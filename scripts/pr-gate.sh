@@ -85,6 +85,18 @@ _kill_process_tree() {
 #                        <f> is resolved against the working dir (--cd), not the caller's CWD, since
 #                        the file is loaded after the gate cd's into the work dir. The loaded source
 #                        and content are recorded in the gate result (## Gate Overrides Applied).
+#   --test-cmd <cmd>     pre-flight test command run in plain bash BEFORE dispatch, independent of
+#                        --timeout; pass/fail is recorded mechanically (frontmatter test_suite: field)
+#                        and a FAIL forces Final: NO-GO regardless of what any reviewer LLM writes.
+#                        No auto-detection -- pr-gate.sh is copy-mode portable (see header) and must
+#                        not assume any repo-specific test command or path convention; the caller
+#                        supplies one explicitly (e.g. the /pr-gate skill passes this repo's own
+#                        `bash scripts/run-all-tests.sh` for pm-dispatch's own gate runs). Omitting
+#                        this flag skips the pre-flight check entirely (reviewers judge test status
+#                        themselves, as before this feature existed).
+#   --test-timeout <s>   timeout for --test-cmd (default: 1800), decoupled from --timeout so a slow
+#                        test suite can never cause a reviewer dispatch session to time out.
+#   --skip-preflight-tests   force-disable the pre-flight test check even if --test-cmd is passed.
 
 WORK_DIR=""
 GATE_RUN_DIR_OVERRIDE=""   # out-of-repo artifact root; set via --run-dir from pmctl-gate
@@ -109,6 +121,9 @@ DISPATCH_SANDBOX="workspace-write"
 DISPATCH_ISOLATION=""   # isolation_level; empty = use codex default (workspace-write)
 DISPATCH_APPROVAL="never"
 BRIEF_FILE=""
+TEST_CMD_OVERRIDE=""   # --test-cmd: explicit pre-flight test command (see CC-470 Part 3)
+TEST_TIMEOUT="1800"    # --test-timeout: independent of --timeout (dispatch budget)
+SKIP_PREFLIGHT_TESTS=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -141,12 +156,19 @@ while [[ $# -gt 0 ]]; do
       # script's controlled CLI error style.
       [[ $# -ge 2 ]] || { printf 'Error: --override-file requires a file path\n' >&2; exit 2; }
       OVERRIDE_FILE="$2";  shift 2;;
+    --test-cmd)
+      [[ $# -ge 2 ]] || { printf 'Error: --test-cmd requires a shell command\n' >&2; exit 2; }
+      TEST_CMD_OVERRIDE="$2"; shift 2;;
+    --test-timeout)
+      [[ $# -ge 2 ]] || { printf 'Error: --test-timeout requires a number of seconds\n' >&2; exit 2; }
+      TEST_TIMEOUT="$2";   shift 2;;
+    --skip-preflight-tests) SKIP_PREFLIGHT_TESTS=true; shift;;
     -h|--help)
-      sed -n '2,87p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,99p' "$0" | sed 's/^# \{0,1\}//'
       exit 0;;
     *)
       printf 'Unknown arg: %s\n' "$1" >&2
-      printf 'Accepted: --cd --run-dir --tier --brief --reviewers|--targeted --scope --base --head --output --executor --model --isolation --timeout --parallel --sequential --allow-hooks --allow-dirty --override-file (-h for help)\n' >&2
+      printf 'Accepted: --cd --run-dir --tier --brief --reviewers|--targeted --scope --base --head --output --executor --model --isolation --timeout --parallel --sequential --allow-hooks --allow-dirty --override-file --test-cmd --test-timeout --skip-preflight-tests (-h for help)\n' >&2
       exit 2;;
   esac
 done
@@ -831,6 +853,8 @@ ADJ_COUNT=$(printf '%s\n' "$ADJACENT_TEST_FILES" | grep -c '[^[:space:]]' 2>/dev
 # (sequential, parallel reviewer, parallel synthesis) reference the one
 # ${GATE_OVERRIDES_CONTEXT_BLOCK} this produces, so an override-rendering change
 # lands in exactly one place. Emits the empty string when there are no overrides.
+# (render_test_evidence_block() below follows this same single-source-of-truth
+# shape for the pre-flight test evidence block -- see CC-470 Part 3.)
 render_gate_overrides_block() {
   local content="$1" indented
   [[ -z "$content" ]] && return 0
@@ -862,6 +886,172 @@ elif [[ -x "$_PRE_GATE_HOOK" ]]; then
   say 'pre-gate hook completed.\n\n'
 fi
 
+# ── Pre-flight test suite (mechanical, decoupled from reviewer --timeout budget) ──
+# Runs BEFORE any dispatch, in plain bash, with its own independent timeout
+# (--test-timeout, default 1800s) -- however long the target repo's test suite
+# takes, it can never cause a reviewer session to hit --timeout, because it has
+# already finished by the time dispatch starts. Shared by both sequential and
+# --parallel modes (computed once here, injected into whichever brief(s) follow).
+# A FAIL short-circuits dispatch entirely (see the fail-fast branch below) --
+# reviewing code that is already guaranteed NO-GO wastes reviewer tokens for
+# no benefit. A PASS is tagged onto the real dispatch result afterward
+# (gate_apply_preflight_pass_tag). Either way this is enforced mechanically,
+# NOT by asking a reviewer LLM to correctly interpret and relay it. See
+# CC-470 Part 3.
+PREFLIGHT_STATUS="skipped"
+PREFLIGHT_LOG_PATH=""
+
+# relocate_gate_artifacts() (below) moves everything under $WORK_DIR/.gate-results
+# carrying $TIMESTAMP -- including the pre-flight log -- out to $GATE_RUN_DIR_OVERRIDE
+# AFTER dispatch completes. Any log path baked into persisted text (the brief's
+# evidence block, the mechanical override note in the result body) must point at
+# where the file will actually BE by the time a human reads it, not where it
+# started -- otherwise --run-dir runs leave a stale pointer into a directory the
+# EXIT trap already emptied. This mirrors relocate_gate_artifacts' own
+# OUTPUT_FILE-repointing logic (same condition) without needing to relocate the
+# log file itself any earlier than dispatch allows.
+_preflight_log_display_path() {
+  local path="$1"
+  if [[ -n "$path" && -n "$GATE_RUN_DIR_OVERRIDE" && -z "$OUTPUT_OVERRIDE" ]]; then
+    printf '%s/.gate-results/%s' "$GATE_RUN_DIR_OVERRIDE" "$(basename "$path")"
+  else
+    printf '%s' "$path"
+  fi
+}
+
+if [[ "$SKIP_PREFLIGHT_TESTS" != "true" && -n "$TEST_CMD_OVERRIDE" ]]; then
+  # pr-gate.sh is designed to be copied standalone into any repo (copy-mode --
+  # see the file header), so it must not hardcode any repo-specific test
+  # command or path convention. --test-cmd is the ONLY way to opt in: the
+  # caller (a human, or the /pr-gate skill, which already knows this repo's
+  # own convention) supplies it explicitly for this invocation -- that
+  # explicit act IS the consent, so no additional --allow-hooks gate applies
+  # (contrast with .pm-dispatch/pre-gate.sh above, whose content is arbitrary
+  # and repo-supplied, not operator-supplied).
+  mkdir -p "$WORK_DIR/.gate-results"
+  PREFLIGHT_LOG_PATH="$WORK_DIR/.gate-results/preflight-tests-${TIMESTAMP}.log"
+  say 'pr-gate: running pre-flight test suite (timeout %ss): %s\n' "$TEST_TIMEOUT" "$TEST_CMD_OVERRIDE"
+  _preflight_rc=0
+  ( cd "$WORK_DIR" && timeout --kill-after=15 "$TEST_TIMEOUT" bash -c "$TEST_CMD_OVERRIDE" ) \
+    > "$PREFLIGHT_LOG_PATH" 2>&1 || _preflight_rc=$?
+  if [[ "$_preflight_rc" -eq 0 ]]; then
+    PREFLIGHT_STATUS="pass"
+  else
+    PREFLIGHT_STATUS="fail"
+  fi
+  say 'pr-gate: pre-flight test suite: %s (log: %s)\n\n' "$PREFLIGHT_STATUS" "$PREFLIGHT_LOG_PATH"
+fi
+
+# Best-effort redaction of common secret shapes before a failed pre-flight
+# log excerpt is copied into a reviewer brief -- a non-hermetic test suite's
+# stdout/stderr can legitimately contain API keys, bearer tokens, or
+# password/token values from the environment it ran in. Mirrors the proven
+# pattern in scripts/guard-pm-bash.sh's _redact_secrets (same threat: don't
+# let secret-shaped substrings reach a place they get displayed/persisted).
+# Not a complete secret scanner -- closes the common cases, not every one.
+_preflight_redact_secrets() {
+  # Reads from stdin (used as a pipe filter: `tail ... | _preflight_redact_secrets`),
+  # not an argument -- an earlier version took "$1" here, which meant the
+  # piped log content was silently discarded and the function only ever
+  # processed an empty string. Caught by shellcheck (SC2119/SC2120) before ship.
+  sed -E \
+    -e 's/sk-[A-Za-z0-9_-]{16,}/***REDACTED***/g' \
+    -e 's/gh[ps]_[A-Za-z0-9]{20,}/***REDACTED***/g' \
+    -e 's/AKIA[0-9A-Z]{16}/***REDACTED***/g' \
+    -e 's/([Bb]earer[[:space:]]+)[A-Za-z0-9._-]+/\1***REDACTED***/g' \
+    -e 's/(-{0,2}[A-Za-z0-9][A-Za-z0-9_-]*)?([Pp]assword|[Tt]oken|[Ss]ecret|[Cc]redential|[Aa][Pp][Ii]_?[Kk][Ee][Yy])([A-Za-z0-9_-]*)([=:[:space:]])[^[:space:]]+/\1\2\3\4***REDACTED***/g'
+}
+
+# Render the pre-flight evidence block for brief injection. Informational
+# context only for reviewers -- NOT the enforcement mechanism (see above).
+render_test_evidence_block() {
+  local status="$1" log_path="$2" tail display_path
+  [[ "$status" == "skipped" ]] && return 0
+  printf '  Pre-flight test run: %s' "$status"
+  if [[ "$status" == "fail" && -n "$log_path" ]]; then
+    # Read from the CURRENT (still in-repo) path -- relocation hasn't happened
+    # yet at this point in the script -- but DISPLAY the path it will live at
+    # once relocate_gate_artifacts moves it, so any reviewer that quotes this
+    # verbatim into the persisted result doesn't leave a stale pointer.
+    display_path="$(_preflight_log_display_path "$log_path")"
+    printf ' (log: %s)\n  Last ~40 lines (secret-shaped substrings redacted):\n' "$display_path"
+    tail=$(tail -n 40 "$log_path" 2>/dev/null | _preflight_redact_secrets | sed 's/^/    /')
+    printf '%s\n' "$tail"
+  else
+    printf '\n'
+  fi
+  printf '  This is informational context only -- the mechanical enforcement (if any) happens\n  after your session completes and does not depend on you reading or citing this block.\n'
+}
+TEST_EVIDENCE_CONTEXT_BLOCK="$(render_test_evidence_block "$PREFLIGHT_STATUS" "$PREFLIGHT_LOG_PATH")"
+
+# Fail-fast: a failed pre-flight test run already determines Final: NO-GO
+# mechanically (see _write_preflight_failure_result below) regardless of what
+# any reviewer would say -- so dispatching 5 reviewer LLM sessions to review code that
+# is guaranteed to be rejected anyway is pure wasted cost (token spend + wall
+# clock) for a result that changes nothing. Skip dispatch entirely and
+# synthesize the NO-GO result directly. If the pre-flight fix later turns out
+# to also need a code-review pass, that happens on the NEXT gate run after the
+# tests are fixed, not blocked from ever happening.
+_write_preflight_failure_result() {
+  local result_file="$1" log_path="$2" display_path reviewer_lines=""
+  display_path="$(_preflight_log_display_path "$log_path")"
+  local r
+  for r in $REVIEWERS; do
+    reviewer_lines="${reviewer_lines}  ${r}: skipped"$'\n'
+  done
+  local excerpt
+  excerpt=$(tail -n 40 "$log_path" 2>/dev/null | _preflight_redact_secrets | sed 's/^/    /')
+  cat > "$result_file" << PREFLIGHT_FAIL_EOF
+---
+gate_result_version: pr_gate_result_v1
+final: NO-GO
+tier: ${TIER}
+mode: preflight-fail-fast
+most_severe: block
+reviewers:
+${reviewer_lines}escalation:
+  recommended: false
+  reviewers: []
+  reason: []
+test_suite: fail
+---
+
+# PR-Gate Result -- pre-flight fail-fast (${EXECUTOR} mode)
+**Date**: $(date '+%Y-%m-%d')
+**Reviewers**: ${REVIEWER_DISPLAY}
+**Not reviewed**: all (pre-flight test suite failed; reviewer dispatch was skipped)
+
+## Pre-flight Test Failure
+The pre-flight test command failed before any reviewer was dispatched.
+Full log: ${display_path}
+Last ~40 lines (secret-shaped substrings redacted):
+${excerpt}
+
+Reviewer dispatch was skipped because a failing test suite already
+determines this gate's outcome -- fixing the tests is required before code
+review has anything to add. Fix the test suite and re-run pr-gate; reviewers
+will run normally once the pre-flight check passes.
+
+## Gate Conclusion
+**Overall verdict**: block
+**Most severe individual verdict**: block
+Final: NO-GO
+Required fixes: the pre-flight test command failed. Fix the test suite (see log above), then re-run pr-gate.
+
+## Escalation
+**Recommended**: false
+**Reviewers**: none
+**Reason**:
+- none
+PREFLIGHT_FAIL_EOF
+}
+
+if [[ "$PREFLIGHT_STATUS" == "fail" ]]; then
+  say 'pr-gate: pre-flight test suite failed -- skipping reviewer dispatch entirely (fail-fast)\n'
+  _write_preflight_failure_result "$OUTPUT_FILE" "$PREFLIGHT_LOG_PATH"
+  gate_result_verify "$OUTPUT_FILE" "" "preflight-fail-fast" || exit 1
+else
+
 # ── Dispatch ─────────────────────────────────────────────────────────────────
 if [[ "$SEQUENTIAL" == "true" ]]; then
 
@@ -887,8 +1077,9 @@ ${AGENT_FILE_ENTRIES}${DIFF_FILE_ENTRIES}  - new:  ${OUTPUT_FILE}
 constraints:
   - Do NOT modify any source file.
   - Only write ${OUTPUT_FILE}.
-  - Before writing ${OUTPUT_FILE}, call: pmctl guard check --role reviewer --runtime ${EXECUTOR} --event pre-write --file ${OUTPUT_FILE}
+  - Before your FIRST write to ${OUTPUT_FILE} in this session, call: pmctl guard check --role reviewer --runtime ${EXECUTOR} --event pre-write --file ${OUTPUT_FILE}
     If that call exits nonzero, abort and report the guard denial -- do NOT write the file.
+    You will write to this same file multiple times in this session (once per reviewer, then once for synthesis) -- that is expected. Do not create or write any other file.
   - Create parent directories for ${OUTPUT_FILE} if needed (mkdir -p).
   - Only cite files in the verified reference index or the diff list. Read a file before citing its sections; do not invent citations.
 
@@ -900,7 +1091,7 @@ context:
   Base: ${BASE}${HEAD_METADATA_LINE}
   Scope: ${SCOPE:-none}
   Date: $(date '+%Y-%m-%d')
-${GATE_OVERRIDES_CONTEXT_BLOCK}
+${GATE_OVERRIDES_CONTEXT_BLOCK}${TEST_EVIDENCE_CONTEXT_BLOCK}
   Verified reference files (exist in working tree -- check before citing):
 ${REPO_REF_INDEX}
   Diff (${LINES} changed lines):
@@ -916,14 +1107,27 @@ task:
   3. Produce a structured findings block:
      - Findings with severity (low/medium/high) and location
      - Explicit verdict: approve | advise | block-soft | block
+  4. IMMEDIATELY write/append that reviewer's "## {reviewer} -- {verdict}" section to
+     ${OUTPUT_FILE} before moving to the next reviewer. On the FIRST reviewer, create the
+     file starting with the "# PR-Gate Result" header block (date/reviewers/not-reviewed
+     lines -- these do not depend on any reviewer's findings), then that reviewer's
+     section. On subsequent reviewers, append only that reviewer's section. Do NOT write
+     the YAML frontmatter yet -- its fields (final, most_severe, per-reviewer verdicts)
+     are only known after synthesis; it is added in step 9 below. Do NOT hold all reviewer
+     content in-context until the end -- write each section as soon as it is done, so a
+     later reviewer's slowness (e.g. a long test run) cannot destroy earlier reviewers'
+     already-completed verdicts if this session is later interrupted or times out.
 
   After all reviewers, synthesize as project-pm would:
-  4. Identify cross-reviewer overlaps (same issue raised by multiple reviewers)
-  5. Overall verdict = most severe individual verdict
-  6. State which dimensions were NOT covered (not-reviewed list above)
-  7. Final GO (no blocks) / NO-GO (any block or block-soft) with rationale and override path if applicable
-
-  Write the complete result to ${OUTPUT_FILE}.
+  5. Identify cross-reviewer overlaps (same issue raised by multiple reviewers)
+  6. Overall verdict = most severe individual verdict
+  7. State which dimensions were NOT covered (not-reviewed list above)
+  8. Final GO (no blocks) / NO-GO (any block or block-soft) with rationale and override path if applicable
+  9. Now that the final verdict is known: PREPEND the YAML frontmatter block to the very
+     top of ${OUTPUT_FILE} (before the header already written in step 4), then APPEND the
+     synthesis sections (Cross-Reviewer Overlaps / Coverage Notes / Gate Conclusion /
+     Escalation) to the bottom. Do not rewrite the reviewer sections already written in
+     step 4 -- only prepend the frontmatter and append the synthesis sections.
 
 output_format: |
   ---
@@ -1005,7 +1209,40 @@ BRIEF_EOF
   # first write would hit EPIPE and -- with SIGPIPE ignored + set -e -- exit
   # nonzero before writing the result, killing the gate before its integrity
   # checks could fire. Parallel reviewers already redirect to a log.
-  eval "$DISPATCH_CMD" >&2
+  #
+  # Capture the exit code instead of letting `set -e` abort here: a sequential
+  # session that times out partway through (e.g. qa-tester stuck running a
+  # long test suite) must not discard whatever earlier reviewers already
+  # wrote to ${OUTPUT_FILE} per the brief's per-reviewer append instruction
+  # (task step 4 above) -- see the partial-result branch below.
+  SEQ_DISPATCH_EXIT=0
+  eval "$DISPATCH_CMD" >&2 || SEQ_DISPATCH_EXIT=$?
+
+  if [[ "$SEQ_DISPATCH_EXIT" -ne 0 ]]; then
+    if [[ "$SEQ_DISPATCH_EXIT" -eq 124 ]]; then
+      printf 'Timeout: sequential dispatch did not complete within %ss.\n' "$TIMEOUT" >&2
+    else
+      printf 'Error: sequential dispatch exited %d.\n' "$SEQ_DISPATCH_EXIT" >&2
+    fi
+    if [[ -s "$OUTPUT_FILE" ]]; then
+      _SEQ_COMPLETED=() _SEQ_INCOMPLETE=()
+      for r in $REVIEWERS; do
+        if grep -qE "^## ${r} -- " "$OUTPUT_FILE"; then
+          _SEQ_COMPLETED+=("$r")
+        else
+          _SEQ_INCOMPLETE+=("$r")
+        fi
+      done
+      printf 'Partial result: %d of %d reviewer(s) completed before the session stopped: %s\n' \
+        "${#_SEQ_COMPLETED[@]}" "$NUM_REVIEWERS" "${_SEQ_COMPLETED[*]:-none}" >&2
+      printf 'Not completed: %s\n' "${_SEQ_INCOMPLETE[*]:-none}" >&2
+      printf 'Partial artifact (no Final: verdict -- inconclusive, do NOT treat as GO) preserved at: %s\n' "$OUTPUT_FILE" >&2
+      printf 'Raw session trace (for post-mortem): %s\n' "${PM_DISPATCH_TRACE_DIR:-$WORK_DIR/.agent-trace}" >&2
+    else
+      printf 'Gate aborted -- no reviewer sections were written before the session stopped: %s\n' "$OUTPUT_FILE" >&2
+    fi
+    exit 1
+  fi
 
   # Validate single-session output via the shared contract (must exist, be
   # non-empty, carry exactly one Final: GO|NO-GO line that agrees with the
@@ -1087,7 +1324,7 @@ context:
   Base: ${BASE}${HEAD_METADATA_LINE}
   Scope: ${SCOPE:-none}
   Date: $(date '+%Y-%m-%d')
-${GATE_OVERRIDES_CONTEXT_BLOCK}
+${GATE_OVERRIDES_CONTEXT_BLOCK}${TEST_EVIDENCE_CONTEXT_BLOCK}
   Verified reference files (exist in working tree -- check before citing):
 ${REPO_REF_INDEX}
   Diff (${LINES} changed lines):
@@ -1311,7 +1548,7 @@ context:
   Base: ${BASE}${HEAD_METADATA_LINE}
   Scope: ${SCOPE:-none}
   Date: $(date '+%Y-%m-%d')
-${GATE_OVERRIDES_CONTEXT_BLOCK}
+${GATE_OVERRIDES_CONTEXT_BLOCK}${TEST_EVIDENCE_CONTEXT_BLOCK}
   Verified reference files (exist in working tree -- check before citing):
 ${REPO_REF_INDEX}
   Reviewer findings (embedded -- do NOT attempt to read any external reviewer output file):
@@ -1478,6 +1715,43 @@ SBRIEF_P2
   fi
   fi
 
+fi
+
+fi
+
+# ── Pre-flight test result: mechanical override (CC-470 Part 3) ────────────────
+# Applies AFTER dispatch (sequential or parallel) and its own gate_result_verify
+# have already succeeded -- this is the single point where both routes converge,
+# so the tagging logic lives here once instead of duplicated per route (same
+# shape as the override provenance block immediately below, which is the
+# established precedent for "shared post-dispatch bash processing of OUTPUT_FILE").
+# Only ever called with status=pass: a FAIL never reaches dispatch at all (see
+# the fail-fast short-circuit above, which synthesizes its own NO-GO result and
+# never invokes any reviewer) -- this just tags the mechanical fact "pre-flight
+# already confirmed the suite passes" onto whatever the reviewers produced,
+# without touching final:/Final: (reviewers' own verdict stands).
+gate_apply_preflight_pass_tag() {
+  local result_file="$1"
+  awk '
+    /^---$/ {
+      if (fence < 2) fence++
+      if (fence == 2 && !ts_done) { print "test_suite: pass"; ts_done=1 }
+      print; next
+    }
+    { print }
+  ' "$result_file" > "${result_file}.preflight-tmp"
+  mv "${result_file}.preflight-tmp" "$result_file"
+
+  # Self-check: if this rewrite corrupted frontmatter/body parity, fail closed
+  # rather than let a broken result file out the door.
+  gate_result_verify "$result_file" "" "preflight-pass-tag" || {
+    printf 'Error: internal -- gate_apply_preflight_pass_tag corrupted frontmatter/body parity\n' >&2
+    exit 1
+  }
+}
+
+if [[ "$PREFLIGHT_STATUS" == "pass" ]]; then
+  gate_apply_preflight_pass_tag "$OUTPUT_FILE"
 fi
 
 # ── Override provenance (audit record) ─────────────────────────────────────────

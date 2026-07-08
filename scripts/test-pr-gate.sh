@@ -228,6 +228,35 @@ case "$effective_mode" in
     fi
     exit 0
     ;;
+  sequential-partial-timeout)
+    # Simulates a sequential-mode session that wrote SOME reviewer sections
+    # (per the brief's per-reviewer append instruction) before timing out —
+    # e.g. qa-tester stuck running a long test suite. Only applies to the
+    # single-session sequential brief (not a --parallel reviewer/synthesis
+    # brief); writes 2 of the 5 default full-tier reviewer sections with no
+    # frontmatter and no Final: line (frontmatter/synthesis is only added
+    # after ALL reviewers finish — see pr-gate.sh task step 9), then exits
+    # 124 to simulate the dispatch timeout.
+    if [[ "$brief_file" =~ ^.*/pr-gate-[0-9]{8}-[0-9]{6}\.md$ ]]; then
+      output_path=$(grep -o '\- new:.*' "$brief_file" | head -1 | awk '{print $NF}')
+      if [[ -n "$output_path" ]]; then
+        mkdir -p "$(dirname "$output_path")"
+        cat > "$output_path" << PARTIAL_EOF
+# PR-Gate Result -- stub tier (sequential codex mode)
+**Date**: 2026-01-01
+**Reviewers**: stub
+**Not reviewed**: none
+
+## critic -- advise
+- stub finding, completed before timeout
+
+## qa-tester -- pass
+- stub finding, completed before timeout (this reviewer then stalled running tests)
+PARTIAL_EOF
+      fi
+    fi
+    exit 124
+    ;;
   *)
     # Success: write a stub output file so the gate's output validation passes.
     output_path=$(grep -o '\- new:.*' "$brief_file" | head -1 | awk '{print $NF}')
@@ -1771,6 +1800,54 @@ test_sequential_no_final_line_aborts_gate() {
   pass "$name"
 }
 
+# Behavior: a sequential-mode dispatch timeout must not discard reviewer
+# sections that were already appended to the output file before the
+# session stalled (PR-gate finding, CC-445 R7, 2026-07-08: a sequential
+# session that timed out while qa-tester ran a long test suite produced a
+# 0-byte result even though earlier reviewers may have already finished).
+# Steps:
+#   1. Create a full-tier repo change (5 reviewers)
+#   2. CODEX_GATE_STUB_MODE=sequential-partial-timeout: dispatch writes 2 of
+#      5 reviewer sections then exits 124 (simulated timeout)
+#   3. Run gate in sequential mode (default)
+#   4. Assert non-zero exit, stderr reports Timeout + partial completion
+#      counts + the completed/incomplete reviewer names, and the output
+#      file on disk still contains the 2 completed reviewer sections
+#      (proving gate_exit_cleanup/cleanup_briefs did not delete it)
+test_sequential_timeout_preserves_partial_result() {
+  local name="sequential-timeout-preserves-partial-result"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" result="$dir/result.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  CODEX_GATE_STUB_MODE=sequential-partial-timeout \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --tier full --output "$result"
+  local code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then
+    fail "$name" "expected non-zero exit on a simulated sequential timeout"
+    return
+  fi
+  assert_file_contains "$name" "$err" "Timeout:" || return
+  assert_file_contains "$name" "$err" "Partial result: 2 of 5" || return
+  assert_file_contains "$name" "$err" "critic" || return
+  assert_file_contains "$name" "$err" "qa-tester" || return
+  assert_file_contains "$name" "$err" "Not completed:" || return
+  if [[ ! -s "$result" ]]; then
+    fail "$name" "partial result file was deleted/emptied on timeout — should be preserved: $result"
+    return
+  fi
+  assert_file_contains "$name" "$result" "## critic -- advise" || return
+  assert_file_contains "$name" "$result" "## qa-tester -- pass" || return
+  pass "$name"
+}
+
 # Behavior: a consumer that reads a prefix of gate stdout and closes the
 # pipe early (head -n1, grep -q, ...) must NOT abort the gate before it
 # dispatches and writes the result file. Pre-fix, the
@@ -1839,6 +1916,314 @@ test_sequential_frontmatter_parity_mismatch_aborts_gate() {
     return
   fi
   assert_file_contains "$name" "$err" "does not match body Final" || return
+  pass "$name"
+}
+
+# ── Pre-flight test suite (CC-470 Part 3): mechanical, decoupled from --timeout ──
+
+# Behavior: a passing --test-cmd records test_suite: pass in the frontmatter
+# and does not touch final:/Final: (reviewers' own verdict stands).
+# Steps: run gate with --test-cmd "exit 0", stub reviewers default to GO.
+# Assert exit 0, Final: GO, frontmatter test_suite: pass.
+test_preflight_pass_no_override() {
+  local name="preflight-pass-no-override"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" result="$dir/result.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --test-cmd "exit 0" --output "$result"
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  assert_file_contains "$name" "$result" "Final: GO" || return
+  assert_file_contains "$name" "$result" "test_suite: pass" || return
+  pass "$name"
+}
+
+# Behavior: key case -- a FAILING --test-cmd short-circuits the gate to
+# Final: NO-GO WITHOUT dispatching any reviewer at all. Reviewing code that
+# is already guaranteed to be rejected wastes reviewer tokens for nothing,
+# so this must be a fail-fast, not a post-hoc override of a real dispatch.
+# Steps: run gate with --test-cmd "echo boom; exit 1" (stub reviewers would
+# say GO if invoked, but must never be invoked). Assert exit non-zero,
+# Final: NO-GO, frontmatter test_suite: fail, and -- the decisive assertion --
+# no DISPATCH_STUB output anywhere (proves the reviewer session never ran).
+test_preflight_fail_short_circuits_without_dispatch() {
+  local name="preflight-fail-short-circuits-without-dispatch"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" result="$dir/result.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main \
+    --test-cmd "echo boom; exit 1" --output "$result"
+  local code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then
+    fail "$name" "expected non-zero exit when pre-flight tests fail"
+    return
+  fi
+  if [[ ! -s "$result" ]]; then
+    fail "$name" "result file missing/empty -- fail-fast must still produce a result"
+    return
+  fi
+  assert_file_contains "$name" "$result" "Final: NO-GO" || return
+  assert_file_contains "$name" "$result" "test_suite: fail" || return
+  assert_not_contains "$name" "$out" "DISPATCH_STUB" || return
+  assert_not_contains "$name" "$err" "DISPATCH_STUB" || return
+  pass "$name"
+}
+
+# Behavior: a failed pre-flight run's log excerpt (embedded directly in the
+# fail-fast result body, since no reviewer brief is ever built) must actually
+# contain the log's real content, with secret-shaped substrings redacted --
+# not silently empty. Regression lock: an earlier version's redaction helper
+# read a function argument instead of its piped stdin, so the piped log
+# content was discarded entirely and the excerpt was blank (caught by a
+# static-analysis lint tool -- not a test -- until this test was added).
+# Steps: --test-cmd that echoes a distinctive marker AND a secret-shaped
+# token, then fails. Assert the marker survives in the result (proves the
+# pipe carried real content) and the raw secret does not (proves redaction
+# actually ran on that content).
+test_preflight_fail_log_excerpt_is_redacted_not_empty() {
+  local name="preflight-fail-log-excerpt-is-redacted-not-empty"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" result="$dir/result.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main \
+    --test-cmd 'echo "MARKER_needle_visible_in_excerpt"; echo "token sk-abcdef1234567890ABCDEF"; exit 1' \
+    --output "$result"
+  set -e
+  if [[ ! -s "$result" ]]; then
+    fail "$name" "result file missing/empty"
+    return
+  fi
+  assert_file_contains "$name" "$result" "MARKER_needle_visible_in_excerpt" || return
+  assert_file_contains "$name" "$result" "REDACTED" || return
+  assert_not_contains "$name" "$result" "sk-abcdef1234567890ABCDEF" || return
+  pass "$name"
+}
+
+# Behavior: the fail-fast result synthesized in
+# test_preflight_fail_short_circuits_without_dispatch does not violate
+# frontmatter/body Final: parity -- gate_result_verify (the same contract
+# `pmctl gate verify` re-runs) must pass on the synthesized file.
+test_preflight_fail_result_preserves_frontmatter_body_parity() {
+  local name="preflight-fail-result-preserves-parity"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" result="$dir/result.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main \
+    --test-cmd "exit 1" --output "$result"
+  set -e
+  if [[ ! -s "$result" ]]; then
+    fail "$name" "result file missing/empty"
+    return
+  fi
+  local rc=0
+  ( source "$REPO_ROOT/scripts/lib/gate-result-verify.sh" && gate_result_verify "$result" "" "post-preflight-check" ) || rc=$?
+  [[ "$rc" -eq 0 ]] && pass "$name" || fail "$name" "gate_result_verify rejected the fail-fast synthesized result file"
+}
+
+# Behavior: --test-cmd exceeding --test-timeout is treated the same as a
+# non-zero exit (fail-fast, no dispatch), not left as "skipped" or silently
+# ignored.
+test_preflight_timeout_treated_as_fail() {
+  local name="preflight-timeout-treated-as-fail"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" result="$dir/result.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main \
+    --test-cmd "sleep 5" --test-timeout 1 --output "$result"
+  local code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then
+    fail "$name" "expected non-zero exit when pre-flight tests time out"
+    return
+  fi
+  assert_file_contains "$name" "$result" "test_suite: fail" || return
+  assert_file_contains "$name" "$result" "Final: NO-GO" || return
+  assert_not_contains "$name" "$out" "DISPATCH_STUB" || return
+  pass "$name"
+}
+
+# Behavior: copy-mode safety net -- with no --test-cmd, the pre-flight step
+# is a no-op regardless of what's in the target repo -- behavior is identical
+# to before this feature existed (no test_suite: field, reviewers' own
+# verdict determines Final: unmodified).
+test_preflight_skipped_without_test_cmd() {
+  local name="preflight-skipped-without-test-cmd"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" result="$dir/result.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --output "$result"
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0 (no pre-flight configured -- legacy behavior)"
+    return
+  fi
+  assert_file_contains "$name" "$result" "Final: GO" || return
+  assert_not_contains "$name" "$result" "test_suite:" || return
+  pass "$name"
+}
+
+# Behavior: pr-gate.sh must NEVER auto-execute a repo-local script just
+# because it exists and is executable -- it is copy-mode portable (see file
+# header) and must not assume any repo-specific test command convention.
+# Steps: seed $repo/scripts/run-all-tests.sh (executable, would FAIL if run)
+# but do NOT pass --test-cmd. Assert the gate does not touch it at all: no
+# test_suite: field, Final: determined purely by reviewers, and the failing
+# script's presence has zero effect on the outcome.
+test_preflight_never_auto_executes_repo_local_script() {
+  local name="preflight-never-auto-executes-repo-local-script"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" result="$dir/result.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  mkdir -p "$repo/scripts"
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$repo/scripts/run-all-tests.sh"
+  chmod +x "$repo/scripts/run-all-tests.sh"
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --output "$result"
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0 -- the executable script must not be auto-run without --test-cmd"
+    return
+  fi
+  assert_file_contains "$name" "$result" "Final: GO" || return
+  assert_not_contains "$name" "$result" "test_suite:" || return
+  pass "$name"
+}
+
+# Behavior: an explicit --test-cmd is honored even when the target repo also
+# happens to have its own scripts/run-all-tests.sh -- the two are unrelated;
+# only what the caller explicitly passed ever runs.
+test_preflight_explicit_test_cmd_runs_independent_of_repo_scripts() {
+  local name="preflight-explicit-test-cmd-runs-independent-of-repo-scripts"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" result="$dir/result.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  mkdir -p "$repo/scripts"
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$repo/scripts/run-all-tests.sh"
+  chmod +x "$repo/scripts/run-all-tests.sh"
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --test-cmd "exit 0" --output "$result"
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0 -- explicit --test-cmd (exit 0) should be what actually ran"
+    return
+  fi
+  assert_file_contains "$name" "$result" "test_suite: pass" || return
+  pass "$name"
+}
+
+# Behavior: --skip-preflight-tests force-disables the mechanism even when an
+# explicit --test-cmd is ALSO passed (the escape hatch wins).
+test_preflight_skip_flag_disables() {
+  local name="preflight-skip-flag-disables"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" result="$dir/result.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main \
+    --test-cmd "exit 1" --skip-preflight-tests --output "$result"
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0 -- --skip-preflight-tests should bypass --test-cmd entirely"
+    return
+  fi
+  assert_not_contains "$name" "$result" "test_suite:" || return
+  pass "$name"
+}
+
+# Behavior: pre-flight runs regardless of which reviewers are targeted -- it
+# is a mechanical check independent of reviewer role, not gated on qa-tester
+# being present. A --targeted re-gate round still needs to know whether the
+# code (which may have changed since the last round) still passes tests.
+test_preflight_runs_even_when_qa_tester_not_targeted() {
+  local name="preflight-runs-even-when-qa-tester-not-targeted"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" result="$dir/result.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main \
+    --targeted critic --test-cmd "exit 0" --output "$result"
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  assert_file_contains "$name" "$result" "test_suite: pass" || return
   pass "$name"
 }
 
@@ -2795,8 +3180,19 @@ run_test test_reviewer_invalid_verdict_aborts_gate
 run_test test_reviewer_no_output_aborts_gate
 run_test test_sequential_no_output_aborts_gate
 run_test test_sequential_no_final_line_aborts_gate
+run_test test_sequential_timeout_preserves_partial_result
 run_test test_piped_stdout_does_not_abort_gate
 run_test test_sequential_frontmatter_parity_mismatch_aborts_gate
+run_test test_preflight_pass_no_override
+run_test test_preflight_fail_short_circuits_without_dispatch
+run_test test_preflight_fail_log_excerpt_is_redacted_not_empty
+run_test test_preflight_fail_result_preserves_frontmatter_body_parity
+run_test test_preflight_timeout_treated_as_fail
+run_test test_preflight_skipped_without_test_cmd
+run_test test_preflight_never_auto_executes_repo_local_script
+run_test test_preflight_explicit_test_cmd_runs_independent_of_repo_scripts
+run_test test_preflight_skip_flag_disables
+run_test test_preflight_runs_even_when_qa_tester_not_targeted
 run_test test_parallel_frontmatter_parity_mismatch_aborts_gate
 run_test test_prompt_injection_detected
 run_test test_block_soft_verdict_is_no_go

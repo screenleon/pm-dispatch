@@ -28,6 +28,12 @@ PMCTL="$REPO_ROOT/cli/pmctl"
 th_init "$@"
 export PM_DISPATCH_STATE_ROOT="$tmp_root/pmctl-dispatch-state"
 
+# Accelerate dispatch wait polling in tests: the fake codex exits immediately,
+# so a 2s polling interval is pure dead time across this suite's many
+# `dispatch run --lifecycle foreground` (run+wait) cases. Same fix as
+# test-dispatch-lifecycle.sh:48. Tests may override via the env.
+export PM_DISPATCH_WAIT_POLL_INTERVAL="${PM_DISPATCH_WAIT_POLL_INTERVAL:-0.1}"
+
 # Resolve a dispatch's out-of-repo trace dir for a work dir + run_id, binding the
 # partition to the work dir (cd) exactly as the dispatch core does.
 _run_trace_dir() { ( cd "$1" 2>/dev/null && printf '%s/.agent-trace\n' "$(sw_project_run_dir "$2")" ); }

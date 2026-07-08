@@ -105,6 +105,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-447 | 🔵 active | 乾淨機器 onboarding 雙 smoke：offline clean-install smoke（v0.9.0 候選）+ live dogfood smoke（v1.0-rc）；摔倒點逐一開票；QA_RULES_DIR 缺席行為驗證 | docs/ops | 2026-07-04 | — | P2 | — |
 | CC-448 | 🔵 active | opencode host support：可行性 probe → `hosts/opencode/host.yaml` → install/doctor 接線；host 抽象 N=2 驗收（v0.9.0，2026-07-06 自 v1.0-rc 提前；依賴 CC-438/445；umbrella: CC-333；DECISIONS 2026-07-04+2026-07-06） | arch/install | 2026-07-04 | — | P2 | design |
 | CC-449 | 🔵 active | release-verify/test-e2e 對 v0.8.0 新 surface（`pmctl ship`/`pmctl worktree`）無 live 煙測 + run-all-tests 套件註冊完整性 lint（CC-444 收尾發現 test-pmctl-worktree 未註冊，已修；防再漏）+ CI↔run-all parity 斷言（2026-07-06 稽核：24 個本地 suite CI 缺席）（v0.9.0 候選） | ops/test | 2026-07-04 | — | P2 | — |
+| CC-470 | ✅ closed 2026-07-08 | pr-gate sequential 模式逾時全歸零風險 + 慢速測試套件優化：qa-tester 選擇跑全套 run-all-tests 撞上共用 timeout 時，整個 gate session 結果 0 bytes（CC-445 R7 實測）；改逐 reviewer 落地 + 補 test-pmctl-dispatch/pmctl-context.sh 兩處已查明根因的效能修復（2026-07-08） | ops/gate | 2026-07-08 | pr:#383 | P2 | — |
 
 ---
 
@@ -459,6 +460,30 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 **Dependencies**：與 [[CC-431]] 檔案面重疊（test-e2e.sh/release-verify.sh），宜同版處理。v0.9.0 候選。
 **See**: [[CC-444]] Outcome、pr:#367
+
+---
+
+## CC-470 — pr-gate sequential 模式逾時歸零風險 + 慢速測試套件優化 ✅ 2026-07-08
+
+**Problem**（2026-07-08，CC-445 pr-gate 第 7 輪實測）：`scripts/pr-gate.sh` 的 sequential 模式（預設）用單一 codex/claude session 依序處理全部 reviewer，只在最後才把完整結果寫入 `${OUTPUT_FILE}`。若 qa-tester 在該 session 內選擇跑完整 `run-all-tests.sh`（~10 分鐘）並撞上共用的 dispatch timeout，`set -euo pipefail` 讓腳本立即中止、`gate_result_verify` 從未被呼叫，`${OUTPUT_FILE}` 停留在 0 bytes——即使其他 reviewer（critic/architecture-reviewer/security-reviewer/risk-reviewer）可能已經在同一個 session 裡完成推論，全部產出仍付諸東流，該輪只能整個重跑。
+
+**Why**：這是「有 timeout 上限、all-or-nothing 的執行模型」本身的架構風險，跟測試套件多慢無關——即使全套壓到 3 分鐘，任何其他意外阻塞（codex CLI 卡住等）都會觸發同樣的全歸零。同時，深入量測發現兩個測試套件有具體、低風險的效能修復空間，值得一併處理。
+
+**Requirement**：
+1. **sequential 模式逐 reviewer 落地**：改 brief 指示（`scripts/pr-gate.sh` task 區塊）讓 session 在每個 reviewer 完成後立即把該 reviewer 的區塊附加寫入 `${OUTPUT_FILE}`，而非等到最後才一次寫入；dispatch 呼叫（`eval "$DISPATCH_CMD"`）改為捕捉 exit code 而非讓 `set -e` 直接中止腳本；逾時/失敗時比對 `${OUTPUT_FILE}` 已完成哪些 reviewer 區塊，回報「N of 5 完成：xxx；未完成：yyy」的 partial 結果，並保留 partial artifact 供人工追查（不視為 GO，仍 `exit 1`，pass/fail 語意不變）。
+2. **`test-pmctl-dispatch.sh` poll interval 修復**：補上 `export PM_DISPATCH_WAIT_POLL_INTERVAL="${PM_DISPATCH_WAIT_POLL_INTERVAL:-0.1}"`（`test-dispatch-lifecycle.sh:48` 已驗證安全的既有模式），預期從 309s 省下 60-90s。
+3. **`pmctl-context.sh` 的 `_ctx_fts5_available` 加快取**：目前每次呼叫都 fork 2 個 sqlite3 子行程探測 FTS5 支援，改為模組層級關聯陣列快取（FTS5 支援在同一 binary/process 生命週期內是靜態的），預期從 244s 省下 5-15s。
+4. **測試套件執行與 reviewer session timeout 完全解耦**（2026-07-08 使用者進一步收斂）：Requirement 1 只是止血——只要 qa-tester 還在 dispatch session 內自己跑測試，測試耗時就會侵蝕跟其他 reviewer 共用的 `--timeout` 預算。改為在 dispatch 之前用純 bash 跑一次目標 repo 的測試指令，跟任何 reviewer 的 LLM 判斷完全脫鉤；結果（`test_suite: pass|fail|skipped`）機械寫入 frontmatter。`--test-timeout`（獨立於 `--timeout`）、`--skip-preflight-tests` 逃生閥。**只認明確 `--test-cmd`，不自動偵測任何路徑**（初版曾自動偵測 `scripts/run-all-tests.sh`，但 pr-gate.sh 設計上可被複製進任何 repo 獨立使用，不該寫死任何特定 repo 的慣例路徑，即使加了 `--allow-hooks` 信任閘門也一樣——2026-07-08 pr-gate 第一輪 NO-GO 後跟使用者對齊修正）。**FAIL 時 fail-fast、完全跳過 reviewer dispatch**（不是先跑完 5 個 reviewer 再事後覆寫——測試沒過本來就註定 NO-GO，花真實 token 審查一份已知會被打回票的程式碼沒有意義；2026-07-08 跟使用者對齊後由「dispatch 後覆寫」改為「dispatch 前短路」），直接機械合成 NO-GO 結果（含 redacted log 摘要），不呼叫任何 LLM。
+
+**Non-goals**：不解析 `.agent-trace/*.jsonl` 做結構化 partial 回收（adapter 事件格式不統一，維護成本高，只當人工追查路徑指標）；不處理 `cli/pmctl` 每次呼叫 source 22 個 lib 檔案的系統性 ~0.5-0.7s 開銷（影響全產品所有 pmctl 呼叫路徑，需要更大規模的 lazy-loading/常駐行程重設計，風險/範圍都遠大於本票，另開票處理）；不把 `--parallel` 設為預設（成本 ×2，僅適合 auth/payment/migration 等高風險變更）；不做「iteration vs final round」測試分層啟發式；不新增 `.pr-gate.yml` 設定檔格式；不自動偵測任何 repo 特定測試指令路徑（見上）。
+
+**Verification**：`scripts/test-pr-gate.sh` 新增 codex stub 分支模擬「2 of 5 reviewer 完成後逾時」，斷言 partial 結果訊息 + `${OUTPUT_FILE}` 內容在磁碟上不被清理掉；`test-pmctl-dispatch.sh`/`test-pmctl-context.sh` 改動前後量測 wall time 確認確實變快、案例數不變全綠；Requirement 4 共 13 個測試，含關鍵案例「pre-flight 失敗時 stub reviewer 就算被設定成回 GO 也絕對不會被呼叫（斷言 stdout/stderr 完全沒有 dispatch stub 的輸出）」、「即使 repo 內存在可執行的 `scripts/run-all-tests.sh` 也絕不會自動執行」、「fail-fast 合成的 log 摘要確實含真實內容且 redaction 有效（回歸鎖：早期版本 redaction 函式讀錯 `$1` 導致 pipe 內容整個被丟棄，shellcheck SC2119/SC2120 抓到）」、FTS5 快取邏輯本身（回歸鎖：早期版本快取命中分支比對值寫反，導致第二次呼叫永遠回報錯誤結果）。手動 smoke test 對 pm-dispatch 自己跑 `--test-cmd "exit 1"`，確認完全沒有 `codex-dispatch starting` 字樣、直接產出合成的 NO-GO 結果。
+
+**Source**：CC-445 pr-gate 第 7 輪逾時實測 + 使用者要求優先處理、並在討論中收斂出機械化解耦設計（2026-07-08）；已用 Explore + Plan agent 交叉核實根因與改動點，並經 Ultraplan 雲端 session 精修 Requirement 4 的實作行號；送 pr-gate 第一輪 NO-GO（security/risk block 自動偵測信任邊界、qa-tester block FTS5 缺測試）後與使用者對齊修正方向並全數修復；修復過程中使用者進一步指出「pre-flight 本身就是送 gate 前的完整性檢查，不需要再手動跑一次 checkpoint」與「測試沒過就不該還花錢跑 reviewer」兩個洞見，收斂出 fail-fast 設計，見對話紀錄。
+
+**Outcome**（2026-07-08）：Requirement 1-4 全數完成並驗證；`pmctl gate run --executor codex --test-cmd "bash scripts/run-all-tests.sh"` 收斂 GO（全部 5 個 reviewer approve/pass，`test_suite: pass`）；`scripts/test-pr-gate.sh` 135/135、`test-pmctl-context.sh` 109/109、`test-pmctl-dispatch.sh` 44/44 全綠；`bash scripts/run-all-tests.sh` 全套 checkpoint 71/71 clean。
+
+**See**: pr:#383
 
 ---
 
