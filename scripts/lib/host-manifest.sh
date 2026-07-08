@@ -1,13 +1,19 @@
 #!/usr/bin/env bash
 # Generic reader for hosts/<name>/host.yaml (schema v1, docs/host-contract.md).
 #
-# Consumed by install.sh/uninstall.sh/doctor.sh so none of them special-case a
-# host name — every host-specific fact (target path, format, managed flag)
-# comes from the manifest. Adding a host means adding hosts/<name>/host.yaml,
-# not editing a caller of this file. Deliberately grep/awk-based (no YAML
-# parser dependency), mirroring the block-extraction approach
-# scripts/test-host-manifest.sh and doctor-host-claude.sh already use for the
-# same file shape.
+# Consumed by install.sh/uninstall.sh/doctor.sh so the FACTS these callers
+# read (target path, format, managed flag) come from the manifest, not a
+# hardcoded per-host branch. This is partial today, not fully host-generic:
+# install.sh:514/uninstall.sh:317 still call codex-specific scripts
+# (scripts/install-guards-codex.sh / uninstall-guards-codex.sh) directly for
+# the opt-in codex hook-wiring step — those scripts read their target facts
+# from this manifest, but the call site itself still names "codex". Adding a
+# host means adding hosts/<name>/host.yaml plus (for now) that host's own
+# install/uninstall wiring script; the manifest removes the need to hardcode
+# facts inside those scripts, not the need for them to exist per host yet.
+# Deliberately grep/awk-based (no YAML parser dependency), mirroring the
+# block-extraction approach scripts/test-host-manifest.sh and
+# doctor-host-claude.sh already use for the same file shape.
 #
 # Functions:
 #   host_manifest_names                      -> one host name per line (dirs under hosts/ with a host.yaml)

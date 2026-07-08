@@ -128,10 +128,15 @@ declare -a DENY_PATTERNS=(
   # short or long form: `rm -r -f`, `rm --force --recursive`, etc.
   'rm\b.*(-r\b|-R\b|--recursive\b).*(-f\b|--force\b)'
   'rm\b.*(-f\b|--force\b).*(-r\b|-R\b|--recursive\b)'
-  'git[[:space:]]+push([[:space:]]+[^|;&]*)?[[:space:]](-f|--force)([[:space:]]|$)'  # force push: can overwrite upstream history
-  'git[[:space:]]+reset[[:space:]]+--hard'                                 # discards uncommitted work irreversibly
-  'git[[:space:]]+clean[[:space:]]+-[a-z]*f'                               # deletes untracked files irreversibly
-  'git[[:space:]]+branch[[:space:]]+-D'                                    # force-deletes a branch, bypassing merge check
+  # git subcommand patterns below all use `git\b.*[[:space:]]<subcmd>\b`
+  # rather than `git[[:space:]]+<subcmd>` so a Git global option before the
+  # subcommand does not shield it — `git -C /tmp reset --hard` and
+  # `git -c foo=bar push --force` are denied too, not just the bare form
+  # (same fix shape as the rm cluster pattern above).
+  'git\b.*[[:space:]]push\b([[:space:]]+[^|;&]*)?[[:space:]](-f|--force)([[:space:]]|$)'  # force push: can overwrite upstream history
+  'git\b.*[[:space:]]reset\b[[:space:]]+--hard'                            # discards uncommitted work irreversibly
+  'git\b.*[[:space:]]clean\b[[:space:]]+-[a-z]*f'                          # deletes untracked files irreversibly
+  'git\b.*[[:space:]]branch\b[[:space:]]+-D'                               # force-deletes a branch, bypassing merge check
   '\-\-no-verify\b'                                                        # skips commit/push hooks
   '\-\-no-gpg-sign\b'                                                      # bypasses commit signing
   '(curl|wget)[^|]*\|[[:space:]]*(ba)?sh\b'                                # pipe-to-shell remote code execution

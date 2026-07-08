@@ -3473,6 +3473,22 @@ run_case "pm-bash: rm --one-file-system -rf (long option before cluster, previou
   '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"rm --one-file-system -rf /tmp/foo"}}' \
   "denylisted pattern"
 
+run_case "pm-bash: git -C <dir> reset --hard (global option before subcommand, previously bypassed) → deny" 2 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"git -C /tmp reset --hard"}}' \
+  "denylisted pattern"
+
+run_case "pm-bash: git -C <dir> clean -fd (global option before subcommand, previously bypassed) → deny" 2 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"git -C /tmp clean -fd"}}' \
+  "denylisted pattern"
+
+run_case "pm-bash: git -C <dir> push --force (global option before subcommand, previously bypassed) → deny" 2 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"git -C /tmp push origin main --force"}}' \
+  "denylisted pattern"
+
+run_case "pm-bash: git -c foo=bar branch -D (global option before subcommand, previously bypassed) → deny" 2 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"git -c foo=bar branch -D feat/old"}}' \
+  "denylisted pattern"
+
 run_case "pm-bash: rm -r alone (no force) → allow" 0 "$PMBASHHOOK" \
   '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"rm -r /tmp/foo"}}'
 

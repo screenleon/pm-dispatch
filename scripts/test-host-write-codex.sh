@@ -219,6 +219,22 @@ test_hook_codex_command_guard_denies_prefixed_option_bypass() {
   rm -f "$stderr_file"
 }
 
+test_hook_codex_command_guard_denies_git_global_option_bypass() {
+  local name="hook-codex-command-guard-denies-git-global-option-bypass"
+  should_run "$name" || return 0
+  local stderr_file rc
+  stderr_file="$(mktemp)"
+  printf '{"tool_input":{"command":"git -C /tmp reset --hard","cwd":"/tmp"}}' \
+    | PM_GUARD_LOG_DIR="$tmp_root/guard-logs" "$SCRIPT_DIR/hook-codex-command-guard.sh" 2>"$stderr_file" 1>/dev/null
+  rc=$?
+  if [[ "$rc" -ne 0 ]] && grep -q "denylisted pattern" "$stderr_file"; then
+    pass "$name"
+  else
+    fail "$name" "expected non-zero exit + denylist message, got rc=$rc stderr=$(cat "$stderr_file")"
+  fi
+  rm -f "$stderr_file"
+}
+
 test_hook_codex_command_guard_missing_command_denies() {
   local name="hook-codex-command-guard-missing-command-denies"
   should_run "$name" || return 0
@@ -298,6 +314,7 @@ test_uninstall_guards_codex_unknown_flag_rejected
 test_hook_codex_command_guard_allows_benign_command
 test_hook_codex_command_guard_denies_destructive_command
 test_hook_codex_command_guard_denies_prefixed_option_bypass
+test_hook_codex_command_guard_denies_git_global_option_bypass
 test_hook_codex_command_guard_missing_command_denies
 test_install_default_never_touches_codex_home
 test_install_opt_in_wires_codex_and_uninstall_removes_it
