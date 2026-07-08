@@ -1340,6 +1340,45 @@ case_doctor_codex_manifest_parity_unrelated_hooks_not_wired() {
   fi
 }
 
+case_doctor_codex_manifest_parity_same_basename_other_checkout_not_wired() {
+  # Regression: a CODEX_HOME/hooks.json holding a hook-codex-command-guard.sh
+  # entry from a DIFFERENT checkout (same basename, different repo root) must
+  # NOT be reported as this checkout's target being wired — matching must use
+  # the exact command identity this checkout's installer writes, not a
+  # basename heuristic (same identity rule uninstall-guards-codex.sh uses).
+  #
+  # Steps:
+  #   1. Full healthy env; write a hooks.json with only a foreign same-basename hook.
+  #   2. Run doctor --json --repo <repo> with claude+codex stubs.
+  #   3. Assert one host.codex.manifest-parity ok record mentioning "not wired".
+  local name="doctor-codex-manifest-parity-same-basename-other-checkout-not-wired"
+  should_run "$name" || return 0
+  if ! command -v jq >/dev/null 2>&1; then
+    pass "$name (jq not available - skip)"
+    return
+  fi
+  local home="$tmp_root/home-codex-parity-other-checkout" out status=0 path
+  write_full_settings "$home"
+  create_memory_dir_for_pwd "$home"
+  write_manifest "$home"
+  mkdir -p "$home/.codex"
+  printf '{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"/other/repo/scripts/hook-codex-command-guard.sh"}]}]}}\n' \
+    > "$home/.codex/hooks.json"
+  path="$(make_stub_bin "$tmp_root/bin-codex-parity-other-checkout" claude codex)"
+
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
+    bash "$DOCTOR" --json --repo "$REPO_ROOT" 2>/dev/null)" || status=$?
+
+  local matched
+  matched="$(printf '%s\n' "$out" | jq -s '[.[] | select(.check == "host.codex.manifest-parity")
+    | select(.status == "ok" and (.message | contains("not wired")))] | length')"
+  if [[ "$matched" -eq 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected a same-basename other-checkout hook to be reported not-wired; matched=$matched status=$status out=$out"
+  fi
+}
+
 case_doctor_claude_command_interface_missing_warns() {
   # Verifies the claude-host pm_command_interface probe emits the warn tuple
   # (provider none) when commands/pm.md is not installed.
@@ -1978,6 +2017,7 @@ case_doctor_codex_hooks_absent_unwired_tuple
 case_doctor_codex_manifest_parity_missing_ok
 case_doctor_codex_manifest_parity_present_ok
 case_doctor_codex_manifest_parity_unrelated_hooks_not_wired
+case_doctor_codex_manifest_parity_same_basename_other_checkout_not_wired
 case_doctor_claude_command_interface_missing_warns
 case_doctor_codex_module_no_binary_degrades
 case_doctor_copy_mode_hooks_degraded

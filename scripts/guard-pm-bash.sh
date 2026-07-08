@@ -134,8 +134,16 @@ declare -a DENY_PATTERNS=(
   # `git -c foo=bar push --force` are denied too, not just the bare form
   # (same fix shape as the rm cluster pattern above).
   'git\b.*[[:space:]]push\b([[:space:]]+[^|;&]*)?[[:space:]](-f|--force)([[:space:]]|$)'  # force push: can overwrite upstream history
+  # force-refspec push: `git push origin +main`, `git push +HEAD:main` — a
+  # `+` prefix on a refspec argument means "force this update" without
+  # spelling `-f`/`--force`, so it must be matched independently of the
+  # pattern above (anywhere after `push`, not just as the first argument).
+  'git\b.*[[:space:]]push\b.*[[:space:]]\+[^[:space:]]'
   'git\b.*[[:space:]]reset\b[[:space:]]+--hard'                            # discards uncommitted work irreversibly
-  'git\b.*[[:space:]]clean\b[[:space:]]+-[a-z]*f'                          # deletes untracked files irreversibly
+  # git clean force flag: matched anywhere after `clean` (not just the
+  # immediately-following token) so `git clean -d -f` (force passed as a
+  # SEPARATE token from -d) is denied too, not just the combined `-df`/`-fd` form.
+  'git\b.*[[:space:]]clean\b.*[[:space:]](-[a-zA-Z]*f[a-zA-Z]*|--force)([[:space:]]|$)'
   'git\b.*[[:space:]]branch\b[[:space:]]+-D'                               # force-deletes a branch, bypassing merge check
   '\-\-no-verify\b'                                                        # skips commit/push hooks
   '\-\-no-gpg-sign\b'                                                      # bypasses commit signing

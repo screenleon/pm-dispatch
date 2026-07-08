@@ -47,17 +47,24 @@ _doctor_host_codex_hooks() {
 # Per-target installed check: for the codex-hooks-json format this verifies
 # the managed hook COMMAND is actually wired inside the hooks file, not merely
 # that the file exists — a hooks.json holding only unrelated entries (e.g. a
-# user's own Codex hooks) must not read as this target being installed. Other
-# formats have no content probe yet, so path existence is the best available
-# signal for them.
+# user's own Codex hooks, or a same-basename hook-codex-command-guard.sh
+# belonging to a DIFFERENT checkout) must not read as this target being
+# installed. Matches the exact command identity this checkout's own installer
+# writes (install-guards-codex.sh:59, raw and shell-escaped forms — same
+# identity rule uninstall-guards-codex.sh uses), not a basename heuristic.
+# Other formats have no content probe yet, so path existence is the best
+# available signal for them.
 _doctor_host_codex_target_installed() {
   local expanded="$1" fmt="$2"
   if [[ "$fmt" == "codex-hooks-json" ]]; then
     [[ -f "$expanded" ]] || return 1
     command -v jq >/dev/null 2>&1 || return 1
-    jq -e '
+    local hook_cmd="$REPO_ROOT/scripts/hook-codex-command-guard.sh"
+    local hook_cmd_q
+    hook_cmd_q="$(printf '%q' "$hook_cmd")"
+    jq -e --arg cmd "$hook_cmd" --arg cmd_q "$hook_cmd_q" '
       (.hooks.PreToolUse // [])[]? | select(.matcher == "Bash") | (.hooks // [])[]?.command
-      | select((split("/") | last) == "hook-codex-command-guard.sh")
+      | select(. == $cmd or . == $cmd_q)
     ' "$expanded" >/dev/null 2>&1
     return $?
   fi

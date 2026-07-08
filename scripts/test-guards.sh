@@ -3503,6 +3503,14 @@ run_case "pm-bash: git push -f → deny" 2 "$PMBASHHOOK" \
   '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"git push -f"}}' \
   "denylisted pattern"
 
+run_case "pm-bash: git push origin +main (force-refspec bypass) → deny" 2 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"git push origin +main"}}' \
+  "denylisted pattern"
+
+run_case "pm-bash: git push +HEAD:main (force-refspec, no remote name) → deny" 2 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"git push +HEAD:main"}}' \
+  "denylisted pattern"
+
 run_case "pm-bash: git push (no force) → allow" 0 "$PMBASHHOOK" \
   '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"git push origin main"}}'
 
@@ -3516,6 +3524,17 @@ run_case "pm-bash: git reset (soft, no --hard) → allow" 0 "$PMBASHHOOK" \
 run_case "pm-bash: git clean -f → deny" 2 "$PMBASHHOOK" \
   '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"git clean -fd"}}' \
   "denylisted pattern"
+
+run_case "pm-bash: git clean -d -f (split-flag bypass) → deny" 2 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"git clean -d -f"}}' \
+  "denylisted pattern"
+
+run_case "pm-bash: git clean -d --force (split-flag, long form) → deny" 2 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"git clean -d --force"}}' \
+  "denylisted pattern"
+
+run_case "pm-bash: git clean -n (dry-run, no force) → allow" 0 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"git clean -n"}}'
 
 run_case "pm-bash: git branch -D → deny" 2 "$PMBASHHOOK" \
   '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"git branch -D feat/old"}}' \
