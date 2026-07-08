@@ -887,8 +887,9 @@ ${AGENT_FILE_ENTRIES}${DIFF_FILE_ENTRIES}  - new:  ${OUTPUT_FILE}
 constraints:
   - Do NOT modify any source file.
   - Only write ${OUTPUT_FILE}.
-  - Before writing ${OUTPUT_FILE}, call: pmctl guard check --role reviewer --runtime ${EXECUTOR} --event pre-write --file ${OUTPUT_FILE}
+  - Before your FIRST write to ${OUTPUT_FILE} in this session, call: pmctl guard check --role reviewer --runtime ${EXECUTOR} --event pre-write --file ${OUTPUT_FILE}
     If that call exits nonzero, abort and report the guard denial -- do NOT write the file.
+    You will write to this same file multiple times in this session (once per reviewer, then once for synthesis) -- that is expected. Do not create or write any other file.
   - Create parent directories for ${OUTPUT_FILE} if needed (mkdir -p).
   - Only cite files in the verified reference index or the diff list. Read a file before citing its sections; do not invent citations.
 
@@ -916,14 +917,27 @@ task:
   3. Produce a structured findings block:
      - Findings with severity (low/medium/high) and location
      - Explicit verdict: approve | advise | block-soft | block
+  4. IMMEDIATELY write/append that reviewer's "## {reviewer} -- {verdict}" section to
+     ${OUTPUT_FILE} before moving to the next reviewer. On the FIRST reviewer, create the
+     file starting with the "# PR-Gate Result" header block (date/reviewers/not-reviewed
+     lines -- these do not depend on any reviewer's findings), then that reviewer's
+     section. On subsequent reviewers, append only that reviewer's section. Do NOT write
+     the YAML frontmatter yet -- its fields (final, most_severe, per-reviewer verdicts)
+     are only known after synthesis; it is added in step 9 below. Do NOT hold all reviewer
+     content in-context until the end -- write each section as soon as it is done, so a
+     later reviewer's slowness (e.g. a long test run) cannot destroy earlier reviewers'
+     already-completed verdicts if this session is later interrupted or times out.
 
   After all reviewers, synthesize as project-pm would:
-  4. Identify cross-reviewer overlaps (same issue raised by multiple reviewers)
-  5. Overall verdict = most severe individual verdict
-  6. State which dimensions were NOT covered (not-reviewed list above)
-  7. Final GO (no blocks) / NO-GO (any block or block-soft) with rationale and override path if applicable
-
-  Write the complete result to ${OUTPUT_FILE}.
+  5. Identify cross-reviewer overlaps (same issue raised by multiple reviewers)
+  6. Overall verdict = most severe individual verdict
+  7. State which dimensions were NOT covered (not-reviewed list above)
+  8. Final GO (no blocks) / NO-GO (any block or block-soft) with rationale and override path if applicable
+  9. Now that the final verdict is known: PREPEND the YAML frontmatter block to the very
+     top of ${OUTPUT_FILE} (before the header already written in step 4), then APPEND the
+     synthesis sections (Cross-Reviewer Overlaps / Coverage Notes / Gate Conclusion /
+     Escalation) to the bottom. Do not rewrite the reviewer sections already written in
+     step 4 -- only prepend the frontmatter and append the synthesis sections.
 
 output_format: |
   ---
@@ -1005,7 +1019,40 @@ BRIEF_EOF
   # first write would hit EPIPE and -- with SIGPIPE ignored + set -e -- exit
   # nonzero before writing the result, killing the gate before its integrity
   # checks could fire. Parallel reviewers already redirect to a log.
-  eval "$DISPATCH_CMD" >&2
+  #
+  # Capture the exit code instead of letting `set -e` abort here: a sequential
+  # session that times out partway through (e.g. qa-tester stuck running a
+  # long test suite) must not discard whatever earlier reviewers already
+  # wrote to ${OUTPUT_FILE} per the brief's per-reviewer append instruction
+  # (task step 4 above) -- see the partial-result branch below.
+  SEQ_DISPATCH_EXIT=0
+  eval "$DISPATCH_CMD" >&2 || SEQ_DISPATCH_EXIT=$?
+
+  if [[ "$SEQ_DISPATCH_EXIT" -ne 0 ]]; then
+    if [[ "$SEQ_DISPATCH_EXIT" -eq 124 ]]; then
+      printf 'Timeout: sequential dispatch did not complete within %ss.\n' "$TIMEOUT" >&2
+    else
+      printf 'Error: sequential dispatch exited %d.\n' "$SEQ_DISPATCH_EXIT" >&2
+    fi
+    if [[ -s "$OUTPUT_FILE" ]]; then
+      _SEQ_COMPLETED=() _SEQ_INCOMPLETE=()
+      for r in $REVIEWERS; do
+        if grep -qE "^## ${r} -- " "$OUTPUT_FILE"; then
+          _SEQ_COMPLETED+=("$r")
+        else
+          _SEQ_INCOMPLETE+=("$r")
+        fi
+      done
+      printf 'Partial result: %d of %d reviewer(s) completed before the session stopped: %s\n' \
+        "${#_SEQ_COMPLETED[@]}" "$NUM_REVIEWERS" "${_SEQ_COMPLETED[*]:-none}" >&2
+      printf 'Not completed: %s\n' "${_SEQ_INCOMPLETE[*]:-none}" >&2
+      printf 'Partial artifact (no Final: verdict -- inconclusive, do NOT treat as GO) preserved at: %s\n' "$OUTPUT_FILE" >&2
+      printf 'Raw session trace (for post-mortem): %s\n' "${PM_DISPATCH_TRACE_DIR:-$WORK_DIR/.agent-trace}" >&2
+    else
+      printf 'Gate aborted -- no reviewer sections were written before the session stopped: %s\n' "$OUTPUT_FILE" >&2
+    fi
+    exit 1
+  fi
 
   # Validate single-session output via the shared contract (must exist, be
   # non-empty, carry exactly one Final: GO|NO-GO line that agrees with the

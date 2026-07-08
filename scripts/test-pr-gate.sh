@@ -228,6 +228,35 @@ case "$effective_mode" in
     fi
     exit 0
     ;;
+  sequential-partial-timeout)
+    # Simulates a sequential-mode session that wrote SOME reviewer sections
+    # (per the brief's per-reviewer append instruction) before timing out —
+    # e.g. qa-tester stuck running a long test suite. Only applies to the
+    # single-session sequential brief (not a --parallel reviewer/synthesis
+    # brief); writes 2 of the 5 default full-tier reviewer sections with no
+    # frontmatter and no Final: line (frontmatter/synthesis is only added
+    # after ALL reviewers finish — see pr-gate.sh task step 9), then exits
+    # 124 to simulate the dispatch timeout.
+    if [[ "$brief_file" =~ ^.*/pr-gate-[0-9]{8}-[0-9]{6}\.md$ ]]; then
+      output_path=$(grep -o '\- new:.*' "$brief_file" | head -1 | awk '{print $NF}')
+      if [[ -n "$output_path" ]]; then
+        mkdir -p "$(dirname "$output_path")"
+        cat > "$output_path" << PARTIAL_EOF
+# PR-Gate Result -- stub tier (sequential codex mode)
+**Date**: 2026-01-01
+**Reviewers**: stub
+**Not reviewed**: none
+
+## critic -- advise
+- stub finding, completed before timeout
+
+## qa-tester -- pass
+- stub finding, completed before timeout (this reviewer then stalled running tests)
+PARTIAL_EOF
+      fi
+    fi
+    exit 124
+    ;;
   *)
     # Success: write a stub output file so the gate's output validation passes.
     output_path=$(grep -o '\- new:.*' "$brief_file" | head -1 | awk '{print $NF}')
@@ -1771,6 +1800,54 @@ test_sequential_no_final_line_aborts_gate() {
   pass "$name"
 }
 
+# Behavior: a sequential-mode dispatch timeout must not discard reviewer
+# sections that were already appended to the output file before the
+# session stalled (PR-gate finding, CC-445 R7, 2026-07-08: a sequential
+# session that timed out while qa-tester ran a long test suite produced a
+# 0-byte result even though earlier reviewers may have already finished).
+# Steps:
+#   1. Create a full-tier repo change (5 reviewers)
+#   2. CODEX_GATE_STUB_MODE=sequential-partial-timeout: dispatch writes 2 of
+#      5 reviewer sections then exits 124 (simulated timeout)
+#   3. Run gate in sequential mode (default)
+#   4. Assert non-zero exit, stderr reports Timeout + partial completion
+#      counts + the completed/incomplete reviewer names, and the output
+#      file on disk still contains the 2 completed reviewer sections
+#      (proving gate_exit_cleanup/cleanup_briefs did not delete it)
+test_sequential_timeout_preserves_partial_result() {
+  local name="sequential-timeout-preserves-partial-result"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" result="$dir/result.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  CODEX_GATE_STUB_MODE=sequential-partial-timeout \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --tier full --output "$result"
+  local code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then
+    fail "$name" "expected non-zero exit on a simulated sequential timeout"
+    return
+  fi
+  assert_file_contains "$name" "$err" "Timeout:" || return
+  assert_file_contains "$name" "$err" "Partial result: 2 of 5" || return
+  assert_file_contains "$name" "$err" "critic" || return
+  assert_file_contains "$name" "$err" "qa-tester" || return
+  assert_file_contains "$name" "$err" "Not completed:" || return
+  if [[ ! -s "$result" ]]; then
+    fail "$name" "partial result file was deleted/emptied on timeout — should be preserved: $result"
+    return
+  fi
+  assert_file_contains "$name" "$result" "## critic -- advise" || return
+  assert_file_contains "$name" "$result" "## qa-tester -- pass" || return
+  pass "$name"
+}
+
 # Behavior: a consumer that reads a prefix of gate stdout and closes the
 # pipe early (head -n1, grep -q, ...) must NOT abort the gate before it
 # dispatches and writes the result file. Pre-fix, the
@@ -2795,6 +2872,7 @@ run_test test_reviewer_invalid_verdict_aborts_gate
 run_test test_reviewer_no_output_aborts_gate
 run_test test_sequential_no_output_aborts_gate
 run_test test_sequential_no_final_line_aborts_gate
+run_test test_sequential_timeout_preserves_partial_result
 run_test test_piped_stdout_does_not_abort_gate
 run_test test_sequential_frontmatter_parity_mismatch_aborts_gate
 run_test test_parallel_frontmatter_parity_mismatch_aborts_gate
