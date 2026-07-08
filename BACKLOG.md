@@ -105,7 +105,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-447 | 🔵 active | 乾淨機器 onboarding 雙 smoke：offline clean-install smoke（v0.9.0 候選）+ live dogfood smoke（v1.0-rc）；摔倒點逐一開票；QA_RULES_DIR 缺席行為驗證 | docs/ops | 2026-07-04 | — | P2 | — |
 | CC-448 | 🔵 active | opencode host support：可行性 probe → `hosts/opencode/host.yaml` → install/doctor 接線；host 抽象 N=2 驗收（v0.9.0，2026-07-06 自 v1.0-rc 提前；依賴 CC-438/445；umbrella: CC-333；DECISIONS 2026-07-04+2026-07-06） | arch/install | 2026-07-04 | — | P2 | design |
 | CC-449 | 🔵 active | release-verify/test-e2e 對 v0.8.0 新 surface（`pmctl ship`/`pmctl worktree`）無 live 煙測 + run-all-tests 套件註冊完整性 lint（CC-444 收尾發現 test-pmctl-worktree 未註冊，已修；防再漏）+ CI↔run-all parity 斷言（2026-07-06 稽核：24 個本地 suite CI 缺席）（v0.9.0 候選） | ops/test | 2026-07-04 | — | P2 | — |
-| CC-470 | 🔵 active | pr-gate sequential 模式逾時全歸零風險 + 慢速測試套件優化：qa-tester 選擇跑全套 run-all-tests 撞上共用 timeout 時，整個 gate session 結果 0 bytes（CC-445 R7 實測）；改逐 reviewer 落地 + 補 test-pmctl-dispatch/pmctl-context.sh 兩處已查明根因的效能修復（2026-07-08） | ops/gate | 2026-07-08 | — | P2 | — |
+| CC-470 | ✅ closed 2026-07-08 | pr-gate sequential 模式逾時全歸零風險 + 慢速測試套件優化：qa-tester 選擇跑全套 run-all-tests 撞上共用 timeout 時，整個 gate session 結果 0 bytes（CC-445 R7 實測）；改逐 reviewer 落地 + 補 test-pmctl-dispatch/pmctl-context.sh 兩處已查明根因的效能修復（2026-07-08） | ops/gate | 2026-07-08 | pr:#383 | P2 | — |
 
 ---
 
@@ -463,7 +463,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 ---
 
-## CC-470 — pr-gate sequential 模式逾時歸零風險 + 慢速測試套件優化 🔵 active
+## CC-470 — pr-gate sequential 模式逾時歸零風險 + 慢速測試套件優化 ✅ 2026-07-08
 
 **Problem**（2026-07-08，CC-445 pr-gate 第 7 輪實測）：`scripts/pr-gate.sh` 的 sequential 模式（預設）用單一 codex/claude session 依序處理全部 reviewer，只在最後才把完整結果寫入 `${OUTPUT_FILE}`。若 qa-tester 在該 session 內選擇跑完整 `run-all-tests.sh`（~10 分鐘）並撞上共用的 dispatch timeout，`set -euo pipefail` 讓腳本立即中止、`gate_result_verify` 從未被呼叫，`${OUTPUT_FILE}` 停留在 0 bytes——即使其他 reviewer（critic/architecture-reviewer/security-reviewer/risk-reviewer）可能已經在同一個 session 裡完成推論，全部產出仍付諸東流，該輪只能整個重跑。
 
@@ -481,7 +481,9 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 **Source**：CC-445 pr-gate 第 7 輪逾時實測 + 使用者要求優先處理、並在討論中收斂出機械化解耦設計（2026-07-08）；已用 Explore + Plan agent 交叉核實根因與改動點，並經 Ultraplan 雲端 session 精修 Requirement 4 的實作行號；送 pr-gate 第一輪 NO-GO（security/risk block 自動偵測信任邊界、qa-tester block FTS5 缺測試）後與使用者對齊修正方向並全數修復；修復過程中使用者進一步指出「pre-flight 本身就是送 gate 前的完整性檢查，不需要再手動跑一次 checkpoint」與「測試沒過就不該還花錢跑 reviewer」兩個洞見，收斂出 fail-fast 設計，見對話紀錄。
 
-**Outcome**（2026-07-08）：Requirement 1-3 已 commit（`038d409`/`531e48f`，`feat/CC-470` 分支，尚未合併）；Requirement 4 完成並驗證，`scripts/test-pr-gate.sh` 133/133 全綠（含新增 8 個 pre-flight 測試）；待 pr-gate 收斂後合併。
+**Outcome**（2026-07-08）：Requirement 1-4 全數完成並驗證；`pmctl gate run --executor codex --test-cmd "bash scripts/run-all-tests.sh"` 收斂 GO（全部 5 個 reviewer approve/pass，`test_suite: pass`）；`scripts/test-pr-gate.sh` 135/135、`test-pmctl-context.sh` 109/109、`test-pmctl-dispatch.sh` 44/44 全綠；`bash scripts/run-all-tests.sh` 全套 checkpoint 71/71 clean。
+
+**See**: pr:#383
 
 ---
 
