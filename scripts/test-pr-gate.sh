@@ -1949,7 +1949,7 @@ test_preflight_pass_no_override() {
   pass "$name"
 }
 
-# Behavior (key case): a FAILING --test-cmd forces Final: NO-GO even when
+# Behavior: key case -- a FAILING --test-cmd forces Final: NO-GO even when
 # every reviewer LLM says GO -- the mechanical override does not depend on
 # any reviewer correctly reading or citing the pre-flight evidence.
 # Steps: run gate with --test-cmd "echo boom; exit 1", stub reviewers all GO.
@@ -2039,7 +2039,7 @@ test_preflight_timeout_treated_as_fail() {
   pass "$name"
 }
 
-# Behavior (copy-mode safety net): with no --test-cmd and no executable
+# Behavior: copy-mode safety net -- with no --test-cmd and no executable
 # scripts/run-all-tests.sh under --cd, the pre-flight step is a no-op --
 # behavior is identical to before this feature existed (no test_suite: field,
 # reviewers' own verdict determines Final: unmodified).
