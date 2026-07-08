@@ -383,6 +383,8 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Dependencies**：依賴 [[CC-436]]（payload 表達力）、[[CC-438]]（schema）；與 [[CC-437]] 的 doctor host module 介面對齊。write path 必須 host-generic（由 `hosts/*/host.yaml` 驅動，非 codex 特例）——[[CC-448]] opencode host 是本票抽象的 N=2 驗收。umbrella [[CC-333]]。v0.9.0 候選。
 **See**: `docs/spikes/CC-381.md`、DECISIONS.md 2026-07-04
 
+**Update 2026-07-08（rescope：codex-only 切片，host-generic dispatcher 延後）**：pr-gate 第 17 輪（critic/qa-tester/architecture-reviewer 三方）指出目前實作仍是 codex 特例——`install.sh`/`uninstall.sh` 直接呼叫 `scripts/{install,uninstall}-guards-codex.sh`，尚未有 manifest 驅動的通用 install/uninstall dispatcher；而本票 Dependencies 明訂的 N=2 驗收依賴 [[CC-448]]（opencode host），該票尚未完成，此刻本質上無法真正驗證「非 codex 特例」的抽象是否正確。使用者拍板：本 PR 明確定位為 **CC-445 第一刀（codex 實裝切片）**，不宣稱達成 host-generic 驗收；本票維持 active，通用 install/uninstall dispatcher（連同 [[CC-448]] N=2 驗證）留待 opencode host 落地後同批處理。`scripts/lib/host-manifest.sh` 檔頭註解已誠實記載這個過渡狀態（manifest 消除的是「facts 寫死在 per-host 腳本裡」，不是「per-host 腳本本身要不要存在」），本次僅需在此追加決策記錄，不需要再改程式碼。critic/architecture-reviewer 的 block-soft 已由使用者明確接受 override；qa-tester 的兩個缺測試 finding（`host_manifest_names`/`host_manifest_scalar` 無直接測試）已修（`scripts/test-host-write-codex.sh` 補 7 個案例）。
+
 ## CC-446 — v1.0 契約凍結：stable/experimental 分級 + SemVer/deprecation 政策 🔵 active
 
 **Problem**：目前沒有任何文件回答「pmctl 哪些子指令是 stable、哪些是 experimental」；machine 契約（dispatch brief schema、`adapter.yaml`、`host.yaml`（[[CC-438]] 後）、run-spec、`ship-lanes.jsonl`、`.dispatch-results/`、gate result 格式）沒有版本化與相容承諾；[[CC-296]] deprecation sunset（`--profile` alias、`codex-dispatch.sh` shim）從 v0.5.0 排程至今漂了兩版未執行；`docs/pr-gate-handover-schema.md` 標 deprecated 卻仍列在 README 目錄。ship/worktree 系列（[[CC-443]]）剛落地，schema 仍在熱變動期。

@@ -41,6 +41,77 @@ test_host_manifest_reads_codex_install_targets() {
   [[ "$found" -eq 1 ]] && pass "$name" || fail "$name" "expected a managed hooks/codex-hooks-json install_target row"
 }
 
+test_host_manifest_names_lists_only_dirs_with_host_yaml() {
+  local name="host-manifest-names-lists-only-dirs-with-host-yaml"
+  should_run "$name" || return 0
+  local fake_root="$tmp_root/hmn-fake-repo"
+  mkdir -p "$fake_root/hosts/foo" "$fake_root/hosts/bar" "$fake_root/hosts/baz"
+  printf 'schema_version: 1\nhost_name: foo\n' > "$fake_root/hosts/foo/host.yaml"
+  printf 'schema_version: 1\nhost_name: baz\n' > "$fake_root/hosts/baz/host.yaml"
+  # hosts/bar/ deliberately has NO host.yaml — must not be listed.
+  local names
+  names="$(host_manifest_names "$fake_root" | sort | tr '\n' ',')"
+  [[ "$names" == "baz,foo," ]] && pass "$name" || fail "$name" "expected 'baz,foo,' (bar excluded), got: $names"
+}
+
+test_host_manifest_scalar_reads_present_value() {
+  local name="host-manifest-scalar-reads-present-value"
+  should_run "$name" || return 0
+  local manifest="$tmp_root/hms-present.yaml"
+  printf 'schema_version: 1\nhost_binary: opencode\n' > "$manifest"
+  local v
+  v="$(host_manifest_scalar "$manifest" host_binary)"
+  [[ "$v" == "opencode" ]] && pass "$name" || fail "$name" "got: $v"
+}
+
+test_host_manifest_scalar_strips_quotes() {
+  local name="host-manifest-scalar-strips-quotes"
+  should_run "$name" || return 0
+  local manifest="$tmp_root/hms-quoted.yaml"
+  printf 'schema_version: 1\nhost_name: "codex"\n' > "$manifest"
+  local v
+  v="$(host_manifest_scalar "$manifest" host_name)"
+  [[ "$v" == "codex" ]] && pass "$name" || fail "$name" "got: $v"
+}
+
+test_host_manifest_scalar_strips_trailing_comment() {
+  local name="host-manifest-scalar-strips-trailing-comment"
+  should_run "$name" || return 0
+  local manifest="$tmp_root/hms-comment.yaml"
+  printf 'schema_version: 1\ndoctor_module: doctor-host-codex.sh  # wired by doctor.sh loader\n' > "$manifest"
+  local v
+  v="$(host_manifest_scalar "$manifest" doctor_module)"
+  [[ "$v" == "doctor-host-codex.sh" ]] && pass "$name" || fail "$name" "got: $v"
+}
+
+test_host_manifest_scalar_missing_key_returns_empty() {
+  local name="host-manifest-scalar-missing-key-returns-empty"
+  should_run "$name" || return 0
+  local manifest="$tmp_root/hms-missingkey.yaml"
+  printf 'schema_version: 1\nhost_binary: opencode\n' > "$manifest"
+  local v rc=0
+  v="$(host_manifest_scalar "$manifest" nonexistent_key)" || rc=$?
+  [[ -z "$v" && "$rc" -eq 0 ]] && pass "$name" || fail "$name" "expected empty output and rc=0 for a missing key, got v='$v' rc=$rc"
+}
+
+test_host_manifest_scalar_missing_file_errors() {
+  local name="host-manifest-scalar-missing-file-errors"
+  should_run "$name" || return 0
+  local rc=0
+  host_manifest_scalar "$tmp_root/hms-does-not-exist.yaml" host_binary >/dev/null 2>&1 || rc=$?
+  [[ "$rc" -ne 0 ]] && pass "$name" || fail "$name" "expected non-zero exit for a missing manifest file, got rc=$rc"
+}
+
+test_host_manifest_scalar_ignores_list_map_field() {
+  local name="host-manifest-scalar-ignores-list-map-field"
+  should_run "$name" || return 0
+  local manifest="$tmp_root/hms-listfield.yaml"
+  printf 'schema_version: 1\ninstall_targets:\n  - id: hooks\n    path: "$CODEX_HOME/hooks.json"\n' > "$manifest"
+  local v
+  v="$(host_manifest_scalar "$manifest" install_targets)"
+  [[ -z "$v" ]] && pass "$name" || fail "$name" "expected empty scalar for a list/map field header, got: $v"
+}
+
 test_host_manifest_expand_path_uses_env_override() {
   local name="host-manifest-expand-path-uses-env-override"
   should_run "$name" || return 0
@@ -402,6 +473,13 @@ test_uninstall_removes_codex_hook_when_codex_not_on_path() {
 }
 
 test_host_manifest_reads_codex_install_targets
+test_host_manifest_names_lists_only_dirs_with_host_yaml
+test_host_manifest_scalar_reads_present_value
+test_host_manifest_scalar_strips_quotes
+test_host_manifest_scalar_strips_trailing_comment
+test_host_manifest_scalar_missing_key_returns_empty
+test_host_manifest_scalar_missing_file_errors
+test_host_manifest_scalar_ignores_list_map_field
 test_host_manifest_expand_path_uses_env_override
 test_host_manifest_expand_path_default_when_unset
 test_install_guards_codex_dry_run_no_side_effect
