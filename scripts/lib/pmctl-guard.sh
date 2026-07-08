@@ -16,7 +16,11 @@
 #
 # Two orthogonal axes — keep them distinct:
 #   * ROLE (`--role pm|executor|…`) — what the agent IS. guard cares about role.
-#     `pm` is runtime-agnostic (codex-as-PM and claude-as-PM share one policy).
+#     `pm/pre-bash` policy genuinely differs by runtime: codex-as-PM enforces
+#     the real denylist (guard-pm-bash.sh); claude-as-PM has no registered
+#     cell (project-pm never calls Bash itself on that runtime) and stays
+#     fail-closed. Other pm events (pre-write, post-task) share one policy
+#     across runtimes.
 #     `executor` is the role shared by all executor runtimes (codex, claude, opencode, …).
 #   * RUNTIME (`--runtime codex|claude`) — which CLI executes the role. dispatch
 #     cares about runtime (it is the `--adapter`). guard only consults runtime
@@ -122,7 +126,10 @@ pmctl_guard_check() {
   fi
 
   # Validate role, then resolve the runtime requirement.
-  # `pm` is runtime-agnostic (project-pm only ever runs on claude; no codex-as-pm).
+  # `pm` REQUIRES a runtime: project-pm itself only ever runs on claude, but
+  # its pre-bash cell now genuinely differs by runtime — codex-as-PM enforces
+  # guard-pm-bash.sh's denylist, claude-as-PM has no registered cell (see the
+  # registry below and guard-pm-bash.sh's threat-model comment).
   # `executor` REQUIRES a runtime — it runs on both codex AND claude, and its
   # pre-bash policy genuinely differs by runtime (see registry).
   # `reviewer` REQUIRES a runtime — it runs on both codex (reviewer brief in

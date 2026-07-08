@@ -69,6 +69,12 @@ EOF
 # secret in an unrecognized shape still gets logged as-is; this closes the
 # common cases (API keys, bearer tokens, password/token/secret flags), not
 # every possible one.
+#
+# The generic keyword pattern matches the keyword ANYWHERE in a flag name
+# (e.g. `--client-secret`, `--db-password`), not just as the whole flag, and
+# accepts `=`, `:`, or plain whitespace as the separator — a prior version
+# only matched `=`/`:`, so a long-form flag using a space separator (e.g.
+# `--client-secret value`) was logged with its value unredacted.
 _redact_secrets() {
   local s="$1"
   s="${s//$'\n'/ }"
@@ -78,7 +84,7 @@ _redact_secrets() {
     -e 's/AKIA[0-9A-Z]{16}/***REDACTED***/g' \
     -e 's/([Bb]earer[[:space:]]+)[A-Za-z0-9._-]+/\1***REDACTED***/g' \
     -e 's/(-p|--password|--pass)([=[:space:]])[^[:space:]]+/\1\2***REDACTED***/g' \
-    -e 's/([Pp]assword|[Tt]oken|[Ss]ecret|[Aa][Pp][Ii]_?[Kk][Ee][Yy])([=:][[:space:]]?)[^[:space:]]+/\1\2***REDACTED***/g' \
+    -e 's/(-{0,2}[A-Za-z0-9][A-Za-z0-9_-]*)?([Pp]assword|[Tt]oken|[Ss]ecret|[Cc]redential|[Aa][Pp][Ii]_?[Kk][Ee][Yy])([A-Za-z0-9_-]*)([=:[:space:]])[^[:space:]]+/\1\2\3\4***REDACTED***/g' \
     <<<"$s"
 }
 

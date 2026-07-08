@@ -3548,6 +3548,13 @@ assert_log "pm-bash: -p password flag redacted in audit log — REDACTED marker 
 assert_log_not "pm-bash: -p password value never appears raw in audit log" "SuperSecretPass123"
 
 truncate_log
+run_case "pm-bash: --client-secret (space-separated, previously uncovered) redacted in audit log" 0 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"curl --client-secret myS3cretValue123 https://api.example.com"}}'
+assert_log "pm-bash: --client-secret redacted in audit log — target line" "client-secret"
+assert_log "pm-bash: --client-secret redacted in audit log — REDACTED marker present" "REDACTED"
+assert_log_not "pm-bash: --client-secret value never appears raw in audit log" "myS3cretValue123"
+
+truncate_log
 run_case "pm-bash: benign command logged unredacted" 0 "$PMBASHHOOK" \
   '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"git status"}}'
 assert_log "pm-bash: benign command logged unredacted — target line" "git"
