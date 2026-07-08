@@ -892,9 +892,12 @@ fi
 # takes, it can never cause a reviewer session to hit --timeout, because it has
 # already finished by the time dispatch starts. Shared by both sequential and
 # --parallel modes (computed once here, injected into whichever brief(s) follow).
-# The result is enforced mechanically after dispatch (gate_apply_preflight_result,
-# after the sequential/parallel if/else below) -- NOT by asking a reviewer LLM to
-# correctly interpret and relay it. See CC-470 Part 3.
+# A FAIL short-circuits dispatch entirely (see the fail-fast branch below) --
+# reviewing code that is already guaranteed NO-GO wastes reviewer tokens for
+# no benefit. A PASS is tagged onto the real dispatch result afterward
+# (gate_apply_preflight_pass_tag). Either way this is enforced mechanically,
+# NOT by asking a reviewer LLM to correctly interpret and relay it. See
+# CC-470 Part 3.
 PREFLIGHT_STATUS="skipped"
 PREFLIGHT_LOG_PATH=""
 
@@ -980,6 +983,74 @@ render_test_evidence_block() {
   printf '  This is informational context only -- the mechanical enforcement (if any) happens\n  after your session completes and does not depend on you reading or citing this block.\n'
 }
 TEST_EVIDENCE_CONTEXT_BLOCK="$(render_test_evidence_block "$PREFLIGHT_STATUS" "$PREFLIGHT_LOG_PATH")"
+
+# Fail-fast: a failed pre-flight test run already determines Final: NO-GO
+# mechanically (see _write_preflight_failure_result below) regardless of what
+# any reviewer would say -- so dispatching 5 reviewer LLM sessions to review code that
+# is guaranteed to be rejected anyway is pure wasted cost (token spend + wall
+# clock) for a result that changes nothing. Skip dispatch entirely and
+# synthesize the NO-GO result directly. If the pre-flight fix later turns out
+# to also need a code-review pass, that happens on the NEXT gate run after the
+# tests are fixed, not blocked from ever happening.
+_write_preflight_failure_result() {
+  local result_file="$1" log_path="$2" display_path reviewer_lines=""
+  display_path="$(_preflight_log_display_path "$log_path")"
+  local r
+  for r in $REVIEWERS; do
+    reviewer_lines="${reviewer_lines}  ${r}: skipped"$'\n'
+  done
+  local excerpt
+  excerpt=$(tail -n 40 "$log_path" 2>/dev/null | _preflight_redact_secrets | sed 's/^/    /')
+  cat > "$result_file" << PREFLIGHT_FAIL_EOF
+---
+gate_result_version: pr_gate_result_v1
+final: NO-GO
+tier: ${TIER}
+mode: preflight-fail-fast
+most_severe: block
+reviewers:
+${reviewer_lines}escalation:
+  recommended: false
+  reviewers: []
+  reason: []
+test_suite: fail
+---
+
+# PR-Gate Result -- pre-flight fail-fast (${EXECUTOR} mode)
+**Date**: $(date '+%Y-%m-%d')
+**Reviewers**: ${REVIEWER_DISPLAY}
+**Not reviewed**: all (pre-flight test suite failed; reviewer dispatch was skipped)
+
+## Pre-flight Test Failure
+The pre-flight test command failed before any reviewer was dispatched.
+Full log: ${display_path}
+Last ~40 lines (secret-shaped substrings redacted):
+${excerpt}
+
+Reviewer dispatch was skipped because a failing test suite already
+determines this gate's outcome -- fixing the tests is required before code
+review has anything to add. Fix the test suite and re-run pr-gate; reviewers
+will run normally once the pre-flight check passes.
+
+## Gate Conclusion
+**Overall verdict**: block
+**Most severe individual verdict**: block
+Final: NO-GO
+Required fixes: the pre-flight test command failed. Fix the test suite (see log above), then re-run pr-gate.
+
+## Escalation
+**Recommended**: false
+**Reviewers**: none
+**Reason**:
+- none
+PREFLIGHT_FAIL_EOF
+}
+
+if [[ "$PREFLIGHT_STATUS" == "fail" ]]; then
+  say 'pr-gate: pre-flight test suite failed -- skipping reviewer dispatch entirely (fail-fast)\n'
+  _write_preflight_failure_result "$OUTPUT_FILE" "$PREFLIGHT_LOG_PATH"
+  gate_result_verify "$OUTPUT_FILE" "" "preflight-fail-fast" || exit 1
+else
 
 # ── Dispatch ─────────────────────────────────────────────────────────────────
 if [[ "$SEQUENTIAL" == "true" ]]; then
@@ -1646,36 +1717,26 @@ SBRIEF_P2
 
 fi
 
+fi
+
 # ── Pre-flight test result: mechanical override (CC-470 Part 3) ────────────────
 # Applies AFTER dispatch (sequential or parallel) and its own gate_result_verify
 # have already succeeded -- this is the single point where both routes converge,
-# so the override logic lives here once instead of duplicated per route (same
+# so the tagging logic lives here once instead of duplicated per route (same
 # shape as the override provenance block immediately below, which is the
 # established precedent for "shared post-dispatch bash processing of OUTPUT_FILE").
-# A FAIL forces Final: NO-GO regardless of what any reviewer LLM wrote -- the
-# whole point is that this does not depend on a reviewer correctly reading or
-# citing the pre-flight evidence injected into its brief context above.
-gate_apply_preflight_result() {
-  local result_file="$1" status="$2" log_path="$3"
-  local force_nogo=0
-  [[ "$status" == "fail" ]] && force_nogo=1
-
-  awk -v status="$status" -v logpath="$log_path" -v force_nogo="$force_nogo" '
+# Only ever called with status=pass: a FAIL never reaches dispatch at all (see
+# the fail-fast short-circuit above, which synthesizes its own NO-GO result and
+# never invokes any reviewer) -- this just tags the mechanical fact "pre-flight
+# already confirmed the suite passes" onto whatever the reviewers produced,
+# without touching final:/Final: (reviewers' own verdict stands).
+gate_apply_preflight_pass_tag() {
+  local result_file="$1"
+  awk '
     /^---$/ {
       if (fence < 2) fence++
-      if (fence == 2 && !ts_done) { print "test_suite: " status; ts_done=1 }
+      if (fence == 2 && !ts_done) { print "test_suite: pass"; ts_done=1 }
       print; next
-    }
-    fence == 1 && /^final:/ {
-      print (force_nogo ? "final: NO-GO" : $0); next
-    }
-    fence == 2 && /^Final: (GO|NO-GO)$/ {
-      print (force_nogo ? "Final: NO-GO" : $0)
-      if (force_nogo && !note_done) {
-        print "Overridden by pre-flight test failure (mechanical, not reviewer-judged) -- see: " logpath
-        note_done=1
-      }
-      next
     }
     { print }
   ' "$result_file" > "${result_file}.preflight-tmp"
@@ -1683,19 +1744,14 @@ gate_apply_preflight_result() {
 
   # Self-check: if this rewrite corrupted frontmatter/body parity, fail closed
   # rather than let a broken result file out the door.
-  gate_result_verify "$result_file" "" "preflight-override" || {
-    printf 'Error: internal -- gate_apply_preflight_result corrupted frontmatter/body parity\n' >&2
+  gate_result_verify "$result_file" "" "preflight-pass-tag" || {
+    printf 'Error: internal -- gate_apply_preflight_pass_tag corrupted frontmatter/body parity\n' >&2
     exit 1
   }
 }
 
-if [[ "$PREFLIGHT_STATUS" != "skipped" ]]; then
-  # The "Overridden by pre-flight..." note gets baked as literal text into
-  # $OUTPUT_FILE's body; relocate_gate_artifacts (called after this, at gate
-  # completion) will move the log out from under $WORK_DIR/.gate-results to
-  # $GATE_RUN_DIR_OVERRIDE under --run-dir. Pass the eventual (post-relocation)
-  # path so the note doesn't point at a location the EXIT trap already emptied.
-  gate_apply_preflight_result "$OUTPUT_FILE" "$PREFLIGHT_STATUS" "$(_preflight_log_display_path "$PREFLIGHT_LOG_PATH")"
+if [[ "$PREFLIGHT_STATUS" == "pass" ]]; then
+  gate_apply_preflight_pass_tag "$OUTPUT_FILE"
 fi
 
 # ── Override provenance (audit record) ─────────────────────────────────────────

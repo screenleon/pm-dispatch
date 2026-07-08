@@ -1949,14 +1949,16 @@ test_preflight_pass_no_override() {
   pass "$name"
 }
 
-# Behavior: key case -- a FAILING --test-cmd forces Final: NO-GO even when
-# every reviewer LLM says GO -- the mechanical override does not depend on
-# any reviewer correctly reading or citing the pre-flight evidence.
-# Steps: run gate with --test-cmd "echo boom; exit 1", stub reviewers all GO.
-# Assert exit non-zero, Final: NO-GO, frontmatter test_suite: fail, an
-# "Overridden by pre-flight" note is present.
-test_preflight_fail_forces_no_go_override() {
-  local name="preflight-fail-forces-no-go-override"
+# Behavior: key case -- a FAILING --test-cmd short-circuits the gate to
+# Final: NO-GO WITHOUT dispatching any reviewer at all. Reviewing code that
+# is already guaranteed to be rejected wastes reviewer tokens for nothing,
+# so this must be a fail-fast, not a post-hoc override of a real dispatch.
+# Steps: run gate with --test-cmd "echo boom; exit 1" (stub reviewers would
+# say GO if invoked, but must never be invoked). Assert exit non-zero,
+# Final: NO-GO, frontmatter test_suite: fail, and -- the decisive assertion --
+# no DISPATCH_STUB output anywhere (proves the reviewer session never ran).
+test_preflight_fail_short_circuits_without_dispatch() {
+  local name="preflight-fail-short-circuits-without-dispatch"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
@@ -1976,57 +1978,59 @@ test_preflight_fail_forces_no_go_override() {
     return
   fi
   if [[ ! -s "$result" ]]; then
-    fail "$name" "result file missing/empty -- mechanical override must still produce a result"
+    fail "$name" "result file missing/empty -- fail-fast must still produce a result"
     return
   fi
   assert_file_contains "$name" "$result" "Final: NO-GO" || return
   assert_file_contains "$name" "$result" "test_suite: fail" || return
-  assert_file_contains "$name" "$result" "Overridden by pre-flight" || return
+  assert_not_contains "$name" "$out" "DISPATCH_STUB" || return
+  assert_not_contains "$name" "$err" "DISPATCH_STUB" || return
   pass "$name"
 }
 
-# Behavior: a failed pre-flight run's log excerpt (injected into the brief as
-# reviewer context) must actually contain the log's real content, with
-# secret-shaped substrings redacted -- not silently empty. Regression lock: an
-# earlier version's redaction helper read a function argument instead of its
-# piped stdin, so the piped log content was discarded entirely and the
-# brief's excerpt was blank (caught by shellcheck SC2119/SC2120, not a test,
-# until this was added).
+# Behavior: a failed pre-flight run's log excerpt (embedded directly in the
+# fail-fast result body, since no reviewer brief is ever built) must actually
+# contain the log's real content, with secret-shaped substrings redacted --
+# not silently empty. Regression lock: an earlier version's redaction helper
+# read a function argument instead of its piped stdin, so the piped log
+# content was discarded entirely and the excerpt was blank (caught by a
+# static-analysis lint tool -- not a test -- until this test was added).
 # Steps: --test-cmd that echoes a distinctive marker AND a secret-shaped
-# token, then fails. Capture the sequential brief. Assert the marker survives
-# (proves the pipe carried real content) and the raw secret does not (proves
-# redaction actually ran on that content).
+# token, then fails. Assert the marker survives in the result (proves the
+# pipe carried real content) and the raw secret does not (proves redaction
+# actually ran on that content).
 test_preflight_fail_log_excerpt_is_redacted_not_empty() {
   local name="preflight-fail-log-excerpt-is-redacted-not-empty"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
-  local out="$dir/out" err="$dir/err" result="$dir/result.md" brief="$dir/brief.md"
+  local out="$dir/out" err="$dir/err" result="$dir/result.md"
   mkdir -p "$dir"
   create_runner "$runner"
   create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
   create_repo "$repo" docs
 
   set +e
-  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main \
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main \
     --test-cmd 'echo "MARKER_needle_visible_in_excerpt"; echo "token sk-abcdef1234567890ABCDEF"; exit 1' \
     --output "$result"
   set -e
-  if [[ ! -s "$brief" ]]; then
-    fail "$name" "brief was not captured"
+  if [[ ! -s "$result" ]]; then
+    fail "$name" "result file missing/empty"
     return
   fi
-  assert_file_contains "$name" "$brief" "MARKER_needle_visible_in_excerpt" || return
-  assert_file_contains "$name" "$brief" "REDACTED" || return
-  assert_not_contains "$name" "$brief" "sk-abcdef1234567890ABCDEF" || return
+  assert_file_contains "$name" "$result" "MARKER_needle_visible_in_excerpt" || return
+  assert_file_contains "$name" "$result" "REDACTED" || return
+  assert_not_contains "$name" "$result" "sk-abcdef1234567890ABCDEF" || return
   pass "$name"
 }
 
-# Behavior: the mechanical override in test_preflight_fail_forces_no_go_override
-# does not corrupt frontmatter/body Final: parity -- gate_result_verify (the
-# same contract `pmctl gate verify` re-runs) must still pass on the rewritten file.
-test_preflight_fail_override_preserves_frontmatter_body_parity() {
-  local name="preflight-fail-override-preserves-parity"
+# Behavior: the fail-fast result synthesized in
+# test_preflight_fail_short_circuits_without_dispatch does not violate
+# frontmatter/body Final: parity -- gate_result_verify (the same contract
+# `pmctl gate verify` re-runs) must pass on the synthesized file.
+test_preflight_fail_result_preserves_frontmatter_body_parity() {
+  local name="preflight-fail-result-preserves-parity"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
@@ -2046,11 +2050,12 @@ test_preflight_fail_override_preserves_frontmatter_body_parity() {
   fi
   local rc=0
   ( source "$REPO_ROOT/scripts/lib/gate-result-verify.sh" && gate_result_verify "$result" "" "post-preflight-check" ) || rc=$?
-  [[ "$rc" -eq 0 ]] && pass "$name" || fail "$name" "gate_result_verify rejected the mechanically-overridden result file"
+  [[ "$rc" -eq 0 ]] && pass "$name" || fail "$name" "gate_result_verify rejected the fail-fast synthesized result file"
 }
 
 # Behavior: --test-cmd exceeding --test-timeout is treated the same as a
-# non-zero exit (fail), not left as "skipped" or silently ignored.
+# non-zero exit (fail-fast, no dispatch), not left as "skipped" or silently
+# ignored.
 test_preflight_timeout_treated_as_fail() {
   local name="preflight-timeout-treated-as-fail"
   should_run "$name" || return 0
@@ -2073,6 +2078,7 @@ test_preflight_timeout_treated_as_fail() {
   fi
   assert_file_contains "$name" "$result" "test_suite: fail" || return
   assert_file_contains "$name" "$result" "Final: NO-GO" || return
+  assert_not_contains "$name" "$out" "DISPATCH_STUB" || return
   pass "$name"
 }
 
@@ -3178,9 +3184,9 @@ run_test test_sequential_timeout_preserves_partial_result
 run_test test_piped_stdout_does_not_abort_gate
 run_test test_sequential_frontmatter_parity_mismatch_aborts_gate
 run_test test_preflight_pass_no_override
-run_test test_preflight_fail_forces_no_go_override
+run_test test_preflight_fail_short_circuits_without_dispatch
 run_test test_preflight_fail_log_excerpt_is_redacted_not_empty
-run_test test_preflight_fail_override_preserves_frontmatter_body_parity
+run_test test_preflight_fail_result_preserves_frontmatter_body_parity
 run_test test_preflight_timeout_treated_as_fail
 run_test test_preflight_skipped_without_test_cmd
 run_test test_preflight_never_auto_executes_repo_local_script
