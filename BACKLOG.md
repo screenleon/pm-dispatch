@@ -10,7 +10,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 
 | #  | Status | 主題 | 影響面 | 首次記錄 | Refs | Priority | Epic |
 |----|--------|------|--------|----------|------|----------|------|
-| CC-476 | 🔵 active | opencode `edit`+`bash` 同時 deny 時 `opencode run` 掛起根因調查（spike，CC-448 階段 2 blocking open risk） | install/ops | 2026-07-09 | — | P2 | spike |
+| CC-476 | ✅ done | opencode `edit`+`bash` 同時 deny 時 `opencode run` 掛起根因調查（spike，CC-448 階段 2 blocking open risk） | install/ops | 2026-07-09 | pr:#390 | P2 | spike |
 | CC-450 | 🟢 someday | 其餘 9 個 test-*.sh docstring 格式統一（CC-004 同款 Behavior/Steps，跨檔） | ops | 2026-07-03 | — | P3 | — |
 | CC-475 | ✅ done | claude sonnet model alias 過期：`share/claude-model-aliases.tsv` 的 `default`/`sonnet` 仍釘 `claude-sonnet-4-6`，未跟進最新 `claude-sonnet-5`（opus/haiku 已對齊最新）（2026-07-09 使用者發現） | ops | 2026-07-09 | pr:#389 | P2 | — |
 | CC-451 | 🔵 active | core/ 定義層接上 runtime：enum 單一來源 + state 寫入 schema 驗證（CC-446 契約凍結前置；2026-07-06 盲測稽核；v0.9.0） | arch | 2026-07-06 | — | P2 | design |
@@ -274,7 +274,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Dependencies**：承接 [[CC-448]] 階段 1 probe 的 open risk；解開後回頭解鎖 [[CC-448]] 階段 2。
 
 **Source**：2026-07-09 PM discovery-route 分析（CC-445/469/470/474 陸續合併後盤點 v0.9.0 host 軸下一步）。
-**See**: `docs/spikes/CC-476.md`
+**See**: `docs/spikes/CC-476.md`、pr:#390
 
 ---
 
