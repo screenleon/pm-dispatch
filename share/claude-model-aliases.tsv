@@ -12,18 +12,18 @@
 #                codex  → codex-spark (gpt-5.3-codex-spark, see model-aliases.tsv)
 #
 # Default model: pm-dispatch pins its OWN default model (the `default` alias,
-# which resolves to claude-sonnet-4-6 via this file), decoupled from the claude
-# CLI built-in default. Omitting --model therefore dispatches on claude-sonnet-4-6
+# which resolves to claude-sonnet-5 via this file), decoupled from the claude
+# CLI built-in default. Omitting --model therefore dispatches on claude-sonnet-5
 # — NOT whatever the local claude CLI defaults to. Precedence: --model flag >
 # PM_CFG_DEFAULT_MODEL > built-in `default` alias.
 # Override per-host via ~/.pm-dispatch/config `dispatch.default_model`.
 #
 # Context window reference:
 #   light / haiku   — claude-haiku-4-5   ~200K tokens, faster + cheaper
-#   default / sonnet — claude-sonnet-4-6  ~200K tokens, balanced
+#   default / sonnet — claude-sonnet-5    ~200K tokens, balanced
 #   opus             — claude-opus-4-8    ~200K tokens, most capable (ask user first)
-default	claude-sonnet-4-6	normal
-sonnet	claude-sonnet-4-6	normal
+default	claude-sonnet-5	normal
+sonnet	claude-sonnet-5	normal
 light	claude-haiku-4-5-20251001	normal
 haiku	claude-haiku-4-5-20251001	normal
 opus	claude-opus-4-8	high

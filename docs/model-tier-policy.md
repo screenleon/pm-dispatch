@@ -79,7 +79,7 @@ Wait for user confirmation before spawning any agent.
 `/pr-gate` does not spawn in-session `Agent()` calls — reviewers and the final
 project-pm synthesis hop each dispatch as an independent executor subprocess via
 `pmctl gate run` (`scripts/pr-gate.sh`'s `dispatch_via`), sharing one `--model`
-value for the whole gate run (default: the `default` alias, e.g. `claude-sonnet-4-6`
+value for the whole gate run (default: the `default` alias, e.g. `claude-sonnet-5`
 for the claude executor). These are bounded, scoped tasks: reviewing a diff and
 synthesising the result does not benefit from a larger model but does incur its
 cost.
