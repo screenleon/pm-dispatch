@@ -4301,6 +4301,139 @@ test_parallel_reviewer_brief_has_guard_constraint() {
   pass "$name"
 }
 
+# CC-469: build a PATH with no real `pmctl` on it (only the tools pr-gate.sh
+# itself needs, plus the codex stub already required for auto-detect), and
+# stage a `cli/pmctl` stub inside the runner dir so the SCRIPT_DIR-relative
+# fallback (repo-root = SCRIPT_DIR with a trailing "/scripts" stripped, which
+# is a no-op here since the test runner flattens scripts/+repo-root into one
+# dir) has something to find. Returns the constructed PATH via $REPLY.
+_cc469_build_pmctl_less_path() {
+  local runner="$1"
+  local minpath="$runner/.no-pmctl-bin"
+  mkdir -p "$minpath"
+  local cmd
+  for cmd in bash git date readlink dirname basename cp mkdir touch ln cat grep sort wc awk sed mktemp rm head tail tr true false sha256sum shasum; do
+    local src
+    src="$(command -v "$cmd" 2>/dev/null || true)"
+    [[ -n "$src" ]] && ln -sf "$src" "$minpath/$cmd"
+  done
+  mkdir -p "$runner/cli"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$runner/cli/pmctl"
+  chmod +x "$runner/cli/pmctl"
+  REPLY="$minpath:$_codex_stub_bin"
+}
+
+# Behavior: when the real `pmctl` is not resolvable on PATH, the sequential
+# combined reviewer brief's guard-check instruction falls back to the
+# absolute path of the sibling cli/pmctl next to pr-gate.sh, instead of the
+# bare word (which was observed, twice, to fail command-not-found inside a
+# codex reviewer's sandboxed exec environment -- CC-469).
+# Steps: strip pmctl from PATH, stage runner/cli/pmctl, run --sequential,
+# assert the brief's guard-check line uses the absolute path.
+test_seq_brief_guard_absolute_path_when_pmctl_not_on_path() {
+  local name="seq-brief-guard-absolute-path-when-pmctl-not-on-path"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  local REPLY
+  _cc469_build_pmctl_less_path "$runner"
+  local minpath="$REPLY"
+
+  set +e
+  CODEX_GATE_CAPTURE_BRIEF="$brief" HOME="$home" PATH="$minpath" \
+    "$runner/pr-gate.sh" --cd "$repo" --base main --sequential > "$out" 2> "$err"
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  assert_file_contains "$name" "$brief" "call: $runner/cli/pmctl guard check --role reviewer" || return
+  pass "$name"
+}
+
+# Behavior: same as the sequential case above, but for the --parallel
+# per-reviewer brief's guard-check instruction.
+# Steps: strip pmctl from PATH, stage runner/cli/pmctl, run --parallel with a
+# single reviewer, assert the captured reviewer brief's guard-check line uses
+# the absolute path.
+test_parallel_reviewer_brief_guard_absolute_path_when_pmctl_not_on_path() {
+  local name="parallel-reviewer-brief-guard-absolute-path-when-pmctl-not-on-path"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" reviewer_brief="$dir/reviewer-brief.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic
+  create_repo "$repo" docs
+
+  local REPLY
+  _cc469_build_pmctl_less_path "$runner"
+  local minpath="$REPLY"
+
+  set +e
+  CODEX_GATE_CAPTURE_REVIEWER_BRIEF="$reviewer_brief" HOME="$home" PATH="$minpath" \
+    "$runner/pr-gate.sh" --cd "$repo" --base main --reviewers critic --parallel > "$out" 2> "$err"
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  if [[ ! -f "$reviewer_brief" ]]; then
+    fail "$name" "reviewer brief not captured -- CODEX_GATE_CAPTURE_REVIEWER_BRIEF not picked up"
+    return
+  fi
+  assert_file_contains "$name" "$reviewer_brief" "call: $runner/cli/pmctl guard check --role reviewer" || return
+  pass "$name"
+}
+
+# Behavior: a claude reviewer's guard-check instruction MUST stay the bare
+# `pmctl` word, even when pmctl is not resolvable on PATH -- claude's own
+# PreToolUse permission-allow list matches the literal `Bash(pmctl ...)`
+# prefix, and rewriting it to an absolute path would break that match and
+# stall headless dispatch on an unanswerable permission prompt (see
+# feedback_pmctl_bare_invocation). The CC-469 absolute-path fallback is
+# scoped to codex reviewers only.
+# Steps: strip pmctl from PATH (same fixture as the codex tests above), run
+# --executor claude --sequential, assert the brief's guard-check line is
+# still the bare "call: pmctl guard check" (not an absolute path).
+test_claude_seq_brief_guard_stays_bare_pmctl_when_pmctl_not_on_path() {
+  local name="claude-seq-brief-guard-stays-bare-pmctl-when-pmctl-not-on-path"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  local REPLY
+  _cc469_build_pmctl_less_path "$runner"
+  local minpath="$REPLY"
+
+  set +e
+  CODEX_GATE_CAPTURE_BRIEF="$brief" HOME="$home" PATH="$minpath" \
+    "$runner/pr-gate.sh" --cd "$repo" --base main --executor claude --sequential > "$out" 2> "$err"
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0; stderr: $(cat "$err" 2>/dev/null)"
+    return
+  fi
+  assert_file_contains "$name" "$brief" "call: pmctl guard check --role reviewer" || return
+  assert_not_contains "$name" "$brief" "call: $runner/cli/pmctl guard check" || return
+  pass "$name"
+}
+
 run_test test_pre_gate_hook_runs
 run_test test_pre_gate_hook_aborts_gate_on_failure
 run_test test_post_gate_hook_runs
@@ -4786,6 +4919,9 @@ test_override_file_injected_into_parallel_synthesis_brief() {
 
 run_test test_seq_brief_has_reviewer_guard_constraint
 run_test test_parallel_reviewer_brief_has_guard_constraint
+run_test test_seq_brief_guard_absolute_path_when_pmctl_not_on_path
+run_test test_parallel_reviewer_brief_guard_absolute_path_when_pmctl_not_on_path
+run_test test_claude_seq_brief_guard_stays_bare_pmctl_when_pmctl_not_on_path
 run_test test_relative_output_normalized_to_absolute
 run_test test_inline_fallback_matches_lib
 run_test test_brief_major_suggests_full

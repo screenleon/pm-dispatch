@@ -444,6 +444,34 @@ fi
 
 EXECUTOR="$(resolve_executor "$EXECUTOR_OPTION")" || exit 2
 
+# Reviewer briefs instruct the dispatched session to call `pmctl guard check`
+# before writing its output file. For a claude reviewer, that instruction must
+# stay a bare `pmctl` invocation -- claude's own PreToolUse permission-allow
+# list matches the literal `Bash(pmctl ...)` prefix, and any wrapping (command
+# substitution, absolute-path rewrite) breaks that match and stalls headless
+# dispatch on an unanswerable permission prompt (see feedback_pmctl_bare_invocation).
+# A codex reviewer has no such prefix-allowlist (approval_policy=never governs
+# it instead), and has been observed twice (2026-07-07) failing to resolve the
+# bare `pmctl` command inside its sandboxed exec environment (CC-469) -- cause
+# unconfirmed, but codex's own PATH resolution for the command is not reliable.
+# Resolve the absolute path once, in pr-gate's own environment, and embed
+# that instead of the bare word for codex reviewer briefs specifically.
+# Best-effort: PATH lookup first (the normal install), falling back to the
+# sibling cli/pmctl next to this script (source checkouts without a PATH
+# symlink). If neither resolves -- e.g. a test fixture that copies pr-gate.sh
+# standalone without cli/pmctl alongside it -- fall back to the bare word so
+# behavior is unchanged rather than fail-closing the whole gate on it.
+GUARD_PMCTL_CMD="pmctl"
+if [[ "$EXECUTOR" == "codex" ]]; then
+  _guard_pmctl_abs="$(command -v pmctl 2>/dev/null || true)"
+  _guard_repo_root="${SCRIPT_DIR%/scripts}"
+  if [[ -z "$_guard_pmctl_abs" && -x "$_guard_repo_root/cli/pmctl" ]]; then
+    _guard_pmctl_abs="$_guard_repo_root/cli/pmctl"
+  fi
+  [[ -n "$_guard_pmctl_abs" ]] && GUARD_PMCTL_CMD="$_guard_pmctl_abs"
+  unset _guard_pmctl_abs _guard_repo_root
+fi
+
 # Every supported executor now dispatches an INDEPENDENT subprocess (codex `codex
 # exec`, claude headless `claude --print`) and writes the result in-process, which
 # the gate then integrity-checks. This flag is the seam where a future
@@ -1094,7 +1122,7 @@ ${AGENT_FILE_ENTRIES}${DIFF_FILE_ENTRIES}  - new:  ${OUTPUT_FILE}
 constraints:
   - Do NOT modify any source file.
   - Only write ${OUTPUT_FILE}.
-  - Before your FIRST write to ${OUTPUT_FILE} in this session, call: pmctl guard check --role reviewer --runtime ${EXECUTOR} --event pre-write --file ${OUTPUT_FILE}
+  - Before your FIRST write to ${OUTPUT_FILE} in this session, call: ${GUARD_PMCTL_CMD} guard check --role reviewer --runtime ${EXECUTOR} --event pre-write --file ${OUTPUT_FILE}
     If that call exits nonzero, abort and report the guard denial -- do NOT write the file.
     You will write to this same file multiple times in this session (once per reviewer, then once for synthesis) -- that is expected. Do not create or write any other file.
   - Create parent directories for ${OUTPUT_FILE} if needed (mkdir -p).
@@ -1329,7 +1357,7 @@ ${DIFF_FILE_ENTRIES}  - new:  ${REVIEWER_OUTPUT}
 constraints:
   - Do NOT modify any source file.
   - Only write ${REVIEWER_OUTPUT}.
-  - Before writing ${REVIEWER_OUTPUT}, call: pmctl guard check --role reviewer --runtime ${EXECUTOR} --event pre-write --file ${REVIEWER_OUTPUT}
+  - Before writing ${REVIEWER_OUTPUT}, call: ${GUARD_PMCTL_CMD} guard check --role reviewer --runtime ${EXECUTOR} --event pre-write --file ${REVIEWER_OUTPUT}
     If that call exits nonzero, abort and report the guard denial -- do NOT write the file.
   - Create parent directories if needed (mkdir -p).
   - Only cite files in the verified reference index or the diff list. Read a file before citing its sections; do not invent citations.
