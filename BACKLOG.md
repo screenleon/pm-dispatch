@@ -89,7 +89,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-445 | 🔵 active | install write path host-aware：依 host manifest（CC-438）衍生 install/uninstall/doctor 對 codex-host 的接線；CC-381 完整實作第一刀（v0.9.0 候選；依賴 CC-436/438；umbrella: CC-333） | arch/install | 2026-07-04 | — | P2 | design |
 | CC-446 | 🔵 active | v1.0 契約凍結：`docs/stability-contract.md` 四層分級（stable/experimental CLI + stable/internal schema）+ SemVer/deprecation 政策 + 執行 CC-296 清掃（v1.0 P0，v0.9.0 候選；DECISIONS 2026-07-04） | process/DX | 2026-07-04 | — | P2 | design |
 | CC-447 | 🔵 active | 乾淨機器 onboarding 雙 smoke：offline clean-install smoke（v0.9.0 候選）+ live dogfood smoke（v1.0-rc）；摔倒點逐一開票；QA_RULES_DIR 缺席行為驗證 | docs/ops | 2026-07-04 | — | P2 | — |
-| CC-448 | 🔵 active | opencode host support：可行性 probe → `hosts/opencode/host.yaml` → install/doctor 接線；host 抽象 N=2 驗收（v0.9.0，2026-07-06 自 v1.0-rc 提前；依賴 CC-438/445；umbrella: CC-333；DECISIONS 2026-07-04+2026-07-06） | arch/install | 2026-07-04 | — | P2 | design |
+| CC-448 | 🔵 active | opencode host support：階段 1 probe 完成、CC-476 spike 解除掛起 blocking risk → 階段 2 `hosts/opencode/host.yaml` → 階段 3 install/doctor 接線；host 抽象 N=2 驗收（v0.9.0；依賴 CC-438已done/CC-445；umbrella: CC-333；DECISIONS 2026-07-04+2026-07-06） | arch/install | 2026-07-04 | — | P2 | design |
 | CC-449 | 🔵 active | release-verify/test-e2e 對 v0.8.0 新 surface（`pmctl ship`/`pmctl worktree`）無 live 煙測 + run-all-tests 套件註冊完整性 lint（CC-444 收尾發現 test-pmctl-worktree 未註冊，已修；防再漏）+ CI↔run-all parity 斷言（2026-07-06 稽核：24 個本地 suite CI 缺席）（v0.9.0 候選） | ops/test | 2026-07-04 | — | P2 | — |
 | CC-472 | 🟢 someday | spike: antigravity（`agy` CLI）host 唯讀 probe——比照 CC-436/CC-448 階段 1 模式，實測 command 載入能力 + hook/plugin 機制 + 五個 capability enum 的 provider/confidence 判定，不落地 `hosts/antigravity/host.yaml`；排在 CC-445 通用 install/uninstall dispatcher 之後、與 CC-448 opencode 同批或緊接其後評估（N=3 驗證點） | arch/install | 2026-07-08 | — | P3 | spike |
 | CC-473 | 🟢 someday | 設計 `pmctl pm`：把 `commands/pm.md` 的 orchestration 邏輯（snapshot/handover validation/dispatch-wait 迴圈/discovery routing）抽成 CLI surface，讓 Claude `/pm` 與未來 codex host 呼叫同一份邏輯；範圍明訂為 batch-only（無互動澄清迴圈），承接 CC-471 spike 發現 | arch/install | 2026-07-09 | — | P3 | design |
@@ -209,7 +209,9 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Update 2026-07-06（v1.0-rc → v0.9.0 整票提前）**: 維護者拍板 v0.9.0 host 軸 = codex + opencode 雙 host（DECISIONS 2026-07-06）——N=2 驗收紅線由 v1.0-rc 提前為 v0.9.0 版內驗收，避免 `hosts/*/host.yaml` schema 在只有 codex 一個非 claude host 時定案被特例帶歪。三階段順序不變：階段 1 probe 與 [[CC-436]]/[[CC-437]] 並行先跑；[[CC-438]] schema 定案須同時吃進雙 probe 結果；階段 2+3 依 [[CC-438]]/[[CC-445]] 之後收尾。
 
 **Update 2026-07-06（階段 1 probe 完成）**：`docs/spikes/CC-448.md`。關鍵發現：opencode 有宣告式 `permission.{bash,edit,...}: allow/ask/deny` 靜態設定，guard binding 比 codex 的 hooks.json 外掛式機制更簡單（不需寫腳本）；`bash: deny` 實測 fail-closed 且比 codex 乾淨（模型完全不嘗試呼叫）；但 `edit: deny` 單獨設定會被 `bash: allow` 繞過（用 shell 重導向寫檔案），必須兩者都納管才是真正的 file guard——這與 CC-436 的 codex `apply_patch`/`Bash` 不對稱發現同一類問題；`edit`+`bash` 同時 deny 會導致 `opencode run` 掛起，根因未查明，是階段 2 manifest 定案前的 blocking open risk。階段 2（`hosts/opencode/host.yaml`）、階段 3（doctor/install 接線）尚未開始。
-**See**: DECISIONS.md 2026-07-04、DECISIONS.md 2026-07-06、`docs/spikes/CC-448.md`
+
+**Update 2026-07-09（[[CC-476]] spike 解除 blocking open risk）**：`docs/spikes/CC-476.md`（中等信心）——掛起最可能系統性根因是 upstream `anomalyco/opencode` open issue #35073（headless subagent 權限 ask 誤判為 interactive），非 edit+bash 特定組合的獨立 bug；無直接修復但有繞過方式：階段 2 manifest 的 `bash` guard binding 一律用 per-pattern object 形式 `{"*":"deny"}`（非 bare string），並在 headless dispatch 外掛強制 timeout+kill（沿用 [[CC-470]] 逾時止血機制）。[[CC-438]] schema v1 已定案完成（pr:#375，BACKLOG-ARCHIVE.md）——階段 2 的兩個前置依賴（schema、掛起風險）皆已清除，可以開始寫 `hosts/opencode/host.yaml`。
+**See**: DECISIONS.md 2026-07-04、DECISIONS.md 2026-07-06、`docs/spikes/CC-448.md`、`docs/spikes/CC-476.md`
 
 ## CC-449 — release-verify/test-e2e：ship/worktree surface 煙測 + 套件註冊完整性 lint 🔵 active
 
