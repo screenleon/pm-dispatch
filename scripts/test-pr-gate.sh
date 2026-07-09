@@ -4358,7 +4358,11 @@ test_seq_brief_guard_absolute_path_when_pmctl_not_on_path() {
   pass "$name"
 }
 
-# Same as above for the --parallel per-reviewer brief.
+# Behavior: same as the sequential case above, but for the --parallel
+# per-reviewer brief's guard-check instruction.
+# Steps: strip pmctl from PATH, stage runner/cli/pmctl, run --parallel with a
+# single reviewer, assert the captured reviewer brief's guard-check line uses
+# the absolute path.
 test_parallel_reviewer_brief_guard_absolute_path_when_pmctl_not_on_path() {
   local name="parallel-reviewer-brief-guard-absolute-path-when-pmctl-not-on-path"
   should_run "$name" || return 0
