@@ -11,7 +11,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | #  | Status | 主題 | 影響面 | 首次記錄 | Refs | Priority | Epic |
 |----|--------|------|--------|----------|------|----------|------|
 | CC-450 | 🟢 someday | 其餘 9 個 test-*.sh docstring 格式統一（CC-004 同款 Behavior/Steps，跨檔） | ops | 2026-07-03 | — | P3 | — |
-| CC-475 | ✅ done | claude sonnet model alias 過期：`share/claude-model-aliases.tsv` 的 `default`/`sonnet` 仍釘 `claude-sonnet-4-6`，未跟進最新 `claude-sonnet-5`（opus/haiku 已對齊最新）（2026-07-09 使用者發現） | ops/dispatch | 2026-07-09 | pr:#389 | P2 | — |
+| CC-475 | ✅ done | claude sonnet model alias 過期：`share/claude-model-aliases.tsv` 的 `default`/`sonnet` 仍釘 `claude-sonnet-4-6`，未跟進最新 `claude-sonnet-5`（opus/haiku 已對齊最新）（2026-07-09 使用者發現） | ops | 2026-07-09 | pr:#389 | P2 | — |
 | CC-451 | 🔵 active | core/ 定義層接上 runtime：enum 單一來源 + state 寫入 schema 驗證（CC-446 契約凍結前置；2026-07-06 盲測稽核；v0.9.0） | arch | 2026-07-06 | — | P2 | design |
 | CC-452 | 🔵 active | guard/hook 對稱性與併發 hardening：episodes.jsonl append 加鎖、三安全 guard set -e 統一、ISO8601 正規化抽 lib（2026-07-06 盲測稽核；v0.9.0） | ops | 2026-07-06 | — | P3 | hygiene |
 | CC-453 | 🔵 active | worktree/auto-pack 路徑契約 hardening：worktree create stdout 契約、auto-pack work_dir fail-loud、opencode isolation 錯誤訊息修正（2026-07-06 盲測稽核；v0.9.0） | ops | 2026-07-06 | — | P3 | hygiene |
