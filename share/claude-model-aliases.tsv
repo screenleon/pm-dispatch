@@ -17,6 +17,7 @@
 # — NOT whatever the local claude CLI defaults to. Precedence: --model flag >
 # PM_CFG_DEFAULT_MODEL > built-in `default` alias.
 # Override per-host via ~/.pm-dispatch/config `dispatch.default_model`.
+# Rollback: --model claude-sonnet-4-6
 #
 # Context window reference:
 #   light / haiku   — claude-haiku-4-5   ~200K tokens, faster + cheaper
