@@ -74,6 +74,10 @@ _kill_process_tree() {
 #   --executor <mode>    codex|claude|auto (default: auto; auto uses `command -v codex`)
 #   --model <id>         dispatch model (default: "default" → adapter's pinned default,
 #                        e.g. codex gpt-5.5 / claude sonnet; pass a concrete id to override)
+#   --effort <level>     low|medium|high (default: omit → adapter resolves medium unless
+#                        the model alias carries its own valid value; see
+#                        scripts/lib/reasoning-effort.sh). Independent of --model — use
+#                        this to dial reasoning depth up/down without switching models.
 #   --isolation <level>  isolation level: none|read-only|workspace-write|workspace-network|sandboxed
 #   --timeout <secs>     dispatch timeout per session (default: 1200)
 #   --parallel           multi-session: one dispatch per reviewer + synthesis (higher token cost)
@@ -120,6 +124,11 @@ DISPATCH_MODEL="default"
 DISPATCH_SANDBOX="workspace-write"
 DISPATCH_ISOLATION=""   # isolation_level; empty = use codex default (workspace-write)
 DISPATCH_APPROVAL="never"
+# "" → omit --effort → the adapter resolves its own default (medium unless the
+# model alias carries its own valid low/medium/high value; see
+# scripts/lib/reasoning-effort.sh). Validated inline (not sourced from the lib)
+# so copy-mode pr-gate.sh has no extra file dependency for this flag.
+DISPATCH_EFFORT=""
 BRIEF_FILE=""
 TEST_CMD_OVERRIDE=""   # --test-cmd: explicit pre-flight test command (see CC-470 Part 3)
 TEST_TIMEOUT="1800"    # --test-timeout: independent of --timeout (dispatch budget)
@@ -144,6 +153,12 @@ while [[ $# -gt 0 ]]; do
     --output)     OUTPUT_OVERRIDE="$2";    shift 2;;
     --executor)   EXECUTOR_OPTION="$2";    shift 2;;
     --model)      DISPATCH_MODEL="$2";     shift 2;;
+    --effort)
+      case "$2" in
+        low|medium|high) ;;
+        *) printf 'Error: --effort must be one of: low medium high (got: %s)\n' "$2" >&2; exit 2;;
+      esac
+      DISPATCH_EFFORT="$2"; shift 2;;
     --isolation)  DISPATCH_ISOLATION="$2"; shift 2;;
     --timeout)    TIMEOUT="$2";            shift 2;;
     --parallel)   SEQUENTIAL=false;        shift;;
@@ -168,7 +183,7 @@ while [[ $# -gt 0 ]]; do
       exit 0;;
     *)
       printf 'Unknown arg: %s\n' "$1" >&2
-      printf 'Accepted: --cd --run-dir --tier --brief --reviewers|--targeted --scope --base --head --output --executor --model --isolation --timeout --parallel --sequential --allow-hooks --allow-dirty --override-file --test-cmd --test-timeout --skip-preflight-tests (-h for help)\n' >&2
+      printf 'Accepted: --cd --run-dir --tier --brief --reviewers|--targeted --scope --base --head --output --executor --model --effort --isolation --timeout --parallel --sequential --allow-hooks --allow-dirty --override-file --test-cmd --test-timeout --skip-preflight-tests (-h for help)\n' >&2
       exit 2;;
   esac
 done
@@ -320,12 +335,13 @@ else
     local approval=${6-}
     local timeout=${7-}
     local isolation_level=${8-}
+    local effort=${9-}
     local -a cmd
     local arg
     local first=1
 
-    [[ $# -eq 7 || $# -eq 8 ]] || {
-      printf 'executor-router: dispatch_via expects executor, brief_file, working_dir, model, sandbox, approval, timeout[, isolation_level]\n' >&2
+    [[ $# -ge 7 && $# -le 9 ]] || {
+      printf 'executor-router: dispatch_via expects executor, brief_file, working_dir, model, sandbox, approval, timeout[, isolation_level[, effort]]\n' >&2
       return 2
     }
 
@@ -345,6 +361,7 @@ else
     fi
     cmd+=(--timeout "$timeout" --brief-file "$brief_file")
     [[ -n "$isolation_level" ]] && cmd+=(--isolation "$isolation_level")
+    [[ -n "$effort" ]] && cmd+=(--effort "$effort")
     [[ -n "${PM_DISPATCH_TRACE_DIR:-}" ]] && cmd+=(--trace-dir "$PM_DISPATCH_TRACE_DIR")
 
     for arg in "${cmd[@]}"; do
@@ -1202,7 +1219,7 @@ BRIEF_EOF
   # headless `claude --print`). The generic dispatch_via takes the executor name as
   # its first arg, so the call site is uniform; sandbox/approval are forwarded only
   # to adapters whose runner_kind accepts them.
-  DISPATCH_CMD="$(dispatch_via "$EXECUTOR" "$BRIEF_FILE" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT" "$DISPATCH_ISOLATION")" || exit 2
+  DISPATCH_CMD="$(dispatch_via "$EXECUTOR" "$BRIEF_FILE" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT" "$DISPATCH_ISOLATION" "$DISPATCH_EFFORT")" || exit 2
   # Send the dispatch child's stdout to our stderr: it is diagnostic chatter,
   # not gate data (the verdict lands in the result file). If it inherited our
   # stdout and a consumer closed that pipe (`gate run | head`), the child's
@@ -1355,7 +1372,7 @@ acceptance:
   - ${REVIEWER_OUTPUT} exists with at least one findings line and an explicit Verdict line
 RBRIEF_EOF
 
-    REVIEWER_DISPATCH_CMD="$(dispatch_via "$EXECUTOR" "$REVIEWER_BRIEF" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT" "$DISPATCH_ISOLATION")" || exit 2
+    REVIEWER_DISPATCH_CMD="$(dispatch_via "$EXECUTOR" "$REVIEWER_BRIEF" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT" "$DISPATCH_ISOLATION" "$DISPATCH_EFFORT")" || exit 2
     eval "$REVIEWER_DISPATCH_CMD" > "$DISPATCH_LOG" 2>&1 &
     DISPATCH_PIDS+=($!)
     say '  [parallel] launched %s (pid %d)\n' "$r" "$!"
@@ -1658,7 +1675,7 @@ acceptance:
 SBRIEF_P2
 
   say '  [synthesis] running PM consolidation...\n'
-  SYNTHESIS_DISPATCH_CMD="$(dispatch_via "$EXECUTOR" "$SYNTHESIS_BRIEF" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT" "$DISPATCH_ISOLATION")" || exit 2
+  SYNTHESIS_DISPATCH_CMD="$(dispatch_via "$EXECUTOR" "$SYNTHESIS_BRIEF" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT" "$DISPATCH_ISOLATION" "$DISPATCH_EFFORT")" || exit 2
   # Diagnostic chatter to stderr -- see sequential dispatch note above.
   # Synthesis runs in background so a watchdog can kill it if it hangs indefinitely.
   eval "$SYNTHESIS_DISPATCH_CMD" >&2 &

@@ -128,11 +128,13 @@ executor_router_safe_argv() {
   printf '%q' "$value"
 }
 
-# dispatch_via <executor> <brief_file> <working_dir> <model> <sandbox> <approval> <timeout> [isolation_level]
+# dispatch_via <executor> <brief_file> <working_dir> <model> <sandbox> <approval> <timeout> [isolation_level] [effort]
 # Generic dispatcher: resolves adapters/<executor>/dispatch.sh from the VALIDATED
 # executor name and prints a safely-quoted command string. The caller still owns
 # when/how to execute it (foreground/background, redirection). Universal flags
-# (--cd / --model / --timeout / --brief-file / --isolation) are always forwarded.
+# (--cd / --model / --timeout / --brief-file / --isolation / --effort) are always
+# forwarded — every adapter accepts --effort (opencode no-ops it; see
+# scripts/lib/reasoning-effort.sh for the shared low/medium/high vocabulary).
 # The codex-native --sandbox / --approval flags are forwarded only for
 # cli-subprocess runner-kinds (those run the executor as a sandboxed subprocess).
 # Both shipped adapters are cli-subprocess; claude accepts but ignores these flags
@@ -148,12 +150,13 @@ dispatch_via() {
   local approval=${6-}
   local timeout=${7-}
   local isolation_level=${8-}
+  local effort=${9-}
   local -a cmd
   local arg
   local first=1
 
-  [[ $# -eq 7 || $# -eq 8 ]] || {
-    printf 'executor-router: dispatch_via expects executor, brief_file, working_dir, model, sandbox, approval, timeout[, isolation_level]\n' >&2
+  [[ $# -ge 7 && $# -le 9 ]] || {
+    printf 'executor-router: dispatch_via expects executor, brief_file, working_dir, model, sandbox, approval, timeout[, isolation_level[, effort]]\n' >&2
     return 2
   }
 
@@ -173,6 +176,7 @@ dispatch_via() {
   fi
   cmd+=(--timeout "$timeout" --brief-file "$brief_file")
   [[ -n "$isolation_level" ]] && cmd+=(--isolation "$isolation_level")
+  [[ -n "$effort" ]] && cmd+=(--effort "$effort")
   # Forward the trace-dir seam EXPLICITLY when set, so the printed command is
   # self-documenting and the adapter's trace location does not silently depend
   # on inherited env. Default (env unset) appends nothing — behavior unchanged,
@@ -195,16 +199,16 @@ dispatch_via() {
 # generic dispatch_via, kept for external callers and existing tests. New call
 # sites should prefer `dispatch_via "$executor" …` so a new adapter needs no shim.
 dispatch_via_codex() {
-  [[ $# -eq 6 || $# -eq 7 ]] || {
-    printf 'executor-router: dispatch_via_codex expects brief_file, working_dir, model, sandbox, approval, timeout[, isolation_level]\n' >&2
+  [[ $# -ge 6 && $# -le 8 ]] || {
+    printf 'executor-router: dispatch_via_codex expects brief_file, working_dir, model, sandbox, approval, timeout[, isolation_level[, effort]]\n' >&2
     return 2
   }
   dispatch_via codex "$@"
 }
 
 dispatch_via_claude() {
-  [[ $# -eq 6 || $# -eq 7 ]] || {
-    printf 'executor-router: dispatch_via_claude expects brief_file, working_dir, model, sandbox, approval, timeout[, isolation_level]\n' >&2
+  [[ $# -ge 6 && $# -le 8 ]] || {
+    printf 'executor-router: dispatch_via_claude expects brief_file, working_dir, model, sandbox, approval, timeout[, isolation_level[, effort]]\n' >&2
     return 2
   }
   dispatch_via claude "$@"

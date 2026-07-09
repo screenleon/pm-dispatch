@@ -25,8 +25,16 @@
 #   light / codex-spark  — gpt-5.3-codex-spark  ~64K tokens
 #   gpt-5.5              — ~122K+ tokens (default)
 # Survey-style briefs that read large files MUST use lazy-read instructions.
-default	gpt-5.5	high
-gpt-5.5	gpt-5.5	high
-gpt-5.4	gpt-5.4	high
+#
+# Reasoning effort: an alias's effort column is the practical default whenever
+# `--effort` is omitted (it takes precedence over the global default — see
+# scripts/lib/reasoning-effort.sh). default/gpt-5.5/gpt-5.4 converge to medium
+# so a plain dispatch/gate call is medium by default without needing
+# `--effort medium` on every invocation; codex-spark/light stay high,
+# unchanged and orthogonal to this convergence (their small-model/low-latency
+# tuning is a separate concern from reasoning depth).
+default	gpt-5.5	medium
+gpt-5.5	gpt-5.5	medium
+gpt-5.4	gpt-5.4	medium
 codex-spark	gpt-5.3-codex-spark	high
 light	gpt-5.3-codex-spark	high

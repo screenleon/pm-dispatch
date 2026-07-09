@@ -127,6 +127,8 @@ Model B is the canonical dispatch topology: `pmctl dispatch run` lands the brief
 
 `model` alias and `isolation_level` translation follow the existing adapter convention (each adapter's `isolation-map.yaml` and the shared model-alias table); they are not redefined here.
 
+`--effort <low|medium|high>` is a `pmctl dispatch run` / `pmctl gate run` CLI flag, independent of `model` — it is not part of the `dispatch_handover_v1` metadata header. Precedence: `--effort` flag > the resolved model alias's own effort column (when valid) > global default `medium`. codex and claude both wire it through natively (codex via `-c model_reasoning_effort=...`, claude via its own `--effort`); opencode has no equivalent and accepts the flag as a no-op with a warning. See `docs/dispatch-brief.md` §Reasoning effort and `scripts/lib/reasoning-effort.sh`.
+
 ## Executor profiles
 
 | Aspect | codex profile | claude profile |
@@ -139,7 +141,7 @@ Model B is the canonical dispatch topology: `pmctl dispatch run` lands the brief
 | Suitable scope | Repo edits that are already in codex dispatch envelope. | Any dispatch where a headless `claude --print` subprocess is the executor (host-independent; codex-as-PM can drive it). |
 | Status | Implemented (primary route). | Implemented — `adapters/claude/` + `executor: claude` enum + `install.sh --profile minimal\|full`. |
 
-`opencode` is a third shipped profile, not shown as a column above for brevity: `pmctl dispatch run --adapter opencode --brief-file <path>` invokes `adapters/opencode/dispatch.sh` (headless CLI subprocess, `runner_kind: cli-subprocess`, `write_guard_mode: cli-only`). It is the only adapter that accepts `isolation_level: none` (full machine access — opencode has no finer-grained sandbox); codex and claude reject that value. Model resolution uses `share/opencode-model-aliases.tsv` with a fallback chain across free-tier models.
+`opencode` is a third shipped profile, not shown as a column above for brevity: `pmctl dispatch run --adapter opencode --brief-file <path>` invokes `adapters/opencode/dispatch.sh` (headless CLI subprocess, `runner_kind: cli-subprocess`, `write_guard_mode: cli-only`). It is the only adapter that accepts `isolation_level: none` (full machine access — opencode has no finer-grained sandbox); codex and claude reject that value. Model resolution uses `share/opencode-model-aliases.tsv` with a fallback chain across free-tier models. `--effort` is a non-goal for this adapter (no reasoning-effort equivalent in the opencode CLI); it is accepted as a no-op with a warning, mirroring the existing `--sandbox`/`--approval` no-op convention.
 
 ## Guard enforcement
 

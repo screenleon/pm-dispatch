@@ -10,12 +10,14 @@
 # the most recent run without knowing the timestamp.
 #
 # Usage:
-#   codex-dispatch.sh --cd <dir> [--model <m>] [--sandbox <mode>]
+#   codex-dispatch.sh --cd <dir> [--model <m>] [--effort <low|medium|high>]
+#                     [--sandbox <mode>]
 #                     [--isolation <level>]
 #                     [--approval <mode>] [--skip-git-check]
 #                     [--timeout <seconds>] [--print-cmd]
 #                     --brief-file <path>
-#   codex-dispatch.sh --cd <dir> [--model <m>] [--sandbox <mode>]
+#   codex-dispatch.sh --cd <dir> [--model <m>] [--effort <low|medium|high>]
+#                     [--sandbox <mode>]
 #                     [--isolation <level>]
 #                     [--approval <mode>] [--skip-git-check]
 #                     [--timeout <seconds>] [--print-cmd] -- <brief...>
@@ -33,6 +35,8 @@
 #   --isolation empty            (read-only | workspace-write | workspace-network |
 #                                 sandboxed; `none` is REJECTED for codex)
 #   --approval never             (never | on-failure | on-request | untrusted)
+#   --effort   medium global default (low | medium | high; overrides the resolved
+#              model alias's own effort column; see scripts/lib/reasoning-effort.sh)
 #   --timeout  precedence (via pmctl): --timeout flag (wins) > CODEX_DISPATCH_TIMEOUT env >
 #              PM_CFG_TIMEOUT (exported by pmctl from config) > 1200 default.
 #              Direct adapter invocations: CODEX_DISPATCH_TIMEOUT env > 1200 default.
@@ -91,6 +95,7 @@ trap 'rm -rf -- "$__codex_dispatch_snapshot_dir"' EXIT
 
 WORK_DIR=""
 MODEL=""
+EFFORT=""
 SANDBOX="workspace-write"
 ISOLATION=""   # isolation_level from brief; expanded to --sandbox + -c flags
 APPROVAL="never"
@@ -123,6 +128,8 @@ DEFAULT_DISPATCH_MODEL="default"
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/lib/model-aliases.sh"
 # shellcheck disable=SC1091
+. "$SCRIPT_DIR/lib/reasoning-effort.sh"
+# shellcheck disable=SC1091
 . "$SCRIPT_DIR/lib/timeout-resolve.sh"
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/lib/dispatch-common.sh"
@@ -144,6 +151,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --cd) WORK_DIR="$2"; shift 2;;
     --model) MODEL="$2"; shift 2;;
+    --effort) EFFORT="$2"; shift 2;;
     --sandbox) SANDBOX="$2"; shift 2;;
     --isolation) ISOLATION="$2"; shift 2;;
     --approval) APPROVAL="$2"; shift 2;;
@@ -191,6 +199,17 @@ MODEL_ALIAS_MATCH=0
 if [[ -n "$MODEL" ]]; then
   _resolve_model_alias "$MODEL" || exit 2
 fi
+
+# --effort overrides the alias's own effort column; --effort > alias effort >
+# global default (medium). re_resolve_effort validates $EFFORT itself (returns
+# 1 on an invalid flag value), so there is no separate pre-check here. See
+# scripts/lib/reasoning-effort.sh for the fixed low/medium/high vocabulary and
+# why it's narrower than codex's raw model_reasoning_effort surface.
+re_resolve_effort "$EFFORT" "$MODEL_RESOLVED_EFFORT" || {
+  printf 'codex-dispatch: error: --effort must be one of: %s (got: %s)\n' "$RE_VALID_EFFORTS" "$EFFORT" >&2
+  exit 2
+}
+MODEL_RESOLVED_EFFORT="$RE_RESOLVED_EFFORT"
 
 MODEL_DISPLAY="$MODEL"
 if [[ -z "$MODEL_DISPLAY" ]]; then

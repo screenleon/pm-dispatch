@@ -192,6 +192,7 @@ jobs:
             test-timeout-resolve.sh
             test-dispatch-common.sh
             test-model-aliases.sh
+            test-reasoning-effort.sh
             test-schema-task-mirrors-backlog.sh
             test-brief-validate.sh
             dispatch-post-verify.sh

@@ -438,9 +438,12 @@ case_alias_resolution_spark_prints_resolved_model_and_banner_no_trace_files() {
   rm -f "$_brief14" "$_stderr14"
 }
 
-# ---- 15: full-form-passthrough keeps model and no effort ----
+# ---- 15: full-form-passthrough keeps raw wire model id, effort falls to global default ----
+# "gpt-5.3-codex-spark" is a wire id, not an alias key, so it has no alias
+# effort column to inherit; effort resolution still applies the global
+# default (medium) independent of the model-alias match.
 case_full_form_passthrough_keeps_model_no_effort() {
-  local name="full-form-passthrough keeps full model and no injected effort"
+  local name="full-form-passthrough keeps full model, effort falls to global default"
   local _work15 _brief15 _output15 _exit15
   should_run "$name" || return 0
 
@@ -456,7 +459,7 @@ case_full_form_passthrough_keeps_model_no_effort() {
   set -e
   if [[ "$_exit15" -eq 0 ]] \
     && [[ "$_output15" == *"-m gpt-5.3-codex-spark"* ]] \
-    && [[ "$_output15" != *"model_reasoning_effort=\"high\""* ]]; then
+    && [[ "$_output15" == *'model_reasoning_effort="medium"'* ]]; then
     pass "$name"
   else
     fail "$name" ""
@@ -465,9 +468,12 @@ case_full_form_passthrough_keeps_model_no_effort() {
   rm -f "$_brief15"
 }
 
-# ---- 16: unknown-alias-fallback keeps raw model and no effort ----
+# ---- 16: unknown-alias-fallback keeps raw model, effort falls to global default ----
+# Effort resolution is independent of model-alias match — an unknown model
+# still gets the global default effort (medium) applied via -c
+# model_reasoning_effort, since there is no alias effort column to consult.
 case_unknown_alias_fallback_keeps_raw_model() {
-  local name="unknown-alias-fallback keeps raw model and no effort"
+  local name="unknown-alias-fallback keeps raw model, effort falls to global default"
   local _work16 _brief16 _output16 _exit16
   should_run "$name" || return 0
 
@@ -483,7 +489,7 @@ case_unknown_alias_fallback_keeps_raw_model() {
   set -e
   if [[ "$_exit16" -eq 0 ]] \
     && [[ "$_output16" == *"-m unknown-tag"* ]] \
-    && [[ "$_output16" != *"model_reasoning_effort="* ]]; then
+    && [[ "$_output16" == *'model_reasoning_effort="medium"'* ]]; then
     pass "$name"
   else
     fail "$name" ""
@@ -492,15 +498,16 @@ case_unknown_alias_fallback_keeps_raw_model() {
   rm -f "$_brief16"
 }
 
-# ---- 16a: default model (no --model) resolves to gpt-5.5 with high effort ----
+# ---- 16a: default model (no --model) resolves to gpt-5.5 with medium effort ----
 # Behavior: with no --model and no config override, dispatch applies pm-dispatch's
 #   pinned default (the `default` alias → gpt-5.5) instead of inheriting the host
-#   ~/.codex/config.toml model.
+#   ~/.codex/config.toml model. The default alias's effort column is medium, so a
+#   plain dispatch is medium by default without an explicit --effort flag.
 # Steps:
 #   1. Run --print-cmd with an empty HOME (no ~/.pm-dispatch/config) and no --model.
-#   2. Assert the printed CMD carries -m gpt-5.5 and model_reasoning_effort="high".
+#   2. Assert the printed CMD carries -m gpt-5.5 and model_reasoning_effort="medium".
 case_default_model_resolves_gpt55() {
-  local name="default-model/no --model resolves to gpt-5.5 + high effort"
+  local name="default-model/no --model resolves to gpt-5.5 + medium effort"
   local _home _work _brief _out _exit
   should_run "$name" || return 0
 
@@ -514,7 +521,7 @@ case_default_model_resolves_gpt55() {
   set -e
   if [[ "$_exit" -eq 0 ]] \
     && [[ "$_out" == *"-m gpt-5.5"* ]] \
-    && [[ "$_out" == *'-c model_reasoning_effort="high"'* ]]; then
+    && [[ "$_out" == *'-c model_reasoning_effort="medium"'* ]]; then
     pass "$name"
   else
     fail "$name" ""
@@ -523,14 +530,14 @@ case_default_model_resolves_gpt55() {
   rm -f "$_brief"
 }
 
-# ---- 16b: explicit --model gpt-5.5 resolves with high effort ----
+# ---- 16b: explicit --model gpt-5.5 resolves with medium effort ----
 # Behavior: explicitly requesting gpt-5.5 resolves through the alias table and
-#   attaches high reasoning effort.
+#   attaches medium reasoning effort.
 # Steps:
 #   1. Run --print-cmd with --model gpt-5.5.
-#   2. Assert the CMD carries -m gpt-5.5 and model_reasoning_effort="high".
-case_explicit_gpt55_resolves_high_effort() {
-  local name="default-model/--model gpt-5.5 resolves + high effort"
+#   2. Assert the CMD carries -m gpt-5.5 and model_reasoning_effort="medium".
+case_explicit_gpt55_resolves_medium_effort() {
+  local name="default-model/--model gpt-5.5 resolves + medium effort"
   local _home _work _brief _out _exit
   should_run "$name" || return 0
 
@@ -544,7 +551,7 @@ case_explicit_gpt55_resolves_high_effort() {
   set -e
   if [[ "$_exit" -eq 0 ]] \
     && [[ "$_out" == *"-m gpt-5.5"* ]] \
-    && [[ "$_out" == *'-c model_reasoning_effort="high"'* ]]; then
+    && [[ "$_out" == *'-c model_reasoning_effort="medium"'* ]]; then
     pass "$name"
   else
     fail "$name" ""
@@ -553,14 +560,14 @@ case_explicit_gpt55_resolves_high_effort() {
   rm -f "$_brief"
 }
 
-# ---- 16c: explicit --model gpt-5.4 (fallback) resolves with high effort ----
+# ---- 16c: explicit --model gpt-5.4 (fallback) resolves with medium effort ----
 # Behavior: the documented fallback model gpt-5.4 resolves through the alias table
-#   and attaches high reasoning effort.
+#   and attaches medium reasoning effort.
 # Steps:
 #   1. Run --print-cmd with --model gpt-5.4.
-#   2. Assert the CMD carries -m gpt-5.4 and model_reasoning_effort="high".
-case_explicit_gpt54_resolves_high_effort() {
-  local name="default-model/--model gpt-5.4 fallback resolves + high effort"
+#   2. Assert the CMD carries -m gpt-5.4 and model_reasoning_effort="medium".
+case_explicit_gpt54_resolves_medium_effort() {
+  local name="default-model/--model gpt-5.4 fallback resolves + medium effort"
   local _home _work _brief _out _exit
   should_run "$name" || return 0
 
@@ -574,7 +581,7 @@ case_explicit_gpt54_resolves_high_effort() {
   set -e
   if [[ "$_exit" -eq 0 ]] \
     && [[ "$_out" == *"-m gpt-5.4"* ]] \
-    && [[ "$_out" == *'-c model_reasoning_effort="high"'* ]]; then
+    && [[ "$_out" == *'-c model_reasoning_effort="medium"'* ]]; then
     pass "$name"
   else
     fail "$name" ""
@@ -583,14 +590,14 @@ case_explicit_gpt54_resolves_high_effort() {
   rm -f "$_brief"
 }
 
-# ---- 16e: explicit --model default alias resolves to gpt-5.5 + high ----
+# ---- 16e: explicit --model default alias resolves to gpt-5.5 + medium ----
 # Behavior: the `default` alias is data-backed in share/model-aliases.tsv and
-#   resolves to the gpt-5.5 wire id with high effort.
+#   resolves to the gpt-5.5 wire id with medium effort.
 # Steps:
 #   1. Run --print-cmd with --model default.
-#   2. Assert the CMD carries -m gpt-5.5 and model_reasoning_effort="high".
+#   2. Assert the CMD carries -m gpt-5.5 and model_reasoning_effort="medium".
 case_default_alias_resolves_gpt55() {
-  local name="default-model/--model default alias resolves to gpt-5.5 + high"
+  local name="default-model/--model default alias resolves to gpt-5.5 + medium"
   local _home _work _brief _out _exit
   should_run "$name" || return 0
 
@@ -604,7 +611,7 @@ case_default_alias_resolves_gpt55() {
   set -e
   if [[ "$_exit" -eq 0 ]] \
     && [[ "$_out" == *"-m gpt-5.5"* ]] \
-    && [[ "$_out" == *'-c model_reasoning_effort="high"'* ]]; then
+    && [[ "$_out" == *'-c model_reasoning_effort="medium"'* ]]; then
     pass "$name"
   else
     fail "$name" ""
@@ -677,6 +684,7 @@ case_alias_source_missing_exits_2() {
   _tmproot="$(mktemp -d)"
   mkdir -p "$_tmproot/adapters/codex" "$_tmproot/scripts/lib"
   cp "$REPO_ROOT/scripts/lib/model-aliases.sh" "$_tmproot/scripts/lib/"
+  cp "$REPO_ROOT/scripts/lib/reasoning-effort.sh" "$_tmproot/scripts/lib/"
   cp "$REPO_ROOT/scripts/lib/timeout-resolve.sh" "$_tmproot/scripts/lib/"
   cp "$REPO_ROOT/scripts/lib/dispatch-common.sh" "$_tmproot/scripts/lib/"
   _dispatch="$_tmproot/adapters/codex/dispatch.sh"
@@ -710,6 +718,7 @@ case_alias_source_malformed_exits_nonzero() {
   _tmproot="$(mktemp -d)"
   mkdir -p "$_tmproot/adapters/codex" "$_tmproot/scripts/lib"
   cp "$REPO_ROOT/scripts/lib/model-aliases.sh" "$_tmproot/scripts/lib/"
+  cp "$REPO_ROOT/scripts/lib/reasoning-effort.sh" "$_tmproot/scripts/lib/"
   cp "$REPO_ROOT/scripts/lib/timeout-resolve.sh" "$_tmproot/scripts/lib/"
   cp "$REPO_ROOT/scripts/lib/dispatch-common.sh" "$_tmproot/scripts/lib/"
   _dispatch="$_tmproot/adapters/codex/dispatch.sh"
@@ -741,6 +750,7 @@ case_alias_source_installed_helper_fallback() {
   mkdir -p "$_script_dir" "$_share_dir" "$_script_dir/lib"
   cp "$DISPATCH" "$_script_dir/codex-dispatch.sh"
   cp "$REPO_ROOT/scripts/lib/model-aliases.sh" "$_script_dir/lib/"
+  cp "$REPO_ROOT/scripts/lib/reasoning-effort.sh" "$_script_dir/lib/"
   cp "$REPO_ROOT/scripts/lib/timeout-resolve.sh" "$_script_dir/lib/"
   cp "$REPO_ROOT/scripts/lib/dispatch-common.sh" "$_script_dir/lib/"
   chmod +x "$_script_dir/codex-dispatch.sh"
@@ -954,6 +964,63 @@ case_isolation_sandboxed() {
   pass "$name"
 }
 
+# ---- 28a: --effort flag overrides the model alias's own effort column ----
+case_effort_flag_overrides_alias() {
+  local name="effort-flag/--effort low overrides alias's high"
+  local dir brief out
+  should_run "$name" || return 0
+
+  dir="$(mktemp -d)"
+  brief="$dir/brief.md"
+  printf 'goal: effort override test\n' > "$brief"
+  out="$(bash "$DISPATCH" --cd "$dir" --brief-file "$brief" --model default --effort low --print-cmd 2>&1)"
+  rm -rf "$dir"
+  if ! printf '%s\n' "$out" | grep -q -- 'model_reasoning_effort="low"'; then
+    fail "$name" "expected model_reasoning_effort=\"low\"; got: $out"
+    return
+  fi
+  pass "$name"
+}
+
+# ---- 28b: omitting --effort with no alias match falls back to global default (medium) ----
+case_effort_flag_default_medium() {
+  local name="effort-flag/omit --effort falls back to global default medium"
+  local dir brief out
+  should_run "$name" || return 0
+
+  dir="$(mktemp -d)"
+  brief="$dir/brief.md"
+  printf 'goal: effort default test\n' > "$brief"
+  out="$(bash "$DISPATCH" --cd "$dir" --brief-file "$brief" --model unknown-tag --print-cmd 2>&1)"
+  rm -rf "$dir"
+  if ! printf '%s\n' "$out" | grep -q -- 'model_reasoning_effort="medium"'; then
+    fail "$name" "expected model_reasoning_effort=\"medium\"; got: $out"
+    return
+  fi
+  pass "$name"
+}
+
+# ---- 28c: invalid --effort value is rejected before dispatch ----
+case_effort_flag_invalid_rejected() {
+  local name="effort-flag/invalid value rejected"
+  local dir brief out exit_code
+  should_run "$name" || return 0
+
+  dir="$(mktemp -d)"
+  brief="$dir/brief.md"
+  printf 'goal: effort invalid test\n' > "$brief"
+  set +e
+  out="$(bash "$DISPATCH" --cd "$dir" --brief-file "$brief" --effort bogus --print-cmd 2>&1)"
+  exit_code=$?
+  set -e
+  rm -rf "$dir"
+  if [[ "$exit_code" -eq 0 ]] || ! printf '%s\n' "$out" | grep -q 'low medium high'; then
+    fail "$name" "expected non-zero exit and error listing low/medium/high; got exit=$exit_code out=$out"
+    return
+  fi
+  pass "$name"
+}
+
 # ---- 29: print-cmd with no brief exits 0 and emits command ----
 case_print_cmd_no_brief() {
   local name="print-cmd no-brief exits 0 and emits command"
@@ -1088,8 +1155,8 @@ case_alias_resolution_spark_prints_resolved_model_and_banner_no_trace_files
 case_full_form_passthrough_keeps_model_no_effort
 case_unknown_alias_fallback_keeps_raw_model
 case_default_model_resolves_gpt55
-case_explicit_gpt55_resolves_high_effort
-case_explicit_gpt54_resolves_high_effort
+case_explicit_gpt55_resolves_medium_effort
+case_explicit_gpt54_resolves_medium_effort
 case_default_alias_resolves_gpt55
 case_timeout_env_only_precedence
 case_timeout_precedence_brief_field
@@ -1103,6 +1170,9 @@ case_isolation_none
 case_sandbox_danger_full_access_rejected
 case_isolation_read_only
 case_isolation_sandboxed
+case_effort_flag_overrides_alias
+case_effort_flag_default_medium
+case_effort_flag_invalid_rejected
 case_print_cmd_no_brief
 case_latest_symlink_failure_tolerated
 case_state_store_no_direct_run_row_codex

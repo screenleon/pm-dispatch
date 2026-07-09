@@ -56,6 +56,7 @@ SUITE_NAMES=(
   test-dispatch-common
   test-detached-launch
   test-lint-model-aliases
+  test-reasoning-effort
   test-core-schemas
   test-host-manifest
   test-host-write-codex
@@ -131,6 +132,7 @@ declare -A SUITE_PATHS=(
   [test-dispatch-common]="scripts/test-dispatch-common.sh"
   [test-detached-launch]="scripts/test-detached-launch.sh"
   [test-lint-model-aliases]="scripts/test-lint-model-aliases.sh"
+  [test-reasoning-effort]="scripts/test-reasoning-effort.sh"
   [test-core-schemas]="scripts/test-core-schemas.sh"
   [test-host-manifest]="scripts/test-host-manifest.sh"
   [test-host-write-codex]="scripts/test-host-write-codex.sh"
