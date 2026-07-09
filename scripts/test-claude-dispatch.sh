@@ -346,10 +346,10 @@ case_model_alias_default() {
   local work brief out
   work="$(mktemp -d)"; git init -q "$work"; brief="$(_mk_brief "$work")"
   out="$("$DISPATCH" --cd "$work" --brief-file "$brief" --model default --print-cmd 2>/dev/null)"
-  if printf '%s' "$out" | grep -q 'claude-sonnet-4-6'; then
+  if printf '%s' "$out" | grep -q 'claude-sonnet-5'; then
     pass "$name"
   else
-    fail "$name" "expected claude-sonnet-4-6 in CMD, got: $(printf '%s' "$out" | tail -1)"
+    fail "$name" "expected claude-sonnet-5 in CMD, got: $(printf '%s' "$out" | tail -1)"
   fi
   rm -rf "$work"; rm -f "$brief"
 }
@@ -372,10 +372,10 @@ case_model_alias_sonnet() {
   local work brief out
   work="$(mktemp -d)"; git init -q "$work"; brief="$(_mk_brief "$work")"
   out="$("$DISPATCH" --cd "$work" --brief-file "$brief" --model sonnet --print-cmd 2>/dev/null)"
-  if printf '%s' "$out" | grep -q 'claude-sonnet-4-6'; then
+  if printf '%s' "$out" | grep -q 'claude-sonnet-5'; then
     pass "$name"
   else
-    fail "$name" "expected claude-sonnet-4-6 in CMD, got: $(printf '%s' "$out" | tail -1)"
+    fail "$name" "expected claude-sonnet-5 in CMD, got: $(printf '%s' "$out" | tail -1)"
   fi
   rm -rf "$work"; rm -f "$brief"
 }
@@ -449,14 +449,14 @@ case_effort_flag_invalid_rejected() {
 }
 
 case_model_no_flag_resolves_default() {
-  local name="dispatch/omit --model resolves to claude-sonnet-4-6 via alias table (not CLI built-in)"; should_run "$name" || return 0
+  local name="dispatch/omit --model resolves to claude-sonnet-5 via alias table (not CLI built-in)"; should_run "$name" || return 0
   local work brief out
   work="$(mktemp -d)"; git init -q "$work"; brief="$(_mk_brief "$work")"
   out="$(unset PM_CFG_DEFAULT_MODEL; "$DISPATCH" --cd "$work" --brief-file "$brief" --print-cmd 2>/dev/null)"
-  if printf '%s' "$out" | grep -q -- '--model claude-sonnet-4-6'; then
+  if printf '%s' "$out" | grep -q -- '--model claude-sonnet-5'; then
     pass "$name"
   else
-    fail "$name" "expected --model claude-sonnet-4-6 in CMD (default alias resolved), got: $(printf '%s' "$out" | tail -1)"
+    fail "$name" "expected --model claude-sonnet-5 in CMD (default alias resolved), got: $(printf '%s' "$out" | tail -1)"
   fi
   rm -rf "$work"; rm -f "$brief"
 }
@@ -466,10 +466,10 @@ case_model_pm_cfg_default_model() {
   local work brief out
   work="$(mktemp -d)"; git init -q "$work"; brief="$(_mk_brief "$work")"
   out="$(PM_CFG_DEFAULT_MODEL=sonnet "$DISPATCH" --cd "$work" --brief-file "$brief" --print-cmd 2>/dev/null)"
-  if printf '%s' "$out" | grep -q 'claude-sonnet-4-6'; then
+  if printf '%s' "$out" | grep -q 'claude-sonnet-5'; then
     pass "$name"
   else
-    fail "$name" "expected claude-sonnet-4-6 from PM_CFG_DEFAULT_MODEL=sonnet, got: $(printf '%s' "$out" | tail -1)"
+    fail "$name" "expected claude-sonnet-5 from PM_CFG_DEFAULT_MODEL=sonnet, got: $(printf '%s' "$out" | tail -1)"
   fi
   rm -rf "$work"; rm -f "$brief"
 }

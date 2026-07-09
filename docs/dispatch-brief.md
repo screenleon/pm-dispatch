@@ -503,7 +503,7 @@ Each adapter resolves the alias to its own wire format at dispatch time.
 
 | PM-facing alias | codex wire ID | claude wire ID | opencode wire ID | When to use |
 |---|---|---|---|---|
-| `default` | `gpt-5.5` | `claude-sonnet-4-6` | `opencode/nemotron-3-ultra-free` | All medium/large tasks (omit `--model` or write `model: default`) |
+| `default` | `gpt-5.5` | `claude-sonnet-5` | `opencode/nemotron-3-ultra-free` | All medium/large tasks (omit `--model` or write `model: default`) |
 | `light` | `gpt-5.3-codex-spark` | `claude-haiku-4-5-20251001` | `opencode/deepseek-v4-flash-free` | Small tasks only (see §When to dispatch) |
 
 See `docs/model-tier-policy.md` §Executor-agnostic `light` alias for routing criteria.
@@ -531,13 +531,13 @@ PM short-form model aliases for the claude executor, resolved from `share/claude
 
 | PM-facing alias | Wire-format model ID | reasoning effort |
 |---|---|---|
-| `default` | `claude-sonnet-4-6` | `normal` |
-| `sonnet` | `claude-sonnet-4-6` | `normal` |
+| `default` | `claude-sonnet-5` | `normal` |
+| `sonnet` | `claude-sonnet-5` | `normal` |
 | `light` | `claude-haiku-4-5-20251001` | `normal` |
 | `haiku` | `claude-haiku-4-5-20251001` | `normal` |
 | `opus` | `claude-opus-4-8` | `high` |
 
-Model resolution precedence: `--model` flag > `PM_CFG_DEFAULT_MODEL` (from `~/.pm-dispatch/config` `dispatch.default_model`) > pm-dispatch's own built-in `default` alias (→ `claude-sonnet-4-6` via `share/claude-model-aliases.tsv`), decoupled from the claude CLI's own built-in default. Every alias in these tables is a valid handover `model:` value (`scripts/lib/handover-validate.sh`).
+Model resolution precedence: `--model` flag > `PM_CFG_DEFAULT_MODEL` (from `~/.pm-dispatch/config` `dispatch.default_model`) > pm-dispatch's own built-in `default` alias (→ `claude-sonnet-5` via `share/claude-model-aliases.tsv`), decoupled from the claude CLI's own built-in default. Every alias in these tables is a valid handover `model:` value (`scripts/lib/handover-validate.sh`).
 
 ## Reasoning effort
 
