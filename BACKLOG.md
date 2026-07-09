@@ -108,6 +108,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-449 | 🔵 active | release-verify/test-e2e 對 v0.8.0 新 surface（`pmctl ship`/`pmctl worktree`）無 live 煙測 + run-all-tests 套件註冊完整性 lint（CC-444 收尾發現 test-pmctl-worktree 未註冊，已修；防再漏）+ CI↔run-all parity 斷言（2026-07-06 稽核：24 個本地 suite CI 缺席）（v0.9.0 候選） | ops/test | 2026-07-04 | — | P2 | — |
 | CC-470 | ✅ closed 2026-07-08 | pr-gate sequential 模式逾時全歸零風險 + 慢速測試套件優化：qa-tester 選擇跑全套 run-all-tests 撞上共用 timeout 時，整個 gate session 結果 0 bytes（CC-445 R7 實測）；改逐 reviewer 落地 + 補 test-pmctl-dispatch/pmctl-context.sh 兩處已查明根因的效能修復（2026-07-08） | ops/gate | 2026-07-08 | pr:#383 | P2 | — |
 | CC-471 | ✅ done | spike: codex `pm_command_interface` probe——實測確認 codex CLI 沒有等同 Claude Agent/subagent 呼叫的機制，無法承接 `/pm` 這類互動式 orchestration；`hosts/codex/host.yaml` 該 capability 改記為 confidence: probed（`docs/spikes/CC-471.md`） | arch/install | 2026-07-09 | — | P3 | spike |
+| CC-472 | 🟢 someday | spike: antigravity（`agy` CLI）host 唯讀 probe——比照 CC-436/CC-448 階段 1 模式，實測 command 載入能力 + hook/plugin 機制 + 五個 capability enum 的 provider/confidence 判定，不落地 `hosts/antigravity/host.yaml`；排在 CC-445 通用 install/uninstall dispatcher 之後、與 CC-448 opencode 同批或緊接其後評估（N=3 驗證點） | arch/install | 2026-07-08 | — | P3 | spike |
 | CC-473 | 🟢 someday | 設計 `pmctl pm`：把 `commands/pm.md` 的 orchestration 邏輯（snapshot/handover validation/dispatch-wait 迴圈/discovery routing）抽成 CLI surface，讓 Claude `/pm` 與未來 codex host 呼叫同一份邏輯；範圍明訂為 batch-only（無互動澄清迴圈），承接 CC-471 spike 發現 | arch/install | 2026-07-09 | — | P3 | design |
 
 ---
@@ -838,6 +839,25 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Dependencies**：承接 [[CC-445]] 的 host 安全防護實作；發現回饋進 [[CC-473]] 規劃票。
 
 **See**: `docs/spikes/CC-471.md`
+
+---
+
+## CC-472 — spike: antigravity（`agy`）host 唯讀 probe 🟢 someday
+
+**Problem**：使用者正在跟 agy（antigravity CLI）討論把它接成 pm-dispatch 的一個 host（PM 在該 CLI 內被驅動，而非僅作 executor adapter）。目前完全沒有評估過 agy 屬於哪一類、guard 綁定是否可行。
+
+**Why**：討論過程中釐清一個先前被混淆的區分——**Executor**（背景自動派工、靠 post-verify 機械判定）需要結構化的 JSONL/JQ 可審計輸出；**Host**（人類互動起點）門檻低很多，只要能載入專案 slash command（如 `/pm`）、能在內部 agent 呼叫 Bash/檔案寫入時觸發 `pmctl guard check` 就夠格。`docs/host-contract.md` 的 `guard_bindings` schema 已內建這個分級：`pm_command_interface` 是強制宣告的能力（這才是「算不算 host」的門檻），`command_guard`/`file_guard` 允許合法宣告 `provider: none`（`confidence: probed`/`observed` 代表「已實測、這個 host 結構上就是做不到攔截」，是誠實終態宣告，不是缺陷）。
+
+**Requirement**：比照 [[CC-436]]/[[CC-448]] 階段 1 的唯讀 probe 模式——不落地 `hosts/antigravity/host.yaml`，只實測：
+1. command 載入能力（能否載入 pm-dispatch 的 `/pm` 這類 slash command，或有無等價機制）。
+2. hook/plugin 機制（能否在 Bash/檔案寫入時觸發 `pmctl guard check`）。
+3. 五個 capability enum（`command_guard`/`file_guard`/`session_lifecycle`/`pm_command_interface`/`statusline`）的 provider/confidence 判定。
+
+結論寫 `docs/spikes/CC-472.md`。
+
+**排程**：排在 [[CC-445]] 通用 install/uninstall dispatcher 工作**之後**、與 [[CC-448]] opencode 同批或緊接其後評估——antigravity 若真的接成 host，會是這個抽象的第三個驗證點（N=3）。使用者原話：「他只要是能呼叫pmctl 以及幫我排序內容 其實就可以算是host，只是有些host 沒有辦法限制 有些可以」。
+
+**Dependencies**：與 [[CC-436]]（codex host probe）/[[CC-448]]（opencode host probe）同方法論；N=3 驗證需在 [[CC-445]]/[[CC-448]] 落地後才有意義。
 
 ---
 
