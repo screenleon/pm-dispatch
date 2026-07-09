@@ -111,6 +111,38 @@ if [[ -z "$command_str" ]]; then
   g_deny "tool_input.command empty"
 fi
 
+# Shell-expansion normalization: the denylist below matches literal
+# whitespace ([[:space:]], which already covers real tabs/newlines/CR since
+# bash treats those as ordinary characters in a JSON string, not shell
+# metacharacters at match time). But `$IFS`/`${IFS}` and ANSI-C whitespace
+# escapes (`$'\x20'`, `$'\t'`, `$' '`, ...) are still literal text in
+# command_str at match time — bash only expands them when the string is
+# later *executed*, which happens downstream of this guard, not inside it.
+# A command shaped like `rm${IFS}-rf${IFS}/tmp/x` therefore reached Bash's
+# real word-splitting as `rm -rf /tmp/x` while evading every pattern above
+# because the raw text has no literal space between tokens. Fold the known
+# whitespace-producing spellings into a real space BEFORE denylist matching
+# (matching only — G_TARGET/audit/deny-message text above is built from the
+# original command_str, so this normalization cannot suppress or alter what
+# gets logged, only what gets evaluated against the patterns).
+#
+# This closes the specific reported bypass class, not every conceivable
+# shell-expansion trick: brace expansion (`{rm,-rf,/tmp/x}`), variable
+# indirection (`x=rf; rm -$x`), and `eval`/command-substitution-built
+# commands are NOT normalized here and remain a known, accepted residual gap
+# (same category as the case-sensitivity gap documented below) — a
+# denylist inspecting a single string can never fully replace a real shell
+# parser. Extend this normalization if a new whitespace-producing spelling is
+# found; do not try to make it a general shell evaluator.
+_normalize_for_denylist() {
+  local s="$1"
+  s="${s//\$\{IFS\}/ }"
+  s="${s//\$IFS/ }"
+  # ANSI-C quoted whitespace: $'\x20' $'\x09' $'\x0a' $'\t' $'\n' $' '
+  s="$(sed -E "s/\\\$'(\\\\x20|\\\\x09|\\\\x0a|\\\\t|\\\\n| )'/ /g" <<<"$s")"
+  printf '%s' "$s"
+}
+
 # Denylist: extended-regex patterns (bash =~), matched case-sensitively (see
 # the match loop below for why). Each entry pairs a pattern with the one-line
 # reason it exists.
@@ -168,8 +200,9 @@ declare -a DENY_PATTERNS=(
 # distinguish a safe form from a destructive one (git branch -D force-delete
 # vs -d safe-delete; chmod -R vs -r). A command spelled in unusual case (e.g.
 # `SUDO`) evades this v1 denylist — a known, accepted gap, not a silent one.
+_normalized_command_str="$(_normalize_for_denylist "$command_str")"
 for _pattern in "${DENY_PATTERNS[@]}"; do
-  if [[ "$command_str" =~ $_pattern ]]; then
+  if [[ "$_normalized_command_str" =~ $_pattern ]]; then
     g_deny "matches denylisted pattern: $_pattern"
   fi
 done

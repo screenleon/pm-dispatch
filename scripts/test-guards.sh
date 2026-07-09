@@ -3489,6 +3489,25 @@ run_case "pm-bash: git -c foo=bar branch -D (global option before subcommand, pr
   '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"git -c foo=bar branch -D feat/old"}}' \
   "denylisted pattern"
 
+run_case "pm-bash: rm\${IFS}-rf\${IFS}/tmp/x (IFS brace-expansion bypass) → deny" 2 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"rm${IFS}-rf${IFS}/tmp/x"}}' \
+  "denylisted pattern"
+
+run_case "pm-bash: rm\$IFS-rf\$IFS/tmp/x (bare IFS bypass) → deny" 2 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"rm$IFS-rf$IFS/tmp/x"}}' \
+  "denylisted pattern"
+
+run_case "pm-bash: rm\$'"'"'\\x20'"'"'-rf\$'"'"'\\x20'"'"'/tmp/x (ANSI-C quoted whitespace bypass) → deny" 2 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"rm$'"'"'\\x20'"'"'-rf$'"'"'\\x20'"'"'/tmp/x"}}' \
+  "denylisted pattern"
+
+run_case "pm-bash: git push \${IFS}--force (IFS bypass on git push) → deny" 2 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"git push origin main${IFS}--force"}}' \
+  "denylisted pattern"
+
+run_case "pm-bash: echo \$IFS (benign command referencing IFS var) → allow" 0 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"echo $IFS"}}'
+
 run_case "pm-bash: rm -r alone (no force) → allow" 0 "$PMBASHHOOK" \
   '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"rm -r /tmp/foo"}}'
 
