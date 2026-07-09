@@ -107,6 +107,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-448 | 🔵 active | opencode host support：可行性 probe → `hosts/opencode/host.yaml` → install/doctor 接線；host 抽象 N=2 驗收（v0.9.0，2026-07-06 自 v1.0-rc 提前；依賴 CC-438/445；umbrella: CC-333；DECISIONS 2026-07-04+2026-07-06） | arch/install | 2026-07-04 | — | P2 | design |
 | CC-449 | 🔵 active | release-verify/test-e2e 對 v0.8.0 新 surface（`pmctl ship`/`pmctl worktree`）無 live 煙測 + run-all-tests 套件註冊完整性 lint（CC-444 收尾發現 test-pmctl-worktree 未註冊，已修；防再漏）+ CI↔run-all parity 斷言（2026-07-06 稽核：24 個本地 suite CI 缺席）（v0.9.0 候選） | ops/test | 2026-07-04 | — | P2 | — |
 | CC-470 | ✅ closed 2026-07-08 | pr-gate sequential 模式逾時全歸零風險 + 慢速測試套件優化：qa-tester 選擇跑全套 run-all-tests 撞上共用 timeout 時，整個 gate session 結果 0 bytes（CC-445 R7 實測）；改逐 reviewer 落地 + 補 test-pmctl-dispatch/pmctl-context.sh 兩處已查明根因的效能修復（2026-07-08） | ops/gate | 2026-07-08 | pr:#383 | P2 | — |
+| CC-471 | ✅ done | spike: codex `pm_command_interface` probe——實測確認 codex CLI 沒有等同 Claude Agent/subagent 呼叫的機制，無法承接 `/pm` 這類互動式 orchestration；`hosts/codex/host.yaml` 該 capability 改記為 confidence: probed（`docs/spikes/CC-471.md`） | arch/install | 2026-07-09 | — | P3 | spike |
+| CC-473 | 🟢 someday | 設計 `pmctl pm`：把 `commands/pm.md` 的 orchestration 邏輯（snapshot/handover validation/dispatch-wait 迴圈/discovery routing）抽成 CLI surface，讓 Claude `/pm` 與未來 codex host 呼叫同一份邏輯；範圍明訂為 batch-only（無互動澄清迴圈），承接 CC-471 spike 發現 | arch/install | 2026-07-09 | — | P3 | design |
 
 ---
 
@@ -822,6 +824,35 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 3. 回歸測試覆蓋兩種 gate 派工模式（sequential/parallel）在最小化 PATH 環境下仍能找到 `pmctl`。
 
 **Dependencies**：與 [[CC-445]] 無關（後者是 PM 本身跑在 codex host 上；本票是 codex 被派去當 reviewer 時的沙盒環境問題）。
+
+---
+
+## CC-471 — spike: codex `pm_command_interface` probe ✅ 2026-07-09
+
+**Problem**：[[CC-445]] 送出 codex-host command-guard write path 並在第 21 輪 pr-gate GO 後，使用者問「如果我要在 codex 上安裝，還缺什麼」——盤點發現 `hosts/codex/host.yaml` 的 `pm_command_interface` capability 從未被評估過（`confidence: assumed`），也就是「codex 到底能不能像 Claude 的 `/pm` 一樣呼叫 project-pm」這件事完全沒驗證過。
+
+**方法**：使用者直接啟動 codex 實測——focused suites（`test-host-write-codex.sh` 31、`test-pmctl-guard.sh --filter pm-prebash` 7、`test-doctor.sh --filter codex` 12、`test-guards.sh --filter pm-bash` 84）+ 全套 `run-all-tests.sh`（72 綠）+ 手動 smoke（臨時 CODEX_HOME 裝 hook、doctor 回報 wired、餵 payload 驗證 allow/deny）+ 真實 `~/.codex/hooks.json` 短暫接線後跑真實 `codex exec`（allow path 執行成功、deny path 被 PreToolUse hook 擋下），測完用 `uninstall-guards-codex.sh` 移除，repo 保持乾淨。
+
+**Outcome**（`docs/spikes/CC-471.md`）：CC-445 的 command-guard write path 功能完全正確，無新 bug。但確認 codex CLI **沒有**等同 Claude Code Agent/subagent 呼叫的機制——`/pm` 依賴的「即時開一個 project-pm subagent、可暫停問澄清問題、再收 handover」這整套互動迴圈，codex 沒有對等入口。codex 目前能呼叫的只有底層 `pmctl dispatch run/wait`、`pmctl gate run`、`pmctl context query` 等既有 CLI 原語，不是 `/pm`-shaped 的體驗。`hosts/codex/host.yaml` 的 `pm_command_interface` 已改記為 `confidence: probed`（已評估、確認不支援，非未評估）。後續規劃見 [[CC-473]]。
+
+**Dependencies**：承接 [[CC-445]] 的 host 安全防護實作；發現回饋進 [[CC-473]] 規劃票。
+
+**See**: `docs/spikes/CC-471.md`
+
+---
+
+## CC-473 — 設計 `pmctl pm` CLI surface 🟢 someday
+
+**Problem**：[[CC-471]] spike 確認 codex 沒有 Claude Agent/subagent 呼叫機制，無法承接 `/pm` 的互動式 orchestration。要讓非 Claude host（codex、未來的 opencode/antigravity）也能用到 PM orchestration（snapshot 產生、handover validation、dispatch/wait 迴圈、discovery routing），需要一個不依賴 Claude harness 專屬工具（`Agent`/`AskUserQuestion`）的共用入口。
+
+**Why**：`commands/pm.md` 目前的 orchestration 邏輯只存在於 Claude command markdown 裡，若每個新 host 都各自複製一份邏輯，會變成 architecture-reviewer 一再點名的「host-specific 分支各自維護、彼此漂移」問題（同類前例：[[CC-445]] 的 codex install/uninstall 分支）。
+
+**Requirement**（規劃階段，粗刻）：
+1. 把 `commands/pm.md` 的 snapshot 擷取、handover 驗證、dispatch/wait 排程邏輯抽成 `pmctl pm` CLI 指令，Claude `/pm` 與未來的 codex 呼叫同一份實作。
+2. **明確範圍邊界**：`pmctl pm` 對非 Claude host 只提供 batch-only 模式（一次性餵完整需求、拿一次性 handover/結果），不做互動式澄清迴圈——這個縮水必須是設計時就聲明的限制，不是事後才發現的落差。Claude 自己的 `/pm` 可以繼續在同一套底層原語之上疊加 `Agent`/`AskUserQuestion` 的互動層。
+3. 需要定義：當一個請求本該觸發 Claude `/pm` 的 uncertainty routing（discovery fan-out、範圍不明確的問題）時，batch-only 模式下要怎麼降級處理（例如預設走最保守路線並附上理由，而不是卡住等一個沒人能回答的問題）。
+
+**Dependencies**：承接 [[CC-471]] spike 發現。與 [[CC-448]]（opencode host）並行——opencode 的 `pm_command_interface` 是獨立問題，不能假設跟 codex 一樣不支援，需要各自 probe 確認。
 
 ---
 
