@@ -110,6 +110,10 @@ jobs:
           scandir: ./scripts
           ignore_names: >-
             executor-router.sh
+            guard-pm-bash.sh
+            install-guards-codex.sh
+            uninstall-guards-codex.sh
+            test-host-write-codex.sh
             gate-result-verify.sh
             pmctl-adapter.sh
             pmctl-backlog.sh

@@ -33,6 +33,16 @@ behaves as a dispatched executor.
 - **No host-specific branches in core.** Adding a host means adding a
   `hosts/<name>/` directory (manifest + doctor module), not editing core
   scripts. This mirrors the executor-adapter acceptance rule.
+  - **Recorded transitional exception**: `install.sh`/`uninstall.sh` currently
+    call a codex-named install/uninstall script directly as an opt-in step,
+    ahead of a manifest-driven per-host dispatch loop. This is a deliberate,
+    incremental first slice — not a silent drift from the rule — kept in
+    place until a second host reaches the same install-write-path milestone
+    and the loop can be generalized against two real instances instead of
+    one. `scripts/lib/host-manifest.sh`'s header comment documents the same
+    boundary from the manifest-reader side. Any *new* host-specific branch
+    beyond this recorded one is not covered by this exception and should be
+    treated as a rule violation.
 - **No maintainer-local layout assumptions.** Target paths are expressed via
   the host's own home variable (`$CODEX_HOME`, `$XDG_CONFIG_HOME`, …), never
   via a hard-coded user directory.

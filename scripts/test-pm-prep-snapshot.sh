@@ -241,13 +241,47 @@ fi
 #   1. Compute the highest CC-NNN across BOTH BACKLOG.md and BACKLOG-ARCHIVE.md.
 #   2. Run the snapshot and read backlog_next_id.
 #   3. Assert next-id == global max + 1 (strictly greater than any archived ID).
+#
+# The oracle below mirrors pm-prep-snapshot.sh's own scanning contract —
+# BACKLOG.md `## Index` table rows (`| CC-NNN |`) and BACKLOG-ARCHIVE.md
+# `## CC-NNN` headings — rather than a raw `grep -oE 'CC-[0-9]+'` over the
+# whole file. A raw full-text grep also matches CC-NNN mentioned in ticket
+# BODY PROSE (e.g. a forward reference to a not-yet-created future ticket
+# number, or a cross-repo/backlog ID mentioned for context), which is not an
+# ID the product's own next-id derivation treats as "in use" — that mismatch
+# made this oracle fail independently of any real next-id regression.
 if should_run "next-id-includes-archive"; then
   name="next-id-includes-archive"
   out="$tmp_root/next-id.md"
   run_snapshot "$out" >/dev/null
   next_id_num="$(awk -F'CC-' '/^backlog_next_id:/ { n=$2+0; print n }' "$out")"
-  global_max="$(cat "$REPO_ROOT/BACKLOG.md" "$REPO_ROOT/BACKLOG-ARCHIVE.md" \
-    | grep -oE 'CC-[0-9]+' | sed 's/CC-0*//' | sort -n | tail -1)"
+  backlog_index_max="$(awk -F'|' '
+    /^## Index/ { in_index=1; next }
+    in_index && /^## / { exit }
+    in_index && /^\|/ {
+      candidate=$2
+      gsub(/^[[:space:]]+|[[:space:]]+$/,"",candidate)
+      if (candidate ~ /^CC-[0-9]/) {
+        n=candidate; sub(/^CC-0*/, "", n); n=n+0
+        if (n > max) max=n
+      }
+    }
+    END { print max+0 }
+  ' "$REPO_ROOT/BACKLOG.md")"
+  archive_max="$(awk '
+    /^## CC-[0-9]/ {
+      line=$0
+      sub(/^## CC-0*/, "", line)
+      sub(/[^0-9].*/, "", line)
+      n=line+0
+      if (n > max) max=n
+    }
+    END { print max+0 }
+  ' "$REPO_ROOT/BACKLOG-ARCHIVE.md")"
+  global_max="$backlog_index_max"
+  if [ "$archive_max" -gt "$global_max" ]; then
+    global_max="$archive_max"
+  fi
   if [ -z "$next_id_num" ]; then
     fail "$name" "could not parse backlog_next_id from snapshot"
   elif [ "$next_id_num" -gt "$global_max" ]; then

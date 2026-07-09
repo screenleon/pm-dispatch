@@ -104,13 +104,20 @@ guard_bindings:
     coverage: none
     stability: evolving
     confidence: assumed
+  # Probed end-to-end (see docs/spikes/ for the probe writeup): codex has
+  # no equivalent of Claude Code's Agent/subagent invocation, so there is no
+  # way for a codex session to open a live project-pm subagent and exchange
+  # turns with it the way commands/pm.md does. codex CAN call the
+  # lower-level pmctl primitives directly (pmctl dispatch run/wait, pmctl
+  # gate run, pmctl context query, ...), but that is not a `/pm`-shaped
+  # entry point — this is an evaluated absence, not an unevaluated gap.
   - capability: pm_command_interface
     binding_form: none
     provider: none
     enforcement: none
     coverage: none
     stability: evolving
-    confidence: assumed
+    confidence: probed
   - capability: statusline
     binding_form: none
     provider: none

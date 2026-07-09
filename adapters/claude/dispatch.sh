@@ -262,7 +262,11 @@ if [[ "$EXIT" -eq 0 && -s "$TRACE" ]]; then
   _CLAUDE_TOKENS=$(jq -r 'select(.type == "result") | ((.usage.input_tokens // 0) + (.usage.output_tokens // 0))' "$TRACE" 2>/dev/null | tail -1 || echo 0)
   if [[ "$_CLAUDE_TOKENS" =~ ^[0-9]+$ && "$_CLAUDE_TOKENS" -gt 0 ]]; then
     _NOTE="auto: $(basename "$WORK_DIR")"
-    bash "${HOME}/.claude/scripts/log-usage.sh" "claude_dispatch" "$_CLAUDE_TOKENS" "$_NOTE" "" "claude" 2>>"$STDERR_LOG" || \
+    # PM_CFG_USAGE_LOG_PATH (dispatch.usage_log_path in ~/.pm-dispatch/config,
+    # exported by pmctl-dispatch.sh) overrides the claude-host-assumed default
+    # path below — set it when the PM's own host is not claude
+    # (docs/host-contract.md).
+    bash "${PM_CFG_USAGE_LOG_PATH:-${HOME}/.claude/scripts/log-usage.sh}" "claude_dispatch" "$_CLAUDE_TOKENS" "$_NOTE" "" "claude" 2>>"$STDERR_LOG" || \
       echo "[$(date -Is)] claude-dispatch: usage log failed (tokens=$_CLAUDE_TOKENS)" >> "$STDERR_LOG"
   fi
 fi

@@ -30,6 +30,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-466 | 🔵 active | 記憶卡片生命週期閉環：expires_at 執行 + 關窗式 supersede + usage sidecar 休眠偵測 + doctor→distill 接線（2026-07-07 記憶系統分析 + 外部研究 Graphiti/mcp-memory-service） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-467 | 🟢 someday | `pmctl memory stats`：注入效益可視化——注入 bytes/卡片命中分佈/從未命中卡/episode 填寫率，回答「記憶有跟沒有差在哪」（2026-07-07；業界僅離線 recall 評測，無 per-injection 遙測） | DX/memory | 2026-07-07 | — | P3 | retrieval |
 | CC-468 | 🟢 someday | dispatch brief 帶 memory 約束：brief authoring/auto-pack 對 memory plane 做 pointer-only 查詢，feedback 卡約束自動浮上 brief（2026-07-07；auto-pack 現為 repo-only by construction） | ops/memory | 2026-07-07 | — | P3 | retrieval |
+| CC-469 | 🔵 active | codex reviewer sandbox 找不到 pmctl：`codex exec --sandbox workspace-write` 派工 reviewer 時，sandbox 內裸呼叫 `pmctl guard check` 回報 command not found，導致該 reviewer 中止、gate 產不出結果檔案（2026-07-07 平行模式 gate run 實測發現） | ops/gate | 2026-07-07 | — | P2 | — |
 | CC-011 | 🟢 someday | sync-memory.sh + install 選項：symlink memory 到雲端資料夾實現跨裝置共用 | ux/memory | 2026-05-14 | — | — | — |
 | CC-012 | 🟢 someday | SessionStart hook：session 啟動時 pull 最新 memory（git/rsync）確保跨裝置同步 | ux/memory | 2026-05-14 | — | — | — |
 | CC-014 | ✅ closed 2026-07-02 | repo 通用 worktree 平行開發工具：建立/清理 worktree + using-git-worktrees skill。v0.8.0 Phase 4 | arch | 2026-05-14 | pr:#358 | — | — |
@@ -106,6 +107,9 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-448 | 🔵 active | opencode host support：可行性 probe → `hosts/opencode/host.yaml` → install/doctor 接線；host 抽象 N=2 驗收（v0.9.0，2026-07-06 自 v1.0-rc 提前；依賴 CC-438/445；umbrella: CC-333；DECISIONS 2026-07-04+2026-07-06） | arch/install | 2026-07-04 | — | P2 | design |
 | CC-449 | 🔵 active | release-verify/test-e2e 對 v0.8.0 新 surface（`pmctl ship`/`pmctl worktree`）無 live 煙測 + run-all-tests 套件註冊完整性 lint（CC-444 收尾發現 test-pmctl-worktree 未註冊，已修；防再漏）+ CI↔run-all parity 斷言（2026-07-06 稽核：24 個本地 suite CI 缺席）（v0.9.0 候選） | ops/test | 2026-07-04 | — | P2 | — |
 | CC-470 | ✅ closed 2026-07-08 | pr-gate sequential 模式逾時全歸零風險 + 慢速測試套件優化：qa-tester 選擇跑全套 run-all-tests 撞上共用 timeout 時，整個 gate session 結果 0 bytes（CC-445 R7 實測）；改逐 reviewer 落地 + 補 test-pmctl-dispatch/pmctl-context.sh 兩處已查明根因的效能修復（2026-07-08） | ops/gate | 2026-07-08 | pr:#383 | P2 | — |
+| CC-471 | ✅ done | spike: codex `pm_command_interface` probe——實測確認 codex CLI 沒有等同 Claude Agent/subagent 呼叫的機制，無法承接 `/pm` 這類互動式 orchestration；`hosts/codex/host.yaml` 該 capability 改記為 confidence: probed（`docs/spikes/CC-471.md`） | arch/install | 2026-07-09 | — | P3 | spike |
+| CC-472 | 🟢 someday | spike: antigravity（`agy` CLI）host 唯讀 probe——比照 CC-436/CC-448 階段 1 模式，實測 command 載入能力 + hook/plugin 機制 + 五個 capability enum 的 provider/confidence 判定，不落地 `hosts/antigravity/host.yaml`；排在 CC-445 通用 install/uninstall dispatcher 之後、與 CC-448 opencode 同批或緊接其後評估（N=3 驗證點） | arch/install | 2026-07-08 | — | P3 | spike |
+| CC-473 | 🟢 someday | 設計 `pmctl pm`：把 `commands/pm.md` 的 orchestration 邏輯（snapshot/handover validation/dispatch-wait 迴圈/discovery routing）抽成 CLI surface，讓 Claude `/pm` 與未來 codex host 呼叫同一份邏輯；範圍明訂為 batch-only（無互動澄清迴圈），承接 CC-471 spike 發現 | arch/install | 2026-07-09 | — | P3 | design |
 
 ---
 
@@ -381,6 +385,16 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 **Dependencies**：依賴 [[CC-436]]（payload 表達力）、[[CC-438]]（schema）；與 [[CC-437]] 的 doctor host module 介面對齊。write path 必須 host-generic（由 `hosts/*/host.yaml` 驅動，非 codex 特例）——[[CC-448]] opencode host 是本票抽象的 N=2 驗收。umbrella [[CC-333]]。v0.9.0 候選。
 **See**: `docs/spikes/CC-381.md`、DECISIONS.md 2026-07-04
+
+**Update 2026-07-08（rescope：codex-only 切片，host-generic dispatcher 延後）**：pr-gate 第 17 輪（critic/qa-tester/architecture-reviewer 三方）指出目前實作仍是 codex 特例——`install.sh`/`uninstall.sh` 直接呼叫 `scripts/{install,uninstall}-guards-codex.sh`，尚未有 manifest 驅動的通用 install/uninstall dispatcher；而本票 Dependencies 明訂的 N=2 驗收依賴 [[CC-448]]（opencode host），該票尚未完成，此刻本質上無法真正驗證「非 codex 特例」的抽象是否正確。使用者拍板：本 PR 明確定位為 **CC-445 第一刀（codex 實裝切片）**，不宣稱達成 host-generic 驗收；本票維持 active，通用 install/uninstall dispatcher（連同 [[CC-448]] N=2 驗證）留待 opencode host 落地後同批處理。`scripts/lib/host-manifest.sh` 檔頭註解已誠實記載這個過渡狀態（manifest 消除的是「facts 寫死在 per-host 腳本裡」，不是「per-host 腳本本身要不要存在」），本次僅需在此追加決策記錄，不需要再改程式碼。critic/architecture-reviewer 的 block-soft 已由使用者明確接受 override；qa-tester 的兩個缺測試 finding（`host_manifest_names`/`host_manifest_scalar` 無直接測試）已修（`scripts/test-host-write-codex.sh` 補 7 個案例）。
+
+**Update 2026-07-08（antigravity/agy host 候選，唯讀 probe 併入本票後續範圍）**：使用者正在跟 agy（antigravity CLI）討論把它接成 pm-dispatch 的一個 host，過程中釐清一個先前被混淆的區分——**Executor**（背景自動派工、靠 post-verify 機械判定）需要結構化的 JSONL/JQ 可審計輸出；**Host**（人類互動起點，PM 在該 CLI 內被驅動）門檻低很多，只要能載入專案 slash command（如 `/pm`）、能在內部 agent 呼叫 Bash/檔案寫入時觸發 `pmctl guard check` 就夠格。`docs/host-contract.md` 的 `guard_bindings` schema 其實已內建這個分級：`pm_command_interface` 是強制宣告的能力（這才是「算不算 host」的門檻），`command_guard`/`file_guard` 允許合法宣告 `provider: none`（`confidence: probed`/`observed` 代表「已實測、這個 host 結構上就是做不到攔截」，是誠實終態宣告，不是缺陷）。agy 目前完全沒被評估過屬於哪一類、guard 綁定是否可行；比照 [[CC-436]]/[[CC-448]] 階段 1 的唯讀 probe 模式（不落地 `hosts/antigravity/host.yaml`，只實測 command 載入能力 + hook/plugin 機制 + 五個 capability enum 的 provider/confidence 判定，結論寫 `docs/spikes/CC-472.md`），排在本票的通用 install/uninstall dispatcher 工作**之後**、與 [[CC-448]] opencode 同批或緊接其後評估——antigravity 若真的接成 host，會是這個抽象的第三個驗證點（N=3），使用者原話：「他只要是能呼叫pmctl 以及幫我排序內容 其實就可以算是host，只是有些host 沒有辦法限制 有些可以」。
+
+**Update 2026-07-09（pr-gate 第 18 輪，security/risk block 修復 + architecture block-soft 例外落地記錄）**：security-reviewer 與 risk-reviewer 都抓到同一個真實 bug——`scripts/guard-pm-bash.sh` 的 destructive-command denylist 用 whitespace-dependent 正則比對 raw command 字串，會被 shell expansion 形式繞過（`rm${IFS}-rf${IFS}/tmp/x` 這類命令在 guard 比對時字面上沒有空白，但 Bash 執行時把 `${IFS}` 展開成分隔符，等同 `rm -rf /tmp/x`）；已修：新增 `_normalize_for_denylist`（`scripts/guard-pm-bash.sh`），比對前先把 `$IFS`/`${IFS}`/ANSI-C 空白轉義（`$'\x20'` 等）摺疊成字面空白，僅影響 denylist 判斷，不影響 audit/deny 訊息使用的原始字串；`scripts/test-guards.sh` 補 5 個回歸案例（IFS 花括號展開、bare `$IFS`、ANSI-C quoting、git push 變體、以及一個確認正常引用 `$IFS` 的指令不被誤擋的 allow case）。明確接受的殘留缺口（比照既有 case-sensitivity 缺口的記錄風格）：brace expansion（`{rm,-rf,/tmp/x}`）、變數間接展開、`eval`/command substitution 組出的指令仍可繞過——單一字串 denylist 本質上無法取代真正的 shell parser。architecture-reviewer 的 block-soft（`install.sh`/`uninstall.sh` codex 特例分支）是 R17 已由使用者拍板 override 的同一個 finding 重複出現；本輪把該例外正式寫入 `docs/host-contract.md`「No host-specific branches in core」設計規則下，作為可查詢的 recorded exception，而非僅存在對話記錄裡，降低往後每輪重複觸發同一個已決策問題的成本。`bash scripts/test-guards.sh` 283 綠（原 278 + 新增 5）。
+
+**Update 2026-07-09（pr-gate 第 19 輪，quote/backslash 繞過 + uninstall malformed-JSON 中止修復）**：改用 `pmctl gate run --test-cmd` 讓 pre-flight 自動跑 `run-all-tests.sh`（test_suite: pass），這輪三個新 finding：(1) security-reviewer 找到同一 denylist 的第二種繞過——`r'm' -rf /tmp/x`（quote-split token 重組）與 `r\m -rf /tmp/x`（單字元 backslash escape）在比對時字面上不含 `rm` 子字串，但 Bash 執行時引號/跳脫字元被移除後就是 `rm -rf /tmp/x`；`_normalize_for_denylist` 加一段 quote-strip（移除 `'`/`"`）+ backslash-collapse（`\X`→`X`），僅影響方向是讓比對「更容易命中」而非更寬鬆，`scripts/test-guards.sh` 補 4 案例（quote-split rm、backslash-escape rm、quote-split git push flag、一個確認 `git commit -m "hello world"` 這種正常帶空白引號參數不被誤擋的 allow case）。(2)(3) critic/qa-tester/architecture-reviewer/risk-reviewer 都指出 `uninstall.sh` 現在無條件呼叫 `scripts/uninstall-guards-codex.sh`，若使用者的 `$CODEX_HOME/hooks.json` 本來就損毀（跟本 checkout 是否曾裝過 codex guard 無關），`jq` 在 `set -e` 下會直接中止整個 uninstall；已修：呼叫既有 jq 轉換前先 `jq empty` 驗證，非合法 JSON 就印警告後 `exit 0` 跳過（不修改該檔案），`scripts/test-host-write-codex.sh` 補 `uninstall-guards-codex-malformed-hooks-json-skips-not-errors` 案例（31 綠，原 30）。`bash scripts/test-guards.sh` 287 綠（原 283 + 新增 4）。
+
+**Update 2026-07-09（pr-gate 第 21 輪：GO）**：第 20 輪 pre-flight fail-fast 擋在 `test-pmctl-task` 一個並發競態測試（timing-sensitive，單獨重跑與全套件重跑皆綠，確認與本次改動無關）；重送第 21 輪，critic/qa-tester/architecture-reviewer/security-reviewer/risk-reviewer 五方全數 approve/pass，無 finding。R18-R19 的三個真實修復（IFS/ANSI-C 繞過、quote-split/backslash 繞過、uninstall malformed-JSON 中止）與 architecture 例外記錄均獲確認。本票 codex 實裝切片（第一刀）至此收斂為 GO，待使用者確認後 push + 開 PR。
 
 ## CC-446 — v1.0 契約凍結：stable/experimental 分級 + SemVer/deprecation 政策 🔵 active
 
@@ -796,6 +810,69 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 3. 零命中時不加空區塊（比照 `auto_context:` 現行語意）；查詢失敗 fail-open 不阻斷 dispatch。
 
 **Cross-link**: [[CC-466]]。
+
+---
+
+## CC-469 — codex reviewer sandbox 找不到 pmctl 🔵 active
+
+**Problem**：`pmctl gate run --parallel`（或任何以 codex 為 reviewer 的派工）啟動 `codex exec --sandbox workspace-write` 後，reviewer brief 內裸呼叫 `pmctl guard check ...` 回報 `pmctl: command not found`，該 reviewer 未產出結果、整個 gate 拿不到完整結論。2026-07-07 一次平行模式 gate run 實測重現，另一個 session 稍早也踩過同症狀。
+
+**Why**：目前 `pmctl` 裸指令慣例是為了讓 Claude 的 permission-allow 前綴比對成立而設計；同一套「裸指令」假設套用到 codex sandbox 執行環境時可能失效——`codex exec` 的沙盒子行程未必繼承互動 shell 的完整 PATH（尤其 `~/.local/bin`），根因尚未確認。連續在兩個獨立情境命中，非偶發。
+
+**Requirement**（待調查後定案，此為粗刻）：
+1. 確認 `codex exec --sandbox workspace-write` 子行程實際繼承的 PATH/env——是否真的漏了 `~/.local/bin`，或另有原因（cwd、shell 種類等）。
+2. 依調查結果選擇修法：(a) codex-dispatch.sh 派工前顯式帶入/保留 PATH；或 (b) reviewer brief 對 `pmctl` 呼叫改用可靠的絕對路徑解析（不破壞既有 Claude 端裸指令慣例）。
+3. 回歸測試覆蓋兩種 gate 派工模式（sequential/parallel）在最小化 PATH 環境下仍能找到 `pmctl`。
+
+**Dependencies**：與 [[CC-445]] 無關（後者是 PM 本身跑在 codex host 上；本票是 codex 被派去當 reviewer 時的沙盒環境問題）。
+
+---
+
+## CC-471 — spike: codex `pm_command_interface` probe ✅ 2026-07-09
+
+**Problem**：[[CC-445]] 送出 codex-host command-guard write path 並在第 21 輪 pr-gate GO 後，使用者問「如果我要在 codex 上安裝，還缺什麼」——盤點發現 `hosts/codex/host.yaml` 的 `pm_command_interface` capability 從未被評估過（`confidence: assumed`），也就是「codex 到底能不能像 Claude 的 `/pm` 一樣呼叫 project-pm」這件事完全沒驗證過。
+
+**方法**：使用者直接啟動 codex 實測——focused suites（`test-host-write-codex.sh` 31、`test-pmctl-guard.sh --filter pm-prebash` 7、`test-doctor.sh --filter codex` 12、`test-guards.sh --filter pm-bash` 84）+ 全套 `run-all-tests.sh`（72 綠）+ 手動 smoke（臨時 CODEX_HOME 裝 hook、doctor 回報 wired、餵 payload 驗證 allow/deny）+ 真實 `~/.codex/hooks.json` 短暫接線後跑真實 `codex exec`（allow path 執行成功、deny path 被 PreToolUse hook 擋下），測完用 `uninstall-guards-codex.sh` 移除，repo 保持乾淨。
+
+**Outcome**（`docs/spikes/CC-471.md`）：CC-445 的 command-guard write path 功能完全正確，無新 bug。但確認 codex CLI **沒有**等同 Claude Code Agent/subagent 呼叫的機制——`/pm` 依賴的「即時開一個 project-pm subagent、可暫停問澄清問題、再收 handover」這整套互動迴圈，codex 沒有對等入口。codex 目前能呼叫的只有底層 `pmctl dispatch run/wait`、`pmctl gate run`、`pmctl context query` 等既有 CLI 原語，不是 `/pm`-shaped 的體驗。`hosts/codex/host.yaml` 的 `pm_command_interface` 已改記為 `confidence: probed`（已評估、確認不支援，非未評估）。後續規劃見 [[CC-473]]。
+
+**Dependencies**：承接 [[CC-445]] 的 host 安全防護實作；發現回饋進 [[CC-473]] 規劃票。
+
+**See**: `docs/spikes/CC-471.md`
+
+---
+
+## CC-472 — spike: antigravity（`agy`）host 唯讀 probe 🟢 someday
+
+**Problem**：使用者正在跟 agy（antigravity CLI）討論把它接成 pm-dispatch 的一個 host（PM 在該 CLI 內被驅動，而非僅作 executor adapter）。目前完全沒有評估過 agy 屬於哪一類、guard 綁定是否可行。
+
+**Why**：討論過程中釐清一個先前被混淆的區分——**Executor**（背景自動派工、靠 post-verify 機械判定）需要結構化的 JSONL/JQ 可審計輸出；**Host**（人類互動起點）門檻低很多，只要能載入專案 slash command（如 `/pm`）、能在內部 agent 呼叫 Bash/檔案寫入時觸發 `pmctl guard check` 就夠格。`docs/host-contract.md` 的 `guard_bindings` schema 已內建這個分級：`pm_command_interface` 是強制宣告的能力（這才是「算不算 host」的門檻），`command_guard`/`file_guard` 允許合法宣告 `provider: none`（`confidence: probed`/`observed` 代表「已實測、這個 host 結構上就是做不到攔截」，是誠實終態宣告，不是缺陷）。
+
+**Requirement**：比照 [[CC-436]]/[[CC-448]] 階段 1 的唯讀 probe 模式——不落地 `hosts/antigravity/host.yaml`，只實測：
+1. command 載入能力（能否載入 pm-dispatch 的 `/pm` 這類 slash command，或有無等價機制）。
+2. hook/plugin 機制（能否在 Bash/檔案寫入時觸發 `pmctl guard check`）。
+3. 五個 capability enum（`command_guard`/`file_guard`/`session_lifecycle`/`pm_command_interface`/`statusline`）的 provider/confidence 判定。
+
+結論寫 `docs/spikes/CC-472.md`。
+
+**排程**：排在 [[CC-445]] 通用 install/uninstall dispatcher 工作**之後**、與 [[CC-448]] opencode 同批或緊接其後評估——antigravity 若真的接成 host，會是這個抽象的第三個驗證點（N=3）。使用者原話：「他只要是能呼叫pmctl 以及幫我排序內容 其實就可以算是host，只是有些host 沒有辦法限制 有些可以」。
+
+**Dependencies**：與 [[CC-436]]（codex host probe）/[[CC-448]]（opencode host probe）同方法論；N=3 驗證需在 [[CC-445]]/[[CC-448]] 落地後才有意義。
+
+---
+
+## CC-473 — 設計 `pmctl pm` CLI surface 🟢 someday
+
+**Problem**：[[CC-471]] spike 確認 codex 沒有 Claude Agent/subagent 呼叫機制，無法承接 `/pm` 的互動式 orchestration。要讓非 Claude host（codex、未來的 opencode/antigravity）也能用到 PM orchestration（snapshot 產生、handover validation、dispatch/wait 迴圈、discovery routing），需要一個不依賴 Claude harness 專屬工具（`Agent`/`AskUserQuestion`）的共用入口。
+
+**Why**：`commands/pm.md` 目前的 orchestration 邏輯只存在於 Claude command markdown 裡，若每個新 host 都各自複製一份邏輯，會變成 architecture-reviewer 一再點名的「host-specific 分支各自維護、彼此漂移」問題（同類前例：[[CC-445]] 的 codex install/uninstall 分支）。
+
+**Requirement**（規劃階段，粗刻）：
+1. 把 `commands/pm.md` 的 snapshot 擷取、handover 驗證、dispatch/wait 排程邏輯抽成 `pmctl pm` CLI 指令，Claude `/pm` 與未來的 codex 呼叫同一份實作。
+2. **明確範圍邊界**：`pmctl pm` 對非 Claude host 只提供 batch-only 模式（一次性餵完整需求、拿一次性 handover/結果），不做互動式澄清迴圈——這個縮水必須是設計時就聲明的限制，不是事後才發現的落差。Claude 自己的 `/pm` 可以繼續在同一套底層原語之上疊加 `Agent`/`AskUserQuestion` 的互動層。
+3. 需要定義：當一個請求本該觸發 Claude `/pm` 的 uncertainty routing（discovery fan-out、範圍不明確的問題）時，batch-only 模式下要怎麼降級處理（例如預設走最保守路線並附上理由，而不是卡住等一個沒人能回答的問題）。
+
+**Dependencies**：承接 [[CC-471]] spike 發現。與 [[CC-448]]（opencode host）並行——opencode 的 `pm_command_interface` 是獨立問題，不能假設跟 codex 一樣不支援，需要各自 probe 確認。
 
 ---
 

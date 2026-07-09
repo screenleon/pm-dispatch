@@ -11,9 +11,10 @@
 # well-known files or PATH binaries. It must never run a codex CLI command that
 # could mutate state, hang on a trust prompt, or incur cost.
 #
-# The codex host has no install write path yet, so an unwired capability is
-# reported as ok with provider=none (an observed state, not an install defect)
-# — unlike the claude host where unwired means the install contract is broken.
+# The codex host's install write path is opt-in (install.sh
+# --enable-codex-command-guard), so an unwired capability is reported as ok
+# with provider=none (the default, expected state, not an install defect) —
+# unlike the claude host where unwired means the install contract is broken.
 # Once a host manifest declares codex wiring targets, the declared values move
 # out of this file into the manifest; the module interface stays the same.
 
@@ -24,6 +25,13 @@
 # patch text and need a parser before a file guard can bind. Headless runs also
 # require an explicit hook-trust bypass flag, so wiring alone is not effective
 # enforcement — hence confidence stays at probed, stability at evolving.
+#
+# "Wired" here means THIS checkout's managed hook is actually present (see
+# _doctor_host_codex_target_installed below), not merely that hooks.json
+# exists and parses — a hooks.json holding only unrelated or same-basename
+# foreign entries must report as unwired here too, matching
+# _doctor_host_codex_manifest_parity's determination (the two probes must
+# never disagree about the same underlying fact).
 _doctor_host_codex_hooks() {
   local codex_home="${CODEX_HOME:-$HOME/.codex}"
   if [[ -f "$codex_home/hooks.json" ]]; then
@@ -33,13 +41,91 @@ _doctor_host_codex_hooks() {
         "codex hooks.json exists but is not valid JSON ($codex_home/hooks.json)"
       return
     fi
-    emit_capability host.codex.hooks ok codex command_guard \
-      host_hook blocking partial evolving probed \
-      "codex hook surface wired ($codex_home/hooks.json; command coverage full, file-write needs patch parsing)"
+    if _doctor_host_codex_target_installed "$codex_home/hooks.json" codex-hooks-json; then
+      emit_capability host.codex.hooks ok codex command_guard \
+        host_hook blocking partial evolving probed \
+        "codex hook surface wired ($codex_home/hooks.json; command coverage full, file-write needs patch parsing)"
+    else
+      emit_capability host.codex.hooks ok codex command_guard \
+        none none none evolving probed \
+        "codex hook surface not wired ($codex_home/hooks.json exists but does not contain this checkout's managed hook; opt-in via install.sh --enable-codex-command-guard)"
+    fi
   else
     emit_capability host.codex.hooks ok codex command_guard \
       none none none evolving probed \
-      "codex hook surface not wired (no $codex_home/hooks.json; install write path pending)"
+      "codex hook surface not wired (no $codex_home/hooks.json; opt-in via install.sh --enable-codex-command-guard)"
+  fi
+}
+
+# Per-target installed check: for the codex-hooks-json format this verifies
+# the managed hook COMMAND is actually wired inside the hooks file, not merely
+# that the file exists — a hooks.json holding only unrelated entries (e.g. a
+# user's own Codex hooks, or a same-basename hook-codex-command-guard.sh
+# belonging to a DIFFERENT checkout) must not read as this target being
+# installed. Matches the exact command identity this checkout's own installer
+# writes (install-guards-codex.sh:59, raw and shell-escaped forms — same
+# identity rule uninstall-guards-codex.sh uses), not a basename heuristic.
+# Other formats have no content probe yet, so path existence is the best
+# available signal for them.
+_doctor_host_codex_target_installed() {
+  local expanded="$1" fmt="$2"
+  if [[ "$fmt" == "codex-hooks-json" ]]; then
+    [[ -f "$expanded" ]] || return 1
+    command -v jq >/dev/null 2>&1 || return 1
+    local hook_cmd="$REPO_ROOT/scripts/hook-codex-command-guard.sh"
+    local hook_cmd_q
+    hook_cmd_q="$(printf '%q' "$hook_cmd")"
+    jq -e --arg cmd "$hook_cmd" --arg cmd_q "$hook_cmd_q" '
+      (.hooks.PreToolUse // [])[]? | select(.matcher == "Bash") | (.hooks // [])[]?.command
+      | select(. == $cmd or . == $cmd_q)
+    ' "$expanded" >/dev/null 2>&1
+    return $?
+  fi
+  [[ -e "$expanded" ]]
+}
+
+# Declared-vs-installed parity check: hosts/codex/host.yaml's
+# install_targets is the DECLARED layer (docs/host-contract.md); this reports
+# which managed targets are actually installed (see
+# _doctor_host_codex_target_installed above). Distinct from claude's
+# declared-vs-PROBED consistency check (doctor-host-claude.sh) — codex has no
+# equivalent live-capability probe yet. codex-host wiring is opt-in (install.sh
+# --enable-codex-command-guard), so a missing managed target is the DEFAULT,
+# expected state, not a defect — this stays `ok` the same way
+# _doctor_host_codex_hooks() above treats an absent hooks.json as ok, never
+# warn/fail. Only a broken checkout (manifest or host-manifest.sh missing)
+# warrants a warn.
+_doctor_host_codex_manifest_parity() {
+  if [[ "${_HOST_MANIFEST_AVAILABLE:-0}" -ne 1 ]]; then
+    emit_check host.codex.manifest-parity warn \
+      "scripts/lib/host-manifest.sh unavailable — cannot check declared-vs-installed parity"
+    return
+  fi
+  local manifest="$REPO_ROOT/hosts/codex/host.yaml"
+  if [[ ! -f "$manifest" ]]; then
+    emit_check host.codex.manifest-parity warn \
+      "hosts/codex/host.yaml missing — cannot check declared-vs-installed parity"
+    return
+  fi
+
+  local -a present=() missing=()
+  local id path fmt managed expanded
+  while IFS=$'\t' read -r id path fmt managed; do
+    [[ "$managed" == "true" ]] || continue
+    expanded="$(host_manifest_expand_path "$path")"
+    if _doctor_host_codex_target_installed "$expanded" "$fmt"; then
+      present+=("$id")
+    else
+      missing+=("$id")
+    fi
+  done < <(host_manifest_install_targets "$manifest")
+
+  if [[ "${#missing[@]}" -eq 0 ]]; then
+    emit_check host.codex.manifest-parity ok \
+      "all managed hosts/codex/host.yaml install_targets wired (${present[*]:-none declared managed})"
+  else
+    emit_check host.codex.manifest-parity ok \
+      "managed install_target(s) not wired: ${missing[*]} (expected default — codex-host wiring is opt-in via install.sh --enable-codex-command-guard)"
   fi
 }
 
@@ -55,4 +141,5 @@ doctor_host_codex_run() {
     host_native none full evolving probed \
     "codex binary on PATH"
   _doctor_host_codex_hooks
+  _doctor_host_codex_manifest_parity
 }

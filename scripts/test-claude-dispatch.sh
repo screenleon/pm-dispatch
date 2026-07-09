@@ -189,6 +189,37 @@ case_usage_log() {
   rm -rf "$bin" "$home" "$work"; rm -f "$brief"
 }
 
+# ---- 13b: PM_CFG_USAGE_LOG_PATH overrides the claude-host-assumed default path ----
+case_usage_log_custom_path() {
+  local name="auto-log/PM_CFG_USAGE_LOG_PATH overrides default log-usage.sh path"
+  should_run "$name" || return 0
+  local bin home work brief custom_log marker code
+  bin="$(mktemp -d)"; _install_fake_claude "$bin"
+  home="$(mktemp -d)"  # deliberately NO $home/.claude/scripts/log-usage.sh —
+                        # proves the default path is never consulted when the
+                        # override is set.
+  custom_log="$(mktemp -d)/custom-log-usage.sh"
+  marker="$(mktemp -d)/marker"
+  cat > "$custom_log" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" > "$marker"
+EOF
+  chmod +x "$custom_log"
+  work="$(mktemp -d)"; git init -q "$work"; brief="$(_mk_brief "$work")"
+  set +e
+  PATH="$bin:$PATH" HOME="$home" PM_CFG_USAGE_LOG_PATH="$custom_log" \
+    "$DISPATCH" --cd "$work" --brief-file "$brief" >/dev/null 2>&1
+  code=$?
+  set -e
+  if [[ "$code" -eq 0 && -f "$marker" ]] && grep -q "claude_dispatch" "$marker" \
+     && [[ ! -f "$home/.claude/usage-tracker.jsonl" ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code marker_exists=$([[ -f "$marker" ]] && echo yes || echo no)"
+  fi
+  rm -rf "$bin" "$home" "$work" "$(dirname "$custom_log")" "$(dirname "$marker")"; rm -f "$brief"
+}
+
 # ---- 14: codex-only flags accepted as no-ops ----
 case_codex_flags_noop() {
   local name="args/codex-only flags accepted as no-ops"; should_run "$name" || return 0
@@ -214,6 +245,7 @@ case_happy_path
 case_is_error
 case_exit_propagated
 case_usage_log
+case_usage_log_custom_path
 # ---- 15: CLAUDE_DISPATCH_TIMEOUT env sets adapter timeout (highest priority) ----
 # Config loading moved to pmctl layer (CC-293); adapter uses PM_CFG_TIMEOUT
 # exported by pmctl, or falls back to 1200. CLAUDE_DISPATCH_TIMEOUT env remains

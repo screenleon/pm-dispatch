@@ -239,6 +239,52 @@ FAKEOF
   rm -f "$_brief10"
 }
 
+# ---- 10b: PM_CFG_USAGE_LOG_PATH overrides the claude-host-assumed default path ----
+case_auto_log_custom_path_codex() {
+  local name="auto-log/PM_CFG_USAGE_LOG_PATH overrides default log-usage.sh path (codex)"
+  local _fake_bin _home _work _brief _custom_log _marker _exit
+  should_run "$name" || return 0
+
+  _fake_bin="$(mktemp -d)"
+  cat > "$_fake_bin/codex" << 'FAKEOF'
+#!/usr/bin/env bash
+printf '%s\n' \
+  '{"type":"turn.started"}' \
+  '{"type":"turn.completed","usage":{"input_tokens":100000,"output_tokens":5000,"cached_input_tokens":0,"reasoning_output_tokens":0}}'
+exit 0
+FAKEOF
+  chmod +x "$_fake_bin/codex"
+
+  _home="$(mktemp -d)"  # deliberately NO $_home/.claude/scripts/log-usage.sh —
+                          # proves the default path is never consulted when the
+                          # override is set.
+  _custom_log="$(mktemp -d)/custom-log-usage.sh"
+  _marker="$(mktemp -d)/marker"
+  cat > "$_custom_log" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" > "$_marker"
+EOF
+  chmod +x "$_custom_log"
+
+  _work="$(mktemp -d)"
+  git init -q "$_work"
+  _brief="$(mktemp --suffix=.md)"
+  printf 'working_dir: %s\ngoal: test auto-log custom path\n' "$_work" > "$_brief"
+
+  PATH="$_fake_bin:$PATH" HOME="$_home" PM_CFG_USAGE_LOG_PATH="$_custom_log" \
+    "$DISPATCH" --cd "$_work" --brief-file "$_brief" >/dev/null 2>&1
+  _exit=$?
+
+  if [[ "$_exit" -eq 0 && -f "$_marker" ]] && grep -q "codex_dispatch" "$_marker" \
+     && [[ ! -f "$_home/.claude/usage-tracker.jsonl" ]]; then
+    pass "$name"
+  else
+    fail "$name" "exit=$_exit marker_exists=$([[ -f "$_marker" ]] && echo yes || echo no)"
+  fi
+  rm -rf "$_fake_bin" "$_home" "$_work" "$(dirname "$_custom_log")" "$(dirname "$_marker")"
+  rm -f "$_brief"
+}
+
 # ---- 11: auto-log/failed-dispatch-no-log ----
 case_auto_log_failed_dispatch_no_log() {
   local name="auto-log/failed-dispatch-no-log"
@@ -1034,6 +1080,7 @@ case_structural_snapshot_block_intact
 case_dispatch_does_not_mutate_gitignore
 case_auto_log_parser_single_integer
 case_auto_log_successful_dispatch_logs_codex
+case_auto_log_custom_path_codex
 case_auto_log_failed_dispatch_no_log
 case_auto_log_spark_model_logs_pool
 case_auto_log_log_failure_preserves_dispatch_exit

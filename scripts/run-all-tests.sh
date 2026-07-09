@@ -58,6 +58,7 @@ SUITE_NAMES=(
   test-lint-model-aliases
   test-core-schemas
   test-host-manifest
+  test-host-write-codex
   test-pm-prep-snapshot
   test-schema-task-mirrors-backlog
   test-state-store
@@ -132,6 +133,7 @@ declare -A SUITE_PATHS=(
   [test-lint-model-aliases]="scripts/test-lint-model-aliases.sh"
   [test-core-schemas]="scripts/test-core-schemas.sh"
   [test-host-manifest]="scripts/test-host-manifest.sh"
+  [test-host-write-codex]="scripts/test-host-write-codex.sh"
   [test-pm-prep-snapshot]="scripts/test-pm-prep-snapshot.sh"
   [test-schema-task-mirrors-backlog]="scripts/test-schema-task-mirrors-backlog.sh"
   [test-state-store]="scripts/test-state-store.sh"
