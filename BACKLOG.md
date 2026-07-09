@@ -254,7 +254,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 ---
 
-## CC-476 — opencode `edit`+`bash` 同時 deny 掛起根因調查（spike）
+## CC-476 — opencode `edit`+`bash` 同時 deny 掛起根因調查（spike）✅ 2026-07-09
 
 **Problem**：[[CC-448]] 階段 1 probe（`docs/spikes/CC-448.md`）發現，opencode 宣告式 permission config 若同時設 `edit: deny` + `bash: deny`，`opencode run` 會無聲掛起（90 秒 timeout 內無任何輸出即被中止），即使帶 `--dangerously-skip-permissions`；這與單獨 `bash: deny`（模型乾淨回覆「I can't run shell commands」）行為不一致。根因未查——是等待某個永遠不會到來的互動提示？還是 opencode 內部重試迴圈？在不知道根因之前，無法確認「file-level guard 需要 edit+bash 都 deny 才算真正擋住」這個 CC-448 的核心結論在 headless dispatch 路徑上是否可行（若掛起無法解，等於這個保守預設在 headless 場景是死路）。
 
@@ -269,9 +269,12 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 - Done-when：能明確回答「掛起的觸發條件與根本機制是什麼」，並給出對 CC-448 階段 2 manifest 設計的建議之一：(a) 掛起有解，記錄解法；(b) 掛起無解但有繞過方式（如加 timeout + 強制 kill，接受 degrade）；(c) 掛起無解也無繞過，CC-448 manifest 需改設計（例如 opencode host 不採「全 deny」保守預設，改用其他 guard binding 策略）。
 - Result log：`docs/spikes/CC-476.md`
 
+**Outcome**：3-angle fan-out（重現+process檢視 / 原始碼與 issue tracker 先例 / 觸發組合縮小）收斂出建議 (b)：掛起無解但有繞過方式，中等信心（非高信心，見 spike 文件 Open risks）。最可能的系統性根因是 upstream `anomalyco/opencode` 已知 open issue #35073（headless subagent 的 ask 被誤判為 interactive，等待不存在的回應者，修復 PR #35823 未合併，正好對應本機安裝版本 1.17.8）——比「edit+bash 特定組合」這個框架更能解釋 a3 觀察到的「相同 config+prompt 時掛時不掛」flakiness。繞過方式：(1) `bash` 一律用 per-pattern object 形式 `{"*":"deny"}` 而非 bare string `"deny"`（a3 樣本雖小但方向一致）；(2) headless dispatch 呼叫 opencode 一律外掛強制 timeout+kill（CC-470 逾時止血機制可沿用），把掛起當作已知、有限機率的 degrade 情境接受；(3) 之後升級 opencode 版本前先確認 PR #35823 是否已合併修復 #35073。解除 [[CC-448]] 階段 2 manifest 定案的 blocking open risk。完整三角度證據、矛盾調和推理、Open risks 見 `docs/spikes/CC-476.md`。
+
 **Dependencies**：承接 [[CC-448]] 階段 1 probe 的 open risk；解開後回頭解鎖 [[CC-448]] 階段 2。
 
 **Source**：2026-07-09 PM discovery-route 分析（CC-445/469/470/474 陸續合併後盤點 v0.9.0 host 軸下一步）。
+**See**: `docs/spikes/CC-476.md`
 
 ---
 
