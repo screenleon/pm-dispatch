@@ -11,7 +11,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | #  | Status | 主題 | 影響面 | 首次記錄 | Refs | Priority | Epic |
 |----|--------|------|--------|----------|------|----------|------|
 | CC-450 | 🟢 someday | 其餘 9 個 test-*.sh docstring 格式統一（CC-004 同款 Behavior/Steps，跨檔） | ops | 2026-07-03 | — | P3 | — |
-| CC-475 | 🔵 active | claude sonnet model alias 過期：`share/claude-model-aliases.tsv` 的 `default`/`sonnet` 仍釘 `claude-sonnet-4-6`，未跟進最新 `claude-sonnet-5`（opus/haiku 已對齊最新）（2026-07-09 使用者發現） | ops/dispatch | 2026-07-09 | — | P2 | — |
+| CC-475 | ✅ done | claude sonnet model alias 過期：`share/claude-model-aliases.tsv` 的 `default`/`sonnet` 仍釘 `claude-sonnet-4-6`，未跟進最新 `claude-sonnet-5`（opus/haiku 已對齊最新）（2026-07-09 使用者發現） | ops/dispatch | 2026-07-09 | pr:#389 | P2 | — |
 | CC-451 | 🔵 active | core/ 定義層接上 runtime：enum 單一來源 + state 寫入 schema 驗證（CC-446 契約凍結前置；2026-07-06 盲測稽核；v0.9.0） | arch | 2026-07-06 | — | P2 | design |
 | CC-452 | 🔵 active | guard/hook 對稱性與併發 hardening：episodes.jsonl append 加鎖、三安全 guard set -e 統一、ISO8601 正規化抽 lib（2026-07-06 盲測稽核；v0.9.0） | ops | 2026-07-06 | — | P3 | hygiene |
 | CC-453 | 🔵 active | worktree/auto-pack 路徑契約 hardening：worktree create stdout 契約、auto-pack work_dir fail-loud、opencode isolation 錯誤訊息修正（2026-07-06 盲測稽核；v0.9.0） | ops | 2026-07-06 | — | P3 | hygiene |
@@ -231,7 +231,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 ---
 
-## CC-475 — claude sonnet model alias 過期：對齊最新 claude-sonnet-5 🔵 active
+## CC-475 — claude sonnet model alias 過期：對齊最新 claude-sonnet-5 ✅ 2026-07-09
 
 **Problem**：`share/claude-model-aliases.tsv` 的 `default`/`sonnet` 兩列 alias 仍解析到 `claude-sonnet-4-6`，但目前最新的 Claude Sonnet 版本已是 `claude-sonnet-5`（wire id `claude-sonnet-5`）。對照同一份檔案內的 `opus`（`claude-opus-4-8`）與 `haiku`（`claude-haiku-4-5-20251001`），這兩個 alias 都已對齊各自家族的最新版本——只有 sonnet 這條路徑漏了更新，導致 `pmctl dispatch run`/`pmctl gate run` 在未指定 `--model` 時（也就是絕大多數呼叫的預設路徑）派發到一個過期的 model id。
 
@@ -248,6 +248,8 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Verification**：`scripts/test-claude-dispatch.sh` 全綠（33/33，含上述 4 案例斷言更新後的字面值）；`scripts/test-model-aliases.sh` 維持全綠但不需要改動內容；`pmctl dispatch run --cd <tmp> --brief-file <tmp> --print-cmd`（不帶 `--model`）組出的指令含 `claude-sonnet-5`。
 
 **Source**：使用者於確認派發相關內容時發現，2026-07-09。
+
+**See**: pr:#389
 
 ---
 
