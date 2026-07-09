@@ -11,6 +11,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | #  | Status | 主題 | 影響面 | 首次記錄 | Refs | Priority | Epic |
 |----|--------|------|--------|----------|------|----------|------|
 | CC-450 | 🟢 someday | 其餘 9 個 test-*.sh docstring 格式統一（CC-004 同款 Behavior/Steps，跨檔） | ops | 2026-07-03 | — | P3 | — |
+| CC-475 | 🔵 active | claude sonnet model alias 過期：`share/claude-model-aliases.tsv` 的 `default`/`sonnet` 仍釘 `claude-sonnet-4-6`，未跟進最新 `claude-sonnet-5`（opus/haiku 已對齊最新）（2026-07-09 使用者發現） | ops/dispatch | 2026-07-09 | — | P2 | — |
 | CC-451 | 🔵 active | core/ 定義層接上 runtime：enum 單一來源 + state 寫入 schema 驗證（CC-446 契約凍結前置；2026-07-06 盲測稽核；v0.9.0） | arch | 2026-07-06 | — | P2 | design |
 | CC-452 | 🔵 active | guard/hook 對稱性與併發 hardening：episodes.jsonl append 加鎖、三安全 guard set -e 統一、ISO8601 正規化抽 lib（2026-07-06 盲測稽核；v0.9.0） | ops | 2026-07-06 | — | P3 | hygiene |
 | CC-453 | 🔵 active | worktree/auto-pack 路徑契約 hardening：worktree create stdout 契約、auto-pack work_dir fail-loud、opencode isolation 錯誤訊息修正（2026-07-06 盲測稽核；v0.9.0） | ops | 2026-07-06 | — | P3 | hygiene |
@@ -227,6 +228,26 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 **Dependencies**：與 [[CC-431]] 檔案面重疊（test-e2e.sh/release-verify.sh），宜同版處理。v0.9.0 候選。
 **See**: [[CC-444]] Outcome、pr:#367
+
+---
+
+## CC-475 — claude sonnet model alias 過期：對齊最新 claude-sonnet-5 🔵 active
+
+**Problem**：`share/claude-model-aliases.tsv` 的 `default`/`sonnet` 兩列 alias 仍解析到 `claude-sonnet-4-6`，但目前最新的 Claude Sonnet 版本已是 `claude-sonnet-5`（wire id `claude-sonnet-5`）。對照同一份檔案內的 `opus`（`claude-opus-4-8`）與 `haiku`（`claude-haiku-4-5-20251001`），這兩個 alias 都已對齊各自家族的最新版本——只有 sonnet 這條路徑漏了更新，導致 `pmctl dispatch run`/`pmctl gate run` 在未指定 `--model` 時（也就是絕大多數呼叫的預設路徑）派發到一個過期的 model id。
+
+**Why**：`default` alias 是整條 claude 派發路徑最常用的隱性入口（`docs/dispatch-brief.md` 明文「omit `--model` or write `model: default`」為建議寫法），過期的釘死版本代表日常派工都在用一個非最新的 model，且这類版本字串是分散在多處文件/測試的字面值，容易在下次模型升級時再度漏改（沒有單一 owner 盤點「目前最新版本 vs alias 表現況」）。
+
+**Requirement**：
+1. **更新 `share/claude-model-aliases.tsv`**：`default`/`sonnet` 兩列的 model 欄位從 `claude-sonnet-4-6` 改為 `claude-sonnet-5`；檔頭註解（第 15/16/23 行附近）同步更新版本字串與說明。
+2. **文件同步**：`docs/model-tier-policy.md`、`docs/dispatch-brief.md` 提及 `claude-sonnet-4-6` 的字面值全部改為 `claude-sonnet-5`。
+3. **測試同步**：`scripts/test-claude-dispatch.sh`、`scripts/test-model-aliases.sh` 中斷言 `claude-sonnet-4-6` 字面值的案例（包含 `case_model_alias_sonnet`、`--model default resolves to claude-sonnet wire id`、`PM_CFG_DEFAULT_MODEL=sonnet` 案例等）改為斷言 `claude-sonnet-5`。
+4. **不動 archive**：`BACKLOG-ARCHIVE.md`、`docs/spikes/*` 內的歷史記錄字面值保留不改（那是過去執行紀錄的事實描述，非現況契約）。
+
+**Non-goals**：不順帶調整 opus/haiku 這兩個目前已對齊最新版本的 alias；不做「自動偵測 CLI 最新可用 model 並自動更新 alias 表」的機制化方案（那是更大範圍的設計題，這票僅修正當下已知的過期字面值）。
+
+**Verification**：`scripts/test-claude-dispatch.sh`、`scripts/test-model-aliases.sh` 全綠；`pmctl dispatch run --cd <tmp> --brief-file <tmp> --print-cmd`（不帶 `--model`）組出的指令含 `claude-sonnet-5`。
+
+**Source**：使用者於確認派發相關內容時發現，2026-07-09。
 
 ---
 
