@@ -201,16 +201,14 @@ if [[ -n "$MODEL" ]]; then
 fi
 
 # --effort overrides the alias's own effort column; --effort > alias effort >
-# global default (medium). See scripts/lib/reasoning-effort.sh for the fixed
-# low/medium/high vocabulary and why it's narrower than codex's raw
-# model_reasoning_effort surface.
-if [[ -n "$EFFORT" ]]; then
-  re_validate_effort "$EFFORT" || {
-    printf 'codex-dispatch: error: --effort must be one of: %s (got: %s)\n' "$RE_VALID_EFFORTS" "$EFFORT" >&2
-    exit 2
-  }
-fi
-re_resolve_effort "$EFFORT" "$MODEL_RESOLVED_EFFORT"
+# global default (medium). re_resolve_effort validates $EFFORT itself (returns
+# 1 on an invalid flag value), so there is no separate pre-check here. See
+# scripts/lib/reasoning-effort.sh for the fixed low/medium/high vocabulary and
+# why it's narrower than codex's raw model_reasoning_effort surface.
+re_resolve_effort "$EFFORT" "$MODEL_RESOLVED_EFFORT" || {
+  printf 'codex-dispatch: error: --effort must be one of: %s (got: %s)\n' "$RE_VALID_EFFORTS" "$EFFORT" >&2
+  exit 2
+}
 MODEL_RESOLVED_EFFORT="$RE_RESOLVED_EFFORT"
 
 MODEL_DISPLAY="$MODEL"

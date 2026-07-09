@@ -196,14 +196,13 @@ fi
 # codex — see scripts/lib/reasoning-effort.sh. ALIAS_EFFORT may hold a stale
 # non-low/medium/high value (e.g. the legacy "normal"/"high" column in
 # share/claude-model-aliases.tsv); re_resolve_effort treats that as absent and
-# falls through to the global default.
-if [[ -n "$EFFORT" ]]; then
-  re_validate_effort "$EFFORT" || {
-    printf 'claude-dispatch: error: --effort must be one of: %s (got: %s)\n' "$RE_VALID_EFFORTS" "$EFFORT" >&2
-    exit 2
-  }
-fi
-re_resolve_effort "$EFFORT" "$ALIAS_EFFORT"
+# falls through to the global default. re_resolve_effort validates $EFFORT
+# itself (returns 1 on an invalid flag value), so there is no separate
+# pre-check here.
+re_resolve_effort "$EFFORT" "$ALIAS_EFFORT" || {
+  printf 'claude-dispatch: error: --effort must be one of: %s (got: %s)\n' "$RE_VALID_EFFORTS" "$EFFORT" >&2
+  exit 2
+}
 RESOLVED_EFFORT="$RE_RESOLVED_EFFORT"
 
 MODEL_DISPLAY="$MODEL"; [[ -z "$MODEL_DISPLAY" ]] && MODEL_DISPLAY="<default>"
