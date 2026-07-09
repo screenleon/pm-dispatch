@@ -9,10 +9,16 @@
 # builds the claude invocation and writes the executor-agnostic output contract.
 #
 # Usage:
-#   dispatch.sh --cd <dir> [--model <m>] [--isolation <level>]
+#   dispatch.sh --cd <dir> [--model <m>] [--effort <low|medium|high>]
+#               [--isolation <level>]
 #               [--timeout <seconds>] [--print-cmd] --brief-file <path>
 #
 # --print-cmd prints the final CMD array (`CMD=${CMD[*]}`) and exits 0.
+#
+# --effort overrides the resolved model alias's own effort column; absent a
+# flag or a valid alias value, the global default is `medium` (see
+# scripts/lib/reasoning-effort.sh). Wired straight through to claude's native
+# `--effort` flag.
 #
 # Isolation: --isolation <level> is translated to `claude --permission-mode <m>`
 # via adapters/claude/isolation-map.yaml (none→bypassPermissions, read-only→
@@ -68,6 +74,8 @@ trap 'rm -rf -- "$__claude_dispatch_snapshot_dir"' EXIT
 
 WORK_DIR=""
 MODEL=""
+EFFORT=""
+ALIAS_EFFORT=""
 DEFAULT_DISPATCH_MODEL="default"   # resolved via share/claude-model-aliases.tsv → claude-sonnet-4-6
 ISOLATION=""
 SCRIPT_DIR="$(cd -P -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -83,6 +91,8 @@ PERMISSION_MODE="acceptEdits"   # default = workspace-write equivalent
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/lib/model-aliases.sh"
 # shellcheck disable=SC1091
+. "$SCRIPT_DIR/lib/reasoning-effort.sh"
+# shellcheck disable=SC1091
 . "$SCRIPT_DIR/lib/timeout-resolve.sh"
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/lib/dispatch-common.sh"
@@ -96,7 +106,10 @@ _resolve_claude_model_alias() {
   local query_model="$1"
   [[ -f "$PM_CLAUDE_ALIAS_FILE" ]] || return 0
   ma_resolve_alias "$PM_CLAUDE_ALIAS_FILE" "$query_model" "claude-dispatch" || return 0
-  [[ "$MA_RESOLVE_MATCH" == "1" ]] && MODEL="$MA_RESOLVE_MODEL"
+  if [[ "$MA_RESOLVE_MATCH" == "1" ]]; then
+    MODEL="$MA_RESOLVE_MODEL"
+    ALIAS_EFFORT="$MA_RESOLVE_EFFORT"
+  fi
   return 0
 }
 
@@ -140,6 +153,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --cd) WORK_DIR="$2"; shift 2;;
     --model) MODEL="$2"; shift 2;;
+    --effort) EFFORT="$2"; shift 2;;
     --isolation) ISOLATION="$2"; shift 2;;
     --timeout) TIMEOUT="$2"; shift 2;;
     --print-cmd) PRINT_CMD=1; shift;;
@@ -176,6 +190,22 @@ fi
 # passing to the claude CLI. Unknown values are passed through unchanged.
 [[ -n "$MODEL" ]] && _resolve_claude_model_alias "$MODEL"
 
+# --effort overrides the alias's own effort column; --effort > alias effort >
+# global default (medium). claude's native --effort accepts low/medium/high/
+# xhigh/max, but pm-dispatch only exposes the low/medium/high intersection with
+# codex — see scripts/lib/reasoning-effort.sh. ALIAS_EFFORT may hold a stale
+# non-low/medium/high value (e.g. the legacy "normal"/"high" column in
+# share/claude-model-aliases.tsv); re_resolve_effort treats that as absent and
+# falls through to the global default.
+if [[ -n "$EFFORT" ]]; then
+  re_validate_effort "$EFFORT" || {
+    printf 'claude-dispatch: error: --effort must be one of: %s (got: %s)\n' "$RE_VALID_EFFORTS" "$EFFORT" >&2
+    exit 2
+  }
+fi
+re_resolve_effort "$EFFORT" "$ALIAS_EFFORT"
+RESOLVED_EFFORT="$RE_RESOLVED_EFFORT"
+
 MODEL_DISPLAY="$MODEL"; [[ -z "$MODEL_DISPLAY" ]] && MODEL_DISPLAY="<default>"
 
 TS=$(date +%Y%m%d-%H%M%S)-$$
@@ -198,11 +228,13 @@ CMD=(claude -p
   --verbose
 )
 [[ -n "$MODEL" ]] && CMD+=(--model "$MODEL")
+[[ -n "$RESOLVED_EFFORT" ]] && CMD+=(--effort "$RESOLVED_EFFORT")
 
 {
   echo "[$(date -Is)] claude-dispatch starting"
   echo "  cwd:        $WORK_DIR"
   echo "  model:      $MODEL_DISPLAY"
+  echo "  effort:     $RESOLVED_EFFORT"
   echo "  permission: $PERMISSION_MODE"
   [[ -n "$ISOLATION" ]] && echo "  isolation:  $ISOLATION"
   echo "  timeout:    ${TIMEOUT}s"

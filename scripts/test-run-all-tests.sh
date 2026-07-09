@@ -58,6 +58,7 @@ SUITE_NAMES=(
   test-dispatch-common
   test-detached-launch
   test-lint-model-aliases
+  test-reasoning-effort
   test-core-schemas
   test-host-manifest
   test-host-write-codex
@@ -156,6 +157,7 @@ suite_path() {
     test-dispatch-common) printf 'scripts/test-dispatch-common.sh\n' ;;
     test-detached-launch) printf 'scripts/test-detached-launch.sh\n' ;;
     test-lint-model-aliases) printf 'scripts/test-lint-model-aliases.sh\n' ;;
+    test-reasoning-effort) printf 'scripts/test-reasoning-effort.sh\n' ;;
     test-host-manifest)   printf 'scripts/test-host-manifest.sh\n' ;;
     test-host-write-codex) printf 'scripts/test-host-write-codex.sh\n' ;;
     test-core-schemas) printf 'scripts/test-core-schemas.sh\n' ;;

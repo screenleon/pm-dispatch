@@ -3666,6 +3666,72 @@ test_isolation_forwarding_through_pr_gate() {
   pass "$name"
 }
 
+# Behavior: --effort is forwarded from pr-gate.sh to the adapter dispatch,
+# independent of --model.
+# Steps: run the gate with --effort low and CODEX_GATE_CAPTURE_DISPATCH_ARGS
+# set, and assert the captured dispatch args file contains both --effort and
+# the low value.
+test_effort_forwarding_through_pr_gate() {
+  local name="effort-forwarding-through-pr-gate"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" dispatch_args="$dir/dispatch.args"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  CODEX_GATE_CAPTURE_DISPATCH_ARGS="$dispatch_args" \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --effort low
+  local code=$?
+  set -e
+
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  if [[ ! -f "$dispatch_args" ]]; then
+    fail "$name" "dispatch args file not written — CODEX_GATE_CAPTURE_DISPATCH_ARGS not picked up"
+    return
+  fi
+  if ! grep -qx -- '--effort' "$dispatch_args"; then
+    fail "$name" "--effort flag not forwarded to adapter dispatch"
+    return
+  fi
+  if ! grep -qx 'low' "$dispatch_args"; then
+    fail "$name" "low value not forwarded to adapter dispatch"
+    return
+  fi
+  pass "$name"
+}
+
+# Behavior: an invalid --effort value is rejected at pr-gate.sh's own flag
+# parsing, before any dispatch is attempted.
+test_effort_invalid_value_rejected() {
+  local name="effort-invalid-value-rejected"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_repo "$repo" docs
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --effort bogus
+  local code=$?
+  set -e
+
+  if [[ "$code" -ne 2 ]]; then
+    fail "$name" "exit $code, expected 2"
+    return
+  fi
+  assert_file_contains "$name" "$err" "low medium high" || return
+  pass "$name"
+}
+
 # Behavior: when lib/executor-router.sh is absent (copy-mode), pr-gate.sh
 # dispatches via adapters/codex/dispatch.sh -- NOT the deleted
 # scripts/codex-dispatch.sh shim.
@@ -4245,6 +4311,8 @@ run_test test_post_gate_hook_skipped_on_nogo
 run_test test_hook_skipped_without_allow_hooks
 run_test test_isolation_flag_validation
 run_test test_isolation_forwarding_through_pr_gate
+run_test test_effort_forwarding_through_pr_gate
+run_test test_effort_invalid_value_rejected
 run_test test_copy_mode_dispatches_via_adapter
 run_test test_unknown_arg_message
 run_test test_targeted_alias

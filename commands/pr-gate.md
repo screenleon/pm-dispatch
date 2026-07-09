@@ -190,6 +190,10 @@ There is no handover/fan-out path — the skill just reads the result file.
   (`claude --print`, an independent process) instead. Default model is the claude
   adapter's pinned default (sonnet); override with `--model <id>`.
 
+Reasoning effort defaults to `medium` regardless of executor (`--effort low|medium|high`,
+independent of `--model`); only raise it to `high` for a genuinely hard diagnosis or
+after repeated NO-GO rounds on the same finding.
+
 `scripts/pr-gate.sh` owns dispatch + result verification for both; the calling
 skill does not fan out reviewers or parse any handover block.
 

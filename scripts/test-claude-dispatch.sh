@@ -406,6 +406,48 @@ case_model_alias_unknown_passthrough() {
   rm -rf "$work"; rm -f "$brief"
 }
 
+case_effort_flag_overrides_alias() {
+  local name="effort/--effort low overrides alias's normal/high column"; should_run "$name" || return 0
+  local work brief out
+  work="$(mktemp -d)"; git init -q "$work"; brief="$(_mk_brief "$work")"
+  out="$("$DISPATCH" --cd "$work" --brief-file "$brief" --model opus --effort low --print-cmd 2>/dev/null)"
+  if printf '%s' "$out" | grep -q -- '--effort low'; then
+    pass "$name"
+  else
+    fail "$name" "expected --effort low in CMD, got: $(printf '%s' "$out" | tail -1)"
+  fi
+  rm -rf "$work"; rm -f "$brief"
+}
+
+case_effort_flag_default_medium() {
+  local name="effort/omit --effort falls back to global default medium (alias's stale 'normal'/'high' column ignored)"; should_run "$name" || return 0
+  local work brief out
+  work="$(mktemp -d)"; git init -q "$work"; brief="$(_mk_brief "$work")"
+  out="$("$DISPATCH" --cd "$work" --brief-file "$brief" --model sonnet --print-cmd 2>/dev/null)"
+  if printf '%s' "$out" | grep -q -- '--effort medium'; then
+    pass "$name"
+  else
+    fail "$name" "expected --effort medium in CMD, got: $(printf '%s' "$out" | tail -1)"
+  fi
+  rm -rf "$work"; rm -f "$brief"
+}
+
+case_effort_flag_invalid_rejected() {
+  local name="effort/invalid --effort value rejected"; should_run "$name" || return 0
+  local work brief out exit_code
+  work="$(mktemp -d)"; git init -q "$work"; brief="$(_mk_brief "$work")"
+  set +e
+  out="$("$DISPATCH" --cd "$work" --brief-file "$brief" --effort bogus --print-cmd 2>&1)"
+  exit_code=$?
+  set -e
+  if [[ "$exit_code" -ne 0 ]] && printf '%s' "$out" | grep -q 'low medium high'; then
+    pass "$name"
+  else
+    fail "$name" "expected non-zero exit and error listing low/medium/high; got exit=$exit_code out=$out"
+  fi
+  rm -rf "$work"; rm -f "$brief"
+}
+
 case_model_no_flag_resolves_default() {
   local name="dispatch/omit --model resolves to claude-sonnet-4-6 via alias table (not CLI built-in)"; should_run "$name" || return 0
   local work brief out
@@ -501,6 +543,9 @@ case_model_alias_haiku
 case_model_alias_sonnet
 case_model_alias_opus
 case_model_alias_unknown_passthrough
+case_effort_flag_overrides_alias
+case_effort_flag_default_medium
+case_effort_flag_invalid_rejected
 case_model_no_flag_resolves_default
 case_model_pm_cfg_default_model
 case_model_alias_malformed_tsv_warns

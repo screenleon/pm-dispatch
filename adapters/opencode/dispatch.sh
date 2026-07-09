@@ -190,7 +190,7 @@ while [[ $# -gt 0 ]]; do
     --brief-file) BRIEF_FILE="$2"; shift 2;;
     --trace-dir) TRACE_DIR_OVERRIDE="$2"; shift 2;;
     # Codex/claude-only flags: accepted but not supported; warn so callers notice.
-    --sandbox|--approval)
+    --sandbox|--approval|--effort)
       printf 'opencode-dispatch: warning: %s is not supported by the opencode adapter and will be ignored\n' "$1" >&2
       shift 2;;
     --skip-git-check) shift;;

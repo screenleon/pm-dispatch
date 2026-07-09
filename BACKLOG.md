@@ -91,7 +91,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-449 | 🔵 active | release-verify/test-e2e 對 v0.8.0 新 surface（`pmctl ship`/`pmctl worktree`）無 live 煙測 + run-all-tests 套件註冊完整性 lint（CC-444 收尾發現 test-pmctl-worktree 未註冊，已修；防再漏）+ CI↔run-all parity 斷言（2026-07-06 稽核：24 個本地 suite CI 缺席）（v0.9.0 候選） | ops/test | 2026-07-04 | — | P2 | — |
 | CC-472 | 🟢 someday | spike: antigravity（`agy` CLI）host 唯讀 probe——比照 CC-436/CC-448 階段 1 模式，實測 command 載入能力 + hook/plugin 機制 + 五個 capability enum 的 provider/confidence 判定，不落地 `hosts/antigravity/host.yaml`；排在 CC-445 通用 install/uninstall dispatcher 之後、與 CC-448 opencode 同批或緊接其後評估（N=3 驗證點） | arch/install | 2026-07-08 | — | P3 | spike |
 | CC-473 | 🟢 someday | 設計 `pmctl pm`：把 `commands/pm.md` 的 orchestration 邏輯（snapshot/handover validation/dispatch-wait 迴圈/discovery routing）抽成 CLI surface，讓 Claude `/pm` 與未來 codex host 呼叫同一份邏輯；範圍明訂為 batch-only（無互動澄清迴圈），承接 CC-471 spike 發現 | arch/install | 2026-07-09 | — | P3 | design |
-| CC-474 | 🟢 someday | dispatch/gate reasoning effort 獨立可調：目前 effort 綁死在 model alias 第三欄（share/*-model-aliases.tsv，多數 alias 寫死 high），無法在不換 model 的前提下單獨調降/調升；新增 `--effort` 旗標覆蓋、預設改 medium（CC-445 pr-gate 多輪迭代觀察，2026-07-08） | ops/gate | 2026-07-08 | — | P3 | — |
+| CC-474 | 🔵 active | dispatch/gate reasoning effort 獨立可調：目前 effort 綁死在 model alias 第三欄（share/*-model-aliases.tsv，多數 alias 寫死 high），無法在不換 model 的前提下單獨調降/調升；新增 `--effort` 旗標覆蓋、預設改 medium（CC-445 pr-gate 多輪迭代觀察，2026-07-08） | ops/gate | 2026-07-08 | — | P3 | — |
 
 ---
 
@@ -230,7 +230,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 ---
 
-## CC-474 — dispatch/gate reasoning effort 獨立可調參數，預設收斂為 medium 🟢 someday
+## CC-474 — dispatch/gate reasoning effort 獨立可調參數，預設收斂為 medium 🔵 active
 
 **Problem**：`pmctl dispatch run` / `pmctl gate run` 目前沒有獨立的 reasoning-effort 控制旗標——effort 值綁死在 `share/model-aliases.tsv`（codex）與 `share/claude-model-aliases.tsv`（claude）每一列 alias 的第三欄，經 `scripts/lib/model-aliases.sh` 解析出 `MA_RESOLVE_EFFORT` 後直接餵給 adapter（codex 端見 `adapters/codex/dispatch.sh:285` 的 `-c model_reasoning_effort="..."`）。這代表使用者若想調整某次派工的推理強度，唯一手段是換一個不同的 model alias——但常用 alias（codex 的 `default`/`gpt-5.5`/`gpt-5.4`/`codex-spark`/`light` 全部寫死 `high`；claude 的 `default`/`sonnet`/`light`/`haiku` 寫死 `normal`，只有 `opus` 是 `high`）並沒有「同一個 model、不同 effort」的組合可選。
 

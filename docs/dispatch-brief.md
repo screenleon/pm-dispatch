@@ -539,6 +539,14 @@ PM short-form model aliases for the claude executor, resolved from `share/claude
 
 Model resolution precedence: `--model` flag > `PM_CFG_DEFAULT_MODEL` (from `~/.pm-dispatch/config` `dispatch.default_model`) > pm-dispatch's own built-in `default` alias (→ `claude-sonnet-4-6` via `share/claude-model-aliases.tsv`), decoupled from the claude CLI's own built-in default. Every alias in these tables is a valid handover `model:` value (`scripts/lib/handover-validate.sh`).
 
+## Reasoning effort
+
+`--effort <low|medium|high>` is independent of `--model`: use it to dial reasoning depth up or down without switching models (e.g. keep the same model but drop to `low` for a quick pass, or raise to `high` for a hard diagnosis). Resolution precedence: `--effort` flag > the resolved model alias's own effort column (only when that column holds a valid `low`/`medium`/`high` value) > global default `medium`. This is a fixed, executor-agnostic vocabulary — narrower than either CLI's raw surface (claude's native `--effort` also accepts `xhigh`/`max`) — chosen so an invalid value is rejected up front by pm-dispatch, not mid-run inside the executor subprocess. See `scripts/lib/reasoning-effort.sh` for the resolution logic.
+
+The "reasoning effort" columns in the alias tables above are the per-alias default that applies only when `--effort` is omitted; the codex table's `high` values and the claude table's legacy `normal` values (not itself a valid `low`/`medium`/`high` literal, so it is ignored) both fall through to the `medium` global default in practice unless a caller opts into a specific alias-carried value. `pmctl gate run` accepts the same `--effort` flag; default reasoning depth for both dispatch and gate is `medium` — reach for `--effort high` only when you need deeper analysis (e.g. escalating after repeated gate NO-GOs).
+
+opencode has no reasoning-effort equivalent; `--effort` is accepted as a no-op with a warning by that adapter (non-goal — see `docs/executor-contract.md`).
+
 Direct Bash dispatch shape (substitute `<executor>` with `codex`, `claude`, or `opencode`):
 
 ```text

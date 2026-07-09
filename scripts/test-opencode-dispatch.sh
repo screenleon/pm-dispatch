@@ -439,6 +439,25 @@ case_legacy_flags_warn() {
   rm -rf "$work"; rm -f "$bf"
 }
 
+# Behavior: --effort is not supported by the opencode adapter (no native
+# equivalent) — accepted as a no-op with a warning, not a hard error.
+# Steps:
+#   1. Run dispatch.sh with --effort plus --print-cmd.
+#   2. Assert stderr contains "warning" and exit is non-fatal.
+case_effort_flag_noop_warns() {
+  local name="compat/--effort warns but is a no-op, not a crash"; should_run "$name" || return 0
+  local work bf err
+  work="$(mktemp -d)"; bf="$(_mk_brief)"
+  err="$("$DISPATCH" \
+    --cd "$work" --brief-file "$bf" \
+    --model opencode/nemotron-3-ultra-free \
+    --effort low \
+    --print-cmd 2>&1 || true)"
+  if echo "$err" | grep -qi "warning"; then pass "$name"
+  else fail "$name" "no warning emitted for --effort"; fi
+  rm -rf "$work"; rm -f "$bf"
+}
+
 # Behavior: Non-zero exit on attempt 1 causes fallback to attempt 2 which succeeds.
 # Steps:
 #   1. Install fake opencode: attempt 1 exits 1 (no JSONL), attempt 2 emits text + step_finish.
@@ -591,6 +610,7 @@ case_pmctl_route
 case_timeout_zero_no_limit
 case_timeout_too_low_rejected
 case_legacy_flags_warn
+case_effort_flag_noop_warns
 case_latest_symlinks_created
 
 # ---- trace-dir/--trace-dir routes trace out of repo ----
