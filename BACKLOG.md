@@ -25,7 +25,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-466 | 🔵 active | 記憶卡片生命週期閉環：expires_at 執行 + 關窗式 supersede + usage sidecar 休眠偵測 + doctor→distill 接線（2026-07-07 記憶系統分析 + 外部研究 Graphiti/mcp-memory-service） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-467 | 🟢 someday | `pmctl memory stats`：注入效益可視化——注入 bytes/卡片命中分佈/從未命中卡/episode 填寫率，回答「記憶有跟沒有差在哪」（2026-07-07；業界僅離線 recall 評測，無 per-injection 遙測） | DX/memory | 2026-07-07 | — | P3 | retrieval |
 | CC-468 | 🟢 someday | dispatch brief 帶 memory 約束：brief authoring/auto-pack 對 memory plane 做 pointer-only 查詢，feedback 卡約束自動浮上 brief（2026-07-07；auto-pack 現為 repo-only by construction） | ops/memory | 2026-07-07 | — | P3 | retrieval |
-| CC-469 | 🔵 active | codex reviewer sandbox 找不到 pmctl：`codex exec --sandbox workspace-write` 派工 reviewer 時，sandbox 內裸呼叫 `pmctl guard check` 回報 command not found，導致該 reviewer 中止、gate 產不出結果檔案（2026-07-07 平行模式 gate run 實測發現） | ops/gate | 2026-07-07 | — | P2 | — |
+| CC-469 | ✅ done | codex reviewer sandbox 找不到 pmctl：`codex exec --sandbox workspace-write` 派工 reviewer 時，sandbox 內裸呼叫 `pmctl guard check` 回報 command not found，導致該 reviewer 中止、gate 產不出結果檔案（2026-07-07 平行模式 gate run 實測發現） | ops/gate | 2026-07-09 | pr:#388 | P2 | — |
 | CC-011 | 🟢 someday | sync-memory.sh + install 選項：symlink memory 到雲端資料夾實現跨裝置共用 | ux/memory | 2026-05-14 | — | — | — |
 | CC-012 | 🟢 someday | SessionStart hook：session 啟動時 pull 最新 memory（git/rsync）確保跨裝置同步 | ux/memory | 2026-05-14 | — | — | — |
 | CC-015 | ⏸ deferred | `systematic-debugging` skill：結構化偵錯工作流 | ux | 2026-05-14 | — | — | — |
@@ -472,7 +472,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 ---
 
-## CC-469 — codex reviewer sandbox 找不到 pmctl 🔵 active
+## CC-469 — codex reviewer sandbox 找不到 pmctl ✅ 2026-07-09
 
 **Problem**：`pmctl gate run --parallel`（或任何以 codex 為 reviewer 的派工）啟動 `codex exec --sandbox workspace-write` 後，reviewer brief 內裸呼叫 `pmctl guard check ...` 回報 `pmctl: command not found`，該 reviewer 未產出結果、整個 gate 拿不到完整結論。2026-07-07 一次平行模式 gate run 實測重現，另一個 session 稍早也踩過同症狀。
 
@@ -484,6 +484,9 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 3. 回歸測試覆蓋兩種 gate 派工模式（sequential/parallel）在最小化 PATH 環境下仍能找到 `pmctl`。
 
 **Dependencies**：與 [[CC-445]] 無關（後者是 PM 本身跑在 codex host 上；本票是 codex 被派去當 reviewer 時的沙盒環境問題）。
+
+**Resolution**：根因未能確定性重現（互動環境下手動測試 `codex exec --sandbox workspace-write` 找得到 `pmctl`），故不追根因，改採方案 (b)：`pr-gate.sh` 在自身環境解析 `pmctl` 絕對路徑（PATH 查找，找不到則退回同倉庫 sibling `cli/pmctl`），codex reviewer brief 的 guard-check 指令改嵌入該絕對路徑；claude reviewer brief 維持裸 `pmctl`（PreToolUse permission-allow 前綴比對需要）。兩種解析路徑都失敗時（如隔離測試 fixture）退回裸字，行為不變。新增 3 個回歸測試覆蓋 sequential/parallel codex 絕對路徑解析與 claude 裸指令不受影響。
+**See**: pr:#388
 
 ---
 
