@@ -54,6 +54,17 @@ if [[ ! -f "$hooks_file" ]]; then
   exit 0
 fi
 
+# uninstall.sh invokes this script unconditionally (symmetric teardown even
+# when this checkout never opted into --enable-codex-command-guard), so
+# $hooks_file may be user-owned Codex state pm-dispatch never wrote and never
+# validated. A malformed/unrelated hooks.json must not abort a normal
+# pm-dispatch uninstall under `set -e` — warn and skip instead of erroring,
+# same as the "not wired, nothing to do" no-op path below.
+if ! jq empty "$hooks_file" 2>/dev/null; then
+  echo "uninstall-guards-codex: $hooks_file is not valid JSON — skipping (unrelated/unmanaged Codex state, not modified)" >&2
+  exit 0
+fi
+
 hook_cmd="$REPO_ROOT/scripts/hook-codex-command-guard.sh"
 hook_cmd_q="$(printf '%q' "$hook_cmd")"
 

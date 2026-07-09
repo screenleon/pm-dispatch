@@ -349,6 +349,27 @@ test_uninstall_guards_codex_unknown_flag_rejected() {
     || fail "$name" "expected non-zero exit and unchanged hooks.json for an unknown flag, got rc=$rc"
 }
 
+test_uninstall_guards_codex_malformed_hooks_json_skips_not_errors() {
+  # Regression: uninstall.sh invokes this script UNCONDITIONALLY (symmetric
+  # teardown even when this checkout never opted into
+  # --enable-codex-command-guard), so $CODEX_HOME/hooks.json may be
+  # user-owned Codex state pm-dispatch never wrote and never validated. A
+  # malformed/unrelated hooks.json must degrade to a warned skip, not abort
+  # under `set -e` and not mutate the file.
+  local name="uninstall-guards-codex-malformed-hooks-json-skips-not-errors"
+  should_run "$name" || return 0
+  local codex_home="$tmp_root/uc-malformed/.codex"
+  mkdir -p "$codex_home"
+  printf '{ this is not valid json' > "$codex_home/hooks.json"
+  local before after rc=0
+  before="$(cat "$codex_home/hooks.json")"
+  CODEX_HOME="$codex_home" bash "$REPO_ROOT/scripts/uninstall-guards-codex.sh" >/dev/null 2>/dev/null || rc=$?
+  after="$(cat "$codex_home/hooks.json")"
+  [[ "$rc" -eq 0 ]] && [[ "$before" == "$after" ]] \
+    && pass "$name" \
+    || fail "$name" "expected exit 0 and unchanged file for malformed hooks.json, got rc=$rc"
+}
+
 # --- hook-codex-command-guard.sh ------------------------------------------
 
 test_hook_codex_command_guard_allows_benign_command() {
@@ -494,6 +515,7 @@ test_uninstall_guards_codex_preserves_in_repo_user_hook
 test_uninstall_guards_codex_preserves_same_basename_other_checkout
 test_uninstall_guards_codex_idempotent_when_absent
 test_uninstall_guards_codex_unknown_flag_rejected
+test_uninstall_guards_codex_malformed_hooks_json_skips_not_errors
 test_hook_codex_command_guard_allows_benign_command
 test_hook_codex_command_guard_denies_destructive_command
 test_hook_codex_command_guard_denies_prefixed_option_bypass

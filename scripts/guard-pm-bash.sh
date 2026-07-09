@@ -126,20 +126,42 @@ fi
 # original command_str, so this normalization cannot suppress or alter what
 # gets logged, only what gets evaluated against the patterns).
 #
-# This closes the specific reported bypass class, not every conceivable
+# Quote/escape collapsing: bash reconstructs a single word from adjacent
+# quoted/unquoted/escaped fragments with no separator between them — e.g.
+# `r'm' -rf /tmp/x` executes as `rm -rf /tmp/x` (the quotes around `m` are
+# just removed by the shell, they do not introduce a word boundary), and
+# `r\m -rf /tmp/x` does the same via a single-char backslash escape. The
+# denylist patterns above look for the literal substring `rm` — quote/escape
+# characters sitting between `r` and `m` defeat that even after IFS
+# normalization. Strip quote characters and collapse backslash-escaped single
+# characters before matching, same rationale as the IFS folding above: this
+# can only make a pattern match MORE often (never fewer), so it cannot turn a
+# true positive into a bypass — at worst it's a false-positive over-match on
+# an unusual quoting style, which is the safe direction for a denylist.
+#
+# This closes the specific reported bypass classes, not every conceivable
 # shell-expansion trick: brace expansion (`{rm,-rf,/tmp/x}`), variable
 # indirection (`x=rf; rm -$x`), and `eval`/command-substitution-built
 # commands are NOT normalized here and remain a known, accepted residual gap
 # (same category as the case-sensitivity gap documented below) — a
 # denylist inspecting a single string can never fully replace a real shell
-# parser. Extend this normalization if a new whitespace-producing spelling is
-# found; do not try to make it a general shell evaluator.
+# parser. Extend this normalization if a new bypass shape is found; do not
+# try to make it a general shell evaluator (in particular: never `eval`
+# command_str itself to tokenize it — that would execute the very thing this
+# guard exists to stop evaluating).
 _normalize_for_denylist() {
   local s="$1"
   s="${s//\$\{IFS\}/ }"
   s="${s//\$IFS/ }"
   # ANSI-C quoted whitespace: $'\x20' $'\x09' $'\x0a' $'\t' $'\n' $' '
   s="$(sed -E "s/\\\$'(\\\\x20|\\\\x09|\\\\x0a|\\\\t|\\\\n| )'/ /g" <<<"$s")"
+  # Quote-removal + single-char backslash-escape collapse (see comment
+  # above): does not model quote-context nuances (e.g. double-quote-only
+  # backslash escapes) exactly — a blanket, conservative simplification that
+  # only ever merges tokens closer together, never splits a real match apart.
+  s="${s//\'/}"
+  s="${s//\"/}"
+  s="$(sed -E 's/\\(.)/\1/g' <<<"$s")"
   printf '%s' "$s"
 }
 

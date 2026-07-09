@@ -3508,6 +3508,21 @@ run_case "pm-bash: git push \${IFS}--force (IFS bypass on git push) → deny" 2 
 run_case "pm-bash: echo \$IFS (benign command referencing IFS var) → allow" 0 "$PMBASHHOOK" \
   '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"echo $IFS"}}'
 
+run_case "pm-bash: r'"'"'m'"'"' -rf /tmp/x (quote-split token reconstruction bypass) → deny" 2 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"r'"'"'m'"'"' -rf /tmp/x"}}' \
+  "denylisted pattern"
+
+run_case "pm-bash: r\\m -rf /tmp/x (backslash-escaped token reconstruction bypass) → deny" 2 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"r\\m -rf /tmp/x"}}' \
+  "denylisted pattern"
+
+run_case "pm-bash: git push origin main --for'"'"'ce'"'"' (quote-split flag reconstruction bypass) → deny" 2 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"git push origin main --for'"'"'ce'"'"'"}}' \
+  "denylisted pattern"
+
+run_case "pm-bash: git commit -m \"hello world\" (benign quoted argument) → allow" 0 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"git commit -m \"hello world\""}}'
+
 run_case "pm-bash: rm -r alone (no force) → allow" 0 "$PMBASHHOOK" \
   '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"rm -r /tmp/foo"}}'
 
