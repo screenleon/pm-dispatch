@@ -110,6 +110,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-471 | ✅ done | spike: codex `pm_command_interface` probe——實測確認 codex CLI 沒有等同 Claude Agent/subagent 呼叫的機制，無法承接 `/pm` 這類互動式 orchestration；`hosts/codex/host.yaml` 該 capability 改記為 confidence: probed（`docs/spikes/CC-471.md`） | arch/install | 2026-07-09 | — | P3 | spike |
 | CC-472 | 🟢 someday | spike: antigravity（`agy` CLI）host 唯讀 probe——比照 CC-436/CC-448 階段 1 模式，實測 command 載入能力 + hook/plugin 機制 + 五個 capability enum 的 provider/confidence 判定，不落地 `hosts/antigravity/host.yaml`；排在 CC-445 通用 install/uninstall dispatcher 之後、與 CC-448 opencode 同批或緊接其後評估（N=3 驗證點） | arch/install | 2026-07-08 | — | P3 | spike |
 | CC-473 | 🟢 someday | 設計 `pmctl pm`：把 `commands/pm.md` 的 orchestration 邏輯（snapshot/handover validation/dispatch-wait 迴圈/discovery routing）抽成 CLI surface，讓 Claude `/pm` 與未來 codex host 呼叫同一份邏輯；範圍明訂為 batch-only（無互動澄清迴圈），承接 CC-471 spike 發現 | arch/install | 2026-07-09 | — | P3 | design |
+| CC-474 | 🟢 someday | dispatch/gate reasoning effort 獨立可調：目前 effort 綁死在 model alias 第三欄（share/*-model-aliases.tsv，多數 alias 寫死 high），無法在不換 model 的前提下單獨調降/調升；新增 `--effort` 旗標覆蓋、預設改 medium（CC-445 pr-gate 多輪迭代觀察，2026-07-08） | ops/gate | 2026-07-08 | — | P3 | — |
 
 ---
 
@@ -498,6 +499,26 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Outcome**（2026-07-08）：Requirement 1-4 全數完成並驗證；`pmctl gate run --executor codex --test-cmd "bash scripts/run-all-tests.sh"` 收斂 GO（全部 5 個 reviewer approve/pass，`test_suite: pass`）；`scripts/test-pr-gate.sh` 135/135、`test-pmctl-context.sh` 109/109、`test-pmctl-dispatch.sh` 44/44 全綠；`bash scripts/run-all-tests.sh` 全套 checkpoint 71/71 clean。
 
 **See**: pr:#383
+
+---
+
+## CC-474 — dispatch/gate reasoning effort 獨立可調參數，預設收斂為 medium 🟢 someday
+
+**Problem**：`pmctl dispatch run` / `pmctl gate run` 目前沒有獨立的 reasoning-effort 控制旗標——effort 值綁死在 `share/model-aliases.tsv`（codex）與 `share/claude-model-aliases.tsv`（claude）每一列 alias 的第三欄，經 `scripts/lib/model-aliases.sh` 解析出 `MA_RESOLVE_EFFORT` 後直接餵給 adapter（codex 端見 `adapters/codex/dispatch.sh:285` 的 `-c model_reasoning_effort="..."`）。這代表使用者若想調整某次派工的推理強度，唯一手段是換一個不同的 model alias——但常用 alias（codex 的 `default`/`gpt-5.5`/`gpt-5.4`/`codex-spark`/`light` 全部寫死 `high`；claude 的 `default`/`sonnet`/`light`/`haiku` 寫死 `normal`，只有 `opus` 是 `high`）並沒有「同一個 model、不同 effort」的組合可選。
+
+**Why**：model 選擇（能力/成本層級）與 reasoning effort（同一 model 內的推理深度/延遲/token 用量）是兩個獨立維度，糊在同一張 alias 表格裡意味著每次想省成本/縮短等待就得被迫換一個能力較弱的 model，或反過來為了拉高 effort 被迫換一個較貴的 model。CC-445 這次 pr-gate 迭代（全程用 codex `default` alias、effort 固定 `high`，跑了 12+ 輪 full-tier ×5 reviewer）讓使用者實際感受到這個耦合的成本；使用者的訴求是把 dispatch/gate 的預設 effort 收斂為 `medium`，同時保留視情況調高/調低的彈性，而不是二選一寫死。
+
+**Requirement**：
+1. **新增 `--effort <value>` CLI 旗標**：`pmctl dispatch run` 與 `pmctl gate run` 都接受，語意為「覆蓋 model alias 解析出的 effort」，優先序為 `--effort` 旗標 > model alias 內建 effort > 全域預設 `medium`。旗標值域需對齊各 adapter 實際支援的 reasoning-effort 詞彙（codex/claude 目前用的值如 `high`/`normal`，需在實作時盤點 codex CLI `model_reasoning_effort` 與 claude CLI 對應設定各自接受哪些字面量，必要時做一層 pm-dispatch 內部詞彙 → adapter 原生詞彙的正規化，而非直接透傳使用者輸入）。
+2. **預設值收斂為 medium**：修改 `share/model-aliases.tsv`、`share/claude-model-aliases.tsv` 常用 alias（`default`/`gpt-5.5`/`gpt-5.4`/`sonnet`/`haiku` 等）的 effort 欄位，或改為由旗標邏輯在未指定 `--effort` 時套用全域預設，兩種做法擇一並在票內定案（後者更貼近「效果獨立於 alias」的設計方向，但需確認不會影響 `light`/`codex-spark` 這類本來就該維持低延遲的路徑）。
+3. **文件同步**：`docs/dispatch-brief.md`、`docs/executor-contract.md` 補上 `--effort` 契約說明；`agents/project-pm.md`、`pr-gate-review` skill 提及派工時預設 medium、僅在需要更深入分析（如高風險/連續 NO-GO 升級）時才建議使用者手動加 `--effort high`。
+4. **opencode adapter 現況盤點**：目前 opencode adapter 沒有任何 effort/reasoning 解析邏輯——查明 opencode 是否原生支援等效概念；若支援則一併補上，若不支援則在票內明文記錄為 non-goal（不要為了統一介面而偽造一個 opencode 不支援的旗標語意）。
+
+**Non-goals**：不做「依 tier/risk 自動升降 effort」的啟發式（那是另一個更大的政策題目，先讓旗標本身可控即可）；不改變各 model 的能力/報價層級選擇邏輯本身；不強行讓三個 adapter 的 effort 詞彙變成完全相同的字串集合（各家原生支援的值域不同，正規化層負責轉換，不是消滅差異）。
+
+**Verification**：model-alias 解析相關測試套件新增 `--effort` override 案例（含「旗標覆蓋 alias 內建值」與「未給旗標時套用全域預設 medium」兩態）；`test-pr-gate.sh`/`test-pmctl-dispatch.sh` 斷言帶 `--effort <value>` 時組出的 adapter 指令帶正確的原生 reasoning-effort 設定；相關 doctor/dispatch 套件全綠。
+
+**Source**：使用者在 CC-445 pr-gate 多輪迭代（本 session 全程以 codex `default` alias 隱性 `high` effort 執行）之後提出，2026-07-08。
 
 ---
 
