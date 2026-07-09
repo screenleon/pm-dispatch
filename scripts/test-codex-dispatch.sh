@@ -536,7 +536,7 @@ case_default_model_resolves_gpt55() {
 # Steps:
 #   1. Run --print-cmd with --model gpt-5.5.
 #   2. Assert the CMD carries -m gpt-5.5 and model_reasoning_effort="medium".
-case_explicit_gpt55_resolves_high_effort() {
+case_explicit_gpt55_resolves_medium_effort() {
   local name="default-model/--model gpt-5.5 resolves + medium effort"
   local _home _work _brief _out _exit
   should_run "$name" || return 0
@@ -566,7 +566,7 @@ case_explicit_gpt55_resolves_high_effort() {
 # Steps:
 #   1. Run --print-cmd with --model gpt-5.4.
 #   2. Assert the CMD carries -m gpt-5.4 and model_reasoning_effort="medium".
-case_explicit_gpt54_resolves_high_effort() {
+case_explicit_gpt54_resolves_medium_effort() {
   local name="default-model/--model gpt-5.4 fallback resolves + medium effort"
   local _home _work _brief _out _exit
   should_run "$name" || return 0
@@ -1155,8 +1155,8 @@ case_alias_resolution_spark_prints_resolved_model_and_banner_no_trace_files
 case_full_form_passthrough_keeps_model_no_effort
 case_unknown_alias_fallback_keeps_raw_model
 case_default_model_resolves_gpt55
-case_explicit_gpt55_resolves_high_effort
-case_explicit_gpt54_resolves_high_effort
+case_explicit_gpt55_resolves_medium_effort
+case_explicit_gpt54_resolves_medium_effort
 case_default_alias_resolves_gpt55
 case_timeout_env_only_precedence
 case_timeout_precedence_brief_field
