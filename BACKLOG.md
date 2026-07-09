@@ -10,6 +10,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 
 | #  | Status | 主題 | 影響面 | 首次記錄 | Refs | Priority | Epic |
 |----|--------|------|--------|----------|------|----------|------|
+| CC-476 | ✅ done | opencode `edit`+`bash` 同時 deny 時 `opencode run` 掛起根因調查（spike，CC-448 階段 2 blocking open risk） | install/ops | 2026-07-09 | pr:#390 | P2 | spike |
 | CC-450 | 🟢 someday | 其餘 9 個 test-*.sh docstring 格式統一（CC-004 同款 Behavior/Steps，跨檔） | ops | 2026-07-03 | — | P3 | — |
 | CC-475 | ✅ done | claude sonnet model alias 過期：`share/claude-model-aliases.tsv` 的 `default`/`sonnet` 仍釘 `claude-sonnet-4-6`，未跟進最新 `claude-sonnet-5`（opus/haiku 已對齊最新）（2026-07-09 使用者發現） | ops | 2026-07-09 | pr:#389 | P2 | — |
 | CC-451 | 🔵 active | core/ 定義層接上 runtime：enum 單一來源 + state 寫入 schema 驗證（CC-446 契約凍結前置；2026-07-06 盲測稽核；v0.9.0） | arch | 2026-07-06 | — | P2 | design |
@@ -88,7 +89,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-445 | 🔵 active | install write path host-aware：依 host manifest（CC-438）衍生 install/uninstall/doctor 對 codex-host 的接線；CC-381 完整實作第一刀（v0.9.0 候選；依賴 CC-436/438；umbrella: CC-333） | arch/install | 2026-07-04 | — | P2 | design |
 | CC-446 | 🔵 active | v1.0 契約凍結：`docs/stability-contract.md` 四層分級（stable/experimental CLI + stable/internal schema）+ SemVer/deprecation 政策 + 執行 CC-296 清掃（v1.0 P0，v0.9.0 候選；DECISIONS 2026-07-04） | process/DX | 2026-07-04 | — | P2 | design |
 | CC-447 | 🔵 active | 乾淨機器 onboarding 雙 smoke：offline clean-install smoke（v0.9.0 候選）+ live dogfood smoke（v1.0-rc）；摔倒點逐一開票；QA_RULES_DIR 缺席行為驗證 | docs/ops | 2026-07-04 | — | P2 | — |
-| CC-448 | 🔵 active | opencode host support：可行性 probe → `hosts/opencode/host.yaml` → install/doctor 接線；host 抽象 N=2 驗收（v0.9.0，2026-07-06 自 v1.0-rc 提前；依賴 CC-438/445；umbrella: CC-333；DECISIONS 2026-07-04+2026-07-06） | arch/install | 2026-07-04 | — | P2 | design |
+| CC-448 | 🔵 active | opencode host support：階段 1 probe 完成、CC-476 spike 解除掛起 blocking risk → 階段 2 `hosts/opencode/host.yaml` → 階段 3 install/doctor 接線；host 抽象 N=2 驗收（v0.9.0；依賴 CC-438已done/CC-445；umbrella: CC-333；DECISIONS 2026-07-04+2026-07-06） | arch/install | 2026-07-04 | — | P2 | design |
 | CC-449 | 🔵 active | release-verify/test-e2e 對 v0.8.0 新 surface（`pmctl ship`/`pmctl worktree`）無 live 煙測 + run-all-tests 套件註冊完整性 lint（CC-444 收尾發現 test-pmctl-worktree 未註冊，已修；防再漏）+ CI↔run-all parity 斷言（2026-07-06 稽核：24 個本地 suite CI 缺席）（v0.9.0 候選） | ops/test | 2026-07-04 | — | P2 | — |
 | CC-472 | 🟢 someday | spike: antigravity（`agy` CLI）host 唯讀 probe——比照 CC-436/CC-448 階段 1 模式，實測 command 載入能力 + hook/plugin 機制 + 五個 capability enum 的 provider/confidence 判定，不落地 `hosts/antigravity/host.yaml`；排在 CC-445 通用 install/uninstall dispatcher 之後、與 CC-448 opencode 同批或緊接其後評估（N=3 驗證點） | arch/install | 2026-07-08 | — | P3 | spike |
 | CC-473 | 🟢 someday | 設計 `pmctl pm`：把 `commands/pm.md` 的 orchestration 邏輯（snapshot/handover validation/dispatch-wait 迴圈/discovery routing）抽成 CLI surface，讓 Claude `/pm` 與未來 codex host 呼叫同一份邏輯；範圍明訂為 batch-only（無互動澄清迴圈），承接 CC-471 spike 發現 | arch/install | 2026-07-09 | — | P3 | design |
@@ -208,7 +209,9 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Update 2026-07-06（v1.0-rc → v0.9.0 整票提前）**: 維護者拍板 v0.9.0 host 軸 = codex + opencode 雙 host（DECISIONS 2026-07-06）——N=2 驗收紅線由 v1.0-rc 提前為 v0.9.0 版內驗收，避免 `hosts/*/host.yaml` schema 在只有 codex 一個非 claude host 時定案被特例帶歪。三階段順序不變：階段 1 probe 與 [[CC-436]]/[[CC-437]] 並行先跑；[[CC-438]] schema 定案須同時吃進雙 probe 結果；階段 2+3 依 [[CC-438]]/[[CC-445]] 之後收尾。
 
 **Update 2026-07-06（階段 1 probe 完成）**：`docs/spikes/CC-448.md`。關鍵發現：opencode 有宣告式 `permission.{bash,edit,...}: allow/ask/deny` 靜態設定，guard binding 比 codex 的 hooks.json 外掛式機制更簡單（不需寫腳本）；`bash: deny` 實測 fail-closed 且比 codex 乾淨（模型完全不嘗試呼叫）；但 `edit: deny` 單獨設定會被 `bash: allow` 繞過（用 shell 重導向寫檔案），必須兩者都納管才是真正的 file guard——這與 CC-436 的 codex `apply_patch`/`Bash` 不對稱發現同一類問題；`edit`+`bash` 同時 deny 會導致 `opencode run` 掛起，根因未查明，是階段 2 manifest 定案前的 blocking open risk。階段 2（`hosts/opencode/host.yaml`）、階段 3（doctor/install 接線）尚未開始。
-**See**: DECISIONS.md 2026-07-04、DECISIONS.md 2026-07-06、`docs/spikes/CC-448.md`
+
+**Update 2026-07-09（[[CC-476]] spike 解除 blocking open risk）**：`docs/spikes/CC-476.md`（中等信心）——掛起最可能系統性根因是 upstream `anomalyco/opencode` open issue #35073（headless subagent 權限 ask 誤判為 interactive），非 edit+bash 特定組合的獨立 bug；無直接修復但有繞過方式：階段 2 manifest 的 `bash` guard binding 一律用 per-pattern object 形式 `{"*":"deny"}`（非 bare string），並在 headless dispatch 外掛強制 timeout+kill（沿用 [[CC-470]] 逾時止血機制）。[[CC-438]] schema v1 已定案完成（pr:#375，BACKLOG-ARCHIVE.md）——階段 2 的兩個前置依賴（schema、掛起風險）皆已清除，可以開始寫 `hosts/opencode/host.yaml`。
+**See**: DECISIONS.md 2026-07-04、DECISIONS.md 2026-07-06、`docs/spikes/CC-448.md`、`docs/spikes/CC-476.md`
 
 ## CC-449 — release-verify/test-e2e：ship/worktree surface 煙測 + 套件註冊完整性 lint 🔵 active
 
@@ -250,6 +253,30 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Source**：使用者於確認派發相關內容時發現，2026-07-09。
 
 **See**: pr:#389
+
+---
+
+## CC-476 — opencode `edit`+`bash` 同時 deny 掛起根因調查（spike）✅ 2026-07-09
+
+**Problem**：[[CC-448]] 階段 1 probe（`docs/spikes/CC-448.md`）發現，opencode 宣告式 permission config 若同時設 `edit: deny` + `bash: deny`，`opencode run` 會無聲掛起（90 秒 timeout 內無任何輸出即被中止），即使帶 `--dangerously-skip-permissions`；這與單獨 `bash: deny`（模型乾淨回覆「I can't run shell commands」）行為不一致。根因未查——是等待某個永遠不會到來的互動提示？還是 opencode 內部重試迴圈？在不知道根因之前，無法確認「file-level guard 需要 edit+bash 都 deny 才算真正擋住」這個 CC-448 的核心結論在 headless dispatch 路徑上是否可行（若掛起無法解，等於這個保守預設在 headless 場景是死路）。
+
+**Why**：這是 [[CC-448]] 階段 2（`hosts/opencode/host.yaml` manifest 定案）明文列出的 blocking open risk，卡住整個 opencode host 接線；同時是 v0.9.0 host 軸（codex+opencode N=2 驗收）的排程路徑上的節點。範圍窄、技術性（單一行為的根因），不是「該往哪個方向走」的開放性問題，適合小規模 spike 而非完整 /discover。
+
+**Requirement**：
+- Investigation scope：
+  1. 用 `opencode run --format json`（或等效 debug/verbose 旗標）重現 CC-448 probe 的掛起情境，觀察掛起當下 process 狀態（`strace`/`py-spy` 等價工具或至少 `ps`/thread dump）——掛起是在等待 stdin/TTY 互動輸入？是網路呼叫卡住（model provider 重試）？還是某個內部 promise 沒有 resolve？
+  2. 查 opencode 原始碼/CHANGELOG/issue tracker（若原始碼可讀取或有本地 vendor 副本）：`permission.edit`/`permission.bash` 同時 deny 時的內部處理路徑是否有已知 issue 或文件記錄的行為。
+  3. 排除法：測試 edit+bash 以外的權限組合（如 `edit: deny` + `webfetch: deny`、三者全 deny）是否同樣掛起，縮小是「edit+bash 特定組合」還是「任兩個以上工具同時 deny 就掛」。
+  4. 若能重現，嘗試找出繞過/修復方式（例如某個 flag、某個 config 欄位、升級版本後是否已修）。
+- Done-when：能明確回答「掛起的觸發條件與根本機制是什麼」，並給出對 CC-448 階段 2 manifest 設計的建議之一：(a) 掛起有解，記錄解法；(b) 掛起無解但有繞過方式（如加 timeout + 強制 kill，接受 degrade）；(c) 掛起無解也無繞過，CC-448 manifest 需改設計（例如 opencode host 不採「全 deny」保守預設，改用其他 guard binding 策略）。
+- Result log：`docs/spikes/CC-476.md`
+
+**Outcome**：3-angle fan-out（重現+process檢視 / 原始碼與 issue tracker 先例 / 觸發組合縮小）收斂出建議 (b)：掛起無解但有繞過方式，中等信心（非高信心，見 spike 文件 Open risks）。最可能的系統性根因是 upstream `anomalyco/opencode` 已知 open issue #35073（headless subagent 的 ask 被誤判為 interactive，等待不存在的回應者，修復 PR #35823 未合併，正好對應本機安裝版本 1.17.8）——比「edit+bash 特定組合」這個框架更能解釋 a3 觀察到的「相同 config+prompt 時掛時不掛」flakiness。繞過方式：(1) `bash` 一律用 per-pattern object 形式 `{"*":"deny"}` 而非 bare string `"deny"`（a3 樣本雖小但方向一致）；(2) headless dispatch 呼叫 opencode 一律外掛強制 timeout+kill（CC-470 逾時止血機制可沿用），把掛起當作已知、有限機率的 degrade 情境接受；(3) 之後升級 opencode 版本前先確認 PR #35823 是否已合併修復 #35073。解除 [[CC-448]] 階段 2 manifest 定案的 blocking open risk。完整三角度證據、矛盾調和推理、Open risks 見 `docs/spikes/CC-476.md`。
+
+**Dependencies**：承接 [[CC-448]] 階段 1 probe 的 open risk；解開後回頭解鎖 [[CC-448]] 階段 2。
+
+**Source**：2026-07-09 PM discovery-route 分析（CC-445/469/470/474 陸續合併後盤點 v0.9.0 host 軸下一步）。
+**See**: `docs/spikes/CC-476.md`、pr:#390
 
 ---
 
