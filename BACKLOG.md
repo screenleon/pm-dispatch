@@ -10,6 +10,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 
 | #  | Status | 主題 | 影響面 | 首次記錄 | Refs | Priority | Epic |
 |----|--------|------|--------|----------|------|----------|------|
+| CC-476 | 🔵 active | opencode `edit`+`bash` 同時 deny 時 `opencode run` 掛起根因調查（spike，CC-448 階段 2 blocking open risk） | install/ops | 2026-07-09 | — | P2 | spike |
 | CC-450 | 🟢 someday | 其餘 9 個 test-*.sh docstring 格式統一（CC-004 同款 Behavior/Steps，跨檔） | ops | 2026-07-03 | — | P3 | — |
 | CC-475 | ✅ done | claude sonnet model alias 過期：`share/claude-model-aliases.tsv` 的 `default`/`sonnet` 仍釘 `claude-sonnet-4-6`，未跟進最新 `claude-sonnet-5`（opus/haiku 已對齊最新）（2026-07-09 使用者發現） | ops | 2026-07-09 | pr:#389 | P2 | — |
 | CC-451 | 🔵 active | core/ 定義層接上 runtime：enum 單一來源 + state 寫入 schema 驗證（CC-446 契約凍結前置；2026-07-06 盲測稽核；v0.9.0） | arch | 2026-07-06 | — | P2 | design |
@@ -250,6 +251,27 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Source**：使用者於確認派發相關內容時發現，2026-07-09。
 
 **See**: pr:#389
+
+---
+
+## CC-476 — opencode `edit`+`bash` 同時 deny 掛起根因調查（spike）
+
+**Problem**：[[CC-448]] 階段 1 probe（`docs/spikes/CC-448.md`）發現，opencode 宣告式 permission config 若同時設 `edit: deny` + `bash: deny`，`opencode run` 會無聲掛起（90 秒 timeout 內無任何輸出即被中止），即使帶 `--dangerously-skip-permissions`；這與單獨 `bash: deny`（模型乾淨回覆「I can't run shell commands」）行為不一致。根因未查——是等待某個永遠不會到來的互動提示？還是 opencode 內部重試迴圈？在不知道根因之前，無法確認「file-level guard 需要 edit+bash 都 deny 才算真正擋住」這個 CC-448 的核心結論在 headless dispatch 路徑上是否可行（若掛起無法解，等於這個保守預設在 headless 場景是死路）。
+
+**Why**：這是 [[CC-448]] 階段 2（`hosts/opencode/host.yaml` manifest 定案）明文列出的 blocking open risk，卡住整個 opencode host 接線；同時是 v0.9.0 host 軸（codex+opencode N=2 驗收）的排程路徑上的節點。範圍窄、技術性（單一行為的根因），不是「該往哪個方向走」的開放性問題，適合小規模 spike 而非完整 /discover。
+
+**Requirement**：
+- Investigation scope：
+  1. 用 `opencode run --format json`（或等效 debug/verbose 旗標）重現 CC-448 probe 的掛起情境，觀察掛起當下 process 狀態（`strace`/`py-spy` 等價工具或至少 `ps`/thread dump）——掛起是在等待 stdin/TTY 互動輸入？是網路呼叫卡住（model provider 重試）？還是某個內部 promise 沒有 resolve？
+  2. 查 opencode 原始碼/CHANGELOG/issue tracker（若原始碼可讀取或有本地 vendor 副本）：`permission.edit`/`permission.bash` 同時 deny 時的內部處理路徑是否有已知 issue 或文件記錄的行為。
+  3. 排除法：測試 edit+bash 以外的權限組合（如 `edit: deny` + `webfetch: deny`、三者全 deny）是否同樣掛起，縮小是「edit+bash 特定組合」還是「任兩個以上工具同時 deny 就掛」。
+  4. 若能重現，嘗試找出繞過/修復方式（例如某個 flag、某個 config 欄位、升級版本後是否已修）。
+- Done-when：能明確回答「掛起的觸發條件與根本機制是什麼」，並給出對 CC-448 階段 2 manifest 設計的建議之一：(a) 掛起有解，記錄解法；(b) 掛起無解但有繞過方式（如加 timeout + 強制 kill，接受 degrade）；(c) 掛起無解也無繞過，CC-448 manifest 需改設計（例如 opencode host 不採「全 deny」保守預設，改用其他 guard binding 策略）。
+- Result log：`docs/spikes/CC-476.md`
+
+**Dependencies**：承接 [[CC-448]] 階段 1 probe 的 open risk；解開後回頭解鎖 [[CC-448]] 階段 2。
+
+**Source**：2026-07-09 PM discovery-route 分析（CC-445/469/470/474 陸續合併後盤點 v0.9.0 host 軸下一步）。
 
 ---
 
