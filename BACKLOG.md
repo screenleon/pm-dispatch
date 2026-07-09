@@ -10,17 +10,12 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 
 | #  | Status | 主題 | 影響面 | 首次記錄 | Refs | Priority | Epic |
 |----|--------|------|--------|----------|------|----------|------|
-| CC-004 | ✅ closed 2026-07-06 | test-pr-gate.sh docstring 格式統一 | ops | 2026-05-12 | pr:#369 | P3 | — |
 | CC-450 | 🟢 someday | 其餘 9 個 test-*.sh docstring 格式統一（CC-004 同款 Behavior/Steps，跨檔） | ops | 2026-07-03 | — | P3 | — |
 | CC-451 | 🔵 active | core/ 定義層接上 runtime：enum 單一來源 + state 寫入 schema 驗證（CC-446 契約凍結前置；2026-07-06 盲測稽核；v0.9.0） | arch | 2026-07-06 | — | P2 | design |
 | CC-452 | 🔵 active | guard/hook 對稱性與併發 hardening：episodes.jsonl append 加鎖、三安全 guard set -e 統一、ISO8601 正規化抽 lib（2026-07-06 盲測稽核；v0.9.0） | ops | 2026-07-06 | — | P3 | hygiene |
 | CC-453 | 🔵 active | worktree/auto-pack 路徑契約 hardening：worktree create stdout 契約、auto-pack work_dir fail-loud、opencode isolation 錯誤訊息修正（2026-07-06 盲測稽核；v0.9.0） | ops | 2026-07-06 | — | P3 | hygiene |
 | CC-454 | 🟢 someday | CI shellcheck ignore_names 白名單 ratchet 收斂：獨立 job + 白名單清零機制（比照 CC-450 模式；2026-07-06 盲測稽核） | ops/test | 2026-07-06 | — | P3 | hygiene |
-| CC-455 | ✅ closed 2026-07-06 | context plane repo_root 跟隨工作目錄：query/reuse-scan/index 未帶路徑時 default 到 pmctl 安裝 repo 而非 CWD，跨 repo 使用 /pm 時目標 repo 的 context.db 永不建立/刷新、查詢打錯 db（2026-07-06 使用者回報+實測確認；v0.9.0） | ux/ops | 2026-07-06 | pr:#371 | P2 | — |
 | CC-456 | 🔵 active | 去除 maintainer-local `~/github/` 佈局假設：repos-root 參數化 + prose/scripts/pm 層全面 sweep + lint 防再犯（2026-07-06 使用者指出；v1.0 public 前提；v0.9.0） | arch/portability | 2026-07-06 | — | P2 | oss |
-| CC-457 | ✅ closed 2026-07-07 | claude host manifest 化：`hosts/claude/host.yaml` 把原生 claude host 宣告進 CC-438 schema（install_targets/capability/guard_bindings/uninstall_module），validator 納入，作為 CC-445 host-generic 接線的 reference instance（2026-07-07 使用者指出三 host 維護不對齊；v0.9.0） | arch/install | 2026-07-07 | pr:#381 | P2 | design |
-| CC-458 | ✅ closed 2026-07-07 | gate run/wait DX：wait `--cd` 改預設 CWD git toplevel、run stderr 印可直接複製的 wait 指令、wait 完成印 result `Final:` verdict 行讓 NO-GO 與執行錯誤可區分（2026-07-06 使用者指定優先；三痛點同 session 實踩） | ux/gate | 2026-07-07 | pr:#378 | P2 | — |
-| CC-459 | ✅ closed 2026-07-07 | context retrieval reflex 確定性化：`pmctl context prompt-scan`（knowledge-domain 抽詞查詢、獨立事件 kind、空 query payload 隱私契約）+ UserPromptSubmit hook 自動注入 knowledge hits + project-pm On-invocation 編號 Retrieve 步驟；第 2 層 read-guard 顯式 deferred（2026-07-07 telemetry 證實 reflex 從未被執行） | DX/hook | 2026-07-07 | pr:#379 | P2 | — |
 | CC-460 | 🔵 active | `pmctl commands --json` manifest 單一來源 + router↔manifest↔README 三方防漂移 lint（承接 CC-033 #4 README surface 重建、CC-446 #5a `--json` 覆蓋率缺口；2026-07-07 openyida 跨專案分析） | DX/docs | 2026-07-07 | — | P2 | design |
 | CC-461 | 🟢 someday | `doctor.sh --fix`：僅限冪等/可逆/不碰使用者內容類別的自動修復；待 CC-447 offline smoke 產出摔倒點清單後定白名單（2026-07-07 openyida 跨專案分析） | ops/install | 2026-07-07 | — | P3 | — |
 | CC-462 | 🟢 someday | e2e 可拋棄資源紀律：前綴命名 + registry JSON + result artifact；掛在 CC-449 e2e 新 phase 之後，與 CC-447 live smoke 共用同一 registry（2026-07-07 openyida 跨專案分析） | ops/test | 2026-07-07 | — | P3 | — |
@@ -33,7 +28,6 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-469 | 🔵 active | codex reviewer sandbox 找不到 pmctl：`codex exec --sandbox workspace-write` 派工 reviewer 時，sandbox 內裸呼叫 `pmctl guard check` 回報 command not found，導致該 reviewer 中止、gate 產不出結果檔案（2026-07-07 平行模式 gate run 實測發現） | ops/gate | 2026-07-07 | — | P2 | — |
 | CC-011 | 🟢 someday | sync-memory.sh + install 選項：symlink memory 到雲端資料夾實現跨裝置共用 | ux/memory | 2026-05-14 | — | — | — |
 | CC-012 | 🟢 someday | SessionStart hook：session 啟動時 pull 最新 memory（git/rsync）確保跨裝置同步 | ux/memory | 2026-05-14 | — | — | — |
-| CC-014 | ✅ closed 2026-07-02 | repo 通用 worktree 平行開發工具：建立/清理 worktree + using-git-worktrees skill。v0.8.0 Phase 4 | arch | 2026-05-14 | pr:#358 | — | — |
 | CC-015 | ⏸ deferred | `systematic-debugging` skill：結構化偵錯工作流 | ux | 2026-05-14 | — | — | — |
 | CC-018 | 🟢 someday | Codex quota 自動追蹤 + rate-limit 路徑統一（吸收 CC-269）：寫到 `~/.local/share/pm-dispatch/state/rate-limits.json`；解析 API response headers；token-usage.sh 加 Codex pool 顯示 | ux/token | 2026-05-14 | — | P3 | — |
 | CC-023 | ⏸ deferred | `coupling-reviewer`：PR gate 加入語言感知耦合分析（dependency-cruiser/gocyclo/coca） | ops/gate | 2026-05-14 | — | — | — |
@@ -61,7 +55,6 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-209 | 🟢 someday | codegraph evaluation（Phase 1 AMBER）：pm-dispatch 非有效測試目標；Phase 2 benchmark 需 TS/JS/Python/Go codebase（see CC-253） | ops/token | 2026-05-21 | pr:TBD | P3 | spike |
 | CC-211 | ⏸ deferred | v0.3.0 arch epic：schema-first PM runtime（core/runtime/adapters/mcp 四層）；adapters codex+claude 已 ship；state-first/mcp 仍 open | arch/portability | 2026-05-21 | — | P1 | design |
 | CC-212 | ⏸ deferred | **[fix: harden Windows junction install — path-passing + idempotency]** 兩個 Windows junction hardening 合併一 PR（吸收 CC-213）：(A) `make_junction_windows()` 改用 `PM_DISPATCH_MAKE_SRC`/`PM_DISPATCH_MAKE_DST` env var 傳路徑，統一 PowerShell boundary 慣例；(B) `install_dir_junction()` 加 manifest-driven idempotency probe，不再依賴 `-L` 偵測。 | ops/portability | 2026-05-21 | pr:#112 | P3 | oss |
-| CC-214 | ✅ done | **[CC-207 advise follow-up]** `docs/platform-support.md` 手動 uninstall 說明使用裸 `bash uninstall.sh`，在非 repo-root 工作目錄下執行會找不到腳本；已改為 `bash "${PM_DISPATCH_REPO}/uninstall.sh"` 形式（與文件其他範例一致）。Raised by critic in gate-20260521-115634 as [low] advise. | ops/DX | 2026-07-03 | pr:#362 | P3 | oss |
 | CC-216 | ⏸ deferred | MCP server（DEFERRED no milestone，2026-06-18 user 拍板；待 executor 抽象 + retrieval/memory 基底穩定後再評估） | arch/portability | 2026-05-21 | — | — | design |
 | CC-227 | ⏸ deferred | **[refactor: extract yaml-frontmatter lib + shared validation helpers]** 把 `check_frontmatter()` 與 shared helpers（dq-escape/adjacent-quote/empty-entry，原 CC-226 範圍）一起搬到 `scripts/lib/yaml-frontmatter.sh`；`lint-frontmatter.sh` 成薄 CLI 包裝；`doctor.sh` 可 source lib 取代 fork subprocess。CC-226 已合併入本票。 | arch/reuse | 2026-05-22 | pr:#119 | P3 | oss |
 | CC-236 | 🟢 someday | **[pmctl report — away-from-keyboard state roll-up]** A `pmctl report` rolling up state since last invocation (open tasks, blockers, last gate verdict, recent runs). Deprioritized 2026-05-22: the maintainer does not run agents unattended, so a "morning report" time-gap framing has low current need; on-demand status is already part of the `pmctl` surface (CC-215). Revisit if the workflow ever includes overnight / away dispatch. | ux | 2026-05-22 | — | — | design |
@@ -87,27 +80,15 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-369 | ⏸ deferred | Windows state store 真實 ACL via icacls（parked: CC-370；border case relative to profile ACL protection） | ops/portability | 2026-06-13 | — | — | hygiene |
 | CC-370 | ⏸ deferred | **[native Windows support deferred to post-core platform phase]** 核心功能開發期間正式只支援 Linux + WSL2（WSL2 視為 Linux）；原生 Windows Git Bash 非官方支援，使用者走 WSL2。理由是專注：開發期同時扛多平台會排擠核心功能（CI 只測 Linux，每次碰 Windows 都要人工驗證 + gate churn，見 #272/#273）。已合併的 portability 程式碼保留（綠且成本低），但不再新增 Windows 分支，直到核心定型（v0.5.0+）後的專屬平台階段。Parks: CC-038, CC-104d/e/f/g/j/k/r/s, CC-369。**See**: DECISIONS.md 2026-06-13 defer-native-windows-support-during-core-dev | ops/portability | 2026-06-13 | — | — | design |
 | CC-377 | ⏸ deferred | adapter: Google Antigravity（`agy`）executor（DEFERRED：headless CLI 1.0.8 不成熟；resume: newer agy with `--output-format stream-json`；umbrella: CC-333） | arch/portability | 2026-06-13 | — | P2 | design |
-| CC-381 | ✅ done | arch: install host-PM-aware（host runtime axis：codex/opencode host PM 設定面；umbrella: CC-333）。v0.8.0 Phase 3 spike 已收斂（`docs/spikes/CC-381.md`）：guard 落點不確定性已解——codex native PreToolUse hook 可行；後續拆為 CC-436/437/438 | arch/install | 2026-06-14 | pr:#359 | P2 | design |
 | CC-390 | ⏸ deferred | codex dispatch trace-capture 強化（FD inheritance cold-start flake；fail-closed safe；resume: stable repro；umbrella: CC-333） | arch/portability | 2026-06-15 | — | P3 | design |
 | CC-393 | 🟢 someday | design: portable-skill-substrate — CLI-agnostic skill 控制層（design seed after v0.6.0 N≥2；3 control skills + Portable Skill v0 frontmatter；umbrella: CC-333） | arch | 2026-06-16 | — | — | design |
 | CC-431 | 🔵 active | **[test-e2e.sh + release-verify.sh: opencode adapter support]** `--adapter` 目前只接受 `claude\|codex\|auto`；opencode 在 v0.6.0 加入後未同步更新 e2e 驗證路徑。需：(1) 將 opencode 加入兩腳本的 adapter 驗證清單；(2) Phase B dispatch 支援 opencode；(3) Phase C pr-gate smoke 評估是否可用 opencode executor（目前硬碼 codex）。觸發：release-verify --e2e --adapter opencode 被拒（exit 2）。v1.0 executor stable 宣稱的證據前置（v0.9.0 候選；DECISIONS 2026-07-04） | ops/test | 2026-06-30 | — | P2 | — |
 | CC-435 | 🟢 someday | **[poll→通知機制 single-waiter guard：條件觸發，非既定後續票]** 只有在真正出現多個 waiter 需要同時等待同一個 run_id/gate_id 的場景時才拿出來討論；候選設計見 `docs/spikes/CC-433.md` Open risks（方案 A：`flock` 搶鎖+敗者退回輪詢；方案 B：per-waiter 專屬 fifo+supervisor 廣播）。CC-434 完成後重新盤點成本效益：輪詢 vs blocking read 在單一 waiter/數分鐘等待場景下資源消耗差距趨近於零，延遲改善（≤2s→近乎即時）對人在等 gate 結果無感，而兩個方案都要在安全敏感的 supervisor 檔案引入新 race condition，投資報酬率目前不足，故不排入既定實作，僅記錄設計供未來觸發條件成立時起步。 | arch/gate | 2026-07-02 | — | P3 | design |
-| CC-436 | ✅ done | codex-host PreToolUse payload 驗證 probe（唯讀，驗證 CC-381 guard binding 可行性；umbrella: CC-333） | arch/install | 2026-07-02 | — | P2 | spike |
-| CC-437 | ✅ done | doctor 擴充切片：host-aware capability check（`doctor.sh` 拆出 host module 介面；umbrella: CC-333，承接 CC-381） | arch/install | 2026-07-02 | pr:#374 | P2 | design |
-| CC-438 | ✅ done | host manifest schema v1：codex-host 設定面宣告化（`hosts/codex/host.yaml` + format handler；依賴 CC-436；umbrella: CC-333，承接 CC-381） | arch/install | 2026-07-02 | pr:#375 | P2 | design |
-| CC-439 | ✅ done | `/ship <ticket-id>` command：明確票直接實作到開 PR，pre-flight 一致性檢查 + gate 迴圈收斂 | process/DX | 2026-07-02 | pr:#360 | P2 | design |
-| CC-440 | ✅ done | spike: `/ship` 並行版可行性——worktree + dispatch + gate 迴圈同時跑 N 條 pipeline。四題已收斂（`docs/spikes/CC-440.md`）：lane 失敗互不干擾逐條通知、gate fix-loop 由 executor 自扛、worktree 等合併確認才 remove、N 可調且天生結構隔離不需選票機制 | arch/gate | 2026-07-03 | — | P2 | design |
-| CC-441 | ✅ done | `/ship --parallel` N-lane orchestrator v1——薄封裝在 CC-014 worktree 之上，保留 CC-439 ship 契約，落地 CC-440 五點決策 | arch/gate | 2026-07-03 | pr:#363 | P2 | design |
-| CC-442 | ✅ done | spike: 統一 `pmctl ship <ticket-id> [--worktree] [--adapter <name>]` 單一入口。三題已收斂（`docs/spikes/CC-442.md`）：`ship finish` 維持獨立動詞不收斂、tracking 採 unified-schema-with-optional-run_id、pilot diff 證實 `pmctl_ship_run` 遷移乾淨無 shim | arch/gate | 2026-07-03 | — | P3 | spike |
-| CC-443 | ✅ closed 2026-07-04 | 實作：統一 `pmctl ship <ticket-id>` start 入口（承接 CC-442 spike 三項決策 + 使用者外部 review 補強：prepare 保留 alias、tracking 改名 ship-lanes.jsonl、gc.auto 僅 batch 層擁有） | arch/gate | 2026-07-04 | pr:#365 | P2 | — |
-| CC-444 | ✅ done | v0.8.0 release closure：`/pre-release v0.8.0` → 修 drift（README badge/MILESTONES 標頭/CHANGELOG range 含 ship 系列 CC-439..443）→ release notes → tag + GitHub Release | process | 2026-07-04 | pr:#367 | P2 | — |
 | CC-445 | 🔵 active | install write path host-aware：依 host manifest（CC-438）衍生 install/uninstall/doctor 對 codex-host 的接線；CC-381 完整實作第一刀（v0.9.0 候選；依賴 CC-436/438；umbrella: CC-333） | arch/install | 2026-07-04 | — | P2 | design |
 | CC-446 | 🔵 active | v1.0 契約凍結：`docs/stability-contract.md` 四層分級（stable/experimental CLI + stable/internal schema）+ SemVer/deprecation 政策 + 執行 CC-296 清掃（v1.0 P0，v0.9.0 候選；DECISIONS 2026-07-04） | process/DX | 2026-07-04 | — | P2 | design |
 | CC-447 | 🔵 active | 乾淨機器 onboarding 雙 smoke：offline clean-install smoke（v0.9.0 候選）+ live dogfood smoke（v1.0-rc）；摔倒點逐一開票；QA_RULES_DIR 缺席行為驗證 | docs/ops | 2026-07-04 | — | P2 | — |
 | CC-448 | 🔵 active | opencode host support：可行性 probe → `hosts/opencode/host.yaml` → install/doctor 接線；host 抽象 N=2 驗收（v0.9.0，2026-07-06 自 v1.0-rc 提前；依賴 CC-438/445；umbrella: CC-333；DECISIONS 2026-07-04+2026-07-06） | arch/install | 2026-07-04 | — | P2 | design |
 | CC-449 | 🔵 active | release-verify/test-e2e 對 v0.8.0 新 surface（`pmctl ship`/`pmctl worktree`）無 live 煙測 + run-all-tests 套件註冊完整性 lint（CC-444 收尾發現 test-pmctl-worktree 未註冊，已修；防再漏）+ CI↔run-all parity 斷言（2026-07-06 稽核：24 個本地 suite CI 缺席）（v0.9.0 候選） | ops/test | 2026-07-04 | — | P2 | — |
-| CC-470 | ✅ closed 2026-07-08 | pr-gate sequential 模式逾時全歸零風險 + 慢速測試套件優化：qa-tester 選擇跑全套 run-all-tests 撞上共用 timeout 時，整個 gate session 結果 0 bytes（CC-445 R7 實測）；改逐 reviewer 落地 + 補 test-pmctl-dispatch/pmctl-context.sh 兩處已查明根因的效能修復（2026-07-08） | ops/gate | 2026-07-08 | pr:#383 | P2 | — |
-| CC-471 | ✅ done | spike: codex `pm_command_interface` probe——實測確認 codex CLI 沒有等同 Claude Agent/subagent 呼叫的機制，無法承接 `/pm` 這類互動式 orchestration；`hosts/codex/host.yaml` 該 capability 改記為 confidence: probed（`docs/spikes/CC-471.md`） | arch/install | 2026-07-09 | — | P3 | spike |
 | CC-472 | 🟢 someday | spike: antigravity（`agy` CLI）host 唯讀 probe——比照 CC-436/CC-448 階段 1 模式，實測 command 載入能力 + hook/plugin 機制 + 五個 capability enum 的 provider/confidence 判定，不落地 `hosts/antigravity/host.yaml`；排在 CC-445 通用 install/uninstall dispatcher 之後、與 CC-448 opencode 同批或緊接其後評估（N=3 驗證點） | arch/install | 2026-07-08 | — | P3 | spike |
 | CC-473 | 🟢 someday | 設計 `pmctl pm`：把 `commands/pm.md` 的 orchestration 邏輯（snapshot/handover validation/dispatch-wait 迴圈/discovery routing）抽成 CLI surface，讓 Claude `/pm` 與未來 codex host 呼叫同一份邏輯；範圍明訂為 batch-only（無互動澄清迴圈），承接 CC-471 spike 發現 | arch/install | 2026-07-09 | — | P3 | design |
 | CC-474 | 🟢 someday | dispatch/gate reasoning effort 獨立可調：目前 effort 綁死在 model alias 第三欄（share/*-model-aliases.tsv，多數 alias 寫死 high），無法在不換 model 的前提下單獨調降/調升；新增 `--effort` 旗標覆蓋、預設改 medium（CC-445 pr-gate 多輪迭代觀察，2026-07-08） | ops/gate | 2026-07-08 | — | P3 | — |
@@ -139,235 +120,6 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 向下相容：v1.1/v1.2 file 中缺此兩欄的列只 emit 警告（不阻斷 gate）。
 
 <!-- archived stubs — full text in BACKLOG-ARCHIVE.md -->
-
-## CC-381 — arch: install host-PM-aware ✅ 2026-07-02
-
-**Problem**: `install.sh` / `install-hooks.sh` 把整個安裝面寫死成 claude harness：PreToolUse/SessionEnd 等 hook 接進 `~/.claude/settings.json`、reviewer 與 dispatch 的 `permissions.allow`、statusline、以及 `agents/` `commands/` 的 PM 介面，全部假設「claude 是 host PM」。一旦 codex（或未來 host）當主 PM，這些都不對：codex 的設定面是 `~/.codex/` ＋ `AGENTS.md` ＋自有 sandbox/approval 模型，沒有 `~/.claude` 那套 PreToolUse hook。[[CC-334]]/[[CC-380]] 把 reviewer guard 與 allow-list 寫進 `~/.claude/settings.json`——在 codex-host 下根本不載入，等於 codex-PM 安裝拿不到任何 gate/guard plumbing。
-
-**這是哪條軸**: 「誰當 host PM」的軸，與目前 v0.6.0 在做的「PM→executor」軸（[[CC-373]]/[[CC-374]]）**正交**。runner_kind（[[CC-372]]）解的是「被驅動的 executor 怎麼到達」；本票解的是「驅動者（host PM runtime）的安裝/設定面」。對應 [[CC-333]] 七耦合的 **layer 4（install 路徑 `~/.claude/`）＋ layer 3/5（hook 機制／設定格式）**，memory 已標記為「later」。
-
-**Requirement**:
-- install 變 host-PM-aware：對每個支援當 PM 的 host runtime，由 manifest 衍生該 host 的等價設定 target＋format（hook/guard 接線、allow-list 或 sandbox/approval policy、PM 命令介面），而非寫死 `~/.claude/`。
-- 與 [[CC-372]] runner_kind ＋ [[CC-375]]（manifest 衍生接線）對齊：host 的「設定面在哪、長怎樣」應是 manifest 宣告，不是程式碼常數。
-- 每個 host 維持 install / uninstall / doctor 三方一致（[[CC-368]] 教訓），並各自有回歸測試。
-- 釐清跨 host 的 guard 落點：claude-host 走 `~/.claude` PreToolUse hook；codex-host 需把對應 guard 放進 codex 的攔截點（或退回 cli-only 由 `pmctl guard check` 撐）。**Update 2026-06-14（user）**：Codex 現在已有 hook 機制（可能不完全）——所以 codex-host 不必只能走 cli-only fallback，可評估把 write/bash guard 接進 codex 原生 hook（對齊 [[CC-372]] `write_guard_mode=hook`），是本票把 install 變 host-aware 時要勘的能力。`docs/executor-contract.md` 已不再斷言「非 Claude host 無 PreToolUse 等價」。
-
-**Non-goals**: 不是 executor 軸（[[CC-373]]/[[CC-374]] 已涵蓋 PM→codex/claude/opencode/agy 的 dispatch）；本票只管「host PM runtime 的安裝設定面」。不在本票決定 codex-host 的最終 hook 機制細節——先把 install 的 host 分派抽象出來。
-
-**Sequencing**: 排在 v0.6.0 executor-abstraction 核心（[[CC-373]]..[[CC-377]]）之後；可能落在 v0.7.0（與 [[CC-333]] layer 1/7、MCP 同期評估）。
-
-**Outcome**: v0.8.0 Phase 3 spike 完成並收斂（`docs/spikes/CC-381.md`）——三方獨立分析（主線程 BACKLOG/決策脈絡視角、codex read-only 對自身 hook runtime 的實測、chatgpt 外部架構視角）。guard 落點的最大不確定性已解：codex `PreToolUse` hook 經 codex 自己實測（`codex features list`/`codex doctor --json`/binary 字串）證實 stable 且 fail-closed，足以承接 write/bash guard，不必退回 cli-only fallback。本票收斂為三張後續票：[[CC-436]]（payload 驗證 probe，唯讀，第一刀）、[[CC-437]]（doctor 擴充切片，可與 CC-436 並行）、[[CC-438]]（host manifest schema v1 draft，依賴 CC-436）。`install.sh` write path 仍不動，留給後續票。
-**See**: pr:#359
-
----
-
-## CC-436 — codex-host PreToolUse payload 驗證 probe ✅ 2026-07-06
-
-**Problem**: [[CC-381]] spike（`docs/spikes/CC-381.md`）已用唯讀證據（`codex features list`/`codex doctor --json`/binary 字串反查）確認 codex `PreToolUse` hook 是 stable 且會 fail-closed 阻擋，但尚未實際跑過一次 end-to-end 的 hook 阻擋，也不知道 payload 內容能否映射到 `pmctl guard check --file/--command` 需要的欄位。
-
-**Why**: 這是 [[CC-381]] 收斂矩陣認定的「最小風險、最高信號」第一刀——payload 欄位不足會直接限制 codex-host guard binding 的設計空間（例如只能擋 command 不能擋 file path），必須在寫 host manifest schema（[[CC-438]]）前確認。
-
-**Outcome**: probe 完成，實測結果見 `docs/spikes/CC-436.md`。關鍵發現：(1) hook 設定格式是 `$CODEX_HOME/hooks.json`，與 Claude Code `settings.json` hooks 區塊相容，不是獨立 `config.toml` schema；(2) command 與 file-write 兩種動作皆實測 fail-closed 阻擋成功；(3) Bash/command payload 欄位齊全可直接映射 `pmctl guard check --command`，但 `apply_patch`（file-write）payload 沒有獨立 `file_path` 欄位，路徑內嵌在 patch 文字裡，需要額外 parser；(4) headless `codex exec` 若不帶 `--dangerously-bypass-hook-trust` 會無限期掛起（非 fail-closed 拒絕），這個 flag 對 codex-host dispatch 路徑是必要參數而非可選。建議：往 [[CC-438]] 推進但 schema 需區分 command/file 兩種覆蓋度不對稱；繼續保留 `write_guard_mode: cli-only` 當 fallback。
-
-**Dependencies**: 承接 [[CC-381]] spike 建議「第一刀」。umbrella [[CC-333]]。
-**See**: `docs/spikes/CC-436.md`
-
----
-
-## CC-437 — doctor 擴充切片：host-aware capability check ✅ 2026-07-06
-
-**Problem**: `scripts/doctor.sh` 目前四處寫死 claude-host 路徑（`check_settings_file`/`check_hooks`/`check_dispatch_allowlist`/`check_manifest`），無法回答「目前 host 是 claude/codex/opencode？哪些能力有 wiring？哪些只能透過 pmctl 手動使用？」。
-
-**Why**: [[CC-381]] spike 三方一致收斂：doctor 應以 capability（`command_guard`/`session_lifecycle`/`pm_command_interface`/`statusline` 等）為檢查單位，而非以 host 為單位；核心跑通用檢查、host-specific 邏輯外移，未來加新 host 才不必改 doctor 核心。此切片唯讀、風險最小，可與 [[CC-436]] 並行。
-
-**Requirement**:
-- `doctor.sh`（或 `pmctl doctor`）拆出通用核心檢查與 host-specific 檢查模組介面，新增 host 時只加模組、不改核心邏輯。
-- 檢查結果以 capability 為單位呈現（provider/enforcement/coverage/stability 等，具體結構由實作時的 `/pre-impl` 收斂），而非「這個 host 設定對不對」的二元判斷。
-- 至少涵蓋 claude-host 既有檢查（回歸不遺漏）與 codex-host 的對應能力探測。
-- 唯讀：不改變 install 的 write path。
-
-**Dependencies**: 承接 [[CC-381]] spike 建議，可與 [[CC-436]] 並行（不互相阻塞）。umbrella [[CC-333]]。
-
-**Outcome**: `doctor.sh` 核心 host-agnostic 化——四個 claude-host 檢查逐字搬入 `scripts/lib/doctor-host-claude.sh`（slug 與 pass/fail 判準不變），泛型 `lib/doctor-host-*.sh` 模組 loader 動態載入，新增 host 只加模組檔。新增 `emit_capability` 結構化 capability 記錄（host/capability/provider/enforcement/coverage/stability/confidence 七欄位，對齊 [[CC-381]] capability object 設計）。codex-host 模組全唯讀（binary、`$CODEX_HOME/hooks.json` 存在性/有效性；coverage=partial 反映 [[CC-436]] file-write payload 需 patch parser 的實測）。模組 helper 私有化（`_doctor_host_<name>_*`），僅 `doctor_host_<name>_run` 公開。copy-mode（單檔安裝無 lib/）緊湊 fallback：settings-file/dispatch-allowlist/manifest 判準具體保留，hooks inventory 降級單一 WARN（唯一行為變更，僅 copy-mode）。gate 兩輪收斂（R1 qa block+arch advise → R2 全 GO）。capability 欄位命名與 [[CC-438]] schema 定案時對齊，模組介面 manifest-ready。
-**See**: pr:#374
-**Also**: `docs/spikes/CC-381.md` §Angle 1/2/3 doctor 段落、§Recommendation 步驟 3。
-
----
-
-## CC-438 — host manifest schema v1：codex-host 設定面宣告化 ✅ 2026-07-06
-
-**Problem**: install 目前把 codex-host 的設定 target/format 假設寫死在程式碼常數（若日後實作），而非宣告在 manifest；[[CC-381]] spike 已收斂出應與既有 executor adapter manifest（[[CC-372]] `runner_kind`）分離、互為姊妹結構的 host manifest 方向，但尚未有 schema v1 draft。
-
-**Why**: 沒有 schema，[[CC-437]] 的 host-specific 檢查模組與未來 install write path 都無所依附；schema 需要先確認 [[CC-436]] 的 payload 驗證結果，才能把 `guard_bindings` 欄位定案。
-
-**Requirement**:
-- 產出 `hosts/codex/host.yaml` schema v1 draft：至少涵蓋 install target/format、hook surface、guard bindings、permissions surface、doctor/uninstall module 指標。
-- 與 [[CC-372]] executor adapter manifest（`runner_kind`/`write_guard_mode`）保持姊妹結構，不合併語意——host manifest 描述「host PM 自身」軸，adapter manifest 描述「PM→executor」軸。
-- schema 欄位需能表達「能力尚在演進」的狀態（例如 declared/probed/effective 或等價分層），不得假設所有 host 能力恆定。
-- 不落地實際 `install.sh` write path 改動（留給後續票）。
-
-**Dependencies**: 依賴 [[CC-436]]（payload 驗證結果決定 `guard_bindings` 欄位能表達什麼）。承接 [[CC-381]] spike。umbrella [[CC-333]]。
-
-**Outcome**: schema v1 定案（`docs/host-contract.md`）+ 首個 manifest（`hosts/codex/host.yaml`）+ 結構驗證器（`scripts/test-host-manifest.sh`，82 案例含 33 個負向 mutation，已註冊 run-all-tests）。schema 同時吃進雙 probe 結果——codex（[[CC-436]]）與 opencode 階段 1（[[CC-448]]）：`binding_form: config-fragment`/`provider: host_policy`/`hook_surface: {}` 承接宣告式 config host，不假設 guard binding 是腳本；closure-of-all-paths 條款明文寫入兩個 host file guard 的同構缺口（codex `apply_patch` 無 file_path 欄位 + shell 重導向繞過、opencode `edit:deny` 被 bash 繞過），all-deny 掛起風險與 headless hook-trust flag 亦入契約；contract 內含 opencode worked example 供階段 2 直接對照。gate 兩輪收斂（R1 qa NO-GO → enum-value 驗證補強；R2 GO + critic/arch advisory）→ advisory 修畢：capability 完整枚舉規則——五個 capability 全數必列，`none` 兩態由 `confidence` 區分（probed=已評估不支援、assumed=尚未評估），validator 強制完整性含負向案例。write path 不動，留給 [[CC-445]]。
-**See**: pr:#375；`docs/host-contract.md`
-
----
-
-## CC-439 — `/ship <ticket-id>` command：明確票直接實作到開 PR ✅ 2026-07-03
-
-**Problem**: 目前「拿到明確 backlog 票 → 直接實作 → 派 pr-gate → 修到 GO → 開 PR」這條路徑，只存在於 memory 與 `agents/project-pm.md` 的 Rules A/B 散落文字裡，主線程每次都要自己記得拼起來完整流程，且完全沒有「開工前先檢查跟已定案決策有沒有衝突」這一步。
-
-**Why**: 參考 [ai-night-shift](https://github.com/JudyaiLab/ai-night-shift) 的自動化紀律（非其架構）：把「implement → gate → fix → PR」收斂成一個可重複呼叫的 command，讓「丟一張明確的票」到「開出 PR」變成單一動作；同時把唯一合法卡點（票跟 BACKLOG/DECISIONS 已定案內容根本性矛盾）做成明確、可執行的第一步檢查，而不是模糊的自我判斷。
-
-**Requirement**:
-- 新增 `commands/ship.md`（`/ship CC-NNN` 呼叫），依 `commands/pm.md`/`commands/spike.md` 既有格式撰寫，步驟：(0) pre-flight 一致性檢查：讀該票 `BACKLOG.md` body + grep `DECISIONS.md` `**Constraints introduced**`，若根本性矛盾或 `Dependencies` 未滿足，停止並回報，不開分支；(1) 開 `feat/CC-NNN` 分支；(2) 主線程直接 Read/Edit/Write 實作，不 dispatch codex 做實作；(3) gate 迴圈：`pmctl gate run --executor codex` → 讀 `Final:` → NO-GO 時交給 `project-pm` agent 依既有 Rule A/B synthesis → 修全部 finding → 重跑，直到 GO；停止條件只有兩種（根本性不一致、或 3-strike 審查後同批 diff-caused blocker 完全原地打轉）；(4) `git push` + `gh pr create`（title/body 模板：票號/摘要/跑幾輪 gate/最終 verdict）；(5) 收尾報告，GO 後不自動 merge。
-- `scripts/test-commands.sh` 補結構斷言：pre-flight 段落存在、gate 迴圈段落引用 `Final:`/`pmctl gate run --executor codex`、停止條件段落明確列出兩種且只有兩種、PR 模板段落存在。
-- 不新增 `open-pr.sh` 或 DECISIONS.md 解析腳本（一致性判斷是 LLM 語意工作，不做機械化）；不建背景 daemon/cron supervisor（維持互動 session 內執行）；不做批次掃描 BACKLOG 自動挑票。
-
-**Dependencies**: 無阻塞依賴。
-**See**: pr:#360
-
----
-
-## CC-440 — spike: `/ship` 並行版可行性（spike） ✅ 2026-07-03
-
-**Problem**: `/ship`（單票版）已合併，主線程一次跑一張票、實作留在主線程直接改（`feedback_development_workflow`）、分支用普通 `git checkout -b`。使用者指出這個模式在人不在場時效益有限——真正的槓桿是「同時跑 N 張票」，但這要求兩個核心假設同時改變：(1) 實作要從主線程直接改換成 dispatch 給 executor（`feedback_development_workflow` 的省 token 理由只在主線程與該票共享上下文時成立，N 張互相獨立的票之間沒有這個共享上下文，所以這條記憶的適用範圍本來就不包含這個情境，不是要推翻它）；(2) 分支要從 `git checkout -b` 換成 `pmctl worktree create`（CC-014 已交付）避免 N 條 pipeline 互踩同一個工作目錄。這兩個改變疊加後，還有更難的問題完全沒有答案：一條 lane 失敗（gate 卡住、dispatch 失敗、根本性不一致）要怎麼回報又不卡住其他 lane？gate 迴圈裡本來假設「主線程可以隨時插手判斷」，換成 dispatch 給 codex 之後誰來扮演這個角色？
-
-**Why**: 在沒有答案的情況下直接開實作票，大概率會像 `/ship` 單票版一樣在 pr-gate 階段被 architecture-reviewer/critic 挑出設計層面的漏洞，且並行 orchestration 的 blast radius（多個 worktree/dispatch 同時跑）遠大於單票版，值得先用 spike 收斂設計決策，而不是邊做邊踩。
-
-**Requirement**:
-- Investigation scope:
-  - lane 失敗隔離：一條 pipeline（worktree+dispatch+gate）失敗時，其他 lane 是否需要感知/暫停？回報機制長什麼樣（單一收尾報告彙總 N 條結果，還是逐條即時通知）？
-  - gate 迴圈的人機分工：`/ship` 單票版的 NO-GO fix-loop 假設「主線程」讀 gate 結果、判斷、寫 fix brief；並行版把實作換成 dispatch 給 codex 之後，fix-loop 由誰驅動（主線程仍讀每條 lane 的 gate 結果並派 fix brief，還是要在 dispatch brief 裡把整個 fix-loop 交給 executor 自己跑）？
-  - worktree 生命週期：`pmctl worktree create/remove/gc`（CC-014）在多條並行 lane 下的 create/remove 時機——PR 開出後、gate 迴圈完成後，還是要等使用者確認合併後才 remove？
-  - 併發上限：N 的合理上限（token/並發 dispatch/gate reviewer 容量），以及是否需要像 `--parallel` gate 一樣的 reviewer 隔離考量。
-- Done-when: 對上述四個問題，至少收斂出可執行的設計決策（不需要完整實作方案），足以支撐後續開一張明確的實作票。
-- Result log: docs/spikes/CC-440.md
-
-**Outcome**: 四題與使用者逐一討論收斂（未 fan-out 多視角，單一使用者判斷已足夠明確）：lane 失敗互不干擾、逐條即時通知；gate NO-GO fix-loop 交給 executor 自扛到卡住才喚醒使用者；worktree 等使用者確認合併後才 remove；N 為可調參數，天生結構隔離（獨立 worktree + run_id 分區 artifact store）不需選票/仲裁機制。討論過程中額外浮現的 git 鎖疑慮也一併收斂：不自訂鎖，僅並行執行期間關閉 `gc.auto`。詳見 `docs/spikes/CC-440.md`。後續實作票承接 [[CC-439]]。
-
-**Dependencies**: 承接 [[CC-439]]（單票版 `/ship`，作為並行版要呼叫的最小工作單元）。用到 CC-014 已交付的 `pmctl worktree`。
-**See**: pr:#361
-
----
-
-## CC-441 — `/ship --parallel` N-lane orchestrator v1 ✅ 2026-07-03
-
-**Problem**: [[CC-440]] spike 已收斂五項設計決策（lane 失敗隔離、gate 迴圈人機分工、worktree 生命週期、併發上限、git 鎖策略），但這些決策目前只存在 `docs/spikes/CC-440.md` 裡，尚未落地成任何可呼叫的 orchestrator。
-
-**Why**: spike 的 Done-when 只要求「收斂出可執行的設計決策」，不含實作；決策已收斂完畢，直接照 spike 的 Recommendation 開實作票，避免決策成果停留在文件層沒有後續。
-
-**Framing（開工前必讀，避免誤讀範圍）**：CC-441 是一個**建在 [[CC-014]] worktree lane 之上的薄 orchestrator，保留 [[CC-439]] `/ship` 的 ship 語意契約**——不是重寫一條新的 ship pipeline。CC-441 只負責「lane 建立/追蹤/通知/`gc.auto` 暫時覆寫/GO-未合併清單」這幾件事；ship 本身該做什麼（pre-flight 一致性檢查、gate 讀 `Final:`、NO-GO fix-loop 停止條件、GO 後 push+PR、GO 後不自動 merge）由每條 lane 內部沿用 CC-439 已定義的契約，只是把「主線程直接改」換成「dispatch 給 executor 在該 lane 的 worktree 裡跑」。禁止：(a) 發明新的 worktree 目錄慣例/鎖/cleanup 狀態——一律用 CC-014 已交付的 `pmctl worktree create/list/remove/gc` 與其 manifest；(b) 在未跟使用者確認前，變更或繞過 CC-439 定義的 ship 停止條件。
-
-**Requirement**（對照 `docs/spikes/CC-440.md` Recommendation 五點）：
-0. **開工前 checkpoint**：實作前先產出一份簡短 execution plan（用到哪些 CC-014 `pmctl worktree` API、每個 lane 的 dispatch brief 如何映射 CC-439 的六項 ship 契約、CC-440 五項決策各自在程式碼裡的落點），列給使用者確認一次；若途中發現必須偏離 CC-439 的 ship 契約才能做到並行，停止並詢問使用者，不自行決定。
-1. Orchestrator 主迴圈：讀入 N 張票的清單 → 對每張票 `pmctl worktree create`（沿用 CC-014 既有 manifest/命名慣例，不新造）→ 產生**保留 CC-439 ship 契約**的 dispatch brief（pre-flight 檢查、gate `Final:` 讀取、NO-GO fix-loop 由 executor 自扛到卡住才喚醒使用者、GO 後 push+PR、不自動 merge 全部照搬）→ `pmctl dispatch run --lifecycle detached` 平行送出。
-2. 執行前置/收尾：啟動時用 `git config --get gc.auto` 讀出目標 repo 現有值並記錄「該 key 原本是否存在」（存在存實際值，不存在記為未設定，不可用 git 預設 `256` 頂替），寫入 `git config gc.auto 0`；主迴圈結束時（不論全部成功、部分失敗、或整批中斷）一律還原——原本有值寫回原值，原本未設定則 `--unset`，不可寫回 `256`。
-3. 失敗回報：每條 lane 的 dispatch/gate 狀態變化即時通知使用者，不等其他 lane、不互相干擾。
-4. worktree 保留策略：GO 之後不自動 remove，維護一份「已 GO 但未合併」的追蹤清單；remove 只提供 manual command path（使用者確認合併後手動觸發 `pmctl worktree remove`），本票不做自動 remove。
-5. N 不做程式碼硬上限，僅在文件/CLI help 提醒使用者依機器負載自行調整；不做選票/仲裁機制。
-- **Done-when（v1 範圍刻意縮小，避免第一張票塞太多）**：用 2 條 low-risk/mock 票驗證端到端——可各自建立 CC-014 worktree lane、各自生成通過 CC-439 契約檢查的 ship brief、各自 detached dispatch 且狀態可追蹤、GO 的 lane 進入「待合併」清單。不要求 v1 就有自動 remove、完整 cleanup UX、或超過 2 條的併發驗證——這些留給後續迭代。
-
-**Dependencies**: 承接 [[CC-440]]（spike 已收斂全部設計決策）與 [[CC-439]]（`/ship` 單票版，定義本票必須保留的 ship 契約）。必須使用 [[CC-014]] 已交付的 `pmctl worktree`，不得自造 worktree 管理機制。
-
-**AS-BUILT**：`pmctl ship prepare/finish` 為 CC-439 ship 契約的可腳本化 bookend（票號驗證+開分支；單輪 gate+GO 後 push/PR，含 branch-identity/dirty-tree/HEAD-moved/gh-preflight 四道 guard）；`pmctl ship --parallel/status/list` 為建在 CC-014 worktree 之上的 N-lane orchestrator，每條 lane 的 brief 呼叫 `pmctl ship finish` 收斂 gate/PR，不重複實作 ship 契約。真實 e2e 驗收（CC-004、CC-214 兩張低風險票）過程中發現並修正多項真實問題：claude adapter headless Bash 核准缺口（改用 `pmctl` 前綴全收 allowlist）、isolation 預設值擋住巢狀 gate dispatch（改 `workspace-network`）、GO 判斷曾誤信自由文字（改為只信 `pmctl ship finish` 自己寫的 marker）、併發重複派發競態、票號前綴誤判、tracking 檔案未上鎖競態、push 成功但 PR 開失敗的靜默狀態（新增 `partial` 狀態）。pr-gate 歷經 8 輪收斂至全 GO。
-**See**: pr:#363
-
----
-
-## CC-442 — 統一 `pmctl ship <ticket-id>` 單一入口（取代 prepare/--parallel 兩條平行路徑）（spike）✅ 2026-07-04
-
-**Problem**：[[CC-441]] 落地後，「開始處理一張票」存在兩條互不相通的路徑：
-- `pmctl ship prepare`（[[CC-439]]/[[CC-441]]）：**原地** `git checkout -b`，完全沒用到 worktree，只能主線程直接接手實作。
-- `pmctl worktree create`（[[CC-014]]）：只有 `pmctl ship --parallel` 的 lane 建立時才會呼叫，worktree 隔離必須綁著整個 N-lane dispatch 派工機制才能拿到。
-
-如果使用者想要「單張票也要 worktree 隔離，但不想走整個 dispatch 派工機制」，或「單張票也想 dispatch 給 codex/claude，但不必湊到 `--parallel` 那種批次形式」，現在都沒有對應指令。
-
-**Why**：不是真的重複實作——底層 dispatch 原語只有一份（`pmctl dispatch run`，被 `/pm`、`/spike`、`pr-gate`（經 `pmctl gate run`）、`ship`/`ship --parallel` 共同呼叫，非各自重造），`pmctl ship finish` 也是單一實作被 `--parallel` 的每條 lane 共用；但「怎麼開始一張票」這個概念層面，因為 `prepare`（單票、無隔離）與 `--parallel`（批次、必隔離、必 dispatch）綁死在一起，分裂成兩套心智模型。[[CC-441]] 開發完成後由使用者提出，票面 Framing 當時刻意把範圍限定在「N-lane 並行整合」，不碰單票 `ship prepare` 行為，故延後為獨立票；本票之後使用者與主線程進一步討論收斂出更具體的設計（見下）。
-
-**設計方向（2026-07-03 使用者與主線程收斂，待細化為正式 Requirement）**：
-不再保留獨立的 `prepare` 子命令名稱，改成單一入口 `pmctl ship <ticket-id> [--worktree] [--adapter <name>] [其他既有 --parallel 旗標如 --isolation/--model/--from/--auto-pack]`：
-
-- `pmctl ship <ticket-id>`：主線程原地接手（不隔離），行為等同現在的 `ship prepare`——驗證票號 + 原地開分支，Step 2 實作仍由呼叫端（主線程）自己完成，之後仍需要某種「finish」動作跑 gate+PR（沿用現有 `ship finish`，或整合進同一入口下的第二段呼叫，待細化）。
-- `pmctl ship <ticket-id> --worktree`：同上，但改用 [[CC-014]] `pmctl worktree create` 建立隔離 worktree，不自動 dispatch——回傳 lane 路徑，呼叫端自己決定要不要過去接手實作。
-- `pmctl ship <ticket-id> --adapter <name>`：**只要出現 `--adapter`，就強制隱含 `--worktree`**（dispatch 一定要隔離，不提供「不隔離也能 dispatch」的組合）——驗證票號、建隔離 worktree、產生保留 ship 契約的 dispatch brief、`pmctl dispatch run --lifecycle detached` 派給指定 adapter 跑完整流程（implement + `pmctl ship finish`）。
-- `pmctl ship --parallel <id1> <id2> ...`：不再是獨立實作，收斂成「對每張票呼叫 `ship <id> --worktree --adapter <X>` 並行送出」的語法糖，`status`/`list` 維持現有的 tracking/marker 機制不變。
-
-**Requirement**：
-- Investigation scope：收斂「設計方向」段落遺留的兩項未定架構決策，並以一個真實消費者遷移驗證新介面站得住腳：
-  1. 單票「原地 / `--worktree`」模式下，Step 2 實作與 gate+PR 之間的呼叫介面要不要沿用現有 `ship finish`，還是也收斂進同一入口（例如同一個 `pmctl ship <ticket-id>` 呼叫兩次，或改用不同子動作字樣）？
-  2. `--adapter` 強制隱含 `--worktree` 之後，`--worktree`（無 `--adapter`）與 `--adapter`（必隱含 `--worktree`）兩種模式的 lane 目錄/tracking 記錄是否需要區分（例如非 dispatch 的 worktree lane 要不要也寫進 `ship-parallel.jsonl` 這類 tracking 檔）？
-  3. Pilot walkthrough：挑一個現有真實消費者（`pmctl ship --parallel` 內部呼叫）試接統一後的單票入口，寫出逐字 before/after diff，確認乾淨無 shim、無行為回歸。
-- Done-when：上述 3 點都有明確答案（介面呼叫形狀 + tracking schema 決策 + pilot diff 佐證），足以回填一份有信心的實作 dispatch brief，且不破壞 [[CC-439]] 既有 `/ship` 單票契約。
-- Result log: docs/spikes/CC-442.md
-
-**Outcome**：3-angle fan-out（interface-draft × 2 + code-audit）收斂三項決策：(1) `pmctl ship finish` **保留為獨立、不變的動詞**——已是掛 allowlist（`pmctl ship finish:*`）、有 branch-identity guard/HEAD-drift guard/`.pm-dispatch-ship-finish.json` marker 的既有 primitive，`--worktree`/`--adapter` 在 finish 時語意上是空的，收斂進同一入口等於重造「guard-one-execute-another」反模式（v0.6.0/v0.7.0 已有的教訓）；`commands/ship.md`（CC-439 契約）本來就不呼叫 `ship finish`，故不受影響。(2) tracking schema 採「unified-schema-with-optional-run_id」——所有 `--worktree` lane（無論是否 `--adapter` dispatch）都寫入 `ship-parallel.jsonl`，非 dispatch lane 的 `run_id=""`；純 worktree manifest 不夠，會讓 `ship status`/`ship list` 看不到該 lane，重現本票想解決的分裂。(3) Pilot walkthrough 證實遷移乾淨無 shim：新增 `pmctl_ship_run`（吸收 brief-writer + worktree-create + dispatch-run 序列，`ship-parallel.jsonl` 的 tracking-append 收斂進函式內部而非留在呼叫端，確保任何呼叫點都不會漏寫）、`pmctl_ship_parallel_run` 改為對每張票呼叫一次。完整證據、reconciliation 與 pilot diff 見 `docs/spikes/CC-442.md`。**後續實作票待開立**（承接下方草案，帶入本次 3 項決策），依賴不變：[[CC-441]]／[[CC-439]]／[[CC-014]]。
-
-**後續實作 Requirement 草案（spike 收斂後回填至新開的實作票）**：
-1. 盤點 `pmctl ship prepare`、`pmctl worktree create`、`pmctl_ship_parallel_run` 三處目前個別的 ticket 驗證/branch 建立邏輯，確認統一後不產生行為回歸（尤其是 [[CC-439]] 既有 `/ship` 單票契約不能被破壞）。
-2. 依 spike 決策收斂單票模式下 Step 2 實作與 gate+PR 的呼叫介面。
-3. 依 spike 決策落實 `--worktree`/`--adapter` 兩種模式的 lane tracking 記錄語意。
-4. `pmctl ship --parallel` 內部改為呼叫統一後的單票入口（帶 `--worktree --adapter`），避免兩份 worktree 建立/dispatch brief 生成邏輯分別維護。
-5. 補齊對應的 `scripts/test-pmctl-ship.sh`/`scripts/test-pmctl-worktree.sh` 回歸測試，含「`--adapter` 隱含 `--worktree`」這條新規則的直接測試。
-
-**Dependencies**：承接 [[CC-441]]（發現此縫隙並完成初版 `--parallel`）、[[CC-439]]（單票 ship 契約不可破壞）、[[CC-014]]（`pmctl worktree` 既有 API 不得重造）。
-**See**: `docs/spikes/CC-442.md`
-
----
-
-## CC-443 — 實作：統一 `pmctl ship <ticket-id>` start 入口（承接 CC-442 spike）✅ 2026-07-04
-
-**Problem**：[[CC-442]] spike 已收斂三項架構決策（`ship finish` 保留獨立動詞、tracking 採 unified-schema-with-optional-run_id、pilot diff 證實 `pmctl_ship_run` 遷移乾淨無 shim），但尚未落地成程式碼。使用者對 spike 方向的外部（ChatGPT）review 也補強了幾個實作細節，本票一併吸收。
-
-**Why**：spike 決策若不落地會過期失效；[[CC-441]] 之後「開始處理一張票」仍分裂成 `ship prepare`（原地）與 `worktree create`（僅 `--parallel` 用得到）兩條路，單票 worktree 隔離、或單票 dispatch 給 codex/claude，都沒有乾淨入口。
-
-**Requirement**：
-1. 新增 `pmctl_ship_run(repo_root, work_dir, ticket_id, [--worktree] [--adapter <name>] [--from <base>] [--isolation <level>] [--model <alias>] [--auto-pack|--no-auto-pack])`（`scripts/lib/pmctl-ship.sh`）：
-   - 無 `--worktree`/`--adapter`：原地委派給既有 `pmctl_ship_prepare`（行為完全不變，無 tracking 記錄）。
-   - `--worktree`（無 `--adapter`）：呼叫 [[CC-014]] `pmctl_worktree_create` 建隔離 worktree，不 dispatch，寫入 tracking（見 #3），回傳 lane 路徑。
-   - `--adapter <name>`：強制隱含 `--worktree`；建 worktree、寫 dispatch brief（沿用既有 ship 契約，`_pmctl_ship_brief_write`）、`pmctl dispatch run --lifecycle detached`、寫入 tracking。
-   - `--worktree --adapter <name>` 同時出現：合法，效果等同單獨 `--adapter <name>`（冗餘不報錯）。
-2. `pmctl ship finish` **維持獨立、不變的動詞**，不收斂進 `pmctl_ship_run`（CC-442 spike 決策）。`pmctl ship prepare <id>` **保留為明確 alias**，不刪除（外部 review 補強：CC-439/441 既有腳本化 bookend 依賴，直接移除有回歸風險）。`pmctl_ship_usage` 需明確標註 `pmctl ship <id>` 是「開始一個手動 ship lane」而非完整 ship 到 PR，並提示下一步是 `pmctl ship finish`；同時列出完整 option matrix（裸呼叫 / `--worktree` / `--adapter` / 兩者同時 / `--parallel`），避免實作時邊做邊猜（外部 review 補強）。
-3. Tracking 檔重新命名為 `ship-lanes.jsonl`（取代 `ship-parallel.jsonl`，反映此檔現在被手動 worktree lane 與 dispatch lane 共用，不再是 `--parallel` 專屬；外部 review 補強）：
-   - 欄位沿用既有 6 個（ticket/branch/path/run_id/status/created_ts）+ 新增 `adapter`（manual lane 為空字串）。
-   - 任何 `--worktree` lane（無論是否 dispatch）都寫入一筆，`run_id=""` 代表未 dispatch 的手動 lane（CC-442 spike 決策）。
-   - Tracking-append 呼叫收斂進 `pmctl_ship_run` 內部，不留在呼叫端，確保任何呼叫點都不會漏寫（CC-442 spike reconciliation 建議）。
-   - lane-status 判斷（原 `_pmctl_ship_parallel_lane_status`，改名 `_pmctl_ship_lane_status`）新增一條分支：`run_id` 為空字串且無 finish marker → 回傳 `prepared`（而非目前會落到的誤導性 `running`）。
-4. `pmctl_ship_parallel_run`（`scripts/lib/pmctl-ship-parallel.sh`）內部改為對每張票呼叫 `pmctl_ship_run "$repo_root" "$work_dir" "$t" --worktree --adapter "$adapter" ...` 一次，取代目前直接呼叫 `pmctl_worktree_create` + brief-write + `pmctl dispatch run` 的重複邏輯。Batch 層既有的 pre-flight（重複票號檢查、in-flight 檢查、全票驗證）與 `gc.auto` save/restore trap **維持只在 batch wrapper 這一層**；`pmctl_ship_run` 本身完全不碰 `gc.auto`（外部 review 補強：避免 N 條 lane 各自 set/restore 造成 race，與現有實作已經正確的批次層 scoping 保持一致，不要在單票路徑上重造）。
-5. `cli/pmctl` 新增 `ship/*` fallback 路由：`pmctl ship <ticket-id> [--worktree] [--adapter <name>] ...`（票號形狀的第一個 token，非既有保留字 `prepare`/`finish`/`status`/`list`/`--parallel`）呼叫 `pmctl_ship_run`。
-6. 回歸測試（`scripts/test-pmctl-ship.sh`）：
-   - `pmctl ship <id>` 裸呼叫行為等同 `ship prepare <id>`（無 worktree、無 tracking 記錄）。
-   - `pmctl ship prepare <id>` 既有行為不變（回歸）。
-   - `pmctl ship <id> --worktree`：建 worktree、不 dispatch、tracking 寫入 `run_id=""`/`adapter=""`，`ship status` 讀到 `prepared`（非誤導性 `running`）。
-   - `pmctl ship <id> --adapter <name>`：隱含 `--worktree`、寫 dispatch brief、tracking 寫入 `run_id`+`adapter`。
-   - `pmctl ship <id> --worktree --adapter <name>`：與純 `--adapter` 等價。
-   - 單票（非 `--parallel`）in-flight 重複 dispatch 拒絕。
-   - `pmctl ship --parallel` 端到端既有 case 全綠（含 tracking 檔案改名後路徑同步更新）。
-7. `docs/spikes/CC-442.md` 不修改（維持歷史 spike 記錄原貌）。
-
-**Outcome**：`pmctl_ship_run` 落地於 `scripts/lib/pmctl-ship.sh`，`pmctl_ship_parallel_run` 改為對每張票呼叫它（消除重複的 worktree-create/brief-write/dispatch 邏輯）。Tracking 檔改名 `ship-lanes.jsonl`，任何 `--worktree` lane 的每個終態（`prepared`/`dispatched`/`dispatch-failed`/`go`/`no-go`/`partial`/`failed`）都保證寫入一筆，tracking-append 失敗改為硬性錯誤。`ship finish`/`ship prepare` 維持不變。`cli/pmctl` 新增 `ship/*` fallback 路由。pr-gate 跑了 6 輪才 GO（過程中額外修正：brief 產生指令的 shell quoting 漏洞、測試環境 `XDG_RUNTIME_DIR` 未隔離、`--adapter`/`--from`/`--isolation`/`--model` 旗標值未驗證即產生副作用、重複 positional ticket 未拒絕、`ship-parallel.jsonl` 改名後舊檔案會靜默消失——改為印出明確警告，不做雙讀遷移）；`scripts/test-pmctl-ship.sh` 增至 57 案例全綠。PR #365。
-**Dependencies**：承接 [[CC-442]] spike（三項決策）、[[CC-441]]（`--parallel` v1 需保持行為不回歸）、[[CC-439]]（單票 `/ship` 契約不可破壞）、[[CC-014]]（`pmctl_worktree_create` 不得重造）。
-**See**: `docs/spikes/CC-442.md`、PR #365
-
----
-
-## CC-444 — v0.8.0 release closure ✅ 2026-07-04
-
-**Problem**：v0.8.0 四個 Phase（memory substrate 跨工具可攜、gate DX、CC-381 spike、CC-014 worktree）已全部完成，但尚未 tag——v0.7.1 之後已累積 17 commits，含五張計畫外交付的 ship 系列票（[[CC-439]]..[[CC-443]]）。拖延不 tag 會讓版本邊界與 CHANGELOG range 越來越糊（v0.5.0 曾因此 release-prep 補了 ~8 張票的 CHANGELOG）。
-
-**Why**：這是 DECISIONS 2026-07-04（v1.0-public-roadmap-and-release-sequence）排定的第一步；v0.9.0（host 軸）要在乾淨的版本邊界上開工。
-
-**Requirement**（mirror [[CC-429]] v0.7.0 closure 模式）：
-1. 跑 `/pre-release v0.8.0`（Layer 1 結構檢查 + Layer 2 語義 diff 覆蓋 + Layer 3 盲點聲明），逐項處理報告 finding。
-2. 修 release 文件：README 版本徽章 bump 至 target tag（RELEASE_CHECKLIST 政策——badge 僅於 release 時 bump，為唯一版本標記，開發期停在上一 release 非 drift）、MILESTONES.md v0.8.0 標頭（規劃中 → released）、v0.8.0 milestone 補 release-closure Phase 行、CHANGELOG v0.8.0 range 完整性（含計畫外 ship 系列 CC-439..443）。
-3. 寫 release notes；PR 合併後 tag `v0.8.0` + GitHub Release。
-
-**Done-when**：tag `v0.8.0` 存在且指向含 closure PR 的 main；GitHub Release 發佈；`/pre-release` 報告無未處置 finding。
-
-**Outcome**（2026-07-04，pr:#367）：`/pre-release v0.8.0` Layer 1 抓到 8 個 structural findings，逐項處置——CHANGELOG 補全 6 票（CC-412/423/432/014/434 + docs 票；CC-276 判定 false positive，其 entry 本就在 [0.6.0] 段 gh-174 名下）+ ship 系列（CC-439..441；CC-442/443 已在）；MILESTONES CC-433 行過期狀態修正（spike done → lib 由 CC-434 pr:#356 落地、poll→notify 殘餘 → CC-435）；補 Phase 5（計畫外同期 ship 7 票）與 Phase 6（closure）；標頭改 released；README badge bump v0.8.0。Layer 2 語義覆蓋 7/7 Covered（High confidence）。收尾過程另發現並修復：**`test-pmctl-worktree` 未註冊進 `run-all-tests.sh`**（CC-014 交付的 36-case 套件從未被 aggregator 執行）——已補註冊並確認全綠；套件註冊完整性 lint 開 [[CC-449]] 防再漏。`release-verify.sh --e2e` 全套 sign-off 於 closure PR 前執行（結果見 PR）。
-
-**Dependencies**：[[CC-426]]（Layer 1/3 工具）、[[CC-430]]（Layer 2）皆已交付。
-**See**: DECISIONS.md 2026-07-04 v1.0-public-roadmap-and-release-sequence、pr:#367
 
 ## CC-445 — install write path host-aware（CC-381 完整實作第一刀）🔵 active
 
@@ -478,30 +230,6 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 ---
 
-## CC-470 — pr-gate sequential 模式逾時歸零風險 + 慢速測試套件優化 ✅ 2026-07-08
-
-**Problem**（2026-07-08，CC-445 pr-gate 第 7 輪實測）：`scripts/pr-gate.sh` 的 sequential 模式（預設）用單一 codex/claude session 依序處理全部 reviewer，只在最後才把完整結果寫入 `${OUTPUT_FILE}`。若 qa-tester 在該 session 內選擇跑完整 `run-all-tests.sh`（~10 分鐘）並撞上共用的 dispatch timeout，`set -euo pipefail` 讓腳本立即中止、`gate_result_verify` 從未被呼叫，`${OUTPUT_FILE}` 停留在 0 bytes——即使其他 reviewer（critic/architecture-reviewer/security-reviewer/risk-reviewer）可能已經在同一個 session 裡完成推論，全部產出仍付諸東流，該輪只能整個重跑。
-
-**Why**：這是「有 timeout 上限、all-or-nothing 的執行模型」本身的架構風險，跟測試套件多慢無關——即使全套壓到 3 分鐘，任何其他意外阻塞（codex CLI 卡住等）都會觸發同樣的全歸零。同時，深入量測發現兩個測試套件有具體、低風險的效能修復空間，值得一併處理。
-
-**Requirement**：
-1. **sequential 模式逐 reviewer 落地**：改 brief 指示（`scripts/pr-gate.sh` task 區塊）讓 session 在每個 reviewer 完成後立即把該 reviewer 的區塊附加寫入 `${OUTPUT_FILE}`，而非等到最後才一次寫入；dispatch 呼叫（`eval "$DISPATCH_CMD"`）改為捕捉 exit code 而非讓 `set -e` 直接中止腳本；逾時/失敗時比對 `${OUTPUT_FILE}` 已完成哪些 reviewer 區塊，回報「N of 5 完成：xxx；未完成：yyy」的 partial 結果，並保留 partial artifact 供人工追查（不視為 GO，仍 `exit 1`，pass/fail 語意不變）。
-2. **`test-pmctl-dispatch.sh` poll interval 修復**：補上 `export PM_DISPATCH_WAIT_POLL_INTERVAL="${PM_DISPATCH_WAIT_POLL_INTERVAL:-0.1}"`（`test-dispatch-lifecycle.sh:48` 已驗證安全的既有模式），預期從 309s 省下 60-90s。
-3. **`pmctl-context.sh` 的 `_ctx_fts5_available` 加快取**：目前每次呼叫都 fork 2 個 sqlite3 子行程探測 FTS5 支援，改為模組層級關聯陣列快取（FTS5 支援在同一 binary/process 生命週期內是靜態的），預期從 244s 省下 5-15s。
-4. **測試套件執行與 reviewer session timeout 完全解耦**（2026-07-08 使用者進一步收斂）：Requirement 1 只是止血——只要 qa-tester 還在 dispatch session 內自己跑測試，測試耗時就會侵蝕跟其他 reviewer 共用的 `--timeout` 預算。改為在 dispatch 之前用純 bash 跑一次目標 repo 的測試指令，跟任何 reviewer 的 LLM 判斷完全脫鉤；結果（`test_suite: pass|fail|skipped`）機械寫入 frontmatter。`--test-timeout`（獨立於 `--timeout`）、`--skip-preflight-tests` 逃生閥。**只認明確 `--test-cmd`，不自動偵測任何路徑**（初版曾自動偵測 `scripts/run-all-tests.sh`，但 pr-gate.sh 設計上可被複製進任何 repo 獨立使用，不該寫死任何特定 repo 的慣例路徑，即使加了 `--allow-hooks` 信任閘門也一樣——2026-07-08 pr-gate 第一輪 NO-GO 後跟使用者對齊修正）。**FAIL 時 fail-fast、完全跳過 reviewer dispatch**（不是先跑完 5 個 reviewer 再事後覆寫——測試沒過本來就註定 NO-GO，花真實 token 審查一份已知會被打回票的程式碼沒有意義；2026-07-08 跟使用者對齊後由「dispatch 後覆寫」改為「dispatch 前短路」），直接機械合成 NO-GO 結果（含 redacted log 摘要），不呼叫任何 LLM。
-
-**Non-goals**：不解析 `.agent-trace/*.jsonl` 做結構化 partial 回收（adapter 事件格式不統一，維護成本高，只當人工追查路徑指標）；不處理 `cli/pmctl` 每次呼叫 source 22 個 lib 檔案的系統性 ~0.5-0.7s 開銷（影響全產品所有 pmctl 呼叫路徑，需要更大規模的 lazy-loading/常駐行程重設計，風險/範圍都遠大於本票，另開票處理）；不把 `--parallel` 設為預設（成本 ×2，僅適合 auth/payment/migration 等高風險變更）；不做「iteration vs final round」測試分層啟發式；不新增 `.pr-gate.yml` 設定檔格式；不自動偵測任何 repo 特定測試指令路徑（見上）。
-
-**Verification**：`scripts/test-pr-gate.sh` 新增 codex stub 分支模擬「2 of 5 reviewer 完成後逾時」，斷言 partial 結果訊息 + `${OUTPUT_FILE}` 內容在磁碟上不被清理掉；`test-pmctl-dispatch.sh`/`test-pmctl-context.sh` 改動前後量測 wall time 確認確實變快、案例數不變全綠；Requirement 4 共 13 個測試，含關鍵案例「pre-flight 失敗時 stub reviewer 就算被設定成回 GO 也絕對不會被呼叫（斷言 stdout/stderr 完全沒有 dispatch stub 的輸出）」、「即使 repo 內存在可執行的 `scripts/run-all-tests.sh` 也絕不會自動執行」、「fail-fast 合成的 log 摘要確實含真實內容且 redaction 有效（回歸鎖：早期版本 redaction 函式讀錯 `$1` 導致 pipe 內容整個被丟棄，shellcheck SC2119/SC2120 抓到）」、FTS5 快取邏輯本身（回歸鎖：早期版本快取命中分支比對值寫反，導致第二次呼叫永遠回報錯誤結果）。手動 smoke test 對 pm-dispatch 自己跑 `--test-cmd "exit 1"`，確認完全沒有 `codex-dispatch starting` 字樣、直接產出合成的 NO-GO 結果。
-
-**Source**：CC-445 pr-gate 第 7 輪逾時實測 + 使用者要求優先處理、並在討論中收斂出機械化解耦設計（2026-07-08）；已用 Explore + Plan agent 交叉核實根因與改動點，並經 Ultraplan 雲端 session 精修 Requirement 4 的實作行號；送 pr-gate 第一輪 NO-GO（security/risk block 自動偵測信任邊界、qa-tester block FTS5 缺測試）後與使用者對齊修正方向並全數修復；修復過程中使用者進一步指出「pre-flight 本身就是送 gate 前的完整性檢查，不需要再手動跑一次 checkpoint」與「測試沒過就不該還花錢跑 reviewer」兩個洞見，收斂出 fail-fast 設計，見對話紀錄。
-
-**Outcome**（2026-07-08）：Requirement 1-4 全數完成並驗證；`pmctl gate run --executor codex --test-cmd "bash scripts/run-all-tests.sh"` 收斂 GO（全部 5 個 reviewer approve/pass，`test_suite: pass`）；`scripts/test-pr-gate.sh` 135/135、`test-pmctl-context.sh` 109/109、`test-pmctl-dispatch.sh` 44/44 全綠；`bash scripts/run-all-tests.sh` 全套 checkpoint 71/71 clean。
-
-**See**: pr:#383
-
----
-
 ## CC-474 — dispatch/gate reasoning effort 獨立可調參數，預設收斂為 medium 🟢 someday
 
 **Problem**：`pmctl dispatch run` / `pmctl gate run` 目前沒有獨立的 reasoning-effort 控制旗標——effort 值綁死在 `share/model-aliases.tsv`（codex）與 `share/claude-model-aliases.tsv`（claude）每一列 alias 的第三欄，經 `scripts/lib/model-aliases.sh` 解析出 `MA_RESOLVE_EFFORT` 後直接餵給 adapter（codex 端見 `adapters/codex/dispatch.sh:285` 的 `-c model_reasoning_effort="..."`）。這代表使用者若想調整某次派工的推理強度，唯一手段是換一個不同的 model alias——但常用 alias（codex 的 `default`/`gpt-5.5`/`gpt-5.4`/`codex-spark`/`light` 全部寫死 `high`；claude 的 `default`/`sonnet`/`light`/`haiku` 寫死 `normal`，只有 `opus` 是 `high`）並沒有「同一個 model、不同 effort」的組合可選。
@@ -570,28 +298,6 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Dependencies**: 無前置；v0.9.0 hardening phase。與 [[CC-449]] e2e 煙測互補（那邊驗 happy path，本票驗防禦面）。
 **Source**: 2026-07-06 盲測程式碼稽核；洩漏目錄實例（已清除）。
 
-## CC-455 — context plane repo_root 跟隨工作目錄（跨 repo 使用 context.db 打錯 repo）✅ 2026-07-06
-
-**Problem**（2026-07-06 使用者回報 + 實測確認）: 在 pm-dispatch 以外的 repo 用 CLI 觸發 pm agent 時，目標 repo 的 context.db 不會被建立或刷新。根因鏈：
-1. `cli/pmctl` 的 `REPO_ROOT` 從 pmctl 腳本自身路徑（穿過 `~/.local/bin` symlink）解析——**永遠指向 pm-dispatch 安裝 repo，與執行時的工作目錄無關**。
-2. `pmctl_context_query` / `pmctl_context_reuse_scan` / `pmctl_context_index` 的 repo_root 參數為「可選第一個位置參數，未帶時 default `REPO_ROOT`」。
-3. `agents/project-pm.md` 的 context retrieval reflex 指示 `pmctl context query --domain knowledge <term>` **不帶 repo 路徑**（僅 reuse-scan 帶 `<working_dir>`）。
-三者疊加：跨 repo 的查詢全部打到 pm-dispatch 自己的 db（命中不相關內容），且既有的 auto-build/auto-refresh 機制（`_ctx_ensure_fresh`，預設開啟）一直刷新錯的 repo。實測：在外部目錄執行 `pmctl context query <term>`，該目錄不產生任何 ctx 檔案，pm-dispatch 的 context.db mtime 反而被更新。
-
-**Why**: context retrieval 是 v0.7.0 epic 的核心能力，宣稱面是「per-repo 的本地 context 基底」；pm agent 的設計本來就是跨多個 repo 工作（任意位置的 repo，不限特定目錄佈局），此缺陷讓 context 能力在 pm-dispatch 以外的所有 repo 實質失效且靜默。
-
-**Requirement**:
-1. **CLI 層 chokepoint 修正**（優先）：context 家族子指令未帶路徑時，default 改為「呼叫時 CWD 的 git toplevel」（`git rev-parse --show-toplevel`），非 git 目錄再 fallback 既有 `REPO_ROOT` 行為並印 warning；在 pm-dispatch repo 內執行的行為不變（回歸鎖住）。
-2. 盤點 context 家族以外是否有同型「default REPO_ROOT 但語意應為 target repo」的子指令（如 memory 平面已獨立解析、應不受影響——確認即可）。
-3. `agents/project-pm.md` retrieval reflex 與 `docs/context-retrieval.md` 同步：明確「跨 repo 時查詢必帶 target repo root（或依賴修正後的 CWD default）」。
-4. 回歸測試：外部 repo 內執行 query/reuse-scan → 在該 repo 建立/刷新 `.pm-dispatch/ctx/context.db`、不觸碰 pm-dispatch 自身 db。
-
-**AS-BUILT**：新增共用 helper `_ctx_default_repo_root`（`scripts/lib/pmctl-context.sh`）：未帶路徑時先解析呼叫時 CWD 的 git toplevel，非 git 目錄才 fallback `REPO_ROOT` 並印一行 stderr warning；`index`/`update`/`query`/`pack`/`reuse-scan` 五個子指令全部改用（Requirement 1）。pr-gate 過程中另抓到 `pack`/`reuse-scan` 有「default 早於 explicit-repo 解析」的排序 bug（explicit repo 呼叫仍誤印 fallback warning），一併修正。`agents/project-pm.md` retrieval reflex 與 `docs/context-retrieval.md` 同步改為要求明確帶 `<working_dir>`（Requirement 3）。回歸測試新增 external-repo/no-git-fallback/pm-dispatch-tree-unchanged/live-db-untouched 等情境，共 99 案全綠（Requirement 4）。Requirement 2 抽查 worktree/dispatch/ship/task 等子指令：`repo_root`（install repo，供 lib/state 定位）與 `work_dir`/`--cd`（實際 target repo）本就是分離參數，`work_dir` 一律要求明確 `--cd`/positional 而非依賴 CWD 隱性 default，架構上與 context 的單一參數混用問題不同類，未發現同型缺陷。過程中順帶把 `commands/pr-gate.md`/`pre-release.md`/`ship.md` 的 pmctl 呼叫方式改為裸指令（原本的路徑解析 preamble 會讓指令永遠比對不到 `Bash(pmctl:*)` allowlist、每次都要提權）。
-**See**: pr:#371
-
-**Dependencies**: 無前置。v0.9.0。與 [[CC-453]]（auto-pack work_dir 驗證）同屬「路徑語意」修正面，可同批評估但不合票。
-**Source**: 使用者 2026-07-06 回報「其他 repo 的 context.db 不會自動使用/刷新」；主線程實測確認。
-
 ## CC-456 — 去除 maintainer-local `~/github/` 佈局假設（repos-root 參數化 + sweep + lint 防再犯）🔵 active
 
 **Problem**（2026-07-06 維護者自指出）: `~/github/` 是維護者本機的 repo 佈局習慣，卻已滲進多個操作性檔案成為隱含產品假設——其他使用者的 repo 可能在任何位置。盤點（2026-07-06）：
@@ -613,76 +319,6 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 **Dependencies**: 無硬前置；宜在 [[CC-447]] offline smoke 之前或同批完成，讓 smoke 直接驗證。與 [[CC-445]]（install write path）檔案面部分重疊（install/env 慣例），排程時注意順序。v0.9.0。
 **Source**: 維護者 2026-07-06「`~/github/` 是我本地的使用方式，不代表其他使用者」；主線程同日全 repo 盤點。
-
----
-
-## CC-457 — claude host manifest 化：`hosts/claude/host.yaml` reference instance ✅ 2026-07-07
-
-**Problem**（2026-07-07 維護者指出）: [[CC-438]] 交付 host manifest schema v1 後，`hosts/` 只有 `hosts/codex/host.yaml`。claude 作為原生 host，install/uninstall 的檔案佈局（commands/agents/skills/hooks 寫入 `~/.claude/...`）仍散在 `install.sh` 硬編碼，doctor 側雖已有 `scripts/lib/doctor-host-claude.sh` host module（[[CC-437]]），但宣告面（capability/guard_bindings/install_targets/uninstall_module）沒有 claude instance。三 host（claude/codex/opencode）維護面不對齊：改 schema 或接線時 claude 永遠走特例路徑，後續每張 host 軸票都要為 claude 另寫一份心智模型。
-
-**Why**: claude 是能力最完整、confidence 最高的 host（PreToolUse hook 原生、payload 欄位齊、fail-closed 已驗證），最適合當 schema 的 reference instance——先宣告它能回頭驗證 CC-438 schema 表達力是否足夠（吃得下最完整的 host 才算 schema 成立）。同時 [[CC-445]]（install write path host-generic：`hosts/*/host.yaml` 驅動、claude 路徑 byte-compatible）需要一份 claude manifest 作為 byte-compatible 驗收的 source of truth，否則「host-generic」實際上只涵蓋 codex/opencode，claude 仍是隱形特例。
-
-**Requirement**:
-1. `hosts/claude/host.yaml`：依 `docs/host-contract.md` schema v1 完整宣告 claude host——install_targets（commands/agents/skills/hooks 各寫入點，path 以 env-var 錨定）、capability（七欄位與 `doctor-host-claude.sh` emit_capability 對齊，confidence 反映原生實測）、guard_bindings（PreToolUse hook-script form）、uninstall_module、permissions_surface。
-2. `scripts/test-host-manifest.sh` validator 納入 claude instance（含 claude 特有欄位組合的負向案例）；schema 表達力不足處回頭修 contract（版內允許，schema 尚未凍結）。
-3. doctor capability 輸出與 manifest 宣告一致性檢核（宣告 vs 實測不符要可觀察，形式參照 CC-437 介面）。
-4. **不動 install.sh write path**——接線歸 [[CC-445]]；本票只交付宣告面 + validator + 一致性檢核，CC-445 落地時以本 manifest 為 claude 驗收基準。
-
-**Dependencies**: [[CC-438]] ✅（schema v1 已定案）。與 [[CC-445]] 同鏈：本票先行（純 additive、低風險），CC-445 接線時引用。v0.9.0 host 軸。
-**Source**: 維護者 2026-07-07「claude 的 host 也需要調整成新的架構，不然後續維護會相對不對齊」。
-
-**Outcome**（2026-07-07）: `hosts/claude/host.yaml` 依 schema v1 完整宣告（install_targets/capability/guard_bindings/uninstall_module/permissions_surface），claude 作為能力最完整的 host 通過 reference instance 驗收。`scripts/test-host-manifest.sh` 納入 claude 專屬正負案例（87 綠），`doctor-host-claude.sh` 加上宣告 vs 實測一致性檢核（test-doctor.sh 50 綠，含 drift 失敗案例）。不動 install.sh write path，接線留給 [[CC-445]]。Gate R1 GO（critic advise：uninstall_module 註解與 install.sh 尚未 manifest-driven 的事實矛盾）已修正並收斂。
-**See**: pr:#381
-
----
-
-## CC-458 — gate run/wait DX：--cd 預設、wait 指令可複製、verdict 可區分 ✅ 2026-07-07
-
-**Problem**（2026-07-06 使用者指定優先；同一 session 內三個痛點全部實踩）:
-1. `pmctl gate wait` 強制要求 `--cd <work_dir>`，漏帶直接 exit 2；但 run-dir 分割本可由呼叫者 CWD 推導（[[CC-455]] context plane 已有 CWD git-toplevel 預設先例）。
-2. `pmctl gate run` 只在 stdout 印 gate id 一行，後續 wait 指令要手動拼 id + `--cd`，中間任何複製錯誤都是 usage error。
-3. NO-GO 時 `gate wait` exit 1，在背景任務完成通知裡顯示成 "command failed"，與真正執行錯誤難以區分——verdict 的 source of truth 是 result 檔 `Final:` 行（[[feedback_gate_verdict_source_of_truth]]），wait 卻不印它。
-
-**Requirement**:
-1. **wait `--cd` 改選填**：缺席時預設 CWD git toplevel（非 git 目錄 fallback `$PWD`）；`gate run` 的 `--cd` 預設同步改為同一推導，確保 run/wait 兩端獨立重算出同一個 run-dir partition。顯式 `--cd` 行為不變。
-2. **run 印可複製的 wait 指令**：detached 啟動後在 stderr 印一行完整的 `pmctl gate wait <gate_id> --cd <path>`（stdout 維持只印 gate_id 一行——ship/pr-gate 等既有消費者以 stdout 捕捉 id，契約不得破壞）。
-3. **wait 印 verdict 摘要**：sentinel 完成且 result 通過 `gate_result_verify` 後，把 result 檔的 `Final: GO|NO-GO` 行原樣印到 stdout；NO-GO 時另在 stderr 明示這是 gate verdict（exit 1）而非執行錯誤。exit code 分層維持既有語意並在函式註解明文化：0=GO、1=NO-GO、2=usage/整全性錯誤、3=indeterminate、124=timeout。
-
-**邊界**: 不動 sentinel/nonce 機制、不動 `gate_result_verify` 契約、不加新 flag；`commands/pr-gate.md` 的 wait 說明同步更新（不含票號）。
-
-**Dependencies**: 無。獨立 PR（使用者 2026-07-06 指示）。
-**Source**: 使用者 2026-07-06「pmctl gate wait 這段流程很容易執行錯誤，下一個 session 優先處理」。
-
-**Outcome**（2026-07-07）: 三項 Requirement 全數交付於 `scripts/lib/pmctl-gate.sh`：(1) `_pmctl_gate_default_cd`（CWD git toplevel → `$PWD` fallback）同時供 run/wait 兩端推導，partition 重算一致，顯式 `--cd` 不變；(2) detached run 在 stderr 印完整可複製的 wait 指令，stdout 維持單行 gate_id 契約；(3) wait 在 `gate_result_verify` 通過後原樣印出 result `Final:` 行、NO-GO 加 stderr 註記與執行錯誤區分，exit code 分層（0/1/2/3/124）明文化於函式註解。`commands/pr-gate.md` 指引同步。測試：test-pmctl-gate 18 綠（含 git-subdir 爬升與非 git fallback 直接覆蓋）、test-gate-lifecycle 12 綠、test-pr-gate-profile 13 綠。gate R1 NO-GO（qa block：wait 預設 git-toplevel 分支缺直接測試）修畢後 R2 GO 零 advisory。本票 gate 流程本身即以新 DX 走完（dogfood）。
-
-**See**: pr:#378
-
----
-
-## CC-459 — context retrieval reflex 確定性化：prompt-scan 自動注入 + PM 編號步驟 ✅ 2026-07-07
-
-**Problem**（2026-07-07 使用者實踩）: `agents/project-pm.md` 的 context retrieval reflex（Principles #3）目前是純 prose，無任何 runtime enforcement。實測跨 repo telemetry（`pmctl trace tail --kind context.queried`）證實：數日內對某目標 repo 的所有 /pm 工作階段，agent 一次都沒呼叫過 `pmctl context query`——唯一有強制力的點是 `BRIEF_VALIDATE_RETRIEVAL=fail`，只卡 file-writing brief 的 context 證據；Analysis / Status / 一般知識查詢完全沒 gate，agent 直接 Read/Grep knowledge docs 跳過 query。這正是 `agents/project-pm.md` 自述的「a prose reflex degrades exactly when the session is busy」同一模式——discover 路由已用 Classify branch 解掉，knowledge retrieval 還停在 prose。
-
-**Why**: 本 repo 已兩次驗證「prose reflex → deterministic path」有效（dispatch auto-pack、discover Classify branch），另有 pm-write-guard 證明 hook 硬閘可行。與其要求 model「記得」查，不如讓 pipeline 自動查好注入——agent 開場就拿到 heading-anchored refs，跳過 query 的動機直接消失，telemetry 也天然回填。
-
-**Requirement**:
-1. **`pmctl context prompt-scan [<repo_root>] "<prompt text>"`**：以 `_ctx_extract_terms` 抽詞（沿用既有 change seam，不 inline）、每 term 對 repo plane 以 `--domain knowledge` 查詢、跨 term dedupe、輸出 pointer-only 的 `knowledge_hits:` YAML（上限 5 條）。發射**獨立事件 kind `context.prompt_scanned`**——不得混用 `context.queried`，否則自動掃描會污染「agent 是否主動查詢」的 telemetry 訊號。**Privacy hard rule**：事件 payload 的 query 欄位一律為**空**——原始 prompt 與 derived terms 皆不持久化（derived term 仍可能原樣重現 secret 形 token），只記 hit count；scrub 程序見 `docs/context-retrieval.md`。no-index / no-sqlite 皆優雅降級（空輸出 + 零 hit 事件）。
-2. **`scripts/guard-inject-context.sh`**（UserPromptSubmit hook）：讀 payload `cwd`+`prompt` → 解析 git toplevel（非 git 目錄靜默退出）→ 以 `PM_DISPATCH_CONTEXT_AUTOBUILD=0` 呼叫 prompt-scan（不在互動 prompt 路徑觸發首次全量建索引；incremental refresh 保留）→ 僅在有 hits 時輸出 `=== auto-context ===` 區塊（含「更多請跑 pmctl context query」提示行）。永遠 exit 0（hook 絕不阻斷 prompt）；`PM_DISPATCH_DISABLE_PROMPT_CONTEXT=1` kill-switch；呼叫包 timeout 防慢 repo 拖累 prompt 延遲。
-3. **`scripts/install-guards.sh`** 註冊新 hook 為 managed hook（presence check / path refresh / prune 與 guard-inject-memory 對稱）。
-4. **`agents/project-pm.md`**：On invocation 於 Classify 前插入編號 Retrieve 步驟（knowledge 類請求先 query；若 prompt 已帶 auto-context hits 則直接引用、不重查），Principle #3 指向該步驟——prose 從原則段落升格為結構化步驟。
-5. **`docs/context-retrieval.md`** 補 prompt-scan / auto-inject / `context.prompt_scanned` 文件；成功判準沿用既有 Success metric（下游引用 anchors，非 query count）。
-6. 測試：`test-pmctl-context.sh`（prompt-scan：no-index、hits、knowledge-domain-only、dedupe、事件發射）、`test-guards.sh`（hook：happy path、非 git、零 hits 靜默、malformed payload、kill-switch）、`test-install.sh` 於 inject-memory 斷言點鏡像新 hook。
-
-**Deferred（顯式非目標）**: 第 2 層 PreToolUse read-guard（Read/Grep/Bash 開 knowledge docs 前檢查本 session 是否 query 過）——待本票上線後以 telemetry 覆蓋率決定邊際價值再議；若做，須依 [[feedback_cut_capability_close_all_paths]] 同時關 Bash 路徑。
-
-**Risk**: hook 會在每個 prompt 自動觸發 pmctl context 讀取路徑，與 [[feedback_no_pmctl_during_full_test_run]]（全套測試期間勿碰 live DB）存在自動化衝突——kill-switch 即為此而設，並在 docs 註記。
-
-**Dependencies**: 無（context plane 既有能力之上純 additive）。
-**Source**: 使用者 2026-07-07「context.db 沒刷新」誤報調查 → 根因是 reflex 從未被執行 → 「請幫我開票並實際規劃與實作」。
-
-**Outcome**（2026-07-07）: 六項 Requirement 全數交付。gate 三輪收斂：R1 full NO-GO（no-sqlite 降級契約不符、telemetry 存原始 prompt、覆蓋缺口）→ R2 targeted NO-GO（security/risk 升級：derived terms 仍可能重現 secret 形 token）→ 最終方案為 `context.prompt_scanned` 事件 query payload **一律為空**（僅記 hit count），加 secret-shaped regression（state root 遞迴 grep 零殘留）與 events.jsonl scrub 程序 → R3 targeted GO 零 findings。修復前本機 live store 的 3 筆 prompt-derived 事件已現場 scrub。測試：test-pmctl-context 108、test-guards 203（含 timeout fail-open stub seam）、test-install 86、test-doctor 49、test-commands 269、全套 71 suites 綠。
-
-**See**: pr:#379
 
 ---
 
@@ -849,20 +485,6 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 ---
 
-## CC-471 — spike: codex `pm_command_interface` probe ✅ 2026-07-09
-
-**Problem**：[[CC-445]] 送出 codex-host command-guard write path 並在第 21 輪 pr-gate GO 後，使用者問「如果我要在 codex 上安裝，還缺什麼」——盤點發現 `hosts/codex/host.yaml` 的 `pm_command_interface` capability 從未被評估過（`confidence: assumed`），也就是「codex 到底能不能像 Claude 的 `/pm` 一樣呼叫 project-pm」這件事完全沒驗證過。
-
-**方法**：使用者直接啟動 codex 實測——focused suites（`test-host-write-codex.sh` 31、`test-pmctl-guard.sh --filter pm-prebash` 7、`test-doctor.sh --filter codex` 12、`test-guards.sh --filter pm-bash` 84）+ 全套 `run-all-tests.sh`（72 綠）+ 手動 smoke（臨時 CODEX_HOME 裝 hook、doctor 回報 wired、餵 payload 驗證 allow/deny）+ 真實 `~/.codex/hooks.json` 短暫接線後跑真實 `codex exec`（allow path 執行成功、deny path 被 PreToolUse hook 擋下），測完用 `uninstall-guards-codex.sh` 移除，repo 保持乾淨。
-
-**Outcome**（`docs/spikes/CC-471.md`）：CC-445 的 command-guard write path 功能完全正確，無新 bug。但確認 codex CLI **沒有**等同 Claude Code Agent/subagent 呼叫的機制——`/pm` 依賴的「即時開一個 project-pm subagent、可暫停問澄清問題、再收 handover」這整套互動迴圈，codex 沒有對等入口。codex 目前能呼叫的只有底層 `pmctl dispatch run/wait`、`pmctl gate run`、`pmctl context query` 等既有 CLI 原語，不是 `/pm`-shaped 的體驗。`hosts/codex/host.yaml` 的 `pm_command_interface` 已改記為 `confidence: probed`（已評估、確認不支援，非未評估）。後續規劃見 [[CC-473]]。
-
-**Dependencies**：承接 [[CC-445]] 的 host 安全防護實作；發現回饋進 [[CC-473]] 規劃票。
-
-**See**: `docs/spikes/CC-471.md`
-
----
-
 ## CC-472 — spike: antigravity（`agy`）host 唯讀 probe 🟢 someday
 
 **Problem**：使用者正在跟 agy（antigravity CLI）討論把它接成 pm-dispatch 的一個 host（PM 在該 CLI 內被驅動，而非僅作 executor adapter）。目前完全沒有評估過 agy 屬於哪一類、guard 綁定是否可行。
@@ -963,14 +585,6 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Requirement**: 待 Windows = Supported flag flip 前評估：`state-writer.sh` 在 Windows 偵測下以 `icacls "<store_root>" /inheritance:r /grant:r "%USERNAME%:(OI)(CI)F"` 等價設定收斂保護，並補對應能力測試。
 **Source**: 2026-06-13 CC-368 #2 收尾時分出的 follow-up。
 
-## CC-004 — test-pr-gate.sh docstring 格式統一 ✅ 2026-07-06
-
-**Problem**: scripts/test-pr-gate.sh 新增的 shell test functions 使用散文註解描述行為，而非 pm-schema 規範的 structured behavior/Steps docstring 形式。
-**Why**: tests 本身 behavior-named、deterministic，功能無虞，純為 audit-quality / 一致性問題。長期會讓新人讀測試時樣式不一。
-**Requirement**: 把新增 test functions 的開頭註解改寫成與既有 hook tests 一致的 behavior/Steps docstring 結構。不改測試邏輯。
-**AS-BUILT**：124 個 test function 全數補上 `# Behavior:`/`# Steps:` docstring，慣例說明加進 `scripts/lib/test-harness.sh` 頂部；新增 `scripts/lint-test-docstrings.sh` explicit-allowlist ratchet linter + 回歸測試，CI 掛勾守住已轉換檔案不再退化。其餘 9 檔 201 函式的跨檔 backfill 拆出為 [[CC-450]]。
-**See**: pr:#369
-
 ## CC-450 — 其餘 9 個 test-*.sh docstring 格式統一（CC-004 同款 Behavior/Steps，跨檔）
 
 **Problem**: [[CC-004]] 實作時盤點發現，同樣的 docstring 不一致問題不只 test-pr-gate.sh：`test-doctor.sh`(5)、`test-e2e-script.sh`(13)、`test-install.sh`(77)、`test-patch-gitignore.sh`(5)、`test-pr-gate-profile.sh`(13)、`test-release-verify.sh`(25)、`test-run-all-tests.sh`(26)、`test-setup-project.sh`(9)、`test-uninstall.sh`(28) 共 9 個檔案、201 個 test function 完全沒有 `# Behavior:`/`# Steps:` 開頭註解。
@@ -1007,18 +621,6 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Requirement**: `scripts/hook-sync-memory.sh` SessionStart hook；支援 git pull 和 rsync 兩種模式；失敗時靜默降級。
 **Note**: 依賴 CC-011；建議與 CC-011 合入同一 PR（Phase 1 + Phase 2 同步落地，CC-012 無獨立實作意義）。
 **Status note (CC-050 audit 2026-05-18)**: Downgraded from ⏸ deferred to 🟢 someday — depends on CC-011; no active plan. Re-evaluate together with CC-011.
-
-## CC-014 — repo 通用 worktree 平行開發工具 ✅ 2026-07-02
-
-**Status note (v0.8.0 planning 2026-07-02)**: Re-activated (was downgraded to ⏸ deferred by the CC-050 audit 2026-05-18 for lacking an open branch) — assigned to v0.8.0 Phase 4. Scope broadened 2026-07-02: 不再侷限於 pr-gate reviewer 隔離，改為 repo 層級通用 worktree 工具，讓任一 ticket/分支都能快速建立、切換、清理獨立 worktree 以支援多票並行開發。
-**Problem**: 目前開發者（與 `--parallel` PR gate 各 reviewer）都在同一 working tree 上工作，跨票並行開發時彼此的未 commit 變更、build 產物會互相干擾；沒有標準化的方式建立/清理獨立 worktree。
-**Why**: git worktree 讓每個工作串流（人或 subagent）在獨立環境工作，避免狀態污染；同時直接補強 CC-003 的解法方向，也可延伸解掉 `--parallel` gate 的 reviewer 隔離問題。
-**Requirement**:
-1. `scripts/worktree-*.sh`（或等效 `pmctl` 子指令）：為指定 ticket/分支建立、列出、清理 worktree，統一命名慣例與清理時機（避免孤兒 worktree 殘留）。
-2. `commands/using-git-worktrees.md` skill：指導開發者（人或 dispatch executor）如何用這些工具做功能分支平行開發。
-3. 評估 `--parallel` PR gate 是否可改用同一套工具為每個 reviewer 建立獨立 worktree（原票聚焦點，現列為本票子項而非全部範圍）。
-**Outcome**: `pmctl worktree create/list/remove/gc` 落地，manifest 存於 state store（`sw_project_worktree_dir`，跨主 repo/linked worktree 同一 partition）；`commands/using-git-worktrees.md` skill 文件；36 個 focused test。`--parallel` gate reviewer 隔離（原需求 3）留待未來 follow-up ticket，未併入本次範圍。
-**See**: pr:#358
 
 ## CC-015 — `systematic-debugging` skill
 
@@ -1268,22 +870,6 @@ dispatch state machine, reviewer policy, and schema definitions should be owned 
 **Complements**: CC-207 (parent), CC-214 (docs uninstall anchoring — optionally fold in).
 
 **Priority**: P3.
-
-## CC-214 — platform-support.md manual uninstall command anchoring ✅ 2026-07-03
-
-**Problem**: The manual uninstall warning in `docs/platform-support.md` uses `bash uninstall.sh`
-without anchoring to the repo path; running it from any other working directory silently fails.
-
-**Why**: Raised by critic in gate-20260521-115634 as [low] advise. Other examples in the same
-document already use the `"${PM_DISPATCH_REPO}/uninstall.sh"` form.
-
-**Requirement**: Replace the bare `bash uninstall.sh` in the Windows uninstall warning block with
-`bash "${PM_DISPATCH_REPO}/uninstall.sh"` (one-line change).
-
-**Note**: Picked as one of two real, low-risk mock tickets for [[CC-441]]'s real e2e validation
-(N-lane `pmctl ship --parallel` dispatch) — implemented by a dispatched claude executor inside a
-CC-014 worktree lane, not by hand.
-**See**: pr:#362
 
 ## CC-216 — MCP server — pm-dispatch-server（deferred）
 
