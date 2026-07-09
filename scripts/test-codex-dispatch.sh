@@ -498,15 +498,16 @@ case_unknown_alias_fallback_keeps_raw_model() {
   rm -f "$_brief16"
 }
 
-# ---- 16a: default model (no --model) resolves to gpt-5.5 with high effort ----
+# ---- 16a: default model (no --model) resolves to gpt-5.5 with medium effort ----
 # Behavior: with no --model and no config override, dispatch applies pm-dispatch's
 #   pinned default (the `default` alias → gpt-5.5) instead of inheriting the host
-#   ~/.codex/config.toml model.
+#   ~/.codex/config.toml model. The default alias's effort column is medium, so a
+#   plain dispatch is medium by default without an explicit --effort flag.
 # Steps:
 #   1. Run --print-cmd with an empty HOME (no ~/.pm-dispatch/config) and no --model.
-#   2. Assert the printed CMD carries -m gpt-5.5 and model_reasoning_effort="high".
+#   2. Assert the printed CMD carries -m gpt-5.5 and model_reasoning_effort="medium".
 case_default_model_resolves_gpt55() {
-  local name="default-model/no --model resolves to gpt-5.5 + high effort"
+  local name="default-model/no --model resolves to gpt-5.5 + medium effort"
   local _home _work _brief _out _exit
   should_run "$name" || return 0
 
@@ -520,7 +521,7 @@ case_default_model_resolves_gpt55() {
   set -e
   if [[ "$_exit" -eq 0 ]] \
     && [[ "$_out" == *"-m gpt-5.5"* ]] \
-    && [[ "$_out" == *'-c model_reasoning_effort="high"'* ]]; then
+    && [[ "$_out" == *'-c model_reasoning_effort="medium"'* ]]; then
     pass "$name"
   else
     fail "$name" ""
@@ -529,14 +530,14 @@ case_default_model_resolves_gpt55() {
   rm -f "$_brief"
 }
 
-# ---- 16b: explicit --model gpt-5.5 resolves with high effort ----
+# ---- 16b: explicit --model gpt-5.5 resolves with medium effort ----
 # Behavior: explicitly requesting gpt-5.5 resolves through the alias table and
-#   attaches high reasoning effort.
+#   attaches medium reasoning effort.
 # Steps:
 #   1. Run --print-cmd with --model gpt-5.5.
-#   2. Assert the CMD carries -m gpt-5.5 and model_reasoning_effort="high".
+#   2. Assert the CMD carries -m gpt-5.5 and model_reasoning_effort="medium".
 case_explicit_gpt55_resolves_high_effort() {
-  local name="default-model/--model gpt-5.5 resolves + high effort"
+  local name="default-model/--model gpt-5.5 resolves + medium effort"
   local _home _work _brief _out _exit
   should_run "$name" || return 0
 
@@ -550,7 +551,7 @@ case_explicit_gpt55_resolves_high_effort() {
   set -e
   if [[ "$_exit" -eq 0 ]] \
     && [[ "$_out" == *"-m gpt-5.5"* ]] \
-    && [[ "$_out" == *'-c model_reasoning_effort="high"'* ]]; then
+    && [[ "$_out" == *'-c model_reasoning_effort="medium"'* ]]; then
     pass "$name"
   else
     fail "$name" ""
@@ -559,14 +560,14 @@ case_explicit_gpt55_resolves_high_effort() {
   rm -f "$_brief"
 }
 
-# ---- 16c: explicit --model gpt-5.4 (fallback) resolves with high effort ----
+# ---- 16c: explicit --model gpt-5.4 (fallback) resolves with medium effort ----
 # Behavior: the documented fallback model gpt-5.4 resolves through the alias table
-#   and attaches high reasoning effort.
+#   and attaches medium reasoning effort.
 # Steps:
 #   1. Run --print-cmd with --model gpt-5.4.
-#   2. Assert the CMD carries -m gpt-5.4 and model_reasoning_effort="high".
+#   2. Assert the CMD carries -m gpt-5.4 and model_reasoning_effort="medium".
 case_explicit_gpt54_resolves_high_effort() {
-  local name="default-model/--model gpt-5.4 fallback resolves + high effort"
+  local name="default-model/--model gpt-5.4 fallback resolves + medium effort"
   local _home _work _brief _out _exit
   should_run "$name" || return 0
 
@@ -580,7 +581,7 @@ case_explicit_gpt54_resolves_high_effort() {
   set -e
   if [[ "$_exit" -eq 0 ]] \
     && [[ "$_out" == *"-m gpt-5.4"* ]] \
-    && [[ "$_out" == *'-c model_reasoning_effort="high"'* ]]; then
+    && [[ "$_out" == *'-c model_reasoning_effort="medium"'* ]]; then
     pass "$name"
   else
     fail "$name" ""
@@ -589,14 +590,14 @@ case_explicit_gpt54_resolves_high_effort() {
   rm -f "$_brief"
 }
 
-# ---- 16e: explicit --model default alias resolves to gpt-5.5 + high ----
+# ---- 16e: explicit --model default alias resolves to gpt-5.5 + medium ----
 # Behavior: the `default` alias is data-backed in share/model-aliases.tsv and
-#   resolves to the gpt-5.5 wire id with high effort.
+#   resolves to the gpt-5.5 wire id with medium effort.
 # Steps:
 #   1. Run --print-cmd with --model default.
-#   2. Assert the CMD carries -m gpt-5.5 and model_reasoning_effort="high".
+#   2. Assert the CMD carries -m gpt-5.5 and model_reasoning_effort="medium".
 case_default_alias_resolves_gpt55() {
-  local name="default-model/--model default alias resolves to gpt-5.5 + high"
+  local name="default-model/--model default alias resolves to gpt-5.5 + medium"
   local _home _work _brief _out _exit
   should_run "$name" || return 0
 
@@ -610,7 +611,7 @@ case_default_alias_resolves_gpt55() {
   set -e
   if [[ "$_exit" -eq 0 ]] \
     && [[ "$_out" == *"-m gpt-5.5"* ]] \
-    && [[ "$_out" == *'-c model_reasoning_effort="high"'* ]]; then
+    && [[ "$_out" == *'-c model_reasoning_effort="medium"'* ]]; then
     pass "$name"
   else
     fail "$name" ""
