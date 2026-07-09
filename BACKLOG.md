@@ -240,12 +240,12 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Requirement**：
 1. **更新 `share/claude-model-aliases.tsv`**：`default`/`sonnet` 兩列的 model 欄位從 `claude-sonnet-4-6` 改為 `claude-sonnet-5`；檔頭註解（第 15/16/23 行附近）同步更新版本字串與說明。
 2. **文件同步**：`docs/model-tier-policy.md`、`docs/dispatch-brief.md` 提及 `claude-sonnet-4-6` 的字面值全部改為 `claude-sonnet-5`。
-3. **測試同步**：`scripts/test-claude-dispatch.sh`、`scripts/test-model-aliases.sh` 中斷言 `claude-sonnet-4-6` 字面值的案例（包含 `case_model_alias_sonnet`、`--model default resolves to claude-sonnet wire id`、`PM_CFG_DEFAULT_MODEL=sonnet` 案例等）改為斷言 `claude-sonnet-5`。
+3. **測試同步**：`scripts/test-claude-dispatch.sh` 中斷言 `claude-sonnet-4-6` 字面值、且實際驅動 `adapters/claude/dispatch.sh` + 真實 `share/claude-model-aliases.tsv` 的案例（`case_model_alias_sonnet`、`case_model_alias_default`、`case_model_no_flag_resolves_default`、`case_model_pm_cfg_default_model`）改為斷言 `claude-sonnet-5`。`scripts/test-model-aliases.sh` 內同名字面值不動——盤點後確認該檔用的是純合成 fixture（`_mk_tsv` 自建一份與 repo 真實 tsv 無關的臨時表，測的是 `ma_resolve_alias` 解析器本身的行為，非「目前 sonnet 該指向哪個版本」），改了也不會提高覆蓋率，故明文列為 non-goal（見下）。
 4. **不動 archive**：`BACKLOG-ARCHIVE.md`、`docs/spikes/*` 內的歷史記錄字面值保留不改（那是過去執行紀錄的事實描述，非現況契約）。
 
-**Non-goals**：不順帶調整 opus/haiku 這兩個目前已對齊最新版本的 alias；不做「自動偵測 CLI 最新可用 model 並自動更新 alias 表」的機制化方案（那是更大範圍的設計題，這票僅修正當下已知的過期字面值）。
+**Non-goals**：不順帶調整 opus/haiku 這兩個目前已對齊最新版本的 alias；不做「自動偵測 CLI 最新可用 model 並自動更新 alias 表」的機制化方案（那是更大範圍的設計題，這票僅修正當下已知的過期字面值）；不改 `scripts/test-model-aliases.sh` 裡 `claude-sonnet-4-6` 這個合成 fixture 字面值——該測試不讀真實 `share/claude-model-aliases.tsv`，字面值只是解析器測試的任意樣本資料，與本票要修正的「目前 sonnet 該指向哪個版本」無關。
 
-**Verification**：`scripts/test-claude-dispatch.sh`、`scripts/test-model-aliases.sh` 全綠；`pmctl dispatch run --cd <tmp> --brief-file <tmp> --print-cmd`（不帶 `--model`）組出的指令含 `claude-sonnet-5`。
+**Verification**：`scripts/test-claude-dispatch.sh` 全綠（33/33，含上述 4 案例斷言更新後的字面值）；`scripts/test-model-aliases.sh` 維持全綠但不需要改動內容；`pmctl dispatch run --cd <tmp> --brief-file <tmp> --print-cmd`（不帶 `--model`）組出的指令含 `claude-sonnet-5`。
 
 **Source**：使用者於確認派發相關內容時發現，2026-07-09。
 
