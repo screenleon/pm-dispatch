@@ -27,6 +27,7 @@ SUITE_NAMES=(
   test-pm-scripts
   test-codex-dispatch
   test-pmctl-dispatch
+  test-pmctl-pm
   test-dispatch-record
   test-dispatch-lifecycle
   test-gate-lifecycle
@@ -126,6 +127,7 @@ suite_path() {
     test-pm-scripts) printf 'pm/scripts/test/run-tests.sh\n' ;;
     test-codex-dispatch) printf 'scripts/test-codex-dispatch.sh\n' ;;
     test-pmctl-dispatch) printf 'scripts/test-pmctl-dispatch.sh\n' ;;
+    test-pmctl-pm) printf 'scripts/test-pmctl-pm.sh\n' ;;
     test-dispatch-record) printf 'scripts/test-dispatch-record.sh\n' ;;
     test-dispatch-lifecycle) printf 'scripts/test-dispatch-lifecycle.sh\n' ;;
     test-gate-lifecycle) printf 'scripts/test-gate-lifecycle.sh\n' ;;

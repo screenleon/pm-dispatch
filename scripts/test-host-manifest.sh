@@ -211,14 +211,14 @@ validate_manifest() {
   done
   # Per-entry consistency rules:
   #   provider none => enforcement none AND coverage none (unsupported rule);
-  #   binding_form none => provider none (no artifact without a none provider).
+  #   binding_form none => provider none or cli_wrapper (no installed host artifact).
   printf '%s\n' "$bindings" | sed -E 's/[[:space:]]+#.*$//' | awk '
     function flush() {
       if (cap == "") return
       if (prov == "none" && (enf != "none" || cov != "none"))
         print "guard_bindings: capability " cap " declares provider none but enforcement/coverage not none"
-      if (bf == "none" && prov != "none")
-        print "guard_bindings: capability " cap " declares binding_form none but provider not none"
+      if (bf == "none" && prov != "none" && prov != "cli_wrapper")
+        print "guard_bindings: capability " cap " declares binding_form none but provider is neither none nor cli_wrapper"
     }
     /^[[:space:]]*- capability:/ { flush(); cap=$NF; bf=""; prov=""; enf=""; cov="" }
     /^[[:space:]]*(- )?binding_form:/ { bf=$NF }
@@ -411,7 +411,7 @@ run_negative_case "capability missing from full enumeration" \
   "capability statusline missing (full enumeration required)"
 run_negative_case "binding_form none with non-none provider" \
   's/^([[:space:]]+)provider: none/\1provider: host_hook/' \
-  "declares binding_form none but provider not none"
+  "declares binding_form none but provider is neither none nor cli_wrapper"
 run_negative_case "provider none with non-none coverage" \
   's/^([[:space:]]+)coverage: none/\1coverage: partial/' \
   "declares provider none but enforcement/coverage not none"

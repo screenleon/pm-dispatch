@@ -25,6 +25,7 @@ SUITE_NAMES=(
   test-pm-scripts
   test-codex-dispatch
   test-pmctl-dispatch
+  test-pmctl-pm
   test-dispatch-record
   test-dispatch-lifecycle
   test-gate-lifecycle
@@ -101,6 +102,7 @@ declare -A SUITE_PATHS=(
   [test-pm-scripts]="pm/scripts/test/run-tests.sh"
   [test-codex-dispatch]="scripts/test-codex-dispatch.sh"
   [test-pmctl-dispatch]="scripts/test-pmctl-dispatch.sh"
+  [test-pmctl-pm]="scripts/test-pmctl-pm.sh"
   [test-dispatch-record]="scripts/test-dispatch-record.sh"
   [test-dispatch-lifecycle]="scripts/test-dispatch-lifecycle.sh"
   [test-gate-lifecycle]="scripts/test-gate-lifecycle.sh"

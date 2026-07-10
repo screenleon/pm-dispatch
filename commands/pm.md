@@ -3,13 +3,16 @@ description: Route a request to the project-pm agent.
 argument-hint: "<free-form request, e.g. \"status of foo\", \"add /health endpoint to api\">"
 ---
 
-**Before invoking the agent, capture a state snapshot.** From within the target repo's working directory, run the snapshot script and capture its stdout (which echoes the output path):
+**Before invoking the agent, capture a state snapshot.** From within the target repo's working directory, use the shared batch coordinator. This is also the snapshot path used by non-Claude hosts; Claude retains the interactive Agent layer after preparation:
 
 ```bash
-SNAPSHOT_FILE="$(bash ${PM_DISPATCH_REPO}/scripts/pm-prep-snapshot.sh [--focus CC-N,CC-M])"
+PM_PREP_ARGS=(pm prepare --request "$ARGUMENTS" --json)
+PM_PREP_JSON="$(bash ${PM_DISPATCH_REPO}/cli/pmctl "${PM_PREP_ARGS[@]}")" || PM_PREP_JSON=""
+SNAPSHOT_FILE=""
+[[ -n "$PM_PREP_JSON" ]] && SNAPSHOT_FILE="$(printf '%s\n' "$PM_PREP_JSON" | jq -r '.snapshot_file // empty')"
 ```
 
-Extract any `CC-\d+` ticket IDs from `$ARGUMENTS` and pass them as `--focus`. If the script errors (e.g. the target repo has no `BACKLOG.md` — common outside pm-dispatch), `$SNAPSHOT_FILE` will be empty; skip the snapshot but proceed with the dispatch — do not block. Rationale: solves the "PM spends its first phase re-verifying caller-claimed branch/ticket state" failure mode documented in `[[project_memory_architecture]]`.
+If preparation cannot create a snapshot (e.g. the target repo has no `BACKLOG.md` — common outside pm-dispatch), `$SNAPSHOT_FILE` will be empty; skip the snapshot but proceed with the dispatch — do not block. Rationale: solves the "PM spends its first phase re-verifying caller-claimed branch/ticket state" failure mode documented in `[[project_memory_architecture]]`.
 
 Invoke `project-pm` via Agent with `run_in_background: true` (default). PM tasks routinely take 30–120s and burn 30–80K tokens; foregrounding holds the main thread idle while the user can't interject. Foreground only when PM's verdict is the sole input to the immediate next tool call AND no parallel main-thread prep work exists (rare). Do not force a model — inherit the main-thread model so the user's own session choice applies (see `docs/model-tier-policy.md` §`/pm`). Brief with: request ($ARGUMENTS), current working directory, **`snapshot_file: <abs-path>` when the snapshot was captured above** (PM agent uses the snapshot for orientation; see `agents/project-pm.md` `## Snapshot ingestion` for the git re-derivation rules that apply before trusting any snapshot field), and relevant prior-turn context the subagent won't otherwise see.
 

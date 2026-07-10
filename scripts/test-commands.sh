@@ -295,6 +295,27 @@ should_run "project-pm: tactical request does not auto-fire an uncertainty mode"
 should_run "pm-cmd: named scope sets run_discover false (no fan-out)" && assert_file_contains "pm-cmd: named scope sets run_discover false (no fan-out)" "$PM_CMD" "run_discover: false" && pass "pm-cmd: named scope sets run_discover false (no fan-out)"
 should_run "pm-cmd: tactical request does not auto-run discover" && assert_file_contains "pm-cmd: tactical request does not auto-run discover" "$PM_CMD" "Do **not** auto-run \`/discover\` for tactical" && pass "pm-cmd: tactical request does not auto-run discover"
 should_run "pm-cmd: dispatch uses detached lifecycle" && assert_file_contains "pm-cmd: dispatch uses detached lifecycle" "$PM_CMD" "--lifecycle detached" && pass "pm-cmd: dispatch uses detached lifecycle"
+should_run "pm-cmd: snapshot preparation uses pmctl pm default cwd" && assert_file_contains "pm-cmd: snapshot preparation uses pmctl pm default cwd" "$PM_CMD" "pm prepare --request" && pass "pm-cmd: snapshot preparation uses pmctl pm default cwd"
+should_run "pm-cmd: snapshot preparation reads structured result" && assert_file_contains "pm-cmd: snapshot preparation reads structured result" "$PM_CMD" "snapshot_file // empty" && pass "pm-cmd: snapshot preparation reads structured result"
+should_run "pm-cmd: empty preparation result skips jq" && assert_file_contains "pm-cmd: empty preparation result skips jq" "$PM_CMD" '[[ -n "$PM_PREP_JSON" ]]' && pass "pm-cmd: empty preparation result skips jq"
+# Behavior: the /pm snapshot preparation shell fence remains parseable Bash.
+# Steps: extract the first bash fence from commands/pm.md; run bash -n on its exact contents.
+pm_cmd_snapshot_fence_syntax() {
+  local name="pm-cmd: snapshot preparation bash fence parses"
+  should_run "$name" || return 0
+  local snippet="$tmp_root/pm-snapshot-fence.sh"
+  awk '
+    /^```bash$/ && !inside { inside=1; next }
+    inside && /^```$/ { exit }
+    inside { print }
+  ' "$PM_CMD" > "$snippet"
+  if [[ -s "$snippet" ]] && bash -n "$snippet"; then
+    pass "$name"
+  else
+    fail "$name" "first bash fence is empty or has invalid syntax"
+  fi
+}
+pm_cmd_snapshot_fence_syntax
 should_run "pm-cmd: uses pmctl dispatch wait for completion" && assert_file_contains "pm-cmd: uses pmctl dispatch wait for completion" "$PM_CMD" "pmctl dispatch wait" && pass "pm-cmd: uses pmctl dispatch wait for completion"
 should_run "pm-cmd: reads artifact paths from dispatch record" && assert_file_contains "pm-cmd: reads artifact paths from dispatch record" "$PM_CMD" ".dispatch-results/\$run_id.md" && pass "pm-cmd: reads artifact paths from dispatch record"
 should_run "pm-cmd: documents pmctl artifacts list" && assert_file_contains "pm-cmd: documents pmctl artifacts list" "$PM_CMD" "pmctl artifacts list --cd <safe working_dir>" && pass "pm-cmd: documents pmctl artifacts list"

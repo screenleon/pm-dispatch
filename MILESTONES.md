@@ -21,6 +21,7 @@
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
+| CC-473 | Codex batch PM interface：`pmctl pm prepare/run` 共用 snapshot、brief validation、detached dispatch/wait；明確不提供互動式澄清迴圈，Codex manifest/doctor 宣告 `cli_wrapper` partial coverage | 🔵 |
 | CC-436 | codex-host PreToolUse payload 驗證 probe：throwaway `CODEX_HOME` 實測 hook fail-closed 阻擋 + payload 欄位能否映射 `pmctl guard check --file/--command`；唯讀第一刀 | ✅ |
 | CC-437 | doctor 擴充切片：拆通用核心檢查 vs host-specific 模組介面，以 capability 為單位呈現；可與 CC-436 並行 | ✅ |
 | CC-448（階段 1） | opencode host probe（唯讀，鏡像 CC-436）：hook/plugin 機制有無 PreToolUse 等價事件、payload 表達力、fail-closed 可行性；結論寫 `docs/spikes/CC-448.md`；與 CC-436/437 並行先跑 | ✅ |
@@ -29,7 +30,7 @@
 | CC-445 | install write path host-aware：由 host manifest 衍生接線、host-generic（`hosts/*/host.yaml` 驅動）；claude 路徑 byte-compatible（以 CC-457 manifest 為驗收基準）；含 claude-host 殘餘耦合盤點（usage-log 硬編路徑）；依賴 CC-436/438 | 🔵 |
 | CC-448（階段 2+3） | `hosts/opencode/host.yaml`（依 CC-438 schema）+ doctor/install 接線；N=2 驗收紅線：核心零改動、僅新增 `hosts/opencode/` 內容，做不到即回頭修抽象；probe 若判定 guard 不可承接則 fallback cli-only 並在 host manifest 明宣告 | 🔵 |
 
-> 順序：CC-436、CC-437、CC-448 階段 1 三者並行先行 → CC-438（雙 probe 結果共同定案 schema）→ CC-457（claude 宣告面，純 additive 可先行）→ CC-445 → CC-448 階段 2+3。本 Phase 驗收面（DECISIONS 2026-07-06）：**codex 與 opencode 雙 host** 各自通過 sandbox install → doctor 全綠 → guard 實攔一次違規（或明宣告 cli-only）→ uninstall 無殘留。
+> 順序：CC-473 先完成 Codex 的 batch PM interface → CC-436、CC-437、CC-448 階段 1 三者並行先行 → CC-438（雙 probe 結果共同定案 schema）→ CC-457（claude 宣告面，純 additive 可先行）→ CC-448 階段 2 manifest → CC-445 共用 dispatcher → CC-448 階段 3 接線驗收。本 Phase 驗收面（DECISIONS 2026-07-06）：**codex 與 opencode 雙 host** 各自通過 sandbox install → doctor 全綠 → guard 實攔一次違規（或明宣告 cli-only）→ uninstall 無殘留。
 
 ### Phase 2 — 證據層（P2；與 Phase 1 檔案面大致不重疊，可並行）
 
@@ -52,6 +53,7 @@
 | 票 | 摘要 | 狀態 |
 |----|------|------|
 | CC-452 | guard/hook 對稱性與併發 hardening：episodes.jsonl append 加鎖、三安全 guard `set -e` 統一、ISO8601 正規化抽 lib | 🔵 |
+| CC-477 | guard memory usage sidecar 並發遺失更新：可診斷 contention repro → lock protocol 根因修正 → full-suite 壓測穩定；與 CC-452 協調 shared lock helper | 🔵 |
 | CC-453 | worktree/auto-pack 路徑契約 hardening：worktree create stdout 收斂只印路徑、auto-pack work_dir fail-loud、opencode isolation 錯誤訊息修正 | 🔵 |
 | CC-455 | context plane repo_root 跟隨工作目錄（P2）：query/reuse-scan/index 未帶路徑時 default 到 pmctl 安裝 repo 而非 CWD——跨 repo 用 /pm 時目標 repo 的 context.db 永不建立/刷新、查詢打錯 db；CLI 層改 CWD git-toplevel default + agent prose 同步 + 回歸測試（2026-07-06 使用者回報，實測確認） | ✅ done pr:#371 |
 | CC-456 | 去除 maintainer-local `~/github/` 佈局假設（P2）：repos-root 參數化（由 `PM_DISPATCH_REPO` 派生 + env 覆寫）、agents/commands/scripts/pm 層 prose sweep、lint 防再犯；與 CC-455 同根（維護者本機佈局被當成使用者環境契約）、與 CC-447 offline smoke 互扣驗收（2026-07-06 使用者指出） | 🔵 |

@@ -134,12 +134,12 @@ doctor_host_codex_run() {
   if ! codex_available; then
     emit_capability host.codex.binary ok codex pm_command_interface \
       none none none evolving probed \
-      "codex binary not on PATH — codex-host capability probes skipped"
+      "codex binary not on PATH — batch PM command interface unavailable"
     return
   fi
   emit_capability host.codex.binary ok codex pm_command_interface \
-    host_native none full evolving probed \
-    "codex binary on PATH"
+    cli_wrapper none partial evolving probed \
+    "codex binary on PATH; pmctl pm provides batch-only orchestration (no interactive clarification loop)"
   _doctor_host_codex_hooks
   _doctor_host_codex_manifest_parity
 }
