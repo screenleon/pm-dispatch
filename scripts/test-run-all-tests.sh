@@ -787,7 +787,7 @@ test_jobs_default_fallback_no_nproc() {
 }
 
 test_jobs_default_uses_detected_nproc() {
-  # Behavior: with no --jobs, default parallelism equals the detected nproc value.
+  # Behavior: below the safety cap, default parallelism equals detected nproc.
   # Steps: gate the first 4 suites; prepend an nproc stub reporting 3; run aggregator with
   #        no --jobs in background; assert exactly suites 1-3 start concurrently and suite 4
   #        stays held (max=3 from nproc, not a hardcoded 1 or unbounded); release one slot

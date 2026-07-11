@@ -26,6 +26,28 @@ case_prepare_emits_batch_contract() {
   fi
 }
 
+# Behavior: prepare's human mode exposes the batch contract and snapshot handoff.
+# Steps: invoke prepare without --json; assert its required lines and remove the created snapshot.
+case_prepare_emits_human_contract() {
+  local name="pmctl pm prepare: emits human batch contract"
+  should_run "$name" || return 0
+  local out code=0 snapshot
+  out="$("$PMCTL" pm prepare --cd "$REPO_ROOT" --request 'human contract CC-473' 2>/dev/null)" || code=$?
+  snapshot="$(printf '%s\n' "$out" | sed -n 's/^snapshot_file: //p')"
+  if [[ "$code" -eq 0 ]] \
+    && [[ "$out" == *$'mode: batch-only\n'* ]] \
+    && [[ "$out" == *"working_dir: $REPO_ROOT"* ]] \
+    && [[ "$out" == *"focus_tickets: CC-473"* ]] \
+    && [[ "$out" == *"snapshot_status: created"* ]] \
+    && [[ "$out" == *"next: author a complete dispatch_handover_v1 brief, then run pmctl pm run"* ]] \
+    && [[ -f "$snapshot" ]]; then
+    rm -f "$snapshot"
+    pass "$name"
+  else
+    fail "$name" "code=$code snapshot=$snapshot out=$out"
+  fi
+}
+
 # Behavior: prepare defaults its work directory to the caller's git toplevel.
 # Steps: invoke prepare from this checkout without --cd; assert its JSON work directory resolves to the checkout root.
 case_prepare_defaults_to_caller_git_root() {
@@ -143,6 +165,25 @@ case_run_uses_validate_detached_wait() {
   fi
 }
 
+# Behavior: run's human mode prints the authenticated dispatch handoff result.
+# Steps: stub validation, launch, and wait; assert the complete four-line human contract.
+case_run_emits_human_contract() {
+  local name="pmctl pm run: emits human batch contract"
+  should_run "$name" || return 0
+  # shellcheck source=scripts/lib/pmctl-pm.sh
+  . "$REPO_ROOT/scripts/lib/pmctl-pm.sh"
+  local out="$tmp_root/run-human.out" code=0
+  pmctl_validate_brief() { return 0; }
+  pmctl_dispatch_run() { printf 'run-test-human-output\n'; }
+  pmctl_dispatch_wait() { return 0; }
+  pmctl_pm_run "$REPO_ROOT" --adapter codex --brief-file /tmp/brief-test.md --cd "$REPO_ROOT" > "$out" || code=$?
+  if [[ "$code" -eq 0 ]] && [[ "$(<"$out")" == $'run_id: run-test-human-output\nworking_dir: '"$REPO_ROOT"$'\nadapter: codex\nwait_exit_code: 0' ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$(<"$out")"
+  fi
+}
+
 # Behavior: run rejects an invalid handover before it can launch a dispatch.
 # Steps: invoke the CLI with a malformed brief and assert usage exit 2 and no executor requirement.
 case_run_rejects_invalid_brief() {
@@ -220,6 +261,25 @@ case_run_propagates_wait_failure() {
   fi
 }
 
+# Behavior: JSON mode owns stdout even when the shared wait primitive emits an advisory record.
+# Steps: stub wait stdout; invoke JSON mode; assert the complete output remains parseable JSON.
+case_run_json_suppresses_wait_stdout() {
+  local name="pmctl pm run: JSON output suppresses wait stdout"
+  should_run "$name" || return 0
+  # shellcheck source=scripts/lib/pmctl-pm.sh
+  . "$REPO_ROOT/scripts/lib/pmctl-pm.sh"
+  local out="$tmp_root/json-wait-stdout.out" code=0
+  pmctl_validate_brief() { return 0; }
+  pmctl_dispatch_run() { printf 'run-test-json-output\n'; }
+  pmctl_dispatch_wait() { printf 'advisory wait output\n'; return 0; }
+  pmctl_pm_run "$REPO_ROOT" --adapter codex --brief-file /tmp/brief-test.md --cd "$REPO_ROOT" --json > "$out" || code=$?
+  if [[ "$code" -eq 0 ]] && jq -e '.run_id == "run-test-json-output" and .wait_exit_code == 0' "$out" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "expected parseable JSON, got $code out=$(<"$out")"
+  fi
+}
+
 # Behavior: run forwards optional adapter flags unchanged into the shared detached dispatcher.
 # Steps: stub launch and wait; invoke model, isolation, and no-auto-pack options; assert all appear in launch argv.
 case_run_forwards_optional_dispatch_flags() {
@@ -245,6 +305,7 @@ case_run_forwards_optional_dispatch_flags() {
 }
 
 case_prepare_emits_batch_contract
+case_prepare_emits_human_contract
 case_prepare_defaults_to_caller_git_root
 case_prepare_degrades_without_backlog
 case_prepare_deduplicates_focus_tickets
@@ -252,10 +313,12 @@ case_prepare_rejects_empty_request
 case_prepare_rejects_non_git_workdir
 case_unknown_subcommand_shows_usage
 case_run_uses_validate_detached_wait
+case_run_emits_human_contract
 case_run_rejects_invalid_brief
 case_run_requires_adapter_brief_and_workdir
 case_run_rejects_non_git_workdir
 case_run_rejects_invalid_dispatch_id
 case_run_propagates_wait_failure
+case_run_json_suppresses_wait_stdout
 case_run_forwards_optional_dispatch_flags
 th_summary

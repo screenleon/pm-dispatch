@@ -134,7 +134,14 @@ pmctl_pm_run() {
   [[ "$run_id" =~ ^run-[A-Za-z0-9._-]+$ ]] || { printf 'pmctl pm run: dispatch returned invalid run id: %s\n' "$run_id" >&2; return 1; }
   local -a wait_args=("$run_id" --cd "$work_dir")
   [[ -n "$timeout" ]] && wait_args+=(--timeout "$timeout")
-  pmctl_dispatch_wait "$repo_root" "${wait_args[@]}" || wait_rc=$?
+  # In JSON mode the coordinator owns stdout. dispatch wait may print an
+  # advisory record, which remains useful for human callers but would make the
+  # JSON response unparsable. Keep stderr and the authenticated exit status.
+  if [[ "$json" -eq 1 ]]; then
+    pmctl_dispatch_wait "$repo_root" "${wait_args[@]}" >/dev/null || wait_rc=$?
+  else
+    pmctl_dispatch_wait "$repo_root" "${wait_args[@]}" || wait_rc=$?
+  fi
   if [[ "$json" -eq 1 ]]; then
     jq -cn --arg run_id "$run_id" --arg work_dir "$work_dir" --arg adapter "$adapter" --argjson exit_code "$wait_rc" \
       '{schema_version:1,mode:"batch-only",run_id:$run_id,working_dir:$work_dir,adapter:$adapter,wait_exit_code:$exit_code}'

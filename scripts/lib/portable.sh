@@ -221,17 +221,25 @@ mkdir_unlock() {
 # Returns the wrapped function's exit code, or 1 on lock failure.
 serialize_with_lock() {
   local lockbase="$1"; shift
+  local timeout_secs="${PM_DISPATCH_LOCK_TIMEOUT_SECS:-10}"
+  if ! [[ "$timeout_secs" =~ ^[0-9]+$ ]] || (( 10#$timeout_secs == 0 )); then
+    timeout_secs=10
+  fi
   if command -v flock >/dev/null 2>&1 && [[ "${FAKE_FLOCK_MISSING:-}" != "1" ]]; then
     local _slw_rc=0
     (
-      flock -x -w 2 9 || exit 1
+      if ! flock -x -w "$timeout_secs" 9; then
+        printf 'serialize_with_lock: timed out after %ss acquiring %s.lock\n' "$timeout_secs" "$lockbase" >&2
+        exit 1
+      fi
       "$@"
     ) 9>"${lockbase}.lock"
     _slw_rc=$?
     return $_slw_rc
   else
     local lockdir="${lockbase}.lockdir"
-    if ! mkdir_lock "$lockdir" 2; then
+    if ! mkdir_lock "$lockdir" "$timeout_secs"; then
+      printf 'serialize_with_lock: timed out after %ss acquiring %s\n' "$timeout_secs" "$lockdir" >&2
       return 1
     fi
     local _slw_rc=0

@@ -17,6 +17,19 @@ trap '' PIPE
 # shellcheck disable=SC2059  # printf passthrough wrapper: the caller owns the format string
 say() { printf "$@" 2>/dev/null || true; }
 
+# verify_reviewer_artifact_hashes <hash_cmd> <name> <path> <baseline> [...]
+# Print every reviewer whose artifact differs from its captured baseline.
+verify_reviewer_artifact_hashes() {
+  local hash_cmd="$1" name path baseline current
+  shift
+  while [[ $# -ge 3 ]]; do
+    name="$1" path="$2" baseline="$3"; shift 3
+    [[ "$baseline" == "none" ]] && continue
+    current="$(cat "$path" 2>/dev/null | $hash_cmd || echo 'missing')"
+    [[ "$current" != "$baseline" ]] && printf '%s\n' "$name"
+  done
+}
+
 # _kill_process_tree <pid> [signal] -- signal a process AND all its descendants.
 # A plain `kill <pid>` only reaches the `eval` subshell / dispatch.sh wrapper we
 # backgrounded; the grandchild executor (`codex exec`, or a test `sleep` stub)
@@ -1504,17 +1517,14 @@ RBRIEF_EOF
     # compare with the hash captured immediately after that reviewer's PID exited.
     # A mismatch means a concurrently-running reviewer session modified this file
     # after it was completed -- fail closed before synthesis can run on tainted data.
-    CROSS_TAMPERED=()
+    _artifact_check_args=()
     for i in "${!REVIEWER_OUTPUT_FILES[@]}"; do
       rf="${REVIEWER_OUTPUT_FILES[$i]}"
       r="${REVIEWER_NAMES[$i]}"
       expected="${REVIEWER_POST_WAIT_HASHES[$i]}"
-      [[ "$expected" == "none" ]] && continue
-      current="$(cat "$rf" 2>/dev/null | $_HASH_CMD || echo 'missing')"
-      if [[ "$current" != "$expected" ]]; then
-        CROSS_TAMPERED+=("$r")
-      fi
+      _artifact_check_args+=("$r" "$rf" "$expected")
     done
+    mapfile -t CROSS_TAMPERED < <(verify_reviewer_artifact_hashes "$_HASH_CMD" "${_artifact_check_args[@]}")
     if [[ "${#CROSS_TAMPERED[@]}" -gt 0 ]]; then
       printf 'Error: reviewer artifact modified after that reviewer session completed: %s\n' "${CROSS_TAMPERED[*]}" >&2
       printf 'Possible cross-reviewer artifact tampering in --parallel mode. Gate aborted.\n' >&2
