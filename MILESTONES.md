@@ -21,7 +21,7 @@
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-473 | Codex batch PM interface：`pmctl pm prepare/run` 共用 snapshot、brief validation、detached dispatch/wait；明確不提供互動式澄清迴圈，Codex manifest/doctor 宣告 `cli_wrapper` partial coverage | 🔵 |
+| CC-473 | Codex batch PM interface：`pmctl pm prepare/run` 共用 snapshot、brief validation、detached dispatch/wait；明確不提供互動式澄清迴圈，Codex manifest/doctor 宣告 `cli_wrapper` partial coverage；Claude gate GO + Codex live smoke PASS | ✅ |
 | CC-436 | codex-host PreToolUse payload 驗證 probe：throwaway `CODEX_HOME` 實測 hook fail-closed 阻擋 + payload 欄位能否映射 `pmctl guard check --file/--command`；唯讀第一刀 | ✅ |
 | CC-437 | doctor 擴充切片：拆通用核心檢查 vs host-specific 模組介面，以 capability 為單位呈現；可與 CC-436 並行 | ✅ |
 | CC-448（階段 1） | opencode host probe（唯讀，鏡像 CC-436）：hook/plugin 機制有無 PreToolUse 等價事件、payload 表達力、fail-closed 可行性；結論寫 `docs/spikes/CC-448.md`；與 CC-436/437 並行先跑 | ✅ |
