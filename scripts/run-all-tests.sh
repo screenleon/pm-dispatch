@@ -25,6 +25,7 @@ SUITE_NAMES=(
   test-pm-scripts
   test-codex-dispatch
   test-pmctl-dispatch
+  test-pmctl-pm
   test-dispatch-record
   test-dispatch-lifecycle
   test-gate-lifecycle
@@ -101,6 +102,7 @@ declare -A SUITE_PATHS=(
   [test-pm-scripts]="pm/scripts/test/run-tests.sh"
   [test-codex-dispatch]="scripts/test-codex-dispatch.sh"
   [test-pmctl-dispatch]="scripts/test-pmctl-dispatch.sh"
+  [test-pmctl-pm]="scripts/test-pmctl-pm.sh"
   [test-dispatch-record]="scripts/test-dispatch-record.sh"
   [test-dispatch-lifecycle]="scripts/test-dispatch-lifecycle.sh"
   [test-gate-lifecycle]="scripts/test-gate-lifecycle.sh"
@@ -164,7 +166,15 @@ declare -A SUITE_PATHS=(
 
 declare -A SKIP_REQUESTED=()
 LIST=0
-JOBS="$(nproc 2>/dev/null || echo 1)"
+_detected_jobs="$(nproc 2>/dev/null || echo 1)"
+[[ "$_detected_jobs" =~ ^[1-9][0-9]*$ ]] || _detected_jobs=1
+_default_job_cap="${PM_DISPATCH_TEST_MAX_JOBS:-8}"
+[[ "$_default_job_cap" =~ ^[1-9][0-9]*$ ]] || _default_job_cap=8
+if (( _detected_jobs > _default_job_cap )); then
+  JOBS="$_default_job_cap"
+else
+  JOBS="$_detected_jobs"
+fi
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -238,6 +248,7 @@ passed=0
 failed=0
 skipped=0
 FAILED_SUITE_NAMES=()
+declare -A SUITE_DURATIONS=()
 
 run_suite() {
   local name="$1"
@@ -292,10 +303,12 @@ if [[ "$JOBS" -eq 1 ]]; then
       continue
     fi
 
+    suite_started="$SECONDS"
     set +e
     run_suite "$name"
     rc=$?
     set -e
+    SUITE_DURATIONS["$name"]="$(( SECONDS - suite_started ))"
 
     if [[ "$rc" -eq 0 ]]; then
       printf 'PASS %s\n' "$name"
@@ -326,6 +339,7 @@ else
     d="$_tmpbase/$name"
     mkdir -p "$d"
     printf '255\n' > "$d/rc"
+    printf '%s\n' "$SECONDS" > "$d/started"
     (
       set +e
       run_suite "$name" > "$d/out" 2>&1
@@ -354,6 +368,10 @@ else
         local rc
         rc="$(cat "$d/rc" 2>/dev/null || printf '1')"
         [[ "$rc" =~ ^[0-9]+$ ]] || rc=1
+        local started finished
+        started="$(cat "$d/started" 2>/dev/null || printf '%s' "$SECONDS")"
+        finished="$SECONDS"
+        SUITE_DURATIONS["$name"]="$((finished - started))"
         # Print buffered suite output then its result line
         [[ -s "$d/out" ]] && cat "$d/out"
         if [[ "$rc" -eq 0 ]]; then
@@ -396,7 +414,9 @@ else
       [[ ${#_if_pids[@]} -ge "$JOBS" ]] && sleep 0.05
     done
 
-    # A live-db-exclusive suite must not start while another one is in-flight.
+    # Suites that access the shared repo/memory context index may overlap
+    # ordinary isolated suites, but never each other. This prevents context.db
+    # collisions without serializing the entire test run behind two long suites.
     if [[ -n "${LIVE_DB_EXCLUSIVE[$name]:-}" ]]; then
       while _exclusive_inflight; do
         _drain
@@ -415,6 +435,24 @@ else
 fi
 
 printf '%s passed, %s failed, %s skipped\n' "$passed" "$failed" "$skipped"
+if [[ "${#SUITE_DURATIONS[@]}" -gt 0 ]]; then
+  printf 'slowest suites:\n'
+  declare -A _duration_reported=()
+  for ((_rank = 0; _rank < 10; _rank++)); do
+    _slow_name=""
+    _slow_seconds=-1
+    for name in "${!SUITE_DURATIONS[@]}"; do
+      [[ -n "${_duration_reported[$name]:-}" ]] && continue
+      if (( SUITE_DURATIONS[$name] > _slow_seconds )); then
+        _slow_name="$name"
+        _slow_seconds="${SUITE_DURATIONS[$name]}"
+      fi
+    done
+    [[ -n "$_slow_name" ]] || break
+    printf '  %ss %s\n' "$_slow_seconds" "$_slow_name"
+    _duration_reported["$_slow_name"]=1
+  done
+fi
 if [[ "${#FAILED_SUITE_NAMES[@]}" -gt 0 ]]; then
   printf 'failed suites:'
   printf ' %s' "${FAILED_SUITE_NAMES[@]}"

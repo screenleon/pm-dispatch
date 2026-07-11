@@ -103,7 +103,7 @@ declared and probed layers stay mechanically comparable:
 | Field | Enum | Meaning |
 |---|---|---|
 | `capability` | `command_guard`, `file_guard`, `session_lifecycle`, `pm_command_interface`, `statusline` | The semantic capability being declared. |
-| `binding_form` | `hook-script`, `config-fragment`, `none` | What artifact realizes the binding: an executable hook script wired into the host's hook surface, or a fragment merged into the host's declarative config. Never assume a guard binding is a script — opencode's is config. `none` means no binding artifact exists or has been designed, and is legal only when `provider` is `none`; an evaluated-but-unsupported capability may instead keep its anticipated form (e.g. `hook-script`) to record what the binding would be once its gaps close. |
+| `binding_form` | `hook-script`, `config-fragment`, `none` | What artifact realizes the binding: an executable hook script wired into the host's hook surface, or a fragment merged into the host's declarative config. Never assume a guard binding is a script — opencode's is config. `none` means the capability has no host-installed artifact; it is legal for `provider: none` and for `provider: cli_wrapper`, where a pmctl command supplies the batch-only interface. An evaluated-but-unsupported capability may instead keep its anticipated form (e.g. `hook-script`) to record what the binding would be once its gaps close. |
 | `provider` | `host_hook`, `host_policy`, `host_native`, `cli_wrapper`, `doc_instruction`, `none` | Mechanism class providing the capability. |
 | `enforcement` | `blocking`, `approval`, `advisory`, `none` | What a violation does. |
 | `coverage` | `full`, `partial`, `none` | How much of the capability's surface the binding reaches. |

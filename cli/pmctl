@@ -16,7 +16,7 @@ done
 REPO_ROOT="$(cd "$(dirname "$_pmctl_self")/.." && pwd)"
 unset _pmctl_self _pmctl_dir
 
-for _lib in detached-launch pmctl-policy pmctl-fs pmctl-adapter pmctl-backlog pmctl-guard executor-router pmctl-dispatch pmctl-trace pmctl-task pmctl-decision gate-result-verify pmctl-gate pmctl-safe pmctl-validate pmctl-context pmctl-memory pmctl-artifacts pmctl-pre-release pmctl-worktree pmctl-ship-parallel pmctl-ship; do
+for _lib in detached-launch pmctl-policy pmctl-fs pmctl-adapter pmctl-backlog pmctl-guard executor-router pmctl-dispatch pmctl-trace pmctl-task pmctl-decision gate-result-verify pmctl-gate pmctl-safe pmctl-validate pmctl-context pmctl-memory pmctl-artifacts pmctl-pre-release pmctl-worktree pmctl-ship-parallel pmctl-ship pmctl-pm; do
   # shellcheck source=/dev/null
   [[ -r "$REPO_ROOT/scripts/lib/$_lib.sh" ]] && . "$REPO_ROOT/scripts/lib/$_lib.sh"
 done
@@ -364,6 +364,22 @@ case "$cmd/$sub" in
       pmctl_die "pre-release audit unavailable"
     fi
     pmctl_pre_release_audit "$REPO_ROOT" "$@"
+    ;;
+  pm/prepare)
+    if ! declare -F pmctl_pm_prepare >/dev/null; then
+      pmctl_die "pm prepare unavailable"
+    fi
+    pmctl_pm_prepare "$REPO_ROOT" "$@"
+    ;;
+  pm/run)
+    if ! declare -F pmctl_pm_run >/dev/null; then
+      pmctl_die "pm run unavailable"
+    fi
+    pmctl_pm_run "$REPO_ROOT" "$@"
+    ;;
+  pm/*)
+    pmctl_pm_usage
+    exit 2
     ;;
   ""/)
     pmctl_die "missing command. Usage: pmctl <cmd> <sub> [args]"

@@ -92,8 +92,9 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-448 | 🔵 active | opencode host support：階段 1 probe 完成、CC-476 spike 解除掛起 blocking risk → 階段 2 `hosts/opencode/host.yaml` → 階段 3 install/doctor 接線；host 抽象 N=2 驗收（v0.9.0；依賴 CC-438已done/CC-445；umbrella: CC-333；DECISIONS 2026-07-04+2026-07-06） | arch/install | 2026-07-04 | — | P2 | design |
 | CC-449 | 🔵 active | release-verify/test-e2e 對 v0.8.0 新 surface（`pmctl ship`/`pmctl worktree`）無 live 煙測 + run-all-tests 套件註冊完整性 lint（CC-444 收尾發現 test-pmctl-worktree 未註冊，已修；防再漏）+ CI↔run-all parity 斷言（2026-07-06 稽核：24 個本地 suite CI 缺席）（v0.9.0 候選） | ops/test | 2026-07-04 | — | P2 | — |
 | CC-472 | 🟢 someday | spike: antigravity（`agy` CLI）host 唯讀 probe——比照 CC-436/CC-448 階段 1 模式，實測 command 載入能力 + hook/plugin 機制 + 五個 capability enum 的 provider/confidence 判定，不落地 `hosts/antigravity/host.yaml`；排在 CC-445 通用 install/uninstall dispatcher 之後、與 CC-448 opencode 同批或緊接其後評估（N=3 驗證點） | arch/install | 2026-07-08 | — | P3 | spike |
-| CC-473 | 🟢 someday | 設計 `pmctl pm`：把 `commands/pm.md` 的 orchestration 邏輯（snapshot/handover validation/dispatch-wait 迴圈/discovery routing）抽成 CLI surface，讓 Claude `/pm` 與未來 codex host 呼叫同一份邏輯；範圍明訂為 batch-only（無互動澄清迴圈），承接 CC-471 spike 發現 | arch/install | 2026-07-09 | — | P3 | design |
+| CC-473 | ✅ done | `pmctl pm`：batch-only `prepare/run` CLI surface，共用 snapshot、handover validation、detached dispatch/authenticated wait；Codex host manifest/doctor 宣告 partial `cli_wrapper`，Claude gate GO 且真實 Codex live smoke 通過 | arch/install | 2026-07-10 | pr:#391 | P2 | design |
 | CC-474 | ✅ done | dispatch/gate reasoning effort 獨立可調：目前 effort 綁死在 model alias 第三欄（share/*-model-aliases.tsv，多數 alias 寫死 high），無法在不換 model 的前提下單獨調降/調升；新增 `--effort` 旗標覆蓋、預設改 medium（CC-445 pr-gate 多輪迭代觀察，2026-07-08） | ops/gate | 2026-07-08 | pr:#387 | P3 | — |
+| CC-477 | 🔵 active | guard memory usage sidecar 並發遺失更新：建立可診斷 repro，修正 lock protocol，消除 full-suite flake | ops/test | 2026-07-10 | feedback:2026-07-10 | P2 | hygiene |
 
 ---
 
@@ -334,6 +335,24 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Dependencies**: 無前置；v0.9.0 hardening phase，與其他 phase 檔案面不重疊可並行。
 **Source**: 2026-07-06 盲測程式碼稽核（runtime 管線角度）。
 
+## CC-477 — guard memory usage sidecar 並發遺失更新 🔵 active
+
+**Problem**: `scripts/test-guards.sh` 的 `memory-usage/concurrent-no-lost-updates` 已多次在完整 `run-all-tests.sh` 中失敗（例如 2026-07-10 gate pre-flight 觀察到 final `access_count=21`, expected `25`），但單獨重跑可通過。這表示 `guard-inject-memory.sh` 的 usage sidecar read-modify-write 路徑在真實 contention 下仍可能遺失 access increment，或其測試/lock lifecycle 本身不具足夠隔離與可觀測性。它反覆阻斷 gate，不能再視為偶發噪音。
+
+**Why**: usage sidecar 是 frecency 排序的唯一寫入訊號；遺失更新會讓排序資料偏低且不可觀測。更重要的是，`serialize_with_lock` 已是此路徑的既有安全宣稱，卻無法在 full-suite 壓力下穩定兌現，代表 lock scope、ownership、清理或測試同步其中至少一處有缺口。
+
+**Requirement**:
+1. 先建立可重複、可診斷的 contention repro：每個 writer 有唯一 id、barrier/start timing、完成數與 sidecar 最終值皆可記錄；失敗時保留足夠的 sandbox evidence 判斷是 writer 未啟動、lock 未互斥、還是 commit 被覆寫。
+2. 釐清 `serialize_with_lock` 對同一 sidecar 的鎖 key、owner、timeout/cleanup 與 read-modify-write scope；修正根因，不以無上限 retry 或降低 assertion 掩蓋。
+3. 修正後，並發 regression 在同一 suite 及 `run-all-tests.sh` 平行執行下都必須穩定：至少多輪 contention 壓測零遺失更新，且不引入全域鎖或跨 fixture state 汙染。
+4. 將 failure evidence 與 chosen locking invariant 寫入測試註解或短設計 note，使下次 gate failure 可直接定位。
+
+**Non-goals**: 不改 canonical Markdown card；不把 usage sidecar 改成資料庫；不因測試 flake 而跳過 `test-guards` 或把 gate pre-flight 改成 warn-only。
+
+**Dependencies**: 與 [[CC-452]] 同屬 guard/hook concurrency hardening，但本票涵蓋的是已使用 lock 的 usage sidecar 交易完整性；可並行調查，修法若需要 shared lock helper 則在實作時協調。v0.9.0 hardening P2。
+
+**Evidence**: 2026-07-10 full gate pre-flight 多次出現 `memory-usage/concurrent-no-lost-updates` 遺失 increment（21/25）；另一次 `test-pmctl-memory` fixture case 單獨重跑通過，支持「full-suite contention / isolation」方向，而非 CC-473 行為回歸。
+
 ## CC-453 — worktree/auto-pack 路徑契約 hardening 🔵 active
 
 **Problem**（2026-07-06 盲測稽核 + 實際洩漏案例）:
@@ -559,7 +578,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 ---
 
-## CC-473 — 設計 `pmctl pm` CLI surface 🟢 someday
+## CC-473 — `pmctl pm` CLI surface ✅ 2026-07-12
 
 **Problem**：[[CC-471]] spike 確認 codex 沒有 Claude Agent/subagent 呼叫機制，無法承接 `/pm` 的互動式 orchestration。要讓非 Claude host（codex、未來的 opencode/antigravity）也能用到 PM orchestration（snapshot 產生、handover validation、dispatch/wait 迴圈、discovery routing），需要一個不依賴 Claude harness 專屬工具（`Agent`/`AskUserQuestion`）的共用入口。
 
@@ -571,6 +590,12 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 3. 需要定義：當一個請求本該觸發 Claude `/pm` 的 uncertainty routing（discovery fan-out、範圍不明確的問題）時，batch-only 模式下要怎麼降級處理（例如預設走最保守路線並附上理由，而不是卡住等一個沒人能回答的問題）。
 
 **Dependencies**：承接 [[CC-471]] spike 發現。與 [[CC-448]]（opencode host）並行——opencode 的 `pm_command_interface` 是獨立問題，不能假設跟 codex 一樣不支援，需要各自 probe 確認。
+
+**Update 2026-07-10（implementation started）**：新增 `pmctl pm prepare`（batch-only request + snapshot contract）與 `pmctl pm run`（brief validation → detached dispatch → authenticated wait）。Codex manifest/doctor 改宣告 `cli_wrapper` / `partial`，不再把 binary 在 PATH 誤報為有完整互動式 `/pm`。Claude `/pm` 的 snapshot 呼叫改走 `pmctl pm prepare`；其 Agent/AskUserQuestion 與 run-level interactive monitoring 仍保留在 Claude host layer。後續補齊真實 Codex live smoke 後再結案。
+
+**Closed 2026-07-12**：PR #391 已完成 full-tier Claude PR-gate（GO）。真實 Codex live smoke 以 `pmctl pm prepare → dispatch_handover_v1 → pmctl pm run --adapter codex → authenticated wait` 完成，run `run-20260711T181739Z-78ba4f` 的 dispatch/wait 皆 exit 0，Codex 回報 PASS 且工作目錄無修改。
+
+**See**: pr:#391
 
 ---
 

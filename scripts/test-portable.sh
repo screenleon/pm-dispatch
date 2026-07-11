@@ -304,6 +304,12 @@ _slw_write_fallback() {
   printf 'fallback ok\n' > "$1"
 }
 
+_slw_hold_lock() {
+  local ready_fifo="$1" release_fifo="$2"
+  printf 'ready\n' > "$ready_fifo"
+  IFS= read -r < "$release_fifo"
+}
+
 # Behavior: serialize_with_lock runs the wrapped function and applies its file side-effects.
 # Steps: 1. Call serialize_with_lock with a helper that writes to a temp file; 2. Assert rc=0; 3. Assert temp file contains the expected string.
 case_serialize_with_lock_basic() {
@@ -358,6 +364,28 @@ case_serialize_with_lock_propagates_rc() {
     pass "$name"
   else
     fail "$name" "expected rc 42 in both paths, got default=$rc_default fallback=$rc_fallback"
+  fi
+}
+
+# Behavior: a contended flock reports its lock path and configured timeout instead of failing silently.
+# Steps: signal when the holder acquires the lock; acquire it with a shorter timeout; release the holder; assert exit 1 and a diagnostic.
+case_serialize_with_lock_contention_diagnostic() {
+  local name="portable-serialize-with-lock-contention-diagnostic"
+  should_run "$name" || return 0
+  local lockbase="$tmp_root/slw-contention" err="$tmp_root/slw-contention.err" rc=0 holder
+  local ready_fifo="$tmp_root/slw-contention-ready" release_fifo="$tmp_root/slw-contention-release"
+  mkfifo "$ready_fifo" "$release_fifo"
+  serialize_with_lock "$lockbase" _slw_hold_lock "$ready_fifo" "$release_fifo" >/dev/null 2>&1 &
+  holder=$!
+  IFS= read -r < "$ready_fifo"
+  PM_DISPATCH_LOCK_TIMEOUT_SECS=1 serialize_with_lock "$lockbase" _slw_write_basic "$tmp_root/should-not-write" \
+    >/dev/null 2>"$err" || rc=$?
+  printf 'release\n' > "$release_fifo"
+  wait "$holder" || true
+  if [[ "$rc" -eq 1 && "$(<"$err")" == *"timed out after 1s acquiring $lockbase.lock"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc stderr=$(<"$err")"
   fi
 }
 
@@ -1078,6 +1106,7 @@ case_mkdir_lock_does_not_steal_live_lock
 case_mkdir_lock_live_owner_old_age_not_stolen
 case_serialize_with_lock_basic
 case_serialize_with_lock_propagates_rc
+case_serialize_with_lock_contention_diagnostic
 case_serialize_with_lock_fallback
 case_serialize_with_lock_fallback_signal_cleanup
 case_serialize_with_lock_missing_parent

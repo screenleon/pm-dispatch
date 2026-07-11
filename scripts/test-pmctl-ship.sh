@@ -1678,7 +1678,22 @@ case_run_tracks_adapter_field
 # case already asserts its own outcome before this point).
 _lingering_pid=""
 for _lingering_pid in $(pgrep -f -- "$tmp_root" 2>/dev/null); do
-  timeout 5 tail --pid="$_lingering_pid" -f /dev/null < /dev/null > /dev/null 2>&1 || true
+  if ! timeout 5 tail --pid="$_lingering_pid" -f /dev/null < /dev/null > /dev/null 2>&1; then
+    # A detached supervisor that outlives its bounded grace period would race
+    # the harness EXIT cleanup and recreate files beneath tmp_root. Reap its
+    # descendants first, then the supervisor; all processes here are suite
+    # fixtures discovered by the tmp_root path filter above.
+    _ship_reap_tree() {
+      local pid="$1" child
+      for child in $(pgrep -P "$pid" 2>/dev/null || true); do
+        _ship_reap_tree "$child"
+      done
+      kill -TERM "$pid" 2>/dev/null || true
+    }
+    _ship_reap_tree "$_lingering_pid"
+    timeout 2 tail --pid="$_lingering_pid" -f /dev/null < /dev/null > /dev/null 2>&1 || \
+      kill -KILL "$_lingering_pid" 2>/dev/null || true
+  fi
 done
 unset _lingering_pid
 

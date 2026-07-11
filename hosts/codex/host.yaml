@@ -12,9 +12,10 @@
 # module reports the PROBED layer; EFFECTIVE is what an end-to-end guard test
 # observes. Declared values here must never exceed what a probe has shown.
 #
-# Read consumers today: none (the install write path is a later slice); the
-# doctor codex module still carries its own probe targets. Once the write path
-# lands, wiring targets move out of code and this file becomes load-bearing.
+# Consumers: the codex guard installer reads install_targets; doctor compares
+# the live hook state with this declaration. `pmctl pm` is the batch-only
+# command interface for this host; it deliberately does not imitate Claude's
+# interactive Agent/AskUserQuestion loop.
 schema_version: 1
 host_name: codex
 host_binary: codex
@@ -104,18 +105,14 @@ guard_bindings:
     coverage: none
     stability: evolving
     confidence: assumed
-  # Probed end-to-end (see docs/spikes/ for the probe writeup): codex has
-  # no equivalent of Claude Code's Agent/subagent invocation, so there is no
-  # way for a codex session to open a live project-pm subagent and exchange
-  # turns with it the way commands/pm.md does. codex CAN call the
-  # lower-level pmctl primitives directly (pmctl dispatch run/wait, pmctl
-  # gate run, pmctl context query, ...), but that is not a `/pm`-shaped
-  # entry point — this is an evaluated absence, not an unevaluated gap.
+  # Codex lacks Claude's interactive Agent/AskUserQuestion loop. It instead
+  # uses pmctl pm: one fully specified request/brief in, one batch result out.
+  # That supports PM orchestration without claiming interactive parity.
   - capability: pm_command_interface
     binding_form: none
-    provider: none
+    provider: cli_wrapper
     enforcement: none
-    coverage: none
+    coverage: partial
     stability: evolving
     confidence: probed
   - capability: statusline

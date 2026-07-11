@@ -141,6 +141,7 @@ jobs:
             test-check-docs-freshness.sh
             test-codex-dispatch.sh
             test-pmctl-dispatch.sh
+            test-pmctl-pm.sh
             test-dispatch-record.sh
             test-dispatch-lifecycle.sh
             test-gate-lifecycle.sh

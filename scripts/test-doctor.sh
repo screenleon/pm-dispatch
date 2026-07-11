@@ -1110,7 +1110,7 @@ case_doctor_capability_json_fields() {
       and .stability == "evolving" and .confidence == "probed")] | length')"
   binary_tuple="$(printf '%s\n' "$out" | jq -s '[.[] | select(.check == "host.codex.binary")
     | select(.status == "ok" and .host == "codex" and .capability == "pm_command_interface"
-      and .provider == "host_native" and .enforcement == "none" and .coverage == "full"
+      and .provider == "cli_wrapper" and .enforcement == "none" and .coverage == "partial"
       and .stability == "evolving" and .confidence == "probed")] | length')"
   if [[ "$bad_fields" -eq 0 && "$guard_tuple" -eq 1 && "$command_guard_tuple" -eq 1 && "$binary_tuple" -eq 1 ]]; then
     pass "$name"
@@ -1553,7 +1553,7 @@ case_doctor_codex_module_no_binary_degrades() {
 
   local codex_fail
   codex_fail="$(printf '%s\n' "$out" | grep '\[FAIL\]' | grep -c 'host\.codex' || true)"
-  if [[ "$out" == *"codex-host capability probes skipped"* && "$codex_fail" -eq 0 ]]; then
+  if [[ "$out" == *"batch PM command interface unavailable"* && "$codex_fail" -eq 0 ]]; then
     pass "$name"
   else
     fail "$name" "expected skip message and no host.codex FAIL; status=$status out=$out"
