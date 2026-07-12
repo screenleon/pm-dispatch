@@ -21,7 +21,7 @@ _make_fake_repo() {
   mkdir -p "$root/scripts" "$root/share" "$root/docs" "$root/agents" \
            "$root/adapters/codex" "$root/adapters/claude"
   cp "$REPO_ROOT/scripts/lint-model-aliases.sh" "$root/scripts/"
-  [[ -n "$tsv_content" ]] && printf '%s' "$tsv_content" > "$root/share/model-aliases.tsv"
+  [[ -n "$tsv_content" ]] && printf '%s' "$tsv_content" > "$root/share/codex-model-aliases.tsv"
   printf '%s' "$claude_tsv_content" > "$root/share/claude-model-aliases.tsv"
   printf '%s' "$doc_content" > "$root/docs/dispatch-brief.md"
   # codex adapter stub
@@ -114,7 +114,7 @@ case_empty_tsv_fails() {
   should_run "$name" || return 0
   root="$(mktemp -d)"
   _make_fake_repo "$root" "placeholder" ""
-  : > "$root/share/model-aliases.tsv"
+  : > "$root/share/codex-model-aliases.tsv"
   _run_linter_expect "$name" "$root" "nonzero" "no aliases defined"
   rm -rf "$root"
 }

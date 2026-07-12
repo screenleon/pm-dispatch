@@ -1,7 +1,7 @@
 # pm-facing_alias	wire_model_id	reasoning_effort
 # Schema: PM-facing alias, wire-format model id, reasoning effort.
 # This file is the claude adapter alias table. The codex adapter alias table
-# lives at share/model-aliases.tsv (same 3-column format).
+# lives at share/codex-model-aliases.tsv (same 3-column format).
 #
 # Columns must be tab-separated.
 #
@@ -9,7 +9,7 @@
 #   `light`  — lightweight/fast model for targeted changes (< 50 lines, ≤ 2 files,
 #              no new behavioral units). Mapped per executor:
 #                claude → haiku       (claude-haiku-4-5-20251001)
-#                codex  → codex-spark (gpt-5.3-codex-spark, see model-aliases.tsv)
+#                codex  → codex-spark (gpt-5.3-codex-spark, see codex-model-aliases.tsv)
 #
 # Default model: pm-dispatch pins its OWN default model (the `default` alias,
 # which resolves to claude-sonnet-5 via this file), decoupled from the claude
@@ -19,12 +19,23 @@
 # Override per-host via ~/.pm-dispatch/config `dispatch.default_model`.
 # Rollback: --model claude-sonnet-4-6
 #
+# Legacy/prior-generation aliases (kept selectable, not the default; confirmed
+# against platform.claude.com/docs 2026-07-12 — Claude Opus 4.7 has a 1M-token
+# context window; claude-sonnet-4-5 is a convenience alias for the dated
+# snapshot claude-sonnet-4-5-20250929):
+#   sonnet-4-6 / sonnet-4-5 — prior Sonnet generations, superseded by claude-sonnet-5
+#   opus-4-6 / opus-4-7     — prior Opus generations, superseded by claude-opus-4-8
+#
 # Context window reference:
-#   light / haiku   — claude-haiku-4-5   ~200K tokens, faster + cheaper
-#   default / sonnet — claude-sonnet-5    ~200K tokens, balanced
-#   opus             — claude-opus-4-8    ~200K tokens, most capable (ask user first)
+#   light / haiku    — claude-haiku-4-5  ~200K tokens, faster + cheaper
+#   default / sonnet — claude-sonnet-5   ~200K tokens (1M with long-context pricing), balanced
+#   opus             — claude-opus-4-8   1M tokens, most capable (ask user first)
 default	claude-sonnet-5	normal
 sonnet	claude-sonnet-5	normal
 light	claude-haiku-4-5-20251001	normal
 haiku	claude-haiku-4-5-20251001	normal
 opus	claude-opus-4-8	high
+sonnet-4-6	claude-sonnet-4-6	normal
+sonnet-4-5	claude-sonnet-4-5-20250929	normal
+opus-4-6	claude-opus-4-6	high
+opus-4-7	claude-opus-4-7	high

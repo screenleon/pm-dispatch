@@ -20,7 +20,7 @@ spirit as the `light`/`default` split above:
 | `gpt-5.6-sol` | `gpt-5.6-sol` | Frontier tier — reach for it only under the same signals as the Opus escalation flow below (novel cross-cutting architecture, high-stakes/hard-to-reverse decisions, deep security design, very large context, ambiguous problems), and only after asking the user per that flow |
 | `gpt-5.6-luna` | `gpt-5.6-luna` | Fast/affordable — do not conflate with `light`/`codex-spark`: `light` draws from an independent, opt-in-only usage pool (see below) and is the correct choice for confirmed-small dispatches, not `luna` |
 
-`gpt-5.5`/`gpt-5.4` remain as explicit fallback aliases if `gpt-5.6-terra` is unavailable — see `share/model-aliases.tsv` for the full fallback chain.
+`gpt-5.5`/`gpt-5.4` remain as explicit fallback aliases if `gpt-5.6-terra` is unavailable — see `share/codex-model-aliases.tsv` for the full fallback chain.
 
 ---
 
@@ -35,7 +35,7 @@ briefs and dispatch policy docs — never hard-code executor-specific model IDs.
 | claude | `claude-haiku-4-5-20251001` | ~200K | Small claude dispatches |
 | opencode | `opencode/deepseek-v4-flash-free` | varies by model | Small opencode dispatches |
 
-Alias tables: `share/model-aliases.tsv` (codex), `share/claude-model-aliases.tsv` (claude), `share/opencode-model-aliases.tsv` (opencode).
+Alias tables: `share/codex-model-aliases.tsv` (codex), `share/claude-model-aliases.tsv` (claude), `share/opencode-model-aliases.tsv` (opencode).
 
 **When to use `light`**: all three criteria must hold — (a) expected diff < 50 lines,
 (b) changes confined to ≤ 2 adjacent files with no cross-module dependencies,

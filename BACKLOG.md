@@ -23,6 +23,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-462 | 🟢 someday | e2e 可拋棄資源紀律：前綴命名 + registry JSON + result artifact；掛在 CC-449 e2e 新 phase 之後，與 CC-447 live smoke 共用同一 registry（2026-07-07 openyida 跨專案分析） | ops/test | 2026-07-07 | — | P3 | — |
 | CC-463 | 🟢 someday | `pmctl batch` 泛用批次執行原語；依賴 CC-460（合法性驗證來源）；新注入面須過 security-reviewer（2026-07-07 openyida 跨專案分析） | arch/process | 2026-07-07 | — | P3 | design |
 | CC-464 | 🟢 someday | `pmctl ticket draft --from <notes>`：隨手筆記→結構化 backlog 票草稿；依賴 CC-286（prefix-generic next-id，⏸ deferred 尚未排程）；review-first 邊界獨立設計，CC-054 僅供鬆散參照非直接前例（2026-07-07 openyida 跨專案分析） | ux/process | 2026-07-07 | — | P3 | — |
+| CC-479 | ✅ done | `share/model-aliases.tsv` 改名為 `share/codex-model-aliases.tsv`（與 `claude-model-aliases.tsv`/`opencode-model-aliases.tsv` 命名對齊）；`share/claude-model-aliases.tsv` 補回 `sonnet-4-6`/`sonnet-4-5`/`opus-4-6`/`opus-4-7` 舊世代 alias（可選用，非 default）（2026-07-12 使用者發現） | ops | 2026-07-12 | — | P2 | — |
 | CC-478 | ✅ done | codex default model alias 過期：`share/model-aliases.tsv` 的 `default` 仍釘舊 `gpt-5.5`，未跟進新的 gpt-5.6 三分支（sol/terra/luna）（2026-07-12 使用者發現） | ops | 2026-07-12 | pr:#392 | P2 | — |
 | CC-465 | 🔵 active | memory/context 關鍵詞管線 CJK 支援：抽出共用零依賴斷詞 lib，取代三處各自 ASCII-only 抽詞；工作序列起點（465→467→468→466）（2026-07-07 記憶系統深入分析） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-466 | 🔵 active | 記憶卡片生命週期閉環：expires_at 執行 + 關窗式 supersede + usage sidecar 休眠偵測 + doctor→distill 接線；排在 CC-467 之後（需其遙測為前置）（2026-07-07 記憶系統分析 + 外部研究 Graphiti/mcp-memory-service） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
@@ -363,6 +364,23 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Resolution**: `default` 改指向 `gpt-5.6-terra`（與舊 `default`→`gpt-5.5` 同屬 balanced/everyday 定位最相符）；`gpt-5.6-sol`/`gpt-5.6-luna` 同步登錄為可明確指定的 alias；`gpt-5.5`/`gpt-5.4` 保留為 fallback chain；`gpt-5.3-codex-spark`/`light` 維持獨立用量池不變。同步更新 `adapters/codex/dispatch.sh`、`docs/dispatch-brief.md`、`scripts/pr-gate.sh` 註解與對照表，並在 `docs/model-tier-policy.md` 新增三分支選型指引。新增/更新 `scripts/test-codex-dispatch.sh`、`scripts/test-pmctl-dispatch.sh` 測試斷言，`scripts/lint-model-aliases.sh` 通過。`/pr-gate` standard tier：GO（2 個 low advise，皆已修正：測試函式改名、選型指引補上）。
 
 **See**: pr:#392
+
+---
+
+## CC-479 — `share/model-aliases.tsv` 改名 + claude 舊世代 alias 補回 ✅ 2026-07-12
+
+**Problem**: `share/model-aliases.tsv`（codex table）沒有前綴，與 `share/claude-model-aliases.tsv`、`share/opencode-model-aliases.tsv` 的命名慣例不一致，容易誤以為是「泛用」表。另外，`share/claude-model-aliases.tsv` 在先前的 sonnet-5 bump（CC-475）中只保留了當前世代 alias，沒有像 codex 表（CC-478 保留 gpt-5.5/gpt-5.4 fallback）一樣保留舊世代 alias 供明確指定回退。
+
+**Resolution**: `git mv share/model-aliases.tsv share/codex-model-aliases.tsv`；同步更新 runtime 路徑解析（`adapters/codex/dispatch.sh` 的 snapshot 來源/目的檔名與 `PM_DISPATCH_ALIAS_FILE` fallback chain）、`scripts/lint-model-aliases.sh`、`scripts/lib/model-aliases.sh` 錯誤訊息、`install.sh` share asset 安裝路徑、`docs/dispatch-brief.md`／`docs/model-tier-policy.md`／`agents/project-pm.md` 的路徑引用，以及對應測試（`test-install.sh`、`test-uninstall.sh`、`test-codex-dispatch.sh`、`test-dispatch-handover.sh`、`test-lint-model-aliases.sh`）。歷史/凍結紀錄（`CHANGELOG.md`、`BACKLOG-ARCHIVE.md`、已關閉票的內文、`docs/spikes/*.md`）刻意不動，保留當時真實路徑。
+
+同時對照 Anthropic 官方文件（platform.claude.com/docs，2026-07-12 確認）補回 `share/claude-model-aliases.tsv` 的舊世代 alias：`sonnet-4-6`→`claude-sonnet-4-6`、`sonnet-4-5`→`claude-sonnet-4-5-20250929`、`opus-4-6`→`claude-opus-4-6`、`opus-4-7`→`claude-opus-4-7`（皆非 default，僅供明確指定回退），並在 `scripts/test-claude-dispatch.sh` 新增對應覆蓋案例、`docs/dispatch-brief.md` Claude 對照表同步。
+
+**Requirement**（驗收，皆已完成）:
+1. `scripts/lint-model-aliases.sh` 通過（codex + claude 兩表的 doc-sync／test-fixture-coverage 檢查）。
+2. `pmctl backlog lint` 通過。
+3. `test-codex-dispatch.sh`、`test-claude-dispatch.sh`、`test-lint-model-aliases.sh`、`test-install.sh`（`install-share-asset-*`）、`test-dispatch-handover.sh`、`test-pmctl-dispatch.sh` 全數通過。
+
+**See**: pr:#TBD（合併後補上正確編號）
 
 ---
 

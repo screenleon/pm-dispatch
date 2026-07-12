@@ -75,10 +75,10 @@ if ! [[ "${BASH_SOURCE[0]}" =~ /codex-dispatch\.[A-Za-z0-9]{6}/codex-dispatch\.s
     [[ "$__codex_dispatch_real" == /* ]] || __codex_dispatch_real="$__codex_dispatch_link_dir/$__codex_dispatch_real"
   done
   __codex_dispatch_source_repo="$(cd -P -- "$(dirname "$__codex_dispatch_real")/../.." && pwd)"
-  __codex_dispatch_alias_source="$__codex_dispatch_source_repo/share/model-aliases.tsv"
+  __codex_dispatch_alias_source="$__codex_dispatch_source_repo/share/codex-model-aliases.tsv"
   __codex_dispatch_isolation_source="$__codex_dispatch_source_repo/adapters/codex/isolation-map.yaml"
   cp -- "${BASH_SOURCE[0]}" "$__codex_dispatch_snapshot"
-  [[ -r "$__codex_dispatch_alias_source" ]] && cp -- "$__codex_dispatch_alias_source" "$__codex_dispatch_snapshot_dir/model-aliases.tsv" || true
+  [[ -r "$__codex_dispatch_alias_source" ]] && cp -- "$__codex_dispatch_alias_source" "$__codex_dispatch_snapshot_dir/codex-model-aliases.tsv" || true
   if [[ -r "$__codex_dispatch_isolation_source" ]]; then
     mkdir -p -- "$__codex_dispatch_snapshot_dir/adapters/codex"
     cp -- "$__codex_dispatch_isolation_source" "$__codex_dispatch_snapshot_dir/adapters/codex/isolation-map.yaml"
@@ -101,12 +101,12 @@ ISOLATION=""   # isolation_level from brief; expanded to --sandbox + -c flags
 APPROVAL="never"
 SKIP_GIT_CHECK=0
 SCRIPT_DIR="$(cd -P -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PM_DISPATCH_ALIAS_FILE="${SCRIPT_DIR}/model-aliases.tsv"
+PM_DISPATCH_ALIAS_FILE="${SCRIPT_DIR}/codex-model-aliases.tsv"
 # Fallbacks, in order: snapshot-flat (`../share`, the installed-helper layout)
 # then repo-source layout from adapters/codex/ (`../../share`). The latter keeps
 # alias resolution working if the self-snapshot bootstrap is ever bypassed.
-[[ -f "$PM_DISPATCH_ALIAS_FILE" ]] || PM_DISPATCH_ALIAS_FILE="${SCRIPT_DIR}/../share/model-aliases.tsv"
-[[ -f "$PM_DISPATCH_ALIAS_FILE" ]] || PM_DISPATCH_ALIAS_FILE="${SCRIPT_DIR}/../../share/model-aliases.tsv"
+[[ -f "$PM_DISPATCH_ALIAS_FILE" ]] || PM_DISPATCH_ALIAS_FILE="${SCRIPT_DIR}/../share/codex-model-aliases.tsv"
+[[ -f "$PM_DISPATCH_ALIAS_FILE" ]] || PM_DISPATCH_ALIAS_FILE="${SCRIPT_DIR}/../../share/codex-model-aliases.tsv"
 TIMEOUT=""
 BRIEF=""
 BRIEF_FILE=""
@@ -116,7 +116,7 @@ TRACE_DIR_OVERRIDE=""
 # pm-dispatch's OWN default model, decoupled from the user's interactive
 # ~/.codex/config.toml `model` setting (which may be a spark/other variant).
 # This is the `default` ALIAS — its wire id (gpt-5.6-terra) lives only in
-# share/model-aliases.tsv (single source of truth), so a model bump edits the
+# share/codex-model-aliases.tsv (single source of truth), so a model bump edits the
 # TSV alone. Override via the PM_CFG_DEFAULT_MODEL env var, which `pmctl dispatch
 # run` exports from ~/.pm-dispatch/config `dispatch.default_model` (see line ~235).
 # The adapter no longer reads that config file directly: direct shim callers must
@@ -183,7 +183,7 @@ else
 fi
 
 # Default model resolution. pm-dispatch pins its OWN default (the `default` alias,
-# which resolves to gpt-5.6-terra via share/model-aliases.tsv), decoupled from the user's
+# which resolves to gpt-5.6-terra via share/codex-model-aliases.tsv), decoupled from the user's
 # interactive ~/.codex/config.toml — so omitting --model dispatches on gpt-5.6-terra, NOT
 # whatever the local codex config defaults to. Precedence: --model flag > config
 # dispatch.default_model > built-in `default` alias. The chosen value flows through

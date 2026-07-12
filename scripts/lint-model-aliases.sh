@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 # Ensure PM-facing model alias data stays single-source-of-truth.
 # Verifies:
-#   - share/model-aliases.tsv is well-formed and non-empty
+#   - share/codex-model-aliases.tsv is well-formed and non-empty
 #   - docs/dispatch-brief.md ## Model aliases table is byte-equal to the codex TSV
 #   - docs/dispatch-brief.md ## Claude model aliases table is byte-equal to the claude TSV
 #   - PM template hardcoded model aliases (if any) appear in the codex TSV
 #   - model alias fixtures mention those aliases in tests
-#   - runtime loader in adapters/codex/dispatch.sh still reads from share/model-aliases.tsv
+#   - runtime loader in adapters/codex/dispatch.sh still reads from share/codex-model-aliases.tsv
 #   - claude adapter references PM_CLAUDE_ALIAS_FILE and _resolve_claude_model_alias
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
-alias_tsv="$repo_root/share/model-aliases.tsv"
+alias_tsv="$repo_root/share/codex-model-aliases.tsv"
 claude_alias_tsv="$repo_root/share/claude-model-aliases.tsv"
 dispatch_brief="$repo_root/docs/dispatch-brief.md"
 pm_template="$repo_root/agents/project-pm.md"
@@ -195,7 +195,7 @@ while IFS= read -r alias || [[ -n "$alias" ]]; do
     continue
   fi
   if ! grep -Fq -- "--model $alias" "$test_script" && ! grep -Fq -- "--model=$alias" "$test_script"; then
-    echo "lint-model-aliases: ERROR: alias '$alias' from model-aliases.tsv is not covered by test fixtures." >&2
+    echo "lint-model-aliases: ERROR: alias '$alias' from codex-model-aliases.tsv is not covered by test fixtures." >&2
     exit 1
   fi
 done < "$sot_aliases"

@@ -991,8 +991,8 @@ test_prune_feedback() {
   #   3. Assert output contains "pruned" and share/ directory is gone.
   local name="TC-27 prune-feedback"
   local home="$tmp_root/home-prune-feedback"
-  local src="$tmp_root/model-aliases.tsv"
-  local dst="$home/.claude/share/model-aliases.tsv"
+  local src="$tmp_root/codex-model-aliases.tsv"
+  local dst="$home/.claude/share/codex-model-aliases.tsv"
   local out="$tmp_root/prune-feedback.out"
   printf 'alias\tmodel\n' > "$src"
   local sha

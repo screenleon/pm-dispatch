@@ -1,7 +1,8 @@
 # pm-facing_alias	wire_model_id	reasoning_effort
 # Schema: PM-facing alias, wire-format model id, reasoning effort.
 # This file is the codex adapter alias table. The claude adapter alias table
-# lives at share/claude-model-aliases.tsv (same 3-column format).
+# lives at share/claude-model-aliases.tsv (same 3-column format); the opencode
+# one lives at share/opencode-model-aliases.tsv.
 #
 # Columns must be tab-separated.
 #

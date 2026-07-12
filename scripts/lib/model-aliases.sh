@@ -49,7 +49,7 @@ ma_resolve_alias_strict() {
 
   if [[ ! -f "$tsv_file" ]]; then
     printf '%s: error: model alias source-of-truth not found: %s\n' "$caller" "$tsv_file" >&2
-    printf 'Expected file path: share/model-aliases.tsv (copied to snapshot at runtime).\n' >&2
+    printf 'Expected file path: share/codex-model-aliases.tsv or share/claude-model-aliases.tsv (copied to snapshot at runtime).\n' >&2
     return 1
   fi
   if [[ ! -r "$tsv_file" ]]; then

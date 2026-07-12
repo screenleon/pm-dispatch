@@ -130,7 +130,7 @@ ALLOW_HOOKS=false   # hooks require explicit --allow-hooks opt-in (security)
 ALLOW_DIRTY=false   # gate refuses a dirty tree atop committed changes unless this opt-in
 OVERRIDE_FILE=""
 # "default" → omit --model → the executor adapter applies its own pinned default
-# (for codex, resolved via share/model-aliases.tsv; decoupled from ~/.codex/config.toml).
+# (for codex, resolved via share/codex-model-aliases.tsv; decoupled from ~/.codex/config.toml).
 # The gate is analysis-heavy and must run on a full model, never the spark variant;
 # spark is opt-in only.
 DISPATCH_MODEL="default"

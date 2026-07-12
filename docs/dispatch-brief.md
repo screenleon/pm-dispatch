@@ -511,7 +511,7 @@ See `docs/model-tier-policy.md` §Executor-agnostic `light` alias for routing cr
 ## Model aliases
 
 PM short-form model aliases are resolved from the source-of-truth file
-`share/model-aliases.tsv`, then passed as wire-format model IDs to `codex exec`.
+`share/codex-model-aliases.tsv`, then passed as wire-format model IDs to `codex exec`.
 `scripts/lint-model-aliases.sh` asserts that this table stays in sync with the PM-facing table below and any template hardcoded references.
 
 | PM-facing alias | Wire-format model ID | reasoning effort |
@@ -539,6 +539,12 @@ PM short-form model aliases for the claude executor, resolved from `share/claude
 | `light` | `claude-haiku-4-5-20251001` | `normal` |
 | `haiku` | `claude-haiku-4-5-20251001` | `normal` |
 | `opus` | `claude-opus-4-8` | `high` |
+| `sonnet-4-6` | `claude-sonnet-4-6` | `normal` |
+| `sonnet-4-5` | `claude-sonnet-4-5-20250929` | `normal` |
+| `opus-4-6` | `claude-opus-4-6` | `high` |
+| `opus-4-7` | `claude-opus-4-7` | `high` |
+
+`sonnet-4-6`/`sonnet-4-5`/`opus-4-6`/`opus-4-7` are prior-generation aliases kept selectable for rollback — none is the default.
 
 Model resolution precedence: `--model` flag > `PM_CFG_DEFAULT_MODEL` (from `~/.pm-dispatch/config` `dispatch.default_model`) > pm-dispatch's own built-in `default` alias (→ `claude-sonnet-5` via `share/claude-model-aliases.tsv`), decoupled from the claude CLI's own built-in default. Every alias in these tables is a valid handover `model:` value (`scripts/lib/handover-validate.sh`).
 
