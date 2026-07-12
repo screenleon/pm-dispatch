@@ -192,6 +192,22 @@ An override is only honored when the target directory already exists; an
 unset or nonexistent override falls through to the next tier, so existing
 installs see byte-identical resolution with no environment changes.
 
+At a **host-switch boundary**, use the stricter diagnostic contract instead
+of relying on that compatibility fallback:
+
+```bash
+pmctl memory resolve --repo-root "$(pwd)" --json
+```
+
+The result identifies the canonical repo, stable project key, selected memory
+directory, and resolution source (`env`, `config`, `legacy`, or `none`). An
+explicit `PM_MEMORY_DIR` or `dispatch.memory_dir` that is unavailable returns
+`status: invalid-explicit` and exit 3; it never falls through to another
+host's legacy directory. With no explicit selection, legacy Claude discovery
+remains compatible, and absence is reported as `unavailable`.
+Exit codes are `0` resolved, `1` unavailable, `2` usage error, and `3`
+invalid explicit selection.
+
 **Injection is a per-tool adapter, not part of the portable core.** The
 portable core is the retrieval API: `pmctl context --source memory` (and
 `pmctl memory doctor` for health checks). Claude Code's `UserPromptSubmit`
@@ -199,6 +215,14 @@ hook (`guard-inject-memory.sh`) is one adapter that calls into this core
 automatically every turn. A tool without an equivalent hook (codex, opencode)
 gets the same memory by calling `pmctl context --source memory` directly —
 there is no requirement to replicate Claude's hook-based injection timing.
+
+For the Codex batch PM interface, this call is deterministic rather than a
+model convention: `pmctl pm prepare` runs strict resolution and a bounded,
+request-scoped memory query on every preparation. Its JSON contract carries
+`memory_resolution`, `memory_context_status`, and the retrieved
+`memory_context`, so a calling host can verify which canonical memory it used.
+No memory or zero hits is fail-open; an invalid explicit selection is
+fail-closed to prevent silent continuity loss.
 
 ## Practical conventions
 

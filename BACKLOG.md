@@ -25,6 +25,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-464 | 🟢 someday | `pmctl ticket draft --from <notes>`：隨手筆記→結構化 backlog 票草稿；依賴 CC-286（prefix-generic next-id，⏸ deferred 尚未排程）；review-first 邊界獨立設計，CC-054 僅供鬆散參照非直接前例（2026-07-07 openyida 跨專案分析） | ux/process | 2026-07-07 | — | P3 | — |
 | CC-479 | ✅ done | `share/model-aliases.tsv` 改名為 `share/codex-model-aliases.tsv`（與 `claude-model-aliases.tsv`/`opencode-model-aliases.tsv` 命名對齊）；`share/claude-model-aliases.tsv` 補回 `sonnet-4-6`/`sonnet-4-5`/`opus-4-6`/`opus-4-7` 舊世代 alias（可選用，非 default）（2026-07-12 使用者發現） | ops | 2026-07-12 | pr:#393 | P2 | — |
 | CC-478 | ✅ done | codex default model alias 過期：`share/model-aliases.tsv` 的 `default` 仍釘舊 `gpt-5.5`，未跟進新的 gpt-5.6 三分支（sol/terra/luna）（2026-07-12 使用者發現） | ops | 2026-07-12 | pr:#392 | P2 | — |
+| CC-480 | ✅ done | host-switch memory continuity：嚴格 resolution contract + Codex `pmctl pm prepare` 確定性 hydration + Claude↔Codex 共用同一 canonical memory E2E；v0.9.0 host 軸 continuity 驗收 | arch/memory | 2026-07-12 | — | P1 | design |
 | CC-465 | 🔵 active | memory/context 關鍵詞管線 CJK 支援：抽出共用零依賴斷詞 lib，取代三處各自 ASCII-only 抽詞；工作序列起點（465→467→468→466）（2026-07-07 記憶系統深入分析） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-466 | 🔵 active | 記憶卡片生命週期閉環：expires_at 執行 + 關窗式 supersede + usage sidecar 休眠偵測 + doctor→distill 接線；排在 CC-467 之後（需其遙測為前置）（2026-07-07 記憶系統分析 + 外部研究 Graphiti/mcp-memory-service） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-467 | 🔵 active | `pmctl memory stats`：注入效益可視化（唯讀聚合器）——注入 bytes/卡片命中分佈/從未命中卡/episode 填寫率，回答「記憶有跟沒有差在哪」；排在 CC-466 之前（2026-07-07；業界僅離線 recall 評測，無 per-injection 遙測） | DX/memory | 2026-07-07 | — | P2 | retrieval |
@@ -506,6 +507,29 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 **Dependencies**: [[CC-286]]（⏸ deferred，尚未排程）。
 **Source**: 2026-07-07 openyida 跨專案分析——`flash-to-prd` 模式。
+
+---
+
+## CC-480 — host-switch memory continuity：resolution contract + deterministic hydration ✅ 2026-07-12
+
+**Problem**: [[CC-412]] 已把 memory cards、resolver override 與 `pmctl context --source memory` 做成跨工具 substrate，但「切換 host 後仍確定讀到同一份 memory」尚無 runtime 契約。`find_memory_dir` 對不存在的顯式 override 會靜默 fall through 到 Claude legacy path；Codex/OpenCode 雖可手動呼叫 retrieval API，卻沒有 deterministic chokepoint 保證每次 PM preparation 都會讀取。結果是 host 切換可能表面成功、實際讀到另一個目錄，或完全漏掉既有 memory。
+
+**Why**: v0.9.0 要宣稱 Claude + Codex + OpenCode host 軸成立，除了 install/doctor/guard，還必須維持 PM 的跨 session continuity。Memory 是 project-owned substrate，不是 host-owned state；host manifest 只描述 host 如何承載能力，不應各自持有或複製 memory。這張票補的是 [[CC-445]]/[[CC-448]] 未涵蓋的 project-memory continuity 驗收，並沿用 [[CC-412]]，不另造一套 Codex memory。
+
+**Requirement**:
+1. 新增 `pmctl memory resolve [--repo-root <path>] [--json]`，輸出 canonical repo root、stable project key、memory dir、resolution source（`env`/`config`/`legacy`/`none`）、readable/writable 與 status。
+2. 保留 `find_memory_dir` 舊呼叫端的 byte-compatible fallback；新 strict resolver 對已明確設定但不存在／不可用的 `PM_MEMORY_DIR` 或 `dispatch.memory_dir` fail-loud，不得偷偷切到 legacy memory。未設定且沒有 legacy memory則回報 `unavailable`，不是錯誤目錄。
+3. `pmctl pm prepare` 在 snapshot 之後固定執行 memory resolve + request-scoped `pmctl context pack --source memory`，把 bounded retrieval 結果放入 JSON/human preparation contract；零 memory／零命中 fail-open，明確錯誤 override fail-closed。
+4. Host-switch E2E fixture：同一 repo、同一 canonical memory，由 Claude legacy path 與 `PM_MEMORY_DIR`/config 路徑分別進入時 resolve 到同一位置；Claude 建立的 card 可由 Codex preparation 讀到；不得複製或建立第二份 memory。
+5. 不把 memory location 加進 `hosts/*/host.yaml`；host manifest 與 memory substrate 保持正交。跨 host 寫入 provenance、episode namespace 與 telemetry coverage 若超出本切片，明列 follow-up，不能讓本票虛假宣稱已解決。
+
+**Done-when**: `pmctl memory resolve --json` 可機械區分 resolved/unavailable/invalid-explicit；`pmctl pm prepare --json` 對共用 memory 回傳來源與非空相關 context；不存在的 explicit override 阻止 preparation；unset 路徑維持既有行為；memory/pm/commands tests 全綠，並由 Claude 對 diff 與測試證據做獨立確認。
+
+**Resolution**: 新增 strict `pmctl memory resolve`（env > config > legacy，stable worktree-aware project key，invalid explicit/relative path fail-loud）；`pmctl pm prepare` 固定產出 canonical resolution + pointer-only memory context pack，pack 以完整 `memories[]` 項目縮減維持 ≤6000 bytes 且 JSON 永遠可解析，human/JSON 兩種 contract 均覆蓋。`commands/pm.md` 與 `agents/project-pm.md` 已接上 consumer guidance：canonical memory 優先、ref confinement、不得複製成 host-local memory。驗證：memory 61/61、pm 26/26、commands 276/276、backlog 18/18；Claude targeted pr-gate `gate-20260712-054618-f7d93e` Final GO，`pmctl gate verify` 通過。
+
+**See**: Claude pr-gate `gate-20260712-054618-f7d93e`（Final GO）
+
+**Dependencies / sequencing**: 建在 [[CC-412]]（已完成）與 [[CC-473]]（Codex batch PM interface，已完成）上；與 [[CC-445]]/[[CC-448]] cross-link 但不混入 host install manifest。[[CC-452]]/[[CC-477]] 是後續跨 host 共寫 episodes/usage sidecar 的正確性前置；memory 品質工作序列調整為 **CC-480 → CC-465 → CC-467 → CC-468 → CC-466**，其中 CC-465 可與本票的 resolver 切片並行。
 
 ---
 

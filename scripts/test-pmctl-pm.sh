@@ -120,6 +120,225 @@ case_prepare_rejects_non_git_workdir() {
   fi
 }
 
+# Behavior: Codex preparation deterministically hydrates request-relevant context from shared project memory.
+# Steps: create a Claude-authored card in PM_MEMORY_DIR, prepare the same repo, and assert the host-neutral handoff.
+case_prepare_hydrates_shared_memory() {
+  local name="pmctl pm prepare: hydrates shared memory across host boundary"
+  should_run "$name" || return 0
+  local work="$tmp_root/memory-work" mdir="$tmp_root/canonical-memory" cfg="$tmp_root/unused-claude-config" out="$tmp_root/memory-prepare.json" code=0 snapshot encoded legacy
+  mkdir -p "$work" "$mdir"
+  git -C "$work" init -q
+  cat > "$mdir/MEMORY.md" <<'MD'
+- [Host switch rule](project_host_switch.md) — preserve hostswitche2e continuity across runtimes
+MD
+  cat > "$mdir/project_host_switch.md" <<'MD'
+---
+topics:
+  - hostswitche2e
+priority: normal
+status: active
+updated_at: "2026-07-12"
+repo_refs: []
+---
+The hostswitche2e rule says every host must reuse the canonical project memory.
+MD
+  out="$(PM_MEMORY_DIR="$mdir" CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" pm prepare --cd "$work" --request 'hostswitche2e' --json 2>/dev/null)" || code=$?
+  snapshot="$(jq -r '.snapshot_file // empty' <<<"$out" 2>/dev/null || true)"
+  [[ -n "$snapshot" && -f "$snapshot" ]] && rm -f "$snapshot"
+  encoded="-${work#/}"; encoded="${encoded//\//-}"
+  legacy="$cfg/projects/$encoded/memory"
+  if [[ "$code" -eq 0 ]] && jq -e --arg mdir "$mdir" \
+    '.memory_resolution.status == "resolved" and .memory_resolution.resolution_source == "env" and .memory_resolution.memory_dir == $mdir and .memory_context_status == "hydrated" and (.memory_context | contains("project_host_switch.md"))' <<<"$out" >/dev/null \
+    && [[ ! -e "$legacy" ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+# Behavior: Codex preparation refuses an invalid explicit memory selection instead of reading legacy memory.
+# Steps: create an available legacy path plus a missing PM_MEMORY_DIR and assert fail-closed preparation.
+case_prepare_rejects_invalid_explicit_memory() {
+  local name="pmctl pm prepare: invalid explicit memory fails closed"
+  should_run "$name" || return 0
+  local work="$tmp_root/invalid-memory-work" cfg="$tmp_root/invalid-memory-cfg" missing="$tmp_root/absent-memory" out="$tmp_root/invalid-memory.out" code=0 encoded
+  mkdir -p "$work"
+  git -C "$work" init -q
+  encoded="-${work#/}"; encoded="${encoded//\//-}"
+  mkdir -p "$cfg/projects/$encoded/memory"
+  PM_MEMORY_DIR="$missing" CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" pm prepare --cd "$work" --request 'must not fall back' --json > "$out" 2>&1 || code=$?
+  if [[ "$code" -eq 1 ]] && grep -q 'explicit memory configuration is invalid' "$out"; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 1 without fallback; code=$code out=$(<"$out")"
+  fi
+}
+
+# Behavior: a resolved memory directory with no relevant cards is an explicit no-hits outcome.
+# Steps: prepare against an empty shared directory and assert null context without blocking PM work.
+case_prepare_reports_no_memory_hits() {
+  local name="pmctl pm prepare: resolved memory with zero hits reports no-hits"
+  should_run "$name" || return 0
+  local work="$tmp_root/no-hits-work" mdir="$tmp_root/no-hits-memory" out code=0 snapshot
+  mkdir -p "$work" "$mdir"
+  git -C "$work" init -q
+  out="$(PM_MEMORY_DIR="$mdir" "$PMCTL" pm prepare --cd "$work" --request 'nothingmatches98765' --json 2>/dev/null)" || code=$?
+  snapshot="$(jq -r '.snapshot_file // empty' <<<"$out" 2>/dev/null || true)"
+  [[ -n "$snapshot" && -f "$snapshot" ]] && rm -f "$snapshot"
+  if [[ "$code" -eq 0 ]] && jq -e \
+    '.memory_resolution.status == "resolved" and .memory_context_status == "no-hits" and .memory_context == null' <<<"$out" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+# Behavior: retrieval failure degrades to query-failed while preserving a successful preparation contract.
+# Steps: source the coordinator with a resolved-memory stub and failing context pack; assert the JSON status.
+case_prepare_reports_memory_query_failure() {
+  local name="pmctl pm prepare: memory pack failure reports query-failed"
+  should_run "$name" || return 0
+  . "$REPO_ROOT/scripts/lib/pmctl-pm.sh"
+  local work="$tmp_root/query-failed-work" mdir="$tmp_root/query-failed-memory" out="$tmp_root/query-failed.json" code=0
+  mkdir -p "$work" "$mdir"
+  git -C "$work" init -q
+  pmctl_memory_resolve() {
+    jq -cn --arg repo "$work" --arg mdir "$mdir" '{schema_version:1,status:"resolved",repo_root:$repo,project_key:"test",memory_dir:$mdir,resolution_source:"env",readable:true,writable:true,reason:null}'
+  }
+  _ctx_extract_terms() { printf 'queryfailureterm\n'; }
+  pmctl_context_pack() { return 9; }
+  pmctl_pm_prepare "$REPO_ROOT" --cd "$work" --request 'queryfailureterm' --json > "$out" 2>/dev/null || code=$?
+  unset -f pmctl_memory_resolve _ctx_extract_terms pmctl_context_pack
+  if [[ "$code" -eq 0 ]] && jq -e \
+    '.memory_context_status == "query-failed" and .memory_context == null' "$out" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$(<"$out")"
+  fi
+}
+
+# Behavior: oversized memory packs stay valid JSON by dropping whole memory entries.
+# Steps: stub an 80-entry pack over 6000 bytes; prepare and assert bounded parseable output.
+case_prepare_bounds_memory_pack_without_corruption() {
+  local name="pmctl pm prepare: oversized memory pack stays parseable and bounded"
+  should_run "$name" || return 0
+  . "$REPO_ROOT/scripts/lib/pmctl-pm.sh"
+  local work="$tmp_root/oversized-pack-work" mdir="$tmp_root/oversized-pack-memory" out="$tmp_root/oversized-pack.json" code=0
+  mkdir -p "$work" "$mdir"
+  git -C "$work" init -q
+  pmctl_memory_resolve() {
+    jq -cn --arg repo "$work" --arg mdir "$mdir" '{schema_version:1,status:"resolved",repo_root:$repo,project_key:"test",memory_dir:$mdir,resolution_source:"env",readable:true,writable:true,reason:null}'
+  }
+  _ctx_extract_terms() { printf 'oversizedpackterm\n'; }
+  pmctl_context_pack() {
+    jq -cn '{schema_version:2,task_id:"pm-prepare",built_ts:"2026-07-12T00:00:00Z",sources:[{name:"memory-index",version:"1"}],files:[],symbols:[],memories:[range(0;80) as $i | {ref:("card-"+($i|tostring)+"-"+("x"*120)+".md:1"),source:"memory-index",confidence:0.75,source_domain:"memory",why_relevant:"memory match",trust_level:"high"}],risks:[]}'
+  }
+  pmctl_pm_prepare "$REPO_ROOT" --cd "$work" --request 'oversizedpackterm' --json > "$out" 2>/dev/null || code=$?
+  unset -f pmctl_memory_resolve _ctx_extract_terms pmctl_context_pack
+  if [[ "$code" -eq 0 ]] && jq -e \
+    '.memory_context_status == "hydrated" and (.memory_context | length) <= 6000 and ((.memory_context | fromjson | .memories | length) > 0) and ((.memory_context | fromjson | .memories | length) < 80)' "$out" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$(<"$out")"
+  fi
+}
+
+# Behavior: human preparation exposes hydrated canonical memory with explicit fences.
+# Steps: stub a resolved pack, invoke non-JSON mode, and assert all human contract lines.
+case_prepare_human_emits_hydrated_memory_contract() {
+  local name="pmctl pm prepare: human mode emits hydrated memory contract"
+  should_run "$name" || return 0
+  . "$REPO_ROOT/scripts/lib/pmctl-pm.sh"
+  local work="$tmp_root/human-memory-work" mdir="$tmp_root/human-memory-dir" out="$tmp_root/human-memory.out" code=0
+  mkdir -p "$work" "$mdir"
+  git -C "$work" init -q
+  pmctl_memory_resolve() {
+    jq -cn --arg repo "$work" --arg mdir "$mdir" '{schema_version:1,status:"resolved",repo_root:$repo,project_key:"test",memory_dir:$mdir,resolution_source:"env",readable:true,writable:true,reason:null}'
+  }
+  _ctx_extract_terms() { printf 'humanmemoryterm\n'; }
+  pmctl_context_pack() {
+    printf '%s\n' '{"schema_version":2,"task_id":"pm-prepare","built_ts":"2026-07-12T00:00:00Z","sources":[{"name":"memory-index","version":"1"}],"files":[],"symbols":[],"memories":[{"ref":"card.md:1","source":"memory-index","confidence":0.75,"source_domain":"memory","why_relevant":"memory match","trust_level":"high"}],"risks":[]}'
+  }
+  pmctl_pm_prepare "$REPO_ROOT" --cd "$work" --request 'humanmemoryterm' > "$out" 2>/dev/null || code=$?
+  unset -f pmctl_memory_resolve _ctx_extract_terms pmctl_context_pack
+  if [[ "$code" -eq 0 ]] \
+    && grep -q '^memory_status: hydrated$' "$out" \
+    && grep -q "^memory_dir: $mdir$" "$out" \
+    && grep -q '^--- memory_context ---$' "$out" \
+    && grep -q '"ref":"card.md:1"' "$out" \
+    && grep -q '^--- end_memory_context ---$' "$out"; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$(<"$out")"
+  fi
+}
+
+# Behavior: human preparation reports unavailable memory without fabricating a path or context block.
+# Steps: stub the resolver's unavailable result and assert the negative-space contract.
+case_prepare_human_emits_unavailable_memory_contract() {
+  local name="pmctl pm prepare: human mode omits unavailable memory details"
+  should_run "$name" || return 0
+  . "$REPO_ROOT/scripts/lib/pmctl-pm.sh"
+  local work="$tmp_root/human-no-memory-work" out="$tmp_root/human-no-memory.out" code=0
+  mkdir -p "$work"
+  git -C "$work" init -q
+  pmctl_memory_resolve() {
+    printf '%s\n' '{"schema_version":1,"status":"unavailable","repo_root":"x","project_key":"x","memory_dir":null,"resolution_source":"none","readable":false,"writable":false,"reason":null}'
+    return 1
+  }
+  pmctl_pm_prepare "$REPO_ROOT" --cd "$work" --request 'no memory here' > "$out" 2>/dev/null || code=$?
+  unset -f pmctl_memory_resolve
+  if [[ "$code" -eq 0 ]] \
+    && grep -q '^memory_status: unavailable$' "$out" \
+    && ! grep -q '^memory_dir:' "$out" \
+    && ! grep -q '^--- memory_context ---$' "$out"; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$(<"$out")"
+  fi
+}
+
+# Behavior: the pack bound helper fails when fixed envelope fields alone exceed the budget.
+# Steps: call the helper with no memories and a tiny limit; assert nonzero and no output.
+case_bound_memory_pack_rejects_oversized_envelope() {
+  local name="pmctl pm prepare: pack bound rejects oversized fixed envelope"
+  should_run "$name" || return 0
+  . "$REPO_ROOT/scripts/lib/pmctl-pm.sh"
+  local out="$tmp_root/oversized-envelope.out" code=0
+  pmctl_pm_bound_memory_pack '{"schema_version":2,"task_id":"a-large-fixed-envelope","sources":[],"memories":[]}' 10 > "$out" 2>/dev/null || code=$?
+  if [[ "$code" -ne 0 && ! -s "$out" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected nonzero with empty output; code=$code out=$(<"$out")"
+  fi
+}
+
+# Behavior: invalid explicit memory cleanup removes a snapshot created earlier in preparation.
+# Steps: inject a deterministic snapshot producer plus invalid resolver and assert no orphan remains.
+case_prepare_invalid_memory_cleans_snapshot() {
+  local name="pmctl pm prepare: invalid memory removes created snapshot"
+  should_run "$name" || return 0
+  . "$REPO_ROOT/scripts/lib/pmctl-pm.sh"
+  local work="$tmp_root/snapshot-cleanup-work" toolroot="$tmp_root/snapshot-toolroot" snapshot="$tmp_root/orphan-snapshot.md" out="$tmp_root/snapshot-cleanup.out" code=0
+  mkdir -p "$work" "$toolroot/scripts"
+  git -C "$work" init -q
+  printf '%s\n' '#!/usr/bin/env bash' \
+    "printf 'snapshot fixture\\n' > '$snapshot'" \
+    "printf '%s\\n' '$snapshot'" > "$toolroot/scripts/pm-prep-snapshot.sh"
+  chmod +x "$toolroot/scripts/pm-prep-snapshot.sh"
+  pmctl_memory_resolve() {
+    printf '%s\n' '{"schema_version":1,"status":"invalid-explicit","repo_root":"x","project_key":"x","memory_dir":null,"resolution_source":"env","readable":false,"writable":false,"reason":"missing"}'
+    return 3
+  }
+  pmctl_pm_prepare "$toolroot" --cd "$work" --request 'cleanup snapshot' --json > "$out" 2>&1 || code=$?
+  unset -f pmctl_memory_resolve
+  if [[ "$code" -eq 1 ]] && [[ ! -e "$snapshot" ]] && grep -q 'explicit memory configuration is invalid' "$out"; then
+    pass "$name"
+  else
+    fail "$name" "code=$code snapshot_exists=$([[ -e "$snapshot" ]] && printf yes || printf no) out=$(<"$out")"
+  fi
+}
+
 # Behavior: an unknown pm subcommand fails with the pm command usage contract.
 # Steps: invoke pmctl pm with an unsupported subcommand; assert usage exit 2 and the prepare usage line.
 case_unknown_subcommand_shows_usage() {
@@ -311,6 +530,15 @@ case_prepare_degrades_without_backlog
 case_prepare_deduplicates_focus_tickets
 case_prepare_rejects_empty_request
 case_prepare_rejects_non_git_workdir
+case_prepare_hydrates_shared_memory
+case_prepare_rejects_invalid_explicit_memory
+case_prepare_reports_no_memory_hits
+case_prepare_reports_memory_query_failure
+case_prepare_bounds_memory_pack_without_corruption
+case_prepare_human_emits_hydrated_memory_contract
+case_prepare_human_emits_unavailable_memory_contract
+case_bound_memory_pack_rejects_oversized_envelope
+case_prepare_invalid_memory_cleans_snapshot
 case_unknown_subcommand_shows_usage
 case_run_uses_validate_detached_wait
 case_run_emits_human_contract
