@@ -77,7 +77,9 @@ if ! [[ "${BASH_SOURCE[0]}" =~ /codex-dispatch\.[A-Za-z0-9]{6}/codex-dispatch\.s
   __codex_dispatch_source_repo="$(cd -P -- "$(dirname "$__codex_dispatch_real")/../.." && pwd)"
   __codex_dispatch_alias_source="$__codex_dispatch_source_repo/share/codex-model-aliases.tsv"
   __codex_dispatch_isolation_source="$__codex_dispatch_source_repo/adapters/codex/isolation-map.yaml"
+  __codex_dispatch_usage_log_source="$__codex_dispatch_source_repo/scripts/log-usage.sh"
   cp -- "${BASH_SOURCE[0]}" "$__codex_dispatch_snapshot"
+  [[ -r "$__codex_dispatch_usage_log_source" ]] && cp -- "$__codex_dispatch_usage_log_source" "$__codex_dispatch_snapshot_dir/log-usage.sh" || true
   [[ -r "$__codex_dispatch_alias_source" ]] && cp -- "$__codex_dispatch_alias_source" "$__codex_dispatch_snapshot_dir/codex-model-aliases.tsv" || true
   if [[ -r "$__codex_dispatch_isolation_source" ]]; then
     mkdir -p -- "$__codex_dispatch_snapshot_dir/adapters/codex"
@@ -363,10 +365,10 @@ if [[ "$EXIT" -eq 0 && -f "$TRACE" ]]; then
     [[ "${MODEL:-}" == *spark* ]] && _POOL="spark"
     _NOTE="auto: $(basename "$WORK_DIR")"
     # PM_CFG_USAGE_LOG_PATH (dispatch.usage_log_path in ~/.pm-dispatch/config,
-    # exported by pmctl-dispatch.sh) overrides the claude-host-assumed default
-    # path below — set it when the PM's own host is not claude
-    # (docs/host-contract.md).
-    bash "${PM_CFG_USAGE_LOG_PATH:-${HOME}/.claude/scripts/log-usage.sh}" "codex_dispatch" "$_CODEX_TOKENS" "$_NOTE" "" "$_POOL" 2>>"$STDERR_LOG" || \
+    # exported by pmctl-dispatch.sh) remains the highest-priority override.
+    # Otherwise use the repo-owned logger copied beside this self-snapshot;
+    # executor behavior must not depend on which interactive host launched it.
+    bash "${PM_CFG_USAGE_LOG_PATH:-${SCRIPT_DIR}/log-usage.sh}" "codex_dispatch" "$_CODEX_TOKENS" "$_NOTE" "" "$_POOL" 2>>"$STDERR_LOG" || \
       echo "[$(date -Is)] codex-dispatch: usage log failed (pool=$_POOL tokens=$_CODEX_TOKENS)" \
         >> "$STDERR_LOG"
   fi

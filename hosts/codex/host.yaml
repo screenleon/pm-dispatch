@@ -130,7 +130,9 @@ permissions_surface:
   config_target: config
   managed: false
 
-# Host-module wiring. doctor_module must exist; uninstall_module is null until
-# the install write path lands (nothing installed means nothing to remove).
+# Host-module wiring. The optional write modules are dispatched generically
+# from their manifest paths; the legacy --enable-codex-command-guard flag is a
+# backward-compatible selector, not a codex-named call site in core.
 doctor_module: scripts/lib/doctor-host-codex.sh
-uninstall_module: null
+install_module: scripts/install-guards-codex.sh
+uninstall_module: scripts/uninstall-guards-codex.sh

@@ -40,10 +40,14 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 
-# Honor an explicit CLAUDE_HOME override (inherited from install.sh, or set when
-# running standalone), so hook wiring lands in the same dir as the rest of the
-# install. Defaults to ~/.claude.
-CLAUDE_HOME="${CLAUDE_HOME:-$HOME/.claude}"
+# Use the same canonical Claude runtime config root as install/doctor/guards.
+# CLAUDE_HOME remains a compatibility alias for standalone legacy callers.
+if [[ -n "${CLAUDE_CONFIG_DIR:-}" && -n "${CLAUDE_HOME:-}" && "$CLAUDE_CONFIG_DIR" != "$CLAUDE_HOME" ]]; then
+  printf 'install-guards: CLAUDE_CONFIG_DIR and legacy CLAUDE_HOME disagree\n' >&2
+  exit 2
+fi
+CLAUDE_CONFIG_DIR="${CLAUDE_CONFIG_DIR:-${CLAUDE_HOME:-$HOME/.claude}}"
+CLAUDE_HOME="$CLAUDE_CONFIG_DIR"
 
 # shellcheck source=scripts/lib/portable.sh
 . "$SCRIPT_DIR/lib/portable.sh"

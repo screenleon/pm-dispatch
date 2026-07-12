@@ -17,9 +17,9 @@ Usage:
   ./uninstall.sh --dry-run  preview what would be removed, change nothing
   ./uninstall.sh --help     show this help
 
-Honors $CLAUDE_HOME to target a sandbox install. Reads the install manifest at
-$CLAUDE_HOME/.pm-dispatch/install-manifest.json; entries that were modified since
-install, or that resolve outside the managed root, are skipped for safety.
+Honors canonical $CLAUDE_CONFIG_DIR (or legacy $CLAUDE_HOME) to target a
+sandbox install. Reads the install manifest below that root; entries modified
+since install, or resolving outside the managed root, are skipped for safety.
 EOF
 }
 
@@ -33,12 +33,25 @@ while [[ $# -gt 0 ]]; do
 done
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
-# Mirror install.sh: honor an explicit CLAUDE_HOME override so uninstall targets the
-# same sandbox dir an override-install used. Defaults to ~/.claude.
-CLAUDE_HOME="${CLAUDE_HOME:-$HOME/.claude}"
+# Mirror install.sh's canonical config-root resolution. CLAUDE_HOME is a legacy
+# alias only; conflicting explicit roots are unsafe and rejected.
+if [[ -n "${CLAUDE_CONFIG_DIR:-}" && -n "${CLAUDE_HOME:-}" && "$CLAUDE_CONFIG_DIR" != "$CLAUDE_HOME" ]]; then
+  printf 'uninstall: CLAUDE_CONFIG_DIR and legacy CLAUDE_HOME disagree: %s != %s\n' "$CLAUDE_CONFIG_DIR" "$CLAUDE_HOME" >&2
+  exit 2
+fi
+CLAUDE_CONFIG_DIR="${CLAUDE_CONFIG_DIR:-${CLAUDE_HOME:-$HOME/.claude}}"
+CLAUDE_HOME="$CLAUDE_CONFIG_DIR"
 
 # shellcheck disable=SC1091
 . "$REPO_ROOT/scripts/lib/portable.sh"
+_HOST_WRITE_AVAILABLE=0
+if [[ -f "$REPO_ROOT/scripts/lib/host-manifest.sh" && -f "$REPO_ROOT/scripts/lib/host-write.sh" ]]; then
+  # shellcheck disable=SC1091
+  . "$REPO_ROOT/scripts/lib/host-manifest.sh"
+  # shellcheck disable=SC1091
+  . "$REPO_ROOT/scripts/lib/host-write.sh"
+  _HOST_WRITE_AVAILABLE=1
+fi
 
 _UNINSTALL_PLATFORM="$(detect_platform)"
 
@@ -347,28 +360,16 @@ echo "==> hooks"
 # CLAUDE_HOME passed per-call so hook removal targets the same root as the rest
 # of the uninstall (it derives settings.json from CLAUDE_HOME too).
 if [[ "$DRY_RUN" -eq 1 ]]; then
-  CLAUDE_HOME="$CLAUDE_HOME" bash "$REPO_ROOT/scripts/uninstall-guards.sh" --dry-run
+  CLAUDE_CONFIG_DIR="$CLAUDE_CONFIG_DIR" bash "$REPO_ROOT/scripts/uninstall-guards.sh" --dry-run
 else
-  CLAUDE_HOME="$CLAUDE_HOME" bash "$REPO_ROOT/scripts/uninstall-guards.sh"
+  CLAUDE_CONFIG_DIR="$CLAUDE_CONFIG_DIR" bash "$REPO_ROOT/scripts/uninstall-guards.sh"
 fi
 
-# codex-as-host symmetric teardown (see install.sh's "codex host" step).
-# Deliberately NOT gated on codex_available: install.sh --enable-codex-command-guard
-# writes into $CODEX_HOME regardless of whether the codex binary is on PATH at
-# install time, so uninstall must remove it regardless of whether codex is on
-# PATH at uninstall time too (gate-review finding: PR-gate NO-GO — a codex
-# uninstall/reinstall or a PATH change between install and uninstall left a
-# stale global hook behind). uninstall-guards-codex.sh is itself idempotent
-# ("not wired, nothing to do") when nothing was ever installed, so running it
-# unconditionally is safe. Still requires the script to exist so a
-# partial/copy-mode checkout (or a test fixture repo copying only a subset of
-# scripts/) degrades gracefully instead of erroring.
-if [[ -f "$REPO_ROOT/scripts/uninstall-guards-codex.sh" ]]; then
-  if [[ "$DRY_RUN" -eq 1 ]]; then
-    bash "$REPO_ROOT/scripts/uninstall-guards-codex.sh" --dry-run
-  else
-    bash "$REPO_ROOT/scripts/uninstall-guards-codex.sh"
-  fi
+# Symmetric teardown for every independently dispatched host write module.
+# Modules must be idempotent because uninstall cannot assume the matching
+# opt-in flag was used, nor that the host binary remains on PATH.
+if [[ "$_HOST_WRITE_AVAILABLE" -eq 1 ]]; then
+  host_write_uninstall_all "$REPO_ROOT" "$DRY_RUN"
 fi
 
 if [[ "$DRY_RUN" -ne 1 ]]; then

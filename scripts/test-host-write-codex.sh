@@ -23,6 +23,8 @@ th_init "test-host-write-codex" "$@"
 
 # shellcheck source=scripts/lib/host-manifest.sh
 . "$SCRIPT_DIR/lib/host-manifest.sh"
+# shellcheck source=scripts/lib/host-write.sh
+. "$SCRIPT_DIR/lib/host-write.sh"
 
 # th_init already created $tmp_root with its own EXIT trap; reuse it.
 
@@ -126,6 +128,70 @@ test_host_manifest_expand_path_default_when_unset() {
   local expanded
   expanded="$(unset CODEX_HOME; host_manifest_expand_path '$CODEX_HOME/hooks.json')"
   [[ "$expanded" == "$HOME/.codex/hooks.json" ]] && pass "$name" || fail "$name" "got: $expanded"
+}
+
+test_host_manifest_declares_codex_write_modules() {
+  local name="host-manifest-declares-codex-write-modules"
+  should_run "$name" || return 0
+  local manifest install_module uninstall_module
+  manifest="$(host_manifest_file "$REPO_ROOT" codex)"
+  install_module="$(host_manifest_scalar "$manifest" install_module)"
+  uninstall_module="$(host_manifest_scalar "$manifest" uninstall_module)"
+  [[ "$install_module" == "scripts/install-guards-codex.sh" && "$uninstall_module" == "scripts/uninstall-guards-codex.sh" ]] \
+    && pass "$name" || fail "$name" "unexpected modules: install=$install_module uninstall=$uninstall_module"
+}
+
+test_host_write_dispatches_codex_from_manifest() {
+  local name="host-write-dispatches-codex-from-manifest"
+  should_run "$name" || return 0
+  local codex_home="$tmp_root/hwd-codex/.codex"
+  CODEX_HOME="$codex_home" host_write_install "$REPO_ROOT" codex 0 >/dev/null 2>&1
+  if [[ ! -f "$codex_home/hooks.json" ]]; then
+    fail "$name" "generic dispatcher did not create hooks.json"
+    return
+  fi
+  CODEX_HOME="$codex_home" host_write_uninstall_all "$REPO_ROOT" 0 >/dev/null 2>&1
+  [[ "$(jq -c . "$codex_home/hooks.json")" == "{}" ]] \
+    && pass "$name" || fail "$name" "generic teardown did not remove managed hook"
+}
+
+test_host_write_dispatches_opencode_stage3() {
+  local name="host-write-dispatches-opencode-stage3"
+  should_run "$name" || return 0
+  local xdg="$tmp_root/hwd-opencode" codex="$tmp_root/hwd-opencode-codex"
+  XDG_CONFIG_HOME="$xdg" host_write_install "$REPO_ROOT" opencode 0 >/dev/null 2>&1
+  if [[ ! -f "$xdg/opencode/commands/pm.md" ]]; then
+    fail "$name" "generic dispatcher did not wire OpenCode"
+    return
+  fi
+  XDG_CONFIG_HOME="$xdg" CODEX_HOME="$codex" host_write_uninstall_all "$REPO_ROOT" 0 >/dev/null 2>&1
+  [[ ! -e "$xdg/opencode/opencode.json" ]] \
+    && pass "$name" || fail "$name" "generic teardown did not remove OpenCode wiring"
+}
+
+test_install_generic_host_selector_wires_codex() {
+  local name="install-generic-host-selector-wires-codex"
+  should_run "$name" || return 0
+  local home="$tmp_root/int-generic-home" claude_home="$tmp_root/int-generic-claude"
+  local codex_home="$tmp_root/int-generic-codex" bin_dir="$tmp_root/int-generic-bin"
+  HOME="$home" CLAUDE_HOME="$claude_home" CODEX_HOME="$codex_home" PMCTL_BIN_DIR="$bin_dir" \
+    bash "$REPO_ROOT/install.sh" --profile minimal --enable-host codex >/dev/null 2>&1
+  if jq -e '.hooks.PreToolUse[]? | select(.matcher == "Bash")' "$codex_home/hooks.json" >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name" "--enable-host codex did not dispatch the declared install module"
+  fi
+}
+
+test_install_unknown_host_fails_before_mutation() {
+  local name="install-unknown-host-fails-before-mutation"
+  should_run "$name" || return 0
+  local home="$tmp_root/int-unwired-home" claude_home="$tmp_root/int-unwired-claude" rc=0
+  HOME="$home" CLAUDE_HOME="$claude_home" PMCTL_BIN_DIR="$tmp_root/int-unwired-bin" \
+    XDG_CONFIG_HOME="$tmp_root/int-unwired-xdg" \
+    bash "$REPO_ROOT/install.sh" --profile minimal --enable-host not-a-host >/dev/null 2>&1 || rc=$?
+  [[ "$rc" -eq 2 && ! -e "$claude_home" && ! -e "$tmp_root/int-unwired-xdg" ]] \
+    && pass "$name" || fail "$name" "expected unknown host to fail before mutation, got rc=$rc"
 }
 
 # --- install-guards-codex.sh ---------------------------------------------
@@ -503,6 +569,11 @@ test_host_manifest_scalar_missing_file_errors
 test_host_manifest_scalar_ignores_list_map_field
 test_host_manifest_expand_path_uses_env_override
 test_host_manifest_expand_path_default_when_unset
+test_host_manifest_declares_codex_write_modules
+test_host_write_dispatches_codex_from_manifest
+test_host_write_dispatches_opencode_stage3
+test_install_generic_host_selector_wires_codex
+test_install_unknown_host_fails_before_mutation
 test_install_guards_codex_dry_run_no_side_effect
 test_install_guards_codex_wires_hook
 test_install_guards_codex_idempotent

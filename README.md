@@ -79,10 +79,12 @@ Legacy PM directories or symlinks under the old `github` checkout location are n
 ./install.sh                          # apply (auto-detect profile)
 ./install.sh --profile minimal        # skip adapter bash guards
 ./install.sh --profile full           # wire all hooks (no adapter ships a bash guard today)
-CLAUDE_HOME=/tmp/sandbox ./install.sh # install into an alternate dir (sandbox/testing)
+./install.sh --enable-host codex      # opt in to the Codex host command guard
+./install.sh --enable-host opencode   # opt in to OpenCode /pm + native Bash policy
+CLAUDE_CONFIG_DIR=/tmp/sandbox ./install.sh # alternate Claude config root
 ```
 
-The install destination defaults to `~/.claude`; set `CLAUDE_HOME` to install (and later `uninstall.sh`) into an alternate directory without touching your real config — useful for rehearsing install changes. `install.sh` and `uninstall.sh` must use the same `CLAUDE_HOME`.
+The install destination defaults to `~/.claude`; `CLAUDE_CONFIG_DIR` is the canonical override shared by the Claude runtime, installer, uninstaller, doctor, and guards. `CLAUDE_HOME` remains a backward-compatible installer alias for older sandbox scripts. If both variables are explicitly set they must be identical, otherwise install/uninstall fail before mutation.
 
 Idempotent — re-run safely after adding files. Per-file symlinks so other tools' agents in `~/.claude/agents/` are not clobbered. If a destination already exists and is not our symlink, it is skipped with a CONFLICT warning.
 
@@ -98,6 +100,8 @@ already on `$PATH`. On Windows Git Bash it does not copy `pmctl`; add
 repo-local libraries.
 
 **Profile**: selects whether to wire adapter bash guards (`adapters/<name>/bash-guard.sh`, manifest-driven via `needs_bash_guard`). No adapter ships a bash guard today (codex's was retired with the codex-executor agent), so `full` and `minimal` currently wire the same hook set; the flag is retained for forward compatibility with future adapters that declare one. Auto-detect runs `command -v codex` — if found, `full`; otherwise `minimal`. See [docs/executor-contract.md](docs/executor-contract.md) for the executor profile model.
+
+**Optional hosts**: `--enable-host codex` and `--enable-host opencode` are explicit because they modify global host configuration. OpenCode wiring refuses to overwrite an existing `permission.bash` policy; integrate such a policy manually instead. Its receipt-based uninstall restores the exact prior config only while managed files remain unchanged. The legacy `--enable-codex-command-guard` flag remains an alias for `--enable-host codex`.
 
 After installing, verify the environment is healthy:
 

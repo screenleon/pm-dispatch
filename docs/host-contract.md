@@ -33,19 +33,25 @@ behaves as a dispatched executor.
 - **No host-specific branches in core.** Adding a host means adding a
   `hosts/<name>/` directory (manifest + doctor module), not editing core
   scripts. This mirrors the executor-adapter acceptance rule.
-  - **Recorded transitional exception**: `install.sh`/`uninstall.sh` currently
-    call a codex-named install/uninstall script directly as an opt-in step,
-    ahead of a manifest-driven per-host dispatch loop. This is a deliberate,
-    incremental first slice — not a silent drift from the rule — kept in
-    place until a second host reaches the same install-write-path milestone
-    and the loop can be generalized against two real instances instead of
-    one. `scripts/lib/host-manifest.sh`'s header comment documents the same
-    boundary from the manifest-reader side. Any *new* host-specific branch
-    beyond this recorded one is not covered by this exception and should be
-    treated as a rule violation.
+  The opt-in write path is dispatched through `install_module` /
+  `uninstall_module`; format-specific judgment remains in those modules, while
+  core selection contains no host-named branch. The legacy Codex flag is only
+  a backward-compatible alias for the generic host selector.
 - **No maintainer-local layout assumptions.** Target paths are expressed via
   the host's own home variable (`$CODEX_HOME`, `$XDG_CONFIG_HOME`, …), never
   via a hard-coded user directory.
+  Claude uses `CLAUDE_CONFIG_DIR` canonically across runtime, manifest,
+  install/uninstall, doctor, and guards. The older `CLAUDE_HOME` installer
+  variable is a compatibility alias only; explicitly different values are a
+  configuration error and fail before mutation.
+
+Executor usage logging follows the same separation of axes. Both Claude and
+Codex adapters copy the repo-owned `scripts/log-usage.sh` into their immutable
+self-snapshot and use that snapshot-local copy by default;
+`PM_CFG_USAGE_LOG_PATH` remains the highest-priority explicit override. The
+default executable path therefore does not depend on a Claude host install at
+`~/.claude/scripts/`, and it does not belong in a host manifest. Migration of
+the tracker's data location is a separate state-store concern.
 
 ## Top-level fields
 
@@ -59,7 +65,8 @@ behaves as a dispatched executor.
 | `guard_bindings` | yes | List of guard capability declarations (see below). |
 | `permissions_surface` | yes | The host's native permission model outside the hook surface. Carries `config_target` (must reference an `install_targets` entry `id`) and `managed` (boolean: whether the install write path manages that surface). |
 | `doctor_module` | yes | Repo-relative path to the sourceable doctor host module; must exist. |
-| `uninstall_module` | yes | Repo-relative path to the uninstall module, or `null` while no install write path exists. |
+| `install_module` | no (v1 compatibility) | Repo-relative path to an opt-in host wiring module, or `null`/omitted when the host is installed by the legacy base path or has no independent write path yet. Generic dispatchers use this field instead of naming hosts in core. New authored manifests should include it explicitly. |
+| `uninstall_module` | yes | Repo-relative path to the matching opt-in teardown module, or `null` when no independently dispatched write path exists. |
 
 ### `install_targets` entries
 
@@ -183,9 +190,10 @@ deprecation policy.
 ## Worked example: opencode as a second host
 
 The schema was finalized against two probed hosts specifically so that no
-field encodes a codex-ism. This walkthrough expresses the opencode probe
-results in schema v1 terms; the actual `hosts/opencode/host.yaml` ships with
-the opencode wiring work, not with this document.
+field encodes a codex-ism. This walkthrough mirrors the authored
+`hosts/opencode/host.yaml`: a native command file rides beside a declarative
+permission fragment, and receipt-based modules own their reversible write
+path without adding a host-named branch to core.
 
 ```yaml
 schema_version: 1
@@ -195,6 +203,14 @@ install_targets:
   - id: config
     path: "$XDG_CONFIG_HOME/opencode/opencode.json"
     format: opencode-config-json
+    managed: true
+  - id: commands
+    path: "$XDG_CONFIG_HOME/opencode/commands"
+    format: copy-tree
+    managed: true
+  - id: tools
+    path: "$XDG_CONFIG_HOME/opencode/tools"
+    format: copy-tree
     managed: true
 # No hook scripts: the guard story is declarative permission config
 # (permission.bash / permission.edit: allow|ask|deny, with per-pattern
@@ -216,8 +232,8 @@ guard_bindings:
     coverage: none                    # all-deny hangs headless runs (unverified root cause)
     stability: evolving
     confidence: probed
-  # Full enumeration: the remaining capabilities have not been evaluated on
-  # this host — none tuple with confidence assumed, not omission.
+  # Full enumeration: session lifecycle and statusline have not been evaluated
+  # on this host — none tuple with confidence assumed, not omission.
   - capability: session_lifecycle
     binding_form: none
     provider: none
@@ -226,12 +242,12 @@ guard_bindings:
     stability: evolving
     confidence: assumed
   - capability: pm_command_interface
-    binding_form: none
-    provider: none
+    binding_form: config-fragment
+    provider: host_native
     enforcement: none
-    coverage: none
+    coverage: partial
     stability: evolving
-    confidence: assumed
+    confidence: probed
   - capability: statusline
     binding_form: none
     provider: none
@@ -243,7 +259,8 @@ permissions_surface:
   config_target: config
   managed: true
 doctor_module: scripts/lib/doctor-host-opencode.sh
-uninstall_module: null
+install_module: scripts/install-host-opencode.sh
+uninstall_module: scripts/uninstall-host-opencode.sh
 ```
 
 Points the walkthrough demonstrates:
@@ -255,9 +272,8 @@ Points the walkthrough demonstrates:
   for both hosts' file guards, for the same structural reason (edit/write
   tools and shell execution are separate gates).
 - Full enumeration keeps the two `none` states distinguishable: the file
-  guard is `none`/`probed` (evaluated, unsupported), while the three
-  unevaluated capabilities are `none`/`assumed` placeholders — nothing is
-  omitted.
+  guard is `none`/`probed` (evaluated, unsupported), while session lifecycle
+  and statusline are `none`/`assumed` placeholders — nothing is omitted.
 - Denying a whole tool declaratively is *cleaner* than hook interception (the
   tool is never exposed to the model) but yields no per-attempt payload to
   audit; a host needing blocked-attempt logging must layer a plugin hook,

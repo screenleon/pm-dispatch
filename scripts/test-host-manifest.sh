@@ -267,13 +267,16 @@ validate_manifest() {
     echo "doctor_module '$module' not found under repo root"
   fi
 
-  # --- uninstall_module must be null or an existing repo-relative file --------
-  module="$(grep -E '^uninstall_module:' "$manifest" | head -1 | sed 's/^uninstall_module:[[:space:]]*//;s/[[:space:]]*#.*$//')"
-  if [[ -z "$module" ]]; then
-    echo "uninstall_module is empty (must be null or an existing repo-relative path)"
-  elif [[ "$module" != "null" && ! -f "$REPO_ROOT/$module" ]]; then
-    echo "uninstall_module '$module' not found under repo root (must be null or an existing repo-relative path)"
-  fi
+  # --- write modules must be null or existing repo-relative files ------------
+  local module_key
+  for module_key in install_module uninstall_module; do
+    module="$(grep -E "^$module_key:" "$manifest" | head -1 | sed "s/^$module_key:[[:space:]]*//;s/[[:space:]]*#.*$//")"
+    if [[ -z "$module" ]]; then
+      echo "$module_key is empty (must be null or an existing repo-relative path)"
+    elif [[ "$module" != "null" && ! -f "$REPO_ROOT/$module" ]]; then
+      echo "$module_key '$module' not found under repo root (must be null or an existing repo-relative path)"
+    fi
+  done
 
   # --- operational files carry no ticket references ---------------------------
   if grep -qE 'CC-[0-9]+' "$manifest"; then
@@ -460,10 +463,8 @@ run_negative_case "ticket reference in manifest" \
   "manifest contains ticket references"
 
 # --- claude-specific field-combination negative cases -----------------------
-# claude is the only manifest today with symlink-tree install targets, a
-# host_native/config-fragment pm_command_interface binding, and a non-null
-# uninstall_module — mutate those unique combinations directly rather than
-# only re-mutating the codex fixture's fields.
+# Claude carries the symlink-tree targets and host_native/config-fragment PM
+# binding; mutate those unique combinations directly.
 
 REF_MANIFEST_CLAUDE="$REPO_ROOT/hosts/claude/host.yaml"
 
@@ -480,9 +481,9 @@ run_negative_case_on "$REF_MANIFEST_CLAUDE" claude \
   's/config_target: settings/config_target: config/' \
   "config_target 'config' does not reference an install_targets id"
 run_negative_case_on "$REF_MANIFEST_CLAUDE" claude \
-  "non-null uninstall_module pointing at missing file" \
-  's|^uninstall_module: uninstall.sh|uninstall_module: uninstall-missing.sh|' \
-  "uninstall_module 'uninstall-missing.sh' not found"
+  "non-null install_module pointing at missing file" \
+  's|^install_module: null|install_module: install-missing.sh|' \
+  "install_module 'install-missing.sh' not found"
 
 # Duplicate-capability case: all five capabilities stay present and every
 # entry keeps a complete field tuple, so the ONLY violation is the

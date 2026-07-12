@@ -80,6 +80,18 @@ fi
 When codex is intentionally absent, you can still run the full stack as a lightweight personal setup using
 `bash install.sh --profile minimal`.
 
+To use Codex or OpenCode as the PM host, opt in explicitly:
+
+```sh
+bash install.sh --enable-host codex
+bash install.sh --enable-host opencode
+```
+
+These host flags are independent of `--profile`, which controls the executor
+axis. OpenCode installation adds a native `/pm` command and a catch-all Bash
+deny with an allow rule for this checkout's `pmctl`; it fails without changing
+the file when an existing user-owned `permission.bash` policy is present.
+
 ## 4) Verify install succeeded
 
 Run the built-in health check:
@@ -169,4 +181,3 @@ After you finish the first `/pm` cycle, keep these in sync:
 - [`docs/platform-support.md`](docs/platform-support.md)
 
 If a fork user path differs from yours, keep your edits small and local; this repo is designed to be copied and adapted.
-

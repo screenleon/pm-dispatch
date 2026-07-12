@@ -2971,6 +2971,45 @@ test_install_claude_home_override() {
   pass "$name"
 }
 
+test_install_claude_config_dir_canonical_override() {
+  # Behavior: the runtime-standard CLAUDE_CONFIG_DIR controls every Claude
+  # install surface, while HOME/.claude remains untouched.
+  local name="install-claude-config-dir-canonical-override"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name-home" config="$tmp_root/$name-config" rc=0
+  mkdir -p "$home"
+  HOME="$home" CLAUDE_CONFIG_DIR="$config" \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
+    bash "$REPO_ROOT/install.sh" >/dev/null 2>&1 || rc=$?
+  if [[ "$rc" -eq 0 && -e "$config/.pm-dispatch/install-manifest.json" ]] \
+      && grep -q 'guard-pm-write.sh' "$config/settings.json" \
+      && [[ ! -e "$home/.claude" ]]; then
+    pass "$name"
+  else
+    fail "$name" "canonical config override was not applied consistently (rc=$rc)"
+  fi
+}
+
+test_conflicting_claude_roots_fail_before_mutation() {
+  # Behavior: explicitly divergent canonical/legacy roots are rejected by both
+  # install and uninstall before either tree can be modified.
+  local name="claude-config-root-conflict-fails-before-mutation"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name-home" config="$tmp_root/$name-config"
+  local legacy="$tmp_root/$name-legacy" install_rc=0 uninstall_rc=0
+  mkdir -p "$home"
+  HOME="$home" CLAUDE_CONFIG_DIR="$config" CLAUDE_HOME="$legacy" \
+    bash "$REPO_ROOT/install.sh" >/dev/null 2>&1 || install_rc=$?
+  HOME="$home" CLAUDE_CONFIG_DIR="$config" CLAUDE_HOME="$legacy" \
+    bash "$REPO_ROOT/uninstall.sh" >/dev/null 2>&1 || uninstall_rc=$?
+  if [[ "$install_rc" -eq 2 && "$uninstall_rc" -eq 2 \
+      && ! -e "$config" && ! -e "$legacy" && ! -e "$home/.claude" ]]; then
+    pass "$name"
+  else
+    fail "$name" "conflicting roots did not fail closed (install=$install_rc uninstall=$uninstall_rc)"
+  fi
+}
+
 test_uninstall_claude_home_override() {
   # Verifies uninstall.sh honors the same CLAUDE_HOME override end-to-end: it
   # removes the sandbox install (including hook cleanup via uninstall-guards.sh)
@@ -3321,6 +3360,8 @@ test_install_share_asset_installed
 test_install_share_asset_conflict
 test_install_share_asset_uninstall
 test_install_claude_home_override
+test_install_claude_config_dir_canonical_override
+test_conflicting_claude_roots_fail_before_mutation
 test_uninstall_claude_home_override
 test_install_hooks_spaced_repo_root
 test_install_hooks_msys_native_jq_boundary
