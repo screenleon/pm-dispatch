@@ -9,6 +9,21 @@ Never silently upgrade to Opus.
 
 ---
 
+## Codex `gpt-5.6` named tiers
+
+GPT 5.6 ships as three named wire ids, not one — pick by task shape, same
+spirit as the `light`/`default` split above:
+
+| Alias | Wire id | Use case |
+|---|---|---|
+| `default` / `gpt-5.6-terra` | `gpt-5.6-terra` | Balanced/everyday tasks — the default for medium/large dispatches (see Implementation tasks table below) |
+| `gpt-5.6-sol` | `gpt-5.6-sol` | Frontier tier — reach for it only under the same signals as the Opus escalation flow below (novel cross-cutting architecture, high-stakes/hard-to-reverse decisions, deep security design, very large context, ambiguous problems), and only after asking the user per that flow |
+| `gpt-5.6-luna` | `gpt-5.6-luna` | Fast/affordable — do not conflate with `light`/`codex-spark`: `light` draws from an independent, opt-in-only usage pool (see below) and is the correct choice for confirmed-small dispatches, not `luna` |
+
+`gpt-5.5`/`gpt-5.4` remain as explicit fallback aliases if `gpt-5.6-terra` is unavailable — see `share/model-aliases.tsv` for the full fallback chain.
+
+---
+
 ## Executor-agnostic `light` alias
 
 The `light` alias selects the lightweight model for a given executor. Use it in

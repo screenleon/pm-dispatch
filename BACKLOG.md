@@ -482,15 +482,46 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 **Problem**: 記憶注入排序（`guard-inject-memory.sh` 的 keyword 抽取）、檢索抽詞（`_ctx_extract_terms` → prompt-scan / reuse-scan）、FTS5 索引（unicode61 tokenizer）三處分詞全為 ASCII-only，CJK 字元被當分隔符丟棄。維護者工作語言為中文：中文 prompt 的 keyword tier 恆為 0 分、tier2 排序退化為純 frecency；且 usage sidecar 只在 keyword 命中時累積 access，中文工作流永遠累積不到使用訊號——整套 frecency 機制對 CJK 使用者形同虛設。prompt-scan / reuse-scan 對中文任務描述抽不出任何詞；FTS5 對整段中文只存單一 token，中文查詢僅靠 LIKE substring fallback 硬撐。
 
-**Why**: 分詞邏輯設計時只考慮英文 identifier；CJK 無空白斷詞，ASCII 字元類過濾直接消滅整段文字。這是功能性缺陷而非排序品質調校——注入排序、usage 累積、檢索三條線同時失效。零依賴的 CJK bigram（連續 CJK 串切 2-gram）即可讓三處恢復運作，不需外部分詞器，符合 bash / zero-LLM hooks 約束，也不觸發 [[CC-340]]（embeddings/semantic backend）的 resume 條件。
+**Why**: 分詞邏輯設計時只考慮英文 identifier；CJK 無空白斷詞，ASCII 字元類過濾直接消滅整段文字。這是功能性缺陷而非排序品質調校——注入排序、usage 累積、檢索三條線同時失效。解法定調為**抽出一個共用零依賴斷詞 lib**（CJK bigram：連續 CJK 串切 2-gram），讓三個呼叫端遷移過去共用同一實作，而非三處各自獨立補丁——避免三份幾乎相同的邏輯各自漂移。FTS5 unicode61 tokenizer 對中文查詢的行為則視為與此共用 lib 分離的獨立關注點，另案驗證，不預設用同一次修改解決。不需外部分詞器，符合 bash / zero-LLM hooks 約束，也不觸發 [[CC-340]]（embeddings/semantic backend）的 resume 條件。
 
 **Requirement**:
-1. 中文 prompt 能對含中文 hook/topics 的卡片產生 keyword tier 命中（注入排序與 usage sidecar 累積同時恢復）。
-2. `pmctl context prompt-scan` / `reuse-scan` 對中文任務描述能抽出可查詢的詞。
-3. FTS/LIKE 檢索對中文查詢詞可命中中文內容（FTS5 不可用時 LIKE fallback 行為不退化）。
-4. 既有英文行為不變；回歸測試涵蓋純英文、中英混合、純中文三類輸入。
+1. 抽出共用零依賴斷詞 lib（如 `scripts/lib/retrieval-terms.sh`），實作 CJK bigram 斷詞函式作為單一實作來源。
+2. `scripts/guard-inject-memory.sh`（keyword tier 抽取／注入排序）與 `scripts/lib/pmctl-context.sh` 的 `_ctx_extract_terms`（`prompt-scan` / `reuse-scan` 抽詞）改為呼叫共用 lib，取代各自現有的抽詞邏輯。
+3. FTS5 unicode61 tokenizer 對中文查詢的行為（含 LIKE fallback）獨立驗證，視為與共用 lib 分離的關注點，允許各自的修復時程與驗收。
+4. 既有英文行為不變；回歸測試涵蓋純英文、中英混合、純中文三類輸入，並驗證兩個呼叫端遷移至共用 lib 後行為一致。
 
-**Cross-link**: [[CC-340]]（deferred；本票是非 embedding 的分詞修正，非其替代）。
+**Cross-link**: [[CC-340]]（deferred；本票是非 embedding 的分詞修正，非其替代）。**工作序列**：本票是 CC-465 → CC-467 → CC-468 → CC-466 序列化工作串的起點——CJK 抽詞先修好，統計可視化與 brief 約束萃取才有可信賴的中文訊號可用。
+
+---
+
+## CC-467 — `pmctl memory stats`：注入效益可視化 🔵 active
+
+**Problem**: 記憶注入每 prompt 默默執行，維護者無法回答「有記憶跟沒記憶差在哪」：沒有指標顯示注入了多少 bytes、哪些卡常被命中、哪些卡從未命中、episodes 骨架的語意摘要填寫率（Stop hook 只寫空骨架、`/mem-log` 靠人跑；填寫率低則 `/mem-distill` 上游是乾的，且此事目前完全不可見）。
+
+**Why**: 2026-07-07 外部研究——全業界（Letta / mem0 / Zep / Claude Code 社群工具）都只量離線 retrieval recall，無人做 per-injection 效益遙測；唯一在野的 token 可視化是 claude-mem 的 token economics 顯示。pm-dispatch 原料已齊（inject-usage.tsv、episodes.jsonl、doctor）——一個唯讀聚合報表即可回答維護者的核心疑問，符合「輕量執行」方向：不加新遙測寫入面，只聚合既有資料。範圍刻意收斂為純唯讀聚合器（無新寫入面），先讓維護者看得見注入效益，再由 [[CC-466]] 在可信賴的遙測基礎上建置生命週期判斷。
+
+**Requirement**:
+1. 唯讀子指令輸出：卡片總數與注入預算使用、各卡命中次數與最後命中時間分佈、從未命中卡清單、episode 填寫率（非空 summary 佔比）。
+2. 支援 `--json`（與 doctor 同級的結構化輸出）。
+3. 不新增 hook 寫入面；僅聚合既有 sidecar / episodes / doctor 資料，不引入新的寫入路徑。
+
+**Cross-link**: [[CC-465]]（CJK 抽詞先行，統計才能正確反映中文卡片的命中率）、[[CC-466]]（本票須先上線——[[CC-466]] 的休眠偵測邏輯建立在本票產出的遙測之上）。**工作序列**：CC-465 → CC-467 → CC-468 → CC-466。
+
+---
+
+## CC-468 — dispatch brief 帶 memory 約束：PM 萃取為 constraints 清單（pointer 僅作 provenance）🔵 active
+
+**Problem**: auto-pack 走 reuse-scan 且 repo-only by construction；`context pack --source memory` 存在但 dispatch 從不使用。結果：feedback 卡裡的約束（如「此 repo 禁用某工具」「reviewer 反覆擋的模式」）永遠不會自動進 brief，全靠 PM 記得手貼——記憶對 executor 行為零影響力。
+
+**Why**: 成功指標（DECISIONS 2026-06-10）本來就是「brief 直接引用 memory/decision anchors」；目前管線只對 repo plane 兌現，memory plane 缺最後一哩。單純 pointer-only ref 讓 executor 拿到一個 ref 卻看不到約束本體，等於沒有約束力——因此改為由 PM 在 brief authoring / auto-pack 階段，把私有卡片規則**萃取（extract）成一份非敏感的 `constraints:` 清單**直接寫入 brief；pointer 僅保留作為來源標記（provenance-only），不再是 executor 唯一可見的內容。約束類卡片常以中文撰寫，依賴 [[CC-465]] 先把 CJK 抽詞修好，查詢命中才可靠。
+
+**Requirement**:
+1. brief 授權／auto-pack 對 memory plane 做一次查詢，命中約束類卡片後，由 PM 將其規則轉譯為非敏感的 `constraints:` 條列寫入 brief（不是原文卡片內容，也不是單純 ref）。
+2. 每條萃取出的 constraint 同時保留來源 pointer（ref + trust tier）作為 provenance，供人工回查原卡；executor 執行時只需讀 `constraints:` 清單。
+3. 私有／敏感內容（含中文原文的具體措辭）不需逐字進入 repo-bound 產物；萃取後的 constraint 表述須為可公開的非敏感摘要，數量設上限。
+4. 零命中時不加空區塊（比照 `auto_context:` 現行語意）；查詢或萃取失敗 fail-open 不阻斷 dispatch。
+
+**Cross-link**: [[CC-465]]（依賴其先修好 CJK 抽詞——約束類卡片常以中文撰寫，命中依賴中文分詞正確）、[[CC-466]]。**工作序列**：CC-465 → CC-467 → CC-468 → CC-466。
 
 ---
 
@@ -498,7 +529,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 **Problem**: 卡片 schema 有 `expires_at` / `status` 生命週期欄位但無任何執行面：注入 hook 只降級 `stale`/`superseded`、不看 `expires_at`；doctor 不報過期卡；usage sidecar 只餵排序、不餵老化（沒有「N 天未命中」的休眠訊號）；doctor 找到的 stale_repo_refs / orphan 與 `/mem-distill` 的提案迴路完全斷開，修復全靠人記得。記憶只進不出，長期必然膨脹並讓固定注入預算被殭屍卡佔據。
 
-**Why**: 2026-07-07 外部研究（/research）結論——確定性生命週期的成熟做法是：(a) Graphiti/Zep 的雙時間軸「關窗不刪除」失效模型（schema 與關窗操作是確定性的，只有矛盾偵測需要智慧——正好是 `/mem-distill` 的既有職責）；(b) mcp-memory-service 家族的 access-count / last-access 休眠偵測（零 LLM）。pm-dispatch 原料已齊（usage sidecar、doctor、confirm-gated distill），缺的只是接線；LLM 判斷全部留在顯式指令桶，hooks 維持 zero-LLM。已評估並排除：mem0 每寫入 LLM 仲裁、Letta sleep-time LLM 整理（違反 zero-LLM hooks；`/mem-distill` + `/memory-compress` 已是顯式等價物）。
+**Why**: 2026-07-07 外部研究（/research）結論——確定性生命週期的成熟做法是：(a) Graphiti/Zep 的雙時間軸「關窗不刪除」失效模型（schema 與關窗操作是確定性的，只有矛盾偵測需要智慧——正好是 `/mem-distill` 的既有職責）；(b) mcp-memory-service 家族的 access-count / last-access 休眠偵測（零 LLM）。pm-dispatch 原料已齊（usage sidecar、doctor、confirm-gated distill），缺的只是接線；LLM 判斷全部留在顯式指令桶，hooks 維持 zero-LLM。已評估並排除：mem0 每寫入 LLM 仲裁、Letta sleep-time LLM 整理（違反 zero-LLM hooks；`/mem-distill` + `/memory-compress` 已是顯式等價物）。本票應排在 [[CC-467]] 之後執行——需要先有可信賴的注入效益遙測，才能在其上建置休眠偵測與降級/移除判斷邏輯；在遙測可信之前先做生命週期自動化容易誤判。
 
 **Requirement**:
 1. 過期卡（`expires_at` 已過）在注入時降級、在 doctor 報告中列出。
@@ -506,38 +537,8 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 3. doctor 能從 usage sidecar 偵測休眠卡（超過門檻天數未命中）並列出。
 4. `/mem-distill` 讀取 doctor 結構化輸出，把過期／休眠／stale-ref 卡轉成 UPDATE/REMOVE 提案，沿用既有確認閘門（不新增任何自動寫入路徑）。
 
-**Cross-link**: [[CC-452]]（episodes.jsonl 併發 hardening，同資料面）、[[CC-467]]（stats 讓閉環效果可見）。
+**Cross-link**: [[CC-452]]（episodes.jsonl 併發 hardening，同資料面）、[[CC-467]]（前置依賴：本票排在 CC-467 之後，需要其遙測作為休眠判斷基礎）。**工作序列**：CC-465 → CC-467 → CC-468 → CC-466（本票為序列終點）。
 **Source**: 2026-07-07 /research——Graphiti bi-temporal（github.com/getzep/graphiti）、mcp-memory-service decay 家族（github.com/doobidoo/mcp-memory-service）。
-
----
-
-## CC-467 — `pmctl memory stats`：注入效益可視化 🟢 someday
-
-**Problem**: 記憶注入每 prompt 默默執行，維護者無法回答「有記憶跟沒記憶差在哪」：沒有指標顯示注入了多少 bytes、哪些卡常被命中、哪些卡從未命中、episodes 骨架的語意摘要填寫率（Stop hook 只寫空骨架、`/mem-log` 靠人跑；填寫率低則 `/mem-distill` 上游是乾的，且此事目前完全不可見）。
-
-**Why**: 2026-07-07 外部研究——全業界（Letta / mem0 / Zep / Claude Code 社群工具）都只量離線 retrieval recall，無人做 per-injection 效益遙測；唯一在野的 token 可視化是 claude-mem 的 token economics 顯示。pm-dispatch 原料已齊（inject-usage.tsv、episodes.jsonl、doctor）——一個唯讀聚合報表即可回答維護者的核心疑問，符合「輕量執行」方向：不加新遙測寫入面，只聚合既有資料。
-
-**Requirement**:
-1. 唯讀子指令輸出：卡片總數與注入預算使用、各卡命中次數與最後命中時間分佈、從未命中卡清單、episode 填寫率（非空 summary 佔比）。
-2. 支援 `--json`（與 doctor 同級的結構化輸出）。
-3. 不新增 hook 寫入面；僅聚合既有 sidecar / episodes / doctor 資料。
-
-**Cross-link**: [[CC-466]]。
-
----
-
-## CC-468 — dispatch brief 帶 memory 約束（pointer-only）🟢 someday
-
-**Problem**: auto-pack 走 reuse-scan 且 repo-only by construction；`context pack --source memory` 存在但 dispatch 從不使用。結果：feedback 卡裡的約束（如「此 repo 禁用某工具」「reviewer 反覆擋的模式」）永遠不會自動進 brief，全靠 PM 記得手貼——記憶對 executor 行為零影響力。
-
-**Why**: 成功指標（DECISIONS 2026-06-10）本來就是「brief 直接引用 memory/decision anchors」；目前管線只對 repo plane 兌現，memory plane 缺最後一哩。隱私模型不變：沿用 context pack 的 pointer-only 契約（只帶 ref + trust tier，卡片內容不進 repo-bound 產物）。
-
-**Requirement**:
-1. brief 授權／auto-pack 時對 memory plane 做一次查詢，命中的約束類卡片以 pointer-only ref 附入 brief context（數量設上限）。
-2. 私有內容不落入 repo 內任何檔案（含 pack 檔）——僅 ref 與 trust tier。
-3. 零命中時不加空區塊（比照 `auto_context:` 現行語意）；查詢失敗 fail-open 不阻斷 dispatch。
-
-**Cross-link**: [[CC-466]]。
 
 ---
 
