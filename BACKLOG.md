@@ -23,10 +23,11 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-462 | 🟢 someday | e2e 可拋棄資源紀律：前綴命名 + registry JSON + result artifact；掛在 CC-449 e2e 新 phase 之後，與 CC-447 live smoke 共用同一 registry（2026-07-07 openyida 跨專案分析） | ops/test | 2026-07-07 | — | P3 | — |
 | CC-463 | 🟢 someday | `pmctl batch` 泛用批次執行原語；依賴 CC-460（合法性驗證來源）；新注入面須過 security-reviewer（2026-07-07 openyida 跨專案分析） | arch/process | 2026-07-07 | — | P3 | design |
 | CC-464 | 🟢 someday | `pmctl ticket draft --from <notes>`：隨手筆記→結構化 backlog 票草稿；依賴 CC-286（prefix-generic next-id，⏸ deferred 尚未排程）；review-first 邊界獨立設計，CC-054 僅供鬆散參照非直接前例（2026-07-07 openyida 跨專案分析） | ux/process | 2026-07-07 | — | P3 | — |
-| CC-465 | 🔵 active | memory/context 關鍵詞管線 CJK 支援：注入排序、prompt-scan/reuse-scan 抽詞、FTS 索引三處分詞 ASCII-only，中文 prompt 拿不到 keyword tier 與 usage 訊號（2026-07-07 記憶系統深入分析） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
-| CC-466 | 🔵 active | 記憶卡片生命週期閉環：expires_at 執行 + 關窗式 supersede + usage sidecar 休眠偵測 + doctor→distill 接線（2026-07-07 記憶系統分析 + 外部研究 Graphiti/mcp-memory-service） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
-| CC-467 | 🟢 someday | `pmctl memory stats`：注入效益可視化——注入 bytes/卡片命中分佈/從未命中卡/episode 填寫率，回答「記憶有跟沒有差在哪」（2026-07-07；業界僅離線 recall 評測，無 per-injection 遙測） | DX/memory | 2026-07-07 | — | P3 | retrieval |
-| CC-468 | 🟢 someday | dispatch brief 帶 memory 約束：brief authoring/auto-pack 對 memory plane 做 pointer-only 查詢，feedback 卡約束自動浮上 brief（2026-07-07；auto-pack 現為 repo-only by construction） | ops/memory | 2026-07-07 | — | P3 | retrieval |
+| CC-478 | ✅ done | codex default model alias 過期：`share/model-aliases.tsv` 的 `default` 仍釘舊 `gpt-5.5`，未跟進新的 gpt-5.6 三分支（sol/terra/luna）（2026-07-12 使用者發現） | ops | 2026-07-12 | pr:#392 | P2 | — |
+| CC-465 | 🔵 active | memory/context 關鍵詞管線 CJK 支援：抽出共用零依賴斷詞 lib，取代三處各自 ASCII-only 抽詞；工作序列起點（465→467→468→466）（2026-07-07 記憶系統深入分析） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
+| CC-466 | 🔵 active | 記憶卡片生命週期閉環：expires_at 執行 + 關窗式 supersede + usage sidecar 休眠偵測 + doctor→distill 接線；排在 CC-467 之後（需其遙測為前置）（2026-07-07 記憶系統分析 + 外部研究 Graphiti/mcp-memory-service） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
+| CC-467 | 🔵 active | `pmctl memory stats`：注入效益可視化（唯讀聚合器）——注入 bytes/卡片命中分佈/從未命中卡/episode 填寫率，回答「記憶有跟沒有差在哪」；排在 CC-466 之前（2026-07-07；業界僅離線 recall 評測，無 per-injection 遙測） | DX/memory | 2026-07-07 | — | P2 | retrieval |
+| CC-468 | 🔵 active | dispatch brief 帶 memory 約束：PM 萃取為非敏感 `constraints:` 清單（pointer 僅作 provenance），依賴 CC-465 CJK 先行（2026-07-07；auto-pack 現為 repo-only by construction） | ops/memory | 2026-07-07 | — | P2 | retrieval |
 | CC-469 | ✅ done | codex reviewer sandbox 找不到 pmctl：`codex exec --sandbox workspace-write` 派工 reviewer 時，sandbox 內裸呼叫 `pmctl guard check` 回報 command not found，導致該 reviewer 中止、gate 產不出結果檔案（2026-07-07 平行模式 gate run 實測發現） | ops/gate | 2026-07-09 | pr:#388 | P2 | — |
 | CC-011 | 🟢 someday | sync-memory.sh + install 選項：symlink memory 到雲端資料夾實現跨裝置共用 | ux/memory | 2026-05-14 | — | — | — |
 | CC-012 | 🟢 someday | SessionStart hook：session 啟動時 pull 最新 memory（git/rsync）確保跨裝置同步 | ux/memory | 2026-05-14 | — | — | — |
@@ -352,6 +353,18 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Dependencies**: 與 [[CC-452]] 同屬 guard/hook concurrency hardening，但本票涵蓋的是已使用 lock 的 usage sidecar 交易完整性；可並行調查，修法若需要 shared lock helper 則在實作時協調。v0.9.0 hardening P2。
 
 **Evidence**: 2026-07-10 full gate pre-flight 多次出現 `memory-usage/concurrent-no-lost-updates` 遺失 increment（21/25）；另一次 `test-pmctl-memory` fixture case 單獨重跑通過，支持「full-suite contention / isolation」方向，而非 CC-473 行為回歸。
+
+---
+
+## CC-478 — codex default model alias 過期：對齊 gpt-5.6 三分支 ✅ 2026-07-12
+
+**Problem**: `share/model-aliases.tsv` 的 `default` 仍釘舊 `gpt-5.5`，未跟進新推出的 GPT 5.6 世代。GPT 5.6 並非單一 wire id，而是三個具名分支：`gpt-5.6-sol`（frontier）、`gpt-5.6-terra`（balanced/everyday）、`gpt-5.6-luna`（fast/affordable）。
+
+**Resolution**: `default` 改指向 `gpt-5.6-terra`（與舊 `default`→`gpt-5.5` 同屬 balanced/everyday 定位最相符）；`gpt-5.6-sol`/`gpt-5.6-luna` 同步登錄為可明確指定的 alias；`gpt-5.5`/`gpt-5.4` 保留為 fallback chain；`gpt-5.3-codex-spark`/`light` 維持獨立用量池不變。同步更新 `adapters/codex/dispatch.sh`、`docs/dispatch-brief.md`、`scripts/pr-gate.sh` 註解與對照表，並在 `docs/model-tier-policy.md` 新增三分支選型指引。新增/更新 `scripts/test-codex-dispatch.sh`、`scripts/test-pmctl-dispatch.sh` 測試斷言，`scripts/lint-model-aliases.sh` 通過。`/pr-gate` standard tier：GO（2 個 low advise，皆已修正：測試函式改名、選型指引補上）。
+
+**See**: pr:#392
+
+---
 
 ## CC-453 — worktree/auto-pack 路徑契約 hardening 🔵 active
 
