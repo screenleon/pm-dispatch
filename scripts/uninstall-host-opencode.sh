@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Safely reverse install-host-opencode.sh using its ownership receipt.
+# shellcheck disable=SC1091
+# Repo-local manifest/portable libraries are resolved dynamically below.
 
 set -euo pipefail
 

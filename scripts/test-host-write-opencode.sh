@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 # Regression suite for OpenCode host stage-3 config/command ownership.
+# shellcheck disable=SC1091,SC2015,SC2154,SC2016
+# SC1091/SC2154: the test harness is a runtime source and owns tmp_root.
+# SC2015: compact pass/fail assertions intentionally use the harness idiom.
+# SC2016: jq programs and literal OpenCode $ARGUMENTS must not shell-expand.
 
 set -uo pipefail
 

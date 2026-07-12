@@ -2,6 +2,8 @@
 # Install the OpenCode host permission fragment and /pm custom command.
 # Ownership is receipt-based: an existing Bash policy or pm command is never
 # overwritten, and uninstall restores the exact pre-install config bytes.
+# shellcheck disable=SC1091
+# Repo-local manifest/portable libraries are resolved dynamically below.
 
 set -euo pipefail
 

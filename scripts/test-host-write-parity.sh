@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Cross-host regression: optional Codex/OpenCode dispatch must leave Claude's
 # existing install/uninstall surface byte-compatible.
+# shellcheck disable=SC1091,SC2154
+# The sourced test harness/portable library provide tmp_root and hash helpers.
 
 set -uo pipefail
 

@@ -6,7 +6,7 @@ _doctor_host_opencode_config_path() {
   local manifest="$REPO_ROOT/hosts/opencode/host.yaml"
   local id path fmt managed
   while IFS=$'\t' read -r id path fmt managed; do
-    [[ "$id" == "config" && "$fmt" == "opencode-config-json" ]] || continue
+    [[ "$id" == "config" && "$fmt" == "opencode-config-json" && "$managed" == "true" ]] || continue
     host_manifest_expand_path "$path"
     return 0
   done < <(host_manifest_install_targets "$manifest")
@@ -17,7 +17,7 @@ _doctor_host_opencode_commands_path() {
   local manifest="$REPO_ROOT/hosts/opencode/host.yaml"
   local id path fmt managed
   while IFS=$'\t' read -r id path fmt managed; do
-    [[ "$id" == "commands" && "$fmt" == "copy-tree" ]] || continue
+    [[ "$id" == "commands" && "$fmt" == "copy-tree" && "$managed" == "true" ]] || continue
     host_manifest_expand_path "$path"
     return 0
   done < <(host_manifest_install_targets "$manifest")
@@ -28,7 +28,7 @@ _doctor_host_opencode_tools_path() {
   local manifest="$REPO_ROOT/hosts/opencode/host.yaml"
   local id path fmt managed
   while IFS=$'\t' read -r id path fmt managed; do
-    [[ "$id" == "tools" && "$fmt" == "copy-tree" ]] || continue
+    [[ "$id" == "tools" && "$fmt" == "copy-tree" && "$managed" == "true" ]] || continue
     host_manifest_expand_path "$path"
     return 0
   done < <(host_manifest_install_targets "$manifest")
@@ -51,6 +51,7 @@ _doctor_host_opencode_pm_command() {
   }
   command_file="$commands/pm.md"
   tool_file="$tools/pm_prepare.ts"
+  # shellcheck disable=SC2016  # Backticks are literal OpenCode command prose.
   if [[ -f "$command_file" && -f "$tool_file" ]] \
       && grep -Fq -- 'custom `pm_prepare` tool' "$command_file" \
       && grep -Fq -- "const PMCTL = \"$expected_pmctl\"" "$tool_file"; then
