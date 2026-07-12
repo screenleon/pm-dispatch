@@ -44,7 +44,7 @@
     },
     "model": {
       "type": "string",
-      "description": "PM-facing alias OR wire id OR `default`. Aliases resolved via share/model-aliases.tsv."
+      "description": "PM-facing alias OR wire id OR `default`. Aliases resolved via share/codex-model-aliases.tsv, share/claude-model-aliases.tsv, or share/opencode-model-aliases.tsv depending on executor."
     },
     "fallback_allowed": {
       "type": "boolean"
