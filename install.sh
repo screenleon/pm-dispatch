@@ -18,6 +18,10 @@
 # --verify runs all preflight test suites before installing.
 #   Skipped by default; recommended when contributing or after updating.
 #
+# --enable-host <name> opts into the independently dispatched write module
+# declared by hosts/<name>/host.yaml. --enable-codex-command-guard remains a
+# backward-compatible alias for --enable-host codex.
+#
 # --enable-codex-command-guard opts into wiring scripts/hook-codex-command-guard.sh
 #   into $CODEX_HOME/hooks.json (see hosts/codex/host.yaml). OFF BY DEFAULT and NOT
 #   auto-detected from codex-on-PATH the way --profile is: unlike claude's
@@ -37,12 +41,20 @@ set -euo pipefail
 DRY_RUN=0
 VERIFY=0
 PROFILE=""
-ENABLE_CODEX_COMMAND_GUARD=0
+ENABLED_HOSTS=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run) DRY_RUN=1; shift ;;
     --verify) VERIFY=1; shift ;;
-    --enable-codex-command-guard) ENABLE_CODEX_COMMAND_GUARD=1; shift ;;
+    --enable-codex-command-guard) ENABLED_HOSTS+=(codex); shift ;;
+    --enable-host)
+      [[ $# -ge 2 ]] || { echo "install: --enable-host requires a value" >&2; exit 2; }
+      [[ "$2" =~ ^[a-z0-9_-]+$ ]] || { echo "install: invalid host name: $2" >&2; exit 2; }
+      ENABLED_HOSTS+=("$2"); shift 2 ;;
+    --enable-host=*)
+      _enable_host="${1#--enable-host=}"
+      [[ "$_enable_host" =~ ^[a-z0-9_-]+$ ]] || { echo "install: invalid host name: $_enable_host" >&2; exit 2; }
+      ENABLED_HOSTS+=("$_enable_host"); shift ;;
     --profile)
       [[ $# -ge 2 ]] || { echo "install: --profile requires a value" >&2; exit 2; }
       PROFILE="$2"
@@ -69,17 +81,46 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
-# Install destination. Honors an explicit CLAUDE_HOME override so the install can
-# target a sandbox dir (testing / dry-run rehearsal) without overriding the whole
-# $HOME. Defaults to ~/.claude. All install destinations derive from this — never
-# from a bare $HOME/.claude — so an override stays consistent.
-CLAUDE_HOME="${CLAUDE_HOME:-$HOME/.claude}"
+# CLAUDE_CONFIG_DIR is the canonical Claude host config root used by the runtime,
+# doctor, guards, and manifest. CLAUDE_HOME remains a backward-compatible alias
+# for older sandbox/install callers; conflicting explicit values fail loud so
+# install and runtime can never silently target different trees.
+if [[ -n "${CLAUDE_CONFIG_DIR:-}" && -n "${CLAUDE_HOME:-}" && "$CLAUDE_CONFIG_DIR" != "$CLAUDE_HOME" ]]; then
+  printf 'install: CLAUDE_CONFIG_DIR and legacy CLAUDE_HOME disagree: %s != %s\n' "$CLAUDE_CONFIG_DIR" "$CLAUDE_HOME" >&2
+  exit 2
+fi
+CLAUDE_CONFIG_DIR="${CLAUDE_CONFIG_DIR:-${CLAUDE_HOME:-$HOME/.claude}}"
+CLAUDE_HOME="$CLAUDE_CONFIG_DIR"
 _COPY_FALLBACK_COUNT=0
 
 # shellcheck disable=SC1091
 . "$REPO_ROOT/scripts/lib/portable.sh"
 # shellcheck disable=SC1091
 . "$REPO_ROOT/scripts/lib/allowlist.sh"
+_HOST_WRITE_AVAILABLE=0
+if [[ -f "$REPO_ROOT/scripts/lib/host-manifest.sh" && -f "$REPO_ROOT/scripts/lib/host-write.sh" ]]; then
+  # shellcheck disable=SC1091
+  . "$REPO_ROOT/scripts/lib/host-manifest.sh"
+  # shellcheck disable=SC1091
+  . "$REPO_ROOT/scripts/lib/host-write.sh"
+  _HOST_WRITE_AVAILABLE=1
+elif [[ "${#ENABLED_HOSTS[@]}" -gt 0 ]]; then
+  echo "install: host write libraries unavailable in this install layout" >&2
+  exit 2
+fi
+
+# Validate every requested optional host before the base installer mutates any
+# destination. A stage-2 manifest with no write module must fail cleanly, not
+# after the Claude install path has already run.
+if [[ "$_HOST_WRITE_AVAILABLE" -eq 1 ]]; then
+  _preflight_hosts=" "
+  for _host in "${ENABLED_HOSTS[@]}"; do
+    [[ "$_preflight_hosts" == *" $_host "* ]] && continue
+    _preflight_hosts+="$_host "
+    _host_write_module "$REPO_ROOT" "$_host" install_module >/dev/null
+  done
+  unset _host _preflight_hosts
+fi
 
 _INSTALL_PLATFORM="$(detect_platform)"
 
@@ -362,6 +403,24 @@ if [[ "$VERIFY" -eq 1 ]] && [[ "$_SKIP_PREFLIGHT" != "1" ]]; then
   echo
 fi
 
+# Validate every explicitly selected host before the legacy Claude/base install
+# mutates anything. Host installers define --dry-run as a read-only ownership
+# and conflict check, so a user-owned policy (for example OpenCode's
+# permission.bash) fails the whole multi-host operation at the transaction
+# boundary instead of leaving a surprising partial base install behind.
+if [[ "$DRY_RUN" -eq 0 && "${#ENABLED_HOSTS[@]}" -gt 0 ]]; then
+  echo "==> optional host preflight"
+  _preflighted_hosts=" "
+  for _host in "${ENABLED_HOSTS[@]}"; do
+    [[ "$_preflighted_hosts" == *" $_host "* ]] && continue
+    _preflighted_hosts+="$_host "
+    host_write_install "$REPO_ROOT" "$_host" 1 >/dev/null
+    echo "  ok    $_host"
+  done
+  unset _host _preflighted_hosts
+  echo
+fi
+
 install_pmctl_cli
 echo
 
@@ -480,9 +539,9 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
     # and does NOT leak into --verify's run-all-tests preflight (which spawns
     # nested installs that must default CLAUDE_HOME to their own HOME).
     if [[ -n "$PROFILE" ]]; then
-      PM_DISPATCH_REPO="$REPO_ROOT" CLAUDE_HOME="$CLAUDE_HOME" bash "$REPO_ROOT/scripts/install-guards.sh" --dry-run --profile "$PROFILE"
+      PM_DISPATCH_REPO="$REPO_ROOT" CLAUDE_CONFIG_DIR="$CLAUDE_CONFIG_DIR" bash "$REPO_ROOT/scripts/install-guards.sh" --dry-run --profile "$PROFILE"
     else
-      PM_DISPATCH_REPO="$REPO_ROOT" CLAUDE_HOME="$CLAUDE_HOME" bash "$REPO_ROOT/scripts/install-guards.sh" --dry-run
+      PM_DISPATCH_REPO="$REPO_ROOT" CLAUDE_CONFIG_DIR="$CLAUDE_CONFIG_DIR" bash "$REPO_ROOT/scripts/install-guards.sh" --dry-run
     fi
   fi
 else
@@ -494,9 +553,9 @@ else
   # CLAUDE_HOME and PM_DISPATCH_REPO passed per-call (not exported) so they scope
   # to hook wiring only and do not leak into nested install runs.
   if [[ -n "$PROFILE" ]]; then
-    PM_DISPATCH_REPO="$REPO_ROOT" CLAUDE_HOME="$CLAUDE_HOME" bash "$REPO_ROOT/scripts/install-guards.sh" --profile "$PROFILE"
+    PM_DISPATCH_REPO="$REPO_ROOT" CLAUDE_CONFIG_DIR="$CLAUDE_CONFIG_DIR" bash "$REPO_ROOT/scripts/install-guards.sh" --profile "$PROFILE"
   else
-    PM_DISPATCH_REPO="$REPO_ROOT" CLAUDE_HOME="$CLAUDE_HOME" bash "$REPO_ROOT/scripts/install-guards.sh"
+    PM_DISPATCH_REPO="$REPO_ROOT" CLAUDE_CONFIG_DIR="$CLAUDE_CONFIG_DIR" bash "$REPO_ROOT/scripts/install-guards.sh"
   fi
 fi
 echo
@@ -505,21 +564,18 @@ echo "==> dispatch permissions.allow"
 install_dispatch_allowlist
 echo
 
-# codex-as-host wiring (hosts/codex/host.yaml driven; see scripts/install-guards-codex.sh).
-# Opt-in only via --enable-codex-command-guard — NEVER auto-detected from codex
-# being on PATH (see the flag's header comment: hooks.json is global to every
-# codex session on the machine, and the registered guard policy — a curated
-# denylist, scripts/guard-pm-bash.sh — applies to every Bash call in every
-# codex session on this machine once wired, not just pm-dispatch ones).
-if [[ "$ENABLE_CODEX_COMMAND_GUARD" -eq 1 ]]; then
-  echo "==> codex host"
-  if [[ "$DRY_RUN" -eq 1 ]]; then
-    bash "$REPO_ROOT/scripts/install-guards-codex.sh" --dry-run
-  else
-    bash "$REPO_ROOT/scripts/install-guards-codex.sh"
-  fi
+# Optional host wiring is selected explicitly and dispatched through manifest
+# module paths. It is never auto-detected from a binary on PATH because these
+# policies affect every session using the host's global config.
+_installed_hosts=" "
+for _host in "${ENABLED_HOSTS[@]}"; do
+  [[ "$_installed_hosts" == *" $_host "* ]] && continue
+  _installed_hosts+="$_host "
+  echo "==> $_host host"
+  host_write_install "$REPO_ROOT" "$_host" "$DRY_RUN"
   echo
-fi
+done
+unset _host _installed_hosts _enable_host _HOST_WRITE_AVAILABLE
 
 if [[ "$_COPY_FALLBACK_COUNT" -gt 0 && "$DRY_RUN" -eq 0 ]]; then
   echo

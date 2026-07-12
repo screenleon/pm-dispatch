@@ -61,6 +61,8 @@ SUITE_NAMES=(
   test-core-schemas
   test-host-manifest
   test-host-write-codex
+  test-host-write-opencode
+  test-host-write-parity
   test-pm-prep-snapshot
   test-schema-task-mirrors-backlog
   test-state-store
@@ -138,6 +140,8 @@ declare -A SUITE_PATHS=(
   [test-core-schemas]="scripts/test-core-schemas.sh"
   [test-host-manifest]="scripts/test-host-manifest.sh"
   [test-host-write-codex]="scripts/test-host-write-codex.sh"
+  [test-host-write-opencode]="scripts/test-host-write-opencode.sh"
+  [test-host-write-parity]="scripts/test-host-write-parity.sh"
   [test-pm-prep-snapshot]="scripts/test-pm-prep-snapshot.sh"
   [test-schema-task-mirrors-backlog]="scripts/test-schema-task-mirrors-backlog.sh"
   [test-state-store]="scripts/test-state-store.sh"

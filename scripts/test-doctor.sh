@@ -1922,6 +1922,25 @@ case_doctor_claude_config_dir() {
   fi
 }
 
+case_doctor_claude_config_root_conflict_fails() {
+  # Behavior: doctor surfaces divergent canonical/legacy Claude roots as a
+  # hard configuration failure instead of silently inspecting only one tree.
+  local name="doctor-claude-config-root-conflict-fails"
+  should_run "$name" || return 0
+  local home="$tmp_root/home-config-root-conflict" out status=0 path
+  mkdir -p "$home"
+  path="$(make_stub_bin "$tmp_root/bin-config-root-conflict" claude codex)"
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$tmp_root/canonical-root" CLAUDE_HOME="$tmp_root/legacy-root" \
+    PATH="$path" bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
+  if [[ "$status" -eq 1 \
+      && "$out" == *"CLAUDE_CONFIG_DIR and legacy CLAUDE_HOME disagree"* \
+      && "$out" == *"unset CLAUDE_HOME or set both variables to the same Claude config root"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected divergent roots to fail doctor; status=$status out=$out"
+  fi
+}
+
 case_doctor_repo_trusted_linter() {
   # Verifies that doctor.sh runs the INSTALLED linter, not the target repo's
   # scripts/lint-frontmatter.sh, preventing arbitrary code execution via --repo.
@@ -2078,6 +2097,7 @@ case_doctor_copy_mode_no_lib_no_codex
 case_doctor_installed_copy_no_repo
 case_doctor_installed_copy_no_repo_json
 case_doctor_claude_config_dir
+case_doctor_claude_config_root_conflict_fails
 case_doctor_repo_trusted_linter
 case_doctor_stale_hook_sibling_prefix_warns
 case_doctor_native_windows_notice

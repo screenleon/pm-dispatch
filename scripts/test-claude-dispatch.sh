@@ -173,13 +173,12 @@ case_exit_propagated() {
   rm -rf "$bin" "$work"; rm -f "$brief"
 }
 
-# ---- 13: successful dispatch logs claude-pool token usage ----
+# ---- 13: repo-local default logs usage without a Claude host install ----
 case_usage_log() {
-  local name="auto-log/successful dispatch logs claude pool"; should_run "$name" || return 0
+  local name="auto-log/repo-local default logs claude pool without ~/.claude/scripts"; should_run "$name" || return 0
   local bin home work brief tracker code
   bin="$(mktemp -d)"; _install_fake_claude "$bin"
-  home="$(mktemp -d)"; mkdir -p "$home/.claude/scripts"
-  ln -s "$REPO_ROOT/scripts/log-usage.sh" "$home/.claude/scripts/log-usage.sh"
+  home="$(mktemp -d)"  # deliberately no host-owned script installation
   work="$(mktemp -d)"; git init -q "$work"; brief="$(_mk_brief "$work")"
   set +e; PATH="$bin:$PATH" HOME="$home" "$DISPATCH" --cd "$work" --brief-file "$brief" >/dev/null 2>&1; code=$?; set -e
   tracker="$home/.claude/usage-tracker.jsonl"
@@ -189,15 +188,13 @@ case_usage_log() {
   rm -rf "$bin" "$home" "$work"; rm -f "$brief"
 }
 
-# ---- 13b: PM_CFG_USAGE_LOG_PATH overrides the claude-host-assumed default path ----
+# ---- 13b: PM_CFG_USAGE_LOG_PATH overrides the repo-local default path ----
 case_usage_log_custom_path() {
-  local name="auto-log/PM_CFG_USAGE_LOG_PATH overrides default log-usage.sh path"
+  local name="auto-log/PM_CFG_USAGE_LOG_PATH overrides repo-local log-usage.sh path"
   should_run "$name" || return 0
   local bin home work brief custom_log marker code
   bin="$(mktemp -d)"; _install_fake_claude "$bin"
-  home="$(mktemp -d)"  # deliberately NO $home/.claude/scripts/log-usage.sh —
-                        # proves the default path is never consulted when the
-                        # override is set.
+  home="$(mktemp -d)"
   custom_log="$(mktemp -d)/custom-log-usage.sh"
   marker="$(mktemp -d)/marker"
   cat > "$custom_log" <<EOF

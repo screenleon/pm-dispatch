@@ -29,10 +29,14 @@ else
     done
   }
 fi
-# Honor an explicit CLAUDE_HOME override (passed per-call by uninstall.sh, or set
-# when running standalone) so hook removal targets the same dir the install used.
-# Defaults to ~/.claude.
-CLAUDE_HOME="${CLAUDE_HOME:-$HOME/.claude}"
+# Use the same canonical Claude runtime config root as install/doctor/guards.
+# CLAUDE_HOME remains a compatibility alias for standalone legacy callers.
+if [[ -n "${CLAUDE_CONFIG_DIR:-}" && -n "${CLAUDE_HOME:-}" && "$CLAUDE_CONFIG_DIR" != "$CLAUDE_HOME" ]]; then
+  printf 'uninstall-guards: CLAUDE_CONFIG_DIR and legacy CLAUDE_HOME disagree\n' >&2
+  exit 2
+fi
+CLAUDE_CONFIG_DIR="${CLAUDE_CONFIG_DIR:-${CLAUDE_HOME:-$HOME/.claude}}"
+CLAUDE_HOME="$CLAUDE_CONFIG_DIR"
 settings="$CLAUDE_HOME/settings.json"
 
 if ! command -v jq >/dev/null 2>&1; then

@@ -21,8 +21,19 @@
 #
 # shellcheck disable=SC2153  # REPO_ROOT/PROFILE are doctor.sh globals, assigned before main() dispatches here
 
+_doctor_host_claude_check_config_root() {
+  if [[ -n "${CLAUDE_CONFIG_DIR:-}" && -n "${CLAUDE_HOME:-}" && "$CLAUDE_CONFIG_DIR" != "$CLAUDE_HOME" ]]; then
+    emit_check host.claude.config-root fail \
+      "CLAUDE_CONFIG_DIR and legacy CLAUDE_HOME disagree" \
+      "unset CLAUDE_HOME or set both variables to the same Claude config root"
+  else
+    emit_check host.claude.config-root ok \
+      "Claude config root: ${CLAUDE_CONFIG_DIR:-${CLAUDE_HOME:-$HOME/.claude}}"
+  fi
+}
+
 _doctor_host_claude_check_settings_file() {
-  local settings="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
+  local settings="${CLAUDE_CONFIG_DIR:-${CLAUDE_HOME:-$HOME/.claude}}/settings.json"
   _SETTINGS_FILE_FAILED=0
   _SETTINGS_FILE_INVALID=0
   if [[ ! -f "$settings" ]]; then
@@ -142,7 +153,7 @@ _doctor_host_claude_stale_hook_commands() {
 }
 
 _doctor_host_claude_check_hooks() {
-  local settings="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
+  local settings="${CLAUDE_CONFIG_DIR:-${CLAUDE_HOME:-$HOME/.claude}}/settings.json"
   if [[ "$_SETTINGS_FILE_FAILED" -eq 1 ]]; then
     emit_check hooks fail "settings.json missing — cannot check hooks" "bash '${REPO_ROOT}/install.sh'"
     return
@@ -240,7 +251,7 @@ _doctor_host_claude_check_hooks() {
 }
 
 _doctor_host_claude_check_dispatch_allowlist() {
-  local settings="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
+  local settings="${CLAUDE_CONFIG_DIR:-${CLAUDE_HOME:-$HOME/.claude}}/settings.json"
   if [[ "$_SETTINGS_FILE_FAILED" -eq 1 || "$_SETTINGS_FILE_INVALID" -eq 1 ]]; then
     return
   fi
@@ -283,7 +294,7 @@ _doctor_host_claude_check_dispatch_allowlist() {
 }
 
 _doctor_host_claude_check_manifest() {
-  local manifest_path="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.pm-dispatch/install-manifest.json"
+  local manifest_path="${CLAUDE_CONFIG_DIR:-${CLAUDE_HOME:-$HOME/.claude}}/.pm-dispatch/install-manifest.json"
   if [[ ! -f "$manifest_path" ]]; then
     emit_check manifest warn "install manifest missing — uninstall.sh cannot track files" \
       "bash '${REPO_ROOT}/install.sh' to regenerate"
@@ -362,7 +373,7 @@ _doctor_host_claude_probe() {
       fi
       ;;
     pm_command_interface)
-      if [[ -f "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/commands/pm.md" ]]; then
+      if [[ -f "${CLAUDE_CONFIG_DIR:-${CLAUDE_HOME:-$HOME/.claude}}/commands/pm.md" ]]; then
         _PROBE_WIRED=1; _PROBE_PROVIDER=host_native; _PROBE_ENFORCEMENT=none; _PROBE_COVERAGE=full
         _PROBE_STABILITY=stable; _PROBE_CONFIDENCE=probed; _PROBE_STATUS=ok
         _PROBE_MESSAGE="PM command interface installed (commands/pm.md)"
@@ -381,7 +392,7 @@ _doctor_host_claude_probe() {
 # — the single wiring-signal source of truth shared with the consistency
 # check below.
 _doctor_host_claude_capabilities() {
-  local settings="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
+  local settings="${CLAUDE_CONFIG_DIR:-${CLAUDE_HOME:-$HOME/.claude}}/settings.json"
   if [[ "$_SETTINGS_FILE_FAILED" -eq 1 || "$_SETTINGS_FILE_INVALID" -eq 1 ]] \
     || ! command -v jq >/dev/null 2>&1; then
     emit_check host.claude.capabilities warn \
@@ -441,7 +452,7 @@ _doctor_host_claude_manifest_field() {
 # live, wired environment actually probes to — drift between the static file
 # and reality must be observable, not silent.
 _doctor_host_claude_check_manifest_consistency() {
-  local settings="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
+  local settings="${CLAUDE_CONFIG_DIR:-${CLAUDE_HOME:-$HOME/.claude}}/settings.json"
   if [[ ! -f "$REPO_ROOT/hosts/claude/host.yaml" ]]; then
     emit_check host.claude.manifest-consistency warn \
       "hosts/claude/host.yaml missing — cannot check declared/probed consistency"
@@ -486,6 +497,7 @@ _doctor_host_claude_check_manifest_consistency() {
 
 # Host-module entry point (required by doctor.sh's generic loader).
 doctor_host_claude_run() {
+  _doctor_host_claude_check_config_root
   _doctor_host_claude_check_settings_file
   _doctor_host_claude_check_hooks
   _doctor_host_claude_check_dispatch_allowlist

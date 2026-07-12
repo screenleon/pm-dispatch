@@ -64,6 +64,17 @@ cd "${PM_DISPATCH_REPO}"
 bash install.sh
 ```
 
+Optional PM-host wiring is explicit because it modifies each host's global
+configuration:
+
+```bash
+bash install.sh --enable-host codex
+bash install.sh --enable-host opencode
+```
+
+OpenCode uses `${XDG_CONFIG_HOME:-$HOME/.config}/opencode/opencode.json` and
+refuses to overwrite an existing `permission.bash` policy.
+
 `install.sh` symlinks each file individually into `~/.claude/agents/`,
 `~/.claude/commands/`, `~/.claude/scripts/`, and `~/.claude/.pm/` so that
 updates to this repo are automatically reflected without re-running the installer.

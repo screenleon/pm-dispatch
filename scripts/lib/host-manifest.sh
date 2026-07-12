@@ -1,16 +1,10 @@
 #!/usr/bin/env bash
 # Generic reader for hosts/<name>/host.yaml (schema v1, docs/host-contract.md).
 #
-# Consumed by install.sh/uninstall.sh/doctor.sh so the FACTS these callers
-# read (target path, format, managed flag) come from the manifest, not a
-# hardcoded per-host branch. This is partial today, not fully host-generic:
-# install.sh:514/uninstall.sh:317 still call codex-specific scripts
-# (scripts/install-guards-codex.sh / uninstall-guards-codex.sh) directly for
-# the opt-in codex hook-wiring step — those scripts read their target facts
-# from this manifest, but the call site itself still names "codex". Adding a
-# host means adding hosts/<name>/host.yaml plus (for now) that host's own
-# install/uninstall wiring script; the manifest removes the need to hardcode
-# facts inside those scripts, not the need for them to exist per host yet.
+# Consumed by install.sh/uninstall.sh/doctor.sh so target facts and optional
+# write-module paths come from the manifest, not host-named core branches.
+# Host-specific format judgment remains inside the declared modules; the
+# shared dispatcher only selects and invokes them symmetrically.
 # Deliberately grep/awk-based (no YAML parser dependency), mirroring the
 # block-extraction approach scripts/test-host-manifest.sh and
 # doctor-host-claude.sh already use for the same file shape.

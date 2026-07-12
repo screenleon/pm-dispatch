@@ -194,9 +194,9 @@ case_auto_log_parser_single_integer() {
   fi
 }
 
-# ---- 10: auto-log/successful-dispatch-logs-codex ----
+# ---- 10: repo-local default logs usage without a Claude host install ----
 case_auto_log_successful_dispatch_logs_codex() {
-  local name="auto-log/successful-dispatch-logs-codex"
+  local name="auto-log/repo-local-default-logs-codex-without-claude-script"
   local _fake_bin10 _home10 _work10 _brief10 _tracker10 _exit10
   local path
   should_run "$name" || return 0
@@ -212,9 +212,7 @@ exit 0
 FAKEOF
   chmod +x "$_fake_bin10/codex"
 
-  _home10="$(mktemp -d)"
-  mkdir -p "$_home10/.claude/scripts"
-  ln -s "$REPO_ROOT/scripts/log-usage.sh" "$_home10/.claude/scripts/log-usage.sh"
+  _home10="$(mktemp -d)"  # deliberately no host-owned script installation
 
   _work10="$(mktemp -d)"
   git init -q "$_work10"
@@ -239,9 +237,9 @@ FAKEOF
   rm -f "$_brief10"
 }
 
-# ---- 10b: PM_CFG_USAGE_LOG_PATH overrides the claude-host-assumed default path ----
+# ---- 10b: PM_CFG_USAGE_LOG_PATH overrides the repo-local default path ----
 case_auto_log_custom_path_codex() {
-  local name="auto-log/PM_CFG_USAGE_LOG_PATH overrides default log-usage.sh path (codex)"
+  local name="auto-log/PM_CFG_USAGE_LOG_PATH overrides repo-local log-usage.sh path (codex)"
   local _fake_bin _home _work _brief _custom_log _marker _exit
   should_run "$name" || return 0
 
@@ -255,9 +253,7 @@ exit 0
 FAKEOF
   chmod +x "$_fake_bin/codex"
 
-  _home="$(mktemp -d)"  # deliberately NO $_home/.claude/scripts/log-usage.sh —
-                          # proves the default path is never consulted when the
-                          # override is set.
+  _home="$(mktemp -d)"
   _custom_log="$(mktemp -d)/custom-log-usage.sh"
   _marker="$(mktemp -d)/marker"
   cat > "$_custom_log" <<EOF
@@ -380,8 +376,6 @@ FAKEOF
   chmod +x "$_fake_bin13/codex"
 
   _home13="$(mktemp -d)"
-  mkdir -p "$_home13/.claude/scripts"
-  # Deliberately no log-usage.sh so the auto-log call fails
 
   _work13="$(mktemp -d)"
   git init -q "$_work13"
@@ -389,7 +383,10 @@ FAKEOF
   _brief13="$(mktemp --suffix=.md)"
   printf 'goal: test logging failure\n' > "$_brief13"
 
+  # An explicit broken override must remain best-effort: it reports the logging
+  # failure without replacing the executor's successful exit status.
   PATH="$_fake_bin13:$PATH" HOME="$_home13" \
+    PM_CFG_USAGE_LOG_PATH="$_home13/missing-log-usage.sh" \
     "$DISPATCH" --cd "$_work13" --brief-file "$_brief13" >/dev/null 2>&1
   _exit13=$?
 

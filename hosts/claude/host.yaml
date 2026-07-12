@@ -23,14 +23,9 @@
 # claude; this file is also the declarative baseline a future host-generic
 # install write path would diff its byte-compatible output against.
 #
-# Known naming inconsistency (not fixed here, out of scope for this
-# declarative-only manifest): install.sh derives its destination from
-# $CLAUDE_HOME, while doctor-host-claude.sh and the guard-*.sh hooks read
-# $CLAUDE_CONFIG_DIR — both default to ~/.claude but are two distinct env vars
-# today. This manifest anchors paths to $CLAUDE_CONFIG_DIR because that is the
-# variable the probed (doctor/guard) layer actually reads; a future
-# install-write-path wiring effort should reconcile the two names rather than
-# this file picking a third convention.
+# CLAUDE_CONFIG_DIR is the canonical config root across install, uninstall,
+# doctor, guards, and this manifest. CLAUDE_HOME is accepted only as a legacy
+# install/uninstall alias; if both are explicitly set they must be identical.
 schema_version: 1
 host_name: claude
 host_binary: claude
@@ -159,8 +154,8 @@ permissions_surface:
   config_target: settings
   managed: true
 
-# Host-module wiring. doctor_module must exist. uninstall_module is non-null
-# (unlike codex/opencode) because claude already has a live install write
-# path (install.sh, not yet manifest-driven) with a matching uninstall path.
+# Host-module wiring. Claude remains the byte-compatible base install path,
+# so it is not independently dispatched by the optional-host write loop.
 doctor_module: scripts/lib/doctor-host-claude.sh
-uninstall_module: uninstall.sh
+install_module: null
+uninstall_module: null

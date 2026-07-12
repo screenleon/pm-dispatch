@@ -1,0 +1,70 @@
+# host.yaml - AUTHORED manifest for OpenCode as a PM host.
+# The native permission surface and PM command path were probed independently;
+# stage 3 wires them with receipt-based reversible ownership.
+schema_version: 1
+host_name: opencode
+host_binary: opencode
+
+install_targets:
+  - id: config
+    path: "$XDG_CONFIG_HOME/opencode/opencode.json"
+    format: opencode-config-json
+    managed: true
+  - id: commands
+    path: "$XDG_CONFIG_HOME/opencode/commands"
+    format: copy-tree
+    managed: true
+  - id: tools
+    path: "$XDG_CONFIG_HOME/opencode/tools"
+    format: copy-tree
+    managed: true
+
+# OpenCode guard policy is declarative configuration. Its JavaScript plugin
+# hooks were inspected but not probed end to end, so no pseudo hook events are
+# declared here.
+hook_surface: {}
+
+guard_bindings:
+  - capability: command_guard
+    binding_form: config-fragment
+    provider: host_policy
+    enforcement: blocking
+    coverage: full
+    stability: evolving
+    confidence: probed
+  - capability: file_guard
+    binding_form: config-fragment
+    provider: none
+    enforcement: none
+    coverage: none
+    stability: evolving
+    confidence: probed
+  - capability: session_lifecycle
+    binding_form: none
+    provider: none
+    enforcement: none
+    coverage: none
+    stability: evolving
+    confidence: assumed
+  - capability: pm_command_interface
+    binding_form: config-fragment
+    provider: host_native
+    enforcement: none
+    coverage: partial
+    stability: evolving
+    confidence: probed
+  - capability: statusline
+    binding_form: none
+    provider: none
+    enforcement: none
+    coverage: none
+    stability: evolving
+    confidence: assumed
+
+permissions_surface:
+  config_target: config
+  managed: true
+
+doctor_module: scripts/lib/doctor-host-opencode.sh
+install_module: scripts/install-host-opencode.sh
+uninstall_module: scripts/uninstall-host-opencode.sh
