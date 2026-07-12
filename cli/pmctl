@@ -341,6 +341,12 @@ case "$cmd/$sub" in
     fi
     pmctl_memory_dir "$@"
     ;;
+  memory/resolve)
+    if ! declare -F pmctl_memory_resolve >/dev/null; then
+      pmctl_die "memory resolve unavailable"
+    fi
+    pmctl_memory_resolve "$@"
+    ;;
   memory/doctor)
     if ! declare -F pmctl_memory_doctor >/dev/null; then
       pmctl_die "memory doctor unavailable"

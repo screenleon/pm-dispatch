@@ -31,8 +31,28 @@ pmctl_pm_append_focus_ticket() {
   esac
 }
 
+# Keep the context pack parseable while enforcing a byte budget. Remove whole
+# memories[] entries from the tail and re-serialize; never raw-slice JSON.
+pmctl_pm_bound_memory_pack() {
+  local pack="$1" max_bytes="${2:-6000}" count bounded bytes
+  [[ "$max_bytes" =~ ^[1-9][0-9]*$ ]] || return 1
+  count="$(jq -r '.memories | length' <<<"$pack" 2>/dev/null)" || return 1
+  [[ "$count" =~ ^[0-9]+$ ]] || return 1
+  while (( count >= 0 )); do
+    bounded="$(jq -c --argjson count "$count" '.memories = (.memories[:$count])' <<<"$pack" 2>/dev/null)" || return 1
+    bytes="$(printf '%s' "$bounded" | wc -c | tr -d '[:space:]')"
+    if [[ "$bytes" =~ ^[0-9]+$ ]] && (( bytes <= max_bytes )); then
+      printf '%s\n' "$bounded"
+      return 0
+    fi
+    count=$((count - 1))
+  done
+  return 1
+}
+
 pmctl_pm_emit_prepare() {
   local json="$1" work_dir="$2" request="$3" focus="$4" snapshot="$5" snapshot_status="$6"
+  local memory_resolution="$7" memory_context_status="$8" memory_context="$9"
   if [[ "$json" -eq 1 ]]; then
     jq -cn \
       --arg work_dir "$work_dir" \
@@ -40,12 +60,22 @@ pmctl_pm_emit_prepare() {
       --arg focus "$focus" \
       --arg snapshot "$snapshot" \
       --arg snapshot_status "$snapshot_status" \
-      '{schema_version:1,mode:"batch-only",working_dir:$work_dir,request:$request,focus_tickets:(if $focus == "" then [] else $focus | split(",") end),snapshot_file:(if $snapshot == "" then null else $snapshot end),snapshot_status:$snapshot_status,handover_required:true,ambiguity_policy:"reject-and-return-to-host"}'
+      --argjson memory_resolution "$memory_resolution" \
+      --arg memory_context_status "$memory_context_status" \
+      --arg memory_context "$memory_context" \
+      '{schema_version:1,mode:"batch-only",working_dir:$work_dir,request:$request,focus_tickets:(if $focus == "" then [] else $focus | split(",") end),snapshot_file:(if $snapshot == "" then null else $snapshot end),snapshot_status:$snapshot_status,memory_resolution:$memory_resolution,memory_context_status:$memory_context_status,memory_context:(if $memory_context == "" then null else $memory_context end),handover_required:true,ambiguity_policy:"reject-and-return-to-host"}'
   else
     printf 'mode: batch-only\nworking_dir: %s\n' "$work_dir"
     [[ -n "$focus" ]] && printf 'focus_tickets: %s\n' "$focus"
     printf 'snapshot_status: %s\n' "$snapshot_status"
     [[ -n "$snapshot" ]] && printf 'snapshot_file: %s\n' "$snapshot"
+    printf 'memory_status: %s\n' "$memory_context_status"
+    local memory_dir
+    memory_dir="$(jq -r '.memory_dir // empty' <<<"$memory_resolution")"
+    [[ -n "$memory_dir" ]] && printf 'memory_dir: %s\n' "$memory_dir"
+    if [[ -n "$memory_context" ]]; then
+      printf '%s\n%s\n%s\n' '--- memory_context ---' "$memory_context" '--- end_memory_context ---'
+    fi
     printf 'next: author a complete dispatch_handover_v1 brief, then run pmctl pm run\n'
   fi
 }
@@ -96,7 +126,56 @@ pmctl_pm_prepare() {
   else
     snapshot=""
   fi
-  pmctl_pm_emit_prepare "$json" "$work_dir" "$request" "$focus" "$snapshot" "$snapshot_status"
+
+  # Host-neutral memory hydration. The strict resolver prevents an explicitly
+  # selected memory path from silently falling back to Claude's legacy path.
+  local memory_resolution memory_rc=0 memory_context="" memory_context_status="unavailable" query_rc=0
+  memory_resolution='{"schema_version":1,"status":"unavailable","repo_root":"","project_key":"","memory_dir":null,"resolution_source":"none","readable":false,"writable":false,"reason":null}'
+  if declare -F pmctl_memory_resolve >/dev/null 2>&1; then
+    memory_resolution="$(pmctl_memory_resolve --repo-root "$work_dir" --json)" || memory_rc=$?
+    if [[ "$memory_rc" -eq 3 ]]; then
+      printf 'pmctl pm prepare: explicit memory configuration is invalid: %s\n' \
+        "$(jq -r '.reason // "unknown reason"' <<<"$memory_resolution" 2>/dev/null || printf 'unknown reason')" >&2
+      [[ -n "$snapshot" && -f "$snapshot" ]] && rm -f "$snapshot"
+      return 1
+    elif [[ "$memory_rc" -eq 0 ]]; then
+      memory_context_status="no-hits"
+      if declare -F pmctl_context_pack >/dev/null 2>&1; then
+        local -a memory_terms=() memory_pack_args=("$work_dir" --task-id pm-prepare --source memory)
+        local memory_term
+        if declare -F _ctx_extract_terms >/dev/null 2>&1; then
+          while IFS= read -r memory_term; do
+            [[ -n "$memory_term" ]] && memory_terms+=("$memory_term")
+            [[ "${#memory_terms[@]}" -ge 8 ]] && break
+          done < <(_ctx_extract_terms "$request")
+        fi
+        # Empty extraction (currently CJK-only text, short English, or
+        # stopword-only requests; CC-465 covers CJK) falls back to the whole
+        # request so LIKE/FTS can still find exact substrings.
+        [[ "${#memory_terms[@]}" -gt 0 ]] || memory_terms+=("$request")
+        for memory_term in "${memory_terms[@]}"; do
+          memory_pack_args+=(--query "$memory_term")
+        done
+        memory_context="$(pmctl_context_pack "${memory_pack_args[@]}")" || query_rc=$?
+        if [[ "$query_rc" -ne 0 ]]; then
+          memory_context=""
+          memory_context_status="query-failed"
+        elif ! jq -e '.memories | length > 0' <<<"$memory_context" >/dev/null 2>&1; then
+          memory_context=""
+        else
+          # Preparation is bounded but remains a valid context-pack document.
+          if memory_context="$(pmctl_pm_bound_memory_pack "$memory_context" 6000)"; then
+            memory_context_status="hydrated"
+          else
+            memory_context=""
+            memory_context_status="query-failed"
+          fi
+        fi
+      fi
+    fi
+  fi
+  pmctl_pm_emit_prepare "$json" "$work_dir" "$request" "$focus" "$snapshot" "$snapshot_status" \
+    "$memory_resolution" "$memory_context_status" "$memory_context"
 }
 
 pmctl_pm_run() {

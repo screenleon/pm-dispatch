@@ -23,6 +23,14 @@ if [[ "$(type -t pm_config_load 2>/dev/null)" != function ]]; then
   . "$(dirname "${BASH_SOURCE[0]}")/pmctl-config.sh" 2>/dev/null || true
 fi
 
+# Stable project identity shared with the state substrate. The worktree-aware
+# key keeps a main checkout and its linked worktrees in one project partition.
+if [[ "$(type -t _sw_worktree_project_key 2>/dev/null)" != function ]]; then
+  # shellcheck source=scripts/lib/state-paths.sh
+  # shellcheck disable=SC1091
+  . "$(dirname "${BASH_SOURCE[0]}")/state-paths.sh" 2>/dev/null || true
+fi
+
 # Loads ~/.pm-dispatch/config's dispatch.memory_dir into PM_CFG_MEMORY_DIR
 # when no caller has already populated it.
 _pmctl_memory_load_config_override() {
@@ -38,6 +46,105 @@ pmctl_memory_dir() {
   _pmctl_memory_load_config_override
   mem_dir="$(find_memory_dir "$cwd")" || return 1
   printf '%s\n' "$mem_dir"
+}
+
+_pmctl_memory_resolve_usage() {
+  cat <<'EOF'
+Usage: pmctl memory resolve [--repo-root <path>] [--json]
+
+Resolve the canonical project-memory directory without silently falling back
+from an explicitly configured but unavailable path.
+
+Exit codes: 0 resolved, 1 unavailable, 2 usage error, 3 invalid explicit path.
+EOF
+}
+
+_pmctl_memory_project_key() {
+  local repo_root="$1"
+  if declare -F _sw_worktree_project_key >/dev/null 2>&1; then
+    _SW_REPO_ROOT="$repo_root" _sw_worktree_project_key
+  else
+    # Defensive fallback for standalone sourcing on a host missing the shared
+    # state helpers. The canonical path remains deterministic and inspectable.
+    printf '%s\n' "$repo_root"
+  fi
+}
+
+_pmctl_memory_emit_resolution() {
+  local json="$1" status="$2" repo_root="$3" project_key="$4" memory_dir="$5" source="$6" reason="$7"
+  local readable=false writable=false
+  [[ -n "$memory_dir" && -r "$memory_dir" ]] && readable=true
+  [[ -n "$memory_dir" && -w "$memory_dir" ]] && writable=true
+  if [[ "$json" -eq 1 ]]; then
+    jq -cn \
+      --arg status "$status" --arg repo_root "$repo_root" --arg project_key "$project_key" \
+      --arg memory_dir "$memory_dir" --arg source "$source" --arg reason "$reason" \
+      --argjson readable "$readable" --argjson writable "$writable" \
+      '{schema_version:1,status:$status,repo_root:$repo_root,project_key:$project_key,memory_dir:(if $memory_dir == "" then null else $memory_dir end),resolution_source:$source,readable:$readable,writable:$writable,reason:(if $reason == "" then null else $reason end)}'
+  else
+    printf 'status: %s\nrepo_root: %s\nproject_key: %s\nresolution_source: %s\n' "$status" "$repo_root" "$project_key" "$source"
+    [[ -n "$memory_dir" ]] && printf 'memory_dir: %s\nreadable: %s\nwritable: %s\n' "$memory_dir" "$readable" "$writable"
+    [[ -n "$reason" ]] && printf 'reason: %s\n' "$reason"
+  fi
+}
+
+# Strict, diagnostic resolver used at cross-host boundaries. Unlike the legacy
+# find_memory_dir API, an explicit but unavailable override is an error: host
+# switching must never appear successful while silently selecting other memory.
+pmctl_memory_resolve() {
+  # Use the caller's cwd, not cli/pmctl's install-root REPO_ROOT. An explicit
+  # --repo-root still wins and is recommended for automation.
+  local repo_root="$PWD" json=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo-root)
+        [[ $# -ge 2 ]] || { printf 'pmctl memory resolve: --repo-root requires a value\n' >&2; return 2; }
+        repo_root="$2"; shift 2 ;;
+      --json) json=1; shift ;;
+      -h|--help) _pmctl_memory_resolve_usage; return 0 ;;
+      *) printf 'pmctl memory resolve: unknown argument: %s\n' "$1" >&2; return 2 ;;
+    esac
+  done
+
+  repo_root="$(cd "$repo_root" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null)" || {
+    printf 'pmctl memory resolve: --repo-root must be inside a git worktree\n' >&2
+    return 2
+  }
+  local project_key memory_dir="" source="none" status="unavailable" reason="" rc=1
+  project_key="$(_pmctl_memory_project_key "$repo_root")"
+  _pmctl_memory_load_config_override
+
+  if [[ -n "${PM_MEMORY_DIR:-}" ]]; then
+    source="env"
+    if [[ "${PM_MEMORY_DIR}" != /* ]]; then
+      status="invalid-explicit"; reason="PM_MEMORY_DIR must be an absolute path"; rc=3
+    elif [[ ! -d "${PM_MEMORY_DIR}" ]]; then
+      status="invalid-explicit"; reason="PM_MEMORY_DIR does not exist or is not a directory"; rc=3
+    else
+      memory_dir="$(cd "${PM_MEMORY_DIR}" && pwd -P)"; status="resolved"; rc=0
+    fi
+  elif [[ "${PM_CFG_MEMORY_DIR_INVALID:-0}" -eq 1 ]]; then
+    source="config"; status="invalid-explicit"; reason="dispatch.memory_dir must be an absolute path"; rc=3
+  elif [[ -n "${PM_CFG_MEMORY_DIR:-}" ]]; then
+    source="config"
+    if [[ "${PM_CFG_MEMORY_DIR}" != /* ]]; then
+      status="invalid-explicit"; reason="dispatch.memory_dir must be an absolute path"; rc=3
+    elif [[ ! -d "${PM_CFG_MEMORY_DIR}" ]]; then
+      status="invalid-explicit"; reason="dispatch.memory_dir does not exist or is not a directory"; rc=3
+    else
+      memory_dir="$(cd "${PM_CFG_MEMORY_DIR}" && pwd -P)"; status="resolved"; rc=0
+    fi
+  else
+    # With no explicit override, retain the established Claude project-path
+    # discovery as the compatibility default.
+    if memory_dir="$(find_memory_dir "$repo_root")"; then
+      memory_dir="$(cd "$memory_dir" && pwd -P)"
+      source="legacy"; status="resolved"; rc=0
+    fi
+  fi
+
+  _pmctl_memory_emit_resolution "$json" "$status" "$repo_root" "$project_key" "$memory_dir" "$source" "$reason"
+  return "$rc"
 }
 
 _mem_json_esc() {

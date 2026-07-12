@@ -93,6 +93,168 @@ assert_jq() {
 
 # ── Test cases ─────────────────────────────────────────────────────────────────
 
+# Behavior: strict resolution reports an explicit cross-host memory directory and stable project identity.
+# Steps: create a git repo plus external memory dir; resolve through PM_MEMORY_DIR; assert the JSON contract.
+case_memory_resolve_env_contract() {
+  local name="pmctl memory resolve: env override emits resolved contract"
+  should_run "$name" || return 0
+  local repo="$tmp_root/resolve-env-repo" mdir="$tmp_root/shared-memory" out="$tmp_root/resolve-env.json" status=0
+  mkdir -p "$repo" "$mdir"
+  git -C "$repo" init -q
+  PM_MEMORY_DIR="$mdir" "$PMCTL" memory resolve --repo-root "$repo" --json > "$out" 2>/dev/null || status=$?
+  if [[ "$status" -eq 0 ]] && jq -e --arg repo "$repo" --arg mdir "$mdir" \
+    '.status == "resolved" and .repo_root == $repo and .memory_dir == $mdir and .resolution_source == "env" and (.project_key | length) > 0 and .readable == true and .writable == true' "$out" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$(<"$out")"
+  fi
+}
+
+# Behavior: an unavailable explicit path never falls through to an existing Claude legacy memory.
+# Steps: create legacy memory, point PM_MEMORY_DIR at a missing path, and assert invalid-explicit exit 3.
+case_memory_resolve_invalid_explicit_no_fallback() {
+  local name="pmctl memory resolve: invalid explicit path fails without legacy fallback"
+  should_run "$name" || return 0
+  local repo="$tmp_root/resolve-invalid-repo" cfg="$tmp_root/resolve-invalid-cfg" missing="$tmp_root/missing-memory" out="$tmp_root/resolve-invalid.json" status=0 legacy
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+  legacy="$(make_fixture_memory "$cfg" "$repo")"
+  PM_MEMORY_DIR="$missing" CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory resolve --repo-root "$repo" --json > "$out" 2>/dev/null || status=$?
+  if [[ "$status" -eq 3 ]] \
+    && jq -e '.status == "invalid-explicit" and .resolution_source == "env" and .memory_dir == null' "$out" >/dev/null \
+    && [[ -d "$legacy" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$(<"$out")"
+  fi
+}
+
+# Behavior: without an override, strict resolution preserves Claude project-memory discovery.
+# Steps: create only the legacy path, resolve it, and assert source=legacy.
+case_memory_resolve_legacy_compatibility() {
+  local name="pmctl memory resolve: unset override preserves legacy discovery"
+  should_run "$name" || return 0
+  local repo="$tmp_root/resolve-legacy-repo" cfg="$tmp_root/resolve-legacy-cfg" out="$tmp_root/resolve-legacy.json" status=0 mdir
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+  mdir="$(make_fixture_memory "$cfg" "$repo")"
+  (unset PM_MEMORY_DIR; CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory resolve --repo-root "$repo" --json) > "$out" 2>/dev/null || status=$?
+  if [[ "$status" -eq 0 ]] && jq -e --arg mdir "$mdir" \
+    '.status == "resolved" and .resolution_source == "legacy" and .memory_dir == $mdir' "$out" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$(<"$out")"
+  fi
+}
+
+# Behavior: strict resolution honors dispatch.memory_dir as the shared cross-host location.
+# Steps: write an isolated config, resolve an existing directory, and assert source=config.
+case_memory_resolve_config_contract() {
+  local name="pmctl memory resolve: config override emits resolved contract"
+  should_run "$name" || return 0
+  local repo="$tmp_root/resolve-config-repo" mdir="$tmp_root/config-memory" config="$tmp_root/resolve-config.conf" out="$tmp_root/resolve-config.json" status=0
+  mkdir -p "$repo" "$mdir"
+  git -C "$repo" init -q
+  printf 'dispatch.memory_dir = %s\n' "$mdir" > "$config"
+  (unset PM_MEMORY_DIR; PM_DISPATCH_CONFIG_FILE="$config" "$PMCTL" memory resolve --repo-root "$repo" --json) > "$out" 2>/dev/null || status=$?
+  if [[ "$status" -eq 0 ]] && jq -e --arg mdir "$mdir" \
+    '.status == "resolved" and .resolution_source == "config" and .memory_dir == $mdir' "$out" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$(<"$out")"
+  fi
+}
+
+# Behavior: PM_MEMORY_DIR remains the highest-priority explicit selector.
+# Steps: set env and config to different valid dirs; assert env wins deterministically.
+case_memory_resolve_env_outranks_config() {
+  local name="pmctl memory resolve: env override outranks config"
+  should_run "$name" || return 0
+  local repo="$tmp_root/resolve-precedence-repo" env_dir="$tmp_root/precedence-env-memory" cfg_dir="$tmp_root/precedence-config-memory" config="$tmp_root/resolve-precedence.conf" out="$tmp_root/resolve-precedence.json" status=0
+  mkdir -p "$repo" "$env_dir" "$cfg_dir"
+  git -C "$repo" init -q
+  printf 'dispatch.memory_dir = %s\n' "$cfg_dir" > "$config"
+  PM_MEMORY_DIR="$env_dir" PM_DISPATCH_CONFIG_FILE="$config" "$PMCTL" memory resolve --repo-root "$repo" --json > "$out" 2>/dev/null || status=$?
+  if [[ "$status" -eq 0 ]] && jq -e --arg env_dir "$env_dir" \
+    '.resolution_source == "env" and .memory_dir == $env_dir' "$out" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$(<"$out")"
+  fi
+}
+
+# Behavior: an unavailable config-selected directory does not fall through to Claude legacy memory.
+# Steps: create legacy memory plus a missing configured directory; assert source=config and exit 3.
+case_memory_resolve_invalid_config_no_fallback() {
+  local name="pmctl memory resolve: invalid config path fails without legacy fallback"
+  should_run "$name" || return 0
+  local repo="$tmp_root/resolve-bad-config-repo" cfg="$tmp_root/resolve-bad-config-claude" missing="$tmp_root/missing-config-memory" config="$tmp_root/resolve-bad-config.conf" out="$tmp_root/resolve-bad-config.json" status=0 legacy
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+  legacy="$(make_fixture_memory "$cfg" "$repo")"
+  printf 'dispatch.memory_dir = %s\n' "$missing" > "$config"
+  (unset PM_MEMORY_DIR; PM_DISPATCH_CONFIG_FILE="$config" CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory resolve --repo-root "$repo" --json) > "$out" 2>/dev/null || status=$?
+  if [[ "$status" -eq 3 ]] \
+    && jq -e '.status == "invalid-explicit" and .resolution_source == "config" and .memory_dir == null' "$out" >/dev/null \
+    && [[ -d "$legacy" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$(<"$out")"
+  fi
+}
+
+# Behavior: relative env/config selections are rejected because they vary by host cwd.
+# Steps: exercise both explicit sources and assert the same absolute-path diagnostic.
+case_memory_resolve_rejects_relative_explicit_paths() {
+  local name="pmctl memory resolve: relative explicit paths are invalid"
+  should_run "$name" || return 0
+  local repo="$tmp_root/resolve-relative-repo" config="$tmp_root/resolve-relative.conf" env_out="$tmp_root/resolve-relative-env.json" cfg_out="$tmp_root/resolve-relative-config.json" env_status=0 cfg_status=0
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+  PM_MEMORY_DIR="relative-memory" "$PMCTL" memory resolve --repo-root "$repo" --json > "$env_out" 2>/dev/null || env_status=$?
+  printf 'dispatch.memory_dir = relative-memory\n' > "$config"
+  (unset PM_MEMORY_DIR; PM_DISPATCH_CONFIG_FILE="$config" "$PMCTL" memory resolve --repo-root "$repo" --json) > "$cfg_out" 2>/dev/null || cfg_status=$?
+  if [[ "$env_status" -eq 3 && "$cfg_status" -eq 3 ]] \
+    && jq -e '.resolution_source == "env" and .status == "invalid-explicit" and (.reason | contains("absolute path"))' "$env_out" >/dev/null \
+    && jq -e '.resolution_source == "config" and .status == "invalid-explicit" and (.reason | contains("absolute path"))' "$cfg_out" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "env_status=$env_status cfg_status=$cfg_status env=$(<"$env_out") cfg=$(<"$cfg_out")"
+  fi
+}
+
+# Behavior: no override and no legacy directory is a distinct unavailable result.
+# Steps: resolve an isolated git repo against an empty Claude config and assert exit 1/status unavailable.
+case_memory_resolve_unavailable() {
+  local name="pmctl memory resolve: no memory reports unavailable"
+  should_run "$name" || return 0
+  local repo="$tmp_root/resolve-none-repo" cfg="$tmp_root/resolve-none-cfg" out="$tmp_root/resolve-none.json" status=0
+  mkdir -p "$repo" "$cfg"
+  git -C "$repo" init -q
+  (unset PM_MEMORY_DIR; PM_DISPATCH_CONFIG_FILE="$tmp_root/no-config" CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory resolve --repo-root "$repo" --json) > "$out" 2>/dev/null || status=$?
+  if [[ "$status" -eq 1 ]] && jq -e \
+    '.status == "unavailable" and .resolution_source == "none" and .memory_dir == null' "$out" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$(<"$out")"
+  fi
+}
+
+# Behavior: the strict resolver rejects a repo root outside a git worktree.
+# Steps: pass the harness temp root and assert the documented usage error.
+case_memory_resolve_rejects_non_git_root() {
+  local name="pmctl memory resolve: non-git repo root exits 2"
+  should_run "$name" || return 0
+  local non_git="$tmp_root/resolve-non-git" out="$tmp_root/resolve-non-git.out" status=0
+  mkdir -p "$non_git"
+  "$PMCTL" memory resolve --repo-root "$non_git" --json > "$out" 2>&1 || status=$?
+  if [[ "$status" -eq 2 ]] && grep -q 'must be inside a git worktree' "$out"; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$(<"$out")"
+  fi
+}
+
 case_memory_doctor_clean_fixture() {
   local name="pmctl memory doctor: clean fixture → exit 0, issues_count 0, schema_version 1"
   should_run "$name" || return 0
@@ -1576,6 +1738,15 @@ case_memory_doctor_shard_count() {
 
 # ── Run all cases ──────────────────────────────────────────────────────────────
 
+case_memory_resolve_env_contract
+case_memory_resolve_invalid_explicit_no_fallback
+case_memory_resolve_legacy_compatibility
+case_memory_resolve_config_contract
+case_memory_resolve_env_outranks_config
+case_memory_resolve_invalid_config_no_fallback
+case_memory_resolve_rejects_relative_explicit_paths
+case_memory_resolve_unavailable
+case_memory_resolve_rejects_non_git_root
 case_memory_dir_happy_path
 case_memory_dir_nested_subdir
 case_memory_dir_uses_pwd_default
