@@ -237,7 +237,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 **Update 2026-07-12（OpenCode GUI acceptance round 2 GO）**：修正版真實 wiring 複驗通過：`/pm` loaded、working dir 正確、`focus_tickets=[CC-445,CC-448]`、snapshot created、memory readable/legacy resolver/context hydrated、project key `4633b7e7f780014195b603f84ce281c3a1afd97b` 與 Claude 完全一致、無 permission prompt/timeout。結合先前 catch-all deny + checkout pmctl allow 的 guard 實測，OpenCode host 功能性 acceptance GO；CC-448 保持 active 僅待本批 implementation gate/PR 收尾，不再有 host capability blocker。
 
-**Update 2026-07-12（draft PR opened）**：與 [[CC-445]] 共用 draft PR #395；full-tier implementation gate 與 Claude/OpenCode live acceptance 均 GO。票維持 active 等待 review/merge，合併後再依 terminal/archive 規則關閉。
+**Update 2026-07-12（draft PR opened）**：與 [[CC-445]] 共用 draft PR #395；full-tier implementation gate 與 Claude/OpenCode live acceptance 均 GO。PR review 清理時移除已完成使命的 ticket-specific probe generator，將 runbook 改為歷史 probe record；正式重現面由 cross-host acceptance 文件與 OpenCode regression suite 承接，避免一次性 fixture 混入支援中的 script surface。票維持 active 等待 review/merge，合併後再依 terminal/archive 規則關閉。
 **See**: DECISIONS.md 2026-07-04、DECISIONS.md 2026-07-06、`docs/spikes/CC-448.md`、`docs/spikes/CC-476.md`
 
 ## CC-449 — release-verify/test-e2e：ship/worktree surface 煙測 + 套件註冊完整性 lint 🔵 active

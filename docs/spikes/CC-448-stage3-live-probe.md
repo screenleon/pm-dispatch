@@ -1,23 +1,19 @@
-# CC-448 stage 3 — OpenCode live probe runbook
+# CC-448 stage 3 — OpenCode live probe record
 
-This runbook tests the remaining host-interface question without touching the
-operator's real OpenCode configuration.
+This document records the isolated live probe used before the stage-3 write
+path was implemented. The ticket-specific package generator was intentionally
+removed after the probe completed: it was neither a production tool nor an
+automated test, and keeping it under `scripts/` made the supported CLI surface
+ambiguous.
 
-Prepare a throwaway package:
+The throwaway package used a private `XDG_CONFIG_HOME` and compared four rows:
 
-```bash
-bash scripts/prepare-cc448-opencode-probe.sh /tmp/cc448-opencode-stage3
-```
-
-Then run:
-
-```bash
-/tmp/cc448-opencode-stage3/run.sh control pm
-/tmp/cc448-opencode-stage3/run.sh deny-all pm
-/tmp/cc448-opencode-stage3/run.sh allow-pmctl pm
-/tmp/cc448-opencode-stage3/run.sh allow-pmctl guard
-test ! -e /tmp/cc448-opencode-stage3/guard-should-not-exist
-```
+| Profile | Probe | Question |
+|---|---|---|
+| control | pm | Can a custom command obtain deterministic `pmctl pm prepare` JSON? |
+| deny-all | pm | Does a catch-all Bash deny also block command-template shell expansion? |
+| allow-pmctl | pm | Does a later checkout-specific pmctl rule preserve the PM path? |
+| allow-pmctl | guard | Does the catch-all still deny an unrelated Bash command? |
 
 The matrix separates three facts that must not be conflated:
 
@@ -28,9 +24,24 @@ The matrix separates three facts that must not be conflated:
    catch-all denies unrelated Bash; the `allow-pmctl guard` row verifies the
    negative side.
 
-Do not use `--dangerously-skip-permissions`. Preserve each JSONL stdout stream
-for the ticket result. Stage 3 may proceed to reversible config merge design
-only if the PM row succeeds and the guard sentinel remains absent.
+## Outcome
+
+- OpenCode custom-command integration could obtain parseable
+  `pmctl pm prepare` JSON.
+- Permission patterns use last-match-wins behavior: catch-all deny followed by
+  a checkout-specific pmctl allow preserved the PM path.
+- The same policy denied an unrelated Bash command and did not create the
+  sentinel file.
+- The first fixed bootstrap command later proved insufficient for preserving
+  request-specific focus tickets. The shipped implementation therefore uses
+  the argv-safe `pm_prepare` custom tool and is covered by
+  `scripts/test-host-write-opencode.sh` instead of this probe harness.
+
+The maintained acceptance evidence now lives in
+`docs/spikes/CC-445-448-cross-host-live-acceptance.md`, while ownership,
+rollback, hostile-path serialization, and generic preflight behavior are
+executable regression tests. Reproduction should use those supported surfaces,
+not restore the retired ticket-specific generator.
 
 References: OpenCode permissions use last matching pattern precedence, and
 custom commands support shell-output injection in their prompt templates:
