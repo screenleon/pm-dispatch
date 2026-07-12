@@ -417,8 +417,8 @@ echo "  ($us_count linked, $us_conflicts conflicts)"
 
 echo
 
-# Share assets - model-aliases.tsv must be co-installed with scripts so
-# adapters/codex/dispatch.sh resolves $SCRIPT_DIR/../share/model-aliases.tsv correctly.
+# Share assets - codex-model-aliases.tsv must be co-installed with scripts so
+# adapters/codex/dispatch.sh resolves $SCRIPT_DIR/../share/codex-model-aliases.tsv correctly.
 echo "==> share assets"
 SHARE_DEST="$CLAUDE_HOME/share"
 if [[ ! -d "$SHARE_DEST" ]]; then
@@ -430,7 +430,7 @@ if [[ ! -d "$SHARE_DEST" ]]; then
   fi
 fi
 sa_count=0; sa_conflicts=0
-if link "$REPO_ROOT/share/model-aliases.tsv" "$SHARE_DEST/model-aliases.tsv"; then
+if link "$REPO_ROOT/share/codex-model-aliases.tsv" "$SHARE_DEST/codex-model-aliases.tsv"; then
   sa_count=$((sa_count + 1))
 else
   sa_conflicts=$((sa_conflicts + 1))

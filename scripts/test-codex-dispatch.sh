@@ -591,7 +591,7 @@ case_explicit_gpt54_resolves_medium_effort() {
 }
 
 # ---- 16e: explicit --model default alias resolves to gpt-5.6-terra + medium ----
-# Behavior: the `default` alias is data-backed in share/model-aliases.tsv and
+# Behavior: the `default` alias is data-backed in share/codex-model-aliases.tsv and
 #   resolves to the gpt-5.6-terra wire id with medium effort.
 # Steps:
 #   1. Run --print-cmd with --model default.
@@ -820,7 +820,7 @@ case_alias_source_malformed_exits_nonzero() {
 
 # ---- 22: alias source installed-helper fallback resolves from ../share ----
 case_alias_source_installed_helper_fallback() {
-  local name="alias-source/fallback to ../share/model-aliases.tsv"
+  local name="alias-source/fallback to ../share/codex-model-aliases.tsv"
   local _root _script_dir _share_dir _work _brief _dispatch _out _exit
   should_run "$name" || return 0
   _root="$(mktemp -d)"
@@ -833,7 +833,7 @@ case_alias_source_installed_helper_fallback() {
   cp "$REPO_ROOT/scripts/lib/timeout-resolve.sh" "$_script_dir/lib/"
   cp "$REPO_ROOT/scripts/lib/dispatch-common.sh" "$_script_dir/lib/"
   chmod +x "$_script_dir/codex-dispatch.sh"
-  printf 'codex-spark\tgpt-5.3-codex-spark\thigh\n' > "$_share_dir/model-aliases.tsv"
+  printf 'codex-spark\tgpt-5.3-codex-spark\thigh\n' > "$_share_dir/codex-model-aliases.tsv"
   _work="$(mktemp -d)"; git init -q "$_work"
   _brief="$(mktemp --suffix=.md)"; printf 'goal: alias fallback test\n' > "$_brief"
   _dispatch="$_script_dir/codex-dispatch.sh"

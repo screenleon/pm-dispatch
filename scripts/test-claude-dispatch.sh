@@ -393,6 +393,58 @@ case_model_alias_opus() {
   rm -rf "$work"; rm -f "$brief"
 }
 
+case_model_alias_sonnet_4_6() {
+  local name="dispatch/--model sonnet-4-6 resolves to claude-sonnet-4-6 wire id"; should_run "$name" || return 0
+  local work brief out
+  work="$(mktemp -d)"; git init -q "$work"; brief="$(_mk_brief "$work")"
+  out="$("$DISPATCH" --cd "$work" --brief-file "$brief" --model sonnet-4-6 --print-cmd 2>/dev/null)"
+  if printf '%s' "$out" | grep -q 'claude-sonnet-4-6'; then
+    pass "$name"
+  else
+    fail "$name" "expected claude-sonnet-4-6 in CMD, got: $(printf '%s' "$out" | tail -1)"
+  fi
+  rm -rf "$work"; rm -f "$brief"
+}
+
+case_model_alias_sonnet_4_5() {
+  local name="dispatch/--model sonnet-4-5 resolves to claude-sonnet-4-5-20250929 wire id"; should_run "$name" || return 0
+  local work brief out
+  work="$(mktemp -d)"; git init -q "$work"; brief="$(_mk_brief "$work")"
+  out="$("$DISPATCH" --cd "$work" --brief-file "$brief" --model sonnet-4-5 --print-cmd 2>/dev/null)"
+  if printf '%s' "$out" | grep -q 'claude-sonnet-4-5-20250929'; then
+    pass "$name"
+  else
+    fail "$name" "expected claude-sonnet-4-5-20250929 in CMD, got: $(printf '%s' "$out" | tail -1)"
+  fi
+  rm -rf "$work"; rm -f "$brief"
+}
+
+case_model_alias_opus_4_6() {
+  local name="dispatch/--model opus-4-6 resolves to claude-opus-4-6 wire id"; should_run "$name" || return 0
+  local work brief out
+  work="$(mktemp -d)"; git init -q "$work"; brief="$(_mk_brief "$work")"
+  out="$("$DISPATCH" --cd "$work" --brief-file "$brief" --model opus-4-6 --print-cmd 2>/dev/null)"
+  if printf '%s' "$out" | grep -q 'claude-opus-4-6'; then
+    pass "$name"
+  else
+    fail "$name" "expected claude-opus-4-6 in CMD, got: $(printf '%s' "$out" | tail -1)"
+  fi
+  rm -rf "$work"; rm -f "$brief"
+}
+
+case_model_alias_opus_4_7() {
+  local name="dispatch/--model opus-4-7 resolves to claude-opus-4-7 wire id"; should_run "$name" || return 0
+  local work brief out
+  work="$(mktemp -d)"; git init -q "$work"; brief="$(_mk_brief "$work")"
+  out="$("$DISPATCH" --cd "$work" --brief-file "$brief" --model opus-4-7 --print-cmd 2>/dev/null)"
+  if printf '%s' "$out" | grep -q 'claude-opus-4-7'; then
+    pass "$name"
+  else
+    fail "$name" "expected claude-opus-4-7 in CMD, got: $(printf '%s' "$out" | tail -1)"
+  fi
+  rm -rf "$work"; rm -f "$brief"
+}
+
 case_model_alias_unknown_passthrough() {
   local name="dispatch/--model unknown-alias passes through unchanged"; should_run "$name" || return 0
   local work brief out
@@ -542,6 +594,10 @@ case_model_alias_default
 case_model_alias_haiku
 case_model_alias_sonnet
 case_model_alias_opus
+case_model_alias_sonnet_4_6
+case_model_alias_sonnet_4_5
+case_model_alias_opus_4_6
+case_model_alias_opus_4_7
 case_model_alias_unknown_passthrough
 case_effort_flag_overrides_alias
 case_effort_flag_default_medium

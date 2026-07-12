@@ -920,7 +920,7 @@ model_codex_spark_accepts_case() {
 }
 
 # Behavior: dotted wire/model ids (gpt-5.5, gpt-5.4) are accepted — every value in
-# share/model-aliases.tsv must be a valid handover model: value (CC-292).
+# share/codex-model-aliases.tsv must be a valid handover model: value (CC-292).
 # Steps:
 #   1. Validate model gpt-5.5 and gpt-5.4.
 #   2. Assert both succeed.
