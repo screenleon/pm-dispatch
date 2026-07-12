@@ -503,7 +503,7 @@ Each adapter resolves the alias to its own wire format at dispatch time.
 
 | PM-facing alias | codex wire ID | claude wire ID | opencode wire ID | When to use |
 |---|---|---|---|---|
-| `default` | `gpt-5.5` | `claude-sonnet-5` | `opencode/nemotron-3-ultra-free` | All medium/large tasks (omit `--model` or write `model: default`) |
+| `default` | `gpt-5.6-terra` | `claude-sonnet-5` | `opencode/nemotron-3-ultra-free` | All medium/large tasks (omit `--model` or write `model: default`) |
 | `light` | `gpt-5.3-codex-spark` | `claude-haiku-4-5-20251001` | `opencode/deepseek-v4-flash-free` | Small tasks only (see §When to dispatch) |
 
 See `docs/model-tier-policy.md` §Executor-agnostic `light` alias for routing criteria.
@@ -516,13 +516,16 @@ PM short-form model aliases are resolved from the source-of-truth file
 
 | PM-facing alias | Wire-format model ID | reasoning effort |
 |---|---|---|
-| `default` | `gpt-5.5` | `medium` |
+| `default` | `gpt-5.6-terra` | `medium` |
+| `gpt-5.6-terra` | `gpt-5.6-terra` | `medium` |
+| `gpt-5.6-sol` | `gpt-5.6-sol` | `medium` |
+| `gpt-5.6-luna` | `gpt-5.6-luna` | `medium` |
 | `gpt-5.5` | `gpt-5.5` | `medium` |
 | `gpt-5.4` | `gpt-5.4` | `medium` |
 | `codex-spark` | `gpt-5.3-codex-spark` | `high` |
 | `light` | `gpt-5.3-codex-spark` | `high` |
 
-`light` is opt-in only and draws from an independent usage pool — see §Executor-agnostic model aliases above.
+GPT 5.6 ships as three named tiers: `gpt-5.6-sol` (frontier), `gpt-5.6-terra` (balanced/everyday — the `default`), `gpt-5.6-luna` (fast/affordable). `light` is opt-in only and draws from an independent usage pool — see §Executor-agnostic model aliases above.
 
 ## Claude model aliases
 

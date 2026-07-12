@@ -11,29 +11,42 @@
 #                codex  → codex-spark (gpt-5.3-codex-spark, independent pool, ~64K ctx)
 #                claude → haiku       (claude-haiku-4-5, see claude-model-aliases.tsv)
 #
-# Default model: pm-dispatch pins its OWN default model (gpt-5.5, see
+# GPT 5.6 ships as three named variants (not a single `gpt-5.6` id):
+#   gpt-5.6-sol    — latest frontier agentic coding model
+#   gpt-5.6-terra  — balanced agentic coding model for everyday work
+#   gpt-5.6-luna   — fast and affordable agentic coding model
+#
+# Default model: pm-dispatch pins its OWN default model (gpt-5.6-terra, see
 # DEFAULT_DISPATCH_MODEL in adapters/codex/dispatch.sh), decoupled from the
 # user's interactive ~/.codex/config.toml `model` setting. Omitting --model
-# therefore dispatches on gpt-5.5 — NOT whatever the local codex config
+# therefore dispatches on gpt-5.6-terra — NOT whatever the local codex config
 # defaults to. Override per-host via ~/.pm-dispatch/config `dispatch.default_model`.
-#   gpt-5.5  — primary default
-#   gpt-5.4  — fallback (set dispatch.default_model = gpt-5.4 if gpt-5.5 is unavailable)
+#   gpt-5.6-terra  — primary default (balanced/everyday tier)
+#   gpt-5.5        — fallback (set dispatch.default_model = gpt-5.5 if gpt-5.6-terra is unavailable)
+#   gpt-5.4        — second fallback (set dispatch.default_model = gpt-5.4 if both above are unavailable)
+# `gpt-5.6-sol` (frontier) and `gpt-5.6-luna` (fast/affordable) are available as
+# explicit aliases for callers who want to name a tier directly — neither is
+# the default; see docs/model-tier-policy.md for when to reach for the
+# frontier tier.
 # `codex-spark` / `light` draw from an INDEPENDENT usage pool and are opt-in only
 # (PM routes here for known-small changes — see agents/project-pm.md); never default.
 #
 # Context window reference:
 #   light / codex-spark  — gpt-5.3-codex-spark  ~64K tokens
-#   gpt-5.5              — ~122K+ tokens (default)
+#   gpt-5.6-terra         — ~122K+ tokens (default; same tier as prior gpt-5.5)
 # Survey-style briefs that read large files MUST use lazy-read instructions.
 #
 # Reasoning effort: an alias's effort column is the practical default whenever
 # `--effort` is omitted (it takes precedence over the global default — see
-# scripts/lib/reasoning-effort.sh). default/gpt-5.5/gpt-5.4 converge to medium
-# so a plain dispatch/gate call is medium by default without needing
+# scripts/lib/reasoning-effort.sh). default/gpt-5.6-*/gpt-5.5/gpt-5.4 converge
+# to medium so a plain dispatch/gate call is medium by default without needing
 # `--effort medium` on every invocation; codex-spark/light stay high,
 # unchanged and orthogonal to this convergence (their small-model/low-latency
 # tuning is a separate concern from reasoning depth).
-default	gpt-5.5	medium
+default	gpt-5.6-terra	medium
+gpt-5.6-terra	gpt-5.6-terra	medium
+gpt-5.6-sol	gpt-5.6-sol	medium
+gpt-5.6-luna	gpt-5.6-luna	medium
 gpt-5.5	gpt-5.5	medium
 gpt-5.4	gpt-5.4	medium
 codex-spark	gpt-5.3-codex-spark	high

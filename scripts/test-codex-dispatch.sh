@@ -498,16 +498,16 @@ case_unknown_alias_fallback_keeps_raw_model() {
   rm -f "$_brief16"
 }
 
-# ---- 16a: default model (no --model) resolves to gpt-5.5 with medium effort ----
+# ---- 16a: default model (no --model) resolves to gpt-5.6-terra with medium effort ----
 # Behavior: with no --model and no config override, dispatch applies pm-dispatch's
-#   pinned default (the `default` alias → gpt-5.5) instead of inheriting the host
+#   pinned default (the `default` alias → gpt-5.6-terra) instead of inheriting the host
 #   ~/.codex/config.toml model. The default alias's effort column is medium, so a
 #   plain dispatch is medium by default without an explicit --effort flag.
 # Steps:
 #   1. Run --print-cmd with an empty HOME (no ~/.pm-dispatch/config) and no --model.
-#   2. Assert the printed CMD carries -m gpt-5.5 and model_reasoning_effort="medium".
-case_default_model_resolves_gpt55() {
-  local name="default-model/no --model resolves to gpt-5.5 + medium effort"
+#   2. Assert the printed CMD carries -m gpt-5.6-terra and model_reasoning_effort="medium".
+case_default_model_resolves_gpt56_terra() {
+  local name="default-model/no --model resolves to gpt-5.6-terra + medium effort"
   local _home _work _brief _out _exit
   should_run "$name" || return 0
 
@@ -520,7 +520,7 @@ case_default_model_resolves_gpt55() {
   _exit=$?
   set -e
   if [[ "$_exit" -eq 0 ]] \
-    && [[ "$_out" == *"-m gpt-5.5"* ]] \
+    && [[ "$_out" == *"-m gpt-5.6-terra"* ]] \
     && [[ "$_out" == *'-c model_reasoning_effort="medium"'* ]]; then
     pass "$name"
   else
@@ -590,14 +590,14 @@ case_explicit_gpt54_resolves_medium_effort() {
   rm -f "$_brief"
 }
 
-# ---- 16e: explicit --model default alias resolves to gpt-5.5 + medium ----
+# ---- 16e: explicit --model default alias resolves to gpt-5.6-terra + medium ----
 # Behavior: the `default` alias is data-backed in share/model-aliases.tsv and
-#   resolves to the gpt-5.5 wire id with medium effort.
+#   resolves to the gpt-5.6-terra wire id with medium effort.
 # Steps:
 #   1. Run --print-cmd with --model default.
-#   2. Assert the CMD carries -m gpt-5.5 and model_reasoning_effort="medium".
-case_default_alias_resolves_gpt55() {
-  local name="default-model/--model default alias resolves to gpt-5.5 + medium"
+#   2. Assert the CMD carries -m gpt-5.6-terra and model_reasoning_effort="medium".
+case_default_alias_resolves_gpt56_terra() {
+  local name="default-model/--model default alias resolves to gpt-5.6-terra + medium"
   local _home _work _brief _out _exit
   should_run "$name" || return 0
 
@@ -610,7 +610,86 @@ case_default_alias_resolves_gpt55() {
   _exit=$?
   set -e
   if [[ "$_exit" -eq 0 ]] \
-    && [[ "$_out" == *"-m gpt-5.5"* ]] \
+    && [[ "$_out" == *"-m gpt-5.6-terra"* ]] \
+    && [[ "$_out" == *'-c model_reasoning_effort="medium"'* ]]; then
+    pass "$name"
+  else
+    fail "$name" ""
+  fi
+  rm -rf "$_work" "$_home"
+  rm -f "$_brief"
+}
+
+# ---- 16f/g/h: explicit --model gpt-5.6-{terra,sol,luna} resolve with medium effort ----
+# Behavior: GPT 5.6 ships as three named wire ids (terra/sol/luna); each is
+#   directly selectable as an explicit alias, independent of which one `default`
+#   points at.
+# Steps:
+#   1. Run --print-cmd with --model gpt-5.6-<tier>.
+#   2. Assert the CMD carries -m gpt-5.6-<tier> and model_reasoning_effort="medium".
+case_explicit_gpt56_terra_resolves_medium_effort() {
+  local name="default-model/--model gpt-5.6-terra resolves + medium effort"
+  local _home _work _brief _out _exit
+  should_run "$name" || return 0
+
+  _home="$(mktemp -d)"
+  _work="$(mktemp -d)"; git init -q "$_work"
+  _brief="$(mktemp --suffix=.md)"; printf 'goal: explicit gpt-5.6-terra test\n' > "$_brief"
+
+  set +e
+  _out="$(HOME="$_home" "$DISPATCH" --cd "$_work" --brief-file "$_brief" --model gpt-5.6-terra --print-cmd)"
+  _exit=$?
+  set -e
+  if [[ "$_exit" -eq 0 ]] \
+    && [[ "$_out" == *"-m gpt-5.6-terra"* ]] \
+    && [[ "$_out" == *'-c model_reasoning_effort="medium"'* ]]; then
+    pass "$name"
+  else
+    fail "$name" ""
+  fi
+  rm -rf "$_work" "$_home"
+  rm -f "$_brief"
+}
+
+case_explicit_gpt56_sol_resolves_medium_effort() {
+  local name="default-model/--model gpt-5.6-sol resolves + medium effort"
+  local _home _work _brief _out _exit
+  should_run "$name" || return 0
+
+  _home="$(mktemp -d)"
+  _work="$(mktemp -d)"; git init -q "$_work"
+  _brief="$(mktemp --suffix=.md)"; printf 'goal: explicit gpt-5.6-sol test\n' > "$_brief"
+
+  set +e
+  _out="$(HOME="$_home" "$DISPATCH" --cd "$_work" --brief-file "$_brief" --model gpt-5.6-sol --print-cmd)"
+  _exit=$?
+  set -e
+  if [[ "$_exit" -eq 0 ]] \
+    && [[ "$_out" == *"-m gpt-5.6-sol"* ]] \
+    && [[ "$_out" == *'-c model_reasoning_effort="medium"'* ]]; then
+    pass "$name"
+  else
+    fail "$name" ""
+  fi
+  rm -rf "$_work" "$_home"
+  rm -f "$_brief"
+}
+
+case_explicit_gpt56_luna_resolves_medium_effort() {
+  local name="default-model/--model gpt-5.6-luna resolves + medium effort"
+  local _home _work _brief _out _exit
+  should_run "$name" || return 0
+
+  _home="$(mktemp -d)"
+  _work="$(mktemp -d)"; git init -q "$_work"
+  _brief="$(mktemp --suffix=.md)"; printf 'goal: explicit gpt-5.6-luna test\n' > "$_brief"
+
+  set +e
+  _out="$(HOME="$_home" "$DISPATCH" --cd "$_work" --brief-file "$_brief" --model gpt-5.6-luna --print-cmd)"
+  _exit=$?
+  set -e
+  if [[ "$_exit" -eq 0 ]] \
+    && [[ "$_out" == *"-m gpt-5.6-luna"* ]] \
     && [[ "$_out" == *'-c model_reasoning_effort="medium"'* ]]; then
     pass "$name"
   else
@@ -1154,10 +1233,13 @@ case_auto_log_log_failure_preserves_dispatch_exit
 case_alias_resolution_spark_prints_resolved_model_and_banner_no_trace_files
 case_full_form_passthrough_keeps_model_no_effort
 case_unknown_alias_fallback_keeps_raw_model
-case_default_model_resolves_gpt55
+case_default_model_resolves_gpt56_terra
 case_explicit_gpt55_resolves_medium_effort
 case_explicit_gpt54_resolves_medium_effort
-case_default_alias_resolves_gpt55
+case_default_alias_resolves_gpt56_terra
+case_explicit_gpt56_terra_resolves_medium_effort
+case_explicit_gpt56_sol_resolves_medium_effort
+case_explicit_gpt56_luna_resolves_medium_effort
 case_timeout_env_only_precedence
 case_timeout_precedence_brief_field
 case_alias_source_missing_exits_2

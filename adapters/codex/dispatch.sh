@@ -115,7 +115,7 @@ PRINT_CMD=0
 TRACE_DIR_OVERRIDE=""
 # pm-dispatch's OWN default model, decoupled from the user's interactive
 # ~/.codex/config.toml `model` setting (which may be a spark/other variant).
-# This is the `default` ALIAS — its wire id (gpt-5.5) lives only in
+# This is the `default` ALIAS — its wire id (gpt-5.6-terra) lives only in
 # share/model-aliases.tsv (single source of truth), so a model bump edits the
 # TSV alone. Override via the PM_CFG_DEFAULT_MODEL env var, which `pmctl dispatch
 # run` exports from ~/.pm-dispatch/config `dispatch.default_model` (see line ~235).
@@ -183,8 +183,8 @@ else
 fi
 
 # Default model resolution. pm-dispatch pins its OWN default (the `default` alias,
-# which resolves to gpt-5.5 via share/model-aliases.tsv), decoupled from the user's
-# interactive ~/.codex/config.toml — so omitting --model dispatches on gpt-5.5, NOT
+# which resolves to gpt-5.6-terra via share/model-aliases.tsv), decoupled from the user's
+# interactive ~/.codex/config.toml — so omitting --model dispatches on gpt-5.6-terra, NOT
 # whatever the local codex config defaults to. Precedence: --model flag > config
 # dispatch.default_model > built-in `default` alias. The chosen value flows through
 # _resolve_model_alias below, attaching reasoning effort.

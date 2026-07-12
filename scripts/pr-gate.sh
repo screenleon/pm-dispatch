@@ -86,7 +86,7 @@ _kill_process_tree() {
 #   --output <path>      result file (default: .gate-results/gate-<ts>.md)
 #   --executor <mode>    codex|claude|auto (default: auto; auto uses `command -v codex`)
 #   --model <id>         dispatch model (default: "default" → adapter's pinned default,
-#                        e.g. codex gpt-5.5 / claude sonnet; pass a concrete id to override)
+#                        e.g. codex gpt-5.6-terra / claude sonnet; pass a concrete id to override)
 #   --effort <level>     low|medium|high (default: omit → adapter resolves medium unless
 #                        the model alias carries its own valid value; see
 #                        scripts/lib/reasoning-effort.sh). Independent of --model — use
