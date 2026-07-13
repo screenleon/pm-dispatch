@@ -135,6 +135,40 @@ case_explicit_cd_passthrough() {
   fi
 }
 
+case_gate_run_refreshes_context_before_dispatch() {
+  # Verifies the pmctl wrapper refreshes generic repo context before launching
+  # pr-gate, while the gate implementation remains unaware of sqlite/content.
+  # Steps: inject a refresh stub that records its repo, run a foreground fake
+  # gate, and assert refresh ordering/diagnostic plus unchanged gate argv.
+  local name="gate/run: refreshes pmctl context before repo-agnostic pr-gate dispatch"
+  should_run "$name" || return 0
+  local fixture="$tmp_root/gate-context-fixture" wrapper="$tmp_root/gate-context-wrapper" marker="$tmp_root/gate-context-marker"
+  local target="$tmp_root/gate-context-target" out code=0
+  mkdir -p "$fixture/scripts/lib" "$target"
+  git -C "$target" init -q
+  _mk_fake_gate "$fixture" 0
+  cp "$REPO_ROOT/scripts/lib/pmctl-gate.sh" "$fixture/scripts/lib/pmctl-gate.sh"
+  cat > "$wrapper" <<WRAPPER
+#!/usr/bin/env bash
+set -euo pipefail
+. "$fixture/scripts/lib/pmctl-gate.sh"
+pmctl_context_workflow_refresh() {
+  printf '%s\n' "\$1" > "$marker"
+  jq -cn --arg repo "\$1" --arg db "\$1/.pm-dispatch/ctx/context.db" '{refresh_status:"refreshed",freshness:"fresh",resolved_repo_root:\$repo,db_path:\$db}'
+}
+pmctl_gate_run "$fixture" "\$@"
+WRAPPER
+  chmod +x "$wrapper"
+  out="$("$wrapper" --cd "$target" --lifecycle foreground --tier express 2>&1)" || code=$?
+  if [[ "$code" -eq 0 && "$(<"$marker")" == "$target" ]] \
+    && [[ "$out" == *"pmctl gate context: status=refreshed repo=$target db=$target/.pm-dispatch/ctx/context.db"* ]] \
+    && [[ "$out" == *"fake-gate-args:"*"--cd $target"*"--tier express"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code marker=$(cat "$marker" 2>/dev/null || true) out=$out"
+  fi
+}
+
 # ---- 2: missing --cd defaults to the CWD git toplevel (then $PWD) ------------
 case_default_cd_injected() {
   # Verifies that pmctl_gate_run derives --cd from the caller's CWD when
@@ -737,6 +771,7 @@ case_wait_default_cd() {
 }
 
 case_explicit_cd_passthrough
+case_gate_run_refreshes_context_before_dispatch
 case_default_cd_injected
 case_exit_propagated
 case_missing_gate_script

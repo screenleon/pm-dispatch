@@ -239,13 +239,16 @@ bash scripts/test-guards.sh --filter "session-hook"
 bash scripts/test-install.sh --filter "session-stop"
 bash scripts/test-guards.sh --filter "inject-hook/episode"
 
-# Full suites must still pass before re-gating
+# Broader affected suites should pass before re-gating
 bash scripts/test-guards.sh && bash scripts/test-install.sh
 ```
 
 `--filter <pattern>` runs only cases whose name contains `<pattern>`.
 `--list` prints all case names and exits 0.
-Full suites are still required in the gate; `--filter` is for local iteration speed.
+The target repo may explicitly supply a bounded iteration runner through
+`pmctl gate run --test-cmd '<repo-owned command>'`; `/pr-gate` never auto-detects
+or hardcodes one. Run a repository's authoritative full suite separately before
+final delivery so a long test process cannot consume the gate lifecycle timeout.
 
 **Warning**: if the pattern matches zero cases, the harness exits nonzero and prints
 `no tests matched filter <pattern>`. A typo in the filter produces a hard failure,

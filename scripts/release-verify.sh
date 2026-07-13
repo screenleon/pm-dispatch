@@ -142,8 +142,10 @@ if [[ "$RUN_SUITE" -eq 0 ]]; then
   REQUIRED_SKIPPED=$((REQUIRED_SKIPPED + 1))
 else
   suite_log="$(mktemp)"  # registered in cleanup trap above
-  if bash "$SCRIPT_DIR/run-all-tests.sh" >"$suite_log" 2>&1; then
-    record "run-all-tests" PASS "$(tail -1 "$suite_log")"
+  suite_result="$REPO_ROOT/.pm-dispatch/test-results/latest-full.json"
+  if bash "$SCRIPT_DIR/run-all-tests.sh" --result-file "$suite_result" >"$suite_log" 2>&1 \
+    && bash "$SCRIPT_DIR/run-tests.sh" --verify-full "$suite_result" >>"$suite_log" 2>&1; then
+    record "run-all-tests" PASS "authoritative full PASS verified for the current tree"
   else
     record "run-all-tests" FAIL "$(tail -1 "$suite_log") — see below"
     printf '    --- failing suites ---\n'

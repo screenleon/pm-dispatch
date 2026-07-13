@@ -52,19 +52,44 @@ if [[ ! -f "$pmctl_cli" ]]; then
   exit 0
 fi
 
-# AUTOBUILD=0: never trigger a first full index build on the interactive prompt
-# path (repos without an index stay silent); incremental refresh of an existing
-# DB stays on. The timeout bounds prompt latency on slow repos; override via
-# PM_DISPATCH_PROMPT_CONTEXT_TIMEOUT (seconds) when a slower bound is needed
-# (e.g. tests on a CPU-saturated machine).
-_timeout_secs="${PM_DISPATCH_PROMPT_CONTEXT_TIMEOUT:-10}"
-[[ "$_timeout_secs" =~ ^[0-9]+$ ]] || _timeout_secs=10
+# Context is an optional sqlite-backed capability. Without sqlite3, stay silent
+# and do not attempt pmctl; with sqlite3, the first real prompt auto-bootstraps
+# the repo-local DB. Initial builds get a larger budget than incremental scans.
+command -v sqlite3 >/dev/null 2>&1 || exit 0
+_context_db="$repo_root/.pm-dispatch/ctx/context.db"
+_initial_build=0
+if [[ ! -f "$_context_db" ]]; then
+  _initial_build=1
+  _timeout_secs="${PM_DISPATCH_PROMPT_CONTEXT_INITIAL_TIMEOUT:-120}"
+else
+  _timeout_secs="${PM_DISPATCH_PROMPT_CONTEXT_TIMEOUT:-45}"
+fi
+if [[ ! "$_timeout_secs" =~ ^[0-9]+$ ]]; then
+  [[ "$_initial_build" -eq 1 ]] && _timeout_secs=120 || _timeout_secs=45
+fi
 _runner=(bash "$pmctl_cli")
 if command -v timeout >/dev/null 2>&1; then
   _runner=(timeout "$_timeout_secs" bash "$pmctl_cli")
 fi
-out=$(PM_DISPATCH_CONTEXT_AUTOBUILD=0 "${_runner[@]}" \
-  context prompt-scan "$repo_root" "$prompt" 2>/dev/null) || exit 0
+_scan_rc=0
+out=$(PM_DISPATCH_CONTEXT_AUTOBUILD=1 "${_runner[@]}" \
+  context prompt-scan "$repo_root" "$prompt" 2>/dev/null) || _scan_rc=$?
+if [[ "$_scan_rc" -ne 0 ]]; then
+  # A timeout during first build can leave an initialized-but-empty derived DB.
+  # Remove only that cache so the next prompt still receives the initial-build
+  # budget instead of misclassifying it as an existing index forever.
+  if [[ "$_initial_build" -eq 1 ]]; then
+    _indexed_files="$(sqlite3 "$_context_db" 'SELECT count(*) FROM files;' 2>/dev/null || true)"
+    # This is a derived cache and the initial build did not complete. Preserve
+    # it only when SQLite can positively confirm committed file rows; a missing
+    # schema, unreadable/locked shell, or zero rows is not a usable index and
+    # must not make the next prompt take the shorter refresh path.
+    if [[ ! "$_indexed_files" =~ ^[1-9][0-9]*$ ]]; then
+      rm -f -- "$_context_db" "${_context_db}-wal" "${_context_db}-shm" 2>/dev/null || true
+    fi
+  fi
+  exit 0
+fi
 
 if [[ -z "$out" || "$out" == "knowledge_hits: []" ]]; then
   exit 0

@@ -43,6 +43,11 @@
 | CC-431 | test-e2e/release-verify 的 `--adapter` 清單改 adapters/ 動態派生，opencode e2e 通過；未過則 v1.0 將 opencode executor 降標 experimental | 🔵 |
 | CC-449 | ship/worktree surface 煙測 + 套件註冊完整性 lint + **CI↔run-all parity 斷言**（2026-07-06 稽核擴充：24 個本地 suite CI 缺席）+ 零覆蓋 lib 盤點；與 CC-431 檔案面重疊宜同批 | 🔵 |
 | CC-447 | 乾淨機器 onboarding smoke——**本版只做 offline 半**（fresh Linux + WSL2 clean install/doctor/uninstall）；live dogfood 半留 v1.0-rc | 🔵 |
+| CC-481 | test runner contract：direct-impact iteration runner；full suite 移出 reviewer gate lifecycle；tree fingerprint 綁定 final test evidence | ✅ |
+| CC-482 | Claude gate reviewer definitions 改 workspace immutable snapshots；不擴大 home read／不使用 bypassPermissions；真實 detached smoke | ✅ |
+| CC-483 | Codex workflow 的 canonical memory provider 固定為 pmctl memory；native memory 不得靜默優先或覆蓋 | 🔵 |
+| CC-484 | JapanJob／qa-testing-rules context refresh live diagnosis + marker round-trip E2E + repo/DB freshness diagnostics | ✅ |
+| CC-485 | 可選 workflow profiles：maintainer delivery policy 與通用 gate/test capabilities 分離，不強制其他 repo 使用 PR-gate 或特定 runner | 🟢 |
 
 ### Phase 3 — 契約凍結（P2；CC-451 先行或與 CC-446 同批）
 

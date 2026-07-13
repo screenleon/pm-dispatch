@@ -24,6 +24,16 @@ pm-dispatch install repo), printing a one-line stderr warning when it does.
 When scripting or dispatching from an unknown CWD, pass `<repo_root>`
 explicitly to be unambiguous.
 
+For a read-only diagnosis of that resolution, the canonical DB path, sqlite
+capability, and whether files have been added/changed/deleted since indexing:
+
+    pmctl context status [<repo_root>]
+    pmctl context status [<repo_root>] --json
+
+`status` never creates or refreshes a DB. The repo-plane DB is always
+`<repo_root>/.pm-dispatch/ctx/context.db`; `.pm-dispatch/` is excluded from
+index discovery and is added to `.gitignore` when the first DB is built.
+
 ## Source planes — repo and memory
 
 `--source` selects which **index plane** is searched and is orthogonal to
@@ -94,17 +104,27 @@ up to 5 deduped hits. When the scan finds hits, the hook injects them as an
 with heading-anchored refs already in context — citing them replaces the
 full-file Read it would otherwise reach for.
 
-The hook never blocks a prompt: every failure path (no git repo, no prompt
-text, scan error, timeout) exits 0 silently. It also runs with
-`PM_DISPATCH_CONTEXT_AUTOBUILD=0`, so a repo with no index yet is never given a
-first full index build on the interactive prompt path — build one explicitly
-with `pmctl context index`. Incremental refresh of an existing DB stays on.
-The scan is bounded by a 10-second timeout; override with
-`PM_DISPATCH_PROMPT_CONTEXT_TIMEOUT=<seconds>` when a slower bound is needed.
+The hook never fails a prompt: every failure path (no git repo, no prompt text,
+scan error, timeout) exits 0 silently. Context indexing is capability-gated:
+when `sqlite3` is absent the hook skips pmctl entirely; when it is available,
+the first eligible prompt automatically builds the repo-local DB. Initial builds
+have a 120-second budget (`PM_DISPATCH_PROMPT_CONTEXT_INITIAL_TIMEOUT`), while
+incremental refreshes use 45 seconds (`PM_DISPATCH_PROMPT_CONTEXT_TIMEOUT`). A
+timed-out first build removes only its incomplete derived DB so the next prompt
+can retry with the initial-build budget. Unchanged refreshes preserve the FTS
+table instead of rebuilding it, keeping the normal prompt path short.
 
 Set `PM_DISPATCH_DISABLE_PROMPT_CONTEXT=1` to disable the scan entirely. Use
 this whenever the live context DB must not be touched — for example while the
 full test suite is running against the pm-dispatch repo itself.
+
+The same optional repo-context refresh is used at pmctl-owned workflow
+boundaries: `pmctl pm prepare` reports it as `repo_context`, and `pmctl gate
+run` refreshes the effective `--cd` repository before dispatch. Missing
+`sqlite3` is an explicit `unavailable` capability state and does not fail PM
+preparation, prompt submission, or a gate. This wiring does not make context,
+PM preparation, testing, or PR-gate mandatory for tool users; each surface can
+still be invoked independently.
 
 `pmctl context prompt-scan` emits a `context.prompt_scanned` event after every
 call (including zero-hit, no-index, and no-sqlite calls — the last two degrade
@@ -184,7 +204,10 @@ The context index is **always** written to `<repo-root>/.pm-dispatch/ctx/context
 is fixed per repo and is **not** affected by `PM_DISPATCH_STATE_ROOT` — the
 database is a derived per-repo cache, so it lives next to the code it indexes.
 The `.pm-dispatch/` directory is added to `.gitignore` automatically so the
-database is never committed.
+database is never committed. The context file discovery walk also excludes the
+entire `.pm-dispatch/` tree; the DB, WAL files, generated packs, gate artifacts,
+and other derived pm-dispatch state can therefore never feed back into the
+repo's own context index.
 
 Auto-pack files are written under the same repo-local context directory at
 `<repo-root>/.pm-dispatch/ctx/packs/<run_id>.md`; they are derived dispatch

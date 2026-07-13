@@ -107,8 +107,9 @@ _kill_process_tree() {
 #                        and a FAIL forces Final: NO-GO regardless of what any reviewer LLM writes.
 #                        No auto-detection -- pr-gate.sh is copy-mode portable (see header) and must
 #                        not assume any repo-specific test command or path convention; the caller
-#                        supplies one explicitly (e.g. the /pr-gate skill passes this repo's own
-#                        `bash scripts/run-all-tests.sh` for pm-dispatch's own gate runs). Omitting
+#                        supplies one explicitly (e.g. `bash scripts/test.sh`). Long-running full
+#                        suites should run outside the gate lifecycle; --test-cmd is best suited to
+#                        a bounded iteration check chosen by the target repo's caller. Omitting
 #                        this flag skips the pre-flight check entirely (reviewers judge test status
 #                        themselves, as before this feature existed).
 #   --test-timeout <s>   timeout for --test-cmd (default: 1800), decoupled from --timeout so a slow
@@ -780,12 +781,17 @@ touch "$OUTPUT_FILE"
 
 # Track all brief files for EXIT cleanup
 BRIEF_FILES=()
+REVIEWER_DEFINITION_DIR=""
 cleanup_briefs() {
   # Every executor now dispatches a subprocess (codex `codex exec`, claude headless
   # `claude --print`), so generated briefs are always transient and cleaned on exit.
   for bf in "${BRIEF_FILES[@]:-}"; do
     rm -f "$bf"
   done
+  if [[ -n "${REVIEWER_DEFINITION_DIR:-}" ]]; then
+    rm -rf -- "$REVIEWER_DEFINITION_DIR"
+    rmdir "$WORK_DIR/.gate-briefs" 2>/dev/null || true
+  fi
 }
 
 # Relocate gate result artifacts out of the repo when a run dir was supplied.
@@ -1110,13 +1116,37 @@ if [[ "$PREFLIGHT_STATUS" == "fail" ]]; then
   gate_result_verify "$OUTPUT_FILE" "" "preflight-fail-fast" || exit 1
 else
 
+# Claude's headless acceptEdits mode cannot interactively approve reads from
+# ~/.claude/agents. Snapshot only the definitions selected for this run into an
+# artifact-only directory inside the reviewed workspace. Both Claude and Codex
+# can read these immutable local copies without broad home-directory access;
+# cleanup_briefs removes them on every success/failure path.
+REVIEWER_DEFINITION_DIR="$WORK_DIR/.gate-briefs/reviewer-definitions-${TIMESTAMP}"
+mkdir -m 700 -p -- "$REVIEWER_DEFINITION_DIR"
+for r in $REVIEWERS; do
+  _reviewer_source="$AGENT_DIR/${r}.md"
+  _reviewer_snapshot="$REVIEWER_DEFINITION_DIR/${r}.md"
+  # umask makes a newly copied definition owner-read-only without depending on
+  # chmod being present in the executor test PATH (some gate portability tests
+  # deliberately expose only the commands pr-gate strictly needs).
+  if ! (umask 0377; cp -- "$_reviewer_source" "$_reviewer_snapshot"); then
+    printf 'Error: failed to snapshot reviewer definition: %s\n' "$_reviewer_source" >&2
+    exit 1
+  fi
+  [[ -s "$_reviewer_snapshot" ]] || {
+    printf 'Error: reviewer definition snapshot is empty: %s\n' "$_reviewer_snapshot" >&2
+    exit 1
+  }
+done
+unset _reviewer_source _reviewer_snapshot
+
 # ── Dispatch ─────────────────────────────────────────────────────────────────
 if [[ "$SEQUENTIAL" == "true" ]]; then
 
   # ── Sequential mode (default: all reviewers in one combined codex session) ──
   AGENT_FILE_ENTRIES=""
   for r in $REVIEWERS; do
-    AGENT_PATH="$AGENT_DIR/${r}.md"
+    AGENT_PATH="$REVIEWER_DEFINITION_DIR/${r}.md"
     AGENT_FILE_ENTRIES="${AGENT_FILE_ENTRIES}  - read: ${AGENT_PATH}"$'\n'
   done
 
@@ -1348,7 +1378,7 @@ else
   _PRE_DISPATCH_STATUS=$(git status --porcelain -z 2>/dev/null | artifact_filter_porcelain | $_HASH_CMD)
 
   for r in $REVIEWERS; do
-    AGENT_PATH="$AGENT_DIR/${r}.md"
+    AGENT_PATH="$REVIEWER_DEFINITION_DIR/${r}.md"
     REVIEWER_OUTPUT="$WORK_DIR/.gate-results/reviewer-${r}-${TIMESTAMP}.md"
     REVIEWER_BRIEF="$BRIEF_DIR/pr-gate-${TIMESTAMP}-${r}.md"
     DISPATCH_LOG="$_ARTIFACT_ROOT/.agent-trace/gate-${TIMESTAMP}-${r}.log"

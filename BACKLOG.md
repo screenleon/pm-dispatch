@@ -26,6 +26,11 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-479 | ✅ done | `share/model-aliases.tsv` 改名為 `share/codex-model-aliases.tsv`（與 `claude-model-aliases.tsv`/`opencode-model-aliases.tsv` 命名對齊）；`share/claude-model-aliases.tsv` 補回 `sonnet-4-6`/`sonnet-4-5`/`opus-4-6`/`opus-4-7` 舊世代 alias（可選用，非 default）（2026-07-12 使用者發現） | ops | 2026-07-12 | pr:#393 | P2 | — |
 | CC-478 | ✅ done | codex default model alias 過期：`share/model-aliases.tsv` 的 `default` 仍釘舊 `gpt-5.5`，未跟進新的 gpt-5.6 三分支（sol/terra/luna）（2026-07-12 使用者發現） | ops | 2026-07-12 | pr:#392 | P2 | — |
 | CC-480 | ✅ done | host-switch memory continuity：嚴格 resolution contract + Codex `pmctl pm prepare` 確定性 hydration + Claude↔Codex 共用同一 canonical memory E2E；v0.9.0 host 軸 continuity 驗收 | arch/memory | 2026-07-12 | — | P1 | design |
+| CC-481 | ✅ done | test runner contract：`run-tests.sh` direct-impact iteration planner + `run-all-tests.sh` 相容 full wrapper + 共用 suite executor + tree-bound result verifier；PR-gate 維持 repo-agnostic，full suite 移出 gate lifecycle | ops/test | 2026-07-13 | feedback:2026-07-13 | P1 | design |
+| CC-482 | ✅ done | Claude PR-gate reviewer definitions 最小讀取權限：headless `acceptEdits` 無法批准 `~/.claude/agents/*.md`；改用 workspace 內 run-scoped immutable snapshots，禁止擴大為任意 home read／`bypassPermissions` | ops/gate | 2026-07-13 | feedback:2026-07-13 | P1 | hygiene |
+| CC-483 | 🔵 active | Codex PM workflow memory provider 優先權：使用者指定 `pmctl memory` 為 canonical substrate，不得默認優先使用 Codex native memory；盤點 prepare/guard/host instruction routing 與可觀測 provenance | arch/memory | 2026-07-13 | feedback:2026-07-13 | P1 | design |
+| CC-484 | ✅ done | JapanJob 與 qa-testing-rules 的 `pmctl context` refresh 未生效：重現 session/index/update/pack 實際路徑、repo-root/project-key/DB freshness，補跨 repo live E2E 與 actionable diagnostics | ops/memory | 2026-07-13 | feedback:2026-07-13 | P1 | retrieval |
+| CC-485 | 🟢 someday | 可選 workflow profiles：將 maintainer 偏好的 affected gate → pre-PR full → release full 組合成 opt-in repo policy；通用 gate/test/PM capabilities 保持可獨立使用，不強制其他 repo 跑 PR-gate 或任何特定 runner | arch/process | 2026-07-13 | feedback:2026-07-13 | P3 | design |
 | CC-465 | 🔵 active | memory/context 關鍵詞管線 CJK 支援：抽出共用零依賴斷詞 lib，取代三處各自 ASCII-only 抽詞；工作序列起點（465→467→468→466）（2026-07-07 記憶系統深入分析） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-466 | 🔵 active | 記憶卡片生命週期閉環：expires_at 執行 + 關窗式 supersede + usage sidecar 休眠偵測 + doctor→distill 接線；排在 CC-467 之後（需其遙測為前置）（2026-07-07 記憶系統分析 + 外部研究 Graphiti/mcp-memory-service） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-467 | 🔵 active | `pmctl memory stats`：注入效益可視化（唯讀聚合器）——注入 bytes/卡片命中分佈/從未命中卡/episode 填寫率，回答「記憶有跟沒有差在哪」；排在 CC-466 之前（2026-07-07；業界僅離線 recall 評測，無 per-injection 遙測） | DX/memory | 2026-07-07 | — | P2 | retrieval |
@@ -246,15 +251,15 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 ## CC-449 — release-verify/test-e2e：ship/worktree surface 煙測 + 套件註冊完整性 lint 🔵 active
 
-**Problem**：v0.8.0 新增的 `pmctl ship`（unified entry / prepare / finish / `--parallel`）與 `pmctl worktree`（create/list/remove/gc）只有 unit 套件覆蓋；release sign-off 的 e2e 路徑（`test-e2e.sh` Phase B/C）只驗 dispatch 輸出契約與 pr-gate 機制，對這兩個新 surface 零 live 煙測。且 [[CC-444]] 收尾時發現 `test-pmctl-worktree.sh`（36 cases）**根本沒註冊進 `run-all-tests.sh`**——套件存在但 aggregator 從未執行，release-verify 的「全套綠燈」靜默漏掉它（已於 CC-444 補註冊）；「新增 suite 必須註冊」目前無任何機械防護。
+**Problem**：v0.8.0 新增的 `pmctl ship`（unified entry / prepare / finish / `--parallel`）與 `pmctl worktree`（create/list/remove/gc）只有 unit 套件覆蓋；release sign-off 的 e2e 路徑（`test-e2e.sh` Phase B/C）只驗 dispatch 輸出契約與 pr-gate 機制，對這兩個新 surface 零 live 煙測。且 [[CC-444]] 收尾時發現 `test-pmctl-worktree.sh`（36 cases）**根本沒註冊進 full runner registry**——套件存在但 aggregator 從未執行，release-verify 的「全套綠燈」靜默漏掉它（已於 CC-444 補註冊）；「新增 suite 必須註冊」目前無任何機械防護。CC-481 後 canonical registry 位於 `scripts/lib/test-suite-runner.sh`，`run-all-tests.sh --list` 仍是穩定查詢 surface。
 
 **Why**：v1.0 P1 證據層的一環——release sign-off 的覆蓋範圍必須跟上 surface 的成長，否則 `release-verify GO` 的可信度逐版稀釋；註冊完整性 lint 是同類靜默缺口的止血閥。
 
 **Requirement**：
-1. **套件註冊完整性 lint**（第一刀，機械）：`scripts/test-*.sh` 存在但未在 `run-all-tests.sh` 註冊 → fail loud（允許顯式 exclude 清單，如 fixture-only helper）；接入 CI 與 `release-verify.sh` Phase 1。注意新增套件目前需**三處**同步——`run-all-tests.sh`（SUITE 陣列 + path map）與 `test-run-all-tests.sh`（`SUITE_NAMES` mirror + `suite_path` case）；後者的 parity 已由 meta 套件自身把關（CC-444 補註冊時實際觸發），lint 只需補「檔案存在但未註冊」這缺口，並評估把 meta-suite mirror 改為從 run-all-tests.sh 動態派生以消除第三處人工同步。
+1. **套件註冊完整性 lint**（第一刀，機械）：`scripts/test-*.sh` 存在但未在 `scripts/lib/test-suite-runner.sh` 註冊 → fail loud（允許顯式 exclude 清單，如 fixture-only helper）；接入 CI 與 `release-verify.sh` Phase 1。注意新增套件目前需**三處**同步——共用 executor（SUITE 陣列 + path map）與 `test-run-all-tests.sh`（`SUITE_NAMES` mirror + `suite_path` case）；後者的 parity 已由 meta 套件自身把關（CC-444 補註冊時實際觸發），lint 只需補「檔案存在但未註冊」這缺口，並評估讓 meta-suite 從 canonical executor 動態派生以消除第三處人工同步。
 2. **ship/worktree e2e 煙測**：`test-e2e.sh` 新增 phase——synthetic target 上走一次 `pmctl worktree create → pmctl ship <id> --worktree → ship status 讀到 prepared → worktree remove`（不 dispatch、不花 LLM token 的最小閉環）；`ship finish` 的 live 驗證（含 gate）評估成本後決定納入或明文排除並記錄理由。
 3. 與 [[CC-431]]（adapter 清單動態派生）同批評估，避免 e2e 腳本兩次重構。
-4. **CI↔run-all parity 斷言**（2026-07-06 盲測稽核擴充）：`.github/workflows/lint.yml` 的 job 清單與 `run-all-tests.sh` 註冊表各自手動維護、零 parity 檢查——實測 24 個本地 suite 在 CI 從未執行，含 dispatch 核心（test-dispatch-lifecycle、test-dispatch-common、test-detached-launch、test-opencode-dispatch）與三個最大 pmctl 套件（test-pmctl-context/memory/dispatch）。lint 需一併涵蓋：run-all 每個註冊 suite 必須在 CI 出現，或列入顯式豁免清單並附理由（如 live-DB 互斥、耗時）。這是比第 1 項「未註冊」更大的同類靜默缺口。
+4. **CI↔run-all parity 斷言**（2026-07-06 盲測稽核擴充）：`.github/workflows/lint.yml` 的 job 清單與 full runner registry 各自手動維護、零 parity 檢查——實測 24 個本地 suite 在 CI 從未執行，含 dispatch 核心（test-dispatch-lifecycle、test-dispatch-common、test-detached-launch、test-opencode-dispatch）與三個最大 pmctl 套件（test-pmctl-context/memory/dispatch）。lint 需一併涵蓋：canonical executor 每個註冊 suite 必須在 CI 出現，或列入顯式豁免清單並附理由（如 live-DB 互斥、耗時）。這是比第 1 項「未註冊」更大的同類靜默缺口。
 5. **零覆蓋 lib 盤點**（同批）：`scripts/lib/gate-workspace.sh`、`scripts/lib/pmctl-config.sh` 在所有測試檔零引用——補最小套件或記錄豁免理由。
 6. **surface 覆蓋分類 lint（反向補完，2026-07-07 openyida 跨專案分析併入）**：每個 command/agent/skill 必須宣告 `coverage: e2e|unit|opt-in|manual-only|deprecated` + 一行理由；本項是第 1 項「套件存在但未註冊」的反向缺口——「surface 存在但沒人宣告它該有什麼等級的覆蓋」。清單載體與既有 lint 機制（第 1/4 項）同批評估，避免產出第二套獨立 YAML/清單格式。
 
@@ -561,6 +566,114 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **See**: Claude pr-gate `gate-20260712-054618-f7d93e`（Final GO）
 
 **Dependencies / sequencing**: 建在 [[CC-412]]（已完成）與 [[CC-473]]（Codex batch PM interface，已完成）上；與 [[CC-445]]/[[CC-448]] cross-link 但不混入 host install manifest。[[CC-452]]/[[CC-477]] 是後續跨 host 共寫 episodes/usage sidecar 的正確性前置；memory 品質工作序列調整為 **CC-480 → CC-465 → CC-467 → CC-468 → CC-466**，其中 CC-465 可與本票的 resolver 切片並行。
+
+---
+
+## CC-481 — test runner contract：短迭代與 final evidence 分層 ✅ 2026-07-13
+
+**Problem**: pm-dispatch 的完整 `scripts/run-all-tests.sh` 在真實 contention/full gate 下可超過 20 分鐘。若每次 reviewer gate 都把 full suite 放進 `--test-cmd`，外層 gate/supervisor timeout 與測試 runtime 耦合，修正迴圈仍要等完整套件後才得到失敗；但在 selector 尚無可信 transitive dependency graph 時，直接以 affected tests 取代 final full validation又會產生假綠。
+
+**Contract**:
+1. `scripts/run-tests.sh` 是 pm-dispatch 專屬的 iteration-only planner：依 changed paths 選 direct behavioral suites、明列 coverage gaps，高扇出 substrate 自動升級 full；不得宣稱 final sign-off。
+2. `scripts/run-all-tests.sh` 是 `scripts/run-tests.sh --all` 的相容 wrapper；suite registry／repeatable positive selection／平行執行與 timeout 由共用 executor 持有。未知 suite 在任何執行前 fail-loud。
+3. `pr-gate` 保持 repo-agnostic，不自動偵測或強綁任何 runner 名稱。caller 可透過既有通用 `--test-cmd` 明確注入 bounded iteration command；其他 repo 可提供自己的命令或完全不提供。
+4. 在 pm-dispatch 自身的 maintainer delivery profile，full `run-all-tests.sh` 在 reviewer gate lifecycle 外獨立執行，避免消耗 gate timeout；同一份待交付狀態需 reviewer GO 與 full-suite PASS。這不是通用 gate 對其他 repo 的強制規則。
+5. `pm_test_result_v1` 類型化 artifact 記錄 tree fingerprint、runner contract hash、suite set、status/timestamps；verifier 只接受同一 tree fingerprint 的 full artifact。Iteration PASS 不得冒充 full PASS。
+
+**Acceptance**: affected direct mapping能在數秒內啟動所需 suites；unmapped path 顯式呈現；high-fanout path fail-safe 升級；`pr-gate.sh` 無任何 pm-dispatch runner path；focused regression 綠；full runner既有無參數行為不變。
+
+**Source**: 2026-07-13 使用者回報：full suite 在 PR-gate 內超過 20 分鐘並觸發 timeout；要求 runner 分層，同時維持 pr-gate 的跨 repo 工具邊界。
+
+**Implementation evidence (2026-07-13)**: `run-all-tests.sh` 已改為 `run-tests.sh --all` 薄 wrapper，registry/selection/parallel execution 共用同一 executor；iteration planner 顯示 direct mappings/coverage gaps 並對 high-fanout 變更 fail-safe 升級。Full run 產生 `pm_test_result_v1`，verifier 對比完整 suite set、no-skip、runner contract 與實際 working-tree fingerprint，測試中或測試後任何 tree 變動都會使 evidence stale。`release-verify` 作為 pm-dispatch 自身升版入口，Phase 2 強制 fresh full + artifact verify；通用 `pr-gate` 未綁定任何 runner。Regression：runner planner/artifact 12/12、full wrapper/meta-runner 34/34、release contract 47/47、core schema 50/50、script lint 117 files。Claude full-tier bounded affected gate `gate-20260713-054416-2b2bb7` 的 15 suites 0 fail/0 skip，五 reviewers 全數 approve/pass，verified Final GO；gate 內未執行 `run-all-tests.sh`。
+
+**See**: Claude full-tier pr-gate `gate-20260713-054416-2b2bb7`（Final GO）
+
+---
+
+## CC-482 — Claude PR-gate reviewer definitions 最小讀取權限 ✅ 2026-07-13
+
+**Problem**: `pmctl gate run --executor claude` 以 headless `claude --print --permission-mode acceptEdits` 執行。`pr-gate.sh` 雖由可信父程序確認 reviewer definitions 存在，卻把 `~/.claude/agents/{critic,qa-tester,architecture-reviewer,security-reviewer,risk-reviewer}.md` 原始 home 路徑寫入 brief。Detached subprocess 無互動 approver，明示在 scope 文字中的「使用者同意」也不會轉成 Claude permission grant；Claude 因此 exit 0 但不寫 result，`pmctl gate wait` 只能以 missing-result integrity failure fail-closed。
+
+**Evidence**:
+- `gate-20260713-005954-828160`：Claude 回報使用者拒絕五份 agent definitions，result 0 bytes，wait 以 NO-GO/missing artifact 拒絕。
+- `gate-20260713-010121-bf8931`：scope 已明示授權讀取仍被 permission prompt 阻擋，證明 prompt authorization 不是 capability propagation。
+- 現行 workaround `--isolation none` 映射 `bypassPermissions`，授權面遠大於只讀五份固定 definitions，不可作正式解。
+
+**Requirement**:
+1. Trusted gate parent 在 dispatch 前只針對本次選取 reviewers 建立 workspace 內、run-scoped、owner-read-only snapshot；brief 不再要求 executor 讀取 `~/.claude/agents/**`。
+2. Snapshot 必須位於 gate artifact leaf、不得覆蓋 target source、不得跟隨 executor 任意指定路徑；成功、NO-GO、dispatch failure、timeout 都清除 transient definitions。
+3. 不新增任意 `~/.claude/**` read allowlist，不使用 `bypassPermissions`，不改 Claude adapter 的一般 workspace-write 權限模型。
+4. Installed definition 缺失／不可讀／snapshot 失敗時在 dispatch 前回傳明確 operational error，不產生 synthetic NO-GO/missing-result 組合。
+5. Regression 覆蓋 sequential/parallel brief path confinement、snapshot 非空/唯讀/cleanup，以及 Claude route；真實 `claude --print` smoke 必須在 `acceptEdits` 下讀完五份 definitions 並寫出可由 `gate_result_verify` 驗證的非空 result。
+
+**Acceptance**: 原兩個 gate 的權限阻擋不可重現；result integrity 通過；home read scope 未擴張；`--isolation none` 不再是 reviewer definitions 的必要 workaround。
+
+**Implementation evidence (2026-07-13)**: selected definitions 在 dispatch 前複製到 target workspace 的 `.gate-briefs/reviewer-definitions-<timestamp>/`，directory mode 0700、files owner-read-only，sequential/parallel briefs 只引用 snapshot，EXIT cleanup 清除。Regression：`test-pr-gate.sh` 141/141（含 workspace confinement/non-empty/read-only/cleanup 與 minimal-PATH cases）。真實 `claude --print` smoke 使用 `permission: acceptEdits`、full tier 五 reviewers，寫出 `.gate-results/result.md`、Final GO，`pmctl gate verify` 通過；未使用 `--isolation none`。首次沙箱內 smoke 僅因 Claude API ConnectionRefused，經核准網路後重跑；另一次 output 指到 `.gate-results` 外被既有 reviewer guard 正確阻擋，改為合法 path 後成功，均非 reviewer-definition 權限回歸。Claude full-tier bounded gate `gate-20260713-054416-2b2bb7` 再次以 `acceptEdits` 讀取 run-scoped snapshots，五 reviewers 全數 approve/pass、result integrity 通過、verified Final GO，未重現原 permission block。
+
+**Source**: 2026-07-13 使用者提供兩次 detached Claude gate failure、完整 supervisor output 與 acceptance criteria。
+
+**See**: Claude full-tier pr-gate `gate-20260713-054416-2b2bb7`（Final GO）
+
+---
+
+## CC-483 — Codex workflow 優先使用 pmctl memory canonical substrate 🔵 active
+
+**Problem**: 現有 Codex workflow/host guidance 可能先使用 Codex 自身 memory surface，再把 `pmctl memory` 視為 fallback；但本專案的跨 host continuity 契約已由 [[CC-480]] 定義為 project-owned `pmctl memory`。若 provider priority 反轉，同一 repo 會產生兩套互不一致的記憶來源，Claude→Codex 切換表面成功、實際 retrieval/provenance 漂移。
+
+**Requirement**:
+1. 盤點 Codex host instructions、`pmctl pm prepare`、guard injection、context pack 與任何 native memory integration 的實際呼叫順序；以 runtime evidence 判斷目前誰先讀、誰能寫，不只檢查文件文字。
+2. Codex PM/task workflow 的 canonical source 固定為 `pmctl memory resolve` + `pmctl context pack --source memory`；Codex native memory 若保留，只能是明示、可觀測、非衝突的輔助來源，不得靜默覆蓋 canonical cards。
+3. 每次 preparation/dispatch artifact 要能看出 memory provider、canonical dir/project key、resolution source 與命中數；explicit invalid pmctl memory 仍依 CC-480 fail-closed，不可 fall through native memory。
+4. 不把 memory location 放進 host manifest，不複製 canonical memory 到 Codex-owned directory，不破壞 Claude/OpenCode 對同一 project memory 的 continuity。
+5. Live E2E：由 Claude/既有 pmctl memory 建立的辨識卡，在 Codex preparation 中由 pmctl 路徑命中；放置衝突的 Codex-native note 時不得取代 canonical constraint，artifact 清楚標示來源。
+
+**Acceptance**: 使用者要求「使用 pmctl memory」時，runtime trace 可證明 pmctl 是第一且 canonical provider；不存在無聲 native-first/fallback；focused memory/pm/host tests 與跨 host E2E 通過。
+
+**Dependencies**: [[CC-480]]（strict resolver + deterministic hydration，已完成）；與 [[CC-465]]/[[CC-467]] 的 retrieval quality/telemetry 正交，本票先修 provider authority。
+
+**Source**: 2026-07-13 使用者明確指定目前應優先使用 `pmctl memory`，不是 Codex memory。
+
+**Diagnostic evidence (2026-07-13)**: live `pmctl pm prepare --cd /home/screenleon/github/JapanJob --json` 已由 `pmctl memory resolve` 命中該 repo 的 canonical legacy memory dir/project key，且 `memory_context_status=hydrated`；pmctl coordinator 本身不是 native-first。缺口位於 Codex interactive host wiring：目前 live `~/.codex/hooks.json` 只有 Bash `PreToolUse` guard，沒有 prompt/session entry 將 preparation 固定導入 pmctl memory。拋棄式 `UserPromptSubmit` payload/injection probe 被中斷，未取得 runtime contract 前不先綁定未驗證 hook。
+
+---
+
+## CC-484 — JapanJob／qa-testing-rules pmctl context refresh 失效 ✅ 2026-07-13
+
+**Problem**: JapanJob 的 session 與 qa-testing-rules 實際工作流沒有順利用 `pmctl context` 刷新內容。[[CC-455]] 曾修正 context plane 預設 repo root 跟隨 caller CWD，但目前 live 行為仍可能在 repo-root resolution、worktree/project key、context.db 位置、mtime skip、session hook/prepare wiring 或 update/query 順序其中一層失效；只看 unit test 不能確認是哪一層。
+
+**Investigation / Requirement**:
+0. Capability gate：`sqlite3` 不在 PATH 時不執行 context hook／不建 DB，且 session 不失敗；`sqlite3` 可用且 DB 不存在時，第一次實際 context 使用必須自動建立 repo-local DB，不要求人工先跑 index。自動建立時須把 `.pm-dispatch/` 加入 repo `.gitignore`，且 context file discovery 本身必須排除整棵 `.pm-dispatch/`，避免 DB、WAL、pack 或 gate/runtime artifacts 被反向索引。
+1. 分別在 `/home/screenleon/github/JapanJob` 與 `/home/screenleon/github/qa-testing-rules` 記錄 `pmctl context index/update/query/pack` 的 resolved repo root、DB absolute path、DB mtime/content fingerprint、indexed/changed/skipped counts與 query hit provenance。
+2. JapanJob 必須涵蓋實際 session/PM preparation 入口，不只手動 CLI；確認 session 啟動後新內容是否進入同 repo 的 canonical DB，是否誤打 pm-dispatch 或另一 worktree DB。
+3. qa-testing-rules 必須涵蓋 gate/reviewer 使用前的 refresh 路徑；確認 rules 更新後 context pack 能讀到新內容，且 gate artifact 不被誤索引為 knowledge/source。
+4. 建立最小可逆 repro：新增唯一 marker → refresh → query/pack 命中 → 移除 marker → refresh → 不再命中；所有測試使用 temporary fixture/isolated state，除非 live wiring 驗證必要，不污染兩 repo committed content。
+5. 依根因補 actionable diagnostics：輸出 resolved repo/DB/freshness，不允許「command exit 0 但刷新了別的 repo」；補跨 repo E2E 防止 CC-455 類回歸。
+
+**Acceptance**: 兩 repo 的 marker round-trip 均通過；session/prepare/gate 實際入口與手動 CLI 使用同一 canonical context DB；錯誤 repo root 或 stale DB 可在單次診斷輸出中辨識；focused context tests 與 live smoke 有 artifact evidence。
+
+**Dependencies**: [[CC-455]]（CWD git-toplevel default，已交付）、[[CC-480]]（canonical memory resolution）；先診斷 context refresh，不與 CC-483 provider priority 混修。
+
+**Source**: 2026-07-13 使用者回報 JapanJob session 與 qa-testing-rules 均未順利刷新 context。
+
+**Diagnostic / implementation evidence (2026-07-13)**: qa-testing-rules 原本沒有 DB，根因是 prompt hook 明確關閉 autobuild；JapanJob DB 則停在 2026-07-07，且每次 unchanged refresh 都無條件重建 FTS（live 29.870s，超過舊 10s hook timeout）。hook 現在先 capability-check `sqlite3`，缺少時完全不呼叫 pmctl；存在時首次 prompt 以 120s budget 自動建立 `<repo>/.pm-dispatch/ctx/context.db`，既有 DB 以 45s refresh，首次 timeout 只保留可確認有 committed rows 的 cache。unchanged refresh 保留 FTS，JapanJob live 降為 6.254s。indexer 與 Git 各自排除 `.pm-dispatch/`：live 查到 JapanJob 舊 DB 曾含 `pre-gate.sh`/`post-gate.sh` 兩筆自我索引，修正版 refresh reconciliation 後為 0；qa-testing-rules 亦為 0。`pmctl context status [repo] --json` 現可一次回報 resolved root、DB、sqlite capability、new/changed/deleted 與 freshness；prompt/session hook、`pmctl pm prepare` 與 pmctl gate wrapper 在各自 workflow boundary best-effort refresh，但 context 仍是可選 capability。Regression：context baseline 112/112 + workflow status focused 2/2、guards 294/294、pm prepare 27/27、gate wrapper 19/19。Live 可逆 marker E2E 已在 JapanJob 與 qa-testing-rules 各自完成 add → prompt/session hit → query/pack hit → prepare 同 DB → gate boundary refresh → remove → no-hit，canonical DB 分別為 `<repo>/.pm-dispatch/ctx/context.db`，final indexed files 1294/25，兩庫 `.pm-dispatch/%` 自我索引列數均為 0，marker/docs fixture 已清除。Full-tier gate `gate-20260713-054416-2b2bb7` Final GO 後，critic 指出 AUTOREFRESH=0 狀態過度回報；已修為 `skipped`，缺 sqlite 統一回報 `unavailable`。首次 targeted re-gate `gate-20260713-060112-1bfb0a` 因 unavailable 分支無直接測試 NO-GO；補 regression 後 `gate-20260713-060616-424cda` critic approve / qa pass，test_suite pass，verified Final GO。
+
+**See**: Claude full-tier pr-gate `gate-20260713-054416-2b2bb7` 與 targeted re-gate `gate-20260713-060616-424cda`（Final GO）
+
+---
+
+## CC-485 — 可選 workflow profiles：工具能力與 maintainer policy 分離 🟢 someday
+
+**Problem**: pm-dispatch 維護者偏好「開發/PR-gate 只跑 affected tests → 開 PR 前獨立 full suite → 升版前 `release-verify` 再跑 fresh full」，但 pm-dispatch 同時是通用工具。其他使用者可能只需 dispatch/context/test 其中一部分，甚至不使用 PR-gate；若把維護者習慣寫死在通用 command，就會破壞 repo-agnostic 邊界。
+
+**Requirement**:
+1. gate、`--test-cmd`、affected planner、full runner、artifact verifier 與 release verification 都保持可獨立調用；不得因安裝/使用 pmctl 而強制執行其中任何一項。
+2. 若未來提供 profile/orchestration，必須是 repo-local config 或 CLI 明示 opt-in，default 向後相容，不自動假設 runner 名稱。
+3. 內建或文件化一個 pm-dispatch maintainer recommended profile，但機械回報 selected/skipped phases，不把部分執行報成完整 sign-off。
+4. `release-verify.sh` 是 pm-dispatch 自身的升版政策，可維持 fresh full 強制要求；此規則不向外溢到通用 gate 或其他 repo。
+
+**Acceptance**: 未設定 profile 時現有 command 行為不變；使用者可選 test-only、gate-only、test+gate 或全部不用；maintainer profile 可重現三階段流程並對每階段證據 fail-closed。
+
+**Source**: 2026-07-13 使用者澄清：該測試流程是個人/本專案政策，不保證其他工具使用者會執行 PR-gate；所有能力應可選。
 
 ---
 

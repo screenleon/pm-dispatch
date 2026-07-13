@@ -2810,7 +2810,7 @@ ctx_inject_case() {
   # can be exceeded on a CPU-saturated machine (run-all-tests --jobs N), and a
   # timed-out scan degrades to silence — which would flip "hit" cases red for
   # load reasons, not correctness ones.
-  local name="$1" payload="$2" expect="$3" state_root="$4"
+  local name="$1" payload="$2" expect="$3" state_root="$4" expected_ref="${5:-docs/notes.md}"
   local output status hook_err
   hook_err="$(mktemp)"
   output=$(printf '%s' "$payload" \
@@ -2824,7 +2824,7 @@ ctx_inject_case() {
     [[ "$status" == "0" \
       && "$output" == ===\ auto-context:*$'\n'* \
       && "$output" == *"knowledge_hits:"* \
-      && "$output" == *"docs/notes.md"* \
+      && "$output" == *"$expected_ref"* \
       && "$output" == *$'\n'===\ end\ auto-context\ === ]] && ok=1
   else
     [[ "$status" == "0" && -z "$output" ]] && ok=1
@@ -2896,25 +2896,125 @@ ctx_inject_hook_non_git_cwd_silent() {
   rm -rf "$dir"
 }
 
-ctx_inject_hook_no_db_silent() {
-  # Verifies a git repo with no context index stays silent — the hook must not
-  # trigger a first full index build on the prompt path (AUTOBUILD=0).
+ctx_inject_hook_no_db_auto_builds() {
+  # Verifies a git repo with no context index auto-builds when sqlite3 exists.
   # Steps:
   #   1. Create a git fixture repo WITHOUT building an index
   #   2. Run the hook with a matching prompt
-  #   3. Assert exit 0, empty stdout, and no context.db created
-  local name="ctx-inject-hook/no-db-silent"
+  #   3. Assert exit 0, matching context output, and context.db created
+  local name="ctx-inject-hook/no-db-auto-builds"
   should_run "$name" || return 0
+  command -v sqlite3 >/dev/null 2>&1 || { PASS=$((PASS+1)); return 0; }
   local dir repo
   dir="$(mktemp -d)"; repo="$dir/repo"
   mkdir -p "$repo/docs"
   git -C "$repo" init -q
   printf '## Gate verdict\n\nctxinjectterm knowledge body.\n' > "$repo/docs/notes.md"
   local _CTX_CASE_ENV=()
-  ctx_inject_case "$name" "{\"cwd\":\"$repo\",\"prompt\":\"tell me about ctxinjectterm behavior\"}" silent "$dir/state"
-  if [[ -e "$repo/.pm-dispatch/ctx/context.db" ]]; then
-    FAIL=$((FAIL+1)); FAILED_CASES+=("$name/no-autobuild")
-    printf '  FAIL  %s — hook auto-built context.db on the prompt path\n' "$name"
+  ctx_inject_case "$name" "{\"cwd\":\"$repo\",\"prompt\":\"tell me about ctxinjectterm behavior\"}" hit "$dir/state"
+  if [[ ! -s "$repo/.pm-dispatch/ctx/context.db" ]]; then
+    FAIL=$((FAIL+1)); FAILED_CASES+=("$name/db-missing")
+    printf '  FAIL  %s — hook did not auto-build context.db\n' "$name"
+  fi
+  rm -rf "$dir"
+}
+
+ctx_inject_hook_marker_round_trip() {
+  # Verifies the real UserPromptSubmit entry both adds and removes knowledge
+  # from the same repo-local DB across prompts.
+  local name="ctx-inject-hook/marker-round-trip"
+  should_run "$name" || return 0
+  command -v sqlite3 >/dev/null 2>&1 || { PASS=$((PASS+1)); return 0; }
+  local dir repo marker db row
+  dir="$(mktemp -d)"; repo="$dir/repo"; marker="$repo/docs/cc484-marker.md"
+  mkdir -p "$repo/docs"
+  git -C "$repo" init -q
+  printf '## CC484 session marker\n\ncc484sessionroundtrip knowledge body.\n' > "$marker"
+  local _CTX_CASE_ENV=()
+  ctx_inject_case "$name/add" "{\"cwd\":\"$repo\",\"prompt\":\"tell me about cc484sessionroundtrip behavior\"}" hit "$dir/state" "docs/cc484-marker.md"
+  db="$repo/.pm-dispatch/ctx/context.db"
+  rm -f "$marker"
+  ctx_inject_case "$name/remove" "{\"cwd\":\"$repo\",\"prompt\":\"tell me about cc484sessionroundtrip behavior\"}" silent "$dir/state"
+  row="$(sqlite3 "$db" "SELECT path FROM files WHERE path='docs/cc484-marker.md';" 2>/dev/null || true)"
+  if [[ -z "$row" ]]; then
+    PASS=$((PASS+1))
+  else
+    FAIL=$((FAIL+1)); FAILED_CASES+=("$name/db-reconciliation")
+    printf '  FAIL  %s — removed marker remained in canonical DB: %s\n' "$name" "$row"
+  fi
+  rm -rf "$dir"
+}
+
+ctx_inject_hook_sqlite_missing_skips_pmctl() {
+  # Verifies sqlite3 is an optional capability gate: without it the hook never
+  # invokes pmctl and never creates a context DB.
+  # Steps:
+  #   1. Build a minimal PATH with hook prerequisites but no sqlite3
+  #   2. Point the pmctl seam at a marker-writing stub
+  #   3. Assert silent exit 0, no marker, and no DB
+  local name="ctx-inject-hook/sqlite-missing-skips-pmctl"
+  should_run "$name" || return 0
+  local dir repo bin marker output status cmd
+  dir="$(mktemp -d)"; repo="$dir/repo"; bin="$dir/bin"; marker="$dir/pmctl-called"
+  mkdir -p "$repo/docs" "$bin"
+  git -C "$repo" init -q
+  printf '## Gate verdict\n\nctxinjectterm knowledge body.\n' > "$repo/docs/notes.md"
+  for cmd in bash cat dirname git jq mktemp rm; do
+    ln -s "$(command -v "$cmd")" "$bin/$cmd"
+  done
+  cat > "$dir/fake-pmctl" <<STUB
+#!/usr/bin/env bash
+touch "$marker"
+STUB
+  chmod +x "$dir/fake-pmctl"
+  output=$(printf '%s' "{\"cwd\":\"$repo\",\"prompt\":\"tell me about ctxinjectterm behavior\"}" \
+    | PATH="$bin" PM_DISPATCH_PROMPT_CONTEXT_PMCTL="$dir/fake-pmctl" "$CTX_HOOK" 2>/dev/null)
+  status=$?
+  if [[ "$status" == "0" && -z "$output" && ! -e "$marker" && ! -e "$repo/.pm-dispatch/ctx/context.db" ]]; then
+    PASS=$((PASS+1))
+  else
+    FAIL=$((FAIL+1)); FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s output=%q pmctl_called=%s db=%s\n' "$name" "$status" "$output" \
+      "$([[ -e "$marker" ]] && echo yes || echo no)" "$([[ -e "$repo/.pm-dispatch/ctx/context.db" ]] && echo yes || echo no)"
+  fi
+  rm -rf "$dir"
+}
+
+ctx_inject_hook_initial_timeout_removes_empty_db() {
+  # Verifies a timed-out first build cannot strand an empty DB that would make
+  # later prompts use the shorter incremental-refresh budget forever.
+  # Steps:
+  #   1. Use a fake pmctl that creates an empty files table then hangs
+  #   2. Run the hook with a one-second initial-build timeout
+  #   3. Assert fail-open exit 0 and removal of the empty derived DB
+  local name="ctx-inject-hook/initial-timeout-removes-empty-db"
+  should_run "$name" || return 0
+  command -v sqlite3 >/dev/null 2>&1 || { PASS=$((PASS+1)); return 0; }
+  command -v timeout >/dev/null 2>&1 || { PASS=$((PASS+1)); return 0; }
+  local dir repo output status
+  dir="$(mktemp -d)"; repo="$dir/repo"
+  mkdir -p "$repo/docs"
+  git -C "$repo" init -q
+  printf '## Gate verdict\n\nctxinjectterm knowledge body.\n' > "$repo/docs/notes.md"
+  cat > "$dir/slow-initial-pmctl" <<'STUB'
+#!/usr/bin/env bash
+set -e
+repo="${3:?repo path missing}"
+mkdir -p "$repo/.pm-dispatch/ctx"
+sqlite3 "$repo/.pm-dispatch/ctx/context.db" 'create table files(id integer primary key);'
+sleep 30
+STUB
+  chmod +x "$dir/slow-initial-pmctl"
+  output=$(printf '%s' "{\"cwd\":\"$repo\",\"prompt\":\"tell me about ctxinjectterm behavior\"}" \
+    | PM_DISPATCH_PROMPT_CONTEXT_PMCTL="$dir/slow-initial-pmctl" \
+      PM_DISPATCH_PROMPT_CONTEXT_INITIAL_TIMEOUT=1 "$CTX_HOOK" 2>/dev/null)
+  status=$?
+  if [[ "$status" == "0" && -z "$output" && ! -e "$repo/.pm-dispatch/ctx/context.db" ]]; then
+    PASS=$((PASS+1))
+  else
+    FAIL=$((FAIL+1)); FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s output=%q db=%s\n' "$name" "$status" "$output" \
+      "$([[ -e "$repo/.pm-dispatch/ctx/context.db" ]] && echo yes || echo no)"
   fi
   rm -rf "$dir"
 }
@@ -3055,7 +3155,10 @@ ctx_inject_hook_empty_stdin() {
 ctx_inject_hook_happy_path
 ctx_inject_hook_subdir_resolves_toplevel
 ctx_inject_hook_non_git_cwd_silent
-ctx_inject_hook_no_db_silent
+ctx_inject_hook_no_db_auto_builds
+ctx_inject_hook_marker_round_trip
+ctx_inject_hook_sqlite_missing_skips_pmctl
+ctx_inject_hook_initial_timeout_removes_empty_db
 ctx_inject_hook_no_hits_silent
 ctx_inject_hook_short_prompt_silent
 ctx_inject_hook_kill_switch

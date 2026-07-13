@@ -10,6 +10,11 @@ PMCTL="$REPO_ROOT/cli/pmctl"
 . "$SCRIPT_DIR/lib/test-harness.sh"
 th_init "$@"
 
+# Preparation now reports repo-context freshness. Avoid mutating this checkout's
+# live derived DB in the many contract-only cases; dedicated fixture cases opt
+# back into refresh explicitly.
+export PM_DISPATCH_CONTEXT_AUTOREFRESH=0
+
 # Behavior: prepare creates a snapshot and reports the non-interactive contract as JSON.
 # Steps: run prepare against this checkout with a ticket in the request; assert its snapshot and policy fields.
 case_prepare_emits_batch_contract() {
@@ -77,6 +82,41 @@ case_prepare_degrades_without_backlog() {
     pass "$name"
   else
     fail "$name" "code=$code out=$out"
+  fi
+}
+
+# Behavior: preparation refreshes the target repo's canonical context DB and
+# reconciles a marker deletion on the next preparation.
+# Steps: prepare a fixture with a unique marker, assert repo_context + query hit;
+# remove the marker, prepare again, then assert the same DB no longer returns it.
+case_prepare_repo_context_marker_round_trip() {
+  local name="pmctl pm prepare: repo context marker round-trip uses canonical DB"
+  should_run "$name" || return 0
+  command -v sqlite3 >/dev/null 2>&1 || { pass "$name (sqlite unavailable)"; return 0; }
+  local work="$tmp_root/prepare-context-work" marker out snapshot query code=0
+  mkdir -p "$work/docs"
+  git -C "$work" init -q
+  marker="$work/docs/cc484-prepare.md"
+  printf '# CC484 prepare marker\n\ncc484prepareroundtrip\n' > "$marker"
+  out="$(PM_DISPATCH_CONTEXT_AUTOREFRESH=1 "$PMCTL" pm prepare --cd "$work" --request 'cc484prepareroundtrip' --json 2>/dev/null)" || code=$?
+  snapshot="$(jq -r '.snapshot_file // empty' <<<"$out" 2>/dev/null || true)"
+  [[ -n "$snapshot" && -f "$snapshot" ]] && rm -f "$snapshot"
+  if [[ "$code" -ne 0 ]] || ! jq -e --arg repo "$work" --arg db "$work/.pm-dispatch/ctx/context.db" \
+      '.repo_context.resolved_repo_root == $repo and .repo_context.db_path == $db and .repo_context.freshness == "fresh" and (.repo_context.refresh_status == "built" or .repo_context.refresh_status == "refreshed")' <<<"$out" >/dev/null; then
+    fail "$name" "first prepare did not report fresh canonical context: code=$code out=$out"; return 0
+  fi
+  query="$(PM_DISPATCH_CONTEXT_AUTOREFRESH=0 "$PMCTL" context query "$work" cc484prepareroundtrip 2>/dev/null)"
+  [[ "$query" == *"docs/cc484-prepare.md"* ]] || { fail "$name" "marker missing after prepare: $query"; return 0; }
+  rm -f "$marker"
+  code=0
+  out="$(PM_DISPATCH_CONTEXT_AUTOREFRESH=1 "$PMCTL" pm prepare --cd "$work" --request 'cc484prepareroundtrip removal' --json 2>/dev/null)" || code=$?
+  snapshot="$(jq -r '.snapshot_file // empty' <<<"$out" 2>/dev/null || true)"
+  [[ -n "$snapshot" && -f "$snapshot" ]] && rm -f "$snapshot"
+  query="$(PM_DISPATCH_CONTEXT_AUTOREFRESH=0 "$PMCTL" context query "$work" cc484prepareroundtrip 2>/dev/null)"
+  if [[ "$code" -eq 0 ]] && jq -e '.repo_context.freshness == "fresh"' <<<"$out" >/dev/null && [[ "$query" == *"# no hits"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "removed marker remained or context stale: code=$code prepare=$out query=$query"
   fi
 }
 
@@ -527,6 +567,7 @@ case_prepare_emits_batch_contract
 case_prepare_emits_human_contract
 case_prepare_defaults_to_caller_git_root
 case_prepare_degrades_without_backlog
+case_prepare_repo_context_marker_round_trip
 case_prepare_deduplicates_focus_tickets
 case_prepare_rejects_empty_request
 case_prepare_rejects_non_git_workdir
