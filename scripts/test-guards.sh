@@ -26,7 +26,8 @@ EXWHOOK="$SCRIPT_DIR/guard-executor-write.sh"
 PMBASHHOOK="$SCRIPT_DIR/guard-pm-bash.sh"
 STOP_HOOK="$SCRIPT_DIR/guard-log-claude-usage.sh"
 RL_HOOK="$SCRIPT_DIR/guard-save-rate-limits.sh"
-MEM_HOOK="$SCRIPT_DIR/guard-inject-memory.sh"
+MEM_HOOK_REAL="$SCRIPT_DIR/guard-inject-memory.sh"
+export MEM_HOOK_REAL
 CTX_HOOK="$SCRIPT_DIR/guard-inject-context.sh"
 SESSION_HOOK="$SCRIPT_DIR/guard-session-summary.sh"
 
@@ -37,7 +38,44 @@ th_init --format=indent-2sp-quiet "$@"
 # Sandbox audit logs.
 export PM_GUARD_LOG_DIR="$(mktemp -d)"
 TEST_LOG_FILE="$PM_GUARD_LOG_DIR/hooks.log"
+TEST_GUARDS_DIAG_FILE="$PM_GUARD_LOG_DIR/diagnostics.log"
+export TEST_GUARDS_DIAG_FILE
 trap 'rm -rf "$PM_GUARD_LOG_DIR" "${DISPATCH_TEST_BRIEF:-}" "${DISPATCH_TEST_BIN:-}" "${tmp_root:-}"' EXIT
+
+# Every inject-memory call in this suite goes through one bounded wrapper. The
+# hook is a prompt-path component, so a single fixture must never consume the
+# aggregate suite deadline. `should_run` below exports the active case name,
+# making an eventual timeout actionable in the suite output and diagnostics.
+MEM_HOOK="$PM_GUARD_LOG_DIR/guard-inject-memory-bounded.sh"
+cat > "$MEM_HOOK" <<'EOF'
+#!/usr/bin/env bash
+set -uo pipefail
+target="${TEST_GUARDS_MEMORY_HOOK_TARGET:-$MEM_HOOK_REAL}"
+timeout --kill-after=5s "${TEST_GUARDS_MEMORY_HOOK_TIMEOUT:-30}s" "$target"
+rc=$?
+if [[ "$rc" -eq 124 ]]; then
+  msg="TIMEOUT guard-inject-memory case=${TEST_GUARDS_CURRENT_CASE:-unknown} timeout=${TEST_GUARDS_MEMORY_HOOK_TIMEOUT:-30}s"
+  printf '%s\n' "$msg" >&2
+  [[ -n "${TEST_GUARDS_DIAG_FILE:-}" ]] && printf '%s\n' "$msg" >> "$TEST_GUARDS_DIAG_FILE"
+fi
+exit "$rc"
+EOF
+chmod +x "$MEM_HOOK"
+
+# test-harness' default helper deliberately stays silent in quiet mode. This
+# suite needs a durable progress breadcrumb when it is run under run-all's
+# buffered parallel scheduler, so preserve its filtering semantics while
+# exporting and emitting the currently executing case only when requested.
+should_run() {
+  if $LIST; then
+    ALL_CASES+=("$1")
+    return 1
+  fi
+  [[ -z "$FILTER" || "$1" == *"$FILTER"* ]] || return 1
+  export TEST_GUARDS_CURRENT_CASE="$1"
+  [[ "${TEST_GUARDS_PROGRESS:-0}" == "1" ]] && printf 'RUNNING test-guards/%s\n' "$1" >&2
+  return 0
+}
 
 # Pin the codex-executor read roots to known values so path tests are
 # deterministic regardless of caller environment.
@@ -2100,6 +2138,78 @@ memory_usage_commit_concurrent_no_lost_updates() {
   fi
 }
 
+memory_usage_commit_contention_matrix() {
+  # Regression (CC-477): a sidecar transaction must retain every increment when
+  # writers begin together. Exercise both flock and the mkdir-lock fallback and
+  # leave enough evidence on failure to distinguish a writer/lock failure from
+  # a lost read-modify-write update.
+  # Steps: launch 25 uniquely identified writers behind a FIFO barrier; release
+  # them together for each lock backend; assert every writer entered the locked
+  # section, completed successfully, and produced the exact final count.
+  local name="memory-usage/contention-matrix-flock-and-mkdir-fallback"
+  should_run "$name" || return 0
+  local report status=0
+  report="$(
+    # shellcheck disable=SC1091
+    . "$SCRIPT_DIR/lib/memory.sh"
+    # shellcheck disable=SC1091
+    . "$SCRIPT_DIR/lib/portable.sh"
+    _cc477_commit() {
+      local sidecar="$1" trace="$2" writer_id="$3"
+      printf '%s acquired\n' "$writer_id" >> "$trace"
+      memory_usage_commit "$sidecar" 1000000 100 a.md
+      printf '%s finished\n' "$writer_id" >> "$trace"
+    }
+    local backend round writer_id d sidecar trace barrier got starts acquired finished exits ids_ok rc
+    for backend in flock mkdir; do
+      for round in $(seq 1 4); do
+        d="$(mktemp -d)"
+        sidecar="$d/inject-usage.tsv"
+        trace="$d/trace"
+        barrier="$d/start"
+        mkfifo "$barrier"
+        for writer_id in $(seq 1 25); do
+          (
+            printf '%s started\n' "$writer_id" >> "$trace"
+            IFS= read -r < "$barrier"
+            rc=0
+            if [[ "$backend" == "mkdir" ]]; then
+              FAKE_FLOCK_MISSING=1 serialize_with_lock "$sidecar" _cc477_commit "$sidecar" "$trace" "$writer_id" || rc=$?
+            else
+              serialize_with_lock "$sidecar" _cc477_commit "$sidecar" "$trace" "$writer_id" || rc=$?
+            fi
+            printf '%s exit=%s\n' "$writer_id" "$rc" >> "$trace"
+          ) &
+        done
+        for writer_id in $(seq 1 25); do printf 'go\n' > "$barrier"; done
+        wait
+        got="$(awk -F'\t' '$1=="a.md" {print $2}' "$sidecar" 2>/dev/null)"
+        starts="$(awk '$2=="started" {n++} END {print n+0}' "$trace")"
+        acquired="$(awk '$2=="acquired" {n++} END {print n+0}' "$trace")"
+        finished="$(awk '$2=="finished" {n++} END {print n+0}' "$trace")"
+        exits="$(awk '$2=="exit=0" {n++} END {print n+0}' "$trace")"
+        ids_ok=1
+        for writer_id in $(seq 1 25); do
+          [[ "$(awk -v id="$writer_id" '$1==id && $2=="started" {n++} END {print n+0}' "$trace")" -eq 1 ]] || ids_ok=0
+          [[ "$(awk -v id="$writer_id" '$1==id && $2=="acquired" {n++} END {print n+0}' "$trace")" -eq 1 ]] || ids_ok=0
+          [[ "$(awk -v id="$writer_id" '$1==id && $2=="finished" {n++} END {print n+0}' "$trace")" -eq 1 ]] || ids_ok=0
+          [[ "$(awk -v id="$writer_id" '$1==id && $2=="exit=0" {n++} END {print n+0}' "$trace")" -eq 1 ]] || ids_ok=0
+        done
+        printf 'backend=%s round=%s count=%s started=%s acquired=%s finished=%s exit0=%s ids-ok=%s lockdir=%s\n' \
+          "$backend" "$round" "${got:-missing}" "$starts" "$acquired" "$finished" "$exits" "$ids_ok" \
+          "$([[ -e "$sidecar.lockdir" ]] && printf present || printf absent)"
+        rm -rf "$d"
+      done
+    done
+  )" || status=$?
+  if [[ "$status" -eq 0 ]] \
+    && [[ "$(grep -Ec '^backend=(flock|mkdir) round=[1-4] count=25 started=25 acquired=25 finished=25 exit0=25 ids-ok=1 lockdir=absent$' <<< "$report")" -eq 8 ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status report=$report"
+  fi
+}
+
 memory_age_bucket_mapping() {
   # Unit: age bucket boundaries map to 100/70/50/30/10.
   local name="memory-usage/age-bucket-mapping" got want ok=1
@@ -2417,6 +2527,7 @@ inject_hook_archived_card_treated_as_active
 inject_hook_priority_always_bypasses_lifecycle_gate
 memory_usage_commit_decay_halves
 memory_usage_commit_concurrent_no_lost_updates
+memory_usage_commit_contention_matrix
 memory_age_bucket_mapping
 
 # Episode reminder tests (CC-019 inject hook extension)
@@ -2638,6 +2749,28 @@ inject_hook_routing_dir_isolation() {
   fi
 }
 inject_hook_routing_dir_isolation
+
+inject_hook_timeout_reports_current_case() {
+  # Verifies the bounded test wrapper fails a stalled hook quickly and names
+  # the active case, rather than leaving run-all with only a suite-level hang.
+  local name="inject-hook/timeout-reports-current-case" fake out status
+  should_run "$name" || return 0
+  fake="$PM_GUARD_LOG_DIR/stalled-inject-hook.sh"
+  printf '#!/bin/sh\nsleep 5\n' > "$fake"
+  chmod +x "$fake"
+  out=$(printf '{}' | TEST_GUARDS_MEMORY_HOOK_TARGET="$fake" \
+    TEST_GUARDS_MEMORY_HOOK_TIMEOUT=1 "$MEM_HOOK" 2>&1) || status=$?
+  if [[ "${status:-0}" -eq 124 && "$out" == *"TIMEOUT guard-inject-memory case=$name timeout=1s"* ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s output=%q\n' "$name" "${status:-0}" "$out"
+  fi
+  rm -f "$fake"
+}
+inject_hook_timeout_reports_current_case
 
 # =============================================================================
 # guard-inject-context
@@ -3763,7 +3896,10 @@ meta_filter_runs_only_matching() {
   local name="meta/filter-runs-only-matching"
   should_run "$name" || return 0
   local out
-  out=$(bash "$SCRIPT_DIR/test-guards.sh" --filter "pm: Edit memory file" 2>&1)
+  # This suite self-invokes to exercise filter semantics. Bound that child so a
+  # resource-starved full run cannot turn this small meta check into an
+  # unbounded run-all-tests stall.
+  out=$(timeout "${TEST_GUARDS_SELF_TIMEOUT:-30}" bash "$SCRIPT_DIR/test-guards.sh" --filter "pm: Edit memory file" 2>&1)
   if [[ "$out" == *"1 passed, 0 failed"* ]]; then
     PASS=$((PASS+1))
     [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
@@ -3784,7 +3920,7 @@ meta_list_exits_zero_with_count() {
   local name="meta/list-exits-zero-with-count"
   should_run "$name" || return 0
   local out count status
-  out=$(bash "$SCRIPT_DIR/test-guards.sh" --list 2>&1)
+  out=$(timeout "${TEST_GUARDS_SELF_TIMEOUT:-30}" bash "$SCRIPT_DIR/test-guards.sh" --list 2>&1)
   status=$?
   count=$(printf '%s\n' "$out" | wc -l)
   if [[ "$status" == "0" && "$count" -gt 140 ]]; then
@@ -3807,7 +3943,7 @@ meta_filter_no_match_exits_nonzero() {
   local name="meta/filter-no-match-exits-nonzero"
   should_run "$name" || return 0
   local out status
-  out=$(bash "$SCRIPT_DIR/test-guards.sh" --filter "__no_such_case_xyz__" 2>&1) && status=$? || status=$?
+  out=$(timeout "${TEST_GUARDS_SELF_TIMEOUT:-30}" bash "$SCRIPT_DIR/test-guards.sh" --filter "__no_such_case_xyz__" 2>&1) && status=$? || status=$?
   if [[ "$status" -ne 0 && "$out" == *"no tests matched"* ]]; then
     PASS=$((PASS+1))
     [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"

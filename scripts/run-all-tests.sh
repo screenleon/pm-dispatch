@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Standalone test aggregator - run all pm-dispatch test suites.
-# Usage: scripts/run-all-tests.sh [--skip <name>] [--list] [--jobs N]
+# Usage: scripts/run-all-tests.sh [--skip <name>] [--list] [--jobs N] [--suite-timeout N]
 # Requires a complete developer checkout: registered suites that are missing or
 # non-executable fail loudly (exit 1). Use --skip <name> to opt out of a specific suite.
 # Use --jobs N (or -j N) to set parallelism (default: nproc; falls back to 1 if nproc unavailable).
+# Each suite has a 15-minute deadline by default. Use --suite-timeout N (seconds) or
+# PM_DISPATCH_TEST_SUITE_TIMEOUT_SECS to tune it for an intentionally slow environment.
 set -euo pipefail
 export LC_ALL=C.UTF-8
 
@@ -179,12 +181,16 @@ if (( _detected_jobs > _default_job_cap )); then
 else
   JOBS="$_detected_jobs"
 fi
+SUITE_TIMEOUT_SECS="${PM_DISPATCH_TEST_SUITE_TIMEOUT_SECS:-900}"
+[[ "$SUITE_TIMEOUT_SECS" =~ ^[1-9][0-9]*$ ]] || SUITE_TIMEOUT_SECS=900
+PROGRESS_INTERVAL_SECS="${PM_DISPATCH_TEST_PROGRESS_SECS:-60}"
+[[ "$PROGRESS_INTERVAL_SECS" =~ ^[1-9][0-9]*$ ]] || PROGRESS_INTERVAL_SECS=60
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --skip)
       if [[ -z "${2:-}" || "${2:-}" == --* ]]; then
-        printf 'usage: %s [--skip <suite-name>] [--list] [--jobs N]\n' "$0" >&2
+        printf 'usage: %s [--skip <suite-name>] [--list] [--jobs N] [--suite-timeout N]\n' "$0" >&2
         printf 'error: --skip requires a non-empty suite name (got: %q)\n' "${2:-}" >&2
         exit 2
       fi
@@ -203,12 +209,31 @@ while [[ $# -gt 0 ]]; do
       JOBS="$2"
       shift 2
       ;;
+    --suite-timeout)
+      if [[ -z "${2:-}" || ! "${2:-}" =~ ^[1-9][0-9]*$ ]]; then
+        printf 'run-all-tests: --suite-timeout requires a positive integer (seconds)\n' >&2
+        exit 2
+      fi
+      SUITE_TIMEOUT_SECS="$2"
+      shift 2
+      ;;
     *)
       echo "run-all-tests: unknown flag $1" >&2
       exit 2
       ;;
   esac
 done
+
+TIMEOUT_BIN=""
+if command -v timeout >/dev/null 2>&1; then
+  TIMEOUT_BIN="$(command -v timeout)"
+elif command -v gtimeout >/dev/null 2>&1; then
+  # Homebrew coreutils exposes GNU timeout as gtimeout on macOS.
+  TIMEOUT_BIN="$(command -v gtimeout)"
+else
+  printf 'run-all-tests: requires GNU timeout (timeout or gtimeout) for per-suite deadlines\n' >&2
+  exit 2
+fi
 
 # ── Registry-sync guard ──────────────────────────────────────────────────────
 # SUITE_NAMES (ordered) and SUITE_PATHS (name→script) are two parallel registries.
@@ -254,24 +279,38 @@ skipped=0
 FAILED_SUITE_NAMES=()
 declare -A SUITE_DURATIONS=()
 
+run_with_suite_timeout() {
+  "$TIMEOUT_BIN" --kill-after=15s "${SUITE_TIMEOUT_SECS}s" "$@"
+}
+
 run_suite() {
   local name="$1"
   local script="$REPO_ROOT/${SUITE_PATHS[$name]}"
+  local rc=0
 
+  # A hung suite used to hold a parallel slot indefinitely while all of its
+  # output stayed buffered. Keep the deadline per suite so one stalled child
+  # cannot consume the gate's whole aggregate timeout.
   case "$name" in
     test-guards)
-      HOME="${CLAUDE_CONFIG_TEST_PREFLIGHT_HOME:-$HOME}" "$script"
+      HOME="${CLAUDE_CONFIG_TEST_PREFLIGHT_HOME:-$HOME}" \
+        TEST_GUARDS_PROGRESS="${TEST_GUARDS_PROGRESS:-1}" \
+        run_with_suite_timeout "$script"
       ;;
     test-install)
-      CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 bash "$script"
+      CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 run_with_suite_timeout bash "$script"
       ;;
     test-pm-scripts)
-      bash "$script"
+      run_with_suite_timeout bash "$script"
       ;;
     *)
-      "$script"
+      run_with_suite_timeout "$script"
       ;;
-  esac
+  esac || rc=$?
+  if [[ "$rc" -eq 124 ]]; then
+    printf 'TIMEOUT %s (%ss)\n' "$name" "$SUITE_TIMEOUT_SECS" >&2
+  fi
+  return "$rc"
 }
 
 # ── Suite eligibility check (shared by sequential and parallel paths) ─────────
@@ -308,6 +347,7 @@ if [[ "$JOBS" -eq 1 ]]; then
     fi
 
     suite_started="$SECONDS"
+    printf 'START %s\n' "$name"
     set +e
     run_suite "$name"
     rc=$?
@@ -337,6 +377,7 @@ else
   _if_names=()
   _if_pids=()
   _if_dirs=()
+  declare -A _progress_reported=()
 
   _launch() {
     local name="$1" script="$2" d
@@ -344,6 +385,7 @@ else
     mkdir -p "$d"
     printf '255\n' > "$d/rc"
     printf '%s\n' "$SECONDS" > "$d/started"
+    printf 'START %s\n' "$name"
     (
       set +e
       run_suite "$name" > "$d/out" 2>&1
@@ -387,6 +429,11 @@ else
           FAILED_SUITE_NAMES+=("$name")
         fi
       else
+        local elapsed=$(( SECONDS - $(cat "$d/started" 2>/dev/null || printf '%s' "$SECONDS") ))
+        if [[ -z "${_progress_reported[$name]:-}" ]] && (( elapsed >= PROGRESS_INTERVAL_SECS )); then
+          printf 'RUNNING %s (%ss)\n' "$name" "$elapsed"
+          _progress_reported["$name"]=1
+        fi
         new_names+=("$name")
         new_pids+=("$pid")
         new_dirs+=("$d")
