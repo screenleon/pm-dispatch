@@ -239,6 +239,38 @@ make_path_without_codex() {
   ln -s "$(command -v cat)"    "$bin/cat"
   ln -s "$(command -v rm)"     "$bin/rm"
   ln -s "$(command -v sleep)"  "$bin/sleep"
+  ln -s "$(command -v timeout)" "$bin/timeout"
+  if command -v nproc >/dev/null 2>&1; then ln -s "$(command -v nproc)" "$bin/nproc"; fi
+  printf '%s\n' "$bin"
+}
+
+make_path_without_timeout() {
+  # Keep only the startup utilities the aggregator needs before its timeout
+  # prerequisite check. Deliberately omit both timeout and gtimeout.
+  local bin="$1"
+  mkdir -p "$bin"
+  ln -s /usr/bin/bash "$bin/bash"
+  ln -s /usr/bin/dirname "$bin/dirname"
+  printf '%s\n' "$bin"
+}
+
+make_path_with_gtimeout_only() {
+  # Exercise fallback selection without claiming a macOS integration test: the
+  # shim delegates to this Linux host's GNU timeout, while PATH has no timeout.
+  local bin="$1" marker="$2" timeout_bin
+  timeout_bin="$(command -v timeout)"
+  mkdir -p "$bin"
+  printf '#!/bin/sh\n: > %s\nexec %s "$@"\n' "$marker" "$timeout_bin" > "$bin/gtimeout"
+  chmod +x "$bin/gtimeout"
+  printf '#!/bin/sh\nexit 0\n' > "$bin/codex"
+  chmod +x "$bin/codex"
+  ln -s /usr/bin/bash "$bin/bash"
+  ln -s /usr/bin/dirname "$bin/dirname"
+  ln -s "$(command -v mktemp)" "$bin/mktemp"
+  ln -s "$(command -v mkdir)"  "$bin/mkdir"
+  ln -s "$(command -v cat)"    "$bin/cat"
+  ln -s "$(command -v rm)"     "$bin/rm"
+  ln -s "$(command -v sleep)"  "$bin/sleep"
   if command -v nproc >/dev/null 2>&1; then ln -s "$(command -v nproc)" "$bin/nproc"; fi
   printf '%s\n' "$bin"
 }
@@ -285,6 +317,16 @@ EOF
 wait_for_file() {
   local f="$1" tries="${2:-200}" i=0
   while [[ ! -e "$f" ]]; do
+    i=$((i + 1))
+    [[ "$i" -ge "$tries" ]] && return 1
+    sleep 0.02
+  done
+  return 0
+}
+
+wait_for_log_pattern() {
+  local file="$1" pattern="$2" tries="${3:-300}" i=0
+  while ! grep -q "$pattern" "$file" 2>/dev/null; do
     i=$((i + 1))
     [[ "$i" -ge "$tries" ]] && return 1
     sleep 0.02
@@ -636,6 +678,111 @@ test_jobs_invalid_string() {
   fi
 }
 
+test_suite_timeout_invalid_zero() {
+  # Behavior: --suite-timeout 0 exits 2 because a suite deadline must be positive.
+  # Steps: invoke the aggregator with zero; assert the flag-specific validation message.
+  local name="suite-timeout-invalid-zero"
+  local out status=0
+  out=$(bash "$REPO_ROOT/scripts/run-all-tests.sh" --suite-timeout 0 2>&1) || status=$?
+  if [[ "$status" -eq 2 && "$out" == *"--suite-timeout requires a positive integer"* ]]; then
+    pass_case "$name"
+  else
+    fail_case "$name" "status=$status out=$out"
+  fi
+}
+
+test_timeout_binary_missing_fails_loudly() {
+  # Behavior: no timeout or gtimeout binary fails closed before any suite starts.
+  # Steps: use a minimal PATH deliberately lacking both binaries; invoke --list;
+  #        assert exit 2 and the actionable prerequisite diagnostic.
+  local name="timeout-binary-missing-fails-loudly"
+  local path out status=0
+  path="$(make_path_without_timeout "$TMP_ROOT/$name-bin")"
+  out=$(PATH="$path" bash "$REPO_ROOT/scripts/run-all-tests.sh" --list 2>&1) || status=$?
+  if [[ "$status" -eq 2 && "$out" == *"requires GNU timeout (timeout or gtimeout)"* ]]; then
+    pass_case "$name"
+  else
+    fail_case "$name" "status=$status out=$out"
+  fi
+}
+
+test_gtimeout_fallback_runs_suites() {
+  # Behavior: when timeout is absent but gtimeout exists, the runner selects gtimeout.
+  # Steps: use a PATH with a marker-writing GNU-timeout shim named only gtimeout; pass-stub
+  #        every suite; assert all suites pass and the shim was invoked at least once.
+  local name="gtimeout-fallback-runs-suites"
+  local repo="$TMP_ROOT/$name" path marker out status=0
+  make_fixture_repo "$repo"
+  write_pass_stubs "$repo"
+  marker="$TMP_ROOT/$name-gtimeout-used"
+  path="$(make_path_with_gtimeout_only "$repo/bin" "$marker")"
+  out=$(PATH="$path" run_aggregator "$repo" --jobs 1 2>&1) || status=$?
+  if [[ "$status" -eq 0 && -e "$marker" &&
+        "$out" == *"$SUITE_TOTAL passed, 0 failed, 0 skipped"* ]]; then
+    pass_case "$name"
+  else
+    fail_case "$name" "status=$status gtimeout_used=$([[ -e "$marker" ]] && echo yes || echo no) out=$out"
+  fi
+}
+
+test_suite_timeout_fails_loudly() {
+  # Behavior: a suite exceeding --suite-timeout is failed with an explicit timeout marker.
+  # Steps: make lint-agents sleep past a one-second deadline; pass-stub every other suite;
+  #        run sequentially and assert the aggregate finishes non-zero, names the timed-out
+  #        suite, and preserves the timeout diagnostic for a gate log reader.
+  local name="suite-timeout-fails-loudly"
+  local repo="$TMP_ROOT/$name" path out status=0
+  make_fixture_repo "$repo"
+  write_pass_stubs "$repo"
+  local slow_stub
+  slow_stub="$repo/$(suite_path lint-agents)"
+  printf '#!/bin/sh\nsleep 2\n' > "$slow_stub"
+  chmod +x "$slow_stub"
+  path="$(make_path_with_codex "$repo/bin")"
+  out=$(PATH="$path" run_aggregator "$repo" --jobs 1 --suite-timeout 1 2>&1) || status=$?
+  if [[ "$status" -ne 0 && "$out" == *"TIMEOUT lint-agents (1s)"* &&
+        "$out" == *"FAIL lint-agents"* && "$out" == *"failed suites:"*"lint-agents"* ]]; then
+    pass_case "$name"
+  else
+    fail_case "$name" "status=$status out=$out"
+  fi
+}
+
+test_parallel_progress_reports_slow_suite() {
+  # Behavior: a still-running parallel suite emits one visible progress line before it finishes.
+  # Steps: block the first suite, set the progress interval to one second, wait past it, and
+  #        assert the aggregate log identifies the suite and elapsed time; release and finish.
+  local name="parallel-progress-reports-slow-suite"
+  local repo="$TMP_ROOT/$name" path status
+  make_fixture_repo "$repo"
+  write_pass_stubs "$repo"
+  local marker="$TMP_ROOT/$name-markers"; mkdir -p "$marker"
+  write_gated_stub "$repo" lint-agents "$marker"
+  path="$(make_path_with_codex "$repo/bin")"
+  local logf="$TMP_ROOT/$name.log"
+  ( PM_DISPATCH_TEST_PROGRESS_SECS=1 PATH="$path" run_aggregator "$repo" --jobs 2 > "$logf" 2>&1; echo $? > "$marker/rc" ) &
+  local agg_pid=$!
+
+  if ! wait_for_file "$marker/started-lint-agents" 300; then
+    fail_case "$name" "blocked suite never started"
+    touch "$marker/release-lint-agents"
+    wait "$agg_pid" 2>/dev/null; return
+  fi
+  if ! wait_for_log_pattern "$logf" 'RUNNING lint-agents (.*s)' 300; then
+    fail_case "$name" "missing progress line: $(cat "$logf" 2>/dev/null)"
+    touch "$marker/release-lint-agents"
+    wait "$agg_pid" 2>/dev/null; return
+  fi
+  touch "$marker/release-lint-agents"
+  wait "$agg_pid" 2>/dev/null
+  status="$(cat "$marker/rc" 2>/dev/null || echo 1)"
+  if [[ "$status" -eq 0 ]]; then
+    pass_case "$name"
+  else
+    fail_case "$name" "status=$status out=$(cat "$logf" 2>/dev/null)"
+  fi
+}
+
 test_jobs_no_arg_default() {
   # Behavior: no --jobs flag uses default parallelism (nproc or 1 fallback); exits 0.
   # Steps: write pass stubs; run aggregator without --jobs; assert exit 0 and correct totals.
@@ -909,6 +1056,11 @@ test_jobs_parallel_one_fail
 test_jobs_parallel_skip_accounting
 test_jobs_invalid_zero
 test_jobs_invalid_string
+test_suite_timeout_invalid_zero
+test_timeout_binary_missing_fails_loudly
+test_gtimeout_fallback_runs_suites
+test_suite_timeout_fails_loudly
+test_parallel_progress_reports_slow_suite
 test_jobs_no_arg_default
 test_jobs_larger_than_suite_count
 test_jobs_explicit_sequential

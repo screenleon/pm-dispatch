@@ -247,7 +247,10 @@ serialize_with_lock() {
       trap 'mkdir_unlock "$lockdir"' EXIT
       "$@"
     ) || _slw_rc=$?
-    mkdir_unlock "$lockdir"
+    # The EXIT trap above is the sole releaser. Releasing again here is not
+    # harmless: after the trap removes our lockdir, another waiter may acquire
+    # the same path before this outer shell reaches a second mkdir_unlock(),
+    # which would then delete the new owner's lock.
     return $_slw_rc
   fi
 }

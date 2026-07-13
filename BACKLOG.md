@@ -97,7 +97,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-472 | 🟢 someday | spike: antigravity（`agy` CLI）host 唯讀 probe——比照 CC-436/CC-448 階段 1 模式，實測 command 載入能力 + hook/plugin 機制 + 五個 capability enum 的 provider/confidence 判定，不落地 `hosts/antigravity/host.yaml`；排在 CC-445 通用 install/uninstall dispatcher 之後、與 CC-448 opencode 同批或緊接其後評估（N=3 驗證點） | arch/install | 2026-07-08 | — | P3 | spike |
 | CC-473 | ✅ done | `pmctl pm`：batch-only `prepare/run` CLI surface，共用 snapshot、handover validation、detached dispatch/authenticated wait；Codex host manifest/doctor 宣告 partial `cli_wrapper`，Claude gate GO 且真實 Codex live smoke 通過 | arch/install | 2026-07-10 | pr:#391 | P2 | design |
 | CC-474 | ✅ done | dispatch/gate reasoning effort 獨立可調：目前 effort 綁死在 model alias 第三欄（share/*-model-aliases.tsv，多數 alias 寫死 high），無法在不換 model 的前提下單獨調降/調升；新增 `--effort` 旗標覆蓋、預設改 medium（CC-445 pr-gate 多輪迭代觀察，2026-07-08） | ops/gate | 2026-07-08 | pr:#387 | P3 | — |
-| CC-477 | 🔵 active | guard memory usage sidecar 並發遺失更新：建立可診斷 repro，修正 lock protocol，消除 full-suite flake | ops/test | 2026-07-10 | feedback:2026-07-10 | P2 | hygiene |
+| CC-477 | ✅ closed 2026-07-13 | guard memory usage sidecar 並發遺失更新：建立可診斷 repro，修正 lock protocol，消除 full-suite flake | ops/test | 2026-07-10 | pr:#396 | P2 | hygiene |
 
 ---
 
@@ -365,7 +365,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Dependencies**: 無前置；v0.9.0 hardening phase，與其他 phase 檔案面不重疊可並行。
 **Source**: 2026-07-06 盲測程式碼稽核（runtime 管線角度）。
 
-## CC-477 — guard memory usage sidecar 並發遺失更新 🔵 active
+## CC-477 — guard memory usage sidecar 並發遺失更新 ✅ 2026-07-13
 
 **Problem**: `scripts/test-guards.sh` 的 `memory-usage/concurrent-no-lost-updates` 已多次在完整 `run-all-tests.sh` 中失敗（例如 2026-07-10 gate pre-flight 觀察到 final `access_count=21`, expected `25`），但單獨重跑可通過。這表示 `guard-inject-memory.sh` 的 usage sidecar read-modify-write 路徑在真實 contention 下仍可能遺失 access increment，或其測試/lock lifecycle 本身不具足夠隔離與可觀測性。它反覆阻斷 gate，不能再視為偶發噪音。
 
@@ -382,6 +382,10 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Dependencies**: 與 [[CC-452]] 同屬 guard/hook concurrency hardening，但本票涵蓋的是已使用 lock 的 usage sidecar 交易完整性；可並行調查，修法若需要 shared lock helper 則在實作時協調。v0.9.0 hardening P2。
 
 **Evidence**: 2026-07-10 full gate pre-flight 多次出現 `memory-usage/concurrent-no-lost-updates` 遺失 increment（21/25）；另一次 `test-pmctl-memory` fixture case 單獨重跑通過，支持「full-suite contention / isolation」方向，而非 CC-473 行為回歸。
+
+**Resolution**: 根因是 `serialize_with_lock` 的 mkdir fallback 在子 shell `EXIT` trap 已釋放 lockdir 後，外層又做第二次 `mkdir_unlock`；兩次釋放之間下一個 waiter 可取得同一路徑，導致舊 owner 刪除新 owner 的 lock。改為由子 shell trap 作唯一釋放者。新增 25 writer、FIFO barrier、`flock`/`mkdir_lock` 兩後端各 4 rounds 的 contention matrix，失敗時保留 writer start/acquire/finish/exit evidence 與 lockdir cleanup assertion。同步 harden full runner 的 per-suite deadline、START/RUNNING diagnostics，以及 inject-memory case-level timeout，使 full-suite 壓力下能快速定位而不再靜默卡住。`gate-20260713-021703-6a233a` preflight PASS、Final GO。
+
+**See**: pr:#396
 
 ---
 
