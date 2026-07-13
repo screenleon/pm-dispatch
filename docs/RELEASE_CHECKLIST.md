@@ -18,6 +18,11 @@ Coverage splits into three layers:
 
 A release is **full GO** only when `release-verify.sh --e2e` exits 0 (`AUTOMATED VERDICT: GO`) and every §2a / §2d box is ticked. Exit 3 (`PARTIAL GO`) means required phases were skipped and is **not** sufficient for tagging.
 
+Affected-suite feedback and an optional development/PR gate happen before this
+release procedure and are not fixed release phases. Do not run them as release
+prerequisites or treat their artifacts as substitutes for the fresh full suite
+already owned by `release-verify.sh --e2e`.
+
 ---
 
 ## 0. Pre-flight

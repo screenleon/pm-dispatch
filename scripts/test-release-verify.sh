@@ -53,6 +53,7 @@ rv_no_suite_once() {
 test_help_contains_usage() {
   local out; out=$(bash "$RV" --help 2>&1)
   assert_contains    "help-usage"         "Usage"             "$out"
+  assert_contains    "help-e2e-keeps-full" "never replaces or skips the full suite" "$out"
 }
 
 test_help_no_code_leak() {
@@ -79,6 +80,25 @@ test_release_suite_verifies_state_bound_artifact() {
     pass "$name"
   else
     fail "$name" "release Phase 2 does not run+verify the full test artifact"
+  fi
+}
+
+test_release_e2e_keeps_full_and_excludes_affected_phase() {
+  # The fixed release entry point is release-verify.sh --e2e. It must keep the
+  # default fresh full suite, add E2E after that suite, and never grow an
+  # affected-selection phase (affected feedback belongs to development/PR).
+  local name="release-e2e-keeps-full-and-excludes-affected-phase"
+  local full_line e2e_line
+  full_line="$(grep -n '^# ── Phase 2: Full automated test suite' "$RV" | head -1 | cut -d: -f1)"
+  e2e_line="$(grep -n '^# ── Phase 4:' "$RV" | head -1 | cut -d: -f1)"
+  if grep -q '^RUN_SUITE=1$' "$RV" \
+    && grep -q -- '--e2e)      RUN_E2E=1; shift ;;' "$RV" \
+    && [[ "$full_line" =~ ^[0-9]+$ && "$e2e_line" =~ ^[0-9]+$ ]] \
+    && (( full_line < e2e_line )) \
+    && ! grep -Eq 'run-tests\.sh[^[:cntrl:]]*--(base|path)|run-tests\.sh[^[:cntrl:]]*contract=iteration|run-tests\.sh[^[:cntrl:]]*affected' "$RV"; then
+    pass "$name"
+  else
+    fail "$name" "--e2e no longer means fresh full first + E2E, or an affected phase leaked into release"
   fi
 }
 
@@ -303,6 +323,7 @@ test_help_no_code_leak
 test_help_exits_0
 test_help_short
 test_release_suite_verifies_state_bound_artifact
+test_release_e2e_keeps_full_and_excludes_affected_phase
 test_unknown_flag
 test_adapter_missing_value
 test_adapter_invalid
