@@ -55,6 +55,7 @@ SUITE_NAMES=(
   test-skill-refine
   test-pr-gate-profile
   test-run-all-tests
+  test-run-tests
   test-timeout-resolve
   test-dispatch-common
   test-detached-launch
@@ -157,6 +158,7 @@ suite_path() {
     test-skill-refine) printf 'scripts/test-skill-refine.sh\n' ;;
     test-pr-gate-profile) printf 'scripts/test-pr-gate-profile.sh\n' ;;
     test-run-all-tests) printf 'scripts/test-run-all-tests.sh\n' ;;
+    test-run-tests) printf 'scripts/test-run-tests.sh\n' ;;
     test-timeout-resolve) printf 'scripts/test-timeout-resolve.sh\n' ;;
     test-dispatch-common) printf 'scripts/test-dispatch-common.sh\n' ;;
     test-detached-launch) printf 'scripts/test-detached-launch.sh\n' ;;
@@ -197,9 +199,16 @@ suite_path() {
 
 make_fixture_repo() {
   local repo="$1"
-  mkdir -p "$repo/scripts" "$repo/pm/scripts/test"
+  mkdir -p "$repo/scripts/lib" "$repo/pm/scripts/test" "$repo/core/schema"
   cp "$REPO_ROOT/scripts/run-all-tests.sh" "$repo/scripts/run-all-tests.sh"
-  chmod +x "$repo/scripts/run-all-tests.sh"
+  cp "$REPO_ROOT/scripts/run-tests.sh" "$repo/scripts/run-tests.sh"
+  cp "$REPO_ROOT/scripts/lib/test-suite-runner.sh" "$repo/scripts/lib/test-suite-runner.sh"
+  cp "$REPO_ROOT/scripts/lib/test-result.sh" "$repo/scripts/lib/test-result.sh"
+  cp "$REPO_ROOT/scripts/lib/artifact-paths.sh" "$repo/scripts/lib/artifact-paths.sh"
+  cp "$REPO_ROOT/core/schema/test-result.schema.json" "$repo/core/schema/test-result.schema.json"
+  chmod +x "$repo/scripts/run-all-tests.sh" "$repo/scripts/run-tests.sh" "$repo/scripts/lib/test-suite-runner.sh"
+  git -C "$repo" init -q
+  git -C "$repo" add .
 }
 
 write_suite_stub() {
@@ -229,17 +238,12 @@ make_path_with_codex() {
 }
 
 make_path_without_codex() {
-  local bin="$1"
+  local bin="$1" cmd
   mkdir -p "$bin"
-  ln -s /usr/bin/bash "$bin/bash"
-  ln -s /usr/bin/dirname "$bin/dirname"
-  # Parallel path in run-all-tests needs these external tools:
-  ln -s "$(command -v mktemp)" "$bin/mktemp"
-  ln -s "$(command -v mkdir)"  "$bin/mkdir"
-  ln -s "$(command -v cat)"    "$bin/cat"
-  ln -s "$(command -v rm)"     "$bin/rm"
-  ln -s "$(command -v sleep)"  "$bin/sleep"
-  ln -s "$(command -v timeout)" "$bin/timeout"
+  # Keep the runner/test-result dependencies but deliberately omit codex.
+  for cmd in bash dirname mktemp mkdir cat rm sleep timeout git jq sha256sum awk sort readlink date mv chmod; do
+    ln -s "$(command -v "$cmd")" "$bin/$cmd"
+  done
   if command -v nproc >/dev/null 2>&1; then ln -s "$(command -v nproc)" "$bin/nproc"; fi
   printf '%s\n' "$bin"
 }
@@ -257,20 +261,16 @@ make_path_without_timeout() {
 make_path_with_gtimeout_only() {
   # Exercise fallback selection without claiming a macOS integration test: the
   # shim delegates to this Linux host's GNU timeout, while PATH has no timeout.
-  local bin="$1" marker="$2" timeout_bin
+  local bin="$1" marker="$2" timeout_bin cmd
   timeout_bin="$(command -v timeout)"
   mkdir -p "$bin"
   printf '#!/bin/sh\n: > %s\nexec %s "$@"\n' "$marker" "$timeout_bin" > "$bin/gtimeout"
   chmod +x "$bin/gtimeout"
   printf '#!/bin/sh\nexit 0\n' > "$bin/codex"
   chmod +x "$bin/codex"
-  ln -s /usr/bin/bash "$bin/bash"
-  ln -s /usr/bin/dirname "$bin/dirname"
-  ln -s "$(command -v mktemp)" "$bin/mktemp"
-  ln -s "$(command -v mkdir)"  "$bin/mkdir"
-  ln -s "$(command -v cat)"    "$bin/cat"
-  ln -s "$(command -v rm)"     "$bin/rm"
-  ln -s "$(command -v sleep)"  "$bin/sleep"
+  for cmd in bash dirname mktemp mkdir cat rm sleep git jq sha256sum awk sort readlink date mv chmod; do
+    ln -s "$(command -v "$cmd")" "$bin/$cmd"
+  done
   if command -v nproc >/dev/null 2>&1; then ln -s "$(command -v nproc)" "$bin/nproc"; fi
   printf '%s\n' "$bin"
 }
@@ -367,6 +367,50 @@ test_known_suite_count() {
     pass_case "$name"
   else
     fail_case "$name" "status=$status SUITE_TOTAL=$SUITE_TOTAL listed=$actual_count expected=$expected_count out=$out"
+  fi
+}
+
+test_suite_filter_list() {
+  local name="suite-filter-list"
+  # Behavior: repeated --suite flags select known suites in registry order for --list.
+  # Steps: request two suites in reverse order; assert only those two are listed in canonical order.
+  local out status=0
+  out=$(bash "$REPO_ROOT/scripts/lib/test-suite-runner.sh" --suite test-pr-gate --suite lint-agents --list 2>&1) || status=$?
+  if [[ "$status" -eq 0 && "$out" == $'lint-agents\ntest-pr-gate' ]]; then
+    pass_case "$name"
+  else
+    fail_case "$name" "status=$status out=$out"
+  fi
+}
+
+test_suite_filter_runs_only_selected() {
+  local name="suite-filter-runs-only-selected"
+  # Behavior: --suite runs only the positive selection and does not count all other suites as skipped.
+  # Steps: pass-stub all suites; select lint-agents; assert exactly one pass and no unrelated START line.
+  local repo="$TMP_ROOT/$name" path out status=0
+  make_fixture_repo "$repo"
+  write_pass_stubs "$repo"
+  path="$(make_path_with_codex "$repo/bin")"
+  out=$(PATH="$path" bash "$repo/scripts/lib/test-suite-runner.sh" --suite lint-agents 2>&1) || status=$?
+  if [[ "$status" -eq 0 && "$out" == *"1 passed, 0 failed, 0 skipped"* &&
+        "$out" == *"START lint-agents"* && "$out" != *"START lint-scripts"* ]]; then
+    pass_case "$name"
+  else
+    fail_case "$name" "status=$status out=$out"
+  fi
+}
+
+test_suite_filter_rejects_unknown() {
+  local name="suite-filter-rejects-unknown"
+  # Behavior: an unknown --suite value fails before any suite starts.
+  # Steps: request a typo; assert exit 2 and a precise diagnostic with no START output.
+  local out status=0
+  out=$(bash "$REPO_ROOT/scripts/lib/test-suite-runner.sh" --suite does-not-exist 2>&1) || status=$?
+  if [[ "$status" -eq 2 && "$out" == *"unknown suite requested by --suite: does-not-exist"* &&
+        "$out" != *"START "* ]]; then
+    pass_case "$name"
+  else
+    fail_case "$name" "status=$status out=$out"
   fi
 }
 
@@ -1039,6 +1083,9 @@ test_live_db_exclusive_suites_never_overlap() {
 
 test_list
 test_known_suite_count
+test_suite_filter_list
+test_suite_filter_runs_only_selected
+test_suite_filter_rejects_unknown
 test_skip_unknown_suite
 test_skip_known_suite
 test_suite_not_found_skip

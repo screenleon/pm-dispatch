@@ -2108,6 +2108,130 @@ case_context_db_path_repo_local() {
   pass "$name"
 }
 
+case_context_index_excludes_pm_dispatch_tree() {
+  local name="pmctl context index: excludes the derived .pm-dispatch tree from its own index"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-self-index"
+  make_fixture_repo "$fix_repo"
+  mkdir -p "$fix_repo/.pm-dispatch/ctx/packs"
+  cat > "$fix_repo/.pm-dispatch/ctx/packs/should-not-index.md" <<'MD'
+# Derived Context Pack
+
+unique-self-index-marker
+MD
+
+  "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 \
+    || { fail "$name" "context index failed"; return 0; }
+
+  local db="$fix_repo/.pm-dispatch/ctx/context.db"
+  local leaked
+  leaked="$(sqlite3 "$db" "SELECT path FROM files WHERE path = '.pm-dispatch' OR path LIKE '.pm-dispatch/%';" 2>/dev/null || true)"
+  if [[ -n "$leaked" ]]; then
+    fail "$name" ".pm-dispatch artifacts leaked into index: $leaked"
+    return 0
+  fi
+  pass "$name"
+}
+
+case_context_status_marker_round_trip() {
+  local name="pmctl context status/query/pack: marker round-trip reports stale then fresh"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-status-roundtrip"
+  make_fixture_repo "$fix_repo"
+  "$PMCTL" context index "$fix_repo" >/dev/null 2>&1 || { fail "$name" "initial index failed"; return 0; }
+  local marker="$fix_repo/docs/cc484-marker.md" status_json query_out pack_out status_err="$tmp_root/status-roundtrip.err"
+  printf '# CC484 marker\n\ncc484roundtripmarker\n' > "$marker"
+  status_json="$("$PMCTL" context status "$fix_repo" --json 2>"$status_err")" || { fail "$name" "status failed: $(<"$status_err")"; return 0; }
+  if ! jq -e --arg repo "$fix_repo" --arg db "$fix_repo/.pm-dispatch/ctx/context.db" \
+    '.resolved_repo_root == $repo and .db_path == $db and .freshness == "stale" and .new_files >= 1' <<<"$status_json" >/dev/null; then
+    fail "$name" "new marker was not diagnosed as stale: $status_json"; return 0
+  fi
+  query_out="$("$PMCTL" context query "$fix_repo" cc484roundtripmarker 2>/dev/null)" || { fail "$name" "query refresh failed"; return 0; }
+  [[ "$query_out" == *"docs/cc484-marker.md"* ]] || { fail "$name" "marker missing after query refresh: $query_out"; return 0; }
+  rm -f "$marker"
+  status_json="$("$PMCTL" context status "$fix_repo" --json 2>/dev/null)" || { fail "$name" "deleted status failed"; return 0; }
+  jq -e '.freshness == "stale" and .deleted_files >= 1' <<<"$status_json" >/dev/null || {
+    fail "$name" "deleted marker was not diagnosed as stale: $status_json"; return 0;
+  }
+  pack_out="$("$PMCTL" context pack "$fix_repo" --task-id CC-484 --query cc484roundtripmarker 2>/dev/null)" || {
+    fail "$name" "pack reconciliation failed"; return 0;
+  }
+  if jq -e '(.files | length) == 0 and (.symbols | length) == 0' <<<"$pack_out" >/dev/null &&
+     "$PMCTL" context status "$fix_repo" --json 2>/dev/null | jq -e '.freshness == "fresh"' >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "removed marker remained in pack or status stayed stale: $pack_out"
+  fi
+}
+
+case_context_status_explicit_repo_isolated() {
+  local name="pmctl context status: explicit repo reports its canonical DB without touching caller repo"
+  should_run "$name" || return 0
+
+  local repo_a="$tmp_root/status-repo-a" repo_b="$tmp_root/status-repo-b" out before_b after_b status_err="$tmp_root/status-isolated.err"
+  make_fixture_repo "$repo_a"; make_fixture_repo "$repo_b"
+  "$PMCTL" context index "$repo_a" >/dev/null 2>&1 || { fail "$name" "repo A index failed"; return 0; }
+  "$PMCTL" context index "$repo_b" >/dev/null 2>&1 || { fail "$name" "repo B index failed"; return 0; }
+  before_b="$(stat -c '%Y:%s' "$repo_b/.pm-dispatch/ctx/context.db" 2>/dev/null || stat -f '%m:%z' "$repo_b/.pm-dispatch/ctx/context.db")"
+  printf '# isolated\n\ncc484isolatedmarker\n' > "$repo_a/docs/isolated.md"
+  out="$(cd "$repo_b" && "$PMCTL" context status "$repo_a" --json 2>"$status_err")" || { fail "$name" "status failed: $(<"$status_err")"; return 0; }
+  after_b="$(stat -c '%Y:%s' "$repo_b/.pm-dispatch/ctx/context.db" 2>/dev/null || stat -f '%m:%z' "$repo_b/.pm-dispatch/ctx/context.db")"
+  if jq -e --arg repo "$repo_a" --arg db "$repo_a/.pm-dispatch/ctx/context.db" \
+      '.resolved_repo_root == $repo and .db_path == $db and .freshness == "stale" and .new_files >= 1' <<<"$out" >/dev/null &&
+     [[ "$before_b" == "$after_b" ]]; then
+    pass "$name"
+  else
+    fail "$name" "out=$out repo_b_before=$before_b repo_b_after=$after_b"
+  fi
+}
+
+case_context_workflow_refresh_opt_out_reports_skipped() {
+  local name="pmctl context workflow refresh: AUTOREFRESH=0 reports skipped without mutating stale DB"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-workflow-skip" out before after
+  make_fixture_repo "$fix_repo"
+  "$PMCTL" context index "$fix_repo" >/dev/null 2>&1 || { fail "$name" "initial index failed"; return 0; }
+  printf '# workflow skip\n\ncc484workflowskipmarker\n' > "$fix_repo/docs/workflow-skip.md"
+  before="$(stat -c '%Y:%s' "$fix_repo/.pm-dispatch/ctx/context.db" 2>/dev/null || stat -f '%m:%z' "$fix_repo/.pm-dispatch/ctx/context.db")"
+  out="$(PM_DISPATCH_CONTEXT_AUTOREFRESH=0 bash -c \
+    '. "$1"; pmctl_context_workflow_refresh "$2" --json' bash "$SCRIPT_DIR/lib/pmctl-context.sh" "$fix_repo" 2>/dev/null)" || {
+      fail "$name" "workflow refresh invocation failed"; return 0;
+    }
+  after="$(stat -c '%Y:%s' "$fix_repo/.pm-dispatch/ctx/context.db" 2>/dev/null || stat -f '%m:%z' "$fix_repo/.pm-dispatch/ctx/context.db")"
+  if jq -e '.refresh_status == "skipped" and .freshness == "stale" and .new_files >= 1' <<<"$out" >/dev/null &&
+     [[ "$before" == "$after" ]]; then
+    pass "$name"
+  else
+    fail "$name" "out=$out db_before=$before db_after=$after"
+  fi
+}
+
+case_context_workflow_refresh_sqlite_unavailable() {
+  local name="pmctl context workflow refresh: missing sqlite reports unavailable without DB mutation"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-workflow-no-sqlite" out before after
+  make_fixture_repo "$fix_repo"
+  "$PMCTL" context index "$fix_repo" >/dev/null 2>&1 || { fail "$name" "initial index failed"; return 0; }
+  before="$(stat -c '%Y:%s' "$fix_repo/.pm-dispatch/ctx/context.db" 2>/dev/null || stat -f '%m:%z' "$fix_repo/.pm-dispatch/ctx/context.db")"
+  out="$(bash -c \
+    '. "$1"; _ctx_sqlite3_check() { return 1; }; pmctl_context_workflow_refresh "$2" --json' \
+    bash "$SCRIPT_DIR/lib/pmctl-context.sh" "$fix_repo" 2>/dev/null)" || {
+      fail "$name" "workflow refresh invocation failed"; return 0;
+    }
+  after="$(stat -c '%Y:%s' "$fix_repo/.pm-dispatch/ctx/context.db" 2>/dev/null || stat -f '%m:%z' "$fix_repo/.pm-dispatch/ctx/context.db")"
+  if jq -e '.refresh_status == "unavailable" and .freshness == "unavailable" and
+      .sqlite_available == false and .db_exists == true' <<<"$out" >/dev/null &&
+     [[ "$before" == "$after" ]]; then
+    pass "$name"
+  else
+    fail "$name" "out=$out db_before=$before db_after=$after"
+  fi
+}
+
 case_context_index_gitignore_symlink() {
   local name="pmctl context index: does not write through a symlinked .gitignore"
   should_run "$name" || return 0
@@ -3192,6 +3316,11 @@ case_context_index_gitignore_idempotent_exact
 case_context_index_gitignore_idempotent_slash
 case_context_index_gitignore_absent
 case_context_db_path_repo_local
+case_context_index_excludes_pm_dispatch_tree
+case_context_status_marker_round_trip
+case_context_status_explicit_repo_isolated
+case_context_workflow_refresh_opt_out_reports_skipped
+case_context_workflow_refresh_sqlite_unavailable
 case_context_index_gitignore_symlink
 case_context_index_gitignore_hardlink
 case_context_index_gitignore_preexisting_dir

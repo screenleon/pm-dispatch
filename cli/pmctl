@@ -311,6 +311,12 @@ case "$cmd/$sub" in
     fi
     pmctl_context_update "$@"
     ;;
+  context/status)
+    if ! declare -F pmctl_context_status >/dev/null; then
+      pmctl_die "context status unavailable"
+    fi
+    pmctl_context_status "$@"
+    ;;
   context/query)
     if ! declare -F pmctl_context_query >/dev/null; then
       pmctl_die "context query unavailable"

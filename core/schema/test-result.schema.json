@@ -1,0 +1,28 @@
+{
+  "title": "PM test result",
+  "description": "State-bound evidence emitted by the pm-dispatch test runner.",
+  "type": "object",
+  "required": [
+    "kind", "schema_version", "repo_root", "contract", "authoritative",
+    "status", "exit_code", "started_at", "finished_at", "tree_fingerprint",
+    "observed_tree_fingerprint_after", "runner_contract_hash", "suite_set",
+    "requested_skips"
+  ],
+  "properties": {
+    "kind": { "const": "pm_test_result_v1" },
+    "schema_version": { "const": 1 },
+    "repo_root": { "type": "string", "pattern": "^/" },
+    "contract": { "enum": ["iteration", "full", "full-with-skips"] },
+    "authoritative": { "type": "boolean" },
+    "status": { "enum": ["pass", "fail", "stale"] },
+    "exit_code": { "type": "integer", "minimum": 0 },
+    "started_at": { "type": "string", "format": "date-time" },
+    "finished_at": { "type": "string", "format": "date-time" },
+    "tree_fingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "observed_tree_fingerprint_after": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "runner_contract_hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "suite_set": { "type": "array", "minItems": 1, "items": { "type": "string" }, "uniqueItems": true },
+    "requested_skips": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
+  },
+  "additionalProperties": false
+}

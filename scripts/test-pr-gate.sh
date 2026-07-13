@@ -92,6 +92,23 @@ if [[ -n "${CODEX_GATE_CAPTURE_REVIEWER_BRIEF:-}" && "$brief_file" != *-synthesi
   cp "$brief_file" "$CODEX_GATE_CAPTURE_REVIEWER_BRIEF"
 fi
 
+if [[ -n "${CODEX_GATE_REVIEWER_DEFS_MARKER:-}" && "$brief_file" != *-synthesis.md ]]; then
+  work_dir=$(awk '$1 == "working_dir:" {print $2; exit}' "$brief_file")
+  defs=0
+  while IFS= read -r def_path; do
+    [[ -n "$def_path" ]] || continue
+    defs=$((defs + 1))
+    case "$def_path" in
+      "$work_dir"/.gate-briefs/reviewer-definitions-*/*.md) ;;
+      *) printf 'reviewer definition escaped workspace snapshot: %s\n' "$def_path" >&2; exit 4 ;;
+    esac
+    [[ -s "$def_path" ]] || { printf 'reviewer definition snapshot missing/empty: %s\n' "$def_path" >&2; exit 4; }
+    [[ ! -w "$def_path" ]] || { printf 'reviewer definition snapshot is writable: %s\n' "$def_path" >&2; exit 4; }
+  done < <(awk '/^  - read: .*\/\.gate-briefs\/reviewer-definitions-.*\.md$/ {sub(/^  - read: /, ""); print}' "$brief_file")
+  [[ "$defs" -gt 0 ]] || { printf 'no workspace reviewer definition snapshots in brief\n' >&2; exit 4; }
+  printf '%s\n' "$defs" > "$CODEX_GATE_REVIEWER_DEFS_MARKER"
+fi
+
 # Simulate reviewer-side injection (tracked file modification during reviewer dispatch).
 if [[ -n "${CODEX_GATE_STUB_INJECT_FILE:-}" && "$brief_file" != *-synthesis.md ]]; then
   printf 'injected\n' >> "$CODEX_GATE_STUB_INJECT_FILE"
@@ -934,6 +951,42 @@ test_brief_file_inside_workdir() {
     return
   fi
   assert_file_contains "$name" "$marker" "brief-present" || return
+  pass "$name"
+}
+
+# Behavior: reviewer definitions are copied into immutable, run-scoped files
+# inside the target workspace before dispatch; briefs never ask a detached
+# executor to read the original ~/.claude/agents paths.
+# Steps: run the Claude route with the dispatch stub validating every reviewer
+# read entry at invocation time; assert all selected definitions were readable,
+# workspace-confined, non-writable, and the captured brief omits the home paths.
+test_reviewer_definitions_are_workspace_snapshots() {
+  local name="reviewer-definitions-workspace-snapshots"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" marker="$dir/marker" brief="$dir/brief.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  CODEX_GATE_REVIEWER_DEFS_MARKER="$marker" CODEX_GATE_CAPTURE_BRIEF="$brief" \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --executor claude --tier full
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0: $(cat "$err" 2>/dev/null)"
+    return
+  fi
+  assert_file_contains "$name" "$marker" "5" || return
+  assert_file_contains "$name" "$brief" "$repo/.gate-briefs/reviewer-definitions-" || return
+  assert_not_contains "$name" "$brief" "$home/.claude/agents/" || return
+  if compgen -G "$repo/.gate-briefs/reviewer-definitions-*" > /dev/null; then
+    fail "$name" "reviewer definition snapshot remained after gate cleanup"
+    return
+  fi
   pass "$name"
 }
 
@@ -3142,6 +3195,7 @@ run_test test_invalid_base_ref
 run_test test_no_changed_files
 run_test test_reviewers_override_skips_tier_detection
 run_test test_brief_file_inside_workdir
+run_test test_reviewer_definitions_are_workspace_snapshots
 run_test test_brief_cleanup_on_dispatch_failure
 run_test test_output_directory_created
 run_test test_claude_adapter_dispatches_subprocess

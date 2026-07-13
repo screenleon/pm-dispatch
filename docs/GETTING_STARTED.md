@@ -113,7 +113,14 @@ readlink -f "$HOME/.claude/agents/project-pm.md"
 readlink -f "$HOME/.claude/.pm"
 ```
 
-For a full regression sweep (takes ~30 s):
+For a quick direct-impact iteration check:
+
+```sh
+bash scripts/run-tests.sh --base origin/main
+```
+
+For the authoritative full regression sweep, run the compatibility entry point
+outside the PR-gate lifecycle (the complete suite can be long-running):
 
 ```sh
 bash scripts/run-all-tests.sh
@@ -135,7 +142,9 @@ pmctl context index "$PM_DISPATCH_REPO"
 The path is fixed per repo and is **not** affected by `PM_DISPATCH_STATE_ROOT`
 (that variable governs the state partition, not the context DB).  The
 `.pm-dispatch/` directory is gitignored automatically, so the database file is
-never committed.  See [`docs/context-retrieval.md`](docs/context-retrieval.md)
+never committed. The context indexer also excludes that directory from file
+discovery, so generated packs and database artifacts are not self-indexed. See
+[`docs/context-retrieval.md`](docs/context-retrieval.md)
 for the full convention and available subcommands.
 
 ## 6) First `/pm` run (end-to-end walkthrough)

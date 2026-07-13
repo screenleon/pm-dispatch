@@ -114,15 +114,28 @@ bash scripts/doctor.sh
 ## Testing
 
 ```bash
-bash scripts/run-all-tests.sh         # run all suites (test-codex-dispatch auto-skips when Codex is absent)
+bash scripts/run-tests.sh --base origin/main  # optional direct-impact iteration (not final sign-off)
+bash scripts/run-tests.sh --base origin/main --list  # explain selected suites without running
+bash scripts/run-all-tests.sh         # authoritative full suite for this checkout
 bash scripts/run-all-tests.sh --list  # show registered suites without running
 bash scripts/run-all-tests.sh --skip test-codex-dispatch  # skip one suite
+bash scripts/run-tests.sh --verify-full .pm-dispatch/test-results/latest-full.json
 ```
 
 Requires a complete developer checkout — any registered suite that is missing or
 not executable causes the aggregator to exit non-zero. Use `--skip <name>` to
 opt out of environment-specific suites (e.g., `test-codex-dispatch` if the Codex
 CLI is not installed).
+
+`run-tests.sh` is intentionally iteration-only: it selects direct regression
+suites and reports unmapped paths, but does not claim transitive coverage. The
+pm-dispatch maintainer workflow may inject it into PR-gate for fast feedback,
+then runs and verifies the full suite outside the gate before opening this
+project's PR. `release-verify.sh` performs and verifies another fresh full run
+as a mandatory pm-dispatch release check. These are this repository's delivery
+policies, not requirements imposed on users of the generic gate tool: other
+repos may choose tests, a gate, both, or neither. See
+[the test runner contract](docs/test-runner-contract.md).
 
 `install.sh --verify` delegates to this script.
 
@@ -175,7 +188,8 @@ usage.
 - **test-guards.sh** — Regression suite for the managed hook scripts (~200+ cases: happy paths, boundary, per-metachar isolated coverage, quote / `..` / glob / read-root / git -C / `--flag=path` bypass attempts, destructive git, stash subverbs, audit-log content assertions, env-var bypass, type-confusion, and StatusLine rate-limit capture). Exit 0 on all pass. `VERBOSE=1` prints every case. Run by `install.sh` and isolates audit logs via `PM_GUARD_LOG_DIR`.
 - **lint-scripts.sh** — Hygiene check for `scripts/*.sh`: executable bit, shebang, `bash -n` parses, has a `set -...` line. Run by `install.sh`.
 - **lint-frontmatter.sh** — Validates YAML frontmatter in `agents/`, `commands/`, and `skills/` against PyYAML flow-collection semantics (dq-escape whitelist, adjacent-quote, tab-indent, and empty-entry detection across all four collection paths). Run by CI and `doctor.sh`.
-- **run-all-tests.sh** — Standalone test aggregator: runs every registered suite and prints one pass/fail summary. `install.sh --verify` runs it as a preflight; `--list` and `--skip <name>` are available.
+- **run-tests.sh** — pm-dispatch-specific, direct-impact iteration planner. It can be supplied explicitly to generic `pr-gate --test-cmd`; it is not final sign-off evidence.
+- **run-all-tests.sh** — Backward-compatible full-suite wrapper for `run-tests.sh --all`. `install.sh --verify` uses it; `--list` and `--skip <name>` remain available in full mode.
 - **doctor.sh** — Environment health check: verifies `claude`/`jq`/`pmctl` are on `$PATH`, hooks are wired into `~/.claude/settings.json`, the memory directory exists, scripts are executable, and frontmatter passes lint. `--profile minimal|full|auto` scopes which hook checks apply. Each failing check prints a concrete remediation command.
 - **token-usage.sh** — Multi-pool token usage estimator (Claude / Codex / Spark). Reads `~/.claude/usage-tracker.jsonl`. Symlinked to `~/.claude/scripts/token-usage.sh` by `install.sh`. Usage: `bash ~/.claude/scripts/token-usage.sh [--today|--all]`. `--remaining` (no arg) auto-reads `~/.claude/rate-limits.json` if the StatusLine hook is installed; `--remaining N` accepts manual dashboard value.
 - **log-usage.sh** — Appends one entry to `~/.claude/usage-tracker.jsonl`. Symlinked to `~/.claude/scripts/log-usage.sh` by `install.sh`. Usage: `bash ~/.claude/scripts/log-usage.sh <type> <tokens> [note]`. Call after any significant agent operation; standard types in the script header.

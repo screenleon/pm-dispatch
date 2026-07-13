@@ -552,6 +552,7 @@ _ctx_find_index_files() {
     *)
       find "$root" \
         -not -path '*/.git/*' \
+        -not -path '*/.pm-dispatch/*' \
         -not -path '*/node_modules/*' \
         -not -path '*/vendor/*' \
         -not -path '*/.cache/*' \
@@ -608,9 +609,10 @@ _ctx_index_tree() {
   printf 'BEGIN;\n' >> "$batch_sql"
   printf 'CREATE TEMP TABLE _cur_paths(path TEXT PRIMARY KEY);\n' >> "$batch_sql"
 
-  local indexed=0 skipped=0
+  local indexed=0 skipped=0 found=0
   while IFS= read -r abs_path; do
     [[ -f "$abs_path" ]] || continue
+    found=$((found + 1))
     local rel_path="${abs_path#"$root/"}"
     local ep
     ep="$(_ctx_sql_str "$rel_path")"
@@ -644,7 +646,14 @@ _ctx_index_tree() {
   sqlite3 "$db" < "$batch_sql" >/dev/null
   rm -f "$batch_sql"
 
-  _ctx_fts_rebuild "$db"
+  # Rebuilding FTS5 is the dominant cost on large repos. An unchanged mtime
+  # scan does not alter symbols/chunks, so preserve the existing FTS table.
+  # Rebuild only for changed files or a path-count change (pure deletions).
+  local _fts_present
+  _fts_present="$(sqlite3 "$db" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='content_fts';" 2>/dev/null || printf '0')"
+  if (( indexed > 0 || found != ${#_ctx_db_mtimes[@]} )) || [[ "$_fts_present" != "1" ]]; then
+    _ctx_fts_rebuild "$db"
+  fi
 
   printf 'context index: %d indexed, %d skipped\n' "$indexed" "$skipped"
   printf 'db: %s\n' "$db"
@@ -775,6 +784,124 @@ _ctx_ensure_fresh() {
   if ! pmctl_context_index "$repo_root" > /dev/null; then
     printf 'context: auto-refresh failed for %s\n' "$db" >&2
     return 1
+  fi
+}
+
+# Read-only diagnostic for repo-root/DB resolution and freshness. It never
+# creates or refreshes an index; callers can inspect the result before deciding
+# whether to run a workflow refresh.
+pmctl_context_status() {
+  local repo_root="" json=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json) json=1; shift ;;
+      -*) printf 'pmctl context status: unknown flag %s\n' "$1" >&2; return 2 ;;
+      *)
+        [[ -z "$repo_root" && -d "$1" ]] || { printf 'pmctl context status: expected one repo directory\n' >&2; return 2; }
+        repo_root="$1"; shift ;;
+    esac
+  done
+  if [[ -z "$repo_root" ]]; then
+    repo_root="$(_ctx_default_repo_root)" || repo_root=""
+  fi
+  repo_root="$(cd "$repo_root" 2>/dev/null && { git rev-parse --show-toplevel 2>/dev/null || pwd -P; })" || {
+    printf 'pmctl context status: repo directory is not readable\n' >&2
+    return 2
+  }
+
+  local db sqlite_available=false db_exists=false freshness=missing
+  local indexed_files=0 new_files=0 changed_files=0 deleted_files=0 matched_files=0
+  local db_mtime="" latest_indexed_at=""
+  db="$(_ctx_db_path "$repo_root")"
+  _ctx_sqlite3_check && sqlite_available=true
+  if [[ -f "$db" ]]; then
+    db_exists=true
+    db_mtime="$(_ctx_file_mtime "$db")"
+  fi
+
+  if [[ "$sqlite_available" == true && "$db_exists" == true ]]; then
+    declare -A _status_mtimes=()
+    local p m abs rel
+    while IFS='|' read -r p m; do
+      [[ -n "$p" ]] && _status_mtimes["$p"]="$m"
+    done < <(sqlite3 "$db" 'SELECT path, mtime FROM files;' 2>/dev/null | tr -d '\r' || true)
+    indexed_files="${#_status_mtimes[@]}"
+    latest_indexed_at="$(sqlite3 "$db" 'SELECT COALESCE(MAX(indexed_at), "") FROM files;' 2>/dev/null || true)"
+    while IFS= read -r abs; do
+      [[ -f "$abs" ]] || continue
+      rel="${abs#"$repo_root/"}"
+      if [[ -z "${_status_mtimes[$rel]+_}" ]]; then
+        new_files=$((new_files + 1))
+      else
+        matched_files=$((matched_files + 1))
+        [[ "${_status_mtimes[$rel]}" == "$(_ctx_file_mtime "$abs")" ]] || changed_files=$((changed_files + 1))
+      fi
+    done < <(_ctx_find_index_files "$repo_root" repo)
+    deleted_files=$((indexed_files - matched_files))
+    (( deleted_files < 0 )) && deleted_files=0
+    if (( new_files == 0 && changed_files == 0 && deleted_files == 0 )); then
+      freshness=fresh
+    else
+      freshness=stale
+    fi
+  elif [[ "$sqlite_available" == false ]]; then
+    freshness=unavailable
+  fi
+
+  if [[ "$json" -eq 1 ]]; then
+    jq -cn \
+      --arg repo_root "$repo_root" --arg db_path "$db" \
+      --argjson sqlite_available "$sqlite_available" --argjson db_exists "$db_exists" \
+      --arg freshness "$freshness" --argjson indexed_files "$indexed_files" \
+      --argjson new_files "$new_files" --argjson changed_files "$changed_files" \
+      --argjson deleted_files "$deleted_files" --arg db_mtime "$db_mtime" \
+      --arg latest_indexed_at "$latest_indexed_at" \
+      '{schema_version:1,resolved_repo_root:$repo_root,db_path:$db_path,
+        sqlite_available:$sqlite_available,db_exists:$db_exists,freshness:$freshness,
+        indexed_files:$indexed_files,new_files:$new_files,changed_files:$changed_files,
+        deleted_files:$deleted_files,db_mtime:(if $db_mtime == "" then null else ($db_mtime|tonumber) end),
+        latest_indexed_at:(if $latest_indexed_at == "" then null else $latest_indexed_at end)}'
+  else
+    printf 'resolved_repo_root: %s\ndb: %s\nsqlite_available: %s\ndb_exists: %s\nfreshness: %s\n' \
+      "$repo_root" "$db" "$sqlite_available" "$db_exists" "$freshness"
+    printf 'indexed_files: %s\nnew_files: %s\nchanged_files: %s\ndeleted_files: %s\n' \
+      "$indexed_files" "$new_files" "$changed_files" "$deleted_files"
+  fi
+}
+
+# Best-effort workflow boundary used by prompt/session, PM preparation, and the
+# pmctl gate wrapper. Missing sqlite is an explicit non-error capability state.
+pmctl_context_workflow_refresh() {
+  local repo_root="${1:-}" json=0
+  [[ $# -gt 0 ]] && shift
+  [[ "${1:-}" == "--json" ]] && { json=1; shift; }
+  [[ $# -eq 0 ]] || { printf 'pmctl context workflow-refresh: unexpected argument %s\n' "$1" >&2; return 2; }
+  repo_root="$(cd "$repo_root" 2>/dev/null && { git rev-parse --show-toplevel 2>/dev/null || pwd -P; })" || {
+    printf 'pmctl context workflow-refresh: repo directory is not readable\n' >&2
+    return 2
+  }
+  local db refresh_status status_json
+  db="$(_ctx_db_path "$repo_root")"
+  if ! _ctx_sqlite3_check; then
+    refresh_status=unavailable
+  elif [[ -f "$db" && "${PM_DISPATCH_CONTEXT_AUTOREFRESH:-1}" == "0" ]]; then
+    # AUTOREFRESH=0 is a real caller policy, not a successful refresh. Report
+    # the skipped boundary accurately while preserving the read-only freshness
+    # diagnosis (which may be stale).
+    refresh_status=skipped
+  else
+    refresh_status=refreshed
+    [[ -f "$db" ]] || refresh_status=built
+    if ! _ctx_ensure_fresh "$repo_root"; then
+      refresh_status=error
+    fi
+  fi
+  status_json="$(pmctl_context_status "$repo_root" --json)" || return $?
+  if [[ "$json" -eq 1 ]]; then
+    jq -c --arg refresh_status "$refresh_status" '. + {refresh_status:$refresh_status}' <<<"$status_json"
+  else
+    pmctl_context_status "$repo_root"
+    printf 'refresh_status: %s\n' "$refresh_status"
   fi
 }
 

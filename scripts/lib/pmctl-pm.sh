@@ -53,6 +53,7 @@ pmctl_pm_bound_memory_pack() {
 pmctl_pm_emit_prepare() {
   local json="$1" work_dir="$2" request="$3" focus="$4" snapshot="$5" snapshot_status="$6"
   local memory_resolution="$7" memory_context_status="$8" memory_context="$9"
+  local repo_context="${10}"
   if [[ "$json" -eq 1 ]]; then
     jq -cn \
       --arg work_dir "$work_dir" \
@@ -63,12 +64,15 @@ pmctl_pm_emit_prepare() {
       --argjson memory_resolution "$memory_resolution" \
       --arg memory_context_status "$memory_context_status" \
       --arg memory_context "$memory_context" \
-      '{schema_version:1,mode:"batch-only",working_dir:$work_dir,request:$request,focus_tickets:(if $focus == "" then [] else $focus | split(",") end),snapshot_file:(if $snapshot == "" then null else $snapshot end),snapshot_status:$snapshot_status,memory_resolution:$memory_resolution,memory_context_status:$memory_context_status,memory_context:(if $memory_context == "" then null else $memory_context end),handover_required:true,ambiguity_policy:"reject-and-return-to-host"}'
+      --argjson repo_context "$repo_context" \
+      '{schema_version:1,mode:"batch-only",working_dir:$work_dir,request:$request,focus_tickets:(if $focus == "" then [] else $focus | split(",") end),snapshot_file:(if $snapshot == "" then null else $snapshot end),snapshot_status:$snapshot_status,repo_context:$repo_context,memory_resolution:$memory_resolution,memory_context_status:$memory_context_status,memory_context:(if $memory_context == "" then null else $memory_context end),handover_required:true,ambiguity_policy:"reject-and-return-to-host"}'
   else
     printf 'mode: batch-only\nworking_dir: %s\n' "$work_dir"
     [[ -n "$focus" ]] && printf 'focus_tickets: %s\n' "$focus"
     printf 'snapshot_status: %s\n' "$snapshot_status"
     [[ -n "$snapshot" ]] && printf 'snapshot_file: %s\n' "$snapshot"
+    printf 'context_status: %s\n' "$(jq -r '.freshness // "unavailable"' <<<"$repo_context")"
+    printf 'context_db: %s\n' "$(jq -r '.db_path // ""' <<<"$repo_context")"
     printf 'memory_status: %s\n' "$memory_context_status"
     local memory_dir
     memory_dir="$(jq -r '.memory_dir // empty' <<<"$memory_resolution")"
@@ -107,6 +111,13 @@ pmctl_pm_prepare() {
       focus="$(pmctl_pm_append_focus_ticket "$focus" "$ticket")"
       rest="${rest#*"$ticket"}"
     done
+  fi
+
+  local repo_context
+  repo_context="$(jq -cn --arg repo "$work_dir" '{schema_version:1,resolved_repo_root:$repo,db_path:null,sqlite_available:false,db_exists:false,freshness:"unavailable",indexed_files:0,new_files:0,changed_files:0,deleted_files:0,db_mtime:null,latest_indexed_at:null,refresh_status:"unavailable"}')"
+  if declare -F pmctl_context_workflow_refresh >/dev/null 2>&1; then
+    repo_context="$(pmctl_context_workflow_refresh "$work_dir" --json 2>/dev/null)" || \
+      repo_context="$(jq -cn --arg repo "$work_dir" '{schema_version:1,resolved_repo_root:$repo,db_path:null,sqlite_available:true,db_exists:false,freshness:"error",indexed_files:0,new_files:0,changed_files:0,deleted_files:0,db_mtime:null,latest_indexed_at:null,refresh_status:"error"}')"
   fi
 
   local snapshot="" snapshot_status="unavailable" snapshot_err snapshot_rc=0
@@ -175,7 +186,7 @@ pmctl_pm_prepare() {
     fi
   fi
   pmctl_pm_emit_prepare "$json" "$work_dir" "$request" "$focus" "$snapshot" "$snapshot_status" \
-    "$memory_resolution" "$memory_context_status" "$memory_context"
+    "$memory_resolution" "$memory_context_status" "$memory_context" "$repo_context"
 }
 
 pmctl_pm_run() {

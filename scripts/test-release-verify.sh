@@ -70,6 +70,18 @@ test_help_short() {
   assert_contains    "help-short-usage"   "Usage"             "$out"
 }
 
+test_release_suite_verifies_state_bound_artifact() {
+  # Release sign-off must freshly run the full suite and verify its tree-bound
+  # artifact before any later smoke/e2e phase can produce GO.
+  local name="release-suite-verifies-state-bound-artifact"
+  if grep -q 'run-all-tests.sh.*--result-file' "$RV" \
+    && grep -q 'run-tests.sh.*--verify-full' "$RV"; then
+    pass "$name"
+  else
+    fail "$name" "release Phase 2 does not run+verify the full test artifact"
+  fi
+}
+
 # ── Unknown / malformed flags ─────────────────────────────────────────────────
 
 test_unknown_flag() {
@@ -290,6 +302,7 @@ test_help_contains_usage
 test_help_no_code_leak
 test_help_exits_0
 test_help_short
+test_release_suite_verifies_state_bound_artifact
 test_unknown_flag
 test_adapter_missing_value
 test_adapter_invalid
