@@ -30,7 +30,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-482 | ✅ done | Claude PR-gate reviewer definitions 最小讀取權限：headless `acceptEdits` 無法批准 `~/.claude/agents/*.md`；改用 workspace 內 run-scoped immutable snapshots，禁止擴大為任意 home read／`bypassPermissions` | ops/gate | 2026-07-13 | feedback:2026-07-13 | P1 | hygiene |
 | CC-483 | 🔵 active | Codex PM workflow memory provider 優先權：使用者指定 `pmctl memory` 為 canonical substrate，不得默認優先使用 Codex native memory；盤點 prepare/guard/host instruction routing 與可觀測 provenance | arch/memory | 2026-07-13 | feedback:2026-07-13 | P1 | design |
 | CC-484 | ✅ done | JapanJob 與 qa-testing-rules 的 `pmctl context` refresh 未生效：重現 session/index/update/pack 實際路徑、repo-root/project-key/DB freshness，補跨 repo live E2E 與 actionable diagnostics | ops/memory | 2026-07-13 | feedback:2026-07-13 | P1 | retrieval |
-| CC-485 | 🟢 someday | 可選 workflow profiles：將 maintainer 偏好的 affected gate → pre-PR full → release full 組合成 opt-in repo policy；通用 gate/test/PM capabilities 保持可獨立使用，不強制其他 repo 跑 PR-gate 或任何特定 runner | arch/process | 2026-07-13 | feedback:2026-07-13 | P3 | design |
+| CC-485 | ✅ done | 工具能力與維護者政策分離：通用 gate/test/PM 不規定使用流程；affected feedback 僅屬開發/PR，pm-dispatch release 固定由 `release-verify.sh --e2e`（內含 fresh full suite）+ checklist 驗收 | arch/process | 2026-07-13 | pr:#398 | P3 | design |
 | CC-465 | 🔵 active | memory/context 關鍵詞管線 CJK 支援：抽出共用零依賴斷詞 lib，取代三處各自 ASCII-only 抽詞；工作序列起點（465→467→468→466）（2026-07-07 記憶系統深入分析） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-466 | 🔵 active | 記憶卡片生命週期閉環：expires_at 執行 + 關窗式 supersede + usage sidecar 休眠偵測 + doctor→distill 接線；排在 CC-467 之後（需其遙測為前置）（2026-07-07 記憶系統分析 + 外部研究 Graphiti/mcp-memory-service） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-467 | 🔵 active | `pmctl memory stats`：注入效益可視化（唯讀聚合器）——注入 bytes/卡片命中分佈/從未命中卡/episode 填寫率，回答「記憶有跟沒有差在哪」；排在 CC-466 之前（2026-07-07；業界僅離線 recall 評測，無 per-injection 遙測） | DX/memory | 2026-07-07 | — | P2 | retrieval |
@@ -661,19 +661,26 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 ---
 
-## CC-485 — 可選 workflow profiles：工具能力與 maintainer policy 分離 🟢 someday
+## CC-485 — 工具能力與 maintainer policy 分離；固定本專案 release procedure ✅ 2026-07-13
 
-**Problem**: pm-dispatch 維護者偏好「開發/PR-gate 只跑 affected tests → 開 PR 前獨立 full suite → 升版前 `release-verify` 再跑 fresh full」，但 pm-dispatch 同時是通用工具。其他使用者可能只需 dispatch/context/test 其中一部分，甚至不使用 PR-gate；若把維護者習慣寫死在通用 command，就會破壞 repo-agnostic 邊界。
+**Problem**: pm-dispatch 維護者有自己的開發、PR 與 release 習慣，但 pm-dispatch 同時是通用工具。其他使用者可能只需 dispatch/context/test 其中一部分，甚至不使用 PR-gate；若把維護者習慣寫死在通用 command，就會破壞 repo-agnostic 邊界。另一方面，本專案自己的 release 必須只有一套固定且可驗證的 procedure，不能把開發期 affected feedback 混成 release phase，也不能重複要求 `release-verify.sh --e2e` 已內含的 full suite。
 
 **Requirement**:
 1. gate、`--test-cmd`、affected planner、full runner、artifact verifier 與 release verification 都保持可獨立調用；不得因安裝/使用 pmctl 而強制執行其中任何一項。
-2. 若未來提供 profile/orchestration，必須是 repo-local config 或 CLI 明示 opt-in，default 向後相容，不自動假設 runner 名稱。
-3. 內建或文件化一個 pm-dispatch maintainer recommended profile，但機械回報 selected/skipped phases，不把部分執行報成完整 sign-off。
-4. `release-verify.sh` 是 pm-dispatch 自身的升版政策，可維持 fresh full 強制要求；此規則不向外溢到通用 gate 或其他 repo。
+2. 不建立通用 workflow profile/orchestration engine；其他 repo 如何組合或完全不使用上述能力，由其自行決定，default 行為維持向後相容且不猜 runner 名稱。
+3. affected suites 與可選 PR-gate 僅屬 pm-dispatch 的開發/PR feedback；它們不是固定 release phase，也不得被描述成其他使用者必須遵守的流程。
+4. pm-dispatch 唯一固定 automated release 入口為 `scripts/release-verify.sh --e2e`：Phase 2 自行 fresh-run + verify `run-all-tests.sh` artifact，Phase 4 增加 live dispatch/gate；`--no-suite` 或任何 required skip 只能 PARTIAL GO。另完成 `docs/RELEASE_CHECKLIST.md` 的人工驗收後才可 tag。
+5. release procedure 不額外要求 affected run 或第二次 standalone full suite；既有 development/PR evidence 不得替代 release command 內 fresh full evidence。
 
-**Acceptance**: 未設定 profile 時現有 command 行為不變；使用者可選 test-only、gate-only、test+gate 或全部不用；maintainer profile 可重現三階段流程並對每階段證據 fail-closed。
+**Acceptance**: 現有 generic command 行為不變；使用者可選 test-only、gate-only、test+gate 或全部不用。文件與回歸清楚區分 development/PR policy 與 release procedure；`release-verify.sh --e2e` 保證仍執行並驗證 fresh full suite，release source 不出現 affected-selection phase，required skip 無法產生 GO。
 
-**Source**: 2026-07-13 使用者澄清：該測試流程是個人/本專案政策，不保證其他工具使用者會執行 PR-gate；所有能力應可選。
+**Source**: 2026-07-13 使用者澄清：目的只是提供工具，不強制其他人如何使用；個人開發流程不代表其他使用方式。pm-dispatch 自身 release procedure 則必須固定，且 `release-verify.sh --e2e` 已內含 `run-all-tests.sh`，release 不含固定 affected feedback。
+
+**Implementation evidence (2026-07-13)**: `docs/test-runner-contract.md` 已把 affected suites／optional PR-gate 限定為 development/PR policy，另列唯一 automated release 入口 `scripts/release-verify.sh --e2e`；`docs/RELEASE_CHECKLIST.md` 明示 affected evidence 不屬 release phase、不得取代 command 內 fresh full。`release-verify.sh --help` 現直接聲明 `--e2e` 只增加 Phase 4、不取代或跳過 Phase 2 full suite；回歸鎖定 full-before-E2E、source 無 affected-selection invocation、required skip 僅 PARTIAL GO。Focused validation：release-verify 49/49、run-tests 12/12、docs freshness 21/21、pmctl backlog 18/18、backlog schema 與 shellcheck 通過。
+
+**Resolution**: 通用工具維持自由組合且不提供 workflow profile engine；pm-dispatch development/PR feedback 與 release procedure 已分層，正式 automated release 固定使用 `scripts/release-verify.sh --e2e`，再完成 release checklist 的人工驗收。Claude full-tier gate `gate-20260713-072733-444879` verified Final GO。
+
+**See**: pr:#398
 
 ---
 

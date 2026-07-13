@@ -34,7 +34,7 @@ pmctl gate run \
 `pr-gate` does not auto-detect this command or any runner filename. Other repos
 remain free to supply their own `--test-cmd`, or none.
 
-## pm-dispatch maintainer delivery profile
+## pm-dispatch development and PR policy
 
 `scripts/run-all-tests.sh` is the backward-compatible full-suite entry point; it
 delegates to `scripts/run-tests.sh --all`. For this repository's own delivery
@@ -45,7 +45,8 @@ budget cannot consume the gate supervisor/reviewer budget:
 bash scripts/run-all-tests.sh
 ```
 
-The pm-dispatch maintainer profile is deliberately asymmetric:
+The pm-dispatch maintainer's development and PR policy is deliberately
+asymmetric:
 
 1. During implementation and an optional PR-gate review, run affected suites
    for fast feedback.
@@ -62,16 +63,32 @@ the complete current suite registry, an unchanged tree during the run, and
 matching current tree + runner-contract fingerprints. Any edit after the full
 run invalidates the evidence and requires another full run.
 
-`release-verify.sh` is this project's release command. It always performs a
-fresh full run in Phase 2 and verifies its new artifact before continuing.
-`--no-suite` remains an explicit diagnostic escape hatch and can produce only
-PARTIAL GO, never a pm-dispatch release sign-off.
+These three steps end at PR creation. They are not a release workflow and
+affected-suite feedback is not a fixed release phase.
 
-These are project-maintainer policy choices, not requirements imposed by the
-generic gate tool. Each capability remains independently callable: another
-repository may use `--test-cmd` with its own runner, use a gate with no test
-command, run tests without a gate, or use neither. `pr-gate` does not select or
-enforce a delivery profile.
+## Fixed pm-dispatch release procedure
+
+The single automated release entry point is:
+
+```bash
+bash scripts/release-verify.sh --e2e
+```
+
+`release-verify.sh --e2e` always performs a fresh `run-all-tests.sh` in Phase 2,
+verifies its new tree-bound artifact, runs the real-binary smoke phases, and
+adds the live dispatch + pr-gate Phase 4. A separate affected-suite run or a
+second standalone `run-all-tests.sh` is not a fixed release prerequisite.
+`--no-suite` remains an explicit diagnostic escape hatch and can produce only
+PARTIAL GO, never a pm-dispatch release sign-off. The remaining environment-
+mutating checks are fixed by `docs/RELEASE_CHECKLIST.md` and must be completed
+before tagging.
+
+Both the development/PR policy and the release procedure are pm-dispatch
+maintainer choices, not requirements imposed by the generic tools. Each
+capability remains independently callable: another repository may use
+`--test-cmd` with its own runner, use a gate with no test command, run tests
+without a gate, or use neither. `pr-gate` does not select or enforce a workflow
+profile, and pm-dispatch does not ship a generic profile engine.
 
 ## Aggregator selection primitive
 

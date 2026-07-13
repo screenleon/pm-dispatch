@@ -11,6 +11,8 @@
 #                     for an actual release sign-off).
 #   --e2e             Also run Phase 4: real dispatch + pr-gate via
 #                     test-e2e.sh. Spends LLM tokens. Required for release.
+#                     Phase 2 still runs a fresh run-all-tests.sh; --e2e adds
+#                     live coverage and never replaces or skips the full suite.
 #   --adapter <a>     Executor for --e2e (default: auto — codex if on PATH,
 #                     else claude).
 #
@@ -52,7 +54,7 @@ while [[ $# -gt 0 ]]; do
       E2E_ADAPTER="$2"; shift 2
       ;;
     --help|-h)
-      sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,/^set -/p' "$0" | sed '$d; s/^# \{0,1\}//'
       exit 0
       ;;
     *) printf 'release-verify: unknown flag %s\n' "$1" >&2; exit 2 ;;

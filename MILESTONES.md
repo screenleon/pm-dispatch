@@ -47,7 +47,7 @@
 | CC-482 | Claude gate reviewer definitions 改 workspace immutable snapshots；不擴大 home read／不使用 bypassPermissions；真實 detached smoke | ✅ |
 | CC-483 | Codex workflow 的 canonical memory provider 固定為 pmctl memory；native memory 不得靜默優先或覆蓋 | 🔵 |
 | CC-484 | JapanJob／qa-testing-rules context refresh live diagnosis + marker round-trip E2E + repo/DB freshness diagnostics | ✅ |
-| CC-485 | 可選 workflow profiles：maintainer delivery policy 與通用 gate/test capabilities 分離，不強制其他 repo 使用 PR-gate 或特定 runner | 🟢 |
+| CC-485 | 工具能力不規定使用流程；affected feedback 僅屬開發/PR，pm-dispatch release 固定由 `release-verify.sh --e2e`（內含 fresh full suite）+ checklist 驗收 | ✅ |
 
 ### Phase 3 — 契約凍結（P2；CC-451 先行或與 CC-446 同批）
 
