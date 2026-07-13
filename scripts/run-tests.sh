@@ -66,7 +66,7 @@ done
 [[ -f "$TEST_RESULT_LIB" ]] || { printf 'run-tests: test result library is missing: %s\n' "$TEST_RESULT_LIB" >&2; exit 2; }
 # shellcheck source=scripts/lib/test-result.sh
 . "$TEST_RESULT_LIB"
-# shellcheck source=scripts/lib/artifact-paths.sh
+# shellcheck source=scripts/lib/artifact-paths.sh disable=SC1091
 . "$SCRIPT_DIR/lib/artifact-paths.sh"
 
 if [[ -n "$VERIFY_FULL_FILE" ]]; then
@@ -197,7 +197,7 @@ map_path() {
       add_suite lint-agents; add_suite lint-frontmatter; behavioral=1 ;;
     commands/*.md)
       add_suite lint-frontmatter; add_suite test-commands; behavioral=1 ;;
-    skills/*|skills/*/*)
+    skills/*)
       add_suite lint-frontmatter; add_suite test-commands; behavioral=1 ;;
     adapters/claude/*)
       add_suite test-claude-dispatch; add_suite test-executor-router; add_suite test-runner-kind; behavioral=1 ;;
@@ -213,15 +213,15 @@ map_path() {
       add_suite test-host-manifest; add_suite test-host-write-codex; add_suite test-host-write-parity; behavioral=1 ;;
     hosts/opencode/*)
       add_suite test-host-manifest; add_suite test-host-write-opencode; add_suite test-host-write-parity; behavioral=1 ;;
-    core/*|core/*/*)
+    core/*)
       add_suite test-core-schemas; add_suite test-layer-boundaries; behavioral=1 ;;
-    pm/*|pm/*/*|pm/*/*/*)
+    pm/*)
       add_suite test-pm-scripts; behavioral=1 ;;
     BACKLOG.md|BACKLOG-ARCHIVE.md|MILESTONES.md)
       add_suite test-schema-task-mirrors-backlog; add_suite test-pmctl-backlog; add_suite test-archive-closed-backlog; behavioral=1 ;;
-    README.md|CHANGELOG.md|docs/*|docs/*/*)
+    README.md|CHANGELOG.md|docs/*)
       add_suite test-check-docs-freshness; behavioral=1 ;;
-    .github/*|.github/*/*)
+    .github/*)
       add_suite lint-scripts ;;
   esac
 

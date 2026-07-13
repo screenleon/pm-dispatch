@@ -53,7 +53,7 @@ pm_test_tree_fingerprint() {
       executable=false
       digest="$(printf '%s' "$(readlink "$repo/$path")" | pm_test_sha256_stream)" || { rm -f "$manifest"; return 2; }
     elif [[ -f "$repo/$path" ]]; then
-      kind=file
+      kind='file'
       [[ -x "$repo/$path" ]] && executable=true || executable=false
       digest="$(pm_test_sha256_file "$repo/$path")" || { rm -f "$manifest"; return 2; }
     elif [[ -e "$repo/$path" ]]; then
