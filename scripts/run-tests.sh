@@ -64,7 +64,7 @@ done
 
 [[ -x "$SUITE_RUNNER" ]] || { printf 'run-tests: suite executor is missing or not executable: %s\n' "$SUITE_RUNNER" >&2; exit 2; }
 [[ -f "$TEST_RESULT_LIB" ]] || { printf 'run-tests: test result library is missing: %s\n' "$TEST_RESULT_LIB" >&2; exit 2; }
-# shellcheck source=scripts/lib/test-result.sh
+# shellcheck source=scripts/lib/test-result.sh disable=SC1091
 . "$TEST_RESULT_LIB"
 # shellcheck source=scripts/lib/artifact-paths.sh disable=SC1091
 . "$SCRIPT_DIR/lib/artifact-paths.sh"
