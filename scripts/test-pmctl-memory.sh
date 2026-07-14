@@ -1867,6 +1867,7 @@ case_memory_append_episode_symlink_swap_race() {
   printf 'sentinel\n' > "$target"
   _pmctl_memory_secure_append_dir "$append_dir"
   json_line='{"date":"2026-07-14T00:00:00Z","cwd":"/tmp/race","session_id":"race","summary":"atomic","writer_host":"codex"}'
+  # shellcheck disable=SC2329,SC2317  # invoked indirectly by the sourced append helper.
   mv() {
     if [[ "$swapped" -eq 0 && "${*: -1}" == "$episodes" ]]; then
       ln -sf -- "$target" "$episodes"
