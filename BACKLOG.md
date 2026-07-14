@@ -32,7 +32,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-484 | ✅ done | JapanJob 與 qa-testing-rules 的 `pmctl context` refresh 未生效：重現 session/index/update/pack 實際路徑、repo-root/project-key/DB freshness，補跨 repo live E2E 與 actionable diagnostics | ops/memory | 2026-07-13 | feedback:2026-07-13 | P1 | retrieval |
 | CC-485 | ✅ done | 工具能力與維護者政策分離：通用 gate/test/PM 不規定使用流程；affected feedback 僅屬開發/PR，pm-dispatch release 固定由 `release-verify.sh --e2e`（內含 fresh full suite）+ checklist 驗收 | arch/process | 2026-07-13 | pr:#398 | P3 | design |
 | CC-486 | ⏸ deferred | direct-impact test planner mapping 提前退出：changed path 含 `agents/*.md`／`commands/*.md` 時 `map_path` 呼叫未註冊的 `lint-frontmatter`，`add_suite` 回傳 1 並在 `set -e` 下無輸出終止，導致 `run-tests.sh --base ... --list` exit 1 | ops/test | 2026-07-13 | feedback:2026-07-13 | P2 | hygiene |
-| CC-487 | 🔵 active | GitHub Actions `test-guards` 非確定性掛起：逐 case breadcrumb + bounded background writer/wait + orphan cleanup，避免 main CI 無輸出佔用 runner 近一小時 | ops/test | 2026-07-14 | feedback:2026-07-14 | P1 | hygiene |
+| CC-487 | ✅ closed 2026-07-14 | GitHub Actions `test-guards` 非確定性掛起：逐 case breadcrumb + bounded background writer/wait + orphan cleanup，避免 main CI 無輸出佔用 runner 近一小時 | ops/test | 2026-07-14 | pr:#402 | P1 | hygiene |
 | CC-488 | ✅ done | Codex canonical memory lifecycle 收口：Stop writer、自然語言更新路由、explicit config 與 live/private-memory migration 驗收 | arch/memory | 2026-07-14 | feedback:2026-07-14 | P1 | design |
 | CC-489 | ⏸ deferred | `scripts/` domain ownership 重整：host/runtime/ops/test entrypoints 移至對應模組，由 manifest/registry 統一發現並以相容 shim 分批遷移 | arch | 2026-07-14 | feedback:2026-07-14 | P2 | design |
 | CC-490 | 🔵 active | project-scoped explicit memory config：取代全域單值 `dispatch.memory_dir`，避免多 repo 靜默共用 pm-dispatch canonical store | arch/memory | 2026-07-14 | feedback:2026-07-14 | P1 | design |
@@ -661,7 +661,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 ---
 
-## CC-487 — GitHub Actions `test-guards` 非確定性掛起與 bounded diagnostics 🔵 active
+## CC-487 — GitHub Actions `test-guards` 非確定性掛起與 bounded diagnostics ✅ 2026-07-14
 
 **Problem**: main SHA `0b66f1f` 的 GitHub Actions run `29298816362` 中，`test-guards` job 從 2026-07-14 01:32:51Z 執行至 02:30:38Z，停留在 `== guard-inject-memory ==` 後沒有更多輸出，最後由使用者手動取消。runner cleanup 記錄兩個殘留 `bash` process。該區段不只包含 inject hook，亦包含 `memory-usage/concurrent-no-lost-updates` 與 `memory-usage/contention-matrix-flock-and-mkdir-fallback` 等背景 writer／`wait` 測試；CI 未啟用逐 case breadcrumb，現有 artifact 無法確定是哪一個 case 或 process 未收斂。
 
@@ -678,6 +678,10 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Evidence**: GitHub Actions run `29298816362`, job `86978053691`；本機乾淨環境完整 296/296 通過，故根因仍需以新增 breadcrumb／bounded diagnostics 捕捉，不能從單次取消紀錄過度推論。
 
 **Dependencies**: 承接 [[CC-477]] 已完成的 lock protocol 與 runner breadcrumbs；本票只處理仍存在的 CI hang 可診斷性與 bounded lifecycle。
+
+**Closed 2026-07-14（Draft PR #402）**: Draft PR #402 已建立；standard implementation gate `gate-20260714-075600-a3affd` 與針對 busy-spin／nonzero-child coverage findings 的 targeted gate `gate-20260714-080619-5069e6` 均為 `Final: GO`。最終實作加入逐 case breadcrumb、tracked child registry、case deadline、TERM→KILL／EXIT cleanup、FIFO release 防阻塞與 hang/nonzero fault-injection regressions；`test-guards` 300/300、authoritative full suite 77/77 通過。依維護者流程於 PR #402 建立後 terminal close，合併該 PR 即完成交付。
+
+**See**: pr:#402
 
 ---
 
