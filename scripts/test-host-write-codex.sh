@@ -214,10 +214,12 @@ test_install_guards_codex_wires_hook() {
     return
   fi
   if jq -e '.hooks.PreToolUse[] | select(.matcher=="Bash") | .hooks[] | select(.command | endswith("hook-codex-command-guard.sh"))' \
+      "$codex_home/hooks.json" >/dev/null 2>&1 \
+    && jq -e '.hooks.UserPromptSubmit[] | .hooks[] | select(.command | endswith("guard-inject-memory.sh"))' \
       "$codex_home/hooks.json" >/dev/null 2>&1; then
     pass "$name"
   else
-    fail "$name" "expected PreToolUse Bash hook not found in $codex_home/hooks.json"
+    fail "$name" "expected command guard and canonical-memory prompt hook in $codex_home/hooks.json"
   fi
 }
 
@@ -227,10 +229,12 @@ test_install_guards_codex_idempotent() {
   local codex_home="$tmp_root/ic-idem/.codex"
   CODEX_HOME="$codex_home" bash "$REPO_ROOT/scripts/install-guards-codex.sh" >/dev/null 2>&1
   local before after
-  before="$(jq -c '.hooks.PreToolUse' "$codex_home/hooks.json")"
+  before="$(jq -c '.hooks' "$codex_home/hooks.json")"
   CODEX_HOME="$codex_home" bash "$REPO_ROOT/scripts/install-guards-codex.sh" >/dev/null 2>&1
-  after="$(jq -c '.hooks.PreToolUse' "$codex_home/hooks.json")"
-  [[ "$before" == "$after" ]] && [[ "$(jq '.hooks.PreToolUse | length' "$codex_home/hooks.json")" == "1" ]] \
+  after="$(jq -c '.hooks' "$codex_home/hooks.json")"
+  [[ "$before" == "$after" ]] \
+    && [[ "$(jq '.hooks.PreToolUse | length' "$codex_home/hooks.json")" == "1" ]] \
+    && [[ "$(jq '.hooks.UserPromptSubmit | length' "$codex_home/hooks.json")" == "1" ]] \
     && pass "$name" || fail "$name" "re-running should not duplicate the managed hook entry"
 }
 

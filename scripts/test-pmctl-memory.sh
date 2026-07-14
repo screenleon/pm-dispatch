@@ -1736,6 +1736,174 @@ case_memory_doctor_shard_count() {
   pass "$name"
 }
 
+# Behavior: every host appends through the same strict canonical episode path.
+# Steps: append one marker per host to an env-selected memory dir and assert JSONL/provenance.
+case_memory_append_episode_cross_host_contract() {
+  local name="pmctl memory append-episode: Claude Codex OpenCode and generic share canonical path"
+  should_run "$name" || return 0
+  local repo="$tmp_root/append-cross-host-repo" mdir="$tmp_root/append-cross-host-memory" host out status=0
+  mkdir -p "$repo" "$mdir"
+  git -C "$repo" init -q
+  for host in claude codex opencode generic; do
+    out="$(PM_MEMORY_DIR="$mdir" "$PMCTL" memory append-episode --repo-root "$repo" --host "$host" \
+      --session-id "session-$host" --date "2026-07-13T00:00:00Z" --summary "cc483-${host}-canonical-marker" --json 2>/dev/null)" || status=$?
+    if [[ "$status" -ne 0 ]] || ! jq -e --arg host "$host" --arg mdir "$mdir" \
+        '.provider == "pmctl" and .authority == "canonical" and .writer_host == $host and .memory_dir == $mdir and .episode.writer_host == $host' <<<"$out" >/dev/null; then
+      fail "$name" "host=$host status=$status out=$out"; return 0
+    fi
+  done
+  if [[ "$(wc -l < "$mdir/episodes.jsonl" | tr -d ' ')" == "4" ]] \
+    && jq -e -s 'map(.writer_host) == ["claude","codex","opencode","generic"]' "$mdir/episodes.jsonl" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "episodes=$(cat "$mdir/episodes.jsonl" 2>/dev/null || true)"
+  fi
+}
+
+# Behavior: the write API never falls through from an invalid explicit path to legacy memory.
+# Steps: create writable legacy memory, select a missing PM_MEMORY_DIR, and assert no episode is written.
+case_memory_append_episode_invalid_explicit_no_fallback() {
+  local name="pmctl memory append-episode: invalid explicit path fails closed without legacy write"
+  should_run "$name" || return 0
+  local repo="$tmp_root/append-invalid-repo" cfg="$tmp_root/append-invalid-cfg" missing="$tmp_root/append-missing" out="$tmp_root/append-invalid.out" legacy status=0
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+  legacy="$(make_fixture_memory "$cfg" "$repo")"
+  PM_MEMORY_DIR="$missing" CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory append-episode --repo-root "$repo" \
+    --host codex --summary 'must-not-land' --json > "$out" 2>&1 || status=$?
+  if [[ "$status" -eq 3 && ! -e "$legacy/episodes.jsonl" ]] && grep -q 'canonical memory resolution failed' "$out"; then
+    pass "$name"
+  else
+    fail "$name" "status=$status legacy_episode=$([[ -e "$legacy/episodes.jsonl" ]] && printf yes || printf no) out=$(<"$out")"
+  fi
+}
+
+# Behavior: an episode written by one host is immediately queryable through the shared pmctl memory plane.
+# Steps: Codex appends a unique marker, then a host-neutral memory query retrieves episodes.jsonl.
+case_memory_append_episode_query_round_trip() {
+  local name="pmctl memory append-episode: Codex write is queryable by shared memory retrieval"
+  should_run "$name" || return 0
+  command -v sqlite3 >/dev/null 2>&1 || { pass "$name (sqlite unavailable)"; return 0; }
+  local repo="$tmp_root/append-query-repo" mdir="$tmp_root/append-query-memory" marker="cc483codexwriteroundtrip" out status=0
+  mkdir -p "$repo" "$mdir"
+  git -C "$repo" init -q
+  PM_MEMORY_DIR="$mdir" "$PMCTL" memory append-episode --repo-root "$repo" --host codex --summary "$marker" --json >/dev/null 2>&1 || status=$?
+  out="$(PM_MEMORY_DIR="$mdir" "$PMCTL" context query "$repo" --source memory -- "$marker" 2>/dev/null || true)"
+  if [[ "$status" -eq 0 && "$out" == *"episodes.jsonl"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status query=$out"
+  fi
+}
+
+# Behavior: the generic lifecycle fallback is owned by the strict resolver, not a hook-local reimplementation.
+# Steps: resolve a non-git cwd with the explicit opt-in and assert deterministic canonical provenance.
+case_memory_resolve_allows_generic_non_git() {
+  local name="pmctl memory resolve: generic non-git fallback stays structured"
+  should_run "$name" || return 0
+  local cwd="$tmp_root/resolve-generic-cwd" cfg="$tmp_root/resolve-generic-cfg" mdir out status=0
+  mkdir -p "$cwd"
+  mdir="$(make_fixture_memory "$cfg" "$cwd")"
+  out="$(CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory resolve --repo-root "$cwd" --allow-non-git --json 2>/dev/null)" || status=$?
+  if [[ "$status" -eq 0 ]] && jq -e --arg cwd "$cwd" --arg mdir "$mdir" \
+      '.status == "resolved" and .repo_root == $cwd and .memory_dir == $mdir and .resolution_source == "legacy" and (.project_key | length) > 0' <<<"$out" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out"
+  fi
+}
+
+# Behavior: skeleton dedupe is performed inside the canonical append lock.
+# Steps: launch concurrent Stop-style writes for one session and assert one JSONL record.
+case_memory_append_episode_concurrent_skeleton_dedupe() {
+  local name="pmctl memory append-episode: concurrent skeleton writes deduplicate"
+  should_run "$name" || return 0
+  local repo="$tmp_root/append-skeleton-repo" mdir="$tmp_root/append-skeleton-memory" i failed=0
+  mkdir -p "$repo" "$mdir"
+  git -C "$repo" init -q
+  for i in 1 2 3 4 5 6; do
+    PM_MEMORY_DIR="$mdir" "$PMCTL" memory append-episode --repo-root "$repo" --host claude \
+      --session-id shared-stop-session --summary "" --skeleton >/dev/null 2>&1 &
+  done
+  wait || failed=1
+  if [[ "$failed" -eq 0 && "$(wc -l < "$mdir/episodes.jsonl" | tr -d ' ')" == "1" ]] \
+    && jq -e -s 'length == 1 and .[0].session_id == "shared-stop-session" and .[0].summary == ""' "$mdir/episodes.jsonl" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "failed=$failed episodes=$(cat "$mdir/episodes.jsonl" 2>/dev/null || true)"
+  fi
+}
+
+# Behavior: canonical writes refuse an episodes.jsonl symlink even when its target is writable.
+# Steps: point episodes.jsonl at an external file and assert the command fails without changing it.
+case_memory_append_episode_refuses_symlink() {
+  local name="pmctl memory append-episode: refuses symlink target"
+  should_run "$name" || return 0
+  local repo="$tmp_root/append-symlink-repo" mdir="$tmp_root/append-symlink-memory" target="$tmp_root/external-episodes" out status=0
+  mkdir -p "$repo" "$mdir"
+  git -C "$repo" init -q
+  printf 'sentinel\n' > "$target"
+  ln -s "$target" "$mdir/episodes.jsonl"
+  out="$(PM_MEMORY_DIR="$mdir" "$PMCTL" memory append-episode --repo-root "$repo" --host generic --summary must-not-land 2>&1)" || status=$?
+  if [[ "$status" -eq 1 && "$(<"$target")" == "sentinel" && "$out" == *"refusing symlink target"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status target=$(<"$target") out=$out"
+  fi
+}
+
+# Behavior: a target swapped to a symlink immediately before commit cannot redirect the canonical write.
+# Steps: intercept the final rename, install a symlink to an external sentinel, and assert rename replaces only the link.
+case_memory_append_episode_symlink_swap_race() {
+  local name="pmctl memory append-episode: atomic commit defeats symlink swap race"
+  should_run "$name" || return 0
+  # shellcheck disable=SC1091
+  . "$REPO_ROOT/scripts/lib/pmctl-memory.sh"
+  local mdir="$tmp_root/append-race-memory" episodes target append_dir json_line status=0 swapped=0
+  mkdir -p "$mdir"
+  episodes="$mdir/episodes.jsonl"
+  target="$tmp_root/append-race-external"
+  append_dir="$mdir/.pm-dispatch"
+  printf 'sentinel\n' > "$target"
+  _pmctl_memory_secure_append_dir "$append_dir"
+  json_line='{"date":"2026-07-14T00:00:00Z","cwd":"/tmp/race","session_id":"race","summary":"atomic","writer_host":"codex"}'
+  # shellcheck disable=SC2329,SC2317  # invoked indirectly by the sourced append helper.
+  mv() {
+    if [[ "$swapped" -eq 0 && "${*: -1}" == "$episodes" ]]; then
+      ln -sf -- "$target" "$episodes"
+      swapped=1
+    fi
+    command mv "$@"
+  }
+  _pmctl_memory_append_episode_inner "$episodes" "$json_line" summary race "$append_dir" || status=$?
+  unset -f mv
+  if [[ "$status" -eq 0 && "$swapped" -eq 1 && ! -L "$episodes" ]] \
+    && [[ "$(<"$target")" == "sentinel" ]] \
+    && jq -e '.summary == "atomic" and .writer_host == "codex"' "$episodes" >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name" "status=$status swapped=$swapped target=$(<"$target") episodes=$(cat "$episodes" 2>/dev/null || true)"
+  fi
+}
+
+# Behavior: the append lock/work directory cannot be redirected through a symlink.
+# Steps: symlink .pm-dispatch to an external directory and assert fail-closed with no episode artifacts.
+case_memory_append_episode_refuses_symlink_lock_dir() {
+  local name="pmctl memory append-episode: refuses symlink lock directory"
+  should_run "$name" || return 0
+  local repo="$tmp_root/append-lock-repo" mdir="$tmp_root/append-lock-memory" external="$tmp_root/append-lock-external" out status=0
+  mkdir -p "$repo" "$mdir" "$external"
+  git -C "$repo" init -q
+  ln -s "$external" "$mdir/.pm-dispatch"
+  out="$(PM_MEMORY_DIR="$mdir" "$PMCTL" memory append-episode --repo-root "$repo" --host codex --summary must-not-land 2>&1)" || status=$?
+  if [[ "$status" -eq 1 && "$out" == *"refusing symlink lock directory"* ]] \
+    && [[ ! -e "$mdir/episodes.jsonl" && -z "$(find "$external" -mindepth 1 -print -quit)" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out external=$(find "$external" -mindepth 1 -print 2>/dev/null || true)"
+  fi
+}
+
 # ── Run all cases ──────────────────────────────────────────────────────────────
 
 case_memory_resolve_env_contract
@@ -1747,6 +1915,14 @@ case_memory_resolve_invalid_config_no_fallback
 case_memory_resolve_rejects_relative_explicit_paths
 case_memory_resolve_unavailable
 case_memory_resolve_rejects_non_git_root
+case_memory_resolve_allows_generic_non_git
+case_memory_append_episode_cross_host_contract
+case_memory_append_episode_invalid_explicit_no_fallback
+case_memory_append_episode_query_round_trip
+case_memory_append_episode_concurrent_skeleton_dedupe
+case_memory_append_episode_refuses_symlink
+case_memory_append_episode_symlink_swap_race
+case_memory_append_episode_refuses_symlink_lock_dir
 case_memory_dir_happy_path
 case_memory_dir_nested_subdir
 case_memory_dir_uses_pwd_default

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# pmctl-memory.sh — project-memory health reporting (`pmctl memory doctor`).
+# pmctl-memory.sh — canonical project-memory resolution, writes, and health.
 #
-# Source this file; do not execute directly. Provides pmctl_memory_doctor(): a
-# read-only reporter over the project memory directory. It MUTATES nothing — no
-# card writes, no enforce. Enforce + live-card backfill are sequenced follow-ups.
+# Source this file; do not execute directly. `pmctl_memory_doctor` remains a
+# read-only reporter; mutating callers must use the strict locked write surfaces
+# in this module rather than writing canonical files directly.
 #
 # Reuses find_memory_dir() from memory.sh (the base, non-routing variant) to
 # locate the memory dir — it never re-walks paths itself and never sources
@@ -13,6 +13,16 @@
 # shellcheck source=scripts/lib/memory.sh
 # shellcheck disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/memory.sh"
+
+# shellcheck source=scripts/lib/host-names.sh
+# shellcheck disable=SC1091
+. "$(dirname "${BASH_SOURCE[0]}")/host-names.sh"
+
+if [[ "$(type -t serialize_with_lock 2>/dev/null)" != function ]]; then
+  # shellcheck source=scripts/lib/portable.sh
+  # shellcheck disable=SC1091
+  . "$(dirname "${BASH_SOURCE[0]}")/portable.sh"
+fi
 
 # Explicitly own the dispatch.memory_dir config dependency (not pmctl-dispatch.sh
 # or an adapter module, so the "MUST NOT source adapters" rule does not apply)
@@ -50,7 +60,7 @@ pmctl_memory_dir() {
 
 _pmctl_memory_resolve_usage() {
   cat <<'EOF'
-Usage: pmctl memory resolve [--repo-root <path>] [--json]
+Usage: pmctl memory resolve [--repo-root <path>] [--allow-non-git] [--json]
 
 Resolve the canonical project-memory directory without silently falling back
 from an explicitly configured but unavailable path.
@@ -94,24 +104,39 @@ _pmctl_memory_emit_resolution() {
 pmctl_memory_resolve() {
   # Use the caller's cwd, not cli/pmctl's install-root REPO_ROOT. An explicit
   # --repo-root still wins and is recommended for automation.
-  local repo_root="$PWD" json=0
+  local repo_root="$PWD" allow_non_git=0 json=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --repo-root)
         [[ $# -ge 2 ]] || { printf 'pmctl memory resolve: --repo-root requires a value\n' >&2; return 2; }
         repo_root="$2"; shift 2 ;;
+      --allow-non-git) allow_non_git=1; shift ;;
       --json) json=1; shift ;;
       -h|--help) _pmctl_memory_resolve_usage; return 0 ;;
       *) printf 'pmctl memory resolve: unknown argument: %s\n' "$1" >&2; return 2 ;;
     esac
   done
 
-  repo_root="$(cd "$repo_root" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null)" || {
-    printf 'pmctl memory resolve: --repo-root must be inside a git worktree\n' >&2
+  local requested_root="$repo_root" git_root=""
+  repo_root="$(cd "$requested_root" 2>/dev/null && pwd -P)" || {
+    printf 'pmctl memory resolve: --repo-root must name an existing directory\n' >&2
     return 2
   }
+  git_root="$(git -C "$repo_root" rev-parse --show-toplevel 2>/dev/null || true)"
+  if [[ -n "$git_root" ]]; then
+    repo_root="$git_root"
+  elif [[ "$allow_non_git" -ne 1 ]]; then
+    printf 'pmctl memory resolve: --repo-root must be inside a git worktree\n' >&2
+    return 2
+  fi
   local project_key memory_dir="" source="none" status="unavailable" reason="" rc=1
-  project_key="$(_pmctl_memory_project_key "$repo_root")"
+  if [[ -n "$git_root" ]]; then
+    project_key="$(_pmctl_memory_project_key "$repo_root")"
+  elif declare -F _portable_sha1 >/dev/null 2>&1; then
+    project_key="$(printf '%s\n' "$repo_root" | _portable_sha1 2>/dev/null || printf '%s' "$repo_root")"
+  else
+    project_key="$repo_root"
+  fi
   _pmctl_memory_load_config_override
 
   if [[ -n "${PM_MEMORY_DIR:-}" ]]; then
@@ -145,6 +170,159 @@ pmctl_memory_resolve() {
 
   _pmctl_memory_emit_resolution "$json" "$status" "$repo_root" "$project_key" "$memory_dir" "$source" "$reason"
   return "$rc"
+}
+
+_pmctl_memory_append_episode_usage() {
+  cat <<'EOF'
+Usage: pmctl memory append-episode --repo-root <path> --summary <text>
+       [--session-id <id>] [--date <ISO8601>]
+       [--host <claude|codex|opencode|generic>] [--skeleton]
+       [--allow-non-git] [--json]
+
+Append one JSONL episode through the strict canonical resolver. An invalid
+explicit memory path, unavailable memory, or unwritable target fails closed.
+EOF
+}
+
+_pmctl_memory_secure_append_dir() {
+  local append_dir="$1" owner
+  [[ ! -L "$append_dir" ]] || {
+    printf 'pmctl memory append-episode: refusing symlink lock directory: %s\n' "$append_dir" >&2
+    return 1
+  }
+  mkdir -p -- "$append_dir" 2>/dev/null || return 1
+  [[ -d "$append_dir" && ! -L "$append_dir" ]] || return 1
+  chmod 700 "$append_dir" 2>/dev/null || return 1
+  owner="$(stat -c '%u' "$append_dir" 2>/dev/null || stat -f '%u' "$append_dir" 2>/dev/null || true)"
+  if [[ -n "$owner" && "$owner" != "$(id -u)" ]]; then
+    printf 'pmctl memory append-episode: refusing lock directory not owned by current user: %s\n' "$append_dir" >&2
+    return 1
+  fi
+}
+
+_pmctl_memory_append_episode_inner() {
+  local episodes_file="$1" json_line="$2" mode="$3" session_id="$4" append_dir="$5"
+  local snapshot tmp
+  snapshot="$(mktemp "$append_dir/episodes.snapshot.XXXXXX")" || return 1
+  tmp="$(mktemp "$append_dir/episodes.new.XXXXXX")" || { rm -f -- "$snapshot"; return 1; }
+  chmod 600 "$snapshot" "$tmp" 2>/dev/null || { rm -f -- "$snapshot" "$tmp"; return 1; }
+  rm -f -- "$snapshot" || { rm -f -- "$tmp"; return 1; }
+
+  # Capture the current directory entry without following a symlink. The hard
+  # link pins the exact inode that was present at lookup time; a concurrent
+  # pathname swap can therefore only make ln fail or produce a snapshot that
+  # is itself a symlink, both of which fail closed before any content is read.
+  if [[ -e "$episodes_file" || -L "$episodes_file" ]]; then
+    if ! ln -P -- "$episodes_file" "$snapshot" 2>/dev/null; then
+      rm -f -- "$snapshot" "$tmp"
+      printf 'pmctl memory append-episode: failed to capture target safely: %s\n' "$episodes_file" >&2
+      return 1
+    fi
+    if [[ -L "$snapshot" || ! -f "$snapshot" ]]; then
+      rm -f -- "$snapshot" "$tmp"
+      printf 'pmctl memory append-episode: refusing symlink target: %s\n' "$episodes_file" >&2
+      return 1
+    fi
+    cat -- "$snapshot" > "$tmp" || { rm -f -- "$snapshot" "$tmp"; return 1; }
+  fi
+
+  if [[ "$mode" == "skeleton" ]] \
+    && jq -eRs --arg sid "$session_id" \
+      'split("\n") | map(select(length>0) | try fromjson catch empty) | any(.session_id == $sid)' \
+      "$tmp" >/dev/null 2>&1; then
+    rm -f -- "$snapshot" "$tmp"
+    return 0
+  fi
+  printf '%s\n' "$json_line" >> "$tmp" || { rm -f -- "$snapshot" "$tmp"; return 1; }
+
+  # Never reopen episodes_file for writing. rename(2) replaces a raced symlink
+  # directory entry instead of following it, so an external target cannot be
+  # corrupted between validation and commit.
+  mv -f -- "$tmp" "$episodes_file" || { rm -f -- "$snapshot" "$tmp"; return 1; }
+  rm -f -- "$snapshot"
+}
+
+# Strict canonical write surface for cross-host episodic memory. The resolver
+# is deliberately invoked here instead of accepting a caller-computed memory
+# path, so reads and writes cannot drift to different host-owned directories.
+pmctl_memory_append_episode() {
+  local repo_root="$PWD" summary="" session_id="" episode_date="" host="generic"
+  local mode="summary" allow_non_git=0 json=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo-root)
+        [[ $# -ge 2 ]] || { printf 'pmctl memory append-episode: --repo-root requires a value\n' >&2; return 2; }
+        repo_root="$2"; shift 2 ;;
+      --summary)
+        [[ $# -ge 2 ]] || { printf 'pmctl memory append-episode: --summary requires a value\n' >&2; return 2; }
+        summary="$2"; shift 2 ;;
+      --session-id)
+        [[ $# -ge 2 ]] || { printf 'pmctl memory append-episode: --session-id requires a value\n' >&2; return 2; }
+        session_id="$2"; shift 2 ;;
+      --date)
+        [[ $# -ge 2 ]] || { printf 'pmctl memory append-episode: --date requires a value\n' >&2; return 2; }
+        episode_date="$2"; shift 2 ;;
+      --host)
+        [[ $# -ge 2 ]] || { printf 'pmctl memory append-episode: --host requires a value\n' >&2; return 2; }
+        pmctl_host_is_valid "$2" || { printf 'pmctl memory append-episode: --host must be claude, codex, opencode, or generic\n' >&2; return 2; }
+        host="$2"
+        shift 2 ;;
+      --skeleton) mode="skeleton"; shift ;;
+      --allow-non-git) allow_non_git=1; shift ;;
+      --json) json=1; shift ;;
+      -h|--help) _pmctl_memory_append_episode_usage; return 0 ;;
+      *) printf 'pmctl memory append-episode: unknown argument: %s\n' "$1" >&2; return 2 ;;
+    esac
+  done
+
+  [[ "$mode" == "skeleton" && -n "$session_id" ]] || [[ -n "${summary//[[:space:]]/}" ]] || {
+    printf 'pmctl memory append-episode: --summary must not be empty\n' >&2
+    return 2
+  }
+  episode_date="${episode_date:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
+
+  local resolution rc=0 memory_dir project_key source episodes_file json_line
+  local -a resolve_args=(--repo-root "$repo_root" --json)
+  [[ "$allow_non_git" -eq 1 ]] && resolve_args+=(--allow-non-git)
+  resolution="$(pmctl_memory_resolve "${resolve_args[@]}")" || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    printf 'pmctl memory append-episode: canonical memory resolution failed: %s\n' \
+      "$(jq -r '.reason // .status // "unknown reason"' <<<"$resolution" 2>/dev/null || printf 'unknown reason')" >&2
+    return "$rc"
+  fi
+
+  memory_dir="$(jq -r '.memory_dir // empty' <<<"$resolution")"
+  project_key="$(jq -r '.project_key // empty' <<<"$resolution")"
+  source="$(jq -r '.resolution_source // "none"' <<<"$resolution")"
+  [[ -n "$memory_dir" && -d "$memory_dir" ]] || {
+    printf 'pmctl memory append-episode: resolved memory directory is unavailable\n' >&2
+    return 1
+  }
+  [[ "$(jq -r '.writable // false' <<<"$resolution")" == "true" ]] || {
+    printf 'pmctl memory append-episode: canonical memory directory is not writable: %s\n' "$memory_dir" >&2
+    return 1
+  }
+
+  json_line="$(jq -cn \
+    --arg date "$episode_date" --arg cwd "$(jq -r '.repo_root' <<<"$resolution")" \
+    --arg session_id "$session_id" --arg summary "$summary" --arg writer_host "$host" \
+    '{date:$date,cwd:$cwd,session_id:$session_id,summary:$summary,writer_host:$writer_host}')" || return 1
+  episodes_file="$memory_dir/episodes.jsonl"
+  local append_dir="$memory_dir/.pm-dispatch"
+  _pmctl_memory_secure_append_dir "$append_dir" || return 1
+  serialize_with_lock "$append_dir/episodes" \
+    _pmctl_memory_append_episode_inner "$episodes_file" "$json_line" "$mode" "$session_id" "$append_dir" || return 1
+
+  if [[ "$json" -eq 1 ]]; then
+    jq -cn --arg provider pmctl --arg authority canonical \
+      --arg project_key "$project_key" --arg memory_dir "$memory_dir" \
+      --arg resolution_source "$source" --arg episodes_file "$episodes_file" --arg writer_host "$host" \
+      --argjson episode "$json_line" \
+      '{schema_version:1,provider:$provider,authority:$authority,writer_host:$writer_host,project_key:$project_key,memory_dir:$memory_dir,resolution_source:$resolution_source,episodes_file:$episodes_file,episode:$episode}'
+  else
+    printf 'provider: pmctl\nauthority: canonical\nwriter_host: %s\nproject_key: %s\nresolution_source: %s\nepisodes_file: %s\n' \
+      "$host" "$project_key" "$source" "$episodes_file"
+  fi
 }
 
 _mem_json_esc() {

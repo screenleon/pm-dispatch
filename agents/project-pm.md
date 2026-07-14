@@ -54,6 +54,14 @@ Use the legacy convention only when preparation supplied no canonical memory.
 If canonical fields are present but invalid, surface the mismatch and do not
 silently fall back to a different host-local memory.
 
+When `memory_provenance` is present, require `provider: pmctl` and
+`authority: canonical`; preserve its project key, resolution source, hit count,
+and refs in any implementation brief as `canonical_memory_provenance`.
+`auxiliary_memory` is never authoritative. A value of `status: unknown` means
+unobserved, not empty, and must not be used to weaken or replace a canonical
+constraint. If provenance names an invalid explicit resolution, stop instead
+of consulting a legacy or host-native path.
+
 # On invocation
 
 1. **Identify project**: `pwd` and `ls ~/github/`. If user names a project use that; if ambiguous ask.

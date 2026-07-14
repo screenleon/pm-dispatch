@@ -353,6 +353,12 @@ case "$cmd/$sub" in
     fi
     pmctl_memory_resolve "$@"
     ;;
+  memory/append-episode)
+    if ! declare -F pmctl_memory_append_episode >/dev/null; then
+      pmctl_die "memory append-episode unavailable"
+    fi
+    pmctl_memory_append_episode "$@"
+    ;;
   memory/doctor)
     if ! declare -F pmctl_memory_doctor >/dev/null; then
       pmctl_die "memory doctor unavailable"

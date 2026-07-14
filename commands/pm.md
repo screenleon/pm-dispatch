@@ -6,19 +6,21 @@ argument-hint: "<free-form request, e.g. \"status of foo\", \"add /health endpoi
 **Before invoking the agent, capture a state snapshot.** From within the target repo's working directory, use the shared batch coordinator. This is also the snapshot path used by non-Claude hosts; Claude retains the interactive Agent layer after preparation:
 
 ```bash
-PM_PREP_ARGS=(pm prepare --request "$ARGUMENTS" --json)
+PM_PREP_ARGS=(pm prepare --request "$ARGUMENTS" --host claude --json)
 PM_PREP_JSON="$(bash ${PM_DISPATCH_REPO}/cli/pmctl "${PM_PREP_ARGS[@]}")" || PM_PREP_JSON=""
 SNAPSHOT_FILE=""
 MEMORY_DIR=""
 MEMORY_CONTEXT=""
+MEMORY_PROVENANCE=""
 [[ -n "$PM_PREP_JSON" ]] && SNAPSHOT_FILE="$(printf '%s\n' "$PM_PREP_JSON" | jq -r '.snapshot_file // empty')"
 [[ -n "$PM_PREP_JSON" ]] && MEMORY_DIR="$(printf '%s\n' "$PM_PREP_JSON" | jq -r '.memory_resolution.memory_dir // empty')"
 [[ -n "$PM_PREP_JSON" ]] && MEMORY_CONTEXT="$(printf '%s\n' "$PM_PREP_JSON" | jq -r '.memory_context // empty')"
+[[ -n "$PM_PREP_JSON" ]] && MEMORY_PROVENANCE="$(printf '%s\n' "$PM_PREP_JSON" | jq -c '.memory_provenance // empty')"
 ```
 
 If preparation cannot create a snapshot (e.g. the target repo has no `BACKLOG.md` — common outside pm-dispatch), `$SNAPSHOT_FILE` will be empty; skip the snapshot but proceed with the dispatch — do not block. Rationale: solves the "PM spends its first phase re-verifying caller-claimed branch/ticket state" failure mode documented in `[[project_memory_architecture]]`.
 
-Invoke `project-pm` via Agent with `run_in_background: true` (default). PM tasks routinely take 30–120s and burn 30–80K tokens; foregrounding holds the main thread idle while the user can't interject. Foreground only when PM's verdict is the sole input to the immediate next tool call AND no parallel main-thread prep work exists (rare). Do not force a model — inherit the main-thread model so the user's own session choice applies (see `docs/model-tier-policy.md` §`/pm`). Brief with: request ($ARGUMENTS), current working directory, **`snapshot_file: <abs-path>` when the snapshot was captured above** (PM agent uses the snapshot for orientation; see `agents/project-pm.md` `## Snapshot ingestion` for the git re-derivation rules that apply before trusting any snapshot field), **`memory_dir: <abs-path>` and the pointer-only `memory_context` pack when preparation returned them** (read the referenced cards from that directory before planning; never infer a different host-local memory path), and relevant prior-turn context the subagent won't otherwise see.
+Invoke `project-pm` via Agent with `run_in_background: true` (default). PM tasks routinely take 30–120s and burn 30–80K tokens; foregrounding holds the main thread idle while the user can't interject. Foreground only when PM's verdict is the sole input to the immediate next tool call AND no parallel main-thread prep work exists (rare). Do not force a model — inherit the main-thread model so the user's own session choice applies (see `docs/model-tier-policy.md` §`/pm`). Brief with: request ($ARGUMENTS), current working directory, **`snapshot_file: <abs-path>` when the snapshot was captured above** (PM agent uses the snapshot for orientation; see `agents/project-pm.md` `## Snapshot ingestion` for the git re-derivation rules that apply before trusting any snapshot field), **`memory_provenance`, `memory_dir: <abs-path>`, and the pointer-only `memory_context` pack when preparation returned them** (pmctl/canonical takes precedence; host-native memory is auxiliary only; read the referenced cards from that directory before planning; never infer a different host-local memory path), and relevant prior-turn context the subagent won't otherwise see.
 
 Relay the PM's user-facing summary. Do not do the PM's job yourself.
 

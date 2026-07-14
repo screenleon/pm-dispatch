@@ -6,8 +6,7 @@
 # hosts/codex/host.yaml's install_targets (id: hooks) and guard_bindings
 # (command_guard) instead of hardcoding the path/format here — see
 # scripts/lib/host-manifest.sh and docs/host-contract.md. Wires exactly one
-# hook today: matcher "Bash" -> scripts/hook-codex-command-guard.sh (see that
-# script's header for the fail-closed v1 policy caveat).
+# command guard plus the host-neutral canonical-memory UserPromptSubmit adapter.
 #
 # Usage:
 #   scripts/install-guards-codex.sh              # apply
@@ -57,9 +56,10 @@ fi
 
 hooks_file="$(host_manifest_expand_path "$hooks_path_template")"
 hook_cmd="$REPO_ROOT/scripts/hook-codex-command-guard.sh"
+memory_hook_cmd="$REPO_ROOT/scripts/guard-inject-memory.sh"
 
-if [[ ! -x "$hook_cmd" ]]; then
-  echo "install-guards-codex: guard hook missing or not executable: $hook_cmd" >&2
+if [[ ! -x "$hook_cmd" || ! -x "$memory_hook_cmd" ]]; then
+  echo "install-guards-codex: managed hook missing or not executable" >&2
   exit 2
 fi
 
@@ -69,6 +69,7 @@ fi
 # — printf %q only adds backslashes when needed, so space-free paths are
 # stored verbatim (no churn for existing installs).
 hook_cmd_q="$(printf '%q' "$hook_cmd")"
+memory_hook_cmd_q="$(printf '%q' "$memory_hook_cmd")"
 
 tmp_new="$(mktemp)"
 tmp_current="$(mktemp)"
@@ -83,12 +84,15 @@ fi
 
 # Merge idempotently: only append the managed hook entry if no existing
 # PreToolUse/Bash entry already points at this repo's guard script.
-jq --arg cmd "$hook_cmd_q" '
+jq --arg cmd "$hook_cmd_q" --arg memory_cmd "$memory_hook_cmd_q" '
   .hooks = (.hooks // {}) |
   .hooks.PreToolUse = (.hooks.PreToolUse // []) |
+  .hooks.UserPromptSubmit = (.hooks.UserPromptSubmit // []) |
   ([.hooks.PreToolUse[]? | select(.matcher == "Bash") | .hooks[]?.command] | index($cmd)) as $already |
-  if $already != null then .
-  else .hooks.PreToolUse += [{"matcher": "Bash", "hooks": [{"type": "command", "command": $cmd}]}]
+  (if $already != null then . else .hooks.PreToolUse += [{"matcher": "Bash", "hooks": [{"type": "command", "command": $cmd}]}] end) |
+  ([.hooks.UserPromptSubmit[]? | .hooks[]?.command] | index($memory_cmd)) as $memory_already |
+  if $memory_already != null then .
+  else .hooks.UserPromptSubmit += [{"hooks": [{"type": "command", "command": $memory_cmd}]}]
   end
 ' "$tmp_current" > "$tmp_new"
 

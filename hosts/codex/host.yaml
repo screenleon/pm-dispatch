@@ -37,8 +37,9 @@ install_targets:
 
 # Hook runtime facts probed end-to-end: the hook config lives in hooks.json
 # using the Claude-Code-compatible hooks block shape (NOT a config.toml
-# section), and deny decisions return via hookSpecificOutput.permissionDecision
-# on the hook script's stdout.
+# section), deny decisions return via hookSpecificOutput.permissionDecision,
+# and UserPromptSubmit provides cwd/prompt while plain stdout becomes model
+# context. The install module uses that verified contract for canonical memory.
 hook_surface:
   config_format: codex-hooks-json
   events:
