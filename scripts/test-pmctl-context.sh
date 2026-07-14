@@ -10,7 +10,15 @@ PMCTL="$REPO_ROOT/cli/pmctl"
 # shellcheck source=scripts/lib/test-harness.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/lib/test-harness.sh"
+# shellcheck source=scripts/lib/test-memory-config-fixtures.sh
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/lib/test-memory-config-fixtures.sh"
 th_init "$@"
+
+# Never inherit the operator's memory mapping. Config-specific cases opt into
+# their own fixture file explicitly.
+export PM_DISPATCH_CONFIG_FILE="$tmp_root/no-operator-config"
+unset PM_MEMORY_DIR PM_CFG_MEMORY_DIR PM_CFG_MEMORY_DIR_INVALID PM_CFG_MEMORY_CONFIG_STATUS
 
 # Skip all tests if sqlite3 is not available (rare but possible on stripped envs)
 if ! command -v sqlite3 >/dev/null 2>&1; then
@@ -2443,14 +2451,14 @@ case_context_query_source_memory_no_dir_graceful() {
 }
 
 case_context_query_source_memory_config_override() {
-  local name="pmctl context query --source memory: dispatch.memory_dir config resolves memory dir"
+  local name="pmctl context query --source memory: project-scoped config resolves memory dir"
   should_run "$name" || return 0
   local repo="$tmp_root/mem-cfgover-repo" cfg="$tmp_root/mem-cfgover-cfg"
   local override="$tmp_root/mem-cfgover-override" fakehome="$tmp_root/mem-cfgover-home"
   mkdir -p "$repo" "$fakehome/.pm-dispatch"
   # $cfg deliberately has no memory dir for $repo. Populate ONLY the override
   # dir (not under $cfg/projects/<id>/memory) so a hit proves resolution went
-  # through dispatch.memory_dir, not the CLAUDE_CONFIG_DIR walk.
+  # through the project-scoped config, not the CLAUDE_CONFIG_DIR walk.
   mkdir -p "$override"
   cat > "$override/MEMORY.md" <<'MD'
 # Memory Index
@@ -2462,16 +2470,16 @@ name: gate-executor-codex
 ---
 The pr-gate flow should prefer the codex executor for separation.
 MD
-  printf 'dispatch.memory_dir = %s\n' "$override" > "$fakehome/.pm-dispatch/config"
+  write_project_memory_config "$fakehome/.pm-dispatch/config" "$repo" "$override"
 
   local out err status=0
   out="$tmp_root/mem-cfgover.out"; err="$tmp_root/mem-cfgover.err"
-  HOME="$fakehome" CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" context query "$repo" --source memory codex > "$out" 2> "$err" || status=$?
+  PM_DISPATCH_CONFIG_FILE="$fakehome/.pm-dispatch/config" CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" context query "$repo" --source memory codex > "$out" 2> "$err" || status=$?
   if [[ "$status" -ne 0 ]]; then fail "$name" "query exited $status: $(<"$err")"; return 0; fi
   if grep -q 'ref: feedback_gate_executor.md' "$out" && grep -q 'source_domain: memory' "$out"; then
     pass "$name"
   else
-    fail "$name" "expected memory card hit resolved via dispatch.memory_dir; got: $(<"$out")"
+    fail "$name" "expected memory card hit resolved via project-scoped config; got: $(<"$out")"
   fi
 }
 

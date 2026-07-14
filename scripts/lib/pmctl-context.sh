@@ -23,7 +23,7 @@ if [[ "$(type -t find_memory_dir 2>/dev/null)" != function ]]; then
 fi
 
 # Source pmctl-config.sh explicitly (not pmctl-dispatch.sh or an adapter module,
-# so the "MUST NOT source adapters" rule does not apply) so dispatch.memory_dir
+# so the "MUST NOT source adapters" rule does not apply) so project-scoped memory
 # resolution does not depend on cli/pmctl's lib-load ordering happening to have
 # already sourced it via pmctl-dispatch.sh.
 if [[ "$(type -t pm_config_load 2>/dev/null)" != function ]]; then
@@ -76,8 +76,10 @@ _ctx_memory_db_path() {
 # when memory.sh is unavailable or no memory dir exists up the tree.
 _ctx_resolve_memory_dir() {
   local cwd="$1"
+  local project_key=""
   declare -F find_memory_dir >/dev/null 2>&1 || return 1
-  declare -F pm_config_load >/dev/null 2>&1 && [[ -z "${PM_CFG_MEMORY_DIR:-}" ]] && pm_config_load
+  declare -F pm_config_project_key >/dev/null 2>&1 && project_key="$(pm_config_project_key "$cwd" 2>/dev/null || true)"
+  declare -F pm_config_load >/dev/null 2>&1 && pm_config_load "$project_key"
   find_memory_dir "$cwd" 2>/dev/null
 }
 

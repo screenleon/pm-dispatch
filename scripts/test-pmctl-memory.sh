@@ -13,7 +13,15 @@ PMCTL="$REPO_ROOT/cli/pmctl"
 # shellcheck source=scripts/lib/memory.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/lib/memory.sh"
+# shellcheck source=scripts/lib/test-memory-config-fixtures.sh
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/lib/test-memory-config-fixtures.sh"
 th_init "$@"
+
+# Operator config is external state. Every case starts isolated and opts into a
+# fixture config explicitly when exercising project-scoped selection.
+export PM_DISPATCH_CONFIG_FILE="$tmp_root/no-operator-config"
+unset PM_MEMORY_DIR PM_CFG_MEMORY_DIR PM_CFG_MEMORY_DIR_INVALID PM_CFG_MEMORY_CONFIG_STATUS
 
 # Snapshot the developer's live project-memory dir up front (a read, for the
 # baseline) so a dedicated guard case proves the suite never MUTATES it — doctor
@@ -155,7 +163,7 @@ case_memory_resolve_config_contract() {
   local repo="$tmp_root/resolve-config-repo" mdir="$tmp_root/config-memory" config="$tmp_root/resolve-config.conf" out="$tmp_root/resolve-config.json" status=0
   mkdir -p "$repo" "$mdir"
   git -C "$repo" init -q
-  printf 'dispatch.memory_dir = %s\n' "$mdir" > "$config"
+  write_project_memory_config "$config" "$repo" "$mdir"
   (unset PM_MEMORY_DIR; PM_DISPATCH_CONFIG_FILE="$config" "$PMCTL" memory resolve --repo-root "$repo" --json) > "$out" 2>/dev/null || status=$?
   if [[ "$status" -eq 0 ]] && jq -e --arg mdir "$mdir" \
     '.status == "resolved" and .resolution_source == "config" and .memory_dir == $mdir' "$out" >/dev/null; then
@@ -173,7 +181,7 @@ case_memory_resolve_env_outranks_config() {
   local repo="$tmp_root/resolve-precedence-repo" env_dir="$tmp_root/precedence-env-memory" cfg_dir="$tmp_root/precedence-config-memory" config="$tmp_root/resolve-precedence.conf" out="$tmp_root/resolve-precedence.json" status=0
   mkdir -p "$repo" "$env_dir" "$cfg_dir"
   git -C "$repo" init -q
-  printf 'dispatch.memory_dir = %s\n' "$cfg_dir" > "$config"
+  write_project_memory_config "$config" "$repo" "$cfg_dir"
   PM_MEMORY_DIR="$env_dir" PM_DISPATCH_CONFIG_FILE="$config" "$PMCTL" memory resolve --repo-root "$repo" --json > "$out" 2>/dev/null || status=$?
   if [[ "$status" -eq 0 ]] && jq -e --arg env_dir "$env_dir" \
     '.resolution_source == "env" and .memory_dir == $env_dir' "$out" >/dev/null; then
@@ -192,7 +200,7 @@ case_memory_resolve_invalid_config_no_fallback() {
   mkdir -p "$repo"
   git -C "$repo" init -q
   legacy="$(make_fixture_memory "$cfg" "$repo")"
-  printf 'dispatch.memory_dir = %s\n' "$missing" > "$config"
+  write_project_memory_config "$config" "$repo" "$missing"
   (unset PM_MEMORY_DIR; PM_DISPATCH_CONFIG_FILE="$config" CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory resolve --repo-root "$repo" --json) > "$out" 2>/dev/null || status=$?
   if [[ "$status" -eq 3 ]] \
     && jq -e '.status == "invalid-explicit" and .resolution_source == "config" and .memory_dir == null' "$out" >/dev/null \
@@ -212,7 +220,7 @@ case_memory_resolve_rejects_relative_explicit_paths() {
   mkdir -p "$repo"
   git -C "$repo" init -q
   PM_MEMORY_DIR="relative-memory" "$PMCTL" memory resolve --repo-root "$repo" --json > "$env_out" 2>/dev/null || env_status=$?
-  printf 'dispatch.memory_dir = relative-memory\n' > "$config"
+  write_project_memory_config "$config" "$repo" relative-memory
   (unset PM_MEMORY_DIR; PM_DISPATCH_CONFIG_FILE="$config" "$PMCTL" memory resolve --repo-root "$repo" --json) > "$cfg_out" 2>/dev/null || cfg_status=$?
   if [[ "$env_status" -eq 3 && "$cfg_status" -eq 3 ]] \
     && jq -e '.resolution_source == "env" and .status == "invalid-explicit" and (.reason | contains("absolute path"))' "$env_out" >/dev/null \
@@ -667,7 +675,7 @@ case_memory_doctor_no_memory_dir() {
 }
 
 case_memory_doctor_config_memory_dir_override() {
-  local name="pmctl memory doctor: dispatch.memory_dir config resolves an override-only memory dir"
+  local name="pmctl memory doctor: project-scoped config resolves an override-only memory dir"
   should_run "$name" || return 0
 
   local cfg="$tmp_root/docover-cfg" repo="$tmp_root/docover-repo"
@@ -677,10 +685,10 @@ case_memory_doctor_config_memory_dir_override() {
   mkdir -p "$cfg/projects" "$repo" "$override" "$fakehome/.pm-dispatch"
   write_compliant_card "$override/feedback_test.md" test-card
   printf '# Memory Index\n- [test](feedback_test.md) — hook\n' > "$override/MEMORY.md"
-  printf 'dispatch.memory_dir = %s\n' "$override" > "$fakehome/.pm-dispatch/config"
+  write_project_memory_config "$fakehome/.pm-dispatch/config" "$repo" "$override"
 
   local out="$tmp_root/docover.json" status=0
-  HOME="$fakehome" CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory doctor --repo-root "$repo" --json \
+  PM_DISPATCH_CONFIG_FILE="$fakehome/.pm-dispatch/config" CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory doctor --repo-root "$repo" --json \
     > "$out" 2>/dev/null || status=$?
 
   if ! assert_exit "$name" "$status" 0; then return 0; fi
@@ -936,15 +944,15 @@ case_memory_dir_pm_memory_dir_unset_byte_identical() {
 }
 
 case_memory_dir_config_dispatch_memory_dir_override() {
-  local name="pmctl memory dir: dispatch.memory_dir config overrides discovery when PM_MEMORY_DIR unset"
+  local name="pmctl memory dir: project-scoped config overrides discovery when PM_MEMORY_DIR unset"
   should_run "$name" || return 0
 
   local cfg="$tmp_root/pmcfg-cfg" repo="$tmp_root/pmcfg-repo" override="$tmp_root/pmcfg-override" fakehome="$tmp_root/pmcfg-home"
   mkdir -p "$repo" "$override" "$fakehome/.pm-dispatch"
-  printf 'dispatch.memory_dir = %s\n' "$override" > "$fakehome/.pm-dispatch/config"
+  write_project_memory_config "$fakehome/.pm-dispatch/config" "$repo" "$override"
 
   local out status=0
-  out="$(HOME="$fakehome" CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory dir "$repo" 2>/dev/null)" || status=$?
+  out="$(PM_DISPATCH_CONFIG_FILE="$fakehome/.pm-dispatch/config" CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory dir "$repo" 2>/dev/null)" || status=$?
 
   if ! assert_exit "$name" "$status" 0; then return 0; fi
   if [[ "$out" != "$override" ]]; then
@@ -955,16 +963,16 @@ case_memory_dir_config_dispatch_memory_dir_override() {
 }
 
 case_memory_dir_pm_memory_dir_outranks_config() {
-  local name="pmctl memory dir: PM_MEMORY_DIR env outranks dispatch.memory_dir config"
+  local name="pmctl memory dir: PM_MEMORY_DIR env outranks project-scoped config"
   should_run "$name" || return 0
 
   local cfg="$tmp_root/pmboth-cfg" repo="$tmp_root/pmboth-repo"
   local env_win="$tmp_root/pmboth-env-win" cfg_lose="$tmp_root/pmboth-cfg-lose" fakehome="$tmp_root/pmboth-home"
   mkdir -p "$repo" "$env_win" "$cfg_lose" "$fakehome/.pm-dispatch"
-  printf 'dispatch.memory_dir = %s\n' "$cfg_lose" > "$fakehome/.pm-dispatch/config"
+  write_project_memory_config "$fakehome/.pm-dispatch/config" "$repo" "$cfg_lose"
 
   local out status=0
-  out="$(PM_MEMORY_DIR="$env_win" HOME="$fakehome" CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory dir "$repo" 2>/dev/null)" || status=$?
+  out="$(PM_MEMORY_DIR="$env_win" PM_DISPATCH_CONFIG_FILE="$fakehome/.pm-dispatch/config" CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory dir "$repo" 2>/dev/null)" || status=$?
 
   if ! assert_exit "$name" "$status" 0; then return 0; fi
   if [[ "$out" != "$env_win" ]]; then
@@ -975,24 +983,24 @@ case_memory_dir_pm_memory_dir_outranks_config() {
 }
 
 case_memory_dir_malformed_config_memory_dir_falls_through() {
-  local name="pmctl memory dir: malformed (relative) dispatch.memory_dir warns and falls through to legacy resolution"
+  local name="pmctl memory dir: malformed project-scoped path warns and falls through to legacy resolution"
   should_run "$name" || return 0
 
   local cfg="$tmp_root/pmbad-cfg" repo="$tmp_root/pmbad-repo" fakehome="$tmp_root/pmbad-home"
   mkdir -p "$repo" "$fakehome/.pm-dispatch"
   local mdir; mdir="$(make_fixture_memory "$cfg" "$repo")"
-  printf 'dispatch.memory_dir = relative/not-absolute\n' > "$fakehome/.pm-dispatch/config"
+  write_project_memory_config "$fakehome/.pm-dispatch/config" "$repo" relative/not-absolute
 
   local out err status=0
   err="$tmp_root/pmbad.err"
-  out="$(HOME="$fakehome" CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory dir "$repo" 2>"$err")" || status=$?
+  out="$(PM_DISPATCH_CONFIG_FILE="$fakehome/.pm-dispatch/config" CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory dir "$repo" 2>"$err")" || status=$?
 
   if ! assert_exit "$name" "$status" 0; then return 0; fi
   if [[ "$out" != "$mdir" ]]; then
     fail "$name" "expected fallback to legacy dir '$mdir' (malformed override must be ignored), got '$out'"
     return 0
   fi
-  if ! grep -q 'malformed value for dispatch.memory_dir' "$err"; then
+  if ! grep -q 'malformed value for memory.projects.' "$err"; then
     fail "$name" "expected a malformed-value warning on stderr, got: $(<"$err")"
     return 0
   fi
@@ -1414,7 +1422,7 @@ case_memory_rebuild_summary_no_memory_dir() {
 }
 
 case_memory_shard_config_memory_dir_override() {
-  local name="pmctl memory shard: dispatch.memory_dir config resolves an override-only memory dir"
+  local name="pmctl memory shard: project-scoped config resolves an override-only memory dir"
   should_run "$name" || return 0
 
   local cfg repo override fakehome
@@ -1423,7 +1431,7 @@ case_memory_shard_config_memory_dir_override() {
   override="$(mktemp -d -p "$tmp_root")"
   fakehome="$(mktemp -d -p "$tmp_root")"
   mkdir -p "$cfg/projects" "$fakehome/.pm-dispatch"  # cfg has NO memory dir for $repo
-  printf 'dispatch.memory_dir = %s\n' "$override" > "$fakehome/.pm-dispatch/config"
+  write_project_memory_config "$fakehome/.pm-dispatch/config" "$repo" "$override"
 
   local ep="$override/episodes.jsonl"
   local i
@@ -1433,7 +1441,7 @@ case_memory_shard_config_memory_dir_override() {
   done
 
   local out status=0
-  out="$(HOME="$fakehome" CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory shard --repo-root "$repo" 2>&1)" || status=$?
+  out="$(PM_DISPATCH_CONFIG_FILE="$fakehome/.pm-dispatch/config" CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory shard --repo-root "$repo" 2>&1)" || status=$?
 
   if [[ "$status" -ne 0 ]]; then
     fail "$name" "expected shard to resolve override-only memory dir; exited $status: $out"
@@ -1447,7 +1455,7 @@ case_memory_shard_config_memory_dir_override() {
 }
 
 case_memory_rebuild_summary_config_memory_dir_override() {
-  local name="pmctl memory rebuild-summary: dispatch.memory_dir config resolves an override-only memory dir"
+  local name="pmctl memory rebuild-summary: project-scoped config resolves an override-only memory dir"
   should_run "$name" || return 0
 
   local cfg repo override fakehome
@@ -1456,13 +1464,13 @@ case_memory_rebuild_summary_config_memory_dir_override() {
   override="$(mktemp -d -p "$tmp_root")"
   fakehome="$(mktemp -d -p "$tmp_root")"
   mkdir -p "$cfg/projects" "$fakehome/.pm-dispatch"  # cfg has NO memory dir for $repo
-  printf 'dispatch.memory_dir = %s\n' "$override" > "$fakehome/.pm-dispatch/config"
+  write_project_memory_config "$fakehome/.pm-dispatch/config" "$repo" "$override"
 
   local ep="$override/episodes.jsonl"
   printf '{"date":"2026-05-01","cwd":"%s","session_id":"a","summary":"may entry one"}\n' "$repo" >> "$ep"
 
   local out status=0
-  out="$(HOME="$fakehome" CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory rebuild-summary --repo-root "$repo" 2>&1)" || status=$?
+  out="$(PM_DISPATCH_CONFIG_FILE="$fakehome/.pm-dispatch/config" CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory rebuild-summary --repo-root "$repo" 2>&1)" || status=$?
 
   if [[ "$status" -ne 0 ]]; then
     fail "$name" "expected rebuild-summary to resolve override-only memory dir; exited $status: $out"
@@ -1760,6 +1768,19 @@ case_memory_append_episode_cross_host_contract() {
   fi
 }
 
+case_memory_append_episode_requires_host() {
+  local name="pmctl memory append-episode: shared writer requires explicit initiating host"
+  should_run "$name" || return 0
+  local repo="$tmp_root/append-host-required-repo" mdir="$tmp_root/append-host-required-memory" out status=0
+  mkdir -p "$repo" "$mdir"; git -C "$repo" init -q
+  out="$(PM_MEMORY_DIR="$mdir" "$PMCTL" memory append-episode --repo-root "$repo" --summary must-not-default 2>&1)" || status=$?
+  if [[ "$status" -eq 2 && "$out" == *"--host is required"* && ! -e "$mdir/episodes.jsonl" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out"
+  fi
+}
+
 # Behavior: the write API never falls through from an invalid explicit path to legacy memory.
 # Steps: create writable legacy memory, select a missing PM_MEMORY_DIR, and assert no episode is written.
 case_memory_append_episode_invalid_explicit_no_fallback() {
@@ -1904,6 +1925,111 @@ case_memory_append_episode_refuses_symlink_lock_dir() {
   fi
 }
 
+# Behavior: one config file can safely map independent repositories without a
+# machine-wide fallback, and an unmatched append cannot touch another project.
+case_memory_config_project_isolation() {
+  local name="pmctl memory config: project mapping prevents cross-project resolve and append"
+  should_run "$name" || return 0
+  local repo_a="$tmp_root/config-project-a" repo_b="$tmp_root/config-project-b"
+  local mem_a="$tmp_root/config-memory-a" cfg="$tmp_root/project-config" empty_claude="$tmp_root/project-empty-claude"
+  local before after out status=0
+  mkdir -p "$repo_a" "$repo_b" "$mem_a" "$empty_claude/projects"
+  git -C "$repo_a" init -q; git -C "$repo_b" init -q
+  printf 'sentinel = keep\n' > "$cfg"
+  PM_DISPATCH_CONFIG_FILE="$cfg" "$PMCTL" memory config set --repo-root "$repo_a" --memory-dir "$mem_a" --json > "$tmp_root/config-set.json"
+  before="$(find "$mem_a" -type f -printf '%P:%s:%T@\n' | sort)"
+  out="$(PM_DISPATCH_CONFIG_FILE="$cfg" CLAUDE_CONFIG_DIR="$empty_claude" "$PMCTL" memory resolve --repo-root "$repo_b" --json 2>/dev/null)" || status=$?
+  PM_DISPATCH_CONFIG_FILE="$cfg" CLAUDE_CONFIG_DIR="$empty_claude" "$PMCTL" memory append-episode \
+    --repo-root "$repo_b" --host codex --summary cross-project-must-fail >/dev/null 2>&1 || true
+  after="$(find "$mem_a" -type f -printf '%P:%s:%T@\n' | sort)"
+  if [[ "$status" -eq 1 && "$before" == "$after" ]] \
+    && jq -e '.status == "unavailable" and .resolution_source == "none"' <<<"$out" >/dev/null \
+    && grep -q '^sentinel = keep$' "$cfg" \
+    && grep -q "^memory.projects.$(memory_fixture_project_key "$repo_a").dir = $mem_a$" "$cfg"; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out before=[$before] after=[$after] config=$(<"$cfg")"
+  fi
+}
+
+# Behavior: deprecated global config is diagnostic and fail-closed until one
+# explicit repository migration atomically replaces it with a scoped entry.
+case_memory_config_legacy_migration() {
+  local name="pmctl memory config: unsafe global fails closed then migrates idempotently"
+  should_run "$name" || return 0
+  local repo="$tmp_root/config-migrate-repo" mem="$tmp_root/config-migrate-memory" cfg="$tmp_root/config-migrate.conf"
+  local out status=0 lint_status=0
+  mkdir -p "$repo" "$mem"; git -C "$repo" init -q
+  printf 'dispatch.default_timeout = 700\ndispatch.memory_dir = %s\n' "$mem" > "$cfg"
+  out="$(PM_DISPATCH_CONFIG_FILE="$cfg" "$PMCTL" memory resolve --repo-root "$repo" --json 2>/dev/null)" || status=$?
+  PM_DISPATCH_CONFIG_FILE="$cfg" "$PMCTL" memory config lint --json > "$tmp_root/config-legacy-lint.json" || lint_status=$?
+  if [[ "$status" -ne 3 || "$lint_status" -ne 1 ]] \
+    || ! jq -e '.resolution_source == "config-legacy-global" and .status == "invalid-explicit"' <<<"$out" >/dev/null \
+    || ! jq -e '.issues | any(.code == "unsafe-legacy-global")' "$tmp_root/config-legacy-lint.json" >/dev/null; then
+    fail "$name" "pre-migration status=$status lint=$lint_status out=$out"
+    return 0
+  fi
+  PM_DISPATCH_CONFIG_FILE="$cfg" "$PMCTL" memory config migrate --repo-root "$repo" --json > "$tmp_root/config-migrate.json" || {
+    fail "$name" "migration failed"; return 0;
+  }
+  PM_DISPATCH_CONFIG_FILE="$cfg" "$PMCTL" memory config migrate --repo-root "$repo" --json > "$tmp_root/config-migrate-noop.json" || {
+    fail "$name" "second migration was not idempotent"; return 0;
+  }
+  status=0
+  out="$(PM_DISPATCH_CONFIG_FILE="$cfg" "$PMCTL" memory resolve --repo-root "$repo" --json 2>/dev/null)" || status=$?
+  if [[ "$status" -eq 0 ]] \
+    && jq -e --arg mem "$mem" '.resolution_source == "config" and .memory_dir == $mem' <<<"$out" >/dev/null \
+    && jq -e '.action == "migrate-noop"' "$tmp_root/config-migrate-noop.json" >/dev/null \
+    && ! grep -q '^dispatch.memory_dir[[:space:]]*=' "$cfg" \
+    && grep -q '^dispatch.default_timeout = 700$' "$cfg"; then
+    pass "$name"
+  else
+    fail "$name" "post-migration status=$status out=$out config=$(<"$cfg")"
+  fi
+}
+
+# Behavior: matched malformed/missing project paths are reported, while entries
+# for other projects never poison the selected repository.
+case_memory_config_lint_and_matched_fail_closed() {
+  local name="pmctl memory config: lint diagnoses malformed and missing matched paths"
+  should_run "$name" || return 0
+  local repo="$tmp_root/config-lint-repo" cfg="$tmp_root/config-lint.conf" key missing="$tmp_root/config-lint-missing"
+  local status=0 lint_status=0 out
+  mkdir -p "$repo"; git -C "$repo" init -q; key="$(memory_fixture_project_key "$repo")"
+  printf 'memory.projects.bad.dir = /tmp/nope\nmemory.projects.%s.dir = %s\nmemory.projects.%s.dir = %s\n' \
+    "$key" "$missing" "$key" "$missing" > "$cfg"
+  out="$(PM_DISPATCH_CONFIG_FILE="$cfg" "$PMCTL" memory resolve --repo-root "$repo" --json 2>/dev/null)" || status=$?
+  PM_DISPATCH_CONFIG_FILE="$cfg" "$PMCTL" memory config lint --json > "$tmp_root/config-lint.json" || lint_status=$?
+  if [[ "$status" -eq 3 && "$lint_status" -eq 1 ]] \
+    && jq -e '.status == "invalid-explicit" and .resolution_source == "config"' <<<"$out" >/dev/null \
+    && jq -e '.issues | any(.code == "malformed-project-key") and any(.code == "duplicate-project-key") and any(.code == "missing-memory-dir")' "$tmp_root/config-lint.json" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "resolve=$status lint=$lint_status out=$out report=$(<"$tmp_root/config-lint.json")"
+  fi
+}
+
+case_memory_config_linked_worktree_identity() {
+  local name="pmctl memory config: linked worktree shares primary project mapping"
+  should_run "$name" || return 0
+  local repo="$tmp_root/config-worktree-main" wt="$tmp_root/config-worktree-linked"
+  local mem="$tmp_root/config-worktree-memory" cfg="$tmp_root/config-worktree.conf" main_json wt_json
+  mkdir -p "$repo" "$mem"; git -C "$repo" init -q
+  printf 'seed\n' > "$repo/README.md"
+  git -C "$repo" add README.md
+  git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm seed
+  git -C "$repo" worktree add -q -b config-worktree-branch "$wt"
+  PM_DISPATCH_CONFIG_FILE="$cfg" "$PMCTL" memory config set --repo-root "$repo" --memory-dir "$mem" --json >/dev/null
+  main_json="$(PM_DISPATCH_CONFIG_FILE="$cfg" "$PMCTL" memory resolve --repo-root "$repo" --json)"
+  wt_json="$(PM_DISPATCH_CONFIG_FILE="$cfg" "$PMCTL" memory resolve --repo-root "$wt" --json)"
+  if [[ "$(jq -r '.project_key' <<<"$main_json")" == "$(jq -r '.project_key' <<<"$wt_json")" ]] \
+    && jq -e --arg mem "$mem" '.resolution_source == "config" and .memory_dir == $mem' <<<"$wt_json" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "main=$main_json worktree=$wt_json"
+  fi
+}
+
 # ── Run all cases ──────────────────────────────────────────────────────────────
 
 case_memory_resolve_env_contract
@@ -1917,12 +2043,17 @@ case_memory_resolve_unavailable
 case_memory_resolve_rejects_non_git_root
 case_memory_resolve_allows_generic_non_git
 case_memory_append_episode_cross_host_contract
+case_memory_append_episode_requires_host
 case_memory_append_episode_invalid_explicit_no_fallback
 case_memory_append_episode_query_round_trip
 case_memory_append_episode_concurrent_skeleton_dedupe
 case_memory_append_episode_refuses_symlink
 case_memory_append_episode_symlink_swap_race
 case_memory_append_episode_refuses_symlink_lock_dir
+case_memory_config_project_isolation
+case_memory_config_legacy_migration
+case_memory_config_lint_and_matched_fail_closed
+case_memory_config_linked_worktree_identity
 case_memory_dir_happy_path
 case_memory_dir_nested_subdir
 case_memory_dir_uses_pwd_default

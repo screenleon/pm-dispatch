@@ -41,7 +41,7 @@ _doctor_host_codex_hooks() {
         "codex hooks.json exists but is not valid JSON ($codex_home/hooks.json)"
       return
     fi
-    if _doctor_host_codex_target_installed "$codex_home/hooks.json" codex-hooks-json; then
+    if _doctor_host_codex_hook_present "$codex_home/hooks.json" command_guard; then
       emit_capability host.codex.hooks ok codex command_guard \
         host_hook blocking partial evolving probed \
         "codex hook surface wired ($codex_home/hooks.json; command coverage full, file-write needs patch parsing)"
@@ -50,11 +50,52 @@ _doctor_host_codex_hooks() {
         none none none evolving probed \
         "codex hook surface not wired ($codex_home/hooks.json exists but does not contain this checkout's managed hook; opt-in via install.sh --enable-codex-command-guard)"
     fi
+    if _doctor_host_codex_hook_present "$codex_home/hooks.json" memory_injection; then
+      emit_check host.codex.memory-injection ok "canonical UserPromptSubmit memory injection wired"
+    else
+      emit_check host.codex.memory-injection ok "canonical UserPromptSubmit memory injection not wired (opt-in host wiring)"
+    fi
+    if _doctor_host_codex_hook_present "$codex_home/hooks.json" session_lifecycle; then
+      emit_capability host.codex.session-lifecycle ok codex session_lifecycle \
+        host_hook none partial evolving probed \
+        "canonical Stop session writer wired with host=codex"
+    else
+      emit_capability host.codex.session-lifecycle ok codex session_lifecycle \
+        none none none evolving probed \
+        "canonical Stop session writer not wired (opt-in host wiring)"
+    fi
   else
     emit_capability host.codex.hooks ok codex command_guard \
       none none none evolving probed \
       "codex hook surface not wired (no $codex_home/hooks.json; opt-in via install.sh --enable-codex-command-guard)"
+    emit_check host.codex.memory-injection ok "canonical UserPromptSubmit memory injection not wired (no hooks.json)"
+    emit_capability host.codex.session-lifecycle ok codex session_lifecycle \
+      none none none evolving probed \
+      "canonical Stop session writer not wired (no hooks.json)"
   fi
+}
+
+_doctor_host_codex_hook_present() {
+  local hooks_file="$1" kind="$2" command command_q event matcher=""
+  case "$kind" in
+    command_guard)
+      command="$REPO_ROOT/scripts/hook-codex-command-guard.sh"; event="PreToolUse"; matcher="Bash" ;;
+    memory_injection)
+      command="$REPO_ROOT/scripts/guard-inject-memory.sh"; event="UserPromptSubmit" ;;
+    session_lifecycle)
+      command="$REPO_ROOT/scripts/guard-session-summary.sh --host codex"
+      command_q="$(printf '%q' "$REPO_ROOT/scripts/guard-session-summary.sh") --host codex"
+      event="Stop"
+      ;;
+    *) return 1 ;;
+  esac
+  [[ -n "${command_q:-}" ]] || command_q="$(printf '%q' "$command")"
+  jq -e --arg event "$event" --arg matcher "$matcher" --arg cmd "$command" --arg cmd_q "$command_q" '
+    (.hooks[$event] // [])[]?
+    | select(($matcher == "") or (.matcher == $matcher))
+    | (.hooks // [])[]?.command
+    | select(. == $cmd or . == $cmd_q)
+  ' "$hooks_file" >/dev/null 2>&1
 }
 
 # Per-target installed check: for the codex-hooks-json format this verifies
@@ -72,13 +113,15 @@ _doctor_host_codex_target_installed() {
   if [[ "$fmt" == "codex-hooks-json" ]]; then
     [[ -f "$expanded" ]] || return 1
     command -v jq >/dev/null 2>&1 || return 1
-    local hook_cmd="$REPO_ROOT/scripts/hook-codex-command-guard.sh"
-    local hook_cmd_q
-    hook_cmd_q="$(printf '%q' "$hook_cmd")"
-    jq -e --arg cmd "$hook_cmd" --arg cmd_q "$hook_cmd_q" '
-      (.hooks.PreToolUse // [])[]? | select(.matcher == "Bash") | (.hooks // [])[]?.command
-      | select(. == $cmd or . == $cmd_q)
-    ' "$expanded" >/dev/null 2>&1
+    _doctor_host_codex_hook_present "$expanded" command_guard \
+      && _doctor_host_codex_hook_present "$expanded" memory_injection \
+      && _doctor_host_codex_hook_present "$expanded" session_lifecycle
+    return $?
+  fi
+  if [[ "$fmt" == "codex-agents-md" ]]; then
+    [[ -f "$expanded" ]] || return 1
+    grep -Fqx '<!-- pm-dispatch:codex-memory-contract:start -->' "$expanded" \
+      && grep -Fqx '<!-- pm-dispatch:codex-memory-contract:end -->' "$expanded"
     return $?
   fi
   [[ -e "$expanded" ]]

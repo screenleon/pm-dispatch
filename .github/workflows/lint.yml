@@ -215,6 +215,10 @@ jobs:
             test-pmctl-decision.sh
             test-pmctl-worktree.sh
             test-lint-test-docstrings.sh
+      - name: Host-owned shellcheck
+        uses: ludeeus/action-shellcheck@00cae500b08a931fb5698e11e79bfbd38e612a38 # tag 2.0.0
+        with:
+          scandir: ./hosts
 
   test-doctor:
     runs-on: ubuntu-latest

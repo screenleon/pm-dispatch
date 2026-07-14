@@ -7,6 +7,34 @@ set -euo pipefail
 # shellcheck disable=SC1091
 . "$(dirname "$0")/lib/pmctl-memory.sh"
 
+writer_host=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --host)
+      [[ $# -ge 2 ]] || { printf 'guard-session-summary: --host requires a value\n' >&2; exit 2; }
+      pmctl_host_is_valid "$2" || {
+        printf 'guard-session-summary: --host must be claude, codex, opencode, or generic\n' >&2
+        exit 2
+      }
+      writer_host="$2"
+      shift 2
+      ;;
+    -h|--help)
+      printf 'Usage: guard-session-summary.sh --host <claude|codex|opencode|generic>\n'
+      exit 0
+      ;;
+    *)
+      printf 'guard-session-summary: unknown argument: %s\n' "$1" >&2
+      exit 2
+      ;;
+  esac
+done
+
+[[ -n "$writer_host" ]] || {
+  printf 'guard-session-summary: --host is required; the shared writer has no CLI-specific default\n' >&2
+  exit 2
+}
+
 payload=$(cat)
 [[ -z "$payload" ]] && exit 0
 
@@ -84,7 +112,7 @@ fi
 
 # Re-resolve and append under the canonical lock. `--skeleton` performs the
 # session-id dedupe again inside the lock, closing the concurrent Stop race.
-pmctl_memory_append_episode --repo-root "$cwd" --allow-non-git --host claude \
+pmctl_memory_append_episode --repo-root "$cwd" --allow-non-git --host "$writer_host" \
   --session-id "$session_id" --summary "" --skeleton >/dev/null 2>&1 || exit 0
 
 exit 0

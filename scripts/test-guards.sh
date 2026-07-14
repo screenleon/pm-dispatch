@@ -30,10 +30,19 @@ MEM_HOOK_REAL="$SCRIPT_DIR/guard-inject-memory.sh"
 export MEM_HOOK_REAL
 CTX_HOOK="$SCRIPT_DIR/guard-inject-context.sh"
 SESSION_HOOK="$SCRIPT_DIR/guard-session-summary.sh"
+session_hook_claude() { "$SESSION_HOOK" --host claude "$@"; }
 
 # shellcheck source=scripts/lib/test-harness.sh
 . "$SCRIPT_DIR/lib/test-harness.sh"
 th_init --format=indent-2sp-quiet "$@"
+
+# Memory-hook fixtures must never inherit the operator's live canonical-memory
+# selection. CC-488 intentionally installs ~/.pm-dispatch/config, so relying on
+# a clean HOME makes these tests pass in CI but target the live store locally.
+# Point config discovery at a guaranteed-missing fixture path; individual cases
+# can still opt into PM_MEMORY_DIR explicitly when testing strict resolution.
+unset PM_CFG_MEMORY_DIR PM_MEMORY_DIR
+export PM_DISPATCH_CONFIG_FILE="$tmp_root/no-pm-dispatch-config"
 
 # Sandbox audit logs.
 export PM_GUARD_LOG_DIR="$(mktemp -d)"
@@ -3215,7 +3224,7 @@ session_hook_happy_path() {
   mkdir -p "$cwd"
   write_inject_memory "$dir" "$cwd" $'- alpha\n'
   payload="{\"cwd\":\"$cwd\",\"session_id\":\"sess-001\"}"
-  printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$SESSION_HOOK" 2>/dev/null
+  printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" session_hook_claude 2>/dev/null
   status=$?
   episodes="$dir/projects/$(inject_encoded_path "$cwd")/memory/episodes.jsonl"
   entry="$(cat "$episodes" 2>/dev/null || true)"
@@ -3228,6 +3237,52 @@ session_hook_happy_path() {
     printf '  FAIL  %s — exit=%s entry=%q\n' "$name" "$status" "$entry"
   fi
   rm -rf "$dir"
+}
+
+session_hook_codex_host_provenance() {
+  # Verifies the shared Stop writer records explicit Codex provenance without
+  # relying on a CLI-specific default in the shared writer.
+  # Steps:
+  #   1. Create an isolated canonical memory fixture
+  #   2. Invoke the Stop hook with --host codex and a stable session id
+  #   3. Assert the skeleton is canonical, deduplicated, and writer_host=codex
+  local name="session-hook/codex-host-provenance"
+  should_run "$name" || return 0
+  local dir cwd payload episodes entry line_count
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  write_inject_memory "$dir" "$cwd" $'- alpha\n'
+  payload="{\"cwd\":\"$cwd\",\"session_id\":\"codex-session-001\"}"
+  printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$SESSION_HOOK" --host codex 2>/dev/null
+  printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$SESSION_HOOK" --host codex 2>/dev/null
+  episodes="$dir/projects/$(inject_encoded_path "$cwd")/memory/episodes.jsonl"
+  entry="$(cat "$episodes" 2>/dev/null || true)"
+  line_count="$(wc -l < "$episodes" 2>/dev/null || echo 0)"
+  if [[ "$line_count" -eq 1 && "$entry" == *'"session_id":"codex-session-001"'* \
+      && "$entry" == *'"writer_host":"codex"'* ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — lines=%s entry=%q\n' "$name" "$line_count" "$entry"
+  fi
+  rm -rf "$dir"
+}
+
+session_hook_requires_explicit_host() {
+  local name="session-hook/requires-explicit-host"
+  should_run "$name" || return 0
+  local output status=0
+  output="$(printf '{}' | "$SESSION_HOOK" 2>&1)" || status=$?
+  if [[ "$status" -eq 2 && "$output" == *"--host is required"* ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1)); FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s output=%q\n' "$name" "$status" "$output"
+  fi
 }
 
 session_hook_duplicate_no_summary() {
@@ -3247,7 +3302,7 @@ session_hook_duplicate_no_summary() {
   printf '{"date":"2026-01-01T00:00:00+00:00","cwd":"%s","session_id":"session-abc","summary":""}\n' "$cwd" \
     > "$dir/projects/$encoded/memory/episodes.jsonl"
   payload="{\"cwd\":\"$cwd\",\"session_id\":\"session-abc\"}"
-  printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$SESSION_HOOK" 2>/dev/null
+  printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" session_hook_claude 2>/dev/null
   status=$?
   line_count=$(wc -l < "$dir/projects/$encoded/memory/episodes.jsonl")
   if [[ "$status" == "0" && "$line_count" -eq 1 ]]; then
@@ -3278,7 +3333,7 @@ session_hook_duplicate_has_summary() {
   printf '{"date":"2026-01-01T00:00:00+00:00","cwd":"%s","session_id":"session-abc","summary":"Done work."}\n' "$cwd" \
     > "$dir/projects/$encoded/memory/episodes.jsonl"
   payload="{\"cwd\":\"$cwd\",\"session_id\":\"session-abc\"}"
-  printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$SESSION_HOOK" 2>/dev/null
+  printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" session_hook_claude 2>/dev/null
   status=$?
   line_count=$(wc -l < "$dir/projects/$encoded/memory/episodes.jsonl")
   if [[ "$status" == "0" && "$line_count" -eq 1 ]]; then
@@ -3309,7 +3364,7 @@ session_hook_new_session_appends() {
   printf '{"date":"2026-01-01T00:00:00+00:00","cwd":"%s","session_id":"old-sess","summary":"Old work."}\n' "$cwd" \
     > "$dir/projects/$encoded/memory/episodes.jsonl"
   payload="{\"cwd\":\"$cwd\",\"session_id\":\"new-sess\"}"
-  printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$SESSION_HOOK" 2>/dev/null
+  printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" session_hook_claude 2>/dev/null
   status=$?
   line_count=$(wc -l < "$dir/projects/$encoded/memory/episodes.jsonl")
   if [[ "$status" == "0" && "$line_count" -eq 2 ]]; then
@@ -3336,7 +3391,7 @@ session_hook_no_memory_dir() {
   cwd="$dir/workspace"
   mkdir -p "$cwd"
   payload="{\"cwd\":\"$cwd\",\"session_id\":\"s1\"}"
-  output=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$SESSION_HOOK" 2>/dev/null)
+  output=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" session_hook_claude 2>/dev/null)
   status=$?
   if [[ "$status" == "0" && -z "$output" ]]; then
     PASS=$((PASS+1))
@@ -3364,7 +3419,7 @@ session_hook_invalid_explicit_no_legacy_write() {
   write_inject_memory "$dir" "$cwd" $'- alpha\n'
   episodes="$dir/projects/$(inject_encoded_path "$cwd")/memory/episodes.jsonl"
   output="$(printf '%s' "{\"cwd\":\"$cwd\",\"session_id\":\"invalid-explicit\"}" | \
-    PM_MEMORY_DIR="$dir/missing-memory" CLAUDE_CONFIG_DIR="$dir" "$SESSION_HOOK" 2>/dev/null)" || status=$?
+    PM_MEMORY_DIR="$dir/missing-memory" CLAUDE_CONFIG_DIR="$dir" session_hook_claude 2>/dev/null)" || status=$?
   if [[ "$status" -eq 0 && -z "$output" && ! -e "$episodes" ]]; then
     PASS=$((PASS+1))
     [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
@@ -3383,7 +3438,7 @@ session_hook_malformed_payload() {
   local name="session-hook/malformed-payload"
   should_run "$name" || return 0
   local output status
-  output=$(printf 'not json' | "$SESSION_HOOK" 2>/dev/null)
+  output=$(printf 'not json' | session_hook_claude 2>/dev/null)
   status=$?
   if [[ "$status" == "0" && -z "$output" ]]; then
     PASS=$((PASS+1))
@@ -3403,7 +3458,7 @@ session_hook_empty_stdin() {
   local name="session-hook/empty-stdin"
   should_run "$name" || return 0
   local output status
-  output=$(printf '' | "$SESSION_HOOK" 2>/dev/null)
+  output=$(printf '' | session_hook_claude 2>/dev/null)
   status=$?
   if [[ "$status" == "0" && -z "$output" ]]; then
     PASS=$((PASS+1))
@@ -3430,7 +3485,7 @@ session_hook_missing_session_id() {
   mkdir -p "$cwd"
   write_inject_memory "$dir" "$cwd" $'- alpha\n'
   episodes="$dir/projects/$(inject_encoded_path "$cwd")/memory/episodes.jsonl"
-  printf '%s' "{\"cwd\":\"$cwd\"}" | CLAUDE_CONFIG_DIR="$dir" "$SESSION_HOOK" 2>/dev/null
+  printf '%s' "{\"cwd\":\"$cwd\"}" | CLAUDE_CONFIG_DIR="$dir" session_hook_claude 2>/dev/null
   status=$?
   if [[ "$status" == "0" && ! -f "$episodes" ]]; then
     PASS=$((PASS+1))
@@ -3460,7 +3515,7 @@ session_hook_non_string_session_id() {
   mkdir -p "$cwd"
   write_inject_memory "$dir" "$cwd" $'- alpha\n'
   episodes="$dir/projects/$(inject_encoded_path "$cwd")/memory/episodes.jsonl"
-  printf '%s' "{\"cwd\":\"$cwd\",\"session_id\":42}" | CLAUDE_CONFIG_DIR="$dir" "$SESSION_HOOK" 2>/dev/null
+  printf '%s' "{\"cwd\":\"$cwd\",\"session_id\":42}" | CLAUDE_CONFIG_DIR="$dir" session_hook_claude 2>/dev/null
   status=$?
   if [[ "$status" == "0" && ! -f "$episodes" ]]; then
     PASS=$((PASS+1))
@@ -3475,6 +3530,8 @@ session_hook_non_string_session_id() {
 }
 
 session_hook_happy_path
+session_hook_codex_host_provenance
+session_hook_requires_explicit_host
 session_hook_duplicate_no_summary
 session_hook_duplicate_has_summary
 session_hook_new_session_appends
@@ -3502,7 +3559,7 @@ session_hook_routing_dir_isolation() {
   mkdir -p "$cwd"
   write_inject_memory "$dir" "$cwd" $'- alpha\n'
   payload="{\"cwd\":\"$cwd\",\"session_id\":\"isolation-test\"}"
-  printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" CLAUDE_ROUTING_LOG_DIR="$routing_dir" "$SESSION_HOOK" 2>/dev/null
+  printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" CLAUDE_ROUTING_LOG_DIR="$routing_dir" session_hook_claude 2>/dev/null
   status=$?
   project_has_ep=false; routing_has_ep=false
   [[ -f "$dir/projects/$(inject_encoded_path "$cwd")/memory/episodes.jsonl" ]] && project_has_ep=true
@@ -3601,7 +3658,7 @@ session_stop_skips_after_recent_memlog_empty_session_id() {
     "$recent_iso" "$cwd" > "$episodes"
 
   payload="{\"cwd\":\"$cwd\",\"session_id\":\"real-session-id-123\"}"
-  printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$SESSION_HOOK" 2>/dev/null
+  printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" session_hook_claude 2>/dev/null
   status=$?
   line_count=$(wc -l < "$episodes" 2>/dev/null || echo 0)
   rm -rf "$dir"
@@ -3639,7 +3696,7 @@ session_stop_appends_after_old_memlog_empty_session_id() {
     "$old_iso" "$cwd" > "$episodes"
 
   payload="{\"cwd\":\"$cwd\",\"session_id\":\"new-real-session\"}"
-  printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$SESSION_HOOK" 2>/dev/null
+  printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" session_hook_claude 2>/dev/null
   status=$?
   line_count=$(wc -l < "$episodes" 2>/dev/null || echo 0)
   rm -rf "$dir"
@@ -3676,7 +3733,7 @@ cross_cmd_stop_skips_recent_fractional_iso() {
   printf '{"date":"%s","cwd":"%s","session_id":"","summary":"Recent fractional entry."}\n' \
     "$recent_iso" "$cwd" > "$episodes"
   payload="{\"cwd\":\"$cwd\",\"session_id\":\"real-session-frac\"}"
-  printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$SESSION_HOOK" 2>/dev/null
+  printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" session_hook_claude 2>/dev/null
   status=$?
   line_count=$(wc -l < "$episodes" 2>/dev/null || echo 0)
   rm -rf "$dir"
@@ -3708,7 +3765,7 @@ cross_cmd_stop_appends_old_fractional_iso() {
   printf '{"date":"2020-01-01T00:00:00.123456+00:00","cwd":"%s","session_id":"","summary":"Old fractional entry."}\n' \
     "$cwd" > "$episodes"
   payload="{\"cwd\":\"$cwd\",\"session_id\":\"new-real-session-frac\"}"
-  printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$SESSION_HOOK" 2>/dev/null
+  printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" session_hook_claude 2>/dev/null
   status=$?
   line_count=$(wc -l < "$episodes" 2>/dev/null || echo 0)
   rm -rf "$dir"

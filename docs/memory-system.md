@@ -181,12 +181,29 @@ explicit override, checked in this order:
 
 1. `PM_MEMORY_DIR` environment variable (highest priority; works everywhere,
    including the Claude Code hook path, at zero extra cost)
-2. `dispatch.memory_dir` in `~/.pm-dispatch/config` (checked by CLI-driven
-   callers — `pmctl memory *`, `pmctl context --source memory`,
-   installer/migrator scripts — not by the hook path, to avoid adding a
-   config-file read to every Claude Code turn)
+2. the matching `memory.projects.<project_key>.dir` entry in
+   `~/.pm-dispatch/config` (checked by CLI-driven callers — `pmctl memory *`,
+   `pmctl context --source memory`, installer/migrator scripts — not by the
+   low-latency `memory.sh` hook path itself)
 3. the `CLAUDE_CONFIG_DIR/projects/<id>/memory/` convention (unchanged
    default when neither override is set)
+
+The deprecated `dispatch.memory_dir` global key is unsafe in a multi-repo
+environment. Strict resolution returns `invalid-explicit` with
+`resolution_source: config-legacy-global`; compatibility discovery ignores the
+value and warns. Migrate it atomically for one repository with:
+
+```bash
+pmctl memory config migrate --repo-root /absolute/repo --json
+pmctl memory config lint --json
+```
+
+For a new or replacement mapping, use `pmctl memory config set --repo-root
+/absolute/repo --memory-dir /absolute/memory`. Both commands preserve unrelated
+config lines; `set` removes a remaining unsafe global key. Repeating `migrate`
+after success is a no-op. Tests must still isolate operator config with
+`PM_DISPATCH_CONFIG_FILE`; they must never assume `~/.pm-dispatch/config` is
+absent.
 
 An override is only honored when the target directory already exists; an
 unset or nonexistent override falls through to the next tier, so existing
@@ -200,8 +217,9 @@ pmctl memory resolve --repo-root "$(pwd)" --json
 ```
 
 The result identifies the canonical repo, stable project key, selected memory
-directory, and resolution source (`env`, `config`, `legacy`, or `none`). An
-explicit `PM_MEMORY_DIR` or `dispatch.memory_dir` that is unavailable returns
+directory, and resolution source (`env`, `config`, `legacy`,
+`config-legacy-global`, or `none`). An explicit `PM_MEMORY_DIR` or matched
+project-scoped config path that is unavailable returns
 `status: invalid-explicit` and exit 3; it never falls through to another
 host's legacy directory. With no explicit selection, legacy Claude discovery
 remains compatible, and absence is reported as `unavailable`.
@@ -234,13 +252,15 @@ Writes use the same resolver. `pmctl memory append-episode --repo-root <repo>
 --host <name> --summary <text>` appends one locked JSONL record to the resolved
 canonical `episodes.jsonl`. It refuses invalid explicit paths, unwritable
 directories, and symlink episode targets; it never accepts a caller-guessed
-memory directory. `/mem-log` and Claude's Stop skeleton writer both use this
+memory directory. `--host` is required and has no default: it records the
+adapter that actually initiated the event, while project identity alone selects
+the canonical destination. `/mem-log` and each host's Stop adapter both use this
 API; skeleton session-id dedupe happens inside the same append lock.
 
 | Host | Deterministic read entry | Canonical write entry | Native memory |
 | --- | --- | --- | --- |
 | Claude | `/pm` calls `pm prepare --host claude`; `UserPromptSubmit` runs `guard-inject-memory.sh` | `pmctl memory append-episode --host claude` | auxiliary; `unknown` unless separately observed |
-| Codex | `UserPromptSubmit` runs `guard-inject-memory.sh`; batch PM uses `--host codex` | `pmctl memory append-episode --host codex` | auxiliary; `unknown` unless separately observed |
+| Codex | `UserPromptSubmit` runs `guard-inject-memory.sh`; batch PM uses `--host codex` | `codex-memory-update.sh` routes explicit requests to `pmctl memory append-episode --host codex`; `Stop` writes a canonical skeleton | auxiliary; `unknown` unless separately observed |
 | OpenCode | `/pm` calls the installed `pm_prepare` tool with `--host opencode` | `pmctl memory append-episode --host opencode` | auxiliary; `unknown` unless separately observed |
 | Generic/no hook | `pmctl pm prepare --host generic` | `pmctl memory append-episode --host generic` | auxiliary; `unknown` |
 
@@ -251,6 +271,26 @@ API; skeleton session-id dedupe happens inside the same append lock.
 - Use `/memory-compress` after heavy memory growth.
 - Run `/mem-recall` for session continuity before a major `/pm` batch.
 - Keep `episodes.jsonl` append-only for auditability.
+
+### Codex explicit update requests
+
+The Codex host installer adds a marker-delimited block to
+`$CODEX_HOME/AGENTS.md`. When a user explicitly asks to update, save, or record
+project memory, that guidance routes the action through:
+
+```bash
+/path/to/pm-dispatch/hosts/codex/bin/memory-update.sh \
+  --repo-root "$(git rev-parse --show-toplevel)" \
+  --summary "$SUMMARY" \
+  --json
+```
+
+The wrapper fixes writer provenance to `codex` and delegates path selection to
+the strict resolver. It never accepts a native-memory path. `AGENTS.md` is a
+model instruction surface, not a filesystem access-control boundary, so the
+installer and tests make the supported route deterministic while the
+filesystem-diff E2E verifies that this route changes only canonical
+`episodes.jsonl`. Invalid explicit memory remains fail-closed.
 
 
 ## Runtime conventions

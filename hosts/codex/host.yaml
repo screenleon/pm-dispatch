@@ -34,6 +34,10 @@ install_targets:
     path: "$CODEX_HOME/config.toml"
     format: codex-config-toml
     managed: false                    # asserted by doctor, never written
+  - id: instructions
+    path: "$CODEX_HOME/AGENTS.md"
+    format: codex-agents-md
+    managed: true                     # marker-delimited partial ownership
 
 # Hook runtime facts probed end-to-end: the hook config lives in hooks.json
 # using the Claude-Code-compatible hooks block shape (NOT a config.toml
@@ -93,19 +97,16 @@ guard_bindings:
     coverage: none
     stability: evolving
     confidence: probed
-  # The capabilities below have not been evaluated on this host yet. The
-  # contract requires full enumeration: a none tuple with confidence assumed
-  # is the declared form of "not yet evaluated" (vs the probed none tuple
-  # above, which means "evaluated and unsupported").
-  # session_lifecycle: SessionStart/Stop events exist on the hook surface,
-  # but no end-to-end binding has been probed — stays assumed until one is.
+  # Stop payload carries cwd + session_id and the installed adapter passes an
+  # explicit Codex writer provenance into the shared canonical session writer.
+  # Only Stop is bound (SessionStart remains unused), hence partial coverage.
   - capability: session_lifecycle
-    binding_form: none
-    provider: none
+    binding_form: hook-script
+    provider: host_hook
     enforcement: none
-    coverage: none
+    coverage: partial
     stability: evolving
-    confidence: assumed
+    confidence: probed
   # Codex lacks Claude's interactive Agent/AskUserQuestion loop. It instead
   # uses pmctl pm: one fully specified request/brief in, one batch result out.
   # That supports PM orchestration without claiming interactive parity.
@@ -137,3 +138,4 @@ permissions_surface:
 doctor_module: scripts/lib/doctor-host-codex.sh
 install_module: scripts/install-guards-codex.sh
 uninstall_module: scripts/uninstall-guards-codex.sh
+memory_update_module: hosts/codex/bin/memory-update.sh

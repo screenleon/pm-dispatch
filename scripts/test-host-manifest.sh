@@ -44,7 +44,7 @@ REQUIRED_KEYS=(
 CAPABILITY_FIELDS=(provider enforcement coverage stability confidence)
 
 # Closed enums (docs/host-contract.md). Space-separated membership strings.
-ENUM_FORMAT="claude-settings-json codex-hooks-json codex-config-toml opencode-config-json markdown-managed-block symlink-tree copy-tree"
+ENUM_FORMAT="claude-settings-json codex-hooks-json codex-config-toml codex-agents-md opencode-config-json markdown-managed-block symlink-tree copy-tree"
 ENUM_CAPABILITY="command_guard file_guard session_lifecycle pm_command_interface statusline"
 ENUM_BINDING_FORM="hook-script config-fragment none"
 ENUM_PROVIDER="host_hook host_policy host_native cli_wrapper doc_instruction none"
@@ -277,6 +277,10 @@ validate_manifest() {
       echo "$module_key '$module' not found under repo root (must be null or an existing repo-relative path)"
     fi
   done
+  module="$(grep -E '^memory_update_module:' "$manifest" | head -1 | sed 's/^memory_update_module:[[:space:]]*//;s/[[:space:]]*#.*$//' || true)"
+  if [[ -n "$module" && "$module" != "null" && ! -f "$REPO_ROOT/$module" ]]; then
+    echo "memory_update_module '$module' not found under repo root"
+  fi
 
   # --- operational files carry no ticket references ---------------------------
   if grep -qE 'CC-[0-9]+' "$manifest"; then

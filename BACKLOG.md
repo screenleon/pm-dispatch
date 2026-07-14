@@ -33,6 +33,10 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-485 | ✅ done | 工具能力與維護者政策分離：通用 gate/test/PM 不規定使用流程；affected feedback 僅屬開發/PR，pm-dispatch release 固定由 `release-verify.sh --e2e`（內含 fresh full suite）+ checklist 驗收 | arch/process | 2026-07-13 | pr:#398 | P3 | design |
 | CC-486 | ⏸ deferred | direct-impact test planner mapping 提前退出：changed path 含 `agents/*.md`／`commands/*.md` 時 `map_path` 呼叫未註冊的 `lint-frontmatter`，`add_suite` 回傳 1 並在 `set -e` 下無輸出終止，導致 `run-tests.sh --base ... --list` exit 1 | ops/test | 2026-07-13 | feedback:2026-07-13 | P2 | hygiene |
 | CC-487 | 🔵 active | GitHub Actions `test-guards` 非確定性掛起：逐 case breadcrumb + bounded background writer/wait + orphan cleanup，避免 main CI 無輸出佔用 runner 近一小時 | ops/test | 2026-07-14 | feedback:2026-07-14 | P1 | hygiene |
+| CC-488 | ✅ done | Codex canonical memory lifecycle 收口：Stop writer、自然語言更新路由、explicit config 與 live/private-memory migration 驗收 | arch/memory | 2026-07-14 | feedback:2026-07-14 | P1 | design |
+| CC-489 | ⏸ deferred | `scripts/` domain ownership 重整：host/runtime/ops/test entrypoints 移至對應模組，由 manifest/registry 統一發現並以相容 shim 分批遷移 | arch | 2026-07-14 | feedback:2026-07-14 | P2 | design |
+| CC-490 | 🔵 active | project-scoped explicit memory config：取代全域單值 `dispatch.memory_dir`，避免多 repo 靜默共用 pm-dispatch canonical store | arch/memory | 2026-07-14 | feedback:2026-07-14 | P1 | design |
+| CC-491 | 🔵 active | PR-gate pre-flight 機械式 evidence contract：傳遞 command、selected suites、逐項結果與 tree fingerprint，讓 reviewer reuse 已驗證結果並禁止無條件重跑 | ops/gate | 2026-07-14 | feedback:2026-07-14 | P1 | design |
 | CC-465 | 🔵 active | memory/context 關鍵詞管線 CJK 支援：抽出共用零依賴斷詞 lib，取代三處各自 ASCII-only 抽詞；工作序列起點（465→467→468→466）（2026-07-07 記憶系統深入分析） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-466 | 🔵 active | 記憶卡片生命週期閉環：expires_at 執行 + 關窗式 supersede + usage sidecar 休眠偵測 + doctor→distill 接線；排在 CC-467 之後（需其遙測為前置）（2026-07-07 記憶系統分析 + 外部研究 Graphiti/mcp-memory-service） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-467 | 🔵 active | `pmctl memory stats`：注入效益可視化（唯讀聚合器）——注入 bytes/卡片命中分佈/從未命中卡/episode 填寫率，回答「記憶有跟沒有差在哪」；排在 CC-466 之前（2026-07-07；業界僅離線 recall 評測，無 per-injection 遙測） | DX/memory | 2026-07-07 | — | P2 | retrieval |
@@ -641,6 +645,8 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 **Outcome**: 2026-07-14 完成 Claude、Codex、OpenCode 共用 canonical `pmctl memory` resolver/writer、可觀測 provenance、Codex prompt/session hooks 與 symlink-safe atomic episode append。Full suite 77/77、Claude full-tier gate Final GO，PR CI 全數通過；CC-486 維持獨立 deferred，不併入本票。
 
+**Post-close audit (2026-07-14)**: 上述「Codex prompt/session hooks」表述過廣。PR #399 的 Codex installer 已接上 `UserPromptSubmit` canonical read hook，但未安裝 `Stop` session writer；`hosts/codex/host.yaml` 也仍以 `session_lifecycle provider:none / confidence:assumed` 誠實標示。writer API 與 Claude Stop migration 已完成，不等於 Codex lifecycle write binding 已完成。此 closure gap、live install/config migration 與「更新 memory」自然語言路由的可測試契約改由 [[CC-488]] 承接，不重開本票。
+
 **See**: pr:#399
 
 ---
@@ -672,6 +678,112 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Evidence**: GitHub Actions run `29298816362`, job `86978053691`；本機乾淨環境完整 296/296 通過，故根因仍需以新增 breadcrumb／bounded diagnostics 捕捉，不能從單次取消紀錄過度推論。
 
 **Dependencies**: 承接 [[CC-477]] 已完成的 lock protocol 與 runner breadcrumbs；本票只處理仍存在的 CI hang 可診斷性與 bounded lifecycle。
+
+---
+
+## CC-488 — Codex canonical memory lifecycle 與更新路由收口 ✅ 2026-07-14
+
+**Problem**: PR #399 已建立跨 host 的 strict resolver、locked `pmctl memory append-episode` writer API，並讓 Codex installer 能安裝 `UserPromptSubmit` canonical read hook；但目前 live `~/.codex/hooks.json` 仍只有 `PreToolUse`，Codex installer 尚未安裝 `Stop` writer，manifest 也未宣告已驗證的 `session_lifecycle`。此外，使用者以自然語言要求「更新專案 memory」時，仍可能由 agent 寫入 Codex 私有 `.codex/memories/...`，而不是 canonical `episodes.jsonl`；live resolver 亦仍為 `resolution_source: legacy`。因此資料面健康不代表 Codex 的讀、寫、選址與操作路由已形成可測試的 end-to-end contract。
+
+**Boundary**:
+1. [[CC-483]] 保持 closed；本票只承接其 post-close Codex lifecycle／routing closure，不重做 resolver、writer API 或 provider provenance。
+2. live reinstall、`~/.pm-dispatch/config` 設定與錯誤私有紀錄遷移是部署／資料修復步驟，必須在 product contract 與 isolated tests 通過後執行，不能用手動修機器掩蓋 installer/doctor 缺口。
+3. 不把 [[CC-486]] planner bug 或 [[CC-487]] CI hang 混入本票；它們各自維持獨立狀態。
+
+**Requirement**:
+1. 以拋棄式 `CODEX_HOME` 和真實 Codex hook payload probe 驗證 `Stop` 的 `cwd`、`session_id`、重複觸發與 headless trust 行為；證據不足前不得把 manifest capability 從 `assumed/none` 升級。
+2. Codex install/uninstall 必須對稱管理 canonical session writer：保留 foreign hooks、exact checkout identity、含空白路徑可執行、重裝不重複、卸載只移除本 checkout 項目。共用 `guard-session-summary.sh` 不得有 Claude、Codex 或其他 CLI 預設值；必須由各 host-specific installer／薄 adapter 明示且驗證 provenance，避免目前或未來 host 的 episode 被錯誤歸因。
+3. doctor 必須分別檢查 command guard、prompt read hook 與 Stop write hook；只有實際 wiring 加 live probe 通過後，`hosts/codex/host.yaml` 才能宣告 `session_lifecycle` 的 `host_hook` provider、coverage 與 confidence。
+4. 為「更新專案 memory／請更新 memory」建立 Codex host instruction／command contract：canonical 目的地必須先由 repo project identity 解析，再由 Codex-owned adapter 明示實際 source host，呼叫 `pmctl memory append-episode --repo-root <repo> --host codex --summary ...`。此處 `codex` 是 adapter provenance，不是 canonical 預設；Claude、OpenCode 或未來 CLI 必須各自明示自己的 host。Codex native memory 只能是明示 auxiliary，不得作為 project memory 的寫入 fallback。若 Codex 沒有可安裝、可強制的 instruction surface，必須提供可機械呼叫的 wrapper/command seam 並把 unsupported 邊界寫進 doctor/contract；只補提醒文字不算完成。
+5. 新增 filesystem-diff regression/live E2E：從自然語言「更新專案 memory」情境出發，確認 canonical `episodes.jsonl` 新增一筆 `host=codex` episode，Codex 私有 memory root 沒有新增或修改 project 記錄；invalid explicit config 必須 fail closed，不能轉寫 private/legacy store。
+6. 將 live canonical dir 寫入 `~/.pm-dispatch/config` 的 `memory.projects.<project_key>.dir`，使 Claude、Codex、OpenCode 對同 repo 均回報 `resolution_source: config`、相同 project key/physical dir、readable/writable。此步必須先記錄現有 resolved path，禁止建立第二份 memory 或複製資料；失效 config 的跨 host probe 必須一致 fail closed。
+7. 以「先 canonical、後刪除」順序遷移本次錯誤記錄：來源檔雖位於 Codex 私有 memory，但 canonical 目的地只由 repo project identity 決定，不由目前 CLI 決定。遷移時必須明示實際產生該事件的 source host（本次歷史事件可證明為 Codex；若 provenance 無法證明則拒絕猜測，改由操作者明示 `generic`），再用 `pmctl memory append-episode --repo-root <repo> --host <observed-host>` 寫入等價且可驗證的 episode。確認 canonical 成功與唯一性後，才移除 `.codex/memories/extensions/ad_hoc/notes/20260714-115550-pr400-merged-workflow.md`；保留遷移前後 evidence，失敗時不得先刪來源。這是一次 source-adapter cleanup，不代表 canonical memory 預設 host=codex。
+
+**Acceptance**:
+1. isolated install 產生 `PreToolUse`、`UserPromptSubmit`、`Stop` 三條預期 wiring；idempotent install、symmetric uninstall、foreign/sibling checkout preservation 與 spaced-path cases 全綠。
+2. Codex Stop live smoke 只新增一次 canonical skeleton episode，`host=codex`、session id/cwd 正確；doctor 與 manifest declared/probed/effective 三層一致。
+3. 「更新 memory」E2E 只有 canonical episodes 改變，Codex 私有 memory 無 project write；explicit invalid path 非零退出且兩邊都不寫。
+4. live 三 host resolve 均為 `config` 且指向目前 75 筆、`issues_count: 0` 的同一實體 store；錯誤私有 note 已在 canonical append 驗證後清除。
+5. focused Codex host/doctor/memory/guard/install tests、`./cli/pmctl backlog lint`、`git diff --check` 通過；涉及 hook concurrency 的驗證不以降低 [[CC-487]] 斷言或跳過 case 方式完成。
+
+**Execution order**: (A) Stop payload/provenance probe → (B) installer/uninstaller/doctor/manifest + tests → (C) update-memory routing contract + filesystem-diff E2E → (D) isolated full host acceptance → (E) live reinstall → (F) explicit config 三 host verification → (G) canonical append 後清理私有 note。任何階段 fail closed 就停止，不進行後續 live mutation。
+
+**Dependencies**: 建在 [[CC-480]] strict resolution 與 [[CC-483]] canonical writer/provider work 上；與 [[CC-452]] 的一般 guard hardening 共用安全約束，但不得等待其全部 hygiene scope 才修正 Codex host provenance。[[CC-487]] 若仍 active，只影響 full-suite/CI sign-off 的解讀，不改變本票 focused product acceptance。
+
+**Source**: 2026-07-14 live audit：canonical doctor 75 entries、0 issues、read/write healthy；Codex live hook 缺 `UserPromptSubmit`/`Stop`，resolver source 為 legacy，且發現一筆誤寫到 Codex private memory 的 PR #400 workflow note。
+
+**Outcome**: Codex installer 現在對稱管理 `PreToolUse` command guard、`UserPromptSubmit` canonical injection、`Stop` canonical skeleton writer，以及 `$CODEX_HOME/AGENTS.md` marker-delimited update-memory guidance；共享 Stop writer 要求明示 `--host`，沒有 CLI-specific 預設值，各 host adapter 必須注入自己的實際 provenance。explicit update seam 位於 manifest-owned `hosts/codex/bin/memory-update.sh`，因此該 Codex-owned adapter 明示委派 strict `pmctl memory append-episode --host codex`；其他 CLI 必須由自己的 adapter 明示 host，canonical store 仍只按 repo project identity 選址。invalid explicit path fail closed，filesystem-diff regression 證實不修改 Codex native memory。真實 Codex 0.144.3 headless probe 捕捉到 Stop payload 的 `session_id`/`cwd`/`hook_event_name`，manifest/doctor 因而可誠實宣告 `session_lifecycle host_hook/partial/probed`。Live installer 已重裝；`~/.pm-dispatch/config` 明示既有 canonical dir，Claude/Codex/OpenCode preparation 均回報同 project key、同實體路徑、`resolution_source=config`、readable/writable/hydrated。錯誤 PR #400 私有 note 的 canonical `writer_host=codex` 只記錄該歷史事件確由 Codex session 產生，不是系統預設；確認唯一落盤後才移除來源。Refactor/reuse audit 為 `CHANGED`：install/uninstall 重複的 Codex `AGENTS.md` marker strip、空白正規化與 contract render 已收斂到 host-owned `hosts/codex/lib/memory-contract.sh`，並新增 malformed-marker fail-closed 回歸。驗證：Codex host 41/41、host manifest 89/89、guards 297/297、memory 69/69、doctor 56/56、install 88/88、affected planner 4/4、lint-scripts、backlog lint、`git diff --check` 全綠；`~/.claude/statusline-chain.conf` 安裝前後 `cmp` 相同且 SHA-256 固定為 `6eec303a31b7f161fecec88eb6b8467f236d77c17ded09c3c85435090da9eeaf`。
+
+**PR-gate R1（2026-07-14, NO-GO）**: Claude full-tier gate `gate-20260714-134455-1466632` 找到一個 blocking fixture-isolation gap：live `~/.pm-dispatch/config` 使 `test-guards.sh` 的 inject/session fixtures 誤解析到真實 canonical store，造成 263 pass / 34 fail，包含本票新增的 Codex Stop provenance case 實際寫入 0 筆。已修為 suite-level `PM_DISPATCH_CONFIG_FILE` missing-path isolation，重跑 297/297。architecture advise 同步處理：`lint-scripts.sh` 現掃描 `scripts/*.sh`、`hosts/*/bin/*.sh`、`hosts/*/lib/*.sh`（119 files），CI 另對 `./hosts` 執行 shellcheck。risk reviewer 指出的全域單值 config 跨 repo bleed 經 live read-only probe 確認：JapanJob 與 qa-testing-rules 會解析到 pm-dispatch memory；此 resolver/schema redesign 獨立列為 [[CC-490]]，不混入本票 host lifecycle diff。
+
+**See**: [[CC-483]], [[CC-489]], [[CC-490]]
+
+---
+
+## CC-489 — `scripts/` domain ownership 與 manifest-driven entrypoint 重整 ⏸ deferred
+
+**Problem**: repository 目前把 host adapters、install/uninstall、doctor modules、memory hooks、gate/runtime supervisors、維運工具、lint 與所有 test runners 集中在單一 `scripts/`。檔名雖有前綴，但 ownership、依賴方向與「新增功能應放哪裡」無法從目錄結構判斷；host manifest 已能描述 module path，實體程式卻仍多數留在共享 scripts 根目錄，長期會增加跨 host 漂移、路徑硬編與搬移成本。
+
+**Decision / target shape**:
+1. host 專屬 executable、hook adapter、doctor 與 install module 歸 `hosts/<host>/{bin,hooks,lib}`；`hosts/<host>/host.yaml` 是它們的發現單一來源。CC-488 新增的 Codex explicit-memory writer 直接落在 `hosts/codex/bin/`，不再新增 `scripts/codex-*` debt。
+2. host-neutral canonical business logic 留在共用 runtime/CLI layer；例如 memory resolver/writer 不複製到各 host，host 目錄只保留薄 adapter。通用 ops/release 工具與 test harness 另有明確 domain，不因搬目錄而複製實作。
+3. 先產出 current→target path map、依賴方向與穩定入口清單，再按 domain 分批搬遷；禁止一次性全庫 rename。對已公開／已安裝路徑保留有期限、帶 deprecation 訊息的 shim，manifest/registry 與 tests 先切新路徑，最後移除 shim。
+4. 新增 layer/path lint：host-specific 名稱不得再出現在共享 core/runtime entrypoints；新增 host module 必須由 manifest 引用；suite 必須由 test registry 發現，不能靠散落硬編路徑。
+
+**Acceptance**: (a) architecture map 說明每類 executable 的 owner 與允許依賴方向；(b) Codex、Claude、OpenCode install/doctor/uninstall 從各自 manifest 發現 module，shared dispatcher 不列 host-specific path；(c) staged migration 每一刀均通過 install parity、uninstall preservation、doctor、full runner 與 release smoke；(d) 最終 `scripts/` 只保留明確定義的相容入口或通用 ops entrypoints，不再作為所有 shell code 的默認垃圾桶。
+
+**Boundary / sequencing**: 本票在 [[CC-488]] lifecycle product contract 完成後執行。CC-488 只遵守新檔案 placement 與 manifest discovery 原則，不藉機搬完既有 Codex/Claude/OpenCode scripts；避免把路徑遷移 regression 混入 canonical memory correctness。
+
+**Source**: 2026-07-14 使用者指出所有 script 集中於 `scripts/` 造成後續維護困難，要求特定內容放回對應位置並統一讀取。
+
+---
+
+## CC-490 — project-scoped explicit memory config，避免跨 repo canonical bleed 🔵 active
+
+**Problem**: `~/.pm-dispatch/config` 的 `dispatch.memory_dir` 是全域單值，但 resolver 對每個 repo 都無條件套用。CC-488 gate R1 後的 live read-only probe 已確認：pm-dispatch、JapanJob、qa-testing-rules 雖有不同 stable `project_key`，三者目前都回報 `resolution_source=config` 並解析到 pm-dispatch 的 canonical memory dir。任何其他 repo 的 canonical append 因此可能成功但寫入錯誤專案，屬靜默 cross-project data bleed；同一問題亦使本機 fixture 在未隔離 config 時誤寫 live store。
+
+**Boundary**: 本票處理 config schema/resolver 的 project scoping 與 live migration；不重做 [[CC-488]] 的 Codex hook/session/update routing，也不把多 repo memory 合併成一個共享資料庫。CC-488 的三 host 驗收只證明「同一 repo 跨 host」一致，不能當成「跨 repo 共用同一 dir」的授權。
+
+**Requirement**:
+1. explicit config 必須以 stable project identity 選址（例如 project-key keyed mapping 或等價 repo-scoped section），不得在未匹配 repo 時套用另一專案路徑。
+2. unmatched repo 應回到自身 legacy discovery 或明確 unavailable；matched explicit path 失效仍維持 fail closed，不得退回另一 repo/native store。
+3. 定義舊 `dispatch.memory_dir` 單值的相容與 migration 規則；在多 repo 環境不得繼續默認為全域 override，doctor/config lint 必須能指出 unsafe legacy-global 設定。
+4. 以 pm-dispatch、JapanJob、qa-testing-rules 三個不同 project key 做 isolated + live read-only E2E，證明同 repo Claude/Codex/OpenCode 仍同址、不同 repo 不同址；append 測試必須以 filesystem diff 證明零 cross-project write。
+
+**Immediate safety note**: 在本票落地前，`dispatch.memory_dir` 只能視為 single-repo/single-purpose config；多 repo 操作不得把它當成安全的 machine-wide default。測試一律用 `PM_DISPATCH_CONFIG_FILE` 隔離，不得讀取 operator live config。
+
+**Implementation (2026-07-14, in progress)**: config schema 改為 `memory.projects.<stable-project-key>.dir`；`pmctl memory config set|migrate|lint` 提供原子管理、legacy-global 診斷與可重複 migration。strict resolver 對舊 global key 回報 `config-legacy-global` / exit 3，matched invalid path 維持 fail closed，unmatched repo 回到自身 legacy 或 unavailable。isolated regression 已覆蓋零 cross-project append；live config 已遷移為 pm-dispatch scoped mapping，JapanJob read-only probe 回到自身 legacy memory，config lint 0 issues。full-suite 與 gate 完成前本票維持 active。
+
+**Acceptance**: 三 repo resolve 的 project key 與 memory dir 對應正確；跨 host 同 repo continuity 不退化；invalid matched config fail closed；unmatched repo 不使用 pm-dispatch memory；doctor/config diagnostics、memory/pm/guard regressions與 live migration evidence 全綠。
+
+**Source**: CC-488 Claude full-tier gate R1 risk/QA findings；2026-07-14 live probe confirmed JapanJob (`01a9ed...`) and qa-testing-rules (`100334...`) both resolved to pm-dispatch memory through the global config value.
+
+---
+
+## CC-491 — PR-gate pre-flight 機械式 evidence 與 reviewer reuse contract 🔵 active
+
+**Problem**: `pr-gate.sh --test-cmd` 目前只把 pre-flight 結果以 `Pre-flight test run: pass|fail` 提供給 reviewer，沒有傳遞實際 command、selected suites、逐 suite 結果或被驗證工作樹的 fingerprint。QA reviewer 因而無法判斷哪些 behavioral units 已有可信證據；即使 pre-flight 已通過，仍可能手工列舉相同 suite 再跑一次。`gate-20260714-145345-2998745` 中 9 個已通過的 suite 被 QA 重複執行，部分因 180 秒 timeout 又重跑，最終單一 sequential reviewer session 耗盡 1200 秒，只完成 critic、留下 inconclusive partial artifact。
+
+**Boundary**: 本票建立 pre-flight producer → PR-gate → reviewer 的 evidence/reuse contract；不重寫 [[CC-481]] 的 direct-impact planner、不把 authoritative full suite 搬回 gate lifecycle，也不禁止 reviewer 對「既有 evidence 未覆蓋」的新行為做最小補充驗證。
+
+**Requirements**:
+1. 每次 pre-flight 必須產生 versioned、machine-readable result。generic `--test-cmd` 至少記錄經安全處理的 command identity、exit status、started/finished time、timeout、log path/digest 與工作樹 identity；使用 `scripts/run-tests.sh` 時必須再帶 selection mode、changed paths、selected suites、逐 suite pass/fail/timeout/duration，以及 aggregate status。
+2. 工作樹 identity 必須能判定 evidence 是否 stale，至少綁定 repo/project identity、base/head 與 dirty/untracked content fingerprint；pre-flight 後若受測內容改變，PR-gate 不得把舊 PASS 呈現為 current evidence。
+3. PR-gate 必須機械驗證 result schema、artifact digest、fingerprint 與實際 pre-flight exit status，再把結構化 evidence 摘要及 artifact pointer 放進 reviewer brief；不得只由自然語言宣稱 `pass`，也不得要求 reviewer 從自由格式 log 猜測已跑項目。
+4. QA reviewer 收到 current PASS evidence 後，必須先建立 behavioral-unit → existing-suite evidence 對照；已涵蓋 suite 不得 reflexively rerun。只有 evidence 未涵蓋、stale/invalid 或具體 flake 疑點時才能補跑最小 suite，且須在結果中記錄 gap、理由、command 與新增 evidence。
+5. Reviewer 不得以手寫 `for`/`&&` 清單取代 repo planner，也不得在 source working tree 建立 `.qa-test-*` 等暫存輸出；補充測試應使用 repo runner 的 selection/parallelism contract，輸出歸 gate run artifact directory。單獨指定一個 suite 時才允許 sequential execution。
+6. detached/foreground、artifact relocation 與 timeout 路徑都必須保留同一 evidence schema；partial／timeout gate 要能指出 pre-flight 已完成、哪些 reviewer 額外執行了什麼，以及重複 suite 數量，不得把 partial artifact 誤當 GO。
+
+**Acceptance**:
+- focused pre-flight 透過 `run-tests.sh` 後，reviewer brief 可機械讀出 changed paths、selected suites、逐 suite結果與一致的 tree fingerprint；QA 對完全涵蓋且 current 的 PASS evidence 執行 0 個重複 suite。
+- 新增一個未被 planner mapping 涵蓋的 behavioral unit 時，QA 只補跑能覆蓋該 gap 的最小測試並附理由；不得重跑其餘已通過 suite。
+- pre-flight 後修改 tracked 或 untracked 受測內容會使 evidence 判為 stale，gate/reviewer 不得 reuse 舊 PASS。
+- generic 不支援 rich result 的 `--test-cmd` 仍有可驗證的 basic artifact，並明確標示 coverage opaque，不偽造 selected-suite evidence。
+- regression 覆蓋 pass/fail/timeout、artifact tamper、tree drift、run-dir relocation，以及本次「9 個 suite 被重跑導致 reviewer timeout」案例。
+
+**Source**: 2026-07-14 `gate-20260714-145345-2998745` post-mortem；pre-flight 已 PASS，但 brief 僅提供布林狀態，QA 重複執行相同 focused suites並使 sequential full-tier gate timeout／inconclusive。
+
+**See**: [[CC-470]], [[CC-481]], [[CC-485]].
 
 ---
 

@@ -9,6 +9,10 @@ MIGRATOR="$SCRIPT_DIR/migrate-routing-log.sh"
 . "$SCRIPT_DIR/lib/test-harness.sh"
 th_init "$@"
 
+# Migrator fixtures must not inherit the operator's project memory config.
+export PM_DISPATCH_CONFIG_FILE="$tmp_root/no-operator-config"
+unset PM_MEMORY_DIR PM_CFG_MEMORY_DIR PM_CFG_MEMORY_DIR_INVALID PM_CFG_MEMORY_CONFIG_STATUS
+
 write_fixture() {
   local path="$1" malformed="${2:-0}"
   mkdir -p "$(dirname "$path")"
