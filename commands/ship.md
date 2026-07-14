@@ -3,8 +3,9 @@ description: Take one explicit backlog ticket from implementation through pr-gat
 argument-hint: "<ticket-id>"
 ---
 
-Run a single, explicitly named ticket end-to-end: implement → gate → fix → gate
-→ open PR. This is the main-thread's own default operating discipline made
+Run a single, explicitly named ticket end-to-end: implement → affected tests →
+refactor/reuse audit → gate → fix → conditional re-audit → gate → full suite →
+open PR. This is the main-thread's own default operating discipline made
 runnable as one command, not a new background/unattended supervisor — the
 session stays open and you stay reachable the whole time.
 
@@ -97,9 +98,44 @@ implementation to codex/claude/opencode. `pmctl dispatch run` is not part of
 this flow; the only executor dispatch in `/ship` is the gate's own reviewer
 dispatch in Step 3.
 
+Use `bash scripts/run-tests.sh --base <base-ref>` for implementation feedback.
+Pass explicit `--path` or suite inputs when narrowing an iteration further.
+Do not run `run-all-tests.sh` before the first PR gate: the affected-test
+planner is the fast feedback path, while the authoritative full suite belongs
+after a GO verdict.
+
+## Step 2.5 — Refactor/reuse audit
+
+After the primary implementation and its affected verification are complete,
+run one maintainability audit on the actual diff **before the first PR gate**.
+This is a pm-dispatch maintainer policy, not a prerequisite built into the
+generic `pmctl gate` command.
+
+1. **Simplify**: inspect changed production code for duplicated branches,
+   wrappers, parsing, locking, path handling, or indirection that can be made
+   smaller without changing behavior.
+2. **Reuse**: use `rg` to inspect existing helpers, peer implementations, and
+   all call sites in the affected scope. Prefer a proven shared helper over a
+   second local implementation, but do not introduce speculative abstractions.
+3. **Verify**: apply warranted behavior-preserving cleanup, rerun the affected
+   focused tests, and record either `CHANGED: <what was consolidated>` or
+   `PASS: no warranted refactor/reuse change` for the PR handoff.
+
+This initial audit runs exactly once even when it finds no cleanup. It is not
+delegated to PR-gate reviewers: doing the cheap maintainability pass first
+keeps avoidable duplication and incidental complexity out of the expensive
+cross-model review loop.
+
 ## Step 3 — Gate loop
 
-Run `pmctl gate run --executor codex --cd "<work_dir>" --lifecycle foreground`
+Choose `<gate_executor>` and, when needed, `<gate_model>` before the first gate
+using the authoritative [gate model diversity policy](../docs/review-model.md#gate-model-diversity).
+Base the choice on actual model identities, record both identities in the
+handoff, and keep the same resolved pair for targeted re-runs. Add
+`--model "<gate_model>"` below only when the executor default does not already
+resolve to the selected gate model.
+
+Run `pmctl gate run --executor <gate_executor> --cd "<work_dir>" --lifecycle foreground`
 (substitute `<work_dir>` with the literal absolute working directory, not
 `"$PWD"` — a shell-variable expansion makes the command unanalyzable
 statically and forces a manual approval every time even though a bare
@@ -117,13 +153,26 @@ uses to keep the main thread free for other work; run `foreground` and read
 the resulting `Final: GO|NO-GO` verdict directly from the gate result file
 once the call returns.
 
-- **GO** → go to Step 4.
+- **GO** → go to Step 3.5.
 - **NO-GO** → invoke the `project-pm` agent to synthesize the gate result
   against the verdict table and Rules A/B in `agents/project-pm.md` (source-first
   read of every cited diff file, discovery sweep of all call sites of a
   flagged helper, minimum-list is a floor not a ceiling). Fix **every** finding
   it returns — high, medium, and low, hard gate and advisory alike, not only
-  the blocking ones. Re-run `pmctl gate run --executor codex --cd "<work_dir>"
+  the blocking ones.
+
+  Before re-running the gate, classify the remediation:
+
+  - **Re-run the refactor/reuse audit** when the fix changes a shared helper or
+    public interface, schema, ownership, data flow, layer boundary, introduces
+    or removes an abstraction, moves logic across files, performs cross-file
+    deduplication, raises `architecture_impact`, or leaves the structural scope
+    unclear. Rerun affected focused tests if the audit changes the diff.
+  - **Skip the re-audit with a recorded reason** for localized corrections that
+    preserve the established structure, such as wording/comments, a narrow
+    assertion or fixture adjustment, or a small guard/error-handling fix.
+
+  Then re-run `pmctl gate run --executor <gate_executor> --cd "<work_dir>"
   --lifecycle foreground --reviewers <reviewer,...>` (same literal-path
   substitution as Step 3's first call — never `"$PWD"`; the `/pr-gate`
   `--targeted` flag maps to this same `--reviewers` option) for the reviewers
@@ -143,6 +192,18 @@ once the call returns.
 
 Any other NO-GO, at any round count, gets fixed and re-gated without asking.
 
+## Step 3.5 — Authoritative full suite
+
+Only after PR-gate returns GO, run `bash scripts/run-all-tests.sh` once and
+verify its authoritative result artifact. This is the final repo-wide
+regression check, not an iteration tool.
+
+If the full suite finds a diff-caused failure, fix it, rerun affected tests,
+apply the same refactor/reuse recheck threshold, and return to the targeted
+gate path for every reviewer territory the fix touched. After GO, run the full
+suite again against the new tree. Keep pre-existing or infrastructure failures
+separate; do not silently attach unrelated repairs to the ticket.
+
 ## Step 4 — Open the PR
 
 ```bash
@@ -152,9 +213,13 @@ gh pr create --title "<type>(<ticket-id>): <short summary>" --body "$(cat <<'EOF
 - <one-line summary of the change>
 
 ## Gate
+- Refactor/reuse audit: <CHANGED summary | PASS no change>
+- Implementation model: <model id/family>
+- Review executor/model: <executor + resolved model id/family>
 - Rounds: <N>
 - Final verdict: GO
 - Result file: <path from the last /pr-gate relay>
+- Full suite: <passed count and authoritative result artifact>
 
 Ticket: <ticket-id>
 EOF

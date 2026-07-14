@@ -84,11 +84,47 @@ If machine verification passes, the task is done. If it fails, it re-opens. This
 ## How the layers interact
 
 ```
-/pre-impl → dispatch brief → executor → /pr-gate → merged
-    L1            L1               L4      L2+L3+L4
+/pre-impl → dispatch brief → executor → affected tests → refactor/reuse audit
+    L1            L1               L4       fast feedback       maintainer policy
+        → /pr-gate → full suite → PR
+           L2+L3+L4   final verify
 ```
 
 A typical task flows left to right. Each arrow is a checkpoint; a failure at any checkpoint stops forward motion rather than producing a bad merge.
+
+The refactor/reuse audit is a maintainer checkpoint after the main
+implementation, not another generic gate layer. It inspects the actual diff and
+nearby helpers/call sites for behavior-preserving simplification, consolidation,
+and reuse before cross-context review. Run it once before the first PR gate.
+
+After gate remediation, structural or scope-unclear fixes repeat the audit;
+localized fixes that preserve the architecture may skip it with a recorded
+reason. [`/ship` Step 3](../commands/ship.md#step-3--gate-loop) is the
+authoritative operational threshold. This keeps the cheap maintenance pass
+ahead of expensive review without duplicating the full rule across documents.
+
+The affected-test planner (`scripts/run-tests.sh`) is the iteration path before
+and between gate rounds. The authoritative `scripts/run-all-tests.sh` runs only
+after a GO verdict against the final tree. A diff-caused full-suite fix returns
+through affected tests and targeted review before the full suite is repeated.
+
+### Gate model diversity
+
+Select the PR-gate model by comparing it with the **actual primary
+implementation model family**, not with a host or adapter label. OpenCode can
+run Claude, OpenAI, Gemini, and other model families, and executor routes may
+accept an explicit `--model`; therefore host names are not reliable model
+identifiers.
+
+Prefer an available gate model from a different family than the model that
+produced the primary diff. For mixed-model implementation, prefer a family not
+responsible for the primary change. An explicit user selection wins. Use the
+same resolved executor/model pair for targeted re-runs.
+
+If no alternate family is available, a same-family gate is allowed only when
+the handoff records the implementation model, resolved gate model, and fallback
+reason. The PR description records both model identities so this best-effort
+selection remains reviewable.
 
 For small tasks (`behavioral_units < 3` and `architecture_impact: none`), Layer 1 may be skipped and Layer 3 is lightweight. For tasks with architecture impact, all four layers are active and Layer 3 gets a full conceptual map as input.
 

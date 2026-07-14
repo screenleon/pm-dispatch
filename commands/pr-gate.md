@@ -59,14 +59,20 @@ call is still available.
 
 ### Executor routing is passed by flag only
 
+Choose the gate executor/model using the authoritative
+[gate model diversity policy](../docs/review-model.md#gate-model-diversity).
+Resolve actual model identities rather than inferring them from host or adapter
+names. Replace `<gate_executor>` below with the selected literal value and pass
+`--model <gate_model>` when the route default is not the selected model.
+
 This command should pass exactly one of these explicit modes when known:
 
 - `--executor codex` for codex route (or when `command -v codex` is true and user explicitly requested)
 - `--executor claude` for claude-only path
 - `--executor auto` for default behavior (`command -v codex` decides)
 
-`--executor auto` is the default; keep that shape here for parity with existing
-`/pm` profile defaults and `scripts/install-guards.sh` auto-detect.
+`--executor auto` remains the compatibility fallback only when the
+implementation model or alternate executor availability cannot be determined.
 
 ```bash
 RAW_ARGS="${ARGUMENTS:-}"
@@ -74,6 +80,8 @@ TIER_OVERRIDE=""
 TARGETED_REVIEWERS=""
 SCOPE_TOKENS=()
 PARALLEL=false
+GATE_EXECUTOR="<gate_executor>"
+GATE_MODEL=""
 
 if [[ -n "$RAW_ARGS" ]]; then
   read -r -a TOKENS <<< "$RAW_ARGS"
@@ -105,12 +113,28 @@ while [[ "$idx" -lt "${#TOKENS[@]}" ]]; do
     --parallel)
       PARALLEL=true
       ;;
+    --executor)
+      idx=$((idx + 1))
+      GATE_EXECUTOR="${TOKENS[$idx]:-}"
+      ;;
+    --model)
+      idx=$((idx + 1))
+      GATE_MODEL="${TOKENS[$idx]:-}"
+      [[ -n "$GATE_MODEL" ]] || { echo "error: --model requires a value" >&2; exit 2; }
+      ;;
     *)
       SCOPE_TOKENS+=("$tok")
       ;;
   esac
   idx=$((idx + 1))
 done
+
+# Validate after parsing so this also rejects a missing substitution of the
+# <gate_executor> default, not only an invalid explicit --executor value.
+case "$GATE_EXECUTOR" in
+  codex|claude|auto) ;;
+  *) echo "error: gate executor must resolve to codex, claude, or auto" >&2; exit 2 ;;
+esac
 
 SCOPE="${SCOPE_TOKENS[*]:-}"
 # --cd's value below, "<work_dir>", is a placeholder to replace with the
@@ -121,7 +145,8 @@ SCOPE="${SCOPE_TOKENS[*]:-}"
 # `pmctl:*` prefix match. The quotes around the placeholder keep this block
 # valid, executable Bash even before that substitution (bare, unquoted
 # `<work_dir>` would be parsed as I/O redirection and fail to parse).
-GATE_ARGS=(--cd "<work_dir>" --executor auto)
+GATE_ARGS=(--cd "<work_dir>" --executor "$GATE_EXECUTOR")
+[[ -n "$GATE_MODEL" ]] && GATE_ARGS+=(--model "$GATE_MODEL")
 [[ -n "$TIER_OVERRIDE" ]] && GATE_ARGS+=(--tier "$TIER_OVERRIDE")
 [[ -n "$TARGETED_REVIEWERS" ]] && GATE_ARGS+=(--reviewers "$TARGETED_REVIEWERS")
 [[ -n "$SCOPE" ]] && GATE_ARGS+=(--scope "$SCOPE")

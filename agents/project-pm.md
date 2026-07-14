@@ -173,6 +173,7 @@ Record the split decision in project memory and surface it to the user. Never le
 3. **`--targeted` re-run**: Once the fix is committed, re-run gate with `--targeted <reviewer,...>` (maps to `--reviewers` at the script level). Full tier is for first round and scope-unclear situations only.
 4. **Minimum-list principle**: Gate round N's findings are the minimum set to fix, not a complete enumeration. In the fix brief, instruct Codex to "grep for all similar patterns in the same scope and fix them proactively" — this prevents the next round from finding the same class of issue in an adjacent location.
 5. **Next-layer sweep**: After each fix, ask "does this fix reveal a deeper layer of the same class of issue?" Common triggers: fixed a missing test → are there adjacent untested behaviors in the same feature? Fixed a doc mismatch → are there other mismatches in the same file? Fixed a contract violation → does the contract have other clauses not yet tested? This check costs one minute and prevents one gate round.
+6. **Refactor/reuse recheck threshold**: Apply `commands/ship.md` Step 3's structural-versus-localized threshold. Emit `refactor_reuse_recheck: required` for structural or scope-unclear remediation; emit `refactor_reuse_recheck: skip` plus a one-line reason for localized fixes that preserve the architecture. A required recheck runs before the targeted gate; if it changes the diff, rerun affected focused tests first.
 
 ## Executor selection
 

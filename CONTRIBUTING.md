@@ -41,11 +41,19 @@ chore(cc-###): short summary
 
 Before opening a PR:
 
-1. Run `/pr-gate` in the main thread.
-2. Address any required review blocks.
-3. Confirm the final checklist in your PR description.
+The authoritative maintainer sequence and failure loop are defined in
+[`/ship` Steps 2.5–3.5](commands/ship.md#step-25--refactorreuse-audit).
+
+1. Use affected tests during implementation, then complete `/ship` Step 2.5's
+   refactor/reuse audit.
+2. Run `/pr-gate` in the main thread.
+3. Address findings and apply `/ship` Step 3's conditional recheck rule.
+4. After GO, complete `/ship` Step 3.5's authoritative full-suite check.
+5. Confirm the final checklist in your PR description.
 
 [`/pr-gate` skill](commands/pr-gate.md) is the hard-gate review entry point and is documented alongside the same execution patterns in [`docs/dispatch-brief.md`](docs/dispatch-brief.md).
+The refactor/reuse checkpoint is this repository's maintainer policy; it does
+not make `pmctl gate` or its component tools mandatory for downstream users.
 
 ## PM brief schema and contracts
 
@@ -59,11 +67,20 @@ If this repository adds changes to the dispatch pipeline, update this schema fir
 
 ## Testing and validation
 
-For every file-writing or schema-affecting PR, run the full test suite:
+During implementation and gate-fix iteration, run only the affected suites:
+
+```bash
+bash scripts/run-tests.sh --base <base-ref>
+```
+
+After PR-gate returns GO, run the full test suite once against the final tree:
 
 ```bash
 bash scripts/run-all-tests.sh
 ```
+
+For full-suite failures and re-gating, follow the authoritative loop in
+[`/ship` Step 3.5](commands/ship.md#step-35--authoritative-full-suite).
 
 This runs all suites (hooks, install, portable, pr-gate, usage, pm-scripts, etc.) and
 prints a pass/fail/skip summary. For a focused run on one suite, invoke it directly,
