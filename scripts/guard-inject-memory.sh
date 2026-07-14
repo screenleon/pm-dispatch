@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
-# guard-inject-memory.sh — UserPromptSubmit hook: inject MEMORY.md index.
-# Receives JSON payload via stdin from Claude Code UserPromptSubmit event.
+# guard-inject-memory.sh — host-neutral UserPromptSubmit canonical-memory adapter.
+# Claude and Codex both provide cwd/prompt on stdin and accept plain stdout as
+# additional context. Hosts without that contract use `pmctl pm prepare`.
 set -euo pipefail
 
 # shellcheck disable=SC1091
-. "$(dirname "$0")/lib/memory.sh"
-# shellcheck disable=SC1091
-. "$(dirname "$0")/lib/portable.sh"
+. "$(dirname "$0")/lib/pmctl-memory.sh"
 
 MAX_INJECT_ENTRIES=20
 MAX_INJECT_BYTES=3000
@@ -23,7 +22,6 @@ MEMORY_KEYWORD_WEIGHT="${PM_MEMORY_FRECENCY_KEYWORD_WEIGHT:-100000}"
 payload=$(cat)
 [[ -z "$payload" ]] && exit 0
 
-_config_dir="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}"
 _tmp=$(mktemp)
 _t2tmp=$(mktemp)
 trap 'rm -f "$_tmp" "$_t2tmp"' EXIT
@@ -32,7 +30,20 @@ printf '%s' "$payload" > "$_tmp"
 cwd=$(jq -r 'if (.cwd | type) == "string" then .cwd else empty end' "$_tmp" 2>/dev/null) || cwd=""
 [[ -n "$cwd" ]] || exit 0
 
-memory_dir=$(find_memory_dir "$cwd" "$_config_dir") || exit 0
+memory_resolution=""
+memory_rc=0
+memory_resolution="$(pmctl_memory_resolve --repo-root "$cwd" --allow-non-git --json 2>/dev/null)" || memory_rc=$?
+if [[ "$memory_rc" -eq 3 ]]; then
+  reason="$(jq -r '.reason // "invalid explicit canonical memory"' <<<"$memory_resolution" 2>/dev/null || printf 'invalid explicit canonical memory')"
+  jq -cn --arg reason "pmctl canonical memory configuration is invalid: $reason" \
+    '{decision:"block",reason:$reason}'
+  exit 0
+fi
+[[ "$memory_rc" -eq 0 ]] || exit 0
+memory_dir="$(jq -r '.memory_dir // empty' <<<"$memory_resolution")"
+memory_project_key="$(jq -r '.project_key // empty' <<<"$memory_resolution")"
+memory_resolution_source="$(jq -r '.resolution_source // "none"' <<<"$memory_resolution")"
+[[ -n "$memory_dir" ]] || exit 0
 memory_path="$memory_dir/MEMORY.md"
 [[ -f "$memory_path" ]] || exit 0
 
@@ -189,9 +200,10 @@ remaining_slots=$((MAX_INJECT_ENTRIES - tier1_count))
 
 # Compute bytes already used by preamble + tier1 (tier1 is never byte-capped)
 preamble_line1='=== auto-memory: MEMORY.md index ==='
-preamble_line2="Memory dir: ${memory_dir} | ${total_count} cards total"
-preamble_line3='Use /mem-search <topic> for full retrieval'
-bytes_used=$(( ${#preamble_line1} + 1 + ${#preamble_line2} + 1 + ${#preamble_line3} + 1 ))
+preamble_line2="Provider: pmctl | authority: canonical | project_key: ${memory_project_key} | resolution: ${memory_resolution_source}"
+preamble_line3="Memory dir: ${memory_dir} | ${total_count} cards total | native memory: auxiliary/unknown"
+preamble_line4='Use /mem-search <topic> for full retrieval'
+bytes_used=$(( ${#preamble_line1} + 1 + ${#preamble_line2} + 1 + ${#preamble_line3} + 1 + ${#preamble_line4} + 1 ))
 for _line in "${tier1_lines[@]+"${tier1_lines[@]}"}"; do
   bytes_used=$(( bytes_used + ${#_line} + 1 ))
 done
@@ -209,7 +221,7 @@ done
 omitted_count=$(( total_count - tier1_count - "${#selected_tier2[@]}" ))
 
 # Emit preamble
-printf '%s\n' "$preamble_line1" "$preamble_line2" "$preamble_line3"
+printf '%s\n' "$preamble_line1" "$preamble_line2" "$preamble_line3" "$preamble_line4"
 
 # Emit tier1 (always-inject)
 [[ "${#tier1_lines[@]}" -gt 0 ]] && printf '%s\n' "${tier1_lines[@]}"

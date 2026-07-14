@@ -31,6 +31,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-483 | 🔵 active | Codex PM workflow memory provider 優先權：使用者指定 `pmctl memory` 為 canonical substrate，不得默認優先使用 Codex native memory；盤點 prepare/guard/host instruction routing 與可觀測 provenance | arch/memory | 2026-07-13 | feedback:2026-07-13 | P1 | design |
 | CC-484 | ✅ done | JapanJob 與 qa-testing-rules 的 `pmctl context` refresh 未生效：重現 session/index/update/pack 實際路徑、repo-root/project-key/DB freshness，補跨 repo live E2E 與 actionable diagnostics | ops/memory | 2026-07-13 | feedback:2026-07-13 | P1 | retrieval |
 | CC-485 | ✅ done | 工具能力與維護者政策分離：通用 gate/test/PM 不規定使用流程；affected feedback 僅屬開發/PR，pm-dispatch release 固定由 `release-verify.sh --e2e`（內含 fresh full suite）+ checklist 驗收 | arch/process | 2026-07-13 | pr:#398 | P3 | design |
+| CC-486 | ⏸ deferred | direct-impact test planner mapping 提前退出：changed path 含 `agents/*.md`／`commands/*.md` 時 `map_path` 呼叫未註冊的 `lint-frontmatter`，`add_suite` 回傳 1 並在 `set -e` 下無輸出終止，導致 `run-tests.sh --base ... --list` exit 1 | ops/test | 2026-07-13 | feedback:2026-07-13 | P2 | hygiene |
 | CC-465 | 🔵 active | memory/context 關鍵詞管線 CJK 支援：抽出共用零依賴斷詞 lib，取代三處各自 ASCII-only 抽詞；工作序列起點（465→467→468→466）（2026-07-07 記憶系統深入分析） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-466 | 🔵 active | 記憶卡片生命週期閉環：expires_at 執行 + 關窗式 supersede + usage sidecar 休眠偵測 + doctor→distill 接線；排在 CC-467 之後（需其遙測為前置）（2026-07-07 記憶系統分析 + 外部研究 Graphiti/mcp-memory-service） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-467 | 🔵 active | `pmctl memory stats`：注入效益可視化（唯讀聚合器）——注入 bytes/卡片命中分佈/從未命中卡/episode 填寫率，回答「記憶有跟沒有差在哪」；排在 CC-466 之前（2026-07-07；業界僅離線 recall 評測，無 per-injection 遙測） | DX/memory | 2026-07-07 | — | P2 | retrieval |
@@ -634,6 +635,18 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Source**: 2026-07-13 使用者明確指定目前應優先使用 `pmctl memory`，不是 Codex memory。
 
 **Diagnostic evidence (2026-07-13)**: live `pmctl pm prepare --cd /home/screenleon/github/JapanJob --json` 已由 `pmctl memory resolve` 命中該 repo 的 canonical legacy memory dir/project key，且 `memory_context_status=hydrated`；pmctl coordinator 本身不是 native-first。缺口位於 Codex interactive host wiring：目前 live `~/.codex/hooks.json` 只有 Bash `PreToolUse` guard，沒有 prompt/session entry 將 preparation 固定導入 pmctl memory。拋棄式 `UserPromptSubmit` payload/injection probe 被中斷，未取得 runtime contract 前不先綁定未驗證 hook。
+
+**Implementation handoff (session close, 2026-07-13)**: working tree 尚未 commit，CC-483 保持 active。已完成 host-neutral provenance（`provider=pmctl`、canonical project key/dir、resolution source、hit count/refs、native `auxiliary/unknown`）、Codex `UserPromptSubmit` 安裝、OpenCode `--host opencode` preparation、strict locked `pmctl memory append-episode`、Claude `/mem-log` 與 Stop skeleton writer 遷移、invalid explicit 讀寫 fail-closed、generic non-git resolver opt-in，以及 dispatch brief 的 canonical provenance。因目前 checkout/global `pmctl` 沒有 `simplify` 子命令，已用 Codex read-only simplify/reuse review 代行並依結果抽出共用 host enum、prepare/run hydration、resolver-owned generic fallback，且把 Stop 寫入納入同一 lock。Focused evidence：memory 67/67、pm 30/30、guards full 294/294（新增後 invalid-explicit 2/2、session-hook 11/11）、commands 277/277、Codex host 36/36、OpenCode host 13/13、Codex doctor 9/9；lint-scripts/agents/frontmatter/test-docstrings 均通過。Live isolated E2E 已實際驗證 Codex 0.144.1 prompt payload/injection 與 invalid explicit pre-model block、Claude Code 2.1.207 canonical injection、OpenCode 1.17.8 `/pm` preparation；後續不得再用 Claude 做 gate（使用者額度要求）。本 session 結束前 full suite 僅啟動後即依使用者要求停止，沒有 sign-off 結果；Codex-only PR gate 尚未執行。下一 session 先重跑 full suite，處理真正 regression（若有），再以 `pr-gate.sh --executor codex --allow-dirty` gate。direct-impact planner 自身的既有無輸出 exit 1 已拆為 [[CC-486]]，不可誤報為 CC-483 產品失敗。
+
+---
+
+## CC-486 — direct-impact planner 未註冊 suite 觸發 `set -e` 提前退出 ⏸ deferred
+
+**Problem**: `scripts/run-tests.sh --base origin/main --list` 在 changed paths 含 `agents/*.md` 或 `commands/*.md` 時，`map_path` 會呼叫 `add_suite lint-frontmatter`；但 `test-suite-runner.sh --list` 沒有註冊該 suite。`add_suite` 的最後一個條件式因此回傳 1，頂層 `set -e` 直接終止，沒有 planner diagnostics，exit 1。
+
+**Acceptance**: 未註冊的 optional mapping 不得讓 planner 提前退出；應修正 mapping 名稱或讓 `add_suite` 明確 return 0，並新增包含 agent/command changed path 的 regression，確認 `--list` 輸出已選 suites、coverage gaps 與 exit 0。不得藉此弱化「沒有任何可用 suite 時 exit 2」的既有契約。
+
+**Evidence**: CC-483 收尾時以 `bash -x scripts/run-tests.sh --base origin/main --list` 重現；trace 停在 `add_suite lint-frontmatter` 的 `[[ -n '' ]]`。同一批 CC-483 focused suites與 lint 均綠，故此項獨立追蹤，不視為 CC-483 產品 regression。
 
 ---
 

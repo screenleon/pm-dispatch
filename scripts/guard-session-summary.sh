@@ -5,12 +5,11 @@
 set -euo pipefail
 
 # shellcheck disable=SC1091
-. "$(dirname "$0")/lib/memory.sh"
+. "$(dirname "$0")/lib/pmctl-memory.sh"
 
 payload=$(cat)
 [[ -z "$payload" ]] && exit 0
 
-_config_dir="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}"
 _tmp=$(mktemp)
 trap 'rm -f "$_tmp"' EXIT
 printf '%s' "$payload" > "$_tmp"
@@ -23,7 +22,9 @@ cwd=$(jq -r 'if (.cwd | type) == "string" then .cwd else empty end' "$_tmp" 2>/d
 session_id=$(jq -r 'if (.session_id | type) == "string" then .session_id else empty end' "$_tmp" 2>/dev/null) || session_id=""
 [[ -n "$session_id" ]] || exit 0
 
-memory_dir=$(find_memory_dir "$cwd" "$_config_dir") || exit 0
+memory_resolution="$(pmctl_memory_resolve --repo-root "$cwd" --allow-non-git --json 2>/dev/null)" || exit 0
+memory_dir="$(jq -r '.memory_dir // empty' <<<"$memory_resolution")"
+[[ -n "$memory_dir" ]] || exit 0
 episodes_file="$memory_dir/episodes.jsonl"
 
 # Check for existing entry with this session_id
@@ -81,14 +82,9 @@ if [[ -f "$episodes_file" ]]; then
   fi
 fi
 
-# Write new skeleton entry
-now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-entry=$(jq -cn \
-  --arg date "$now" \
-  --arg cwd "$cwd" \
-  --arg session_id "$session_id" \
-  '{date: $date, cwd: $cwd, session_id: $session_id, summary: ""}')
-mkdir -p "$memory_dir"
-printf '%s\n' "$entry" >> "$episodes_file"
+# Re-resolve and append under the canonical lock. `--skeleton` performs the
+# session-id dedupe again inside the lock, closing the concurrent Stop race.
+pmctl_memory_append_episode --repo-root "$cwd" --allow-non-git --host claude \
+  --session-id "$session_id" --summary "" --skeleton >/dev/null 2>&1 || exit 0
 
 exit 0

@@ -143,10 +143,10 @@ MEM_LOG="$COMMANDS_DIR/mem-log.md"
 
 assert_frontmatter "mem-log: frontmatter valid" "$MEM_LOG"
 should_run "mem-log: no python3 calls" && assert_not_contains "mem-log: no python3 calls" "$MEM_LOG" "python3"
-should_run "mem-log: Step 1 uses pmctl memory dir" && assert_file_contains "mem-log: Step 1 uses pmctl memory dir" "$MEM_LOG" "pmctl memory dir" && pass "mem-log: Step 1 uses pmctl memory dir"
-should_run "mem-log: Step 1 derives episodes.jsonl path" && assert_file_contains "mem-log: Step 1 derives episodes.jsonl path" "$MEM_LOG" "episodes.jsonl" && pass "mem-log: Step 1 derives episodes.jsonl path"
-should_run "mem-log: Step 1 handles no memory dir error" && assert_file_contains "mem-log: Step 1 handles no memory dir error" "$MEM_LOG" "No memory directory found for this project" && pass "mem-log: Step 1 handles no memory dir error"
-should_run "mem-log: Step 1 allows missing file on first log" && assert_file_contains "mem-log: Step 1 allows missing file on first log" "$MEM_LOG" "may not exist" && pass "mem-log: Step 1 allows missing file on first log"
+should_run "mem-log: Step 1 uses strict memory resolve" && assert_file_contains "mem-log: Step 1 uses strict memory resolve" "$MEM_LOG" "pmctl memory resolve" && pass "mem-log: Step 1 uses strict memory resolve"
+should_run "mem-log: Step 3 uses canonical append API" && assert_file_contains "mem-log: Step 3 uses canonical append API" "$MEM_LOG" "pmctl memory append-episode" && pass "mem-log: Step 3 uses canonical append API"
+should_run "mem-log: Step 3 identifies Claude writer host" && assert_file_contains "mem-log: Step 3 identifies Claude writer host" "$MEM_LOG" "--host claude" && pass "mem-log: Step 3 identifies Claude writer host"
+should_run "mem-log: never writes episodes directly" && assert_not_contains "mem-log: never writes episodes directly" "$MEM_LOG" 'ep="$mem/episodes.jsonl"'
 
 # ── mem-recall.md contract ────────────────────────────────────────────────────
 

@@ -21,16 +21,15 @@ Record what happened in this session to the episodic memory layer. Follow these 
 /mem-log "Session delivered first-pass migration plan and closed a hook exception."
 ```
 
-## Step 1 — Find episodes.jsonl
+## Step 1 — Confirm canonical memory
 
-Run `pmctl memory dir` to locate the memory directory, then derive the episodes path:
+Resolve the same strict canonical memory that every host uses:
 
 ```bash
-mem="$(pmctl memory dir)" || { echo "No memory directory found for this project"; exit 1; }
-ep="$mem/episodes.jsonl"
+pmctl memory resolve --repo-root "$(pwd)" --json
 ```
 
-If `pmctl memory dir` exits non-zero, report "No memory directory found for this project" and stop. The file `$ep` may not exist yet — that is expected when logging for the first time.
+If resolution is unavailable or an explicit path is invalid, report the resolver error and stop. Never derive or guess a host-local path.
 
 ## Step 2 — Write the summary
 
@@ -46,23 +45,20 @@ If `$ARGUMENTS` is non-empty, incorporate it as a hint about what to emphasize.
 
 Keep the summary factual and dense. No filler phrases.
 
-## Step 3 — Update episodes.jsonl
+## Step 3 — Append through the strict write API
 
-**/mem-log owns summary creation.** Do not assume the Stop hook has already written a skeleton — the Stop hook runs at session end, after /mem-log. If a skeleton already exists (e.g., from a previous session), update it; otherwise append a new entry.
+Call the host-neutral writer; do not open or mutate `episodes.jsonl` directly:
 
-Read the episodes.jsonl file (it may not exist yet). Then:
-
-1. **Find an updatable entry**: scan all lines for one where `session_id` matches the current session AND `summary` is empty. If found, replace that line with the full entry (same `date`/`cwd`/`session_id`, filled `summary`).
-2. **Otherwise**: append a new entry with the current date and cwd.
-
-The entry format:
-```json
-{"date":"<ISO8601>","cwd":"<absolute path>","session_id":"<id>","summary":"<3-5 line text>"}
+```bash
+pmctl memory append-episode \
+  --repo-root "$(pwd)" \
+  --host claude \
+  --session-id "" \
+  --summary "$SUMMARY" \
+  --json
 ```
 
-`session_id` is only available inside hook payloads; from a slash command it may not be accessible. Use an empty string `""` if it is unknown — the Stop hook will still skip this session correctly if the last entry for this cwd already has a non-empty summary.
-
-Write the updated file (replace the matched line in-place or append; preserve all other lines).
+`session_id` may be unavailable from a slash command; use `""` in that case. The API re-runs strict resolution, appends under a lock, rejects a symlink target, and fails closed instead of falling through to another host's memory.
 
 ## Step 4 — Confirm
 

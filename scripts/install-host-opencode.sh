@@ -198,7 +198,7 @@ export default tool({
   },
   async execute(args, context) {
     const focus = [...new Set(args.focus_tickets)]
-    const argv = [PMCTL, "pm", "prepare", "--cd", context.worktree, "--request", args.request, "--json"]
+    const argv = [PMCTL, "pm", "prepare", "--cd", context.worktree, "--request", args.request, "--host", "opencode", "--json"]
     if (focus.length > 0) argv.push("--focus", focus.join(","))
 
     const proc = Bun.spawn(argv, {

@@ -67,6 +67,8 @@ fi
 
 hook_cmd="$REPO_ROOT/scripts/hook-codex-command-guard.sh"
 hook_cmd_q="$(printf '%q' "$hook_cmd")"
+memory_hook_cmd="$REPO_ROOT/scripts/guard-inject-memory.sh"
+memory_hook_cmd_q="$(printf '%q' "$memory_hook_cmd")"
 
 tmp_new="$(mktemp)"
 trap 'rm -f "$tmp_new"' EXIT
@@ -77,8 +79,8 @@ trap 'rm -f "$tmp_new"' EXIT
 # to a different checkout or tool. Compare both the escaped form (current
 # installer output) and the raw unescaped form (installs written before the
 # shell-escape fix), so an older install still uninstalls cleanly.
-jq --arg cmd "$hook_cmd" --arg cmd_q "$hook_cmd_q" '
-  def is_managed: (. // "") | (. == $cmd or . == $cmd_q);
+jq --arg cmd "$hook_cmd" --arg cmd_q "$hook_cmd_q" --arg memory_cmd "$memory_hook_cmd" --arg memory_cmd_q "$memory_hook_cmd_q" '
+  def is_managed: (. // "") | (. == $cmd or . == $cmd_q or . == $memory_cmd or . == $memory_cmd_q);
   ( [.hooks // {} | keys[]] ) as $event_types |
   reduce $event_types[] as $et (
     .;

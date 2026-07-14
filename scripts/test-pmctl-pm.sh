@@ -196,6 +196,51 @@ MD
   fi
 }
 
+# Behavior: preparation names the calling host while keeping pmctl canonical and native memory auxiliary.
+# Steps: run the same shared-memory query through all host labels and assert identical refs/authority.
+case_prepare_emits_cross_host_memory_provenance() {
+  local name="pmctl pm prepare: all hosts emit canonical pmctl provenance"
+  should_run "$name" || return 0
+  local work="$tmp_root/provenance-work" mdir="$tmp_root/provenance-memory" host out snapshot code
+  mkdir -p "$work" "$mdir"
+  git -C "$work" init -q
+  printf '%s\n' '- [CC483 provenance](project_cc483.md) — cc483provenancemarker' > "$mdir/MEMORY.md"
+  printf '%s\n' '---' 'topics:' '  - cc483provenancemarker' 'priority: normal' 'status: active' 'updated_at: "2026-07-13"' 'repo_refs: []' '---' 'canonical cc483provenancemarker' > "$mdir/project_cc483.md"
+  for host in claude codex opencode generic; do
+    code=0
+    out="$(PM_MEMORY_DIR="$mdir" "$PMCTL" pm prepare --cd "$work" --host "$host" --request cc483provenancemarker --json 2>/dev/null)" || code=$?
+    snapshot="$(jq -r '.snapshot_file // empty' <<<"$out" 2>/dev/null || true)"
+    [[ -n "$snapshot" && -f "$snapshot" ]] && rm -f "$snapshot"
+    if [[ "$code" -ne 0 ]] || ! jq -e --arg host "$host" --arg mdir "$mdir" \
+      '.memory_provenance.host == $host and .memory_provenance.provider == "pmctl" and .memory_provenance.authority == "canonical" and .memory_provenance.memory_dir == $mdir and .memory_provenance.resolution_source == "env" and .memory_provenance.hit_count >= 1 and (.memory_provenance.refs | index("project_cc483.md:1") != null) and .memory_provenance.auxiliary_memory.role == "auxiliary" and .memory_provenance.auxiliary_memory.status == "unknown"' <<<"$out" >/dev/null; then
+      fail "$name" "host=$host code=$code out=$out"; return 0
+    fi
+  done
+  pass "$name"
+}
+
+# Behavior: a conflicting host-native note cannot replace canonical pmctl results.
+# Steps: place opposite text under CODEX_HOME, query canonical memory, and assert only canonical refs are exposed.
+case_prepare_native_conflict_stays_auxiliary() {
+  local name="pmctl pm prepare: conflicting native note cannot replace canonical constraint"
+  should_run "$name" || return 0
+  local work="$tmp_root/native-conflict-work" mdir="$tmp_root/native-conflict-memory" codex_home="$tmp_root/native-conflict-codex" out snapshot code=0
+  mkdir -p "$work" "$mdir" "$codex_home/memories"
+  git -C "$work" init -q
+  printf '%s\n' '- [Canonical authority](canonical_rule.md) — cc483authoritymarker' > "$mdir/MEMORY.md"
+  printf '%s\n' '---' 'topics:' '  - cc483authoritymarker' 'priority: always' 'status: active' 'updated_at: "2026-07-13"' 'repo_refs: []' '---' 'CANONICAL_RULE_WINS cc483authoritymarker' > "$mdir/canonical_rule.md"
+  printf '%s\n' 'NATIVE_CONFLICT_WINS cc483authoritymarker' > "$codex_home/memories/conflict.md"
+  out="$(PM_MEMORY_DIR="$mdir" CODEX_HOME="$codex_home" "$PMCTL" pm prepare --cd "$work" --host codex --request cc483authoritymarker --json 2>/dev/null)" || code=$?
+  snapshot="$(jq -r '.snapshot_file // empty' <<<"$out" 2>/dev/null || true)"
+  [[ -n "$snapshot" && -f "$snapshot" ]] && rm -f "$snapshot"
+  if [[ "$code" -eq 0 ]] && jq -e \
+    '.memory_provenance.provider == "pmctl" and (.memory_provenance.refs | index("canonical_rule.md:1") != null) and .memory_provenance.auxiliary_memory.status == "unknown" and (.memory_context | contains("conflict.md") | not)' <<<"$out" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
 # Behavior: Codex preparation refuses an invalid explicit memory selection instead of reading legacy memory.
 # Steps: create an available legacy path plus a missing PM_MEMORY_DIR and assert fail-closed preparation.
 case_prepare_rejects_invalid_explicit_memory() {
@@ -425,7 +470,7 @@ case_run_uses_validate_detached_wait() {
 }
 
 # Behavior: run's human mode prints the authenticated dispatch handoff result.
-# Steps: stub validation, launch, and wait; assert the complete four-line human contract.
+# Steps: stub validation, launch, and wait; assert dispatch plus memory provenance lines.
 case_run_emits_human_contract() {
   local name="pmctl pm run: emits human batch contract"
   should_run "$name" || return 0
@@ -436,10 +481,45 @@ case_run_emits_human_contract() {
   pmctl_dispatch_run() { printf 'run-test-human-output\n'; }
   pmctl_dispatch_wait() { return 0; }
   pmctl_pm_run "$REPO_ROOT" --adapter codex --brief-file /tmp/brief-test.md --cd "$REPO_ROOT" > "$out" || code=$?
-  if [[ "$code" -eq 0 ]] && [[ "$(<"$out")" == $'run_id: run-test-human-output\nworking_dir: '"$REPO_ROOT"$'\nadapter: codex\nwait_exit_code: 0' ]]; then
+  if [[ "$code" -eq 0 ]] \
+    && grep -q '^run_id: run-test-human-output$' "$out" \
+    && grep -q '^memory_provider: pmctl$' "$out" \
+    && grep -q '^auxiliary_memory_status: unknown$' "$out" \
+    && grep -q '^wait_exit_code: 0$' "$out"; then
     pass "$name"
   else
     fail "$name" "code=$code out=$(<"$out")"
+  fi
+}
+
+# Behavior: dispatch re-resolves canonical memory and carries provenance/refs in the executed brief.
+# Steps: stub resolver/query/dispatch, run as OpenCode host, and inspect JSON plus forwarded brief.
+case_run_carries_memory_provenance_into_dispatch_brief() {
+  local name="pmctl pm run: dispatch artifact carries canonical memory provenance"
+  should_run "$name" || return 0
+  . "$REPO_ROOT/scripts/lib/pmctl-pm.sh"
+  local work="$tmp_root/run-provenance-work" mdir="$tmp_root/run-provenance-memory" brief="$tmp_root/run-provenance-source.md" trace="$tmp_root/run-provenance-trace" out="$tmp_root/run-provenance.out" code=0 effective
+  mkdir -p "$work" "$mdir"
+  git -C "$work" init -q
+  printf 'working_dir: %s\ngoal: cc483 dispatch provenance\nfiles:\n  - read: README.md\nacceptance:\n  - provenance\n' "$work" > "$brief"
+  pmctl_validate_brief() { return 0; }
+  pmctl_memory_resolve() { jq -cn --arg repo "$work" --arg mdir "$mdir" '{schema_version:1,status:"resolved",repo_root:$repo,project_key:"cc483-key",memory_dir:$mdir,resolution_source:"env",readable:true,writable:true,reason:null}'; }
+  pmctl_dispatch_extract_goal() { printf 'cc483 dispatch provenance\n'; }
+  pmctl_context_pack() { printf '%s\n' '{"schema_version":2,"task_id":"pm-run","memories":[{"ref":"canonical.md:7"}]}' ; }
+  pmctl_dispatch_run() { printf '%s\n' "$*" > "$trace"; printf 'run-test-provenance\n'; }
+  pmctl_dispatch_wait() { return 0; }
+  pmctl_pm_run "$REPO_ROOT" --adapter codex --brief-file "$brief" --cd "$work" --host opencode --json > "$out" || code=$?
+  unset -f pmctl_validate_brief pmctl_memory_resolve pmctl_dispatch_extract_goal pmctl_context_pack pmctl_dispatch_run pmctl_dispatch_wait
+  effective="$(jq -r '.dispatch_brief // empty' "$out" 2>/dev/null || true)"
+  if [[ "$code" -eq 0 ]] \
+    && jq -e '.memory_provenance.host == "opencode" and .memory_provenance.provider == "pmctl" and .memory_provenance.hit_count == 1 and .memory_provenance.refs == ["canonical.md:7"]' "$out" >/dev/null \
+    && [[ -f "$effective" ]] \
+    && grep -q '^canonical_memory_provenance:$' "$effective" \
+    && grep -q 'canonical.md:7' "$effective" \
+    && grep -q -- "--brief-file $effective" "$trace"; then
+    pass "$name"
+  else
+    fail "$name" "code=$code effective=$effective out=$(<"$out") trace=$(cat "$trace" 2>/dev/null || true)"
   fi
 }
 
@@ -572,6 +652,8 @@ case_prepare_deduplicates_focus_tickets
 case_prepare_rejects_empty_request
 case_prepare_rejects_non_git_workdir
 case_prepare_hydrates_shared_memory
+case_prepare_emits_cross_host_memory_provenance
+case_prepare_native_conflict_stays_auxiliary
 case_prepare_rejects_invalid_explicit_memory
 case_prepare_reports_no_memory_hits
 case_prepare_reports_memory_query_failure
@@ -583,6 +665,7 @@ case_prepare_invalid_memory_cleans_snapshot
 case_unknown_subcommand_shows_usage
 case_run_uses_validate_detached_wait
 case_run_emits_human_contract
+case_run_carries_memory_provenance_into_dispatch_brief
 case_run_rejects_invalid_brief
 case_run_requires_adapter_brief_and_workdir
 case_run_rejects_non_git_workdir

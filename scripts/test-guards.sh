@@ -1538,6 +1538,32 @@ inject_hook_no_memory_found() {
   rm -rf "$dir"
 }
 
+inject_hook_invalid_explicit_blocks_without_fallback() {
+  # Verifies invalid explicit canonical memory blocks the prompt and never injects legacy memory.
+  # Steps:
+  #   1. Create a matching legacy memory fixture and select a missing PM_MEMORY_DIR
+  #   2. Run the shared Claude/Codex UserPromptSubmit hook
+  #   3. Assert the structured block decision is returned with no legacy card text
+  local name="inject-hook/invalid-explicit-blocks-without-fallback"
+  should_run "$name" || return 0
+  local dir cwd payload output status=0
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  write_inject_memory "$dir" "$cwd" $'- legacy-card-must-not-inject\n'
+  payload="{\"cwd\":\"$cwd\",\"prompt\":\"test invalid canonical memory\"}"
+  output="$(printf '%s' "$payload" | PM_MEMORY_DIR="$dir/missing-memory" CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)" || status=$?
+  if [[ "$status" -eq 0 ]] && jq -e '.decision == "block" and (.reason | contains("canonical memory configuration is invalid"))' <<<"$output" >/dev/null 2>&1 \
+    && [[ "$output" != *"legacy-card-must-not-inject"* ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1)); FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s output=%q\n' "$name" "$status" "$output"
+  fi
+  rm -rf "$dir"
+}
+
 inject_hook_empty_index() {
   # Verifies MEMORY.md without "- " index lines exits 0 with empty stdout.
   # Steps:
@@ -1795,7 +1821,8 @@ inject_hook_default_home_fallback() {
   local name="inject-hook/default-home-fallback" cwd encoded tmp_home project_dir payload output status
   should_run "$name" || return 0
   tmp_home="$(mktemp -d)"
-  cwd="/tmp/inject-hook-home-fallback-test-$$"
+  cwd="$tmp_home/worktree"
+  mkdir -p "$cwd"
   encoded="$(inject_encoded_path "$cwd")"
   project_dir="${tmp_home}/.claude/projects/${encoded}/memory"
   mkdir -p "$project_dir"
@@ -2502,6 +2529,7 @@ inject_hook_priority_always_bypasses_lifecycle_gate() {
 inject_hook_happy_path
 inject_hook_parent_fallback
 inject_hook_no_memory_found
+inject_hook_invalid_explicit_blocks_without_fallback
 inject_hook_empty_index
 inject_hook_malformed_payload
 inject_hook_empty_stdin
@@ -3321,6 +3349,32 @@ session_hook_no_memory_dir() {
   rm -rf "$dir"
 }
 
+session_hook_invalid_explicit_no_legacy_write() {
+  # Verifies Stop metadata cannot fall through from invalid explicit memory to legacy memory.
+  # Steps:
+  #   1. Create a legacy project memory fixture and select a missing PM_MEMORY_DIR
+  #   2. Run the Stop hook with a stable session id
+  #   3. Assert the best-effort hook exits cleanly without writing either target
+  local name="session-hook/invalid-explicit-no-legacy-write"
+  should_run "$name" || return 0
+  local dir cwd episodes output status=0
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  write_inject_memory "$dir" "$cwd" $'- alpha\n'
+  episodes="$dir/projects/$(inject_encoded_path "$cwd")/memory/episodes.jsonl"
+  output="$(printf '%s' "{\"cwd\":\"$cwd\",\"session_id\":\"invalid-explicit\"}" | \
+    PM_MEMORY_DIR="$dir/missing-memory" CLAUDE_CONFIG_DIR="$dir" "$SESSION_HOOK" 2>/dev/null)" || status=$?
+  if [[ "$status" -eq 0 && -z "$output" && ! -e "$episodes" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1)); FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s output=%q episodes=%s\n' "$name" "$status" "$output" "$([[ -e "$episodes" ]] && echo yes || echo no)"
+  fi
+  rm -rf "$dir"
+}
+
 session_hook_malformed_payload() {
   # Verifies exit 0 with no output when payload is not valid JSON.
   # Steps:
@@ -3425,6 +3479,7 @@ session_hook_duplicate_no_summary
 session_hook_duplicate_has_summary
 session_hook_new_session_appends
 session_hook_no_memory_dir
+session_hook_invalid_explicit_no_legacy_write
 session_hook_malformed_payload
 session_hook_empty_stdin
 session_hook_missing_session_id

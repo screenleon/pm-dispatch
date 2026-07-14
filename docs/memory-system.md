@@ -208,21 +208,41 @@ remains compatible, and absence is reported as `unavailable`.
 Exit codes are `0` resolved, `1` unavailable, `2` usage error, and `3`
 invalid explicit selection.
 
-**Injection is a per-tool adapter, not part of the portable core.** The
-portable core is the retrieval API: `pmctl context --source memory` (and
-`pmctl memory doctor` for health checks). Claude Code's `UserPromptSubmit`
-hook (`guard-inject-memory.sh`) is one adapter that calls into this core
-automatically every turn. A tool without an equivalent hook (codex, opencode)
-gets the same memory by calling `pmctl context --source memory` directly —
-there is no requirement to replicate Claude's hook-based injection timing.
+Lifecycle adapters that can receive a real directory outside a Git worktree
+use `--allow-non-git`. That option keeps env/config validation and legacy
+discovery inside this same resolver, while deriving a deterministic path key;
+hooks must not reconstruct a synthetic resolution record themselves. Normal PM
+preparation and dispatch remain Git-only.
 
-For the Codex batch PM interface, this call is deterministic rather than a
-model convention: `pmctl pm prepare` runs strict resolution and a bounded,
+**Injection is a per-tool adapter, not part of the portable core.** The
+portable core is strict resolution, `pmctl context --source memory`, and the
+canonical write API. Claude and Codex can both run the host-neutral
+`guard-inject-memory.sh` on `UserPromptSubmit`; OpenCode's installed `/pm`
+command calls its `pm_prepare` custom tool; a host with neither mechanism uses
+`pmctl pm prepare --host generic` directly. All four routes expose pmctl as
+canonical and label unobserved host-native memory `auxiliary/unknown`.
+
+For every batch PM interface, this call is deterministic rather than a model
+convention: `pmctl pm prepare --host <name>` runs strict resolution and a bounded,
 request-scoped memory query on every preparation. Its JSON contract carries
-`memory_resolution`, `memory_context_status`, and the retrieved
+`memory_resolution`, `memory_provenance`, `memory_context_status`, and the retrieved
 `memory_context`, so a calling host can verify which canonical memory it used.
 No memory or zero hits is fail-open; an invalid explicit selection is
 fail-closed to prevent silent continuity loss.
+
+Writes use the same resolver. `pmctl memory append-episode --repo-root <repo>
+--host <name> --summary <text>` appends one locked JSONL record to the resolved
+canonical `episodes.jsonl`. It refuses invalid explicit paths, unwritable
+directories, and symlink episode targets; it never accepts a caller-guessed
+memory directory. `/mem-log` and Claude's Stop skeleton writer both use this
+API; skeleton session-id dedupe happens inside the same append lock.
+
+| Host | Deterministic read entry | Canonical write entry | Native memory |
+| --- | --- | --- | --- |
+| Claude | `/pm` calls `pm prepare --host claude`; `UserPromptSubmit` runs `guard-inject-memory.sh` | `pmctl memory append-episode --host claude` | auxiliary; `unknown` unless separately observed |
+| Codex | `UserPromptSubmit` runs `guard-inject-memory.sh`; batch PM uses `--host codex` | `pmctl memory append-episode --host codex` | auxiliary; `unknown` unless separately observed |
+| OpenCode | `/pm` calls the installed `pm_prepare` tool with `--host opencode` | `pmctl memory append-episode --host opencode` | auxiliary; `unknown` unless separately observed |
+| Generic/no hook | `pmctl pm prepare --host generic` | `pmctl memory append-episode --host generic` | auxiliary; `unknown` |
 
 ## Practical conventions
 
