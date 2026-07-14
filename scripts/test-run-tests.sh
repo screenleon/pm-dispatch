@@ -27,7 +27,7 @@ make_fixture() {
   cat > "$repo/scripts/lib/test-suite-runner.sh" <<'RUNNER'
 #!/usr/bin/env bash
 set -euo pipefail
-suites=(lint-agents lint-scripts lint-frontmatter test-commands test-check-docs-freshness test-guards test-pmctl-context test-pr-gate test-host-manifest test-host-write-codex test-host-write-parity test-core-schemas test-layer-boundaries test-pm-scripts test-run-tests)
+suites=(lint-agents lint-scripts test-lint-frontmatter test-commands test-check-docs-freshness test-guards test-pmctl-context test-pr-gate test-host-manifest test-host-write-codex test-host-write-parity test-core-schemas test-layer-boundaries test-pm-scripts test-run-tests)
 for arg in "$@"; do
   if [[ "$arg" == --list ]]; then printf '%s\n' "${suites[@]}"; exit 0; fi
 done
@@ -62,6 +62,42 @@ case_docs_mapping_list_only() {
   repo="$(make_fixture "$name")"
   out=$(RUN_TESTS_ARGS_LOG="$args" "$repo/scripts/run-tests.sh" --path docs/context-retrieval.md --list 2>&1) || status=$?
   if [[ "$status" -eq 0 && "$out" == *"test-check-docs-freshness"* && ! -e "$args" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out executed=$([[ -e "$args" ]] && echo yes || echo no)"
+  fi
+}
+
+case_agent_mapping_uses_registered_frontmatter_suite() {
+  local name=agent-mapping-uses-registered-frontmatter-suite repo out status=0 args
+  args="$TMP_ROOT/$name.args"
+  repo="$(make_fixture "$name")"
+  out=$(RUN_TESTS_ARGS_LOG="$args" "$repo/scripts/run-tests.sh" --path agents/project-pm.md --list 2>&1) || status=$?
+  if [[ "$status" -eq 0 && "$out" == *"lint-agents"* && "$out" == *"test-lint-frontmatter"* && ! -e "$args" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out executed=$([[ -e "$args" ]] && echo yes || echo no)"
+  fi
+}
+
+case_command_mapping_uses_registered_frontmatter_suite() {
+  local name=command-mapping-uses-registered-frontmatter-suite repo out status=0 args
+  args="$TMP_ROOT/$name.args"
+  repo="$(make_fixture "$name")"
+  out=$(RUN_TESTS_ARGS_LOG="$args" "$repo/scripts/run-tests.sh" --path commands/ship.md --list 2>&1) || status=$?
+  if [[ "$status" -eq 0 && "$out" == *"test-lint-frontmatter"* && "$out" == *"test-commands"* && ! -e "$args" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out executed=$([[ -e "$args" ]] && echo yes || echo no)"
+  fi
+}
+
+case_skill_mapping_uses_registered_frontmatter_suite() {
+  local name=skill-mapping-uses-registered-frontmatter-suite repo out status=0 args
+  args="$TMP_ROOT/$name.args"
+  repo="$(make_fixture "$name")"
+  out=$(RUN_TESTS_ARGS_LOG="$args" "$repo/scripts/run-tests.sh" --path skills/example/SKILL.md --list 2>&1) || status=$?
+  if [[ "$status" -eq 0 && "$out" == *"test-lint-frontmatter"* && "$out" == *"test-commands"* && ! -e "$args" ]]; then
     pass "$name"
   else
     fail "$name" "status=$status out=$out executed=$([[ -e "$args" ]] && echo yes || echo no)"
@@ -213,6 +249,9 @@ case_iteration_result_cannot_verify_as_full() {
 
 case_direct_library_mapping
 case_docs_mapping_list_only
+case_agent_mapping_uses_registered_frontmatter_suite
+case_command_mapping_uses_registered_frontmatter_suite
+case_skill_mapping_uses_registered_frontmatter_suite
 case_guard_family_maps_to_guard_suite
 case_evidence_contract_maps_to_runner_regression
 case_high_fanout_escalates_full
