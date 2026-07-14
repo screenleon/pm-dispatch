@@ -49,7 +49,105 @@ export PM_GUARD_LOG_DIR="$(mktemp -d)"
 TEST_LOG_FILE="$PM_GUARD_LOG_DIR/hooks.log"
 TEST_GUARDS_DIAG_FILE="$PM_GUARD_LOG_DIR/diagnostics.log"
 export TEST_GUARDS_DIAG_FILE
-trap 'rm -rf "$PM_GUARD_LOG_DIR" "${DISPATCH_TEST_BRIEF:-}" "${DISPATCH_TEST_BIN:-}" "${tmp_root:-}"' EXIT
+
+# Concurrency cases register every background child here.  Bare `wait` is not
+# acceptable in this suite: a wedged writer would otherwise consume the whole
+# CI job without identifying the active case or process.  The registry is also
+# used by the suite-level EXIT trap so an interrupted run cannot orphan writers.
+TEST_GUARDS_CHILD_PIDS=()
+TEST_GUARDS_CHILD_LABELS=()
+
+test_guards_children_reset() {
+  TEST_GUARDS_CHILD_PIDS=()
+  TEST_GUARDS_CHILD_LABELS=()
+}
+
+test_guards_child_track() {
+  TEST_GUARDS_CHILD_PIDS+=("$1")
+  TEST_GUARDS_CHILD_LABELS+=("$2")
+}
+
+test_guards_child_state() {
+  ps -o stat= -p "$1" 2>/dev/null | awk '{$1=$1; print}'
+}
+
+test_guards_children_dump() {
+  local context="$1" i pid label state
+  printf 'CHILD-DIAG case=%s context=%s registered=%s\n' \
+    "${TEST_GUARDS_CURRENT_CASE:-unknown}" "$context" "${#TEST_GUARDS_CHILD_PIDS[@]}" >&2
+  for i in "${!TEST_GUARDS_CHILD_PIDS[@]}"; do
+    pid="${TEST_GUARDS_CHILD_PIDS[$i]}"
+    label="${TEST_GUARDS_CHILD_LABELS[$i]}"
+    state="$(test_guards_child_state "$pid")"
+    printf 'CHILD-DIAG writer=%s pid=%s state=%s alive=%s\n' \
+      "$label" "$pid" "${state:-exited}" "$([[ -n "$state" ]] && printf yes || printf no)" >&2
+  done
+}
+
+test_guards_children_terminate() {
+  local signal="$1" pid
+  for pid in "${TEST_GUARDS_CHILD_PIDS[@]}"; do
+    kill -0 "$pid" 2>/dev/null && kill "-$signal" "$pid" 2>/dev/null || true
+  done
+}
+
+test_guards_children_reap() {
+  local pid
+  for pid in "${TEST_GUARDS_CHILD_PIDS[@]}"; do
+    wait "$pid" 2>/dev/null || true
+  done
+  test_guards_children_reset
+}
+
+test_guards_children_cleanup() {
+  ((${#TEST_GUARDS_CHILD_PIDS[@]})) || return 0
+  test_guards_children_terminate TERM
+  sleep 0.1
+  test_guards_children_terminate KILL
+  test_guards_children_reap
+}
+
+# test_guards_children_wait <deadline-seconds> <diagnostic-context>
+# Returns 0 only when every registered child exits successfully.  On timeout it
+# prints the complete registry, performs TERM -> KILL cleanup, and returns 124.
+test_guards_children_wait() {
+  local deadline="$1" context="$2" started=$SECONDS i pid rc status=0 alive
+  while :; do
+    alive=0
+    for pid in "${TEST_GUARDS_CHILD_PIDS[@]}"; do
+      kill -0 "$pid" 2>/dev/null && alive=$((alive + 1))
+    done
+    ((alive == 0)) && break
+    if ((SECONDS - started >= deadline)); then
+      printf 'TIMEOUT test-guards case=%s context=%s deadline=%ss alive=%s\n' \
+        "${TEST_GUARDS_CURRENT_CASE:-unknown}" "$context" "$deadline" "$alive" >&2
+      test_guards_children_dump "$context"
+      test_guards_children_cleanup
+      return 124
+    fi
+    sleep 0.05
+  done
+
+  for i in "${!TEST_GUARDS_CHILD_PIDS[@]}"; do
+    pid="${TEST_GUARDS_CHILD_PIDS[$i]}"
+    rc=0
+    wait "$pid" || rc=$?
+    if ((rc != 0)); then
+      printf 'CHILD-FAIL case=%s context=%s writer=%s pid=%s exit=%s\n' \
+        "${TEST_GUARDS_CURRENT_CASE:-unknown}" "$context" \
+        "${TEST_GUARDS_CHILD_LABELS[$i]}" "$pid" "$rc" >&2
+      status=1
+    fi
+  done
+  test_guards_children_reset
+  return "$status"
+}
+
+test_guards_exit_cleanup() {
+  test_guards_children_cleanup
+  rm -rf "$PM_GUARD_LOG_DIR" "${DISPATCH_TEST_BRIEF:-}" "${DISPATCH_TEST_BIN:-}" "${tmp_root:-}"
+}
+trap test_guards_exit_cleanup EXIT
 
 # Every inject-memory call in this suite goes through one bounded wrapper. The
 # hook is a prompt-path component, so a single fixture must never consume the
@@ -2145,9 +2243,11 @@ memory_usage_commit_concurrent_no_lost_updates() {
   # the hook's persistence path turns the read-modify-write into a race that
   # drops updates, so this test fails (the mutation is caught). Uses a private
   # temp dir (no shared /tmp scanning) so the result is isolation-stable.
-  local name="memory-usage/concurrent-no-lost-updates" got n=25
+  local name="memory-usage/concurrent-no-lost-updates" got n=25 status=0
   should_run "$name" || return 0
   got="$(
+    trap test_guards_children_cleanup EXIT
+    test_guards_children_reset
     # shellcheck disable=SC1091
     . "$SCRIPT_DIR/lib/memory.sh"
     # shellcheck disable=SC1091
@@ -2159,18 +2259,19 @@ memory_usage_commit_concurrent_no_lost_updates() {
     for ((i = 0; i < n; i++)); do
       # threshold high so decay never fires; one a.md hit per writer.
       serialize_with_lock "$sc" memory_usage_commit "$sc" 1000000 100 a.md &
+      test_guards_child_track "$!" "writer=$((i + 1))"
     done
-    wait
+    test_guards_children_wait "${TEST_GUARDS_CHILD_DEADLINE:-20}" "writers=25,lock=auto" || exit $?
     awk -F'\t' '$1=="a.md"{print $2}' "$sc"
     rm -rf "$d"
-  )"
-  if [[ "$got" == "$n" ]]; then
+  )" || status=$?
+  if [[ "$status" -eq 0 && "$got" == "$n" ]]; then
     PASS=$((PASS+1))
     [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
   else
     FAIL=$((FAIL+1))
     FAILED_CASES+=("$name")
-    printf '  FAIL  %s — final access_count=%q want=%q\n' "$name" "$got" "$n"
+    printf '  FAIL  %s — status=%s final access_count=%q want=%q\n' "$name" "$status" "$got" "$n"
   fi
 }
 
@@ -2196,18 +2297,30 @@ memory_usage_commit_contention_matrix() {
       memory_usage_commit "$sidecar" 1000000 100 a.md
       printf '%s finished\n' "$writer_id" >> "$trace"
     }
-    local backend round writer_id d sidecar trace barrier got starts acquired finished exits ids_ok rc
+    local backend round writer_id d sidecar trace barrier barrier_fd got starts acquired finished exits ids_ok rc wait_status
     for backend in flock mkdir; do
       for round in $(seq 1 4); do
+        trap test_guards_children_cleanup EXIT
+        test_guards_children_reset
         d="$(mktemp -d)"
         sidecar="$d/inject-usage.tsv"
         trace="$d/trace"
         barrier="$d/start"
         mkfifo "$barrier"
+        # Keep both ends open in the coordinator so releasing the barrier can
+        # never block if a writer exits before reading its token.
+        exec {barrier_fd}<>"$barrier"
         for writer_id in $(seq 1 25); do
           (
-            printf '%s started\n' "$writer_id" >> "$trace"
-            IFS= read -r < "$barrier"
+            printf '%s started pid=%s\n' "$writer_id" "$BASHPID" >> "$trace"
+            IFS= read -r <&"$barrier_fd"
+            if [[ "${TEST_GUARDS_HANG_WRITER:-}" == "$backend/$round/$writer_id" ]]; then
+              printf '%s injected-hang\n' "$writer_id" >> "$trace"
+              # The inherited descriptor is open read/write, so a second read
+              # blocks indefinitely without spawning a sleep child or spinning
+              # on EOF.  The bounded lifecycle must signal this writer directly.
+              IFS= read -r <&"$barrier_fd"
+            fi
             rc=0
             if [[ "$backend" == "mkdir" ]]; then
               FAKE_FLOCK_MISSING=1 serialize_with_lock "$sidecar" _cc477_commit "$sidecar" "$trace" "$writer_id" || rc=$?
@@ -2216,9 +2329,13 @@ memory_usage_commit_contention_matrix() {
             fi
             printf '%s exit=%s\n' "$writer_id" "$rc" >> "$trace"
           ) &
+          test_guards_child_track "$!" "backend=$backend,round=$round,writer=$writer_id"
         done
-        for writer_id in $(seq 1 25); do printf 'go\n' > "$barrier"; done
-        wait
+        for writer_id in $(seq 1 25); do printf 'go\n' >&"$barrier_fd"; done
+        exec {barrier_fd}>&-
+        wait_status=0
+        test_guards_children_wait "${TEST_GUARDS_CHILD_DEADLINE:-20}" \
+          "backend=$backend,round=$round,lockdir=$sidecar.lockdir" || wait_status=$?
         got="$(awk -F'\t' '$1=="a.md" {print $2}' "$sidecar" 2>/dev/null)"
         starts="$(awk '$2=="started" {n++} END {print n+0}' "$trace")"
         acquired="$(awk '$2=="acquired" {n++} END {print n+0}' "$trace")"
@@ -2234,6 +2351,11 @@ memory_usage_commit_contention_matrix() {
         printf 'backend=%s round=%s count=%s started=%s acquired=%s finished=%s exit0=%s ids-ok=%s lockdir=%s\n' \
           "$backend" "$round" "${got:-missing}" "$starts" "$acquired" "$finished" "$exits" "$ids_ok" \
           "$([[ -e "$sidecar.lockdir" ]] && printf present || printf absent)"
+        if ((wait_status != 0)); then
+          printf 'bounded-wait-exit=%s trace=%s\n' "$wait_status" "$(tr '\n' ';' < "$trace")"
+          rm -rf "$d"
+          exit "$wait_status"
+        fi
         rm -rf "$d"
       done
     done
@@ -2243,6 +2365,59 @@ memory_usage_commit_contention_matrix() {
     pass "$name"
   else
     fail "$name" "status=$status report=$report"
+  fi
+}
+
+# Behavior: the bounded concurrency lifecycle identifies and removes a writer
+# that deliberately refuses to exit instead of leaving the suite in `wait`.
+# Steps: recursively run only the contention matrix with writer 7 hung in the
+# first flock round, assert a bounded non-zero result and actionable PID label,
+# then prove the reported child PID no longer exists.
+memory_usage_hanging_writer_is_bounded_and_cleaned() {
+  local name="bounded-child/hanging-writer-is-diagnosed-and-cleaned" out status=0 pid started elapsed
+  should_run "$name" || return 0
+  started=$SECONDS
+  out="$(TEST_GUARDS_HANG_WRITER='flock/1/7' TEST_GUARDS_CHILD_DEADLINE=1 \
+    TEST_GUARDS_PROGRESS=1 timeout --kill-after=2s 10s \
+    bash "$SCRIPT_DIR/test-guards.sh" \
+      --filter 'memory-usage/contention-matrix-flock-and-mkdir-fallback' 2>&1)" || status=$?
+  elapsed=$((SECONDS - started))
+  pid="$(sed -n 's/.*writer=backend=flock,round=1,writer=7 pid=\([0-9][0-9]*\).*/\1/p' <<< "$out" | head -n 1)"
+  if [[ "$status" -ne 0 && "$status" -ne 124 && "$elapsed" -lt 10 \
+    && "$out" == *'TIMEOUT test-guards case=memory-usage/contention-matrix-flock-and-mkdir-fallback'* \
+    && "$out" == *'writer=backend=flock,round=1,writer=7'* \
+    && -n "$pid" ]] && ! kill -0 "$pid" 2>/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "status=$status elapsed=${elapsed}s pid=${pid:-missing} out=$out"
+  fi
+}
+
+# Behavior: a registered child that exits nonzero is reported with its label,
+# PID, and original exit code even though it does not consume the deadline.
+# Steps: launch one child that exits 7, wait through the shared bounded helper,
+# assert its deterministic CHILD-FAIL diagnostic and aggregate failure status,
+# then prove the child PID was reaped.
+memory_usage_nonzero_writer_is_reported_and_reaped() {
+  local name="bounded-child/nonzero-writer-is-reported-and-reaped" out pid
+  should_run "$name" || return 0
+  out="$(
+    exec 2>&1
+    trap test_guards_children_cleanup EXIT
+    test_guards_children_reset
+    (exit 7) &
+    child_pid=$!
+    test_guards_child_track "$child_pid" 'writer=nonzero-fixture'
+    wait_status=0
+    test_guards_children_wait 5 'fixture=nonzero-child' || wait_status=$?
+    printf 'WAIT-RESULT status=%s pid=%s\n' "$wait_status" "$child_pid"
+  )"
+  pid="$(sed -n 's/^WAIT-RESULT status=1 pid=\([0-9][0-9]*\)$/\1/p' <<< "$out")"
+  if [[ "$out" == *'CHILD-FAIL case=bounded-child/nonzero-writer-is-reported-and-reaped context=fixture=nonzero-child writer=writer=nonzero-fixture'* \
+    && "$out" == *'exit=7'* && -n "$pid" ]] && ! kill -0 "$pid" 2>/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "pid=${pid:-missing} out=$out"
   fi
 }
 
@@ -2565,6 +2740,8 @@ inject_hook_priority_always_bypasses_lifecycle_gate
 memory_usage_commit_decay_halves
 memory_usage_commit_concurrent_no_lost_updates
 memory_usage_commit_contention_matrix
+memory_usage_hanging_writer_is_bounded_and_cleaned
+memory_usage_nonzero_writer_is_reported_and_reaped
 memory_age_bucket_mapping
 
 # Episode reminder tests (CC-019 inject hook extension)
@@ -4047,20 +4224,24 @@ if should_run "pm-bash: concurrent first-write to a fresh audit log never trunca
   # every decision line survives.
   _concurrency_log_dir="$(mktemp -d)"
   _n=10
+  test_guards_children_reset
   for _i in $(seq 1 "$_n"); do
     PM_GUARD_LOG_DIR="$_concurrency_log_dir" \
       printf '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"git status"}}' \
       | PM_GUARD_LOG_DIR="$_concurrency_log_dir" "$PMBASHHOOK" >/dev/null 2>&1 &
+    test_guards_child_track "$!" "audit-writer=$_i"
   done
-  wait
+  _wait_status=0
+  test_guards_children_wait "${TEST_GUARDS_CHILD_DEADLINE:-20}" \
+    "writers=$_n,audit-log=$_concurrency_log_dir/hooks.log" || _wait_status=$?
   _lines="$(wc -l < "$_concurrency_log_dir/hooks.log" 2>/dev/null | tr -d ' ')"
-  if [[ "${_lines:-0}" -eq "$_n" ]]; then
+  if [[ "$_wait_status" -eq 0 && "${_lines:-0}" -eq "$_n" ]]; then
     pass "$name"
   else
-    fail "$name" "expected $_n audit lines after $_n concurrent first-writes, got ${_lines:-0}"
+    fail "$name" "wait_status=$_wait_status expected $_n audit lines after $_n concurrent first-writes, got ${_lines:-0}"
   fi
   rm -rf "$_concurrency_log_dir"
-  unset _concurrency_log_dir _n _i _lines
+  unset _concurrency_log_dir _n _i _lines _wait_status
 fi
 
 run_case "pm-bash: mkfs → deny" 2 "$PMBASHHOOK" \

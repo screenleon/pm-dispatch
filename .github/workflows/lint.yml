@@ -65,9 +65,12 @@ jobs:
 
   test-guards:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
       - name: Guard regression suite
+        env:
+          TEST_GUARDS_PROGRESS: "1"
         run: ./scripts/test-guards.sh
 
   test-guard-framework:
