@@ -28,7 +28,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-480 | ✅ done | host-switch memory continuity：嚴格 resolution contract + Codex `pmctl pm prepare` 確定性 hydration + Claude↔Codex 共用同一 canonical memory E2E；v0.9.0 host 軸 continuity 驗收 | arch/memory | 2026-07-12 | — | P1 | design |
 | CC-481 | ✅ done | test runner contract：`run-tests.sh` direct-impact iteration planner + `run-all-tests.sh` 相容 full wrapper + 共用 suite executor + tree-bound result verifier；PR-gate 維持 repo-agnostic，full suite 移出 gate lifecycle | ops/test | 2026-07-13 | feedback:2026-07-13 | P1 | design |
 | CC-482 | ✅ done | Claude PR-gate reviewer definitions 最小讀取權限：headless `acceptEdits` 無法批准 `~/.claude/agents/*.md`；改用 workspace 內 run-scoped immutable snapshots，禁止擴大為任意 home read／`bypassPermissions` | ops/gate | 2026-07-13 | feedback:2026-07-13 | P1 | hygiene |
-| CC-483 | 🔵 active | Codex PM workflow memory provider 優先權：使用者指定 `pmctl memory` 為 canonical substrate，不得默認優先使用 Codex native memory；盤點 prepare/guard/host instruction routing 與可觀測 provenance | arch/memory | 2026-07-13 | feedback:2026-07-13 | P1 | design |
+| CC-483 | ✅ closed 2026-07-14 | Codex PM workflow memory provider 優先權：使用者指定 `pmctl memory` 為 canonical substrate，不得默認優先使用 Codex native memory；盤點 prepare/guard/host instruction routing 與可觀測 provenance | arch/memory | 2026-07-13 | pr:#399 | P1 | design |
 | CC-484 | ✅ done | JapanJob 與 qa-testing-rules 的 `pmctl context` refresh 未生效：重現 session/index/update/pack 實際路徑、repo-root/project-key/DB freshness，補跨 repo live E2E 與 actionable diagnostics | ops/memory | 2026-07-13 | feedback:2026-07-13 | P1 | retrieval |
 | CC-485 | ✅ done | 工具能力與維護者政策分離：通用 gate/test/PM 不規定使用流程；affected feedback 僅屬開發/PR，pm-dispatch release 固定由 `release-verify.sh --e2e`（內含 fresh full suite）+ checklist 驗收 | arch/process | 2026-07-13 | pr:#398 | P3 | design |
 | CC-486 | ⏸ deferred | direct-impact test planner mapping 提前退出：changed path 含 `agents/*.md`／`commands/*.md` 時 `map_path` 呼叫未註冊的 `lint-frontmatter`，`add_suite` 回傳 1 並在 `set -e` 下無輸出終止，導致 `run-tests.sh --base ... --list` exit 1 | ops/test | 2026-07-13 | feedback:2026-07-13 | P2 | hygiene |
@@ -617,7 +617,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 ---
 
-## CC-483 — Codex workflow 優先使用 pmctl memory canonical substrate 🔵 active
+## CC-483 — Codex workflow 優先使用 pmctl memory canonical substrate ✅ 2026-07-14
 
 **Problem**: 現有 Codex workflow/host guidance 可能先使用 Codex 自身 memory surface，再把 `pmctl memory` 視為 fallback；但本專案的跨 host continuity 契約已由 [[CC-480]] 定義為 project-owned `pmctl memory`。若 provider priority 反轉，同一 repo 會產生兩套互不一致的記憶來源，Claude→Codex 切換表面成功、實際 retrieval/provenance 漂移。
 
@@ -637,6 +637,10 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Diagnostic evidence (2026-07-13)**: live `pmctl pm prepare --cd /home/screenleon/github/JapanJob --json` 已由 `pmctl memory resolve` 命中該 repo 的 canonical legacy memory dir/project key，且 `memory_context_status=hydrated`；pmctl coordinator 本身不是 native-first。缺口位於 Codex interactive host wiring：目前 live `~/.codex/hooks.json` 只有 Bash `PreToolUse` guard，沒有 prompt/session entry 將 preparation 固定導入 pmctl memory。拋棄式 `UserPromptSubmit` payload/injection probe 被中斷，未取得 runtime contract 前不先綁定未驗證 hook。
 
 **Implementation handoff (session close, 2026-07-13)**: working tree 尚未 commit，CC-483 保持 active。已完成 host-neutral provenance（`provider=pmctl`、canonical project key/dir、resolution source、hit count/refs、native `auxiliary/unknown`）、Codex `UserPromptSubmit` 安裝、OpenCode `--host opencode` preparation、strict locked `pmctl memory append-episode`、Claude `/mem-log` 與 Stop skeleton writer 遷移、invalid explicit 讀寫 fail-closed、generic non-git resolver opt-in，以及 dispatch brief 的 canonical provenance。因目前 checkout/global `pmctl` 沒有 `simplify` 子命令，已用 Codex read-only simplify/reuse review 代行並依結果抽出共用 host enum、prepare/run hydration、resolver-owned generic fallback，且把 Stop 寫入納入同一 lock。Focused evidence：memory 67/67、pm 30/30、guards full 294/294（新增後 invalid-explicit 2/2、session-hook 11/11）、commands 277/277、Codex host 36/36、OpenCode host 13/13、Codex doctor 9/9；lint-scripts/agents/frontmatter/test-docstrings 均通過。Live isolated E2E 已實際驗證 Codex 0.144.1 prompt payload/injection 與 invalid explicit pre-model block、Claude Code 2.1.207 canonical injection、OpenCode 1.17.8 `/pm` preparation；後續不得再用 Claude 做 gate（使用者額度要求）。本 session 結束前 full suite 僅啟動後即依使用者要求停止，沒有 sign-off 結果；Codex-only PR gate 尚未執行。下一 session 先重跑 full suite，處理真正 regression（若有），再以 `pr-gate.sh --executor codex --allow-dirty` gate。direct-impact planner 自身的既有無輸出 exit 1 已拆為 [[CC-486]]，不可誤報為 CC-483 產品失敗。
+
+**Outcome**: 2026-07-14 完成 Claude、Codex、OpenCode 共用 canonical `pmctl memory` resolver/writer、可觀測 provenance、Codex prompt/session hooks 與 symlink-safe atomic episode append。Full suite 77/77、Claude full-tier gate Final GO，PR CI 全數通過；CC-486 維持獨立 deferred，不併入本票。
+
+**See**: pr:#399
 
 ---
 
