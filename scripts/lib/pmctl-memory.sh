@@ -24,7 +24,7 @@ if [[ "$(type -t serialize_with_lock 2>/dev/null)" != function ]]; then
   . "$(dirname "${BASH_SOURCE[0]}")/portable.sh"
 fi
 
-# Explicitly own the dispatch.memory_dir config dependency (not pmctl-dispatch.sh
+# Explicitly own the project-scoped memory config dependency (not pmctl-dispatch.sh
 # or an adapter module, so the "MUST NOT source adapters" rule does not apply)
 # instead of relying on cli/pmctl's lib-load ordering having already sourced it.
 if [[ "$(type -t pm_config_load 2>/dev/null)" != function ]]; then
@@ -41,10 +41,19 @@ if [[ "$(type -t _sw_worktree_project_key 2>/dev/null)" != function ]]; then
   . "$(dirname "${BASH_SOURCE[0]}")/state-paths.sh" 2>/dev/null || true
 fi
 
-# Loads ~/.pm-dispatch/config's dispatch.memory_dir into PM_CFG_MEMORY_DIR
-# when no caller has already populated it.
+if [[ "$(type -t pmctl_memory_config 2>/dev/null)" != function ]]; then
+  # shellcheck source=scripts/lib/pmctl-memory-config.sh
+  # shellcheck disable=SC1091
+  . "$(dirname "${BASH_SOURCE[0]}")/pmctl-memory-config.sh" 2>/dev/null || true
+fi
+
+# Selects ~/.pm-dispatch/config's project-scoped memory entry for repo_root.
+# Reload on every call so a long-lived shell cannot leak one repo's selection
+# into another repo.
 _pmctl_memory_load_config_override() {
-  declare -F pm_config_load >/dev/null 2>&1 && [[ -z "${PM_CFG_MEMORY_DIR:-}" ]] && pm_config_load
+  local repo_root="${1:-$PWD}" project_key=""
+  declare -F pm_config_project_key >/dev/null 2>&1 && project_key="$(pm_config_project_key "$repo_root" 2>/dev/null || true)"
+  declare -F pm_config_load >/dev/null 2>&1 && pm_config_load "$project_key"
   return 0
 }
 
@@ -53,7 +62,7 @@ _pmctl_memory_load_config_override() {
 pmctl_memory_dir() {
   local cwd="${1:-$PWD}"
   local mem_dir
-  _pmctl_memory_load_config_override
+  _pmctl_memory_load_config_override "$cwd"
   mem_dir="$(find_memory_dir "$cwd")" || return 1
   printf '%s\n' "$mem_dir"
 }
@@ -137,7 +146,7 @@ pmctl_memory_resolve() {
   else
     project_key="$repo_root"
   fi
-  _pmctl_memory_load_config_override
+  _pmctl_memory_load_config_override "$repo_root"
 
   if [[ -n "${PM_MEMORY_DIR:-}" ]]; then
     source="env"
@@ -148,14 +157,16 @@ pmctl_memory_resolve() {
     else
       memory_dir="$(cd "${PM_MEMORY_DIR}" && pwd -P)"; status="resolved"; rc=0
     fi
+  elif [[ "${PM_CFG_MEMORY_CONFIG_STATUS:-none}" == "legacy-global" ]]; then
+    source="config-legacy-global"; status="invalid-explicit"; reason="unsafe global dispatch.memory_dir must be migrated to a project-scoped entry"; rc=3
   elif [[ "${PM_CFG_MEMORY_DIR_INVALID:-0}" -eq 1 ]]; then
-    source="config"; status="invalid-explicit"; reason="dispatch.memory_dir must be an absolute path"; rc=3
+    source="config"; status="invalid-explicit"; reason="matched project memory path must be an absolute path"; rc=3
   elif [[ -n "${PM_CFG_MEMORY_DIR:-}" ]]; then
     source="config"
     if [[ "${PM_CFG_MEMORY_DIR}" != /* ]]; then
-      status="invalid-explicit"; reason="dispatch.memory_dir must be an absolute path"; rc=3
+      status="invalid-explicit"; reason="matched project memory path must be an absolute path"; rc=3
     elif [[ ! -d "${PM_CFG_MEMORY_DIR}" ]]; then
-      status="invalid-explicit"; reason="dispatch.memory_dir does not exist or is not a directory"; rc=3
+      status="invalid-explicit"; reason="matched project memory path does not exist or is not a directory"; rc=3
     else
       memory_dir="$(cd "${PM_CFG_MEMORY_DIR}" && pwd -P)"; status="resolved"; rc=0
     fi
@@ -174,9 +185,9 @@ pmctl_memory_resolve() {
 
 _pmctl_memory_append_episode_usage() {
   cat <<'EOF'
-Usage: pmctl memory append-episode --repo-root <path> --summary <text>
+Usage: pmctl memory append-episode --repo-root <path> --host <name> --summary <text>
        [--session-id <id>] [--date <ISO8601>]
-       [--host <claude|codex|opencode|generic>] [--skeleton]
+       [--skeleton]
        [--allow-non-git] [--json]
 
 Append one JSONL episode through the strict canonical resolver. An invalid
@@ -246,7 +257,7 @@ _pmctl_memory_append_episode_inner() {
 # is deliberately invoked here instead of accepting a caller-computed memory
 # path, so reads and writes cannot drift to different host-owned directories.
 pmctl_memory_append_episode() {
-  local repo_root="$PWD" summary="" session_id="" episode_date="" host="generic"
+  local repo_root="$PWD" summary="" session_id="" episode_date="" host=""
   local mode="summary" allow_non_git=0 json=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -274,6 +285,11 @@ pmctl_memory_append_episode() {
       *) printf 'pmctl memory append-episode: unknown argument: %s\n' "$1" >&2; return 2 ;;
     esac
   done
+
+  [[ -n "$host" ]] || {
+    printf 'pmctl memory append-episode: --host is required; provenance must name the actual initiating host\n' >&2
+    return 2
+  }
 
   [[ "$mode" == "skeleton" && -n "$session_id" ]] || [[ -n "${summary//[[:space:]]/}" ]] || {
     printf 'pmctl memory append-episode: --summary must not be empty\n' >&2
@@ -480,7 +496,7 @@ pmctl_memory_doctor() {
   done
 
   local mem_dir=""
-  _pmctl_memory_load_config_override
+  _pmctl_memory_load_config_override "$repo_root"
   if ! mem_dir="$(find_memory_dir "$repo_root")"; then
     mem_dir=""
   fi
@@ -743,7 +759,7 @@ pmctl_memory_shard() {
   done
 
   local mem_dir=""
-  _pmctl_memory_load_config_override
+  _pmctl_memory_load_config_override "$repo_root"
   mem_dir="$(find_memory_dir "$repo_root")" || { printf 'pmctl memory shard: no memory directory found\n' >&2; return 1; }
 
   local ep="$mem_dir/episodes.jsonl"
@@ -807,7 +823,7 @@ pmctl_memory_rebuild_summary() {
   done
 
   local mem_dir=""
-  _pmctl_memory_load_config_override
+  _pmctl_memory_load_config_override "$repo_root"
   mem_dir="$(find_memory_dir "$repo_root")" || { printf 'pmctl memory rebuild-summary: no memory directory found\n' >&2; return 1; }
 
   local ep="$mem_dir/episodes.jsonl"

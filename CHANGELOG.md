@@ -10,6 +10,8 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Project-scoped canonical memory config (CC-490).** Replaces the unsafe machine-wide `dispatch.memory_dir` selector with `memory.projects.<stable-project-key>.dir`. `pmctl memory config set|migrate|lint` manages mappings atomically, diagnoses deprecated global config, and keeps unmatched repositories on their own legacy discovery or unavailable path. Strict resolution fails closed for invalid matched entries and legacy-global config; regression coverage proves an unmatched append cannot mutate another project's canonical store.
+
 - **Memory substrate cross-tool location seam (CC-412, PR#352).** `find_memory_dir` now honors an explicit override with precedence `PM_MEMORY_DIR` env > `dispatch.memory_dir` config > `CLAUDE_CONFIG_DIR` convention — behavior is byte-identical to before when neither override is set. The injection layering is now documented in `docs/memory-system.md`: the portable core is the `pmctl context --source memory` retrieval API; injection is a per-tool adapter concern (Claude keeps its existing hook; codex/opencode/future hosts call the retrieval API directly).
 
 - **Gate detached lifecycle (CC-423, PR#353).** `pmctl gate run --lifecycle detached` (now the default) returns a `gate_id` immediately and runs `pr-gate.sh` under a `setsid`/`nohup` gate-supervisor, mirroring the existing dispatch detached mode. `pmctl gate wait <gate_id>` reattaches via a nonce-authenticated sentinel and fails closed on result-integrity violations. A session interrupt can no longer kill a running gate or corrupt its exit-code reporting.

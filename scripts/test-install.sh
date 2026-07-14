@@ -2185,7 +2185,7 @@ test_session_stop_install_wires_hook() {
   should_run "$name" || return 0
   local home="$tmp_root/$name"
   local session
-  session="$(_ti_hook_cmd_path "$REPO_ROOT/scripts/guard-session-summary.sh")"
+  session="$(_ti_hook_cmd_path "$REPO_ROOT/scripts/guard-session-summary.sh") --host claude"
   mkdir -p "$home/.claude"
   printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
 
@@ -2211,7 +2211,7 @@ test_session_stop_uninstall_removes_hook() {
   should_run "$name" || return 0
   local home="$tmp_root/$name"
   local session
-  session="$(_ti_hook_cmd_path "$REPO_ROOT/scripts/guard-session-summary.sh")"
+  session="$(_ti_hook_cmd_path "$REPO_ROOT/scripts/guard-session-summary.sh") --host claude"
   mkdir -p "$home/.claude"
   printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
 
@@ -2232,7 +2232,7 @@ test_session_stop_install_idempotent() {
   should_run "$name" || return 0
   local home="$tmp_root/$name"
   local session
-  session="$(_ti_hook_cmd_path "$REPO_ROOT/scripts/guard-session-summary.sh")"
+  session="$(_ti_hook_cmd_path "$REPO_ROOT/scripts/guard-session-summary.sh") --host claude"
   local count
   mkdir -p "$home/.claude"
   printf '{"permissions":{}}\n' > "$home/.claude/settings.json"

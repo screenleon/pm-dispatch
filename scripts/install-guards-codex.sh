@@ -29,6 +29,8 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # shellcheck source=scripts/lib/host-manifest.sh
 . "$SCRIPT_DIR/lib/host-manifest.sh"
+# shellcheck source=hosts/codex/lib/memory-contract.sh
+. "$REPO_ROOT/hosts/codex/lib/memory-contract.sh"
 
 if ! command -v jq >/dev/null 2>&1; then
   echo "install-guards-codex: jq is required but not found on PATH" >&2
@@ -42,23 +44,38 @@ if [[ ! -f "$manifest" ]]; then
 fi
 
 hooks_path_template=""
+instructions_path_template=""
 while IFS=$'\t' read -r id path fmt managed; do
-  [[ "$id" == "hooks" ]] || continue
-  [[ "$fmt" == "codex-hooks-json" ]] || continue
   [[ "$managed" == "true" ]] || continue
-  hooks_path_template="$path"
+  if [[ "$id" == "hooks" && "$fmt" == "codex-hooks-json" ]]; then
+    hooks_path_template="$path"
+  elif [[ "$id" == "instructions" && "$fmt" == "codex-agents-md" ]]; then
+    instructions_path_template="$path"
+  fi
 done < <(host_manifest_install_targets "$manifest")
 
 if [[ -z "$hooks_path_template" ]]; then
   echo "install-guards-codex: hosts/codex/host.yaml has no managed codex-hooks-json install_target — nothing to wire" >&2
   exit 2
 fi
+if [[ -z "$instructions_path_template" ]]; then
+  echo "install-guards-codex: hosts/codex/host.yaml has no managed codex-agents-md install_target — nothing to wire" >&2
+  exit 2
+fi
 
 hooks_file="$(host_manifest_expand_path "$hooks_path_template")"
+instructions_file="$(host_manifest_expand_path "$instructions_path_template")"
 hook_cmd="$REPO_ROOT/scripts/hook-codex-command-guard.sh"
 memory_hook_cmd="$REPO_ROOT/scripts/guard-inject-memory.sh"
+session_hook_cmd="$REPO_ROOT/scripts/guard-session-summary.sh"
+memory_update_module="$(host_manifest_scalar "$manifest" memory_update_module)"
+if [[ -z "$memory_update_module" || "$memory_update_module" == "null" ]]; then
+  echo "install-guards-codex: hosts/codex/host.yaml has no memory_update_module" >&2
+  exit 2
+fi
+memory_update_cmd="$REPO_ROOT/$memory_update_module"
 
-if [[ ! -x "$hook_cmd" || ! -x "$memory_hook_cmd" ]]; then
+if [[ ! -x "$hook_cmd" || ! -x "$memory_hook_cmd" || ! -x "$session_hook_cmd" || ! -x "$memory_update_cmd" ]]; then
   echo "install-guards-codex: managed hook missing or not executable" >&2
   exit 2
 fi
@@ -70,10 +87,14 @@ fi
 # stored verbatim (no churn for existing installs).
 hook_cmd_q="$(printf '%q' "$hook_cmd")"
 memory_hook_cmd_q="$(printf '%q' "$memory_hook_cmd")"
+session_hook_cmd_q="$(printf '%q' "$session_hook_cmd") --host codex"
+memory_update_cmd_q="$(printf '%q' "$memory_update_cmd")"
 
 tmp_new="$(mktemp)"
 tmp_current="$(mktemp)"
-trap 'rm -f "$tmp_new" "$tmp_current"' EXIT
+tmp_instructions_new="$(mktemp)"
+tmp_instructions_current="$(mktemp)"
+trap 'rm -f "$tmp_new" "$tmp_current" "$tmp_instructions_new" "$tmp_instructions_current"' EXIT
 
 if [[ -f "$hooks_file" ]]; then
   cp "$hooks_file" "$tmp_current"
@@ -84,35 +105,72 @@ fi
 
 # Merge idempotently: only append the managed hook entry if no existing
 # PreToolUse/Bash entry already points at this repo's guard script.
-jq --arg cmd "$hook_cmd_q" --arg memory_cmd "$memory_hook_cmd_q" '
+jq --arg cmd "$hook_cmd_q" --arg memory_cmd "$memory_hook_cmd_q" --arg session_cmd "$session_hook_cmd_q" '
   .hooks = (.hooks // {}) |
   .hooks.PreToolUse = (.hooks.PreToolUse // []) |
   .hooks.UserPromptSubmit = (.hooks.UserPromptSubmit // []) |
+  .hooks.Stop = (.hooks.Stop // []) |
   ([.hooks.PreToolUse[]? | select(.matcher == "Bash") | .hooks[]?.command] | index($cmd)) as $already |
   (if $already != null then . else .hooks.PreToolUse += [{"matcher": "Bash", "hooks": [{"type": "command", "command": $cmd}]}] end) |
   ([.hooks.UserPromptSubmit[]? | .hooks[]?.command] | index($memory_cmd)) as $memory_already |
-  if $memory_already != null then .
-  else .hooks.UserPromptSubmit += [{"hooks": [{"type": "command", "command": $memory_cmd}]}]
-  end
+  (if $memory_already != null then . else .hooks.UserPromptSubmit += [{"hooks": [{"type": "command", "command": $memory_cmd}]}] end) |
+  ([.hooks.Stop[]? | .hooks[]?.command] | index($session_cmd)) as $session_already |
+  if $session_already != null then . else .hooks.Stop += [{"hooks": [{"type": "command", "command": $session_cmd}]}] end
 ' "$tmp_current" > "$tmp_new"
 
-if cmp -s "$tmp_current" "$tmp_new"; then
+if [[ -f "$instructions_file" ]]; then
+  cp "$instructions_file" "$tmp_instructions_current"
+else
+  : > "$tmp_instructions_current"
+  [[ "$DRY_RUN" -eq 1 ]] && echo "install-guards-codex: would create $instructions_file"
+fi
+
+if ! codex_memory_contract_strip "$tmp_instructions_current" "$tmp_instructions_new"; then
+  echo "install-guards-codex: malformed managed markers in $instructions_file — refusing to modify" >&2
+  exit 2
+fi
+codex_memory_contract_append "$tmp_instructions_new" "$memory_update_cmd_q"
+
+hooks_changed=0
+instructions_changed=0
+cmp -s "$tmp_current" "$tmp_new" || hooks_changed=1
+cmp -s "$tmp_instructions_current" "$tmp_instructions_new" || instructions_changed=1
+if [[ "$hooks_changed" -eq 0 && "$instructions_changed" -eq 0 ]]; then
   echo "install-guards-codex: already wired, nothing to do"
   exit 0
 fi
 
 if [[ "$DRY_RUN" -eq 1 ]]; then
-  echo "install-guards-codex: would apply the following change to $hooks_file:"
-  diff -u "$tmp_current" "$tmp_new" || true
+  if [[ "$hooks_changed" -eq 1 ]]; then
+    echo "install-guards-codex: would apply the following change to $hooks_file:"
+    diff -u "$tmp_current" "$tmp_new" || true
+  fi
+  if [[ "$instructions_changed" -eq 1 ]]; then
+    echo "install-guards-codex: would apply the following change to $instructions_file:"
+    diff -u "$tmp_instructions_current" "$tmp_instructions_new" || true
+  fi
   exit 0
 fi
 
 mkdir -p "$(dirname "$hooks_file")"
+mkdir -p "$(dirname "$instructions_file")"
 [[ -f "$hooks_file" ]] || printf '{}\n' > "$hooks_file"
 
-backup="$hooks_file.bak.$(date +%Y%m%d-%H%M%S)"
-cp "$hooks_file" "$backup"
-mv "$tmp_new" "$hooks_file"
+timestamp="$(date +%Y%m%d-%H%M%S)"
+if [[ "$hooks_changed" -eq 1 ]]; then
+  backup="$hooks_file.bak.$timestamp"
+  cp "$hooks_file" "$backup"
+  mv "$tmp_new" "$hooks_file"
+  echo "install-guards-codex: wrote $hooks_file"
+  echo "install-guards-codex: backup at $backup"
+fi
+if [[ "$instructions_changed" -eq 1 ]]; then
+  if [[ -f "$instructions_file" ]]; then
+    instructions_backup="$instructions_file.bak.$timestamp"
+    cp "$instructions_file" "$instructions_backup"
+    echo "install-guards-codex: backup at $instructions_backup"
+  fi
+  mv "$tmp_instructions_new" "$instructions_file"
+  echo "install-guards-codex: wrote $instructions_file"
+fi
 trap - EXIT
-echo "install-guards-codex: wrote $hooks_file"
-echo "install-guards-codex: backup at $backup"

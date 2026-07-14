@@ -10,6 +10,15 @@ PMCTL="$REPO_ROOT/cli/pmctl"
 . "$SCRIPT_DIR/lib/test-harness.sh"
 th_init "$@"
 
+# Operator memory/config is external state. Contract-only prepare cases run
+# against this checkout, so isolate both project-scoped config and legacy
+# CLAUDE_CONFIG_DIR discovery at suite scope. Individual continuity/config
+# cases opt into their own PM_MEMORY_DIR or fixture config explicitly.
+export PM_DISPATCH_CONFIG_FILE="$tmp_root/no-operator-config"
+export CLAUDE_CONFIG_DIR="$tmp_root/isolated-claude-config"
+mkdir -p "$CLAUDE_CONFIG_DIR/projects"
+unset PM_MEMORY_DIR PM_CFG_MEMORY_DIR PM_CFG_MEMORY_DIR_INVALID PM_CFG_MEMORY_CONFIG_STATUS
+
 # Preparation now reports repo-context freshness. Avoid mutating this checkout's
 # live derived DB in the many contract-only cases; dedicated fixture cases opt
 # back into refresh explicitly.

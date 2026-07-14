@@ -68,7 +68,9 @@ _doctor_host_claude_hook_present() {
     def managed_hook:
       (.command? // "") as $cmd |
       ($cmd | normalize_path) as $ncmd |
-      (($ncmd | split("/") | last) == $basename and ($ncmd | split("/") | .[-2]) == "scripts");
+      ($ncmd | sub(" --host (claude|codex|opencode|generic)$"; "")) as $path |
+      (($path | split("/") | last) == $basename and ($path | split("/") | .[-2]) == "scripts") and
+      (if $basename == "guard-session-summary.sh" then ($ncmd | endswith("guard-session-summary.sh --host claude")) else true end);
     ([
       ((.hooks // {}).PreToolUse[]? | (.hooks // [])[]? | select(managed_hook)),
       ((.hooks // {}).PostToolUse[]? | (.hooks // [])[]? | select(managed_hook)),

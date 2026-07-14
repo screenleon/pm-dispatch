@@ -185,6 +185,18 @@ map_path() {
   case "$path" in
     scripts/lib/test-result.sh|core/schema/test-result.schema.json)
       add_suite test-run-tests; behavioral=1 ;;
+    scripts/lib/pmctl-config.sh)
+      add_suite test-pmctl-dispatch; add_suite test-pmctl-memory; add_suite test-pmctl-context; behavioral=1 ;;
+    scripts/lib/memory.sh|scripts/lib/memory-dir.sh)
+      add_suite test-pmctl-memory; add_suite test-pmctl-context; add_suite test-migrate; add_suite test-guards; behavioral=1 ;;
+    scripts/lib/pmctl-memory-config.sh)
+      add_suite test-pmctl-memory; behavioral=1 ;;
+    scripts/install-guards-codex.sh|scripts/uninstall-guards-codex.sh|scripts/lib/doctor-host-codex.sh)
+      add_suite test-host-write-codex; add_suite test-doctor; behavioral=1 ;;
+    scripts/install-guards.sh|scripts/uninstall-guards.sh|scripts/lib/doctor-host-claude.sh)
+      add_suite test-install; add_suite test-doctor; behavioral=1 ;;
+    scripts/lint-scripts.sh)
+      add_suite lint-scripts; add_suite test-run-tests; behavioral=1 ;;
   esac
 
   case "$path" in
@@ -222,7 +234,7 @@ map_path() {
     README.md|CHANGELOG.md|docs/*)
       add_suite test-check-docs-freshness; behavioral=1 ;;
     .github/*)
-      add_suite lint-scripts ;;
+      add_suite lint-scripts; behavioral=1 ;;
   esac
 
   [[ "$behavioral" -eq 1 ]] || COVERAGE_GAPS["$path"]=1

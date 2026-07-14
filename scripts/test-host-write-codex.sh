@@ -141,6 +141,16 @@ test_host_manifest_declares_codex_write_modules() {
     && pass "$name" || fail "$name" "unexpected modules: install=$install_module uninstall=$uninstall_module"
 }
 
+test_host_manifest_declares_codex_memory_update_module() {
+  local name="host-manifest-declares-codex-memory-update-module"
+  should_run "$name" || return 0
+  local manifest module
+  manifest="$(host_manifest_file "$REPO_ROOT" codex)"
+  module="$(host_manifest_scalar "$manifest" memory_update_module)"
+  [[ "$module" == "hosts/codex/bin/memory-update.sh" && -x "$REPO_ROOT/$module" ]] \
+    && pass "$name" || fail "$name" "unexpected or non-executable module: $module"
+}
+
 test_host_write_dispatches_codex_from_manifest() {
   local name="host-write-dispatches-codex-from-manifest"
   should_run "$name" || return 0
@@ -216,10 +226,13 @@ test_install_guards_codex_wires_hook() {
   if jq -e '.hooks.PreToolUse[] | select(.matcher=="Bash") | .hooks[] | select(.command | endswith("hook-codex-command-guard.sh"))' \
       "$codex_home/hooks.json" >/dev/null 2>&1 \
     && jq -e '.hooks.UserPromptSubmit[] | .hooks[] | select(.command | endswith("guard-inject-memory.sh"))' \
-      "$codex_home/hooks.json" >/dev/null 2>&1; then
+      "$codex_home/hooks.json" >/dev/null 2>&1 \
+    && jq -e '.hooks.Stop[] | .hooks[] | select(.command | endswith("guard-session-summary.sh --host codex"))' \
+      "$codex_home/hooks.json" >/dev/null 2>&1 \
+    && grep -Fq 'pm-dispatch:codex-memory-contract:start' "$codex_home/AGENTS.md"; then
     pass "$name"
   else
-    fail "$name" "expected command guard and canonical-memory prompt hook in $codex_home/hooks.json"
+    fail "$name" "expected command, prompt, Stop, and AGENTS memory wiring"
   fi
 }
 
@@ -235,7 +248,45 @@ test_install_guards_codex_idempotent() {
   [[ "$before" == "$after" ]] \
     && [[ "$(jq '.hooks.PreToolUse | length' "$codex_home/hooks.json")" == "1" ]] \
     && [[ "$(jq '.hooks.UserPromptSubmit | length' "$codex_home/hooks.json")" == "1" ]] \
+    && [[ "$(jq '.hooks.Stop | length' "$codex_home/hooks.json")" == "1" ]] \
+    && [[ "$(grep -Fc 'pm-dispatch:codex-memory-contract:start' "$codex_home/AGENTS.md")" == "1" ]] \
     && pass "$name" || fail "$name" "re-running should not duplicate the managed hook entry"
+}
+
+test_codex_memory_update_writes_only_canonical_episode() {
+  local name="codex-memory-update-writes-only-canonical-episode"
+  should_run "$name" || return 0
+  local root="$tmp_root/memory-update" repo="$tmp_root/memory-update/repo"
+  local memory="$tmp_root/memory-update/canonical" native="$tmp_root/memory-update/native"
+  local marker="codex-canonical-marker-$RANDOM" native_before native_after out
+  mkdir -p "$repo" "$memory" "$native"
+  git -C "$repo" init -q
+  printf 'native sentinel\n' > "$native/note.md"
+  native_before="$(find "$native" -type f -exec sha256sum {} + | sort)"
+  out="$(PM_MEMORY_DIR="$memory" CODEX_HOME="$native" "$REPO_ROOT/hosts/codex/bin/memory-update.sh" \
+    --repo-root "$repo" --summary "$marker" --json)"
+  native_after="$(find "$native" -type f -exec sha256sum {} + | sort)"
+  if jq -e --arg marker "$marker" \
+      '.writer_host == "codex" and .authority == "canonical" and .episode.summary == $marker' <<<"$out" >/dev/null \
+    && jq -e --arg marker "$marker" 'select(.summary == $marker and .writer_host == "codex")' \
+      "$memory/episodes.jsonl" >/dev/null \
+    && [[ "$native_before" == "$native_after" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected one canonical Codex write and no native-memory change"
+  fi
+}
+
+test_codex_memory_update_invalid_explicit_fails_closed() {
+  local name="codex-memory-update-invalid-explicit-fails-closed"
+  should_run "$name" || return 0
+  local root="$tmp_root/memory-update-invalid" repo="$tmp_root/memory-update-invalid/repo" rc=0
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+  PM_MEMORY_DIR="$root/missing" "$REPO_ROOT/hosts/codex/bin/memory-update.sh" \
+    --repo-root "$repo" --summary "must not land" --json >/dev/null 2>&1 || rc=$?
+  [[ "$rc" -eq 3 && ! -e "$root/missing" ]] \
+    && pass "$name" || fail "$name" "expected invalid explicit path rc=3 and no write, got rc=$rc"
 }
 
 test_install_guards_codex_missing_manifest_target_errors() {
@@ -349,6 +400,45 @@ test_uninstall_guards_codex_preserves_unrelated_hook() {
     pass "$name"
   else
     fail "$name" "unrelated hook entry should survive uninstall"
+  fi
+}
+
+test_codex_agents_managed_block_preserves_foreign_content() {
+  local name="codex-agents-managed-block-preserves-foreign-content"
+  should_run "$name" || return 0
+  local codex_home="$tmp_root/agents-preserve/.codex"
+  mkdir -p "$codex_home"
+  printf '# Personal guidance\n\n- Keep this exact rule.\n' > "$codex_home/AGENTS.md"
+  CODEX_HOME="$codex_home" bash "$REPO_ROOT/scripts/install-guards-codex.sh" >/dev/null 2>&1
+  CODEX_HOME="$codex_home" bash "$REPO_ROOT/scripts/install-guards-codex.sh" >/dev/null 2>&1
+  CODEX_HOME="$codex_home" bash "$REPO_ROOT/scripts/uninstall-guards-codex.sh" >/dev/null 2>&1
+  if [[ "$(cat "$codex_home/AGENTS.md")" == $'# Personal guidance\n\n- Keep this exact rule.' ]]; then
+    pass "$name"
+  else
+    fail "$name" "foreign AGENTS.md content changed during install/uninstall"
+  fi
+}
+
+test_codex_agents_malformed_markers_fail_closed() {
+  local name="codex-agents-malformed-markers-fail-closed"
+  should_run "$name" || return 0
+  local codex_home="$tmp_root/agents-malformed/.codex"
+  local before="$tmp_root/agents-malformed.before"
+  local rc=0
+  mkdir -p "$codex_home"
+  printf '%s\n%s\n' \
+    '# Personal guidance' \
+    '<!-- pm-dispatch:codex-memory-contract:start -->' \
+    > "$codex_home/AGENTS.md"
+  cp "$codex_home/AGENTS.md" "$before"
+
+  CODEX_HOME="$codex_home" bash "$REPO_ROOT/scripts/install-guards-codex.sh" >/dev/null 2>&1 || rc=$?
+  if [[ "$rc" -eq 2 ]] \
+    && cmp -s "$before" "$codex_home/AGENTS.md" \
+    && [[ ! -e "$codex_home/hooks.json" ]]; then
+    pass "$name"
+  else
+    fail "$name" "malformed managed markers must fail before modifying AGENTS.md or hooks.json (rc=$rc)"
   fi
 }
 
@@ -574,6 +664,7 @@ test_host_manifest_scalar_ignores_list_map_field
 test_host_manifest_expand_path_uses_env_override
 test_host_manifest_expand_path_default_when_unset
 test_host_manifest_declares_codex_write_modules
+test_host_manifest_declares_codex_memory_update_module
 test_host_write_dispatches_codex_from_manifest
 test_host_write_dispatches_opencode_stage3
 test_install_generic_host_selector_wires_codex
@@ -581,11 +672,15 @@ test_install_unknown_host_fails_before_mutation
 test_install_guards_codex_dry_run_no_side_effect
 test_install_guards_codex_wires_hook
 test_install_guards_codex_idempotent
+test_codex_memory_update_writes_only_canonical_episode
+test_codex_memory_update_invalid_explicit_fails_closed
 test_install_guards_codex_missing_manifest_target_errors
 test_install_guards_codex_unknown_flag_rejected
 test_install_guards_codex_spaced_repo_root
 test_uninstall_guards_codex_removes_hook
 test_uninstall_guards_codex_preserves_unrelated_hook
+test_codex_agents_managed_block_preserves_foreign_content
+test_codex_agents_malformed_markers_fail_closed
 test_uninstall_guards_codex_preserves_in_repo_user_hook
 test_uninstall_guards_codex_preserves_same_basename_other_checkout
 test_uninstall_guards_codex_idempotent_when_absent

@@ -87,7 +87,7 @@ write_minimal_settings() {
     "PostToolUse": [],
     "Stop": [
       {"hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/guard-log-claude-usage.sh"}]},
-      {"hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/guard-session-summary.sh"}]}
+      {"hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/guard-session-summary.sh --host claude"}]}
     ],
     "UserPromptSubmit": [
       {"hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/guard-inject-memory.sh"}]},
@@ -113,7 +113,7 @@ write_stale_path_settings() {
     "PostToolUse": [],
     "Stop": [
       {"hooks": [{"type": "command", "command": "/fake/old-repo/scripts/guard-log-claude-usage.sh"}]},
-      {"hooks": [{"type": "command", "command": "/fake/old-repo/scripts/guard-session-summary.sh"}]}
+      {"hooks": [{"type": "command", "command": "/fake/old-repo/scripts/guard-session-summary.sh --host claude"}]}
     ],
     "UserPromptSubmit": [
       {"hooks": [{"type": "command", "command": "/fake/old-repo/scripts/guard-inject-memory.sh"}]},
@@ -139,7 +139,7 @@ write_sibling_prefix_settings() {
     "PostToolUse": [],
     "Stop": [
       {"hooks": [{"type": "command", "command": "${sibling}/scripts/guard-log-claude-usage.sh"}]},
-      {"hooks": [{"type": "command", "command": "${sibling}/scripts/guard-session-summary.sh"}]}
+      {"hooks": [{"type": "command", "command": "${sibling}/scripts/guard-session-summary.sh --host claude"}]}
     ],
     "UserPromptSubmit": [
       {"hooks": [{"type": "command", "command": "${sibling}/scripts/guard-inject-memory.sh"}]},
@@ -165,7 +165,7 @@ write_full_settings() {
     "PostToolUse": [],
     "Stop": [
       {"hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/guard-log-claude-usage.sh"}]},
-      {"hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/guard-session-summary.sh"}]}
+      {"hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/guard-session-summary.sh --host claude"}]}
     ],
     "UserPromptSubmit": [
       {"hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/guard-inject-memory.sh"}]},
@@ -1143,10 +1143,7 @@ case_doctor_codex_hooks_wired_tuple() {
   write_full_settings "$home"
   create_memory_dir_for_pwd "$home"
   write_manifest "$home"
-  mkdir -p "$home/.codex"
-  jq -n --arg cmd "$REPO_ROOT/scripts/hook-codex-command-guard.sh" \
-    '{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":$cmd}]}]}}' \
-    > "$home/.codex/hooks.json"
+  CODEX_HOME="$home/.codex" bash "$REPO_ROOT/scripts/install-guards-codex.sh" >/dev/null 2>&1
   path="$(make_stub_bin "$tmp_root/bin-codex-hooks-wired" claude codex)"
 
   out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
@@ -1331,10 +1328,7 @@ case_doctor_codex_manifest_parity_present_ok() {
   write_full_settings "$home"
   create_memory_dir_for_pwd "$home"
   write_manifest "$home"
-  mkdir -p "$home/.codex"
-  jq -n --arg cmd "$REPO_ROOT/scripts/hook-codex-command-guard.sh" \
-    '{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":$cmd}]}]}}' \
-    > "$home/.codex/hooks.json"
+  CODEX_HOME="$home/.codex" bash "$REPO_ROOT/scripts/install-guards-codex.sh" >/dev/null 2>&1
   path="$(make_stub_bin "$tmp_root/bin-codex-parity-present" claude codex)"
 
   out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
@@ -1622,7 +1616,7 @@ case_doctor_windows_path_hooks_present() {
     "PostToolUse": [],
     "Stop": [
       {"hooks": [{"type": "command", "command": "C:\\pm-dispatch\\scripts\\guard-log-claude-usage.sh"}]},
-      {"hooks": [{"type": "command", "command": "C:\\pm-dispatch\\scripts\\guard-session-summary.sh"}]}
+      {"hooks": [{"type": "command", "command": "C:\\pm-dispatch\\scripts\\guard-session-summary.sh --host claude"}]}
     ],
     "UserPromptSubmit": [
       {"hooks": [{"type": "command", "command": "C:\\pm-dispatch\\scripts\\guard-inject-memory.sh"}]},
@@ -1672,7 +1666,7 @@ case_doctor_windows_path_hooks_stale() {
     "PostToolUse": [],
     "Stop": [
       {"hooks": [{"type": "command", "command": "C:\\other-repo\\scripts\\guard-log-claude-usage.sh"}]},
-      {"hooks": [{"type": "command", "command": "C:\\other-repo\\scripts\\guard-session-summary.sh"}]}
+      {"hooks": [{"type": "command", "command": "C:\\other-repo\\scripts\\guard-session-summary.sh --host claude"}]}
     ],
     "UserPromptSubmit": [
       {"hooks": [{"type": "command", "command": "C:\\other-repo\\scripts\\guard-inject-memory.sh"}]},
@@ -1894,7 +1888,7 @@ case_doctor_claude_config_dir() {
   local config_dir="$tmp_root/config-dir-valid"
   mkdir -p "$home_bare"
   mkdir -p "$config_dir/.pm-dispatch"
-  printf '{\n  "hooks": {\n    "PreToolUse": [\n      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "%s/scripts/guard-pm-write.sh"}]},\n      {"matcher": "Bash",       "hooks": [{"type": "command", "command": "%s/adapters/codex/bash-guard.sh"}]}\n    ],\n    "PostToolUse": [],\n    "Stop": [\n      {"hooks": [{"type": "command", "command": "%s/scripts/guard-log-claude-usage.sh"}]},\n      {"hooks": [{"type": "command", "command": "%s/scripts/guard-session-summary.sh"}]}\n    ],\n    "UserPromptSubmit": [\n      {"hooks": [{"type": "command", "command": "%s/scripts/guard-inject-memory.sh"}]},\n      {"hooks": [{"type": "command", "command": "%s/scripts/guard-inject-context.sh"}]}\n    ]\n  },\n  "statusLine": {"command": "%s/scripts/guard-save-rate-limits.sh"}\n}\n' \
+  printf '{\n  "hooks": {\n    "PreToolUse": [\n      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "%s/scripts/guard-pm-write.sh"}]},\n      {"matcher": "Bash",       "hooks": [{"type": "command", "command": "%s/adapters/codex/bash-guard.sh"}]}\n    ],\n    "PostToolUse": [],\n    "Stop": [\n      {"hooks": [{"type": "command", "command": "%s/scripts/guard-log-claude-usage.sh"}]},\n      {"hooks": [{"type": "command", "command": "%s/scripts/guard-session-summary.sh --host claude"}]}\n    ],\n    "UserPromptSubmit": [\n      {"hooks": [{"type": "command", "command": "%s/scripts/guard-inject-memory.sh"}]},\n      {"hooks": [{"type": "command", "command": "%s/scripts/guard-inject-context.sh"}]}\n    ]\n  },\n  "statusLine": {"command": "%s/scripts/guard-save-rate-limits.sh"}\n}\n' \
     "$REPO_ROOT" "$REPO_ROOT" \
     "$REPO_ROOT" "$REPO_ROOT" "$REPO_ROOT" "$REPO_ROOT" "$REPO_ROOT" > "$config_dir/settings.json"
   # Add abs-path allowlist entries for all dispatch scripts directly into config_dir.

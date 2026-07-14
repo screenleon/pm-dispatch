@@ -13,11 +13,19 @@ if ! declare -F pm_config_load >/dev/null 2>&1; then
   . "$(dirname "${BASH_SOURCE[0]}")/pmctl-config.sh" 2>/dev/null || true
 fi
 
+if ! declare -F _sw_worktree_project_key >/dev/null 2>&1; then
+  # shellcheck source=scripts/lib/state-paths.sh
+  # shellcheck disable=SC1091
+  . "$(dirname "${BASH_SOURCE[0]}")/state-paths.sh" 2>/dev/null || true
+fi
+
 # Installer/migrator callers support the routing log directory override.
 # Hook callers source memory.sh directly and must NOT inherit this routing-specific
 # behavior; they always use project memory from CLAUDE_CONFIG_DIR.
 find_memory_dir() {
-  declare -F pm_config_load >/dev/null 2>&1 && [[ -z "${PM_CFG_MEMORY_DIR:-}" ]] && pm_config_load
+  local cwd="$1" project_key=""
+  declare -F pm_config_project_key >/dev/null 2>&1 && project_key="$(pm_config_project_key "$cwd" 2>/dev/null || true)"
+  declare -F pm_config_load >/dev/null 2>&1 && pm_config_load "$project_key"
   local override
   if override="$(_pm_memory_dir_override)"; then
     printf '%s' "$override"; return 0
@@ -26,7 +34,6 @@ find_memory_dir() {
   if [[ -n "$routing_dir" && -d "$routing_dir" ]]; then
     printf '%s' "$routing_dir"; return 0
   fi
-  local cwd="$1"
   local config_dir="${2:-${CLAUDE_CONFIG_DIR:-${HOME}/.claude}}"
   local projects_dir current candidate parent
   projects_dir="$config_dir/projects"

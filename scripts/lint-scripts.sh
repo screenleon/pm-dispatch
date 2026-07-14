@@ -1,30 +1,42 @@
 #!/usr/bin/env bash
-# Validate hygiene of every scripts/*.sh:
-#   - file is executable (mode +x)
+# Validate hygiene of shell entrypoints and host-owned shell modules:
+#   - entrypoints are executable (mode +x)
 #   - first line is a shebang (#!...)
 #   - parses cleanly under `bash -n`
-#   - declares `set -uo pipefail` or `set -euo pipefail` near the top
+#   - entrypoints declare `set -uo pipefail` or `set -euo pipefail` near the top
+#
+# Stable scan roots:
+#   scripts/*.sh             shared entrypoints
+#   hosts/*/bin/*.sh         host-owned entrypoints
+#   hosts/*/lib/*.sh         sourced host modules (not required to be +x or
+#                            change their caller's shell options)
 #
 # Exit 0 if all clean; 1 if any violation.
 
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
-scripts_dir="$repo_root/scripts"
-
-if [ ! -d "$scripts_dir" ]; then
-  echo "lint-scripts: $scripts_dir not found" >&2
+if [ ! -d "$repo_root/scripts" ] || [ ! -d "$repo_root/hosts" ]; then
+  echo "lint-scripts: expected scripts/ and hosts/ under $repo_root" >&2
   exit 2
 fi
 
 violations=0
 checked=0
-for f in "$scripts_dir"/*.sh; do
+shopt -s nullglob
+files=(
+  "$repo_root"/scripts/*.sh
+  "$repo_root"/hosts/*/bin/*.sh
+  "$repo_root"/hosts/*/lib/*.sh
+)
+shopt -u nullglob
+
+for f in "${files[@]}"; do
   [ -e "$f" ] || continue
   checked=$((checked + 1))
-  name="$(basename "$f")"
+  name="${f#"$repo_root"/}"
 
-  if [ ! -x "$f" ]; then
+  if [[ "$name" != hosts/*/lib/*.sh ]] && [ ! -x "$f" ]; then
     echo "FAIL: $name not executable (chmod +x)" >&2
     violations=$((violations + 1))
   fi
@@ -44,10 +56,12 @@ for f in "$scripts_dir"/*.sh; do
     violations=$((violations + 1))
   fi
 
-  # Look for `set -...` in the first 50 lines; require at least one of -u/-e/-o.
-  set_line="$(head -n50 "$f" | grep -E '^set -[a-z]+( pipefail)?$' || true)"
-  if [ -z "$set_line" ]; then
-    echo "WARN: $name has no \`set -uo pipefail\`-style line in first 50 lines" >&2
+  # Sourced libraries inherit their caller's strict mode and must not mutate it.
+  if [[ "$name" != hosts/*/lib/*.sh ]]; then
+    set_line="$(head -n50 "$f" | grep -E '^set -[a-z]+( pipefail)?$' || true)"
+    if [ -z "$set_line" ]; then
+      echo "WARN: $name has no \`set -uo pipefail\`-style line in first 50 lines" >&2
+    fi
   fi
 done
 
@@ -61,4 +75,4 @@ if [ "$checked" -eq 0 ]; then
   exit 1
 fi
 
-echo "lint-scripts: OK ($checked script files checked)"
+echo "lint-scripts: OK ($checked shell files checked)"

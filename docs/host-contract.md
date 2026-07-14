@@ -67,6 +67,7 @@ the tracker's data location is a separate state-store concern.
 | `doctor_module` | yes | Repo-relative path to the sourceable doctor host module; must exist. |
 | `install_module` | no (v1 compatibility) | Repo-relative path to an opt-in host wiring module, or `null`/omitted when the host is installed by the legacy base path or has no independent write path yet. Generic dispatchers use this field instead of naming hosts in core. New authored manifests should include it explicitly. |
 | `uninstall_module` | yes | Repo-relative path to the matching opt-in teardown module, or `null` when no independently dispatched write path exists. |
+| `memory_update_module` | no | Repo-relative host-owned executable for explicit natural-language project-memory updates. It must delegate location and writes to the canonical `pmctl memory append-episode` API and must not accept a host-private memory path. |
 
 ### `install_targets` entries
 
@@ -86,6 +87,9 @@ Closed enum; adding a value is a schema revision, not a per-host improvisation:
   shape as Claude Code `settings.json` (probed: codex reads this file, not a
   `config.toml` section).
 - `codex-config-toml` — codex `config.toml` (approval/sandbox policy).
+- `codex-agents-md` — marker-delimited global guidance in
+  `$CODEX_HOME/AGENTS.md`; installers own only their marked block and must
+  preserve all foreign content byte-for-byte outside that block.
 - `opencode-config-json` — `opencode.json` declarative permission config.
 - `markdown-managed-block` — owned marker-delimited block inside a Markdown file.
 - `symlink-tree` — directory wired as symlinks back into the repo.
