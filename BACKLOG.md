@@ -32,6 +32,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-484 | ✅ done | JapanJob 與 qa-testing-rules 的 `pmctl context` refresh 未生效：重現 session/index/update/pack 實際路徑、repo-root/project-key/DB freshness，補跨 repo live E2E 與 actionable diagnostics | ops/memory | 2026-07-13 | feedback:2026-07-13 | P1 | retrieval |
 | CC-485 | ✅ done | 工具能力與維護者政策分離：通用 gate/test/PM 不規定使用流程；affected feedback 僅屬開發/PR，pm-dispatch release 固定由 `release-verify.sh --e2e`（內含 fresh full suite）+ checklist 驗收 | arch/process | 2026-07-13 | pr:#398 | P3 | design |
 | CC-486 | ⏸ deferred | direct-impact test planner mapping 提前退出：changed path 含 `agents/*.md`／`commands/*.md` 時 `map_path` 呼叫未註冊的 `lint-frontmatter`，`add_suite` 回傳 1 並在 `set -e` 下無輸出終止，導致 `run-tests.sh --base ... --list` exit 1 | ops/test | 2026-07-13 | feedback:2026-07-13 | P2 | hygiene |
+| CC-487 | 🔵 active | GitHub Actions `test-guards` 非確定性掛起：逐 case breadcrumb + bounded background writer/wait + orphan cleanup，避免 main CI 無輸出佔用 runner 近一小時 | ops/test | 2026-07-14 | feedback:2026-07-14 | P1 | hygiene |
 | CC-465 | 🔵 active | memory/context 關鍵詞管線 CJK 支援：抽出共用零依賴斷詞 lib，取代三處各自 ASCII-only 抽詞；工作序列起點（465→467→468→466）（2026-07-07 記憶系統深入分析） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-466 | 🔵 active | 記憶卡片生命週期閉環：expires_at 執行 + 關窗式 supersede + usage sidecar 休眠偵測 + doctor→distill 接線；排在 CC-467 之後（需其遙測為前置）（2026-07-07 記憶系統分析 + 外部研究 Graphiti/mcp-memory-service） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-467 | 🔵 active | `pmctl memory stats`：注入效益可視化（唯讀聚合器）——注入 bytes/卡片命中分佈/從未命中卡/episode 填寫率，回答「記憶有跟沒有差在哪」；排在 CC-466 之前（2026-07-07；業界僅離線 recall 評測，無 per-injection 遙測） | DX/memory | 2026-07-07 | — | P2 | retrieval |
@@ -651,6 +652,26 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Acceptance**: 未註冊的 optional mapping 不得讓 planner 提前退出；應修正 mapping 名稱或讓 `add_suite` 明確 return 0，並新增包含 agent/command changed path 的 regression，確認 `--list` 輸出已選 suites、coverage gaps 與 exit 0。不得藉此弱化「沒有任何可用 suite 時 exit 2」的既有契約。
 
 **Evidence**: CC-483 收尾時以 `bash -x scripts/run-tests.sh --base origin/main --list` 重現；trace 停在 `add_suite lint-frontmatter` 的 `[[ -n '' ]]`。同一批 CC-483 focused suites與 lint 均綠，故此項獨立追蹤，不視為 CC-483 產品 regression。
+
+---
+
+## CC-487 — GitHub Actions `test-guards` 非確定性掛起與 bounded diagnostics 🔵 active
+
+**Problem**: main SHA `0b66f1f` 的 GitHub Actions run `29298816362` 中，`test-guards` job 從 2026-07-14 01:32:51Z 執行至 02:30:38Z，停留在 `== guard-inject-memory ==` 後沒有更多輸出，最後由使用者手動取消。runner cleanup 記錄兩個殘留 `bash` process。該區段不只包含 inject hook，亦包含 `memory-usage/concurrent-no-lost-updates` 與 `memory-usage/contention-matrix-flock-and-mkdir-fallback` 等背景 writer／`wait` 測試；CI 未啟用逐 case breadcrumb，現有 artifact 無法確定是哪一個 case 或 process 未收斂。
+
+**Boundary**: 目前不能把這次取消判定為 canonical-memory 產品 regression。相同程式碼在乾淨 HOME 的本機完整 `scripts/test-guards.sh` 為 296/296，inject/context 範圍 50/50；contention matrix 連跑 12 次、concurrent update 連跑 20 次均通過。這是一張獨立 repo-wide CI hardening 票，不混入 CC-483、CC-486 或 maintainer workflow 內容。
+
+**Requirement**:
+1. GitHub Actions 的直接 `test-guards` job 必須輸出 `RUNNING test-guards/<case>`，取消或逾時時能從 log 唯一定位 active case。
+2. 對含背景 writer／FIFO／`wait` 的 guard concurrency cases 加 case-level deadline、TERM→KILL 與 `EXIT` cleanup；任一 writer 失敗或未退出時輸出 backend、round、writer id、PID、lock state 與已完成計數，不得無界等待。
+3. 對直接 CI job 加整體上限，且上限必須大於正常完整 suite 的合理波動、遠小於 57 分鐘；timeout 必須保留最後 case breadcrumb 與診斷，而非只留下 group heading。
+4. 使用接近 GitHub `ubuntu-24.04` runner 的乾淨 HOME/PATH 重跑完整 suite 與 contention stress；不得靠放寬正確性斷言、降低 writer 數或跳過 mkdir fallback 來讓測試變綠。
+
+**Acceptance**: (a) 正常 CI `test-guards` 完整通過；(b) 人工注入一個不退出 writer 時，在 bounded deadline 內非零結束、指出精確 case/writer 並清除所有 child process；(c) 不再可能讓單一 guard case 無輸出佔用 runner 近一小時；(d) focused contention stress、完整 `scripts/test-guards.sh`、`scripts/test-run-all-tests.sh` 與 `git diff --check` 全綠。
+
+**Evidence**: GitHub Actions run `29298816362`, job `86978053691`；本機乾淨環境完整 296/296 通過，故根因仍需以新增 breadcrumb／bounded diagnostics 捕捉，不能從單次取消紀錄過度推論。
+
+**Dependencies**: 承接 [[CC-477]] 已完成的 lock protocol 與 runner breadcrumbs；本票只處理仍存在的 CI hang 可診斷性與 bounded lifecycle。
 
 ---
 

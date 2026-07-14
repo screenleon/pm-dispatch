@@ -194,11 +194,11 @@ map_path() {
       for suite in "${!REGISTERED[@]}"; do [[ "$suite" == test-pmctl-* ]] && add_suite "$suite"; done
       behavioral=1 ;;
     agents/*.md)
-      add_suite lint-agents; add_suite lint-frontmatter; behavioral=1 ;;
+      add_suite lint-agents; add_suite test-lint-frontmatter; behavioral=1 ;;
     commands/*.md)
-      add_suite lint-frontmatter; add_suite test-commands; behavioral=1 ;;
+      add_suite test-lint-frontmatter; add_suite test-commands; behavioral=1 ;;
     skills/*)
-      add_suite lint-frontmatter; add_suite test-commands; behavioral=1 ;;
+      add_suite test-lint-frontmatter; add_suite test-commands; behavioral=1 ;;
     adapters/claude/*)
       add_suite test-claude-dispatch; add_suite test-executor-router; add_suite test-runner-kind; behavioral=1 ;;
     adapters/codex/*)

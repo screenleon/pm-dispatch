@@ -402,6 +402,80 @@ should_run "using-git-worktrees: no CC ticket references" && assert_not_contains
 # ── ship.md contract ─────────────────────────────────────────────────────────
 
 SHIP="$COMMANDS_DIR/ship.md"
+PR_GATE="$COMMANDS_DIR/pr-gate.md"
+
+extract_pr_gate_bash_fence() {
+  local output="$1"
+  awk '
+    /^```bash$/ && !inside { inside=1; block=""; next }
+    inside && /^```$/ {
+      if (block ~ /RAW_ARGS=/) { printf "%s", block; exit }
+      inside=0
+      next
+    }
+    inside { block=block $0 ORS }
+  ' "$PR_GATE" > "$output"
+}
+
+pr_gate_fence_syntax() {
+  local name="pr-gate: argument parser bash fence parses"
+  should_run "$name" || return 0
+  local snippet="$tmp_root/pr-gate-fence-syntax.sh"
+  extract_pr_gate_bash_fence "$snippet"
+  if [[ -s "$snippet" ]] && bash -n "$snippet"; then
+    pass "$name"
+  else
+    fail "$name" "first bash fence is empty or has invalid syntax"
+  fi
+}
+pr_gate_fence_syntax
+
+pr_gate_fence_executor_model_behavior() {
+  local name="pr-gate: executor and model parser behavior"
+  should_run "$name" || return 0
+  local case_dir="$tmp_root/pr-gate-fence-behavior"
+  local snippet="$case_dir/snippet.sh" bin_dir="$case_dir/bin"
+  local args_log="$case_dir/args.log" out="$case_dir/out" err="$case_dir/err"
+  local valid_status invalid_status missing_executor_status missing_model_status default_status
+  mkdir -p "$bin_dir"
+  extract_pr_gate_bash_fence "$snippet"
+  cat > "$bin_dir/pmctl" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$@" > "${PR_GATE_ARGS_LOG:?}"
+STUB
+  chmod +x "$bin_dir/pmctl"
+
+  ARGUMENTS="--executor claude --model claude-sonnet-5" \
+    PR_GATE_ARGS_LOG="$args_log" PATH="$bin_dir:$PATH" bash "$snippet" > "$out" 2> "$err"
+  valid_status=$?
+  rm -f "$args_log"
+
+  ARGUMENTS="--executor invalid" PR_GATE_ARGS_LOG="$args_log" PATH="$bin_dir:$PATH" \
+    bash "$snippet" > "$out" 2> "$err"
+  invalid_status=$?
+  ARGUMENTS="--executor" PR_GATE_ARGS_LOG="$args_log" PATH="$bin_dir:$PATH" \
+    bash "$snippet" > "$out" 2> "$err"
+  missing_executor_status=$?
+  ARGUMENTS="--executor claude --model" PR_GATE_ARGS_LOG="$args_log" PATH="$bin_dir:$PATH" \
+    bash "$snippet" > "$out" 2> "$err"
+  missing_model_status=$?
+  ARGUMENTS="" PR_GATE_ARGS_LOG="$args_log" PATH="$bin_dir:$PATH" \
+    bash "$snippet" > "$out" 2> "$err"
+  default_status=$?
+
+  ARGUMENTS="--executor claude --model claude-sonnet-5" \
+    PR_GATE_ARGS_LOG="$args_log" PATH="$bin_dir:$PATH" bash "$snippet" > "$out" 2> "$err"
+  if [[ "$valid_status" -eq 0 && "$invalid_status" -eq 2 &&
+        "$missing_executor_status" -eq 2 && "$missing_model_status" -eq 2 &&
+        "$default_status" -eq 2 ]] &&
+     grep -qx -- '--executor' "$args_log" && grep -qx 'claude' "$args_log" &&
+     grep -qx -- '--model' "$args_log" && grep -qx 'claude-sonnet-5' "$args_log"; then
+    pass "$name"
+  else
+    fail "$name" "statuses valid=$valid_status invalid=$invalid_status missing_executor=$missing_executor_status missing_model=$missing_model_status default=$default_status"
+  fi
+}
+pr_gate_fence_executor_model_behavior
 
 assert_frontmatter "ship: frontmatter valid" "$SHIP"
 should_run "ship: scoped to a single named ticket per invocation" && assert_file_contains "ship: scoped to a single named ticket per invocation" "$SHIP" "one ticket per invocation" && pass "ship: scoped to a single named ticket per invocation"
@@ -425,13 +499,34 @@ should_run "ship: dirty tree aborts fail-fast, does not auto-mutate" && assert_f
 should_run "ship: dirty-tree abort is not the negotiated stop" && assert_file_contains "ship: dirty-tree abort is not the negotiated stop" "$SHIP" "not the negotiated stop this command reserves" && pass "ship: dirty-tree abort is not the negotiated stop"
 # implementation stays main-thread, not dispatched
 should_run "ship: implementation is not dispatched to an executor" && assert_file_contains "ship: implementation is not dispatched to an executor" "$SHIP" "to codex/claude/opencode" && pass "ship: implementation is not dispatched to an executor"
+# pre-gate maintainability checkpoint
+should_run "ship: has refactor/reuse audit before first gate" && assert_file_contains "ship: has refactor/reuse audit before first gate" "$SHIP" "Step 2.5 — Refactor/reuse audit" && assert_file_contains "ship: has refactor/reuse audit before first gate" "$SHIP" "before the first PR gate" && pass "ship: has refactor/reuse audit before first gate"
+if should_run "ship: refactor/reuse audit section precedes gate section"; then
+  ship_audit_line=$(grep -n '^## Step 2\.5 — Refactor/reuse audit$' "$SHIP" | cut -d: -f1)
+  ship_gate_line=$(grep -n '^## Step 3 — Gate loop$' "$SHIP" | cut -d: -f1)
+  if [[ -n "$ship_audit_line" && -n "$ship_gate_line" && "$ship_audit_line" -lt "$ship_gate_line" ]]; then
+    pass "ship: refactor/reuse audit section precedes gate section"
+  else
+    fail "ship: refactor/reuse audit section precedes gate section" "audit_line=$ship_audit_line gate_line=$ship_gate_line"
+  fi
+fi
+should_run "ship: audit inspects actual diff and existing helpers" && assert_file_contains "ship: audit inspects actual diff and existing helpers" "$SHIP" "actual diff" && assert_file_contains "ship: audit inspects actual diff and existing helpers" "$SHIP" "existing helpers" && pass "ship: audit inspects actual diff and existing helpers"
+should_run "ship: audit rejects speculative abstraction" && assert_file_contains "ship: audit rejects speculative abstraction" "$SHIP" "do not introduce speculative abstractions" && pass "ship: audit rejects speculative abstraction"
+should_run "ship: initial audit records changed or no-change result" && assert_file_contains "ship: initial audit records changed or no-change result" "$SHIP" "CHANGED:" && assert_file_contains "ship: initial audit records changed or no-change result" "$SHIP" "PASS: no warranted refactor/reuse change" && pass "ship: initial audit records changed or no-change result"
+should_run "ship: structural gate fixes require re-audit" && assert_file_contains "ship: structural gate fixes require re-audit" "$SHIP" "Re-run the refactor/reuse audit" && assert_file_contains "ship: structural gate fixes require re-audit" "$SHIP" "layer boundary" && pass "ship: structural gate fixes require re-audit"
+should_run "ship: localized gate fixes may skip re-audit with reason" && assert_file_contains "ship: localized gate fixes may skip re-audit with reason" "$SHIP" "Skip the re-audit with a recorded reason" && assert_file_contains "ship: localized gate fixes may skip re-audit with reason" "$SHIP" "localized corrections" && pass "ship: localized gate fixes may skip re-audit with reason"
+should_run "ship: uses affected tests before first gate" && assert_file_contains "ship: uses affected tests before first gate" "$SHIP" "scripts/run-tests.sh --base <base-ref>" && assert_file_contains "ship: uses affected tests before first gate" "$SHIP" 'Do not run `run-all-tests.sh` before the first PR gate' && pass "ship: uses affected tests before first gate"
+should_run "ship: runs authoritative full suite only after GO" && assert_file_contains "ship: runs authoritative full suite only after GO" "$SHIP" "Only after PR-gate returns GO" && assert_file_contains "ship: runs authoritative full suite only after GO" "$SHIP" "bash scripts/run-all-tests.sh" && pass "ship: runs authoritative full suite only after GO"
+should_run "ship: diff-caused full failure returns through targeted review" && assert_file_contains "ship: diff-caused full failure returns through targeted review" "$SHIP" "full suite finds a diff-caused failure" && assert_file_contains "ship: diff-caused full failure returns through targeted review" "$SHIP" "return to the targeted" && pass "ship: diff-caused full failure returns through targeted review"
 # gate loop contract
-should_run "ship: invokes pmctl gate run --executor codex for review" && assert_file_contains "ship: invokes pmctl gate run --executor codex for review" "$SHIP" "pmctl gate run --executor codex" && pass "ship: invokes pmctl gate run --executor codex for review"
+should_run "ship: delegates model selection policy" && assert_file_contains "ship: delegates model selection policy" "$SHIP" "gate model diversity policy" && assert_file_contains "ship: delegates model selection policy" "$SHIP" "actual model identities" && pass "ship: delegates model selection policy"
+should_run "pr-gate: delegates model selection policy" && assert_file_contains "pr-gate: delegates model selection policy" "$PR_GATE" "gate model diversity policy" && assert_file_contains "pr-gate: delegates model selection policy" "$PR_GATE" "actual model identities" && pass "pr-gate: delegates model selection policy"
+should_run "review-model: selects by model not host or adapter" && assert_file_contains "review-model: selects by model not host or adapter" "$REPO_ROOT/docs/review-model.md" "actual primary" && assert_file_contains "review-model: selects by model not host or adapter" "$REPO_ROOT/docs/review-model.md" "host names are not reliable model" && assert_file_contains "review-model: selects by model not host or adapter" "$REPO_ROOT/docs/review-model.md" "OpenCode can" && pass "review-model: selects by model not host or adapter"
 should_run "ship: never invokes pr-gate.sh directly" && assert_file_contains "ship: never invokes pr-gate.sh directly" "$SHIP" "never \`bash scripts/pr-gate.sh\` directly" && pass "ship: never invokes pr-gate.sh directly"
 if should_run "ship: every gate invocation uses --lifecycle foreground"; then
   ship_flat=$(tr '\n' ' ' < "$SHIP" | tr -s ' ')
-  ship_gate_calls=$(grep -oE 'pmctl gate run --executor codex' <<< "$ship_flat" | wc -l)
-  ship_foreground_calls=$(grep -oE 'pmctl gate run --executor codex[^`]*--lifecycle foreground' <<< "$ship_flat" | wc -l)
+  ship_gate_calls=$(grep -oE 'pmctl gate run --executor <gate_executor>' <<< "$ship_flat" | wc -l)
+  ship_foreground_calls=$(grep -oE 'pmctl gate run --executor <gate_executor>[^`]*--lifecycle foreground' <<< "$ship_flat" | wc -l)
   if [[ "$ship_gate_calls" -gt 0 && "$ship_gate_calls" -eq "$ship_foreground_calls" ]]; then
     pass "ship: every gate invocation uses --lifecycle foreground"
   else
@@ -443,6 +538,7 @@ should_run "ship: reads Final GO/NO-GO verdict" && assert_file_contains "ship: r
 should_run "ship: NO-GO fixes every finding not only blocking ones" && assert_file_contains "ship: NO-GO fixes every finding not only blocking ones" "$SHIP" "the blocking ones" && pass "ship: NO-GO fixes every finding not only blocking ones"
 should_run "ship: re-runs gate with --reviewers targeting" && assert_file_contains "ship: re-runs gate with --reviewers targeting" "$SHIP" "--reviewers <reviewer,...>" && pass "ship: re-runs gate with --reviewers targeting"
 should_run "ship: references project-pm Rules A/B synthesis" && assert_file_contains "ship: references project-pm Rules A/B synthesis" "$SHIP" "Rules A/B" && pass "ship: references project-pm Rules A/B synthesis"
+should_run "project-pm: classifies refactor/reuse recheck after gate fixes" && assert_file_contains "project-pm: classifies refactor/reuse recheck after gate fixes" "$PROJECT_PM" "refactor_reuse_recheck: required" && assert_file_contains "project-pm: classifies refactor/reuse recheck after gate fixes" "$PROJECT_PM" "refactor_reuse_recheck: skip" && pass "project-pm: classifies refactor/reuse recheck after gate fixes"
 # exactly two stop conditions, no more
 should_run "ship: stop condition heading enumerates the loop's halt cases" && assert_file_contains "ship: stop condition heading enumerates the loop's halt cases" "$SHIP" "Stop the loop only when" && pass "ship: stop condition heading enumerates the loop's halt cases"
 if should_run "ship: exactly one genuine wait-for-user-direction path"; then
