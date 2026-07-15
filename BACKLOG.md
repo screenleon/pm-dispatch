@@ -28,6 +28,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-493 | 🟢 someday | Prompt→Skill→Command→Harness 升級規則文件化：可測試的分類判準（何時停在 prompt、何時升為 skill、何時做成 command、何時需要 harness-level hook/guard/state），並盤點 `commands/`／`skills/`／`agents/` 現況對照分類（2026-07-15 CC-489 三方 multi-model synthesis） | process/docs | 2026-07-15 | feedback:2026-07-15 | P2 | design |
 | CC-494 | 🟢 someday | design: executor 局部設計裁量權 envelope——在 dispatch brief / executor contract 定義「可自行處理的局部設計」與「必須 halt 回報 PM」的邊界（例如新增 schema 欄位 `design_latitude`/`architectural_conflicts`）；三方 multi-model synthesis 2:1 分歧（codex/fable 認為現行邊界過度僵硬需要新機制，opencode 認為現行 `isolation_level`/executor 欄位已足夠彈性），本票僅追蹤決策、不預設結論（2026-07-15） | schema/process | 2026-07-15 | feedback:2026-07-15 | P3 | design |
 | CC-495 | 🔵 active | `pmctl dispatch cancel <run_id>`：detached run 中途終止機制。`core/policy/dispatch-states.yaml` 已定義 `cancelled` 為合法 terminal state 且無任何 code path 寫入；`.supervisor.pid` 存在但未被任何 pmctl 子命令讀取；使用者目前唯一手段是手動 kill pid，無文件、可能留孤兒 process、無 `run.cancelled` event（2026-07-15 使用者發現 executor 缺乏可終止行為） | arch/gate | 2026-07-15 | feedback:2026-07-15 | P2 | design |
+| CC-496 | 🔵 active | Codex command guard 的單次 bypass transport 修復：提示建議 `PM_GUARD_PM_BASH=off`，但 inline assignment 在 PreToolUse hook 前尚未進入環境，導致已確認風險的 branch cleanup 仍被攔截 | ops | 2026-07-15 | feedback:2026-07-15 | P1 | hygiene |
 | CC-465 | 🔵 active | memory/context 關鍵詞管線 CJK 支援：抽出共用零依賴斷詞 lib，取代三處各自 ASCII-only 抽詞；工作序列起點（465→467→468→466）（2026-07-07 記憶系統深入分析） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-466 | 🔵 active | 記憶卡片生命週期閉環：expires_at 執行 + 關窗式 supersede + usage sidecar 休眠偵測 + doctor→distill 接線；排在 CC-467 之後（需其遙測為前置）（2026-07-07 記憶系統分析 + 外部研究 Graphiti/mcp-memory-service） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-467 | 🔵 active | `pmctl memory stats`：注入效益可視化（唯讀聚合器）——注入 bytes/卡片命中分佈/從未命中卡/episode 填寫率，回答「記憶有跟沒有差在哪」；排在 CC-466 之前（2026-07-07；業界僅離線 recall 評測，無 per-injection 遙測） | DX/memory | 2026-07-07 | — | P2 | retrieval |
@@ -1597,3 +1598,17 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 **Source**: 2026-07-15 使用者在 CC-489 三方 multi-model synthesis 收斂後，回想起「pmctl executor 相關內容目前沒有停止的行為」並要求確認；經 grep `core/policy/dispatch-states.yaml`、`core/schema/run.schema.json`、`scripts/lib/pmctl-dispatch.sh` 確認 `cancelled` 狀態存在於 schema 但無任何實作，`.supervisor.pid` 未被任何子命令消費。使用者明確要求以 `cancel`（而非 `stop`）作為指令名稱，理由是中途終止的 run 不具備可恢復語意。
 
 **Cross-link**: [[CC-470]]（既有逾時止血 kill 機制可沿用）、[[CC-487]]（孤兒 process 殘留的既有觀察案例）、[[CC-489]]（三方 multi-model synthesis 脈絡）、`docs/executor-contract.md`。
+
+## CC-496 — Codex command guard 單次 bypass transport 修復 🔵 active
+
+**Problem**: `guard-pm-bash.sh` 的 deny message 指示在確認風險後使用 `PM_GUARD_PM_BASH=off` 做 one-turn bypass，但 Codex `PreToolUse` hook 會在 Bash 解讀 command-local environment assignment 前執行。實際輸入 `PM_GUARD_PM_BASH=off git branch -D ...` 時，hook process 看不到該變數，仍會拒絕命令，提示與可達行為不一致。
+
+**Requirement**:
+1. Codex command hook 必須把 command 開頭、大小寫完全一致的 `PM_GUARD_PM_BASH=off` 提升為該次 hook invocation 的 bypass。
+2. assignment 出現在 command 中段、值不是 lowercase `off`，或下一個 hook call 都不得繼承 bypass。
+3. bypass 必須沿用既有 `decision=bypass` audit，不另開未稽核路徑。
+4. 修正後重新執行已確認為 merged 的 local branch cleanup 與 worktree prune。
+
+**Acceptance**: exact leading assignment 對 denylisted command allow 且留下 bypass audit；同一 command 下一次未帶 assignment 時恢復 deny；中段與錯誤大小寫 assignment 均 deny。
+
+**Source**: 2026-07-15 清理 PR #406 合併後的 local branches 時，repo guard 兩次攔下已確認風險的 `git branch -D`；第二次已使用提示指定的 inline `PM_GUARD_PM_BASH=off`，仍因 Codex hook transport 時序而被拒絕。

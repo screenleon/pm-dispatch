@@ -589,6 +589,54 @@ test_hook_codex_command_guard_denies_git_global_option_bypass() {
   rm -f "$stderr_file"
 }
 
+# Behavior: Codex command-local PM guard bypass applies to exactly one hook call.
+# Steps:
+#   1. Send a destructive command with an exact leading PM_GUARD_PM_BASH=off assignment.
+#   2. Assert the hook allows and audits the bypass.
+#   3. Send the same destructive command without the assignment and assert it is denied.
+test_hook_codex_command_guard_command_local_bypass_is_one_call() {
+  local name="hook-codex-command-guard-command-local-bypass-is-one-call"
+  should_run "$name" || return 0
+  local log_dir="$tmp_root/guard-command-local" log_file rc=0 second_rc=0
+  log_file="$log_dir/hooks.log"
+  printf '{"tool_input":{"command":"PM_GUARD_PM_BASH=off git branch -D merged-branch","cwd":"/tmp"}}' \
+    | env -u PM_GUARD_PM_BASH PM_GUARD_LOG_DIR="$log_dir" \
+      "$SCRIPT_DIR/hook-codex-command-guard.sh" >/dev/null 2>&1 || rc=$?
+  printf '{"tool_input":{"command":"git branch -D merged-branch","cwd":"/tmp"}}' \
+    | env -u PM_GUARD_PM_BASH PM_GUARD_LOG_DIR="$log_dir" \
+      "$SCRIPT_DIR/hook-codex-command-guard.sh" >/dev/null 2>&1 || second_rc=$?
+  if [[ "$rc" -eq 0 && "$second_rc" -ne 0 ]] \
+      && grep -Fq 'decision=bypass' "$log_file"; then
+    pass "$name"
+  else
+    fail "$name" "expected one-call audited bypass; first=$rc second=$second_rc"
+  fi
+}
+
+# Behavior: Codex command-local bypass syntax is anchored and case-sensitive.
+# Steps:
+#   1. Put PM_GUARD_PM_BASH=off after another shell command and assert denial.
+#   2. Use the leading value Off instead of off and assert denial.
+#   3. Confirm neither malformed form produces a bypass audit entry.
+test_hook_codex_command_guard_rejects_malformed_command_local_bypass() {
+  local name="hook-codex-command-guard-rejects-malformed-command-local-bypass"
+  should_run "$name" || return 0
+  local log_dir="$tmp_root/guard-command-local-invalid" log_file middle_rc=0 case_rc=0
+  log_file="$log_dir/hooks.log"
+  printf '{"tool_input":{"command":"echo ok; PM_GUARD_PM_BASH=off git branch -D merged-branch","cwd":"/tmp"}}' \
+    | env -u PM_GUARD_PM_BASH PM_GUARD_LOG_DIR="$log_dir" \
+      "$SCRIPT_DIR/hook-codex-command-guard.sh" >/dev/null 2>&1 || middle_rc=$?
+  printf '{"tool_input":{"command":"PM_GUARD_PM_BASH=Off git branch -D merged-branch","cwd":"/tmp"}}' \
+    | env -u PM_GUARD_PM_BASH PM_GUARD_LOG_DIR="$log_dir" \
+      "$SCRIPT_DIR/hook-codex-command-guard.sh" >/dev/null 2>&1 || case_rc=$?
+  if [[ "$middle_rc" -ne 0 && "$case_rc" -ne 0 ]] \
+      && ! grep -Fq 'decision=bypass' "$log_file"; then
+    pass "$name"
+  else
+    fail "$name" "expected malformed bypass forms to deny; middle=$middle_rc case=$case_rc"
+  fi
+}
+
 test_hook_codex_command_guard_missing_command_denies() {
   local name="hook-codex-command-guard-missing-command-denies"
   should_run "$name" || return 0
@@ -690,6 +738,8 @@ test_hook_codex_command_guard_allows_benign_command
 test_hook_codex_command_guard_denies_destructive_command
 test_hook_codex_command_guard_denies_prefixed_option_bypass
 test_hook_codex_command_guard_denies_git_global_option_bypass
+test_hook_codex_command_guard_command_local_bypass_is_one_call
+test_hook_codex_command_guard_rejects_malformed_command_local_bypass
 test_hook_codex_command_guard_missing_command_denies
 test_install_default_never_touches_codex_home
 test_install_opt_in_wires_codex_and_uninstall_removes_it
