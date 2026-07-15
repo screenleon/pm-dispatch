@@ -37,5 +37,14 @@ if [[ -z "$command_str" ]]; then
   exit 2
 fi
 
+# Codex evaluates PreToolUse hooks before Bash interprets command-local
+# assignments. Promote the documented, exact leading assignment into this
+# hook invocation so `PM_GUARD_PM_BASH=off command...` is a genuine one-call
+# bypass. Keep the match anchored and case-sensitive: an assignment later in
+# the command, or any value other than lowercase `off`, must not bypass.
+if [[ "$command_str" =~ ^[[:space:]]*PM_GUARD_PM_BASH=off([[:space:]]|$) ]]; then
+  export PM_GUARD_PM_BASH=off
+fi
+
 exec "$REPO_ROOT/cli/pmctl" guard check \
   --event pre-bash --role pm --runtime codex --command "$command_str"
