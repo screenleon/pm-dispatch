@@ -15,6 +15,7 @@ FAILED_CASES=()
 SUITE_NAMES=(
   lint-agents
   lint-scripts
+  lint-script-domain-inventory
   lint-test-docstrings
   test-guards
   test-guard-framework
@@ -81,6 +82,7 @@ SUITE_NAMES=(
   test-pmctl-validate
   test-brief-validate
   test-archive-closed-backlog
+  test-script-domain-inventory
   test-pmctl-context
   test-pmctl-memory
   test-pmctl-backlog
@@ -118,6 +120,7 @@ suite_path() {
   case "$1" in
     lint-agents) printf 'scripts/lint-agents.sh\n' ;;
     lint-scripts) printf 'scripts/lint-scripts.sh\n' ;;
+    lint-script-domain-inventory) printf 'scripts/lint-script-domain-inventory.sh\n' ;;
     lint-test-docstrings) printf 'scripts/lint-test-docstrings.sh\n' ;;
     test-guards) printf 'scripts/test-guards.sh\n' ;;
     test-guard-framework) printf 'scripts/test-guard-framework.sh\n' ;;
@@ -184,6 +187,7 @@ suite_path() {
     test-pmctl-validate) printf 'scripts/test-pmctl-validate.sh\n' ;;
     test-brief-validate) printf 'scripts/test-brief-validate.sh\n' ;;
     test-archive-closed-backlog) printf 'scripts/test-archive-closed-backlog.sh\n' ;;
+    test-script-domain-inventory) printf 'scripts/test-script-domain-inventory.sh\n' ;;
     test-pmctl-context)  printf 'scripts/test-pmctl-context.sh\n' ;;
     test-pmctl-memory)   printf 'scripts/test-pmctl-memory.sh\n' ;;
     test-pmctl-backlog)   printf 'scripts/test-pmctl-backlog.sh\n' ;;

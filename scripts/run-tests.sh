@@ -183,6 +183,8 @@ map_path() {
   esac
 
   case "$path" in
+    scripts/lint-script-domain-inventory.sh|scripts/test-script-domain-inventory.sh|docs/architecture/script-domain-ownership.md|docs/architecture/script-domain-inventory.tsv|docs/architecture/script-variable-inventory.tsv|docs/architecture/script-variable-consumers.tsv)
+      add_suite lint-script-domain-inventory; add_suite test-script-domain-inventory; behavioral=1 ;;
     scripts/lib/test-result.sh|core/schema/test-result.schema.json)
       add_suite test-run-tests; behavioral=1 ;;
     scripts/lib/pmctl-config.sh)
