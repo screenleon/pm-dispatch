@@ -54,6 +54,10 @@ create_runner() {
   mkdir -p "$dir"
   cp "$REPO_ROOT/scripts/pr-gate.sh" "$dir/pr-gate.sh"
   chmod +x "$dir/pr-gate.sh"
+  mkdir -p "$dir/lib"
+  cp "$REPO_ROOT/scripts/lib/pmctl-policy.sh" "$dir/lib/pmctl-policy.sh"
+  mkdir -p "$dir/core/policy"
+  cp "$REPO_ROOT/core/policy/isolation-level.yaml" "$dir/core/policy/isolation-level.yaml"
   mkdir -p "$dir/adapters/codex"
   cat > "$dir/adapters/codex/dispatch.sh" <<'STUB_EOF'
 #!/usr/bin/env bash

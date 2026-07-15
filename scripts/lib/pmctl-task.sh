@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 
 _PMCTL_TASK_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/lib/pmctl-policy.sh
+if ! declare -F pmctl_policy_contains >/dev/null 2>&1; then
+  . "$_PMCTL_TASK_LIB_DIR/pmctl-policy.sh"
+fi
+_PMCTL_TASK_STATES_FILE="${_PMCTL_TASK_STATES_FILE:-$_PMCTL_TASK_LIB_DIR/../../core/policy/task-states.yaml}"
 # shellcheck source=scripts/lib/state-writer.sh
 # shellcheck disable=SC1091
 . "$_PMCTL_TASK_LIB_DIR/state-writer.sh"
@@ -34,10 +39,7 @@ pmctl_task_valid_id() {
 }
 
 pmctl_task_valid_state() {
-  case "${1:-}" in
-    open|claimed|in-progress|blocked|done|dropped) return 0 ;;
-    *) return 1 ;;
-  esac
+  pmctl_policy_contains "$_PMCTL_TASK_STATES_FILE" "${1:-}" states
 }
 
 pmctl_task_valid_priority() {
@@ -57,12 +59,13 @@ pmctl_task_valid_size_tier() {
 # Validate a task JSON line against core/schema/task.schema.json field rules.
 pmctl_task_validate_json() {
   local json="$1"
-  local result
-  result="$(printf '%s\n' "$json" | jq -r '
+  local result states_json
+  states_json="$(pmctl_policy_values "$_PMCTL_TASK_STATES_FILE" states | jq -Rsc 'split("\n") | map(select(length > 0))')" || return 2
+  result="$(printf '%s\n' "$json" | jq -r --argjson valid_states "$states_json" '
     if (.id | type != "string" or length == 0) then "missing required field: id"
     elif (.schema_version != 1) then "invalid schema_version: must be 1"
     elif (.title | type != "string" or length == 0 or length > 200) then "invalid title: must be non-empty string <= 200 chars"
-    elif (.state | . as $s | ["open","claimed","in-progress","blocked","done","dropped"] | index($s) == null) then "invalid state"
+    elif (.state | . as $s | $valid_states | index($s) == null) then "invalid state"
     elif (.created_ts | type != "string" or length == 0) then "missing required field: created_ts"
     elif (.priority != null and (.priority | . as $p | ["P1","P2","P3"] | index($p) == null)) then "invalid priority: must be P1, P2, P3, or absent"
     elif (.behavioral_units != null and (.behavioral_units | type != "number" or . < 0 or floor != .)) then "invalid behavioral_units: must be non-negative integer"

@@ -8,6 +8,10 @@ This directory defines the **path layout** of the pm-dispatch state store on dis
 
 State lives under `~/.local/share/pm-dispatch/state/` by default — per-machine, gitignored, tool-agnostic. The root is resolved at runtime by `state-writer.sh` using the following precedence: `$PM_DISPATCH_STATE_ROOT` (explicit override) → `$XDG_DATA_HOME/pm-dispatch/state` (XDG-aware) → `~/.local/share/pm-dispatch/state` (fallback). Adapters reach the store only via the runtime writer, never by globbing the dir.
 
+## Write validation
+
+The runtime writer validates Run/Event JSONL appends and Task/Decision projection upserts before touching durable files. The dependency-free `jq` validator reads the matching `core/schema/*.schema.json` file and enforces recursive object requirements, constants, primitive types, enums, and `if`/`then` conditionals. Validation is fail-loud by default. `PM_DISPATCH_SCHEMA_VALIDATION=warn` is a temporary compatibility escape hatch that emits a warning and permits an invalid write; it should not be used for normal operation.
+
 ## Partitioning
 
 **Per-project.** Each repo gets its own state directory keyed by `sha1(git-toplevel)`. Cross-repo isolation is structural — `rsync` / `rm` a single project's directory without touching others.

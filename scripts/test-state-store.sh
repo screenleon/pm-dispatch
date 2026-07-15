@@ -656,53 +656,40 @@ case_events_append_rejects_nul() {
 }
 
 case_events_append_rejects_run_event_without_payload() {
-  # Verifies that events_append rejects a run.* event that is missing the
-  # required payload field enforced by core/schema/event.schema.json if/then.
-  #
+  # Behavior: a run.* event must satisfy the schema's conditional payload requirement.
   # Steps:
-  #   1. Call events_append with a run.completed event that has no payload field.
-  #   2. Assert events_append returns non-zero (schema rejects missing payload).
+  #   1. Append a run.completed event without payload.
+  #   2. Assert the append fails and no durable row is created.
   local name="state-store: events_append rejects run.completed event missing payload"
   should_run "$name" || return 0
-  if ! command -v jsonschema >/dev/null 2>&1; then
-    pass "$name (skip: jsonschema not available)"
-    return 0
-  fi
   local store rc=0
   store="$tmp_root/events-no-payload"
   PM_DISPATCH_STATE_ROOT="$store" events_append \
     '{"schema_version":1,"id":"evt-20260101T000000Z-abcdef","ts":"2026-01-01T00:00:00Z","kind":"run.completed","subject_type":"run","subject_id":"run-20260101T000000Z-abcdef"}' \
     >/dev/null 2>&1 || rc=$?
-  if [[ "$rc" -ne 0 ]]; then
+  if [[ "$rc" -ne 0 ]] && ! find "$store" -name events.jsonl -type f 2>/dev/null | grep -q .; then
     pass "$name"
   else
-    fail "$name" "expected non-zero for run.completed event without payload, got rc=$rc"
+    fail "$name" "expected conditional payload rejection and no event row, rc=$rc"
   fi
 }
 
 case_events_append_rejects_run_event_wrong_payload_type() {
-  # Verifies that events_append rejects a run.* event whose payload fields have
-  # wrong types (numeric run_id instead of string), per the type constraints in
-  # core/schema/event.schema.json if/then.
-  #
+  # Behavior: nested run-event payload fields must satisfy their schema types.
   # Steps:
-  #   1. Call events_append with a run.completed event where run_id is an integer.
-  #   2. Assert events_append returns non-zero (schema rejects numeric run_id).
+  #   1. Append a run.completed event with a numeric run_id.
+  #   2. Assert the append fails and no durable row is created.
   local name="state-store: events_append rejects run.completed event with wrong-typed payload"
   should_run "$name" || return 0
-  if ! command -v jsonschema >/dev/null 2>&1; then
-    pass "$name (skip: jsonschema not available)"
-    return 0
-  fi
   local store rc=0
   store="$tmp_root/events-wrong-type-payload"
   PM_DISPATCH_STATE_ROOT="$store" events_append \
     '{"schema_version":1,"id":"evt-20260101T000000Z-abcdef","ts":"2026-01-01T00:00:00Z","kind":"run.completed","subject_type":"run","subject_id":"run-20260101T000000Z-abcdef","payload":{"run_id":123,"state":"ok","from_state":"verifying","to_state":"ok"}}' \
     >/dev/null 2>&1 || rc=$?
-  if [[ "$rc" -ne 0 ]]; then
+  if [[ "$rc" -ne 0 ]] && ! find "$store" -name events.jsonl -type f 2>/dev/null | grep -q .; then
     pass "$name"
   else
-    fail "$name" "expected non-zero for run.completed event with numeric run_id, got rc=$rc"
+    fail "$name" "expected nested payload type rejection and no event row, rc=$rc"
   fi
 }
 
@@ -738,10 +725,6 @@ case_runs_append_rejects_malformed_json() {
 case_runs_append_rejects_schema_invalid() {
   local name="state-store: runs_append rejects schema-invalid Run JSON"
   should_run "$name" || return 0
-  if ! command -v jsonschema >/dev/null 2>&1; then
-    pass "$name (skip: jsonschema not available)"
-    return 0
-  fi
   local store rc=0
   store="$tmp_root/runs-schema-invalid"
   PM_DISPATCH_STATE_ROOT="$store" runs_append '{"schema_version":1,"id":"not-a-run"}' >/dev/null 2>&1 || rc=$?
@@ -749,6 +732,44 @@ case_runs_append_rejects_schema_invalid() {
     pass "$name"
   else
     fail "$name" "expected non-zero schema failure, rc=$rc"
+  fi
+}
+
+case_runs_append_rejects_invalid_enum() {
+  # Behavior: runs_append rejects a Run whose executor is outside the schema enum.
+  # Steps:
+  #   1. Append an otherwise structurally valid Run with executor=unknown.
+  #   2. Assert the append fails and no runs.jsonl row is created.
+  local name="state-store: runs_append rejects invalid executor enum"
+  should_run "$name" || return 0
+  local store rc=0
+  store="$tmp_root/runs-enum-invalid"
+  PM_DISPATCH_STATE_ROOT="$store" runs_append \
+    '{"schema_version":2,"id":"run-20260101T000000Z-abcdef","task_id":"TASK-451","executor":"unknown","state":"ok","working_dir":"/tmp/test","trace_path":"/tmp/test.jsonl","exit_code":0,"created_ts":"2026-01-01T00:00:00Z"}' \
+    >/dev/null 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 ]] && ! find "$store" -name runs.jsonl -type f 2>/dev/null | grep -q .; then
+    pass "$name"
+  else
+    fail "$name" "expected invalid executor rejection, rc=$rc"
+  fi
+}
+
+case_events_append_rejects_invalid_enum() {
+  # Behavior: events_append rejects an Event whose kind is outside the schema enum.
+  # Steps:
+  #   1. Append an otherwise structurally valid Event with kind=unknown.event.
+  #   2. Assert the append fails and no events.jsonl row is created.
+  local name="state-store: events_append rejects invalid kind enum"
+  should_run "$name" || return 0
+  local store rc=0
+  store="$tmp_root/events-enum-invalid"
+  PM_DISPATCH_STATE_ROOT="$store" events_append \
+    '{"schema_version":1,"id":"evt-20260101T000000Z-abcdef","ts":"2026-01-01T00:00:00Z","kind":"unknown.event","subject_type":"run","subject_id":"run-20260101T000000Z-abcdef"}' \
+    >/dev/null 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 ]] && ! find "$store" -name events.jsonl -type f 2>/dev/null | grep -q .; then
+    pass "$name"
+  else
+    fail "$name" "expected invalid kind rejection, rc=$rc"
   fi
 }
 
@@ -763,7 +784,7 @@ case_task_upsert() {
   should_run "$name" || return 0
   local store proj_dir task_file expected
   store="$tmp_root/task-upsert"
-  expected='{"schema_version":1,"id":"TASK-230","title":"test","state":"planned","created_ts":"2026-01-01T00:00:00Z"}'
+  expected='{"schema_version":1,"id":"TASK-230","title":"test","state":"open","created_ts":"2026-01-01T00:00:00Z"}'
   PM_DISPATCH_STATE_ROOT="$store" task_upsert "TASK-230" "$expected"
   proj_dir="$(PM_DISPATCH_STATE_ROOT="$store" _sw_project_dir)"
   task_file="$proj_dir/tasks/TASK-230.json"
@@ -793,6 +814,46 @@ case_task_upsert_invalid_id() {
     pass "$name"
   else
     fail "$name" "rc=$rc or unexpected file exists under $store"
+  fi
+}
+
+case_task_upsert_rejects_schema_invalid() {
+  # Behavior: task_upsert rejects a projection whose state is outside the schema enum.
+  # Steps:
+  #   1. Upsert an otherwise structurally valid Task with state=planned.
+  #   2. Assert the upsert fails and no Task projection file is created.
+  local name="state-store: task_upsert rejects invalid state enum before writing"
+  should_run "$name" || return 0
+  local store rc=0
+  store="$tmp_root/task-schema-invalid"
+  PM_DISPATCH_STATE_ROOT="$store" task_upsert "TASK-451" \
+    '{"schema_version":1,"id":"TASK-451","title":"test","state":"planned","created_ts":"2026-01-01T00:00:00Z"}' \
+    >/dev/null 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 ]] && ! find "$store" -name 'TASK-451.json' -type f 2>/dev/null | grep -q .; then
+    pass "$name"
+  else
+    fail "$name" "expected invalid enum rejection and no task file, rc=$rc"
+  fi
+}
+
+case_task_upsert_warn_only_transition() {
+  # Behavior: warn-only mode permits a schema-invalid projection for migration compatibility.
+  # Steps:
+  #   1. Enable warn mode and upsert a Task with state=planned.
+  #   2. Assert the upsert succeeds and creates the Task projection file.
+  local name="state-store: warn-only transition allows schema-invalid projection"
+  should_run "$name" || return 0
+  local store proj_dir rc=0
+  store="$tmp_root/task-schema-warn"
+  PM_DISPATCH_SCHEMA_VALIDATION=warn PM_DISPATCH_STATE_ROOT="$store" \
+    task_upsert "TASK-451" \
+    '{"schema_version":1,"id":"TASK-451","title":"test","state":"planned","created_ts":"2026-01-01T00:00:00Z"}' \
+    >/dev/null 2>&1 || rc=$?
+  proj_dir="$(PM_DISPATCH_STATE_ROOT="$store" _sw_project_dir)"
+  if [[ "$rc" -eq 0 && -f "$proj_dir/tasks/TASK-451.json" ]]; then
+    pass "$name"
+  else
+    fail "$name" "warn-only mode did not preserve transitional write, rc=$rc"
   fi
 }
 
@@ -861,6 +922,26 @@ case_decision_upsert_invalid_id() {
     pass "$name"
   else
     fail "$name" "rc=$rc or unexpected file exists under $store"
+  fi
+}
+
+case_decision_upsert_rejects_schema_invalid() {
+  # Behavior: decision_upsert rejects a projection missing schema-required fields.
+  # Steps:
+  #   1. Upsert a Decision containing only schema_version and id.
+  #   2. Assert the upsert fails and no Decision projection file is created.
+  local name="state-store: decision_upsert rejects missing required fields before writing"
+  should_run "$name" || return 0
+  local store rc=0
+  store="$tmp_root/decision-schema-invalid"
+  PM_DISPATCH_STATE_ROOT="$store" decision_upsert \
+    "dec-2026-07-15-schema-invalid" \
+    '{"schema_version":1,"id":"dec-2026-07-15-schema-invalid"}' \
+    >/dev/null 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 ]] && ! find "$store" -name 'dec-2026-07-15-schema-invalid.json' -type f 2>/dev/null | grep -q .; then
+    pass "$name"
+  else
+    fail "$name" "expected missing-field rejection and no decision file, rc=$rc"
   fi
 }
 
@@ -1848,11 +1929,16 @@ case_events_append_rejects_run_event_wrong_payload_type
 case_runs_append_compacts_json
 case_runs_append_rejects_malformed_json
 case_runs_append_rejects_schema_invalid
+case_runs_append_rejects_invalid_enum
+case_events_append_rejects_invalid_enum
 case_task_upsert
 case_task_upsert_invalid_id
+case_task_upsert_rejects_schema_invalid
+case_task_upsert_warn_only_transition
 case_task_upsert_version2_blocked
 case_decision_upsert
 case_decision_upsert_invalid_id
+case_decision_upsert_rejects_schema_invalid
 case_decision_upsert_version2_blocked
 case_runs_append_read_only_fails_loudly
 case_codex_dispatch_state_store_self_contained

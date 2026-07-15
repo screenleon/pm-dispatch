@@ -1036,7 +1036,7 @@ case_supervisor_tail_failure_writes_fallback_record() {
   work="$(mktemp -d)"; git init -q "$work"
   brief="$(_mk_brief "$work")"
   bindir="$(mktemp -d)"; _install_fake_codex "$bindir" 0
-  run_id="run-20260618T000000Z-tailfail"
+  run_id="run-20260618T000000Z-a1b2c3"
   mkdir -p "$work/.agent-trace"
   spec="$work/.agent-trace/$run_id.runspec"
   {
@@ -1052,15 +1052,15 @@ case_supervisor_tail_failure_writes_fallback_record() {
     printf 'initial_state_written=0\n'
     printf 'native_b64:\n'
   } > "$spec"
-  # Point state root to a non-writable dir so FSM transition writes fail and
-  # execute_tail exits non-zero before writing any dispatch record.
+  # Point state root to an unsupported store version so FSM transition writes
+  # fail deterministically and execute_tail exits non-zero before writing any
+  # dispatch record.
   bad_state_root="$(mktemp -d)"
-  chmod 000 "$bad_state_root"
+  printf '2\n' > "$bad_state_root/VERSION"
   set +e
   PM_DISPATCH_STATE_ROOT="$bad_state_root" PATH="$bindir:$PATH" \
     bash "$SUPERVISOR" --run-spec "$spec" 2>/dev/null; supervisor_code=$?
   set -e
-  chmod 755 "$bad_state_root"
   record="$(_record_for_run "$work" "$run_id")"
   set +e
   wait_out="$(PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout "$_WAIT_OK" 2>&1)"; wait_code=$?

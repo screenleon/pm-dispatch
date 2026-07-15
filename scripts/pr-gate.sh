@@ -438,26 +438,34 @@ fi
 
 _validate_isolation_level() {
   local level="$1" policy_file="$2"
+  local policy_lib="$SCRIPT_DIR/lib/pmctl-policy.sh"
+  if ! declare -F pmctl_policy_contains >/dev/null 2>&1; then
+    if [[ ! -r "$policy_lib" ]]; then
+      printf 'Error: policy reader is unavailable: %s\n' "$policy_lib" >&2
+      return 2
+    fi
+    # shellcheck source=scripts/lib/pmctl-policy.sh
+    . "$policy_lib"
+  fi
   if [[ -r "$policy_file" ]]; then
-    if ! grep -qE "^  - ${level}$" "$policy_file"; then
+    if ! pmctl_policy_contains "$policy_file" "$level" values; then
       local valid_levels
-      valid_levels="$(grep -E "^  - " "$policy_file" | sed 's/^  - //' | tr '\n' ' ' | sed 's/ $//')"
+      valid_levels="$(pmctl_policy_values "$policy_file" values | tr '\n' ' ' | sed 's/ $//')"
       printf "Error: --isolation must be one of: %s (got: %s)\n" "$valid_levels" "$level" >&2
       return 2
     fi
   else
-    case "$level" in
-      none|read-only|workspace-write|workspace-network|sandboxed) ;;
-      *)
-        printf "Error: --isolation must be one of: none | read-only | workspace-write | workspace-network | sandboxed (got: %s)\n" "$level" >&2
-        return 2
-        ;;
-    esac
+    printf "Error: isolation policy source is unavailable: %s\n" "$policy_file" >&2
+    return 2
   fi
 }
 
 if [[ -n "$DISPATCH_ISOLATION" ]]; then
-  _validate_isolation_level "$DISPATCH_ISOLATION" "$SCRIPT_DIR/../core/policy/isolation-level.yaml" || exit 2
+  ISOLATION_POLICY_FILE="$SCRIPT_DIR/../core/policy/isolation-level.yaml"
+  if [[ ! -r "$ISOLATION_POLICY_FILE" && -r "$SCRIPT_DIR/core/policy/isolation-level.yaml" ]]; then
+    ISOLATION_POLICY_FILE="$SCRIPT_DIR/core/policy/isolation-level.yaml"
+  fi
+  _validate_isolation_level "$DISPATCH_ISOLATION" "$ISOLATION_POLICY_FILE" || exit 2
 fi
 
 EXECUTOR="$(resolve_executor "$EXECUTOR_OPTION")" || exit 2

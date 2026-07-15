@@ -188,6 +188,12 @@ map_path() {
       add_suite lint-script-domain-inventory; add_suite test-script-domain-inventory; behavioral=1 ;;
     scripts/lib/test-result.sh|core/schema/test-result.schema.json)
       add_suite test-run-tests; behavioral=1 ;;
+    scripts/lib/state-writer.sh)
+      add_suite test-state-store; behavioral=1 ;;
+    scripts/lib/pmctl-policy.sh)
+      add_suite test-pmctl-adapter-generate; add_suite test-pr-gate
+      add_suite test-dispatch-handover; add_suite test-handover-validate
+      add_suite test-pmctl-task; behavioral=1 ;;
     core/schema/preflight-evidence.schema.json)
       add_suite test-pr-gate; behavioral=1 ;;
     scripts/lib/pmctl-config.sh)

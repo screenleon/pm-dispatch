@@ -198,6 +198,8 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 **Non-goals**: 不做完整 JSON Schema validator（draft-07 全語意）；結構檢查以「必要欄位存在 + enum 值合法」為度。
 
+**Runtime validation disposition (2026-07-15)**: writer 邊界統一採 deterministic、`jq`-only 的 schema 子集（recursive object `required`、`const`、primitive `type`、`enum`、`if`/`then`），取代舊有「主機剛好裝了 `jsonschema` 才做完整 draft-07，未安裝即跳過」的環境相依行為。`pattern`、length/range、`format`、`additionalProperties` 等完整 draft-07 keyword 仍由 development/test schema checks 負責，明確不屬 runtime load-bearing contract；這是本票 Non-goals 的具體化，不改 schema 內容或版本。
+
 **Dependencies**: [[CC-446]] 的前置/同批（stable schema 分級需要「有驗證」的事實支撐）。承接 [[CC-211]]（schema-first epic）的 runtime 驗證切片。v0.9.0。
 **Source**: 2026-07-06 盲測程式碼稽核（四路獨立分析，未讀 backlog 前提下收斂的最大未規劃項）。
 
