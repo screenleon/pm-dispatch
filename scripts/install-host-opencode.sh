@@ -8,18 +8,37 @@
 set -euo pipefail
 
 DRY_RUN=0
-case "${1:-}" in
-  --dry-run) DRY_RUN=1 ;;
-  "") : ;;
-  *) printf 'install-host-opencode: usage: install-host-opencode.sh [--dry-run]\n' >&2; exit 2 ;;
-esac
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_ROOT=""
+while [[ "$#" -gt 0 ]]; do
+  case "$1" in
+    --dry-run) DRY_RUN=1; shift ;;
+    --repo-root)
+      [[ "$#" -ge 2 ]] || { printf 'install-host-opencode: --repo-root requires a value\n' >&2; exit 2; }
+      REPO_ROOT="$2"; shift 2 ;;
+    *) printf 'install-host-opencode: usage: install-host-opencode.sh [--repo-root <absolute-path>] [--dry-run]\n' >&2; exit 2 ;;
+  esac
+done
+if [[ -z "$REPO_ROOT" ]]; then
+  REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
+else
+  case "$REPO_ROOT" in
+    /*) ;;
+    *) printf 'install-host-opencode: --repo-root must be absolute\n' >&2; exit 2 ;;
+  esac
+  REPO_ROOT="$(cd "$REPO_ROOT" 2>/dev/null && pwd -P)" || {
+    printf 'install-host-opencode: --repo-root does not exist\n' >&2
+    exit 2
+  }
+fi
+[[ -f "$REPO_ROOT/hosts/opencode/host.yaml" && -f "$REPO_ROOT/scripts/lib/host-manifest.sh" ]] || {
+  printf 'install-host-opencode: --repo-root is not a compatible pm-dispatch checkout: %s\n' "$REPO_ROOT" >&2
+  exit 2
+}
 # shellcheck source=scripts/lib/host-manifest.sh
-. "$SCRIPT_DIR/lib/host-manifest.sh"
+. "$REPO_ROOT/scripts/lib/host-manifest.sh"
 # shellcheck source=scripts/lib/portable.sh
-. "$SCRIPT_DIR/lib/portable.sh"
+. "$REPO_ROOT/scripts/lib/portable.sh"
 
 command -v jq >/dev/null 2>&1 || { printf 'install-host-opencode: jq is required\n' >&2; exit 2; }
 

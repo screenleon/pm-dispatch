@@ -114,6 +114,16 @@ Migration slices must converge on these inputs:
    boundary must appear in the variable inventory and be covered by parity
    tests.
 
+The manifest write dispatcher now enforces the first compatibility slice of
+this contract for the Codex and OpenCode install/uninstall modules. It accepts
+only an absolute repository root, resolves the manifest-selected module, and
+invokes it with `--repo-root <absolute-path>` plus `--dry-run` when requested.
+Those four modules validate the supplied checkout before sourcing repository
+libraries. Their historical direct-call forms remain valid and derive the root
+from the compatibility path, but a dispatcher call no longer depends on that
+path depth. Relocated Codex and OpenCode fixtures exercise install, managed
+state ownership, and uninstall through the manifest dispatcher.
+
 ## Variable ownership rules
 
 The variable inventory distinguishes five boundary classes:

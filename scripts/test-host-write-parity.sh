@@ -52,6 +52,40 @@ run_uninstall() {
     PMCTL_BIN_DIR="$tmp_root/shared-bin" bash "$REPO_ROOT/uninstall.sh" >/dev/null 2>&1
 }
 
+make_relocated_opencode_fixture() {
+  local root="$1"
+  mkdir -p "$root/hosts/opencode/bin" "$root/scripts/lib" "$root/cli"
+  cp "$REPO_ROOT/hosts/opencode/host.yaml" "$root/hosts/opencode/host.yaml"
+  cp "$REPO_ROOT/scripts/lib/host-manifest.sh" "$root/scripts/lib/host-manifest.sh"
+  cp "$REPO_ROOT/scripts/lib/host-write.sh" "$root/scripts/lib/host-write.sh"
+  cp "$REPO_ROOT/scripts/lib/portable.sh" "$root/scripts/lib/portable.sh"
+  cp "$REPO_ROOT/scripts/install-host-opencode.sh" "$root/hosts/opencode/bin/install.sh"
+  cp "$REPO_ROOT/scripts/uninstall-host-opencode.sh" "$root/hosts/opencode/bin/uninstall.sh"
+  sed -i \
+    -e 's|^install_module:.*|install_module: hosts/opencode/bin/install.sh|' \
+    -e 's|^uninstall_module:.*|uninstall_module: hosts/opencode/bin/uninstall.sh|' \
+    "$root/hosts/opencode/host.yaml"
+}
+
+make_relocated_codex_fixture() {
+  local root="$1"
+  mkdir -p "$root/hosts/codex/bin" "$root/scripts/lib"
+  cp -R "$REPO_ROOT/hosts/codex/lib" "$root/hosts/codex/lib"
+  cp "$REPO_ROOT/hosts/codex/host.yaml" "$root/hosts/codex/host.yaml"
+  cp "$REPO_ROOT/hosts/codex/bin/memory-update.sh" "$root/hosts/codex/bin/memory-update.sh"
+  cp "$REPO_ROOT/scripts/lib/host-manifest.sh" "$root/scripts/lib/host-manifest.sh"
+  cp "$REPO_ROOT/scripts/lib/host-write.sh" "$root/scripts/lib/host-write.sh"
+  cp "$REPO_ROOT/scripts/install-guards-codex.sh" "$root/hosts/codex/bin/install.sh"
+  cp "$REPO_ROOT/scripts/uninstall-guards-codex.sh" "$root/hosts/codex/bin/uninstall.sh"
+  cp "$REPO_ROOT/scripts/hook-codex-command-guard.sh" "$root/scripts/hook-codex-command-guard.sh"
+  cp "$REPO_ROOT/scripts/guard-inject-memory.sh" "$root/scripts/guard-inject-memory.sh"
+  cp "$REPO_ROOT/scripts/guard-session-summary.sh" "$root/scripts/guard-session-summary.sh"
+  sed -i \
+    -e 's|^install_module:.*|install_module: hosts/codex/bin/install.sh|' \
+    -e 's|^uninstall_module:.*|uninstall_module: hosts/codex/bin/uninstall.sh|' \
+    "$root/hosts/codex/host.yaml"
+}
+
 test_claude_surface_byte_compatible_with_optional_hosts() {
   local name="host-dispatcher-preserves-claude-install-surface"
   should_run "$name" || return 0
@@ -87,6 +121,124 @@ test_claude_uninstall_surface_stays_symmetric() {
   fi
 }
 
+# Behavior: manifest modules remain runnable after their directory depth changes.
+# Steps: relocate both OpenCode modules in a fixture, dispatch install/uninstall,
+# and verify the explicit repository ABI owns and removes the resulting receipt.
+test_relocated_module_uses_explicit_repo_root() {
+  local name="host-dispatcher-relocated-module-uses-explicit-repo-root"
+  should_run "$name" || return 0
+  local fixture="$tmp_root/relocated/repo" xdg="$tmp_root/relocated/config"
+  local config receipt
+  config="$xdg/opencode/opencode.json"
+  receipt="$config.pm-dispatch-receipt.json"
+  make_relocated_opencode_fixture "$fixture"
+  (
+    # shellcheck disable=SC1090
+    . "$fixture/scripts/lib/host-manifest.sh"
+    # shellcheck disable=SC1090
+    . "$fixture/scripts/lib/host-write.sh"
+    HOME="$tmp_root/relocated/home" XDG_CONFIG_HOME="$xdg" TMPDIR="$tmp_root/relocated" \
+      host_write_install "$fixture" opencode 0 >/dev/null
+  )
+  if [[ ! -f "$receipt" ]] || [[ "$(jq -r '.repo_root' "$receipt")" != "$fixture" ]]; then
+    fail "$name" "relocated install did not record the dispatcher-supplied repository root"
+    return
+  fi
+  (
+    # shellcheck disable=SC1090
+    . "$fixture/scripts/lib/host-manifest.sh"
+    # shellcheck disable=SC1090
+    . "$fixture/scripts/lib/host-write.sh"
+    HOME="$tmp_root/relocated/home" XDG_CONFIG_HOME="$xdg" TMPDIR="$tmp_root/relocated" \
+      host_write_uninstall_all "$fixture" 0 >/dev/null
+  )
+  if [[ ! -e "$config" && ! -e "$receipt" ]]; then
+    pass "$name"
+  else
+    fail "$name" "relocated uninstall left managed OpenCode state"
+  fi
+}
+
+# Behavior: Codex write modules consume the same explicit-root ABI after moving.
+# Steps: relocate both modules in a fixture, dispatch their lifecycle, verify all
+# generated commands use that fixture, then reject a direct relative-root call.
+test_relocated_codex_module_uses_explicit_repo_root() {
+  local name="host-dispatcher-relocated-codex-module-uses-explicit-repo-root"
+  should_run "$name" || return 0
+  local fixture="$tmp_root/relocated-codex/repo" codex="$tmp_root/relocated-codex/home"
+  local rejected="$tmp_root/relocated-codex/rejected" hooks="$codex/hooks.json" rc=0
+  make_relocated_codex_fixture "$fixture"
+  (
+    # shellcheck disable=SC1090
+    . "$fixture/scripts/lib/host-manifest.sh"
+    # shellcheck disable=SC1090
+    . "$fixture/scripts/lib/host-write.sh"
+    HOME="$tmp_root/relocated-codex/operator-home" CODEX_HOME="$codex" TMPDIR="$tmp_root/relocated-codex" \
+      host_write_install "$fixture" codex 0 >/dev/null
+  )
+  if ! jq -e --arg root "$fixture" '
+      [.hooks[][]?.hooks[]?.command] |
+      any(startswith($root + "/scripts/"))
+    ' "$hooks" >/dev/null \
+      || ! grep -Fq "$fixture/hosts/codex/bin/memory-update.sh" "$codex/AGENTS.md"; then
+    fail "$name" "relocated Codex install did not use the dispatcher-supplied repository root"
+    return
+  fi
+  (
+    # shellcheck disable=SC1090
+    . "$fixture/scripts/lib/host-manifest.sh"
+    # shellcheck disable=SC1090
+    . "$fixture/scripts/lib/host-write.sh"
+    HOME="$tmp_root/relocated-codex/operator-home" CODEX_HOME="$codex" TMPDIR="$tmp_root/relocated-codex" \
+      host_write_uninstall_all "$fixture" 0 >/dev/null
+  )
+  if [[ "$(jq -c . "$hooks")" != "{}" || -e "$codex/AGENTS.md" ]]; then
+    fail "$name" "relocated Codex uninstall left managed hooks or instructions"
+    return
+  fi
+  (
+    cd "$tmp_root" || exit 1
+    HOME="$tmp_root/relocated-codex/operator-home" CODEX_HOME="$rejected" \
+      bash "$fixture/hosts/codex/bin/install.sh" --repo-root relocated-codex/repo
+  ) >/dev/null 2>&1 || rc=$?
+  if [[ "$rc" -eq 2 && ! -e "$rejected" ]]; then
+    pass "$name"
+  else
+    fail "$name" "relative root reached relocated Codex module state or returned rc=$rc"
+  fi
+}
+
+# Behavior: the dispatcher refuses a relative repository root before execution.
+# Steps: install a sentinel module in a fixture, call with a relative root, and
+# assert exit 2 without allowing the sentinel side effect.
+test_relative_repo_root_fails_before_module_execution() {
+  local name="host-dispatcher-relative-repo-root-fails-before-module-execution"
+  should_run "$name" || return 0
+  local fixture="$tmp_root/relative-root" marker="$tmp_root/relative-root-ran" rc=0
+  mkdir -p "$fixture/hosts/fake" "$fixture/module"
+  printf 'install_module: module/install.sh\n' > "$fixture/hosts/fake/host.yaml"
+  printf '#!/usr/bin/env bash\ntouch %q\n' "$marker" > "$fixture/module/install.sh"
+  (
+    cd "$tmp_root" || exit 1
+    # These callbacks are invoked indirectly by the sourced dispatcher.
+    # shellcheck disable=SC2317,SC2329
+    host_manifest_file() { printf '%s/hosts/%s/host.yaml\n' "$1" "$2"; }
+    # shellcheck disable=SC2317,SC2329
+    host_manifest_scalar() { awk -v key="$2" '$1 == key ":" { print $2; exit }' "$1"; }
+    # shellcheck disable=SC1090
+    . "$REPO_ROOT/scripts/lib/host-write.sh"
+    host_write_install relative-root fake 0
+  ) >/dev/null 2>&1 || rc=$?
+  if [[ "$rc" -eq 2 && ! -e "$marker" ]]; then
+    pass "$name"
+  else
+    fail "$name" "relative root reached the module or returned rc=$rc"
+  fi
+}
+
 test_claude_surface_byte_compatible_with_optional_hosts
 test_claude_uninstall_surface_stays_symmetric
+test_relocated_module_uses_explicit_repo_root
+test_relocated_codex_module_uses_explicit_repo_root
+test_relative_repo_root_fails_before_module_execution
 th_summary
