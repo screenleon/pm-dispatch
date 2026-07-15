@@ -15,20 +15,36 @@
 set -euo pipefail
 
 DRY_RUN=0
-case "${1:-}" in
-  --dry-run) DRY_RUN=1 ;;
-  "") : ;;
-  *)
-    echo "install-guards-codex: unknown argument: $1 (usage: install-guards-codex.sh [--dry-run])" >&2
-    exit 2
-    ;;
-esac
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_ROOT=""
+while [[ "$#" -gt 0 ]]; do
+  case "$1" in
+    --dry-run) DRY_RUN=1; shift ;;
+    --repo-root)
+      [[ "$#" -ge 2 ]] || { echo "install-guards-codex: --repo-root requires a value" >&2; exit 2; }
+      REPO_ROOT="$2"; shift 2 ;;
+    *) echo "install-guards-codex: unknown argument: $1 (usage: install-guards-codex.sh [--repo-root <absolute-path>] [--dry-run])" >&2; exit 2 ;;
+  esac
+done
+if [[ -z "$REPO_ROOT" ]]; then
+  REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
+else
+  case "$REPO_ROOT" in
+    /*) ;;
+    *) echo "install-guards-codex: --repo-root must be absolute" >&2; exit 2 ;;
+  esac
+  REPO_ROOT="$(cd "$REPO_ROOT" 2>/dev/null && pwd -P)" || {
+    echo "install-guards-codex: --repo-root does not exist" >&2
+    exit 2
+  }
+fi
+[[ -f "$REPO_ROOT/hosts/codex/host.yaml" && -f "$REPO_ROOT/scripts/lib/host-manifest.sh" ]] || {
+  echo "install-guards-codex: --repo-root is not a compatible pm-dispatch checkout: $REPO_ROOT" >&2
+  exit 2
+}
 
 # shellcheck source=scripts/lib/host-manifest.sh
-. "$SCRIPT_DIR/lib/host-manifest.sh"
+. "$REPO_ROOT/scripts/lib/host-manifest.sh"
 # shellcheck source=hosts/codex/lib/memory-contract.sh
 . "$REPO_ROOT/hosts/codex/lib/memory-contract.sh"
 

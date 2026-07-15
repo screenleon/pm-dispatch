@@ -6,6 +6,14 @@
 _host_write_module() {
   local repo_root="$1" host="$2" key="$3"
   local manifest module
+  case "$repo_root" in
+    /*) ;;
+    *) printf 'host write: repo root must be absolute: %s\n' "$repo_root" >&2; return 2 ;;
+  esac
+  repo_root="$(cd "$repo_root" 2>/dev/null && pwd -P)" || {
+    printf 'host write: repo root does not exist: %s\n' "$repo_root" >&2
+    return 2
+  }
   manifest="$(host_manifest_file "$repo_root" "$host")"
   [[ -f "$manifest" ]] || {
     printf 'host write: unknown host manifest: %s\n' "$host" >&2
@@ -30,9 +38,9 @@ host_write_install() {
   local repo_root="$1" host="$2" dry_run="${3:-0}" module
   module="$(_host_write_module "$repo_root" "$host" install_module)" || return $?
   if [[ "$dry_run" -eq 1 ]]; then
-    bash "$module" --dry-run
+    bash "$module" --repo-root "$repo_root" --dry-run
   else
-    bash "$module"
+    bash "$module" --repo-root "$repo_root"
   fi
 }
 
@@ -44,9 +52,9 @@ host_write_uninstall_all() {
     [[ -n "$install_module" && "$install_module" != "null" ]] || continue
     module="$(_host_write_module "$repo_root" "$host" uninstall_module)" || return $?
     if [[ "$dry_run" -eq 1 ]]; then
-      bash "$module" --dry-run
+      bash "$module" --repo-root "$repo_root" --dry-run
     else
-      bash "$module"
+      bash "$module" --repo-root "$repo_root"
     fi
   done < <(host_manifest_names "$repo_root")
 }
