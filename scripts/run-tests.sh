@@ -191,6 +191,8 @@ map_path() {
       add_suite test-pmctl-memory; add_suite test-pmctl-context; add_suite test-migrate; add_suite test-guards; behavioral=1 ;;
     scripts/lib/pmctl-memory-config.sh)
       add_suite test-pmctl-memory; behavioral=1 ;;
+    scripts/lib/prompt-context-timeouts.sh)
+      add_suite test-guards; add_suite test-install; add_suite test-doctor; behavioral=1 ;;
     scripts/install-guards-codex.sh|scripts/uninstall-guards-codex.sh|scripts/lib/doctor-host-codex.sh)
       add_suite test-host-write-codex; add_suite test-doctor; behavioral=1 ;;
     scripts/install-guards.sh|scripts/uninstall-guards.sh|scripts/lib/doctor-host-claude.sh)

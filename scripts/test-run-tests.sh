@@ -131,6 +131,21 @@ case_guard_family_maps_to_guard_suite() {
   fi
 }
 
+case_prompt_context_timeout_contract_maps_all_consumers() {
+  local name=prompt-context-timeout-contract-maps-all-consumers repo out status=0 args
+  args="$TMP_ROOT/$name.args"
+  repo="$(make_fixture "$name")"
+  out=$(RUN_TESTS_ARGS_LOG="$args" "$repo/scripts/run-tests.sh" \
+    --path scripts/lib/prompt-context-timeouts.sh 2>&1) || status=$?
+  if [[ "$status" -eq 0 ]] && grep -qx 'lint-scripts' "$args" &&
+     grep -qx 'test-guards' "$args" && grep -qx 'test-install' "$args" &&
+     grep -qx 'test-doctor' "$args" && [[ "$out" != *"coverage gaps"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out args=$(cat "$args" 2>/dev/null)"
+  fi
+}
+
 case_evidence_contract_maps_to_runner_regression() {
   local name=evidence-contract-maps-to-runner-regression repo out status=0 args
   args="$TMP_ROOT/$name.args"
@@ -268,6 +283,7 @@ case_agent_mapping_uses_registered_frontmatter_suite
 case_command_mapping_uses_registered_frontmatter_suite
 case_skill_mapping_uses_registered_frontmatter_suite
 case_guard_family_maps_to_guard_suite
+case_prompt_context_timeout_contract_maps_all_consumers
 case_evidence_contract_maps_to_runner_regression
 case_high_fanout_escalates_full
 case_unknown_path_fails_without_test_evidence

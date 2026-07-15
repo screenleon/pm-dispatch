@@ -57,7 +57,7 @@ trap 'rm -f "$tmp_new"' EXIT
 _chain_target=""
 [[ -f "$statusline_chain_conf" ]] && _chain_target=$(head -1 "$statusline_chain_conf")
 
-# Compute the reviewer Write glob to include in managed removal.
+# Compute the reviewer Edit glob to include in managed removal.
 # gate_workspace_root is sourced from scripts/lib/gate-workspace.sh;
 # falls back to inline detection if the lib is absent (copy-mode installs).
 if command -v gate_workspace_root >/dev/null 2>&1; then
@@ -66,8 +66,9 @@ else
   _gate_ws="${PM_DISPATCH_GATE_WORKSPACE:-$HOME}"
 fi
 # The reviewer permission entries are managed install artifacts: they are added
-# by install-guards.sh and removed here. Write(.gate-results), Bash(mkdir -p:*),
-# and the pmctl guard-check forms are treated as pm-dispatch-owned; re-add
+# by install-guards.sh and removed here. Edit(.gate-results), the historical
+# Write(.gate-results) spelling, Bash(mkdir -p:*), and the pmctl guard-check
+# forms are treated as pm-dispatch-owned; re-add
 # manually if needed for other tools after uninstall. The guard check is
 # allow-listed in bare, absolute, and tilde forms (mirror install-guards.sh: an
 # in-session reviewer subagent may invoke pmctl by absolute path when its PATH
@@ -75,6 +76,9 @@ fi
 _pmctl_bin_dir="${PMCTL_BIN_DIR:-$HOME/.local/bin}"
 _managed_json="$({
   dispatch_allowlist_entries
+  printf 'Edit(%s/**/.gate-results/**)\n' "$_gate_ws"
+  # Upgrade compatibility: old installers wrote a permission kind Claude does
+  # not accept. Uninstall must still remove that historical managed artifact.
   printf 'Write(%s/**/.gate-results/**)\n' "$_gate_ws"
   printf 'Bash(pmctl guard check:*)\n'
   printf 'Bash(%s/pmctl guard check:*)\n' "$_pmctl_bin_dir"

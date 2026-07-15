@@ -110,9 +110,15 @@ when `sqlite3` is absent the hook skips pmctl entirely; when it is available,
 the first eligible prompt automatically builds the repo-local DB. Initial builds
 have a 120-second budget (`PM_DISPATCH_PROMPT_CONTEXT_INITIAL_TIMEOUT`), while
 incremental refreshes use 45 seconds (`PM_DISPATCH_PROMPT_CONTEXT_TIMEOUT`). A
-timed-out first build removes only its incomplete derived DB so the next prompt
-can retry with the initial-build budget. Unchanged refreshes preserve the FTS
-table instead of rebuilding it, keeping the normal prompt path short.
+Claude install explicitly gives this handler 150 seconds, leaving cleanup time
+outside the largest internal budget instead of inheriting Claude Code's shorter
+`UserPromptSubmit` default. Re-running the installer upgrades an older managed
+hook in place. A timed-out first build removes only its incomplete derived DB so
+the next prompt can retry with the initial-build budget; a schema-only DB with
+zero committed file rows is also treated as an interrupted initial build.
+Unchanged refreshes preserve the FTS table instead of rebuilding it, keeping the
+normal prompt path short. `doctor.sh` reports a managed context hook whose
+handler timeout is absent or below this envelope.
 
 Set `PM_DISPATCH_DISABLE_PROMPT_CONTEXT=1` to disable the scan entirely. Use
 this whenever the live context DB must not be touched — for example while the

@@ -91,7 +91,7 @@ write_minimal_settings() {
     ],
     "UserPromptSubmit": [
       {"hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/guard-inject-memory.sh"}]},
-      {"hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/guard-inject-context.sh"}]}
+      {"hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/guard-inject-context.sh", "timeout": 150}]}
     ]
   },
   "statusLine": {"command": "${REPO_ROOT}/scripts/guard-save-rate-limits.sh"}
@@ -117,7 +117,7 @@ write_stale_path_settings() {
     ],
     "UserPromptSubmit": [
       {"hooks": [{"type": "command", "command": "/fake/old-repo/scripts/guard-inject-memory.sh"}]},
-      {"hooks": [{"type": "command", "command": "/fake/old-repo/scripts/guard-inject-context.sh"}]}
+      {"hooks": [{"type": "command", "command": "/fake/old-repo/scripts/guard-inject-context.sh", "timeout": 150}]}
     ]
   },
   "statusLine": {"command": "/fake/old-repo/scripts/guard-save-rate-limits.sh"}
@@ -143,7 +143,7 @@ write_sibling_prefix_settings() {
     ],
     "UserPromptSubmit": [
       {"hooks": [{"type": "command", "command": "${sibling}/scripts/guard-inject-memory.sh"}]},
-      {"hooks": [{"type": "command", "command": "${sibling}/scripts/guard-inject-context.sh"}]}
+      {"hooks": [{"type": "command", "command": "${sibling}/scripts/guard-inject-context.sh", "timeout": 150}]}
     ]
   },
   "statusLine": {"command": "${sibling}/scripts/guard-save-rate-limits.sh"}
@@ -169,7 +169,7 @@ write_full_settings() {
     ],
     "UserPromptSubmit": [
       {"hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/guard-inject-memory.sh"}]},
-      {"hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/guard-inject-context.sh"}]}
+      {"hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/guard-inject-context.sh", "timeout": 150}]}
     ]
   },
   "statusLine": {"command": "${REPO_ROOT}/scripts/guard-save-rate-limits.sh"}
@@ -792,6 +792,38 @@ case_doctor_profile_minimal_skip_codex_hooks() {
     pass "$name"
   else
     fail "$name" "status=$status out=$out"
+  fi
+}
+
+case_doctor_context_hook_timeout_too_low_fails() {
+  # Verifies doctor catches the exact live regression where Claude's default
+  # 30-second handler timeout is shorter than the context hook's own budget.
+  # Steps:
+  #   1. Write an otherwise valid minimal install with timeout=30
+  #   2. Run doctor in minimal profile
+  #   3. Assert the hooks check fails with the timeout-envelope diagnosis
+  local name="doctor-context-hook-timeout-too-low-fails"
+  should_run "$name" || return 0
+  if ! command -v jq >/dev/null 2>&1; then
+    pass "$name (jq not available - skip)"
+    return
+  fi
+  local home="$tmp_root/home-context-timeout-low" out status=0 path
+  write_minimal_settings "$home"
+  jq '(.hooks.UserPromptSubmit[]?.hooks[]? |
+        select((.command | endswith("guard-inject-context.sh"))).timeout) = 30' \
+    "$home/.claude/settings.json" > "$home/.claude/settings.json.tmp"
+  mv "$home/.claude/settings.json.tmp" "$home/.claude/settings.json"
+  create_memory_dir_for_pwd "$home"
+  write_manifest "$home"
+  path="$(make_stub_bin "$tmp_root/bin-context-timeout-low" claude)"
+
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
+    bash "$DOCTOR" --no-color --repo "$REPO_ROOT" --profile minimal 2>&1)" || status=$?
+  if [[ "$status" -eq 1 && "$out" == *"timeout missing or below 150s"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected timeout-envelope failure; status=$status out=$out"
   fi
 }
 
@@ -1620,7 +1652,7 @@ case_doctor_windows_path_hooks_present() {
     ],
     "UserPromptSubmit": [
       {"hooks": [{"type": "command", "command": "C:\\pm-dispatch\\scripts\\guard-inject-memory.sh"}]},
-      {"hooks": [{"type": "command", "command": "C:\\pm-dispatch\\scripts\\guard-inject-context.sh"}]}
+      {"hooks": [{"type": "command", "command": "C:\\pm-dispatch\\scripts\\guard-inject-context.sh", "timeout": 150}]}
     ]
   },
   "statusLine": {"command": "C:\\pm-dispatch\\scripts\\guard-save-rate-limits.sh"}
@@ -1670,7 +1702,7 @@ case_doctor_windows_path_hooks_stale() {
     ],
     "UserPromptSubmit": [
       {"hooks": [{"type": "command", "command": "C:\\other-repo\\scripts\\guard-inject-memory.sh"}]},
-      {"hooks": [{"type": "command", "command": "C:\\other-repo\\scripts\\guard-inject-context.sh"}]}
+      {"hooks": [{"type": "command", "command": "C:\\other-repo\\scripts\\guard-inject-context.sh", "timeout": 150}]}
     ]
   },
   "statusLine": {"command": "C:\\other-repo\\scripts\\guard-save-rate-limits.sh"}
@@ -1888,7 +1920,7 @@ case_doctor_claude_config_dir() {
   local config_dir="$tmp_root/config-dir-valid"
   mkdir -p "$home_bare"
   mkdir -p "$config_dir/.pm-dispatch"
-  printf '{\n  "hooks": {\n    "PreToolUse": [\n      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "%s/scripts/guard-pm-write.sh"}]},\n      {"matcher": "Bash",       "hooks": [{"type": "command", "command": "%s/adapters/codex/bash-guard.sh"}]}\n    ],\n    "PostToolUse": [],\n    "Stop": [\n      {"hooks": [{"type": "command", "command": "%s/scripts/guard-log-claude-usage.sh"}]},\n      {"hooks": [{"type": "command", "command": "%s/scripts/guard-session-summary.sh --host claude"}]}\n    ],\n    "UserPromptSubmit": [\n      {"hooks": [{"type": "command", "command": "%s/scripts/guard-inject-memory.sh"}]},\n      {"hooks": [{"type": "command", "command": "%s/scripts/guard-inject-context.sh"}]}\n    ]\n  },\n  "statusLine": {"command": "%s/scripts/guard-save-rate-limits.sh"}\n}\n' \
+  printf '{\n  "hooks": {\n    "PreToolUse": [\n      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "%s/scripts/guard-pm-write.sh"}]},\n      {"matcher": "Bash",       "hooks": [{"type": "command", "command": "%s/adapters/codex/bash-guard.sh"}]}\n    ],\n    "PostToolUse": [],\n    "Stop": [\n      {"hooks": [{"type": "command", "command": "%s/scripts/guard-log-claude-usage.sh"}]},\n      {"hooks": [{"type": "command", "command": "%s/scripts/guard-session-summary.sh --host claude"}]}\n    ],\n    "UserPromptSubmit": [\n      {"hooks": [{"type": "command", "command": "%s/scripts/guard-inject-memory.sh"}]},\n      {"hooks": [{"type": "command", "command": "%s/scripts/guard-inject-context.sh", "timeout": 150}]}\n    ]\n  },\n  "statusLine": {"command": "%s/scripts/guard-save-rate-limits.sh"}\n}\n' \
     "$REPO_ROOT" "$REPO_ROOT" \
     "$REPO_ROOT" "$REPO_ROOT" "$REPO_ROOT" "$REPO_ROOT" "$REPO_ROOT" > "$config_dir/settings.json"
   # Add abs-path allowlist entries for all dispatch scripts directly into config_dir.
@@ -2060,6 +2092,7 @@ case_doctor_manifest_bad_version_warn
 case_doctor_malformed_settings_fail
 case_doctor_malformed_settings_json
 case_doctor_profile_minimal_skip_codex_hooks
+case_doctor_context_hook_timeout_too_low_fails
 case_doctor_windows_auto_profile_codex_on_path
 test_dispatch_allowlist_ok
 test_dispatch_allowlist_missing

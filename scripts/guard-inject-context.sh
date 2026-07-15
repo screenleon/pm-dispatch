@@ -16,6 +16,11 @@
 # test suite is running against this repo).
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck disable=SC1091
+# shellcheck source=scripts/lib/prompt-context-timeouts.sh
+. "$SCRIPT_DIR/lib/prompt-context-timeouts.sh"
+
 if [[ "${PM_DISPATCH_DISABLE_PROMPT_CONTEXT:-0}" == "1" ]]; then
   exit 0
 fi
@@ -60,12 +65,26 @@ _context_db="$repo_root/.pm-dispatch/ctx/context.db"
 _initial_build=0
 if [[ ! -f "$_context_db" ]]; then
   _initial_build=1
-  _timeout_secs="${PM_DISPATCH_PROMPT_CONTEXT_INITIAL_TIMEOUT:-120}"
 else
-  _timeout_secs="${PM_DISPATCH_PROMPT_CONTEXT_TIMEOUT:-45}"
+  # An interrupted initial build can leave a SQLite schema without committed
+  # file rows. Only a confirmed numeric zero is treated as incomplete; a locked
+  # or unreadable DB stays on the non-destructive incremental path.
+  _indexed_files="$(sqlite3 "$_context_db" 'SELECT count(*) FROM files;' 2>/dev/null || true)"
+  if [[ "$_indexed_files" == "0" ]]; then
+    _initial_build=1
+  fi
+fi
+if [[ "$_initial_build" -eq 1 ]]; then
+  _timeout_secs="${PM_DISPATCH_PROMPT_CONTEXT_INITIAL_TIMEOUT:-$PROMPT_CONTEXT_INITIAL_TIMEOUT_DEFAULT}"
+else
+  _timeout_secs="${PM_DISPATCH_PROMPT_CONTEXT_TIMEOUT:-$PROMPT_CONTEXT_REFRESH_TIMEOUT_DEFAULT}"
 fi
 if [[ ! "$_timeout_secs" =~ ^[0-9]+$ ]]; then
-  [[ "$_initial_build" -eq 1 ]] && _timeout_secs=120 || _timeout_secs=45
+  if [[ "$_initial_build" -eq 1 ]]; then
+    _timeout_secs="$PROMPT_CONTEXT_INITIAL_TIMEOUT_DEFAULT"
+  else
+    _timeout_secs="$PROMPT_CONTEXT_REFRESH_TIMEOUT_DEFAULT"
+  fi
 fi
 _runner=(bash "$pmctl_cli")
 if command -v timeout >/dev/null 2>&1; then
