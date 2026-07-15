@@ -8,6 +8,8 @@ MIGRATOR="$SCRIPT_DIR/migrate-routing-log.sh"
 # shellcheck source=scripts/lib/test-harness.sh
 . "$SCRIPT_DIR/lib/test-harness.sh"
 th_init "$@"
+# shellcheck source=scripts/lib/test-memory-config-fixtures.sh
+. "$SCRIPT_DIR/lib/test-memory-config-fixtures.sh"
 
 # Migrator fixtures must not inherit the operator's project memory config.
 export PM_DISPATCH_CONFIG_FILE="$tmp_root/no-operator-config"
@@ -256,6 +258,34 @@ test_pm_memory_dir_outranks_routing_log_dir() {
   fi
 }
 
+# Behavior: An unavailable project-scoped memory selection prevents migration
+# from falling back to a populated legacy Claude memory directory.
+# Steps:
+#   1. Populate a legacy routing_log.md for an isolated project path.
+#   2. Configure that project to use a missing project-scoped memory directory.
+#   3. Verify migration fails and leaves the legacy file and backup state untouched.
+test_invalid_project_memory_does_not_fallback() {
+  local name="migrate: invalid project memory does not fall back to legacy"
+  should_run "$name" || return 0
+  local repo="$tmp_root/m9-repo" home="$tmp_root/m9-home" config="$tmp_root/m9.config"
+  local missing="$tmp_root/m9-missing" legacy encoded out status=0
+  mkdir -p "$repo"
+  encoded="-$(printf '%s' "${repo#/}" | tr '/' '-')"
+  legacy="$home/.claude/projects/$encoded/memory/routing_log.md"
+  write_fixture "$legacy"
+  cp "$legacy" "$legacy.before"
+  write_project_memory_config "$config" "$repo" "$missing"
+
+  out="$(PM_DISPATCH_CONFIG_FILE="$config" HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" \
+    "$MIGRATOR" --cwd "$repo" 2>&1)" || status=$?
+  if [[ "$status" -ne 0 && "$out" == *"failed to discover"* \
+      && cmp -s "$legacy" "$legacy.before" && [[ ! -e "$legacy.bak" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out"
+  fi
+}
+
 test_fresh_migrates
 test_idempotent
 test_existing_backup_aborts
@@ -264,5 +294,6 @@ test_legacy_integrity
 test_routing_log_dir_override
 test_pm_memory_dir_override
 test_pm_memory_dir_outranks_routing_log_dir
+test_invalid_project_memory_does_not_fallback
 
 th_summary
