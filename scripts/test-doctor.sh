@@ -577,7 +577,8 @@ case_doctor_invalid_project_memory_does_not_fallback() {
 
   out="$(PM_DISPATCH_CONFIG_FILE="$config" HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
     bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
-  if [[ "$out" == *"[WARN] memory-dir"* && "$out" != *"memory directory exists: $legacy"* ]]; then
+  if [[ "$out" == *"[WARN] no memory directory for current path"* \
+      && "$out" != *"memory directory exists: $legacy"* ]]; then
     pass "$name"
   else
     fail "$name" "expected fail-closed memory-dir warning; status=$status out=$out"

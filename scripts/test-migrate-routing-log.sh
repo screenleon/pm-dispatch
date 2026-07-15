@@ -278,7 +278,7 @@ test_invalid_project_memory_does_not_fallback() {
 
   out="$(PM_DISPATCH_CONFIG_FILE="$config" HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" \
     "$MIGRATOR" --cwd "$repo" 2>&1)" || status=$?
-  if [[ "$status" -ne 0 && "$out" == *"failed to discover"* \
+  if [[ "$status" -ne 0 && "$out" == *"failed to discover"* ]] \
       && cmp -s "$legacy" "$legacy.before" && [[ ! -e "$legacy.bak" ]]; then
     pass "$name"
   else
