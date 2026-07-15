@@ -13,13 +13,28 @@ encode_path() {
 # over PM_CFG_MEMORY_DIR (~/.pm-dispatch/config `dispatch.memory_dir`, only
 # populated when a caller has already run pm_config_load — hooks never do,
 # so this stays a plain variable read with zero file I/O on the hook path).
-# Silently falls through (does not use the override) when the directory does
-# not exist, matching the existing CLAUDE_ROUTING_LOG_DIR convention.
+# This low-level selector ignores unavailable targets. Canonical CLI callers
+# first use _pm_memory_explicit_selection_invalid so an explicit selection
+# cannot fall through; legacy-only callers retain their discovery convention.
 _pm_memory_dir_override() {
   local d="${PM_MEMORY_DIR:-}"
   if [[ -n "$d" && -d "$d" ]]; then printf '%s' "$d"; return 0; fi
   d="${PM_CFG_MEMORY_DIR:-}"
   if [[ -n "$d" && -d "$d" ]]; then printf '%s' "$d"; return 0; fi
+  return 1
+}
+
+# Return success when an explicitly selected canonical-memory target is invalid.
+# Callers that have loaded project config use this before compatibility discovery
+# so one shared rule prevents fallback into another store.
+_pm_memory_explicit_selection_invalid() {
+  if [[ -n "${PM_MEMORY_DIR:-}" && ( "${PM_MEMORY_DIR}" != /* || ! -d "${PM_MEMORY_DIR}" ) ]]; then
+    return 0
+  fi
+  [[ "${PM_CFG_MEMORY_DIR_INVALID:-0}" -eq 0 ]] || return 0
+  if [[ "${PM_CFG_MEMORY_CONFIG_STATUS:-none}" == "matched" && ! -d "${PM_CFG_MEMORY_DIR:-}" ]]; then
+    return 0
+  fi
   return 1
 }
 

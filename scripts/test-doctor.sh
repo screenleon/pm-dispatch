@@ -8,6 +8,8 @@ DOCTOR="$REPO_ROOT/scripts/doctor.sh"
 # shellcheck source=scripts/lib/test-harness.sh
 . "$SCRIPT_DIR/lib/test-harness.sh"
 th_init "$@"
+# shellcheck source=scripts/lib/test-memory-config-fixtures.sh
+. "$SCRIPT_DIR/lib/test-memory-config-fixtures.sh"
 
 # check_codex/check_claude FAIL when an executor CLI is present but
 # unauthenticated. The many stub-claude/codex tests below model a HEALTHY
@@ -548,6 +550,38 @@ case_doctor_repo_from_different_cwd() {
     pass "$name"
   else
     fail "$name" "expected memory-dir ok for REPO_ROOT; status=$status out=$out"
+  fi
+}
+
+case_doctor_invalid_project_memory_does_not_fallback() {
+  # Verifies that an unavailable project-scoped memory selection does not let
+  # doctor report a populated legacy Claude memory directory as healthy.
+  #
+  # Steps:
+  #   1. Populate the legacy memory directory for REPO_ROOT.
+  #   2. Configure REPO_ROOT to use a missing project-scoped memory directory.
+  #   3. Run doctor and assert memory-dir warns without reporting the legacy path.
+  local name="doctor-invalid-project-memory-does-not-fallback"
+  should_run "$name" || return 0
+  local home="$tmp_root/home-invalid-project-memory" config="$tmp_root/invalid-project-memory.config"
+  local missing="$tmp_root/missing-project-memory" legacy out status=0 path encoded
+  write_full_settings "$home"
+  write_manifest "$home"
+  # shellcheck source=scripts/lib/memory.sh
+  . "$REPO_ROOT/scripts/lib/memory.sh"
+  encoded="$(encode_path "$REPO_ROOT")"
+  legacy="$home/.claude/projects/$encoded/memory"
+  mkdir -p "$legacy"
+  write_project_memory_config "$config" "$REPO_ROOT" "$missing"
+  path="$(make_stub_bin "$tmp_root/bin-invalid-project-memory" claude codex)"
+
+  out="$(PM_DISPATCH_CONFIG_FILE="$config" HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
+    bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
+  if [[ "$out" == *"[WARN] no memory directory for current path"* \
+      && "$out" != *"memory directory exists: $legacy"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected fail-closed memory-dir warning; status=$status out=$out"
   fi
 }
 
@@ -2082,6 +2116,7 @@ case_doctor_quiet_no_ok_lines
 case_doctor_jq_missing_exits_1
 case_doctor_warn_only_exits_0
 case_doctor_repo_from_different_cwd
+case_doctor_invalid_project_memory_does_not_fallback
 case_doctor_frontmatter_lint_ok
 case_doctor_help_exits_0
 case_doctor_unknown_flag

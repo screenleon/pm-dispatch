@@ -2483,6 +2483,32 @@ MD
   fi
 }
 
+# Behavior: a matched but unavailable config path cannot select legacy memory.
+# Steps: expose both a missing scoped target and a populated legacy store, then
+# query and index while asserting that no legacy context DB is created.
+case_context_memory_invalid_config_no_legacy_fallback() {
+  local name="pmctl context memory source: invalid matched config never falls back to legacy memory"
+  should_run "$name" || return 0
+  local repo="$tmp_root/mem-invalid-repo" claude="$tmp_root/mem-invalid-claude"
+  local config="$tmp_root/mem-invalid.conf" missing="$tmp_root/mem-invalid-missing" legacy
+  local query_out="$tmp_root/mem-invalid-query.out" index_status=0
+  mkdir -p "$repo"
+  legacy="$(make_fixture_memory "$repo" "$claude")"
+  write_project_memory_config "$config" "$repo" "$missing"
+
+  PM_DISPATCH_CONFIG_FILE="$config" CLAUDE_CONFIG_DIR="$claude" "$PMCTL" context query \
+    "$repo" --source memory codex > "$query_out" 2>/dev/null || true
+  PM_DISPATCH_CONFIG_FILE="$config" CLAUDE_CONFIG_DIR="$claude" "$PMCTL" context index \
+    "$repo" --source memory >/dev/null 2>&1 || index_status=$?
+
+  if [[ "$index_status" -eq 1 ]] && grep -q '# no hits' "$query_out" \
+    && [[ ! -e "$legacy/.pm-dispatch/context.db" ]]; then
+    pass "$name"
+  else
+    fail "$name" "index=$index_status query=$(<"$query_out") legacy_db=$([[ -e "$legacy/.pm-dispatch/context.db" ]] && printf yes || printf no)"
+  fi
+}
+
 case_context_query_source_memory_domain_rejected() {
   local name="pmctl context query: --domain with --source memory is rejected (exit 2)"
   should_run "$name" || return 0
@@ -3340,6 +3366,7 @@ case_context_query_source_all_merges
 case_context_query_source_repo_excludes_memory
 case_context_query_source_memory_no_dir_graceful
 case_context_query_source_memory_config_override
+case_context_memory_invalid_config_no_legacy_fallback
 case_context_query_source_memory_domain_rejected
 case_context_query_source_invalid_rejected
 case_context_index_source_memory_builds_db

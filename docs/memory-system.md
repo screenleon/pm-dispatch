@@ -126,6 +126,10 @@ Report fields (ordered): `memory_dir`, `entry_count`, `memory_bytes`,
 `topics`/`priority`/`status`/`updated_at`/`repo_refs`; `repo_refs` may be `[]`
 but the key must exist), `issues_count`. `--json` emits a single object carrying
 `schema_version: 1`. Exit codes: `0` healthy, `1` issues found, `2` usage error.
+When explicit canonical resolution is invalid, the report remains read-only and
+returns one additive `resolution_issues` entry with the rejected source and
+reason; it never inspects a legacy fallback as though that were the selected
+project store.
 
 `cards_missing_fields` lists any not-yet-migrated card still lacking a required
 field — useful for spot-checking coverage even though write-time enforcement is
@@ -205,9 +209,11 @@ after success is a no-op. Tests must still isolate operator config with
 `PM_DISPATCH_CONFIG_FILE`; they must never assume `~/.pm-dispatch/config` is
 absent.
 
-An override is only honored when the target directory already exists; an
-unset or nonexistent override falls through to the next tier, so existing
-installs see byte-identical resolution with no environment changes.
+An unset override falls through to the next tier. Once an environment override
+or matching project-scoped config entry is present, however, an invalid or
+missing target fails closed for `pmctl memory`, direct memory-context indexing,
+and installer/migrator discovery. Mutating maintenance commands such as `shard`
+and `rebuild-summary` therefore cannot redirect writes into a legacy store.
 
 At a **host-switch boundary**, use the stricter diagnostic contract instead
 of relying on that compatibility fallback:

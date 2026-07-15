@@ -23,7 +23,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-464 | 🟢 someday | `pmctl ticket draft --from <notes>`：隨手筆記→結構化 backlog 票草稿；依賴 CC-286（prefix-generic next-id，⏸ deferred 尚未排程）；review-first 邊界獨立設計，CC-054 僅供鬆散參照非直接前例（2026-07-07 openyida 跨專案分析） | ux/process | 2026-07-07 | — | P3 | — |
 | CC-486 | ⏸ deferred | direct-impact test planner mapping 提前退出：changed path 含 `agents/*.md`／`commands/*.md` 時 `map_path` 呼叫未註冊的 `lint-frontmatter`，`add_suite` 回傳 1 並在 `set -e` 下無輸出終止，導致 `run-tests.sh --base ... --list` exit 1 | ops/test | 2026-07-13 | feedback:2026-07-13 | P2 | hygiene |
 | CC-489 | 🔵 active | `scripts/` domain ownership 重整：先收斂 module ABI、變數/config ownership 與 side-effect boundary，再將 host/runtime/ops/test entrypoints 以 manifest/registry 與相容 shim 分批遷移 | arch | 2026-07-14 | feedback:2026-07-15 | P2 | design |
-| CC-490 | 🔵 active | project-scoped explicit memory config：取代全域單值 `dispatch.memory_dir`，避免多 repo 靜默共用 pm-dispatch canonical store | arch/memory | 2026-07-14 | feedback:2026-07-14 | P1 | design |
+| CC-490 | ✅ done | project-scoped explicit memory config：取代全域單值 `dispatch.memory_dir`，避免多 repo 靜默共用 pm-dispatch canonical store | arch/memory | 2026-07-14 | pr:#406 | P1 | design |
 | CC-491 | 🔵 active | PR-gate pre-flight 機械式 evidence contract：傳遞 command、selected suites、逐項結果與 tree fingerprint，讓 reviewer reuse 已驗證結果並禁止無條件重跑 | ops/gate | 2026-07-14 | feedback:2026-07-14 | P1 | design |
 | CC-493 | 🟢 someday | Prompt→Skill→Command→Harness 升級規則文件化：可測試的分類判準（何時停在 prompt、何時升為 skill、何時做成 command、何時需要 harness-level hook/guard/state），並盤點 `commands/`／`skills/`／`agents/` 現況對照分類（2026-07-15 CC-489 三方 multi-model synthesis） | process/docs | 2026-07-15 | feedback:2026-07-15 | P2 | design |
 | CC-494 | 🟢 someday | design: executor 局部設計裁量權 envelope——在 dispatch brief / executor contract 定義「可自行處理的局部設計」與「必須 halt 回報 PM」的邊界（例如新增 schema 欄位 `design_latitude`/`architectural_conflicts`）；三方 multi-model synthesis 2:1 分歧（codex/fable 認為現行邊界過度僵硬需要新機制，opencode 認為現行 `isolation_level`/executor 欄位已足夠彈性），本票僅追蹤決策、不預設結論（2026-07-15） | schema/process | 2026-07-15 | feedback:2026-07-15 | P3 | design |
@@ -385,7 +385,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 ---
 
-## CC-490 — project-scoped explicit memory config，避免跨 repo canonical bleed 🔵 active
+## CC-490 — project-scoped explicit memory config，避免跨 repo canonical bleed ✅ 2026-07-15
 
 **Problem**: `~/.pm-dispatch/config` 的 `dispatch.memory_dir` 是全域單值，但 resolver 對每個 repo 都無條件套用。CC-488 gate R1 後的 live read-only probe 已確認：pm-dispatch、JapanJob、qa-testing-rules 雖有不同 stable `project_key`，三者目前都回報 `resolution_source=config` 並解析到 pm-dispatch 的 canonical memory dir。任何其他 repo 的 canonical append 因此可能成功但寫入錯誤專案，屬靜默 cross-project data bleed；同一問題亦使本機 fixture 在未隔離 config 時誤寫 live store。
 
@@ -399,9 +399,11 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 **Immediate safety note**: 在本票落地前，`dispatch.memory_dir` 只能視為 single-repo/single-purpose config；多 repo 操作不得把它當成安全的 machine-wide default。測試一律用 `PM_DISPATCH_CONFIG_FILE` 隔離，不得讀取 operator live config。
 
-**Implementation (2026-07-14, in progress)**: config schema 改為 `memory.projects.<stable-project-key>.dir`；`pmctl memory config set|migrate|lint` 提供原子管理、legacy-global 診斷與可重複 migration。strict resolver 對舊 global key 回報 `config-legacy-global` / exit 3，matched invalid path 維持 fail closed，unmatched repo 回到自身 legacy 或 unavailable。isolated regression 已覆蓋零 cross-project append；live config 已遷移為 pm-dispatch scoped mapping，JapanJob read-only probe 回到自身 legacy memory，config lint 0 issues。full-suite 與 gate 完成前本票維持 active。
+**Implementation (2026-07-15)**: config schema 已改為 `memory.projects.<stable-project-key>.dir`；`pmctl memory config set|migrate|lint` 提供原子管理、legacy-global 診斷與可重複 migration。strict resolver 對舊 global key 回報 `config-legacy-global` / exit 3，matched invalid path 維持 fail closed，unmatched repo 回到自身 legacy 或 unavailable。完善稽核另補上原實作未封閉的 compatibility fallback：`memory dir`、doctor、shard、rebuild-summary、direct `context --source memory` 與 installer/migrator discovery 現在共用 explicit-selection validity helper；invalid matched/env target 不得讀寫 legacy store，doctor 以 `resolution_issues` 回報來源與原因。isolated regression 已擴為三個 project key、project-scoped 四 host continuity、maintenance/context 零 fallback write；live read-only probe 證明 pm-dispatch 走 scoped config，JapanJob 與 qa-testing-rules 各回自身 legacy，config lint 0 issues。Claude standard gate `gate-20260715-032942-90cd0b` 使用明確 `--test-cmd` 後 GO（critic approve、qa-tester pass、architecture-reviewer approve）；gate 後 authoritative full suite 79 passed、0 failed、0 skipped。
 
 **Acceptance**: 三 repo resolve 的 project key 與 memory dir 對應正確；跨 host 同 repo continuity 不退化；invalid matched config fail closed；unmatched repo 不使用 pm-dispatch memory；doctor/config diagnostics、memory/pm/guard regressions與 live migration evidence 全綠。
+
+**See**: pr:#406
 
 **Source**: CC-488 Claude full-tier gate R1 risk/QA findings；2026-07-14 live probe confirmed JapanJob (`01a9ed...`) and qa-testing-rules (`100334...`) both resolved to pm-dispatch memory through the global config value.
 

@@ -80,6 +80,10 @@ _ctx_resolve_memory_dir() {
   declare -F find_memory_dir >/dev/null 2>&1 || return 1
   declare -F pm_config_project_key >/dev/null 2>&1 && project_key="$(pm_config_project_key "$cwd" 2>/dev/null || true)"
   declare -F pm_config_load >/dev/null 2>&1 && pm_config_load "$project_key"
+  # Never let direct context commands turn an invalid explicit selector into a
+  # write beside another repository's legacy memory. Host entrypoints already
+  # use the strict resolver; this closes the standalone context path as well.
+  _pm_memory_explicit_selection_invalid && return 3
   find_memory_dir "$cwd" 2>/dev/null
 }
 
