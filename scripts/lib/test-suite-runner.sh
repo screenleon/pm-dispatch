@@ -193,6 +193,31 @@ SUITE_TIMEOUT_SECS="${PM_DISPATCH_TEST_SUITE_TIMEOUT_SECS:-900}"
 [[ "$SUITE_TIMEOUT_SECS" =~ ^[1-9][0-9]*$ ]] || SUITE_TIMEOUT_SECS=900
 PROGRESS_INTERVAL_SECS="${PM_DISPATCH_TEST_PROGRESS_SECS:-60}"
 [[ "$PROGRESS_INTERVAL_SECS" =~ ^[1-9][0-9]*$ ]] || PROGRESS_INTERVAL_SECS=60
+SUITE_RESULTS_FILE="${PM_TEST_SUITE_RESULTS_FILE:-}"
+SUITE_RESULTS_TMP=""
+if [[ -n "$SUITE_RESULTS_FILE" ]]; then
+  mkdir -p "$(dirname "$SUITE_RESULTS_FILE")"
+  SUITE_RESULTS_TMP="$(mktemp "${TMPDIR:-/tmp}/pm-suite-results.XXXXXX")"
+fi
+
+record_suite_result() {
+  local name="$1" status="$2" exit_code="$3" duration="$4" reason="${5:-}"
+  [[ -n "$SUITE_RESULTS_TMP" ]] || return 0
+  jq -nc --arg name "$name" --arg status "$status" --argjson exit_code "$exit_code" \
+    --argjson duration_seconds "$duration" --arg reason "$reason" \
+    '{name:$name,status:$status,exit_code:$exit_code,duration_seconds:$duration_seconds}
+     + (if $reason == "" then {} else {reason:$reason} end)' >> "$SUITE_RESULTS_TMP"
+}
+
+write_suite_results() {
+  [[ -n "$SUITE_RESULTS_FILE" ]] || return 0
+  local ordered_names
+  ordered_names="$(printf '%s\n' "${ACTIVE_SUITE_NAMES[@]}" | jq -Rsc 'split("\n") | map(select(length > 0))')"
+  jq -s --argjson order "$ordered_names" '[ $order[] as $name | .[] | select(.name == $name) ]' \
+    "$SUITE_RESULTS_TMP" > "$SUITE_RESULTS_FILE"
+  rm -f "$SUITE_RESULTS_TMP"
+  SUITE_RESULTS_TMP=""
+}
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -318,7 +343,10 @@ FAILED_SUITE_NAMES=()
 declare -A SUITE_DURATIONS=()
 
 run_with_suite_timeout() {
-  "$TIMEOUT_BIN" --kill-after=15s "${SUITE_TIMEOUT_SECS}s" "$@"
+  # The result sink belongs to this runner process. Do not leak it into a
+  # suite that happens to launch another runner, or the nested process could
+  # overwrite its parent's evidence artifact.
+  ( unset PM_TEST_SUITE_RESULTS_FILE; "$TIMEOUT_BIN" --kill-after=15s "${SUITE_TIMEOUT_SECS}s" "$@" )
 }
 
 run_suite() {
@@ -372,6 +400,7 @@ if [[ "$JOBS" -eq 1 ]]; then
   for name in "${ACTIVE_SUITE_NAMES[@]}"; do
     if reason="$(_suite_skip_reason "$name")"; then
       printf 'SKIP %s (%s)\n' "$name" "$reason"
+      record_suite_result "$name" skip 0 0 "$reason"
       skipped=$((skipped + 1))
       continue
     fi
@@ -379,6 +408,7 @@ if [[ "$JOBS" -eq 1 ]]; then
     script="$REPO_ROOT/${SUITE_PATHS[$name]}"
     if [[ ! -x "$script" ]]; then
       printf 'FAIL %s (not found or not executable)\n' "$name"
+      record_suite_result "$name" fail 126 0 "not found or not executable"
       failed=$((failed + 1))
       FAILED_SUITE_NAMES+=("$name")
       continue
@@ -394,9 +424,15 @@ if [[ "$JOBS" -eq 1 ]]; then
 
     if [[ "$rc" -eq 0 ]]; then
       printf 'PASS %s\n' "$name"
+      record_suite_result "$name" pass 0 "${SUITE_DURATIONS[$name]}"
       passed=$((passed + 1))
     else
       printf 'FAIL %s\n' "$name"
+      if [[ "$rc" -eq 124 ]]; then
+        record_suite_result "$name" timeout "$rc" "${SUITE_DURATIONS[$name]}"
+      else
+        record_suite_result "$name" fail "$rc" "${SUITE_DURATIONS[$name]}"
+      fi
       failed=$((failed + 1))
       FAILED_SUITE_NAMES+=("$name")
     fi
@@ -460,9 +496,15 @@ else
         [[ -s "$d/out" ]] && cat "$d/out"
         if [[ "$rc" -eq 0 ]]; then
           printf 'PASS %s\n' "$name"
+          record_suite_result "$name" pass 0 "${SUITE_DURATIONS[$name]}"
           passed=$((passed + 1))
         else
           printf 'FAIL %s\n' "$name"
+          if [[ "$rc" -eq 124 ]]; then
+            record_suite_result "$name" timeout "$rc" "${SUITE_DURATIONS[$name]}"
+          else
+            record_suite_result "$name" fail "$rc" "${SUITE_DURATIONS[$name]}"
+          fi
           failed=$((failed + 1))
           FAILED_SUITE_NAMES+=("$name")
         fi
@@ -485,6 +527,7 @@ else
   for name in "${ACTIVE_SUITE_NAMES[@]}"; do
     if reason="$(_suite_skip_reason "$name")"; then
       printf 'SKIP %s (%s)\n' "$name" "$reason"
+      record_suite_result "$name" skip 0 0 "$reason"
       skipped=$((skipped + 1))
       continue
     fi
@@ -492,6 +535,7 @@ else
     script="$REPO_ROOT/${SUITE_PATHS[$name]}"
     if [[ ! -x "$script" ]]; then
       printf 'FAIL %s (not found or not executable)\n' "$name"
+      record_suite_result "$name" fail 126 0 "not found or not executable"
       failed=$((failed + 1))
       FAILED_SUITE_NAMES+=("$name")
       continue
@@ -546,5 +590,7 @@ if [[ "${#FAILED_SUITE_NAMES[@]}" -gt 0 ]]; then
   printf 'failed suites:'
   printf ' %s' "${FAILED_SUITE_NAMES[@]}"
   printf '\n'
+  write_suite_results
   exit 1
 fi
+write_suite_results
