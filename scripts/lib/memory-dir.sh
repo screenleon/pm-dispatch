@@ -26,6 +26,7 @@ find_memory_dir() {
   local cwd="$1" project_key=""
   declare -F pm_config_project_key >/dev/null 2>&1 && project_key="$(pm_config_project_key "$cwd" 2>/dev/null || true)"
   declare -F pm_config_load >/dev/null 2>&1 && pm_config_load "$project_key"
+  _pm_memory_explicit_selection_invalid && return 1
   local override
   if override="$(_pm_memory_dir_override)"; then
     printf '%s' "$override"; return 0

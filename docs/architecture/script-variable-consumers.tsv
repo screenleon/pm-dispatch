@@ -142,6 +142,7 @@ PM_CFG_*	PM_CFG_LEGACY_MEMORY_DIR	scripts/lib/pmctl-memory-config.sh	production
 PM_CFG_*	PM_CFG_LEGACY_MEMORY_DIR_INVALID	scripts/lib/pmctl-config.sh	production
 PM_CFG_*	PM_CFG_LIFECYCLE	scripts/lib/pmctl-config.sh	production
 PM_CFG_*	PM_CFG_LIFECYCLE	scripts/lib/pmctl-dispatch.sh	production
+PM_CFG_*	PM_CFG_MEMORY_CONFIG_STATUS	scripts/lib/memory.sh	production
 PM_CFG_*	PM_CFG_MEMORY_CONFIG_STATUS	scripts/lib/pmctl-config.sh	production
 PM_CFG_*	PM_CFG_MEMORY_CONFIG_STATUS	scripts/lib/pmctl-memory-config.sh	production
 PM_CFG_*	PM_CFG_MEMORY_CONFIG_STATUS	scripts/lib/pmctl-memory.sh	production
@@ -149,6 +150,7 @@ PM_CFG_*	PM_CFG_MEMORY_DIR	scripts/lib/memory.sh	production
 PM_CFG_*	PM_CFG_MEMORY_DIR	scripts/lib/pmctl-config.sh	production
 PM_CFG_*	PM_CFG_MEMORY_DIR	scripts/lib/pmctl-memory-config.sh	production
 PM_CFG_*	PM_CFG_MEMORY_DIR	scripts/lib/pmctl-memory.sh	production
+PM_CFG_*	PM_CFG_MEMORY_DIR_INVALID	scripts/lib/memory.sh	production
 PM_CFG_*	PM_CFG_MEMORY_DIR_INVALID	scripts/lib/pmctl-config.sh	production
 PM_CFG_*	PM_CFG_MEMORY_DIR_INVALID	scripts/lib/pmctl-memory.sh	production
 PM_CFG_*	PM_CFG_TIMEOUT	adapters/claude/dispatch.sh	production

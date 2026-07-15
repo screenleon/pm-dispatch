@@ -982,8 +982,8 @@ case_memory_dir_pm_memory_dir_outranks_config() {
   pass "$name"
 }
 
-case_memory_dir_malformed_config_memory_dir_falls_through() {
-  local name="pmctl memory dir: malformed project-scoped path warns and falls through to legacy resolution"
+case_memory_dir_malformed_config_memory_dir_fails_closed() {
+  local name="pmctl memory dir: malformed project-scoped path fails closed without legacy resolution"
   should_run "$name" || return 0
 
   local cfg="$tmp_root/pmbad-cfg" repo="$tmp_root/pmbad-repo" fakehome="$tmp_root/pmbad-home"
@@ -995,9 +995,9 @@ case_memory_dir_malformed_config_memory_dir_falls_through() {
   err="$tmp_root/pmbad.err"
   out="$(PM_DISPATCH_CONFIG_FILE="$fakehome/.pm-dispatch/config" CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory dir "$repo" 2>"$err")" || status=$?
 
-  if ! assert_exit "$name" "$status" 0; then return 0; fi
-  if [[ "$out" != "$mdir" ]]; then
-    fail "$name" "expected fallback to legacy dir '$mdir' (malformed override must be ignored), got '$out'"
+  if ! assert_exit "$name" "$status" 3; then return 0; fi
+  if [[ -n "$out" ]]; then
+    fail "$name" "expected no resolved directory, got '$out' instead of rejecting legacy '$mdir'"
     return 0
   fi
   if ! grep -q 'malformed value for memory.projects.' "$err"; then
@@ -1744,17 +1744,19 @@ case_memory_doctor_shard_count() {
   pass "$name"
 }
 
-# Behavior: every host appends through the same strict canonical episode path.
-# Steps: append one marker per host to an env-selected memory dir and assert JSONL/provenance.
+# Behavior: every host appends through the same project-scoped canonical path.
+# Steps: append one marker per host through one scoped config and assert JSONL/provenance.
 case_memory_append_episode_cross_host_contract() {
   local name="pmctl memory append-episode: Claude Codex OpenCode and generic share canonical path"
   should_run "$name" || return 0
-  local repo="$tmp_root/append-cross-host-repo" mdir="$tmp_root/append-cross-host-memory" host out status=0
+  local repo="$tmp_root/append-cross-host-repo" mdir="$tmp_root/append-cross-host-memory"
+  local config="$tmp_root/append-cross-host.conf" host out status=0
   mkdir -p "$repo" "$mdir"
   git -C "$repo" init -q
+  write_project_memory_config "$config" "$repo" "$mdir"
   for host in claude codex opencode generic; do
-    out="$(PM_MEMORY_DIR="$mdir" "$PMCTL" memory append-episode --repo-root "$repo" --host "$host" \
-      --session-id "session-$host" --date "2026-07-13T00:00:00Z" --summary "cc483-${host}-canonical-marker" --json 2>/dev/null)" || status=$?
+    out="$(PM_DISPATCH_CONFIG_FILE="$config" "$PMCTL" memory append-episode --repo-root "$repo" --host "$host" \
+      --session-id "session-$host" --date "2026-07-13T00:00:00Z" --summary "${host}-canonical-marker" --json 2>/dev/null)" || status=$?
     if [[ "$status" -ne 0 ]] || ! jq -e --arg host "$host" --arg mdir "$mdir" \
         '.provider == "pmctl" and .authority == "canonical" and .writer_host == $host and .memory_dir == $mdir and .episode.writer_host == $host' <<<"$out" >/dev/null; then
       fail "$name" "host=$host status=$status out=$out"; return 0
@@ -1930,25 +1932,58 @@ case_memory_append_episode_refuses_symlink_lock_dir() {
 case_memory_config_project_isolation() {
   local name="pmctl memory config: project mapping prevents cross-project resolve and append"
   should_run "$name" || return 0
-  local repo_a="$tmp_root/config-project-a" repo_b="$tmp_root/config-project-b"
-  local mem_a="$tmp_root/config-memory-a" cfg="$tmp_root/project-config" empty_claude="$tmp_root/project-empty-claude"
+  local repo_a="$tmp_root/config-project-a" repo_b="$tmp_root/config-project-b" repo_c="$tmp_root/config-project-c"
+  local mem_a="$tmp_root/config-memory-a" mem_b="$tmp_root/config-memory-b"
+  local cfg="$tmp_root/project-config" empty_claude="$tmp_root/project-empty-claude"
   local before after out status=0
-  mkdir -p "$repo_a" "$repo_b" "$mem_a" "$empty_claude/projects"
-  git -C "$repo_a" init -q; git -C "$repo_b" init -q
+  mkdir -p "$repo_a" "$repo_b" "$repo_c" "$mem_a" "$mem_b" "$empty_claude/projects"
+  git -C "$repo_a" init -q; git -C "$repo_b" init -q; git -C "$repo_c" init -q
   printf 'sentinel = keep\n' > "$cfg"
   PM_DISPATCH_CONFIG_FILE="$cfg" "$PMCTL" memory config set --repo-root "$repo_a" --memory-dir "$mem_a" --json > "$tmp_root/config-set.json"
-  before="$(find "$mem_a" -type f -printf '%P:%s:%T@\n' | sort)"
-  out="$(PM_DISPATCH_CONFIG_FILE="$cfg" CLAUDE_CONFIG_DIR="$empty_claude" "$PMCTL" memory resolve --repo-root "$repo_b" --json 2>/dev/null)" || status=$?
+  PM_DISPATCH_CONFIG_FILE="$cfg" "$PMCTL" memory config set --repo-root "$repo_b" --memory-dir "$mem_b" --json >/dev/null
+  before="$(find "$mem_a" "$mem_b" -type f -printf '%p:%s:%T@\n' | sort)"
+  out="$(PM_DISPATCH_CONFIG_FILE="$cfg" CLAUDE_CONFIG_DIR="$empty_claude" "$PMCTL" memory resolve --repo-root "$repo_c" --json 2>/dev/null)" || status=$?
   PM_DISPATCH_CONFIG_FILE="$cfg" CLAUDE_CONFIG_DIR="$empty_claude" "$PMCTL" memory append-episode \
-    --repo-root "$repo_b" --host codex --summary cross-project-must-fail >/dev/null 2>&1 || true
-  after="$(find "$mem_a" -type f -printf '%P:%s:%T@\n' | sort)"
+    --repo-root "$repo_c" --host codex --summary cross-project-must-fail >/dev/null 2>&1 || true
+  after="$(find "$mem_a" "$mem_b" -type f -printf '%p:%s:%T@\n' | sort)"
   if [[ "$status" -eq 1 && "$before" == "$after" ]] \
     && jq -e '.status == "unavailable" and .resolution_source == "none"' <<<"$out" >/dev/null \
     && grep -q '^sentinel = keep$' "$cfg" \
-    && grep -q "^memory.projects.$(memory_fixture_project_key "$repo_a").dir = $mem_a$" "$cfg"; then
+    && grep -q "^memory.projects.$(memory_fixture_project_key "$repo_a").dir = $mem_a$" "$cfg" \
+    && grep -q "^memory.projects.$(memory_fixture_project_key "$repo_b").dir = $mem_b$" "$cfg"; then
     pass "$name"
   else
     fail "$name" "status=$status out=$out before=[$before] after=[$after] config=$(<"$cfg")"
+  fi
+}
+
+# Behavior: every maintenance surface rejects an invalid matched mapping rather
+# than reading or writing the repository's otherwise discoverable legacy store.
+# Steps: configure a missing scoped target over a populated legacy store, invoke
+# doctor, dir, shard, and rebuild-summary, then assert diagnostics and zero writes.
+case_memory_config_invalid_maintenance_no_fallback() {
+  local name="pmctl memory config: invalid matched mapping blocks doctor and maintenance fallback"
+  should_run "$name" || return 0
+  local repo="$tmp_root/config-maint-repo" claude="$tmp_root/config-maint-claude"
+  local config="$tmp_root/config-maint.conf" missing="$tmp_root/config-maint-missing" legacy
+  local doctor="$tmp_root/config-maint-doctor.json" status_doctor=0 status_dir=0 status_shard=0 status_rebuild=0
+  mkdir -p "$repo"; git -C "$repo" init -q
+  legacy="$(make_fixture_memory "$claude" "$repo")"
+  printf '{"date":"2026-01-01","summary":"legacy sentinel"}\n' > "$legacy/episodes.jsonl"
+  write_project_memory_config "$config" "$repo" "$missing"
+
+  PM_DISPATCH_CONFIG_FILE="$config" CLAUDE_CONFIG_DIR="$claude" "$PMCTL" memory doctor --repo-root "$repo" --json > "$doctor" 2>/dev/null || status_doctor=$?
+  PM_DISPATCH_CONFIG_FILE="$config" CLAUDE_CONFIG_DIR="$claude" "$PMCTL" memory dir "$repo" >/dev/null 2>&1 || status_dir=$?
+  PM_DISPATCH_CONFIG_FILE="$config" CLAUDE_CONFIG_DIR="$claude" "$PMCTL" memory shard --repo-root "$repo" >/dev/null 2>&1 || status_shard=$?
+  PM_DISPATCH_CONFIG_FILE="$config" CLAUDE_CONFIG_DIR="$claude" "$PMCTL" memory rebuild-summary --repo-root "$repo" >/dev/null 2>&1 || status_rebuild=$?
+
+  if [[ "$status_doctor" -eq 1 && "$status_dir" -eq 3 && "$status_shard" -eq 3 && "$status_rebuild" -eq 3 ]] \
+    && jq -e '.issues_count == 1 and .resolution_issues[0].source == "config" and (.resolution_issues[0].reason | contains("does not exist"))' "$doctor" >/dev/null \
+    && [[ ! -e "$legacy/episodes.summary.md" ]] \
+    && [[ -z "$(find "$legacy" -maxdepth 1 -name 'episodes.????-??.jsonl' -print -quit)" ]]; then
+    pass "$name"
+  else
+    fail "$name" "doctor=$status_doctor dir=$status_dir shard=$status_shard rebuild=$status_rebuild report=$(<"$doctor")"
   fi
 }
 
@@ -2051,6 +2086,7 @@ case_memory_append_episode_refuses_symlink
 case_memory_append_episode_symlink_swap_race
 case_memory_append_episode_refuses_symlink_lock_dir
 case_memory_config_project_isolation
+case_memory_config_invalid_maintenance_no_fallback
 case_memory_config_legacy_migration
 case_memory_config_lint_and_matched_fail_closed
 case_memory_config_linked_worktree_identity
@@ -2062,7 +2098,7 @@ case_memory_dir_pm_memory_dir_env_override
 case_memory_dir_pm_memory_dir_unset_byte_identical
 case_memory_dir_config_dispatch_memory_dir_override
 case_memory_dir_pm_memory_dir_outranks_config
-case_memory_dir_malformed_config_memory_dir_falls_through
+case_memory_dir_malformed_config_memory_dir_fails_closed
 case_memory_dir_no_mutation
 case_memory_doctor_clean_fixture
 case_memory_doctor_dead_link

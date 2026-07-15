@@ -63,6 +63,10 @@ pmctl_memory_dir() {
   local cwd="${1:-$PWD}"
   local mem_dir
   _pmctl_memory_load_config_override "$cwd"
+  if _pm_memory_explicit_selection_invalid; then
+    printf 'pmctl memory dir: explicit canonical memory selection is invalid\n' >&2
+    return 3
+  fi
   mem_dir="$(find_memory_dir "$cwd")" || return 1
   printf '%s\n' "$mem_dir"
 }
@@ -105,6 +109,24 @@ _pmctl_memory_emit_resolution() {
     [[ -n "$memory_dir" ]] && printf 'memory_dir: %s\nreadable: %s\nwritable: %s\n' "$memory_dir" "$readable" "$writable"
     [[ -n "$reason" ]] && printf 'reason: %s\n' "$reason"
   fi
+}
+
+# Resolve a canonical memory directory for mutating maintenance commands. These
+# commands must not use find_memory_dir's compatibility fallback: an invalid
+# explicit selection could otherwise redirect writes into a legacy store.
+_pmctl_memory_require_resolved_dir() {
+  local repo_root="$1" operation="$2" resolution rc=0 reason
+  resolution="$(pmctl_memory_resolve --repo-root "$repo_root" --allow-non-git --json)" || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    if [[ "$rc" -eq 1 ]]; then
+      printf 'pmctl memory %s: no memory directory found\n' "$operation" >&2
+      return 1
+    fi
+    reason="$(jq -r '.reason // .status // "unavailable"' <<<"$resolution" 2>/dev/null || printf 'unavailable')"
+    printf 'pmctl memory %s: canonical memory resolution failed: %s\n' "$operation" "$reason" >&2
+    return "$rc"
+  fi
+  jq -er '.memory_dir // empty' <<<"$resolution"
 }
 
 # Strict, diagnostic resolver used at cross-host boundaries. Unlike the legacy
@@ -495,10 +517,25 @@ pmctl_memory_doctor() {
     esac
   done
 
-  local mem_dir=""
-  _pmctl_memory_load_config_override "$repo_root"
-  if ! mem_dir="$(find_memory_dir "$repo_root")"; then
-    mem_dir=""
+  local mem_dir="" resolution="" resolution_rc=0 resolution_reason="" resolution_source="none"
+  resolution="$(pmctl_memory_resolve --repo-root "$repo_root" --allow-non-git --json)" || resolution_rc=$?
+  if [[ "$resolution_rc" -eq 0 ]]; then
+    mem_dir="$(jq -r '.memory_dir // empty' <<<"$resolution")"
+  elif [[ "$resolution_rc" -eq 3 ]]; then
+    resolution_reason="$(jq -r '.reason // "invalid explicit canonical memory configuration"' <<<"$resolution")"
+    resolution_source="$(jq -r '.resolution_source // "none"' <<<"$resolution")"
+    if [[ "$json" -eq 1 ]]; then
+      jq -cn --arg source "$resolution_source" --arg reason "$resolution_reason" \
+        '{schema_version:1,memory_dir:"",entry_count:0,memory_bytes:0,episodes_bytes:0,shard_count:0,dead_links:[],orphan_cards:[],duplicate_hooks:[],stale_repo_refs:[],cards_missing_fields:[],resolution_issues:[{source:$source,reason:$reason}],issues_count:1}'
+    else
+      printf 'memory_dir:      (invalid explicit configuration)\n'
+      printf 'resolution_issues:\n  - %s: %s\n' "$resolution_source" "$resolution_reason"
+      printf 'issues_count:    1\n'
+    fi
+    return 1
+  elif [[ "$resolution_rc" -eq 2 ]]; then
+    printf 'pmctl memory doctor: unable to resolve repository root\n' >&2
+    return 2
   fi
 
   # No memory dir → nothing to check; report an empty, healthy result.
@@ -758,9 +795,9 @@ pmctl_memory_shard() {
     esac
   done
 
-  local mem_dir=""
-  _pmctl_memory_load_config_override "$repo_root"
-  mem_dir="$(find_memory_dir "$repo_root")" || { printf 'pmctl memory shard: no memory directory found\n' >&2; return 1; }
+  local mem_dir="" resolve_rc=0
+  mem_dir="$(_pmctl_memory_require_resolved_dir "$repo_root" shard)" || resolve_rc=$?
+  [[ "$resolve_rc" -eq 0 ]] || return "$resolve_rc"
 
   local ep="$mem_dir/episodes.jsonl"
   [[ -f "$ep" ]] || { printf 'pmctl memory shard: no episodes.jsonl found\n'; return 0; }
@@ -822,9 +859,9 @@ pmctl_memory_rebuild_summary() {
     esac
   done
 
-  local mem_dir=""
-  _pmctl_memory_load_config_override "$repo_root"
-  mem_dir="$(find_memory_dir "$repo_root")" || { printf 'pmctl memory rebuild-summary: no memory directory found\n' >&2; return 1; }
+  local mem_dir="" resolve_rc=0
+  mem_dir="$(_pmctl_memory_require_resolved_dir "$repo_root" rebuild-summary)" || resolve_rc=$?
+  [[ "$resolve_rc" -eq 0 ]] || return "$resolve_rc"
 
   local ep="$mem_dir/episodes.jsonl"
   [[ -f "$ep" ]] || { printf 'pmctl memory rebuild-summary: no episodes.jsonl found\n'; return 0; }
