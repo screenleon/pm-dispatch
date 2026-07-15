@@ -7,11 +7,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 LINTER="$REPO_ROOT/scripts/lint-script-domain-inventory.sh"
 # shellcheck source=scripts/lib/test-harness.sh
+# Resolved from SCRIPT_DIR at runtime.
+# shellcheck disable=SC1091
 . "$SCRIPT_DIR/lib/test-harness.sh"
 th_init "$@"
 
 fixture_repo() {
   local root
+  # Initialized by th_init in test-harness.sh.
+  # shellcheck disable=SC2154
   root="$(mktemp -d "$tmp_root/script-domain-inventory-XXXXXX")"
   mkdir -p "$root/docs/architecture" "$root/scripts"
   cp "$REPO_ROOT/docs/architecture/script-domain-ownership.md" "$root/docs/architecture/"
