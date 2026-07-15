@@ -848,6 +848,39 @@ test_suite_result_artifact_records_timeout() {
   fi
 }
 
+test_result_sinks_do_not_leak_into_suites() {
+  # Behavior: gate and suite result-sink variables belong to the outer runner
+  # and are absent from suite processes, including suites that launch another
+  # run-tests instance.
+  # Steps: make one selected stub fail if either sink is non-empty; invoke the
+  # runner with both outer sinks set; assert the suite passes and the parent
+  # still writes its own ordered result artifact.
+  local name="result-sinks-do-not-leak-into-suites"
+  local repo="$TMP_ROOT/$name" path result outer out status=0 stub
+  make_fixture_repo "$repo"
+  write_pass_stubs "$repo"
+  stub="$repo/$(suite_path lint-agents)"
+  cat > "$stub" <<'STUB'
+#!/bin/sh
+[ -z "${PM_TEST_SUITE_RESULTS_FILE:-}" ] || exit 31
+[ -z "${PM_DISPATCH_PREFLIGHT_TEST_RESULT:-}" ] || exit 32
+exit 0
+STUB
+  chmod +x "$stub"
+  path="$(make_path_with_codex "$repo/bin")"
+  result="$TMP_ROOT/$name.json"
+  outer="$TMP_ROOT/$name-outer.json"
+  out=$(PATH="$path" PM_TEST_SUITE_RESULTS_FILE="$result" PM_DISPATCH_PREFLIGHT_TEST_RESULT="$outer" \
+    "$repo/scripts/lib/test-suite-runner.sh" --suite lint-agents --jobs 1 2>&1) || status=$?
+  if [[ "$status" -eq 0 ]] && jq -e '
+      length == 1 and .[0].name == "lint-agents" and .[0].status == "pass"
+    ' "$result" >/dev/null 2>&1 && [[ ! -e "$outer" ]]; then
+    pass_case "$name"
+  else
+    fail_case "$name" "status=$status out=$out result=$(cat "$result" 2>/dev/null)"
+  fi
+}
+
 test_parallel_progress_reports_slow_suite() {
   # Behavior: a still-running parallel suite emits one visible progress line before it finishes.
   # Steps: block the first suite, set the progress interval to one second, wait past it, and
@@ -1165,6 +1198,7 @@ test_gtimeout_fallback_runs_suites
 test_suite_timeout_fails_loudly
 test_suite_result_artifact_records_ordered_outcomes
 test_suite_result_artifact_records_timeout
+test_result_sinks_do_not_leak_into_suites
 test_parallel_progress_reports_slow_suite
 test_jobs_no_arg_default
 test_jobs_larger_than_suite_count

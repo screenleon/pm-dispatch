@@ -346,7 +346,9 @@ run_with_suite_timeout() {
   # The result sink belongs to this runner process. Do not leak it into a
   # suite that happens to launch another runner, or the nested process could
   # overwrite its parent's evidence artifact.
-  ( unset PM_TEST_SUITE_RESULTS_FILE; "$TIMEOUT_BIN" --kill-after=15s "${SUITE_TIMEOUT_SECS}s" "$@" )
+  ( unset PM_TEST_SUITE_RESULTS_FILE PM_DISPATCH_PREFLIGHT_TEST_RESULT
+    "$TIMEOUT_BIN" --kill-after=15s "${SUITE_TIMEOUT_SECS}s" "$@"
+  )
 }
 
 run_suite() {
