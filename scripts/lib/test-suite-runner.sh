@@ -15,6 +15,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SUITE_NAMES=(
   lint-agents
   lint-scripts
+  lint-script-domain-inventory
   lint-test-docstrings
   test-guards
   test-guard-framework
@@ -81,6 +82,7 @@ SUITE_NAMES=(
   test-pmctl-validate
   test-brief-validate
   test-archive-closed-backlog
+  test-script-domain-inventory
   test-pmctl-context
   test-pmctl-memory
   test-pmctl-backlog
@@ -95,6 +97,7 @@ SUITE_NAMES=(
 declare -A SUITE_PATHS=(
   [lint-agents]="scripts/lint-agents.sh"
   [lint-scripts]="scripts/lint-scripts.sh"
+  [lint-script-domain-inventory]="scripts/lint-script-domain-inventory.sh"
   [lint-test-docstrings]="scripts/lint-test-docstrings.sh"
   [test-guards]="scripts/test-guards.sh"
   [test-guard-framework]="scripts/test-guard-framework.sh"
@@ -161,6 +164,7 @@ declare -A SUITE_PATHS=(
   [test-pmctl-validate]="scripts/test-pmctl-validate.sh"
   [test-brief-validate]="scripts/test-brief-validate.sh"
   [test-archive-closed-backlog]="scripts/test-archive-closed-backlog.sh"
+  [test-script-domain-inventory]="scripts/test-script-domain-inventory.sh"
   [test-pmctl-context]="scripts/test-pmctl-context.sh"
   [test-pmctl-memory]="scripts/test-pmctl-memory.sh"
   [test-pmctl-backlog]="scripts/test-pmctl-backlog.sh"

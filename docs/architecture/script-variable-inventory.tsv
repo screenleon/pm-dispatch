@@ -1,0 +1,63 @@
+name_or_pattern	owner_domain	input_class	default_source	precedence	propagation	risk_or_side_effect	test_isolation
+REPO_ROOT	shared-runtime	internal-derived	explicit module ABI target	argv then validated discovery	pass explicitly to child modules	wrong relative depth redirects every repo-local read and write	relocated checkout fixture with spaces
+SCRIPT_DIR	module-local	internal-derived	BASH_SOURCE directory	module location only	do not export	changes whenever a file moves	no fixed directory-depth assumptions
+DRY_RUN	module-local	argv-derived	false	CLI flag	pass as explicit argv	must suppress every filesystem mutation	filesystem diff before and after
+HOME	bootstrap	ambient-public	process environment	ambient fallback only	inherit only when child contract declares it	controls host homes pmctl bin state and user files	replace entire HOME for mutating tests
+PATH	bootstrap	ambient-public	process environment	ambient	inherit through executable boundary	selects jq git pmctl adapters and hostile stubs	minimal explicit PATH fixture
+PWD	bootstrap	ambient-public	process cwd	argv cwd wins where supported	do not treat as repo identity	can select the wrong caller repository	run from repo subdir external dir and symlink
+TMPDIR	shared-runtime	ambient-public	/tmp	ambient	inherit	controls temporary artifact location	fixture-local TMPDIR with cleanup assertion
+OSTYPE	portability	ambient-public	shell supplied	ambient	inherit	selects platform-specific behavior	linux macOS and Windows spelling fixtures
+MSYS2_ARG_CONV_EXCL	portability	child-control	unset	module-local assignment	pass only to jq child	Windows argument rewriting	assert parent environment unchanged
+MSYS_NO_PATHCONV	portability	child-control	unset	module-local assignment	pass only to jq child	Windows path conversion	assert parent environment unchanged
+XDG_CONFIG_HOME	host-opencode	host-root	$HOME/.config	explicit env then host default	pass only to OpenCode host modules	selects OpenCode config commands tools and receipts	isolated HOME plus explicit XDG root
+XDG_DATA_HOME	shared-runtime	ambient-public	$HOME/.local/share	explicit env then platform default	pass to state resolver	selects canonical runtime state root	fixture-local XDG data root
+XDG_RUNTIME_DIR	shared-runtime	ambient-public	platform fallback	explicit valid directory then fallback	pass to detached launcher	selects sentinel and detached runtime location	fixture-local existing and missing variants
+CLAUDE_CONFIG_DIR	host-claude	host-root	$HOME/.claude	explicit canonical then legacy alias then default	pass only to Claude host modules	selects settings hooks install manifest commands agents and skills	isolated HOME plus explicit canonical root
+CLAUDE_HOME	host-claude	legacy-alias	none	must equal CLAUDE_CONFIG_DIR when both explicit	normalize inside Claude resolver only	conflict must fail before mutation	unset legacy-only canonical-only conflict matrix
+CODEX_HOME	host-codex	host-root	$HOME/.codex	explicit env then host default	pass only to Codex host modules	selects hooks config and managed AGENTS instructions	isolated HOME plus explicit Codex root
+PMCTL_BIN_DIR	ops-setup	public-override	$HOME/.local/bin	explicit env then HOME fallback	pass to install and uninstall only	creates or removes the real pmctl symlink	always isolate HOME or set explicit fixture bin dir
+PM_DISPATCH_REPO	shared-runtime	compatibility-input	validated checkout root	explicit caller then module ABI	do not export globally	legacy hook installer repo selection	wrong and hostile checkout fixtures
+PM_DISPATCH_CONFIG_FILE	shared-runtime	public-override	$HOME/.pm-dispatch/config	explicit env then HOME fallback	pass to canonical config readers only	can redirect every config and memory resolution	always set missing or fixture path in tests
+PM_MEMORY_DIR	shared-memory	public-override	none	explicit env then project config then legacy discovery	pass only to canonical memory commands	canonical memory read and write target	fixture directory plus invalid and symlink cases
+PM_CFG_*	shared-runtime	resolved-config	none	CLI flag then project config then built-in default	export narrowly from pmctl to invoked runtime	must not become a host-owned default	config precedence matrix with clean environment
+PM_CFG_DEFAULT_MODEL	shared-runtime	resolved-config	adapter default alias	CLI model then config then adapter alias	pass to adapter process	selects dispatched model	per-adapter alias fixtures
+PM_CFG_TIMEOUT	shared-runtime	resolved-config	adapter built-in	CLI timeout then adapter env then config then built-in	pass to adapter process	bounds executor runtime	precedence matrix
+PM_CFG_USAGE_LOG_PATH	shared-runtime	resolved-config	repo-owned snapshot logger	explicit config then snapshot fallback	pass to adapters only	writes usage accounting data	fixture log path and unwritable path
+CLAUDE_DISPATCH_TIMEOUT	adapter-claude	public-override	1200	CLI flag then adapter env then PM_CFG_TIMEOUT then built-in	consume inside Claude adapter only	bounds Claude executor runtime	precedence and invalid-value fixtures
+CODEX_DISPATCH_TIMEOUT	adapter-codex	public-override	1200	CLI flag then adapter env then PM_CFG_TIMEOUT then built-in	consume inside Codex adapter only	bounds Codex executor runtime	precedence and invalid-value fixtures
+OPENCODE_DISPATCH_TIMEOUT	adapter-opencode	public-override	1200	CLI flag then adapter env then PM_CFG_TIMEOUT then built-in	consume inside OpenCode adapter only	bounds OpenCode executor attempts	fallback-chain budget fixtures
+PM_DISPATCH_TRACE_DIR	shared-runtime	public-override	worktree .agent-trace	CLI flag then env then legacy fallback	pass to adapter and verifier	trace and post-verification write target	fixture absolute path and traversal rejection
+PM_DISPATCH_STATE_ROOT	shared-runtime	public-override	XDG data or HOME fallback	explicit env then platform fallback	pass to state writers and readers	canonical run event and artifact state	fixture-local root for every stateful test
+PM_DISPATCH_ALLOW_UNSAFE_STATE_ROOT	shared-runtime	emergency-override	disabled	explicit opt-in only	consume inside state writer	can weaken state-root containment	disabled by default and isolated unsafe fixture
+PM_DISPATCH_ROTATE_MAX_BYTES	shared-runtime	public-override	52428800	explicit env then built-in	consume inside state writer	changes state rotation threshold	tiny fixture threshold
+PM_DISPATCH_LOCK_TIMEOUT_SECS	shared-runtime	public-override	implementation default	explicit env then built-in	consume inside locking helper	bounds lock acquisition	short deterministic timeout fixture
+PM_DISPATCH_LOCK_STALE_SECS	shared-runtime	public-override	implementation default	explicit env then built-in	consume inside locking helper	controls stale lock recovery	aged fixture lock
+PM_DISPATCH_WAIT_POLL_INTERVAL	shared-runtime	public-override	2	explicit env then built-in	consume inside dispatch wait	poll cadence only	fast fixture value
+PM_GATE_WAIT_DEFAULT_TIMEOUT	shared-runtime	public-override	1200	explicit env then built-in	consume inside gate wait	bounds authenticated gate wait	short timeout fixture
+PM_GATE_WAIT_POLL_INTERVAL	shared-runtime	public-override	2	explicit env then built-in	consume inside gate wait	poll cadence only	fast fixture value
+PM_DISPATCH_GATE_WORKSPACE	shared-runtime	public-override	resolved workspace root	explicit env then host-safe fallback	pass to gate workspace resolver	controls reviewer writable artifact boundary	fixture path and containment cases
+GATE_RUN_DIR_OVERRIDE	shared-runtime	internal-injection	generated run directory	explicit internal override then generated path	pass only through gate supervisor	changes gate artifact root	fixture-local path and relocation case
+OUTPUT_OVERRIDE	shared-runtime	internal-injection	worktree gate result path	explicit internal override then default	pass only through gate wrapper	changes human result output path	fixture-local path
+REVIEWER_DEFINITION_DIR	shared-runtime	internal-injection	repo reviewer definitions	explicit internal override then repo default	pass only to gate reviewer loading	can replace reviewer instructions	trusted fixture directory only
+PM_DISPATCH_CONTEXT_AUTOBUILD	shared-context	public-override	enabled	explicit env then enabled	consume inside context runtime	controls initial context database creation	fixture repo and disabled case
+PM_DISPATCH_CONTEXT_AUTOREFRESH	shared-context	public-override	enabled	explicit env then enabled	consume inside context runtime	controls context database refresh	fixture repo and disabled case
+PM_DISPATCH_DISABLE_PROMPT_CONTEXT	shared-context	hook-control	disabled	explicit env then disabled	consume inside prompt hook only	disables optional prompt context injection	enabled and disabled hook fixtures
+PM_DISPATCH_PROMPT_CONTEXT_PMCTL	shared-context	hook-injection	repo cli/pmctl	explicit env then repo path	consume inside prompt hook only	can replace the executable invoked by hook	trusted stub executable
+PM_DISPATCH_PROMPT_CONTEXT_INITIAL_TIMEOUT	shared-context	public-override	prompt timeout contract	explicit env then declared default	consume inside prompt hook	bounds initial index creation	short timeout and cleanup fixture
+PM_DISPATCH_PROMPT_CONTEXT_TIMEOUT	shared-context	public-override	prompt timeout contract	explicit env then declared default	consume inside prompt hook	bounds incremental refresh	short timeout fixture
+PM_DISPATCH_PROMPT_SCAN_MAX_TERMS	shared-context	public-override	8	explicit env then built-in	consume inside context scanner	bounds prompt-derived retrieval terms	boundary values
+PM_DISPATCH_GC_KEEP_LAST	shared-runtime	public-override	10	explicit env then built-in	consume inside artifact GC	controls retained artifacts	fixture state tree
+PM_DISPATCH_GC_MAX_AGE_DAYS	shared-runtime	public-override	30	explicit env then built-in	consume inside artifact GC	controls time-based deletion	aged fixture artifacts
+PM_DISPATCH_TEST_MAX_JOBS	test-harness	test-config	8	explicit env then built-in	consume inside suite runner	parallelism and contention	bounded fixture value
+PM_DISPATCH_TEST_SUITE_TIMEOUT_SECS	test-harness	test-config	900	explicit env then built-in	consume inside suite runner	per-suite deadline	short hanging-suite fixture
+PM_DISPATCH_TEST_PROGRESS_SECS	test-harness	test-config	60	explicit env then built-in	consume inside suite runner	progress heartbeat cadence	fast fixture value
+TEST_GUARDS_*	test-harness	test-injection	test defaults	explicit test env then test default	never propagate to production modules	fault injection timeouts and diagnostics	clear after each case
+CODEX_GATE_STUB_*	test-harness	test-injection	none	explicit test env only	consume only in gate test stubs	artifact tamper hang and verdict injection	clear after each case
+CLAUDE_GATE_STUB_*	test-harness	test-injection	none	explicit test env only	consume only in gate test stubs	gate-mode and call-marker injection	clear after each case
+RUN_TESTS_*	test-harness	test-injection	none	explicit test env only	consume only in runner test stubs	argument capture mutation and forced status	clear after each case
+CLAUDE_CONFIG_TEST_*	test-harness	test-injection	none	explicit test env only	consume only in install and suite fixtures	preflight suppression and fixture HOME	clear and isolate full HOME
+_PM_DISPATCH_PREFLIGHT_RUNNER	test-harness	test-injection	repo run-all-tests	explicit test env then repo runner	consume only in installer preflight	can replace executable run during install	trusted fixture stub only
+PM_E2E_PMCTL	test-harness	test-injection	repo cli/pmctl	explicit test env then repo path	consume only in E2E test	selects command under test	trusted fixture executable
+ANTHROPIC_API_KEY	adapter-claude	secret-passthrough	none	parent environment	pass only to Claude executable	credential must never enter inventory values logs or child hosts	presence-only fake secret fixture
+CLAUDE_CODE_OAUTH_TOKEN	adapter-claude	secret-passthrough	none	parent environment	pass only to Claude executable	credential must never enter logs or artifacts	presence-only fake secret fixture
+OPENAI_API_KEY	adapter-codex	secret-passthrough	none	parent environment	pass only to Codex executable	credential must never enter logs or artifacts	presence-only fake secret fixture
