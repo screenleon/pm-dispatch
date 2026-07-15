@@ -24,7 +24,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-486 | ⏸ deferred | direct-impact test planner mapping 提前退出：changed path 含 `agents/*.md`／`commands/*.md` 時 `map_path` 呼叫未註冊的 `lint-frontmatter`，`add_suite` 回傳 1 並在 `set -e` 下無輸出終止，導致 `run-tests.sh --base ... --list` exit 1 | ops/test | 2026-07-13 | feedback:2026-07-13 | P2 | hygiene |
 | CC-489 | 🔵 active | `scripts/` domain ownership 重整：先收斂 module ABI、變數/config ownership 與 side-effect boundary，再將 host/runtime/ops/test entrypoints 以 manifest/registry 與相容 shim 分批遷移 | arch | 2026-07-14 | feedback:2026-07-15 | P2 | design |
 | CC-490 | ✅ done | project-scoped explicit memory config：取代全域單值 `dispatch.memory_dir`，避免多 repo 靜默共用 pm-dispatch canonical store | arch/memory | 2026-07-14 | pr:#406 | P1 | design |
-| CC-491 | 🔵 active | PR-gate pre-flight 機械式 evidence contract：傳遞 command、selected suites、逐項結果與 tree fingerprint，讓 reviewer reuse 已驗證結果並禁止無條件重跑 | ops/gate | 2026-07-14 | feedback:2026-07-14 | P1 | design |
+| CC-491 | ✅ closed 2026-07-15 | PR-gate pre-flight 機械式 evidence contract：傳遞 command、selected suites、逐項結果與 tree fingerprint，讓 reviewer reuse 已驗證結果並禁止無條件重跑 | ops/gate | 2026-07-14 | pr:#408 | P1 | design |
 | CC-493 | 🟢 someday | Prompt→Skill→Command→Harness 升級規則文件化：可測試的分類判準（何時停在 prompt、何時升為 skill、何時做成 command、何時需要 harness-level hook/guard/state），並盤點 `commands/`／`skills/`／`agents/` 現況對照分類（2026-07-15 CC-489 三方 multi-model synthesis） | process/docs | 2026-07-15 | feedback:2026-07-15 | P2 | design |
 | CC-494 | 🟢 someday | design: executor 局部設計裁量權 envelope——在 dispatch brief / executor contract 定義「可自行處理的局部設計」與「必須 halt 回報 PM」的邊界（例如新增 schema 欄位 `design_latitude`/`architectural_conflicts`）；三方 multi-model synthesis 2:1 分歧（codex/fable 認為現行邊界過度僵硬需要新機制，opencode 認為現行 `isolation_level`/executor 欄位已足夠彈性），本票僅追蹤決策、不預設結論（2026-07-15） | schema/process | 2026-07-15 | feedback:2026-07-15 | P3 | design |
 | CC-495 | 🔵 active | `pmctl dispatch cancel <run_id>`：detached run 中途終止機制。`core/policy/dispatch-states.yaml` 已定義 `cancelled` 為合法 terminal state 且無任何 code path 寫入；`.supervisor.pid` 存在但未被任何 pmctl 子命令讀取；使用者目前唯一手段是手動 kill pid，無文件、可能留孤兒 process、無 `run.cancelled` event（2026-07-15 使用者發現 executor 缺乏可終止行為） | arch/gate | 2026-07-15 | feedback:2026-07-15 | P2 | design |
@@ -410,17 +410,17 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 ---
 
-## CC-491 — PR-gate pre-flight 機械式 evidence 與 reviewer reuse contract 🔵 active
+## CC-491 — PR-gate pre-flight 機械式 evidence 與 reviewer reuse contract ✅ 2026-07-15
 
 **Problem**: `pr-gate.sh --test-cmd` 目前只把 pre-flight 結果以 `Pre-flight test run: pass|fail` 提供給 reviewer，沒有傳遞實際 command、selected suites、逐 suite 結果或被驗證工作樹的 fingerprint。QA reviewer 因而無法判斷哪些 behavioral units 已有可信證據；即使 pre-flight 已通過，仍可能手工列舉相同 suite 再跑一次。`gate-20260714-145345-2998745` 中 9 個已通過的 suite 被 QA 重複執行，部分因 180 秒 timeout 又重跑，最終單一 sequential reviewer session 耗盡 1200 秒，只完成 critic、留下 inconclusive partial artifact。
 
 **Boundary**: 本票建立 pre-flight producer → PR-gate → reviewer 的 evidence/reuse contract；不重寫 [[CC-481]] 的 direct-impact planner、不把 authoritative full suite 搬回 gate lifecycle，也不禁止 reviewer 對「既有 evidence 未覆蓋」的新行為做最小補充驗證。
 
 **Requirements**:
-1. 每次 pre-flight 必須產生 versioned、machine-readable result。generic `--test-cmd` 至少記錄經安全處理的 command identity、exit status、started/finished time、timeout、log path/digest 與工作樹 identity；使用 `scripts/run-tests.sh` 時必須再帶 selection mode、changed paths、selected suites、逐 suite pass/fail/timeout/duration，以及 aggregate status。
-2. 工作樹 identity 必須能判定 evidence 是否 stale，至少綁定 repo/project identity、base/head 與 dirty/untracked content fingerprint；pre-flight 後若受測內容改變，PR-gate 不得把舊 PASS 呈現為 current evidence。
+1. 每次 pre-flight 必須產生 versioned、machine-readable result。通用必填核心只包含經安全處理的 command identity、exit status、started/finished time、timeout 與 log path/digest；不得要求一般 repo 的 `npm run test`／`go test ./...` 等指令實作 pm-dispatch 專用 producer。使用 `scripts/run-tests.sh` 時才附加 selection mode、planner 自動推導的 changed paths、selected suites、逐 suite pass/fail/timeout/duration，以及 aggregate status；changed paths 不是使用者輸入欄位。
+2. basic result 與 reusable evidence 必須分層：沒有受測內容 identity 的結果仍是有效 basic artifact，但標為 `reusable:false`；只有 gate 要主張 PASS 仍為 current／可避免重跑時，才必須自動綁定 subject fingerprint。Git repo/base/head 僅為可選 provenance，不是通用 result 必填。pre-flight 後若 fingerprint 對應的 tracked 或 untracked 內容改變，PR-gate 不得把舊 PASS 呈現為 current evidence。
 3. PR-gate 必須機械驗證 result schema、artifact digest、fingerprint 與實際 pre-flight exit status，再把結構化 evidence 摘要及 artifact pointer 放進 reviewer brief；不得只由自然語言宣稱 `pass`，也不得要求 reviewer 從自由格式 log 猜測已跑項目。
-4. QA reviewer 收到 current PASS evidence 後，必須先建立 behavioral-unit → existing-suite evidence 對照；已涵蓋 suite 不得 reflexively rerun。只有 evidence 未涵蓋、stale/invalid 或具體 flake 疑點時才能補跑最小 suite，且須在結果中記錄 gap、理由、command 與新增 evidence。
+4. QA reviewer 收到 current structured PASS evidence 後，必須先建立 behavioral-unit → existing-suite evidence 對照；已涵蓋 suite 不得 reflexively rerun。只有 evidence 未涵蓋、stale/invalid 或具體 flake 疑點時才能補跑最小 suite，且須在結果中記錄 gap、理由、command 與新增 evidence。generic command 的 coverage 明確標為 opaque/advisory：QA 可引用 aggregate PASS，但無法確認 behavioral coverage 時仍可執行最小 repo-native 補充驗證，不保證 0 次重跑，也不得偽稱 suite-level reuse。
 5. Reviewer 不得以手寫 `for`/`&&` 清單取代 repo planner，也不得在 source working tree 建立 `.qa-test-*` 等暫存輸出；補充測試應使用 repo runner 的 selection/parallelism contract，輸出歸 gate run artifact directory。單獨指定一個 suite 時才允許 sequential execution。
 6. detached/foreground、artifact relocation 與 timeout 路徑都必須保留同一 evidence schema；partial／timeout gate 要能指出 pre-flight 已完成、哪些 reviewer 額外執行了什麼，以及重複 suite 數量，不得把 partial artifact 誤當 GO。
 
@@ -428,12 +428,16 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 - focused pre-flight 透過 `run-tests.sh` 後，reviewer brief 可機械讀出 changed paths、selected suites、逐 suite結果與一致的 tree fingerprint；QA 對完全涵蓋且 current 的 PASS evidence 執行 0 個重複 suite。
 - 新增一個未被 planner mapping 涵蓋的 behavioral unit 時，QA 只補跑能覆蓋該 gap 的最小測試並附理由；不得重跑其餘已通過 suite。
 - pre-flight 後修改 tracked 或 untracked 受測內容會使 evidence 判為 stale，gate/reviewer 不得 reuse 舊 PASS。
-- generic 不支援 rich result 的 `--test-cmd` 仍有可驗證的 basic artifact，並明確標示 coverage opaque，不偽造 selected-suite evidence。
+- generic 不支援 rich result 的 `--test-cmd` 仍有可驗證的 basic artifact，且不需修改指令或採用 pm-dispatch 專用格式；明確標示 coverage opaque/advisory，不偽造 selected-suite evidence，也不承諾 QA 0 次重跑。
 - regression 覆蓋 pass/fail/timeout、artifact tamper、tree drift、run-dir relocation，以及本次「9 個 suite 被重跑導致 reviewer timeout」案例。
 
 **Source**: 2026-07-14 `gate-20260714-145345-2998745` post-mortem；pre-flight 已 PASS，但 brief 僅提供布林狀態，QA 重複執行相同 focused suites並使 sequential full-tier gate timeout／inconclusive。
 
-**See**: [[CC-470]], [[CC-481]], [[CC-485]].
+**Outcome**: 已完成 portable basic evidence 與 structured suite evidence 分層；一般 repo 可維持原有 `npm run test` 等指令而不採用專用 producer，Git provenance 為選填。pm-dispatch runner 會自動輸出 planner-derived coverage、逐 suite 結果與 subject fingerprint，gate 對 tracked/untracked drift、malformed artifact、timeout 與 tamper fail closed；QA evidence accounting 保留 generic opaque evidence 的最小補充驗證權，同時禁止無理由重跑 current structured PASS suites。PR gate GO，authoritative full suite 79 passed、0 failed、0 skipped。
+
+**See**: pr:#408
+
+**Cross-link**: [[CC-470]], [[CC-481]], [[CC-485]].
 
 ---
 

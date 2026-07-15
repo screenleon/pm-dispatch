@@ -89,18 +89,42 @@ pm_test_runner_contract_hash() {
   done | pm_test_sha256_stream
 }
 
+pm_test_repo_identity() {
+  local repo="$1" remote
+  remote="$(git -C "$repo" config --get remote.origin.url 2>/dev/null || true)"
+  printf '%s\n%s\n' "$repo" "$remote" | pm_test_sha256_stream
+}
+
 pm_test_write_result() {
   local file="$1" repo="$2" contract="$3" authoritative="$4" status="$5"
   local exit_code="$6" started="$7" finished="$8" before="$9" after="${10}"
-  local contract_hash="${11}" suite_json="${12}" skips_json="${13}"
+  local contract_hash="${11}" selection_mode="${12}" changed_json="${13}"
+  local suite_json="${14}" skips_json="${15}" suite_results_json="${16}" base_ref="${17}"
+  local repo_identity head_commit base_commit aggregate_json
   local dir tmp
+  repo_identity="$(pm_test_repo_identity "$repo")" || return 2
+  head_commit="$(git -C "$repo" rev-parse HEAD 2>/dev/null || true)"
+  base_commit=""
+  if [[ -n "$base_ref" ]]; then
+    base_commit="$(git -C "$repo" rev-parse "${base_ref}^{commit}")" || return 2
+  fi
+  aggregate_json="$(jq -nc --arg status "$status" --argjson results "$suite_results_json" '
+    {status:$status,selected:($results|length),
+     passed:([$results[]|select(.status=="pass")]|length),
+     failed:([$results[]|select(.status=="fail")]|length),
+     timed_out:([$results[]|select(.status=="timeout")]|length),
+     skipped:([$results[]|select(.status=="skip")]|length)}')" || return 2
   dir="$(dirname "$file")"
   mkdir -p "$dir" || return 2
   tmp="$(mktemp "$dir/.pm-test-result.XXXXXX")" || return 2
   jq -n \
-    --arg kind pm_test_result_v1 \
-    --argjson schema_version 1 \
+    --arg kind pm_test_result_v2 \
+    --argjson schema_version 2 \
     --arg repo_root "$repo" \
+    --arg repo_identity "$repo_identity" \
+    --arg base_ref "$base_ref" \
+    --arg base_commit "$base_commit" \
+    --arg head_commit "$head_commit" \
     --arg contract "$contract" \
     --argjson authoritative "$authoritative" \
     --arg status "$status" \
@@ -110,29 +134,40 @@ pm_test_write_result() {
     --arg tree_fingerprint "$before" \
     --arg observed_tree_fingerprint_after "$after" \
     --arg runner_contract_hash "$contract_hash" \
+    --arg selection_mode "$selection_mode" \
+    --argjson changed_paths "$changed_json" \
     --argjson suite_set "$suite_json" \
     --argjson requested_skips "$skips_json" \
-    '{kind:$kind,schema_version:$schema_version,repo_root:$repo_root,contract:$contract,
+    --argjson suite_results "$suite_results_json" \
+    --argjson aggregate "$aggregate_json" \
+    '{kind:$kind,schema_version:$schema_version,repo_root:$repo_root,repo_identity:$repo_identity,
+      base_ref:(if $base_ref=="" then null else $base_ref end),
+      base_commit:(if $base_commit=="" then null else $base_commit end),
+      head_commit:(if $head_commit=="" then null else $head_commit end),contract:$contract,
       authoritative:$authoritative,status:$status,exit_code:$exit_code,
       started_at:$started_at,finished_at:$finished_at,
       tree_fingerprint:$tree_fingerprint,
       observed_tree_fingerprint_after:$observed_tree_fingerprint_after,
-      runner_contract_hash:$runner_contract_hash,
-      suite_set:$suite_set,requested_skips:$requested_skips}' > "$tmp" || { rm -f "$tmp"; return 2; }
+      runner_contract_hash:$runner_contract_hash,selection_mode:$selection_mode,
+      changed_paths:$changed_paths,suite_set:$suite_set,requested_skips:$requested_skips,
+      suite_results:$suite_results,aggregate:$aggregate}' > "$tmp" || { rm -f "$tmp"; return 2; }
   chmod 0600 "$tmp" 2>/dev/null || true
   mv "$tmp" "$file"
   printf 'test result artifact: %s\n' "$file"
 }
 
 pm_test_run_and_record() {
-  local repo="$1" contract="$2" result_file="$3" suite_json="$4" skips_json="$5"
-  shift 5
+  local repo="$1" contract="$2" result_file="$3" selection_mode="$4" changed_json="$5"
+  local suite_json="$6" skips_json="$7" base_ref="$8"
+  shift 8
   local before after contract_hash started finished rc=0 status authoritative=false
+  local suite_results_file suite_results_json
   before="$(pm_test_tree_fingerprint "$repo")" || return 2
   contract_hash="$(pm_test_runner_contract_hash "$repo")" || return 2
   started="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+  suite_results_file="$(mktemp "${TMPDIR:-/tmp}/pm-suite-results.XXXXXX")" || return 2
   set +e
-  "$@"
+  PM_TEST_SUITE_RESULTS_FILE="$suite_results_file" "$@"
   rc=$?
   set -e
   finished="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
@@ -148,8 +183,16 @@ pm_test_run_and_record() {
   if [[ "$contract" == full && "$status" == pass && "$skips_json" == '[]' ]]; then
     authoritative=true
   fi
+  if ! suite_results_json="$(jq -ce 'if type == "array" and length > 0 then . else error("not a non-empty array") end' "$suite_results_file" 2>/dev/null)"; then
+    suite_results_json="$(jq -nc --argjson suites "$suite_json" --arg status "$status" --argjson rc "$rc" '
+      [$suites[] | {name:.,status:(if $status=="pass" then "pass" else "fail" end),exit_code:$rc,duration_seconds:0}]')" || {
+      rm -f "$suite_results_file"; return 2;
+    }
+  fi
+  rm -f "$suite_results_file"
   pm_test_write_result "$result_file" "$repo" "$contract" "$authoritative" "$status" \
-    "$rc" "$started" "$finished" "$before" "$after" "$contract_hash" "$suite_json" "$skips_json" || return 2
+    "$rc" "$started" "$finished" "$before" "$after" "$contract_hash" "$selection_mode" \
+    "$changed_json" "$suite_json" "$skips_json" "$suite_results_json" "$base_ref" || return 2
   [[ "$status" == stale ]] && printf 'run-tests: source tree changed while tests ran; result is stale\n' >&2
   return "$rc"
 }
@@ -158,7 +201,7 @@ pm_test_verify_full_result() {
   local repo="$1" file="$2" current_tree current_contract expected_suites
   [[ -s "$file" ]] || { printf 'run-tests: full result artifact missing or empty: %s\n' "$file" >&2; return 1; }
   jq -e '
-    .kind == "pm_test_result_v1" and .schema_version == 1 and
+    .kind == "pm_test_result_v2" and .schema_version == 2 and
     .contract == "full" and .authoritative == true and
     .status == "pass" and .exit_code == 0 and
     (.requested_skips == []) and

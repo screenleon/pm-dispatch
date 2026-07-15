@@ -151,8 +151,10 @@ case_evidence_contract_maps_to_runner_regression() {
   args="$TMP_ROOT/$name.args"
   repo="$(make_fixture "$name")"
   out=$(RUN_TESTS_ARGS_LOG="$args" "$repo/scripts/run-tests.sh" \
-    --path scripts/lib/test-result.sh --path core/schema/test-result.schema.json --list 2>&1) || status=$?
-  if [[ "$status" -eq 0 && "$out" == *"test-run-tests"* && "$out" == *"test-core-schemas"* &&
+    --path scripts/lib/test-result.sh --path core/schema/test-result.schema.json \
+    --path core/schema/preflight-evidence.schema.json --list 2>&1) || status=$?
+  if [[ "$status" -eq 0 && "$out" == *"test-run-tests"* && "$out" == *"test-pr-gate"* &&
+        "$out" == *"test-core-schemas"* &&
         "$out" != *"coverage gaps"* && ! -e "$args" ]]; then
     pass "$name"
   else
@@ -216,7 +218,9 @@ case_full_result_verifies_same_tree() {
   artifact="$repo/.pm-dispatch/test-results/full.json"
   out=$(RUN_TESTS_ARGS_LOG="$args" "$repo/scripts/run-tests.sh" --all --result-file "$artifact" 2>&1) || status=$?
   if [[ "$status" -ne 0 || ! -s "$artifact" ]] ||
-     ! jq -e '.kind == "pm_test_result_v1" and .contract == "full" and .authoritative == true and .status == "pass" and (.suite_set | length > 0)' "$artifact" >/dev/null; then
+     ! jq -e '.kind == "pm_test_result_v2" and .schema_version == 2 and .contract == "full" and
+       .authoritative == true and .status == "pass" and (.suite_set | length > 0) and
+       ((.suite_results | length) == (.suite_set | length))' "$artifact" >/dev/null; then
     fail "$name" "artifact missing/invalid status=$status out=$out"
     return
   fi

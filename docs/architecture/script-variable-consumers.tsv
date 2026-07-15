@@ -46,6 +46,7 @@ CODEX_GATE_STUB_*	CODEX_GATE_STUB_SYNTHESIS_FINAL	scripts/test-pr-gate.sh	test
 CODEX_GATE_STUB_*	CODEX_GATE_STUB_SYNTHESIS_INJECT_FILE	scripts/test-pr-gate.sh	test
 CODEX_GATE_STUB_*	CODEX_GATE_STUB_SYNTHESIS_MODE	scripts/test-pr-gate.sh	test
 CODEX_GATE_STUB_*	CODEX_GATE_STUB_SYNTHESIS_TAMPER_ARTIFACT	scripts/test-pr-gate.sh	test
+CODEX_GATE_STUB_*	CODEX_GATE_STUB_TAMPER_PREFLIGHT	scripts/test-pr-gate.sh	test
 CODEX_GATE_STUB_*	CODEX_GATE_STUB_VERDICT	scripts/test-pr-gate.sh	test
 CODEX_GATE_STUB_*	CODEX_GATE_STUB_VERDICT_PREFIX_ONLY	scripts/test-pr-gate.sh	test
 CODEX_HOME	CODEX_HOME	install.sh	production
@@ -308,6 +309,7 @@ TMPDIR	TMPDIR	scripts/lib/handover-validate.sh	production
 TMPDIR	TMPDIR	scripts/lib/pmctl-artifacts.sh	production
 TMPDIR	TMPDIR	scripts/lib/pmctl-pm.sh	production
 TMPDIR	TMPDIR	scripts/lib/portable.sh	production
+TMPDIR	TMPDIR	scripts/pr-gate.sh	production
 XDG_CONFIG_HOME	XDG_CONFIG_HOME	scripts/lib/host-manifest.sh	production
 XDG_DATA_HOME	XDG_DATA_HOME	scripts/lib/state-paths.sh	production
 XDG_RUNTIME_DIR	XDG_RUNTIME_DIR	scripts/lib/detached-launch.sh	production

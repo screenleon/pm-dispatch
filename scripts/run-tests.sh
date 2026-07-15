@@ -23,7 +23,7 @@ LIST_ONLY=0
 RUN_ALL=0
 JOBS=""
 SUITE_TIMEOUT=""
-RESULT_FILE=""
+RESULT_FILE="${PM_DISPATCH_PREFLIGHT_TEST_RESULT:-}"
 VERIFY_FULL_FILE=""
 declare -a EXPLICIT_PATHS=()
 declare -a FULL_SKIPS=()
@@ -101,7 +101,8 @@ if [[ "$RUN_ALL" -eq 1 ]]; then
     result_contract=full
     [[ -n "$RESULT_FILE" ]] || RESULT_FILE="$REPO_ROOT/.pm-dispatch/test-results/latest-full.json"
   fi
-  pm_test_run_and_record "$REPO_ROOT" "$result_contract" "$RESULT_FILE" "$full_suite_json" "$skip_json" \
+  pm_test_run_and_record "$REPO_ROOT" "$result_contract" "$RESULT_FILE" all '[]' \
+    "$full_suite_json" "$skip_json" "" \
     "$SUITE_RUNNER" "${runner_args[@]}"
   exit $?
 fi
@@ -187,6 +188,8 @@ map_path() {
       add_suite lint-script-domain-inventory; add_suite test-script-domain-inventory; behavioral=1 ;;
     scripts/lib/test-result.sh|core/schema/test-result.schema.json)
       add_suite test-run-tests; behavioral=1 ;;
+    core/schema/preflight-evidence.schema.json)
+      add_suite test-pr-gate; behavioral=1 ;;
     scripts/lib/pmctl-config.sh)
       add_suite test-pmctl-dispatch; add_suite test-pmctl-memory; add_suite test-pmctl-context; behavioral=1 ;;
     scripts/lib/memory.sh|scripts/lib/memory-dir.sh)
@@ -245,6 +248,7 @@ map_path() {
 }
 
 while IFS= read -r path; do map_path "$path"; done < <(printf '%s\n' "${!CHANGED[@]}" | LC_ALL=C sort)
+changed_paths_json="$(printf '%s\n' "${!CHANGED[@]}" | LC_ALL=C sort | jq -Rsc 'split("\n") | map(select(length > 0))')"
 
 printf 'run-tests: contract=iteration-only coverage=direct-impact (not final sign-off)\n' >&2
 printf 'run-tests: changed paths: %s\n' "${#CHANGED[@]}" >&2
@@ -254,6 +258,13 @@ if [[ "$ESCALATE_FULL" -eq 1 ]]; then
   if [[ "$LIST_ONLY" -eq 1 ]]; then
     "$SUITE_RUNNER" --list
     exit 0
+  fi
+  if [[ -n "$RESULT_FILE" ]]; then
+    escalated_suite_json="$("$SUITE_RUNNER" --list | jq -Rsc 'split("\n") | map(select(length > 0))')"
+    pm_test_run_and_record "$REPO_ROOT" iteration "$RESULT_FILE" escalated-full \
+      "$changed_paths_json" "$escalated_suite_json" '[]' "$BASE_REF" \
+      "$SUITE_RUNNER" "${runner_args[@]}"
+    exit $?
   fi
   exec "$SUITE_RUNNER" "${runner_args[@]}"
 fi
@@ -285,7 +296,11 @@ fi
 for suite in "${ORDERED_SUITES[@]}"; do runner_args+=(--suite "$suite"); done
 if [[ -n "$RESULT_FILE" ]]; then
   iteration_suite_json="$(printf '%s\n' "${ORDERED_SUITES[@]}" | jq -Rsc 'split("\n") | map(select(length > 0))')"
-  pm_test_run_and_record "$REPO_ROOT" iteration "$RESULT_FILE" "$iteration_suite_json" '[]' \
+  selection_mode=working-tree
+  [[ -n "$BASE_REF" ]] && selection_mode=base-diff
+  [[ "${#EXPLICIT_PATHS[@]}" -gt 0 ]] && selection_mode=explicit-paths
+  pm_test_run_and_record "$REPO_ROOT" iteration "$RESULT_FILE" "$selection_mode" \
+    "$changed_paths_json" "$iteration_suite_json" '[]' "$BASE_REF" \
     "$SUITE_RUNNER" "${runner_args[@]}"
   exit $?
 fi

@@ -1,0 +1,115 @@
+{
+  "title": "Pre-flight command evidence",
+  "description": "Portable command evidence. Repository provenance and structured coverage are optional extensions; reusable evidence requires a bound subject fingerprint.",
+  "type": "object",
+  "required": [
+    "kind", "schema_version", "command_identity", "status", "exit_status",
+    "timeout_seconds", "started_at", "finished_at", "subject", "log", "coverage"
+  ],
+  "properties": {
+    "kind": { "const": "pr_gate_preflight_v1" },
+    "schema_version": { "const": 1 },
+    "command_identity": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "status": { "enum": ["pass", "fail", "timeout", "stale", "invalid"] },
+    "exit_status": { "type": "integer", "minimum": 0 },
+    "timeout_seconds": { "type": "integer", "minimum": 1 },
+    "started_at": { "type": "string", "format": "date-time" },
+    "finished_at": { "type": "string", "format": "date-time" },
+    "subject": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["kind", "reusable"],
+          "properties": {
+            "kind": { "const": "unbound" },
+            "reusable": { "const": false }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "reusable", "fingerprint_before", "fingerprint_after"],
+          "properties": {
+            "kind": { "type": "string", "minLength": 1 },
+            "reusable": { "const": true },
+            "fingerprint_before": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+            "fingerprint_after": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "provenance": {
+      "description": "Optional producer-specific metadata; never required for a basic command result.",
+      "type": "object",
+      "properties": {
+        "provider": { "type": "string" },
+        "repo_root": { "type": "string" },
+        "repo_identity": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "base_ref": { "type": "string" },
+        "base_commit": { "type": "string" },
+        "head_ref": { "type": "string" },
+        "head_commit": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "log": {
+      "type": "object",
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+      },
+      "additionalProperties": false
+    },
+    "coverage": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["type", "reuse_policy"],
+          "properties": {
+            "type": { "const": "opaque" },
+            "reuse_policy": { "const": "advisory" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "reuse_policy", "artifact_path", "artifact_sha256"],
+          "properties": {
+            "type": { "const": "invalid" },
+            "reuse_policy": { "const": "none" },
+            "artifact_path": { "type": "string", "minLength": 1 },
+            "artifact_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "type", "reuse_policy", "artifact_path", "artifact_sha256", "selection_mode",
+            "changed_paths", "suite_set", "suite_results", "aggregate"
+          ],
+          "properties": {
+            "type": { "const": "structured" },
+            "reuse_policy": { "const": "no-duplicate-current-pass" },
+            "artifact_path": { "type": "string", "minLength": 1 },
+            "artifact_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+            "selection_mode": { "type": "string", "minLength": 1 },
+            "changed_paths": {
+              "description": "Planner-derived inputs, never user-authored fields.",
+              "type": "array", "items": { "type": "string" }, "uniqueItems": true
+            },
+            "suite_set": {
+              "type": "array", "minItems": 1, "items": { "type": "string" }, "uniqueItems": true
+            },
+            "suite_results": { "type": "array", "minItems": 1, "items": { "type": "object" } },
+            "aggregate": { "type": "object" }
+          },
+          "additionalProperties": false
+        }
+      ]
+    }
+  },
+  "additionalProperties": false
+}

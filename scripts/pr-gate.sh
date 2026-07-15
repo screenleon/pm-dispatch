@@ -105,6 +105,10 @@ _kill_process_tree() {
 #   --test-cmd <cmd>     pre-flight test command run in plain bash BEFORE dispatch, independent of
 #                        --timeout; pass/fail is recorded mechanically (frontmatter test_suite: field)
 #                        and a FAIL forces Final: NO-GO regardless of what any reviewer LLM writes.
+#                        Any command works unchanged and receives basic opaque/advisory evidence.
+#                        A compatible runner may write structured suite evidence to the result path
+#                        exposed in PM_DISPATCH_PREFLIGHT_TEST_RESULT; only current structured PASS
+#                        suites receive the no-duplicate reuse policy.
 #                        No auto-detection -- pr-gate.sh is copy-mode portable (see header) and must
 #                        not assume any repo-specific test command or path convention; the caller
 #                        supplies one explicitly (e.g. `bash scripts/test.sh`). Long-running full
@@ -964,6 +968,9 @@ fi
 # CC-470 Part 3.
 PREFLIGHT_STATUS="skipped"
 PREFLIGHT_LOG_PATH=""
+PREFLIGHT_EVIDENCE_PATH=""
+PREFLIGHT_EVIDENCE_DIGEST=""
+PREFLIGHT_RICH_RESULT_PATH=""
 
 # relocate_gate_artifacts() (below) moves everything under $WORK_DIR/.gate-results
 # carrying $TIMESTAMP -- including the pre-flight log -- out to $GATE_RUN_DIR_OVERRIDE
@@ -983,6 +990,60 @@ _preflight_log_display_path() {
   fi
 }
 
+_preflight_sha256_stream() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 | awk '{print $1}'
+  else
+    printf 'Error: pre-flight evidence requires sha256sum or shasum\n' >&2
+    return 2
+  fi
+}
+
+_preflight_sha256_file() {
+  local file="$1"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum -- "$file" | awk '{print $1}'
+  else
+    shasum -a 256 -- "$file" | awk '{print $1}'
+  fi
+}
+
+# Copy-mode portable content identity. It binds tracked and non-ignored
+# untracked content (including executable bits and symlink targets), while
+# excluding only gate-owned runtime artifacts created by this invocation.
+_preflight_tree_fingerprint() {
+  local manifest path quoted kind executable digest
+  manifest="$(mktemp "${TMPDIR:-/tmp}/pr-gate-tree.XXXXXX")" || return 2
+  while IFS= read -r -d '' path; do
+    case "$path" in
+      .agent-trace|.agent-trace/*|.gate-briefs|.gate-briefs/*|.gate-results|.gate-results/*) continue ;;
+    esac
+    quoted="$(printf '%q' "$path")"
+    if [[ -L "$WORK_DIR/$path" ]]; then
+      kind=symlink; executable=false
+      digest="$(printf '%s' "$(readlink "$WORK_DIR/$path")" | _preflight_sha256_stream)" || { rm -f "$manifest"; return 2; }
+    elif [[ -f "$WORK_DIR/$path" ]]; then
+      kind=file; [[ -x "$WORK_DIR/$path" ]] && executable=true || executable=false
+      digest="$(_preflight_sha256_file "$WORK_DIR/$path")" || { rm -f "$manifest"; return 2; }
+    else
+      kind=missing; executable=false; digest=-
+    fi
+    printf '%s\t%s\t%s\t%s\n' "$quoted" "$kind" "$executable" "$digest" >> "$manifest"
+  done < <(git -C "$WORK_DIR" ls-files --cached --others --exclude-standard -z)
+  LC_ALL=C sort "$manifest" | _preflight_sha256_stream
+  local rc=$?
+  rm -f "$manifest"
+  return "$rc"
+}
+
+_preflight_repo_identity() {
+  local remote
+  remote="$(git -C "$WORK_DIR" config --get remote.origin.url 2>/dev/null || true)"
+  printf '%s\n%s\n' "$WORK_DIR" "$remote" | _preflight_sha256_stream
+}
+
 if [[ "$SKIP_PREFLIGHT_TESTS" != "true" && -n "$TEST_CMD_OVERRIDE" ]]; then
   # pr-gate.sh is designed to be copied standalone into any repo (copy-mode --
   # see the file header), so it must not hardcode any repo-specific test
@@ -994,16 +1055,107 @@ if [[ "$SKIP_PREFLIGHT_TESTS" != "true" && -n "$TEST_CMD_OVERRIDE" ]]; then
   # and repo-supplied, not operator-supplied).
   mkdir -p "$WORK_DIR/.gate-results"
   PREFLIGHT_LOG_PATH="$WORK_DIR/.gate-results/preflight-tests-${TIMESTAMP}.log"
-  say 'pr-gate: running pre-flight test suite (timeout %ss): %s\n' "$TEST_TIMEOUT" "$TEST_CMD_OVERRIDE"
+  PREFLIGHT_EVIDENCE_PATH="$WORK_DIR/.gate-results/preflight-evidence-${TIMESTAMP}.json"
+  PREFLIGHT_RICH_RESULT_PATH="$WORK_DIR/.gate-results/preflight-rich-result-${TIMESTAMP}.json"
+  _preflight_command_digest="$(printf '%s' "$TEST_CMD_OVERRIDE" | _preflight_sha256_stream)" || exit 2
+  _preflight_before="$(_preflight_tree_fingerprint)" || exit 2
+  _preflight_repo_id="$(_preflight_repo_identity)" || exit 2
+  _preflight_base_commit="$(git rev-parse "${BASE}^{commit}")" || exit 2
+  _preflight_head_commit="$(git rev-parse "${HEAD_REF}^{commit}")" || exit 2
+  _preflight_started="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+  say 'pr-gate: running pre-flight test suite (timeout %ss, command sha256:%s)\n' \
+    "$TEST_TIMEOUT" "${_preflight_command_digest:0:12}"
   _preflight_rc=0
-  ( cd "$WORK_DIR" && timeout --kill-after=15 "$TEST_TIMEOUT" bash -c "$TEST_CMD_OVERRIDE" ) \
+  ( cd "$WORK_DIR" && PM_DISPATCH_PREFLIGHT_TEST_RESULT="$PREFLIGHT_RICH_RESULT_PATH" \
+      PM_DISPATCH_PREFLIGHT_SUBJECT_FINGERPRINT="$_preflight_before" \
+      PM_DISPATCH_PREFLIGHT_BASE_COMMIT="$_preflight_base_commit" \
+      PM_DISPATCH_PREFLIGHT_HEAD_COMMIT="$_preflight_head_commit" \
+      timeout --kill-after=15 "$TEST_TIMEOUT" bash -c "$TEST_CMD_OVERRIDE" ) \
     > "$PREFLIGHT_LOG_PATH" 2>&1 || _preflight_rc=$?
-  if [[ "$_preflight_rc" -eq 0 ]]; then
-    PREFLIGHT_STATUS="pass"
-  else
-    PREFLIGHT_STATUS="fail"
+  _preflight_finished="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+  _preflight_after="$(_preflight_tree_fingerprint)" || exit 2
+  _preflight_log_digest="$(_preflight_sha256_file "$PREFLIGHT_LOG_PATH")" || exit 2
+  _preflight_status=fail
+  [[ "$_preflight_rc" -eq 0 ]] && _preflight_status=pass
+  [[ "$_preflight_rc" -eq 124 || "$_preflight_rc" -eq 137 ]] && _preflight_status=timeout
+  if [[ "$_preflight_before" != "$_preflight_after" ]]; then
+    _preflight_status=stale
   fi
-  say 'pr-gate: pre-flight test suite: %s (log: %s)\n\n' "$PREFLIGHT_STATUS" "$PREFLIGHT_LOG_PATH"
+  _preflight_coverage='{"type":"opaque","reuse_policy":"advisory"}'
+  _preflight_rich_digest=""
+  if [[ -s "$PREFLIGHT_RICH_RESULT_PATH" ]]; then
+    _preflight_rich_digest="$(_preflight_sha256_file "$PREFLIGHT_RICH_RESULT_PATH")" || exit 2
+    if jq -e --arg repo "$WORK_DIR" --arg repo_id "$_preflight_repo_id" \
+      --arg tree_before "$_preflight_before" --arg tree_after "$_preflight_after" \
+      --arg head "$_preflight_head_commit" --argjson rc "$_preflight_rc" '
+        .kind == "pm_test_result_v2" and .schema_version == 2 and
+        .repo_root == $repo and .repo_identity == $repo_id and
+        .tree_fingerprint == $tree_before and .observed_tree_fingerprint_after == $tree_after and
+        .head_commit == $head and .exit_code == $rc and
+        (.runner_contract_hash | type == "string" and test("^[a-f0-9]{64}$")) and
+        (.selection_mode | type == "string" and length > 0) and
+        ((.changed_paths | type) == "array") and
+        (.suite_set | type == "array" and length > 0) and
+        ((.suite_results | type) == "array") and
+        ((.suite_results | length) == (.suite_set | length)) and
+        ([.suite_results[].name] == .suite_set) and
+        (all(.suite_results[];
+          (.name | type == "string" and length > 0) and
+          (.status == "pass" or .status == "fail" or .status == "timeout" or .status == "skip") and
+          (.exit_code | type == "number" and . >= 0 and floor == .) and
+          (.duration_seconds | type == "number" and . >= 0 and floor == .))) and
+        (.aggregate.status == .status) and
+        (.aggregate.selected == (.suite_results | length)) and
+        (.aggregate.passed == ([.suite_results[] | select(.status == "pass")] | length)) and
+        (.aggregate.failed == ([.suite_results[] | select(.status == "fail")] | length)) and
+        (.aggregate.timed_out == ([.suite_results[] | select(.status == "timeout")] | length)) and
+        (.aggregate.skipped == ([.suite_results[] | select(.status == "skip")] | length)) and
+        (($rc == 0 and .status == "pass") or ($rc != 0 and (.status == "fail" or .status == "stale")))
+      ' "$PREFLIGHT_RICH_RESULT_PATH" >/dev/null 2>&1; then
+      _preflight_coverage="$(jq -c --arg path "$(_preflight_log_display_path "$PREFLIGHT_RICH_RESULT_PATH")" \
+        --arg digest "$_preflight_rich_digest" \
+        '{type:"structured",reuse_policy:"no-duplicate-current-pass",
+          artifact_path:$path,artifact_sha256:$digest,selection_mode,
+          changed_paths,suite_set,suite_results,aggregate}' "$PREFLIGHT_RICH_RESULT_PATH")" || exit 2
+    else
+      _preflight_status=invalid
+      _preflight_coverage="$(jq -nc --arg path "$(_preflight_log_display_path "$PREFLIGHT_RICH_RESULT_PATH")" \
+        --arg digest "$_preflight_rich_digest" \
+        '{type:"invalid",reuse_policy:"none",artifact_path:$path,artifact_sha256:$digest}')"
+    fi
+  fi
+  _preflight_log_display="$(_preflight_log_display_path "$PREFLIGHT_LOG_PATH")"
+  _preflight_evidence_display="$(_preflight_log_display_path "$PREFLIGHT_EVIDENCE_PATH")"
+  jq -n --arg kind pr_gate_preflight_v1 --argjson schema_version 1 \
+    --arg command_identity "sha256:${_preflight_command_digest}" --arg status "$_preflight_status" \
+    --argjson exit_status "$_preflight_rc" --argjson timeout_seconds "$TEST_TIMEOUT" \
+    --arg started_at "$_preflight_started" --arg finished_at "$_preflight_finished" \
+    --arg repo_root "$WORK_DIR" --arg repo_identity "$_preflight_repo_id" \
+    --arg base_ref "$BASE" --arg base_commit "$_preflight_base_commit" \
+    --arg head_ref "$HEAD_REF" --arg head_commit "$_preflight_head_commit" \
+    --arg tree_before "$_preflight_before" --arg tree_after "$_preflight_after" \
+    --arg log_path "$_preflight_log_display" --arg log_sha256 "$_preflight_log_digest" \
+    --argjson coverage "$_preflight_coverage" \
+    '{kind:$kind,schema_version:$schema_version,command_identity:$command_identity,
+      status:$status,exit_status:$exit_status,timeout_seconds:$timeout_seconds,
+      started_at:$started_at,finished_at:$finished_at,
+      subject:{kind:"workspace",reusable:true,
+        fingerprint_before:$tree_before,fingerprint_after:$tree_after},
+      provenance:{repo_root:$repo_root,repo_identity:$repo_identity,base_ref:$base_ref,
+        base_commit:$base_commit,head_ref:$head_ref,head_commit:$head_commit,
+        provider:"git"},
+      log:{path:$log_path,sha256:$log_sha256},coverage:$coverage}' > "$PREFLIGHT_EVIDENCE_PATH" || exit 2
+  jq -e '.kind == "pr_gate_preflight_v1" and .schema_version == 1 and
+    (.command_identity | test("^sha256:[a-f0-9]{64}$")) and
+    .subject.reusable == true and
+    (.subject.fingerprint_before | test("^[a-f0-9]{64}$")) and
+    (.subject.fingerprint_after | test("^[a-f0-9]{64}$")) and
+    (.log.sha256 | test("^[a-f0-9]{64}$")) and
+    (.coverage.type == "opaque" or .coverage.type == "structured" or .coverage.type == "invalid")' \
+    "$PREFLIGHT_EVIDENCE_PATH" >/dev/null || { printf 'Error: invalid pre-flight evidence envelope\n' >&2; exit 2; }
+  PREFLIGHT_EVIDENCE_DIGEST="$(_preflight_sha256_file "$PREFLIGHT_EVIDENCE_PATH")" || exit 2
+  if [[ "$_preflight_status" == pass ]]; then PREFLIGHT_STATUS=pass; else PREFLIGHT_STATUS=fail; fi
+  say 'pr-gate: pre-flight test suite: %s (evidence: %s)\n\n' "$_preflight_status" "$PREFLIGHT_EVIDENCE_PATH"
 fi
 
 # Best-effort redaction of common secret shapes before a failed pre-flight
@@ -1029,22 +1181,45 @@ _preflight_redact_secrets() {
 # Render the pre-flight evidence block for brief injection. Informational
 # context only for reviewers -- NOT the enforcement mechanism (see above).
 render_test_evidence_block() {
-  local status="$1" log_path="$2" tail display_path
+  local status="$1" log_path="$2" tail display_path evidence_display coverage_type
   [[ "$status" == "skipped" ]] && return 0
-  printf '  Pre-flight test run: %s' "$status"
+  evidence_display="$(_preflight_log_display_path "$PREFLIGHT_EVIDENCE_PATH")"
+  coverage_type="$(jq -r '.coverage.type' "$PREFLIGHT_EVIDENCE_PATH")"
+  printf '  Pre-flight evidence (machine-verified pr_gate_preflight_v1):\n'
+  printf '    Status: %s\n    Artifact: %s\n    Artifact sha256: %s\n' "$status" "$evidence_display" "$PREFLIGHT_EVIDENCE_DIGEST"
+  printf '    Subject fingerprint: %s\n    Coverage: %s (%s)\n' \
+    "$(jq -r '.subject.fingerprint_before' "$PREFLIGHT_EVIDENCE_PATH")" "$coverage_type" \
+    "$(jq -r '.coverage.reuse_policy' "$PREFLIGHT_EVIDENCE_PATH")"
+  if [[ "$coverage_type" == structured ]]; then
+    printf '    Selection mode: %s\n' "$(jq -r '.coverage.selection_mode' "$PREFLIGHT_EVIDENCE_PATH")"
+    printf '    Changed paths: %s\n' "$(jq -r '.coverage.changed_paths | join(", ")' "$PREFLIGHT_EVIDENCE_PATH")"
+    printf '    Selected suite results:\n'
+    jq -r '.coverage.suite_results[] | "      - \(.name): \(.status) (exit=\(.exit_code), duration=\(.duration_seconds)s)"' "$PREFLIGHT_EVIDENCE_PATH"
+  else
+    printf '    Selected suites: unavailable (generic command coverage is opaque)\n'
+    printf '    QA may run the minimum repo-native validation needed when behavioral coverage\n'
+    printf '    cannot be established; record the gap, reason, command, and new evidence.\n'
+  fi
   if [[ "$status" == "fail" && -n "$log_path" ]]; then
     # Read from the CURRENT (still in-repo) path -- relocation hasn't happened
     # yet at this point in the script -- but DISPLAY the path it will live at
     # once relocate_gate_artifacts moves it, so any reviewer that quotes this
     # verbatim into the persisted result doesn't leave a stale pointer.
     display_path="$(_preflight_log_display_path "$log_path")"
-    printf ' (log: %s)\n  Last ~40 lines (secret-shaped substrings redacted):\n' "$display_path"
+    printf '    Log: %s\n  Last ~40 lines (secret-shaped substrings redacted):\n' "$display_path"
     tail=$(tail -n 40 "$log_path" 2>/dev/null | _preflight_redact_secrets | sed 's/^/    /')
     printf '%s\n' "$tail"
-  else
-    printf '\n'
   fi
-  printf '  This is informational context only -- the mechanical enforcement (if any) happens\n  after your session completes and does not depend on you reading or citing this block.\n'
+  printf '  Evidence reuse contract:\n'
+  printf '    - First map each behavioral unit in the diff to existing suite evidence above.\n'
+  printf '    - Do not rerun a suite with current PASS evidence. Supplemental execution is allowed only\n'
+  printf '      for an uncovered behavioral gap, stale/invalid evidence, or a concrete flake suspicion.\n'
+  printf '    - Record every supplemental command, gap/reason, new artifact, and duplicate-suite count.\n'
+  printf '      Use the repo runner selection/parallelism contract; do not use handwritten for/&& suite\n'
+  printf '      lists and do not create test output in the source working tree.\n'
+  printf '    - The qa-tester written section must include an Evidence Accounting block with: reused\n'
+  printf '      artifact/suites, supplemental executions (gap, reason, command, artifact), and an exact\n'
+  printf '      Duplicate suite count. Preserve this block even when the gate later becomes partial/timeout.\n'
 }
 TEST_EVIDENCE_CONTEXT_BLOCK="$(render_test_evidence_block "$PREFLIGHT_STATUS" "$PREFLIGHT_LOG_PATH")"
 
@@ -1078,6 +1253,8 @@ ${reviewer_lines}escalation:
   reviewers: []
   reason: []
 test_suite: fail
+test_evidence: $(_preflight_log_display_path "$PREFLIGHT_EVIDENCE_PATH")
+test_evidence_sha256: ${PREFLIGHT_EVIDENCE_DIGEST}
 ---
 
 # PR-Gate Result -- pre-flight fail-fast (${EXECUTOR} mode)
@@ -1088,6 +1265,8 @@ test_suite: fail
 ## Pre-flight Test Failure
 The pre-flight test command failed before any reviewer was dispatched.
 Full log: ${display_path}
+Evidence artifact: $(_preflight_log_display_path "$PREFLIGHT_EVIDENCE_PATH")
+Evidence sha256: ${PREFLIGHT_EVIDENCE_DIGEST}
 Last ~40 lines (secret-shaped substrings redacted):
 ${excerpt}
 
@@ -1815,12 +1994,44 @@ fi
 # never invokes any reviewer) -- this just tags the mechanical fact "pre-flight
 # already confirmed the suite passes" onto whatever the reviewers produced,
 # without touching final:/Final: (reviewers' own verdict stands).
+verify_preflight_artifacts_current() {
+  local current_evidence current_log expected_log coverage_type current_tree rich_path expected_rich current_rich
+  current_evidence="$(_preflight_sha256_file "$PREFLIGHT_EVIDENCE_PATH")" || return 1
+  [[ "$current_evidence" == "$PREFLIGHT_EVIDENCE_DIGEST" ]] || {
+    printf 'Error: pre-flight evidence artifact was modified after verification\n' >&2; return 1;
+  }
+  expected_log="$(jq -r '.log.sha256' "$PREFLIGHT_EVIDENCE_PATH")"
+  current_log="$(_preflight_sha256_file "$PREFLIGHT_LOG_PATH")" || return 1
+  [[ "$current_log" == "$expected_log" ]] || {
+    printf 'Error: pre-flight log artifact was modified after verification\n' >&2; return 1;
+  }
+  coverage_type="$(jq -r '.coverage.type' "$PREFLIGHT_EVIDENCE_PATH")"
+  if [[ "$coverage_type" == structured ]]; then
+    rich_path="$PREFLIGHT_RICH_RESULT_PATH"
+    expected_rich="$(jq -r '.coverage.artifact_sha256' "$PREFLIGHT_EVIDENCE_PATH")"
+    current_rich="$(_preflight_sha256_file "$rich_path")" || return 1
+    [[ "$current_rich" == "$expected_rich" ]] || {
+      printf 'Error: structured pre-flight result was modified after verification\n' >&2; return 1;
+    }
+  fi
+  current_tree="$(_preflight_tree_fingerprint)" || return 1
+  [[ "$current_tree" == "$(jq -r '.subject.fingerprint_before' "$PREFLIGHT_EVIDENCE_PATH")" ]] || {
+    printf 'Error: pre-flight evidence is stale for the current subject\n' >&2; return 1;
+  }
+}
+
 gate_apply_preflight_pass_tag() {
-  local result_file="$1"
-  awk '
+  local result_file="$1" evidence_path
+  evidence_path="$(_preflight_log_display_path "$PREFLIGHT_EVIDENCE_PATH")"
+  awk -v evidence_path="$evidence_path" -v evidence_digest="$PREFLIGHT_EVIDENCE_DIGEST" '
     /^---$/ {
       if (fence < 2) fence++
-      if (fence == 2 && !ts_done) { print "test_suite: pass"; ts_done=1 }
+      if (fence == 2 && !ts_done) {
+        print "test_suite: pass"
+        print "test_evidence: " evidence_path
+        print "test_evidence_sha256: " evidence_digest
+        ts_done=1
+      }
       print; next
     }
     { print }
@@ -1836,6 +2047,7 @@ gate_apply_preflight_pass_tag() {
 }
 
 if [[ "$PREFLIGHT_STATUS" == "pass" ]]; then
+  verify_preflight_artifacts_current || exit 1
   gate_apply_preflight_pass_tag "$OUTPUT_FILE"
 fi
 

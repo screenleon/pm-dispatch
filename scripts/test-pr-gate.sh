@@ -125,6 +125,13 @@ if [[ -n "${CODEX_GATE_STUB_SYNTHESIS_TAMPER_ARTIFACT:-}" && "$brief_file" == *-
   printf 'tampered-by-synthesis\n' >> "$CODEX_GATE_STUB_SYNTHESIS_TAMPER_ARTIFACT"
 fi
 
+# Simulate reviewer-side tampering with the machine-verified pre-flight
+# envelope after it was embedded in the brief.
+if [[ "${CODEX_GATE_STUB_TAMPER_PREFLIGHT:-}" == "1" && "$brief_file" != *-synthesis.md ]]; then
+  evidence_path=$(awk '$1 == "Artifact:" { print $2; exit }' "$brief_file")
+  [[ -n "$evidence_path" ]] && printf '\n' >> "$evidence_path"
+fi
+
 # Simulate prefix-only verdict (loose regex bypass): writes "Verdict: approved" (invalid token
 # with the right prefix) to verify the anchored regex rejects it.
 # CODEX_GATE_STUB_VERDICT_PREFIX_ONLY=1: write an invalid prefix verdict instead of a valid one.
@@ -2280,6 +2287,203 @@ test_preflight_runs_even_when_qa_tester_not_targeted() {
   pass "$name"
 }
 
+# Behavior: an ordinary command produces valid basic evidence without having
+# to emit repository metadata or planner-specific fields itself. The gate binds
+# the result to a subject automatically, while coverage remains explicitly
+# opaque so reviewers cannot infer suite-level coverage.
+test_preflight_generic_command_emits_basic_evidence() {
+  local name="preflight-generic-command-emits-basic-evidence"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home repo runner out err result brief evidence
+  home="$dir/home"; repo="$dir/repo"; runner="$dir/runner"
+  out="$dir/out"; err="$dir/err"; result="$dir/result.md"; brief="$dir/brief.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" \
+    --base main --test-cmd "printf 'ordinary test command\\n'" --output "$result"
+  local code=$?
+  set -e
+  [[ "$code" -eq 0 ]] || { fail "$name" "exit $code, expected 0"; return; }
+  evidence="$(find "$repo/.gate-results" -name 'preflight-evidence-*.json' -print -quit)"
+  if [[ -s "$evidence" ]] && jq -e '
+      .kind == "pr_gate_preflight_v1" and .status == "pass" and
+      .subject.reusable == true and .subject.kind == "workspace" and
+      .coverage.type == "opaque" and (.provenance.provider == "git")
+    ' "$evidence" >/dev/null; then
+    assert_file_contains "$name" "$brief" "generic command coverage is opaque" || return
+    pass "$name"
+  else
+    fail "$name" "basic evidence missing or invalid: $(cat "$evidence" 2>/dev/null)"
+  fi
+}
+
+# Behavior: source content changed by the command invalidates an otherwise
+# successful result. The stale result must fail fast before reviewer dispatch.
+test_preflight_tree_drift_marks_evidence_stale() {
+  local name="preflight-tree-drift-marks-evidence-stale"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home repo runner out err result evidence
+  home="$dir/home"; repo="$dir/repo"; runner="$dir/runner"
+  out="$dir/out"; err="$dir/err"; result="$dir/result.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main \
+    --test-cmd "printf 'drift\\n' >> README.md" --output "$result"
+  local code=$?
+  set -e
+  [[ "$code" -ne 0 ]] || { fail "$name" "expected stale evidence to fail"; return; }
+  evidence="$(find "$repo/.gate-results" -name 'preflight-evidence-*.json' -print -quit)"
+  if jq -e '.status == "stale" and (.subject.fingerprint_before != .subject.fingerprint_after)' \
+      "$evidence" >/dev/null 2>&1; then
+    assert_not_contains "$name" "$out" "DISPATCH_STUB" || return
+    pass "$name"
+  else
+    fail "$name" "evidence did not record tree drift: $(cat "$evidence" 2>/dev/null)"
+  fi
+}
+
+# Behavior: non-ignored untracked content participates in the reusable subject
+# fingerprint, so creating a new source file during the command also makes an
+# otherwise successful result stale.
+test_preflight_untracked_drift_marks_evidence_stale() {
+  local name="preflight-untracked-drift-marks-evidence-stale"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home repo runner out err result evidence
+  home="$dir/home"; repo="$dir/repo"; runner="$dir/runner"
+  out="$dir/out"; err="$dir/err"; result="$dir/result.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main \
+    --test-cmd "printf 'new source\\n' > generated.js" --output "$result"
+  local code=$?
+  set -e
+  [[ "$code" -ne 0 ]] || { fail "$name" "expected untracked drift to fail"; return; }
+  evidence="$(find "$repo/.gate-results" -name 'preflight-evidence-*.json' -print -quit)"
+  if jq -e '.status == "stale" and (.subject.fingerprint_before != .subject.fingerprint_after)' \
+      "$evidence" >/dev/null 2>&1; then
+    assert_not_contains "$name" "$out" "DISPATCH_STUB" || return
+    pass "$name"
+  else
+    fail "$name" "untracked drift was not bound to evidence: $(cat "$evidence" 2>/dev/null)"
+  fi
+}
+
+# Behavior: a producer that opts into structured coverage must satisfy the
+# rich result contract. Tampered or malformed structured output is not silently
+# downgraded to opaque evidence; it invalidates the pre-flight.
+test_preflight_invalid_rich_result_fails_closed() {
+  local name="preflight-invalid-rich-result-fails-closed"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home repo runner out err result evidence
+  home="$dir/home"; repo="$dir/repo"; runner="$dir/runner"
+  out="$dir/out"; err="$dir/err"; result="$dir/result.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main \
+    --test-cmd 'printf "{}\n" > "$PM_DISPATCH_PREFLIGHT_TEST_RESULT"' --output "$result"
+  local code=$?
+  set -e
+  [[ "$code" -ne 0 ]] || { fail "$name" "expected malformed rich result to fail"; return; }
+  evidence="$(find "$repo/.gate-results" -name 'preflight-evidence-*.json' -print -quit)"
+  if jq -e '.status == "invalid" and .coverage.type == "invalid"' "$evidence" >/dev/null 2>&1; then
+    assert_not_contains "$name" "$out" "DISPATCH_STUB" || return
+    pass "$name"
+  else
+    fail "$name" "malformed rich result was not rejected: $(cat "$evidence" 2>/dev/null)"
+  fi
+}
+
+# Behavior: evidence is re-hashed after reviewer dispatch. A reviewer process
+# that modifies the verified envelope cannot leave behind a mechanically tagged
+# PASS result.
+test_preflight_artifact_tamper_aborts_gate() {
+  local name="preflight-artifact-tamper-aborts-gate"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home repo runner out err result
+  home="$dir/home"; repo="$dir/repo"; runner="$dir/runner"
+  out="$dir/out"; err="$dir/err"; result="$dir/result.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  CODEX_GATE_STUB_TAMPER_PREFLIGHT=1 run_gate "$home" "$runner" "$repo" "$out" "$err" \
+    --base main --test-cmd "exit 0" --output "$result"
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]] && grep -Fq "pre-flight evidence artifact was modified" "$err"; then
+    pass "$name"
+  else
+    fail "$name" "tampered evidence did not abort gate: code=$code err=$(cat "$err")"
+  fi
+}
+
+# Behavior: valid structured coverage is summarized mechanically in the brief,
+# including each selected suite and the no-reflexive-rerun contract.
+test_preflight_structured_result_is_reused_in_brief() {
+  local name="preflight-structured-result-is-reused-in-brief"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home repo runner out err result brief producer
+  home="$dir/home"; repo="$dir/repo"; runner="$dir/runner"
+  out="$dir/out"; err="$dir/err"; result="$dir/result.md"; brief="$dir/brief.md"
+  producer="$repo/produce-result.sh"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  cat > "$producer" <<'PRODUCER'
+#!/usr/bin/env bash
+set -euo pipefail
+repo="$PWD"
+repo_id="$(printf '%s\n\n' "$repo" | sha256sum | awk '{print $1}')"
+jq -n --arg repo "$repo" --arg repo_id "$repo_id" \
+  --arg head "$PM_DISPATCH_PREFLIGHT_HEAD_COMMIT" \
+  --arg fp "$PM_DISPATCH_PREFLIGHT_SUBJECT_FINGERPRINT" \
+  --argjson suites '["suite-1","suite-2","suite-3","suite-4","suite-5","suite-6","suite-7","suite-8","suite-9"]' \
+  '{kind:"pm_test_result_v2",schema_version:2,repo_root:$repo,repo_identity:$repo_id,
+    base_ref:null,base_commit:null,head_commit:$head,contract:"iteration",authoritative:false,
+    status:"pass",exit_code:0,started_at:"2026-01-01T00:00:00Z",finished_at:"2026-01-01T00:00:01Z",
+    tree_fingerprint:$fp,observed_tree_fingerprint_after:$fp,
+    runner_contract_hash:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    selection_mode:"explicit-paths",changed_paths:["src/widget.js"],suite_set:$suites,requested_skips:[],
+    suite_results:[$suites[] | {name:.,status:"pass",exit_code:0,duration_seconds:1}],
+    aggregate:{status:"pass",selected:9,passed:9,failed:0,timed_out:0,skipped:0}}' \
+  > "$PM_DISPATCH_PREFLIGHT_TEST_RESULT"
+PRODUCER
+  chmod +x "$producer"
+
+  set +e
+  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" \
+    --base main --test-cmd "./produce-result.sh" --output "$result"
+  local code=$?
+  set -e
+  [[ "$code" -eq 0 ]] || { fail "$name" "exit $code, expected 0: $(cat "$err")"; return; }
+  assert_file_contains "$name" "$brief" "Coverage: structured" || return
+  assert_file_contains "$name" "$brief" "suite-1: pass" || return
+  assert_file_contains "$name" "$brief" "suite-9: pass" || return
+  assert_file_contains "$name" "$brief" "Do not rerun a suite with current PASS evidence" || return
+  assert_file_contains "$name" "$brief" "Duplicate suite count" || return
+  assert_file_contains "$name" "$result" "test_evidence_sha256:" || return
+  pass "$name"
+}
+
 # Behavior: parallel mode aborts when the synthesis YAML frontmatter final:
 # field disagrees with the shell-computed verdict.
 # Steps:
@@ -3237,6 +3441,12 @@ run_test test_preflight_never_auto_executes_repo_local_script
 run_test test_preflight_explicit_test_cmd_runs_independent_of_repo_scripts
 run_test test_preflight_skip_flag_disables
 run_test test_preflight_runs_even_when_qa_tester_not_targeted
+run_test test_preflight_generic_command_emits_basic_evidence
+run_test test_preflight_tree_drift_marks_evidence_stale
+run_test test_preflight_untracked_drift_marks_evidence_stale
+run_test test_preflight_invalid_rich_result_fails_closed
+run_test test_preflight_artifact_tamper_aborts_gate
+run_test test_preflight_structured_result_is_reused_in_brief
 run_test test_parallel_frontmatter_parity_mismatch_aborts_gate
 run_test test_prompt_injection_detected
 run_test test_block_soft_verdict_is_no_go
@@ -5284,7 +5494,7 @@ test_gate_artifacts_land_out_of_repo() {
   create_repo "$repo" docs
 
   set +e
-  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --run-dir "$run_dir"
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --run-dir "$run_dir" --test-cmd "exit 0"
   local code=$?
   set -e
   if [[ "$code" -ne 0 ]]; then
@@ -5303,6 +5513,13 @@ test_gate_artifacts_land_out_of_repo() {
     fail "$name" "result file '$result_path' is not under run_dir '$run_dir'"
     return
   fi
+  local evidence_path
+  evidence_path="$(find "$run_dir/.gate-results" -name 'preflight-evidence-*.json' -print -quit)"
+  if [[ ! -s "$evidence_path" ]]; then
+    fail "$name" "pre-flight evidence was not relocated with the gate result"
+    return
+  fi
+  assert_file_contains "$name" "$result_path" "test_evidence: $evidence_path" || return
   # repo must NOT have a .gate-results dir (--run-dir should have redirected it).
   if [[ -d "$repo/.gate-results" ]]; then
     fail "$name" ".gate-results appeared inside repo -- --run-dir did not redirect results"

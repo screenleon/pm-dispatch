@@ -607,10 +607,62 @@ case_context_pack_invalid_trust_level_rejected() {
   rm -f "$tmpf"
 }
 
+case_preflight_basic_evidence_needs_no_git_provenance() {
+  # Verifies the portable basic-result contract stays usable by an ordinary
+  # command producer with no repository, base, head, or planner metadata.
+  # Steps:
+  #   1. Build a complete opaque/advisory instance with an unbound subject.
+  #   2. Omit provenance entirely.
+  #   3. Assert the JSON Schema accepts the instance.
+  local name="preflight-evidence: basic opaque result needs no Git provenance"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/preflight-evidence.schema.json" tmpf
+  tmpf="$(mktemp /tmp/preflight-basic-XXXXXX.json)"
+  jq -n '{kind:"pr_gate_preflight_v1",schema_version:1,
+    command_identity:("sha256:" + ("a" * 64)),status:"pass",exit_status:0,timeout_seconds:60,
+    started_at:"2026-01-01T00:00:00Z",finished_at:"2026-01-01T00:00:01Z",
+    subject:{kind:"unbound",reusable:false},
+    log:{path:"/tmp/test.log",sha256:("b" * 64)},
+    coverage:{type:"opaque",reuse_policy:"advisory"}}' > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name" "schema rejected a basic result without Git provenance"
+  fi
+  rm -f "$tmpf"
+}
+
+case_preflight_reusable_evidence_requires_fingerprint() {
+  # Verifies reusable evidence cannot claim freshness without identifying the
+  # tested subject, while basic unbound evidence remains a separate valid form.
+  # Steps:
+  #   1. Build an otherwise complete result with reusable:true.
+  #   2. Omit both subject fingerprints.
+  #   3. Assert the JSON Schema rejects the instance.
+  local name="preflight-evidence: reusable result requires subject fingerprints"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/preflight-evidence.schema.json" tmpf
+  tmpf="$(mktemp /tmp/preflight-reusable-XXXXXX.json)"
+  jq -n '{kind:"pr_gate_preflight_v1",schema_version:1,
+    command_identity:("sha256:" + ("a" * 64)),status:"pass",exit_status:0,timeout_seconds:60,
+    started_at:"2026-01-01T00:00:00Z",finished_at:"2026-01-01T00:00:01Z",
+    subject:{kind:"workspace",reusable:true},
+    log:{path:"/tmp/test.log",sha256:("b" * 64)},
+    coverage:{type:"opaque",reuse_policy:"advisory"}}' > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    fail "$name" "schema accepted reusable evidence without fingerprints"
+  else
+    pass "$name"
+  fi
+  rm -f "$tmpf"
+}
+
 case_context_pack_v1_still_valid
 case_context_pack_v2_new_fields_valid
 case_context_pack_memory_source_domain_valid
 case_context_pack_invalid_source_domain_rejected
 case_context_pack_invalid_trust_level_rejected
+case_preflight_basic_evidence_needs_no_git_provenance
+case_preflight_reusable_evidence_requires_fingerprint
 
 th_summary
