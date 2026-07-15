@@ -34,10 +34,13 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-486 | ⏸ deferred | direct-impact test planner mapping 提前退出：changed path 含 `agents/*.md`／`commands/*.md` 時 `map_path` 呼叫未註冊的 `lint-frontmatter`，`add_suite` 回傳 1 並在 `set -e` 下無輸出終止，導致 `run-tests.sh --base ... --list` exit 1 | ops/test | 2026-07-13 | feedback:2026-07-13 | P2 | hygiene |
 | CC-487 | ✅ closed 2026-07-14 | GitHub Actions `test-guards` 非確定性掛起：逐 case breadcrumb + bounded background writer/wait + orphan cleanup，避免 main CI 無輸出佔用 runner 近一小時 | ops/test | 2026-07-14 | pr:#402 | P1 | hygiene |
 | CC-488 | ✅ done | Codex canonical memory lifecycle 收口：Stop writer、自然語言更新路由、explicit config 與 live/private-memory migration 驗收 | arch/memory | 2026-07-14 | feedback:2026-07-14 | P1 | design |
-| CC-489 | ⏸ deferred | `scripts/` domain ownership 重整：host/runtime/ops/test entrypoints 移至對應模組，由 manifest/registry 統一發現並以相容 shim 分批遷移 | arch | 2026-07-14 | feedback:2026-07-14 | P2 | design |
+| CC-489 | 🔵 active | `scripts/` domain ownership 重整：host/runtime/ops/test entrypoints 與 host 專屬設定值/預設變數移至對應模組，由 manifest/registry 統一發現並以相容 shim 分批遷移 | arch | 2026-07-14 | feedback:2026-07-14 | P2 | design |
 | CC-490 | 🔵 active | project-scoped explicit memory config：取代全域單值 `dispatch.memory_dir`，避免多 repo 靜默共用 pm-dispatch canonical store | arch/memory | 2026-07-14 | feedback:2026-07-14 | P1 | design |
 | CC-491 | 🔵 active | PR-gate pre-flight 機械式 evidence contract：傳遞 command、selected suites、逐項結果與 tree fingerprint，讓 reviewer reuse 已驗證結果並禁止無條件重跑 | ops/gate | 2026-07-14 | feedback:2026-07-14 | P1 | design |
 | CC-492 | ✅ closed 2026-07-15 | Claude UserPromptSubmit context hook timeout envelope：升級 managed timeout、復原 files=0 殘缺 DB，避免 30 秒外層終止 | ops/memory | 2026-07-15 | pr:#403 | P1 | retrieval |
+| CC-493 | 🟢 someday | Prompt→Skill→Command→Harness 升級規則文件化：可測試的分類判準（何時停在 prompt、何時升為 skill、何時做成 command、何時需要 harness-level hook/guard/state），並盤點 `commands/`／`skills/`／`agents/` 現況對照分類（2026-07-15 CC-489 三方 multi-model synthesis） | process/docs | 2026-07-15 | feedback:2026-07-15 | P2 | design |
+| CC-494 | 🟢 someday | design: executor 局部設計裁量權 envelope——在 dispatch brief / executor contract 定義「可自行處理的局部設計」與「必須 halt 回報 PM」的邊界（例如新增 schema 欄位 `design_latitude`/`architectural_conflicts`）；三方 multi-model synthesis 2:1 分歧（codex/fable 認為現行邊界過度僵硬需要新機制，opencode 認為現行 `isolation_level`/executor 欄位已足夠彈性），本票僅追蹤決策、不預設結論（2026-07-15） | schema/process | 2026-07-15 | feedback:2026-07-15 | P3 | design |
+| CC-495 | 🔵 active | `pmctl dispatch cancel <run_id>`：detached run 中途終止機制。`core/policy/dispatch-states.yaml` 已定義 `cancelled` 為合法 terminal state 且無任何 code path 寫入；`.supervisor.pid` 存在但未被任何 pmctl 子命令讀取；使用者目前唯一手段是手動 kill pid，無文件、可能留孤兒 process、無 `run.cancelled` event（2026-07-15 使用者發現 executor 缺乏可終止行為） | arch/gate | 2026-07-15 | feedback:2026-07-15 | P2 | design |
 | CC-465 | 🔵 active | memory/context 關鍵詞管線 CJK 支援：抽出共用零依賴斷詞 lib，取代三處各自 ASCII-only 抽詞；工作序列起點（465→467→468→466）（2026-07-07 記憶系統深入分析） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-466 | 🔵 active | 記憶卡片生命週期閉環：expires_at 執行 + 關窗式 supersede + usage sidecar 休眠偵測 + doctor→distill 接線；排在 CC-467 之後（需其遙測為前置）（2026-07-07 記憶系統分析 + 外部研究 Graphiti/mcp-memory-service） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-467 | 🔵 active | `pmctl memory stats`：注入效益可視化（唯讀聚合器）——注入 bytes/卡片命中分佈/從未命中卡/episode 填寫率，回答「記憶有跟沒有差在哪」；排在 CC-466 之前（2026-07-07；業界僅離線 recall 評測，無 per-injection 遙測） | DX/memory | 2026-07-07 | — | P2 | retrieval |
@@ -45,7 +48,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-469 | ✅ done | codex reviewer sandbox 找不到 pmctl：`codex exec --sandbox workspace-write` 派工 reviewer 時，sandbox 內裸呼叫 `pmctl guard check` 回報 command not found，導致該 reviewer 中止、gate 產不出結果檔案（2026-07-07 平行模式 gate run 實測發現） | ops/gate | 2026-07-09 | pr:#388 | P2 | — |
 | CC-011 | 🟢 someday | sync-memory.sh + install 選項：symlink memory 到雲端資料夾實現跨裝置共用 | ux/memory | 2026-05-14 | — | — | — |
 | CC-012 | 🟢 someday | SessionStart hook：session 啟動時 pull 最新 memory（git/rsync）確保跨裝置同步 | ux/memory | 2026-05-14 | — | — | — |
-| CC-015 | ⏸ deferred | `systematic-debugging` skill：結構化偵錯工作流 | ux | 2026-05-14 | — | — | — |
+| CC-015 | 🟢 someday | `systematic-debugging` skill：結構化偵錯工作流；作為升級規則(CC-493)定案後的首個試點 skill，落地於 `skills/systematic-debugging/SKILL.md` 而非 slash command | ux | 2026-05-14 | — | P3 | — |
 | CC-018 | 🟢 someday | Codex quota 自動追蹤 + rate-limit 路徑統一（吸收 CC-269）：寫到 `~/.local/share/pm-dispatch/state/rate-limits.json`；解析 API response headers；token-usage.sh 加 Codex pool 顯示 | ux/token | 2026-05-14 | — | P3 | — |
 | CC-023 | ⏸ deferred | `coupling-reviewer`：PR gate 加入語言感知耦合分析（dependency-cruiser/gocyclo/coca） | ops/gate | 2026-05-14 | — | — | — |
 | CC-026 | 🟢 someday | `/skill-distill`：偵測重複工作流，產出草稿 skill .md | ux/memory | 2026-05-15 | — | P3 | — |
@@ -725,7 +728,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 ---
 
-## CC-489 — `scripts/` domain ownership 與 manifest-driven entrypoint 重整 ⏸ deferred
+## CC-489 — `scripts/` domain ownership 與 manifest-driven entrypoint 重整 🔵 active
 
 **Problem**: repository 目前把 host adapters、install/uninstall、doctor modules、memory hooks、gate/runtime supervisors、維運工具、lint 與所有 test runners 集中在單一 `scripts/`。檔名雖有前綴，但 ownership、依賴方向與「新增功能應放哪裡」無法從目錄結構判斷；host manifest 已能描述 module path，實體程式卻仍多數留在共享 scripts 根目錄，長期會增加跨 host 漂移、路徑硬編與搬移成本。
 
@@ -734,12 +737,13 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 2. host-neutral canonical business logic 留在共用 runtime/CLI layer；例如 memory resolver/writer 不複製到各 host，host 目錄只保留薄 adapter。通用 ops/release 工具與 test harness 另有明確 domain，不因搬目錄而複製實作。
 3. 先產出 current→target path map、依賴方向與穩定入口清單，再按 domain 分批搬遷；禁止一次性全庫 rename。對已公開／已安裝路徑保留有期限、帶 deprecation 訊息的 shim，manifest/registry 與 tests 先切新路徑，最後移除 shim。
 4. 新增 layer/path lint：host-specific 名稱不得再出現在共享 core/runtime entrypoints；新增 host module 必須由 manifest 引用；suite 必須由 test registry 發現，不能靠散落硬編路徑。
+5. host 專屬設定值/預設變數（如 model alias 預設檔、host 專屬 timeout/isolation 預設）一併歸位到對應 `hosts/<host>/` 底下並由 `host.yaml` 宣告；範圍僅止於「這個值屬於哪個 host、放在哪個檔案」，不重新設計 config 解析/優先權機制——後者屬 [[CC-490]] project-scoped memory config 的既有邊界，本票不得覆蓋或重工。
 
-**Acceptance**: (a) architecture map 說明每類 executable 的 owner 與允許依賴方向；(b) Codex、Claude、OpenCode install/doctor/uninstall 從各自 manifest 發現 module，shared dispatcher 不列 host-specific path；(c) staged migration 每一刀均通過 install parity、uninstall preservation、doctor、full runner 與 release smoke；(d) 最終 `scripts/` 只保留明確定義的相容入口或通用 ops entrypoints，不再作為所有 shell code 的默認垃圾桶。
+**Acceptance**: (a) architecture map 說明每類 executable 的 owner 與允許依賴方向；(b) Codex、Claude、OpenCode install/doctor/uninstall 從各自 manifest 發現 module，shared dispatcher 不列 host-specific path；(c) staged migration 每一刀均通過 install parity、uninstall preservation、doctor、full runner 與 release smoke；(d) 最終 `scripts/` 只保留明確定義的相容入口或通用 ops entrypoints，不再作為所有 shell code 的默認垃圾桶；(e) host 專屬設定值歸位後，`pmctl doctor` 對三個 host 的 manifest 一致性檢查仍全綠。
 
-**Boundary / sequencing**: 本票在 [[CC-488]] lifecycle product contract 完成後執行。CC-488 只遵守新檔案 placement 與 manifest discovery 原則，不藉機搬完既有 Codex/Claude/OpenCode scripts；避免把路徑遷移 regression 混入 canonical memory correctness。
+**Boundary / sequencing**: 本票在 [[CC-488]] lifecycle product contract 完成後執行（CC-488 已於 2026-07-14 done，前置條件已清除）。CC-488 只遵守新檔案 placement 與 manifest discovery 原則，不藉機搬完既有 Codex/Claude/OpenCode scripts；避免把路徑遷移 regression 混入 canonical memory correctness。2026-07-15 三方（codex/opencode/fable）multi-model synthesis 一致建議排在 [[CC-451]]/[[CC-490]]/[[CC-491]] 核心 harness 收口票之後執行，避免路徑遷移與 state/schema/evidence 收口同時進行。
 
-**Source**: 2026-07-14 使用者指出所有 script 集中於 `scripts/` 造成後續維護困難，要求特定內容放回對應位置並統一讀取。
+**Source**: 2026-07-14 使用者指出所有 script 集中於 `scripts/` 造成後續維護困難，要求特定內容放回對應位置並統一讀取；2026-07-15 使用者要求擴大範圍納入 host 專屬設定值/變數歸位。
 
 ---
 
@@ -998,6 +1002,8 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 **Boundaries**: skill 不跑 shell、不查 DB、不改 task status、不繞 guard、不當 workflow engine。
 
+**Resume trigger（2026-07-15 三方 multi-model synthesis）**: 三個獨立 executor 分析一致認為現階段是平台化早熟；待 [[CC-015]] 等首批高命中率 skill 落地並累積 2-3 次真實重複使用證據後，再評估是否需要這層跨 CLI substrate。
+
 **Sequencing**: 排 v0.6.0（executor 抽象在 N≥2 = [[CC-376]]+[[CC-377]] 證明成立）**之後**；自然歸宿與 [[CC-216]]（v0.7.0 MCP 通用橋）同層同期——兩者都讓任意 host 透過穩定、平台中立契約共用單一 pm-dispatch。
 
 **See**: `docs/notes/portable-skill-substrate.md`（完整 session synthesis）、umbrella [[CC-333]]。
@@ -1087,10 +1093,11 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 ## CC-015 — `systematic-debugging` skill
 
-**Status note (CC-050 audit 2026-05-18)**: Downgraded from 🔵 active — no open branch. Re-activate when work begins.
+**Status note (2026-07-15 CC-489 三方 multi-model synthesis）**: 重新定位為 harness/skill 分類下第一個高命中率試點 skill；不再落地為 slash command，改落地於 `skills/systematic-debugging/SKILL.md`（progressive disclosure，thin pointer 風格，比照現有 `skills/dispatch-brief`、`skills/pr-gate-review`）。
 **Problem**: debug 工作流目前無標準化流程，每次偵錯方式不一致，容易遺漏根本原因分析。
-**Why**: 結構化偵錯步驟（reproduce → isolate → hypothesize → verify → fix → regression test）有助於複雜 bug 分析。
-**Requirement**: `commands/systematic-debugging.md` slash command，提供結構化偵錯步驟。
+**Why**: 結構化偵錯步驟（reproduce → isolate → hypothesize → verify → fix → regression test）有助於複雜 bug 分析；同時是驗證「skill = 可替換工作方法、非 workflow engine」定位的第一個實例。
+**Requirement**: `skills/systematic-debugging/SKILL.md`，提供結構化偵錯步驟；不執行 state transition、不繞過 guard。
+**Sequencing**: 待 [[CC-493]] 升級規則票定案分類判準後再落地，避免格式先於規則。
 
 ## CC-018 — Codex quota 自動追蹤 + rate-limit 路徑統一（吸收 CC-269）
 
@@ -1115,6 +1122,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 3. 若同樣序列在不同 session 出現 ≥ N 次（預設 3）且總長度 ≥ 5 步，產出草稿 `commands/<draft-name>.md` 並回報出處 episodes。
 4. 預設 `--dry-run` 只印名稱與草稿 outline，user 確認後再寫檔。
 **Note**: 依賴 **CC-027** 與 **CC-025**。順序：CC-027 訊號層落地 → CC-025 驗證單一 skill 改進迴路 → CC-026 才有足夠資料做序列聚類。
+**Resume trigger（2026-07-15 三方 multi-model synthesis）**: codex/opencode 分析一致認為此票是 skill 平台化早熟的具體例子（自動偵測+產生 skill 草稿=雛形 marketplace）。除依賴 CC-027/CC-025 外，另需 [[CC-493]] 升級規則票定案，且草稿產物目標應是 `skills/<name>/SKILL.md` 而非 `commands/<draft-name>.md`。
 **Source**: 2026-05-15 對話討論 Hermes Agent self-improvement loop 與 pm-dispatch 的 gap 分析。
 
 ## CC-032 — `[[feedback_*]]` cross-link 公開化（dead-link 防護）
@@ -1209,6 +1217,7 @@ someday → active，P3 → P2。
 2. Keep the default behavior review-first: emit the diff for user or main-thread approval rather than directly rewriting skill files.
 3. Include Claude-assisted refinement guidance in `commands/skill-refine.md`, with clear dry-run and apply boundaries.
 4. Add contract tests for diff-generation behavior and no-direct-write safety.
+**Resume trigger (2026-07-15 三方 multi-model synthesis)**: 同 CC-026，屬 skill 平台化早熟範疇；待 [[CC-493]] 升級規則票定案後再評估是否需要，且落地目標應是 `skills/` 而非 `commands/skill-refine.md`。
 **Source**: PR #67 CC-025 M1 implementation and 2026-05-18 CC-025b closure decision in `feat/cc039-cc025b-v2`.
 
 ## CC-063 — [P2] Trace / token / gate metrics dashboard
@@ -1863,6 +1872,8 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 
 **Non-goals**: 不重新設計 skill 執行機制；不要求現有 skill prose 消失（schema 是 complement，不是 replace）；不在此票做 validator。
 
+**Resume trigger（2026-07-15 三方 multi-model synthesis）**: 目前僅 2 個 skill，schema/validator 屬 premature optimization。待 skills 數量 ≥5 且已有跨 host consumer 實際使用、或已觀察到具體 discovery/誤用事故時才 reopen；在此之前維持純 prose。
+
 **Milestone**: someday（無里程碑排期，概念票）。
 
 **Priority**: 未定（someday）。
@@ -1975,3 +1986,81 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 **area**: arch/gate
 **Priority**: P3（someday，條件觸發）。
 **Cross-link**: [[CC-433]]、[[CC-434]]。
+
+## CC-493 — Prompt→Skill→Command→Harness 升級規則文件化 🟢 someday
+
+**Problem**: 使用者一篇論述主張 pm-dispatch 已從「加幾個 skills」演化為專用 coding-agent 控制平面，三層疊加：原生 harness → pm-dispatch 控制面 → 可替換 skills。經 codex/opencode/project-pm(fable) 三個獨立 executor 各自分析同一份論述並比對 repo 現況後一致指出：這個三層定位大致成立，但「什麼時候該用哪一層」目前完全沒有文件化的判準——`commands/` 下混雜了 workflow entrypoint（`pm.md`/`pr-gate.md`/`ship.md`）與純方法性內容（`using-git-worktrees.md`/`research.md`/`pre-impl.md`），`docs/CONCEPTS.md` 甚至把 slash command 直接稱為「skills」，而 `skills/` 目錄本身只有 2 個真正的 `SKILL.md`。
+
+**Why**: 沒有分類判準，新功能會持續依「就手」而非「該不該」落點，重演 command/skill 術語混淆，也讓 CC-015/CC-026/CC-054 這類 skill 相關票的產物定位（`commands/*.md` vs `skills/*/SKILL.md`）反覆漂移。這是三方一致認為成本最低、槓桿最高的第一步。
+
+**Requirement**:
+1. 撰寫一份判準文件（建議 `docs/CONCEPTS.md` 新增小節，或獨立 `docs/policies/skill-command-harness.md`），明文四級判準：
+   - 第一次出現、低頻、無副作用 → 停在 prompt，不留任何檔案。
+   - 跨 repo/跨 session 重複 2–3 次、可中斷恢復、不涉權限邊界 → 提煉為 `skills/<name>/SKILL.md`（thin pointer，不執行 state transition、不繞 guard）。
+   - 需要使用者主動輸入 `/foo` 啟動、或需要參數解析 → `commands/<name>.md`（可以只是 skill 的啟動包裝）。
+   - 需要 hard enforcement、持久狀態、機械 evidence 或 lifecycle 控制 → 只能落在 `pmctl`/`core/`/guard hook。
+2. 盤點現有 `commands/`、`skills/`、`agents/` 目錄逐項對照此判準，列出「保留原狀」vs「建議遷移」清單（不在本票直接搬檔案）。
+3. 修正 `docs/CONCEPTS.md` 中把 slash command 稱為「skills」的用詞混用。
+4. 依此判準回頭修正 CC-015/CC-026/CC-054 的產物定位描述（已在各票加註依賴本票）。
+
+**Non-goals**: 不在本票內實際搬遷任何 `commands/`/`agents/` 檔案到 `skills/`；不建立 skill schema/validator（見 [[CC-357]]）；不建立 skill marketplace 或 DSL（見 [[CC-393]]）。
+
+**Source**: 2026-07-15 使用者提供「harness/skill/pm-dispatch 三層定位」論述，經 `pmctl dispatch run --adapter codex`、`--adapter opencode` 與 `project-pm`(model: fable) 三方獨立分析收斂。
+
+**Cross-link**: [[CC-015]]、[[CC-026]]、[[CC-054]]、[[CC-357]]、[[CC-393]]、[[CC-489]]。
+
+## CC-494 — design: executor 局部設計裁量權 envelope 🟢 someday
+
+**Type**: design seed（三方分歧追蹤票；非 milestone 承諾）
+
+**Problem**: 「PM thinks / executor implements」原則對控制 scope 有效，但論述指出執行階段常發現既有 API 不符預期、需要小重構、測試暴露 edge case；若 executor 完全不能做局部設計判斷，會變成「發現問題 → blocked → 回 PM → 改 brief → 重新 dispatch」，安全但昂貴。經 codex/opencode/project-pm(fable) 三方獨立分析同一份論述後，對此點出現 2:1 分歧：
+
+- **codex**：建議界線是「executor 不得擅自擴大產品/API/資料模型/權限設計的影響面，但可在既有契約內處置必要的小重構、相鄰 call-site、一致性修補與測試 edge case；超出 brief 的設計決策才回報 blocked」。
+- **project-pm(fable)**：建議把此裁量權從 Rule B 的散落 prose 慣例升格為 dispatch brief schema 一級欄位，例如可選的 `design_latitude:`。
+- **opencode**：不同意現行邊界過度僵硬——認為 `dispatch_handover_v1` 的 `isolation_level`/`executor` 欄位、post-verify 只驗結果不約束實作路徑，已經給 executor 充分空間；「blocked → 回 PM」在目前設計中更多是 scope control 的 feature 而非 bug。
+
+**Why**: 三方對「現況是否已足夠」沒有共識，但都同意若要動，應該是「限制設計影響半徑」而非「禁止所有設計」。這是一個會影響 dispatch brief schema 的結構性改動，值得獨立追蹤而非在這次 backlog 整理中順手定案。
+
+**Requirement**（留待展開票時定案，此處僅列候選方向）：
+1. 評估是否需要在 `dispatch_handover_v1`/executor report contract 新增欄位（如 `design_latitude:` 或 `architectural_conflicts[]`），或維持現行 prose-only 慣例（Rule B minimum-list principle）。
+2. 若新增欄位，需明列「executor 可自行處理」（局部/可逆/符合 acceptance 的實作判斷）vs「必須 halt 回報 PM」（public API、schema migration、permission、跨模組架構、scope/成本承諾）的具體邊界。
+3. 若決定不新增機制，需把現行 prose 慣例（Rule B）在 `docs/dispatch-brief.md`/`docs/executor-contract.md` 中明確化，降低新 contributor 誤讀風險。
+
+**Non-goals**: 不預設本票會採納 codex/fable 的新欄位提案；不在此票修改 `core/schema/brief.schema.json`（若決定新增欄位，另開實作票）。
+
+**Source**: 2026-07-15 三方（codex/opencode/project-pm fable）multi-model synthesis 對同一份「harness/skill/pm-dispatch 三層定位」論述的獨立分析分歧點。
+
+**Cross-link**: [[CC-489]]、`docs/dispatch-brief.md`、`docs/executor-contract.md`。
+
+## CC-495 — `pmctl dispatch cancel <run_id>`：detached run 中途終止機制 🔵 active
+
+**Problem**: `pmctl dispatch run --lifecycle detached` 有 `run`（啟動）與 `wait`（等待完成），但沒有任何方式可以在使用者發現 executor 卡住、跑錯方向、或需要中途喊停時主動終止一個進行中的 run。現況只能手動找到並 `kill $(cat <run_dir>/<run_id>.supervisor.pid)`——這個路徑完全沒有文件記錄，且：
+1. `_pmctl_dispatch_launch_supervisor`（`scripts/lib/pmctl-dispatch.sh:826`）用 `detached_launch_under_setsid` 啟動 supervisor，若只 kill `.supervisor.pid` 記錄的單一 pid，底層真正在執行的 adapter CLI 子行程（在其自己的 process group 內）不保證被連帶終止，可能留下孤兒 process（性質類似 CC-487 觀察到的 CI 殘留 bash process）。
+2. `core/policy/dispatch-states.yaml` 已定義 `cancelled` 為合法的 dispatch-level terminal state（`pending`/`in-progress` 均可轉入），但 `grep -rn "cancelled" scripts/lib/*.sh scripts/*.sh` 沒有任何非測試程式碼寫入這個狀態——schema 已預留位置，實作完全空白。
+3. `core/schema/run.schema.json` 的 `state` enum（`pending`/`dispatched`/`verifying`/`ok`/`partial`/`failed`）與 `core/policy/run-states.yaml` 也都沒有 `cancelled`，run-level 狀態機需要同步補上，否則 dispatch-level 的 `cancelled` 無法對應到底層 run 的真實終止原因。
+4. 手動 kill 不會產生任何 event（`events.jsonl` 無 `run.cancelled`/`dispatch.cancelled` 記錄），dispatch record 會永遠卡在 `pending`/`dispatched` 狀態，沒有機械證據區分「使用者主動中止」與「跑到一半當掉/timeout」。
+
+**Why**: 語意上刻意選 `cancel` 而非 `stop`——`stop` 暗示「之後可以續跑/resume」，但一個 executor run 中途被打斷後，brief 可能只執行到一半、檔案可能改到一半，狀態不完整、不安全恢復；`cancel` 精確表達「終止且結果不可信，需重新 dispatch」這個唯一合理語意，避免使用者誤以為存在 pause/resume 能力。這也是今天稍早 CC-489 三方分析點出的「控制面宣稱可審計/可恢復，但完成判定的對稱面（中止）完全沒有機械證據」的具體落地缺口。
+
+**Requirement**:
+1. `pmctl dispatch cancel <run_id> --cd <work_dir>`：
+   - 讀取 `<run_dir>/<run_id>.supervisor.pid`，對其**process group**（而非單一 pid）送 `SIGTERM`，給予短暫 grace period 後對仍存活的成員送 `SIGKILL`（沿用 CC-470 既有逾時止血機制的 kill 慣例，不重新發明）。
+   - 若 pid file 不存在或對應 process 已不存在（run 已自然終止），fail-loud 並回報「run 已非 in-flight 狀態」，不誤寫終止記錄。
+   - 終止成功後：透過既有 `pmctl_dispatch_write_transition` 寫入 dispatch record 的 `cancelled` 終態，並寫入對應的 `run.cancelled`/`dispatch.cancelled` event（比照現有 `run.ok`/`run.failed` 的 event 結構）。
+   - 清理 sentinel/pid file，避免殘留讓後續 `pmctl dispatch wait` 誤判。
+2. `core/policy/run-states.yaml` 與 `core/schema/run.schema.json` 的 `state` enum 補上 `cancelled`（作為 terminal state，仿照 `dispatch-states.yaml` 既有定義），並更新 transitions 表（`dispatched`/`verifying` 可轉入）。
+3. `pmctl dispatch wait <run_id>` 遇到 `cancelled` 終態需明確回報（非 0 exit code，訊息與 timeout/failed 區分），呼叫端才能分辨「使用者主動終止」而非「adapter 失敗」。
+4. 為了讓使用者知道有哪些 run_id 可以 cancel，補一個最小化的發現機制（例如讀取 `.dispatch-results/` 目錄下尚未終態的 record 列出 run_id/adapter/created_ts）；不需要完整的 `pmctl dispatch list` 子命令設計，只要求 cancel 的使用路徑不必靠使用者自己肉眼翻 run_id。
+5. `docs/executor-contract.md` 補上取消流程的文件段落：何時該用、行為保證（process group termination、無 resume）、與 timeout 自動終止的差異。
+
+**Acceptance**:
+- 對一個真實 in-flight 的 detached codex/opencode/claude run 呼叫 `pmctl dispatch cancel`，底層 adapter process 與其子行程全數終止，`ps` 確認無孤兒殘留。
+- dispatch record 終態為 `cancelled`，`events.jsonl` 有對應 event，`pmctl dispatch wait` 對已 cancel 的 run_id 回報明確、與 failed/timeout 不同的訊息。
+- 對已經自然終止（ok/failed/partial）的 run_id 呼叫 cancel，fail-loud 且不覆寫既有終態。
+- `scripts/test-dispatch-lifecycle.sh` 新增對應案例；既有 dispatch lifecycle 測試全綠。
+
+**Non-goals**: 不做 pause/resume（語意上已排除）；不做完整的 `pmctl dispatch list` UI/篩選功能（見第 4 項，僅最小發現機制）；不處理 non-detached（foreground）dispatch 的取消——foreground 呼叫端本來就能用 Ctrl-C 直接中斷。
+
+**Source**: 2026-07-15 使用者在 CC-489 三方 multi-model synthesis 收斂後，回想起「pmctl executor 相關內容目前沒有停止的行為」並要求確認；經 grep `core/policy/dispatch-states.yaml`、`core/schema/run.schema.json`、`scripts/lib/pmctl-dispatch.sh` 確認 `cancelled` 狀態存在於 schema 但無任何實作，`.supervisor.pid` 未被任何子命令消費。使用者明確要求以 `cancel`（而非 `stop`）作為指令名稱，理由是中途終止的 run 不具備可恢復語意。
+
+**Cross-link**: [[CC-470]]（既有逾時止血 kill 機制可沿用）、[[CC-487]]（孤兒 process 殘留的既有觀察案例）、[[CC-489]]（三方 multi-model synthesis 脈絡）、`docs/executor-contract.md`。
