@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Best-effort state-store writer for pm-dispatch.
+# Canonical state-store writer for pm-dispatch.
 
 SCRIPT_DIR_SW="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/lib/portable.sh
@@ -297,24 +297,69 @@ _sw_compact_json_line() {
 }
 
 _sw_validate_compacted_json_line() {
-  local entity="${1:-}" compact="${2:-}" schema_file tmp rc=0
+  local entity="${1:-}" compact="${2:-}" schema_file errors
   schema_file="$SCRIPT_DIR_SW/../../core/schema/${entity}.schema.json"
-  if ! command -v jsonschema >/dev/null 2>&1; then
-    printf 'state-writer: warning: jsonschema not available; skipping %s schema validation\n' "$entity" >&2
-    return 0
-  fi
   if [[ ! -f "$schema_file" ]]; then
     printf 'state-writer: schema not found for %s: %s\n' "$entity" "$schema_file" >&2
     return 1
   fi
-  tmp="$(mktemp)" || return 1
-  printf '%s\n' "$compact" > "$tmp" || { rm -f "$tmp"; return 1; }
-  jsonschema -i "$tmp" "$schema_file" >/dev/null || rc=$?
-  if [[ "$rc" -ne 0 ]]; then
-    printf 'state-writer: %s schema validation failed\n' "$entity" >&2
+
+  # Deliberately bounded JSON-Schema subset for the writer boundary: recursive
+  # object required fields, const values, enum membership, primitive field
+  # types, and if/then conditionals.
+  # This keeps validation dependency-free (jq is already required) while making
+  # core/schema authoritative for every durable Run/Event/Task/Decision write.
+  errors="$(jq -rn --argjson document "$compact" --slurpfile schema "$schema_file" '
+    def type_matches($value; $expected):
+      if $expected == null then true
+      elif ($expected | type) == "array" then
+        any($expected[]; type_matches($value; .))
+      elif $expected == "integer" then
+        ($value | type) == "number" and ($value | floor) == $value
+      else ($value | type) == $expected
+      end;
+    def validate($value; $node; $path):
+      [
+        ($node.required[]? as $key |
+          select(($value | type) != "object" or (($value | has($key)) | not)) |
+          "missing required field: \($path).\($key)"),
+        (if ($node | has("const")) and $value != $node.const then
+          "invalid const: \($path)"
+        elif ($node | has("enum")) and (($node.enum | index($value)) == null) then
+          "invalid enum: \($path)"
+        elif ($node | has("type")) and (type_matches($value; $node.type) | not) then
+          "invalid type: \($path)"
+        else empty
+        end),
+        (($node.properties // {}) | to_entries[] as $property |
+          select(($value | type) == "object" and ($value | has($property.key))) |
+          validate($value[$property.key]; $property.value; "\($path).\($property.key)")[]),
+        (if ($node | has("if")) then
+          validate($value; $node.if; $path) as $condition_errors |
+          if ($condition_errors | length) == 0 and ($node | has("then")) then
+            validate($value; $node.then; $path)[]
+          elif ($condition_errors | length) != 0 and ($node | has("else")) then
+            validate($value; $node.else; $path)[]
+          else empty
+          end
+        else empty
+        end)
+      ];
+    validate($document; $schema[0]; "$" ) | .[]
+  ' 2>/dev/null)" || {
+    printf 'state-writer: %s schema validation could not run\n' "$entity" >&2
+    return 1
+  }
+  if [[ -n "$errors" ]]; then
+    if [[ "${PM_DISPATCH_SCHEMA_VALIDATION:-strict}" == "warn" ]]; then
+      printf 'state-writer: warning: %s schema validation failed: %s\n' "$entity" "${errors//$'\n'/; }" >&2
+      return 0
+    fi
+    printf 'state-writer: %s schema validation failed: %s\n' "$entity" "${errors//$'\n'/; }" >&2
+    return 1
   fi
-  rm -f "$tmp"
-  return "$rc"
+
+  return 0
 }
 
 # run_transition_valid from_state to_state
@@ -531,18 +576,20 @@ sw_build_run_json() {
 }
 
 task_upsert() {
-  local task_id="${1:-}" json_line="${2:-}" proj_dir tmp=""
+  local task_id="${1:-}" json_line="${2:-}" proj_dir tmp="" compact
   if [[ ! "${task_id}" =~ ^[A-Z]{1,4}-[0-9]+[a-z]?$ ]]; then
     _sw_log_error "task_upsert: invalid task_id='${task_id}'"
     return 1
   fi
+  compact="$(_sw_compact_json_line "$json_line")" || return $?
+  _sw_validate_compacted_json_line task "$compact" || return $?
   state_store_init || return 1
   proj_dir="$(_sw_project_dir)" || return 1
   tmp="$(mktemp "$proj_dir/tasks/.tmp-XXXXXX" 2>/dev/null)" || {
     _sw_log_error "task_upsert mktemp failed: $proj_dir/tasks"
     return 1
   }
-  printf '%s\n' "$json_line" > "$tmp" 2>/dev/null || {
+  printf '%s\n' "$compact" > "$tmp" 2>/dev/null || {
     _sw_log_error "task_upsert temp write failed: $tmp"
     rm -f "$tmp" 2>/dev/null
     return 1
@@ -555,18 +602,20 @@ task_upsert() {
 }
 
 decision_upsert() {
-  local decision_id="${1:-}" json_line="${2:-}" proj_dir tmp=""
+  local decision_id="${1:-}" json_line="${2:-}" proj_dir tmp="" compact
   if [[ ! "${decision_id}" =~ ^dec-[0-9]{4}-[0-9]{2}-[0-9]{2}-[a-z0-9-]+$ ]]; then
     _sw_log_error "decision_upsert: invalid decision_id='${decision_id}'"
     return 1
   fi
+  compact="$(_sw_compact_json_line "$json_line")" || return $?
+  _sw_validate_compacted_json_line decision "$compact" || return $?
   state_store_init || return 1
   proj_dir="$(_sw_project_dir)" || return 1
   tmp="$(mktemp "$proj_dir/decisions/.tmp-XXXXXX" 2>/dev/null)" || {
     _sw_log_error "decision_upsert mktemp failed: $proj_dir/decisions"
     return 1
   }
-  printf '%s\n' "$json_line" > "$tmp" 2>/dev/null || {
+  printf '%s\n' "$compact" > "$tmp" 2>/dev/null || {
     _sw_log_error "decision_upsert temp write failed: $tmp"
     rm -f "$tmp" 2>/dev/null
     return 1

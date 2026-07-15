@@ -1,4 +1,13 @@
 #!/usr/bin/env bash
+
+_HANDOVER_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_HANDOVER_EXECUTOR_POLICY_FILE="${_HANDOVER_EXECUTOR_POLICY_FILE:-$_HANDOVER_LIB_DIR/../../core/policy/executor-enum.yaml}"
+_HANDOVER_DISPATCH_ROUTE_POLICY_FILE="${_HANDOVER_DISPATCH_ROUTE_POLICY_FILE:-$_HANDOVER_LIB_DIR/../../core/policy/dispatch-routes.yaml}"
+_HANDOVER_ISOLATION_POLICY_FILE="${_HANDOVER_ISOLATION_POLICY_FILE:-$_HANDOVER_LIB_DIR/../../core/policy/isolation-level.yaml}"
+# shellcheck source=scripts/lib/pmctl-policy.sh
+if ! declare -F pmctl_policy_contains >/dev/null 2>&1; then
+  . "$_HANDOVER_LIB_DIR/pmctl-policy.sh"
+fi
 # Sourceable validation helpers for dispatch_handover_v1 metadata.
 # No shell options are set here; callers own their execution policy.
 
@@ -134,20 +143,24 @@ handover_validate_executor() {
   local value=${1-}
 
   handover_validate_metadata_value executor "$value" || return 1
-  case "$value" in
-    codex|claude|opencode) return 0 ;;
-    *) handover_reject executor "unknown executor" ;;
-  esac
+  [[ -r "$_HANDOVER_EXECUTOR_POLICY_FILE" ]] || {
+    handover_reject executor "policy source is unavailable: core/policy/executor-enum.yaml"
+    return 1
+  }
+  pmctl_policy_contains "$_HANDOVER_EXECUTOR_POLICY_FILE" "$value" values \
+    || handover_reject executor "unknown executor"
 }
 
 handover_validate_dispatch_route() {
   local value=${1-}
 
   handover_validate_metadata_value dispatch_route "$value" || return 1
-  case "$value" in
-    main_thread_bash_background|agent_executor) return 0 ;;
-    *) handover_reject dispatch_route "unknown dispatch route" ;;
-  esac
+  [[ -r "$_HANDOVER_DISPATCH_ROUTE_POLICY_FILE" ]] || {
+    handover_reject dispatch_route "policy source is unavailable: core/policy/dispatch-routes.yaml"
+    return 1
+  }
+  pmctl_policy_contains "$_HANDOVER_DISPATCH_ROUTE_POLICY_FILE" "$value" values \
+    || handover_reject dispatch_route "unknown dispatch route"
 }
 
 handover_validate_working_dir() {
@@ -252,21 +265,14 @@ handover_validate_isolation_level() {
   handover_validate_metadata_value isolation_level "$value" || return 1
 
   # Load valid enum from core/policy/isolation-level.yaml (source of truth).
-  # This library lives at scripts/lib/; the policy file is two levels up.
-  local _lib_dir
-  _lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  local _policy="${_lib_dir}/../../core/policy/isolation-level.yaml"
+  local _policy="$_HANDOVER_ISOLATION_POLICY_FILE"
 
-  if [[ -f "$_policy" ]]; then
-    if ! awk -v val="$value" '/^values:/{f=1;next} f && /^  - /{sub(/^  - /,""); if($0==val){found=1;exit}} END{exit !found}' "$_policy" 2>/dev/null; then
-      handover_reject isolation_level "unknown isolation_level value; check core/policy/isolation-level.yaml for valid values" || return 1
-    fi
-  else
-    # Fallback: hardcoded list (kept in sync with isolation-level.yaml)
-    case "$value" in
-      none|read-only|workspace-write|workspace-network|sandboxed) return 0 ;;
-      *) handover_reject isolation_level "unknown isolation_level value; expected one of: none read-only workspace-write workspace-network sandboxed" ;;
-    esac
+  if [[ ! -r "$_policy" ]]; then
+    handover_reject isolation_level "policy source is unavailable: core/policy/isolation-level.yaml"
+    return 1
+  fi
+  if ! pmctl_policy_contains "$_policy" "$value" values; then
+    handover_reject isolation_level "unknown isolation_level value; check core/policy/isolation-level.yaml for valid values" || return 1
   fi
 }
 

@@ -27,6 +27,53 @@ run_task_cmd() {
   PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" "$@" > "$_out" 2> "$_err"
 }
 
+case_task_state_enum_comes_from_policy() {
+  # Behavior: task state validation reads the substituted policy instead of an inline enum.
+  # Steps:
+  #   1. Substitute a policy containing only a synthetic state and source the task runtime.
+  #   2. Assert the synthetic state is accepted and a repository state is rejected.
+  local name="pmctl task: state validation reads core policy at runtime"
+  should_run "$name" || return 0
+  local policy old_policy
+  policy="$tmp_root/task-states-policy.yaml"
+  printf 'states:\n  - policy-only\ntransitions:\n  policy-only: []\n' > "$policy"
+  # shellcheck source=scripts/lib/pmctl-task.sh
+  . "$SCRIPT_DIR/lib/pmctl-task.sh"
+  old_policy="$_PMCTL_TASK_STATES_FILE"
+  _PMCTL_TASK_STATES_FILE="$policy"
+  if pmctl_task_valid_state policy-only && ! pmctl_task_valid_state open; then
+    pass "$name"
+  else
+    fail "$name" "state validator did not follow the substituted policy source"
+  fi
+  _PMCTL_TASK_STATES_FILE="$old_policy"
+}
+
+case_task_json_validation_state_enum_comes_from_policy() {
+  # Behavior: task JSON validation derives its accepted state from the substituted policy.
+  # Steps:
+  #   1. Substitute a policy containing only a synthetic state and source the task runtime.
+  #   2. Validate otherwise-identical task JSON using the synthetic and repository states.
+  #   3. Assert the synthetic state is accepted and the repository state is rejected.
+  local name="pmctl task: JSON validation reads state enum from core policy at runtime"
+  should_run "$name" || return 0
+  local policy old_policy policy_json repository_json
+  policy="$tmp_root/task-json-states-policy.yaml"
+  printf 'states:\n  - policy-only\ntransitions:\n  policy-only: []\n' > "$policy"
+  # shellcheck source=scripts/lib/pmctl-task.sh
+  . "$SCRIPT_DIR/lib/pmctl-task.sh"
+  old_policy="$_PMCTL_TASK_STATES_FILE"
+  _PMCTL_TASK_STATES_FILE="$policy"
+  policy_json='{"schema_version":1,"id":"CC-999","title":"policy task","state":"policy-only","created_ts":"2026-07-15T00:00:00Z"}'
+  repository_json='{"schema_version":1,"id":"CC-999","title":"repository task","state":"open","created_ts":"2026-07-15T00:00:00Z"}'
+  if pmctl_task_validate_json "$policy_json" && ! pmctl_task_validate_json "$repository_json" 2>/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "JSON validator did not follow the substituted policy source"
+  fi
+  _PMCTL_TASK_STATES_FILE="$old_policy"
+}
+
 case_task_create_writes_open_task() {
   local name="pmctl task create: writes open task through state store"
   should_run "$name" || return 0
@@ -1546,6 +1593,8 @@ case_task_dispatch_substantial_lifecycle_warn_event_failure_nonfatal() {
   fi
 }
 
+case_task_state_enum_comes_from_policy
+case_task_json_validation_state_enum_comes_from_policy
 case_task_create_with_behavioral_units
 case_task_create_with_size_tier
 case_task_create_invalid_size_tier

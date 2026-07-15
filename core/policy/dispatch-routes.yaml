@@ -2,7 +2,7 @@
 #
 # Closed list of dispatch routes for a `dispatch_handover_v1` block.
 # Embedded inline in core/schema/handover.schema.json (kept in sync).
-# Intended for consumption by runtime-layer validators (deferred to v0.3.x runtime phase); see core/README.md.
+# Consumed by runtime handover validation and schema parity tests; see core/README.md.
 
 values:
   - main_thread_bash_background    # main thread background script route

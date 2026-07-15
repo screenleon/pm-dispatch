@@ -21,6 +21,69 @@ run_case() {
   fi
 }
 
+isolation_level_comes_from_policy_case() {
+  # Behavior: isolation validation reads the substituted policy instead of an inline enum.
+  # Steps:
+  #   1. Substitute a policy containing only a synthetic value.
+  #   2. Assert the synthetic value is accepted and a repository value is rejected.
+  local policy old_policy
+  policy="$(mktemp)"
+  printf 'values:\n  - policy-only\n' > "$policy"
+  old_policy="$_HANDOVER_ISOLATION_POLICY_FILE"
+  _HANDOVER_ISOLATION_POLICY_FILE="$policy"
+  if handover_validate_isolation_level policy-only >/dev/null 2>&1 \
+      && ! handover_validate_isolation_level workspace-write >/dev/null 2>&1; then
+    _HANDOVER_ISOLATION_POLICY_FILE="$old_policy"
+    rm -f "$policy"
+    return 0
+  fi
+  _HANDOVER_ISOLATION_POLICY_FILE="$old_policy"
+  rm -f "$policy"
+  return 1
+}
+
+executor_comes_from_policy_case() {
+  # Behavior: executor validation reads the substituted policy instead of an inline enum.
+  # Steps:
+  #   1. Substitute a policy containing only a synthetic value.
+  #   2. Assert the synthetic value is accepted and a repository value is rejected.
+  local policy old_policy
+  policy="$(mktemp)"
+  printf 'values:\n  - policy-only\n' > "$policy"
+  old_policy="$_HANDOVER_EXECUTOR_POLICY_FILE"
+  _HANDOVER_EXECUTOR_POLICY_FILE="$policy"
+  if handover_validate_executor policy-only >/dev/null 2>&1 \
+      && ! handover_validate_executor codex >/dev/null 2>&1; then
+    _HANDOVER_EXECUTOR_POLICY_FILE="$old_policy"
+    rm -f "$policy"
+    return 0
+  fi
+  _HANDOVER_EXECUTOR_POLICY_FILE="$old_policy"
+  rm -f "$policy"
+  return 1
+}
+
+dispatch_route_comes_from_policy_case() {
+  # Behavior: dispatch-route validation reads the substituted policy instead of an inline enum.
+  # Steps:
+  #   1. Substitute a policy containing only a synthetic value.
+  #   2. Assert the synthetic value is accepted and a repository value is rejected.
+  local policy old_policy
+  policy="$(mktemp)"
+  printf 'values:\n  - policy-only\n' > "$policy"
+  old_policy="$_HANDOVER_DISPATCH_ROUTE_POLICY_FILE"
+  _HANDOVER_DISPATCH_ROUTE_POLICY_FILE="$policy"
+  if handover_validate_dispatch_route policy-only >/dev/null 2>&1 \
+      && ! handover_validate_dispatch_route agent_executor >/dev/null 2>&1; then
+    _HANDOVER_DISPATCH_ROUTE_POLICY_FILE="$old_policy"
+    rm -f "$policy"
+    return 0
+  fi
+  _HANDOVER_DISPATCH_ROUTE_POLICY_FILE="$old_policy"
+  rm -f "$policy"
+  return 1
+}
+
 make_tmpdir() {
   mktemp -d -t dispatch-handover.XXXXXX
 }
@@ -1100,9 +1163,11 @@ run_case "handover/executor unknown rejects" executor_unknown_rejects_case
 run_case "handover/executor codex accepts" executor_codex_accepts_case
 run_case "handover/executor claude accepts" executor_claude_accepts_case
 run_case "handover/executor opencode accepts" executor_opencode_accepts_case
+run_case "handover/executor validation reads core policy at runtime" executor_comes_from_policy_case
 run_case "handover/dispatch route bash accepts" dispatch_route_bash_accepts_case
 run_case "handover/dispatch route agent accepts" dispatch_route_agent_accepts_case
 run_case "handover/dispatch route unknown rejects" dispatch_route_unknown_value_rejects_case
+run_case "handover/dispatch route validation reads core policy at runtime" dispatch_route_comes_from_policy_case
 run_case "handover/timeout 1200 accepts" timeout_1200_accepts_case
 run_case "handover/timeout below min rejects" timeout_below_minimum_rejects_case
 run_case "handover/timeout above max rejects" timeout_above_maximum_rejects_case
@@ -1133,6 +1198,7 @@ run_case "handover/isolation_level workspace-network accepts" isolation_level_wo
 run_case "handover/isolation_level none accepts" isolation_level_none_accepts_case
 run_case "handover/isolation_level read-only accepts" isolation_level_read_only_accepts_case
 run_case "handover/isolation_level unknown rejects" isolation_level_unknown_rejects_case
+run_case "handover/isolation_level validation reads core policy at runtime" isolation_level_comes_from_policy_case
 run_case "handover/all metadata invalid isolation_level rejects" all_metadata_invalid_isolation_level_rejects_case
 run_case "handover/all metadata isolation none bash route rejects" all_metadata_isolation_none_bash_route_rejects_case
 run_case "handover/all metadata codex isolation none agent route rejects" all_metadata_codex_isolation_none_agent_route_rejects_case

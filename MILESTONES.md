@@ -53,7 +53,7 @@
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-451 | core/ 定義層接上 runtime：enum 單一來源（policy YAML 派生 + parity 回歸）、state 寫入 schema 結構檢查；契約凍結的事實前置（2026-07-06 稽核新票） | 🔵 |
+| CC-451 | core/ 定義層接上 runtime：enum 單一來源（policy YAML 派生 + parity 回歸）、state 寫入 schema 結構檢查；契約凍結的事實前置（2026-07-06 稽核新票） | ✅ |
 | CC-446 | `docs/stability-contract.md` 四層分級 + SemVer/deprecation 政策 + CC-296 清掃 + deprecated surface 清點 + 契約可驗證性盤點（`--json` 一致性、死欄位去留） | 🔵 |
 
 ### Phase 4 — hardening：盲測稽核 + 使用回報（P3-P2；低風險並行，檔案面與 Phase 1-3 不重疊）
