@@ -152,8 +152,11 @@ test_relocated_module_uses_explicit_repo_root() {
     HOME="$tmp_root/relocated/home" XDG_CONFIG_HOME="$xdg" TMPDIR="$tmp_root/relocated" \
       host_write_uninstall_all "$fixture" 0 >/dev/null
   )
-  [[ ! -e "$config" && ! -e "$receipt" ]] \
-    && pass "$name" || fail "$name" "relocated uninstall left managed OpenCode state"
+  if [[ ! -e "$config" && ! -e "$receipt" ]]; then
+    pass "$name"
+  else
+    fail "$name" "relocated uninstall left managed OpenCode state"
+  fi
 }
 
 # Behavior: Codex write modules consume the same explicit-root ABI after moving.
@@ -198,8 +201,11 @@ test_relocated_codex_module_uses_explicit_repo_root() {
     HOME="$tmp_root/relocated-codex/operator-home" CODEX_HOME="$rejected" \
       bash "$fixture/hosts/codex/bin/install.sh" --repo-root relocated-codex/repo
   ) >/dev/null 2>&1 || rc=$?
-  [[ "$rc" -eq 2 && ! -e "$rejected" ]] \
-    && pass "$name" || fail "$name" "relative root reached relocated Codex module state or returned rc=$rc"
+  if [[ "$rc" -eq 2 && ! -e "$rejected" ]]; then
+    pass "$name"
+  else
+    fail "$name" "relative root reached relocated Codex module state or returned rc=$rc"
+  fi
 }
 
 # Behavior: the dispatcher refuses a relative repository root before execution.
@@ -214,14 +220,20 @@ test_relative_repo_root_fails_before_module_execution() {
   printf '#!/usr/bin/env bash\ntouch %q\n' "$marker" > "$fixture/module/install.sh"
   (
     cd "$tmp_root" || exit 1
+    # These callbacks are invoked indirectly by the sourced dispatcher.
+    # shellcheck disable=SC2317,SC2329
     host_manifest_file() { printf '%s/hosts/%s/host.yaml\n' "$1" "$2"; }
+    # shellcheck disable=SC2317,SC2329
     host_manifest_scalar() { awk -v key="$2" '$1 == key ":" { print $2; exit }' "$1"; }
     # shellcheck disable=SC1090
     . "$REPO_ROOT/scripts/lib/host-write.sh"
     host_write_install relative-root fake 0
   ) >/dev/null 2>&1 || rc=$?
-  [[ "$rc" -eq 2 && ! -e "$marker" ]] \
-    && pass "$name" || fail "$name" "relative root reached the module or returned rc=$rc"
+  if [[ "$rc" -eq 2 && ! -e "$marker" ]]; then
+    pass "$name"
+  else
+    fail "$name" "relative root reached the module or returned rc=$rc"
+  fi
 }
 
 test_claude_surface_byte_compatible_with_optional_hosts
