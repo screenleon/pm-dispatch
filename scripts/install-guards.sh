@@ -39,6 +39,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+# shellcheck source=scripts/lib/prompt-context-timeouts.sh
+. "$SCRIPT_DIR/lib/prompt-context-timeouts.sh"
 
 # Use the same canonical Claude runtime config root as install/doctor/guards.
 # CLAUDE_HOME remains a compatibility alias for standalone legacy callers.
@@ -253,6 +255,7 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
   --arg session "$session_cmd_q" \
   --arg inject "$inject_cmd_q" \
   --arg ctx_inject "$ctx_inject_cmd_q" \
+  --argjson ctx_inject_timeout "$CLAUDE_PROMPT_CONTEXT_HOOK_TIMEOUT" \
   --arg statusline "$statusline_cmd_q" \
   --argjson sl_present "$_statusline_already_wired" \
   --argjson bg_guards "$_bg_json" \
@@ -374,7 +377,8 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
   .hooks.UserPromptSubmit |= map(
     .hooks |= map(
       if   ((.command | split("/") | last) == ($inject     | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") then .command = $inject
-      elif ((.command | split("/") | last) == ($ctx_inject | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") then .command = $ctx_inject
+      elif ((.command | split("/") | last) == ($ctx_inject | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") then
+        .command = $ctx_inject | .timeout = $ctx_inject_timeout
       else . end
     )
   ) |
@@ -430,7 +434,7 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
     else . end
   ) |
   ( if $ctx_inject_present == 0 then
-      .hooks.UserPromptSubmit += [{"hooks": [{"type": "command", "command": $ctx_inject}]}]
+      .hooks.UserPromptSubmit += [{"hooks": [{"type": "command", "command": $ctx_inject, "timeout": $ctx_inject_timeout}]}]
     else . end
   ) |
   ( if $sl_present == 0 then
@@ -440,7 +444,7 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
   ' > "$tmp_new" < "$settings"
 
 # --- Permissions merge for reviewer subagents ---
-# Reviewer subagents spawned by pr-gate need Write(.gate-results) and Bash(pmctl guard check)
+# Reviewer subagents spawned by pr-gate need Edit(.gate-results) and Bash(pmctl guard check)
 # to write results and run guard checks. Workspace root detection is shared with
 # uninstall-guards.sh via scripts/lib/gate-workspace.sh.
 _workspace_root="$(gate_workspace_root "$repo_root" "$HOME")"
@@ -459,7 +463,8 @@ _pmctl_guard_tilde=""
 _tmp_perms="$(mktemp)"
 trap 'rm -f "$tmp_new" "$_tmp_perms"' EXIT
 if ! jq \
-  --arg write_perm "Write(${_gate_glob})" \
+  --arg edit_perm "Edit(${_gate_glob})" \
+  --arg legacy_write_perm "Write(${_gate_glob})" \
   --arg bash_guard "Bash(pmctl guard check:*)" \
   --arg bash_guard_abs "$_pmctl_guard_abs" \
   --arg bash_guard_tilde "$_pmctl_guard_tilde" \
@@ -467,7 +472,10 @@ if ! jq \
   '
   .permissions //= {} |
   .permissions.allow //= [] |
-  ([$write_perm, $bash_guard, $bash_guard_abs, $bash_guard_tilde, $bash_mkdir]
+  # Claude settings accepts Edit path permissions. Remove the legacy Write
+  # spelling during upgrade instead of preserving an invalid managed entry.
+  .permissions.allow |= map(select(. != $legacy_write_perm)) |
+  ([$edit_perm, $bash_guard, $bash_guard_abs, $bash_guard_tilde, $bash_mkdir]
     | map(select(. != ""))) as $required |
   .permissions.allow |= (
     . as $existing |

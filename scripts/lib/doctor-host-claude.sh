@@ -87,6 +87,20 @@ _doctor_host_claude_hook_present() {
   ' "$settings" >/dev/null 2>&1
 }
 
+_doctor_host_claude_context_timeout_ok() {
+  local settings="$1"
+  # shellcheck source=scripts/lib/prompt-context-timeouts.sh
+  . "$REPO_ROOT/scripts/lib/prompt-context-timeouts.sh"
+  jq -e --argjson expected "$CLAUDE_PROMPT_CONTEXT_HOOK_TIMEOUT" '
+    [
+      (.hooks.UserPromptSubmit[]? | (.hooks // [])[]? |
+        select(((.command? // "") | gsub("\\\\"; "/") | split("/") | last) == "guard-inject-context.sh"))
+    ] as $hooks |
+    ($hooks | length) > 0 and
+    all($hooks[]; ((.timeout? // 0) | type) == "number" and (.timeout >= $expected))
+  ' "$settings" >/dev/null 2>&1
+}
+
 _doctor_host_claude_adapter_bg_present() {
   local adapter_name="$1" settings="$2"
   jq -e --arg adapter_name "$adapter_name" '
@@ -247,6 +261,12 @@ _doctor_host_claude_check_hooks() {
     emit_check hooks warn \
       "${#_stale[@]} hook(s) wired from a different checkout (e.g. $(basename "${_stale[0]}"))" \
       "bash '${REPO_ROOT}/install.sh' to re-wire hooks to this checkout"
+  elif ! _doctor_host_claude_context_timeout_ok "$settings"; then
+    # shellcheck source=scripts/lib/prompt-context-timeouts.sh
+    . "$REPO_ROOT/scripts/lib/prompt-context-timeouts.sh"
+    emit_check hooks fail \
+      "guard-inject-context.sh timeout missing or below ${CLAUDE_PROMPT_CONTEXT_HOOK_TIMEOUT}s" \
+      "bash '${REPO_ROOT}/scripts/install-guards.sh'"
   else
     emit_check hooks ok "$_total_hooks hooks present ($profile profile)"
   fi

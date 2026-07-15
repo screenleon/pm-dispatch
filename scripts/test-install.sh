@@ -1038,8 +1038,8 @@ test_install_hooks_gate_perms_fresh() {
     PM_DISPATCH_GATE_WORKSPACE="$ws" \
     bash "$REPO_ROOT/scripts/install-guards.sh" >/dev/null 2>&1
 
-  local write_entry="Write(${ws}/**/.gate-results/**)"
-  for entry in "$write_entry" "Bash(pmctl guard check:*)" \
+  local edit_entry="Edit(${ws}/**/.gate-results/**)"
+  for entry in "$edit_entry" "Bash(pmctl guard check:*)" \
       "Bash($home/.local/bin/pmctl guard check:*)" \
       "Bash(~/.local/bin/pmctl guard check:*)" "Bash(mkdir -p:*)"; do
     if ! jq -e --arg e "$entry" '(.permissions.allow // [] | index($e)) != null' "$settings" >/dev/null; then
@@ -1065,9 +1065,9 @@ test_install_hooks_gate_perms_idempotent() {
   HOME="$home" CLAUDE_HOME="$home/.claude" PM_DISPATCH_GATE_WORKSPACE="$ws" \
     bash "$REPO_ROOT/scripts/install-guards.sh" >/dev/null 2>&1
 
-  local write_entry="Write(${ws}/**/.gate-results/**)"
+  local edit_entry="Edit(${ws}/**/.gate-results/**)"
   local count
-  for entry in "$write_entry" "Bash(pmctl guard check:*)" \
+  for entry in "$edit_entry" "Bash(pmctl guard check:*)" \
       "Bash($home/.local/bin/pmctl guard check:*)" \
       "Bash(~/.local/bin/pmctl guard check:*)" "Bash(mkdir -p:*)"; do
     count="$(jq -r --arg e "$entry" '[.permissions.allow[]? | select(. == $e)] | length' "$settings")"
@@ -1076,6 +1076,38 @@ test_install_hooks_gate_perms_idempotent() {
       return
     fi
   done
+  pass "$name"
+}
+
+test_install_hooks_gate_perms_migrates_legacy_write() {
+  # Verifies an upgrade replaces the historical managed Write spelling with
+  # Edit while leaving non-managed /tmp permissions untouched.
+  # Steps:
+  #   1. Seed legacy Write(.gate-results), Edit(/tmp/*), and Write(/tmp/*)
+  #   2. Run install-guards.sh once
+  #   3. Assert only the managed gate permission is migrated
+  local name="install-guards-gate-perms-migrates-legacy-write"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name" settings="$tmp_root/$name/.claude/settings.json"
+  local ws="$tmp_root/$name-ws"
+  mkdir -p "$home/.claude" "$ws"
+  jq -n --arg legacy "Write(${ws}/**/.gate-results/**)" '{
+    hooks:{}, permissions:{allow:[$legacy,"Edit(/tmp/*)","Write(/tmp/*)"]}
+  }' > "$settings"
+
+  HOME="$home" CLAUDE_HOME="$home/.claude" PM_DISPATCH_GATE_WORKSPACE="$ws" \
+    bash "$REPO_ROOT/scripts/install-guards.sh" >/dev/null 2>&1
+
+  if ! jq -e --arg edit "Edit(${ws}/**/.gate-results/**)" \
+      --arg legacy "Write(${ws}/**/.gate-results/**)" '
+    (.permissions.allow | index($edit)) != null and
+    (.permissions.allow | index($legacy)) == null and
+    (.permissions.allow | index("Edit(/tmp/*)")) != null and
+    (.permissions.allow | index("Write(/tmp/*)")) != null
+  ' "$settings" >/dev/null; then
+    fail "$name" "managed gate permission was not migrated without touching /tmp entries"
+    return
+  fi
   pass "$name"
 }
 
@@ -1125,7 +1157,7 @@ test_install_hooks_gate_perms_preserves_existing() {
 }
 
 test_install_hooks_gate_perms_workspace_override() {
-  # PM_DISPATCH_GATE_WORKSPACE is honoured verbatim — the Write glob uses the
+  # PM_DISPATCH_GATE_WORKSPACE is honoured verbatim — the Edit glob uses the
   # override path, not the auto-detected repo parent.
   local name="install-guards-gate-perms-workspace-override"
   should_run "$name" || return 0
@@ -1138,16 +1170,16 @@ test_install_hooks_gate_perms_workspace_override() {
   CLAUDE_HOME="$home/.claude" PM_DISPATCH_GATE_WORKSPACE="$custom_ws" \
     bash "$REPO_ROOT/scripts/install-guards.sh" >/dev/null 2>&1
 
-  local expected="Write(${custom_ws}/**/.gate-results/**)"
+  local expected="Edit(${custom_ws}/**/.gate-results/**)"
   if ! jq -e --arg e "$expected" '(.permissions.allow // [] | index($e)) != null' "$settings" >/dev/null; then
-    fail "$name" "Write glob did not use PM_DISPATCH_GATE_WORKSPACE; expected: $expected"
+    fail "$name" "Edit glob did not use PM_DISPATCH_GATE_WORKSPACE; expected: $expected"
     return
   fi
   pass "$name"
 }
 
 test_install_hooks_gate_perms_home_fallback() {
-  # When the auto-detected git root's parent equals HOME, the Write glob falls
+  # When the auto-detected git root's parent equals HOME, the Edit glob falls
   # back to $HOME/**/.gate-results/**. Uses PM_DISPATCH_GATE_GIT_ROOT to inject a
   # fake git root whose parent is the test HOME, exercising the real fallback branch.
   local name="install-guards-gate-perms-home-fallback"
@@ -1161,9 +1193,9 @@ test_install_hooks_gate_perms_home_fallback() {
   HOME="$home" CLAUDE_HOME="$home/.claude" PM_DISPATCH_GATE_GIT_ROOT="$home/fake-pm" \
     bash "$REPO_ROOT/scripts/install-guards.sh" >/dev/null 2>&1
 
-  local expected="Write(${home}/**/.gate-results/**)"
+  local expected="Edit(${home}/**/.gate-results/**)"
   if ! jq -e --arg e "$expected" '(.permissions.allow // [] | index($e)) != null' "$settings" >/dev/null; then
-    fail "$name" "Write glob did not use HOME fallback; expected: $expected"
+    fail "$name" "Edit glob did not use HOME fallback; expected: $expected"
     return
   fi
   pass "$name"
@@ -1182,9 +1214,9 @@ test_install_hooks_gate_perms_git_failure_fallback() {
   HOME="$home" CLAUDE_HOME="$home/.claude" PM_DISPATCH_GATE_GIT_ROOT="" \
     bash "$REPO_ROOT/scripts/install-guards.sh" >/dev/null 2>&1
 
-  local expected="Write(${home}/**/.gate-results/**)"
+  local expected="Edit(${home}/**/.gate-results/**)"
   if ! jq -e --arg e "$expected" '(.permissions.allow // [] | index($e)) != null' "$settings" >/dev/null; then
-    fail "$name" "Write glob did not fall back to HOME on git failure; expected: $expected"
+    fail "$name" "Edit glob did not fall back to HOME on git failure; expected: $expected"
     return
   fi
   pass "$name"
@@ -1207,9 +1239,9 @@ test_install_hooks_gate_perms_normal_git_parent() {
   HOME="$home" CLAUDE_HOME="$home/.claude" PM_DISPATCH_GATE_GIT_ROOT="$fake_git_root" \
     bash "$REPO_ROOT/scripts/install-guards.sh" >/dev/null 2>&1
 
-  local expected="Write(${fake_ws}/**/.gate-results/**)"
+  local expected="Edit(${fake_ws}/**/.gate-results/**)"
   if ! jq -e --arg e "$expected" '(.permissions.allow // [] | index($e)) != null' "$settings" >/dev/null; then
-    fail "$name" "Write glob did not use git-parent workspace; expected: $expected"
+    fail "$name" "Edit glob did not use git-parent workspace; expected: $expected"
     return
   fi
   pass "$name"
@@ -1224,23 +1256,28 @@ test_install_hooks_gate_perms_uninstall_removes() {
   local settings="$home/.claude/settings.json"
   local ws="$tmp_root/$name-ws"
   mkdir -p "$home/.claude" "$ws"
-  printf '{"hooks":{},"permissions":{"allow":["Bash(git log:*)"]}}\n' > "$settings"
+  printf '{"hooks":{},"permissions":{"allow":["Bash(git log:*)","Edit(/tmp/*)"]}}\n' > "$settings"
 
   # Install
   HOME="$home" CLAUDE_HOME="$home/.claude" PM_DISPATCH_GATE_WORKSPACE="$ws" \
     bash "$REPO_ROOT/scripts/install-guards.sh" >/dev/null 2>&1
 
-  local write_entry="Write(${ws}/**/.gate-results/**)"
-  if ! jq -e --arg e "$write_entry" '(.permissions.allow // [] | index($e)) != null' "$settings" >/dev/null; then
-    fail "$name" "install did not add Write entry; cannot test lifecycle"
+  local edit_entry="Edit(${ws}/**/.gate-results/**)"
+  if ! jq -e --arg e "$edit_entry" '(.permissions.allow // [] | index($e)) != null' "$settings" >/dev/null; then
+    fail "$name" "install did not add Edit entry; cannot test lifecycle"
     return
   fi
+  # Simulate an older install artifact coexisting with the current spelling;
+  # uninstall must recognize and remove both.
+  jq --arg legacy "Write(${ws}/**/.gate-results/**)" \
+    '.permissions.allow += [$legacy]' "$settings" > "$settings.tmp"
+  mv "$settings.tmp" "$settings"
 
   # Uninstall
   HOME="$home" CLAUDE_HOME="$home/.claude" PM_DISPATCH_GATE_WORKSPACE="$ws" \
     bash "$REPO_ROOT/scripts/uninstall-guards.sh" >/dev/null 2>&1
 
-  for entry in "$write_entry" "Bash(pmctl guard check:*)" \
+  for entry in "$edit_entry" "Write(${ws}/**/.gate-results/**)" "Bash(pmctl guard check:*)" \
       "Bash($home/.local/bin/pmctl guard check:*)" \
       "Bash(~/.local/bin/pmctl guard check:*)" "Bash(mkdir -p:*)"; do
     if jq -e --arg e "$entry" '(.permissions.allow // [] | index($e)) != null' "$settings" >/dev/null; then
@@ -1251,6 +1288,10 @@ test_install_hooks_gate_perms_uninstall_removes() {
   # Unrelated entry must survive
   if ! jq -e --arg e "Bash(git log:*)" '(.permissions.allow // [] | index($e)) != null' "$settings" >/dev/null; then
     fail "$name" "unrelated permissions.allow entry was incorrectly removed"
+    return
+  fi
+  if ! jq -e --arg e "Edit(/tmp/*)" '(.permissions.allow // [] | index($e)) != null' "$settings" >/dev/null; then
+    fail "$name" "non-managed /tmp permission was incorrectly removed"
     return
   fi
   pass "$name"
@@ -1911,9 +1952,9 @@ test_userpromptsubmit_install_wires_hook() {
     return
   fi
   if ! jq -e --arg inject "$ctx_inject" \
-    '.hooks.UserPromptSubmit[]? | (.hooks // [])[]? | select(.command == $inject)' \
+    '.hooks.UserPromptSubmit[]? | (.hooks // [])[]? | select(.command == $inject and .timeout == 150)' \
     "$home/.claude/settings.json" >/dev/null; then
-    fail "$name" "UserPromptSubmit context hook command not found"
+    fail "$name" "UserPromptSubmit context hook command/timeout contract not found"
     return
   fi
   pass "$name"
@@ -1975,6 +2016,44 @@ test_userpromptsubmit_install_idempotent() {
     "$home/.claude/settings.json")"
   if [[ "$count" != "1" ]]; then
     fail "$name" "expected one UserPromptSubmit context hook, got $count"
+    return
+  fi
+  if ! jq -e --arg inject "$ctx_inject" \
+    '.hooks.UserPromptSubmit[]? | (.hooks // [])[]? | select(.command == $inject and .timeout == 150)' \
+    "$home/.claude/settings.json" >/dev/null; then
+    fail "$name" "expected context hook timeout=150 after repeated install"
+    return
+  fi
+  pass "$name"
+}
+
+test_userpromptsubmit_install_upgrades_context_timeout() {
+  # Verifies an existing managed context hook is upgraded in place while an
+  # unrelated UserPromptSubmit hook keeps its own timeout.
+  # Steps:
+  #   1. Seed the managed context hook with timeout=30 plus an unrelated hook
+  #   2. Run install-guards.sh once
+  #   3. Assert managed timeout=150 and unrelated timeout remains unchanged
+  local name="userpromptsubmit-install-upgrades-context-timeout"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name" ctx_inject unrelated
+  ctx_inject="$(_ti_hook_cmd_path "$REPO_ROOT/scripts/guard-inject-context.sh")"
+  unrelated="/home/testuser/custom-prompt-hook.sh"
+  mkdir -p "$home/.claude"
+  jq -n --arg ctx "$ctx_inject" --arg unrelated "$unrelated" '{
+    permissions:{}, hooks:{UserPromptSubmit:[
+      {hooks:[{type:"command",command:$ctx,timeout:30}]},
+      {hooks:[{type:"command",command:$unrelated,timeout:7}]}
+    ]}
+  }' > "$home/.claude/settings.json"
+
+  HOME="$home" bash "$REPO_ROOT/scripts/install-guards.sh" > /dev/null
+
+  if ! jq -e --arg ctx "$ctx_inject" --arg unrelated "$unrelated" '
+    ([.hooks.UserPromptSubmit[]?.hooks[]? | select(.command == $ctx and .timeout == 150)] | length) == 1 and
+    ([.hooks.UserPromptSubmit[]?.hooks[]? | select(.command == $unrelated and .timeout == 7)] | length) == 1
+  ' "$home/.claude/settings.json" >/dev/null; then
+    fail "$name" "managed timeout was not upgraded without changing unrelated hook"
     return
   fi
   pass "$name"
@@ -2638,6 +2717,7 @@ test_dispatch_allowlist_uninstall_removes_entries
 test_dispatch_allowlist_uninstall_dryrun
 test_install_hooks_gate_perms_fresh
 test_install_hooks_gate_perms_idempotent
+test_install_hooks_gate_perms_migrates_legacy_write
 test_install_hooks_gate_perms_dry_run
 test_install_hooks_gate_perms_preserves_existing
 test_install_hooks_gate_perms_workspace_override
@@ -2654,6 +2734,7 @@ test_install_hooks_uninstall_stale_paths_after_rename
 test_userpromptsubmit_install_wires_hook
 test_userpromptsubmit_uninstall_removes_hook
 test_userpromptsubmit_install_idempotent
+test_userpromptsubmit_install_upgrades_context_timeout
 test_userpromptsubmit_uninstall_preserves_unrelated
 test_stop_hook_migration
 test_stop_hook_preservation

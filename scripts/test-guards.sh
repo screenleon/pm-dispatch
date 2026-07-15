@@ -3233,6 +3233,42 @@ STUB
   rm -rf "$dir"
 }
 
+ctx_inject_hook_existing_empty_db_reenters_initial_cleanup() {
+  # Verifies a schema-only DB left by an externally interrupted initial build
+  # is not misclassified as a healthy incremental cache.
+  # Steps:
+  #   1. Seed an existing context.db whose files table has zero rows
+  #   2. Run a slow fake pmctl with a one-second initial-build timeout
+  #   3. Assert fail-open exit 0 and removal of the incomplete derived cache
+  local name="ctx-inject-hook/existing-empty-db-reenters-initial-cleanup"
+  should_run "$name" || return 0
+  command -v sqlite3 >/dev/null 2>&1 || { PASS=$((PASS+1)); return 0; }
+  command -v timeout >/dev/null 2>&1 || { PASS=$((PASS+1)); return 0; }
+  local dir repo output status
+  dir="$(mktemp -d)"; repo="$dir/repo"
+  mkdir -p "$repo/docs" "$repo/.pm-dispatch/ctx"
+  git -C "$repo" init -q
+  printf '## Gate verdict\n\nctxinjectterm knowledge body.\n' > "$repo/docs/notes.md"
+  sqlite3 "$repo/.pm-dispatch/ctx/context.db" 'create table files(id integer primary key);'
+  cat > "$dir/slow-existing-pmctl" <<'STUB'
+#!/usr/bin/env bash
+sleep 30
+STUB
+  chmod +x "$dir/slow-existing-pmctl"
+  output=$(printf '%s' "{\"cwd\":\"$repo\",\"prompt\":\"tell me about ctxinjectterm behavior\"}" \
+    | PM_DISPATCH_PROMPT_CONTEXT_PMCTL="$dir/slow-existing-pmctl" \
+      PM_DISPATCH_PROMPT_CONTEXT_INITIAL_TIMEOUT=1 "$CTX_HOOK" 2>/dev/null)
+  status=$?
+  if [[ "$status" == "0" && -z "$output" && ! -e "$repo/.pm-dispatch/ctx/context.db" ]]; then
+    PASS=$((PASS+1))
+  else
+    FAIL=$((FAIL+1)); FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s output=%q db=%s\n' "$name" "$status" "$output" \
+      "$([[ -e "$repo/.pm-dispatch/ctx/context.db" ]] && echo yes || echo no)"
+  fi
+  rm -rf "$dir"
+}
+
 ctx_inject_hook_no_hits_silent() {
   # Verifies an indexed repo with a non-matching prompt stays silent.
   # Steps:
@@ -3373,6 +3409,7 @@ ctx_inject_hook_no_db_auto_builds
 ctx_inject_hook_marker_round_trip
 ctx_inject_hook_sqlite_missing_skips_pmctl
 ctx_inject_hook_initial_timeout_removes_empty_db
+ctx_inject_hook_existing_empty_db_reenters_initial_cleanup
 ctx_inject_hook_no_hits_silent
 ctx_inject_hook_short_prompt_silent
 ctx_inject_hook_kill_switch
