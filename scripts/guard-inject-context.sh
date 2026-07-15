@@ -17,6 +17,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck disable=SC1091
 # shellcheck source=scripts/lib/prompt-context-timeouts.sh
 . "$SCRIPT_DIR/lib/prompt-context-timeouts.sh"
 

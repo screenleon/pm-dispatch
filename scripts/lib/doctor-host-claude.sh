@@ -89,6 +89,7 @@ _doctor_host_claude_hook_present() {
 
 _doctor_host_claude_context_timeout_ok() {
   local settings="$1"
+  # shellcheck disable=SC1091
   # shellcheck source=scripts/lib/prompt-context-timeouts.sh
   . "$REPO_ROOT/scripts/lib/prompt-context-timeouts.sh"
   jq -e --argjson expected "$CLAUDE_PROMPT_CONTEXT_HOOK_TIMEOUT" '
@@ -262,6 +263,7 @@ _doctor_host_claude_check_hooks() {
       "${#_stale[@]} hook(s) wired from a different checkout (e.g. $(basename "${_stale[0]}"))" \
       "bash '${REPO_ROOT}/install.sh' to re-wire hooks to this checkout"
   elif ! _doctor_host_claude_context_timeout_ok "$settings"; then
+    # shellcheck disable=SC1091
     # shellcheck source=scripts/lib/prompt-context-timeouts.sh
     . "$REPO_ROOT/scripts/lib/prompt-context-timeouts.sh"
     emit_check hooks fail \

@@ -37,7 +37,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-489 | ⏸ deferred | `scripts/` domain ownership 重整：host/runtime/ops/test entrypoints 移至對應模組，由 manifest/registry 統一發現並以相容 shim 分批遷移 | arch | 2026-07-14 | feedback:2026-07-14 | P2 | design |
 | CC-490 | 🔵 active | project-scoped explicit memory config：取代全域單值 `dispatch.memory_dir`，避免多 repo 靜默共用 pm-dispatch canonical store | arch/memory | 2026-07-14 | feedback:2026-07-14 | P1 | design |
 | CC-491 | 🔵 active | PR-gate pre-flight 機械式 evidence contract：傳遞 command、selected suites、逐項結果與 tree fingerprint，讓 reviewer reuse 已驗證結果並禁止無條件重跑 | ops/gate | 2026-07-14 | feedback:2026-07-14 | P1 | design |
-| CC-492 | 🔵 active | Claude UserPromptSubmit context hook timeout envelope：升級 managed timeout、復原 files=0 殘缺 DB，避免 30 秒外層終止 | ops/memory | 2026-07-15 | feedback:2026-07-15 | P1 | retrieval |
+| CC-492 | ✅ closed 2026-07-15 | Claude UserPromptSubmit context hook timeout envelope：升級 managed timeout、復原 files=0 殘缺 DB，避免 30 秒外層終止 | ops/memory | 2026-07-15 | pr:#403 | P1 | retrieval |
 | CC-465 | 🔵 active | memory/context 關鍵詞管線 CJK 支援：抽出共用零依賴斷詞 lib，取代三處各自 ASCII-only 抽詞；工作序列起點（465→467→468→466）（2026-07-07 記憶系統深入分析） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-466 | 🔵 active | 記憶卡片生命週期閉環：expires_at 執行 + 關窗式 supersede + usage sidecar 休眠偵測 + doctor→distill 接線；排在 CC-467 之後（需其遙測為前置）（2026-07-07 記憶系統分析 + 外部研究 Graphiti/mcp-memory-service） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-467 | 🔵 active | `pmctl memory stats`：注入效益可視化（唯讀聚合器）——注入 bytes/卡片命中分佈/從未命中卡/episode 填寫率，回答「記憶有跟沒有差在哪」；排在 CC-466 之前（2026-07-07；業界僅離線 recall 評測，無 per-injection 遙測） | DX/memory | 2026-07-07 | — | P2 | retrieval |
@@ -792,7 +792,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 ---
 
-## CC-492 — Claude UserPromptSubmit context hook timeout envelope 與殘缺 DB 復原 🔵 active
+## CC-492 — Claude UserPromptSubmit context hook timeout envelope 與殘缺 DB 復原 ✅ 2026-07-15
 
 **Problem**: Claude Code 的 `UserPromptSubmit` command hook 未明確設定 timeout，實際使用 30 秒預設值；但 `guard-inject-context.sh` 的既有索引刷新與初次建立預算分別為 45／120 秒。JapanJob live session 已觀察到 context hook 在 30.020 秒被外層終止，stdout 被丟棄；同時先前中斷留下「DB 檔存在但 files=0」的殘缺 cache，使 hook 誤判為既有索引並在後續 prompt 重複進入超時路徑。
 
@@ -806,6 +806,10 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Acceptance**: sandbox install 後 context hook 具有明確 timeout，doctor 通過；模擬已存在的空 DB 與慢速 index 時，hook 在自身預算內 fail-open、清除殘缺 cache，且不再由 Claude 30 秒外層先行終止。permission upgrade 只留下 managed `Edit(.gate-results)`、不產生任何 `Write(...)`；uninstall 可清除新舊兩種 managed spelling 且保留 `/tmp/*` 等非 managed 權限。live Claude 設定升級後，JapanJob 下一次 prompt 不再出現 `UserPromptSubmit hook timed out after 30s`。
 
 **Source**: 2026-07-15 JapanJob Claude session `30e97e81-4bcf-4308-aa1c-78c25d451ba3` live diagnosis。
+
+**Closed 2026-07-15（Draft PR #403）**: managed context hook timeout 已提升為 150 秒，殘缺 files=0 DB 會重走 initial-build recovery；installer 與 uninstaller 已改用並對稱清理 managed `Edit(.gate-results)`，同時相容歷史 `Write(...)` 且保留非 managed `/tmp/*` 權限。Sequential full Codex gate `gate-20260715-003400-ab8888` 為 `Final: GO`，affected suites 全綠，live Claude doctor 26/26 通過，JapanJob prompt hook 12.77 秒完成並建立 1320-file index；受另一 session 並行刷新 live context DB 影響的 full-suite isolation 斷言，已獨立重跑 `test-pmctl-context` 114/114 通過。
+
+**See**: pr:#403
 
 ---
 
