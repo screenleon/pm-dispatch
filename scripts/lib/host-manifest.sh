@@ -21,7 +21,8 @@ host_manifest_names() {
   local repo_root="$1" dir name
   for dir in "$repo_root"/hosts/*/; do
     [[ -f "${dir}host.yaml" ]] || continue
-    name="$(basename "$dir")"
+    name="${dir%/}"
+    name="${name##*/}"
     printf '%s\n' "$name"
   done
 }
@@ -34,18 +35,22 @@ host_manifest_file() {
 # Top-level scalar field only (not list/map fields) — same restriction
 # doctor-host-claude.sh's manifest_field helper has for guard_bindings entries.
 host_manifest_scalar() {
-  local file="$1" key="$2"
+  local file="$1" key="$2" line value
   [[ -f "$file" ]] || return 1
-  awk -v key="$key" '
-    $0 ~ "^" key ":[[:space:]]*" {
-      v = $0
-      sub("^" key ":[[:space:]]*", "", v)
-      sub("[[:space:]]*#.*$", "", v)
-      gsub(/^"|"$/, "", v)
-      print v
-      exit
-    }
-  ' "$file"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" == "$key:"* ]] || continue
+    value="${line#"$key:"}"
+    value="${value%%#*}"
+    while [[ "$value" == [[:space:]]* ]]; do value="${value#?}"; done
+    while [[ "$value" == *[[:space:]] ]]; do value="${value%?}"; done
+    if [[ "$value" == \"*\" && "${#value}" -ge 2 ]]; then
+      value="${value#\"}"
+      value="${value%\"}"
+    fi
+    printf '%s\n' "$value"
+    return 0
+  done < "$file"
+  return 0
 }
 
 host_manifest_install_targets() {

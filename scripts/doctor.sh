@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2034  # PROFILE (and settings-state flags) are consumed by lib/doctor-host-*.sh modules sourced at runtime
+# shellcheck disable=SC2034  # PROFILE and settings state are consumed by manifest-declared doctor modules
 set -euo pipefail
 export LC_ALL=C.UTF-8
 
@@ -64,27 +64,41 @@ else
   _HOST_MANIFEST_AVAILABLE=0
 fi
 
-# Host modules: each scripts/lib/doctor-host-<name>.sh declares a
-# doctor_host_<name>_run() entry point with that host's checks and capability
-# probes. The core discovers modules by glob and dispatches generically, so
-# adding a host is a new module file only — no core edit. In copy-mode (lib/
-# absent) no module loads and main() runs a compact degraded fallback instead
-# (see check_host_fallback_copy_mode).
 _DOCTOR_HOST_NAMES=()
-for _module in "$SCRIPT_DIR"/lib/doctor-host-*.sh; do
-  [[ -f "$_module" ]] || continue
-  # Pure parameter expansion (no basename): doctor must run under the minimal
-  # PATHs the restricted-environment tests model.
-  _host_name="${_module##*/}"
-  _host_name="${_host_name#doctor-host-}"
-  _host_name="${_host_name%.sh}"
-  # Host names become function-name fragments; skip anything unexpected.
-  [[ "$_host_name" =~ ^[a-z0-9_-]+$ ]] || continue
-  # shellcheck disable=SC1090
-  . "$_module"
-  _DOCTOR_HOST_NAMES+=("$_host_name")
-done
-unset _module _host_name
+
+load_doctor_host_modules() {
+  _DOCTOR_HOST_NAMES=()
+  [[ "$_HOST_MANIFEST_AVAILABLE" -eq 1 ]] || return 0
+
+  local host manifest module module_path entrypoint
+  while IFS= read -r host; do
+    [[ "$host" =~ ^[a-z0-9_-]+$ ]] || {
+      printf 'doctor: unsafe host name from manifest registry: %s\n' "$host" >&2
+      return 1
+    }
+    manifest="$(host_manifest_file "$REPO_ROOT" "$host")"
+    module="$(host_manifest_scalar "$manifest" doctor_module)"
+    case "$module" in
+      ""|null|/*|../*|*/../*|*/..)
+        printf 'doctor: unsafe doctor_module for %s: %s\n' "$host" "$module" >&2
+        return 1
+        ;;
+    esac
+    module_path="$REPO_ROOT/$module"
+    [[ -f "$module_path" ]] || {
+      printf 'doctor: doctor_module for %s does not exist: %s\n' "$host" "$module" >&2
+      return 1
+    }
+    # shellcheck disable=SC1090
+    . "$module_path"
+    entrypoint="doctor_host_${host}_run"
+    declare -F "$entrypoint" >/dev/null || {
+      printf 'doctor: doctor_module for %s lacks %s\n' "$host" "$entrypoint" >&2
+      return 1
+    }
+    _DOCTOR_HOST_NAMES+=("$host")
+  done < <(host_manifest_names "$REPO_ROOT")
+}
 
 JSON=0
 QUIET=0
@@ -520,6 +534,8 @@ main() {
     fi
   fi
 
+  load_doctor_host_modules || exit 1
+
   # Native Windows Git Bash is not an officially supported platform; WSL2
   # (treated as Linux) is the supported path. Surface that up front so the checks
   # below are not mistaken for a supported baseline; some may report
@@ -535,9 +551,8 @@ main() {
   check_claude
   check_codex
   check_pmctl
-  # Host axis: generic dispatch into lib/doctor-host-*.sh modules (each host's
-  # checks + capability probes). Copy-mode (no modules loaded) degrades to the
-  # compact fallback instead.
+  # Host axis: generic dispatch into manifest-declared doctor modules. Copy-mode
+  # (no manifest library available) degrades to the compact fallback instead.
   if [[ ${#_DOCTOR_HOST_NAMES[@]} -gt 0 ]]; then
     local _host
     for _host in "${_DOCTOR_HOST_NAMES[@]}"; do

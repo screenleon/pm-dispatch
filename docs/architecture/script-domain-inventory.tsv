@@ -30,7 +30,6 @@ scripts/lib/dispatch-common.sh	sourced-lib	shared-runtime	runtime/lib/dispatch-c
 scripts/lib/dispatch-record.sh	sourced-lib	shared-runtime	runtime/lib/dispatch-record.sh	move-then-remove	internal
 scripts/lib/doctor-host-claude.sh	sourced-lib	host-claude	hosts/claude/lib/doctor.sh	move-then-remove	internal
 scripts/lib/doctor-host-codex.sh	sourced-lib	host-codex	hosts/codex/lib/doctor.sh	move-then-remove	internal
-scripts/lib/doctor-host-opencode.sh	sourced-lib	host-opencode	hosts/opencode/lib/doctor.sh	move-then-remove	internal
 scripts/lib/executor-router.sh	sourced-lib	shared-runtime	runtime/lib/executor-router.sh	move-then-remove	internal
 scripts/lib/gate-result-verify.sh	sourced-lib	shared-runtime	runtime/lib/gate-result-verify.sh	move-then-remove	internal
 scripts/lib/gate-workspace.sh	sourced-lib	shared-runtime	runtime/lib/gate-workspace.sh	move-then-remove	internal
