@@ -34,12 +34,15 @@ test_manifest_declares_stage3_modules() {
 }
 
 # Behavior: legacy OpenCode entrypoints remain thin, stderr-only compatibility shims.
-# Steps: compare dry-run stdout, then install through the legacy path and remove through the manifest path.
+# Steps: compare both dry-run surfaces, then install and uninstall through the legacy paths.
 test_legacy_entrypoints_forward_without_behavior_drift() {
   local name="opencode-legacy-entrypoints-forward-without-behavior-drift"
   should_run "$name" || return 0
   local xdg="$tmp_root/legacy/config" legacy_out="$tmp_root/legacy.out"
   local module_out="$tmp_root/module.out" legacy_err="$tmp_root/legacy.err"
+  local legacy_uninstall_out="$tmp_root/legacy-uninstall.out"
+  local module_uninstall_out="$tmp_root/module-uninstall.out"
+  local legacy_uninstall_err="$tmp_root/legacy-uninstall.err"
   mkdir -p "$tmp_root/legacy"
   XDG_CONFIG_HOME="$xdg" bash "$REPO_ROOT/hosts/opencode/bin/install.sh" \
     --repo-root "$REPO_ROOT" --dry-run >"$module_out" 2>/dev/null
@@ -53,9 +56,19 @@ test_legacy_entrypoints_forward_without_behavior_drift() {
   fi
   XDG_CONFIG_HOME="$xdg" bash "$REPO_ROOT/scripts/install-host-opencode.sh" \
     >/dev/null 2>/dev/null
-  uninstall_oc "$xdg" >/dev/null 2>&1
+  uninstall_oc "$xdg" --dry-run >"$module_uninstall_out" 2>/dev/null
+  XDG_CONFIG_HOME="$xdg" bash "$REPO_ROOT/scripts/uninstall-host-opencode.sh" \
+    --dry-run >"$legacy_uninstall_out" 2>"$legacy_uninstall_err"
+  if ! cmp -s "$module_uninstall_out" "$legacy_uninstall_out" \
+      || ! grep -q 'deprecated path' "$legacy_uninstall_err" \
+      || [[ ! -e "$xdg/opencode/opencode.json" ]]; then
+    fail "$name" "legacy uninstall dry-run changed stdout or filesystem behavior"
+    return
+  fi
+  XDG_CONFIG_HOME="$xdg" bash "$REPO_ROOT/scripts/uninstall-host-opencode.sh" \
+    >/dev/null 2>/dev/null
   [[ ! -e "$xdg/opencode/opencode.json" ]] \
-    && pass "$name" || fail "$name" "legacy install was not removable by manifest module"
+    && pass "$name" || fail "$name" "legacy uninstall did not remove the managed config"
 }
 
 # Behavior: OpenCode dry-run reports a plan without creating config state.
