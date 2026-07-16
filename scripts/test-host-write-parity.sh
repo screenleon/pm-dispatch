@@ -311,7 +311,11 @@ test_shared_expander_is_host_agnostic() {
     . "$REPO_ROOT/$module"
     declare -F "$resolver" >/dev/null 2>&1 || failures+="$host:missing-function;"
   done
-  [[ -z "$failures" ]] && pass "$name" || fail "$name" "$failures"
+  if [[ -z "$failures" ]]; then
+    pass "$name"
+  else
+    fail "$name" "$failures"
+  fi
 }
 
 test_claude_surface_byte_compatible_with_optional_hosts

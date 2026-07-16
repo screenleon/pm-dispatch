@@ -26,6 +26,7 @@ _CLAUDE_HOST_CONFIG_ROOT_ERROR=""
 
 _doctor_host_claude_resolve_config_root() {
   local out rc=0
+  # shellcheck disable=SC2016  # Manifest templates intentionally remain literal until host resolution.
   out="$(host_manifest_expand_path "$REPO_ROOT" claude '$CLAUDE_CONFIG_DIR' 2>&1)" || rc=$?
   if [[ "$rc" -ne 0 ]]; then
     _CLAUDE_HOST_CONFIG_ROOT_ERROR="$out"
