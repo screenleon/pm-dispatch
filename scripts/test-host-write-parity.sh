@@ -68,21 +68,18 @@ make_relocated_opencode_fixture() {
 
 make_relocated_codex_fixture() {
   local root="$1"
-  mkdir -p "$root/hosts/codex/bin" "$root/scripts/lib"
+  mkdir -p "$root/hosts/codex/bin" "$root/hosts/codex/hooks" "$root/scripts/lib"
   cp -R "$REPO_ROOT/hosts/codex/lib" "$root/hosts/codex/lib"
   cp "$REPO_ROOT/hosts/codex/host.yaml" "$root/hosts/codex/host.yaml"
   cp "$REPO_ROOT/hosts/codex/bin/memory-update.sh" "$root/hosts/codex/bin/memory-update.sh"
   cp "$REPO_ROOT/scripts/lib/host-manifest.sh" "$root/scripts/lib/host-manifest.sh"
   cp "$REPO_ROOT/scripts/lib/host-write.sh" "$root/scripts/lib/host-write.sh"
-  cp "$REPO_ROOT/scripts/install-guards-codex.sh" "$root/hosts/codex/bin/install.sh"
-  cp "$REPO_ROOT/scripts/uninstall-guards-codex.sh" "$root/hosts/codex/bin/uninstall.sh"
+  cp "$REPO_ROOT/hosts/codex/bin/install.sh" "$root/hosts/codex/bin/install.sh"
+  cp "$REPO_ROOT/hosts/codex/bin/uninstall.sh" "$root/hosts/codex/bin/uninstall.sh"
+  cp "$REPO_ROOT/hosts/codex/hooks/command-guard.sh" "$root/hosts/codex/hooks/command-guard.sh"
   cp "$REPO_ROOT/scripts/hook-codex-command-guard.sh" "$root/scripts/hook-codex-command-guard.sh"
   cp "$REPO_ROOT/scripts/guard-inject-memory.sh" "$root/scripts/guard-inject-memory.sh"
   cp "$REPO_ROOT/scripts/guard-session-summary.sh" "$root/scripts/guard-session-summary.sh"
-  sed -i \
-    -e 's|^install_module:.*|install_module: hosts/codex/bin/install.sh|' \
-    -e 's|^uninstall_module:.*|uninstall_module: hosts/codex/bin/uninstall.sh|' \
-    "$root/hosts/codex/host.yaml"
 }
 
 test_claude_surface_byte_compatible_with_optional_hosts() {

@@ -10,6 +10,8 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Codex host-owned modules (CC-489 Phase 4).** Codex install, uninstall, doctor, and command-guard implementations now live under `hosts/codex/` and are discovered from `host.yaml`. Legacy installed paths remain thin compatibility shims; reinstall refreshes this checkout's stale hook command to the new path, while uninstall recognizes exact old/new identities without removing foreign same-basename hooks. The canonical memory writer and executor adapter remain unchanged.
+
 - **Host-owned config-root resolvers (CC-489 Phase 2).** Claude, Codex, and OpenCode manifests now declare host-local path resolver modules. The shared manifest reader safely delegates target expansion without naming host environment variables or defaults; Claude install, uninstall, doctor, and hook wiring share one canonical/legacy conflict contract. Regression coverage locks unset/empty roots, hostile and whitespace-bearing `HOME`, alias conflicts, and relocated fixtures. No existing production file is relocated in this slice.
 
 - **Codex command-local PM guard bypass (CC-496).** The Codex `PreToolUse` transport now recognizes an exact leading `PM_GUARD_PM_BASH=off` assignment for one audited hook call, matching the remediation printed by `guard-pm-bash.sh`; later assignments, case variants, and subsequent calls remain denied.

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Regression suite for the codex-host install write path:
-# scripts/lib/host-manifest.sh, scripts/install-guards-codex.sh,
-# scripts/uninstall-guards-codex.sh, scripts/hook-codex-command-guard.sh, and
+# scripts/lib/host-manifest.sh, hosts/codex/bin/{install,uninstall}.sh,
+# hosts/codex/hooks/command-guard.sh, the legacy compatibility shims, and
 # the install.sh/uninstall.sh integration points that call them.
 #
 # Every case runs against a throwaway $CODEX_HOME under $tmp_root — never the
@@ -160,12 +160,15 @@ test_host_manifest_expand_path_default_when_unset() {
 test_host_manifest_declares_codex_write_modules() {
   local name="host-manifest-declares-codex-write-modules"
   should_run "$name" || return 0
-  local manifest install_module uninstall_module
+  local manifest install_module uninstall_module doctor_module
   manifest="$(host_manifest_file "$REPO_ROOT" codex)"
   install_module="$(host_manifest_scalar "$manifest" install_module)"
   uninstall_module="$(host_manifest_scalar "$manifest" uninstall_module)"
-  [[ "$install_module" == "scripts/install-guards-codex.sh" && "$uninstall_module" == "scripts/uninstall-guards-codex.sh" ]] \
-    && pass "$name" || fail "$name" "unexpected modules: install=$install_module uninstall=$uninstall_module"
+  doctor_module="$(host_manifest_scalar "$manifest" doctor_module)"
+  [[ "$install_module" == "hosts/codex/bin/install.sh" \
+      && "$uninstall_module" == "hosts/codex/bin/uninstall.sh" \
+      && "$doctor_module" == "hosts/codex/lib/doctor.sh" ]] \
+    && pass "$name" || fail "$name" "unexpected modules: install=$install_module uninstall=$uninstall_module doctor=$doctor_module"
 }
 
 test_host_manifest_declares_codex_memory_update_module() {
@@ -250,7 +253,8 @@ test_install_guards_codex_wires_hook() {
     fail "$name" "hooks.json not created"
     return
   fi
-  if jq -e '.hooks.PreToolUse[] | select(.matcher=="Bash") | .hooks[] | select(.command | endswith("hook-codex-command-guard.sh"))' \
+  if jq -e --arg cmd "$REPO_ROOT/hosts/codex/hooks/command-guard.sh" \
+      '.hooks.PreToolUse[] | select(.matcher=="Bash") | .hooks[] | select(.command == $cmd)' \
       "$codex_home/hooks.json" >/dev/null 2>&1 \
     && jq -e '.hooks.UserPromptSubmit[] | .hooks[] | select(.command | endswith("guard-inject-memory.sh"))' \
       "$codex_home/hooks.json" >/dev/null 2>&1 \
@@ -278,6 +282,82 @@ test_install_guards_codex_idempotent() {
     && [[ "$(jq '.hooks.Stop | length' "$codex_home/hooks.json")" == "1" ]] \
     && [[ "$(grep -Fc 'pm-dispatch:codex-memory-contract:start' "$codex_home/AGENTS.md")" == "1" ]] \
     && pass "$name" || fail "$name" "re-running should not duplicate the managed hook entry"
+}
+
+# Behavior: reinstall upgrades this checkout's pre-migration command hook in place.
+# Steps: seed old and foreign commands, run the manifest-owned installer, and assert
+# only the exact old command is replaced by the new host-owned path.
+test_install_guards_codex_refreshes_legacy_hook_path() {
+  local name="install-guards-codex-refreshes-legacy-hook-path"
+  should_run "$name" || return 0
+  local codex_home="$tmp_root/ic-refresh/.codex"
+  local old_cmd="$REPO_ROOT/scripts/hook-codex-command-guard.sh"
+  local new_cmd="$REPO_ROOT/hosts/codex/hooks/command-guard.sh"
+  local foreign_cmd="/other/checkout/scripts/hook-codex-command-guard.sh"
+  mkdir -p "$codex_home"
+  jq -n --arg old "$old_cmd" --arg foreign "$foreign_cmd" \
+    '{hooks:{PreToolUse:[{matcher:"Bash",hooks:[{type:"command",command:$old},{type:"command",command:$foreign}]}]}}' \
+    > "$codex_home/hooks.json"
+
+  CODEX_HOME="$codex_home" bash "$REPO_ROOT/hosts/codex/bin/install.sh" \
+    --repo-root "$REPO_ROOT" >/dev/null 2>&1
+
+  if jq -e --arg old "$old_cmd" --arg new "$new_cmd" --arg foreign "$foreign_cmd" '
+      ([.hooks.PreToolUse[]?.hooks[]?.command | select(. == $old)] | length) == 0 and
+      ([.hooks.PreToolUse[]?.hooks[]?.command | select(. == $new)] | length) == 1 and
+      ([.hooks.PreToolUse[]?.hooks[]?.command | select(. == $foreign)] | length) == 1
+    ' "$codex_home/hooks.json" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "reinstall did not precisely refresh old command path"
+  fi
+}
+
+# Behavior: the new uninstaller removes pre-migration commands from this checkout.
+# Steps: seed the old command alongside a foreign same-basename command and verify
+# only the exact checkout-owned legacy command is removed.
+test_uninstall_guards_codex_removes_legacy_hook_path() {
+  local name="uninstall-guards-codex-removes-legacy-hook-path"
+  should_run "$name" || return 0
+  local codex_home="$tmp_root/uc-legacy/.codex"
+  local old_cmd="$REPO_ROOT/scripts/hook-codex-command-guard.sh"
+  local foreign_cmd="/other/checkout/scripts/hook-codex-command-guard.sh"
+  mkdir -p "$codex_home"
+  jq -n --arg old "$old_cmd" --arg foreign "$foreign_cmd" \
+    '{hooks:{PreToolUse:[{matcher:"Bash",hooks:[{type:"command",command:$old},{type:"command",command:$foreign}]}]}}' \
+    > "$codex_home/hooks.json"
+
+  CODEX_HOME="$codex_home" bash "$REPO_ROOT/hosts/codex/bin/uninstall.sh" \
+    --repo-root "$REPO_ROOT" >/dev/null 2>&1
+
+  if jq -e --arg old "$old_cmd" --arg foreign "$foreign_cmd" '
+      ([.hooks.PreToolUse[]?.hooks[]?.command | select(. == $old)] | length) == 0 and
+      ([.hooks.PreToolUse[]?.hooks[]?.command | select(. == $foreign)] | length) == 1
+    ' "$codex_home/hooks.json" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "legacy uninstall removed the wrong command identity"
+  fi
+}
+
+# Behavior: the installed legacy hook path remains an executable compatibility shim.
+# Steps: send benign and destructive payloads through old and new paths and compare decisions.
+test_hook_codex_command_guard_legacy_shim_parity() {
+  local name="hook-codex-command-guard-legacy-shim-parity"
+  should_run "$name" || return 0
+  local payload old_rc=0 new_rc=0 old_deny_rc=0 new_deny_rc=0
+  payload='{"tool_input":{"command":"git status","cwd":"/tmp"}}'
+  printf '%s' "$payload" | PM_GUARD_LOG_DIR="$tmp_root/shim-old-allow" \
+    "$REPO_ROOT/scripts/hook-codex-command-guard.sh" >/dev/null 2>&1 || old_rc=$?
+  printf '%s' "$payload" | PM_GUARD_LOG_DIR="$tmp_root/shim-new-allow" \
+    "$REPO_ROOT/hosts/codex/hooks/command-guard.sh" >/dev/null 2>&1 || new_rc=$?
+  payload='{"tool_input":{"command":"rm -rf /tmp/whatever","cwd":"/tmp"}}'
+  printf '%s' "$payload" | PM_GUARD_LOG_DIR="$tmp_root/shim-old-deny" \
+    "$REPO_ROOT/scripts/hook-codex-command-guard.sh" >/dev/null 2>&1 || old_deny_rc=$?
+  printf '%s' "$payload" | PM_GUARD_LOG_DIR="$tmp_root/shim-new-deny" \
+    "$REPO_ROOT/hosts/codex/hooks/command-guard.sh" >/dev/null 2>&1 || new_deny_rc=$?
+  [[ "$old_rc" -eq 0 && "$new_rc" -eq 0 && "$old_deny_rc" -eq "$new_deny_rc" && "$old_deny_rc" -ne 0 ]] \
+    && pass "$name" || fail "$name" "old/new decisions differ: allow=$old_rc/$new_rc deny=$old_deny_rc/$new_deny_rc"
 }
 
 test_codex_memory_update_writes_only_canonical_episode() {
@@ -749,12 +829,14 @@ test_install_unknown_host_fails_before_mutation
 test_install_guards_codex_dry_run_no_side_effect
 test_install_guards_codex_wires_hook
 test_install_guards_codex_idempotent
+test_install_guards_codex_refreshes_legacy_hook_path
 test_codex_memory_update_writes_only_canonical_episode
 test_codex_memory_update_invalid_explicit_fails_closed
 test_install_guards_codex_missing_manifest_target_errors
 test_install_guards_codex_unknown_flag_rejected
 test_install_guards_codex_spaced_repo_root
 test_uninstall_guards_codex_removes_hook
+test_uninstall_guards_codex_removes_legacy_hook_path
 test_uninstall_guards_codex_preserves_unrelated_hook
 test_codex_agents_managed_block_preserves_foreign_content
 test_codex_agents_malformed_markers_fail_closed
@@ -770,6 +852,7 @@ test_hook_codex_command_guard_denies_git_global_option_bypass
 test_hook_codex_command_guard_command_local_bypass_is_one_call
 test_hook_codex_command_guard_rejects_malformed_command_local_bypass
 test_hook_codex_command_guard_missing_command_denies
+test_hook_codex_command_guard_legacy_shim_parity
 test_install_default_never_touches_codex_home
 test_install_opt_in_wires_codex_and_uninstall_removes_it
 test_uninstall_removes_codex_hook_when_codex_not_on_path

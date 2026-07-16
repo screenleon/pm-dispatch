@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC1091
 # Sourceable codex-host doctor module.
 #
 # Host-specific doctor probes for the codex host (Codex CLI as the PM runtime).
-# Sourced by scripts/doctor.sh's generic host-module loader
-# (lib/doctor-host-*.sh glob); never executed standalone. The loader calls
+# Sourced by scripts/doctor.sh's manifest-driven host-module loader; never
+# executed standalone. The loader calls
 # doctor_host_codex_run() — the single required entry point of the host-module
 # interface. emit_check/emit_capability and codex_available come from doctor.sh.
 #
@@ -17,6 +18,9 @@
 # unlike the claude host where unwired means the install contract is broken.
 # Once a host manifest declares codex wiring targets, the declared values move
 # out of this file into the manifest; the module interface stays the same.
+
+# shellcheck source=hosts/codex/lib/hook-paths.sh
+. "$REPO_ROOT/hosts/codex/lib/hook-paths.sh"
 
 # Capability probe for the codex hook surface. hooks.json under CODEX_HOME is
 # the hook wiring target (same hooks-block shape as Claude settings.json, not
@@ -76,10 +80,14 @@ _doctor_host_codex_hooks() {
 }
 
 _doctor_host_codex_hook_present() {
-  local hooks_file="$1" kind="$2" command command_q event matcher=""
+  local hooks_file="$1" kind="$2" command command_q legacy_command="" legacy_command_q="" event matcher=""
   case "$kind" in
     command_guard)
-      command="$REPO_ROOT/scripts/hook-codex-command-guard.sh"; event="PreToolUse"; matcher="Bash" ;;
+      command="$(codex_host_command_guard_path "$REPO_ROOT")"
+      command_q="$(printf '%q' "$command")"
+      legacy_command="$(codex_host_command_guard_legacy_path "$REPO_ROOT")"
+      legacy_command_q="$(printf '%q' "$legacy_command")"
+      event="PreToolUse"; matcher="Bash" ;;
     memory_injection)
       command="$REPO_ROOT/scripts/guard-inject-memory.sh"; event="UserPromptSubmit" ;;
     session_lifecycle)
@@ -90,11 +98,12 @@ _doctor_host_codex_hook_present() {
     *) return 1 ;;
   esac
   [[ -n "${command_q:-}" ]] || command_q="$(printf '%q' "$command")"
-  jq -e --arg event "$event" --arg matcher "$matcher" --arg cmd "$command" --arg cmd_q "$command_q" '
+  jq -e --arg event "$event" --arg matcher "$matcher" --arg cmd "$command" --arg cmd_q "$command_q" \
+    --arg legacy_cmd "${legacy_command:-}" --arg legacy_cmd_q "${legacy_command_q:-}" '
     (.hooks[$event] // [])[]?
     | select(($matcher == "") or (.matcher == $matcher))
     | (.hooks // [])[]?.command
-    | select(. == $cmd or . == $cmd_q)
+    | select(. == $cmd or . == $cmd_q or ($legacy_cmd != "" and . == $legacy_cmd) or ($legacy_cmd_q != "" and . == $legacy_cmd_q))
   ' "$hooks_file" >/dev/null 2>&1
 }
 
