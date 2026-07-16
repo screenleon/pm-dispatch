@@ -70,25 +70,9 @@ load_doctor_host_modules() {
   _DOCTOR_HOST_NAMES=()
   [[ "$_HOST_MANIFEST_AVAILABLE" -eq 1 ]] || return 0
 
-  local host manifest module module_path entrypoint
+  local host module_path entrypoint
   while IFS= read -r host; do
-    [[ "$host" =~ ^[a-z0-9_-]+$ ]] || {
-      printf 'doctor: unsafe host name from manifest registry: %s\n' "$host" >&2
-      return 1
-    }
-    manifest="$(host_manifest_file "$REPO_ROOT" "$host")"
-    module="$(host_manifest_scalar "$manifest" doctor_module)"
-    case "$module" in
-      ""|null|/*|../*|*/../*|*/..)
-        printf 'doctor: unsafe doctor_module for %s: %s\n' "$host" "$module" >&2
-        return 1
-        ;;
-    esac
-    module_path="$REPO_ROOT/$module"
-    [[ -f "$module_path" ]] || {
-      printf 'doctor: doctor_module for %s does not exist: %s\n' "$host" "$module" >&2
-      return 1
-    }
+    module_path="$(host_manifest_module_path "$REPO_ROOT" "$host" doctor_module)" || return 1
     # shellcheck disable=SC1090
     . "$module_path"
     entrypoint="doctor_host_${host}_run"

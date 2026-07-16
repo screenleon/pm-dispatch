@@ -1098,6 +1098,71 @@ case_doctor_profile_invalid_value_exits_2() {
   fi
 }
 
+_td_assert_loader_failure() {
+  local name="$1" host="$2" manifest_body="$3" expected="$4" module_body="${5:-}"
+  should_run "$name" || return 0
+  local fake_repo="$tmp_root/$name/repo" out status=0 module
+  mkdir -p "$fake_repo/hosts/$host"
+  printf '%s\n' "$manifest_body" > "$fake_repo/hosts/$host/host.yaml"
+  if [[ -n "$module_body" ]]; then
+    module="${manifest_body#doctor_module: }"
+    mkdir -p "$(dirname "$fake_repo/$module")"
+    printf '%s\n' "$module_body" > "$fake_repo/$module"
+  fi
+  out="$(bash "$DOCTOR" --no-color --repo "$fake_repo" 2>&1)" || status=$?
+  if [[ "$status" -eq 1 && "$out" == *"$expected"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected loader failure '$expected'; status=$status out=$out"
+  fi
+}
+
+# Behavior: manifest doctor discovery rejects a host name unsafe for function dispatch.
+# Steps: create a dotted host directory, invoke doctor, and require a fail-closed error.
+case_doctor_loader_rejects_unsafe_host_name() {
+  _td_assert_loader_failure \
+    "doctor-loader-rejects-unsafe-host-name" "bad.host" \
+    "doctor_module: hosts/bad.host/doctor.sh" \
+    "host manifest: unsafe host name: bad.host"
+}
+
+# Behavior: manifest doctor discovery rejects an unsafe repo-relative module scalar.
+# Steps: point doctor_module through .., invoke doctor, and require a fail-closed error.
+case_doctor_loader_rejects_unsafe_module_path() {
+  _td_assert_loader_failure \
+    "doctor-loader-rejects-unsafe-module-path" "badpath" \
+    "doctor_module: ../escape.sh" \
+    "host manifest: unsafe doctor_module path for badpath: ../escape.sh"
+}
+
+# Behavior: manifest doctor discovery rejects a missing doctor_module scalar.
+# Steps: create a host manifest without a module, invoke doctor, and require failure.
+case_doctor_loader_rejects_empty_module_path() {
+  _td_assert_loader_failure \
+    "doctor-loader-rejects-empty-module-path" "empty" \
+    "doctor_module:" \
+    "host manifest: empty has no doctor_module"
+}
+
+# Behavior: manifest doctor discovery rejects a declared module that is absent.
+# Steps: declare a safe nonexistent path, invoke doctor, and require a fail-closed error.
+case_doctor_loader_rejects_missing_module() {
+  _td_assert_loader_failure \
+    "doctor-loader-rejects-missing-module" "missing" \
+    "doctor_module: hosts/missing/doctor.sh" \
+    "host manifest: doctor_module path for missing does not exist"
+}
+
+# Behavior: manifest doctor discovery requires the host-specific run entrypoint.
+# Steps: create a module with the wrong function, invoke doctor, and require failure.
+case_doctor_loader_rejects_missing_entrypoint() {
+  _td_assert_loader_failure \
+    "doctor-loader-rejects-missing-entrypoint" "wrongfn" \
+    "doctor_module: hosts/wrongfn/doctor.sh" \
+    "doctor_module for wrongfn lacks doctor_host_wrongfn_run" \
+    'doctor_host_other_run() { :; }'
+}
+
 case_doctor_hook_inventory_parity() {
   # Parity guard: managed hook basenames in doctor's claude-host module must
   # match those in install-guards.sh (the inventory lives in
@@ -2155,6 +2220,11 @@ test_dispatch_allowlist_claude_adapter_absent
 test_dispatch_allowlist_copymode_no_lib_fail
 case_doctor_profile_missing_arg_exits_2
 case_doctor_profile_invalid_value_exits_2
+case_doctor_loader_rejects_unsafe_host_name
+case_doctor_loader_rejects_unsafe_module_path
+case_doctor_loader_rejects_empty_module_path
+case_doctor_loader_rejects_missing_module
+case_doctor_loader_rejects_missing_entrypoint
 case_doctor_hook_inventory_parity
 case_doctor_capability_json_fields
 case_doctor_claude_manifest_consistency_drift_fails

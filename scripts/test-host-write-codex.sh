@@ -76,6 +76,19 @@ test_host_manifest_scalar_strips_quotes() {
   [[ "$v" == "codex" ]] && pass "$name" || fail "$name" "got: $v"
 }
 
+# Behavior: scalar parsing preserves the legacy independent edge-quote stripping.
+# Steps: parse leading-only and trailing-only quotes and compare their normalized values.
+test_host_manifest_scalar_strips_partial_edge_quotes() {
+  local name="host-manifest-scalar-strips-partial-edge-quotes"
+  should_run "$name" || return 0
+  local manifest="$tmp_root/hms-partial-quotes.yaml" leading trailing
+  printf 'leading: "codex\ntrailing: codex"\n' > "$manifest"
+  leading="$(host_manifest_scalar "$manifest" leading)"
+  trailing="$(host_manifest_scalar "$manifest" trailing)"
+  [[ "$leading" == "codex" && "$trailing" == "codex" ]] \
+    && pass "$name" || fail "$name" "got leading='$leading' trailing='$trailing'"
+}
+
 test_host_manifest_scalar_strips_trailing_comment() {
   local name="host-manifest-scalar-strips-trailing-comment"
   should_run "$name" || return 0
@@ -102,6 +115,20 @@ test_host_manifest_scalar_missing_file_errors() {
   local rc=0
   host_manifest_scalar "$tmp_root/hms-does-not-exist.yaml" host_binary >/dev/null 2>&1 || rc=$?
   [[ "$rc" -ne 0 ]] && pass "$name" || fail "$name" "expected non-zero exit for a missing manifest file, got rc=$rc"
+}
+
+# Behavior: module resolution returns one validated absolute repo-owned path.
+# Steps: declare a safe module in a fake host manifest and resolve it through the shared helper.
+test_host_manifest_module_path_resolves_declared_file() {
+  local name="host-manifest-module-path-resolves-declared-file"
+  should_run "$name" || return 0
+  local fake_root="$tmp_root/hmm-repo" expected actual
+  expected="$fake_root/hosts/fake/lib/doctor.sh"
+  mkdir -p "$(dirname "$expected")"
+  printf 'doctor_module: hosts/fake/lib/doctor.sh\n' > "$fake_root/hosts/fake/host.yaml"
+  : > "$expected"
+  actual="$(host_manifest_module_path "$fake_root" fake doctor_module)"
+  [[ "$actual" == "$expected" ]] && pass "$name" || fail "$name" "expected '$expected', got '$actual'"
 }
 
 test_host_manifest_scalar_ignores_list_map_field() {
@@ -705,9 +732,11 @@ test_host_manifest_reads_codex_install_targets
 test_host_manifest_names_lists_only_dirs_with_host_yaml
 test_host_manifest_scalar_reads_present_value
 test_host_manifest_scalar_strips_quotes
+test_host_manifest_scalar_strips_partial_edge_quotes
 test_host_manifest_scalar_strips_trailing_comment
 test_host_manifest_scalar_missing_key_returns_empty
 test_host_manifest_scalar_missing_file_errors
+test_host_manifest_module_path_resolves_declared_file
 test_host_manifest_scalar_ignores_list_map_field
 test_host_manifest_expand_path_uses_env_override
 test_host_manifest_expand_path_default_when_unset
