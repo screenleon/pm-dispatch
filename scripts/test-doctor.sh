@@ -88,7 +88,7 @@ write_minimal_settings() {
     ],
     "PostToolUse": [],
     "Stop": [
-      {"hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/guard-log-claude-usage.sh"}]},
+      {"hooks": [{"type": "command", "command": "${REPO_ROOT}/hosts/claude/hooks/log-usage.sh"}]},
       {"hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/guard-session-summary.sh --host claude"}]}
     ],
     "UserPromptSubmit": [
@@ -96,7 +96,7 @@ write_minimal_settings() {
       {"hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/guard-inject-context.sh", "timeout": 150}]}
     ]
   },
-  "statusLine": {"command": "${REPO_ROOT}/scripts/guard-save-rate-limits.sh"}
+  "statusLine": {"command": "${REPO_ROOT}/hosts/claude/hooks/save-rate-limits.sh"}
 }
 EOF
   add_dispatch_allowlist "$home_dir"
@@ -166,7 +166,7 @@ write_full_settings() {
     ],
     "PostToolUse": [],
     "Stop": [
-      {"hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/guard-log-claude-usage.sh"}]},
+      {"hooks": [{"type": "command", "command": "${REPO_ROOT}/hosts/claude/hooks/log-usage.sh"}]},
       {"hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/guard-session-summary.sh --host claude"}]}
     ],
     "UserPromptSubmit": [
@@ -174,7 +174,7 @@ write_full_settings() {
       {"hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/guard-inject-context.sh", "timeout": 150}]}
     ]
   },
-  "statusLine": {"command": "${REPO_ROOT}/scripts/guard-save-rate-limits.sh"}
+  "statusLine": {"command": "${REPO_ROOT}/hosts/claude/hooks/save-rate-limits.sh"}
 }
 EOF
   add_dispatch_allowlist "$home_dir"
@@ -1199,12 +1199,13 @@ case_doctor_hook_inventory_parity() {
   # module, not the base hooks array.
   local name="doctor-hook-inventory-parity"
   should_run "$name" || return 0
-  local module="$REPO_ROOT/scripts/lib/doctor-host-claude.sh"
+  local module="$REPO_ROOT/hosts/claude/lib/doctor.sh"
   local doctor_hooks install_hooks
-  # Union of core + module: the hooks=() inventory lives in the module while
-  # doctor.sh core still names guard scripts in check_scripts_executable.
-  doctor_hooks="$(cat "$DOCTOR" "$module" | grep -oE 'guard-[a-z-]+\.sh' | sort -u)"
-  install_hooks="$(grep -oE 'guard-[a-z-]+\.sh' "$REPO_ROOT/scripts/install-guards.sh" | sort -u)"
+  doctor_hooks="$(awk '/local -a hooks=\(/{f=1} f{if(/^[[:space:]]*\)/) f=0; else print}' "$module" \
+    | grep -oE '(guard-[a-z-]+|log-usage|save-rate-limits)\.sh' | sort -u)"
+  install_hooks="$(grep -E '^(pm_cmd|stop_cmd|session_path|inject_cmd|ctx_inject_cmd|statusline_cmd)=' \
+    "$REPO_ROOT/hosts/claude/bin/install-guards.sh" \
+    | grep -oE '(guard-[a-z-]+|log-usage|save-rate-limits)\.sh' | sort -u)"
   if [[ "$doctor_hooks" != "$install_hooks" ]]; then
     fail "$name" "hook inventory mismatch between doctor-host-claude.sh and install-guards.sh:
 doctor-host-claude.sh: $(printf '%s' "$doctor_hooks" | tr '\n' ' ')

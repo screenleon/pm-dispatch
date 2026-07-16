@@ -136,7 +136,7 @@ case_prompt_context_timeout_contract_maps_all_consumers() {
   args="$TMP_ROOT/$name.args"
   repo="$(make_fixture "$name")"
   out=$(RUN_TESTS_ARGS_LOG="$args" "$repo/scripts/run-tests.sh" \
-    --path scripts/lib/prompt-context-timeouts.sh 2>&1) || status=$?
+    --path hosts/claude/lib/prompt-context-timeouts.sh 2>&1) || status=$?
   if [[ "$status" -eq 0 ]] && grep -qx 'lint-scripts' "$args" &&
      grep -qx 'test-guards' "$args" && grep -qx 'test-install' "$args" &&
      grep -qx 'test-doctor' "$args" && [[ "$out" != *"coverage gaps"* ]]; then

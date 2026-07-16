@@ -9,7 +9,7 @@ _host_write_module() {
     /*) ;;
     *) printf 'host write: repo root must be absolute: %s\n' "$repo_root" >&2; return 2 ;;
   esac
-  repo_root="$(cd "$repo_root" 2>/dev/null && pwd -P)" || {
+  (cd "$repo_root" 2>/dev/null) || {
     printf 'host write: repo root does not exist: %s\n' "$repo_root" >&2
     return 2
   }
@@ -18,11 +18,12 @@ _host_write_module() {
 
 host_write_install() {
   local repo_root="$1" host="$2" dry_run="${3:-0}" module
+  shift 3 || true
   module="$(_host_write_module "$repo_root" "$host" install_module)" || return $?
   if [[ "$dry_run" -eq 1 ]]; then
-    bash "$module" --repo-root "$repo_root" --dry-run
+    bash "$module" --repo-root "$repo_root" --dry-run "$@"
   else
-    bash "$module" --repo-root "$repo_root"
+    bash "$module" --repo-root "$repo_root" "$@"
   fi
 }
 

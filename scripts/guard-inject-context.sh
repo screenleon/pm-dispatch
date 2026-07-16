@@ -18,8 +18,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck disable=SC1091
-# shellcheck source=scripts/lib/prompt-context-timeouts.sh
-. "$SCRIPT_DIR/lib/prompt-context-timeouts.sh"
+# shellcheck source=hosts/claude/lib/prompt-context-timeouts.sh
+. "$SCRIPT_DIR/../hosts/claude/lib/prompt-context-timeouts.sh"
 
 if [[ "${PM_DISPATCH_DISABLE_PROMPT_CONTEXT:-0}" == "1" ]]; then
   exit 0

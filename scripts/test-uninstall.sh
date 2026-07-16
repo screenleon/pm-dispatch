@@ -695,14 +695,19 @@ test_hooks_failure_preserves_manifest() {
   local mock_repo="$tmp_root/mock-repo19"
   local src19 dst19 manifest19 rc
   mkdir -p "$fake_home/.claude/agents" "$fake_home/.claude/.pm-dispatch"
-  mkdir -p "$mock_repo/scripts/lib" "$mock_repo/hosts/claude/lib"
+  mkdir -p "$mock_repo/scripts/lib" "$mock_repo/hosts/claude/bin" "$mock_repo/hosts/claude/lib"
 
   cp "$REPO_ROOT/uninstall.sh" "$mock_repo/uninstall.sh"
   cp "$REPO_ROOT/scripts/lib/portable.sh" "$mock_repo/scripts/lib/portable.sh"
+  cp "$REPO_ROOT/scripts/lib/host-manifest.sh" "$mock_repo/scripts/lib/host-manifest.sh"
+  cp "$REPO_ROOT/scripts/lib/host-write.sh" "$mock_repo/scripts/lib/host-write.sh"
   cp "$REPO_ROOT/hosts/claude/lib/path-resolver.sh" "$mock_repo/hosts/claude/lib/path-resolver.sh"
+  printf 'install_module: hosts/claude/bin/install-guards.sh\nuninstall_module: hosts/claude/bin/uninstall-guards.sh\n' \
+    > "$mock_repo/hosts/claude/host.yaml"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$mock_repo/hosts/claude/bin/install-guards.sh"
 
-  printf '#!/usr/bin/env bash\nexit 1\n' > "$mock_repo/scripts/uninstall-guards.sh"
-  chmod +x "$mock_repo/scripts/uninstall-guards.sh"
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$mock_repo/hosts/claude/bin/uninstall-guards.sh"
+  chmod +x "$mock_repo/hosts/claude/bin/install-guards.sh" "$mock_repo/hosts/claude/bin/uninstall-guards.sh"
 
   src19="$tmp_root/src19.md"
   printf 'hello' > "$src19"
@@ -722,7 +727,7 @@ test_hooks_failure_preserves_manifest() {
   else
     # First run correct: hooks failed, manifest preserved.
     # Now fix the mock hooks and rerun — recovery should succeed.
-    printf '#!/usr/bin/env bash\nexit 0\n' > "$mock_repo/scripts/uninstall-guards.sh"
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$mock_repo/hosts/claude/bin/uninstall-guards.sh"
     HOME="$fake_home" bash "$mock_repo/uninstall.sh" > /dev/null 2>&1 || true
     # Entries are "already gone" (removed in first run) → safety_skipped=0 → manifest deleted
     if [[ -f "$manifest19" ]]; then
@@ -1045,6 +1050,34 @@ test_claude_home_dst_rejected() {
   pass "$name"
 }
 
+# A partial checkout without the manifest dispatcher cannot safely discover
+# Claude or optional-host uninstall modules. Uninstall remains best-effort but
+# must warn and leave existing Claude settings byte-identical.
+test_missing_host_write_library_warns_and_preserves_hooks() {
+  local name="TC-29 missing-host-write-library-warns-and-preserves-hooks"
+  local home="$tmp_root/home-missing-host-write" mock_repo="$tmp_root/mock-repo-missing-host-write"
+  local out="$tmp_root/missing-host-write.out" before="$tmp_root/missing-host-write.before" rc=0
+  mkdir -p "$home/.claude" "$mock_repo/scripts/lib" "$mock_repo/hosts/claude/lib"
+  cp "$REPO_ROOT/uninstall.sh" "$mock_repo/uninstall.sh"
+  cp "$REPO_ROOT/scripts/lib/portable.sh" "$mock_repo/scripts/lib/portable.sh"
+  cp "$REPO_ROOT/hosts/claude/lib/path-resolver.sh" "$mock_repo/hosts/claude/lib/path-resolver.sh"
+  printf '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"/checkout/scripts/guard-session-summary.sh --host claude"}]}]},"foreign":{"keep":true}}\n' \
+    > "$home/.claude/settings.json"
+  cp "$home/.claude/settings.json" "$before"
+
+  HOME="$home" bash "$mock_repo/uninstall.sh" >"$out" 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    fail "$name" "expected best-effort exit 0, got $rc: $(<"$out")"
+    return
+  fi
+  assert_contains "$name" "$out" "host write libraries unavailable; Claude and optional-host hooks will not be removed" || return
+  if ! cmp -s "$before" "$home/.claude/settings.json"; then
+    fail "$name" "settings.json changed despite unavailable host-write libraries"
+    return
+  fi
+  pass "$name"
+}
+
 run_case "TC-01 no-manifest" test_no_manifest
 run_case "TC-02 symlink-removed" test_symlink_removed
 run_case "TC-03 symlink-foreign" test_symlink_foreign
@@ -1073,5 +1106,6 @@ run_case "TC-25 pmctl-foreign-symlink-preserved" test_pmctl_foreign_symlink_pres
 run_case "TC-26 pmctl-real-file-preserved" test_pmctl_real_file_preserved
 run_case "TC-27 prune-feedback" test_prune_feedback
 run_case "TC-28 claude-home-dst-rejected" test_claude_home_dst_rejected
+run_case "TC-29 missing-host-write-library-warns-and-preserves-hooks" test_missing_host_write_library_warns_and_preserves_hooks
 
 th_summary

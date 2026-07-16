@@ -11,20 +11,21 @@ th_init "$@"
 
 # Doctor's claude-host module owns the hooks=() inventory (doctor.sh core is
 # host-agnostic and dispatches into lib/doctor-host-*.sh modules).
-DOCTOR_HOST_CLAUDE="$REPO_ROOT/scripts/lib/doctor-host-claude.sh"
+DOCTOR_HOST_CLAUDE="$REPO_ROOT/hosts/claude/lib/doctor.sh"
+INSTALL_GUARDS_CLAUDE="$REPO_ROOT/hosts/claude/bin/install-guards.sh"
 
 # Extract minimal hook set from the claude-host module's hooks=() array
 # (POSIX awk, no GNU extensions)
 _doctor_hooks() {
   awk '/local -a hooks=\(/{f=1} f{if(/^[[:space:]]*\)/) f=0; else print}' \
-    "$DOCTOR_HOST_CLAUDE" | grep -oE 'guard-[a-z-]+\.sh' | sort
+    "$DOCTOR_HOST_CLAUDE" | grep -oE '(guard-[a-z-]+|log-usage|save-rate-limits)\.sh' | sort
 }
 
 # Extract minimal hook set from install-guards.sh *_cmd= variables
 # (excludes old_stop_cmd which references the retired hooks/ path)
 _install_hooks() {
-  grep -E '^[a-z_]+=.*scripts/guard-[a-z-]+\.sh' \
-    "$REPO_ROOT/scripts/install-guards.sh" | grep -oE 'guard-[a-z-]+\.sh' | sort
+  grep -E '^(pm_cmd|stop_cmd|session_path|inject_cmd|ctx_inject_cmd|statusline_cmd)=' \
+    "$INSTALL_GUARDS_CLAUDE" | grep -oE '(guard-[a-z-]+|log-usage|save-rate-limits)\.sh' | sort
 }
 
 # Simulates doctor.sh check_hooks(): adapter names from manifests where
@@ -129,7 +130,7 @@ should_run "full-profile-uses-manifest-scan"
     fail "full-profile-uses-manifest-scan" "doctor-host-claude.sh no longer contains needs_bash_guard manifest scan"
     status=1
   fi
-  if ! grep -q 'needs_bash_guard' "$REPO_ROOT/scripts/install-guards.sh"; then
+  if ! grep -q 'needs_bash_guard' "$INSTALL_GUARDS_CLAUDE"; then
     fail "full-profile-uses-manifest-scan" "install-guards.sh no longer contains needs_bash_guard manifest scan"
     status=1
   fi

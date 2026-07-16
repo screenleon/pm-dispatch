@@ -104,7 +104,7 @@ if [[ -f "$REPO_ROOT/scripts/lib/host-manifest.sh" && -f "$REPO_ROOT/scripts/lib
   # shellcheck disable=SC1091
   . "$REPO_ROOT/scripts/lib/host-write.sh"
   _HOST_WRITE_AVAILABLE=1
-elif [[ "${#ENABLED_HOSTS[@]}" -gt 0 ]]; then
+else
   echo "install: host write libraries unavailable in this install layout" >&2
   exit 2
 fi
@@ -539,9 +539,9 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
     # and does NOT leak into --verify's run-all-tests preflight (which spawns
     # nested installs that must default CLAUDE_HOME to their own HOME).
     if [[ -n "$PROFILE" ]]; then
-      PM_DISPATCH_REPO="$REPO_ROOT" CLAUDE_CONFIG_DIR="$CLAUDE_CONFIG_DIR" bash "$REPO_ROOT/scripts/install-guards.sh" --dry-run --profile "$PROFILE"
+      CLAUDE_CONFIG_DIR="$CLAUDE_CONFIG_DIR" host_write_install "$REPO_ROOT" claude 1 --profile "$PROFILE"
     else
-      PM_DISPATCH_REPO="$REPO_ROOT" CLAUDE_CONFIG_DIR="$CLAUDE_CONFIG_DIR" bash "$REPO_ROOT/scripts/install-guards.sh" --dry-run
+      CLAUDE_CONFIG_DIR="$CLAUDE_CONFIG_DIR" host_write_install "$REPO_ROOT" claude 1
     fi
   fi
 else
@@ -553,9 +553,9 @@ else
   # CLAUDE_HOME and PM_DISPATCH_REPO passed per-call (not exported) so they scope
   # to hook wiring only and do not leak into nested install runs.
   if [[ -n "$PROFILE" ]]; then
-    PM_DISPATCH_REPO="$REPO_ROOT" CLAUDE_CONFIG_DIR="$CLAUDE_CONFIG_DIR" bash "$REPO_ROOT/scripts/install-guards.sh" --profile "$PROFILE"
+    CLAUDE_CONFIG_DIR="$CLAUDE_CONFIG_DIR" host_write_install "$REPO_ROOT" claude 0 --profile "$PROFILE"
   else
-    PM_DISPATCH_REPO="$REPO_ROOT" CLAUDE_CONFIG_DIR="$CLAUDE_CONFIG_DIR" bash "$REPO_ROOT/scripts/install-guards.sh"
+    CLAUDE_CONFIG_DIR="$CLAUDE_CONFIG_DIR" host_write_install "$REPO_ROOT" claude 0
   fi
 fi
 echo
@@ -567,7 +567,7 @@ echo
 # Optional host wiring is selected explicitly and dispatched through manifest
 # module paths. It is never auto-detected from a binary on PATH because these
 # policies affect every session using the host's global config.
-_installed_hosts=" "
+_installed_hosts=" claude "
 for _host in "${ENABLED_HOSTS[@]}"; do
   [[ "$_installed_hosts" == *" $_host "* ]] && continue
   _installed_hosts+="$_host "
