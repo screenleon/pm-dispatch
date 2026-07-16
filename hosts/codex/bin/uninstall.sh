@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC1091
 # Remove the pm-dispatch managed hook from $CODEX_HOME/hooks.json.
 # Idempotent: skips entries that aren't present. Host-generic counterpart of
 # uninstall-guards.sh (claude host); driven by hosts/codex/host.yaml the same

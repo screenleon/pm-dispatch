@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC1091
 # Sourceable codex-host doctor module.
 #
 # Host-specific doctor probes for the codex host (Codex CLI as the PM runtime).

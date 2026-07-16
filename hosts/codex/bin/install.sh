@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC1091
 # Idempotently splice the pm-dispatch codex-host command guard into
 # $CODEX_HOME/hooks.json (default ~/.codex/hooks.json).
 #
