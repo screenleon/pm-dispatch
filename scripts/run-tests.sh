@@ -209,10 +209,13 @@ map_path() {
       add_suite test-guards; add_suite test-install; add_suite test-doctor; behavioral=1 ;;
     scripts/install-guards-codex.sh|scripts/uninstall-guards-codex.sh|scripts/lib/doctor-host-codex.sh)
       add_suite test-host-write-codex; add_suite test-doctor; behavioral=1 ;;
-    scripts/install-host-opencode.sh|scripts/uninstall-host-opencode.sh|scripts/lib/doctor-host-opencode.sh)
+    scripts/install-host-opencode.sh|scripts/uninstall-host-opencode.sh|hosts/opencode/bin/install.sh|hosts/opencode/bin/uninstall.sh|hosts/opencode/lib/doctor.sh|hosts/opencode/host.yaml)
       add_suite test-host-write-opencode; add_suite test-host-write-parity; add_suite test-doctor; behavioral=1 ;;
     scripts/lib/host-write.sh)
       add_suite test-host-write-codex; add_suite test-host-write-opencode; add_suite test-host-write-parity; behavioral=1 ;;
+    scripts/lib/host-manifest.sh)
+      add_suite test-host-manifest; add_suite test-host-write-codex
+      add_suite test-host-write-opencode; add_suite test-host-write-parity; add_suite test-doctor; behavioral=1 ;;
     scripts/install-guards.sh|scripts/uninstall-guards.sh|scripts/lib/doctor-host-claude.sh)
       add_suite test-install; add_suite test-doctor; behavioral=1 ;;
     scripts/lint-scripts.sh)

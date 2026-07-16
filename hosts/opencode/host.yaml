@@ -65,8 +65,8 @@ permissions_surface:
   config_target: config
   managed: true
 
-doctor_module: scripts/lib/doctor-host-opencode.sh
+doctor_module: hosts/opencode/lib/doctor.sh
 path_resolver_module: hosts/opencode/lib/path-resolver.sh
 path_resolver_function: opencode_host_resolve_path
-install_module: scripts/install-host-opencode.sh
-uninstall_module: scripts/uninstall-host-opencode.sh
+install_module: hosts/opencode/bin/install.sh
+uninstall_module: hosts/opencode/bin/uninstall.sh

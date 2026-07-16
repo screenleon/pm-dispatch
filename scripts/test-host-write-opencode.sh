@@ -13,17 +13,62 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 . "$SCRIPT_DIR/lib/test-harness.sh"
 th_init "test-host-write-opencode" "$@"
 
-install_oc() { XDG_CONFIG_HOME="$1" bash "$REPO_ROOT/scripts/install-host-opencode.sh" "${@:2}"; }
-uninstall_oc() { XDG_CONFIG_HOME="$1" bash "$REPO_ROOT/scripts/uninstall-host-opencode.sh" "${@:2}"; }
+install_oc() {
+  XDG_CONFIG_HOME="$1" bash "$REPO_ROOT/hosts/opencode/bin/install.sh" \
+    --repo-root "$REPO_ROOT" "${@:2}"
+}
+uninstall_oc() {
+  XDG_CONFIG_HOME="$1" bash "$REPO_ROOT/hosts/opencode/bin/uninstall.sh" \
+    --repo-root "$REPO_ROOT" "${@:2}"
+}
 
 # Behavior: the OpenCode manifest declares symmetric stage-3 write modules.
 # Steps: inspect both manifest scalars and require their repository paths.
 test_manifest_declares_stage3_modules() {
   local name="opencode-manifest-declares-stage3-modules"
   should_run "$name" || return 0
-  grep -q '^install_module: scripts/install-host-opencode.sh$' "$REPO_ROOT/hosts/opencode/host.yaml" \
-    && grep -q '^uninstall_module: scripts/uninstall-host-opencode.sh$' "$REPO_ROOT/hosts/opencode/host.yaml" \
+  grep -q '^install_module: hosts/opencode/bin/install.sh$' "$REPO_ROOT/hosts/opencode/host.yaml" \
+    && grep -q '^uninstall_module: hosts/opencode/bin/uninstall.sh$' "$REPO_ROOT/hosts/opencode/host.yaml" \
+    && grep -q '^doctor_module: hosts/opencode/lib/doctor.sh$' "$REPO_ROOT/hosts/opencode/host.yaml" \
     && pass "$name" || fail "$name" "OpenCode write modules are not declared"
+}
+
+# Behavior: legacy OpenCode entrypoints remain thin, stderr-only compatibility shims.
+# Steps: compare both dry-run surfaces, then install and uninstall through the legacy paths.
+test_legacy_entrypoints_forward_without_behavior_drift() {
+  local name="opencode-legacy-entrypoints-forward-without-behavior-drift"
+  should_run "$name" || return 0
+  local xdg="$tmp_root/legacy/config" legacy_out="$tmp_root/legacy.out"
+  local module_out="$tmp_root/module.out" legacy_err="$tmp_root/legacy.err"
+  local legacy_uninstall_out="$tmp_root/legacy-uninstall.out"
+  local module_uninstall_out="$tmp_root/module-uninstall.out"
+  local legacy_uninstall_err="$tmp_root/legacy-uninstall.err"
+  mkdir -p "$tmp_root/legacy"
+  XDG_CONFIG_HOME="$xdg" bash "$REPO_ROOT/hosts/opencode/bin/install.sh" \
+    --repo-root "$REPO_ROOT" --dry-run >"$module_out" 2>/dev/null
+  XDG_CONFIG_HOME="$xdg" bash "$REPO_ROOT/scripts/install-host-opencode.sh" \
+    --dry-run >"$legacy_out" 2>"$legacy_err"
+  if ! cmp -s "$module_out" "$legacy_out" \
+      || ! grep -q 'deprecated path' "$legacy_err" \
+      || [[ -e "$xdg" ]]; then
+    fail "$name" "legacy dry-run changed stdout or filesystem behavior"
+    return
+  fi
+  XDG_CONFIG_HOME="$xdg" bash "$REPO_ROOT/scripts/install-host-opencode.sh" \
+    >/dev/null 2>/dev/null
+  uninstall_oc "$xdg" --dry-run >"$module_uninstall_out" 2>/dev/null
+  XDG_CONFIG_HOME="$xdg" bash "$REPO_ROOT/scripts/uninstall-host-opencode.sh" \
+    --dry-run >"$legacy_uninstall_out" 2>"$legacy_uninstall_err"
+  if ! cmp -s "$module_uninstall_out" "$legacy_uninstall_out" \
+      || ! grep -q 'deprecated path' "$legacy_uninstall_err" \
+      || [[ ! -e "$xdg/opencode/opencode.json" ]]; then
+    fail "$name" "legacy uninstall dry-run changed stdout or filesystem behavior"
+    return
+  fi
+  XDG_CONFIG_HOME="$xdg" bash "$REPO_ROOT/scripts/uninstall-host-opencode.sh" \
+    >/dev/null 2>/dev/null
+  [[ ! -e "$xdg/opencode/opencode.json" ]] \
+    && pass "$name" || fail "$name" "legacy uninstall did not remove the managed config"
 }
 
 # Behavior: OpenCode dry-run reports a plan without creating config state.
@@ -167,7 +212,7 @@ test_doctor_reports_wired_effective_capabilities() {
       . "$REPO_ROOT/scripts/lib/host-manifest.sh"
       emit_capability() { printf "%s|%s|%s|%s\n" "$1" "$5" "$6" "$7"; }
       emit_check() { :; }
-      . "$REPO_ROOT/scripts/lib/doctor-host-opencode.sh"
+      . "$REPO_ROOT/hosts/opencode/lib/doctor.sh"
       doctor_host_opencode_run
     ' _ "$REPO_ROOT"
   )"
@@ -176,6 +221,29 @@ test_doctor_reports_wired_effective_capabilities() {
     pass "$name"
   else
     fail "$name" "doctor did not report wired PM/guard tuples: $out"
+  fi
+}
+
+# Behavior: the shared doctor discovers OpenCode through doctor_module, not a scripts/lib glob.
+# Steps: install in a sandbox, invoke the real doctor, and assert the OpenCode capability record exists.
+test_doctor_loader_follows_manifest_module() {
+  local name="opencode-doctor-loader-follows-manifest-module"
+  should_run "$name" || return 0
+  local home="$tmp_root/doctor-loader/home" xdg="$tmp_root/doctor-loader/config"
+  local codex="$tmp_root/doctor-loader/codex" fakebin="$tmp_root/doctor-loader/bin" out rc=0
+  install_oc "$xdg" >/dev/null 2>&1
+  mkdir -p "$fakebin" "$home"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$fakebin/opencode"
+  chmod +x "$fakebin/opencode"
+  out="$(HOME="$home" XDG_CONFIG_HOME="$xdg" CODEX_HOME="$codex" \
+    CLAUDE_CONFIG_DIR="$home/.claude" PATH="$fakebin:$PATH" \
+    bash "$REPO_ROOT/scripts/doctor.sh" --json --repo "$REPO_ROOT" 2>/dev/null)" || rc=$?
+  if printf '%s\n' "$out" | jq -e \
+      'select(.check == "host.opencode.pm-command" and .host == "opencode")' \
+      >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "manifest-declared OpenCode doctor module was not loaded (rc=$rc)"
   fi
 }
 
@@ -205,7 +273,8 @@ test_hostile_checkout_path_is_typescript_escaped() {
   mkdir -p "$hostile_root"
   cp -R "$REPO_ROOT/scripts" "$REPO_ROOT/hosts" "$REPO_ROOT/cli" "$hostile_root/"
   xdg="$tmp_root/hostile-config"
-  XDG_CONFIG_HOME="$xdg" bash "$hostile_root/scripts/install-host-opencode.sh" >/dev/null 2>&1
+  XDG_CONFIG_HOME="$xdg" bash "$hostile_root/hosts/opencode/bin/install.sh" \
+    --repo-root "$hostile_root" >/dev/null 2>&1
   tool_file="$xdg/opencode/tools/pm_prepare.ts"
   expected_literal="$(jq -Rn --arg v "$hostile_root/cli/pmctl" '$v')"
   expected_line="const PMCTL = $expected_literal"
@@ -242,6 +311,7 @@ test_generic_conflict_preflight_leaves_base_untouched() {
 }
 
 test_manifest_declares_stage3_modules
+test_legacy_entrypoints_forward_without_behavior_drift
 test_dry_run_has_no_side_effect
 test_fresh_install_and_idempotency
 test_existing_config_restored_byte_exact
@@ -251,6 +321,7 @@ test_modified_managed_config_blocks_uninstall
 test_host_schema_normalization_allows_uninstall
 test_fresh_uninstall_removes_managed_files
 test_doctor_reports_wired_effective_capabilities
+test_doctor_loader_follows_manifest_module
 test_generic_install_uninstall_integration
 test_hostile_checkout_path_is_typescript_escaped
 test_generic_conflict_preflight_leaves_base_untouched

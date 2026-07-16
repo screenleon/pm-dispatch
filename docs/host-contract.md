@@ -264,9 +264,9 @@ guard_bindings:
 permissions_surface:
   config_target: config
   managed: true
-doctor_module: scripts/lib/doctor-host-opencode.sh
-install_module: scripts/install-host-opencode.sh
-uninstall_module: scripts/uninstall-host-opencode.sh
+doctor_module: hosts/opencode/lib/doctor.sh
+install_module: hosts/opencode/bin/install.sh
+uninstall_module: hosts/opencode/bin/uninstall.sh
 ```
 
 Points the walkthrough demonstrates:

@@ -7,6 +7,13 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
+# Keep every nested pr-gate mktemp artifact inside this suite's private root.
+# The full runner executes suites in parallel, so the system /tmp namespace is
+# not a stable test fixture even when generated basenames are randomized.
+_suite_tmpdir="$TMP_ROOT/tmp"
+mkdir -p "$_suite_tmpdir"
+export TMPDIR="$_suite_tmpdir"
+
 # pr-gate.sh supports `--executor codex|claude|auto`, with auto-detect
 # via `command -v codex`. Existing tests in this file
 # assume the codex execution path (brief file written, dispatch stub
@@ -4155,7 +4162,7 @@ test_parallel_synthesis_brief_ascii_separator() {
   local code=$?
   set -e
   if [[ "$code" -ne 0 ]]; then
-    fail "$name" "exit $code, expected 0"
+    fail "$name" "exit $code, expected 0; stderr: $(tail -n 12 "$err" 2>/dev/null)"
     return
   fi
   # Synthesis result template heading must use ASCII --

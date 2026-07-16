@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Sourceable OpenCode-host doctor module. Stage 2 is declaration/read-only:
-# it reports an existing native permission policy but does not install one.
+# Sourceable OpenCode-host doctor module discovered from the host manifest.
 
 _doctor_host_opencode_config_path() {
   local manifest="$REPO_ROOT/hosts/opencode/host.yaml"

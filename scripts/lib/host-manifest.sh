@@ -13,6 +13,8 @@
 #   host_manifest_names                      -> one host name per line (dirs under hosts/ with a host.yaml)
 #   host_manifest_file <name>                 -> prints hosts/<name>/host.yaml path (may not exist)
 #   host_manifest_scalar <file> <key>         -> top-level scalar field value (e.g. host_binary, doctor_module)
+#   host_manifest_module_path <repo_root> <host> <key>
+#                                             -> validates and prints one declared repo module path
 #   host_manifest_install_targets <file>      -> TSV rows: id\tpath\tformat\tmanaged (one per install_targets entry)
 #   host_manifest_expand_path <repo_root> <host> <path_template>
 #                                             -> delegates expansion to the host-owned resolver
@@ -21,7 +23,8 @@ host_manifest_names() {
   local repo_root="$1" dir name
   for dir in "$repo_root"/hosts/*/; do
     [[ -f "${dir}host.yaml" ]] || continue
-    name="$(basename "$dir")"
+    name="${dir%/}"
+    name="${name##*/}"
     printf '%s\n' "$name"
   done
 }
@@ -34,18 +37,51 @@ host_manifest_file() {
 # Top-level scalar field only (not list/map fields) — same restriction
 # doctor-host-claude.sh's manifest_field helper has for guard_bindings entries.
 host_manifest_scalar() {
-  local file="$1" key="$2"
+  local file="$1" key="$2" line value
   [[ -f "$file" ]] || return 1
-  awk -v key="$key" '
-    $0 ~ "^" key ":[[:space:]]*" {
-      v = $0
-      sub("^" key ":[[:space:]]*", "", v)
-      sub("[[:space:]]*#.*$", "", v)
-      gsub(/^"|"$/, "", v)
-      print v
-      exit
-    }
-  ' "$file"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" == "$key:"* ]] || continue
+    value="${line#"$key:"}"
+    value="${value%%#*}"
+    while [[ "$value" == [[:space:]]* ]]; do value="${value#?}"; done
+    while [[ "$value" == *[[:space:]] ]]; do value="${value%?}"; done
+    [[ "$value" == \"* ]] && value="${value#\"}"
+    [[ "$value" == *\" ]] && value="${value%\"}"
+    printf '%s\n' "$value"
+    return 0
+  done < "$file"
+  return 0
+}
+
+# Resolve sourceable/executable repo modules through one fail-closed contract.
+# Callers retain ownership of entrypoint validation and invocation semantics.
+host_manifest_module_path() {
+  local repo_root="$1" host="$2" key="$3" manifest module
+  [[ "$host" =~ ^[a-z0-9_-]+$ ]] || {
+    printf 'host manifest: unsafe host name: %s\n' "$host" >&2
+    return 2
+  }
+  manifest="$(host_manifest_file "$repo_root" "$host")"
+  [[ -f "$manifest" ]] || {
+    printf 'host manifest: unknown host: %s\n' "$host" >&2
+    return 2
+  }
+  module="$(host_manifest_scalar "$manifest" "$key")"
+  [[ -n "$module" && "$module" != "null" ]] || {
+    printf 'host manifest: %s has no %s\n' "$host" "$key" >&2
+    return 2
+  }
+  case "$module" in
+    /*|../*|*/../*|*/..)
+      printf 'host manifest: unsafe %s path for %s: %s\n' "$key" "$host" "$module" >&2
+      return 2
+      ;;
+  esac
+  [[ -f "$repo_root/$module" ]] || {
+    printf 'host manifest: %s path for %s does not exist: %s\n' "$key" "$host" "$module" >&2
+    return 2
+  }
+  printf '%s\n' "$repo_root/$module"
 }
 
 host_manifest_install_targets() {
@@ -79,30 +115,16 @@ host_manifest_install_targets() {
 # are validated before sourcing/invocation. Manifest data never reaches eval.
 host_manifest_expand_path() {
   local repo_root="$1" host="$2" path="$3"
-  local manifest module resolver
+  local manifest module_path resolver
   manifest="$(host_manifest_file "$repo_root" "$host")"
-  [[ -f "$manifest" ]] || {
-    printf 'host manifest: unknown host for path expansion: %s\n' "$host" >&2
-    return 2
-  }
-  module="$(host_manifest_scalar "$manifest" path_resolver_module)"
+  module_path="$(host_manifest_module_path "$repo_root" "$host" path_resolver_module)" || return $?
   resolver="$(host_manifest_scalar "$manifest" path_resolver_function)"
-  case "$module" in
-    ''|null|/*|../*|*/../*|*/..)
-      printf 'host manifest: unsafe path_resolver_module for %s: %s\n' "$host" "$module" >&2
-      return 2
-      ;;
-  esac
   [[ "$resolver" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] || {
     printf 'host manifest: unsafe path_resolver_function for %s: %s\n' "$host" "$resolver" >&2
     return 2
   }
-  [[ -f "$repo_root/$module" ]] || {
-    printf 'host manifest: path resolver module for %s does not exist: %s\n' "$host" "$module" >&2
-    return 2
-  }
   # shellcheck disable=SC1090
-  . "$repo_root/$module"
+  . "$module_path"
   declare -F "$resolver" >/dev/null 2>&1 || {
     printf 'host manifest: path resolver function for %s is not defined: %s\n' "$host" "$resolver" >&2
     return 2

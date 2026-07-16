@@ -5,7 +5,6 @@
 
 _host_write_module() {
   local repo_root="$1" host="$2" key="$3"
-  local manifest module
   case "$repo_root" in
     /*) ;;
     *) printf 'host write: repo root must be absolute: %s\n' "$repo_root" >&2; return 2 ;;
@@ -14,24 +13,7 @@ _host_write_module() {
     printf 'host write: repo root does not exist: %s\n' "$repo_root" >&2
     return 2
   }
-  manifest="$(host_manifest_file "$repo_root" "$host")"
-  [[ -f "$manifest" ]] || {
-    printf 'host write: unknown host manifest: %s\n' "$host" >&2
-    return 2
-  }
-  module="$(host_manifest_scalar "$manifest" "$key")"
-  [[ -n "$module" && "$module" != "null" ]] || {
-    printf 'host write: %s has no %s (wiring not available)\n' "$host" "$key" >&2
-    return 2
-  }
-  case "$module" in
-    /*|../*|*/../*|*/..) printf 'host write: unsafe %s path for %s: %s\n' "$key" "$host" "$module" >&2; return 2 ;;
-  esac
-  [[ -f "$repo_root/$module" ]] || {
-    printf 'host write: %s path for %s does not exist: %s\n' "$key" "$host" "$module" >&2
-    return 2
-  }
-  printf '%s\n' "$repo_root/$module"
+  host_manifest_module_path "$repo_root" "$host" "$key"
 }
 
 host_write_install() {

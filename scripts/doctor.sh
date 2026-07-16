@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2034  # PROFILE (and settings-state flags) are consumed by lib/doctor-host-*.sh modules sourced at runtime
+# shellcheck disable=SC2034  # PROFILE and settings state are consumed by manifest-declared doctor modules
 set -euo pipefail
 export LC_ALL=C.UTF-8
 
@@ -64,27 +64,25 @@ else
   _HOST_MANIFEST_AVAILABLE=0
 fi
 
-# Host modules: each scripts/lib/doctor-host-<name>.sh declares a
-# doctor_host_<name>_run() entry point with that host's checks and capability
-# probes. The core discovers modules by glob and dispatches generically, so
-# adding a host is a new module file only — no core edit. In copy-mode (lib/
-# absent) no module loads and main() runs a compact degraded fallback instead
-# (see check_host_fallback_copy_mode).
 _DOCTOR_HOST_NAMES=()
-for _module in "$SCRIPT_DIR"/lib/doctor-host-*.sh; do
-  [[ -f "$_module" ]] || continue
-  # Pure parameter expansion (no basename): doctor must run under the minimal
-  # PATHs the restricted-environment tests model.
-  _host_name="${_module##*/}"
-  _host_name="${_host_name#doctor-host-}"
-  _host_name="${_host_name%.sh}"
-  # Host names become function-name fragments; skip anything unexpected.
-  [[ "$_host_name" =~ ^[a-z0-9_-]+$ ]] || continue
-  # shellcheck disable=SC1090
-  . "$_module"
-  _DOCTOR_HOST_NAMES+=("$_host_name")
-done
-unset _module _host_name
+
+load_doctor_host_modules() {
+  _DOCTOR_HOST_NAMES=()
+  [[ "$_HOST_MANIFEST_AVAILABLE" -eq 1 ]] || return 0
+
+  local host module_path entrypoint
+  while IFS= read -r host; do
+    module_path="$(host_manifest_module_path "$REPO_ROOT" "$host" doctor_module)" || return 1
+    # shellcheck disable=SC1090
+    . "$module_path"
+    entrypoint="doctor_host_${host}_run"
+    declare -F "$entrypoint" >/dev/null || {
+      printf 'doctor: doctor_module for %s lacks %s\n' "$host" "$entrypoint" >&2
+      return 1
+    }
+    _DOCTOR_HOST_NAMES+=("$host")
+  done < <(host_manifest_names "$REPO_ROOT")
+}
 
 JSON=0
 QUIET=0
@@ -174,6 +172,18 @@ emit_check() {
       fi
       ;;
   esac
+}
+
+# Emit the final doctor envelope consistently for normal completion and
+# fail-fast setup paths. JSON mode stays JSONL-only on stdout.
+emit_summary() {
+  local exit_code="$1"
+  if [[ "$JSON" -eq 1 ]]; then
+    printf '{"summary":true,"ok":%d,"warn":%d,"fail":%d,"exit_code":%d}\n' \
+      "$_OK_COUNT" "$_WARN_COUNT" "$_FAIL_COUNT" "$exit_code"
+  else
+    printf '\nSummary: %d OK, %d WARN, %d FAIL\n' "$_OK_COUNT" "$_WARN_COUNT" "$_FAIL_COUNT"
+  fi
 }
 
 # Capability record emitter for host modules. Same status envelope and
@@ -510,14 +520,17 @@ main() {
       emit_check "repo-root" "fail" \
         "copy-mode install: repo root could not be inferred (got: $REPO_ROOT)" \
         "re-run with: bash $(basename "${BASH_SOURCE[0]}") --repo <path-to-pm-dispatch-checkout>"
-      if [[ "$JSON" -eq 1 ]]; then
-        printf '{"summary":true,"ok":%d,"warn":%d,"fail":%d,"exit_code":1}\n' \
-          "$_OK_COUNT" "$_WARN_COUNT" "$_FAIL_COUNT"
-      else
-        printf '\nSummary: %d OK, %d WARN, %d FAIL\n' "$_OK_COUNT" "$_WARN_COUNT" "$_FAIL_COUNT"
-      fi
+      emit_summary 1
       exit 1
     fi
+  fi
+
+  if ! load_doctor_host_modules; then
+    emit_check "host-modules" "fail" \
+      "host manifest doctor modules could not be loaded" \
+      "repair the failing hosts/<name>/host.yaml doctor_module declaration"
+    emit_summary 1
+    exit 1
   fi
 
   # Native Windows Git Bash is not an officially supported platform; WSL2
@@ -535,9 +548,8 @@ main() {
   check_claude
   check_codex
   check_pmctl
-  # Host axis: generic dispatch into lib/doctor-host-*.sh modules (each host's
-  # checks + capability probes). Copy-mode (no modules loaded) degrades to the
-  # compact fallback instead.
+  # Host axis: generic dispatch into manifest-declared doctor modules. Copy-mode
+  # (no manifest library available) degrades to the compact fallback instead.
   if [[ ${#_DOCTOR_HOST_NAMES[@]} -gt 0 ]]; then
     local _host
     for _host in "${_DOCTOR_HOST_NAMES[@]}"; do
@@ -552,12 +564,7 @@ main() {
 
   local ec=0
   [[ $_FAIL_COUNT -gt 0 ]] && ec=1
-  if [[ "$JSON" -eq 1 ]]; then
-    printf '{"summary":true,"ok":%d,"warn":%d,"fail":%d,"exit_code":%d}\n' \
-      "$_OK_COUNT" "$_WARN_COUNT" "$_FAIL_COUNT" "$ec"
-  else
-    printf '\nSummary: %d OK, %d WARN, %d FAIL\n' "$_OK_COUNT" "$_WARN_COUNT" "$_FAIL_COUNT"
-  fi
+  emit_summary "$ec"
 
   exit "$ec"
 }

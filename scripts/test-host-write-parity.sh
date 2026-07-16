@@ -62,12 +62,8 @@ make_relocated_opencode_fixture() {
   cp "$REPO_ROOT/scripts/lib/host-manifest.sh" "$root/scripts/lib/host-manifest.sh"
   cp "$REPO_ROOT/scripts/lib/host-write.sh" "$root/scripts/lib/host-write.sh"
   cp "$REPO_ROOT/scripts/lib/portable.sh" "$root/scripts/lib/portable.sh"
-  cp "$REPO_ROOT/scripts/install-host-opencode.sh" "$root/hosts/opencode/bin/install.sh"
-  cp "$REPO_ROOT/scripts/uninstall-host-opencode.sh" "$root/hosts/opencode/bin/uninstall.sh"
-  sed -i \
-    -e 's|^install_module:.*|install_module: hosts/opencode/bin/install.sh|' \
-    -e 's|^uninstall_module:.*|uninstall_module: hosts/opencode/bin/uninstall.sh|' \
-    "$root/hosts/opencode/host.yaml"
+  cp "$REPO_ROOT/hosts/opencode/bin/install.sh" "$root/hosts/opencode/bin/install.sh"
+  cp "$REPO_ROOT/hosts/opencode/bin/uninstall.sh" "$root/hosts/opencode/bin/uninstall.sh"
 }
 
 make_relocated_codex_fixture() {
