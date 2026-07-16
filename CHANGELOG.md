@@ -66,6 +66,8 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Repeated full-suite escalation in the affected-test planner (CC-489).** `mark_full` now remains successful after the first high-fanout path, so a diff containing both `install.sh` and `uninstall.sh` no longer exits silently under `set -e` before producing test evidence. A focused regression locks the repeated-escalation case.
+
 - **`uninstall.sh` blast-radius guard: exact managed-root path rejection (CC-210, PR#340).** Added `[[ "$dst" == "$managed_root" ]]` precise path check to prevent the managed root itself from being deleted during uninstall. Added regression test case.
 
 - **`test-portable.sh` lock contention: FIFO-gated IPC replaces fixed `sleep 1.2` (CC-240, PR#344).** `case_mkdir_lock_contention` now uses a FIFO release signal for cross-process synchronization instead of a timing-dependent sleep, eliminating CI flakiness on slow runners. Satisfies qa-testing-rules constraint against sleep-based async synchronization.

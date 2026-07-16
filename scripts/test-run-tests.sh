@@ -174,6 +174,20 @@ case_high_fanout_escalates_full() {
   fi
 }
 
+case_repeated_high_fanout_escalation_succeeds() {
+  local name=repeated-high-fanout-escalation-succeeds repo out status=0 args
+  args="$TMP_ROOT/$name.args"
+  repo="$(make_fixture "$name")"
+  out=$(RUN_TESTS_ARGS_LOG="$args" "$repo/scripts/run-tests.sh" \
+    --path install.sh --path uninstall.sh 2>&1) || status=$?
+  if [[ "$status" -eq 0 && -z "$(tr -d '\n' < "$args")" &&
+        "$out" == *"escalating to full suite"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out args=$(cat "$args" 2>/dev/null)"
+  fi
+}
+
 case_unknown_path_fails_without_test_evidence() {
   local name=unknown-path-fails-without-test-evidence repo out status=0 args
   args="$TMP_ROOT/$name.args"
@@ -290,6 +304,7 @@ case_guard_family_maps_to_guard_suite
 case_prompt_context_timeout_contract_maps_all_consumers
 case_evidence_contract_maps_to_runner_regression
 case_high_fanout_escalates_full
+case_repeated_high_fanout_escalation_succeeds
 case_unknown_path_fails_without_test_evidence
 case_selected_failure_propagates
 case_explicit_all_delegates_without_selector
