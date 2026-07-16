@@ -63,9 +63,9 @@ done < <(host_manifest_install_targets "$manifest")
   exit 2
 }
 
-config_file="$(host_manifest_expand_path "$config_template")"
-commands_dir="$(host_manifest_expand_path "$commands_template")"
-tools_dir="$(host_manifest_expand_path "$tools_template")"
+config_file="$(host_manifest_expand_path "$REPO_ROOT" opencode "$config_template")"
+commands_dir="$(host_manifest_expand_path "$REPO_ROOT" opencode "$commands_template")"
+tools_dir="$(host_manifest_expand_path "$REPO_ROOT" opencode "$tools_template")"
 command_file="$commands_dir/pm.md"
 tool_file="$tools_dir/pm_prepare.ts"
 receipt="$config_file.pm-dispatch-receipt.json"

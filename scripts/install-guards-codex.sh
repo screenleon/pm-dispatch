@@ -79,8 +79,8 @@ if [[ -z "$instructions_path_template" ]]; then
   exit 2
 fi
 
-hooks_file="$(host_manifest_expand_path "$hooks_path_template")"
-instructions_file="$(host_manifest_expand_path "$instructions_path_template")"
+hooks_file="$(host_manifest_expand_path "$REPO_ROOT" codex "$hooks_path_template")"
+instructions_file="$(host_manifest_expand_path "$REPO_ROOT" codex "$instructions_path_template")"
 hook_cmd="$REPO_ROOT/scripts/hook-codex-command-guard.sh"
 memory_hook_cmd="$REPO_ROOT/scripts/guard-inject-memory.sh"
 session_hook_cmd="$REPO_ROOT/scripts/guard-session-summary.sh"

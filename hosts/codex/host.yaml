@@ -136,6 +136,8 @@ permissions_surface:
 # from their manifest paths; the legacy --enable-codex-command-guard flag is a
 # backward-compatible selector, not a codex-named call site in core.
 doctor_module: scripts/lib/doctor-host-codex.sh
+path_resolver_module: hosts/codex/lib/path-resolver.sh
+path_resolver_function: codex_host_resolve_path
 install_module: scripts/install-guards-codex.sh
 uninstall_module: scripts/uninstall-guards-codex.sh
 memory_update_module: hosts/codex/bin/memory-update.sh

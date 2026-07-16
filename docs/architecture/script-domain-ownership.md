@@ -168,10 +168,12 @@ doctor entrypoint
   -> manifest-declared host doctor module
 ```
 
-Claude's base installation is currently a special path and must reach the same
-module contract before its physical relocation. Codex and OpenCode already have
-manifest-declared optional modules, but their declared paths still point into
-`scripts/`.
+Claude's base installation remains a special write path, but its install,
+uninstall, doctor, and hook wiring now share the manifest-declared
+`hosts/claude/lib/path-resolver.sh` contract. Codex and OpenCode resolve their
+manifest targets through equivalent host-owned modules. Their install/write
+implementations still point into `scripts/`; physical relocation is a separate
+slice.
 
 ### PM, dispatch, and gate
 
@@ -262,12 +264,14 @@ rewritten merely to erase an old path string.
 6. Relocate the test harness, shared runtime, tooling, and operations by domain.
 7. Remove shims only through the criteria above.
 
-## Known blockers before physical relocation
+## Physical relocation readiness
 
-- The shared path expander still contains named host variables and defaults.
-- Claude config-root precedence is repeated across multiple entrypoints.
-- Host write modules still infer the repository from their current directory
-  depth and the dispatcher does not pass an explicit repository-root argument.
+The first three migration steps are complete: inventory and parity fixtures are
+ratcheted, the write-module ABI passes an explicit repository root and dry-run
+mode, and all three host root/default/alias contracts live in host-owned
+resolvers. The shared path expander contains no named host environment branch.
+Physical files have not moved; OpenCode remains the first pilot slice, followed
+by Codex and Claude after its parity evidence is accepted.
 - The suite registry and changed-path mapping contain current `scripts/` paths.
 - Installed symlinks and generated hook commands embed current paths.
 - Full environment isolation is not expressed as one reusable test contract.

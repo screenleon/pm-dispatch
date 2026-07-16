@@ -57,9 +57,9 @@ while IFS=$'\t' read -r id path fmt managed; do
 done < <(host_manifest_install_targets "$manifest")
 [[ -n "$config_template" && -n "$commands_template" && -n "$tools_template" ]] || { printf 'uninstall-host-opencode: managed targets incomplete\n' >&2; exit 2; }
 
-config_file="$(host_manifest_expand_path "$config_template")"
-commands_dir="$(host_manifest_expand_path "$commands_template")"
-tools_dir="$(host_manifest_expand_path "$tools_template")"
+config_file="$(host_manifest_expand_path "$REPO_ROOT" opencode "$config_template")"
+commands_dir="$(host_manifest_expand_path "$REPO_ROOT" opencode "$commands_template")"
+tools_dir="$(host_manifest_expand_path "$REPO_ROOT" opencode "$tools_template")"
 receipt="$config_file.pm-dispatch-receipt.json"
 if [[ ! -e "$receipt" && ! -L "$receipt" ]]; then
   printf 'uninstall-host-opencode: not wired, nothing to do\n'

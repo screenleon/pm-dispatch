@@ -66,5 +66,7 @@ permissions_surface:
   managed: true
 
 doctor_module: scripts/lib/doctor-host-opencode.sh
+path_resolver_module: hosts/opencode/lib/path-resolver.sh
+path_resolver_function: opencode_host_resolve_path
 install_module: scripts/install-host-opencode.sh
 uninstall_module: scripts/uninstall-host-opencode.sh

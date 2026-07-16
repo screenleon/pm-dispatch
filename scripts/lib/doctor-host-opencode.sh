@@ -7,7 +7,7 @@ _doctor_host_opencode_config_path() {
   local id path fmt managed
   while IFS=$'\t' read -r id path fmt managed; do
     [[ "$id" == "config" && "$fmt" == "opencode-config-json" && "$managed" == "true" ]] || continue
-    host_manifest_expand_path "$path"
+    host_manifest_expand_path "$REPO_ROOT" opencode "$path"
     return 0
   done < <(host_manifest_install_targets "$manifest")
   return 1
@@ -18,7 +18,7 @@ _doctor_host_opencode_commands_path() {
   local id path fmt managed
   while IFS=$'\t' read -r id path fmt managed; do
     [[ "$id" == "commands" && "$fmt" == "copy-tree" && "$managed" == "true" ]] || continue
-    host_manifest_expand_path "$path"
+    host_manifest_expand_path "$REPO_ROOT" opencode "$path"
     return 0
   done < <(host_manifest_install_targets "$manifest")
   return 1
@@ -29,7 +29,7 @@ _doctor_host_opencode_tools_path() {
   local id path fmt managed
   while IFS=$'\t' read -r id path fmt managed; do
     [[ "$id" == "tools" && "$fmt" == "copy-tree" && "$managed" == "true" ]] || continue
-    host_manifest_expand_path "$path"
+    host_manifest_expand_path "$REPO_ROOT" opencode "$path"
     return 0
   done < <(host_manifest_install_targets "$manifest")
   return 1

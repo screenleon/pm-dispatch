@@ -65,6 +65,8 @@ the tracker's data location is a separate state-store concern.
 | `guard_bindings` | yes | List of guard capability declarations (see below). |
 | `permissions_surface` | yes | The host's native permission model outside the hook surface. Carries `config_target` (must reference an `install_targets` entry `id`) and `managed` (boolean: whether the install write path manages that surface). |
 | `doctor_module` | yes | Repo-relative path to the sourceable doctor host module; must exist. |
+| `path_resolver_module` | yes | Repo-relative path to the sourceable host-owned install-target path resolver; must exist. Host environment names, defaults, aliases, and conflict rules live here rather than in the shared manifest reader. |
+| `path_resolver_function` | yes | Shell function exported by `path_resolver_module`. The shared reader validates the identifier and invokes it with one authored install-target path template; manifest data is never evaluated. |
 | `install_module` | no (v1 compatibility) | Repo-relative path to an opt-in host wiring module, or `null`/omitted when the host is installed by the legacy base path or has no independent write path yet. Generic dispatchers use this field instead of naming hosts in core. New authored manifests should include it explicitly. |
 | `uninstall_module` | yes | Repo-relative path to the matching opt-in teardown module, or `null` when no independently dispatched write path exists. |
 | `memory_update_module` | no | Repo-relative host-owned executable for explicit natural-language project-memory updates. It must delegate location and writes to the canonical `pmctl memory append-episode` API and must not accept a host-private memory path. |

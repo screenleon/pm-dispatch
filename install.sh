@@ -81,16 +81,16 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
-# CLAUDE_CONFIG_DIR is the canonical Claude host config root used by the runtime,
-# doctor, guards, and manifest. CLAUDE_HOME remains a backward-compatible alias
-# for older sandbox/install callers; conflicting explicit values fail loud so
-# install and runtime can never silently target different trees.
-if [[ -n "${CLAUDE_CONFIG_DIR:-}" && -n "${CLAUDE_HOME:-}" && "$CLAUDE_CONFIG_DIR" != "$CLAUDE_HOME" ]]; then
-  printf 'install: CLAUDE_CONFIG_DIR and legacy CLAUDE_HOME disagree: %s != %s\n' "$CLAUDE_CONFIG_DIR" "$CLAUDE_HOME" >&2
+# Host-owned resolver is the single source for canonical/default/legacy rules.
+# shellcheck source=hosts/claude/lib/path-resolver.sh
+. "$REPO_ROOT/hosts/claude/lib/path-resolver.sh"
+_claude_root="$(claude_host_config_root 2>&1)" || {
+  printf 'install: %s\n' "$_claude_root" >&2
   exit 2
-fi
-CLAUDE_CONFIG_DIR="${CLAUDE_CONFIG_DIR:-${CLAUDE_HOME:-$HOME/.claude}}"
+}
+CLAUDE_CONFIG_DIR="$_claude_root"
 CLAUDE_HOME="$CLAUDE_CONFIG_DIR"
+unset _claude_root
 _COPY_FALLBACK_COUNT=0
 
 # shellcheck disable=SC1091
