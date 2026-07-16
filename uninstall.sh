@@ -53,6 +53,8 @@ if [[ -f "$REPO_ROOT/scripts/lib/host-manifest.sh" && -f "$REPO_ROOT/scripts/lib
   # shellcheck disable=SC1091
   . "$REPO_ROOT/scripts/lib/host-write.sh"
   _HOST_WRITE_AVAILABLE=1
+else
+  echo "uninstall: warning: host write libraries unavailable; Claude and optional-host hooks will not be removed" >&2
 fi
 
 _UNINSTALL_PLATFORM="$(detect_platform)"
@@ -357,20 +359,12 @@ if [[ "$parsed_any" -eq 0 ]] && grep -q '"mode"' "$MANIFEST" 2>/dev/null; then
   safety_skipped=$((safety_skipped + 1))
 fi
 
-echo
-echo "==> hooks"
-# CLAUDE_HOME passed per-call so hook removal targets the same root as the rest
-# of the uninstall (it derives settings.json from CLAUDE_HOME too).
-if [[ "$DRY_RUN" -eq 1 ]]; then
-  CLAUDE_CONFIG_DIR="$CLAUDE_CONFIG_DIR" bash "$REPO_ROOT/scripts/uninstall-guards.sh" --dry-run
-else
-  CLAUDE_CONFIG_DIR="$CLAUDE_CONFIG_DIR" bash "$REPO_ROOT/scripts/uninstall-guards.sh"
-fi
-
 # Symmetric teardown for every independently dispatched host write module.
 # Modules must be idempotent because uninstall cannot assume the matching
 # opt-in flag was used, nor that the host binary remains on PATH.
 if [[ "$_HOST_WRITE_AVAILABLE" -eq 1 ]]; then
+  echo
+  echo "==> hooks"
   host_write_uninstall_all "$REPO_ROOT" "$DRY_RUN"
 fi
 

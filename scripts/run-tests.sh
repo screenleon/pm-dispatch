@@ -205,7 +205,7 @@ map_path() {
       add_suite test-pmctl-memory; add_suite test-pmctl-context; add_suite test-migrate; add_suite test-guards; behavioral=1 ;;
     scripts/lib/pmctl-memory-config.sh)
       add_suite test-pmctl-memory; behavioral=1 ;;
-    scripts/lib/prompt-context-timeouts.sh)
+    hosts/claude/lib/prompt-context-timeouts.sh)
       add_suite test-guards; add_suite test-install; add_suite test-doctor; behavioral=1 ;;
     scripts/install-guards-codex.sh|scripts/uninstall-guards-codex.sh|scripts/hook-codex-command-guard.sh|hosts/codex/bin/install.sh|hosts/codex/bin/uninstall.sh|hosts/codex/lib/doctor.sh|hosts/codex/hooks/command-guard.sh|hosts/codex/host.yaml)
       add_suite test-host-write-codex; add_suite test-host-write-parity; add_suite test-doctor; behavioral=1 ;;
@@ -216,8 +216,11 @@ map_path() {
     scripts/lib/host-manifest.sh)
       add_suite test-host-manifest; add_suite test-host-write-codex
       add_suite test-host-write-opencode; add_suite test-host-write-parity; add_suite test-doctor; behavioral=1 ;;
-    scripts/install-guards.sh|scripts/uninstall-guards.sh|scripts/lib/doctor-host-claude.sh)
-      add_suite test-install; add_suite test-doctor; behavioral=1 ;;
+    scripts/install-guards.sh|scripts/uninstall-guards.sh|hosts/claude/bin/install-guards.sh|hosts/claude/bin/uninstall-guards.sh|hosts/claude/lib/doctor.sh|hosts/claude/host.yaml)
+      add_suite test-install; add_suite test-uninstall; add_suite test-doctor
+      add_suite test-hook-profile-parity; add_suite test-host-write-parity; behavioral=1 ;;
+    scripts/guard-log-claude-usage.sh|scripts/guard-save-rate-limits.sh|hosts/claude/hooks/log-usage.sh|hosts/claude/hooks/save-rate-limits.sh)
+      add_suite test-install; add_suite test-doctor; add_suite test-guards; behavioral=1 ;;
     scripts/lint-scripts.sh)
       add_suite lint-scripts; add_suite test-run-tests; behavioral=1 ;;
   esac

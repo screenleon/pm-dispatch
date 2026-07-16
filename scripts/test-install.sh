@@ -755,11 +755,11 @@ test_install_sh_wires_hooks() {
   assert_file_contains "$name" "$home/.claude/settings.json" "guard-pm-write.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_TRACE" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "guard-log-claude-usage.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hosts/claude/hooks/log-usage.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "guard-inject-memory.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "guard-inject-context.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "guard-save-rate-limits.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hosts/claude/hooks/save-rate-limits.sh" || return
   if [[ -f "$home/.claude/statusline-chain.conf" ]]; then
     fail "$name" "statusline-chain.conf should not exist without previous statusLine"
     return
@@ -785,7 +785,7 @@ test_install_sh_profile_minimal_skips_codex_hooks() {
   assert_file_contains "$name" "$home/.claude/settings.json" "guard-pm-write.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "guard-log-claude-usage.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hosts/claude/hooks/log-usage.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "guard-inject-memory.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "guard-inject-context.sh" || return
   pass "$name"
@@ -1331,7 +1331,7 @@ test_install_hooks_windows_profile_full_downgrades_to_minimal() {
   assert_file_contains "$name" "$home/.claude/settings.json" "guard-pm-write.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_TRACE" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "guard-log-claude-usage.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hosts/claude/hooks/log-usage.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "guard-session-summary.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
@@ -1371,7 +1371,7 @@ test_install_hooks_windows_profile_minimal_silent() {
   assert_file_contains "$name" "$home/.claude/settings.json" "guard-pm-write.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_TRACE" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "guard-log-claude-usage.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hosts/claude/hooks/log-usage.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "guard-session-summary.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "guard-executor-write.sh" || return
@@ -1602,11 +1602,11 @@ test_install_sh_wires_hooks_no_settings() {
   assert_file_contains "$name" "$home/.claude/settings.json" "guard-pm-write.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_TRACE" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "guard-log-claude-usage.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hosts/claude/hooks/log-usage.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "guard-inject-memory.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "guard-inject-context.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "guard-save-rate-limits.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hosts/claude/hooks/save-rate-limits.sh" || return
   pass "$name"
 }
 
@@ -1621,22 +1621,22 @@ test_hooks_install_uninstall_lifecycle() {
   assert_file_contains "$name" "$home/.claude/settings.json" "guard-pm-write.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_TRACE" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "guard-log-claude-usage.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hosts/claude/hooks/log-usage.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "guard-inject-memory.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "guard-inject-context.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "guard-save-rate-limits.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hosts/claude/hooks/save-rate-limits.sh" || return
 
   HOME="$home" bash "$REPO_ROOT/scripts/uninstall-guards.sh" > /dev/null
   assert_not_contains "$name" "$home/.claude/settings.json" "guard-pm-write.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_TRACE" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "guard-log-claude-usage.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "hosts/claude/hooks/log-usage.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "guard-inject-memory.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "guard-inject-context.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "guard-save-rate-limits.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "hosts/claude/hooks/save-rate-limits.sh" || return
   if jq -e 'has("statusLine")' "$home/.claude/settings.json" >/dev/null; then
     fail "$name" "statusLine should be deleted when no chain target exists"
     return
@@ -1735,11 +1735,11 @@ JSON
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "guard-pm-write.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "guard-log-claude-usage.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hosts/claude/hooks/log-usage.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "guard-session-summary.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "guard-inject-memory.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "guard-inject-context.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "guard-save-rate-limits.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hosts/claude/hooks/save-rate-limits.sh" || return
   pass "$name"
 }
 
@@ -1781,8 +1781,8 @@ JSON
 
   # Each managed hook basename must appear exactly once (no duplicates)
   local settings="$home/.claude/settings.json"
-  for hook in guard-pm-write.sh guard-log-claude-usage.sh guard-session-summary.sh \
-              guard-inject-memory.sh guard-inject-context.sh guard-save-rate-limits.sh; do
+  for hook in guard-pm-write.sh log-usage.sh guard-session-summary.sh \
+              guard-inject-memory.sh guard-inject-context.sh save-rate-limits.sh; do
     local count
     count=$(grep -o "$hook" "$settings" | wc -l | tr -d ' ')
     if [[ "$count" -ne 1 ]]; then
@@ -1843,16 +1843,7 @@ JSON
   assert_file_contains "$name" "$settings" "$unrelated_path" || return
 
   # Our managed hook must also be present (appended, not merged)
-  assert_file_contains "$name" "$settings" "guard-log-claude-usage.sh" || return
-
-  # Count occurrences of the basename — must be exactly 2
-  # (unrelated path + our managed path)
-  local count
-  count=$(grep -o "guard-log-claude-usage.sh" "$settings" | wc -l | tr -d ' ')
-  if [[ "$count" -ne 2 ]]; then
-    fail "$name" "guard-log-claude-usage.sh appears $count times (want 2: unrelated + managed)"
-    return
-  fi
+  assert_file_contains "$name" "$settings" "hosts/claude/hooks/log-usage.sh" || return
 
   pass "$name"
 }
@@ -1903,8 +1894,8 @@ JSON
   local settings="$home/.claude/settings.json"
 
   # All managed hook basenames must be gone after uninstall
-  for hook in guard-pm-write.sh guard-log-claude-usage.sh guard-session-summary.sh \
-              guard-inject-memory.sh guard-inject-context.sh guard-save-rate-limits.sh; do
+  for hook in guard-pm-write.sh log-usage.sh guard-session-summary.sh \
+              guard-inject-memory.sh guard-inject-context.sh save-rate-limits.sh; do
     if grep -q "$hook" "$settings"; then
       fail "$name" "$hook still present in settings.json after uninstall of stale paths"
       return
@@ -2098,7 +2089,7 @@ test_stop_hook_migration() {
   assert_not_contains "$name" "$home/.claude/settings.json" \
     "hooks/guard-log-claude-usage.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" \
-    "scripts/guard-log-claude-usage.sh" || return
+    "hosts/claude/hooks/log-usage.sh" || return
   pass "$name"
 }
 
@@ -2115,11 +2106,11 @@ test_stop_hook_preservation() {
   # After install: unrelated hook preserved, managed hook added
   HOME="$home" bash "$REPO_ROOT/scripts/install-guards.sh" > /dev/null
   assert_file_contains "$name" "$home/.claude/settings.json" "$unrelated" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "scripts/guard-log-claude-usage.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hosts/claude/hooks/log-usage.sh" || return
 
   # After uninstall: managed hook removed, unrelated hook still present
   HOME="$home" bash "$REPO_ROOT/scripts/uninstall-guards.sh" > /dev/null
-  assert_not_contains "$name" "$home/.claude/settings.json" "scripts/guard-log-claude-usage.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "hosts/claude/hooks/log-usage.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "$unrelated" || return
   pass "$name"
 }
@@ -2147,7 +2138,7 @@ test_statusline_install_chains_previous() {
   HOME="$home" bash "$REPO_ROOT/scripts/install-guards.sh" > /dev/null
   local got
   got="$(jq -r '.statusLine.command // empty' "$home/.claude/settings.json")"
-  if [[ "$got" != "$(_ti_hook_cmd_path "$REPO_ROOT/scripts/guard-save-rate-limits.sh")" ]]; then
+  if [[ "$got" != "$(_ti_hook_cmd_path "$REPO_ROOT/hosts/claude/hooks/save-rate-limits.sh")" ]]; then
     fail "$name" "statusLine.command was $got"
     return
   fi
@@ -2171,7 +2162,7 @@ test_statusline_install_preserves_existing_chain() {
   should_run "$name" || return 0
   local home="$tmp_root/$name"
   local other_dir="$tmp_root/$name-other/scripts"
-  local other_hook="$other_dir/guard-save-rate-limits.sh"
+  local other_hook="$other_dir/save-rate-limits.sh"
   local display_cmd="bash /home/screenleon/.claude/abtop-statusline.sh"
   mkdir -p "$home/.claude" "$other_dir"
   printf '#!/usr/bin/env bash\ncat >/dev/null\n' > "$other_hook"
@@ -2213,7 +2204,7 @@ test_statusline_install_chains_previous_with_args() {
   HOME="$home" bash "$REPO_ROOT/scripts/install-guards.sh" > /dev/null
   local got
   got="$(jq -r '.statusLine.command // empty' "$home/.claude/settings.json")"
-  if [[ "$got" != "$(_ti_hook_cmd_path "$REPO_ROOT/scripts/guard-save-rate-limits.sh")" ]]; then
+  if [[ "$got" != "$(_ti_hook_cmd_path "$REPO_ROOT/hosts/claude/hooks/save-rate-limits.sh")" ]]; then
     fail "$name" "statusLine.command was $got"
     return
   fi
@@ -3244,7 +3235,10 @@ test_install_hooks_spaced_repo_root() {
   # a raw grep for the spaced path text would miss escaped leftovers.
   local managed_q='[ (.hooks // {}) | (.PreToolUse,.PostToolUse,.Stop,.UserPromptSubmit) | .[]? | (.hooks // [])[]? | .command, .statusLine.command ]
     | map(select(. != null))
-    | map(select((split("/") | .[-2]) == "scripts" and ((split("/") | last) | test("^guard-"))))
+    | map(select(
+        ((split("/") | .[-2]) == "scripts" and ((split("/") | last) | test("^guard-"))) or
+        ((split("/") | .[-2]) == "hooks" and (split("/") | .[-3]) == "claude" and (split("/") | .[-4]) == "hosts")
+      ))
     | length'
   local managed_before
   managed_before="$(jq "$managed_q" "$override/settings.json")"
@@ -3372,7 +3366,10 @@ FAKEJQ
   # and remove every managed hook; a slash-mangled repo_root_q would miss them.
   local managed_q='[ (.hooks // {}) | (.PreToolUse,.PostToolUse,.Stop,.UserPromptSubmit) | .[]? | (.hooks // [])[]? | .command, .statusLine.command ]
     | map(select(. != null))
-    | map(select((split("/") | .[-2]) == "scripts" and ((split("/") | last) | test("^guard-"))))
+    | map(select(
+        ((split("/") | .[-2]) == "scripts" and ((split("/") | last) | test("^guard-"))) or
+        ((split("/") | .[-2]) == "hooks" and (split("/") | .[-3]) == "claude" and (split("/") | .[-4]) == "hosts")
+      ))
     | length'
   if [[ "$("$real_jq" "$managed_q" "$override/settings.json")" -lt 1 ]]; then
     fail "$name" "no managed hooks detected pre-uninstall (fixture broken)"
@@ -3437,6 +3434,32 @@ test_uninstall_prunes_empty_adapters_dir() {
   pass "$name"
 }
 
+test_install_missing_host_write_library_fails_loudly() {
+  # Claude settings writes are now manifest-dispatched and therefore require
+  # both shared host-write libraries even when no optional host is requested.
+  local name="install-missing-host-write-library-fails-loudly"
+  should_run "$name" || return 0
+  local mock_repo="$tmp_root/$name-repo" home="$tmp_root/$name-home"
+  local out="$tmp_root/$name.out" rc=0
+  mkdir -p "$mock_repo/scripts/lib" "$mock_repo/hosts/claude/lib" "$home"
+  cp "$REPO_ROOT/install.sh" "$mock_repo/install.sh"
+  cp "$REPO_ROOT/scripts/lib/portable.sh" "$mock_repo/scripts/lib/portable.sh"
+  cp "$REPO_ROOT/scripts/lib/allowlist.sh" "$mock_repo/scripts/lib/allowlist.sh"
+  cp "$REPO_ROOT/hosts/claude/lib/path-resolver.sh" "$mock_repo/hosts/claude/lib/path-resolver.sh"
+
+  HOME="$home" bash "$mock_repo/install.sh" >"$out" 2>&1 || rc=$?
+  if [[ "$rc" -ne 2 ]]; then
+    fail "$name" "expected exit 2, got $rc: $(<"$out")"
+    return
+  fi
+  assert_file_contains "$name" "$out" "host write libraries unavailable in this install layout" || return
+  if [[ -e "$home/.claude/settings.json" ]]; then
+    fail "$name" "install mutated Claude settings before rejecting the incomplete checkout"
+    return
+  fi
+  pass "$name"
+}
+
 test_install_share_asset_installed
 test_install_share_asset_conflict
 test_install_share_asset_uninstall
@@ -3447,5 +3470,6 @@ test_uninstall_claude_home_override
 test_install_hooks_spaced_repo_root
 test_install_hooks_msys_native_jq_boundary
 test_uninstall_prunes_empty_adapters_dir
+test_install_missing_host_write_library_fails_loudly
 
 th_summary

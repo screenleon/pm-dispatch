@@ -8,7 +8,7 @@
 #
 # Schema reference: docs/host-contract.md. The manifest records the DECLARED
 # capability layer (static facts an installer can act on); the doctor host
-# module (scripts/lib/doctor-host-claude.sh) reports the PROBED layer;
+# module (hosts/claude/lib/doctor.sh) reports the PROBED layer;
 # EFFECTIVE is what an end-to-end guard test observes. Declared values here
 # must never exceed what a probe has shown — claude is chosen as the schema
 # v1 reference instance specifically because it is the most capability-complete
@@ -16,12 +16,11 @@
 # verified), so this manifest is the hardest test of schema v1's expressive
 # power.
 #
-# Read consumers today: scripts/lib/doctor-host-claude.sh reads this file's
+# Read consumers today: hosts/claude/lib/doctor.sh reads this file's
 # guard_bindings block to cross-check its own probed capability tuples
 # against the declared ones (a declared-vs-probed consistency check, not an
-# install path). install.sh's write path is not yet manifest-driven for
-# claude; this file is also the declarative baseline a future host-generic
-# install write path would diff its byte-compatible output against.
+# install path). install.sh dispatches Claude settings writes through the
+# install_module below while retaining ownership of product-level assets.
 #
 # CLAUDE_CONFIG_DIR is the canonical config root across install, uninstall,
 # doctor, guards, and this manifest. CLAUDE_HOME is accepted only as a legacy
@@ -56,7 +55,7 @@ install_targets:
 # Hook runtime facts: claude's own settings.json hooks block (the shape codex
 # and this repo's own hooks.json borrow from). Events reflect Claude Code's
 # documented hook surface; pm-dispatch itself currently wires only
-# PreToolUse/Stop/UserPromptSubmit (see scripts/install-guards.sh header
+# PreToolUse/Stop/UserPromptSubmit (see hosts/claude/bin/install-guards.sh
 # comment) — the remaining events are host-exposed but not yet consumed by
 # any guard-*.sh script in this repo.
 hook_surface:
@@ -81,7 +80,7 @@ hook_surface:
 # binding. Enum values: docs/host-contract.md "Capability object".
 guard_bindings:
   # Command-level guard (guarding claude's own Bash tool calls generically):
-  # NOT wired today. install-guards.sh only ever attaches a "Bash" matcher
+  # NOT wired today. The Claude install module only ever attaches a "Bash" matcher
   # hook per-adapter, gated by that adapter's needs_bash_guard flag (executor
   # axis, dispatched-subprocess guarding) — and zero adapters set that flag
   # today, so the mechanism is dormant. There is no host-level hook guarding
@@ -136,7 +135,7 @@ guard_bindings:
     coverage: full
     stability: stable
     confidence: probed
-  # Statusline: guard-save-rate-limits.sh wired via settings.json's
+# Statusline: hosts/claude/hooks/save-rate-limits.sh wired via settings.json's
   # statusLine.command field — a script artifact same as a hook, just keyed
   # under statusLine rather than hooks.<event>.
   - capability: statusline
@@ -149,15 +148,15 @@ guard_bindings:
 
 # Permission model native to the host, outside the hook surface. claude's
 # permissions.allow list (dispatch allowlist entries) lives inside
-# settings.json and is written by install.sh / install-guards.sh.
+# settings.json and is written by the manifest-declared Claude install module.
 permissions_surface:
   config_target: settings
   managed: true
 
-# Host-module wiring. Claude remains the byte-compatible base install path,
-# so it is not independently dispatched by the optional-host write loop.
-doctor_module: scripts/lib/doctor-host-claude.sh
+# Host-module wiring. Top-level install/uninstall remain the product entrypoints;
+# Claude settings writes use the same manifest dispatcher as optional hosts.
+doctor_module: hosts/claude/lib/doctor.sh
 path_resolver_module: hosts/claude/lib/path-resolver.sh
 path_resolver_function: claude_host_resolve_path
-install_module: null
-uninstall_module: null
+install_module: hosts/claude/bin/install-guards.sh
+uninstall_module: hosts/claude/bin/uninstall-guards.sh

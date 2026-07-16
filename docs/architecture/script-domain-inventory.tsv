@@ -28,7 +28,6 @@ scripts/lib/artifact-paths.sh	sourced-lib	shared-runtime	runtime/lib/artifact-pa
 scripts/lib/detached-launch.sh	sourced-lib	shared-runtime	runtime/lib/detached-launch.sh	move-then-remove	internal
 scripts/lib/dispatch-common.sh	sourced-lib	shared-runtime	runtime/lib/dispatch-common.sh	move-then-remove	internal
 scripts/lib/dispatch-record.sh	sourced-lib	shared-runtime	runtime/lib/dispatch-record.sh	move-then-remove	internal
-scripts/lib/doctor-host-claude.sh	sourced-lib	host-claude	hosts/claude/lib/doctor.sh	move-then-remove	internal
 scripts/lib/executor-router.sh	sourced-lib	shared-runtime	runtime/lib/executor-router.sh	move-then-remove	internal
 scripts/lib/gate-result-verify.sh	sourced-lib	shared-runtime	runtime/lib/gate-result-verify.sh	move-then-remove	internal
 scripts/lib/gate-workspace.sh	sourced-lib	shared-runtime	runtime/lib/gate-workspace.sh	move-then-remove	internal
@@ -63,7 +62,6 @@ scripts/lib/pmctl-trace.sh	sourced-lib	shared-runtime	runtime/lib/pmctl-trace.sh
 scripts/lib/pmctl-validate.sh	sourced-lib	shared-runtime	runtime/lib/pmctl-validate.sh	move-then-remove	internal
 scripts/lib/pmctl-worktree.sh	sourced-lib	shared-runtime	runtime/lib/pmctl-worktree.sh	move-then-remove	internal
 scripts/lib/portable.sh	sourced-lib	shared-runtime	runtime/lib/portable.sh	move-then-remove	internal
-scripts/lib/prompt-context-timeouts.sh	sourced-lib	host-claude	hosts/claude/lib/prompt-context-timeouts.sh	move-then-remove	internal
 scripts/lib/reasoning-effort.sh	sourced-lib	shared-runtime	runtime/lib/reasoning-effort.sh	move-then-remove	internal
 scripts/lib/runner-kind.sh	sourced-lib	shared-runtime	runtime/lib/runner-kind.sh	move-then-remove	internal
 scripts/lib/state-paths.sh	sourced-lib	shared-runtime	runtime/lib/state-paths.sh	move-then-remove	internal

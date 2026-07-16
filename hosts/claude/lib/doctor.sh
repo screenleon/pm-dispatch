@@ -2,8 +2,8 @@
 # Sourceable claude-host doctor module.
 #
 # Host-specific doctor checks for the claude host (Claude Code as the PM
-# runtime). Sourced by scripts/doctor.sh's generic host-module loader
-# (lib/doctor-host-*.sh glob); never executed standalone. The loader calls
+# runtime). Sourced by scripts/doctor.sh's manifest-driven host-module loader;
+# never executed standalone. The loader calls
 # doctor_host_claude_run() — the single required entry point of the host-module
 # interface. Everything this module needs (emit_check, emit_capability,
 # _json_esc, REPO_ROOT, PROFILE, JSON/QUIET/COLOR, codex_available,
@@ -11,7 +11,7 @@
 # doctor.sh before main() runs.
 #
 # Adding a new host must NOT require editing this file or doctor.sh core —
-# drop a new lib/doctor-host-<name>.sh defining doctor_host_<name>_run().
+# declare a module in hosts/<name>/host.yaml defining doctor_host_<name>_run().
 #
 # Copy-mode caveat: when doctor.sh is installed as a lone copied file (no lib/,
 # e.g. native Windows), this module is absent and doctor.sh runs a compact
@@ -87,7 +87,11 @@ _doctor_host_claude_hook_present() {
       (.command? // "") as $cmd |
       ($cmd | normalize_path) as $ncmd |
       ($ncmd | sub(" --host (claude|codex|opencode|generic)$"; "")) as $path |
-      (($path | split("/") | last) == $basename and ($path | split("/") | .[-2]) == "scripts") and
+      (
+        (($path | split("/") | last) == $basename and ($path | split("/") | .[-2]) == "scripts") or
+        (($path | split("/") | last) == $basename and ($path | split("/") | .[-2]) == "hooks" and ($path | split("/") | .[-3]) == "claude" and ($path | split("/") | .[-4]) == "hosts") or
+        ($basename == "log-usage.sh" and ($path | split("/") | last) == "guard-log-claude-usage.sh" and ($path | split("/") | .[-2]) == "scripts")
+      ) and
       (if $basename == "guard-session-summary.sh" then ($ncmd | endswith("guard-session-summary.sh --host claude")) else true end);
     ([
       ((.hooks // {}).PreToolUse[]? | (.hooks // [])[]? | select(managed_hook)),
@@ -97,10 +101,13 @@ _doctor_host_claude_hook_present() {
     ] | length > 0)
     or
     (
-      $basename == "guard-save-rate-limits.sh" and
+      $basename == "save-rate-limits.sh" and
       ((.statusLine.command? // "") as $cmd |
         ($cmd | normalize_path) as $ncmd |
-        (($ncmd | split("/") | last) == $basename and ($ncmd | split("/") | .[-2]) == "scripts"))
+        (
+          (($ncmd | split("/") | last) == $basename and ($ncmd | split("/") | .[-2]) == "hooks" and ($ncmd | split("/") | .[-3]) == "claude" and ($ncmd | split("/") | .[-4]) == "hosts") or
+          (($ncmd | split("/") | last) == "guard-save-rate-limits.sh" and ($ncmd | split("/") | .[-2]) == "scripts")
+        ))
     )
   ' "$settings" >/dev/null 2>&1
 }
@@ -108,8 +115,8 @@ _doctor_host_claude_hook_present() {
 _doctor_host_claude_context_timeout_ok() {
   local settings="$1"
   # shellcheck disable=SC1091
-  # shellcheck source=scripts/lib/prompt-context-timeouts.sh
-  . "$REPO_ROOT/scripts/lib/prompt-context-timeouts.sh"
+  # shellcheck source=hosts/claude/lib/prompt-context-timeouts.sh
+  . "$REPO_ROOT/hosts/claude/lib/prompt-context-timeouts.sh"
   jq -e --argjson expected "$CLAUDE_PROMPT_CONTEXT_HOOK_TIMEOUT" '
     [
       (.hooks.UserPromptSubmit[]? | (.hooks // [])[]? |
@@ -177,6 +184,12 @@ _doctor_host_claude_stale_hook_commands() {
             ))
           ) or
           (
+            ($ncmd | split("/") | .[-2]) == "hooks" and
+            ($ncmd | split("/") | .[-3]) == "claude" and
+            ($ncmd | split("/") | .[-4]) == "hosts" and
+            (($ncmd | split("/") | last) | IN("log-usage.sh", "save-rate-limits.sh"))
+          ) or
+          (
             ($ncmd | split("/") | last) == "bash-guard.sh" and
             ($ncmd | split("/") | .[-3]) == "adapters"
           )
@@ -205,11 +218,11 @@ _doctor_host_claude_check_hooks() {
   local profile
   local -a hooks=(
     guard-pm-write.sh
-    guard-log-claude-usage.sh
+    log-usage.sh
     guard-session-summary.sh
     guard-inject-memory.sh
     guard-inject-context.sh
-    guard-save-rate-limits.sh
+    save-rate-limits.sh
   )
   local _want_full=0
   case "$PROFILE" in
@@ -275,18 +288,18 @@ _doctor_host_claude_check_hooks() {
     _total_hooks=$(( _total_hooks + ${#_adapter_bg_names[@]} ))
   fi
   if [[ "${#missing[@]}" -gt 0 ]]; then
-    emit_check hooks fail "missing hooks: ${missing[*]}" "bash '${REPO_ROOT}/scripts/install-guards.sh'"
+    emit_check hooks fail "missing hooks: ${missing[*]}" "bash '${REPO_ROOT}/install.sh'"
   elif [[ "${#_stale[@]}" -gt 0 ]]; then
     emit_check hooks warn \
       "${#_stale[@]} hook(s) wired from a different checkout (e.g. $(basename "${_stale[0]}"))" \
       "bash '${REPO_ROOT}/install.sh' to re-wire hooks to this checkout"
   elif ! _doctor_host_claude_context_timeout_ok "$settings"; then
     # shellcheck disable=SC1091
-    # shellcheck source=scripts/lib/prompt-context-timeouts.sh
-    . "$REPO_ROOT/scripts/lib/prompt-context-timeouts.sh"
+    # shellcheck source=hosts/claude/lib/prompt-context-timeouts.sh
+    . "$REPO_ROOT/hosts/claude/lib/prompt-context-timeouts.sh"
     emit_check hooks fail \
       "guard-inject-context.sh timeout missing or below ${CLAUDE_PROMPT_CONTEXT_HOOK_TIMEOUT}s" \
-      "bash '${REPO_ROOT}/scripts/install-guards.sh'"
+      "bash '${REPO_ROOT}/install.sh'"
   else
     emit_check hooks ok "$_total_hooks hooks present ($profile profile)"
   fi
@@ -399,11 +412,11 @@ _doctor_host_claude_probe() {
         _PROBE_WIRED=0; _PROBE_PROVIDER=none; _PROBE_ENFORCEMENT=none; _PROBE_COVERAGE=none
         _PROBE_STABILITY=stable; _PROBE_CONFIDENCE=probed; _PROBE_STATUS=warn
         _PROBE_MESSAGE="session summary not wired"
-        _PROBE_FIX="bash '${REPO_ROOT}/scripts/install-guards.sh'"
+        _PROBE_FIX="bash '${REPO_ROOT}/install.sh'"
       fi
       ;;
     statusline)
-      if _doctor_host_claude_hook_present guard-save-rate-limits.sh "$settings"; then
+      if _doctor_host_claude_hook_present save-rate-limits.sh "$settings"; then
         _PROBE_WIRED=1; _PROBE_PROVIDER=host_hook; _PROBE_ENFORCEMENT=advisory; _PROBE_COVERAGE=full
         _PROBE_STABILITY=stable; _PROBE_CONFIDENCE=probed; _PROBE_STATUS=ok
         _PROBE_MESSAGE="statusline wired"
@@ -411,7 +424,7 @@ _doctor_host_claude_probe() {
         _PROBE_WIRED=0; _PROBE_PROVIDER=none; _PROBE_ENFORCEMENT=none; _PROBE_COVERAGE=none
         _PROBE_STABILITY=stable; _PROBE_CONFIDENCE=probed; _PROBE_STATUS=warn
         _PROBE_MESSAGE="statusline not wired"
-        _PROBE_FIX="bash '${REPO_ROOT}/scripts/install-guards.sh'"
+        _PROBE_FIX="bash '${REPO_ROOT}/install.sh'"
       fi
       ;;
     pm_command_interface)

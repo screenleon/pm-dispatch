@@ -514,7 +514,7 @@ run_negative_case_on "$REF_MANIFEST_CLAUDE" claude \
   "config_target 'config' does not reference an install_targets id"
 run_negative_case_on "$REF_MANIFEST_CLAUDE" claude \
   "non-null install_module pointing at missing file" \
-  's|^install_module: null|install_module: install-missing.sh|' \
+  's|^install_module:.*|install_module: install-missing.sh|' \
   "install_module 'install-missing.sh' not found"
 
 # Duplicate-capability case: all five capabilities stay present and every
