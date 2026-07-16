@@ -15,7 +15,7 @@
 # constantly breaking legitimate work.
 #
 # Wired into a codex-host's hooks.json PreToolUse (matcher "Bash") via
-# scripts/hook-codex-command-guard.sh, which calls `pmctl guard check --role
+# hosts/codex/hooks/command-guard.sh, which calls `pmctl guard check --role
 # pm --runtime <host> --event pre-bash`. No-op for any other agent identity.
 #
 # Bypass: set PM_GUARD_PM_BASH=off in the environment to skip enforcement.

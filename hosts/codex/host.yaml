@@ -135,9 +135,9 @@ permissions_surface:
 # Host-module wiring. The optional write modules are dispatched generically
 # from their manifest paths; the legacy --enable-codex-command-guard flag is a
 # backward-compatible selector, not a codex-named call site in core.
-doctor_module: scripts/lib/doctor-host-codex.sh
+doctor_module: hosts/codex/lib/doctor.sh
 path_resolver_module: hosts/codex/lib/path-resolver.sh
 path_resolver_function: codex_host_resolve_path
-install_module: scripts/install-guards-codex.sh
-uninstall_module: scripts/uninstall-guards-codex.sh
+install_module: hosts/codex/bin/install.sh
+uninstall_module: hosts/codex/bin/uninstall.sh
 memory_update_module: hosts/codex/bin/memory-update.sh

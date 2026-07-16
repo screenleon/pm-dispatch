@@ -22,7 +22,7 @@
 # declared by hosts/<name>/host.yaml. --enable-codex-command-guard remains a
 # backward-compatible alias for --enable-host codex.
 #
-# --enable-codex-command-guard opts into wiring scripts/hook-codex-command-guard.sh
+# --enable-codex-command-guard opts into the manifest-declared Codex hook.
 #   into $CODEX_HOME/hooks.json (see hosts/codex/host.yaml). OFF BY DEFAULT and NOT
 #   auto-detected from codex-on-PATH the way --profile is: unlike claude's
 #   settings.json, hooks.json is GLOBAL to every codex session on the machine,
