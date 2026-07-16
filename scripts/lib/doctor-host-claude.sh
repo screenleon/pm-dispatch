@@ -36,9 +36,13 @@ _doctor_host_claude_resolve_config_root() {
 
 _doctor_host_claude_check_config_root() {
   if [[ -n "$_CLAUDE_HOST_CONFIG_ROOT_ERROR" ]]; then
+    local remediation="unset CLAUDE_HOME or set both variables to the same Claude config root"
+    if [[ "$_CLAUDE_HOST_CONFIG_ROOT_ERROR" == *"HOME is required"* ]]; then
+      remediation="set HOME or set CLAUDE_CONFIG_DIR to the Claude config root"
+    fi
     emit_check host.claude.config-root fail \
-      "CLAUDE_CONFIG_DIR and legacy CLAUDE_HOME disagree" \
-      "unset CLAUDE_HOME or set both variables to the same Claude config root"
+      "$_CLAUDE_HOST_CONFIG_ROOT_ERROR" \
+      "$remediation"
   else
     emit_check host.claude.config-root ok \
       "Claude config root: $_CLAUDE_HOST_CONFIG_ROOT"

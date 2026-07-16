@@ -298,6 +298,10 @@ test_shared_expander_is_host_agnostic() {
     fail "$name" "shared manifest reader still names a host environment variable"
     return
   fi
+  if declare -f host_manifest_expand_path | grep -Eq '(^|[^[:alnum:]_])eval([[:space:]]|$)'; then
+    fail "$name" "shared manifest expander delegates through eval"
+    return
+  fi
   for host in claude codex opencode; do
     manifest="$REPO_ROOT/hosts/$host/host.yaml"
     module="$(host_manifest_scalar "$manifest" path_resolver_module)"

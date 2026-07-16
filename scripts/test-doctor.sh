@@ -2001,6 +2001,25 @@ case_doctor_claude_config_root_conflict_fails() {
   fi
 }
 
+case_doctor_claude_config_root_requires_home() {
+  # Behavior: doctor preserves the resolver's HOME-required failure when no
+  # canonical root, legacy root, or ambient HOME is available.
+  local name="doctor-claude-config-root-requires-home"
+  should_run "$name" || return 0
+  local out status=0 path
+  path="$(make_stub_bin "$tmp_root/bin-config-root-no-home" claude codex)"
+  out="$(env -u HOME -u CLAUDE_CONFIG_DIR -u CLAUDE_HOME PATH="$path" \
+    bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
+  if [[ "$status" -eq 1 \
+      && "$out" == *"claude path resolver: HOME is required when CLAUDE_CONFIG_DIR and CLAUDE_HOME are unset or empty"* \
+      && "$out" == *"set HOME or set CLAUDE_CONFIG_DIR to the Claude config root"* \
+      && "$out" != *"CLAUDE_CONFIG_DIR and legacy CLAUDE_HOME disagree"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected resolver HOME failure to propagate; status=$status out=$out"
+  fi
+}
+
 case_doctor_repo_trusted_linter() {
   # Verifies that doctor.sh runs the INSTALLED linter, not the target repo's
   # scripts/lint-frontmatter.sh, preventing arbitrary code execution via --repo.
@@ -2160,6 +2179,7 @@ case_doctor_installed_copy_no_repo
 case_doctor_installed_copy_no_repo_json
 case_doctor_claude_config_dir
 case_doctor_claude_config_root_conflict_fails
+case_doctor_claude_config_root_requires_home
 case_doctor_repo_trusted_linter
 case_doctor_stale_hook_sibling_prefix_warns
 case_doctor_native_windows_notice
