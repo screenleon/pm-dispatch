@@ -3,12 +3,12 @@ _PM_DISPATCH_PREFLIGHT_RUNNER	_PM_DISPATCH_PREFLIGHT_RUNNER	install.sh	productio
 _PM_DISPATCH_PREFLIGHT_RUNNER	_PM_DISPATCH_PREFLIGHT_RUNNER	scripts/test-install.sh	test
 ANTHROPIC_API_KEY	ANTHROPIC_API_KEY	scripts/doctor.sh	production
 CLAUDE_CODE_OAUTH_TOKEN	CLAUDE_CODE_OAUTH_TOKEN	scripts/doctor.sh	production
+CLAUDE_CONFIG_DIR	CLAUDE_CONFIG_DIR	hosts/claude/lib/path-resolver.sh	production
 CLAUDE_CONFIG_DIR	CLAUDE_CONFIG_DIR	install.sh	production
 CLAUDE_CONFIG_DIR	CLAUDE_CONFIG_DIR	scripts/doctor.sh	production
 CLAUDE_CONFIG_DIR	CLAUDE_CONFIG_DIR	scripts/guard-save-rate-limits.sh	production
 CLAUDE_CONFIG_DIR	CLAUDE_CONFIG_DIR	scripts/install-guards.sh	production
 CLAUDE_CONFIG_DIR	CLAUDE_CONFIG_DIR	scripts/lib/doctor-host-claude.sh	production
-CLAUDE_CONFIG_DIR	CLAUDE_CONFIG_DIR	scripts/lib/host-manifest.sh	production
 CLAUDE_CONFIG_DIR	CLAUDE_CONFIG_DIR	scripts/lib/memory-dir.sh	production
 CLAUDE_CONFIG_DIR	CLAUDE_CONFIG_DIR	scripts/lib/memory.sh	production
 CLAUDE_CONFIG_DIR	CLAUDE_CONFIG_DIR	scripts/token-usage.sh	production
@@ -24,6 +24,7 @@ CLAUDE_CONFIG_TEST_*	CLAUDE_CONFIG_TEST_PREFLIGHT_HOME	scripts/test-run-all-test
 CLAUDE_DISPATCH_TIMEOUT	CLAUDE_DISPATCH_TIMEOUT	adapters/claude/dispatch.sh	production
 CLAUDE_GATE_STUB_*	CLAUDE_GATE_STUB_CALLED_MARKER	scripts/test-pr-gate-profile.sh	test
 CLAUDE_GATE_STUB_*	CLAUDE_GATE_STUB_MODE	scripts/test-pr-gate-profile.sh	test
+CLAUDE_HOME	CLAUDE_HOME	hosts/claude/lib/path-resolver.sh	production
 CLAUDE_HOME	CLAUDE_HOME	install.sh	production
 CLAUDE_HOME	CLAUDE_HOME	scripts/install-guards.sh	production
 CLAUDE_HOME	CLAUDE_HOME	scripts/lib/doctor-host-claude.sh	production
@@ -49,11 +50,11 @@ CODEX_GATE_STUB_*	CODEX_GATE_STUB_SYNTHESIS_TAMPER_ARTIFACT	scripts/test-pr-gate
 CODEX_GATE_STUB_*	CODEX_GATE_STUB_TAMPER_PREFLIGHT	scripts/test-pr-gate.sh	test
 CODEX_GATE_STUB_*	CODEX_GATE_STUB_VERDICT	scripts/test-pr-gate.sh	test
 CODEX_GATE_STUB_*	CODEX_GATE_STUB_VERDICT_PREFIX_ONLY	scripts/test-pr-gate.sh	test
+CODEX_HOME	CODEX_HOME	hosts/codex/lib/path-resolver.sh	production
 CODEX_HOME	CODEX_HOME	install.sh	production
 CODEX_HOME	CODEX_HOME	scripts/hook-codex-command-guard.sh	production
 CODEX_HOME	CODEX_HOME	scripts/install-guards-codex.sh	production
 CODEX_HOME	CODEX_HOME	scripts/lib/doctor-host-codex.sh	production
-CODEX_HOME	CODEX_HOME	scripts/lib/host-manifest.sh	production
 CODEX_HOME	CODEX_HOME	scripts/uninstall-guards-codex.sh	production
 DRY_RUN	DRY_RUN	install.sh	production
 DRY_RUN	DRY_RUN	scripts/archive-closed-backlog.sh	production
@@ -68,6 +69,9 @@ DRY_RUN	DRY_RUN	scripts/uninstall-guards.sh	production
 DRY_RUN	DRY_RUN	scripts/uninstall-host-opencode.sh	production
 DRY_RUN	DRY_RUN	uninstall.sh	production
 GATE_RUN_DIR_OVERRIDE	GATE_RUN_DIR_OVERRIDE	scripts/pr-gate.sh	production
+HOME	HOME	hosts/claude/lib/path-resolver.sh	production
+HOME	HOME	hosts/codex/lib/path-resolver.sh	production
+HOME	HOME	hosts/opencode/lib/path-resolver.sh	production
 HOME	HOME	install.sh	production
 HOME	HOME	scripts/doctor.sh	production
 HOME	HOME	scripts/guard-executor-write.sh	production
@@ -81,7 +85,6 @@ HOME	HOME	scripts/lib/allowlist.sh	production
 HOME	HOME	scripts/lib/doctor-host-claude.sh	production
 HOME	HOME	scripts/lib/doctor-host-codex.sh	production
 HOME	HOME	scripts/lib/gate-workspace.sh	production
-HOME	HOME	scripts/lib/host-manifest.sh	production
 HOME	HOME	scripts/lib/memory-dir.sh	production
 HOME	HOME	scripts/lib/memory.sh	production
 HOME	HOME	scripts/lib/pmctl-artifacts.sh	production
@@ -310,6 +313,6 @@ TMPDIR	TMPDIR	scripts/lib/pmctl-artifacts.sh	production
 TMPDIR	TMPDIR	scripts/lib/pmctl-pm.sh	production
 TMPDIR	TMPDIR	scripts/lib/portable.sh	production
 TMPDIR	TMPDIR	scripts/pr-gate.sh	production
-XDG_CONFIG_HOME	XDG_CONFIG_HOME	scripts/lib/host-manifest.sh	production
+XDG_CONFIG_HOME	XDG_CONFIG_HOME	hosts/opencode/lib/path-resolver.sh	production
 XDG_DATA_HOME	XDG_DATA_HOME	scripts/lib/state-paths.sh	production
 XDG_RUNTIME_DIR	XDG_RUNTIME_DIR	scripts/lib/detached-launch.sh	production

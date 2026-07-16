@@ -155,7 +155,10 @@ add_suite() {
 
 mark_full() {
   ESCALATE_FULL=1
-  [[ -z "$ESCALATE_REASON" ]] && ESCALATE_REASON="$1"
+  if [[ -z "$ESCALATE_REASON" ]]; then
+    ESCALATE_REASON="$1"
+  fi
+  return 0
 }
 
 map_path() {

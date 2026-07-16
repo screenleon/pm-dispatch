@@ -42,14 +42,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 # shellcheck source=scripts/lib/prompt-context-timeouts.sh
 . "$SCRIPT_DIR/lib/prompt-context-timeouts.sh"
 
-# Use the same canonical Claude runtime config root as install/doctor/guards.
-# CLAUDE_HOME remains a compatibility alias for standalone legacy callers.
-if [[ -n "${CLAUDE_CONFIG_DIR:-}" && -n "${CLAUDE_HOME:-}" && "$CLAUDE_CONFIG_DIR" != "$CLAUDE_HOME" ]]; then
-  printf 'install-guards: CLAUDE_CONFIG_DIR and legacy CLAUDE_HOME disagree\n' >&2
+# Use the same host-owned canonical/default/legacy contract as base install.
+# shellcheck source=hosts/claude/lib/path-resolver.sh
+. "$SCRIPT_DIR/../hosts/claude/lib/path-resolver.sh"
+_claude_root="$(claude_host_config_root 2>&1)" || {
+  printf 'install-guards: %s\n' "$_claude_root" >&2
   exit 2
-fi
-CLAUDE_CONFIG_DIR="${CLAUDE_CONFIG_DIR:-${CLAUDE_HOME:-$HOME/.claude}}"
+}
+CLAUDE_CONFIG_DIR="$_claude_root"
 CLAUDE_HOME="$CLAUDE_CONFIG_DIR"
+unset _claude_root
 
 # shellcheck source=scripts/lib/portable.sh
 . "$SCRIPT_DIR/lib/portable.sh"

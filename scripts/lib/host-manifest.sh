@@ -14,8 +14,8 @@
 #   host_manifest_file <name>                 -> prints hosts/<name>/host.yaml path (may not exist)
 #   host_manifest_scalar <file> <key>         -> top-level scalar field value (e.g. host_binary, doctor_module)
 #   host_manifest_install_targets <file>      -> TSV rows: id\tpath\tformat\tmanaged (one per install_targets entry)
-#   host_manifest_expand_path <path_template> -> expands $CODEX_HOME/$CLAUDE_CONFIG_DIR/$XDG_CONFIG_HOME
-#                                                 against env (with the same defaults doctor/install already use)
+#   host_manifest_expand_path <repo_root> <host> <path_template>
+#                                             -> delegates expansion to the host-owned resolver
 
 host_manifest_names() {
   local repo_root="$1" dir name
@@ -73,18 +73,39 @@ host_manifest_install_targets() {
   ' "$file"
 }
 
-# Bounded substitution: only the host-home env vars the schema actually uses
-# (docs/host-contract.md "No maintainer-local layout assumptions"). Not a
-# generic template engine on purpose — an unrecognized $VAR in a manifest
-# path is left as a literal, not silently eval'd (manifest data must never
-# reach a shell eval).
+# Manifest-driven delegation keeps host environment names, defaults, aliases,
+# and conflict rules out of this shared reader. Resolver modules are trusted
+# repo files declared by authored manifests; both their path and callable name
+# are validated before sourcing/invocation. Manifest data never reaches eval.
 host_manifest_expand_path() {
-  local path="$1"
-  local codex_home="${CODEX_HOME:-$HOME/.codex}"
-  local claude_config_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
-  local xdg_config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
-  path="${path//\$CODEX_HOME/$codex_home}"
-  path="${path//\$CLAUDE_CONFIG_DIR/$claude_config_dir}"
-  path="${path//\$XDG_CONFIG_HOME/$xdg_config_home}"
-  printf '%s\n' "$path"
+  local repo_root="$1" host="$2" path="$3"
+  local manifest module resolver
+  manifest="$(host_manifest_file "$repo_root" "$host")"
+  [[ -f "$manifest" ]] || {
+    printf 'host manifest: unknown host for path expansion: %s\n' "$host" >&2
+    return 2
+  }
+  module="$(host_manifest_scalar "$manifest" path_resolver_module)"
+  resolver="$(host_manifest_scalar "$manifest" path_resolver_function)"
+  case "$module" in
+    ''|null|/*|../*|*/../*|*/..)
+      printf 'host manifest: unsafe path_resolver_module for %s: %s\n' "$host" "$module" >&2
+      return 2
+      ;;
+  esac
+  [[ "$resolver" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] || {
+    printf 'host manifest: unsafe path_resolver_function for %s: %s\n' "$host" "$resolver" >&2
+    return 2
+  }
+  [[ -f "$repo_root/$module" ]] || {
+    printf 'host manifest: path resolver module for %s does not exist: %s\n' "$host" "$module" >&2
+    return 2
+  }
+  # shellcheck disable=SC1090
+  . "$repo_root/$module"
+  declare -F "$resolver" >/dev/null 2>&1 || {
+    printf 'host manifest: path resolver function for %s is not defined: %s\n' "$host" "$resolver" >&2
+    return 2
+  }
+  "$resolver" "$path"
 }

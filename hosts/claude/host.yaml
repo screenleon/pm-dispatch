@@ -157,5 +157,7 @@ permissions_surface:
 # Host-module wiring. Claude remains the byte-compatible base install path,
 # so it is not independently dispatched by the optional-host write loop.
 doctor_module: scripts/lib/doctor-host-claude.sh
+path_resolver_module: hosts/claude/lib/path-resolver.sh
+path_resolver_function: claude_host_resolve_path
 install_module: null
 uninstall_module: null

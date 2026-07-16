@@ -118,7 +118,7 @@ test_host_manifest_expand_path_uses_env_override() {
   local name="host-manifest-expand-path-uses-env-override"
   should_run "$name" || return 0
   local expanded
-  expanded="$(CODEX_HOME=/tmp/fake-codex-home host_manifest_expand_path '$CODEX_HOME/hooks.json')"
+  expanded="$(CODEX_HOME=/tmp/fake-codex-home host_manifest_expand_path "$REPO_ROOT" codex '$CODEX_HOME/hooks.json')"
   [[ "$expanded" == "/tmp/fake-codex-home/hooks.json" ]] && pass "$name" || fail "$name" "got: $expanded"
 }
 
@@ -126,7 +126,7 @@ test_host_manifest_expand_path_default_when_unset() {
   local name="host-manifest-expand-path-default-when-unset"
   should_run "$name" || return 0
   local expanded
-  expanded="$(unset CODEX_HOME; host_manifest_expand_path '$CODEX_HOME/hooks.json')"
+  expanded="$(unset CODEX_HOME; host_manifest_expand_path "$REPO_ROOT" codex '$CODEX_HOME/hooks.json')"
   [[ "$expanded" == "$HOME/.codex/hooks.json" ]] && pass "$name" || fail "$name" "got: $expanded"
 }
 

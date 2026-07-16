@@ -10,6 +10,8 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Host-owned config-root resolvers (CC-489 Phase 2).** Claude, Codex, and OpenCode manifests now declare host-local path resolver modules. The shared manifest reader safely delegates target expansion without naming host environment variables or defaults; Claude install, uninstall, doctor, and hook wiring share one canonical/legacy conflict contract. Regression coverage locks unset/empty roots, hostile and whitespace-bearing `HOME`, alias conflicts, and relocated fixtures. No existing production file is relocated in this slice.
+
 - **Codex command-local PM guard bypass (CC-496).** The Codex `PreToolUse` transport now recognizes an exact leading `PM_GUARD_PM_BASH=off` assignment for one audited hook call, matching the remediation printed by `guard-pm-bash.sh`; later assignments, case variants, and subsequent calls remain denied.
 
 - **Project-scoped canonical memory config (CC-490).** Replaces the unsafe machine-wide `dispatch.memory_dir` selector with `memory.projects.<stable-project-key>.dir`. `pmctl memory config set|migrate|lint` manages mappings atomically, diagnoses deprecated global config, and keeps unmatched repositories on their own legacy discovery or unavailable path. Invalid explicit selections now fail closed across resolve, context indexing, doctor, and mutating maintenance commands; regression coverage proves an unmatched append or invalid maintenance operation cannot mutate another project's canonical store.
@@ -63,6 +65,8 @@ Versions follow [Semantic Versioning](https://semver.org/).
 - **Shared adapter lib: `scripts/lib/dispatch-common.sh` (CC-422, PR#347).** Extracted five shared adapter init helpers (`require_brief_file`, `require_working_dir`, `load_model_aliases`, `resolve_timeout`, `init_run_dir`) into a single sourced lib. All three adapters now share a single init sequence.
 
 ### Fixed
+
+- **Repeated full-suite escalation in the affected-test planner (CC-489).** `mark_full` now remains successful after the first high-fanout path, so a diff containing both `install.sh` and `uninstall.sh` no longer exits silently under `set -e` before producing test evidence. A focused regression locks the repeated-escalation case.
 
 - **`uninstall.sh` blast-radius guard: exact managed-root path rejection (CC-210, PR#340).** Added `[[ "$dst" == "$managed_root" ]]` precise path check to prevent the managed root itself from being deleted during uninstall. Added regression test case.
 

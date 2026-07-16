@@ -68,9 +68,9 @@ done < <(host_manifest_install_targets "$manifest")
 
 [[ -n "$hooks_path_template" ]] || { echo "uninstall-guards-codex: no managed codex-hooks-json target declared — nothing to do"; exit 0; }
 
-hooks_file="$(host_manifest_expand_path "$hooks_path_template")"
+hooks_file="$(host_manifest_expand_path "$REPO_ROOT" codex "$hooks_path_template")"
 instructions_file=""
-[[ -n "$instructions_path_template" ]] && instructions_file="$(host_manifest_expand_path "$instructions_path_template")"
+[[ -n "$instructions_path_template" ]] && instructions_file="$(host_manifest_expand_path "$REPO_ROOT" codex "$instructions_path_template")"
 
 if [[ ! -f "$hooks_file" && ( -z "$instructions_file" || ! -f "$instructions_file" ) ]]; then
   echo "uninstall-guards-codex: $hooks_file not found — nothing to do"

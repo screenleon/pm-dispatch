@@ -33,14 +33,16 @@ while [[ $# -gt 0 ]]; do
 done
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
-# Mirror install.sh's canonical config-root resolution. CLAUDE_HOME is a legacy
-# alias only; conflicting explicit roots are unsafe and rejected.
-if [[ -n "${CLAUDE_CONFIG_DIR:-}" && -n "${CLAUDE_HOME:-}" && "$CLAUDE_CONFIG_DIR" != "$CLAUDE_HOME" ]]; then
-  printf 'uninstall: CLAUDE_CONFIG_DIR and legacy CLAUDE_HOME disagree: %s != %s\n' "$CLAUDE_CONFIG_DIR" "$CLAUDE_HOME" >&2
+# Mirror install.sh through the same host-owned resolver.
+# shellcheck source=hosts/claude/lib/path-resolver.sh
+. "$REPO_ROOT/hosts/claude/lib/path-resolver.sh"
+_claude_root="$(claude_host_config_root 2>&1)" || {
+  printf 'uninstall: %s\n' "$_claude_root" >&2
   exit 2
-fi
-CLAUDE_CONFIG_DIR="${CLAUDE_CONFIG_DIR:-${CLAUDE_HOME:-$HOME/.claude}}"
+}
+CLAUDE_CONFIG_DIR="$_claude_root"
 CLAUDE_HOME="$CLAUDE_CONFIG_DIR"
+unset _claude_root
 
 # shellcheck disable=SC1091
 . "$REPO_ROOT/scripts/lib/portable.sh"

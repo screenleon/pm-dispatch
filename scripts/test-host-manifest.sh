@@ -36,6 +36,8 @@ REQUIRED_KEYS=(
   guard_bindings
   permissions_surface
   doctor_module
+  path_resolver_module
+  path_resolver_function
   uninstall_module
 )
 
@@ -267,6 +269,26 @@ validate_manifest() {
     echo "doctor_module '$module' not found under repo root"
   fi
 
+  # --- path resolver module/function must be safe and callable ---------------
+  module="$(grep -E '^path_resolver_module:' "$manifest" | head -1 | sed 's/^path_resolver_module:[[:space:]]*//;s/[[:space:]]*#.*$//')"
+  local resolver
+  resolver="$(grep -E '^path_resolver_function:' "$manifest" | head -1 | sed 's/^path_resolver_function:[[:space:]]*//;s/[[:space:]]*#.*$//')"
+  if [[ -z "$module" ]]; then
+    echo "path_resolver_module is empty"
+  elif [[ "$module" == /* || "$module" == ../* || "$module" == */../* || "$module" == */.. ]]; then
+    echo "path_resolver_module '$module' is not a safe repo-relative path"
+  elif [[ ! -f "$REPO_ROOT/$module" ]]; then
+    echo "path_resolver_module '$module' not found under repo root"
+  fi
+  if [[ ! "$resolver" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]; then
+    echo "path_resolver_function '$resolver' is not a safe shell function identifier"
+  elif [[ -f "$REPO_ROOT/$module" ]]; then
+    # shellcheck disable=SC1090
+    . "$REPO_ROOT/$module"
+    declare -F "$resolver" >/dev/null 2>&1 \
+      || echo "path_resolver_function '$resolver' not found in '$module'"
+  fi
+
   # --- write modules must be null or existing repo-relative files ------------
   local module_key
   for module_key in install_module uninstall_module; do
@@ -428,6 +450,12 @@ run_negative_case "permissions config_target referencing unknown id" \
 run_negative_case "doctor_module pointing at missing file" \
   's|^doctor_module:.*|doctor_module: scripts/lib/doctor-host-missing.sh|' \
   "doctor_module 'scripts/lib/doctor-host-missing.sh' not found"
+run_negative_case "path_resolver_module pointing at missing file" \
+  's|^path_resolver_module:.*|path_resolver_module: hosts/codex/lib/missing-resolver.sh|' \
+  "path_resolver_module 'hosts/codex/lib/missing-resolver.sh' not found"
+run_negative_case "path_resolver_function unsafe identifier" \
+  's|^path_resolver_function:.*|path_resolver_function: codex-resolve;touch|' \
+  "path_resolver_function 'codex-resolve;touch' is not a safe shell function identifier"
 run_negative_case "uninstall_module non-null pointing at missing file" \
   's|^uninstall_module:.*|uninstall_module: scripts/lib/uninstall-host-missing.sh|' \
   "uninstall_module 'scripts/lib/uninstall-host-missing.sh' not found"

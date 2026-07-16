@@ -12,6 +12,8 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 . "$SCRIPT_DIR/lib/test-harness.sh"
 # shellcheck source=scripts/lib/portable.sh
 . "$SCRIPT_DIR/lib/portable.sh"
+# shellcheck source=scripts/lib/host-manifest.sh
+. "$SCRIPT_DIR/lib/host-manifest.sh"
 th_init "test-host-write-parity" "$@"
 
 claude_fingerprint() {
@@ -54,8 +56,9 @@ run_uninstall() {
 
 make_relocated_opencode_fixture() {
   local root="$1"
-  mkdir -p "$root/hosts/opencode/bin" "$root/scripts/lib" "$root/cli"
+  mkdir -p "$root/hosts/opencode/bin" "$root/hosts/opencode/lib" "$root/scripts/lib" "$root/cli"
   cp "$REPO_ROOT/hosts/opencode/host.yaml" "$root/hosts/opencode/host.yaml"
+  cp "$REPO_ROOT/hosts/opencode/lib/path-resolver.sh" "$root/hosts/opencode/lib/path-resolver.sh"
   cp "$REPO_ROOT/scripts/lib/host-manifest.sh" "$root/scripts/lib/host-manifest.sh"
   cp "$REPO_ROOT/scripts/lib/host-write.sh" "$root/scripts/lib/host-write.sh"
   cp "$REPO_ROOT/scripts/lib/portable.sh" "$root/scripts/lib/portable.sh"
@@ -236,9 +239,91 @@ test_relative_repo_root_fails_before_module_execution() {
   fi
 }
 
+# Behavior: every host owns its path environment/default contract and preserves
+# whitespace while treating an empty explicit root like an unset root.
+# Steps: invoke the manifest-driven shared entry for all three hosts with
+# isolated hostile HOME values, then compare exact paths.
+test_host_resolvers_handle_unset_empty_spaces_and_hostile_home() {
+  local name="host-resolvers-handle-unset-empty-spaces-and-hostile-home"
+  should_run "$name" || return 0
+  local home="$tmp_root/hostile home [literal]" claude codex opencode
+  mkdir -p "$home"
+  claude="$(HOME="$home" CLAUDE_CONFIG_DIR='' CLAUDE_HOME='' \
+    host_manifest_expand_path "$REPO_ROOT" claude "\$CLAUDE_CONFIG_DIR/settings.json")"
+  codex="$(HOME="$home" CODEX_HOME='' \
+    host_manifest_expand_path "$REPO_ROOT" codex "\$CODEX_HOME/hooks.json")"
+  opencode="$(HOME="$home" XDG_CONFIG_HOME='' \
+    host_manifest_expand_path "$REPO_ROOT" opencode "\$XDG_CONFIG_HOME/opencode/opencode.json")"
+  if [[ "$claude" == "$home/.claude/settings.json" \
+      && "$codex" == "$home/.codex/hooks.json" \
+      && "$opencode" == "$home/.config/opencode/opencode.json" ]]; then
+    pass "$name"
+  else
+    fail "$name" "unexpected defaults: claude=$claude codex=$codex opencode=$opencode"
+  fi
+}
+
+# Behavior: Claude's canonical root and legacy alias have one fail-closed
+# conflict rule, while equal values and legacy-only callers remain compatible.
+# Steps: exercise conflict/equal/legacy-only combinations through the shared
+# manifest entry and assert no conflicting path is returned.
+test_claude_resolver_legacy_conflict_contract() {
+  local name="claude-resolver-legacy-conflict-contract"
+  should_run "$name" || return 0
+  local canonical="$tmp_root/claude canonical" legacy="$tmp_root/claude legacy"
+  local out rc=0 equal legacy_only
+  out="$(HOME="$tmp_root/operator" CLAUDE_CONFIG_DIR="$canonical" CLAUDE_HOME="$legacy" \
+    host_manifest_expand_path "$REPO_ROOT" claude "\$CLAUDE_CONFIG_DIR/settings.json" 2>&1)" || rc=$?
+  equal="$(HOME="$tmp_root/operator" CLAUDE_CONFIG_DIR="$canonical" CLAUDE_HOME="$canonical" \
+    host_manifest_expand_path "$REPO_ROOT" claude "\$CLAUDE_CONFIG_DIR/settings.json")"
+  legacy_only="$(HOME="$tmp_root/operator" CLAUDE_CONFIG_DIR='' CLAUDE_HOME="$legacy" \
+    host_manifest_expand_path "$REPO_ROOT" claude "\$CLAUDE_CONFIG_DIR/settings.json")"
+  if [[ "$rc" -eq 2 && "$out" == *"CLAUDE_CONFIG_DIR and legacy CLAUDE_HOME disagree"* \
+      && "$equal" == "$canonical/settings.json" \
+      && "$legacy_only" == "$legacy/settings.json" ]]; then
+    pass "$name"
+  else
+    fail "$name" "conflict contract mismatch: rc=$rc out=$out equal=$equal legacy=$legacy_only"
+  fi
+}
+
+# Behavior: the shared reader contains no host environment names or defaults.
+# Steps: inspect the function's source file and require all three manifest
+# declarations to point at existing host-owned resolver modules/functions.
+test_shared_expander_is_host_agnostic() {
+  local name="shared-expander-is-host-agnostic"
+  should_run "$name" || return 0
+  local host manifest module resolver failures=""
+  if grep -Eq 'CODEX_HOME|CLAUDE_CONFIG_DIR|CLAUDE_HOME|XDG_CONFIG_HOME' "$REPO_ROOT/scripts/lib/host-manifest.sh"; then
+    fail "$name" "shared manifest reader still names a host environment variable"
+    return
+  fi
+  if declare -f host_manifest_expand_path | grep -Eq '(^|[^[:alnum:]_])eval([[:space:]]|$)'; then
+    fail "$name" "shared manifest expander delegates through eval"
+    return
+  fi
+  for host in claude codex opencode; do
+    manifest="$REPO_ROOT/hosts/$host/host.yaml"
+    module="$(host_manifest_scalar "$manifest" path_resolver_module)"
+    resolver="$(host_manifest_scalar "$manifest" path_resolver_function)"
+    [[ -f "$REPO_ROOT/$module" ]] || failures+="$host:missing-module;"
+    # shellcheck disable=SC1090
+    . "$REPO_ROOT/$module"
+    declare -F "$resolver" >/dev/null 2>&1 || failures+="$host:missing-function;"
+  done
+  if [[ -z "$failures" ]]; then
+    pass "$name"
+  else
+    fail "$name" "$failures"
+  fi
+}
+
 test_claude_surface_byte_compatible_with_optional_hosts
 test_claude_uninstall_surface_stays_symmetric
 test_relocated_module_uses_explicit_repo_root
 test_relocated_codex_module_uses_explicit_repo_root
 test_relative_repo_root_fails_before_module_execution
+test_host_resolvers_handle_unset_empty_spaces_and_hostile_home
+test_claude_resolver_legacy_conflict_contract
+test_shared_expander_is_host_agnostic
 th_summary

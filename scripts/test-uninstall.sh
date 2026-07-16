@@ -695,10 +695,11 @@ test_hooks_failure_preserves_manifest() {
   local mock_repo="$tmp_root/mock-repo19"
   local src19 dst19 manifest19 rc
   mkdir -p "$fake_home/.claude/agents" "$fake_home/.claude/.pm-dispatch"
-  mkdir -p "$mock_repo/scripts/lib"
+  mkdir -p "$mock_repo/scripts/lib" "$mock_repo/hosts/claude/lib"
 
   cp "$REPO_ROOT/uninstall.sh" "$mock_repo/uninstall.sh"
   cp "$REPO_ROOT/scripts/lib/portable.sh" "$mock_repo/scripts/lib/portable.sh"
+  cp "$REPO_ROOT/hosts/claude/lib/path-resolver.sh" "$mock_repo/hosts/claude/lib/path-resolver.sh"
 
   printf '#!/usr/bin/env bash\nexit 1\n' > "$mock_repo/scripts/uninstall-guards.sh"
   chmod +x "$mock_repo/scripts/uninstall-guards.sh"
@@ -819,11 +820,12 @@ test_symlink_parent_no_realpath_rejected() {
   local mock_repo="$tmp_root/mock-repo22"
   local outside_dir outside_file dst22 sha22 manifest22
   mkdir -p "$fake_home/.claude/agents" "$fake_home/.claude/.pm-dispatch"
-  mkdir -p "$mock_repo/scripts/lib" "$mock_repo/bin"
+  mkdir -p "$mock_repo/scripts/lib" "$mock_repo/hosts/claude/lib" "$mock_repo/bin"
 
   # Set up a mock repo with a real uninstall.sh, portable helpers, and working hooks.
   cp "$REPO_ROOT/uninstall.sh" "$mock_repo/uninstall.sh"
   cp "$REPO_ROOT/scripts/lib/portable.sh" "$mock_repo/scripts/lib/portable.sh"
+  cp "$REPO_ROOT/hosts/claude/lib/path-resolver.sh" "$mock_repo/hosts/claude/lib/path-resolver.sh"
   printf '#!/usr/bin/env bash\nexit 0\n' > "$mock_repo/scripts/uninstall-guards.sh"
   chmod +x "$mock_repo/scripts/uninstall-guards.sh"
 

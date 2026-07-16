@@ -155,7 +155,7 @@ _doctor_host_codex_manifest_parity() {
   local id path fmt managed expanded
   while IFS=$'\t' read -r id path fmt managed; do
     [[ "$managed" == "true" ]] || continue
-    expanded="$(host_manifest_expand_path "$path")"
+    expanded="$(host_manifest_expand_path "$REPO_ROOT" codex "$path")"
     if _doctor_host_codex_target_installed "$expanded" "$fmt"; then
       present+=("$id")
     else
