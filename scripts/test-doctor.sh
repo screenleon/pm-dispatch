@@ -1163,6 +1163,34 @@ case_doctor_loader_rejects_missing_entrypoint() {
     'doctor_host_other_run() { :; }'
 }
 
+# Behavior: a manifest-loader failure keeps --json stdout valid JSONL with a failing summary.
+# Steps: declare an unsafe module, capture stdout/stderr separately, and validate both contracts.
+case_doctor_loader_failure_json_summary() {
+  local name="doctor-loader-failure-json-summary"
+  should_run "$name" || return 0
+  if ! command -v jq >/dev/null 2>&1; then
+    pass "$name (jq not on PATH - validation skipped)"
+    return
+  fi
+  local fake_repo="$tmp_root/$name/repo" out="$tmp_root/$name/out" err="$tmp_root/$name/err"
+  local status=0 line invalid=0
+  mkdir -p "$fake_repo/hosts/badpath"
+  printf 'doctor_module: ../escape.sh\n' > "$fake_repo/hosts/badpath/host.yaml"
+  bash "$DOCTOR" --json --repo "$fake_repo" >"$out" 2>"$err" || status=$?
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    jq -e . >/dev/null 2>&1 <<< "$line" || invalid=1
+  done < "$out"
+  if [[ "$status" -eq 1 && "$invalid" -eq 0 ]] \
+      && jq -se 'any(.check == "host-modules" and .status == "fail")
+                  and any(.summary == true and .fail == 1 and .exit_code == 1)' "$out" >/dev/null \
+      && grep -q 'unsafe doctor_module path' "$err"; then
+    pass "$name"
+  else
+    fail "$name" "expected JSONL fail record + summary; status=$status stdout=$(<"$out") stderr=$(<"$err")"
+  fi
+}
+
 case_doctor_hook_inventory_parity() {
   # Parity guard: managed hook basenames in doctor's claude-host module must
   # match those in install-guards.sh (the inventory lives in
@@ -2225,6 +2253,7 @@ case_doctor_loader_rejects_unsafe_module_path
 case_doctor_loader_rejects_empty_module_path
 case_doctor_loader_rejects_missing_module
 case_doctor_loader_rejects_missing_entrypoint
+case_doctor_loader_failure_json_summary
 case_doctor_hook_inventory_parity
 case_doctor_capability_json_fields
 case_doctor_claude_manifest_consistency_drift_fails

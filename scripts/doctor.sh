@@ -174,6 +174,18 @@ emit_check() {
   esac
 }
 
+# Emit the final doctor envelope consistently for normal completion and
+# fail-fast setup paths. JSON mode stays JSONL-only on stdout.
+emit_summary() {
+  local exit_code="$1"
+  if [[ "$JSON" -eq 1 ]]; then
+    printf '{"summary":true,"ok":%d,"warn":%d,"fail":%d,"exit_code":%d}\n' \
+      "$_OK_COUNT" "$_WARN_COUNT" "$_FAIL_COUNT" "$exit_code"
+  else
+    printf '\nSummary: %d OK, %d WARN, %d FAIL\n' "$_OK_COUNT" "$_WARN_COUNT" "$_FAIL_COUNT"
+  fi
+}
+
 # Capability record emitter for host modules. Same status envelope and
 # counters as emit_check, plus the structured capability object fields the
 # host axis reports on (provider/enforcement/coverage/stability/confidence),
@@ -508,17 +520,18 @@ main() {
       emit_check "repo-root" "fail" \
         "copy-mode install: repo root could not be inferred (got: $REPO_ROOT)" \
         "re-run with: bash $(basename "${BASH_SOURCE[0]}") --repo <path-to-pm-dispatch-checkout>"
-      if [[ "$JSON" -eq 1 ]]; then
-        printf '{"summary":true,"ok":%d,"warn":%d,"fail":%d,"exit_code":1}\n' \
-          "$_OK_COUNT" "$_WARN_COUNT" "$_FAIL_COUNT"
-      else
-        printf '\nSummary: %d OK, %d WARN, %d FAIL\n' "$_OK_COUNT" "$_WARN_COUNT" "$_FAIL_COUNT"
-      fi
+      emit_summary 1
       exit 1
     fi
   fi
 
-  load_doctor_host_modules || exit 1
+  if ! load_doctor_host_modules; then
+    emit_check "host-modules" "fail" \
+      "host manifest doctor modules could not be loaded" \
+      "repair the failing hosts/<name>/host.yaml doctor_module declaration"
+    emit_summary 1
+    exit 1
+  fi
 
   # Native Windows Git Bash is not an officially supported platform; WSL2
   # (treated as Linux) is the supported path. Surface that up front so the checks
@@ -551,12 +564,7 @@ main() {
 
   local ec=0
   [[ $_FAIL_COUNT -gt 0 ]] && ec=1
-  if [[ "$JSON" -eq 1 ]]; then
-    printf '{"summary":true,"ok":%d,"warn":%d,"fail":%d,"exit_code":%d}\n' \
-      "$_OK_COUNT" "$_WARN_COUNT" "$_FAIL_COUNT" "$ec"
-  else
-    printf '\nSummary: %d OK, %d WARN, %d FAIL\n' "$_OK_COUNT" "$_WARN_COUNT" "$_FAIL_COUNT"
-  fi
+  emit_summary "$ec"
 
   exit "$ec"
 }
