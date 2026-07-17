@@ -163,7 +163,71 @@
 
 > **設計依據**：151 個 implementation/fixture path 已搬遷且 full runner 79 passed，但 compatibility shims 仍掩蓋 docs/CI/backlog 漂移；同時 root/area help 缺失使現有能力對使用者不可發現。
 
-### Phase 1 — migration surface closure
+> **交付記錄邊界**：下列 Phase 0–5 是 `v0.8.0` tag（2026-07-04）之後已合併到 `main`、但尚未形成下一個 release tag 的成果，不代表 v0.9.0 已 release。Phase 6 起才是目前 remaining scope。
+
+### Phase 0 — host abstraction 與跨 host PM surface（✅ 已交付）
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-436 / CC-437 / CC-438 | Codex PreToolUse probe、host-aware doctor、host manifest schema v1 | ✅ pr:#372/#374/#375 |
+| CC-457 | Claude host manifest reference instance，讓三 host 使用同一 capability schema | ✅ pr:#381 |
+| CC-445 / CC-448 | manifest-driven install/doctor/guard write path；OpenCode 作 N=2 host 驗收 | ✅ pr:#384/#395 |
+| CC-471 / CC-473 | 確認 Codex 無 Claude-style 互動 subagent 入口，交付 batch-only `pmctl pm prepare/run` | ✅ spike + pr:#391 |
+| CC-480 | Claude→Codex/OpenCode host-switch memory continuity 與 deterministic hydration | ✅ pr:#394 |
+
+### Phase 1 — context 與 canonical memory correctness（✅ 已交付）
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-455 | context plane 預設跟隨 CWD git toplevel，不再誤打 pm-dispatch 自身 DB | ✅ pr:#371 |
+| CC-459 | prompt-scan retrieval reflex、PM Retrieve step、零敏感 prompt telemetry | ✅ pr:#379 |
+| CC-483 | Claude/Codex/OpenCode 統一使用 canonical `pmctl memory` resolver/writer | ✅ pr:#399 |
+| CC-484 | JapanJob／qa-testing-rules context refresh 與 marker round-trip 修復 | ✅ pr:#397 |
+| CC-488 | Codex prompt/session lifecycle hooks、explicit canonical update seam、host provenance | ✅ pr:#401 |
+| CC-490 | project-scoped explicit memory config，修復跨 repo canonical bleed | ✅ pr:#406 |
+| CC-492 | Claude UserPromptSubmit timeout envelope 與殘缺 context DB 復原 | ✅ pr:#403 |
+
+### Phase 2 — gate、runner 與操作安全（✅ 已交付）
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-458 | gate run/wait 的 `--cd` 預設、可複製 wait hint、verdict/exit contract | ✅ pr:#378 |
+| CC-469 | Codex reviewer sandbox 使用 absolute `pmctl` path | ✅ pr:#388 |
+| CC-470 | sequential gate timeout 止血、test-first fail-fast、慢 suite enforcement | ✅ pr:#383 |
+| CC-474 | dispatch/gate reasoning effort 獨立參數化，預設 medium | ✅ pr:#387 |
+| CC-477 | guard memory usage sidecar 並發 lost-update 修復 | ✅ pr:#396 |
+| CC-481 / CC-482 | direct-impact iteration vs final evidence 分層、reviewer 最小讀取權限 | ✅ pr:#397 |
+| CC-485 | 工具能力與 maintainer policy 分離；固定本 repo release procedure | ✅ pr:#398 |
+| CC-487 | GitHub Actions `test-guards` bounded diagnostics 與非確定性 hang hardening | ✅ pr:#402 |
+| CC-491 | reusable pre-flight evidence、suite results、tree fingerprint、reviewer reuse contract | ✅ pr:#408；full 79 passed |
+| CC-496 | Codex command guard one-turn bypass transport 與 audit contract | ✅ pr:#407 |
+
+### Phase 3 — model/adapter compatibility maintenance（✅ 已交付）
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-475 | Claude sonnet alias 對齊 `claude-sonnet-5` | ✅ pr:#389 |
+| CC-476 | OpenCode headless deny hang root-cause spike、timeout/permission workaround | ✅ pr:#390 |
+| CC-478 | Codex default alias 對齊 gpt-5.6 系列 | ✅ pr:#392 |
+| CC-479 | model alias 表改名為 Codex-specific，補回 Claude legacy aliases | ✅ pr:#393 |
+
+### Phase 4 — core/runtime definition 與 domain migration（✅ 已交付）
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-451 | core enum 單一來源、state writer runtime schema validation | ✅ pr:#409 |
+| CC-489 | host write ABI、path resolver、OpenCode/Codex/Claude modules、151 個 implementation/fixture path 搬遷與 19-shim ratchet | ✅ pr:#405/#410–#415 |
+
+### Phase 5 — supporting hygiene（✅ 已交付）
+
+| 票／PR | 摘要 | 狀態 |
+|--------|------|------|
+| CC-004 / pr:#369 | `test-pr-gate.sh` docstring 統一與 docstring ratchet | ✅ |
+| pr:#376 | docs-freshness milestone heading-only regression 修復 | ✅ |
+| pr:#386 | 19 張 terminal backlog tickets canonical archive sweep | ✅ |
+| pr:#400 | affected-test registered-suite selection 與 maintainability-review/gate workflow ordering hardening | ✅（殘餘 planner bug留 CC-486） |
+
+### Phase 6 — migration surface closure（目前 working set）
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
@@ -171,13 +235,13 @@
 | CC-456 | 移除 maintainer-local `~/github` operational assumptions | 🔵 |
 | CC-454 | canonical ShellCheck domains + ignore ratchet + CI/local parity | 🔵 |
 
-### Phase 2 — user-facing CLI discovery
+### Phase 7 — user-facing CLI discovery（目前 working set）
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
 | CC-460 | root/area/leaf help、command registry、`commands --json`、router/help/README parity | 🔵 |
 
-### Parallel audit
+### Parallel audit（不阻塞 Phase 6/7）
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
@@ -187,7 +251,7 @@
 
 - CC-495/498 之後的 lifecycle/state 能力不塞入 v0.9.0。
 - public posture、contract freeze、RC 與 v1.0 tag 均不屬本版。
-- 已交付的 Codex/OpenCode host baseline、canonical memory continuity、CC-451、CC-489 不再重複列成 active phase。
+- Phase 0–5 只記錄已合併 baseline，不重新開工、不占用 Current working set。
 
 ---
 
