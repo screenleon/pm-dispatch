@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 
-pmctl_discovery_die() {
+pmctl_command_catalog_die() {
   printf 'pmctl: %s\n' "$*" >&2
   return 2
 }
 
-pmctl_discovery_require_registry() {
+pmctl_command_catalog_require_registry() {
   [[ -r "${PMCTL_COMMAND_REGISTRY:-}" ]] || {
-    pmctl_discovery_die "command registry unavailable"
+    pmctl_command_catalog_die "command registry unavailable"
     return 2
   }
 }
 
-pmctl_discovery_root_help() {
-  pmctl_discovery_require_registry || return
+pmctl_command_catalog_root_help() {
+  pmctl_command_catalog_require_registry || return
   cat <<'EOF'
 pmctl — project-maintenance runtime CLI
 
@@ -41,11 +41,11 @@ Run "pmctl help <area>" to discover the next level.
 EOF
 }
 
-pmctl_discovery_area_help() {
+pmctl_command_catalog_area_help() {
   local area="$1" direct
-  pmctl_discovery_require_registry || return
+  pmctl_command_catalog_require_registry || return
   if ! awk -F '\t' -v area="$area" 'NR > 1 { split($1, p, " "); if (p[1] == area) found=1 } END { exit !found }' "$PMCTL_COMMAND_REGISTRY"; then
-    pmctl_discovery_unknown "$area"
+    pmctl_command_catalog_unknown "$area"
     return 2
   fi
   printf '%s — pmctl command area\n\n' "$area"
@@ -67,13 +67,13 @@ pmctl_discovery_area_help() {
   fi
 }
 
-pmctl_discovery_leaf_help() {
+pmctl_command_catalog_leaf_help() {
   local path="$1" row
   [[ -z "${2:-}" ]] || path+=" $2"
-  pmctl_discovery_require_registry || return
+  pmctl_command_catalog_require_registry || return
   row="$(awk -F '\t' -v path="$path" 'NR > 1 && $1 == path { print; exit }' "$PMCTL_COMMAND_REGISTRY")"
   if [[ -z "$row" ]]; then
-    pmctl_discovery_unknown "$path"
+    pmctl_command_catalog_unknown "$path"
     return 2
   fi
   local _path summary usage stability json mutating options example
@@ -85,25 +85,25 @@ pmctl_discovery_leaf_help() {
   printf 'Example:\n  %s\n' "$example"
 }
 
-pmctl_discovery_help() {
+pmctl_command_catalog_help() {
   case "$#" in
-    0) pmctl_discovery_root_help ;;
+    0) pmctl_command_catalog_root_help ;;
     1)
       if awk -F '\t' -v area="$1" 'NR > 1 { split($1,p," "); if (p[1] == area && p[2] != "") found=1 } END { exit !found }' "$PMCTL_COMMAND_REGISTRY"; then
-        pmctl_discovery_area_help "$1"
+        pmctl_command_catalog_area_help "$1"
       elif awk -F '\t' -v path="$1" 'NR > 1 && $1 == path { found=1 } END { exit !found }' "$PMCTL_COMMAND_REGISTRY"; then
-        pmctl_discovery_leaf_help "$1" ""
+        pmctl_command_catalog_leaf_help "$1" ""
       else
-        pmctl_discovery_area_help "$1"
+        pmctl_command_catalog_area_help "$1"
       fi
       ;;
-    2) pmctl_discovery_leaf_help "$1" "$2" ;;
-    *) pmctl_discovery_die 'help accepts at most an area and command'; return 2 ;;
+    2) pmctl_command_catalog_leaf_help "$1" "$2" ;;
+    *) pmctl_command_catalog_die 'help accepts at most an area and command'; return 2 ;;
   esac
 }
 
-pmctl_discovery_commands_json() {
-  pmctl_discovery_require_registry || return
+pmctl_command_catalog_commands_json() {
+  pmctl_command_catalog_require_registry || return
   awk -F '\t' '
     function esc(value) {
       gsub(/\\/, "\\\\", value); gsub(/"/, "\\\"", value)
@@ -120,9 +120,9 @@ pmctl_discovery_commands_json() {
   ' "$PMCTL_COMMAND_REGISTRY"
 }
 
-pmctl_discovery_unknown() {
+pmctl_command_catalog_unknown() {
   local input="$1" suggestion
-  pmctl_discovery_require_registry || return
+  pmctl_command_catalog_require_registry || return
   suggestion="$(awk -F '\t' -v input="$input" '
     function min3(a,b,c) { m=a; if (b<m) m=b; if (c<m) m=c; return m }
     function distance(a,b, i,j,cost,d) {

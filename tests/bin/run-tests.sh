@@ -193,7 +193,7 @@ map_path() {
       add_suite lint-script-domain-inventory; add_suite test-script-domain-inventory; behavioral=1 ;;
     tools/lint/lint-portable-repo-paths.sh|tests/shell/test-lint-portable-repo-paths.sh|runtime/lib/repo-layout.sh)
       add_suite lint-portable-repo-paths; add_suite test-lint-portable-repo-paths; behavioral=1 ;;
-    tools/lint/lint-pmctl-commands.sh|tests/shell/test-pmctl-discovery.sh|cli/commands.tsv|runtime/lib/pmctl-discovery.sh)
+    tools/lint/lint-pmctl-commands.sh|tests/shell/test-pmctl-discovery.sh|cli/commands.tsv|runtime/lib/pmctl-command-catalog.sh)
       add_suite lint-pmctl-commands; add_suite test-pmctl-discovery; behavioral=1 ;;
     tests/bin/run-tests.sh)
       add_suite test-run-tests; behavioral=1 ;;
