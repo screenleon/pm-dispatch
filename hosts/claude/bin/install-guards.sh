@@ -4,12 +4,12 @@
 # ~/.claude/settings.json.
 #
 # Wires:
-#   - matcher "Edit|Write" → scripts/guard-pm-write.sh
+#   - matcher "Edit|Write" → runtime/hooks/guard-pm-write.sh
 #   - matcher "Bash"       → adapters/<name>/bash-guard.sh  (manifest-derived; needs_bash_guard=true)
 #   - Stop                 → hosts/claude/hooks/log-usage.sh
-#   - Stop                 → scripts/guard-session-summary.sh
-#   - UserPromptSubmit     → scripts/guard-inject-memory.sh
-#   - UserPromptSubmit     → scripts/guard-inject-context.sh
+#   - Stop                 → runtime/hooks/guard-session-summary.sh
+#   - UserPromptSubmit     → runtime/hooks/guard-inject-memory.sh
+#   - UserPromptSubmit     → runtime/hooks/guard-inject-context.sh
 #   - StatusLine           → hosts/claude/hooks/save-rate-limits.sh (chains previous if present)
 #
 # Note: guard-reviewer-write.sh is NOT wired as a PreToolUse hook.
@@ -18,7 +18,7 @@
 # pmctl guard check (uniform explicit-guard design).
 #
 # Note: routing_log.md migration is NOT run automatically.
-# Run scripts/migrate-routing-to-events.sh manually to move legacy routing
+# Run ops/migrations/migrate-routing-to-events.sh manually to move legacy routing
 # records into state-store events.jsonl.
 # Safe to re-run: detects existing entries (matched by command path) and skips
 # them. Backs up settings.json once per run if any change is staged.
@@ -80,7 +80,7 @@ else
     exit 2
   }
 fi
-[[ -f "$REPO_ROOT/hosts/claude/host.yaml" && -f "$REPO_ROOT/scripts/lib/host-manifest.sh" ]] || {
+[[ -f "$REPO_ROOT/hosts/claude/host.yaml" && -f "$REPO_ROOT/runtime/lib/host-manifest.sh" ]] || {
   echo "install-guards: --repo-root is not a compatible pm-dispatch checkout: $REPO_ROOT" >&2
   exit 2
 }
@@ -89,8 +89,8 @@ fi
 . "$REPO_ROOT/hosts/claude/lib/prompt-context-timeouts.sh"
 # shellcheck source=hosts/claude/lib/path-resolver.sh
 . "$REPO_ROOT/hosts/claude/lib/path-resolver.sh"
-# shellcheck source=scripts/lib/portable.sh
-. "$REPO_ROOT/scripts/lib/portable.sh"
+# shellcheck source=runtime/lib/portable.sh
+. "$REPO_ROOT/runtime/lib/portable.sh"
 
 _claude_root="$(claude_host_config_root 2>&1)" || {
   printf 'install-guards: %s\n' "$_claude_root" >&2
@@ -125,10 +125,10 @@ fi
 
 repo_root="$REPO_ROOT"
 settings="$CLAUDE_HOME/settings.json"
-# shellcheck source=scripts/lib/memory-dir.sh
-. "$repo_root/scripts/lib/memory-dir.sh"
-# shellcheck source=scripts/lib/gate-workspace.sh
-. "$repo_root/scripts/lib/gate-workspace.sh"
+# shellcheck source=runtime/lib/memory-dir.sh
+. "$repo_root/runtime/lib/memory-dir.sh"
+# shellcheck source=runtime/lib/gate-workspace.sh
+. "$repo_root/runtime/lib/gate-workspace.sh"
 
 if ! command -v jq >/dev/null 2>&1; then
   cat >&2 <<EOF
@@ -153,19 +153,19 @@ if [ ! -f "$settings" ]; then
   exit 2
 fi
 
-pm_cmd="$repo_root/scripts/guard-pm-write.sh"
+pm_cmd="$repo_root/runtime/hooks/guard-pm-write.sh"
 stop_cmd="$repo_root/hosts/claude/hooks/log-usage.sh"
 old_stop_cmd="$repo_root/hooks/guard-log-claude-usage.sh"
 legacy_stop_cmd="$repo_root/scripts/guard-log-claude-usage.sh"
-session_path="$repo_root/scripts/guard-session-summary.sh"
-inject_cmd="$repo_root/scripts/guard-inject-memory.sh"
-ctx_inject_cmd="$repo_root/scripts/guard-inject-context.sh"
+session_path="$repo_root/runtime/hooks/guard-session-summary.sh"
+inject_cmd="$repo_root/runtime/hooks/guard-inject-memory.sh"
+ctx_inject_cmd="$repo_root/runtime/hooks/guard-inject-context.sh"
 statusline_cmd="$repo_root/hosts/claude/hooks/save-rate-limits.sh"
 legacy_statusline_cmd="$repo_root/scripts/guard-save-rate-limits.sh"
 statusline_chain_conf="$CLAUDE_HOME/statusline-chain.conf"
 
-# shellcheck source=scripts/lib/runner-kind.sh
-. "$repo_root/scripts/lib/runner-kind.sh"
+# shellcheck source=runtime/lib/runner-kind.sh
+. "$repo_root/runtime/lib/runner-kind.sh"
 
 # Scan adapters/ manifests and collect bash-guard command paths for adapters
 # where needs_bash_guard resolves to true. Builds _bash_guard_cmds[] (absolute
@@ -298,6 +298,11 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
   --arg profile "$PROFILE" \
   '
   def without_host_arg: sub(" --host (claude|codex|opencode|generic)$"; "");
+  def managed_shared($cmd; $expected):
+    ($cmd | without_host_arg | split("/")) as $parts |
+    ($expected | without_host_arg | split("/")) as $wanted |
+    ($parts[-1] == $wanted[-1] and
+      ($parts[-2] == "scripts" or ($parts[-2] == "hooks" and $parts[-3] == "runtime")));
 
   # Ensure .hooks.PreToolUse exists as an array.
   .hooks //= {} |
@@ -377,19 +382,19 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
   .hooks.PostToolUse |= map(select((.hooks | length) > 0)) |
 
   # Helper: an entry already exists if any matcher block has a managed hook with the same command basename.
-  ( [ .hooks.PreToolUse[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($pm | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $pm_present |
+  ( [ .hooks.PreToolUse[]? | (.hooks // [])[]? | select(managed_shared(.command; $pm)) ] | length ) as $pm_present |
   ( [ .hooks.Stop[]? | (.hooks // [])[]? | select(
       .command == $stop or .command == $legacy_stop or .command == $legacy_stop_q or
       (((.command | split("/") | last) == ($legacy_stop | split("/") | last)) and ((.command | split("/") | .[-2]) == "scripts"))
     ) ] | length ) as $stop_present |
-  ( [ .hooks.Stop[]? | (.hooks // [])[]? | select(((.command | without_host_arg | split("/") | last) == ($session | without_host_arg | split("/") | last)) and ((.command | without_host_arg | split("/") | .[-2]) == "scripts")) ] | length ) as $session_present |
-  ( [ .hooks.UserPromptSubmit[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($inject | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $inject_present |
-  ( [ .hooks.UserPromptSubmit[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($ctx_inject | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $ctx_inject_present |
+  ( [ .hooks.Stop[]? | (.hooks // [])[]? | select(managed_shared(.command; $session)) ] | length ) as $session_present |
+  ( [ .hooks.UserPromptSubmit[]? | (.hooks // [])[]? | select(managed_shared(.command; $inject)) ] | length ) as $inject_present |
+  ( [ .hooks.UserPromptSubmit[]? | (.hooks // [])[]? | select(managed_shared(.command; $ctx_inject)) ] | length ) as $ctx_inject_present |
 
   # Refresh stale command paths for managed hooks (scripts/<basename> path shape).
   .hooks.PreToolUse |= map(
     .hooks |= map(
-      if ((.command | split("/") | last) == ($pm | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") then .command = $pm
+      if managed_shared(.command; $pm) then .command = $pm
       else . end
     )
   ) |
@@ -410,14 +415,14 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
     .hooks |= map(
       if   (.command == $legacy_stop or .command == $legacy_stop_q or .command == $stop
             or (((.command | split("/") | last) == ($legacy_stop | split("/") | last)) and ((.command | split("/") | .[-2]) == "scripts"))) then .command = $stop
-      elif (((.command | without_host_arg | split("/") | last) == ($session | without_host_arg | split("/") | last)) and ((.command | without_host_arg | split("/") | .[-2]) == "scripts")) then .command = $session
+      elif managed_shared(.command; $session) then .command = $session
       else . end
     )
   ) |
   .hooks.UserPromptSubmit |= map(
     .hooks |= map(
-      if   ((.command | split("/") | last) == ($inject     | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") then .command = $inject
-      elif ((.command | split("/") | last) == ($ctx_inject | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") then
+      if   managed_shared(.command; $inject) then .command = $inject
+      elif managed_shared(.command; $ctx_inject) then
         .command = $ctx_inject | .timeout = $ctx_inject_timeout
       else . end
     )
@@ -489,7 +494,7 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
 # --- Permissions merge for reviewer subagents ---
 # Reviewer subagents spawned by pr-gate need Edit(.gate-results) and Bash(pmctl guard check)
 # to write results and run guard checks. Workspace root detection is shared with
-# uninstall-guards.sh via scripts/lib/gate-workspace.sh.
+# uninstall-guards.sh via runtime/lib/gate-workspace.sh.
 _workspace_root="$(gate_workspace_root "$repo_root" "$HOME")"
 _gate_glob="${_workspace_root}/**/.gate-results/**"
 
@@ -546,7 +551,7 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
   exit 0
 fi
 
-# Routing-log migration is manual: run scripts/migrate-routing-to-events.sh
+# Routing-log migration is manual: run ops/migrations/migrate-routing-to-events.sh
 # to move legacy routing_log.md records into state-store events.jsonl.
 
 backup="$settings.bak.$(date +%Y%m%d-%H%M%S)"

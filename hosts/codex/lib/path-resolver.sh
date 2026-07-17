@@ -20,13 +20,5 @@ codex_host_config_root() {
 codex_host_resolve_path() {
   local path="$1" root
   root="$(codex_host_config_root)" || return $?
-  case "$path" in
-    \$CODEX_HOME|\$CODEX_HOME/*)
-      printf '%s\n' "${path//\$CODEX_HOME/$root}"
-      ;;
-    *)
-      printf 'codex path resolver: unsupported manifest path template: %s\n' "$path" >&2
-      return 2
-      ;;
-  esac
+  host_manifest_expand_root_template codex "\$CODEX_HOME" "$root" "$path"
 }

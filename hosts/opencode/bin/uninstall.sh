@@ -30,14 +30,14 @@ else
     exit 2
   }
 fi
-[[ -f "$REPO_ROOT/hosts/opencode/host.yaml" && -f "$REPO_ROOT/scripts/lib/host-manifest.sh" ]] || {
+[[ -f "$REPO_ROOT/hosts/opencode/host.yaml" && -f "$REPO_ROOT/runtime/lib/host-manifest.sh" ]] || {
   printf 'uninstall-host-opencode: --repo-root is not a compatible pm-dispatch checkout: %s\n' "$REPO_ROOT" >&2
   exit 2
 }
-# shellcheck source=scripts/lib/host-manifest.sh
-. "$REPO_ROOT/scripts/lib/host-manifest.sh"
-# shellcheck source=scripts/lib/portable.sh
-. "$REPO_ROOT/scripts/lib/portable.sh"
+# shellcheck source=runtime/lib/host-manifest.sh
+. "$REPO_ROOT/runtime/lib/host-manifest.sh"
+# shellcheck source=runtime/lib/portable.sh
+. "$REPO_ROOT/runtime/lib/portable.sh"
 command -v jq >/dev/null 2>&1 || { printf 'uninstall-host-opencode: jq is required\n' >&2; exit 2; }
 
 config_semantic_sha256() {

@@ -185,7 +185,7 @@ The canonical schema lives in `~/github/pm-dispatch/docs/dispatch-brief.md`. Bri
 
 **`qa_checklist` rule**: when the brief introduces ≥ 3 distinct behavioral units (new code paths, new flags, new hooks, new error branches), add a `qa_checklist` section listing each unit and its expected test name or scenario. Without it, `qa-tester` will block in gate round 1 — writing it upfront prevents 1–2 extra gate/fix cycles. A "behavioral unit" is any code path that can be independently exercised by a test.
 
-**New contract test script rule**: when a brief adds a new contract test script (e.g., `scripts/test-commands.sh`) alongside a new command or feature in the same PR, enumerate **every** behavioral contract of the feature BEFORE writing any assertion: all input states (empty arg, valid values, invalid values), all output formats (success path, each error path), all rule sections the command documents. `qa-tester` evaluates the test script's completeness with the same rigor as the feature itself and finds gaps one per gate round. A comprehensive upfront enumeration prevents 4–6 extra rounds — list first, assert second.
+**New contract test script rule**: when a brief adds a new contract test script (e.g., `tests/shell/test-commands.sh`) alongside a new command or feature in the same PR, enumerate **every** behavioral contract of the feature BEFORE writing any assertion: all input states (empty arg, valid values, invalid values), all output formats (success path, each error path), all rule sections the command documents. `qa-tester` evaluates the test script's completeness with the same rigor as the feature itself and finds gaps one per gate round. A comprehensive upfront enumeration prevents 4–6 extra rounds — list first, assert second.
 
 **`/pre-impl` rule**: run `/pre-impl "<feature description>"` **before** writing the brief when either condition holds: (a) the brief introduces ≥ 3 behavioral units, OR (b) the task has architecture impact — any change touching a shared module, crossing a layer boundary, or introducing a new interface/schema (`architecture_impact: minor` or `major` in the planned brief). Paste the output's `Conceptual Map` section into the brief's `conceptual_map:` field and the design constraint list into `constraints:`. This prevents architecture-reviewer blocks caused by boundary/dependency issues caught too late, and gives the architecture-reviewer a map to evaluate before inspecting source files.
 
@@ -219,9 +219,9 @@ For Tiny tasks, return a plain text recommendation to the main thread (not a `di
 
 Return exactly one fenced `dispatch_handover_v1` block. The metadata header is for the main thread; the content after the standalone `---` line is the brief body the main thread writes to `brief_file`.
 
-Never emit metadata values containing forbidden shell characters: single quote, double quote, backtick, dollar, semicolon, ampersand, pipe, redirect chars (`<` `>`), parens, braces, backslash, CR, LF, or whitespace at the start/end of the value. The main thread enforces this with `scripts/lib/handover-validate.sh` before constructing Bash argv.
+Never emit metadata values containing forbidden shell characters: single quote, double quote, backtick, dollar, semicolon, ampersand, pipe, redirect chars (`<` `>`), parens, braces, backslash, CR, LF, or whitespace at the start/end of the value. The main thread enforces this with `runtime/lib/handover-validate.sh` before constructing Bash argv.
 
-The handover extraction and validation contract is covered by `scripts/test-dispatch-handover.sh`; keep PM metadata compatible with that harness.
+The handover extraction and validation contract is covered by `tests/shell/test-dispatch-handover.sh`; keep PM metadata compatible with that harness.
 
 ```dispatch_handover_v1
 handover_version: 3

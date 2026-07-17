@@ -5,14 +5,14 @@ different problems and neither silently substitutes for the other.
 
 ## Iteration runner
 
-`scripts/run-tests.sh` plans direct-impact suites from changed paths and invokes
+`tests/bin/run-tests.sh` plans direct-impact suites from changed paths and invokes
 the shared suite executor with explicit `--suite` selections. It is optimized for a
 short edit/fix feedback loop.
 
 ```bash
-bash scripts/run-tests.sh --base origin/main
-bash scripts/run-tests.sh --path scripts/lib/pmctl-context.sh
-bash scripts/run-tests.sh --base origin/main --list
+bash tests/bin/run-tests.sh --base origin/main
+bash tests/bin/run-tests.sh --path runtime/lib/pmctl-context.sh
+bash tests/bin/run-tests.sh --base origin/main --list
 ```
 
 The planner currently knows direct path-to-suite relationships only. It does
@@ -27,7 +27,7 @@ generic gate interface:
 ```bash
 pmctl gate run \
   --cd /path/to/pm-dispatch \
-  --test-cmd 'bash scripts/run-tests.sh --base origin/main' \
+  --test-cmd 'bash tests/bin/run-tests.sh --base origin/main' \
   --lifecycle detached
 ```
 
@@ -41,7 +41,7 @@ commands such as `npm run test` produce opaque/advisory coverage: QA may cite
 the aggregate PASS, but may still run the minimum repo-native validation needed
 when behavioral coverage cannot be established.
 
-`scripts/run-tests.sh` additionally detects the gate-provided result sink and
+`tests/bin/run-tests.sh` additionally detects the gate-provided result sink and
 emits structured coverage automatically. Its `pm_test_result_v2` records the
 planner-derived inputs, selection mode, registry-ordered suites, each suite's
 pass/fail/timeout/skip status and duration, and aggregate counts. Current PASS
@@ -51,13 +51,13 @@ evidence fields manually.
 
 ## pm-dispatch development and PR policy
 
-`scripts/run-all-tests.sh` is the backward-compatible full-suite entry point; it
-delegates to `scripts/run-tests.sh --all`. For this repository's own delivery
+`tests/bin/run-all-tests.sh` is the backward-compatible full-suite entry point; it
+delegates to `tests/bin/run-tests.sh --all`. For this repository's own delivery
 workflow, run it independently of the PR-gate lifecycle so its wall-clock
 budget cannot consume the gate supervisor/reviewer budget:
 
 ```bash
-bash scripts/run-all-tests.sh
+bash tests/bin/run-all-tests.sh
 ```
 
 The pm-dispatch maintainer's development and PR policy is deliberately
@@ -66,12 +66,12 @@ asymmetric:
 1. During implementation and an optional PR-gate review, run affected suites
    for fast feedback.
 2. Immediately before creating a pm-dispatch PR, run
-   `scripts/run-all-tests.sh` outside the gate lifecycle. It writes
+   `tests/bin/run-all-tests.sh` outside the gate lifecycle. It writes
    `.pm-dispatch/test-results/latest-full.json` (`pm_test_result_v2`).
 3. Verify that artifact against the still-current source tree before opening
    the pm-dispatch PR:
 
-       bash scripts/run-tests.sh --verify-full .pm-dispatch/test-results/latest-full.json
+       bash tests/bin/run-tests.sh --verify-full .pm-dispatch/test-results/latest-full.json
 
 The verifier accepts only an authoritative full PASS with no requested skips,
 the complete current suite registry, an unchanged tree during the run, and
@@ -86,7 +86,7 @@ affected-suite feedback is not a fixed release phase.
 The single automated release entry point is:
 
 ```bash
-bash scripts/release-verify.sh --e2e
+bash ops/release/release-verify.sh --e2e
 ```
 
 `release-verify.sh --e2e` always performs a fresh `run-all-tests.sh` in Phase 2,

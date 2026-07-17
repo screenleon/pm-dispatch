@@ -91,7 +91,7 @@ including calls that find no hits and calls against a repo with no index yet
 The query-before-Read discipline above is a prose rule, and prose rules degrade
 exactly when a session is busy. The prompt auto-scan makes the knowledge-doc
 half of that rule deterministic: a `UserPromptSubmit` hook
-(`scripts/guard-inject-context.sh`, wired by `install-guards.sh`) runs
+(`runtime/hooks/guard-inject-context.sh`, wired by `install-guards.sh`) runs
 
     pmctl context prompt-scan [<repo_root>] "<prompt text>"
 

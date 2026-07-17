@@ -5,7 +5,7 @@ set -euo pipefail
 # Resolve the real script path through symlinks so REPO_ROOT is always the
 # actual repo directory, regardless of whether pmctl is called via a symlink
 # in PATH (e.g. ~/.local/bin/pmctl) or directly.
-# Pattern mirrors scripts/pr-gate.sh: loop + rebase relative targets against
+# Pattern mirrors runtime/bin/pr-gate.sh: loop + rebase relative targets against
 # the symlink's own directory, no readlink -f needed (POSIX readlink suffices).
 _pmctl_self="${BASH_SOURCE[0]}"
 while [[ -L "$_pmctl_self" ]]; do
@@ -18,7 +18,7 @@ unset _pmctl_self _pmctl_dir
 
 for _lib in detached-launch pmctl-policy pmctl-fs pmctl-adapter pmctl-backlog pmctl-guard executor-router pmctl-dispatch pmctl-trace pmctl-task pmctl-decision gate-result-verify pmctl-gate pmctl-safe pmctl-validate pmctl-context pmctl-memory pmctl-artifacts pmctl-pre-release pmctl-worktree pmctl-ship-parallel pmctl-ship pmctl-pm; do
   # shellcheck source=/dev/null
-  [[ -r "$REPO_ROOT/scripts/lib/$_lib.sh" ]] && . "$REPO_ROOT/scripts/lib/$_lib.sh"
+  [[ -r "$REPO_ROOT/runtime/lib/$_lib.sh" ]] && . "$REPO_ROOT/runtime/lib/$_lib.sh"
 done
 unset _lib
 

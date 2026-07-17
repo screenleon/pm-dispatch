@@ -6,7 +6,7 @@
 # Host-generic counterpart of install-guards.sh (claude host), driven by
 # hosts/codex/host.yaml's install_targets (id: hooks) and guard_bindings
 # (command_guard) instead of hardcoding the path/format here — see
-# scripts/lib/host-manifest.sh and docs/host-contract.md. Wires exactly one
+# runtime/lib/host-manifest.sh and docs/host-contract.md. Wires exactly one
 # command guard plus the host-neutral canonical-memory UserPromptSubmit adapter.
 #
 # Usage:
@@ -39,13 +39,13 @@ else
     exit 2
   }
 fi
-[[ -f "$REPO_ROOT/hosts/codex/host.yaml" && -f "$REPO_ROOT/scripts/lib/host-manifest.sh" ]] || {
+[[ -f "$REPO_ROOT/hosts/codex/host.yaml" && -f "$REPO_ROOT/runtime/lib/host-manifest.sh" ]] || {
   echo "install-guards-codex: --repo-root is not a compatible pm-dispatch checkout: $REPO_ROOT" >&2
   exit 2
 }
 
-# shellcheck source=scripts/lib/host-manifest.sh
-. "$REPO_ROOT/scripts/lib/host-manifest.sh"
+# shellcheck source=runtime/lib/host-manifest.sh
+. "$REPO_ROOT/runtime/lib/host-manifest.sh"
 # shellcheck source=hosts/codex/lib/hook-paths.sh
 . "$REPO_ROOT/hosts/codex/lib/hook-paths.sh"
 # shellcheck source=hosts/codex/lib/memory-contract.sh
@@ -86,8 +86,10 @@ hooks_file="$(host_manifest_expand_path "$REPO_ROOT" codex "$hooks_path_template
 instructions_file="$(host_manifest_expand_path "$REPO_ROOT" codex "$instructions_path_template")"
 hook_cmd="$(codex_host_command_guard_path "$REPO_ROOT")"
 legacy_hook_cmd="$(codex_host_command_guard_legacy_path "$REPO_ROOT")"
-memory_hook_cmd="$REPO_ROOT/scripts/guard-inject-memory.sh"
-session_hook_cmd="$REPO_ROOT/scripts/guard-session-summary.sh"
+memory_hook_cmd="$REPO_ROOT/runtime/hooks/guard-inject-memory.sh"
+session_hook_cmd="$REPO_ROOT/runtime/hooks/guard-session-summary.sh"
+legacy_memory_hook_cmd="$REPO_ROOT/scripts/guard-inject-memory.sh"
+legacy_session_hook_cmd="$REPO_ROOT/scripts/guard-session-summary.sh --host codex"
 memory_update_module="$(host_manifest_scalar "$manifest" memory_update_module)"
 if [[ -z "$memory_update_module" || "$memory_update_module" == "null" ]]; then
   echo "install-guards-codex: hosts/codex/host.yaml has no memory_update_module" >&2
@@ -109,6 +111,8 @@ hook_cmd_q="$(printf '%q' "$hook_cmd")"
 legacy_hook_cmd_q="$(printf '%q' "$legacy_hook_cmd")"
 memory_hook_cmd_q="$(printf '%q' "$memory_hook_cmd")"
 session_hook_cmd_q="$(printf '%q' "$session_hook_cmd") --host codex"
+legacy_memory_hook_cmd_q="$(printf '%q' "$legacy_memory_hook_cmd")"
+legacy_session_hook_cmd_q="$(printf '%q' "$REPO_ROOT/scripts/guard-session-summary.sh") --host codex"
 memory_update_cmd_q="$(printf '%q' "$memory_update_cmd")"
 
 tmp_new="$(mktemp)"
@@ -127,7 +131,9 @@ fi
 # Merge idempotently: only append the managed hook entry if no existing
 # PreToolUse/Bash entry already points at this repo's guard script.
 jq --arg cmd "$hook_cmd_q" --arg legacy_cmd "$legacy_hook_cmd" --arg legacy_cmd_q "$legacy_hook_cmd_q" \
-  --arg memory_cmd "$memory_hook_cmd_q" --arg session_cmd "$session_hook_cmd_q" '
+  --arg memory_cmd "$memory_hook_cmd_q" --arg session_cmd "$session_hook_cmd_q" \
+  --arg legacy_memory_cmd "$legacy_memory_hook_cmd" --arg legacy_memory_cmd_q "$legacy_memory_hook_cmd_q" \
+  --arg legacy_session_cmd "$legacy_session_hook_cmd" --arg legacy_session_cmd_q "$legacy_session_hook_cmd_q" '
   .hooks = (.hooks // {}) |
   .hooks.PreToolUse = (.hooks.PreToolUse // []) |
   .hooks.UserPromptSubmit = (.hooks.UserPromptSubmit // []) |
@@ -138,6 +144,18 @@ jq --arg cmd "$hook_cmd_q" --arg legacy_cmd "$legacy_hook_cmd" --arg legacy_cmd_
     else . end
   ) |
   .hooks.PreToolUse |= map(select((.hooks // [] | length) > 0)) |
+  .hooks.UserPromptSubmit |= map(
+    if (.hooks | type) == "array" then
+      .hooks |= map(select(.command != $legacy_memory_cmd and .command != $legacy_memory_cmd_q))
+    else . end
+  ) |
+  .hooks.UserPromptSubmit |= map(select((.hooks // [] | length) > 0)) |
+  .hooks.Stop |= map(
+    if (.hooks | type) == "array" then
+      .hooks |= map(select(.command != $legacy_session_cmd and .command != $legacy_session_cmd_q))
+    else . end
+  ) |
+  .hooks.Stop |= map(select((.hooks // [] | length) > 0)) |
   ([.hooks.PreToolUse[]? | select(.matcher == "Bash") | .hooks[]?.command] | index($cmd)) as $already |
   (if $already != null then . else .hooks.PreToolUse += [{"matcher": "Bash", "hooks": [{"type": "command", "command": $cmd}]}] end) |
   ([.hooks.UserPromptSubmit[]? | .hooks[]?.command] | index($memory_cmd)) as $memory_already |

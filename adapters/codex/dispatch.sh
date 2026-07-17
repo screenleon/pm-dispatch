@@ -36,7 +36,7 @@
 #                                 sandboxed; `none` is REJECTED for codex)
 #   --approval never             (never | on-failure | on-request | untrusted)
 #   --effort   medium global default (low | medium | high; overrides the resolved
-#              model alias's own effort column; see scripts/lib/reasoning-effort.sh)
+#              model alias's own effort column; see runtime/lib/reasoning-effort.sh)
 #   --timeout  precedence (via pmctl): --timeout flag (wins) > CODEX_DISPATCH_TIMEOUT env >
 #              PM_CFG_TIMEOUT (exported by pmctl from config) > 1200 default.
 #              Direct adapter invocations: CODEX_DISPATCH_TIMEOUT env > 1200 default.
@@ -77,7 +77,7 @@ if ! [[ "${BASH_SOURCE[0]}" =~ /codex-dispatch\.[A-Za-z0-9]{6}/codex-dispatch\.s
   __codex_dispatch_source_repo="$(cd -P -- "$(dirname "$__codex_dispatch_real")/../.." && pwd)"
   __codex_dispatch_alias_source="$__codex_dispatch_source_repo/share/codex-model-aliases.tsv"
   __codex_dispatch_isolation_source="$__codex_dispatch_source_repo/adapters/codex/isolation-map.yaml"
-  __codex_dispatch_usage_log_source="$__codex_dispatch_source_repo/scripts/log-usage.sh"
+  __codex_dispatch_usage_log_source="$__codex_dispatch_source_repo/ops/usage/log-usage.sh"
   cp -- "${BASH_SOURCE[0]}" "$__codex_dispatch_snapshot"
   [[ -r "$__codex_dispatch_usage_log_source" ]] && cp -- "$__codex_dispatch_usage_log_source" "$__codex_dispatch_snapshot_dir/log-usage.sh" || true
   [[ -r "$__codex_dispatch_alias_source" ]] && cp -- "$__codex_dispatch_alias_source" "$__codex_dispatch_snapshot_dir/codex-model-aliases.tsv" || true
@@ -86,7 +86,7 @@ if ! [[ "${BASH_SOURCE[0]}" =~ /codex-dispatch\.[A-Za-z0-9]{6}/codex-dispatch\.s
     cp -- "$__codex_dispatch_isolation_source" "$__codex_dispatch_snapshot_dir/adapters/codex/isolation-map.yaml"
   fi
   # shellcheck disable=SC1091
-  . "$__codex_dispatch_source_repo/scripts/lib/dispatch-common.sh"
+  . "$__codex_dispatch_source_repo/runtime/lib/dispatch-common.sh"
   dc_snapshot_copy_libs "$__codex_dispatch_snapshot_dir" "$__codex_dispatch_source_repo"
   chmod +x -- "$__codex_dispatch_snapshot"
   exec "$__codex_dispatch_snapshot" "$@"
@@ -125,7 +125,7 @@ TRACE_DIR_OVERRIDE=""
 # either dispatch through `pmctl dispatch run` or set PM_CFG_DEFAULT_MODEL themselves.
 DEFAULT_DISPATCH_MODEL="default"
 
-# shellcheck source=scripts/lib/state-writer.sh  # sourced for snapshot support only; pmctl owns state writes.
+# shellcheck source=runtime/lib/state-writer.sh  # sourced for snapshot support only; pmctl owns state writes.
 . "$SCRIPT_DIR/lib/state-writer.sh" 2>/dev/null || true
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/lib/model-aliases.sh"
@@ -205,7 +205,7 @@ fi
 # --effort overrides the alias's own effort column; --effort > alias effort >
 # global default (medium). re_resolve_effort validates $EFFORT itself (returns
 # 1 on an invalid flag value), so there is no separate pre-check here. See
-# scripts/lib/reasoning-effort.sh for the fixed low/medium/high vocabulary and
+# runtime/lib/reasoning-effort.sh for the fixed low/medium/high vocabulary and
 # why it's narrower than codex's raw model_reasoning_effort surface.
 re_resolve_effort "$EFFORT" "$MODEL_RESOLVED_EFFORT" || {
   printf 'codex-dispatch: error: --effort must be one of: %s (got: %s)\n' "$RE_VALID_EFFORTS" "$EFFORT" >&2
@@ -228,7 +228,7 @@ TRACE="<print-only>"
 if [[ "$PRINT_CMD" -ne 1 ]]; then
   # Trace output location: --trace-dir flag > PM_DISPATCH_TRACE_DIR env > legacy
   # in-repo $WORK_DIR/.agent-trace (default UNCHANGED). Precedence + absolute-path
-  # validation live in sw_resolve_trace_dir (scripts/lib/state-paths.sh), sourced
+  # validation live in sw_resolve_trace_dir (runtime/lib/state-paths.sh), sourced
   # via state-writer.sh above and copied into the snapshot lib dir. Resolved only
   # when trace is actually written (--print-cmd writes none, so it needs no lib).
   dc_setup_trace_dir "$TRACE_DIR_OVERRIDE" "$WORK_DIR" "codex" "$TS" || exit 2

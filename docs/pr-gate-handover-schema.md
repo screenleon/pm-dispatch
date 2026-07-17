@@ -3,11 +3,11 @@
 > **DEPRECATED.** `pmctl gate run --executor claude` no longer emits this
 > block. The claude executor now dispatches an independent headless `claude --print`
 > subprocess (`adapters/claude/dispatch.sh`) and writes the result in-process,
-> symmetric to codex — there is no handover/fan-out. `scripts/pr-gate.sh` no longer
+> symmetric to codex — there is no handover/fan-out. `runtime/bin/pr-gate.sh` no longer
 > produces a `pr-gate-handover_v1` block for any executor. This document is retained
 > for historical reference only; the schema below describes the retired behavior.
 
-This schema was used by `scripts/pr-gate.sh` when the selected executor was
+This schema was used by `runtime/bin/pr-gate.sh` when the selected executor was
 `claude`, before this route was retired. It is intentionally separate from `dispatch_handover_v1`.
 
 - Envelope fence: ```pr-gate-handover_v1
@@ -43,7 +43,7 @@ Required keys by role:
 ## Output contract (historical — retired)
 
 The behavior below describes the retired handover route and no longer occurs;
-`scripts/pr-gate.sh` does not print a handover block for any executor.
+`runtime/bin/pr-gate.sh` does not print a handover block for any executor.
 
 - The gate script printed the handover block on stdout when running in claude mode.
 - The caller parsed the block and dispatched one in-session Agent call for every
@@ -62,7 +62,7 @@ The behavior below describes the retired handover route and no longer occurs;
   the host-native result trackable and is the gate's authority on whether a
   result was actually produced. The gate script prints the exact command to run.
 
-Implementation reference: `commands/pr-gate.md` and `scripts/pr-gate.sh`.
+Implementation reference: `commands/pr-gate.md` and `runtime/bin/pr-gate.sh`.
 
 ## Example: sequential mode
 

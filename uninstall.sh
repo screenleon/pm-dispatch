@@ -45,13 +45,13 @@ CLAUDE_HOME="$CLAUDE_CONFIG_DIR"
 unset _claude_root
 
 # shellcheck disable=SC1091
-. "$REPO_ROOT/scripts/lib/portable.sh"
+. "$REPO_ROOT/runtime/lib/portable.sh"
 _HOST_WRITE_AVAILABLE=0
-if [[ -f "$REPO_ROOT/scripts/lib/host-manifest.sh" && -f "$REPO_ROOT/scripts/lib/host-write.sh" ]]; then
+if [[ -f "$REPO_ROOT/runtime/lib/host-manifest.sh" && -f "$REPO_ROOT/runtime/lib/host-write.sh" ]]; then
   # shellcheck disable=SC1091
-  . "$REPO_ROOT/scripts/lib/host-manifest.sh"
+  . "$REPO_ROOT/runtime/lib/host-manifest.sh"
   # shellcheck disable=SC1091
-  . "$REPO_ROOT/scripts/lib/host-write.sh"
+  . "$REPO_ROOT/runtime/lib/host-write.sh"
   _HOST_WRITE_AVAILABLE=1
 else
   echo "uninstall: warning: host write libraries unavailable; Claude and optional-host hooks will not be removed" >&2

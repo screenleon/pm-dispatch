@@ -41,7 +41,7 @@ The handover metadata's `executor:` field selects which executor receives the br
 | `working_dir` | Absolute path. Must exist. | `/home/example/github/my-app/` |
 | `goal` | One sentence. What changes after this runs. | "Backfill 40 N4 / 40 N3 / 40 N2 kanji entries to fill the empty middle-tier overlay." |
 | `files` | Concrete paths or a search hint. Both create-new and edit-existing must be enumerated. | `server/data/corpus/kanji/{N4,N3,N2}.jsonl` (new); read `N1.jsonl` and `N5.jsonl` for schema |
-| `acceptance` | Testable post-conditions Codex itself can verify before declaring done. | Lint passes (`bash scripts/lint-agents.sh` exit 0); new file exists at the declared path; `git status --short` shows only allowlisted files. |
+| `acceptance` | Testable post-conditions Codex itself can verify before declaring done. | Lint passes (`bash tools/lint/lint-agents.sh` exit 0); new file exists at the declared path; `git status --short` shows only allowlisted files. |
 | `self_verify` | **Required for any file-writing brief.** A brief is file-writing if its `files` block contains any entry tagged `write:` or `new:`, or any entry with no explicit `read:` tag. When in doubt, treat as file-writing. Read-only briefs (every `files:` entry explicitly tagged `read:`) may omit this field — do not inline checks into `acceptance` as a substitute for `self_verify` in file-writing briefs. Machine-verifiable items use `- cmd: "<bash>"` (post-verify executes them); macros/prose are executor-evaluated (post-verify skips them). | `- cmd: "bash scripts/test.sh"`; `git-status no-collateral-damage` (executor-evaluated). |
 
 A brief missing any of these is a request for guesswork. Reject and ask the caller.
@@ -281,7 +281,7 @@ The recommended 3-phase shell dispatch pipeline. Each phase is a single Bash cal
 ### Phase 1 — Pre-dispatch validation (shell, <1s)
 
 ```bash
-bash scripts/brief-validate.sh <brief-file>
+bash runtime/bin/brief-validate.sh <brief-file>
 ```
 
 Validates required fields (`schema_version`, `working_dir`, `goal`, `files`, `acceptance`) and enforces `self_verify` for file-writing briefs. Exits 0 = VALID; exits 1 = REJECT with reason. Run before dispatching to catch schema errors without wasting a full codex execution.
@@ -314,7 +314,7 @@ Bare `pmctl dispatch run` defaults to `--lifecycle detached` for eligible adapte
 ### Phase 3 — Post-dispatch verification (executor-agnostic shell, <5s)
 
 ```bash
-bash scripts/dispatch-post-verify.sh <work_dir> <brief-file>
+bash runtime/bin/dispatch-post-verify.sh <work_dir> <brief-file>
 ```
 
 Reads `.agent-trace/latest.{last,stderr}`, shows `git diff --stat`, and processes each `self_verify` item by kind:
@@ -490,7 +490,7 @@ Invalid lines (for example `dispatch.default_timeout=oops`) are logged as warnin
 `pmctl dispatch run` supports a `--lifecycle foreground|detached` flag, with a `dispatch.lifecycle = foreground|detached` config default the flag overrides. **The built-in default is `detached` for eligible adapters** (`cli-subprocess` runner kind, e.g. codex): bare `pmctl dispatch run` returns a `run_id` immediately without waiting for the adapter to complete. Callers that need the old synchronous, blocking behavior must pass `--lifecycle foreground` or set `dispatch.lifecycle = foreground` in their project config. This axis is **orthogonal** to an adapter's `runner_kind` (which says *how* the executor is reached): lifecycle says *who owns the executor after launch*.
 
 - `foreground` runs the post-preflight executor tail (adapter invocation → footer parse → post-verify → terminal state + durable record) in-process and blocks until the adapter exits — the historical behavior. No run-spec is written; the dispatch exit code is the adapter exit code.
-- `detached` persists a run-spec under `<work_dir>/.agent-trace/<run_id>.runspec`, launches `scripts/dispatch-supervisor.sh` via `setsid`/`nohup` (falling back to `nohup ... & disown`), writes the `run_id` to stdout, and exits 0 without waiting for the adapter. The supervisor re-runs the **full** security preflight — adapter name/containment, route allowlist, `brief-validate.sh`, and `pmctl guard check` — before invoking any executor, so it can never bypass the gates `pmctl dispatch run` enforces. The run-spec records the `--cd` and `--brief-file` values as trusted scalars and carries only the non-core adapter args as passthrough; the supervisor rebuilds the adapter command from those scalars, so the brief that is guarded and validated is exactly the one executed (it rejects any attempt to smuggle a second `--cd`/`--brief-file` through the passthrough args).
+- `detached` persists a run-spec under `<work_dir>/.agent-trace/<run_id>.runspec`, launches `runtime/bin/dispatch-supervisor.sh` via `setsid`/`nohup` (falling back to `nohup ... & disown`), writes the `run_id` to stdout, and exits 0 without waiting for the adapter. The supervisor re-runs the **full** security preflight — adapter name/containment, route allowlist, `brief-validate.sh`, and `pmctl guard check` — before invoking any executor, so it can never bypass the gates `pmctl dispatch run` enforces. The run-spec records the `--cd` and `--brief-file` values as trusted scalars and carries only the non-core adapter args as passthrough; the supervisor rebuilds the adapter command from those scalars, so the brief that is guarded and validated is exactly the one executed (it rejects any attempt to smuggle a second `--cd`/`--brief-file` through the passthrough args).
 
 Use `pmctl dispatch wait <run_id> --cd <work_dir> [--timeout <secs>]` to reattach and resolve the terminal outcome. `--cd` is mandatory; timeout exits 124. The authoritative completion signal is the supervisor sentinel written to `/tmp` (never the in-workspace `.dispatch-results/<run_id>.md` record, which is executor-writable and used for observability only). The sentinel path includes a per-run nonce held in a per-user `mode 700` key dir and not stored in the workspace run-spec: this stops *other OS users* and cross-run/predictable-path collisions from resolving the wait, but a *same-user* executor (same uid) can read the key — so the executor is **trusted** not to forge it (the deployment runs the operator's own login-authenticated agent; see `docs/executor-contract.md` → Durable dispatch record for the full trust model — this is a deliberate, user-accepted trust boundary, not an oversight). If the sentinel key is absent, `dispatch wait` returns **indeterminate (exit 3)** and prints the durable record for observability only — never as authenticated success.
 
@@ -512,7 +512,7 @@ See `docs/model-tier-policy.md` §Executor-agnostic `light` alias for routing cr
 
 PM short-form model aliases are resolved from the source-of-truth file
 `share/codex-model-aliases.tsv`, then passed as wire-format model IDs to `codex exec`.
-`scripts/lint-model-aliases.sh` asserts that this table stays in sync with the PM-facing table below and any template hardcoded references.
+`tools/lint/lint-model-aliases.sh` asserts that this table stays in sync with the PM-facing table below and any template hardcoded references.
 
 | PM-facing alias | Wire-format model ID | reasoning effort |
 |---|---|---|
@@ -530,7 +530,7 @@ GPT 5.6 ships as three named tiers: `gpt-5.6-sol` (frontier), `gpt-5.6-terra` (b
 ## Claude model aliases
 
 PM short-form model aliases for the claude executor, resolved from `share/claude-model-aliases.tsv`.
-`scripts/lint-model-aliases.sh` asserts that this table stays in sync with the source TSV.
+`tools/lint/lint-model-aliases.sh` asserts that this table stays in sync with the source TSV.
 
 | PM-facing alias | Wire-format model ID | reasoning effort |
 |---|---|---|
@@ -546,11 +546,11 @@ PM short-form model aliases for the claude executor, resolved from `share/claude
 
 `sonnet-4-6`/`sonnet-4-5`/`opus-4-6`/`opus-4-7` are prior-generation aliases kept selectable for rollback — none is the default.
 
-Model resolution precedence: `--model` flag > `PM_CFG_DEFAULT_MODEL` (from `~/.pm-dispatch/config` `dispatch.default_model`) > pm-dispatch's own built-in `default` alias (→ `claude-sonnet-5` via `share/claude-model-aliases.tsv`), decoupled from the claude CLI's own built-in default. Every alias in these tables is a valid handover `model:` value (`scripts/lib/handover-validate.sh`).
+Model resolution precedence: `--model` flag > `PM_CFG_DEFAULT_MODEL` (from `~/.pm-dispatch/config` `dispatch.default_model`) > pm-dispatch's own built-in `default` alias (→ `claude-sonnet-5` via `share/claude-model-aliases.tsv`), decoupled from the claude CLI's own built-in default. Every alias in these tables is a valid handover `model:` value (`runtime/lib/handover-validate.sh`).
 
 ## Reasoning effort
 
-`--effort <low|medium|high>` is independent of `--model`: use it to dial reasoning depth up or down without switching models (e.g. keep the same model but drop to `low` for a quick pass, or raise to `high` for a hard diagnosis). Resolution precedence: `--effort` flag > the resolved model alias's own effort column (only when that column holds a valid `low`/`medium`/`high` value) > global default `medium`. This is a fixed, executor-agnostic vocabulary — narrower than either CLI's raw surface (claude's native `--effort` also accepts `xhigh`/`max`) — chosen so an invalid value is rejected up front by pm-dispatch, not mid-run inside the executor subprocess. See `scripts/lib/reasoning-effort.sh` for the resolution logic.
+`--effort <low|medium|high>` is independent of `--model`: use it to dial reasoning depth up or down without switching models (e.g. keep the same model but drop to `low` for a quick pass, or raise to `high` for a hard diagnosis). Resolution precedence: `--effort` flag > the resolved model alias's own effort column (only when that column holds a valid `low`/`medium`/`high` value) > global default `medium`. This is a fixed, executor-agnostic vocabulary — narrower than either CLI's raw surface (claude's native `--effort` also accepts `xhigh`/`max`) — chosen so an invalid value is rejected up front by pm-dispatch, not mid-run inside the executor subprocess. See `runtime/lib/reasoning-effort.sh` for the resolution logic.
 
 The "reasoning effort" columns in the alias tables above are the per-alias default that applies whenever `--effort` is omitted — an alias's own valid column value wins over the global default, so it is the practical default, not just a fallback label. `default`/`gpt-5.5`/`gpt-5.4` carry `medium` for exactly this reason (a plain dispatch/gate call is `medium` by default without needing `--effort medium` on every invocation); `codex-spark`/`light` intentionally keep `high`, unchanged and orthogonal to this convergence. The claude table's legacy `normal` values are not a valid `low`/`medium`/`high` literal, so they are ignored and those aliases fall through to the `medium` global default in practice (`opus`'s `high` is valid and is honored as-is). `pmctl gate run` accepts the same `--effort` flag; reach for `--effort high` only when you need deeper analysis (e.g. escalating after repeated gate NO-GOs).
 
@@ -564,7 +564,7 @@ Bash(command: "pmctl dispatch run --adapter <executor> --cd <safe working_dir> -
 
 (Omit `--lifecycle foreground` to use the two-step `run` + `pmctl dispatch wait` pattern instead — see §Dispatch lifecycle.)
 
-Before constructing this Bash command, the dispatcher MUST source `scripts/lib/handover-validate.sh`, extract the fenced block with `handover_extract_block`, split it with `handover_extract_metadata` and `handover_extract_body`, require metadata with `handover_validate_required_fields`, validate the complete metadata header with `handover_validate_all_metadata`, confirm body consistency with `handover_validate_working_dir_match`, then use `handover_safe_argv <field> <value>` for the argv fragment inserted into the one-line command. This is the enforcement mechanism for the handover route, not optional formatting guidance.
+Before constructing this Bash command, the dispatcher MUST source `runtime/lib/handover-validate.sh`, extract the fenced block with `handover_extract_block`, split it with `handover_extract_metadata` and `handover_extract_body`, require metadata with `handover_validate_required_fields`, validate the complete metadata header with `handover_validate_all_metadata`, confirm body consistency with `handover_validate_working_dir_match`, then use `handover_safe_argv <field> <value>` for the argv fragment inserted into the one-line command. This is the enforcement mechanism for the handover route, not optional formatting guidance.
 
 `handover_validate_all_metadata` applies these field validators:
 
@@ -616,7 +616,7 @@ Argument order is stable:
 
 Quoting and command-shape rules:
 
-- Validate metadata first with `scripts/lib/handover-validate.sh`; never insert raw metadata into the Bash command.
+- Validate metadata first with `runtime/lib/handover-validate.sh`; never insert raw metadata into the Bash command.
 - Use `handover_safe_argv` output for every metadata-derived argv value.
 - Single physical line, with no `\` continuation.
 - No `cd <dir> && ...` compounds; this avoids the stale agent-context lifecycle leak described in `[[feedback_codex_dispatch_lifecycle_leak]]`.
@@ -633,7 +633,7 @@ Completion-parse procedure:
 6. Read `<stderr>` regardless of exit code. Surface any non-empty content beyond the standard start and finish banners as `dispatch_errors`.
 7. Verify `git -C <working_dir> status --short`, `git -C <working_dir> diff --stat <base>...HEAD`, and observed `command_execution` events against the brief's `files:` and `self_verify:` blocks before reporting `ok`; otherwise report `partial` or `failed`.
 
-Runnable coverage for extraction, validation, safe argv construction, and footer parsing lives in `scripts/test-dispatch-handover.sh`.
+Runnable coverage for extraction, validation, safe argv construction, and footer parsing lives in `tests/shell/test-dispatch-handover.sh`.
 
 Report shape:
 
@@ -652,7 +652,7 @@ If the completion notification does not arrive within `<timeout>+30s`, run the d
 
 ### No Agent executor fallback
 
-There is no Agent-spawn executor route. Both the `claude-executor` and `codex-executor` subagents were retired; every executor now runs as an independent subprocess driven by `pmctl dispatch run`, and the brief is always authored by trusted main-thread code (no subagent self-writes a brief). Schema validation is delegated to `scripts/brief-validate.sh` via the `pmctl dispatch run` pre-flight. (`agent_executor` survives only as a reserved `dispatch_route` value for a possible future host-native adapter.)
+There is no Agent-spawn executor route. Both the `claude-executor` and `codex-executor` subagents were retired; every executor now runs as an independent subprocess driven by `pmctl dispatch run`, and the brief is always authored by trusted main-thread code (no subagent self-writes a brief). Schema validation is delegated to `runtime/bin/brief-validate.sh` via the `pmctl dispatch run` pre-flight. (`agent_executor` survives only as a reserved `dispatch_route` value for a possible future host-native adapter.)
 
 ## Dispatching a brief
 
@@ -731,7 +731,7 @@ acceptance:
   - git status --short is unchanged.
 ```
 
-Write it to a unique path such as `/tmp/brief-pm-dispatch-cc036-smoke-<utc-ts>-<rand>.md` with exclusive `mktemp`-style creation, validate each metadata value with `scripts/lib/handover-validate.sh`, then launch one physical line built from `handover_safe_argv` values:
+Write it to a unique path such as `/tmp/brief-pm-dispatch-cc036-smoke-<utc-ts>-<rand>.md` with exclusive `mktemp`-style creation, validate each metadata value with `runtime/lib/handover-validate.sh`, then launch one physical line built from `handover_safe_argv` values:
 
 ```text
 Bash(command: "pmctl dispatch run --adapter codex --cd ${PM_DISPATCH_REPO} --isolation workspace-write --timeout 1200 --brief-file /tmp/brief-pm-dispatch-cc036-smoke-<utc-ts>-<rand>.md --lifecycle foreground", run_in_background: true, description: "Dispatch codex for cc036-smoke")

@@ -2,7 +2,7 @@
 # Sourceable claude-host doctor module.
 #
 # Host-specific doctor checks for the claude host (Claude Code as the PM
-# runtime). Sourced by scripts/doctor.sh's manifest-driven host-module loader;
+# runtime). Sourced by runtime/bin/doctor.sh's manifest-driven host-module loader;
 # never executed standalone. The loader calls
 # doctor_host_claude_run() — the single required entry point of the host-module
 # interface. Everything this module needs (emit_check, emit_capability,
@@ -89,6 +89,7 @@ _doctor_host_claude_hook_present() {
       ($ncmd | sub(" --host (claude|codex|opencode|generic)$"; "")) as $path |
       (
         (($path | split("/") | last) == $basename and ($path | split("/") | .[-2]) == "scripts") or
+        (($path | split("/") | last) == $basename and ($path | split("/") | .[-2]) == "hooks" and ($path | split("/") | .[-3]) == "runtime") or
         (($path | split("/") | last) == $basename and ($path | split("/") | .[-2]) == "hooks" and ($path | split("/") | .[-3]) == "claude" and ($path | split("/") | .[-4]) == "hosts") or
         ($basename == "log-usage.sh" and ($path | split("/") | last) == "guard-log-claude-usage.sh" and ($path | split("/") | .[-2]) == "scripts")
       ) and
@@ -200,6 +201,50 @@ _doctor_host_claude_stale_hook_commands() {
   ' "$settings" 2>/dev/null
 }
 
+# Print checkout-owned managed command targets that are configured but no
+# longer executable. Matching is deliberately narrower than "any command under
+# the repo": user-maintained hooks stored in the checkout are not pm-dispatch
+# install targets and must not make doctor fail.
+_doctor_host_claude_broken_hook_targets() {
+  local settings="$1" repo_root="$2" command_path
+  while IFS= read -r command_path; do
+    [[ -n "$command_path" && ! -x "$command_path" ]] && printf '%s\n' "$command_path"
+  done < <(jq -r --arg repo_root "$repo_root" '
+    def normalize_path:
+      gsub("\\\\(?<c>[^A-Za-z0-9])"; .c)
+      | if test("^[A-Za-z]:[/\\\\]") then
+          "/" + (.[0:1] | ascii_downcase) + "/" + (.[3:] | gsub("\\\\"; "/"))
+        else gsub("\\\\"; "/") end;
+    [
+      ((.hooks // {}) | .PreToolUse[]? | (.hooks // [])[]?),
+      ((.hooks // {}) | .PostToolUse[]? | (.hooks // [])[]?),
+      ((.hooks // {}) | .Stop[]? | (.hooks // [])[]?),
+      ((.hooks // {}) | .UserPromptSubmit[]? | (.hooks // [])[]?),
+      (if .statusLine then {command: (.statusLine.command // "")} else empty end)
+    ]
+    | map(
+        (.command? // "" | normalize_path
+          | sub(" --host (claude|codex|opencode|generic)$"; "")) as $path
+        | select($path | startswith(($repo_root | normalize_path) + "/"))
+        | select(
+            (($path | split("/") | .[-2]) == "scripts" and
+              (($path | split("/") | last) | IN(
+                "guard-pm-write.sh", "guard-log-claude-usage.sh",
+                "guard-session-summary.sh", "guard-inject-memory.sh",
+                "guard-inject-context.sh", "guard-save-rate-limits.sh"
+              ))) or
+            (($path | split("/") | .[-2]) == "hooks" and
+              ($path | split("/") | .[-3]) == "runtime") or
+            (($path | split("/") | .[-2]) == "hooks" and
+              ($path | split("/") | .[-3]) == "claude" and
+              ($path | split("/") | .[-4]) == "hosts")
+          )
+        | $path
+      )
+    | unique[]
+  ' "$settings" 2>/dev/null)
+}
+
 _doctor_host_claude_check_hooks() {
   local settings="$_CLAUDE_HOST_CONFIG_ROOT/settings.json"
   if [[ "$_SETTINGS_FILE_FAILED" -eq 1 ]]; then
@@ -259,12 +304,17 @@ _doctor_host_claude_check_hooks() {
   fi
 
   local -a missing=()
+  local -a broken=()
   local hook
   for hook in "${hooks[@]}"; do
     if ! _doctor_host_claude_hook_present "$hook" "$settings"; then
       missing+=("$hook")
     fi
   done
+  local broken_target
+  while IFS= read -r broken_target; do
+    [[ -n "$broken_target" ]] && broken+=("$broken_target")
+  done < <(_doctor_host_claude_broken_hook_targets "$settings" "$REPO_ROOT")
   if [[ "$_want_full" -eq 1 ]]; then
     local _aname
     for _aname in "${_adapter_bg_names[@]+"${_adapter_bg_names[@]}"}"; do
@@ -287,7 +337,11 @@ _doctor_host_claude_check_hooks() {
   if [[ "$_want_full" -eq 1 ]]; then
     _total_hooks=$(( _total_hooks + ${#_adapter_bg_names[@]} ))
   fi
-  if [[ "${#missing[@]}" -gt 0 ]]; then
+  if [[ "${#broken[@]}" -gt 0 ]]; then
+    emit_check hooks fail \
+      "configured hook target missing or not executable: ${broken[0]}" \
+      "bash '${REPO_ROOT}/install.sh' to refresh managed hook paths"
+  elif [[ "${#missing[@]}" -gt 0 ]]; then
     emit_check hooks fail "missing hooks: ${missing[*]}" "bash '${REPO_ROOT}/install.sh'"
   elif [[ "${#_stale[@]}" -gt 0 ]]; then
     emit_check hooks warn \
@@ -316,7 +370,7 @@ _doctor_host_claude_check_dispatch_allowlist() {
   fi
 
   # Consume the shared dispatch_allowlist_entries() helper (sourced by doctor.sh
-  # from scripts/lib/allowlist.sh).  Entries arrive in abs+tilde pairs; at least
+  # from runtime/lib/allowlist.sh).  Entries arrive in abs+tilde pairs; at least
   # one form per script must be present in settings.json.  Falls back to inline
   # scan when allowlist.sh is absent (this module present without it is unusual
   # but possible in a partial checkout).
@@ -474,7 +528,7 @@ _doctor_host_claude_capabilities() {
 # Extracts a single field's value from one capability entry of
 # hosts/claude/host.yaml's guard_bindings list. Deliberately grep/awk-based
 # (no YAML parser dependency), mirroring the block-extraction approach
-# scripts/test-host-manifest.sh already uses for the same file.
+# tests/shell/test-host-manifest.sh already uses for the same file.
 _doctor_host_claude_manifest_field() {
   local capability="$1" field="$2"
   local manifest="$REPO_ROOT/hosts/claude/host.yaml"

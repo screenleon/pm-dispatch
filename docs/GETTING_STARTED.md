@@ -97,7 +97,7 @@ the file when an existing user-owned `permission.bash` policy is present.
 Run the built-in health check:
 
 ```sh
-bash scripts/doctor.sh
+bash runtime/bin/doctor.sh
 ```
 
 `doctor.sh` checks that `claude` and `jq` are on PATH, hooks are wired in
@@ -116,14 +116,14 @@ readlink -f "$HOME/.claude/.pm"
 For a quick direct-impact iteration check:
 
 ```sh
-bash scripts/run-tests.sh --base origin/main
+bash tests/bin/run-tests.sh --base origin/main
 ```
 
 For the authoritative full regression sweep, run the compatibility entry point
 outside the PR-gate lifecycle (the complete suite can be long-running):
 
 ```sh
-bash scripts/run-all-tests.sh
+bash tests/bin/run-all-tests.sh
 ```
 
 In normal docs-first workflows, passing `doctor.sh` alone is sufficient before

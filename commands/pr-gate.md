@@ -3,7 +3,7 @@ description: Run the tiered pre-PR review pipeline on the current branch.
 argument-hint: "[express|standard|full] [--targeted r1,r2] [--scope context] [--parallel]"
 ---
 
-Run the PR gate via `pmctl gate run`. The `scripts/pr-gate.sh` script is the
+Run the PR gate via `pmctl gate run`. The `runtime/bin/pr-gate.sh` script is the
 internal implementation; `pmctl gate run` is the preferred invocation surface.
 
 **Sequential mode (default):** all reviewers run in one combined session.
@@ -219,7 +219,7 @@ Reasoning effort defaults to `medium` regardless of executor (`--effort low|medi
 independent of `--model`); only raise it to `high` for a genuinely hard diagnosis or
 after repeated NO-GO rounds on the same finding.
 
-`scripts/pr-gate.sh` owns dispatch + result verification for both; the calling
+`runtime/bin/pr-gate.sh` owns dispatch + result verification for both; the calling
 skill does not fan out reviewers or parse any handover block.
 
 ## Step 3 - Receive completion and relay the result
@@ -256,16 +256,16 @@ After fixing a NO-GO finding, run only the affected tests before re-gating:
 
 ```bash
 # List all available case names to find the right filter pattern
-bash scripts/test-guards.sh --list
-bash scripts/test-install.sh --list
+bash tests/shell/test-guards.sh --list
+bash tests/shell/test-install.sh --list
 
 # Run only tests matching the changed area (substring match)
-bash scripts/test-guards.sh --filter "session-hook"
-bash scripts/test-install.sh --filter "session-stop"
-bash scripts/test-guards.sh --filter "inject-hook/episode"
+bash tests/shell/test-guards.sh --filter "session-hook"
+bash tests/shell/test-install.sh --filter "session-stop"
+bash tests/shell/test-guards.sh --filter "inject-hook/episode"
 
 # Broader affected suites should pass before re-gating
-bash scripts/test-guards.sh && bash scripts/test-install.sh
+bash tests/shell/test-guards.sh && bash tests/shell/test-install.sh
 ```
 
 `--filter <pattern>` runs only cases whose name contains `<pattern>`.

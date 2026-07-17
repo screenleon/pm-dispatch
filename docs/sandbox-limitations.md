@@ -30,7 +30,7 @@ Understanding the boundary helps you write `self_verify` blocks that actually wo
 > warning. Pass `--allow-hooks` only for repositories and branches you trust.
 >
 > ```bash
-> bash scripts/pr-gate.sh --cd . --allow-hooks
+> bash runtime/bin/pr-gate.sh --cd . --allow-hooks
 > ```
 
 The gate lifecycle hooks let the main thread start and stop infrastructure
@@ -74,7 +74,7 @@ trap cleanup EXIT
 docker compose -f docker-compose.test.yml up -d db
 until docker compose -f docker-compose.test.yml exec -T db pg_isready -q; do sleep 1; done
 
-bash scripts/pr-gate.sh --cd . --allow-hooks
+bash runtime/bin/pr-gate.sh --cd . --allow-hooks
 ```
 
 The teardown trap is now in scope for the full gate run. Alternatively, use a
@@ -150,7 +150,7 @@ make test-integration
 Then run the gate:
 
 ```bash
-bash scripts/pr-gate.sh --cd . --allow-hooks
+bash runtime/bin/pr-gate.sh --cd . --allow-hooks
 ```
 
 **Why this works**: `pre-gate.sh` runs as the main-thread user with full Docker and
@@ -236,7 +236,7 @@ unambiguously locate the insertion point:
 
 ```yaml
 task:
-  Edit scripts/pr-gate.sh:
+  Edit runtime/bin/pr-gate.sh:
   - Locate the line starting with "WORK_DIR=" (search uniquely identifies this line)
   - After that line, add: ...
   - Separately locate the line "cd "$WORK_DIR"" and add below it: ...

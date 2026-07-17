@@ -197,7 +197,7 @@ working-set 模型（§4）下，closed / dropped 條目會被移出 BACKLOG.md�
 BACKLOG.md 是**工作集**，不是歷史帳本：只承載非終態條目（active / deferred / someday / ⚠️ partial）。終態條目（`✅ done [YYYY-MM-DD]` / `✅ closed YYYY-MM-DD` / `🟢 superseded YYYY-MM-DD` / `🚫 dropped YYYY-MM-DD`）整個移出至 `BACKLOG-ARCHIVE.md`。
 
 - **觸發**：行數 > 500 **或** 終態條目佔比 > 50%。working-set 模型下，定期執行 archive 後兩者都不應再被觸發；觸發代表久未歸檔。
-- **歸檔動作**（`scripts/archive-closed-backlog.sh`）：對每個終態條目，**index row 與 body section 同時移出** BACKLOG.md；body 整段 append 到 `BACKLOG-ARCHIVE.md`。**不留 `**See**:` stub** —— row 已移除，原位指標失去意義。
+- **歸檔動作**（`ops/backlog/archive-closed-backlog.sh`）：對每個終態條目，**index row 與 body section 同時移出** BACKLOG.md；body 整段 append 到 `BACKLOG-ARCHIVE.md`。**不留 `**See**:` stub** —— row 已移除，原位指標失去意義。
 - **終態判定以 index table 的 Status 欄為準**（§6.1 唯一真理）。終態集合 = `✅ done` / `✅ closed` / `🟢 superseded` / `🚫 dropped`（CC-378 起 `done` 與 `superseded` 納入）。非終態（active / deferred / someday / `⚠️ partial`）不歸檔。
 - **查詢已關閉條目**：grep `BACKLOG-ARCHIVE.md` 的 body heading（含 id / title / status / date）；完整 index-row metadata（area / refs / priority 等）保留在 git history。
 - **向後相容**：既有 `**See**:` archive-backed stub（§2.6）仍為合法輸入；下次 archive run 會一併清掉（row 為終態 → 移除；該 stub 的 heading 已存在於 archive → body 不重複 append）。跨 repo 尚未遷移者不受影響——validator 對「條目缺席」與「留 stub」皆通過。
@@ -234,7 +234,7 @@ PM agent 讀 backlog 時：
 狀態變更（active → 終態）—— working-set 模型（§4）：
 
 1. 更新 index Status 欄為終態：`✅ done [YYYY-MM-DD]` / `✅ closed YYYY-MM-DD` / `🟢 superseded YYYY-MM-DD` / `🚫 dropped YYYY-MM-DD`。
-2. 執行 `scripts/archive-closed-backlog.sh`：該條目的 **index row + body 一併移出** BACKLOG.md、body append 至 BACKLOG-ARCHIVE.md，**不留 stub**。若有對應 DECISIONS entry，把 `**See**: DECISIONS.md#...` 行留在被歸檔的 body 內。
+2. 執行 `ops/backlog/archive-closed-backlog.sh`：該條目的 **index row + body 一併移出** BACKLOG.md、body append 至 BACKLOG-ARCHIVE.md，**不留 stub**。若有對應 DECISIONS entry，把 `**See**: DECISIONS.md#...` 行留在被歸檔的 body 內。
 3. 結果：BACKLOG.md 不再含該條目。
 4. 過渡相容：若暫不歸檔，可依 §2.6 在原位留一個 stub 讓 validator 通過（下次 archive run 會清掉）；但預設應 close + archive 同步完成於同一變更。
 

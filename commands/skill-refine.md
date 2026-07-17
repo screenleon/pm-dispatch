@@ -15,7 +15,7 @@ This command supports single-skill invocation only. Do not use `--all`, multiple
 export CLAUDE_MEMORY_DIR="${HOME}/.claude/projects/-home-$(whoami)-github/memory"
 ```
 
-If `CLAUDE_MEMORY_DIR` is unset or points to a nonexistent directory, `scripts/skill-refine.sh` will exit 2 with a clear error.
+If `CLAUDE_MEMORY_DIR` is unset or points to a nonexistent directory, `tools/skills/skill-refine.sh` will exit 2 with a clear error.
 
 ## What
 
@@ -52,7 +52,7 @@ Only single-skill invocation is supported in M1. Pass exactly one <skill-name>; 
 From the repository working directory, run:
 
 ```bash
-bash scripts/skill-refine.sh "$ARGUMENTS"
+bash tools/skills/skill-refine.sh "$ARGUMENTS"
 ```
 
 Return the script output verbatim so it can be pasted into a refinement brief.

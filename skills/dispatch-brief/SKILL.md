@@ -23,7 +23,7 @@ the executor can act on without re-asking questions.
   `expected_head_sha` state pin, and the §Model aliases table.
 - **`agents/project-pm.md`** — how the PM decomposes work and emits exactly one
   fenced `dispatch_handover_v1` block, plus the model-selection guidance.
-- **`scripts/lib/handover-validate.sh`** — the validator the main thread runs
+- **`runtime/lib/handover-validate.sh`** — the validator the main thread runs
   before constructing argv; your metadata values must pass it.
 - **`docs/sandbox-limitations.md`** — executor sandbox constraints and
   workarounds. Read this before writing `self_verify` blocks that use `go

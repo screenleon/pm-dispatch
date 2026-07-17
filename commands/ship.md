@@ -98,7 +98,7 @@ implementation to codex/claude/opencode. `pmctl dispatch run` is not part of
 this flow; the only executor dispatch in `/ship` is the gate's own reviewer
 dispatch in Step 3.
 
-Use `bash scripts/run-tests.sh --base <base-ref>` for implementation feedback.
+Use `bash tests/bin/run-tests.sh --base <base-ref>` for implementation feedback.
 Pass explicit `--path` or suite inputs when narrowing an iteration further.
 Do not run `run-all-tests.sh` before the first PR gate: the affected-test
 planner is the fast feedback path, while the authoritative full suite belongs
@@ -142,7 +142,7 @@ statically and forces a manual approval every time even though a bare
 `pmctl ...` invocation matches allowlisted `Bash(pmctl:*)`-style permission
 rules). The `/pr-gate` command is the orchestration wrapper around this exact
 invocation — either entry point is acceptable, but the underlying gate call
-is always this one, never `bash scripts/pr-gate.sh` directly.
+is always this one, never `bash runtime/bin/pr-gate.sh` directly.
 `--lifecycle foreground` is required here: the default `--lifecycle detached`
 returns only a `gate_id` immediately and the gate keeps running in the
 background — reading `Final:` right after that call would read a stale or
@@ -194,7 +194,7 @@ Any other NO-GO, at any round count, gets fixed and re-gated without asking.
 
 ## Step 3.5 — Authoritative full suite
 
-Only after PR-gate returns GO, run `bash scripts/run-all-tests.sh` once and
+Only after PR-gate returns GO, run `bash tests/bin/run-all-tests.sh` once and
 verify its authoritative result artifact. This is the final repo-wide
 regression check, not an iteration tool.
 

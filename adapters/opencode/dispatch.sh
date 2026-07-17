@@ -60,7 +60,7 @@ if ! [[ "${BASH_SOURCE[0]}" =~ /opencode-dispatch\.[A-Za-z0-9]{6}/opencode-dispa
     cp -- "$__oc_dispatch_adapter_source" "$__oc_dispatch_snapshot_dir/adapters/opencode/adapter.yaml"
   fi
   # shellcheck disable=SC1091
-  . "$__oc_dispatch_source_repo/scripts/lib/dispatch-common.sh"
+  . "$__oc_dispatch_source_repo/runtime/lib/dispatch-common.sh"
   dc_snapshot_copy_libs "$__oc_dispatch_snapshot_dir" "$__oc_dispatch_source_repo"
   chmod +x -- "$__oc_dispatch_snapshot"
   exec "$__oc_dispatch_snapshot" "$@"
@@ -80,7 +80,7 @@ PRINT_CMD=0
 TRACE_DIR_OVERRIDE=""
 NATIVE_FLAGS=()
 
-# shellcheck source=scripts/lib/state-writer.sh
+# shellcheck source=runtime/lib/state-writer.sh
 . "$SCRIPT_DIR/lib/state-writer.sh" 2>/dev/null || true
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/lib/model-aliases.sh"
@@ -239,7 +239,7 @@ TRACE_DIR=""
 if [[ "$PRINT_CMD" -ne 1 ]]; then
   # Trace output location: --trace-dir flag > PM_DISPATCH_TRACE_DIR env > legacy
   # in-repo $WORK_DIR/.agent-trace (default UNCHANGED). Precedence + absolute-path
-  # validation live in sw_resolve_trace_dir (scripts/lib/state-paths.sh), sourced
+  # validation live in sw_resolve_trace_dir (runtime/lib/state-paths.sh), sourced
   # via state-writer.sh above and copied into the snapshot lib dir. Resolved only
   # when trace is actually written (--print-cmd writes none, so it needs no lib).
   dc_setup_trace_dir "$TRACE_DIR_OVERRIDE" "$WORK_DIR" "opencode" "$TS" || exit 2
