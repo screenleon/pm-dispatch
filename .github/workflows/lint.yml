@@ -58,6 +58,15 @@ jobs:
       - name: Script-domain inventory regression suite
         run: bash tests/shell/test-script-domain-inventory.sh
 
+  lint-portable-repo-paths:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Reject maintainer-local repository paths
+        run: bash tools/lint/lint-portable-repo-paths.sh
+      - name: Repository-path portability regression suite
+        run: bash tests/shell/test-lint-portable-repo-paths.sh
+
   lint-test-docstrings:
     runs-on: ubuntu-latest
     steps:

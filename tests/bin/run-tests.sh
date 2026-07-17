@@ -189,6 +189,8 @@ map_path() {
   case "$path" in
     tools/lint/lint-script-domain-inventory.sh|tests/shell/test-script-domain-inventory.sh|docs/architecture/script-domain-ownership.md|docs/architecture/script-domain-inventory.tsv|docs/architecture/script-domain-reference-allowlist.tsv|docs/architecture/script-variable-inventory.tsv|docs/architecture/script-variable-consumers.tsv)
       add_suite lint-script-domain-inventory; add_suite test-script-domain-inventory; behavioral=1 ;;
+    tools/lint/lint-portable-repo-paths.sh|tests/shell/test-lint-portable-repo-paths.sh|runtime/lib/repo-layout.sh)
+      add_suite lint-portable-repo-paths; add_suite test-lint-portable-repo-paths; behavioral=1 ;;
     tests/bin/run-tests.sh)
       add_suite test-run-tests; behavioral=1 ;;
     tests/lib/test-result.sh|core/schema/test-result.schema.json)
@@ -225,6 +227,11 @@ map_path() {
       add_suite test-install; add_suite test-doctor; add_suite test-guards; behavioral=1 ;;
     tools/lint/lint-scripts.sh)
       add_suite lint-scripts; add_suite test-run-tests; behavioral=1 ;;
+  esac
+
+  case "$path" in
+    README.md|agents/*.md|commands/*.md|skills/*|scripts/*|scripts/**/*|runtime/*|runtime/**/*|pm/*|pm/**/*|docs/*.md)
+      add_suite lint-portable-repo-paths; add_suite test-lint-portable-repo-paths; behavioral=1 ;;
   esac
 
   case "$path" in

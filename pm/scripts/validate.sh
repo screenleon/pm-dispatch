@@ -5,9 +5,10 @@ export LC_ALL=C.UTF-8
 # Bootstrap warning: detect pre-cutover state where ~/.claude/.pm is still a
 # real directory. Warn but do not abort; canonical-path invocation still works.
 if [ -e "$HOME/.claude/.pm" ] && [ ! -L "$HOME/.claude/.pm" ] && ! ps -o args= -p "${PPID:-0}" 2>/dev/null | grep -Fq 'pm/scripts/test/run-tests.sh'; then
+  install_root="${PM_DISPATCH_REPO:-<pm-dispatch-repo>}"
   printf 'warn: %s is a real directory, not a symlink. Run %s/install.sh to complete pm-schema cutover.\n' \
     "$HOME/.claude/.pm" \
-    "$HOME/github/pm-dispatch" >&2
+    "$install_root" >&2
 fi
 
 usage() {

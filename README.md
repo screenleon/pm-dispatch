@@ -35,6 +35,8 @@ Examples use `${PM_DISPATCH_REPO}` to refer to your local clone root. If unset, 
 
 `repo_root="${PM_DISPATCH_REPO:-$(cd "$SCRIPT_DIR/../../.." && pwd -P)}"`
 
+Cross-repository operations use `${PM_DISPATCH_REPOS_ROOT}` when set, otherwise the parent directory of `${PM_DISPATCH_REPO}`. Per-command `--repos-root` flags take precedence.
+
 ## Layout
 
 ```
@@ -69,7 +71,7 @@ Runtime artifacts (`.agent-trace/`, `rollup/PORTFOLIO.md`) are gitignored.
 
 The canonical PM path is now `~/.claude/.pm/`, installed as a symlink to `pm-dispatch/pm/`.
 
-1. `bash ~/github/pm-dispatch/install.sh`
+1. `bash "${PM_DISPATCH_REPO}/install.sh"`
    — Expected: `link $HOME/.claude/.pm -> .../pm-dispatch/pm`. Exit code 0.
 2. `readlink ~/.claude/.pm`
    — Should print the path under `pm-dispatch/pm/`. If it doesn't, stop; do not use rollup.sh / validate.sh until the symlink is confirmed.
@@ -150,7 +152,7 @@ repos may choose tests, a gate, both, or neither. See
 ### Agents
 
 **Orchestration**
-- **project-pm** — PM across `~/github/` repos. Triages requests, decomposes work, writes briefs (main thread dispatches), synthesizes PR-gate reviews, maintains per-project memory at `~/.claude/projects/<claude-project-id>/memory/project_<repo>.md`.
+- **project-pm** — PM across repos under the configured repositories root. Triages requests, decomposes work, writes briefs (main thread dispatches), synthesizes PR-gate reviews, and maintains canonical per-project memory.
 
 Executors (codex, claude, opencode) are **not** subagents — the main thread dispatches each as an independent CLI subprocess via `pmctl dispatch run --adapter <name>`, then verifies via `git diff` and `dispatch-post-verify.sh`.
 
@@ -180,7 +182,7 @@ usage.
 
 ### External dependencies
 
-- **QA rules directory** (`$QA_RULES_DIR`, default `~/github/qa-testing-rules/`). Any directory with an `AGENT.md` Tier 1 entry point works — the [`qa-testing-rules`](https://github.com/screenleon/qa-testing-rules) repo is the reference implementation, but you can substitute your own. Set `QA_RULES_ENTRY` to override the entry point filename if your rules repo uses a different convention.
+- **QA rules directory** (`$QA_RULES_DIR`, default `<repos-root>/qa-testing-rules/`). Any directory with an `AGENT.md` Tier 1 entry point works — the [`qa-testing-rules`](https://github.com/screenleon/qa-testing-rules) repo is the reference implementation, but you can substitute your own. Set `QA_RULES_ENTRY` to override the entry point filename if your rules repo uses a different convention.
 
 ### Operational entrypoints
 
@@ -243,7 +245,7 @@ Codex briefs that touch many files can run 10–30 minutes. The background dispa
 
 1. **External tail (any session, no Claude Code involvement).** From another terminal:
    ```sh
-   ~/github/pm-dispatch/ops/diagnostics/codex-watch.sh --cd /path/to/project
+   "${PM_DISPATCH_REPO}/ops/diagnostics/codex-watch.sh" --cd /path/to/project
    ```
    Prints one line per codex event as it streams. Works whether the dispatcher was launched from Claude Code, the CLI, or a CI job.
 

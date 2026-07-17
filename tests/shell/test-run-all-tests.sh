@@ -16,6 +16,7 @@ SUITE_NAMES=(
   lint-agents
   lint-scripts
   lint-script-domain-inventory
+  lint-portable-repo-paths
   lint-test-docstrings
   test-guards
   test-guard-framework
@@ -61,6 +62,7 @@ SUITE_NAMES=(
   test-dispatch-common
   test-detached-launch
   test-lint-model-aliases
+  test-lint-portable-repo-paths
   test-reasoning-effort
   test-core-schemas
   test-host-manifest
@@ -121,6 +123,7 @@ suite_path() {
     lint-agents) printf 'tools/lint/lint-agents.sh\n' ;;
     lint-scripts) printf 'tools/lint/lint-scripts.sh\n' ;;
     lint-script-domain-inventory) printf 'tools/lint/lint-script-domain-inventory.sh\n' ;;
+    lint-portable-repo-paths) printf 'tools/lint/lint-portable-repo-paths.sh\n' ;;
     lint-test-docstrings) printf 'tools/lint/lint-test-docstrings.sh\n' ;;
     test-guards) printf 'tests/shell/test-guards.sh\n' ;;
     test-guard-framework) printf 'tests/shell/test-guard-framework.sh\n' ;;
@@ -166,6 +169,7 @@ suite_path() {
     test-dispatch-common) printf 'tests/shell/test-dispatch-common.sh\n' ;;
     test-detached-launch) printf 'tests/shell/test-detached-launch.sh\n' ;;
     test-lint-model-aliases) printf 'tests/shell/test-lint-model-aliases.sh\n' ;;
+    test-lint-portable-repo-paths) printf 'tests/shell/test-lint-portable-repo-paths.sh\n' ;;
     test-reasoning-effort) printf 'tests/shell/test-reasoning-effort.sh\n' ;;
     test-host-manifest)   printf 'tests/shell/test-host-manifest.sh\n' ;;
     test-host-write-codex) printf 'tests/shell/test-host-write-codex.sh\n' ;;

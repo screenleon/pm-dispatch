@@ -16,6 +16,7 @@ SUITE_NAMES=(
   lint-agents
   lint-scripts
   lint-script-domain-inventory
+  lint-portable-repo-paths
   lint-test-docstrings
   test-guards
   test-guard-framework
@@ -61,6 +62,7 @@ SUITE_NAMES=(
   test-dispatch-common
   test-detached-launch
   test-lint-model-aliases
+  test-lint-portable-repo-paths
   test-reasoning-effort
   test-core-schemas
   test-host-manifest
@@ -98,6 +100,7 @@ declare -A SUITE_PATHS=(
   [lint-agents]="tools/lint/lint-agents.sh"
   [lint-scripts]="tools/lint/lint-scripts.sh"
   [lint-script-domain-inventory]="tools/lint/lint-script-domain-inventory.sh"
+  [lint-portable-repo-paths]="tools/lint/lint-portable-repo-paths.sh"
   [lint-test-docstrings]="tools/lint/lint-test-docstrings.sh"
   [test-guards]="tests/shell/test-guards.sh"
   [test-guard-framework]="tests/shell/test-guard-framework.sh"
@@ -143,6 +146,7 @@ declare -A SUITE_PATHS=(
   [test-dispatch-common]="tests/shell/test-dispatch-common.sh"
   [test-detached-launch]="tests/shell/test-detached-launch.sh"
   [test-lint-model-aliases]="tests/shell/test-lint-model-aliases.sh"
+  [test-lint-portable-repo-paths]="tests/shell/test-lint-portable-repo-paths.sh"
   [test-reasoning-effort]="tests/shell/test-reasoning-effort.sh"
   [test-core-schemas]="tests/shell/test-core-schemas.sh"
   [test-host-manifest]="tests/shell/test-host-manifest.sh"
