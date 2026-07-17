@@ -147,6 +147,70 @@ repos may choose tests, a gate, both, or neither. See
 
 `install.sh --verify` delegates to this script.
 
+## pmctl command index
+
+The CLI is self-documenting: run `pmctl --help`, `pmctl help <area>`, or
+`pmctl help <area> <command>`. The machine-readable inventory is available as
+`pmctl commands --json`. The block below is mechanically checked against the
+router and [`cli/commands.tsv`](cli/commands.tsv).
+
+<!-- pmctl-command-index:start -->
+- `adapter generate` — Scaffold an adapter from the canonical adapter manifest. [experimental; JSON: false; mutating: true]
+- `backlog view` — Show the active backlog. [experimental; JSON: false; mutating: false]
+- `backlog lint` — Validate backlog structure and policy. [experimental; JSON: false; mutating: false]
+- `backlog archive` — Archive completed backlog entries. [experimental; JSON: false; mutating: true]
+- `guard check` — Evaluate a registered guard policy. [experimental; JSON: false; mutating: false]
+- `dispatch run` — Launch an adapter run from a validated brief. [experimental; JSON: false; mutating: true]
+- `dispatch wait` — Wait for a detached dispatch run to finish. [experimental; JSON: false; mutating: true]
+- `artifacts list` — List managed artifacts. [experimental; JSON: false; mutating: false]
+- `artifacts show` — Show one managed artifact. [experimental; JSON: false; mutating: false]
+- `artifacts gc` — Remove expired managed artifacts. [experimental; JSON: false; mutating: true]
+- `artifacts migrate` — Migrate legacy artifacts into managed storage. [experimental; JSON: false; mutating: true]
+- `worktree create` — Create a managed ticket worktree. [experimental; JSON: false; mutating: true]
+- `worktree list` — List managed worktrees. [experimental; JSON: true; mutating: false]
+- `worktree remove` — Remove a managed worktree. [experimental; JSON: false; mutating: true]
+- `worktree gc` — Remove stale managed worktree records. [experimental; JSON: false; mutating: true]
+- `ship` — Run the ticket delivery workflow. [experimental; JSON: false; mutating: true]
+- `ship prepare` — Prepare a ticket delivery run. [experimental; JSON: false; mutating: true]
+- `ship finish` — Finish a prepared ticket delivery run. [experimental; JSON: false; mutating: true]
+- `ship --parallel` — Run multiple ticket delivery workflows. [experimental; JSON: false; mutating: true]
+- `ship status` — Show and refresh a parallel ship run. [experimental; JSON: true; mutating: true]
+- `ship list` — List and refresh completed parallel ship runs. [experimental; JSON: true; mutating: true]
+- `trace tail` — Read normalized project events. [experimental; JSON: true; mutating: false]
+- `task list` — List tasks. [experimental; JSON: true; mutating: false]
+- `task show` — Show one task. [experimental; JSON: true; mutating: false]
+- `task create` — Create a task. [experimental; JSON: false; mutating: true]
+- `task update` — Update task metadata or state. [experimental; JSON: false; mutating: true]
+- `task claim` — Claim an available task. [experimental; JSON: false; mutating: true]
+- `task dispatch` — Record task dispatch metadata. [experimental; JSON: false; mutating: true]
+- `task status` — Show task lifecycle status. [experimental; JSON: true; mutating: false]
+- `task review` — Record a task review result. [experimental; JSON: false; mutating: true]
+- `safe bash` — Run a shell command through guard policy. [experimental; JSON: false; mutating: true]
+- `validate brief` — Validate a dispatch brief. [experimental; JSON: false; mutating: false]
+- `decision add` — Append a structured decision. [experimental; JSON: true; mutating: true]
+- `gate run` — Start the pull-request gate. [experimental; JSON: false; mutating: true]
+- `gate verify` — Verify a gate result artifact. [experimental; JSON: false; mutating: false]
+- `gate wait` — Wait for a detached gate run. [experimental; JSON: false; mutating: true]
+- `context index` — Build the repository context index. [experimental; JSON: false; mutating: true]
+- `context update` — Update the repository context index. [experimental; JSON: false; mutating: true]
+- `context status` — Show context index status. [experimental; JSON: true; mutating: false]
+- `context query` — Query indexed project context. [experimental; JSON: false; mutating: true]
+- `context pack` — Build a bounded JSON context pack. [experimental; JSON: true; mutating: true]
+- `context reuse-scan` — Scan indexed context for prior art. [experimental; JSON: false; mutating: true]
+- `context prompt-scan` — Scan a prompt for context references. [experimental; JSON: false; mutating: true]
+- `memory dir` — Print the canonical project memory directory. [experimental; JSON: false; mutating: false]
+- `memory resolve` — Resolve canonical project memory configuration. [experimental; JSON: true; mutating: false]
+- `memory config` — Read or update memory configuration. [experimental; JSON: true; mutating: true]
+- `memory append-episode` — Append a canonical memory episode. [experimental; JSON: true; mutating: true]
+- `memory doctor` — Diagnose canonical memory configuration; exits 0 healthy, 1 issues found, 2 usage error. [experimental; JSON: true; mutating: false]
+- `memory shard` — Build memory retrieval shards. [experimental; JSON: false; mutating: true]
+- `memory rebuild-summary` — Rebuild the memory summary index. [experimental; JSON: false; mutating: true]
+- `pre-release audit` — Audit a milestone before release. [experimental; JSON: false; mutating: false]
+- `pm prepare` — Prepare a bounded PM execution plan. [experimental; JSON: true; mutating: true]
+- `pm run` — Run a prepared PM batch. [experimental; JSON: true; mutating: true]
+- `commands` — List the canonical command registry. [experimental; JSON: true; mutating: false]
+<!-- pmctl-command-index:end -->
+
 ## What's here
 
 ### Agents

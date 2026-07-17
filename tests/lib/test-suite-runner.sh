@@ -17,6 +17,7 @@ SUITE_NAMES=(
   lint-scripts
   lint-script-domain-inventory
   lint-portable-repo-paths
+  lint-pmctl-commands
   lint-test-docstrings
   test-guards
   test-guard-framework
@@ -92,6 +93,7 @@ SUITE_NAMES=(
   test-pmctl-guard
   test-pmctl-ship
   test-pmctl-worktree
+  test-pmctl-discovery
   test-pre-release
   test-release-verify
   test-e2e-script
@@ -102,6 +104,7 @@ declare -A SUITE_PATHS=(
   [lint-scripts]="tools/lint/lint-scripts.sh"
   [lint-script-domain-inventory]="tools/lint/lint-script-domain-inventory.sh"
   [lint-portable-repo-paths]="tools/lint/lint-portable-repo-paths.sh"
+  [lint-pmctl-commands]="tools/lint/lint-pmctl-commands.sh"
   [lint-test-docstrings]="tools/lint/lint-test-docstrings.sh"
   [test-guards]="tests/shell/test-guards.sh"
   [test-guard-framework]="tests/shell/test-guard-framework.sh"
@@ -177,6 +180,7 @@ declare -A SUITE_PATHS=(
   [test-pmctl-guard]="tests/shell/test-pmctl-guard.sh"
   [test-pmctl-ship]="tests/shell/test-pmctl-ship.sh"
   [test-pmctl-worktree]="tests/shell/test-pmctl-worktree.sh"
+  [test-pmctl-discovery]="tests/shell/test-pmctl-discovery.sh"
   [test-pre-release]="tests/shell/test-pre-release.sh"
   [test-release-verify]="tests/shell/test-release-verify.sh"
   [test-e2e-script]="tests/shell/test-e2e-script.sh"

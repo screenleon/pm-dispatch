@@ -92,6 +92,7 @@ HOME	HOME	runtime/lib/pmctl-memory-config.sh	production
 HOME	HOME	runtime/lib/pmctl-ship.sh	production
 HOME	HOME	runtime/lib/portable.sh	production
 HOME	HOME	runtime/lib/state-paths.sh	production
+HOME	HOME	tools/lint/lint-pmctl-commands.sh	production
 HOME	HOME	tools/lint/lint-portable-repo-paths.sh	production
 HOME	HOME	ops/usage/log-usage.sh	production
 HOME	HOME	runtime/bin/pr-gate.sh	production

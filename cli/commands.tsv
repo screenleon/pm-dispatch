@@ -1,0 +1,55 @@
+path	summary	usage	stability	json	mutating	options	example
+adapter generate	Scaffold an adapter from the canonical adapter manifest.	pmctl adapter generate <name>	experimental	false	true	none	pmctl adapter generate opencode
+backlog view	Show the active backlog.	pmctl backlog view [--status <status>] [--area <area>]	experimental	false	false	--status, --area	pmctl backlog view --status active
+backlog lint	Validate backlog structure and policy.	pmctl backlog lint	experimental	false	false	none	pmctl backlog lint
+backlog archive	Archive completed backlog entries.	pmctl backlog archive [options]	experimental	false	true	--dry-run	pmctl backlog archive --dry-run
+guard check	Evaluate a registered guard policy.	pmctl guard check --role <role> --runtime <runtime> [options]	experimental	false	false	--role, --runtime, --event, --input	pmctl guard check --role pm --runtime codex
+dispatch run	Launch an adapter run from a validated brief.	pmctl dispatch run --adapter <name> --cd <dir> --brief-file <path> [options]	experimental	false	true	--adapter, --cd, --brief-file, --model, --lifecycle, --auto-pack	pmctl dispatch run --adapter codex --cd . --brief-file /tmp/brief.md
+dispatch wait	Wait for a detached dispatch run to finish.	pmctl dispatch wait <run-id> --cd <dir> [--timeout <seconds>]	experimental	false	true	--cd, --timeout	pmctl dispatch wait run-123 --cd .
+artifacts list	List managed artifacts.	pmctl artifacts list [--cd <dir>]	experimental	false	false	--cd	pmctl artifacts list --cd .
+artifacts show	Show one managed artifact.	pmctl artifacts show <artifact-id> [--cd <dir>]	experimental	false	false	--cd	pmctl artifacts show artifact-123
+artifacts gc	Remove expired managed artifacts.	pmctl artifacts gc [--cd <dir>] [--dry-run]	experimental	false	true	--cd, --dry-run	pmctl artifacts gc --dry-run
+artifacts migrate	Migrate legacy artifacts into managed storage.	pmctl artifacts migrate [--cd <dir>]	experimental	false	true	--cd	pmctl artifacts migrate --cd .
+worktree create	Create a managed ticket worktree.	pmctl worktree create <branch> [options]	experimental	false	true	--from, --name, --cd	pmctl worktree create feat/example --from main
+worktree list	List managed worktrees.	pmctl worktree list [--cd <dir>] [--json]	experimental	true	false	--cd, --json	pmctl worktree list --json
+worktree remove	Remove a managed worktree.	pmctl worktree remove <name-or-branch> [options]	experimental	false	true	--cd, --force	pmctl worktree remove example
+worktree gc	Remove stale managed worktree records.	pmctl worktree gc [options]	experimental	false	true	--cd, --dry-run, --merged, --force, --max-age-days	pmctl worktree gc --dry-run
+ship	Run the ticket delivery workflow.	pmctl ship <ticket-id> [options]	experimental	false	true	--worktree, --adapter, --from, --isolation, --model, --auto-pack, --cd	pmctl ship CC-NNN --adapter codex
+ship prepare	Prepare a ticket delivery run.	pmctl ship prepare <ticket-id> [--cd <dir>]	experimental	false	true	--cd	pmctl ship prepare CC-NNN
+ship finish	Finish a prepared ticket delivery run.	pmctl ship finish <ticket-id> [options]	experimental	false	true	--cd, --reviewers	pmctl ship finish CC-NNN
+ship --parallel	Run multiple ticket delivery workflows.	pmctl ship --parallel <ticket-id>... [options]	experimental	false	true	--from, --adapter, --isolation, --model, --auto-pack, --cd	pmctl ship --parallel CC-NNN CC-MMM
+ship status	Show and refresh a parallel ship run.	pmctl ship status [--cd <dir>] [--json]	experimental	true	true	--cd, --json	pmctl ship status --json
+ship list	List and refresh completed parallel ship runs.	pmctl ship list [--cd <dir>] [--json]	experimental	true	true	--cd, --json	pmctl ship list --json
+trace tail	Read normalized project events.	pmctl trace tail [filters]	experimental	true	false	--kind, --task, --subject, --since, --until, --limit, --all, --json	pmctl trace tail --task CC-NNN --json
+task list	List tasks.	pmctl task list [--state <state>] [--json]	experimental	true	false	--state, --json	pmctl task list --state active --json
+task show	Show one task.	pmctl task show <id> [--json]	experimental	true	false	--json	pmctl task show CC-NNN --json
+task create	Create a task.	pmctl task create <id> --title <title> [options]	experimental	false	true	--title, --priority, --epic, --area, --backlog-ref, --behavioral-units, --size-tier	pmctl task create CC-NNN --title "Example"
+task update	Update task metadata or state.	pmctl task update <id> [options]	experimental	false	true	--title, --state, --priority, --epic, --area, --backlog-ref, --behavioral-units, --size-tier	pmctl task update CC-NNN --state active
+task claim	Claim an available task.	pmctl task claim <id>	experimental	false	true	none	pmctl task claim CC-NNN
+task dispatch	Record task dispatch metadata.	pmctl task dispatch <id> --agent <agent> [--brief-file <path>]	experimental	false	true	--agent, --brief-file	pmctl task dispatch CC-NNN --agent codex
+task status	Show task lifecycle status.	pmctl task status <id> [--json]	experimental	true	false	--json	pmctl task status CC-NNN --json
+task review	Record a task review result.	pmctl task review <id> [options]	experimental	false	true	--result, --note	pmctl task review CC-NNN --result pass
+safe bash	Run a shell command through guard policy.	pmctl safe bash --role <role> --runtime <runtime> [--] <command>	experimental	false	true	--role, --runtime, --	pmctl safe bash --role reviewer --runtime codex -- "git diff --check"
+validate brief	Validate a dispatch brief.	pmctl validate brief <path> [options]	experimental	false	false	--schema	pmctl validate brief /tmp/brief.md
+decision add	Append a structured decision.	pmctl decision add --date <date> --title <title> --path <path> [options]	experimental	true	true	--date, --title, --path, --closes, --tags, --evidence, --json	pmctl decision add --date 2026-01-01 --title "Example" --path DECISIONS.md
+gate run	Start the pull-request gate.	pmctl gate run [options]	experimental	false	true	--executor, --test-cmd, --cd	pmctl gate run --executor codex
+gate verify	Verify a gate result artifact.	pmctl gate verify <result-file>	experimental	false	false	none	pmctl gate verify .gate-results/result.json
+gate wait	Wait for a detached gate run.	pmctl gate wait <gate-id> [options]	experimental	false	true	--cd, --timeout	pmctl gate wait gate-123 --cd .
+context index	Build the repository context index.	pmctl context index [<repo-root>] [--source <repo|memory>]	experimental	false	true	--source	pmctl context index . --source repo
+context update	Update the repository context index.	pmctl context update [<repo-root>] [<path>]	experimental	false	true	none	pmctl context update . README.md
+context status	Show context index status.	pmctl context status [<repo-root>] [--json]	experimental	true	false	--json	pmctl context status . --json
+context query	Query indexed project context.	pmctl context query [<repo-root>] [options] -- <query>	experimental	false	true	--domain, --source, --	pmctl context query . --source repo -- "dispatch lifecycle"
+context pack	Build a bounded JSON context pack.	pmctl context pack [<repo-root>] --task-id <id> --query <term>... [--source <repo|memory|all>]	experimental	true	true	--task-id, --query, --source	pmctl context pack . --task-id CC-NNN --query "dispatch lifecycle"
+context reuse-scan	Scan indexed context for prior art.	pmctl context reuse-scan [<repo-root>] <description>	experimental	false	true	none	pmctl context reuse-scan . "dispatch lifecycle"
+context prompt-scan	Scan a prompt for context references.	pmctl context prompt-scan [<repo-root>] <prompt>	experimental	false	true	none	pmctl context prompt-scan . "dispatch lifecycle"
+memory dir	Print the canonical project memory directory.	pmctl memory dir [working-directory]	experimental	false	false	none	pmctl memory dir .
+memory resolve	Resolve canonical project memory configuration.	pmctl memory resolve [options]	experimental	true	false	--repo-root, --allow-non-git, --json	pmctl memory resolve --repo-root . --json
+memory config	Read or update memory configuration.	pmctl memory config <set|migrate|lint> [options]	experimental	true	true	--repo-root, --memory-dir, --json	pmctl memory config lint --json
+memory append-episode	Append a canonical memory episode.	pmctl memory append-episode --repo-root <path> --host <name> --summary <text> [--json]	experimental	true	true	--repo-root, --host, --summary, --json	pmctl memory append-episode --repo-root . --host codex --summary "Completed work"
+memory doctor	Diagnose canonical memory configuration; exits 0 healthy, 1 issues found, 2 usage error.	pmctl memory doctor [--json] [--repo-root <path>]	experimental	true	false	--repo-root, --json	pmctl memory doctor --repo-root . --json
+memory shard	Build memory retrieval shards.	pmctl memory shard [--repo-root <path>]	experimental	false	true	--repo-root	pmctl memory shard --repo-root .
+memory rebuild-summary	Rebuild the memory summary index.	pmctl memory rebuild-summary [--repo-root <path>]	experimental	false	true	--repo-root	pmctl memory rebuild-summary --repo-root .
+pre-release audit	Audit a milestone before release.	pmctl pre-release audit <milestone-id>	experimental	false	false	none	pmctl pre-release audit v1.0.0
+pm prepare	Prepare a bounded PM execution plan.	pmctl pm prepare --request <text> [options]	experimental	true	true	--request, --cd, --focus, --host, --json	pmctl pm prepare --request "Implement the active ticket" --cd .
+pm run	Run a prepared PM batch.	pmctl pm run --plan <path> [options]	experimental	true	true	--plan, --cd, --json	pmctl pm run --plan /tmp/pm-plan.json
+commands	List the canonical command registry.	pmctl commands --json	experimental	true	false	--json	pmctl commands --json

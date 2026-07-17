@@ -193,10 +193,15 @@ map_path() {
       add_suite lint-script-domain-inventory; add_suite test-script-domain-inventory; behavioral=1 ;;
     tools/lint/lint-portable-repo-paths.sh|tests/shell/test-lint-portable-repo-paths.sh|runtime/lib/repo-layout.sh)
       add_suite lint-portable-repo-paths; add_suite test-lint-portable-repo-paths; behavioral=1 ;;
+    tools/lint/lint-pmctl-commands.sh|tests/shell/test-pmctl-discovery.sh|cli/commands.tsv|runtime/lib/pmctl-command-catalog.sh)
+      add_suite lint-pmctl-commands; add_suite test-pmctl-discovery; behavioral=1 ;;
     tests/bin/run-tests.sh)
       add_suite test-run-tests; behavioral=1 ;;
     tests/lib/test-result.sh|core/schema/test-result.schema.json)
       add_suite test-run-tests; behavioral=1 ;;
+    tests/lib/test-pmctl-fixture.sh)
+      add_suite test-pmctl-adapter-generate; add_suite test-pmctl-artifacts
+      add_suite test-pmctl-gate; add_suite test-pmctl-discovery; behavioral=1 ;;
     runtime/lib/state-writer.sh)
       add_suite test-state-store; behavioral=1 ;;
     runtime/lib/pmctl-policy.sh)
@@ -246,6 +251,7 @@ map_path() {
       add_suite test-guards; behavioral=1 ;;
     cli/pmctl)
       for suite in "${!REGISTERED[@]}"; do [[ "$suite" == test-pmctl-* ]] && add_suite "$suite"; done
+      add_suite lint-pmctl-commands
       behavioral=1 ;;
     agents/*.md)
       add_suite lint-agents; add_suite test-lint-frontmatter; behavioral=1 ;;

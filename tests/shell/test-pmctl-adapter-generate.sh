@@ -7,14 +7,16 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # shellcheck source=tests/lib/test-harness.sh
 . "$SCRIPT_DIR/../lib/test-harness.sh"
+# shellcheck source=tests/lib/test-pmctl-fixture.sh
+. "$SCRIPT_DIR/../lib/test-pmctl-fixture.sh"
 th_init "test-pmctl-adapter-generate" "$@"
 
 make_fixture_repo() {
   local repo="$1" enum_values="${2:-codex claude}"
   local value
 
-  mkdir -p "$repo/cli" "$repo/runtime/lib" "$repo/core/policy" "$repo/adapters"
-  cp "$REPO_ROOT/cli/pmctl" "$repo/cli/pmctl"
+  mkdir -p "$repo/core/policy" "$repo/adapters"
+  pmctl_fixture_copy_spine "$REPO_ROOT" "$repo"
   cp "$REPO_ROOT/runtime/lib/pmctl-adapter.sh" "$repo/runtime/lib/pmctl-adapter.sh"
   cp "$REPO_ROOT/runtime/lib/pmctl-fs.sh" "$repo/runtime/lib/pmctl-fs.sh"
   cp "$REPO_ROOT/runtime/lib/pmctl-policy.sh" "$repo/runtime/lib/pmctl-policy.sh"
@@ -24,8 +26,6 @@ make_fixture_repo() {
   cp "$REPO_ROOT/runtime/lib/executor-router.sh" "$repo/runtime/lib/executor-router.sh"
   # executor-router.sh sources runner-kind.sh for manifest-derived routing (CC-373).
   cp "$REPO_ROOT/runtime/lib/runner-kind.sh" "$repo/runtime/lib/runner-kind.sh"
-  chmod +x "$repo/cli/pmctl"
-
   {
     printf 'values:\n'
     for value in $enum_values; do

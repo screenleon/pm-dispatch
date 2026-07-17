@@ -17,6 +17,7 @@ SUITE_NAMES=(
   lint-scripts
   lint-script-domain-inventory
   lint-portable-repo-paths
+  lint-pmctl-commands
   lint-test-docstrings
   test-guards
   test-guard-framework
@@ -92,6 +93,7 @@ SUITE_NAMES=(
   test-pmctl-guard
   test-pmctl-ship
   test-pmctl-worktree
+  test-pmctl-discovery
   test-pre-release
   test-release-verify
   test-e2e-script
@@ -125,6 +127,7 @@ suite_path() {
     lint-scripts) printf 'tools/lint/lint-scripts.sh\n' ;;
     lint-script-domain-inventory) printf 'tools/lint/lint-script-domain-inventory.sh\n' ;;
     lint-portable-repo-paths) printf 'tools/lint/lint-portable-repo-paths.sh\n' ;;
+    lint-pmctl-commands) printf 'tools/lint/lint-pmctl-commands.sh\n' ;;
     lint-test-docstrings) printf 'tools/lint/lint-test-docstrings.sh\n' ;;
     test-guards) printf 'tests/shell/test-guards.sh\n' ;;
     test-guard-framework) printf 'tests/shell/test-guard-framework.sh\n' ;;
@@ -200,6 +203,7 @@ suite_path() {
     test-pmctl-guard)     printf 'tests/shell/test-pmctl-guard.sh\n' ;;
     test-pmctl-ship)      printf 'tests/shell/test-pmctl-ship.sh\n' ;;
     test-pmctl-worktree)  printf 'tests/shell/test-pmctl-worktree.sh\n' ;;
+    test-pmctl-discovery) printf 'tests/shell/test-pmctl-discovery.sh\n' ;;
     test-pre-release)     printf 'tests/shell/test-pre-release.sh\n' ;;
     test-release-verify)  printf 'tests/shell/test-release-verify.sh\n' ;;
     test-e2e-script)      printf 'tests/shell/test-e2e-script.sh\n' ;;
