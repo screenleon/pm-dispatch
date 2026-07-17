@@ -187,8 +187,10 @@ map_path() {
   esac
 
   case "$path" in
-    tools/lint/lint-script-domain-inventory.sh|tests/shell/test-script-domain-inventory.sh|docs/architecture/script-domain-ownership.md|docs/architecture/script-domain-inventory.tsv|docs/architecture/script-variable-inventory.tsv|docs/architecture/script-variable-consumers.tsv)
+    tools/lint/lint-script-domain-inventory.sh|tests/shell/test-script-domain-inventory.sh|docs/architecture/script-domain-ownership.md|docs/architecture/script-domain-inventory.tsv|docs/architecture/script-domain-reference-allowlist.tsv|docs/architecture/script-variable-inventory.tsv|docs/architecture/script-variable-consumers.tsv)
       add_suite lint-script-domain-inventory; add_suite test-script-domain-inventory; behavioral=1 ;;
+    tests/bin/run-tests.sh)
+      add_suite test-run-tests; behavioral=1 ;;
     tests/lib/test-result.sh|core/schema/test-result.schema.json)
       add_suite test-run-tests; behavioral=1 ;;
     runtime/lib/state-writer.sh)
@@ -223,6 +225,11 @@ map_path() {
       add_suite test-install; add_suite test-doctor; add_suite test-guards; behavioral=1 ;;
     tools/lint/lint-scripts.sh)
       add_suite lint-scripts; add_suite test-run-tests; behavioral=1 ;;
+  esac
+
+  case "$path" in
+    README.md|core/README.md|BACKLOG.md|MILESTONES.md|docs/*.md|docs/architecture/*.md|.github/*|.github/**/*|install.sh|uninstall.sh|cli/*|runtime/*|runtime/**/*|hosts/*|hosts/**/*|ops/*|ops/**/*|tools/*|tools/**/*)
+      add_suite lint-script-domain-inventory; behavioral=1 ;;
   esac
 
   case "$path" in

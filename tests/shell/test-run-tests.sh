@@ -28,7 +28,7 @@ make_fixture() {
   cat > "$repo/tests/lib/test-suite-runner.sh" <<'RUNNER'
 #!/usr/bin/env bash
 set -euo pipefail
-suites=(lint-agents lint-scripts test-lint-frontmatter test-commands test-check-docs-freshness test-guards test-migrate test-install test-doctor test-pmctl-dispatch test-pmctl-context test-pmctl-memory test-pr-gate test-host-manifest test-host-write-codex test-host-write-parity test-core-schemas test-layer-boundaries test-pm-scripts test-run-tests)
+suites=(lint-agents lint-scripts lint-script-domain-inventory test-script-domain-inventory test-lint-frontmatter test-commands test-check-docs-freshness test-guards test-migrate test-install test-doctor test-pmctl-dispatch test-pmctl-context test-pmctl-memory test-pr-gate test-host-manifest test-host-write-codex test-host-write-parity test-core-schemas test-layer-boundaries test-pm-scripts test-run-tests)
 for arg in "$@"; do
   if [[ "$arg" == --list ]]; then printf '%s\n' "${suites[@]}"; exit 0; fi
 done
@@ -77,6 +77,18 @@ case_docs_mapping_list_only() {
   repo="$(make_fixture "$name")"
   out=$(RUN_TESTS_ARGS_LOG="$args" "$repo/tests/bin/run-tests.sh" --path docs/context-retrieval.md --list 2>&1) || status=$?
   if [[ "$status" -eq 0 && "$out" == *"test-check-docs-freshness"* && ! -e "$args" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out executed=$([[ -e "$args" ]] && echo yes || echo no)"
+  fi
+}
+
+case_operational_docs_map_to_stale_reference_lint() {
+  local name=operational-docs-map-to-stale-reference-lint repo out status=0 args
+  args="$TMP_ROOT/$name.args"
+  repo="$(make_fixture "$name")"
+  out=$(RUN_TESTS_ARGS_LOG="$args" "$repo/tests/bin/run-tests.sh" --path README.md --list 2>&1) || status=$?
+  if [[ "$status" -eq 0 && "$out" == *"lint-script-domain-inventory"* && ! -e "$args" ]]; then
     pass "$name"
   else
     fail "$name" "status=$status out=$out executed=$([[ -e "$args" ]] && echo yes || echo no)"
@@ -298,6 +310,7 @@ case_iteration_result_cannot_verify_as_full() {
 case_direct_library_mapping
 case_memory_config_mapping_has_no_gap
 case_docs_mapping_list_only
+case_operational_docs_map_to_stale_reference_lint
 case_agent_mapping_uses_registered_frontmatter_suite
 case_command_mapping_uses_registered_frontmatter_suite
 case_skill_mapping_uses_registered_frontmatter_suite

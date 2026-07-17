@@ -6,6 +6,12 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased]
+
+### Changed
+
+- **Canonical migration references and release metadata.** Current README, core, platform, milestone, backlog, and release-checklist surfaces now point to the owner-domain paths established by the script-domain migration. The inventory linter rejects retired implementation references while preserving historical records, compatibility coverage, and installed `~/.claude/scripts/` helper names; release verification now derives coverage from the canonical suite registry instead of a copied suite count.
+
 ## [0.8.0] — 2026-07-04
 
 ### Added

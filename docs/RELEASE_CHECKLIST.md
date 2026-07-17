@@ -12,7 +12,7 @@ Coverage splits into three layers:
 
 | Layer | What runs it | Covers |
 |-------|--------------|--------|
-| **Offline automated** | `ops/release/release-verify.sh` (Phases 1–3) | prerequisites, all 64 test suites, real `pmctl context` smoke + real `sqlite3` |
+| **Offline automated** | `ops/release/release-verify.sh` (Phases 1–3) | prerequisites, every suite in the canonical test registry, real `pmctl context` smoke + real `sqlite3` |
 | **Live E2E automated** | `ops/release/release-verify.sh --e2e` (Phase 4) | real dispatch output contract (Phase B); pr-gate structural validation via codex (Phase C — requires codex on PATH) — spends LLM tokens |
 | **Manual** | §2a / §2d below | real install + hooks, `doctor`, Claude Code hook execution — environment-mutating, not automatable |
 
@@ -58,6 +58,8 @@ bash ops/release/release-verify.sh --e2e --adapter claude
 - [ ] No suite is silently skipped that you expected to run (the script lists
       every `SKIP`ped suite explicitly — confirm each skip is intentional, e.g.
       `test-codex-dispatch` skips when `codex` is not on PATH).
+- [ ] The run covers all suites reported by `tests/bin/run-all-tests.sh --list`;
+      do not copy a suite count into release metadata or this checklist.
 
 ### Prerequisites the script checks (install before running)
 

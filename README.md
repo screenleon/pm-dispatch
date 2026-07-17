@@ -31,17 +31,23 @@ expect bilingual responses.
 
 ## Path placeholders
 
-Examples use `${PM_DISPATCH_REPO}` to refer to your local clone root. If unset, `scripts/install-guards.sh` derives it automatically from the git toplevel with:
+Examples use `${PM_DISPATCH_REPO}` to refer to your local clone root. If unset, `hosts/claude/bin/install-guards.sh` derives it automatically from the git toplevel with:
 
-`repo_root="${PM_DISPATCH_REPO:-$(cd "$(dirname "$0")/.." && pwd)}"`
+`repo_root="${PM_DISPATCH_REPO:-$(cd "$SCRIPT_DIR/../../.." && pwd -P)}"`
 
 ## Layout
 
 ```
 agents/      → ~/.claude/agents/    subagents callable via the Agent tool
 commands/    → ~/.claude/commands/  /slash commands
-scripts/                            hook wrappers (called by absolute path) + usage tracking scripts
-             → ~/.claude/scripts/   token-usage.sh and log-usage.sh are symlinked here by install.sh
+runtime/                            shared CLI, hooks, state, memory, context, and gate runtime
+hosts/<host>/                      host-owned install, doctor, hooks, and configuration adapters
+adapters/<name>/                   executor-specific dispatch and model policy
+tests/                             registered test harness, suites, and fixtures
+tools/                             static lint and authoring helpers
+ops/                               maintainer setup, release, diagnostics, backlog, and usage tools
+scripts/                           compatibility shims only; no canonical implementation
+             → ~/.claude/scripts/   selected stable helper names are installed by install.sh
 pm/          → ~/.claude/.pm/       cross-repo PM schema, scripts, templates
 settings/                           settings fragments to merge into ~/.claude/settings.json by hand
 docs/                               guides, schemas, and policy documents
@@ -176,21 +182,21 @@ usage.
 
 - **QA rules directory** (`$QA_RULES_DIR`, default `~/github/qa-testing-rules/`). Any directory with an `AGENT.md` Tier 1 entry point works — the [`qa-testing-rules`](https://github.com/screenleon/qa-testing-rules) repo is the reference implementation, but you can substitute your own. Set `QA_RULES_ENTRY` to override the entry point filename if your rules repo uses a different convention.
 
-### Scripts
+### Operational entrypoints
 
 - **cli/pmctl** — Runtime CLI spine. `install.sh` symlinks it into `${PMCTL_BIN_DIR:-$HOME/.local/bin}` on Linux/macOS/WSL; Windows users should add `<repo>/cli` to `$PATH` manually because a copied `pmctl` cannot resolve repo-local libraries. Key sub-commands: `pmctl pm prepare` / `pmctl pm run` (batch-only PM coordinator for non-Claude hosts); `pmctl dispatch run --adapter <codex|claude> --brief-file <path>` (preferred dispatch path); `pmctl task create/show/list/update/claim/dispatch/status/review` (task CRUD + lifecycle; see [`docs/pmctl-task.md`](docs/pmctl-task.md)); `pmctl decision add`; `pmctl trace tail` (reads `events.jsonl` + archives with `--kind/--task/--since/--until/--json` filters); `pmctl context index/update/query/pack/reuse-scan` (repo index + prior-art scan; see [`docs/context-retrieval.md`](docs/context-retrieval.md)); `pmctl validate brief`; `pmctl gate run`; `pmctl guard check --role <pm|executor|reviewer> --runtime <codex|claude>`; `pmctl safe bash`; `pmctl adapter generate <name>` (scaffolds `adapters/<name>/adapter.yaml` and support files). `adapter.yaml` is the source of truth and must stay out of `generated_files`; regenerate only the files listed there.
-- **pm-prep-snapshot.sh** — Captures branch/PR/backlog/tooling state before PM-agent spawn and writes a typed snapshot for PM consumption.
-- **codex-watch.sh** — Tails `.agent-trace/latest.jsonl` and prints a one-line human summary per event (`[turn.started]`, `[cmd] exit=0 …`, `[msg] …`, `[turn.completed] tokens: …`). Run from another terminal during a long dispatch to see real-time progress.
-- **guard-pm-write.sh** — `PreToolUse` hook (matcher `Edit|Write`). Blocks `project-pm` from editing/writing outside `~/.claude/projects/<claude-project-id>/memory/`. Asserts absolute paths and normalizes `..`. No-op for any other agent or the main thread. Bypass (logged): `PM_GUARD_PM_WRITE=off`. Requires `jq` and `realpath`.
-- **guard-executor-write.sh** — the unified executor write-guard, surfaced via `pmctl guard check --role executor` (cli-only — no live `PreToolUse` hook, since the brief is authored by trusted main-thread code). It derives the runtime from `agent_type` and enforces that runtime's `write_guard_mode`. Bypass (logged): `PM_GUARD_<RUNTIME>_WRITE=off`. Requires `jq` and `realpath`.
-- **guard-save-rate-limits.sh** — `StatusLine` hook that saves Claude rate-limit payloads to `~/.claude/rate-limits.json` for `token-usage.sh --remaining`. If a previous `statusLine.command` existed during install, it is saved to `~/.claude/statusline-chain.conf` and invoked after the rate-limit file is updated.
-- **install-guards.sh / uninstall-guards.sh** — Idempotent `jq`-based splice into `~/.claude/settings.json`. `--dry-run` shows the diff without applying. Each apply backs up `settings.json` to `settings.json.bak.<timestamp>`.
-- **test-guards.sh** — Regression suite for the managed hook scripts (~200+ cases: happy paths, boundary, per-metachar isolated coverage, quote / `..` / glob / read-root / git -C / `--flag=path` bypass attempts, destructive git, stash subverbs, audit-log content assertions, env-var bypass, type-confusion, and StatusLine rate-limit capture). Exit 0 on all pass. `VERBOSE=1` prints every case. Run by `install.sh` and isolates audit logs via `PM_GUARD_LOG_DIR`.
-- **lint-scripts.sh** — Hygiene check for `scripts/*.sh`: executable bit, shebang, `bash -n` parses, has a `set -...` line. Run by `install.sh`.
-- **lint-frontmatter.sh** — Validates YAML frontmatter in `agents/`, `commands/`, and `skills/` against PyYAML flow-collection semantics (dq-escape whitelist, adjacent-quote, tab-indent, and empty-entry detection across all four collection paths). Run by CI and `doctor.sh`.
-- **run-tests.sh** — pm-dispatch-specific, direct-impact iteration planner. It can be supplied explicitly to generic `pr-gate --test-cmd`; it is not final sign-off evidence.
-- **run-all-tests.sh** — Backward-compatible full-suite wrapper for `run-tests.sh --all`. `install.sh --verify` uses it; `--list` and `--skip <name>` remain available in full mode.
-- **doctor.sh** — Environment health check: verifies `claude`/`jq`/`pmctl` are on `$PATH`, hooks are wired into `~/.claude/settings.json`, the memory directory exists, scripts are executable, and frontmatter passes lint. `--profile minimal|full|auto` scopes which hook checks apply. Each failing check prints a concrete remediation command.
+- **runtime/bin/pm-prep-snapshot.sh** — Captures branch/PR/backlog/tooling state before PM-agent spawn and writes a typed snapshot for PM consumption.
+- **ops/diagnostics/codex-watch.sh** — Tails `.agent-trace/latest.jsonl` and prints a one-line human summary per event (`[turn.started]`, `[cmd] exit=0 …`, `[msg] …`, `[turn.completed] tokens: …`). Run from another terminal during a long dispatch to see real-time progress.
+- **runtime/hooks/guard-pm-write.sh** — `PreToolUse` hook (matcher `Edit|Write`). Blocks `project-pm` from editing/writing outside `~/.claude/projects/<claude-project-id>/memory/`. Asserts absolute paths and normalizes `..`. No-op for any other agent or the main thread. Bypass (logged): `PM_GUARD_PM_WRITE=off`. Requires `jq` and `realpath`.
+- **runtime/hooks/guard-executor-write.sh** — the unified executor write-guard, surfaced via `pmctl guard check --role executor` (cli-only — no live `PreToolUse` hook, since the brief is authored by trusted main-thread code). It derives the runtime from `agent_type` and enforces that runtime's `write_guard_mode`. Bypass (logged): `PM_GUARD_<RUNTIME>_WRITE=off`. Requires `jq` and `realpath`.
+- **hosts/claude/hooks/save-rate-limits.sh** — `StatusLine` hook that saves Claude rate-limit payloads to `~/.claude/rate-limits.json` for `token-usage.sh --remaining`. If a previous `statusLine.command` existed during install, it is saved to `~/.claude/statusline-chain.conf` and invoked after the rate-limit file is updated.
+- **hosts/claude/bin/install-guards.sh / uninstall-guards.sh** — Idempotent `jq`-based splice into `~/.claude/settings.json`. `--dry-run` shows the diff without applying. Each apply backs up `settings.json` to `settings.json.bak.<timestamp>`.
+- **tests/shell/test-guards.sh** — Regression suite for the managed hook scripts (~200+ cases: happy paths, boundary, per-metachar isolated coverage, quote / `..` / glob / read-root / git -C / `--flag=path` bypass attempts, destructive git, stash subverbs, audit-log content assertions, env-var bypass, type-confusion, and StatusLine rate-limit capture). Exit 0 on all pass. `VERBOSE=1` prints every case. Run by `install.sh` and isolates audit logs via `PM_GUARD_LOG_DIR`.
+- **tools/lint/lint-scripts.sh** — Hygiene check for canonical shell domains and the bounded compatibility shims. Run by `install.sh`.
+- **tools/lint/lint-frontmatter.sh** — Validates YAML frontmatter in `agents/`, `commands/`, and `skills/` against PyYAML flow-collection semantics (dq-escape whitelist, adjacent-quote, tab-indent, and empty-entry detection across all four collection paths). Run by CI and `doctor.sh`.
+- **tests/bin/run-tests.sh** — pm-dispatch-specific, direct-impact iteration planner. It can be supplied explicitly to generic `pr-gate --test-cmd`; it is not final sign-off evidence.
+- **tests/bin/run-all-tests.sh** — Authoritative full-suite entrypoint. `install.sh --verify` uses it; `--list` and `--skip <name>` remain available in full mode.
+- **runtime/bin/doctor.sh** — Environment health check: verifies `claude`/`jq`/`pmctl` are on `$PATH`, hooks are wired into `~/.claude/settings.json`, the memory directory exists, scripts are executable, and frontmatter passes lint. `--profile minimal|full|auto` scopes which hook checks apply. Each failing check prints a concrete remediation command.
 - **token-usage.sh** — Multi-pool token usage estimator (Claude / Codex / Spark). Reads `~/.claude/usage-tracker.jsonl`. Symlinked to `~/.claude/scripts/token-usage.sh` by `install.sh`. Usage: `bash ~/.claude/scripts/token-usage.sh [--today|--all]`. `--remaining` (no arg) auto-reads `~/.claude/rate-limits.json` if the StatusLine hook is installed; `--remaining N` accepts manual dashboard value.
 - **log-usage.sh** — Appends one entry to `~/.claude/usage-tracker.jsonl`. Symlinked to `~/.claude/scripts/log-usage.sh` by `install.sh`. Usage: `bash ~/.claude/scripts/log-usage.sh <type> <tokens> [note]`. Call after any significant agent operation; standard types in the script header.
 - **usage-weekly.sh** — Weekly Markdown report from `~/.claude/stats-cache.json` (Claude internal cache) and Codex session JSONL files. Read-only. Run manually or from a cron job.
@@ -199,7 +205,7 @@ usage.
 
 **Audit log:** every hook firing that targets the matched subagent appends one line to `$PM_GUARD_LOG_DIR/hooks.log` (default `~/.claude/logs/hooks.log`). No-ops for other agents are not logged. Format: `<ISO8601> <hook-name> agent=<type> tool=<name> decision=<allow|deny|bypass> reason=<...> target=<path-or-cmd>`. `reason` and `target` are `printf %q`-escaped so the log is safely re-parseable. The `PM_GUARD_LOG_DIR` env var lets the test suite redirect to a sandbox dir without polluting the live log.
 
-**Rollback:** to disable hooks system-wide, run `scripts/uninstall-guards.sh` (creates a backup, splices out PreToolUse entries pointing at this repo). To restore a specific prior settings file, copy from `~/.claude/settings.json.bak.<timestamp>`. The hook scripts in this repo are inert without the settings.json wiring.
+**Rollback:** to disable hooks system-wide, run `hosts/claude/bin/uninstall-guards.sh` (creates a backup, splices out PreToolUse entries pointing at this repo). To restore a specific prior settings file, copy from `~/.claude/settings.json.bak.<timestamp>`. The hook scripts in this repo are inert without the settings.json wiring.
 
 ## Design notes
 

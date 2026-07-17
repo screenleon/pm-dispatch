@@ -13,20 +13,6 @@
 
 > 這不是 v1.0 倒數或 release forecast。以下 v0.x milestones 用來逐版消化目前已知的遷移、操作、安全、證據與公開化缺口；完成 v0.14.0 後才重新做一次 v1.0 readiness review，再決定是否建立 v1.0.0 milestone。任何未完成的 critical surface 都不能因版本接近而自動降級或略過。
 
-### Current working set（最多五張；完成一張才補下一張）
-
-| 順序 | 票 | 所屬版本 | 本輪完成邊界 |
-|------|----|----------|--------------|
-| 1 | CC-497 | v0.9.0 | canonical path/docs/backlog/release metadata 收口；stale-reference ratchet |
-| 2 | CC-460 | v0.9.0 | root/area/leaf help、command registry、`commands --json`、四方 parity |
-| 3 | CC-456 | v0.9.0 | operational surface 移除 maintainer-local `~/github` 假設 |
-| 4 | CC-495 | v0.10.0 | trusted cancel terminalization、process identity、單一終態與 authenticated sentinel |
-| 5 | CC-498 | v0.11.0 | state version 命名、`state status` 與真實 remediation |
-
-> **平行安全工作**：CC-033 只先做 git-history 敏感內容／損害盤點。候補順序為 CC-454 → CC-449 → CC-447 → CC-500 → CC-499 → CC-446。CC-465→467 不進 pre-v1 主線；CC-468/466 只在數據 trigger 成立時啟動。
-
----
-
 ## v0.14.0 — public contract candidate（暫定；未啟動）
 
 > 最後排程更新：2026-07-17（首次拆版）
@@ -231,7 +217,7 @@
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-497 | canonical paths、docs/backlog/milestone/release metadata、stale-reference ratchet | 🔵 |
+| CC-497 / pr:#417 | canonical paths、docs/backlog/milestone/release metadata、stale-reference ratchet | ✅ |
 | CC-456 | 移除 maintainer-local `~/github` operational assumptions | 🔵 |
 | CC-454 | canonical ShellCheck domains + ignore ratchet + CI/local parity | 🔵 |
 

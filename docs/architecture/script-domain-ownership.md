@@ -23,6 +23,10 @@ its canonical owner path, and whether the historical path remains a shim.
   checked-in static variable-to-consumer graph. It maps every declared exact or
   wildcard variable to its current production or test references without
   treating comments or shell parsing as runtime data flow.
+- [`script-domain-reference-allowlist.tsv`](script-domain-reference-allowlist.tsv)
+  records the bounded production consumers that must recognize a retired path
+  to migrate already-installed configuration. Shim paths are derived directly
+  from the path inventory and therefore do not belong in this allowlist.
 
 The complete path, shim-target, variable, and consumer contracts are ratcheted
 together by:
@@ -33,9 +37,17 @@ bash tools/lint/lint-script-domain-inventory.sh
 
 The linter rejects untracked or missing scripts, invalid owner-to-target
 mappings, stable paths without shims, undeclared or unreferenced variables,
-unsafe consumer paths, and a stale static consumer graph. Consumer filesystem
-checks treat repository and relative paths as data without constructing shell
-commands. Its regression fixtures are registered as
+unsafe consumer paths, a stale static consumer graph, and retired
+implementation paths in current operational docs or code. The stale-reference
+ratchet derives exact historical-to-canonical pairs from the inventory: it does
+not reject the unrelated `pm/scripts/` tree or installed
+`~/.claude/scripts/` helper ABI, and it excludes historical spike evidence.
+`CHANGELOG.md` and `BACKLOG-ARCHIVE.md` are historical records and are likewise
+outside the operational-document scan. Current `BACKLOG.md` remains enforced;
+`MILESTONES.md` enforcement covers only unimplemented planning sections and
+never rewrites completed phases or released-version history.
+Consumer filesystem checks treat repository and relative paths as data without
+constructing shell commands. Its regression fixtures are registered as
 `test-script-domain-inventory` in the shared suite runner.
 
 The TSV files are planning contracts, not runtime registries. Production code
