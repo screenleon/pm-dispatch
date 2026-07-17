@@ -9,6 +9,8 @@ WATCH="$REPO_ROOT/ops/diagnostics/codex-watch.sh"
 
 # shellcheck source=tests/lib/test-harness.sh
 . "$SCRIPT_DIR/../lib/test-harness.sh"
+# shellcheck source=tests/lib/test-pmctl-fixture.sh
+. "$SCRIPT_DIR/../lib/test-pmctl-fixture.sh"
 th_init "$@"
 
 # shellcheck source=runtime/lib/state-paths.sh
@@ -406,8 +408,8 @@ case_gc_all_repos_uses_checkout_parent_default() {
   layout="$tmp_root/nonstandard-layout"
   checkout="$layout/pm-dispatch-copy"
   work_repo="$layout/product-repo"
-  mkdir -p "$checkout/cli" "$checkout/runtime/lib" "$work_repo"
-  cp "$REPO_ROOT/cli/pmctl" "$checkout/cli/pmctl"
+  mkdir -p "$work_repo"
+  pmctl_fixture_copy_spine "$REPO_ROOT" "$checkout"
   cp "$REPO_ROOT/runtime/lib/repo-layout.sh" "$checkout/runtime/lib/repo-layout.sh"
   cp "$REPO_ROOT/runtime/lib/pmctl-artifacts.sh" "$checkout/runtime/lib/pmctl-artifacts.sh"
   cp "$REPO_ROOT/runtime/lib/artifact-paths.sh" "$checkout/runtime/lib/artifact-paths.sh"
@@ -438,8 +440,8 @@ case_gc_all_repos_env_overrides_derived_default() {
   checkout="$layout/pm-dispatch-copy"
   configured_repo="$tmp_root/configured-root/product"
   derived_repo="$layout/derived-product"
-  mkdir -p "$checkout/cli" "$checkout/runtime/lib" "$configured_repo" "$derived_repo"
-  cp "$REPO_ROOT/cli/pmctl" "$checkout/cli/pmctl"
+  mkdir -p "$configured_repo" "$derived_repo"
+  pmctl_fixture_copy_spine "$REPO_ROOT" "$checkout"
   cp "$REPO_ROOT/runtime/lib/repo-layout.sh" "$checkout/runtime/lib/repo-layout.sh"
   cp "$REPO_ROOT/runtime/lib/pmctl-artifacts.sh" "$checkout/runtime/lib/pmctl-artifacts.sh"
   cp "$REPO_ROOT/runtime/lib/artifact-paths.sh" "$checkout/runtime/lib/artifact-paths.sh"

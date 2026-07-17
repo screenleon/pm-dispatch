@@ -9,6 +9,8 @@ PMCTL="$REPO_ROOT/cli/pmctl"
 
 # shellcheck source=tests/lib/test-harness.sh
 . "$SCRIPT_DIR/../lib/test-harness.sh"
+# shellcheck source=tests/lib/test-pmctl-fixture.sh
+. "$SCRIPT_DIR/../lib/test-pmctl-fixture.sh"
 th_init "$@"
 
 # Isolate the detached-gate sentinel key dir for this suite's cli/pmctl fixture
@@ -96,9 +98,8 @@ WRAPPER
 # fixture makes it treat the fixture as REPO_ROOT.
 _mk_gate_cli_fixture() {
   local fixture="$1"
-  mkdir -p "$fixture/cli" "$fixture/runtime/lib" "$fixture/runtime/bin"
-  cp "$REPO_ROOT/cli/pmctl" "$fixture/cli/pmctl"
-  chmod +x "$fixture/cli/pmctl"
+  mkdir -p "$fixture/runtime/bin"
+  pmctl_fixture_copy_spine "$REPO_ROOT" "$fixture"
   for _lib in pmctl-gate gate-result-verify state-paths portable detached-launch; do
     cp "$REPO_ROOT/runtime/lib/$_lib.sh" "$fixture/runtime/lib/$_lib.sh"
   done

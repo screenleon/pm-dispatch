@@ -16,6 +16,38 @@ done
 REPO_ROOT="$(cd "$(dirname "$_pmctl_self")/.." && pwd)"
 unset _pmctl_self _pmctl_dir
 
+PMCTL_COMMAND_REGISTRY="$REPO_ROOT/cli/commands.tsv"
+# shellcheck source=runtime/lib/pmctl-discovery.sh
+. "$REPO_ROOT/runtime/lib/pmctl-discovery.sh"
+
+# Discovery paths deliberately short-circuit before runtime libraries are
+# loaded. Help must be safe even when state, adapters, and external tools are
+# unavailable.
+if [[ $# -eq 0 ]]; then
+  pmctl_discovery_root_help
+  exit $?
+fi
+case "$1" in
+  -h|--help)
+    [[ $# -eq 1 ]] || { pmctl_discovery_die 'root help accepts no arguments'; exit 2; }
+    pmctl_discovery_root_help
+    exit $?
+    ;;
+  help)
+    shift
+    pmctl_discovery_help "$@"
+    exit $?
+    ;;
+esac
+if [[ $# -eq 2 && ( "$2" == "-h" || "$2" == "--help" ) ]]; then
+  pmctl_discovery_help "$1"
+  exit $?
+fi
+if [[ $# -eq 3 && ( "$3" == "-h" || "$3" == "--help" ) ]]; then
+  pmctl_discovery_help "$1" "$2"
+  exit $?
+fi
+
 for _lib in repo-layout detached-launch pmctl-policy pmctl-fs pmctl-adapter pmctl-backlog pmctl-guard executor-router pmctl-dispatch pmctl-trace pmctl-task pmctl-decision gate-result-verify pmctl-gate pmctl-safe pmctl-validate pmctl-context pmctl-memory pmctl-artifacts pmctl-pre-release pmctl-worktree pmctl-ship-parallel pmctl-ship pmctl-pm; do
   # shellcheck source=/dev/null
   [[ -r "$REPO_ROOT/runtime/lib/$_lib.sh" ]] && . "$REPO_ROOT/runtime/lib/$_lib.sh"
@@ -33,6 +65,10 @@ sub="${1:-}"
 shift 2>/dev/null || true
 
 case "$cmd/$sub" in
+  commands/--json)
+    [[ $# -eq 0 ]] || pmctl_die "commands --json accepts no arguments"
+    pmctl_discovery_commands_json
+    ;;
   adapter/generate)
     if ! declare -F pmctl_adapter_generate >/dev/null; then
       pmctl_die "adapter generate unavailable"
@@ -403,12 +439,13 @@ case "$cmd/$sub" in
     ;;
   pm/*)
     pmctl_pm_usage
+    pmctl_discovery_unknown "pm $sub"
     exit 2
     ;;
-  ""/)
-    pmctl_die "missing command. Usage: pmctl <cmd> <sub> [args]"
-    ;;
   *)
-    pmctl_die "unknown command: $cmd $sub"
+    _unknown="$cmd"
+    [[ -z "$sub" ]] || _unknown+=" $sub"
+    pmctl_discovery_unknown "$_unknown"
+    exit 2
     ;;
 esac
