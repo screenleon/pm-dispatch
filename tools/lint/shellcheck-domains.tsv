@@ -1,0 +1,7 @@
+root	role
+runtime	canonical
+tests	canonical
+tools	canonical
+ops	canonical
+hosts	canonical
+scripts	compatibility

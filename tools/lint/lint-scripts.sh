@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Validate hygiene of shell entrypoints and host-owned shell modules:
+# Validate basic hygiene of shell entrypoints and host-owned shell modules,
+# then invoke the canonical ShellCheck domain inventory used by CI:
 #   - entrypoints are executable (mode +x)
 #   - first line is a shebang (#!...)
 #   - parses cleanly under `bash -n`
@@ -14,6 +15,13 @@
 # Exit 0 if all clean; 1 if any violation.
 
 set -euo pipefail
+
+run_shellcheck=1
+case "${1:-}" in
+  --hygiene-only) run_shellcheck=0 ;;
+  "") ;;
+  *) printf 'lint-scripts: usage: %s [--hygiene-only]\n' "$0" >&2; exit 2 ;;
+esac
 
 repo_root="$(cd "$(dirname "$0")/../.." && pwd)"
 if [ ! -d "$repo_root/scripts" ] || [ ! -d "$repo_root/hosts" ]; then
@@ -71,8 +79,11 @@ if [ "$violations" -gt 0 ]; then
 fi
 
 if [ "$checked" -eq 0 ]; then
-  echo "lint-scripts: no script files found in $scripts_dir" >&2
+  echo "lint-scripts: no script files found in configured roots" >&2
   exit 1
 fi
 
 echo "lint-scripts: OK ($checked shell files checked)"
+if [[ "$run_shellcheck" -eq 1 ]]; then
+  "$repo_root/tools/lint/lint-shellcheck.sh"
+fi

@@ -84,6 +84,7 @@ SUITE_NAMES=(
   test-pmctl-validate
   test-brief-validate
   test-archive-closed-backlog
+  test-lint-shellcheck
   test-script-domain-inventory
   test-pmctl-context
   test-pmctl-memory
@@ -191,6 +192,7 @@ suite_path() {
     test-pmctl-validate) printf 'tests/shell/test-pmctl-validate.sh\n' ;;
     test-brief-validate) printf 'tests/shell/test-brief-validate.sh\n' ;;
     test-archive-closed-backlog) printf 'tests/shell/test-archive-closed-backlog.sh\n' ;;
+    test-lint-shellcheck) printf 'tests/shell/test-lint-shellcheck.sh\n' ;;
     test-script-domain-inventory) printf 'tests/shell/test-script-domain-inventory.sh\n' ;;
     test-pmctl-context)  printf 'tests/shell/test-pmctl-context.sh\n' ;;
     test-pmctl-memory)   printf 'tests/shell/test-pmctl-memory.sh\n' ;;

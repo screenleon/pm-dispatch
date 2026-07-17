@@ -45,9 +45,18 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Validate script hygiene
-        run: ./tools/lint/lint-scripts.sh
+        run: ./tools/lint/lint-scripts.sh --hygiene-only
       - name: Validate codex model alias source-of-truth
         run: bash tools/lint/lint-model-aliases.sh
+
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Validate canonical shell domains and compatibility shims
+        run: ./tools/lint/lint-shellcheck.sh
+      - name: ShellCheck domain and ratchet regression suite
+        run: ./tests/shell/test-lint-shellcheck.sh
 
   lint-script-domain-inventory:
     runs-on: ubuntu-latest
@@ -125,121 +134,6 @@ jobs:
       - uses: actions/checkout@v6
       - name: skill-refine regression suite
         run: bash tests/shell/test-skill-refine.sh
-      - name: skill-refine shellcheck
-        uses: ludeeus/action-shellcheck@00cae500b08a931fb5698e11e79bfbd38e612a38 # tag 2.0.0
-        with:
-          scandir: ./scripts
-          ignore_names: >-
-            executor-router.sh
-            guard-pm-bash.sh
-            install-guards-codex.sh
-            uninstall-guards-codex.sh
-            test-host-write-codex.sh
-            gate-result-verify.sh
-            pmctl-adapter.sh
-            pmctl-backlog.sh
-            pmctl-fs.sh
-            pmctl-policy.sh
-            handover-validate.sh
-            codex-dispatch.sh
-            codex-watch.sh
-            guard-executor-write.sh
-            guard-inject-memory.sh
-            guard-log-claude-usage.sh
-            guard-pm-write.sh
-            guard-reviewer-write.sh
-            guard-save-rate-limits.sh
-            guard-session-summary.sh
-            install-guards.sh
-            lint-agents.sh
-            lint-scripts.sh
-            log-usage.sh
-            migrate-routing-log.sh
-            patch-gitignore.sh
-            pr-gate.sh
-            setup-project.sh
-            state-writer.sh
-            test-check-docs-freshness.sh
-            test-codex-dispatch.sh
-            test-pmctl-dispatch.sh
-            test-pmctl-pm.sh
-            test-dispatch-record.sh
-            test-dispatch-lifecycle.sh
-            test-gate-lifecycle.sh
-            test-claude-dispatch.sh
-            test-opencode-dispatch.sh
-            test-layer-boundaries.sh
-            test-core-schemas.sh
-            test-commands.sh
-            test-commands-runner.sh
-            test-dispatch-handover.sh
-            test-executor-router.sh
-            test-runner-kind.sh
-            test-pmctl-adapter-generate.sh
-            test-pmctl-backlog.sh
-            test-pmctl-guard.sh
-            test-handover-validate.sh
-            guard-framework.sh
-            test-guard-framework.sh
-            test-guards.sh
-            test-install.sh
-            test-lint-frontmatter.sh
-            test-migrate-routing-log.sh
-            test-patch-gitignore.sh
-            test-pr-gate.sh
-            test-pr-gate-profile.sh
-            test-portable.sh
-            test-claude-executor.sh
-            test-pm-prep-snapshot.sh
-            test-setup-project.sh
-            test-skill-refine.sh
-            test-state-store.sh
-            test-pmctl-artifacts.sh
-            test-state-layout-parity.sh
-            test-state-store-rotation.sh
-            test-uninstall.sh
-            test-usage-tracker.sh
-            test-usage-weekly.sh
-            token-usage.sh
-            uninstall-guards.sh
-            usage-weekly.sh
-            memory.sh
-            memory-dir.sh
-            doctor.sh
-            test-doctor.sh
-            test-e2e.sh
-            test-harness.sh
-            test-test-harness.sh
-            test-lint-model-aliases.sh
-            test-timeout-resolve.sh
-            test-dispatch-common.sh
-            test-model-aliases.sh
-            test-reasoning-effort.sh
-            test-schema-task-mirrors-backlog.sh
-            test-brief-validate.sh
-            dispatch-post-verify.sh
-            test-dispatch-post-verify.sh
-            archive-closed-backlog.sh
-            test-archive-closed-backlog.sh
-            migrate-routing-to-events.sh
-            test-migrate-routing-to-events.sh
-            test-pmctl-trace.sh
-            test-pmctl-gate.sh
-            pmctl-gate.sh
-            pmctl-task.sh
-            pmctl-safe.sh
-            pmctl-validate.sh
-            pmctl-decision.sh
-            test-pmctl-task.sh
-            test-pmctl-safe.sh
-            test-pmctl-validate.sh
-            test-pmctl-decision.sh
-            test-pmctl-worktree.sh
-            test-lint-test-docstrings.sh
-      - name: Host-owned shellcheck
-        uses: ludeeus/action-shellcheck@00cae500b08a931fb5698e11e79bfbd38e612a38 # tag 2.0.0
-        with:
-          scandir: ./hosts
 
   test-doctor:
     runs-on: ubuntu-latest
