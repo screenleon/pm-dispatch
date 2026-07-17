@@ -34,7 +34,8 @@
 > path before running the commands below, or substitute it inline.
 >
 > ```bash
-> export PM_DISPATCH_REPO="$HOME/github/pm-dispatch"   # or wherever you cloned it
+> export PM_DISPATCH_REPO="$HOME/src/pm-dispatch"   # or wherever you cloned it
+> export PM_DISPATCH_REPOS_ROOT="$(dirname "$PM_DISPATCH_REPO")" # optional override for cross-repo operations
 > ```
 
 ### Prerequisites

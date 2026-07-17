@@ -9,10 +9,10 @@ This command supports single-skill invocation only. Do not use `--all`, multiple
 
 ## Prerequisites
 
-`CLAUDE_MEMORY_DIR` must be exported and point to an existing memory directory before invoking this command. Example path: `${HOME}/.claude/projects/-home-<user>-github/memory`. Claude Code sets this automatically; if running from a bare shell, export it first:
+`CLAUDE_MEMORY_DIR` must be exported and point to an existing memory directory before invoking this command. Claude Code sets this automatically; if running from a bare shell, select the directory for the current absolute project path and export it first:
 
 ```sh
-export CLAUDE_MEMORY_DIR="${HOME}/.claude/projects/-home-$(whoami)-github/memory"
+export CLAUDE_MEMORY_DIR="${HOME}/.claude/projects/<claude-project-id>/memory"
 ```
 
 If `CLAUDE_MEMORY_DIR` is unset or points to a nonexistent directory, `tools/skills/skill-refine.sh` will exit 2 with a clear error.

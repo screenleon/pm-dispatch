@@ -87,12 +87,12 @@ HOME	HOME	hosts/claude/lib/doctor.sh	production
 HOME	HOME	runtime/lib/gate-workspace.sh	production
 HOME	HOME	runtime/lib/memory-dir.sh	production
 HOME	HOME	runtime/lib/memory.sh	production
-HOME	HOME	runtime/lib/pmctl-artifacts.sh	production
 HOME	HOME	runtime/lib/pmctl-config.sh	production
 HOME	HOME	runtime/lib/pmctl-memory-config.sh	production
 HOME	HOME	runtime/lib/pmctl-ship.sh	production
 HOME	HOME	runtime/lib/portable.sh	production
 HOME	HOME	runtime/lib/state-paths.sh	production
+HOME	HOME	tools/lint/lint-portable-repo-paths.sh	production
 HOME	HOME	ops/usage/log-usage.sh	production
 HOME	HOME	runtime/bin/pr-gate.sh	production
 HOME	HOME	ops/usage/token-usage.sh	production
@@ -201,6 +201,11 @@ PM_DISPATCH_PROMPT_CONTEXT_TIMEOUT	PM_DISPATCH_PROMPT_CONTEXT_TIMEOUT	runtime/ho
 PM_DISPATCH_PROMPT_SCAN_MAX_TERMS	PM_DISPATCH_PROMPT_SCAN_MAX_TERMS	runtime/lib/pmctl-context.sh	production
 PM_DISPATCH_REPO	PM_DISPATCH_REPO	install.sh	production
 PM_DISPATCH_REPO	PM_DISPATCH_REPO	hosts/claude/bin/install-guards.sh	production
+PM_DISPATCH_REPO	PM_DISPATCH_REPO	runtime/hooks/guard-pm-write.sh	production
+PM_DISPATCH_REPO	PM_DISPATCH_REPO	runtime/lib/repo-layout.sh	production
+PM_DISPATCH_REPO	PM_DISPATCH_REPO	tools/lint/lint-portable-repo-paths.sh	production
+PM_DISPATCH_REPOS_ROOT	PM_DISPATCH_REPOS_ROOT	runtime/lib/repo-layout.sh	production
+PM_DISPATCH_REPOS_ROOT	PM_DISPATCH_REPOS_ROOT	tools/lint/lint-portable-repo-paths.sh	production
 PM_DISPATCH_ROTATE_MAX_BYTES	PM_DISPATCH_ROTATE_MAX_BYTES	runtime/lib/state-writer.sh	production
 PM_DISPATCH_STATE_ROOT	PM_DISPATCH_STATE_ROOT	runtime/lib/pmctl-context.sh	production
 PM_DISPATCH_STATE_ROOT	PM_DISPATCH_STATE_ROOT	runtime/lib/pmctl-ship.sh	production

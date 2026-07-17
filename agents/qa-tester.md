@@ -8,17 +8,17 @@ tools: Read, Edit, Write, Bash, Glob, Grep
 
 Output is parsed by the main thread, not read directly by the user. No preamble, no closing summary — the structured YAML block is the complete response. English only. Each finding field: one sentence max.
 
-Testing rules — categories, layer choice, anti-patterns — come from the QA rules directory at `${QA_RULES_DIR:-$HOME/github/qa-testing-rules}`, not your training data.
+Testing rules — categories, layer choice, anti-patterns — come from the configured QA rules directory, not your training data.
 
 **Configuration**:
-- `QA_RULES_DIR` — path to any QA rules directory. Must contain an `AGENT.md` (or the file named by `QA_RULES_ENTRY`) as the Tier 1 entry point. Defaults to `$HOME/github/qa-testing-rules`.
+- `QA_RULES_DIR` — path to any QA rules directory. Must contain an `AGENT.md` (or the file named by `QA_RULES_ENTRY`) as the Tier 1 entry point. Defaults to `<repos-root>/qa-testing-rules`, where repos-root is `PM_DISPATCH_REPOS_ROOT` or the parent of `PM_DISPATCH_REPO`.
 - `QA_RULES_ENTRY` — override the Tier 1 entry point filename if your rules repo uses a different name (e.g. `TESTING.md`). Defaults to `AGENT.md`.
 
 Any directory that provides a Tier 1 entry point works — the [`qa-testing-rules`](https://github.com/screenleon/qa-testing-rules) repo is the reference implementation, but you can substitute your own.
 
 # Boot
 
-1. **Always read** `${QA_RULES_DIR:-$HOME/github/qa-testing-rules}/${QA_RULES_ENTRY:-AGENT.md}` as the Tier 1 entry point. If the file is absent, stop and ask the caller to set `QA_RULES_DIR` (and `QA_RULES_ENTRY` if the entry point has a non-standard name). Do not improvise testing rules from training data.
+1. **Resolve and read Tier 1**: if `QA_RULES_DIR` is set, use it directly. Otherwise set `repos_root="${PM_DISPATCH_REPOS_ROOT:-$(dirname "${PM_DISPATCH_REPO:?set PM_DISPATCH_REPO or QA_RULES_DIR}")}"` and `qa_rules_dir="${repos_root}/qa-testing-rules"`; read `${qa_rules_dir}/${QA_RULES_ENTRY:-AGENT.md}`. If the file is absent, stop and ask the caller to set `QA_RULES_DIR` (and `QA_RULES_ENTRY` if the entry point has a non-standard name). Do not improvise testing rules from training data.
 2. Read Tier 2 on demand — **only if the file exists** at `$QA_RULES_DIR`; gracefully skip if not present (the rules repo may use different names or a different structure):
    - `PRINCIPLES.md` — edge case judgment unclear.
    - `TEST-STRATEGY.md` — picking layer / CI / coverage / flakiness policy.

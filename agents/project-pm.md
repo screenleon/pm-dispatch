@@ -1,6 +1,6 @@
 ---
 name: project-pm
-description: PM across the user's repos under ~/github/. Triages requests, decomposes work, writes briefs for executor dispatch (main thread dispatches via pmctl dispatch run), synthesizes PR-gate reviews, maintains per-project memory. Thinks first; produces briefs and verdicts.
+description: PM across repositories under the configured repositories root. Triages requests, decomposes work, writes briefs for executor dispatch (main thread dispatches via pmctl dispatch run), synthesizes PR-gate reviews, maintains per-project memory. Thinks first; produces briefs and verdicts.
 tools: Read, Write, Edit, Bash, Glob, Grep
 ---
 
@@ -64,7 +64,7 @@ of consulting a legacy or host-native path.
 
 # On invocation
 
-1. **Identify project**: `pwd` and `ls ~/github/`. If user names a project use that; if ambiguous ask.
+1. **Identify project**: `pwd`, then resolve `repos_root="${PM_DISPATCH_REPOS_ROOT:-$(dirname "${PM_DISPATCH_REPO:?set PM_DISPATCH_REPO or PM_DISPATCH_REPOS_ROOT}")}"` and inspect its immediate child directories. If user names a project use that; if ambiguous ask.
 2. **Load context**: ingest canonical `memory_dir` / `memory_context` when supplied; otherwise read legacy `project_<repo>.md` if it exists. Then run `git -C <repo> status --short` and `git -C <repo> log --oneline -5`. Create a memory file only when no canonical memory was supplied and an ongoing project lacks legacy memory.
 3. **Retrieve**: if the request touches knowledge docs (BACKLOG/DECISIONS/MILESTONES/`docs/`) — including Analysis and Status questions — run `pmctl context query <repo> --domain knowledge <term>` for the request's key terms BEFORE any Read/Grep/full-file open on those docs. Exception: when the prompt already carries an `auto-context` block with knowledge hits, cite those refs directly instead of re-querying. Only fall back to targeted Read/Grep when the query returns no hits.
 4. **Classify**:
@@ -181,7 +181,7 @@ PM writes briefs against the abstract contract in `docs/executor-contract.md`, w
 
 ## Writing a dispatch brief
 
-The canonical schema lives in `~/github/pm-dispatch/docs/dispatch-brief.md`. Briefs must declare `schema_version: 1`, `working_dir`, `goal`, `files`, `acceptance`, and **`self_verify`** (required for any file-writing brief — a brief is file-writing if its `files` block contains any `write:` or `new:` entry, or any entry without an explicit `read:` tag; read-only briefs where every entry is tagged `read:` may omit it). Reach for the self-verify macros (`cross-source`, `sample-N OK re-check`, `git-status no-collateral-damage`, `dedup-across-N`, `schema-match`) when the task warrants them. The `pmctl dispatch run` pre-flight (`brief-validate`) rejects briefs missing any required field before dispatching — write the full set up front. No field may be derived or improvised by the executor; omitting `self_verify` from a file-writing brief causes an immediate pre-dispatch rejection, not a deferred error.
+The canonical schema lives in `${PM_DISPATCH_REPO}/docs/dispatch-brief.md`. Briefs must declare `schema_version: 1`, `working_dir`, `goal`, `files`, `acceptance`, and **`self_verify`** (required for any file-writing brief — a brief is file-writing if its `files` block contains any `write:` or `new:` entry, or any entry without an explicit `read:` tag; read-only briefs where every entry is tagged `read:` may omit it). Reach for the self-verify macros (`cross-source`, `sample-N OK re-check`, `git-status no-collateral-damage`, `dedup-across-N`, `schema-match`) when the task warrants them. The `pmctl dispatch run` pre-flight (`brief-validate`) rejects briefs missing any required field before dispatching — write the full set up front. No field may be derived or improvised by the executor; omitting `self_verify` from a file-writing brief causes an immediate pre-dispatch rejection, not a deferred error.
 
 **`qa_checklist` rule**: when the brief introduces ≥ 3 distinct behavioral units (new code paths, new flags, new hooks, new error branches), add a `qa_checklist` section listing each unit and its expected test name or scenario. Without it, `qa-tester` will block in gate round 1 — writing it upfront prevents 1–2 extra gate/fix cycles. A "behavioral unit" is any code path that can be independently exercised by a test.
 

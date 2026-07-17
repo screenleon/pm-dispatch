@@ -46,7 +46,7 @@ project-pm: blocked by $GUARD_NAME — $reason
              <any-repo>/docs/spikes/{CC-NNN*,*-scope,*-rfc}.md
 
 If a code change is needed, hand a brief back to the main thread for executor
-dispatch via pmctl dispatch run (schema: ~/github/pm-dispatch/docs/dispatch-brief.md).
+dispatch via pmctl dispatch run (schema: \${PM_DISPATCH_REPO}/docs/dispatch-brief.md).
 
 Bypass for one turn: set PM_GUARD_PM_WRITE=off (logged).
 EOF

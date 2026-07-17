@@ -264,7 +264,7 @@ pmctl_artifacts_gc() {
   local dry_run=0 keep_last all_repos=0 repos_root max_age_days
   keep_last="${PM_DISPATCH_GC_KEEP_LAST:-10}"
   max_age_days="${PM_DISPATCH_GC_MAX_AGE_DAYS:-30}"
-  repos_root="${HOME:-}/github"
+  repos_root=""
 
   if [[ -z "$work_dir" ]]; then
     work_dir="$repo_root"
@@ -302,6 +302,17 @@ pmctl_artifacts_gc() {
   if [[ "${#extra_args[@]}" -gt 0 ]]; then
     printf 'pmctl artifacts gc: unexpected argument: %s\n' "${extra_args[0]}" >&2
     pmctl_artifacts_usage; return 2
+  fi
+
+  if [[ -z "$repos_root" ]]; then
+    if [[ "$(type -t pm_dispatch_repos_root 2>/dev/null)" != function ]]; then
+      local repo_layout_sh="${repo_root}/runtime/lib/repo-layout.sh"
+      if [[ -r "$repo_layout_sh" ]]; then
+        # shellcheck disable=SC1090,SC1091
+        . "$repo_layout_sh"
+      fi
+    fi
+    repos_root="$(pm_dispatch_repos_root "$repo_root")" || return $?
   fi
 
   # Load PM_ARTIFACT_LEAVES from artifact-paths.sh

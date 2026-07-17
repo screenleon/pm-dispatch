@@ -45,7 +45,7 @@ Closes: BACKLOG.md#<PREFIX>-NNN
 
 ### Context
 
-Multiple repos under ~/github/ 各自演化 BACKLOG / DECISIONS 格式，PM agent 解析成本高。
+Multiple repos under the configured repositories root 各自演化 BACKLOG / DECISIONS 格式，PM agent 解析成本高。
 此決策不掛單一 repo backlog —— 是 cross-cutting，本身就由 ~/.claude/.pm/DECISIONS.md 承載。
 
 ### Decision

@@ -396,6 +396,71 @@ case_gc_all_repos_never_deletes_pm_dispatch() {
   fi
 }
 
+case_gc_all_repos_uses_checkout_parent_default() {
+  # behavior: --all-repos derives its default root from the active pm-dispatch checkout
+  # Steps: create a sibling git repo beside a copied checkout path; run without --repos-root;
+  #        assert the sibling remnant is found and removed even when HOME points elsewhere
+  local name="pmctl artifacts gc --all-repos: default follows checkout parent, not HOME"
+  should_run "$name" || return 0
+  local layout checkout work_repo trace_dir out err status=0
+  layout="$tmp_root/nonstandard-layout"
+  checkout="$layout/pm-dispatch-copy"
+  work_repo="$layout/product-repo"
+  mkdir -p "$checkout/cli" "$checkout/runtime/lib" "$work_repo"
+  cp "$REPO_ROOT/cli/pmctl" "$checkout/cli/pmctl"
+  cp "$REPO_ROOT/runtime/lib/repo-layout.sh" "$checkout/runtime/lib/repo-layout.sh"
+  cp "$REPO_ROOT/runtime/lib/pmctl-artifacts.sh" "$checkout/runtime/lib/pmctl-artifacts.sh"
+  cp "$REPO_ROOT/runtime/lib/artifact-paths.sh" "$checkout/runtime/lib/artifact-paths.sh"
+  git init -q "$work_repo"
+  trace_dir="$work_repo/.agent-trace"
+  mkdir -p "$trace_dir"
+  printf 'trace data\n' > "$trace_dir/some.jsonl"
+
+  out="$tmp_root/all-repos-derived.out"; err="$tmp_root/all-repos-derived.err"
+  env -u PM_DISPATCH_REPO -u PM_DISPATCH_REPOS_ROOT HOME="$tmp_root/unrelated-home" \
+    "$checkout/cli/pmctl" artifacts gc --all-repos > "$out" 2> "$err" || status=$?
+
+  if [[ "$status" -eq 0 && ! -d "$trace_dir" && "$(<"$out")" == *"found:"* && ! -s "$err" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status trace_exists=$(test -d "$trace_dir" && echo y||echo n) out=$(<"$out") err=$(<"$err")"
+  fi
+}
+
+case_gc_all_repos_env_overrides_derived_default() {
+  # behavior: PM_DISPATCH_REPOS_ROOT overrides the checkout-parent default
+  # Steps: create remnants under derived and configured roots; run without --repos-root;
+  #        assert only the configured-root remnant is removed
+  local name="pmctl artifacts gc --all-repos: PM_DISPATCH_REPOS_ROOT overrides default"
+  should_run "$name" || return 0
+  local layout checkout configured_repo derived_repo configured_trace derived_trace out err status=0
+  layout="$tmp_root/env-layout"
+  checkout="$layout/pm-dispatch-copy"
+  configured_repo="$tmp_root/configured-root/product"
+  derived_repo="$layout/derived-product"
+  mkdir -p "$checkout/cli" "$checkout/runtime/lib" "$configured_repo" "$derived_repo"
+  cp "$REPO_ROOT/cli/pmctl" "$checkout/cli/pmctl"
+  cp "$REPO_ROOT/runtime/lib/repo-layout.sh" "$checkout/runtime/lib/repo-layout.sh"
+  cp "$REPO_ROOT/runtime/lib/pmctl-artifacts.sh" "$checkout/runtime/lib/pmctl-artifacts.sh"
+  cp "$REPO_ROOT/runtime/lib/artifact-paths.sh" "$checkout/runtime/lib/artifact-paths.sh"
+  git init -q "$configured_repo"
+  git init -q "$derived_repo"
+  configured_trace="$configured_repo/.agent-trace"
+  derived_trace="$derived_repo/.agent-trace"
+  mkdir -p "$configured_trace" "$derived_trace"
+  printf 'configured\n' > "$configured_trace/trace.jsonl"
+  printf 'derived\n' > "$derived_trace/trace.jsonl"
+
+  out="$tmp_root/all-repos-env.out"; err="$tmp_root/all-repos-env.err"
+  PM_DISPATCH_REPOS_ROOT="$tmp_root/configured-root" "$checkout/cli/pmctl" artifacts gc --all-repos > "$out" 2> "$err" || status=$?
+
+  if [[ "$status" -eq 0 && ! -d "$configured_trace" && -d "$derived_trace" && ! -s "$err" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status configured=$(test -d "$configured_trace" && echo y||echo n) derived=$(test -d "$derived_trace" && echo y||echo n) out=$(<"$out") err=$(<"$err")"
+  fi
+}
+
 case_migrate_copies_leaves() {
   # behavior: pmctl artifacts migrate copies in-repo .agent-trace to out-of-repo partition,
   #           preserves original, and the destination contains the same files
@@ -486,6 +551,8 @@ case_gc_safety_rejects_pm_dispatch
 case_gc_all_repos_removes_inrepo
 case_gc_all_repos_dry_run
 case_gc_all_repos_never_deletes_pm_dispatch
+case_gc_all_repos_uses_checkout_parent_default
+case_gc_all_repos_env_overrides_derived_default
 case_migrate_copies_leaves
 case_migrate_idempotent
 case_inrepo_notice_emitted
