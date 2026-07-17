@@ -12,7 +12,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-450 | 🟢 someday | 其餘 9 個 test-*.sh docstring 格式統一（CC-004 同款 Behavior/Steps，跨檔） | ops | 2026-07-03 | — | P3 | — |
 | CC-452 | 🔵 active | guard/hook 對稱性與併發 hardening；僅與 lifecycle/state correctness 直接相關的 slice 納入 v0.10.0 | ops | 2026-07-06 | — | P3 | hygiene |
 | CC-453 | 🔵 active | worktree/auto-pack 路徑契約 hardening；僅與 lifecycle/state correctness 直接相關的 slice 納入 v0.10.0 | ops | 2026-07-06 | — | P3 | hygiene |
-| CC-454 | 🔵 active | canonical ShellCheck domain coverage：掃描 runtime/tests/tools/ops/hosts、ignore ratchet、moved-path parity、CI↔local lint 一致（CC-489 後收口） | ops/test | 2026-07-06 | — | P1 | hygiene |
+| CC-454 | ✅ done | canonical ShellCheck domain coverage：掃描 runtime/tests/tools/ops/hosts、ignore ratchet、moved-path parity、CI↔local lint 一致（CC-489 後收口） | ops/test | 2026-07-06 | pr:#420 | P1 | hygiene |
 | CC-460 | 🔵 active | `pmctl` CLI discovery surface：root/area/leaf help、commands JSON registry、router↔manifest↔help↔README parity（v1.0 使用者可理解性前置） | DX/docs | 2026-07-07 | — | P1 | design |
 | CC-461 | 🟢 someday | `doctor.sh --fix`：僅限冪等/可逆/不碰使用者內容類別的自動修復；待 CC-447 offline smoke 產出摔倒點清單後定白名單（2026-07-07 openyida 跨專案分析） | ops/install | 2026-07-07 | — | P3 | — |
 | CC-462 | 🟢 someday | e2e 可拋棄資源紀律：前綴命名 + registry JSON + result artifact；掛在 CC-449 e2e 新 phase 之後，與 CC-447 live smoke 共用同一 registry（2026-07-07 openyida 跨專案分析） | ops/test | 2026-07-07 | — | P3 | — |
@@ -460,7 +460,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `ops/backlog/archive-cl
 **Requirement**: 依 `tests/lib/test-harness.sh` 頂部新增的 docstring 慣例說明（CC-004 帶入），逐檔把上述 9 個檔案的 test function 補上 `# Behavior:`/`# Steps:` 註解區塊，整段置於函式宣告正上方、不拆進函式內部。不改測試邏輯。完成後跑對應套件全綠、`bash -n` 語法檢查、以及 run_test 呼叫名稱與函式宣告的交叉核對（避免重蹈 CC-004 實作中一度誤刪宣告行的錯誤）。
 **Source**: 2026-07-03 CC-004 實作時的範圍盤點。
 
-## CC-454 — canonical ShellCheck domain coverage + ignore ratchet 🔵 active
+## CC-454 — canonical ShellCheck domain coverage + ignore ratchet ✅ 2026-07-17
 
 **Problem**: CC-489 已把 canonical implementation 搬到 `runtime/`、`tests/`、`tools/`、`ops/`、`hosts/`，但 `.github/workflows/lint.yml` 的 action-shellcheck 仍以 `scripts/` 為主要掃描入口，且保留大量搬遷前 `ignore_names`。問題已不只是 allowlist 太大，而是 canonical production/test domains 可能完全未受等價靜態檢查。
 
@@ -474,6 +474,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `ops/backlog/archive-cl
 
 **Dependencies**: 與 [[CC-497]] 的 stale-path/docs ratchet 分工；與 [[CC-449]] 協調 CI evidence parity，但本票獨立負責 ShellCheck domain coverage。v0.9.0。
 **Source**: 2026-07-06 盲測程式碼稽核（測試/CI 角度）。
+**See**: pr:#420
 
 ## CC-011 — sync-memory.sh + 跨裝置共用（deferred；建議與 CC-012 合併實作）
 
