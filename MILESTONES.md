@@ -9,70 +9,185 @@
 
 ---
 
-## v0.9.0 — v1.0 證據層 + 契約凍結 + host 軸（codex + opencode）（規劃中 2026-07-06）
+## Pre-v1 stabilization sequence（2026-07-17 重排；v1.0 尚未排程）
 
-> 最後排程更新：2026-07-12
+> 這不是 v1.0 倒數或 release forecast。以下 v0.x milestones 用來逐版消化目前已知的遷移、操作、安全、證據與公開化缺口；完成 v0.14.0 後才重新做一次 v1.0 readiness review，再決定是否建立 v1.0.0 milestone。任何未完成的 critical surface 都不能因版本接近而自動降級或略過。
 
-**主題**：v1.0 public 正式版（DECISIONS 2026-07-04）的前置版本，三條主線：**(1) host 軸（codex + opencode 雙 host + memory continuity）**——把 CC-381 spike 收斂出的三張唯讀票推進到 install write path 落地，並依 DECISIONS 2026-07-06 把 opencode host（CC-448）整票提前併入本版，讓 host 抽象在本版內就通過 N=2 驗收；同時以 CC-480 保證 PM 從 Claude 切到 Codex/OpenCode 後仍解析並讀取同一份 project-owned memory，讓「支援非 claude host」不只可安裝，也保有跨 session continuity；**(2) 證據層**——release 宣稱背後的可查證資料（run-stats reader、opencode e2e、ship/worktree 煙測、乾淨機器 offline smoke）；**(3) 契約凍結**——stable/experimental 分級與 SemVer/deprecation 政策，並先把 `core/` 定義層真正接上 runtime，讓凍結的 schema 是「有驗證的承諾」而非裝飾。另附一個低風險 hardening phase 收割 2026-07-06 盲測稽核的正確性發現。
+### Current working set（最多五張；完成一張才補下一張）
 
-> **設計依據**：DECISIONS 2026-07-04（v1.0 roadmap：v0.9.0 = evidence + contract + host 軸）＋ DECISIONS 2026-07-06（host 軸擴為 codex + opencode 雙 host，CC-448 提前）＋ 2026-07-06 四路盲測程式碼稽核（CLI/核心架構、runtime 管線、prose/文件、測試/CI 四個獨立視角，未讀 backlog 前提下分析後對照）——稽核與既定 roadmap 方向高度一致，增量為：CC-449 擴充 CI parity、新票 CC-451（core 定義層接 runtime，契約凍結前置）、CC-452/453（hardening）、CC-454（someday ratchet）、CC-445/446/033 票內補充。
+| 順序 | 票 | 所屬版本 | 本輪完成邊界 |
+|------|----|----------|--------------|
+| 1 | CC-497 | v0.9.0 | canonical path/docs/backlog/release metadata 收口；stale-reference ratchet |
+| 2 | CC-460 | v0.9.0 | root/area/leaf help、command registry、`commands --json`、四方 parity |
+| 3 | CC-456 | v0.9.0 | operational surface 移除 maintainer-local `~/github` 假設 |
+| 4 | CC-495 | v0.10.0 | trusted cancel terminalization、process identity、單一終態與 authenticated sentinel |
+| 5 | CC-498 | v0.11.0 | state version 命名、`state status` 與真實 remediation |
 
-> **Codex 完成邊界（2026-07-12）**：Codex host baseline 已可用——manifest、probed fail-closed command guard、opt-in install/uninstall、doctor、batch-only `pmctl pm` 與跨 host memory continuity 均已交付；這不等於 host abstraction 已收尾。CC-445 維持 active，直到 Codex 專用 call site 改為 manifest-driven 共用 dispatcher、manifest wiring metadata 與實作同步，並由 CC-448 的 OpenCode 第二實例完成 N=2 驗證。Codex 的 `file_guard: none`、batch-only PM、尚未驗證的 lifecycle/statusline 是如實宣告的能力邊界，不是 baseline 故障。
+> **平行安全工作**：CC-033 只先做 git-history 敏感內容／損害盤點。候補順序為 CC-454 → CC-449 → CC-447 → CC-500 → CC-499 → CC-446。CC-465→467 不進 pre-v1 主線；CC-468/466 只在數據 trigger 成立時啟動。
 
-### Phase 1 — host 軸：codex + opencode 雙 host（P2；依 CC-381 spike 收斂順序推進）
+---
 
-| 票 | 摘要 | 狀態 |
-|----|------|------|
-| CC-473 | Codex batch PM interface：`pmctl pm prepare/run` 共用 snapshot、brief validation、detached dispatch/wait；明確不提供互動式澄清迴圈，Codex manifest/doctor 宣告 `cli_wrapper` partial coverage；Claude gate GO + Codex live smoke PASS | ✅ |
-| CC-480 | host-switch memory continuity：`pmctl memory resolve` strict contract；Codex `pmctl pm prepare` deterministic memory hydration；Claude→Codex 共用 canonical memory E2E。Memory 維持 project-owned，不進 host manifest | ✅ |
-| CC-436 | codex-host PreToolUse payload 驗證 probe：throwaway `CODEX_HOME` 實測 hook fail-closed 阻擋 + payload 欄位能否映射 `pmctl guard check --file/--command`；唯讀第一刀 | ✅ |
-| CC-437 | doctor 擴充切片：拆通用核心檢查 vs host-specific 模組介面，以 capability 為單位呈現；可與 CC-436 並行 | ✅ |
-| CC-448（階段 1） | opencode host probe（唯讀，鏡像 CC-436）：hook/plugin 機制有無 PreToolUse 等價事件、payload 表達力、fail-closed 可行性；結論寫 `docs/spikes/CC-448.md`；與 CC-436/437 並行先跑 | ✅ |
-| CC-438 | host manifest schema v1：`hosts/codex/host.yaml` draft（install target/format、hook surface、guard bindings…）；依賴 CC-436 payload 結果，schema 定案須同時吃進 CC-448 階段 1 的 opencode probe 結果，不得 codex 特例 | ✅ |
-| CC-457 | claude host manifest 化：`hosts/claude/host.yaml` 把原生 claude host 宣告進 CC-438 schema，validator 納入 + doctor capability 一致性檢核；不動 install write path（接線歸 CC-445），作為 CC-445 claude byte-compatible 驗收的 reference instance（2026-07-07 使用者指出三 host 維護不對齊） | 🔵 |
-| CC-445 | Codex baseline、manifest-driven dispatcher、usage-log host decoupling 已交付；Claude/OpenCode GUI live GO。R1 所有 findings 已處理：host conflict preflight failure-atomic、OpenCode PMCTL literal 防注入、Claude config root 統一為 `CLAUDE_CONFIG_DIR`；R2 full-tier 五方全數 cleared | ✅ closed 2026-07-12；PR #395 |
-| CC-448（階段 2+3） | OpenCode GUI round 2 通過：native `/pm` + argv-safe `pm_prepare` 正確帶 CC-445/448、snapshot created、canonical memory hydrated、無 prompt/timeout；guard、ownership/rollback、hostile path 與 generic conflict 均有回歸，R2 full-tier GO | ✅ closed 2026-07-12；PR #395 |
+## v0.14.0 — public contract candidate（暫定；未啟動）
 
-> 順序：CC-473 先完成 Codex 的 batch PM interface → CC-480 接上 strict memory resolution 與 deterministic hydration（可和已完成的 probes 並行）→ CC-436、CC-437、CC-448 階段 1 三者並行先行 → CC-438（雙 probe 結果共同定案 schema）→ CC-457（claude 宣告面，純 additive 可先行）→ CC-448 階段 2 manifest → CC-445 共用 dispatcher → CC-448 階段 3 接線驗收。本 Phase 驗收面（DECISIONS 2026-07-06 + CC-480）：**codex 與 opencode 雙 host** 各自通過 sandbox install → doctor 全綠 → guard 實攔一次違規（或明宣告 cli-only）→ uninstall 無殘留，且對同一 project 解析到同一 canonical memory；Codex preparation 能確定性讀取既有 memory。
+> 最後排程更新：2026-07-17（首次拆版）
 
-### Phase 2 — 證據層（P2；與 Phase 1 檔案面大致不重疊，可並行）
+**主題**：完成 public posture 與 stable/experimental contract candidate；本版產物是「是否具備建立 v1.0 milestone 的事實基礎」，不是 v1.0 RC。
 
-| 票 | 摘要 | 狀態 |
-|----|------|------|
-| CC-358 | `pmctl run-stats --since --by-adapter [--json]`：dispatch/gate terminal outcome 分佈、post-verify failure、fallback 統計；v1.0 release notes 附報告的 reader | 🔵 |
-| CC-431 | test-e2e/release-verify 的 `--adapter` 清單改 adapters/ 動態派生，opencode e2e 通過；未過則 v1.0 將 opencode executor 降標 experimental | 🔵 |
-| CC-449 | ship/worktree surface 煙測 + 套件註冊完整性 lint + **CI↔run-all parity 斷言**（2026-07-06 稽核擴充：24 個本地 suite CI 缺席）+ 零覆蓋 lib 盤點；與 CC-431 檔案面重疊宜同批 | 🔵 |
-| CC-447 | 乾淨機器 onboarding smoke——**本版只做 offline 半**（fresh Linux + WSL2 clean install/doctor/uninstall）；live dogfood 半留 v1.0-rc | 🔵 |
-| CC-481 | test runner contract：direct-impact iteration runner；full suite 移出 reviewer gate lifecycle；tree fingerprint 綁定 final test evidence | ✅ |
-| CC-482 | Claude gate reviewer definitions 改 workspace immutable snapshots；不擴大 home read／不使用 bypassPermissions；真實 detached smoke | ✅ |
-| CC-483 | Codex workflow 的 canonical memory provider 固定為 pmctl memory；native memory 不得靜默優先或覆蓋 | 🔵 |
-| CC-484 | JapanJob／qa-testing-rules context refresh live diagnosis + marker round-trip E2E + repo/DB freshness diagnostics | ✅ |
-| CC-485 | 工具能力不規定使用流程；affected feedback 僅屬開發/PR，pm-dispatch release 固定由 `release-verify.sh --e2e`（內含 fresh full suite）+ checklist 驗收 | ✅ |
+> **設計依據**：契約凍結必須晚於 CLI discovery、state compatibility、upgrade/release evidence 與 detached recovery，避免先承諾再補安全語意。
 
-### Phase 3 — 契約凍結（P2；CC-451 先行或與 CC-446 同批）
+### Phase 1 — public surface
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-451 | core/ 定義層接上 runtime：enum 單一來源（policy YAML 派生 + parity 回歸）、state 寫入 schema 結構檢查；契約凍結的事實前置（2026-07-06 稽核新票） | ✅ |
-| CC-446 | `docs/stability-contract.md` 四層分級 + SemVer/deprecation 政策 + CC-296 清掃 + deprecated surface 清點 + 契約可驗證性盤點（`--json` 一致性、死欄位去留） | 🔵 |
+| CC-032 | feedback cross-link glossary 公開化，清除 public dead/private-only link | 🔵 |
+| CC-033 | README/onboarding public posture、history audit 處置、repo collaboration surface | 🔵（history audit 可先行） |
 
-### Phase 4 — hardening：盲測稽核 + 使用回報（P3-P2；低風險並行，檔案面與 Phase 1-3 不重疊）
+### Phase 2 — contract candidate
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-452 | guard/hook 對稱性與併發 hardening：episodes.jsonl append 加鎖、三安全 guard `set -e` 統一、ISO8601 正規化抽 lib | 🔵 |
-| CC-477 | guard memory usage sidecar 並發遺失更新：可診斷 contention repro → lock protocol 根因修正 → full-suite 壓測穩定；與 CC-452 協調 shared lock helper | ✅ done pr:#396 |
-| CC-453 | worktree/auto-pack 路徑契約 hardening：worktree create stdout 收斂只印路徑、auto-pack work_dir fail-loud、opencode isolation 錯誤訊息修正 | 🔵 |
-| CC-455 | context plane repo_root 跟隨工作目錄（P2）：query/reuse-scan/index 未帶路徑時 default 到 pmctl 安裝 repo 而非 CWD——跨 repo 用 /pm 時目標 repo 的 context.db 永不建立/刷新、查詢打錯 db；CLI 層改 CWD git-toplevel default + agent prose 同步 + 回歸測試（2026-07-06 使用者回報，實測確認） | ✅ done pr:#371 |
-| CC-456 | 去除 maintainer-local `~/github/` 佈局假設（P2）：repos-root 參數化（由 `PM_DISPATCH_REPO` 派生 + env 覆寫）、agents/commands/scripts/pm 層 prose sweep、lint 防再犯；與 CC-455 同根（維護者本機佈局被當成使用者環境契約）、與 CC-447 offline smoke 互扣驗收（2026-07-06 使用者指出） | 🔵 |
+| CC-446 | stable/experimental CLI + schema、SemVer/deprecation、deprecated surface 清掃 | 🔵 |
 
 ### 待後續 / 明確排除
 
-- **CC-032 / CC-033（policies glossary、public posture）**——v1.0-rc（P0 但時點在 rc；CC-033 的 git history 損害盤點例外：票內標「即刻」，可隨時先做）。
-- **CC-447 live dogfood 半**——v1.0-rc，宜在 CC-446 契約凍結後執行。
-- **CC-450 / CC-454（docstring、shellcheck ratchet）**——不排程，逐版順手收割；allowlist 縮張即進度。
-- **CC-435（poll→通知）**——維持條件觸發 someday。
-- **CC-216 MCP**——維持排除，post-1.0 第一題（DECISIONS 2026-07-04）。
+- v1.0.0 milestone、RC 日期與 release tag：**全部尚未排程**；本版完成後另做 readiness review。
+- CC-447 live dogfood 可作 readiness evidence，但不得用一次 happy path 取代 contract/evidence 缺口。
+
+---
+
+## v0.13.0 — detached recovery + operational evidence（暫定；未啟動）
+
+> 最後排程更新：2026-07-17（首次拆版）
+
+**主題**：處理 cancel 之後仍存在的 reboot、supervisor crash、key loss、orphan 與 indeterminate 診斷；同時產出可供下一版契約判斷的真實運行數據。
+
+### Phase 1 — detached reconciliation
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-499 | conservative reconcile、doctor stale-run diagnostics、PID reuse/key-loss/crash tests | ⏸（依賴 CC-495） |
+
+### Phase 2 — operational evidence
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-358 | per-adapter outcome/failure/fallback run stats，供 release/readiness 報告引用 | 🔵 |
+
+### 待後續 / 明確排除
+
+- 不從 advisory record 推導 success；無可信證據時保留 indeterminate。
+- memory product expansion 不因 telemetry 名稱相近而併入本版。
+
+---
+
+## v0.12.0 — release evidence + upgrade proof（暫定；未啟動）
+
+> 最後排程更新：2026-07-17（首次拆版）
+
+**主題**：證明 clean install、N-1 upgrade、OpenCode 與新增 ship/worktree surface 都被 release verifier 真正覆蓋，且 full runner/CI 不會靜默漏 suite。
+
+### Phase 1 — evidence parity
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-449 | 吸收 CC-431：suite registry、CI parity、OpenCode、ship/worktree smoke | 🔵 |
+
+### Phase 2 — install/upgrade smoke
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-447 | offline clean install + latest released tag→current N-1 upgrade；foreign config/memory/user data 不變 | 🔵 |
+
+### 待後續 / 明確排除
+
+- 真實 auth 的 end-to-end live dogfood 留到 v1 readiness review；本版先建立可重現的 offline/upgrade evidence。
+- bootstrap wizard 仍由 smoke 的真實摔倒點決定，不預先實作。
+
+---
+
+## v0.11.0 — state compatibility + writer boundary（暫定；未啟動）
+
+> 最後排程更新：2026-07-17（首次拆版）
+
+**主題**：讓 state version mismatch 有真實可執行的診斷/remediation，並把 single-writer 從宣言變成 production-wide invariant。
+
+### Phase 1 — compatibility surface
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-498 | layout/entity version 命名、`pmctl state status [--json]`、migration availability | 🔵 |
+
+### Phase 2 — architecture ratchet
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-500 | all-production-domain single-writer enforcement | ⏸（依賴 CC-498） |
+
+### 待後續 / 明確排除
+
+- 沒有真實 N→N+1 path 時不建空 migration engine，也不宣稱 `state migrate` 可用。
+- detached reconcile 留 v0.13.0，避免 state version 與 process recovery 同版擴張。
+
+---
+
+## v0.10.0 — detached cancel safety（暫定；未啟動）
+
+> 最後排程更新：2026-07-17（首次拆版）
+
+**主題**：只補 detached lifecycle 的中止對稱面；先把 process identity、terminal race 與 completion evidence 做對，再談 crash/reboot recovery。
+
+### Phase 1 — trusted cancellation
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-495 | process-group cancel、PID identity、terminal CAS、authenticated cancelled sentinel、wait distinct exit | 🔵 |
+
+### Phase 2 — bounded correctness hardening
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-452/453 | 僅納入與 lifecycle correctness 直接相關的小 slice；其餘不擴張 | 🔵 |
+
+### 待後續 / 明確排除
+
+- 不做 pause/resume、完整 dispatch list 或 crash reconciliation。
+- cancel 若依賴 workspace 可偽造資料、刪除 completion proof 或可能誤殺 reused PID，本版不得 release。
+
+---
+
+## v0.9.0 — migration closure + CLI discoverability（目前規劃中）
+
+> 最後排程更新：2026-07-17
+
+**主題**：讓 CC-489 後的產品表面追上 current tree，並讓第一次接觸 `pmctl` 的使用者能只靠 CLI/README 找到正確操作。本版不宣稱接近 v1.0，也不凍結完整 public contract。
+
+> **設計依據**：151 個 implementation/fixture path 已搬遷且 full runner 79 passed，但 compatibility shims 仍掩蓋 docs/CI/backlog 漂移；同時 root/area help 缺失使現有能力對使用者不可發現。
+
+### Phase 1 — migration surface closure
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-497 | canonical paths、docs/backlog/milestone/release metadata、stale-reference ratchet | 🔵 |
+| CC-456 | 移除 maintainer-local `~/github` operational assumptions | 🔵 |
+| CC-454 | canonical ShellCheck domains + ignore ratchet + CI/local parity | 🔵 |
+
+### Phase 2 — user-facing CLI discovery
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-460 | root/area/leaf help、command registry、`commands --json`、router/help/README parity | 🔵 |
+
+### Parallel audit
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-033（audit slice only） | git-history 敏感內容／損害盤點；public copy 不在本版修改 | 🔵 |
+
+### 待後續 / 明確排除
+
+- CC-495/498 之後的 lifecycle/state 能力不塞入 v0.9.0。
+- public posture、contract freeze、RC 與 v1.0 tag 均不屬本版。
+- 已交付的 Codex/OpenCode host baseline、canonical memory continuity、CC-451、CC-489 不再重複列成 active phase。
 
 ---
 

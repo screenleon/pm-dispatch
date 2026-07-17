@@ -10,36 +10,35 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | #  | Status | 主題 | 影響面 | 首次記錄 | Refs | Priority | Epic |
 |----|--------|------|--------|----------|------|----------|------|
 | CC-450 | 🟢 someday | 其餘 9 個 test-*.sh docstring 格式統一（CC-004 同款 Behavior/Steps，跨檔） | ops | 2026-07-03 | — | P3 | — |
-| CC-451 | ✅ closed 2026-07-15 | core/ 定義層接上 runtime：enum 單一來源 + state 寫入 schema 驗證（CC-446 契約凍結前置；2026-07-06 盲測稽核；v0.9.0） | arch | 2026-07-06 | pr:#409 | P2 | design |
-| CC-452 | 🔵 active | guard/hook 對稱性與併發 hardening：episodes.jsonl append 加鎖、三安全 guard set -e 統一、ISO8601 正規化抽 lib（2026-07-06 盲測稽核；v0.9.0） | ops | 2026-07-06 | — | P3 | hygiene |
-| CC-453 | 🔵 active | worktree/auto-pack 路徑契約 hardening：worktree create stdout 契約、auto-pack work_dir fail-loud、opencode isolation 錯誤訊息修正（2026-07-06 盲測稽核；v0.9.0） | ops | 2026-07-06 | — | P3 | hygiene |
-| CC-454 | 🟢 someday | CI shellcheck ignore_names 白名單 ratchet 收斂：獨立 job + 白名單清零機制（比照 CC-450 模式；2026-07-06 盲測稽核） | ops/test | 2026-07-06 | — | P3 | hygiene |
+| CC-452 | 🔵 active | guard/hook 對稱性與併發 hardening；僅與 lifecycle/state correctness 直接相關的 slice 納入 v0.10.0 | ops | 2026-07-06 | — | P3 | hygiene |
+| CC-453 | 🔵 active | worktree/auto-pack 路徑契約 hardening；僅與 lifecycle/state correctness 直接相關的 slice 納入 v0.10.0 | ops | 2026-07-06 | — | P3 | hygiene |
+| CC-454 | 🔵 active | canonical ShellCheck domain coverage：掃描 runtime/tests/tools/ops/hosts、ignore ratchet、moved-path parity、CI↔local lint 一致（CC-489 後收口） | ops/test | 2026-07-06 | — | P1 | hygiene |
 | CC-456 | 🔵 active | 去除 maintainer-local `~/github/` 佈局假設：repos-root 參數化 + prose/scripts/pm 層全面 sweep + lint 防再犯（2026-07-06 使用者指出；v1.0 public 前提；v0.9.0） | arch/portability | 2026-07-06 | — | P2 | oss |
-| CC-460 | 🔵 active | `pmctl commands --json` manifest 單一來源 + router↔manifest↔README 三方防漂移 lint（承接 CC-033 #4 README surface 重建、CC-446 #5a `--json` 覆蓋率缺口；2026-07-07 openyida 跨專案分析） | DX/docs | 2026-07-07 | — | P2 | design |
+| CC-460 | 🔵 active | `pmctl` CLI discovery surface：root/area/leaf help、commands JSON registry、router↔manifest↔help↔README parity（v1.0 使用者可理解性前置） | DX/docs | 2026-07-07 | — | P1 | design |
 | CC-461 | 🟢 someday | `doctor.sh --fix`：僅限冪等/可逆/不碰使用者內容類別的自動修復；待 CC-447 offline smoke 產出摔倒點清單後定白名單（2026-07-07 openyida 跨專案分析） | ops/install | 2026-07-07 | — | P3 | — |
 | CC-462 | 🟢 someday | e2e 可拋棄資源紀律：前綴命名 + registry JSON + result artifact；掛在 CC-449 e2e 新 phase 之後，與 CC-447 live smoke 共用同一 registry（2026-07-07 openyida 跨專案分析） | ops/test | 2026-07-07 | — | P3 | — |
 | CC-463 | 🟢 someday | `pmctl batch` 泛用批次執行原語；依賴 CC-460（合法性驗證來源）；新注入面須過 security-reviewer（2026-07-07 openyida 跨專案分析） | arch/process | 2026-07-07 | — | P3 | design |
 | CC-464 | 🟢 someday | `pmctl ticket draft --from <notes>`：隨手筆記→結構化 backlog 票草稿；依賴 CC-286（prefix-generic next-id，⏸ deferred 尚未排程）；review-first 邊界獨立設計，CC-054 僅供鬆散參照非直接前例（2026-07-07 openyida 跨專案分析） | ux/process | 2026-07-07 | — | P3 | — |
 | CC-486 | ⏸ deferred | direct-impact test planner mapping 提前退出：changed path 含 `agents/*.md`／`commands/*.md` 時 `map_path` 呼叫未註冊的 `lint-frontmatter`，`add_suite` 回傳 1 並在 `set -e` 下無輸出終止，導致 `run-tests.sh --base ... --list` exit 1 | ops/test | 2026-07-13 | feedback:2026-07-13 | P2 | hygiene |
-| CC-489 | ✅ done | `scripts/` domain ownership重整完成：host/runtime/test/tooling/ops 已歸位，151 個舊 implementation path 移除，`scripts/` 僅留 19 個受 ratchet 約束的相容 shim | arch | 2026-07-14 | pr:#415 | P2 | design |
-| CC-490 | ✅ done | project-scoped explicit memory config：取代全域單值 `dispatch.memory_dir`，避免多 repo 靜默共用 pm-dispatch canonical store | arch/memory | 2026-07-14 | pr:#406 | P1 | design |
-| CC-491 | ✅ closed 2026-07-15 | PR-gate pre-flight 機械式 evidence contract：傳遞 command、selected suites、逐項結果與 tree fingerprint，讓 reviewer reuse 已驗證結果並禁止無條件重跑 | ops/gate | 2026-07-14 | pr:#408 | P1 | design |
 | CC-493 | 🟢 someday | Prompt→Skill→Command→Harness 升級規則文件化：可測試的分類判準（何時停在 prompt、何時升為 skill、何時做成 command、何時需要 harness-level hook/guard/state），並盤點 `commands/`／`skills/`／`agents/` 現況對照分類（2026-07-15 CC-489 三方 multi-model synthesis） | process/docs | 2026-07-15 | feedback:2026-07-15 | P2 | design |
 | CC-494 | 🟢 someday | design: executor 局部設計裁量權 envelope——在 dispatch brief / executor contract 定義「可自行處理的局部設計」與「必須 halt 回報 PM」的邊界（例如新增 schema 欄位 `design_latitude`/`architectural_conflicts`）；三方 multi-model synthesis 2:1 分歧（codex/fable 認為現行邊界過度僵硬需要新機制，opencode 認為現行 `isolation_level`/executor 欄位已足夠彈性），本票僅追蹤決策、不預設結論（2026-07-15） | schema/process | 2026-07-15 | feedback:2026-07-15 | P3 | design |
-| CC-495 | 🔵 active | `pmctl dispatch cancel <run_id>`：detached run 中途終止機制。`core/policy/dispatch-states.yaml` 已定義 `cancelled` 為合法 terminal state 且無任何 code path 寫入；`.supervisor.pid` 存在但未被任何 pmctl 子命令讀取；使用者目前唯一手段是手動 kill pid，無文件、可能留孤兒 process、無 `run.cancelled` event（2026-07-15 使用者發現 executor 缺乏可終止行為） | arch/gate | 2026-07-15 | feedback:2026-07-15 | P2 | design |
-| CC-496 | ✅ done | Codex command guard 的單次 bypass transport 修復：提示建議 `PM_GUARD_PM_BASH=off`，但 inline assignment 在 PreToolUse hook 前尚未進入環境，導致已確認風險的 branch cleanup 仍被攔截 | ops | 2026-07-15 | pr:#407 | P1 | hygiene |
+| CC-495 | 🔵 active | `pmctl dispatch cancel <run_id>`：可信任的 detached-run cancel terminalization、PID reuse 防護、cancel-vs-complete 單一終態、authenticated cancelled sentinel | arch/gate | 2026-07-15 | feedback:2026-07-15 | P1 | design |
+| CC-497 | 🔵 active | CC-489 遷移後收口：canonical paths、文件、backlog、release metadata 與 stale-reference ratchet | arch/docs | 2026-07-17 | — | P1 | design |
+| CC-498 | 🔵 active | State compatibility surface：status、layout/entity 版本命名、真實 migration availability | arch/schema | 2026-07-17 | — | P1 | design |
+| CC-499 | ⏸ deferred | Detached run reconciliation：crash、reboot、stale sentinel、PID identity 與 orphan recovery | arch/ops | 2026-07-17 | — | P2 | design |
+| CC-500 | ⏸ deferred | State single-writer boundary enforcement：all-production-domain direct-writer ratchet | arch/test | 2026-07-17 | — | P2 | design |
 | CC-465 | 🔵 active | memory/context 關鍵詞管線 CJK 支援：抽出共用零依賴斷詞 lib，取代三處各自 ASCII-only 抽詞；工作序列起點（465→467→468→466）（2026-07-07 記憶系統深入分析） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
-| CC-466 | 🔵 active | 記憶卡片生命週期閉環：expires_at 執行 + 關窗式 supersede + usage sidecar 休眠偵測 + doctor→distill 接線；排在 CC-467 之後（需其遙測為前置）（2026-07-07 記憶系統分析 + 外部研究 Graphiti/mcp-memory-service） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
+| CC-466 | ⏸ deferred | 記憶卡片生命週期閉環：expires_at 執行 + 關窗式 supersede + usage sidecar 休眠偵測 + doctor→distill 接線；僅在 CC-467 證明 stale/dormant card 已形成實際問題時啟動 | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-467 | 🔵 active | `pmctl memory stats`：注入效益可視化（唯讀聚合器）——注入 bytes/卡片命中分佈/從未命中卡/episode 填寫率，回答「記憶有跟沒有差在哪」；排在 CC-466 之前（2026-07-07；業界僅離線 recall 評測，無 per-injection 遙測） | DX/memory | 2026-07-07 | — | P2 | retrieval |
-| CC-468 | 🔵 active | dispatch brief 帶 memory 約束：PM 萃取為非敏感 `constraints:` 清單（pointer 僅作 provenance），依賴 CC-465 CJK 先行（2026-07-07；auto-pack 現為 repo-only by construction） | ops/memory | 2026-07-07 | — | P2 | retrieval |
+| CC-468 | ⏸ deferred | dispatch brief 帶 memory 約束與信任邊界；完成 CC-465→CC-467 後，僅在 usage evidence 證明有價值時啟動 | ops/memory | 2026-07-07 | — | P2 | retrieval |
 | CC-011 | 🟢 someday | sync-memory.sh + install 選項：symlink memory 到雲端資料夾實現跨裝置共用 | ux/memory | 2026-05-14 | — | — | — |
 | CC-012 | 🟢 someday | SessionStart hook：session 啟動時 pull 最新 memory（git/rsync）確保跨裝置同步 | ux/memory | 2026-05-14 | — | — | — |
 | CC-015 | 🟢 someday | `systematic-debugging` skill：結構化偵錯工作流；作為升級規則(CC-493)定案後的首個試點 skill，落地於 `skills/systematic-debugging/SKILL.md` 而非 slash command | ux | 2026-05-14 | — | P3 | — |
 | CC-018 | 🟢 someday | Codex quota 自動追蹤 + rate-limit 路徑統一（吸收 CC-269）：寫到 `~/.local/share/pm-dispatch/state/rate-limits.json`；解析 API response headers；token-usage.sh 加 Codex pool 顯示 | ux/token | 2026-05-14 | — | P3 | — |
 | CC-023 | ⏸ deferred | `coupling-reviewer`：PR gate 加入語言感知耦合分析（dependency-cruiser/gocyclo/coca） | ops/gate | 2026-05-14 | — | — | — |
 | CC-026 | 🟢 someday | `/skill-distill`：偵測重複工作流，產出草稿 skill .md | ux/memory | 2026-05-15 | — | P3 | — |
-| CC-032 | 🔵 active | `[[feedback_*]]` cross-link 公開化：抽到 `docs/policies/` glossary 避免 dead link（v1.0 P0，v1.0-rc 候選；DECISIONS 2026-07-04） | process/DX | 2026-05-15 | — | P2 | — |
-| CC-033 | 🔵 active | public posture reconciliation（原 flip checklist；repo 已 public 故 rescope）：README 文案一致、Issues/Discussions 設定、CITATION.cff（選配）、**即刻** git history 損害盤點（v1.0 P0，盤點即刻＋其餘 v1.0-rc；依賴 CC-032；DECISIONS 2026-07-04） | process | 2026-05-15 | — | P2 | — |
+| CC-032 | 🔵 active | `[[feedback_*]]` cross-link 公開化：抽到 `docs/policies/` glossary 避免 dead link（v1.0 前置；v0.14.0 contract candidate） | process/DX | 2026-05-15 | — | P2 | — |
+| CC-033 | 🔵 active | public posture reconciliation：README/協作表面 + **即刻** git history 損害盤點（audit 先行；其餘 v0.14.0） | process | 2026-05-15 | — | P2 | — |
 | CC-035 | 🟢 someday | install/uninstall-guards basename+scripts/ heuristic：未覆蓋另一工具也在 scripts/ 下同名 hook 的 collision edge case | ops | 2026-05-15 | pr:#53 | P3 | — |
 | CC-038 | ⏸ deferred | Windows/cross-platform 鎖機制：`flock` Linux-only，未來支援需替代方案（parked: CC-370） | ops/portability | 2026-05-15 | — | — | oss |
 | CC-044 | ⏸ deferred | `tool-trace.jsonl` 三階段升級（吸收 CC-027b/c）：Phase 1 rotation/retention；Phase 2 bounded error counter；Phase 3 async validation | ux/memory | 2026-05-15 | — | — | — |
@@ -71,7 +70,6 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-273 | ⏸ deferred | arch: unified lifecycle hook event spec（`.pm-dispatch/hooks/<event>.sh`）；activate when second hook point beyond gate pre/post emerges | arch/gate | 2026-05-28 | — | P3 | — |
 | CC-286 | ⏸ deferred | **[pmctl: prefix-generic next-id derivation]** `scripts/pm-prep-snapshot.sh` derives `backlog_next_id` CC-only (it emits `CC-NNN`); under the working-set contract it scans BACKLOG.md + BACKLOG-ARCHIVE.md for the max, but only `CC-` IDs. A cross-repo next-id (other prefixes: JS-, PA-) must be prefix-derived and centralized in pmctl, scanning both working-set and archive. Retire pm-prep-snapshot's CC-hardcoded derivation when `pmctl backlog`/next-id lands. Surfaced by pr-gate critic+architecture on #186. | arch | 2026-05-30 | — | P3 | design |
 | CC-306 | ⏸ deferred | **[arch: extend CC-233 layer enforcer to runtime-named data paths in scripts/]** Guard against re-introducing `.codex-*`/`.claude-*` DATA directories under scripts/ (the optional follow-up deferred from CC-298). | arch | 2026-06-01 | — | P3 | design |
-| CC-333 | 🔵 active | arch: pm-dispatch runtime 解耦合（v0.6.0 umbrella）；layer 2/3/5/6 已交付（v0.6.0）；layer 1（CC-412）已交付、layer 4 spike（CC-381）已收斂為 CC-436/437/438；layer 7 待評估；open sub-tickets: CC-390/393/412/436/437/438 | arch | 2026-06-07 | — | P2 | design |
 | CC-340 | ⏸ deferred | knowledge index: embeddings/semantic-backend remainder（FTS/LIKE MVP 已由 CC-403 接管；本票保留 Khoj-class semantic accelerator，待 FTS ranking 不足時 resume） | memory | 2026-06-08 | — | P3 | retrieval |
 | CC-342 | 🟢 someday | agent: debt-auditor — proactive tech-debt health scan（`agents/debt-auditor.md`；`pmctl audit <path>` 呼叫；PR-free 主動健康掃描，有別於現有 PR-focused reviewers） | process/DX | 2026-06-05 | — | P3 | design |
 | CC-346 | ⏸ deferred | repo-index: cross-file ref tracking `file_refs` table（paused 2026-06-10；resume trigger: reuse-scan 進過 ≥2 份真 brief 且缺 ref 資料為瓶頸；屆時先 Phase a bash source） | ops | 2026-06-09 | — | P3 | design |
@@ -80,7 +78,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-352 | ⏸ deferred | **[codex-executor sandbox friction Pattern 1+2: apply_patch retry noise + Go module cache blocked]** issue:#173 Pattern 3（git commit blocked）已由 CC-272 pr:#245 吸收修復。剩餘：(1) apply_patch 中途失敗 self-retry 噪音 — brief 改拆小 hunk 加 unique context；(2) go build 時 GOPATH copy 被 sandbox 擋 — 文件化 GOPATH=/tmp/gopath 慣例。兩者均為 doc/convention fix。 | ops/DX | 2026-06-10 | — | P3 | — |
 | CC-355 | 🟢 someday | knowledge index: HTML semantic chunking `<h1-6>`（trigger: .html file enters knowledge plane；plug into CC-354 per-format chunker seam） | memory | 2026-06-10 | — | P3 | design |
 | CC-357 | 🟢 someday | **[skill as contract: machine-readable schema for skills]** 現有 skills/ 都是純 markdown prose（SKILL.md），沒有機器可讀的 input schema、output contract、tool_constraints、completion_condition。這使得 skill 無法被驗證、無法被工具自動發現、也無法像 dispatch_handover_v1 那樣由 validator 強制執行契約。本票引入 skill schema（YAML frontmatter 或 JSON sidecar），使 skill 具備：明確的輸入型別、輸出格式、允許/禁止工具清單、完成條件——平行於 brief-validate.sh 對 brief 的驗證角色。 | arch/DX | 2026-06-10 | — | — | design |
-| CC-358 | 🔵 active | runner telemetry：`pmctl run-stats` per-adapter 成功率/失敗模式/fallback 分析（v1.0 P1 證據層，v0.9.0 候選；DECISIONS 2026-07-04） | ops/memory | 2026-06-10 | — | P2 | design |
+| CC-358 | 🔵 active | runner telemetry：`pmctl run-stats` per-adapter 成功率/失敗模式/fallback 分析（v1.0 readiness 證據；v0.13.0） | ops/memory | 2026-06-10 | — | P2 | design |
 | CC-359 | 🟢 someday | concept: backlog-driven batch dispatch with worktree isolation（PM manages `git worktree` lifecycle；executor-agnostic；human-in-the-loop merge；PR-only output） | arch/ops | 2026-06-11 | — | — | design |
 | CC-364 | ⏸ deferred | **[perf: `pmctl trace tail --all` per-event jq spawn]** `pmctl trace tail --kind <k> --all --json` is O(n) with a high per-event constant — ~20s for 338 events (~60ms/event), consistent with spawning a jq/subprocess per event rather than one streaming pass. Surfaced while diagnosing #270 context-telemetry test flakiness; the tests no longer depend on it (telemetry now honors `PM_DISPATCH_STATE_ROOT`, so the suite isolates state). Standalone reader-perf follow-up. **See**: pr:#270 | ops | 2026-06-12 | pr:#270 | P3 | hygiene |
 | CC-369 | ⏸ deferred | Windows state store 真實 ACL via icacls（parked: CC-370；border case relative to profile ACL protection） | ops/portability | 2026-06-13 | — | — | hygiene |
@@ -88,11 +86,10 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-377 | ⏸ deferred | adapter: Google Antigravity（`agy`）executor（DEFERRED：headless CLI 1.0.8 不成熟；resume: newer agy with `--output-format stream-json`；umbrella: CC-333） | arch/portability | 2026-06-13 | — | P2 | design |
 | CC-390 | ⏸ deferred | codex dispatch trace-capture 強化（FD inheritance cold-start flake；fail-closed safe；resume: stable repro；umbrella: CC-333） | arch/portability | 2026-06-15 | — | P3 | design |
 | CC-393 | 🟢 someday | design: portable-skill-substrate — CLI-agnostic skill 控制層（design seed after v0.6.0 N≥2；3 control skills + Portable Skill v0 frontmatter；umbrella: CC-333） | arch | 2026-06-16 | — | — | design |
-| CC-431 | 🔵 active | **[test-e2e.sh + release-verify.sh: opencode adapter support]** `--adapter` 目前只接受 `claude\|codex\|auto`；opencode 在 v0.6.0 加入後未同步更新 e2e 驗證路徑。需：(1) 將 opencode 加入兩腳本的 adapter 驗證清單；(2) Phase B dispatch 支援 opencode；(3) Phase C pr-gate smoke 評估是否可用 opencode executor（目前硬碼 codex）。觸發：release-verify --e2e --adapter opencode 被拒（exit 2）。v1.0 executor stable 宣稱的證據前置（v0.9.0 候選；DECISIONS 2026-07-04） | ops/test | 2026-06-30 | — | P2 | — |
 | CC-435 | 🟢 someday | **[poll→通知機制 single-waiter guard：條件觸發，非既定後續票]** 只有在真正出現多個 waiter 需要同時等待同一個 run_id/gate_id 的場景時才拿出來討論；候選設計見 `docs/spikes/CC-433.md` Open risks（方案 A：`flock` 搶鎖+敗者退回輪詢；方案 B：per-waiter 專屬 fifo+supervisor 廣播）。CC-434 完成後重新盤點成本效益：輪詢 vs blocking read 在單一 waiter/數分鐘等待場景下資源消耗差距趨近於零，延遲改善（≤2s→近乎即時）對人在等 gate 結果無感，而兩個方案都要在安全敏感的 supervisor 檔案引入新 race condition，投資報酬率目前不足，故不排入既定實作，僅記錄設計供未來觸發條件成立時起步。 | arch/gate | 2026-07-02 | — | P3 | design |
-| CC-446 | 🔵 active | v1.0 契約凍結：`docs/stability-contract.md` 四層分級（stable/experimental CLI + stable/internal schema）+ SemVer/deprecation 政策 + 執行 CC-296 清掃（v1.0 P0，v0.9.0 候選；DECISIONS 2026-07-04） | process/DX | 2026-07-04 | — | P2 | design |
-| CC-447 | 🔵 active | 乾淨機器 onboarding 雙 smoke：offline clean-install smoke（v0.9.0 候選）+ live dogfood smoke（v1.0-rc）；摔倒點逐一開票；QA_RULES_DIR 缺席行為驗證 | docs/ops | 2026-07-04 | — | P2 | — |
-| CC-449 | 🔵 active | release-verify/test-e2e 對 v0.8.0 新 surface（`pmctl ship`/`pmctl worktree`）無 live 煙測 + run-all-tests 套件註冊完整性 lint（CC-444 收尾發現 test-pmctl-worktree 未註冊，已修；防再漏）+ CI↔run-all parity 斷言（2026-07-06 稽核：24 個本地 suite CI 缺席）（v0.9.0 候選） | ops/test | 2026-07-04 | — | P2 | — |
+| CC-446 | 🔵 active | public contract candidate：stable/experimental CLI + schema、SemVer/deprecation 與 CC-296 清掃（v0.14.0；非 v1 RC） | process/DX | 2026-07-04 | — | P2 | design |
+| CC-447 | 🔵 active | onboarding 三 smoke：offline clean install + N-1 upgrade（v0.12.0）+ live dogfood（readiness review 後再排） | docs/ops | 2026-07-04 | — | P2 | — |
+| CC-449 | 🔵 active | release evidence parity：suite registry、CI parity、OpenCode（吸收 CC-431）、ship/worktree smoke（v0.12.0） | ops/test | 2026-07-04 | — | P2 | — |
 | CC-472 | 🟢 someday | spike: antigravity（`agy` CLI）host 唯讀 probe——比照 CC-436/CC-448 階段 1 模式，實測 command 載入能力 + hook/plugin 機制 + 五個 capability enum 的 provider/confidence 判定，不落地 `hosts/antigravity/host.yaml`；排在 CC-445 通用 install/uninstall dispatcher 之後、與 CC-448 opencode 同批或緊接其後評估（N=3 驗證點） | arch/install | 2026-07-08 | — | P3 | spike |
 
 ---
@@ -142,7 +139,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 **Done-when**：分級表覆蓋全部 pmctl 子指令與 schema 檔；CC-296 清掃完成；repo 內無「標 deprecated 但無移除計畫」的懸空表面；README 與分級文件互相一致。
 
-**Dependencies**：吸收 [[CC-296]] 執行。[[CC-451]]（core schema runtime 接線）為 stable schema 分級的事實前置，宜先行或同批。Cross-link [[CC-286]]（prefix-generic next-id，影響 cross-repo ID contract，可同批評估）、[[CC-357]]（skill schema——**明確排除**，除非 v1.0 要宣稱 skill 為 machine-readable public API）。v0.9.0 候選（v1.0 P0）。
+**Dependencies**：吸收 [[CC-296]] 執行。[[CC-451]]、[[CC-460]] command inventory、[[CC-498]] state compatibility 為事實前置。Cross-link [[CC-286]]、[[CC-357]]。v0.14.0 contract candidate；完成後才進行 v1.0 readiness review。
 **See**: DECISIONS.md 2026-07-04
 
 ## CC-447 — 乾淨機器 onboarding 雙 smoke（offline + live dogfood）🔵 active
@@ -151,59 +148,39 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 **Why**：v1.0 的第二個承諾是「別人裝得起來、用得下去」（DECISIONS 2026-07-04）；這比做 bootstrap wizard（[[CC-064]]）便宜且先驗證需求。
 
-**Requirement**（拆兩個 smoke，時點不同）：
-1. **Offline clean-install smoke**（v0.9.0）：fresh Linux + WSL2 各一輪，不需任何 CLI auth——`install.sh --dry-run` → `CLAUDE_HOME=/tmp/... install.sh` → `doctor.sh` → `uninstall.sh` 無殘留。驗 install 鏈本體與文件一致性。
-2. **Live dogfood smoke**（v1.0-rc）：真實 Claude/Codex auth 環境，走完整 onboarding：install → doctor → 首次 `/pm` → 首次 `pmctl dispatch run` → 首次 `pmctl ship`（一次 gate 到 PR）。
-3. 每個摔倒點（缺依賴、文件與行為不符、錯誤訊息不可行動）逐一開票，不在本票內修。
-4. `QA_RULES_DIR` 外部依賴缺席時的行為驗證：qa-tester 在沒有 qa-testing-rules checkout 的機器上是 fail-loud 還是靜默劣化，結論寫入報告。
-5. [[CC-064]] bootstrap wizard 僅在實測證明需要時才升級為實作票。
+**Requirement**（拆三個 smoke，時點不同）：
+1. **Offline clean-install smoke**（v0.12.0）：fresh Linux + WSL2 各一輪，不需任何 CLI auth——`install.sh --dry-run` → `CLAUDE_HOME=/tmp/... install.sh` → `doctor.sh` → `uninstall.sh` 無殘留。驗 install 鏈本體與文件一致性。
+2. **Live dogfood smoke**（readiness review 後另排）：真實 Claude/Codex auth 環境，走完整 onboarding：install → doctor → 首次 `/pm` → 首次 `pmctl dispatch run` → 首次 `pmctl ship`（一次 gate 到 PR）。
+3. **N-1 upgrade smoke**（v0.12.0）：從 latest released tag 安裝，建立代表性的 Claude/Codex/OpenCode managed config，再切到 current checkout 重跑 installer；驗證 doctor 全綠、最小 command 可執行、uninstall 無殘留，且 foreign hooks/config、canonical memory 與使用者資料未被修改。
+4. 每個摔倒點（缺依賴、文件與行為不符、錯誤訊息不可行動）逐一開票，不在本票內修。
+5. `QA_RULES_DIR` 外部依賴缺席時的行為驗證：qa-tester 在沒有 qa-testing-rules checkout 的機器上是 fail-loud 還是靜默劣化，結論寫入報告。
+6. [[CC-064]] bootstrap wizard 僅在實測證明需要時才升級為實作票。
 
-**Done-when**：兩個 smoke 的實測報告 committed（`docs/notes/` 或票內）；摔倒點全部開票；GETTING_STARTED 修正到與實測一致。
+**Done-when**：三個 smoke 的實測報告 committed（`docs/notes/` 或票內）；clean install 與 N-1 upgrade 都有可重現證據；摔倒點全部開票；GETTING_STARTED 修正到與實測一致。
 
-**Dependencies**：offline smoke 無前置可先行；live smoke 宜在 [[CC-446]] 契約凍結後執行。offline = v0.9.0 候選、live = v1.0-rc。
+**Dependencies**：offline/N-1 smoke 在 [[CC-497]]、[[CC-456]]、[[CC-449]] 後於 v0.12.0 執行；live smoke 不預先綁 v1.0，待 v0.14.0 後 readiness review 排程。
 **See**: DECISIONS.md 2026-07-04
 
 ## CC-449 — release-verify/test-e2e：ship/worktree surface 煙測 + 套件註冊完整性 lint 🔵 active
 
-**Problem**：v0.8.0 新增的 `pmctl ship`（unified entry / prepare / finish / `--parallel`）與 `pmctl worktree`（create/list/remove/gc）只有 unit 套件覆蓋；release sign-off 的 e2e 路徑（`test-e2e.sh` Phase B/C）只驗 dispatch 輸出契約與 pr-gate 機制，對這兩個新 surface 零 live 煙測。且 [[CC-444]] 收尾時發現 `test-pmctl-worktree.sh`（36 cases）**根本沒註冊進 full runner registry**——套件存在但 aggregator 從未執行，release-verify 的「全套綠燈」靜默漏掉它（已於 CC-444 補註冊）；「新增 suite 必須註冊」目前無任何機械防護。CC-481 後 canonical registry 位於 `scripts/lib/test-suite-runner.sh`，`run-all-tests.sh --list` 仍是穩定查詢 surface。
+**Problem**：v0.8.0 新增的 `pmctl ship`（unified entry / prepare / finish / `--parallel`）與 `pmctl worktree`（create/list/remove/gc）只有 unit 套件覆蓋；release sign-off 的 e2e 路徑（`tests/shell/test-e2e.sh` Phase B/C）只驗 dispatch 輸出契約與 pr-gate 機制，對這兩個新 surface 零 live 煙測。且 [[CC-444]] 收尾時發現 `tests/shell/test-pmctl-worktree.sh`（36 cases）**根本沒註冊進 full runner registry**——套件存在但 aggregator 從未執行，release-verify 的「全套綠燈」靜默漏掉它（已於 CC-444 補註冊）；「新增 suite 必須註冊」目前無任何機械防護。CC-481 後 canonical registry 位於 `tests/lib/test-suite-runner.sh`，`tests/bin/run-all-tests.sh --list` 是穩定查詢 surface。OpenCode 已是現有 adapter，但 `test-e2e`／`release-verify` 的 adapter 驗證與 Phase B/C 尚未提供等價證據；此範圍由本票吸收 [[CC-431]]。
 
 **Why**：v1.0 P1 證據層的一環——release sign-off 的覆蓋範圍必須跟上 surface 的成長，否則 `release-verify GO` 的可信度逐版稀釋；註冊完整性 lint 是同類靜默缺口的止血閥。
 
 **Requirement**：
-1. **套件註冊完整性 lint**（第一刀，機械）：`scripts/test-*.sh` 存在但未在 `scripts/lib/test-suite-runner.sh` 註冊 → fail loud（允許顯式 exclude 清單，如 fixture-only helper）；接入 CI 與 `release-verify.sh` Phase 1。注意新增套件目前需**三處**同步——共用 executor（SUITE 陣列 + path map）與 `test-run-all-tests.sh`（`SUITE_NAMES` mirror + `suite_path` case）；後者的 parity 已由 meta 套件自身把關（CC-444 補註冊時實際觸發），lint 只需補「檔案存在但未註冊」這缺口，並評估讓 meta-suite 從 canonical executor 動態派生以消除第三處人工同步。
-2. **ship/worktree e2e 煙測**：`test-e2e.sh` 新增 phase——synthetic target 上走一次 `pmctl worktree create → pmctl ship <id> --worktree → ship status 讀到 prepared → worktree remove`（不 dispatch、不花 LLM token 的最小閉環）；`ship finish` 的 live 驗證（含 gate）評估成本後決定納入或明文排除並記錄理由。
-3. 與 [[CC-431]]（adapter 清單動態派生）同批評估，避免 e2e 腳本兩次重構。
+1. **套件註冊完整性 lint**（第一刀，機械）：`tests/shell/test-*.sh` 存在但未在 `tests/lib/test-suite-runner.sh` 註冊 → fail loud（允許顯式 exclude 清單，如 fixture-only helper）；接入 CI 與 `ops/release/release-verify.sh` Phase 1。評估讓 meta-suite 從 canonical executor 動態派生，消除人工同步面。
+2. **ship/worktree e2e 煙測**：`tests/shell/test-e2e.sh` 新增 phase——synthetic target 上走一次 `pmctl worktree create → pmctl ship <id> --worktree → ship status 讀到 prepared → worktree remove`（不 dispatch、不花 LLM token 的最小閉環）；`ship finish` 的 live 驗證（含 gate）評估成本後決定納入或明文排除並記錄理由。
+3. **OpenCode adapter evidence**（吸收 [[CC-431]]）：adapter 清單由 canonical adapter inventory 派生；Phase B dispatch 支援 OpenCode；Phase C pr-gate smoke 若不能使用 OpenCode executor，須明文降標或記錄排除理由。
 4. **CI↔run-all parity 斷言**（2026-07-06 盲測稽核擴充）：`.github/workflows/lint.yml` 的 job 清單與 full runner registry 各自手動維護、零 parity 檢查——實測 24 個本地 suite 在 CI 從未執行，含 dispatch 核心（test-dispatch-lifecycle、test-dispatch-common、test-detached-launch、test-opencode-dispatch）與三個最大 pmctl 套件（test-pmctl-context/memory/dispatch）。lint 需一併涵蓋：canonical executor 每個註冊 suite 必須在 CI 出現，或列入顯式豁免清單並附理由（如 live-DB 互斥、耗時）。這是比第 1 項「未註冊」更大的同類靜默缺口。
-5. **零覆蓋 lib 盤點**（同批）：`scripts/lib/gate-workspace.sh`、`scripts/lib/pmctl-config.sh` 在所有測試檔零引用——補最小套件或記錄豁免理由。
+5. **零覆蓋 lib 盤點**（同批）：`runtime/lib/gate-workspace.sh`、`runtime/lib/pmctl-config.sh` 在所有測試檔零引用——補最小套件或記錄豁免理由。
 6. **surface 覆蓋分類 lint（反向補完，2026-07-07 openyida 跨專案分析併入）**：每個 command/agent/skill 必須宣告 `coverage: e2e|unit|opt-in|manual-only|deprecated` + 一行理由；本項是第 1 項「套件存在但未註冊」的反向缺口——「surface 存在但沒人宣告它該有什麼等級的覆蓋」。清單載體與既有 lint 機制（第 1/4 項）同批評估，避免產出第二套獨立 YAML/清單格式。
 
 **Done-when**：lint 落地且能抓到「新增未註冊套件」與「已註冊但 CI 缺席且無豁免」與「surface 缺 coverage 宣告」三類注入測試；e2e 新 phase 在 `release-verify.sh --e2e` 下通過；排除項（若有）記錄於腳本註解與本票。
 
-**Dependencies**：與 [[CC-431]] 檔案面重疊（test-e2e.sh/release-verify.sh），宜同版處理。v0.9.0 候選。
+**Dependencies**：已吸收 [[CC-431]]；與 [[CC-454]] 協調 CI/lint ownership，但不合併 ShellCheck domain coverage。v0.12.0。
 **See**: [[CC-444]] Outcome、pr:#367
 
 ---
-
-## CC-451 — core/ 定義層接上 runtime：enum 單一來源 + state 寫入 schema 驗證 ✅ 2026-07-15
-
-**Problem**: `core/` 定義層（8 個 JSON Schema + policy enum/狀態機 YAML）從未接上 runtime——`core/README.md` 自承「the current implementation handles path resolution and state writes without validating against the definition layer (integration deferred to a future milestone)」；三個 policy 檔（`executor-enum.yaml`、`dispatch-routes.yaml` 等）檔頭標「deferred to v0.3.x runtime phase」至今（v0.8.0）未兌現。實際後果：executor/isolation enum 在 adapter dispatch 腳本與 `handover-validate.sh` 各硬編一份、靠人工同步（`executor-enum.yaml` 自承 "embedded inline ... kept in sync"）；`scripts/lib/state-writer.sh` 手寫 JSON、不經任何 schema 檢查。
-
-**Why**: [[CC-446]] v1.0 契約凍結要把 schema 列為 stable 承諾，但 runtime 從不驗證的 schema，其承諾是空的——凍結前應先讓定義層「真的在管事」。enum inline 複本漂移也是未來新增第 4 個 executor 時的實際回歸風險（2026-07-06 盲測稽核）。
-
-**Requirement**:
-1. **enum 單一來源**：executor / isolation-level 等 enum 由 `core/policy/*.yaml` 派生（runtime 讀取或 build-time 生成，實作時 `/pre-impl` 收斂取捨）；至少先落地一個 parity 回歸測試鎖住「所有 inline 複本 == policy YAML」，抓漂移。
-2. **state 寫入驗證**：state-writer append 的 event/record 對 `core/schema/*.schema.json` 對應 schema 做結構檢查（jq 層即可，不引新依賴）；預設 fail-loud，可保留 warn-only 過渡開關。
-3. 不改 schema 內容本身；現有綠燈路徑行為不變（回歸鎖住）。
-
-**Non-goals**: 不做完整 JSON Schema validator（draft-07 全語意）；結構檢查以「必要欄位存在 + enum 值合法」為度。
-
-**Runtime validation disposition (2026-07-15)**: writer 邊界統一採 deterministic、`jq`-only 的 schema 子集（recursive object `required`、`const`、primitive `type`、`enum`、`if`/`then`），取代舊有「主機剛好裝了 `jsonschema` 才做完整 draft-07，未安裝即跳過」的環境相依行為。`pattern`、length/range、`format`、`additionalProperties` 等完整 draft-07 keyword 仍由 development/test schema checks 負責，明確不屬 runtime load-bearing contract；這是本票 Non-goals 的具體化，不改 schema 內容或版本。
-
-**Outcome**: executor、dispatch route、isolation level 與 task state 的 runtime 驗證已改由 `core/policy` 單一來源驅動；Run、Event、Task、Decision 的 durable write boundary 統一以 `jq` 執行明確界定的 schema 結構子集，預設 fail loud 並保留顯式 warn-only 過渡模式。policy substitution、invalid enum／required／nested type、projection side effect 與 lifecycle fallback regression 均已落地；targeted gate GO，authoritative full suite 79 passed、0 failed、0 skipped。
-
-**Dependencies**: [[CC-446]] 的前置/同批（stable schema 分級需要「有驗證」的事實支撐）。承接 [[CC-211]]（schema-first epic）的 runtime 驗證切片。v0.9.0。
-**Source**: 2026-07-06 盲測程式碼稽核（四路獨立分析，未讀 backlog 前提下收斂的最大未規劃項）。
-**See**: pr:#409
 
 ## CC-452 — guard/hook 對稱性與併發 hardening 🔵 active
 
@@ -218,7 +195,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 3. ISO8601 正規化抽到 `scripts/lib/memory.sh`（兩 hook 既有共用點），兩處改呼叫。
 各項行為對現有測試 byte-compatible；只修對稱性與併發安全。
 
-**Dependencies**: 無前置；v0.9.0 hardening phase，與其他 phase 檔案面不重疊可並行。
+**Dependencies**: 無硬前置；只有與 CC-495/498 lifecycle/state correctness 直接相關的 slice 納入 v0.10.0，其餘維持一般 hardening backlog。
 **Source**: 2026-07-06 盲測程式碼稽核（runtime 管線角度）。
 
 ## CC-453 — worktree/auto-pack 路徑契約 hardening 🔵 active
@@ -234,7 +211,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 3. opencode isolation 錯誤訊息只提實際支援值。
 各項補回歸測試（含「垃圾 work_dir 不得在 CWD 產生任何目錄」斷言）。
 
-**Dependencies**: 無前置；v0.9.0 hardening phase。與 [[CC-449]] e2e 煙測互補（那邊驗 happy path，本票驗防禦面）。
+**Dependencies**: 無硬前置；只有與 CC-495/498 lifecycle/state correctness 直接相關的 slice 納入 v0.10.0。與 [[CC-449]] e2e 煙測互補（那邊驗 happy path，本票驗防禦面）。
 **Source**: 2026-07-06 盲測程式碼稽核；洩漏目錄實例（已清除）。
 
 ## CC-456 — 去除 maintainer-local `~/github/` 佈局假設（repos-root 參數化 + sweep + lint 防再犯）🔵 active
@@ -261,21 +238,22 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 ---
 
-## CC-460 — `pmctl commands --json` manifest + router↔manifest↔README 三方防漂移 lint 🔵 active
+## CC-460 — `pmctl` CLI discovery：root/area/leaf help + commands registry + 四方 parity 🔵 active
 
-**Problem**: [[CC-033]] 2026-07-06 盲測稽核發現 README 只列 15 個 command 中的 2 個（`/pm`、`/pr-gate`）；[[CC-446]] Requirement 5a 發現 `--json` 覆蓋率僅約半數子指令。兩者共同根因是同一個缺口——command/subcommand 的機器可讀清單不存在單一來源，README 與 router 各自手動維護、無防漂移機制。2026-07-07 openyida（DingTalk 宜搭 AI-native CLI）跨專案分析發現其 `commands --json` + `check:commands` 三方比對模式直接命中此缺口。
+**Problem**: 使用者無法由 CLI 自身可靠學會 `pmctl`：無參數只印一行 usage；`pmctl help`、`pmctl --help`、`pmctl <area> --help` 目前都視為 unknown command 並 exit 2；unknown command 沒有可用命令或建議。README 也只列完整 command surface 的一小部分。command/subcommand 的機器可讀清單不存在單一來源，router、help、README 各自漂移。
 
-**Why**: README 手動維護的 command 清單注定漂移（已實測漂到 2/15）；[[CC-446]] 契約凍結要把 CLI 分級列為 stable 承諾，若連「有哪些 command」都沒有機器可讀的單一來源，分級表本身就建立在會漂移的地基上。
+**Why**: v1.0 若宣稱 CLI 可用，使用者必須不讀原始碼即可發現入口、理解參數並找到下一步。[[CC-446]] 也需要完整且可驗證的 command inventory，才能凍結 stable/experimental surface。
 
 **Requirement**:
-1. `pmctl commands --json`：列舉所有已註冊 command/subcommand，輸出結構化 JSON（name、summary、area、stability tier 若 CC-446 已定案）。**權威來源分工**（避免雙寫漂移）：pmctl 內部 router 表是「command 是否存在/可執行」的權威來源（manifest 的 name/area 欄位由此派生）；`commands/*.md` frontmatter 是「summary 說明文字」的權威來源（manifest 讀取但不擁有存在性判定）。router 有但 frontmatter 缺（或反之）視為第 2 項 lint 要抓的漂移，而非留給實作臨時決定。
-2. **三方防漂移 lint**：router 已註冊的 command ↔ `pmctl commands --json` 輸出 ↔ README command 目錄，三者任一方向缺漏即 fail loud；接入 CI。
-3. **README/docs command 索引自動生成**（原 openyida 分析草稿的獨立子項，因與 manifest 屬同一 PR 範圍且無獨立驗收價值而併入本票，不另開票）：README command 目錄段落改由 `pmctl commands --json` 生成或以生成結果核對，取代目前手動列表。
-4. 與 [[CC-451]] enum 單一來源同一設計精神（一份定義、多處消費、機械 parity 檢查）——實作時可借鏡其 parity 回歸測試模式。
+1. **Slice A — help/registry**：支援 `pmctl help`、`pmctl --help`、`pmctl <area> --help`、`pmctl help <area> [subcommand]` 與 leaf help；help 成功一律 exit 0，且不得初始化外部依賴、解析 state store 或產生任何寫入副作用。
+2. help 至少包含 summary、usage、主要 options、常見 examples、stability 標記與相關下一層 command；unknown command 顯示最接近建議及 root-help 指引。
+3. 建立 canonical command registry，至少含 command path、summary、usage、stability、是否支援 JSON、是否 mutating。router 是「是否可執行」的權威；registry/help metadata 不得另造第二份 command existence 清單。
+4. **Slice B — discovery/parity**：`pmctl commands --json` 列出 registry 全部 command/subcommand；README command index 由 registry 生成或機械核對。
+5. **四方防漂移 lint**：router ↔ registry/`commands --json` ↔ help ↔ README 任一方向缺漏即 fail loud，接入 CI；包含新增 command 未進 help/README 與刪除 command 仍留文件的注入測試。
 
-**Non-goals**: 不做 command 說明文件內容重寫（僅索引/存在性，不驗證每個 command 的說明品質）；不覆蓋 skill/agent 的 coverage 分類（見 [[CC-449]] 第 6 項，機制不同、載體待同批評估避免兩套 YAML）。
+**Non-goals**: 不在本票重寫所有長篇教學；不覆蓋 skill/agent 的 coverage 分類（見 [[CC-449]]）。`pmctl version --json` 可作第二 slice 候選，但是否列 stable 由 [[CC-446]] 定案。
 
-**Done-when**: `pmctl commands --json` 輸出涵蓋全部已註冊 command；三方 lint 在 CI 抓到「新增 command 未進 README」與「README 列了已刪除 command」兩類注入測試；README 目錄與 lint 輸出一致。
+**Done-when**: 新使用者可只靠 root/area/leaf help 找到並正確組出主要 workflow；help path 全部 exit 0 且無副作用；`commands --json` 涵蓋全部已註冊 command；四方 parity lint 的正反向注入測試通過。
 
 **Dependencies**: 與 [[CC-446]]（stable CLI 分級表需要這份清單作為覆蓋範圍的事實依據，宜同批或先行）、[[CC-451]]（parity lint 設計參照）。v0.9.0 候選（契約凍結 Phase 3 的前置證據）。
 **Source**: 2026-07-07 openyida（github.com/openyida/openyida）跨專案分析——`commands --json` manifest + `check:commands` 三方防漂移模式；承接 [[CC-033]] #4、[[CC-446]] #5a 兩個既有票內已記載的缺口。
@@ -356,134 +334,6 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 ---
 
-## CC-489 — `scripts/` domain ownership 與 manifest-driven entrypoint 重整 ✅ 2026-07-17
-
-**Problem**: repository 目前把 host adapters、install/uninstall、doctor modules、memory hooks、gate/runtime supervisors、維運工具、lint 與所有 test runners 集中在單一 `scripts/`。檔名雖有前綴，但 ownership、依賴方向與「新增功能應放哪裡」無法從目錄結構判斷；host manifest 已能描述 module path，實體程式卻仍多數留在共享 scripts 根目錄，長期會增加跨 host 漂移、路徑硬編與搬移成本。更隱晦的問題是這些腳本同時攜帶了大量 ambient configuration contract：host home/config root、legacy alias、timeout/model/isolation 預設、`HOME`/`PATH`/`TMPDIR` fallback、repo-root 相對路徑推導、child-process env 傳遞與 test-only injection。若只搬檔案，即使內容不變也可能改變路徑解析、優先序與實體寫入目標。
-
-**Framing**: 本票不是 bulk rename，遷移單位也不是單一 file；每一個 executable/module 必須以「path + invocation ABI + variable/config contract + side-effect boundary + consumers/tests」作為一個可驗證單位。先鎖住現行行為與 ownership，才允許變更實體路徑；不得以「搬後 focused tests 有綠」取代 env/side-effect parity。
-
-**Decision / target shape**:
-1. host 專屬 executable、hook adapter、doctor 與 install module 歸 `hosts/<host>/{bin,hooks,lib}`；`hosts/<host>/host.yaml` 是它們的發現單一來源。CC-488 新增的 Codex explicit-memory writer 直接落在 `hosts/codex/bin/`，不再新增 `scripts/codex-*` debt。
-2. host-neutral canonical business logic 留在共用 runtime/CLI layer；例如 memory resolver/writer 不複製到各 host，host 目錄只保留薄 adapter。通用 ops/release 工具與 test harness 另有明確 domain，不因搬目錄而複製實作。
-3. 先產出 current→target path map 與 variable contract ledger。每個對外或跨模組變數至少記錄 owner、input type（public override/legacy alias/internal derived/test injection）、default source、precedence、child-process propagation、side effects、sensitivity、test isolation 與 compatibility plan。
-4. shared dispatcher 與 host module 先建立明確 invocation ABI；repo root、dry-run 等執行輸入由 argv 或等價的可機械驗證介面傳入，不再依賴 module 恰好位於 `scripts/` 而以 `SCRIPT_DIR/..` 猜 repo root。舊入口由 shim 轉接新 ABI。
-5. host PM runtime 與 dispatched executor adapter 維持正交 ownership：`hosts/<host>/` 擁有 host config root、hook/install/doctor/lifecycle；`adapters/<name>/` 擁有 executor model、timeout、reasoning effort、isolation mapping；`PM_CFG_*`、state/context/memory 等 canonical config 留在 shared runtime。不得只因變數名稱含 host 名稱就移入 `hosts/`。
-6. host config root/default/legacy alias 必須在對應 host-owned resolver 收斂，install、uninstall、doctor 與 hook installer 共用同一組解析與衝突規則。shared manifest reader 不得長期硬編 `CODEX_HOME`、`CLAUDE_CONFIG_DIR`、`XDG_CONFIG_HOME` 等具名 host 變數與預設值；展開必須來自 manifest/host resolver 的受限宣告，不得 `eval` manifest data。
-7. 按 domain 分批搬遷，禁止一次性全庫 rename。對已公開／已安裝路徑保留有期限、帶 deprecation 訊息的 shim，manifest/registry 與 tests 先切新路徑，最後依明確刪除條件移除 shim。
-8. 新增 layer/path/variable lint：host-specific implementation 不得再出現在共享 core/runtime entrypoints；新增 host module 必須由 manifest 引用；shared resolver 不得新增未宣告的 host env；suite 必須由 test registry 發現，不能靠散落硬編路徑。過渡期以明確 grandfather inventory 鎖住現有債務，但不允許新增。
-
-**Priority implementation plan**:
-1. **Phase 0 — contract inventory（不搬檔）**：建立 executable ownership/current→target map、variable contract ledger、consumer graph、穩定入口清單、shim removal criteria 與允許依賴方向。先盤點 production env、host legacy alias、ambient `HOME`/`PATH`/`TMPDIR`/XDG、test injection 與 secrets，不得只 grep host-name prefix。
-2. **Phase 1 — behavior-lock tests + module ABI**：先以現行路徑建立 env/default/side-effect parity matrix，覆蓋 unset/empty/conflicting alias/含空白路徑/relocated fixture/hostile `HOME` 與全環境沙盒；再讓 manifest dispatcher 明確傳遞 repo root 與 dry-run，並保留既有 direct-call 相容。
-3. **Phase 2 — host resolver 收斂**：先將 Claude canonical `CLAUDE_CONFIG_DIR`/legacy `CLAUDE_HOME` 衝突規則收為單一 host-owned resolver，再對 Codex/OpenCode 建立同型 resolver/manifest declaration；改造 shared `host_manifest_expand_path` 為不含 host-name branches 的受限展開。
-4. **Phase 3 — OpenCode pilot migration**：搬遷 OpenCode install/uninstall/doctor，用最小 host slice 驗證 manifest-first consumer cutover、legacy shim、inventory ratchet 與 filesystem parity。
-5. **Phase 4 — Codex host migration**：搬遷 Codex install/uninstall/doctor/command hook，同時驗證已安裝 `hooks.json` 的舊路徑 refresh/uninstall 相容；已在 `hosts/codex/bin/` 的 canonical memory writer 不搬動。
-6. **Phase 5 — Claude host migration**：搬遷 Claude guards installer/uninstaller、doctor 與 Claude-only hooks/libs，並去除 `install.sh`/`uninstall.sh` 繞過 manifest dispatcher 的 base-host 特例；保留 top-level installer 作為產品入口。
-7. **Phase 6 — shared domains 與 shim retirement**：三個 host phase 穩定後，再分批搬 shared runtime、test harness、tooling 與 ops/release；依公告期、consumer 清零與 release smoke 結果移除相容 shim。這是 CC-489 可關票的最終階段，不與 Phase 3–5 的 host migration 混成單一 PR。
-
-**Phase 0 completed (2026-07-15)**: 新增 `docs/architecture/script-domain-ownership.md`、`script-domain-inventory.tsv`、`script-variable-inventory.tsv` 與 `script-variable-consumers.tsv`。path inventory 機械對齊目前 `scripts/` 174/174 files（119 executables、52 sourced libs、3 fixtures），每列已指定 artifact kind、owner domain、proposed target、migration disposition 與 stability；其中 19 個 installed/maintainer/host-wiring paths 必須 move-with-shim，其餘 155 個在 consumer 切換後 move-then-remove。variable ledger 另以結構化欄位記錄 module-derived path、host roots/legacy alias、ambient env、resolved `PM_CFG_*`、state/context/gate/test controls 與 API credential passthrough 的 owner、precedence、propagation、side effect 與 isolation contract；static consumer graph 將 62 個 exact/wildcard declarations 對應至 310 個 production/test references。`scripts/lint-script-domain-inventory.sh` 已把 path set、owner→target、shim、variable declaration、consumer path safety 與 graph freshness 收為 ratchet，consumer filesystem validation 不再組合 shell command；`test-script-domain-inventory` 的 10 個 fixture regressions（含 stale graph mutation 與 hostile repo path injection）已註冊進共用 suite runner，changed-path planner 亦會在 inventory/contract 變更時選取兩者。architecture contract 完成 dependency direction、module ABI 目標、穩定入口、shim 刪除條件與實體搬遷順序；本階段沒有搬動 production file，下一階段須等待 [[CC-451]]、[[CC-490]]、[[CC-491]] 核心契約收斂後，才從 env/default/side-effect behavior-lock tests 與明確 repo-root/dry-run module ABI 開始。
-
-**Phase 1 module ABI slice completed (2026-07-15)**: 前置 [[CC-451]]、[[CC-490]]、[[CC-491]] 均已完成後，manifest write dispatcher 已要求 absolute repo root，並對 Codex/OpenCode install/uninstall modules 明確傳遞 `--repo-root` 與 `--dry-run`。四個 module 先驗證 supplied checkout 再 source repo libraries；舊路徑 direct-call 介面仍相容。`test-host-write-parity` 新增 relocated Codex/OpenCode fixtures，從 manifest-dispatched install、managed-state owner 到 uninstall 全程證明不再依賴 `scripts/` directory depth，並鎖住 generic dispatcher 與 relocated Codex module 的 relative repo root 在執行前 fail-loud。既有 Codex/OpenCode write suites、full-HOME/PMCTL_BIN_DIR sandbox integration、dry-run side-effect 與 Claude byte-parity regressions 維持通過。本切片不包含 Phase 2 host resolver 收斂，也尚未搬動 production path。
-
-**Phase 2 host resolver slice completed (2026-07-16)**: 三個 host manifest 現在各自宣告 `path_resolver_module`／`path_resolver_function`，實作分別位於 `hosts/{claude,codex,opencode}/lib/path-resolver.sh`。shared `host_manifest_expand_path` 僅驗證 manifest-declared repo-relative module 與 function identifier 後委派，不再包含任何 `CODEX_HOME`／`CLAUDE_CONFIG_DIR`／`CLAUDE_HOME`／`XDG_CONFIG_HOME` 名稱、default 或 host branch，也未使用 `eval`。Claude base install/uninstall、hook install/uninstall 與 doctor 已共用同一 resolver，鎖住 canonical→legacy→`HOME/.claude` precedence 與 conflicting alias fail-closed；Codex/OpenCode 維持 explicit root→host default。回歸覆蓋 unset、empty、相同/衝突 legacy alias、含空白 root、hostile `HOME`、relocated fixture 與 shared-reader no-host-name ratchet；variable consumer graph 已由 shared reader 轉移到 host-owned modules。本階段沒有搬動既有 production file。交付時另修正 affected-test planner 的既有 repeated-`mark_full` bug：同一 diff 依序命中 `install.sh`、`uninstall.sh` 時不再因第二次空字串條件在 `set -e` 下靜默退出；此修正只恢復 test evidence 規劃，不改 resolver 產品行為。下一階段從 OpenCode pilot migration 開始。
-
-**Phase 3 plan — OpenCode pilot migration**:
-1. **Production move set**: `scripts/install-host-opencode.sh` → `hosts/opencode/bin/install.sh`、`scripts/uninstall-host-opencode.sh` → `hosts/opencode/bin/uninstall.sh`、`scripts/lib/doctor-host-opencode.sh` → `hosts/opencode/lib/doctor.sh`。同一切片更新 `hosts/opencode/host.yaml`、path/variable inventory 與 consumer graph，不搬 OpenCode adapter，也不改 permission/receipt 產品語意。
-2. **Manifest-first cutover**: `doctor.sh` 的 host module discovery 從 `scripts/lib/doctor-host-*.sh` glob 改為逐一讀取 manifest `doctor_module`；install/uninstall 繼續只經 `host-write.sh` 讀 manifest。shared loader 只驗證 repo-relative path/function contract，不新增 OpenCode branch。
-3. **Compatibility**: 舊 install/uninstall 路徑保留 thin shim，只解析自身 checkout root 後原樣轉送 argv/exit status，deprecation 只寫 stderr；舊 doctor lib 是 internal sourced path，production/test consumer 切換後直接移除，不建立第二個 source shim。
-4. **Acceptance / evidence**: manifest path 與 legacy direct call 對 install、dry-run、idempotent reinstall、user-owned conflict、receipt restore 與 uninstall 的 stdout machine payload、exit code 及 filesystem diff 一致；relocated/space-path fixture 全程不依賴 module depth；`test-host-write-opencode`、`test-host-write-parity`、`test-doctor`、`test-host-manifest`、`test-script-domain-inventory` 與 full-`HOME`/`PMCTL_BIN_DIR` sandbox 全綠，而且 repo 外只變動 fixture 允許的 XDG tree。
-5. **Exit gate**: manifest/production consumer 已無舊 OpenCode implementation path；inventory 只將兩個 legacy shim 列為 compatibility debt；完成一次 install → doctor → uninstall live-like sandbox smoke 後，才允許開始 Phase 4。
-
-**Phase 3 completed (2026-07-16)**: OpenCode install/uninstall/doctor 已搬至 `hosts/opencode/{bin,lib}` 並由 `host.yaml` 發現；shared doctor loader 改為依 manifest `doctor_module` 載入，舊 install/uninstall 入口只保留 stderr deprecation 的 thin shim，舊 internal doctor path 已移除。搬遷過程暴露的 minimal-`PATH` 問題已在 shared manifest reader 以純 Bash path/scalar parsing 收旂，changed-path planner 也將 shared manifest 變更對應到三 host write/parity/doctor suites。refactor/reuse 稽核將 doctor、host-write、path resolver 三處新增的 module path 解析與 fail-closed 驗證收斂至 `host_manifest_module_path`；legacy shims 則刻意保持 self-contained，避免相容入口新增脆弱依賴。gate advisory 後，loader fail-fast 亦統一經 `emit_summary` 輸出 JSONL fail record/summary；parallel synthesis fixture 使用 suite-private `TMPDIR` 並保留 gate stderr，避免 full-run 暫態失敗不可診斷。path inventory 現為 173 個 `scripts/` files，variable graph 為 62 declarations/317 refs；14 個 direct-impact suites 全綠（含 OpenCode 15、parity 8、doctor 65、host manifest 91、Codex host-write 45、PR-gate 147 cases）。
-
-**Phase 4 plan — Codex host migration**:
-1. **Production move set**: 將 Codex install/uninstall/doctor 搬到 `hosts/codex/{bin,lib}`，將 `scripts/hook-codex-command-guard.sh` 搬到 `hosts/codex/hooks/command-guard.sh`；manifest 改指新 module。`hosts/codex/bin/memory-update.sh` 與 `adapters/codex/` 均維持原位，不在此 phase 重寫 canonical memory 或 executor semantics。
-2. **Installed-path transition**: 新 install 必須將 `hooks.json` 寫為新 hook path；舊 install/uninstall/command-hook 路徑保留 thin shim，且 uninstaller 必須能辨識、移除同一 checkout 的 old/new managed command，但不得誤刪同 basename 的其他 checkout 或 user hook。重跑 installer 應把自己的 stale old path refresh 到 new path。
-3. **Contract ratchets**: Codex path resolver 繼續擁有 `CODEX_HOME`/default；shared manifest/host-write/doctor loader 不出現 Codex env 名稱或分支。inventory/consumer graph 要區分 host runtime 與 `adapters/codex` executor axis，禁止因搬遷把兩者合併。
-4. **Acceptance / evidence**: 舊版 `hooks.json` fixture 經 reinstall 後只剩 new path，經 uninstall 後只移除本 checkout managed entries；headless benign allow/destructive deny hook smoke 與 session-summary/canonical-memory routing 不退化；`test-host-write-codex`、`test-host-write-parity`、`test-doctor`、`test-host-manifest`、Codex hook/guard focused suites 與 hostile-`HOME` sandbox 全綠。
-5. **Exit gate**: live-like install → headless hook probe → doctor → uninstall 證明無 orphan hook、無誤寫 canonical memory、無 operator config diff；舊路徑只剩明列 compatibility shim 與專門 parity test。
-
-**Phase 4 completed (2026-07-16)**: Codex install/uninstall/doctor/command guard 已搬到 `hosts/codex/{bin,lib,hooks}` 並由 `host.yaml` 發現；`hosts/codex/bin/memory-update.sh` 與 `adapters/codex/` 維持原位。舊 install/uninstall/command-hook 路徑保留 self-contained thin shim，舊 internal doctor 路徑已移除；新 installer 會精準將同一 checkout 的舊 `hooks.json` command refresh 為 host-owned path，新 uninstaller 同時辨識 raw/escaped old/new identity，且保留其他 checkout 的同 basename hook。refactor/reuse 稽核將 installer、uninstaller、doctor 共用的 hook identity 收斂到 `hosts/codex/lib/hook-paths.sh`。驗收通過 Codex host-write 48、manifest 91、relocated parity 8、doctor 65、install 90、uninstall 28、inventory 10 cases 與 131-file shell lint；live-like 全環境沙盒完成 install → benign allow/destructive deny probe → doctor → uninstall，最終 `hooks.json` 為空、canonical-memory sentinel 未變、operator config 未被觸碰。Phase 5 可開始，CC-489 仍保持 active。
-
-**Phase 5 plan — Claude host migration**:
-1. **Production move set**: 將 `scripts/install-guards.sh`、`scripts/uninstall-guards.sh`、`scripts/lib/doctor-host-claude.sh` 搬到 `hosts/claude/{bin,lib}`；將 Claude-only `guard-log-claude-usage.sh`、`guard-save-rate-limits.sh` 與 `prompt-context-timeouts.sh` 搬到 `hosts/claude/{hooks,lib}`。shared PM/memory/context guard 先保留 shared runtime ownership，等 Phase 6 再搬，避免 Claude phase 偷渡 host-neutral logic。
-2. **Remove the base-host exception**: `hosts/claude/host.yaml` 宣告可執行 install/uninstall module；top-level `install.sh`/`uninstall.sh` 仍是用戶產品入口、負責 assets/symlinks/manifest 總編排，但 Claude hook/settings 寫入改為經 generic host-write dispatcher，不再直接呼叫 `scripts/install-guards.sh`。預設 Claude 與 opt-in host loop 必須去重，uninstall 不得執行兩次。
-3. **Compatibility and chain safety**: 舊 guards installer/uninstaller 與兩個已寫入 `settings.json`/`statusline-chain.conf` 的 hook path 保留 thin shim。installer 可將同 checkout old path refresh 為 new path，但必須保留 unrelated Stop/UserPromptSubmit hooks、Claude Account Switcher 與 abtop chain；uninstall 同時識別 old/new managed path，不刪他方同 basename hook。
-4. **Resolver and copy-mode boundary**: `CLAUDE_CONFIG_DIR`/`CLAUDE_HOME` 衝突與 default 仍只在 Claude resolver；doctor 以 manifest module 為 normal mode。單檔 copy-mode fallback 只保留可獨立驗證的降級診斷，fix text 指向 top-level installer，不複製 host resolver/hook inventory 邏輯。
-5. **Acceptance / evidence**: 覆蓋 canonical/legacy alias 同值與衝突、minimal/full profile、settings 含無關 hooks、stale old paths、statusline chain、spaced checkout、dry-run、full-`HOME`/`PMCTL_BIN_DIR` sandbox與 install-manifest uninstall preservation；`test-install`、`test-doctor`、`test-hook-profile-parity`、`test-host-manifest`、相關 guard/context/memory suites 與 live-like statusline payload smoke 全綠。
-6. **Exit gate**: top-level install/uninstall 對 Claude settings 已無 direct script-path special case；manifest 是 install/uninstall/doctor 唯一 module discovery source；真實 chain 不在驗收中被修改，除非另有明確 live-write 授權。Phase 5 通過後 CC-489 仍保持 active，由 Phase 6 完成 shared domain 搬遷與 shim retirement 才關票。
-
-**Phase 5 completed (2026-07-16)**: Claude guards install/uninstall、doctor、usage/rate-limit hooks 與 prompt-context timeout contract 已搬到 `hosts/claude/{bin,hooks,lib}`，`host.yaml` 現在宣告三個 lifecycle module；top-level install/uninstall 保留產品 assets/symlink 編排，但 Claude settings 寫入與清理由 generic host-write dispatcher 發現，不再直接呼叫 `scripts/` implementation path，optional host loop 亦明確去重 Claude。舊 installer/uninstaller 與兩個已安裝 hook path 保留 thin compatibility shim；reinstall 會將同 checkout 或已失效舊 checkout 的 legacy hook path refresh 到 host-owned path，uninstall 以 checkout prefix 同時移除 old/new managed entries並保留 unrelated hook、既有 statusline chain 與 foreign settings。explicit repo-root ABI 可安全轉送 profile 參數且保留 spaced checkout 的 logical identity，minimal `PATH`、MSYS native-jq boundary、canonical/legacy config-root conflict、dry-run、full-environment isolation與 manifest-preserving failure recovery均有回歸。focused evidence 通過 install 91、uninstall 29、doctor 65、guards 301、Codex host-write 48、OpenCode host-write 15、host manifest 91、host parity 8、inventory 10 cases、135-file syntax/executable lint及 host-owned ShellCheck；live-like sandbox 完成 install → statusline payload/chain → uninstall，foreign hook/settings與 canonical-memory sentinel 均未變。CC-489 仍保持 active，下一階段只做 Phase 6 shared domains 與 shim retirement。
-
-**Phase 6 implementation and final refactor/reuse audit completed (2026-07-17)**: inventory 宣告的 shared runtime、test harness、tooling、ops/release 共 151 個 implementation/fixture path 已搬到 `runtime/`、`tests/`、`tools/`、`ops/` 並移除舊檔；`scripts/` 精確剩下 19 個 move-with-shim 相容入口，內部 consumer、CLI、CI、suite registry、changed-path planner、install source 與文件皆改用 owner path。installer 的 user-helper name/source/legacy-source 收斂到單一 spec table，精準 refresh 本 checkout 的舊 symlink 並保留 foreign target；三 host resolver 重複的 template 展開收斂到 host-neutral prefix-only helper，host env/default/alias 仍由各 host 擁有，且不再全域替換路徑後段的 token-shaped literal；inventory ratchet 新增 shim→declared target linkage 與 executable 驗證，存在但誤導向的相容層會 fail loud。late live audit 另補 Codex memory/session legacy hook 去重遷移，以及 Claude/Codex doctor 對 configured managed command target 的 existence/executable fail-loud 檢查。focused suites 通過 Codex host-write 49、doctor 67、install 92、uninstall 29、OpenCode host-write 15、host manifest 91、host parity 9、inventory 11；三 host live refresh 後 doctor 為 27 ok、0 warn、0 fail，重跑 dry-run 為 0 conflict 且全部 idempotent，OpenCode 1.18.2 resolved config 載入 checkout-specific pmctl allow、`/pm` command 與 `pm_prepare` permission。final sequential Claude gate `gate-20260717-092054` 以 explicit `--test-cmd 'tests/bin/run-all-tests.sh'` 取得同工作樹 structured evidence（79 passed、0 failed、0 timed out、0 skipped），critic=advise、qa=pass、architecture=approve、security=pass、risk=pass，Final GO；非阻擋 advise 已收斂 backlog 狀態與 upgrade/reinstall 文件。draft PR #415 建立後，table、heading 與 PR reference 已同步關票。
-
-**Acceptance**: (a) architecture map 說明每類 executable 的 owner 與允許依賴方向，variable ledger 可機械或結構化盤點每個跨模組 input/default/precedence/propagation/side effect/test isolation；(b) relocated fixture 證明 module 不再依賴舊 `scripts/` 深度推導 repo root，direct legacy entrypoint 仍能經 shim 產生 byte/exit/side-effect-compatible 結果；(c) Codex、Claude、OpenCode install/doctor/uninstall 從各自 manifest 發現 module，shared dispatcher/resolver 不列 host-specific path、env 或 default；(d) staged migration 每一刀均通過 install parity、uninstall preservation、doctor、hostile-env/full-`HOME` sandbox、full runner 與 release smoke，filesystem diff 證明不觸碰 operator 真實 host config、pmctl symlink、canonical memory 與 repo 外狀態；(e) host/adapter/shared/test 變數 ownership 沒有跨軸漂移，legacy alias 衝突、default precedence、secret redaction 與 child env allowlist 的回歸全綠；(f) 最終 `scripts/` 只保留明確定義的相容入口或通用 ops entrypoints，不再作為所有 shell code 的默認垃圾桶。
-
-**Boundary / sequencing**: 本票在 [[CC-488]] lifecycle product contract 完成後執行（CC-488 已於 2026-07-14 done，前置條件已清除）。CC-488 只遵守新檔案 placement 與 manifest discovery 原則，不藉機搬完既有 Codex/Claude/OpenCode scripts；避免把路徑遷移 regression 混入 canonical memory correctness。2026-07-15 三方（codex/opencode/fable）multi-model synthesis 一致建議 production relocation 排在 [[CC-451]]/[[CC-490]]/[[CC-491]] 核心 harness 收口票之後，避免路徑遷移與 state/schema/evidence 收口同時進行；Phase 0 contract inventory 可先行，但不得在前置契約仍變動時開始 production move。本票可收斂變數 owner/default 位置與模組傳遞契約，但不重新設計 [[CC-490]] 的 project-scoped config schema/resolver precedence，也不改變 [[CC-491]] evidence semantics。
-
-**Current diagnostic evidence (2026-07-15)**: `scripts/` 現有 174 files（root shell entrypoints 119、`scripts/lib` shell modules 52、`test-*.sh` 76），host manifests 仍有 7 個 doctor/install/uninstall module refs 指向 `scripts/`。shared `scripts/lib/host-manifest.sh` 的 path expander 直接解析 `CODEX_HOME`、`CLAUDE_CONFIG_DIR`、`XDG_CONFIG_HOME` 與各自 `$HOME` default；Claude config-root canonical/legacy precedence 重複出現在 install/uninstall/guards/doctor；install/uninstall 另以 `${PMCTL_BIN_DIR:-$HOME/.local/bin}` 決定真實 symlink 寫入目標。既有回饋已證明測試只覆蓋 `CLAUDE_HOME`/`CODEX_HOME` 而漏掉 `HOME`/`PMCTL_BIN_DIR` 會刪改 operator 真實 `~/.local/bin/pmctl`，因此 full-environment isolation 與 filesystem-diff 是 blocker acceptance，不是可選 hardening。
-
-**Source**: 2026-07-14 使用者指出所有 script 集中於 `scripts/` 造成後續維護困難，要求特定內容放回對應位置並統一讀取；2026-07-15 使用者進一步指出腳本內的特定變數、default/fallback 與環境傳遞也必須獨立歸位，不能將本票當成單純搬檔。
-
-**See**: `CHANGELOG.md` CC-489 Phase 6、pr:#415、gate:`gate-20260717-092054`
-
----
-
-## CC-490 — project-scoped explicit memory config，避免跨 repo canonical bleed ✅ 2026-07-15
-
-**Problem**: `~/.pm-dispatch/config` 的 `dispatch.memory_dir` 是全域單值，但 resolver 對每個 repo 都無條件套用。CC-488 gate R1 後的 live read-only probe 已確認：pm-dispatch、JapanJob、qa-testing-rules 雖有不同 stable `project_key`，三者目前都回報 `resolution_source=config` 並解析到 pm-dispatch 的 canonical memory dir。任何其他 repo 的 canonical append 因此可能成功但寫入錯誤專案，屬靜默 cross-project data bleed；同一問題亦使本機 fixture 在未隔離 config 時誤寫 live store。
-
-**Boundary**: 本票處理 config schema/resolver 的 project scoping 與 live migration；不重做 [[CC-488]] 的 Codex hook/session/update routing，也不把多 repo memory 合併成一個共享資料庫。CC-488 的三 host 驗收只證明「同一 repo 跨 host」一致，不能當成「跨 repo 共用同一 dir」的授權。
-
-**Requirement**:
-1. explicit config 必須以 stable project identity 選址（例如 project-key keyed mapping 或等價 repo-scoped section），不得在未匹配 repo 時套用另一專案路徑。
-2. unmatched repo 應回到自身 legacy discovery 或明確 unavailable；matched explicit path 失效仍維持 fail closed，不得退回另一 repo/native store。
-3. 定義舊 `dispatch.memory_dir` 單值的相容與 migration 規則；在多 repo 環境不得繼續默認為全域 override，doctor/config lint 必須能指出 unsafe legacy-global 設定。
-4. 以 pm-dispatch、JapanJob、qa-testing-rules 三個不同 project key 做 isolated + live read-only E2E，證明同 repo Claude/Codex/OpenCode 仍同址、不同 repo 不同址；append 測試必須以 filesystem diff 證明零 cross-project write。
-
-**Immediate safety note**: 在本票落地前，`dispatch.memory_dir` 只能視為 single-repo/single-purpose config；多 repo 操作不得把它當成安全的 machine-wide default。測試一律用 `PM_DISPATCH_CONFIG_FILE` 隔離，不得讀取 operator live config。
-
-**Implementation (2026-07-15)**: config schema 已改為 `memory.projects.<stable-project-key>.dir`；`pmctl memory config set|migrate|lint` 提供原子管理、legacy-global 診斷與可重複 migration。strict resolver 對舊 global key 回報 `config-legacy-global` / exit 3，matched invalid path 維持 fail closed，unmatched repo 回到自身 legacy 或 unavailable。完善稽核另補上原實作未封閉的 compatibility fallback：`memory dir`、doctor、shard、rebuild-summary、direct `context --source memory` 與 installer/migrator discovery 現在共用 explicit-selection validity helper；invalid matched/env target 不得讀寫 legacy store，doctor 以 `resolution_issues` 回報來源與原因。isolated regression 已擴為三個 project key、project-scoped 四 host continuity、maintenance/context 零 fallback write；live read-only probe 證明 pm-dispatch 走 scoped config，JapanJob 與 qa-testing-rules 各回自身 legacy，config lint 0 issues。Claude standard gate `gate-20260715-032942-90cd0b` 使用明確 `--test-cmd` 後 GO（critic approve、qa-tester pass、architecture-reviewer approve）；gate 後 authoritative full suite 79 passed、0 failed、0 skipped。
-
-**Acceptance**: 三 repo resolve 的 project key 與 memory dir 對應正確；跨 host 同 repo continuity 不退化；invalid matched config fail closed；unmatched repo 不使用 pm-dispatch memory；doctor/config diagnostics、memory/pm/guard regressions與 live migration evidence 全綠。
-
-**See**: pr:#406
-
-**Source**: CC-488 Claude full-tier gate R1 risk/QA findings；2026-07-14 live probe confirmed JapanJob (`01a9ed...`) and qa-testing-rules (`100334...`) both resolved to pm-dispatch memory through the global config value.
-
----
-
-## CC-491 — PR-gate pre-flight 機械式 evidence 與 reviewer reuse contract ✅ 2026-07-15
-
-**Problem**: `pr-gate.sh --test-cmd` 目前只把 pre-flight 結果以 `Pre-flight test run: pass|fail` 提供給 reviewer，沒有傳遞實際 command、selected suites、逐 suite 結果或被驗證工作樹的 fingerprint。QA reviewer 因而無法判斷哪些 behavioral units 已有可信證據；即使 pre-flight 已通過，仍可能手工列舉相同 suite 再跑一次。`gate-20260714-145345-2998745` 中 9 個已通過的 suite 被 QA 重複執行，部分因 180 秒 timeout 又重跑，最終單一 sequential reviewer session 耗盡 1200 秒，只完成 critic、留下 inconclusive partial artifact。
-
-**Boundary**: 本票建立 pre-flight producer → PR-gate → reviewer 的 evidence/reuse contract；不重寫 [[CC-481]] 的 direct-impact planner、不把 authoritative full suite 搬回 gate lifecycle，也不禁止 reviewer 對「既有 evidence 未覆蓋」的新行為做最小補充驗證。
-
-**Requirements**:
-1. 每次 pre-flight 必須產生 versioned、machine-readable result。通用必填核心只包含經安全處理的 command identity、exit status、started/finished time、timeout 與 log path/digest；不得要求一般 repo 的 `npm run test`／`go test ./...` 等指令實作 pm-dispatch 專用 producer。使用 `scripts/run-tests.sh` 時才附加 selection mode、planner 自動推導的 changed paths、selected suites、逐 suite pass/fail/timeout/duration，以及 aggregate status；changed paths 不是使用者輸入欄位。
-2. basic result 與 reusable evidence 必須分層：沒有受測內容 identity 的結果仍是有效 basic artifact，但標為 `reusable:false`；只有 gate 要主張 PASS 仍為 current／可避免重跑時，才必須自動綁定 subject fingerprint。Git repo/base/head 僅為可選 provenance，不是通用 result 必填。pre-flight 後若 fingerprint 對應的 tracked 或 untracked 內容改變，PR-gate 不得把舊 PASS 呈現為 current evidence。
-3. PR-gate 必須機械驗證 result schema、artifact digest、fingerprint 與實際 pre-flight exit status，再把結構化 evidence 摘要及 artifact pointer 放進 reviewer brief；不得只由自然語言宣稱 `pass`，也不得要求 reviewer 從自由格式 log 猜測已跑項目。
-4. QA reviewer 收到 current structured PASS evidence 後，必須先建立 behavioral-unit → existing-suite evidence 對照；已涵蓋 suite 不得 reflexively rerun。只有 evidence 未涵蓋、stale/invalid 或具體 flake 疑點時才能補跑最小 suite，且須在結果中記錄 gap、理由、command 與新增 evidence。generic command 的 coverage 明確標為 opaque/advisory：QA 可引用 aggregate PASS，但無法確認 behavioral coverage 時仍可執行最小 repo-native 補充驗證，不保證 0 次重跑，也不得偽稱 suite-level reuse。
-5. Reviewer 不得以手寫 `for`/`&&` 清單取代 repo planner，也不得在 source working tree 建立 `.qa-test-*` 等暫存輸出；補充測試應使用 repo runner 的 selection/parallelism contract，輸出歸 gate run artifact directory。單獨指定一個 suite 時才允許 sequential execution。
-6. detached/foreground、artifact relocation 與 timeout 路徑都必須保留同一 evidence schema；partial／timeout gate 要能指出 pre-flight 已完成、哪些 reviewer 額外執行了什麼，以及重複 suite 數量，不得把 partial artifact 誤當 GO。
-
-**Acceptance**:
-- focused pre-flight 透過 `run-tests.sh` 後，reviewer brief 可機械讀出 changed paths、selected suites、逐 suite結果與一致的 tree fingerprint；QA 對完全涵蓋且 current 的 PASS evidence 執行 0 個重複 suite。
-- 新增一個未被 planner mapping 涵蓋的 behavioral unit 時，QA 只補跑能覆蓋該 gap 的最小測試並附理由；不得重跑其餘已通過 suite。
-- pre-flight 後修改 tracked 或 untracked 受測內容會使 evidence 判為 stale，gate/reviewer 不得 reuse 舊 PASS。
-- generic 不支援 rich result 的 `--test-cmd` 仍有可驗證的 basic artifact，且不需修改指令或採用 pm-dispatch 專用格式；明確標示 coverage opaque/advisory，不偽造 selected-suite evidence，也不承諾 QA 0 次重跑。
-- regression 覆蓋 pass/fail/timeout、artifact tamper、tree drift、run-dir relocation，以及本次「9 個 suite 被重跑導致 reviewer timeout」案例。
-
-**Source**: 2026-07-14 `gate-20260714-145345-2998745` post-mortem；pre-flight 已 PASS，但 brief 僅提供布林狀態，QA 重複執行相同 focused suites並使 sequential full-tier gate timeout／inconclusive。
-
-**Outcome**: 已完成 portable basic evidence 與 structured suite evidence 分層；一般 repo 可維持原有 `npm run test` 等指令而不採用專用 producer，Git provenance 為選填。pm-dispatch runner 會自動輸出 planner-derived coverage、逐 suite 結果與 subject fingerprint，gate 對 tracked/untracked drift、malformed artifact、timeout 與 tamper fail closed；QA evidence accounting 保留 generic opaque evidence 的最小補充驗證權，同時禁止無理由重跑 current structured PASS suites。PR gate GO，authoritative full suite 79 passed、0 failed、0 skipped。
-
-**See**: pr:#408
-
-**Cross-link**: [[CC-470]], [[CC-481]], [[CC-485]].
-
----
-
 ## CC-465 — memory/context 關鍵詞管線 CJK 支援 🔵 active
 
 **Problem**: 記憶注入排序（`guard-inject-memory.sh` 的 keyword 抽取）、檢索抽詞（`_ctx_extract_terms` → prompt-scan / reuse-scan）、FTS5 索引（unicode61 tokenizer）三處分詞全為 ASCII-only，CJK 字元被當分隔符丟棄。維護者工作語言為中文：中文 prompt 的 keyword tier 恆為 0 分、tier2 排序退化為純 frecency；且 usage sidecar 只在 keyword 命中時累積 access，中文工作流永遠累積不到使用訊號——整套 frecency 機制對 CJK 使用者形同虛設。prompt-scan / reuse-scan 對中文任務描述抽不出任何詞；FTS5 對整段中文只存單一 token，中文查詢僅靠 LIKE substring fallback 硬撐。
@@ -515,23 +365,24 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 ---
 
-## CC-468 — dispatch brief 帶 memory 約束：PM 萃取為 constraints 清單（pointer 僅作 provenance）🔵 active
+## CC-468 — dispatch brief 帶 memory 約束：PM 萃取為 constraints 清單（pointer 僅作 provenance）⏸ deferred
 
 **Problem**: auto-pack 走 reuse-scan 且 repo-only by construction；`context pack --source memory` 存在但 dispatch 從不使用。結果：feedback 卡裡的約束（如「此 repo 禁用某工具」「reviewer 反覆擋的模式」）永遠不會自動進 brief，全靠 PM 記得手貼——記憶對 executor 行為零影響力。
 
 **Why**: 成功指標（DECISIONS 2026-06-10）本來就是「brief 直接引用 memory/decision anchors」；目前管線只對 repo plane 兌現，memory plane 缺最後一哩。單純 pointer-only ref 讓 executor 拿到一個 ref 卻看不到約束本體，等於沒有約束力——因此改為由 PM 在 brief authoring / auto-pack 階段，把私有卡片規則**萃取（extract）成一份非敏感的 `constraints:` 清單**直接寫入 brief；pointer 僅保留作為來源標記（provenance-only），不再是 executor 唯一可見的內容。約束類卡片常以中文撰寫，依賴 [[CC-465]] 先把 CJK 抽詞修好，查詢命中才可靠。
 
 **Requirement**:
-1. brief 授權／auto-pack 對 memory plane 做一次查詢，命中約束類卡片後，由 PM 將其規則轉譯為非敏感的 `constraints:` 條列寫入 brief（不是原文卡片內容，也不是單純 ref）。
-2. 每條萃取出的 constraint 同時保留來源 pointer（ref + trust tier）作為 provenance，供人工回查原卡；executor 執行時只需讀 `constraints:` 清單。
+1. brief 授權／auto-pack 對 memory plane 做一次查詢；只有 curated／高 trust tier、未過期、未 supersede 的 constraint-type card 能轉成 normative `constraints:`。episode、raw event、低信任 retrieval result 只能作為 evidence，不能直接形成指令。
+2. retrieved memory 一律視為 untrusted data，不得執行其中的 prompt/tool instruction；每條萃取出的 constraint 保留 source pointer、trust tier、status、expiry 作為 provenance。
 3. 私有／敏感內容（含中文原文的具體措辭）不需逐字進入 repo-bound 產物；萃取後的 constraint 表述須為可公開的非敏感摘要，數量設上限。
 4. 零命中時不加空區塊（比照 `auto_context:` 現行語意）；查詢或萃取失敗 fail-open 不阻斷 dispatch。
+5. 補惡意 prompt-injection card、敏感資料 redaction、過期／superseded card、互相矛盾 card 的測試。
 
-**Cross-link**: [[CC-465]]（依賴其先修好 CJK 抽詞——約束類卡片常以中文撰寫，命中依賴中文分詞正確）、[[CC-466]]。**工作序列**：CC-465 → CC-467 → CC-468 → CC-466。
+**Activation trigger**: 完成 [[CC-465]] → [[CC-467]] 後，只有 usage evidence 證明 memory constraints 對 dispatch 有實際價值才啟動；不因票已存在自動實作。
 
 ---
 
-## CC-466 — 記憶卡片生命週期閉環：expires_at 執行 + 關窗式 supersede + 休眠偵測 + doctor→distill 接線 🔵 active
+## CC-466 — 記憶卡片生命週期閉環：expires_at 執行 + 關窗式 supersede + 休眠偵測 + doctor→distill 接線 ⏸ deferred
 
 **Problem**: 卡片 schema 有 `expires_at` / `status` 生命週期欄位但無任何執行面：注入 hook 只降級 `stale`/`superseded`、不看 `expires_at`；doctor 不報過期卡；usage sidecar 只餵排序、不餵老化（沒有「N 天未命中」的休眠訊號）；doctor 找到的 stale_repo_refs / orphan 與 `/mem-distill` 的提案迴路完全斷開，修復全靠人記得。記憶只進不出，長期必然膨脹並讓固定注入預算被殭屍卡佔據。
 
@@ -543,7 +394,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 3. doctor 能從 usage sidecar 偵測休眠卡（超過門檻天數未命中）並列出。
 4. `/mem-distill` 讀取 doctor 結構化輸出，把過期／休眠／stale-ref 卡轉成 UPDATE/REMOVE 提案，沿用既有確認閘門（不新增任何自動寫入路徑）。
 
-**Cross-link**: [[CC-452]]（episodes.jsonl 併發 hardening，同資料面）、[[CC-467]]（前置依賴：本票排在 CC-467 之後，需要其遙測作為休眠判斷基礎）。**工作序列**：CC-465 → CC-467 → CC-468 → CC-466（本票為序列終點）。
+**Activation trigger**: [[CC-467]] 的真實遙測顯示 stale/dormant card 已佔用注入預算或造成檢索品質問題才啟動；否則維持 deferred。
 **Source**: 2026-07-07 /research——Graphiti bi-temporal（github.com/getzep/graphiti）、mcp-memory-service decay 家族（github.com/doobidoo/mcp-memory-service）。
 
 ---
@@ -642,18 +493,19 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Requirement**: 依 `scripts/lib/test-harness.sh` 頂部新增的 docstring 慣例說明（CC-004 帶入），逐檔把上述 9 個檔案的 test function 補上 `# Behavior:`/`# Steps:` 註解區塊，整段置於函式宣告正上方、不拆進函式內部。不改測試邏輯。完成後跑對應套件全綠、`bash -n` 語法檢查、以及 run_test 呼叫名稱與函式宣告的交叉核對（避免重蹈 CC-004 實作中一度誤刪宣告行的錯誤）。
 **Source**: 2026-07-03 CC-004 實作時的範圍盤點。
 
-## CC-454 — CI shellcheck ignore_names 白名單 ratchet 收斂 🟢 someday
+## CC-454 — canonical ShellCheck domain coverage + ignore ratchet 🔵 active
 
-**Problem**: `.github/workflows/lint.yml` 的 shellcheck 步驟帶約 90 個檔案的 `ignore_names` 豁免白名單——絕大多數腳本實質未過 shellcheck；白名單靠人工維護、無 ratchet 票追蹤，且掛在 `test-skill-refine` 這個語意不相關的 job 底下。新增腳本若忘記處理，會無聲繞過靜態檢查。
+**Problem**: CC-489 已把 canonical implementation 搬到 `runtime/`、`tests/`、`tools/`、`ops/`、`hosts/`，但 `.github/workflows/lint.yml` 的 action-shellcheck 仍以 `scripts/` 為主要掃描入口，且保留大量搬遷前 `ignore_names`。問題已不只是 allowlist 太大，而是 canonical production/test domains 可能完全未受等價靜態檢查。
 
-**Why**: 與 [[CC-450]]（docstring ratchet）同型的「規則已立、backfill 未竟」狀態，但缺少 CC-450 那樣的顯式追蹤；白名單只增不減。
+**Why**: compatibility shims 仍綠不能代表 canonical implementation 已被 lint。v1.0 前必須讓 CI 與 local lint 對 current tree 提供一致證據。
 
 **Requirement**:
-1. shellcheck 拆成獨立 CI job（脫離 test-skill-refine）。
-2. `ignore_names` 白名單視為待清零 ratchet：逐批修檔、縮減白名單（比照 lint-test-docstrings 的 explicit-allowlist 收斂模式）；新腳本預設必須過 shellcheck，不得直接進白名單。
-3. 修檔時沿用既有慣例：動態 source 帶 `disable=SC1091`；test 檔的 `tmp_root` 等跨檔變數帶 `SC2154`。
+1. shellcheck 拆成語意獨立的 CI job，掃描 canonical `runtime/`、`tests/`、`tools/`、`ops/`、`hosts/` shell domains；`scripts/` compatibility shims 仍需 parity/basic validation。
+2. CI 與 local lint 共用同一份 domain inventory；新增或搬移 shell implementation 不得因路徑改變而脫離掃描。
+3. `ignore_names` 改為 current canonical path 的 explicit ratchet；每筆須有理由，新檔預設不得加入，搬遷前不存在的 ignore name 必須 fail。
+4. 補 moved-path parity 與注入測試：在 canonical domain 新增違規 shell 時 CI/local lint 都能抓到；只掃舊 shim 不算通過。
 
-**Dependencies**: 無；規模大（~90 檔）故列 someday，逐版收割。與 [[CC-450]] 可共用「ratchet 進度 = allowlist 縮張」的機制敘事。
+**Dependencies**: 與 [[CC-497]] 的 stale-path/docs ratchet 分工；與 [[CC-449]] 協調 CI evidence parity，但本票獨立負責 ShellCheck domain coverage。v0.9.0。
 **Source**: 2026-07-06 盲測程式碼稽核（測試/CI 角度）。
 
 ## CC-011 — sync-memory.sh + 跨裝置共用（deferred；建議與 CC-012 合併實作）
@@ -716,7 +568,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 3. 更新所有 `[[name]]` 改為 `[docs/policies/<slug>.md](docs/policies/<slug>.md)` 或 `[[<slug>]]`（若決定保留 wikilink 風格、配合 CC-030 validator 擴充驗證 link target 存在）。
 4. 個人偏好類 feedback memory（不適合公開）留 local memory 不對外。
 **Note**: 與 CC-030 schema validator 設計協同 — 可同 PR 加上「`[[name]]` link target 必須存在」的 validation。Blocks **CC-033**。
-**Update 2026-07-04**: 進入 v1.0 P0（someday → active，P3 → P2；v1.0-rc 候選）。repo 已為 public，本票的 link-target validator 綠燈為 v1.0 hard constraint（公開讀者不可見 dead wikilink）；DECISIONS 2026-07-04（v1.0-public-roadmap-and-release-sequence）。
+**Update 2026-07-17**: 排入 v0.14.0 public contract candidate（尚非 v1.0 RC）。repo 已為 public，本票的 link-target validator 綠燈為未來 stable release 的 hard constraint。
 **Source**: 2026-05-15 對話 — 公開前置盤點 #3（Explore 未抓到的盲點）。
 
 ## CC-033 — Public flip checklist 與後續觀察
@@ -731,7 +583,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Update 2026-07-04（rescope：flip 前提已過時）**: 2026-07-04 實測 `gh repo view` 確認 **repo 已經是 public**（`isPrivate: false`）——本票原「flip 前防護」框架失效，rescope 為 **public posture reconciliation**（v1.0 P0，DECISIONS 2026-07-04）：
 1. **即刻 git history 損害盤點**（非 flip 前防護，是已曝光後的發現與處置）：原「git history 已審 clean」結論成於 2026-05-15，之後已累積 ~250 commits（含大量 dispatch trace / memory 路徑相關工作）——重掃 secrets、個人路徑、意外入 repo 的本機 artifact；發現即處置（rotate/清除/評估影響）。
 2. **README posture 一致化**：README 仍寫 "private-maintainer scoped" 而 repo 實際 public——文案改為明確的「publicly readable personal distribution, not a public support contract」定位（或依 v1.0 宣稱調整），與 CONTRIBUTING（不收外部 PR、issue 無 SLA）對齊。
-3. GitHub 設定決策照原 Requirement 1（Issues/Discussions/template/labels/CITATION.cff），時點改為 v1.0-rc；觀察期反轉為 v1.0.0 發佈後的觀察窗。
+3. GitHub 設定決策照原 Requirement 1（Issues/Discussions/template/labels/CITATION.cff），在 v0.14.0 完成；觀察期留到未來 stable release 後。
 4. **README 使用者表面重建**（2026-07-06 盲測稽核追加）：README 只記載 15 個 command 中的 2 個（`/pm`、`/pr-gate`）、Agents 段缺 spike agent、Layout 段引用已不存在的 `settings/` 目錄且缺 `skills/`（install.sh 實際會接線）——commands/agents/skills 清單改為與實際目錄一致（可由 `commands/*.md` frontmatter description 派生），Layout 修正到與 install 行為相符。
 someday → active，P3 → P2。
 **Source**: 2026-05-15 對話 — 公開前置盤點 #4。
@@ -1349,50 +1201,6 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 
 ---
 
-## CC-333 — arch: pm-dispatch runtime 解耦合（v0.6.0 umbrella epic）🔵 active
-
-> **v0.6.0 umbrella（2026-06-13 升格）**：本票為 v0.6.0「executor abstraction」milestone 的母 epic。主軸是「**新增第三個 executor = 放 `adapters/<name>/` + 一份 manifest，核心零改動**」，用 opencode + Antigravity 兩個真 adapter 落地當驗收。執行子票對應下方七層耦合：
->
-> | 層面 | v0.6.0 子票 |
-> |------|------------|
-> | 2/3/6（hook 機制 / 設定格式 / dispatch 路由與術語） | [[CC-372]] runner-kind manifest → [[CC-373]] router 資料驅動 → [[CC-374]]/[[CC-375]] guard 收口＋安裝接線 |
-> | 6（adapter 證明） | [[CC-376]] opencode、[[CC-377]] antigravity(`agy`) |
-> | deprecation（runtime-coupling cruft 移除：`--profile`、`codex-dispatch.sh` shim） | [[CC-335]] |
-> | 1/4/7（memory 路徑 / 安裝路徑 / reviewer memory 讀取） | **延後 v0.7.0+**（本版不處理；見 MILESTONES v0.6.0「延後」段） |
->
-> 註：MCP（[[CC-216]]）為「通用橋」，邏輯上是 executor 抽象之後的下一層，**defer 至 v0.6.0 之後**（2026-06-13 user 拍板）。
-
-**Problem**: pm-dispatch 在設計上以 Claude Code 為唯一執行環境，導致七個層面的硬耦合。目前任何想換 runtime（或在不同 AI CLI 環境使用）的嘗試，都需要手動繞過大量 Claude-specific 假設。
-
-**Why**: pm-dispatch 的核心價值（dispatch brief 契約、PR gate review pipeline、policy enforcement、state store）與「執行在哪個 AI 上」理論上無關。但目前 memory 路徑、hook 機制、設定格式都直接假設 Claude Code。把這些降為 adapter layer 後，系統才能真正 runtime-agnostic，也更容易測試和移植。
-
-**耦合清單（audit 2026-06-07）**：
-
-| 層面 | 具體耦合 | 代表檔案 |
-|------|---------|---------|
-| 1. Memory 路徑 | `~/.claude/projects/<claude-project-id>/memory/` 硬寫在 agent 指令與 docs | `agents/project-pm.md`, `agents/critic.md`, `agents/architecture-reviewer.md`, `commands/mem-*.md` |
-| 2. Hook 機制 | PreToolUse / PostToolUse / SessionStart / SessionStop 是 Claude Code 特有 primitive | 所有 `scripts/hook-*.sh`, `scripts/install-hooks.sh`, `docs/CONCEPTS.md` |
-| 3. 設定格式 | `~/.claude/settings.json` 結構（`.hooks.PreToolUse[]` 等）與 Claude Code 版本綁定 | `scripts/install-hooks.sh`, `scripts/doctor.sh`, `scripts/test-install.sh` |
-| 4. 安裝路徑 | `~/.claude/` 作為所有 assets 安裝目標（雖有 `CLAUDE_HOME` override，但 fallback 仍 Claude-specific） | `install.sh`, `uninstall.sh`, `scripts/install-hooks.sh` |
-| 5. Env var 前綴 | `CLAUDE_HOOK_*` / `CLAUDE_CONFIG_DIR` 前綴（CC-321 已完成重命名 `CLAUDE_HOOK_*` → `PM_HOOK_*`；shims 至 v0.5.0 移除） | `scripts/hook-*.sh`, `scripts/lib/memory.sh` |
-| 6. Dispatch 術語 | `dispatch_handover_v1` 區塊格式、`Agent tool` 呼叫約定、`claude --print` CLI 假設 | `docs/dispatch-brief.md`, `adapters/claude/dispatch.sh`, `commands/pm.md` |
-| 7. Reviewer memory 讀取 | Reviewer agents 直接讀 `~/.claude/projects/<id>/memory/` 而非透過 handover brief | `agents/critic.md`, `agents/architecture-reviewer.md`, `agents/risk-reviewer.md`, `agents/security-reviewer.md` |
-
-**解耦合方向（供後續拆票參考）**：
-
-- **層面 7（最小代價，最高收益）**：Reviewer agents 移除直接 memory 路徑引用；改由 PM 在建 handover brief 時 embed 相關 memory 內容至 `project_memory:` 欄位，reviewers 只讀 brief。
-- **層面 5**：CC-321 已完成（2026-06-08）。`PM_HOOK_*` 已取代 `CLAUDE_HOOK_*`，shims 至 v0.5.0 移除。
-- **層面 4**：`CLAUDE_HOME` override 已存在，補齊所有 bypass-door 後降為 pure adapter 設定。
-- **層面 1**：引入 `PM_MEMORY_DIR` env var；PM agent 讀寫由 env 指定路徑，預設仍 `~/.claude/...` 但可 override。
-- **層面 2/3**：Hook 機制是 Claude Code 深度 primitive，短期不可能完全抽象；目標是把 hook 邏輯（guard policy）從 Claude hook event 格式中抽出，讓 policy 可獨立測試，hook 僅作為 trigger adapter。
-- **層面 6**：`dispatch_handover_v1` 格式是 internal contract，重命名後可 rename 為 `pm_dispatch_handover_v1`；`claude --print` 已封裝在 `adapters/claude/dispatch.sh`，不需大改。
-
-**Non-goals**: 本票不追求「完全不依賴 Claude Code」——Claude 仍是主要執行環境。目標是「核心 workflow 不假設 Claude-specific 路徑與機制」，降低移植成本與測試複雜度。
-
-**Dependencies**: [[CC-321]]（env var 重命名，應先於本票任何 hook 相關子票）。
-
----
-
 ## CC-340 — knowledge index: standalone FTS over memory/backlog/decisions ⏸ deferred (SUPERSEDED by [[CC-403]])
 
 > **SUPERSEDED 2026-06-18**: the out-of-repo memory-card / episodes indexing + standalone full-text ranking MVP is now owned by **[[CC-403]]** (`pmctl context --source memory`, retrieval epic, v0.7.0). CC-340 is retained only as the **embeddings / semantic-backend remainder** (Khoj-class accelerator) that CC-403 explicitly leaves out of its MVP; resume only if FTS5/LIKE ranking proves insufficient in practice. The anchored-TOC slice already shipped as [[CC-354]] (v0.5.0).
@@ -1482,7 +1290,7 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 
 **Resume trigger for related tickets**: 本票的觀察結果是 [[CC-346]]（cross-file ref）resume 的補充證據，也是任何 runner diversity 票（multi-vendor adapter）的前置條件——先看數據，再決定要不要加第三個 adapter。
 
-**Milestone**: v0.9.0 候選（v1.0 P1 證據層；DECISIONS 2026-07-04）。
+**Milestone**: v0.13.0（stable-readiness operational evidence）。
 
 **Priority**: P2。
 
@@ -1521,31 +1329,6 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 **See**: pr:#270
 
 `pmctl trace tail --kind <kind> --all --json` is O(n) with a high per-event constant — measured ~20s for 338 events (~60ms/event), consistent with spawning a `jq` (or equivalent subprocess) per event rather than a single streaming pass. Discovered while diagnosing the #270 context-telemetry test flakiness: `context.queried` / `context.reuse_scanned` events accumulate in a partition, and the readback assertions called `trace tail --all`, so reads degraded as the partition grew. The tests were de-coupled from this — context telemetry now honors `PM_DISPATCH_STATE_ROOT`, so the suite isolates all state into a throwaway root — leaving this as a standalone reader-performance follow-up, not a blocker. Fix: rework `trace tail` filtering/serialization as a single `jq` pass (or a streaming reader) over `events.jsonl`.
-
-## CC-431 — test-e2e.sh + release-verify.sh: opencode adapter support 🔵 active
-
-**Problem**: `test-e2e.sh` 和 `release-verify.sh` 的 `--adapter` 旗標只接受 `claude|codex|auto`；opencode adapter 在 v0.6.0 加入後，e2e 驗證路徑從未同步更新。執行 `release-verify.sh --e2e --adapter opencode` 直接 exit 2 被拒。
-
-**Why**: opencode 是已支援的 first-class adapter（`adapters/opencode.sh` 存在、Phase 3b smoke 通過），但無法用它做完整 e2e release sign-off，是驗證覆蓋度的缺口。
-
-**Requirement**:
-- `test-e2e.sh` 的 `--adapter` 驗證清單改為從 `adapters/` 目錄動態派生（對照 dispatch adapter 清單），不再維護獨立硬碼清單；新 adapter 加入後自動生效
-- Phase B dispatch 路徑直接用 dispatch 既有 adapter 路由，無需在 e2e 層另做判斷
-- Phase C（pr-gate smoke）若仍需限制 executor（如僅 codex），在不支援的 adapter 下改為 SKIP 並說明，而非 exit 2
-- `release-verify.sh` 同步移除 `--adapter` 硬碼驗證，改走相同派生路徑
-
-**Acceptance**:
-- `release-verify.sh --e2e --adapter opencode` 不再 exit 2；正常執行或在已知限制處 SKIP
-- 新增 adapter 後無需修改 test-e2e.sh 驗證清單即可自動支援
-- Phase B opencode dispatch 可通過
-
-**Trigger**: `release-verify.sh --e2e --adapter opencode` → `exit 2: --adapter must be claude|codex|auto` (2026-06-30, v0.7.1 release sign-off)
-
-**Priority**: P2（v0.9.0 候選）.
-
-**Update 2026-07-04（someday → active）**: v1.0「executor stable = codex/claude/opencode」宣稱的證據前置（DECISIONS 2026-07-04 P1 證據層）——release 驗證從未跑過第三方 adapter 是 executor-agnostic 宣稱的實質漏洞。若本票 e2e 未過，v1.0 文件須把 opencode executor 降標 experimental（不可與 codex/claude 並列 stable）。Phase C pr-gate smoke 若 reviewer pipeline 僅支援 codex，文件化為「gate executor codex-only」而非 SKIP 靜默。
-
-**See**: pr:#339
 
 ## CC-435 — poll→通知機制 single-waiter guard：條件觸發，非既定後續票 🟢 someday
 
@@ -1616,50 +1399,90 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 ## CC-495 — `pmctl dispatch cancel <run_id>`：detached run 中途終止機制 🔵 active
 
 **Problem**: `pmctl dispatch run --lifecycle detached` 有 `run`（啟動）與 `wait`（等待完成），但沒有任何方式可以在使用者發現 executor 卡住、跑錯方向、或需要中途喊停時主動終止一個進行中的 run。現況只能手動找到並 `kill $(cat <run_dir>/<run_id>.supervisor.pid)`——這個路徑完全沒有文件記錄，且：
-1. `_pmctl_dispatch_launch_supervisor`（`scripts/lib/pmctl-dispatch.sh:826`）用 `detached_launch_under_setsid` 啟動 supervisor，若只 kill `.supervisor.pid` 記錄的單一 pid，底層真正在執行的 adapter CLI 子行程（在其自己的 process group 內）不保證被連帶終止，可能留下孤兒 process（性質類似 CC-487 觀察到的 CI 殘留 bash process）。
-2. `core/policy/dispatch-states.yaml` 已定義 `cancelled` 為合法的 dispatch-level terminal state（`pending`/`in-progress` 均可轉入），但 `grep -rn "cancelled" scripts/lib/*.sh scripts/*.sh` 沒有任何非測試程式碼寫入這個狀態——schema 已預留位置，實作完全空白。
+1. `_pmctl_dispatch_launch_supervisor`（`runtime/lib/pmctl-dispatch.sh`）用 `detached_launch_under_setsid` 啟動 supervisor，若只 kill `.supervisor.pid` 記錄的單一 pid，底層真正在執行的 adapter CLI 子行程（在其自己的 process group 內）不保證被連帶終止，可能留下孤兒 process（性質類似 CC-487 觀察到的 CI 殘留 bash process）。
+2. `core/policy/dispatch-states.yaml` 已定義 `cancelled` 為合法的 dispatch-level terminal state（`pending`/`in-progress` 均可轉入），但 canonical runtime 沒有任何 code path 寫入這個狀態——schema 已預留位置，實作完全空白。
 3. `core/schema/run.schema.json` 的 `state` enum（`pending`/`dispatched`/`verifying`/`ok`/`partial`/`failed`）與 `core/policy/run-states.yaml` 也都沒有 `cancelled`，run-level 狀態機需要同步補上，否則 dispatch-level 的 `cancelled` 無法對應到底層 run 的真實終止原因。
 4. 手動 kill 不會產生任何 event（`events.jsonl` 無 `run.cancelled`/`dispatch.cancelled` 記錄），dispatch record 會永遠卡在 `pending`/`dispatched` 狀態，沒有機械證據區分「使用者主動中止」與「跑到一半當掉/timeout」。
 
 **Why**: 語意上刻意選 `cancel` 而非 `stop`——`stop` 暗示「之後可以續跑/resume」，但一個 executor run 中途被打斷後，brief 可能只執行到一半、檔案可能改到一半，狀態不完整、不安全恢復；`cancel` 精確表達「終止且結果不可信，需重新 dispatch」這個唯一合理語意，避免使用者誤以為存在 pause/resume 能力。這也是今天稍早 CC-489 三方分析點出的「控制面宣稱可審計/可恢復，但完成判定的對稱面（中止）完全沒有機械證據」的具體落地缺口。
 
 **Requirement**:
-1. `pmctl dispatch cancel <run_id> --cd <work_dir>`：
-   - 讀取 `<run_dir>/<run_id>.supervisor.pid`，對其**process group**（而非單一 pid）送 `SIGTERM`，給予短暫 grace period 後對仍存活的成員送 `SIGKILL`（沿用 CC-470 既有逾時止血機制的 kill 慣例，不重新發明）。
-   - 若 pid file 不存在或對應 process 已不存在（run 已自然終止），fail-loud 並回報「run 已非 in-flight 狀態」，不誤寫終止記錄。
-   - 終止成功後：透過既有 `pmctl_dispatch_write_transition` 寫入 dispatch record 的 `cancelled` 終態，並寫入對應的 `run.cancelled`/`dispatch.cancelled` event（比照現有 `run.ok`/`run.failed` 的 event 結構）。
-   - 清理 sentinel/pid file，避免殘留讓後續 `pmctl dispatch wait` 誤判。
-2. `core/policy/run-states.yaml` 與 `core/schema/run.schema.json` 的 `state` enum 補上 `cancelled`（作為 terminal state，仿照 `dispatch-states.yaml` 既有定義），並更新 transitions 表（`dispatched`/`verifying` 可轉入）。
-3. `pmctl dispatch wait <run_id>` 遇到 `cancelled` 終態需明確回報（非 0 exit code，訊息與 timeout/failed 區分），呼叫端才能分辨「使用者主動終止」而非「adapter 失敗」。
-4. 為了讓使用者知道有哪些 run_id 可以 cancel，補一個最小化的發現機制（例如讀取 `.dispatch-results/` 目錄下尚未終態的 record 列出 run_id/adapter/created_ts）；不需要完整的 `pmctl dispatch list` 子命令設計，只要求 cancel 的使用路徑不必靠使用者自己肉眼翻 run_id。
-5. `docs/executor-contract.md` 補上取消流程的文件段落：何時該用、行為保證（process group termination、無 resume）、與 timeout 自動終止的差異。
+1. `pmctl dispatch cancel <run_id> --cd <work_dir>` 的權威資料只來自 out-of-repo trusted run directory；workspace 內可被 executor 修改的 PID、record 或狀態不得作為 cancel authority。
+2. 啟動時記錄 PID、PGID 與可驗證的 process start/command identity。cancel 在送 signal 前必須重新驗證 identity，PID reuse 或 identity 不符時 fail-closed，不得誤殺其他 process。
+3. cancel 與 supervisor 自然完成共用 terminalization lock 或 compare-and-set；`ok`/`failed`/`cancelled` 只能有一個 terminal winner，既有 terminal 絕不覆寫。
+4. 對已驗證的 process group 先送 `SIGTERM`，grace period 後仍存活再送 `SIGKILL`，並確認 group 已退出；不得只 kill supervisor PID 留下 adapter 子行程。
+5. cancel 成功後，先以 designated writer 寫入 cancelled Run/Event/dispatch record，再由 trusted controller 寫入 nonce-authenticated `cancelled` sentinel；只有 terminal evidence 全部 durable 後才清理 pid/runspec/brief 等非證據 artifact。**不得刪除尚未被 wait 消費的 sentinel/key completion proof。**
+6. `core/policy/run-states.yaml` 與 `core/schema/run.schema.json` 補上 `cancelled` terminal state 與合法 transitions。
+7. `pmctl dispatch wait <run_id>` 驗證並消費 authenticated cancelled sentinel，以穩定且可文件化的非零 exit contract 區分 cancelled、failed、timeout、indeterminate；advisory record 不得單獨證明 terminal outcome。
+8. 提供最小 in-flight run discovery，讓使用者不必手動翻 state directory；`docs/executor-contract.md` 說明 cancel、timeout 與不支援 resume 的邊界。
 
 **Acceptance**:
-- 對一個真實 in-flight 的 detached codex/opencode/claude run 呼叫 `pmctl dispatch cancel`，底層 adapter process 與其子行程全數終止，`ps` 確認無孤兒殘留。
-- dispatch record 終態為 `cancelled`，`events.jsonl` 有對應 event，`pmctl dispatch wait` 對已 cancel 的 run_id 回報明確、與 failed/timeout 不同的訊息。
-- 對已經自然終止（ok/failed/partial）的 run_id 呼叫 cancel，fail-loud 且不覆寫既有終態。
-- `scripts/test-dispatch-lifecycle.sh` 新增對應案例；既有 dispatch lifecycle 測試全綠。
+- 對真實 in-flight detached codex/opencode/claude run cancel 後，底層 adapter process group 全數終止且無孤兒。
+- cancelled Run/Event/dispatch record 與 authenticated sentinel 一致；`wait` 能驗證、消費並以穩定 distinct exit 回報 cancelled。
+- cancel-vs-natural-complete race 重複壓測不產生雙終態；對既有 terminal cancel 不覆寫。
+- PID reuse／identity mismatch、workspace 偽造 PID/record、部分 evidence write failure 全部 fail-closed 且不誤殺、不宣稱成功。
+- `tests/shell/test-dispatch-lifecycle.sh` 與 detached supervisor focused tests 覆蓋以上案例。
 
 **Non-goals**: 不做 pause/resume（語意上已排除）；不做完整的 `pmctl dispatch list` UI/篩選功能（見第 4 項，僅最小發現機制）；不處理 non-detached（foreground）dispatch 的取消——foreground 呼叫端本來就能用 Ctrl-C 直接中斷。
 
-**Source**: 2026-07-15 使用者在 CC-489 三方 multi-model synthesis 收斂後，回想起「pmctl executor 相關內容目前沒有停止的行為」並要求確認；經 grep `core/policy/dispatch-states.yaml`、`core/schema/run.schema.json`、`scripts/lib/pmctl-dispatch.sh` 確認 `cancelled` 狀態存在於 schema 但無任何實作，`.supervisor.pid` 未被任何子命令消費。使用者明確要求以 `cancel`（而非 `stop`）作為指令名稱，理由是中途終止的 run 不具備可恢復語意。
+**Source**: 2026-07-15 使用者在 CC-489 三方 multi-model synthesis 收斂後，回想起「pmctl executor 相關內容目前沒有停止的行為」並要求確認；經查 `core/policy/dispatch-states.yaml`、`core/schema/run.schema.json`、`runtime/lib/pmctl-dispatch.sh` 確認 `cancelled` 狀態存在於 policy 但無任何實作，`.supervisor.pid` 未被任何子命令消費。使用者明確要求以 `cancel`（而非 `stop`）作為指令名稱，理由是中途終止的 run 不具備可恢復語意。
 
 **Cross-link**: [[CC-470]]（既有逾時止血 kill 機制可沿用）、[[CC-487]]（孤兒 process 殘留的既有觀察案例）、[[CC-489]]（三方 multi-model synthesis 脈絡）、`docs/executor-contract.md`。
 
-## CC-496 — Codex command guard 單次 bypass transport 修復 ✅ 2026-07-15
+## CC-497 — CC-489 遷移後收口：canonical paths、文件、backlog、CI ratchet 🔵 active
 
-**Problem**: `guard-pm-bash.sh` 的 deny message 指示在確認風險後使用 `PM_GUARD_PM_BASH=off` 做 one-turn bypass，但 Codex `PreToolUse` hook 會在 Bash 解讀 command-local environment assignment 前執行。實際輸入 `PM_GUARD_PM_BASH=off git branch -D ...` 時，hook process 看不到該變數，仍會拒絕命令，提示與可達行為不一致。
+**Problem**: CC-489 已完成 151 個 implementation/fixture path 遷移，但 README、core docs、MILESTONES、RELEASE_CHECKLIST、CI 與 active backlog 仍有搬遷前 `scripts/` implementation 假設。19 個 compatibility shims 暫時讓舊入口可跑，卻也掩蓋產品表面漂移。
 
 **Requirement**:
-1. Codex command hook 必須把 command 開頭、大小寫完全一致的 `PM_GUARD_PM_BASH=off` 提升為該次 hook invocation 的 bypass。
-2. assignment 出現在 command 中段、值不是 lowercase `off`，或下一個 hook call 都不得繼承 bypass。
-3. bypass 必須沿用既有 `decision=bypass` audit，不另開未稽核路徑。
-4. 修正後重新執行已確認為 merged 的 local branch cleanup 與 worktree prune。
+1. 以 CC-489 domain inventory 為來源，掃描 README、`docs/`、active backlog、MILESTONES、CI、installer/doctor/help operational text。
+2. current operational instructions 改指 canonical `runtime/`、`tests/`、`tools/`、`ops/`、`hosts/`；舊 implementation path 只允許出現在 archive/history、migration/compatibility 說明與 inventory-declared shim parity tests。
+3. stale-path lint 必須能區分 repo 舊 `scripts/...` implementation、合法 `pm/scripts/...`、installed `~/.claude/scripts/...` 與 19 個明列 shims；不得用粗糙字串禁令製造誤報。
+4. `RELEASE_CHECKLIST.md` 不再硬編 suite 數量，改引用 canonical registry/「全部 registered suites」契約。
+5. 更新 MILESTONES、README layout、`core/README.md` writer layer 用詞與 active backlog path；terminal tickets 由 canonical archive tool 移出 working set。
+6. 與 [[CC-454]] 分工：本票只保證 canonical path/reference coverage；ShellCheck 實際 domain coverage/ignore ratchet 由 CC-454 負責。
 
-**Acceptance**: exact leading assignment 對 denylisted command allow 且留下 bypass audit；同一 command 下一次未帶 assignment 時恢復 deny；中段與錯誤大小寫 assignment 均 deny。
+**Done-when**: operational surface 與 current tree 一致；注入 stale `scripts/lib/...` implementation reference 時 lint fail；合法 shim/history/installed-path fixture 不誤報；release suite 數量不再手工漂移。
 
-**Outcome**: Codex hook 現在只把 command 開頭、大小寫完全一致的 `PM_GUARD_PM_BASH=off` 提升為當次 hook environment；中段與錯誤大小寫仍 deny，下一次呼叫不繼承。Codex host suite 43/43 通過，Claude gate `gate-20260715-044654-7da04e` 使用明確 `--test-cmd` 後 GO；live acceptance 已成功刪除所有確認 merged 的舊 local branches 並 prune worktree metadata。
+**Priority/Milestone**: P1，v0.9.0 NOW。
 
-**See**: pr:#407
+## CC-498 — State compatibility surface：status、版本命名、migration registry 🔵 active
 
-**Source**: 2026-07-15 清理 PR #406 合併後的 local branches 時，repo guard 兩次攔下已確認風險的 `git branch -D`；第二次已使用提示指定的 inline `PM_GUARD_PM_BASH=off`，仍因 Codex hook transport 時序而被拒絕。
+**Problem**: state writer 遇到不支援的 store version 時要求執行不存在的 `pmctl state migrate`；store root `VERSION`、entity `schema_version` 與 `core/state/layout.yaml` 的命名也混用，契約無法安全凍結。
+
+**Requirement**:
+1. 明確區分 `store_layout_version` 與 Run/Event/Task 等 entity `schema_version`。
+2. 第一 slice 新增 `pmctl state status [--json]`，輸出 resolved store root、layout version、supported versions、project key、entity schema versions、writable/safe-root 與 migration availability；可供 doctor/support report 消費。
+3. 建立 migration registry。只有存在明確 N→N+1 path 時才宣稱 `pmctl state migrate` 可用；尚無 path 時，錯誤訊息不得推薦不存在或不能完成的命令。
+4. migration implementation 若本 slice 有真實需求才展開；屆時 `--dry-run`、global lock、backup、atomic publish、可重跑與 failure recovery 都是必要契約，不先造空引擎。
+5. 測試 future-version fail-closed 且零 mutation；若加入合成 migration，補 success/failure recovery。
+
+**Done-when**: 所有 remediation 都指向真實可執行 surface；`state status --json` 可機械消費；layout/entity version 不再混用。
+
+**Dependencies**: CC-451 completed；[[CC-446]] stable contract 前置。P1，v0.11.0。
+
+## CC-499 — Detached run reconciliation：crash、reboot、stale sentinel、orphan recovery ⏸ deferred
+
+**Problem**: authenticated sentinel key 可能因 reboot/tmp cleanup 或先前 wait 被消耗而消失；supervisor 若在寫 terminal evidence 前死亡，現況只能回 indeterminate，無機械方式區分仍執行、process gone、orphan 或 evidence loss。
+
+**Requirement**:
+1. 在 [[CC-495]] 完成可信任 process identity/terminalization 後，新增 `pmctl dispatch reconcile <run_id> --cd <repo>` 與可選 `--all`。
+2. 只依 trusted out-of-repo metadata、PID/PGID identity、runspec、sentinel、durable record 分類 in-flight、terminal-authenticated、cancelled、orphaned、process-gone-without-evidence、indeterminate。
+3. 永遠不得從 advisory record 推導 success；只有能證明 process 已不存在，才可把缺證據的 in-flight 收斂為 failed/orphaned，且不得覆寫既有 terminal。
+4. doctor 顯示 stale detached runs、失效 process identity、孤兒 runspec/brief/key artifacts；補 reboot、key loss、PID reuse、supervisor crash、cancel-vs-complete race tests。
+
+**Done-when**: 使用者不必手翻 state directory 或 `ps` 即可取得保守可信診斷；任何自動收斂都不捏造成功。
+
+**Dependencies/Trigger**: [[CC-495]] 完成後再排程。P2，v0.13.0。
+
+## CC-500 — State single-writer boundary enforcement ⏸ deferred
+
+**Problem**: `core/state/layout.yaml` 宣告 designated writer 是唯一 state-store 寫入邊界，但目前沒有跨所有 production domains 的 enforcement test。
+
+**Requirement**:
+1. 掃描 production domains 對 state root、known state filenames、project state paths 的 direct redirect/`mv`/`cp`/`jq >` 寫入。
+2. canonical `runtime/lib/state-writer.sh`、state-path resolver 與 `rebuildable:true` derived SQLite cache 可明列最小豁免；新增 direct writer 必須 fail CI。
+3. self-test fixtures 證明每條規則能抓違規，並有合法 derived-cache 負例；接入 full runner/release verification。
+
+**Done-when**: single-writer invariant 從文件宣言變成 all-production-domain ratchet，且新增旁路 writer 無法只靠 code review 混入。
+
+**Dependencies**: [[CC-498]] 可先行；可作其第二 PR，但不併入 [[CC-497]]。P2，v0.11.0。
