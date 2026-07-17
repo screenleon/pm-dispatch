@@ -43,8 +43,9 @@ ratchet derives exact historical-to-canonical pairs from the inventory: it does
 not reject the unrelated `pm/scripts/` tree or installed
 `~/.claude/scripts/` helper ABI, and it excludes historical spike evidence.
 `CHANGELOG.md` and `BACKLOG-ARCHIVE.md` are historical records and are likewise
-outside the operational-document scan; current `BACKLOG.md` and `MILESTONES.md`
-remain enforced surfaces.
+outside the operational-document scan. Current `BACKLOG.md` remains enforced;
+`MILESTONES.md` enforcement covers only unimplemented planning sections and
+never rewrites completed phases or released-version history.
 Consumer filesystem checks treat repository and relative paths as data without
 constructing shell commands. Its regression fixtures are registered as
 `test-script-domain-inventory` in the shared suite runner.

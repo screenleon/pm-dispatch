@@ -219,6 +219,38 @@ test_historical_reference_passes() {
   expect_pass "$name" "$root"
 }
 
+# Behavior: completed milestone phases and released versions preserve the path
+# wording that was true when they shipped.
+# Steps: place retired paths in both historical milestone shapes and require
+# the current-reference ratchet to ignore them.
+test_completed_milestone_history_passes() {
+  local name="script-domain-inventory/completed-milestone-history-passes" root
+  should_run "$name" || return 0
+  root="$(fixture_repo)"
+  printf '%s\n' \
+    '## v0.9.0 — current' \
+    '### Phase 1 — delivered（✅ 已交付）' \
+    '- shipped from scripts/lib/state-writer.sh' \
+    '### Phase 2 — planned' \
+    '- planned canonical path: runtime/lib/state-writer.sh' \
+    '## v0.8.0 — previous（✅ released 2026-07-04）' \
+    '- shipped from scripts/lib/state-writer.sh' > "$root/MILESTONES.md"
+  expect_pass "$name" "$root"
+}
+
+# Behavior: an unimplemented milestone section must use the canonical owner path.
+# Steps: put a retired path in a planned phase and assert the milestone diagnostic.
+test_unimplemented_milestone_reference_fails() {
+  local name="script-domain-inventory/unimplemented-milestone-reference-fails" root
+  should_run "$name" || return 0
+  root="$(fixture_repo)"
+  printf '%s\n' \
+    '## v0.9.0 — current' \
+    '### Phase 1 — planned' \
+    '- implement scripts/lib/state-writer.sh' > "$root/MILESTONES.md"
+  expect_fail "$name" "$root" "MILESTONES.md:3: stale scripts/lib/state-writer.sh"
+}
+
 # Behavior: the installed ~/.claude helper path is a stable external ABI, not a repository implementation path.
 # Steps: document an installed helper path in README and require no stale-reference false positive.
 test_installed_helper_reference_passes() {
@@ -335,6 +367,8 @@ test_repository_path_metacharacters_are_safe
 test_ticket_identifier_fails
 test_stale_operational_reference_fails
 test_historical_reference_passes
+test_completed_milestone_history_passes
+test_unimplemented_milestone_reference_fails
 test_installed_helper_reference_passes
 test_unallowlisted_production_reference_fails
 test_allowlisted_legacy_references_pass

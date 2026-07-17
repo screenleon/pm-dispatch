@@ -81,10 +81,11 @@ expected_consumers="$(mktemp)"
 declared_consumers="$(mktemp)"
 stale_reference_hits="$(mktemp)"
 stale_patterns="$(mktemp)"
+milestone_open_view="$(mktemp)"
 cleanup() {
   rm -f "$actual_paths" "$declared_paths" "$raw_refs" \
     "$expected_consumers" "$declared_consumers" "$stale_reference_hits" \
-    "$stale_patterns"
+    "$stale_patterns" "$milestone_open_view"
 }
 trap cleanup EXIT
 awk -F '\t' 'NR > 1 { print $1 }' "$inventory" > "$stale_patterns"
@@ -159,10 +160,10 @@ while IFS=$'\t' read -r _ allowed_consumer _; do
 done < "$reference_allowlist"
 
 scan_stale_reference_file() {
-  local file="$1" mode="$2" relative old_path target_path disposition
+  local file="$1" mode="$2" display_path="${3:-}" relative old_path target_path disposition
   local line_number line
   [[ -f "$file" ]] || return 0
-  relative="${file#"$repo_root"/}"
+  relative="${display_path:-${file#"$repo_root"/}}"
   while IFS=: read -r line_number line; do
     [[ -n "$line_number" ]] || continue
     while IFS=$'\t' read -r old_path _ _ target_path disposition _; do
@@ -178,9 +179,25 @@ scan_stale_reference_file() {
   done < <(grep -nF -f "$stale_patterns" -- "$file" || true)
 }
 
-for operational_doc in README.md core/README.md BACKLOG.md MILESTONES.md; do
+for operational_doc in README.md core/README.md BACKLOG.md; do
   scan_stale_reference_file "$repo_root/$operational_doc" docs
 done
+# MILESTONES.md mixes current planning with immutable delivery history. Preserve
+# line numbers while blanking completed phases and all released-version sections
+# so the ratchet checks only work that has not yet been implemented.
+awk '
+  BEGIN { historical = 0; completed_phase = 0 }
+  /^## / {
+    completed_phase = 0
+    if ($0 ~ /released/ || $0 ~ /地基完成/) historical = 1
+  }
+  historical { print ""; next }
+  /^### / {
+    completed_phase = ($0 ~ /✅/ || $0 ~ /已交付/ || $0 ~ /complete/ || $0 ~ /done/)
+  }
+  { if (completed_phase) print ""; else print }
+' "$repo_root/MILESTONES.md" > "$milestone_open_view"
+scan_stale_reference_file "$milestone_open_view" docs MILESTONES.md
 while IFS= read -r -d '' operational_doc; do
   case "${operational_doc#"$repo_root"/}" in
     docs/spikes/*|docs/architecture/script-domain-inventory.tsv|\
