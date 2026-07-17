@@ -218,7 +218,7 @@
 | 票 | 摘要 | 狀態 |
 |----|------|------|
 | CC-497 / pr:#417 | canonical paths、docs/backlog/milestone/release metadata、stale-reference ratchet | ✅ |
-| CC-456 | 移除 maintainer-local `~/github` operational assumptions | 🔵 |
+| CC-456 / pr:#418 | 移除 maintainer-local `~/github` operational assumptions | ✅ |
 | CC-454 | canonical ShellCheck domains + ignore ratchet + CI/local parity | 🔵 |
 
 ### Phase 7 — user-facing CLI discovery（目前 working set）
