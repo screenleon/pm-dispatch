@@ -70,13 +70,13 @@ If this repository adds changes to the dispatch pipeline, update this schema fir
 During implementation and gate-fix iteration, run only the affected suites:
 
 ```bash
-bash scripts/run-tests.sh --base <base-ref>
+bash tests/bin/run-tests.sh --base <base-ref>
 ```
 
 After PR-gate returns GO, run the full test suite once against the final tree:
 
 ```bash
-bash scripts/run-all-tests.sh
+bash tests/bin/run-all-tests.sh
 ```
 
 For full-suite failures and re-gating, follow the authoritative loop in
@@ -84,7 +84,7 @@ For full-suite failures and re-gating, follow the authoritative loop in
 
 This runs all suites (hooks, install, portable, pr-gate, usage, pm-scripts, etc.) and
 prints a pass/fail/skip summary. For a focused run on one suite, invoke it directly,
-for example `bash scripts/test-guards.sh` or `bash scripts/test-install.sh`. Use
+for example `bash tests/shell/test-guards.sh` or `bash tests/shell/test-install.sh`. Use
 `--skip <suite>` to opt out of environment-specific suites, such as
 `--skip test-codex-dispatch` when the Codex CLI is not installed.
 

@@ -28,13 +28,5 @@ claude_host_config_root() {
 claude_host_resolve_path() {
   local path="$1" root
   root="$(claude_host_config_root)" || return $?
-  case "$path" in
-    \$CLAUDE_CONFIG_DIR|\$CLAUDE_CONFIG_DIR/*)
-      printf '%s\n' "${path//\$CLAUDE_CONFIG_DIR/$root}"
-      ;;
-    *)
-      printf 'claude path resolver: unsupported manifest path template: %s\n' "$path" >&2
-      return 2
-      ;;
-  esac
+  host_manifest_expand_root_template claude '$CLAUDE_CONFIG_DIR' "$root" "$path"
 }

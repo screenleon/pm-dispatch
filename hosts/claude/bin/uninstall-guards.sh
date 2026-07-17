@@ -40,10 +40,10 @@ fi
 repo_root="$REPO_ROOT"
 REPO_ROOT="$repo_root"
 # shellcheck disable=SC1091
-[[ -f "$repo_root/scripts/lib/gate-workspace.sh" ]] && . "$repo_root/scripts/lib/gate-workspace.sh"
-if [[ -f "$repo_root/scripts/lib/allowlist.sh" ]]; then
+[[ -f "$repo_root/runtime/lib/gate-workspace.sh" ]] && . "$repo_root/runtime/lib/gate-workspace.sh"
+if [[ -f "$repo_root/runtime/lib/allowlist.sh" ]]; then
   # shellcheck disable=SC1091
-  . "$repo_root/scripts/lib/allowlist.sh"
+  . "$repo_root/runtime/lib/allowlist.sh"
 else
   # copy-mode fallback: scan adapters dynamically so removal stays concrete
   dispatch_allowlist_entries() {
@@ -86,7 +86,7 @@ _chain_target=""
 [[ -f "$statusline_chain_conf" ]] && _chain_target=$(head -1 "$statusline_chain_conf")
 
 # Compute the reviewer Edit glob to include in managed removal.
-# gate_workspace_root is sourced from scripts/lib/gate-workspace.sh;
+# gate_workspace_root is sourced from runtime/lib/gate-workspace.sh;
 # falls back to inline detection if the lib is absent (copy-mode installs).
 if command -v gate_workspace_root >/dev/null 2>&1; then
   _gate_ws="$(gate_workspace_root "$repo_root" "$HOME")"

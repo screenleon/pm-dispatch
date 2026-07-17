@@ -10,6 +10,8 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Script-domain ownership completion (CC-489 Phase 6 + final reuse audit).** Shared runtime, test harness, tooling, and operations implementations now live under `runtime/`, `tests/`, `tools/`, and `ops/`; 151 retired implementation paths are gone and `scripts/` contains exactly 19 compatibility shims. CLI, CI, manifests, installers, docs, and suite selection use canonical owner paths. The final cross-phase audit centralizes host-neutral leading-token expansion without moving host defaults out of host modules, replaces parallel installer helper arrays with one name/source spec table, and strengthens the inventory ratchet so each executable shim must name its declared canonical target.
+
 - **Claude host-owned modules (CC-489 Phase 5).** Claude hook install/uninstall, doctor, usage/rate-limit hooks, and prompt-context timeout defaults now live under `hosts/claude/` and are discovered from `host.yaml`. Top-level install/uninstall retain product asset orchestration while delegating Claude settings writes through the generic host dispatcher. Legacy installed paths remain compatibility shims, stale managed paths refresh safely, and unrelated hooks plus statusline chains survive install/uninstall.
 
 - **Codex host-owned modules (CC-489 Phase 4).** Codex install, uninstall, doctor, and command-guard implementations now live under `hosts/codex/` and are discovered from `host.yaml`. Legacy installed paths remain thin compatibility shims; reinstall refreshes this checkout's stale hook command to the new path, while uninstall recognizes exact old/new identities without removing foreign same-basename hooks. The canonical memory writer and executor adapter remain unchanged.

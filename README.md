@@ -106,7 +106,7 @@ repo-local libraries.
 After installing, verify the environment is healthy:
 
 ```sh
-bash scripts/doctor.sh
+bash runtime/bin/doctor.sh
 ```
 
 `doctor.sh` checks that `claude`, `jq`, and `pmctl` are on `$PATH`, hooks are wired into `~/.claude/settings.json`, the memory directory exists, scripts are executable, and frontmatter passes lint — each failing check prints a concrete remediation command.
@@ -114,12 +114,12 @@ bash scripts/doctor.sh
 ## Testing
 
 ```bash
-bash scripts/run-tests.sh --base origin/main  # optional direct-impact iteration (not final sign-off)
-bash scripts/run-tests.sh --base origin/main --list  # explain selected suites without running
-bash scripts/run-all-tests.sh         # authoritative full suite for this checkout
-bash scripts/run-all-tests.sh --list  # show registered suites without running
-bash scripts/run-all-tests.sh --skip test-codex-dispatch  # skip one suite
-bash scripts/run-tests.sh --verify-full .pm-dispatch/test-results/latest-full.json
+bash tests/bin/run-tests.sh --base origin/main  # optional direct-impact iteration (not final sign-off)
+bash tests/bin/run-tests.sh --base origin/main --list  # explain selected suites without running
+bash tests/bin/run-all-tests.sh         # authoritative full suite for this checkout
+bash tests/bin/run-all-tests.sh --list  # show registered suites without running
+bash tests/bin/run-all-tests.sh --skip test-codex-dispatch  # skip one suite
+bash tests/bin/run-tests.sh --verify-full .pm-dispatch/test-results/latest-full.json
 ```
 
 Requires a complete developer checkout — any registered suite that is missing or
@@ -203,12 +203,12 @@ usage.
 
 ## Design notes
 
-- **Subagents cannot spawn subagents.** Claude Code intentionally restricts nested `Agent` tool calls regardless of frontmatter declaration ([Agent SDK docs](https://code.claude.com/docs/en/agent-sdk/subagents.md)). The **main thread** orchestrates: it spawns subagents (PM, reviewers) and relays outputs between them, and dispatches executors as CLI subprocesses. PM produces briefs and synthesizes verdicts; it does not dispatch. Reviewers run in parallel from the main thread, not from PM. Never include `Agent` in any subagent's `tools:` frontmatter — `scripts/lint-agents.sh` enforces this.
+- **Subagents cannot spawn subagents.** Claude Code intentionally restricts nested `Agent` tool calls regardless of frontmatter declaration ([Agent SDK docs](https://code.claude.com/docs/en/agent-sdk/subagents.md)). The **main thread** orchestrates: it spawns subagents (PM, reviewers) and relays outputs between them, and dispatches executors as CLI subprocesses. PM produces briefs and synthesizes verdicts; it does not dispatch. Reviewers run in parallel from the main thread, not from PM. Never include `Agent` in any subagent's `tools:` frontmatter — `tools/lint/lint-agents.sh` enforces this.
 - **Hooks enforce hard rules; prose alone leaks.** CLAUDE.md compliance for "never do X" rules sits around 70% in the public research, so structural enforcement matters for invariants. The live `PreToolUse` hook in `~/.claude/settings.json` is `guard-pm-write.sh` (project-pm can only Edit/Write inside the memory dir). Executor write policy is enforced by the unified `guard-executor-write.sh` via `pmctl guard check` (cli-only — the brief is authored by trusted main-thread code, so no live write hook is needed). All guards no-op for the main thread and other subagents.
   - **Threat model**: defends against accidental misuse and prompt-injected misuse by the targeted subagent. Specifically *not* a defense against the user's main thread, which has full tool access by design.
   - **Failure mode**: fail-closed on missing `jq`/`realpath`, malformed input JSON, or empty/non-absolute paths. Fail-open (no-op) only when the firing agent is not the targeted subagent, or when the bypass env var is the literal string `off` (anything else, including empty string and case variants, does not bypass — bypasses are logged).
   - **Bypass**: `PM_GUARD_PM_WRITE=off` / `PM_GUARD_<RUNTIME>_WRITE=off` (e.g. `PM_GUARD_CODEX_WRITE=off`). Each bypass appends a line to `~/.claude/logs/hooks.log`.
-  - **Tests**: `scripts/test-guards.sh` exercises ~150+ cases including per-metacharacter isolation, quoted-path / `..`-traversal / `git -C` / `--flag=PATH` / bundled-short-flag (`-rf/path`, `-n5/path`) bypass attempts, destructive-git forms, and audit-log content assertions. Run by `install.sh` with audit logs sandboxed via `PM_GUARD_LOG_DIR`.
+  - **Tests**: `tests/shell/test-guards.sh` exercises ~150+ cases including per-metacharacter isolation, quoted-path / `..`-traversal / `git -C` / `--flag=PATH` / bundled-short-flag (`-rf/path`, `-n5/path`) bypass attempts, destructive-git forms, and audit-log content assertions. Run by `install.sh` with audit logs sandboxed via `PM_GUARD_LOG_DIR`.
   - **Known overrestriction**: short-flag-attached values containing `/` after letter/digit chars are treated as paths and validated against read roots — so `grep -ipath/to/regex` is denied even when `path/to/regex` is intended as a regex pattern, not a file. Workaround: pass the pattern as a separate token (`grep -i path/to/regex file`) or use `-e` / positional form. Same for paths with embedded `/` that legitimately need to escape the read root: use the bypass env var.
 - **PM thinks, Codex implements.** `project-pm` writes the brief; the codex executor (a CLI subprocess) implements it, it does not design. Architecture, scope, and acceptance criteria stay with the PM.
 - **Definitions in repo, state on disk.** Agent and command definitions are version-controlled here. Per-project state (memory, traces) lives in `~/.claude/` and stays out of this repo.
@@ -220,9 +220,9 @@ MIT. See [`LICENSE`](LICENSE).
 
 ## Adding new pieces
 
-- New agent: drop a `name.md` (with frontmatter) into `agents/`, re-run `install.sh`. **Don't include `Agent` in `tools:`** — `scripts/lint-agents.sh` will reject the install.
+- New agent: drop a `name.md` (with frontmatter) into `agents/`, re-run `install.sh`. **Don't include `Agent` in `tools:`** — `tools/lint/lint-agents.sh` will reject the install.
 - New command: drop a `name.md` into `commands/`, re-run `install.sh`.
-- New guard: drop a `scripts/guard-<name>.sh` and add a corresponding `PreToolUse` entry by re-running `scripts/install-guards.sh` (extend the splice if it's a new pair); don't hand-edit `settings.json` if it can be avoided. Add test cases to `scripts/test-guards.sh` — security-relevant scripts ship with regression coverage.
+- New shared guard: add it under `runtime/hooks/`; a host-specific guard belongs under `hosts/<host>/hooks/`. Add the corresponding manifest/installer binding and re-run `install.sh`; don't hand-edit host settings if it can be avoided. Add test cases under `tests/shell/` — security-relevant scripts ship with regression coverage.
 - Settings allowlist additions: edit `~/.claude/settings.json` directly; don't try to symlink settings.
 
 ## Dispatch briefs
@@ -237,7 +237,7 @@ Codex briefs that touch many files can run 10–30 minutes. The background dispa
 
 1. **External tail (any session, no Claude Code involvement).** From another terminal:
    ```sh
-   ~/github/pm-dispatch/scripts/codex-watch.sh --cd /path/to/project
+   ~/github/pm-dispatch/ops/diagnostics/codex-watch.sh --cd /path/to/project
    ```
    Prints one line per codex event as it streams. Works whether the dispatcher was launched from Claude Code, the CLI, or a CI job.
 

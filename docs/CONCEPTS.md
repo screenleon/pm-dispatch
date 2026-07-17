@@ -41,12 +41,12 @@ The general shape is: identify a recurring "you should not have done that" momen
 
 A prompt rule lives in one agent's context window. A hook lives in the harness. If three agents could in principle make the same mistake, you write one hook instead of three prompt rules and you get the rule back even after a context compaction.
 
-The trade-off is that hooks are shell, not English. They are harder to write and harder to test. `scripts/test-guards.sh` is how this repo keeps them honest — every hook has at least one test case that drives a JSON fixture and asserts the exit code and stderr shape.
+The trade-off is that hooks are shell, not English. They are harder to write and harder to test. `tests/shell/test-guards.sh` is how this repo keeps them honest — every hook has at least one test case that drives a JSON fixture and asserts the exit code and stderr shape.
 
 ### Where to look
 
 - `scripts/guard-*.sh` — every guard policy script in this repo
-- `scripts/test-guards.sh` — the test harness for them
+- `tests/shell/test-guards.sh` — the test harness for them
 - `~/.claude/settings.json` after `bash install.sh` — the registration
 
 ---
@@ -79,7 +79,7 @@ Slash commands also become an artifact you can review. A reusable workflow that 
 ### Where to look
 
 - `commands/*.md` — every slash command shipped here
-- `scripts/skill-refine.sh` — example of a script that supports a slash command (`/skill-refine`)
+- `tools/skills/skill-refine.sh` — example of a script that supports a slash command (`/skill-refine`)
 
 ---
 
@@ -111,7 +111,7 @@ These two rules shape how every workflow in this repo is wired. The main thread 
 
 - `agents/*.md` — every subagent definition (one markdown per role)
 - `commands/pm.md` — how the main thread invokes the `project-pm` subagent
-- `scripts/pr-gate.sh` — how the main thread dispatches review as an independent executor subprocess (`pmctl gate run`), not an in-session subagent fan-out
+- `runtime/bin/pr-gate.sh` — how the main thread dispatches review as an independent executor subprocess (`pmctl gate run`), not an in-session subagent fan-out
 
 ---
 
@@ -149,7 +149,7 @@ This three-way write path is on purpose: not every fact wants the same author.
 
 - `MEMORY.md` — the index for the current session
 - `commands/mem-recall.md` / `mem-log.md` / `mem-distill.md` / `mem-search.md` — the four memory skills
-- `scripts/guard-session-summary.sh` — the SessionStop hook that writes episodes
+- `runtime/hooks/guard-session-summary.sh` — the SessionStop hook that writes episodes
 
 ---
 
@@ -178,8 +178,8 @@ Every step uses one of the four concepts. None of them is "magic" — each is a 
 - **Set up the repo on your machine** → `docs/GETTING_STARTED.md`
 - **Understand the dispatch flow used by `/pm` and `/pr-gate`** → `docs/dispatch-brief.md`
 - **Query the repo index before writing a brief** → `docs/context-retrieval.md`
-- **Add a new slash command** → look at any existing `commands/*.md` and `scripts/test-guards.sh`
-- **Write a new hook** → read `scripts/guard-pm-write.sh` as a reference and add a test in `scripts/test-guards.sh`
+- **Add a new slash command** → look at any existing `commands/*.md` and `tests/shell/test-guards.sh`
+- **Write a new hook** → read `runtime/hooks/guard-pm-write.sh` as a reference and add a test in `tests/shell/test-guards.sh`
 - **Add a memory card** → see `~/.claude/projects/<id>/memory/MEMORY.md` for the index format; cards have YAML frontmatter (`name:` / `description:` / `metadata.type:`) and live next to the index
 - **Platform support** → `docs/platform-support.md`
 

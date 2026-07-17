@@ -14,7 +14,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Validate agent frontmatter
-        run: ./scripts/lint-agents.sh
+        run: ./tools/lint/lint-agents.sh
 
   lint-frontmatter:
     runs-on: ubuntu-latest
@@ -22,46 +22,46 @@ jobs:
       - uses: actions/checkout@v6
       # Grammar coverage for the restricted subset is provided by test-lint-frontmatter below.
       - name: Validate frontmatter (restricted YAML subset)
-        run: ./scripts/lint-frontmatter.sh
+        run: ./tools/lint/lint-frontmatter.sh
 
   test-lint-frontmatter:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - name: lint-frontmatter regression suite
-        run: bash scripts/test-lint-frontmatter.sh
+        run: bash tests/shell/test-lint-frontmatter.sh
 
   test-commands:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - name: Command contract tests
-        run: ./scripts/test-commands.sh
+        run: ./tests/shell/test-commands.sh
       - name: Command runner CLI tests
-        run: ./scripts/test-commands-runner.sh
+        run: ./tests/shell/test-commands-runner.sh
 
   lint-scripts:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - name: Validate script hygiene
-        run: ./scripts/lint-scripts.sh
+        run: ./tools/lint/lint-scripts.sh
       - name: Validate codex model alias source-of-truth
-        run: bash scripts/lint-model-aliases.sh
+        run: bash tools/lint/lint-model-aliases.sh
 
   lint-test-docstrings:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - name: Validate test docstring convention (allowlisted files)
-        run: ./scripts/lint-test-docstrings.sh
+        run: ./tools/lint/lint-test-docstrings.sh
 
   test-lint-test-docstrings:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - name: lint-test-docstrings regression suite
-        run: bash scripts/test-lint-test-docstrings.sh
+        run: bash tests/shell/test-lint-test-docstrings.sh
 
   test-guards:
     runs-on: ubuntu-latest
@@ -71,42 +71,42 @@ jobs:
       - name: Guard regression suite
         env:
           TEST_GUARDS_PROGRESS: "1"
-        run: ./scripts/test-guards.sh
+        run: ./tests/shell/test-guards.sh
 
   test-guard-framework:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - name: Guard framework regression suite
-        run: ./scripts/test-guard-framework.sh
+        run: ./tests/shell/test-guard-framework.sh
 
   test-pr-gate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - name: pr-gate regression suite
-        run: ./scripts/test-pr-gate.sh
+        run: ./tests/shell/test-pr-gate.sh
 
   test-executor-router:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - name: executor router regression suite
-        run: bash scripts/test-executor-router.sh
+        run: bash tests/shell/test-executor-router.sh
 
   test-pmctl-adapter-generate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - name: pmctl adapter generate regression suite
-        run: bash scripts/test-pmctl-adapter-generate.sh
+        run: bash tests/shell/test-pmctl-adapter-generate.sh
 
   test-skill-refine:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - name: skill-refine regression suite
-        run: bash scripts/test-skill-refine.sh
+        run: bash tests/shell/test-skill-refine.sh
       - name: skill-refine shellcheck
         uses: ludeeus/action-shellcheck@00cae500b08a931fb5698e11e79bfbd38e612a38 # tag 2.0.0
         with:
@@ -228,119 +228,119 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: doctor.sh regression suite
-        run: ./scripts/test-doctor.sh
+        run: ./tests/shell/test-doctor.sh
 
   test-hook-profile-parity:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - name: hook-profile parity regression suite
-        run: ./scripts/test-hook-profile-parity.sh
+        run: ./tests/shell/test-hook-profile-parity.sh
 
   test-portable:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - name: portable helper regression suite
-        run: ./scripts/test-portable.sh
+        run: ./tests/shell/test-portable.sh
 
   test-brief-validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - name: brief validator regression suite
-        run: bash scripts/test-brief-validate.sh
+        run: bash tests/shell/test-brief-validate.sh
 
   test-dispatch-post-verify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - name: dispatch post-verify regression suite
-        run: bash scripts/test-dispatch-post-verify.sh
+        run: bash tests/shell/test-dispatch-post-verify.sh
 
   test-pr-gate-profile:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - name: pr-gate executor split regression suite
-        run: ./scripts/test-pr-gate-profile.sh
+        run: ./tests/shell/test-pr-gate-profile.sh
 
   test-setup-project:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - name: setup-project regression suite
-        run: ./scripts/test-setup-project.sh
+        run: ./tests/shell/test-setup-project.sh
 
   test-install-core:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - name: install/uninstall core regression suite
-        run: CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$HOME" ./scripts/test-install.sh --group core
+        run: CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$HOME" ./tests/shell/test-install.sh --group core
 
   test-install-guards:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - name: install/uninstall guards regression suite
-        run: CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$HOME" ./scripts/test-install.sh --group guards
+        run: CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$HOME" ./tests/shell/test-install.sh --group guards
 
   test-usage-weekly:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - name: usage-weekly regression suite
-        run: ./scripts/test-usage-weekly.sh
+        run: ./tests/shell/test-usage-weekly.sh
 
   test-codex-dispatch:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - name: codex-dispatch regression suite
-        run: ./scripts/test-codex-dispatch.sh
+        run: ./tests/shell/test-codex-dispatch.sh
 
   test-claude-dispatch:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - name: claude-dispatch adapter regression suite
-        run: ./scripts/test-claude-dispatch.sh
+        run: ./tests/shell/test-claude-dispatch.sh
 
   test-layer-boundaries:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - name: layer-boundary enforcer
-        run: ./scripts/test-layer-boundaries.sh
+        run: ./tests/shell/test-layer-boundaries.sh
 
   test-dispatch-handover:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - name: dispatch handover regression suite
-        run: ./scripts/test-dispatch-handover.sh
+        run: ./tests/shell/test-dispatch-handover.sh
 
   test-handover-validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - name: handover validator regression suite
-        run: bash scripts/test-handover-validate.sh
+        run: bash tests/shell/test-handover-validate.sh
 
   test-lint-model-aliases:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - name: model-alias linter regression suite
-        run: bash scripts/test-lint-model-aliases.sh
+        run: bash tests/shell/test-lint-model-aliases.sh
 
   test-core-schemas:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - name: core schema structural tests
-        run: bash scripts/test-core-schemas.sh
+        run: bash tests/shell/test-core-schemas.sh
 
   test-pm-prep-snapshot:
     runs-on: ubuntu-latest
@@ -348,119 +348,119 @@ jobs:
       - uses: actions/checkout@v6
       - run: git fetch --depth=1 origin main
       - name: pm-prep-snapshot regression suite
-        run: bash scripts/test-pm-prep-snapshot.sh
+        run: bash tests/shell/test-pm-prep-snapshot.sh
 
   test-check-docs-freshness:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - name: check-docs-freshness regression suite
-        run: bash scripts/test-check-docs-freshness.sh
+        run: bash tests/shell/test-check-docs-freshness.sh
 
   test-schema-task-mirrors-backlog:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - name: schema task mirrors backlog regression suite
-        run: bash scripts/test-schema-task-mirrors-backlog.sh
+        run: bash tests/shell/test-schema-task-mirrors-backlog.sh
 
   test-state-store:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - name: state store regression suite
-        run: bash scripts/test-state-store.sh
+        run: bash tests/shell/test-state-store.sh
 
   test-state-layout-parity:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - name: state layout parity regression suite
-        run: bash scripts/test-state-layout-parity.sh
+        run: bash tests/shell/test-state-layout-parity.sh
 
   test-state-store-rotation:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - name: state store rotation regression suite
-        run: bash scripts/test-state-store-rotation.sh
+        run: bash tests/shell/test-state-store-rotation.sh
 
   test-archive-closed-backlog:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - name: archive-closed-backlog regression suite
-        run: bash scripts/test-archive-closed-backlog.sh
+        run: bash tests/shell/test-archive-closed-backlog.sh
 
   test-pmctl-backlog:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - name: pmctl backlog regression suite
-        run: bash scripts/test-pmctl-backlog.sh
+        run: bash tests/shell/test-pmctl-backlog.sh
 
   test-pmctl-guard:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - name: pmctl guard check regression suite
-        run: bash scripts/test-pmctl-guard.sh
+        run: bash tests/shell/test-pmctl-guard.sh
 
   test-pmctl-trace:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - name: pmctl trace tail regression suite
-        run: bash scripts/test-pmctl-trace.sh
+        run: bash tests/shell/test-pmctl-trace.sh
 
   test-pmctl-gate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - name: pmctl gate run regression suite
-        run: bash scripts/test-pmctl-gate.sh
+        run: bash tests/shell/test-pmctl-gate.sh
 
   test-gate-lifecycle:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - name: gate detached lifecycle regression suite
-        run: bash scripts/test-gate-lifecycle.sh
+        run: bash tests/shell/test-gate-lifecycle.sh
 
   test-pmctl-task:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - name: pmctl task lifecycle regression suite
-        run: bash scripts/test-pmctl-task.sh
+        run: bash tests/shell/test-pmctl-task.sh
 
   test-pmctl-safe:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - name: pmctl safe bash regression suite
-        run: bash scripts/test-pmctl-safe.sh
+        run: bash tests/shell/test-pmctl-safe.sh
 
   test-pmctl-validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - name: pmctl validate brief regression suite
-        run: bash scripts/test-pmctl-validate.sh
+        run: bash tests/shell/test-pmctl-validate.sh
 
   test-pmctl-worktree:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - name: pmctl worktree regression suite
-        run: bash scripts/test-pmctl-worktree.sh
+        run: bash tests/shell/test-pmctl-worktree.sh
 
   test-pmctl-ship:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - name: pmctl ship regression suite
-        run: bash scripts/test-pmctl-ship.sh
+        run: bash tests/shell/test-pmctl-ship.sh
 
   lint-backlog:
     runs-on: ubuntu-latest

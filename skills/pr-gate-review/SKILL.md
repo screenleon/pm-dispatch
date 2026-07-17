@@ -5,7 +5,7 @@ description: Use before opening a PR to run the tiered pre-PR review pipeline (c
 
 # PR-gate review
 
-A **thin pointer skill** — the gate is implemented by `scripts/pr-gate.sh` and the
+A **thin pointer skill** — the gate is implemented by `runtime/bin/pr-gate.sh` and the
 `/pr-gate` command; this skill says when to reach for it and how to read the result.
 
 ## When to use
@@ -18,7 +18,7 @@ implement → pr-gate → fix NO-GO → push → PR).
 
 - Slash command: `/pr-gate` (see `commands/pr-gate.md`). It dispatches the
   reviewers and writes a typed result to `.gate-results/`.
-- Direct: `bash scripts/pr-gate.sh --cd <repo> --executor auto [--parallel]`.
+- Direct: `bash runtime/bin/pr-gate.sh --cd <repo> --executor auto [--parallel]`.
 - Reasoning effort defaults to `medium` (`--effort low|medium|high`, independent of `--model`/`--executor`). Only reach for `--effort high` when you need deeper analysis — e.g. a hard-to-diagnose finding, or escalating after repeated NO-GO rounds on the same issue.
 
 **Tier / mode** (tiers reflect rigor level, not reviewer count):

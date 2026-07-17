@@ -113,13 +113,13 @@ export PATH="${PM_DISPATCH_REPO}/cli:$PATH"
 > so those paths auto-sync after pulling. Individual helper scripts are still
 > copied. See *Update* below.
 
-> **Copy-mode installs (no dev-mode):** Individual helper scripts (`scripts/*.sh`) are
+> **Copy-mode installs (no dev-mode):** Individual helper scripts are
 > always installed via copy on Git Bash. Re-run `bash install.sh` after pulling to
 > refresh copied files — the installer compares source vs installed sha256 and
 > re-copies only files whose source has changed.
 > `install.sh` prints a summary banner listing how many files were installed or refreshed via copy.
 > `pmctl` is the exception: it is never copied because a copied `pmctl` treats
-> the copy location as its repo root and cannot find `scripts/lib/*.sh`.
+> the copy location as its repo root and cannot find `runtime/lib/*.sh`.
 
 ---
 
@@ -128,7 +128,7 @@ export PATH="${PM_DISPATCH_REPO}/cli:$PATH"
 Run the built-in health check after installing on any platform:
 
 ```bash
-bash "${PM_DISPATCH_REPO}/scripts/doctor.sh"
+bash "${PM_DISPATCH_REPO}/runtime/bin/doctor.sh"
 ```
 
 `doctor.sh` checks that `claude`, `jq`, and `pmctl` are on PATH, hooks are wired,
@@ -138,7 +138,7 @@ Each failing check prints a concrete remediation command.
 Pass `--profile minimal` when the install used the minimal profile:
 
 ```bash
-bash "${PM_DISPATCH_REPO}/scripts/doctor.sh" --profile minimal
+bash "${PM_DISPATCH_REPO}/runtime/bin/doctor.sh" --profile minimal
 ```
 
 ---
@@ -325,7 +325,7 @@ bash install.sh
 
 - `README.md` — overview and quick install
 - `CONCEPTS.md` — architecture concepts
-- `scripts/lib/portable.sh` — `link_or_copy()` and install manifest
+- `runtime/lib/portable.sh` — `link_or_copy()` and install manifest
 - `scripts/install-guards.sh` — hook wiring
 - `scripts/uninstall-guards.sh` — hook removal
 - `docs/platform-support.md` (this document)

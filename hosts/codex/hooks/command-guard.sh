@@ -7,10 +7,10 @@
 # Reads the canonical PreToolUse stdin JSON codex fires for a Bash tool call
 # (tool_input.command, cwd — hosts/codex/host.yaml payload_fields) and defers
 # to `pmctl guard check`, the same executor-agnostic guard front-end a
-# non-Claude host must call explicitly (scripts/lib/pmctl-guard.sh). This
+# non-Claude host must call explicitly (runtime/lib/pmctl-guard.sh). This
 # script does not implement its own allow/deny policy — the policy is
 # whatever `pmctl guard check --role pm --runtime codex --event pre-bash`
-# resolves to: scripts/guard-pm-bash.sh, a curated denylist of destructive /
+# resolves to: runtime/hooks/guard-pm-bash.sh, a curated denylist of destructive /
 # hard-to-reverse commands (rm -rf, force push, git reset --hard, sudo, ...),
 # allowing everything else. See that script's header for the full list and
 # rationale.

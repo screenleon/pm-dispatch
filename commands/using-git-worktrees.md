@@ -58,4 +58,4 @@ If a worktree directory is deleted directly (`rm -rf` instead of `pmctl worktree
 
 ## Out of scope
 
-This tool does not touch the `--parallel` PR gate's reviewer-isolation logic (`scripts/pr-gate.sh`) — that is a separate integration tracked independently. `pmctl worktree` is a general-purpose utility for any parallel branch work, not specific to the gate.
+This tool does not touch the `--parallel` PR gate's reviewer-isolation logic (`runtime/bin/pr-gate.sh`) — that is a separate integration tracked independently. `pmctl worktree` is a general-purpose utility for any parallel branch work, not specific to the gate.

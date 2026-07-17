@@ -26,7 +26,7 @@
 #   into $CODEX_HOME/hooks.json (see hosts/codex/host.yaml). OFF BY DEFAULT and NOT
 #   auto-detected from codex-on-PATH the way --profile is: unlike claude's
 #   settings.json, hooks.json is GLOBAL to every codex session on the machine,
-#   not scoped to pm-dispatch. The guard policy (scripts/guard-pm-bash.sh) is a
+#   not scoped to pm-dispatch. The guard policy (runtime/hooks/guard-pm-bash.sh) is a
 #   curated denylist of destructive/hard-to-reverse commands (rm -rf, force
 #   push, sudo, ...) applied to EVERY Bash call in EVERY codex session on this
 #   machine once wired — not just pm-dispatch ones. Auto-wiring it from mere
@@ -94,15 +94,15 @@ unset _claude_root
 _COPY_FALLBACK_COUNT=0
 
 # shellcheck disable=SC1091
-. "$REPO_ROOT/scripts/lib/portable.sh"
+. "$REPO_ROOT/runtime/lib/portable.sh"
 # shellcheck disable=SC1091
-. "$REPO_ROOT/scripts/lib/allowlist.sh"
+. "$REPO_ROOT/runtime/lib/allowlist.sh"
 _HOST_WRITE_AVAILABLE=0
-if [[ -f "$REPO_ROOT/scripts/lib/host-manifest.sh" && -f "$REPO_ROOT/scripts/lib/host-write.sh" ]]; then
+if [[ -f "$REPO_ROOT/runtime/lib/host-manifest.sh" && -f "$REPO_ROOT/runtime/lib/host-write.sh" ]]; then
   # shellcheck disable=SC1091
-  . "$REPO_ROOT/scripts/lib/host-manifest.sh"
+  . "$REPO_ROOT/runtime/lib/host-manifest.sh"
   # shellcheck disable=SC1091
-  . "$REPO_ROOT/scripts/lib/host-write.sh"
+  . "$REPO_ROOT/runtime/lib/host-write.sh"
   _HOST_WRITE_AVAILABLE=1
 else
   echo "install: host write libraries unavailable in this install layout" >&2
@@ -125,8 +125,20 @@ fi
 _INSTALL_PLATFORM="$(detect_platform)"
 
 link() {
-  local src="$1" dest="$2"
+  local src="$1" dest="$2" legacy_src="${3:-}"
   local rc
+  # A domain relocation changes the source path without changing the installed
+  # helper ABI. Refresh only an exact symlink owned by this checkout; foreign
+  # symlinks and real files continue through link_or_copy's conflict policy.
+  if [[ -n "$legacy_src" && -L "$dest" ]] \
+      && _install_symlink_target_resolves_to "$dest" "$legacy_src"; then
+    if [[ "$DRY_RUN" -eq 1 ]]; then
+      echo "  would refresh $dest -> $src"
+      manifest_record "$src" "$dest" symlink || return 1
+      return 0
+    fi
+    rm "$dest"
+  fi
   link_or_copy "$src" "$dest"
   rc=$?
   case "$rc" in
@@ -399,7 +411,7 @@ if [[ "$VERIFY" -eq 1 ]] && [[ "$_SKIP_PREFLIGHT" != "1" ]]; then
   echo "==> preflight tests"
   # _PM_DISPATCH_PREFLIGHT_RUNNER lets tests inject a stub without touching
   # the real run-all-tests.sh (default). Never set this in production use.
-  bash "${_PM_DISPATCH_PREFLIGHT_RUNNER:-$REPO_ROOT/scripts/run-all-tests.sh}"
+  bash "${_PM_DISPATCH_PREFLIGHT_RUNNER:-$REPO_ROOT/tests/bin/run-all-tests.sh}"
   echo
 fi
 
@@ -465,8 +477,17 @@ us_count=0; us_conflicts=0
 #   test-*.sh   — run as install preflights above, not user tools
 #   hook-*.sh   — wired by install-guards.sh, not standalone user tools
 #   lint-*.sh   — internal CI helpers
-for script in token-usage.sh log-usage.sh pr-gate.sh setup-project.sh patch-gitignore.sh doctor.sh; do
-  if link "$REPO_ROOT/scripts/$script" "$SCRIPTS_DEST/$script"; then
+helper_specs=(
+  $'token-usage.sh\tops/usage/token-usage.sh\tscripts/token-usage.sh'
+  $'log-usage.sh\tops/usage/log-usage.sh\tscripts/log-usage.sh'
+  $'pr-gate.sh\truntime/bin/pr-gate.sh\tscripts/pr-gate.sh'
+  $'setup-project.sh\tops/setup/setup-project.sh\tscripts/setup-project.sh'
+  $'patch-gitignore.sh\tops/setup/patch-gitignore.sh\tscripts/patch-gitignore.sh'
+  $'doctor.sh\truntime/bin/doctor.sh\tscripts/doctor.sh'
+)
+for helper_spec in "${helper_specs[@]}"; do
+  IFS=$'\t' read -r script source_path legacy_source_path <<< "$helper_spec"
+  if link "$REPO_ROOT/$source_path" "$SCRIPTS_DEST/$script" "$REPO_ROOT/$legacy_source_path"; then
     us_count=$((us_count + 1))
   else
     us_conflicts=$((us_conflicts + 1))

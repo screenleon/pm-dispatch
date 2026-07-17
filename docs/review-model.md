@@ -65,8 +65,8 @@ When `conceptual_map` is absent, the architecture-reviewer falls back to diff in
 
 ```
 self_verify:
-  - cmd: "bash scripts/lint-agents.sh"
-  - cmd: "bash scripts/test-run-all-tests.sh"
+  - cmd: "bash tools/lint/lint-agents.sh"
+  - cmd: "bash tests/shell/test-run-all-tests.sh"
   - git-status no-collateral-damage    # executor-evaluated (not a shell cmd)
 ```
 
@@ -103,8 +103,8 @@ reason. [`/ship` Step 3](../commands/ship.md#step-3--gate-loop) is the
 authoritative operational threshold. This keeps the cheap maintenance pass
 ahead of expensive review without duplicating the full rule across documents.
 
-The affected-test planner (`scripts/run-tests.sh`) is the iteration path before
-and between gate rounds. The authoritative `scripts/run-all-tests.sh` runs only
+The affected-test planner (`tests/bin/run-tests.sh`) is the iteration path before
+and between gate rounds. The authoritative `tests/bin/run-all-tests.sh` runs only
 after a GO verdict against the final tree. A diff-caused full-suite fix returns
 through affected tests and targeted review before the full suite is repeated.
 

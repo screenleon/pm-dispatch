@@ -20,13 +20,5 @@ opencode_host_config_root() {
 opencode_host_resolve_path() {
   local path="$1" root
   root="$(opencode_host_config_root)" || return $?
-  case "$path" in
-    \$XDG_CONFIG_HOME|\$XDG_CONFIG_HOME/*)
-      printf '%s\n' "${path//\$XDG_CONFIG_HOME/$root}"
-      ;;
-    *)
-      printf 'opencode path resolver: unsupported manifest path template: %s\n' "$path" >&2
-      return 2
-      ;;
-  esac
+  host_manifest_expand_root_template opencode '$XDG_CONFIG_HOME' "$root" "$path"
 }

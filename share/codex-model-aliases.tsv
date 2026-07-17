@@ -39,7 +39,7 @@
 #
 # Reasoning effort: an alias's effort column is the practical default whenever
 # `--effort` is omitted (it takes precedence over the global default — see
-# scripts/lib/reasoning-effort.sh). default/gpt-5.6-*/gpt-5.5/gpt-5.4 converge
+# runtime/lib/reasoning-effort.sh). default/gpt-5.6-*/gpt-5.5/gpt-5.4 converge
 # to medium so a plain dispatch/gate call is medium by default without needing
 # `--effort medium` on every invocation; codex-spark/light stay high,
 # unchanged and orthogonal to this convergence (their small-model/low-latency

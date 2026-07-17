@@ -6,7 +6,7 @@
 
 ### create / show / update / list
 
-Core CRUD operations — see source `scripts/lib/pmctl-task.sh` for flags. The state model and schema are defined in `core/schema/task.schema.json`.
+Core CRUD operations — see source `runtime/lib/pmctl-task.sh` for flags. The state model and schema are defined in `core/schema/task.schema.json`.
 
 ### claim
 

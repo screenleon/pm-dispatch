@@ -35,13 +35,13 @@ else
     exit 2
   }
 fi
-[[ -f "$REPO_ROOT/hosts/codex/host.yaml" && -f "$REPO_ROOT/scripts/lib/host-manifest.sh" ]] || {
+[[ -f "$REPO_ROOT/hosts/codex/host.yaml" && -f "$REPO_ROOT/runtime/lib/host-manifest.sh" ]] || {
   echo "uninstall-guards-codex: --repo-root is not a compatible pm-dispatch checkout: $REPO_ROOT" >&2
   exit 2
 }
 
-# shellcheck source=scripts/lib/host-manifest.sh
-. "$REPO_ROOT/scripts/lib/host-manifest.sh"
+# shellcheck source=runtime/lib/host-manifest.sh
+. "$REPO_ROOT/runtime/lib/host-manifest.sh"
 # shellcheck source=hosts/codex/lib/hook-paths.sh
 . "$REPO_ROOT/hosts/codex/lib/hook-paths.sh"
 # shellcheck source=hosts/codex/lib/memory-contract.sh
@@ -95,10 +95,10 @@ hook_cmd="$(codex_host_command_guard_path "$REPO_ROOT")"
 hook_cmd_q="$(printf '%q' "$hook_cmd")"
 legacy_hook_cmd="$(codex_host_command_guard_legacy_path "$REPO_ROOT")"
 legacy_hook_cmd_q="$(printf '%q' "$legacy_hook_cmd")"
-memory_hook_cmd="$REPO_ROOT/scripts/guard-inject-memory.sh"
+memory_hook_cmd="$REPO_ROOT/runtime/hooks/guard-inject-memory.sh"
 memory_hook_cmd_q="$(printf '%q' "$memory_hook_cmd")"
-session_hook_cmd="$REPO_ROOT/scripts/guard-session-summary.sh --host codex"
-session_hook_cmd_q="$(printf '%q' "$REPO_ROOT/scripts/guard-session-summary.sh") --host codex"
+session_hook_cmd="$REPO_ROOT/runtime/hooks/guard-session-summary.sh --host codex"
+session_hook_cmd_q="$(printf '%q' "$REPO_ROOT/runtime/hooks/guard-session-summary.sh") --host codex"
 
 tmp_new="$(mktemp)"
 tmp_instructions_new="$(mktemp)"

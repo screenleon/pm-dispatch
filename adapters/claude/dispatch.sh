@@ -17,7 +17,7 @@
 #
 # --effort overrides the resolved model alias's own effort column; absent a
 # flag or a valid alias value, the global default is `medium` (see
-# scripts/lib/reasoning-effort.sh). Wired straight through to claude's native
+# runtime/lib/reasoning-effort.sh). Wired straight through to claude's native
 # `--effort` flag.
 #
 # Isolation: --isolation <level> is translated to `claude --permission-mode <m>`
@@ -56,7 +56,7 @@ if ! [[ "${BASH_SOURCE[0]}" =~ /claude-dispatch\.[A-Za-z0-9]{6}/claude-dispatch\
   __claude_dispatch_source_repo="$(cd -P -- "$(dirname "$__claude_dispatch_real")/../.." && pwd)"
   __claude_dispatch_isolation_source="$__claude_dispatch_source_repo/adapters/claude/isolation-map.yaml"
   __claude_dispatch_alias_source="$__claude_dispatch_source_repo/share/claude-model-aliases.tsv"
-  __claude_dispatch_usage_log_source="$__claude_dispatch_source_repo/scripts/log-usage.sh"
+  __claude_dispatch_usage_log_source="$__claude_dispatch_source_repo/ops/usage/log-usage.sh"
   cp -- "${BASH_SOURCE[0]}" "$__claude_dispatch_snapshot"
   [[ -r "$__claude_dispatch_usage_log_source" ]] && cp -- "$__claude_dispatch_usage_log_source" "$__claude_dispatch_snapshot_dir/log-usage.sh" || true
   if [[ -r "$__claude_dispatch_isolation_source" ]]; then
@@ -65,7 +65,7 @@ if ! [[ "${BASH_SOURCE[0]}" =~ /claude-dispatch\.[A-Za-z0-9]{6}/claude-dispatch\
   fi
   [[ -r "$__claude_dispatch_alias_source" ]] && cp -- "$__claude_dispatch_alias_source" "$__claude_dispatch_snapshot_dir/claude-model-aliases.tsv" || true
   # shellcheck disable=SC1091
-  . "$__claude_dispatch_source_repo/scripts/lib/dispatch-common.sh"
+  . "$__claude_dispatch_source_repo/runtime/lib/dispatch-common.sh"
   dc_snapshot_copy_libs "$__claude_dispatch_snapshot_dir" "$__claude_dispatch_source_repo"
   chmod +x -- "$__claude_dispatch_snapshot"
   exec "$__claude_dispatch_snapshot" "$@"
@@ -88,7 +88,7 @@ PRINT_CMD=0
 TRACE_DIR_OVERRIDE=""
 PERMISSION_MODE="acceptEdits"   # default = workspace-write equivalent
 
-# shellcheck source=scripts/lib/state-writer.sh  # sourced for snapshot support only; pmctl owns state writes.
+# shellcheck source=runtime/lib/state-writer.sh  # sourced for snapshot support only; pmctl owns state writes.
 . "$SCRIPT_DIR/lib/state-writer.sh" 2>/dev/null || true
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/lib/model-aliases.sh"
@@ -195,7 +195,7 @@ fi
 # --effort overrides the alias's own effort column; --effort > alias effort >
 # global default (medium). claude's native --effort accepts low/medium/high/
 # xhigh/max, but pm-dispatch only exposes the low/medium/high intersection with
-# codex — see scripts/lib/reasoning-effort.sh. ALIAS_EFFORT may hold a stale
+# codex — see runtime/lib/reasoning-effort.sh. ALIAS_EFFORT may hold a stale
 # non-low/medium/high value (e.g. the legacy "normal"/"high" column in
 # share/claude-model-aliases.tsv); re_resolve_effort treats that as absent and
 # falls through to the global default. re_resolve_effort validates $EFFORT
@@ -216,7 +216,7 @@ TRACE="<print-only>"
 if [[ "$PRINT_CMD" -ne 1 ]]; then
   # Trace output location: --trace-dir flag > PM_DISPATCH_TRACE_DIR env > legacy
   # in-repo $WORK_DIR/.agent-trace (default UNCHANGED). Precedence + absolute-path
-  # validation live in sw_resolve_trace_dir (scripts/lib/state-paths.sh), sourced
+  # validation live in sw_resolve_trace_dir (runtime/lib/state-paths.sh), sourced
   # via state-writer.sh above and copied into the snapshot lib dir. Resolved only
   # when trace is actually written (--print-cmd writes none, so it needs no lib).
   dc_setup_trace_dir "$TRACE_DIR_OVERRIDE" "$WORK_DIR" "claude" "$TS" || exit 2

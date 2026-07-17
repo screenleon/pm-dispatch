@@ -6,14 +6,14 @@ inventory is active merely because it appears here. A path becomes active only
 when its consumers, tests, manifest or registry entry, and compatibility shim
 move together in a verified migration slice.
 
-The inventory was captured on 2026-07-15. It covers every file below
-`scripts/` and separates path ownership from variable/configuration ownership.
+The inventory was captured on 2026-07-15 and became the migration ledger for
+every file that was then below `scripts/`. It now records each historical path,
+its canonical owner path, and whether the historical path remains a shim.
 
 ## Inventory artifacts
 
 - [`script-domain-inventory.tsv`](script-domain-inventory.tsv) is the complete
-  current-to-proposed path map. It contains 174 rows: 119 executable scripts,
-  52 sourced libraries, and 3 fixtures.
+  historical-to-canonical path map. It contains 170 rows.
 - [`script-variable-inventory.tsv`](script-variable-inventory.tsv) records
   cross-module inputs, ambient environment, legacy aliases, resolved config,
   fault-injection families, and secret passthrough. Module-local scratch
@@ -24,18 +24,11 @@ The inventory was captured on 2026-07-15. It covers every file below
   wildcard variable to its current production or test references without
   treating comments or shell parsing as runtime data flow.
 
-The path inventory is complete when this comparison has no output:
+The complete path, shim-target, variable, and consumer contracts are ratcheted
+together by:
 
 ```bash
-comm -3 \
-  <(find scripts -type f -printf '%p\n' | sort) \
-  <(tail -n +2 docs/architecture/script-domain-inventory.tsv | cut -f1 | sort)
-```
-
-The complete path, variable, and consumer contracts are ratcheted together by:
-
-```bash
-bash scripts/lint-script-domain-inventory.sh
+bash tools/lint/lint-script-domain-inventory.sh
 ```
 
 The linter rejects untracked or missing scripts, invalid owner-to-target
@@ -50,7 +43,7 @@ must not read them to locate modules.
 
 ## Target ownership domains
 
-| Domain | Proposed root | Owns | Must not own |
+| Domain | Canonical root | Owns | Must not own |
 |---|---|---|---|
 | Shared runtime | `runtime/{bin,hooks,lib}` | canonical CLI workflows, state, memory, context, guard primitives, supervisors | named host defaults or test fault injection |
 | Host modules | `hosts/<host>/{bin,hooks,lib}` | host config roots, lifecycle hooks, install, uninstall, doctor | executor model selection or canonical project state |
@@ -60,11 +53,11 @@ must not read them to locate modules.
 | Tooling | `tools/{lint,skills}` | static validation and repository authoring helpers | runtime business logic |
 | Compatibility | existing `scripts/` paths | time-bounded forwarding shims only | a second implementation or divergent defaults |
 
-The current owner distribution is:
+The canonical owner distribution is:
 
 - test harness: 85 files
 - shared runtime: 58 files
-- host modules: 13 files across Claude, Codex, and OpenCode
+- host modules: 9 files across Claude, Codex, and OpenCode
 - operations: 10 files
 - tooling: 8 files
 
@@ -168,12 +161,11 @@ doctor entrypoint
   -> manifest-declared host doctor module
 ```
 
-Claude's base installation remains a special write path, but its install,
-uninstall, doctor, and hook wiring now share the manifest-declared
+Claude's base installation remains a special asset-orchestration path, but its
+install, uninstall, doctor, and hook wiring share the manifest-declared
 `hosts/claude/lib/path-resolver.sh` contract. Codex and OpenCode resolve their
-manifest targets through equivalent host-owned modules. Their install/write
-implementations still point into `scripts/`; physical relocation is a separate
-slice.
+manifest targets through equivalent host-owned modules, and all host write
+implementations live below `hosts/<host>/`.
 
 ### PM, dispatch, and gate
 
@@ -213,8 +205,8 @@ release verification
   -> E2E and release-specific checks
 ```
 
-Suite discovery must eventually come from one test registry. Relocation cannot
-replace the current hard-coded suite map with a second list elsewhere.
+Suite discovery comes from one test registry. Relocation must not introduce a
+second suite list elsewhere.
 
 ## Stable entrypoints and shims
 
@@ -250,7 +242,7 @@ A shim may be removed only when all of these are true:
 Historical backlog, changelog, and spike records are evidence and are not
 rewritten merely to erase an old path string.
 
-## Migration order
+## Executed migration order
 
 1. Lock this inventory and add behavior tests for environment precedence,
    filesystem side effects, relocated checkouts, and full-home isolation.
@@ -264,17 +256,20 @@ rewritten merely to erase an old path string.
 6. Relocate the test harness, shared runtime, tooling, and operations by domain.
 7. Remove shims only through the criteria above.
 
-## Physical relocation readiness
+## Physical relocation status
 
-The first three migration steps are complete: inventory and parity fixtures are
-ratcheted, the write-module ABI passes an explicit repository root and dry-run
-mode, and all three host root/default/alias contracts live in host-owned
-resolvers. The shared path expander contains no named host environment branch.
-Physical files have not moved; OpenCode remains the first pilot slice, followed
-by Codex and Claude after its parity evidence is accepted.
-- The suite registry and changed-path mapping contain current `scripts/` paths.
-- Installed symlinks and generated hook commands embed current paths.
-- Full environment isolation is not expressed as one reusable test contract.
+Physical relocation is complete. All 170 canonical targets exist in their
+declared domains; 151 internal historical paths are absent, and `scripts/`
+contains exactly the 19 compatibility shims declared by the inventory. The
+ratchet verifies both file-set equality and that every shim names its declared
+canonical target, so a present-but-misdirected forwarder fails validation.
 
-These are expected inputs to the behavior-lock and module-ABI phase. They are
-not authorization to begin a bulk rename.
+The CLI, manifests, host installers, suite registry, changed-path planner,
+documentation, and CI invoke canonical owner paths. Installed user-tool names
+remain stable while their sources come from `runtime/` or `ops/`; reinstall
+refreshes copied or linked assets without changing that external ABI. Host
+config roots and aliases remain host-owned, while their common leading-token
+template expansion is shared and replaces only the declared prefix.
+
+Shim removal remains a future compatibility-window decision governed by the
+criteria above. No implementation is allowed to move back under `scripts/`.

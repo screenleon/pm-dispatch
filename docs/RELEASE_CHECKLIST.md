@@ -12,8 +12,8 @@ Coverage splits into three layers:
 
 | Layer | What runs it | Covers |
 |-------|--------------|--------|
-| **Offline automated** | `scripts/release-verify.sh` (Phases 1–3) | prerequisites, all 64 test suites, real `pmctl context` smoke + real `sqlite3` |
-| **Live E2E automated** | `scripts/release-verify.sh --e2e` (Phase 4) | real dispatch output contract (Phase B); pr-gate structural validation via codex (Phase C — requires codex on PATH) — spends LLM tokens |
+| **Offline automated** | `ops/release/release-verify.sh` (Phases 1–3) | prerequisites, all 64 test suites, real `pmctl context` smoke + real `sqlite3` |
+| **Live E2E automated** | `ops/release/release-verify.sh --e2e` (Phase 4) | real dispatch output contract (Phase B); pr-gate structural validation via codex (Phase C — requires codex on PATH) — spends LLM tokens |
 | **Manual** | §2a / §2d below | real install + hooks, `doctor`, Claude Code hook execution — environment-mutating, not automatable |
 
 A release is **full GO** only when `release-verify.sh --e2e` exits 0 (`AUTOMATED VERDICT: GO`) and every §2a / §2d box is ticked. Exit 3 (`PARTIAL GO`) means required phases were skipped and is **not** sufficient for tagging.
@@ -46,12 +46,12 @@ there with a "use WSL2" notice.
 
 ```bash
 # Linux / WSL2 — Phases 1-3 (offline, no tokens)
-bash scripts/release-verify.sh
+bash ops/release/release-verify.sh
 
 # Same platform — Phase 4: real dispatch + pr-gate (spends LLM tokens)
-bash scripts/release-verify.sh --e2e
+bash ops/release/release-verify.sh --e2e
 # or with explicit adapter:
-bash scripts/release-verify.sh --e2e --adapter claude
+bash ops/release/release-verify.sh --e2e --adapter claude
 ```
 
 - [ ] **Linux / WSL2 (full sign-off)**: `release-verify.sh --e2e` exits 0 and prints `AUTOMATED VERDICT: GO` (all phases including Phase C pass).
@@ -85,12 +85,19 @@ because they mutate the real `~/.claude` environment.
 
 ```bash
 bash install.sh --verify          # runs preflight suites, then installs
-bash scripts/install-guards.sh     # wire hooks into ~/.claude/settings.json
-bash scripts/doctor.sh            # Linux / WSL2: profile auto
+bash hosts/claude/bin/install-guards.sh --repo-root "$PWD" # wire Claude hooks
+bash runtime/bin/doctor.sh        # Linux / WSL2: profile auto
 bash uninstall.sh                 # confirm clean removal, no leftover managed dirs
 ```
 
+For upgrades that relocate managed hook targets, run `bash install.sh` immediately
+after `git pull` and before starting a new Claude, Codex, or OpenCode session. The
+installer refreshes host configuration to canonical owner paths; doctor fails loud
+when an older configured command target is missing or no longer executable.
+
 - [ ] `install.sh --verify` completes, managed dirs/symlinks created; `pmctl` resolvable on PATH.
+- [ ] Upgrade install was re-run after pulling; a second `install.sh --dry-run`
+      reports all selected hosts already wired with no conflicts.
 - [ ] `doctor.sh` reports **0 FAIL**.
 - [ ] `uninstall.sh` removes everything it installed (no dangling links, no leftover
       `agents/`, `commands/`, `skills/`, `scripts/`, `share/`, or `adapters/` under
@@ -114,9 +121,9 @@ GO`) instead of 0 (`GO`). A `PARTIAL GO` is **not** sufficient for release sign-
 
 To run them independently:
 ```bash
-bash scripts/test-e2e.sh                    # auto-detect adapter
-bash scripts/test-e2e.sh --adapter claude   # force claude for dispatch (Phase B only)
-bash scripts/test-e2e.sh --skip-gate        # dispatch only, explicitly skip Phase C
+bash tests/shell/test-e2e.sh                    # auto-detect adapter
+bash tests/shell/test-e2e.sh --adapter claude   # force claude for dispatch (Phase B only)
+bash tests/shell/test-e2e.sh --skip-gate        # dispatch only, explicitly skip Phase C
 ```
 
 - [ ] `test-e2e.sh` (or `release-verify.sh --e2e`) exits 0 (`GO`) **with Phase C PASS** on a codex-enabled Linux/WSL2 machine.

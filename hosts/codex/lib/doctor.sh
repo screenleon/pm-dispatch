@@ -3,7 +3,7 @@
 # Sourceable codex-host doctor module.
 #
 # Host-specific doctor probes for the codex host (Codex CLI as the PM runtime).
-# Sourced by scripts/doctor.sh's manifest-driven host-module loader; never
+# Sourced by runtime/bin/doctor.sh's manifest-driven host-module loader; never
 # executed standalone. The loader calls
 # doctor_host_codex_run() — the single required entry point of the host-module
 # interface. emit_check/emit_capability and codex_available come from doctor.sh.
@@ -36,6 +36,38 @@
 # foreign entries must report as unwired here too, matching
 # _doctor_host_codex_manifest_parity's determination (the two probes must
 # never disagree about the same underlying fact).
+_doctor_host_codex_broken_hook_targets() {
+  local hooks_file="$1" command_path
+  while IFS= read -r command_path; do
+    [[ -n "$command_path" && ! -x "$command_path" ]] && printf '%s\n' "$command_path"
+  done < <(jq -r --arg repo_root "$REPO_ROOT" '
+    def normalize_path:
+      gsub("\\\\(?<c>[^A-Za-z0-9])"; .c)
+      | if test("^[A-Za-z]:[/\\\\]") then
+          "/" + (.[0:1] | ascii_downcase) + "/" + (.[3:] | gsub("\\\\"; "/"))
+        else gsub("\\\\"; "/") end;
+    [
+      ((.hooks // {}) | .PreToolUse[]? | (.hooks // [])[]?),
+      ((.hooks // {}) | .UserPromptSubmit[]? | (.hooks // [])[]?),
+      ((.hooks // {}) | .Stop[]? | (.hooks // [])[]?)
+    ]
+    | map(
+        (.command? // "" | normalize_path
+          | sub(" --host codex$"; "")) as $path
+        | select($path | startswith(($repo_root | normalize_path) + "/"))
+        | select(
+            (($path | split("/") | last) | IN(
+              "command-guard.sh", "hook-codex-command-guard.sh",
+              "guard-inject-memory.sh", "guard-session-summary.sh"
+            )) and
+            (($path | split("/") | .[-2]) | IN("hooks", "scripts"))
+          )
+        | $path
+      )
+    | unique[]
+  ' "$hooks_file" 2>/dev/null)
+}
+
 _doctor_host_codex_hooks() {
   local codex_home="${CODEX_HOME:-$HOME/.codex}"
   if [[ -f "$codex_home/hooks.json" ]]; then
@@ -44,6 +76,18 @@ _doctor_host_codex_hooks() {
         host_hook none none evolving probed \
         "codex hooks.json exists but is not valid JSON ($codex_home/hooks.json)"
       return
+    fi
+    local -a broken_targets=()
+    local broken_target
+    while IFS= read -r broken_target; do
+      [[ -n "$broken_target" ]] && broken_targets+=("$broken_target")
+    done < <(_doctor_host_codex_broken_hook_targets "$codex_home/hooks.json")
+    if [[ "${#broken_targets[@]}" -gt 0 ]]; then
+      emit_check host.codex.hook-targets fail \
+        "configured hook target missing or not executable: ${broken_targets[0]}" \
+        "bash '${REPO_ROOT}/install.sh' --enable-host codex"
+    else
+      emit_check host.codex.hook-targets ok "configured pm-dispatch hook targets are executable"
     fi
     if _doctor_host_codex_hook_present "$codex_home/hooks.json" command_guard; then
       emit_capability host.codex.hooks ok codex command_guard \
@@ -89,10 +133,10 @@ _doctor_host_codex_hook_present() {
       legacy_command_q="$(printf '%q' "$legacy_command")"
       event="PreToolUse"; matcher="Bash" ;;
     memory_injection)
-      command="$REPO_ROOT/scripts/guard-inject-memory.sh"; event="UserPromptSubmit" ;;
+      command="$REPO_ROOT/runtime/hooks/guard-inject-memory.sh"; event="UserPromptSubmit" ;;
     session_lifecycle)
-      command="$REPO_ROOT/scripts/guard-session-summary.sh --host codex"
-      command_q="$(printf '%q' "$REPO_ROOT/scripts/guard-session-summary.sh") --host codex"
+      command="$REPO_ROOT/runtime/hooks/guard-session-summary.sh --host codex"
+      command_q="$(printf '%q' "$REPO_ROOT/runtime/hooks/guard-session-summary.sh") --host codex"
       event="Stop"
       ;;
     *) return 1 ;;
@@ -150,7 +194,7 @@ _doctor_host_codex_target_installed() {
 _doctor_host_codex_manifest_parity() {
   if [[ "${_HOST_MANIFEST_AVAILABLE:-0}" -ne 1 ]]; then
     emit_check host.codex.manifest-parity warn \
-      "scripts/lib/host-manifest.sh unavailable — cannot check declared-vs-installed parity"
+      "runtime/lib/host-manifest.sh unavailable — cannot check declared-vs-installed parity"
     return
   fi
   local manifest="$REPO_ROOT/hosts/codex/host.yaml"

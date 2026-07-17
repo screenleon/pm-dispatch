@@ -46,7 +46,7 @@ behaves as a dispatched executor.
   configuration error and fail before mutation.
 
 Executor usage logging follows the same separation of axes. Both Claude and
-Codex adapters copy the repo-owned `scripts/log-usage.sh` into their immutable
+Codex adapters copy the repo-owned `ops/usage/log-usage.sh` into their immutable
 self-snapshot and use that snapshot-local copy by default;
 `PM_CFG_USAGE_LOG_PATH` remains the highest-priority explicit override. The
 default executable path therefore does not depend on a Claude host install at
