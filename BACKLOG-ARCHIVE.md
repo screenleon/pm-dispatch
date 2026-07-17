@@ -5953,3 +5953,16 @@ CC-014 worktree lane, not by hand.
 **See**: pr:#407
 
 **Source**: 2026-07-15 清理 PR #406 合併後的 local branches 時，repo guard 兩次攔下已確認風險的 `git branch -D`；第二次已使用提示指定的 inline `PM_GUARD_PM_BASH=off`，仍因 Codex hook transport 時序而被拒絕。
+## CC-486 — direct-impact planner 未註冊 suite 觸發 `set -e` 提前退出 ✅ done 2026-07-14
+
+**Problem**: `scripts/run-tests.sh --base origin/main --list` 在 changed paths 含 `agents/*.md` 或 `commands/*.md` 時，`map_path` 會呼叫 `add_suite lint-frontmatter`；但 `test-suite-runner.sh --list` 沒有註冊該 suite。`add_suite` 的最後一個條件式因此回傳 1，頂層 `set -e` 直接終止，沒有 planner diagnostics，exit 1。
+
+**Acceptance**: 未註冊的 optional mapping 不得讓 planner 提前退出；應修正 mapping 名稱或讓 `add_suite` 明確 return 0，並新增包含 agent/command changed path 的 regression，確認 `--list` 輸出已選 suites、coverage gaps 與 exit 0。不得藉此弱化「沒有任何可用 suite 時 exit 2」的既有契約。
+
+**Evidence**: CC-483 收尾時以 `bash -x scripts/run-tests.sh --base origin/main --list` 重現；trace 停在 `add_suite lint-frontmatter` 的 `[[ -n '' ]]`。同一批 CC-483 focused suites與 lint 均綠，故此項獨立追蹤，不視為 CC-483 產品 regression。
+
+**Outcome**: PR #400 將 agent/command/skill mappings 全部改用 canonical registered suite `test-lint-frontmatter`，並為三種 path 各補 `--list` regression；unknown path 無 evidence 仍維持 exit 2。2026-07-17 在 canonical `tests/shell/test-run-tests.sh` 重驗 18 passed、0 failed。
+
+**See**: pr:#400
+
+---

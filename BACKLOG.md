@@ -19,7 +19,6 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-462 | 🟢 someday | e2e 可拋棄資源紀律：前綴命名 + registry JSON + result artifact；掛在 CC-449 e2e 新 phase 之後，與 CC-447 live smoke 共用同一 registry（2026-07-07 openyida 跨專案分析） | ops/test | 2026-07-07 | — | P3 | — |
 | CC-463 | 🟢 someday | `pmctl batch` 泛用批次執行原語；依賴 CC-460（合法性驗證來源）；新注入面須過 security-reviewer（2026-07-07 openyida 跨專案分析） | arch/process | 2026-07-07 | — | P3 | design |
 | CC-464 | 🟢 someday | `pmctl ticket draft --from <notes>`：隨手筆記→結構化 backlog 票草稿；依賴 CC-286（prefix-generic next-id，⏸ deferred 尚未排程）；review-first 邊界獨立設計，CC-054 僅供鬆散參照非直接前例（2026-07-07 openyida 跨專案分析） | ux/process | 2026-07-07 | — | P3 | — |
-| CC-486 | ⏸ deferred | direct-impact test planner mapping 提前退出：changed path 含 `agents/*.md`／`commands/*.md` 時 `map_path` 呼叫未註冊的 `lint-frontmatter`，`add_suite` 回傳 1 並在 `set -e` 下無輸出終止，導致 `run-tests.sh --base ... --list` exit 1 | ops/test | 2026-07-13 | feedback:2026-07-13 | P2 | hygiene |
 | CC-493 | 🟢 someday | Prompt→Skill→Command→Harness 升級規則文件化：可測試的分類判準（何時停在 prompt、何時升為 skill、何時做成 command、何時需要 harness-level hook/guard/state），並盤點 `commands/`／`skills/`／`agents/` 現況對照分類（2026-07-15 CC-489 三方 multi-model synthesis） | process/docs | 2026-07-15 | feedback:2026-07-15 | P2 | design |
 | CC-494 | 🟢 someday | design: executor 局部設計裁量權 envelope——在 dispatch brief / executor contract 定義「可自行處理的局部設計」與「必須 halt 回報 PM」的邊界（例如新增 schema 欄位 `design_latitude`/`architectural_conflicts`）；三方 multi-model synthesis 2:1 分歧（codex/fable 認為現行邊界過度僵硬需要新機制，opencode 認為現行 `isolation_level`/executor 欄位已足夠彈性），本票僅追蹤決策、不預設結論（2026-07-15） | schema/process | 2026-07-15 | feedback:2026-07-15 | P3 | design |
 | CC-495 | 🔵 active | `pmctl dispatch cancel <run_id>`：可信任的 detached-run cancel terminalization、PID reuse 防護、cancel-vs-complete 單一終態、authenticated cancelled sentinel | arch/gate | 2026-07-15 | feedback:2026-07-15 | P1 | design |
@@ -321,16 +320,6 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 **Dependencies**: [[CC-286]]（⏸ deferred，尚未排程）。
 **Source**: 2026-07-07 openyida 跨專案分析——`flash-to-prd` 模式。
-
----
-
-## CC-486 — direct-impact planner 未註冊 suite 觸發 `set -e` 提前退出 ⏸ deferred
-
-**Problem**: `scripts/run-tests.sh --base origin/main --list` 在 changed paths 含 `agents/*.md` 或 `commands/*.md` 時，`map_path` 會呼叫 `add_suite lint-frontmatter`；但 `test-suite-runner.sh --list` 沒有註冊該 suite。`add_suite` 的最後一個條件式因此回傳 1，頂層 `set -e` 直接終止，沒有 planner diagnostics，exit 1。
-
-**Acceptance**: 未註冊的 optional mapping 不得讓 planner 提前退出；應修正 mapping 名稱或讓 `add_suite` 明確 return 0，並新增包含 agent/command changed path 的 regression，確認 `--list` 輸出已選 suites、coverage gaps 與 exit 0。不得藉此弱化「沒有任何可用 suite 時 exit 2」的既有契約。
-
-**Evidence**: CC-483 收尾時以 `bash -x scripts/run-tests.sh --base origin/main --list` 重現；trace 停在 `add_suite lint-frontmatter` 的 `[[ -n '' ]]`。同一批 CC-483 focused suites與 lint 均綠，故此項獨立追蹤，不視為 CC-483 產品 regression。
 
 ---
 

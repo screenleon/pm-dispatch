@@ -225,7 +225,7 @@
 | CC-004 / pr:#369 | `test-pr-gate.sh` docstring 統一與 docstring ratchet | ✅ |
 | pr:#376 | docs-freshness milestone heading-only regression 修復 | ✅ |
 | pr:#386 | 19 張 terminal backlog tickets canonical archive sweep | ✅ |
-| pr:#400 | affected-test registered-suite selection 與 maintainability-review/gate workflow ordering hardening | ✅（殘餘 planner bug留 CC-486） |
+| CC-486 / pr:#400 | affected-test registered-suite selection、agent/command/skill regression 與 maintainability-review/gate workflow ordering hardening | ✅ |
 
 ### Phase 6 — migration surface closure（目前 working set）
 
