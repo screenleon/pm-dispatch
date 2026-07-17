@@ -22,7 +22,6 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-493 | 🟢 someday | Prompt→Skill→Command→Harness 升級規則文件化：可測試的分類判準（何時停在 prompt、何時升為 skill、何時做成 command、何時需要 harness-level hook/guard/state），並盤點 `commands/`／`skills/`／`agents/` 現況對照分類（2026-07-15 CC-489 三方 multi-model synthesis） | process/docs | 2026-07-15 | feedback:2026-07-15 | P2 | design |
 | CC-494 | 🟢 someday | design: executor 局部設計裁量權 envelope——在 dispatch brief / executor contract 定義「可自行處理的局部設計」與「必須 halt 回報 PM」的邊界（例如新增 schema 欄位 `design_latitude`/`architectural_conflicts`）；三方 multi-model synthesis 2:1 分歧（codex/fable 認為現行邊界過度僵硬需要新機制，opencode 認為現行 `isolation_level`/executor 欄位已足夠彈性），本票僅追蹤決策、不預設結論（2026-07-15） | schema/process | 2026-07-15 | feedback:2026-07-15 | P3 | design |
 | CC-495 | 🔵 active | `pmctl dispatch cancel <run_id>`：可信任的 detached-run cancel terminalization、PID reuse 防護、cancel-vs-complete 單一終態、authenticated cancelled sentinel | arch/gate | 2026-07-15 | feedback:2026-07-15 | P1 | design |
-| CC-497 | 🔵 active | CC-489 遷移後收口：canonical paths、文件、backlog、release metadata 與 stale-reference ratchet | arch/docs | 2026-07-17 | — | P1 | design |
 | CC-498 | 🔵 active | State compatibility surface：status、layout/entity 版本命名、真實 migration availability | arch/schema | 2026-07-17 | — | P1 | design |
 | CC-499 | ⏸ deferred | Detached run reconciliation：crash、reboot、stale sentinel、PID identity 與 orphan recovery | arch/ops | 2026-07-17 | — | P2 | design |
 | CC-500 | ⏸ deferred | State single-writer boundary enforcement：all-production-domain direct-writer ratchet | arch/test | 2026-07-17 | — | P2 | design |
@@ -1417,22 +1416,6 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 **Source**: 2026-07-15 使用者在 CC-489 三方 multi-model synthesis 收斂後，回想起「pmctl executor 相關內容目前沒有停止的行為」並要求確認；經查 `core/policy/dispatch-states.yaml`、`core/schema/run.schema.json`、`runtime/lib/pmctl-dispatch.sh` 確認 `cancelled` 狀態存在於 policy 但無任何實作，`.supervisor.pid` 未被任何子命令消費。使用者明確要求以 `cancel`（而非 `stop`）作為指令名稱，理由是中途終止的 run 不具備可恢復語意。
 
 **Cross-link**: [[CC-470]]（既有逾時止血 kill 機制可沿用）、[[CC-487]]（孤兒 process 殘留的既有觀察案例）、[[CC-489]]（三方 multi-model synthesis 脈絡）、`docs/executor-contract.md`。
-
-## CC-497 — CC-489 遷移後收口：canonical paths、文件、backlog、CI ratchet 🔵 active
-
-**Problem**: CC-489 已完成 151 個 implementation/fixture path 遷移，但 README、core docs、MILESTONES、RELEASE_CHECKLIST、CI 與 active backlog 仍有搬遷前 `scripts/` implementation 假設。19 個 compatibility shims 暫時讓舊入口可跑，卻也掩蓋產品表面漂移。
-
-**Requirement**:
-1. 以 CC-489 domain inventory 為來源，掃描 README、`docs/`、active backlog、MILESTONES、CI、installer/doctor/help operational text。
-2. current operational instructions 改指 canonical `runtime/`、`tests/`、`tools/`、`ops/`、`hosts/`；舊 implementation path 只允許出現在 archive/history、migration/compatibility 說明與 inventory-declared shim parity tests。
-3. stale-path lint 必須能區分 repo 舊 `scripts/...` implementation、合法 `pm/scripts/...`、installed `~/.claude/scripts/...` 與 19 個明列 shims；不得用粗糙字串禁令製造誤報。
-4. `RELEASE_CHECKLIST.md` 不再硬編 suite 數量，改引用 canonical registry/「全部 registered suites」契約。
-5. 更新 MILESTONES、README layout、`core/README.md` writer layer 用詞與 active backlog path；terminal tickets 由 canonical archive tool 移出 working set。
-6. 與 [[CC-454]] 分工：本票只保證 canonical path/reference coverage；ShellCheck 實際 domain coverage/ignore ratchet 由 CC-454 負責。
-
-**Done-when**: operational surface 與 current tree 一致；注入 stale `scripts/lib/...` implementation reference 時 lint fail；合法 shim/history/installed-path fixture 不誤報；release suite 數量不再手工漂移。
-
-**Priority/Milestone**: P1，v0.9.0 NOW。
 
 ## CC-498 — State compatibility surface：status、版本命名、migration registry 🔵 active
 

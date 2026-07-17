@@ -5966,3 +5966,20 @@ CC-014 worktree lane, not by hand.
 **See**: pr:#400
 
 ---
+## CC-497 — CC-489 遷移後收口：canonical paths、文件、backlog、CI ratchet ✅ closed 2026-07-17
+
+**Problem**: CC-489 已完成 151 個 implementation/fixture path 遷移，但 README、core docs、MILESTONES、RELEASE_CHECKLIST、CI 與 active backlog 仍有搬遷前 `scripts/` implementation 假設。19 個 compatibility shims 暫時讓舊入口可跑，卻也掩蓋產品表面漂移。
+
+**Requirement**:
+1. 以 CC-489 domain inventory 為來源，掃描 README、`docs/`、active backlog、MILESTONES、CI、installer/doctor/help operational text。
+2. current operational instructions 改指 canonical `runtime/`、`tests/`、`tools/`、`ops/`、`hosts/`；舊 implementation path 只允許出現在 archive/history、migration/compatibility 說明與 inventory-declared shim parity tests。
+3. stale-path lint 必須能區分 repo 舊 `scripts/...` implementation、合法 `pm/scripts/...`、installed `~/.claude/scripts/...` 與 19 個明列 shims；不得用粗糙字串禁令製造誤報。
+4. `RELEASE_CHECKLIST.md` 不再硬編 suite 數量，改引用 canonical registry/「全部 registered suites」契約。
+5. 更新 MILESTONES、README layout、`core/README.md` writer layer 用詞與 active backlog path；terminal tickets 由 canonical archive tool 移出 working set。
+6. 與 [[CC-454]] 分工：本票只保證 canonical path/reference coverage；ShellCheck 實際 domain coverage/ignore ratchet 由 CC-454 負責。
+
+**Done-when**: operational surface 與 current tree 一致；注入 stale `scripts/lib/...` implementation reference 時 lint fail；合法 shim/history/installed-path fixture 不誤報；release suite 數量不再手工漂移。
+
+**Priority/Milestone**: P1，v0.9.0 NOW。
+
+**Outcome**: PR #417 將 operational docs、active backlog、milestone 與 release metadata 收斂到 canonical owner-domain paths；既有 inventory linter 新增 inventory-derived stale-reference ratchet 與 consumer-scoped compatibility allowlist，並納入 affected-suite planning 與 CI。首次 PR gate 前已完成重構／重用審查；最終 gate GO，full suite 79 passed、0 failed、0 skipped。
