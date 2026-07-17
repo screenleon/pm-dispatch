@@ -28,5 +28,5 @@ claude_host_config_root() {
 claude_host_resolve_path() {
   local path="$1" root
   root="$(claude_host_config_root)" || return $?
-  host_manifest_expand_root_template claude '$CLAUDE_CONFIG_DIR' "$root" "$path"
+  host_manifest_expand_root_template claude "\$CLAUDE_CONFIG_DIR" "$root" "$path"
 }

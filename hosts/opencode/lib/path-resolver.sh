@@ -20,5 +20,5 @@ opencode_host_config_root() {
 opencode_host_resolve_path() {
   local path="$1" root
   root="$(opencode_host_config_root)" || return $?
-  host_manifest_expand_root_template opencode '$XDG_CONFIG_HOME' "$root" "$path"
+  host_manifest_expand_root_template opencode "\$XDG_CONFIG_HOME" "$root" "$path"
 }

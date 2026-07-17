@@ -20,5 +20,5 @@ codex_host_config_root() {
 codex_host_resolve_path() {
   local path="$1" root
   root="$(codex_host_config_root)" || return $?
-  host_manifest_expand_root_template codex '$CODEX_HOME' "$root" "$path"
+  host_manifest_expand_root_template codex "\$CODEX_HOME" "$root" "$path"
 }
