@@ -82,7 +82,14 @@
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
+| CC-504 | manifest-driven multi-host lifecycle，移除 Claude base-spine 特例 | 🔵 |
 | CC-447 | offline clean install + latest released tag→current N-1 upgrade；foreign config/memory/user data 不變 | 🔵 |
+
+### Phase 3 — shared tooling/hooks host boundary
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-503 | canonical memory/payload/log roots + shared-layer content ratchet | 🔵（依賴 CC-502 pattern） |
 
 ### 待後續 / 明確排除
 
@@ -227,6 +234,13 @@
 |----|------|------|
 | CC-460 | root/area/leaf help、command registry、`commands --json`、router/help/README parity | 🔵 |
 
+### Phase 8 — release migration evidence + host-boundary blocker（目前 working set）
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-502 | shared gate/reviewer移除 `.claude` asset與memory前置 | 🔵 P1 blocker |
+| CC-501 | v0.8.0→v0.9 candidate install/upgrade/doctor/uninstall preservation smoke | 🔵 P1 acceptance |
+
 ### Parallel audit（不阻塞 Phase 6/7）
 
 | 票 | 摘要 | 狀態 |
@@ -236,6 +250,7 @@
 ### 待後續 / 明確排除
 
 - CC-495/498 之後的 lifecycle/state 能力不塞入 v0.9.0。
+- CC-503/504 的全面 shared hook/tooling與 host lifecycle收斂留 v0.12.0；v0.9只處理 CC-502 gate blocker與 CC-501一次性 migration evidence。
 - public posture、contract freeze、RC 與 v1.0 tag 均不屬本版。
 - Phase 0–5 只記錄已合併 baseline，不重新開工、不占用 Current working set。
 
