@@ -84,6 +84,7 @@ SUITE_NAMES=(
   test-pmctl-validate
   test-brief-validate
   test-archive-closed-backlog
+  test-lint-shellcheck
   test-script-domain-inventory
   test-pmctl-context
   test-pmctl-memory
@@ -168,6 +169,7 @@ declare -A SUITE_PATHS=(
   [test-pmctl-validate]="tests/shell/test-pmctl-validate.sh"
   [test-brief-validate]="tests/shell/test-brief-validate.sh"
   [test-archive-closed-backlog]="tests/shell/test-archive-closed-backlog.sh"
+  [test-lint-shellcheck]="tests/shell/test-lint-shellcheck.sh"
   [test-script-domain-inventory]="tests/shell/test-script-domain-inventory.sh"
   [test-pmctl-context]="tests/shell/test-pmctl-context.sh"
   [test-pmctl-memory]="tests/shell/test-pmctl-memory.sh"

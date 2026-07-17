@@ -187,6 +187,8 @@ map_path() {
   esac
 
   case "$path" in
+    tools/lint/lint-shellcheck.sh|tools/lint/shellcheck-domains.tsv|tools/lint/shellcheck-ignores.tsv|tests/shell/test-lint-shellcheck.sh)
+      add_suite lint-scripts; add_suite test-lint-shellcheck; behavioral=1 ;;
     tools/lint/lint-script-domain-inventory.sh|tests/shell/test-script-domain-inventory.sh|docs/architecture/script-domain-ownership.md|docs/architecture/script-domain-inventory.tsv|docs/architecture/script-domain-reference-allowlist.tsv|docs/architecture/script-variable-inventory.tsv|docs/architecture/script-variable-consumers.tsv)
       add_suite lint-script-domain-inventory; add_suite test-script-domain-inventory; behavioral=1 ;;
     tools/lint/lint-portable-repo-paths.sh|tests/shell/test-lint-portable-repo-paths.sh|runtime/lib/repo-layout.sh)
@@ -274,7 +276,7 @@ map_path() {
     README.md|CHANGELOG.md|docs/*)
       add_suite test-check-docs-freshness; behavioral=1 ;;
     .github/*)
-      add_suite lint-scripts; behavioral=1 ;;
+      add_suite lint-scripts; add_suite test-lint-shellcheck; behavioral=1 ;;
   esac
 
   [[ "$behavioral" -eq 1 ]] || COVERAGE_GAPS["$path"]=1
