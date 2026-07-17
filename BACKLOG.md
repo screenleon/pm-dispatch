@@ -24,6 +24,10 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-498 | 🔵 active | State compatibility surface：status、layout/entity 版本命名、真實 migration availability | arch/schema | 2026-07-17 | — | P1 | design |
 | CC-499 | ⏸ deferred | Detached run reconciliation：crash、reboot、stale sentinel、PID identity 與 orphan recovery | arch/ops | 2026-07-17 | — | P2 | design |
 | CC-500 | ⏸ deferred | State single-writer boundary enforcement：all-production-domain direct-writer ratchet | arch/test | 2026-07-17 | — | P2 | design |
+| CC-501 | 🔵 active | v0.8.0→v0.9 candidate 一次性 upgrade smoke：三 host managed path refresh、doctor 0 FAIL、foreign config/canonical memory byte preservation | release/test | 2026-07-17 | — | P1 | hygiene |
+| CC-502 | 🔵 active | shared gate/reviewer 去除 Claude-host 隱性前置：repo-owned reviewer definitions + canonical memory contract + 非 Claude HOME regression | arch/gate | 2026-07-17 | — | P1 | design |
+| CC-503 | 🔵 active | shared tooling/hooks host-boundary 收斂：skill-refine canonical memory、prompt payload adapter、state-root audit log、content ratchet | arch/hook | 2026-07-17 | — | P2 | hygiene |
+| CC-504 | 🔵 active | top-level install/uninstall/doctor 移除 Claude base-spine 特例，建立 manifest-driven multi-host lifecycle 與 product-asset ownership | arch/install | 2026-07-17 | — | P2 | design |
 | CC-465 | 🔵 active | memory/context 關鍵詞管線 CJK 支援：抽出共用零依賴斷詞 lib，取代三處各自 ASCII-only 抽詞；工作序列起點（465→467→468→466）（2026-07-07 記憶系統深入分析） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-466 | ⏸ deferred | 記憶卡片生命週期閉環：expires_at 執行 + 關窗式 supersede + usage sidecar 休眠偵測 + doctor→distill 接線；僅在 CC-467 證明 stale/dormant card 已形成實際問題時啟動 | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-467 | 🔵 active | `pmctl memory stats`：注入效益可視化（唯讀聚合器）——注入 bytes/卡片命中分佈/從未命中卡/episode 填寫率，回答「記憶有跟沒有差在哪」；排在 CC-466 之前（2026-07-07；業界僅離線 recall 評測，無 per-injection 遙測） | DX/memory | 2026-07-07 | — | P2 | retrieval |
@@ -1433,3 +1437,72 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 **Done-when**: single-writer invariant 從文件宣言變成 all-production-domain ratchet，且新增旁路 writer 無法只靠 code review 混入。
 
 **Dependencies**: [[CC-498]] 可先行；可作其第二 PR，但不併入 [[CC-497]]。P2，v0.11.0。
+
+## CC-501 — v0.8.0→v0.9 candidate 一次性 upgrade smoke 🔵 active
+
+**Problem**: v0.8.0 之後完成 host manifest、151 個 script domain 搬遷、canonical memory continuity、portable repos-root 與 stale-path ratchet，但目前 release evidence 只驗 current tree 的 fresh install/unit behavior，沒有證明既有 v0.8.0 使用者重跑 v0.9 installer 時會把 managed targets refresh 到 canonical owner paths，也沒有證明 uninstall 不會誤傷 foreign config 或 canonical memory。
+
+**Why**: 這是一次特殊的大型遷移風險，不能等到 [[CC-447]] 在 v0.12.0 建立通用 N-1 contract 才第一次驗證。另一方面，本票只驗 v0.8.0→v0.9 candidate，不提前吞入 CC-447 的 future-release automation、clean-machine onboarding 或 live dogfood。
+
+**Requirement**:
+1. 以 tag `v0.8.0` 與待發布 v0.9 candidate 的兩個獨立 checkout/worktree 執行；記錄兩端 commit SHA。
+2. 測試環境必須覆蓋整個隔離 `HOME`，並顯式隔離 `CLAUDE_CONFIG_DIR`、`CODEX_HOME`、`XDG_CONFIG_HOME`、`PMCTL_BIN_DIR`、state/telemetry roots；不得只換 host home 後仍碰真實 `~/.local/bin/pmctl` 或 operator state。
+3. v0.8.0 install 後建立代表性的 Claude/Codex/OpenCode managed config，同時在各 config 寫入 foreign marker；建立 project-scoped canonical memory fixture並保存 config、memory、使用者資料 checksum。
+4. 以相同隔離環境切換到 v0.9 candidate 重跑 install；要求 `doctor --json` 0 FAIL、三 host managed target 指向 candidate canonical owner paths、retired `scripts/` implementation targets 不再被 active config 引用，第二次 dry-run 冪等。
+5. 執行 candidate uninstall；只移除 manifest-owned artifacts，foreign hooks/config、canonical memory、使用者資料與非本專案 managed block 必須 byte-identical。
+6. 產出可追溯 artifact，至少含 baseline/candidate SHA、每階段 exit status、doctor summary、old→new target assertion 與 preservation checksum；任一 FAIL 都阻擋 v0.9 release。
+
+**Done-when**: v0.8.0→v0.9 candidate 在隔離環境完成 install→upgrade→doctor→uninstall，doctor 0 FAIL、所有 retired target 已 refresh、foreign config/canonical memory checksum 不變，且結果 artifact 可由 maintainer 重跑。
+
+**Dependencies**: [[CC-454]] 與 [[CC-502]] 完成後執行最終 candidate smoke；[[CC-497]]、[[CC-456]] 已完成且只作 baseline，不重新開票。完成本票不取代 [[CC-447]]。P1，v0.9.0 release acceptance。
+
+## CC-502 — shared gate/reviewer 去除 Claude-host 隱性前置 🔵 active
+
+**Problem**: `runtime/bin/pr-gate.sh` 是 shared gate runtime，卻無條件從 `$HOME/.claude/agents` 載入 reviewer definitions；同一批 reviewer definition 會交給 Codex 與 Claude executor，但 `agents/critic.md`、`agents/architecture-reviewer.md` 又直接要求讀 `~/.claude/projects/<id>/memory/...`。結果是 Codex/OpenCode 作 PM host 或乾淨非 Claude HOME 即使具備 repo checkout、pmctl 與 executor auth，仍被 Claude installation tree 與 Claude memory layout 隱性綁住。
+
+**Why**: v0.9 已把 host manifest、canonical memory 與 executor adapter 宣告成正交軸；shared gate 仍依賴 Claude host root，會讓該承諾在最重要的 release gate 路徑失真。這也是 [[CC-501]] upgrade smoke 若只在 maintainer HOME 通過就會漏掉的環境污染。
+
+**Requirement**:
+1. reviewer definitions 以 repo-owned source或明確 resolver/參數取得；shared gate 不得把 `$HOME/.claude/agents` 當 default 或 prerequisite。若需要 snapshot，仍只把本次選中的 immutable definitions 複製到 reviewed workspace artifact dir。
+2. reviewer memory 指令改消費 gate/preparation 提供的 canonical memory provenance/context，或走 `pmctl memory/context` read surface；不得推導另一個 host-local path，也不得在 canonical resolution invalid 時 fallback。
+3. 明確區分 host 與 executor：Claude executor 可保留 adapter-specific 行為，但選擇 Codex executor或 Codex/OpenCode PM host 不得要求 Claude config tree存在。
+4. 新增 regression：使用沒有 `.claude/agents` 的隔離 HOME，從 repo checkout 執行 gate preparation/reviewer snapshot；驗證 Codex executor path 能讀 reviewer definitions與 canonical context，且不建立 Claude host目錄。
+5. 新增 targeted content ratchet，阻止 shared gate/reviewer contract 再引入 Claude host config root；允許 executor enum/model/adapter文字，不採全 repo `claude` 字串禁令。
+
+**Done-when**: `pmctl gate run --executor codex` 在非 Claude HOME 不再依賴 `.claude` asset/memory tree；Claude executor parity 保持；focused gate、reviewer、memory regression 與 full suite通過。
+
+**Dependencies**: canonical memory基底由 [[CC-483]]/[[CC-490]] 提供；final candidate須先於 [[CC-501]]。P1，v0.9.0 release blocker。
+
+## CC-503 — shared tooling/hooks host-boundary 收斂 🔵 active
+
+**Problem**: script domain 已依檔案路徑分到 shared runtime、host modules與 tooling，但 content boundary 尚未 ratchet：`tools/skills/skill-refine.sh` 強制 `CLAUDE_MEMORY_DIR`；`runtime/hooks/guard-inject-context.sh` 位於 shared runtime卻解析 Claude UserPromptSubmit payload並 source `hosts/claude`; 多個 shared guard預設 audit log在 `$HOME/.claude/logs`；`guard-pm-write.sh` 把 writable memory root固定為 `$HOME/.claude/projects`。
+
+**Why**: 只搬檔不處理 inputs/defaults/side effects，會讓 shared path 看似通用、實際仍在 Claude host才成立。這些問題不應與 [[CC-502]] 的 release-blocking gate路徑混修，也不應順手擴張 [[CC-054]] 的 diff-generation產品範圍。
+
+**Requirement**:
+1. `/skill-refine` 與 bundler透過 canonical `pmctl memory dir/resolve` 取得 project memory；`PM_MEMORY_DIR`/project config precedence與 invalid-explicit fail-closed沿用單一 resolver，`CLAUDE_MEMORY_DIR` 僅能作有期限的 compatibility seam或移除。
+2. prompt-time context injection拆成 host payload adapter與 shared prompt-scan primitive；Claude payload/timeouts歸 `hosts/claude`，shared primitive只接收正規化 cwd/prompt/repo input。
+3. shared guard audit log預設改由 canonical state/log resolver或 host binding顯式傳入；不得在非 Claude host side effect建立 `.claude` tree。
+4. PM write policy若仍允許 memory writes，必須依 canonical resolved memory root判定；invalid explicit selection fail-closed，symlink/escape安全不降級。若 canonical writer已取代 direct edit，明文縮小或移除該 allow rule。
+5. 建立 content ratchet：shared runtime/tooling不得直接 source `hosts/<name>`、使用 host config root作通用 default，或把單一 host env當唯一 API；bounded allowlist每列需 owner、理由、consumer與退場條件。
+
+**Done-when**: 上述 shared consumers在 Claude/Codex/OpenCode host fixture下使用同一 canonical input/output contract；host-specific parsing只存在 host module；content ratchet有正反注入測試並接入 CI/full runner。
+
+**Dependencies**: [[CC-502]] 先建立 gate/reviewer pattern；[[CC-054]] 保持 deferred且只處理 review-first diff generation。P2，v0.12.0 host-boundary closure。
+
+## CC-504 — manifest-driven multi-host lifecycle，移除 Claude base-spine 特例 🔵 active
+
+**Problem**: host manifests已能為 Claude/Codex/OpenCode宣告 install/uninstall/doctor modules，但頂層 `install.sh`、`uninstall.sh` 與 `runtime/bin/doctor.sh` 的 base orchestration仍先解析 Claude config root、把 product assets/manifest放進 Claude tree，其他 host再作附加 wiring；copy-mode doctor也保留 Claude-specific fallback。Codex/OpenCode-only環境因此仍無法形成真正獨立的 product lifecycle。
+
+**Why**: 這是文件已承認的 transitional compatibility path，不能在 v0.9 release前以全面重構方式臨時擴 scope；但 [[CC-447]] 要建立可長期沿用的 multi-host N-1 upgrade proof前，必須先決定 product-owned assets、host-owned config與 shared state各自的 canonical owner，否則每版 smoke都會固化 Claude特例。
+
+**Requirement**:
+1. 盤點頂層 installer/uninstaller/doctor的 product assets、host bindings、shared CLI/state與 compatibility ABI，定義不依賴任一 host home的 ownership graph。
+2. top-level lifecycle以 manifest-selected modules協調所有 selected hosts；Claude與Codex/OpenCode使用同一 dispatch contract，無隱含 base host。Codex/OpenCode-only install不得建立或要求 `.claude`。
+3. install manifest移到 product-owned canonical location，或定義可證明安全的 per-host manifest aggregation；uninstall只移除各 owner宣告的 artifacts並保留 foreign content。
+4. doctor core只做 shared checks與 manifest module dispatch；host binary/auth/config/hook remediation留在 `hosts/<name>`，移除 Claude copy-mode business logic或把它降為明列、有退場條件的 compatibility wrapper。
+5. 保留既有 installed helper ABI所需的 bounded shims，並提供 old Claude-base install到新 lifecycle的 upgrade/migration path；不得用 clean-install-only重構破壞既有使用者。
+
+**Done-when**: 三個 host可各自或組合 install→doctor→uninstall；未選 host零 config side effect；foreign config與canonical memory preserved；[[CC-447]] 可在同一 lifecycle contract上執行 future N-1 upgrade而不特判 Claude base tree。
+
+**Dependencies**: 以 [[CC-501]] 的一次性 evidence作現況輸入，與 [[CC-503]] 的 shared content boundary協調；在 [[CC-447]] final N-1 contract前完成。P2，v0.12.0。
