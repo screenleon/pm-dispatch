@@ -39,6 +39,8 @@ case "$1" in
     exit $?
     ;;
 esac
+# Global help intentionally wins in these fixed command slots. A literal
+# option-shaped positional value must be passed in a command-specific data slot.
 if [[ $# -eq 2 && ( "$2" == "-h" || "$2" == "--help" ) ]]; then
   pmctl_discovery_help "$1"
   exit $?
