@@ -313,7 +313,7 @@
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-434 | 抽共用 detached-launch lib（`scripts/lib/detached-launch.sh`，7 函式）；dispatch/gate 兩 supervisor + wait 端改共用，行為位元組不變 | ✅ done pr:#356 |
+| CC-434 | 抽共用 detached-launch lib（`runtime/lib/detached-launch.sh`，7 函式）；dispatch/gate 兩 supervisor + wait 端改共用，行為位元組不變 | ✅ done pr:#356 |
 | CC-214 | platform-support.md 手動 uninstall 指令錨定 `PM_DISPATCH_REPO` | ✅ done pr:#362 |
 | CC-439 | `/ship <ticket-id>` command：明確票直接實作到開 PR，pre-flight 一致性檢查 + gate 迴圈收斂 | ✅ done pr:#360 |
 | CC-440 | spike: `/ship` 並行版可行性，五項設計決策收斂（`docs/spikes/CC-440.md`） | ✅ spike done pr:#361 |
@@ -371,8 +371,8 @@
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-420 | adapter 共用 model alias TSV 解析 → `scripts/lib/model-aliases.sh`；claude / codex / opencode 三 adapter ~30 行重複消除 | ✅ pr:#345 |
-| CC-421 | adapter 共用 timeout 優先序邏輯 → `scripts/lib/timeout-resolve.sh`；3 adapter + post-verify ~15 行×4 重複消除 | ✅ pr:#346 |
+| CC-420 | adapter 共用 model alias TSV 解析 → `runtime/lib/model-aliases.sh`；claude / codex / opencode 三 adapter ~30 行重複消除 | ✅ pr:#345 |
+| CC-421 | adapter 共用 timeout 優先序邏輯 → `runtime/lib/timeout-resolve.sh`；3 adapter + post-verify ~15 行×4 重複消除 | ✅ pr:#346 |
 
 > Phase 4 兩張票可獨立 ship，與 Phase 1–3 無依賴。CC-422（dispatch-common.sh）需先 spike 確認邊界，**不排入本版**。
 
@@ -542,7 +542,7 @@
 | CC-392 | **(7a 前置)** claude adapter `runner_kind` 分類漂移修正——manifest 宣告 `host-native` 但 adapter 實跑 headless `claude --print`（[[CC-383]]/[[CC-388]] 後）→ `runner_kind` 不可信、卡住 [[CC-391]] detach 資格推導。傾向定 canonical 為 `cli-subprocess`＋override 保行為不變；security/risk hard gate（不弱化 claude write guard） | ✅ pr:#289 |
 | CC-225 | **(7b durable，可獨立先 ship)** all-executor durable run-state 記錄（brief 路徑 / result 摘要 / exit / post-verify 判定 → repo-tracked，格式對齊 `.gate-results/`）；對齊 [[CC-211]] run-FSM。supervisor 的 durable 半；真 adapter 需要時前拉 | ✅ pr:#295 |
 | CC-397 | **(7b refactor，前置 7c)** `pmctl_dispatch_run` executor tail 抽出為獨立函式 `pmctl_dispatch_execute_tail`；adapter stdout footer 從 mktemp 改為 durable sidecar（`<run_id>.footer`），確保 recovery window 可讀 | ✅ pr:#296 |
-| CC-398 | **(7c-2a)** dispatch lifecycle axis：`--lifecycle foreground\|detached` + config key `dispatch.lifecycle`；detach 資格由 `runner_kind` 推導（cli-subprocess = eligible）；`scripts/dispatch-supervisor.sh` 同步 supervisor；21 個 test-dispatch-lifecycle 案例 | ✅ pr:#297 |
+| CC-398 | **(7c-2a)** dispatch lifecycle axis：`--lifecycle foreground\|detached` + config key `dispatch.lifecycle`；detach 資格由 `runner_kind` 推導（cli-subprocess = eligible）；`runtime/bin/dispatch-supervisor.sh` 同步 supervisor；21 個 test-dispatch-lifecycle 案例 | ✅ pr:#297 |
 | CC-399 | **(7c-2b)** `pmctl dispatch run --lifecycle detached` now launches the supervisor via `setsid`/`nohup`, returns `run_id` immediately, writes advisory supervisor PID/log sidecars. `pmctl dispatch wait <run_id> --cd <dir>` reattaches via the supervisor sentinel (nonce-bearing `/tmp` path, key in per-user private dir); falls back to `.dispatch-results/<run_id>.md` when key is absent. `pmctl inbox`/notify channel remain out of this thin slice. | ✅ pr:#298 |
 | CC-238 | **(7c)** pr-gate fan-out 無 timeout / 弱 attribution：加 reviewer + synthesis 本地 watchdog（SIGTERM-based，per-reviewer attribution）。**設計決策**：`pr-gate.sh` parallel fan-out 直接管理子程序（非走 `pmctl dispatch run`），故 local watchdog 是正確的 ownership boundary；general supervisor（[[CC-399]]）為不同路徑。tradeoff 記錄於 BACKLOG CC-238 body。 | ✅ pr:#300 |
 
@@ -769,7 +769,7 @@
 | CC-288 | `pmctl guard check`（接 CC-204 hook-framework；guard 邏輯共用、觸發方式 per-adapter） | ✅ (#191) |
 | CC-289 | `pmctl dispatch run`（**走 B**：擁有共用流程；codex-dispatch.sh 瘦成 `adapters/codex/dispatch.sh`） | ✅ (#194) |
 | CC-266 | `adapters/claude/dispatch.sh`（`claude --print` 薄 executor，使 codex-as-PM → claude-executor 可行；含 Phase-1 feasibility 檢查） | ✅ (#195) |
-| CC-233 | `scripts/test-layer-boundaries.sh`（分層強制器：core/→無 CLI 名、adapters/→無共用邏輯） | ✅ (#197) |
+| CC-233 | `tests/shell/test-layer-boundaries.sh`（分層強制器：core/→無 CLI 名、adapters/→無共用邏輯） | ✅ (#197) |
 
 ### M4 — Claude 指令 / skill 介面（舊 M3 剩餘）— ✅ complete 2026-05-31
 
@@ -787,7 +787,7 @@
 |---|---|---|
 | CC-277 | 修正 BACKLOG.md 所有 E-code（E-AREA-ENUM / E-REFS-PREFIX / stale active rows）→ `validate.sh` exit 0（P1） | ✅ (#183) |
 | CC-278 | 將 `validate.sh` 接入 CI `lint.yml`（Phase 1 warn-only；Phase 2 hard-fail after CC-277）（P2） | ✅ (#184) |
-| CC-279 | `scripts/archive-closed-backlog.sh` — idempotent bloat-policy executor（P2） | ✅ (#184) |
+| CC-279 | `ops/backlog/archive-closed-backlog.sh` — idempotent bloat-policy executor（P2） | ✅ (#184) |
 | CC-280 | 執行 archive script，壓縮當前 BACKLOG 膨脹（deferred until CC-279）（P2） | ✅ (#185) |
 | CC-281 | BACKLOG index 分割 Active / Terminal（comment delimiter；deferred until CC-280）（P3） | 🚫 dropped 2026-05-30 |
 | CC-282 | `pmctl backlog sync` → SQLite derived query layer（deferred until CC-215 M3）（P3） | 🚫 dropped 2026-05-30 |
@@ -795,7 +795,7 @@
 | CC-300 | dispatch allowlist bootstrap（CC-208 follow-up；gate citation guard 後置修正） | ✅ (#206/#207) |
 | CC-301 | multi-line hook chain + uninstall allowlist cleanup | ✅ (#207) |
 | CC-302 | `install.sh` settings.json timestamped backup | ✅ (#211) |
-| CC-303 | allowlist entry construction 集中化 → `scripts/lib/allowlist.sh`（adapter-agnostic dynamic scan） | ✅ (#211) |
+| CC-303 | allowlist entry construction 集中化 → `runtime/lib/allowlist.sh`（adapter-agnostic dynamic scan） | ✅ (#211) |
 | CC-304 | hook `_rate_tmp` trap leak + startup stale-temp cleanup | ✅ (#209) |
 
 ### v0.3.0 收尾（M3/M4 after-burn）
@@ -850,11 +850,11 @@ CC-220（spike workflow）、CC-209（codegraph spike）已移至 v0.4.0。
 Tag: `v0.2.0` @ `2c55650`（released 2026-05-22；GitHub Release published）
 
 核心內容（詳見 CHANGELOG.md v0.2.0 section）：
-- `scripts/doctor.sh` — 環境健康檢查，每項給出可操作修復步驟（CC-058）
-- `scripts/run-all-tests.sh` — standalone 全套測試聚合器（CC-104n）
+- `runtime/bin/doctor.sh` — 環境健康檢查，每項給出可操作修復步驟（CC-058）
+- `tests/bin/run-all-tests.sh` — standalone 全套測試聚合器（CC-104n）
 - `uninstall.sh` — manifest-driven 移除（CC-109）
 - `install.sh` — directory junction（Windows）、copy-mode refresh、jq prereq check（CC-207/CC-221/CC-104l/v）
-- `scripts/lib/portable.sh` `serialize_with_lock()` — flock portable shim（CC-104p）
+- `runtime/lib/portable.sh` `serialize_with_lock()` — flock portable shim（CC-104p）
 - Hook scripts python3 → jq 重寫（CC-104t）
 - pm-schema v1.1/v1.2（Priority/Epic 欄位、design/spike epic）（CC-052/CC-205）
 
@@ -894,13 +894,13 @@ Tag: `v0.2.0` @ `2c55650`（released 2026-05-22；GitHub Release published）
 | #115 | CC-217..220 | spike epic + process improvement BACKLOG entries |
 | #116 | CC-104l, CC-104v | install.sh jq prereq check + copy-mode banner |
 | #117 | CC-221 | copy-mode refresh semantics（link_or_copy src-vs-dst sha compare） |
-| #119 | CC-058 | scripts/doctor.sh + lint-frontmatter PyYAML-equivalent validation + 68 regression tests |
+| #119 | CC-058 | runtime/bin/doctor.sh + lint-frontmatter PyYAML-equivalent validation + 68 regression tests |
 
 ### Roadmap (all shipped)
 
 | 票號 | 說明 | 狀態 |
 |---|---|---|
-| CC-058 | `scripts/doctor.sh` — 環境健康檢查 | ✅ |
+| CC-058 | `runtime/bin/doctor.sh` — 環境健康檢查 | ✅ |
 | CC-104l | install.sh 頂部加 jq 先決條件 check + README | ✅ |
 | CC-104v | copy-mode 安裝後顯示 summary banner | ✅ |
 | CC-221 | copy-mode refresh semantics（link_or_copy src-vs-dst sha compare） | ✅ |
@@ -916,9 +916,9 @@ Tag: `v0.2.0` @ `2c55650`（released 2026-05-22；GitHub Release published）
 Tag: `v0.1.0` @ commit `72a9405`
 
 核心內容（詳見 CHANGELOG.md 或 PR #77 release notes）：
-- `scripts/pr-gate.sh` unified PR gate（sequential / parallel）
+- `runtime/bin/pr-gate.sh` unified PR gate（sequential / parallel）
 - `scripts/codex-dispatch.sh` codex 派送 wrapper
-- `scripts/install.sh` + `scripts/lib/portable.sh` cross-platform installer
+- `install.sh` + `runtime/lib/portable.sh` cross-platform installer
 - pm-schema v1.0 + `pm/scripts/validate.sh` + `pm/scripts/rollup.sh`
 - hook 層完整套件（inject-memory / routing-log / tool-trace / session-summary 等）
 - Windows dogfood r1（CC-104a/b/c/d/e/f）修復

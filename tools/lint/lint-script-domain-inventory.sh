@@ -16,6 +16,7 @@ esac
 inventory="$repo_root/docs/architecture/script-domain-inventory.tsv"
 variables="$repo_root/docs/architecture/script-variable-inventory.tsv"
 consumers="$repo_root/docs/architecture/script-variable-consumers.tsv"
+reference_allowlist="$repo_root/docs/architecture/script-domain-reference-allowlist.tsv"
 contract="$repo_root/docs/architecture/script-domain-ownership.md"
 failures=0
 
@@ -24,7 +25,7 @@ fail() {
   failures=$((failures + 1))
 }
 
-for required in "$inventory" "$variables" "$consumers" "$contract"; do
+for required in "$inventory" "$variables" "$consumers" "$reference_allowlist" "$contract"; do
   [[ -f "$required" ]] || fail "missing ${required#"$repo_root"/}"
 done
 [[ "$failures" -eq 0 ]] || exit 1
@@ -32,9 +33,11 @@ done
 expected_path_header=$'current_path\tartifact_kind\towner_domain\tproposed_target\tdisposition\tstability'
 expected_variable_header=$'name_or_pattern\towner_domain\tinput_class\tdefault_source\tprecedence\tpropagation\trisk_or_side_effect\ttest_isolation'
 expected_consumer_header=$'declared_name_or_pattern\tactual_name\tconsumer_path\treference_scope'
+expected_reference_allowlist_header=$'historical_path\tconsumer_path\treason'
 [[ "$(head -n1 "$inventory")" == "$expected_path_header" ]] || fail "path inventory header mismatch"
 [[ "$(head -n1 "$variables")" == "$expected_variable_header" ]] || fail "variable inventory header mismatch"
 [[ "$(head -n1 "$consumers")" == "$expected_consumer_header" ]] || fail "variable consumer header mismatch"
+[[ "$(head -n1 "$reference_allowlist")" == "$expected_reference_allowlist_header" ]] || fail "reference allowlist header mismatch"
 
 path_errors="$(awk -F '\t' '
   BEGIN {
@@ -76,11 +79,15 @@ declared_paths="$(mktemp)"
 raw_refs="$(mktemp)"
 expected_consumers="$(mktemp)"
 declared_consumers="$(mktemp)"
+stale_reference_hits="$(mktemp)"
+stale_patterns="$(mktemp)"
 cleanup() {
   rm -f "$actual_paths" "$declared_paths" "$raw_refs" \
-    "$expected_consumers" "$declared_consumers"
+    "$expected_consumers" "$declared_consumers" "$stale_reference_hits" \
+    "$stale_patterns"
 }
 trap cleanup EXIT
+awk -F '\t' 'NR > 1 { print $1 }' "$inventory" > "$stale_patterns"
 (cd "$repo_root" && find scripts -type f -print | sort) > "$actual_paths"
 awk -F '\t' 'NR > 1 && $5 == "move-with-shim" { print $1 }' "$inventory" | sort > "$declared_paths"
 if ! cmp -s "$actual_paths" "$declared_paths"; then
@@ -107,6 +114,94 @@ while IFS=$'\t' read -r current_path artifact_kind _ target_path disposition _; 
   fi
 done < "$inventory"
 [[ -z "$path_state_errors" ]] || fail "invalid migrated path state:\n${path_state_errors%$'\n'}"
+
+# Current operational surfaces must name canonical owner paths. Historical
+# records, migration design evidence, installed ~/.claude helper ABIs, and
+# compatibility tests are intentionally outside this ratchet. Production code
+# may retain a retired path only for the two explicit Codex legacy-config
+# probes below; adding another exception requires a reviewed compatibility
+# contract rather than weakening this scan.
+is_installed_helper_reference() {
+  local line="$1" old_path="$2"
+  line="${line//~\/.claude\/${old_path}/}"
+  [[ "$line" != *"$old_path"* ]]
+}
+
+is_legacy_code_reference_allowed() {
+  local old_path="$1" relative="$2" disposition="$3"
+  [[ "$disposition" == "move-with-shim" ]] && return 0
+  awk -F '\t' -v old="$old_path" -v consumer="$relative" '
+    NR > 1 && $1 == old && $2 == consumer { found = 1 }
+    END { exit(found ? 0 : 1) }
+  ' "$reference_allowlist"
+}
+
+reference_allowlist_errors="$(awk -F '\t' '
+  NR == FNR {
+    if (FNR > 1) disposition[$1] = $5
+    next
+  }
+  FNR == 1 { next }
+  NF != 3 { print "line " FNR " has " NF " fields"; next }
+  !($1 in disposition) { print "line " FNR " path is absent from migration inventory: " $1 }
+  ($1 in disposition) && disposition[$1] != "move-then-remove" {
+    print "line " FNR " allowlist is unnecessary for shim path: " $1
+  }
+  $2 ~ /^\// || $2 ~ /(^|\/)\.\.(\/|$)/ { print "line " FNR " unsafe consumer path: " $2 }
+  $3 !~ /^[a-z0-9][a-z0-9-]*$/ { print "line " FNR " invalid reason slug: " $3 }
+' "$inventory" "$reference_allowlist")"
+[[ -z "$reference_allowlist_errors" ]] || fail "invalid stale-reference allowlist rows:\n$reference_allowlist_errors"
+duplicate_reference_allowlist="$(tail -n +2 "$reference_allowlist" | cut -f1,2 | sort | uniq -d)"
+[[ -z "$duplicate_reference_allowlist" ]] || fail "duplicate stale-reference allowlist rows:\n$duplicate_reference_allowlist"
+while IFS=$'\t' read -r _ allowed_consumer _; do
+  [[ "$allowed_consumer" != "consumer_path" ]] || continue
+  [[ -f "$repo_root/$allowed_consumer" ]] || fail "missing stale-reference allowlist consumer: $allowed_consumer"
+done < "$reference_allowlist"
+
+scan_stale_reference_file() {
+  local file="$1" mode="$2" relative old_path target_path disposition
+  local line_number line
+  [[ -f "$file" ]] || return 0
+  relative="${file#"$repo_root"/}"
+  while IFS=: read -r line_number line; do
+    [[ -n "$line_number" ]] || continue
+    while IFS=$'\t' read -r old_path _ _ target_path disposition _; do
+      [[ "$old_path" != "current_path" && "$line" == *"$old_path"* ]] || continue
+      is_installed_helper_reference "$line" "$old_path" && continue
+      if [[ "$mode" == "code" ]] \
+          && is_legacy_code_reference_allowed "$old_path" "$relative" "$disposition"; then
+        continue
+      fi
+      printf '%s:%s: stale %s (use %s)\n' \
+        "$relative" "$line_number" "$old_path" "$target_path" >> "$stale_reference_hits"
+    done < "$inventory"
+  done < <(grep -nF -f "$stale_patterns" -- "$file" || true)
+}
+
+for operational_doc in README.md core/README.md BACKLOG.md MILESTONES.md; do
+  scan_stale_reference_file "$repo_root/$operational_doc" docs
+done
+while IFS= read -r -d '' operational_doc; do
+  case "${operational_doc#"$repo_root"/}" in
+    docs/spikes/*|docs/architecture/script-domain-inventory.tsv|\
+    docs/architecture/script-domain-reference-allowlist.tsv|\
+    docs/architecture/script-domain-ownership.md|\
+    docs/architecture/v0.3.0-synthesis.md) continue ;;
+  esac
+  scan_stale_reference_file "$operational_doc" docs
+done < <(find "$repo_root/docs" -type f -print0 2>/dev/null)
+for code_root in install.sh uninstall.sh cli runtime hosts ops tools .github; do
+  if [[ -f "$repo_root/$code_root" ]]; then
+    scan_stale_reference_file "$repo_root/$code_root" code
+  elif [[ -d "$repo_root/$code_root" ]]; then
+    while IFS= read -r -d '' code_file; do
+      scan_stale_reference_file "$code_file" code
+    done < <(find "$repo_root/$code_root" -type f -print0)
+  fi
+done
+if [[ -s "$stale_reference_hits" ]]; then
+  fail "stale migrated implementation references:\n$(cat "$stale_reference_hits")"
+fi
 
 variable_errors="$(awk -F '\t' '
   BEGIN {
@@ -215,7 +310,7 @@ if ! cmp -s "$expected_consumers" "$declared_consumers"; then
   fail "variable consumer graph is stale"
 fi
 
-if grep -Eq 'CC-[0-9]+' "$contract" "$inventory" "$variables" "$consumers"; then
+if grep -Eq 'CC-[0-9]+' "$contract" "$inventory" "$reference_allowlist" "$variables" "$consumers"; then
   fail "operational architecture inventory contains a ticket identifier"
 fi
 

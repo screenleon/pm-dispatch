@@ -22,6 +22,12 @@ fixture_repo() {
   cp "$REPO_ROOT/docs/architecture/script-domain-inventory.tsv" "$root/docs/architecture/"
   cp "$REPO_ROOT/docs/architecture/script-variable-inventory.tsv" "$root/docs/architecture/"
   cp "$REPO_ROOT/docs/architecture/script-variable-consumers.tsv" "$root/docs/architecture/"
+  cp "$REPO_ROOT/docs/architecture/script-domain-reference-allowlist.tsv" "$root/docs/architecture/"
+  : > "$root/README.md"
+  mkdir -p "$root/core"
+  : > "$root/core/README.md"
+  : > "$root/BACKLOG.md"
+  : > "$root/MILESTONES.md"
   while IFS=$'\t' read -r current_path _ _ target_path disposition _; do
     [[ "$current_path" == "current_path" ]] && continue
     mkdir -p "$root/$(dirname "$target_path")"
@@ -36,6 +42,12 @@ fixture_repo() {
     [[ "$consumer_path" == "consumer_path" ]] && continue
     mkdir -p "$root/$(dirname "$consumer_path")"
     [[ -e "$root/$consumer_path" ]] || : > "$root/$consumer_path"
+  done < "$root/docs/architecture/script-variable-consumers.tsv"
+  # Seed the declared static variable graph so pass fixtures exercise only the
+  # path-reference mutation introduced by each case.
+  while IFS=$'\t' read -r _ actual_name consumer_path _; do
+    [[ "$actual_name" == "actual_name" ]] && continue
+    printf '\n# %s\n' "$actual_name" >> "$root/$consumer_path"
   done < "$root/docs/architecture/script-variable-consumers.tsv"
   printf '%s\n' "$root"
 }
@@ -169,10 +181,10 @@ test_repository_path_metacharacters_are_safe() {
     return 0
   fi
   output="$(cd "$tmp_root" && bash "$LINTER" --repo "$hostile_root" 2>&1)" || status=$?
-  if [[ ! -e "$marker" ]]; then
+  if [[ "$status" -eq 0 && ! -e "$marker" ]]; then
     pass "$name"
   else
-    fail "$name" "repository path executed shell syntax, status=$status output=$output"
+    fail "$name" "hostile repository path was rejected or executed shell syntax, status=$status output=$output"
   fi
 }
 
@@ -186,6 +198,130 @@ test_ticket_identifier_fails() {
   expect_fail "$name" "$root" "contains a ticket identifier"
 }
 
+# Behavior: a retired implementation path cannot return to current operational documentation.
+# Steps: inject a scripts/lib path from the inventory into README and assert the canonical-path diagnostic.
+test_stale_operational_reference_fails() {
+  local name="script-domain-inventory/stale-operational-reference-fails" root
+  should_run "$name" || return 0
+  root="$(fixture_repo)"
+  printf 'Run scripts/lib/state-writer.sh directly.\n' >> "$root/README.md"
+  expect_fail "$name" "$root" "stale scripts/lib/state-writer.sh (use runtime/lib/state-writer.sh)"
+}
+
+# Behavior: historical migration evidence may preserve the path that existed at the time.
+# Steps: put a retired path under docs/spikes and require the complete inventory lint to pass.
+test_historical_reference_passes() {
+  local name="script-domain-inventory/historical-reference-passes" root
+  should_run "$name" || return 0
+  root="$(fixture_repo)"
+  mkdir -p "$root/docs/spikes"
+  printf 'Historical location: scripts/lib/state-writer.sh\n' > "$root/docs/spikes/history.md"
+  expect_pass "$name" "$root"
+}
+
+# Behavior: the installed ~/.claude helper path is a stable external ABI, not a repository implementation path.
+# Steps: document an installed helper path in README and require no stale-reference false positive.
+test_installed_helper_reference_passes() {
+  local name="script-domain-inventory/installed-helper-reference-passes" root
+  should_run "$name" || return 0
+  root="$(fixture_repo)"
+  printf 'Run bash ~/.claude/scripts/doctor.sh after installation.\n' >> "$root/README.md"
+  expect_pass "$name" "$root"
+}
+
+# Behavior: a retired implementation path in production code needs an explicit compatibility contract.
+# Steps: inject an unallowlisted scripts/lib reference into a runtime file and assert rejection.
+test_unallowlisted_production_reference_fails() {
+  local name="script-domain-inventory/unallowlisted-production-reference-fails" root
+  should_run "$name" || return 0
+  root="$(fixture_repo)"
+  printf '\n# loads scripts/lib/state-writer.sh\n' >> "$root/runtime/bin/brief-validate.sh"
+  expect_fail "$name" "$root" "stale scripts/lib/state-writer.sh (use runtime/lib/state-writer.sh)"
+}
+
+# Behavior: every declared legacy-config exception remains accepted in its exact consumer.
+# Steps: add both allowlisted historical paths to the Codex installer fixture and require success.
+test_allowlisted_legacy_references_pass() {
+  local name="script-domain-inventory/allowlisted-legacy-references-pass" root
+  should_run "$name" || return 0
+  root="$(fixture_repo)"
+  printf '\n# detects scripts/guard-inject-memory.sh\n# detects scripts/guard-session-summary.sh\n' \
+    >> "$root/hosts/codex/bin/install.sh"
+  expect_pass "$name" "$root"
+}
+
+# Behavior: a legacy-config exception is scoped to its declared consumer, not path-only.
+# Steps: inject each allowlisted historical path into another production file and require rejection.
+test_allowlist_consumer_boundary_fails() {
+  local name="script-domain-inventory/allowlist-consumer-boundary-fails"
+  local old_path target_path root index=0
+  should_run "$name" || return 0
+  while IFS=$'\t' read -r old_path _ _ target_path _ _; do
+    case "$old_path" in
+      scripts/guard-inject-memory.sh|scripts/guard-session-summary.sh) ;;
+      *) continue ;;
+    esac
+    index=$((index + 1))
+    root="$(fixture_repo)"
+    printf '\n# detects %s\n' "$old_path" >> "$root/runtime/bin/brief-validate.sh"
+    expect_fail "$name/$index" "$root" "stale $old_path (use $target_path)"
+  done < "$REPO_ROOT/docs/architecture/script-domain-inventory.tsv"
+}
+
+# Behavior: every reference-allowlist schema and integrity branch fails with its own diagnostic.
+# Steps: mutate one TSV contract rule per fresh fixture and assert the corresponding error.
+test_reference_allowlist_validation_fails() {
+  local name="script-domain-inventory/reference-allowlist-validation-fails"
+  local root file
+  should_run "$name" || return 0
+
+  root="$(fixture_repo)"; file="$root/docs/architecture/script-domain-reference-allowlist.tsv"
+  printf 'scripts/unknown.sh\truntime/bin/brief-validate.sh\n' >> "$file"
+  expect_fail "$name/malformed-fields" "$root" "has 2 fields"
+
+  root="$(fixture_repo)"; file="$root/docs/architecture/script-domain-reference-allowlist.tsv"
+  printf 'scripts/unknown.sh\truntime/bin/brief-validate.sh\tlegacy-detection\n' >> "$file"
+  expect_fail "$name/unknown-path" "$root" "path is absent from migration inventory: scripts/unknown.sh"
+
+  root="$(fixture_repo)"; file="$root/docs/architecture/script-domain-reference-allowlist.tsv"
+  printf 'scripts/doctor.sh\truntime/bin/brief-validate.sh\tlegacy-detection\n' >> "$file"
+  expect_fail "$name/shim-path" "$root" "allowlist is unnecessary for shim path: scripts/doctor.sh"
+
+  root="$(fixture_repo)"; file="$root/docs/architecture/script-domain-reference-allowlist.tsv"
+  printf 'scripts/guard-inject-memory.sh\t../escape.sh\tlegacy-detection\n' >> "$file"
+  expect_fail "$name/unsafe-consumer" "$root" "unsafe consumer path: ../escape.sh"
+
+  root="$(fixture_repo)"; file="$root/docs/architecture/script-domain-reference-allowlist.tsv"
+  printf 'scripts/guard-inject-memory.sh\truntime/bin/brief-validate.sh\tBad reason\n' >> "$file"
+  expect_fail "$name/invalid-reason" "$root" "invalid reason slug: Bad reason"
+
+  root="$(fixture_repo)"; file="$root/docs/architecture/script-domain-reference-allowlist.tsv"
+  sed -n '2p' "$file" >> "$file"
+  expect_fail "$name/duplicate-row" "$root" "duplicate stale-reference allowlist rows"
+
+  root="$(fixture_repo)"; file="$root/docs/architecture/script-domain-reference-allowlist.tsv"
+  printf 'scripts/guard-inject-memory.sh\truntime/missing.sh\tlegacy-detection\n' >> "$file"
+  expect_fail "$name/missing-consumer" "$root" "missing stale-reference allowlist consumer: runtime/missing.sh"
+}
+
+# Behavior: all newly scanned production roots reject retired implementation references.
+# Steps: inject the same stale internal path into GitHub workflow, ops, and tools files.
+test_production_root_stale_references_fail() {
+  local name="script-domain-inventory/production-root-stale-references-fail"
+  local root surface index=0
+  should_run "$name" || return 0
+  for surface in \
+    .github/workflows/lint.yml \
+    ops/backlog/archive-closed-backlog.sh \
+    tools/lint/lint-agents.sh; do
+    index=$((index + 1))
+    root="$(fixture_repo)"
+    mkdir -p "$root/$(dirname "$surface")"
+    printf '\n# loads scripts/lib/state-writer.sh\n' >> "$root/$surface"
+    expect_fail "$name/$index" "$root" "stale scripts/lib/state-writer.sh (use runtime/lib/state-writer.sh)"
+  done
+}
+
 test_real_repository_passes
 test_untracked_script_fails
 test_missing_script_fails
@@ -197,5 +333,13 @@ test_exact_variable_mismatch_fails
 test_stale_consumer_graph_fails
 test_repository_path_metacharacters_are_safe
 test_ticket_identifier_fails
+test_stale_operational_reference_fails
+test_historical_reference_passes
+test_installed_helper_reference_passes
+test_unallowlisted_production_reference_fails
+test_allowlisted_legacy_references_pass
+test_allowlist_consumer_boundary_fails
+test_reference_allowlist_validation_fails
+test_production_root_stale_references_fail
 
 th_summary

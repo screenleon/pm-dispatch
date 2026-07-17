@@ -60,7 +60,7 @@ git clone https://github.com/screenleon/pm-dispatch "${PM_DISPATCH_REPO}"
 cd "${PM_DISPATCH_REPO}"
 
 # 2. Install managed files and wire Claude Code hooks into ~/.claude/settings.json
-# (install.sh calls scripts/install-guards.sh internally; no separate step needed)
+# (install.sh calls hosts/claude/bin/install-guards.sh internally; no separate step needed)
 bash install.sh
 ```
 
@@ -162,8 +162,9 @@ bash install.sh    # creates symlinks for any new files
 
 ### Windows Git Bash
 
-Pull and agents/commands/skills auto-sync via junction. Individual helper scripts
-(`scripts/*.sh`) are installed via copy. Re-run `install.sh` to refresh stale copies
+Pull and agents/commands/skills auto-sync via junction. Individual helper executables
+from their canonical `runtime/`, `ops/`, or host owner are installed under
+`~/.claude/scripts/` via copy. Re-run `install.sh` to refresh stale copies
 — the installer compares `sha256(src)` vs `sha256(dst)` and re-copies only changed files:
 
 ```bash
@@ -187,9 +188,9 @@ Removes pm-dispatch hooks from `~/.claude/settings.json`. Safe to run at any tim
 leaves all other settings untouched.
 
 ```bash
-bash "${PM_DISPATCH_REPO}/scripts/uninstall-guards.sh"
+bash "${PM_DISPATCH_REPO}/hosts/claude/bin/uninstall-guards.sh"
 # or with preview:
-bash "${PM_DISPATCH_REPO}/scripts/uninstall-guards.sh" --dry-run
+bash "${PM_DISPATCH_REPO}/hosts/claude/bin/uninstall-guards.sh" --dry-run
 ```
 
 ### Part 2 — remove managed files from ~/.claude
@@ -326,6 +327,6 @@ bash install.sh
 - `README.md` — overview and quick install
 - `CONCEPTS.md` — architecture concepts
 - `runtime/lib/portable.sh` — `link_or_copy()` and install manifest
-- `scripts/install-guards.sh` — hook wiring
-- `scripts/uninstall-guards.sh` — hook removal
+- `hosts/claude/bin/install-guards.sh` — hook wiring
+- `hosts/claude/bin/uninstall-guards.sh` — hook removal
 - `docs/platform-support.md` (this document)

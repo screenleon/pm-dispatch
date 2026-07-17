@@ -33,7 +33,7 @@ core/context-pack/   → core/schema/  (source.interface.md references context-p
 `core/policy/` is a leaf — depends on nothing.
 `core/state/` does NOT import `core/policy/`.
 
-The designated writer module (in the `scripts/` layer) is the sole manager of writes to `~/.local/share/pm-dispatch/state/` paths. It validates every durable Run, Event, Task, and Decision write against recursive object requirements, constants, primitive types, enums, and `if`/`then` conditionals declared in `core/schema/`, using `jq` only. Runtime enum consumers read the corresponding `core/policy/` YAML, while parity tests keep the inline schema enum mirrors synchronized. Full draft-07 validation remains a development/test concern rather than a runtime dependency.
+The designated writer module in `runtime/lib/state-writer.sh` is the sole manager of writes to `~/.local/share/pm-dispatch/state/` paths. It validates every durable Run, Event, Task, and Decision write against recursive object requirements, constants, primitive types, enums, and `if`/`then` conditionals declared in `core/schema/`, using `jq` only. Runtime enum consumers read the corresponding `core/policy/` YAML, while parity tests keep the inline schema enum mirrors synchronized. Full draft-07 validation remains a development/test concern rather than a runtime dependency.
 
 ## Schema versioning
 
