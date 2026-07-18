@@ -5950,6 +5950,75 @@ STUB_EOF
   pass "$name"
 }
 
+# Behavior: the public pmctl gate entrypoint runs the production Codex gate on
+# a clean non-Claude HOME, hydrates canonical memory through the real shared
+# resolver/context libraries, and snapshots repo-owned reviewer definitions.
+# Steps: assemble a canonical checkout fixture around the real pmctl/pr-gate
+# code and fake only the executor adapter, provide an external canonical memory
+# card through PM_MEMORY_DIR, then assert the captured reviewer brief and HOME.
+test_pmctl_codex_gate_uses_production_memory_on_clean_home() {
+  local name="host-boundary/pmctl-codex-production-memory-clean-home"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" isolated_home="$TMP_ROOT/$name/isolated-home"
+  local bundle="$TMP_ROOT/$name/bundle" product="$TMP_ROOT/$name/product"
+  local repo="$TMP_ROOT/$name/repo" memory="$TMP_ROOT/$name/canonical-memory"
+  local state="$TMP_ROOT/$name/state" brief="$TMP_ROOT/$name/brief.md"
+  local defs="$TMP_ROOT/$name/reviewer-def-count" out="$TMP_ROOT/$name/out" err="$TMP_ROOT/$name/err"
+  mkdir -p "$dir" "$isolated_home" "$memory" "$product/cli" "$product/runtime/bin"
+  create_runner "$bundle"
+  create_repo "$repo" docs
+
+  cp "$REPO_ROOT/cli/pmctl" "$product/cli/pmctl"
+  cp "$REPO_ROOT/cli/commands.tsv" "$product/cli/commands.tsv"
+  cp "$bundle/pr-gate.sh" "$product/runtime/bin/pr-gate.sh"
+  cp -R "$bundle/lib" "$product/runtime/lib"
+  cp -R "$bundle/agents" "$product/agents"
+  cp -R "$REPO_ROOT/adapters" "$product/adapters"
+  cp "$bundle/adapters/codex/dispatch.sh" "$product/adapters/codex/dispatch.sh"
+  cp "$bundle/adapters/claude/dispatch.sh" "$product/adapters/claude/dispatch.sh"
+  cp -R "$bundle/core" "$product/core"
+  chmod +x "$product/cli/pmctl" "$product/runtime/bin/pr-gate.sh"
+
+  cat > "$memory/MEMORY.md" <<'MEMORY_EOF'
+# Canonical Memory
+- [CC-502 gate contract](cc502-gate-contract.md) — canonical host boundary
+MEMORY_EOF
+  cat > "$memory/cc502-gate-contract.md" <<'MEMORY_EOF'
+---
+name: cc502-gate-contract
+---
+cc502canonicalmarker requires a host-neutral reviewer gate.
+MEMORY_EOF
+
+  local code=0
+  set +e
+  HOME="$isolated_home" PM_MEMORY_DIR="$memory" PM_DISPATCH_CONFIG_FILE="$dir/no-config" \
+    PM_DISPATCH_STATE_ROOT="$state" PM_DISPATCH_CONTEXT_AUTOREFRESH=0 \
+    CODEX_GATE_CAPTURE_BRIEF="$brief" CODEX_GATE_REVIEWER_DEFS_MARKER="$defs" \
+    "$product/cli/pmctl" gate run --lifecycle foreground --cd "$repo" --base main \
+      --executor codex --scope cc502canonicalmarker > "$out" 2> "$err"
+  code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0: $(cat "$err" 2>/dev/null)"
+    return
+  fi
+  assert_file_contains "$name" "$brief" "resolution_status: resolved" || return
+  assert_file_contains "$name" "$brief" "resolution_source: env" || return
+  assert_file_contains "$name" "$brief" "context_status: hydrated" || return
+  assert_file_contains "$name" "$brief" "cc502-gate-contract.md" || return
+  if [[ ! -s "$defs" || "$(<"$defs")" -le 0 ]]; then
+    fail "$name" "pmctl/Codex path did not consume reviewer snapshots"
+    return
+  fi
+  assert_not_contains "$name" "$brief" ".claude/agents" || return
+  if [[ -e "$isolated_home/.claude" ]]; then
+    fail "$name" "pmctl gate created a Claude host directory in the isolated HOME"
+    return
+  fi
+  pass "$name"
+}
+
 # Behavior: an invalid explicit canonical-memory selection is fail-closed; the
 # gate must not fall back to any host-local memory convention or dispatch.
 test_invalid_canonical_memory_does_not_fallback() {
@@ -6147,6 +6216,7 @@ test_shared_gate_reviewer_content_host_boundary_ratchet() {
 }
 
 run_test test_repo_owned_reviewers_and_canonical_memory_on_clean_home
+run_test test_pmctl_codex_gate_uses_production_memory_on_clean_home
 run_test test_invalid_canonical_memory_does_not_fallback
 run_test test_unexpected_canonical_memory_failure_is_closed
 run_test test_workspace_reviewer_definitions_are_base_pinned

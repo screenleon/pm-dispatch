@@ -1209,7 +1209,11 @@ test_live_db_exclusive_suites_never_overlap() {
   ( PATH="$path" run_aggregator "$repo" --jobs 4 > "$logf" 2>&1; echo $? > "$marker/rc" ) &
   local agg_pid=$!
 
-  if ! wait_for_file "$marker/started-test-pmctl-context" 300; then
+  # Reaching this late-registry suite requires draining dozens of earlier pass
+  # stubs. Under the authoritative full runner this self-test competes with
+  # several CPU-heavy suites, so allow 20s while staying below the gated stub's
+  # 30s hard ceiling.
+  if ! wait_for_file "$marker/started-test-pmctl-context" 1000; then
     fail_case "$name" "first exclusive suite (test-pmctl-context) never started"
     touch "$marker/release-test-pmctl-context" "$marker/release-test-release-verify"
     wait "$agg_pid" 2>/dev/null; return
@@ -1223,7 +1227,7 @@ test_live_db_exclusive_suites_never_overlap() {
   fi
   # Release the first exclusive suite -> the second must now launch.
   touch "$marker/release-test-pmctl-context"
-  if ! wait_for_file "$marker/started-test-release-verify" 300; then
+  if ! wait_for_file "$marker/started-test-release-verify" 1000; then
     fail_case "$name" "test-release-verify never launched after test-pmctl-context finished"
     touch "$marker/release-test-release-verify"
     wait "$agg_pid" 2>/dev/null; return

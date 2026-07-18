@@ -25,7 +25,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-499 | ⏸ deferred | Detached run reconciliation：crash、reboot、stale sentinel、PID identity 與 orphan recovery | arch/ops | 2026-07-17 | — | P2 | design |
 | CC-500 | ⏸ deferred | State single-writer boundary enforcement：all-production-domain direct-writer ratchet | arch/test | 2026-07-17 | — | P2 | design |
 | CC-501 | 🔵 active | v0.8.0→v0.9 candidate 一次性 upgrade smoke：三 host managed path refresh、doctor 0 FAIL、foreign config/canonical memory byte preservation | release/test | 2026-07-17 | — | P1 | hygiene |
-| CC-502 | 🔵 active | shared gate/reviewer 去除 Claude-host 隱性前置：repo-owned reviewer definitions + canonical memory contract + 非 Claude HOME regression | arch/gate | 2026-07-17 | — | P1 | design |
+| CC-502 | ✅ done | shared gate/reviewer 去除 Claude-host 隱性前置：repo-owned reviewer definitions + canonical memory contract + 非 Claude HOME regression | arch/gate | 2026-07-17 | pr:#422 | P1 | design |
 | CC-503 | 🔵 active | shared tooling/hooks host-boundary 收斂：skill-refine canonical memory、prompt payload adapter、state-root audit log、content ratchet | arch/hook | 2026-07-17 | — | P2 | hygiene |
 | CC-504 | 🔵 active | top-level install/uninstall/doctor 移除 Claude base-spine 特例，建立 manifest-driven multi-host lifecycle 與 product-asset ownership | arch/install | 2026-07-17 | — | P2 | design |
 | CC-465 | 🔵 active | memory/context 關鍵詞管線 CJK 支援：抽出共用零依賴斷詞 lib，取代三處各自 ASCII-only 抽詞；工作序列起點（465→467→468→466）（2026-07-07 記憶系統深入分析） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
@@ -1457,7 +1457,7 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 
 **Dependencies**: [[CC-454]] 與 [[CC-502]] 完成後執行最終 candidate smoke；[[CC-497]]、[[CC-456]] 已完成且只作 baseline，不重新開票。完成本票不取代 [[CC-447]]。P1，v0.9.0 release acceptance。
 
-## CC-502 — shared gate/reviewer 去除 Claude-host 隱性前置 🔵 active
+## CC-502 — shared gate/reviewer 去除 Claude-host 隱性前置 ✅ 2026-07-18
 
 **Problem**: `runtime/bin/pr-gate.sh` 是 shared gate runtime，卻無條件從 `$HOME/.claude/agents` 載入 reviewer definitions；同一批 reviewer definition 會交給 Codex 與 Claude executor，但 `agents/critic.md`、`agents/architecture-reviewer.md` 又直接要求讀 `~/.claude/projects/<id>/memory/...`。結果是 Codex/OpenCode 作 PM host 或乾淨非 Claude HOME 即使具備 repo checkout、pmctl 與 executor auth，仍被 Claude installation tree 與 Claude memory layout 隱性綁住。
 
@@ -1472,7 +1472,10 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 
 **Done-when**: `pmctl gate run --executor codex` 在非 Claude HOME 不再依賴 `.claude` asset/memory tree；Claude executor parity 保持；focused gate、reviewer、memory regression 與 full suite通過。
 
+**Outcome**: `pr-gate` 預設從 product-owned `agents/` 解析 reviewer definitions；reviewed-workspace definitions 固定讀 trusted base revision，外部 trusted definitions 在 snapshot 前後驗證 identity。Gate 透過 shared runtime 取得 canonical memory provenance/context，invalid explicit selection 與 resolver/query failure 均 fail closed。Regression 由真實 `pmctl gate run --executor codex` 入口在隔離非 Claude HOME 驗證 production resolver、reviewer snapshot 與零 `.claude` side effect；Claude executor parity 與 full suite維持通過（PR #422）。
+
 **Dependencies**: canonical memory基底由 [[CC-483]]/[[CC-490]] 提供；final candidate須先於 [[CC-501]]。P1，v0.9.0 release blocker。
+**See**: pr:#422
 
 ## CC-503 — shared tooling/hooks host-boundary 收斂 🔵 active
 
