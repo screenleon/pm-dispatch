@@ -38,6 +38,16 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 - **Canonical migration references and release metadata.** Current README, core, platform, milestone, backlog, and release-checklist surfaces now point to the owner-domain paths established by the script-domain migration. The inventory linter rejects retired implementation references while preserving historical records, compatibility coverage, and installed `~/.claude/scripts/` helper names; release verification now derives coverage from the canonical suite registry instead of a copied suite count.
 
+### Fixed
+
+- **Real-HOME uninstall convergence.** The dedicated pmctl teardown removes
+  `~/.local/bin/pmctl` before the manifest loop sees the same entry. That
+  already-gone, out-of-`~/.claude` destination is now treated as an idempotent
+  success instead of a safety conflict, so uninstall removes its manifest and
+  a second run converges with zero safety skips. Missing paths never trigger a
+  deletion; broken symlinks and existing out-of-root targets still pass through
+  the fail-closed ownership and containment checks.
+
 ## [0.8.0] — 2026-07-04
 
 ### Added

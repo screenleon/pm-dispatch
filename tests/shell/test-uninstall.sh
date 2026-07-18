@@ -927,6 +927,43 @@ test_pmctl_symlink_removed() {
   pass "$name"
 }
 
+test_pmctl_manifest_duplicate_converges() {
+  # The installer records ~/.local/bin/pmctl in the manifest even though
+  # uninstall_pmctl_cli removes it before the manifest loop. That duplicate
+  # already-gone entry must not count as an out-of-root safety skip or preserve
+  # the manifest forever.
+  #
+  # Steps:
+  #   1. Create the owned pmctl symlink and a matching manifest entry.
+  #   2. Run uninstall; the dedicated phase removes the symlink first.
+  #   3. Assert the manifest loop accepts already-gone and removes the manifest.
+  local name="TC-24b pmctl-manifest-duplicate-converges"
+  _tu_needs_symlink "$name" || return 0
+  local home="$tmp_root/home-pmctl-manifest-duplicate"
+  local dest="$home/.local/bin/pmctl"
+  local out="$tmp_root/pmctl-manifest-duplicate.out"
+  local manifest="$home/.claude/.pm-dispatch/install-manifest.json"
+  mkdir -p "$(dirname "$dest")"
+  ln -s "$REPO_ROOT/cli/pmctl" "$dest"
+  write_manifest "$home" "$(symlink_entry "$REPO_ROOT/cli/pmctl" "$dest")"
+
+  if ! run_uninstall "$home" "$out"; then
+    fail "$name" "uninstall exited non-zero"
+    return
+  fi
+  if [[ -e "$dest" || -L "$dest" ]]; then
+    fail "$name" "$dest should have been removed"
+    return
+  fi
+  if [[ -e "$manifest" ]]; then
+    fail "$name" "manifest should be removed after duplicate entry is already gone"
+    return
+  fi
+  assert_contains "$name" "$out" "skip $dest (already gone)" || return
+  assert_not_contains "$name" "$out" "manual attention" || return
+  pass "$name"
+}
+
 test_pmctl_foreign_symlink_preserved() {
   # Verifies uninstall preserves a ~/.local/bin/pmctl symlink that points
   # somewhere other than this checkout's cli/pmctl (ownership check).
@@ -1105,6 +1142,7 @@ run_case "TC-21 symlink-parent-traversal-rejected" test_symlink_parent_traversal
 run_case "TC-22 symlink-parent-no-realpath-rejected" test_symlink_parent_no_realpath_rejected
 run_case "TC-23 claude-home-symlink" test_claude_home_symlink
 run_case "TC-24 pmctl-symlink-removed" test_pmctl_symlink_removed
+run_case "TC-24b pmctl-manifest-duplicate-converges" test_pmctl_manifest_duplicate_converges
 run_case "TC-25 pmctl-foreign-symlink-preserved" test_pmctl_foreign_symlink_preserved
 run_case "TC-26 pmctl-real-file-preserved" test_pmctl_real_file_preserved
 run_case "TC-27 prune-feedback" test_prune_feedback
