@@ -216,7 +216,11 @@ else
 add() { echo $(( $1 + $2 )); }
 add 1 2
 SCRIPT
-    git -C "$synthetic_base" add calc.sh                >/dev/null 2>&1 || _gate_ok=0
+    # `pmctl gate run` refreshes repo-local context before invoking pr-gate.
+    # Commit the canonical derived-state ignore up front so that refresh cannot
+    # make this synthetic review tree dirty and trip pr-gate's clean-tree guard.
+    printf '.pm-dispatch/\n' > "$synthetic_base/.gitignore"
+    git -C "$synthetic_base" add calc.sh .gitignore     >/dev/null 2>&1 || _gate_ok=0
     git -C "$synthetic_base" commit -m "add calc script" >/dev/null 2>&1 || _gate_ok=0
     git -C "$synthetic_base" push origin main            >/dev/null 2>&1 || _gate_ok=0
   fi

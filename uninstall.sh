@@ -252,6 +252,23 @@ while IFS= read -r line; do
     continue
   fi
 
+  # A prior teardown step may already have removed an entry that is also
+  # recorded in the manifest. The pmctl CLI is the canonical example: it lives
+  # outside CLAUDE_HOME, is ownership-checked and removed by
+  # uninstall_pmctl_cli(), then appears again in the manifest loop. Absence is
+  # not a blast-radius concern, so do not turn that idempotent state into a
+  # safety skip that preserves the manifest forever. Broken symlinks still pass
+  # through the ownership/root checks because `-L` remains true.
+  case "$mode" in
+    symlink|copy|junction)
+      if [[ ! -e "$dst" && ! -L "$dst" ]]; then
+        skipped=$((skipped + 1))
+        echo "  skip $dst (already gone)"
+        continue
+      fi
+      ;;
+  esac
+
   case "$mode" in
     symlink)
       if ! is_symlink_dst_under_managed_root "$dst"; then

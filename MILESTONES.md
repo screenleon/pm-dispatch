@@ -148,9 +148,9 @@
 
 ---
 
-## v0.9.0 — migration closure + CLI discoverability（目前規劃中）
+## v0.9.0 — migration closure + CLI discoverability（release closure 中）
 
-> 最後排程更新：2026-07-17
+> 最後排程更新：2026-07-18（release closure）
 
 **主題**：讓 CC-489 後的產品表面追上 current tree，並讓第一次接觸 `pmctl` 的使用者能只靠 CLI/README 找到正確操作。本版不宣稱接近 v1.0，也不凍結完整 public contract。
 
@@ -228,18 +228,18 @@
 | CC-456 / pr:#418 | 移除 maintainer-local `~/github` operational assumptions | ✅ |
 | CC-454 / pr:#420 | canonical ShellCheck domains + ignore ratchet + CI/local parity | ✅ |
 
-### Phase 7 — user-facing CLI discovery（目前 working set）
+### Phase 7 — user-facing CLI discovery（✅ 已交付）
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-460 | root/area/leaf help、command registry、`commands --json`、router/help/README parity | 🔵 |
+| CC-460 | root/area/leaf help、command registry、`commands --json`、router/help/README parity | ✅ pr:#421 |
 
-### Phase 8 — release migration evidence + host-boundary blocker（目前 working set）
+### Phase 8 — release migration evidence + host-boundary blocker（✅ 已交付）
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-502 | shared gate/reviewer移除 `.claude` asset與memory前置 | 🔵 P1 blocker |
-| CC-501 | v0.8.0→v0.9 candidate install/upgrade/doctor/uninstall preservation smoke | 🔵 P1 acceptance |
+| CC-502 | shared gate/reviewer移除 `.claude` asset與memory前置 | ✅ pr:#422 |
+| CC-501 | v0.8.0→v0.9 candidate install/upgrade/doctor/uninstall preservation smoke | ✅ pr:#424 |
 
 ### Parallel audit（不阻塞 Phase 6/7）
 

@@ -8,9 +8,34 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Structured shell-test docstring contract (CC-004, PR#369).** All 124
+  `test-pr-gate` cases now use the shared `Behavior`/`Steps` convention, and a
+  dedicated allowlist-based linter plus CI regression suite prevents converted
+  test files from silently drifting back to unstructured comments.
+
+- **Manifest-driven script and host-module ownership (CC-489 Phases 0–6;
+  PR#405/#410–#415/#417).** Host write modules and config-root resolvers are
+  declared by each host manifest; OpenCode, Codex, and Claude install,
+  uninstall, doctor, hook, and path-resolution implementations live under
+  their owning host domains. The final migration moves shared runtime, test,
+  tooling, and operations implementations into canonical owner directories,
+  leaving only audited compatibility shims under `scripts/`.
+
 ### Changed
 
-- **v0.8.0 → v0.9 candidate upgrade acceptance (CC-501 preparation).** Added a
+- **Multi-host PM and host abstraction closure (CC-436/437/438/445/448/457/471/473/480; PR#372/#374/#375/#381/#384/#391/#394/#395).** Claude, Codex, and OpenCode now share the host-manifest capability contract and host-aware install/doctor/guard wiring. Codex gains the batch-only `pmctl pm prepare/run` coordinator, and canonical memory survives host switches without relying on another host's private tree.
+
+- **Canonical context and memory correctness (CC-455/459/483/484/488/490/492; PR#371/#379/#397/#399/#401/#403/#406).** Context follows the target repository, prompt retrieval is deterministic, all three hosts resolve and write the same project-scoped canonical memory, Codex lifecycle hooks preserve provenance, and invalid explicit selections fail closed.
+
+- **Gate, runner, and operational safety (CC-458/469/470/474/477/481/482/485/487/491/496; PR#378/#383/#387/#388/#396/#397/#398/#402/#407/#408).** Gate run/wait UX, absolute reviewer tooling, bounded timeouts, independent reasoning effort, concurrency-safe usage accounting, reusable pre-flight evidence, reviewer least privilege, and Codex's audited one-turn guard bypass are covered by structured fail-closed tests.
+
+- **Model and adapter compatibility maintenance (CC-475/476/478/479; PR#389/#390/#392/#393).** Claude and Codex aliases track their current model families; legacy Claude aliases remain supported, and OpenCode's deny-mode hang has a bounded timeout/permission workaround.
+
+- **Core/runtime ownership and CLI discovery (CC-451/454/456/460/489/497; PR#409/#405/#410–#421).** Runtime enums and state schema validation now have canonical sources; 151 implementation/fixture paths moved to their owner domains with compatibility-shim and stale-reference ratchets; ShellCheck and maintainer-path coverage match CI; and `pmctl` now provides root/area/leaf help, a machine-readable command catalog, suggestions, and README parity checks.
+
+- **v0.8.0 → v0.9 candidate upgrade acceptance (CC-501, PR#424).** Added a
   fully isolated, artifact-producing three-host upgrade smoke and fixed the
   ownership-safe refresh paths it exposed: manifest-owned Claude assets and
   `pmctl` transfer to a new checkout, stale dispatch allowlist entries are
@@ -20,29 +45,50 @@ Versions follow [Semantic Versioning](https://semver.org/).
   no retired `scripts/` targets, an idempotent dry-run, and byte preservation of
   foreign config, canonical memory, and user data.
 
-- **Public-history exposure audit (CC-033 audit slice).** Scanned all 493 commits reachable from heads, remotes, and tags for private keys, provider-token shapes, credential URLs/assignments, sensitive filenames, runtime artifacts, oversized blobs, maintainer-local paths, and author-email exposure. No actionable credential or committed runtime artifact was found; the durable audit records synthetic-token false positives, the decision not to rewrite published history for non-secret paths/email metadata, and GitHub secret scanning being disabled as a v0.14.0 settings follow-up.
+- **Public-history exposure audit (CC-033 audit slice, PR#423).** Scanned all 493 commits reachable from heads, remotes, and tags for private keys, provider-token shapes, credential URLs/assignments, sensitive filenames, runtime artifacts, oversized blobs, maintainer-local paths, and author-email exposure. No actionable credential or committed runtime artifact was found; the durable audit records synthetic-token false positives, the decision not to rewrite published history for non-secret paths/email metadata, and GitHub secret scanning being disabled as a v0.14.0 settings follow-up.
 
-- **Host-neutral shared PR gate (CC-502).** `pr-gate` now resolves reviewer definitions from product-owned assets instead of `$HOME/.claude/agents`, pins workspace-owned policies to the trusted base revision, and supplies reviewers with canonical-memory provenance/context through shared runtime libraries. Invalid canonical selections and unexpected resolution/query failures fail closed. A real `pmctl gate run --executor codex` regression proves the production path works in an isolated non-Claude HOME without creating `.claude` state, while Claude executor parity remains covered.
+- **Host-neutral shared PR gate (CC-502, PR#422).** `pr-gate` now resolves reviewer definitions from product-owned assets instead of `$HOME/.claude/agents`, pins workspace-owned policies to the trusted base revision, and supplies reviewers with canonical-memory provenance/context through shared runtime libraries. Invalid canonical selections and unexpected resolution/query failures fail closed. A real `pmctl gate run --executor codex` regression proves the production path works in an isolated non-Claude HOME without creating `.claude` state, while Claude executor parity remains covered.
 
-- **Fail-closed structured test evidence.** The shared test runner now limits its default parallel fan-out to four jobs to preserve file-descriptor and subprocess headroom for heavyweight suites, while explicit `--jobs`/`PM_DISPATCH_TEST_MAX_JOBS` overrides remain available. Structured-result consumers reject missing, empty, or malformed sinks instead of treating incomplete evidence as success.
+- **Fail-closed structured test evidence (PR#400/#408/#422).** The shared test runner now limits its default parallel fan-out to four jobs to preserve file-descriptor and subprocess headroom for heavyweight suites, while explicit `--jobs`/`PM_DISPATCH_TEST_MAX_JOBS` overrides remain available. Structured-result consumers reject missing, empty, or malformed sinks instead of treating incomplete evidence as success.
 
-- **Canonical migration references and release metadata.** Current README, core, platform, milestone, backlog, and release-checklist surfaces now point to the owner-domain paths established by the script-domain migration. The inventory linter rejects retired implementation references while preserving historical records, compatibility coverage, and installed `~/.claude/scripts/` helper names; release verification now derives coverage from the canonical suite registry instead of a copied suite count.
+- **Canonical migration references and release metadata (PR#417/#425).** Current README, core, platform, milestone, backlog, and release-checklist surfaces now point to the owner-domain paths established by the script-domain migration. The inventory linter rejects retired implementation references while preserving historical records, compatibility coverage, and installed `~/.claude/scripts/` helper names; release verification now derives coverage from the canonical suite registry instead of a copied suite count.
+
+### Docs
+
+- **v0.9 planning, probe, and closure records
+  (PR#370/#373/#377/#380/#382/#385/#386/#404/#416/#419).** Milestone scope,
+  host probes, cross-project analysis, model/effort decisions, follow-up tickets,
+  terminal-ticket archival, and pre-v1 stabilization/upgrade plans now preserve
+  the rationale and evidence behind the implemented v0.9 changes without
+  presenting deferred work as shipped behavior.
+
+### Fixed
+
+- **Milestone docs-freshness status parsing (PR#376).** The U2
+  planned-versus-released check now reads only the milestone heading, so status
+  words in explanatory body text cannot produce a false stale-status finding.
+
+- **Repeated full-suite escalation in the affected-test planner (CC-489,
+  PR#411).** Repeated high-fanout paths now keep `mark_full` successful, so a
+  diff containing both `install.sh` and `uninstall.sh` cannot exit silently
+  under `set -e` before producing structured test evidence.
+
+- **Release-gate synthetic tree remains clean (PR#425).** The live E2E fixture
+  commits `.pm-dispatch/` to its synthetic repository's ignore policy before
+  context refresh, preventing derived context state from tripping the gate's
+  clean-tree guard. Structural regression coverage locks the setup order.
+
+- **Real-HOME uninstall convergence (PR#425).** The dedicated pmctl teardown
+  removes `~/.local/bin/pmctl` before the manifest loop sees the same entry. That
+  already-gone, out-of-`~/.claude` destination is now treated as an idempotent
+  success instead of a safety conflict, so uninstall removes its manifest and
+  a second run converges with zero safety skips. Missing paths never trigger a
+  deletion; broken symlinks and existing out-of-root targets still pass through
+  the fail-closed ownership and containment checks.
 
 ## [0.8.0] — 2026-07-04
 
 ### Added
-
-- **Script-domain ownership completion (CC-489 Phase 6 + final reuse audit).** Shared runtime, test harness, tooling, and operations implementations now live under `runtime/`, `tests/`, `tools/`, and `ops/`; 151 retired implementation paths are gone and `scripts/` contains exactly 19 compatibility shims. CLI, CI, manifests, installers, docs, and suite selection use canonical owner paths. The final cross-phase audit centralizes host-neutral leading-token expansion without moving host defaults out of host modules, replaces parallel installer helper arrays with one name/source spec table, and strengthens the inventory ratchet so each executable shim must name its declared canonical target.
-
-- **Claude host-owned modules (CC-489 Phase 5).** Claude hook install/uninstall, doctor, usage/rate-limit hooks, and prompt-context timeout defaults now live under `hosts/claude/` and are discovered from `host.yaml`. Top-level install/uninstall retain product asset orchestration while delegating Claude settings writes through the generic host dispatcher. Legacy installed paths remain compatibility shims, stale managed paths refresh safely, and unrelated hooks plus statusline chains survive install/uninstall.
-
-- **Codex host-owned modules (CC-489 Phase 4).** Codex install, uninstall, doctor, and command-guard implementations now live under `hosts/codex/` and are discovered from `host.yaml`. Legacy installed paths remain thin compatibility shims; reinstall refreshes this checkout's stale hook command to the new path, while uninstall recognizes exact old/new identities without removing foreign same-basename hooks. The canonical memory writer and executor adapter remain unchanged.
-
-- **Host-owned config-root resolvers (CC-489 Phase 2).** Claude, Codex, and OpenCode manifests now declare host-local path resolver modules. The shared manifest reader safely delegates target expansion without naming host environment variables or defaults; Claude install, uninstall, doctor, and hook wiring share one canonical/legacy conflict contract. Regression coverage locks unset/empty roots, hostile and whitespace-bearing `HOME`, alias conflicts, and relocated fixtures. No existing production file is relocated in this slice.
-
-- **Codex command-local PM guard bypass (CC-496).** The Codex `PreToolUse` transport now recognizes an exact leading `PM_GUARD_PM_BASH=off` assignment for one audited hook call, matching the remediation printed by `guard-pm-bash.sh`; later assignments, case variants, and subsequent calls remain denied.
-
-- **Project-scoped canonical memory config (CC-490).** Replaces the unsafe machine-wide `dispatch.memory_dir` selector with `memory.projects.<stable-project-key>.dir`. `pmctl memory config set|migrate|lint` manages mappings atomically, diagnoses deprecated global config, and keeps unmatched repositories on their own legacy discovery or unavailable path. Invalid explicit selections now fail closed across resolve, context indexing, doctor, and mutating maintenance commands; regression coverage proves an unmatched append or invalid maintenance operation cannot mutate another project's canonical store.
 
 - **Memory substrate cross-tool location seam (CC-412, PR#352).** `find_memory_dir` now honors an explicit override with precedence `PM_MEMORY_DIR` env > `dispatch.memory_dir` config > `CLAUDE_CONFIG_DIR` convention — behavior is byte-identical to before when neither override is set. The injection layering is now documented in `docs/memory-system.md`: the portable core is the `pmctl context --source memory` retrieval API; injection is a per-tool adapter concern (Claude keeps its existing hook; codex/opencode/future hosts call the retrieval API directly).
 
@@ -93,8 +139,6 @@ Versions follow [Semantic Versioning](https://semver.org/).
 - **Shared adapter lib: `scripts/lib/dispatch-common.sh` (CC-422, PR#347).** Extracted five shared adapter init helpers (`require_brief_file`, `require_working_dir`, `load_model_aliases`, `resolve_timeout`, `init_run_dir`) into a single sourced lib. All three adapters now share a single init sequence.
 
 ### Fixed
-
-- **Repeated full-suite escalation in the affected-test planner (CC-489).** `mark_full` now remains successful after the first high-fanout path, so a diff containing both `install.sh` and `uninstall.sh` no longer exits silently under `set -e` before producing test evidence. A focused regression locks the repeated-escalation case.
 
 - **`uninstall.sh` blast-radius guard: exact managed-root path rejection (CC-210, PR#340).** Added `[[ "$dst" == "$managed_root" ]]` precise path check to prevent the managed root itself from being deleted during uninstall. Added regression test case.
 
