@@ -10,6 +10,8 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **Public-history exposure audit (CC-033 audit slice).** Scanned all 493 commits reachable from heads, remotes, and tags for private keys, provider-token shapes, credential URLs/assignments, sensitive filenames, runtime artifacts, oversized blobs, maintainer-local paths, and author-email exposure. No actionable credential or committed runtime artifact was found; the durable audit records synthetic-token false positives, the decision not to rewrite published history for non-secret paths/email metadata, and GitHub secret scanning being disabled as a v0.14.0 settings follow-up.
+
 - **Host-neutral shared PR gate (CC-502).** `pr-gate` now resolves reviewer definitions from product-owned assets instead of `$HOME/.claude/agents`, pins workspace-owned policies to the trusted base revision, and supplies reviewers with canonical-memory provenance/context through shared runtime libraries. Invalid canonical selections and unexpected resolution/query failures fail closed. A real `pmctl gate run --executor codex` regression proves the production path works in an isolated non-Claude HOME without creating `.claude` state, while Claude executor parity remains covered.
 
 - **Fail-closed structured test evidence.** The shared test runner now limits its default parallel fan-out to four jobs to preserve file-descriptor and subprocess headroom for heavyweight suites, while explicit `--jobs`/`PM_DISPATCH_TEST_MAX_JOBS` overrides remain available. Structured-result consumers reject missing, empty, or malformed sinks instead of treating incomplete evidence as success.

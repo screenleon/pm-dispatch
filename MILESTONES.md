@@ -26,7 +26,7 @@
 | 票 | 摘要 | 狀態 |
 |----|------|------|
 | CC-032 | feedback cross-link glossary 公開化，清除 public dead/private-only link | 🔵 |
-| CC-033 | README/onboarding public posture、history audit 處置、repo collaboration surface | 🔵（history audit 可先行） |
+| CC-033 | README/onboarding public posture、history audit 處置、repo collaboration surface | 🔵（history audit ✅ 2026-07-18；其餘未啟動） |
 
 ### Phase 2 — contract candidate
 
@@ -245,7 +245,7 @@
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-033（audit slice only） | git-history 敏感內容／損害盤點；public copy 不在本版修改 | 🔵 |
+| CC-033（audit slice only） | git-history 敏感內容／損害盤點；public copy 不在本版修改 | ✅ 2026-07-18；結果：`docs/audits/CC-033-git-history-audit.md` |
 
 ### 待後續 / 明確排除
 
