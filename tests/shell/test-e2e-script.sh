@@ -175,6 +175,19 @@ test_stub_e2e_no_pm_dispatch_artifact() {
   else fail "stub-e2e-no-pm-dispatch-artifact" ".pm-dispatch created at: $artifacts"; fi
 }
 
+# Phase C runs `pmctl gate run`, whose context refresh may create
+# `.pm-dispatch/ctx/context.db`. The synthetic repo must commit the canonical
+# ignore before its base commit or pr-gate will reject the harness-created
+# `.gitignore` change as a dirty tree.
+test_phase_c_commits_context_ignore() {
+  local body
+  body="$(<"$E2E")"
+  assert_contains "phase-c-writes-context-ignore" \
+    "printf '.pm-dispatch/\\n' > \"\$synthetic_base/.gitignore\"" "$body"
+  assert_contains "phase-c-commits-context-ignore" \
+    'add calc.sh .gitignore' "$body"
+}
+
 # ── Run ───────────────────────────────────────────────────────────────────────
 
 test_help_contains_usage
@@ -190,6 +203,7 @@ test_skip_gate_flag_accepted
 test_skip_gate_not_usage_error
 test_skip_gate_reaches_phase_c_skip
 test_stub_e2e_no_pm_dispatch_artifact
+test_phase_c_commits_context_ignore
 
 printf '\n%d passed, %d failed\n' "$PASSED" "$FAILED"
 [[ "$FAILED" -eq 0 ]]
