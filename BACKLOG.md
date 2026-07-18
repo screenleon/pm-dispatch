@@ -12,8 +12,6 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-450 | 🟢 someday | 其餘 9 個 test-*.sh docstring 格式統一（CC-004 同款 Behavior/Steps，跨檔） | ops | 2026-07-03 | — | P3 | — |
 | CC-452 | 🔵 active | guard/hook 對稱性與併發 hardening；僅與 lifecycle/state correctness 直接相關的 slice 納入 v0.10.0 | ops | 2026-07-06 | — | P3 | hygiene |
 | CC-453 | 🔵 active | worktree/auto-pack 路徑契約 hardening；僅與 lifecycle/state correctness 直接相關的 slice 納入 v0.10.0 | ops | 2026-07-06 | — | P3 | hygiene |
-| CC-454 | ✅ done | canonical ShellCheck domain coverage：掃描 runtime/tests/tools/ops/hosts、ignore ratchet、moved-path parity、CI↔local lint 一致（CC-489 後收口） | ops/test | 2026-07-06 | pr:#420 | P1 | hygiene |
-| CC-460 | 🔵 active | `pmctl` CLI discovery surface：root/area/leaf help、commands JSON registry、router↔manifest↔help↔README parity（v1.0 使用者可理解性前置） | DX/docs | 2026-07-07 | — | P1 | design |
 | CC-461 | 🟢 someday | `doctor.sh --fix`：僅限冪等/可逆/不碰使用者內容類別的自動修復；待 CC-447 offline smoke 產出摔倒點清單後定白名單（2026-07-07 openyida 跨專案分析） | ops/install | 2026-07-07 | — | P3 | — |
 | CC-462 | 🟢 someday | e2e 可拋棄資源紀律：前綴命名 + registry JSON + result artifact；掛在 CC-449 e2e 新 phase 之後，與 CC-447 live smoke 共用同一 registry（2026-07-07 openyida 跨專案分析） | ops/test | 2026-07-07 | — | P3 | — |
 | CC-463 | 🟢 someday | `pmctl batch` 泛用批次執行原語；依賴 CC-460（合法性驗證來源）；新注入面須過 security-reviewer（2026-07-07 openyida 跨專案分析） | arch/process | 2026-07-07 | — | P3 | design |
@@ -24,8 +22,6 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-498 | 🔵 active | State compatibility surface：status、layout/entity 版本命名、真實 migration availability | arch/schema | 2026-07-17 | — | P1 | design |
 | CC-499 | ⏸ deferred | Detached run reconciliation：crash、reboot、stale sentinel、PID identity 與 orphan recovery | arch/ops | 2026-07-17 | — | P2 | design |
 | CC-500 | ⏸ deferred | State single-writer boundary enforcement：all-production-domain direct-writer ratchet | arch/test | 2026-07-17 | — | P2 | design |
-| CC-501 | 🔵 active | v0.8.0→v0.9 candidate 一次性 upgrade smoke：三 host managed path refresh、doctor 0 FAIL、foreign config/canonical memory byte preservation | release/test | 2026-07-17 | — | P1 | hygiene |
-| CC-502 | ✅ done | shared gate/reviewer 去除 Claude-host 隱性前置：repo-owned reviewer definitions + canonical memory contract + 非 Claude HOME regression | arch/gate | 2026-07-17 | pr:#422 | P1 | design |
 | CC-503 | 🔵 active | shared tooling/hooks host-boundary 收斂：skill-refine canonical memory、prompt payload adapter、state-root audit log、content ratchet | arch/hook | 2026-07-17 | — | P2 | hygiene |
 | CC-504 | 🔵 active | top-level install/uninstall/doctor 移除 Claude base-spine 特例，建立 manifest-driven multi-host lifecycle 與 product-asset ownership | arch/install | 2026-07-17 | — | P2 | design |
 | CC-465 | 🔵 active | memory/context 關鍵詞管線 CJK 支援：抽出共用零依賴斷詞 lib，取代三處各自 ASCII-only 抽詞；工作序列起點（465→467→468→466）（2026-07-07 記憶系統深入分析） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
@@ -214,26 +210,6 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `ops/backlog/archive-cl
 
 **Dependencies**: 無硬前置；只有與 CC-495/498 lifecycle/state correctness 直接相關的 slice 納入 v0.10.0。與 [[CC-449]] e2e 煙測互補（那邊驗 happy path，本票驗防禦面）。
 **Source**: 2026-07-06 盲測程式碼稽核；洩漏目錄實例（已清除）。
-
-## CC-460 — `pmctl` CLI discovery：root/area/leaf help + commands registry + 四方 parity 🔵 active
-
-**Problem**: 使用者無法由 CLI 自身可靠學會 `pmctl`：無參數只印一行 usage；`pmctl help`、`pmctl --help`、`pmctl <area> --help` 目前都視為 unknown command 並 exit 2；unknown command 沒有可用命令或建議。README 也只列完整 command surface 的一小部分。command/subcommand 的機器可讀清單不存在單一來源，router、help、README 各自漂移。
-
-**Why**: v1.0 若宣稱 CLI 可用，使用者必須不讀原始碼即可發現入口、理解參數並找到下一步。[[CC-446]] 也需要完整且可驗證的 command inventory，才能凍結 stable/experimental surface。
-
-**Requirement**:
-1. **Slice A — help/registry**：支援 `pmctl help`、`pmctl --help`、`pmctl <area> --help`、`pmctl help <area> [subcommand]` 與 leaf help；help 成功一律 exit 0，且不得初始化外部依賴、解析 state store 或產生任何寫入副作用。
-2. help 至少包含 summary、usage、主要 options、常見 examples、stability 標記與相關下一層 command；unknown command 顯示最接近建議及 root-help 指引。
-3. 建立 canonical command registry，至少含 command path、summary、usage、stability、是否支援 JSON、是否 mutating。router 是「是否可執行」的權威；registry/help metadata 不得另造第二份 command existence 清單。
-4. **Slice B — discovery/parity**：`pmctl commands --json` 列出 registry 全部 command/subcommand；README command index 由 registry 生成或機械核對。
-5. **四方防漂移 lint**：router ↔ registry/`commands --json` ↔ help ↔ README 任一方向缺漏即 fail loud，接入 CI；包含新增 command 未進 help/README 與刪除 command 仍留文件的注入測試。
-
-**Non-goals**: 不在本票重寫所有長篇教學；不覆蓋 skill/agent 的 coverage 分類（見 [[CC-449]]）。`pmctl version --json` 可作第二 slice 候選，但是否列 stable 由 [[CC-446]] 定案。
-
-**Done-when**: 新使用者可只靠 root/area/leaf help 找到並正確組出主要 workflow；help path 全部 exit 0 且無副作用；`commands --json` 涵蓋全部已註冊 command；四方 parity lint 的正反向注入測試通過。
-
-**Dependencies**: 與 [[CC-446]]（stable CLI 分級表需要這份清單作為覆蓋範圍的事實依據，宜同批或先行）、[[CC-451]]（parity lint 設計參照）。v0.9.0 候選（契約凍結 Phase 3 的前置證據）。
-**Source**: 2026-07-07 openyida（github.com/openyida/openyida）跨專案分析——`commands --json` manifest + `check:commands` 三方防漂移模式；承接 [[CC-033]] #4、[[CC-446]] #5a 兩個既有票內已記載的缺口。
 
 ## CC-461 — `doctor.sh --fix`：冪等/可逆自動修復 🟢 someday
 
@@ -459,22 +435,6 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `ops/backlog/archive-cl
 **Why**: 純 audit-quality / 一致性問題，不影響測試邏輯或功能；規模較大故從 CC-004 拆出獨立票，避免單票範圍無限擴張。
 **Requirement**: 依 `tests/lib/test-harness.sh` 頂部新增的 docstring 慣例說明（CC-004 帶入），逐檔把上述 9 個檔案的 test function 補上 `# Behavior:`/`# Steps:` 註解區塊，整段置於函式宣告正上方、不拆進函式內部。不改測試邏輯。完成後跑對應套件全綠、`bash -n` 語法檢查、以及 run_test 呼叫名稱與函式宣告的交叉核對（避免重蹈 CC-004 實作中一度誤刪宣告行的錯誤）。
 **Source**: 2026-07-03 CC-004 實作時的範圍盤點。
-
-## CC-454 — canonical ShellCheck domain coverage + ignore ratchet ✅ 2026-07-17
-
-**Problem**: CC-489 已把 canonical implementation 搬到 `runtime/`、`tests/`、`tools/`、`ops/`、`hosts/`，但 `.github/workflows/lint.yml` 的 action-shellcheck 仍以 `scripts/` 為主要掃描入口，且保留大量搬遷前 `ignore_names`。問題已不只是 allowlist 太大，而是 canonical production/test domains 可能完全未受等價靜態檢查。
-
-**Why**: compatibility shims 仍綠不能代表 canonical implementation 已被 lint。v1.0 前必須讓 CI 與 local lint 對 current tree 提供一致證據。
-
-**Requirement**:
-1. shellcheck 拆成語意獨立的 CI job，掃描 canonical `runtime/`、`tests/`、`tools/`、`ops/`、`hosts/` shell domains；`scripts/` compatibility shims 仍需 parity/basic validation。
-2. CI 與 local lint 共用同一份 domain inventory；新增或搬移 shell implementation 不得因路徑改變而脫離掃描。
-3. `ignore_names` 改為 current canonical path 的 explicit ratchet；每筆須有理由，新檔預設不得加入，搬遷前不存在的 ignore name 必須 fail。
-4. 補 moved-path parity 與注入測試：在 canonical domain 新增違規 shell 時 CI/local lint 都能抓到；只掃舊 shim 不算通過。
-
-**Dependencies**: 與 [[CC-497]] 的 stale-path/docs ratchet 分工；與 [[CC-449]] 協調 CI evidence parity，但本票獨立負責 ShellCheck domain coverage。v0.9.0。
-**Source**: 2026-07-06 盲測程式碼稽核（測試/CI 角度）。
-**See**: pr:#420
 
 ## CC-011 — sync-memory.sh + 跨裝置共用（deferred；建議與 CC-012 合併實作）
 
@@ -1439,54 +1399,6 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 **Done-when**: single-writer invariant 從文件宣言變成 all-production-domain ratchet，且新增旁路 writer 無法只靠 code review 混入。
 
 **Dependencies**: [[CC-498]] 可先行；可作其第二 PR，但不併入 [[CC-497]]。P2，v0.11.0。
-
-## CC-501 — v0.8.0→v0.9 candidate 一次性 upgrade smoke 🔵 active
-
-**Problem**: v0.8.0 之後完成 host manifest、151 個 script domain 搬遷、canonical memory continuity、portable repos-root 與 stale-path ratchet，但目前 release evidence 只驗 current tree 的 fresh install/unit behavior，沒有證明既有 v0.8.0 使用者重跑 v0.9 installer 時會把 managed targets refresh 到 canonical owner paths，也沒有證明 uninstall 不會誤傷 foreign config 或 canonical memory。
-
-**Why**: 這是一次特殊的大型遷移風險，不能等到 [[CC-447]] 在 v0.12.0 建立通用 N-1 contract 才第一次驗證。另一方面，本票只驗 v0.8.0→v0.9 candidate，不提前吞入 CC-447 的 future-release automation、clean-machine onboarding 或 live dogfood。
-
-**Requirement**:
-1. 以 tag `v0.8.0` 與待發布 v0.9 candidate 的兩個獨立 checkout/worktree 執行；記錄兩端 commit SHA。
-2. 測試環境必須覆蓋整個隔離 `HOME`，並顯式隔離 `CLAUDE_CONFIG_DIR`、`CODEX_HOME`、`XDG_CONFIG_HOME`、`PMCTL_BIN_DIR`、state/telemetry roots；不得只換 host home 後仍碰真實 `~/.local/bin/pmctl` 或 operator state。
-3. v0.8.0 install 後建立代表性的 Claude/Codex/OpenCode managed config，同時在各 config 寫入 foreign marker；建立 project-scoped canonical memory fixture並保存 config、memory、使用者資料 checksum。
-4. 以相同隔離環境切換到 v0.9 candidate 重跑 install；要求 `doctor --json` 0 FAIL、三 host managed target 指向 candidate canonical owner paths、retired `scripts/` implementation targets 不再被 active config 引用，第二次 dry-run 冪等。
-5. 執行 candidate uninstall；只移除 manifest-owned artifacts，foreign hooks/config、canonical memory、使用者資料與非本專案 managed block 必須 byte-identical。
-6. 產出可追溯 artifact，至少含 baseline/candidate SHA、每階段 exit status、doctor summary、old→new target assertion 與 preservation checksum；任一 FAIL 都阻擋 v0.9 release。
-
-**Done-when**: v0.8.0→v0.9 candidate 在隔離環境完成 install→upgrade→doctor→uninstall，doctor 0 FAIL、所有 retired target 已 refresh、foreign config/canonical memory checksum 不變，且結果 artifact 可由 maintainer 重跑。
-
-**Update 2026-07-18（pre-release rehearsal）**: 已新增
-`ops/release/upgrade-smoke-v0.8-v0.9.sh`、canonical suite registration 與 release
-checklist 入口。實跑 `v0.8.0` (`b5eb215`) → dirty candidate based on `746096c`
-為 GO：doctor 0 FAIL、三 host old→new、retired target 0、dry-run 冪等，uninstall
-後 foreign config／canonical memory／user data checksum 全保留。Smoke 暴露並補上
-manifest-owned Claude/pmctl 跨 checkout transfer、stale dispatch allowlist cleanup、
-Codex compatible-checkout identity refresh、OpenCode checksum-verified receipt transfer。
-本票維持 active；最終 release acceptance 必須在這批變更提交後，以 final clean
-candidate SHA 重跑並保存 artifact，dirty rehearsal 不得作 tagging evidence。
-
-**Dependencies**: [[CC-454]] 與 [[CC-502]] 完成後執行最終 candidate smoke；[[CC-497]]、[[CC-456]] 已完成且只作 baseline，不重新開票。完成本票不取代 [[CC-447]]。P1，v0.9.0 release acceptance。
-
-## CC-502 — shared gate/reviewer 去除 Claude-host 隱性前置 ✅ 2026-07-18
-
-**Problem**: `runtime/bin/pr-gate.sh` 是 shared gate runtime，卻無條件從 `$HOME/.claude/agents` 載入 reviewer definitions；同一批 reviewer definition 會交給 Codex 與 Claude executor，但 `agents/critic.md`、`agents/architecture-reviewer.md` 又直接要求讀 `~/.claude/projects/<id>/memory/...`。結果是 Codex/OpenCode 作 PM host 或乾淨非 Claude HOME 即使具備 repo checkout、pmctl 與 executor auth，仍被 Claude installation tree 與 Claude memory layout 隱性綁住。
-
-**Why**: v0.9 已把 host manifest、canonical memory 與 executor adapter 宣告成正交軸；shared gate 仍依賴 Claude host root，會讓該承諾在最重要的 release gate 路徑失真。這也是 [[CC-501]] upgrade smoke 若只在 maintainer HOME 通過就會漏掉的環境污染。
-
-**Requirement**:
-1. reviewer definitions 以 repo-owned source或明確 resolver/參數取得；shared gate 不得把 `$HOME/.claude/agents` 當 default 或 prerequisite。若需要 snapshot，仍只把本次選中的 immutable definitions 複製到 reviewed workspace artifact dir。
-2. reviewer memory 指令改消費 gate/preparation 提供的 canonical memory provenance/context，或走 `pmctl memory/context` read surface；不得推導另一個 host-local path，也不得在 canonical resolution invalid 時 fallback。
-3. 明確區分 host 與 executor：Claude executor 可保留 adapter-specific 行為，但選擇 Codex executor或 Codex/OpenCode PM host 不得要求 Claude config tree存在。
-4. 新增 regression：使用沒有 `.claude/agents` 的隔離 HOME，從 repo checkout 執行 gate preparation/reviewer snapshot；驗證 Codex executor path 能讀 reviewer definitions與 canonical context，且不建立 Claude host目錄。
-5. 新增 targeted content ratchet，阻止 shared gate/reviewer contract 再引入 Claude host config root；允許 executor enum/model/adapter文字，不採全 repo `claude` 字串禁令。
-
-**Done-when**: `pmctl gate run --executor codex` 在非 Claude HOME 不再依賴 `.claude` asset/memory tree；Claude executor parity 保持；focused gate、reviewer、memory regression 與 full suite通過。
-
-**Outcome**: `pr-gate` 預設從 product-owned `agents/` 解析 reviewer definitions；reviewed-workspace definitions 固定讀 trusted base revision，外部 trusted definitions 在 snapshot 前後驗證 identity。Gate 透過 shared runtime 取得 canonical memory provenance/context，invalid explicit selection 與 resolver/query failure 均 fail closed。Regression 由真實 `pmctl gate run --executor codex` 入口在隔離非 Claude HOME 驗證 production resolver、reviewer snapshot 與零 `.claude` side effect；Claude executor parity 與 full suite維持通過（PR #422）。
-
-**Dependencies**: canonical memory基底由 [[CC-483]]/[[CC-490]] 提供；final candidate須先於 [[CC-501]]。P1，v0.9.0 release blocker。
-**See**: pr:#422
 
 ## CC-503 — shared tooling/hooks host-boundary 收斂 🔵 active
 

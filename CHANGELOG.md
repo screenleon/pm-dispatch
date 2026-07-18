@@ -10,7 +10,17 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
-- **v0.8.0 → v0.9 candidate upgrade acceptance (CC-501 preparation).** Added a
+- **Multi-host PM and host abstraction closure (CC-436/437/438/445/448/457/471/473/480; PR#372/#374/#375/#381/#384/#391/#394/#395).** Claude, Codex, and OpenCode now share the host-manifest capability contract and host-aware install/doctor/guard wiring. Codex gains the batch-only `pmctl pm prepare/run` coordinator, and canonical memory survives host switches without relying on another host's private tree.
+
+- **Canonical context and memory correctness (CC-455/459/483/484/488/490/492; PR#371/#379/#397/#399/#401/#403/#406).** Context follows the target repository, prompt retrieval is deterministic, all three hosts resolve and write the same project-scoped canonical memory, Codex lifecycle hooks preserve provenance, and invalid explicit selections fail closed.
+
+- **Gate, runner, and operational safety (CC-458/469/470/474/477/481/482/485/487/491/496; PR#378/#383/#387/#388/#396/#397/#398/#402/#407/#408).** Gate run/wait UX, absolute reviewer tooling, bounded timeouts, independent reasoning effort, concurrency-safe usage accounting, reusable pre-flight evidence, reviewer least privilege, and Codex's audited one-turn guard bypass are covered by structured fail-closed tests.
+
+- **Model and adapter compatibility maintenance (CC-475/476/478/479; PR#389/#390/#392/#393).** Claude and Codex aliases track their current model families; legacy Claude aliases remain supported, and OpenCode's deny-mode hang has a bounded timeout/permission workaround.
+
+- **Core/runtime ownership and CLI discovery (CC-451/454/456/460/489/497; PR#409/#405/#410–#421).** Runtime enums and state schema validation now have canonical sources; 151 implementation/fixture paths moved to their owner domains with compatibility-shim and stale-reference ratchets; ShellCheck and maintainer-path coverage match CI; and `pmctl` now provides root/area/leaf help, a machine-readable command catalog, suggestions, and README parity checks.
+
+- **v0.8.0 → v0.9 candidate upgrade acceptance (CC-501, PR#424).** Added a
   fully isolated, artifact-producing three-host upgrade smoke and fixed the
   ownership-safe refresh paths it exposed: manifest-owned Claude assets and
   `pmctl` transfer to a new checkout, stale dispatch allowlist entries are
