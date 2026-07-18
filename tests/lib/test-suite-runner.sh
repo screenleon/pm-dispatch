@@ -97,6 +97,7 @@ SUITE_NAMES=(
   test-pmctl-discovery
   test-pre-release
   test-release-verify
+  test-upgrade-smoke
   test-e2e-script
 )
 
@@ -184,6 +185,7 @@ declare -A SUITE_PATHS=(
   [test-pmctl-discovery]="tests/shell/test-pmctl-discovery.sh"
   [test-pre-release]="tests/shell/test-pre-release.sh"
   [test-release-verify]="tests/shell/test-release-verify.sh"
+  [test-upgrade-smoke]="tests/shell/test-upgrade-smoke.sh"
   [test-e2e-script]="tests/shell/test-e2e-script.sh"
 )
 

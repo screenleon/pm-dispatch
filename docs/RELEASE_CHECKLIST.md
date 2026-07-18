@@ -40,6 +40,20 @@ already owned by `release-verify.sh --e2e`.
 
 ## 1. Automated verification (`release-verify.sh`)
 
+For the one-time v0.9.0 acceptance, CC-501 additionally requires the isolated
+v0.8.0 upgrade smoke. Create independent worktrees for tag `v0.8.0` and the
+candidate commit, then run:
+
+```bash
+bash ops/release/upgrade-smoke-v0.8-v0.9.sh \
+  --baseline-dir /path/to/v0.8.0-worktree \
+  --candidate-dir /path/to/v0.9-candidate-worktree
+```
+
+- [ ] CC-501 prints `CC-501 upgrade smoke: GO`; retain its
+      `.gate-results/cc501-*` artifact with the release evidence. A dirty or
+      later superseded candidate checkout must be rerun at the final candidate SHA.
+
 Run on **Linux or WSL2** (the supported sign-off platforms). Native Windows Git
 Bash is out of scope during core development — `release-verify.sh` refuses to run
 there with a "use WSL2" notice.

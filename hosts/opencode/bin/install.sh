@@ -77,12 +77,21 @@ pmctl_pattern="$pmctl *"
 # POSIX checkout paths may legally contain quotes, backslashes, or newlines.
 pmctl_literal="$(jq -Rn --arg v "$pmctl" '$v')"
 
+receipt_owned=0
+prior_backup=""
+prior_config_existed=""
 if [[ -e "$receipt" || -L "$receipt" ]]; then
   [[ -f "$receipt" && ! -L "$receipt" ]] || { printf 'install-host-opencode: receipt path is not a regular file: %s\n' "$receipt" >&2; exit 1; }
   jq empty "$receipt" >/dev/null 2>&1 || { printf 'install-host-opencode: invalid receipt: %s\n' "$receipt" >&2; exit 1; }
   owner="$(jq -r '.repo_root // empty' "$receipt")"
-  [[ "$owner" == "$REPO_ROOT" ]] || {
-    printf 'install-host-opencode: receipt belongs to another checkout: %s\n' "$owner" >&2
+  case "$owner" in
+    /*) ;;
+    *) printf 'install-host-opencode: receipt has unsafe owner checkout: %s\n' "$owner" >&2; exit 1 ;;
+  esac
+  receipt_command_file="$(jq -r '.installed.command_file // empty' "$receipt")"
+  receipt_tool_file="$(jq -r '.installed.tool_file // empty' "$receipt")"
+  [[ "$receipt_command_file" == "$command_file" && "$receipt_tool_file" == "$tool_file" ]] || {
+    printf 'install-host-opencode: receipt targets do not match canonical host paths\n' >&2
     exit 1
   }
   expected_config_semantic="$(jq -r '.installed.config_semantic_sha256 // empty' "$receipt")"
@@ -100,25 +109,40 @@ if [[ -e "$receipt" || -L "$receipt" ]]; then
     printf 'install-host-opencode: managed files changed since install; refusing to overwrite\n' >&2
     exit 1
   }
-  printf 'install-host-opencode: already wired, nothing to do\n'
-  exit 0
+  if [[ "$owner" == "$REPO_ROOT" ]]; then
+    printf 'install-host-opencode: already wired, nothing to do\n'
+    exit 0
+  fi
+  prior_config_existed="$(jq -r '.before.config_existed' "$receipt")"
+  prior_backup="$(jq -r '.before.backup // empty' "$receipt")"
+  if [[ -n "$prior_backup" && "$prior_backup" != "$config_file.pm-dispatch.bak."* ]]; then
+    printf 'install-host-opencode: unsafe backup path in receipt: %s\n' "$prior_backup" >&2
+    exit 1
+  fi
+  if [[ "$prior_config_existed" == "true" && ! -f "$prior_backup" ]]; then
+    printf 'install-host-opencode: original config backup missing: %s\n' "$prior_backup" >&2
+    exit 1
+  fi
+  receipt_owned=1
 fi
 
-if [[ -e "$command_file" || -L "$command_file" ]]; then
+if [[ "$receipt_owned" -eq 0 && ( -e "$command_file" || -L "$command_file" ) ]]; then
   printf 'install-host-opencode: command already exists and is not owned by this checkout: %s\n' "$command_file" >&2
   exit 1
 fi
-if [[ -e "$tool_file" || -L "$tool_file" ]]; then
+if [[ "$receipt_owned" -eq 0 && ( -e "$tool_file" || -L "$tool_file" ) ]]; then
   printf 'install-host-opencode: tool already exists and is not owned by this checkout: %s\n' "$tool_file" >&2
   exit 1
 fi
 
 config_existed=false
-if [[ -L "$config_file" ]]; then
+if [[ "$receipt_owned" -eq 0 && -L "$config_file" ]]; then
   printf 'install-host-opencode: symlinked config requires manual integration: %s\n' "$config_file" >&2
   exit 1
 fi
-if [[ -f "$config_file" ]]; then
+if [[ "$receipt_owned" -eq 1 ]]; then
+  config_existed="$prior_config_existed"
+elif [[ -f "$config_file" ]]; then
   config_existed=true
   jq empty "$config_file" >/dev/null 2>&1 || {
     printf 'install-host-opencode: existing config is not valid JSON: %s\n' "$config_file" >&2
@@ -173,7 +197,17 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if [[ "$config_existed" == "true" ]]; then
+if [[ "$receipt_owned" -eq 1 ]]; then
+  backup="$prior_backup"
+  old_pmctl_pattern="$owner/cli/pmctl *"
+  jq --arg old_pattern "$old_pmctl_pattern" --arg pattern "$pmctl_pattern" '
+    if .permission.bash[$old_pattern]? == "allow" then del(.permission.bash[$old_pattern]) else . end |
+    .permission = (.permission // {}) |
+    .permission.bash = {"*":"deny"} |
+    .permission.bash[$pattern] = "allow" |
+    .permission.pm_prepare = "allow"
+  ' "$config_file" > "$tmp_config"
+elif [[ "$config_existed" == "true" ]]; then
   backup="$config_file.pm-dispatch.bak.$(date +%Y%m%d-%H%M%S).$$"
   cp "$config_file" "$backup"
   jq --arg pattern "$pmctl_pattern" \
@@ -265,6 +299,9 @@ mv "$tmp_tool" "$tool_file"
 applied_tool=1
 mv "$tmp_receipt" "$receipt"
 trap - EXIT
+if [[ "$receipt_owned" -eq 1 ]]; then
+  printf 'install-host-opencode: refreshed managed targets from %s to %s\n' "$owner" "$REPO_ROOT"
+fi
 printf 'install-host-opencode: wrote %s\n' "$config_file"
 printf 'install-host-opencode: wrote %s\n' "$command_file"
 printf 'install-host-opencode: wrote %s\n' "$tool_file"

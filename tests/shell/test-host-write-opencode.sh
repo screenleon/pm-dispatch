@@ -118,6 +118,37 @@ test_existing_config_restored_byte_exact() {
   cmp -s "$before" "$config" && pass "$name" || fail "$name" "original config bytes were not restored"
 }
 
+# Behavior: a verified receipt may transfer ownership from an old checkout to the candidate.
+# Steps: install from a copied checkout, refresh from this checkout, then uninstall and compare bytes.
+test_cross_checkout_refresh_preserves_foreign_config() {
+  local name="opencode-cross-checkout-refresh-preserves-foreign-config"
+  should_run "$name" || return 0
+  local old_root="$tmp_root/opencode-old-checkout" xdg="$tmp_root/opencode-cross/config"
+  local config="$xdg/opencode/opencode.json" before="$tmp_root/opencode-cross-before.json"
+  mkdir -p "$old_root" "$(dirname "$config")"
+  cp -R "$REPO_ROOT/runtime" "$REPO_ROOT/hosts" "$REPO_ROOT/cli" "$old_root/"
+  printf '{"foreignMarker":"preserve-exactly","theme":"night"}\n' > "$config"
+  cp "$config" "$before"
+  XDG_CONFIG_HOME="$xdg" bash "$old_root/hosts/opencode/bin/install.sh" --repo-root "$old_root" >/dev/null 2>&1
+  XDG_CONFIG_HOME="$xdg" bash "$REPO_ROOT/hosts/opencode/bin/install.sh" --repo-root "$REPO_ROOT" >/dev/null 2>&1
+  if ! jq -e --arg root "$REPO_ROOT" --arg old "$old_root" '
+      .foreignMarker == "preserve-exactly" and .theme == "night" and
+      .permission.bash[($root+"/cli/pmctl *")] == "allow" and
+      (.permission.bash[($old+"/cli/pmctl *")] == null)
+    ' "$config" >/dev/null 2>&1; then
+    fail "$name" "candidate config did not preserve foreign fields and refresh the managed target"
+    return
+  fi
+  if ! grep -Fq "$REPO_ROOT/cli/pmctl" "$xdg/opencode/commands/pm.md" \
+      || grep -RFq "$old_root" "$xdg/opencode/commands" "$xdg/opencode/tools"; then
+    fail "$name" "candidate command/tool still references the old checkout"
+    return
+  fi
+  XDG_CONFIG_HOME="$xdg" bash "$REPO_ROOT/hosts/opencode/bin/uninstall.sh" --repo-root "$REPO_ROOT" >/dev/null 2>&1
+  cmp -s "$before" "$config" && pass "$name" \
+    || fail "$name" "uninstall did not restore the foreign config byte-identically"
+}
+
 # Behavior: an ordering-sensitive user Bash policy is refused without mutation.
 # Steps: seed permission.bash, install, then verify exit 1 and unchanged bytes.
 test_existing_bash_policy_refused() {
@@ -315,6 +346,7 @@ test_legacy_entrypoints_forward_without_behavior_drift
 test_dry_run_has_no_side_effect
 test_fresh_install_and_idempotency
 test_existing_config_restored_byte_exact
+test_cross_checkout_refresh_preserves_foreign_config
 test_existing_bash_policy_refused
 test_existing_permission_shorthand_refused
 test_modified_managed_config_blocks_uninstall

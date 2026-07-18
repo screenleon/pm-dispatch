@@ -10,6 +10,16 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **v0.8.0 → v0.9 candidate upgrade acceptance (CC-501 preparation).** Added a
+  fully isolated, artifact-producing three-host upgrade smoke and fixed the
+  ownership-safe refresh paths it exposed: manifest-owned Claude assets and
+  `pmctl` transfer to a new checkout, stale dispatch allowlist entries are
+  retired, Codex refreshes only commands rooted in a verified pm-dispatch
+  checkout, and OpenCode transfers a checksum-verified receipt while retaining
+  its original byte-exact uninstall backup. The smoke requires doctor 0 FAIL,
+  no retired `scripts/` targets, an idempotent dry-run, and byte preservation of
+  foreign config, canonical memory, and user data.
+
 - **Public-history exposure audit (CC-033 audit slice).** Scanned all 493 commits reachable from heads, remotes, and tags for private keys, provider-token shapes, credential URLs/assignments, sensitive filenames, runtime artifacts, oversized blobs, maintainer-local paths, and author-email exposure. No actionable credential or committed runtime artifact was found; the durable audit records synthetic-token false positives, the decision not to rewrite published history for non-secret paths/email metadata, and GitHub secret scanning being disabled as a v0.14.0 settings follow-up.
 
 - **Host-neutral shared PR gate (CC-502).** `pr-gate` now resolves reviewer definitions from product-owned assets instead of `$HOME/.claude/agents`, pins workspace-owned policies to the trusted base revision, and supplies reviewers with canonical-memory provenance/context through shared runtime libraries. Invalid canonical selections and unexpected resolution/query failures fail closed. A real `pmctl gate run --executor codex` regression proves the production path works in an isolated non-Claude HOME without creating `.claude` state, while Claude executor parity remains covered.

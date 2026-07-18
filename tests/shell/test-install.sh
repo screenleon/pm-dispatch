@@ -539,6 +539,9 @@ test_install_manifest_atomic() {
       [[ -d "$REPO_ROOT/$subdir" ]] && expected_entries=$((expected_entries + 1))
     done
   else
+    # Linux/macOS install records the checkout-owned pmctl symlink so a later
+    # checkout can refresh it through the same manifest ownership proof.
+    expected_entries=$((expected_entries + 1))
     for subdir in agents skills commands adapters; do
       [[ -d "$REPO_ROOT/$subdir" ]] || continue
       for _ in "$REPO_ROOT/$subdir"/*; do
@@ -927,6 +930,51 @@ test_install_dispatch_allowlist_backup_timestamped() {
     pass "$name"
   else
     fail "$name" "backup $bak is not byte-identical to pre-install settings (before=$before after=$after)"
+  fi
+}
+
+# Behavior: a cross-checkout install retires both absolute and HOME-relative
+# dispatch grants owned by the former checkout without touching foreign grants.
+# Steps: seed the prior adapter symlink + manifest ownership record and both
+# allowlist spellings, install the candidate, then inspect permissions.allow.
+test_install_dispatch_allowlist_refreshes_other_checkout_paths() {
+  local name="test_install_dispatch_allowlist_refreshes_other_checkout_paths"
+  should_run "$name" || return 0
+  if _ti_skip_win "$name" "symlink ownership fixture is POSIX-only"; then return 0; fi
+  local home="$tmp_root/$name-home" claude_home old_root settings manifest foreign
+  claude_home="$home/.claude"
+  old_root="$home/old checkout"
+  settings="$claude_home/settings.json"
+  manifest="$claude_home/.pm-dispatch/install-manifest.json"
+  foreign="Bash(~/foreign checkout/adapters/claude/dispatch.sh:*)"
+  mkdir -p "$claude_home/adapters" "$claude_home/.pm-dispatch" \
+    "$old_root/adapters/claude"
+  ln -s "$old_root/adapters/claude" "$claude_home/adapters/claude"
+  jq -cn --arg src "$old_root/adapters/claude" \
+    --arg dst "$claude_home/adapters/claude" \
+    '{manifest_version:1,entries:[{src:$src,dst:$dst,mode:"symlink"}]}' > "$manifest"
+  jq -n --arg old "$old_root" --arg foreign "$foreign" '{permissions:{allow:[
+    ("Bash("+$old+"/adapters/claude/dispatch.sh:*)"),
+    "Bash(~/old checkout/adapters/claude/dispatch.sh:*)",
+    $foreign,
+    "Bash(echo:*)"
+  ]}}' > "$settings"
+
+  HOME="$home" CLAUDE_HOME="$claude_home" \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
+    bash "$REPO_ROOT/install.sh" >/dev/null 2>&1
+
+  if jq -e --arg old "$old_root" --arg foreign "$foreign" --arg root "$REPO_ROOT" '
+      ([.permissions.allow[]? | select(startswith("Bash("+$old+"/adapters/") or
+        startswith("Bash(~/old checkout/adapters/"))] | length) == 0 and
+      (.permissions.allow | index($foreign)) != null and
+      (.permissions.allow | index("Bash(echo:*)")) != null and
+      any(.permissions.allow[]?; startswith("Bash("+$root+"/adapters/"))
+    ' "$settings" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "stale checkout grants survived or foreign/current grants changed: $(jq -c . "$settings")"
   fi
 }
 
@@ -2703,6 +2751,7 @@ test_install_sh_wires_hooks_no_settings
 test_install_adds_dispatch_allowlist
 test_install_dispatch_allowlist_idempotent
 test_install_dispatch_allowlist_backup_timestamped
+test_install_dispatch_allowlist_refreshes_other_checkout_paths
 test_dispatch_allowlist_lib_parity
 test_dispatch_allowlist_uninstall_removes_entries
 test_dispatch_allowlist_uninstall_dryrun
