@@ -67,6 +67,14 @@ If this repository adds changes to the dispatch pipeline, update this schema fir
 
 ## Testing and validation
 
+### Maintainer development dependencies
+
+Running lint or the authoritative full suite requires **ShellCheck** on `PATH`.
+It is a maintainer/fork development dependency only: ordinary users who install
+and use pm-dispatch tools do not need ShellCheck. Install it with your platform
+package manager (for example, `apt install shellcheck` or `brew install shellcheck`)
+before running the commands below.
+
 During implementation and gate-fix iteration, run only the affected suites:
 
 ```bash

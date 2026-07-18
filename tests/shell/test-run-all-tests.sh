@@ -5,6 +5,12 @@ export LC_ALL=C.UTF-8
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
+# This script launches fixture copies of the aggregate runner. A caller such as
+# pr-gate may provide an outer result sink, but fixtures must never overwrite
+# that caller's evidence. Cases that exercise result artifacts set their own
+# isolated paths explicitly.
+unset PM_TEST_SUITE_RESULTS_FILE PM_DISPATCH_PREFLIGHT_TEST_RESULT
+
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
@@ -1131,6 +1137,58 @@ test_jobs_default_uses_detected_nproc() {
   fi
 }
 
+test_jobs_default_caps_high_nproc() {
+  # Behavior: the default remains parallel on large machines, but caps heavyweight
+  #           full-suite concurrency at 4 unless the operator explicitly overrides it.
+  # Steps: report nproc=32, gate the first 5 suites, and run without --jobs. Assert
+  #        exactly the first 4 launch; release one and ensure the fifth then launches.
+  local name="jobs-default-caps-high-nproc"
+  local repo="$TMP_ROOT/$name" path status
+  make_fixture_repo "$repo"
+  write_pass_stubs "$repo"
+  local marker="$TMP_ROOT/$name-markers"; mkdir -p "$marker"
+  write_gated_stub "$repo" lint-agents "$marker"
+  write_gated_stub "$repo" lint-scripts "$marker"
+  write_gated_stub "$repo" test-guards "$marker"
+  write_gated_stub "$repo" test-guard-framework "$marker"
+  write_gated_stub "$repo" test-migrate "$marker"
+  path="$(make_path_codex_nproc_stub "$repo/bin" 'echo 32')"
+  local logf="$TMP_ROOT/$name.log"
+  ( PATH="$path" run_aggregator "$repo" > "$logf" 2>&1; echo $? > "$marker/rc" ) &
+  local agg_pid=$!
+
+  _release_all_gated() {
+    touch "$marker/release-lint-agents" "$marker/release-lint-scripts" \
+          "$marker/release-test-guards" "$marker/release-test-guard-framework" \
+          "$marker/release-test-migrate"
+  }
+  if ! wait_for_file "$marker/started-lint-agents" 300 || \
+     ! wait_for_file "$marker/started-lint-scripts" 300 || \
+     ! wait_for_file "$marker/started-test-guards" 300 || \
+     ! wait_for_file "$marker/started-test-guard-framework" 300; then
+    fail_case "$name" "fewer than 4 suites started; default is no longer parallel"
+    _release_all_gated; wait "$agg_pid" 2>/dev/null; return
+  fi
+  if [[ -e "$marker/started-test-migrate" ]]; then
+    fail_case "$name" "5th suite started; default exceeded high-nproc safety cap of 4"
+    _release_all_gated; wait "$agg_pid" 2>/dev/null; return
+  fi
+  touch "$marker/release-lint-agents"
+  if ! wait_for_file "$marker/started-test-migrate" 300; then
+    fail_case "$name" "5th suite never launched after a capped slot freed"
+    _release_all_gated; wait "$agg_pid" 2>/dev/null; return
+  fi
+  _release_all_gated
+  wait "$agg_pid" 2>/dev/null
+  status="$(cat "$marker/rc" 2>/dev/null || echo 1)"
+  local out; out="$(cat "$logf" 2>/dev/null)"
+  if [[ "$status" -eq 0 && "$out" == *"$SUITE_TOTAL passed, 0 failed, 0 skipped"* ]]; then
+    pass_case "$name"
+  else
+    fail_case "$name" "status=$status out=$out"
+  fi
+}
+
 test_live_db_exclusive_suites_never_overlap() {
   # Behavior: test-pmctl-context and test-release-verify both touch the live
   #           $REPO_ROOT/.pm-dispatch/ctx/context.db, so the parallel scheduler
@@ -1151,7 +1209,11 @@ test_live_db_exclusive_suites_never_overlap() {
   ( PATH="$path" run_aggregator "$repo" --jobs 4 > "$logf" 2>&1; echo $? > "$marker/rc" ) &
   local agg_pid=$!
 
-  if ! wait_for_file "$marker/started-test-pmctl-context" 300; then
+  # Reaching this late-registry suite requires draining dozens of earlier pass
+  # stubs. Under the authoritative full runner this self-test competes with
+  # several CPU-heavy suites, so allow 20s while staying below the gated stub's
+  # 30s hard ceiling.
+  if ! wait_for_file "$marker/started-test-pmctl-context" 1000; then
     fail_case "$name" "first exclusive suite (test-pmctl-context) never started"
     touch "$marker/release-test-pmctl-context" "$marker/release-test-release-verify"
     wait "$agg_pid" 2>/dev/null; return
@@ -1165,7 +1227,7 @@ test_live_db_exclusive_suites_never_overlap() {
   fi
   # Release the first exclusive suite -> the second must now launch.
   touch "$marker/release-test-pmctl-context"
-  if ! wait_for_file "$marker/started-test-release-verify" 300; then
+  if ! wait_for_file "$marker/started-test-release-verify" 1000; then
     fail_case "$name" "test-release-verify never launched after test-pmctl-context finished"
     touch "$marker/release-test-release-verify"
     wait "$agg_pid" 2>/dev/null; return
@@ -1217,6 +1279,7 @@ test_jobs_explicit_sequential
 test_jobs_concurrency_and_max_inflight
 test_jobs_default_fallback_no_nproc
 test_jobs_default_uses_detected_nproc
+test_jobs_default_caps_high_nproc
 test_live_db_exclusive_suites_never_overlap
 
 printf '%s passed, %s failed\n' "$PASS" "$FAIL"

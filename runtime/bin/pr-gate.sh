@@ -72,6 +72,7 @@ _kill_process_tree() {
 #   --brief <file>       dispatch brief for this change; architecture_impact field informs tier suggestion
 #   --reviewers <list>   comma-separated names -- overrides tier default (targeted re-gate)
 #   --targeted <list>    alias for --reviewers (matches /pr-gate skill vocabulary)
+#   --reviewer-dir <dir> explicit reviewer-definition source; defaults to the repo-owned agents/ directory
 #   --scope <text>       context hint passed into the review brief
 #   --base <branch>      base branch for diff (default: origin/HEAD → main)
 #   --head <ref>         head ref for diff (default: HEAD / working tree); pass a fixed ref
@@ -124,6 +125,7 @@ WORK_DIR=""
 GATE_RUN_DIR_OVERRIDE=""   # out-of-repo artifact root; set via --run-dir from pmctl-gate
 TIER_OVERRIDE=""
 REVIEWERS_OVERRIDE=""
+REVIEWER_DIR_OVERRIDE=""
 SCOPE=""
 BASE_OVERRIDE=""
 HEAD_OVERRIDE=""
@@ -160,6 +162,9 @@ while [[ $# -gt 0 ]]; do
     --brief)      BRIEF_FILE="$2";         shift 2;;
     --reviewers)  REVIEWERS_OVERRIDE="$2"; shift 2;;
     --targeted)   REVIEWERS_OVERRIDE="$2"; shift 2;;   # alias: /pr-gate skill + script comments say "targeted"
+    --reviewer-dir)
+      [[ $# -ge 2 ]] || { printf 'Error: --reviewer-dir requires a directory\n' >&2; exit 2; }
+      REVIEWER_DIR_OVERRIDE="$2"; shift 2;;
     --scope)      SCOPE="$2";              shift 2;;
     --base)       BASE_OVERRIDE="$2";      shift 2;;
     --head)
@@ -201,7 +206,7 @@ while [[ $# -gt 0 ]]; do
       exit 0;;
     *)
       printf 'Unknown arg: %s\n' "$1" >&2
-      printf 'Accepted: --cd --run-dir --tier --brief --reviewers|--targeted --scope --base --head --output --executor --model --effort --isolation --timeout --parallel --sequential --allow-hooks --allow-dirty --override-file --test-cmd --test-timeout --skip-preflight-tests (-h for help)\n' >&2
+      printf 'Accepted: --cd --run-dir --tier --brief --reviewers|--targeted --reviewer-dir --scope --base --head --output --executor --model --effort --isolation --timeout --parallel --sequential --allow-hooks --allow-dirty --override-file --test-cmd --test-timeout --skip-preflight-tests (-h for help)\n' >&2
       exit 2;;
   esac
 done
@@ -212,6 +217,10 @@ fi
 if [[ ! -d "$WORK_DIR" ]]; then
   printf 'Error: working dir not found: %s\n' "$WORK_DIR" >&2; exit 2
 fi
+# Trust-boundary comparisons and every derived artifact path must use the same
+# physical workspace identity. A raw relative or symlink-bearing --cd value can
+# otherwise make an in-workspace reviewer directory look external and trusted.
+WORK_DIR="$(cd "$WORK_DIR" && pwd -P)"
 if [[ -n "$GATE_RUN_DIR_OVERRIDE" && "$GATE_RUN_DIR_OVERRIDE" != /* ]]; then
   printf 'Error: --run-dir must be an absolute path: %s\n' "$GATE_RUN_DIR_OVERRIDE" >&2; exit 2
 fi
@@ -582,6 +591,31 @@ if [[ "$HEAD_REF" != "HEAD" ]]; then
   HEAD_METADATA_LINE=$'\n  Head: '"${HEAD_REF}"
 fi
 
+# Resolve canonical memory once through the shared runtime boundary and pass
+# the resulting provenance/context to every reviewer. Ref/argument validation
+# intentionally precedes runtime loading so malformed invocations remain
+# diagnosable even for a deliberately minimal copied gate.
+_gate_memory_lib="$SCRIPT_DIR/lib/gate-memory-context.sh"
+[[ -r "$_gate_memory_lib" ]] || _gate_memory_lib="$SCRIPT_DIR/../lib/gate-memory-context.sh"
+if [[ ! -r "$_gate_memory_lib" ]]; then
+  printf 'Error: shared gate memory runtime not found: %s\n' "$_gate_memory_lib" >&2
+  exit 1
+fi
+# shellcheck source=runtime/lib/gate-memory-context.sh
+# shellcheck disable=SC1090
+. "$_gate_memory_lib"
+gate_memory_context_hydrate "$WORK_DIR" "${SCOPE:-PR gate review}" || exit 1
+printf -v MEMORY_CONTEXT_BLOCK \
+  '  Canonical memory provenance:\n    provider: pmctl\n    authority: canonical\n    resolution_status: %s\n    resolution_source: %s\n    project_key: %s\n    context_status: %s\n' \
+  "$GATE_MEMORY_STATUS" "$GATE_MEMORY_SOURCE" "${GATE_MEMORY_PROJECT_KEY:-none}" "$GATE_MEMORY_CONTEXT_STATUS"
+if [[ -n "$GATE_MEMORY_CONTEXT" ]]; then
+  printf -v _gate_memory_context_rendered \
+    '  Canonical memory context (read-only JSON; do not infer another path):\n    %s\n' \
+    "${GATE_MEMORY_CONTEXT//$'\n'/$'\n    '}"
+  MEMORY_CONTEXT_BLOCK+="$_gate_memory_context_rendered"
+fi
+unset _gate_memory_lib _gate_memory_context_rendered
+
 _worktree_is_dirty() {
   # uncommitted tracked changes (staged or unstaged) ...
   if ! git diff --quiet HEAD 2>/dev/null; then return 0; fi
@@ -752,18 +786,44 @@ for r in $ALL_REVIEWERS; do
 done
 SKIPPED_DISPLAY="${SKIPPED:-none}"
 
-# ── Resolve agent definitions dir ────────────────────────────────────────────
-AGENT_DIR="${HOME}/.claude/agents"
-if [[ ! -d "$AGENT_DIR" ]]; then
-  printf 'Error: agent dir not found: %s\n' "$AGENT_DIR" >&2; exit 1
+# ── Resolve reviewer definitions ─────────────────────────────────────────────
+# Definitions outside the reviewed workspace are trusted installation assets.
+# A definition directory inside the reviewed workspace is attacker-controlled,
+# so read it from the trusted base revision rather than from the working tree.
+AGENT_DIR="$REVIEWER_DIR_OVERRIDE"
+if [[ -z "$AGENT_DIR" && -d "$SCRIPT_DIR/../../agents" ]]; then
+  AGENT_DIR="$SCRIPT_DIR/../../agents"
+elif [[ -z "$AGENT_DIR" && -d "$SCRIPT_DIR/agents" ]]; then
+  AGENT_DIR="$SCRIPT_DIR/agents"
 fi
+if [[ ! -d "$AGENT_DIR" ]]; then
+  printf 'Error: reviewer definition directory not found; use --reviewer-dir: %s\n' "${AGENT_DIR:-unset}" >&2; exit 1
+fi
+AGENT_DIR="$(cd "$AGENT_DIR" && pwd -P)"
+REVIEWER_SOURCE_MODE="trusted-directory"
+REVIEWER_BASE_REL=""
+case "$AGENT_DIR" in
+  "$WORK_DIR"/*)
+    REVIEWER_SOURCE_MODE="base-pinned"
+    REVIEWER_BASE_REL="${AGENT_DIR#"$WORK_DIR"/}"
+    ;;
+esac
+say 'pr-gate: reviewer definition source: %s (%s)\n' "$REVIEWER_SOURCE_MODE" "$AGENT_DIR"
 
 # Validate all reviewer agent files exist before doing any work
 for r in $REVIEWERS; do
-  AGENT_PATH="$AGENT_DIR/${r}.md"
-  if [[ ! -f "$AGENT_PATH" ]]; then
-    printf 'Error: reviewer agent file not found: %s\n' "$AGENT_PATH" >&2
-    exit 1
+  if [[ "$REVIEWER_SOURCE_MODE" == "base-pinned" ]]; then
+    if ! git cat-file -e "$BASE:$REVIEWER_BASE_REL/${r}.md" 2>/dev/null; then
+      printf 'Error: reviewer agent file not found in trusted base %s: %s/%s.md\n' \
+        "$BASE" "$REVIEWER_BASE_REL" "$r" >&2
+      exit 1
+    fi
+  else
+    AGENT_PATH="$AGENT_DIR/${r}.md"
+    if [[ ! -f "$AGENT_PATH" ]]; then
+      printf 'Error: reviewer agent file not found: %s\n' "$AGENT_PATH" >&2
+      exit 1
+    fi
   fi
 done
 
@@ -1013,12 +1073,21 @@ _preflight_sha256_stream() {
 }
 
 _preflight_sha256_file() {
-  local file="$1"
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum -- "$file" | awk '{print $1}'
-  else
-    shasum -a 256 -- "$file" | awk '{print $1}'
+  local file="$1" digest=""
+  if command -v sha256sum >/dev/null 2>&1 \
+      && digest="$(sha256sum -- "$file" 2>/dev/null | awk '{print $1}')" \
+      && [[ -n "$digest" ]]; then
+    printf '%s\n' "$digest"
+    return 0
   fi
+  if command -v shasum >/dev/null 2>&1 \
+      && digest="$(shasum -a 256 -- "$file" 2>/dev/null | awk '{print $1}')" \
+      && [[ -n "$digest" ]]; then
+    printf '%s\n' "$digest"
+    return 0
+  fi
+  printf 'Error: no sha256sum or shasum found -- cannot fingerprint gate inputs.\n' >&2
+  return 2
 }
 
 # Copy-mode portable content identity. It binds tracked and non-ignored
@@ -1306,11 +1375,10 @@ if [[ "$PREFLIGHT_STATUS" == "fail" ]]; then
   gate_result_verify "$OUTPUT_FILE" "" "preflight-fail-fast" || exit 1
 else
 
-# Claude's headless acceptEdits mode cannot interactively approve reads from
-# ~/.claude/agents. Snapshot only the definitions selected for this run into an
-# artifact-only directory inside the reviewed workspace. Both Claude and Codex
-# can read these immutable local copies without broad home-directory access;
-# cleanup_briefs removes them on every success/failure path.
+# Snapshot only the selected repo-owned definitions into an artifact-only
+# directory inside the reviewed workspace. Both Claude and Codex can read these
+# immutable local copies without broad host-home access; cleanup_briefs removes
+# them on every success/failure path.
 REVIEWER_DEFINITION_DIR="$WORK_DIR/.gate-briefs/reviewer-definitions-${TIMESTAMP}"
 mkdir -m 700 -p -- "$REVIEWER_DEFINITION_DIR"
 for r in $REVIEWERS; do
@@ -1319,16 +1387,41 @@ for r in $REVIEWERS; do
   # umask makes a newly copied definition owner-read-only without depending on
   # chmod being present in the executor test PATH (some gate portability tests
   # deliberately expose only the commands pr-gate strictly needs).
-  if ! (umask 0377; cp -- "$_reviewer_source" "$_reviewer_snapshot"); then
-    printf 'Error: failed to snapshot reviewer definition: %s\n' "$_reviewer_source" >&2
-    exit 1
+  if [[ "$REVIEWER_SOURCE_MODE" == "base-pinned" ]]; then
+    _reviewer_source="$BASE:$REVIEWER_BASE_REL/${r}.md"
+    (umask 0377; git show "$_reviewer_source" > "$_reviewer_snapshot") || {
+      printf 'Error: failed to snapshot base-pinned reviewer definition: %s\n' "$_reviewer_source" >&2
+      exit 1
+    }
+  else
+    if [[ ! -f "$_reviewer_source" || -L "$_reviewer_source" ]]; then
+      printf 'Error: trusted reviewer agent file must be a regular non-symlink: %s\n' "$_reviewer_source" >&2
+      exit 1
+    fi
+    _reviewer_nlink="$(stat -c '%h' "$_reviewer_source" 2>/dev/null || stat -f '%l' "$_reviewer_source" 2>/dev/null || printf '1')"
+    if [[ "$_reviewer_nlink" =~ ^[0-9]+$ ]] && (( _reviewer_nlink > 1 )); then
+      printf 'Error: trusted reviewer agent file must not be hardlinked: %s\n' "$_reviewer_source" >&2
+      exit 1
+    fi
+    _reviewer_source_hash="$(_preflight_sha256_file "$_reviewer_source")" || exit 1
+    if ! (umask 0377; cp -P -- "$_reviewer_source" "$_reviewer_snapshot"); then
+      printf 'Error: failed to snapshot reviewer definition: %s\n' "$_reviewer_source" >&2
+      exit 1
+    fi
+    _reviewer_nlink="$(stat -c '%h' "$_reviewer_source" 2>/dev/null || stat -f '%l' "$_reviewer_source" 2>/dev/null || printf '1')"
+    if [[ -L "$_reviewer_source" || -L "$_reviewer_snapshot" || ! -f "$_reviewer_source" \
+        || ( "$_reviewer_nlink" =~ ^[0-9]+$ && "$_reviewer_nlink" -gt 1 ) \
+        || "$(_preflight_sha256_file "$_reviewer_source")" != "$_reviewer_source_hash" ]]; then
+      printf 'Error: trusted reviewer agent changed during snapshot: %s\n' "$_reviewer_source" >&2
+      exit 1
+    fi
   fi
   [[ -s "$_reviewer_snapshot" ]] || {
     printf 'Error: reviewer definition snapshot is empty: %s\n' "$_reviewer_snapshot" >&2
     exit 1
   }
 done
-unset _reviewer_source _reviewer_snapshot
+unset _reviewer_source _reviewer_snapshot _reviewer_nlink _reviewer_source_hash
 
 # ── Dispatch ─────────────────────────────────────────────────────────────────
 if [[ "$SEQUENTIAL" == "true" ]]; then
@@ -1370,6 +1463,7 @@ context:
   Scope: ${SCOPE:-none}
   Date: $(date '+%Y-%m-%d')
 ${GATE_OVERRIDES_CONTEXT_BLOCK}${TEST_EVIDENCE_CONTEXT_BLOCK}
+${MEMORY_CONTEXT_BLOCK}
   Verified reference files (exist in working tree -- check before citing):
 ${REPO_REF_INDEX}
   Diff (${LINES} changed lines):
@@ -1603,6 +1697,7 @@ context:
   Scope: ${SCOPE:-none}
   Date: $(date '+%Y-%m-%d')
 ${GATE_OVERRIDES_CONTEXT_BLOCK}${TEST_EVIDENCE_CONTEXT_BLOCK}
+${MEMORY_CONTEXT_BLOCK}
   Verified reference files (exist in working tree -- check before citing):
 ${REPO_REF_INDEX}
   Diff (${LINES} changed lines):

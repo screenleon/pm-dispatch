@@ -36,7 +36,30 @@ if [[ -n "${RUN_TESTS_MUTATE_PATH:-}" ]]; then
   printf 'mutated during test\n' >> "$RUN_TESTS_MUTATE_PATH"
 fi
 printf '%s\n' "$@" > "${RUN_TESTS_ARGS_LOG:?}"
-exit "${RUN_TESTS_STUB_STATUS:-0}"
+rc="${RUN_TESTS_STUB_STATUS:-0}"
+if [[ -n "${PM_TEST_SUITE_RESULTS_FILE:-}" && "${RUN_TESTS_SKIP_SINK:-0}" != "1" ]]; then
+  selected=()
+  args=("$@")
+  i=0
+  while (( i < ${#args[@]} )); do
+    if [[ "${args[$i]}" == "--suite" && $((i + 1)) -lt ${#args[@]} ]]; then
+      selected+=("${args[$((i + 1))]}")
+      i=$((i + 2))
+    else
+      i=$((i + 1))
+    fi
+  done
+  (( ${#selected[@]} > 0 )) || selected=("${suites[@]}")
+  names_json="$(printf '%s\n' "${selected[@]}" | jq -Rsc 'split("\n") | map(select(length > 0))')"
+  if [[ "${RUN_TESTS_INVALID_SINK:-0}" == "1" ]]; then
+    printf '%s\n' '[{"name":"wrong-suite","status":"bogus","exit_code":0,"duration_seconds":"fast"}]' > "$PM_TEST_SUITE_RESULTS_FILE"
+  else
+    jq -n --argjson names "$names_json" --argjson rc "$rc" '
+      [$names[] | {name:.,status:(if $rc == 0 then "pass" else "fail" end),exit_code:$rc,duration_seconds:0}]
+    ' > "$PM_TEST_SUITE_RESULTS_FILE"
+  fi
+fi
+exit "$rc"
 RUNNER
   chmod +x "$repo/tests/lib/test-suite-runner.sh"
   git -C "$repo" init -q
@@ -307,6 +330,36 @@ case_iteration_result_cannot_verify_as_full() {
   fi
 }
 
+case_empty_structured_sink_fails_closed() {
+  local name=empty-structured-sink-fails-closed repo out status=0 args artifact
+  args="$TMP_ROOT/$name.args"
+  repo="$(make_fixture "$name")"
+  artifact="$repo/.pm-dispatch/test-results/full.json"
+  out=$(RUN_TESTS_ARGS_LOG="$args" RUN_TESTS_SKIP_SINK=1 \
+    "$repo/tests/bin/run-tests.sh" --all --result-file "$artifact" 2>&1) || status=$?
+  if [[ "$status" -eq 2 && "$out" == *"did not emit a valid non-empty structured result sink"* \
+      && ! -e "$artifact" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out artifact=$(cat "$artifact" 2>/dev/null)"
+  fi
+}
+
+case_invalid_structured_sink_fails_closed() {
+  local name=invalid-structured-sink-fails-closed repo out status=0 args artifact
+  args="$TMP_ROOT/$name.args"
+  repo="$(make_fixture "$name")"
+  artifact="$repo/.pm-dispatch/test-results/full.json"
+  out=$(RUN_TESTS_ARGS_LOG="$args" RUN_TESTS_INVALID_SINK=1 \
+    "$repo/tests/bin/run-tests.sh" --all --result-file "$artifact" 2>&1) || status=$?
+  if [[ "$status" -eq 2 && "$out" == *"did not emit a valid non-empty structured result sink"* \
+      && ! -e "$artifact" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out artifact=$(cat "$artifact" 2>/dev/null)"
+  fi
+}
+
 case_direct_library_mapping
 case_memory_config_mapping_has_no_gap
 case_docs_mapping_list_only
@@ -326,6 +379,8 @@ case_full_result_verifies_same_tree
 case_full_result_rejects_changed_tree
 case_tree_change_during_run_marks_stale
 case_iteration_result_cannot_verify_as_full
+case_empty_structured_sink_fails_closed
+case_invalid_structured_sink_fails_closed
 
 printf '%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
