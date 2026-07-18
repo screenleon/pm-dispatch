@@ -1521,8 +1521,8 @@ case_doctor_codex_retired_hook_target_fails() {
   out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
     bash "$DOCTOR" --json --repo "$REPO_ROOT" 2>/dev/null)" || status=$?
 
-  if [[ "$status" -eq 1 ]] && printf '%s\n' "$out" | jq -e '
-      select(.check == "host.codex.hook-targets" and .status == "fail" and
+  if [[ "$status" -eq 1 ]] && printf '%s\n' "$out" | jq -s -e '
+      any(.[]; .check == "host.codex.hook-targets" and .status == "fail" and
         (.message | contains("scripts/guard-inject-memory.sh")))
     ' >/dev/null; then
     pass "$name"
@@ -1549,8 +1549,8 @@ case_doctor_claude_retired_hook_target_fails() {
   out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
     bash "$DOCTOR" --json --repo "$REPO_ROOT" 2>/dev/null)" || status=$?
 
-  if [[ "$status" -eq 1 ]] && printf '%s\n' "$out" | jq -e '
-      select(.check == "hooks" and .status == "fail" and
+  if [[ "$status" -eq 1 ]] && printf '%s\n' "$out" | jq -s -e '
+      any(.[]; .check == "hooks" and .status == "fail" and
         (.message | contains("scripts/guard-inject-memory.sh")))
     ' >/dev/null; then
     pass "$name"

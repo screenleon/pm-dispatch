@@ -183,11 +183,22 @@ pm_test_run_and_record() {
   if [[ "$contract" == full && "$status" == pass && "$skips_json" == '[]' ]]; then
     authoritative=true
   fi
-  if ! suite_results_json="$(jq -ce 'if type == "array" and length > 0 then . else error("not a non-empty array") end' "$suite_results_file" 2>/dev/null)"; then
-    suite_results_json="$(jq -nc --argjson suites "$suite_json" --arg status "$status" --argjson rc "$rc" '
-      [$suites[] | {name:.,status:(if $status=="pass" then "pass" else "fail" end),exit_code:$rc,duration_seconds:0}]')" || {
-      rm -f "$suite_results_file"; return 2;
-    }
+  # The structured sink is part of the authoritative evidence contract. jq
+  # exits successfully with no output for an empty input file, so test size
+  # explicitly and fail closed instead of fabricating per-suite PASS records.
+  local expected_result_names
+  expected_result_names="$suite_json"
+  if [[ ! -s "$suite_results_file" ]] ||
+     ! suite_results_json="$(jq -ce --argjson expected "$expected_result_names" '
+       if type == "array" and length > 0 and [.[].name] == $expected and
+          all(.[]; (.status == "pass" or .status == "fail" or .status == "timeout" or .status == "skip") and
+                   (.exit_code | type == "number") and
+                   (.duration_seconds | type == "number" and . >= 0))
+       then . else error("invalid or incomplete structured suite results") end
+     ' "$suite_results_file" 2>/dev/null)"; then
+    printf 'pm-test-result: suite runner did not emit a valid non-empty structured result sink\n' >&2
+    rm -f "$suite_results_file"
+    return 2
   fi
   rm -f "$suite_results_file"
   pm_test_write_result "$result_file" "$repo" "$contract" "$authoritative" "$status" \

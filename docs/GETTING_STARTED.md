@@ -15,6 +15,10 @@ Before cloning or running anything, confirm the host has:
 - **GNU `realpath`** equivalent on `PATH` (or a shell that provides equivalent behavior).
 - Optional: **Codex CLI** (`codex`) if you want the default `full` install profile.
 
+ShellCheck is deliberately not an installation/runtime prerequisite. It is
+needed only by maintainers or fork owners who run lint or the authoritative
+full test suite; see [CONTRIBUTING.md](../CONTRIBUTING.md#maintainer-development-dependencies).
+
 You can verify the minimum tooling quickly:
 
 ```sh

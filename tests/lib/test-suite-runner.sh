@@ -3,7 +3,8 @@
 # Usage: tests/lib/test-suite-runner.sh [--suite <name>] [--skip <name>] [--list] [--jobs N] [--suite-timeout N]
 # Requires a complete developer checkout: registered suites that are missing or
 # non-executable fail loudly (exit 1). Use --skip <name> to opt out of a specific suite.
-# Use --jobs N (or -j N) to set parallelism (default: nproc; falls back to 1 if nproc unavailable).
+# Use --jobs N (or -j N) to set parallelism (default: detected nproc, capped at
+# PM_DISPATCH_TEST_MAX_JOBS or 4; falls back to 1 if nproc unavailable).
 # Each suite has a 15-minute deadline by default. Use --suite-timeout N (seconds) or
 # PM_DISPATCH_TEST_SUITE_TIMEOUT_SECS to tune it for an intentionally slow environment.
 set -euo pipefail
@@ -192,8 +193,12 @@ SUITE_FILTER=0
 LIST=0
 _detected_jobs="$(nproc 2>/dev/null || echo 1)"
 [[ "$_detected_jobs" =~ ^[1-9][0-9]*$ ]] || _detected_jobs=1
-_default_job_cap="${PM_DISPATCH_TEST_MAX_JOBS:-8}"
-[[ "$_default_job_cap" =~ ^[1-9][0-9]*$ ]] || _default_job_cap=8
+# Full-suite fixtures include several process-heavy install/dispatch/gate
+# integrations. Four concurrent suites keep the default parallel while leaving
+# enough CPU, file descriptors, and subprocess headroom for their own children.
+# Operators with a measured higher-capacity environment may raise this explicitly.
+_default_job_cap="${PM_DISPATCH_TEST_MAX_JOBS:-4}"
+[[ "$_default_job_cap" =~ ^[1-9][0-9]*$ ]] || _default_job_cap=4
 if (( _detected_jobs > _default_job_cap )); then
   JOBS="$_default_job_cap"
 else

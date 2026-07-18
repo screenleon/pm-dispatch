@@ -24,7 +24,7 @@ Find what's wrong, weak, or missed. Do not validate.
 
 1. Read the brief/plan being reviewed.
 2. If reviewing a diff: `git -C <repo> diff` against integration branch (default `main`). Read the full diff plus enough context to judge each change.
-3. Check project memory at `~/.claude/projects/<claude-project-id>/memory/project_<repo>.md` for violated constraints.
+3. Use the canonical-memory provenance/context supplied by the gate brief for violated constraints. Never infer a host-local memory path; if the brief reports unavailable or query-failed, state that limitation rather than falling back.
 
 # Output
 

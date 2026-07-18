@@ -238,8 +238,8 @@ test_doctor_loader_follows_manifest_module() {
   out="$(HOME="$home" XDG_CONFIG_HOME="$xdg" CODEX_HOME="$codex" \
     CLAUDE_CONFIG_DIR="$home/.claude" PATH="$fakebin:$PATH" \
     bash "$REPO_ROOT/runtime/bin/doctor.sh" --json --repo "$REPO_ROOT" 2>/dev/null)" || rc=$?
-  if printf '%s\n' "$out" | jq -e \
-      'select(.check == "host.opencode.pm-command" and .host == "opencode")' \
+  if printf '%s\n' "$out" | jq -s -e \
+      'any(.[]; .check == "host.opencode.pm-command" and .host == "opencode")' \
       >/dev/null; then
     pass "$name"
   else

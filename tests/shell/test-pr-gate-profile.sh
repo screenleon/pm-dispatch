@@ -39,6 +39,9 @@ create_runner() {
   mkdir -p "$dir"
   cp "$REPO_ROOT/runtime/bin/pr-gate.sh" "$dir/pr-gate.sh"
   chmod +x "$dir/pr-gate.sh"
+  cp -R "$REPO_ROOT/agents" "$dir/agents"
+  mkdir -p "$dir/lib"
+  cp -R "$REPO_ROOT/runtime/lib/." "$dir/lib/"
   local cmd
   for cmd in bash git date readlink dirname basename cp mkdir touch ln cat grep sort wc awk sed mktemp rm head tail tr true false sha256sum shasum; do
     src="$(command -v "$cmd" 2>/dev/null || true)"
@@ -371,6 +374,7 @@ test_no_lib_copy_mode_uses_inline_executor_fallback() {
   create_runner "$runner"
   create_repo "$repo"
   no_codex_path="$(build_no_codex_path "$dir")"
+  rm -rf "${runner:?}/lib"
 
   if [[ -e "$runner/lib" ]]; then
     fail "$name" "copy-mode fixture unexpectedly contains lib/"

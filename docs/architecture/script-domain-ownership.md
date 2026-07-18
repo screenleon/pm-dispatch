@@ -192,6 +192,13 @@ cli/pmctl
 The CLI remains the stable coordinator. Relocating an implementation must not
 create host-specific dispatch branches in `cli/pmctl`.
 
+`pr-gate` consumes canonical-memory resolution and context packing through the
+same shared runtime libraries; shared runtime must not call back up through the
+public `cli/pmctl` coordinator. Reviewer policy files outside the reviewed
+workspace are trusted installation assets. Policy files inside the reviewed
+workspace are snapshotted from the trusted base revision, never from the dirty
+or feature working tree being reviewed.
+
 ### Hooks and canonical project state
 
 ```text
