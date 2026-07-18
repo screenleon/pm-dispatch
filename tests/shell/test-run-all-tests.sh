@@ -102,6 +102,7 @@ SUITE_NAMES=(
   test-pmctl-discovery
   test-pre-release
   test-release-verify
+  test-upgrade-smoke
   test-e2e-script
 )
 SUITE_TOTAL=${#SUITE_NAMES[@]}
@@ -212,6 +213,7 @@ suite_path() {
     test-pmctl-discovery) printf 'tests/shell/test-pmctl-discovery.sh\n' ;;
     test-pre-release)     printf 'tests/shell/test-pre-release.sh\n' ;;
     test-release-verify)  printf 'tests/shell/test-release-verify.sh\n' ;;
+    test-upgrade-smoke)   printf 'tests/shell/test-upgrade-smoke.sh\n' ;;
     test-e2e-script)      printf 'tests/shell/test-e2e-script.sh\n' ;;
     *) return 1 ;;
   esac

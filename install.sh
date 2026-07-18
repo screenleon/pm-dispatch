@@ -165,6 +165,16 @@ remove_legacy_symlink() {
 
 install_dispatch_allowlist() {
   local settings="$CLAUDE_HOME/settings.json"
+  local previous_adapter_src="" previous_repo_root="" previous_repo_rel=""
+
+  previous_adapter_src="$(_portable_manifest_prev_symlink_src \
+    "$(_portable_normalize_path "$CLAUDE_HOME/adapters/claude")" || true)"
+  case "$previous_adapter_src" in
+    */adapters/claude) previous_repo_root="${previous_adapter_src%/adapters/claude}" ;;
+  esac
+  if [[ -n "$previous_repo_root" && "$previous_repo_root" == "$HOME/"* ]]; then
+    previous_repo_rel="${previous_repo_root#"$HOME/"}"
+  fi
 
   # Collect all managed dispatch entries once (avoids re-running the generator
   # per iteration and lets us batch jq calls below).
@@ -182,6 +192,12 @@ install_dispatch_allowlist() {
   fi
 
   if [[ "$DRY_RUN" -eq 1 ]]; then
+    if [[ -n "$previous_repo_root" && "$previous_repo_root" != "$REPO_ROOT" ]] \
+        && { grep -Fq "$previous_repo_root/adapters/" "$settings" 2>/dev/null \
+          || { [[ -n "$previous_repo_rel" ]] \
+            && grep -Fq "~/$previous_repo_rel/adapters/" "$settings" 2>/dev/null; }; }; then
+      printf '  permissions.allow: would remove stale managed entries for %s\n' "$previous_repo_root"
+    fi
     for _entry in "${_all_entries[@]}"; do
       if printf '%s\n' "$_present" | grep -qxF -- "$_entry" 2>/dev/null; then
         printf '  permissions.allow: would skip (present) %s\n' "$_entry"
@@ -205,6 +221,17 @@ install_dispatch_allowlist() {
   done
   cp "$settings" "${settings}.bak.${_backup_ts}"
   printf '  settings.json: backup at %s.bak.%s\n' "$settings" "$_backup_ts"
+
+  if [[ -n "$previous_repo_root" && "$previous_repo_root" != "$REPO_ROOT" ]]; then
+    jq --arg old "$previous_repo_root" --arg old_rel "$previous_repo_rel" '
+      .permissions.allow = ((.permissions.allow // []) | map(select(
+        (startswith("Bash(" + $old + "/adapters/") or
+         ($old_rel != "" and startswith("Bash(~/" + $old_rel + "/adapters/"))) | not
+      )))
+    ' "$settings" > "${settings}.tmp"
+    mv "${settings}.tmp" "$settings"
+    _present="$(jq -r '.permissions.allow // [] | .[]' "$settings" 2>/dev/null || true)"
+  fi
 
   # Identify missing entries and print status; then add all at once (one write).
   local -a _missing=()
@@ -340,6 +367,16 @@ _install_path_contains_dir() {
   esac
 }
 
+_install_pmctl_checkout_target() {
+  local target="$1" old_root
+  case "$target" in
+    */cli/pmctl) old_root="${target%/cli/pmctl}" ;;
+    *) return 1 ;;
+  esac
+  [[ -f "$old_root/install.sh" && -f "$old_root/uninstall.sh" \
+      && -d "$old_root/adapters" && -x "$target" ]]
+}
+
 install_pmctl_cli() {
   local src="$REPO_ROOT/cli/pmctl"
   local bin_dir="${PMCTL_BIN_DIR:-$HOME/.local/bin}"
@@ -370,6 +407,25 @@ install_pmctl_cli() {
   if [[ -L "$dest" ]]; then
     if _install_symlink_target_resolves_to "$dest" "$src"; then
       echo "  ok    $dest"
+    elif _previous_src="$(_portable_manifest_prev_symlink_src "$(_portable_normalize_path "$dest")" || true)" \
+        && [[ -n "$_previous_src" ]] \
+        && _install_symlink_target_resolves_to "$dest" "$_previous_src"; then
+      if [[ "$DRY_RUN" -eq 1 ]]; then
+        echo "  would refresh $dest -> $src"
+      else
+        rm "$dest"
+        ln -s "$src" "$dest"
+        echo "  refresh $dest -> $src"
+      fi
+    elif _old_pmctl_target="$(_portable_resolve_symlink "$dest")" \
+        && _install_pmctl_checkout_target "$_old_pmctl_target"; then
+      if [[ "$DRY_RUN" -eq 1 ]]; then
+        echo "  would refresh $dest -> $src"
+      else
+        rm "$dest"
+        ln -s "$src" "$dest"
+        echo "  refresh $dest -> $src"
+      fi
     else
       printf '  CONFLICT %s -> %s (expected %s)\n' "$dest" "$(readlink "$dest")" "$src" >&2
     fi
@@ -380,6 +436,10 @@ install_pmctl_cli() {
   else
     ln -s "$src" "$dest"
     echo "  link   $dest -> $src"
+  fi
+
+  if [[ -L "$dest" ]] && _install_symlink_target_resolves_to "$dest" "$src"; then
+    manifest_record "$src" "$dest" symlink || return 1
   fi
 
   if ! _install_path_contains_dir "$bin_dir"; then

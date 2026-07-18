@@ -128,31 +128,110 @@ else
   [[ "$DRY_RUN" -eq 1 ]] && echo "install-guards-codex: would create $hooks_file"
 fi
 
+# A cross-checkout refresh needs stronger evidence than a basename match: only
+# treat a command as managed when its former root is still a compatible
+# pm-dispatch checkout. Foreign lookalikes at arbitrary paths remain untouched.
+# Commands written by this installer use `printf %q`; decode only that simple
+# backslash-escaped first word here.  This deliberately is not `eval`: hook
+# configuration is user-controlled, so discovery must never execute it.  Bash
+# switches `%q` to ANSI-C `$'...'` syntax for control characters; reject that
+# uncommon form fail-closed rather than growing a shell parser.
+codex_hook_command_word() {
+  local input="$1" output="" char escaped=0 i
+  [[ "$input" != \$\'* ]] || return 1
+  for ((i = 0; i < ${#input}; i++)); do
+    char="${input:i:1}"
+    if [[ "$escaped" -eq 1 ]]; then
+      output+="$char"
+      escaped=0
+    elif [[ "$char" == "\\" ]]; then
+      escaped=1
+    elif [[ "$char" == " " || "$char" == $'\t' || "$char" == $'\n' ]]; then
+      break
+    elif [[ "$char" == "'" || "$char" == '"' ]]; then
+      return 1
+    else
+      output+="$char"
+    fi
+  done
+  [[ "$escaped" -eq 0 && -n "$output" ]] || return 1
+  printf '%s\n' "$output"
+}
+
+previous_repo_root=""
+while IFS= read -r previous_command; do
+  previous_word="$(codex_hook_command_word "$previous_command")" || continue
+  case "$previous_word" in
+    */hosts/codex/hooks/command-guard.sh) previous_root="${previous_word%/hosts/codex/hooks/command-guard.sh}" ;;
+    */scripts/hook-codex-command-guard.sh) previous_root="${previous_word%/scripts/hook-codex-command-guard.sh}" ;;
+    */runtime/hooks/guard-inject-memory.sh) previous_root="${previous_word%/runtime/hooks/guard-inject-memory.sh}" ;;
+    */scripts/guard-inject-memory.sh) previous_root="${previous_word%/scripts/guard-inject-memory.sh}" ;;
+    */runtime/hooks/guard-session-summary.sh) previous_root="${previous_word%/runtime/hooks/guard-session-summary.sh}" ;;
+    */scripts/guard-session-summary.sh) previous_root="${previous_word%/scripts/guard-session-summary.sh}" ;;
+    *) continue ;;
+  esac
+  if [[ "$previous_root" != "$REPO_ROOT" && -f "$previous_root/install.sh" \
+      && -f "$previous_root/uninstall.sh" && -x "$previous_root/cli/pmctl" ]]; then
+    previous_repo_root="$previous_root"
+    break
+  fi
+done < <(jq -r '.. | objects | .command? // empty' "$tmp_current")
+
+previous_hook_cmd_q=""
+previous_legacy_hook_cmd_q=""
+previous_memory_hook_cmd_q=""
+previous_legacy_memory_hook_cmd_q=""
+previous_session_hook_cmd_q=""
+previous_legacy_session_hook_cmd_q=""
+if [[ -n "$previous_repo_root" ]]; then
+  previous_hook_cmd_q="$(printf '%q' "$previous_repo_root/hosts/codex/hooks/command-guard.sh")"
+  previous_legacy_hook_cmd_q="$(printf '%q' "$previous_repo_root/scripts/hook-codex-command-guard.sh")"
+  previous_memory_hook_cmd_q="$(printf '%q' "$previous_repo_root/runtime/hooks/guard-inject-memory.sh")"
+  previous_legacy_memory_hook_cmd_q="$(printf '%q' "$previous_repo_root/scripts/guard-inject-memory.sh")"
+  previous_session_hook_cmd_q="$(printf '%q' "$previous_repo_root/runtime/hooks/guard-session-summary.sh") --host codex"
+  previous_legacy_session_hook_cmd_q="$(printf '%q' "$previous_repo_root/scripts/guard-session-summary.sh") --host codex"
+fi
+
 # Merge idempotently: only append the managed hook entry if no existing
 # PreToolUse/Bash entry already points at this repo's guard script.
 jq --arg cmd "$hook_cmd_q" --arg legacy_cmd "$legacy_hook_cmd" --arg legacy_cmd_q "$legacy_hook_cmd_q" \
   --arg memory_cmd "$memory_hook_cmd_q" --arg session_cmd "$session_hook_cmd_q" \
   --arg legacy_memory_cmd "$legacy_memory_hook_cmd" --arg legacy_memory_cmd_q "$legacy_memory_hook_cmd_q" \
-  --arg legacy_session_cmd "$legacy_session_hook_cmd" --arg legacy_session_cmd_q "$legacy_session_hook_cmd_q" '
+  --arg legacy_session_cmd "$legacy_session_hook_cmd" --arg legacy_session_cmd_q "$legacy_session_hook_cmd_q" \
+  --arg previous_hook_cmd_q "$previous_hook_cmd_q" --arg previous_legacy_hook_cmd_q "$previous_legacy_hook_cmd_q" \
+  --arg previous_memory_hook_cmd_q "$previous_memory_hook_cmd_q" --arg previous_legacy_memory_hook_cmd_q "$previous_legacy_memory_hook_cmd_q" \
+  --arg previous_session_hook_cmd_q "$previous_session_hook_cmd_q" --arg previous_legacy_session_hook_cmd_q "$previous_legacy_session_hook_cmd_q" '
+  def managed_guard:
+    . == $cmd or . == $legacy_cmd or . == $legacy_cmd_q or
+    ($previous_hook_cmd_q != "" and
+      (. == $previous_hook_cmd_q or . == $previous_legacy_hook_cmd_q));
+  def managed_memory:
+    . == $memory_cmd or . == $legacy_memory_cmd or . == $legacy_memory_cmd_q or
+    ($previous_memory_hook_cmd_q != "" and
+      (. == $previous_memory_hook_cmd_q or . == $previous_legacy_memory_hook_cmd_q));
+  def managed_session:
+    . == $session_cmd or . == $legacy_session_cmd or . == $legacy_session_cmd_q or
+    ($previous_session_hook_cmd_q != "" and
+      (. == $previous_session_hook_cmd_q or . == $previous_legacy_session_hook_cmd_q));
   .hooks = (.hooks // {}) |
   .hooks.PreToolUse = (.hooks.PreToolUse // []) |
   .hooks.UserPromptSubmit = (.hooks.UserPromptSubmit // []) |
   .hooks.Stop = (.hooks.Stop // []) |
   .hooks.PreToolUse |= map(
     if (.hooks | type) == "array" then
-      .hooks |= map(select(.command != $legacy_cmd and .command != $legacy_cmd_q))
+      .hooks |= map(select((.command | managed_guard) | not))
     else . end
   ) |
   .hooks.PreToolUse |= map(select((.hooks // [] | length) > 0)) |
   .hooks.UserPromptSubmit |= map(
     if (.hooks | type) == "array" then
-      .hooks |= map(select(.command != $legacy_memory_cmd and .command != $legacy_memory_cmd_q))
+      .hooks |= map(select((.command | managed_memory) | not))
     else . end
   ) |
   .hooks.UserPromptSubmit |= map(select((.hooks // [] | length) > 0)) |
   .hooks.Stop |= map(
     if (.hooks | type) == "array" then
-      .hooks |= map(select(.command != $legacy_session_cmd and .command != $legacy_session_cmd_q))
+      .hooks |= map(select((.command | managed_session) | not))
     else . end
   ) |
   .hooks.Stop |= map(select((.hooks // [] | length) > 0)) |

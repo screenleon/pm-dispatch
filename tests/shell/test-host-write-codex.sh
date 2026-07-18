@@ -362,6 +362,78 @@ test_install_guards_codex_refreshes_legacy_memory_session_hooks() {
   fi
 }
 
+# Behavior: managed hooks from a previous checkout refresh to the candidate checkout.
+# Steps: seed old-root canonical/legacy commands plus a foreign hook, install, and compare paths.
+test_install_guards_codex_refreshes_other_checkout_paths() {
+  local name="install-guards-codex-refreshes-other-checkout-paths"
+  should_run "$name" || return 0
+  local home="$tmp_root/cross-checkout/.codex" old_root="$tmp_root/old-checkout"
+  mkdir -p "$home" "$old_root/cli"
+  printf '#!/usr/bin/env bash\n' > "$old_root/install.sh"
+  printf '#!/usr/bin/env bash\n' > "$old_root/uninstall.sh"
+  printf '#!/usr/bin/env bash\n' > "$old_root/cli/pmctl"
+  chmod +x "$old_root/cli/pmctl"
+  jq -n --arg old "$old_root" '{foreignMarker:"keep-byte-for-byte",hooks:{
+    PreToolUse:[{matcher:"Bash",hooks:[{type:"command",command:($old+"/hosts/codex/hooks/command-guard.sh")}]},
+                {matcher:"Read",hooks:[{type:"command",command:"/foreign/hook.sh"}]}],
+    UserPromptSubmit:[{hooks:[{type:"command",command:($old+"/scripts/guard-inject-memory.sh")}]}],
+    Stop:[{hooks:[{type:"command",command:($old+"/runtime/hooks/guard-session-summary.sh --host codex")}]}]
+  }}' > "$home/hooks.json"
+  CODEX_HOME="$home" bash "$REPO_ROOT/hosts/codex/bin/install.sh" --repo-root "$REPO_ROOT" >/dev/null 2>&1
+  if jq -e --arg root "$REPO_ROOT" --arg old "$old_root" '
+      .foreignMarker == "keep-byte-for-byte" and
+      any(.hooks.PreToolUse[]?.hooks[]?; .command == ($root+"/hosts/codex/hooks/command-guard.sh")) and
+      any(.hooks.UserPromptSubmit[]?.hooks[]?; .command == ($root+"/runtime/hooks/guard-inject-memory.sh")) and
+      any(.hooks.Stop[]?.hooks[]?; .command == ($root+"/runtime/hooks/guard-session-summary.sh --host codex")) and
+      any(.hooks.PreToolUse[]?.hooks[]?; .command == "/foreign/hook.sh") and
+      ([.. | strings | select(startswith($old))] | length) == 0
+    ' "$home/hooks.json" >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name" "managed old-checkout targets were not refreshed or foreign content changed"
+  fi
+}
+
+# Behavior: cross-checkout refresh recognizes the shell-escaped commands that
+# this installer writes when the former checkout path contains spaces.
+# Steps: seed printf-%q canonical/legacy commands under a spaced compatible
+# root, install the candidate, and verify exact replacement plus foreign safety.
+test_install_guards_codex_refreshes_shell_escaped_spaced_checkout_paths() {
+  local name="install-guards-codex-refreshes-shell-escaped-spaced-checkout-paths"
+  should_run "$name" || return 0
+  local home="$tmp_root/cross-checkout-spaced/.codex" old_root="$tmp_root/old checkout"
+  local old_guard old_memory old_session foreign
+  mkdir -p "$home" "$old_root/cli"
+  printf '#!/usr/bin/env bash\n' > "$old_root/install.sh"
+  printf '#!/usr/bin/env bash\n' > "$old_root/uninstall.sh"
+  printf '#!/usr/bin/env bash\n' > "$old_root/cli/pmctl"
+  chmod +x "$old_root/cli/pmctl"
+  old_guard="$(printf '%q' "$old_root/hosts/codex/hooks/command-guard.sh")"
+  old_memory="$(printf '%q' "$old_root/scripts/guard-inject-memory.sh")"
+  old_session="$(printf '%q' "$old_root/runtime/hooks/guard-session-summary.sh") --host codex"
+  foreign="$(printf '%q' "$tmp_root/foreign checkout/hosts/codex/hooks/command-guard.sh")"
+  jq -n --arg guard "$old_guard" --arg memory "$old_memory" \
+    --arg session "$old_session" --arg foreign "$foreign" '{hooks:{
+      PreToolUse:[{matcher:"Bash",hooks:[{type:"command",command:$guard}]},
+                  {matcher:"Read",hooks:[{type:"command",command:$foreign}]}],
+      UserPromptSubmit:[{hooks:[{type:"command",command:$memory}]}],
+      Stop:[{hooks:[{type:"command",command:$session}]}]
+    }}' > "$home/hooks.json"
+
+  CODEX_HOME="$home" bash "$REPO_ROOT/hosts/codex/bin/install.sh" --repo-root "$REPO_ROOT" >/dev/null 2>&1
+  if jq -e --arg root "$REPO_ROOT" --arg old "$old_root" --arg foreign "$foreign" '
+      any(.hooks.PreToolUse[]?.hooks[]?; .command == ($root+"/hosts/codex/hooks/command-guard.sh")) and
+      any(.hooks.UserPromptSubmit[]?.hooks[]?; .command == ($root+"/runtime/hooks/guard-inject-memory.sh")) and
+      any(.hooks.Stop[]?.hooks[]?; .command == ($root+"/runtime/hooks/guard-session-summary.sh --host codex")) and
+      any(.hooks.PreToolUse[]?.hooks[]?; .command == $foreign) and
+      ([.. | strings | select(contains($old))] | length) == 0
+    ' "$home/hooks.json" >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name" "shell-escaped old-checkout targets were not refreshed or foreign content changed"
+  fi
+}
+
 # Behavior: the new uninstaller removes pre-migration commands from this checkout.
 # Steps: seed the old command alongside a foreign same-basename command and verify
 # only the exact checkout-owned legacy command is removed.
@@ -880,6 +952,8 @@ test_install_guards_codex_wires_hook
 test_install_guards_codex_idempotent
 test_install_guards_codex_refreshes_legacy_hook_path
 test_install_guards_codex_refreshes_legacy_memory_session_hooks
+test_install_guards_codex_refreshes_other_checkout_paths
+test_install_guards_codex_refreshes_shell_escaped_spaced_checkout_paths
 test_codex_memory_update_writes_only_canonical_episode
 test_codex_memory_update_invalid_explicit_fails_closed
 test_install_guards_codex_missing_manifest_target_errors

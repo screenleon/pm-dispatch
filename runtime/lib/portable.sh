@@ -649,6 +649,7 @@ _portable_realpath_windows() {
 }
 
 _PORTABLE_MANIFEST_RECORDS=()
+_PORTABLE_MANIFEST_PREV_SRCS=()
 _PORTABLE_MANIFEST_PREV_DSTS=()
 _PORTABLE_MANIFEST_PREV_MODES=()
 _PORTABLE_MANIFEST_PREV_SHA256S=()
@@ -656,12 +657,15 @@ _PORTABLE_MANIFEST_PREV_INITIALIZED=0
 _PORTABLE_SHA256_TOOL=""
 
 _portable_manifest_path() {
-  local home_root="${HOME:-}"
-  if [[ -z "$home_root" ]]; then
+  local config_root="${CLAUDE_CONFIG_DIR:-${CLAUDE_HOME:-}}"
+  if [[ -z "$config_root" && -n "${HOME:-}" ]]; then
+    config_root="$HOME/.claude"
+  fi
+  if [[ -z "$config_root" ]]; then
     printf '' 2>/dev/null
     return 1
   fi
-  printf '%s/.claude/.pm-dispatch/install-manifest.json' "$home_root"
+  printf '%s/.pm-dispatch/install-manifest.json' "$config_root"
 }
 
 _portable_json_escape() {
@@ -771,6 +775,7 @@ _portable_manifest_prev_load() {
   fi
 
   _PORTABLE_MANIFEST_PREV_INITIALIZED=1
+  _PORTABLE_MANIFEST_PREV_SRCS=()
   _PORTABLE_MANIFEST_PREV_DSTS=()
   _PORTABLE_MANIFEST_PREV_MODES=()
   _PORTABLE_MANIFEST_PREV_SHA256S=()
@@ -791,10 +796,25 @@ _portable_manifest_prev_load() {
     if [[ -z "$dst" ]]; then
       continue
     fi
+    _PORTABLE_MANIFEST_PREV_SRCS+=("$src")
     _PORTABLE_MANIFEST_PREV_DSTS+=("$dst")
     _PORTABLE_MANIFEST_PREV_MODES+=("$mode")
     _PORTABLE_MANIFEST_PREV_SHA256S+=("$sha")
   done < "$path"
+}
+
+_portable_manifest_prev_symlink_src() {
+  local dst="${1-}" i path
+  path="$(_portable_manifest_path)" || return 1
+  _portable_manifest_prev_load "$path"
+  for ((i = 0; i < ${#_PORTABLE_MANIFEST_PREV_DSTS[@]}; i++)); do
+    if [[ "${_PORTABLE_MANIFEST_PREV_DSTS[i]}" == "$dst" ]]; then
+      [[ "${_PORTABLE_MANIFEST_PREV_MODES[i]:-}" == "symlink" ]] || return 1
+      printf '%s\n' "${_PORTABLE_MANIFEST_PREV_SRCS[i]:-}"
+      return 0
+    fi
+  done
+  return 1
 }
 
 _portable_manifest_prev_sha256() {
@@ -1013,6 +1033,7 @@ link_or_copy() {
   local src_abs
   local dst_abs
   local existing_symlink_target
+  local prev_src
   local prev_sha
   local curr_sha
   local src_sha
@@ -1027,7 +1048,7 @@ link_or_copy() {
   fi
 
   src_abs="$(realpath_m "$src" 2>/dev/null || printf '%s' "$src")"
-  dst_abs="$(realpath_m "$dst" 2>/dev/null || printf '%s' "$dst")"
+  dst_abs="$(realpath_m_lex "$dst" 2>/dev/null || printf '%s' "$dst")"
 
   if [[ -L "$dst" ]]; then
     existing_symlink_target="$(_portable_resolve_symlink "$dst")"
@@ -1036,9 +1057,21 @@ link_or_copy() {
       manifest_record "$src" "$dst" symlink || return 3
       return 0
     fi
-    current="$(readlink "$dst")"
-    printf '  CONFLICT %s -> %s (expected %s)\n' "$dst" "$current" "$src" >&2
-    return 2
+    prev_src="$(_portable_manifest_prev_symlink_src "$dst_abs" || true)"
+    if [[ -n "$prev_src" && ( "$existing_symlink_target" == "$prev_src" \
+        || "$(_portable_normalize_path "$existing_symlink_target")" == "$(_portable_normalize_path "$prev_src")" ) ]]; then
+      if [[ "${DRY_RUN:-0}" == "1" ]]; then
+        echo "  would refresh $dst -> $src"
+        manifest_record "$src" "$dst" symlink || return 3
+        return 0
+      fi
+      rm "$dst"
+      echo "  refresh $dst -> $src"
+    else
+      current="$(readlink "$dst")"
+      printf '  CONFLICT %s -> %s (expected %s)\n' "$dst" "$current" "$src" >&2
+      return 2
+    fi
   fi
 
   prev_sha="$(_portable_manifest_prev_sha256 "$dst_abs" || true)"

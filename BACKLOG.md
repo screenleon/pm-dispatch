@@ -1456,6 +1456,16 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 
 **Done-when**: v0.8.0→v0.9 candidate 在隔離環境完成 install→upgrade→doctor→uninstall，doctor 0 FAIL、所有 retired target 已 refresh、foreign config/canonical memory checksum 不變，且結果 artifact 可由 maintainer 重跑。
 
+**Update 2026-07-18（pre-release rehearsal）**: 已新增
+`ops/release/upgrade-smoke-v0.8-v0.9.sh`、canonical suite registration 與 release
+checklist 入口。實跑 `v0.8.0` (`b5eb215`) → dirty candidate based on `746096c`
+為 GO：doctor 0 FAIL、三 host old→new、retired target 0、dry-run 冪等，uninstall
+後 foreign config／canonical memory／user data checksum 全保留。Smoke 暴露並補上
+manifest-owned Claude/pmctl 跨 checkout transfer、stale dispatch allowlist cleanup、
+Codex compatible-checkout identity refresh、OpenCode checksum-verified receipt transfer。
+本票維持 active；最終 release acceptance 必須在這批變更提交後，以 final clean
+candidate SHA 重跑並保存 artifact，dirty rehearsal 不得作 tagging evidence。
+
 **Dependencies**: [[CC-454]] 與 [[CC-502]] 完成後執行最終 candidate smoke；[[CC-497]]、[[CC-456]] 已完成且只作 baseline，不重新開票。完成本票不取代 [[CC-447]]。P1，v0.9.0 release acceptance。
 
 ## CC-502 — shared gate/reviewer 去除 Claude-host 隱性前置 ✅ 2026-07-18

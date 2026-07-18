@@ -14,6 +14,8 @@ CLAUDE_CONFIG_DIR	CLAUDE_CONFIG_DIR	runtime/lib/memory.sh	production
 CLAUDE_CONFIG_DIR	CLAUDE_CONFIG_DIR	ops/usage/token-usage.sh	production
 CLAUDE_CONFIG_DIR	CLAUDE_CONFIG_DIR	hosts/claude/bin/uninstall-guards.sh	production
 CLAUDE_CONFIG_DIR	CLAUDE_CONFIG_DIR	uninstall.sh	production
+CLAUDE_CONFIG_DIR	CLAUDE_CONFIG_DIR	ops/release/upgrade-smoke-v0.8-v0.9.sh	production
+CLAUDE_CONFIG_DIR	CLAUDE_CONFIG_DIR	runtime/lib/portable.sh	production
 CLAUDE_CONFIG_TEST_*	CLAUDE_CONFIG_TEST_INSTALL_RUNNING	install.sh	production
 CLAUDE_CONFIG_TEST_*	CLAUDE_CONFIG_TEST_INSTALL_RUNNING	tests/lib/test-suite-runner.sh	test
 CLAUDE_CONFIG_TEST_*	CLAUDE_CONFIG_TEST_INSTALL_RUNNING	tests/shell/test-install.sh	test
@@ -30,6 +32,8 @@ CLAUDE_HOME	CLAUDE_HOME	hosts/claude/bin/install-guards.sh	production
 CLAUDE_HOME	CLAUDE_HOME	hosts/claude/lib/doctor.sh	production
 CLAUDE_HOME	CLAUDE_HOME	hosts/claude/bin/uninstall-guards.sh	production
 CLAUDE_HOME	CLAUDE_HOME	uninstall.sh	production
+CLAUDE_HOME	CLAUDE_HOME	ops/release/upgrade-smoke-v0.8-v0.9.sh	production
+CLAUDE_HOME	CLAUDE_HOME	runtime/lib/portable.sh	production
 CODEX_DISPATCH_TIMEOUT	CODEX_DISPATCH_TIMEOUT	adapters/codex/dispatch.sh	production
 CODEX_DISPATCH_TIMEOUT	CODEX_DISPATCH_TIMEOUT	runtime/lib/pmctl-dispatch.sh	production
 CODEX_GATE_STUB_*	CODEX_GATE_STUB_	tests/shell/test-pr-gate.sh	test
@@ -56,6 +60,7 @@ CODEX_HOME	CODEX_HOME	hosts/codex/hooks/command-guard.sh	production
 CODEX_HOME	CODEX_HOME	hosts/codex/lib/doctor.sh	production
 CODEX_HOME	CODEX_HOME	hosts/codex/lib/path-resolver.sh	production
 CODEX_HOME	CODEX_HOME	install.sh	production
+CODEX_HOME	CODEX_HOME	ops/release/upgrade-smoke-v0.8-v0.9.sh	production
 DRY_RUN	DRY_RUN	hosts/codex/bin/install.sh	production
 DRY_RUN	DRY_RUN	hosts/codex/bin/uninstall.sh	production
 DRY_RUN	DRY_RUN	install.sh	production
@@ -99,6 +104,7 @@ HOME	HOME	ops/usage/token-usage.sh	production
 HOME	HOME	hosts/claude/bin/uninstall-guards.sh	production
 HOME	HOME	ops/usage/usage-weekly.sh	production
 HOME	HOME	uninstall.sh	production
+HOME	HOME	ops/release/upgrade-smoke-v0.8-v0.9.sh	production
 MSYS_NO_PATHCONV	MSYS_NO_PATHCONV	hosts/claude/bin/install-guards.sh	production
 MSYS_NO_PATHCONV	MSYS_NO_PATHCONV	hosts/claude/bin/uninstall-guards.sh	production
 MSYS2_ARG_CONV_EXCL	MSYS2_ARG_CONV_EXCL	hosts/claude/bin/install-guards.sh	production
@@ -134,6 +140,7 @@ PATH	PATH	ops/release/release-verify.sh	production
 PATH	PATH	hosts/claude/bin/uninstall-guards.sh	production
 PATH	PATH	ops/usage/usage-weekly.sh	production
 PATH	PATH	uninstall.sh	production
+PATH	PATH	ops/release/upgrade-smoke-v0.8-v0.9.sh	production
 PM_CFG_*	PM_CFG_AUTO_PACK	runtime/lib/pmctl-config.sh	production
 PM_CFG_*	PM_CFG_AUTO_PACK	runtime/lib/pmctl-dispatch.sh	production
 PM_CFG_*	PM_CFG_DEFAULT_MODEL	adapters/claude/dispatch.sh	production
@@ -212,6 +219,7 @@ PM_DISPATCH_STATE_ROOT	PM_DISPATCH_STATE_ROOT	runtime/lib/pmctl-ship.sh	producti
 PM_DISPATCH_STATE_ROOT	PM_DISPATCH_STATE_ROOT	runtime/lib/pmctl-worktree.sh	production
 PM_DISPATCH_STATE_ROOT	PM_DISPATCH_STATE_ROOT	runtime/lib/state-paths.sh	production
 PM_DISPATCH_STATE_ROOT	PM_DISPATCH_STATE_ROOT	ops/release/release-verify.sh	production
+PM_DISPATCH_STATE_ROOT	PM_DISPATCH_STATE_ROOT	ops/release/upgrade-smoke-v0.8-v0.9.sh	production
 PM_DISPATCH_TEST_MAX_JOBS	PM_DISPATCH_TEST_MAX_JOBS	tests/lib/test-suite-runner.sh	test
 PM_DISPATCH_TEST_PROGRESS_SECS	PM_DISPATCH_TEST_PROGRESS_SECS	tests/lib/test-suite-runner.sh	test
 PM_DISPATCH_TEST_PROGRESS_SECS	PM_DISPATCH_TEST_PROGRESS_SECS	tests/shell/test-run-all-tests.sh	test
@@ -231,11 +239,13 @@ PM_GATE_WAIT_DEFAULT_TIMEOUT	PM_GATE_WAIT_DEFAULT_TIMEOUT	runtime/lib/pmctl-gate
 PM_GATE_WAIT_POLL_INTERVAL	PM_GATE_WAIT_POLL_INTERVAL	runtime/lib/pmctl-gate.sh	production
 PM_MEMORY_DIR	PM_MEMORY_DIR	runtime/lib/memory.sh	production
 PM_MEMORY_DIR	PM_MEMORY_DIR	runtime/lib/pmctl-memory.sh	production
+PM_MEMORY_DIR	PM_MEMORY_DIR	ops/release/upgrade-smoke-v0.8-v0.9.sh	production
 PMCTL_BIN_DIR	PMCTL_BIN_DIR	install.sh	production
 PMCTL_BIN_DIR	PMCTL_BIN_DIR	runtime/bin/doctor.sh	production
 PMCTL_BIN_DIR	PMCTL_BIN_DIR	hosts/claude/bin/install-guards.sh	production
 PMCTL_BIN_DIR	PMCTL_BIN_DIR	hosts/claude/bin/uninstall-guards.sh	production
 PMCTL_BIN_DIR	PMCTL_BIN_DIR	uninstall.sh	production
+PMCTL_BIN_DIR	PMCTL_BIN_DIR	ops/release/upgrade-smoke-v0.8-v0.9.sh	production
 PWD	PWD	ops/diagnostics/codex-watch.sh	production
 PWD	PWD	runtime/lib/pmctl-gate.sh	production
 PWD	PWD	runtime/lib/pmctl-memory.sh	production
@@ -323,6 +333,8 @@ TMPDIR	TMPDIR	runtime/lib/pmctl-artifacts.sh	production
 TMPDIR	TMPDIR	runtime/lib/pmctl-pm.sh	production
 TMPDIR	TMPDIR	runtime/lib/portable.sh	production
 TMPDIR	TMPDIR	runtime/bin/pr-gate.sh	production
+TMPDIR	TMPDIR	ops/release/upgrade-smoke-v0.8-v0.9.sh	production
 XDG_CONFIG_HOME	XDG_CONFIG_HOME	hosts/opencode/lib/path-resolver.sh	production
+XDG_CONFIG_HOME	XDG_CONFIG_HOME	ops/release/upgrade-smoke-v0.8-v0.9.sh	production
 XDG_DATA_HOME	XDG_DATA_HOME	runtime/lib/state-paths.sh	production
 XDG_RUNTIME_DIR	XDG_RUNTIME_DIR	runtime/lib/detached-launch.sh	production
