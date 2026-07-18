@@ -217,6 +217,10 @@ fi
 if [[ ! -d "$WORK_DIR" ]]; then
   printf 'Error: working dir not found: %s\n' "$WORK_DIR" >&2; exit 2
 fi
+# Trust-boundary comparisons and every derived artifact path must use the same
+# physical workspace identity. A raw relative or symlink-bearing --cd value can
+# otherwise make an in-workspace reviewer directory look external and trusted.
+WORK_DIR="$(cd "$WORK_DIR" && pwd -P)"
 if [[ -n "$GATE_RUN_DIR_OVERRIDE" && "$GATE_RUN_DIR_OVERRIDE" != /* ]]; then
   printf 'Error: --run-dir must be an absolute path: %s\n' "$GATE_RUN_DIR_OVERRIDE" >&2; exit 2
 fi
@@ -804,6 +808,7 @@ case "$AGENT_DIR" in
     REVIEWER_BASE_REL="${AGENT_DIR#"$WORK_DIR"/}"
     ;;
 esac
+say 'pr-gate: reviewer definition source: %s (%s)\n' "$REVIEWER_SOURCE_MODE" "$AGENT_DIR"
 
 # Validate all reviewer agent files exist before doing any work
 for r in $REVIEWERS; do

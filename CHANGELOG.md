@@ -12,6 +12,8 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 - **Host-neutral shared PR gate (CC-502).** `pr-gate` now resolves reviewer definitions from product-owned assets instead of `$HOME/.claude/agents`, pins workspace-owned policies to the trusted base revision, and supplies reviewers with canonical-memory provenance/context through shared runtime libraries. Invalid canonical selections and unexpected resolution/query failures fail closed. A real `pmctl gate run --executor codex` regression proves the production path works in an isolated non-Claude HOME without creating `.claude` state, while Claude executor parity remains covered.
 
+- **Fail-closed structured test evidence.** The shared test runner now limits its default parallel fan-out to four jobs to preserve file-descriptor and subprocess headroom for heavyweight suites, while explicit `--jobs`/`PM_DISPATCH_TEST_MAX_JOBS` overrides remain available. Structured-result consumers reject missing, empty, or malformed sinks instead of treating incomplete evidence as success.
+
 - **Canonical migration references and release metadata.** Current README, core, platform, milestone, backlog, and release-checklist surfaces now point to the owner-domain paths established by the script-domain migration. The inventory linter rejects retired implementation references while preserving historical records, compatibility coverage, and installed `~/.claude/scripts/` helper names; release verification now derives coverage from the canonical suite registry instead of a copied suite count.
 
 ## [0.8.0] — 2026-07-04

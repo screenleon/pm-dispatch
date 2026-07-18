@@ -40,6 +40,9 @@ gate_memory_context_hydrate() {
     return 1
   fi
 
+  # Resolver contract: 0=resolved result (whose status is validated below),
+  # 1=expected no-memory result, 3=invalid explicit selection (fail closed),
+  # and every other exit is an unexpected failure (also fail closed).
   case "$resolution_rc" in
     0)
       GATE_MEMORY_STATUS="$(jq -r '.status // "resolved"' <<<"$resolution")"

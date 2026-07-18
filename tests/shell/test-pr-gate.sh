@@ -6114,6 +6114,42 @@ test_workspace_reviewer_definitions_are_base_pinned() {
   pass "$name"
 }
 
+# Behavior: a relative --cd still classifies reviewer definitions inside the
+# physical workspace as base-pinned, never as an external trusted directory.
+# Steps: invoke the gate from the repo with --cd ., dirty the committed reviewer
+# definition, and assert both the trusted snapshot and observable source mode.
+test_relative_work_dir_preserves_base_pinned_reviewer_boundary() {
+  local name="host-boundary/relative-work-dir-is-base-pinned"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home="$TMP_ROOT/$name/home" repo="$TMP_ROOT/$name/repo"
+  local runner="$TMP_ROOT/$name/runner" out="$TMP_ROOT/$name/out" err="$TMP_ROOT/$name/err"
+  local captured="$TMP_ROOT/$name/reviewer-defs"
+  mkdir -p "$dir" "$home"
+  create_runner "$runner"
+  create_repo "$repo" docs
+  mkdir -p "$repo/agents"
+  printf '# trusted-relative-base-reviewer\n' > "$repo/agents/critic.md"
+  git -C "$repo" add agents/critic.md
+  git -C "$repo" commit -q -m 'add relative-path reviewer definition'
+  printf '# malicious-relative-working-tree-reviewer\n' > "$repo/agents/critic.md"
+
+  local code=0
+  set +e
+  (
+    cd "$repo"
+    HOME="$home" CODEX_GATE_CAPTURE_REVIEWER_DEFS="$captured" \
+      "$runner/pr-gate.sh" --cd . --base main --executor codex \
+        --reviewers critic --reviewer-dir "$repo/agents" --allow-dirty
+  ) > "$out" 2> "$err"
+  code=$?
+  set -e
+  [[ "$code" -eq 0 ]] || { fail "$name" "exit $code, expected 0: $(cat "$err" 2>/dev/null)"; return; }
+  assert_file_contains "$name" "$out" "reviewer definition source: base-pinned" || return
+  assert_file_contains "$name" "$captured" "trusted-relative-base-reviewer" || return
+  assert_not_contains "$name" "$captured" "malicious-relative-working-tree-reviewer" || return
+  pass "$name"
+}
+
 # Behavior: trusted-directory reviewer definitions reject symlink files before
 # dispatch so cp cannot dereference a swapped policy source.
 # Steps: replace critic.md in the external runner bundle with a symlink, run a
@@ -6162,6 +6198,39 @@ test_trusted_reviewer_hardlink_is_rejected() {
   pass "$name"
 }
 
+# Behavior: mutation of a trusted reviewer definition after its initial hash
+# but before the copy completes is detected by the post-copy re-verification.
+# Steps: place a cp shim first on PATH that mutates the source immediately before
+# copying it, then assert the gate aborts before dispatch with the TOCTOU error.
+test_trusted_reviewer_snapshot_detects_mid_copy_mutation() {
+  local name="host-boundary/trusted-reviewer-mid-copy-mutation-rejected"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home="$TMP_ROOT/$name/home" repo="$TMP_ROOT/$name/repo"
+  local runner="$TMP_ROOT/$name/runner" out="$TMP_ROOT/$name/out" err="$TMP_ROOT/$name/err"
+  local shim_bin="$TMP_ROOT/$name/bin" real_cp
+  mkdir -p "$dir" "$home" "$shim_bin"
+  create_runner "$runner"
+  create_repo "$repo" docs
+  real_cp="$(command -v cp)"
+  cat > "$shim_bin/cp" <<STUB_EOF
+#!/usr/bin/env bash
+printf '# changed-during-snapshot\n' > "\$3"
+exec "$real_cp" "\$@"
+STUB_EOF
+  chmod +x "$shim_bin/cp"
+
+  local code=0
+  set +e
+  PATH="$shim_bin:$PATH" run_gate "$home" "$runner" "$repo" "$out" "$err" \
+    --base main --reviewers critic
+  code=$?
+  set -e
+  [[ "$code" -ne 0 ]] || { fail "$name" "mid-copy mutation was accepted"; return; }
+  assert_file_contains "$name" "$err" "changed during snapshot" || return
+  assert_not_contains "$name" "$out" "DISPATCH_STUB" || return
+  pass "$name"
+}
+
 # Behavior: the real shared hydration library closes an unexpected resolver
 # exit rather than converting it to unavailable memory.
 # Steps: predefine the shared resolver/context functions, source the production
@@ -6204,6 +6273,64 @@ test_gate_memory_runtime_closes_query_failure() {
   pass "$name"
 }
 
+# Behavior: an oversized canonical-memory context is marked over-budget and is
+# not embedded in a reviewer brief, while resolved provenance remains visible.
+# Steps: run the production hydration library with a >6000-byte context stub,
+# capture the gate brief, and assert the empty-context rendering contract.
+test_gate_memory_runtime_omits_over_budget_context() {
+  local name="host-boundary/shared-runtime-over-budget-context"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home="$TMP_ROOT/$name/home" repo="$TMP_ROOT/$name/repo"
+  local runner="$TMP_ROOT/$name/runner" out="$TMP_ROOT/$name/out" err="$TMP_ROOT/$name/err"
+  local brief="$TMP_ROOT/$name/brief.md"
+  mkdir -p "$dir" "$home"
+  create_runner "$runner"
+  create_repo "$repo" docs
+  mv "$runner/lib/gate-memory-context.sh" "$runner/lib/gate-memory-context-production.sh"
+  cat > "$runner/lib/gate-memory-context.sh" <<'STUB_EOF'
+pmctl_memory_resolve() {
+  printf '%s\n' '{"status":"resolved","resolution_source":"config","project_key":"fixture"}'
+}
+pmctl_context_pack() {
+  printf '{"payload":"'
+  printf '%*s' 6100 '' | tr ' ' x
+  printf '"}\n'
+}
+. "$(dirname "${BASH_SOURCE[0]}")/gate-memory-context-production.sh"
+STUB_EOF
+
+  local code=0
+  set +e
+  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" \
+    --base main --executor codex
+  code=$?
+  set -e
+  [[ "$code" -eq 0 ]] || { fail "$name" "exit $code, expected 0: $(cat "$err" 2>/dev/null)"; return; }
+  assert_file_contains "$name" "$brief" "resolution_status: resolved" || return
+  assert_file_contains "$name" "$brief" "context_status: over-budget" || return
+  assert_not_contains "$name" "$brief" "Canonical memory context (read-only JSON" || return
+  pass "$name"
+}
+
+# Behavior: resolver exit 0 with any status other than resolved is rejected as
+# an invalid success response instead of being treated as absent memory.
+test_gate_memory_runtime_closes_unexpected_success_status() {
+  local name="host-boundary/shared-runtime-unexpected-success-status"
+  should_run "$name" || return 0
+  local out="$TMP_ROOT/$name.out" err="$TMP_ROOT/$name.err" status=0
+  set +e
+  bash -c '
+    pmctl_memory_resolve() { printf "%s\n" "{\"status\":\"partial\"}"; }
+    pmctl_context_pack() { return 0; }
+    . "$1/runtime/lib/gate-memory-context.sh"
+    gate_memory_context_hydrate "$1" test
+  ' _ "$REPO_ROOT" > "$out" 2> "$err" || status=$?
+  set -e
+  [[ "$status" -ne 0 ]] || { fail "$name" "unexpected success status was accepted"; return; }
+  assert_file_contains "$name" "$err" "resolver succeeded with unexpected status: partial" || return
+  pass "$name"
+}
+
 # Behavior: shared gate/reviewer content cannot regain a Claude-host asset or
 # memory dependency through an incidental edit.
 test_shared_gate_reviewer_content_host_boundary_ratchet() {
@@ -6220,10 +6347,14 @@ run_test test_pmctl_codex_gate_uses_production_memory_on_clean_home
 run_test test_invalid_canonical_memory_does_not_fallback
 run_test test_unexpected_canonical_memory_failure_is_closed
 run_test test_workspace_reviewer_definitions_are_base_pinned
+run_test test_relative_work_dir_preserves_base_pinned_reviewer_boundary
 run_test test_trusted_reviewer_symlink_is_rejected
 run_test test_trusted_reviewer_hardlink_is_rejected
+run_test test_trusted_reviewer_snapshot_detects_mid_copy_mutation
 run_test test_gate_memory_runtime_closes_unexpected_resolver_failure
 run_test test_gate_memory_runtime_closes_query_failure
+run_test test_gate_memory_runtime_omits_over_budget_context
+run_test test_gate_memory_runtime_closes_unexpected_success_status
 run_test test_shared_gate_reviewer_content_host_boundary_ratchet
 
 th_summary
