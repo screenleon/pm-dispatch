@@ -11,7 +11,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 |----|--------|------|--------|----------|------|----------|------|
 | CC-450 | 🟢 someday | 其餘 9 個 test-*.sh docstring 格式統一（CC-004 同款 Behavior/Steps，跨檔） | ops | 2026-07-03 | — | P3 | — |
 | CC-452 | 🔵 active | guard/hook 對稱性與併發 hardening；僅與 lifecycle/state correctness 直接相關的 slice 納入 v0.10.0 | ops | 2026-07-06 | — | P3 | hygiene |
-| CC-453 | ✅ done | worktree/auto-pack 路徑契約 hardening；僅與 lifecycle/state correctness 直接相關的 slice 納入 v0.10.0 | ops | 2026-07-06 | pr:TBD | P3 | hygiene |
+| CC-453 | ✅ done | worktree/auto-pack 路徑契約 hardening；僅與 lifecycle/state correctness 直接相關的 slice 納入 v0.10.0 | ops | 2026-07-06 | pr:#430 | P3 | hygiene |
 | CC-461 | 🟢 someday | `doctor.sh --fix`：僅限冪等/可逆/不碰使用者內容類別的自動修復；待 CC-447 offline smoke 產出摔倒點清單後定白名單（2026-07-07 openyida 跨專案分析） | ops/install | 2026-07-07 | — | P3 | — |
 | CC-462 | 🟢 someday | e2e 可拋棄資源紀律：前綴命名 + registry JSON + result artifact；掛在 CC-449 e2e 新 phase 之後，與 CC-447 live smoke 共用同一 registry（2026-07-07 openyida 跨專案分析） | ops/test | 2026-07-07 | — | P3 | — |
 | CC-463 | 🟢 someday | `pmctl batch` 泛用批次執行原語；依賴 CC-460（合法性驗證來源）；新注入面須過 security-reviewer（2026-07-07 openyida 跨專案分析） | arch/process | 2026-07-07 | — | P3 | design |
