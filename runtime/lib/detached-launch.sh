@@ -247,7 +247,7 @@ detached_launch_load_identity_file() {
 #   2 — identity mismatch / PID reuse (fail-closed; never signal)
 detached_launch_verify_identity() {
   local pid="${1:?pid required}" identity_file="${2:?identity file required}"
-  local cur_pgid cur_start cur_comm
+  local snap cur_pgid cur_start cur_comm
   if ! detached_launch_load_identity_file "$identity_file"; then
     return 2
   fi
@@ -255,9 +255,11 @@ detached_launch_verify_identity() {
   if [[ ! -r "/proc/$pid/stat" ]]; then
     return 1
   fi
-  cur_pgid="$(detached_launch_capture_identity "$pid" 2>/dev/null | grep -m1 '^pgid=' | cut -d= -f2-)" || true
-  cur_start="$(detached_launch_capture_identity "$pid" 2>/dev/null | grep -m1 '^starttime=' | cut -d= -f2-)" || true
-  cur_comm="$(detached_launch_capture_identity "$pid" 2>/dev/null | grep -m1 '^comm=' | cut -d= -f2-)" || true
+  # Single /proc snapshot so fields cannot mix across a mid-read transition.
+  snap="$(detached_launch_capture_identity "$pid" 2>/dev/null)" || return 1
+  cur_pgid="$(printf '%s\n' "$snap" | grep -m1 '^pgid=' | cut -d= -f2-)" || true
+  cur_start="$(printf '%s\n' "$snap" | grep -m1 '^starttime=' | cut -d= -f2-)" || true
+  cur_comm="$(printf '%s\n' "$snap" | grep -m1 '^comm=' | cut -d= -f2-)" || true
   if [[ -z "$cur_pgid" || -z "$cur_start" ]]; then
     return 1
   fi

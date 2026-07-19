@@ -1925,12 +1925,96 @@ case_supervisor_die_restricted_cleanup
 case_dispatch_wait_poll_interval_honored
 
 
+# ── cancel: dead leader PID but live isolated PGID is still killed ──────────
+# Behavior: when identity PID is gone but recorded isolated PGID still has
+#          members, cancel kills the group before claiming cancelled.
+# Steps: handcraft trusted identity (dead pid + live setsid group) + runspec +
+#        key/nonce → cancel → assert group dead and cancelled claim.
+case_dispatch_cancel_orphaned_process_group() {
+  local name="lifecycle/dispatch cancel kills orphaned process group after leader exit"
+  should_run "$name" || return 0
+  command -v setsid >/dev/null 2>&1 || { pass "$name (SKIP: no setsid)"; return 0; }
+
+  local work run_id art_dir id_file runspec key_file nonce leader child pgid
+  local cancel_code claim group_gone=1 starttime
+  work="$(mktemp -d)"; git init -q "$work"
+  run_id="run-20260719T000000Z-c49501"
+  export _SW_REPO_ROOT="$work"
+  art_dir="$(_run_trace_dir "$work" "$run_id")"
+  mkdir -p "$art_dir"
+
+  # Isolated group: leader + long-lived child; then kill only the leader.
+  setsid bash -c 'tail -f /dev/null & exec -a pm-sup-dead sleep 3600' >/dev/null 2>&1 & disown 2>/dev/null || true
+  leader=$!
+  # Capture identity while leader is alive.
+  local _i
+  for _i in 1 2 3 4 5 6 7 8 9 10; do
+    [[ -r "/proc/$leader/stat" ]] && break
+  done
+  if ! detached_launch_capture_identity "$leader" "1" >"$art_dir/$run_id.supervisor.identity" 2>/dev/null; then
+    kill -KILL "$leader" 2>/dev/null || true
+    fail "$name" "failed to capture identity for leader=$leader"
+    rm -rf "$work"
+    return
+  fi
+  pgid="$(grep -m1 '^pgid=' "$art_dir/$run_id.supervisor.identity" | cut -d= -f2-)"
+  # Kill leader only; child (tail) should remain in the process group.
+  kill -KILL "$leader" 2>/dev/null || true
+
+  # Minimal runspec so cancel accepts dispatch evidence.
+  cat >"$art_dir/$run_id.runspec" <<EOF
+schema_version=2
+run_id=$run_id
+adapter=codex
+work_dir=$work
+cd_arg=$work
+brief_file=/tmp/brief-$run_id.md
+model=
+created_ts=2026-07-19T00:00:00Z
+print_cmd=0
+initial_state_written=1
+native_b64:
+EOF
+  printf 'goal: cancel orphan fixture\n' >"/tmp/brief-$run_id.md"
+
+  # Sentinel key so cancel can publish wait-resolvable cancelled outcome.
+  key_file="$(_pmctl_sentinel_key_file "$run_id")"
+  mkdir -p "$(dirname "$key_file")"
+  chmod 700 "$(dirname "$key_file")" 2>/dev/null || true
+  nonce="$(detached_launch_generate_nonce)"
+  printf '%s' "$nonce" >"$key_file"
+
+  set +e
+  pmctl_dispatch_cancel "$REPO_ROOT" "$run_id" --cd "$work" --grace 2 >/dev/null 2>&1
+  cancel_code=$?
+  set -e
+
+  claim="$art_dir/$run_id.terminal"
+  if [[ -n "$pgid" ]] && kill -0 -- "-$pgid" 2>/dev/null; then
+    group_gone=0
+  fi
+  # Cleanup any survivors.
+  [[ -n "$pgid" ]] && kill -KILL -- "-$pgid" 2>/dev/null || true
+  rm -f "/tmp/brief-$run_id.md" "$key_file" \
+    "$(detached_launch_sentinel_path "pm-supervisor" "$run_id" "$nonce")" 2>/dev/null || true
+
+  if [[ "$cancel_code" -eq 0 && "$group_gone" -eq 1 ]] \
+    && [[ -f "$claim" ]] && grep -q '^final_state=cancelled$' "$claim"; then
+    pass "$name"
+  else
+    fail "$name" "cancel=$cancel_code group_gone=$group_gone claim=$(cat "$claim" 2>/dev/null | tr '\n' '|') pgid=$pgid leader=$leader"
+  fi
+  unset _SW_REPO_ROOT
+  rm -rf "$work"
+}
+
 case_dispatch_cancel_in_flight
 case_dispatch_cancel_already_terminal
 case_dispatch_cancel_identity_mismatch
 case_dispatch_cancel_ignores_workspace_pid
 case_dispatch_cancel_ignores_explicit_trace_dir
 case_dispatch_cancel_record_write_failure
+case_dispatch_cancel_orphaned_process_group
 case_dispatch_status_lists_in_flight
 case_dispatch_status_lists_terminal
 th_summary

@@ -1356,21 +1356,25 @@ pmctl_dispatch_cancel() {
     detached_launch_verify_identity "$pid" "$identity_file"
     verify_rc=$?
     case "$verify_rc" in
-      0)
+      0|1)
+        # PID may be gone (rc=1) while adapter descendants remain in the
+        # recorded isolated PGID. Always require the process group dead before
+        # taking the cancelled claim.
         if [[ "$isolated" != "1" ]]; then
-          printf 'pmctl dispatch cancel: run %s is not in an isolated process group (no setsid); refusing group kill (fail-closed)\n' \
-            "$run_id" >&2
-          return 2
+          if [[ "$verify_rc" -eq 0 ]]; then
+            printf 'pmctl dispatch cancel: run %s is not in an isolated process group (no setsid); refusing group kill (fail-closed)\n' \
+              "$run_id" >&2
+            return 2
+          fi
+          # Leader gone and not isolated: nothing safe to signal; terminalize.
+          :
+        elif [[ -n "$pgid" ]] && kill -0 -- "-$pgid" 2>/dev/null; then
+          if ! detached_launch_kill_process_group "$pgid" "$grace"; then
+            printf 'pmctl dispatch cancel: process group %s for %s still alive after SIGKILL; not marking cancelled\n' \
+              "$pgid" "$run_id" >&2
+            return 2
+          fi
         fi
-        if ! detached_launch_kill_process_group "$pgid" "$grace"; then
-          printf 'pmctl dispatch cancel: process group %s for %s still alive after SIGKILL; not marking cancelled\n' \
-            "$pgid" "$run_id" >&2
-          return 2
-        fi
-        ;;
-      1)
-        # Process already gone — proceed to terminalize as cancelled.
-        :
         ;;
       2)
         printf 'pmctl dispatch cancel: process identity mismatch for %s (pid=%s); refusing to signal (fail-closed)\n' \
