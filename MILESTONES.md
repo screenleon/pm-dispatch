@@ -123,9 +123,9 @@
 
 ---
 
-## v0.10.0 — detached cancel safety（暫定；未啟動）
+## v0.10.0 — detached cancel safety（進行中）
 
-> 最後排程更新：2026-07-17（首次拆版）
+> 最後排程更新：2026-07-19（CC-495 實作）
 
 **主題**：只補 detached lifecycle 的中止對稱面；先把 process identity、terminal race 與 completion evidence 做對，再談 crash/reboot recovery。
 
@@ -133,7 +133,7 @@
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-495 | process-group cancel、PID identity、terminal CAS、authenticated cancelled sentinel、wait distinct exit | 🔵 |
+| CC-495 | process-group cancel、PID identity、terminal CAS、authenticated cancelled sentinel、wait distinct exit | ✅ |
 
 ### Phase 2 — bounded correctness hardening
 

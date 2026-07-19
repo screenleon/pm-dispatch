@@ -1513,4 +1513,265 @@ case_dispatch_wait_fallback_adversarial_key_removal
 case_dispatch_wait_second_call_uses_record
 case_supervisor_die_restricted_cleanup
 case_dispatch_wait_poll_interval_honored
+
+# ── cancel: in-flight process group terminalized + wait exit 130 ────────────
+case_dispatch_cancel_in_flight() {
+  local name="lifecycle/dispatch cancel in-flight run terminates group and wait exits 130"
+  should_run "$name" || return 0
+  local work brief bindir run_id code cancel_code wait_code wait_out record
+  local started_fifo release_fifo _started_dummy art_dir id_file claim_file pid
+  work="$(mktemp -d)"; git init -q "$work"
+  brief="$(_mk_brief "$work")"
+  bindir="$(mktemp -d)"
+  started_fifo="$(mktemp -u)"; release_fifo="$(mktemp -u)"
+  mkfifo "$started_fifo" "$release_fifo"
+  _install_fake_codex_blocking "$bindir" 0 "$started_fifo" "$release_fifo"
+
+  set +e
+  run_id="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" --lifecycle detached 2>/dev/null)"; code=$?
+  set -e
+  if [[ "$code" -ne 0 || ! "$run_id" =~ ^run-[A-Za-z0-9]+-[A-Za-z0-9]+$ ]]; then
+    fail "$name" "dispatch failed code=$code run_id=${run_id:-empty}"
+    rm -rf "$work" "$bindir"; rm -f "$started_fifo" "$release_fifo"
+    return
+  fi
+
+  if ! read -r -t 10 _started_dummy < "$started_fifo"; then
+    fail "$name" "adapter did not start"
+    { exec 9<>"$release_fifo" && printf 'go\n' >&9 && exec 9>&-; } 2>/dev/null || true
+    rm -rf "$work" "$bindir"; rm -f "$started_fifo" "$release_fifo"
+    return
+  fi
+
+  art_dir="$(_run_trace_dir "$work" "$run_id")"
+  id_file="$art_dir/$run_id.supervisor.identity"
+  claim_file="$art_dir/$run_id.terminal"
+  # Identity capture is best-effort shortly after launch; wait briefly.
+  local _i
+  for _i in 1 2 3 4 5 6 7 8 9 10; do
+    [[ -f "$id_file" ]] && break
+    sleep 0.05
+  done
+
+  set +e
+  PATH="$bindir:$PATH" "$PMCTL" dispatch cancel "$run_id" --cd "$work" --grace 2 >/dev/null 2>&1
+  cancel_code=$?
+  wait_out="$(PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout "$_WAIT_OK" 2>&1)"
+  wait_code=$?
+  set -e
+  record="$(_record_for_run "$work" "$run_id")"
+
+  # Release FIFO in case cancel did not kill (cleanup); ignore errors.
+  { exec 9<>"$release_fifo" && printf 'go\n' >&9 && exec 9>&-; } 2>/dev/null || true
+
+  local proc_gone=1
+  if [[ -f "$id_file" ]]; then
+    pid="$(grep -m1 '^pid=' "$id_file" 2>/dev/null | cut -d= -f2-)" || pid=""
+    if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+      proc_gone=0
+    fi
+  fi
+  # After successful cancel, identity file is removed; check via claim + wait.
+  if [[ "$cancel_code" -eq 0 && "$wait_code" -eq 130 ]] \
+    && grep -q 'state: cancelled' <<<"$wait_out" \
+    && [[ -n "$record" ]] && grep -q '^final_state: "cancelled"$' "$record" \
+    && [[ -f "$claim_file" ]] && grep -q '^final_state=cancelled$' "$claim_file" \
+    && [[ "$proc_gone" -eq 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "cancel=$cancel_code wait=$wait_code proc_gone=$proc_gone claim=$(cat "$claim_file" 2>/dev/null | tr '\n' '|') wait_out=$(printf '%s' "$wait_out" | tr '\n' '|') record=$(grep final_state "$record" 2>/dev/null | tr '\n' '|')"
+  fi
+  rm -rf "$work" "$bindir"; rm -f "$started_fifo" "$release_fifo"
+}
+
+# ── cancel: already-terminal ok is not overwritten ──────────────────────────
+case_dispatch_cancel_already_terminal() {
+  local name="lifecycle/dispatch cancel does not overwrite existing ok terminal"
+  should_run "$name" || return 0
+  local work brief bindir run_id cancel_code wait_code record
+  work="$(mktemp -d)"; git init -q "$work"
+  brief="$(_mk_brief "$work")"
+  bindir="$(mktemp -d)"; _install_fake_codex "$bindir" 0
+
+  set +e
+  run_id="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" --lifecycle detached 2>/dev/null)"
+  PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout "$_WAIT_OK" >/dev/null 2>&1
+  wait_code=$?
+  # Second wait consumes key; re-seed is not needed — cancel must still refuse
+  # overwrite based on the durable terminal claim file.
+  PATH="$bindir:$PATH" "$PMCTL" dispatch cancel "$run_id" --cd "$work" >/dev/null 2>&1
+  cancel_code=$?
+  set -e
+  record="$(_record_for_run "$work" "$run_id")"
+  local claim_file
+  claim_file="$(_run_trace_dir "$work" "$run_id")/$run_id.terminal"
+
+  if [[ "$wait_code" -eq 0 && "$cancel_code" -eq 1 ]] \
+    && [[ -n "$record" ]] && grep -q '^final_state: "ok"$' "$record" \
+    && [[ -f "$claim_file" ]] && grep -q '^final_state=ok$' "$claim_file"; then
+    pass "$name"
+  else
+    fail "$name" "wait=$wait_code cancel=$cancel_code claim=$(cat "$claim_file" 2>/dev/null | tr '\n' '|') record=$(grep final_state "$record" 2>/dev/null | tr '\n' '|')"
+  fi
+  rm -rf "$work" "$bindir"
+}
+
+# ── cancel: identity mismatch fail-closed (no signal) ───────────────────────
+case_dispatch_cancel_identity_mismatch() {
+  local name="lifecycle/dispatch cancel identity mismatch refuses signal"
+  should_run "$name" || return 0
+  local work brief bindir run_id cancel_code started_fifo release_fifo _started_dummy
+  local art_dir id_file sleep_pid
+  work="$(mktemp -d)"; git init -q "$work"
+  brief="$(_mk_brief "$work")"
+  bindir="$(mktemp -d)"
+  started_fifo="$(mktemp -u)"; release_fifo="$(mktemp -u)"
+  mkfifo "$started_fifo" "$release_fifo"
+  _install_fake_codex_blocking "$bindir" 0 "$started_fifo" "$release_fifo"
+
+  set +e
+  run_id="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" --lifecycle detached 2>/dev/null)"
+  set -e
+  if ! read -r -t 10 _started_dummy < "$started_fifo"; then
+    fail "$name" "adapter did not start"
+    { exec 9<>"$release_fifo" && printf 'go\n' >&9 && exec 9>&-; } 2>/dev/null || true
+    rm -rf "$work" "$bindir"; rm -f "$started_fifo" "$release_fifo"
+    return
+  fi
+
+  art_dir="$(_run_trace_dir "$work" "$run_id")"
+  id_file="$art_dir/$run_id.supervisor.identity"
+  local _i
+  for _i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+    [[ -f "$id_file" ]] && break
+    sleep 0.05
+  done
+  if [[ ! -f "$id_file" ]]; then
+    fail "$name" "identity file never written"
+    { exec 9<>"$release_fifo" && printf 'go\n' >&9 && exec 9>&-; } 2>/dev/null || true
+    rm -rf "$work" "$bindir"; rm -f "$started_fifo" "$release_fifo"
+    return
+  fi
+
+  # Forge a different starttime while keeping a live decoy pid so verify fails
+  # closed (PID reuse / identity mismatch) and cancel must not claim success
+  # by killing the wrong process.
+  sleep 60 &
+  sleep_pid=$!
+  printf 'pid=%s\npgid=%s\nstarttime=1\ncomm=sleep\n' "$sleep_pid" "$sleep_pid" >"$id_file"
+
+  set +e
+  PATH="$bindir:$PATH" "$PMCTL" dispatch cancel "$run_id" --cd "$work" --grace 1 >/dev/null 2>&1
+  cancel_code=$?
+  set -e
+
+  local decoy_alive=0
+  if kill -0 "$sleep_pid" 2>/dev/null; then
+    decoy_alive=1
+  fi
+  kill "$sleep_pid" 2>/dev/null || true
+  wait "$sleep_pid" 2>/dev/null || true
+  { exec 9<>"$release_fifo" && printf 'go\n' >&9 && exec 9>&-; } 2>/dev/null || true
+  PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout "$_WAIT_OK" >/dev/null 2>&1 || true
+
+  if [[ "$cancel_code" -eq 2 && "$decoy_alive" -eq 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "cancel=$cancel_code decoy_alive=$decoy_alive (expected cancel=2 and decoy still alive)"
+  fi
+  rm -rf "$work" "$bindir"; rm -f "$started_fifo" "$release_fifo"
+}
+
+# ── cancel: workspace-forged pid is not authority ───────────────────────────
+case_dispatch_cancel_ignores_workspace_pid() {
+  local name="lifecycle/dispatch cancel ignores workspace-forged supervisor.pid"
+  should_run "$name" || return 0
+  local work brief bindir run_id cancel_code started_fifo release_fifo _started_dummy
+  local decoy_pid
+  work="$(mktemp -d)"; git init -q "$work"
+  brief="$(_mk_brief "$work")"
+  bindir="$(mktemp -d)"
+  started_fifo="$(mktemp -u)"; release_fifo="$(mktemp -u)"
+  mkfifo "$started_fifo" "$release_fifo"
+  _install_fake_codex_blocking "$bindir" 0 "$started_fifo" "$release_fifo"
+
+  set +e
+  run_id="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" --lifecycle detached 2>/dev/null)"
+  set -e
+  if ! read -r -t 10 _started_dummy < "$started_fifo"; then
+    fail "$name" "adapter did not start"
+    { exec 9<>"$release_fifo" && printf 'go\n' >&9 && exec 9>&-; } 2>/dev/null || true
+    rm -rf "$work" "$bindir"; rm -f "$started_fifo" "$release_fifo"
+    return
+  fi
+
+  sleep 60 &
+  decoy_pid=$!
+  mkdir -p "$work/.agent-trace"
+  printf '%s\n' "$decoy_pid" >"$work/.agent-trace/$run_id.supervisor.pid"
+
+  set +e
+  # Real cancel uses trusted art_dir identity, not workspace pid. Should succeed
+  # against the real supervisor and leave the decoy untouched until we kill it.
+  PATH="$bindir:$PATH" "$PMCTL" dispatch cancel "$run_id" --cd "$work" --grace 2 >/dev/null 2>&1
+  cancel_code=$?
+  set -e
+
+  local decoy_alive=0
+  if kill -0 "$decoy_pid" 2>/dev/null; then
+    decoy_alive=1
+  fi
+  kill "$decoy_pid" 2>/dev/null || true
+  wait "$decoy_pid" 2>/dev/null || true
+  { exec 9<>"$release_fifo" && printf 'go\n' >&9 && exec 9>&-; } 2>/dev/null || true
+
+  if [[ "$cancel_code" -eq 0 && "$decoy_alive" -eq 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "cancel=$cancel_code decoy_alive=$decoy_alive"
+  fi
+  rm -rf "$work" "$bindir"; rm -f "$started_fifo" "$release_fifo"
+}
+
+# ── status: lists in-flight runs ────────────────────────────────────────────
+case_dispatch_status_lists_in_flight() {
+  local name="lifecycle/dispatch status lists in-flight run"
+  should_run "$name" || return 0
+  local work brief bindir run_id started_fifo release_fifo _started_dummy status_out
+  work="$(mktemp -d)"; git init -q "$work"
+  brief="$(_mk_brief "$work")"
+  bindir="$(mktemp -d)"
+  started_fifo="$(mktemp -u)"; release_fifo="$(mktemp -u)"
+  mkfifo "$started_fifo" "$release_fifo"
+  _install_fake_codex_blocking "$bindir" 0 "$started_fifo" "$release_fifo"
+
+  set +e
+  run_id="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" --lifecycle detached 2>/dev/null)"
+  set -e
+  if ! read -r -t 10 _started_dummy < "$started_fifo"; then
+    fail "$name" "adapter did not start"
+    { exec 9<>"$release_fifo" && printf 'go\n' >&9 && exec 9>&-; } 2>/dev/null || true
+    rm -rf "$work" "$bindir"; rm -f "$started_fifo" "$release_fifo"
+    return
+  fi
+
+  set +e
+  status_out="$(PATH="$bindir:$PATH" "$PMCTL" dispatch status --cd "$work" 2>&1)"
+  set -e
+  { exec 9<>"$release_fifo" && printf 'go\n' >&9 && exec 9>&-; } 2>/dev/null || true
+  PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout "$_WAIT_OK" >/dev/null 2>&1 || true
+
+  if grep -q "run: $run_id  status: in-flight" <<<"$status_out"; then
+    pass "$name"
+  else
+    fail "$name" "status=$(printf '%s' "$status_out" | tr '\n' '|')"
+  fi
+  rm -rf "$work" "$bindir"; rm -f "$started_fifo" "$release_fifo"
+}
+
+case_dispatch_cancel_in_flight
+case_dispatch_cancel_already_terminal
+case_dispatch_cancel_identity_mismatch
+case_dispatch_cancel_ignores_workspace_pid
+case_dispatch_status_lists_in_flight
 th_summary

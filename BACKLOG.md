@@ -18,7 +18,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-464 | 🟢 someday | `pmctl ticket draft --from <notes>`：隨手筆記→結構化 backlog 票草稿；依賴 CC-286（prefix-generic next-id，⏸ deferred 尚未排程）；review-first 邊界獨立設計，CC-054 僅供鬆散參照非直接前例（2026-07-07 openyida 跨專案分析） | ux/process | 2026-07-07 | — | P3 | — |
 | CC-493 | 🟢 someday | Prompt→Skill→Command→Harness 升級規則文件化：可測試的分類判準（何時停在 prompt、何時升為 skill、何時做成 command、何時需要 harness-level hook/guard/state），並盤點 `commands/`／`skills/`／`agents/` 現況對照分類（2026-07-15 CC-489 三方 multi-model synthesis） | process/docs | 2026-07-15 | feedback:2026-07-15 | P2 | design |
 | CC-494 | 🟢 someday | design: executor 局部設計裁量權 envelope——在 dispatch brief / executor contract 定義「可自行處理的局部設計」與「必須 halt 回報 PM」的邊界（例如新增 schema 欄位 `design_latitude`/`architectural_conflicts`）；三方 multi-model synthesis 2:1 分歧（codex/fable 認為現行邊界過度僵硬需要新機制，opencode 認為現行 `isolation_level`/executor 欄位已足夠彈性），本票僅追蹤決策、不預設結論（2026-07-15） | schema/process | 2026-07-15 | feedback:2026-07-15 | P3 | design |
-| CC-495 | 🔵 active | `pmctl dispatch cancel <run_id>`：可信任的 detached-run cancel terminalization、PID reuse 防護、cancel-vs-complete 單一終態、authenticated cancelled sentinel | arch/gate | 2026-07-15 | feedback:2026-07-15 | P1 | design |
+| CC-495 | ✅ done 2026-07-19 | `pmctl dispatch cancel <run_id>`：可信任的 detached-run cancel terminalization、PID reuse 防護、cancel-vs-complete 單一終態、authenticated cancelled sentinel | arch/gate | 2026-07-15 | feedback:2026-07-15 | P1 | design |
 | CC-498 | 🔵 active | State compatibility surface：status、layout/entity 版本命名、真實 migration availability | arch/schema | 2026-07-17 | — | P1 | design |
 | CC-499 | ⏸ deferred | Detached run reconciliation：crash、reboot、stale sentinel、PID identity 與 orphan recovery | arch/ops | 2026-07-17 | — | P2 | design |
 | CC-500 | ⏸ deferred | State single-writer boundary enforcement：all-production-domain direct-writer ratchet | arch/test | 2026-07-17 | — | P2 | design |
@@ -1325,7 +1325,17 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 
 **Cross-link**: [[CC-489]]、`docs/dispatch-brief.md`、`docs/executor-contract.md`。
 
-## CC-495 — `pmctl dispatch cancel <run_id>`：detached run 中途終止機制 🔵 active
+## CC-495 — `pmctl dispatch cancel <run_id>`：detached run 中途終止機制 ✅ done 2026-07-19
+
+**Outcome**: Shipped `pmctl dispatch cancel <run_id> --cd <work_dir>` and
+`pmctl dispatch status --cd <work_dir>`. Trusted artifact dir records
+supervisor identity (pid/pgid/starttime/comm); cancel re-verifies before
+process-group SIGTERM/SIGKILL. Exclusive `$run_id.terminal` CAS ensures a
+single winner among ok/failed/partial/cancelled. Cancel writes Run/Event
+(`run.cancelled`)/dispatch record then nonce-authenticated cancelled
+sentinel; wait returns exit 130. Lifecycle suite covers in-flight cancel,
+already-terminal non-overwrite, identity mismatch fail-closed, workspace PID
+non-authority, and status listing.
 
 **Problem**: `pmctl dispatch run --lifecycle detached` 有 `run`（啟動）與 `wait`（等待完成），但沒有任何方式可以在使用者發現 executor 卡住、跑錯方向、或需要中途喊停時主動終止一個進行中的 run。現況只能手動找到並 `kill $(cat <run_dir>/<run_id>.supervisor.pid)`——這個路徑完全沒有文件記錄，且：
 1. `_pmctl_dispatch_launch_supervisor`（`runtime/lib/pmctl-dispatch.sh`）用 `detached_launch_under_setsid` 啟動 supervisor，若只 kill `.supervisor.pid` 記錄的單一 pid，底層真正在執行的 adapter CLI 子行程（在其自己的 process group 內）不保證被連帶終止，可能留下孤兒 process（性質類似 CC-487 觀察到的 CI 殘留 bash process）。

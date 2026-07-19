@@ -198,6 +198,10 @@ pmctl_dispatch_write_transition() {
       note="partial"
       ;;
     failed) event_kind="run.failed" ;;
+    cancelled)
+      event_kind="run.cancelled"
+      note="cancelled"
+      ;;
     *)
       printf 'pmctl dispatch run: invalid Run transition state %q\n' "$state" >&2
       return 1
@@ -509,6 +513,76 @@ _pmctl_dispatch_trace_dir() {
   printf '%s\n' "$work_dir/.agent-trace"
 }
 
+# Out-of-repo trusted artifact directory for a run (same partition as the
+# supervisor pid/runspec). Never reads workspace-writable paths for authority.
+_pmctl_dispatch_trusted_artifact_dir() {
+  local work_dir="${1:-}" run_id="${2:-}"
+  _pmctl_dispatch_trace_dir "$work_dir" "$run_id" ""
+}
+
+# Exclusive terminal claim (CAS). First writer wins; content is key=value.
+#   0 — this caller owns the terminal claim for $state
+#   1 — a terminal claim already exists (read via _pmctl_dispatch_read_terminal_claim)
+_pmctl_dispatch_try_terminal_claim() {
+  local work_dir="${1:-}" run_id="${2:-}" state="${3:-}" claimer="${4:-unknown}"
+  local art_dir claim_path
+  case "$state" in ok|failed|partial|cancelled) : ;; *) return 1 ;; esac
+  art_dir="$(_pmctl_dispatch_trusted_artifact_dir "$work_dir" "$run_id")"
+  [[ -n "$art_dir" ]] || return 1
+  mkdir -p "$art_dir" 2>/dev/null || return 1
+  claim_path="$art_dir/$run_id.terminal"
+  # noclobber: exclusive create so cancel and natural complete cannot both win.
+  if (
+    set -C
+    umask 077
+    printf 'final_state=%s\nclaimer=%s\nts=%s\n' \
+      "$state" "$claimer" "$(pmctl_dispatch_utc_ts)" >"$claim_path"
+  ) 2>/dev/null; then
+    return 0
+  fi
+  return 1
+}
+
+_pmctl_dispatch_read_terminal_claim() {
+  local work_dir="${1:-}" run_id="${2:-}"
+  local art_dir claim_path
+  PMCTL_TERMINAL_STATE=""
+  PMCTL_TERMINAL_CLAIMER=""
+  art_dir="$(_pmctl_dispatch_trusted_artifact_dir "$work_dir" "$run_id")"
+  claim_path="${art_dir:-}/$run_id.terminal"
+  [[ -f "$claim_path" ]] || return 1
+  PMCTL_TERMINAL_STATE="$(grep -m1 '^final_state=' "$claim_path" 2>/dev/null | cut -d= -f2-)" || true
+  PMCTL_TERMINAL_CLAIMER="$(grep -m1 '^claimer=' "$claim_path" 2>/dev/null | cut -d= -f2-)" || true
+  [[ -n "$PMCTL_TERMINAL_STATE" ]] || return 1
+  return 0
+}
+
+# Infer the latest non-terminal run state for cancel transitions. Best-effort
+# scan of runs.jsonl; falls back to dispatched (the common in-flight state).
+_pmctl_dispatch_infer_from_state() {
+  local work_dir="${1:-}" run_id="${2:-}"
+  local proj_dir runs_file last=""
+  if [[ "$(type -t _sw_project_dir 2>/dev/null)" != function ]]; then
+    local _sp_lib="${repo_root:-}/runtime/lib/state-paths.sh"
+    if [[ -r "$_sp_lib" ]]; then
+      # shellcheck disable=SC1090,SC1091
+      . "$_sp_lib" 2>/dev/null || true
+    fi
+  fi
+  if [[ "$(type -t _sw_project_dir 2>/dev/null)" == function ]]; then
+    proj_dir="$(cd "$work_dir" 2>/dev/null && _SW_REPO_ROOT="$work_dir" _sw_project_dir 2>/dev/null)" || proj_dir=""
+    runs_file="${proj_dir}runs.jsonl"
+    if [[ -f "$runs_file" ]]; then
+      last="$(jq -r --arg id "$run_id" \
+        'select(.id == $id) | .state' "$runs_file" 2>/dev/null | tail -n 1)" || last=""
+    fi
+  fi
+  case "$last" in
+    pending|dispatched|verifying) printf '%s\n' "$last" ;;
+    *) printf 'dispatched\n' ;;
+  esac
+}
+
 pmctl_dispatch_execute_tail() {
   local repo_root="${1:-}" work_dir="${2:-}" adapter="${3:-}" adapter_path="${4:-}"
   local _dispatch_run_id="${5:-}" _dispatch_model="${6:-}" brief_file="${7:-}"
@@ -587,6 +661,12 @@ pmctl_dispatch_execute_tail() {
   # A failed adapter run short-circuits: propagate its exit verbatim. The
   # adapter already wrote forensic trace/stderr for post-mortem.
   if [[ "$exit_code" -ne 0 ]]; then
+    if ! _pmctl_dispatch_try_terminal_claim "$work_dir" "$_dispatch_run_id" "failed" "supervisor"; then
+      _pmctl_dispatch_read_terminal_claim "$work_dir" "$_dispatch_run_id" || true
+      printf 'pmctl dispatch run: terminal already claimed as %s; skipping failed write\n' \
+        "${PMCTL_TERMINAL_STATE:-unknown}" >&2
+      return 130
+    fi
     pmctl_dispatch_write_transition "$repo_root" "$work_dir" "$adapter" "$_dispatch_run_id" \
       "failed" "$exit_code" "$_dispatch_model" "$brief_file" "${_run_last:-}" "$_dispatch_created_ts" "verifying" || return $?
     pmctl_dispatch_write_record_soft "$_dispatch_run_id" "$adapter" "$_dispatch_model" "$brief_file" \
@@ -635,6 +715,12 @@ pmctl_dispatch_execute_tail() {
   fi
   if [[ "$_pv_rc" -ne 0 ]]; then
     printf 'pmctl dispatch run: post-verify failed\n' >&2
+    if ! _pmctl_dispatch_try_terminal_claim "$work_dir" "$_dispatch_run_id" "failed" "supervisor"; then
+      _pmctl_dispatch_read_terminal_claim "$work_dir" "$_dispatch_run_id" || true
+      printf 'pmctl dispatch run: terminal already claimed as %s; skipping failed write\n' \
+        "${PMCTL_TERMINAL_STATE:-unknown}" >&2
+      return 130
+    fi
     pmctl_dispatch_write_transition "$repo_root" "$work_dir" "$adapter" "$_dispatch_run_id" \
       "failed" 1 "$_dispatch_model" "$brief_file" "${_run_last:-}" "$_dispatch_created_ts" "verifying" || return $?
     pmctl_dispatch_write_record_soft "$_dispatch_run_id" "$adapter" "$_dispatch_model" "$brief_file" \
@@ -643,6 +729,12 @@ pmctl_dispatch_execute_tail() {
     return 1
   fi
 
+  if ! _pmctl_dispatch_try_terminal_claim "$work_dir" "$_dispatch_run_id" "ok" "supervisor"; then
+    _pmctl_dispatch_read_terminal_claim "$work_dir" "$_dispatch_run_id" || true
+    printf 'pmctl dispatch run: terminal already claimed as %s; skipping ok write\n' \
+      "${PMCTL_TERMINAL_STATE:-unknown}" >&2
+    return 130
+  fi
   pmctl_dispatch_write_transition "$repo_root" "$work_dir" "$adapter" "$_dispatch_run_id" \
     "ok" "$exit_code" "$_dispatch_model" "$brief_file" "${_run_last:-}" "$_dispatch_created_ts" "verifying" || return $?
   pmctl_dispatch_write_record_soft "$_dispatch_run_id" "$adapter" "$_dispatch_model" "$brief_file" \
@@ -970,6 +1062,7 @@ pmctl_dispatch_run_detached() {
     # brief snapshot (brief_file now points to the /tmp snapshot copy).
     local _launch_fail_ts
     _launch_fail_ts="$(pmctl_dispatch_utc_ts 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)"
+    _pmctl_dispatch_try_terminal_claim "$work_dir" "$run_id" "failed" "parent" 2>/dev/null || true
     pmctl_dispatch_write_transition "$repo_root" "$work_dir" "$adapter" "$run_id" \
       "failed" 2 "$model" "$brief_file" "" "$created_ts" "dispatched" 2>/dev/null || true
     pmctl_dispatch_write_record_soft "$run_id" "$adapter" "$model" "$brief_file" \
@@ -984,6 +1077,23 @@ pmctl_dispatch_run_detached() {
     # The key is consumed by the first dispatch wait, or reaped by tmpwatch.
     unset PM_SUPERVISOR_NONCE
     return 2
+  fi
+  # Record PID/PGID/starttime/comm in the trusted run dir (not workspace) so
+  # cancel can re-verify identity before signaling. Brief settle for /proc.
+  local _sup_pid _id_file
+  _id_file="$spec_dir/$run_id.supervisor.identity"
+  if [[ -f "$pid_file" ]]; then
+    _sup_pid="$(tr -d ' \n' <"$pid_file" 2>/dev/null || true)"
+    if [[ "$_sup_pid" =~ ^[0-9]+$ ]]; then
+      sleep 0.05
+      if ! detached_launch_capture_identity "$_sup_pid" >"$_id_file" 2>/dev/null; then
+        sleep 0.15
+        if ! detached_launch_capture_identity "$_sup_pid" >"$_id_file" 2>/dev/null; then
+          printf 'pmctl dispatch run: WARN: failed to capture supervisor identity for %s (cancel will refuse process kill)\n' "$run_id" >&2
+          rm -f "$_id_file" 2>/dev/null || true
+        fi
+      fi
+    fi
   fi
   unset PM_SUPERVISOR_NONCE
   printf '%s\n' "$run_id"
@@ -1108,10 +1218,327 @@ pmctl_dispatch_wait() {
         printf 'pmctl dispatch wait: WARN: sentinel ok but durable dispatch record not found for %s in %s\n' "$run_id" "$work_dir" >&2
       fi
     fi
+    # Distinct exit contract for authenticated outcomes:
+    #   0     — ok
+    #   130   — cancelled (user cancel; do not treat as generic failure)
+    #   other — failed / adapter exit (including 1, 2, …)
+    #   3 / 124 handled above (indeterminate / timeout)
+    if [[ "${_sent_state:-}" == "cancelled" ]]; then
+      return 130
+    fi
     return "${_sent_exit:-1}"
   fi
   printf 'pmctl dispatch wait: timed out after %ss waiting for %s in %s\n' "$timeout" "$run_id" "$work_dir" >&2
   return 124
+}
+
+# Cancel an in-flight detached run. Authority is the out-of-repo trusted run
+# directory (identity + terminal claim), never workspace-writable PID/records.
+# Exit contract:
+#   0  — cancel terminalized (cancelled sentinel durable)
+#   1  — already terminal with a non-cancelled state (not overwritten)
+#   2  — usage / identity mismatch fail-closed / evidence write failure
+pmctl_dispatch_cancel() {
+  local repo_root="${1:-}"
+  shift || true
+  local run_id="" work_dir="" grace=5
+
+  if [[ "$(type -t detached_launch_verify_identity 2>/dev/null)" != function ]]; then
+    local _dl_lib="$repo_root/runtime/lib/detached-launch.sh"
+    if [[ -r "$_dl_lib" ]]; then
+      # shellcheck disable=SC1090,SC1091
+      . "$_dl_lib" 2>/dev/null || true
+    fi
+  fi
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --cd)
+        if [[ $# -lt 2 ]]; then
+          printf 'pmctl dispatch cancel: missing value for --cd\n' >&2
+          return 2
+        fi
+        work_dir="$(_portable_canonical_path "$2")"
+        shift 2
+        ;;
+      --grace)
+        if [[ $# -lt 2 || ! "$2" =~ ^[0-9]+$ ]]; then
+          printf 'pmctl dispatch cancel: --grace requires a non-negative integer (seconds)\n' >&2
+          return 2
+        fi
+        grace="$2"
+        shift 2
+        ;;
+      --*)
+        printf 'pmctl dispatch cancel: unknown option %s\n' "$1" >&2
+        return 2
+        ;;
+      *)
+        if [[ -n "$run_id" ]]; then
+          printf 'pmctl dispatch cancel: unexpected argument %s\n' "$1" >&2
+          return 2
+        fi
+        run_id="$1"
+        shift
+        ;;
+    esac
+  done
+
+  if [[ -z "$run_id" ]]; then
+    printf 'pmctl dispatch cancel: <run_id> is required\n' >&2
+    return 2
+  fi
+  if ! [[ "$run_id" =~ ^run-[A-Za-z0-9]+-[A-Za-z0-9]+$ ]]; then
+    printf 'pmctl dispatch cancel: invalid run_id %q\n' "$run_id" >&2
+    return 2
+  fi
+  if [[ -z "$work_dir" ]]; then
+    printf 'pmctl dispatch cancel: --cd <work_dir> is required\n' >&2
+    return 2
+  fi
+
+  local art_dir identity_file pid_file claim_exists=0
+  art_dir="$(_pmctl_dispatch_trusted_artifact_dir "$work_dir" "$run_id")"
+  identity_file="$art_dir/$run_id.supervisor.identity"
+  pid_file="$art_dir/$run_id.supervisor.pid"
+
+  # Already terminal? Never overwrite.
+  if _pmctl_dispatch_read_terminal_claim "$work_dir" "$run_id"; then
+    claim_exists=1
+    if [[ "${PMCTL_TERMINAL_STATE:-}" == "cancelled" ]]; then
+      printf 'pmctl dispatch cancel: run %s already cancelled\n' "$run_id"
+      return 0
+    fi
+    printf 'pmctl dispatch cancel: run %s already terminal (%s); not overwritten\n' \
+      "$run_id" "${PMCTL_TERMINAL_STATE:-unknown}" >&2
+    return 1
+  fi
+
+  # Identity + signal decision from trusted run dir only.
+  local do_kill=0 verify_rc=1 pid="" pgid=""
+  if [[ -f "$identity_file" ]]; then
+    if ! detached_launch_load_identity_file "$identity_file"; then
+      printf 'pmctl dispatch cancel: unreadable identity file for %s (fail-closed)\n' "$run_id" >&2
+      return 2
+    fi
+    pid="$DL_ID_PID"
+    pgid="$DL_ID_PGID"
+    detached_launch_verify_identity "$pid" "$identity_file"
+    verify_rc=$?
+    case "$verify_rc" in
+      0) do_kill=1 ;;
+      1)
+        # Process already gone — still terminalize as cancelled if no claim.
+        do_kill=0
+        ;;
+      2)
+        printf 'pmctl dispatch cancel: process identity mismatch for %s (pid=%s); refusing to signal (fail-closed)\n' \
+          "$run_id" "$pid" >&2
+        return 2
+        ;;
+    esac
+  elif [[ -f "$pid_file" ]]; then
+    # Identity missing: refuse kill (cannot prove process identity). Still allow
+    # terminalization if the process is already gone and no claim exists.
+    pid="$(tr -d ' \n' <"$pid_file" 2>/dev/null || true)"
+    if [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null; then
+      printf 'pmctl dispatch cancel: no verified identity for live pid %s of %s; refusing to signal (fail-closed)\n' \
+        "$pid" "$run_id" >&2
+      return 2
+    fi
+  else
+    # No pid/identity: may be already cleaned or never launched. If no claim,
+    # still write cancelled evidence so wait can resolve.
+    :
+  fi
+
+  # CAS first — if natural complete wins the race, do not kill/overwrite.
+  if ! _pmctl_dispatch_try_terminal_claim "$work_dir" "$run_id" "cancelled" "cancel"; then
+    _pmctl_dispatch_read_terminal_claim "$work_dir" "$run_id" || true
+    if [[ "${PMCTL_TERMINAL_STATE:-}" == "cancelled" ]]; then
+      printf 'pmctl dispatch cancel: run %s already cancelled\n' "$run_id"
+      return 0
+    fi
+    printf 'pmctl dispatch cancel: run %s already terminal (%s); not overwritten\n' \
+      "$run_id" "${PMCTL_TERMINAL_STATE:-unknown}" >&2
+    return 1
+  fi
+
+  if [[ "$do_kill" -eq 1 && -n "$pgid" ]]; then
+    if ! detached_launch_kill_process_group "$pgid" "$grace"; then
+      printf 'pmctl dispatch cancel: process group %s for %s still alive after SIGKILL\n' "$pgid" "$run_id" >&2
+      # Claim already held as cancelled — still write durable evidence; report
+      # non-zero so the operator knows the group may be orphaned.
+      # Continue to write evidence so wait is not stuck forever.
+    fi
+  fi
+
+  # Load metadata from trusted runspec when available (not workspace).
+  local adapter="" model="" brief_file="" created_ts="" from_state
+  local runspec="$art_dir/$run_id.runspec"
+  if [[ -f "$runspec" ]]; then
+    adapter="$(grep -m1 '^adapter=' "$runspec" 2>/dev/null | cut -d= -f2-)" || true
+    model="$(grep -m1 '^model=' "$runspec" 2>/dev/null | cut -d= -f2-)" || true
+    brief_file="$(grep -m1 '^brief_file=' "$runspec" 2>/dev/null | cut -d= -f2-)" || true
+    created_ts="$(grep -m1 '^created_ts=' "$runspec" 2>/dev/null | cut -d= -f2-)" || true
+  fi
+  from_state="$(_pmctl_dispatch_infer_from_state "$work_dir" "$run_id")"
+  [[ -n "$created_ts" ]] || created_ts="$(pmctl_dispatch_utc_ts)"
+  local finished_ts
+  finished_ts="$(pmctl_dispatch_utc_ts)"
+
+  # Durable cancelled evidence BEFORE authenticated sentinel. Fail-closed if
+  # state write fails after claim — leave claim so natural complete cannot
+  # claim ok, but still attempt sentinel so wait can resolve.
+  local evidence_rc=0
+  if [[ -n "$adapter" ]]; then
+    pmctl_dispatch_write_transition "$repo_root" "$work_dir" "$adapter" "$run_id" \
+      "cancelled" 130 "$model" "${brief_file:-}" "" "$created_ts" "$from_state" || evidence_rc=$?
+  else
+    # Without adapter from runspec, still emit a cancelled event if possible.
+    pmctl_dispatch_ensure_state_writer "$repo_root" 2>/dev/null || true
+    if declare -F pmctl_dispatch_write_event >/dev/null 2>&1; then
+      pmctl_dispatch_write_event "$repo_root" "$work_dir" "run.cancelled" "$run_id" \
+        "cancelled" 130 "unknown" "cancelled without adapter metadata" "" "$from_state" || evidence_rc=$?
+    fi
+  fi
+  pmctl_dispatch_write_record_soft "$run_id" "${adapter:-unknown}" "$model" "${brief_file:-}" \
+    "$work_dir" 130 "cancelled" "cancelled by pmctl dispatch cancel" "" "" "" \
+    "$created_ts" "$finished_ts"
+
+  # Authenticated cancelled sentinel (trusted controller; nonce from key file).
+  local _key_file _key_nonce _sentinel
+  _key_file="$(_pmctl_sentinel_key_file "$run_id")"
+  if [[ ! -f "$_key_file" ]]; then
+    printf 'pmctl dispatch cancel: sentinel key absent for %s; cancelled claim held but wait may be indeterminate\n' "$run_id" >&2
+    return 2
+  fi
+  _key_nonce="$(cat "$_key_file" 2>/dev/null)" || _key_nonce=""
+  if [[ -z "$_key_nonce" ]]; then
+    printf 'pmctl dispatch cancel: empty sentinel key for %s\n' "$run_id" >&2
+    return 2
+  fi
+  _sentinel="$(detached_launch_sentinel_path "pm-supervisor" "$run_id" "$_key_nonce")"
+  detached_launch_write_sentinel "$_sentinel" "final_state=cancelled" "exit_code=130"
+  if [[ ! -f "$_sentinel" ]]; then
+    printf 'pmctl dispatch cancel: failed to write cancelled sentinel for %s\n' "$run_id" >&2
+    return 2
+  fi
+
+  # Non-evidence cleanup only after terminal proof is durable. Keep
+  # sentinel + key for wait consumption; drop pid/identity/runspec/brief.
+  rm -f "$pid_file" "$identity_file" "$runspec" 2>/dev/null || true
+  if [[ -n "$brief_file" && "$brief_file" == "/tmp/brief-${run_id}.md" ]]; then
+    rm -f "$brief_file" 2>/dev/null || true
+  fi
+
+  if [[ "$evidence_rc" -ne 0 ]]; then
+    printf 'pmctl dispatch cancel: cancelled sentinel written but state write failed for %s (rc=%s)\n' \
+      "$run_id" "$evidence_rc" >&2
+    return 2
+  fi
+  if [[ "$do_kill" -eq 1 && -n "$pgid" ]] && kill -0 -- "-$pgid" 2>/dev/null; then
+    printf 'pmctl dispatch cancel: run %s cancelled but process group %s still alive\n' "$run_id" "$pgid" >&2
+    return 2
+  fi
+
+  printf 'run: %s  state: cancelled  exit: 130\n' "$run_id"
+  return 0
+}
+
+# Minimal in-flight discovery: list detached runs under the project state
+# partition that still lack a terminal claim.
+pmctl_dispatch_status() {
+  local repo_root="${1:-}"
+  shift || true
+  local work_dir=""
+
+  if [[ "$(type -t detached_launch_verify_identity 2>/dev/null)" != function ]]; then
+    local _dl_lib="$repo_root/runtime/lib/detached-launch.sh"
+    if [[ -r "$_dl_lib" ]]; then
+      # shellcheck disable=SC1090,SC1091
+      . "$_dl_lib" 2>/dev/null || true
+    fi
+  fi
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --cd)
+        if [[ $# -lt 2 ]]; then
+          printf 'pmctl dispatch status: missing value for --cd\n' >&2
+          return 2
+        fi
+        work_dir="$(_portable_canonical_path "$2")"
+        shift 2
+        ;;
+      --*)
+        printf 'pmctl dispatch status: unknown option %s\n' "$1" >&2
+        return 2
+        ;;
+      *)
+        printf 'pmctl dispatch status: unexpected argument %s\n' "$1" >&2
+        return 2
+        ;;
+    esac
+  done
+  if [[ -z "$work_dir" ]]; then
+    printf 'pmctl dispatch status: --cd <work_dir> is required\n' >&2
+    return 2
+  fi
+
+  if [[ "$(type -t _sw_project_dir 2>/dev/null)" != function ]]; then
+    local _sp_lib="$repo_root/runtime/lib/state-paths.sh"
+    if [[ -r "$_sp_lib" ]]; then
+      # shellcheck disable=SC1090,SC1091
+      . "$_sp_lib" 2>/dev/null || true
+    fi
+  fi
+  if [[ "$(type -t _sw_project_dir 2>/dev/null)" != function ]]; then
+    printf 'pmctl dispatch status: state-paths unavailable\n' >&2
+    return 2
+  fi
+
+  local proj_dir runs_root
+  proj_dir="$(cd "$work_dir" 2>/dev/null && _SW_REPO_ROOT="$work_dir" _sw_project_dir 2>/dev/null)" || proj_dir=""
+  runs_root="${proj_dir}runs"
+  if [[ -z "$proj_dir" || ! -d "$runs_root" ]]; then
+    printf 'pmctl dispatch status: no runs under %s\n' "$work_dir"
+    return 0
+  fi
+
+  local found=0 run_path run_id art_dir claim_state pid_alive="no"
+  for run_path in "$runs_root"/*; do
+    [[ -d "$run_path" ]] || continue
+    run_id="$(basename "$run_path")"
+    [[ "$run_id" =~ ^run-[A-Za-z0-9]+-[A-Za-z0-9]+$ ]] || continue
+    art_dir="$run_path/.agent-trace"
+    if [[ -f "$art_dir/$run_id.terminal" ]]; then
+      claim_state="$(grep -m1 '^final_state=' "$art_dir/$run_id.terminal" 2>/dev/null | cut -d= -f2-)" || claim_state="?"
+      printf 'run: %s  status: terminal  final_state: %s\n' "$run_id" "$claim_state"
+      found=1
+      continue
+    fi
+    pid_alive="no"
+    if [[ -f "$art_dir/$run_id.supervisor.identity" ]]; then
+      if detached_launch_load_identity_file "$art_dir/$run_id.supervisor.identity" 2>/dev/null; then
+        if detached_launch_verify_identity "$DL_ID_PID" "$art_dir/$run_id.supervisor.identity" 2>/dev/null; then
+          pid_alive="yes"
+        fi
+      fi
+    elif [[ -f "$art_dir/$run_id.supervisor.pid" ]]; then
+      local _p
+      _p="$(tr -d ' \n' <"$art_dir/$run_id.supervisor.pid" 2>/dev/null || true)"
+      if [[ "$_p" =~ ^[0-9]+$ ]] && kill -0 "$_p" 2>/dev/null; then
+        pid_alive="unknown-identity"
+      fi
+    fi
+    printf 'run: %s  status: in-flight  process_alive: %s\n' "$run_id" "$pid_alive"
+    found=1
+  done
+  if [[ "$found" -eq 0 ]]; then
+    printf 'pmctl dispatch status: no runs under %s\n' "$work_dir"
+  fi
+  return 0
 }
 
 pmctl_dispatch_run() {

@@ -160,3 +160,109 @@ detached_launch_wait_for_sentinel() {
     sleep "$poll_interval"
   done
 }
+
+# Capture a stable process identity for cancel-time re-verification.
+# Linux /proc is authoritative; without it this returns 1 (fail-closed for
+# identity-dependent kill). Emits key=value lines:
+#   pid=  pgid=  starttime=  comm=
+# starttime is the kernel field from /proc/<pid>/stat (boot-relative ticks),
+# which is stable across PID reuse of the same numeric pid.
+detached_launch_capture_identity() {
+  local pid="${1:?pid required}"
+  local stat_file rest state ppid pgrp session tty_nr tpgid flags
+  local minflt cminflt majflt cmajflt utime stime cutime cstime priority nice
+  local num_threads itrealvalue starttime comm_field comm
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  stat_file="/proc/$pid/stat"
+  [[ -r "$stat_file" ]] || return 1
+  # comm may contain spaces/parentheses; fields after the final ')' are fixed.
+  rest="$(cat "$stat_file" 2>/dev/null)" || return 1
+  comm_field="${rest#*(}"
+  comm_field="${comm_field%)*}"
+  rest="${rest##*)}"
+  # shellcheck disable=SC2086  # intentional field split of /proc stat tail
+  set -- $rest
+  # After comm: state ppid pgrp session tty_nr tpgid flags ... starttime is $20
+  state="${1:-}"; ppid="${2:-}"; pgrp="${3:-}"
+  starttime="${20:-}"
+  [[ -n "$pgrp" && -n "$starttime" ]] || return 1
+  comm="$(tr -d '\n' <"/proc/$pid/comm" 2>/dev/null || printf '%s' "$comm_field")"
+  printf 'pid=%s\npgid=%s\nstarttime=%s\ncomm=%s\n' "$pid" "$pgrp" "$starttime" "$comm"
+}
+
+# Load identity file written by detached_launch_capture_identity (key=value).
+# Sets DL_ID_PID DL_ID_PGID DL_ID_STARTTIME DL_ID_COMM. Returns 1 if incomplete.
+detached_launch_load_identity_file() {
+  local path="${1:?identity path required}" line key val
+  DL_ID_PID=""; DL_ID_PGID=""; DL_ID_STARTTIME=""; DL_ID_COMM=""
+  [[ -f "$path" ]] || return 1
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    key="${line%%=*}"
+    val="${line#*=}"
+    case "$key" in
+      pid) DL_ID_PID="$val" ;;
+      pgid) DL_ID_PGID="$val" ;;
+      starttime) DL_ID_STARTTIME="$val" ;;
+      comm) DL_ID_COMM="$val" ;;
+    esac
+  done <"$path"
+  [[ -n "$DL_ID_PID" && -n "$DL_ID_PGID" && -n "$DL_ID_STARTTIME" ]] || return 1
+  return 0
+}
+
+# Re-verify that <pid> still matches a captured identity.
+#   0 — process alive and identity matches (safe to signal)
+#   1 — process gone (not an error for cancel terminalization; do not signal)
+#   2 — identity mismatch / PID reuse (fail-closed; never signal)
+detached_launch_verify_identity() {
+  local pid="${1:?pid required}" identity_file="${2:?identity file required}"
+  local cur_pgid cur_start cur_comm
+  if ! detached_launch_load_identity_file "$identity_file"; then
+    return 2
+  fi
+  [[ "$pid" == "$DL_ID_PID" ]] || return 2
+  if [[ ! -r "/proc/$pid/stat" ]]; then
+    return 1
+  fi
+  cur_pgid="$(detached_launch_capture_identity "$pid" 2>/dev/null | grep -m1 '^pgid=' | cut -d= -f2-)" || true
+  cur_start="$(detached_launch_capture_identity "$pid" 2>/dev/null | grep -m1 '^starttime=' | cut -d= -f2-)" || true
+  cur_comm="$(detached_launch_capture_identity "$pid" 2>/dev/null | grep -m1 '^comm=' | cut -d= -f2-)" || true
+  if [[ -z "$cur_pgid" || -z "$cur_start" ]]; then
+    return 1
+  fi
+  if [[ "$cur_pgid" != "$DL_ID_PGID" || "$cur_start" != "$DL_ID_STARTTIME" ]]; then
+    return 2
+  fi
+  if [[ -n "$DL_ID_COMM" && -n "$cur_comm" && "$cur_comm" != "$DL_ID_COMM" ]]; then
+    return 2
+  fi
+  return 0
+}
+
+# Signal an entire process group: SIGTERM, wait up to grace seconds, then
+# SIGKILL if any member remains. pgid must be positive; never signals pgid 0/-1.
+#   0 — group gone after TERM or KILL
+#   1 — invalid pgid / signal delivery failure that left the group alive
+detached_launch_kill_process_group() {
+  local pgid="${1:?pgid required}" grace="${2:-5}"
+  local waited=0
+  [[ "$pgid" =~ ^[1-9][0-9]*$ ]] || return 1
+  # Negative pid = process group. Prefer kill, fall back quietly if already gone.
+  kill -TERM -- "-$pgid" 2>/dev/null || true
+  while (( waited < grace )); do
+    if ! kill -0 -- "-$pgid" 2>/dev/null; then
+      return 0
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  if kill -0 -- "-$pgid" 2>/dev/null; then
+    kill -KILL -- "-$pgid" 2>/dev/null || true
+    sleep 0.2
+  fi
+  if kill -0 -- "-$pgid" 2>/dev/null; then
+    return 1
+  fi
+  return 0
+}

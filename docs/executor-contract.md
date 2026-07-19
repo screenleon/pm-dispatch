@@ -98,6 +98,20 @@ The record contains YAML frontmatter with machine-readable summary fields (`run_
 
   The in-workspace dispatch record (`.dispatch-results/<run_id>.md`) is executor-writable and therefore **never authoritative**: `dispatch wait` resolves a terminal outcome only from the supervisor sentinel at the nonce-including `/tmp` path. If the sentinel key is absent (consumed by a prior wait, cleaned up by reboot/tmpwatch, or removed), `dispatch wait` returns an **indeterminate** non-zero status (**exit 3**) and prints the durable record for observability only — it never reports the workspace record as authenticated success.
 
+### Cancel, timeout, and no-resume
+
+Detached runs can be actively terminalized with `pmctl dispatch cancel <run_id> --cd <work_dir>`:
+
+- **Authority** is the out-of-repo trusted run directory (process identity + exclusive terminal claim). Workspace PID files, `.dispatch-results/`, or forged records are never used as cancel authority.
+- **Process kill** re-verifies PID/PGID/starttime/comm before signaling the process group (`SIGTERM`, then `SIGKILL` after `--grace` seconds). Identity mismatch or PID reuse fails closed without signaling.
+- **Terminal CAS**: cancel and natural complete share an exclusive `$run_id.terminal` claim under the trusted artifact dir. Exactly one of `ok` / `failed` / `partial` / `cancelled` wins; existing terminals are never overwritten.
+- **Semantics are cancel, not stop**: mid-run results are untrusted; there is **no resume**. Re-run requires a new `pmctl dispatch run`.
+- **Authenticated cancelled sentinel**: after durable Run/Event/dispatch-record writes, cancel writes `final_state=cancelled` to the same nonce-authenticated sentinel path natural complete uses. `pmctl dispatch wait` consumes it and returns **exit 130** (distinct from failed, timeout **124**, and indeterminate **3**).
+- **Discovery**: `pmctl dispatch status --cd <work_dir>` lists in-flight and terminal runs under the project state partition so operators need not dig through state directories by hand.
+- **Foreground** dispatches are out of scope for cancel — the calling shell can `Ctrl-C` the foreground process tree.
+
+Timeout (`dispatch wait` exit **124**) means the waiter gave up; it does not itself cancel the supervisor. Use `dispatch cancel` to terminalize a still-running detached run after a wait timeout.
+
 ## Non-interactive executor contract (Model B)
 
 Model B is the canonical dispatch topology: `pmctl dispatch run` lands the brief and the executor runs as an **independent subprocess** that consumes it (see DECISIONS.md 2026-06-15). Every Model B executor — codex, claude, and future third-party adapters (opencode, antigravity) — MUST satisfy the following common contract. This is the baseline a new adapter is measured against; each requirement maps to an adapter self-check or a `doctor` check.

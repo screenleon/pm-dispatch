@@ -36,7 +36,7 @@
       "pattern": "^/"
     },
     "state": {
-      "enum": ["pending", "dispatched", "verifying", "ok", "partial", "failed"],
+      "enum": ["pending", "dispatched", "verifying", "ok", "partial", "failed", "cancelled"],
       "description": "Editing source-of-truth: core/policy/run-states.yaml. Keep in sync."
     },
     "operation_id": {

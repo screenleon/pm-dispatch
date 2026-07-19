@@ -28,6 +28,7 @@
         "run.verifying",
         "run.completed",
         "run.failed",
+        "run.cancelled",
         "review.started",
         "review.verdict",
         "guard.denied",
@@ -70,7 +71,8 @@
           "run.dispatched",
           "run.verifying",
           "run.completed",
-          "run.failed"
+          "run.failed",
+          "run.cancelled"
         ]
       }
     },

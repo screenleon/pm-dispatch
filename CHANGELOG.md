@@ -8,6 +8,17 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **`pmctl dispatch cancel` / `dispatch status` (CC-495).** Detached runs can be
+  terminalized with trusted process-group kill (PID/PGID/starttime/comm
+  re-verify before signal), exclusive terminal CAS shared with natural
+  complete, durable cancelled Run/Event/dispatch record, and a
+  nonce-authenticated `cancelled` sentinel. `pmctl dispatch wait` returns
+  **exit 130** for authenticated cancel (distinct from failed, timeout 124,
+  and indeterminate 3). Minimal in-flight discovery via `dispatch status`.
+  Run schema/policy and event schema gain `cancelled` / `run.cancelled`.
+
 ---
 
 ## [0.9.0] — 2026-07-18
