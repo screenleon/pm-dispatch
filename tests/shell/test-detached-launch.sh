@@ -307,50 +307,59 @@ SCRIPT
 
 # ---- 14: write_sentinel is complete when the destination path appears -------
 # Behavior: destination path appears only after a full multi-line body is written
-#          (temp+rename); waiters never see a partial final_state-only file.
-# Steps: start a waiter that records the first full content it observes once
-#        the path exists; writer publishes two pairs via write_sentinel; assert
-#        the observed content contains both lines and no temp leftovers.
+#          (temp+rename); first observation of the final path is always complete.
+# Steps: waiter blocks on ready-FIFO then copies sentinel on first existence via
+#        event handshakes (no sleep); writer signals ready, publishes, waits done.
 case_write_sentinel_atomic_visibility() {
   local name="detached-launch/write_sentinel is atomic (no partial final path)"
   should_run "$name" || return 0
 
   local sentinel="$tmp_root/sentinel-atomic" observed="$tmp_root/sentinel-observed"
+  local ready_fifo="$tmp_root/sentinel-ready.fifo" done_fifo="$tmp_root/sentinel-done.fifo"
   local waiter_pid
   rm -f "$sentinel" "$observed"
+  mkfifo "$ready_fifo" "$done_fifo"
+
   (
-    # Waiter: first observation of the path must already be complete.
+    # Block until writer says it is about to publish, then spin on path existence
+    # without sleeping (tight poll is deterministic relative to rename publish).
+    read -r _ <"$ready_fifo" 2>/dev/null || true
     while [[ ! -f "$sentinel" ]]; do
-      sleep 0.01
+      :
     done
-    # Copy immediately; under atomic rename both lines must already be present.
     cat "$sentinel" >"$observed" 2>/dev/null || true
+    # Signal completion (O_RDWR open so we never hang if peer already closed).
+    exec 8<>"$done_fifo" 2>/dev/null || true
+    printf 'done\n' >&8 2>/dev/null || true
+    exec 8>&- 2>/dev/null || true
   ) &
   waiter_pid=$!
 
-  # Give the waiter a head start so it is blocked on absence, not on content.
-  sleep 0.05
+  # Release waiter, then publish atomically.
+  exec 7<>"$ready_fifo" 2>/dev/null || true
+  printf 'go\n' >&7 2>/dev/null || true
+  exec 7>&- 2>/dev/null || true
   detached_launch_write_sentinel "$sentinel" "final_state=ok" "exit_code=0"
 
-  # Wait for observer (bounded).
-  local i
-  for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
-    [[ -s "$observed" ]] && break
-    sleep 0.05
-  done
+  # Wait for observer completion via FIFO (no sleep poll).
+  local observed_done=0
+  if read -r -t 10 _ <"$done_fifo" 2>/dev/null; then
+    observed_done=1
+  fi
   wait "$waiter_pid" 2>/dev/null || true
+  rm -f "$ready_fifo" "$done_fifo"
 
   local tmp_left=0
   if compgen -G "$tmp_root/.sentinel-atomic.tmp.*" >/dev/null 2>&1; then
     tmp_left=1
   fi
-  if [[ -f "$sentinel" && -s "$observed" ]] \
+  if [[ "$observed_done" -eq 1 && -f "$sentinel" && -s "$observed" ]] \
     && grep -q '^final_state=ok$' "$observed" \
     && grep -q '^exit_code=0$' "$observed" \
     && [[ "$tmp_left" -eq 0 ]]; then
     pass "$name"
   else
-    fail "$name" "observed=$(tr '\n' '|' <"$observed" 2>/dev/null) tmp_left=$tmp_left"
+    fail "$name" "observed_done=$observed_done observed=$(tr '\n' '|' <"$observed" 2>/dev/null) tmp_left=$tmp_left"
   fi
 }
 
