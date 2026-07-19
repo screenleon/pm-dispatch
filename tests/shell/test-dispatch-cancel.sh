@@ -37,9 +37,10 @@ _isolated_decoy() {
   command -v setsid >/dev/null 2>&1 || return 1
   setsid tail -f /dev/null </dev/null >/dev/null 2>&1 &
   local pid=$!
-  local i
-  for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+  local _poll
+  for _poll in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
     [[ -r "/proc/$pid/stat" ]] && break
+    : "$_poll"
   done
   [[ -r "/proc/$pid/stat" ]] || { kill -KILL "$pid" 2>/dev/null || true; return 1; }
   printf '%s\n' "$pid"
@@ -208,7 +209,7 @@ case_dispatch_cancel_in_flight() {
     && [[ "$proc_gone" -eq 1 ]]; then
     pass "$name"
   else
-    fail "$name" "cancel=$cancel_code wait=$wait_code proc_gone=$proc_gone claim=$(cat "$claim_file" 2>/dev/null | tr '\n' '|') wait_out=$(printf '%s' "$wait_out" | tr '\n' '|') record=$(grep final_state "$record" 2>/dev/null | tr '\n' '|')"
+    fail "$name" "cancel=$cancel_code wait=$wait_code proc_gone=$proc_gone claim=$(tr '\n' '|' <"$claim_file" 2>/dev/null) wait_out=$(printf '%s' "$wait_out" | tr '\n' '|') record=$(grep final_state "$record" 2>/dev/null | tr '\n' '|')"
   fi
   rm -rf "$work" "$bindir"; rm -f "$started_fifo" "$release_fifo"
 }
@@ -242,7 +243,7 @@ case_dispatch_cancel_already_terminal() {
     && [[ -f "$claim_file" ]] && grep -q '^final_state=ok$' "$claim_file"; then
     pass "$name"
   else
-    fail "$name" "wait=$wait_code cancel=$cancel_code claim=$(cat "$claim_file" 2>/dev/null | tr '\n' '|') record=$(grep final_state "$record" 2>/dev/null | tr '\n' '|')"
+    fail "$name" "wait=$wait_code cancel=$cancel_code claim=$(tr '\n' '|' <"$claim_file" 2>/dev/null) record=$(grep final_state "$record" 2>/dev/null | tr '\n' '|')"
   fi
   rm -rf "$work" "$bindir"
 }
@@ -449,7 +450,7 @@ case_dispatch_cancel_ignores_explicit_trace_dir() {
     && [[ ! -f "$evil_trace/$run_id.terminal" ]]; then
     pass "$name"
   else
-    fail "$name" "cancel=$cancel_code decoy_alive=$decoy_alive claim=$(cat "$claim" 2>/dev/null | tr '\n' '|') evil_term=$(ls "$evil_trace" 2>/dev/null | tr '\n' ' ')"
+    fail "$name" "cancel=$cancel_code decoy_alive=$decoy_alive claim=$(tr '\n' '|' <"$claim" 2>/dev/null) evil_term=$(find "$evil_trace" -mindepth 1 -printf '%f\n' 2>/dev/null | tr '\n' ' ')"
   fi
   rm -rf "$work" "$bindir"; rm -f "$started_fifo" "$release_fifo"
 }
@@ -604,7 +605,7 @@ case_dispatch_cancel_record_write_failure() {
     && [[ -f "$claim" ]] && grep -q '^final_state=cancelled$' "$claim"; then
     pass "$name"
   else
-    fail "$name" "cancel=$cancel_code wait=$wait_code claim=$(cat "$claim" 2>/dev/null | tr '\n' '|')"
+    fail "$name" "cancel=$cancel_code wait=$wait_code claim=$(tr '\n' '|' <"$claim" 2>/dev/null)"
   fi
   rm -rf "$work" "$bindir"; rm -f "$started_fifo" "$release_fifo"
 }
@@ -660,7 +661,7 @@ EOF
     && [[ -f "$claim" ]] && grep -q '^final_state=cancelled$' "$claim"; then
     pass "$name"
   else
-    fail "$name" "cancel=$cancel_code claim=$(cat "$claim" 2>/dev/null | tr '\n' '|')"
+    fail "$name" "cancel=$cancel_code claim=$(tr '\n' '|' <"$claim" 2>/dev/null)"
   fi
   rm -rf "$work"
 }

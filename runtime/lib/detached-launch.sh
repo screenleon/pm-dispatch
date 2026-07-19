@@ -115,16 +115,17 @@ detached_launch_under_setsid() {
   [[ -n "$pid_file" ]] && { mkdir -p "$(dirname "$pid_file")" || return 1; }
 
   local pid
-  DETACHED_LAUNCH_ISOLATED=0
+  # Exported so callers (pmctl-dispatch) can record isolated= in identity files.
+  export DETACHED_LAUNCH_ISOLATED=0
   if command -v setsid >/dev/null 2>&1; then
     setsid nohup bash "$script_path" "$@" </dev/null >"$log_file" 2>&1 &
     pid=$!
-    DETACHED_LAUNCH_ISOLATED=1
+    export DETACHED_LAUNCH_ISOLATED=1
   else
     nohup bash "$script_path" "$@" </dev/null >"$log_file" 2>&1 &
     pid=$!
     disown "$pid" 2>/dev/null || true
-    DETACHED_LAUNCH_ISOLATED=0
+    export DETACHED_LAUNCH_ISOLATED=0
   fi
 
   if [[ -n "$pid_file" ]]; then
@@ -192,9 +193,7 @@ detached_launch_wait_for_sentinel() {
 # Optional second arg overrides isolated (defaults to 1 when pid==pgid else 0).
 detached_launch_capture_identity() {
   local pid="${1:?pid required}" isolated_override="${2-}"
-  local stat_file rest state ppid pgrp session tty_nr tpgid flags
-  local minflt cminflt majflt cmajflt utime stime cutime cstime priority nice
-  local num_threads itrealvalue starttime comm_field comm isolated
+  local stat_file rest pgrp starttime comm_field comm isolated
   [[ "$pid" =~ ^[0-9]+$ ]] || return 1
   stat_file="/proc/$pid/stat"
   [[ -r "$stat_file" ]] || return 1
@@ -205,8 +204,8 @@ detached_launch_capture_identity() {
   rest="${rest##*)}"
   # shellcheck disable=SC2086  # intentional field split of /proc stat tail
   set -- $rest
-  # After comm: state ppid pgrp session tty_nr tpgid flags ... starttime is $20
-  state="${1:-}"; ppid="${2:-}"; pgrp="${3:-}"
+  # After comm: state ppid pgrp session ... starttime is positional $20.
+  pgrp="${3:-}"
   starttime="${20:-}"
   [[ -n "$pgrp" && -n "$starttime" ]] || return 1
   comm="$(tr -d '\n' <"/proc/$pid/comm" 2>/dev/null || printf '%s' "$comm_field")"
@@ -294,7 +293,7 @@ detached_launch_verify_identity() {
 #   1 — invalid pgid / refused unsafe group / group still alive after KILL
 detached_launch_kill_process_group() {
   local pgid="${1:?pgid required}" grace="${2:-5}"
-  local waited=0 self_pgid probe p_pgid
+  local self_pgid probe p_pgid
   [[ "$pgid" =~ ^[1-9][0-9]*$ ]] || return 1
   # Fail closed if we cannot determine our own process group: without it we
   # cannot prove the target is not the invoking shell/automation runner.

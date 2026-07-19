@@ -566,12 +566,16 @@ _pmctl_dispatch_try_terminal_claim() {
 _pmctl_dispatch_read_terminal_claim() {
   local work_dir="${1:-}" run_id="${2:-}"
   local art_dir claim_path
+  # Output globals for callers (cancel/wait/supervisor). CLAIMER is set for
+  # diagnostics/tests even when current call sites only branch on STATE.
   PMCTL_TERMINAL_STATE=""
   PMCTL_TERMINAL_CLAIMER=""
   art_dir="$(_pmctl_dispatch_trusted_artifact_dir "$work_dir" "$run_id")" || return 1
   claim_path="${art_dir:-}/$run_id.terminal"
   [[ -f "$claim_path" ]] || return 1
+  # shellcheck disable=SC2034  # public output global; read by cancel/wait/tests
   PMCTL_TERMINAL_STATE="$(grep -m1 '^final_state=' "$claim_path" 2>/dev/null | cut -d= -f2-)" || true
+  # shellcheck disable=SC2034  # public output global; claimer identity for diagnostics
   PMCTL_TERMINAL_CLAIMER="$(grep -m1 '^claimer=' "$claim_path" 2>/dev/null | cut -d= -f2-)" || true
   [[ -n "$PMCTL_TERMINAL_STATE" ]] || return 1
   return 0
