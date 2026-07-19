@@ -10,6 +10,12 @@ DOCTOR="$REPO_ROOT/runtime/bin/doctor.sh"
 th_init "$@"
 # shellcheck source=tests/lib/test-memory-config-fixtures.sh
 . "$SCRIPT_DIR/../lib/test-memory-config-fixtures.sh"
+# shellcheck source=tests/lib/dispatch-decoy-helpers.sh
+. "$SCRIPT_DIR/../lib/dispatch-decoy-helpers.sh"
+# shellcheck source=runtime/lib/state-paths.sh
+. "$REPO_ROOT/runtime/lib/state-paths.sh"
+# shellcheck source=runtime/lib/detached-launch.sh
+. "$REPO_ROOT/runtime/lib/detached-launch.sh"
 
 # check_codex/check_claude FAIL when an executor CLI is present but
 # unauthenticated. The many stub-claude/codex tests below model a HEALTHY
@@ -603,6 +609,144 @@ case_doctor_frontmatter_lint_ok() {
     pass "$name"
   else
     fail "$name" "expected frontmatter-lint check in output; status=$status out=$out"
+  fi
+}
+
+case_doctor_detached_runs_none_ok() {
+  # Verifies check_detached_runs (CC-499) reports ok when the state
+  # partition has no recorded runs.
+  #
+  # Steps:
+  #   1. Point PM_DISPATCH_STATE_ROOT at an empty isolated dir.
+  #   2. Run doctor --no-color --repo <repo>.
+  #   3. Assert exit 0 and "no detached dispatch runs recorded" in output.
+  local name="doctor-detached-runs-none-ok"
+  should_run "$name" || return 0
+  local home="$tmp_root/home-detached-none" out status=0 path state_root
+  write_full_settings "$home"
+  write_manifest "$home"
+  path="$(make_stub_bin "$tmp_root/bin-detached-none" claude codex)"
+  state_root="$tmp_root/state-detached-none"
+
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
+    PM_DISPATCH_STATE_ROOT="$state_root" bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
+  if [[ "$status" -eq 0 && "$out" == *"no detached dispatch runs recorded"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$(printf '%s' "$out" | grep -i detached || true)"
+  fi
+}
+
+case_doctor_detached_runs_stale_warns() {
+  # Verifies check_detached_runs surfaces an orphaned run as a WARN with the
+  # convergence fix hint, and does not overpromise for indeterminate runs
+  # (gate critic finding on the fix-hint wording, CC-499).
+  #
+  # Steps:
+  #   1. Point PM_DISPATCH_STATE_ROOT at an isolated dir; craft one dead-pid
+  #      identity + runspec fixture (orphaned, reconcilable) under it.
+  #   2. Run doctor --no-color --repo <repo>.
+  #   3. Assert WARN "1 of 1 detached run(s) look stale (crash/reboot/orphan)"
+  #      and the fix hint promises convergence for THIS (reconcilable) case.
+  local name="doctor-detached-runs-stale-warns"
+  should_run "$name" || return 0
+  local home="$tmp_root/home-detached-stale" out status=0 path state_root
+  local run_id art_dir
+  write_full_settings "$home"
+  write_manifest "$home"
+  path="$(make_stub_bin "$tmp_root/bin-detached-stale" claude codex)"
+  state_root="$tmp_root/state-detached-stale"
+  run_id="run-20260719T000000Z-dr0001"
+  art_dir="$(PM_DISPATCH_STATE_ROOT="$state_root" dispatch_test_run_trace_dir "$REPO_ROOT" "$run_id")"
+  mkdir -p "$art_dir"
+  printf 'pid=999999\npgid=999999\nstarttime=1\ncomm=bash\nisolated=1\n' \
+    >"$art_dir/$run_id.supervisor.identity"
+  cat >"$art_dir/$run_id.runspec" <<EOF
+schema_version=2
+run_id=$run_id
+adapter=codex
+work_dir=$REPO_ROOT
+cd_arg=$REPO_ROOT
+brief_file=/tmp/brief-$run_id.md
+model=
+created_ts=2026-07-19T00:00:00Z
+print_cmd=0
+initial_state_written=1
+native_b64:
+EOF
+
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
+    PM_DISPATCH_STATE_ROOT="$state_root" bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
+  rm -rf "$art_dir" 2>/dev/null || true
+
+  if [[ "$status" -eq 0 ]] \
+    && [[ "$out" == *"1 of 1 detached run(s) look stale (crash/reboot/orphan)"* ]] \
+    && [[ "$out" == *"drop --dry-run to converge"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$(printf '%s' "$out" | grep -i detached || true)"
+  fi
+}
+
+case_doctor_detached_runs_indeterminate_no_convergence_promise() {
+  # Verifies the pure-indeterminate branch (all stale runs are PID-reuse
+  # suspected, none reconcilable) uses "require manual investigation" wording
+  # and never promises "to converge" — gate qa-tester coverage gap on the
+  # doctor.sh:527 indeterminate-only branch, CC-499.
+  #
+  # Steps:
+  #   1. Point PM_DISPATCH_STATE_ROOT at an isolated dir; craft one identity
+  #      fixture whose pid/pgid are live but starttime is forged (PID-reuse
+  #      simulation) so reconcile classifies it indeterminate, not orphaned.
+  #   2. Run doctor --no-color --repo <repo>.
+  #   3. Assert WARN "1 of 1 detached run(s) are indeterminate (e.g. possible
+  #      PID reuse)" and the fix hint says "require manual investigation" —
+  #      and never contains the bare "to converge" promise.
+  local name="doctor-detached-runs-indeterminate-no-convergence-promise"
+  should_run "$name" || return 0
+  local home="$tmp_root/home-detached-indet" out status=0 path state_root
+  local run_id art_dir decoy
+  write_full_settings "$home"
+  write_manifest "$home"
+  path="$(make_stub_bin "$tmp_root/bin-detached-indet" claude codex)"
+  state_root="$tmp_root/state-detached-indet"
+  run_id="run-20260719T000000Z-dr0002"
+
+  decoy="$(dispatch_test_isolated_decoy)" || {
+    fail "$name" "setsid decoy unavailable"
+    return
+  }
+  art_dir="$(PM_DISPATCH_STATE_ROOT="$state_root" dispatch_test_run_trace_dir "$REPO_ROOT" "$run_id")"
+  mkdir -p "$art_dir"
+  detached_launch_capture_identity "$decoy" "1" >"$art_dir/$run_id.supervisor.identity" 2>/dev/null
+  sed -i 's/^starttime=.*/starttime=1/' "$art_dir/$run_id.supervisor.identity" \
+    || sed -i '' 's/^starttime=.*/starttime=1/' "$art_dir/$run_id.supervisor.identity"
+  cat >"$art_dir/$run_id.runspec" <<EOF
+schema_version=2
+run_id=$run_id
+adapter=codex
+work_dir=$REPO_ROOT
+cd_arg=$REPO_ROOT
+brief_file=/tmp/brief-$run_id.md
+model=
+created_ts=2026-07-19T00:00:00Z
+print_cmd=0
+initial_state_written=1
+native_b64:
+EOF
+
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
+    PM_DISPATCH_STATE_ROOT="$state_root" bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
+  dispatch_test_kill_pid_quiet "$decoy"
+  rm -rf "$art_dir" 2>/dev/null || true
+
+  if [[ "$status" -eq 0 ]] \
+    && [[ "$out" == *"1 of 1 detached run(s) are indeterminate (e.g. possible PID reuse)"* ]] \
+    && [[ "$out" == *"require manual investigation"* ]] \
+    && [[ "$out" != *"to converge"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$(printf '%s' "$out" | grep -i detached || true)"
   fi
 }
 
@@ -2279,6 +2423,9 @@ case_doctor_warn_only_exits_0
 case_doctor_repo_from_different_cwd
 case_doctor_invalid_project_memory_does_not_fallback
 case_doctor_frontmatter_lint_ok
+case_doctor_detached_runs_none_ok
+case_doctor_detached_runs_stale_warns
+case_doctor_detached_runs_indeterminate_no_convergence_promise
 case_doctor_help_exits_0
 case_doctor_unknown_flag
 case_doctor_repo_missing_arg

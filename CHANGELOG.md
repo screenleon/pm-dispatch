@@ -10,6 +10,17 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`pmctl dispatch reconcile` (CC-499).** Diagnoses and converges stale
+  detached runs (crash, reboot, orphan, PID reuse) using only trusted
+  out-of-repo evidence — never infers success from advisory records, and
+  never overwrites an existing terminal claim; convergence only ever
+  CAS-claims `failed`, and only when process absence is provable. Reports
+  in-flight / terminal-authenticated / orphaned / process-gone-without-evidence
+  / indeterminate (PID-reuse suspected). Identity capture now records a
+  `boot_id` so a reboot short-circuits straight to "gone" instead of risking
+  a post-reboot `starttime` coincidence. `pmctl dispatch reconcile <run_id>|--all
+  --cd <dir> [--dry-run]`; `doctor.sh` gained a read-only stale-run scan.
+
 - **`pmctl dispatch cancel` / `dispatch status` (CC-495).** Detached runs can be
   terminalized with trusted process-group kill (PID/PGID/starttime/comm
   re-verify before signal), exclusive terminal CAS shared with natural

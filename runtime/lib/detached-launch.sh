@@ -182,18 +182,30 @@ detached_launch_wait_for_sentinel() {
   done
 }
 
+# Current boot identifier, when the kernel exposes one. Used to detect a
+# reboot between identity capture and re-verification: starttime (below) is
+# boot-relative ticks and resets after reboot, so a post-reboot process could
+# coincidentally collide on pid+pgid+starttime. Empty (not an error) when
+# unavailable, e.g. non-Linux — callers treat empty as "no reboot signal".
+detached_launch_current_boot_id() {
+  local f="/proc/sys/kernel/random/boot_id"
+  [[ -r "$f" ]] || return 0
+  cat "$f" 2>/dev/null || true
+}
+
 # Capture a stable process identity for cancel-time re-verification.
 # Linux /proc is authoritative; without it this returns 1 (fail-closed for
 # identity-dependent kill). Emits key=value lines:
-#   pid=  pgid=  starttime=  comm=  isolated=
+#   pid=  pgid=  starttime=  comm=  isolated=  boot_id=
 # starttime is the kernel field from /proc/<pid>/stat (boot-relative ticks),
-# which is stable across PID reuse of the same numeric pid.
+# which is stable across PID reuse of the same numeric pid within one boot;
+# boot_id disambiguates across a reboot (see detached_launch_current_boot_id).
 # isolated=1 means the process was launched under setsid (own process group);
 # isolated=0 means cancel must refuse process-group kill (shared group).
 # Optional second arg overrides isolated (defaults to 1 when pid==pgid else 0).
 detached_launch_capture_identity() {
   local pid="${1:?pid required}" isolated_override="${2-}"
-  local stat_file rest pgrp starttime comm_field comm isolated
+  local stat_file rest pgrp starttime comm_field comm isolated boot_id
   [[ "$pid" =~ ^[0-9]+$ ]] || return 1
   stat_file="/proc/$pid/stat"
   [[ -r "$stat_file" ]] || return 1
@@ -217,16 +229,17 @@ detached_launch_capture_identity() {
   else
     isolated=0
   fi
-  printf 'pid=%s\npgid=%s\nstarttime=%s\ncomm=%s\nisolated=%s\n' \
-    "$pid" "$pgrp" "$starttime" "$comm" "$isolated"
+  boot_id="$(detached_launch_current_boot_id)" || boot_id=""
+  printf 'pid=%s\npgid=%s\nstarttime=%s\ncomm=%s\nisolated=%s\nboot_id=%s\n' \
+    "$pid" "$pgrp" "$starttime" "$comm" "$isolated" "$boot_id"
 }
 
 # Load identity file written by detached_launch_capture_identity (key=value).
-# Sets DL_ID_PID DL_ID_PGID DL_ID_STARTTIME DL_ID_COMM DL_ID_ISOLATED.
+# Sets DL_ID_PID DL_ID_PGID DL_ID_STARTTIME DL_ID_COMM DL_ID_ISOLATED DL_ID_BOOT_ID.
 # Returns 1 if incomplete.
 detached_launch_load_identity_file() {
   local path="${1:?identity path required}" line key val
-  DL_ID_PID=""; DL_ID_PGID=""; DL_ID_STARTTIME=""; DL_ID_COMM=""; DL_ID_ISOLATED=""
+  DL_ID_PID=""; DL_ID_PGID=""; DL_ID_STARTTIME=""; DL_ID_COMM=""; DL_ID_ISOLATED=""; DL_ID_BOOT_ID=""
   [[ -f "$path" ]] || return 1
   while IFS= read -r line || [[ -n "$line" ]]; do
     [[ -z "$line" || "$line" == \#* ]] && continue
@@ -238,6 +251,7 @@ detached_launch_load_identity_file() {
       starttime) DL_ID_STARTTIME="$val" ;;
       comm) DL_ID_COMM="$val" ;;
       isolated) DL_ID_ISOLATED="$val" ;;
+      boot_id) DL_ID_BOOT_ID="$val" ;;
     esac
   done <"$path"
   [[ -n "$DL_ID_PID" && -n "$DL_ID_PGID" && -n "$DL_ID_STARTTIME" ]] || return 1
@@ -258,11 +272,23 @@ detached_launch_load_identity_file() {
 #   2 — identity mismatch / PID reuse (fail-closed; never signal)
 detached_launch_verify_identity() {
   local pid="${1:?pid required}" identity_file="${2:?identity file required}"
-  local snap cur_pgid cur_start cur_comm
+  local snap cur_pgid cur_start cur_comm cur_boot_id
   if ! detached_launch_load_identity_file "$identity_file"; then
     return 2
   fi
   [[ "$pid" == "$DL_ID_PID" ]] || return 2
+  # Reboot detection: starttime is boot-relative and resets after reboot, so a
+  # post-reboot process could coincidentally collide on pid+pgid+starttime.
+  # When both boot ids are known and differ, the original process cannot
+  # possibly still be alive — report gone without attempting the (unreliable
+  # post-reboot) starttime comparison below. Legacy identity files without
+  # boot_id= (empty DL_ID_BOOT_ID) fall through to the existing comparison.
+  if [[ -n "${DL_ID_BOOT_ID:-}" ]]; then
+    cur_boot_id="$(detached_launch_current_boot_id)" || cur_boot_id=""
+    if [[ -n "$cur_boot_id" && "$cur_boot_id" != "$DL_ID_BOOT_ID" ]]; then
+      return 1
+    fi
+  fi
   if [[ ! -r "/proc/$pid/stat" ]]; then
     return 1
   fi
