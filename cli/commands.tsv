@@ -6,6 +6,8 @@ backlog archive	Archive completed backlog entries.	pmctl backlog archive [option
 guard check	Evaluate a registered guard policy.	pmctl guard check --role <role> --runtime <runtime> [options]	experimental	false	false	--role, --runtime, --event, --input	pmctl guard check --role pm --runtime codex
 dispatch run	Launch an adapter run from a validated brief.	pmctl dispatch run --adapter <name> --cd <dir> --brief-file <path> [options]	experimental	false	true	--adapter, --cd, --brief-file, --model, --lifecycle, --auto-pack	pmctl dispatch run --adapter codex --cd . --brief-file /tmp/brief.md
 dispatch wait	Wait for a detached dispatch run to finish.	pmctl dispatch wait <run-id> --cd <dir> [--timeout <seconds>]	experimental	false	true	--cd, --timeout	pmctl dispatch wait run-123 --cd .
+dispatch cancel	Cancel an in-flight detached dispatch run (no resume).	pmctl dispatch cancel <run-id> --cd <dir> [--grace <seconds>]	experimental	false	true	--cd, --grace	pmctl dispatch cancel run-123 --cd .
+dispatch status	List in-flight and terminal detached runs for a work dir.	pmctl dispatch status --cd <dir>	experimental	false	false	--cd	pmctl dispatch status --cd .
 artifacts list	List managed artifacts.	pmctl artifacts list [--cd <dir>]	experimental	false	false	--cd	pmctl artifacts list --cd .
 artifacts show	Show one managed artifact.	pmctl artifacts show <artifact-id> [--cd <dir>]	experimental	false	false	--cd	pmctl artifacts show artifact-123
 artifacts gc	Remove expired managed artifacts.	pmctl artifacts gc [--cd <dir>] [--dry-run]	experimental	false	true	--cd, --dry-run	pmctl artifacts gc --dry-run

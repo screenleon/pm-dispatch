@@ -162,6 +162,8 @@ router and [`cli/commands.tsv`](cli/commands.tsv).
 - `guard check` — Evaluate a registered guard policy. [experimental; JSON: false; mutating: false]
 - `dispatch run` — Launch an adapter run from a validated brief. [experimental; JSON: false; mutating: true]
 - `dispatch wait` — Wait for a detached dispatch run to finish. [experimental; JSON: false; mutating: true]
+- `dispatch cancel` — Cancel an in-flight detached dispatch run (no resume). [experimental; JSON: false; mutating: true]
+- `dispatch status` — List in-flight and terminal detached runs for a work dir. [experimental; JSON: false; mutating: false]
 - `artifacts list` — List managed artifacts. [experimental; JSON: false; mutating: false]
 - `artifacts show` — Show one managed artifact. [experimental; JSON: false; mutating: false]
 - `artifacts gc` — Remove expired managed artifacts. [experimental; JSON: false; mutating: true]

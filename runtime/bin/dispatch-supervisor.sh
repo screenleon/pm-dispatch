@@ -68,7 +68,20 @@ _die() {
   printf 'dispatch-supervisor: %s\n' "$*" >&2
   # Write a failed dispatch record so pmctl dispatch wait observes failure
   # quickly instead of blocking until timeout. Only possible after the run-spec
-  # has been parsed and the run_id + work_dir are valid.
+  # has been parsed and the run_id + work_dir are valid. Skip sentinel when
+  # cancel (or another terminal winner) already holds the exclusive claim.
+  local _own_terminal=1
+  if [[ "${spec_run_id:-}" =~ ^run-[A-Za-z0-9]+-[A-Za-z0-9]+$ ]] \
+    && [[ -n "${spec_work_dir:-}" ]] \
+    && declare -F _pmctl_dispatch_try_terminal_claim >/dev/null 2>&1; then
+    if ! _pmctl_dispatch_try_terminal_claim "$spec_work_dir" "$spec_run_id" "failed" "supervisor"; then
+      # Another winner (e.g. cancel) owns the terminal; do not overwrite sentinel.
+      _own_terminal=0
+    fi
+  fi
+  # Always attempt the observability record on preflight failure when we know
+  # the work dir — even if the terminal claim was unavailable (state partition
+  # missing) so humans and tests still see a failed result file.
   if [[ "${spec_run_id:-}" =~ ^run-[A-Za-z0-9]+-[A-Za-z0-9]+$ ]] \
     && [[ -n "${spec_work_dir:-}" ]] \
     && declare -F dispatch_record_write >/dev/null 2>&1; then
@@ -79,7 +92,9 @@ _die() {
       "supervisor preflight failed: $*" "" "" "" \
       "${spec_created_ts:-}" "$_finished_ts" 2>/dev/null || true
   fi
-  _write_sentinel "failed" 2
+  if [[ "$_own_terminal" -eq 1 ]]; then
+    _write_sentinel "failed" 2
+  fi
   # Only unlink the parent-created brief snapshot, never an arbitrary path from the
   # run-spec. Validate that the path matches the /tmp/brief-<run_id>.md pattern
   # that the parent writes before launching the supervisor. A tampered run-spec
@@ -216,21 +231,46 @@ if ! dispatch_record_read_state "$spec_work_dir" "$spec_run_id" >/dev/null 2>&1;
     || printf 'dispatch-supervisor: WARN: fallback record write also failed for %s\n' "$spec_run_id" >&2
 fi
 
-# Write the authoritative supervisor sentinel to /tmp before exiting. This
-# sentinel is the only signal pmctl dispatch wait trusts. Its path includes the
-# nonce captured at startup (now unset from env), so an executor that read the
-# workspace run-spec cannot derive the correct path and cannot forge completion.
-# The sentinel records the real execute_tail exit code.
-_finished_state="$( [[ "$_execute_rc" -eq 0 ]] && printf 'ok' || printf 'failed' )"
-_write_sentinel "$_finished_state" "$_execute_rc"
+# Write the authoritative supervisor sentinel only when this supervisor owns
+# the terminal claim (ok/failed). Exit 130 means execute_tail lost the CAS to
+# cancel (or another terminal winner); do not overwrite a cancelled sentinel.
+# The sentinel is the only signal pmctl dispatch wait trusts; its path includes
+# the nonce captured at startup (now unset from env).
+if [[ "$_execute_rc" -eq 130 ]]; then
+  :
+elif declare -F _pmctl_dispatch_read_terminal_claim >/dev/null 2>&1 \
+  && _pmctl_dispatch_read_terminal_claim "$spec_work_dir" "$spec_run_id" 2>/dev/null; then
+  case "${PMCTL_TERMINAL_STATE:-}" in
+    cancelled)
+      # cancel owns the terminal evidence + sentinel
+      :
+      ;;
+    ok|failed|partial)
+      _write_sentinel "$PMCTL_TERMINAL_STATE" "$_execute_rc"
+      ;;
+    *)
+      _finished_state="$( [[ "$_execute_rc" -eq 0 ]] && printf 'ok' || printf 'failed' )"
+      _write_sentinel "$_finished_state" "$_execute_rc"
+      ;;
+  esac
+else
+  _finished_state="$( [[ "$_execute_rc" -eq 0 ]] && printf 'ok' || printf 'failed' )"
+  _write_sentinel "$_finished_state" "$_execute_rc"
+fi
 
 # Best-effort cleanup of the durable brief snapshot now that the adapter has
 # finished. The snapshot at spec_brief_file (/tmp/brief-<run_id>.md) was
 # created by the parent before returning the run_id; it is no longer needed
 # once the supervisor exits and a terminal record exists. Only delete the
 # expected parent-created path; a tampered run-spec cannot delete other files.
+# Leave the brief when cancel owns the terminal claim — cancel cleans non-
+# evidence artifacts after writing its own durable proof.
 if [[ "${spec_brief_file:-}" == "/tmp/brief-${spec_run_id}.md" ]]; then
-  rm -f "$spec_brief_file" 2>/dev/null || true
+  if ! declare -F _pmctl_dispatch_read_terminal_claim >/dev/null 2>&1 \
+    || ! _pmctl_dispatch_read_terminal_claim "$spec_work_dir" "$spec_run_id" 2>/dev/null \
+    || [[ "${PMCTL_TERMINAL_STATE:-}" != "cancelled" ]]; then
+    rm -f "$spec_brief_file" 2>/dev/null || true
+  fi
 fi
 
 exit "$_execute_rc"

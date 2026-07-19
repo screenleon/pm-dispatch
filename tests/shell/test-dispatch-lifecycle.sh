@@ -1475,6 +1475,7 @@ case_dispatch_wait_poll_interval_honored() {
   rm -rf "$work"; rm -f "$key_file" "$sentinel" "$sleep_log" 2>/dev/null || true
 }
 
+
 case_detached_is_default
 case_foreground_explicit_no_runspec
 case_default_detach_terminal_record_is_ok
@@ -1513,4 +1514,6 @@ case_dispatch_wait_fallback_adversarial_key_removal
 case_dispatch_wait_second_call_uses_record
 case_supervisor_die_restricted_cleanup
 case_dispatch_wait_poll_interval_honored
+
+
 th_summary

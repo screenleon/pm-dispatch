@@ -113,6 +113,18 @@ case "$cmd/$sub" in
     fi
     pmctl_dispatch_wait "$REPO_ROOT" "$@"
     ;;
+  dispatch/cancel)
+    if ! declare -F pmctl_dispatch_cancel >/dev/null; then
+      pmctl_die "dispatch cancel unavailable"
+    fi
+    pmctl_dispatch_cancel "$REPO_ROOT" "$@"
+    ;;
+  dispatch/status)
+    if ! declare -F pmctl_dispatch_status >/dev/null; then
+      pmctl_die "dispatch status unavailable"
+    fi
+    pmctl_dispatch_status "$REPO_ROOT" "$@"
+    ;;
   artifacts/list)
     if ! declare -F pmctl_artifacts_list >/dev/null; then
       pmctl_die "artifacts list unavailable"

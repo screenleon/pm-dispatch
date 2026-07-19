@@ -39,6 +39,7 @@ SUITE_NAMES=(
   test-pmctl-pm
   test-dispatch-record
   test-dispatch-lifecycle
+  test-dispatch-cancel
   test-gate-lifecycle
   test-claude-dispatch
   test-opencode-dispatch
@@ -150,6 +151,7 @@ suite_path() {
     test-pmctl-pm) printf 'tests/shell/test-pmctl-pm.sh\n' ;;
     test-dispatch-record) printf 'tests/shell/test-dispatch-record.sh\n' ;;
     test-dispatch-lifecycle) printf 'tests/shell/test-dispatch-lifecycle.sh\n' ;;
+    test-dispatch-cancel) printf 'tests/shell/test-dispatch-cancel.sh\n' ;;
     test-gate-lifecycle) printf 'tests/shell/test-gate-lifecycle.sh\n' ;;
     test-claude-dispatch) printf 'tests/shell/test-claude-dispatch.sh\n' ;;
     test-opencode-dispatch) printf 'tests/shell/test-opencode-dispatch.sh\n' ;;

@@ -247,6 +247,9 @@ case_wait_for_sentinel_timeout() {
 }
 
 # ---- 12: under_setsid launches a script and records its pid -----------------
+# FIFO note: open the done-fifo O_RDWR in the parent BEFORE launch so
+# `read -t` applies to the read, not the open. A bare `read -t <fifo`
+# blocks forever on open if the child finishes and closes first.
 case_under_setsid_launches_and_records_pid() {
   local name="detached-launch/under_setsid launches script and writes pid_file"
   should_run "$name" || return 0
@@ -254,20 +257,22 @@ case_under_setsid_launches_and_records_pid() {
   local script="$tmp_root/probe.sh" log="$tmp_root/probe.log" pidfile="$tmp_root/probe.pid"
   local done_fifo="$tmp_root/probe.done.fifo"
   mkfifo "$done_fifo"
+  # Hold an RDWR end so the child can write even if we have not yet read.
+  exec 9<>"$done_fifo"
   cat > "$script" <<SCRIPT
 #!/usr/bin/env bash
 printf 'ran\n'
-exec 7<>"$done_fifo" 2>/dev/null || true
-printf 'done\n' >&7
+printf 'done\n' >"$done_fifo"
 SCRIPT
   chmod +x "$script"
 
   detached_launch_under_setsid "$script" "$log" "$pidfile"
 
   local signaled=0 _dummy
-  if read -r -t 5 _dummy < "$done_fifo"; then
+  if read -r -t 5 _dummy <&9; then
     signaled=1
   fi
+  exec 9>&- 9<&- 2>/dev/null || true
 
   if [[ "$signaled" -eq 1 ]] && [[ -s "$pidfile" ]] && grep -q 'ran' "$log"; then
     pass "$name"
@@ -284,24 +289,85 @@ case_under_setsid_empty_pid_file_skipped() {
   local script="$tmp_root/probe2.sh" log="$tmp_root/probe2.log"
   local done_fifo="$tmp_root/probe2.done.fifo"
   mkfifo "$done_fifo"
+  exec 9<>"$done_fifo"
   cat > "$script" <<SCRIPT
 #!/usr/bin/env bash
-exec 7<>"$done_fifo" 2>/dev/null || true
-printf 'done\n' >&7
+printf 'done\n' >"$done_fifo"
 SCRIPT
   chmod +x "$script"
 
   detached_launch_under_setsid "$script" "$log" ""
 
   local signaled=0 _dummy
-  if read -r -t 5 _dummy < "$done_fifo"; then
+  if read -r -t 5 _dummy <&9; then
     signaled=1
   fi
+  exec 9>&- 9<&- 2>/dev/null || true
 
   if [[ "$signaled" -eq 1 ]]; then
     pass "$name"
   else
     fail "$name" "script never signaled completion"
+  fi
+}
+
+# ---- 14: write_sentinel is complete when the destination path appears -------
+# Behavior: destination path appears only after a full multi-line body is written
+#          (temp+rename); first observation of the final path is always complete.
+# Steps: parent holds ready/done FIFOs open O_RDWR before forking the waiter
+#        (avoids classic FIFO race: write+close before reader open drops data,
+#        then both sides hang). Waiter inherits FDs; writer signals, publishes,
+#        waits on already-open done FD so `read -t` cannot block on open.
+case_write_sentinel_atomic_visibility() {
+  local name="detached-launch/write_sentinel is atomic (no partial final path)"
+  should_run "$name" || return 0
+
+  local sentinel="$tmp_root/sentinel-atomic" observed="$tmp_root/sentinel-observed"
+  local ready_fifo="$tmp_root/sentinel-ready.fifo" done_fifo="$tmp_root/sentinel-done.fifo"
+  local waiter_pid
+  rm -f "$sentinel" "$observed"
+  mkfifo "$ready_fifo" "$done_fifo"
+  # Keep both ends live for the whole handshake (parent + inherited child FDs).
+  exec 7<>"$ready_fifo"
+  exec 8<>"$done_fifo"
+
+  (
+    # Inherited FD 7/8 — never re-open by path (path open races with writer).
+    read -r _ <&7 2>/dev/null || true
+    while [[ ! -f "$sentinel" ]]; do
+      :
+    done
+    cat "$sentinel" >"$observed" 2>/dev/null || true
+    printf 'done\n' >&8 2>/dev/null || true
+  ) &
+  waiter_pid=$!
+
+  printf 'go\n' >&7 2>/dev/null || true
+  detached_launch_write_sentinel "$sentinel" "final_state=ok" "exit_code=0"
+
+  local observed_done=0
+  if read -r -t 10 _ <&8 2>/dev/null; then
+    observed_done=1
+    wait "$waiter_pid" 2>/dev/null || true
+  else
+    # Timed out waiting for observer — fail closed without hanging the suite.
+    kill -KILL "$waiter_pid" 2>/dev/null || true
+    wait "$waiter_pid" 2>/dev/null || true
+  fi
+  exec 7>&- 7<&- 8>&- 8<&- 2>/dev/null || true
+  rm -f "$ready_fifo" "$done_fifo"
+
+  local tmp_left=0
+  if compgen -G "$tmp_root/.sentinel-atomic.tmp.*" >/dev/null 2>&1; then
+    tmp_left=1
+  fi
+  if [[ "$observed_done" -eq 1 && -f "$sentinel" && -s "$observed" ]] \
+    && grep -q '^final_state=ok$' "$observed" \
+    && grep -q '^exit_code=0$' "$observed" \
+    && [[ "$tmp_left" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "observed_done=$observed_done observed=$(tr '\n' '|' <"$observed" 2>/dev/null) tmp_left=$tmp_left"
   fi
 }
 
@@ -319,5 +385,6 @@ case_wait_for_sentinel_success
 case_wait_for_sentinel_timeout
 case_under_setsid_launches_and_records_pid
 case_under_setsid_empty_pid_file_skipped
+case_write_sentinel_atomic_visibility
 
 th_summary

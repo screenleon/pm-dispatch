@@ -98,6 +98,11 @@ detached_launch_sentinel_path() {
 # propagate to the launched process for the lifetime of this function call,
 # same as any other simple-command prefix assignment in bash.
 #
+# When setsid is used, the child is a new session/process-group leader and is
+# safe for process-group cancel. Without setsid the child shares the caller's
+# process group — cancel must refuse group kill (see identity `isolated=`).
+# Sets DETACHED_LAUNCH_ISOLATED=1|0 for the caller to record in identity.
+#
 # Usage: detached_launch_under_setsid <script_path> <log_file> <pid_file> [--] <args...>
 # Returns 0 once the process is launched and (if requested) the PID is
 # persisted; does not wait for the process to complete.
@@ -110,13 +115,17 @@ detached_launch_under_setsid() {
   [[ -n "$pid_file" ]] && { mkdir -p "$(dirname "$pid_file")" || return 1; }
 
   local pid
+  # Exported so callers (pmctl-dispatch) can record isolated= in identity files.
+  export DETACHED_LAUNCH_ISOLATED=0
   if command -v setsid >/dev/null 2>&1; then
     setsid nohup bash "$script_path" "$@" </dev/null >"$log_file" 2>&1 &
     pid=$!
+    export DETACHED_LAUNCH_ISOLATED=1
   else
     nohup bash "$script_path" "$@" </dev/null >"$log_file" 2>&1 &
     pid=$!
     disown "$pid" 2>/dev/null || true
+    export DETACHED_LAUNCH_ISOLATED=0
   fi
 
   if [[ -n "$pid_file" ]]; then
@@ -129,16 +138,28 @@ detached_launch_under_setsid() {
 # what order) are entirely the caller's decision — this function does not
 # interpret the pairs, just serializes them one per line.
 #
+# Publication is atomic: pairs are written to a same-directory temp file, then
+# renamed onto <sentinel_path>. Waiters that poll for path existence therefore
+# never observe a partial multi-line sentinel (and must not delete a half-written
+# file that has not yet been renamed into place).
+#
 # Usage: detached_launch_write_sentinel <sentinel_path> "final_state=GO" "exit_code=0" ["result_file=/path"]...
 detached_launch_write_sentinel() {
   local sentinel_path="${1:?sentinel_path required}"
   shift
-  local pair
+  local pair dir base tmp
+  dir="$(dirname -- "$sentinel_path")"
+  base="$(basename -- "$sentinel_path")"
+  mkdir -p "$dir" 2>/dev/null || true
+  tmp="$(mktemp "$dir/.${base}.tmp.XXXXXX" 2>/dev/null)" || return 1
   {
     for pair in "$@"; do
       printf '%s\n' "$pair"
     done
-  } > "$sentinel_path" 2>/dev/null || true
+  } >"$tmp" 2>/dev/null || { rm -f "$tmp" 2>/dev/null || true; return 1; }
+  # Atomic on same filesystem: destination appears only after full content is written.
+  mv -f "$tmp" "$sentinel_path" 2>/dev/null || { rm -f "$tmp" 2>/dev/null || true; return 1; }
+  return 0
 }
 
 # Poll for a sentinel file's existence. Pure poll, no parse, no cleanup: the
@@ -159,4 +180,161 @@ detached_launch_wait_for_sentinel() {
     (( elapsed >= timeout )) && return 124
     sleep "$poll_interval"
   done
+}
+
+# Capture a stable process identity for cancel-time re-verification.
+# Linux /proc is authoritative; without it this returns 1 (fail-closed for
+# identity-dependent kill). Emits key=value lines:
+#   pid=  pgid=  starttime=  comm=  isolated=
+# starttime is the kernel field from /proc/<pid>/stat (boot-relative ticks),
+# which is stable across PID reuse of the same numeric pid.
+# isolated=1 means the process was launched under setsid (own process group);
+# isolated=0 means cancel must refuse process-group kill (shared group).
+# Optional second arg overrides isolated (defaults to 1 when pid==pgid else 0).
+detached_launch_capture_identity() {
+  local pid="${1:?pid required}" isolated_override="${2-}"
+  local stat_file rest pgrp starttime comm_field comm isolated
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  stat_file="/proc/$pid/stat"
+  [[ -r "$stat_file" ]] || return 1
+  # comm may contain spaces/parentheses; fields after the final ')' are fixed.
+  rest="$(cat "$stat_file" 2>/dev/null)" || return 1
+  comm_field="${rest#*(}"
+  comm_field="${comm_field%)*}"
+  rest="${rest##*)}"
+  # shellcheck disable=SC2086  # intentional field split of /proc stat tail
+  set -- $rest
+  # After comm: state ppid pgrp session ... starttime is positional $20.
+  pgrp="${3:-}"
+  starttime="${20:-}"
+  [[ -n "$pgrp" && -n "$starttime" ]] || return 1
+  comm="$(tr -d '\n' <"/proc/$pid/comm" 2>/dev/null || printf '%s' "$comm_field")"
+  if [[ -n "$isolated_override" ]]; then
+    isolated="$isolated_override"
+  elif [[ "$pid" == "$pgrp" ]]; then
+    # Session/process-group leaders created by setsid have pid == pgid.
+    isolated=1
+  else
+    isolated=0
+  fi
+  printf 'pid=%s\npgid=%s\nstarttime=%s\ncomm=%s\nisolated=%s\n' \
+    "$pid" "$pgrp" "$starttime" "$comm" "$isolated"
+}
+
+# Load identity file written by detached_launch_capture_identity (key=value).
+# Sets DL_ID_PID DL_ID_PGID DL_ID_STARTTIME DL_ID_COMM DL_ID_ISOLATED.
+# Returns 1 if incomplete.
+detached_launch_load_identity_file() {
+  local path="${1:?identity path required}" line key val
+  DL_ID_PID=""; DL_ID_PGID=""; DL_ID_STARTTIME=""; DL_ID_COMM=""; DL_ID_ISOLATED=""
+  [[ -f "$path" ]] || return 1
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    key="${line%%=*}"
+    val="${line#*=}"
+    case "$key" in
+      pid) DL_ID_PID="$val" ;;
+      pgid) DL_ID_PGID="$val" ;;
+      starttime) DL_ID_STARTTIME="$val" ;;
+      comm) DL_ID_COMM="$val" ;;
+      isolated) DL_ID_ISOLATED="$val" ;;
+    esac
+  done <"$path"
+  [[ -n "$DL_ID_PID" && -n "$DL_ID_PGID" && -n "$DL_ID_STARTTIME" ]] || return 1
+  # Legacy identity files without isolated=: treat as isolated only when pid==pgid.
+  if [[ -z "$DL_ID_ISOLATED" ]]; then
+    if [[ "$DL_ID_PID" == "$DL_ID_PGID" ]]; then
+      DL_ID_ISOLATED=1
+    else
+      DL_ID_ISOLATED=0
+    fi
+  fi
+  return 0
+}
+
+# Re-verify that <pid> still matches a captured identity.
+#   0 — process alive and identity matches (safe to signal)
+#   1 — process gone (not an error for cancel terminalization; do not signal)
+#   2 — identity mismatch / PID reuse (fail-closed; never signal)
+detached_launch_verify_identity() {
+  local pid="${1:?pid required}" identity_file="${2:?identity file required}"
+  local snap cur_pgid cur_start cur_comm
+  if ! detached_launch_load_identity_file "$identity_file"; then
+    return 2
+  fi
+  [[ "$pid" == "$DL_ID_PID" ]] || return 2
+  if [[ ! -r "/proc/$pid/stat" ]]; then
+    return 1
+  fi
+  # Single /proc snapshot so fields cannot mix across a mid-read transition.
+  snap="$(detached_launch_capture_identity "$pid" 2>/dev/null)" || return 1
+  cur_pgid="$(printf '%s\n' "$snap" | grep -m1 '^pgid=' | cut -d= -f2-)" || true
+  cur_start="$(printf '%s\n' "$snap" | grep -m1 '^starttime=' | cut -d= -f2-)" || true
+  cur_comm="$(printf '%s\n' "$snap" | grep -m1 '^comm=' | cut -d= -f2-)" || true
+  if [[ -z "$cur_pgid" || -z "$cur_start" ]]; then
+    return 1
+  fi
+  if [[ "$cur_pgid" != "$DL_ID_PGID" || "$cur_start" != "$DL_ID_STARTTIME" ]]; then
+    return 2
+  fi
+  if [[ -n "$DL_ID_COMM" && -n "$cur_comm" && "$cur_comm" != "$DL_ID_COMM" ]]; then
+    return 2
+  fi
+  return 0
+}
+
+# Signal an entire process group: SIGTERM, wait up to grace seconds, then
+# SIGKILL if any member remains. pgid must be positive; never signals pgid 0/-1.
+# Refuses to signal:
+#   - the caller's own process group
+#   - any process group that contains this process or an ancestor (would kill
+#     the invoking shell/automation runner)
+#   0 — group gone after TERM or KILL
+#   1 — invalid pgid / refused unsafe group / group still alive after KILL
+detached_launch_kill_process_group() {
+  local pgid="${1:?pgid required}" grace="${2:-5}"
+  local self_pgid probe p_pgid
+  [[ "$pgid" =~ ^[1-9][0-9]*$ ]] || return 1
+  # Fail closed if we cannot determine our own process group: without it we
+  # cannot prove the target is not the invoking shell/automation runner.
+  self_pgid="$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')" || self_pgid=""
+  if [[ -z "$self_pgid" || ! "$self_pgid" =~ ^[1-9][0-9]*$ ]]; then
+    return 1
+  fi
+  if [[ "$pgid" == "$self_pgid" ]]; then
+    return 1
+  fi
+  # Walk ancestors: if any share the target pgid, refuse (shared runner group).
+  # If /proc/ps becomes unreadable mid-walk, fail closed rather than signal.
+  probe="$$"
+  while [[ "$probe" =~ ^[1-9][0-9]*$ && "$probe" -gt 1 ]]; do
+    p_pgid="$(ps -o pgid= -p "$probe" 2>/dev/null | tr -d ' ')" || return 1
+    if [[ -z "$p_pgid" ]]; then
+      return 1
+    fi
+    if [[ "$p_pgid" == "$pgid" ]]; then
+      return 1
+    fi
+    probe="$(ps -o ppid= -p "$probe" 2>/dev/null | tr -d ' ')" || return 1
+  done
+  # Negative pid = process group. Prefer kill, fall back quietly if already gone.
+  # Poll interval is fractional so short --grace values (tests) do not wait full
+  # seconds per tick; wall-clock budget remains `grace` seconds.
+  local poll="0.2"
+  kill -TERM -- "-$pgid" 2>/dev/null || true
+  local start=$SECONDS
+  while (( SECONDS - start < grace )); do
+    if ! kill -0 -- "-$pgid" 2>/dev/null; then
+      return 0
+    fi
+    sleep "$poll"
+  done
+  if kill -0 -- "-$pgid" 2>/dev/null; then
+    kill -KILL -- "-$pgid" 2>/dev/null || true
+    sleep 0.2
+  fi
+  if kill -0 -- "-$pgid" 2>/dev/null; then
+    return 1
+  fi
+  return 0
 }

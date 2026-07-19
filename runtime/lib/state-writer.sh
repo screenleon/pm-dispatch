@@ -371,11 +371,11 @@ run_transition_valid() {
     ""|none)
       [[ "$to_state" == "pending" ]] && return 0 ;;
     pending)
-      [[ "$to_state" == "dispatched" || "$to_state" == "failed" ]] && return 0 ;;
+      [[ "$to_state" == "dispatched" || "$to_state" == "failed" || "$to_state" == "cancelled" ]] && return 0 ;;
     dispatched)
-      [[ "$to_state" == "verifying" || "$to_state" == "failed" ]] && return 0 ;;
+      [[ "$to_state" == "verifying" || "$to_state" == "failed" || "$to_state" == "cancelled" ]] && return 0 ;;
     verifying)
-      [[ "$to_state" == "ok" || "$to_state" == "partial" || "$to_state" == "failed" ]] && return 0 ;;
+      [[ "$to_state" == "ok" || "$to_state" == "partial" || "$to_state" == "failed" || "$to_state" == "cancelled" ]] && return 0 ;;
   esac
   return 1
 }

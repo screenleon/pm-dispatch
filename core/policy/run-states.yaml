@@ -11,18 +11,23 @@ states:
   - ok           # terminal: clean exit, self_verify passed, diff matches brief
   - partial      # terminal: exit 0 but verification gaps or unexpected stderr
   - failed       # terminal: non-zero exit OR catastrophic verification failure
+  - cancelled    # terminal: user cancelled before/during; result untrusted, re-dispatch
 
 transitions:
   pending:
     - dispatched
     - failed     # dispatch script rejected the brief
+    - cancelled  # user cancel before executor started
   dispatched:
     - verifying
     - failed     # timeout / sandbox kill
+    - cancelled  # user cancel while in flight
   verifying:
     - ok
     - partial
     - failed
+    - cancelled  # user cancel during post-verify
   ok: []         # terminal
   partial: []    # terminal
   failed: []     # terminal
+  cancelled: []  # terminal

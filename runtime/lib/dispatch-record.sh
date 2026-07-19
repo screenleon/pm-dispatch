@@ -14,7 +14,7 @@ dispatch_record_write() {
   [[ -n "$run_id" ]] || return 1
   [[ -n "$working_dir" ]] || return 1
   [[ "$exit_code" =~ ^-?[0-9]+$ ]] || return 1
-  case "$final_state" in ok|failed|partial) : ;; *) return 1 ;; esac
+  case "$final_state" in ok|failed|partial|cancelled) : ;; *) return 1 ;; esac
 
   result_dir="$working_dir/.dispatch-results"
   result_path="$result_dir/$run_id.md"
@@ -90,7 +90,7 @@ dispatch_record_read_state() {
 
   state="$(grep -m1 '^final_state:' "$record" 2>/dev/null | sed 's/^final_state:[[:space:]]*//;s/^"//;s/"$//;s/[[:space:]]*$//')" || true
   case "$state" in
-    ok|failed|partial) : ;;
+    ok|failed|partial|cancelled) : ;;
     *) return 1 ;;
   esac
 
