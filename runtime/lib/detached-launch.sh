@@ -274,17 +274,29 @@ detached_launch_verify_identity() {
 
 # Signal an entire process group: SIGTERM, wait up to grace seconds, then
 # SIGKILL if any member remains. pgid must be positive; never signals pgid 0/-1.
-# Refuses to signal the caller's own process group (would kill the CLI/shell).
+# Refuses to signal:
+#   - the caller's own process group
+#   - any process group that contains this process or an ancestor (would kill
+#     the invoking shell/automation runner)
 #   0 — group gone after TERM or KILL
-#   1 — invalid pgid / refused self-group / group still alive after KILL
+#   1 — invalid pgid / refused unsafe group / group still alive after KILL
 detached_launch_kill_process_group() {
   local pgid="${1:?pgid required}" grace="${2:-5}"
-  local waited=0 self_pgid
+  local waited=0 self_pgid probe p_pgid
   [[ "$pgid" =~ ^[1-9][0-9]*$ ]] || return 1
   self_pgid="$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')" || self_pgid=""
   if [[ -n "$self_pgid" && "$pgid" == "$self_pgid" ]]; then
     return 1
   fi
+  # Walk ancestors: if any share the target pgid, refuse (shared runner group).
+  probe="$$"
+  while [[ "$probe" =~ ^[1-9][0-9]*$ && "$probe" -gt 1 ]]; do
+    p_pgid="$(ps -o pgid= -p "$probe" 2>/dev/null | tr -d ' ')" || break
+    if [[ -n "$p_pgid" && "$p_pgid" == "$pgid" ]]; then
+      return 1
+    fi
+    probe="$(ps -o ppid= -p "$probe" 2>/dev/null | tr -d ' ')" || break
+  done
   # Negative pid = process group. Prefer kill, fall back quietly if already gone.
   kill -TERM -- "-$pgid" 2>/dev/null || true
   while (( waited < grace )); do
