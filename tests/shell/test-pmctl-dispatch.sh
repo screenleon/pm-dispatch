@@ -1122,6 +1122,65 @@ case_auto_pack_zero_hits_event_original_brief() {
   rm -rf "$work" "$state_root"; rm -f "$stderr"
 }
 
+case_auto_pack_garbage_work_dir_fails_loud_no_mkdir() {
+  # behavior: pmctl_dispatch_auto_pack, given a work_dir that is neither an
+  # absolute existing directory nor a git work tree, must warn and skip
+  # rather than silently falling back to `mkdir -p` a relative/garbage path
+  # under the CALLER's CWD (2026-07-03 leak: 5 "HEAD is now at ..." dirs
+  # landed at repo root because `ctx_root="$work_dir"` fell back verbatim).
+  # Steps:
+  # 1. cd into an empty marker dir; call pmctl_dispatch_auto_pack directly
+  #    with a relative garbage work_dir ("some/relative/garbage-dir").
+  # 2. Assert: function returns 0 (best-effort skip, same as other auto-pack
+  #    skip branches), stderr warns "is not an absolute existing directory",
+  #    and NO directory was created anywhere under the marker dir.
+  local name="dispatch/auto-pack: relative garbage work_dir fails loud, no mkdir under CWD"
+  should_run "$name" || return 0
+  local cwd_marker brief status=0 err before after
+  cwd_marker="$(mktemp -d)"
+  brief="$(_mk_guard_brief "$cwd_marker")"
+  err="$tmp_root/auto-pack-garbage.err"
+  before="$(find "$cwd_marker" -mindepth 1 | sort)"
+  ( cd "$cwd_marker" && pmctl_dispatch_auto_pack "$REPO_ROOT" "some/relative/garbage-dir" "$brief" "test-run-garbage-$$" ) 2>"$err" || status=$?
+  after="$(find "$cwd_marker" -mindepth 1 | sort)"
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "status=$status before=[$before] after=[$after] err=$(<"$err")"
+  elif ! assert_file_contains "$name" "$err" "is not an absolute existing directory"; then
+    : # assert_file_contains already called fail
+  elif [[ "$before" != "$after" ]]; then
+    fail "$name" "auto-pack created a directory under CWD: before=[$before] after=[$after]"
+  else
+    pass "$name"
+  fi
+  rm -rf "$cwd_marker"
+}
+
+case_auto_pack_nonexistent_absolute_work_dir_fails_loud() {
+  # behavior: an absolute but nonexistent work_dir must also skip fail-loud
+  # (the fix requires BOTH absolute AND existing, not absolute alone).
+  # Steps: call pmctl_dispatch_auto_pack with an absolute path under a fresh
+  # tmp dir that was never created; assert the same warn-and-skip behavior.
+  local name="dispatch/auto-pack: nonexistent absolute work_dir fails loud"
+  should_run "$name" || return 0
+  local cwd_marker brief status=0 err missing_abs
+  cwd_marker="$(mktemp -d)"
+  missing_abs="$cwd_marker/does-not-exist"
+  brief="$(_mk_guard_brief "$cwd_marker")"
+  err="$tmp_root/auto-pack-missing-abs.err"
+  status=0
+  pmctl_dispatch_auto_pack "$REPO_ROOT" "$missing_abs" "$brief" "test-run-missing-$$" 2>"$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "status=$status err=$(<"$err")"
+  elif ! assert_file_contains "$name" "$err" "is not an absolute existing directory"; then
+    : # assert_file_contains already called fail
+  elif [[ -e "$missing_abs" ]]; then
+    fail "$name" "auto-pack created $missing_abs"
+  else
+    pass "$name"
+  fi
+  rm -rf "$cwd_marker"
+}
+
 case_auto_pack_hits_creates_pack_and_forwards_copy() {
   # Foreground auto-pack writes the augmented pack under .pm-dispatch/ctx/packs/ AND
   # snapshots it to the guardable /tmp/brief-<run_id>.md, forwarding the snapshot so a
@@ -1449,6 +1508,8 @@ case_timeout_flag_beats_config_via_pmctl
 case_auto_pack_default_on_emits_event
 case_no_auto_pack_overrides_default_on
 case_auto_pack_zero_hits_event_original_brief
+case_auto_pack_garbage_work_dir_fails_loud_no_mkdir
+case_auto_pack_nonexistent_absolute_work_dir_fails_loud
 case_auto_pack_hits_creates_pack_and_forwards_copy
 case_auto_pack_foreground_records_executed_snapshot
 case_dispatch_cd_canonicalized_for_pack_path

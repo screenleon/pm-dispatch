@@ -388,7 +388,18 @@ pmctl_dispatch_auto_pack() {
   # not a git work tree (best-effort, same as reuse-scan's own behavior). The adapter
   # still receives the caller's original --cd; only context placement is normalized.
   ctx_root="$(git -C "$work_dir" rev-parse --show-toplevel 2>/dev/null || true)"
-  [[ -n "$ctx_root" ]] || ctx_root="$work_dir"
+  if [[ -z "$ctx_root" ]]; then
+    # git rev-parse failed (work_dir is not a git work tree). Only fall back
+    # to work_dir verbatim when it is a real, absolute, existing directory --
+    # never let a relative/garbage work_dir reach the mkdir -p below, which
+    # would silently create directories under the current CWD instead.
+    if [[ "$work_dir" != /* || ! -d "$work_dir" ]]; then
+      printf 'pmctl dispatch run: warning: auto-pack skipped: work_dir %q is not an absolute existing directory and is not a git work tree\n' "$work_dir" >&2
+      pmctl_dispatch_emit_auto_packed_event "$repo_root" "$run_id" 0 "" "$brief_file"
+      return 0
+    fi
+    ctx_root="$work_dir"
+  fi
   if declare -F _portable_canonical_path >/dev/null 2>&1; then
     ctx_root="$(_portable_canonical_path "$ctx_root" 2>/dev/null || printf '%s' "$ctx_root")"
   fi

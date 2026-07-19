@@ -226,17 +226,29 @@ case_isolation_none() {
 #   1. Run dispatch.sh with --isolation workspace-write.
 #   2. Assert non-zero exit (same as other unsupported levels).
 case_isolation_workspace_write_rejected() {
+  # Behavior: workspace-write is rejected (not enforceable), and the
+  # rejection message only recommends the isolation level opencode actually
+  # supports (`none`) -- it must NOT point the user at `workspace-write`
+  # itself, which is unenforceable and would just be rejected again.
   local name="isolation/workspace-write is rejected (not enforceable)"; should_run "$name" || return 0
-  local work bf rc
+  local work bf rc err
   work="$(mktemp -d)"; bf="$(_mk_brief)"
+  err="$(mktemp)"
   rc=0
   "$DISPATCH" \
     --cd "$work" --brief-file "$bf" \
     --model opencode/nemotron-3-ultra-free \
-    --isolation workspace-write >/dev/null 2>&1 || rc=$?
-  if [[ "$rc" -ne 0 ]]; then pass "$name"
-  else fail "$name" "workspace-write should be rejected (unsupported by opencode adapter)"; fi
-  rm -rf "$work"; rm -f "$bf"
+    --isolation workspace-write >/dev/null 2>"$err" || rc=$?
+  if [[ "$rc" -eq 0 ]]; then
+    fail "$name" "workspace-write should be rejected (unsupported by opencode adapter)"
+  elif ! assert_file_contains "$name" "$err" "use none"; then
+    : # assert_file_contains already called fail
+  elif grep -q 'or workspace-write' "$err"; then
+    fail "$name" "rejection message still suggests workspace-write: $(<"$err")"
+  else
+    pass "$name"
+  fi
+  rm -rf "$work"; rm -f "$bf" "$err"
 }
 
 # Behavior: Unknown isolation level causes exit 2 (fail-closed).

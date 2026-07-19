@@ -164,12 +164,12 @@ _resolve_isolation() {
       NATIVE_FLAGS+=("${BASH_REMATCH[1]}")
     fi
   done < "$map"
-  # An empty NATIVE_FLAGS is valid for workspace-write (opencode's default behavior).
+  # An empty NATIVE_FLAGS is valid for a mapped level with no native flags.
   # Fail closed when the level is not in isolation-map.yaml — unsupported levels
-  # (read-only, workspace-network, sandboxed) are intentionally absent because
-  # opencode has no CLI mechanism to enforce them.
+  # (workspace-write, read-only, workspace-network, sandboxed) are intentionally
+  # absent because opencode has no CLI mechanism to enforce them.
   if [[ "$_found" -eq 0 ]]; then
-    printf 'opencode-dispatch: error: isolation level %q is not supported by the opencode adapter (no CLI enforcement); use none or workspace-write\n' "$level" >&2
+    printf 'opencode-dispatch: error: isolation level %q is not supported by the opencode adapter (no CLI enforcement); use none\n' "$level" >&2
     return 1
   fi
   return 0
