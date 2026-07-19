@@ -1475,45 +1475,6 @@ case_dispatch_wait_poll_interval_honored() {
   rm -rf "$work"; rm -f "$key_file" "$sentinel" "$sleep_log" 2>/dev/null || true
 }
 
-case_detached_is_default
-case_foreground_explicit_no_runspec
-case_default_detach_terminal_record_is_ok
-case_detached_true_detach
-case_dispatch_wait_failure_propagates
-case_dispatch_wait_timeout
-case_dispatch_wait_not_found
-case_dispatch_wait_requires_cd
-case_invalid_lifecycle_value
-case_detached_print_cmd_incompatible
-case_detached_ineligible_rejected
-case_detach_eligible_unit
-case_config_lifecycle_detached
-case_config_lifecycle_foreground
-case_detached_brief_snapshot_survives_cleanup
-case_flag_beats_config
-case_supervisor_rejects_unroutable
-case_supervisor_rejects_traversal_name
-case_supervisor_missing_spec
-case_supervisor_rejects_malformed_brief
-case_supervisor_rejects_native_brief_smuggle
-case_supervisor_rejects_malformed_base64
-case_supervisor_rejects_bad_schema
-case_supervisor_rejects_bad_runid
-case_supervisor_rejects_missing_scalar
-case_supervisor_rejects_bad_printcmd
-case_supervisor_rejects_cd_smuggle
-case_detached_autopack_snapshot_is_augmented
-case_supervisor_preflight_failure
-case_supervisor_tail_failure_writes_fallback_record
-case_supervisor_fallback_covers_ok_run_with_poisoned_results
-case_dispatch_wait_ignores_forged_workspace_record
-case_dispatch_wait_ignores_forged_sentinel
-case_dispatch_wait_same_user_nonce_forgery_documented
-case_dispatch_wait_fallback_adversarial_key_removal
-case_dispatch_wait_second_call_uses_record
-case_supervisor_die_restricted_cleanup
-case_dispatch_wait_poll_interval_honored
-
 # ── cancel: in-flight process group terminalized + wait exit 130 ────────────
 # Behavior: cancel of a live detached run kills the isolated process group,
 #          writes cancelled claim/record/sentinel, and wait returns exit 130.
@@ -1661,7 +1622,7 @@ case_dispatch_cancel_identity_mismatch() {
   # Forge a different starttime while keeping a live decoy pid so verify fails
   # closed (PID reuse / identity mismatch) and cancel must not claim success
   # by killing the wrong process.
-  sleep 60 &
+  tail -f /dev/null &
   sleep_pid=$!
   printf 'pid=%s\npgid=%s\nstarttime=1\ncomm=sleep\nisolated=1\n' "$sleep_pid" "$sleep_pid" >"$id_file"
 
@@ -1714,7 +1675,7 @@ case_dispatch_cancel_ignores_workspace_pid() {
     return
   fi
 
-  sleep 60 &
+  tail -f /dev/null &
   decoy_pid=$!
   mkdir -p "$work/.agent-trace"
   printf '%s\n' "$decoy_pid" >"$work/.agent-trace/$run_id.supervisor.pid"
@@ -1781,7 +1742,7 @@ case_dispatch_cancel_ignores_explicit_trace_dir() {
     return
   fi
 
-  sleep 60 &
+  tail -f /dev/null &
   decoy_pid=$!
   # Forge authority-looking files under the explicit trace-dir (must be ignored).
   printf 'pid=%s\npgid=%s\nstarttime=1\ncomm=sleep\nisolated=1\n' "$decoy_pid" "$decoy_pid" \
@@ -1923,6 +1884,46 @@ case_dispatch_cancel_record_write_failure() {
   fi
   rm -rf "$work" "$bindir"; rm -f "$started_fifo" "$release_fifo"
 }
+
+case_detached_is_default
+case_foreground_explicit_no_runspec
+case_default_detach_terminal_record_is_ok
+case_detached_true_detach
+case_dispatch_wait_failure_propagates
+case_dispatch_wait_timeout
+case_dispatch_wait_not_found
+case_dispatch_wait_requires_cd
+case_invalid_lifecycle_value
+case_detached_print_cmd_incompatible
+case_detached_ineligible_rejected
+case_detach_eligible_unit
+case_config_lifecycle_detached
+case_config_lifecycle_foreground
+case_detached_brief_snapshot_survives_cleanup
+case_flag_beats_config
+case_supervisor_rejects_unroutable
+case_supervisor_rejects_traversal_name
+case_supervisor_missing_spec
+case_supervisor_rejects_malformed_brief
+case_supervisor_rejects_native_brief_smuggle
+case_supervisor_rejects_malformed_base64
+case_supervisor_rejects_bad_schema
+case_supervisor_rejects_bad_runid
+case_supervisor_rejects_missing_scalar
+case_supervisor_rejects_bad_printcmd
+case_supervisor_rejects_cd_smuggle
+case_detached_autopack_snapshot_is_augmented
+case_supervisor_preflight_failure
+case_supervisor_tail_failure_writes_fallback_record
+case_supervisor_fallback_covers_ok_run_with_poisoned_results
+case_dispatch_wait_ignores_forged_workspace_record
+case_dispatch_wait_ignores_forged_sentinel
+case_dispatch_wait_same_user_nonce_forgery_documented
+case_dispatch_wait_fallback_adversarial_key_removal
+case_dispatch_wait_second_call_uses_record
+case_supervisor_die_restricted_cleanup
+case_dispatch_wait_poll_interval_honored
+
 
 case_dispatch_cancel_in_flight
 case_dispatch_cancel_already_terminal
