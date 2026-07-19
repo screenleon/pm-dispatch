@@ -68,18 +68,21 @@ _die() {
   printf 'dispatch-supervisor: %s\n' "$*" >&2
   # Write a failed dispatch record so pmctl dispatch wait observes failure
   # quickly instead of blocking until timeout. Only possible after the run-spec
-  # has been parsed and the run_id + work_dir are valid. Skip if cancel (or
-  # another terminal winner) already holds the exclusive terminal claim.
-  local _can_fail=1
+  # has been parsed and the run_id + work_dir are valid. Skip sentinel when
+  # cancel (or another terminal winner) already holds the exclusive claim.
+  local _own_terminal=1
   if [[ "${spec_run_id:-}" =~ ^run-[A-Za-z0-9]+-[A-Za-z0-9]+$ ]] \
     && [[ -n "${spec_work_dir:-}" ]] \
     && declare -F _pmctl_dispatch_try_terminal_claim >/dev/null 2>&1; then
     if ! _pmctl_dispatch_try_terminal_claim "$spec_work_dir" "$spec_run_id" "failed" "supervisor"; then
-      _can_fail=0
+      # Another winner (e.g. cancel) owns the terminal; do not overwrite sentinel.
+      _own_terminal=0
     fi
   fi
-  if [[ "$_can_fail" -eq 1 ]] \
-    && [[ "${spec_run_id:-}" =~ ^run-[A-Za-z0-9]+-[A-Za-z0-9]+$ ]] \
+  # Always attempt the observability record on preflight failure when we know
+  # the work dir — even if the terminal claim was unavailable (state partition
+  # missing) so humans and tests still see a failed result file.
+  if [[ "${spec_run_id:-}" =~ ^run-[A-Za-z0-9]+-[A-Za-z0-9]+$ ]] \
     && [[ -n "${spec_work_dir:-}" ]] \
     && declare -F dispatch_record_write >/dev/null 2>&1; then
     local _finished_ts
@@ -89,7 +92,7 @@ _die() {
       "supervisor preflight failed: $*" "" "" "" \
       "${spec_created_ts:-}" "$_finished_ts" 2>/dev/null || true
   fi
-  if [[ "$_can_fail" -eq 1 ]]; then
+  if [[ "$_own_terminal" -eq 1 ]]; then
     _write_sentinel "failed" 2
   fi
   # Only unlink the parent-created brief snapshot, never an arbitrary path from the
