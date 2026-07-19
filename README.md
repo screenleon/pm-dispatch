@@ -164,6 +164,7 @@ router and [`cli/commands.tsv`](cli/commands.tsv).
 - `dispatch wait` — Wait for a detached dispatch run to finish. [experimental; JSON: false; mutating: true]
 - `dispatch cancel` — Cancel an in-flight detached dispatch run (no resume). [experimental; JSON: false; mutating: true]
 - `dispatch status` — List in-flight and terminal detached runs for a work dir. [experimental; JSON: false; mutating: false]
+- `dispatch reconcile` — Diagnose and converge stale/orphaned detached runs to a conservative terminal state. [experimental; JSON: false; mutating: true]
 - `artifacts list` — List managed artifacts. [experimental; JSON: false; mutating: false]
 - `artifacts show` — Show one managed artifact. [experimental; JSON: false; mutating: false]
 - `artifacts gc` — Remove expired managed artifacts. [experimental; JSON: false; mutating: true]

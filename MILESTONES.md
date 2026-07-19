@@ -51,7 +51,7 @@
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-499 | conservative reconcile、doctor stale-run diagnostics、PID reuse/key-loss/crash tests | ⏸（依賴 CC-495） |
+| CC-499 | conservative reconcile、doctor stale-run diagnostics、PID reuse/key-loss/crash tests | ✅ |
 
 ### Phase 2 — operational evidence
 

@@ -579,6 +579,30 @@ _pmctl_dispatch_try_terminal_claim() {
   return 1
 }
 
+# Single-pass read of the four runspec fields cancel/reconcile both need.
+# Sets PMCTL_RS_ADAPTER PMCTL_RS_MODEL PMCTL_RS_BRIEF_FILE PMCTL_RS_CREATED_TS
+# (empty when the runspec is absent/unreadable or a field is missing).
+_pmctl_dispatch_read_runspec_fields() {
+  local runspec="${1:-}"
+  PMCTL_RS_ADAPTER=""
+  PMCTL_RS_MODEL=""
+  PMCTL_RS_BRIEF_FILE=""
+  PMCTL_RS_CREATED_TS=""
+  [[ -f "$runspec" ]] || return 1
+  local line key val
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    key="${line%%=*}"
+    val="${line#*=}"
+    case "$key" in
+      adapter) PMCTL_RS_ADAPTER="$val" ;;
+      model) PMCTL_RS_MODEL="$val" ;;
+      brief_file) PMCTL_RS_BRIEF_FILE="$val" ;;
+      created_ts) PMCTL_RS_CREATED_TS="$val" ;;
+    esac
+  done <"$runspec"
+  return 0
+}
+
 _pmctl_dispatch_read_terminal_claim() {
   local work_dir="${1:-}" run_id="${2:-}"
   local art_dir claim_path
@@ -1450,12 +1474,9 @@ pmctl_dispatch_cancel() {
 
   # Load metadata from trusted runspec when available (not workspace).
   local adapter="" model="" brief_file="" created_ts="" from_state
-  if [[ -f "$runspec" ]]; then
-    adapter="$(grep -m1 '^adapter=' "$runspec" 2>/dev/null | cut -d= -f2-)" || true
-    model="$(grep -m1 '^model=' "$runspec" 2>/dev/null | cut -d= -f2-)" || true
-    brief_file="$(grep -m1 '^brief_file=' "$runspec" 2>/dev/null | cut -d= -f2-)" || true
-    created_ts="$(grep -m1 '^created_ts=' "$runspec" 2>/dev/null | cut -d= -f2-)" || true
-  fi
+  _pmctl_dispatch_read_runspec_fields "$runspec" || true
+  adapter="$PMCTL_RS_ADAPTER"; model="$PMCTL_RS_MODEL"
+  brief_file="$PMCTL_RS_BRIEF_FILE"; created_ts="$PMCTL_RS_CREATED_TS"
   from_state="$(_pmctl_dispatch_infer_from_state "$work_dir" "$run_id")"
   [[ -n "$created_ts" ]] || created_ts="$(pmctl_dispatch_utc_ts)"
   local finished_ts
@@ -1605,6 +1626,237 @@ pmctl_dispatch_status() {
   done
   if [[ "$found" -eq 0 ]]; then
     printf 'pmctl dispatch status: no runs under %s\n' "$work_dir"
+  fi
+  return 0
+}
+
+# Classify (and, unless apply=0, converge) a single detached run from trusted
+# out-of-repo evidence only (identity, pid file, runspec, terminal claim).
+# Never infers success from advisory records; only ever converges to "failed"
+# (never "ok"/"partial") and only when absence-of-process is provable; never
+# overwrites an existing terminal claim (CC-499).
+#   0 — classified (see printed status line); apply may have written a claim
+#   2 — no trusted dispatch evidence at all for this run_id (unknown run)
+_pmctl_dispatch_reconcile_one() {
+  local repo_root="${1:-}" work_dir="${2:-}" run_id="${3:-}" apply="${4:-1}"
+  local art_dir identity_file pid_file runspec
+
+  art_dir="$(_pmctl_dispatch_trusted_artifact_dir "$work_dir" "$run_id")" || {
+    printf 'run: %s  status: indeterminate  detail: state partition unresolved\n' "$run_id"
+    return 0
+  }
+  identity_file="$art_dir/$run_id.supervisor.identity"
+  pid_file="$art_dir/$run_id.supervisor.pid"
+  runspec="$art_dir/$run_id.runspec"
+
+  if _pmctl_dispatch_read_terminal_claim "$work_dir" "$run_id"; then
+    printf 'run: %s  status: terminal-authenticated  final_state: %s\n' "$run_id" "${PMCTL_TERMINAL_STATE:-?}"
+    return 0
+  fi
+
+  if [[ ! -f "$identity_file" && ! -f "$pid_file" && ! -f "$runspec" ]]; then
+    printf 'pmctl dispatch reconcile: no trusted dispatch evidence for %s under %s (unknown run)\n' \
+      "$run_id" "$art_dir" >&2
+    return 2
+  fi
+
+  if [[ -f "$identity_file" ]]; then
+    if ! detached_launch_load_identity_file "$identity_file"; then
+      printf 'run: %s  status: indeterminate  detail: unreadable identity file\n' "$run_id"
+      return 0
+    fi
+    local verify_rc=0
+    detached_launch_verify_identity "$DL_ID_PID" "$identity_file" || verify_rc=$?
+    if [[ "$verify_rc" -eq 0 ]]; then
+      printf 'run: %s  status: in-flight  process_alive: yes\n' "$run_id"
+      return 0
+    fi
+    if [[ "$verify_rc" -eq 2 ]]; then
+      # Live pid, but identity mismatch (e.g. PID reuse). Cannot prove the
+      # original process is gone or still running — refuse to converge.
+      printf 'run: %s  status: indeterminate  detail: identity mismatch (possible PID reuse); not converged\n' "$run_id"
+      return 0
+    fi
+    # verify_rc==1: process (or, per boot_id, the whole boot) is provably
+    # gone. No terminal claim exists (checked above) — orphaned.
+    printf 'run: %s  status: orphaned  detail: process no longer exists, no terminal evidence\n' "$run_id"
+    if [[ "$apply" -eq 1 ]]; then
+      _pmctl_dispatch_reconcile_converge "$repo_root" "$work_dir" "$run_id"
+    fi
+    return 0
+  fi
+
+  if [[ -f "$pid_file" ]]; then
+    local p
+    p="$(tr -d ' \n' <"$pid_file" 2>/dev/null || true)"
+    if [[ "$p" =~ ^[0-9]+$ ]]; then
+      if kill -0 "$p" 2>/dev/null; then
+        printf 'run: %s  status: in-flight  process_alive: unknown-identity\n' "$run_id"
+        return 0
+      fi
+      # Recorded pid confirmed not currently running: provable absence for
+      # THIS specific pid (a negative kill -0 carries no PID-reuse ambiguity —
+      # nothing is running under it right now), even without a full
+      # pid/pgid/starttime identity match. Safe to converge.
+      printf 'run: %s  status: process-gone-without-evidence  detail: recorded pid no longer running, no identity captured\n' "$run_id"
+      if [[ "$apply" -eq 1 ]]; then
+        _pmctl_dispatch_reconcile_converge "$repo_root" "$work_dir" "$run_id"
+      fi
+      return 0
+    fi
+    # Malformed/unparseable pid_file content (not a bare integer) — no
+    # liveness signal at all; falls through to the no-evidence indeterminate
+    # path below rather than being treated as proof of absence.
+  fi
+
+  # No identity file AND no parseable pid — only a runspec (or a malformed
+  # pid_file). Zero liveness signal in either direction; the supervisor could
+  # still be alive with lost or never-written identity artifacts. Report
+  # only, never converge: claiming
+  # "failed" here would fabricate proof of absence the run never gave us
+  # (gate critic finding — a false terminal claim could overwrite a still-live
+  # job; the "never infer success/failure without provable absence" contract
+  # from CC-499's Requirement #3 applies just as much to failure as success).
+  printf 'run: %s  status: indeterminate  detail: no identity or pid ever captured; cannot prove process absence\n' "$run_id"
+  return 0
+}
+
+# Shared convergence tail for both orphaned and process-gone-without-evidence:
+# CAS-claim "failed" (never invented "ok"/"partial"), then best-effort durable
+# Run/Event/dispatch-record evidence from trusted runspec metadata. Mirrors
+# pmctl_dispatch_cancel's post-claim evidence block but writes "failed"
+# (reconcile never signals a process, so 130/"cancelled" would be dishonest).
+# art_dir/identity_file/runspec are re-derived here (same as the caller) so
+# this stays a two-argument-plus-context call, not a five-parameter one.
+_pmctl_dispatch_reconcile_converge() {
+  local repo_root="${1:-}" work_dir="${2:-}" run_id="${3:-}"
+  local art_dir identity_file runspec
+  art_dir="$(_pmctl_dispatch_trusted_artifact_dir "$work_dir" "$run_id")" || return 1
+  identity_file="$art_dir/$run_id.supervisor.identity"
+  runspec="$art_dir/$run_id.runspec"
+
+  if ! _pmctl_dispatch_try_terminal_claim "$work_dir" "$run_id" "failed" "reconcile"; then
+    # Lost the CAS race (e.g. a concurrent cancel/supervisor write) — read
+    # back whatever won; never overwrite.
+    if _pmctl_dispatch_read_terminal_claim "$work_dir" "$run_id"; then
+      printf 'run: %s  status: terminal-authenticated  final_state: %s  detail: reconcile lost race, not overwritten\n' \
+        "$run_id" "${PMCTL_TERMINAL_STATE:-?}"
+    fi
+    return 0
+  fi
+  printf 'run: %s  action: claimed failed (reconcile)\n' "$run_id"
+
+  local adapter="" model="" brief_file="" created_ts="" from_state finished_ts
+  _pmctl_dispatch_read_runspec_fields "$runspec" || true
+  adapter="$PMCTL_RS_ADAPTER"; model="$PMCTL_RS_MODEL"
+  brief_file="$PMCTL_RS_BRIEF_FILE"; created_ts="$PMCTL_RS_CREATED_TS"
+  from_state="$(_pmctl_dispatch_infer_from_state "$work_dir" "$run_id")"
+  [[ -n "$created_ts" ]] || created_ts="$(pmctl_dispatch_utc_ts)"
+  finished_ts="$(pmctl_dispatch_utc_ts)"
+
+  if [[ -n "$adapter" ]]; then
+    pmctl_dispatch_write_transition "$repo_root" "$work_dir" "$adapter" "$run_id" \
+      "failed" 1 "$model" "${brief_file:-}" "" "$created_ts" "$from_state" 2>/dev/null || true
+  fi
+  if declare -F pmctl_dispatch_write_record_soft >/dev/null 2>&1; then
+    pmctl_dispatch_write_record_soft "$run_id" "${adapter:-unknown}" "$model" "${brief_file:-}" \
+      "$work_dir" 1 "failed" "reconciled: process gone, no terminal evidence found" \
+      "" "" "" "$created_ts" "$finished_ts" 2>/dev/null || true
+  fi
+
+  # Evidence is durable; drop stale non-evidence trust artifacts (mirrors cancel).
+  rm -f "$art_dir/$run_id.supervisor.pid" "$identity_file" "$runspec" 2>/dev/null || true
+}
+
+# `pmctl dispatch reconcile <run_id> --cd <dir> [--dry-run]` or
+# `pmctl dispatch reconcile --all --cd <dir> [--dry-run]` (CC-499). Converges
+# stale detached runs to a conservative, evidence-backed terminal state
+# without the user hand-inspecting the state directory or `ps`.
+pmctl_dispatch_reconcile() {
+  local repo_root="${1:-}"
+  shift || true
+  local run_id="" work_dir="" all=0 dry_run=0
+
+  _pmctl_dispatch_ensure_detached_launch "$repo_root" || true
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --cd)
+        if [[ $# -lt 2 ]]; then
+          printf 'pmctl dispatch reconcile: missing value for --cd\n' >&2
+          return 2
+        fi
+        work_dir="$(_portable_canonical_path "$2")"
+        shift 2
+        ;;
+      --all)
+        all=1
+        shift
+        ;;
+      --dry-run)
+        dry_run=1
+        shift
+        ;;
+      --*)
+        printf 'pmctl dispatch reconcile: unknown option %s\n' "$1" >&2
+        return 2
+        ;;
+      *)
+        if [[ -n "$run_id" ]]; then
+          printf 'pmctl dispatch reconcile: unexpected argument %s\n' "$1" >&2
+          return 2
+        fi
+        run_id="$1"
+        shift
+        ;;
+    esac
+  done
+
+  if [[ -z "$work_dir" ]]; then
+    printf 'pmctl dispatch reconcile: --cd <work_dir> is required\n' >&2
+    return 2
+  fi
+  if [[ "$all" -eq 1 && -n "$run_id" ]]; then
+    printf 'pmctl dispatch reconcile: <run_id> and --all are mutually exclusive\n' >&2
+    return 2
+  fi
+  if [[ "$all" -eq 0 && -z "$run_id" ]]; then
+    printf 'pmctl dispatch reconcile: <run_id> is required unless --all is given\n' >&2
+    return 2
+  fi
+  if [[ "$all" -eq 0 ]] && ! [[ "$run_id" =~ ^run-[A-Za-z0-9]+-[A-Za-z0-9]+$ ]]; then
+    printf 'pmctl dispatch reconcile: invalid run_id %q\n' "$run_id" >&2
+    return 2
+  fi
+
+  local apply=1
+  [[ "$dry_run" -eq 1 ]] && apply=0
+
+  if [[ "$all" -eq 0 ]]; then
+    _pmctl_dispatch_reconcile_one "$repo_root" "$work_dir" "$run_id" "$apply"
+    return $?
+  fi
+
+  if ! _pmctl_dispatch_ensure_state_paths; then
+    printf 'pmctl dispatch reconcile: state-paths unavailable\n' >&2
+    return 2
+  fi
+  local proj_dir runs_root run_path found=0
+  proj_dir="$(cd "$work_dir" 2>/dev/null && _SW_REPO_ROOT="$work_dir" _sw_project_dir 2>/dev/null)" || proj_dir=""
+  runs_root="${proj_dir}runs"
+  if [[ -z "$proj_dir" || ! -d "$runs_root" ]]; then
+    printf 'pmctl dispatch reconcile: no runs under %s\n' "$work_dir"
+    return 0
+  fi
+  for run_path in "$runs_root"/*; do
+    [[ -d "$run_path" ]] || continue
+    run_id="$(basename "$run_path")"
+    [[ "$run_id" =~ ^run-[A-Za-z0-9]+-[A-Za-z0-9]+$ ]] || continue
+    _pmctl_dispatch_reconcile_one "$repo_root" "$work_dir" "$run_id" "$apply" || true
+    found=1
+  done
+  if [[ "$found" -eq 0 ]]; then
+    printf 'pmctl dispatch reconcile: no runs under %s\n' "$work_dir"
   fi
   return 0
 }

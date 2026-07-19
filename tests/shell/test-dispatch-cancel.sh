@@ -8,6 +8,8 @@ PMCTL="$REPO_ROOT/cli/pmctl"
 
 # shellcheck source=tests/lib/test-harness.sh
 . "$SCRIPT_DIR/../lib/test-harness.sh"
+# shellcheck source=tests/lib/dispatch-decoy-helpers.sh
+. "$SCRIPT_DIR/../lib/dispatch-decoy-helpers.sh"
 # shellcheck source=runtime/lib/runner-kind.sh
 . "$REPO_ROOT/runtime/lib/runner-kind.sh"
 # shellcheck source=runtime/lib/executor-router.sh
@@ -33,27 +35,9 @@ _WAIT_OK="${PM_DISPATCH_TEST_WAIT_TIMEOUT:-30}"
 set +m 2>/dev/null || true
 
 # Decoy process in its own session/group (never the suite process group).
-_isolated_decoy() {
-  command -v setsid >/dev/null 2>&1 || return 1
-  setsid tail -f /dev/null </dev/null >/dev/null 2>&1 &
-  local pid=$!
-  local _poll
-  for _poll in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
-    [[ -r "/proc/$pid/stat" ]] && break
-    : "$_poll"
-  done
-  [[ -r "/proc/$pid/stat" ]] || { kill -KILL "$pid" 2>/dev/null || true; return 1; }
-  printf '%s\n' "$pid"
-}
+_isolated_decoy() { dispatch_test_isolated_decoy; }
 
-_kill_pid_quiet() {
-  local pid="${1:-}"
-  [[ -n "$pid" ]] || return 0
-  kill -KILL "$pid" 2>/dev/null || true
-  kill -KILL -- "-$pid" 2>/dev/null || true
-  wait "$pid" 2>/dev/null || true
-  return 0
-}
+_kill_pid_quiet() { dispatch_test_kill_pid_quiet "$1"; }
 
 _safe_case() {
   local fn="${1:?}"
@@ -134,7 +118,7 @@ FAKEOF
   chmod +x "$bindir/codex"
 }
 
-_run_trace_dir() { ( cd "$1" 2>/dev/null && printf '%s/.agent-trace\n' "$(sw_project_run_dir "$2")" ); }
+_run_trace_dir() { dispatch_test_run_trace_dir "$1" "$2"; }
 _record_for_run() {
   if [[ -f "$1/.dispatch-results/$2.md" ]]; then
     printf '%s/.dispatch-results/%s.md\n' "$1" "$2"

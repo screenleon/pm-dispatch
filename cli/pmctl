@@ -125,6 +125,12 @@ case "$cmd/$sub" in
     fi
     pmctl_dispatch_status "$REPO_ROOT" "$@"
     ;;
+  dispatch/reconcile)
+    if ! declare -F pmctl_dispatch_reconcile >/dev/null; then
+      pmctl_die "dispatch reconcile unavailable"
+    fi
+    pmctl_dispatch_reconcile "$REPO_ROOT" "$@"
+    ;;
   artifacts/list)
     if ! declare -F pmctl_artifacts_list >/dev/null; then
       pmctl_die "artifacts list unavailable"

@@ -65,6 +65,21 @@ else
   _HOST_MANIFEST_AVAILABLE=0
 fi
 
+if [[ "$_PORTABLE_AVAILABLE" -eq 1 \
+   && -f "$SCRIPT_DIR/../lib/state-paths.sh" \
+   && -f "$SCRIPT_DIR/../lib/detached-launch.sh" \
+   && -f "$SCRIPT_DIR/../lib/pmctl-dispatch.sh" ]]; then
+  # shellcheck source=runtime/lib/state-paths.sh
+  . "$SCRIPT_DIR/../lib/state-paths.sh"
+  # shellcheck source=runtime/lib/detached-launch.sh
+  . "$SCRIPT_DIR/../lib/detached-launch.sh"
+  # shellcheck source=runtime/lib/pmctl-dispatch.sh
+  . "$SCRIPT_DIR/../lib/pmctl-dispatch.sh"
+  _DISPATCH_RECONCILE_AVAILABLE=1
+else
+  _DISPATCH_RECONCILE_AVAILABLE=0
+fi
+
 _DOCTOR_HOST_NAMES=()
 
 load_doctor_host_modules() {
@@ -465,6 +480,59 @@ check_frontmatter_lint() {
     "bash '$REPO_ROOT/tools/lint/lint-frontmatter.sh' --repo-root '${REPO_ROOT}' for details"
 }
 
+# Read-only stale-detached-run diagnostics (CC-499). Goes through the public
+# `pmctl_dispatch_reconcile --all --dry-run` (same entry point `pmctl dispatch
+# reconcile` uses) rather than re-deriving the run listing or reaching into a
+# private classifier — one implementation of "walk this work dir's runs" for
+# both the CLI and doctor. Dry-run never writes a terminal claim; convergence
+# is opt-in via the real reconcile command, printed as the fix hint below.
+check_detached_runs() {
+  if [[ "$_DISPATCH_RECONCILE_AVAILABLE" -eq 0 ]]; then
+    emit_check detached-runs warn "detached-run diagnostics skipped (dispatch libs not available)"
+    return
+  fi
+
+  local out rc=0
+  out="$(pmctl_dispatch_reconcile "$REPO_ROOT" --all --cd "$REPO_ROOT" --dry-run 2>/dev/null)" || rc=$?
+  if [[ "$rc" -ne 0 && -z "$out" ]]; then
+    emit_check detached-runs warn "detached-run diagnostics skipped (state-paths unavailable)"
+    return
+  fi
+
+  # Split stale runs by whether `reconcile --all` (no --dry-run) would
+  # actually converge them: orphaned/process-gone-without-evidence are
+  # provable-absent and DO converge; indeterminate (e.g. PID-reuse-suspected)
+  # never does — reconcile refuses to guess. The fix hint must not promise
+  # convergence it will not deliver (gate critic finding, CC-499).
+  local line total=0 reconcilable=0 indeterminate=0
+  while IFS= read -r line; do
+    [[ "$line" == run:\ * ]] || continue
+    total=$((total + 1))
+    case "$line" in
+      *"status: orphaned"*|*"status: process-gone-without-evidence"*)
+        reconcilable=$((reconcilable + 1)) ;;
+      *"status: indeterminate"*)
+        indeterminate=$((indeterminate + 1)) ;;
+    esac
+  done <<<"$out"
+  local stale=$((reconcilable + indeterminate))
+
+  if [[ "$total" -eq 0 ]]; then
+    emit_check detached-runs ok "no detached dispatch runs recorded"
+  elif [[ "$stale" -eq 0 ]]; then
+    emit_check detached-runs ok "$total detached run(s) recorded, none stale"
+  elif [[ "$indeterminate" -eq 0 ]]; then
+    emit_check detached-runs warn "$reconcilable of $total detached run(s) look stale (crash/reboot/orphan)" \
+      "pmctl dispatch reconcile --all --cd '$REPO_ROOT' --dry-run   # inspect, then drop --dry-run to converge"
+  elif [[ "$reconcilable" -eq 0 ]]; then
+    emit_check detached-runs warn "$indeterminate of $total detached run(s) are indeterminate (e.g. possible PID reuse)" \
+      "pmctl dispatch reconcile --all --cd '$REPO_ROOT' --dry-run   # inspect; these require manual investigation, reconcile will not auto-converge them"
+  else
+    emit_check detached-runs warn "$reconcilable of $total detached run(s) look stale (crash/reboot/orphan), $indeterminate more are indeterminate (e.g. possible PID reuse) and will not auto-converge" \
+      "pmctl dispatch reconcile --all --cd '$REPO_ROOT' --dry-run   # inspect first; dropping --dry-run only converges the reconcilable ones"
+  fi
+}
+
 main() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -562,6 +630,7 @@ main() {
   check_scripts_executable
   check_memory_dir
   check_frontmatter_lint
+  check_detached_runs
 
   local ec=0
   [[ $_FAIL_COUNT -gt 0 ]] && ec=1

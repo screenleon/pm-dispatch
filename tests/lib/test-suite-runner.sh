@@ -35,6 +35,7 @@ SUITE_NAMES=(
   test-dispatch-record
   test-dispatch-lifecycle
   test-dispatch-cancel
+  test-dispatch-reconcile
   test-gate-lifecycle
   test-claude-dispatch
   test-opencode-dispatch
@@ -124,6 +125,7 @@ declare -A SUITE_PATHS=(
   [test-dispatch-record]="tests/shell/test-dispatch-record.sh"
   [test-dispatch-lifecycle]="tests/shell/test-dispatch-lifecycle.sh"
   [test-dispatch-cancel]="tests/shell/test-dispatch-cancel.sh"
+  [test-dispatch-reconcile]="tests/shell/test-dispatch-reconcile.sh"
   [test-gate-lifecycle]="tests/shell/test-gate-lifecycle.sh"
   [test-claude-dispatch]="tests/shell/test-claude-dispatch.sh"
   [test-opencode-dispatch]="tests/shell/test-opencode-dispatch.sh"
