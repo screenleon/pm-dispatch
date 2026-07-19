@@ -513,11 +513,30 @@ _pmctl_dispatch_trace_dir() {
   printf '%s\n' "$work_dir/.agent-trace"
 }
 
-# Out-of-repo trusted artifact directory for a run (same partition as the
-# supervisor pid/runspec). Never reads workspace-writable paths for authority.
+# Out-of-repo trusted artifact directory for cancel authority (identity,
+# terminal claim, runspec, supervisor pid). ALWAYS derived from the state
+# store project run dir — never honors an explicit --trace-dir override
+# (that path is adapter observability only and may be workspace-writable).
 _pmctl_dispatch_trusted_artifact_dir() {
   local work_dir="${1:-}" run_id="${2:-}"
-  _pmctl_dispatch_trace_dir "$work_dir" "$run_id" ""
+  if [[ "$(type -t sw_project_run_dir 2>/dev/null)" != function ]]; then
+    local _sp_lib="${repo_root:-}/runtime/lib/state-paths.sh"
+    if [[ -r "$_sp_lib" ]]; then
+      # shellcheck disable=SC1090,SC1091
+      . "$_sp_lib" 2>/dev/null || true
+    fi
+  fi
+  if [[ "$(type -t sw_project_run_dir 2>/dev/null)" == function ]]; then
+    local _rd
+    _rd="$(cd "$work_dir" 2>/dev/null && sw_project_run_dir "$run_id" 2>/dev/null)" || _rd=""
+    if [[ -n "$_rd" ]]; then
+      printf '%s\n' "$_rd/.agent-trace"
+      return 0
+    fi
+  fi
+  # Legacy fallback when state partition is unavailable: still never takes an
+  # explicit override; caller-controlled paths cannot become cancel authority.
+  printf '%s\n' "$work_dir/.agent-trace"
 }
 
 # Exclusive terminal claim (CAS). First writer wins; content is key=value.
@@ -973,22 +992,13 @@ pmctl_dispatch_run_detached() {
   fi
 
   local spec_dir spec_path supervisor_log pid_file
-  # Relocate the runspec + supervisor log/pid to the out-of-repo run dir (CC-417).
-  # The supervisor re-runs execute_tail with the same (work_dir, run_id) and the
-  # helper is deterministic, so it independently derives this exact dir for the
-  # footer/trace — no need to thread the location through the run-spec. An explicit
-  # --trace-dir survives in `native` and is re-read by the supervisor's execute_tail,
-  # so honour the same value here to keep parent and supervisor agreeing. The
-  # supervisor is launched with an absolute --run-spec path, so reading the
-  # relocated spec from outside the workspace is unaffected.
-  local _explicit_td="" _nt_i
-  for ((_nt_i = 0; _nt_i < ${#native[@]}; _nt_i += 1)); do
-    if [[ "${native[$_nt_i]}" == "--trace-dir" ]]; then
-      _explicit_td="${native[$((_nt_i + 1))]:-}"
-      break
-    fi
-  done
-  spec_dir="$(_pmctl_dispatch_trace_dir "$work_dir" "$run_id" "$_explicit_td")"
+  # Authoritative runspec / supervisor log / pid / identity live ONLY under the
+  # state-derived trusted artifact dir (CC-495). An explicit --trace-dir in
+  # native args is adapter observability only and must never host cancel
+  # authority (identity, terminal claim). The supervisor is launched with an
+  # absolute --run-spec path so it reads the trusted location regardless of
+  # where adapter traces land.
+  spec_dir="$(_pmctl_dispatch_trusted_artifact_dir "$work_dir" "$run_id")"
   spec_path="$spec_dir/$run_id.runspec"
   supervisor_log="$spec_dir/$run_id.supervisor.log"
   pid_file="$spec_dir/$run_id.supervisor.pid"

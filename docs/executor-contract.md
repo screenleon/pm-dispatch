@@ -102,7 +102,7 @@ The record contains YAML frontmatter with machine-readable summary fields (`run_
 
 Detached runs can be actively terminalized with `pmctl dispatch cancel <run_id> --cd <work_dir>`:
 
-- **Authority** is the out-of-repo trusted run directory (process identity + exclusive terminal claim). Workspace PID files, `.dispatch-results/`, or forged records are never used as cancel authority.
+- **Authority** is the state-store-derived out-of-repo run directory (process identity + exclusive terminal claim + runspec/pid). Workspace paths, `.dispatch-results/`, and an explicit `--trace-dir` override are **never** used as cancel authority — `--trace-dir` remains adapter observability only.
 - **Process kill** re-verifies PID/PGID/starttime/comm before signaling the process group (`SIGTERM`, then `SIGKILL` after `--grace` seconds). Identity mismatch, PID reuse, missing identity, or a non-isolated launch (`setsid` unavailable → `isolated=0` in the identity file) **fail closed without signaling**. Cancel also refuses to signal the caller's own process group.
 - **Kill-before-claim**: when a live process must be signalled, the group is confirmed dead **before** the exclusive cancelled terminal claim and authenticated sentinel are published. A failed kill returns non-zero and does **not** mark the run cancelled.
 - **Terminal CAS**: cancel and natural complete share an exclusive `$run_id.terminal` claim under the trusted artifact dir. Exactly one of `ok` / `failed` / `partial` / `cancelled` wins; existing terminals are never overwritten.

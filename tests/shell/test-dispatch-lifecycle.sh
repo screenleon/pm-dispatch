@@ -1547,15 +1547,17 @@ case_dispatch_cancel_in_flight() {
     return
   fi
 
+  # Identity is written before dispatch returns the run_id (no sleep poll).
   art_dir="$(_run_trace_dir "$work" "$run_id")"
   id_file="$art_dir/$run_id.supervisor.identity"
   claim_file="$art_dir/$run_id.terminal"
-  # Identity capture is best-effort shortly after launch; wait briefly.
-  local _i
-  for _i in 1 2 3 4 5 6 7 8 9 10; do
-    [[ -f "$id_file" ]] && break
-    sleep 0.05
-  done
+  if [[ ! -f "$id_file" ]]; then
+    fail "$name" "identity missing after dispatch returned (expected written before run_id)"
+    { exec 9<>"$release_fifo" && printf 'go\n' >&9 && exec 9>&-; } 2>/dev/null || true
+    rm -rf "$work" "$bindir"; rm -f "$started_fifo" "$release_fifo"
+    return
+  fi
+  pid="$(grep -m1 '^pid=' "$id_file" 2>/dev/null | cut -d= -f2-)" || pid=""
 
   set +e
   PATH="$bindir:$PATH" "$PMCTL" dispatch cancel "$run_id" --cd "$work" --grace 2 >/dev/null 2>&1
@@ -1569,11 +1571,8 @@ case_dispatch_cancel_in_flight() {
   { exec 9<>"$release_fifo" && printf 'go\n' >&9 && exec 9>&-; } 2>/dev/null || true
 
   local proc_gone=1
-  if [[ -f "$id_file" ]]; then
-    pid="$(grep -m1 '^pid=' "$id_file" 2>/dev/null | cut -d= -f2-)" || pid=""
-    if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
-      proc_gone=0
-    fi
+  if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+    proc_gone=0
   fi
   # After successful cancel, identity file is removed; check via claim + wait.
   if [[ "$cancel_code" -eq 0 && "$wait_code" -eq 130 ]] \
@@ -1649,15 +1648,11 @@ case_dispatch_cancel_identity_mismatch() {
     return
   fi
 
+  # Identity is written before dispatch returns (no sleep poll).
   art_dir="$(_run_trace_dir "$work" "$run_id")"
   id_file="$art_dir/$run_id.supervisor.identity"
-  local _i
-  for _i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
-    [[ -f "$id_file" ]] && break
-    sleep 0.05
-  done
   if [[ ! -f "$id_file" ]]; then
-    fail "$name" "identity file never written"
+    fail "$name" "identity missing after dispatch returned"
     { exec 9<>"$release_fifo" && printf 'go\n' >&9 && exec 9>&-; } 2>/dev/null || true
     rm -rf "$work" "$bindir"; rm -f "$started_fifo" "$release_fifo"
     return
@@ -1668,7 +1663,7 @@ case_dispatch_cancel_identity_mismatch() {
   # by killing the wrong process.
   sleep 60 &
   sleep_pid=$!
-  printf 'pid=%s\npgid=%s\nstarttime=1\ncomm=sleep\n' "$sleep_pid" "$sleep_pid" >"$id_file"
+  printf 'pid=%s\npgid=%s\nstarttime=1\ncomm=sleep\nisolated=1\n' "$sleep_pid" "$sleep_pid" >"$id_file"
 
   set +e
   PATH="$bindir:$PATH" "$PMCTL" dispatch cancel "$run_id" --cd "$work" --grace 1 >/dev/null 2>&1
@@ -1747,6 +1742,76 @@ case_dispatch_cancel_ignores_workspace_pid() {
   rm -rf "$work" "$bindir"; rm -f "$started_fifo" "$release_fifo"
 }
 
+# ── cancel: explicit --trace-dir is not cancel authority ────────────────────
+# Behavior: even when --trace-dir points at a workspace-writable path that
+#          contains a forged identity, cancel uses the state-derived trusted
+#          dir and leaves a decoy process (forged target) alive.
+# Steps: blocking run with --trace-dir=$work/evil-trace → forge identity in
+#        evil-trace → cancel → assert success against real supervisor and
+#        decoy still alive.
+case_dispatch_cancel_ignores_explicit_trace_dir() {
+  local name="lifecycle/dispatch cancel ignores explicit --trace-dir for authority"
+  should_run "$name" || return 0
+  local work brief bindir run_id started_fifo release_fifo _started_dummy
+  local evil_trace decoy_pid trusted_id
+  work="$(mktemp -d)"; git init -q "$work"
+  brief="$(_mk_brief "$work")"
+  bindir="$(mktemp -d)"
+  started_fifo="$(mktemp -u)"; release_fifo="$(mktemp -u)"
+  mkfifo "$started_fifo" "$release_fifo"
+  _install_fake_codex_blocking "$bindir" 0 "$started_fifo" "$release_fifo"
+  evil_trace="$work/evil-trace"
+  mkdir -p "$evil_trace"
+
+  set +e
+  run_id="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" --lifecycle detached --trace-dir "$evil_trace" 2>/dev/null)"
+  set -e
+  if ! read -r -t 10 _started_dummy < "$started_fifo"; then
+    fail "$name" "adapter did not start"
+    { exec 9<>"$release_fifo" && printf 'go\n' >&9 && exec 9>&-; } 2>/dev/null || true
+    rm -rf "$work" "$bindir"; rm -f "$started_fifo" "$release_fifo"
+    return
+  fi
+
+  trusted_id="$(_run_trace_dir "$work" "$run_id")/$run_id.supervisor.identity"
+  if [[ ! -f "$trusted_id" ]]; then
+    fail "$name" "trusted identity missing under state run dir"
+    { exec 9<>"$release_fifo" && printf 'go\n' >&9 && exec 9>&-; } 2>/dev/null || true
+    rm -rf "$work" "$bindir"; rm -f "$started_fifo" "$release_fifo"
+    return
+  fi
+
+  sleep 60 &
+  decoy_pid=$!
+  # Forge authority-looking files under the explicit trace-dir (must be ignored).
+  printf 'pid=%s\npgid=%s\nstarttime=1\ncomm=sleep\nisolated=1\n' "$decoy_pid" "$decoy_pid" \
+    >"$evil_trace/$run_id.supervisor.identity"
+  printf '%s\n' "$decoy_pid" >"$evil_trace/$run_id.supervisor.pid"
+
+  local cancel_code decoy_alive=0
+  set +e
+  PATH="$bindir:$PATH" "$PMCTL" dispatch cancel "$run_id" --cd "$work" --grace 2 >/dev/null 2>&1
+  cancel_code=$?
+  set -e
+  if kill -0 "$decoy_pid" 2>/dev/null; then
+    decoy_alive=1
+  fi
+  kill "$decoy_pid" 2>/dev/null || true
+  wait "$decoy_pid" 2>/dev/null || true
+  { exec 9<>"$release_fifo" && printf 'go\n' >&9 && exec 9>&-; } 2>/dev/null || true
+
+  local claim
+  claim="$(_run_trace_dir "$work" "$run_id")/$run_id.terminal"
+  if [[ "$cancel_code" -eq 0 && "$decoy_alive" -eq 1 ]] \
+    && [[ -f "$claim" ]] && grep -q '^final_state=cancelled$' "$claim" \
+    && [[ ! -f "$evil_trace/$run_id.terminal" ]]; then
+    pass "$name"
+  else
+    fail "$name" "cancel=$cancel_code decoy_alive=$decoy_alive claim=$(cat "$claim" 2>/dev/null | tr '\n' '|') evil_term=$(ls "$evil_trace" 2>/dev/null | tr '\n' ' ')"
+  fi
+  rm -rf "$work" "$bindir"; rm -f "$started_fifo" "$release_fifo"
+}
+
 # ── status: lists in-flight runs ────────────────────────────────────────────
 # Behavior: dispatch status reports in-flight while adapter is blocked.
 # Steps: blocking detached run → status → assert "status: in-flight" for run_id.
@@ -1814,6 +1879,7 @@ case_dispatch_cancel_in_flight
 case_dispatch_cancel_already_terminal
 case_dispatch_cancel_identity_mismatch
 case_dispatch_cancel_ignores_workspace_pid
+case_dispatch_cancel_ignores_explicit_trace_dir
 case_dispatch_status_lists_in_flight
 case_dispatch_status_lists_terminal
 th_summary
