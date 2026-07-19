@@ -1369,23 +1369,35 @@ pmctl_dispatch_cancel() {
     detached_launch_verify_identity "$pid" "$identity_file"
     verify_rc=$?
     case "$verify_rc" in
-      0|1)
-        # Non-isolated launches share the caller process group: never signal and
-        # never publish cancelled (leader may be gone while descendants remain).
+      0)
+        # Live leader matches identity — only safe path that may signal.
         if [[ "$isolated" != "1" ]]; then
           printf 'pmctl dispatch cancel: run %s is not in an isolated process group (no setsid); refusing cancel (fail-closed)\n' \
             "$run_id" >&2
           return 2
         fi
-        # PID may be gone (rc=1) while adapter descendants remain in the
-        # recorded isolated PGID. Always require the process group dead before
-        # taking the cancelled claim.
         if [[ -n "$pgid" ]] && kill -0 -- "-$pgid" 2>/dev/null; then
           if ! detached_launch_kill_process_group "$pgid" "$grace"; then
             printf 'pmctl dispatch cancel: process group %s for %s still alive after SIGKILL; not marking cancelled\n' \
               "$pgid" "$run_id" >&2
             return 2
           fi
+        fi
+        ;;
+      1)
+        # Leader PID is gone. Do NOT signal a still-live PGID: without the
+        # original leader we cannot re-prove identity, so a reused PGID could
+        # belong to an unrelated same-user workload. Fail closed unless the
+        # recorded group is already empty (nothing left to signal).
+        if [[ "$isolated" != "1" ]]; then
+          printf 'pmctl dispatch cancel: run %s is not in an isolated process group (no setsid); refusing cancel (fail-closed)\n' \
+            "$run_id" >&2
+          return 2
+        fi
+        if [[ -n "$pgid" ]] && kill -0 -- "-$pgid" 2>/dev/null; then
+          printf 'pmctl dispatch cancel: supervisor pid gone but process group %s still live for %s; refusing kill without identity re-proof (fail-closed)\n' \
+            "$pgid" "$run_id" >&2
+          return 2
         fi
         ;;
       2)
