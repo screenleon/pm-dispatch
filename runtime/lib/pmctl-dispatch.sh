@@ -1108,6 +1108,19 @@ pmctl_dispatch_run_detached() {
           rm -f "$_id_file" 2>/dev/null || true
         fi
       fi
+      # Prove isolation: if recorded pgid is the caller's group, rewrite isolated=0
+      # so cancel never treats a non-isolated launch as safe to signal.
+      if [[ -f "$_id_file" ]]; then
+        local _cap_pgid _self_pgid
+        _cap_pgid="$(grep -m1 '^pgid=' "$_id_file" 2>/dev/null | cut -d= -f2-)" || _cap_pgid=""
+        _self_pgid="$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')" || _self_pgid=""
+        if [[ -n "$_cap_pgid" && -n "$_self_pgid" && "$_cap_pgid" == "$_self_pgid" ]]; then
+          printf 'pmctl dispatch run: WARN: supervisor not isolated from caller pgid=%s; cancel will refuse kill\n' "$_self_pgid" >&2
+          if ! detached_launch_capture_identity "$_sup_pid" "0" >"$_id_file" 2>/dev/null; then
+            rm -f "$_id_file" 2>/dev/null || true
+          fi
+        fi
+      fi
     fi
   fi
   unset PM_SUPERVISOR_NONCE

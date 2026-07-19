@@ -284,18 +284,27 @@ detached_launch_kill_process_group() {
   local pgid="${1:?pgid required}" grace="${2:-5}"
   local waited=0 self_pgid probe p_pgid
   [[ "$pgid" =~ ^[1-9][0-9]*$ ]] || return 1
+  # Fail closed if we cannot determine our own process group: without it we
+  # cannot prove the target is not the invoking shell/automation runner.
   self_pgid="$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')" || self_pgid=""
-  if [[ -n "$self_pgid" && "$pgid" == "$self_pgid" ]]; then
+  if [[ -z "$self_pgid" || ! "$self_pgid" =~ ^[1-9][0-9]*$ ]]; then
+    return 1
+  fi
+  if [[ "$pgid" == "$self_pgid" ]]; then
     return 1
   fi
   # Walk ancestors: if any share the target pgid, refuse (shared runner group).
+  # If /proc/ps becomes unreadable mid-walk, fail closed rather than signal.
   probe="$$"
   while [[ "$probe" =~ ^[1-9][0-9]*$ && "$probe" -gt 1 ]]; do
-    p_pgid="$(ps -o pgid= -p "$probe" 2>/dev/null | tr -d ' ')" || break
-    if [[ -n "$p_pgid" && "$p_pgid" == "$pgid" ]]; then
+    p_pgid="$(ps -o pgid= -p "$probe" 2>/dev/null | tr -d ' ')" || return 1
+    if [[ -z "$p_pgid" ]]; then
       return 1
     fi
-    probe="$(ps -o ppid= -p "$probe" 2>/dev/null | tr -d ' ')" || break
+    if [[ "$p_pgid" == "$pgid" ]]; then
+      return 1
+    fi
+    probe="$(ps -o ppid= -p "$probe" 2>/dev/null | tr -d ' ')" || return 1
   done
   # Negative pid = process group. Prefer kill, fall back quietly if already gone.
   kill -TERM -- "-$pgid" 2>/dev/null || true
