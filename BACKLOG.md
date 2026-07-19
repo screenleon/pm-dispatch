@@ -11,7 +11,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 |----|--------|------|--------|----------|------|----------|------|
 | CC-450 | 🟢 someday | 其餘 9 個 test-*.sh docstring 格式統一（CC-004 同款 Behavior/Steps，跨檔） | ops | 2026-07-03 | — | P3 | — |
 | CC-452 | 🔵 active | guard/hook 對稱性與併發 hardening；僅與 lifecycle/state correctness 直接相關的 slice 納入 v0.10.0 | ops | 2026-07-06 | — | P3 | hygiene |
-| CC-453 | 🔵 active | worktree/auto-pack 路徑契約 hardening；僅與 lifecycle/state correctness 直接相關的 slice 納入 v0.10.0 | ops | 2026-07-06 | — | P3 | hygiene |
+| CC-453 | ✅ done | worktree/auto-pack 路徑契約 hardening；僅與 lifecycle/state correctness 直接相關的 slice 納入 v0.10.0 | ops | 2026-07-06 | pr:#430 | P3 | hygiene |
 | CC-461 | 🟢 someday | `doctor.sh --fix`：僅限冪等/可逆/不碰使用者內容類別的自動修復；待 CC-447 offline smoke 產出摔倒點清單後定白名單（2026-07-07 openyida 跨專案分析） | ops/install | 2026-07-07 | — | P3 | — |
 | CC-462 | 🟢 someday | e2e 可拋棄資源紀律：前綴命名 + registry JSON + result artifact；掛在 CC-449 e2e 新 phase 之後，與 CC-447 live smoke 共用同一 registry（2026-07-07 openyida 跨專案分析） | ops/test | 2026-07-07 | — | P3 | — |
 | CC-463 | 🟢 someday | `pmctl batch` 泛用批次執行原語；依賴 CC-460（合法性驗證來源）；新注入面須過 security-reviewer（2026-07-07 openyida 跨專案分析） | arch/process | 2026-07-07 | — | P3 | design |
@@ -195,7 +195,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `ops/backlog/archive-cl
 **Dependencies**: 無硬前置；只有與 CC-495/498 lifecycle/state correctness 直接相關的 slice 納入 v0.10.0，其餘維持一般 hardening backlog。
 **Source**: 2026-07-06 盲測程式碼稽核（runtime 管線角度）。
 
-## CC-453 — worktree/auto-pack 路徑契約 hardening 🔵 active
+## CC-453 — worktree/auto-pack 路徑契約 hardening
 
 **Problem**（2026-07-06 盲測稽核 + 實際洩漏案例）:
 1. `pmctl_worktree_create` 以「stdout 最後一行 = worktree 路徑」為輸出契約，`git worktree add` 的 stdout chatter（`HEAD is now at ...`）不抑制、只靠消費端 `tail -1`（`pmctl-ship.sh` 等）——契約脆弱。2026-07-03 開發期間曾實際把 5 個名為 `HEAD is now at <sha> seed` 的垃圾目錄洩漏到 repo 根目錄（內含 `.pm-dispatch/ctx/packs`；因 `.pm-dispatch` 被 gitignore，`git status` 完全不可見）。2026-07-06 已清除，現行套件重跑不再重現，但根因鏈仍在。

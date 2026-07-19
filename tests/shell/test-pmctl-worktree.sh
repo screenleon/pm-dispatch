@@ -107,6 +107,29 @@ case_create_new_branch() {
   fi
 }
 
+case_create_stdout_single_line_path() {
+  # behavior: create's stdout is exactly one line (the worktree path); git's
+  # own progress chatter (e.g. "Preparing worktree...") must not leak into it
+  # Steps: create feat/y with --from (a path that reliably makes git print
+  # chatter); assert stdout has exactly 1 line equal to the printed path
+  local name="worktree create: stdout contract is exactly one line (the path)"
+  should_run "$name" || return 0
+  local store work out err status=0 line_count wt_path
+  store="$tmp_root/state-create-stdout"
+  work="$tmp_root/work-create-stdout"
+  make_work_repo "$work"
+  git -C "$work" branch base-branch
+  out="$tmp_root/c-stdout.out"; err="$tmp_root/c-stdout.err"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree create feat/y --from base-branch --cd "$work" > "$out" 2> "$err" || status=$?
+  line_count="$(wc -l < "$out" | tr -d ' ')"
+  wt_path="$(<"$out")"
+  if [[ "$status" -eq 0 && "$line_count" -eq 1 && -d "$wt_path" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status line_count=$line_count out=$(<"$out") err=$(<"$err")"
+  fi
+}
+
 case_create_from_base() {
   # behavior: create --from <base> creates the new branch off the given base commit, not HEAD
   # Steps: create a base-branch pointer; create feat/from-base --from base-branch; assert its HEAD sha == base sha
@@ -860,6 +883,7 @@ case_gc_path_with_regex_metachar_not_misclassified() {
 
 case_create_requires_branch
 case_create_new_branch
+case_create_stdout_single_line_path
 case_create_from_base
 case_create_existing_branch_no_new_ref
 case_create_name_override_slug

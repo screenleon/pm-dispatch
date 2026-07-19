@@ -260,7 +260,11 @@ pmctl_worktree_create() {
     git_args+=(-b "$branch" "$wt_path")
   fi
 
-  if ! git -C "$work_dir" "${git_args[@]}"; then
+  # `git worktree add` prints progress chatter (e.g. "Preparing worktree...",
+  # "HEAD is now at ...") to stdout; redirect it to stderr so this function's
+  # stdout contract stays exactly one line (the worktree path) for callers
+  # that capture it directly.
+  if ! git -C "$work_dir" "${git_args[@]}" 1>&2; then
     printf 'pmctl worktree create: git worktree add failed\n' >&2
     return 1
   fi
