@@ -2008,6 +2008,77 @@ EOF
   rm -rf "$work"
 }
 
+# ── cancel: non-isolated live process refuses group kill ────────────────────
+# Behavior: identity with isolated=0 and a live PID causes cancel to exit 2
+#          without signaling the process or writing a cancelled claim.
+# Steps: craft trusted identity (isolated=0) + runspec for a live decoy →
+#        cancel → assert exit 2, decoy alive, no terminal claim.
+case_dispatch_cancel_non_isolated_refuses_kill() {
+  local name="lifecycle/dispatch cancel refuses non-isolated live process group"
+  should_run "$name" || return 0
+  local work run_id art_dir decoy cancel_code claim decoy_alive=0
+  work="$(mktemp -d)"; git init -q "$work"
+  run_id="run-20260719T000000Z-c49502"
+  art_dir="$(_run_trace_dir "$work" "$run_id")"
+  mkdir -p "$art_dir"
+
+  tail -f /dev/null &
+  decoy=$!
+  disown "$decoy" 2>/dev/null || true
+  # Force isolated=0 even if pid==pgid; cancel must refuse live non-isolated kill.
+  printf 'pid=%s\npgid=%s\nstarttime=1\ncomm=tail\nisolated=0\n' "$decoy" "$decoy" \
+    >"$art_dir/$run_id.supervisor.identity"
+  # Use real starttime so verify matches, then force isolated=0.
+  if detached_launch_capture_identity "$decoy" "0" >"$art_dir/$run_id.supervisor.identity" 2>/dev/null; then
+    :
+  else
+    kill "$decoy" 2>/dev/null || true
+    fail "$name" "could not capture identity for decoy"
+    rm -rf "$work"
+    return
+  fi
+
+  cat >"$art_dir/$run_id.runspec" <<EOF
+schema_version=2
+run_id=$run_id
+adapter=codex
+work_dir=$work
+cd_arg=$work
+brief_file=/tmp/brief-$run_id.md
+model=
+created_ts=2026-07-19T00:00:00Z
+print_cmd=0
+initial_state_written=1
+native_b64:
+EOF
+  printf 'goal: non-isolated cancel fixture\n' >"/tmp/brief-$run_id.md"
+  local key_file nonce
+  key_file="$(_pmctl_sentinel_key_file "$run_id")"
+  mkdir -p "$(dirname "$key_file")"
+  chmod 700 "$(dirname "$key_file")" 2>/dev/null || true
+  nonce="$(detached_launch_generate_nonce)"
+  printf '%s' "$nonce" >"$key_file"
+
+  set +e
+  pmctl_dispatch_cancel "$REPO_ROOT" "$run_id" --cd "$work" --grace 1 >/dev/null 2>&1
+  cancel_code=$?
+  set -e
+  if kill -0 "$decoy" 2>/dev/null; then
+    decoy_alive=1
+  fi
+  kill "$decoy" 2>/dev/null || true
+  wait "$decoy" 2>/dev/null || true
+  claim="$art_dir/$run_id.terminal"
+  rm -f "/tmp/brief-$run_id.md" "$key_file" 2>/dev/null || true
+
+  if [[ "$cancel_code" -eq 2 && "$decoy_alive" -eq 1 && ! -f "$claim" ]]; then
+    pass "$name"
+  else
+    fail "$name" "cancel=$cancel_code decoy_alive=$decoy_alive claim=$( [[ -f "$claim" ]] && echo present || echo absent )"
+  fi
+  rm -rf "$work"
+}
+
 case_dispatch_cancel_in_flight
 case_dispatch_cancel_already_terminal
 case_dispatch_cancel_identity_mismatch
@@ -2015,6 +2086,7 @@ case_dispatch_cancel_ignores_workspace_pid
 case_dispatch_cancel_ignores_explicit_trace_dir
 case_dispatch_cancel_record_write_failure
 case_dispatch_cancel_orphaned_process_group
+case_dispatch_cancel_non_isolated_refuses_kill
 case_dispatch_status_lists_in_flight
 case_dispatch_status_lists_terminal
 th_summary

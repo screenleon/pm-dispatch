@@ -1328,14 +1328,16 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 ## CC-495 — `pmctl dispatch cancel <run_id>`：detached run 中途終止機制 ✅ done 2026-07-19
 
 **Outcome**: Shipped `pmctl dispatch cancel <run_id> --cd <work_dir>` and
-`pmctl dispatch status --cd <work_dir>`. Trusted artifact dir records
-supervisor identity (pid/pgid/starttime/comm); cancel re-verifies before
-process-group SIGTERM/SIGKILL. Exclusive `$run_id.terminal` CAS ensures a
-single winner among ok/failed/partial/cancelled. Cancel writes Run/Event
-(`run.cancelled`)/dispatch record then nonce-authenticated cancelled
-sentinel; wait returns exit 130. Lifecycle suite covers in-flight cancel,
-already-terminal non-overwrite, identity mismatch fail-closed, workspace PID
-non-authority, and status listing.
+minimal discovery via `pmctl dispatch status --cd <work_dir>` (ticket req. 8).
+Trusted state-derived artifact dir records supervisor identity
+(pid/pgid/starttime/comm/isolated); cancel re-verifies before process-group
+SIGTERM/SIGKILL and refuses non-isolated live groups. Exclusive
+`$run_id.terminal` CAS ensures a single winner among ok/failed/partial/
+cancelled. Cancel writes Run/Event (`run.cancelled`)/dispatch record then
+nonce-authenticated cancelled sentinel; wait returns exit 130. Lifecycle
+suite covers in-flight cancel, already-terminal non-overwrite, identity
+mismatch, non-isolated refuse, orphaned PGID, forged workspace/`--trace-dir`,
+incomplete record still wait-resolvable, and status listing.
 
 **Problem**: `pmctl dispatch run --lifecycle detached` 有 `run`（啟動）與 `wait`（等待完成），但沒有任何方式可以在使用者發現 executor 卡住、跑錯方向、或需要中途喊停時主動終止一個進行中的 run。現況只能手動找到並 `kill $(cat <run_dir>/<run_id>.supervisor.pid)`——這個路徑完全沒有文件記錄，且：
 1. `_pmctl_dispatch_launch_supervisor`（`runtime/lib/pmctl-dispatch.sh`）用 `detached_launch_under_setsid` 啟動 supervisor，若只 kill `.supervisor.pid` 記錄的單一 pid，底層真正在執行的 adapter CLI 子行程（在其自己的 process group 內）不保證被連帶終止，可能留下孤兒 process（性質類似 CC-487 觀察到的 CI 殘留 bash process）。
