@@ -307,13 +307,16 @@ detached_launch_kill_process_group() {
     probe="$(ps -o ppid= -p "$probe" 2>/dev/null | tr -d ' ')" || return 1
   done
   # Negative pid = process group. Prefer kill, fall back quietly if already gone.
+  # Poll interval is fractional so short --grace values (tests) do not wait full
+  # seconds per tick; wall-clock budget remains `grace` seconds.
+  local poll="0.2"
   kill -TERM -- "-$pgid" 2>/dev/null || true
-  while (( waited < grace )); do
+  local start=$SECONDS
+  while (( SECONDS - start < grace )); do
     if ! kill -0 -- "-$pgid" 2>/dev/null; then
       return 0
     fi
-    sleep 1
-    waited=$((waited + 1))
+    sleep "$poll"
   done
   if kill -0 -- "-$pgid" 2>/dev/null; then
     kill -KILL -- "-$pgid" 2>/dev/null || true

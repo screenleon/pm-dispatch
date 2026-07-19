@@ -29,6 +29,44 @@ export XDG_RUNTIME_DIR="$_TEST_XDG_RUNTIME_DIR"
 export PM_DISPATCH_WAIT_POLL_INTERVAL="${PM_DISPATCH_WAIT_POLL_INTERVAL:-0.1}"
 _WAIT_OK="${PM_DISPATCH_TEST_WAIT_TIMEOUT:-30}"
 
+# Job control off: killed decoys must not become interactive job failures.
+set +m 2>/dev/null || true
+
+# Decoy process in its own session/group (never the suite process group).
+_isolated_decoy() {
+  command -v setsid >/dev/null 2>&1 || return 1
+  setsid tail -f /dev/null </dev/null >/dev/null 2>&1 &
+  local pid=$!
+  local i
+  for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+    [[ -r "/proc/$pid/stat" ]] && break
+  done
+  [[ -r "/proc/$pid/stat" ]] || { kill -KILL "$pid" 2>/dev/null || true; return 1; }
+  printf '%s\n' "$pid"
+}
+
+_kill_pid_quiet() {
+  local pid="${1:-}"
+  [[ -n "$pid" ]] || return 0
+  kill -KILL "$pid" 2>/dev/null || true
+  kill -KILL -- "-$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  return 0
+}
+
+_safe_case() {
+  local fn="${1:?}"
+  if ! declare -F "$fn" >/dev/null 2>&1; then
+    fail "missing case function: $fn" "not defined"
+    return 0
+  fi
+  set +e
+  "$fn"
+  set -e
+  return 0
+}
+
+
 _BRIEFS=()
 _mk_brief() {
   local work="$1" bf
@@ -246,12 +284,23 @@ case_dispatch_cancel_identity_mismatch() {
     return
   fi
 
-  # Forge a different starttime while keeping a live decoy pid so verify fails
-  # closed (PID reuse / identity mismatch) and cancel must not claim success
-  # by killing the wrong process.
-  tail -f /dev/null &
-  sleep_pid=$!
-  printf 'pid=%s\npgid=%s\nstarttime=1\ncomm=sleep\nisolated=1\n' "$sleep_pid" "$sleep_pid" >"$id_file"
+  # Live decoy in its OWN session; rewrite starttime so verify mismatches.
+  sleep_pid="$(_isolated_decoy)" || {
+    fail "$name" "setsid decoy unavailable"
+    { exec 9<>"$release_fifo" && printf 'go\n' >&9 && exec 9>&-; } 2>/dev/null || true
+    PATH="$bindir:$PATH" "$PMCTL" dispatch cancel "$run_id" --cd "$work" --grace 1 >/dev/null 2>&1 || true
+    rm -rf "$work" "$bindir"; rm -f "$started_fifo" "$release_fifo"
+    return
+  }
+  if ! detached_launch_capture_identity "$sleep_pid" "1" >"$id_file" 2>/dev/null; then
+    _kill_pid_quiet "$sleep_pid"
+    fail "$name" "identity capture for decoy failed"
+    { exec 9<>"$release_fifo" && printf 'go\n' >&9 && exec 9>&-; } 2>/dev/null || true
+    rm -rf "$work" "$bindir"; rm -f "$started_fifo" "$release_fifo"
+    return
+  fi
+  sed -i 's/^starttime=.*/starttime=1/' "$id_file" 2>/dev/null \
+    || sed -i '' 's/^starttime=.*/starttime=1/' "$id_file"
 
   set +e
   PATH="$bindir:$PATH" "$PMCTL" dispatch cancel "$run_id" --cd "$work" --grace 1 >/dev/null 2>&1
@@ -262,8 +311,7 @@ case_dispatch_cancel_identity_mismatch() {
   if kill -0 "$sleep_pid" 2>/dev/null; then
     decoy_alive=1
   fi
-  kill "$sleep_pid" 2>/dev/null || true
-  wait "$sleep_pid" 2>/dev/null || true
+  _kill_pid_quiet "$sleep_pid"
   { exec 9<>"$release_fifo" && printf 'go\n' >&9 && exec 9>&-; } 2>/dev/null || true
   PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout "$_WAIT_OK" >/dev/null 2>&1 || true
 
@@ -302,8 +350,12 @@ case_dispatch_cancel_ignores_workspace_pid() {
     return
   fi
 
-  tail -f /dev/null &
-  decoy_pid=$!
+  decoy_pid="$(_isolated_decoy)" || {
+    fail "$name" "setsid decoy unavailable"
+    { exec 9<>"$release_fifo" && printf 'go\n' >&9 && exec 9>&-; } 2>/dev/null || true
+    rm -rf "$work" "$bindir"; rm -f "$started_fifo" "$release_fifo"
+    return
+  }
   mkdir -p "$work/.agent-trace"
   printf '%s\n' "$decoy_pid" >"$work/.agent-trace/$run_id.supervisor.pid"
 
@@ -318,8 +370,7 @@ case_dispatch_cancel_ignores_workspace_pid() {
   if kill -0 "$decoy_pid" 2>/dev/null; then
     decoy_alive=1
   fi
-  kill "$decoy_pid" 2>/dev/null || true
-  wait "$decoy_pid" 2>/dev/null || true
+  _kill_pid_quiet "$decoy_pid"
   { exec 9<>"$release_fifo" && printf 'go\n' >&9 && exec 9>&-; } 2>/dev/null || true
 
   if [[ "$cancel_code" -eq 0 && "$decoy_alive" -eq 1 ]]; then
@@ -369,8 +420,12 @@ case_dispatch_cancel_ignores_explicit_trace_dir() {
     return
   fi
 
-  tail -f /dev/null &
-  decoy_pid=$!
+  decoy_pid="$(_isolated_decoy)" || {
+    fail "$name" "setsid decoy unavailable"
+    { exec 9<>"$release_fifo" && printf 'go\n' >&9 && exec 9>&-; } 2>/dev/null || true
+    rm -rf "$work" "$bindir"; rm -f "$started_fifo" "$release_fifo"
+    return
+  }
   # Forge authority-looking files under the explicit trace-dir (must be ignored).
   printf 'pid=%s\npgid=%s\nstarttime=1\ncomm=sleep\nisolated=1\n' "$decoy_pid" "$decoy_pid" \
     >"$evil_trace/$run_id.supervisor.identity"
@@ -384,8 +439,7 @@ case_dispatch_cancel_ignores_explicit_trace_dir() {
   if kill -0 "$decoy_pid" 2>/dev/null; then
     decoy_alive=1
   fi
-  kill "$decoy_pid" 2>/dev/null || true
-  wait "$decoy_pid" 2>/dev/null || true
+  _kill_pid_quiet "$decoy_pid"
   { exec 9<>"$release_fifo" && printf 'go\n' >&9 && exec 9>&-; } 2>/dev/null || true
 
   local claim
@@ -625,9 +679,11 @@ case_dispatch_cancel_non_isolated_refuses_kill() {
   art_dir="$(_run_trace_dir "$work" "$run_id")"
   mkdir -p "$art_dir"
 
-  tail -f /dev/null &
-  decoy=$!
-  disown "$decoy" 2>/dev/null || true
+  decoy="$(_isolated_decoy)" || {
+    fail "$name" "setsid decoy unavailable"
+    rm -rf "$work"
+    return
+  }
   # Force isolated=0 even if pid==pgid; cancel must refuse live non-isolated kill.
   printf 'pid=%s\npgid=%s\nstarttime=1\ncomm=tail\nisolated=0\n' "$decoy" "$decoy" \
     >"$art_dir/$run_id.supervisor.identity"
@@ -669,8 +725,7 @@ EOF
   if kill -0 "$decoy" 2>/dev/null; then
     decoy_alive=1
   fi
-  kill "$decoy" 2>/dev/null || true
-  wait "$decoy" 2>/dev/null || true
+  _kill_pid_quiet "$decoy"
   claim="$art_dir/$run_id.terminal"
   rm -f "/tmp/brief-$run_id.md" "$key_file" 2>/dev/null || true
 
@@ -682,15 +737,15 @@ EOF
   rm -rf "$work"
 }
 
-case_dispatch_cancel_in_flight
-case_dispatch_cancel_already_terminal
-case_dispatch_cancel_identity_mismatch
-case_dispatch_cancel_ignores_workspace_pid
-case_dispatch_cancel_ignores_explicit_trace_dir
-case_dispatch_cancel_record_write_failure
-case_dispatch_cancel_orphaned_process_group
-case_dispatch_cancel_non_isolated_refuses_kill
-case_dispatch_cancel_non_isolated_dead_leader_refuses
-case_dispatch_status_lists_in_flight
-case_dispatch_status_lists_terminal
+_safe_case case_dispatch_cancel_in_flight
+_safe_case case_dispatch_cancel_already_terminal
+_safe_case case_dispatch_cancel_identity_mismatch
+_safe_case case_dispatch_cancel_ignores_workspace_pid
+_safe_case case_dispatch_cancel_ignores_explicit_trace_dir
+_safe_case case_dispatch_cancel_record_write_failure
+_safe_case case_dispatch_cancel_orphaned_process_group
+_safe_case case_dispatch_cancel_non_isolated_refuses_kill
+_safe_case case_dispatch_cancel_non_isolated_dead_leader_refuses
+_safe_case case_dispatch_status_lists_in_flight
+_safe_case case_dispatch_status_lists_terminal
 th_summary
