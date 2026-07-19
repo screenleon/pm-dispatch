@@ -137,16 +137,28 @@ detached_launch_under_setsid() {
 # what order) are entirely the caller's decision — this function does not
 # interpret the pairs, just serializes them one per line.
 #
+# Publication is atomic: pairs are written to a same-directory temp file, then
+# renamed onto <sentinel_path>. Waiters that poll for path existence therefore
+# never observe a partial multi-line sentinel (and must not delete a half-written
+# file that has not yet been renamed into place).
+#
 # Usage: detached_launch_write_sentinel <sentinel_path> "final_state=GO" "exit_code=0" ["result_file=/path"]...
 detached_launch_write_sentinel() {
   local sentinel_path="${1:?sentinel_path required}"
   shift
-  local pair
+  local pair dir base tmp
+  dir="$(dirname -- "$sentinel_path")"
+  base="$(basename -- "$sentinel_path")"
+  mkdir -p "$dir" 2>/dev/null || true
+  tmp="$(mktemp "$dir/.${base}.tmp.XXXXXX" 2>/dev/null)" || return 1
   {
     for pair in "$@"; do
       printf '%s\n' "$pair"
     done
-  } > "$sentinel_path" 2>/dev/null || true
+  } >"$tmp" 2>/dev/null || { rm -f "$tmp" 2>/dev/null || true; return 1; }
+  # Atomic on same filesystem: destination appears only after full content is written.
+  mv -f "$tmp" "$sentinel_path" 2>/dev/null || { rm -f "$tmp" 2>/dev/null || true; return 1; }
+  return 0
 }
 
 # Poll for a sentinel file's existence. Pure poll, no parse, no cleanup: the

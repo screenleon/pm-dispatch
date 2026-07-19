@@ -305,6 +305,55 @@ SCRIPT
   fi
 }
 
+# ---- 14: write_sentinel is complete when the destination path appears -------
+# Behavior: destination path appears only after a full multi-line body is written
+#          (temp+rename); waiters never see a partial final_state-only file.
+# Steps: start a waiter that records the first full content it observes once
+#        the path exists; writer publishes two pairs via write_sentinel; assert
+#        the observed content contains both lines and no temp leftovers.
+case_write_sentinel_atomic_visibility() {
+  local name="detached-launch/write_sentinel is atomic (no partial final path)"
+  should_run "$name" || return 0
+
+  local sentinel="$tmp_root/sentinel-atomic" observed="$tmp_root/sentinel-observed"
+  local waiter_pid
+  rm -f "$sentinel" "$observed"
+  (
+    # Waiter: first observation of the path must already be complete.
+    while [[ ! -f "$sentinel" ]]; do
+      sleep 0.01
+    done
+    # Copy immediately; under atomic rename both lines must already be present.
+    cat "$sentinel" >"$observed" 2>/dev/null || true
+  ) &
+  waiter_pid=$!
+
+  # Give the waiter a head start so it is blocked on absence, not on content.
+  sleep 0.05
+  detached_launch_write_sentinel "$sentinel" "final_state=ok" "exit_code=0"
+
+  # Wait for observer (bounded).
+  local i
+  for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+    [[ -s "$observed" ]] && break
+    sleep 0.05
+  done
+  wait "$waiter_pid" 2>/dev/null || true
+
+  local tmp_left=0
+  if compgen -G "$tmp_root/.sentinel-atomic.tmp.*" >/dev/null 2>&1; then
+    tmp_left=1
+  fi
+  if [[ -f "$sentinel" && -s "$observed" ]] \
+    && grep -q '^final_state=ok$' "$observed" \
+    && grep -q '^exit_code=0$' "$observed" \
+    && [[ "$tmp_left" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "observed=$(tr '\n' '|' <"$observed" 2>/dev/null) tmp_left=$tmp_left"
+  fi
+}
+
 case_resolve_root_blocks_identical
 case_generate_nonce_nonempty
 case_generate_nonce_full_entropy_under_pipefail
@@ -319,5 +368,6 @@ case_wait_for_sentinel_success
 case_wait_for_sentinel_timeout
 case_under_setsid_launches_and_records_pid
 case_under_setsid_empty_pid_file_skipped
+case_write_sentinel_atomic_visibility
 
 th_summary
