@@ -103,7 +103,8 @@ The record contains YAML frontmatter with machine-readable summary fields (`run_
 Detached runs can be actively terminalized with `pmctl dispatch cancel <run_id> --cd <work_dir>`:
 
 - **Authority** is the out-of-repo trusted run directory (process identity + exclusive terminal claim). Workspace PID files, `.dispatch-results/`, or forged records are never used as cancel authority.
-- **Process kill** re-verifies PID/PGID/starttime/comm before signaling the process group (`SIGTERM`, then `SIGKILL` after `--grace` seconds). Identity mismatch or PID reuse fails closed without signaling.
+- **Process kill** re-verifies PID/PGID/starttime/comm before signaling the process group (`SIGTERM`, then `SIGKILL` after `--grace` seconds). Identity mismatch, PID reuse, missing identity, or a non-isolated launch (`setsid` unavailable → `isolated=0` in the identity file) **fail closed without signaling**. Cancel also refuses to signal the caller's own process group.
+- **Kill-before-claim**: when a live process must be signalled, the group is confirmed dead **before** the exclusive cancelled terminal claim and authenticated sentinel are published. A failed kill returns non-zero and does **not** mark the run cancelled.
 - **Terminal CAS**: cancel and natural complete share an exclusive `$run_id.terminal` claim under the trusted artifact dir. Exactly one of `ok` / `failed` / `partial` / `cancelled` wins; existing terminals are never overwritten.
 - **Semantics are cancel, not stop**: mid-run results are untrusted; there is **no resume**. Re-run requires a new `pmctl dispatch run`.
 - **Authenticated cancelled sentinel**: after durable Run/Event/dispatch-record writes, cancel writes `final_state=cancelled` to the same nonce-authenticated sentinel path natural complete uses. `pmctl dispatch wait` consumes it and returns **exit 130** (distinct from failed, timeout **124**, and indeterminate **3**).

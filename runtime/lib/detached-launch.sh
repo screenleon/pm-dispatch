@@ -98,6 +98,11 @@ detached_launch_sentinel_path() {
 # propagate to the launched process for the lifetime of this function call,
 # same as any other simple-command prefix assignment in bash.
 #
+# When setsid is used, the child is a new session/process-group leader and is
+# safe for process-group cancel. Without setsid the child shares the caller's
+# process group — cancel must refuse group kill (see identity `isolated=`).
+# Sets DETACHED_LAUNCH_ISOLATED=1|0 for the caller to record in identity.
+#
 # Usage: detached_launch_under_setsid <script_path> <log_file> <pid_file> [--] <args...>
 # Returns 0 once the process is launched and (if requested) the PID is
 # persisted; does not wait for the process to complete.
@@ -110,13 +115,16 @@ detached_launch_under_setsid() {
   [[ -n "$pid_file" ]] && { mkdir -p "$(dirname "$pid_file")" || return 1; }
 
   local pid
+  DETACHED_LAUNCH_ISOLATED=0
   if command -v setsid >/dev/null 2>&1; then
     setsid nohup bash "$script_path" "$@" </dev/null >"$log_file" 2>&1 &
     pid=$!
+    DETACHED_LAUNCH_ISOLATED=1
   else
     nohup bash "$script_path" "$@" </dev/null >"$log_file" 2>&1 &
     pid=$!
     disown "$pid" 2>/dev/null || true
+    DETACHED_LAUNCH_ISOLATED=0
   fi
 
   if [[ -n "$pid_file" ]]; then
@@ -164,14 +172,17 @@ detached_launch_wait_for_sentinel() {
 # Capture a stable process identity for cancel-time re-verification.
 # Linux /proc is authoritative; without it this returns 1 (fail-closed for
 # identity-dependent kill). Emits key=value lines:
-#   pid=  pgid=  starttime=  comm=
+#   pid=  pgid=  starttime=  comm=  isolated=
 # starttime is the kernel field from /proc/<pid>/stat (boot-relative ticks),
 # which is stable across PID reuse of the same numeric pid.
+# isolated=1 means the process was launched under setsid (own process group);
+# isolated=0 means cancel must refuse process-group kill (shared group).
+# Optional second arg overrides isolated (defaults to 1 when pid==pgid else 0).
 detached_launch_capture_identity() {
-  local pid="${1:?pid required}"
+  local pid="${1:?pid required}" isolated_override="${2-}"
   local stat_file rest state ppid pgrp session tty_nr tpgid flags
   local minflt cminflt majflt cmajflt utime stime cutime cstime priority nice
-  local num_threads itrealvalue starttime comm_field comm
+  local num_threads itrealvalue starttime comm_field comm isolated
   [[ "$pid" =~ ^[0-9]+$ ]] || return 1
   stat_file="/proc/$pid/stat"
   [[ -r "$stat_file" ]] || return 1
@@ -187,14 +198,24 @@ detached_launch_capture_identity() {
   starttime="${20:-}"
   [[ -n "$pgrp" && -n "$starttime" ]] || return 1
   comm="$(tr -d '\n' <"/proc/$pid/comm" 2>/dev/null || printf '%s' "$comm_field")"
-  printf 'pid=%s\npgid=%s\nstarttime=%s\ncomm=%s\n' "$pid" "$pgrp" "$starttime" "$comm"
+  if [[ -n "$isolated_override" ]]; then
+    isolated="$isolated_override"
+  elif [[ "$pid" == "$pgrp" ]]; then
+    # Session/process-group leaders created by setsid have pid == pgid.
+    isolated=1
+  else
+    isolated=0
+  fi
+  printf 'pid=%s\npgid=%s\nstarttime=%s\ncomm=%s\nisolated=%s\n' \
+    "$pid" "$pgrp" "$starttime" "$comm" "$isolated"
 }
 
 # Load identity file written by detached_launch_capture_identity (key=value).
-# Sets DL_ID_PID DL_ID_PGID DL_ID_STARTTIME DL_ID_COMM. Returns 1 if incomplete.
+# Sets DL_ID_PID DL_ID_PGID DL_ID_STARTTIME DL_ID_COMM DL_ID_ISOLATED.
+# Returns 1 if incomplete.
 detached_launch_load_identity_file() {
   local path="${1:?identity path required}" line key val
-  DL_ID_PID=""; DL_ID_PGID=""; DL_ID_STARTTIME=""; DL_ID_COMM=""
+  DL_ID_PID=""; DL_ID_PGID=""; DL_ID_STARTTIME=""; DL_ID_COMM=""; DL_ID_ISOLATED=""
   [[ -f "$path" ]] || return 1
   while IFS= read -r line || [[ -n "$line" ]]; do
     [[ -z "$line" || "$line" == \#* ]] && continue
@@ -205,9 +226,18 @@ detached_launch_load_identity_file() {
       pgid) DL_ID_PGID="$val" ;;
       starttime) DL_ID_STARTTIME="$val" ;;
       comm) DL_ID_COMM="$val" ;;
+      isolated) DL_ID_ISOLATED="$val" ;;
     esac
   done <"$path"
   [[ -n "$DL_ID_PID" && -n "$DL_ID_PGID" && -n "$DL_ID_STARTTIME" ]] || return 1
+  # Legacy identity files without isolated=: treat as isolated only when pid==pgid.
+  if [[ -z "$DL_ID_ISOLATED" ]]; then
+    if [[ "$DL_ID_PID" == "$DL_ID_PGID" ]]; then
+      DL_ID_ISOLATED=1
+    else
+      DL_ID_ISOLATED=0
+    fi
+  fi
   return 0
 }
 
@@ -242,12 +272,17 @@ detached_launch_verify_identity() {
 
 # Signal an entire process group: SIGTERM, wait up to grace seconds, then
 # SIGKILL if any member remains. pgid must be positive; never signals pgid 0/-1.
+# Refuses to signal the caller's own process group (would kill the CLI/shell).
 #   0 — group gone after TERM or KILL
-#   1 — invalid pgid / signal delivery failure that left the group alive
+#   1 — invalid pgid / refused self-group / group still alive after KILL
 detached_launch_kill_process_group() {
   local pgid="${1:?pgid required}" grace="${2:-5}"
-  local waited=0
+  local waited=0 self_pgid
   [[ "$pgid" =~ ^[1-9][0-9]*$ ]] || return 1
+  self_pgid="$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')" || self_pgid=""
+  if [[ -n "$self_pgid" && "$pgid" == "$self_pgid" ]]; then
+    return 1
+  fi
   # Negative pid = process group. Prefer kill, fall back quietly if already gone.
   kill -TERM -- "-$pgid" 2>/dev/null || true
   while (( waited < grace )); do

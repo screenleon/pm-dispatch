@@ -1078,17 +1078,18 @@ pmctl_dispatch_run_detached() {
     unset PM_SUPERVISOR_NONCE
     return 2
   fi
-  # Record PID/PGID/starttime/comm in the trusted run dir (not workspace) so
-  # cancel can re-verify identity before signaling. Brief settle for /proc.
-  local _sup_pid _id_file
+  # Record PID/PGID/starttime/comm/isolated in the trusted run dir (not
+  # workspace) so cancel can re-verify identity before signaling. isolated=
+  # comes from whether setsid was used at launch (DETACHED_LAUNCH_ISOLATED).
+  local _sup_pid _id_file _isolated="${DETACHED_LAUNCH_ISOLATED:-0}"
   _id_file="$spec_dir/$run_id.supervisor.identity"
   if [[ -f "$pid_file" ]]; then
     _sup_pid="$(tr -d ' \n' <"$pid_file" 2>/dev/null || true)"
     if [[ "$_sup_pid" =~ ^[0-9]+$ ]]; then
       sleep 0.05
-      if ! detached_launch_capture_identity "$_sup_pid" >"$_id_file" 2>/dev/null; then
+      if ! detached_launch_capture_identity "$_sup_pid" "$_isolated" >"$_id_file" 2>/dev/null; then
         sleep 0.15
-        if ! detached_launch_capture_identity "$_sup_pid" >"$_id_file" 2>/dev/null; then
+        if ! detached_launch_capture_identity "$_sup_pid" "$_isolated" >"$_id_file" 2>/dev/null; then
           printf 'pmctl dispatch run: WARN: failed to capture supervisor identity for %s (cancel will refuse process kill)\n' "$run_id" >&2
           rm -f "$_id_file" 2>/dev/null || true
         fi
@@ -1297,14 +1298,13 @@ pmctl_dispatch_cancel() {
     return 2
   fi
 
-  local art_dir identity_file pid_file claim_exists=0
+  local art_dir identity_file pid_file
   art_dir="$(_pmctl_dispatch_trusted_artifact_dir "$work_dir" "$run_id")"
   identity_file="$art_dir/$run_id.supervisor.identity"
   pid_file="$art_dir/$run_id.supervisor.pid"
 
   # Already terminal? Never overwrite.
   if _pmctl_dispatch_read_terminal_claim "$work_dir" "$run_id"; then
-    claim_exists=1
     if [[ "${PMCTL_TERMINAL_STATE:-}" == "cancelled" ]]; then
       printf 'pmctl dispatch cancel: run %s already cancelled\n' "$run_id"
       return 0
@@ -1314,8 +1314,11 @@ pmctl_dispatch_cancel() {
     return 1
   fi
 
-  # Identity + signal decision from trusted run dir only.
-  local do_kill=0 verify_rc=1 pid="" pgid=""
+  # Identity + signal decision from trusted run dir only. Kill (when needed)
+  # happens BEFORE terminal claim so we never publish cancelled while the
+  # process group is still alive. Natural complete may win the CAS race after
+  # kill; that is acceptable (process is already dead).
+  local verify_rc=1 pid="" pgid="" isolated=""
   if [[ -f "$identity_file" ]]; then
     if ! detached_launch_load_identity_file "$identity_file"; then
       printf 'pmctl dispatch cancel: unreadable identity file for %s (fail-closed)\n' "$run_id" >&2
@@ -1323,13 +1326,25 @@ pmctl_dispatch_cancel() {
     fi
     pid="$DL_ID_PID"
     pgid="$DL_ID_PGID"
+    isolated="${DL_ID_ISOLATED:-0}"
     detached_launch_verify_identity "$pid" "$identity_file"
     verify_rc=$?
     case "$verify_rc" in
-      0) do_kill=1 ;;
+      0)
+        if [[ "$isolated" != "1" ]]; then
+          printf 'pmctl dispatch cancel: run %s is not in an isolated process group (no setsid); refusing group kill (fail-closed)\n' \
+            "$run_id" >&2
+          return 2
+        fi
+        if ! detached_launch_kill_process_group "$pgid" "$grace"; then
+          printf 'pmctl dispatch cancel: process group %s for %s still alive after SIGKILL; not marking cancelled\n' \
+            "$pgid" "$run_id" >&2
+          return 2
+        fi
+        ;;
       1)
-        # Process already gone — still terminalize as cancelled if no claim.
-        do_kill=0
+        # Process already gone — proceed to terminalize as cancelled.
+        :
         ;;
       2)
         printf 'pmctl dispatch cancel: process identity mismatch for %s (pid=%s); refusing to signal (fail-closed)\n' \
@@ -1352,9 +1367,8 @@ pmctl_dispatch_cancel() {
     :
   fi
 
-  # CAS first — if natural complete wins the race, do not kill/overwrite.
-  if ! _pmctl_dispatch_try_terminal_claim "$work_dir" "$run_id" "cancelled" "cancel"; then
-    _pmctl_dispatch_read_terminal_claim "$work_dir" "$run_id" || true
+  # Re-check claim after kill (natural complete may have won while we signalled).
+  if _pmctl_dispatch_read_terminal_claim "$work_dir" "$run_id"; then
     if [[ "${PMCTL_TERMINAL_STATE:-}" == "cancelled" ]]; then
       printf 'pmctl dispatch cancel: run %s already cancelled\n' "$run_id"
       return 0
@@ -1364,13 +1378,16 @@ pmctl_dispatch_cancel() {
     return 1
   fi
 
-  if [[ "$do_kill" -eq 1 && -n "$pgid" ]]; then
-    if ! detached_launch_kill_process_group "$pgid" "$grace"; then
-      printf 'pmctl dispatch cancel: process group %s for %s still alive after SIGKILL\n' "$pgid" "$run_id" >&2
-      # Claim already held as cancelled — still write durable evidence; report
-      # non-zero so the operator knows the group may be orphaned.
-      # Continue to write evidence so wait is not stuck forever.
+  # CAS — if natural complete wins the race after kill, do not overwrite.
+  if ! _pmctl_dispatch_try_terminal_claim "$work_dir" "$run_id" "cancelled" "cancel"; then
+    _pmctl_dispatch_read_terminal_claim "$work_dir" "$run_id" || true
+    if [[ "${PMCTL_TERMINAL_STATE:-}" == "cancelled" ]]; then
+      printf 'pmctl dispatch cancel: run %s already cancelled\n' "$run_id"
+      return 0
     fi
+    printf 'pmctl dispatch cancel: run %s already terminal (%s); not overwritten\n' \
+      "$run_id" "${PMCTL_TERMINAL_STATE:-unknown}" >&2
+    return 1
   fi
 
   # Load metadata from trusted runspec when available (not workspace).
@@ -1435,10 +1452,6 @@ pmctl_dispatch_cancel() {
   if [[ "$evidence_rc" -ne 0 ]]; then
     printf 'pmctl dispatch cancel: cancelled sentinel written but state write failed for %s (rc=%s)\n' \
       "$run_id" "$evidence_rc" >&2
-    return 2
-  fi
-  if [[ "$do_kill" -eq 1 && -n "$pgid" ]] && kill -0 -- "-$pgid" 2>/dev/null; then
-    printf 'pmctl dispatch cancel: run %s cancelled but process group %s still alive\n' "$run_id" "$pgid" >&2
     return 2
   fi
 

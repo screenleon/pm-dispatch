@@ -1515,6 +1515,10 @@ case_supervisor_die_restricted_cleanup
 case_dispatch_wait_poll_interval_honored
 
 # ── cancel: in-flight process group terminalized + wait exit 130 ────────────
+# Behavior: cancel of a live detached run kills the isolated process group,
+#          writes cancelled claim/record/sentinel, and wait returns exit 130.
+# Steps: launch blocking detached run → cancel --grace 2 → wait → assert
+#        cancelled claim/record and process gone.
 case_dispatch_cancel_in_flight() {
   local name="lifecycle/dispatch cancel in-flight run terminates group and wait exits 130"
   should_run "$name" || return 0
@@ -1585,6 +1589,8 @@ case_dispatch_cancel_in_flight() {
 }
 
 # ── cancel: already-terminal ok is not overwritten ──────────────────────────
+# Behavior: cancel after natural ok completion exits 1 and leaves final_state=ok.
+# Steps: detached run → wait (ok) → cancel → assert claim/record still ok.
 case_dispatch_cancel_already_terminal() {
   local name="lifecycle/dispatch cancel does not overwrite existing ok terminal"
   should_run "$name" || return 0
@@ -1617,6 +1623,10 @@ case_dispatch_cancel_already_terminal() {
 }
 
 # ── cancel: identity mismatch fail-closed (no signal) ───────────────────────
+# Behavior: forged starttime against a live decoy pid causes cancel exit 2
+#          without killing the decoy.
+# Steps: blocking detached run → rewrite identity to decoy sleep → cancel →
+#        assert decoy still alive and cancel_rc=2.
 case_dispatch_cancel_identity_mismatch() {
   local name="lifecycle/dispatch cancel identity mismatch refuses signal"
   should_run "$name" || return 0
@@ -1683,6 +1693,10 @@ case_dispatch_cancel_identity_mismatch() {
 }
 
 # ── cancel: workspace-forged pid is not authority ───────────────────────────
+# Behavior: a workspace .agent-trace/*.supervisor.pid is ignored; cancel uses
+#          the trusted run-dir identity and leaves the workspace decoy alive.
+# Steps: blocking run → forge workspace pid to decoy → cancel → assert
+#        cancel_rc=0 and decoy still alive.
 case_dispatch_cancel_ignores_workspace_pid() {
   local name="lifecycle/dispatch cancel ignores workspace-forged supervisor.pid"
   should_run "$name" || return 0
@@ -1734,6 +1748,8 @@ case_dispatch_cancel_ignores_workspace_pid() {
 }
 
 # ── status: lists in-flight runs ────────────────────────────────────────────
+# Behavior: dispatch status reports in-flight while adapter is blocked.
+# Steps: blocking detached run → status → assert "status: in-flight" for run_id.
 case_dispatch_status_lists_in_flight() {
   local name="lifecycle/dispatch status lists in-flight run"
   should_run "$name" || return 0
@@ -1769,9 +1785,35 @@ case_dispatch_status_lists_in_flight() {
   rm -rf "$work" "$bindir"; rm -f "$started_fifo" "$release_fifo"
 }
 
+# ── status: lists terminal runs after completion ────────────────────────────
+# Behavior: after wait resolves ok, status reports terminal final_state=ok.
+# Steps: quick detached run → wait → status → assert terminal ok line.
+case_dispatch_status_lists_terminal() {
+  local name="lifecycle/dispatch status lists terminal run after ok"
+  should_run "$name" || return 0
+  local work brief bindir run_id status_out
+  work="$(mktemp -d)"; git init -q "$work"
+  brief="$(_mk_brief "$work")"
+  bindir="$(mktemp -d)"; _install_fake_codex "$bindir" 0
+
+  set +e
+  run_id="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" --lifecycle detached 2>/dev/null)"
+  PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout "$_WAIT_OK" >/dev/null 2>&1
+  status_out="$(PATH="$bindir:$PATH" "$PMCTL" dispatch status --cd "$work" 2>&1)"
+  set -e
+
+  if grep -q "run: $run_id  status: terminal  final_state: ok" <<<"$status_out"; then
+    pass "$name"
+  else
+    fail "$name" "status=$(printf '%s' "$status_out" | tr '\n' '|')"
+  fi
+  rm -rf "$work" "$bindir"
+}
+
 case_dispatch_cancel_in_flight
 case_dispatch_cancel_already_terminal
 case_dispatch_cancel_identity_mismatch
 case_dispatch_cancel_ignores_workspace_pid
 case_dispatch_status_lists_in_flight
+case_dispatch_status_lists_terminal
 th_summary
