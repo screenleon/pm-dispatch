@@ -1425,11 +1425,10 @@ pmctl_dispatch_cancel() {
   local finished_ts
   finished_ts="$(pmctl_dispatch_utc_ts)"
 
-  # Durable cancelled evidence BEFORE authenticated sentinel. If evidence
-  # fails, release the exclusive claim (so cancel can be retried / natural
-  # complete is not permanently blocked without a resolved outcome) and do
-  # NOT publish a cancelled sentinel.
-  local claim_path="$art_dir/$run_id.terminal"
+  # After kill + exclusive claim, NEVER release the claim: the supervisor may
+  # already have observed it and skipped its own terminal write. Publish the
+  # authenticated cancelled sentinel so wait can resolve even if some durable
+  # Run/Event/record writes fail; return non-zero when evidence is incomplete.
   local evidence_rc=0
   if [[ -n "$adapter" ]]; then
     pmctl_dispatch_write_transition "$repo_root" "$work_dir" "$adapter" "$run_id" \
@@ -1443,47 +1442,36 @@ pmctl_dispatch_cancel() {
       evidence_rc=1
     fi
   fi
-  if [[ "$evidence_rc" -eq 0 ]]; then
-    # Hard record write — soft observability is not enough for cancel success.
-    if ! declare -F dispatch_record_write >/dev/null 2>&1; then
-      evidence_rc=1
-    else
-      local task_id=""
-      if declare -F sw_extract_task_id >/dev/null 2>&1; then
-        task_id="$(sw_extract_task_id "${brief_file:-}" "" 2>/dev/null || true)"
-        [[ "$task_id" == "UNKN-0" ]] && task_id=""
-      fi
-      dispatch_record_write "$run_id" "$task_id" "${adapter:-unknown}" "$model" \
-        "${brief_file:-}" "$work_dir" 130 "cancelled" "cancelled by pmctl dispatch cancel" \
-        "" "" "" "$created_ts" "$finished_ts" || evidence_rc=$?
+  if declare -F dispatch_record_write >/dev/null 2>&1; then
+    local task_id=""
+    if declare -F sw_extract_task_id >/dev/null 2>&1; then
+      task_id="$(sw_extract_task_id "${brief_file:-}" "" 2>/dev/null || true)"
+      [[ "$task_id" == "UNKN-0" ]] && task_id=""
     fi
-  fi
-  if [[ "$evidence_rc" -ne 0 ]]; then
-    rm -f "$claim_path" 2>/dev/null || true
-    printf 'pmctl dispatch cancel: durable cancelled evidence failed for %s (rc=%s); claim released, no sentinel\n' \
-      "$run_id" "$evidence_rc" >&2
-    return 2
+    dispatch_record_write "$run_id" "$task_id" "${adapter:-unknown}" "$model" \
+      "${brief_file:-}" "$work_dir" 130 "cancelled" "cancelled by pmctl dispatch cancel" \
+      "" "" "" "$created_ts" "$finished_ts" || evidence_rc=$?
+  else
+    evidence_rc=1
   fi
 
-  # Authenticated cancelled sentinel only after durable evidence succeeds.
+  # Authenticated cancelled sentinel — required so wait is never stranded after
+  # a successful claim (supervisor will not publish a competing terminal).
   local _key_file _key_nonce _sentinel
   _key_file="$(_pmctl_sentinel_key_file "$run_id")"
   if [[ ! -f "$_key_file" ]]; then
-    rm -f "$claim_path" 2>/dev/null || true
-    printf 'pmctl dispatch cancel: sentinel key absent for %s; claim released (fail-closed)\n' "$run_id" >&2
+    printf 'pmctl dispatch cancel: sentinel key absent for %s; claim held as cancelled but wait may be indeterminate\n' "$run_id" >&2
     return 2
   fi
   _key_nonce="$(cat "$_key_file" 2>/dev/null)" || _key_nonce=""
   if [[ -z "$_key_nonce" ]]; then
-    rm -f "$claim_path" 2>/dev/null || true
-    printf 'pmctl dispatch cancel: empty sentinel key for %s; claim released\n' "$run_id" >&2
+    printf 'pmctl dispatch cancel: empty sentinel key for %s; claim held as cancelled\n' "$run_id" >&2
     return 2
   fi
   _sentinel="$(detached_launch_sentinel_path "pm-supervisor" "$run_id" "$_key_nonce")"
   detached_launch_write_sentinel "$_sentinel" "final_state=cancelled" "exit_code=130"
   if [[ ! -f "$_sentinel" ]]; then
-    rm -f "$claim_path" 2>/dev/null || true
-    printf 'pmctl dispatch cancel: failed to write cancelled sentinel for %s; claim released\n' "$run_id" >&2
+    printf 'pmctl dispatch cancel: failed to write cancelled sentinel for %s; claim held as cancelled\n' "$run_id" >&2
     return 2
   fi
 
@@ -1492,6 +1480,13 @@ pmctl_dispatch_cancel() {
   rm -f "$pid_file" "$identity_file" "$runspec" 2>/dev/null || true
   if [[ -n "$brief_file" && "$brief_file" == "/tmp/brief-${run_id}.md" ]]; then
     rm -f "$brief_file" 2>/dev/null || true
+  fi
+
+  if [[ "$evidence_rc" -ne 0 ]]; then
+    printf 'pmctl dispatch cancel: run %s cancelled (sentinel ok) but durable evidence incomplete (rc=%s)\n' \
+      "$run_id" "$evidence_rc" >&2
+    printf 'run: %s  state: cancelled  exit: 130\n' "$run_id"
+    return 2
   fi
 
   printf 'run: %s  state: cancelled  exit: 130\n' "$run_id"

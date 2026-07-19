@@ -1875,11 +1875,61 @@ case_dispatch_status_lists_terminal() {
   rm -rf "$work" "$bindir"
 }
 
+# ── cancel: record write failure still leaves wait-resolvable cancel ────────
+# Behavior: if .dispatch-results cannot be written, cancel still publishes the
+#          authenticated cancelled sentinel and claim; wait returns 130;
+#          cancel command exits 2 for incomplete durable evidence.
+# Steps: blocking run → poison .dispatch-results as a file → cancel → wait.
+case_dispatch_cancel_record_write_failure() {
+  local name="lifecycle/dispatch cancel incomplete record still wait-resolvable"
+  should_run "$name" || return 0
+  local work brief bindir run_id started_fifo release_fifo _started_dummy
+  local cancel_code wait_code claim
+  work="$(mktemp -d)"; git init -q "$work"
+  brief="$(_mk_brief "$work")"
+  bindir="$(mktemp -d)"
+  started_fifo="$(mktemp -u)"; release_fifo="$(mktemp -u)"
+  mkfifo "$started_fifo" "$release_fifo"
+  _install_fake_codex_blocking "$bindir" 0 "$started_fifo" "$release_fifo"
+
+  set +e
+  run_id="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" --lifecycle detached 2>/dev/null)"
+  set -e
+  if ! read -r -t 10 _started_dummy < "$started_fifo"; then
+    fail "$name" "adapter did not start"
+    { exec 9<>"$release_fifo" && printf 'go\n' >&9 && exec 9>&-; } 2>/dev/null || true
+    rm -rf "$work" "$bindir"; rm -f "$started_fifo" "$release_fifo"
+    return
+  fi
+
+  # Poison workspace record path so hard record write fails.
+  rm -rf "$work/.dispatch-results"
+  printf 'not-a-dir\n' >"$work/.dispatch-results"
+
+  set +e
+  PATH="$bindir:$PATH" "$PMCTL" dispatch cancel "$run_id" --cd "$work" --grace 2 >/dev/null 2>&1
+  cancel_code=$?
+  PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout "$_WAIT_OK" >/dev/null 2>&1
+  wait_code=$?
+  set -e
+  { exec 9<>"$release_fifo" && printf 'go\n' >&9 && exec 9>&-; } 2>/dev/null || true
+
+  claim="$(_run_trace_dir "$work" "$run_id")/$run_id.terminal"
+  if [[ "$cancel_code" -eq 2 && "$wait_code" -eq 130 ]] \
+    && [[ -f "$claim" ]] && grep -q '^final_state=cancelled$' "$claim"; then
+    pass "$name"
+  else
+    fail "$name" "cancel=$cancel_code wait=$wait_code claim=$(cat "$claim" 2>/dev/null | tr '\n' '|')"
+  fi
+  rm -rf "$work" "$bindir"; rm -f "$started_fifo" "$release_fifo"
+}
+
 case_dispatch_cancel_in_flight
 case_dispatch_cancel_already_terminal
 case_dispatch_cancel_identity_mismatch
 case_dispatch_cancel_ignores_workspace_pid
 case_dispatch_cancel_ignores_explicit_trace_dir
+case_dispatch_cancel_record_write_failure
 case_dispatch_status_lists_in_flight
 case_dispatch_status_lists_terminal
 th_summary
