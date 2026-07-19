@@ -20,7 +20,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-494 | 🟢 someday | design: executor 局部設計裁量權 envelope——在 dispatch brief / executor contract 定義「可自行處理的局部設計」與「必須 halt 回報 PM」的邊界（例如新增 schema 欄位 `design_latitude`/`architectural_conflicts`）；三方 multi-model synthesis 2:1 分歧（codex/fable 認為現行邊界過度僵硬需要新機制，opencode 認為現行 `isolation_level`/executor 欄位已足夠彈性），本票僅追蹤決策、不預設結論（2026-07-15） | schema/process | 2026-07-15 | feedback:2026-07-15 | P3 | design |
 | CC-495 | ✅ done | `pmctl dispatch cancel <run_id>`：可信任的 detached-run cancel terminalization、PID reuse 防護、cancel-vs-complete 單一終態、authenticated cancelled sentinel | arch/gate | 2026-07-15 | feedback:2026-07-15 | P1 | design |
 | CC-498 | 🔵 active | State compatibility surface：status、layout/entity 版本命名、真實 migration availability | arch/schema | 2026-07-17 | — | P1 | design |
-| CC-499 | ✅ done | Detached run reconciliation：crash、reboot、stale sentinel、PID identity 與 orphan recovery | arch/ops | 2026-07-17 | pr:TBD | P2 | design |
+| CC-499 | ✅ done | Detached run reconciliation：crash、reboot、stale sentinel、PID identity 與 orphan recovery | arch/ops | 2026-07-17 | pr:#429 | P2 | design |
 | CC-500 | ⏸ deferred | State single-writer boundary enforcement：all-production-domain direct-writer ratchet | arch/test | 2026-07-17 | — | P2 | design |
 | CC-503 | 🔵 active | shared tooling/hooks host-boundary 收斂：skill-refine canonical memory、prompt payload adapter、state-root audit log、content ratchet | arch/hook | 2026-07-17 | — | P2 | hygiene |
 | CC-504 | 🔵 active | top-level install/uninstall/doctor 移除 Claude base-spine 特例，建立 manifest-driven multi-host lifecycle 與 product-asset ownership | arch/install | 2026-07-17 | — | P2 | design |
@@ -1406,7 +1406,7 @@ PID-reuse refusal, in-flight untouched, already-terminal not overwritten,
 unknown run fail-closed, `--all` multi-run scan, and the boot_id/reboot
 short-circuit.
 
-**See**: pr:TBD
+**See**: pr:#429
 
 ## CC-500 — State single-writer boundary enforcement ⏸ deferred
 
