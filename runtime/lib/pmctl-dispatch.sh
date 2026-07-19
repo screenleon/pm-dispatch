@@ -517,6 +517,8 @@ _pmctl_dispatch_trace_dir() {
 # terminal claim, runspec, supervisor pid). ALWAYS derived from the state
 # store project run dir — never honors an explicit --trace-dir override
 # (that path is adapter observability only and may be workspace-writable).
+# Returns non-zero (prints nothing) when the state partition cannot be
+# resolved — callers must fail closed rather than fall back to workspace.
 _pmctl_dispatch_trusted_artifact_dir() {
   local work_dir="${1:-}" run_id="${2:-}"
   if [[ "$(type -t sw_project_run_dir 2>/dev/null)" != function ]]; then
@@ -526,17 +528,16 @@ _pmctl_dispatch_trusted_artifact_dir() {
       . "$_sp_lib" 2>/dev/null || true
     fi
   fi
-  if [[ "$(type -t sw_project_run_dir 2>/dev/null)" == function ]]; then
-    local _rd
-    _rd="$(cd "$work_dir" 2>/dev/null && sw_project_run_dir "$run_id" 2>/dev/null)" || _rd=""
-    if [[ -n "$_rd" ]]; then
-      printf '%s\n' "$_rd/.agent-trace"
-      return 0
-    fi
+  if [[ "$(type -t sw_project_run_dir 2>/dev/null)" != function ]]; then
+    return 1
   fi
-  # Legacy fallback when state partition is unavailable: still never takes an
-  # explicit override; caller-controlled paths cannot become cancel authority.
-  printf '%s\n' "$work_dir/.agent-trace"
+  local _rd
+  _rd="$(cd "$work_dir" 2>/dev/null && sw_project_run_dir "$run_id" 2>/dev/null)" || _rd=""
+  if [[ -z "$_rd" ]]; then
+    return 1
+  fi
+  printf '%s\n' "$_rd/.agent-trace"
+  return 0
 }
 
 # Exclusive terminal claim (CAS). First writer wins; content is key=value.
@@ -546,7 +547,7 @@ _pmctl_dispatch_try_terminal_claim() {
   local work_dir="${1:-}" run_id="${2:-}" state="${3:-}" claimer="${4:-unknown}"
   local art_dir claim_path
   case "$state" in ok|failed|partial|cancelled) : ;; *) return 1 ;; esac
-  art_dir="$(_pmctl_dispatch_trusted_artifact_dir "$work_dir" "$run_id")"
+  art_dir="$(_pmctl_dispatch_trusted_artifact_dir "$work_dir" "$run_id")" || return 1
   [[ -n "$art_dir" ]] || return 1
   mkdir -p "$art_dir" 2>/dev/null || return 1
   claim_path="$art_dir/$run_id.terminal"
@@ -567,7 +568,7 @@ _pmctl_dispatch_read_terminal_claim() {
   local art_dir claim_path
   PMCTL_TERMINAL_STATE=""
   PMCTL_TERMINAL_CLAIMER=""
-  art_dir="$(_pmctl_dispatch_trusted_artifact_dir "$work_dir" "$run_id")"
+  art_dir="$(_pmctl_dispatch_trusted_artifact_dir "$work_dir" "$run_id")" || return 1
   claim_path="${art_dir:-}/$run_id.terminal"
   [[ -f "$claim_path" ]] || return 1
   PMCTL_TERMINAL_STATE="$(grep -m1 '^final_state=' "$claim_path" 2>/dev/null | cut -d= -f2-)" || true
@@ -997,8 +998,11 @@ pmctl_dispatch_run_detached() {
   # native args is adapter observability only and must never host cancel
   # authority (identity, terminal claim). The supervisor is launched with an
   # absolute --run-spec path so it reads the trusted location regardless of
-  # where adapter traces land.
-  spec_dir="$(_pmctl_dispatch_trusted_artifact_dir "$work_dir" "$run_id")"
+  # where adapter traces land. Fail closed if the state partition is unavailable.
+  if ! spec_dir="$(_pmctl_dispatch_trusted_artifact_dir "$work_dir" "$run_id")"; then
+    printf 'pmctl dispatch run: cannot resolve state-derived run directory for %s (fail-closed)\n' "$run_id" >&2
+    return 2
+  fi
   spec_path="$spec_dir/$run_id.runspec"
   supervisor_log="$spec_dir/$run_id.supervisor.log"
   pid_file="$spec_dir/$run_id.supervisor.pid"
@@ -1308,10 +1312,14 @@ pmctl_dispatch_cancel() {
     return 2
   fi
 
-  local art_dir identity_file pid_file
-  art_dir="$(_pmctl_dispatch_trusted_artifact_dir "$work_dir" "$run_id")"
+  local art_dir identity_file pid_file runspec
+  if ! art_dir="$(_pmctl_dispatch_trusted_artifact_dir "$work_dir" "$run_id")"; then
+    printf 'pmctl dispatch cancel: cannot resolve state-derived run directory for %s (fail-closed)\n' "$run_id" >&2
+    return 2
+  fi
   identity_file="$art_dir/$run_id.supervisor.identity"
   pid_file="$art_dir/$run_id.supervisor.pid"
+  runspec="$art_dir/$run_id.runspec"
 
   # Already terminal? Never overwrite.
   if _pmctl_dispatch_read_terminal_claim "$work_dir" "$run_id"; then
@@ -1322,6 +1330,14 @@ pmctl_dispatch_cancel() {
     printf 'pmctl dispatch cancel: run %s already terminal (%s); not overwritten\n' \
       "$run_id" "${PMCTL_TERMINAL_STATE:-unknown}" >&2
     return 1
+  fi
+
+  # Require dispatch evidence before terminalizing. A valid-but-unknown run_id
+  # with no trusted identity/pid/runspec must not invent a cancelled terminal.
+  if [[ ! -f "$identity_file" && ! -f "$pid_file" && ! -f "$runspec" && ! -f "$art_dir/$run_id.terminal" ]]; then
+    printf 'pmctl dispatch cancel: no trusted dispatch evidence for %s under %s (unknown run; fail-closed)\n' \
+      "$run_id" "$art_dir" >&2
+    return 2
   fi
 
   # Identity + signal decision from trusted run dir only. Kill (when needed)
@@ -1364,17 +1380,13 @@ pmctl_dispatch_cancel() {
     esac
   elif [[ -f "$pid_file" ]]; then
     # Identity missing: refuse kill (cannot prove process identity). Still allow
-    # terminalization if the process is already gone and no claim exists.
+    # terminalization if the process is already gone and dispatch evidence exists.
     pid="$(tr -d ' \n' <"$pid_file" 2>/dev/null || true)"
     if [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null; then
       printf 'pmctl dispatch cancel: no verified identity for live pid %s of %s; refusing to signal (fail-closed)\n' \
         "$pid" "$run_id" >&2
       return 2
     fi
-  else
-    # No pid/identity: may be already cleaned or never launched. If no claim,
-    # still write cancelled evidence so wait can resolve.
-    :
   fi
 
   # Re-check claim after kill (natural complete may have won while we signalled).
@@ -1402,7 +1414,6 @@ pmctl_dispatch_cancel() {
 
   # Load metadata from trusted runspec when available (not workspace).
   local adapter="" model="" brief_file="" created_ts="" from_state
-  local runspec="$art_dir/$run_id.runspec"
   if [[ -f "$runspec" ]]; then
     adapter="$(grep -m1 '^adapter=' "$runspec" 2>/dev/null | cut -d= -f2-)" || true
     model="$(grep -m1 '^model=' "$runspec" 2>/dev/null | cut -d= -f2-)" || true
