@@ -2446,6 +2446,66 @@ memory_age_bucket_mapping() {
   fi
 }
 
+security_guards_shell_options_symmetric() {
+  # Regression: guard-pm-write.sh and guard-reviewer-write.sh
+  # used to omit `-e`, unlike guard-executor-write.sh — an unhandled non-zero
+  # command in either could silently continue past a point that should have
+  # failed closed. All three security guards must declare the same
+  # `set -euo pipefail` so none of them can drift back to the weaker mode.
+  local name="security-guards/shell-options-symmetric" got want ok=1 f opts
+  should_run "$name" || return 0
+  want="set -euo pipefail"
+  got=""
+  for f in "$PMHOOK" "$RWHOOK" "$EXWHOOK"; do
+    opts="$(grep -m1 '^set -' "$f")"
+    got+="$(basename "$f"):${opts}|"
+    [[ "$opts" == "$want" ]] || ok=0
+  done
+  if [[ "$ok" == "1" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — got=%q want each=%q\n' "$name" "$got" "$want"
+  fi
+}
+
+memory_iso8601_normalize_formats() {
+  # Unit: memory_iso8601_normalize (shared ISO8601 helper extracted from
+  # guard-inject-memory.sh and guard-session-summary.sh) must
+  # produce byte-identical output for every date-field shape the two hooks
+  # were observed to receive: bare Z, fractional seconds, +/-HH:MM offset
+  # with and without fractional seconds, and a naive (no Z, no offset) stamp.
+  local name="memory-lib/iso8601-normalize-formats" got want ok=1
+  should_run "$name" || return 0
+  got="$(
+    # shellcheck disable=SC1091
+    . "$REPO_ROOT/runtime/lib/memory.sh"
+    for d in \
+      "2026-07-19T16:45:56Z" \
+      "2026-07-19T16:45:56.123Z" \
+      "2026-07-19T16:45:56.123+09:00" \
+      "2026-07-19T16:45:56.123-05:00" \
+      "2026-07-19T16:45:56+09:00" \
+      "2026-07-19T16:45:56-05:00" \
+      "2026-07-19T16:45:56"; do
+      memory_iso8601_normalize "$d" | tr '\t' ':'
+      printf '|'
+    done
+  )"
+  want="2026-07-19T16:45:56:0|2026-07-19T16:45:56:0|2026-07-19T16:45:56:32400|2026-07-19T16:45:56:-18000|2026-07-19T16:45:56:32400|2026-07-19T16:45:56:-18000|2026-07-19T16:45:56:0|"
+  [[ "$got" == "$want" ]] && ok=1 || ok=0
+  if [[ "$ok" == "1" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — got=%q want=%q\n' "$name" "$got" "$want"
+  fi
+}
+
 inject_hook_sidecar_write_failure_is_best_effort() {
   # Error path: when the usage sidecar cannot be written (here .pm-dispatch is a
   # regular file, so the dir/lock cannot be created), the hook must still exit 0
@@ -2743,6 +2803,8 @@ memory_usage_commit_contention_matrix
 memory_usage_hanging_writer_is_bounded_and_cleaned
 memory_usage_nonzero_writer_is_reported_and_reaped
 memory_age_bucket_mapping
+memory_iso8601_normalize_formats
+security_guards_shell_options_symmetric
 
 # Episode reminder tests (CC-019 inject hook extension)
 

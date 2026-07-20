@@ -157,3 +157,46 @@ memory_usage_commit() {
   mv -f "$tmp" "$sidecar" || { rm -f "$tmp"; return 1; }
   return 0
 }
+
+# ---------------------------------------------------------------------------
+# ISO8601 timestamp normalization — shared by guard-inject-memory.sh and
+# guard-session-summary.sh episode-age checks (both compute "hours since last
+# episode" from a stored `date` field).
+# ---------------------------------------------------------------------------
+
+# Normalize an episode `date` field (bare "...Z", fractional seconds, and/or a
+# trailing +HH:MM/-HH:MM offset, in any combination) into a jq-safe UTC base
+# plus its offset in seconds. Prints "<base>\t<offset_seconds>" (base has no
+# trailing Z or offset suffix — callers append "Z" before feeding it to jq's
+# fromdateiso8601, which requires exactly that form).
+#   IFS=$'\t' read -r base offset < <(memory_iso8601_normalize "$date")
+memory_iso8601_normalize() {
+  local date="$1" d_norm d_base d_offset=0 d_suffix d_clean d_frac_suffix
+  d_norm="$date"
+  if [[ "$date" == *.*Z ]]; then
+    d_norm="${date%%.*}Z"
+  elif [[ "$date" == *.*[+-][0-9][0-9]:[0-9][0-9] ]]; then
+    d_clean="${date%%.*}"
+    d_frac_suffix="${date#*.}"
+    if [[ "$d_frac_suffix" == *+* ]]; then
+      d_norm="${d_clean}+${d_frac_suffix##*+}"
+    else
+      d_norm="${d_clean}-${d_frac_suffix##*-}"
+    fi
+  elif [[ "$date" == *.* ]]; then
+    d_norm="${date%%.*}Z"
+  elif [[ "$date" != *Z && ! "$date" =~ [+-][0-9][0-9]:[0-9][0-9]$ ]]; then
+    d_norm="${date}Z"
+  fi
+
+  if [[ "$d_norm" == *[+-][0-9][0-9]:[0-9][0-9] ]]; then
+    d_suffix="${d_norm: -6}"
+    d_base="${d_norm:0:${#d_norm}-6}"
+    d_offset=$((10#${d_suffix:1:2} * 3600 + 10#${d_suffix:4:2} * 60))
+    [[ "${d_suffix:0:1}" == "-" ]] && d_offset=$((-d_offset))
+  else
+    d_base="${d_norm%Z}"
+  fi
+
+  printf '%s\t%d\n' "$d_base" "$d_offset"
+}

@@ -26,7 +26,7 @@
 # Audit: every evaluated firing (allow / deny / bypass) is appended to
 # $PM_GUARD_LOG_DIR/hooks.log (default ~/.claude/logs/hooks.log).
 
-set -uo pipefail
+set -euo pipefail
 
 _SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 # shellcheck source=runtime/lib/portable.sh
