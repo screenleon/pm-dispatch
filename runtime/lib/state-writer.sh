@@ -28,6 +28,14 @@ if [[ "$(type -t sw_project_run_dir 2>/dev/null)" != function ]]; then
   . "$SCRIPT_DIR_SW/state-paths.sh" 2>/dev/null || true
 fi
 
+# Layout-version compatibility (supported versions + migration registry) lives
+# in state-compat.sh so the writer's version gate and `pmctl state status`
+# consume the same definitions.
+# shellcheck source=runtime/lib/state-compat.sh
+if [[ "$(type -t sw_layout_version_supported 2>/dev/null)" != function ]]; then
+  . "$SCRIPT_DIR_SW/state-compat.sh" 2>/dev/null || true
+fi
+
 _sw_store_root_leaf() {
   local root="$1"
   while [[ "$root" != "/" && "$root" == */ ]]; do
@@ -444,15 +452,20 @@ state_store_init() {
   # stores must be observed but not mutated (no chmod/mkdir on a future store).
   if [[ -f "$version_file" ]]; then
     version_value="$(<"$version_file")"
-    if [[ "$version_value" != "1" ]]; then
-      printf 'state-writer: unsupported store version %s (expected 1); run '\''pmctl state migrate'\''\n' "$version_value" >&2
+    if [[ "$(type -t sw_layout_version_supported 2>/dev/null)" != function ]]; then
+      printf 'state-writer: state-compat.sh unavailable; cannot verify store layout version\n' >&2
+      return 1
+    fi
+    if ! sw_layout_version_supported "$version_value"; then
+      printf 'state-writer: unsupported store layout version %s (supported: %s); %s\n' \
+        "$version_value" "${SW_SUPPORTED_LAYOUT_VERSIONS[*]}" "$(sw_layout_remediation "$version_value")" >&2
       return 1
     fi
   fi
-  # Compatible (VERSION == "1") or first-time (VERSION absent): now it is safe to
-  # canonicalize, create, and chmod the store root.
+  # Compatible (VERSION supported) or first-time (VERSION absent): now it is
+  # safe to canonicalize, create, and chmod the store root.
   _sw_ensure_store_root_safe "$store_root" || return 1
-  # Only reach here on first-time init (VERSION absent) or VERSION == "1".
+  # Only reach here on first-time init (VERSION absent) or a supported VERSION.
   # Refuse the global partition for load-bearing writes unless explicitly allowed.
   proj_key="$(_sw_project_key)"
   if [[ "$proj_key" == "global" && -z "${_SW_ALLOW_GLOBAL_PARTITION:-}" ]]; then
@@ -473,7 +486,7 @@ state_store_init() {
   fi
   if [[ ! -f "$version_file" ]]; then
     mkdir -p "$store_root" || { printf 'state-writer: mkdir failed: %s\n' "$store_root" >&2; return 1; }
-    printf '1\n' > "$version_file" || { printf 'state-writer: VERSION write failed: %s\n' "$version_file" >&2; return 1; }
+    printf '%s\n' "$SW_STORE_LAYOUT_VERSION" > "$version_file" || { printf 'state-writer: VERSION write failed: %s\n' "$version_file" >&2; return 1; }
   fi
   return 0
 }

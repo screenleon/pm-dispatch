@@ -15,7 +15,11 @@
 #   $YYYYMM        := archive rotation period (UTC month)
 #   $NNNN          := zero-padded monotonic archive segment within $YYYYMM
 
-version: 1
+# Version of the on-disk store layout described by this file. Distinct from
+# the per-entity schema_version fields declared in ../schema/*.schema.json —
+# entity rows version independently of the directory/file layout.
+# Canonical shell definition: runtime/lib/state-compat.sh (SW_STORE_LAYOUT_VERSION).
+store_layout_version: 1
 store_root_env: PM_DISPATCH_STATE_ROOT
 store_root_default: "~/.local/share/pm-dispatch/state"
 store_root_xdg_subpath: "pm-dispatch/state"
@@ -24,7 +28,7 @@ store_root_xdg_subpath: "pm-dispatch/state"
 global:
   - path: "$STORE/VERSION"
     format: text
-    description: "Plain text, contents match the current schema_version."
+    description: "Plain text, contents match the current store_layout_version (NOT any entity schema_version)."
   - path: "$STORE/store.lock"
     format: lockfile
     description: "Reserved for cross-project ops; serialize_with_lock target for global operations."

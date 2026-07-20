@@ -169,6 +169,7 @@ router and [`cli/commands.tsv`](cli/commands.tsv).
 - `artifacts show` — Show one managed artifact. [experimental; JSON: false; mutating: false]
 - `artifacts gc` — Remove expired managed artifacts. [experimental; JSON: false; mutating: true]
 - `artifacts migrate` — Migrate legacy artifacts into managed storage. [experimental; JSON: false; mutating: true]
+- `state status` — Report state-store compatibility: layout version, entity schema versions, migration availability. [experimental; JSON: true; mutating: false]
 - `worktree create` — Create a managed ticket worktree. [experimental; JSON: false; mutating: true]
 - `worktree list` — List managed worktrees. [experimental; JSON: true; mutating: false]
 - `worktree remove` — Remove a managed worktree. [experimental; JSON: false; mutating: true]

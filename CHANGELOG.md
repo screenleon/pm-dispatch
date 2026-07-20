@@ -8,6 +8,33 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **`pmctl state status [--json]` (CC-498).** Read-only state-store
+  compatibility report: resolved store root, observed store layout version vs
+  supported versions, project key, entity schema versions (read live from
+  `core/schema/*.schema.json`), root safety/writability, and migration
+  availability. Never creates or repairs the store — a future-version or
+  uninitialized store is observed with zero mutation. Exit 3 signals an
+  incompatible store for machine consumers (doctor/support report).
+
+### Changed
+
+- **Store layout version naming split (CC-498).** The store-wide layout
+  version (`$STORE/VERSION`, `layout.yaml` `store_layout_version`) is now
+  named and documented as distinct from per-entity `schema_version` fields.
+  Supported versions and the migration registry live in one shared source
+  (`runtime/lib/state-compat.sh`) consumed by both the writer's version gate
+  and `state status`.
+
+### Fixed
+
+- **State writer no longer recommends a nonexistent command (CC-498).** The
+  unsupported-store-version error used to instruct running `pmctl state
+  migrate`, which does not exist. Remediation text is now derived from the
+  migration registry: a command is only named when a runnable migration path
+  actually exists; otherwise the error points at `pmctl state status`.
+
 ## [0.10.0] — 2026-07-20
 
 ### Added

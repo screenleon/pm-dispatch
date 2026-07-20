@@ -13,6 +13,7 @@ artifacts list	List managed artifacts.	pmctl artifacts list [--cd <dir>]	experim
 artifacts show	Show one managed artifact.	pmctl artifacts show <artifact-id> [--cd <dir>]	experimental	false	false	--cd	pmctl artifacts show artifact-123
 artifacts gc	Remove expired managed artifacts.	pmctl artifacts gc [--cd <dir>] [--dry-run]	experimental	false	true	--cd, --dry-run	pmctl artifacts gc --dry-run
 artifacts migrate	Migrate legacy artifacts into managed storage.	pmctl artifacts migrate [--cd <dir>]	experimental	false	true	--cd	pmctl artifacts migrate --cd .
+state status	Report state-store compatibility: layout version, entity schema versions, migration availability.	pmctl state status [--json] [--cd <dir>]	experimental	true	false	--json, --cd	pmctl state status --json
 worktree create	Create a managed ticket worktree.	pmctl worktree create <branch> [options]	experimental	false	true	--from, --name, --cd	pmctl worktree create feat/example --from main
 worktree list	List managed worktrees.	pmctl worktree list [--cd <dir>] [--json]	experimental	true	false	--cd, --json	pmctl worktree list --json
 worktree remove	Remove a managed worktree.	pmctl worktree remove <name-or-branch> [options]	experimental	false	true	--cd, --force	pmctl worktree remove example
