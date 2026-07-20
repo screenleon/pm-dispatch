@@ -39,6 +39,9 @@ status_json() {
 
 # Behavior: a compatible store (VERSION == supported) reports state
 # "compatible", exits 0, and the JSON carries every contract key.
+# Steps: create a store with VERSION=1; run state status --json; assert exit 0
+#        and every contract key (root, versions, project key, entities,
+#        writable, safe_root, migration) via one jq -e predicate.
 case_compatible_store_json_contract() {
   local name="compatible store: exit 0 + full JSON key contract"
   local store out rc=0
@@ -64,6 +67,8 @@ case_compatible_store_json_contract() {
 
 # Behavior: entity schema versions in the report are read from
 # core/schema/*.schema.json, not a parallel table — run's const must match.
+# Steps: read run.schema.json's schema_version const with jq; run status --json;
+#        assert entity_schema_versions.run[0] equals the schema const.
 case_entity_versions_match_schema_files() {
   local name="entity schema versions mirror core/schema files"
   local store out expected actual
@@ -80,6 +85,8 @@ case_entity_versions_match_schema_files() {
 
 # Behavior: a future-version store is reported fail-closed — state
 # "incompatible", exit 3, migration.available false with an honest reason.
+# Steps: create a store with VERSION=99; run status --json; assert exit 3 and
+#        store_state incompatible, layout version 99, migration.available false.
 case_future_version_fail_closed() {
   local name="future-version store: exit 3, migration unavailable"
   local store out rc=0
@@ -96,6 +103,8 @@ case_future_version_fail_closed() {
 
 # Behavior: observing a future-version store mutates nothing — no mkdir,
 # chmod, or VERSION rewrite (path+mode+mtime snapshot identical).
+# Steps: create a VERSION=99 store; snapshot path+mode+mtime; run status in
+#        both JSON and human modes; re-snapshot and assert byte-identical.
 case_future_version_zero_mutation() {
   local name="future-version store: zero mutation"
   local store before after
@@ -110,6 +119,9 @@ case_future_version_zero_mutation() {
 
 # Behavior: pointing at a store root that does not exist reports
 # "uninitialized", exits 0, and does not create the directory.
+# Steps: point PM_DISPATCH_STATE_ROOT at a nonexistent path; run status --json;
+#        assert exit 0, store_state uninitialized, null layout version, and the
+#        path still does not exist afterwards.
 case_uninitialized_store_not_created() {
   local name="uninitialized store: exit 0, nothing created"
   local store="$TMP_ROOT/never-created" out rc=0
@@ -124,6 +136,8 @@ case_uninitialized_store_not_created() {
 
 # Behavior: a store dir whose VERSION file is absent is first-time-init
 # territory for the writer, so status reports it "uninitialized".
+# Steps: create the store dir without a VERSION file; run status --json;
+#        assert store_state is uninitialized.
 case_missing_version_file_uninitialized() {
   local name="store dir without VERSION: reported uninitialized"
   local store out
@@ -135,6 +149,8 @@ case_missing_version_file_uninitialized() {
 
 # Behavior: a garbage (non-numeric) VERSION value is unsupported — reported
 # incompatible with exit 3, and the raw value is surfaced.
+# Steps: write VERSION=banana; run status --json; assert exit 3,
+#        store_state incompatible, and store_layout_version "banana".
 case_garbage_version_incompatible() {
   local name="garbage VERSION value: incompatible, exit 3"
   local store out rc=0
@@ -150,6 +166,9 @@ case_garbage_version_incompatible() {
 
 # Behavior: neither the status report nor the writer's unsupported-version
 # error recommends `pmctl state migrate` while no migration path exists.
+# Steps: against a VERSION=99 store, capture human status, JSON status, and
+#        state_store_init stderr; grep the combined output and assert the
+#        string "pmctl state migrate" never appears.
 case_no_phantom_migrate_recommendation() {
   local name="no surface recommends nonexistent 'pmctl state migrate'"
   local store human_out json_out writer_err
@@ -167,6 +186,9 @@ case_no_phantom_migrate_recommendation() {
 
 # Behavior: the writer's version gate rejects a future store BEFORE any
 # mutation and its error points at a real surface (pmctl state status).
+# Steps: snapshot a VERSION=99 store; source state-writer.sh and call
+#        state_store_init; assert nonzero exit, unchanged snapshot, stderr
+#        mentions "pmctl state status" and never "pmctl state migrate".
 case_writer_gate_honest_remediation() {
   local name="writer gate: fail-closed with honest remediation"
   local store err rc=0 before after
@@ -186,6 +208,8 @@ case_writer_gate_honest_remediation() {
 
 # Behavior: an unrecognized flag is a usage error — exit 2, no store access
 # side effects.
+# Steps: run state status --bogus with a store root that does not exist;
+#        assert exit 2 and that the store root was not created.
 case_unknown_flag_usage_error() {
   local name="unknown flag: usage error exit 2"
   local rc=0
@@ -196,6 +220,8 @@ case_unknown_flag_usage_error() {
 
 # Behavior: run from a non-git cwd without --cd, project_key degrades to null
 # (the writer's "global" partition) while the store-level report still succeeds.
+# Steps: cd into a plain (non-git) temp dir; run status --json without --cd;
+#        assert exit 0, project_key null, store_state compatible.
 case_non_git_cwd_null_project_key() {
   local name="non-git cwd, no --cd: project_key null, still exit 0"
   local store dir out rc=0
@@ -212,6 +238,8 @@ case_non_git_cwd_null_project_key() {
 
 # Behavior: from a git repo, project_key matches the writer's partitioning key
 # so status and writer agree on which partition is being described.
+# Steps: compute _sw_project_key directly from state-paths.sh in the repo;
+#        run status --json --cd <repo>; assert project_key equals that value.
 case_git_cd_matches_writer_key() {
   local name="--cd git repo: project_key matches _sw_project_key"
   local store out expected actual
@@ -225,6 +253,8 @@ case_git_cd_matches_writer_key() {
 
 # Behavior: a group/world-writable store root is reported safe_root=false with
 # a reason, without status attempting to chmod it back.
+# Steps: chmod 0777 a VERSION=1 store; record mode; run status --json; assert
+#        safe_root false with a nonempty reasons list and the mode unchanged.
 case_unsafe_mode_reported_not_repaired() {
   local name="world-writable root: safe_root false, mode untouched"
   local store out mode_before mode_after
@@ -243,6 +273,9 @@ case_unsafe_mode_reported_not_repaired() {
 
 # Behavior: human-readable output carries the same load-bearing facts as the
 # JSON (store root, layout version, migration availability).
+# Steps: run plain (human) state status against a VERSION=1 store; grep for
+#        the store root, layout version, supported versions, and migration
+#        availability lines.
 case_human_output_facts() {
   local name="human output: store root + versions + migration line present"
   local store out
