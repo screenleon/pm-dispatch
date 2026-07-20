@@ -239,33 +239,7 @@ if [[ -f "$episodes_file" ]]; then
   last_date=$(jq -rRs '[split("\n")[] | select(length>0) | try fromjson catch empty] | last // {} | .date // empty' "$episodes_file" 2>/dev/null) || last_date=""
   last_summary=$(jq -rRs '[split("\n")[] | select(length>0) | try fromjson catch empty] | last // {} | .summary // empty' "$episodes_file" 2>/dev/null) || last_summary=""
   if [[ -n "$last_date" ]]; then
-    _d_norm="$last_date"
-    if [[ "$last_date" == *.*Z ]]; then
-      _d_norm="${last_date%%.*}Z"
-    elif [[ "$last_date" == *.*[+-][0-9][0-9]:[0-9][0-9] ]]; then
-      _d_clean="${last_date%%.*}"
-      _d_frac_suffix="${last_date#*.}"
-      if [[ "$_d_frac_suffix" == *+* ]]; then
-        _d_norm="${_d_clean}+${_d_frac_suffix##*+}"
-      else
-        _d_norm="${_d_clean}-${_d_frac_suffix##*-}"
-      fi
-    elif [[ "$last_date" == *.* ]]; then
-      _d_norm="${last_date%%.*}Z"
-    elif [[ "$last_date" != *Z && ! "$last_date" =~ [+-][0-9][0-9]:[0-9][0-9]$ ]]; then
-      _d_norm="${last_date}Z"
-    fi
-
-    _d_base="$_d_norm"
-    _d_offset=0
-    if [[ "$_d_norm" == *[+-][0-9][0-9]:[0-9][0-9] ]]; then
-      _d_suffix="${_d_norm: -6}"
-      _d_base="${_d_norm:0:${#_d_norm}-6}"
-      _d_offset=$((10#${_d_suffix:1:2} * 3600 + 10#${_d_suffix:4:2} * 60))
-      [[ "${_d_suffix:0:1}" == "-" ]] && _d_offset=$((-_d_offset))
-    else
-      _d_base="${_d_norm%Z}"
-    fi
+    IFS=$'\t' read -r _d_base _d_offset < <(memory_iso8601_normalize "$last_date")
 
     age_hours=$(jq -rn --arg d "${_d_base}Z" --argjson offset "$_d_offset" \
       'try ((($d | fromdateiso8601) - $offset) as $ts | (now - $ts) / 3600) catch 0' 2>/dev/null) || age_hours=0

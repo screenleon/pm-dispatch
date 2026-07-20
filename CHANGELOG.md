@@ -30,6 +30,18 @@ Versions follow [Semantic Versioning](https://semver.org/).
   and indeterminate 3). Minimal in-flight discovery via `dispatch status`.
   Run schema/policy and event schema gain `cancelled` / `run.cancelled`.
 
+### Changed
+
+- **Guard/hook symmetry hardening (CC-452, PR#431).** `guard-pm-write.sh` and
+  `guard-reviewer-write.sh` now declare `set -euo pipefail` like
+  `guard-executor-write.sh`; a regression test enumerates every
+  `runtime/hooks/guard-*.sh` dynamically and pins `guard-pm-bash.sh`'s
+  documented `set -uo pipefail` exemption. The duplicated episode-date
+  ISO8601 normalization in `guard-inject-memory.sh` and
+  `guard-session-summary.sh` is extracted to `memory_iso8601_normalize()` in
+  `runtime/lib/memory.sh`. The episodes.jsonl append lock (audit item 1) was
+  already fixed earlier and is verified not regressed.
+
 ---
 
 ## [0.9.0] — 2026-07-18

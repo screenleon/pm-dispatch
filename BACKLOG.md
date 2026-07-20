@@ -10,7 +10,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | #  | Status | 主題 | 影響面 | 首次記錄 | Refs | Priority | Epic |
 |----|--------|------|--------|----------|------|----------|------|
 | CC-450 | 🟢 someday | 其餘 9 個 test-*.sh docstring 格式統一（CC-004 同款 Behavior/Steps，跨檔） | ops | 2026-07-03 | — | P3 | — |
-| CC-452 | 🔵 active | guard/hook 對稱性與併發 hardening；僅與 lifecycle/state correctness 直接相關的 slice 納入 v0.10.0 | ops | 2026-07-06 | — | P3 | hygiene |
+| CC-452 | ✅ done | guard/hook 對稱性與併發 hardening；僅與 lifecycle/state correctness 直接相關的 slice 納入 v0.10.0 | ops | 2026-07-06 | pr:#431 | P3 | hygiene |
 | CC-453 | ✅ done | worktree/auto-pack 路徑契約 hardening；僅與 lifecycle/state correctness 直接相關的 slice 納入 v0.10.0 | ops | 2026-07-06 | pr:#430 | P3 | hygiene |
 | CC-461 | 🟢 someday | `doctor.sh --fix`：僅限冪等/可逆/不碰使用者內容類別的自動修復；待 CC-447 offline smoke 產出摔倒點清單後定白名單（2026-07-07 openyida 跨專案分析） | ops/install | 2026-07-07 | — | P3 | — |
 | CC-462 | 🟢 someday | e2e 可拋棄資源紀律：前綴命名 + registry JSON + result artifact；掛在 CC-449 e2e 新 phase 之後，與 CC-447 live smoke 共用同一 registry（2026-07-07 openyida 跨專案分析） | ops/test | 2026-07-07 | — | P3 | — |
@@ -179,7 +179,17 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `ops/backlog/archive-cl
 
 ---
 
-## CC-452 — guard/hook 對稱性與併發 hardening 🔵 active
+## CC-452 — guard/hook 對稱性與併發 hardening
+
+**Outcome**: Shipped via pr:#431。Item 1（episodes.jsonl 無鎖 append）已由先前工作
+（`0b66f1f`）以 `serialize_with_lock` 修復，本票驗證未回歸、不再改碼。Item 2：
+`guard-pm-write.sh`/`guard-reviewer-write.sh` 統一 `set -euo pipefail`；對稱性回歸
+測試動態列舉 `runtime/hooks/guard-*.sh`（新 guard 自動納入），並明文釘住唯一豁免
+`guard-pm-bash.sh`（其 `[[ cond ]] && exit 0` no-op 快路徑在 `-e` 下會中止並誤擋所
+有非 PM Bash 呼叫；理由已註記於該檔 `set` 行）。Item 3：兩 hook 重複的 ISO8601 正
+規化抽為 `runtime/lib/memory.sh` 的 `memory_iso8601_normalize()`，並移除與
+bare-fractional catch-all 重複的 fractional-Z 分支。Gate GO
+（`gate-20260720-052655-e72d67`）；全套件 87 suites 綠。See CHANGELOG Unreleased。
 
 **Problem**（2026-07-06 盲測稽核，三項低風險高確定性 correctness/一致性缺口）:
 1. `guard-session-summary.sh` 對 episodes.jsonl 的 skeleton append 是裸 `>>` 無鎖，而同一資料面的 `guard-inject-memory.sh` usage sidecar 已用 `serialize_with_lock`——並發 Stop hook（同 cwd 多 session）可交錯寫、破壞 dedup 前提。
