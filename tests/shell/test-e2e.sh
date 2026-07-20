@@ -110,6 +110,9 @@ record "pmctl" PASS "ok"
 section "Phase B — Real dispatch (output-contract validation)"
 
 smoke_dir="$(mktemp -d)"
+# codex refuses to run outside a trusted directory (git repo) unless
+# --skip-git-repo-check is passed; a bare mktemp dir fails with exit 1.
+git init -q "$smoke_dir"
 printf 'E2E-SMOKE-INPUT\n' > "$smoke_dir/smoke-input.txt"
 
 # Guard requires /tmp/brief-*.md (guard-executor-write.sh pattern check).
