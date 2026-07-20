@@ -41,19 +41,41 @@
 
 ---
 
-## v0.13.0 — detached recovery + operational evidence（暫定；未啟動）
+## v0.11.0 — pre-v1 stabilization：state compatibility + release/operational evidence（暫定；未啟動）
 
-> 最後排程更新：2026-07-17（首次拆版）
+> 最後排程更新：2026-07-20（原 v0.11.0／v0.12.0／v0.13.0 三版合併；CC-499 已提前隨 v0.10.0 交付）
 
-**主題**：處理 cancel 之後仍存在的 reboot、supervisor crash、key loss、orphan 與 indeterminate 診斷；同時產出可供下一版契約判斷的真實運行數據。
+**主題**：一次消化 v1.0 前已知的 state compatibility、release/upgrade evidence 與 operational evidence 缺口。原 v0.11.0（state compatibility + writer boundary）、v0.12.0（release evidence + upgrade proof）、v0.13.0（detached recovery + operational evidence）合併為本版；其中 detached reconciliation（CC-499）已提前於 v0.10.0 出貨，不在本版 scope。
 
-### Phase 1 — detached reconciliation
+> **設計依據**：合併只降低 release closure 次數，不改變原有排序理由——state compatibility 先於 writer ratchet、evidence parity 先於 upgrade smoke、契約凍結（v0.14.0）仍晚於本版全部內容。三版合一後 tag 間隔變長，任何 critical surface 不得因版本收斂而降級或略過。
+
+### Phase 1 — state compatibility surface（原 v0.11.0）
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-499 | conservative reconcile、doctor stale-run diagnostics、PID reuse/key-loss/crash tests | ✅ |
+| CC-498 | layout/entity version 命名、`pmctl state status [--json]`、migration availability | 🔵 |
+| CC-500 | all-production-domain single-writer enforcement | ⏸（依賴 CC-498） |
 
-### Phase 2 — operational evidence
+### Phase 2 — release evidence parity（原 v0.12.0 Phase 1）
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-449 | 吸收 CC-431：suite registry、CI parity、OpenCode、ship/worktree smoke | 🔵 |
+
+### Phase 3 — install/upgrade smoke（原 v0.12.0 Phase 2）
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-504 | manifest-driven multi-host lifecycle，移除 Claude base-spine 特例 | 🔵 |
+| CC-447 | offline clean install + latest released tag→current N-1 upgrade；foreign config/memory/user data 不變 | 🔵 |
+
+### Phase 4 — shared tooling/hooks host boundary（原 v0.12.0 Phase 3）
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-503 | canonical memory/payload/log roots + shared-layer content ratchet | 🔵（依賴 CC-502 pattern） |
+
+### Phase 5 — operational evidence（原 v0.13.0 Phase 2）
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
@@ -61,71 +83,17 @@
 
 ### 待後續 / 明確排除
 
+- 沒有真實 N→N+1 path 時不建空 migration engine，也不宣稱 `state migrate` 可用。
+- 真實 auth 的 end-to-end live dogfood 留到 v1 readiness review；本版先建立可重現的 offline/upgrade evidence。
+- bootstrap wizard 仍由 smoke 的真實摔倒點決定，不預先實作。
 - 不從 advisory record 推導 success；無可信證據時保留 indeterminate。
 - memory product expansion 不因 telemetry 名稱相近而併入本版。
 
 ---
 
-## v0.12.0 — release evidence + upgrade proof（暫定；未啟動）
+## v0.10.0 — detached cancel safety + reconciliation（release closure 中）
 
-> 最後排程更新：2026-07-17（首次拆版）
-
-**主題**：證明 clean install、N-1 upgrade、OpenCode 與新增 ship/worktree surface 都被 release verifier 真正覆蓋，且 full runner/CI 不會靜默漏 suite。
-
-### Phase 1 — evidence parity
-
-| 票 | 摘要 | 狀態 |
-|----|------|------|
-| CC-449 | 吸收 CC-431：suite registry、CI parity、OpenCode、ship/worktree smoke | 🔵 |
-
-### Phase 2 — install/upgrade smoke
-
-| 票 | 摘要 | 狀態 |
-|----|------|------|
-| CC-504 | manifest-driven multi-host lifecycle，移除 Claude base-spine 特例 | 🔵 |
-| CC-447 | offline clean install + latest released tag→current N-1 upgrade；foreign config/memory/user data 不變 | 🔵 |
-
-### Phase 3 — shared tooling/hooks host boundary
-
-| 票 | 摘要 | 狀態 |
-|----|------|------|
-| CC-503 | canonical memory/payload/log roots + shared-layer content ratchet | 🔵（依賴 CC-502 pattern） |
-
-### 待後續 / 明確排除
-
-- 真實 auth 的 end-to-end live dogfood 留到 v1 readiness review；本版先建立可重現的 offline/upgrade evidence。
-- bootstrap wizard 仍由 smoke 的真實摔倒點決定，不預先實作。
-
----
-
-## v0.11.0 — state compatibility + writer boundary（暫定；未啟動）
-
-> 最後排程更新：2026-07-17（首次拆版）
-
-**主題**：讓 state version mismatch 有真實可執行的診斷/remediation，並把 single-writer 從宣言變成 production-wide invariant。
-
-### Phase 1 — compatibility surface
-
-| 票 | 摘要 | 狀態 |
-|----|------|------|
-| CC-498 | layout/entity version 命名、`pmctl state status [--json]`、migration availability | 🔵 |
-
-### Phase 2 — architecture ratchet
-
-| 票 | 摘要 | 狀態 |
-|----|------|------|
-| CC-500 | all-production-domain single-writer enforcement | ⏸（依賴 CC-498） |
-
-### 待後續 / 明確排除
-
-- 沒有真實 N→N+1 path 時不建空 migration engine，也不宣稱 `state migrate` 可用。
-- detached reconcile 留 v0.13.0，避免 state version 與 process recovery 同版擴張。
-
----
-
-## v0.10.0 — detached cancel safety（進行中）
-
-> 最後排程更新：2026-07-19（CC-495 實作）
+> 最後排程更新：2026-07-20（release closure；CC-499 提前交付入帳、後續版次重整）
 
 **主題**：只補 detached lifecycle 的中止對稱面；先把 process identity、terminal race 與 completion evidence 做對，再談 crash/reboot recovery。
 
@@ -133,22 +101,32 @@
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-495 | process-group cancel、PID identity、terminal CAS、authenticated cancelled sentinel、wait distinct exit | ✅ |
+| CC-495 | process-group cancel、PID identity、terminal CAS、authenticated cancelled sentinel、wait distinct exit | ✅ pr:#428 |
 
 ### Phase 2 — bounded correctness hardening
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-452/453 | 僅納入與 lifecycle correctness 直接相關的小 slice；其餘不擴張 | 🔵 |
+| CC-452 | guard/hook 對稱性與併發 hardening（僅 lifecycle correctness 直接相關 slice） | ✅ pr:#431 |
+| CC-453 | worktree/auto-pack 路徑契約 hardening（僅 lifecycle correctness 直接相關 slice） | ✅ pr:#430 |
+
+### Phase 3 — detached run reconciliation（提前交付）
+
+> 原排 v0.13.0 Phase 1；實作於 tag 前即合併進 main，隨本版 tag 出貨，故入帳本版並納入 release audit 範圍。
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-499 | conservative reconcile、doctor stale-run diagnostics、PID reuse/key-loss/crash tests | ✅ pr:#429 |
 
 ### 待後續 / 明確排除
 
-- 不做 pause/resume、完整 dispatch list 或 crash reconciliation。
+- 不做 pause/resume 或完整 dispatch list。
 - cancel 若依賴 workspace 可偽造資料、刪除 completion proof 或可能誤殺 reused PID，本版不得 release。
+- reconcile 不從 advisory record 推導 success；無可信證據時保留 indeterminate。
 
 ---
 
-## v0.9.0 — migration closure + CLI discoverability（release closure 中）
+## v0.9.0 — migration closure + CLI discoverability（✅ released 2026-07-18）
 
 > 最後排程更新：2026-07-18（release closure）
 
