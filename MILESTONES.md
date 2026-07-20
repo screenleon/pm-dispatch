@@ -91,9 +91,9 @@
 
 ---
 
-## v0.10.0 — detached cancel safety + reconciliation（release closure 中）
+## v0.10.0 — detached cancel safety + reconciliation（✅ released 2026-07-20）
 
-> 最後排程更新：2026-07-20（release closure；CC-499 提前交付入帳、後續版次重整）
+> 最後排程更新：2026-07-20（✅ released：tag `v0.10.0` + GitHub Release；CC-499 提前交付入帳、後續版次重整）
 
 **主題**：只補 detached lifecycle 的中止對稱面；先把 process identity、terminal race 與 completion evidence 做對，再談 crash/reboot recovery。
 
