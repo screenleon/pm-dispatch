@@ -147,6 +147,52 @@ case_missing_version_file_uninitialized() {
   else fail "$name" "unexpected report: $out"; fi
 }
 
+# Behavior: an unreadable VERSION file is reported as store_state
+# "unreadable" with exit 3 and zero store mutation.
+# Steps: create a VERSION=1 store, chmod 000 the VERSION file, snapshot the
+#        tree; run status --json; assert exit 3, store_state unreadable, null
+#        layout version, and an identical post-run snapshot.
+case_unreadable_version_fail_closed() {
+  local name="unreadable VERSION: exit 3, store_state unreadable, zero mutation"
+  local store out rc=0 before after
+  store="$(mk_store unreadable 1)"
+  chmod 000 "$store/VERSION"
+  before="$(tree_snapshot "$store")"
+  out="$(status_json "$store")" || rc=$?
+  after="$(tree_snapshot "$store")"
+  chmod 644 "$store/VERSION"
+  if [[ "$rc" -ne 3 ]]; then fail "$name" "expected exit 3, got $rc"; return; fi
+  if [[ "$before" != "$after" ]]; then fail "$name" "store mutated"; return; fi
+  if jq -e '.store_state == "unreadable" and .store_layout_version == null' <<< "$out" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "unexpected report: $out"
+  fi
+}
+
+# Behavior: --cd pointing at a nonexistent directory is a usage error — exit 2
+# and the store is never touched.
+# Steps: run status --json --cd <missing dir> with a nonexistent store root;
+#        assert exit 2 and that the store root was not created.
+case_cd_nonexistent_dir_usage_error() {
+  local name="--cd nonexistent dir: exit 2, store untouched"
+  local rc=0
+  PM_DISPATCH_STATE_ROOT="$TMP_ROOT/cd-unused" "$PMCTL" state status --json --cd "$TMP_ROOT/no-such-dir" \
+    >/dev/null 2>&1 || rc=$?
+  if [[ "$rc" -eq 2 && ! -e "$TMP_ROOT/cd-unused" ]]; then pass "$name"
+  else fail "$name" "exit=$rc"; fi
+}
+
+# Behavior: --cd without a value is a usage error — exit 2.
+# Steps: run state status --cd with no following argument; assert exit 2.
+case_cd_missing_value_usage_error() {
+  local name="--cd missing value: exit 2"
+  local rc=0
+  PM_DISPATCH_STATE_ROOT="$TMP_ROOT/cd-unused2" "$PMCTL" state status --cd >/dev/null 2>&1 || rc=$?
+  if [[ "$rc" -eq 2 && ! -e "$TMP_ROOT/cd-unused2" ]]; then pass "$name"
+  else fail "$name" "exit=$rc"; fi
+}
+
 # Behavior: a garbage (non-numeric) VERSION value is unsupported — reported
 # incompatible with exit 3, and the raw value is surfaced.
 # Steps: write VERSION=banana; run status --json; assert exit 3,
@@ -297,6 +343,9 @@ case_future_version_fail_closed
 case_future_version_zero_mutation
 case_uninitialized_store_not_created
 case_missing_version_file_uninitialized
+case_unreadable_version_fail_closed
+case_cd_nonexistent_dir_usage_error
+case_cd_missing_value_usage_error
 case_garbage_version_incompatible
 case_no_phantom_migrate_recommendation
 case_writer_gate_honest_remediation
