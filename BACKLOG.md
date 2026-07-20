@@ -24,6 +24,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-500 | ⏸ deferred | State single-writer boundary enforcement：all-production-domain direct-writer ratchet | arch/test | 2026-07-17 | — | P2 | design |
 | CC-503 | 🔵 active | shared tooling/hooks host-boundary 收斂：skill-refine canonical memory、prompt payload adapter、state-root audit log、content ratchet | arch/hook | 2026-07-17 | — | P2 | hygiene |
 | CC-504 | 🔵 active | top-level install/uninstall/doctor 移除 Claude base-spine 特例，建立 manifest-driven multi-host lifecycle 與 product-asset ownership | arch/install | 2026-07-17 | — | P2 | design |
+| CC-505 | 🔵 active | context plane lexical 檢索補完：全段落 chunk 內容 + bm25 排序與加權 + pack 全域 byte budget + sha1/extractor-version freshness + context_savings 遙測（2026-07-20 四方 multi-model synthesis；CC-346/347 復活的前置） | memory/DX | 2026-07-20 | — | P2 | retrieval |
 | CC-465 | 🔵 active | memory/context 關鍵詞管線 CJK 支援：抽出共用零依賴斷詞 lib，取代三處各自 ASCII-only 抽詞；工作序列起點（465→467→468→466）（2026-07-07 記憶系統深入分析） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-466 | ⏸ deferred | 記憶卡片生命週期閉環：expires_at 執行 + 關窗式 supersede + usage sidecar 休眠偵測 + doctor→distill 接線；僅在 CC-467 證明 stale/dormant card 已形成實際問題時啟動 | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-467 | 🔵 active | `pmctl memory stats`：注入效益可視化（唯讀聚合器）——注入 bytes/卡片命中分佈/從未命中卡/episode 填寫率，回答「記憶有跟沒有差在哪」；排在 CC-466 之前（2026-07-07；業界僅離線 recall 評測，無 per-injection 遙測） | DX/memory | 2026-07-07 | — | P2 | retrieval |
@@ -1074,6 +1075,8 @@ file_refs(id, from_id INTEGER REFERENCES files(id),
 
 **Cross-link**: [[CC-338]] (repo-index, parent table), [[CC-237]] (context_hit_v1 refs 欄位), [[CC-239]] (reuse-scan consumer), [[CC-347]] (blast-radius consumer), [[CC-356]] (wiring precondition).
 
+**Update 2026-07-20（四方 multi-model synthesis）**: 四方（ChatGPT／Fable／opencode／codex gpt-5.6-sol）一致確認本票是 context-plane graph-lite 路線的樞紐。恢復時的設計補充：(a) Phase a 僅做 Bash literal `source`／`.` 邊，confidence 分級 EXTRACTED（literal 已解析）／INFERRED（穩定變數展開如 `$ROOT`）／AMBIGUOUS（動態路徑），沿用既有 `backend`+`confidence` 欄位慣例；(b) markdown 連結與 `[[...]]` 亦可作 EXTRACTED 邊；test 對應從 canonical suite registry（`tests/lib/test-suite-runner.sh`）derive 為 INFERRED 邊，不另建獨立 mapping 表；(c) auto-pack 已 default ON，原「reuse-scan 零 caller」顧慮已結構性降低，但 resume trigger（≥2 份真 brief 且缺 ref 資料為瓶頸）**仍未被證明**——開工前先翻真實 auto-pack brief 驗證，availability ≠ trigger satisfied；(d) 排序上 [[CC-505]]（檢索補完）先行，與 [[CC-347]] 作同一 evidence-gated 垂直切片交付。
+
 ## CC-347 — pr-gate: blast-radius analysis using cross-file refs 🟢 someday → v0.5.0 P3
 
 **Problem**: 現行 gate 只審查 diff 內的檔案，但一個 Bash helper 或 schema 的改動，波及的是**所有 source 它的腳本**。gate 在不知道波及範圍的情況下做 risk review，等於盲目評估——risk-reviewer 無從判斷「修一行 state-writer.sh 是低風險還是影響 15 個腳本的高風險」。
@@ -1096,6 +1099,8 @@ file_refs(id, from_id INTEGER REFERENCES files(id),
 **Priority**: P3.
 
 **Cross-link**: [[CC-346]] (data source), [[CC-338]] (repo-index), [[CC-237]] (context_hit_v1).
+
+**Update 2026-07-20（四方 multi-model synthesis）**: 與 [[CC-346]] Phase a 作同一垂直切片交付（edges 落地即接第一個消費者）。介面補充：新增 `pmctl context impact --changed <path>... [--depth 1] --json`，以 reverse `file_refs` recursive CTE 計算、附深度／數量上限與 cycle 抑制；輸出分四段——`direct_dependents`（EXTRACTED 邊）／`possible_dependents`（INFERRED/AMBIGUOUS）／`affected_tests`（直接 test-source/invocation 邊）／`truncated`（揭露截斷），並揭露 index freshness，防止 stale edges 造成虛假安心。gate brief 注入沿用既有 `pack.risks[]` 佔位欄。不做 ML risk scoring——fan-in 與 diff 特徵直接透明呈現給 reviewer。
 
 ## CC-348 — pmctl project-map: cross-file dependency graph visualisation 🟢 someday
 
@@ -1475,3 +1480,29 @@ short-circuit.
 **Done-when**: 三個 host可各自或組合 install→doctor→uninstall；未選 host零 config side effect；foreign config與canonical memory preserved；[[CC-447]] 可在同一 lifecycle contract上執行 future N-1 upgrade而不特判 Claude base tree。
 
 **Dependencies**: 以 [[CC-501]] 的一次性 evidence作現況輸入，與 [[CC-503]] 的 shared content boundary協調；在 [[CC-447]] final N-1 contract前完成。P2，v0.11.0。
+
+## CC-505 — context plane lexical 檢索補完與排序 🔵 active
+
+**Problem**（2026-07-20 四方 multi-model synthesis：ChatGPT／Fable 主線程／opencode nemotron-3-ultra／codex gpt-5.6-sol；codex 實證發現）: 現行 context plane 並非真全文檢索——
+1. chunk 只索引 heading + 正文前 200 字元（`runtime/lib/pmctl-context.sh:367`、`:436`），段落深處與 shell 函式本體的內容檢索不到。
+2. FTS5 只作 quoted match 過濾器，未用 `bm25()` 排序，無 path/heading/trust/recency 加權；hit confidence 依 hit type 硬編碼而非取自 symbols 表（`:1128`）；LIKE fallback 同樣無序。
+3. reuse-scan 把描述斷成獨立小寫詞逐一查詢，symbol hits 一律排在 text hits 前、取前五——「前五」反映插入順序而非相關性（`:1085`、`:1677`）。
+4. `context pack` 有去重但無全域 item/byte budget；`risks[]` 恆為空（`:1544`，CC-347 佔位）。
+5. freshness 只看 mtime；`files.sha1` 存了但未參與變更偵測，保 mtime 的編輯會靜默 stale（`:629`）；extractor 改版也不會觸發重建。
+
+**Why**: 這是實作缺口而非 lexical 檢索已到極限——在補完之前，[[CC-340]]（embeddings）的 resume 條件「FTS ranking 不足」無法被誠實評估；而 [[CC-346]] edges 層的查詢品質也建立在檢索排序之上。本票是 context-plane 強化路線（graph-lite：edges + blast radius）的第一片。
+
+**Requirement**:
+1. chunk 儲存有界的完整段落內容（bounded full-section bodies），取代 200 字元截斷；DB 尺寸以上限控制。
+2. FTS5 路徑改用 `bm25()` 基礎排序，疊加 exact-symbol／heading／trust／domain 加權，輸出穩定 score；LIKE fallback 給出確定性排序。
+3. `context pack` 增加全域 item + byte budget（跨 query terms），超額截斷須在輸出中揭露。
+4. freshness：mtime 快篩後以 `files.sha1` 驗證可疑案例；新增 `index_meta(schema_version, extractor_version, built_at)`，extractor 版本變更強制目標重建。
+5. `context_savings` 遙測：pack 輸出記錄注入 bytes vs 全檔 baseline bytes，餵 [[CC-467]]／[[CC-358]] 的 evidence 線；不得引用外部專案的節省倍數宣稱。
+
+**Done-when**: 檢索能命中段落深處內容；hits 帶穩定相關性 score 且 fixture 驗證排序；pack 有可證明的 budget 上限與截斷揭露；保 mtime 編輯不再 stale；telemetry 記錄 context_savings。
+
+**Non-goals**: 不做 embeddings（[[CC-340]] 維持 deferred，本票完成後才重新評估其 resume 條件）；不做 edges／blast radius（[[CC-346]]／[[CC-347]] 的範圍）；不引入 tree-sitter/AST 或外部索引工具。
+
+**Dependencies**: 無硬前置；與 [[CC-465]]（CJK 斷詞）同屬檢索品質線可協調但不合票。排序：本票 → [[CC-346]] Phase a + [[CC-347]] 垂直切片（見各票 2026-07-20 Update）。**未排入 milestone**——v0.11.0 之後的 context-plane 版次候選。
+
+**Source**: 2026-07-20 四方 multi-model synthesis（外部參照 tirth8205/code-review-graph 的可轉移性分析；四方一致：不裝外部工具、不建第二套系統，在既有 context.db 上補「檢索品質 → edges → change impact」三層）。
