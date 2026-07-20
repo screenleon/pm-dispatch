@@ -81,6 +81,7 @@ SUITE_NAMES=(
   test-pm-prep-snapshot
   test-schema-task-mirrors-backlog
   test-state-store
+  test-state-status
   test-state-paths
   test-pmctl-artifacts
   test-state-layout-parity
@@ -194,6 +195,7 @@ suite_path() {
     test-pm-prep-snapshot) printf 'tests/shell/test-pm-prep-snapshot.sh\n' ;;
     test-schema-task-mirrors-backlog) printf 'tests/shell/test-schema-task-mirrors-backlog.sh\n' ;;
     test-state-store) printf 'tests/shell/test-state-store.sh\n' ;;
+    test-state-status) printf 'tests/shell/test-state-status.sh\n' ;;
     test-state-paths) printf 'tests/shell/test-state-paths.sh\n' ;;
     test-pmctl-artifacts) printf 'tests/shell/test-pmctl-artifacts.sh\n' ;;
     test-state-layout-parity) printf 'tests/shell/test-state-layout-parity.sh\n' ;;

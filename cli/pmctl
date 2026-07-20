@@ -50,7 +50,7 @@ if [[ $# -eq 3 && ( "$3" == "-h" || "$3" == "--help" ) ]]; then
   exit $?
 fi
 
-for _lib in repo-layout detached-launch pmctl-policy pmctl-fs pmctl-adapter pmctl-backlog pmctl-guard executor-router pmctl-dispatch pmctl-trace pmctl-task pmctl-decision gate-result-verify pmctl-gate pmctl-safe pmctl-validate pmctl-context pmctl-memory pmctl-artifacts pmctl-pre-release pmctl-worktree pmctl-ship-parallel pmctl-ship pmctl-pm; do
+for _lib in repo-layout detached-launch pmctl-policy pmctl-fs pmctl-adapter pmctl-backlog pmctl-guard executor-router pmctl-dispatch pmctl-trace pmctl-task pmctl-decision gate-result-verify pmctl-gate pmctl-safe pmctl-validate pmctl-context pmctl-memory pmctl-artifacts pmctl-pre-release pmctl-worktree pmctl-ship-parallel pmctl-ship pmctl-state pmctl-pm; do
   # shellcheck source=/dev/null
   [[ -r "$REPO_ROOT/runtime/lib/$_lib.sh" ]] && . "$REPO_ROOT/runtime/lib/$_lib.sh"
 done
@@ -154,6 +154,12 @@ case "$cmd/$sub" in
       pmctl_die "artifacts migrate unavailable"
     fi
     pmctl_artifacts_migrate "$REPO_ROOT" "" "$@"
+    ;;
+  state/status)
+    if ! declare -F pmctl_state_status >/dev/null; then
+      pmctl_die "state status unavailable"
+    fi
+    pmctl_state_status "$REPO_ROOT" "$@"
     ;;
   worktree/create)
     if ! declare -F pmctl_worktree_create >/dev/null; then
