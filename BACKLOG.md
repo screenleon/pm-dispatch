@@ -24,7 +24,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-500 | ⏸ deferred | State single-writer boundary enforcement：all-production-domain direct-writer ratchet | arch/test | 2026-07-17 | — | P2 | design |
 | CC-503 | 🔵 active | shared tooling/hooks host-boundary 收斂：skill-refine canonical memory、prompt payload adapter、state-root audit log、content ratchet | arch/hook | 2026-07-17 | — | P2 | hygiene |
 | CC-504 | 🔵 active | top-level install/uninstall/doctor 移除 Claude base-spine 特例，建立 manifest-driven multi-host lifecycle 與 product-asset ownership | arch/install | 2026-07-17 | — | P2 | design |
-| CC-505 | 🔵 active | context plane lexical 檢索補完：全段落 chunk 內容 + bm25 排序與加權 + pack 全域 byte budget + sha1/extractor-version freshness + context_savings 遙測（2026-07-20 四方 multi-model synthesis；CC-346/347 復活的前置） | memory/DX | 2026-07-20 | — | P2 | retrieval |
+| CC-505 | 🔵 active | context plane lexical 檢索補完（Ph1 engine+統一排序+fixtures；Ph2 agent 契約+shadow 儀器化；evidence-gated 收緊 → [[CC-506]]）（2026-07-20 四方 synthesis；CC-346/347 前置） | memory/DX | 2026-07-20 | — | P2 | retrieval |
+| CC-506 | ⏸ deferred | retrieval evidence-gated 收緊：shadow 評測（coverage@5、critical miss、read reduction、outcome parity）達標後才收緊 broad-Read 指引並重評 [[CC-340]] resume 條件；前置 = [[CC-505]] Ph2 shipped + ≥20 真實任務證據 | memory/DX | 2026-07-20 | — | P3 | retrieval |
 | CC-465 | 🔵 active | memory/context 關鍵詞管線 CJK 支援：抽出共用零依賴斷詞 lib，取代三處各自 ASCII-only 抽詞；工作序列起點（465→467→468→466）（2026-07-07 記憶系統深入分析） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-466 | ⏸ deferred | 記憶卡片生命週期閉環：expires_at 執行 + 關窗式 supersede + usage sidecar 休眠偵測 + doctor→distill 接線；僅在 CC-467 證明 stale/dormant card 已形成實際問題時啟動 | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-467 | 🔵 active | `pmctl memory stats`：注入效益可視化（唯讀聚合器）——注入 bytes/卡片命中分佈/從未命中卡/episode 填寫率，回答「記憶有跟沒有差在哪」；排在 CC-466 之前（2026-07-07；業界僅離線 recall 評測，無 per-injection 遙測） | DX/memory | 2026-07-07 | — | P2 | retrieval |
@@ -1491,19 +1492,42 @@ short-circuit.
 4. `context pack` 有去重但無全域 item/byte budget；`risks[]` 恆為空（`:1544`，CC-347 佔位）。
 5. freshness 只看 mtime；`files.sha1` 存了但未參與變更偵測，保 mtime 的編輯會靜默 stale（`:629`）；extractor 改版也不會觸發重建。
 
-**Why**: 這是實作缺口而非 lexical 檢索已到極限——在補完之前，[[CC-340]]（embeddings）的 resume 條件「FTS ranking 不足」無法被誠實評估；而 [[CC-346]] edges 層的查詢品質也建立在檢索排序之上。本票是 context-plane 強化路線（graph-lite：edges + blast radius）的第一片。
+**Why**: 這是實作缺口而非 lexical 檢索已到極限——在補完之前，[[CC-340]]（embeddings）的 resume 條件「FTS ranking 不足」無法被誠實評估；而 [[CC-346]] edges 層的查詢品質也建立在檢索排序之上。本票是 context-plane 強化路線（graph-lite：edges + blast radius）的第一片。索引補完只能證明「索引較完整、輸出較小」，尚不能證明「Agent 會正確使用且不因少讀而降準」——後者由 Phase 2 儀器化蒐證、[[CC-506]] 評測收緊，刻意分離節奏（工程時間 vs 日曆時間）。
+
+**Requirement — Phase 1（engine + 統一排序 + fixtures；deterministic，可一~兩 PR 收掉）**:
+1. chunk 儲存有界的完整段落內容（bounded full-section bodies），取代 200 字元截斷；DB 尺寸以上限控制。
+2. FTS5 路徑改用 `bm25()` 基礎排序，疊加 exact-symbol／heading／trust／domain 加權；LIKE fallback 給出確定性排序。排序穩定性的定義：同一 index snapshot、同一 query 下 rank 具確定性。
+3. 所有 consumer（`query`／`prompt-scan`／`reuse-scan`／`context pack`）共用同一 ranking path，不得各自依插入順序、symbol-first 或獨立 heuristic 排序。每個 hit 輸出 `rank`、`match_kind`、bounded `line_start`／`line_end`、ranking score components、index freshness。
+4. 命名契約：lexical ranking 輸出 `ranking_score` + `score_components`（bm25／boosts 分項），不得命名或解釋為 correctness confidence——解析信心分級（EXTRACTED／INFERRED／AMBIGUOUS）屬 [[CC-346]]，與 lexical ranking 分離。
+5. `context pack` 增加全域 item + byte budget（跨 query terms），超額截斷須在輸出中揭露。
+6. freshness：mtime 快篩後以 `files.sha1` 驗證可疑案例；新增 `index_meta(schema_version, extractor_version, built_at)`，extractor 版本變更強制目標重建。
+7. deterministic retrieval fixture corpus：覆蓋 exact symbol、heading、段落深處、同詞多義、path boost、trust weighting、長 section 分段、mtime-preserving edit、extractor-version rebuild。每個 fixture 宣告 expected top-K refs；exact-symbol expected ref 必須 top-1，其餘 expected refs 必須位於 bounded top-K。
+
+**Requirement — Phase 2（agent 契約 + shadow 儀器化；小 PR，跟在 Phase 1 後）**:
+8. Agent-facing injection 明確採用 **index-first, source-verified** 契約：retrieval hit 是導航與 scope-narrowing evidence，不是原始來源替代品；factual conclusion、code edit、gate/security/release 判斷前必須 targeted-read 命中的 bounded span；zero-hit、stale/unknown freshness、truncated 或 ambiguous 結果必須 fallback 至 targeted Grep/Read；no hit 不得解讀為不存在。本階段只改導引措辭，**不收緊**任何現有 fallback 行為。
+9. shadow telemetry：在既有 context.* 事件上記錄 top-K refs、pack bytes、full-file baseline bytes、truncation/freshness，以及 Agent 後續實際 source-read bytes 與最終修改／引用檔案是否在 top-K——供 [[CC-506]] 評測消費。
+10. `context_savings` 遙測命名為 `compression_ratio_vs_full_file_baseline`（注入 bytes vs 全檔 baseline bytes）；沒有 observed read-reduction 證據時不得宣稱實際節省倍數；不得引用外部專案的節省倍數宣稱。餵 [[CC-467]]／[[CC-358]] 的 evidence 線。
+
+**Done-when**: Phase 1——檢索能命中段落深處內容；四個 consumer 對相同 query 使用相同 ranking order；hits 帶 rank／match_kind／bounded span／score components／freshness；fixture suite 證明 exact-symbol top-1、expected refs top-K、mtime-preserving edit freshness、budget truncation disclosure。Phase 2——agent-facing 輸出攜帶 index-first/source-verified fallback 指令；shadow telemetry 欄位落地並開始蒐集。收緊 broad-Read 指引**不在本票**（→ [[CC-506]]）。
+
+**Non-goals**: 不做 embeddings（[[CC-340]] 維持 deferred，resume 條件由 [[CC-506]] 評測後重評）；不做 edges／blast radius（[[CC-346]]／[[CC-347]] 的範圍）；不引入 tree-sitter/AST 或外部索引工具；不在本票收緊 broad-Read fallback 或宣告實際 token 節省（[[CC-506]]）；跨 host prompt 注入接線屬 [[CC-503]]，本票不因其未完成而阻塞。
+
+**Dependencies**: 無硬前置；與 [[CC-465]]（CJK 斷詞）同屬檢索品質線可協調但不合票。排序：本票 Phase 1 完成即解鎖 [[CC-346]] Phase a + [[CC-347]] 垂直切片（不需等 [[CC-506]]）。**未排入 milestone**——v0.11.0 之後的 context-plane 版次候選。
+
+**Source**: 2026-07-20 四方 multi-model synthesis（外部參照 tirth8205/code-review-graph 的可轉移性分析；四方一致：不裝外部工具、不建第二套系統，在既有 context.db 上補「檢索品質 → edges → change impact」三層）。2026-07-20 外部 review 補強：consumer ranking 統一、index-first/source-verified 契約、fixture corpus、shadow evidence 與誠實命名（ranking ≠ confidence；ratio ≠ 實際節省）；phase 拆分依 auto-pack 先例（機制+telemetry 先行、evidence 後收緊，見 CC-402 default flip 模式）。
+
+## CC-506 — retrieval evidence-gated 收緊：shadow 評測與 broad-Read 指引 ⏸ deferred
+
+**Problem**: [[CC-505]] 完成後索引「較完整、輸出較小」可被 fixture 證明，但「Agent 正確使用且不因少讀而降準」只能用真實任務證據證明。在證據到位前就收緊 broad-Read fallback，風險是 critical retrieval miss 直接轉成漏讀、錯設計或 gate 失敗。
 
 **Requirement**:
-1. chunk 儲存有界的完整段落內容（bounded full-section bodies），取代 200 字元截斷；DB 尺寸以上限控制。
-2. FTS5 路徑改用 `bm25()` 基礎排序，疊加 exact-symbol／heading／trust／domain 加權，輸出穩定 score；LIKE fallback 給出確定性排序。
-3. `context pack` 增加全域 item + byte budget（跨 query terms），超額截斷須在輸出中揭露。
-4. freshness：mtime 快篩後以 `files.sha1` 驗證可疑案例；新增 `index_meta(schema_version, extractor_version, built_at)`，extractor 版本變更強制目標重建。
-5. `context_savings` 遙測：pack 輸出記錄注入 bytes vs 全檔 baseline bytes，餵 [[CC-467]]／[[CC-358]] 的 evidence 線；不得引用外部專案的節省倍數宣稱。
+1. shadow mode 蒐證：以 [[CC-505]] Phase 2 落地的 telemetry，累積 ≥20 個真實任務的記錄（檢索 top-5、實際讀取檔案／段落、最終修改檔案、測試檔案、gate 後補讀補改）。
+2. 評測指標：required-anchor coverage@5（最終必要的既有檔案／章節有多少進前五）；critical miss（檢索缺漏導致錯誤設計、漏測或 gate 擋下）；read reduction（前後全檔 Read 次數、讀取 bytes、廣泛 Grep 次數）；outcome parity（focused/full tests、gate verdict、修正輪數）——不得只量 token 不量結果品質。
+3. 收緊門檻（全部滿足才動指引）：exact-symbol fixture top-1 100%；canonical fixtures expected refs 全進 top-5；shadow tasks 無 critical miss；freshness／truncated／zero-hit fallback 皆有測試；gate 結果無明顯惡化。不要求所有相關檔案進 top-5，只要求必要 anchor 不漏。
+4. 達標後：收緊 agent 導引中的 broad-Read fallback 措辭（保留 source-verified 原則）；以 observed read-reduction 數據重評 [[CC-340]] embeddings resume 條件。
 
-**Done-when**: 檢索能命中段落深處內容；hits 帶穩定相關性 score 且 fixture 驗證排序；pack 有可證明的 budget 上限與截斷揭露；保 mtime 編輯不再 stale；telemetry 記錄 context_savings。
+**Done-when**: 評測報告落地（coverage@5、critical miss、read reduction、outcome parity 各有數字）；門檻判定有明確結論；達標則指引收緊 PR 合併、未達標則記錄缺口回饋 [[CC-505]]／[[CC-346]]。
 
-**Non-goals**: 不做 embeddings（[[CC-340]] 維持 deferred，本票完成後才重新評估其 resume 條件）；不做 edges／blast radius（[[CC-346]]／[[CC-347]] 的範圍）；不引入 tree-sitter/AST 或外部索引工具。
+**Non-goals**: 不新增索引技術；不做 embeddings 實作（僅重評 resume 條件）。
 
-**Dependencies**: 無硬前置；與 [[CC-465]]（CJK 斷詞）同屬檢索品質線可協調但不合票。排序：本票 → [[CC-346]] Phase a + [[CC-347]] 垂直切片（見各票 2026-07-20 Update）。**未排入 milestone**——v0.11.0 之後的 context-plane 版次候選。
-
-**Source**: 2026-07-20 四方 multi-model synthesis（外部參照 tirth8205/code-review-graph 的可轉移性分析；四方一致：不裝外部工具、不建第二套系統，在既有 context.db 上補「檢索品質 → edges → change impact」三層）。
+**Dependencies**: 前置 = [[CC-505]] Phase 2 shipped + 日曆時間蒐證（≥20 真實任務）。P3，未排入 milestone。模式沿用 auto-pack 先例：機制+telemetry 先行、evidence 後收緊。
