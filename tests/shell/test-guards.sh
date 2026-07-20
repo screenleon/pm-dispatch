@@ -2447,27 +2447,32 @@ memory_age_bucket_mapping() {
 }
 
 security_guards_shell_options_symmetric() {
-  # Regression: guard-pm-write.sh and guard-reviewer-write.sh
-  # used to omit `-e`, unlike guard-executor-write.sh — an unhandled non-zero
-  # command in either could silently continue past a point that should have
-  # failed closed. All three security guards must declare the same
-  # `set -euo pipefail` so none of them can drift back to the weaker mode.
+  # Regression: guard-pm-write.sh and guard-reviewer-write.sh used to omit
+  # `-e`, unlike guard-executor-write.sh — an unhandled non-zero command in
+  # either could silently continue past a point that should have failed
+  # closed. Every guard hook must declare the same `set -euo pipefail` so
+  # none can drift back to the weaker mode. Enumerates guard-*.sh dynamically
+  # so a newly added guard is covered without touching this list. Pinned
+  # exception: guard-pm-bash.sh stays `set -uo pipefail` — its
+  # `[[ cond ]] && exit 0` no-op fast paths return non-zero when false, so
+  # `-e` would abort (and thereby block) every non-PM Bash call.
   local name="security-guards/shell-options-symmetric" got want ok=1 f opts
   should_run "$name" || return 0
   want="set -euo pipefail"
   got=""
-  for f in "$PMHOOK" "$RWHOOK" "$EXWHOOK"; do
+  for f in "$REPO_ROOT"/runtime/hooks/guard-*.sh; do
     opts="$(grep -m1 '^set -' "$f")"
     got+="$(basename "$f"):${opts}|"
-    [[ "$opts" == "$want" ]] || ok=0
+    if [[ "$(basename "$f")" == "guard-pm-bash.sh" ]]; then
+      [[ "$opts" == "set -uo pipefail" ]] || ok=0
+    else
+      [[ "$opts" == "$want" ]] || ok=0
+    fi
   done
   if [[ "$ok" == "1" ]]; then
-    PASS=$((PASS+1))
-    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+    pass "$name"
   else
-    FAIL=$((FAIL+1))
-    FAILED_CASES+=("$name")
-    printf '  FAIL  %s — got=%q want each=%q\n' "$name" "$got" "$want"
+    fail "$name" "got=$got want each=$want (guard-pm-bash.sh: set -uo pipefail)"
   fi
 }
 
@@ -2477,7 +2482,7 @@ memory_iso8601_normalize_formats() {
   # produce byte-identical output for every date-field shape the two hooks
   # were observed to receive: bare Z, fractional seconds, +/-HH:MM offset
   # with and without fractional seconds, and a naive (no Z, no offset) stamp.
-  local name="memory-lib/iso8601-normalize-formats" got want ok=1
+  local name="memory-lib/iso8601-normalize-formats" got want
   should_run "$name" || return 0
   got="$(
     # shellcheck disable=SC1091
@@ -2490,19 +2495,14 @@ memory_iso8601_normalize_formats() {
       "2026-07-19T16:45:56+09:00" \
       "2026-07-19T16:45:56-05:00" \
       "2026-07-19T16:45:56"; do
-      memory_iso8601_normalize "$d" | tr '\t' ':'
-      printf '|'
+      memory_iso8601_normalize "$d" | tr '\t\n' ':|'
     done
   )"
   want="2026-07-19T16:45:56:0|2026-07-19T16:45:56:0|2026-07-19T16:45:56:32400|2026-07-19T16:45:56:-18000|2026-07-19T16:45:56:32400|2026-07-19T16:45:56:-18000|2026-07-19T16:45:56:0|"
-  [[ "$got" == "$want" ]] && ok=1 || ok=0
-  if [[ "$ok" == "1" ]]; then
-    PASS=$((PASS+1))
-    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  if [[ "$got" == "$want" ]]; then
+    pass "$name"
   else
-    FAIL=$((FAIL+1))
-    FAILED_CASES+=("$name")
-    printf '  FAIL  %s — got=%q want=%q\n' "$name" "$got" "$want"
+    fail "$name" "got=$got want=$want"
   fi
 }
 

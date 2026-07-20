@@ -34,6 +34,13 @@
 # identified. Prefer denying a specific dangerous invocation shape over a
 # broad command name (e.g. deny `git push.*--force`, not `git push` outright).
 
+# No `-e` here, unlike the other guard hooks: the no-op fast paths below use
+# `[[ cond ]] && exit 0`, which returns non-zero when the condition is false —
+# under `set -e` that would abort the guard with a failure exit on every
+# non-PM Bash call, turning the no-op path into a hard block. This guard must
+# always run to an explicit allow/deny verdict. The shell-options symmetry
+# test pins this exemption; if `-e` is ever wanted, rewrite the fast paths as
+# `if` statements first.
 set -uo pipefail
 
 _SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"

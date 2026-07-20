@@ -173,9 +173,7 @@ memory_usage_commit() {
 memory_iso8601_normalize() {
   local date="$1" d_norm d_base d_offset=0 d_suffix d_clean d_frac_suffix
   d_norm="$date"
-  if [[ "$date" == *.*Z ]]; then
-    d_norm="${date%%.*}Z"
-  elif [[ "$date" == *.*[+-][0-9][0-9]:[0-9][0-9] ]]; then
+  if [[ "$date" == *.*[+-][0-9][0-9]:[0-9][0-9] ]]; then
     d_clean="${date%%.*}"
     d_frac_suffix="${date#*.}"
     if [[ "$d_frac_suffix" == *+* ]]; then
@@ -184,6 +182,7 @@ memory_iso8601_normalize() {
       d_norm="${d_clean}-${d_frac_suffix##*-}"
     fi
   elif [[ "$date" == *.* ]]; then
+    # covers both bare fractional ("...56.123") and fractional-Z ("...56.123Z")
     d_norm="${date%%.*}Z"
   elif [[ "$date" != *Z && ! "$date" =~ [+-][0-9][0-9]:[0-9][0-9]$ ]]; then
     d_norm="${date}Z"
