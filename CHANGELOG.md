@@ -6,7 +6,7 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [Unreleased]
+## [0.10.0] — 2026-07-20
 
 ### Added
 
@@ -29,6 +29,17 @@ Versions follow [Semantic Versioning](https://semver.org/).
   **exit 130** for authenticated cancel (distinct from failed, timeout 124,
   and indeterminate 3). Minimal in-flight discovery via `dispatch status`.
   Run schema/policy and event schema gain `cancelled` / `run.cancelled`.
+
+### Fixed
+
+- **Worktree/auto-pack path-contract hardening (CC-453, PR#430).**
+  `pmctl_worktree_create` now redirects `git worktree add` progress chatter to
+  stderr so its stdout contract is exactly one line (the worktree path).
+  `pmctl_dispatch_auto_pack` validates a non-git work_dir as an absolute,
+  existing directory and fail-loud skips packing otherwise — a garbage
+  work_dir can no longer create directories under the current CWD via a
+  relative `mkdir -p`. The opencode adapter's isolation error message now only
+  recommends its actually supported level (`none`).
 
 ### Changed
 

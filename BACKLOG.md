@@ -75,7 +75,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-352 | ⏸ deferred | **[codex-executor sandbox friction Pattern 1+2: apply_patch retry noise + Go module cache blocked]** issue:#173 Pattern 3（git commit blocked）已由 CC-272 pr:#245 吸收修復。剩餘：(1) apply_patch 中途失敗 self-retry 噪音 — brief 改拆小 hunk 加 unique context；(2) go build 時 GOPATH copy 被 sandbox 擋 — 文件化 GOPATH=/tmp/gopath 慣例。兩者均為 doc/convention fix。 | ops/DX | 2026-06-10 | — | P3 | — |
 | CC-355 | 🟢 someday | knowledge index: HTML semantic chunking `<h1-6>`（trigger: .html file enters knowledge plane；plug into CC-354 per-format chunker seam） | memory | 2026-06-10 | — | P3 | design |
 | CC-357 | 🟢 someday | **[skill as contract: machine-readable schema for skills]** 現有 skills/ 都是純 markdown prose（SKILL.md），沒有機器可讀的 input schema、output contract、tool_constraints、completion_condition。這使得 skill 無法被驗證、無法被工具自動發現、也無法像 dispatch_handover_v1 那樣由 validator 強制執行契約。本票引入 skill schema（YAML frontmatter 或 JSON sidecar），使 skill 具備：明確的輸入型別、輸出格式、允許/禁止工具清單、完成條件——平行於 brief-validate.sh 對 brief 的驗證角色。 | arch/DX | 2026-06-10 | — | — | design |
-| CC-358 | 🔵 active | runner telemetry：`pmctl run-stats` per-adapter 成功率/失敗模式/fallback 分析（v1.0 readiness 證據；v0.13.0） | ops/memory | 2026-06-10 | — | P2 | design |
+| CC-358 | 🔵 active | runner telemetry：`pmctl run-stats` per-adapter 成功率/失敗模式/fallback 分析（v1.0 readiness 證據；v0.11.0） | ops/memory | 2026-06-10 | — | P2 | design |
 | CC-359 | 🟢 someday | concept: backlog-driven batch dispatch with worktree isolation（PM manages `git worktree` lifecycle；executor-agnostic；human-in-the-loop merge；PR-only output） | arch/ops | 2026-06-11 | — | — | design |
 | CC-364 | ⏸ deferred | **[perf: `pmctl trace tail --all` per-event jq spawn]** `pmctl trace tail --kind <k> --all --json` is O(n) with a high per-event constant — ~20s for 338 events (~60ms/event), consistent with spawning a jq/subprocess per event rather than one streaming pass. Surfaced while diagnosing #270 context-telemetry test flakiness; the tests no longer depend on it (telemetry now honors `PM_DISPATCH_STATE_ROOT`, so the suite isolates state). Standalone reader-perf follow-up. **See**: pr:#270 | ops | 2026-06-12 | pr:#270 | P3 | hygiene |
 | CC-369 | ⏸ deferred | Windows state store 真實 ACL via icacls（parked: CC-370；border case relative to profile ACL protection） | ops/portability | 2026-06-13 | — | — | hygiene |
@@ -85,8 +85,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-393 | 🟢 someday | design: portable-skill-substrate — CLI-agnostic skill 控制層（design seed after v0.6.0 N≥2；3 control skills + Portable Skill v0 frontmatter；umbrella: CC-333） | arch | 2026-06-16 | — | — | design |
 | CC-435 | 🟢 someday | **[poll→通知機制 single-waiter guard：條件觸發，非既定後續票]** 只有在真正出現多個 waiter 需要同時等待同一個 run_id/gate_id 的場景時才拿出來討論；候選設計見 `docs/spikes/CC-433.md` Open risks（方案 A：`flock` 搶鎖+敗者退回輪詢；方案 B：per-waiter 專屬 fifo+supervisor 廣播）。CC-434 完成後重新盤點成本效益：輪詢 vs blocking read 在單一 waiter/數分鐘等待場景下資源消耗差距趨近於零，延遲改善（≤2s→近乎即時）對人在等 gate 結果無感，而兩個方案都要在安全敏感的 supervisor 檔案引入新 race condition，投資報酬率目前不足，故不排入既定實作，僅記錄設計供未來觸發條件成立時起步。 | arch/gate | 2026-07-02 | — | P3 | design |
 | CC-446 | 🔵 active | public contract candidate：stable/experimental CLI + schema、SemVer/deprecation 與 CC-296 清掃（v0.14.0；非 v1 RC） | process/DX | 2026-07-04 | — | P2 | design |
-| CC-447 | 🔵 active | onboarding 三 smoke：offline clean install + N-1 upgrade（v0.12.0）+ live dogfood（readiness review 後再排） | docs/ops | 2026-07-04 | — | P2 | — |
-| CC-449 | 🔵 active | release evidence parity：suite registry、CI parity、OpenCode（吸收 CC-431）、ship/worktree smoke（v0.12.0） | ops/test | 2026-07-04 | — | P2 | — |
+| CC-447 | 🔵 active | onboarding 三 smoke：offline clean install + N-1 upgrade（v0.11.0）+ live dogfood（readiness review 後再排） | docs/ops | 2026-07-04 | — | P2 | — |
+| CC-449 | 🔵 active | release evidence parity：suite registry、CI parity、OpenCode（吸收 CC-431）、ship/worktree smoke（v0.11.0） | ops/test | 2026-07-04 | — | P2 | — |
 | CC-472 | 🟢 someday | spike: antigravity（`agy` CLI）host 唯讀 probe——比照 CC-436/CC-448 階段 1 模式，實測 command 載入能力 + hook/plugin 機制 + 五個 capability enum 的 provider/confidence 判定，不落地 `hosts/antigravity/host.yaml`；排在 CC-445 通用 install/uninstall dispatcher 之後、與 CC-448 opencode 同批或緊接其後評估（N=3 驗證點） | arch/install | 2026-07-08 | — | P3 | spike |
 
 ---
@@ -146,16 +146,16 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `ops/backlog/archive-cl
 **Why**：v1.0 的第二個承諾是「別人裝得起來、用得下去」（DECISIONS 2026-07-04）；這比做 bootstrap wizard（[[CC-064]]）便宜且先驗證需求。
 
 **Requirement**（拆三個 smoke，時點不同）：
-1. **Offline clean-install smoke**（v0.12.0）：fresh Linux + WSL2 各一輪，不需任何 CLI auth——`install.sh --dry-run` → `CLAUDE_HOME=/tmp/... install.sh` → `doctor.sh` → `uninstall.sh` 無殘留。驗 install 鏈本體與文件一致性。
+1. **Offline clean-install smoke**（v0.11.0）：fresh Linux + WSL2 各一輪，不需任何 CLI auth——`install.sh --dry-run` → `CLAUDE_HOME=/tmp/... install.sh` → `doctor.sh` → `uninstall.sh` 無殘留。驗 install 鏈本體與文件一致性。
 2. **Live dogfood smoke**（readiness review 後另排）：真實 Claude/Codex auth 環境，走完整 onboarding：install → doctor → 首次 `/pm` → 首次 `pmctl dispatch run` → 首次 `pmctl ship`（一次 gate 到 PR）。
-3. **N-1 upgrade smoke**（v0.12.0）：從 latest released tag 安裝，建立代表性的 Claude/Codex/OpenCode managed config，再切到 current checkout 重跑 installer；驗證 doctor 全綠、最小 command 可執行、uninstall 無殘留，且 foreign hooks/config、canonical memory 與使用者資料未被修改。
+3. **N-1 upgrade smoke**（v0.11.0）：從 latest released tag 安裝，建立代表性的 Claude/Codex/OpenCode managed config，再切到 current checkout 重跑 installer；驗證 doctor 全綠、最小 command 可執行、uninstall 無殘留，且 foreign hooks/config、canonical memory 與使用者資料未被修改。
 4. 每個摔倒點（缺依賴、文件與行為不符、錯誤訊息不可行動）逐一開票，不在本票內修。
 5. `QA_RULES_DIR` 外部依賴缺席時的行為驗證：qa-tester 在沒有 qa-testing-rules checkout 的機器上是 fail-loud 還是靜默劣化，結論寫入報告。
 6. [[CC-064]] bootstrap wizard 僅在實測證明需要時才升級為實作票。
 
 **Done-when**：三個 smoke 的實測報告 committed（`docs/notes/` 或票內）；clean install 與 N-1 upgrade 都有可重現證據；摔倒點全部開票；GETTING_STARTED 修正到與實測一致。
 
-**Dependencies**：offline/N-1 smoke 在 [[CC-497]]、[[CC-456]]、[[CC-449]] 後於 v0.12.0 執行；live smoke 不預先綁 v1.0，待 v0.14.0 後 readiness review 排程。
+**Dependencies**：offline/N-1 smoke 在 [[CC-497]]、[[CC-456]]、[[CC-449]] 後於 v0.11.0 執行；live smoke 不預先綁 v1.0，待 v0.14.0 後 readiness review 排程。
 **See**: DECISIONS.md 2026-07-04
 
 ## CC-449 — release-verify/test-e2e：ship/worktree surface 煙測 + 套件註冊完整性 lint 🔵 active
@@ -174,12 +174,12 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `ops/backlog/archive-cl
 
 **Done-when**：lint 落地且能抓到「新增未註冊套件」與「已註冊但 CI 缺席且無豁免」與「surface 缺 coverage 宣告」三類注入測試；e2e 新 phase 在 `release-verify.sh --e2e` 下通過；排除項（若有）記錄於腳本註解與本票。
 
-**Dependencies**：已吸收 [[CC-431]]；與 [[CC-454]] 協調 CI/lint ownership，但不合併 ShellCheck domain coverage。v0.12.0。
+**Dependencies**：已吸收 [[CC-431]]；與 [[CC-454]] 協調 CI/lint ownership，但不合併 ShellCheck domain coverage。v0.11.0。
 **See**: [[CC-444]] Outcome、pr:#367
 
 ---
 
-## CC-452 — guard/hook 對稱性與併發 hardening
+## CC-452 — guard/hook 對稱性與併發 hardening ✅ 2026-07-20
 
 **Outcome**: Shipped via pr:#431。Item 1（episodes.jsonl 無鎖 append）已由先前工作
 （`0b66f1f`）以 `serialize_with_lock` 修復，本票驗證未回歸、不再改碼。Item 2：
@@ -190,6 +190,8 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `ops/backlog/archive-cl
 規化抽為 `runtime/lib/memory.sh` 的 `memory_iso8601_normalize()`，並移除與
 bare-fractional catch-all 重複的 fractional-Z 分支。Gate GO
 （`gate-20260720-052655-e72d67`）；全套件 87 suites 綠。See CHANGELOG Unreleased。
+
+**See**: pr:#431
 
 **Problem**（2026-07-06 盲測稽核，三項低風險高確定性 correctness/一致性缺口）:
 1. `guard-session-summary.sh` 對 episodes.jsonl 的 skeleton append 是裸 `>>` 無鎖，而同一資料面的 `guard-inject-memory.sh` usage sidecar 已用 `serialize_with_lock`——並發 Stop hook（同 cwd 多 session）可交錯寫、破壞 dedup 前提。
@@ -205,7 +207,16 @@ bare-fractional catch-all 重複的 fractional-Z 分支。Gate GO
 **Dependencies**: 無硬前置；只有與 CC-495/498 lifecycle/state correctness 直接相關的 slice 納入 v0.10.0，其餘維持一般 hardening backlog。
 **Source**: 2026-07-06 盲測程式碼稽核（runtime 管線角度）。
 
-## CC-453 — worktree/auto-pack 路徑契約 hardening
+## CC-453 — worktree/auto-pack 路徑契約 hardening ✅ 2026-07-19
+
+**Outcome**: Shipped via pr:#430。`pmctl_worktree_create` 把 `git worktree add`
+的 stdout chatter 導向 stderr，stdout 契約收斂為只印 worktree 路徑；auto-pack 對
+非 git work tree 的 work_dir 驗證「絕對路徑 + 存在」，不符即 fail-loud 跳過 pack
+（沿用既有 warning + telemetry 模式），杜絕相對路徑 `mkdir -p` 在 CWD 產目錄的
+洩漏鏈；opencode isolation 錯誤訊息只提實際支援值 `none`。三項均補回歸測試
+（含「垃圾 work_dir 不得在 CWD 產生任何目錄」斷言）。
+
+**See**: pr:#430
 
 **Problem**（2026-07-06 盲測稽核 + 實際洩漏案例）:
 1. `pmctl_worktree_create` 以「stdout 最後一行 = worktree 路徑」為輸出契約，`git worktree add` 的 stdout chatter（`HEAD is now at ...`）不抑制、只靠消費端 `tail -1`（`pmctl-ship.sh` 等）——契約脆弱。2026-07-03 開發期間曾實際把 5 個名為 `HEAD is now at <sha> seed` 的垃圾目錄洩漏到 repo 根目錄（內含 `.pm-dispatch/ctx/packs`；因 `.pm-dispatch` 被 gitignore，`git status` 完全不可見）。2026-07-06 已清除，現行套件重跑不再重現，但根因鏈仍在。
@@ -1229,7 +1240,7 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 
 **Resume trigger for related tickets**: 本票的觀察結果是 [[CC-346]]（cross-file ref）resume 的補充證據，也是任何 runner diversity 票（multi-vendor adapter）的前置條件——先看數據，再決定要不要加第三個 adapter。
 
-**Milestone**: v0.13.0（stable-readiness operational evidence）。
+**Milestone**: v0.11.0（stable-readiness operational evidence；原 v0.13.0）。
 
 **Priority**: P2。
 
@@ -1335,7 +1346,7 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 
 **Cross-link**: [[CC-489]]、`docs/dispatch-brief.md`、`docs/executor-contract.md`。
 
-## CC-495 — `pmctl dispatch cancel <run_id>`：detached run 中途終止機制
+## CC-495 — `pmctl dispatch cancel <run_id>`：detached run 中途終止機制 ✅ 2026-07-19
 
 **Outcome**: Shipped `pmctl dispatch cancel <run_id> --cd <work_dir>` and
 minimal discovery via `pmctl dispatch status --cd <work_dir>` (ticket req. 8).
@@ -1397,7 +1408,7 @@ incomplete record still wait-resolvable, and status listing.
 
 **Dependencies**: CC-451 completed；[[CC-446]] stable contract 前置。P1，v0.11.0。
 
-## CC-499 — Detached run reconciliation：crash、reboot、stale sentinel、orphan recovery
+## CC-499 — Detached run reconciliation：crash、reboot、stale sentinel、orphan recovery ✅ 2026-07-19
 
 **Outcome**: Shipped `pmctl dispatch reconcile <run_id>|--all --cd <work_dir>
 [--dry-run]`, reusing [[CC-495]]'s trusted identity/terminal-CAS primitives.
@@ -1446,7 +1457,7 @@ short-circuit.
 
 **Done-when**: 上述 shared consumers在 Claude/Codex/OpenCode host fixture下使用同一 canonical input/output contract；host-specific parsing只存在 host module；content ratchet有正反注入測試並接入 CI/full runner。
 
-**Dependencies**: [[CC-502]] 先建立 gate/reviewer pattern；[[CC-054]] 保持 deferred且只處理 review-first diff generation。P2，v0.12.0 host-boundary closure。
+**Dependencies**: [[CC-502]] 先建立 gate/reviewer pattern；[[CC-054]] 保持 deferred且只處理 review-first diff generation。P2，v0.11.0 host-boundary closure。
 
 ## CC-504 — manifest-driven multi-host lifecycle，移除 Claude base-spine 特例 🔵 active
 
@@ -1463,4 +1474,4 @@ short-circuit.
 
 **Done-when**: 三個 host可各自或組合 install→doctor→uninstall；未選 host零 config side effect；foreign config與canonical memory preserved；[[CC-447]] 可在同一 lifecycle contract上執行 future N-1 upgrade而不特判 Claude base tree。
 
-**Dependencies**: 以 [[CC-501]] 的一次性 evidence作現況輸入，與 [[CC-503]] 的 shared content boundary協調；在 [[CC-447]] final N-1 contract前完成。P2，v0.12.0。
+**Dependencies**: 以 [[CC-501]] 的一次性 evidence作現況輸入，與 [[CC-503]] 的 shared content boundary協調；在 [[CC-447]] final N-1 contract前完成。P2，v0.11.0。
