@@ -19,7 +19,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-493 | 🟢 someday | Prompt→Skill→Command→Harness 升級規則文件化：可測試的分類判準（何時停在 prompt、何時升為 skill、何時做成 command、何時需要 harness-level hook/guard/state），並盤點 `commands/`／`skills/`／`agents/` 現況對照分類（2026-07-15 CC-489 三方 multi-model synthesis） | process/docs | 2026-07-15 | feedback:2026-07-15 | P2 | design |
 | CC-494 | 🟢 someday | design: executor 局部設計裁量權 envelope——在 dispatch brief / executor contract 定義「可自行處理的局部設計」與「必須 halt 回報 PM」的邊界（例如新增 schema 欄位 `design_latitude`/`architectural_conflicts`）；三方 multi-model synthesis 2:1 分歧（codex/fable 認為現行邊界過度僵硬需要新機制，opencode 認為現行 `isolation_level`/executor 欄位已足夠彈性），本票僅追蹤決策、不預設結論（2026-07-15） | schema/process | 2026-07-15 | feedback:2026-07-15 | P3 | design |
 | CC-495 | ✅ done | `pmctl dispatch cancel <run_id>`：可信任的 detached-run cancel terminalization、PID reuse 防護、cancel-vs-complete 單一終態、authenticated cancelled sentinel | arch/gate | 2026-07-15 | feedback:2026-07-15 | P1 | design |
-| CC-498 | 🔵 active | State compatibility surface：status、layout/entity 版本命名、真實 migration availability | arch/schema | 2026-07-17 | — | P1 | design |
+| CC-498 | ✅ done | State compatibility surface：status、layout/entity 版本命名、真實 migration availability | arch/schema | 2026-07-17 | pr:#435 | P1 | design |
 | CC-499 | ✅ done | Detached run reconciliation：crash、reboot、stale sentinel、PID identity 與 orphan recovery | arch/ops | 2026-07-17 | pr:#429 | P2 | design |
 | CC-500 | ⏸ deferred | State single-writer boundary enforcement：all-production-domain direct-writer ratchet | arch/test | 2026-07-17 | — | P2 | design |
 | CC-503 | 🔵 active | shared tooling/hooks host-boundary 收斂：skill-refine canonical memory、prompt payload adapter、state-root audit log、content ratchet | arch/hook | 2026-07-17 | — | P2 | hygiene |
@@ -1398,20 +1398,21 @@ incomplete record still wait-resolvable, and status listing.
 
 **Cross-link**: [[CC-470]]（既有逾時止血 kill 機制可沿用）、[[CC-487]]（孤兒 process 殘留的既有觀察案例）、[[CC-489]]（三方 multi-model synthesis 脈絡）、`docs/executor-contract.md`。
 
-## CC-498 — State compatibility surface：status、版本命名、migration registry 🔵 active
+## CC-498 — State compatibility surface：status、版本命名、migration registry ✅ 2026-07-20
 
-**Problem**: state writer 遇到不支援的 store version 時要求執行不存在的 `pmctl state migrate`；store root `VERSION`、entity `schema_version` 與 `core/state/layout.yaml` 的命名也混用，契約無法安全凍結。
+**Outcome**: Shipped read-only `pmctl state status [--json]` — resolved store
+root、observed store layout version vs supported versions、project key、entity
+schema versions（live 讀 `core/schema/*.schema.json`）、root safety/writability
+與 migration availability；incompatible store 以 exit 3 機械回報，對
+future/uninitialized/unreadable store 全程零 mutation。layout/entity 版本命名
+切分：`layout.yaml` 改宣告 `store_layout_version`，supported versions 與
+declarative migration registry 收斂於 `runtime/lib/state-compat.sh`，writer
+version gate 與 status 共用同一來源。writer 的 unsupported-version 錯誤改由
+registry 查詢產生 remediation — 不再推薦不存在的 `pmctl state migrate`，改指向
+`pmctl state status`。migration engine 依 requirement 4 未展開（無真實 N→N+1
+path）。`tests/shell/test-state-status.sh` 17 cases 註冊於兩份 suite registry。
 
-**Requirement**:
-1. 明確區分 `store_layout_version` 與 Run/Event/Task 等 entity `schema_version`。
-2. 第一 slice 新增 `pmctl state status [--json]`，輸出 resolved store root、layout version、supported versions、project key、entity schema versions、writable/safe-root 與 migration availability；可供 doctor/support report 消費。
-3. 建立 migration registry。只有存在明確 N→N+1 path 時才宣稱 `pmctl state migrate` 可用；尚無 path 時，錯誤訊息不得推薦不存在或不能完成的命令。
-4. migration implementation 若本 slice 有真實需求才展開；屆時 `--dry-run`、global lock、backup、atomic publish、可重跑與 failure recovery 都是必要契約，不先造空引擎。
-5. 測試 future-version fail-closed 且零 mutation；若加入合成 migration，補 success/failure recovery。
-
-**Done-when**: 所有 remediation 都指向真實可執行 surface；`state status --json` 可機械消費；layout/entity version 不再混用。
-
-**Dependencies**: CC-451 completed；[[CC-446]] stable contract 前置。P1，v0.11.0。
+**See**: pr:#435
 
 ## CC-499 — Detached run reconciliation：crash、reboot、stale sentinel、orphan recovery ✅ 2026-07-19
 
