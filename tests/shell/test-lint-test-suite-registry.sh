@@ -72,7 +72,7 @@ test_reasoned_ci_exemption_passes() {
   should_run "$name" || return 0
   root="$(mktemp -d "$tmp_root/registry-XXXXXX")"; make_fixture "$root"
   printf '%s\n' 'name: test' > "$root/.github/workflows/lint.yml"
-  printf '%s\t%s\n' 'test-alpha' 'isolated integration coverage' >> "$root/tests/ci-suite-exemptions.tsv"
+  printf '%s\t%s\n' 'test-alpha' 'constraint: CI shard not provisioned; promotion: add a dedicated CI job' >> "$root/tests/ci-suite-exemptions.tsv"
   output="$(run_linter "$root")"; status=$?
   if [[ "$status" -eq 0 ]]; then pass "$name"; else fail "$name" "status=$status output=$output"; fi
 }
@@ -100,9 +100,19 @@ test_duplicate_ci_exemption_fails() {
   local name="lint-test-suite-registry/duplicate-ci-exemption-fails" root output status
   should_run "$name" || return 0
   root="$(mktemp -d "$tmp_root/registry-XXXXXX")"; make_fixture "$root"
-  printf '%s\t%s\n%s\t%s\n' 'test-alpha' 'first reason' 'test-alpha' 'second reason' >> "$root/tests/ci-suite-exemptions.tsv"
+  printf '%s\t%s\n%s\t%s\n' 'test-alpha' 'constraint: first fixture reason; promotion: first fixture promotion' 'test-alpha' 'constraint: second fixture reason; promotion: second fixture promotion' >> "$root/tests/ci-suite-exemptions.tsv"
   output="$(run_linter "$root")"; status=$?
   if [[ "$status" -ne 0 ]] && has_output_line "$output" 'lint-test-suite-registry: duplicate CI suite exemption: test-alpha'; then pass "$name"; else fail "$name" "status=$status output=$output"; fi
+}
+
+test_unreasoned_ci_exemption_fails() {
+  local name="lint-test-suite-registry/unreasoned-ci-exemption-fails" root output status
+  should_run "$name" || return 0
+  root="$(mktemp -d "$tmp_root/registry-XXXXXX")"; make_fixture "$root"
+  printf '%s\n' 'name: test' > "$root/.github/workflows/lint.yml"
+  printf '%s\t%s\n' 'test-alpha' 'full-runner-only' >> "$root/tests/ci-suite-exemptions.tsv"
+  output="$(run_linter "$root")"; status=$?
+  if [[ "$status" -ne 0 ]] && has_output_line "$output" 'lint-test-suite-registry: CI suite exemption needs constraint and promotion: test-alpha'; then pass "$name"; else fail "$name" "status=$status output=$output"; fi
 }
 
 test_real_registry_passes
@@ -112,5 +122,6 @@ test_reasoned_ci_exemption_passes
 test_registered_exclusion_fails
 test_duplicate_registered_path_fails
 test_duplicate_ci_exemption_fails
+test_unreasoned_ci_exemption_fails
 
 th_summary

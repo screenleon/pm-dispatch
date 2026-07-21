@@ -75,6 +75,7 @@ while IFS= read -r line; do
   IFS=$'\t' read -r name reason extra <<< "$line"
   [[ -z "$name" || "$name" == \#* ]] && continue
   [[ -n "$reason" && -z "$extra" ]] || { fail "malformed CI suite exemption: $name"; continue; }
+  [[ "$reason" =~ ^constraint:\ .+\;\ promotion:\ .+$ ]] || { fail "CI suite exemption needs constraint and promotion: $name"; continue; }
   [[ -z "${ci_exempt[$name]:-}" ]] || fail "duplicate CI suite exemption: $name"
   ci_exempt[$name]="$reason"
 done < "$ci_exemptions"
