@@ -151,18 +151,20 @@ case_missing_version_file_uninitialized() {
 # "unreadable" with exit 3 and zero store mutation.
 # Steps: create a VERSION=1 store, chmod 000 the VERSION file, snapshot the
 #        tree; run status --json; assert exit 3, store_state unreadable, null
-#        layout version, and an identical post-run snapshot.
+#        layout version, no raw shell error, and an identical post-run snapshot.
 case_unreadable_version_fail_closed() {
   local name="unreadable VERSION: exit 3, store_state unreadable, zero mutation"
-  local store out rc=0 before after
+  local store out rc=0 before after stderr_file
   store="$(mk_store unreadable 1)"
+  stderr_file="$TMP_ROOT/unreadable.stderr"
   chmod 000 "$store/VERSION"
   before="$(tree_snapshot "$store")"
-  out="$(status_json "$store")" || rc=$?
+  out="$(status_json "$store" 2>"$stderr_file")" || rc=$?
   after="$(tree_snapshot "$store")"
   chmod 644 "$store/VERSION"
   if [[ "$rc" -ne 3 ]]; then fail "$name" "expected exit 3, got $rc"; return; fi
   if [[ "$before" != "$after" ]]; then fail "$name" "store mutated"; return; fi
+  if [[ -s "$stderr_file" ]]; then fail "$name" "unexpected stderr: $(<"$stderr_file")"; return; fi
   if jq -e '.store_state == "unreadable" and .store_layout_version == null' <<< "$out" >/dev/null; then
     pass "$name"
   else
