@@ -588,9 +588,17 @@ sw_build_run_json() {
     '{schema_version:2,id:$id,task_id:$task_id,executor:$executor,state:$state,exit_code:$exit_code,model:$model,brief_file:$brief_file,working_dir:$working_dir,trace_path:$trace_path,created_ts:$created_ts} + (if $operation_id == "" then {} else {operation_id:$operation_id} end)'
 }
 
+_sw_task_id_valid() {
+  [[ "${1:-}" =~ ^[A-Z]{1,4}-[0-9]+[a-z]?$ ]]
+}
+
+_sw_decision_id_valid() {
+  [[ "${1:-}" =~ ^dec-[0-9]{4}-[0-9]{2}-[0-9]{2}-[a-z0-9-]+$ ]]
+}
+
 task_upsert() {
   local task_id="${1:-}" json_line="${2:-}" proj_dir tmp="" compact
-  if [[ ! "${task_id}" =~ ^[A-Z]{1,4}-[0-9]+[a-z]?$ ]]; then
+  if ! _sw_task_id_valid "$task_id"; then
     _sw_log_error "task_upsert: invalid task_id='${task_id}'"
     return 1
   fi
@@ -614,9 +622,26 @@ task_upsert() {
   }
 }
 
+# Delete a task projection through the designated state-store boundary.
+# Callers own any higher-level transaction lock that must cover this deletion
+# together with related event writes or rollback decisions.
+task_delete() {
+  local task_id="${1:-}" proj_dir
+  if ! _sw_task_id_valid "$task_id"; then
+    _sw_log_error "task_delete: invalid task_id='${task_id}'"
+    return 1
+  fi
+  state_store_init || return 1
+  proj_dir="$(_sw_project_dir)" || return 1
+  rm -f "$proj_dir/tasks/${task_id}.json" 2>/dev/null || {
+    _sw_log_error "task_delete failed: $proj_dir/tasks/${task_id}.json"
+    return 1
+  }
+}
+
 decision_upsert() {
   local decision_id="${1:-}" json_line="${2:-}" proj_dir tmp="" compact
-  if [[ ! "${decision_id}" =~ ^dec-[0-9]{4}-[0-9]{2}-[0-9]{2}-[a-z0-9-]+$ ]]; then
+  if ! _sw_decision_id_valid "$decision_id"; then
     _sw_log_error "decision_upsert: invalid decision_id='${decision_id}'"
     return 1
   fi
@@ -636,6 +661,22 @@ decision_upsert() {
   mv -f "$tmp" "$proj_dir/decisions/${decision_id}.json" 2>/dev/null || {
     _sw_log_error "decision_upsert rename failed: $proj_dir/decisions/${decision_id}.json"
     rm -f "$tmp" 2>/dev/null
+    return 1
+  }
+}
+
+# Delete a decision projection through the designated state-store boundary.
+# The caller serializes the surrounding duplicate-check/write/event operation.
+decision_delete() {
+  local decision_id="${1:-}" proj_dir
+  if ! _sw_decision_id_valid "$decision_id"; then
+    _sw_log_error "decision_delete: invalid decision_id='${decision_id}'"
+    return 1
+  fi
+  state_store_init || return 1
+  proj_dir="$(_sw_project_dir)" || return 1
+  rm -f "$proj_dir/decisions/${decision_id}.json" 2>/dev/null || {
+    _sw_log_error "decision_delete failed: $proj_dir/decisions/${decision_id}.json"
     return 1
   }
 }

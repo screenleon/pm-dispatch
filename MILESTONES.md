@@ -53,8 +53,8 @@
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-498 | layout/entity version 命名、`pmctl state status [--json]`、migration availability | 🔵 |
-| CC-500 | all-production-domain single-writer enforcement | ⏸（依賴 CC-498） |
+| CC-498 | layout/entity version 命名、`pmctl state status [--json]`、migration availability | ✅ pr:#435 |
+| CC-500 | all-production-domain single-writer enforcement | 🔵 |
 | CC-507 | `state status` unreadable `VERSION` fail-closed exit contract | ✅ pr:#437 |
 
 ### Phase 2 — release evidence parity（原 v0.12.0 Phase 1）

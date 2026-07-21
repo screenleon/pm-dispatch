@@ -22,6 +22,10 @@
 #     route, post-verify, or pmctl itself) in non-comment lines. Executor-specific
 #     invocation + output-contract glue + best-effort state/usage logging are
 #     ALLOWED (they parse executor-native formats and cannot live in pmctl).
+#   - Production shell domains must not write state-store entities directly.
+#     The designated writer module owns those mutations; the pure state-path
+#     resolver and layout-declared rebuildable SQLite caches are bounded
+#     exemptions.
 set -euo pipefail
 export LC_ALL=C.UTF-8
 
@@ -94,6 +98,107 @@ check_adapters_no_state_writes() {
   done < <(find "$root/adapters" -type f -name '*.sh' 2>/dev/null)
 }
 
+# S1: all production shell domains must route state-entity mutations through
+# runtime/lib/state-writer.sh. This is deliberately a content ratchet rather
+# than a path-only convention: a new direct redirect, jq redirect, mv/cp, or
+# equivalent mutator aimed at the state root or a known state entity fails.
+#
+# The resolver is exempt because it computes paths without mutating the store.
+# Rebuildable SQLite caches are derived dynamically from layout.yaml and are
+# exempt only when written through sqlite3; mentioning a derived cache cannot
+# hide a write to a load-bearing entity on the same line.
+check_production_no_direct_state_writes() {
+  local root="$1" layout f relative
+  local rebuildable_names=""
+  layout="$root/core/state/layout.yaml"
+  [[ -f "$layout" ]] || {
+    printf 'core/state/layout.yaml: missing state layout contract\n'
+    return 0
+  }
+
+  rebuildable_names="$(awk '
+    /^[[:space:]]*- path:[[:space:]]*/ {
+      path = $0
+      sub(/^[[:space:]]*- path:[[:space:]]*["'\'' ]*/, "", path)
+      sub(/["'\'' ]*[[:space:]]*$/, "", path)
+      next
+    }
+    /^[[:space:]]*rebuildable:[[:space:]]*true([[:space:]]*#.*)?$/ && path != "" {
+      n = split(path, parts, "/")
+      print parts[n]
+      path = ""
+    }
+  ' "$layout" | paste -sd '|' -)"
+
+  while IFS= read -r -d '' f; do
+    relative="${f#"$root"/}"
+    case "$relative" in
+      runtime/lib/state-writer.sh|runtime/lib/state-paths.sh) continue ;;
+    esac
+    awk -v relative="$relative" -v rebuildable_names="$rebuildable_names" '
+      function direct_mutation(s) {
+        return s ~ /^[[:space:]]*(if[[:space:]]+!?[[:space:]]*)?(cp|mv|install|tee|touch|truncate|mkdir|rm|ln|sqlite3)([[:space:]]|$)/ \
+          || s ~ /[;&|][[:space:]]*(cp|mv|install|tee|touch|truncate|mkdir|rm|ln|sqlite3)([[:space:]]|$)/ \
+          || s ~ /(^|[^<])>>?/
+      }
+      function load_bearing_target(s) {
+        return s ~ /(runs[.]jsonl|events[.]jsonl|repo[.]json|runs[.]lock|events[.]lock)/ \
+          || s ~ /\/(tasks|reviews|decisions|context-packs|archive)(\/|["'\''${}[:space:]])/ \
+          || s ~ /\/VERSION(["'\''${}[:space:]]|$)/
+      }
+      function state_scope(s) {
+        return s ~ /(PM_DISPATCH_STATE_ROOT|_sw_store_root|_sw_project_dir|\/projects\/)/ \
+          || s ~ /[$][{]?(store_root|proj_dir|version_file|runs_file|events_file|task_file|review_file|decision_file|context_pack[^}]*)[}]?/
+      }
+      function inspect_line(raw, line_number, line, load_bearing, scoped) {
+        line = raw
+        if (line ~ /^[[:space:]]*#/) return
+        # Diagnostic-only redirects are not filesystem mutations. Remove them
+        # before looking for a real output redirect on the same logical line.
+        gsub(/[0-9]*>[[:space:]]*\/dev\/null/, "", line)
+        gsub(/[0-9]*>[&][0-9]+/, "", line)
+        if (!direct_mutation(line)) return
+
+        load_bearing = load_bearing_target(line)
+        scoped = state_scope(line)
+        if (!load_bearing && !scoped) return
+
+        # Only sqlite3 may write a layout-declared rebuildable cache. A line
+        # naming any load-bearing target remains a violation.
+        if (!load_bearing && rebuildable_names != "" \
+            && (line ~ /^[[:space:]]*(if[[:space:]]+!?[[:space:]]*)?sqlite3([[:space:]]|$)/ \
+                || line ~ /[;&|][[:space:]]*sqlite3([[:space:]]|$)/) \
+            && line ~ ("(" rebuildable_names ")")) return
+
+        printf "%s:%d: direct state-store mutation: %s\n", relative, line_number, raw
+      }
+      {
+        physical = $0
+        if (logical == "") logical_start = FNR
+        if (physical ~ /\\[[:space:]]*$/) {
+          sub(/\\[[:space:]]*$/, "", physical)
+          logical = logical physical " "
+          next
+        }
+        logical = logical physical
+        inspect_line(logical, logical_start)
+        logical = ""
+      }
+      END {
+        if (logical != "") inspect_line(logical, logical_start)
+      }
+    ' "$f"
+  done < <(
+    for production_path in install.sh uninstall.sh cli runtime hosts adapters ops tools scripts; do
+      if [[ -f "$root/$production_path" ]]; then
+        printf '%s\0' "$root/$production_path"
+      elif [[ -d "$root/$production_path" ]]; then
+        find "$root/$production_path" -type f \( -name '*.sh' -o -path "$root/cli/pmctl" \) -print0
+      fi
+    done
+  )
+}
+
 ALL_CHECKS=(
   check_core_no_executables
   check_core_no_cli_named_paths
@@ -101,6 +206,7 @@ ALL_CHECKS=(
   check_core_no_cli_field_keys
   check_adapters_no_shared_flow
   check_adapters_no_state_writes
+  check_production_no_direct_state_writes
 )
 
 # ── Real-repo enforcement: every rule must be clean ───────────────────────────
@@ -116,7 +222,12 @@ for _chk in "${ALL_CHECKS[@]}"; do
 done
 
 # ── Self-tests: plant a violation in a fixture; the rule MUST fire ────────────
-_fixture() { FIX="$(mktemp -d)"; mkdir -p "$FIX/core/policy" "$FIX/adapters/demo"; }
+_fixture() {
+  FIX="$(mktemp -d)"
+  mkdir -p "$FIX/core/policy" "$FIX/core/state" "$FIX/adapters/demo" \
+    "$FIX/runtime/lib" "$FIX/hosts/demo/bin" "$FIX/ops/demo" "$FIX/tools/demo"
+  cp "$REPO_ROOT/core/state/layout.yaml" "$FIX/core/state/layout.yaml"
+}
 # A rule MUST flag a planted violation (non-empty output).
 _expect_fires() {
   local n="$1" out="$2"
@@ -199,6 +310,80 @@ if should_run "selftest/adapters_no_state_writes does NOT fire on usage logging"
   _fixture
   printf '#!/usr/bin/env bash\nbash "$HOME/.claude/scripts/log-usage.sh" claude_dispatch 100\n' > "$FIX/adapters/demo/dispatch.sh"
   _expect_clean "$name" "$(check_adapters_no_state_writes "$FIX")"
+  rm -rf "$FIX"
+fi
+
+if should_run "selftest/production_state_writer catches direct redirect"; then
+  name="selftest/production_state_writer catches direct redirect"
+  _fixture
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$json" >> "$proj_dir/events.jsonl"\n' \
+    > "$FIX/hosts/demo/bin/direct-event.sh"
+  _expect_fires "$name" "$(check_production_no_direct_state_writes "$FIX")"
+  rm -rf "$FIX"
+fi
+
+if should_run "selftest/production_state_writer catches jq redirect"; then
+  name="selftest/production_state_writer catches jq redirect"
+  _fixture
+  printf '#!/usr/bin/env bash\njq -c . "$src" > "$proj_dir/tasks/CC-1.json"\n' \
+    > "$FIX/ops/demo/direct-task.sh"
+  _expect_fires "$name" "$(check_production_no_direct_state_writes "$FIX")"
+  rm -rf "$FIX"
+fi
+
+if should_run "selftest/production_state_writer catches mv destination"; then
+  name="selftest/production_state_writer catches mv destination"
+  _fixture
+  printf '#!/usr/bin/env bash\nmv -f "$tmp" "$proj_dir/decisions/dec-2026-01-01-demo.json"\n' \
+    > "$FIX/runtime/lib/direct-decision.sh"
+  _expect_fires "$name" "$(check_production_no_direct_state_writes "$FIX")"
+  rm -rf "$FIX"
+fi
+
+if should_run "selftest/production_state_writer catches multiline mv destination"; then
+  name="selftest/production_state_writer catches multiline mv destination"
+  _fixture
+  printf '#!/usr/bin/env bash\nmv -f \\\n  "$tmp" \\\n  "$proj_dir/decisions/dec-2026-01-01-demo.json"\n' \
+    > "$FIX/runtime/lib/direct-decision-multiline.sh"
+  _expect_fires "$name" "$(check_production_no_direct_state_writes "$FIX")"
+  rm -rf "$FIX"
+fi
+
+if should_run "selftest/production_state_writer catches cp into state root"; then
+  name="selftest/production_state_writer catches cp into state root"
+  _fixture
+  printf '#!/usr/bin/env bash\ncp "$src" "$PM_DISPATCH_STATE_ROOT/projects/key/repo.json"\n' \
+    > "$FIX/tools/demo/direct-copy.sh"
+  _expect_fires "$name" "$(check_production_no_direct_state_writes "$FIX")"
+  rm -rf "$FIX"
+fi
+
+if should_run "selftest/production_state_writer allows designated writer and resolver"; then
+  name="selftest/production_state_writer allows designated writer and resolver"
+  _fixture
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$json" >> "$proj_dir/events.jsonl"\n' \
+    > "$FIX/runtime/lib/state-writer.sh"
+  printf '#!/usr/bin/env bash\nprintf "%%s/projects/key/\\n" "$store_root"\n' \
+    > "$FIX/runtime/lib/state-paths.sh"
+  _expect_clean "$name" "$(check_production_no_direct_state_writes "$FIX")"
+  rm -rf "$FIX"
+fi
+
+if should_run "selftest/production_state_writer allows rebuildable sqlite cache"; then
+  name="selftest/production_state_writer allows rebuildable sqlite cache"
+  _fixture
+  printf '#!/usr/bin/env bash\nsqlite3 "$proj_dir/repo-index.db" "CREATE TABLE cache(k TEXT);"\n' \
+    > "$FIX/runtime/lib/derived-cache.sh"
+  _expect_clean "$name" "$(check_production_no_direct_state_writes "$FIX")"
+  rm -rf "$FIX"
+fi
+
+if should_run "selftest/production_state_writer allows state readers"; then
+  name="selftest/production_state_writer allows state readers"
+  _fixture
+  printf '#!/usr/bin/env bash\njq -c . "$proj_dir/tasks/CC-1.json"\n' \
+    > "$FIX/runtime/lib/state-reader.sh"
+  _expect_clean "$name" "$(check_production_no_direct_state_writes "$FIX")"
   rm -rf "$FIX"
 fi
 

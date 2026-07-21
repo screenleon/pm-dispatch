@@ -795,6 +795,83 @@ case_task_upsert() {
   fi
 }
 
+case_task_delete() {
+  # Behavior: task_delete removes a projection through the designated writer boundary.
+  # Steps: create a valid projection, delete it, and assert the state file is absent.
+  local name="task_delete: designated writer removes task projection"
+  should_run "$name" || return 0
+  local store proj_dir task_file expected
+  store="$tmp_root/task-delete"
+  expected='{"schema_version":1,"id":"TASK-230","title":"test","state":"open","created_ts":"2026-01-01T00:00:00Z"}'
+  PM_DISPATCH_STATE_ROOT="$store" task_upsert "TASK-230" "$expected"
+  proj_dir="$(PM_DISPATCH_STATE_ROOT="$store" _sw_project_dir)"
+  task_file="$proj_dir/tasks/TASK-230.json"
+  PM_DISPATCH_STATE_ROOT="$store" task_delete "TASK-230"
+  if [[ ! -e "$task_file" ]]; then
+    pass "$name"
+  else
+    fail "$name" "task projection still exists after delete"
+  fi
+}
+
+case_task_delete_rejects_invalid_ids() {
+  # Behavior: task_delete rejects empty, traversal-shaped, and near-valid IDs without mutation.
+  # Steps: call delete for each invalid ID and assert non-zero plus an untouched store path.
+  local name="task_delete: invalid IDs fail without state-store mutation"
+  should_run "$name" || return 0
+  local store invalid_id rc failures=0
+  store="$tmp_root/task-delete-invalid"
+  for invalid_id in "" "../evil" "TASK-" "TASK-1/child"; do
+    rc=0
+    PM_DISPATCH_STATE_ROOT="$store" task_delete "$invalid_id" >/dev/null 2>&1 || rc=$?
+    [[ "$rc" -ne 0 ]] || failures=$((failures + 1))
+  done
+  if [[ "$failures" -eq 0 && ! -e "$store" ]]; then
+    pass "$name"
+  else
+    fail "$name" "failures=$failures store_created=$([[ -e "$store" ]] && echo yes || echo no)"
+  fi
+}
+
+case_task_delete_init_failure_preserves_projection() {
+  # Behavior: an unsupported store layout blocks task_delete before projection mutation.
+  # Steps: create a task, poison VERSION, call delete, and assert the task and VERSION remain.
+  local name="task_delete: initialization failure preserves projection"
+  should_run "$name" || return 0
+  local store proj_dir task_file expected rc=0
+  store="$tmp_root/task-delete-init-failure"
+  expected='{"schema_version":1,"id":"A-0","title":"test","state":"open","created_ts":"2026-01-01T00:00:00Z"}'
+  PM_DISPATCH_STATE_ROOT="$store" task_upsert "A-0" "$expected"
+  proj_dir="$(PM_DISPATCH_STATE_ROOT="$store" _sw_project_dir)"
+  task_file="$proj_dir/tasks/A-0.json"
+  printf '99\n' > "$store/VERSION"
+  PM_DISPATCH_STATE_ROOT="$store" task_delete "A-0" >/dev/null 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 && -f "$task_file" && "$(<"$store/VERSION")" == "99" ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc projection=$([[ -f "$task_file" ]] && echo present || echo missing)"
+  fi
+}
+
+case_task_delete_remove_failure_preserves_target() {
+  # Behavior: a filesystem removal error propagates and leaves the target untouched.
+  # Steps: place a directory at the projection path, call delete, and assert non-zero plus preservation.
+  local name="task_delete: removal failure is loud and preserves target"
+  should_run "$name" || return 0
+  local store proj_dir target rc=0
+  store="$tmp_root/task-delete-remove-failure"
+  PM_DISPATCH_STATE_ROOT="$store" state_store_init
+  proj_dir="$(PM_DISPATCH_STATE_ROOT="$store" _sw_project_dir)"
+  target="$proj_dir/tasks/A-0.json"
+  mkdir "$target"
+  PM_DISPATCH_STATE_ROOT="$store" task_delete "A-0" >/dev/null 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 && -d "$target" ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc target=$([[ -d "$target" ]] && echo present || echo missing)"
+  fi
+}
+
 case_task_upsert_invalid_id() {
   # Verifies that task_upsert with an invalid task_id returns non-zero (fail-loud)
   # and does not create any file, preventing path traversal or unexpected file creation.
@@ -902,6 +979,83 @@ case_decision_upsert() {
     pass "$name"
   else
     fail "$name" "decision file mismatch"
+  fi
+}
+
+case_decision_delete() {
+  # Behavior: decision_delete removes a projection through the designated writer boundary.
+  # Steps: create a valid projection, delete it, and assert the state file is absent.
+  local name="decision_delete: designated writer removes decision projection"
+  should_run "$name" || return 0
+  local store proj_dir dec_file expected
+  store="$tmp_root/decision-delete"
+  expected='{"schema_version":1,"id":"dec-2026-06-07-test-decision","date":"2026-06-07","title":"Test Decision","decision_md_path":"DECISIONS.md"}'
+  PM_DISPATCH_STATE_ROOT="$store" decision_upsert "dec-2026-06-07-test-decision" "$expected"
+  proj_dir="$(PM_DISPATCH_STATE_ROOT="$store" _sw_project_dir)"
+  dec_file="$proj_dir/decisions/dec-2026-06-07-test-decision.json"
+  PM_DISPATCH_STATE_ROOT="$store" decision_delete "dec-2026-06-07-test-decision"
+  if [[ ! -e "$dec_file" ]]; then
+    pass "$name"
+  else
+    fail "$name" "decision projection still exists after delete"
+  fi
+}
+
+case_decision_delete_rejects_invalid_ids() {
+  # Behavior: decision_delete rejects empty, traversal-shaped, and near-valid IDs without mutation.
+  # Steps: call delete for each invalid ID and assert non-zero plus an untouched store path.
+  local name="decision_delete: invalid IDs fail without state-store mutation"
+  should_run "$name" || return 0
+  local store invalid_id rc failures=0
+  store="$tmp_root/decision-delete-invalid"
+  for invalid_id in "" "../evil" "dec-2026-01-01-" "dec-2026-01-01-A"; do
+    rc=0
+    PM_DISPATCH_STATE_ROOT="$store" decision_delete "$invalid_id" >/dev/null 2>&1 || rc=$?
+    [[ "$rc" -ne 0 ]] || failures=$((failures + 1))
+  done
+  if [[ "$failures" -eq 0 && ! -e "$store" ]]; then
+    pass "$name"
+  else
+    fail "$name" "failures=$failures store_created=$([[ -e "$store" ]] && echo yes || echo no)"
+  fi
+}
+
+case_decision_delete_init_failure_preserves_projection() {
+  # Behavior: an unsupported store layout blocks decision_delete before projection mutation.
+  # Steps: create a decision, poison VERSION, call delete, and assert the projection remains.
+  local name="decision_delete: initialization failure preserves projection"
+  should_run "$name" || return 0
+  local store proj_dir dec_file expected rc=0
+  store="$tmp_root/decision-delete-init-failure"
+  expected='{"schema_version":1,"id":"dec-2026-01-01-a","date":"2026-01-01","title":"A","decision_md_path":"DECISIONS.md"}'
+  PM_DISPATCH_STATE_ROOT="$store" decision_upsert "dec-2026-01-01-a" "$expected"
+  proj_dir="$(PM_DISPATCH_STATE_ROOT="$store" _sw_project_dir)"
+  dec_file="$proj_dir/decisions/dec-2026-01-01-a.json"
+  printf '99\n' > "$store/VERSION"
+  PM_DISPATCH_STATE_ROOT="$store" decision_delete "dec-2026-01-01-a" >/dev/null 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 && -f "$dec_file" && "$(<"$store/VERSION")" == "99" ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc projection=$([[ -f "$dec_file" ]] && echo present || echo missing)"
+  fi
+}
+
+case_decision_delete_remove_failure_preserves_target() {
+  # Behavior: a filesystem removal error propagates and leaves the decision target untouched.
+  # Steps: place a directory at the projection path, call delete, and assert non-zero plus preservation.
+  local name="decision_delete: removal failure is loud and preserves target"
+  should_run "$name" || return 0
+  local store proj_dir target rc=0
+  store="$tmp_root/decision-delete-remove-failure"
+  PM_DISPATCH_STATE_ROOT="$store" state_store_init
+  proj_dir="$(PM_DISPATCH_STATE_ROOT="$store" _sw_project_dir)"
+  target="$proj_dir/decisions/dec-2026-01-01-a.json"
+  mkdir "$target"
+  PM_DISPATCH_STATE_ROOT="$store" decision_delete "dec-2026-01-01-a" >/dev/null 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 && -d "$target" ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc target=$([[ -d "$target" ]] && echo present || echo missing)"
   fi
 }
 
@@ -1932,11 +2086,19 @@ case_runs_append_rejects_schema_invalid
 case_runs_append_rejects_invalid_enum
 case_events_append_rejects_invalid_enum
 case_task_upsert
+case_task_delete
+case_task_delete_rejects_invalid_ids
+case_task_delete_init_failure_preserves_projection
+case_task_delete_remove_failure_preserves_target
 case_task_upsert_invalid_id
 case_task_upsert_rejects_schema_invalid
 case_task_upsert_warn_only_transition
 case_task_upsert_version2_blocked
 case_decision_upsert
+case_decision_delete
+case_decision_delete_rejects_invalid_ids
+case_decision_delete_init_failure_preserves_projection
+case_decision_delete_remove_failure_preserves_target
 case_decision_upsert_invalid_id
 case_decision_upsert_rejects_schema_invalid
 case_decision_upsert_version2_blocked

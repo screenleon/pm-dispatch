@@ -252,7 +252,7 @@ _pmctl_task_create_locked() {
   # Emit event inside the lock — keeps dup-check, projection write, event append,
   # and rollback in one serialized section, preventing create/update interleaving.
   _pmctl_emit_task_event "$repo_root" "task.created" "$task_id" || {
-    if ! rm -f "$task_file" 2>/dev/null; then
+    if ! _SW_REPO_ROOT="$repo_root" task_delete "$task_id" 2>/dev/null; then
       printf 'pmctl task create: cleanup FAILED for %s — projection exists without task.created; repair manually\n' "$task_id" >&2
     else
       printf 'pmctl task create: rolled back %s after event append failure\n' "$task_id" >&2

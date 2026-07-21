@@ -106,7 +106,7 @@ _pmctl_decision_add_locked() {
   _SW_REPO_ROOT="$repo_root" decision_upsert "$decision_id" "$json_line" || return $?
   # Rollback: if event append fails, remove the projection so retry can succeed.
   _pmctl_emit_decision_event "$repo_root" "$decision_id" || {
-    if ! rm -f "$decision_file" 2>/dev/null; then
+    if ! _SW_REPO_ROOT="$repo_root" decision_delete "$decision_id" 2>/dev/null; then
       printf 'pmctl decision add: cleanup FAILED for %s — projection row exists without decision.recorded; repair manually\n' "$decision_id" >&2
     else
       printf 'pmctl decision add: rolled back %s after event append failure\n' "$decision_id" >&2
