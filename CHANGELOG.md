@@ -10,6 +10,15 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **All-production-domain state-writer ratchet (CC-500).** The layer-boundary
+  suite now scans every production shell domain for direct state-root and
+  load-bearing entity mutations, including redirects, `jq >`, `mv`, `cp`, and
+  multiline command forms. The designated writer and pure path resolver are
+  the only module exemptions; only `rebuildable: true` SQLite caches declared
+  by `core/state/layout.yaml` may write outside that boundary. Self-injecting
+  fixtures prove each violation shape fails while readers and derived caches
+  remain legal.
+
 - **`pmctl state status [--json]` (CC-498).** Read-only state-store
   compatibility report: resolved store root, observed store layout version vs
   supported versions, project key, entity schema versions (read live from
@@ -19,6 +28,12 @@ Versions follow [Semantic Versioning](https://semver.org/).
   incompatible store for machine consumers (doctor/support report).
 
 ### Changed
+
+- **Task and decision rollback deletes use the canonical writer (CC-500).**
+  Failed event emission no longer removes projections directly from pmctl
+  modules; `task_delete` and `decision_delete` now enforce ID validation,
+  store safety/version gates, project partition resolution, and loud failure
+  through `runtime/lib/state-writer.sh`.
 
 - **Store layout version naming split (CC-498).** The store-wide layout
   version (`$STORE/VERSION`, `layout.yaml` `store_layout_version`) is now

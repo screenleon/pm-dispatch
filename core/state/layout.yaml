@@ -116,10 +116,13 @@ writer:
     - runs_append
     - events_append
     - task_upsert
+    - task_delete
     - review_upsert
     - decision_upsert
+    - decision_delete
 
-# Forbidden writers (aspirational contract; no enforcement test exists yet)
+# Forbidden writers (enforced across production shell domains by the
+# test-layer-boundaries content ratchet)
 forbidden:
   - "any path under $STORE/ written without serialize_with_lock — EXCEPT derived caches declared rebuildable:true (e.g. repo-index.db), which use SQLite WAL for concurrency instead"
   - "any path under $STORE/ written by code outside the designated writer module (see writer.description above)"

@@ -237,6 +237,11 @@ map_path() {
   esac
 
   case "$path" in
+    install.sh|uninstall.sh|cli/pmctl|scripts/*.sh|scripts/**/*.sh|runtime/*.sh|runtime/**/*.sh|hosts/*.sh|hosts/**/*.sh|adapters/*.sh|adapters/**/*.sh|ops/*.sh|ops/**/*.sh|tools/*.sh|tools/**/*.sh)
+      add_suite test-layer-boundaries; behavioral=1 ;;
+  esac
+
+  case "$path" in
     README.md|agents/*.md|commands/*.md|skills/*|scripts/*|scripts/**/*|runtime/*|runtime/**/*|pm/*|pm/**/*|docs/*.md)
       add_suite lint-portable-repo-paths; add_suite test-lint-portable-repo-paths; behavioral=1 ;;
   esac
