@@ -21,7 +21,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-495 | ✅ done | `pmctl dispatch cancel <run_id>`：可信任的 detached-run cancel terminalization、PID reuse 防護、cancel-vs-complete 單一終態、authenticated cancelled sentinel | arch/gate | 2026-07-15 | feedback:2026-07-15 | P1 | design |
 | CC-498 | ✅ done | State compatibility surface：status、layout/entity 版本命名、真實 migration availability | arch/schema | 2026-07-17 | pr:#435 | P1 | design |
 | CC-499 | ✅ done | Detached run reconciliation：crash、reboot、stale sentinel、PID identity 與 orphan recovery | arch/ops | 2026-07-17 | pr:#429 | P2 | design |
-| CC-500 | 🔵 active | State single-writer boundary enforcement：all-production-domain direct-writer ratchet | arch/test | 2026-07-17 | — | P2 | design |
+| CC-500 | ✅ done | State single-writer boundary enforcement：all-production-domain direct-writer ratchet | arch/test | 2026-07-17 | pr:#438 | P2 | design |
 | CC-503 | 🔵 active | shared tooling/hooks host-boundary 收斂：skill-refine canonical memory、prompt payload adapter、state-root audit log、content ratchet | arch/hook | 2026-07-17 | — | P2 | hygiene |
 | CC-504 | 🔵 active | top-level install/uninstall/doctor 移除 Claude base-spine 特例，建立 manifest-driven multi-host lifecycle 與 product-asset ownership | arch/install | 2026-07-17 | — | P2 | design |
 | CC-505 | 🔵 active | context plane lexical 檢索補完（Ph1 engine+統一排序+fixtures；Ph2 agent 契約+shadow 儀器化；evidence-gated 收緊 → [[CC-506]]）（2026-07-20 四方 synthesis；CC-346/347 前置） | memory/DX | 2026-07-20 | — | P2 | retrieval |
@@ -1437,18 +1437,11 @@ short-circuit.
 
 **See**: pr:#429
 
-## CC-500 — State single-writer boundary enforcement 🔵 active
+## CC-500 — State single-writer boundary enforcement ✅ 2026-07-21
 
-**Problem**: `core/state/layout.yaml` 宣告 designated writer 是唯一 state-store 寫入邊界，但目前沒有跨所有 production domains 的 enforcement test。
+**Outcome**: 將 `core/state/layout.yaml` 的 designated-writer 宣告落實為跨 CLI、runtime、hosts、adapters、ops、tools 與 scripts 的 production-domain content ratchet，可偵測 direct redirect、`jq >`、`mv`、`cp` 與 multiline mutation；豁免只限 canonical writer、pure path resolver、readers 與 layout 宣告的 `rebuildable:true` SQLite cache。Task/decision event rollback 刪除收旂至 `task_delete` / `decision_delete`，統一 ID validation、store compatibility、project partition 解析與 loud failure。Self-injecting fixtures 與 state-store regression 覆蓋合法路徑、違規旁路、invalid ID、init failure 與 removal failure；affected tests 14/14、PR gate GO、rebase 最新 main 後 authoritative full suite 88/88 通過。
 
-**Requirement**:
-1. 掃描 production domains 對 state root、known state filenames、project state paths 的 direct redirect/`mv`/`cp`/`jq >` 寫入。
-2. canonical `runtime/lib/state-writer.sh`、state-path resolver 與 `rebuildable:true` derived SQLite cache 可明列最小豁免；新增 direct writer 必須 fail CI。
-3. self-test fixtures 證明每條規則能抓違規，並有合法 derived-cache 負例；接入 full runner/release verification。
-
-**Done-when**: single-writer invariant 從文件宣言變成 all-production-domain ratchet，且新增旁路 writer 無法只靠 code review 混入。
-
-**Dependencies**: [[CC-498]] 可先行；可作其第二 PR，但不併入 [[CC-497]]。P2，v0.11.0。
+**See**: pr:#438
 
 ## CC-503 — shared tooling/hooks host-boundary 收斂 🔵 active
 
