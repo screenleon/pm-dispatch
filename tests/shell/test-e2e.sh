@@ -181,6 +181,10 @@ fi
 # ── Phase B2 — Local worktree + ship smoke ───────────────────────────────────
 # This is intentionally adapter-free: it verifies the real lifecycle paths that
 # unit fixtures cover individually, without spending a model invocation.
+# `ship finish` is deliberately excluded: finishing requires a real GO gate
+# artifact plus GitHub authentication and can push/create a PR. That external,
+# irreversible handoff belongs to the protected ship/release workflow; this
+# phase stays a local, reversible lifecycle smoke and removes every fixture.
 section "Phase B2 — Local worktree and ship smoke"
 
 if [[ "$PMCTL" != "$REPO_ROOT/cli/pmctl" ]]; then

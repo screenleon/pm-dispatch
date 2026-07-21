@@ -21,6 +21,7 @@ SUITE_NAMES=(
   lint-pmctl-commands
   lint-test-docstrings
   lint-test-suite-registry
+  lint-surface-coverage
   test-guards
   test-guard-framework
   test-migrate
@@ -53,6 +54,8 @@ SUITE_NAMES=(
   test-lint-frontmatter
   test-lint-test-docstrings
   test-lint-test-suite-registry
+  test-lint-surface-coverage
+  test-runtime-lib-coverage
   test-test-harness
   test-commands
   test-commands-runner
@@ -115,6 +118,7 @@ declare -A SUITE_PATHS=(
   [lint-pmctl-commands]="tools/lint/lint-pmctl-commands.sh"
   [lint-test-docstrings]="tools/lint/lint-test-docstrings.sh"
   [lint-test-suite-registry]="tools/lint/lint-test-suite-registry.sh"
+  [lint-surface-coverage]="tools/lint/lint-surface-coverage.sh"
   [test-guards]="tests/shell/test-guards.sh"
   [test-guard-framework]="tests/shell/test-guard-framework.sh"
   [test-migrate]="tests/shell/test-migrate-routing-log.sh"
@@ -147,6 +151,8 @@ declare -A SUITE_PATHS=(
   [test-lint-frontmatter]="tests/shell/test-lint-frontmatter.sh"
   [test-lint-test-docstrings]="tests/shell/test-lint-test-docstrings.sh"
   [test-lint-test-suite-registry]="tests/shell/test-lint-test-suite-registry.sh"
+  [test-lint-surface-coverage]="tests/shell/test-lint-surface-coverage.sh"
+  [test-runtime-lib-coverage]="tests/shell/test-runtime-lib-coverage.sh"
   [test-test-harness]="tests/shell/test-test-harness.sh"
   [test-commands]="tests/shell/test-commands.sh"
   [test-commands-runner]="tests/shell/test-commands-runner.sh"

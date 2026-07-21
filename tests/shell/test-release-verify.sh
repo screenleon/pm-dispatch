@@ -85,6 +85,18 @@ test_release_suite_verifies_state_bound_artifact() {
   fi
 }
 
+test_release_phase1_runs_evidence_inventory_lints() {
+  # Phase 1 must reject incomplete release-evidence inventories before later
+  # full-suite or token-spending phases are started.
+  local name="release-phase1-runs-evidence-inventory-lints"
+  if grep -q 'lint-test-suite-registry.sh' "$RV" \
+    && grep -q 'lint-surface-coverage.sh' "$RV"; then
+    pass "$name"
+  else
+    fail "$name" "release Phase 1 does not run both evidence inventory lints"
+  fi
+}
+
 test_release_e2e_keeps_full_and_excludes_affected_phase() {
   # The fixed release entry point is release-verify.sh --e2e. It must keep the
   # default fresh full suite, add E2E after that suite, and never grow an
@@ -354,6 +366,7 @@ test_help_no_code_leak
 test_help_exits_0
 test_help_short
 test_release_suite_verifies_state_bound_artifact
+test_release_phase1_runs_evidence_inventory_lints
 test_release_e2e_keeps_full_and_excludes_affected_phase
 test_unknown_flag
 test_adapter_missing_value

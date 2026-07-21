@@ -99,7 +99,6 @@ test_duplicate_registered_path_fails() {
   local name="lint-test-suite-registry/duplicate-registered-path-fails" root output status
   should_run "$name" || return 0
   root="$(mktemp -d "$tmp_root/registry-XXXXXX")"; make_fixture "$root"
-  sed -i 's/test-alpha\n)/test-alpha\n  test-beta\n)/' "$root/tests/lib/test-suite-runner.sh"
   sed -i 's|\[test-alpha\]="tests/shell/test-alpha.sh"|[test-alpha]="tests/shell/test-alpha.sh"\n  [test-beta]="tests/shell/test-alpha.sh"|' "$root/tests/lib/test-suite-runner.sh"
   output="$(run_linter "$root")"; status=$?
   if [[ "$status" -ne 0 ]] && has_output_line "$output" 'lint-test-suite-registry: duplicate registered path: tests/shell/test-alpha.sh'; then pass "$name"; else fail "$name" "status=$status output=$output"; fi

@@ -130,6 +130,19 @@ need codex   optional codex --version
 need claude  optional claude --version
 need shellcheck optional shellcheck --version
 
+# These inventories protect the release evidence boundary before a potentially
+# expensive full suite or live E2E invocation starts.
+if bash "$REPO_ROOT/tools/lint/lint-test-suite-registry.sh" >/dev/null 2>&1; then
+  record "test suite registry" PASS "canonical runner and CI coverage agree"
+else
+  record "test suite registry" FAIL "registry or CI coverage parity lint failed"
+fi
+if bash "$REPO_ROOT/tools/lint/lint-surface-coverage.sh" >/dev/null 2>&1; then
+  record "surface coverage" PASS "commands, agents, and skills are classified"
+else
+  record "surface coverage" FAIL "surface coverage declaration lint failed"
+fi
+
 # FTS5 capability of the resolved sqlite3 (context query depends on it).
 if command -v sqlite3 >/dev/null 2>&1; then
   if sqlite3 ":memory:" "CREATE VIRTUAL TABLE t USING fts5(x);" >/dev/null 2>&1; then

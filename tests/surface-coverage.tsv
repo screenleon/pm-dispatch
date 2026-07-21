@@ -1,0 +1,25 @@
+# surface<TAB>coverage tier<TAB>one-line reason
+command:discover	opt-in	reason: operator-triggered repository discovery has focused unit coverage
+command:mem-distill	manual-only	reason: maintainer memory curation requires human judgment
+command:mem-log	manual-only	reason: operator memory logging is intentionally human initiated
+command:mem-recall	opt-in	reason: retrieval is exercised by focused context and memory tests
+command:mem-search	opt-in	reason: exploratory memory search is an operator workflow
+command:memory-compress	manual-only	reason: destructive memory compaction requires maintainer review
+command:pm	e2e	reason: primary dispatch entry point has integration and live smoke coverage
+command:pr-gate	e2e	reason: gate lifecycle is covered by integration and synthetic E2E smoke
+command:pre-impl	opt-in	reason: planning workflow is validated through focused command tests
+command:pre-release	opt-in	reason: release checklist is covered by its focused regression suite
+command:research	manual-only	reason: research output is intentionally reviewed by a maintainer
+command:ship	e2e	reason: prepare lifecycle has local worktree and ship smoke coverage
+command:skill-refine	opt-in	reason: refinement workflow has focused command regression coverage
+command:spike	manual-only	reason: exploratory spike workflow is explicitly human directed
+command:using-git-worktrees	opt-in	reason: worktree guidance is exercised through command contract tests
+agent:architecture-reviewer	manual-only	reason: architectural review is a human-in-the-loop advisory role
+agent:critic	manual-only	reason: critique is an explicit reviewer handoff role
+agent:project-pm	opt-in	reason: PM prompt contract is covered by command and dispatch tests
+agent:qa-tester	manual-only	reason: QA review is an explicit reviewer handoff role
+agent:risk-reviewer	manual-only	reason: risk review is an explicit reviewer handoff role
+agent:security-reviewer	manual-only	reason: security review is an explicit reviewer handoff role
+agent:spike	manual-only	reason: exploratory agent work requires maintainer direction
+skill:dispatch-brief	opt-in	reason: dispatch brief validation covers this invoked skill surface
+skill:pr-gate-review	opt-in	reason: gate review profile tests cover this invoked skill surface

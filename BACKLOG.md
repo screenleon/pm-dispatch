@@ -90,7 +90,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-435 | 🟢 someday | **[poll→通知機制 single-waiter guard：條件觸發，非既定後續票]** 只有在真正出現多個 waiter 需要同時等待同一個 run_id/gate_id 的場景時才拿出來討論；候選設計見 `docs/spikes/CC-433.md` Open risks（方案 A：`flock` 搶鎖+敗者退回輪詢；方案 B：per-waiter 專屬 fifo+supervisor 廣播）。CC-434 完成後重新盤點成本效益：輪詢 vs blocking read 在單一 waiter/數分鐘等待場景下資源消耗差距趨近於零，延遲改善（≤2s→近乎即時）對人在等 gate 結果無感，而兩個方案都要在安全敏感的 supervisor 檔案引入新 race condition，投資報酬率目前不足，故不排入既定實作，僅記錄設計供未來觸發條件成立時起步。 | arch/gate | 2026-07-02 | — | P3 | design |
 | CC-446 | 🔵 active | public contract candidate：stable/experimental CLI + schema、SemVer/deprecation 與 CC-296 清掃（v0.14.0；非 v1 RC） | process/DX | 2026-07-04 | — | P2 | design |
 | CC-447 | 🔵 active | onboarding 三 smoke：offline clean install + N-1 upgrade（v0.11.0）+ live dogfood（readiness review 後再排） | docs/ops | 2026-07-04 | — | P2 | — |
-| CC-449 | 🔵 active | release evidence parity：suite registry、CI parity、OpenCode（吸收 CC-431）、ship/worktree smoke（v0.11.0） | ops/test | 2026-07-04 | — | P2 | — |
+| CC-449 | ✅ 2026-07-21 | release evidence parity：suite registry、CI parity、OpenCode（吸收 CC-431）、ship/worktree smoke（v0.11.0） | ops/test | 2026-07-04 | 2026-07-21 | P2 | — |
 | CC-472 | 🟢 someday | spike: antigravity（`agy` CLI）host 唯讀 probe——比照 CC-436/CC-448 階段 1 模式，實測 command 載入能力 + hook/plugin 機制 + 五個 capability enum 的 provider/confidence 判定，不落地 `hosts/antigravity/host.yaml`；排在 CC-445 通用 install/uninstall dispatcher 之後、與 CC-448 opencode 同批或緊接其後評估（N=3 驗證點） | arch/install | 2026-07-08 | — | P3 | spike |
 
 ---
@@ -162,11 +162,19 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `ops/backlog/archive-cl
 **Dependencies**：offline/N-1 smoke 在 [[CC-497]]、[[CC-456]]、[[CC-449]] 後於 v0.11.0 執行；live smoke 不預先綁 v1.0，待 v0.14.0 後 readiness review 排程。
 **See**: DECISIONS.md 2026-07-04
 
-## CC-449 — release-verify/test-e2e：ship/worktree surface 煙測 + 套件註冊完整性 lint 🔵 active
+## CC-449 — release-verify/test-e2e：ship/worktree surface 煙測 + 套件註冊完整性 lint ✅ 2026-07-21
 
 **Problem**：v0.8.0 新增的 `pmctl ship`（unified entry / prepare / finish / `--parallel`）與 `pmctl worktree`（create/list/remove/gc）只有 unit 套件覆蓋；release sign-off 的 e2e 路徑（`tests/shell/test-e2e.sh` Phase B/C）只驗 dispatch 輸出契約與 pr-gate 機制，對這兩個新 surface 零 live 煙測。且 [[CC-444]] 收尾時發現 `tests/shell/test-pmctl-worktree.sh`（36 cases）**根本沒註冊進 full runner registry**——套件存在但 aggregator 從未執行，release-verify 的「全套綠燈」靜默漏掉它（已於 CC-444 補註冊）；「新增 suite 必須註冊」目前無任何機械防護。CC-481 後 canonical registry 位於 `tests/lib/test-suite-runner.sh`，`tests/bin/run-all-tests.sh --list` 是穩定查詢 surface。OpenCode 已是現有 adapter，但 `test-e2e`／`release-verify` 的 adapter 驗證與 Phase B/C 尚未提供等價證據；此範圍由本票吸收 [[CC-431]]。
 
 **Why**：v1.0 P1 證據層的一環——release sign-off 的覆蓋範圍必須跟上 surface 的成長，否則 `release-verify GO` 的可信度逐版稀釋；註冊完整性 lint 是同類靜默缺口的止血閥。
+
+**Outcome**：canonical suite/CI parity lint 與 regression 注入案例已納入 CI 及
+release Phase 1；OpenCode adapter inventory 與 Phase B2 的 local ship/worktree
+smoke 已有證據。`ship finish` 因需要有效 gate artifact、GitHub 認證且可能推送或
+建立 PR，明確保留在 protected ship/release workflow，不在可逆的 local smoke 執行。
+`runtime/lib/gate-workspace.sh`、`runtime/lib/pmctl-config.sh` 現有 direct
+regression coverage；commands、agents、skills 則由單一 TSV registry 與 lint 強制
+coverage tier/reason 宣告，並以缺宣告注入測試釘住。
 
 **Requirement**：
 1. **套件註冊完整性 lint**（第一刀，機械）：`tests/shell/test-*.sh` 存在但未在 `tests/lib/test-suite-runner.sh` 註冊 → fail loud（允許顯式 exclude 清單，如 fixture-only helper）；接入 CI 與 `ops/release/release-verify.sh` Phase 1。評估讓 meta-suite 從 canonical executor 動態派生，消除人工同步面。

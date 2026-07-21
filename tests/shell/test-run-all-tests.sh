@@ -26,6 +26,7 @@ SUITE_NAMES=(
   lint-pmctl-commands
   lint-test-docstrings
   lint-test-suite-registry
+  lint-surface-coverage
   test-guards
   test-guard-framework
   test-migrate
@@ -58,6 +59,8 @@ SUITE_NAMES=(
   test-lint-frontmatter
   test-lint-test-docstrings
   test-lint-test-suite-registry
+  test-lint-surface-coverage
+  test-runtime-lib-coverage
   test-test-harness
   test-commands
   test-commands-runner
@@ -143,6 +146,7 @@ suite_path() {
     lint-pmctl-commands) printf 'tools/lint/lint-pmctl-commands.sh\n' ;;
     lint-test-docstrings) printf 'tools/lint/lint-test-docstrings.sh\n' ;;
     lint-test-suite-registry) printf 'tools/lint/lint-test-suite-registry.sh\n' ;;
+    lint-surface-coverage) printf 'tools/lint/lint-surface-coverage.sh\n' ;;
     test-guards) printf 'tests/shell/test-guards.sh\n' ;;
     test-guard-framework) printf 'tests/shell/test-guard-framework.sh\n' ;;
     test-migrate) printf 'tests/shell/test-migrate-routing-log.sh\n' ;;
@@ -175,6 +179,8 @@ suite_path() {
     test-lint-frontmatter) printf 'tests/shell/test-lint-frontmatter.sh\n' ;;
     test-lint-test-docstrings) printf 'tests/shell/test-lint-test-docstrings.sh\n' ;;
     test-lint-test-suite-registry) printf 'tests/shell/test-lint-test-suite-registry.sh\n' ;;
+    test-lint-surface-coverage) printf 'tests/shell/test-lint-surface-coverage.sh\n' ;;
+    test-runtime-lib-coverage) printf 'tests/shell/test-runtime-lib-coverage.sh\n' ;;
     test-test-harness) printf 'tests/shell/test-test-harness.sh\n' ;;
     test-check-docs-freshness) printf 'tests/shell/test-check-docs-freshness.sh\n' ;;
     test-commands) printf 'tests/shell/test-commands.sh\n' ;;

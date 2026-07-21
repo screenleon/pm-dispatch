@@ -107,6 +107,12 @@ jobs:
         run: bash tools/lint/lint-test-suite-registry.sh
       - name: Suite coverage registry regression suite
         run: bash tests/shell/test-lint-test-suite-registry.sh
+      - name: Validate command, agent, and skill coverage declarations
+        run: bash tools/lint/lint-surface-coverage.sh
+      - name: Surface coverage declaration regression suite
+        run: bash tests/shell/test-lint-surface-coverage.sh
+      - name: Runtime library direct regression suite
+        run: bash tests/shell/test-runtime-lib-coverage.sh
 
   test-guards:
     runs-on: ubuntu-latest
