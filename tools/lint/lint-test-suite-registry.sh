@@ -42,7 +42,20 @@ awk '
     if ($0 != "") print $0
   }
 ' "$runner" > "$names"
-sed -n 's/^[[:space:]]*\[\([^]]*\)\]="\([^"]*\)".*/\1\t\2/p' "$runner" > "$paths"
+awk '
+  /^declare -A SUITE_PATHS=\(/ { inside=1; next }
+  inside && /^\)/ { exit }
+  inside {
+    line=$0
+    gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+    if (line == "") next
+    if (line ~ /^\[[^]]+\]="[^"]+"$/) {
+      name=line; sub(/^\[/, "", name); sub(/\]=.*/, "", name)
+      path=line; sub(/^.*="/, "", path); sub(/"$/, "", path)
+      print name "\t" path
+    } else print "\t"
+  }
+' "$runner" > "$paths"
 
 [[ -s "$names" ]] || fail "could not parse SUITE_NAMES from tests/lib/test-suite-runner.sh"
 [[ -s "$paths" ]] || fail "could not parse SUITE_PATHS from tests/lib/test-suite-runner.sh"

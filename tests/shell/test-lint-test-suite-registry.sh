@@ -124,6 +124,87 @@ test_unreasoned_ci_exemption_fails() {
   if [[ "$status" -ne 0 ]] && has_output_line "$output" 'lint-test-suite-registry: CI suite exemption needs constraint and promotion: test-alpha'; then pass "$name"; else fail "$name" "status=$status output=$output"; fi
 }
 
+test_missing_required_file_fails() {
+  local name="lint-test-suite-registry/missing-required-file-fails" root output status
+  should_run "$name" || return 0
+  root="$(mktemp -d "$tmp_root/registry-XXXXXX")"; make_fixture "$root"
+  rm -f "$root/tests/ci-suite-exemptions.tsv"
+  output="$(run_linter "$root")"; status=$?
+  if [[ "$status" -ne 0 ]] && has_output_line "$output" 'lint-test-suite-registry: missing required file: tests/ci-suite-exemptions.tsv'; then pass "$name"; else fail "$name" "status=$status output=$output"; fi
+}
+
+test_unparseable_registry_fails() {
+  local name="lint-test-suite-registry/unparseable-registry-fails" root output status
+  should_run "$name" || return 0
+  root="$(mktemp -d "$tmp_root/registry-XXXXXX")"; make_fixture "$root"
+  printf '%s\n' '# no suite arrays' > "$root/tests/lib/test-suite-runner.sh"
+  output="$(run_linter "$root")"; status=$?
+  if [[ "$status" -ne 0 ]] && has_output_line "$output" 'lint-test-suite-registry: could not parse SUITE_NAMES from tests/lib/test-suite-runner.sh'; then pass "$name"; else fail "$name" "status=$status output=$output"; fi
+}
+
+test_names_paths_mismatch_fails() {
+  local name="lint-test-suite-registry/names-paths-mismatch-fails" root output status
+  should_run "$name" || return 0
+  root="$(mktemp -d "$tmp_root/registry-XXXXXX")"; make_fixture "$root"
+  sed -i 's/  test-alpha/  test-beta/' "$root/tests/lib/test-suite-runner.sh"
+  output="$(run_linter "$root")"; status=$?
+  if [[ "$status" -ne 0 ]] && [[ "$output" == *'SUITE_NAMES and SUITE_PATHS differ'* ]]; then pass "$name"; else fail "$name" "status=$status output=$output"; fi
+}
+
+test_malformed_mapping_fails() {
+  local name="lint-test-suite-registry/malformed-mapping-fails" root output status
+  should_run "$name" || return 0
+  root="$(mktemp -d "$tmp_root/registry-XXXXXX")"; make_fixture "$root"
+  sed -i '/\[test-alpha\]/a\  bad mapping' "$root/tests/lib/test-suite-runner.sh"
+  output="$(run_linter "$root")"; status=$?
+  if [[ "$status" -ne 0 ]] && has_output_line "$output" 'lint-test-suite-registry: malformed suite mapping'; then pass "$name"; else fail "$name" "status=$status output=$output"; fi
+}
+
+test_malformed_exclusion_fails() {
+  local name="lint-test-suite-registry/malformed-exclusion-fails" root output status
+  should_run "$name" || return 0
+  root="$(mktemp -d "$tmp_root/registry-XXXXXX")"; make_fixture "$root"
+  printf '%s\n' 'tests/shell/test-alpha.sh' >> "$root/tests/test-suite-exclusions.tsv"
+  output="$(run_linter "$root")"; status=$?
+  if [[ "$status" -ne 0 ]] && has_output_line "$output" 'lint-test-suite-registry: malformed test exclusion: tests/shell/test-alpha.sh'; then pass "$name"; else fail "$name" "status=$status output=$output"; fi
+}
+
+test_duplicate_exclusion_fails() {
+  local name="lint-test-suite-registry/duplicate-exclusion-fails" root output status
+  should_run "$name" || return 0
+  root="$(mktemp -d "$tmp_root/registry-XXXXXX")"; make_fixture "$root"
+  printf '%s\t%s\n%s\t%s\n' 'tests/shell/test-missing.sh' 'one' 'tests/shell/test-missing.sh' 'two' >> "$root/tests/test-suite-exclusions.tsv"
+  output="$(run_linter "$root")"; status=$?
+  if [[ "$status" -ne 0 ]] && has_output_line "$output" 'lint-test-suite-registry: duplicate test exclusion: tests/shell/test-missing.sh'; then pass "$name"; else fail "$name" "status=$status output=$output"; fi
+}
+
+test_missing_excluded_file_fails() {
+  local name="lint-test-suite-registry/missing-excluded-file-fails" root output status
+  should_run "$name" || return 0
+  root="$(mktemp -d "$tmp_root/registry-XXXXXX")"; make_fixture "$root"
+  printf '%s\t%s\n' 'tests/shell/test-missing.sh' 'fixture' >> "$root/tests/test-suite-exclusions.tsv"
+  output="$(run_linter "$root")"; status=$?
+  if [[ "$status" -ne 0 ]] && has_output_line "$output" 'lint-test-suite-registry: excluded test file does not exist: tests/shell/test-missing.sh'; then pass "$name"; else fail "$name" "status=$status output=$output"; fi
+}
+
+test_unused_ci_exemption_fails() {
+  local name="lint-test-suite-registry/unused-ci-exemption-fails" root output status
+  should_run "$name" || return 0
+  root="$(mktemp -d "$tmp_root/registry-XXXXXX")"; make_fixture "$root"
+  printf '%s\t%s\n' 'test-alpha' 'constraint: fixture; promotion: remove row' >> "$root/tests/ci-suite-exemptions.tsv"
+  output="$(run_linter "$root")"; status=$?
+  if [[ "$status" -ne 0 ]] && has_output_line "$output" 'lint-test-suite-registry: CI suite exemption is unused: test-alpha'; then pass "$name"; else fail "$name" "status=$status output=$output"; fi
+}
+
+test_unknown_ci_exemption_fails() {
+  local name="lint-test-suite-registry/unknown-ci-exemption-fails" root output status
+  should_run "$name" || return 0
+  root="$(mktemp -d "$tmp_root/registry-XXXXXX")"; make_fixture "$root"
+  printf '%s\t%s\n' 'test-missing' 'constraint: fixture; promotion: remove row' >> "$root/tests/ci-suite-exemptions.tsv"
+  output="$(run_linter "$root")"; status=$?
+  if [[ "$status" -ne 0 ]] && has_output_line "$output" 'lint-test-suite-registry: CI suite exemption names no registered suite: test-missing'; then pass "$name"; else fail "$name" "status=$status output=$output"; fi
+}
+
 test_real_registry_passes
 test_unregistered_test_file_fails
 test_missing_ci_coverage_fails_without_exemption
@@ -133,5 +214,14 @@ test_registered_exclusion_fails
 test_duplicate_registered_path_fails
 test_duplicate_ci_exemption_fails
 test_unreasoned_ci_exemption_fails
+test_missing_required_file_fails
+test_unparseable_registry_fails
+test_names_paths_mismatch_fails
+test_malformed_mapping_fails
+test_malformed_exclusion_fails
+test_duplicate_exclusion_fails
+test_missing_excluded_file_fails
+test_unused_ci_exemption_fails
+test_unknown_ci_exemption_fails
 
 th_summary

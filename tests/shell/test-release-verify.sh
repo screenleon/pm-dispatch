@@ -7,6 +7,8 @@ export LC_ALL=C.UTF-8
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 RV="$REPO_ROOT/ops/release/release-verify.sh"
+# shellcheck source=runtime/lib/adapter-enum.sh
+. "$REPO_ROOT/runtime/lib/adapter-enum.sh"
 
 PASSED=0; FAILED=0
 
@@ -131,6 +133,25 @@ test_opencode_adapter_is_accepted() {
   PM_RELEASE_VERIFY_E2E_SCRIPT="$stub" bash "$RV" --no-suite --e2e --adapter opencode >/dev/null 2>&1 || rc=$?
   rm -f "$stub"
   if [[ "$rc" -eq 3 ]]; then pass "opencode-adapter-accepted"; else fail "opencode-adapter-accepted" "exit $rc want 3 (accepted adapter with --no-suite)"; fi
+}
+
+test_adapter_enum_rejects_invalid_and_symlinked_manifest() {
+  local root manifest
+  root=$(mktemp -d); mkdir -p "$root/adapters/demo"
+  manifest="$root/adapters/demo/adapter.yaml"; printf 'name: demo\n' > "$manifest"
+  if ! pm_adapter_is_valid "$root" 'Bad_Name' && ! pm_adapter_is_valid "$root" '-demo'; then pass "adapter-enum-invalid-names-rejected"; else fail "adapter-enum-invalid-names-rejected"; fi
+  rm -f "$manifest"; ln -s /dev/null "$manifest"
+  if ! pm_adapter_is_valid "$root" demo; then pass "adapter-enum-symlink-manifest-rejected"; else fail "adapter-enum-symlink-manifest-rejected"; fi
+  rm -rf "$root"
+}
+
+test_adapter_enum_expected_values() {
+  local root values
+  root=$(mktemp -d); mkdir -p "$root/adapters/zeta" "$root/adapters/alpha"
+  printf 'name: zeta\n' > "$root/adapters/zeta/adapter.yaml"
+  printf 'name: alpha\n' > "$root/adapters/alpha/adapter.yaml"
+  values="$(pm_adapter_expected_values "$root")"; rm -rf "$root"
+  if [[ "$values" == 'auto|alpha|zeta' ]]; then pass "adapter-enum-expected-values"; else fail "adapter-enum-expected-values" "values=$values"; fi
 }
 
 # ── Exit-code contract ────────────────────────────────────────────────────────
@@ -338,6 +359,8 @@ test_unknown_flag
 test_adapter_missing_value
 test_adapter_invalid
 test_opencode_adapter_is_accepted
+test_adapter_enum_rejects_invalid_and_symlinked_manifest
+test_adapter_enum_expected_values
 test_usage_error_exits_2
 test_help_ends_with_newline
 test_no_suite_partial_verdict
