@@ -8,6 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 RV="$REPO_ROOT/ops/release/release-verify.sh"
 # shellcheck source=runtime/lib/adapter-enum.sh
+# shellcheck disable=SC1091
 . "$REPO_ROOT/runtime/lib/adapter-enum.sh"
 
 PASSED=0; FAILED=0

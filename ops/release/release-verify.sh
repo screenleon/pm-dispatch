@@ -26,6 +26,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 PMCTL="$REPO_ROOT/cli/pmctl"
 # shellcheck source=runtime/lib/adapter-enum.sh
+# shellcheck disable=SC1091
 . "$REPO_ROOT/runtime/lib/adapter-enum.sh"
 
 # Temp files — declared upfront so the EXIT trap can always clean them safely.

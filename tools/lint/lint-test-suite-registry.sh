@@ -101,13 +101,34 @@ done
 ci_runs_suite() {
   local path="$1"
   awk -v wanted="$path" '
-    /^[[:space:]]*run:/ {
-      line=$0
+    function contains_suite(line,   count, words, i) {
       gsub(/[^[:alnum:]_.\/-]/, " ", line)
       count=split(line, words, /[[:space:]]+/)
       for (i = 1; i <= count; i++) {
         sub(/^\.\//, "", words[i])
-        if (words[i] == wanted) { found=1; exit }
+        if (words[i] == wanted) return 1
+      }
+      return 0
+    }
+    function indentation(line,   copy) {
+      copy=line; sub(/[^[:space:]].*$/, "", copy); return length(copy)
+    }
+    {
+      if (in_block) {
+        if ($0 ~ /^[[:space:]]*$/) next
+        if (indentation($0) <= block_indent) in_block=0
+        else {
+          line=$0; sub(/^[[:space:]]+/, "", line)
+          if (line !~ /^#/) found = contains_suite(line)
+          if (found) exit
+          next
+        }
+      }
+      if ($0 ~ /^[[:space:]]*(-[[:space:]]+)?run:[[:space:]]*\|[-+]?[[:space:]]*$/) {
+        block_indent=indentation($0); in_block=1; next
+      }
+      if ($0 ~ /^[[:space:]]*(-[[:space:]]+)?run:/ && contains_suite($0)) {
+        found=1; exit
       }
     }
     END { exit !found }

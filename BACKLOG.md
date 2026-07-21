@@ -28,7 +28,6 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-506 | ⏸ deferred | retrieval evidence-gated 收緊：shadow 評測（coverage@5、critical miss、read reduction、outcome parity）達標後才收緊 broad-Read 指引並重評 [[CC-340]] resume 條件；前置 = [[CC-505]] Ph2 shipped + ≥20 真實任務證據 | memory/DX | 2026-07-20 | — | P3 | retrieval |
 | CC-507 | ✅ done | `pmctl state status`：無法讀取 `VERSION` 時被 Bash `$(<file)` redirection 提前中止，未回傳契約的 unreadable/exit 3 | arch/test | 2026-07-21 | pr:#437 | P1 | design |
 | CC-508 | 🟢 someday | 所有間接 dispatch producer 的 parent-operation control plane：可追溯子 run、受控取消與單一終態；gate／ship／task dispatch 等全數納入 | arch/gate | 2026-07-21 | feedback:2026-07-21 | P2 | design |
-| CC-509 | 🟢 someday | CI suite-parity lint 支援 workflow multi-line `run: |` steps，消除目前單行 `run:` 格式耦合 | ops/test | 2026-07-21 | gate:CC-449 | P3 | hygiene |
 | CC-465 | 🔵 active | memory/context 關鍵詞管線 CJK 支援：抽出共用零依賴斷詞 lib，取代三處各自 ASCII-only 抽詞；工作序列起點（465→467→468→466）（2026-07-07 記憶系統深入分析） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-466 | ⏸ deferred | 記憶卡片生命週期閉環：expires_at 執行 + 關窗式 supersede + usage sidecar 休眠偵測 + doctor→distill 接線；僅在 CC-467 證明 stale/dormant card 已形成實際問題時啟動 | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-467 | 🔵 active | `pmctl memory stats`：注入效益可視化（唯讀聚合器）——注入 bytes/卡片命中分佈/從未命中卡/episode 填寫率，回答「記憶有跟沒有差在哪」；排在 CC-466 之前（2026-07-07；業界僅離線 recall 評測，無 per-injection 遙測） | DX/memory | 2026-07-07 | — | P2 | retrieval |
@@ -91,7 +90,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-435 | 🟢 someday | **[poll→通知機制 single-waiter guard：條件觸發，非既定後續票]** 只有在真正出現多個 waiter 需要同時等待同一個 run_id/gate_id 的場景時才拿出來討論；候選設計見 `docs/spikes/CC-433.md` Open risks（方案 A：`flock` 搶鎖+敗者退回輪詢；方案 B：per-waiter 專屬 fifo+supervisor 廣播）。CC-434 完成後重新盤點成本效益：輪詢 vs blocking read 在單一 waiter/數分鐘等待場景下資源消耗差距趨近於零，延遲改善（≤2s→近乎即時）對人在等 gate 結果無感，而兩個方案都要在安全敏感的 supervisor 檔案引入新 race condition，投資報酬率目前不足，故不排入既定實作，僅記錄設計供未來觸發條件成立時起步。 | arch/gate | 2026-07-02 | — | P3 | design |
 | CC-446 | 🔵 active | public contract candidate：stable/experimental CLI + schema、SemVer/deprecation 與 CC-296 清掃（v0.14.0；非 v1 RC） | process/DX | 2026-07-04 | — | P2 | design |
 | CC-447 | 🔵 active | onboarding 三 smoke：offline clean install + N-1 upgrade（v0.11.0）+ live dogfood（readiness review 後再排） | docs/ops | 2026-07-04 | — | P2 | — |
-| CC-449 | ✅ 2026-07-21 | release evidence parity：suite registry、CI parity、OpenCode（吸收 CC-431）、ship/worktree smoke（v0.11.0） | ops/test | 2026-07-04 | 2026-07-21 | P2 | — |
+| CC-449 | ✅ done | release evidence parity：suite registry、CI parity、OpenCode（吸收 CC-431）、ship/worktree smoke（v0.11.0） | ops/test | 2026-07-04 | pr:#439 | P2 | — |
 | CC-472 | 🟢 someday | spike: antigravity（`agy` CLI）host 唯讀 probe——比照 CC-436/CC-448 階段 1 模式，實測 command 載入能力 + hook/plugin 機制 + 五個 capability enum 的 provider/confidence 判定，不落地 `hosts/antigravity/host.yaml`；排在 CC-445 通用 install/uninstall dispatcher 之後、與 CC-448 opencode 同批或緊接其後評估（N=3 驗證點） | arch/install | 2026-07-08 | — | P3 | spike |
 
 ---
@@ -188,29 +187,7 @@ coverage tier/reason 宣告，並以缺宣告注入測試釘住。
 **Done-when**：lint 落地且能抓到「新增未註冊套件」與「已註冊但 CI 缺席且無豁免」與「surface 缺 coverage 宣告」三類注入測試；e2e 新 phase 在 `release-verify.sh --e2e` 下通過；排除項（若有）記錄於腳本註解與本票。
 
 **Dependencies**：已吸收 [[CC-431]]；與 [[CC-454]] 協調 CI/lint ownership，但不合併 ShellCheck domain coverage。v0.11.0。
-**See**: [[CC-444]] Outcome、pr:#367
-
----
-
-## CC-509 — CI suite-parity lint：支援 multi-line workflow `run: |` 🟢 someday
-
-**Problem**：`tools/lint/lint-test-suite-registry.sh` 的 CI 偵測目前只掃描單行
-`run: <command>`。若未來 workflow 以 `run: |` 宣告多行 shell block，已實際執行的
-suite 會被 lint 誤判為沒有 CI coverage；現行 workflow 未使用此格式，且 lint 會
-fail-loud，故不阻擋 CC-449。
-
-**Why**：CI parity 的契約不應依賴未明說的 YAML 排版細節；支援 block scalar 可讓
-workflow 可讀性調整不必同步修改 coverage 判定。
-
-**Requirement**：擴充或替換 `ci_runs_suite()` 的受限解析，使其能辨識 `run: |` 後
-同層縮排的命令行；加入 fixture regression，分別證明 block 內命令算 coverage、
-block 外註解或文字不會誤算；維持現有單行行為與 fail-loud 診斷。
-
-**Done-when**：同一 suite 只出現在 multi-line `run: |` block 時 lint 通過；未被
-執行的 suite 仍要求明確 CI exemption。
-
-**Source**：CC-449 Claude full-tier gate `gate-20260721-075546-32ebc1` 的 critic 與
-architecture-reviewer 共識 low / non-blocking advisory。
+**See**: [[CC-444]] Outcome、pr:#367、pr:#439
 
 ---
 
