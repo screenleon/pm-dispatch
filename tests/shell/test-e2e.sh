@@ -9,7 +9,7 @@
 # the LLM content (which is non-deterministic).
 #
 # Usage:
-#   tests/shell/test-e2e.sh [--adapter claude|codex|auto] [--skip-gate] [--help]
+#   tests/shell/test-e2e.sh [--adapter claude|codex|opencode|auto] [--skip-gate] [--help]
 #
 #   --adapter <a>  Executor to use. auto (default): codex if on PATH, else claude.
 #   --skip-gate    Skip Phase C (pr-gate); useful when no diff vs main exists.
@@ -42,8 +42,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "$ADAPTER" in
-  claude|codex|auto) ;;
-  *) printf 'test-e2e: --adapter must be claude|codex|auto (got: %s)\n' "$ADAPTER" >&2; exit 2 ;;
+  claude|codex|opencode|auto) ;;
+  *) printf 'test-e2e: --adapter must be claude|codex|opencode|auto (got: %s)\n' "$ADAPTER" >&2; exit 2 ;;
 esac
 
 # ── Result accumulation (same pattern as release-verify.sh) ──────────────────
@@ -67,6 +67,8 @@ brief_file=""
 smoke_dir=""
 synthetic_base=""
 synthetic_remote=""
+ship_smoke_dir=""
+ship_smoke_state=""
 gate_result=""
 e2e_log=""
 # shellcheck disable=SC2317  # all commands run indirectly via trap (EXIT/INT/TERM)
@@ -75,6 +77,8 @@ cleanup() {
   if [[ -n "$smoke_dir"        ]]; then rm -rf "$smoke_dir"        2>/dev/null || true; fi
   if [[ -n "$synthetic_base"   ]]; then rm -rf "$synthetic_base"   2>/dev/null || true; fi
   if [[ -n "$synthetic_remote" ]]; then rm -rf "$synthetic_remote" 2>/dev/null || true; fi
+  if [[ -n "$ship_smoke_dir"  ]]; then rm -rf "$ship_smoke_dir" 2>/dev/null || true; fi
+  if [[ -n "$ship_smoke_state" ]]; then rm -rf "$ship_smoke_state" 2>/dev/null || true; fi
   if [[ -n "$gate_result"      ]]; then rm -f  "$gate_result"      2>/dev/null || true; fi
 }
 trap cleanup EXIT INT TERM
@@ -169,6 +173,72 @@ else
     record "latest.jsonl non-empty" PASS ""
   else
     record "latest.jsonl non-empty" FAIL "missing or 0-byte: $trace_dir/latest.jsonl"
+  fi
+fi
+
+# ── Phase B2 — Local worktree + ship smoke ───────────────────────────────────
+# This is intentionally adapter-free: it verifies the real lifecycle paths that
+# unit fixtures cover individually, without spending a model invocation.
+section "Phase B2 — Local worktree and ship smoke"
+
+if [[ "$PMCTL" != "$REPO_ROOT/cli/pmctl" ]]; then
+  # The script-contract suite supplies a tiny pmctl stub for Phase B/C parsing
+  # tests. That stub is not a lifecycle implementation, so do not mistake its
+  # empty output for a product regression.
+  record "worktree + ship smoke" SKIP "custom pmctl override is not eligible for local lifecycle smoke"
+  REQUIRED_SKIPPED=$((REQUIRED_SKIPPED + 1))
+else
+  ship_smoke_dir="$(mktemp -d)"
+  ship_smoke_state="$(mktemp -d)"
+  git init -q "$ship_smoke_dir"
+  git -C "$ship_smoke_dir" config user.email e2e@test.local
+  git -C "$ship_smoke_dir" config user.name "E2E Test"
+  {
+    printf '%s\n\n' '## E2E-9001 -- local lifecycle smoke'
+    printf '%s\n' 'Problem: isolated smoke fixture.'
+  } > "$ship_smoke_dir/BACKLOG.md"
+  git -C "$ship_smoke_dir" add BACKLOG.md
+  git -C "$ship_smoke_dir" commit -qm "seed lifecycle smoke"
+
+  lifecycle_rc=0
+  manual_lane=""
+  ship_lane=""
+  lifecycle_detail=""
+  manual_lane="$(PM_DISPATCH_STATE_ROOT="$ship_smoke_state" "$PMCTL" worktree create feat/e2e-manual --cd "$ship_smoke_dir" 2>&1)" || lifecycle_rc=$?
+  if [[ "$lifecycle_rc" -ne 0 ]]; then
+    lifecycle_detail="$manual_lane"
+  fi
+  if [[ "$lifecycle_rc" -eq 0 ]]; then
+    PM_DISPATCH_STATE_ROOT="$ship_smoke_state" "$PMCTL" worktree remove feat/e2e-manual --cd "$ship_smoke_dir" >/dev/null 2>&1 || lifecycle_rc=$?
+  fi
+  if [[ "$lifecycle_rc" -eq 0 ]]; then
+    ship_lane="$(PM_DISPATCH_STATE_ROOT="$ship_smoke_state" "$PMCTL" ship E2E-9001 --worktree --cd "$ship_smoke_dir" 2>&1)" || lifecycle_rc=$?
+    if [[ "$lifecycle_rc" -ne 0 ]]; then
+      lifecycle_detail="$ship_lane"
+    fi
+  fi
+  if [[ "$lifecycle_rc" -eq 0 ]]; then
+    ship_status="$(PM_DISPATCH_STATE_ROOT="$ship_smoke_state" "$PMCTL" ship status --json --cd "$ship_smoke_dir" 2>&1)" || lifecycle_rc=$?
+    if [[ "$lifecycle_rc" -eq 0 ]] && ! jq -e 'length == 1 and .[0].ticket == "E2E-9001" and .[0].status == "prepared"' <<< "$ship_status" >/dev/null; then
+      lifecycle_rc=1
+      lifecycle_detail="unexpected ship status: $ship_status"
+    fi
+  fi
+  if [[ "$lifecycle_rc" -eq 0 ]]; then
+    PM_DISPATCH_STATE_ROOT="$ship_smoke_state" "$PMCTL" worktree remove E2E-9001 --cd "$ship_smoke_dir" >/dev/null 2>&1 || lifecycle_rc=$?
+  fi
+  if [[ "$lifecycle_rc" -eq 0 ]]; then
+    remaining="$(PM_DISPATCH_STATE_ROOT="$ship_smoke_state" "$PMCTL" worktree list --json --cd "$ship_smoke_dir" 2>&1)" || lifecycle_rc=$?
+    if [[ "$lifecycle_rc" -eq 0 ]] && ! jq -e 'length == 0' <<< "$remaining" >/dev/null; then
+      lifecycle_rc=1
+      lifecycle_detail="worktree registry was not empty after removal: $remaining"
+    fi
+  fi
+
+  if [[ "$lifecycle_rc" -eq 0 ]]; then
+    record "worktree + ship smoke" PASS "manual lane and prepared ship lane created, observed, and removed"
+  else
+    record "worktree + ship smoke" FAIL "lifecycle smoke exited $lifecycle_rc${lifecycle_detail:+ — $lifecycle_detail}"
   fi
 fi
 

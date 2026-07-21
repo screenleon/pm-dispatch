@@ -99,6 +99,15 @@ jobs:
       - name: lint-test-docstrings regression suite
         run: bash tests/shell/test-lint-test-docstrings.sh
 
+  test-suite-registry:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Validate full-runner and CI suite coverage parity
+        run: bash tools/lint/lint-test-suite-registry.sh
+      - name: Suite coverage registry regression suite
+        run: bash tests/shell/test-lint-test-suite-registry.sh
+
   test-guards:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -255,6 +264,13 @@ jobs:
       - uses: actions/checkout@v6
       - name: model-alias linter regression suite
         run: bash tests/shell/test-lint-model-aliases.sh
+
+  test-model-aliases:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: model aliases unit suite
+        run: bash tests/shell/test-model-aliases.sh
 
   test-core-schemas:
     runs-on: ubuntu-latest

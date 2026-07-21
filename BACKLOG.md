@@ -27,6 +27,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-505 | 🔵 active | context plane lexical 檢索補完（Ph1 engine+統一排序+fixtures；Ph2 agent 契約+shadow 儀器化；evidence-gated 收緊 → [[CC-506]]）（2026-07-20 四方 synthesis；CC-346/347 前置） | memory/DX | 2026-07-20 | — | P2 | retrieval |
 | CC-506 | ⏸ deferred | retrieval evidence-gated 收緊：shadow 評測（coverage@5、critical miss、read reduction、outcome parity）達標後才收緊 broad-Read 指引並重評 [[CC-340]] resume 條件；前置 = [[CC-505]] Ph2 shipped + ≥20 真實任務證據 | memory/DX | 2026-07-20 | — | P3 | retrieval |
 | CC-507 | ✅ done | `pmctl state status`：無法讀取 `VERSION` 時被 Bash `$(<file)` redirection 提前中止，未回傳契約的 unreadable/exit 3 | arch/test | 2026-07-21 | pr:#437 | P1 | design |
+| CC-508 | 🟢 someday | 所有間接 dispatch producer 的 parent-operation control plane：可追溯子 run、受控取消與單一終態；gate／ship／task dispatch 等全數納入 | arch/gate | 2026-07-21 | feedback:2026-07-21 | P2 | design |
 | CC-465 | 🔵 active | memory/context 關鍵詞管線 CJK 支援：抽出共用零依賴斷詞 lib，取代三處各自 ASCII-only 抽詞；工作序列起點（465→467→468→466）（2026-07-07 記憶系統深入分析） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-466 | ⏸ deferred | 記憶卡片生命週期閉環：expires_at 執行 + 關窗式 supersede + usage sidecar 休眠偵測 + doctor→distill 接線；僅在 CC-467 證明 stale/dormant card 已形成實際問題時啟動 | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-467 | 🔵 active | `pmctl memory stats`：注入效益可視化（唯讀聚合器）——注入 bytes/卡片命中分佈/從未命中卡/episode 填寫率，回答「記憶有跟沒有差在哪」；排在 CC-466 之前（2026-07-07；業界僅離線 recall 評測，無 per-injection 遙測） | DX/memory | 2026-07-07 | — | P2 | retrieval |
@@ -1442,6 +1443,25 @@ short-circuit.
 **Outcome**: 將 `core/state/layout.yaml` 的 designated-writer 宣告落實為跨 CLI、runtime、hosts、adapters、ops、tools 與 scripts 的 production-domain content ratchet，可偵測 direct redirect、`jq >`、`mv`、`cp` 與 multiline mutation；豁免只限 canonical writer、pure path resolver、readers 與 layout 宣告的 `rebuildable:true` SQLite cache。Task/decision event rollback 刪除收旂至 `task_delete` / `decision_delete`，統一 ID validation、store compatibility、project partition 解析與 loud failure。Self-injecting fixtures 與 state-store regression 覆蓋合法路徑、違規旁路、invalid ID、init failure 與 removal failure；affected tests 14/14、PR gate GO、rebase 最新 main 後 authoritative full suite 88/88 通過。
 
 **See**: pr:#438
+
+## CC-508 — 所有間接 dispatch 的 parent-operation control plane 🟢 someday
+
+**Problem**: `pmctl gate run`、`pmctl ship --parallel`／adapter 路徑、`pmctl task dispatch` 與任何未來 producer 都可能以一個 parent operation 間接啟動一或多個 detached dispatch；但產品控制面主要只暴露個別 `pmctl dispatch cancel <run_id>`。parent ID 與其子 run 沒有強制、可查的 ownership relation，也沒有一致的 producer-level cancel surface。當任一 producer 卡住、選錯 executor 或需中止時，操作者無法透過 pmctl 取消整個 operation；直接對 supervisor PID 操作會繞過 run state、sentinel 與 cancel-vs-complete 單一終態契約，並可能留下無法判定的 stale operation。
+
+**Why**: 「producer 間接啟動 dispatch」不能把 parent 當成普通裸程序、把 child 當成唯一可管理物件。取消權限、影響範圍、結果完整性都必須從 parent operation 向下傳遞，且只能取消它所擁有的 children。這是所有 dispatch-capable command 的共同 correctness contract，不是 gate 的附屬功能；任何繞過記錄／關聯／受控終態的 producer 都不得出貨。
+
+**Requirement**:
+1. 建立 durable parent-operation record，至少含 operation ID、kind、owner project/workdir、executor、created／terminal timestamps、authenticated cancellation metadata，以及所有 child dispatch run ID 的 append-only relation；machine state 一律仍由 canonical writer 寫入。
+2. 所有會派發的 producer 必須接入此 record：至少 gate、ship 的 adapter／parallel lanes、task dispatch；新增或重構 dispatch-capable command 時，CI ratchet 必須拒絕未宣告 parent/child contract 的路徑。
+3. 每個 producer 提供一致命名的 cancel surface（例如 `pmctl gate cancel <id>`、`pmctl ship cancel <id>`、`pmctl task cancel <id>`），以 recorded ownership 找到 parent 與其 children；不得接受任意 PID、任意 run ID 或跨 project 的 cancellation target。
+4. cancel 順序與 `pmctl dispatch cancel` 對齊：先要求 parent 停止再以 pmctl 逐一取消已記錄、仍 in-flight 的 children；race 中只能產生一個 terminal state（completed／failed／cancelled），不覆寫已完成 result，也不取消其他 operation 的 run。
+5. 每個 producer 的 wait／status／verify 對 cancelled terminal state 提供可驗證、非成功的結論與 result/sentinel evidence；crash、reboot、PID reuse、child already terminal、部分 child cancellation、stale parent 均 fail-closed 並可由 reconcile/doctor 說明。
+6. 抽出的 parent/child relation 與 cancellation primitive 必須是明確、窄的 reusable API；禁止各 producer 重複 supervisor/PID 邏輯，也不以一次性 gate 修補取代全域契約。
+7. 回歸覆蓋 gate、ship 與 task dispatch 的取消、child dispatch cancellation、race（cancel vs finish）、foreign target 拒絕、sentinel/result integrity、reconcile 與不碰非本 operation run 的負向測試。
+
+**Done-when**: 操作者可只用 pmctl 對任一 in-flight producer operation 做可驗證取消；其所有已記錄 child run 收斂到正確終態、無孤兒或跨 operation 影響；各 producer 的等待者不會把 cancelled/stale operation 誤報為成功；現有與未來 dispatch-capable command 都受同一 contract ratchet 保護。
+
+**Dependencies**: [[CC-495]]（dispatch cancel terminalization）與 [[CC-499]]（detached reconciliation）為基礎；本票先定全域 parent-operation contract，再逐一遷移全部既有 producer，不能以「未來有需要」延後 ship、task dispatch 或其他現存派發路徑。
 
 ## CC-503 — shared tooling/hooks host-boundary 收斂 🔵 active
 

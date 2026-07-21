@@ -5,7 +5,7 @@
 # PASS/FAIL table plus a final GO / NO-GO verdict.
 #
 # Usage:
-#   ops/release/release-verify.sh [--no-suite] [--e2e] [--adapter claude|codex|auto] [--help]
+#   ops/release/release-verify.sh [--no-suite] [--e2e] [--adapter claude|codex|opencode|auto] [--help]
 #
 #   --no-suite        Skip run-all-tests.sh (fast iteration only; NEVER skip
 #                     for an actual release sign-off).
@@ -62,8 +62,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "$E2E_ADAPTER" in
-  claude|codex|auto) ;;
-  *) printf 'release-verify: --adapter must be claude|codex|auto (got: %s)\n' "$E2E_ADAPTER" >&2; exit 2 ;;
+  claude|codex|opencode|auto) ;;
+  *) printf 'release-verify: --adapter must be claude|codex|opencode|auto (got: %s)\n' "$E2E_ADAPTER" >&2; exit 2 ;;
 esac
 
 # ── Result accumulation ──────────────────────────────────────────────────────

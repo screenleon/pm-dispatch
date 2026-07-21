@@ -72,6 +72,12 @@ test_adapter_invalid() {
   if [[ "$rc" -eq 2 ]]; then pass "adapter-invalid"; else fail "adapter-invalid" "exit $rc want 2"; fi
 }
 
+test_opencode_adapter_is_accepted() {
+  local rc=0
+  PATH=/usr/bin:/bin bash "$E2E" --adapter opencode 2>/dev/null || rc=$?
+  if [[ "$rc" -eq 4 ]]; then pass "opencode-adapter-accepted"; else fail "opencode-adapter-accepted" "exit $rc want 4 (parse error would be 2)"; fi
+}
+
 # ── Exit-code contract ────────────────────────────────────────────────────────
 
 test_usage_error_exits_2() {
@@ -197,6 +203,7 @@ test_help_short
 test_unknown_flag
 test_adapter_missing_value
 test_adapter_invalid
+test_opencode_adapter_is_accepted
 test_usage_error_exits_2
 test_missing_adapter_exits_4
 test_skip_gate_flag_accepted

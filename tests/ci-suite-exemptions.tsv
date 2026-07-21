@@ -1,0 +1,36 @@
+# suite\treason
+test-migrate\tlegacy routing migration coverage is retained in the full runner only
+test-migrate-to-events\tlegacy event migration coverage is retained in the full runner only
+test-uninstall\tuninstall integration shares install CI coverage but remains full-runner-only
+test-usage-tracker\tstateful tracker coverage is full-runner-only
+test-pm-scripts\tlegacy PM script integration is full-runner-only
+test-pmctl-dispatch\tdispatch integration is full-runner-only pending isolated CI coverage
+test-pmctl-pm\tPM command integration is full-runner-only pending isolated CI coverage
+test-dispatch-record\tdispatch record integration is full-runner-only
+test-dispatch-lifecycle\tdispatch lifecycle integration is full-runner-only
+test-dispatch-cancel\tdispatch cancellation integration is full-runner-only
+test-dispatch-reconcile\tdispatch reconciliation integration is full-runner-only
+test-opencode-dispatch\tOpenCode adapter integration is full-runner-only pending dedicated CI evidence
+test-runner-kind\trunner-kind integration is full-runner-only
+test-patch-gitignore\tgitignore mutation fixture is full-runner-only
+test-test-harness\ttest harness self-test is full-runner-only
+test-run-all-tests\taggregate runner self-test is full-runner-only
+test-run-tests\taffected-test runner self-test is full-runner-only
+test-timeout-resolve\ttimeout resolver integration is full-runner-only
+test-dispatch-common\tshared dispatch integration is full-runner-only
+test-detached-launch\tdetached launch integration is full-runner-only
+test-reasoning-effort\treasoning-effort integration is full-runner-only
+test-host-manifest\thost manifest integration is full-runner-only
+test-host-write-codex\tCodex host-write integration is full-runner-only
+test-host-write-opencode\tOpenCode host-write integration is full-runner-only
+test-host-write-parity\tcross-host write parity integration is full-runner-only
+test-state-status\tstate status integration is full-runner-only
+test-state-paths\tstate paths integration is full-runner-only
+test-pmctl-artifacts\tartifact integration is full-runner-only
+test-pmctl-decision\tdecision integration is full-runner-only
+test-pmctl-context\tcontext integration has live-DB isolation constraints in CI
+test-pmctl-memory\tmemory integration uses canonical-memory fixtures and is full-runner-only
+test-pre-release\tpre-release integration is full-runner-only
+test-release-verify\trelease orchestrator regression is full-runner-only
+test-upgrade-smoke\tupgrade smoke is full-runner-only
+test-e2e-script\tlive E2E script contract is full-runner-only
