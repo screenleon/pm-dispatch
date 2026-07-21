@@ -175,12 +175,12 @@ test_no_suite_exits_3() {
 # is tested without spending LLM tokens. Phase 1+3 still run for real.
 
 test_e2e_delegation_pass() {
-  local stub; stub=$(mktemp)
+  local stub state; stub=$(mktemp); state=$(mktemp -d)
   printf '#!/usr/bin/env bash\nprintf "AUTOMATED VERDICT: GO (stub)\\n"\nexit 0\n' > "$stub"
   chmod +x "$stub"
   local out rc=0
-  out=$(PM_RELEASE_VERIFY_E2E_SCRIPT="$stub" bash "$RV" --no-suite --e2e --adapter claude 2>&1) || rc=$?
-  rm -f "$stub"
+  out=$(PM_DISPATCH_STATE_ROOT="$state" PM_RELEASE_VERIFY_E2E_SCRIPT="$stub" bash "$RV" --no-suite --e2e --adapter claude 2>&1) || rc=$?
+  rm -f "$stub"; rm -rf "$state"
   # --no-suite increments REQUIRED_SKIPPED → PARTIAL GO (exit 3) even with GO from stub
   assert_not_contains "e2e-pass-no-fail" "[FAIL]" "$out"
   if [[ "$rc" -eq 3 ]]; then pass "e2e-pass-exit3"
@@ -188,25 +188,25 @@ test_e2e_delegation_pass() {
 }
 
 test_e2e_delegation_fail() {
-  local stub; stub=$(mktemp)
+  local stub state; stub=$(mktemp); state=$(mktemp -d)
   printf '#!/usr/bin/env bash\nprintf "AUTOMATED VERDICT: NO-GO (stub)\\n"\nexit 1\n' > "$stub"
   chmod +x "$stub"
   local rc=0
-  PM_RELEASE_VERIFY_E2E_SCRIPT="$stub" bash "$RV" --no-suite --e2e --adapter claude \
+  PM_DISPATCH_STATE_ROOT="$state" PM_RELEASE_VERIFY_E2E_SCRIPT="$stub" bash "$RV" --no-suite --e2e --adapter claude \
     >/dev/null 2>&1 || rc=$?
-  rm -f "$stub"
+  rm -f "$stub"; rm -rf "$state"
   if [[ "$rc" -eq 1 ]]; then pass "e2e-fail-exit1"
   else fail "e2e-fail-exit1" "exit $rc want 1 (NO-GO)"; fi
 }
 
 test_e2e_delegation_required_skip() {
   # test-e2e.sh exit 4 = PARTIAL GO (Phase C SKIP) → release-verify records SKIP
-  local stub; stub=$(mktemp)
+  local stub state; stub=$(mktemp); state=$(mktemp -d)
   printf '#!/usr/bin/env bash\nprintf "AUTOMATED VERDICT: PARTIAL GO (stub)\\n"\nexit 4\n' > "$stub"
   chmod +x "$stub"
   local out rc=0
-  out=$(PM_RELEASE_VERIFY_E2E_SCRIPT="$stub" bash "$RV" --no-suite --e2e --adapter claude 2>&1) || rc=$?
-  rm -f "$stub"
+  out=$(PM_DISPATCH_STATE_ROOT="$state" PM_RELEASE_VERIFY_E2E_SCRIPT="$stub" bash "$RV" --no-suite --e2e --adapter claude 2>&1) || rc=$?
+  rm -f "$stub"; rm -rf "$state"
   assert_contains "e2e-req-skip-text" "SKIP" "$out"
   if [[ "$rc" -eq 3 ]]; then pass "e2e-req-skip-exit3"
   else fail "e2e-req-skip-exit3" "exit $rc want 3 (PARTIAL GO)"; fi
