@@ -29,6 +29,11 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Unreadable state-store versions fail closed cleanly (CC-507).** `pmctl
+  state status` now catches a failed `VERSION` read and emits its structured
+  `unreadable` report with exit 3 instead of being terminated by Bash's
+  optimized `$(<file)` redirection with exit 1 and a raw permission error.
+
 - **State writer no longer recommends a nonexistent command (CC-498).** The
   unsupported-store-version error used to instruct running `pmctl state
   migrate`, which does not exist. Remediation text is now derived from the
