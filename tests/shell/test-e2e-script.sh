@@ -153,6 +153,7 @@ test_skip_gate_reaches_phase_c_skip() {
 
   if [[ "$rc" -eq 4 ]]; then pass "skip-gate-reaches-phase-c-exit4"
   else fail "skip-gate-reaches-phase-c-exit4" "exit $rc want 4 (PARTIAL GO)"; fi
+  assert_contains     "worktree-ship-smoke-custom-pmctl-skip" "custom pmctl override is not eligible for local lifecycle smoke" "$out"
   assert_contains     "skip-gate-records-skip" "SKIP"   "$out"
   assert_not_contains "skip-gate-no-fail"      "[FAIL]" "$out"
 }

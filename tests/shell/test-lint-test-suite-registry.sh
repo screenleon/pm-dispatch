@@ -67,6 +67,15 @@ test_missing_ci_coverage_fails_without_exemption() {
   if [[ "$status" -ne 0 ]] && has_output_line "$output" 'lint-test-suite-registry: registered suite is absent from CI without exemption: test-alpha (tests/shell/test-alpha.sh)'; then pass "$name"; else fail "$name" "status=$status output=$output"; fi
 }
 
+test_ci_comment_does_not_count_as_coverage() {
+  local name="lint-test-suite-registry/ci-comment-does-not-count-as-coverage" root output status
+  should_run "$name" || return 0
+  root="$(mktemp -d "$tmp_root/registry-XXXXXX")"; make_fixture "$root"
+  printf '%s\n' '# bash tests/shell/test-alpha.sh' > "$root/.github/workflows/lint.yml"
+  output="$(run_linter "$root")"; status=$?
+  if [[ "$status" -ne 0 ]] && has_output_line "$output" 'lint-test-suite-registry: registered suite is absent from CI without exemption: test-alpha (tests/shell/test-alpha.sh)'; then pass "$name"; else fail "$name" "status=$status output=$output"; fi
+}
+
 test_reasoned_ci_exemption_passes() {
   local name="lint-test-suite-registry/reasoned-ci-exemption-passes" root output status
   should_run "$name" || return 0
@@ -118,6 +127,7 @@ test_unreasoned_ci_exemption_fails() {
 test_real_registry_passes
 test_unregistered_test_file_fails
 test_missing_ci_coverage_fails_without_exemption
+test_ci_comment_does_not_count_as_coverage
 test_reasoned_ci_exemption_passes
 test_registered_exclusion_fails
 test_duplicate_registered_path_fails

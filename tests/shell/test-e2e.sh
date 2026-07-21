@@ -22,6 +22,8 @@ export LC_ALL=C.UTF-8
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 PMCTL="${PM_E2E_PMCTL:-$REPO_ROOT/cli/pmctl}"
+# shellcheck source=runtime/lib/adapter-enum.sh
+. "$REPO_ROOT/runtime/lib/adapter-enum.sh"
 
 ADAPTER="auto"
 SKIP_GATE=0
@@ -41,10 +43,10 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-case "$ADAPTER" in
-  claude|codex|opencode|auto) ;;
-  *) printf 'test-e2e: --adapter must be claude|codex|opencode|auto (got: %s)\n' "$ADAPTER" >&2; exit 2 ;;
-esac
+if ! pm_adapter_is_valid "$REPO_ROOT" "$ADAPTER"; then
+  printf 'test-e2e: --adapter must be %s (got: %s)\n' "$(pm_adapter_expected_values "$REPO_ROOT")" "$ADAPTER" >&2
+  exit 2
+fi
 
 # ── Result accumulation (same pattern as release-verify.sh) ──────────────────
 PHASE_NAMES=()
@@ -248,9 +250,9 @@ fi
 # git repo (local bare remote + feature branch with a one-function diff) so the
 # check is always runnable, even on main after a release tag.
 #
-# IMPORTANT: --executor claude is handover-only (reviewers run outside the
-# script in a CC session). Phase C always uses codex; skipped if codex is not
-# on PATH.
+# IMPORTANT: Phase C uses Codex only because its smoke depends on a local,
+# self-contained reviewer process. Claude is handover-only and OpenCode has no
+# equivalent pr-gate reviewer contract; both are intentionally excluded here.
 section "Phase C — pr-gate mechanism check (synthetic target)"
 
 if [[ "$SKIP_GATE" -eq 1 ]]; then

@@ -42,11 +42,7 @@ awk '
     if ($0 != "") print $0
   }
 ' "$runner" > "$names"
-awk '
-  /^declare -A SUITE_PATHS=\(/ { inside=1; next }
-  inside && /^\)/ { exit }
-  inside && match($0, /\[([^]]+)\]="([^"]+)"/, parts) { print parts[1] "\t" parts[2] }
-' "$runner" > "$paths"
+sed -n 's/^[[:space:]]*\[\([^]]*\)\]="\([^"]*\)".*/\1\t\2/p' "$runner" > "$paths"
 
 [[ -s "$names" ]] || fail "could not parse SUITE_NAMES from tests/lib/test-suite-runner.sh"
 [[ -s "$paths" ]] || fail "could not parse SUITE_PATHS from tests/lib/test-suite-runner.sh"
@@ -89,8 +85,24 @@ for path in "${!excluded[@]}"; do
   [[ -z "${registered[$path]:-}" ]] || fail "test cannot be both registered and excluded: $path"
 done
 
+ci_runs_suite() {
+  local path="$1"
+  awk -v wanted="$path" '
+    /^[[:space:]]*run:/ {
+      line=$0
+      gsub(/[^[:alnum:]_.\/-]/, " ", line)
+      count=split(line, words, /[[:space:]]+/)
+      for (i = 1; i <= count; i++) {
+        sub(/^\.\//, "", words[i])
+        if (words[i] == wanted) { found=1; exit }
+      }
+    }
+    END { exit !found }
+  ' "$workflow"
+}
+
 while IFS=$'\t' read -r name path; do
-  if grep -Fq "$path" "$workflow"; then
+  if ci_runs_suite "$path"; then
     [[ -z "${ci_exempt[$name]:-}" ]] || fail "CI suite exemption is unused: $name"
   elif [[ -z "${ci_exempt[$name]:-}" ]]; then
     fail "registered suite is absent from CI without exemption: $name ($path)"

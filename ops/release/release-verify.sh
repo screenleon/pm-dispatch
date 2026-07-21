@@ -25,6 +25,8 @@ export LC_ALL=C.UTF-8
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 PMCTL="$REPO_ROOT/cli/pmctl"
+# shellcheck source=runtime/lib/adapter-enum.sh
+. "$REPO_ROOT/runtime/lib/adapter-enum.sh"
 
 # Temp files — declared upfront so the EXIT trap can always clean them safely.
 suite_log=""
@@ -61,10 +63,10 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-case "$E2E_ADAPTER" in
-  claude|codex|opencode|auto) ;;
-  *) printf 'release-verify: --adapter must be claude|codex|opencode|auto (got: %s)\n' "$E2E_ADAPTER" >&2; exit 2 ;;
-esac
+if ! pm_adapter_is_valid "$REPO_ROOT" "$E2E_ADAPTER"; then
+  printf 'release-verify: --adapter must be %s (got: %s)\n' "$(pm_adapter_expected_values "$REPO_ROOT")" "$E2E_ADAPTER" >&2
+  exit 2
+fi
 
 # ── Result accumulation ──────────────────────────────────────────────────────
 PHASE_NAMES=()

@@ -123,6 +123,16 @@ test_adapter_invalid() {
   if [[ "$rc" -eq 2 ]]; then pass "adapter-invalid"; else fail "adapter-invalid" "exit $rc want 2"; fi
 }
 
+test_opencode_adapter_is_accepted() {
+  local stub rc=0
+  stub=$(mktemp)
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$stub"
+  chmod +x "$stub"
+  PM_RELEASE_VERIFY_E2E_SCRIPT="$stub" bash "$RV" --no-suite --e2e --adapter opencode >/dev/null 2>&1 || rc=$?
+  rm -f "$stub"
+  if [[ "$rc" -eq 3 ]]; then pass "opencode-adapter-accepted"; else fail "opencode-adapter-accepted" "exit $rc want 3 (accepted adapter with --no-suite)"; fi
+}
+
 # ── Exit-code contract ────────────────────────────────────────────────────────
 
 test_usage_error_exits_2() {
@@ -327,6 +337,7 @@ test_release_e2e_keeps_full_and_excludes_affected_phase
 test_unknown_flag
 test_adapter_missing_value
 test_adapter_invalid
+test_opencode_adapter_is_accepted
 test_usage_error_exits_2
 test_help_ends_with_newline
 test_no_suite_partial_verdict
