@@ -28,6 +28,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-506 | ⏸ deferred | retrieval evidence-gated 收緊：shadow 評測（coverage@5、critical miss、read reduction、outcome parity）達標後才收緊 broad-Read 指引並重評 [[CC-340]] resume 條件；前置 = [[CC-505]] Ph2 shipped + ≥20 真實任務證據 | memory/DX | 2026-07-20 | — | P3 | retrieval |
 | CC-507 | ✅ done | `pmctl state status`：無法讀取 `VERSION` 時被 Bash `$(<file)` redirection 提前中止，未回傳契約的 unreadable/exit 3 | arch/test | 2026-07-21 | pr:#437 | P1 | design |
 | CC-508 | 🟢 someday | 所有間接 dispatch producer 的 parent-operation control plane：可追溯子 run、受控取消與單一終態；gate／ship／task dispatch 等全數納入 | arch/gate | 2026-07-21 | feedback:2026-07-21 | P2 | design |
+| CC-509 | 🟢 someday | CI suite-parity lint 支援 workflow multi-line `run: |` steps，消除目前單行 `run:` 格式耦合 | ops/test | 2026-07-21 | gate:CC-449 | P3 | hygiene |
 | CC-465 | 🔵 active | memory/context 關鍵詞管線 CJK 支援：抽出共用零依賴斷詞 lib，取代三處各自 ASCII-only 抽詞；工作序列起點（465→467→468→466）（2026-07-07 記憶系統深入分析） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-466 | ⏸ deferred | 記憶卡片生命週期閉環：expires_at 執行 + 關窗式 supersede + usage sidecar 休眠偵測 + doctor→distill 接線；僅在 CC-467 證明 stale/dormant card 已形成實際問題時啟動 | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-467 | 🔵 active | `pmctl memory stats`：注入效益可視化（唯讀聚合器）——注入 bytes/卡片命中分佈/從未命中卡/episode 填寫率，回答「記憶有跟沒有差在哪」；排在 CC-466 之前（2026-07-07；業界僅離線 recall 評測，無 per-injection 遙測） | DX/memory | 2026-07-07 | — | P2 | retrieval |
@@ -188,6 +189,28 @@ coverage tier/reason 宣告，並以缺宣告注入測試釘住。
 
 **Dependencies**：已吸收 [[CC-431]]；與 [[CC-454]] 協調 CI/lint ownership，但不合併 ShellCheck domain coverage。v0.11.0。
 **See**: [[CC-444]] Outcome、pr:#367
+
+---
+
+## CC-509 — CI suite-parity lint：支援 multi-line workflow `run: |` 🟢 someday
+
+**Problem**：`tools/lint/lint-test-suite-registry.sh` 的 CI 偵測目前只掃描單行
+`run: <command>`。若未來 workflow 以 `run: |` 宣告多行 shell block，已實際執行的
+suite 會被 lint 誤判為沒有 CI coverage；現行 workflow 未使用此格式，且 lint 會
+fail-loud，故不阻擋 CC-449。
+
+**Why**：CI parity 的契約不應依賴未明說的 YAML 排版細節；支援 block scalar 可讓
+workflow 可讀性調整不必同步修改 coverage 判定。
+
+**Requirement**：擴充或替換 `ci_runs_suite()` 的受限解析，使其能辨識 `run: |` 後
+同層縮排的命令行；加入 fixture regression，分別證明 block 內命令算 coverage、
+block 外註解或文字不會誤算；維持現有單行行為與 fail-loud 診斷。
+
+**Done-when**：同一 suite 只出現在 multi-line `run: |` block 時 lint 通過；未被
+執行的 suite 仍要求明確 CI exemption。
+
+**Source**：CC-449 Claude full-tier gate `gate-20260721-075546-32ebc1` 的 critic 與
+architecture-reviewer 共識 low / non-blocking advisory。
 
 ---
 
