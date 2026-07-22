@@ -87,7 +87,7 @@ make_writer_store() {
   git -C "$repo" init -q
   PM_DISPATCH_STATE_ROOT="$store" _SW_REPO_ROOT="$repo" state_store_init
   PM_DISPATCH_STATE_ROOT="$store" _SW_REPO_ROOT="$repo" runs_append \
-    '{"schema_version":2,"id":"run-20260101T000000Z-abcdef","task_id":"CC-230","executor":"codex","state":"ok","working_dir":"/tmp/test","trace_path":"/tmp/test.jsonl","exit_code":0,"created_ts":"2026-01-01T00:00:00Z"}'
+    '{"schema_version":3,"id":"run-20260101T000000Z-abcdef","task_id":"CC-230","executor":"codex","state":"ok","working_dir":"/tmp/test","trace_path":"/tmp/test.jsonl","exit_code":0,"created_ts":"2026-01-01T00:00:00Z"}'
   PM_DISPATCH_STATE_ROOT="$store" _SW_REPO_ROOT="$repo" events_append \
     '{"schema_version":1,"id":"evt-20260101T000000Z-abcdef","kind":"run.completed","subject_type":"run","subject_id":"run-20260101T000000Z-abcdef","ts":"2026-01-01T00:00:00Z","payload":{"run_id":"run-20260101T000000Z-abcdef","state":"ok","from_state":"verifying","to_state":"ok"}}'
 }
