@@ -1,6 +1,6 @@
 # Dispatch brief schema
 
-The canonical structure for any brief dispatched to an executor (codex, claude, or opencode via `pmctl dispatch run --adapter <name>`).
+The canonical structure for any brief dispatched to an executor (codex, claude, opencode, or grok via `pmctl dispatch run --adapter <name>`).
 
 Executors reject briefs missing the required fields. PMs and main-thread dispatchers should always write briefs against this schema; pick the matching skeleton in §"Brief skeletons" and fill the slots — don't write from scratch.
 The executor-level abstraction is defined in [executor-contract.md](executor-contract.md); this file is the concrete brief schema (independent of executor profile).
@@ -31,7 +31,7 @@ Dispatch overhead (brief write + executor startup + post-verify) costs ~30–120
 
 ## Selecting an executor
 
-The handover metadata's `executor:` field selects which executor receives the brief. Valid values today: `codex`, `claude`, and `opencode`. The default is set at install time via `./install.sh --profile minimal|full` (auto-detected from `command -v codex` when unset): `full` → `codex`, `minimal` → `claude`. PM may override per-brief by setting `executor:` explicitly in the `dispatch_handover_v1` block. Use `isolation_level:` in the handover metadata (canonical values: `none | read-only | workspace-write | workspace-network | sandboxed`); the adapter layer translates this to executor-native flags — note that `opencode` only supports `none` (all others are rejected at dispatch time; workspace boundaries for opencode are configured via host opencode.json). `isolation_level:` is required. The legacy fields `sandbox`, `approval`, and `skip_git_check` were removed in v0.6.0; a brief that still carries any of them is rejected with a migration error.
+The handover metadata's `executor:` field selects which executor receives the brief. Valid values today: `codex`, `claude`, `opencode`, and `grok`. The default is set at install time via `./install.sh --profile minimal|full` (auto-detected from `command -v codex` when unset): `full` → `codex`, `minimal` → `claude`. PM may override per-brief by setting `executor:` explicitly in the `dispatch_handover_v1` block. Use `isolation_level:` in the handover metadata (canonical values: `none | read-only | workspace-write | workspace-network | sandboxed`); the adapter layer translates this to executor-native flags — note that `opencode` only supports `none` (all others are rejected at dispatch time; workspace boundaries for opencode are configured via host opencode.json), while `grok` maps levels to dual `--sandbox` + `--permission-mode` flags (see `adapters/grok/isolation-map.yaml`). `isolation_level:` is required. The legacy fields `sandbox`, `approval`, and `skip_git_check` were removed in v0.6.0; a brief that still carries any of them is rejected with a migration error.
 
 ## Required fields
 
@@ -109,7 +109,7 @@ Use as needed; not all briefs require all of them.
 - **`retrieval_skip_reason`** — non-empty reason why retrieval was intentionally skipped for a file-writing brief. Use this only when query/reuse-scan evidence would add no signal, such as a mechanical edit with all context already supplied in the brief.
 - **`task`** — free-form instruction block used by composed workflows to pass per-run task instructions distinct from the brief's `goal` field.
 - **`output_format`** — when the deliverable is a report (audit, plan), specify the file path and required sections.
-- **`isolation_level`** — required: `workspace-write` (default), `read-only`, `workspace-network`, `sandboxed`, or `none`. `none` means full machine access and is **opencode-only** (it has no finer-grained sandbox); codex and claude reject `none` (their max isolation is `workspace-write`). The adapter layer translates to executor-native flags. Source of truth: `core/policy/isolation-level.yaml`. The legacy `sandbox` / `approval` / `skip_git_check` fields were removed in v0.6.0; a brief carrying any of them is rejected.
+- **`isolation_level`** — required: `workspace-write` (default), `read-only`, `workspace-network`, `sandboxed`, or `none`. `none` means full machine access and is **opencode-only** (it has no finer-grained sandbox); codex, claude, and grok reject `none` (their max isolation is `workspace-write`). The adapter layer translates to executor-native flags. Source of truth: `core/policy/isolation-level.yaml`. The legacy `sandbox` / `approval` / `skip_git_check` fields were removed in v0.6.0; a brief carrying any of them is rejected.
 - **`qa_checklist`** — **Conditionally required**: include when the brief introduces ≥ 3 distinct behavioral units (new code paths, new flags, new hooks, new error-handling branches). For each unit, list its expected test name or scenario. `qa-tester` will block in gate round 1 for any introduced unit without adjacent coverage — writing this upfront costs one minute and prevents multiple gate/fix cycles. Example:
   ```
   qa_checklist:
@@ -307,6 +307,8 @@ pmctl dispatch run --adapter claude --cd <work_dir> --brief-file <brief-file>
 
 # opencode profile:
 pmctl dispatch run --adapter opencode --cd <work_dir> --brief-file <brief-file>
+# grok profile:
+pmctl dispatch run --adapter grok --cd <work_dir> --brief-file <brief-file>
 ```
 
 Bare `pmctl dispatch run` defaults to `--lifecycle detached` for eligible adapters: it returns a `run_id` immediately, then use `pmctl dispatch wait <run_id> --cd <work_dir>` (run that in background) to reattach and resolve the terminal outcome. Pass `--lifecycle foreground` explicitly to block in-process and get the adapter's stdout footer directly instead — see §Dispatch lifecycle below for the full contract.
@@ -322,7 +324,7 @@ Reads `.agent-trace/latest.{last,stderr}`, shows `git diff --stat`, and processe
 - A **machine-executable check** in the structured `- cmd: "<bash>"` form is **executed** in `<work_dir>` — `PASS` iff the command exits 0, `FAIL` on non-zero or timeout (`DISPATCH_SELF_VERIFY_TIMEOUT`, default 300s). This does not depend on the executor's prose: the command is run, not searched for in the executor's final message.
 - Any **other shape** (a named macro like `git-status no-collateral-damage`, free prose, or a bare scalar) is a **semantic check the executor evaluates**, not a shell — post-verify marks it `SKIP (executor-evaluated)` and does not fail on it. Confirm these by reading the executor's report.
 
-Works for any executor (codex, claude, or opencode). Exits 0 = ok (no executed check failed); exits 1 = partial/failed. **Write any check you want machine-verified as `- cmd: "..."`.**
+Works for any executor (codex, claude, opencode, or grok). Exits 0 = ok (no executed check failed); exits 1 = partial/failed. **Write any check you want machine-verified as `- cmd: "..."`.**
 
 > **Note**: The `/pm` command implements the same verification inline via its manual completion-handling steps (steps 2–8 in the main-thread protocol); `dispatch-post-verify.sh` provides the same checks as a standalone shell tool for automation, re-checks, and CI use.
 
@@ -458,7 +460,7 @@ Metadata fields:
 | Field | Required | Notes |
 |---|---|---|
 | `handover_version` | yes | Currently `3`; bump on shape change. |
-| `executor` | yes | Closed enum: `codex`, `claude`, `opencode`. Main-thread dispatch uses this field to choose the executor-specific adapter. |
+| `executor` | yes | Closed enum: `codex`, `claude`, `opencode`, `grok`. Main-thread dispatch uses this field to choose the executor-specific adapter. |
 | `dispatch_route` | yes | `main_thread_bash_background` — the routine route for every shipped (cli-subprocess) adapter. `agent_executor` remains a valid value reserved for a future host-native adapter, but no shipped executor uses it. |
 | `working_dir` | yes | Absolute path; must exist; must match the brief body. |
 | `brief_file` | yes | Absolute path under `/tmp/brief-...`; main thread creates this file with unique `mktemp`-style exclusive semantics, then writes the brief body. |
@@ -501,10 +503,10 @@ Only **detach-eligible** adapters accept `--lifecycle detached`: eligibility is 
 Use these aliases in briefs and PM routing — never hard-code executor wire-format IDs.
 Each adapter resolves the alias to its own wire format at dispatch time.
 
-| PM-facing alias | codex wire ID | claude wire ID | opencode wire ID | When to use |
-|---|---|---|---|---|
-| `default` | `gpt-5.6-terra` | `claude-sonnet-5` | `opencode/nemotron-3-ultra-free` | All medium/large tasks (omit `--model` or write `model: default`) |
-| `light` | `gpt-5.3-codex-spark` | `claude-haiku-4-5-20251001` | `opencode/deepseek-v4-flash-free` | Small tasks only (see §When to dispatch) |
+| PM-facing alias | codex wire ID | claude wire ID | opencode wire ID | grok wire ID | When to use |
+|---|---|---|---|---|---|
+| `default` | `gpt-5.6-terra` | `claude-sonnet-5` | `opencode/nemotron-3-ultra-free` | `grok-4.5` | All medium/large tasks (omit `--model` or write `model: default`) |
+| `light` | `gpt-5.3-codex-spark` | `claude-haiku-4-5-20251001` | `opencode/deepseek-v4-flash-free` | `grok-4.5` (low effort) | Small tasks only (see §When to dispatch) |
 
 See `docs/model-tier-policy.md` §Executor-agnostic `light` alias for routing criteria.
 
@@ -554,9 +556,9 @@ Model resolution precedence: `--model` flag > `PM_CFG_DEFAULT_MODEL` (from `~/.p
 
 The "reasoning effort" columns in the alias tables above are the per-alias default that applies whenever `--effort` is omitted — an alias's own valid column value wins over the global default, so it is the practical default, not just a fallback label. `default`/`gpt-5.5`/`gpt-5.4` carry `medium` for exactly this reason (a plain dispatch/gate call is `medium` by default without needing `--effort medium` on every invocation); `codex-spark`/`light` intentionally keep `high`, unchanged and orthogonal to this convergence. The claude table's legacy `normal` values are not a valid `low`/`medium`/`high` literal, so they are ignored and those aliases fall through to the `medium` global default in practice (`opus`'s `high` is valid and is honored as-is). `pmctl gate run` accepts the same `--effort` flag; reach for `--effort high` only when you need deeper analysis (e.g. escalating after repeated gate NO-GOs).
 
-opencode has no reasoning-effort equivalent; `--effort` is accepted as a no-op with a warning by that adapter (non-goal — see `docs/executor-contract.md`).
+opencode has no reasoning-effort equivalent; `--effort` is accepted as a no-op with a warning by that adapter (non-goal — see `docs/executor-contract.md`). grok wires `--effort` to native `--reasoning-effort`.
 
-Direct Bash dispatch shape (substitute `<executor>` with `codex`, `claude`, or `opencode`):
+Direct Bash dispatch shape (substitute `<executor>` with `codex`, `claude`, `opencode`, or `grok`):
 
 ```text
 Bash(command: "pmctl dispatch run --adapter <executor> --cd <safe working_dir> --isolation <safe isolation_level> --timeout <safe timeout> --brief-file <safe brief_file> --lifecycle foreground", run_in_background: true, description: "Dispatch <executor> for <slug>")
@@ -612,7 +614,18 @@ Argument order is stable:
 5. `--timeout <safe timeout>`
 6. `--brief-file <safe brief_file>`
 
-`isolation_level: none` (full machine access) is **opencode-only**, where it is load-bearing (opencode has no finer-grained sandbox). For codex and claude it is hard-rejected on every route — their max isolation is `workspace-write`, and the Agent escape hatch that once carried full access for codex was retired. There is no full-access route for codex/claude. The codex adapter also rejects a raw `--sandbox danger-full-access` flag (fail-loud, exit 2), so native-flag passthrough through `pmctl dispatch run` cannot reintroduce full access.
+`isolation_level: none` (full machine access) is **opencode-only**, where it is load-bearing (opencode has no finer-grained sandbox). For codex, claude, and grok it is hard-rejected on every route — their max isolation is `workspace-write`, and the Agent escape hatch that once carried full access for codex was retired. There is no full-access route for codex/claude/grok. The codex adapter also rejects a raw `--sandbox danger-full-access` flag (fail-loud, exit 2), so native-flag passthrough through `pmctl dispatch run` cannot reintroduce full access.
+
+### Grok profile model aliases
+
+PM short-form model aliases for the grok executor, resolved from `share/grok-model-aliases.tsv`:
+
+| PM-facing alias | Wire model ID | Default effort | Notes |
+|---|---|---|---|
+| `default` | `grok-4.5` | medium | Default when `--model` omitted |
+| `light` | `grok-4.5` | low | Same model, lower reasoning effort |
+| `build` / `grok-build` | `grok-build` | medium | Grok Build product alias |
+| `grok-4.5-build` | `grok-4.5-build` | medium | Telemetry/usage key form |
 
 Quoting and command-shape rules:
 

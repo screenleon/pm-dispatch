@@ -13,14 +13,14 @@ while [[ $# -gt 0 ]]; do
     --host)
       [[ $# -ge 2 ]] || { printf 'guard-session-summary: --host requires a value\n' >&2; exit 2; }
       pmctl_host_is_valid "$2" || {
-        printf 'guard-session-summary: --host must be claude, codex, opencode, or generic\n' >&2
+        printf 'guard-session-summary: --host must be claude, codex, opencode, grok, or generic\n' >&2
         exit 2
       }
       writer_host="$2"
       shift 2
       ;;
     -h|--help)
-      printf 'Usage: guard-session-summary.sh --host <claude|codex|opencode|generic>\n'
+      printf 'Usage: guard-session-summary.sh --host <claude|codex|opencode|grok|generic>\n'
       exit 0
       ;;
     *)

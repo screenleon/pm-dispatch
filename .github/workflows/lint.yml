@@ -243,6 +243,13 @@ jobs:
       - name: claude-dispatch adapter regression suite
         run: ./tests/shell/test-claude-dispatch.sh
 
+  test-grok-dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: grok-dispatch adapter regression suite
+        run: ./tests/shell/test-grok-dispatch.sh
+
   test-layer-boundaries:
     runs-on: ubuntu-latest
     steps:

@@ -17,15 +17,16 @@ th_init "$@"
 # shellcheck source=runtime/lib/detached-launch.sh
 . "$REPO_ROOT/runtime/lib/detached-launch.sh"
 
-# check_codex/check_claude FAIL when an executor CLI is present but
-# unauthenticated. The many stub-claude/codex tests below model a HEALTHY
+# check_codex/check_claude/check_grok FAIL when an executor CLI is present but
+# unauthenticated. The many stub-claude/codex/grok tests below model a HEALTHY
 # environment, where executors are authenticated — so export dummy API keys at
 # file scope to satisfy the auth probe's env-var branch (the probe never reads the
 # value, only its presence). Tests that specifically exercise the UNAUTHED path
-# clear these vars inline. Tests that build a PATH without claude/codex are
+# clear these vars inline. Tests that build a PATH without claude/codex/grok are
 # unaffected (binary-absent stays WARN regardless of auth).
 export OPENAI_API_KEY="dummy-test-key"
 export ANTHROPIC_API_KEY="dummy-test-key"
+export XAI_API_KEY="dummy-test-key"
 
 # Whether this platform can create real symlinks. MSYS/Git-Bash without Developer
 # Mode copies on `ln -s`, so a pmctl symlink to cli/pmctl becomes a copy that
@@ -273,9 +274,10 @@ case_doctor_all_ok_exits_0() {
 # credential-file branch resolves to authenticated.
 write_executor_creds() {
   local home_dir="$1"
-  mkdir -p "$home_dir/.codex" "$home_dir/.claude"
+  mkdir -p "$home_dir/.codex" "$home_dir/.claude" "$home_dir/.grok"
   printf '{"token":"dummy"}\n' > "$home_dir/.codex/auth.json"
   printf '{"token":"dummy"}\n' > "$home_dir/.claude/.credentials.json"
+  printf '{"token":"dummy"}\n' > "$home_dir/.grok/auth.json"
 }
 
 case_doctor_executor_unauthed_fails() {
@@ -284,7 +286,7 @@ case_doctor_executor_unauthed_fails() {
   #
   # Steps:
   #   1. Write full healthy settings/memory/manifest.
-  #   2. Stub claude+codex; clear auth env vars and use a HOME with no cred files.
+  #   2. Stub claude+codex+grok; clear auth env vars and use a HOME with no cred files.
   #   3. Assert exit 1 and a [FAIL] naming each unauthenticated executor.
   local name="doctor-executor-unauthed-fails"
   should_run "$name" || return 0
@@ -292,14 +294,16 @@ case_doctor_executor_unauthed_fails() {
   write_full_settings "$home"
   create_memory_dir_for_pwd "$home"
   write_manifest "$home"
-  path="$(make_stub_bin "$tmp_root/bin-unauthed" claude codex)"
+  path="$(make_stub_bin "$tmp_root/bin-unauthed" claude codex grok)"
 
   out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
     OPENAI_API_KEY='' ANTHROPIC_API_KEY='' CLAUDE_CODE_OAUTH_TOKEN='' \
+    XAI_API_KEY='' GROK_API_KEY='' GROK_HOME='' \
     bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
   if [[ "$status" -eq 1 \
      && "$out" == *"claude present but not authenticated"* \
-     && "$out" == *"codex present but not authenticated"* ]]; then
+     && "$out" == *"codex present but not authenticated"* \
+     && "$out" == *"grok present but not authenticated"* ]]; then
     pass "$name"
   else
     fail "$name" "status=$status out=$out"
@@ -312,7 +316,7 @@ case_doctor_executor_authed_via_credfile_ok() {
   #
   # Steps:
   #   1. Write full healthy settings/memory/manifest + pmctl symlink + cred files.
-  #   2. Stub claude+codex; clear auth env vars (so only the file branch can pass).
+  #   2. Stub claude+codex+grok; clear auth env vars (so only the file branch can pass).
   #   3. Assert exit 0, 0 FAIL, 0 WARN.
   local name="doctor-executor-authed-via-credfile-ok"
   should_run "$name" || return 0
@@ -322,16 +326,149 @@ case_doctor_executor_authed_via_credfile_ok() {
   create_memory_dir_for_pwd "$home"
   write_manifest "$home"
   write_executor_creds "$home"
-  path="$(make_stub_bin "$tmp_root/bin-authed-credfile" claude codex)"
+  path="$(make_stub_bin "$tmp_root/bin-authed-credfile" claude codex grok)"
   ln -sf "$REPO_ROOT/cli/pmctl" "$tmp_root/bin-authed-credfile/pmctl"
 
   out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
     OPENAI_API_KEY='' ANTHROPIC_API_KEY='' CLAUDE_CODE_OAUTH_TOKEN='' \
+    XAI_API_KEY='' GROK_API_KEY='' GROK_HOME='' \
     bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
-  if [[ "$status" -eq 0 && "$out" == *"0 FAIL"* && "$out" == *"0 WARN"* ]]; then
+  if [[ "$status" -eq 0 && "$out" == *"0 FAIL"* && "$out" == *"0 WARN"* \
+     && "$out" == *"grok available and authenticated"* ]]; then
     pass "$name"
   else
     fail "$name" "status=$status out=$out"
+  fi
+}
+
+case_doctor_grok_authed_via_xai_env() {
+  # check_grok treats XAI_API_KEY presence as authenticated (presence-only probe).
+  local name="doctor-grok-authed-via-xai-env"
+  should_run "$name" || return 0
+  local home="$tmp_root/home-grok-xai" out status=0 path
+  write_full_settings "$home"
+  create_memory_dir_for_pwd "$home"
+  write_manifest "$home"
+  path="$(make_stub_bin "$tmp_root/bin-grok-xai" claude codex grok)"
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
+    OPENAI_API_KEY=dummy ANTHROPIC_API_KEY=dummy \
+    XAI_API_KEY=dummy-xai GROK_API_KEY='' GROK_HOME='' \
+    bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
+  if [[ "$out" == *"grok available and authenticated"* \
+     && "$out" != *"grok present but not authenticated"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out"
+  fi
+}
+
+case_doctor_grok_authed_via_grok_api_env() {
+  # check_grok also accepts GROK_API_KEY as an alternate env credential signal.
+  local name="doctor-grok-authed-via-grok-api-env"
+  should_run "$name" || return 0
+  local home="$tmp_root/home-grok-api" out status=0 path
+  write_full_settings "$home"
+  create_memory_dir_for_pwd "$home"
+  write_manifest "$home"
+  path="$(make_stub_bin "$tmp_root/bin-grok-api" claude codex grok)"
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
+    OPENAI_API_KEY=dummy ANTHROPIC_API_KEY=dummy \
+    XAI_API_KEY='' GROK_API_KEY=dummy-grok GROK_HOME='' \
+    bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
+  if [[ "$out" == *"grok available and authenticated"* \
+     && "$out" != *"grok present but not authenticated"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out"
+  fi
+}
+
+case_doctor_grok_authed_via_grok_home_credfile() {
+  # GROK_HOME overrides the default ~/.grok/auth.json location for the probe.
+  local name="doctor-grok-authed-via-grok-home-credfile"
+  should_run "$name" || return 0
+  local home="$tmp_root/home-grok-home" grok_home="$tmp_root/custom-grok-home" out status=0 path
+  write_full_settings "$home"
+  create_memory_dir_for_pwd "$home"
+  write_manifest "$home"
+  mkdir -p "$grok_home"
+  printf '{"token":"dummy"}\n' > "$grok_home/auth.json"
+  path="$(make_stub_bin "$tmp_root/bin-grok-home" claude codex grok)"
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
+    OPENAI_API_KEY=dummy ANTHROPIC_API_KEY=dummy \
+    XAI_API_KEY='' GROK_API_KEY='' GROK_HOME="$grok_home" \
+    bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
+  if [[ "$out" == *"grok available and authenticated"* \
+     && "$out" != *"grok present but not authenticated"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out"
+  fi
+}
+
+case_doctor_grok_missing_binary_warns() {
+  # Absent grok binary is a non-fatal WARN (optional executor), never FAIL.
+  local name="doctor-grok-missing-binary-warns"
+  should_run "$name" || return 0
+  if ! _td_needs_symlink "$name"; then return 0; fi
+  local home="$tmp_root/home-grok-missing" out status=0 bin path cmd
+  write_full_settings "$home"
+  create_memory_dir_for_pwd "$home"
+  write_manifest "$home"
+  bin="$tmp_root/bin-grok-missing"
+  mkdir -p "$bin"
+  for cmd in bash dirname pwd readlink uname jq sed grep awk python3 tr; do
+    link_cmd "$bin" "$cmd"
+  done
+  [[ -x "$bin/jq" ]] || { pass "$name (jq not available - skip)"; return; }
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$bin/claude"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$bin/codex"
+  chmod +x "$bin/claude" "$bin/codex"
+  path="$bin"
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
+    OPENAI_API_KEY=dummy ANTHROPIC_API_KEY=dummy \
+    XAI_API_KEY='' GROK_API_KEY='' GROK_HOME='' \
+    bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
+  local grok_fail
+  grok_fail="$(printf '%s\n' "$out" | grep '\[FAIL\]' | grep -ci 'grok' || true)"
+  if [[ "$out" == *"grok not found"* && "$grok_fail" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected grok WARN and no grok FAIL; status=$status out=$out"
+  fi
+}
+
+case_doctor_grok_host_config_and_capabilities() {
+  # hosts/grok doctor module: config present/absent + capability tuple emission.
+  local name="doctor-grok-host-config-and-capabilities"
+  should_run "$name" || return 0
+  local home="$tmp_root/home-grok-host" out_absent out_present path
+  write_full_settings "$home"
+  create_memory_dir_for_pwd "$home"
+  write_manifest "$home"
+  path="$(make_stub_bin "$tmp_root/bin-grok-host" claude codex grok)"
+  # Absent config (no ~/.grok/config.toml under test HOME).
+  out_absent="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
+    OPENAI_API_KEY=dummy ANTHROPIC_API_KEY=dummy XAI_API_KEY=dummy GROK_HOME='' \
+    bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || true
+  # Present config under default $HOME/.grok.
+  mkdir -p "$home/.grok"
+  printf 'permission_mode = "default"\n' > "$home/.grok/config.toml"
+  printf '{"token":"dummy"}\n' > "$home/.grok/auth.json"
+  out_present="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
+    OPENAI_API_KEY=dummy ANTHROPIC_API_KEY=dummy XAI_API_KEY=dummy GROK_HOME='' \
+    bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || true
+  if [[ "$out_absent" == *"grok config not yet created"* \
+     && "$out_present" == *"grok config present"* \
+     && "$out_present" == *"batch PM via pmctl pm prepare/run --host grok"* \
+     && "$out_present" == *"Grok command guard not wired"* \
+     && "$out_present" == *"Grok file guard not evaluated"* \
+     && "$out_present" == *"Grok session lifecycle hooks not wired"* \
+     && "$out_present" == *"Grok statusline not evaluated"* \
+     && "$out_present" == *"grok available on PATH"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "absent=$out_absent present=$out_present"
   fi
 }
 
@@ -2413,6 +2550,11 @@ case_doctor_native_windows_notice() {
 case_doctor_all_ok_exits_0
 case_doctor_executor_unauthed_fails
 case_doctor_executor_authed_via_credfile_ok
+case_doctor_grok_authed_via_xai_env
+case_doctor_grok_authed_via_grok_api_env
+case_doctor_grok_authed_via_grok_home_credfile
+case_doctor_grok_missing_binary_warns
+case_doctor_grok_host_config_and_capabilities
 case_doctor_pmctl_foreign_warns
 case_doctor_hooks_missing_exits_1
 case_doctor_settings_missing_exits_1

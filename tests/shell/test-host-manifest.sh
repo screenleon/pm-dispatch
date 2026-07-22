@@ -46,7 +46,7 @@ REQUIRED_KEYS=(
 CAPABILITY_FIELDS=(provider enforcement coverage stability confidence)
 
 # Closed enums (docs/host-contract.md). Space-separated membership strings.
-ENUM_FORMAT="claude-settings-json codex-hooks-json codex-config-toml codex-agents-md opencode-config-json markdown-managed-block symlink-tree copy-tree"
+ENUM_FORMAT="claude-settings-json codex-hooks-json codex-config-toml codex-agents-md opencode-config-json grok-config-toml markdown-managed-block symlink-tree copy-tree"
 ENUM_CAPABILITY="command_guard file_guard session_lifecycle pm_command_interface statusline"
 ENUM_BINDING_FORM="hook-script config-fragment none"
 ENUM_PROVIDER="host_hook host_policy host_native cli_wrapper doc_instruction none"

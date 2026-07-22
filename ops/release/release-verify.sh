@@ -5,7 +5,7 @@
 # PASS/FAIL table plus a final GO / NO-GO verdict.
 #
 # Usage:
-#   ops/release/release-verify.sh [--no-suite] [--e2e] [--adapter claude|codex|opencode|auto] [--help]
+#   ops/release/release-verify.sh [--no-suite] [--e2e] [--adapter claude|codex|opencode|grok|auto] [--help]
 #
 #   --no-suite        Skip run-all-tests.sh (fast iteration only; NEVER skip
 #                     for an actual release sign-off).
@@ -277,7 +277,7 @@ fi
 section "Phase 3b — v0.6.0 feature smoke (adapters · guard · brief-validate)"
 
 # Adapter manifests — codex/claude/opencode must declare runner_kind
-for _adapter in codex claude opencode; do
+for _adapter in codex claude opencode grok; do
   _manifest="$REPO_ROOT/adapters/$_adapter/adapter.yaml"
   if [[ ! -f "$_manifest" ]]; then
     record "adapter-manifest-$_adapter" FAIL "adapter.yaml not found"

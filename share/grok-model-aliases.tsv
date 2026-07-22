@@ -1,0 +1,30 @@
+# pm-facing_alias	wire_model_id	reasoning_effort
+# Schema: PM-facing alias, wire-format model id, reasoning effort.
+# This file is the grok adapter alias table.
+#
+# Columns must be tab-separated.
+#
+# Executor-agnostic alias — use in briefs, PM routing, and dispatch policy docs:
+#   `light`  — lightweight/fast model for targeted changes. Mapped per executor;
+#              for grok this is the same product model at lower reasoning effort.
+#   `default` — balanced default for routine implementation work.
+#
+# Default model: pm-dispatch pins its OWN default (the `default` alias →
+# grok-4.5), decoupled from whatever the local grok CLI may default to.
+# Precedence: --model flag > PM_CFG_DEFAULT_MODEL > built-in `default` alias.
+# Override per-host via ~/.pm-dispatch/config `dispatch.default_model`.
+#
+# Wire IDs accepted by the Grok Build CLI (product names may evolve):
+#   grok-4.5       — current default Grok 4.5 product id
+#   grok-build     — Grok Build product alias
+#   grok-4.5-build — usage/telemetry key observed on streaming-json end events
+#
+# reasoning_effort column values feed runtime/lib/reasoning-effort.sh when the
+# --effort flag is absent. Valid intersection with pm-dispatch is low|medium|high
+# (non-matching values fall through to the global medium default).
+default	grok-4.5	medium
+light	grok-4.5	low
+build	grok-build	medium
+grok-build	grok-build	medium
+grok-4.5	grok-4.5	medium
+grok-4.5-build	grok-4.5-build	medium

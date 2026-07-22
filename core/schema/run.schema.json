@@ -16,7 +16,7 @@
       "pattern": "^[A-Z]{1,4}-[0-9]+[a-z]?$"
     },
     "executor": {
-      "enum": ["codex", "claude", "opencode"],
+      "enum": ["codex", "claude", "opencode", "grok"],
       "description": "Editing source-of-truth: core/policy/executor-enum.yaml. Keep in sync."
     },
     "dispatch_route": {
@@ -25,7 +25,7 @@
     },
     "model": {
       "type": "string",
-      "description": "PM-facing alias OR wire model id. Aliases resolved via share/codex-model-aliases.tsv, share/claude-model-aliases.tsv, or share/opencode-model-aliases.tsv depending on executor."
+      "description": "PM-facing alias OR wire model id. Aliases resolved via share/codex-model-aliases.tsv, share/claude-model-aliases.tsv, share/opencode-model-aliases.tsv, or share/grok-model-aliases.tsv depending on executor."
     },
     "brief_file": {
       "type": "string",

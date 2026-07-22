@@ -29,9 +29,10 @@ Relay the PM's user-facing summary. Do not do the PM's job yourself.
 - `executor: codex` → main-thread Bash to `pmctl dispatch run --adapter codex`
 - `executor: claude` → main-thread Bash to `pmctl dispatch run --adapter claude`
 - `executor: opencode` → main-thread Bash to `pmctl dispatch run --adapter opencode`
+- `executor: grok` → main-thread Bash to `pmctl dispatch run --adapter grok`
 - any other value is rejected by the validator before this point
 
-The abstract contract all three routes implement is documented in `docs/executor-contract.md`. Always source `runtime/lib/handover-validate.sh`, extract and split the fenced block with the shared handover helpers, validate the full metadata header, confirm the metadata/body `working_dir` match, and write `brief_file` via `mktemp -p /tmp brief-<slug>-XXXXXX.md` or equivalent exclusive-create (mode 0600) — `/tmp` is shared, predictable names invite symlink races.
+The abstract contract all four routes implement is documented in `docs/executor-contract.md`. Always source `runtime/lib/handover-validate.sh`, extract and split the fenced block with the shared handover helpers, validate the full metadata header, confirm the metadata/body `working_dir` match, and write `brief_file` via `mktemp -p /tmp brief-<slug>-XXXXXX.md` or equivalent exclusive-create (mode 0600) — `/tmp` is shared, predictable names invite symlink races.
 
 ### Route A — `executor: codex`
 
@@ -41,7 +42,7 @@ The abstract contract all three routes implement is documented in `docs/executor
 Bash(command: "bash ${PM_DISPATCH_REPO}/cli/pmctl dispatch run --adapter codex --lifecycle detached --cd <safe working_dir> --brief-file <safe brief_file> --model <safe model> --isolation <safe isolation_level> --timeout <safe timeout>", description: "Dispatch codex for <slug>")
 ```
 
-`--lifecycle detached` launches the adapter under `nohup/setsid` so the process is fully OS-decoupled from the harness — a session interrupt cannot kill it or corrupt its exit-code reporting. The command returns immediately and prints a single line: the `run_id`. Parse that line and store it. Omit `--model <safe model>` when `model: default`. `isolation_level:` is required in every handover block; the legacy `sandbox`/`approval`/`skip_git_check` fields were removed and a brief carrying any of them is rejected at validation, so never construct `--sandbox`/`--approval`/`--skip-git-check`. `isolation_level: none` (full machine access) is opencode-only; codex and claude reject it (their max isolation is `workspace-write`) — there is no full-access route for them. Insert only `handover_safe_argv` output. Keep the command on one physical line; never use `cd <dir> && ...`.
+`--lifecycle detached` launches the adapter under `nohup/setsid` so the process is fully OS-decoupled from the harness — a session interrupt cannot kill it or corrupt its exit-code reporting. The command returns immediately and prints a single line: the `run_id`. Parse that line and store it. Omit `--model <safe model>` when `model: default`. `isolation_level:` is required in every handover block; the legacy `sandbox`/`approval`/`skip_git_check` fields were removed and a brief carrying any of them is rejected at validation, so never construct `--sandbox`/`--approval`/`--skip-git-check`. `isolation_level: none` (full machine access) is opencode-only; codex, claude, and grok reject it (their max isolation is `workspace-write`) — there is no full-access route for them. Insert only `handover_safe_argv` output. Keep the command on one physical line; never use `cd <dir> && ...`.
 
 **Step A2 — wait (background, polls sentinel):**
 
@@ -57,11 +58,15 @@ Same two-step pattern as Route A with `--adapter claude`. Step A1 (inline, `--li
 
 ### Route C — `executor: opencode`
 
-Same two-step pattern as Route A with `--adapter opencode`. Step A1 (inline, `--lifecycle detached`) returns the `run_id`; Step A2 (background, `pmctl dispatch wait`) polls for completion. Completion handling is identical — all three adapters write the same dispatch record and sentinel. Model resolution uses `share/opencode-model-aliases.tsv` with a free-tier fallback chain (omit `--model` when `model: default`). `isolation_level: none` (full machine access) is valid only for this route — opencode has no finer-grained sandbox; codex and claude reject `none`.
+Same two-step pattern as Route A with `--adapter opencode`. Step A1 (inline, `--lifecycle detached`) returns the `run_id`; Step A2 (background, `pmctl dispatch wait`) polls for completion. Completion handling is identical — all adapters write the same dispatch record and sentinel. Model resolution uses `share/opencode-model-aliases.tsv` with a free-tier fallback chain (omit `--model` when `model: default`). `isolation_level: none` (full machine access) is valid only for this route — opencode has no finer-grained sandbox; codex, claude, and grok reject `none`.
+
+### Route D — `executor: grok`
+
+Same two-step pattern as Route A with `--adapter grok`. Step A1 (inline, `--lifecycle detached`) returns the `run_id`; Step A2 (background, `pmctl dispatch wait`) polls for completion. Completion handling is identical — all adapters write the same dispatch record and sentinel. The adapter translates `isolation_level` to dual native flags (`--sandbox` + `--permission-mode`); omit `--model` when `model: default` (resolves via `share/grok-model-aliases.tsv`). Note: step 5 trace cross-check (command_execution grep) applies to codex traces only; for grok traces (`grok --output-format streaming-json`), skip the JSONL grep and rely on `self_verify` PASS/FAIL already recorded in `verify_summary`.
 
 ### Choosing the route
 
-`executor:` in the handover metadata selects the adapter (`codex` → Route A, `claude` → Route B, `opencode` → Route C); all three routes share the same two-step dispatch shape and completion handling — the only difference is `--adapter <value>`. Install profile (`./install.sh --profile minimal|full`, auto-detected from `command -v codex` when unset) sets the PM agent's default `executor:`. There is no Agent executor fallback — every executor dispatches via the main-thread `pmctl dispatch run` Bash route.
+`executor:` in the handover metadata selects the adapter (`codex` → Route A, `claude` → Route B, `opencode` → Route C, `grok` → Route D); all four routes share the same two-step dispatch shape and completion handling — the only difference is `--adapter <value>`. Install profile (`./install.sh --profile minimal|full`, auto-detected from `command -v codex` when unset) sets the PM agent's default `executor:`. There is no Agent executor fallback — every executor dispatches via the main-thread `pmctl dispatch run` Bash route.
 
 Main-thread completion handling for both routes — the supervisor runs `pmctl_dispatch_execute_tail` (including post-verify and `self_verify` checks) and writes a durable dispatch record; the main thread's job is to authenticate the result via the sentinel (step 2), read artifact paths from the record (step 3), surface the supervisor's verify summary (step 4), and cross-check execution evidence in the trace (step 5):
 

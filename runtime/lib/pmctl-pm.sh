@@ -12,8 +12,8 @@
 
 pmctl_pm_usage() {
   cat >&2 <<'EOF'
-usage: pmctl pm prepare --request <text> [--cd <work_dir>] [--focus <CC-N,...>] [--host <claude|codex|opencode|generic>] [--json]
-       pmctl pm run --adapter <name> --brief-file <path> --cd <work_dir> [--host <claude|codex|opencode|generic>] [--model <model>] [--isolation <level>] [--timeout <seconds>] [--no-auto-pack] [--json]
+usage: pmctl pm prepare --request <text> [--cd <work_dir>] [--focus <CC-N,...>] [--host <claude|codex|opencode|grok|generic>] [--json]
+       pmctl pm run --adapter <name> --brief-file <path> --cd <work_dir> [--host <claude|codex|opencode|grok|generic>] [--model <model>] [--isolation <level>] [--timeout <seconds>] [--no-auto-pack] [--json]
 
 Batch-only interface: prepare captures context for a fully specified request;
 run requires a complete dispatch_handover_v1 brief. Ambiguous requests are not
@@ -161,7 +161,7 @@ pmctl_pm_prepare() {
       --focus) [[ $# -ge 2 ]] || { printf 'pmctl pm prepare: --focus requires a value\n' >&2; return 2; }; focus="$2"; shift 2 ;;
       --host)
         [[ $# -ge 2 ]] || { printf 'pmctl pm prepare: --host requires a value\n' >&2; return 2; }
-        pmctl_host_is_valid "$2" || { printf 'pmctl pm prepare: --host must be claude, codex, opencode, or generic\n' >&2; return 2; }
+        pmctl_host_is_valid "$2" || { printf 'pmctl pm prepare: --host must be claude, codex, opencode, grok, or generic\n' >&2; return 2; }
         host="$2"
         shift 2 ;;
       --json) json=1; shift ;;
@@ -245,7 +245,7 @@ pmctl_pm_run() {
       --cd) [[ $# -ge 2 ]] || { printf 'pmctl pm run: --cd requires a value\n' >&2; return 2; }; work_dir="$2"; shift 2 ;;
       --host)
         [[ $# -ge 2 ]] || { printf 'pmctl pm run: --host requires a value\n' >&2; return 2; }
-        pmctl_host_is_valid "$2" || { printf 'pmctl pm run: --host must be claude, codex, opencode, or generic\n' >&2; return 2; }
+        pmctl_host_is_valid "$2" || { printf 'pmctl pm run: --host must be claude, codex, opencode, grok, or generic\n' >&2; return 2; }
         host="$2"
         shift 2 ;;
       --model) [[ $# -ge 2 ]] || { printf 'pmctl pm run: --model requires a value\n' >&2; return 2; }; model="$2"; shift 2 ;;

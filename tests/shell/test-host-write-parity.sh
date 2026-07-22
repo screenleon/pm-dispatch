@@ -241,7 +241,7 @@ test_relative_repo_root_fails_before_module_execution() {
 test_host_resolvers_handle_unset_empty_spaces_and_hostile_home() {
   local name="host-resolvers-handle-unset-empty-spaces-and-hostile-home"
   should_run "$name" || return 0
-  local home="$tmp_root/hostile home [literal]" claude codex opencode
+  local home="$tmp_root/hostile home [literal]" claude codex opencode grok
   mkdir -p "$home"
   claude="$(HOME="$home" CLAUDE_CONFIG_DIR='' CLAUDE_HOME='' \
     host_manifest_expand_path "$REPO_ROOT" claude "\$CLAUDE_CONFIG_DIR/settings.json")"
@@ -249,12 +249,34 @@ test_host_resolvers_handle_unset_empty_spaces_and_hostile_home() {
     host_manifest_expand_path "$REPO_ROOT" codex "\$CODEX_HOME/hooks.json")"
   opencode="$(HOME="$home" XDG_CONFIG_HOME='' \
     host_manifest_expand_path "$REPO_ROOT" opencode "\$XDG_CONFIG_HOME/opencode/opencode.json")"
+  grok="$(HOME="$home" GROK_HOME='' \
+    host_manifest_expand_path "$REPO_ROOT" grok "\$GROK_HOME/config.toml")"
   if [[ "$claude" == "$home/.claude/settings.json" \
       && "$codex" == "$home/.codex/hooks.json" \
-      && "$opencode" == "$home/.config/opencode/opencode.json" ]]; then
+      && "$opencode" == "$home/.config/opencode/opencode.json" \
+      && "$grok" == "$home/.grok/config.toml" ]]; then
     pass "$name"
   else
-    fail "$name" "unexpected defaults: claude=$claude codex=$codex opencode=$opencode"
+    fail "$name" "unexpected defaults: claude=$claude codex=$codex opencode=$opencode grok=$grok"
+  fi
+}
+
+# Behavior: Grok path resolver honors explicit GROK_HOME and fails closed without HOME.
+# Steps: expand with an explicit root containing spaces, then with HOME unset and no GROK_HOME.
+test_grok_resolver_explicit_root_and_missing_home() {
+  local name="grok-resolver-explicit-root-and-missing-home"
+  should_run "$name" || return 0
+  local root="$tmp_root/grok root [x]" expanded out rc=0
+  expanded="$(HOME="$tmp_root/operator" GROK_HOME="$root" \
+    host_manifest_expand_path "$REPO_ROOT" grok "\$GROK_HOME/config.toml")"
+  out="$(HOME='' GROK_HOME='' \
+    host_manifest_expand_path "$REPO_ROOT" grok "\$GROK_HOME/config.toml" 2>&1)" || rc=$?
+  if [[ "$expanded" == "$root/config.toml" \
+      && "$rc" -eq 2 \
+      && "$out" == *"HOME is required when GROK_HOME is unset or empty"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "expanded=$expanded rc=$rc out=$out"
   fi
 }
 
@@ -317,7 +339,7 @@ test_shared_expander_is_host_agnostic() {
     fail "$name" "shared manifest expander delegates through eval"
     return
   fi
-  for host in claude codex opencode; do
+  for host in claude codex opencode grok; do
     manifest="$REPO_ROOT/hosts/$host/host.yaml"
     module="$(host_manifest_scalar "$manifest" path_resolver_module)"
     resolver="$(host_manifest_scalar "$manifest" path_resolver_function)"
@@ -339,6 +361,7 @@ test_relocated_module_uses_explicit_repo_root
 test_relocated_codex_module_uses_explicit_repo_root
 test_relative_repo_root_fails_before_module_execution
 test_host_resolvers_handle_unset_empty_spaces_and_hostile_home
+test_grok_resolver_explicit_root_and_missing_home
 test_claude_resolver_legacy_conflict_contract
 test_shared_root_template_expands_prefix_only
 test_shared_expander_is_host_agnostic

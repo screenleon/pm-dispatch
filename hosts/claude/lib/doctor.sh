@@ -86,7 +86,7 @@ _doctor_host_claude_hook_present() {
     def managed_hook:
       (.command? // "") as $cmd |
       ($cmd | normalize_path) as $ncmd |
-      ($ncmd | sub(" --host (claude|codex|opencode|generic)$"; "")) as $path |
+      ($ncmd | sub(" --host (claude|codex|opencode|grok|generic)$"; "")) as $path |
       (
         (($path | split("/") | last) == $basename and ($path | split("/") | .[-2]) == "scripts") or
         (($path | split("/") | last) == $basename and ($path | split("/") | .[-2]) == "hooks" and ($path | split("/") | .[-3]) == "runtime") or
@@ -224,7 +224,7 @@ _doctor_host_claude_broken_hook_targets() {
     ]
     | map(
         (.command? // "" | normalize_path
-          | sub(" --host (claude|codex|opencode|generic)$"; "")) as $path
+          | sub(" --host (claude|codex|opencode|grok|generic)$"; "")) as $path
         | select($path | startswith(($repo_root | normalize_path) + "/"))
         | select(
             (($path | split("/") | .[-2]) == "scripts" and

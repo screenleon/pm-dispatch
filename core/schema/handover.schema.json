@@ -18,7 +18,7 @@
       "const": 3
     },
     "executor": {
-      "enum": ["codex", "claude", "opencode"],
+      "enum": ["codex", "claude", "opencode", "grok"],
       "description": "Editing source-of-truth: core/policy/executor-enum.yaml. Keep in sync."
     },
     "dispatch_route": {
@@ -35,7 +35,7 @@
     },
     "isolation_level": {
       "enum": ["none", "read-only", "workspace-write", "workspace-network", "sandboxed"],
-      "description": "Required, canonical isolation intent. Adapter layer translates to executor-native flags. Source of truth: core/policy/isolation-level.yaml. isolation_level:none (full machine access) is opencode-only; codex and claude reject it on all routes (their max isolation is workspace-write). The legacy sandbox/approval/skip_git_check fields were removed in v0.6.0 and are rejected by additionalProperties:false."
+      "description": "Required, canonical isolation intent. Adapter layer translates to executor-native flags. Source of truth: core/policy/isolation-level.yaml. isolation_level:none (full machine access) is opencode-only; codex, claude, and grok reject it on all routes (their max isolation is workspace-write). For grok, workspace-write is narrowed to Grok's workspace OS profile (CWD + ~/.grok session store + temp) — see adapters/grok/isolation-map.yaml. The legacy sandbox/approval/skip_git_check fields were removed in v0.6.0 and are rejected by additionalProperties:false."
     },
     "timeout": {
       "type": "integer",
@@ -44,7 +44,7 @@
     },
     "model": {
       "type": "string",
-      "description": "PM-facing alias OR wire id OR `default`. Aliases resolved via share/codex-model-aliases.tsv, share/claude-model-aliases.tsv, or share/opencode-model-aliases.tsv depending on executor."
+      "description": "PM-facing alias OR wire id OR `default`. Aliases resolved via share/codex-model-aliases.tsv, share/claude-model-aliases.tsv, share/opencode-model-aliases.tsv, or share/grok-model-aliases.tsv depending on executor."
     },
     "fallback_allowed": {
       "type": "boolean"

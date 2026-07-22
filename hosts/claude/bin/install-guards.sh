@@ -297,7 +297,7 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
   --argjson bg_guards "$_bg_json" \
   --arg profile "$PROFILE" \
   '
-  def without_host_arg: sub(" --host (claude|codex|opencode|generic)$"; "");
+  def without_host_arg: sub(" --host (claude|codex|opencode|grok|generic)$"; "");
   def managed_shared($cmd; $expected):
     ($cmd | without_host_arg | split("/")) as $parts |
     ($expected | without_host_arg | split("/")) as $wanted |

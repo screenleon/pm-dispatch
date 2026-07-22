@@ -297,7 +297,7 @@ pmctl_memory_append_episode() {
         episode_date="$2"; shift 2 ;;
       --host)
         [[ $# -ge 2 ]] || { printf 'pmctl memory append-episode: --host requires a value\n' >&2; return 2; }
-        pmctl_host_is_valid "$2" || { printf 'pmctl memory append-episode: --host must be claude, codex, opencode, or generic\n' >&2; return 2; }
+        pmctl_host_is_valid "$2" || { printf 'pmctl memory append-episode: --host must be claude, codex, opencode, grok, or generic\n' >&2; return 2; }
         host="$2"
         shift 2 ;;
       --skeleton) mode="skeleton"; shift ;;

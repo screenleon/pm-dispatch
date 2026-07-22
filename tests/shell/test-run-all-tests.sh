@@ -46,6 +46,7 @@ SUITE_NAMES=(
   test-gate-lifecycle
   test-claude-dispatch
   test-opencode-dispatch
+  test-grok-dispatch
   test-layer-boundaries
   test-executor-router
   test-runner-kind
@@ -166,6 +167,7 @@ suite_path() {
     test-gate-lifecycle) printf 'tests/shell/test-gate-lifecycle.sh\n' ;;
     test-claude-dispatch) printf 'tests/shell/test-claude-dispatch.sh\n' ;;
     test-opencode-dispatch) printf 'tests/shell/test-opencode-dispatch.sh\n' ;;
+    test-grok-dispatch) printf 'tests/shell/test-grok-dispatch.sh\n' ;;
     test-layer-boundaries) printf 'tests/shell/test-layer-boundaries.sh\n' ;;
     test-executor-router) printf 'tests/shell/test-executor-router.sh\n' ;;
     test-runner-kind) printf 'tests/shell/test-runner-kind.sh\n' ;;

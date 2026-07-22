@@ -7,6 +7,46 @@ H2 標題格式：## YYYY-MM-DD: <短描述>
 與 BACKLOG closure 對應的 entry，內文首行寫：Closes: BACKLOG.md#<PREFIX>-NNN
 -->
 
+## 2026-07-22: grok-host-and-executor-mvp
+
+**Context**: Grok Build CLI (`grok`) already exposes Model B headless surfaces
+(`--prompt-file`, `--output-format streaming-json` with terminal event `end`,
+`--sandbox`, `--permission-mode`, `--reasoning-effort`) and a config home at
+`~/.grok`. Maintainers want both axes: dispatch *to* Grok as an executor, and
+run batch PM *inside* Grok as a host (`pmctl pm --host grok`). Host and
+executor remain orthogonal (host-contract / executor-contract).
+
+**Decision**: Ship a full MVP for both axes in one change set. Executor:
+hand-authored `adapters/grok/` with `runner_kind: cli-subprocess`,
+`write_guard_mode: cli-only`, dual isolation map (sandbox + permission_mode),
+`terminal_event: end`, and `share/grok-model-aliases.tsv`. Host: minimal
+`hosts/grok/` with doctor + path-resolver, `install_module: null` /
+`uninstall_module: null`, honest `none`/cli_wrapper capabilities, and closed
+format handler `grok-config-toml` for doctor-visible `$GROK_HOME/config.toml`.
+Expand `executor-enum` + schema mirrors with `grok`; expand host allowlist
+with `grok`. Defer `--enable-host grok` install/hooks and native slash `/pm`
+to a follow-up once the axes exist.
+
+**Alternatives considered**: (a) executor-only or host-only first — rejected;
+user requested both axes and Grok already has the CLI surface for both.
+(b) permission-mode-only isolation (mirror claude) — rejected; Grok's OS
+sandbox is a real second layer and is the recommended mapping.
+(c) full install/hooks in the same MVP — deferred to keep the first landing
+reviewable and honest about unprobed guard bindings.
+
+**Constraints introduced**: `isolation_level: none` remains opencode-only
+(grok rejects it like codex/claude). Adding a third non-claude host keeps the
+host-axis N≥2 red line intact without claiming unprobed guard coverage.
+Executor enum expansion is a closed-policy edit kept in sync with
+`run.schema.json` / `handover.schema.json`. For the grok adapter only,
+`workspace-write` is **narrowed**: Grok OS sandboxes always allow writes under
+`~/.grok` (session/config store) in addition to CWD/temp — there is no CWD-only
+profile; this is documented in `adapters/grok/isolation-map.yaml` and
+`docs/executor-contract.md`, and the adapter emits a stderr note at launch.
+pm-dispatch does not clean or roll back `~/.grok`.
+
+Approver: screenleon (2026-07-22).
+
 ## 2026-07-06: v0.9.0-host-axis-includes-opencode
 
 Relates: CC-436, CC-437, CC-438, CC-445, CC-448

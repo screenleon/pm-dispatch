@@ -270,6 +270,8 @@ map_path() {
       add_suite test-codex-dispatch; add_suite test-executor-router; add_suite test-runner-kind; behavioral=1 ;;
     adapters/opencode/*)
       add_suite test-opencode-dispatch; add_suite test-executor-router; add_suite test-runner-kind; behavioral=1 ;;
+    adapters/grok/*)
+      add_suite test-grok-dispatch; add_suite test-executor-router; add_suite test-runner-kind; behavioral=1 ;;
     adapters/*)
       add_suite test-executor-router; add_suite test-runner-kind; behavioral=1 ;;
     hosts/claude/*)
@@ -278,6 +280,8 @@ map_path() {
       add_suite test-host-manifest; add_suite test-host-write-codex; add_suite test-host-write-parity; behavioral=1 ;;
     hosts/opencode/*)
       add_suite test-host-manifest; add_suite test-host-write-opencode; add_suite test-host-write-parity; behavioral=1 ;;
+    hosts/grok/*)
+      add_suite test-host-manifest; add_suite test-host-write-parity; behavioral=1 ;;
     core/*)
       add_suite test-core-schemas; add_suite test-layer-boundaries; behavioral=1 ;;
     pm/*)

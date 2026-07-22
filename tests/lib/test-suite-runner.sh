@@ -41,6 +41,7 @@ SUITE_NAMES=(
   test-gate-lifecycle
   test-claude-dispatch
   test-opencode-dispatch
+  test-grok-dispatch
   test-layer-boundaries
   test-executor-router
   test-runner-kind
@@ -138,6 +139,7 @@ declare -A SUITE_PATHS=(
   [test-gate-lifecycle]="tests/shell/test-gate-lifecycle.sh"
   [test-claude-dispatch]="tests/shell/test-claude-dispatch.sh"
   [test-opencode-dispatch]="tests/shell/test-opencode-dispatch.sh"
+  [test-grok-dispatch]="tests/shell/test-grok-dispatch.sh"
   [test-layer-boundaries]="tests/shell/test-layer-boundaries.sh"
   [test-executor-router]="tests/shell/test-executor-router.sh"
   [test-runner-kind]="tests/shell/test-runner-kind.sh"
