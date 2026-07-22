@@ -80,7 +80,7 @@ Legacy PM directories or symlinks under the old `github` checkout location are n
 
 ## Install
 
-**Prerequisite**: `jq` must be on `$PATH`. Install: Linux/WSL2 `sudo apt install jq`, macOS `brew install jq`, Windows `winget install jqlang.jq`.
+**Prerequisite**: `jq` must be on `$PATH`. Supported hosts are Linux/WSL2; install it with `sudo apt install jq`.
 
 ```sh
 ./install.sh --dry-run                # preview
@@ -100,7 +100,7 @@ Idempotent — re-run safely after adding files. Per-file symlinks so other tool
 
 On platforms without symlink support (e.g. native Windows Git Bash, best-effort only), the installer falls back to **copy mode**: managed directories are created as directory junctions and helper scripts are copied — re-run `install.sh` after `git pull` to refresh changed copies. See [`docs/platform-support.md`](docs/platform-support.md) for the per-platform install model.
 
-`install.sh` also makes the `pmctl` CLI discoverable. On Linux, macOS, and WSL2
+`install.sh` also makes the `pmctl` CLI discoverable. On Linux and WSL2
 it creates a symlink from `${PMCTL_BIN_DIR:-$HOME/.local/bin}/pmctl` to
 `cli/pmctl` and prints an `export PATH=...` note if that bin directory is not
 already on `$PATH`. On Windows Git Bash it does not copy `pmctl`; add
@@ -254,7 +254,7 @@ usage.
 
 ### Operational entrypoints
 
-- **cli/pmctl** — Runtime CLI spine. `install.sh` symlinks it into `${PMCTL_BIN_DIR:-$HOME/.local/bin}` on Linux/macOS/WSL; Windows users should add `<repo>/cli` to `$PATH` manually because a copied `pmctl` cannot resolve repo-local libraries. Key sub-commands: `pmctl pm prepare` / `pmctl pm run` (batch-only PM coordinator for non-Claude hosts); `pmctl dispatch run --adapter <codex|claude> --brief-file <path>` (preferred dispatch path); `pmctl task create/show/list/update/claim/dispatch/status/review` (task CRUD + lifecycle; see [`docs/pmctl-task.md`](docs/pmctl-task.md)); `pmctl decision add`; `pmctl trace tail` (reads `events.jsonl` + archives with `--kind/--task/--since/--until/--json` filters); `pmctl context index/update/query/pack/reuse-scan` (repo index + prior-art scan; see [`docs/context-retrieval.md`](docs/context-retrieval.md)); `pmctl validate brief`; `pmctl gate run`; `pmctl guard check --role <pm|executor|reviewer> --runtime <codex|claude>`; `pmctl safe bash`; `pmctl adapter generate <name>` (scaffolds `adapters/<name>/adapter.yaml` and support files). `adapter.yaml` is the source of truth and must stay out of `generated_files`; regenerate only the files listed there.
+- **cli/pmctl** — Runtime CLI spine. `install.sh` symlinks it into `${PMCTL_BIN_DIR:-$HOME/.local/bin}` on Linux/WSL2. Key sub-commands: `pmctl pm prepare` / `pmctl pm run` (batch-only PM coordinator for non-Claude hosts); `pmctl dispatch run --adapter <codex|claude> --brief-file <path>` (preferred dispatch path); `pmctl task create/show/list/update/claim/dispatch/status/review` (task CRUD + lifecycle; see [`docs/pmctl-task.md`](docs/pmctl-task.md)); `pmctl decision add`; `pmctl trace tail` (reads `events.jsonl` + archives with `--kind/--task/--since/--until/--json` filters); `pmctl context index/update/query/pack/reuse-scan` (repo index + prior-art scan; see [`docs/context-retrieval.md`](docs/context-retrieval.md)); `pmctl validate brief`; `pmctl gate run`; `pmctl guard check --role <pm|executor|reviewer> --runtime <codex|claude>`; `pmctl safe bash`; `pmctl adapter generate <name>` (scaffolds `adapters/<name>/adapter.yaml` and support files). `adapter.yaml` is the source of truth and must stay out of `generated_files`; regenerate only the files listed there.
 - **runtime/bin/pm-prep-snapshot.sh** — Captures branch/PR/backlog/tooling state before PM-agent spawn and writes a typed snapshot for PM consumption.
 - **ops/diagnostics/codex-watch.sh** — Tails `.agent-trace/latest.jsonl` and prints a one-line human summary per event (`[turn.started]`, `[cmd] exit=0 …`, `[msg] …`, `[turn.completed] tokens: …`). Run from another terminal during a long dispatch to see real-time progress.
 - **runtime/hooks/guard-pm-write.sh** — `PreToolUse` hook (matcher `Edit|Write`). Blocks `project-pm` from editing/writing outside `~/.claude/projects/<claude-project-id>/memory/`. Asserts absolute paths and normalizes `..`. No-op for any other agent or the main thread. Bypass (logged): `PM_GUARD_PM_WRITE=off`. Requires `jq` and `realpath`.

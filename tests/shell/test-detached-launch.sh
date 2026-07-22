@@ -371,6 +371,29 @@ case_write_sentinel_atomic_visibility() {
   fi
 }
 
+# A zombie remains visible in /proc and answers kill -0, but cannot execute;
+# identity verification must classify it as gone rather than live.
+case_verify_identity_rejects_zombie() {
+  local name="detached-launch/verify_identity rejects an unreaped zombie"
+  should_run "$name" || return 0
+  command -v perl >/dev/null 2>&1 || { pass "$name"; return; }
+
+  local pid_fifo="$tmp_root/zombie.pid.fifo" identity="$tmp_root/zombie.identity" parent_pid child_pid rc=0
+  mkfifo "$pid_fifo"; exec 6<>"$pid_fifo"
+  perl -e '$|=1; $pid=fork(); exit 0 if !$pid; print "$pid\n"; sleep 5' >"$pid_fifo" &
+  parent_pid=$!
+  if ! read -r -t 2 child_pid <&6 || ! detached_launch_capture_identity "$child_pid" >"$identity"; then
+    exec 6>&- 6<&- 2>/dev/null || true; rm -f "$pid_fifo"
+    kill "$parent_pid" 2>/dev/null || true; wait "$parent_pid" 2>/dev/null || true
+    fail "$name" "could not capture child zombie identity"
+    return
+  fi
+  detached_launch_verify_identity "$child_pid" "$identity" || rc=$?
+  exec 6>&- 6<&- 2>/dev/null || true; rm -f "$pid_fifo"
+  kill "$parent_pid" 2>/dev/null || true; wait "$parent_pid" 2>/dev/null || true
+  if [[ "$rc" -eq 1 ]]; then pass "$name"; else fail "$name" "rc=$rc"; fi
+}
+
 case_resolve_root_blocks_identical
 case_generate_nonce_nonempty
 case_generate_nonce_full_entropy_under_pipefail
@@ -386,5 +409,6 @@ case_wait_for_sentinel_timeout
 case_under_setsid_launches_and_records_pid
 case_under_setsid_empty_pid_file_skipped
 case_write_sentinel_atomic_visibility
+case_verify_identity_rejects_zombie
 
 th_summary

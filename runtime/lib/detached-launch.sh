@@ -196,7 +196,7 @@ detached_launch_current_boot_id() {
 # Capture a stable process identity for cancel-time re-verification.
 # Linux /proc is authoritative; without it this returns 1 (fail-closed for
 # identity-dependent kill). Emits key=value lines:
-#   pid=  pgid=  starttime=  comm=  isolated=  boot_id=
+#   pid=  state=  pgid=  starttime=  comm=  isolated=  boot_id=
 # starttime is the kernel field from /proc/<pid>/stat (boot-relative ticks),
 # which is stable across PID reuse of the same numeric pid within one boot;
 # boot_id disambiguates across a reboot (see detached_launch_current_boot_id).
@@ -205,7 +205,7 @@ detached_launch_current_boot_id() {
 # Optional second arg overrides isolated (defaults to 1 when pid==pgid else 0).
 detached_launch_capture_identity() {
   local pid="${1:?pid required}" isolated_override="${2-}"
-  local stat_file rest pgrp starttime comm_field comm isolated boot_id
+  local stat_file rest pgrp starttime state comm_field comm isolated boot_id
   [[ "$pid" =~ ^[0-9]+$ ]] || return 1
   stat_file="/proc/$pid/stat"
   [[ -r "$stat_file" ]] || return 1
@@ -217,9 +217,10 @@ detached_launch_capture_identity() {
   # shellcheck disable=SC2086  # intentional field split of /proc stat tail
   set -- $rest
   # After comm: state ppid pgrp session ... starttime is positional $20.
+  state="${1:-}"
   pgrp="${3:-}"
   starttime="${20:-}"
-  [[ -n "$pgrp" && -n "$starttime" ]] || return 1
+  [[ -n "$state" && -n "$pgrp" && -n "$starttime" ]] || return 1
   comm="$(tr -d '\n' <"/proc/$pid/comm" 2>/dev/null || printf '%s' "$comm_field")"
   if [[ -n "$isolated_override" ]]; then
     isolated="$isolated_override"
@@ -230,8 +231,8 @@ detached_launch_capture_identity() {
     isolated=0
   fi
   boot_id="$(detached_launch_current_boot_id)" || boot_id=""
-  printf 'pid=%s\npgid=%s\nstarttime=%s\ncomm=%s\nisolated=%s\nboot_id=%s\n' \
-    "$pid" "$pgrp" "$starttime" "$comm" "$isolated" "$boot_id"
+  printf 'pid=%s\nstate=%s\npgid=%s\nstarttime=%s\ncomm=%s\nisolated=%s\nboot_id=%s\n' \
+    "$pid" "$state" "$pgrp" "$starttime" "$comm" "$isolated" "$boot_id"
 }
 
 # Load identity file written by detached_launch_capture_identity (key=value).
@@ -272,7 +273,7 @@ detached_launch_load_identity_file() {
 #   2 — identity mismatch / PID reuse (fail-closed; never signal)
 detached_launch_verify_identity() {
   local pid="${1:?pid required}" identity_file="${2:?identity file required}"
-  local snap cur_pgid cur_start cur_comm cur_boot_id
+  local snap cur_pgid cur_start cur_comm cur_boot_id cur_state
   if ! detached_launch_load_identity_file "$identity_file"; then
     return 2
   fi
@@ -294,6 +295,11 @@ detached_launch_verify_identity() {
   fi
   # Single /proc snapshot so fields cannot mix across a mid-read transition.
   snap="$(detached_launch_capture_identity "$pid" 2>/dev/null)" || return 1
+  # `kill -0` and /proc both still report a zombie. The state is parsed from
+  # the same safe snapshot capture above, whose parser handles a `comm` field
+  # containing spaces or parentheses.
+  cur_state="$(printf '%s\n' "$snap" | grep -m1 '^state=' | cut -d= -f2-)" || true
+  [[ "$cur_state" != "Z" && "$cur_state" != "X" ]] || return 1
   cur_pgid="$(printf '%s\n' "$snap" | grep -m1 '^pgid=' | cut -d= -f2-)" || true
   cur_start="$(printf '%s\n' "$snap" | grep -m1 '^starttime=' | cut -d= -f2-)" || true
   cur_comm="$(printf '%s\n' "$snap" | grep -m1 '^comm=' | cut -d= -f2-)" || true

@@ -54,6 +54,22 @@ _write_sentinel() {
   fi
 }
 
+# Publish startup evidence only after the supervisor has parsed its arguments,
+# validated the run directory, and can prove its own PID identity.  The launcher
+# authenticates this nonce-derived path before it returns a detached gate ID;
+# therefore a successful `pmctl gate run` means more than a shell fork.
+_write_ready() {
+  local _ready_path _identity _pid _starttime
+  [[ "$gate_id" =~ ^gate-[0-9]{8}-[0-9]{6}-[A-Za-z0-9]{6,}$ ]] || return 1
+  [[ -n "$_sentinel_nonce" ]] || return 1
+  _identity="$(detached_launch_capture_identity "$$" 1 2>/dev/null)" || return 1
+  _pid="$(printf '%s\n' "$_identity" | grep -m1 '^pid=' | cut -d= -f2-)" || return 1
+  _starttime="$(printf '%s\n' "$_identity" | grep -m1 '^starttime=' | cut -d= -f2-)" || return 1
+  [[ "$_pid" == "$$" && -n "$_starttime" ]] || return 1
+  _ready_path="$(detached_launch_sentinel_path "pm-gate-ready" "$gate_id" "$_sentinel_nonce")"
+  detached_launch_write_sentinel "$_ready_path" "state=ready" "pid=$_pid" "starttime=$_starttime"
+}
+
 _die() {
   printf 'gate-supervisor: %s\n' "$*" >&2
   _write_sentinel "failed" 2 ""
@@ -96,6 +112,8 @@ done
 [[ -n "$run_dir" ]] || _die "--run-dir is required"
 
 mkdir -p "$run_dir" || _die "failed to create run dir: $run_dir"
+
+_write_ready || _die "failed to publish supervisor readiness evidence"
 
 # ── Run pr-gate.sh out-of-band, capturing its stdout for result-path discovery ─
 _log="$run_dir/supervisor-stdout.log"
