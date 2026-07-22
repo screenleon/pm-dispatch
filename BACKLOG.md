@@ -28,6 +28,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-506 | ⏸ deferred | retrieval evidence-gated 收緊：shadow 評測（coverage@5、critical miss、read reduction、outcome parity）達標後才收緊 broad-Read 指引並重評 [[CC-340]] resume 條件；前置 = [[CC-505]] Ph2 shipped + ≥20 真實任務證據 | memory/DX | 2026-07-20 | — | P3 | retrieval |
 | CC-507 | ✅ done | `pmctl state status`：無法讀取 `VERSION` 時被 Bash `$(<file)` redirection 提前中止，未回傳契約的 unreadable/exit 3 | arch/test | 2026-07-21 | pr:#437 | P1 | design |
 | CC-508 | 🟢 someday | 所有間接 dispatch producer 的 parent-operation control plane：可追溯子 run、受控取消與單一終態；gate／ship／task dispatch 等全數納入 | arch/gate | 2026-07-21 | feedback:2026-07-21 | P2 | design |
+| CC-509 | 🟢 someday | detached gate launch liveness：對 sandbox parent-death 早期死亡 fail-loud，提供 supervisor readiness／identity evidence | arch/gate | 2026-07-22 | feedback:2026-07-22 | P2 | hygiene |
 | CC-465 | 🔵 active | memory/context 關鍵詞管線 CJK 支援：抽出共用零依賴斷詞 lib，取代三處各自 ASCII-only 抽詞；工作序列起點（465→467→468→466）（2026-07-07 記憶系統深入分析） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-466 | ⏸ deferred | 記憶卡片生命週期閉環：expires_at 執行 + 關窗式 supersede + usage sidecar 休眠偵測 + doctor→distill 接線；僅在 CC-467 證明 stale/dormant card 已形成實際問題時啟動 | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-467 | 🔵 active | `pmctl memory stats`：注入效益可視化（唯讀聚合器）——注入 bytes/卡片命中分佈/從未命中卡/episode 填寫率，回答「記憶有跟沒有差在哪」；排在 CC-466 之前（2026-07-07；業界僅離線 recall 評測，無 per-injection 遙測） | DX/memory | 2026-07-07 | — | P2 | retrieval |
@@ -1451,6 +1452,50 @@ short-circuit.
 **Outcome**: 將 `core/state/layout.yaml` 的 designated-writer 宣告落實為跨 CLI、runtime、hosts、adapters、ops、tools 與 scripts 的 production-domain content ratchet，可偵測 direct redirect、`jq >`、`mv`、`cp` 與 multiline mutation；豁免只限 canonical writer、pure path resolver、readers 與 layout 宣告的 `rebuildable:true` SQLite cache。Task/decision event rollback 刪除收旂至 `task_delete` / `decision_delete`，統一 ID validation、store compatibility、project partition 解析與 loud failure。Self-injecting fixtures 與 state-store regression 覆蓋合法路徑、違規旁路、invalid ID、init failure 與 removal failure；affected tests 14/14、PR gate GO、rebase 最新 main 後 authoritative full suite 88/88 通過。
 
 **See**: pr:#438
+
+## CC-509 — detached gate launch liveness：sandbox parent-death 與 supervisor readiness 🟢 someday
+
+**Problem**: `pmctl gate run` 預設 detached，launcher 以 `setsid nohup ... &`
+建立 background supervisor 後立即回傳 gate ID；目前只代表 shell 已 fork，沒有
+PID identity、readiness handshake 或 supervisor 已成功 exec 的證據。在具
+`bwrap --die-with-parent` 的 command sandbox，launcher 結束後 descendants
+會被回收，而 `setsid` 只切換 session、不能脫離 parent-death 規則。實測 gate
+run directory 僅留下 0-byte `supervisor.log`，無 sentinel、result、trace 或
+Claude session；最小 probe 也在 launcher 回傳後連第一行 `started` 都未寫入。
+
+**Why**: 使用者看到「detached」與 gate ID 時，合理期待已存在可等待的 gate。
+若 supervisor 未曾啟動卻把 timeout 留給 waiter，會浪費等待時間，並把 host
+lifecycle 不相容誤呈現為 executor 或 reviewer 故障。這是 detached launcher
+的 truthful-liveness contract，不是 CC-449 release evidence 的範圍。
+
+**Requirement**:
+1. detached gate launch 必須在回傳 gate ID 前取得可驗證的 supervisor readiness
+   evidence（例如受限時間內的 ready sentinel 與受信任 PID identity）；fork
+   success 本身不得視為啟動成功。
+2. supervisor 在 exec／參數解析前後的 early exit 必須被 launcher 偵測，回傳
+   非零且保留可讀 diagnostic；不得只建立空 run directory 後宣告 detached。
+3. 偵測或明確宣告 parent-death sandbox 時，detached lifecycle 必須 fail-loud
+   並指向 `--lifecycle foreground`，或採用該 host 保證可跨 command 存活的
+   supervised transport；不得依賴 `setsid` 作為逃逸機制。
+4. gate wait 對沒有 readiness／terminal evidence 的 run 維持 fail-closed，
+   並區分未曾啟動、早期死亡與真正在執行但逾時三種狀態。
+5. 測試須涵蓋 launcher process 結束後 descendant 的存活契約，而非只在同一
+   parent shell 尚存時等待 child；加入 sandbox-like parent-death probe、early
+   supervisor failure、正常 detached run 與 foreground fallback。
+
+**Done-when**: `pmctl gate run` 不會對不存在的 detached supervisor 回傳成功；
+操作者可從 machine evidence 判斷 gate 已啟動、已早期失敗或仍在執行，且在
+parent-death sandbox 中得到明確可行的 foreground 指引。
+
+**Dependencies**: [[CC-495]] 的 authenticated terminalization 與 [[CC-499]]
+的 detached-run reconciliation 可重用；不等待 [[CC-508]] 的 parent-operation
+control plane，因為 gate 自身的 launch truthfulness 必須先成立。
+
+**Source**: 2026-07-22 CC-449 Claude gate 實測；foreground Claude gate 已證明
+executor/reviewer 本身可正常完成 `Final: GO`，問題限於 detached launch
+lifecycle。
+
+---
 
 ## CC-508 — 所有間接 dispatch 的 parent-operation control plane 🟢 someday
 
