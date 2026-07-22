@@ -1453,7 +1453,7 @@ short-circuit.
 
 **See**: pr:#438
 
-## CC-509 — detached gate launch liveness：sandbox parent-death 與 supervisor readiness ✅ closed 2026-07-22
+## CC-509 — detached gate launch liveness：sandbox parent-death 與 supervisor readiness ✅ 2026-07-22
 
 **Problem**: `pmctl gate run` 預設 detached，launcher 以 `setsid nohup ... &`
 建立 background supervisor 後立即回傳 gate ID；目前只代表 shell 已 fork，沒有

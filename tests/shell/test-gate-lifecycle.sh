@@ -257,6 +257,27 @@ case_detached_launch_rejects_invalid_ready_timeout() {
   if [[ "$code" -eq 2 ]] && [[ "$out" == *"invalid PM_GATE_READY_TIMEOUT"* ]]; then pass "$name"; else fail "$name" "code=$code out=$out"; fi
 }
 
+case_detached_launch_accepts_terminal_evidence_after_capture_race() {
+  local name="gate-lifecycle/detached launch accepts ready terminal evidence after initial identity capture race"
+  should_run "$name" || return 0
+  local fixture="$tmp_root/c1e/fixture" work="$tmp_root/c1e/work"
+  mkdir -p "$work"; _mk_fixture_repo "$fixture"; _mk_fake_gate "$fixture" 0
+  local run_wrapper="$tmp_root/c1e/run" out code
+  # Override only the launcher's in-process capture. The detached supervisor
+  # starts a separate shell and sources the unmodified fixture library, so it
+  # still emits genuine ready and terminal sentinels.
+  cat > "$run_wrapper" <<WRAPPER
+#!/usr/bin/env bash
+set -euo pipefail
+. "$fixture/runtime/lib/pmctl-gate.sh"
+detached_launch_capture_identity() { return 1; }
+pmctl_gate_run "$fixture" "\$@"
+WRAPPER
+  chmod +x "$run_wrapper"
+  set +e; out="$("$run_wrapper" --cd "$work" --lifecycle detached 2>&1)"; code=$?; set -e
+  if [[ "$code" -eq 0 && "$out" == *"pmctl gate wait gate-"* && "$out" == *$'\ngate-'* ]]; then pass "$name"; else fail "$name" "code=$code out=$out"; fi
+}
+
 # ---- 2: gate wait resolves GO (exit 0) after supervisor completes ------------
 case_wait_resolves_go() {
   local name="gate-lifecycle/gate wait resolves GO after supervisor completes"
@@ -664,6 +685,7 @@ case_detached_launch_returns_gate_id
 case_detached_launch_fails_loud_on_early_supervisor_death
 case_detached_launch_rejects_invalid_ready_identity
 case_detached_launch_rejects_invalid_ready_timeout
+case_detached_launch_accepts_terminal_evidence_after_capture_race
 case_wait_resolves_go
 case_wait_resolves_nogo
 case_wait_resolves_failed

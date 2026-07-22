@@ -261,8 +261,9 @@ pmctl_gate_run_detached() {
 
   local supervisor_log="$gate_run_dir/supervisor.log" supervisor_pid_file="$gate_run_dir/supervisor.pid"
   local supervisor_identity="$gate_run_dir/supervisor.identity"
-  local ready_sentinel
+  local ready_sentinel terminal_sentinel
   ready_sentinel="$(detached_launch_sentinel_path "pm-gate-ready" "$gate_id" "$_nonce")"
+  terminal_sentinel="$(detached_launch_sentinel_path "pm-gate" "$gate_id" "$_nonce")"
   if ! PM_GATE_SUPERVISOR_NONCE="$_nonce" detached_launch_under_setsid \
     "$gate_script" "$supervisor_log" "$supervisor_pid_file" \
     -- --gate-id "$gate_id" --cd "$effective_cd" --run-dir "$gate_run_dir" -- ${forward[@]+"${forward[@]}"}; then
@@ -277,14 +278,18 @@ pmctl_gate_run_detached() {
   # gate ID that can only time out.
   local _sup_pid _isolated="${DETACHED_LAUNCH_ISOLATED:-0}"
   _sup_pid="$(tr -d ' \n' <"$supervisor_pid_file" 2>/dev/null || true)"
-  if ! [[ "$_sup_pid" =~ ^[0-9]+$ ]] \
-    || ! detached_launch_capture_identity "$_sup_pid" "$_isolated" >"$supervisor_identity" 2>/dev/null; then
-    printf 'pmctl gate run: detached supervisor failed before identity capture for %s; inspect %s and retry with --lifecycle foreground (sandbox parent-death may prevent detached runs)\n' \
+  if ! [[ "$_sup_pid" =~ ^[0-9]+$ ]]; then
+    printf 'pmctl gate run: detached supervisor failed before PID capture for %s; inspect %s and retry with --lifecycle foreground (sandbox parent-death may prevent detached runs)\n' \
       "$gate_id" "$supervisor_log" >&2
     return 2
   fi
+  # A short gate can publish ready + terminal evidence before the launcher gets
+  # its first /proc snapshot. Capture identity eagerly when possible, but do
+  # not reject that already-complete, authenticated lifecycle solely because
+  # the supervisor has exited in the intervening scheduling window.
+  detached_launch_capture_identity "$_sup_pid" "$_isolated" >"$supervisor_identity" 2>/dev/null || true
 
-  local _ready_timeout="${PM_GATE_READY_TIMEOUT:-5}" _ready_start _ready_state _ready_pid _ready_starttime _ready_rc
+  local _ready_timeout="${PM_GATE_READY_TIMEOUT:-5}" _ready_start _ready_state _ready_pid _ready_starttime _ready_rc _identity_missing_polls=0
   if ! [[ "$_ready_timeout" =~ ^[1-9][0-9]*$ ]]; then
     printf 'pmctl gate run: invalid PM_GATE_READY_TIMEOUT %q (expected positive seconds)\n' "$_ready_timeout" >&2
     return 2
@@ -295,6 +300,9 @@ pmctl_gate_run_detached() {
       _ready_state="$(grep -m1 '^state=' "$ready_sentinel" 2>/dev/null | cut -d= -f2-)" || _ready_state=""
       _ready_pid="$(grep -m1 '^pid=' "$ready_sentinel" 2>/dev/null | cut -d= -f2-)" || _ready_pid=""
       _ready_starttime="$(grep -m1 '^starttime=' "$ready_sentinel" 2>/dev/null | cut -d= -f2-)" || _ready_starttime=""
+      if [[ ! -f "$supervisor_identity" ]]; then
+        detached_launch_capture_identity "$_sup_pid" "$_isolated" >"$supervisor_identity" 2>/dev/null || true
+      fi
       if detached_launch_load_identity_file "$supervisor_identity" \
         && [[ "$_ready_state" == "ready" && "$_ready_pid" == "$DL_ID_PID" && "$_ready_starttime" == "$DL_ID_STARTTIME" ]]; then
         # A very fast gate can already be terminal by the time the launcher
@@ -303,11 +311,38 @@ pmctl_gate_run_detached() {
         # alive would reject a valid completed gate.
         break
       fi
+      # The readiness path is nonce-authenticated and must name the launched
+      # PID. If the supervisor already terminalized, that pair is durable
+      # proof of a completed, waitable gate even when no parent-side /proc
+      # snapshot could survive the scheduling race.
+      if [[ "$_ready_state" == "ready" && "$_ready_pid" == "$_sup_pid" \
+        && "$_ready_starttime" =~ ^[0-9]+$ && -f "$terminal_sentinel" ]]; then
+        break
+      fi
+      if [[ "$_ready_state" == "ready" && "$_ready_pid" == "$_sup_pid" \
+        && "$_ready_starttime" =~ ^[0-9]+$ ]] && kill -0 "$_sup_pid" 2>/dev/null; then
+        # A live supervisor may be between ready publication and terminal
+        # publication while the parent-side snapshot is unavailable; keep the
+        # bounded readiness poll rather than treating that valid transition as
+        # an identity mismatch.
+        sleep 0.05
+        continue
+      fi
       printf 'pmctl gate run: invalid supervisor readiness evidence for %s; inspect %s and retry with --lifecycle foreground\n' \
         "$gate_id" "$supervisor_log" >&2
       return 2
     fi
-    if detached_launch_verify_identity "$_sup_pid" "$supervisor_identity"; then
+    if [[ ! -f "$supervisor_identity" ]]; then
+      # A supervisor that has already exited may have published both sentinels
+      # between fork and the first parent /proc read. Give their atomic renames
+      # a small bounded observation window before classifying it as never-ready.
+      _identity_missing_polls=$((_identity_missing_polls + 1))
+      if (( _identity_missing_polls <= 5 )); then
+        sleep 0.05
+        continue
+      fi
+      _ready_rc=1
+    elif detached_launch_verify_identity "$_sup_pid" "$supervisor_identity"; then
       _ready_rc=0
     else
       _ready_rc=$?
