@@ -87,14 +87,25 @@ test_release_suite_verifies_state_bound_artifact() {
 }
 
 test_release_phase1_runs_evidence_inventory_lints() {
-  # Phase 1 must reject incomplete release-evidence inventories before later
-  # full-suite or token-spending phases are started.
-  local name="release-phase1-runs-evidence-inventory-lints"
-  if grep -q 'lint-test-suite-registry.sh' "$RV" \
-    && grep -q 'lint-surface-coverage.sh' "$RV"; then
+  # Phase 1 must turn a failed inventory linter into a release NO-GO, not just
+  # contain a static call-site string. Intercept only the surface linter while
+  # delegating every other bash invocation to the real interpreter.
+  local name="release-phase1-runs-evidence-inventory-lints" shim_dir out status=0
+  shim_dir="$(mktemp -d)"
+  printf '%s\n' '#!/bin/bash' \
+    "if [[ \"\${1:-}\" == */tools/lint/lint-surface-coverage.sh ]]; then exit 17; fi" \
+    'exec /bin/bash "$@"' > "$shim_dir/bash"
+  # Keep the behavioral check out of the live context-DB path: Phase 1 still
+  # executes normally, while later sqlite-dependent smoke records a fast
+  # non-GO contributor instead of opening the shared repo database.
+  printf '%s\n' '#!/bin/bash' 'exit 1' > "$shim_dir/sqlite3"
+  chmod +x "$shim_dir/bash" "$shim_dir/sqlite3"
+  out="$(PATH="$shim_dir:$PATH" bash "$RV" --no-suite 2>&1)" || status=$?
+  rm -rf "$shim_dir"
+  if [[ "$status" -eq 1 && "$out" == *'[FAIL] surface coverage'* && "$out" == *'AUTOMATED VERDICT: NO-GO'* ]]; then
     pass "$name"
   else
-    fail "$name" "release Phase 1 does not run both evidence inventory lints"
+    fail "$name" "status=$status out=$out"
   fi
 }
 

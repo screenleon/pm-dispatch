@@ -133,15 +133,15 @@ need shellcheck optional shellcheck --version
 
 # These inventories protect the release evidence boundary before a potentially
 # expensive full suite or live E2E invocation starts.
-if bash "$REPO_ROOT/tools/lint/lint-test-suite-registry.sh" >/dev/null 2>&1; then
+if registry_lint_output="$(bash "$REPO_ROOT/tools/lint/lint-test-suite-registry.sh" 2>&1)"; then
   record "test suite registry" PASS "canonical runner and CI coverage agree"
 else
-  record "test suite registry" FAIL "registry or CI coverage parity lint failed"
+  record "test suite registry" FAIL "${registry_lint_output##*$'\n'}"
 fi
-if bash "$REPO_ROOT/tools/lint/lint-surface-coverage.sh" >/dev/null 2>&1; then
+if surface_lint_output="$(bash "$REPO_ROOT/tools/lint/lint-surface-coverage.sh" 2>&1)"; then
   record "surface coverage" PASS "commands, agents, and skills are classified"
 else
-  record "surface coverage" FAIL "surface coverage declaration lint failed"
+  record "surface coverage" FAIL "${surface_lint_output##*$'\n'}"
 fi
 
 # FTS5 capability of the resolved sqlite3 (context query depends on it).
