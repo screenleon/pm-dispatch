@@ -5,7 +5,7 @@
 # PASS/FAIL table plus a final GO / NO-GO verdict.
 #
 # Usage:
-#   ops/release/release-verify.sh [--no-suite] [--e2e] [--adapter claude|codex|auto] [--help]
+#   ops/release/release-verify.sh [--no-suite] [--e2e] [--adapter claude|codex|opencode|auto] [--help]
 #
 #   --no-suite        Skip run-all-tests.sh (fast iteration only; NEVER skip
 #                     for an actual release sign-off).
@@ -25,6 +25,9 @@ export LC_ALL=C.UTF-8
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 PMCTL="$REPO_ROOT/cli/pmctl"
+# shellcheck source=runtime/lib/adapter-enum.sh
+# shellcheck disable=SC1091
+. "$REPO_ROOT/runtime/lib/adapter-enum.sh"
 
 # Temp files — declared upfront so the EXIT trap can always clean them safely.
 suite_log=""
@@ -61,10 +64,10 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-case "$E2E_ADAPTER" in
-  claude|codex|auto) ;;
-  *) printf 'release-verify: --adapter must be claude|codex|auto (got: %s)\n' "$E2E_ADAPTER" >&2; exit 2 ;;
-esac
+if ! pm_adapter_is_valid "$REPO_ROOT" "$E2E_ADAPTER"; then
+  printf 'release-verify: --adapter must be %s (got: %s)\n' "$(pm_adapter_expected_values "$REPO_ROOT")" "$E2E_ADAPTER" >&2
+  exit 2
+fi
 
 # ── Result accumulation ──────────────────────────────────────────────────────
 PHASE_NAMES=()
@@ -127,6 +130,19 @@ need sqlite3 required sqlite3 --version
 need codex   optional codex --version
 need claude  optional claude --version
 need shellcheck optional shellcheck --version
+
+# These inventories protect the release evidence boundary before a potentially
+# expensive full suite or live E2E invocation starts.
+if registry_lint_output="$(bash "$REPO_ROOT/tools/lint/lint-test-suite-registry.sh" 2>&1)"; then
+  record "test suite registry" PASS "canonical runner and CI coverage agree"
+else
+  record "test suite registry" FAIL "${registry_lint_output##*$'\n'}"
+fi
+if surface_lint_output="$(bash "$REPO_ROOT/tools/lint/lint-surface-coverage.sh" 2>&1)"; then
+  record "surface coverage" PASS "commands, agents, and skills are classified"
+else
+  record "surface coverage" FAIL "${surface_lint_output##*$'\n'}"
+fi
 
 # FTS5 capability of the resolved sqlite3 (context query depends on it).
 if command -v sqlite3 >/dev/null 2>&1; then

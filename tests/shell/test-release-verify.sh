@@ -7,6 +7,9 @@ export LC_ALL=C.UTF-8
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 RV="$REPO_ROOT/ops/release/release-verify.sh"
+# shellcheck source=runtime/lib/adapter-enum.sh
+# shellcheck disable=SC1091
+. "$REPO_ROOT/runtime/lib/adapter-enum.sh"
 
 PASSED=0; FAILED=0
 
@@ -83,6 +86,29 @@ test_release_suite_verifies_state_bound_artifact() {
   fi
 }
 
+test_release_phase1_runs_evidence_inventory_lints() {
+  # Phase 1 must turn a failed inventory linter into a release NO-GO, not just
+  # contain a static call-site string. Intercept only the surface linter while
+  # delegating every other bash invocation to the real interpreter.
+  local name="release-phase1-runs-evidence-inventory-lints" shim_dir out status=0
+  shim_dir="$(mktemp -d)"
+  printf '%s\n' '#!/bin/bash' \
+    "if [[ \"\${1:-}\" == */tools/lint/lint-surface-coverage.sh ]]; then exit 17; fi" \
+    'exec /bin/bash "$@"' > "$shim_dir/bash"
+  # Keep the behavioral check out of the live context-DB path: Phase 1 still
+  # executes normally, while later sqlite-dependent smoke records a fast
+  # non-GO contributor instead of opening the shared repo database.
+  printf '%s\n' '#!/bin/bash' 'exit 1' > "$shim_dir/sqlite3"
+  chmod +x "$shim_dir/bash" "$shim_dir/sqlite3"
+  out="$(PATH="$shim_dir:$PATH" bash "$RV" --no-suite 2>&1)" || status=$?
+  rm -rf "$shim_dir"
+  if [[ "$status" -eq 1 && "$out" == *'[FAIL] surface coverage'* && "$out" == *'AUTOMATED VERDICT: NO-GO'* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out"
+  fi
+}
+
 test_release_e2e_keeps_full_and_excludes_affected_phase() {
   # The fixed release entry point is release-verify.sh --e2e. It must keep the
   # default fresh full suite, add E2E after that suite, and never grow an
@@ -121,6 +147,35 @@ test_adapter_invalid() {
   local rc=0
   bash "$RV" --adapter xyznotvalid 2>/dev/null || rc=$?
   if [[ "$rc" -eq 2 ]]; then pass "adapter-invalid"; else fail "adapter-invalid" "exit $rc want 2"; fi
+}
+
+test_opencode_adapter_is_accepted() {
+  local stub rc=0
+  stub=$(mktemp)
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$stub"
+  chmod +x "$stub"
+  PM_RELEASE_VERIFY_E2E_SCRIPT="$stub" bash "$RV" --no-suite --e2e --adapter opencode >/dev/null 2>&1 || rc=$?
+  rm -f "$stub"
+  if [[ "$rc" -eq 3 ]]; then pass "opencode-adapter-accepted"; else fail "opencode-adapter-accepted" "exit $rc want 3 (accepted adapter with --no-suite)"; fi
+}
+
+test_adapter_enum_rejects_invalid_and_symlinked_manifest() {
+  local root manifest
+  root=$(mktemp -d); mkdir -p "$root/adapters/demo"
+  manifest="$root/adapters/demo/adapter.yaml"; printf 'name: demo\n' > "$manifest"
+  if ! pm_adapter_is_valid "$root" 'Bad_Name' && ! pm_adapter_is_valid "$root" '-demo'; then pass "adapter-enum-invalid-names-rejected"; else fail "adapter-enum-invalid-names-rejected"; fi
+  rm -f "$manifest"; ln -s /dev/null "$manifest"
+  if ! pm_adapter_is_valid "$root" demo; then pass "adapter-enum-symlink-manifest-rejected"; else fail "adapter-enum-symlink-manifest-rejected"; fi
+  rm -rf "$root"
+}
+
+test_adapter_enum_expected_values() {
+  local root values
+  root=$(mktemp -d); mkdir -p "$root/adapters/zeta" "$root/adapters/alpha"
+  printf 'name: zeta\n' > "$root/adapters/zeta/adapter.yaml"
+  printf 'name: alpha\n' > "$root/adapters/alpha/adapter.yaml"
+  values="$(pm_adapter_expected_values "$root")"; rm -rf "$root"
+  if [[ "$values" == 'auto|alpha|zeta' ]]; then pass "adapter-enum-expected-values"; else fail "adapter-enum-expected-values" "values=$values"; fi
 }
 
 # ── Exit-code contract ────────────────────────────────────────────────────────
@@ -165,12 +220,12 @@ test_no_suite_exits_3() {
 # is tested without spending LLM tokens. Phase 1+3 still run for real.
 
 test_e2e_delegation_pass() {
-  local stub; stub=$(mktemp)
+  local stub state; stub=$(mktemp); state=$(mktemp -d)
   printf '#!/usr/bin/env bash\nprintf "AUTOMATED VERDICT: GO (stub)\\n"\nexit 0\n' > "$stub"
   chmod +x "$stub"
   local out rc=0
-  out=$(PM_RELEASE_VERIFY_E2E_SCRIPT="$stub" bash "$RV" --no-suite --e2e --adapter claude 2>&1) || rc=$?
-  rm -f "$stub"
+  out=$(PM_DISPATCH_STATE_ROOT="$state" PM_RELEASE_VERIFY_E2E_SCRIPT="$stub" bash "$RV" --no-suite --e2e --adapter claude 2>&1) || rc=$?
+  rm -f "$stub"; rm -rf "$state"
   # --no-suite increments REQUIRED_SKIPPED → PARTIAL GO (exit 3) even with GO from stub
   assert_not_contains "e2e-pass-no-fail" "[FAIL]" "$out"
   if [[ "$rc" -eq 3 ]]; then pass "e2e-pass-exit3"
@@ -178,25 +233,25 @@ test_e2e_delegation_pass() {
 }
 
 test_e2e_delegation_fail() {
-  local stub; stub=$(mktemp)
+  local stub state; stub=$(mktemp); state=$(mktemp -d)
   printf '#!/usr/bin/env bash\nprintf "AUTOMATED VERDICT: NO-GO (stub)\\n"\nexit 1\n' > "$stub"
   chmod +x "$stub"
   local rc=0
-  PM_RELEASE_VERIFY_E2E_SCRIPT="$stub" bash "$RV" --no-suite --e2e --adapter claude \
+  PM_DISPATCH_STATE_ROOT="$state" PM_RELEASE_VERIFY_E2E_SCRIPT="$stub" bash "$RV" --no-suite --e2e --adapter claude \
     >/dev/null 2>&1 || rc=$?
-  rm -f "$stub"
+  rm -f "$stub"; rm -rf "$state"
   if [[ "$rc" -eq 1 ]]; then pass "e2e-fail-exit1"
   else fail "e2e-fail-exit1" "exit $rc want 1 (NO-GO)"; fi
 }
 
 test_e2e_delegation_required_skip() {
   # test-e2e.sh exit 4 = PARTIAL GO (Phase C SKIP) → release-verify records SKIP
-  local stub; stub=$(mktemp)
+  local stub state; stub=$(mktemp); state=$(mktemp -d)
   printf '#!/usr/bin/env bash\nprintf "AUTOMATED VERDICT: PARTIAL GO (stub)\\n"\nexit 4\n' > "$stub"
   chmod +x "$stub"
   local out rc=0
-  out=$(PM_RELEASE_VERIFY_E2E_SCRIPT="$stub" bash "$RV" --no-suite --e2e --adapter claude 2>&1) || rc=$?
-  rm -f "$stub"
+  out=$(PM_DISPATCH_STATE_ROOT="$state" PM_RELEASE_VERIFY_E2E_SCRIPT="$stub" bash "$RV" --no-suite --e2e --adapter claude 2>&1) || rc=$?
+  rm -f "$stub"; rm -rf "$state"
   assert_contains "e2e-req-skip-text" "SKIP" "$out"
   if [[ "$rc" -eq 3 ]]; then pass "e2e-req-skip-exit3"
   else fail "e2e-req-skip-exit3" "exit $rc want 3 (PARTIAL GO)"; fi
@@ -323,10 +378,14 @@ test_help_no_code_leak
 test_help_exits_0
 test_help_short
 test_release_suite_verifies_state_bound_artifact
+test_release_phase1_runs_evidence_inventory_lints
 test_release_e2e_keeps_full_and_excludes_affected_phase
 test_unknown_flag
 test_adapter_missing_value
 test_adapter_invalid
+test_opencode_adapter_is_accepted
+test_adapter_enum_rejects_invalid_and_symlinked_manifest
+test_adapter_enum_expected_values
 test_usage_error_exits_2
 test_help_ends_with_newline
 test_no_suite_partial_verdict

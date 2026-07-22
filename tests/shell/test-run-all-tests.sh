@@ -25,6 +25,8 @@ SUITE_NAMES=(
   lint-portable-repo-paths
   lint-pmctl-commands
   lint-test-docstrings
+  lint-test-suite-registry
+  lint-surface-coverage
   test-guards
   test-guard-framework
   test-migrate
@@ -56,6 +58,9 @@ SUITE_NAMES=(
   test-hook-profile-parity
   test-lint-frontmatter
   test-lint-test-docstrings
+  test-lint-test-suite-registry
+  test-lint-surface-coverage
+  test-runtime-lib-coverage
   test-test-harness
   test-commands
   test-commands-runner
@@ -71,6 +76,7 @@ SUITE_NAMES=(
   test-dispatch-common
   test-detached-launch
   test-lint-model-aliases
+  test-model-aliases
   test-lint-portable-repo-paths
   test-reasoning-effort
   test-core-schemas
@@ -139,6 +145,8 @@ suite_path() {
     lint-portable-repo-paths) printf 'tools/lint/lint-portable-repo-paths.sh\n' ;;
     lint-pmctl-commands) printf 'tools/lint/lint-pmctl-commands.sh\n' ;;
     lint-test-docstrings) printf 'tools/lint/lint-test-docstrings.sh\n' ;;
+    lint-test-suite-registry) printf 'tools/lint/lint-test-suite-registry.sh\n' ;;
+    lint-surface-coverage) printf 'tools/lint/lint-surface-coverage.sh\n' ;;
     test-guards) printf 'tests/shell/test-guards.sh\n' ;;
     test-guard-framework) printf 'tests/shell/test-guard-framework.sh\n' ;;
     test-migrate) printf 'tests/shell/test-migrate-routing-log.sh\n' ;;
@@ -170,6 +178,9 @@ suite_path() {
     test-hook-profile-parity) printf 'tests/shell/test-hook-profile-parity.sh\n' ;;
     test-lint-frontmatter) printf 'tests/shell/test-lint-frontmatter.sh\n' ;;
     test-lint-test-docstrings) printf 'tests/shell/test-lint-test-docstrings.sh\n' ;;
+    test-lint-test-suite-registry) printf 'tests/shell/test-lint-test-suite-registry.sh\n' ;;
+    test-lint-surface-coverage) printf 'tests/shell/test-lint-surface-coverage.sh\n' ;;
+    test-runtime-lib-coverage) printf 'tests/shell/test-runtime-lib-coverage.sh\n' ;;
     test-test-harness) printf 'tests/shell/test-test-harness.sh\n' ;;
     test-check-docs-freshness) printf 'tests/shell/test-check-docs-freshness.sh\n' ;;
     test-commands) printf 'tests/shell/test-commands.sh\n' ;;
@@ -185,6 +196,7 @@ suite_path() {
     test-dispatch-common) printf 'tests/shell/test-dispatch-common.sh\n' ;;
     test-detached-launch) printf 'tests/shell/test-detached-launch.sh\n' ;;
     test-lint-model-aliases) printf 'tests/shell/test-lint-model-aliases.sh\n' ;;
+    test-model-aliases) printf 'tests/shell/test-model-aliases.sh\n' ;;
     test-lint-portable-repo-paths) printf 'tests/shell/test-lint-portable-repo-paths.sh\n' ;;
     test-reasoning-effort) printf 'tests/shell/test-reasoning-effort.sh\n' ;;
     test-host-manifest)   printf 'tests/shell/test-host-manifest.sh\n' ;;

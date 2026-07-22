@@ -1,0 +1,2 @@
+# test path\treason
+tests/shell/test-e2e.sh\tlive adapter smoke is release-only and intentionally excluded from the deterministic full runner

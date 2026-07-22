@@ -1,0 +1,36 @@
+# suite\trationale: constraint and promotion condition
+test-migrate\tconstraint: legacy migration fixtures add checkpoint runtime without changing supported runtime paths; promotion: remove when legacy routing migration is retired
+test-migrate-to-events\tconstraint: one-time event migration fixtures exercise archived data shapes rather than PR runtime behavior; promotion: remove when migration support is retired
+test-uninstall\tconstraint: install CI jobs already cover the managed-file lifecycle while the destructive uninstall matrix is expensive; promotion: split the uninstall matrix into its own CI job
+test-usage-tracker\tconstraint: tracker tests mutate usage-log fixtures and are unrelated to dispatch PR checks; promotion: add a stateful-tools CI shard
+test-pm-scripts\tconstraint: legacy PM-script compatibility fixtures have no dedicated CI shard; promotion: retire legacy scripts or add a maintenance-tools job
+test-pmctl-dispatch\tconstraint: detached-dispatch lifecycle needs an isolated state partition and exceeds the current CI shard budget; promotion: add an isolated dispatch-lifecycle job
+test-pmctl-pm\tconstraint: PM command tests create detached runs and need an isolated state partition; promotion: add an isolated PM-command job
+test-dispatch-record\tconstraint: record tests depend on state-store lifecycle setup not present in the current command CI job; promotion: fold into an isolated dispatch-state job
+test-dispatch-lifecycle\tconstraint: lifecycle tests spawn supervisors and require process-group isolation; promotion: add a dedicated lifecycle CI job
+test-dispatch-cancel\tconstraint: cancellation tests signal isolated process groups and need platform-stable process semantics; promotion: add a Linux-only cancellation CI job
+test-dispatch-reconcile\tconstraint: reconciliation tests intentionally create stale run records and need a dedicated state root; promotion: add a state-recovery CI job
+test-opencode-dispatch\tconstraint: adapter fallback tests need an OpenCode fixture matrix absent from current CI jobs; promotion: add an OpenCode adapter CI job
+test-runner-kind\tconstraint: runner-kind coverage is coupled to adapter fixture generation not used by current CI shards; promotion: add it to adapter CI coverage
+test-patch-gitignore\tconstraint: mutation fixtures overlap setup-project coverage but run a separate repository matrix; promotion: merge fixture matrices or add a repository-mutation job
+test-test-harness\tconstraint: harness self-tests validate test infrastructure rather than product behavior; promotion: run in a periodic test-infrastructure job
+test-run-all-tests\tconstraint: aggregate-runner tests recursively invoke suites and would duplicate CI execution; promotion: keep as scheduled full-runner coverage
+test-run-tests\tconstraint: affected-runner tests validate changed-path planning and recursively invoke fixture suites; promotion: keep as scheduled full-runner coverage
+test-timeout-resolve\tconstraint: timeout resolver is exercised transitively by adapter and gate CI jobs; promotion: add direct unit coverage to an existing CI job
+test-dispatch-common\tconstraint: shared dispatch helpers are covered transitively but lack a focused CI shard; promotion: add to the adapter CI job
+test-detached-launch\tconstraint: detached-launch fixtures require process and runtime-directory isolation; promotion: add a Linux lifecycle CI job
+test-reasoning-effort\tconstraint: effort resolution is covered through adapter contract tests but lacks direct CI selection; promotion: add to adapter CI coverage
+test-host-manifest\tconstraint: manifest matrix spans all hosts and extends the current PR CI runtime budget; promotion: add a host-contract CI job
+test-host-write-codex\tconstraint: host-write tests mutate synthetic Codex homes and need isolated home fixtures; promotion: add a Codex host-write CI job
+test-host-write-opencode\tconstraint: host-write tests mutate synthetic OpenCode config and need isolated home fixtures; promotion: add an OpenCode host-write CI job
+test-host-write-parity\tconstraint: cross-host parity requires all synthetic host homes and is too broad for current shards; promotion: add a host-parity CI job
+test-state-status\tconstraint: state-status tests exercise store compatibility permutations not covered by command CI; promotion: add a state-store CI job
+test-state-paths\tconstraint: state-path resolver tests are transitively covered but have no direct CI shard; promotion: add to state-store CI coverage
+test-pmctl-artifacts\tconstraint: artifact tests create and rotate external state directories; promotion: add an isolated artifacts CI job
+test-pmctl-decision\tconstraint: decision tests exercise transactional state rollback and need a dedicated state root; promotion: add to state-store CI coverage
+test-pmctl-context\tconstraint: context tests assert that the live repo database remains unchanged and conflict with parallel context consumers; promotion: run in an exclusive CI job
+test-pmctl-memory\tconstraint: memory tests use canonical-memory fixtures and cross-host resolution; promotion: add an isolated memory CI job
+test-pre-release\tconstraint: release audit fixtures validate historical changelog and backlog states rather than every PR path; promotion: run in a scheduled release-readiness job
+test-release-verify\tconstraint: release verification invokes broad orchestration and conflicts with parallel context tests; promotion: run in an exclusive release CI job
+test-upgrade-smoke\tconstraint: upgrade smoke is a compatibility checkpoint with no changed-path trigger; promotion: run in a scheduled upgrade job
+test-e2e-script\tconstraint: script contract reports partial GO without authenticated adapters and is not a true CI E2E signal; promotion: run against authenticated adapters in a protected scheduled job

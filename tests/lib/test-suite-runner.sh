@@ -20,6 +20,8 @@ SUITE_NAMES=(
   lint-portable-repo-paths
   lint-pmctl-commands
   lint-test-docstrings
+  lint-test-suite-registry
+  lint-surface-coverage
   test-guards
   test-guard-framework
   test-migrate
@@ -51,6 +53,9 @@ SUITE_NAMES=(
   test-hook-profile-parity
   test-lint-frontmatter
   test-lint-test-docstrings
+  test-lint-test-suite-registry
+  test-lint-surface-coverage
+  test-runtime-lib-coverage
   test-test-harness
   test-commands
   test-commands-runner
@@ -66,6 +71,7 @@ SUITE_NAMES=(
   test-dispatch-common
   test-detached-launch
   test-lint-model-aliases
+  test-model-aliases
   test-lint-portable-repo-paths
   test-reasoning-effort
   test-core-schemas
@@ -111,6 +117,8 @@ declare -A SUITE_PATHS=(
   [lint-portable-repo-paths]="tools/lint/lint-portable-repo-paths.sh"
   [lint-pmctl-commands]="tools/lint/lint-pmctl-commands.sh"
   [lint-test-docstrings]="tools/lint/lint-test-docstrings.sh"
+  [lint-test-suite-registry]="tools/lint/lint-test-suite-registry.sh"
+  [lint-surface-coverage]="tools/lint/lint-surface-coverage.sh"
   [test-guards]="tests/shell/test-guards.sh"
   [test-guard-framework]="tests/shell/test-guard-framework.sh"
   [test-migrate]="tests/shell/test-migrate-routing-log.sh"
@@ -142,6 +150,9 @@ declare -A SUITE_PATHS=(
   [test-hook-profile-parity]="tests/shell/test-hook-profile-parity.sh"
   [test-lint-frontmatter]="tests/shell/test-lint-frontmatter.sh"
   [test-lint-test-docstrings]="tests/shell/test-lint-test-docstrings.sh"
+  [test-lint-test-suite-registry]="tests/shell/test-lint-test-suite-registry.sh"
+  [test-lint-surface-coverage]="tests/shell/test-lint-surface-coverage.sh"
+  [test-runtime-lib-coverage]="tests/shell/test-runtime-lib-coverage.sh"
   [test-test-harness]="tests/shell/test-test-harness.sh"
   [test-commands]="tests/shell/test-commands.sh"
   [test-commands-runner]="tests/shell/test-commands-runner.sh"
@@ -157,6 +168,7 @@ declare -A SUITE_PATHS=(
   [test-dispatch-common]="tests/shell/test-dispatch-common.sh"
   [test-detached-launch]="tests/shell/test-detached-launch.sh"
   [test-lint-model-aliases]="tests/shell/test-lint-model-aliases.sh"
+  [test-model-aliases]="tests/shell/test-model-aliases.sh"
   [test-lint-portable-repo-paths]="tests/shell/test-lint-portable-repo-paths.sh"
   [test-reasoning-effort]="tests/shell/test-reasoning-effort.sh"
   [test-core-schemas]="tests/shell/test-core-schemas.sh"
