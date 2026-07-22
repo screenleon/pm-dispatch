@@ -1,0 +1,53 @@
+# adapters/grok/isolation-map.yaml
+#
+# RUNTIME adapter map — hand-authored, consumed by adapters/grok/dispatch.sh.
+# Dual-layer mapping: each isolation_level resolves to both an OS-level
+# --sandbox profile and a --permission-mode for tool approval policy.
+#
+# ── Grok-native sandbox write roots (product invariant) ─────────────────────
+# Grok's OS sandbox profiles ALWAYS allow writes to ~/.grok (session/config
+# store) and temp dirs whenever any write is permitted — there is no built-in
+# profile that is CWD-only. This is a Grok CLI product invariant (see Grok
+# Build docs/user-guide/18-sandbox.md), not a pm-dispatch choice.
+#
+# Therefore the abstract isolation_level labels below are NARROWED for the
+# grok adapter only:
+#   workspace-write   = Grok "workspace" profile:
+#                       write CWD + ~/.grok + temp; read everywhere; network on
+#   workspace-network = same OS profile as workspace-write (network already on)
+#   sandboxed         = Grok "strict" profile:
+#                       write CWD + ~/.grok + temp; read CWD+system; child net off
+#   read-only         = Grok "read-only" profile:
+#                       write ONLY ~/.grok + temp (no project writes)
+#   none              = NOT listed → rejected (handover-validate + dispatch)
+#
+# Operators must treat ~/.grok as shared host state that a grok dispatch may
+# mutate under every non-rejected isolation level. pm-dispatch does not clean
+# or roll back ~/.grok. The adapter emits an observable note on stderr when
+# launching under a write-capable sandbox profile.
+#
+# Grok sandbox profiles (upstream docs):
+#   workspace  – read everywhere; write CWD + ~/.grok + temp; network allowed
+#   read-only  – read everywhere; write only ~/.grok + temp; child net blocked (Linux)
+#   strict     – read CWD + system paths; write CWD + ~/.grok + temp; child net blocked
+#   off        – unrestricted (not used; isolation_level:none is rejected)
+#
+# Permission modes:
+#   acceptEdits       – auto-approve file edits
+#   dontAsk           – deny anything without explicit allow / built-in auto-approval
+#   bypassPermissions – always-approve (not used; none is rejected at handover)
+#   default           – prompt (unsuitable for unattended headless)
+
+mappings:
+  read-only:
+    sandbox: read-only
+    permission_mode: dontAsk
+  workspace-write:
+    sandbox: workspace
+    permission_mode: acceptEdits
+  workspace-network:
+    sandbox: workspace
+    permission_mode: acceptEdits
+  sandboxed:
+    sandbox: strict
+    permission_mode: acceptEdits

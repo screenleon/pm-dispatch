@@ -1370,6 +1370,49 @@ case_terminal_event_claude_result_passes() {
   pass "$name"
 }
 
+# grok's terminal_event is `end` (streaming-json). A multi-line stream that ends
+# with type=end must pass the semantic check, symmetric with claude's result case.
+# Steps:
+# 1. Create a valid latest.last and a grok-shape thought/text/end stream.
+# 2. Run dispatch-post-verify.sh with --terminal-event end.
+# 3. Assert exit 0 and the semantic PASS line.
+case_terminal_event_grok_end_passes() {
+  local name="terminal-event-grok-end-passes"
+  should_run "$name" || return 0
+  local work_dir out rc
+  work_dir="$(make_work_dir "$name")"
+  write_latest_last "$work_dir" "status: ok"
+  write_latest_jsonl "$work_dir" '{"type":"thought","data":"planning"}
+{"type":"text","data":"done"}
+{"type":"end","stopReason":"EndTurn","sessionId":"fake"}'
+
+  run_validator rc out "$work_dir" --terminal-event end
+
+  assert_eq "$name" "$rc" 0 || return 0
+  assert_string_contains "$name" "$out" "PASS: trace semantically complete" || return 0
+  pass "$name"
+}
+
+# grok missing end: structure-only text stream must fail semantic check for end.
+# Steps:
+# 1. Create latest.last + a text-only stream (no type=end).
+# 2. Run with --terminal-event end.
+# 3. Assert exit 1 and missing-end FAIL message.
+case_terminal_event_grok_end_missing_fails() {
+  local name="terminal-event-grok-end-missing-fails"
+  should_run "$name" || return 0
+  local work_dir out rc
+  work_dir="$(make_work_dir "$name")"
+  write_latest_last "$work_dir" "status: ok"
+  write_latest_jsonl "$work_dir" '{"type":"text","data":"incomplete"}'
+
+  run_validator rc out "$work_dir" --terminal-event end
+
+  assert_eq "$name" "$rc" 1 || return 0
+  assert_string_contains "$name" "$out" 'no "end" terminal event' || return 0
+  pass "$name"
+}
+
 # The keystone case: with --terminal-event, a structurally whole but NON-terminal
 # trace (stops at turn.started, no completion event — the auth-rejected /
 # silently-killed signature) FAILS the semantic check. This is what the prior
@@ -1643,6 +1686,8 @@ case_trace_jsonl_symlink_outside_rejected
 case_trace_jsonl_override_ok
 case_terminal_event_present_passes
 case_terminal_event_claude_result_passes
+case_terminal_event_grok_end_passes
+case_terminal_event_grok_end_missing_fails
 case_terminal_event_missing_fails
 case_terminal_event_absent_flag_structure_only
 case_terminal_event_structural_fail_short_circuits

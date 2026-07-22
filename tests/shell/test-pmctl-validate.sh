@@ -22,7 +22,7 @@ write_valid_brief() {
 Some preamble text.
 
 \`\`\`dispatch_handover_v1
-handover_version: 3
+handover_version: 4
 executor: codex
 dispatch_route: main_thread_bash_background
 working_dir: $REPO_ROOT

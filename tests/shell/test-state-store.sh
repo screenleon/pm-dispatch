@@ -549,7 +549,7 @@ case_runs_append_valid_jsonl() {
   should_run "$name" || return 0
   local store proj_dir line
   store="$tmp_root/runs-one"
-  PM_DISPATCH_STATE_ROOT="$store" runs_append '{"schema_version":2,"id":"run-20260101T000000Z-abcdef","task_id":"CC-230","executor":"codex","state":"ok","working_dir":"/tmp/test","trace_path":"/tmp/test.jsonl","exit_code":0,"created_ts":"2026-01-01T00:00:00Z"}'
+  PM_DISPATCH_STATE_ROOT="$store" runs_append '{"schema_version":3,"id":"run-20260101T000000Z-abcdef","task_id":"CC-230","executor":"codex","state":"ok","working_dir":"/tmp/test","trace_path":"/tmp/test.jsonl","exit_code":0,"created_ts":"2026-01-01T00:00:00Z"}'
   proj_dir="$(PM_DISPATCH_STATE_ROOT="$store" _sw_project_dir)"
   line="$(cat "$proj_dir/runs.jsonl" 2>/dev/null || true)"
   if [[ -f "$proj_dir/runs.jsonl" && "$(wc -l < "$proj_dir/runs.jsonl")" == "1" ]] &&
@@ -570,8 +570,8 @@ case_runs_append_appends() {
   should_run "$name" || return 0
   local store proj_dir
   store="$tmp_root/runs-two"
-  PM_DISPATCH_STATE_ROOT="$store" runs_append '{"schema_version":2,"id":"run-20260101T000000Z-abcdef","task_id":"CC-230","executor":"codex","state":"ok","working_dir":"/tmp/test","trace_path":"/tmp/test.jsonl","exit_code":0,"created_ts":"2026-01-01T00:00:00Z"}'
-  PM_DISPATCH_STATE_ROOT="$store" runs_append '{"schema_version":2,"id":"run-20260101T000001Z-123456","task_id":"CC-230","executor":"codex","state":"failed","working_dir":"/tmp/test","trace_path":"/tmp/test.jsonl","exit_code":1,"created_ts":"2026-01-01T00:00:01Z"}'
+  PM_DISPATCH_STATE_ROOT="$store" runs_append '{"schema_version":3,"id":"run-20260101T000000Z-abcdef","task_id":"CC-230","executor":"codex","state":"ok","working_dir":"/tmp/test","trace_path":"/tmp/test.jsonl","exit_code":0,"created_ts":"2026-01-01T00:00:00Z"}'
+  PM_DISPATCH_STATE_ROOT="$store" runs_append '{"schema_version":3,"id":"run-20260101T000001Z-123456","task_id":"CC-230","executor":"codex","state":"failed","working_dir":"/tmp/test","trace_path":"/tmp/test.jsonl","exit_code":1,"created_ts":"2026-01-01T00:00:01Z"}'
   proj_dir="$(PM_DISPATCH_STATE_ROOT="$store" _sw_project_dir)"
   if [[ -f "$proj_dir/runs.jsonl" && "$(wc -l < "$proj_dir/runs.jsonl")" == "2" ]]; then
     pass "$name"
@@ -698,10 +698,10 @@ case_runs_append_compacts_json() {
   should_run "$name" || return 0
   local store proj_dir line expected
   store="$tmp_root/runs-compact"
-  PM_DISPATCH_STATE_ROOT="$store" runs_append '{ "schema_version" : 2, "id" : "run-20260101T000000Z-abcdef", "task_id" : "CC-230", "executor" : "codex", "state" : "ok", "working_dir" : "/tmp/test", "trace_path" : "/tmp/test.jsonl", "exit_code" : 0, "created_ts" : "2026-01-01T00:00:00Z" }'
+  PM_DISPATCH_STATE_ROOT="$store" runs_append '{ "schema_version" : 3, "id" : "run-20260101T000000Z-abcdef", "task_id" : "CC-230", "executor" : "codex", "state" : "ok", "working_dir" : "/tmp/test", "trace_path" : "/tmp/test.jsonl", "exit_code" : 0, "created_ts" : "2026-01-01T00:00:00Z" }'
   proj_dir="$(PM_DISPATCH_STATE_ROOT="$store" _sw_project_dir)"
   line="$(cat "$proj_dir/runs.jsonl" 2>/dev/null || true)"
-  expected='{"schema_version":2,"id":"run-20260101T000000Z-abcdef","task_id":"CC-230","executor":"codex","state":"ok","working_dir":"/tmp/test","trace_path":"/tmp/test.jsonl","exit_code":0,"created_ts":"2026-01-01T00:00:00Z"}'
+  expected='{"schema_version":3,"id":"run-20260101T000000Z-abcdef","task_id":"CC-230","executor":"codex","state":"ok","working_dir":"/tmp/test","trace_path":"/tmp/test.jsonl","exit_code":0,"created_ts":"2026-01-01T00:00:00Z"}'
   if [[ "$line" == "$expected" ]]; then
     pass "$name"
   else
@@ -745,7 +745,7 @@ case_runs_append_rejects_invalid_enum() {
   local store rc=0
   store="$tmp_root/runs-enum-invalid"
   PM_DISPATCH_STATE_ROOT="$store" runs_append \
-    '{"schema_version":2,"id":"run-20260101T000000Z-abcdef","task_id":"TASK-451","executor":"unknown","state":"ok","working_dir":"/tmp/test","trace_path":"/tmp/test.jsonl","exit_code":0,"created_ts":"2026-01-01T00:00:00Z"}' \
+    '{"schema_version":3,"id":"run-20260101T000000Z-abcdef","task_id":"TASK-451","executor":"unknown","state":"ok","working_dir":"/tmp/test","trace_path":"/tmp/test.jsonl","exit_code":0,"created_ts":"2026-01-01T00:00:00Z"}' \
     >/dev/null 2>&1 || rc=$?
   if [[ "$rc" -ne 0 ]] && ! find "$store" -name runs.jsonl -type f 2>/dev/null | grep -q .; then
     pass "$name"
@@ -1191,7 +1191,7 @@ case_pmctl_dispatch_creates_run_row() {
   exit_code="$(jq -r '.exit_code' "$runs_file" 2>/dev/null | tail -1 || true)"
   events_file="$(find "$store" -name "events.jsonl" -type f 2>/dev/null | head -1 || true)"
   event_kinds="$(jq -r '.kind' "$events_file" 2>/dev/null | paste -sd, - || true)"
-  if [[ "$schema_v" == "2" && "$executor" == "codex" && "$state" == "ok" && \
+  if [[ "$schema_v" == "3" && "$executor" == "codex" && "$state" == "ok" && \
         "$exit_code" == "0" && "$event_kinds" == "run.pending,run.dispatched,run.verifying,run.completed" ]]; then
     pass "$name"
   else

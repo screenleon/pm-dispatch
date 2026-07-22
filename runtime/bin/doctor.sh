@@ -274,6 +274,12 @@ executor_authed() {
       [[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]] && return 0
       [[ -s "${HOME}/.claude/.credentials.json" ]] && return 0
       ;;
+    grok)
+      [[ -n "${XAI_API_KEY:-}" ]] && return 0
+      [[ -n "${GROK_API_KEY:-}" ]] && return 0
+      [[ -s "${HOME}/.grok/auth.json" ]] && return 0
+      [[ -n "${GROK_HOME:-}" && -s "${GROK_HOME}/auth.json" ]] && return 0
+      ;;
   esac
   return 1
 }
@@ -307,6 +313,20 @@ check_codex() {
   else
     emit_check codex fail "codex present but not authenticated — dispatch would fail (no turn.completed event)" \
       "Run 'codex login' to authenticate, or export OPENAI_API_KEY"
+  fi
+}
+
+check_grok() {
+  if ! command -v grok >/dev/null 2>&1; then
+    emit_check grok warn "grok not found — dispatch to the grok adapter (pmctl dispatch run --adapter grok) is unavailable" \
+      "Install Grok Build CLI if you dispatch tasks to grok (optional)"
+    return
+  fi
+  if executor_authed grok; then
+    emit_check grok ok "grok available and authenticated"
+  else
+    emit_check grok fail "grok present but not authenticated — dispatch would fail (no end event)" \
+      "Run 'grok' once to log in, or export XAI_API_KEY / GROK_API_KEY"
   fi
 }
 
@@ -616,6 +636,7 @@ main() {
   check_jq
   check_claude
   check_codex
+  check_grok
   check_pmctl
   # Host axis: generic dispatch into manifest-declared doctor modules. Copy-mode
   # (no manifest library available) degrades to the compact fallback instead.

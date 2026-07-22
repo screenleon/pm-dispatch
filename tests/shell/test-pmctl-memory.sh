@@ -1747,14 +1747,14 @@ case_memory_doctor_shard_count() {
 # Behavior: every host appends through the same project-scoped canonical path.
 # Steps: append one marker per host through one scoped config and assert JSONL/provenance.
 case_memory_append_episode_cross_host_contract() {
-  local name="pmctl memory append-episode: Claude Codex OpenCode and generic share canonical path"
+  local name="pmctl memory append-episode: Claude Codex OpenCode Grok and generic share canonical path"
   should_run "$name" || return 0
   local repo="$tmp_root/append-cross-host-repo" mdir="$tmp_root/append-cross-host-memory"
   local config="$tmp_root/append-cross-host.conf" host out status=0
   mkdir -p "$repo" "$mdir"
   git -C "$repo" init -q
   write_project_memory_config "$config" "$repo" "$mdir"
-  for host in claude codex opencode generic; do
+  for host in claude codex opencode grok generic; do
     out="$(PM_DISPATCH_CONFIG_FILE="$config" "$PMCTL" memory append-episode --repo-root "$repo" --host "$host" \
       --session-id "session-$host" --date "2026-07-13T00:00:00Z" --summary "${host}-canonical-marker" --json 2>/dev/null)" || status=$?
     if [[ "$status" -ne 0 ]] || ! jq -e --arg host "$host" --arg mdir "$mdir" \
@@ -1762,8 +1762,8 @@ case_memory_append_episode_cross_host_contract() {
       fail "$name" "host=$host status=$status out=$out"; return 0
     fi
   done
-  if [[ "$(wc -l < "$mdir/episodes.jsonl" | tr -d ' ')" == "4" ]] \
-    && jq -e -s 'map(.writer_host) == ["claude","codex","opencode","generic"]' "$mdir/episodes.jsonl" >/dev/null; then
+  if [[ "$(wc -l < "$mdir/episodes.jsonl" | tr -d ' ')" == "5" ]] \
+    && jq -e -s 'map(.writer_host) == ["claude","codex","opencode","grok","generic"]' "$mdir/episodes.jsonl" >/dev/null; then
     pass "$name"
   else
     fail "$name" "episodes=$(cat "$mdir/episodes.jsonl" 2>/dev/null || true)"

@@ -10,6 +10,18 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Grok executor + host (MVP).** New `adapters/grok/` Model B executor
+  (`pmctl dispatch run --adapter grok`) with dual isolation mapping
+  (`--sandbox` + `--permission-mode` via `isolation-map.yaml`), streaming-json
+  terminal event `end`, `share/grok-model-aliases.tsv`, and fake-CLI suite
+  `tests/shell/test-grok-dispatch.sh`. New `hosts/grok/` batch-only host
+  (manifest + doctor + path-resolver; `install_module: null`) with
+  `pmctl pm/memory --host grok` allowlist support. Executor enum and schema
+  mirrors include `grok`; host format enum adds `grok-config-toml`.
+  Contract versions bump with the closed-enum expansion: Run
+  `schema_version` **2→3**, handover `handover_version` **3→4** (CC-376
+  precedent).
+
 - **All-production-domain state-writer ratchet (CC-500).** The layer-boundary
   suite now scans every production shell domain for direct state-root and
   load-bearing entity mutations, including redirects, `jq >`, `mv`, `cp`, and

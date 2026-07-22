@@ -1,10 +1,10 @@
 # Host manifest contract (`hosts/<name>/host.yaml`, schema v1)
 
 A **host** is the runtime the PM itself runs inside (Claude Code, Codex CLI,
-opencode). A host manifest declares, as static facts, what pm-dispatch can
-wire onto that host: which files an installer would own, what hook/permission
-surface exists, which guard capabilities the host can carry, and where the
-host's doctor/uninstall modules live.
+OpenCode, Grok Build). A host manifest declares, as static facts, what
+pm-dispatch can wire onto that host: which files an installer would own, what
+hook/permission surface exists, which guard capabilities the host can carry,
+and where the host's doctor/uninstall modules live.
 
 This is the **sister structure** of the executor adapter manifest
 (`adapters/<name>/adapter.yaml`). The two describe orthogonal axes:
@@ -93,6 +93,7 @@ Closed enum; adding a value is a schema revision, not a per-host improvisation:
   `$CODEX_HOME/AGENTS.md`; installers own only their marked block and must
   preserve all foreign content byte-for-byte outside that block.
 - `opencode-config-json` — `opencode.json` declarative permission config.
+- `grok-config-toml` — Grok Build `config.toml` under `$GROK_HOME` (default `~/.grok`); asserted by doctor, managed by a future install module if needed.
 - `markdown-managed-block` — owned marker-delimited block inside a Markdown file.
 - `symlink-tree` — directory wired as symlinks back into the repo.
 - `copy-tree` — directory materialized as copies (single-file/copy-mode installs).

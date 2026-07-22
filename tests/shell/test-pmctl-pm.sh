@@ -215,7 +215,7 @@ case_prepare_emits_cross_host_memory_provenance() {
   git -C "$work" init -q
   printf '%s\n' '- [CC483 provenance](project_cc483.md) — cc483provenancemarker' > "$mdir/MEMORY.md"
   printf '%s\n' '---' 'topics:' '  - cc483provenancemarker' 'priority: normal' 'status: active' 'updated_at: "2026-07-13"' 'repo_refs: []' '---' 'canonical cc483provenancemarker' > "$mdir/project_cc483.md"
-  for host in claude codex opencode generic; do
+  for host in claude codex opencode grok generic; do
     code=0
     out="$(PM_MEMORY_DIR="$mdir" "$PMCTL" pm prepare --cd "$work" --host "$host" --request cc483provenancemarker --json 2>/dev/null)" || code=$?
     snapshot="$(jq -r '.snapshot_file // empty' <<<"$out" 2>/dev/null || true)"

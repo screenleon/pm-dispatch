@@ -41,7 +41,7 @@ if ! [[ "$TOKENS" =~ ^[0-9]+$ ]]; then
 fi
 
 case "$POOL" in
-  claude|codex|spark) ;;
+  claude|codex|spark|opencode|grok) ;;
   *)
     echo "log-usage: unknown pool '$POOL'; using claude" >&2
     POOL="claude"

@@ -1,0 +1,70 @@
+# host.yaml - AUTHORED manifest for hosts/grok/.
+# Grok Build TUI as a PM host. MVP is batch-only via pmctl pm (cli_wrapper);
+# no install/uninstall write path yet (install_module/uninstall_module null).
+# Schema reference: docs/host-contract.md.
+schema_version: 1
+host_name: grok
+host_binary: grok
+
+install_targets:
+  - id: config
+    path: "$GROK_HOME/config.toml"
+    format: grok-config-toml
+    managed: false                    # asserted by doctor, never written in MVP
+
+# No hook wiring ships in this MVP. Grok supports PreToolUse hooks under
+# ~/.grok/hooks/, but claiming them without a probed install path would
+# overstate the host contract.
+hook_surface: {}
+
+guard_bindings:
+  # Command guard: not wired. Future opt-in install can bind PreToolUse.
+  - capability: command_guard
+    binding_form: none
+    provider: none
+    enforcement: none
+    coverage: none
+    stability: evolving
+    confidence: assumed
+  # File guard: not evaluated; Grok can write via shell tools, so closure
+  # cannot be claimed without a full path audit.
+  - capability: file_guard
+    binding_form: none
+    provider: none
+    enforcement: none
+    coverage: none
+    stability: evolving
+    confidence: assumed
+  - capability: session_lifecycle
+    binding_form: none
+    provider: none
+    enforcement: none
+    coverage: none
+    stability: evolving
+    confidence: assumed
+  # Batch PM interface via pmctl pm prepare/run --host grok (no interactive
+  # Agent/AskUserQuestion loop claimed).
+  - capability: pm_command_interface
+    binding_form: none
+    provider: cli_wrapper
+    enforcement: none
+    coverage: partial
+    stability: evolving
+    confidence: assumed
+  - capability: statusline
+    binding_form: none
+    provider: none
+    enforcement: none
+    coverage: none
+    stability: evolving
+    confidence: assumed
+
+permissions_surface:
+  config_target: config
+  managed: false
+
+doctor_module: hosts/grok/lib/doctor.sh
+path_resolver_module: hosts/grok/lib/path-resolver.sh
+path_resolver_function: grok_host_resolve_path
+install_module: null
+uninstall_module: null
