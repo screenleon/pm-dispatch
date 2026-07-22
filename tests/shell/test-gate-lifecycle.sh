@@ -15,6 +15,9 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 . "$SCRIPT_DIR/../lib/test-harness.sh"
 th_init "$@"
 
+# shellcheck source=runtime/lib/detached-launch.sh
+. "$REPO_ROOT/runtime/lib/detached-launch.sh"
+
 export PM_DISPATCH_STATE_ROOT="$tmp_root/gate-lifecycle-state"
 
 # Isolate the sentinel key dir the same way test-dispatch-lifecycle.sh does
@@ -180,7 +183,7 @@ WRAPPER
 
 # ---- 1: detached launch returns gate_id immediately, exit 0 ------------------
 case_detached_launch_returns_gate_id() {
-  local name="gate-lifecycle/detached launch returns gate_id immediately"
+  local name="gate-lifecycle/detached launch returns gate_id only after supervisor readiness"
   should_run "$name" || return 0
 
   local fixture="$tmp_root/c1/fixture" work="$tmp_root/c1/work"
@@ -204,6 +207,54 @@ case_detached_launch_returns_gate_id() {
   else
     fail "$name" "code=$code out=$out err=$err_out"
   fi
+}
+
+# ---- 1b: early supervisor death fails the launch, not a later wait -----------
+case_detached_launch_fails_loud_on_early_supervisor_death() {
+  local name="gate-lifecycle/detached launch fails loud when supervisor dies before readiness"
+  should_run "$name" || return 0
+
+  local fixture="$tmp_root/c1b/fixture" work="$tmp_root/c1b/work"
+  mkdir -p "$work"
+  _mk_fixture_repo "$fixture"
+  _mk_fake_gate "$fixture" 0
+  # Die before the real supervisor reaches its readiness publication point.
+  sed -i 's/_write_ready || _die "failed to publish supervisor readiness evidence"/exit 97/' "$fixture/runtime/bin/gate-supervisor.sh"
+
+  local run_wrapper="$tmp_root/c1b/run"
+  _run_gate_wrapper "$fixture" "$run_wrapper"
+
+  local out code
+  set +e; out="$("$run_wrapper" --cd "$work" --lifecycle detached 2>&1)"; code=$?; set -e
+  if [[ "$code" -eq 2 ]] && [[ "$out" == *"exited before readiness"* ]] && [[ "$out" == *"--lifecycle foreground"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+case_detached_launch_rejects_invalid_ready_identity() {
+  local name="gate-lifecycle/detached launch rejects mismatched readiness identity"
+  should_run "$name" || return 0
+  local fixture="$tmp_root/c1c/fixture" work="$tmp_root/c1c/work"
+  mkdir -p "$work"; _mk_fixture_repo "$fixture"; _mk_fake_gate "$fixture" 0
+  # shellcheck disable=SC2016  # sed must match literal supervisor variables.
+  sed -i 's/"pid=$_pid"/"pid=999999"/' "$fixture/runtime/bin/gate-supervisor.sh"
+  local run_wrapper="$tmp_root/c1c/run" out code
+  _run_gate_wrapper "$fixture" "$run_wrapper"
+  set +e; out="$("$run_wrapper" --cd "$work" --lifecycle detached 2>&1)"; code=$?; set -e
+  if [[ "$code" -eq 2 ]] && [[ "$out" == *"invalid supervisor readiness evidence"* ]]; then pass "$name"; else fail "$name" "code=$code out=$out"; fi
+}
+
+case_detached_launch_rejects_invalid_ready_timeout() {
+  local name="gate-lifecycle/detached launch rejects invalid readiness timeout"
+  should_run "$name" || return 0
+  local fixture="$tmp_root/c1d/fixture" work="$tmp_root/c1d/work"
+  mkdir -p "$work"; _mk_fixture_repo "$fixture"; _mk_fake_gate "$fixture" 0
+  local run_wrapper="$tmp_root/c1d/run" out code
+  _run_gate_wrapper "$fixture" "$run_wrapper"
+  set +e; out="$(PM_GATE_READY_TIMEOUT=invalid "$run_wrapper" --cd "$work" --lifecycle detached 2>&1)"; code=$?; set -e
+  if [[ "$code" -eq 2 ]] && [[ "$out" == *"invalid PM_GATE_READY_TIMEOUT"* ]]; then pass "$name"; else fail "$name" "code=$code out=$out"; fi
 }
 
 # ---- 2: gate wait resolves GO (exit 0) after supervisor completes ------------
@@ -315,6 +366,51 @@ case_wait_indeterminate_on_consumed_sentinel() {
   else
     fail "$name" "code=$code out=$out"
   fi
+}
+
+# ---- 5b: a key without readiness is a failed launch, not a real timeout ------
+case_wait_indeterminate_when_no_readiness_evidence() {
+  local name="gate-lifecycle/gate wait classifies no readiness evidence as indeterminate"
+  should_run "$name" || return 0
+
+  local fixture="$tmp_root/c5b/fixture" work="$tmp_root/c5b/work"
+  mkdir -p "$work"
+  _mk_fixture_repo "$fixture"
+  local wait_wrapper="$tmp_root/c5b/wait"
+  _wait_wrapper "$fixture" "$wait_wrapper"
+
+  local gate_id="gate-20260722-000000-deadbe" nonce="test-no-readiness-nonce"
+  mkdir -p "$XDG_RUNTIME_DIR/pm-gate-dispatch"
+  printf '%s' "$nonce" > "$XDG_RUNTIME_DIR/pm-gate-dispatch/$gate_id"
+
+  local out code
+  set +e; out="$("$wait_wrapper" "$gate_id" --cd "$work" --timeout 1 2>&1)"; code=$?; set -e
+  rm -f "$XDG_RUNTIME_DIR/pm-gate-dispatch/$gate_id"
+  if [[ "$code" -eq 3 ]] && [[ "$out" == *"never reached supervisor readiness"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+case_wait_indeterminate_when_ready_supervisor_died() {
+  local name="gate-lifecycle/gate wait classifies a dead ready supervisor as indeterminate"
+  should_run "$name" || return 0
+  local fixture="$tmp_root/c5c/fixture" work="$tmp_root/c5c/work"
+  mkdir -p "$work"; _mk_fixture_repo "$fixture"
+  local wait_wrapper="$tmp_root/c5c/wait" gate_id="gate-20260722-000000-deadbf" nonce="test-dead-ready-nonce"
+  _wait_wrapper "$fixture" "$wait_wrapper"
+  mkdir -p "$XDG_RUNTIME_DIR/pm-gate-dispatch"
+  printf '%s' "$nonce" > "$XDG_RUNTIME_DIR/pm-gate-dispatch/$gate_id"
+  local run_dir
+  run_dir="$(PM_DISPATCH_STATE_ROOT="$PM_DISPATCH_STATE_ROOT" bash -c '. "$1/runtime/lib/state-paths.sh"; cd "$2"; sw_project_run_dir "$3"' _ "$fixture" "$work" "$gate_id")"
+  mkdir -p "$run_dir"
+  printf 'pid=999999\nstate=Z\npgid=999999\nstarttime=1\ncomm=bash\nisolated=1\nboot_id=\n' > "$run_dir/supervisor.identity"
+  detached_launch_write_sentinel "$(detached_launch_sentinel_path "pm-gate-ready" "$gate_id" "$nonce")" "state=ready" "pid=999999" "starttime=1"
+  local out code
+  set +e; out="$("$wait_wrapper" "$gate_id" --cd "$work" --timeout 1 2>&1)"; code=$?; set -e
+  rm -f "$XDG_RUNTIME_DIR/pm-gate-dispatch/$gate_id"
+  if [[ "$code" -eq 3 ]] && [[ "$out" == *"died without terminal evidence"* ]]; then pass "$name"; else fail "$name" "code=$code out=$out"; fi
 }
 
 # ---- 6: gate wait times out (exit 124) when supervisor never completes -------
@@ -565,10 +661,15 @@ case_wait_usage_errors() {
 }
 
 case_detached_launch_returns_gate_id
+case_detached_launch_fails_loud_on_early_supervisor_death
+case_detached_launch_rejects_invalid_ready_identity
+case_detached_launch_rejects_invalid_ready_timeout
 case_wait_resolves_go
 case_wait_resolves_nogo
 case_wait_resolves_failed
 case_wait_indeterminate_on_consumed_sentinel
+case_wait_indeterminate_when_no_readiness_evidence
+case_wait_indeterminate_when_ready_supervisor_died
 case_wait_times_out
 case_foreground_unchanged
 case_detached_requires_state_paths
