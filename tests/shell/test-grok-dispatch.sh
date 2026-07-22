@@ -43,6 +43,13 @@ case "$mode" in
     printf '%s\n' '{"type":"text","data":"partial"}'
     exit $code
     ;;
+  # Structurally valid stream (text events) but missing the terminal type=end
+  # marker — post-verify must fail closed when adapter.yaml declares end.
+  no_end)
+    printf '%s\n' '{"type":"thought","data":"planning"}'
+    printf '%s\n' '{"type":"text","data":"incomplete without end"}'
+    exit 0
+    ;;
   *)
     printf '%s\n' '{"type":"thought","data":"planning"}'
     printf '%s\n' '{"type":"text","data":"work "}'
@@ -309,6 +316,46 @@ case_pmctl_route() {
   rm -rf "$store" "$bindir" "$work"; rm -f "$bf"
 }
 
+# Behavior: a structurally whole streaming-json trace that never emits type=end
+# fails closed at post-verify (adapter.yaml terminal_event: end). Adapter exit
+# may be 0; pmctl still records a non-ok Run state.
+# Steps:
+#   1. Fake grok emits text only (no_end mode), exits 0.
+#   2. pmctl dispatch run --lifecycle foreground --adapter grok.
+#   3. Assert Run state is not ok (failed/partial) and exit_code is non-zero
+#      from the post-verify failure path.
+case_pmctl_missing_end_fails() {
+  local name="pmctl-route/missing type=end fails post-verify (non-ok Run)"
+  should_run "$name" || return 0
+  local store bindir work bf runs_file executor state exit_code code=0
+  store="$(mktemp -d)"; bindir="$(mktemp -d)"; work="$(mktemp -d)"
+  bf="$(mktemp /tmp/brief-grok-noend-XXXXXX.md)"
+  git -C "$work" init -q
+  printf 'schema_version: 1\nworking_dir: %s\ngoal: missing end terminal event\nfiles:\n  - read: %s/README\nacceptance:\n  - should fail verify\n' \
+    "$work" "$work" > "$bf"
+  _install_fake_grok "$bindir" "no_end"
+  set +e
+  PM_DISPATCH_STATE_ROOT="$store" PATH="$bindir:$PATH" \
+    PM_DISPATCH_WAIT_POLL_INTERVAL=0.1 \
+    "$PMCTL" dispatch run --lifecycle foreground --adapter grok \
+    --cd "$work" --brief-file "$bf" >/dev/null 2>&1
+  code=$?
+  set -e
+  runs_file="$(find "$store" -name "runs.jsonl" -type f 2>/dev/null | head -1 || true)"
+  executor="$(jq -r '.executor' "$runs_file" 2>/dev/null | tail -1 || true)"
+  state="$(jq -r '.state' "$runs_file" 2>/dev/null | tail -1 || true)"
+  exit_code="$(jq -r '.exit_code' "$runs_file" 2>/dev/null | tail -1 || true)"
+  # Adapter may exit 0; post-verify must still terminalize as non-ok.
+  if [[ "$executor" == "grok" \
+     && "$state" != "ok" && "$state" != "null" && -n "$state" \
+     && "$code" -ne 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code executor=$executor state=$state exit_code=$exit_code runs=$(head -c 400 "${runs_file:-/dev/null}" 2>/dev/null || true)"
+  fi
+  rm -rf "$store" "$bindir" "$work"; rm -f "$bf"
+}
+
 case_help
 case_reexec
 case_snapshot_structural
@@ -328,5 +375,6 @@ case_model_alias_light
 case_footer
 case_handover_executor_grok
 case_pmctl_route
+case_pmctl_missing_end_fails
 
 th_summary
