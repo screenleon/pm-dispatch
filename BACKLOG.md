@@ -28,7 +28,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-506 | ⏸ deferred | retrieval evidence-gated 收緊：shadow 評測（coverage@5、critical miss、read reduction、outcome parity）達標後才收緊 broad-Read 指引並重評 [[CC-340]] resume 條件；前置 = [[CC-505]] Ph2 shipped + ≥20 真實任務證據 | memory/DX | 2026-07-20 | — | P3 | retrieval |
 | CC-507 | ✅ done | `pmctl state status`：無法讀取 `VERSION` 時被 Bash `$(<file)` redirection 提前中止，未回傳契約的 unreadable/exit 3 | arch/test | 2026-07-21 | pr:#437 | P1 | design |
 | CC-508 | 🟢 someday | 所有間接 dispatch producer 的 parent-operation control plane：可追溯子 run、受控取消與單一終態；gate／ship／task dispatch 等全數納入 | arch/gate | 2026-07-21 | feedback:2026-07-21 | P2 | design |
-| CC-509 | 🟢 someday | detached gate launch liveness：對 sandbox parent-death 早期死亡 fail-loud，提供 supervisor readiness／identity evidence | arch/gate | 2026-07-22 | feedback:2026-07-22 | P2 | hygiene |
+| CC-509 | ✅ closed 2026-07-22 | detached gate launch liveness：對 sandbox parent-death 早期死亡 fail-loud，提供 supervisor readiness／identity evidence | arch/gate | 2026-07-22 | pr:#440 | P2 | hygiene |
 | CC-465 | 🔵 active | memory/context 關鍵詞管線 CJK 支援：抽出共用零依賴斷詞 lib，取代三處各自 ASCII-only 抽詞；工作序列起點（465→467→468→466）（2026-07-07 記憶系統深入分析） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-466 | ⏸ deferred | 記憶卡片生命週期閉環：expires_at 執行 + 關窗式 supersede + usage sidecar 休眠偵測 + doctor→distill 接線；僅在 CC-467 證明 stale/dormant card 已形成實際問題時啟動 | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-467 | 🔵 active | `pmctl memory stats`：注入效益可視化（唯讀聚合器）——注入 bytes/卡片命中分佈/從未命中卡/episode 填寫率，回答「記憶有跟沒有差在哪」；排在 CC-466 之前（2026-07-07；業界僅離線 recall 評測，無 per-injection 遙測） | DX/memory | 2026-07-07 | — | P2 | retrieval |
@@ -1453,7 +1453,7 @@ short-circuit.
 
 **See**: pr:#438
 
-## CC-509 — detached gate launch liveness：sandbox parent-death 與 supervisor readiness 🟢 someday
+## CC-509 — detached gate launch liveness：sandbox parent-death 與 supervisor readiness ✅ closed 2026-07-22
 
 **Problem**: `pmctl gate run` 預設 detached，launcher 以 `setsid nohup ... &`
 建立 background supervisor 後立即回傳 gate ID；目前只代表 shell 已 fork，沒有
@@ -1494,6 +1494,15 @@ control plane，因為 gate 自身的 launch truthfulness 必須先成立。
 **Source**: 2026-07-22 CC-449 Claude gate 實測；foreground Claude gate 已證明
 executor/reviewer 本身可正常完成 `Final: GO`，問題限於 detached launch
 lifecycle。
+
+**Outcome**: detached gate 現在只有在取得 nonce-authenticated readiness 與受驗證的
+supervisor PID/starttime identity 後才回傳 gate ID。supervisor 在 readiness 前死亡、
+readiness identity 不符、或 parent-death sandbox 導致早期死亡時皆 fail-loud 並指向
+`--lifecycle foreground`；wait 會區分從未 readiness、readiness 後死亡與仍在執行的
+真實 timeout。回歸覆蓋 zombie identity、mismatched readiness、invalid readiness timeout
+與兩種 fail-closed wait 狀態；Claude gate `Final: GO`。
+
+**See**: pr:#440
 
 ---
 
