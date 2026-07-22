@@ -90,6 +90,23 @@ Top hits (≤5 retained after review):
 
 **Verdict:** MVP stays on existing seams; new code is axis-local (`adapters/grok/`, `hosts/grok/`) plus closed allowlist/enum extensions. Process gap closed by this backfill.
 
+### Schema version bump (enum expansion)
+
+Per `core/README.md` and the CC-376 precedent (`handover_version` 2→3,
+`run.schema_version` 1→2 when `opencode` was added), expanding the closed
+executor enum requires a versioned contract bump:
+
+| Contract | Before | After |
+|----------|--------|-------|
+| `core/schema/run.schema.json` `schema_version` | 2 | **3** |
+| `core/schema/handover.schema.json` `handover_version` | 3 | **4** |
+
+Producers (`state-writer.sh` run JSON, handover authors), validators
+(`handover_validate_handover_version`), fixtures, and dispatch-brief examples
+were updated together. Older validators that accept only version 3 handovers
+will reject version-4 envelopes until upgraded — the intentional mixed-version
+fail-closed path.
+
 Approver: screenleon (2026-07-22).
 
 ## 2026-07-06: v0.9.0-host-axis-includes-opencode

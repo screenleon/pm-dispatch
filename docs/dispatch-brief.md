@@ -423,7 +423,7 @@ No working_dir, no files, no acceptance criteria. Codex would have to guess what
 `project-pm` hands implementation briefs back to the main thread as one fenced block tagged `dispatch_handover_v1`. The main thread extracts the block, writes the brief body to `brief_file`, then dispatches via `pmctl dispatch run --adapter <executor>` in the background. This is the **only** dispatch path — no executor subagent exists or holds brief-write authority; the brief is always authored by trusted main-thread code.
 
 ```dispatch_handover_v1
-handover_version: 3
+handover_version: 4
 executor: codex
 dispatch_route: main_thread_bash_background
 working_dir: ${PM_DISPATCH_REPO}
@@ -459,7 +459,7 @@ Metadata fields:
 
 | Field | Required | Notes |
 |---|---|---|
-| `handover_version` | yes | Currently `3`; bump on shape change. |
+| `handover_version` | yes | Currently `4`; bump on shape change. |
 | `executor` | yes | Closed enum: `codex`, `claude`, `opencode`, `grok`. Main-thread dispatch uses this field to choose the executor-specific adapter. |
 | `dispatch_route` | yes | `main_thread_bash_background` — the routine route for every shipped (cli-subprocess) adapter. `agent_executor` remains a valid value reserved for a future host-native adapter, but no shipped executor uses it. |
 | `working_dir` | yes | Absolute path; must exist; must match the brief body. |
@@ -591,7 +591,7 @@ Reject this before command construction because `working_dir` contains shell met
 Control-field reject examples:
 
 ```text
-handover_version: 3
+handover_version: 4
 executor: claude
 dispatch_route: mystery_route
 working_dir: relative/path

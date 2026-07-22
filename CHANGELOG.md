@@ -18,6 +18,9 @@ Versions follow [Semantic Versioning](https://semver.org/).
   (manifest + doctor + path-resolver; `install_module: null`) with
   `pmctl pm/memory --host grok` allowlist support. Executor enum and schema
   mirrors include `grok`; host format enum adds `grok-config-toml`.
+  Contract versions bump with the closed-enum expansion: Run
+  `schema_version` **2→3**, handover `handover_version` **3→4** (CC-376
+  precedent).
 
 - **All-production-domain state-writer ratchet (CC-500).** The layer-boundary
   suite now scans every production shell domain for direct state-root and

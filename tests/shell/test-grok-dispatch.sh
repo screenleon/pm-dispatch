@@ -260,9 +260,9 @@ case_footer() {
 case_handover_executor_grok() {
   local name="handover/executor grok accepted; isolation none rejected"; should_run "$name" || return 0
   local meta ok_rc=0 none_rc=0
-  meta=$'handover_version: 3\nexecutor: grok\ndispatch_route: main_thread_bash_background\nworking_dir: /tmp\nbrief_file: /tmp/brief-x.md\ntimeout: 600\nmodel: default\nfallback_allowed: false\nisolation_level: workspace-write\n'
+  meta=$'handover_version: 4\nexecutor: grok\ndispatch_route: main_thread_bash_background\nworking_dir: /tmp\nbrief_file: /tmp/brief-x.md\ntimeout: 600\nmodel: default\nfallback_allowed: false\nisolation_level: workspace-write\n'
   handover_validate_all_metadata "$meta" || ok_rc=$?
-  meta=$'handover_version: 3\nexecutor: grok\ndispatch_route: main_thread_bash_background\nworking_dir: /tmp\nbrief_file: /tmp/brief-x.md\ntimeout: 600\nmodel: default\nfallback_allowed: false\nisolation_level: none\n'
+  meta=$'handover_version: 4\nexecutor: grok\ndispatch_route: main_thread_bash_background\nworking_dir: /tmp\nbrief_file: /tmp/brief-x.md\ntimeout: 600\nmodel: default\nfallback_allowed: false\nisolation_level: none\n'
   handover_validate_all_metadata "$meta" 2>/dev/null || none_rc=$?
   if [[ "$ok_rc" -eq 0 && "$none_rc" -ne 0 ]]; then
     pass "$name"

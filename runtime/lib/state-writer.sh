@@ -585,7 +585,7 @@ sw_build_run_json() {
     --arg trace_path "$_trace_path" \
     --arg operation_id "$_operation_id" \
     --arg created_ts "$_ts" \
-    '{schema_version:2,id:$id,task_id:$task_id,executor:$executor,state:$state,exit_code:$exit_code,model:$model,brief_file:$brief_file,working_dir:$working_dir,trace_path:$trace_path,created_ts:$created_ts} + (if $operation_id == "" then {} else {operation_id:$operation_id} end)'
+    '{schema_version:3,id:$id,task_id:$task_id,executor:$executor,state:$state,exit_code:$exit_code,model:$model,brief_file:$brief_file,working_dir:$working_dir,trace_path:$trace_path,created_ts:$created_ts} + (if $operation_id == "" then {} else {operation_id:$operation_id} end)'
 }
 
 _sw_task_id_valid() {
