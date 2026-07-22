@@ -233,6 +233,7 @@ case_detached_launch_fails_loud_on_early_supervisor_death() {
   fi
 }
 
+# ---- 1c: mismatched readiness identity is rejected before returning gate ID --
 case_detached_launch_rejects_invalid_ready_identity() {
   local name="gate-lifecycle/detached launch rejects mismatched readiness identity"
   should_run "$name" || return 0
@@ -246,6 +247,7 @@ case_detached_launch_rejects_invalid_ready_identity() {
   if [[ "$code" -eq 2 ]] && [[ "$out" == *"invalid supervisor readiness evidence"* ]]; then pass "$name"; else fail "$name" "code=$code out=$out"; fi
 }
 
+# ---- 1d: invalid readiness timeout is rejected before supervisor polling -----
 case_detached_launch_rejects_invalid_ready_timeout() {
   local name="gate-lifecycle/detached launch rejects invalid readiness timeout"
   should_run "$name" || return 0
