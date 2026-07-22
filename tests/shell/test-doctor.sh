@@ -245,8 +245,11 @@ case_doctor_all_ok_exits_0() {
   #
   # Steps:
   #   1. Write full settings.json (all hooks), memory dir, and manifest.
-  #   2. Run doctor --no-color --repo <repo> with claude+codex stubs and a
+  #   2. Run doctor --no-color --repo <repo> with claude+codex+grok stubs and a
   #      pmctl symlink resolving to this checkout's cli/pmctl in PATH.
+  #      Grok must be stubbed: without it CI (no grok binary) emits WARN and
+  #      the 0 WARN contract fails; with a real grok elsewhere on PATH the stub
+  #      still wins as the first PATH entry.
   #   3. Assert exit 0, output contains "0 FAIL" and "0 WARN".
   local name="doctor-all-ok-exits-0"
   should_run "$name" || return 0
@@ -257,7 +260,7 @@ case_doctor_all_ok_exits_0() {
   write_full_settings "$home"
   create_memory_dir_for_pwd "$home"
   write_manifest "$home"
-  path="$(make_stub_bin "$tmp_root/bin-all-ok" claude codex)"
+  path="$(make_stub_bin "$tmp_root/bin-all-ok" claude codex grok)"
   # pmctl must resolve to THIS checkout (check_pmctl rejects a foreign pmctl), so
   # install it as a symlink to cli/pmctl rather than a generic stub.
   ln -sf "$REPO_ROOT/cli/pmctl" "$tmp_root/bin-all-ok/pmctl"
