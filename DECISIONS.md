@@ -45,6 +45,51 @@ profile; this is documented in `adapters/grok/isolation-map.yaml` and
 `docs/executor-contract.md`, and the adapter emits a stderr note at launch.
 pm-dispatch does not clean or roll back `~/.grok`.
 
+### Reuse confirmation (backfill 2026-07-22)
+
+Formal prior-art confirmation was **not** run before first pr-gate; backfilled
+after GO via `pmctl context reuse-scan` + targeted `context query` /
+`context pack`.
+
+**reuse-scan query** (repo plane):
+
+```text
+pmctl context reuse-scan . "add grok host and executor adapter dispatch isolation doctor path resolver model aliases terminal event"
+```
+
+Top hits (≤5 retained after review):
+
+| # | Ref | Role in this change |
+|---|-----|---------------------|
+| 1 | `runtime/lib/executor-router.sh` (`_er_adapter_manifest` / runner_kind) | **Reuse as-is** — data-driven routing; no core branch for grok |
+| 2 | `runtime/lib/pmctl-dispatch.sh` (`pmctl_dispatch_resolve_adapter`) | **Reuse as-is** — resolves `adapters/<name>/dispatch.sh` by convention |
+| 3 | `runtime/lib/pmctl-adapter.sh` (`pmctl_adapter_generate`) | **Not used for ship** — production adapter hand-authored (same as claude/opencode) |
+| 4 | `runtime/lib/dispatch-common.sh` (`dc_*`) | **Reuse as-is** — args/trace/footer/snapshot libs shared by all adapters |
+| 5 | Host path resolvers (`hosts/*/lib/path-resolver.sh`) | **Pattern-reuse** — grok mirrors codex/opencode `*_host_config_root` + `host_manifest_expand_root_template` |
+
+**Additional targeted reuse (from pack / query, not in top-5 scan):**
+
+| Seam | Action |
+|------|--------|
+| `adapters/claude/dispatch.sh` | **Pattern-reuse** — self-snapshot, effort, permission_mode, footer, usage log |
+| `adapters/opencode/dispatch.sh` + `isolation-map.yaml` | **Pattern-reuse** — isolation map reader; dual-layer is grok-specific |
+| `adapters/*/adapter.yaml` | **Pattern-reuse** — `cli-subprocess` + `write_guard_mode: cli-only` + `terminal_event` |
+| `runtime/lib/model-aliases.sh` (`ma_resolve_alias`) | **Reuse as-is** — TSV alias table for grok |
+| `runtime/lib/host-manifest.sh` | **Reuse as-is** — doctor/path expand without host-named core |
+| `runtime/bin/doctor.sh` (`executor_authed`) | **Extend** — add `grok` case only; no new probe framework |
+| `runtime/lib/host-names.sh` | **Extend** — allowlist `grok` only |
+| `core/policy/executor-enum.yaml` + schema mirrors | **Extend** — one-line enum add (same as opencode) |
+| `tests/shell/test-opencode-dispatch.sh` (`case_pmctl_route`) | **Pattern-reuse** — fake CLI + Run row assertions |
+| `tests/shell/test-claude-dispatch.sh` | **Pattern-reuse** — snapshot / isolation / footer cases |
+
+**Deliberately not invented / not forked:**
+
+- No new dispatch orchestrator, state writer, guard policy engine, or host-manifest reader.
+- No host-named branches in `executor-router` / `host-manifest` core.
+- No install/hooks write path (would have reopened codex/opencode install modules).
+
+**Verdict:** MVP stays on existing seams; new code is axis-local (`adapters/grok/`, `hosts/grok/`) plus closed allowlist/enum extensions. Process gap closed by this backfill.
+
 Approver: screenleon (2026-07-22).
 
 ## 2026-07-06: v0.9.0-host-axis-includes-opencode
