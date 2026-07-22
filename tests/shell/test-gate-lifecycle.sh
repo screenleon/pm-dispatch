@@ -280,6 +280,34 @@ WRAPPER
   if [[ "$code" -eq 0 && "$out" == *"pmctl gate wait gate-"* && "$out" == *$'\ngate-'* ]]; then pass "$name"; else fail "$name" "code=$code out=$out"; fi
 }
 
+# ---- 1f: identity can die between capture and ready observation -------------
+case_detached_launch_accepts_terminal_evidence_after_liveness_race() {
+  local name="gate-lifecycle/detached launch accepts terminal evidence after captured identity dies"
+  should_run "$name" || return 0
+  local fixture="$tmp_root/c1f/fixture" work="$tmp_root/c1f/work" release="$tmp_root/c1f/release"
+  mkdir -p "$work"; _mk_fixture_repo "$fixture"; _mk_fake_gate "$fixture" 0
+  # Hold the child after it has started, then release it from the parent's
+  # forced-dead liveness check. This deterministically exercises the window
+  # where identity capture succeeded but ready + terminal arrive just after
+  # the parent first observes that identity as dead.
+  # shellcheck disable=SC2016  # sed must preserve the supervisor's env expansion.
+  sed -i 's/_write_ready || _die "failed to publish supervisor readiness evidence"/while [[ ! -f "${PM_TEST_READY_RELEASE:-}" ]]; do sleep 0.01; done\n_write_ready || _die "failed to publish supervisor readiness evidence"/' "$fixture/runtime/bin/gate-supervisor.sh"
+
+  local run_wrapper="$tmp_root/c1f/run" out code
+  cat > "$run_wrapper" <<WRAPPER
+#!/usr/bin/env bash
+set -euo pipefail
+. "$fixture/runtime/lib/pmctl-gate.sh"
+. "$fixture/runtime/lib/detached-launch.sh"
+detached_launch_verify_identity() { : > "$release"; return 1; }
+export PM_TEST_READY_RELEASE="$release"
+pmctl_gate_run "$fixture" "\$@"
+WRAPPER
+  chmod +x "$run_wrapper"
+  set +e; out="$("$run_wrapper" --cd "$work" --lifecycle detached 2>&1)"; code=$?; set -e
+  if [[ "$code" -eq 0 && "$out" == *"pmctl gate wait gate-"* && "$out" == *$'\ngate-'* ]]; then pass "$name"; else fail "$name" "code=$code out=$out"; fi
+}
+
 # ---- 2: gate wait resolves GO (exit 0) after supervisor completes ------------
 case_wait_resolves_go() {
   local name="gate-lifecycle/gate wait resolves GO after supervisor completes"
@@ -688,6 +716,7 @@ case_detached_launch_fails_loud_on_early_supervisor_death
 case_detached_launch_rejects_invalid_ready_identity
 case_detached_launch_rejects_invalid_ready_timeout
 case_detached_launch_accepts_terminal_evidence_after_capture_race
+case_detached_launch_accepts_terminal_evidence_after_liveness_race
 case_wait_resolves_go
 case_wait_resolves_nogo
 case_wait_resolves_failed

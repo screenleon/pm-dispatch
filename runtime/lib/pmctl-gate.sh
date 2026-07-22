@@ -289,7 +289,7 @@ pmctl_gate_run_detached() {
   # the supervisor has exited in the intervening scheduling window.
   detached_launch_capture_identity "$_sup_pid" "$_isolated" >"$supervisor_identity" 2>/dev/null || true
 
-  local _ready_timeout="${PM_GATE_READY_TIMEOUT:-5}" _ready_start _ready_state _ready_pid _ready_starttime _ready_rc _identity_missing_polls=0
+  local _ready_timeout="${PM_GATE_READY_TIMEOUT:-5}" _ready_start _ready_state _ready_pid _ready_starttime _ready_rc _pre_ready_evidence_polls=0
   if ! [[ "$_ready_timeout" =~ ^[1-9][0-9]*$ ]]; then
     printf 'pmctl gate run: invalid PM_GATE_READY_TIMEOUT %q (expected positive seconds)\n' "$_ready_timeout" >&2
     return 2
@@ -332,20 +332,20 @@ pmctl_gate_run_detached() {
         "$gate_id" "$supervisor_log" >&2
       return 2
     fi
-    if [[ ! -f "$supervisor_identity" ]]; then
-      # A supervisor that has already exited may have published both sentinels
-      # between fork and the first parent /proc read. Give their atomic renames
-      # a small bounded observation window before classifying it as never-ready.
-      _identity_missing_polls=$((_identity_missing_polls + 1))
-      if (( _identity_missing_polls <= 5 )); then
+    if [[ -f "$supervisor_identity" ]] \
+      && detached_launch_verify_identity "$_sup_pid" "$supervisor_identity"; then
+      _ready_rc=0
+    else
+      # The child can publish ready + terminal after the parent's first
+      # identity snapshot, then exit before this liveness check. The ready
+      # record is the authoritative evidence, so give its atomic rename a
+      # bounded observation window for both a missing and a now-dead identity.
+      _pre_ready_evidence_polls=$((_pre_ready_evidence_polls + 1))
+      if (( _pre_ready_evidence_polls <= 5 )); then
         sleep 0.05
         continue
       fi
       _ready_rc=1
-    elif detached_launch_verify_identity "$_sup_pid" "$supervisor_identity"; then
-      _ready_rc=0
-    else
-      _ready_rc=$?
     fi
     if [[ "$_ready_rc" -ne 0 ]]; then
       printf 'pmctl gate run: detached supervisor exited before readiness for %s; inspect %s and retry with --lifecycle foreground (sandbox parent-death may prevent detached runs)\n' \
