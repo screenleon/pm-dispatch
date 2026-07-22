@@ -1,20 +1,9 @@
 # Platform support
 
 > **Platform contract (core-development phase):** pm-dispatch officially targets
-> **Linux and WSL2** (WSL2 is treated as Linux, first-class). **Native Windows
-> Git Bash (msys2/mingw) is not officially supported** right now — CI runs Linux
-> only, and platform-hardening work is **deferred to a dedicated phase after the
-> core feature set stabilizes** (v0.5.0+) so it does not divert effort from core
-> features. **Windows users should run pm-dispatch under WSL2**, which avoids the
-> MSYS path / symlink / permission edge cases entirely. macOS is documented but
-> untested. Native Windows may be reassessed once the core stabilizes — see
-> `DECISIONS.md` (2026-06-13 defer-native-windows-support-during-core-dev).
->
-> Already-shipped portability code still runs on native Windows on a best-effort
-> basis (hooks are pure bash+jq, no python3; `install.sh` uses directory junctions
-> for managed dirs and copies helper scripts — re-run `bash install.sh` after
-> pulling; `pmctl` is not copied, add `<repo>/cli` to PATH), but it is **not
-> verified by CI or release sign-off** and may regress without notice.
+> **Linux and WSL2 only** (WSL2 is treated as Linux, first-class). CI and release
+> sign-off run on Linux/WSL2. macOS, native Windows Git Bash, and all other hosts
+> are unsupported; use WSL2 instead of a native Windows shell.
 
 ## Support matrix
 
@@ -22,9 +11,9 @@
 | -------------------------------- | -------------------- | ----- |
 | Linux                            | **First-class**      | Full profile + minimal profile |
 | WSL2                             | **First-class**      | Treated as Linux |
-| macOS                            | **Documented, untested** | Code path same as Linux; requires GNU `realpath` (`brew install coreutils`). No dogfood run confirmed yet — report issues if you hit problems. |
-| Windows Git Bash (`msys2/mingw`) | **Not supported (use WSL2)** | Platform work deferred during core development. Shipped portability code runs best-effort but is unverified by CI/sign-off; run under WSL2 instead |
-| Other / unrecognized             | Best effort          | Install may succeed or fail depending on tool availability |
+| macOS                            | **Not supported**    | Use a Linux host instead |
+| Windows Git Bash (`msys2/mingw`) | **Not supported**    | Use WSL2 instead |
+| Other / unrecognized             | **Not supported**    | Use Linux or WSL2 |
 
 ---
 
@@ -40,20 +29,19 @@
 
 ### Prerequisites
 
-| Tool | Linux/macOS | Windows (Git Bash) | WSL2 |
-|------|-------------|-------------------|------|
-| bash ≥ 4 | system | Git for Windows | system |
-| jq ≥ 1.6 | `apt install jq` / `brew install jq` | `winget install jqlang.jq` | `apt install jq` |
-| git | system | Git for Windows | system |
-| sqlite3 (FTS5) | `apt install sqlite3` / `brew install sqlite` | `winget install SQLite.SQLite` | `apt install sqlite3` |
-| codex CLI | optional (`full` profile) | not supported | optional |
+| Tool | Linux / WSL2 |
+|------|--------------|
+| bash ≥ 4 | system |
+| jq ≥ 1.6 | `apt install jq` |
+| git | system |
+| sqlite3 (FTS5) | `apt install sqlite3` |
+| codex CLI | optional (`full` profile) |
 
 > **`sqlite3`** is required by `pmctl context` (repo-index + FTS5 retrieval, v0.5.0+).
 > Without it, `pmctl context index/query/pack/reuse-scan` exit with an error; the
-> rest of pm-dispatch still works. On Windows the `winget` install appends `sqlite3`
-> to the **User PATH** — open a new Git Bash window so the PATH refresh takes effect.
+> rest of pm-dispatch still works.
 
-### All platforms (Linux / macOS / WSL2)
+### Linux / WSL2
 
 ```bash
 # 1. Clone
@@ -146,7 +134,7 @@ bash "${PM_DISPATCH_REPO}/runtime/bin/doctor.sh" --profile minimal
 
 ## Update
 
-### Linux / macOS / WSL2
+### Linux / WSL2
 
 **Changes to existing files** take effect immediately because `~/.claude/agents/`,
 `~/.claude/commands/`, etc. contain per-file symlinks pointing into the repo.
@@ -201,8 +189,7 @@ the .pm schema. It also removes `~/.local/bin/pmctl` only when that path is a
 symlink to this checkout's `cli/pmctl`; foreign files or symlinks are preserved.
 Run after Part 1.
 
-**Recommended (all platforms):** Use the manifest-driven uninstaller — it handles
-symlinks, Windows directory junctions, and copies safely:
+**Recommended:** Use the manifest-driven uninstaller on Linux/WSL2:
 
 ```bash
 bash "${PM_DISPATCH_REPO}/uninstall.sh"
@@ -210,7 +197,7 @@ bash "${PM_DISPATCH_REPO}/uninstall.sh"
 bash "${PM_DISPATCH_REPO}/uninstall.sh" --dry-run
 ```
 
-**Alternative: manual removal (Linux/macOS, copy or symlink installs only)**
+**Alternative: manual removal (Linux/WSL2)**
 
 > **Warning (Windows Git Bash / junction installs):** Do NOT use the `rm -f`
 > commands below on `~/.claude/agents`, `~/.claude/commands`, or `~/.claude/skills`
@@ -262,7 +249,7 @@ rm -rf ~/.claude/share
 # .pm schema
 rm -rf ~/.claude/.pm       # symlink or directory; safe to remove entirely
 
-# pmctl CLI symlink (Linux/macOS/WSL only)
+# pmctl CLI symlink (Linux/WSL2 only)
 if [ "$(readlink ~/.local/bin/pmctl 2>/dev/null)" = "${PM_DISPATCH_REPO}/cli/pmctl" ]; then
   rm -f ~/.local/bin/pmctl
 fi
@@ -280,31 +267,6 @@ fi
 
 ## Quickstarts
 
-### macOS
-
-> **Note:** macOS install steps follow the same code path as Linux and are
-> documented based on that, but have not been verified by a dogfood run.
-> Please report any issues you encounter.
-
-```bash
-brew install jq coreutils
-git clone https://github.com/screenleon/pm-dispatch "${PM_DISPATCH_REPO}"
-cd "${PM_DISPATCH_REPO}"
-bash install.sh
-```
-
-### Windows Git Bash minimal
-
-```bash
-# In PowerShell first:
-winget install jqlang.jq Git.Git
-
-# Then in Git Bash:
-git clone https://github.com/screenleon/pm-dispatch "${PM_DISPATCH_REPO}"
-cd "${PM_DISPATCH_REPO}"
-bash install.sh --profile minimal
-```
-
 ### WSL2
 
 ```bash
@@ -315,13 +277,6 @@ bash install.sh
 ```
 
 ---
-
-## Known limitations on Windows Git Bash
-
-- GNU `realpath -m` not guaranteed → shimmed `realpath_m` provides equivalent behavior.
-- Filesystem case-insensitive → avoid hook paths differing only by case.
-- `codex` CLI hooks unsupported on Windows; `--profile full` falls back to `minimal`.
-- Symlinks require Developer Mode or `MSYS=winsymlinks:nativestrict`; on Git Bash, install uses directory junctions for managed directories and copies individual helper scripts.
 
 ## Repository references
 
