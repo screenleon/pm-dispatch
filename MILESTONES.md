@@ -61,13 +61,13 @@
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-449 | 吸收 CC-431：suite registry、CI parity、OpenCode、ship/worktree smoke | 🔵 |
+| CC-449 | 吸收 CC-431：suite registry、CI parity、OpenCode、ship/worktree smoke | ✅ pr:#439 |
 
 ### Phase 3 — install/upgrade smoke（原 v0.12.0 Phase 2）
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-504 | manifest-driven multi-host lifecycle，移除 Claude base-spine 特例 | 🔵 |
+| CC-504 | manifest-driven multi-host lifecycle，移除 Claude base-spine 特例；product receipt、selected-host ownership、legacy migration 與 doctor dispatch 完整交付 | ✅ pr:#442 |
 | CC-447 | offline clean install + latest released tag→current N-1 upgrade；foreign config/memory/user data 不變 | 🔵 |
 
 ### Phase 4 — shared tooling/hooks host boundary（原 v0.12.0 Phase 3）

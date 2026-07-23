@@ -657,6 +657,10 @@ _PORTABLE_MANIFEST_PREV_INITIALIZED=0
 _PORTABLE_SHA256_TOOL=""
 
 _portable_manifest_path() {
+  if [[ -n "${PM_DISPATCH_MANIFEST_PATH:-}" ]]; then
+    printf '%s\n' "$PM_DISPATCH_MANIFEST_PATH"
+    return 0
+  fi
   local config_root="${CLAUDE_CONFIG_DIR:-${CLAUDE_HOME:-}}"
   if [[ -z "$config_root" && -n "${HOME:-}" ]]; then
     config_root="$HOME/.claude"
@@ -909,12 +913,14 @@ _portable_manifest_version() {
 manifest_flush() {
   local manifest_path="${1-}"
   local repo_root="${2-}"
+  local selected_hosts_csv="${3-}"
   local tmpfile
   local installed_at
   local pm_dispatch_version
   local count
   local i
   local entry
+  local host first_host=1
 
   if [[ -z "$manifest_path" ]]; then
     manifest_path="$(_portable_manifest_path)" || manifest_path=""
@@ -941,6 +947,16 @@ manifest_flush() {
     printf '  "manifest_version": 1,\n'
     printf '  "installed_at": "%s",\n' "$installed_at"
     printf '  "pm_dispatch_version": "%s",\n' "$(_portable_json_escape "$pm_dispatch_version")"
+    printf '  "selected_hosts": ['
+    IFS=',' read -r -a _portable_selected_hosts <<< "$selected_hosts_csv"
+    for host in "${_portable_selected_hosts[@]}"; do
+      [[ -n "$host" ]] || continue
+      [[ "$first_host" -eq 1 ]] || printf ', '
+      printf '"%s"' "$(_portable_json_escape "$host")"
+      first_host=0
+    done
+    unset _portable_selected_hosts
+    printf '],\n'
     printf '  "entries": [\n'
     count="${#_PORTABLE_MANIFEST_RECORDS[@]}"
     for ((i = 0; i < count; i++)); do

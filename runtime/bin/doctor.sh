@@ -41,6 +41,14 @@ else
   codex_available() { command -v codex >/dev/null 2>&1; }
 fi
 
+if [[ -f "$SCRIPT_DIR/../lib/install-receipt.sh" ]]; then
+  # shellcheck source=runtime/lib/install-receipt.sh
+  . "$SCRIPT_DIR/../lib/install-receipt.sh"
+  _INSTALL_RECEIPT_AVAILABLE=1
+else
+  _INSTALL_RECEIPT_AVAILABLE=0
+fi
+
 if [[ "$_PORTABLE_AVAILABLE" -eq 1 && -f "$SCRIPT_DIR/../lib/memory-dir.sh" ]]; then
   # shellcheck source=runtime/lib/memory-dir.sh
   . "$SCRIPT_DIR/../lib/memory-dir.sh"
@@ -81,6 +89,16 @@ else
 fi
 
 _DOCTOR_HOST_NAMES=()
+_DOCTOR_SELECTED_HOSTS=()
+
+load_doctor_receipt_selection() {
+  _DOCTOR_SELECTED_HOSTS=()
+  [[ "$_INSTALL_RECEIPT_AVAILABLE" -eq 1 ]] || return 0
+  local receipt
+  receipt="$(pm_dispatch_receipt_existing_path 2>/dev/null || true)"
+  [[ -n "$receipt" ]] || return 0
+  mapfile -t _DOCTOR_SELECTED_HOSTS < <(pm_dispatch_receipt_selected_hosts "$receipt")
+}
 
 load_doctor_host_modules() {
   _DOCTOR_HOST_NAMES=()
@@ -98,6 +116,17 @@ load_doctor_host_modules() {
     }
     _DOCTOR_HOST_NAMES+=("$host")
   done < <(host_manifest_names "$REPO_ROOT")
+}
+
+doctor_receipt_drift_target() {
+  local host="$1" manifest id path fmt managed expanded
+  manifest="$(host_manifest_file "$REPO_ROOT" "$host")"
+  while IFS=$'\t' read -r id path fmt managed; do
+    [[ "$managed" == "true" ]] || continue
+    expanded="$(host_manifest_expand_path "$REPO_ROOT" "$host" "$path" 2>/dev/null || true)"
+    [[ -n "$expanded" && -e "$expanded" ]] && { printf '%s\n' "$expanded"; return 0; }
+  done < <(host_manifest_install_targets "$manifest")
+  return 1
 }
 
 JSON=0
@@ -284,49 +313,14 @@ executor_authed() {
   return 1
 }
 
-check_claude() {
-  if ! command -v claude >/dev/null 2>&1; then
-    emit_check claude warn "claude not found — hooks in settings.json work independently of the claude binary" \
-      "Install Claude Code: https://docs.anthropic.com/claude-code"
-    return
-  fi
-  # Binary present: an unauthenticated executor must fail loud, not silently
-  # produce a broken trace at dispatch time.
-  if executor_authed claude; then
-    emit_check claude ok "claude available and authenticated"
+doctor_check_executor_auth() {
+  local host="$1" binary="$2" missing_message="$3" missing_fix="$4" unauth_message="$5" unauth_fix="$6"
+  if ! command -v "$binary" >/dev/null 2>&1; then
+    emit_check "$host" warn "$missing_message" "$missing_fix"
+  elif executor_authed "$host"; then
+    emit_check "$host" ok "$host available and authenticated"
   else
-    emit_check claude fail "claude present but not authenticated — dispatch would fail (no result event)" \
-      "Run 'claude' once to log in, or export ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN"
-  fi
-}
-
-check_codex() {
-  if ! codex_available; then
-    emit_check codex warn "codex not found — dispatch to the codex adapter (pmctl dispatch run --adapter codex) is unavailable" \
-      "Install Codex CLI if you dispatch tasks to codex (optional)"
-    return
-  fi
-  # Binary present: an unauthenticated executor must fail loud, not silently
-  # produce a broken trace at dispatch time.
-  if executor_authed codex; then
-    emit_check codex ok "codex available and authenticated"
-  else
-    emit_check codex fail "codex present but not authenticated — dispatch would fail (no turn.completed event)" \
-      "Run 'codex login' to authenticate, or export OPENAI_API_KEY"
-  fi
-}
-
-check_grok() {
-  if ! command -v grok >/dev/null 2>&1; then
-    emit_check grok warn "grok not found — dispatch to the grok adapter (pmctl dispatch run --adapter grok) is unavailable" \
-      "Install Grok Build CLI if you dispatch tasks to grok (optional)"
-    return
-  fi
-  if executor_authed grok; then
-    emit_check grok ok "grok available and authenticated"
-  else
-    emit_check grok fail "grok present but not authenticated — dispatch would fail (no end event)" \
-      "Run 'grok' once to log in, or export XAI_API_KEY / GROK_API_KEY"
+    emit_check "$host" fail "$unauth_message" "$unauth_fix"
   fi
 }
 
@@ -621,6 +615,7 @@ main() {
     emit_summary 1
     exit 1
   fi
+  load_doctor_receipt_selection
 
   # Native Windows Git Bash is not an officially supported platform; WSL2
   # (treated as Linux) is the supported path. Surface that up front so the checks
@@ -634,15 +629,28 @@ main() {
   fi
 
   check_jq
-  check_claude
-  check_codex
-  check_grok
   check_pmctl
   # Host axis: generic dispatch into manifest-declared doctor modules. Copy-mode
   # (no manifest library available) degrades to the compact fallback instead.
   if [[ ${#_DOCTOR_HOST_NAMES[@]} -gt 0 ]]; then
     local _host
     for _host in "${_DOCTOR_HOST_NAMES[@]}"; do
+      if [[ ${#_DOCTOR_SELECTED_HOSTS[@]} -gt 0 ]]; then
+        local _selected=0 _receipt_host
+        for _receipt_host in "${_DOCTOR_SELECTED_HOSTS[@]}"; do
+          [[ "$_host" == "$_receipt_host" ]] && _selected=1
+        done
+        unset _receipt_host
+        if [[ "$_selected" -eq 0 ]]; then
+          if _drift_target="$(doctor_receipt_drift_target "$_host" 2>/dev/null)"; then
+            emit_check "host.$_host.receipt-drift" warn \
+              "managed host target exists outside selected receipt: $_drift_target" \
+              "run uninstall.sh --host $_host to remove it, or reinstall with --host $_host to adopt it"
+          fi
+          unset _drift_target
+          continue
+        fi
+      fi
       "doctor_host_${_host}_run"
     done
   else

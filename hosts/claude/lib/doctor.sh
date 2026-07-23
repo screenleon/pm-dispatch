@@ -288,7 +288,8 @@ _doctor_host_claude_check_hooks() {
     local _manifest _adapter_name _rk _nbg_override _nbg
     for _manifest in "$REPO_ROOT"/adapters/*/adapter.yaml; do
       [[ -f "$_manifest" ]] || continue
-      _adapter_name="$(basename "$(dirname "$_manifest")")"
+      _adapter_name="${_manifest%/adapter.yaml}"
+      _adapter_name="${_adapter_name##*/}"
       _rk="$(runner_kind_manifest_field "$_manifest" runner_kind)"
       [[ -n "$_rk" ]] || continue
       _nbg_override="$(runner_kind_manifest_field "$_manifest" needs_bash_guard)"
@@ -606,6 +607,11 @@ _doctor_host_claude_check_manifest_consistency() {
 
 # Host-module entry point (required by doctor.sh's generic loader).
 doctor_host_claude_run() {
+  doctor_check_executor_auth claude claude \
+    "claude not found — hooks in settings.json work independently of the claude binary" \
+    "Install Claude Code: https://docs.anthropic.com/claude-code" \
+    "claude present but not authenticated — dispatch would fail (no result event)" \
+    "Run 'claude' once to log in, or export ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN"
   _doctor_host_claude_resolve_config_root || true
   _doctor_host_claude_check_config_root
   [[ -z "$_CLAUDE_HOST_CONFIG_ROOT_ERROR" ]] || return 0

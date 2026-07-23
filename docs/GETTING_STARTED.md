@@ -84,17 +84,30 @@ fi
 When codex is intentionally absent, you can still run the full stack as a lightweight personal setup using
 `bash install.sh --profile minimal`.
 
-To use Codex or OpenCode as the PM host, opt in explicitly:
+To select a host lifecycle explicitly, repeat `--host`. A selected non-Claude
+host never creates or requires `~/.claude`:
 
 ```sh
-bash install.sh --enable-host codex
-bash install.sh --enable-host opencode
+bash install.sh --host codex
+bash install.sh --host opencode
+bash install.sh --host claude --host codex
 ```
 
-These host flags are independent of `--profile`, which controls the executor
-axis. OpenCode installation adds a native `/pm` command and a catch-all Bash
-deny with an allow rule for this checkout's `pmctl`; it fails without changing
-the file when an existing user-owned `permission.bash` policy is present.
+With no `--host`, the existing Claude installation remains the compatibility
+default. `--enable-host <name>` is retained as a compatibility form that adds
+the named host to that default; do not combine it with explicit `--host`
+selection. The host selection is independent of
+`--profile`, which controls the executor axis. OpenCode installation adds a
+native `/pm` command and a catch-all Bash deny with an allow rule for this
+checkout's `pmctl`; it fails without changing the file when an existing
+user-owned `permission.bash` policy is present. Uninstall the matching
+host-owned configuration with the same selector, for example
+`bash uninstall.sh --host codex`.
+
+A Codex-only or OpenCode-only selection deliberately wires only that host's
+manifest-owned configuration. It does not install the product `pmctl` CLI or
+Claude dispatch allowlist; use the default Claude-compatible install (or add
+`--host claude`) when those product assets are required.
 
 ## 4) Verify install succeeded
 

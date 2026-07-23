@@ -51,6 +51,8 @@ PM_DISPATCH_PROMPT_CONTEXT_TIMEOUT	shared-context	public-override	prompt timeout
 PM_DISPATCH_PROMPT_SCAN_MAX_TERMS	shared-context	public-override	8	explicit env then built-in	consume inside context scanner	bounds prompt-derived retrieval terms	boundary values
 PM_DISPATCH_GC_KEEP_LAST	shared-runtime	public-override	10	explicit env then built-in	consume inside artifact GC	controls retained artifacts	fixture state tree
 PM_DISPATCH_GC_MAX_AGE_DAYS	shared-runtime	public-override	30	explicit env then built-in	consume inside artifact GC	controls time-based deletion	aged fixture artifacts
+PM_DISPATCH_INSTALL_ROOT	shared-runtime	public-override	HOME/.pm-dispatch	explicit env then HOME fallback	consume inside product receipt resolver	moves the install receipt without selecting a host	fixture-local receipt root and migration coverage
+PM_DISPATCH_MANIFEST_PATH	shared-runtime	internal-injection	unset	installer-derived receipt path only	pass from installer to portable manifest helpers	keeps manifest refresh and flush bound to the product receipt	install lifecycle fixture verifies selected-host receipt
 PM_DISPATCH_TEST_MAX_JOBS	test-harness	test-config	4	explicit env then built-in	consume inside suite runner	parallelism and contention	bounded fixture value
 PM_DISPATCH_TEST_SUITE_TIMEOUT_SECS	test-harness	test-config	900	explicit env then built-in	consume inside suite runner	per-suite deadline	short hanging-suite fixture
 PM_DISPATCH_TEST_PROGRESS_SECS	test-harness	test-config	60	explicit env then built-in	consume inside suite runner	progress heartbeat cadence	fast fixture value

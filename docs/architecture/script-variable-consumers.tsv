@@ -1,6 +1,8 @@
 declared_name_or_pattern	actual_name	consumer_path	reference_scope
 ANTHROPIC_API_KEY	ANTHROPIC_API_KEY	runtime/bin/doctor.sh	production
+ANTHROPIC_API_KEY	ANTHROPIC_API_KEY	hosts/claude/lib/doctor.sh	production
 CLAUDE_CODE_OAUTH_TOKEN	CLAUDE_CODE_OAUTH_TOKEN	runtime/bin/doctor.sh	production
+CLAUDE_CODE_OAUTH_TOKEN	CLAUDE_CODE_OAUTH_TOKEN	hosts/claude/lib/doctor.sh	production
 CLAUDE_CONFIG_DIR	CLAUDE_CONFIG_DIR	hosts/claude/bin/install-guards.sh	production
 CLAUDE_CONFIG_DIR	CLAUDE_CONFIG_DIR	hosts/claude/bin/uninstall-guards.sh	production
 CLAUDE_CONFIG_DIR	CLAUDE_CONFIG_DIR	hosts/claude/hooks/save-rate-limits.sh	production
@@ -10,6 +12,7 @@ CLAUDE_CONFIG_DIR	CLAUDE_CONFIG_DIR	install.sh	production
 CLAUDE_CONFIG_DIR	CLAUDE_CONFIG_DIR	ops/release/upgrade-smoke-v0.8-v0.9.sh	production
 CLAUDE_CONFIG_DIR	CLAUDE_CONFIG_DIR	ops/usage/token-usage.sh	production
 CLAUDE_CONFIG_DIR	CLAUDE_CONFIG_DIR	runtime/bin/doctor.sh	production
+CLAUDE_CONFIG_DIR	CLAUDE_CONFIG_DIR	runtime/lib/install-receipt.sh	production
 CLAUDE_CONFIG_DIR	CLAUDE_CONFIG_DIR	runtime/lib/memory-dir.sh	production
 CLAUDE_CONFIG_DIR	CLAUDE_CONFIG_DIR	runtime/lib/memory.sh	production
 CLAUDE_CONFIG_DIR	CLAUDE_CONFIG_DIR	runtime/lib/portable.sh	production
@@ -30,6 +33,7 @@ CLAUDE_HOME	CLAUDE_HOME	hosts/claude/lib/doctor.sh	production
 CLAUDE_HOME	CLAUDE_HOME	hosts/claude/lib/path-resolver.sh	production
 CLAUDE_HOME	CLAUDE_HOME	install.sh	production
 CLAUDE_HOME	CLAUDE_HOME	ops/release/upgrade-smoke-v0.8-v0.9.sh	production
+CLAUDE_HOME	CLAUDE_HOME	runtime/lib/install-receipt.sh	production
 CLAUDE_HOME	CLAUDE_HOME	runtime/lib/portable.sh	production
 CLAUDE_HOME	CLAUDE_HOME	uninstall.sh	production
 CODEX_DISPATCH_TIMEOUT	CODEX_DISPATCH_TIMEOUT	adapters/codex/dispatch.sh	production
@@ -73,6 +77,7 @@ DRY_RUN	DRY_RUN	runtime/lib/portable.sh	production
 DRY_RUN	DRY_RUN	uninstall.sh	production
 GATE_RUN_DIR_OVERRIDE	GATE_RUN_DIR_OVERRIDE	runtime/bin/pr-gate.sh	production
 GROK_API_KEY	GROK_API_KEY	runtime/bin/doctor.sh	production
+GROK_API_KEY	GROK_API_KEY	hosts/grok/lib/doctor.sh	production
 GROK_DISPATCH_TIMEOUT	GROK_DISPATCH_TIMEOUT	adapters/grok/dispatch.sh	production
 GROK_HOME	GROK_HOME	hosts/grok/lib/path-resolver.sh	production
 GROK_HOME	GROK_HOME	runtime/bin/doctor.sh	production
@@ -98,6 +103,7 @@ HOME	HOME	runtime/hooks/guard-pm-write.sh	production
 HOME	HOME	runtime/hooks/guard-reviewer-write.sh	production
 HOME	HOME	runtime/lib/allowlist.sh	production
 HOME	HOME	runtime/lib/gate-workspace.sh	production
+HOME	HOME	runtime/lib/install-receipt.sh	production
 HOME	HOME	runtime/lib/memory-dir.sh	production
 HOME	HOME	runtime/lib/memory.sh	production
 HOME	HOME	runtime/lib/pmctl-config.sh	production
@@ -113,6 +119,7 @@ MSYS2_ARG_CONV_EXCL	MSYS2_ARG_CONV_EXCL	hosts/claude/bin/uninstall-guards.sh	pro
 MSYS_NO_PATHCONV	MSYS_NO_PATHCONV	hosts/claude/bin/install-guards.sh	production
 MSYS_NO_PATHCONV	MSYS_NO_PATHCONV	hosts/claude/bin/uninstall-guards.sh	production
 OPENAI_API_KEY	OPENAI_API_KEY	runtime/bin/doctor.sh	production
+OPENAI_API_KEY	OPENAI_API_KEY	hosts/codex/lib/doctor.sh	production
 OPENCODE_DISPATCH_TIMEOUT	OPENCODE_DISPATCH_TIMEOUT	adapters/opencode/dispatch.sh	production
 OSTYPE	OSTYPE	runtime/bin/doctor.sh	production
 OSTYPE	OSTYPE	runtime/lib/portable.sh	production
@@ -144,7 +151,6 @@ PATH	PATH	runtime/lib/portable.sh	production
 PATH	PATH	runtime/lib/state-paths.sh	production
 PATH	PATH	runtime/lib/state-writer.sh	production
 PATH	PATH	tools/lint/check-docs-freshness.sh	production
-PATH	PATH	uninstall.sh	production
 PMCTL_BIN_DIR	PMCTL_BIN_DIR	hosts/claude/bin/install-guards.sh	production
 PMCTL_BIN_DIR	PMCTL_BIN_DIR	hosts/claude/bin/uninstall-guards.sh	production
 PMCTL_BIN_DIR	PMCTL_BIN_DIR	install.sh	production
@@ -216,6 +222,9 @@ PM_DISPATCH_GATE_WORKSPACE	PM_DISPATCH_GATE_WORKSPACE	hosts/claude/bin/uninstall
 PM_DISPATCH_GATE_WORKSPACE	PM_DISPATCH_GATE_WORKSPACE	runtime/lib/gate-workspace.sh	production
 PM_DISPATCH_GC_KEEP_LAST	PM_DISPATCH_GC_KEEP_LAST	runtime/lib/pmctl-artifacts.sh	production
 PM_DISPATCH_GC_MAX_AGE_DAYS	PM_DISPATCH_GC_MAX_AGE_DAYS	runtime/lib/pmctl-artifacts.sh	production
+PM_DISPATCH_INSTALL_ROOT	PM_DISPATCH_INSTALL_ROOT	runtime/lib/install-receipt.sh	production
+PM_DISPATCH_MANIFEST_PATH	PM_DISPATCH_MANIFEST_PATH	install.sh	production
+PM_DISPATCH_MANIFEST_PATH	PM_DISPATCH_MANIFEST_PATH	runtime/lib/portable.sh	production
 PM_DISPATCH_LOCK_STALE_SECS	PM_DISPATCH_LOCK_STALE_SECS	runtime/lib/portable.sh	production
 PM_DISPATCH_LOCK_TIMEOUT_SECS	PM_DISPATCH_LOCK_TIMEOUT_SECS	runtime/lib/portable.sh	production
 PM_DISPATCH_PROMPT_CONTEXT_INITIAL_TIMEOUT	PM_DISPATCH_PROMPT_CONTEXT_INITIAL_TIMEOUT	runtime/hooks/guard-inject-context.sh	production
@@ -347,6 +356,7 @@ TMPDIR	TMPDIR	runtime/lib/pmctl-artifacts.sh	production
 TMPDIR	TMPDIR	runtime/lib/pmctl-pm.sh	production
 TMPDIR	TMPDIR	runtime/lib/portable.sh	production
 XAI_API_KEY	XAI_API_KEY	runtime/bin/doctor.sh	production
+XAI_API_KEY	XAI_API_KEY	hosts/grok/lib/doctor.sh	production
 XDG_CONFIG_HOME	XDG_CONFIG_HOME	hosts/opencode/lib/path-resolver.sh	production
 XDG_CONFIG_HOME	XDG_CONFIG_HOME	ops/release/upgrade-smoke-v0.8-v0.9.sh	production
 XDG_DATA_HOME	XDG_DATA_HOME	runtime/lib/state-paths.sh	production

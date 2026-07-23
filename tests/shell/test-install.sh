@@ -3539,6 +3539,259 @@ test_install_missing_host_write_library_fails_loudly() {
   pass "$name"
 }
 
+test_host_selected_codex_lifecycle_skips_claude_tree() {
+  # A host-selected lifecycle must not retain Claude as an implicit base
+  # installer. Verify both install and matching uninstall leave HOME/.claude
+  # untouched while the Codex-owned hooks are wired then removed.
+  local name="host-selected-codex-lifecycle-skips-claude-tree"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name-home" codex_home="$tmp_root/$name-codex"
+  local out="$tmp_root/$name.out" uninstall_out="$tmp_root/$name-uninstall.out" rc=0
+
+  HOME="$home" CODEX_HOME="$codex_home" PMCTL_BIN_DIR="$tmp_root/$name-bin" \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    bash "$REPO_ROOT/install.sh" --host codex >"$out" 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    fail "$name" "host-selected install exited $rc: $(<"$out")"
+    return
+  fi
+  if [[ -e "$home/.claude" ]]; then
+    fail "$name" "Codex-only install created $home/.claude"
+    return
+  fi
+  if ! grep -Fq 'hosts/codex/hooks/command-guard.sh' "$codex_home/hooks.json"; then
+    fail "$name" "Codex-only install did not wire the Codex hook"
+    return
+  fi
+
+  rc=0
+  HOME="$home" CODEX_HOME="$codex_home" PMCTL_BIN_DIR="$tmp_root/$name-bin" \
+    bash "$REPO_ROOT/uninstall.sh" --host codex >"$uninstall_out" 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    fail "$name" "host-selected uninstall exited $rc: $(<"$uninstall_out")"
+    return
+  fi
+  if [[ -e "$home/.claude" ]]; then
+    fail "$name" "Codex-only uninstall created $home/.claude"
+    return
+  fi
+  if grep -Fq 'hosts/codex/hooks/command-guard.sh' "$codex_home/hooks.json"; then
+    fail "$name" "Codex hook remained after matching host-selected uninstall"
+    return
+  fi
+  pass "$name"
+}
+
+test_host_selected_opencode_lifecycle_skips_claude_tree() {
+  local name="host-selected-opencode-lifecycle-skips-claude-tree"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name-home" xdg_home="$tmp_root/$name-xdg"
+  local out="$tmp_root/$name.out" uninstall_out="$tmp_root/$name-uninstall.out" rc=0
+
+  HOME="$home" XDG_CONFIG_HOME="$xdg_home" PMCTL_BIN_DIR="$tmp_root/$name-bin" \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    bash "$REPO_ROOT/install.sh" --host opencode >"$out" 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    fail "$name" "host-selected install exited $rc: $(<"$out")"
+    return
+  fi
+  if [[ -e "$home/.claude" || ! -f "$xdg_home/opencode/opencode.json" ]]; then
+    fail "$name" "OpenCode-only install did not keep host ownership isolated"
+    return
+  fi
+
+  rc=0
+  HOME="$home" XDG_CONFIG_HOME="$xdg_home" PMCTL_BIN_DIR="$tmp_root/$name-bin" \
+    bash "$REPO_ROOT/uninstall.sh" --host opencode >"$uninstall_out" 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 || -e "$home/.claude" ]]; then
+    fail "$name" "OpenCode-only uninstall mutated the Claude tree or failed"
+    return
+  fi
+  pass "$name"
+}
+
+test_host_equals_form_codex_lifecycle_skips_claude_tree() {
+  local name="host-equals-form-codex-lifecycle-skips-claude-tree"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name-home" codex_home="$tmp_root/$name-codex"
+  local out="$tmp_root/$name.out" uninstall_out="$tmp_root/$name-uninstall.out" rc=0
+
+  HOME="$home" CODEX_HOME="$codex_home" PMCTL_BIN_DIR="$tmp_root/$name-bin" \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    bash "$REPO_ROOT/install.sh" --host=codex --host=codex >"$out" 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 || -e "$home/.claude" ]] \
+      || ! grep -Fq 'hosts/codex/hooks/command-guard.sh' "$codex_home/hooks.json" \
+      || [[ "$(grep -c '^  codex$' "$out")" -ne 1 ]]; then
+    fail "$name" "--host=codex install did not match isolated Codex lifecycle"
+    return
+  fi
+  rc=0
+  HOME="$home" CODEX_HOME="$codex_home" PMCTL_BIN_DIR="$tmp_root/$name-bin" \
+    bash "$REPO_ROOT/uninstall.sh" --host=codex >"$uninstall_out" 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 || -e "$home/.claude" ]] \
+      || grep -Fq 'hosts/codex/hooks/command-guard.sh' "$codex_home/hooks.json"; then
+    fail "$name" "--host=codex uninstall did not match isolated Codex lifecycle"
+    return
+  fi
+  pass "$name"
+}
+
+test_host_selected_claude_and_codex_lifecycle() {
+  local name="host-selected-claude-and-codex-lifecycle"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name-home" claude_home="$tmp_root/$name-claude"
+  local codex_home="$tmp_root/$name-codex" out="$tmp_root/$name.out"
+  local uninstall_out="$tmp_root/$name-uninstall.out" rc=0
+
+  HOME="$home" CLAUDE_HOME="$claude_home" CODEX_HOME="$codex_home" PMCTL_BIN_DIR="$tmp_root/$name-bin" \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    bash "$REPO_ROOT/install.sh" --host claude --host codex >"$out" 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 || ! -e "$claude_home/.pm" ]] \
+      || ! grep -Fq 'hosts/codex/hooks/command-guard.sh' "$codex_home/hooks.json"; then
+    fail "$name" "explicit Claude+Codex install did not wire both selected hosts"
+    return
+  fi
+  rc=0
+  HOME="$home" CLAUDE_HOME="$claude_home" CODEX_HOME="$codex_home" PMCTL_BIN_DIR="$tmp_root/$name-bin" \
+    bash "$REPO_ROOT/uninstall.sh" --host claude --host codex >"$uninstall_out" 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 || -e "$claude_home/.pm" ]] \
+      || grep -Fq 'hosts/codex/hooks/command-guard.sh' "$codex_home/hooks.json"; then
+    fail "$name" "explicit Claude+Codex uninstall did not remove both selected host artifacts"
+    return
+  fi
+  pass "$name"
+}
+
+test_host_and_legacy_selector_conflict_fails_before_mutation() {
+  local name="host-and-legacy-selector-conflict-fails-before-mutation"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name-home" claude_home="$tmp_root/$name-claude"
+  local codex_home="$tmp_root/$name-codex" out="$tmp_root/$name.out" rc=0
+  HOME="$home" CLAUDE_HOME="$claude_home" CODEX_HOME="$codex_home" PMCTL_BIN_DIR="$tmp_root/$name-bin" \
+    bash "$REPO_ROOT/install.sh" --host codex --enable-host claude >"$out" 2>&1 || rc=$?
+  if [[ "$rc" -ne 2 ]] || ! grep -Fq -- '--host cannot be combined' "$out" \
+      || [[ -e "$claude_home" || -e "$codex_home" ]]; then
+    fail "$name" "mixed explicit and legacy selectors did not fail before mutation"
+    return
+  fi
+  pass "$name"
+}
+
+test_host_selected_dry_run_reports_no_mutation() {
+  local name="host-selected-dry-run-reports-no-mutation"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name-home" codex_home="$tmp_root/$name-codex" out="$tmp_root/$name.out" rc=0
+  HOME="$home" CODEX_HOME="$codex_home" bash "$REPO_ROOT/uninstall.sh" --host=codex --dry-run >"$out" 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 ]] || ! grep -Fq 'no changes made' "$out" \
+      || [[ -e "$home/.claude" || -e "$codex_home" ]]; then
+    fail "$name" "non-Claude dry-run did not report or preserve no-mutation state"
+    return
+  fi
+  pass "$name"
+}
+
+test_uninstall_missing_host_write_library_preserves_manifest_teardown() {
+  local name="uninstall-missing-host-write-library-preserves-manifest-teardown"
+  should_run "$name" || return 0
+  local mock_repo="$tmp_root/$name-repo" home="$tmp_root/$name-home"
+  local claude_home="$home/.claude"
+  local source="$mock_repo/pm"
+  local destination="$claude_home/.pm"
+  local out="$tmp_root/$name.out" rc=0
+  mkdir -p "$mock_repo/runtime/lib" "$mock_repo/hosts/claude/lib" "$source" "$claude_home/.pm-dispatch"
+  cp "$REPO_ROOT/uninstall.sh" "$mock_repo/uninstall.sh"
+  cp "$REPO_ROOT/runtime/lib/portable.sh" "$mock_repo/runtime/lib/portable.sh"
+  cp "$REPO_ROOT/hosts/claude/lib/path-resolver.sh" "$mock_repo/hosts/claude/lib/path-resolver.sh"
+  ln -s "$source" "$destination"
+  printf '{"manifest_version":1,"entries":[{"src":"%s","dst":"%s","mode":"symlink","sha256":""}]}\n' \
+    "$source" "$destination" > "$claude_home/.pm-dispatch/install-manifest.json"
+
+  HOME="$home" PMCTL_BIN_DIR="$tmp_root/$name-bin" bash "$mock_repo/uninstall.sh" >"$out" 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 || -e "$destination" ]] \
+      || grep -Fq 'command not found' "$out"; then
+    fail "$name" "missing host-write library did not preserve default manifest teardown"
+    return
+  fi
+  pass "$name"
+}
+
+test_receipt_partial_host_uninstall_preserves_remaining_owner() {
+  local name="receipt-partial-host-uninstall-preserves-remaining-owner"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name-home" claude_home="$tmp_root/$name-claude"
+  local codex_home="$tmp_root/$name-codex" receipt="$home/.pm-dispatch/install-manifest.json"
+  local out="$tmp_root/$name.out" rc=0
+
+  HOME="$home" CLAUDE_HOME="$claude_home" CODEX_HOME="$codex_home" PMCTL_BIN_DIR="$tmp_root/$name-bin" \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    bash "$REPO_ROOT/install.sh" --host claude --host codex >"$out" 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 || ! -f "$receipt" ]]; then
+    fail "$name" "combined install did not create product receipt"
+    return
+  fi
+
+  rc=0
+  HOME="$home" CLAUDE_HOME="$claude_home" CODEX_HOME="$codex_home" PMCTL_BIN_DIR="$tmp_root/$name-bin" \
+    bash "$REPO_ROOT/uninstall.sh" --host codex >>"$out" 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 || ! -e "$claude_home/.pm" ]] \
+      || grep -Fq 'hosts/codex/hooks/command-guard.sh' "$codex_home/hooks.json" \
+      || ! jq -e '.selected_hosts == ["claude"]' "$receipt" >/dev/null; then
+    fail "$name" "partial uninstall did not retain only Claude ownership"
+    return
+  fi
+
+  rc=0
+  HOME="$home" CLAUDE_HOME="$claude_home" CODEX_HOME="$codex_home" PMCTL_BIN_DIR="$tmp_root/$name-bin" \
+    bash "$REPO_ROOT/uninstall.sh" >>"$out" 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 || -e "$claude_home/.pm" || -e "$receipt" ]]; then
+    fail "$name" "implicit uninstall did not finish remaining receipt ownership"
+    return
+  fi
+  pass "$name"
+}
+
+test_legacy_claude_manifest_migrates_to_product_receipt() {
+  local name="legacy-claude-manifest-migrates-to-product-receipt"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name-home"
+  local claude_home="$home/.claude"
+  local legacy="$claude_home/.pm-dispatch/install-manifest.json"
+  local receipt="$home/.pm-dispatch/install-manifest.json"
+  local out="$tmp_root/$name.out" rc=0
+  mkdir -p "${legacy%/*}"
+  printf '{"manifest_version":1,"entries":[]}\n' > "$legacy"
+
+  HOME="$home" PMCTL_BIN_DIR="$tmp_root/$name-bin" CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    bash "$REPO_ROOT/install.sh" --host claude >"$out" 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 || ! -f "$receipt" || ! -f "$legacy" ]] \
+      || ! jq -e '.selected_hosts == ["claude"]' "$receipt" >/dev/null; then
+    fail "$name" "legacy Claude receipt was not migrated into the product receipt"
+    return
+  fi
+  pass "$name"
+}
+
+test_product_receipt_root_override_isolated() {
+  local name="product-receipt-root-override-isolated"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name-home" root="$tmp_root/$name-receipt-root"
+  local codex_home="$tmp_root/$name-codex" receipt="$root/install-manifest.json" out="$tmp_root/$name.out" rc=0
+  HOME="$home" CODEX_HOME="$codex_home" PM_DISPATCH_INSTALL_ROOT="$root" PMCTL_BIN_DIR="$tmp_root/$name-bin" \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 bash "$REPO_ROOT/install.sh" --host codex >"$out" 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 || ! -f "$receipt" || -e "$home/.pm-dispatch/install-manifest.json" ]] \
+      || ! jq -e '.selected_hosts == ["codex"]' "$receipt" >/dev/null; then
+    fail "$name" "product receipt override was not isolated from HOME"
+    return
+  fi
+  HOME="$home" CODEX_HOME="$codex_home" PM_DISPATCH_INSTALL_ROOT="$root" PMCTL_BIN_DIR="$tmp_root/$name-bin" \
+    bash "$REPO_ROOT/uninstall.sh" >"$out" 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 || -e "$receipt" ]]; then
+    fail "$name" "implicit uninstall did not honor the product receipt override"
+    return
+  fi
+  pass "$name"
+}
+
 test_install_share_asset_installed
 test_install_share_asset_conflict
 test_install_share_asset_uninstall
@@ -3551,5 +3804,15 @@ test_install_hooks_msys_native_jq_boundary
 test_install_refreshes_relocated_helper_symlinks
 test_uninstall_prunes_empty_adapters_dir
 test_install_missing_host_write_library_fails_loudly
+test_host_selected_codex_lifecycle_skips_claude_tree
+test_host_selected_opencode_lifecycle_skips_claude_tree
+test_host_equals_form_codex_lifecycle_skips_claude_tree
+test_host_selected_claude_and_codex_lifecycle
+test_host_and_legacy_selector_conflict_fails_before_mutation
+test_host_selected_dry_run_reports_no_mutation
+test_uninstall_missing_host_write_library_preserves_manifest_teardown
+test_receipt_partial_host_uninstall_preserves_remaining_owner
+test_legacy_claude_manifest_migrates_to_product_receipt
+test_product_receipt_root_override_isolated
 
 th_summary

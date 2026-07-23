@@ -18,9 +18,11 @@
 # --verify runs all preflight test suites before installing.
 #   Skipped by default; recommended when contributing or after updating.
 #
-# --enable-host <name> opts into the independently dispatched write module
-# declared by hosts/<name>/host.yaml. --enable-codex-command-guard remains a
-# backward-compatible alias for --enable-host codex.
+# --host <name> selects the host modules to install. It may be repeated. With
+# no --host flag, Claude remains the compatibility default. --enable-host
+# augments that default/explicit selection for backwards compatibility.
+# --enable-codex-command-guard remains a backward-compatible alias for
+# --enable-host codex.
 #
 # --enable-codex-command-guard opts into the manifest-declared Codex hook.
 #   into $CODEX_HOME/hooks.json (see hosts/codex/host.yaml). OFF BY DEFAULT and NOT
@@ -42,6 +44,8 @@ DRY_RUN=0
 VERIFY=0
 PROFILE=""
 ENABLED_HOSTS=()
+SELECTED_HOSTS=(claude)
+HOST_SELECTION_EXPLICIT=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run) DRY_RUN=1; shift ;;
@@ -55,6 +59,22 @@ while [[ $# -gt 0 ]]; do
       _enable_host="${1#--enable-host=}"
       [[ "$_enable_host" =~ ^[a-z0-9_-]+$ ]] || { echo "install: invalid host name: $_enable_host" >&2; exit 2; }
       ENABLED_HOSTS+=("$_enable_host"); shift ;;
+    --host)
+      [[ $# -ge 2 ]] || { echo "install: --host requires a value" >&2; exit 2; }
+      [[ "$2" =~ ^[a-z0-9_-]+$ ]] || { echo "install: invalid host name: $2" >&2; exit 2; }
+      if [[ "$HOST_SELECTION_EXPLICIT" -eq 0 ]]; then
+        SELECTED_HOSTS=()
+        HOST_SELECTION_EXPLICIT=1
+      fi
+      SELECTED_HOSTS+=("$2"); shift 2 ;;
+    --host=*)
+      _selected_host="${1#--host=}"
+      [[ "$_selected_host" =~ ^[a-z0-9_-]+$ ]] || { echo "install: invalid host name: $_selected_host" >&2; exit 2; }
+      if [[ "$HOST_SELECTION_EXPLICIT" -eq 0 ]]; then
+        SELECTED_HOSTS=()
+        HOST_SELECTION_EXPLICIT=1
+      fi
+      SELECTED_HOSTS+=("$_selected_host"); shift ;;
     --profile)
       [[ $# -ge 2 ]] || { echo "install: --profile requires a value" >&2; exit 2; }
       PROFILE="$2"
@@ -64,6 +84,11 @@ while [[ $# -gt 0 ]]; do
     *) echo "install: unknown flag $1" >&2; exit 2 ;;
   esac
 done
+
+if [[ "$HOST_SELECTION_EXPLICIT" -eq 1 && "${#ENABLED_HOSTS[@]}" -gt 0 ]]; then
+  echo "install: --host cannot be combined with --enable-host or --enable-codex-command-guard" >&2
+  exit 2
+fi
 
 case "$PROFILE" in
   ""|minimal|full) ;;
@@ -81,20 +106,18 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
-# Host-owned resolver is the single source for canonical/default/legacy rules.
-# shellcheck source=hosts/claude/lib/path-resolver.sh
-. "$REPO_ROOT/hosts/claude/lib/path-resolver.sh"
-_claude_root="$(claude_host_config_root 2>&1)" || {
-  printf 'install: %s\n' "$_claude_root" >&2
-  exit 2
-}
-CLAUDE_CONFIG_DIR="$_claude_root"
-CLAUDE_HOME="$CLAUDE_CONFIG_DIR"
-unset _claude_root
 _COPY_FALLBACK_COUNT=0
 
 # shellcheck disable=SC1091
 . "$REPO_ROOT/runtime/lib/portable.sh"
+if [[ ! -f "$REPO_ROOT/runtime/lib/install-receipt.sh" ]]; then
+  # Keep the established fail-loud contract for incomplete checkout layouts:
+  # receipt ownership is part of the host lifecycle, never an optional source.
+  echo "install: host write libraries unavailable in this install layout" >&2
+  exit 2
+fi
+# shellcheck disable=SC1091
+. "$REPO_ROOT/runtime/lib/install-receipt.sh"
 # shellcheck disable=SC1091
 . "$REPO_ROOT/runtime/lib/allowlist.sh"
 _HOST_WRITE_AVAILABLE=0
@@ -109,17 +132,53 @@ else
   exit 2
 fi
 
-# Validate every requested optional host before the base installer mutates any
-# destination. A stage-2 manifest with no write module must fail cleanly, not
-# after the Claude install path has already run.
-if [[ "$_HOST_WRITE_AVAILABLE" -eq 1 ]]; then
-  _preflight_hosts=" "
-  for _host in "${ENABLED_HOSTS[@]}"; do
-    [[ "$_preflight_hosts" == *" $_host "* ]] && continue
-    _preflight_hosts+="$_host "
-    _host_write_module "$REPO_ROOT" "$_host" install_module >/dev/null
-  done
-  unset _host _preflight_hosts
+RECEIPT_PATH="$(pm_dispatch_receipt_path)" || { echo "install: cannot resolve product receipt path" >&2; exit 2; }
+LEGACY_RECEIPT_PATH="$(pm_dispatch_legacy_receipt_path)" || LEGACY_RECEIPT_PATH=""
+PM_DISPATCH_MANIFEST_PATH="$RECEIPT_PATH"
+export PM_DISPATCH_MANIFEST_PATH
+
+# --enable-host predates --host and augments only the compatibility-default
+# path. Explicit selection rejects mixing it with the legacy opt-in flags, so
+# an explicit non-Claude lifecycle cannot silently reactivate Claude.
+# Normalize through the shared host lifecycle helper before any module executes.
+for _host in "${ENABLED_HOSTS[@]}"; do
+  SELECTED_HOSTS+=("$_host")
+done
+mapfile -t SELECTED_HOSTS < <(host_selection_unique "${SELECTED_HOSTS[@]}")
+unset _host
+
+# Validate every selected host before any host configuration mutates. A manifest
+# without an install module must fail before another selected host is changed.
+for _host in "${SELECTED_HOSTS[@]}"; do
+  _host_write_module "$REPO_ROOT" "$_host" install_module >/dev/null
+done
+unset _host
+
+# Claude's root resolver is intentionally lazy. A Codex/OpenCode-only install
+# must neither require a valid Claude configuration nor create a .claude tree.
+_INSTALL_CLAUDE=0
+for _host in "${SELECTED_HOSTS[@]}"; do
+  [[ "$_host" == "claude" ]] && _INSTALL_CLAUDE=1
+done
+unset _host
+if [[ "$_INSTALL_CLAUDE" -eq 1 ]]; then
+  # Link/copy refresh uses the prior receipt for ownership evidence.  Import an
+  # old Claude-local receipt only when this lifecycle actually selects Claude;
+  # a Codex/OpenCode-only install must never inspect or copy Claude state.
+  if [[ ! -f "$RECEIPT_PATH" && -n "$LEGACY_RECEIPT_PATH" && -f "$LEGACY_RECEIPT_PATH" && "$DRY_RUN" -eq 0 ]]; then
+    mkdir -p "${RECEIPT_PATH%/*}"
+    cp "$LEGACY_RECEIPT_PATH" "$RECEIPT_PATH"
+    echo "  migrated install receipt: $LEGACY_RECEIPT_PATH -> $RECEIPT_PATH"
+  fi
+  # shellcheck source=hosts/claude/lib/path-resolver.sh
+  . "$REPO_ROOT/hosts/claude/lib/path-resolver.sh"
+  _claude_root="$(claude_host_config_root 2>&1)" || {
+    printf 'install: %s\n' "$_claude_root" >&2
+    exit 2
+  }
+  CLAUDE_CONFIG_DIR="$_claude_root"
+  CLAUDE_HOME="$CLAUDE_CONFIG_DIR"
+  unset _claude_root
 fi
 
 _INSTALL_PLATFORM="$(detect_platform)"
@@ -449,7 +508,11 @@ install_pmctl_cli() {
 
 echo "pm-dispatch installer"
 echo "  repo:        $REPO_ROOT"
-echo "  claude home: $CLAUDE_HOME"
+if [[ "$_INSTALL_CLAUDE" -eq 1 ]]; then
+  echo "  claude home: $CLAUDE_HOME"
+else
+  echo "  hosts:       ${SELECTED_HOSTS[*]}"
+fi
 if [[ "$DRY_RUN" -eq 1 ]]; then echo "  mode:        DRY RUN"; fi
 echo
 
@@ -475,15 +538,23 @@ if [[ "$VERIFY" -eq 1 ]] && [[ "$_SKIP_PREFLIGHT" != "1" ]]; then
   echo
 fi
 
-# Validate every explicitly selected host before the legacy Claude/base install
-# mutates anything. Host installers define --dry-run as a read-only ownership
-# and conflict check, so a user-owned policy (for example OpenCode's
-# permission.bash) fails the whole multi-host operation at the transaction
-# boundary instead of leaving a surprising partial base install behind.
-if [[ "$DRY_RUN" -eq 0 && "${#ENABLED_HOSTS[@]}" -gt 0 ]]; then
-  echo "==> optional host preflight"
+# Validate every selected host before the Claude product install mutates
+# anything. Host installers define --dry-run as a read-only ownership and
+# conflict check, so a user-owned policy fails the whole multi-host operation
+# at the transaction boundary instead of leaving a partial install behind.
+_HAS_NON_CLAUDE_SELECTION=0
+for _host in "${SELECTED_HOSTS[@]}"; do
+  [[ "$_host" != "claude" ]] && _HAS_NON_CLAUDE_SELECTION=1
+done
+unset _host
+if [[ "$DRY_RUN" -eq 0 && "$_HAS_NON_CLAUDE_SELECTION" -eq 1 ]]; then
+  echo "==> selected host preflight"
   _preflighted_hosts=" "
-  for _host in "${ENABLED_HOSTS[@]}"; do
+  for _host in "${SELECTED_HOSTS[@]}"; do
+    # The Claude compatibility installer creates its minimal settings file
+    # later in this transaction; asking its hook module to dry-run first would
+    # reject a clean Claude home before that documented bootstrap step.
+    [[ "$_host" == "claude" ]] && continue
     [[ "$_preflighted_hosts" == *" $_host "* ]] && continue
     _preflighted_hosts+="$_host "
     host_write_install "$REPO_ROOT" "$_host" 1 >/dev/null
@@ -491,6 +562,26 @@ if [[ "$DRY_RUN" -eq 0 && "${#ENABLED_HOSTS[@]}" -gt 0 ]]; then
   done
   unset _host _preflighted_hosts
   echo
+fi
+unset _HAS_NON_CLAUDE_SELECTION
+
+# A selected non-Claude host owns only its manifest-declared configuration.
+# Do not run the historical Claude product installer as a hidden base step:
+# that would create ~/.claude in a Codex/OpenCode-only environment.
+if [[ "$_INSTALL_CLAUDE" -eq 0 ]]; then
+  echo "==> selected host modules"
+  for _host in "${SELECTED_HOSTS[@]}"; do
+    echo "  $_host"
+    host_write_install "$REPO_ROOT" "$_host" "$DRY_RUN"
+  done
+  unset _host
+  if ! manifest_flush "$RECEIPT_PATH" "$REPO_ROOT" "$(IFS=,; echo "${SELECTED_HOSTS[*]}")"; then
+    echo "install: product receipt write failed" >&2
+    exit 3
+  fi
+  echo "Done."
+  [[ "$DRY_RUN" -eq 1 ]] && echo "(no changes made — re-run without --dry-run to apply)"
+  exit 0
 fi
 
 install_pmctl_cli
@@ -645,11 +736,11 @@ echo "==> dispatch permissions.allow"
 install_dispatch_allowlist
 echo
 
-# Optional host wiring is selected explicitly and dispatched through manifest
-# module paths. It is never auto-detected from a binary on PATH because these
-# policies affect every session using the host's global config.
+# Selected host wiring is dispatched through manifest module paths. It is
+# never auto-detected from a binary on PATH because these policies affect every
+# session using the host's global config.
 _installed_hosts=" claude "
-for _host in "${ENABLED_HOSTS[@]}"; do
+for _host in "${SELECTED_HOSTS[@]}"; do
   [[ "$_installed_hosts" == *" $_host "* ]] && continue
   _installed_hosts+="$_host "
   echo "==> $_host host"
@@ -669,9 +760,16 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
   echo "(no changes made — re-run without --dry-run to apply)"
 fi
 
-if ! manifest_flush "$CLAUDE_HOME/.pm-dispatch/install-manifest.json" "$REPO_ROOT"; then
-  echo "install: manifest write failed" >&2
+if ! manifest_flush "$RECEIPT_PATH" "$REPO_ROOT" "$(IFS=,; echo "${SELECTED_HOSTS[*]}")"; then
+  echo "install: product receipt write failed" >&2
   exit 3
+fi
+# Keep the old location as a bounded read-only compatibility mirror for
+# installed helper versions that still look there.  New uninstall/doctor paths
+# always prefer the product receipt above.
+if [[ "$DRY_RUN" -eq 0 && -n "$LEGACY_RECEIPT_PATH" ]]; then
+  mkdir -p "${LEGACY_RECEIPT_PATH%/*}"
+  cp "$RECEIPT_PATH" "$LEGACY_RECEIPT_PATH"
 fi
 if [[ "$DRY_RUN" -eq 1 ]]; then
   echo "dispatch allowlist dry-run complete"

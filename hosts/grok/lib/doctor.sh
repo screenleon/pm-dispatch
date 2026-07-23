@@ -71,6 +71,11 @@ _doctor_host_grok_unguarded() {
 }
 
 doctor_host_grok_run() {
+  doctor_check_executor_auth grok grok \
+    "grok not found — dispatch to the grok adapter (pmctl dispatch run --adapter grok) is unavailable" \
+    "Install Grok Build CLI if you dispatch tasks to grok (optional)" \
+    "grok present but not authenticated — dispatch would fail (no end event)" \
+    "Run 'grok' once to log in, or export XAI_API_KEY / GROK_API_KEY"
   _doctor_host_grok_binary
   _doctor_host_grok_config
   _doctor_host_grok_pm_command

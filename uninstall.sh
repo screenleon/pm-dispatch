@@ -4,7 +4,7 @@
 # Idempotent: safe to re-run.
 #
 # Usage:
-#   ./uninstall.sh [--dry-run]
+#   ./uninstall.sh [--dry-run] [--host <name>]
 
 set -euo pipefail
 
@@ -15,6 +15,7 @@ uninstall.sh — remove pm-dispatch symlinks/junctions/copies and hooks from ~/.
 Usage:
   ./uninstall.sh            apply (idempotent; manifest-driven, safe to re-run)
   ./uninstall.sh --dry-run  preview what would be removed, change nothing
+  ./uninstall.sh --host NAME  remove only one or more explicitly selected hosts
   ./uninstall.sh --help     show this help
 
 Honors canonical $CLAUDE_CONFIG_DIR (or legacy $CLAUDE_HOME) to target a
@@ -24,28 +25,44 @@ EOF
 }
 
 DRY_RUN=0
+SELECTED_HOSTS=(claude)
+HOST_SELECTION_EXPLICIT=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run) DRY_RUN=1; shift ;;
+    --host)
+      [[ $# -ge 2 ]] || { echo "uninstall: --host requires a value" >&2; exit 2; }
+      [[ "$2" =~ ^[a-z0-9_-]+$ ]] || { echo "uninstall: invalid host name: $2" >&2; exit 2; }
+      if [[ "$HOST_SELECTION_EXPLICIT" -eq 0 ]]; then SELECTED_HOSTS=(); HOST_SELECTION_EXPLICIT=1; fi
+      SELECTED_HOSTS+=("$2"); shift 2 ;;
+    --host=*)
+      _selected_host="${1#--host=}"
+      [[ "$_selected_host" =~ ^[a-z0-9_-]+$ ]] || { echo "uninstall: invalid host name: $_selected_host" >&2; exit 2; }
+      if [[ "$HOST_SELECTION_EXPLICIT" -eq 0 ]]; then SELECTED_HOSTS=(); HOST_SELECTION_EXPLICIT=1; fi
+      SELECTED_HOSTS+=("$_selected_host"); shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "uninstall: unknown flag $1" >&2; usage >&2; exit 2 ;;
   esac
 done
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
-# Mirror install.sh through the same host-owned resolver.
-# shellcheck source=hosts/claude/lib/path-resolver.sh
-. "$REPO_ROOT/hosts/claude/lib/path-resolver.sh"
-_claude_root="$(claude_host_config_root 2>&1)" || {
-  printf 'uninstall: %s\n' "$_claude_root" >&2
-  exit 2
-}
-CLAUDE_CONFIG_DIR="$_claude_root"
-CLAUDE_HOME="$CLAUDE_CONFIG_DIR"
-unset _claude_root
 
 # shellcheck disable=SC1091
 . "$REPO_ROOT/runtime/lib/portable.sh"
+_INSTALL_RECEIPT_AVAILABLE=0
+if [[ -f "$REPO_ROOT/runtime/lib/install-receipt.sh" ]]; then
+  # shellcheck disable=SC1091
+  . "$REPO_ROOT/runtime/lib/install-receipt.sh"
+  RECEIPT_PATH="$(pm_dispatch_receipt_path)" || { echo "uninstall: cannot resolve product receipt path" >&2; exit 2; }
+  RECEIPT_SOURCE="$(pm_dispatch_receipt_existing_path 2>/dev/null || true)"
+  LEGACY_RECEIPT_PATH="$(pm_dispatch_legacy_receipt_path 2>/dev/null || true)"
+  _INSTALL_RECEIPT_AVAILABLE=1
+else
+  # A lone legacy uninstall script must still recover its Claude-local receipt.
+  RECEIPT_PATH=""
+  LEGACY_RECEIPT_PATH="${CLAUDE_CONFIG_DIR:-${CLAUDE_HOME:-${HOME:-}/.claude}}/.pm-dispatch/install-manifest.json"
+  RECEIPT_SOURCE="$LEGACY_RECEIPT_PATH"
+fi
 _HOST_WRITE_AVAILABLE=0
 if [[ -f "$REPO_ROOT/runtime/lib/host-manifest.sh" && -f "$REPO_ROOT/runtime/lib/host-write.sh" ]]; then
   # shellcheck disable=SC1091
@@ -57,9 +74,84 @@ else
   echo "uninstall: warning: host write libraries unavailable; Claude and optional-host hooks will not be removed" >&2
 fi
 
+_UNINSTALL_CLAUDE=0
+if [[ "$_HOST_WRITE_AVAILABLE" -eq 1 ]]; then
+  # A v2 product receipt is the durable source of ownership for a no-selector
+  # uninstall.  Legacy receipts intentionally retain the historical Claude
+  # default because they have no selected_hosts field.
+  if [[ "$_INSTALL_RECEIPT_AVAILABLE" -eq 1 && "$HOST_SELECTION_EXPLICIT" -eq 0 && -n "$RECEIPT_SOURCE" ]]; then
+    mapfile -t _receipt_hosts < <(pm_dispatch_receipt_selected_hosts "$RECEIPT_SOURCE")
+    if [[ "${#_receipt_hosts[@]}" -gt 0 ]]; then
+      SELECTED_HOSTS=("${_receipt_hosts[@]}")
+    fi
+    unset _receipt_hosts
+  fi
+  mapfile -t SELECTED_HOSTS < <(host_selection_unique "${SELECTED_HOSTS[@]}")
+  for _host in "${SELECTED_HOSTS[@]}"; do
+    _host_write_module "$REPO_ROOT" "$_host" uninstall_module >/dev/null
+    [[ "$_host" == "claude" ]] && _UNINSTALL_CLAUDE=1
+  done
+  unset _host
+else
+  # The legacy manifest teardown does not depend on host modules. Preserve it
+  # for a default Claude uninstall; explicit host selection cannot be resolved
+  # safely without the manifest dispatcher and therefore fails loudly.
+  if [[ "$HOST_SELECTION_EXPLICIT" -eq 1 ]]; then
+    echo "uninstall: host write libraries unavailable; cannot resolve --host selection" >&2
+    exit 2
+  fi
+  _UNINSTALL_CLAUDE=1
+fi
+
+finalize_product_receipt() {
+  local remaining
+  [[ "$_INSTALL_RECEIPT_AVAILABLE" -eq 1 ]] || return 0
+  [[ "$DRY_RUN" -eq 0 && -f "$RECEIPT_PATH" ]] || return 0
+  remaining="$(pm_dispatch_receipt_remove_hosts "$RECEIPT_PATH" "${SELECTED_HOSTS[@]}")" || {
+    echo "uninstall: could not update product receipt; preserving it for a safe retry" >&2
+    return 1
+  }
+  if [[ "$remaining" -eq 0 ]]; then
+    rm -f "$RECEIPT_PATH"
+    rmdir "${RECEIPT_PATH%/*}" 2>/dev/null || true
+    if [[ -n "$LEGACY_RECEIPT_PATH" && -f "$LEGACY_RECEIPT_PATH" ]]; then
+      rm -f "$LEGACY_RECEIPT_PATH"
+      rmdir "${LEGACY_RECEIPT_PATH%/*}" 2>/dev/null || true
+    fi
+  fi
+}
+
+if [[ "$_UNINSTALL_CLAUDE" -eq 0 ]]; then
+  echo "pm-dispatch uninstaller"
+  echo "  repo:  $REPO_ROOT"
+  echo "  hosts: ${SELECTED_HOSTS[*]}"
+  [[ "$DRY_RUN" -eq 1 ]] && echo "  mode:  DRY RUN"
+  echo
+  for _host in "${SELECTED_HOSTS[@]}"; do
+    host_write_uninstall "$REPO_ROOT" "$_host" "$DRY_RUN"
+  done
+  unset _host
+  finalize_product_receipt || exit 3
+  echo "Done."
+  [[ "$DRY_RUN" -eq 1 ]] && echo "(no changes made — re-run without --dry-run to apply)"
+  exit 0
+fi
+
+# Mirror install.sh through the same host-owned resolver, but only when the
+# selected lifecycle includes Claude.
+# shellcheck source=hosts/claude/lib/path-resolver.sh
+. "$REPO_ROOT/hosts/claude/lib/path-resolver.sh"
+_claude_root="$(claude_host_config_root 2>&1)" || {
+  printf 'uninstall: %s\n' "$_claude_root" >&2
+  exit 2
+}
+CLAUDE_CONFIG_DIR="$_claude_root"
+CLAUDE_HOME="$CLAUDE_CONFIG_DIR"
+unset _claude_root
+
 _UNINSTALL_PLATFORM="$(detect_platform)"
 
-MANIFEST="$CLAUDE_HOME/.pm-dispatch/install-manifest.json"
+MANIFEST="${RECEIPT_SOURCE:-$RECEIPT_PATH}"
 
 removed=0
 skipped=0
@@ -376,18 +468,26 @@ if [[ "$parsed_any" -eq 0 ]] && grep -q '"mode"' "$MANIFEST" 2>/dev/null; then
   safety_skipped=$((safety_skipped + 1))
 fi
 
-# Symmetric teardown for every independently dispatched host write module.
-# Modules must be idempotent because uninstall cannot assume the matching
-# opt-in flag was used, nor that the host binary remains on PATH.
+# Explicit selection tears down only the named host modules. The no-selector
+# compatibility path retains the historic all-module cleanup for existing
+# mixed installs created before host selection was available.
 if [[ "$_HOST_WRITE_AVAILABLE" -eq 1 ]]; then
   echo
   echo "==> hooks"
-  host_write_uninstall_all "$REPO_ROOT" "$DRY_RUN"
+  if [[ "$HOST_SELECTION_EXPLICIT" -eq 1 ]]; then
+    for _host in "${SELECTED_HOSTS[@]}"; do
+      host_write_uninstall "$REPO_ROOT" "$_host" "$DRY_RUN"
+    done
+    unset _host
+  else
+    host_write_uninstall_all "$REPO_ROOT" "$DRY_RUN"
+  fi
 fi
 
 if [[ "$DRY_RUN" -ne 1 ]]; then
   if [[ "$safety_skipped" -eq 0 ]]; then
     rm -rf "$CLAUDE_HOME/.pm-dispatch"
+    finalize_product_receipt || exit 3
   else
     echo "  note: $safety_skipped item(s) require manual attention — manifest preserved for re-run"
     echo "  resolve conflicts manually, then re-run uninstall.sh"
