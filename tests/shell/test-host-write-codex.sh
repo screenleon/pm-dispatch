@@ -260,11 +260,39 @@ test_install_guards_codex_wires_hook() {
       "$codex_home/hooks.json" >/dev/null 2>&1 \
     && jq -e '.hooks.Stop[] | .hooks[] | select(.command | endswith("guard-session-summary.sh --host codex"))' \
       "$codex_home/hooks.json" >/dev/null 2>&1 \
-    && grep -Fq 'pm-dispatch:codex-memory-contract:start' "$codex_home/AGENTS.md"; then
+    && grep -Fq 'pm-dispatch:codex-memory-contract:start' "$codex_home/AGENTS.md" \
+    && grep -Fq 'pm-dispatch detached execution continuation' "$codex_home/AGENTS.md" \
+    && grep -Fq "$REPO_ROOT/hosts/codex/bin/wait-dispatch.sh" "$codex_home/AGENTS.md" \
+    && grep -Fq "$REPO_ROOT/hosts/codex/bin/continue-dispatch.sh" "$codex_home/AGENTS.md" \
+    && grep -Fq '**Default for Codex CLI:**' "$codex_home/AGENTS.md"; then
     pass "$name"
   else
     fail "$name" "expected command, prompt, Stop, and AGENTS memory wiring"
   fi
+}
+
+# Behavior: an old managed AGENTS block is upgraded in place, while uninstall
+# still restores the user's foreign content exactly.
+# Steps: seed the former memory-only block, reinstall, assert continuation
+# guidance is added once, then uninstall and compare the preserved user text.
+test_codex_agents_legacy_memory_block_upgrades_and_rolls_back() {
+  local name="codex-agents-legacy-memory-block-upgrades-and-rolls-back"
+  should_run "$name" || return 0
+  local codex_home="$tmp_root/agents-upgrade/.codex"
+  local foreign=$'# Personal guidance\n\n- Preserve this rule.'
+  mkdir -p "$codex_home"
+  printf '%s\n\n%s\nlegacy memory rule\n%s\n' \
+    "$foreign" '<!-- pm-dispatch:codex-memory-contract:start -->' \
+    '<!-- pm-dispatch:codex-memory-contract:end -->' > "$codex_home/AGENTS.md"
+  CODEX_HOME="$codex_home" bash "$REPO_ROOT/scripts/install-guards-codex.sh" >/dev/null 2>&1
+  if ! grep -Fq 'pm-dispatch detached execution continuation' "$codex_home/AGENTS.md" \
+      || [[ "$(grep -Fc 'pm-dispatch:codex-memory-contract:start' "$codex_home/AGENTS.md")" != "1" ]]; then
+    fail "$name" "legacy managed block was not upgraded exactly once"
+    return
+  fi
+  CODEX_HOME="$codex_home" bash "$REPO_ROOT/scripts/uninstall-guards-codex.sh" >/dev/null 2>&1
+  [[ "$(cat "$codex_home/AGENTS.md")" == "$foreign" ]] \
+    && pass "$name" || fail "$name" "uninstall did not roll back upgraded managed guidance"
 }
 
 test_install_guards_codex_idempotent() {
@@ -965,6 +993,7 @@ test_uninstall_guards_codex_removes_hook
 test_uninstall_guards_codex_removes_legacy_hook_path
 test_uninstall_guards_codex_preserves_unrelated_hook
 test_codex_agents_managed_block_preserves_foreign_content
+test_codex_agents_legacy_memory_block_upgrades_and_rolls_back
 test_codex_agents_malformed_markers_fail_closed
 test_uninstall_guards_codex_preserves_in_repo_user_hook
 test_uninstall_guards_codex_preserves_same_basename_other_checkout

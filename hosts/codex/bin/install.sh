@@ -254,7 +254,7 @@ if ! codex_memory_contract_strip "$tmp_instructions_current" "$tmp_instructions_
   echo "install-guards-codex: malformed managed markers in $instructions_file — refusing to modify" >&2
   exit 2
 fi
-codex_memory_contract_append "$tmp_instructions_new" "$memory_update_cmd_q"
+codex_memory_contract_append "$tmp_instructions_new" "$memory_update_cmd_q" "$REPO_ROOT"
 
 hooks_changed=0
 instructions_changed=0

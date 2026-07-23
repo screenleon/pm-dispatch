@@ -83,6 +83,7 @@ SUITE_NAMES=(
   test-core-schemas
   test-host-manifest
   test-host-write-codex
+  test-codex-dispatch-continuation
   test-host-write-opencode
   test-host-write-parity
   test-pm-prep-snapshot
@@ -203,6 +204,7 @@ suite_path() {
     test-reasoning-effort) printf 'tests/shell/test-reasoning-effort.sh\n' ;;
     test-host-manifest)   printf 'tests/shell/test-host-manifest.sh\n' ;;
     test-host-write-codex) printf 'tests/shell/test-host-write-codex.sh\n' ;;
+    test-codex-dispatch-continuation) printf 'tests/shell/test-codex-dispatch-continuation.sh\n' ;;
     test-host-write-opencode) printf 'tests/shell/test-host-write-opencode.sh\n' ;;
     test-host-write-parity) printf 'tests/shell/test-host-write-parity.sh\n' ;;
     test-core-schemas) printf 'tests/shell/test-core-schemas.sh\n' ;;

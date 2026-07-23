@@ -218,8 +218,8 @@ map_path() {
       add_suite test-pmctl-memory; behavioral=1 ;;
     hosts/claude/lib/prompt-context-timeouts.sh)
       add_suite test-guards; add_suite test-install; add_suite test-doctor; behavioral=1 ;;
-    scripts/install-guards-codex.sh|scripts/uninstall-guards-codex.sh|scripts/hook-codex-command-guard.sh|hosts/codex/bin/install.sh|hosts/codex/bin/uninstall.sh|hosts/codex/lib/doctor.sh|hosts/codex/hooks/command-guard.sh|hosts/codex/host.yaml)
-      add_suite test-host-write-codex; add_suite test-host-write-parity; add_suite test-doctor; behavioral=1 ;;
+    scripts/install-guards-codex.sh|scripts/uninstall-guards-codex.sh|scripts/hook-codex-command-guard.sh|hosts/codex/bin/install.sh|hosts/codex/bin/uninstall.sh|hosts/codex/bin/wait-dispatch.sh|hosts/codex/bin/continue-dispatch.sh|hosts/codex/lib/doctor.sh|hosts/codex/lib/memory-contract.sh|hosts/codex/hooks/command-guard.sh|hosts/codex/host.yaml)
+      add_suite test-host-write-codex; add_suite test-codex-dispatch-continuation; add_suite test-host-write-parity; add_suite test-doctor; behavioral=1 ;;
     scripts/install-host-opencode.sh|scripts/uninstall-host-opencode.sh|hosts/opencode/bin/install.sh|hosts/opencode/bin/uninstall.sh|hosts/opencode/lib/doctor.sh|hosts/opencode/host.yaml)
       add_suite test-host-write-opencode; add_suite test-host-write-parity; add_suite test-doctor; behavioral=1 ;;
     runtime/lib/host-write.sh)
@@ -277,7 +277,7 @@ map_path() {
     hosts/claude/*)
       add_suite test-host-manifest; add_suite test-host-write-parity; behavioral=1 ;;
     hosts/codex/*)
-      add_suite test-host-manifest; add_suite test-host-write-codex; add_suite test-host-write-parity; behavioral=1 ;;
+      add_suite test-host-manifest; add_suite test-host-write-codex; add_suite test-codex-dispatch-continuation; add_suite test-host-write-parity; behavioral=1 ;;
     hosts/opencode/*)
       add_suite test-host-manifest; add_suite test-host-write-opencode; add_suite test-host-write-parity; behavioral=1 ;;
     hosts/grok/*)
