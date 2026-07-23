@@ -85,6 +85,11 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if [[ "$HOST_SELECTION_EXPLICIT" -eq 1 && "${#ENABLED_HOSTS[@]}" -gt 0 ]]; then
+  echo "install: --host cannot be combined with --enable-host or --enable-codex-command-guard" >&2
+  exit 2
+fi
+
 case "$PROFILE" in
   ""|minimal|full) ;;
   *) echo "install: --profile must be minimal or full (got: $PROFILE)" >&2; exit 2 ;;
@@ -119,20 +124,15 @@ else
   exit 2
 fi
 
-# --enable-host predates --host and means "also wire this host". De-duplicate
-# before any module executes so a repeated selector remains idempotent.
+# --enable-host predates --host and augments only the compatibility-default
+# path. Explicit selection rejects mixing it with the legacy opt-in flags, so
+# an explicit non-Claude lifecycle cannot silently reactivate Claude.
+# Normalize through the shared host lifecycle helper before any module executes.
 for _host in "${ENABLED_HOSTS[@]}"; do
   SELECTED_HOSTS+=("$_host")
 done
-_selected_hosts=" "
-_unique_hosts=()
-for _host in "${SELECTED_HOSTS[@]}"; do
-  [[ "$_selected_hosts" == *" $_host "* ]] && continue
-  _selected_hosts+="$_host "
-  _unique_hosts+=("$_host")
-done
-SELECTED_HOSTS=("${_unique_hosts[@]}")
-unset _host _selected_hosts _unique_hosts
+mapfile -t SELECTED_HOSTS < <(host_selection_unique "${SELECTED_HOSTS[@]}")
+unset _host
 
 # Validate every selected host before any host configuration mutates. A manifest
 # without an install module must fail before another selected host is changed.

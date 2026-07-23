@@ -3,6 +3,18 @@
 # Core callers select a host; module paths and lifecycle symmetry come only
 # from hosts/<name>/host.yaml.
 
+# Normalize repeated CLI selectors without giving either lifecycle entrypoint
+# its own copy of the delimiter-sensitive de-duplication loop. Host names have
+# already passed the command-line validation at this layer's call sites.
+host_selection_unique() {
+  local seen=" " host
+  for host in "$@"; do
+    [[ "$seen" == *" $host "* ]] && continue
+    seen+="$host "
+    printf '%s\n' "$host"
+  done
+}
+
 _host_write_module() {
   local repo_root="$1" host="$2" key="$3"
   case "$repo_root" in

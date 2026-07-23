@@ -59,15 +59,7 @@ else
   echo "uninstall: warning: host write libraries unavailable; Claude and optional-host hooks will not be removed" >&2
 fi
 
-_selected_hosts=" "
-_unique_hosts=()
-for _host in "${SELECTED_HOSTS[@]}"; do
-  [[ "$_selected_hosts" == *" $_host "* ]] && continue
-  _selected_hosts+="$_host "
-  _unique_hosts+=("$_host")
-done
-SELECTED_HOSTS=("${_unique_hosts[@]}")
-unset _host _selected_hosts _unique_hosts
+mapfile -t SELECTED_HOSTS < <(host_selection_unique "${SELECTED_HOSTS[@]}")
 
 _UNINSTALL_CLAUDE=0
 for _host in "${SELECTED_HOSTS[@]}"; do
@@ -87,6 +79,7 @@ if [[ "$_UNINSTALL_CLAUDE" -eq 0 ]]; then
   done
   unset _host
   echo "Done."
+  [[ "$DRY_RUN" -eq 1 ]] && echo "(no changes made — re-run without --dry-run to apply)"
   exit 0
 fi
 

@@ -3610,6 +3610,86 @@ test_host_selected_opencode_lifecycle_skips_claude_tree() {
   pass "$name"
 }
 
+test_host_equals_form_codex_lifecycle_skips_claude_tree() {
+  local name="host-equals-form-codex-lifecycle-skips-claude-tree"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name-home" codex_home="$tmp_root/$name-codex"
+  local out="$tmp_root/$name.out" uninstall_out="$tmp_root/$name-uninstall.out" rc=0
+
+  HOME="$home" CODEX_HOME="$codex_home" PMCTL_BIN_DIR="$tmp_root/$name-bin" \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    bash "$REPO_ROOT/install.sh" --host=codex --host=codex >"$out" 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 || -e "$home/.claude" ]] \
+      || ! grep -Fq 'hosts/codex/hooks/command-guard.sh' "$codex_home/hooks.json" \
+      || [[ "$(grep -c '^  codex$' "$out")" -ne 1 ]]; then
+    fail "$name" "--host=codex install did not match isolated Codex lifecycle"
+    return
+  fi
+  rc=0
+  HOME="$home" CODEX_HOME="$codex_home" PMCTL_BIN_DIR="$tmp_root/$name-bin" \
+    bash "$REPO_ROOT/uninstall.sh" --host=codex >"$uninstall_out" 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 || -e "$home/.claude" ]] \
+      || grep -Fq 'hosts/codex/hooks/command-guard.sh' "$codex_home/hooks.json"; then
+    fail "$name" "--host=codex uninstall did not match isolated Codex lifecycle"
+    return
+  fi
+  pass "$name"
+}
+
+test_host_selected_claude_and_codex_lifecycle() {
+  local name="host-selected-claude-and-codex-lifecycle"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name-home" claude_home="$tmp_root/$name-claude"
+  local codex_home="$tmp_root/$name-codex" out="$tmp_root/$name.out"
+  local uninstall_out="$tmp_root/$name-uninstall.out" rc=0
+
+  HOME="$home" CLAUDE_HOME="$claude_home" CODEX_HOME="$codex_home" PMCTL_BIN_DIR="$tmp_root/$name-bin" \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    bash "$REPO_ROOT/install.sh" --host claude --host codex >"$out" 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 || ! -e "$claude_home/.pm" ]] \
+      || ! grep -Fq 'hosts/codex/hooks/command-guard.sh' "$codex_home/hooks.json"; then
+    fail "$name" "explicit Claude+Codex install did not wire both selected hosts"
+    return
+  fi
+  rc=0
+  HOME="$home" CLAUDE_HOME="$claude_home" CODEX_HOME="$codex_home" PMCTL_BIN_DIR="$tmp_root/$name-bin" \
+    bash "$REPO_ROOT/uninstall.sh" --host claude --host codex >"$uninstall_out" 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 || -e "$claude_home/.pm" ]] \
+      || grep -Fq 'hosts/codex/hooks/command-guard.sh' "$codex_home/hooks.json"; then
+    fail "$name" "explicit Claude+Codex uninstall did not remove both selected host artifacts"
+    return
+  fi
+  pass "$name"
+}
+
+test_host_and_legacy_selector_conflict_fails_before_mutation() {
+  local name="host-and-legacy-selector-conflict-fails-before-mutation"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name-home" claude_home="$tmp_root/$name-claude"
+  local codex_home="$tmp_root/$name-codex" out="$tmp_root/$name.out" rc=0
+  HOME="$home" CLAUDE_HOME="$claude_home" CODEX_HOME="$codex_home" PMCTL_BIN_DIR="$tmp_root/$name-bin" \
+    bash "$REPO_ROOT/install.sh" --host codex --enable-host claude >"$out" 2>&1 || rc=$?
+  if [[ "$rc" -ne 2 ]] || ! grep -Fq -- '--host cannot be combined' "$out" \
+      || [[ -e "$claude_home" || -e "$codex_home" ]]; then
+    fail "$name" "mixed explicit and legacy selectors did not fail before mutation"
+    return
+  fi
+  pass "$name"
+}
+
+test_host_selected_dry_run_reports_no_mutation() {
+  local name="host-selected-dry-run-reports-no-mutation"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name-home" codex_home="$tmp_root/$name-codex" out="$tmp_root/$name.out" rc=0
+  HOME="$home" CODEX_HOME="$codex_home" bash "$REPO_ROOT/uninstall.sh" --host=codex --dry-run >"$out" 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 ]] || ! grep -Fq 'no changes made' "$out" \
+      || [[ -e "$home/.claude" || -e "$codex_home" ]]; then
+    fail "$name" "non-Claude dry-run did not report or preserve no-mutation state"
+    return
+  fi
+  pass "$name"
+}
+
 test_install_share_asset_installed
 test_install_share_asset_conflict
 test_install_share_asset_uninstall
@@ -3624,5 +3704,9 @@ test_uninstall_prunes_empty_adapters_dir
 test_install_missing_host_write_library_fails_loudly
 test_host_selected_codex_lifecycle_skips_claude_tree
 test_host_selected_opencode_lifecycle_skips_claude_tree
+test_host_equals_form_codex_lifecycle_skips_claude_tree
+test_host_selected_claude_and_codex_lifecycle
+test_host_and_legacy_selector_conflict_fails_before_mutation
+test_host_selected_dry_run_reports_no_mutation
 
 th_summary

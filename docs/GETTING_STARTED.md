@@ -95,7 +95,8 @@ bash install.sh --host claude --host codex
 
 With no `--host`, the existing Claude installation remains the compatibility
 default. `--enable-host <name>` is retained as a compatibility form that adds
-the named host to that default. The host selection is independent of
+the named host to that default; do not combine it with explicit `--host`
+selection. The host selection is independent of
 `--profile`, which controls the executor axis. OpenCode installation adds a
 native `/pm` command and a catch-all Bash deny with an allow rule for this
 checkout's `pmctl`; it fails without changing the file when an existing
