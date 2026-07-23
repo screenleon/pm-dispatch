@@ -23,7 +23,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-499 | ✅ done | Detached run reconciliation：crash、reboot、stale sentinel、PID identity 與 orphan recovery | arch/ops | 2026-07-17 | pr:#429 | P2 | design |
 | CC-500 | ✅ done | State single-writer boundary enforcement：all-production-domain direct-writer ratchet | arch/test | 2026-07-17 | pr:#438 | P2 | design |
 | CC-503 | 🔵 active | shared tooling/hooks host-boundary 收斂：skill-refine canonical memory、prompt payload adapter、state-root audit log、content ratchet | arch/hook | 2026-07-17 | — | P2 | hygiene |
-| CC-504 | 🔵 active | top-level install/uninstall/doctor 移除 Claude base-spine 特例，建立 manifest-driven multi-host lifecycle 與 product-asset ownership | arch/install | 2026-07-17 | pr:#442 (Phase 1) | P2 | design |
+| CC-504 | ✅ closed 2026-07-23 | top-level install/uninstall/doctor 移除 Claude base-spine 特例，建立 manifest-driven multi-host lifecycle 與 product-asset ownership | arch/install | 2026-07-17 | pr:#442 | P2 | design |
 | CC-505 | 🔵 active | context plane lexical 檢索補完（Ph1 engine+統一排序+fixtures；Ph2 agent 契約+shadow 儀器化；evidence-gated 收緊 → [[CC-506]]）（2026-07-20 四方 synthesis；CC-346/347 前置） | memory/DX | 2026-07-20 | — | P2 | retrieval |
 | CC-506 | ⏸ deferred | retrieval evidence-gated 收緊：shadow 評測（coverage@5、critical miss、read reduction、outcome parity）達標後才收緊 broad-Read 指引並重評 [[CC-340]] resume 條件；前置 = [[CC-505]] Ph2 shipped + ≥20 真實任務證據 | memory/DX | 2026-07-20 | — | P3 | retrieval |
 | CC-507 | ✅ done | `pmctl state status`：無法讀取 `VERSION` 時被 Bash `$(<file)` redirection 提前中止，未回傳契約的 unreadable/exit 3 | arch/test | 2026-07-21 | pr:#437 | P1 | design |
@@ -1542,7 +1542,7 @@ readiness identity 不符、或 parent-death sandbox 導致早期死亡時皆 fa
 
 **Dependencies**: [[CC-502]] 先建立 gate/reviewer pattern；[[CC-054]] 保持 deferred且只處理 review-first diff generation。P2，v0.11.0 host-boundary closure。
 
-## CC-504 — manifest-driven multi-host lifecycle，移除 Claude base-spine 特例 🔵 active
+## CC-504 — manifest-driven multi-host lifecycle，移除 Claude base-spine 特例 ✅ 2026-07-23
 
 **Problem**: host manifests已能為 Claude/Codex/OpenCode宣告 install/uninstall/doctor modules，但頂層 `install.sh`、`uninstall.sh` 與 `runtime/bin/doctor.sh` 的 base orchestration仍先解析 Claude config root、把 product assets/manifest放進 Claude tree，其他 host再作附加 wiring；copy-mode doctor也保留 Claude-specific fallback。Codex/OpenCode-only環境因此仍無法形成真正獨立的 product lifecycle。
 
@@ -1557,9 +1557,9 @@ readiness identity 不符、或 parent-death sandbox 導致早期死亡時皆 fa
 
 **Done-when**: 三個 host可各自或組合 install→doctor→uninstall；未選 host零 config side effect；foreign config與canonical memory preserved；[[CC-447]] 可在同一 lifecycle contract上執行 future N-1 upgrade而不特判 Claude base tree。
 
-**Phase 1 shipped**: pr:#442
+**See**: pr:#442
 
-**Implementation checkpoint 2026-07-23**: Phase 1 introduces repeated top-level `--host <name>` selection for install and uninstall. Omitted `--host` preserves the Claude compatibility default; explicit Codex/OpenCode-only lifecycle dispatches only manifest-declared modules and must not resolve or create a Claude config tree. The first regression proves the Codex-only install→uninstall path. Follow-up slices move the product receipt out of the Claude tree, make selected-host ownership durable across uninstall, and reduce doctor core to shared checks plus host module dispatch before [[CC-447]] final smoke evidence.
+**Outcome 2026-07-23**: Product receipt ownership now lives outside any host tree, records selected hosts durably, and migrates legacy Claude-local receipts safely. Install, uninstall, and doctor dispatch only manifest-selected hosts; unselected hosts have no config side effect, partial uninstall preserves remaining ownership, and doctor reports receipt/config drift. Legacy installed helpers retain bounded Claude compatibility fallback while the canonical lifecycle no longer requires a Claude base tree.
 
 **Dependencies**: 以 [[CC-501]] 的一次性 evidence作現況輸入，與 [[CC-503]] 的 shared content boundary協調；在 [[CC-447]] final N-1 contract前完成。P2，v0.11.0。
 
