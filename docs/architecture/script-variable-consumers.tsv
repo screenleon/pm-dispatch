@@ -128,6 +128,7 @@ PATH	PATH	cli/pmctl	production
 PATH	PATH	hosts/claude/bin/install-guards.sh	production
 PATH	PATH	hosts/claude/bin/uninstall-guards.sh	production
 PATH	PATH	hosts/codex/bin/install.sh	production
+PATH	PATH	hosts/codex/bin/continue-dispatch.sh	production
 PATH	PATH	hosts/codex/hooks/command-guard.sh	production
 PATH	PATH	hosts/codex/lib/doctor.sh	production
 PATH	PATH	hosts/grok/lib/doctor.sh	production
@@ -348,6 +349,7 @@ TEST_GUARDS_*	TEST_GUARDS_MEMORY_HOOK_TIMEOUT	tests/shell/test-guards.sh	test
 TEST_GUARDS_*	TEST_GUARDS_PROGRESS	tests/lib/test-suite-runner.sh	test
 TEST_GUARDS_*	TEST_GUARDS_PROGRESS	tests/shell/test-guards.sh	test
 TEST_GUARDS_*	TEST_GUARDS_SELF_TIMEOUT	tests/shell/test-guards.sh	test
+TMPDIR	TMPDIR	hosts/codex/bin/continue-dispatch.sh	production
 TMPDIR	TMPDIR	hosts/opencode/bin/install.sh	production
 TMPDIR	TMPDIR	ops/release/upgrade-smoke-v0.8-v0.9.sh	production
 TMPDIR	TMPDIR	runtime/bin/pr-gate.sh	production

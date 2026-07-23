@@ -139,6 +139,26 @@ declared and probed layers stay mechanically comparable:
 | `stability` | `stable`, `evolving` | Whether the host mechanism is still moving. |
 | `confidence` | `observed`, `probed`, `declared`, `assumed` | Evidence strength, strongest first: observed in production use > probed end-to-end once > declared by host docs > assumed. |
 
+### Codex detached-dispatch continuation
+
+Codex's host capability remains a **partial, batch-oriented** PM interface.
+The default Codex CLI path runs `wait-dispatch.sh` in the foreground: its
+sandbox does not promise a persistent App Server control socket, and a completed
+background terminal alone cannot resume the conversation. An explicitly
+integrated App Server session that exposes both the originating thread id and
+a reachable control socket may instead run `continue-dispatch.sh` in a
+host-owned background terminal. The supervisor waits on the authenticated
+`pmctl dispatch wait` result, then sends an App Server `turn/start` request to
+the originating thread so Codex resumes the implementation in a fresh turn.
+
+This is deliberately an enhancement, not a new trusted completion source.
+The nonce-authenticated supervisor sentinel remains authoritative. A background
+terminal by itself is not sufficient: automatic continuation is opt-in only
+when the thread id and App Server control socket are both available; otherwise
+the default foreground waiter remains in use. If detached readiness is
+indeterminate, a later **new** attempt may use `--lifecycle foreground`; a
+timeout or indeterminate result is never silently re-dispatched.
+
 Optional per-entry field `payload_fields` maps guard-check inputs to the
 host's payload field paths, documenting how the binding feeds
 `pmctl guard check`. Its keys are a closed set — `command`, `cwd`,

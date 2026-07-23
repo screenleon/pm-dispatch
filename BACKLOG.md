@@ -29,6 +29,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-507 | ✅ done | `pmctl state status`：無法讀取 `VERSION` 時被 Bash `$(<file)` redirection 提前中止，未回傳契約的 unreadable/exit 3 | arch/test | 2026-07-21 | pr:#437 | P1 | design |
 | CC-508 | 🟢 someday | 所有間接 dispatch producer 的 parent-operation control plane：可追溯子 run、受控取消與單一終態；gate／ship／task dispatch 等全數納入 | arch/gate | 2026-07-21 | feedback:2026-07-21 | P2 | design |
 | CC-509 | ✅ closed 2026-07-22 | detached gate launch liveness：對 sandbox parent-death 早期死亡 fail-loud，提供 supervisor readiness／identity evidence | arch/gate | 2026-07-22 | pr:#440 | P2 | hygiene |
+| CC-510 | ✅ closed 2026-07-23 | Codex detached dispatch continuation：App Server callback、authenticated completion envelope 與 foreground fallback | arch/DX | 2026-07-23 | pr:#443 | P2 | design |
 | CC-465 | 🔵 active | memory/context 關鍵詞管線 CJK 支援：抽出共用零依賴斷詞 lib，取代三處各自 ASCII-only 抽詞；工作序列起點（465→467→468→466）（2026-07-07 記憶系統深入分析） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-466 | ⏸ deferred | 記憶卡片生命週期閉環：expires_at 執行 + 關窗式 supersede + usage sidecar 休眠偵測 + doctor→distill 接線；僅在 CC-467 證明 stale/dormant card 已形成實際問題時啟動 | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-467 | 🔵 active | `pmctl memory stats`：注入效益可視化（唯讀聚合器）——注入 bytes/卡片命中分佈/從未命中卡/episode 填寫率，回答「記憶有跟沒有差在哪」；排在 CC-466 之前（2026-07-07；業界僅離線 recall 評測，無 per-injection 遙測） | DX/memory | 2026-07-07 | — | P2 | retrieval |
@@ -1503,6 +1504,36 @@ readiness identity 不符、或 parent-death sandbox 導致早期死亡時皆 fa
 與兩種 fail-closed wait 狀態；Claude gate `Final: GO`。
 
 **See**: pr:#440
+
+---
+
+## CC-510 — Codex detached dispatch continuation ✅ 2026-07-23
+
+**Problem**: detached dispatch 已有 authenticated `dispatch wait`，但 Codex host
+的 batch-only 路徑只會在 shell 結束時得到結果；背景 terminal 完成不等於模型會
+自動收到新 turn，因而不能可靠地讀取 result 後續作。舊版 Codex client 也可能沒有
+background terminal，或無法提供 App Server callback。
+
+**Requirement**:
+
+1. Codex host 以 host-owned waiter 將 `pmctl dispatch wait` 的 exit code 與
+   artifact recovery command 封裝成固定 continuation envelope；sentinel 仍是唯一
+   authenticated completion source。
+2. Codex CLI 預設以同一 waiter foreground 等待；sandbox 不保證可回連 persistent
+   App Server control socket。只有明確整合、同時提供 background terminal、thread id
+   與 control socket 時，才由 continuation supervisor 在 wait 完成後以 `turn/start`
+   將 verified envelope 注入 originating thread，不能用 shell `&` 假裝 detached continuation。
+3. timeout 僅允許重試同一 wait 一次；indeterminate、timeout 與 failure 都先讀
+   artifacts，絕不自動重派。新嘗試若 host 不能保證 detached child 存活，明確改用
+   foreground lifecycle。
+4. install 必須升級既有受管理 Codex `AGENTS.md` marker；uninstall 必須只移除
+   managed block 並還原使用者原有內容。
+
+**Done-when**: Codex host 可在 App Server callback 可用時自行建立 continuation turn，
+且在舊 client 或 sandbox lifecycle 不相容時有可驗證的 foreground fallback；success、
+callback rejection、timeout、indeterminate 與 legacy-install rollback 均有直接回歸覆蓋。
+
+**See**: pr:#443
 
 ---
 

@@ -78,6 +78,7 @@ SUITE_NAMES=(
   test-core-schemas
   test-host-manifest
   test-host-write-codex
+  test-codex-dispatch-continuation
   test-host-write-opencode
   test-host-write-parity
   test-pm-prep-snapshot
@@ -176,6 +177,7 @@ declare -A SUITE_PATHS=(
   [test-core-schemas]="tests/shell/test-core-schemas.sh"
   [test-host-manifest]="tests/shell/test-host-manifest.sh"
   [test-host-write-codex]="tests/shell/test-host-write-codex.sh"
+  [test-codex-dispatch-continuation]="tests/shell/test-codex-dispatch-continuation.sh"
   [test-host-write-opencode]="tests/shell/test-host-write-opencode.sh"
   [test-host-write-parity]="tests/shell/test-host-write-parity.sh"
   [test-pm-prep-snapshot]="tests/shell/test-pm-prep-snapshot.sh"
