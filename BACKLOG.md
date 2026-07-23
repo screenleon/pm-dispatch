@@ -30,6 +30,17 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-508 | 🟢 someday | 所有間接 dispatch producer 的 parent-operation control plane：可追溯子 run、受控取消與單一終態；gate／ship／task dispatch 等全數納入 | arch/gate | 2026-07-21 | feedback:2026-07-21 | P2 | design |
 | CC-509 | ✅ closed 2026-07-22 | detached gate launch liveness：對 sandbox parent-death 早期死亡 fail-loud，提供 supervisor readiness／identity evidence | arch/gate | 2026-07-22 | pr:#440 | P2 | hygiene |
 | CC-510 | ✅ closed 2026-07-23 | Codex detached dispatch continuation：App Server callback、authenticated completion envelope 與 foreground fallback | arch/DX | 2026-07-23 | pr:#443 | P2 | design |
+| CC-511 | 🔵 active | ship publish authorization：current-tree authoritative full-suite 與可驗證 review-closure evidence | release/gate | 2026-07-23 | — | P1 | design |
+| CC-512 | 🔵 active | gate tier、execution mode、reviewer coverage 與 independence assurance 正交化 | ops/gate | 2026-07-23 | — | P1 | design |
+| CC-513 | 🔵 active | canonical gate policy resolver：minimum tier、required reviewers、mode recommendation 與 downgrade audit | security/gate | 2026-07-23 | — | P1 | design |
+| CC-514 | 🔵 active | orthogonal delivery assurance map、machine-derived tables 與 feature/docs/high-risk recipes | docs/process | 2026-07-23 | — | P2 | design |
+| CC-515 | 🔵 active | gate artifact immutable subject、freshness 與 consumer applicability shared verifier | arch/gate | 2026-07-23 | — | P1 | design |
+| CC-516 | ⏸ deferred | evidence-gated thin delivery wrapper 評估；只組合既有 primitives，不建立 workflow engine/FSM | ux/process | 2026-07-23 | — | P3 | spike |
+| CC-517 | 🔵 active | maintainer `/ship`：primary review、structured remediation closure 與 conditional targeted confirmation | process/gate | 2026-07-23 | — | P1 | design |
+| CC-518 | 🔵 active | gate scope manifest v1：immutable subject、changed paths、paired tests、signals 與 bounded expansion | ops/gate | 2026-07-23 | — | P1 | design |
+| CC-519 | 🔵 active | selected-reviewer coverage／finding contract：declared coverage、stable IDs 與 actionable fix boundary | ops/gate | 2026-07-23 | — | P1 | design |
+| CC-520 | 🔵 active | synthesis parity 與 remediation seed：findings union、root-cause grouping、coverage matrix 與 no-silent-drop | ops/gate | 2026-07-23 | — | P1 | design |
+| CC-521 | 🔵 active | test-gap matrix、protocol recovery 與 live recall evaluation 分層 | ops/test | 2026-07-23 | — | P2 | design |
 | CC-465 | 🔵 active | memory/context 關鍵詞管線 CJK 支援：抽出共用零依賴斷詞 lib，取代三處各自 ASCII-only 抽詞；工作序列起點（465→467→468→466）（2026-07-07 記憶系統深入分析） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-466 | ⏸ deferred | 記憶卡片生命週期閉環：expires_at 執行 + 關窗式 supersede + usage sidecar 休眠偵測 + doctor→distill 接線；僅在 CC-467 證明 stale/dormant card 已形成實際問題時啟動 | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-467 | 🔵 active | `pmctl memory stats`：注入效益可視化（唯讀聚合器）——注入 bytes/卡片命中分佈/從未命中卡/episode 填寫率，回答「記憶有跟沒有差在哪」；排在 CC-466 之前（2026-07-07；業界僅離線 recall 評測，無 per-injection 遙測） | DX/memory | 2026-07-07 | — | P2 | retrieval |
@@ -1534,6 +1545,493 @@ background terminal，或無法提供 App Server callback。
 callback rejection、timeout、indeterminate 與 legacy-install rollback 均有直接回歸覆蓋。
 
 **See**: pr:#443
+
+---
+
+## CC-511 — ship publish authorization：current-tree full suite + review closure 🔵 active
+
+**Problem**: `pmctl ship finish` 目前在 gate GO、HEAD 未移動且 tree clean 後直接
+push／開 PR，沒有驗證 current tree 的 authoritative full suite。另一方面，
+[[CC-517]] 的 primary review 可能審查 pre-remediation tree；若一律要求
+「current-tree gate GO + current-tree full PASS」，就會迫使所有 remediation 重跑
+full gate，與 conditional closure policy 衝突。真正的 publish invariant 應是
+current-tree full PASS 加上適用 delivery policy 的 valid review authorization。
+
+**Phase A — immediate full-suite enforcement（不等待新 schema）**:
+
+1. 所有官方 pmctl ship publish path 在任何 push／PR mutation 前，必須取得
+   current tree 的 authoritative full-suite PASS：可由 finish 執行，或以明確
+   `--full-result <artifact>` 接受 caller 結果；兩者都呼叫既有
+   `tests/bin/run-tests.sh --verify-full` canonical verifier。
+2. verifier 現有的完整 suite registry、zero skip、tree 未漂移、tree fingerprint
+   與 runner-contract fingerprint 要求全部保留；missing、partial、skip、fail、
+   timeout、suite drift、tree drift 一律在 publish 前 fail closed。不能相信 exit 0、
+   stdout 字串或舊 `latest-full.json`。
+3. direct `pmctl ship finish` 與 parallel adapter-generated path 共用同一 verifier；
+   full failure 不 push／開 PR，pre-existing/environment failure 另行記錄但不能偽裝
+   PASS。保留 branch/ticket identity、clean-tree、HEAD drift、`gh` preflight 與
+   partial-publish guards。
+
+**Phase B — review authorization integration（依賴 evidence/closure）**:
+
+4. publish verifier 接受兩種 review authorization，且明文記錄採用哪一種：
+   - **final-tree review**：gate subject 與 current tree 匹配，verdict/policy 允許發布；
+   - **primary-review closure**：valid primary review + closed
+     `remediation_closure_v1` + required targeted confirmations passed + zero unresolved
+     diff-caused／unauthorized hard-gate dispositions。
+5. shared publish authorization summary 由 [[CC-515]] verifier 判斷 artifact validity、
+   subject freshness 與 policy applicability；不得只 grep `Final: GO`。成功 marker
+   與 PR handoff 記錄 review/full/closure artifact path、digest、subjects、manual
+   evidence、accepted-risk provenance 與 authorization route。
+
+**Done-when**: 任一官方 ship publish path 都只能在（1）current tree authoritative
+full-suite PASS 有效；（2）review authorization 對目前 delivery policy 有效；
+（3）branch、HEAD、tree 與 evidence subject 匹配後 push／開 PR。Phase A 可先獨立
+ship；Phase B 在 [[CC-515]]、[[CC-517]] 完成後收斂。
+
+**Non-goals**: 不把 full suite 搬進 generic gate；不要求所有 final tree 都 full
+re-gate；不建立第二套 test-result schema；不把 publish authorization 等同 merge
+authorization。
+
+**Dependencies**: Phase A 複用 [[CC-449]]／[[CC-491]]，可立即實作；Phase B 依賴
+[[CC-515]]、[[CC-517]]。
+
+**Cross-link**: [[CC-512]]、[[CC-513]]、`docs/test-runner-contract.md`。
+
+---
+
+## CC-512 — tier／mode／coverage／independence assurance 正交化 🔵 active
+
+**Problem**: runtime 原本就將 tier detection、reviewer selection 與
+`SEQUENTIAL=true|false` 分開，但文件曾把 `full` 描述成 parallel cross-context +
+五個 reviewer，造成 tier、execution topology、實際 coverage 與 independence
+assurance 相互暗示。`full + sequential` 與 `express + parallel` 本應合法，artifact
+卻沒有足夠 metadata 防止錯誤宣稱。
+
+**Requirement**:
+
+1. 建立分離的 machine-readable policy tables：
+   - tier table：express/standard/full/targeted 的 default reviewers 與 evidence
+     floor；
+   - mode table：sequential combined session、parallel per-reviewer sessions +
+     synthesis 的 execution topology。
+   不得建立 `full => parallel` 的合併 table。
+2. requested/resolved 值分開記錄：
+   `tier.requested/resolved`、`mode.requested/resolved`。Tier 不改 mode，parallel
+   不提升 tier；express/standard/full/targeted × sequential/parallel 都是合法組合，
+   subject/policy constraints 另由 [[CC-513]] 判斷。
+3. artifact 明列實際 `coverage.reviewers`／`coverage.skipped`，以及 independence：
+   implementation-context isolation、`combined-session|per-reviewer-sessions`、
+   `per_reviewer_independent: true|false` 與可驗證 session evidence。不能由 tier、
+   mode 名稱或 reviewer 數量推論另一維度。
+4. targeted 結果必須標示 delta-specific 與引用的 initial coverage；不能呈現為完整
+   initial review。Sequential review 仍可證明與 implementation session 隔離，只是
+   reviewer 彼此共享 combined session。
+5. validator 拒絕／標 invalid：宣稱 parallel 卻無個別 session evidence、宣稱
+   per-reviewer independence 但實際 combined session、express+parallel 被呈現成
+   full coverage、full+sequential 被呈現成 parallel、targeted 被呈現成 initial full。
+6. CLI help、result frontmatter、review-model、commands、skills 與測試都由同一
+   machine source 派生或引用 bounded generated markers；README 只提供 pointer。
+
+**Done-when**: 任一 gate artifact 都能獨立回答「要求的深度、實際拓撲、實際 reviewer
+coverage、取得何種 independence」，所有合法組合 round-trip，錯誤 assurance claims
+被 validator 擋下。
+
+**Non-goals**: 不讓 full 自動 parallel；不讓 parallel 自動 full；不決定 risk-based
+minimum floor（見 [[CC-513]]）；不新增另一種 gate。
+
+**Cross-link**: [[CC-515]]、[[CC-518]]、[[CC-519]]、`docs/review-model.md`。
+
+---
+
+## CC-513 — canonical gate policy resolver 🔵 active
+
+**Problem**: sensitive-path regex、brief `architecture_impact`、tier detection、
+reviewer defaults、mode suggestions 與 CLI overrides 分散在不同 branches／文件。
+Generic gate 需要 risk-based minimum floor；pm-dispatch maintainer `/ship` 又希望
+primary review 固定使用完整 reviewer coverage。若把兩種 policy 或 mode 混進 tier，
+generic 使用者會被不必要強制，maintainer 路徑則可能漏掉必要 dimensions。
+
+**Requirement**:
+
+1. 建立單一可測 resolver，輸入 diff classification、trusted brief metadata、
+   generated/untracked/renamed paths、requested tier/mode/reviewers、repo policy 與
+   accepted-risk override；輸出：
+   `minimum_tier`、`required_reviewers`、`recommended_mode`、`required_mode|null`、
+   `downgrade_allowed`、matched signals 與 override provenance。
+2. **Generic `pmctl gate` risk-based floor**：
+   - docs-only：critic/qa；
+   - bounded runtime：critic/qa，依 matched signal增加 dimensions；
+   - auth/credentials/input execution：security；
+   - migration/destructive/concurrency/rollback：risk；
+   - public API/schema/cross-boundary：architecture；
+   - high-risk/major：full reviewer coverage。
+   不再宣稱任何 runtime change 一律需要所有 hard-gate reviewers。
+3. **Maintainer `/ship` policy**：primary comprehensive review 固定要求 critic、
+   qa、architecture、security、risk 全 coverage，因 [[CC-517]] 預設只做一次
+   primary discovery；這是 repo-owned recipe，不強迫 generic gate。
+4. Mode 與 tier 分離：resolver 通常輸出 `recommended_mode: parallel`；只有 policy
+   明確要求 reviewer isolation 才輸出 `required_mode: parallel`。`minimum_tier:
+   full` 本身不得暗示 parallel。
+5. requested tier/reviewer/mode 低於 resolver floor 時 fail closed，除非使用者提供
+   scope-bounded accepted-risk override；security/risk hard-gate override 不能由 PM
+   自行接受。未來 [[CC-065]] repo config 可加嚴，不得靜默降低 canonical floor。
+6. classification/resolution artifact 列出每個 matched path/field/signal、selected/
+   skipped dimensions、recommendation vs requirement、downgrade reason 與 override
+   provenance；所有 consumer 使用同一 output，不各自複製 regex。
+
+**Done-when**: 每份 gate artifact 都能機械回答「為什麼需要這個 minimum tier、
+reviewers 與 recommended/required mode」；generic 與 maintainer policy 可獨立測試，
+full 不再隱含 parallel。
+
+**Non-goals**: 不以分類 signal 取代真正 review；不把 architecture reviewer 全域
+升為 hard gate；不讓 maintainer recipe 改寫 generic defaults。
+
+**Cross-link**: [[CC-065]]、[[CC-512]]、[[CC-515]]、[[CC-517]]、[[CC-518]]。
+
+---
+
+## CC-514 — orthogonal delivery assurance map 與 recipes 🔵 active
+
+**Problem**: repo 已有 retrieve/spec、affected tests、refactor/reuse audit、
+independent gate、full suite、publish 等成熟 primitives，但資訊散在 README、
+`commands/ship.md`、review-model、runner contract、agents 與 skills。新使用者容易
+把它們誤讀成唯一線性 workflow，或把「指令執行成功」誤當成所有 assurance
+dimensions 都已完成；docs-only、一般功能、高風險／manual UI change 也缺少可直接
+照做的短 recipe。
+
+**Requirement**:
+
+1. 建立 canonical delivery assurance map；至少把 tier、mode、reviewer coverage、
+   reviewer independence、policy classification、test coverage、subject freshness、
+   manual evidence、remediation closure 與 publish authorization列為正交維度。
+   每個 dimension 說明 producer、artifact、consumer、可否 reuse，以及
+   `pass|fail|not_run|not_applicable|stale|incomplete` 的誠實聲明。
+2. 提供至少 docs-only、一般 functional change、高風險／含 manual verification
+   三條短 recipe。pm-dispatch maintainer recipe 依 [[CC-517]] 維持
+   focused tests→audit→一次 primary comprehensive gate→一次完整 remediation→
+   deterministic closure→post-fix affected tests/audit→full→publish；只有
+   security/risk、public contract 或跨邊界 remediation 才用既有 `--reviewers`
+   做一次 targeted confirmation，不回到 repeat-until-GO loop。generic `pmctl gate`
+   使用者仍可自行選擇其他 re-gate policy。manual evidence 只使用 bounded
+   checklist／artifact reference，不建立新 runner。
+3. recipe 明列兩個軸而非模糊寫「full gate」；例如 routine feature 可是
+   `tier: standard, mode: sequential`，high-risk feature 可以是
+   `tier: full, mode: parallel-recommended`。Reviewer coverage 與 publish
+   authorization 另列，不由 tier/mode 推論。
+4. 對齊 README、`docs/CONCEPTS.md`、`docs/review-model.md`、
+   `docs/test-runner-contract.md`、commands 與 skills 的術語和入口：
+   `/ship` 是本 repo maintainer recommended path，`pmctl gate`／runner／ship
+   finish 是可組合 primitives；不得把建議路徑寫成唯一合法產品 workflow。
+5. Tier/mode/reviewer-policy tables 必須來自 [[CC-512]]／[[CC-513]] 的
+   machine-readable source 或 bounded generated markers；cross-document lint 不解析
+   大段自由文字。README 只保留 discoverable pointer，canonical docs 承載概念。
+6. 分兩步交付：先落 `draft terminology/map` 骨架，不宣稱 runtime 已支援；等
+   [[CC-511]]～[[CC-515]]、[[CC-518]]～[[CC-521]] 收斂後再做
+   `runtime-aligned finalization` 與 drift ratchet。
+7. 明文記錄現階段不新增 `/deliver`、workflow profile、persistent workflow state、
+   preset DSL 或 FSM；若短 recipe 的真實使用證據顯示需要 wrapper，再由
+   [[CC-516]] 評估。
+
+**Done-when**: 一位未讀原始 agents/scripts 的 maintainer 能從 README 找到正確
+recipe，並準確判斷每個 assurance dimension 是 pass、未跑、不可用或 stale；跨文件
+lint 阻止 tier/mode/full-suite 順序重新漂移。
+
+**Dependencies**: draft skeleton 可先行；runtime-aligned finalization 等
+[[CC-511]]～[[CC-515]]、[[CC-517]]～[[CC-521]]。排入 v0.14.0 public surface，
+避免文件先承諾尚未落地的行為。
+
+**Cross-link**: [[CC-493]]、`commands/ship.md`、`docs/review-model.md`。
+
+---
+
+## CC-515 — immutable subject、freshness 與 applicability verifier 🔵 active
+
+**Problem**: preflight tests 已有 repo/base/head/tree evidence，但 final gate artifact
+主要依賴 prose `Final:`。外部 consumer 無法分辨 artifact 本身壞掉、subject 已過期，
+或 artifact 仍有效但不符合目前 publish policy。此票被 publish、policy、scope
+manifest 與 remediation closure 共同依賴，屬 P1 evidence foundation。
+
+**Requirement**:
+
+1. gate artifact 增加 immutable subject/provenance：
+   - stable repository key、git common-dir identity、remote identity（若存在）；
+   - observed physical/canonical root（只作 provenance，不作唯一 identity）；
+   - base ref+commit、head ref+commit、tree fingerprint；
+   - `subject_kind: committed_head|working_tree|fixed_ref`、dirty policy、
+     created/finished timestamps。
+   Worktree path 改變不能單獨讓同一 Git subject 失效。
+2. verifier 分開輸出：
+   - `artifact_valid`：schema、digest、content parity；
+   - `subject_current`：repo/base/head/tree 是否仍符合 current consumer subject；
+   - `policy_applicable`：tier/mode/coverage/review/closure evidence 是否滿足 consumer。
+   每一軸都有 reason codes；例如 base 前進是 valid artifact 但 stale/not applicable，
+   不是 forged/invalid。
+3. 提供 shared `pmctl gate verify` path，供 gate wait、ship finish、[[CC-511]]
+   publish authorization 與未來 consumer 呼叫；不得各自 grep `Final:` 或自行重做
+   repo identity/freshness 邏輯。
+4. final artifact 連結 preflight evidence digest/subject、[[CC-512]] resolved tier/
+   mode/coverage、[[CC-513]] policy resolution，以及 [[CC-518]] scope manifest。
+   finalize 前重新計算 working subject；HEAD/tree drift 標 stale，不產生可重用
+   current-subject authorization。
+5. 覆蓋 result copy/replay、different physical worktree same git subject、different
+   repo same path shape、HEAD moved、dirty drift、base advanced、fixed ref、
+   malformed digest、valid-but-policy-insufficient 與 valid current result。
+
+**Done-when**: 任一 consumer 可得到結構化 validity/freshness/applicability 三軸結果，
+並以 stable repo subject 驗證 artifact；沒有 consumer 再以 `Final: GO` 當作 freshness
+或 publish authorization。
+
+**Non-goals**: 不以 gate artifact 取代 test result；不把 policy applicable 等同
+merge authorization；不要求 worktree path 永久固定。
+
+**Priority**: P1。
+
+**Cross-link**: [[CC-491]]、[[CC-509]]、[[CC-511]]、[[CC-512]]、[[CC-513]]、
+[[CC-517]]、[[CC-518]]。
+
+---
+
+## CC-516 — evidence-gated thin delivery wrapper 評估 ⏸ deferred
+
+**Problem**: 一份分析建議立即新增 `/deliver` 或 formal lifecycle command，其他
+分析則一致認為現有 `/ship`、gate、runner 與 publish primitives 已足夠，當前缺口
+主要是契約漂移與文件 discoverability。現在新增 command/state machine 會在 runtime
+truth 尚未收斂時複製 orchestration，並增加另一條會漂移的成功定義。
+
+**Trigger**: [[CC-514]] 上線後累積至少 20 次真實 delivery 記錄；只有在記錄顯示
+短 recipe 仍反覆發生相同 handoff／ordering 錯誤，或至少 3 次需要同一段人工 glue
+才能完成，才啟動本 spike。偏好、想像中的便利或單次長流程不足以觸發。
+每筆 evidence 至少分類為 `ordering_error|stale_artifact_reuse|omitted_stage|
+repeated_manual_glue|false_success_claim`；若主要問題只是 discoverability，優先修
+docs/help，不啟動 wrapper。
+
+**Spike questions**:
+
+1. 問題是否可由修正文案、help recipe 或既有 `/ship` 解決，而不新增 surface？
+2. 若需 wrapper，最小版本能否只解析參數並順序呼叫 canonical primitives，同時
+   回報各 dimension 的 artifact/status，而不擁有 reviewer、runner、publish 或
+   state-transition 邏輯？
+3. command、skill 或 `pmctl` leaf 哪個落點符合 [[CC-493]] 的升級判準？
+4. 如何證明 wrapper 與 direct primitive path 產生相同 assurance artifacts，
+   並在任何 partial/stale/failure 狀態 fail closed？
+
+**Adopt boundary**: 最多交付 thin synchronous wrapper；不建立 workflow engine、
+profile/preset DSL、persistent lifecycle state、FSM、resume scheduler 或第二套
+gate/test schema。若需求實際是 multi-run parent control，回到 [[CC-508]]，不得
+偷渡進本票。
+
+**Dependencies**: [[CC-514]] shipped + trigger evidence。P3，未排入 milestone。
+
+**Cross-link**: [[CC-493]]、[[CC-508]]。
+
+---
+
+## CC-517 — maintainer `/ship` primary review + remediation closure 🔵 active
+
+**Problem**: pm-dispatch maintainer `/ship` 目前把 gate remediation 設計成
+repeat-until-GO loop；每輪只揭露少量新問題時，流程會反覆支付完整 LLM review 成本，
+也讓 gate 從「獨立找問題」變成逐輪互動式 lint。把「只 gate 一次」留在個人 memory
+又無法更新實際 command 行為，新的 main-thread session 仍會照舊重跑。這是本 repo
+maintainer 想採用的 delivery policy，不應改寫 generic `pmctl gate` 或強迫其他
+project 使用。
+
+**Requirement**:
+
+1. 更新 `commands/ship.md` 與 maintainer review model：primary implementation、
+   affected tests、refactor/reuse audit 完成後，只執行一次 comprehensive PR gate。
+   [[CC-513]] maintainer policy 固定要求五 reviewer coverage；mode 由 policy
+   recommended/required mode 與 caller 選擇解析，不把 full coverage 寫成必然
+   parallel。Gate 使用 [[CC-518]]～[[CC-521]] 的 structured outputs。
+2. 產生 `remediation_closure_v1` evidence，至少含 primary gate/result/subject、
+   final subject、每個 stable finding ID 的 disposition、changed files、affected-test
+   evidence、targeted confirmation evidence（若有）與 unresolved counts。所有
+   diff-caused findings（high/medium/low、blocking/advisory）集中處理；pre-existing
+   issue 只有在證明非本 diff 引入後另開 ticket。
+3. 明確分類三種 outcome：
+   - **local closure**：wording/comments/fixture/assertion/narrow error message／不新增
+     行為的局部 guard；ledger closure→affected tests→full suite，不再 review；
+   - **targeted confirmation**：security/risk finding、shared helper、public interface、
+     schema/migration、permission、ownership/layer boundary、超出原 finding symbol/
+     file，或無法確定是否新增行為；ledger→affected tests→既有 targeted reviewers
+     一次→full suite；
+   - **stop/split**：改變 ticket premise、新 public API/permission model/destructive
+     migration/cross-module architecture 或明顯 scope expansion；不得靠再跑 full
+     gate 塞回原票。
+4. remediation 後 deterministic closure 必須證明 ledger 每個 finding 都有
+   disposition/evidence、修改範圍未超出 finding boundary、沒有未授權 hard gate，
+   local/targeted/split classification 有 mechanical reason，並重新跑 affected tests。
+   Targeted confirmation 只驗 stable IDs 與 remediation delta，不重啟 full discovery；
+   與 remediation 無關的新 advisory 另開 backlog，只有 remediation 新引入 blocker
+   阻止收尾。
+5. final result 誠實記錄 primary review subject/status/verdict、closed remediation、
+   targeted confirmation `pass|not_required`、final affected/full test subject/status
+   與 `publish_authorized`。除非 final tree 真的重跑 full gate，禁止宣稱 final-tree GO。
+6. scope 只涵蓋 pm-dispatch repo-owned maintainer `/ship` policy、相關文件與 lint/
+   command regressions。`pmctl gate` 的 sequential/parallel/targeted primitives、
+   其他 repo 的 recipes 與 `pmctl ship finish` 行為保持可用，不受此票強制；本票
+   不新增 gate command、gate kind、result family 或 lifecycle。
+
+**Done-when**: `/ship` 對一般低風險 remediation 只呼叫一次 primary PR gate；所有
+findings 有完整 closure evidence，只有明列的高風險條件會觸發一次既有 targeted
+confirmation，且不再 full discovery。final tree 有 affected + authoritative full
+PASS，PR handoff 不會把 initial verdict 錯綁到 remediation 後的 tree。測試能抓到
+不必要 re-gate、該確認卻跳過、重啟 full discovery、漏 ledger finding、未授權
+hard-gate disposition、scope-expanding remediation 與 false final-GO claim。
+
+**Non-goals**: 不把此偏好存成 memory-only instruction；不修改 generic gate 的公共
+自由度；不保證 LLM 一輪能發現所有可能問題；不新增 workflow engine、FSM 或背景
+orchestrator。
+
+**Dependencies**: [[CC-512]]、[[CC-513]]、[[CC-515]]、[[CC-518]]～[[CC-521]]。
+P1，排入 v0.11.0 delivery assurance correctness。
+
+**Cross-link**: [[CC-485]]、[[CC-511]]、[[CC-514]]。
+
+---
+
+## CC-518 — gate scope manifest v1 🔵 active
+
+**Problem**: reviewers 目前主要從 diff list 與個別 prompt 探索 scope；renamed/
+untracked paths、paired tests、sensitive signals 與 bounded adjacent context 沒有一份
+共同、immutable、可揭露截斷的 manifest。不同 reviewers 可能從不同 scope 起步，
+synthesis 也無法判斷「沒 finding」是已看過或根本未收到。
+
+**Requirement**:
+
+1. 直接強化既有 `pmctl gate run`，在 dispatch 前產生 `gate_scope_manifest_v1`；
+   不新增 gate command/mode/lifecycle。
+2. manifest 連結 [[CC-515]] immutable subject，列出完整 changed/renamed/untracked
+   paths、diff hunks、paired tests、[[CC-513]] matched sensitive signals，以及
+   public interface/schema/config/install/CI/release/migration flags。
+3. bounded adjacent expansion 第一版只承諾可機械推導的 peer/call-site hints與直接
+   shared-helper consumers；每個加入項記錄 expansion reason、source與 limits。
+   不宣稱完整 call graph。
+4. manifest 明列 truncation/budget、omitted counts/reasons 與 content digest；未獲
+   明確接受的 truncation 使 operation `INCOMPLETE`，不得靜默縮 scope。
+5. sequential/parallel selected reviewers 都收到同一 manifest digest；mode 不影響
+   scope contract。
+
+**Done-when**: 任一 gate result 可引用 immutable manifest，證明 selected reviewers
+收到相同 declared scope；renamed/untracked、paired-test、sensitive-signal、bounded
+expansion 與 truncation 有 deterministic fixtures。
+
+**Non-goals**: 不建立全語言 call graph；不聲稱 manifest 包含所有語意相關檔案；
+不把 scope declaration 當 review completeness。
+
+**Dependencies**: [[CC-513]]、[[CC-515]]。P1。
+
+**Cross-link**: [[CC-491]]、[[CC-519]]。
+
+---
+
+## CC-519 — selected-reviewer coverage／finding contract 🔵 active
+
+**Problem**: reviewer prose 沒有一致的 coverage declaration；找到 blocker 後可能
+early stop，finding 也常缺少受影響 behavior、fix boundary 與 verification expectation。
+「五個 reviewer 各自獨立 session」又錯把 coverage contract 綁到 parallel mode。
+
+**Requirement**:
+
+1. 每個 **selected reviewer** 都完成相同 logical contract，不論 mode：
+   sequential 可在 combined session 產生獨立 reviewer sections；parallel 才要求
+   per-session isolation evidence。實際 mode/independence 由 [[CC-512]] 記錄。
+2. reviewer×surface checklist 每格為
+   `examined|not_applicable|uncertain`，附 evidence refs/reason。遇到 blocking
+   finding 後仍完成其餘 applicable checklist，不得 early stop。
+3. 每個 finding 含 stable ID、reviewer、severity、hard-gate class、source path+
+   line/symbol、affected behavior、why it matters、failure mode、minimum fix
+   boundary、verification expectation，以及
+   `diff_caused|pre_existing|uncertain|caution`。
+4. 無 source evidence 的泛泛建議不能升 blocker；`not_applicable`/`uncertain` 不能
+   靠沉默表示。Missing/empty/malformed reviewer section 或 checklist 不完整使
+   protocol `INCOMPLETE`。
+5. schema/contract deterministic tests涵蓋 sequential logical sections、parallel
+   session evidence、blocker no-early-stop、missing checklist、invalid stable ID與
+   evidence-less blocker。
+
+**Done-when**: selected reviewer outputs 都是 schema-complete、coverage-declared，
+且 finding 可直接作 remediation input；不對未選 reviewer 或模型 recall 作虛假保證。
+
+**Non-goals**: 不要求所有 gate 都選五 reviewers；不以 coverage-declared 宣稱
+reviewer 完全理解 scope；不讓 parallel 代替 coverage。
+
+**Dependencies**: [[CC-512]]、[[CC-518]]。P1。
+
+**Cross-link**: [[CC-513]]、[[CC-520]]。
+
+---
+
+## CC-520 — synthesis parity 與 remediation seed 🔵 active
+
+**Problem**: synthesis 目前強調 cross-reviewer overlaps與最高 severity，可能在
+dedup 時丟失較低 severity finding、test expectation、caution 或 reviewer disagreement。
+Primary gate 要支援集中 remediation，必須證明 synthesis 保留所有原始 stable IDs，
+而不是宣稱找到了所有真實 defects。
+
+**Requirement**:
+
+1. synthesis 對 selected reviewer findings 做 deterministic ID inventory與 union；
+   root-cause grouping可合併呈現，但保留每個 original ID、reviewer dimension、
+   verification expectation與 disposition slot。
+2. 輸出 reviewer×surface coverage matrix、findings union、root-cause groups、
+   disagreements、uncertainties、cautions、not-reviewed dimensions與
+   `remediation_closure_v1` seed。
+3. consolidated human result固定提供 must-fix順序、advisory/cautions、uncovered/
+   uncertain scopes與 recommended verification pointers；使用者無須逐一開 raw
+   outputs，但 raw artifact仍可追溯。
+4. validator比對 reviewer ID inventory與 synthesis inventory；silent drop、
+   duplicate collision、coverage parity mismatch、missing caution/test expectation
+   皆 `INCOMPLETE`，不得產生可用 authorization。
+5. deterministic fake-artifact tests涵蓋不同 reviewer 同 root cause、同檔不同問題、
+   lower-severity preservation、disagreement、dropped ID、duplicate ID與 malformed
+   remediation seed。
+
+**Done-when**: synthesis 可機械證明 findings-union-complete與 coverage parity；
+remediation seed保留所有 actionable evidence，但不宣稱 defect-complete。
+
+**Non-goals**: 不判定模型 recall；不在本票設計 test-gap schema或 transport retry；
+不建立 workflow state。
+
+**Dependencies**: [[CC-519]]。P1。
+
+**Cross-link**: [[CC-517]]、[[CC-521]]。
+
+---
+
+## CC-521 — test-gap matrix、protocol recovery 與 live evaluation 分層 🔵 active
+
+**Problem**: 「請補測試」缺少 layer/scenario/oracle/failure signal，無法一次修正；
+同時 transport/schema recovery 與模型能否找出 seeded defects 是不同性質。前者可
+deterministic fail closed，後者具模型波動，不應混成 CI hard gate。
+
+**Requirement**:
+
+1. qa-tester及發現 behavior gap 的 reviewer輸出 test-gap matrix：affected behavior/
+   contract、existing evidence、missing layer、scenario、oracle、failure signal、
+   suggested command。依適用性涵蓋 happy/boundary/negative/regression及 concurrency/
+   security/migration/rollback；足夠時以 `no_gap` + evidence 明示。
+2. consolidated result呈現 test coverage to add/strengthen、operational/user cautions
+   與修正後 focused/manual/full verification plan；[[CC-520]] parity不得丟失矩陣列。
+3. bounded in-operation recovery只處理 transport failure、malformed output、
+   schema failure與 synthesis parity failure；只重試失敗 reviewer/synthesis，保留
+   immutable subject與有效 outputs並記錄 attempts。Subject drift標 stale，analysis
+   uncertainty保留，不以 retry掩蓋。
+4. deterministic CI contract tests使用 fake artifacts驗 missing matrix field、
+   malformed result、truncation、wrong subject、dropped row、retry success/exhaustion。
+5. seeded multi-defect/multi-test-gap fixtures作 **live model evaluation**，報 recall、
+   variance與 regression observation；不作一般 deterministic CI hard PASS，也不
+   宣稱一次 review 找完所有 defects。
+
+**Done-when**: protocol/schema/recovery 有穩定 CI contract；使用者可從一次 gate取得
+具體補測與驗證方向；live recall品質另有可觀察 benchmark，不污染 correctness gate。
+
+**Non-goals**: 不把模型 recall 當 deterministic invariant；不因 uncertainty自動重試；
+不新增另一套 gate。
+
+**Dependencies**: [[CC-518]]、[[CC-519]]、[[CC-520]]。P2。
+
+**Cross-link**: [[CC-470]]、[[CC-481]]、[[CC-491]]、[[CC-517]]。
 
 ---
 

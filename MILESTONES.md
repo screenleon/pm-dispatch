@@ -15,7 +15,7 @@
 
 ## v0.14.0 — public contract candidate（暫定；未啟動）
 
-> 最後排程更新：2026-07-17（首次拆版）
+> 最後排程更新：2026-07-23（加入 delivery assurance public surface）
 
 **主題**：完成 public posture 與 stable/experimental contract candidate；本版產物是「是否具備建立 v1.0 milestone 的事實基礎」，不是 v1.0 RC。
 
@@ -27,6 +27,7 @@
 |----|------|------|
 | CC-032 | feedback cross-link glossary 公開化，清除 public dead/private-only link | 🔵 |
 | CC-033 | README/onboarding public posture、history audit 處置、repo collaboration surface | 🔵（history audit ✅ 2026-07-18；其餘未啟動） |
+| CC-514 | orthogonal assurance map、machine-derived tier/mode/policy tables 與 docs-only／functional／high-risk recipes；draft 可先行，runtime-aligned finalization 後公開 | 🔵 |
 
 ### Phase 2 — contract candidate
 
@@ -43,7 +44,7 @@
 
 ## v0.11.0 — pre-v1 stabilization：state compatibility + release/operational evidence（暫定；未啟動）
 
-> 最後排程更新：2026-07-20（原 v0.11.0／v0.12.0／v0.13.0 三版合併；CC-499 已提前隨 v0.10.0 交付）
+> 最後排程更新：2026-07-23（加入 delivery assurance correctness；原 v0.11.0／v0.12.0／v0.13.0 三版合併；CC-499 已提前隨 v0.10.0 交付）
 
 **主題**：一次消化 v1.0 前已知的 state compatibility、release/upgrade evidence 與 operational evidence 缺口。原 v0.11.0（state compatibility + writer boundary）、v0.12.0（release evidence + upgrade proof）、v0.13.0（detached recovery + operational evidence）合併為本版；其中 detached reconciliation（CC-499）已提前於 v0.10.0 出貨，不在本版 scope。
 
@@ -82,6 +83,43 @@
 |----|------|------|
 | CC-358 | per-adapter outcome/failure/fallback run stats，供 release/readiness 報告引用 | 🔵 |
 
+### Phase 6 — immediate publish correctness
+
+> 依 2026-07-23 gate/delivery orthogonality decision，先堵住與新 review schema 無關的
+> 發布漏洞：任何官方 ship path 都必須在 current tree full-suite artifact 通過後才可
+> push／開 PR。
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-511 Phase A | direct／parallel ship publish path 共用既有 full-result verifier；stale/partial/skip/suite/tree drift 全部 fail closed | 🔵 |
+
+### Phase 7 — evidence + policy foundations
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-515 | immutable subject；artifact validity、subject freshness、policy applicability 三軸 shared verifier | 🔵 |
+| CC-512 | tier／mode／reviewer coverage／independence 正交化；full+sequential、express+parallel 均合法 | 🔵 |
+| CC-513 | canonical resolver：minimum tier、required reviewers、recommended/required mode、generic vs maintainer policy 與 downgrade audit | 🔵 |
+
+### Phase 8 — existing gate structured evidence
+
+> 只強化既有 `pmctl gate run`；protocol completeness 與 live-model recall 分開，不新增
+> gate kind、workflow engine 或 FSM。
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-518 | `gate_scope_manifest_v1`：immutable subject、changed/renamed/untracked、paired tests、signals、bounded expansion/truncation | 🔵 |
+| CC-519 | selected-reviewer coverage/finding contract；sequential logical sections 與 parallel session isolation 分開 | 🔵 |
+| CC-520 | synthesis findings-union parity、root-cause grouping、coverage matrix、remediation seed、no silent drop | 🔵 |
+| CC-521 | actionable test-gap matrix + bounded protocol recovery；seeded live recall 僅作 quality evaluation | 🔵 |
+
+### Phase 9 — maintainer closure + publish authorization
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-517 | `/ship` primary review→local/targeted/split remediation closure→final affected/full tests；不虛稱 final-tree GO | 🔵 |
+| CC-511 Phase B | final-tree review或 primary-review closure authorization + current-tree full PASS → publish | 🔵 |
+
 ### 待後續 / 明確排除
 
 - 沒有真實 N→N+1 path 時不建空 migration engine，也不宣稱 `state migrate` 可用。
@@ -89,6 +127,8 @@
 - bootstrap wizard 仍由 smoke 的真實摔倒點決定，不預先實作。
 - 不從 advisory record 推導 success；無可信證據時保留 indeterminate。
 - memory product expansion 不因 telemetry 名稱相近而併入本版。
+- Tier、mode、reviewer coverage、independence、subject 與 publish authorization 不互相推論；`full` 不等於 parallel，parallel 不等於 full coverage。
+- 不在本版新增 `/deliver`、新 gate kind、workflow profile/preset、persistent workflow state 或 FSM；CC-517 只調整 repo-owned maintainer `/ship` policy，其他使用者可繼續自由組合 generic primitives。thin wrapper 只有在 CC-514 後的真實分類證據觸發 CC-516 才評估。
 
 ---
 

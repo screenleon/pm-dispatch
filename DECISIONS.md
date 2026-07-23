@@ -7,6 +7,67 @@ H2 標題格式：## YYYY-MM-DD: <短描述>
 與 BACKLOG closure 對應的 entry，內文首行寫：Closes: BACKLOG.md#<PREFIX>-NNN
 -->
 
+## 2026-07-23: gate-delivery-assurance-dimensions-are-orthogonal
+
+Relates: CC-511, CC-512, CC-513, CC-514, CC-515, CC-517, CC-518, CC-519,
+CC-520, CC-521
+
+**Context**: 現有 runtime 已將 tier detection、reviewer selection 與
+`SEQUENTIAL=true|false` 分開處理，但 review 文件與規畫曾把 `full`、五個 reviewers、
+parallel independence 與 publish-ready GO 描述成同一件事。這造成兩類漂移：
+`full + sequential` 被誤寫成非法或低保證、`express + parallel` 又可能被誤讀為 full；
+另一方面，primary review 後的 remediation 會改變 tree，若 publish 只讀
+`Final: GO`，就無法回答 review、tests 與最終發布各自涵蓋哪個 subject。維護者希望
+primary gate 一次提供完整、可行動的 findings/test gaps，再依 remediation 風險決定
+local closure、targeted confirmation 或拆票，但不建立新的 gate 或 workflow engine。
+
+**Decision**: Gate 與 delivery contract 固定拆成六個彼此正交的維度：
+
+1. **Tier** 表示審查深度與 evidence floor（express/standard/full/targeted），不決定
+   execution topology。
+2. **Mode** 表示 sequential combined session 或 parallel per-reviewer sessions；
+   不提升 tier，也不保證 reviewer coverage。policy 可分別輸出 recommended mode 與
+   required mode。
+3. **Reviewer coverage／independence** 記錄實際 selected/skipped reviewers、
+   implementation-context isolation 與 reviewer-to-reviewer context model；不得由
+   tier 或 reviewer 數量推論。
+4. **Policy classification** 由 canonical resolver 根據 diff、brief、敏感 surface
+   與 override 算出 minimum tier、required reviewers、recommended/required mode
+   與 downgrade audit；generic `pmctl gate` risk-based policy 與 maintainer `/ship`
+   primary full-coverage policy分開。
+5. **Artifact subject** 以 stable repository identity、base/head commit、tree
+   fingerprint 與 subject kind 說明 evidence 審查／測試了什麼；artifact validity、
+   subject freshness 與 consumer policy applicability 分開判斷。
+6. **Publish authorization** 不等同 gate GO。發布必須驗證 current-tree full-suite
+   PASS，以及下列任一 review authorization：current-tree review；或 primary review
+   + closed remediation ledger + required targeted confirmations。branch/HEAD/tree、
+   manual evidence與 accepted-risk override 仍須符合 consumer policy。
+
+合法組合包含 express/standard/full/targeted × sequential/parallel；只有 policy
+明確要求 reviewer isolation 時 `required_mode: parallel` 才是 hard requirement。
+Maintainer `/ship` 使用一次 primary comprehensive review、structured remediation
+closure、必要時一次 targeted confirmation，再對 final tree 執行 affected/full tests。
+
+**Alternatives considered**: (a) `full => parallel => five reviewers => publishable`
+單一 profile——否決，因深度、拓撲、coverage 與發布證據是不同問題，且與現有 runtime
+分離實作矛盾。(b) remediation 後永遠 full re-gate——否決，會回到逐輪揭露與高成本
+loop。(c) remediation 後永不 review——否決，security/risk、schema/public contract
+與跨邊界修復會讓 final tree 帶有未確認的新風險。(d) 新建 single/comprehensive gate
+command 或 workflow FSM——否決；強化既有 `pmctl gate run`、artifact 與 `/ship`
+recipe 即可。
+
+**Constraints introduced**: machine-readable tier table與 mode table 必須分離；
+artifact 必須記錄 requested/resolved tier、requested/resolved mode、實際 reviewer
+coverage/independence、policy resolution 與 immutable subject。任何 consumer 不得只
+grep `Final: GO` 推論 freshness 或 publish authorization。`full + sequential` 與
+`express + parallel` 都合法；targeted artifact 必須明示 delta-specific，不得冒充
+initial full coverage。Current-tree authoritative full-suite evidence是所有官方 ship
+publish path 的硬前置。Gate contract 只能保證 protocol/schema/coverage declaration
+與 findings-union parity，不能宣稱找完所有真實 defect；live-model seeded recall
+只能作 quality evaluation，不作 deterministic CI hard gate。
+
+Approver: screenleon（2026-07-23）。
+
 ## 2026-07-22: grok-host-and-executor-mvp
 
 **Context**: Grok Build CLI (`grok`) already exposes Model B headless surfaces
