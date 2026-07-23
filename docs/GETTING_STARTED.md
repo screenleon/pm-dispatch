@@ -104,6 +104,11 @@ user-owned `permission.bash` policy is present. Uninstall the matching
 host-owned configuration with the same selector, for example
 `bash uninstall.sh --host codex`.
 
+A Codex-only or OpenCode-only selection deliberately wires only that host's
+manifest-owned configuration. It does not install the product `pmctl` CLI or
+Claude dispatch allowlist; use the default Claude-compatible install (or add
+`--host claude`) when those product assets are required.
+
 ## 4) Verify install succeeded
 
 Run the built-in health check:

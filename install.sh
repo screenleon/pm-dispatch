@@ -134,14 +134,6 @@ fi
 
 RECEIPT_PATH="$(pm_dispatch_receipt_path)" || { echo "install: cannot resolve product receipt path" >&2; exit 2; }
 LEGACY_RECEIPT_PATH="$(pm_dispatch_legacy_receipt_path)" || LEGACY_RECEIPT_PATH=""
-# Link/copy refresh uses the prior receipt for ownership evidence.  Import an
-# old Claude-local receipt once so upgrades become product-owned without
-# discarding the evidence needed to refresh existing installed helpers.
-if [[ ! -f "$RECEIPT_PATH" && -n "$LEGACY_RECEIPT_PATH" && -f "$LEGACY_RECEIPT_PATH" && "$DRY_RUN" -eq 0 ]]; then
-  mkdir -p "${RECEIPT_PATH%/*}"
-  cp "$LEGACY_RECEIPT_PATH" "$RECEIPT_PATH"
-  echo "  migrated install receipt: $LEGACY_RECEIPT_PATH -> $RECEIPT_PATH"
-fi
 PM_DISPATCH_MANIFEST_PATH="$RECEIPT_PATH"
 export PM_DISPATCH_MANIFEST_PATH
 
@@ -170,6 +162,14 @@ for _host in "${SELECTED_HOSTS[@]}"; do
 done
 unset _host
 if [[ "$_INSTALL_CLAUDE" -eq 1 ]]; then
+  # Link/copy refresh uses the prior receipt for ownership evidence.  Import an
+  # old Claude-local receipt only when this lifecycle actually selects Claude;
+  # a Codex/OpenCode-only install must never inspect or copy Claude state.
+  if [[ ! -f "$RECEIPT_PATH" && -n "$LEGACY_RECEIPT_PATH" && -f "$LEGACY_RECEIPT_PATH" && "$DRY_RUN" -eq 0 ]]; then
+    mkdir -p "${RECEIPT_PATH%/*}"
+    cp "$LEGACY_RECEIPT_PATH" "$RECEIPT_PATH"
+    echo "  migrated install receipt: $LEGACY_RECEIPT_PATH -> $RECEIPT_PATH"
+  fi
   # shellcheck source=hosts/claude/lib/path-resolver.sh
   . "$REPO_ROOT/hosts/claude/lib/path-resolver.sh"
   _claude_root="$(claude_host_config_root 2>&1)" || {

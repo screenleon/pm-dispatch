@@ -2550,6 +2550,26 @@ case_doctor_native_windows_notice() {
   pass "$name"
 }
 
+case_doctor_receipt_selected_hosts_filter_and_drift_warn() {
+  local name="doctor-receipt-selected-hosts-filter-and-drift-warn"
+  should_run "$name" || return 0
+  local home="$tmp_root/home-receipt-selected" out status=0 path
+  write_full_settings "$home"
+  mkdir -p "$home/.pm-dispatch" "$home/.codex"
+  printf '{"manifest_version":1,"selected_hosts":["codex"],"entries":[]}\n' > "$home/.pm-dispatch/install-manifest.json"
+  path="$(make_stub_bin "$tmp_root/bin-receipt-selected" claude codex grok)"
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" CODEX_HOME="$home/.codex" PATH="$path" \
+    OPENAI_API_KEY=dummy ANTHROPIC_API_KEY=dummy XAI_API_KEY=dummy \
+    bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
+  if [[ "$status" -ne 0 || "$out" != *"codex available and authenticated"* ]] \
+      || [[ "$out" == *"Claude config root:"* ]] \
+      || [[ "$out" != *"managed host target exists outside selected receipt"* ]]; then
+    fail "$name" "receipt filter did not run selected host, skip Claude checks, and warn on drift: $out"
+    return
+  fi
+  pass "$name"
+}
+
 case_doctor_all_ok_exits_0
 case_doctor_executor_unauthed_fails
 case_doctor_executor_authed_via_credfile_ok
@@ -2625,5 +2645,6 @@ case_doctor_claude_config_root_requires_home
 case_doctor_repo_trusted_linter
 case_doctor_stale_hook_sibling_prefix_warns
 case_doctor_native_windows_notice
+case_doctor_receipt_selected_hosts_filter_and_drift_warn
 
 th_summary

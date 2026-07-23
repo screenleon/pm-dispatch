@@ -118,6 +118,17 @@ load_doctor_host_modules() {
   done < <(host_manifest_names "$REPO_ROOT")
 }
 
+doctor_receipt_drift_target() {
+  local host="$1" manifest id path fmt managed expanded
+  manifest="$(host_manifest_file "$REPO_ROOT" "$host")"
+  while IFS=$'\t' read -r id path fmt managed; do
+    [[ "$managed" == "true" ]] || continue
+    expanded="$(host_manifest_expand_path "$REPO_ROOT" "$host" "$path" 2>/dev/null || true)"
+    [[ -n "$expanded" && -e "$expanded" ]] && { printf '%s\n' "$expanded"; return 0; }
+  done < <(host_manifest_install_targets "$manifest")
+  return 1
+}
+
 JSON=0
 QUIET=0
 COLOR=0
@@ -630,7 +641,15 @@ main() {
           [[ "$_host" == "$_receipt_host" ]] && _selected=1
         done
         unset _receipt_host
-        [[ "$_selected" -eq 1 ]] || continue
+        if [[ "$_selected" -eq 0 ]]; then
+          if _drift_target="$(doctor_receipt_drift_target "$_host" 2>/dev/null)"; then
+            emit_check "host.$_host.receipt-drift" warn \
+              "managed host target exists outside selected receipt: $_drift_target" \
+              "run uninstall.sh --host $_host to remove it, or reinstall with --host $_host to adopt it"
+          fi
+          unset _drift_target
+          continue
+        fi
       fi
       "doctor_host_${_host}_run"
     done
