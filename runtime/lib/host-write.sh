@@ -27,17 +27,22 @@ host_write_install() {
   fi
 }
 
+host_write_uninstall() {
+  local repo_root="$1" host="$2" dry_run="${3:-0}" module
+  module="$(_host_write_module "$repo_root" "$host" uninstall_module)" || return $?
+  if [[ "$dry_run" -eq 1 ]]; then
+    bash "$module" --repo-root "$repo_root" --dry-run
+  else
+    bash "$module" --repo-root "$repo_root"
+  fi
+}
+
 host_write_uninstall_all() {
   local repo_root="$1" dry_run="${2:-0}" host manifest install_module module
   while IFS= read -r host; do
     manifest="$(host_manifest_file "$repo_root" "$host")"
     install_module="$(host_manifest_scalar "$manifest" install_module)"
     [[ -n "$install_module" && "$install_module" != "null" ]] || continue
-    module="$(_host_write_module "$repo_root" "$host" uninstall_module)" || return $?
-    if [[ "$dry_run" -eq 1 ]]; then
-      bash "$module" --repo-root "$repo_root" --dry-run
-    else
-      bash "$module" --repo-root "$repo_root"
-    fi
+    host_write_uninstall "$repo_root" "$host" "$dry_run" || return $?
   done < <(host_manifest_names "$repo_root")
 }

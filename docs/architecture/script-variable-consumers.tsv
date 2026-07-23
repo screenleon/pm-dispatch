@@ -144,7 +144,6 @@ PATH	PATH	runtime/lib/portable.sh	production
 PATH	PATH	runtime/lib/state-paths.sh	production
 PATH	PATH	runtime/lib/state-writer.sh	production
 PATH	PATH	tools/lint/check-docs-freshness.sh	production
-PATH	PATH	uninstall.sh	production
 PMCTL_BIN_DIR	PMCTL_BIN_DIR	hosts/claude/bin/install-guards.sh	production
 PMCTL_BIN_DIR	PMCTL_BIN_DIR	hosts/claude/bin/uninstall-guards.sh	production
 PMCTL_BIN_DIR	PMCTL_BIN_DIR	install.sh	production

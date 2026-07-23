@@ -61,7 +61,7 @@
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-449 | 吸收 CC-431：suite registry、CI parity、OpenCode、ship/worktree smoke | 🔵 |
+| CC-449 | 吸收 CC-431：suite registry、CI parity、OpenCode、ship/worktree smoke | ✅ pr:#439 |
 
 ### Phase 3 — install/upgrade smoke（原 v0.12.0 Phase 2）
 

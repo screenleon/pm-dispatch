@@ -3539,6 +3539,77 @@ test_install_missing_host_write_library_fails_loudly() {
   pass "$name"
 }
 
+test_host_selected_codex_lifecycle_skips_claude_tree() {
+  # A host-selected lifecycle must not retain Claude as an implicit base
+  # installer. Verify both install and matching uninstall leave HOME/.claude
+  # untouched while the Codex-owned hooks are wired then removed.
+  local name="host-selected-codex-lifecycle-skips-claude-tree"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name-home" codex_home="$tmp_root/$name-codex"
+  local out="$tmp_root/$name.out" uninstall_out="$tmp_root/$name-uninstall.out" rc=0
+
+  HOME="$home" CODEX_HOME="$codex_home" PMCTL_BIN_DIR="$tmp_root/$name-bin" \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    bash "$REPO_ROOT/install.sh" --host codex >"$out" 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    fail "$name" "host-selected install exited $rc: $(<"$out")"
+    return
+  fi
+  if [[ -e "$home/.claude" ]]; then
+    fail "$name" "Codex-only install created $home/.claude"
+    return
+  fi
+  if ! grep -Fq 'hosts/codex/hooks/command-guard.sh' "$codex_home/hooks.json"; then
+    fail "$name" "Codex-only install did not wire the Codex hook"
+    return
+  fi
+
+  rc=0
+  HOME="$home" CODEX_HOME="$codex_home" PMCTL_BIN_DIR="$tmp_root/$name-bin" \
+    bash "$REPO_ROOT/uninstall.sh" --host codex >"$uninstall_out" 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    fail "$name" "host-selected uninstall exited $rc: $(<"$uninstall_out")"
+    return
+  fi
+  if [[ -e "$home/.claude" ]]; then
+    fail "$name" "Codex-only uninstall created $home/.claude"
+    return
+  fi
+  if grep -Fq 'hosts/codex/hooks/command-guard.sh' "$codex_home/hooks.json"; then
+    fail "$name" "Codex hook remained after matching host-selected uninstall"
+    return
+  fi
+  pass "$name"
+}
+
+test_host_selected_opencode_lifecycle_skips_claude_tree() {
+  local name="host-selected-opencode-lifecycle-skips-claude-tree"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name-home" xdg_home="$tmp_root/$name-xdg"
+  local out="$tmp_root/$name.out" uninstall_out="$tmp_root/$name-uninstall.out" rc=0
+
+  HOME="$home" XDG_CONFIG_HOME="$xdg_home" PMCTL_BIN_DIR="$tmp_root/$name-bin" \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    bash "$REPO_ROOT/install.sh" --host opencode >"$out" 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    fail "$name" "host-selected install exited $rc: $(<"$out")"
+    return
+  fi
+  if [[ -e "$home/.claude" || ! -f "$xdg_home/opencode/opencode.json" ]]; then
+    fail "$name" "OpenCode-only install did not keep host ownership isolated"
+    return
+  fi
+
+  rc=0
+  HOME="$home" XDG_CONFIG_HOME="$xdg_home" PMCTL_BIN_DIR="$tmp_root/$name-bin" \
+    bash "$REPO_ROOT/uninstall.sh" --host opencode >"$uninstall_out" 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 || -e "$home/.claude" ]]; then
+    fail "$name" "OpenCode-only uninstall mutated the Claude tree or failed"
+    return
+  fi
+  pass "$name"
+}
+
 test_install_share_asset_installed
 test_install_share_asset_conflict
 test_install_share_asset_uninstall
@@ -3551,5 +3622,7 @@ test_install_hooks_msys_native_jq_boundary
 test_install_refreshes_relocated_helper_symlinks
 test_uninstall_prunes_empty_adapters_dir
 test_install_missing_host_write_library_fails_loudly
+test_host_selected_codex_lifecycle_skips_claude_tree
+test_host_selected_opencode_lifecycle_skips_claude_tree
 
 th_summary

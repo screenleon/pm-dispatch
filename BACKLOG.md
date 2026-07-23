@@ -1557,6 +1557,8 @@ readiness identity 不符、或 parent-death sandbox 導致早期死亡時皆 fa
 
 **Done-when**: 三個 host可各自或組合 install→doctor→uninstall；未選 host零 config side effect；foreign config與canonical memory preserved；[[CC-447]] 可在同一 lifecycle contract上執行 future N-1 upgrade而不特判 Claude base tree。
 
+**Implementation checkpoint 2026-07-23**: Phase 1 introduces repeated top-level `--host <name>` selection for install and uninstall. Omitted `--host` preserves the Claude compatibility default; explicit Codex/OpenCode-only lifecycle dispatches only manifest-declared modules and must not resolve or create a Claude config tree. The first regression proves the Codex-only install→uninstall path. Follow-up slices move the product receipt out of the Claude tree, make selected-host ownership durable across uninstall, and reduce doctor core to shared checks plus host module dispatch before [[CC-447]] final smoke evidence.
+
 **Dependencies**: 以 [[CC-501]] 的一次性 evidence作現況輸入，與 [[CC-503]] 的 shared content boundary協調；在 [[CC-447]] final N-1 contract前完成。P2，v0.11.0。
 
 ## CC-505 — context plane lexical 檢索補完與排序 🔵 active

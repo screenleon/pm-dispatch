@@ -4,7 +4,7 @@
 # Idempotent: safe to re-run.
 #
 # Usage:
-#   ./uninstall.sh [--dry-run]
+#   ./uninstall.sh [--dry-run] [--host <name>]
 
 set -euo pipefail
 
@@ -24,25 +24,27 @@ EOF
 }
 
 DRY_RUN=0
+SELECTED_HOSTS=(claude)
+HOST_SELECTION_EXPLICIT=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run) DRY_RUN=1; shift ;;
+    --host)
+      [[ $# -ge 2 ]] || { echo "uninstall: --host requires a value" >&2; exit 2; }
+      [[ "$2" =~ ^[a-z0-9_-]+$ ]] || { echo "uninstall: invalid host name: $2" >&2; exit 2; }
+      if [[ "$HOST_SELECTION_EXPLICIT" -eq 0 ]]; then SELECTED_HOSTS=(); HOST_SELECTION_EXPLICIT=1; fi
+      SELECTED_HOSTS+=("$2"); shift 2 ;;
+    --host=*)
+      _selected_host="${1#--host=}"
+      [[ "$_selected_host" =~ ^[a-z0-9_-]+$ ]] || { echo "uninstall: invalid host name: $_selected_host" >&2; exit 2; }
+      if [[ "$HOST_SELECTION_EXPLICIT" -eq 0 ]]; then SELECTED_HOSTS=(); HOST_SELECTION_EXPLICIT=1; fi
+      SELECTED_HOSTS+=("$_selected_host"); shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "uninstall: unknown flag $1" >&2; usage >&2; exit 2 ;;
   esac
 done
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
-# Mirror install.sh through the same host-owned resolver.
-# shellcheck source=hosts/claude/lib/path-resolver.sh
-. "$REPO_ROOT/hosts/claude/lib/path-resolver.sh"
-_claude_root="$(claude_host_config_root 2>&1)" || {
-  printf 'uninstall: %s\n' "$_claude_root" >&2
-  exit 2
-}
-CLAUDE_CONFIG_DIR="$_claude_root"
-CLAUDE_HOME="$CLAUDE_CONFIG_DIR"
-unset _claude_root
 
 # shellcheck disable=SC1091
 . "$REPO_ROOT/runtime/lib/portable.sh"
@@ -56,6 +58,49 @@ if [[ -f "$REPO_ROOT/runtime/lib/host-manifest.sh" && -f "$REPO_ROOT/runtime/lib
 else
   echo "uninstall: warning: host write libraries unavailable; Claude and optional-host hooks will not be removed" >&2
 fi
+
+_selected_hosts=" "
+_unique_hosts=()
+for _host in "${SELECTED_HOSTS[@]}"; do
+  [[ "$_selected_hosts" == *" $_host "* ]] && continue
+  _selected_hosts+="$_host "
+  _unique_hosts+=("$_host")
+done
+SELECTED_HOSTS=("${_unique_hosts[@]}")
+unset _host _selected_hosts _unique_hosts
+
+_UNINSTALL_CLAUDE=0
+for _host in "${SELECTED_HOSTS[@]}"; do
+  _host_write_module "$REPO_ROOT" "$_host" uninstall_module >/dev/null
+  [[ "$_host" == "claude" ]] && _UNINSTALL_CLAUDE=1
+done
+unset _host
+
+if [[ "$_UNINSTALL_CLAUDE" -eq 0 ]]; then
+  echo "pm-dispatch uninstaller"
+  echo "  repo:  $REPO_ROOT"
+  echo "  hosts: ${SELECTED_HOSTS[*]}"
+  [[ "$DRY_RUN" -eq 1 ]] && echo "  mode:  DRY RUN"
+  echo
+  for _host in "${SELECTED_HOSTS[@]}"; do
+    host_write_uninstall "$REPO_ROOT" "$_host" "$DRY_RUN"
+  done
+  unset _host
+  echo "Done."
+  exit 0
+fi
+
+# Mirror install.sh through the same host-owned resolver, but only when the
+# selected lifecycle includes Claude.
+# shellcheck source=hosts/claude/lib/path-resolver.sh
+. "$REPO_ROOT/hosts/claude/lib/path-resolver.sh"
+_claude_root="$(claude_host_config_root 2>&1)" || {
+  printf 'uninstall: %s\n' "$_claude_root" >&2
+  exit 2
+}
+CLAUDE_CONFIG_DIR="$_claude_root"
+CLAUDE_HOME="$CLAUDE_CONFIG_DIR"
+unset _claude_root
 
 _UNINSTALL_PLATFORM="$(detect_platform)"
 
@@ -376,13 +421,20 @@ if [[ "$parsed_any" -eq 0 ]] && grep -q '"mode"' "$MANIFEST" 2>/dev/null; then
   safety_skipped=$((safety_skipped + 1))
 fi
 
-# Symmetric teardown for every independently dispatched host write module.
-# Modules must be idempotent because uninstall cannot assume the matching
-# opt-in flag was used, nor that the host binary remains on PATH.
+# Explicit selection tears down only the named host modules. The no-selector
+# compatibility path retains the historic all-module cleanup for existing
+# mixed installs created before host selection was available.
 if [[ "$_HOST_WRITE_AVAILABLE" -eq 1 ]]; then
   echo
   echo "==> hooks"
-  host_write_uninstall_all "$REPO_ROOT" "$DRY_RUN"
+  if [[ "$HOST_SELECTION_EXPLICIT" -eq 1 ]]; then
+    for _host in "${SELECTED_HOSTS[@]}"; do
+      host_write_uninstall "$REPO_ROOT" "$_host" "$DRY_RUN"
+    done
+    unset _host
+  else
+    host_write_uninstall_all "$REPO_ROOT" "$DRY_RUN"
+  fi
 fi
 
 if [[ "$DRY_RUN" -ne 1 ]]; then
