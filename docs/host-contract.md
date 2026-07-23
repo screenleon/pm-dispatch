@@ -80,6 +80,21 @@ the tracker's data location is a separate state-store concern.
 | `format` | One of the format-handler enum below. |
 | `managed` | `true` if the install write path owns the file content; `false` if it is only read/asserted (doctor visibility). |
 
+### Product receipt and lifecycle ownership
+
+The top-level installer records the selected host set and product-managed
+artifacts in `$HOME/.pm-dispatch/install-manifest.json` (or the explicit
+`PM_DISPATCH_INSTALL_ROOT` override). This receipt is product-owned: it is not
+inside any host configuration directory and is the canonical source for an
+implicit uninstall or doctor dispatch. Host modules remain the exclusive owner
+of their declared config targets; the receipt only records which modules were
+selected and which product artifacts can be safely removed.
+
+Older Claude-local manifests remain a read-only migration input and temporary
+compatibility mirror. A new install writes the product receipt first; consumers
+must prefer it whenever present. This preserves upgrade evidence without
+turning `.claude` into the base lifecycle root for Codex or OpenCode.
+
 ### Format handlers
 
 Closed enum; adding a value is a schema revision, not a per-host improvisation:

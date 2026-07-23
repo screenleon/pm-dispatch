@@ -227,6 +227,11 @@ _doctor_host_codex_manifest_parity() {
 
 # Host-module entry point (required by doctor.sh's generic loader).
 doctor_host_codex_run() {
+  doctor_check_executor_auth codex codex \
+    "codex not found — dispatch to the codex adapter (pmctl dispatch run --adapter codex) is unavailable" \
+    "Install Codex CLI if you dispatch tasks to codex (optional)" \
+    "codex present but not authenticated — dispatch would fail (no turn.completed event)" \
+    "Run 'codex login' to authenticate, or export OPENAI_API_KEY"
   if ! codex_available; then
     emit_capability host.codex.binary ok codex pm_command_interface \
       none none none evolving probed \

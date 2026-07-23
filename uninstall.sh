@@ -49,6 +49,20 @@ REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 
 # shellcheck disable=SC1091
 . "$REPO_ROOT/runtime/lib/portable.sh"
+_INSTALL_RECEIPT_AVAILABLE=0
+if [[ -f "$REPO_ROOT/runtime/lib/install-receipt.sh" ]]; then
+  # shellcheck disable=SC1091
+  . "$REPO_ROOT/runtime/lib/install-receipt.sh"
+  RECEIPT_PATH="$(pm_dispatch_receipt_path)" || { echo "uninstall: cannot resolve product receipt path" >&2; exit 2; }
+  RECEIPT_SOURCE="$(pm_dispatch_receipt_existing_path 2>/dev/null || true)"
+  LEGACY_RECEIPT_PATH="$(pm_dispatch_legacy_receipt_path 2>/dev/null || true)"
+  _INSTALL_RECEIPT_AVAILABLE=1
+else
+  # A lone legacy uninstall script must still recover its Claude-local receipt.
+  RECEIPT_PATH=""
+  LEGACY_RECEIPT_PATH="${CLAUDE_CONFIG_DIR:-${CLAUDE_HOME:-${HOME:-}/.claude}}/.pm-dispatch/install-manifest.json"
+  RECEIPT_SOURCE="$LEGACY_RECEIPT_PATH"
+fi
 _HOST_WRITE_AVAILABLE=0
 if [[ -f "$REPO_ROOT/runtime/lib/host-manifest.sh" && -f "$REPO_ROOT/runtime/lib/host-write.sh" ]]; then
   # shellcheck disable=SC1091
@@ -62,6 +76,16 @@ fi
 
 _UNINSTALL_CLAUDE=0
 if [[ "$_HOST_WRITE_AVAILABLE" -eq 1 ]]; then
+  # A v2 product receipt is the durable source of ownership for a no-selector
+  # uninstall.  Legacy receipts intentionally retain the historical Claude
+  # default because they have no selected_hosts field.
+  if [[ "$_INSTALL_RECEIPT_AVAILABLE" -eq 1 && "$HOST_SELECTION_EXPLICIT" -eq 0 && -n "$RECEIPT_SOURCE" ]]; then
+    mapfile -t _receipt_hosts < <(pm_dispatch_receipt_selected_hosts "$RECEIPT_SOURCE")
+    if [[ "${#_receipt_hosts[@]}" -gt 0 ]]; then
+      SELECTED_HOSTS=("${_receipt_hosts[@]}")
+    fi
+    unset _receipt_hosts
+  fi
   mapfile -t SELECTED_HOSTS < <(host_selection_unique "${SELECTED_HOSTS[@]}")
   for _host in "${SELECTED_HOSTS[@]}"; do
     _host_write_module "$REPO_ROOT" "$_host" uninstall_module >/dev/null
@@ -79,6 +103,24 @@ else
   _UNINSTALL_CLAUDE=1
 fi
 
+finalize_product_receipt() {
+  local remaining
+  [[ "$_INSTALL_RECEIPT_AVAILABLE" -eq 1 ]] || return 0
+  [[ "$DRY_RUN" -eq 0 && -f "$RECEIPT_PATH" ]] || return 0
+  remaining="$(pm_dispatch_receipt_remove_hosts "$RECEIPT_PATH" "${SELECTED_HOSTS[@]}")" || {
+    echo "uninstall: could not update product receipt; preserving it for a safe retry" >&2
+    return 1
+  }
+  if [[ "$remaining" -eq 0 ]]; then
+    rm -f "$RECEIPT_PATH"
+    rmdir "${RECEIPT_PATH%/*}" 2>/dev/null || true
+    if [[ -n "$LEGACY_RECEIPT_PATH" && -f "$LEGACY_RECEIPT_PATH" ]]; then
+      rm -f "$LEGACY_RECEIPT_PATH"
+      rmdir "${LEGACY_RECEIPT_PATH%/*}" 2>/dev/null || true
+    fi
+  fi
+}
+
 if [[ "$_UNINSTALL_CLAUDE" -eq 0 ]]; then
   echo "pm-dispatch uninstaller"
   echo "  repo:  $REPO_ROOT"
@@ -89,6 +131,7 @@ if [[ "$_UNINSTALL_CLAUDE" -eq 0 ]]; then
     host_write_uninstall "$REPO_ROOT" "$_host" "$DRY_RUN"
   done
   unset _host
+  finalize_product_receipt || exit 3
   echo "Done."
   [[ "$DRY_RUN" -eq 1 ]] && echo "(no changes made — re-run without --dry-run to apply)"
   exit 0
@@ -108,7 +151,7 @@ unset _claude_root
 
 _UNINSTALL_PLATFORM="$(detect_platform)"
 
-MANIFEST="$CLAUDE_HOME/.pm-dispatch/install-manifest.json"
+MANIFEST="${RECEIPT_SOURCE:-$RECEIPT_PATH}"
 
 removed=0
 skipped=0
@@ -444,6 +487,7 @@ fi
 if [[ "$DRY_RUN" -ne 1 ]]; then
   if [[ "$safety_skipped" -eq 0 ]]; then
     rm -rf "$CLAUDE_HOME/.pm-dispatch"
+    finalize_product_receipt || exit 3
   else
     echo "  note: $safety_skipped item(s) require manual attention — manifest preserved for re-run"
     echo "  resolve conflicts manually, then re-run uninstall.sh"

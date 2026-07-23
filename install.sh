@@ -111,6 +111,8 @@ _COPY_FALLBACK_COUNT=0
 # shellcheck disable=SC1091
 . "$REPO_ROOT/runtime/lib/portable.sh"
 # shellcheck disable=SC1091
+. "$REPO_ROOT/runtime/lib/install-receipt.sh"
+# shellcheck disable=SC1091
 . "$REPO_ROOT/runtime/lib/allowlist.sh"
 _HOST_WRITE_AVAILABLE=0
 if [[ -f "$REPO_ROOT/runtime/lib/host-manifest.sh" && -f "$REPO_ROOT/runtime/lib/host-write.sh" ]]; then
@@ -123,6 +125,19 @@ else
   echo "install: host write libraries unavailable in this install layout" >&2
   exit 2
 fi
+
+RECEIPT_PATH="$(pm_dispatch_receipt_path)" || { echo "install: cannot resolve product receipt path" >&2; exit 2; }
+LEGACY_RECEIPT_PATH="$(pm_dispatch_legacy_receipt_path)" || LEGACY_RECEIPT_PATH=""
+# Link/copy refresh uses the prior receipt for ownership evidence.  Import an
+# old Claude-local receipt once so upgrades become product-owned without
+# discarding the evidence needed to refresh existing installed helpers.
+if [[ ! -f "$RECEIPT_PATH" && -n "$LEGACY_RECEIPT_PATH" && -f "$LEGACY_RECEIPT_PATH" && "$DRY_RUN" -eq 0 ]]; then
+  mkdir -p "${RECEIPT_PATH%/*}"
+  cp "$LEGACY_RECEIPT_PATH" "$RECEIPT_PATH"
+  echo "  migrated install receipt: $LEGACY_RECEIPT_PATH -> $RECEIPT_PATH"
+fi
+PM_DISPATCH_MANIFEST_PATH="$RECEIPT_PATH"
+export PM_DISPATCH_MANIFEST_PATH
 
 # --enable-host predates --host and augments only the compatibility-default
 # path. Explicit selection rejects mixing it with the legacy opt-in flags, so
@@ -554,6 +569,10 @@ if [[ "$_INSTALL_CLAUDE" -eq 0 ]]; then
     host_write_install "$REPO_ROOT" "$_host" "$DRY_RUN"
   done
   unset _host
+  if ! manifest_flush "$RECEIPT_PATH" "$REPO_ROOT" "$(IFS=,; echo "${SELECTED_HOSTS[*]}")"; then
+    echo "install: product receipt write failed" >&2
+    exit 3
+  fi
   echo "Done."
   [[ "$DRY_RUN" -eq 1 ]] && echo "(no changes made — re-run without --dry-run to apply)"
   exit 0
@@ -735,9 +754,16 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
   echo "(no changes made — re-run without --dry-run to apply)"
 fi
 
-if ! manifest_flush "$CLAUDE_HOME/.pm-dispatch/install-manifest.json" "$REPO_ROOT"; then
-  echo "install: manifest write failed" >&2
+if ! manifest_flush "$RECEIPT_PATH" "$REPO_ROOT" "$(IFS=,; echo "${SELECTED_HOSTS[*]}")"; then
+  echo "install: product receipt write failed" >&2
   exit 3
+fi
+# Keep the old location as a bounded read-only compatibility mirror for
+# installed helper versions that still look there.  New uninstall/doctor paths
+# always prefer the product receipt above.
+if [[ "$DRY_RUN" -eq 0 && -n "$LEGACY_RECEIPT_PATH" ]]; then
+  mkdir -p "${LEGACY_RECEIPT_PATH%/*}"
+  cp "$RECEIPT_PATH" "$LEGACY_RECEIPT_PATH"
 fi
 if [[ "$DRY_RUN" -eq 1 ]]; then
   echo "dispatch allowlist dry-run complete"

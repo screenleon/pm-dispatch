@@ -3715,6 +3715,62 @@ test_uninstall_missing_host_write_library_preserves_manifest_teardown() {
   pass "$name"
 }
 
+test_receipt_partial_host_uninstall_preserves_remaining_owner() {
+  local name="receipt-partial-host-uninstall-preserves-remaining-owner"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name-home" claude_home="$tmp_root/$name-claude"
+  local codex_home="$tmp_root/$name-codex" receipt="$home/.pm-dispatch/install-manifest.json"
+  local out="$tmp_root/$name.out" rc=0
+
+  HOME="$home" CLAUDE_HOME="$claude_home" CODEX_HOME="$codex_home" PMCTL_BIN_DIR="$tmp_root/$name-bin" \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    bash "$REPO_ROOT/install.sh" --host claude --host codex >"$out" 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 || ! -f "$receipt" ]]; then
+    fail "$name" "combined install did not create product receipt"
+    return
+  fi
+
+  rc=0
+  HOME="$home" CLAUDE_HOME="$claude_home" CODEX_HOME="$codex_home" PMCTL_BIN_DIR="$tmp_root/$name-bin" \
+    bash "$REPO_ROOT/uninstall.sh" --host codex >>"$out" 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 || ! -e "$claude_home/.pm" ]] \
+      || grep -Fq 'hosts/codex/hooks/command-guard.sh' "$codex_home/hooks.json" \
+      || ! jq -e '.selected_hosts == ["claude"]' "$receipt" >/dev/null; then
+    fail "$name" "partial uninstall did not retain only Claude ownership"
+    return
+  fi
+
+  rc=0
+  HOME="$home" CLAUDE_HOME="$claude_home" CODEX_HOME="$codex_home" PMCTL_BIN_DIR="$tmp_root/$name-bin" \
+    bash "$REPO_ROOT/uninstall.sh" >>"$out" 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 || -e "$claude_home/.pm" || -e "$receipt" ]]; then
+    fail "$name" "implicit uninstall did not finish remaining receipt ownership"
+    return
+  fi
+  pass "$name"
+}
+
+test_legacy_claude_manifest_migrates_to_product_receipt() {
+  local name="legacy-claude-manifest-migrates-to-product-receipt"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name-home"
+  local claude_home="$home/.claude"
+  local legacy="$claude_home/.pm-dispatch/install-manifest.json"
+  local receipt="$home/.pm-dispatch/install-manifest.json"
+  local out="$tmp_root/$name.out" rc=0
+  mkdir -p "${legacy%/*}"
+  printf '{"manifest_version":1,"entries":[]}\n' > "$legacy"
+
+  HOME="$home" PMCTL_BIN_DIR="$tmp_root/$name-bin" CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    bash "$REPO_ROOT/install.sh" --host claude >"$out" 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 || ! -f "$receipt" || ! -f "$legacy" ]] \
+      || ! jq -e '.selected_hosts == ["claude"]' "$receipt" >/dev/null; then
+    fail "$name" "legacy Claude receipt was not migrated into the product receipt"
+    return
+  fi
+  pass "$name"
+}
+
 test_install_share_asset_installed
 test_install_share_asset_conflict
 test_install_share_asset_uninstall
@@ -3734,5 +3790,7 @@ test_host_selected_claude_and_codex_lifecycle
 test_host_and_legacy_selector_conflict_fails_before_mutation
 test_host_selected_dry_run_reports_no_mutation
 test_uninstall_missing_host_write_library_preserves_manifest_teardown
+test_receipt_partial_host_uninstall_preserves_remaining_owner
+test_legacy_claude_manifest_migrates_to_product_receipt
 
 th_summary
