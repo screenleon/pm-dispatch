@@ -67,7 +67,7 @@
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-504 | manifest-driven multi-host lifecycle，移除 Claude base-spine 特例 | 🔵 |
+| CC-504 | manifest-driven multi-host lifecycle，移除 Claude base-spine 特例 | ✅ pr:#442 |
 | CC-447 | offline clean install + latest released tag→current N-1 upgrade；foreign config/memory/user data 不變 | 🔵 |
 
 ### Phase 4 — shared tooling/hooks host boundary（原 v0.12.0 Phase 3）
