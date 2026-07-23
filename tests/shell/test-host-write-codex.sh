@@ -893,13 +893,14 @@ test_install_opt_in_wires_codex_and_uninstall_removes_it() {
   local claude_home="$tmp_root/int-optin/.claude"
   local codex_home="$tmp_root/int-optin/.codex"
   local pmctl_bin_dir="$tmp_root/int-optin/pmctl-bin"
-  CLAUDE_HOME="$claude_home" CODEX_HOME="$codex_home" PMCTL_BIN_DIR="$pmctl_bin_dir" \
+  local install_root="$tmp_root/int-optin/.pm-dispatch"
+  CLAUDE_HOME="$claude_home" CODEX_HOME="$codex_home" PMCTL_BIN_DIR="$pmctl_bin_dir" PM_DISPATCH_INSTALL_ROOT="$install_root" \
     bash "$REPO_ROOT/install.sh" --profile minimal --enable-codex-command-guard >/dev/null 2>&1
   if [[ ! -f "$codex_home/hooks.json" ]] || ! jq -e '.hooks.PreToolUse[]? | select(.matcher=="Bash")' "$codex_home/hooks.json" >/dev/null 2>&1; then
     fail "$name" "install.sh --enable-codex-command-guard should wire the codex hook"
     return
   fi
-  CLAUDE_HOME="$claude_home" CODEX_HOME="$codex_home" PMCTL_BIN_DIR="$pmctl_bin_dir" \
+  CLAUDE_HOME="$claude_home" CODEX_HOME="$codex_home" PMCTL_BIN_DIR="$pmctl_bin_dir" PM_DISPATCH_INSTALL_ROOT="$install_root" \
     bash "$REPO_ROOT/uninstall.sh" >/dev/null 2>&1
   local content
   content="$(jq -c . "$codex_home/hooks.json" 2>/dev/null)"
@@ -915,14 +916,15 @@ test_uninstall_removes_codex_hook_when_codex_not_on_path() {
   local claude_home="$tmp_root/int-nopath/.claude"
   local codex_home="$tmp_root/int-nopath/.codex"
   local pmctl_bin_dir="$tmp_root/int-nopath/pmctl-bin"
+  local install_root="$tmp_root/int-nopath/.pm-dispatch"
   local minimal_path="/usr/bin:/bin"
-  PATH="$minimal_path" CLAUDE_HOME="$claude_home" CODEX_HOME="$codex_home" PMCTL_BIN_DIR="$pmctl_bin_dir" \
+  PATH="$minimal_path" CLAUDE_HOME="$claude_home" CODEX_HOME="$codex_home" PMCTL_BIN_DIR="$pmctl_bin_dir" PM_DISPATCH_INSTALL_ROOT="$install_root" \
     bash "$REPO_ROOT/install.sh" --profile minimal --enable-codex-command-guard >/dev/null 2>&1
   if [[ ! -f "$codex_home/hooks.json" ]]; then
     fail "$name" "setup: install --enable-codex-command-guard should wire the hook even without codex on PATH"
     return
   fi
-  PATH="$minimal_path" CLAUDE_HOME="$claude_home" CODEX_HOME="$codex_home" PMCTL_BIN_DIR="$pmctl_bin_dir" \
+  PATH="$minimal_path" CLAUDE_HOME="$claude_home" CODEX_HOME="$codex_home" PMCTL_BIN_DIR="$pmctl_bin_dir" PM_DISPATCH_INSTALL_ROOT="$install_root" \
     bash "$REPO_ROOT/uninstall.sh" >/dev/null 2>&1
   local content
   content="$(jq -c . "$codex_home/hooks.json" 2>/dev/null)"

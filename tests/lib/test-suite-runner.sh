@@ -586,10 +586,15 @@ else
       [[ ${#_if_pids[@]} -ge "$JOBS" ]] && sleep 0.05
     done
 
-    # Suites that access the shared repo/memory context index may overlap
-    # ordinary isolated suites, but never each other. This prevents context.db
-    # collisions without serializing the entire test run behind two long suites.
+    # A live-context suite must run alone: ordinary suites can invoke pmctl
+    # indirectly and mutate the same repo-local DB. Conversely, do not launch
+    # ordinary work while that invariant is being asserted.
     if [[ -n "${LIVE_DB_EXCLUSIVE[$name]:-}" ]]; then
+      while [[ ${#_if_pids[@]} -gt 0 ]]; do
+        _drain
+        [[ ${#_if_pids[@]} -gt 0 ]] && sleep 0.05
+      done
+    else
       while _exclusive_inflight; do
         _drain
         _exclusive_inflight && sleep 0.05
