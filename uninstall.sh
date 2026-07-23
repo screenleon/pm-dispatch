@@ -15,6 +15,7 @@ uninstall.sh — remove pm-dispatch symlinks/junctions/copies and hooks from ~/.
 Usage:
   ./uninstall.sh            apply (idempotent; manifest-driven, safe to re-run)
   ./uninstall.sh --dry-run  preview what would be removed, change nothing
+  ./uninstall.sh --host NAME  remove only one or more explicitly selected hosts
   ./uninstall.sh --help     show this help
 
 Honors canonical $CLAUDE_CONFIG_DIR (or legacy $CLAUDE_HOME) to target a
@@ -59,14 +60,24 @@ else
   echo "uninstall: warning: host write libraries unavailable; Claude and optional-host hooks will not be removed" >&2
 fi
 
-mapfile -t SELECTED_HOSTS < <(host_selection_unique "${SELECTED_HOSTS[@]}")
-
 _UNINSTALL_CLAUDE=0
-for _host in "${SELECTED_HOSTS[@]}"; do
-  _host_write_module "$REPO_ROOT" "$_host" uninstall_module >/dev/null
-  [[ "$_host" == "claude" ]] && _UNINSTALL_CLAUDE=1
-done
-unset _host
+if [[ "$_HOST_WRITE_AVAILABLE" -eq 1 ]]; then
+  mapfile -t SELECTED_HOSTS < <(host_selection_unique "${SELECTED_HOSTS[@]}")
+  for _host in "${SELECTED_HOSTS[@]}"; do
+    _host_write_module "$REPO_ROOT" "$_host" uninstall_module >/dev/null
+    [[ "$_host" == "claude" ]] && _UNINSTALL_CLAUDE=1
+  done
+  unset _host
+else
+  # The legacy manifest teardown does not depend on host modules. Preserve it
+  # for a default Claude uninstall; explicit host selection cannot be resolved
+  # safely without the manifest dispatcher and therefore fails loudly.
+  if [[ "$HOST_SELECTION_EXPLICIT" -eq 1 ]]; then
+    echo "uninstall: host write libraries unavailable; cannot resolve --host selection" >&2
+    exit 2
+  fi
+  _UNINSTALL_CLAUDE=1
+fi
 
 if [[ "$_UNINSTALL_CLAUDE" -eq 0 ]]; then
   echo "pm-dispatch uninstaller"

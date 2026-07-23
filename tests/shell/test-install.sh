@@ -3690,6 +3690,31 @@ test_host_selected_dry_run_reports_no_mutation() {
   pass "$name"
 }
 
+test_uninstall_missing_host_write_library_preserves_manifest_teardown() {
+  local name="uninstall-missing-host-write-library-preserves-manifest-teardown"
+  should_run "$name" || return 0
+  local mock_repo="$tmp_root/$name-repo" home="$tmp_root/$name-home"
+  local claude_home="$home/.claude"
+  local source="$mock_repo/pm"
+  local destination="$claude_home/.pm"
+  local out="$tmp_root/$name.out" rc=0
+  mkdir -p "$mock_repo/runtime/lib" "$mock_repo/hosts/claude/lib" "$source" "$claude_home/.pm-dispatch"
+  cp "$REPO_ROOT/uninstall.sh" "$mock_repo/uninstall.sh"
+  cp "$REPO_ROOT/runtime/lib/portable.sh" "$mock_repo/runtime/lib/portable.sh"
+  cp "$REPO_ROOT/hosts/claude/lib/path-resolver.sh" "$mock_repo/hosts/claude/lib/path-resolver.sh"
+  ln -s "$source" "$destination"
+  printf '{"manifest_version":1,"entries":[{"src":"%s","dst":"%s","mode":"symlink","sha256":""}]}\n' \
+    "$source" "$destination" > "$claude_home/.pm-dispatch/install-manifest.json"
+
+  HOME="$home" PMCTL_BIN_DIR="$tmp_root/$name-bin" bash "$mock_repo/uninstall.sh" >"$out" 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 || -e "$destination" ]] \
+      || grep -Fq 'command not found' "$out"; then
+    fail "$name" "missing host-write library did not preserve default manifest teardown"
+    return
+  fi
+  pass "$name"
+}
+
 test_install_share_asset_installed
 test_install_share_asset_conflict
 test_install_share_asset_uninstall
@@ -3708,5 +3733,6 @@ test_host_equals_form_codex_lifecycle_skips_claude_tree
 test_host_selected_claude_and_codex_lifecycle
 test_host_and_legacy_selector_conflict_fails_before_mutation
 test_host_selected_dry_run_reports_no_mutation
+test_uninstall_missing_host_write_library_preserves_manifest_teardown
 
 th_summary

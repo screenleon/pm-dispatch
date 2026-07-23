@@ -521,7 +521,12 @@ fi
 # anything. Host installers define --dry-run as a read-only ownership and
 # conflict check, so a user-owned policy fails the whole multi-host operation
 # at the transaction boundary instead of leaving a partial install behind.
-if [[ "$DRY_RUN" -eq 0 && "${#SELECTED_HOSTS[@]}" -gt 0 ]]; then
+_HAS_NON_CLAUDE_SELECTION=0
+for _host in "${SELECTED_HOSTS[@]}"; do
+  [[ "$_host" != "claude" ]] && _HAS_NON_CLAUDE_SELECTION=1
+done
+unset _host
+if [[ "$DRY_RUN" -eq 0 && "$_HAS_NON_CLAUDE_SELECTION" -eq 1 ]]; then
   echo "==> selected host preflight"
   _preflighted_hosts=" "
   for _host in "${SELECTED_HOSTS[@]}"; do
@@ -537,6 +542,7 @@ if [[ "$DRY_RUN" -eq 0 && "${#SELECTED_HOSTS[@]}" -gt 0 ]]; then
   unset _host _preflighted_hosts
   echo
 fi
+unset _HAS_NON_CLAUDE_SELECTION
 
 # A selected non-Claude host owns only its manifest-declared configuration.
 # Do not run the historical Claude product installer as a hidden base step:
