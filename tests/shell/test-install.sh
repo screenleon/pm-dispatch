@@ -3771,6 +3771,27 @@ test_legacy_claude_manifest_migrates_to_product_receipt() {
   pass "$name"
 }
 
+test_product_receipt_root_override_isolated() {
+  local name="product-receipt-root-override-isolated"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name-home" root="$tmp_root/$name-receipt-root"
+  local codex_home="$tmp_root/$name-codex" receipt="$root/install-manifest.json" out="$tmp_root/$name.out" rc=0
+  HOME="$home" CODEX_HOME="$codex_home" PM_DISPATCH_INSTALL_ROOT="$root" PMCTL_BIN_DIR="$tmp_root/$name-bin" \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 bash "$REPO_ROOT/install.sh" --host codex >"$out" 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 || ! -f "$receipt" || -e "$home/.pm-dispatch/install-manifest.json" ]] \
+      || ! jq -e '.selected_hosts == ["codex"]' "$receipt" >/dev/null; then
+    fail "$name" "product receipt override was not isolated from HOME"
+    return
+  fi
+  HOME="$home" CODEX_HOME="$codex_home" PM_DISPATCH_INSTALL_ROOT="$root" PMCTL_BIN_DIR="$tmp_root/$name-bin" \
+    bash "$REPO_ROOT/uninstall.sh" >"$out" 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 || -e "$receipt" ]]; then
+    fail "$name" "implicit uninstall did not honor the product receipt override"
+    return
+  fi
+  pass "$name"
+}
+
 test_install_share_asset_installed
 test_install_share_asset_conflict
 test_install_share_asset_uninstall
@@ -3792,5 +3813,6 @@ test_host_selected_dry_run_reports_no_mutation
 test_uninstall_missing_host_write_library_preserves_manifest_teardown
 test_receipt_partial_host_uninstall_preserves_remaining_owner
 test_legacy_claude_manifest_migrates_to_product_receipt
+test_product_receipt_root_override_isolated
 
 th_summary
