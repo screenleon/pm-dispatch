@@ -110,6 +110,12 @@ _COPY_FALLBACK_COUNT=0
 
 # shellcheck disable=SC1091
 . "$REPO_ROOT/runtime/lib/portable.sh"
+if [[ ! -f "$REPO_ROOT/runtime/lib/install-receipt.sh" ]]; then
+  # Keep the established fail-loud contract for incomplete checkout layouts:
+  # receipt ownership is part of the host lifecycle, never an optional source.
+  echo "install: host write libraries unavailable in this install layout" >&2
+  exit 2
+fi
 # shellcheck disable=SC1091
 . "$REPO_ROOT/runtime/lib/install-receipt.sh"
 # shellcheck disable=SC1091
