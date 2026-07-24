@@ -75,7 +75,33 @@ make_work_repo() {
     printf '## %s -- mock ticket for ship-parallel tests %s\n\n' "$ticket" "🔵 active"
     printf 'Problem: test fixture.\n\nRequirement: none.\n\nDependencies: none.\n'
   } > "$path/BACKLOG.md"
-  git -C "$path" add BACKLOG.md
+  printf '.pm-dispatch/\n' > "$path/.gitignore"
+  mkdir -p "$path/tests/bin"
+  cat > "$path/tests/bin/run-tests.sh" <<'FAKEOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ -z "${PM_TEST_RUNNER_LOG:-}" ]] || printf '%s\n' "$*" >> "$PM_TEST_RUNNER_LOG"
+case "${1:-}" in
+  --all)
+    [[ "${2:-}" == "--result-file" && -n "${3:-}" ]] || exit 2
+    mkdir -p "$(dirname "$3")"
+    printf '{"fake":"full-result"}\n' > "$3"
+    if [[ "${PM_TEST_FULL_RUN_MUTATE:-}" == "head" ]]; then
+      printf 'post-suite mutation\n' > suite-drift.txt
+      git add suite-drift.txt
+      git -c user.email=test@example.com -c user.name=test commit -q -m post-suite-mutation
+    fi
+    exit "${PM_TEST_FULL_RUN_STATUS:-0}"
+    ;;
+  --verify-full)
+    [[ -n "${2:-}" ]] || exit 2
+    exit "${PM_TEST_FULL_VERIFY_STATUS:-0}"
+    ;;
+esac
+exit 2
+FAKEOF
+  chmod +x "$path/tests/bin/run-tests.sh"
+  git -C "$path" add BACKLOG.md .gitignore tests/bin/run-tests.sh
   git -C "$path" commit -q -m seed
 }
 
@@ -131,6 +157,29 @@ fi
 exit 1
 FAKEOF
   chmod +x "$bindir/gh"
+}
+
+# make_cli_fixture_with_fake_gate <path>
+# Copies the real CLI/runtime libraries, then replaces only the external gate
+# invocation after those libraries load. This keeps CLI option parsing and the
+# real ship finish implementation under test without dispatching a model.
+make_cli_fixture_with_fake_gate() {
+  local path="$1"
+  mkdir -p "$path/cli" "$path/runtime"
+  cp "$PMCTL" "$path/cli/pmctl"
+  cp "$REPO_ROOT/cli/commands.tsv" "$path/cli/commands.tsv"
+  cp -R "$REPO_ROOT/runtime/lib" "$path/runtime/lib"
+  # The sed program must keep the CLI's $cmd/$sub anchors literal.
+  # shellcheck disable=SC2016
+  sed -i '/^case "\$cmd\/\$sub" in$/i\
+pmctl_gate_run() {\
+  local result_file\
+  result_file="$(mktemp)"\
+  printf "Final: GO\\n" > "$result_file"\
+  printf "result: %s\\n" "$result_file"\
+}\
+' "$path/cli/pmctl"
+  chmod +x "$path/cli/pmctl"
 }
 
 # run_finish_with_fake_gate <work_dir> <ticket_id> <verdict> [extra_args...]
@@ -1055,6 +1104,197 @@ case_finish_go_pushes_and_opens_pr() {
   fi
 }
 
+case_finish_runs_and_verifies_current_tree_full_suite_before_publish() {
+  # Behavior: a successful finish produces and verifies current-tree full-suite evidence before publishing.
+  # Steps: run a GO fixture with a recording runner, then require both full-run and verify calls plus a pushed branch.
+  local name="ship finish: fresh current-tree full suite is run and canonically verified before push/PR"
+  should_run "$name" || return 0
+  local work out err log status=0
+  work="$tmp_root/work-finish-full-auto"
+  log="$tmp_root/finish-full-auto.log"
+  make_work_repo "$work" "CC-9001"
+  checkout_ticket_branch "$work" "CC-9001"
+  add_bare_origin "$work"
+  local gh_bin="$tmp_root/fake-gh-full-auto-bin"
+  install_fake_gh "$gh_bin" "https://example.invalid/pr/full-auto"
+  out="$tmp_root/out-finish-full-auto"; err="$tmp_root/err-finish-full-auto"
+  PM_TEST_RUNNER_LOG="$log" PATH="$gh_bin:$PATH" run_finish_with_fake_gate "$work" "CC-9001" "GO" > "$out" 2> "$err" || status=$?
+  local pushed=0
+  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
+  if [[ "$status" -eq 0 && "$pushed" -eq 1 ]] \
+    && grep -q '^--all --result-file ' "$log" \
+    && grep -q '^--verify-full ' "$log"; then
+    pass "$name"
+  else
+    fail "$name" "expected fresh full run + verify before publish; status=$status pushed=$pushed log=$(cat "$log" 2>/dev/null) stderr=$(cat "$err")"
+  fi
+}
+
+case_finish_invalid_supplied_full_result_refuses_publish() {
+  # Behavior: supplied evidence cannot bypass canonical full-result verification.
+  # Steps: make the runner reject a caller artifact and require no remote branch is created.
+  local name="ship finish: invalid caller-supplied full result fails closed before push/PR"
+  should_run "$name" || return 0
+  local work out err log artifact status=0
+  work="$tmp_root/work-finish-full-invalid"
+  log="$tmp_root/finish-full-invalid.log"
+  artifact="$tmp_root/invalid-full-result.json"
+  printf '{"not":"authoritative"}\n' > "$artifact"
+  make_work_repo "$work" "CC-9001"
+  checkout_ticket_branch "$work" "CC-9001"
+  add_bare_origin "$work"
+  local gh_bin="$tmp_root/fake-gh-full-invalid-bin"
+  install_fake_gh "$gh_bin" "https://example.invalid/pr/full-invalid"
+  out="$tmp_root/out-finish-full-invalid"; err="$tmp_root/err-finish-full-invalid"
+  PM_TEST_RUNNER_LOG="$log" PM_TEST_FULL_VERIFY_STATUS=1 PATH="$gh_bin:$PATH" \
+    run_finish_with_fake_gate "$work" "CC-9001" "GO" --full-result "$artifact" > "$out" 2> "$err" || status=$?
+  local pushed=0
+  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
+  if [[ "$status" -eq 1 && "$pushed" -eq 0 ]] \
+    && grep -Fxq -- "--verify-full $artifact" "$log" \
+    && ! grep -q '^--all ' "$log" \
+    && grep -q 'evidence is not valid for the current tree' "$err"; then
+    pass "$name"
+  else
+    fail "$name" "expected fail-closed supplied artifact rejection; status=$status pushed=$pushed log=$(cat "$log" 2>/dev/null) stderr=$(cat "$err")"
+  fi
+}
+
+case_finish_failed_full_suite_refuses_publish() {
+  # Behavior: a fresh full-suite failure blocks all publication side effects.
+  # Steps: force the recording runner's full invocation to fail and require no remote branch is created.
+  local name="ship finish: failed fresh full suite refuses push/PR"
+  should_run "$name" || return 0
+  local work out err log status=0
+  work="$tmp_root/work-finish-full-failed"
+  log="$tmp_root/finish-full-failed.log"
+  make_work_repo "$work" "CC-9001"
+  checkout_ticket_branch "$work" "CC-9001"
+  add_bare_origin "$work"
+  local gh_bin="$tmp_root/fake-gh-full-failed-bin"
+  install_fake_gh "$gh_bin" "https://example.invalid/pr/full-failed"
+  out="$tmp_root/out-finish-full-failed"; err="$tmp_root/err-finish-full-failed"
+  PM_TEST_RUNNER_LOG="$log" PM_TEST_FULL_RUN_STATUS=1 PATH="$gh_bin:$PATH" \
+    run_finish_with_fake_gate "$work" "CC-9001" "GO" > "$out" 2> "$err" || status=$?
+  local pushed=0
+  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
+  if [[ "$status" -eq 1 && "$pushed" -eq 0 ]] \
+    && grep -q '^--all --result-file ' "$log" \
+    && ! grep -q '^--verify-full ' "$log" \
+    && grep -q 'authoritative full suite failed' "$err"; then
+    pass "$name"
+  else
+    fail "$name" "expected failed suite to block publish; status=$status pushed=$pushed log=$(cat "$log" 2>/dev/null) stderr=$(cat "$err")"
+  fi
+}
+
+case_finish_post_suite_head_drift_refuses_publish() {
+  # Behavior: publication rejects a commit created after the gate and during an otherwise-successful full suite.
+  # Steps: make the runner commit a fixture mutation, then require the post-suite HEAD guard and no remote branch.
+  local name="ship finish: HEAD changed while a full suite ran refuses push/PR despite runner success"
+  should_run "$name" || return 0
+  local work out err log status=0
+  work="$tmp_root/work-finish-full-head-drift"
+  log="$tmp_root/finish-full-head-drift.log"
+  make_work_repo "$work" "CC-9001"
+  checkout_ticket_branch "$work" "CC-9001"
+  add_bare_origin "$work"
+  local gh_bin="$tmp_root/fake-gh-full-head-drift-bin"
+  install_fake_gh "$gh_bin" "https://example.invalid/pr/full-head-drift"
+  out="$tmp_root/out-finish-full-head-drift"; err="$tmp_root/err-finish-full-head-drift"
+  PM_TEST_RUNNER_LOG="$log" PM_TEST_FULL_RUN_MUTATE=head PATH="$gh_bin:$PATH" \
+    run_finish_with_fake_gate "$work" "CC-9001" "GO" > "$out" 2> "$err" || status=$?
+  local pushed=0
+  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
+  if [[ "$status" -eq 1 && "$pushed" -eq 0 ]] \
+    && grep -q '^--verify-full ' "$log" \
+    && grep -q 'HEAD moved after the gate' "$err"; then
+    pass "$name"
+  else
+    fail "$name" "expected post-suite HEAD drift to block publish; status=$status pushed=$pushed log=$(cat "$log" 2>/dev/null) stderr=$(cat "$err")"
+  fi
+}
+
+case_finish_valid_supplied_full_result_publishes() {
+  # Behavior: a canonically accepted caller full-result artifact may satisfy the publish evidence requirement.
+  # Steps: supply a relative artifact path to a passing recording verifier and require verification plus a pushed branch.
+  local name="ship finish: valid supplied full result is resolved against --cd, verified, and permits publish"
+  should_run "$name" || return 0
+  local work out err log status=0
+  work="$tmp_root/work-finish-full-supplied"
+  log="$tmp_root/finish-full-supplied.log"
+  make_work_repo "$work" "CC-9001"
+  checkout_ticket_branch "$work" "CC-9001"
+  add_bare_origin "$work"
+  mkdir -p "$work/evidence"
+  printf '{"fake":"supplied-full-result"}\n' > "$work/evidence/full.json"
+  git -C "$work" add evidence/full.json
+  git -C "$work" commit -q -m supplied-full-result
+  local gh_bin="$tmp_root/fake-gh-full-supplied-bin"
+  install_fake_gh "$gh_bin" "https://example.invalid/pr/full-supplied"
+  out="$tmp_root/out-finish-full-supplied"; err="$tmp_root/err-finish-full-supplied"
+  PM_TEST_RUNNER_LOG="$log" PATH="$gh_bin:$PATH" \
+    run_finish_with_fake_gate "$work" "CC-9001" "GO" --full-result evidence/full.json > "$out" 2> "$err" || status=$?
+  local pushed=0
+  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
+  if [[ "$status" -eq 0 && "$pushed" -eq 1 ]] \
+    && grep -Fxq -- "--verify-full $work/evidence/full.json" "$log" \
+    && ! grep -q '^--all ' "$log"; then
+    pass "$name"
+  else
+    fail "$name" "expected verified supplied evidence to publish; status=$status pushed=$pushed log=$(cat "$log" 2>/dev/null) stderr=$(cat "$err")"
+  fi
+}
+
+case_finish_cli_forwards_full_result_option() {
+  # Behavior: the public CLI recognizes --full-result rather than rejecting it as an unknown finish option.
+  # Steps: invoke the real CLI with a missing option value and require the finish-specific argument diagnostic.
+  local name="ship finish CLI: --full-result is forwarded to the finish contract"
+  should_run "$name" || return 0
+  local work out err status=0
+  work="$tmp_root/work-finish-cli-full-result"
+  make_work_repo "$work" "CC-9001"
+  out="$tmp_root/out-finish-cli-full-result"; err="$tmp_root/err-finish-cli-full-result"
+  "$PMCTL" ship finish CC-9001 --full-result --cd "$work" > "$out" 2> "$err" || status=$?
+  if [[ "$status" -eq 2 ]] && grep -q -- '--full-result requires an artifact path' "$err"; then
+    pass "$name"
+  else
+    fail "$name" "expected finish-specific --full-result diagnostic; status=$status stderr=$(cat "$err")"
+  fi
+}
+
+case_finish_cli_valid_full_result_publishes() {
+  # Behavior: a valid public --full-result invocation reaches the real finish verifier and publish path.
+  # Steps: invoke a minimal real CLI/runtime fixture with a post-load fake gate, then require resolved verification and push.
+  local name="ship finish CLI: valid --full-result reaches verifier and permits publish"
+  should_run "$name" || return 0
+  local work product out err log status=0
+  work="$tmp_root/work-finish-cli-full-success"
+  product="$tmp_root/product-cli-full-success"
+  log="$tmp_root/finish-cli-full-success.log"
+  make_work_repo "$work" "CC-9001"
+  checkout_ticket_branch "$work" "CC-9001"
+  add_bare_origin "$work"
+  mkdir -p "$work/evidence"
+  printf '{"fake":"cli-supplied-full-result"}\n' > "$work/evidence/full.json"
+  git -C "$work" add evidence/full.json
+  git -C "$work" commit -q -m cli-supplied-full-result
+  make_cli_fixture_with_fake_gate "$product"
+  local gh_bin="$tmp_root/fake-gh-cli-full-success-bin"
+  install_fake_gh "$gh_bin" "https://example.invalid/pr/cli-full-success"
+  out="$tmp_root/out-finish-cli-full-success"; err="$tmp_root/err-finish-cli-full-success"
+  PM_TEST_RUNNER_LOG="$log" PATH="$gh_bin:$PATH" \
+    "$product/cli/pmctl" ship finish CC-9001 --cd "$work" --full-result evidence/full.json > "$out" 2> "$err" || status=$?
+  local pushed=0
+  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
+  if [[ "$status" -eq 0 && "$pushed" -eq 1 ]] \
+    && grep -Fxq -- "--verify-full $work/evidence/full.json" "$log"; then
+    pass "$name"
+  else
+    fail "$name" "expected valid CLI artifact to verify and publish; status=$status pushed=$pushed log=$(cat "$log" 2>/dev/null) stderr=$(cat "$err")"
+  fi
+}
+
 case_finish_gh_pr_create_runtime_failure_writes_pushed_pr_failed_marker() {
   local name="ship finish: gh pr create fails at runtime after a successful push -- writes PUSHED_PR_FAILED marker, exits nonzero"
   should_run "$name" || return 0
@@ -1613,6 +1853,13 @@ case_finish_go_head_moved_refuses_push
 case_finish_gh_missing_refuses_before_gate_or_push
 case_finish_wrong_branch_refuses_before_gate_or_push
 case_finish_go_pushes_and_opens_pr
+case_finish_runs_and_verifies_current_tree_full_suite_before_publish
+case_finish_invalid_supplied_full_result_refuses_publish
+case_finish_failed_full_suite_refuses_publish
+case_finish_post_suite_head_drift_refuses_publish
+case_finish_valid_supplied_full_result_publishes
+case_finish_cli_forwards_full_result_option
+case_finish_cli_valid_full_result_publishes
 case_finish_gh_pr_create_runtime_failure_writes_pushed_pr_failed_marker
 case_status_reports_partial_for_pushed_pr_failed
 case_finish_reviewers_flag_reaches_gate_call

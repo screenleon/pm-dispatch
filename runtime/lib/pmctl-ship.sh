@@ -32,7 +32,7 @@ pmctl_ship_usage() {
   printf '           Start a manual ship lane. Bare: in the current worktree (alias: prepare). --worktree: isolated worktree, no dispatch. --adapter: dispatch (implies --worktree).\n' >&2
   printf '           After implementation, run: pmctl ship finish <ticket-id>\n' >&2
   printf '       pmctl ship prepare <ticket-id> [--cd <work_dir>]\n' >&2
-  printf '       pmctl ship finish  <ticket-id> [--cd <work_dir>] [--reviewers <r,...>]\n' >&2
+  printf '       pmctl ship finish  <ticket-id> [--cd <work_dir>] [--reviewers <r,...>] [--full-result <artifact>]\n' >&2
   printf '       pmctl ship --parallel <ticket-id> [<ticket-id>...] [--from <base>] [--adapter <codex|claude|opencode|grok>] [--isolation <level>] [--model <alias>] [--cd <work_dir>]\n' >&2
   printf '       pmctl ship status [--cd <work_dir>] [--json]\n' >&2
   printf '       pmctl ship list   [--cd <work_dir>] [--json]\n' >&2
@@ -81,7 +81,44 @@ pmctl_ship_prepare() {
   pmctl_ship_run "${1:-}" "${2:-}" "${3:-}"
 }
 
-# pmctl_ship_finish <repo_root> <work_dir> <ticket-id> [--reviewers <r,...>]
+# pmctl_ship_verify_full_suite <work_dir> [full-result-artifact]
+# Runs or verifies the canonical, tree-bound authoritative full-suite evidence
+# required before an official ship path may publish. A supplied artifact is
+# never trusted by name or exit code: the canonical verifier checks its full
+# contract, suite registry, zero-skip status, and current-tree fingerprints.
+pmctl_ship_verify_full_suite() {
+  local work_dir="${1:-}" supplied_result="${2:-}"
+  local runner result_file
+  runner="$work_dir/tests/bin/run-tests.sh"
+  if [[ ! -x "$runner" ]]; then
+    printf 'pmctl ship finish: canonical full-suite runner is unavailable: %s\n' "$runner" >&2
+    return 2
+  fi
+
+  if [[ -n "$supplied_result" ]]; then
+    if [[ "$supplied_result" == /* ]]; then
+      result_file="$supplied_result"
+    else
+      result_file="$work_dir/$supplied_result"
+    fi
+  else
+    result_file="$work_dir/.pm-dispatch/test-results/ship-full-$(git -C "$work_dir" rev-parse HEAD 2>/dev/null).json"
+    mkdir -p "$(dirname "$result_file")" || return 2
+    printf 'pmctl ship finish: running authoritative full suite for the current tree\n' >&2
+    if ! (cd "$work_dir" && "$runner" --all --result-file "$result_file"); then
+      printf 'pmctl ship finish: authoritative full suite failed; refusing to push or open a PR\n' >&2
+      return 1
+    fi
+  fi
+
+  if ! (cd "$work_dir" && "$runner" --verify-full "$result_file"); then
+    printf 'pmctl ship finish: authoritative full-suite evidence is not valid for the current tree; refusing to push or open a PR\n' >&2
+    return 1
+  fi
+  printf 'pmctl ship finish: verified current-tree authoritative full-suite PASS: %s\n' "$result_file" >&2
+}
+
+# pmctl_ship_finish <repo_root> <work_dir> <ticket-id> [--reviewers <r,...>] [--full-result <artifact>]
 # Runs ONE gate round in work_dir. GO: push + open PR, print the PR URL.
 # NO-GO: print the verdict/result path and exit 1 -- the caller (agent) is
 # expected to fix findings and call `finish` again, same loop discipline as
@@ -90,12 +127,17 @@ pmctl_ship_finish() {
   local repo_root="${1:-}" work_dir="${2:-}" ticket_id="${3:-}"
   shift 3 || true
   [[ -n "$work_dir" ]] || work_dir="$repo_root"
-  local reviewers="" args=("$@") i=0
+  local reviewers="" full_result="" args=("$@") i=0
   while [[ $i -lt ${#args[@]} ]]; do
     case "${args[$i]}" in
-      --reviewers) reviewers="${args[$((i+1))]:-}"; i=$((i+2)) ;;
+      --reviewers)
+        [[ -n "${args[$((i+1))]:-}" ]] || { printf 'pmctl ship finish: --reviewers requires a value\n' >&2; return 2; }
+        reviewers="${args[$((i+1))]}"; i=$((i+2)) ;;
+      --full-result)
+        [[ -n "${args[$((i+1))]:-}" ]] || { printf 'pmctl ship finish: --full-result requires an artifact path\n' >&2; return 2; }
+        full_result="${args[$((i+1))]}"; i=$((i+2)) ;;
       -h|--help) pmctl_ship_usage; return 0 ;;
-      *) i=$((i+1)) ;;
+      *) printf 'pmctl ship finish: unknown option: %s\n' "${args[$i]}" >&2; return 2 ;;
     esac
   done
 
@@ -186,6 +228,31 @@ pmctl_ship_finish() {
   if [[ -z "$pre_gate_head" || "$post_gate_head" != "$pre_gate_head" ]]; then
     printf 'pmctl ship finish: GO, but HEAD moved during the gate run (%s -> %s) -- refusing to push/PR a commit the gate never reviewed. Re-run finish against the current HEAD.\n' \
       "${pre_gate_head:-unknown}" "${post_gate_head:-unknown}" >&2
+    return 1
+  fi
+
+  # A gate GO is review evidence, not publication authorization by itself.
+  # Verify (or freshly create and verify) the authoritative full-suite result
+  # for this exact, still-clean tree before any remote mutation.
+  local full_suite_status=0
+  pmctl_ship_verify_full_suite "$work_dir" "$full_result" || full_suite_status=$?
+  if [[ "$full_suite_status" -ne 0 ]]; then
+    return "$full_suite_status"
+  fi
+
+  # The authoritative result proves the tree as it existed while the suite
+  # ran, not whatever state happens to exist after the runner returns. Keep
+  # the same publication boundary used after the gate: no dirty content and
+  # no new commit may cross from verified evidence into the remote mutation.
+  if [[ -n "$(git -C "$work_dir" status --porcelain 2>/dev/null)" ]]; then
+    printf 'pmctl ship finish: full suite passed, but the tree is dirty -- refusing to push/PR content outside the verified evidence. Commit or discard the uncommitted changes and re-run finish.\n' >&2
+    return 1
+  fi
+  local post_suite_head
+  post_suite_head="$(git -C "$work_dir" rev-parse HEAD 2>/dev/null)"
+  if [[ -z "$post_suite_head" || "$post_suite_head" != "$post_gate_head" ]]; then
+    printf 'pmctl ship finish: full suite passed, but HEAD moved after the gate (%s -> %s) -- refusing to push/PR a commit without matching gate and full-suite evidence. Re-run finish against the current HEAD.\n' \
+      "${post_gate_head:-unknown}" "${post_suite_head:-unknown}" >&2
     return 1
   fi
 

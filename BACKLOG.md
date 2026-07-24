@@ -30,7 +30,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-508 | 🟢 someday | 所有間接 dispatch producer 的 parent-operation control plane：可追溯子 run、受控取消與單一終態；gate／ship／task dispatch 等全數納入 | arch/gate | 2026-07-21 | feedback:2026-07-21 | P2 | design |
 | CC-509 | ✅ closed 2026-07-22 | detached gate launch liveness：對 sandbox parent-death 早期死亡 fail-loud，提供 supervisor readiness／identity evidence | arch/gate | 2026-07-22 | pr:#440 | P2 | hygiene |
 | CC-510 | ✅ closed 2026-07-23 | Codex detached dispatch continuation：App Server callback、authenticated completion envelope 與 foreground fallback | arch/DX | 2026-07-23 | pr:#443 | P2 | design |
-| CC-511 | 🔵 active | ship publish authorization：current-tree authoritative full-suite 與可驗證 review-closure evidence | release/gate | 2026-07-23 | — | P1 | design |
+| CC-511 | ⚠️ partial 2026-07-24 | ship publish authorization：Phase A current-tree authoritative full-suite 已交付；Phase B review-closure evidence 仍待 CC-515／CC-517 | release/gate | 2026-07-23 | pr:#446 | P1 | design |
 | CC-512 | 🔵 active | gate tier、execution mode、reviewer coverage 與 independence assurance 正交化 | ops/gate | 2026-07-23 | — | P1 | design |
 | CC-513 | 🔵 active | canonical gate policy resolver：minimum tier、required reviewers、mode recommendation 與 downgrade audit | security/gate | 2026-07-23 | — | P1 | design |
 | CC-514 | 🔵 active | orthogonal delivery assurance map、machine-derived tables 與 feature/docs/high-risk recipes | docs/process | 2026-07-23 | — | P2 | design |
@@ -1585,6 +1585,14 @@ current-tree full PASS 加上適用 delivery policy 的 valid review authorizati
    subject freshness 與 policy applicability；不得只 grep `Final: GO`。成功 marker
    與 PR handoff 記錄 review/full/closure artifact path、digest、subjects、manual
    evidence、accepted-risk provenance 與 authorization route。
+
+**Phase A delivery（2026-07-24）**：`pmctl ship finish` 現在在任何 push／PR mutation
+前，會對 current tree 執行 full suite 或接受 `--full-result`，並一律透過
+`tests/bin/run-tests.sh --verify-full` 驗證。direct 與 parallel ship path 共用同一
+finish 邊界；fresh run、invalid supplied result、relative artifact resolution、suite
+failure、tree dirtiness 與 post-suite HEAD drift 都有 fail-closed regression coverage。
+本次僅完成 Phase A；Phase B 的 review authorization 與 closure artifact 不在此 PR
+範圍，仍待 [[CC-515]]、[[CC-517]]。
 
 **Done-when**: 任一官方 ship publish path 都只能在（1）current tree authoritative
 full-suite PASS 有效；（2）review authorization 對目前 delivery policy 有效；

@@ -96,7 +96,7 @@
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-511 Phase A | direct／parallel ship publish path 共用既有 full-result verifier；stale/partial/skip/suite/tree drift 全部 fail closed | 🔵 |
+| CC-511 Phase A | direct／parallel ship publish path 共用既有 full-result verifier；stale/partial/skip/suite/tree drift 全部 fail closed | ✅ pr:#446 |
 
 ### Phase 7 — evidence + policy foundations
 
