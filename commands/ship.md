@@ -194,7 +194,10 @@ Any other NO-GO, at any round count, gets fixed and re-gated without asking.
 
 ## Step 3.5 — Authoritative full suite
 
-Only after PR-gate returns GO, run `bash tests/bin/run-all-tests.sh` once and
+Only after PR-gate returns GO, `pmctl ship finish` runs (or canonically
+verifies a supplied) current-tree authoritative full-suite artifact before it
+can push or create a PR. When following this manual `/ship` workflow rather
+than using that primitive, run `bash tests/bin/run-all-tests.sh` once and
 verify its authoritative result artifact. This is the final repo-wide
 regression check, not an iteration tool.
 
