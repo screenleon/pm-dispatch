@@ -158,7 +158,7 @@ case_guard_family_maps_to_guard_suite() {
   local name=guard-family-maps-to-guard-suite repo out status=0 args
   args="$TMP_ROOT/$name.args"
   repo="$(make_fixture "$name")"
-  out=$(RUN_TESTS_ARGS_LOG="$args" "$repo/tests/bin/run-tests.sh" --path runtime/hooks/guard-inject-context.sh 2>&1) || status=$?
+  out=$(RUN_TESTS_ARGS_LOG="$args" "$repo/tests/bin/run-tests.sh" --path hosts/claude/hooks/inject-context.sh 2>&1) || status=$?
   if [[ "$status" -eq 0 ]] && grep -qx 'lint-scripts' "$args" && grep -qx 'test-guards' "$args" &&
      [[ "$out" != *"coverage gaps"* ]]; then
     pass "$name"

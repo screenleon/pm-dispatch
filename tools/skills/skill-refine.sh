@@ -26,13 +26,24 @@ if [[ ! -f "$COMMAND_PATH" ]]; then
   exit 2
 fi
 
-ENV_MEMORY_DIR="${CLAUDE_MEMORY_DIR:-}"
-MEMORY_DIR=""
-
-if [[ -n "$ENV_MEMORY_DIR" && -d "$ENV_MEMORY_DIR" ]]; then
-  MEMORY_DIR="$(cd "$ENV_MEMORY_DIR" && pwd -P)"
-else
-  printf 'Error: CLAUDE_MEMORY_DIR must be exported pointing at your memory dir; got %s\n' "${ENV_MEMORY_DIR:-<unset>}" >&2
+# Resolve through the canonical project resolver.  PM_MEMORY_DIR is the
+# cross-host explicit override; CLAUDE_MEMORY_DIR is a bounded compatibility
+# seam for existing Claude command wrappers and never becomes the API named in
+# new callers.
+if [[ -z "${PM_MEMORY_DIR:-}" && -n "${CLAUDE_MEMORY_DIR:-}" ]]; then
+  PM_MEMORY_DIR="$CLAUDE_MEMORY_DIR"
+  export PM_MEMORY_DIR
+fi
+memory_resolution=""
+memory_rc=0
+memory_resolution="$(bash "$REPO_ROOT/cli/pmctl" memory resolve --repo-root "$REPO_ROOT" --json 2>&1)" || memory_rc=$?
+if [[ "$memory_rc" -ne 0 ]]; then
+  printf 'Error: canonical project memory resolution failed: %s\n' "$memory_resolution" >&2
+  exit 2
+fi
+MEMORY_DIR="$(jq -r '.memory_dir // empty' <<<"$memory_resolution" 2>/dev/null || true)"
+if [[ -z "$MEMORY_DIR" || ! -d "$MEMORY_DIR" ]]; then
+  printf 'Error: canonical project memory resolution returned no usable directory\n' >&2
   exit 2
 fi
 

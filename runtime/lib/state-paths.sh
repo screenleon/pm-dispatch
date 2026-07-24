@@ -37,8 +37,14 @@ fi
 
 _sw_log_error() {
   {
-    local log_dir="${HOME:-}/.claude/logs"
-    [[ -n "$log_dir" ]] || return 0
+    local store_root="" log_dir=""
+    store_root="$(_sw_store_root)"
+    log_dir="$store_root/logs"
+    # Error reporting must not initialize a store. In particular, input
+    # validation failures occur before the designated writer has accepted any
+    # state mutation. An already initialized store may still receive its
+    # product-owned log directory for observable operational failures.
+    [[ -n "$store_root" && -d "$store_root" ]] || return 0
     mkdir -p "$log_dir"
     printf '[%s] %s\n' "$(date -Is 2>/dev/null || date)" "$*" >> "$log_dir/state-writer.err"
   } 2>/dev/null || true

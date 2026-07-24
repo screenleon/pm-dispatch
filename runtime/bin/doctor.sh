@@ -434,7 +434,8 @@ check_scripts_executable() {
     hosts/claude/hooks/log-usage.sh
     runtime/hooks/guard-session-summary.sh
     runtime/hooks/guard-inject-memory.sh
-    runtime/hooks/guard-inject-context.sh
+    runtime/lib/prompt-context.sh
+    hosts/claude/hooks/inject-context.sh
     hosts/claude/hooks/save-rate-limits.sh
     ops/usage/token-usage.sh
     ops/usage/log-usage.sh

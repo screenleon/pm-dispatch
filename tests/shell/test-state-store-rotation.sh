@@ -340,7 +340,7 @@ case_rotation_gzip_unavailable() {
   proj="$(project_dir_for_store "$store")"
   archives="$(find "$proj/archive" -maxdepth 1 -type f -name 'events-*.jsonl.gz' -print 2>/dev/null)"
   active_ids="$(ids_from_file "$proj/events.jsonl")"
-  log="$(cat "$home/.claude/logs/state-writer.err" 2>/dev/null || true)"
+  log="$(cat "$store/logs/state-writer.err" 2>/dev/null || true)"
   if [[ "$rc" -eq 0 && -z "$archives" &&
         "$active_ids" == "evt-20260606T000001Z-000001 evt-20260606T000002Z-000002 " &&
         "$log" == *"gzip unavailable"* ]]; then
@@ -370,7 +370,7 @@ case_rotation_gzip_failure_nonfatal() {
   archives="$(find "$proj/archive" -maxdepth 1 -type f -name 'events-*.jsonl.gz' -print 2>/dev/null)"
   active_ids="$(ids_from_file "$proj/events.jsonl")"
   staging_left="$(find "$proj/archive" -maxdepth 1 -type f -name 'events-*.jsonl.gz.staging' -print 2>/dev/null)"
-  log="$(cat "$home/.claude/logs/state-writer.err" 2>/dev/null || true)"
+  log="$(cat "$store/logs/state-writer.err" 2>/dev/null || true)"
   if [[ "$rc" -eq 0 && -z "$archives" && -z "$staging_left" &&
         "$active_ids" == "evt-20260606T000001Z-000001 evt-20260606T000002Z-000002 " &&
         "$log" == *"gzip failed"* ]]; then

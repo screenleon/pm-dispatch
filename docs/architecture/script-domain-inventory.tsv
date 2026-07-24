@@ -11,7 +11,6 @@ scripts/fixtures/skill-refine/feedback_beta.md	fixture	test-harness	tests/fixtur
 scripts/fixtures/skill-refine/feedback_gamma.md	fixture	test-harness	tests/fixtures/skill-refine/feedback_gamma.md	move-then-remove	internal
 scripts/gate-supervisor.sh	executable	shared-runtime	runtime/bin/gate-supervisor.sh	move-then-remove	internal
 scripts/guard-executor-write.sh	executable	shared-runtime	runtime/hooks/guard-executor-write.sh	move-then-remove	internal
-scripts/guard-inject-context.sh	executable	shared-runtime	runtime/hooks/guard-inject-context.sh	move-then-remove	internal
 scripts/guard-inject-memory.sh	executable	shared-runtime	runtime/hooks/guard-inject-memory.sh	move-then-remove	internal
 scripts/guard-log-claude-usage.sh	executable	host-claude	hosts/claude/hooks/log-usage.sh	move-with-shim	compatibility
 scripts/guard-pm-bash.sh	executable	shared-runtime	runtime/hooks/guard-pm-bash.sh	move-then-remove	internal

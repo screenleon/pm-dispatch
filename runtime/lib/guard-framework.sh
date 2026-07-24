@@ -51,7 +51,7 @@ g_audit() {
   # too. A bare `printf ... >> "$LOG_FILE" 2>/dev/null` does NOT silence that:
   # bash reports the redirection-open failure before the inner `2>/dev/null`
   # takes effect, leaking a "Permission denied" line into the guard's output
-  # (e.g. a read-only ~/.claude/logs/hooks.log inside a sandbox). Auditing is
+  # (e.g. a read-only product guard log inside a sandbox). Auditing is
   # best-effort and must never disturb the allow/deny decision.
   { printf '%s %s agent=%s tool=%s decision=%s reason=%q target=%q\n' \
     "$ts" "$GUARD_NAME" "${G_AGENT_TYPE:-?}" "${G_TOOL_NAME:-?}" "$decision" "$reason" "$target" \

@@ -170,9 +170,11 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `ops/backlog/archive-cl
 5. `QA_RULES_DIR` 外部依賴缺席時的行為驗證：qa-tester 在沒有 qa-testing-rules checkout 的機器上是 fail-loud 還是靜默劣化，結論寫入報告。
 6. [[CC-064]] bootstrap wizard 僅在實測證明需要時才升級為實作票。
 
-**Done-when**：三個 smoke 的實測報告 committed（`docs/notes/` 或票內）；clean install 與 N-1 upgrade 都有可重現證據；摔倒點全部開票；GETTING_STARTED 修正到與實測一致。
+**Release qualification**：offline clean-install 與 N-1 upgrade 是 v0.11.0 release candidate 的最終驗證，不是中途功能票。可先維護可重現的 harness 與報告模板；只有在所有會改 lifecycle、shared hooks、state 或文件的 v0.11.0 work 已進入 freeze 後，才可產生可用於 release 的正式證據。若 release surface 在 smoke 後改變，該 smoke 必須重跑。
 
-**Dependencies**：offline/N-1 smoke 在 [[CC-497]]、[[CC-456]]、[[CC-449]] 後於 v0.11.0 執行；live smoke 不預先綁 v1.0，待 v0.14.0 後 readiness review 排程。
+**Done-when**：在 v0.11.0 release candidate 上，三個 smoke 的實測報告 committed（`docs/notes/` 或票內）；clean install 與 N-1 upgrade 都有可重現證據；摔倒點全部開票；GETTING_STARTED 修正到與實測一致。
+
+**Dependencies**：offline/N-1 smoke 在 [[CC-497]]、[[CC-456]]、[[CC-449]]、[[CC-503]] 後，且 v0.11.0 release freeze 中執行；live smoke 不預先綁 v1.0，待 v0.14.0 後 readiness review 排程。
 **See**: DECISIONS.md 2026-07-04
 
 ## CC-449 — release-verify/test-e2e：ship/worktree surface 煙測 + 套件註冊完整性 lint ✅ 2026-07-21
@@ -2069,7 +2071,9 @@ deterministic fail closed，後者具模型波動，不應混成 CI hard gate。
 
 **Done-when**: 上述 shared consumers在 Claude/Codex/OpenCode host fixture下使用同一 canonical input/output contract；host-specific parsing只存在 host module；content ratchet有正反注入測試並接入 CI/full runner。
 
-**Dependencies**: [[CC-502]] 先建立 gate/reviewer pattern；[[CC-054]] 保持 deferred且只處理 review-first diff generation。P2，v0.11.0 host-boundary closure。
+**Plan**：Phase A 先以 shared log-root resolver、canonical memory resolver 與 host payload adapter 切斷 Claude-only default；Phase B 將 PM write policy改為 canonical resolved root並補 symlink/invalid-explicit negative cases；Phase C 以 repository content ratchet（direct host source、host-root default、single-host-only API）守住邊界。每一 phase 都須在 Claude/Codex/OpenCode fixtures跑同一 contract；不得為了相容而在 shared layer重新引入 host fallback。
+
+**Dependencies**: [[CC-502]] 先建立 gate/reviewer pattern；[[CC-054]] 保持 deferred且只處理 review-first diff generation。必須在 [[CC-447]] 正式 N-1 release qualification 前完成。P2，v0.11.0 host-boundary closure。
 
 ## CC-504 — manifest-driven multi-host lifecycle，移除 Claude base-spine 特例 ✅ 2026-07-23
 

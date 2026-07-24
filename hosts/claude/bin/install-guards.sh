@@ -9,7 +9,7 @@
 #   - Stop                 → hosts/claude/hooks/log-usage.sh
 #   - Stop                 → runtime/hooks/guard-session-summary.sh
 #   - UserPromptSubmit     → runtime/hooks/guard-inject-memory.sh
-#   - UserPromptSubmit     → runtime/hooks/guard-inject-context.sh
+#   - UserPromptSubmit     → hosts/claude/hooks/inject-context.sh
 #   - StatusLine           → hosts/claude/hooks/save-rate-limits.sh (chains previous if present)
 #
 # Note: guard-reviewer-write.sh is NOT wired as a PreToolUse hook.
@@ -159,7 +159,7 @@ old_stop_cmd="$repo_root/hooks/guard-log-claude-usage.sh"
 legacy_stop_cmd="$repo_root/scripts/guard-log-claude-usage.sh"
 session_path="$repo_root/runtime/hooks/guard-session-summary.sh"
 inject_cmd="$repo_root/runtime/hooks/guard-inject-memory.sh"
-ctx_inject_cmd="$repo_root/runtime/hooks/guard-inject-context.sh"
+ctx_inject_cmd="$repo_root/hosts/claude/hooks/inject-context.sh"
 statusline_cmd="$repo_root/hosts/claude/hooks/save-rate-limits.sh"
 legacy_statusline_cmd="$repo_root/scripts/guard-save-rate-limits.sh"
 statusline_chain_conf="$CLAUDE_HOME/statusline-chain.conf"
@@ -302,7 +302,13 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
     ($cmd | without_host_arg | split("/")) as $parts |
     ($expected | without_host_arg | split("/")) as $wanted |
     ($parts[-1] == $wanted[-1] and
-      ($parts[-2] == "scripts" or ($parts[-2] == "hooks" and $parts[-3] == "runtime")));
+      ($parts[-2] == "scripts" or
+       ($parts[-2] == "hooks" and $parts[-3] == "runtime") or
+       ($parts[-2] == $wanted[-2] and $parts[-3] == $wanted[-3] and $parts[-4] == $wanted[-4])));
+  def retired_context_hook:
+    (.command | split("/")) as $parts |
+    ($parts[-1] == ("guard-inject-" + "context.sh") and
+     $parts[-2] == "hooks" and $parts[-3] == "runtime");
 
   # Ensure .hooks.PreToolUse exists as an array.
   .hooks //= {} |
@@ -348,11 +354,14 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
   ) |
   .hooks.Stop |= map(select((.hooks | length) > 0)) |
 
-  # Prune pre-rename hook-inject-memory superseded by guard-inject-memory.
+  # Prune pre-rename memory hooks and the retired shared context hook. The
+  # latter moved from runtime/hooks to the Claude host adapter, so leaving it
+  # in an existing settings file would run both implementations.
   .hooks.UserPromptSubmit |= map(
     .hooks |= map(select(
-      ((.command | split("/") | last) == ("hook-inject-" + "memory.sh"))
-      and ((.command | split("/") | .[-2]) == "scripts") | not
+      (((.command | split("/") | last) == ("hook-inject-" + "memory.sh"))
+       and ((.command | split("/") | .[-2]) == "scripts"))
+      or retired_context_hook | not
     ))
   ) |
   .hooks.UserPromptSubmit |= map(select((.hooks | length) > 0)) |

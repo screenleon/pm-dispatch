@@ -204,6 +204,8 @@ map_path() {
       add_suite test-pmctl-gate; add_suite test-pmctl-discovery; behavioral=1 ;;
     runtime/lib/state-writer.sh)
       add_suite test-state-store; behavioral=1 ;;
+    runtime/lib/state-paths.sh)
+      add_suite test-state-paths; add_suite test-state-store-rotation; behavioral=1 ;;
     runtime/lib/pmctl-policy.sh)
       add_suite test-pmctl-adapter-generate; add_suite test-pr-gate
       add_suite test-dispatch-handover; add_suite test-handover-validate
@@ -214,9 +216,13 @@ map_path() {
       add_suite test-pmctl-dispatch; add_suite test-pmctl-memory; add_suite test-pmctl-context; behavioral=1 ;;
     runtime/lib/memory.sh|runtime/lib/memory-dir.sh)
       add_suite test-pmctl-memory; add_suite test-pmctl-context; add_suite test-migrate; add_suite test-guards; behavioral=1 ;;
+    runtime/lib/prompt-context.sh)
+      add_suite test-guards; behavioral=1 ;;
+    runtime/lib/guard-log.sh)
+      add_suite test-guards; behavioral=1 ;;
     runtime/lib/pmctl-memory-config.sh)
       add_suite test-pmctl-memory; behavioral=1 ;;
-    hosts/claude/lib/prompt-context-timeouts.sh)
+    hosts/claude/lib/prompt-context-timeouts.sh|hosts/claude/hooks/inject-context.sh)
       add_suite test-guards; add_suite test-install; add_suite test-doctor; behavioral=1 ;;
     scripts/install-guards-codex.sh|scripts/uninstall-guards-codex.sh|scripts/hook-codex-command-guard.sh|hosts/codex/bin/install.sh|hosts/codex/bin/uninstall.sh|hosts/codex/bin/wait-dispatch.sh|hosts/codex/bin/continue-dispatch.sh|hosts/codex/lib/doctor.sh|hosts/codex/lib/memory-contract.sh|hosts/codex/hooks/command-guard.sh|hosts/codex/host.yaml)
       add_suite test-host-write-codex; add_suite test-codex-dispatch-continuation; add_suite test-host-write-parity; add_suite test-doctor; behavioral=1 ;;

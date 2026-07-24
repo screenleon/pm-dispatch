@@ -28,7 +28,7 @@ STOP_HOOK="$REPO_ROOT/hosts/claude/hooks/log-usage.sh"
 RL_HOOK="$REPO_ROOT/hosts/claude/hooks/save-rate-limits.sh"
 MEM_HOOK_REAL="$REPO_ROOT/runtime/hooks/guard-inject-memory.sh"
 export MEM_HOOK_REAL
-CTX_HOOK="$REPO_ROOT/runtime/hooks/guard-inject-context.sh"
+CTX_HOOK="$REPO_ROOT/hosts/claude/hooks/inject-context.sh"
 SESSION_HOOK="$REPO_ROOT/runtime/hooks/guard-session-summary.sh"
 session_hook_claude() { "$SESSION_HOOK" --host claude "$@"; }
 
@@ -49,6 +49,31 @@ export PM_GUARD_LOG_DIR="$(mktemp -d)"
 TEST_LOG_FILE="$PM_GUARD_LOG_DIR/hooks.log"
 TEST_GUARDS_DIAG_FILE="$PM_GUARD_LOG_DIR/diagnostics.log"
 export TEST_GUARDS_DIAG_FILE
+
+guard_log_dir_fallback_case() {
+  local name="$1" expected="$2"
+  shift 2
+  should_run "$name" || return 0
+  local actual status=0
+  actual="$(env -u PM_GUARD_LOG_DIR "$@" bash -c '. "$1"; pm_guard_log_dir' _ "$REPO_ROOT/runtime/lib/guard-log.sh")" || status=$?
+  if [[ "$status" -eq 0 && "$actual" == "$expected" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status expected=$expected actual=$actual"
+  fi
+}
+
+# The resolver is shared by all write guards. Exercise each precedence branch
+# directly so a host-specific test fixture cannot accidentally mask a fallback.
+guard_log_dir_fallback_case "guard-log: explicit directory wins" "$tmp_root/guard-log-explicit" \
+  PM_GUARD_LOG_DIR="$tmp_root/guard-log-explicit" PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+  XDG_DATA_HOME="$tmp_root/xdg" HOME="$tmp_root/home"
+guard_log_dir_fallback_case "guard-log: state root fallback" "$tmp_root/guard-log-state/logs" \
+  PM_DISPATCH_STATE_ROOT="$tmp_root/guard-log-state" XDG_DATA_HOME="$tmp_root/xdg" HOME="$tmp_root/home"
+guard_log_dir_fallback_case "guard-log: XDG fallback" "$tmp_root/guard-log-xdg/pm-dispatch/state/logs" \
+  XDG_DATA_HOME="$tmp_root/guard-log-xdg" HOME="$tmp_root/home"
+guard_log_dir_fallback_case "guard-log: HOME fallback" "$tmp_root/guard-log-home/.local/share/pm-dispatch/state/logs" \
+  HOME="$tmp_root/guard-log-home"
 
 # Concurrency cases register every background child here.  Bare `wait` is not
 # acceptable in this suite: a wedged writer would otherwise consume the whole
@@ -301,27 +326,27 @@ code_path="$REPO_ROOT/agents/project-pm.md"
 
 $LIST || echo "== guard-pm-write =="
 
-run_case "pm: Edit memory file → allow" 0 "$PMHOOK" \
+run_case "pm: Edit direct memory file → deny" 2 "$PMHOOK" \
   "{\"agent_type\":\"project-pm\",\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$mem_path\"}}"
 
-run_case "pm: Write memory file → allow" 0 "$PMHOOK" \
+run_case "pm: Write direct memory file → deny" 2 "$PMHOOK" \
   "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$mem_path\"}}"
 
 run_case "pm: Edit code (outside memory) → deny" 2 "$PMHOOK" \
   "{\"agent_type\":\"project-pm\",\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$code_path\"}}" \
-  "outside memory directory"
+  "outside direct-write handoff zones"
 
 run_case "pm: Write to /tmp → deny" 2 "$PMHOOK" \
   '{"agent_type":"project-pm","tool_name":"Write","tool_input":{"file_path":"/tmp/oops.md"}}' \
-  "outside memory directory"
+  "outside direct-write handoff zones"
 
 run_case "pm: Edit memory/../../etc/passwd → deny (realpath normalizes)" 2 "$PMHOOK" \
   "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$HOME/.claude/projects/test-project/memory/../../../etc/passwd\"}}" \
-  "outside memory directory"
+  "outside direct-write handoff zones"
 
 run_case "pm: Edit memory-evil/x.md → deny (no prefix collision)" 2 "$PMHOOK" \
   "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$HOME/.claude/projects/test-project/memory-evil/x.md\"}}" \
-  "outside memory directory"
+  "outside direct-write handoff zones"
 
 run_case "pm: relative file_path → deny" 2 "$PMHOOK" \
   '{"agent_type":"project-pm","tool_name":"Edit","tool_input":{"file_path":"foo.md"}}' \
@@ -374,7 +399,7 @@ run_case_env "pm: bypass=empty does NOT bypass" 2 "PM_GUARD_PM_WRITE=" "$PMHOOK"
 # Audit-log content assertions for pm-guard.
 $LIST || truncate_log
 $LIST || printf '%s' "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$mem_path\"}}" | "$PMHOOK" >/dev/null 2>&1
-assert_log "pm: audit log contains allow line" "decision=allow"
+assert_log "pm: audit log contains direct-memory deny line" "decision=deny"
 
 $LIST || truncate_log
 $LIST || printf '%s' "{\"agent_type\":\"project-pm\",\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$code_path\"}}" | "$PMHOOK" >/dev/null 2>&1
@@ -398,15 +423,15 @@ run_case "pm: Edit /tmp/task-abc123/notes.md → allow (Rule A)" 0 "$PMHOOK" \
 
 run_case "pm: Write /tmp/My-task/brief.md → deny (uppercase start, Rule A)" 2 "$PMHOOK" \
   '{"agent_type":"project-pm","tool_name":"Write","tool_input":{"file_path":"/tmp/My-task/brief.md"}}' \
-  "outside memory directory"
+  "outside direct-write handoff zones"
 
 run_case "pm: Write /tmp/slug/sub/deep.md → deny (nested subdir, Rule A)" 2 "$PMHOOK" \
   '{"agent_type":"project-pm","tool_name":"Write","tool_input":{"file_path":"/tmp/slug/sub/deep.md"}}' \
-  "outside memory directory"
+  "outside direct-write handoff zones"
 
 run_case "pm: Write /tmp/slug-abc/file.txt → deny (not .md, Rule A)" 2 "$PMHOOK" \
   '{"agent_type":"project-pm","tool_name":"Write","tool_input":{"file_path":"/tmp/slug-abc/file.txt"}}' \
-  "outside memory directory"
+  "outside direct-write handoff zones"
 
 # --- Rule B: docs/spikes PM-authored files ---
 run_case "pm: Write docs/spikes/CC-258-pm-write.md → allow (Rule B, CC-NNN*)" 0 "$PMHOOK" \
@@ -420,15 +445,15 @@ run_case "pm: Write docs/spikes/pm-guard-rfc.md → allow (Rule B, *-rfc)" 0 "$P
 
 run_case "pm: Write docs/spikes/notes.md → deny (no pattern match, Rule B)" 2 "$PMHOOK" \
   "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$REPO_ROOT/docs/spikes/notes.md\"}}" \
-  "outside memory directory"
+  "outside direct-write handoff zones"
 
 run_case "pm: Write docs/DECISIONS.md → deny (not spikes/, Rule B)" 2 "$PMHOOK" \
   "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$REPO_ROOT/docs/DECISIONS.md\"}}" \
-  "outside memory directory"
+  "outside direct-write handoff zones"
 
 run_case "pm: Write /tmp/rogue/docs/spikes/CC-999-evil.md → deny (Rule B in /tmp zone)" 2 "$PMHOOK" \
   '{"agent_type":"project-pm","tool_name":"Write","tool_input":{"file_path":"/tmp/rogue/docs/spikes/CC-999-evil.md"}}' \
-  "outside memory directory"
+  "outside direct-write handoff zones"
 
 # Cross-repo Rule B: PM dispatched to work on another repo — spike files there
 # should be allowed.  Use a sibling directory next to REPO_ROOT so the path is
@@ -441,13 +466,13 @@ run_case "pm: Write cross-repo docs/spikes/analysis-scope.md → allow (Rule B, 
 
 run_case "pm: Write cross-repo docs/spikes/notes.md → deny (no pattern match, cross-repo)" 2 "$PMHOOK" \
   "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$REPO_ROOT/../other-project/docs/spikes/notes.md\"}}" \
-  "outside memory directory"
+  "outside direct-write handoff zones"
 
 # Rule A traversal: the lexical normalizer must collapse /tmp/<slug>/../ before
 # the pattern check so that the traversal cannot escape the two-segment limit.
 run_case "pm: Write /tmp/brief-abc/../secret.md → deny (Rule A traversal)" 2 "$PMHOOK" \
   '{"agent_type":"project-pm","tool_name":"Write","tool_input":{"file_path":"/tmp/brief-abc/../secret.md"}}' \
-  "outside memory directory"
+  "outside direct-write handoff zones"
 
 # --- Rule C: symlinked memory dir (lexical path dual-normalization) ---
 # Use a fake HOME under the sandboxed log dir so tests are isolated from the
@@ -457,12 +482,12 @@ _pm_sym_real="$(mktemp -d "$PM_GUARD_LOG_DIR/sym-real.XXXXXX")"
 mkdir -p "$_pm_sym_fake_home/.claude/projects/test-proj"
 ln -sfn "$_pm_sym_real" "$_pm_sym_fake_home/.claude/projects/test-proj/memory" 2>/dev/null || true
 if [[ -L "$_pm_sym_fake_home/.claude/projects/test-proj/memory" ]]; then
-  run_case_env "pm: Write symlinked memory dir → allow (Rule C)" 0 \
+  run_case_env "pm: Write symlinked direct memory dir → deny" 2 \
     "HOME=$_pm_sym_fake_home" "$PMHOOK" \
     "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_pm_sym_fake_home/.claude/projects/test-proj/memory/foo.md\"}}"
   run_case "pm: Write symlinked memory/../../../etc/passwd → deny (Rule C traversal)" 2 "$PMHOOK" \
     "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_pm_sym_fake_home/.claude/projects/test-proj/memory/../../../etc/passwd\"}}" \
-    "outside memory directory"
+    "outside direct-write handoff zones"
 
   # File symlink escape: memory dir is legitimate, but the file itself is a
   # symlink pointing outside — Rule C must deny this.
@@ -505,7 +530,7 @@ if [[ -L "$_pm_sym_fake_home/.claude/projects/test-proj/memory" ]]; then
     run_case_env "pm: memory symlink into /tmp/<slug>/ → deny (cross-rule Rule A escape)" 2 \
       "HOME=$_pm_cross_ruleA_home" "$PMHOOK" \
       "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_pm_cross_ruleA_home/.claude/projects/test-proj/memory/escape.md\"}}" \
-      "outside memory directory"
+      "outside direct-write handoff zones"
   else
     $LIST || printf '  SKIP  pm: cross-rule Rule A escape test (symlink creation unsupported)\n'
   fi
@@ -522,7 +547,7 @@ if [[ -L "$_pm_sym_fake_home/.claude/projects/test-proj/memory" ]]; then
     run_case_env "pm: memory symlink into docs/spikes/ → deny (cross-rule Rule B escape)" 2 \
       "HOME=$_pm_cross_ruleB_home" "$PMHOOK" \
       "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_pm_cross_ruleB_home/.claude/projects/test-proj/memory/CC-99999-test.md\"}}" \
-      "outside memory directory"
+      "outside direct-write handoff zones"
   else
     $LIST || printf '  SKIP  pm: cross-rule Rule B escape test (symlink creation unsupported)\n'
   fi
@@ -3049,11 +3074,11 @@ inject_hook_timeout_reports_current_case() {
 inject_hook_timeout_reports_current_case
 
 # =============================================================================
-# guard-inject-context
+# inject-context
 # =============================================================================
 
 echo
-$LIST || echo "== guard-inject-context =="
+$LIST || echo "== inject-context =="
 
 PMCTL_CLI="$REPO_ROOT/cli/pmctl"
 
@@ -3331,6 +3356,56 @@ STUB
   rm -rf "$dir"
 }
 
+ctx_inject_hook_invalid_timeout_preserves_phase_default() {
+  # Behavior: invalid timeout overrides retain the phase-specific defaults.
+  # Steps:
+  #   1. Route `timeout` through a harmless recorder and use an invalid initial override.
+  #   2. Assert a missing DB invokes the recorder with 120 seconds.
+  #   3. Seed a non-empty DB, use an invalid refresh override, and assert 45 seconds.
+  local name="ctx-inject-hook/invalid-timeout-preserves-phase-default" dir repo bin log fake output status
+  should_run "$name" || return 0
+  command -v sqlite3 >/dev/null 2>&1 || { PASS=$((PASS+1)); return 0; }
+  command -v timeout >/dev/null 2>&1 || { PASS=$((PASS+1)); return 0; }
+  dir="$(mktemp -d)"; repo="$dir/repo"; bin="$dir/bin"; log="$dir/timeout.log"
+  mkdir -p "$repo/docs" "$bin"
+  git -C "$repo" init -q
+  printf '## Gate verdict\n\nctxinjectterm knowledge body.\n' > "$repo/docs/notes.md"
+  cat > "$bin/timeout" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$1" > "$PM_TEST_TIMEOUT_LOG"
+shift
+"$@"
+STUB
+  cat > "$dir/fake-pmctl" <<'STUB'
+#!/usr/bin/env bash
+printf 'knowledge_hits:\n  - ref: docs/notes.md:1\n'
+STUB
+  chmod +x "$bin/timeout" "$dir/fake-pmctl"
+
+  output=$(printf '%s' "{\"cwd\":\"$repo\",\"prompt\":\"tell me about ctxinjectterm behavior\"}" \
+    | PATH="$bin:$PATH" PM_TEST_TIMEOUT_LOG="$log" PM_DISPATCH_PROMPT_CONTEXT_PMCTL="$dir/fake-pmctl" \
+      PM_DISPATCH_PROMPT_CONTEXT_INITIAL_TIMEOUT=invalid "$CTX_HOOK" 2>/dev/null)
+  status=$?
+  local initial_timeout
+  initial_timeout="$(cat "$log" 2>/dev/null || true)"
+
+  mkdir -p "$repo/.pm-dispatch/ctx"
+  sqlite3 "$repo/.pm-dispatch/ctx/context.db" 'create table files(id integer primary key); insert into files default values;'
+  output=$(printf '%s' "{\"cwd\":\"$repo\",\"prompt\":\"tell me about ctxinjectterm behavior\"}" \
+    | PATH="$bin:$PATH" PM_TEST_TIMEOUT_LOG="$log" PM_DISPATCH_PROMPT_CONTEXT_PMCTL="$dir/fake-pmctl" \
+      PM_DISPATCH_PROMPT_CONTEXT_TIMEOUT=invalid "$CTX_HOOK" 2>/dev/null)
+  status=$?
+  local refresh_timeout
+  refresh_timeout="$(cat "$log" 2>/dev/null || true)"
+  if [[ "$status" == "0" && "$initial_timeout" == "120" && "$refresh_timeout" == "45" ]]; then
+    PASS=$((PASS+1))
+  else
+    FAIL=$((FAIL+1)); FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s initial=%q refresh=%q output=%q\n' "$name" "$status" "$initial_timeout" "$refresh_timeout" "$output"
+  fi
+  rm -rf "$dir"
+}
+
 ctx_inject_hook_no_hits_silent() {
   # Verifies an indexed repo with a non-matching prompt stays silent.
   # Steps:
@@ -3472,6 +3547,7 @@ ctx_inject_hook_marker_round_trip
 ctx_inject_hook_sqlite_missing_skips_pmctl
 ctx_inject_hook_initial_timeout_removes_empty_db
 ctx_inject_hook_existing_empty_db_reenters_initial_cleanup
+ctx_inject_hook_invalid_timeout_preserves_phase_default
 ctx_inject_hook_no_hits_silent
 ctx_inject_hook_short_prompt_silent
 ctx_inject_hook_kill_switch
@@ -4394,7 +4470,7 @@ meta_filter_runs_only_matching() {
   # This suite self-invokes to exercise filter semantics. Bound that child so a
   # resource-starved full run cannot turn this small meta check into an
   # unbounded run-all-tests stall.
-  out=$(timeout "${TEST_GUARDS_SELF_TIMEOUT:-30}" bash "$REPO_ROOT/tests/shell/test-guards.sh" --filter "pm: Edit memory file" 2>&1)
+  out=$(timeout "${TEST_GUARDS_SELF_TIMEOUT:-30}" bash "$REPO_ROOT/tests/shell/test-guards.sh" --filter "pm: Edit direct memory file" 2>&1)
   if [[ "$out" == *"1 passed, 0 failed"* ]]; then
     PASS=$((PASS+1))
     [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"

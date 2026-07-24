@@ -22,7 +22,7 @@
 # Each bypass is logged.
 #
 # Audit: every evaluated firing (allow / deny / bypass) is appended to
-# ~/.claude/logs/hooks.log (or $PM_GUARD_LOG_DIR/hooks.log in tests) — with
+# the product-owned guard log (or $PM_GUARD_LOG_DIR/hooks.log in tests) — with
 # common secret-shaped substrings (API keys, bearer tokens, password/token/
 # secret flag values) redacted first (see _redact_secrets below). The
 # denylist itself still matches against the RAW, unredacted command — only
@@ -46,9 +46,11 @@ set -uo pipefail
 _SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 # shellcheck source=runtime/lib/portable.sh
 . "$_SCRIPT_DIR/../lib/portable.sh"
+# shellcheck source=runtime/lib/guard-log.sh
+. "$_SCRIPT_DIR/../lib/guard-log.sh"
 
 GUARD_NAME="guard-pm-bash"
-LOG_DIR="${PM_GUARD_LOG_DIR:-$HOME/.claude/logs}"
+LOG_DIR="$(pm_guard_log_dir)"
 LOG_FILE="$LOG_DIR/hooks.log"
 G_BYPASS_ENV="PM_GUARD_PM_BASH"
 # shellcheck source=runtime/lib/guard-framework.sh

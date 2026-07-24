@@ -34,7 +34,7 @@
 # PM_GUARD_CODEX_WRITE=off.
 #
 # Audit: every evaluated firing (allow / deny / bypass) is appended to
-# $PM_GUARD_LOG_DIR/hooks.log (default ~/.claude/logs/hooks.log).
+# $PM_GUARD_LOG_DIR/hooks.log (default product-owned state log).
 
 set -euo pipefail
 
@@ -44,10 +44,12 @@ _REPO_ROOT="$(cd "$_SCRIPT_DIR/../.." 2>/dev/null && pwd)"
 . "$_SCRIPT_DIR/../lib/portable.sh"
 # shellcheck source=runtime/lib/runner-kind.sh
 . "$_SCRIPT_DIR/../lib/runner-kind.sh"
+# shellcheck source=runtime/lib/guard-log.sh
+. "$_SCRIPT_DIR/../lib/guard-log.sh"
 
 GUARD_NAME="guard-executor-write"
 : "${PM_GUARD_LOG_DIR:=${PM_HOOK_LOG_DIR:-}}"  # deprecated alias
-LOG_DIR="${PM_GUARD_LOG_DIR:-$HOME/.claude/logs}"
+LOG_DIR="$(pm_guard_log_dir)"
 LOG_FILE="$LOG_DIR/hooks.log"
 G_BYPASS_ENV=""   # set per-runtime after agent_type is known
 # shellcheck source=runtime/lib/guard-framework.sh
