@@ -1717,7 +1717,7 @@ pmctl_context_reuse_scan() {
 # Takes a free-text prompt, extracts search terms via _ctx_extract_terms,
 # queries the repo index knowledge domain (BACKLOG/DECISIONS/MILESTONES/docs)
 # for each term, and emits a compact pointer-only knowledge_hits: YAML block
-# for prompt-time injection (consumed by runtime/hooks/guard-inject-context.sh).
+# for prompt-time injection (consumed by hosts/claude/hooks/inject-context.sh).
 #
 # Emits a context.prompt_scanned usage event — deliberately distinct from
 # context.queried, so automated prompt-time scans never pollute the telemetry

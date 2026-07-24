@@ -121,7 +121,7 @@ _doctor_host_claude_context_timeout_ok() {
   jq -e --argjson expected "$CLAUDE_PROMPT_CONTEXT_HOOK_TIMEOUT" '
     [
       (.hooks.UserPromptSubmit[]? | (.hooks // [])[]? |
-        select(((.command? // "") | gsub("\\\\"; "/") | split("/") | last) == "guard-inject-context.sh"))
+        select(((.command? // "") | gsub("\\\\"; "/") | split("/") | last) == "inject-context.sh"))
     ] as $hooks |
     ($hooks | length) > 0 and
     all($hooks[]; ((.timeout? // 0) | type) == "number" and (.timeout >= $expected))
@@ -180,7 +180,7 @@ _doctor_host_claude_stale_hook_commands() {
               "guard-log-claude-usage.sh",
               "guard-session-summary.sh",
               "guard-inject-memory.sh",
-              "guard-inject-context.sh",
+              "inject-context.sh",
               "guard-save-rate-limits.sh"
             ))
           ) or
@@ -231,7 +231,7 @@ _doctor_host_claude_broken_hook_targets() {
               (($path | split("/") | last) | IN(
                 "guard-pm-write.sh", "guard-log-claude-usage.sh",
                 "guard-session-summary.sh", "guard-inject-memory.sh",
-                "guard-inject-context.sh", "guard-save-rate-limits.sh"
+                "inject-context.sh", "guard-save-rate-limits.sh"
               ))) or
             (($path | split("/") | .[-2]) == "hooks" and
               ($path | split("/") | .[-3]) == "runtime") or
@@ -266,7 +266,7 @@ _doctor_host_claude_check_hooks() {
     log-usage.sh
     guard-session-summary.sh
     guard-inject-memory.sh
-    guard-inject-context.sh
+    inject-context.sh
     save-rate-limits.sh
   )
   local _want_full=0
@@ -353,7 +353,7 @@ _doctor_host_claude_check_hooks() {
     # shellcheck source=hosts/claude/lib/prompt-context-timeouts.sh
     . "$REPO_ROOT/hosts/claude/lib/prompt-context-timeouts.sh"
     emit_check hooks fail \
-      "guard-inject-context.sh timeout missing or below ${CLAUDE_PROMPT_CONTEXT_HOOK_TIMEOUT}s" \
+      "inject-context.sh timeout missing or below ${CLAUDE_PROMPT_CONTEXT_HOOK_TIMEOUT}s" \
       "bash '${REPO_ROOT}/install.sh'"
   else
     emit_check hooks ok "$_total_hooks hooks present ($profile profile)"
@@ -418,6 +418,23 @@ _doctor_host_claude_check_manifest() {
   fi
 
   emit_check manifest ok "install manifest present"
+}
+
+_doctor_host_claude_check_legacy_guard_log() {
+  # Guard logs moved out of the Claude configuration tree. A non-empty legacy
+  # file is harmless, but it is a useful upgrade signal: tailing it will no
+  # longer show new guard decisions unless the operator explicitly pins
+  # PM_GUARD_LOG_DIR there.
+  local legacy_log="$_CLAUDE_HOST_CONFIG_ROOT/logs/hooks.log"
+  if [[ -n "${PM_GUARD_LOG_DIR:-}" ]]; then
+    emit_check guard-log ok "guard log directory explicitly configured"
+  elif [[ -s "$legacy_log" ]]; then
+    emit_check guard-log warn \
+      "legacy Claude guard log remains at $legacy_log; new guard logs use the product state root" \
+      "tail \${PM_DISPATCH_STATE_ROOT:-\${XDG_DATA_HOME:-\$HOME/.local/share}/pm-dispatch/state}/logs/hooks.log"
+  else
+    emit_check guard-log ok "guard logs use the product-owned state root"
+  fi
 }
 
 # Single source of truth for the claude host's probed capability tuple — used
@@ -619,6 +636,7 @@ doctor_host_claude_run() {
   _doctor_host_claude_check_hooks
   _doctor_host_claude_check_dispatch_allowlist
   _doctor_host_claude_check_manifest
+  _doctor_host_claude_check_legacy_guard_log
   _doctor_host_claude_capabilities
   _doctor_host_claude_check_manifest_consistency
 }

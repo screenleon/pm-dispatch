@@ -2,8 +2,9 @@
 # PreToolUse guard for the `project-pm` subagent.
 #
 # Threat model: PM is a planner; it must never modify code or arbitrary files.
-# Only memory files under ~/.claude/projects/<project>/memory/ are writable.
-# All other Edit/Write attempts are blocked.
+# Canonical project-memory writes are owned by the locked `pmctl memory`
+# surfaces. Direct Edit/Write is therefore not a memory capability; all
+# arbitrary paths are blocked except the narrow brief/spike handoff zones.
 #
 # Wired into ~/.claude/settings.json as a PreToolUse hook with matcher
 # "Edit|Write". No-op for any other agent (main thread, other subagents).
@@ -11,27 +12,27 @@
 # Bypass: set PM_GUARD_PM_WRITE=off in the environment to skip enforcement.
 # Each bypass is logged.
 #
-# Audit: every evaluated firing (allow / deny / bypass) is appended to
-# ~/.claude/logs/hooks.log. No-ops for other agents are not logged.
+# Audit: every evaluated firing (allow / deny / bypass) is appended to the
+# product-owned guard log. No-ops for other agents are not logged.
 
 set -euo pipefail
 
 _SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 # shellcheck source=runtime/lib/portable.sh
 . "$_SCRIPT_DIR/../lib/portable.sh"
+# shellcheck source=runtime/lib/guard-log.sh
+. "$_SCRIPT_DIR/../lib/guard-log.sh"
 
 GUARD_NAME="guard-pm-write"
 : "${PM_GUARD_LOG_DIR:=${PM_HOOK_LOG_DIR:-}}"    # deprecated alias
 : "${PM_GUARD_PM_WRITE:=${PM_HOOK_PM_GUARD:-}}"  # deprecated alias
-LOG_DIR="${PM_GUARD_LOG_DIR:-$HOME/.claude/logs}"
+LOG_DIR="$(pm_guard_log_dir)"
 LOG_FILE="$LOG_DIR/hooks.log"
 G_BYPASS_ENV="PM_GUARD_PM_WRITE"
 REPO_ROOT="$(cd "$_SCRIPT_DIR/../.." 2>/dev/null && pwd)"
 # shellcheck source=runtime/lib/guard-framework.sh
 . "$_SCRIPT_DIR/../lib/guard-framework.sh"
 unset _SCRIPT_DIR
-
-ALLOWED_BASE="$HOME/.claude/projects"
 
 # ---------- helpers ----------
 
@@ -41,9 +42,12 @@ g_deny_message() {
 project-pm: blocked by $GUARD_NAME — $reason
 
   attempted: $G_TOOL_NAME on ${file_path:-(empty)}
-  allowed:   ${ALLOWED_BASE}/<project>/memory/**
-             /tmp/<slug>/<file>.md  (task-slug briefs)
+  allowed:   /tmp/<slug>/<file>.md  (task-slug briefs)
              <any-repo>/docs/spikes/{CC-NNN*,*-scope,*-rfc}.md
+
+  canonical memory changes: use pmctl memory append-episode or the
+  host-owned canonical memory writer; direct file edits are intentionally
+  denied.
 
 If a code change is needed, hand a brief back to the main thread for executor
 dispatch via pmctl dispatch run (schema: \${PM_DISPATCH_REPO}/docs/dispatch-brief.md).
@@ -84,35 +88,6 @@ abs_path="$G_ABS_PATH"
 # Each rule additionally verifies abs_path is safe within the same rule's scope.
 lex_path="$(realpath_m_lex "$file_path")" || lex_path="$abs_path"
 
-# Memory rule: PM intends to write inside this project's memory dir.
-if [[ "$lex_path" =~ ^"$ALLOWED_BASE"/[^/]+/memory/.+ ]]; then
-  if [[ "$abs_path" == "$lex_path" ]]; then
-    # No symlinks followed — direct memory write.
-    g_allow "inside memory dir" "$file_path"
-  else
-    # Symlink(s) were followed. Allow only when abs_path stays inside the
-    # resolved memory directory target, covering the symlinked-memory-dir use
-    # case (Rule C) while denying file-symlink and nested-dir-symlink escapes.
-    if [[ "$lex_path" =~ ^"$ALLOWED_BASE"/([^/]+)/memory/.+ ]]; then
-      real_mem_dir="$(realpath_m "$ALLOWED_BASE/${BASH_REMATCH[1]}/memory" 2>/dev/null)" \
-        || real_mem_dir=""
-      if [[ -n "$real_mem_dir" && "$abs_path" == "$real_mem_dir/"* ]]; then
-        # Deny when abs_path falls into a Rule A or Rule B zone — that would be
-        # a cross-rule escape via a memory/ dir symlink pointing to /tmp/<slug>/
-        # or docs/spikes/, both of which are distinct allow zones with their own
-        # lex_path requirements.  Only allow when abs_path stays outside those
-        # zones (i.e. memory is legitimately symlinked to an external storage).
-        if [[ "$abs_path" =~ ^/tmp/[a-z][^/]*/[^/]+\.md$ ]] || \
-           [[ "$abs_path" != /tmp/* && "$abs_path" =~ /docs/spikes/(CC-[0-9][^/]*|[^/]+-scope|[^/]+-rfc)\.md$ ]]; then
-          : # fall through to g_deny
-        else
-          g_allow "inside memory dir (lex)" "$file_path"
-        fi
-      fi
-    fi
-  fi
-fi
-
 # Rule A: /tmp/<slug>/<file>.md — exactly two segments below /tmp, .md suffix.
 # Both lex_path and abs_path must match so symlinks cannot route abs_path here
 # from an unrelated file_path (cross-rule symlink escape).
@@ -133,4 +108,4 @@ if [[ "$lex_path" != /tmp/* ]] && \
   fi
 fi
 
-g_deny "outside memory directory (resolved to $abs_path)" "$file_path"
+g_deny "outside direct-write handoff zones (canonical memory is writer-owned; resolved to $abs_path)" "$file_path"

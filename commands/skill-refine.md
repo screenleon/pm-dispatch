@@ -9,13 +9,13 @@ This command supports single-skill invocation only. Do not use `--all`, multiple
 
 ## Prerequisites
 
-`CLAUDE_MEMORY_DIR` must be exported and point to an existing memory directory before invoking this command. Claude Code sets this automatically; if running from a bare shell, select the directory for the current absolute project path and export it first:
+`/skill-refine` resolves the current repository's canonical project memory through `pmctl memory resolve`. For an explicit cross-host override, export `PM_MEMORY_DIR` as an existing absolute directory:
 
 ```sh
-export CLAUDE_MEMORY_DIR="${HOME}/.claude/projects/<claude-project-id>/memory"
+export PM_MEMORY_DIR="/absolute/path/to/project-memory"
 ```
 
-If `CLAUDE_MEMORY_DIR` is unset or points to a nonexistent directory, `tools/skills/skill-refine.sh` will exit 2 with a clear error.
+An invalid explicit `PM_MEMORY_DIR` fails closed. `CLAUDE_MEMORY_DIR` remains a temporary compatibility input for existing Claude wrappers, but is not the shared contract.
 
 ## What
 

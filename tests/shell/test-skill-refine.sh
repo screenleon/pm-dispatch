@@ -20,6 +20,8 @@ make_repo() {
   name="$1"
   repo="$tmp_root/$name"
   mkdir -p "$repo/scripts" "$repo/commands" "$repo/tools/skills"
+  cp -R "$REPO_ROOT/cli" "$REPO_ROOT/runtime" "$repo/"
+  git -C "$repo" init -q
   cp "$REPO_ROOT/tools/skills/skill-refine.sh" "$repo/tools/skills/skill-refine.sh"
   printf '# testskill\n' > "$repo/commands/testskill.md"
   printf '# otherskill\n' > "$repo/commands/otherskill.md"
@@ -29,7 +31,7 @@ make_repo() {
 run_skill_refine() {
   local repo="$1" skill="$2" memory_dir="$3" home_dir="$4" out="$5" err="$6"
   set +e
-  CLAUDE_MEMORY_DIR="$memory_dir" HOME="$home_dir" bash "$repo/tools/skills/skill-refine.sh" "$skill" > "$out" 2> "$err"
+  PM_MEMORY_DIR="$memory_dir" HOME="$home_dir" bash "$repo/tools/skills/skill-refine.sh" "$skill" > "$out" 2> "$err"
   RUN_STATUS=$?
   set -e
 }
@@ -37,7 +39,7 @@ run_skill_refine() {
 run_skill_refine_unset_env() {
   local repo="$1" skill="$2" home_dir="$3" out="$4" err="$5"
   set +e
-  env -u CLAUDE_MEMORY_DIR HOME="$home_dir" bash "$repo/tools/skills/skill-refine.sh" "$skill" > "$out" 2> "$err"
+  env -u PM_MEMORY_DIR -u CLAUDE_MEMORY_DIR HOME="$home_dir" bash "$repo/tools/skills/skill-refine.sh" "$skill" > "$out" 2> "$err"
   RUN_STATUS=$?
   set -e
 }
@@ -45,7 +47,7 @@ run_skill_refine_unset_env() {
 # Behavior: Matching feedback files under a valid memory dir yield candidate entries with correct headings.
 # Steps:
 #   1. Stage the fixture repo with a valid command file and matching feedback files.
-#   2. Invoke skill-refine with CLAUDE_MEMORY_DIR pointing at the fixture memory dir.
+#   2. Invoke skill-refine with PM_MEMORY_DIR pointing at the fixture memory dir.
 #   3. Assert the output reports the expected candidates and renders their headings.
 case_happy_path() {
   local name="happy_path_multi_candidate" repo out err status
@@ -119,7 +121,7 @@ case_missing_command_file() {
   pass "$name"
 }
 
-# Behavior: CLAUDE_MEMORY_DIR unset OR pointing at a nonexistent dir both exit 2.
+# Behavior: unavailable canonical memory OR an invalid explicit PM_MEMORY_DIR exits 2.
 # Steps:
 #   1. Unset CLAUDE_MEMORY_DIR, invoke skill-refine, and assert exit 2 plus CLAUDE_MEMORY_DIR in stderr.
 #   2. Set CLAUDE_MEMORY_DIR to a nonexistent dir, invoke skill-refine, and assert exit 2 plus CLAUDE_MEMORY_DIR in stderr.
@@ -138,15 +140,13 @@ case_bad_memory_dir() {
   unset_status=$RUN_STATUS
 
   assert_exit "$name" "$unset_status" 2
-  assert_file_contains "$name" "$unset_err" "CLAUDE_MEMORY_DIR"
-  assert_file_contains "$name" "$unset_err" "exported pointing at your memory dir"
+  assert_file_contains "$name" "$unset_err" "canonical project memory resolution failed"
 
   run_skill_refine "$repo" testskill "$tmp_root/definitely-not-a-dir" "$home" "$out" "$err"
   status=$RUN_STATUS
 
   assert_exit "$name" "$status" 2
-  assert_file_contains "$name" "$err" "CLAUDE_MEMORY_DIR"
-  assert_file_contains "$name" "$err" "$tmp_root/definitely-not-a-dir"
+  assert_file_contains "$name" "$err" "canonical project memory resolution failed"
   pass "$name"
 }
 

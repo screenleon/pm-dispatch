@@ -9,7 +9,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 # Keying is role×runtime (CC-291): guard cares about --role (pm|executor|reviewer);
 # the --runtime axis (codex|claude) is consulted only where a role's policy differs
 # by runtime.
-# 1. Happy path: codex-prewrite-allow, pm-prewrite-allow, claude-prewrite-allow, reviewer-prewrite-allow, pm-prebash-allow (all via `cli/pmctl guard check --role/--runtime`)
+# 1. Happy path: codex-prewrite-allow, claude-prewrite-allow, reviewer-prewrite-allow, pm-prebash-allow (all via `cli/pmctl guard check --role/--runtime`)
 # 2. Boundary values: post-task-fail-closed (reserved event → exit 3), claude-prebash-fail-closed + codex-prebash-fail-closed (executor role, no policy cell → exit 3), pm-prebash-claude-still-fail-closed (pm role, non-codex runtime, no policy cell → exit 3), prewrite-empty-file-passthrough-deny
 # 3. Negative inputs (usage errors, exit 2): unknown-role, unknown-runtime-fails-closed, invalid-runtime-traversal, executor-missing-runtime, pm-missing-runtime, pm-invalid-runtime, reviewer-missing-runtime, reviewer-invalid-runtime, role-missing-value, runtime-missing-value, unknown-event, missing-event, missing-role, unknown-flag, missing-event-value, prewrite-missing-file-flag, prewrite-rejects-command-flag, hook-not-executable, missing-repo-root, jq-missing
 # 4. Error paths (policy deny, exit 2): codex-prewrite-deny, pm-prewrite-deny, pm-prebash-deny, pm-prebash-deny-uppercase-recursive
@@ -77,10 +77,12 @@ if should_run "codex-prewrite-allow"; then
   assert_exit "$name" "$GUARD_EXIT" "0" && pass "$name"
 fi
 
-if should_run "pm-prewrite-allow"; then
-  name="pm-prewrite-allow"
+if should_run "pm-prewrite-canonical-memory-deny"; then
+  # Canonical memory is writer-owned; the PM guard must not retain a direct
+  # file-edit exception merely because a path resembles legacy memory.
+  name="pm-prewrite-canonical-memory-deny"
   run_guard --event pre-write --role pm --runtime claude --file "$MEM_PATH"
-  assert_exit "$name" "$GUARD_EXIT" "0" && pass "$name"
+  assert_exit "$name" "$GUARD_EXIT" "2" && pass "$name"
 fi
 
 if should_run "codex-prebash-fail-closed"; then
@@ -366,11 +368,11 @@ fi
 
 if should_run "pm-runtime-required-and-valid"; then
   # pm now requires --runtime (uniform two-axis CLI, CC-291/CC-297).
-  # --runtime codex is accepted — pm policy is runtime-independent but the
-  # CLI mandates explicit declaration.
+  # --runtime codex is accepted by the CLI, but canonical memory remains
+  # writer-owned and direct file edits stay denied.
   name="pm-runtime-required-and-valid"
   run_guard --event pre-write --role pm --runtime codex --file "$MEM_PATH"
-  assert_exit "$name" "$GUARD_EXIT" "0" && pass "$name"
+  assert_exit "$name" "$GUARD_EXIT" "2" && pass "$name"
 fi
 
 if should_run "role-missing-value"; then
@@ -580,7 +582,10 @@ if should_run "cli-symlink-repo-root" && _tpg_needs_symlink "cli-symlink-repo-ro
   set -e
   rm -rf "$_sym_dir"
   unset _sym_dir _sym_link
-  assert_exit "$name" "$st" "0" && pass "$name"
+  if assert_exit "$name" "$st" "2" &&
+    assert_string_contains "$name" "$out" "guard-pm-write"; then
+    pass "$name"
+  fi
 fi
 
 if should_run "cli-symlink-repo-root-relative" && _tpg_needs_symlink "cli-symlink-repo-root-relative"; then
@@ -617,7 +622,10 @@ if should_run "cli-symlink-repo-root-relative" && _tpg_needs_symlink "cli-symlin
   set -e
   rm -rf "$_sym_dir"
   unset _sym_dir _sym_link _rel_target
-  assert_exit "$name" "$st" "0" && pass "$name"
+  if assert_exit "$name" "$st" "2" &&
+    assert_string_contains "$name" "$out" "guard-pm-write"; then
+    pass "$name"
+  fi
 fi
 
 # ---------------------------------------------------------------------------

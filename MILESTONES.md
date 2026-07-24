@@ -64,24 +64,29 @@
 |----|------|------|
 | CC-449 | 吸收 CC-431：suite registry、CI parity、OpenCode、ship/worktree smoke | ✅ pr:#439 |
 
-### Phase 3 — install/upgrade smoke（原 v0.12.0 Phase 2）
+### Phase 3 — lifecycle ownership（原 v0.12.0 Phase 2）
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
 | CC-504 | manifest-driven multi-host lifecycle，移除 Claude base-spine 特例；product receipt、selected-host ownership、legacy migration 與 doctor dispatch 完整交付 | ✅ pr:#442 |
-| CC-447 | offline clean install + latest released tag→current N-1 upgrade；foreign config/memory/user data 不變 | 🔵 |
 
 ### Phase 4 — shared tooling/hooks host boundary（原 v0.12.0 Phase 3）
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-503 | canonical memory/payload/log roots + shared-layer content ratchet | 🔵（依賴 CC-502 pattern） |
+| CC-503 | canonical memory/payload/log roots + shared-layer content ratchet | ✅ pr:#445 |
 
 ### Phase 5 — operational evidence（原 v0.13.0 Phase 2）
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
 | CC-358 | per-adapter outcome/failure/fallback run stats，供 release/readiness 報告引用 | 🔵 |
+
+### Release qualification — v0.11.0 freeze 後
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-447 | offline clean install + latest released tag→v0.11 RC N-1 upgrade；foreign config/memory/user data 不變。屬正式 release evidence，若 release surface 改變即重跑 | 🔵 |
 
 ### Phase 6 — immediate publish correctness
 

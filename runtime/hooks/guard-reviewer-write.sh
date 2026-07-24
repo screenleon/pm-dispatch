@@ -24,18 +24,20 @@
 # --output outside .gate-results/ must set this bypass explicitly.
 #
 # Audit: every evaluated firing (allow / deny / bypass) is appended to
-# $PM_GUARD_LOG_DIR/hooks.log (default ~/.claude/logs/hooks.log).
+# $PM_GUARD_LOG_DIR/hooks.log (default product-owned state log).
 
 set -euo pipefail
 
 _SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 # shellcheck source=runtime/lib/portable.sh
 . "$_SCRIPT_DIR/../lib/portable.sh"
+# shellcheck source=runtime/lib/guard-log.sh
+. "$_SCRIPT_DIR/../lib/guard-log.sh"
 
 GUARD_NAME="guard-reviewer-write"
 : "${PM_GUARD_LOG_DIR:=${PM_HOOK_LOG_DIR:-}}"             # deprecated alias
 : "${PM_GUARD_REVIEWER_WRITE:=${PM_HOOK_REVIEWER_GUARD:-}}"  # deprecated alias
-LOG_DIR="${PM_GUARD_LOG_DIR:-$HOME/.claude/logs}"
+LOG_DIR="$(pm_guard_log_dir)"
 LOG_FILE="$LOG_DIR/hooks.log"
 G_BYPASS_ENV="PM_GUARD_REVIEWER_WRITE"
 # shellcheck source=runtime/lib/guard-framework.sh
