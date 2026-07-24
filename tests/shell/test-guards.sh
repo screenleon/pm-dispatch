@@ -902,7 +902,7 @@ stop_happy_path() {
   err="$(mktemp)"
   printf '%s' "$payload" | HOME="$home" PM_GUARD_LOG_DIR="$PM_GUARD_LOG_DIR" "$STOP_HOOK" >"$out" 2>"$err"
   status=$?
-  logfile="$home/.claude/usage-tracker.jsonl"
+  logfile="$home/.pm-dispatch/usage-tracker.jsonl"
   if [[ "$status" == "0" && -f "$logfile" ]] &&
      grep -q -F '"type":"session_total"' "$logfile" &&
      grep -q -F '"tokens":1700' "$logfile"; then
@@ -922,7 +922,7 @@ stop_missing_transcript_path() {
   home="$(make_stop_home)"
   printf '%s' '{"session_id":"s1"}' | HOME="$home" PM_GUARD_LOG_DIR="$PM_GUARD_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
   status=$?
-  if [[ "$status" == "0" && ! -f "$home/.claude/usage-tracker.jsonl" ]]; then
+  if [[ "$status" == "0" && ! -f "$home/.pm-dispatch/usage-tracker.jsonl" ]]; then
     PASS=$((PASS+1))
     [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
   else
@@ -938,7 +938,7 @@ stop_transcript_file_not_found() {
   home="$(make_stop_home)"
   printf '%s' '{"transcript_path":"/nonexistent/path","session_id":"s1"}' | HOME="$home" PM_GUARD_LOG_DIR="$PM_GUARD_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
   status=$?
-  if [[ "$status" == "0" && ! -f "$home/.claude/usage-tracker.jsonl" ]]; then
+  if [[ "$status" == "0" && ! -f "$home/.pm-dispatch/usage-tracker.jsonl" ]]; then
     PASS=$((PASS+1))
     [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
   else
@@ -973,7 +973,7 @@ stop_zero_token_transcript() {
   payload="$(jq -nc --arg path "$transcript" --arg session "s1" '{transcript_path:$path,session_id:$session}')"
   printf '%s' "$payload" | HOME="$home" PM_GUARD_LOG_DIR="$PM_GUARD_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
   status=$?
-  if [[ "$status" == "0" && ! -f "$home/.claude/usage-tracker.jsonl" ]]; then
+  if [[ "$status" == "0" && ! -f "$home/.pm-dispatch/usage-tracker.jsonl" ]]; then
     PASS=$((PASS+1))
     [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
   else
@@ -989,7 +989,8 @@ stop_failure_logged() {
   home="$(make_stop_home)"
   transcript="$home/transcript-fail.jsonl"
   printf '%s\n' '{"role":"assistant","usage":{"input_tokens":1000,"output_tokens":200}}' > "$transcript"
-  logfile="$home/.claude/usage-tracker.jsonl"
+  logfile="$home/.pm-dispatch/usage-tracker.jsonl"
+  mkdir -p "$(dirname "$logfile")"
   : > "$logfile"
   chmod 444 "$logfile"
   payload="$(jq -nc --arg path "$transcript" --arg session "s1" '{transcript_path:$path,session_id:$session}')"
@@ -1023,7 +1024,7 @@ stop_idempotent_double_call() {
   # Second invocation (same session + transcript)
   printf '%s' "$payload" | HOME="$home" PM_GUARD_LOG_DIR="$PM_GUARD_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
   status=$?
-  logfile="$home/.claude/usage-tracker.jsonl"
+  logfile="$home/.pm-dispatch/usage-tracker.jsonl"
   # Sum all session_total entries for this session - must equal 1700, not 3400
   total=$(jq -Rs '[split("\n")[] | select(length>0) | try fromjson catch null | select(. != null and .type=="session_total") | .tokens // 0] | add // 0' "$logfile" 2>/dev/null || echo 0)
   if [[ "$status" == "0" && "$total" == "1700" ]]; then
@@ -1050,7 +1051,7 @@ stop_nested_message_usage() {
     '{transcript_path:$path,session_id:$session}')"
   printf '%s' "$payload" | HOME="$home" PM_GUARD_LOG_DIR="$PM_GUARD_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
   status=$?
-  logfile="$home/.claude/usage-tracker.jsonl"
+  logfile="$home/.pm-dispatch/usage-tracker.jsonl"
   if [[ "$status" == "0" && -f "$logfile" ]] &&
      grep -q -F '"type":"session_total"' "$logfile" &&
      grep -q -F '"tokens":1100' "$logfile"; then
@@ -1077,7 +1078,7 @@ stop_no_session_id_skips_log() {
   printf '%s' "$payload" | HOME="$home" PM_GUARD_LOG_DIR="$PM_GUARD_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
   printf '%s' "$payload" | HOME="$home" PM_GUARD_LOG_DIR="$PM_GUARD_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
   status=$?
-  if [[ "$status" == "0" && ! -f "$home/.claude/usage-tracker.jsonl" ]]; then
+  if [[ "$status" == "0" && ! -f "$home/.pm-dispatch/usage-tracker.jsonl" ]]; then
     PASS=$((PASS+1))
     [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
   else

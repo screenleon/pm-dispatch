@@ -96,6 +96,12 @@ project_partition:
       description: "Mirrors DECISIONS.md index rows."
       write_strategy: write-temp-then-rename
 
+    - path: "operations/"
+      file_pattern: "op-$TS_HEX.json"
+      schema: ../schema/operation.schema.json
+      description: "Parent-operation lifecycle records and append-only child relations."
+      write_strategy: write-temp-then-rename
+
     - path: "context-packs/"
       file_pattern: "$TASK_ID-$TS_HEX.json"
       schema: ../schema/context-pack.schema.json

@@ -1880,7 +1880,7 @@ pmctl_dispatch_run() {
   fi
   shift || true
 
-  local adapter="" work_dir="" brief_file="" print_cmd=0 auto_pack_flag="" lifecycle_flag=""
+  local adapter="" work_dir="" brief_file="" print_cmd=0 auto_pack_flag="" lifecycle_flag="" parent_operation="" parent_operation_work_dir=""
   local -a forward=()
 
   # Peek at the flags the shared steps need (--adapter is consumed; --cd and
@@ -1943,6 +1943,22 @@ pmctl_dispatch_run() {
             return 2
             ;;
         esac
+        shift 2
+        ;;
+      --parent-operation)
+        if [[ $# -lt 2 || ! "$2" =~ ^op-[0-9]{8}T[0-9]{6}Z-[a-f0-9]{6}$ ]]; then
+          printf 'pmctl dispatch run: --parent-operation requires a valid operation id\n' >&2
+          return 2
+        fi
+        parent_operation="$2"
+        shift 2
+        ;;
+      --parent-operation-cd)
+        [[ $# -ge 2 && "$2" == /* && -d "$2" ]] || {
+          printf 'pmctl dispatch run: --parent-operation-cd requires an existing absolute directory\n' >&2
+          return 2
+        }
+        parent_operation_work_dir="$(_portable_canonical_path "$2")"
         shift 2
         ;;
       --)
@@ -2024,6 +2040,12 @@ pmctl_dispatch_run() {
     if [[ "$_detach_elig" -ne 0 ]]; then
       return 2
     fi
+  elif [[ -n "$parent_operation" ]]; then
+    printf 'pmctl dispatch run: --parent-operation requires --lifecycle detached\n' >&2
+    return 2
+  elif [[ -n "$parent_operation_work_dir" ]]; then
+    printf 'pmctl dispatch run: --parent-operation-cd requires --parent-operation\n' >&2
+    return 2
   fi
 
   # Built-in default is ON (context-first by default): retrieval-first discipline
@@ -2124,10 +2146,26 @@ pmctl_dispatch_run() {
   #    to the supervisor via setsid/nohup; returns run_id immediately.  The
   #    preflight gates above still front every executor invocation in both paths.
   if [[ "$_lifecycle_effective" == "detached" ]]; then
-    pmctl_dispatch_run_detached "$repo_root" "$work_dir" "$adapter" \
+    # Parent ownership must be durable BEFORE the launch boundary.  If this
+    # append cannot succeed, no executor has started and the caller can safely
+    # retry; attaching after launch would create an un-cancellable orphan.
+    if [[ -n "$parent_operation" ]]; then
+      if ! declare -F pmctl_operation_attach_child >/dev/null 2>&1; then
+        printf 'pmctl dispatch run: parent-operation library unavailable; refusing unrecorded child %s\n' "$_dispatch_run_id" >&2
+        return 2
+      fi
+      local _parent_operation_dir="${parent_operation_work_dir:-$work_dir}"
+      if ! pmctl_operation_attach_child "$repo_root" "$_parent_operation_dir" "$parent_operation" "$_dispatch_run_id" "$work_dir"; then
+        printf 'pmctl dispatch run: failed to reserve child %s under parent %s; executor was not launched\n' "$_dispatch_run_id" "$parent_operation" >&2
+        return 2
+      fi
+    fi
+    local _detached_out
+    _detached_out="$(pmctl_dispatch_run_detached "$repo_root" "$work_dir" "$adapter" \
       "$_dispatch_run_id" "$_dispatch_model" "$_effective_brief" "$_dispatch_created_ts" "$print_cmd" \
-      "${forward[@]}"
-    return $?
+      "${forward[@]}")" || return $?
+    printf '%s\n' "$_detached_out"
+    return 0
   fi
 
   pmctl_dispatch_execute_tail "$repo_root" "$work_dir" "$adapter" "$adapter_path" \

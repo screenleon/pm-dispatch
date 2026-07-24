@@ -26,7 +26,11 @@
 
 set -euo pipefail
 
-LOGFILE="$HOME/.claude/usage-tracker.jsonl"
+# Usage accounting is shared by every supported executor.  Keep its default
+# under pm-dispatch's host-neutral state namespace instead of creating a
+# Claude-specific home directory during a Codex-only dispatch.  Deployments
+# may still route the file explicitly when they keep a central tracker.
+LOGFILE="${PM_DISPATCH_USAGE_LOG_FILE:-$HOME/.pm-dispatch/usage-tracker.jsonl}"
 TYPE="${1:?usage: log-usage.sh <type> <tokens> [note] [session_id] [pool]}"
 TOKENS="${2:?usage: log-usage.sh <type> <tokens> [note] [session_id] [pool]}"
 NOTE="${3:-}"

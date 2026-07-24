@@ -180,6 +180,8 @@ router and [`cli/commands.tsv`](cli/commands.tsv).
 - `ship --parallel` — Run multiple ticket delivery workflows. [experimental; JSON: false; mutating: true]
 - `ship status` — Show and refresh a parallel ship run. [experimental; JSON: true; mutating: true]
 - `ship list` — List and refresh completed parallel ship runs. [experimental; JSON: true; mutating: true]
+- `ship cancel` — Cancel a ship parent operation and only its recorded child runs. [experimental; JSON: false; mutating: true]
+- `ship reconcile` — Reconcile a ship operation from trusted child terminal claims. [experimental; JSON: false; mutating: true]
 - `trace tail` — Read normalized project events. [experimental; JSON: true; mutating: false]
 - `task list` — List tasks. [experimental; JSON: true; mutating: false]
 - `task show` — Show one task. [experimental; JSON: true; mutating: false]
@@ -195,6 +197,8 @@ router and [`cli/commands.tsv`](cli/commands.tsv).
 - `gate run` — Start the pull-request gate. [experimental; JSON: false; mutating: true]
 - `gate verify` — Verify a gate result artifact. [experimental; JSON: false; mutating: false]
 - `gate wait` — Wait for a detached gate run. [experimental; JSON: false; mutating: true]
+- `gate cancel` — Cancel a gate parent operation and only its recorded child runs. [experimental; JSON: false; mutating: true]
+- `gate reconcile` — Reconcile a gate operation from trusted child terminal claims. [experimental; JSON: false; mutating: true]
 - `context index` — Build the repository context index. [experimental; JSON: false; mutating: true]
 - `context update` — Update the repository context index. [experimental; JSON: false; mutating: true]
 - `context status` — Show context index status. [experimental; JSON: true; mutating: false]
@@ -268,8 +272,8 @@ usage.
 - **tests/bin/run-tests.sh** — pm-dispatch-specific, direct-impact iteration planner. It can be supplied explicitly to generic `pr-gate --test-cmd`; it is not final sign-off evidence.
 - **tests/bin/run-all-tests.sh** — Authoritative full-suite entrypoint. `install.sh --verify` uses it; `--list` and `--skip <name>` remain available in full mode.
 - **runtime/bin/doctor.sh** — Environment health check: verifies `claude`/`jq`/`pmctl` are on `$PATH`, hooks are wired into `~/.claude/settings.json`, the memory directory exists, scripts are executable, and frontmatter passes lint. `--profile minimal|full|auto` scopes which hook checks apply. Each failing check prints a concrete remediation command.
-- **token-usage.sh** — Multi-pool token usage estimator (Claude / Codex / Spark). Reads `~/.claude/usage-tracker.jsonl`. Symlinked to `~/.claude/scripts/token-usage.sh` by `install.sh`. Usage: `bash ~/.claude/scripts/token-usage.sh [--today|--all]`. `--remaining` (no arg) auto-reads `~/.claude/rate-limits.json` if the StatusLine hook is installed; `--remaining N` accepts manual dashboard value.
-- **log-usage.sh** — Appends one entry to `~/.claude/usage-tracker.jsonl`. Symlinked to `~/.claude/scripts/log-usage.sh` by `install.sh`. Usage: `bash ~/.claude/scripts/log-usage.sh <type> <tokens> [note]`. Call after any significant agent operation; standard types in the script header.
+- **token-usage.sh** — Multi-pool token usage estimator (Claude / Codex / Spark). Reads `~/.pm-dispatch/usage-tracker.jsonl` by default; set `PM_DISPATCH_USAGE_LOG_FILE` to retain an existing tracker elsewhere. Symlinked to `~/.claude/scripts/token-usage.sh` by `install.sh`. Usage: `bash ~/.claude/scripts/token-usage.sh [--today|--all]`. `--remaining` (no arg) auto-reads `~/.claude/rate-limits.json` if the StatusLine hook is installed; `--remaining N` accepts manual dashboard value.
+- **log-usage.sh** — Appends one entry to `~/.pm-dispatch/usage-tracker.jsonl` by default; set `PM_DISPATCH_USAGE_LOG_FILE` to retain an existing tracker elsewhere. Symlinked to `~/.claude/scripts/log-usage.sh` by `install.sh`. Usage: `bash ~/.claude/scripts/log-usage.sh <type> <tokens> [note]`. Call after any significant agent operation; standard types in the script header.
 - **usage-weekly.sh** — Weekly Markdown report from `~/.claude/stats-cache.json` (Claude internal cache) and Codex session JSONL files. Read-only. Run manually or from a cron job.
 
 **Dependencies (runtime):** `jq` and `realpath` (coreutils) must be on `$PATH`. Hooks fail closed (`exit 2`) if either is missing — they log to stderr and Claude Code surfaces the message.

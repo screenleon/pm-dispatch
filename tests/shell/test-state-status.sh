@@ -54,7 +54,7 @@ case_compatible_store_json_contract() {
       .store_layout_version == 1 and
       (.supported_layout_versions | index(1) != null) and
       .current_layout_version == 1 and
-      (.entity_schema_versions | has("run") and has("event") and has("task") and has("review") and has("decision") and has("context-pack")) and
+      (.entity_schema_versions | has("run") and has("event") and has("task") and has("review") and has("decision") and has("operation") and has("context-pack")) and
       (.writable | type == "boolean") and
       (.safe_root | type == "boolean") and
       (.migration | has("available") and has("from") and has("to") and has("reason"))

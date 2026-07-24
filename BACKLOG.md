@@ -27,7 +27,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-505 | 🔵 active | context plane lexical 檢索補完（Ph1 engine+統一排序+fixtures；Ph2 agent 契約+shadow 儀器化；evidence-gated 收緊 → [[CC-506]]）（2026-07-20 四方 synthesis；CC-346/347 前置） | memory/DX | 2026-07-20 | — | P2 | retrieval |
 | CC-506 | ⏸ deferred | retrieval evidence-gated 收緊：shadow 評測（coverage@5、critical miss、read reduction、outcome parity）達標後才收緊 broad-Read 指引並重評 [[CC-340]] resume 條件；前置 = [[CC-505]] Ph2 shipped + ≥20 真實任務證據 | memory/DX | 2026-07-20 | — | P3 | retrieval |
 | CC-507 | ✅ done | `pmctl state status`：無法讀取 `VERSION` 時被 Bash `$(<file)` redirection 提前中止，未回傳契約的 unreadable/exit 3 | arch/test | 2026-07-21 | pr:#437 | P1 | design |
-| CC-508 | 🟢 someday | 所有間接 dispatch producer 的 parent-operation control plane：可追溯子 run、受控取消與單一終態；gate／ship／task dispatch 等全數納入 | arch/gate | 2026-07-21 | feedback:2026-07-21 | P2 | design |
+| CC-508 | 🔵 active | executor producer 的 parent-operation control plane：可追溯子 run、受控取消與單一終態；目前納入 gate／ship，task dispatch 保留為後續接入 | arch/gate | 2026-07-21 | feedback:2026-07-21 | P2 | design |
 | CC-509 | ✅ closed 2026-07-22 | detached gate launch liveness：對 sandbox parent-death 早期死亡 fail-loud，提供 supervisor readiness／identity evidence | arch/gate | 2026-07-22 | pr:#440 | P2 | hygiene |
 | CC-510 | ✅ closed 2026-07-23 | Codex detached dispatch continuation：App Server callback、authenticated completion envelope 與 foreground fallback | arch/DX | 2026-07-23 | pr:#443 | P2 | design |
 | CC-511 | ⚠️ partial 2026-07-24 | ship publish authorization：Phase A current-tree authoritative full-suite 已交付；Phase B review-closure evidence 仍待 CC-515／CC-517 | release/gate | 2026-07-23 | pr:#446 | P1 | design |
@@ -2045,7 +2045,7 @@ deterministic fail closed，後者具模型波動，不應混成 CI hard gate。
 
 ---
 
-## CC-508 — 所有間接 dispatch 的 parent-operation control plane 🟢 someday
+## CC-508 — 所有間接 dispatch 的 parent-operation control plane 🔵 active
 
 **Problem**: `pmctl gate run`、`pmctl ship --parallel`／adapter 路徑、`pmctl task dispatch` 與任何未來 producer 都可能以一個 parent operation 間接啟動一或多個 detached dispatch；但產品控制面主要只暴露個別 `pmctl dispatch cancel <run_id>`。parent ID 與其子 run 沒有強制、可查的 ownership relation，也沒有一致的 producer-level cancel surface。當任一 producer 卡住、選錯 executor 或需中止時，操作者無法透過 pmctl 取消整個 operation；直接對 supervisor PID 操作會繞過 run state、sentinel 與 cancel-vs-complete 單一終態契約，並可能留下無法判定的 stale operation。
 
@@ -2053,7 +2053,7 @@ deterministic fail closed，後者具模型波動，不應混成 CI hard gate。
 
 **Requirement**:
 1. 建立 durable parent-operation record，至少含 operation ID、kind、owner project/workdir、executor、created／terminal timestamps、authenticated cancellation metadata，以及所有 child dispatch run ID 的 append-only relation；machine state 一律仍由 canonical writer 寫入。
-2. 所有會派發的 producer 必須接入此 record：至少 gate、ship 的 adapter／parallel lanes、task dispatch；新增或重構 dispatch-capable command 時，CI ratchet 必須拒絕未宣告 parent/child contract 的路徑。
+2. 所有實際會派發 executor 的 producer 必須接入此 record：至少 gate、ship 的 adapter／parallel lanes；`task dispatch` 目前只改 task lifecycle metadata、沒有啟動 executor，因此不是 producer，必須由 contract test 守住「不得暗中派發」的分類。未來若 task dispatch 開始 launch executor，必須在同一變更接入 parent/child contract；新增或重構 dispatch-capable command 時，CI ratchet 必須拒絕未宣告 parent/child contract 的路徑。
 3. 每個 producer 提供一致命名的 cancel surface（例如 `pmctl gate cancel <id>`、`pmctl ship cancel <id>`、`pmctl task cancel <id>`），以 recorded ownership 找到 parent 與其 children；不得接受任意 PID、任意 run ID 或跨 project 的 cancellation target。
 4. cancel 順序與 `pmctl dispatch cancel` 對齊：先要求 parent 停止再以 pmctl 逐一取消已記錄、仍 in-flight 的 children；race 中只能產生一個 terminal state（completed／failed／cancelled），不覆寫已完成 result，也不取消其他 operation 的 run。
 5. 每個 producer 的 wait／status／verify 對 cancelled terminal state 提供可驗證、非成功的結論與 result/sentinel evidence；crash、reboot、PID reuse、child already terminal、部分 child cancellation、stale parent 均 fail-closed 並可由 reconcile/doctor 說明。

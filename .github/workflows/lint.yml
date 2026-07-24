@@ -321,6 +321,13 @@ jobs:
       - name: state store regression suite
         run: bash tests/shell/test-state-store.sh
 
+  test-pmctl-operation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: parent operation regression suite
+        run: bash tests/shell/test-pmctl-operation.sh
+
   test-state-layout-parity:
     runs-on: ubuntu-latest
     steps:

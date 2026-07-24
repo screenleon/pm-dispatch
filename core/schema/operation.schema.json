@@ -1,0 +1,18 @@
+{
+  "title": "Parent operation",
+  "description": "Durable producer-owned lifecycle which may own one or more detached dispatch runs.",
+  "type": "object",
+  "required": ["schema_version", "id", "kind", "working_dir", "state", "created_ts"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "id": {"type": "string", "pattern": "^op-[0-9]{8}T[0-9]{6}Z-[a-f0-9]{6}$"},
+    "kind": {"enum": ["gate", "ship", "task"]},
+    "working_dir": {"type": "string", "pattern": "^/"},
+    "executor": {"type": ["string", "null"]},
+    "state": {"enum": ["running", "cancelling", "completed", "failed", "cancelled", "indeterminate"]},
+    "created_ts": {"type": "string", "format": "date-time"},
+    "terminal_ts": {"type": ["string", "null"], "format": "date-time"},
+    "cancellation": {"type": ["object", "null"]}
+  },
+  "additionalProperties": false
+}

@@ -224,7 +224,7 @@ FAKEOF
     "$DISPATCH" --cd "$_work10" --brief-file "$_brief10" >/dev/null 2>&1
   _exit10=$?
 
-  _tracker10="$_home10/.claude/usage-tracker.jsonl"
+  _tracker10="$_home10/.pm-dispatch/usage-tracker.jsonl"
   if [[ "$_exit10" -eq 0 ]] \
      && [[ -f "$_tracker10" ]] && grep -q '"type":"codex_dispatch"' "$_tracker10" \
      && grep -q '"pool":"codex"' "$_tracker10" \
@@ -272,7 +272,7 @@ EOF
   _exit=$?
 
   if [[ "$_exit" -eq 0 && -f "$_marker" ]] && grep -q "codex_dispatch" "$_marker" \
-     && [[ ! -f "$_home/.claude/usage-tracker.jsonl" ]]; then
+     && [[ ! -f "$_home/.pm-dispatch/usage-tracker.jsonl" ]]; then
     pass "$name"
   else
     fail "$name" "exit=$_exit marker_exists=$([[ -f "$_marker" ]] && echo yes || echo no)"
@@ -307,7 +307,7 @@ FAKEOF
   PATH="$_fake_bin11:$PATH" HOME="$_home11" \
     "$DISPATCH" --cd "$_work11" --brief-file "$_brief11" >/dev/null 2>&1 || true
 
-  if [[ ! -f "$_home11/.claude/usage-tracker.jsonl" ]]; then
+  if [[ ! -f "$_home11/.pm-dispatch/usage-tracker.jsonl" ]]; then
     pass "$name"
   else
     fail "$name" ""
@@ -346,7 +346,7 @@ FAKEOF
     "$DISPATCH" --cd "$_work12" --brief-file "$_brief12" --model codex-spark >/dev/null 2>&1
   _exit12=$?
 
-  _tracker12="$_home12/.claude/usage-tracker.jsonl"
+  _tracker12="$_home12/.pm-dispatch/usage-tracker.jsonl"
   if [[ "$_exit12" -eq 0 ]] \
      && [[ -f "$_tracker12" ]] && grep -q '"type":"codex_dispatch"' "$_tracker12" \
      && grep -q '"pool":"spark"' "$_tracker12" \

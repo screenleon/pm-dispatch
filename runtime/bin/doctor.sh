@@ -548,6 +548,35 @@ check_detached_runs() {
   fi
 }
 
+# Read-only parent-operation diagnostics.  The operation projection is owned by
+# the canonical writer; doctor only uses state status to find its partition and
+# then reports non-terminal records with their producer-specific reconcile path.
+check_parent_operations() {
+  local pmctl="$REPO_ROOT/cli/pmctl" status store key dir file state kind op pending=0 total=0 hint=""
+  [[ -x "$pmctl" ]] || { emit_check parent-operations warn "parent-operation diagnostics skipped (pmctl unavailable)"; return; }
+  status="$("$pmctl" state status --json --cd "$REPO_ROOT" 2>/dev/null)" || {
+    emit_check parent-operations warn "parent-operation diagnostics skipped (state status unavailable)"; return;
+  }
+  store="$(jq -r '.store_root // ""' <<<"$status" 2>/dev/null)"; key="$(jq -r '.project_key // ""' <<<"$status" 2>/dev/null)"
+  [[ -n "$store" && -n "$key" ]] || { emit_check parent-operations warn "parent-operation diagnostics skipped (state partition unresolved)"; return; }
+  dir="$store/projects/$key/operations"
+  [[ -d "$dir" ]] || { emit_check parent-operations ok "no parent operations recorded"; return; }
+  for file in "$dir"/op-*.json; do
+    [[ -f "$file" ]] || continue
+    total=$((total + 1)); state="$(jq -r '.state // ""' "$file" 2>/dev/null)"; kind="$(jq -r '.kind // ""' "$file" 2>/dev/null)"; op="$(jq -r '.id // ""' "$file" 2>/dev/null)"
+    case "$state" in running|indeterminate)
+      pending=$((pending + 1))
+      [[ -n "$hint" ]] || hint="pmctl $kind reconcile $op --cd '$REPO_ROOT'"
+      ;;
+    esac
+  done
+  if [[ "$pending" -eq 0 ]]; then
+    emit_check parent-operations ok "$total parent operation(s) recorded, none require reconciliation"
+  else
+    emit_check parent-operations warn "$pending of $total parent operation(s) are running or indeterminate" "$hint"
+  fi
+}
+
 main() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -661,6 +690,7 @@ main() {
   check_memory_dir
   check_frontmatter_lint
   check_detached_runs
+  check_parent_operations
 
   local ec=0
   [[ $_FAIL_COUNT -gt 0 ]] && ec=1

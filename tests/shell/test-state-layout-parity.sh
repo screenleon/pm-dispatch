@@ -40,7 +40,7 @@ assert_line_set_contains() {
 }
 
 layout_project_subdirs() {
-  grep -E '^[[:space:]]+- path: "(tasks/|reviews/|decisions/|context-packs/|archive/)"' "$LAYOUT" |
+  grep -E '^[[:space:]]+- path: "(tasks/|reviews/|decisions/|operations/|context-packs/|archive/)"' "$LAYOUT" |
     sed -E 's/.*"([^"]+)".*/\1/; s:/$::'
 }
 
@@ -92,6 +92,16 @@ make_writer_store() {
     '{"schema_version":1,"id":"evt-20260101T000000Z-abcdef","kind":"run.completed","subject_type":"run","subject_id":"run-20260101T000000Z-abcdef","ts":"2026-01-01T00:00:00Z","payload":{"run_id":"run-20260101T000000Z-abcdef","state":"ok","from_state":"verifying","to_state":"ok"}}'
 }
 
+case_layout_is_valid_yaml() {
+  local name="state-layout-parity: layout is valid YAML"
+  should_run "$name" || return 0
+  if python3 -c 'import sys, yaml; yaml.safe_load(open(sys.argv[1], encoding="utf-8"))' "$LAYOUT"; then
+    pass "$name"
+  else
+    fail "$name" "YAML parser rejected $LAYOUT"
+  fi
+}
+
 case_project_subdirs_match_layout() {
   # Verifies the project subdirectories created by state_store_init are declared by layout.yaml.
   #
@@ -117,7 +127,7 @@ case_project_subdirs_match_layout() {
   actual_count="$(line_count "$actual")"
   layout_count="$(line_count "$layout")"
 
-  if [[ "$actual_count" -ne 5 || "$layout_count" -ne 5 ]]; then
+  if [[ "$actual_count" -ne 6 || "$layout_count" -ne 6 ]]; then
     fail "$name" "actual_count=$actual_count layout_count=$layout_count"
     return
   fi
@@ -216,6 +226,7 @@ case_sw_build_run_json_emits_current_schema_version() {
   else fail "$name" "writer emits schema_version=$actual_version, schema expects $expected_version"; fi
 }
 
+case_layout_is_valid_yaml
 case_project_subdirs_match_layout
 case_active_files_and_locks_match_layout
 case_archive_patterns_match_layout

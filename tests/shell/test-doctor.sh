@@ -2591,6 +2591,22 @@ case_doctor_receipt_selected_hosts_filter_and_drift_warn() {
   pass "$name"
 }
 
+case_doctor_parent_operation_warns_with_reconcile_hint() {
+  local name="doctor-parent-operation-warns-with-reconcile-hint"
+  should_run "$name" || return 0
+  local store="$tmp_root/operation-doctor-state" op out
+  # shellcheck source=runtime/lib/pmctl-operation.sh
+  . "$REPO_ROOT/runtime/lib/pmctl-operation.sh"
+  op="$(PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_create "$REPO_ROOT" "$REPO_ROOT" gate codex)"
+  out="$(PM_DISPATCH_STATE_ROOT="$store" bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1 || true)"
+  if [[ "$out" == *"parent operation(s) are running or indeterminate"* ]] \
+      && [[ "$out" == *"pmctl gate reconcile $op --cd '$REPO_ROOT'"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "missing operation warning/reconcile hint: $out"
+  fi
+}
+
 case_doctor_all_ok_exits_0
 case_doctor_executor_unauthed_fails
 case_doctor_executor_authed_via_credfile_ok
@@ -2668,5 +2684,6 @@ case_doctor_repo_trusted_linter
 case_doctor_stale_hook_sibling_prefix_warns
 case_doctor_native_windows_notice
 case_doctor_receipt_selected_hosts_filter_and_drift_warn
+case_doctor_parent_operation_warns_with_reconcile_hint
 
 th_summary
