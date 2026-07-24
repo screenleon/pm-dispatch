@@ -22,7 +22,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-498 | ✅ done | State compatibility surface：status、layout/entity 版本命名、真實 migration availability | arch/schema | 2026-07-17 | pr:#435 | P1 | design |
 | CC-499 | ✅ done | Detached run reconciliation：crash、reboot、stale sentinel、PID identity 與 orphan recovery | arch/ops | 2026-07-17 | pr:#429 | P2 | design |
 | CC-500 | ✅ done | State single-writer boundary enforcement：all-production-domain direct-writer ratchet | arch/test | 2026-07-17 | pr:#438 | P2 | design |
-| CC-503 | 🔵 active | shared tooling/hooks host-boundary 收斂：skill-refine canonical memory、prompt payload adapter、state-root audit log、content ratchet | arch/hook | 2026-07-17 | — | P2 | hygiene |
+| CC-503 | ✅ closed 2026-07-24 | shared tooling/hooks host-boundary 收斂：skill-refine canonical memory、prompt payload adapter、state-root audit log、content ratchet | arch/hook | 2026-07-17 | pr:#445 | P2 | hygiene |
 | CC-504 | ✅ closed 2026-07-23 | top-level install/uninstall/doctor 移除 Claude base-spine 特例，建立 manifest-driven multi-host lifecycle 與 product-asset ownership | arch/install | 2026-07-17 | pr:#442 | P2 | design |
 | CC-505 | 🔵 active | context plane lexical 檢索補完（Ph1 engine+統一排序+fixtures；Ph2 agent 契約+shadow 儀器化；evidence-gated 收緊 → [[CC-506]]）（2026-07-20 四方 synthesis；CC-346/347 前置） | memory/DX | 2026-07-20 | — | P2 | retrieval |
 | CC-506 | ⏸ deferred | retrieval evidence-gated 收緊：shadow 評測（coverage@5、critical miss、read reduction、outcome parity）達標後才收緊 broad-Read 指引並重評 [[CC-340]] resume 條件；前置 = [[CC-505]] Ph2 shipped + ≥20 真實任務證據 | memory/DX | 2026-07-20 | — | P3 | retrieval |
@@ -2056,7 +2056,7 @@ deterministic fail closed，後者具模型波動，不應混成 CI hard gate。
 
 **Dependencies**: [[CC-495]]（dispatch cancel terminalization）與 [[CC-499]]（detached reconciliation）為基礎；本票先定全域 parent-operation contract，再逐一遷移全部既有 producer，不能以「未來有需要」延後 ship、task dispatch 或其他現存派發路徑。
 
-## CC-503 — shared tooling/hooks host-boundary 收斂 🔵 active
+## CC-503 — shared tooling/hooks host-boundary 收斂 ✅ 2026-07-24
 
 **Problem**: script domain 已依檔案路徑分到 shared runtime、host modules與 tooling，但 content boundary 尚未 ratchet：`tools/skills/skill-refine.sh` 強制 `CLAUDE_MEMORY_DIR`；`runtime/hooks/guard-inject-context.sh` 位於 shared runtime卻解析 Claude UserPromptSubmit payload並 source `hosts/claude`; 多個 shared guard預設 audit log在 `$HOME/.claude/logs`；`guard-pm-write.sh` 把 writable memory root固定為 `$HOME/.claude/projects`。
 
@@ -2074,6 +2074,10 @@ deterministic fail closed，後者具模型波動，不應混成 CI hard gate。
 **Plan**：Phase A 先以 shared log-root resolver、canonical memory resolver 與 host payload adapter 切斷 Claude-only default；Phase B 將 PM write policy改為 canonical resolved root並補 symlink/invalid-explicit negative cases；Phase C 以 repository content ratchet（direct host source、host-root default、single-host-only API）守住邊界。每一 phase 都須在 Claude/Codex/OpenCode fixtures跑同一 contract；不得為了相容而在 shared layer重新引入 host fallback。
 
 **Dependencies**: [[CC-502]] 先建立 gate/reviewer pattern；[[CC-054]] 保持 deferred且只處理 review-first diff generation。必須在 [[CC-447]] 正式 N-1 release qualification 前完成。P2，v0.11.0 host-boundary closure。
+
+**Outcome 2026-07-24**: Shared prompt scanning now consumes normalized inputs while Claude payload parsing and timeout policy live in the Claude host adapter. Shared tooling and guards resolve canonical memory and product-owned log roots without creating `.claude` trees; direct PM memory edits are removed in favor of the canonical writer boundary. Content ratchets and Claude/Codex/OpenCode fixture coverage enforce the boundary.
+
+**See**: pr:#445
 
 ## CC-504 — manifest-driven multi-host lifecycle，移除 Claude base-spine 特例 ✅ 2026-07-23
 

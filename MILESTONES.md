@@ -74,7 +74,7 @@
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-503 | canonical memory/payload/log roots + shared-layer content ratchet | 🔵（依賴 CC-502 pattern） |
+| CC-503 | canonical memory/payload/log roots + shared-layer content ratchet | ✅ pr:#445 |
 
 ### Phase 5 — operational evidence（原 v0.13.0 Phase 2）
 
