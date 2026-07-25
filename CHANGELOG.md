@@ -10,6 +10,20 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Parent-operation control plane for indirect dispatch (CC-508).** Producers
+  that launch detached children — `pmctl gate run` and `pmctl ship` — now create
+  a durable parent operation record (`core/schema/operation.schema.json`, owned
+  by the canonical state writer) and attach every child run to it *before*
+  launch, so ownership is provable rather than inferred. New ownership-scoped
+  routes `pmctl <gate|ship> cancel <operation-id> --cd <dir> [--grace N]` and
+  `pmctl <gate|ship> reconcile <operation-id> --cd <dir>` cancel or converge
+  only the children recorded under that operation, each through the trusted
+  `pmctl dispatch cancel` primitive — never by accepting a caller-supplied PID.
+  Reconcile never infers completion from workspace artifacts: an unresolved
+  child leaves the parent `indeterminate`. `doctor` gains a read-only
+  `parent-operations` check that reports non-terminal records with the exact
+  reconcile command to run. Task dispatch is deliberately not wired yet.
+
 - **Grok executor + host (MVP).** New `adapters/grok/` Model B executor
   (`pmctl dispatch run --adapter grok`) with dual isolation mapping
   (`--sandbox` + `--permission-mode` via `isolation-map.yaml`), streaming-json
@@ -41,6 +55,15 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **Usage-tracker default moved to the host-neutral namespace (CC-508).**
+  `ops/usage/log-usage.sh` and `ops/usage/token-usage.sh` now default to
+  `~/.pm-dispatch/usage-tracker.jsonl` instead of `~/.claude/usage-tracker.jsonl`,
+  so a Codex-only or Grok-only dispatch no longer creates a Claude-specific home
+  directory. Upgraded installations keep their existing history at the old path:
+  set `PM_DISPATCH_USAGE_LOG_FILE=~/.claude/usage-tracker.jsonl` to retain one
+  tracker in place, or move the file. `doctor` warns whenever history sits at the
+  former default (or is split across both) and prints the remediation.
+
 - **Task and decision rollback deletes use the canonical writer (CC-500).**
   Failed event emission no longer removes projections directly from pmctl
   modules; `task_delete` and `decision_delete` now enforce ID validation,
@@ -55,6 +78,26 @@ Versions follow [Semantic Versioning](https://semver.org/).
   and `state status`.
 
 ### Fixed
+
+- **Operation cancel/reconcile diagnose the failure instead of exiting silently
+  (CC-508).** An unknown operation id — the common case when one is copied from
+  a PR body or created on another host, since operation records are
+  machine-local — used to exit 2 with no output. Both routes now distinguish
+  "no such operation" from "exists but foreign", name the resolved working
+  directory, and print usage on a malformed invocation.
+
+- **Relative `--cd` no longer reports an owned operation as foreign (CC-508).**
+  `cancel`/`reconcile` compared the caller's raw `--cd` value against the
+  absolute `working_dir` stored at creation, so `--cd .` located the record and
+  then refused it as a foreign target. Both routes now resolve `--cd` to an
+  absolute physical path, matching the contract `pmctl_operation_create`
+  already enforces.
+
+- **Path normalisation of "." aborted under `set -u`.**
+  `_portable_normalize_path` declared its accumulator array without an
+  initialiser; on bash before 5.2 a declared-but-unassigned array is unbound, so
+  any input normalising to no path segments (`.`, `./.`) failed with
+  `out: unbound variable` instead of returning `.`.
 
 - **Unreadable state-store versions fail closed cleanly (CC-507).** `pmctl
   state status` now catches a failed `VERSION` read and emits its structured

@@ -202,8 +202,58 @@ case_cancel_deduplicates_repeated_child_records() {
   fi
 }
 
+case_unknown_operation_is_diagnosed_not_silent() {
+  local name="operation cancel/reconcile: unknown id reports why instead of exiting silently"
+  should_run "$name" || return 0
+  local work="$tmp_root/unknown-work" store="$tmp_root/unknown-state" unknown out rc verb
+  make_repo "$work"; unknown="op-20260724T085509Z-62e179"
+  for verb in cancel reconcile; do
+    rc=0
+    out="$(PM_DISPATCH_STATE_ROOT="$store" "pmctl_operation_$verb" "$REPO_ROOT" gate "$unknown" --cd "$work" 2>&1)" || rc=$?
+    if [[ "$rc" -ne 2 ]]; then fail "$name" "$verb expected rc 2 got $rc"; return 0; fi
+    # An id copied from a PR body or another host is the common operator error;
+    # the failure must name it rather than exit non-zero with no output.
+    if [[ "$out" != *"no operation $unknown recorded"* || "$out" != *"machine-local"* ]]; then
+      fail "$name" "$verb produced no actionable diagnostic: out=$out"; return 0
+    fi
+  done
+  pass "$name"
+}
+
+case_reconcile_usage_on_malformed_invocation() {
+  local name="operation reconcile: malformed invocation prints usage"
+  should_run "$name" || return 0
+  local work="$tmp_root/usage-work" store="$tmp_root/usage-state" out rc=0
+  make_repo "$work"
+  out="$(PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_reconcile "$REPO_ROOT" gate --bogus --cd "$work" 2>&1)" || rc=$?
+  if [[ "$rc" -eq 2 && "$out" == *"usage: pmctl <gate|ship|task> reconcile"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc out=$out"
+  fi
+}
+
+case_relative_cd_resolves_to_the_same_operation() {
+  local name="operation reconcile: relative --cd resolves the recorded operation"
+  should_run "$name" || return 0
+  local work="$tmp_root/relative-work" store="$tmp_root/relative-state" op out rc=0
+  make_repo "$work"
+  op="$(PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_create "$REPO_ROOT" "$work" gate codex)"
+  # `--cd .` must reach the same record as the absolute path; path
+  # normalisation of "." previously aborted under `set -u`.
+  out="$(cd "$work" && PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_reconcile "$REPO_ROOT" gate "$op" --cd . 2>&1)" || rc=$?
+  if [[ "$out" == *"operation: $op"* && "$out" != *"no operation"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc out=$out"
+  fi
+}
+
 case_reconcile_uses_trusted_terminal_claims
 case_create_collision_never_overwrites_record
+case_unknown_operation_is_diagnosed_not_silent
+case_reconcile_usage_on_malformed_invocation
+case_relative_cd_resolves_to_the_same_operation
 case_reconcile_rejects_foreign_operation
 case_reconcile_never_infers_success_without_claim
 case_cancel_targets_only_recorded_children

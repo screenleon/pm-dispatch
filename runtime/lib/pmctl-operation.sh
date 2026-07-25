@@ -90,6 +90,29 @@ _pmctl_operation_usage() {
   printf 'usage: pmctl <gate|ship|task> cancel <operation-id> --cd <work_dir> [--grace <seconds>]\n' >&2
 }
 
+_pmctl_operation_reconcile_usage() {
+  printf 'usage: pmctl <gate|ship|task> reconcile <operation-id> --cd <work_dir>\n' >&2
+}
+
+# Operation records live in the machine-local state store, so an id copied from
+# a PR body, a chat log, or another host resolves to nothing here.  Say so
+# explicitly instead of exiting non-zero in silence.
+_pmctl_operation_unknown_msg() {
+  local kind="$1" verb="$2" operation_id="$3" work_dir="$4"
+  printf 'pmctl %s %s: no operation %s recorded for %s\n' "$kind" "$verb" "$operation_id" "$work_dir" >&2
+  printf 'pmctl %s %s: operation ids are machine-local; one created on another host or repo is not resolvable here\n' \
+    "$kind" "$verb" >&2
+}
+
+# Records store the absolute working_dir enforced by pmctl_operation_create, and
+# ownership is decided by comparing against it.  Resolve caller-supplied --cd the
+# same way so a relative path is not misreported as a foreign operation.
+_pmctl_operation_resolve_cd() {
+  local raw="$1" abs
+  abs="$(cd "$raw" 2>/dev/null && pwd -P)" || return 1
+  _portable_canonical_path "$abs"
+}
+
 _pmctl_operation_record_path() {
   local repo_root="$1" work_dir="$2" operation_id="$3" op_dir
   op_dir="$(_pmctl_operation_dir "$repo_root" "$work_dir" "$operation_id")" || return 1
@@ -106,7 +129,9 @@ _pmctl_operation_record_lock_base() {
 
 _pmctl_operation_validate_record() {
   local record="$1" expected_kind="$2" work_dir="$3" json kind owner
-  [[ -f "$record" ]] || return 2
+  # 5 distinguishes "no such operation" from 2 "exists but foreign/malformed",
+  # so callers can name the operator's actual mistake.
+  [[ -f "$record" ]] || return 5
   json="$(jq -c . "$record")" || return 2
   kind="$(jq -r '.kind // ""' <<<"$json")"
   owner="$(jq -r '.working_dir // ""' <<<"$json")"
@@ -122,7 +147,7 @@ _pmctl_operation_with_record_lock() {
   local repo_root="$1" work_dir="$2" operation_id="$3"; shift 3
   local lock_base record
   record="$(_pmctl_operation_record_path "$repo_root" "$work_dir" "$operation_id")" || return 2
-  [[ -f "$record" ]] || return 2
+  [[ -f "$record" ]] || return 5
   lock_base="$(_pmctl_operation_record_lock_base "$repo_root" "$work_dir" "$operation_id")" || return 2
   serialize_with_lock "$lock_base" "$@"
 }
@@ -221,7 +246,7 @@ pmctl_operation_cancel() {
   local operation_id="" work_dir="" grace=5
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --cd) [[ $# -ge 2 ]] || { _pmctl_operation_usage; return 2; }; work_dir="$(_portable_canonical_path "$2")"; shift 2 ;;
+      --cd) [[ $# -ge 2 ]] || { _pmctl_operation_usage; return 2; }; work_dir="$(_pmctl_operation_resolve_cd "$2")" || { _pmctl_operation_usage; return 2; }; shift 2 ;;
       --grace) [[ $# -ge 2 && "$2" =~ ^[0-9]+$ ]] || { _pmctl_operation_usage; return 2; }; grace="$2"; shift 2 ;;
       --*) _pmctl_operation_usage; return 2 ;;
       *) [[ -z "$operation_id" ]] || { _pmctl_operation_usage; return 2; }; operation_id="$1"; shift ;;
@@ -237,6 +262,7 @@ pmctl_operation_cancel() {
     0) : ;;
     3) printf 'pmctl %s cancel: operation %s already terminal\n' "$expected_kind" "$operation_id"; return 1 ;;
     4) printf 'pmctl %s cancel: operation %s cancellation already in progress\n' "$expected_kind" "$operation_id"; return 1 ;;
+    5) _pmctl_operation_unknown_msg "$expected_kind" cancel "$operation_id" "$work_dir"; return 2 ;;
     *) printf 'pmctl %s cancel: foreign or invalid operation target refused\n' "$expected_kind" >&2; return 2 ;;
   esac
 
@@ -267,15 +293,21 @@ pmctl_operation_reconcile() {
   local operation_id="" work_dir=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --cd) [[ $# -ge 2 ]] || return 2; work_dir="$(_portable_canonical_path "$2")"; shift 2 ;;
-      --*) return 2 ;;
-      *) [[ -z "$operation_id" ]] || return 2; operation_id="$1"; shift ;;
+      --cd) [[ $# -ge 2 ]] || { _pmctl_operation_reconcile_usage; return 2; }; work_dir="$(_pmctl_operation_resolve_cd "$2")" || { _pmctl_operation_reconcile_usage; return 2; }; shift 2 ;;
+      --*) _pmctl_operation_reconcile_usage; return 2 ;;
+      *) [[ -z "$operation_id" ]] || { _pmctl_operation_reconcile_usage; return 2; }; operation_id="$1"; shift ;;
     esac
   done
-  [[ "$operation_id" =~ ^op-[0-9]{8}T[0-9]{6}Z-[a-f0-9]{6}$ && -d "$work_dir" ]] || return 2
+  [[ "$operation_id" =~ ^op-[0-9]{8}T[0-9]{6}Z-[a-f0-9]{6}$ && -n "$work_dir" && -d "$work_dir" ]] || { _pmctl_operation_reconcile_usage; return 2; }
   _pmctl_operation_load_writer "$repo_root" || return 2
+  local rc=0
   _pmctl_operation_with_record_lock "$repo_root" "$work_dir" "$operation_id" \
-    _pmctl_operation_reconcile_inner "$repo_root" "$expected_kind" "$work_dir" "$operation_id"
+    _pmctl_operation_reconcile_inner "$repo_root" "$expected_kind" "$work_dir" "$operation_id" || rc=$?
+  case "$rc" in
+    5) _pmctl_operation_unknown_msg "$expected_kind" reconcile "$operation_id" "$work_dir"; return 2 ;;
+    2) printf 'pmctl %s reconcile: foreign or invalid operation target refused\n' "$expected_kind" >&2; return 2 ;;
+  esac
+  return "$rc"
 }
 
 unset _PMCTL_OPERATION_LIB_DIR

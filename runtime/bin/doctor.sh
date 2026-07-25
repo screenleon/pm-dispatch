@@ -577,6 +577,29 @@ check_parent_operations() {
   fi
 }
 
+# The usage tracker default moved from the Claude-specific home to the
+# host-neutral state namespace.  An upgraded installation keeps writing to the
+# new path while its accumulated history sits at the old one, so surface the
+# split rather than letting it look like the history simply vanished.
+check_usage_tracker_path() {
+  local legacy="$HOME/.claude/usage-tracker.jsonl" current="${PM_DISPATCH_USAGE_LOG_FILE:-$HOME/.pm-dispatch/usage-tracker.jsonl}"
+  if [[ -n "${PM_DISPATCH_USAGE_LOG_FILE:-}" ]]; then
+    emit_check usage-tracker ok "usage tracker pinned by PM_DISPATCH_USAGE_LOG_FILE ($current)"
+    return
+  fi
+  if [[ -f "$legacy" && ! -f "$current" ]]; then
+    emit_check usage-tracker warn "usage history remains at the former default $legacy; new entries go to $current" \
+      "export PM_DISPATCH_USAGE_LOG_FILE='$legacy' to keep one tracker, or move the file to '$current'"
+    return
+  fi
+  if [[ -f "$legacy" && -f "$current" ]]; then
+    emit_check usage-tracker warn "usage history is split across $legacy and $current" \
+      "merge the two JSONL files into '$current', or pin one with PM_DISPATCH_USAGE_LOG_FILE"
+    return
+  fi
+  emit_check usage-tracker ok "usage tracker path is $current"
+}
+
 main() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -691,6 +714,7 @@ main() {
   check_frontmatter_lint
   check_detached_runs
   check_parent_operations
+  check_usage_tracker_path
 
   local ec=0
   [[ $_FAIL_COUNT -gt 0 ]] && ec=1

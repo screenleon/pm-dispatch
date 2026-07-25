@@ -10,9 +10,9 @@ PMCTL="$REPO_ROOT/cli/pmctl"
 # shellcheck source=tests/lib/test-harness.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/../lib/test-harness.sh"
-# shellcheck source=runtime/lib/pmctl-operation.sh
+# shellcheck source=runtime/lib/pmctl-operation.sh disable=SC1091
 . "$REPO_ROOT/runtime/lib/pmctl-operation.sh"
-# shellcheck source=runtime/lib/pmctl-dispatch.sh
+# shellcheck source=runtime/lib/pmctl-dispatch.sh disable=SC1091
 . "$REPO_ROOT/runtime/lib/pmctl-dispatch.sh"
 th_init "$@"
 
