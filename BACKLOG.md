@@ -27,7 +27,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-505 | 🔵 active | context plane lexical 檢索補完（Ph1 engine+統一排序+fixtures；Ph2 agent 契約+shadow 儀器化；evidence-gated 收緊 → [[CC-506]]）（2026-07-20 四方 synthesis；CC-346/347 前置） | memory/DX | 2026-07-20 | — | P2 | retrieval |
 | CC-506 | ⏸ deferred | retrieval evidence-gated 收緊：shadow 評測（coverage@5、critical miss、read reduction、outcome parity）達標後才收緊 broad-Read 指引並重評 [[CC-340]] resume 條件；前置 = [[CC-505]] Ph2 shipped + ≥20 真實任務證據 | memory/DX | 2026-07-20 | — | P3 | retrieval |
 | CC-507 | ✅ done | `pmctl state status`：無法讀取 `VERSION` 時被 Bash `$(<file)` redirection 提前中止，未回傳契約的 unreadable/exit 3 | arch/test | 2026-07-21 | pr:#437 | P1 | design |
-| CC-508 | 🔵 active | executor producer 的 parent-operation control plane：可追溯子 run、受控取消與單一終態；目前納入 gate／ship，task dispatch 保留為後續接入 | arch/gate | 2026-07-21 | feedback:2026-07-21 | P2 | design |
+| CC-508 | ✅ closed 2026-07-25 | executor producer 的 parent-operation control plane：可追溯子 run、受控取消與單一終態；目前納入 gate／ship，task dispatch 保留為後續接入 | arch/gate | 2026-07-21 | pr:#447 | P2 | design |
 | CC-509 | ✅ closed 2026-07-22 | detached gate launch liveness：對 sandbox parent-death 早期死亡 fail-loud，提供 supervisor readiness／identity evidence | arch/gate | 2026-07-22 | pr:#440 | P2 | hygiene |
 | CC-510 | ✅ closed 2026-07-23 | Codex detached dispatch continuation：App Server callback、authenticated completion envelope 與 foreground fallback | arch/DX | 2026-07-23 | pr:#443 | P2 | design |
 | CC-511 | ⚠️ partial 2026-07-24 | ship publish authorization：Phase A current-tree authoritative full-suite 已交付；Phase B review-closure evidence 仍待 CC-515／CC-517 | release/gate | 2026-07-23 | pr:#446 | P1 | design |
@@ -2045,7 +2045,7 @@ deterministic fail closed，後者具模型波動，不應混成 CI hard gate。
 
 ---
 
-## CC-508 — 所有間接 dispatch 的 parent-operation control plane 🔵 active
+## CC-508 — 所有間接 dispatch 的 parent-operation control plane ✅ 2026-07-25
 
 **Problem**: `pmctl gate run`、`pmctl ship --parallel`／adapter 路徑、`pmctl task dispatch` 與任何未來 producer 都可能以一個 parent operation 間接啟動一或多個 detached dispatch；但產品控制面主要只暴露個別 `pmctl dispatch cancel <run_id>`。parent ID 與其子 run 沒有強制、可查的 ownership relation，也沒有一致的 producer-level cancel surface。當任一 producer 卡住、選錯 executor 或需中止時，操作者無法透過 pmctl 取消整個 operation；直接對 supervisor PID 操作會繞過 run state、sentinel 與 cancel-vs-complete 單一終態契約，並可能留下無法判定的 stale operation。
 
@@ -2063,6 +2063,16 @@ deterministic fail closed，後者具模型波動，不應混成 CI hard gate。
 **Done-when**: 操作者可只用 pmctl 對任一 in-flight producer operation 做可驗證取消；其所有已記錄 child run 收斂到正確終態、無孤兒或跨 operation 影響；各 producer 的等待者不會把 cancelled/stale operation 誤報為成功；現有與未來 dispatch-capable command 都受同一 contract ratchet 保護。
 
 **Dependencies**: [[CC-495]]（dispatch cancel terminalization）與 [[CC-499]]（detached reconciliation）為基礎；本票先定全域 parent-operation contract，再逐一遷移全部既有 producer，不能以「未來有需要」延後 ship、task dispatch 或其他現存派發路徑。
+
+**Outcome**: gate 與 ship 現在都在 launch boundary 前建立 durable parent-operation record 並掛上每個 child，取消與 reconcile 只作用於自己記錄的 children，且一律經由 trusted `pmctl dispatch cancel` primitive，不接受呼叫端傳入的 PID。reconcile 不從 workspace artifact 推論完成：任一 child 缺可信終態即維持 `indeterminate`。doctor 新增唯讀 `parent-operations` 診斷並直接給出對應的 reconcile 指令。task dispatch 依票面維持不接入。
+
+審查揪出三個同類缺陷——ownership 已保留、但保留之後的失敗路徑沒寫終態證據——並全部修復：child 已 attach 後 launch 失敗改由 dispatch 補寫 `failed` terminal claim（exclusive-create CAS，內層已 claim 時為 no-op），ship 隨之改走 reconcile；detached gate launcher 在 supervisor 存在前失敗改套用與前景路徑相同的 childless 補償；unknown/foreign operation id 不再靜默 exit 2，且相對 `--cd` 不再被誤判為 foreign。每個回歸測試都做過反向驗證（停用修正後確認測試回報 `indeterminate`／`running`，而非空過）。
+
+同時把 `runtime/bin/pr-gate.sh` 的 reviewer dispatch 從回頭呼叫 `cli/pmctl` 改為載入 `runtime/lib` 的 dispatch 函式，修正 `docs/architecture/script-domain-ownership.md` 定義的依賴方向；lib 在每次 dispatch 的 subshell 內 source，保留原有行程隔離。此路徑需要 repo layout（shared libs 以 `<lib>/../..` 推導自身 root），copy-mode bundle 維持既有降級路徑，文件已載明補平方式是給 libs 明確 root、而非還原 CLI 呼叫。
+
+證據：full tier gate GO（五名 reviewer 全 approve/pass）、targeted risk-reviewer GO（零 finding）、current-tree 全套 97 suites 0 failed 0 skipped、CI 57/57。兩輪 GO 的 parent operation 皆自行收斂為 `completed / children: 1 / unresolved: 0`。
+
+**See**: pr:#447
 
 ## CC-503 — shared tooling/hooks host-boundary 收斂 ✅ 2026-07-24
 
