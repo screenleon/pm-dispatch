@@ -94,6 +94,15 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **A detached gate launcher failure terminalizes its childless parent
+  (CC-508).** `pmctl gate run` creates the parent operation before either
+  lifecycle path starts, but the detached branch returned the launcher's status
+  directly. A failure before the supervisor exists — missing
+  `gate-supervisor.sh`, unresolvable run dir, readiness timeout — therefore left
+  a `running` operation that owned no child, visible only as a doctor warning.
+  The detached path now applies the same childless-failure compensation the
+  foreground path already did.
+
 - **A failed detached launch no longer leaves an unresolvable reserved child
   (CC-508).** A child is attached to its parent operation before the launch
   boundary so it can never become an un-cancellable orphan. Supervisor launch

@@ -189,8 +189,17 @@ pmctl_gate_run() {
   fi
 
   if [[ "$lifecycle" == "detached" ]]; then
-    pmctl_gate_run_detached "$repo_root" "$effective_cd" ${_passthrough[@]+"${_passthrough[@]}"}
-    return $?
+    local _detached_rc=0
+    pmctl_gate_run_detached "$repo_root" "$effective_cd" ${_passthrough[@]+"${_passthrough[@]}"} || _detached_rc=$?
+    if [[ "$_detached_rc" -ne 0 && -n "${PM_GATE_PARENT_OPERATION:-}" ]]; then
+      # The launcher can fail before the supervisor starts — missing gate
+      # script, unresolvable run dir, readiness timeout — so the parent created
+      # above may own no child at all.  That is a known producer failure, not an
+      # abandoned operation: terminalize it here, exactly as the foreground path
+      # does, instead of leaving a `running` record for doctor to report.
+      pmctl_operation_fail_if_childless "$repo_root" gate "$PM_GATE_PARENT_OPERATION" "$effective_cd" >&2 || true
+    fi
+    return "$_detached_rc"
   fi
 
   # Compute an out-of-repo run dir via sw_project_run_dir (state-paths seam).

@@ -804,6 +804,40 @@ WRAPPER
   fi
 }
 
+case_detached_launcher_failure_terminalizes_childless_parent() {
+  # The parent is created before either lifecycle path starts, so a detached
+  # launcher that fails before its supervisor exists (missing gate-supervisor.sh
+  # here) owns no child at all.  That is a known producer failure, not an
+  # abandoned operation: it must reach a terminal state instead of leaving a
+  # `running` record that only doctor reports.
+  local name="gate/run detached: launcher failure terminalizes the childless parent operation"
+  should_run "$name" || return 0
+  local fixture="$tmp_root/detached-childless-fixture" target="$tmp_root/detached-childless-target"
+  local wrapper="$tmp_root/detached-childless-wrapper" state="$tmp_root/detached-childless-state" out code=0 record
+  mkdir -p "$fixture/runtime/lib" "$fixture/core/schema" "$target"
+  git -C "$target" init -q
+  _mk_fake_gate "$fixture" 0
+  for lib in pmctl-gate pmctl-operation portable state-writer state-paths state-compat; do
+    cp "$REPO_ROOT/runtime/lib/$lib.sh" "$fixture/runtime/lib/$lib.sh"
+  done
+  cp "$REPO_ROOT/core/schema/operation.schema.json" "$fixture/core/schema/operation.schema.json"
+  # Deliberately absent: $fixture/runtime/bin/gate-supervisor.sh
+  cat > "$wrapper" <<WRAPPER
+#!/usr/bin/env bash
+set -euo pipefail
+. "$fixture/runtime/lib/pmctl-gate.sh"
+pmctl_gate_run "$fixture" "\$@"
+WRAPPER
+  chmod +x "$wrapper"
+  out="$(PM_DISPATCH_STATE_ROOT="$state" "$wrapper" --cd "$target" --lifecycle detached 2>&1)" || code=$?
+  record="$(find "$state" -path '*/operations/op-*.json' -type f | head -1)"
+  if [[ "$code" -ne 0 && -n "$record" && "$(jq -r .state "$record")" == failed ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code record=$record state=$(jq -r .state "$record" 2>/dev/null || true) out=$out"
+  fi
+}
+
 case_gate_operation_routes_via_cli() {
   local name="gate operation CLI: cancel and reconcile route with positional operation id and --cd"
   should_run "$name" || return 0
@@ -851,6 +885,7 @@ case_gate_wait_nogo_route_via_cli
 case_run_wait_handoff_survives_separate_process
 case_wait_default_cd
 case_foreground_gate_reconciles_parent_operation
+case_detached_launcher_failure_terminalizes_childless_parent
 case_gate_operation_routes_via_cli
 case_gate_operation_cli_unavailable_fallbacks
 
