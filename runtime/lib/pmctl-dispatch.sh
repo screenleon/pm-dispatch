@@ -2160,10 +2160,23 @@ pmctl_dispatch_run() {
         return 2
       fi
     fi
-    local _detached_out
+    local _detached_out _detached_rc=0
     _detached_out="$(pmctl_dispatch_run_detached "$repo_root" "$work_dir" "$adapter" \
       "$_dispatch_run_id" "$_dispatch_model" "$_effective_brief" "$_dispatch_created_ts" "$print_cmd" \
-      "${forward[@]}")" || return $?
+      "${forward[@]}")" || _detached_rc=$?
+    if [[ "$_detached_rc" -ne 0 ]]; then
+      # The child is already recorded under the parent, so the reservation must
+      # not outlive the failed launch as an unresolvable record.  Supervisor
+      # launch failure writes its own claim; every earlier failure inside
+      # run_detached (runspec, transitions, brief snapshot) does not, and without
+      # one reconcile can only report `indeterminate` for a launch that provably
+      # never happened.  The claim is an exclusive-create CAS, so writing it here
+      # is a no-op when the inner path already claimed the run.
+      if [[ -n "$parent_operation" ]]; then
+        _pmctl_dispatch_try_terminal_claim "$work_dir" "$_dispatch_run_id" "failed" "launch" 2>/dev/null || true
+      fi
+      return "$_detached_rc"
+    fi
     printf '%s\n' "$_detached_out"
     return 0
   fi

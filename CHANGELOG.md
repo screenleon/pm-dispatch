@@ -79,6 +79,18 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **A failed detached launch no longer leaves an unresolvable reserved child
+  (CC-508).** A child is attached to its parent operation before the launch
+  boundary so it can never become an un-cancellable orphan. Supervisor launch
+  failure already wrote a `failed` terminal claim, but earlier failures inside
+  `pmctl_dispatch_run_detached` (run-spec write, state transitions, brief
+  snapshot) did not — leaving a recorded child with no terminal evidence, so
+  reconcile downgraded a provable launch failure to `indeterminate`. The
+  dispatch layer now writes the terminal claim for any launch failure after
+  reservation (an exclusive-create CAS, so it is a no-op when the inner path
+  already claimed the run), and `pmctl ship` falls back from the childless
+  compensation — which cannot apply once a child exists — to `reconcile`.
+
 - **Operation cancel/reconcile diagnose the failure instead of exiting silently
   (CC-508).** An unknown operation id — the common case when one is copied from
   a PR body or created on another host, since operation records are

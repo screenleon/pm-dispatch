@@ -815,10 +815,16 @@ pmctl_ship_run() {
   dispatch_args+=(--parent-operation "$operation_id" --parent-operation-cd "$work_dir")
 
   if ! run_id="$(pmctl_dispatch_run "$repo_root" "${dispatch_args[@]}")"; then
-    # No child was attached because dispatch failed before its launch boundary.
     # Terminalize the producer now so ship status, doctor, and the lane record
     # agree on the known failure rather than leaving a stale running operation.
-    pmctl_operation_fail_if_childless "$repo_root" ship "$operation_id" "$work_dir" >&2 || true
+    # Two distinct failure shapes reach here: dispatch failed before reserving a
+    # child (childless -> failed), or it reserved one and then failed at the
+    # launch boundary.  The latter cannot be terminalized by the childless path,
+    # so converge it through reconcile, which reads the failed terminal claim
+    # dispatch wrote for the child that never launched.
+    if ! pmctl_operation_fail_if_childless "$repo_root" ship "$operation_id" "$work_dir" >&2; then
+      pmctl_operation_reconcile "$repo_root" ship "$operation_id" --cd "$work_dir" >&2 || true
+    fi
     _pmctl_ship_lanes_tracking_write "$reg_dir" "$ticket_id" "$branch" "$lane_path" "" "$adapter" "dispatch-failed" "$created_ts" || true
     printf 'pmctl ship: %s dispatch run failed -- lane worktree stays at %s for manual inspection, tracked as dispatch-failed\n' "$ticket_id" "$lane_path" >&2
     return 1
