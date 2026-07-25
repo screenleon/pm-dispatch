@@ -1347,8 +1347,14 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 2. 盤點現有 `commands/`、`skills/`、`agents/` 目錄逐項對照此判準，列出「保留原狀」vs「建議遷移」清單（不在本票直接搬檔案）。
 3. 修正 `docs/CONCEPTS.md` 中把 slash command 稱為「skills」的用詞混用。
 4. 依此判準回頭修正 CC-015/CC-026/CC-054 的產物定位描述（已在各票加註依賴本票）。
+5. 判準文件需引用下列外部依據，使判準不只是本 repo 習慣的成文化（見「External grounding」）：第一級與第四級的分界採 degrees-of-freedom 判準；第二級採 progressive disclosure 的尺寸門檻；並在文件內建立「指令預算」概念（重要約束前置）。
 
-**Non-goals**: 不在本票內實際搬遷任何 `commands/`/`agents/` 檔案到 `skills/`；不建立 skill schema/validator（見 [[CC-357]]）；不建立 skill marketplace 或 DSL（見 [[CC-393]]）。
+**External grounding**（2026-07-25 外部檢索；每條均有可驗證來源）:
+- **Degrees of freedom**（第一級↔第四級分界）：多種做法皆可、依情境判斷 → 留在文字；操作脆弱易錯／需一致性／需固定順序 → 降為 script 或 validator。與本 repo `DECISIONS.md 2026-05-19 cc030-validate-bidirectional`「prompt 層 enforcement 不可靠，結構 validator 是唯一穩固邊界」同向，互相印證。來源：<https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices.md>
+- **Progressive disclosure 尺寸契約**（第二級量化門檻）：metadata（name/description）常駐載入、body 按需載入；`description` ≤1,024 字元、`SKILL.md` body <500 行、reference 檔案自 SKILL.md 起算一層深（更深會被部分讀取）、>100 行的 reference 需附目錄。現況實測本 repo 最大 prompt 資產 281 行，全數低於 500 行門檻——判準應據此記錄「現況合格」，避免把本票誤讀為需要大規模改寫既有 prompt。來源：同上。
+- **指令密度衰減（量化）**：指令數量上升時，指令遵循率系統性下降，且存在偏向較早指令的傾向（後段指令先被忽略）；最佳前沿模型在 500 條指令密度下約 68% 正確率。用於支撐「指令預算」與「重要約束前置」兩項排序原則。來源：IFScale, arXiv:2507.11538 (2025-07)。
+
+**Non-goals**: 不在本票內實際搬遷任何 `commands/`/`agents/` 檔案到 `skills/`；不建立 skill schema/validator（見 [[CC-357]]）；不建立 skill marketplace 或 DSL（見 [[CC-393]]）；不依本票改寫既有 `agents/`／`commands/` prompt（外部證據不支持大規模校準改寫，見 External grounding 第二點）。
 
 **Source**: 2026-07-15 使用者提供「harness/skill/pm-dispatch 三層定位」論述，經 `pmctl dispatch run --adapter codex`、`--adapter opencode` 與 `project-pm`(model: fable) 三方獨立分析收斂。
 
