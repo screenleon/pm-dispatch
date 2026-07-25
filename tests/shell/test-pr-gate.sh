@@ -90,12 +90,22 @@ done
 printf 'DISPATCH_STUB:%s\n' "${CODEX_GATE_STUB_MODE:-success}"
 
 if [[ -n "${CODEX_GATE_BRIEF_EXISTS_MARKER:-}" ]]; then
-  if [[ -f "$brief_file" && "$brief_file" == /tmp/brief-gate-* ]]; then
-    printf 'brief-present\n' > "$CODEX_GATE_BRIEF_EXISTS_MARKER"
-  else
-    printf 'brief-missing-or-wrong-path: %s\n' "$brief_file" >&2
+  # The executor must always receive a brief that exists on disk at invocation.
+  # The additional `/tmp/brief-gate-*` form is specific to the pmctl dispatch
+  # transport, whose guard confines executor-readable briefs to that prefix;
+  # a copy-mode bundle dispatches the adapter directly with no such guard, so
+  # it legitimately passes the canonical workspace brief instead.
+  if [[ ! -f "$brief_file" ]]; then
+    printf 'brief-missing: %s\n' "$brief_file" >&2
     exit 3
   fi
+  # Only a brief placed directly in /tmp is a guarded dispatch snapshot; a
+  # workspace brief may still live under /tmp because the test root does.
+  if [[ "$(dirname "$brief_file")" == /tmp && "$(basename "$brief_file")" != brief-gate-* ]]; then
+    printf 'brief-wrong-guarded-path: %s\n' "$brief_file" >&2
+    exit 3
+  fi
+  printf 'brief-present\n' > "$CODEX_GATE_BRIEF_EXISTS_MARKER"
 fi
 
 if [[ -n "${CODEX_GATE_CAPTURE_BRIEF:-}" ]]; then
@@ -982,9 +992,12 @@ test_reviewers_override_skips_tier_detection() {
   pass "$name"
 }
 
-# Behavior: the dispatch brief snapshot exists on disk at the moment the
-# executor is invoked. pmctl's guard requires this /tmp/brief-gate-* snapshot;
-# the gate retains its canonical brief in the workspace separately.
+# Behavior: the brief handed to the executor exists on disk at the moment of
+# invocation, and any /tmp brief carries the guard-required `brief-gate-`
+# prefix. On the pmctl dispatch transport that brief is the /tmp/brief-gate-*
+# snapshot the guard confines executor reads to; a copy-mode bundle dispatches
+# the adapter directly and passes the canonical workspace brief, which no guard
+# constrains. The gate retains its canonical brief in the workspace either way.
 # Steps: run the gate with a marker env var that records whether the brief
 # path exists at dispatch time, and assert the marker file contains
 # "brief-present".

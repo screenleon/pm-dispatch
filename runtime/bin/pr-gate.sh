@@ -520,18 +520,45 @@ if [[ "$EXECUTOR" == "codex" ]]; then
 fi
 
 # Gate reviewers are producer children, not opaque adapter processes.  Resolve
-# their transport independently from the reviewer guard command: Claude briefs
-# intentionally retain a bare `pmctl` guard, while copy-mode execution still
-# needs a local pmctl transport rather than an arbitrary host installation.
-PMCTL_DISPATCH_CMD=""
-if [[ -x "$SCRIPT_DIR/bin/pmctl" ]]; then
-  PMCTL_DISPATCH_CMD="$SCRIPT_DIR/bin/pmctl"
-elif [[ -x "$SCRIPT_DIR/../../cli/pmctl" ]]; then
-  PMCTL_DISPATCH_CMD="$SCRIPT_DIR/../../cli/pmctl"
+# the dispatch lifecycle as a SHARED RUNTIME dependency, not as a callback into
+# the public CLI: docs/architecture/script-domain-ownership.md requires
+# dependencies to flow cli/pmctl -> shared runtime -> adapter, so a producer
+# entrypoint under runtime/bin must reach `pmctl_dispatch_run` through
+# runtime/lib rather than by re-entering `cli/pmctl`.
+#
+# Only the repo layout can take this route.  The shared libraries derive their
+# own root as `<lib>/../..` (executor-router.sh), which holds for
+# `<root>/runtime/lib` but not for a copy-mode bundle that carries `lib/`
+# directly beside the gate — there the derived root lands one level above the
+# bundle and its `adapters/` tree is invisible.  A copy-mode bundle therefore
+# keeps the pre-existing degraded path (direct adapter dispatch, no parent
+# operation) rather than loading libraries under a root they cannot resolve.
+PMCTL_DISPATCH_LIB_DIR=""
+PMCTL_DISPATCH_ROOT=""
+if [[ -r "$SCRIPT_DIR/../lib/pmctl-dispatch.sh" && -d "$SCRIPT_DIR/../../adapters" ]]; then
+  PMCTL_DISPATCH_LIB_DIR="$SCRIPT_DIR/../lib"
+  PMCTL_DISPATCH_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 fi
-if [[ -z "$PMCTL_DISPATCH_CMD" && ( "$EXECUTOR" == codex || "$EXECUTOR" == claude ) ]]; then
+if [[ -z "$PMCTL_DISPATCH_LIB_DIR" && ( "$EXECUTOR" == codex || "$EXECUTOR" == claude ) ]]; then
   printf 'pr-gate: parent-operation tracking unavailable for this deployment layout; using compatible direct reviewer dispatch\n' >&2
 fi
+
+# Libraries are sourced per dispatch inside a subshell rather than at this
+# script's top level.  The gate's own shell is long-lived: it evaluates reviewer
+# commands, runs a parallel watchdog, and parses results, so importing pmctl's
+# whole global namespace into it would trade one coupling problem for a worse
+# one.  A subshell keeps the previous process-level isolation while the
+# dependency direction stays runtime -> runtime.
+pmctl_gate_dispatch_lib_load() {
+  local _lib
+  for _lib in repo-layout detached-launch pmctl-policy pmctl-fs pmctl-adapter \
+    pmctl-guard executor-router pmctl-dispatch pmctl-operation; do
+    # shellcheck disable=SC1090
+    [[ -r "$PMCTL_DISPATCH_LIB_DIR/$_lib.sh" ]] && . "$PMCTL_DISPATCH_LIB_DIR/$_lib.sh"
+  done
+  declare -F pmctl_dispatch_run >/dev/null || return 1
+  return 0
+}
 
 # Gate reviewers are producer children, not opaque adapter processes.  Route
 # each invocation through pmctl's detached dispatch lifecycle, then wait for
@@ -565,7 +592,7 @@ pmctl_gate_dispatch_and_wait() {
     printf 'pr-gate: failed to snapshot reviewer brief for dispatch\n' >&2
     return 1
   fi
-  local -a args=(dispatch run --adapter "$executor" --cd "$working_dir" --brief-file "$dispatch_brief" --lifecycle detached --timeout "$timeout")
+  local -a args=(--adapter "$executor" --cd "$working_dir" --brief-file "$dispatch_brief" --lifecycle detached --timeout "$timeout")
   [[ -n "$model" && "$model" != default ]] && args+=(--model "$model")
   [[ -n "$isolation_level" ]] && args+=(--isolation "$isolation_level")
   [[ -n "$effort" ]] && args+=(--effort "$effort")
@@ -573,7 +600,10 @@ pmctl_gate_dispatch_and_wait() {
   [[ "$executor" == codex ]] && args+=(--sandbox "$sandbox" --approval "$approval")
   [[ -n "${PM_GATE_PARENT_OPERATION:-}" ]] && args+=(--parent-operation "$PM_GATE_PARENT_OPERATION")
   local run_id
-  run_id="$("$PMCTL_DISPATCH_CMD" "${args[@]}")" || {
+  run_id="$(
+    pmctl_gate_dispatch_lib_load || exit 2
+    pmctl_dispatch_run "$PMCTL_DISPATCH_ROOT" "${args[@]}"
+  )" || {
     rc=$?
     rm -f "$dispatch_brief"
     return "$rc"
@@ -584,7 +614,10 @@ pmctl_gate_dispatch_and_wait() {
     printf 'pr-gate: dispatch returned invalid run id\n' >&2
     return 2
   fi
-  "$PMCTL_DISPATCH_CMD" dispatch wait "$run_id" --cd "$working_dir" --timeout "$timeout"
+  (
+    pmctl_gate_dispatch_lib_load || exit 2
+    pmctl_dispatch_wait "$PMCTL_DISPATCH_ROOT" "$run_id" --cd "$working_dir" --timeout "$timeout"
+  )
   rc=$?
   rm -f "$dispatch_brief"
   return "$rc"
@@ -593,7 +626,7 @@ pmctl_gate_dispatch_and_wait() {
 # Override the adapter-command formatter loaded above for gate execution only.
 # Call sites still receive a safely-quoted command string, preserving the
 # parallel watchdog/eval structure while moving lifecycle ownership to pmctl.
-if [[ -n "$PMCTL_DISPATCH_CMD" ]]; then
+if [[ -n "$PMCTL_DISPATCH_LIB_DIR" ]]; then
 dispatch_via() {
   local first=1 arg
   for arg in pmctl_gate_dispatch_and_wait "$@"; do

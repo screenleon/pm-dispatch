@@ -55,6 +55,21 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **Gate reviewer dispatch goes through shared runtime, not the CLI (CC-508).**
+  `runtime/bin/pr-gate.sh` previously launched reviewer children by re-entering
+  `cli/pmctl`, contradicting the dependency direction in
+  `docs/architecture/script-domain-ownership.md` (cli → runtime → adapter). It
+  now loads `pmctl_dispatch_run`/`pmctl_dispatch_wait` from `runtime/lib`,
+  sourced inside a per-dispatch subshell so the gate's long-lived shell — which
+  evaluates reviewer commands and runs the parallel watchdog — does not inherit
+  pmctl's global namespace. The library route requires the repo layout: shared
+  libraries derive their root as `<lib>/../..`, so a copy-mode bundle carrying
+  `lib/` beside the gate degrades to direct adapter dispatch without
+  parent-operation tracking, as it already announced. Coverage note: the
+  end-to-end `/tmp/brief-gate-*` guarded-snapshot assertion now applies only to
+  the repo-layout route; the copy-mode fixtures assert that the executor
+  receives an existing brief, since no guard constrains that path.
+
 - **Usage-tracker default moved to the host-neutral namespace (CC-508).**
   `ops/usage/log-usage.sh` and `ops/usage/token-usage.sh` now default to
   `~/.pm-dispatch/usage-tracker.jsonl` instead of `~/.claude/usage-tracker.jsonl`,
