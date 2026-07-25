@@ -181,7 +181,7 @@ case_usage_log() {
   home="$(mktemp -d)"  # deliberately no host-owned script installation
   work="$(mktemp -d)"; git init -q "$work"; brief="$(_mk_brief "$work")"
   set +e; PATH="$bin:$PATH" HOME="$home" "$DISPATCH" --cd "$work" --brief-file "$brief" >/dev/null 2>&1; code=$?; set -e
-  tracker="$home/.claude/usage-tracker.jsonl"
+  tracker="$home/.pm-dispatch/usage-tracker.jsonl"
   if [[ "$code" -eq 0 && -f "$tracker" ]] && grep -q '"type":"claude_dispatch"' "$tracker" \
      && grep -q '"pool":"claude"' "$tracker" && grep -q '"tokens":150' "$tracker"; then
     pass "$name"; else fail "$name" "code=$code"; fi
@@ -209,7 +209,7 @@ EOF
   code=$?
   set -e
   if [[ "$code" -eq 0 && -f "$marker" ]] && grep -q "claude_dispatch" "$marker" \
-     && [[ ! -f "$home/.claude/usage-tracker.jsonl" ]]; then
+     && [[ ! -f "$home/.pm-dispatch/usage-tracker.jsonl" ]]; then
     pass "$name"
   else
     fail "$name" "code=$code marker_exists=$([[ -f "$marker" ]] && echo yes || echo no)"

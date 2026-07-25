@@ -69,6 +69,7 @@
 | 票 | 摘要 | 狀態 |
 |----|------|------|
 | CC-504 | manifest-driven multi-host lifecycle，移除 Claude base-spine 特例；product receipt、selected-host ownership、legacy migration 與 doctor dispatch 完整交付 | ✅ pr:#442 |
+| CC-508 | executor producer 的 parent-operation control plane：gate／ship 在 launch 前掛載 child、ownership-scoped cancel／reconcile、doctor 診斷；task dispatch 依票面不接入 | ✅ pr:#447 |
 
 ### Phase 4 — shared tooling/hooks host boundary（原 v0.12.0 Phase 3）
 

@@ -16,7 +16,7 @@ pmctl_state_usage() {
 
 # Entity schemas whose schema_version participates in the status report.
 # Mirrors the schema files layout.yaml binds to store entities.
-_PMCTL_STATE_ENTITIES=(run event task review decision context-pack)
+_PMCTL_STATE_ENTITIES=(run event task review decision operation context-pack)
 
 _pmctl_state_ensure_libs() {
   local repo_root="${1:-}" lib

@@ -504,6 +504,38 @@ case_doctor_pmctl_foreign_warns() {
   fi
 }
 
+case_doctor_usage_tracker_legacy_history_warns() {
+  # The usage-tracker default moved from ~/.claude to the host-neutral
+  # ~/.pm-dispatch namespace.  An upgraded install keeps appending to the new
+  # path while its history sits at the old one; doctor must surface that split
+  # (and stay quiet once PM_DISPATCH_USAGE_LOG_FILE pins a single tracker).
+  local name="doctor-usage-tracker-legacy-history-warns"
+  should_run "$name" || return 0
+  local home="$tmp_root/home-usage-tracker" out_split out_pinned out_clean status=0 path
+  write_full_settings "$home"
+  create_memory_dir_for_pwd "$home"
+  write_manifest "$home"
+  path="$(make_stub_bin "$tmp_root/bin-usage-tracker" claude codex)"
+
+  out_clean="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" PM_DISPATCH_USAGE_LOG_FILE='' \
+    bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
+  printf '{"ts":"2026-07-01T00:00:00Z"}\n' > "$home/.claude/usage-tracker.jsonl"
+  out_split="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" PM_DISPATCH_USAGE_LOG_FILE='' \
+    bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
+  out_pinned="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
+    PM_DISPATCH_USAGE_LOG_FILE="$home/.claude/usage-tracker.jsonl" \
+    bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
+
+  if [[ "$out_clean" != *"usage history remains at"* \
+     && "$out_split" == *"usage history remains at"* \
+     && "$out_split" == *"PM_DISPATCH_USAGE_LOG_FILE"* \
+     && "$out_pinned" == *"usage tracker pinned by PM_DISPATCH_USAGE_LOG_FILE"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "clean=$out_clean split=$out_split pinned=$out_pinned"
+  fi
+}
+
 case_doctor_hooks_missing_exits_1() {
   # Verifies that doctor exits 1 with [FAIL] when settings.json has no hooks at all.
   #
@@ -2591,6 +2623,22 @@ case_doctor_receipt_selected_hosts_filter_and_drift_warn() {
   pass "$name"
 }
 
+case_doctor_parent_operation_warns_with_reconcile_hint() {
+  local name="doctor-parent-operation-warns-with-reconcile-hint"
+  should_run "$name" || return 0
+  local store="$tmp_root/operation-doctor-state" op out
+  # shellcheck source=runtime/lib/pmctl-operation.sh
+  . "$REPO_ROOT/runtime/lib/pmctl-operation.sh"
+  op="$(PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_create "$REPO_ROOT" "$REPO_ROOT" gate codex)"
+  out="$(PM_DISPATCH_STATE_ROOT="$store" bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1 || true)"
+  if [[ "$out" == *"parent operation(s) are running or indeterminate"* ]] \
+      && [[ "$out" == *"pmctl gate reconcile $op --cd '$REPO_ROOT'"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "missing operation warning/reconcile hint: $out"
+  fi
+}
+
 case_doctor_all_ok_exits_0
 case_doctor_executor_unauthed_fails
 case_doctor_executor_authed_via_credfile_ok
@@ -2668,5 +2716,7 @@ case_doctor_repo_trusted_linter
 case_doctor_stale_hook_sibling_prefix_warns
 case_doctor_native_windows_notice
 case_doctor_receipt_selected_hosts_filter_and_drift_warn
+case_doctor_parent_operation_warns_with_reconcile_hint
+case_doctor_usage_tracker_legacy_history_warns
 
 th_summary

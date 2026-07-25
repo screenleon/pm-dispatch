@@ -194,7 +194,14 @@ create host-specific dispatch branches in `cli/pmctl`.
 
 `pr-gate` consumes canonical-memory resolution and context packing through the
 same shared runtime libraries; shared runtime must not call back up through the
-public `cli/pmctl` coordinator. Reviewer policy files outside the reviewed
+public `cli/pmctl` coordinator. Reviewer dispatch follows the same rule: the
+gate loads `pmctl_dispatch_run`/`pmctl_dispatch_wait` from `runtime/lib` rather
+than re-entering the CLI. That route requires the repo layout, because the
+shared libraries derive their own root as `<lib>/../..`; a copy-mode bundle
+carrying `lib/` beside the gate resolves one level above its own `adapters/`
+tree, so it degrades to direct adapter dispatch without parent-operation
+tracking. Restoring parity there means giving the libraries an explicit root,
+not reinstating the CLI call. Reviewer policy files outside the reviewed
 workspace are trusted installation assets. Policy files inside the reviewed
 workspace are snapshotted from the trusted base revision, never from the dirty
 or feature working tree being reviewed.

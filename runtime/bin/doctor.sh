@@ -548,6 +548,58 @@ check_detached_runs() {
   fi
 }
 
+# Read-only parent-operation diagnostics.  The operation projection is owned by
+# the canonical writer; doctor only uses state status to find its partition and
+# then reports non-terminal records with their producer-specific reconcile path.
+check_parent_operations() {
+  local pmctl="$REPO_ROOT/cli/pmctl" status store key dir file state kind op pending=0 total=0 hint=""
+  [[ -x "$pmctl" ]] || { emit_check parent-operations warn "parent-operation diagnostics skipped (pmctl unavailable)"; return; }
+  status="$("$pmctl" state status --json --cd "$REPO_ROOT" 2>/dev/null)" || {
+    emit_check parent-operations warn "parent-operation diagnostics skipped (state status unavailable)"; return;
+  }
+  store="$(jq -r '.store_root // ""' <<<"$status" 2>/dev/null)"; key="$(jq -r '.project_key // ""' <<<"$status" 2>/dev/null)"
+  [[ -n "$store" && -n "$key" ]] || { emit_check parent-operations warn "parent-operation diagnostics skipped (state partition unresolved)"; return; }
+  dir="$store/projects/$key/operations"
+  [[ -d "$dir" ]] || { emit_check parent-operations ok "no parent operations recorded"; return; }
+  for file in "$dir"/op-*.json; do
+    [[ -f "$file" ]] || continue
+    total=$((total + 1)); state="$(jq -r '.state // ""' "$file" 2>/dev/null)"; kind="$(jq -r '.kind // ""' "$file" 2>/dev/null)"; op="$(jq -r '.id // ""' "$file" 2>/dev/null)"
+    case "$state" in running|indeterminate)
+      pending=$((pending + 1))
+      [[ -n "$hint" ]] || hint="pmctl $kind reconcile $op --cd '$REPO_ROOT'"
+      ;;
+    esac
+  done
+  if [[ "$pending" -eq 0 ]]; then
+    emit_check parent-operations ok "$total parent operation(s) recorded, none require reconciliation"
+  else
+    emit_check parent-operations warn "$pending of $total parent operation(s) are running or indeterminate" "$hint"
+  fi
+}
+
+# The usage tracker default moved from the Claude-specific home to the
+# host-neutral state namespace.  An upgraded installation keeps writing to the
+# new path while its accumulated history sits at the old one, so surface the
+# split rather than letting it look like the history simply vanished.
+check_usage_tracker_path() {
+  local legacy="$HOME/.claude/usage-tracker.jsonl" current="${PM_DISPATCH_USAGE_LOG_FILE:-$HOME/.pm-dispatch/usage-tracker.jsonl}"
+  if [[ -n "${PM_DISPATCH_USAGE_LOG_FILE:-}" ]]; then
+    emit_check usage-tracker ok "usage tracker pinned by PM_DISPATCH_USAGE_LOG_FILE ($current)"
+    return
+  fi
+  if [[ -f "$legacy" && ! -f "$current" ]]; then
+    emit_check usage-tracker warn "usage history remains at the former default $legacy; new entries go to $current" \
+      "export PM_DISPATCH_USAGE_LOG_FILE='$legacy' to keep one tracker, or move the file to '$current'"
+    return
+  fi
+  if [[ -f "$legacy" && -f "$current" ]]; then
+    emit_check usage-tracker warn "usage history is split across $legacy and $current" \
+      "merge the two JSONL files into '$current', or pin one with PM_DISPATCH_USAGE_LOG_FILE"
+    return
+  fi
+  emit_check usage-tracker ok "usage tracker path is $current"
+}
+
 main() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -661,6 +713,8 @@ main() {
   check_memory_dir
   check_frontmatter_lint
   check_detached_runs
+  check_parent_operations
+  check_usage_tracker_path
 
   local ec=0
   [[ $_FAIL_COUNT -gt 0 ]] && ec=1

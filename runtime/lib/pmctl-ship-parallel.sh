@@ -252,7 +252,7 @@ pmctl_ship_parallel_run() {
       fail_count=$((fail_count+1))
       continue
     fi
-    printf '[%s] dispatched: run_id=%s lane=%s\n' "$t" "$PMCTL_SHIP_RUN_ID" "$PMCTL_SHIP_RUN_LANE_PATH"
+    printf '[%s] dispatched: operation_id=%s run_id=%s lane=%s\n' "$t" "${PMCTL_SHIP_OPERATION_ID:-unknown}" "$PMCTL_SHIP_RUN_ID" "$PMCTL_SHIP_RUN_LANE_PATH"
   done
 
   if [[ "$fail_count" -gt 0 ]]; then
@@ -317,7 +317,7 @@ pmctl_ship_parallel_status() {
   pmctl_worktree_ensure_writer "$repo_root" || return $?
 
   local updated
-  updated="$(pmctl_ship_lanes_tracking_refresh "$reg_dir" "$json_out")"
+  updated="$(pmctl_ship_lanes_tracking_refresh "$repo_root" "$reg_dir" "$json_out")"
 
   if [[ "$json_out" -eq 1 ]]; then
     printf '%s' "$updated" | jq -s -c '[.[] | select(. != null)]'

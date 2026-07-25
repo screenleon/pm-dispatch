@@ -50,6 +50,20 @@ _pmctl_gate_ensure_run_dir_fn() {
   [[ "$(type -t sw_project_run_dir 2>/dev/null)" == function ]]
 }
 
+# Gate's standalone/copy-mode fixtures source only this shim.  Keep that
+# compatibility import in one place, then delegate readiness checks to the
+# operation layer rather than duplicating variants at each call site.
+_pmctl_gate_operation_ensure_loaded() {
+  local repo_root="$1" _operation_lib
+  if ! declare -F _pmctl_operation_ensure_loaded >/dev/null 2>&1; then
+    _operation_lib="$repo_root/runtime/lib/pmctl-operation.sh"
+    # shellcheck disable=SC1090,SC1091 # repo-root-relative optional library
+    [[ -r "$_operation_lib" ]] && . "$_operation_lib"
+  fi
+  declare -F _pmctl_operation_ensure_loaded >/dev/null 2>&1 \
+    && _pmctl_operation_ensure_loaded "$repo_root"
+}
+
 pmctl_gate_run() {
   local repo_root="$1"; shift
 
@@ -155,9 +169,37 @@ pmctl_gate_run() {
     fi
   fi
 
+  # The gate itself is a producer: reviewer/synthesis executor sessions below
+  # are launched as detached pmctl dispatch children.  Create the parent before
+  # either lifecycle path starts so no child can exist without durable owner
+  # evidence.  The exported value survives the detached supervisor boundary.
+  if _pmctl_gate_operation_ensure_loaded "$repo_root"; then
+    local _gate_parent_operation
+    _gate_parent_operation="$(pmctl_operation_create "$repo_root" "$effective_cd" gate)" || {
+      printf 'pmctl gate run: failed to create parent operation record\n' >&2
+      return 2
+    }
+    export PM_GATE_PARENT_OPERATION="$_gate_parent_operation"
+    printf 'pmctl gate run: parent operation: %s\n' "$_gate_parent_operation" >&2
+  else
+    # Standalone/copy-mode test fixtures deliberately carry only the gate shim.
+    # They cannot launch real reviewer children; preserve their synchronous
+    # delegation contract while the installed CLI always loads this library.
+    unset PM_GATE_PARENT_OPERATION
+  fi
+
   if [[ "$lifecycle" == "detached" ]]; then
-    pmctl_gate_run_detached "$repo_root" "$effective_cd" ${_passthrough[@]+"${_passthrough[@]}"}
-    return $?
+    local _detached_rc=0
+    pmctl_gate_run_detached "$repo_root" "$effective_cd" ${_passthrough[@]+"${_passthrough[@]}"} || _detached_rc=$?
+    if [[ "$_detached_rc" -ne 0 && -n "${PM_GATE_PARENT_OPERATION:-}" ]]; then
+      # The launcher can fail before the supervisor starts — missing gate
+      # script, unresolvable run dir, readiness timeout — so the parent created
+      # above may own no child at all.  That is a known producer failure, not an
+      # abandoned operation: terminalize it here, exactly as the foreground path
+      # does, instead of leaving a `running` record for doctor to report.
+      pmctl_operation_fail_if_childless "$repo_root" gate "$PM_GATE_PARENT_OPERATION" "$effective_cd" >&2 || true
+    fi
+    return "$_detached_rc"
   fi
 
   # Compute an out-of-repo run dir via sw_project_run_dir (state-paths seam).
@@ -181,11 +223,30 @@ pmctl_gate_run() {
     run_dir_args=(--run-dir "$gate_run_dir")
   fi
 
+  # Keep the producer process alive after the synchronous gate returns so the
+  # parent operation is converged from trusted child terminal claims.  `exec`
+  # here used to strand every foreground gate in `running` forever.
+  local _gate_rc=0 _reconcile_rc=0
   if [[ "$has_cd" == false ]]; then
-    exec "$gate_script" "${run_dir_args[@]}" --cd "$effective_cd" "$@"
+    "$gate_script" "${run_dir_args[@]}" --cd "$effective_cd" "$@" || _gate_rc=$?
   else
-    exec "$gate_script" "${run_dir_args[@]}" "$@"
+    "$gate_script" "${run_dir_args[@]}" "$@" || _gate_rc=$?
   fi
+  if [[ -n "${PM_GATE_PARENT_OPERATION:-}" ]]; then
+    pmctl_operation_reconcile "$repo_root" gate "$PM_GATE_PARENT_OPERATION" --cd "$effective_cd" >&2 || _reconcile_rc=$?
+    if [[ "$_reconcile_rc" -ne 0 ]]; then
+      # A pre-flight failure can legitimately have no reviewer child.  It is a
+      # known producer failure, not an ambiguous abandoned operation.
+      pmctl_operation_fail_if_childless "$repo_root" gate "$PM_GATE_PARENT_OPERATION" "$effective_cd" >&2 || true
+      _reconcile_rc=0
+      pmctl_operation_reconcile "$repo_root" gate "$PM_GATE_PARENT_OPERATION" --cd "$effective_cd" >&2 || _reconcile_rc=$?
+    fi
+    if [[ "$_reconcile_rc" -ne 0 ]]; then
+      printf 'pmctl gate run: warning: parent operation %s could not be reconciled; preserving gate verdict exit %s\n' "$PM_GATE_PARENT_OPERATION" "$_gate_rc" >&2
+      return "$_gate_rc"
+    fi
+  fi
+  return "$_gate_rc"
 }
 
 # Detached lifecycle launcher for `pmctl gate run --lifecycle detached`,
@@ -469,6 +530,7 @@ pmctl_gate_wait() {
       _state="$(grep -m1 '^final_state=' "$_sentinel" 2>/dev/null | cut -d= -f2-)" || true
       _exit="$(grep -m1 '^exit_code=' "$_sentinel" 2>/dev/null | cut -d= -f2-)" || true
       _result="$(grep -m1 '^result_file=' "$_sentinel" 2>/dev/null | cut -d= -f2-)" || true
+      _operation="$(grep -m1 '^parent_operation=' "$_sentinel" 2>/dev/null | cut -d= -f2-)" || true
       rm -f "$_sentinel" "$_key_file" 2>/dev/null || true
       [[ "$_exit" =~ ^-?[0-9]+$ ]] || _exit="1"
       printf 'gate: %s  state: %s  exit: %s\n' "$gate_id" "${_state:-unknown}" "$_exit"
@@ -531,6 +593,20 @@ pmctl_gate_wait() {
         fi
         if [[ "$_state" == "NO-GO" ]]; then
           printf 'pmctl gate wait: NO-GO is the gate verdict (exit 1), not an execution error; findings are in the result file above\n' >&2
+        fi
+      fi
+      if [[ -n "${_operation:-}" ]]; then
+        local _reconcile_rc=0
+        if ! _pmctl_gate_operation_ensure_loaded "$repo_root" \
+          || ! pmctl_operation_reconcile "$repo_root" gate "$_operation" --cd "$work_dir" >&2; then
+          _reconcile_rc=$?
+          pmctl_operation_fail_if_childless "$repo_root" gate "$_operation" "$work_dir" >&2 || true
+          _reconcile_rc=0
+          pmctl_operation_reconcile "$repo_root" gate "$_operation" --cd "$work_dir" >&2 || _reconcile_rc=$?
+        fi
+        if [[ "$_reconcile_rc" -ne 0 ]]; then
+          printf 'pmctl gate wait: parent operation %s could not be reconciled from trusted child evidence\n' "$_operation" >&2
+          return "$_exit"
         fi
       fi
       return "$_exit"

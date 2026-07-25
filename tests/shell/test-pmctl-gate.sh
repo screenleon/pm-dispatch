@@ -11,6 +11,10 @@ PMCTL="$REPO_ROOT/cli/pmctl"
 . "$SCRIPT_DIR/../lib/test-harness.sh"
 # shellcheck source=tests/lib/test-pmctl-fixture.sh
 . "$SCRIPT_DIR/../lib/test-pmctl-fixture.sh"
+# shellcheck source=runtime/lib/pmctl-operation.sh
+. "$REPO_ROOT/runtime/lib/pmctl-operation.sh"
+# shellcheck source=runtime/lib/pmctl-dispatch.sh
+. "$REPO_ROOT/runtime/lib/pmctl-dispatch.sh"
 th_init "$@"
 
 # Isolate the detached-gate sentinel key dir for this suite's cli/pmctl fixture
@@ -771,6 +775,96 @@ case_wait_default_cd() {
   fi
 }
 
+case_foreground_gate_reconciles_parent_operation() {
+  local name="gate/run foreground: parent operation is terminal after the gate returns"
+  should_run "$name" || return 0
+  local fixture="$tmp_root/foreground-operation-fixture" target="$tmp_root/foreground-operation-target"
+  local wrapper="$tmp_root/foreground-operation-wrapper" state="$tmp_root/foreground-operation-state" out code=0 record
+  mkdir -p "$fixture/runtime/lib" "$fixture/core/schema" "$target"
+  git -C "$target" init -q
+  _mk_fake_gate "$fixture" 0
+  for lib in pmctl-gate pmctl-operation portable state-writer state-paths state-compat; do
+    cp "$REPO_ROOT/runtime/lib/$lib.sh" "$fixture/runtime/lib/$lib.sh"
+  done
+  cp "$REPO_ROOT/core/schema/operation.schema.json" "$fixture/core/schema/operation.schema.json"
+  cat > "$wrapper" <<WRAPPER
+#!/usr/bin/env bash
+set -euo pipefail
+. "$fixture/runtime/lib/pmctl-gate.sh"
+pmctl_gate_run "$fixture" "\$@"
+WRAPPER
+  chmod +x "$wrapper"
+  out="$(PM_DISPATCH_STATE_ROOT="$state" "$wrapper" --cd "$target" --lifecycle foreground 2>&1)" || code=$?
+  record="$(find "$state" -path '*/operations/op-*.json' -type f | head -1)"
+  if [[ "$code" -eq 0 && -n "$record" && "$(jq -r .state "$record")" == failed ]] \
+     && [[ "$out" == *"state: failed"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code record=$record state=$(jq -r .state "$record" 2>/dev/null || true) out=$out"
+  fi
+}
+
+case_detached_launcher_failure_terminalizes_childless_parent() {
+  # The parent is created before either lifecycle path starts, so a detached
+  # launcher that fails before its supervisor exists (missing gate-supervisor.sh
+  # here) owns no child at all.  That is a known producer failure, not an
+  # abandoned operation: it must reach a terminal state instead of leaving a
+  # `running` record that only doctor reports.
+  local name="gate/run detached: launcher failure terminalizes the childless parent operation"
+  should_run "$name" || return 0
+  local fixture="$tmp_root/detached-childless-fixture" target="$tmp_root/detached-childless-target"
+  local wrapper="$tmp_root/detached-childless-wrapper" state="$tmp_root/detached-childless-state" out code=0 record
+  mkdir -p "$fixture/runtime/lib" "$fixture/core/schema" "$target"
+  git -C "$target" init -q
+  _mk_fake_gate "$fixture" 0
+  for lib in pmctl-gate pmctl-operation portable state-writer state-paths state-compat; do
+    cp "$REPO_ROOT/runtime/lib/$lib.sh" "$fixture/runtime/lib/$lib.sh"
+  done
+  cp "$REPO_ROOT/core/schema/operation.schema.json" "$fixture/core/schema/operation.schema.json"
+  # Deliberately absent: $fixture/runtime/bin/gate-supervisor.sh
+  cat > "$wrapper" <<WRAPPER
+#!/usr/bin/env bash
+set -euo pipefail
+. "$fixture/runtime/lib/pmctl-gate.sh"
+pmctl_gate_run "$fixture" "\$@"
+WRAPPER
+  chmod +x "$wrapper"
+  out="$(PM_DISPATCH_STATE_ROOT="$state" "$wrapper" --cd "$target" --lifecycle detached 2>&1)" || code=$?
+  record="$(find "$state" -path '*/operations/op-*.json' -type f | head -1)"
+  if [[ "$code" -ne 0 && -n "$record" && "$(jq -r .state "$record")" == failed ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code record=$record state=$(jq -r .state "$record" 2>/dev/null || true) out=$out"
+  fi
+}
+
+case_gate_operation_routes_via_cli() {
+  local name="gate operation CLI: cancel and reconcile route with positional operation id and --cd"
+  should_run "$name" || return 0
+  local work="$tmp_root/gate-operation-cli-work" state="$tmp_root/gate-operation-cli-state" cancel_op reconcile_op run_id out
+  mkdir -p "$work"; git -C "$work" init -q
+  cancel_op="$(PM_DISPATCH_STATE_ROOT="$state" pmctl_operation_create "$REPO_ROOT" "$work" gate codex)"
+  out="$(PM_DISPATCH_STATE_ROOT="$state" "$PMCTL" gate cancel "$cancel_op" --cd "$work")"
+  reconcile_op="$(PM_DISPATCH_STATE_ROOT="$state" pmctl_operation_create "$REPO_ROOT" "$work" gate codex)"
+  run_id="run-20260724T000060Z-aaaaaa"
+  PM_DISPATCH_STATE_ROOT="$state" pmctl_operation_attach_child "$REPO_ROOT" "$work" "$reconcile_op" "$run_id" "$work"
+  PM_DISPATCH_STATE_ROOT="$state" _pmctl_dispatch_try_terminal_claim "$work" "$run_id" ok supervisor
+  out+=" $(PM_DISPATCH_STATE_ROOT="$state" "$PMCTL" gate reconcile "$reconcile_op" --cd "$work")"
+  if [[ "$out" == *"state: cancelled"* && "$out" == *"state: completed"* ]]; then pass "$name"; else fail "$name" "out=$out"; fi
+}
+
+case_gate_operation_cli_unavailable_fallbacks() {
+  local name="gate operation CLI: cancel and reconcile report unavailable without operation library"
+  should_run "$name" || return 0
+  local fixture="$tmp_root/gate-operation-cli-missing" cancel_out reconcile_out cancel_rc=0 reconcile_rc=0
+  mkdir -p "$fixture/cli" "$fixture/runtime/lib"
+  cp "$REPO_ROOT/cli/pmctl" "$fixture/cli/pmctl"; chmod +x "$fixture/cli/pmctl"
+  cp "$REPO_ROOT/runtime/lib/pmctl-command-catalog.sh" "$fixture/runtime/lib/pmctl-command-catalog.sh"
+  cancel_out="$("$fixture/cli/pmctl" gate cancel op-20260724T000061Z-aaaaaa --cd /tmp 2>&1)" || cancel_rc=$?
+  reconcile_out="$("$fixture/cli/pmctl" gate reconcile op-20260724T000061Z-aaaaaa --cd /tmp 2>&1)" || reconcile_rc=$?
+  if [[ "$cancel_rc" -eq 2 && "$reconcile_rc" -eq 2 && "$cancel_out" == *"gate cancel unavailable"* && "$reconcile_out" == *"gate reconcile unavailable"* ]]; then pass "$name"; else fail "$name" "cancel=$cancel_rc:$cancel_out reconcile=$reconcile_rc:$reconcile_out"; fi
+}
+
 case_explicit_cd_passthrough
 case_gate_run_refreshes_context_before_dispatch
 case_default_cd_injected
@@ -790,5 +884,9 @@ case_gate_wait_go_route_via_cli
 case_gate_wait_nogo_route_via_cli
 case_run_wait_handoff_survives_separate_process
 case_wait_default_cd
+case_foreground_gate_reconciles_parent_operation
+case_detached_launcher_failure_terminalizes_childless_parent
+case_gate_operation_routes_via_cli
+case_gate_operation_cli_unavailable_fallbacks
 
 th_summary

@@ -22,7 +22,7 @@ tokens=$(jq -rRs '
 
 # Delta-based logging: only log tokens not yet recorded for this session.
 # Prevents duplicate entries if Stop fires multiple times for the same session.
-_tracker="${HOME}/.claude/usage-tracker.jsonl"
+_tracker="${PM_DISPATCH_USAGE_LOG_FILE:-${HOME}/.pm-dispatch/usage-tracker.jsonl}"
 _tokens_to_log="$tokens"
 if [[ -f "$_tracker" && -n "${session_id:-}" ]]; then
     _already=$(jq -rRs --arg sid "$session_id" '

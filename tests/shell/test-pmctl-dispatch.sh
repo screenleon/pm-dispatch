@@ -21,6 +21,7 @@ PMCTL="$REPO_ROOT/cli/pmctl"
 . "$REPO_ROOT/runtime/lib/executor-router.sh"
 # shellcheck source=runtime/lib/pmctl-dispatch.sh
 . "$REPO_ROOT/runtime/lib/pmctl-dispatch.sh"
+. "$REPO_ROOT/runtime/lib/pmctl-operation.sh"
 # CC-417: dispatch artifacts land in the out-of-repo run dir; source state-paths
 # at top level (the core loads it lazily) so assertions can resolve that location.
 # shellcheck source=runtime/lib/state-paths.sh
@@ -1470,6 +1471,94 @@ case_no_auto_pack_overrides_config_on() {
   rm -rf "$home" "$work" "$state_root"
 }
 
+case_parent_attach_failure_prevents_detached_launch() {
+  local name="dispatch/parent-operation attach failure prevents detached child launch"
+  should_run "$name" || return 0
+  local owner target brief bindir marker op out code=0
+  owner="$(mktemp -d)"; target="$(mktemp -d)"; bindir="$(mktemp -d)"; marker="$tmp_root/parent-attach-launch-marker"
+  git init -q "$owner"; git init -q "$target"
+  brief="$(_mk_guard_brief "$target")"
+  op="$(pmctl_operation_create "$REPO_ROOT" "$owner" gate codex)"
+  cat > "$bindir/codex" <<'FAKECODEX'
+#!/usr/bin/env bash
+printf 'launched\n' > "$PMCTL_ATTACH_MARKER"
+exit 0
+FAKECODEX
+  chmod +x "$bindir/codex"
+  set +e
+  out="$(PATH="$bindir:$PATH" PMCTL_ATTACH_MARKER="$marker" "$PMCTL" dispatch run --lifecycle detached --adapter codex --cd "$target" --brief-file "$brief" --parent-operation "$op" 2>&1)"; code=$?
+  set -e
+  if [[ "$code" -ne 0 && ! -e "$marker" ]] && grep -qi 'reserve child\|parent operation\|attach' <<<"$out"; then
+    pass "$name"
+  else
+    fail "$name" "code=$code marker=$(test -e "$marker" && echo yes || echo no) out=$out"
+  fi
+  rm -rf "$owner" "$target" "$bindir"
+}
+
+case_parent_launch_failure_terminalizes_reserved_child() {
+  # A child is reserved under the parent BEFORE the launch boundary so it can
+  # never become an un-cancellable orphan.  The mirror obligation is that a
+  # launch failure after that reservation still produces authoritative terminal
+  # evidence: otherwise reconcile downgrades a provable launch failure to
+  # `indeterminate`, and the producer's childless-failure compensation cannot
+  # run because a child now exists.  Force the failure and assert the parent
+  # reaches the defined terminal state.
+  local name="dispatch/parent-operation launch failure after reservation terminalizes the child"
+  should_run "$name" || return 0
+  local owner target brief bindir op out code=0 recon rrc=0
+  owner="$(mktemp -d)"; target="$(mktemp -d)"; bindir="$(mktemp -d)"
+  git init -q "$owner"; git init -q "$target"
+  brief="$(_mk_guard_brief "$target")"
+  op="$(pmctl_operation_create "$REPO_ROOT" "$owner" gate codex)"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$bindir/codex"; chmod +x "$bindir/codex"
+  set +e
+  out="$(
+    PATH="$bindir:$PATH"
+    # Driving pmctl_dispatch_run directly needs the preflight libraries that
+    # cli/pmctl sources; without them the guard check refuses before the attach
+    # boundary this case exists to exercise.  Scoped to the subshell so the rest
+    # of the suite keeps its narrower sourcing.
+    for _lib in repo-layout detached-launch pmctl-policy pmctl-fs pmctl-adapter pmctl-guard; do
+      # shellcheck disable=SC1090
+      . "$REPO_ROOT/runtime/lib/$_lib.sh"
+    done
+    # Overrides the real implementation for the pmctl_dispatch_run call below;
+    # ShellCheck cannot see that indirect invocation.
+    # shellcheck disable=SC2317
+    pmctl_dispatch_run_detached() { printf 'forced launch failure\n' >&2; return 7; }
+    pmctl_dispatch_run "$REPO_ROOT" --lifecycle detached --adapter codex --cd "$target" \
+      --brief-file "$brief" --parent-operation "$op" --parent-operation-cd "$owner" 2>&1
+  )"; code=$?
+  recon="$(pmctl_operation_reconcile "$REPO_ROOT" gate "$op" --cd "$owner" 2>&1)"; rrc=$?
+  set -e
+  # The launch rc must survive, and the operation must converge to a decided
+  # terminal state rather than the unresolved-child `indeterminate`.
+  if [[ "$code" -eq 7 && "$recon" == *"state: failed"* && "$recon" != *"indeterminate"* && "$rrc" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code rrc=$rrc recon=$recon out=$out"
+  fi
+  rm -rf "$owner" "$target" "$bindir"
+}
+
+case_parent_operation_rejects_foreground_lifecycle() {
+  local name="dispatch/parent-operation rejects foreground lifecycle instead of silently dropping ownership"
+  should_run "$name" || return 0
+  local work brief op out code=0
+  work="$(mktemp -d)"; git init -q "$work"; brief="$(_mk_guard_brief "$work")"
+  op="op-20260724T000040Z-abcdef"
+  set +e
+  out="$("$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$work" --brief-file "$brief" --print-cmd --parent-operation "$op" 2>&1)"; code=$?
+  set -e
+  if [[ "$code" -eq 2 && "$out" == *"--parent-operation requires --lifecycle detached"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+  rm -rf "$work"
+}
+
 case_missing_adapter
 case_unknown_adapter
 case_arg_passthrough
@@ -1517,5 +1606,8 @@ case_auto_pack_subdir_cd_roots_context_at_git_top
 case_auto_pack_pack_failure_degrades_to_original_brief
 case_config_auto_pack_on_activates_without_flag
 case_no_auto_pack_overrides_config_on
+case_parent_attach_failure_prevents_detached_launch
+case_parent_launch_failure_terminalizes_reserved_child
+case_parent_operation_rejects_foreground_lifecycle
 
 th_summary

@@ -12,7 +12,7 @@
 
 set -euo pipefail
 
-LOGFILE="$HOME/.claude/usage-tracker.jsonl"
+LOGFILE="${PM_DISPATCH_USAGE_LOG_FILE:-$HOME/.pm-dispatch/usage-tracker.jsonl}"
 CALIB_FILE="$HOME/.claude/usage-calibration.json"
 MODE="--5h"
 REMAINING_PCT_ARG=""

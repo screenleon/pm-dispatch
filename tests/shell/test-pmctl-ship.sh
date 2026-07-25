@@ -10,6 +10,10 @@ PMCTL="$REPO_ROOT/cli/pmctl"
 # shellcheck source=tests/lib/test-harness.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/../lib/test-harness.sh"
+# shellcheck source=runtime/lib/pmctl-operation.sh disable=SC1091
+. "$REPO_ROOT/runtime/lib/pmctl-operation.sh"
+# shellcheck source=runtime/lib/pmctl-dispatch.sh disable=SC1091
+. "$REPO_ROOT/runtime/lib/pmctl-dispatch.sh"
 th_init "$@"
 
 # Isolate XDG_RUNTIME_DIR for this suite's detached dispatch launches --
@@ -240,7 +244,10 @@ run_ship_parallel_capture_dispatch_argv() {
     pmctl_dispatch_run() {
       shift
       printf "%s\n" "$@" > "$ARGV_CAPTURE_FILE"
-      printf "fake-run-id-for-flag-test\n"
+      # Preserve the public detached-run identifier contract: ship now records
+      # the returned id as an operation child, so a deliberately malformed
+      # mock id would correctly be rejected before it reaches tracking.
+      printf "run-20260724T000000Z-abcdef\n"
     }
     pmctl_ship_parallel_run "$repo_root" "$work_dir" "$ticket_id" "$@"
   ' _ "$REPO_ROOT" "$work_dir" "$ticket_id" "$@"
@@ -572,11 +579,13 @@ case_run_dispatches_and_tracks() {
     fail "$name" "tracking file missing at $tracking"
     return
   fi
-  local ticket run_id lane_status
+  local ticket run_id operation_id lane_status
   ticket="$(jq -r '.ticket' "$tracking")"
   run_id="$(jq -r '.run_id' "$tracking")"
+  operation_id="$(jq -r '.operation_id // ""' "$tracking")"
   lane_status="$(jq -r '.status' "$tracking")"
-  if [[ "$ticket" == "CC-9001" && -n "$run_id" && "$run_id" != null && "$lane_status" == "dispatched" ]]; then
+  if [[ "$ticket" == "CC-9001" && -n "$run_id" && "$run_id" != null \
+        && "$operation_id" =~ ^op-[0-9]{8}T[0-9]{6}Z-[a-f0-9]{6}$ && "$lane_status" == "dispatched" ]]; then
     pass "$name"
   else
     fail "$name" "unexpected tracking entry: $(cat "$tracking")"
@@ -658,10 +667,11 @@ case_status_never_reports_go_from_free_text_without_marker() {
   make_work_repo "$work" "CC-9001"
   PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" ship --parallel --no-auto-pack CC-9001 --cd "$work" \
     > "$tmp_root/out-status-go" 2> "$tmp_root/err-status-go" || status=$?
-  local reg_dir tracking run_id lane_path
+  local reg_dir tracking run_id lane_path operation_id operation_state
   reg_dir="$(reg_dir_for "$store" "$work")"
   tracking="$reg_dir/ship-lanes.jsonl"
   run_id="$(jq -r '.run_id' "$tracking")"
+  operation_id="$(jq -r '.operation_id // ""' "$tracking")"
   lane_path="$(jq -r '.path' "$tracking")"
   # No .pm-dispatch-ship-finish.json marker is written here -- only the
   # dispatch record's free-text summary claims "Final: GO". Since the
@@ -687,10 +697,11 @@ case_status_reports_go_from_finish_marker_even_without_final_go_text() {
   make_work_repo "$work" "CC-9001"
   PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" ship --parallel --no-auto-pack CC-9001 --cd "$work" \
     > "$tmp_root/out-status-marker-go" 2> "$tmp_root/err-status-marker-go" || status=$?
-  local reg_dir tracking run_id lane_path
+  local reg_dir tracking run_id lane_path operation_id operation_state
   reg_dir="$(reg_dir_for "$store" "$work")"
   tracking="$reg_dir/ship-lanes.jsonl"
   run_id="$(jq -r '.run_id' "$tracking")"
+  operation_id="$(jq -r '.operation_id // ""' "$tracking")"
   lane_path="$(jq -r '.path' "$tracking")"
   # Simulates a real observed failure mode: the executor's own summary
   # reports the verdict in prose ("Gate 通過（GO）"), not the literal
@@ -716,18 +727,24 @@ case_status_reports_no_go_from_final_line() {
   make_work_repo "$work" "CC-9001"
   PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" ship --parallel --no-auto-pack CC-9001 --cd "$work" \
     > "$tmp_root/out-status-nogo" 2> "$tmp_root/err-status-nogo" || status=$?
-  local reg_dir tracking run_id lane_path
+  local reg_dir tracking run_id lane_path operation_id operation_state
   reg_dir="$(reg_dir_for "$store" "$work")"
   tracking="$reg_dir/ship-lanes.jsonl"
   run_id="$(jq -r '.run_id' "$tracking")"
+  operation_id="$(jq -r '.operation_id // ""' "$tracking")"
   lane_path="$(jq -r '.path' "$tracking")"
   seed_dispatch_record "$lane_path" "$run_id" ok "Final: NO-GO"
   local json
   json="$(PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" ship status --cd "$work" --json)"
-  if [[ "$(jq -r '.[0].status' <<<"$json")" == "no-go" ]]; then
+  operation_state="$(jq -r .state "$(dirname "$reg_dir")/operations/$operation_id.json" 2>/dev/null || true)"
+  # The detached test supervisor can race our seeded record and replace its
+  # terminal evidence; either trusted completion or an explicit indeterminate
+  # terminal state proves status invoked parent reconciliation (never stale
+  # running).
+  if [[ "$(jq -r '.[0].status' <<<"$json")" == "no-go" && "$operation_state" =~ ^(completed|indeterminate)$ ]]; then
     pass "$name"
   else
-    fail "$name" "expected status=no-go, got $json"
+    fail "$name" "expected status=no-go + terminal parent, operation=$operation_id state=$operation_state got $json"
   fi
 }
 
@@ -1573,13 +1590,15 @@ case_ship_dispatch_failure_after_worktree_records_dispatch_failed_lane() {
     fail "$name" "tracking file missing entirely -- the orphan-lane bug the gate review flagged; expected at $tracking"
     return
   fi
-  local run_id lane_status
+  local run_id lane_status operation_id operation_state
   run_id="$(jq -r '.run_id' "$tracking")"
   lane_status="$(jq -r '.status' "$tracking")"
-  if [[ -z "$run_id" && "$lane_status" == "dispatch-failed" ]]; then
+  operation_id="$(find "$(dirname "$reg_dir")/operations" -maxdepth 1 -name 'op-*.json' -type f -printf '%f\n' 2>/dev/null | sed 's/\.json$//' | head -1)"
+  operation_state="$(jq -r .state "$(dirname "$reg_dir")/operations/$operation_id.json" 2>/dev/null || true)"
+  if [[ -z "$run_id" && "$lane_status" == "dispatch-failed" && "$operation_state" == failed ]]; then
     pass "$name"
   else
-    fail "$name" "expected run_id empty + status=dispatch-failed; got tracking=$(cat "$tracking")"
+    fail "$name" "expected run_id empty + status=dispatch-failed + failed parent; operation=$operation_id state=$operation_state tracking=$(cat "$tracking")"
   fi
 }
 
@@ -1912,6 +1931,36 @@ case_ship_brief_quotes_metacharacter_lane_path
 case_ship_adapter_missing_value_fails_before_any_side_effect
 case_ship_adapter_trailing_flag_missing_value_fails
 case_run_tracks_adapter_field
+
+case_ship_operation_routes_via_cli() {
+  local name="ship operation CLI: cancel and reconcile route with positional operation id and --cd"
+  should_run "$name" || return 0
+  local work="$tmp_root/ship-operation-cli-work" state="$tmp_root/ship-operation-cli-state" cancel_op reconcile_op run_id out
+  mkdir -p "$work"; git -C "$work" init -q
+  cancel_op="$(PM_DISPATCH_STATE_ROOT="$state" pmctl_operation_create "$REPO_ROOT" "$work" ship codex)"
+  out="$(PM_DISPATCH_STATE_ROOT="$state" "$PMCTL" ship cancel "$cancel_op" --cd "$work")"
+  reconcile_op="$(PM_DISPATCH_STATE_ROOT="$state" pmctl_operation_create "$REPO_ROOT" "$work" ship codex)"
+  run_id="run-20260724T000070Z-aaaaaa"
+  PM_DISPATCH_STATE_ROOT="$state" pmctl_operation_attach_child "$REPO_ROOT" "$work" "$reconcile_op" "$run_id" "$work"
+  PM_DISPATCH_STATE_ROOT="$state" _pmctl_dispatch_try_terminal_claim "$work" "$run_id" ok supervisor
+  out+=" $(PM_DISPATCH_STATE_ROOT="$state" "$PMCTL" ship reconcile "$reconcile_op" --cd "$work")"
+  if [[ "$out" == *"state: cancelled"* && "$out" == *"state: completed"* ]]; then pass "$name"; else fail "$name" "out=$out"; fi
+}
+
+case_ship_operation_cli_unavailable_fallbacks() {
+  local name="ship operation CLI: cancel and reconcile report unavailable without operation library"
+  should_run "$name" || return 0
+  local fixture="$tmp_root/ship-operation-cli-missing" cancel_out reconcile_out cancel_rc=0 reconcile_rc=0
+  mkdir -p "$fixture/cli" "$fixture/runtime/lib"
+  cp "$REPO_ROOT/cli/pmctl" "$fixture/cli/pmctl"; chmod +x "$fixture/cli/pmctl"
+  cp "$REPO_ROOT/runtime/lib/pmctl-command-catalog.sh" "$fixture/runtime/lib/pmctl-command-catalog.sh"
+  cancel_out="$("$fixture/cli/pmctl" ship cancel op-20260724T000071Z-aaaaaa --cd /tmp 2>&1)" || cancel_rc=$?
+  reconcile_out="$("$fixture/cli/pmctl" ship reconcile op-20260724T000071Z-aaaaaa --cd /tmp 2>&1)" || reconcile_rc=$?
+  if [[ "$cancel_rc" -eq 2 && "$reconcile_rc" -eq 2 && "$cancel_out" == *"ship cancel unavailable"* && "$reconcile_out" == *"ship reconcile unavailable"* ]]; then pass "$name"; else fail "$name" "cancel=$cancel_rc:$cancel_out reconcile=$reconcile_rc:$reconcile_out"; fi
+}
+
+case_ship_operation_routes_via_cli
+case_ship_operation_cli_unavailable_fallbacks
 
 # Detached dispatch supervisors from the fake-codex/claude runs above can
 # still be mid-write (dispatch record, trace files) a moment after their

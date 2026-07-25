@@ -212,9 +212,8 @@ case_usage_log() {
   home="$(mktemp -d)"
   work="$(mktemp -d)"; git init -q "$work"; brief="$(_mk_brief "$work")"
   set +e; PATH="$bin:$PATH" HOME="$home" "$DISPATCH" --cd "$work" --brief-file "$brief" >/dev/null 2>&1; code=$?; set -e
-  # log-usage.sh defaults under ~/.claude/usage-tracker.jsonl historically;
-  # pool field should still be grok.
-  tracker="$home/.claude/usage-tracker.jsonl"
+  # The repository-owned logger uses the host-neutral pm-dispatch namespace.
+  tracker="$home/.pm-dispatch/usage-tracker.jsonl"
   if [[ "$code" -eq 0 && -f "$tracker" ]] && grep -q '"type":"grok_dispatch"' "$tracker" \
      && grep -q '"pool":"grok"' "$tracker" && grep -q '"tokens":150' "$tracker"; then
     pass "$name"; else fail "$name" "code=$code tracker=$(cat "$tracker" 2>/dev/null | head -c 300)"; fi

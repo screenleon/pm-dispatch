@@ -90,12 +90,22 @@ done
 printf 'DISPATCH_STUB:%s\n' "${CODEX_GATE_STUB_MODE:-success}"
 
 if [[ -n "${CODEX_GATE_BRIEF_EXISTS_MARKER:-}" ]]; then
-  if [[ -f "$brief_file" && "$brief_file" == */.gate-briefs/pr-gate-*.md ]]; then
-    printf 'brief-present\n' > "$CODEX_GATE_BRIEF_EXISTS_MARKER"
-  else
-    printf 'brief-missing-or-wrong-path: %s\n' "$brief_file" >&2
+  # The executor must always receive a brief that exists on disk at invocation.
+  # The additional `/tmp/brief-gate-*` form is specific to the pmctl dispatch
+  # transport, whose guard confines executor-readable briefs to that prefix;
+  # a copy-mode bundle dispatches the adapter directly with no such guard, so
+  # it legitimately passes the canonical workspace brief instead.
+  if [[ ! -f "$brief_file" ]]; then
+    printf 'brief-missing: %s\n' "$brief_file" >&2
     exit 3
   fi
+  # Only a brief placed directly in /tmp is a guarded dispatch snapshot; a
+  # workspace brief may still live under /tmp because the test root does.
+  if [[ "$(dirname "$brief_file")" == /tmp && "$(basename "$brief_file")" != brief-gate-* ]]; then
+    printf 'brief-wrong-guarded-path: %s\n' "$brief_file" >&2
+    exit 3
+  fi
+  printf 'brief-present\n' > "$CODEX_GATE_BRIEF_EXISTS_MARKER"
 fi
 
 if [[ -n "${CODEX_GATE_CAPTURE_BRIEF:-}" ]]; then
@@ -282,7 +292,7 @@ case "$effective_mode" in
     # frontmatter and no Final: line (frontmatter/synthesis is only added
     # after ALL reviewers finish — see pr-gate.sh task step 9), then exits
     # 124 to simulate the dispatch timeout.
-    if [[ "$brief_file" =~ ^.*/pr-gate-[0-9]{8}-[0-9]{6}\.md$ ]]; then
+    if grep -q '^goal: Sequential ' "$brief_file"; then
       output_path=$(grep -o '\- new:.*' "$brief_file" | head -1 | awk '{print $NF}')
       if [[ -n "$output_path" ]]; then
         mkdir -p "$(dirname "$output_path")"
@@ -323,7 +333,7 @@ PARTIAL_EOF
         fi
       else
         # Sequential result file should include frontmatter blocks and escalation section.
-        if [[ "$brief_file" =~ ^.*/pr-gate-[0-9]{8}-[0-9]{6}\.md$ ]]; then
+        if grep -q '^goal: Sequential ' "$brief_file"; then
           final_verdict="${CODEX_GATE_STUB_SYNTHESIS_FINAL:-GO}"
           write_frontmatter_stub_gate_result "$output_path" "$final_verdict"
           exit 0
@@ -373,6 +383,33 @@ STUB_EOF
   mkdir -p "$dir/adapters/claude"
   cp "$dir/adapters/codex/dispatch.sh" "$dir/adapters/claude/dispatch.sh"
   chmod +x "$dir/adapters/claude/dispatch.sh"
+  # The production gate now owns reviewer lifecycle through `pmctl dispatch`.
+  # Copy-mode unit fixtures retain their local adapter seam behind a minimal
+  # pmctl transport shim; production-path attachment is covered separately by
+  # test_pmctl_codex_gate_uses_production_memory_on_clean_home below.
+  mkdir -p "$dir/bin"
+  cat > "$dir/bin/pmctl" <<'PMCTL_STUB_EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+runner_dir="$(cd "$(dirname "$0")/.." && pwd)"
+[[ "${1:-}" == dispatch && "${2:-}" == run ]] || {
+  [[ "${1:-}" == dispatch && "${2:-}" == wait ]] && exit 0
+  printf 'fixture pmctl: unsupported command: %s %s\n' "${1:-}" "${2:-}" >&2
+  exit 2
+}
+shift 2
+adapter=""; forward=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --adapter) adapter="$2"; shift 2 ;;
+    --lifecycle|--parent-operation|--parent-operation-cd) shift 2 ;;
+    *) forward+=("$1"); shift ;;
+  esac
+done
+"$runner_dir/adapters/$adapter/dispatch.sh" "${forward[@]}" >&2
+printf 'run-20260724T000000Z-abcdef\n'
+PMCTL_STUB_EOF
+  chmod +x "$dir/bin/pmctl"
 }
 
 create_agents() {
@@ -461,7 +498,7 @@ run_gate() {
   local home="$1" runner="$2" repo="$3" out="$4" err="$5"
   shift 5
   set +e
-  HOME="$home" "$runner/pr-gate.sh" --cd "$repo" "$@" > "$out" 2> "$err"
+  HOME="$home" PATH="$runner/bin:$PATH" "$runner/pr-gate.sh" --cd "$repo" "$@" > "$out" 2> "$err"
   local code=$?
   return "$code"
 }
@@ -955,13 +992,17 @@ test_reviewers_override_skips_tier_detection() {
   pass "$name"
 }
 
-# Behavior: the dispatch brief file exists on disk (inside the gate's
-# working dir) at the moment the executor is invoked, not written after.
+# Behavior: the brief handed to the executor exists on disk at the moment of
+# invocation, and any /tmp brief carries the guard-required `brief-gate-`
+# prefix. On the pmctl dispatch transport that brief is the /tmp/brief-gate-*
+# snapshot the guard confines executor reads to; a copy-mode bundle dispatches
+# the adapter directly and passes the canonical workspace brief, which no guard
+# constrains. The gate retains its canonical brief in the workspace either way.
 # Steps: run the gate with a marker env var that records whether the brief
 # path exists at dispatch time, and assert the marker file contains
 # "brief-present".
-test_brief_file_inside_workdir() {
-  local name="brief-file-inside-workdir"
+test_brief_file_snapshot_exists_at_dispatch() {
+  local name="brief-file-snapshot-exists-at-dispatch"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
@@ -3418,7 +3459,7 @@ run_test test_missing_reviewer_agent
 run_test test_invalid_base_ref
 run_test test_no_changed_files
 run_test test_reviewers_override_skips_tier_detection
-run_test test_brief_file_inside_workdir
+run_test test_brief_file_snapshot_exists_at_dispatch
 run_test test_reviewer_definitions_are_workspace_snapshots
 run_test test_brief_cleanup_on_dispatch_failure
 run_test test_output_directory_created
@@ -5962,22 +6003,88 @@ test_pmctl_codex_gate_uses_production_memory_on_clean_home() {
   local dir="$TMP_ROOT/$name" isolated_home="$TMP_ROOT/$name/isolated-home"
   local bundle="$TMP_ROOT/$name/bundle" product="$TMP_ROOT/$name/product"
   local repo="$TMP_ROOT/$name/repo" memory="$TMP_ROOT/$name/canonical-memory"
-  local state="$TMP_ROOT/$name/state" brief="$TMP_ROOT/$name/brief.md"
+  local state="$TMP_ROOT/$name/state" brief="$TMP_ROOT/$name/brief.md" fake_codex_bin="$TMP_ROOT/$name/fake-codex-bin"
   local defs="$TMP_ROOT/$name/reviewer-def-count" out="$TMP_ROOT/$name/out" err="$TMP_ROOT/$name/err"
-  mkdir -p "$dir" "$isolated_home" "$memory" "$product/cli" "$product/runtime/bin"
+  mkdir -p "$dir" "$isolated_home" "$memory" "$product/cli" "$product/runtime/bin" "$product/core/schema" "$fake_codex_bin"
   create_runner "$bundle"
   create_repo "$repo" docs
 
   cp "$REPO_ROOT/cli/pmctl" "$product/cli/pmctl"
   cp "$REPO_ROOT/cli/commands.tsv" "$product/cli/commands.tsv"
+  cp -R "$REPO_ROOT/runtime/bin/." "$product/runtime/bin/"
   cp "$bundle/pr-gate.sh" "$product/runtime/bin/pr-gate.sh"
   cp -R "$bundle/lib" "$product/runtime/lib"
+  cp -R "$REPO_ROOT/runtime/hooks" "$product/runtime/hooks"
   cp -R "$bundle/agents" "$product/agents"
   cp -R "$REPO_ROOT/adapters" "$product/adapters"
-  cp "$bundle/adapters/codex/dispatch.sh" "$product/adapters/codex/dispatch.sh"
-  cp "$bundle/adapters/claude/dispatch.sh" "$product/adapters/claude/dispatch.sh"
+  cp -R "$REPO_ROOT/share" "$product/share"
+  cp -R "$REPO_ROOT/ops" "$product/ops"
   cp -R "$bundle/core" "$product/core"
+  cp -R "$REPO_ROOT/core/schema/." "$product/core/schema/"
   chmod +x "$product/cli/pmctl" "$product/runtime/bin/pr-gate.sh"
+
+  # Keep the production adapter in this fixture.  The fake executable only
+  # supplies the external Codex process contract: it writes both the adapter's
+  # `--output-last-message` file and the reviewer result requested in stdin.
+  cat > "$fake_codex_bin/codex" <<'FAKE_CODEX_EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+last=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --output-last-message) last="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+brief="$(cat)"
+if [[ -n "${CODEX_GATE_CAPTURE_BRIEF:-}" ]]; then
+  printf '%s\n' "$brief" > "$CODEX_GATE_CAPTURE_BRIEF"
+fi
+if [[ -n "${CODEX_GATE_REVIEWER_DEFS_MARKER:-}" ]]; then
+  count="$(printf '%s\n' "$brief" | awk '/^  - read: .*\/\.gate-briefs\/reviewer-definitions-.*\.md$/ { count += 1 } END { print count + 0 }')"
+  printf '%s\n' "$count" > "$CODEX_GATE_REVIEWER_DEFS_MARKER"
+fi
+output_path="$(printf '%s\n' "$brief" | grep -o '\- new:.*' | head -1 | awk '{print $NF}')"
+if [[ -n "$output_path" ]]; then
+  mkdir -p "$(dirname "$output_path")"
+  cat > "$output_path" <<'GATE_RESULT_EOF'
+---
+gate_result_version: pr_gate_result_v1
+final: GO
+tier: express
+mode: sequential
+most_severe: approve
+reviewers:
+  critic: approve
+  qa-tester: pass
+escalation:
+  recommended: false
+  reviewers: []
+  reason: []
+---
+
+# PR-Gate Result -- fake Codex integration fixture
+
+## Gate Conclusion
+**Overall verdict**: pass
+**Most severe individual verdict**: pass
+Final: GO
+Required fixes before GO: none
+
+## Escalation
+**Recommended**: false
+**Reviewers**: none
+**Reason**:
+- none
+GATE_RESULT_EOF
+fi
+printf 'fake Codex reviewer completed\n' > "$last"
+printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":5}}'
+FAKE_CODEX_EOF
+  chmod +x "$fake_codex_bin/codex"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$fake_codex_bin/log-usage.sh"
+  chmod +x "$fake_codex_bin/log-usage.sh"
+  printf 'dispatch.usage_log_path=%s\n' "$fake_codex_bin/log-usage.sh" > "$dir/pm-dispatch-config"
 
   cat > "$memory/MEMORY.md" <<'MEMORY_EOF'
 # Canonical Memory
@@ -5992,7 +6099,7 @@ MEMORY_EOF
 
   local code=0
   set +e
-  HOME="$isolated_home" PM_MEMORY_DIR="$memory" PM_DISPATCH_CONFIG_FILE="$dir/no-config" \
+  HOME="$isolated_home" PATH="$fake_codex_bin:$PATH" PM_MEMORY_DIR="$memory" PM_DISPATCH_CONFIG_FILE="$dir/pm-dispatch-config" \
     PM_DISPATCH_STATE_ROOT="$state" PM_DISPATCH_CONTEXT_AUTOREFRESH=0 \
     CODEX_GATE_CAPTURE_BRIEF="$brief" CODEX_GATE_REVIEWER_DEFS_MARKER="$defs" \
     "$product/cli/pmctl" gate run --lifecycle foreground --cd "$repo" --base main \
@@ -6014,6 +6121,24 @@ MEMORY_EOF
   assert_not_contains "$name" "$brief" ".claude/agents" || return
   if [[ -e "$isolated_home/.claude" ]]; then
     fail "$name" "pmctl gate created a Claude host directory in the isolated HOME"
+    return
+  fi
+  # The real gate route dispatches each reviewer through `pmctl dispatch run`.
+  # Verify that its detached child is durably attached to the gate operation,
+  # rather than merely checking the pr-gate helper's argv construction.
+  local operation children child_count
+  operation="$(find "$state" -type f -path '*/operations/op-*.json' 2>/dev/null | head -1)"
+  if [[ ! -s "$operation" ]]; then
+    fail "$name" "real gate did not persist a parent operation record"
+    return
+  fi
+  children="$(dirname "$operation")/$(basename "$operation" .json)/children.jsonl"
+  child_count="$(jq -s 'length' "$children" 2>/dev/null || printf '0')"
+  if [[ ! -s "$children" || "$child_count" -lt 1 ]] \
+     || ! jq -se \
+       'all(.[]; (.run_id | test("^run-[A-Za-z0-9]+-[A-Za-z0-9]+$")) and (.working_dir | startswith("/")))' \
+       "$children" >/dev/null; then
+    fail "$name" "gate reviewer child was not attached to parent operation $(basename "$operation" .json)"
     return
   fi
   pass "$name"

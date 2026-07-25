@@ -50,7 +50,7 @@ if [[ $# -eq 3 && ( "$3" == "-h" || "$3" == "--help" ) ]]; then
   exit $?
 fi
 
-for _lib in repo-layout detached-launch pmctl-policy pmctl-fs pmctl-adapter pmctl-backlog pmctl-guard executor-router pmctl-dispatch pmctl-trace pmctl-task pmctl-decision gate-result-verify pmctl-gate pmctl-safe pmctl-validate pmctl-context pmctl-memory pmctl-artifacts pmctl-pre-release pmctl-worktree pmctl-ship-parallel pmctl-ship pmctl-state pmctl-pm; do
+for _lib in repo-layout detached-launch pmctl-policy pmctl-fs pmctl-adapter pmctl-backlog pmctl-guard executor-router pmctl-dispatch pmctl-operation pmctl-trace pmctl-task pmctl-decision gate-result-verify pmctl-gate pmctl-safe pmctl-validate pmctl-context pmctl-memory pmctl-artifacts pmctl-pre-release pmctl-worktree pmctl-ship-parallel pmctl-ship pmctl-state pmctl-pm; do
   # shellcheck source=/dev/null
   [[ -r "$REPO_ROOT/runtime/lib/$_lib.sh" ]] && . "$REPO_ROOT/runtime/lib/$_lib.sh"
 done
@@ -235,6 +235,18 @@ case "$cmd/$sub" in
     fi
     pmctl_ship_parallel_list "$REPO_ROOT" "" "$@"
     ;;
+  ship/cancel)
+    if ! declare -F pmctl_operation_cancel >/dev/null; then
+      pmctl_die "ship cancel unavailable"
+    fi
+    pmctl_operation_cancel "$REPO_ROOT" ship "$@"
+    ;;
+  ship/reconcile)
+    if ! declare -F pmctl_operation_reconcile >/dev/null; then
+      pmctl_die "ship reconcile unavailable"
+    fi
+    pmctl_operation_reconcile "$REPO_ROOT" ship "$@"
+    ;;
   ship/*)
     # Fallback for the unified start entry (CC-442/CC-443): `sub` here is
     # whatever followed `ship` and did not match one of the reserved-word
@@ -363,6 +375,18 @@ case "$cmd/$sub" in
       pmctl_die "gate wait unavailable"
     fi
     pmctl_gate_wait "$REPO_ROOT" "$@"
+    ;;
+  gate/cancel)
+    if ! declare -F pmctl_operation_cancel >/dev/null; then
+      pmctl_die "gate cancel unavailable"
+    fi
+    pmctl_operation_cancel "$REPO_ROOT" gate "$@"
+    ;;
+  gate/reconcile)
+    if ! declare -F pmctl_operation_reconcile >/dev/null; then
+      pmctl_die "gate reconcile unavailable"
+    fi
+    pmctl_operation_reconcile "$REPO_ROOT" gate "$@"
     ;;
   context/index)
     if ! declare -F pmctl_context_index >/dev/null; then

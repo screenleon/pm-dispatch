@@ -475,7 +475,7 @@ state_store_init() {
   proj_dir="$store_root/projects/$proj_key/"
   # Fail loud on layout mkdir failure to match the VERSION-gate fail-loud semantics.
   if ! mkdir -p "$proj_dir/tasks" "$proj_dir/reviews" "$proj_dir/decisions" \
-      "$proj_dir/context-packs" "$proj_dir/archive" 2>/dev/null; then
+      "$proj_dir/operations" "$proj_dir/context-packs" "$proj_dir/archive" 2>/dev/null; then
     printf 'state-writer: layout mkdir failed: %s\n' "$proj_dir" >&2
     return 1
   fi
@@ -594,6 +594,85 @@ _sw_task_id_valid() {
 
 _sw_decision_id_valid() {
   [[ "${1:-}" =~ ^dec-[0-9]{4}-[0-9]{2}-[0-9]{2}-[a-z0-9-]+$ ]]
+}
+
+_sw_operation_id_valid() {
+  [[ "${1:-}" =~ ^op-[0-9]{8}T[0-9]{6}Z-[a-f0-9]{6}$ ]]
+}
+
+# operation_upsert <operation-id> <JSON>
+# The operation projection is deliberately separate from Run transition
+# operation_id values.  The latter pair a Run row with one Event row; this
+# projection owns a producer lifecycle and its append-only child relation.
+operation_upsert() {
+  local operation_id="${1:-}" json_line="${2:-}" proj_dir tmp="" compact
+  if ! _sw_operation_id_valid "$operation_id"; then
+    _sw_log_error "operation_upsert: invalid operation_id='$operation_id'"
+    return 1
+  fi
+  compact="$(_sw_compact_json_line "$json_line")" || return $?
+  _sw_validate_compacted_json_line operation "$compact" || return $?
+  state_store_init || return 1
+  proj_dir="$(_sw_project_dir)" || return 1
+  tmp="$(mktemp "$proj_dir/operations/.tmp-XXXXXX" 2>/dev/null)" || {
+    _sw_log_error "operation_upsert mktemp failed: $proj_dir/operations"
+    return 1
+  }
+  printf '%s\n' "$compact" > "$tmp" 2>/dev/null || { rm -f "$tmp" 2>/dev/null; return 1; }
+  mv -f "$tmp" "$proj_dir/operations/${operation_id}.json" 2>/dev/null || {
+    _sw_log_error "operation_upsert rename failed: $proj_dir/operations/${operation_id}.json"
+    rm -f "$tmp" 2>/dev/null
+    return 1
+  }
+}
+
+# operation_create <operation-id> <JSON>
+# Atomically creates a new operation record without replacing an existing one.
+# A hard-link from a same-directory temporary file is an exclusive reservation:
+# it fails if the target name already exists. Return 3 for that collision.
+operation_create() {
+  local operation_id="${1:-}" json_line="${2:-}" proj_dir tmp="" compact target
+  if ! _sw_operation_id_valid "$operation_id"; then
+    _sw_log_error "operation_create: invalid operation_id='$operation_id'"
+    return 1
+  fi
+  compact="$(_sw_compact_json_line "$json_line")" || return $?
+  _sw_validate_compacted_json_line operation "$compact" || return $?
+  state_store_init || return 1
+  proj_dir="$(_sw_project_dir)" || return 1
+  target="$proj_dir/operations/${operation_id}.json"
+  tmp="$(mktemp "$proj_dir/operations/.tmp-XXXXXX" 2>/dev/null)" || {
+    _sw_log_error "operation_create mktemp failed: $proj_dir/operations"
+    return 1
+  }
+  printf '%s\n' "$compact" > "$tmp" 2>/dev/null || { rm -f "$tmp" 2>/dev/null; return 1; }
+  if ! ln "$tmp" "$target" 2>/dev/null; then
+    rm -f "$tmp" 2>/dev/null || true
+    [[ -e "$target" ]] && return 3
+    _sw_log_error "operation_create exclusive reservation failed: $target"
+    return 1
+  fi
+  rm -f "$tmp" 2>/dev/null || true
+}
+
+_operation_children_append_inner() {
+  local json_line="$1" compact
+  compact="$(_sw_compact_json_line "$json_line")" || return $?
+  printf '%s\n' "$compact" >> children.jsonl
+}
+
+# operation_child_append <operation-id> <JSON>
+# Appends only through the canonical writer boundary.  A child is never
+# removed: cancellation and reconciliation must retain the ownership evidence.
+operation_child_append() {
+  local operation_id="${1:-}" json_line="${2:-}" proj_dir op_dir rc=0
+  _sw_operation_id_valid "$operation_id" || return 1
+  state_store_init || return 1
+  proj_dir="$(_sw_project_dir)" || return 1
+  op_dir="$proj_dir/operations/$operation_id"
+  mkdir -p "$op_dir" 2>/dev/null || return 1
+  ( cd "$op_dir" && serialize_with_lock "$op_dir/children" _operation_children_append_inner "$json_line" ) || rc=$?
+  return "$rc"
 }
 
 task_upsert() {

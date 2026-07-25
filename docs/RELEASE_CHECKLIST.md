@@ -148,9 +148,15 @@ bash tests/shell/test-e2e.sh --skip-gate        # dispatch only, explicitly skip
 ### 2d. Claude Code hooks (live)
 
 In a real Claude Code session against an installed checkout, trigger each hook
-type once and confirm the output lands in the right place: `~/.claude/usage-tracker.jsonl`
+type once and confirm the output lands in the right place: `~/.pm-dispatch/usage-tracker.jsonl`
 or `~/.claude/logs/hooks.log` for hook-level telemetry, project memory `episodes.jsonl`
 for session summaries, or the trace/events store for dispatch telemetry.
+
+> **Usage-tracker migration:** installations upgraded from the former
+> `~/.claude/usage-tracker.jsonl` default begin a new shared tracker at the
+> path above. To retain an existing history in place, set
+> `PM_DISPATCH_USAGE_LOG_FILE=~/.claude/usage-tracker.jsonl` for the hook and
+> usage commands before upgrading.
 
 ```bash
 # write-guard: attempt a write outside the allowed path — should be DENIED with exit 2

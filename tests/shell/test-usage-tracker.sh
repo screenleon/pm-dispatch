@@ -65,7 +65,7 @@ case_happy_path() {
   home="$(new_home "$name")"
   run_log "$home" pr_gate_full 390000 "JapanJob PR #24"; status=$?
   assert_exit "$name" "$status" 0
-  local logfile="$home/.claude/usage-tracker.jsonl"
+  local logfile="$home/.pm-dispatch/usage-tracker.jsonl"
   [[ -f "$logfile" ]] || fail "$name" "logfile not created"
   assert_file_contains "$name" "$logfile" '"type":"pr_gate_full"'
   assert_file_contains "$name" "$logfile" '"tokens":390000'
@@ -80,7 +80,7 @@ case_note_single_quote() {
   out="$TMP_ROOT/$name.out"
   run_log "$home" pm_analysis 5000 "it's done" > "$out" 2>&1; status=$?
   assert_exit "$name" "$status" 0
-  local logfile="$home/.claude/usage-tracker.jsonl"
+  local logfile="$home/.pm-dispatch/usage-tracker.jsonl"
   assert_file_contains "$name" "$logfile" '"note":"it'"'"'s done"'
   assert_line_count "$name" "$logfile" 1
   pass "$name"
@@ -91,7 +91,7 @@ case_note_double_quote() {
   home="$(new_home "$name")"
   run_log "$home" codex_task 10000 'fix "thing"'; status=$?
   assert_exit "$name" "$status" 0
-  local logfile="$home/.claude/usage-tracker.jsonl"
+  local logfile="$home/.pm-dispatch/usage-tracker.jsonl"
   assert_file_contains "$name" "$logfile" '"note":"fix \"thing\""'
   assert_line_count "$name" "$logfile" 1
   pass "$name"
@@ -102,7 +102,7 @@ case_note_backslash() {
   home="$(new_home "$name")"
   run_log "$home" codex_task 10000 'path\to\thing'; status=$?
   assert_exit "$name" "$status" 0
-  local logfile="$home/.claude/usage-tracker.jsonl"
+  local logfile="$home/.pm-dispatch/usage-tracker.jsonl"
   assert_file_contains "$name" "$logfile" '"note":"path\\to\\thing"'
   assert_line_count "$name" "$logfile" 1
   pass "$name"
@@ -113,7 +113,7 @@ case_note_unicode() {
   home="$(new_home "$name")"
   run_log "$home" pm_synthesis 3000 "已完成 #14 重構"; status=$?
   assert_exit "$name" "$status" 0
-  local logfile="$home/.claude/usage-tracker.jsonl"
+  local logfile="$home/.pm-dispatch/usage-tracker.jsonl"
   assert_file_contains "$name" "$logfile" '"note":"已完成 #14 重構"'
   assert_line_count "$name" "$logfile" 1
   pass "$name"
@@ -129,7 +129,7 @@ case_note_injection_attempt() {
   assert_exit "$name" "$status" 0
   [[ ! -f "$sentinel" ]] || fail "$name" "injection sentinel was created — code executed"
   # Output must be valid JSON
-  local logfile="$home/.claude/usage-tracker.jsonl"
+  local logfile="$home/.pm-dispatch/usage-tracker.jsonl"
   jq -e . "$logfile" > /dev/null 2>&1 || fail "$name" "output is not valid JSON"
   assert_line_count "$name" "$logfile" 1
   pass "$name"
@@ -141,7 +141,7 @@ case_tokens_not_integer() {
   out="$TMP_ROOT/$name.out"
   run_log "$home" codex_task "notanumber" "some note" > "$out" 2>&1; status=$?
   assert_exit "$name" "$status" 2
-  local logfile="$home/.claude/usage-tracker.jsonl"
+  local logfile="$home/.pm-dispatch/usage-tracker.jsonl"
   [[ ! -f "$logfile" ]] || assert_line_count "$name" "$logfile" 0
   pass "$name"
 }
@@ -160,7 +160,7 @@ case_multiple_appends() {
   run_log "$home" pr_gate_express 80000 "first"
   run_log "$home" codex_task      50000 "second"
   run_log "$home" pm_synthesis    15000 "third"
-  assert_line_count "$name" "$home/.claude/usage-tracker.jsonl" 3
+  assert_line_count "$name" "$home/.pm-dispatch/usage-tracker.jsonl" 3
   pass "$name"
 }
 
@@ -172,7 +172,7 @@ case_idempotent_json_per_line() {
   while IFS= read -r line; do
     printf '%s\n' "$line" | jq -e . > /dev/null 2>&1 \
       || fail "$name" "line is not valid JSON: $line"
-  done < "$home/.claude/usage-tracker.jsonl"
+  done < "$home/.pm-dispatch/usage-tracker.jsonl"
   pass "$name"
 }
 
@@ -180,7 +180,7 @@ case_file_permissions() {
   local name="file_permissions" home perms
   home="$(new_home "$name")"
   run_log "$home" codex_task 1 ""
-  perms=$(stat -c '%a' "$home/.claude/usage-tracker.jsonl")
+  perms=$(stat -c '%a' "$home/.pm-dispatch/usage-tracker.jsonl")
   [[ "$perms" == "600" ]] || fail "$name" "expected 600 perms, got $perms"
   pass "$name"
 }
@@ -191,7 +191,8 @@ case_file_permissions() {
 
 write_log() {
   local home="$1" ts="$2" type="$3" tokens="$4" note="${5:-}" pool="${6:-}"
-  local logfile="$home/.claude/usage-tracker.jsonl"
+  local logfile="$home/.pm-dispatch/usage-tracker.jsonl"
+  mkdir -p "$(dirname "$logfile")"
   jq -nc --arg ts "$ts" --arg type "$type" --argjson tokens "$tokens" \
          --arg note "$note" --arg session "testsession" --arg pool "$pool" \
     '{ts:$ts,session:$session,type:$type,tokens:$tokens,note:$note}
@@ -211,7 +212,7 @@ case_view_missing_logfile() {
 case_view_empty_logfile() {
   local name="view_empty_logfile" home out status
   home="$(new_home "$name")"
-  touch "$home/.claude/usage-tracker.jsonl"
+  mkdir -p "$home/.pm-dispatch"; touch "$home/.pm-dispatch/usage-tracker.jsonl"
   out="$TMP_ROOT/$name.out"
   HOME="$home" /bin/bash "$VIEW_SCRIPT" > "$out" 2>&1; status=$?
   assert_exit "$name" "$status" 0
@@ -250,7 +251,7 @@ case_view_today_mode() {
 case_view_unknown_mode() {
   local name="view_unknown_mode" home out status
   home="$(new_home "$name")"
-  touch "$home/.claude/usage-tracker.jsonl"
+  mkdir -p "$home/.pm-dispatch"; touch "$home/.pm-dispatch/usage-tracker.jsonl"
   out="$TMP_ROOT/$name.out"
   HOME="$home" /bin/bash "$VIEW_SCRIPT" --foobar > "$out" 2>&1; status=$?
   assert_exit "$name" "$status" 2
@@ -260,7 +261,8 @@ case_view_unknown_mode() {
 case_view_malformed_line_skipped() {
   local name="view_malformed_line_skipped" home out status
   home="$(new_home "$name")"
-  local logfile="$home/.claude/usage-tracker.jsonl"
+  local logfile="$home/.pm-dispatch/usage-tracker.jsonl"
+  mkdir -p "$(dirname "$logfile")"
   printf 'not json\n' >> "$logfile"
   write_log "$home" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "codex_task" 5000 "good"
   out="$TMP_ROOT/$name.out"
@@ -274,7 +276,8 @@ case_view_malformed_line_skipped() {
 case_view_missing_ts_skipped() {
   local name="view_missing_ts_skipped" home out status
   home="$(new_home "$name")"
-  local logfile="$home/.claude/usage-tracker.jsonl"
+  local logfile="$home/.pm-dispatch/usage-tracker.jsonl"
+  mkdir -p "$(dirname "$logfile")"
   printf '{"type":"codex_task","tokens":9999}\n' >> "$logfile"
   write_log "$home" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "pm_analysis" 1000 "good"
   out="$TMP_ROOT/$name.out"
@@ -320,7 +323,7 @@ case_log_pool_codex() {
   home="$(new_home "$name")"
   run_log "$home" codex_dispatch 1100 "dispatch" "" codex; status=$?
   assert_exit "$name" "$status" 0
-  assert_file_contains "$name" "$home/.claude/usage-tracker.jsonl" '"pool":"codex"'
+  assert_file_contains "$name" "$home/.pm-dispatch/usage-tracker.jsonl" '"pool":"codex"'
   pass "$name"
 }
 
@@ -329,7 +332,7 @@ case_log_pool_default() {
   home="$(new_home "$name")"
   run_log "$home" session_total 2200 "session"; status=$?
   assert_exit "$name" "$status" 0
-  assert_file_contains "$name" "$home/.claude/usage-tracker.jsonl" '"pool":"claude"'
+  assert_file_contains "$name" "$home/.pm-dispatch/usage-tracker.jsonl" '"pool":"claude"'
   pass "$name"
 }
 
@@ -338,7 +341,7 @@ case_log_pool_spark() {
   home="$(new_home "$name")"
   run_log "$home" codex_dispatch 3300 "spark dispatch" "" spark; status=$?
   assert_exit "$name" "$status" 0
-  assert_file_contains "$name" "$home/.claude/usage-tracker.jsonl" '"pool":"spark"'
+  assert_file_contains "$name" "$home/.pm-dispatch/usage-tracker.jsonl" '"pool":"spark"'
   pass "$name"
 }
 
@@ -348,7 +351,7 @@ case_log_pool_invalid() {
   err="$TMP_ROOT/$name.err"
   HOME="$home" /bin/bash "$LOG_SCRIPT" codex_dispatch 1100 "test" "" badpool > /dev/null 2> "$err"; status=$?
   assert_exit "$name" "$status" 0
-  assert_file_contains "$name" "$home/.claude/usage-tracker.jsonl" '"pool":"claude"'
+  assert_file_contains "$name" "$home/.pm-dispatch/usage-tracker.jsonl" '"pool":"claude"'
   assert_file_contains "$name" "$err" "unknown pool"
   pass "$name"
 }
@@ -754,8 +757,9 @@ case_missing_type_defaults_to_unknown() {
   local name="missing_type_defaults_to_unknown" home out status
   home="$(new_home "$name")"
   local ts; ts="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-  printf '{"ts":"%s","tokens":7777,"session":"s1"}\n' "$ts" >> "$home/.claude/usage-tracker.jsonl"
-  printf '{"ts":"%s","type":"pm_analysis","tokens":1000}\n' "$ts" >> "$home/.claude/usage-tracker.jsonl"
+  mkdir -p "$home/.pm-dispatch"
+  printf '{"ts":"%s","tokens":7777,"session":"s1"}\n' "$ts" >> "$home/.pm-dispatch/usage-tracker.jsonl"
+  printf '{"ts":"%s","type":"pm_analysis","tokens":1000}\n' "$ts" >> "$home/.pm-dispatch/usage-tracker.jsonl"
   out="$TMP_ROOT/$name.out"
   HOME="$home" /bin/bash "$VIEW_SCRIPT" --all > "$out" 2> "$out.err"; status=$?
   assert_exit "$name" "$status" 0
@@ -771,8 +775,9 @@ case_invalid_ts_skipped_not_counted() {
   local name="invalid_ts_skipped_not_counted" home out status
   home="$(new_home "$name")"
   local ts; ts="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  mkdir -p "$home/.pm-dispatch"
   printf '{"ts":"not-a-date","tokens":999999,"type":"pm_analysis","session":"s"}\n' \
-    >> "$home/.claude/usage-tracker.jsonl"
+    >> "$home/.pm-dispatch/usage-tracker.jsonl"
   write_log "$home" "$ts" "pm_analysis" 1000 "valid entry"
   out="$TMP_ROOT/$name.out"
   HOME="$home" /bin/bash "$VIEW_SCRIPT" --all > "$out" 2> "$out.err"; status=$?

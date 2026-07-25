@@ -368,7 +368,7 @@ pmctl_ship_lanes_tracking_append() {
   serialize_with_lock "$reg_dir/ship-lanes" _pmctl_ship_lanes_tracking_append_inner "$json_line" "$tracking_file"
 }
 
-# _pmctl_ship_lanes_tracking_refresh_inner <tracking_file> <lane_status_fn>
+# _pmctl_ship_lanes_tracking_refresh_inner <repo_root> <tracking_file> <json_out>
 # Runs inside serialize_with_lock: re-reads the CURRENT file content (not a
 # snapshot taken before acquiring the lock), recomputes each line's status,
 # and writes the result back atomically (tmp + mv). This is the ONLY code
@@ -380,24 +380,32 @@ pmctl_ship_lanes_tracking_append() {
 # human-readable line per lane to stderr, matching the un-locked version's
 # prior behavior.
 _pmctl_ship_lanes_tracking_refresh_inner() {
-  local tracking_file="$1" json_out="$2" tmp content line updated=""
+  local repo_root="$1" tracking_file="$2" json_out="$3" tmp content line updated=""
   content=""
   [[ -f "$tracking_file" ]] && content="$(cat "$tracking_file")"
   [[ -n "$content" ]] || return 0
   while IFS= read -r line; do
     [[ -n "$line" ]] || continue
-    local ticket branch path run_id cur_status new_status
+    local ticket branch path run_id operation_id operation_work_dir cur_status new_status
     ticket="$(jq -r '.ticket' <<<"$line")"
     branch="$(jq -r '.branch' <<<"$line")"
     path="$(jq -r '.path' <<<"$line")"
     run_id="$(jq -r '.run_id' <<<"$line")"
+    operation_id="$(jq -r '.operation_id // ""' <<<"$line")"
+    operation_work_dir="$(jq -r '.operation_work_dir // ""' <<<"$line")"
     cur_status="$(jq -r '.status' <<<"$line")"
     new_status="$(_pmctl_ship_lane_status "$path" "$run_id" "$cur_status")"
+    if [[ "$operation_id" =~ ^op-[0-9]{8}T[0-9]{6}Z-[a-f0-9]{6}$ \
+          && "$operation_work_dir" == /* \
+          && "$new_status" =~ ^(go|no-go|partial|failed)$ \
+          && "$(type -t pmctl_operation_reconcile 2>/dev/null)" == function ]]; then
+      pmctl_operation_reconcile "$repo_root" ship "$operation_id" --cd "$operation_work_dir" >&2 || true
+    fi
     line="$(jq -c --arg s "$new_status" '.status = $s' <<<"$line")"
     updated="${updated}${line}
 "
     if [[ "$json_out" -eq 0 ]]; then
-      printf '[%s] %-12s branch=%-20s run_id=%s\n' "$ticket" "$new_status" "$branch" "$run_id" >&2
+      printf '[%s] %-12s branch=%-20s run_id=%s operation_id=%s\n' "$ticket" "$new_status" "$branch" "$run_id" "${operation_id:-none}" >&2
     fi
   done <<<"$content"
   tmp="$(mktemp "$(dirname "$tracking_file")/.ship-lanes.XXXXXX")" || return 1
@@ -406,12 +414,12 @@ _pmctl_ship_lanes_tracking_refresh_inner() {
   printf '%s' "$updated"
 }
 
-# pmctl_ship_lanes_tracking_refresh <reg_dir> <json_out 0|1>
+# pmctl_ship_lanes_tracking_refresh <repo-root> <reg_dir> <json_out 0|1>
 pmctl_ship_lanes_tracking_refresh() {
-  local reg_dir="$1" json_out="$2" tracking_file
+  local repo_root="$1" reg_dir="$2" json_out="$3" tracking_file
   tracking_file="$(_pmctl_ship_lanes_tracking_file "$reg_dir")"
   [[ -f "$tracking_file" ]] || return 0
-  serialize_with_lock "$reg_dir/ship-lanes" _pmctl_ship_lanes_tracking_refresh_inner "$tracking_file" "$json_out"
+  serialize_with_lock "$reg_dir/ship-lanes" _pmctl_ship_lanes_tracking_refresh_inner "$repo_root" "$tracking_file" "$json_out"
 }
 
 # _pmctl_ship_lane_status <lane_path> <run_id> [<current_status>]
@@ -574,20 +582,22 @@ _pmctl_ship_lane_in_flight() {
 }
 
 # _pmctl_ship_lanes_tracking_write <reg_dir> <ticket_id> <branch> <lane_path>
-#                                   <run_id> <adapter> <status> <created_ts>
+#                                   <run_id> <adapter> <status> <created_ts> [operation_id] [operation_work_dir]
 # The ONE call shape `pmctl_ship_run` uses to append a ship-lanes.jsonl entry
 # -- every terminal outcome after a successful `pmctl_worktree_create` goes
 # through this (prepared / dispatch-failed / dispatched), never just the
 # happy path, so a lane can never exist on disk without a corresponding
 # tracking record (CC-442/CC-443 gate finding).
 _pmctl_ship_lanes_tracking_write() {
-  local reg_dir="$1" ticket_id="$2" branch="$3" lane_path="$4" run_id="$5" adapter="$6" status="$7" created_ts="$8"
+  local reg_dir="$1" ticket_id="$2" branch="$3" lane_path="$4" run_id="$5" adapter="$6" status="$7" created_ts="$8" operation_id="${9:-}" operation_work_dir="${10:-}"
   local json_line
-  json_line="$(printf '{"ticket":%s,"branch":%s,"path":%s,"run_id":%s,"adapter":%s,"status":%s,"created_ts":%s}' \
+  json_line="$(printf '{"ticket":%s,"branch":%s,"path":%s,"run_id":%s,"operation_id":%s,"operation_work_dir":%s,"adapter":%s,"status":%s,"created_ts":%s}' \
     "$(jq -Rn --arg v "$ticket_id" '$v')" \
     "$(jq -Rn --arg v "$branch" '$v')" \
     "$(jq -Rn --arg v "$lane_path" '$v')" \
     "$(jq -Rn --arg v "$run_id" '$v')" \
+    "$(jq -Rn --arg v "$operation_id" '$v')" \
+    "$(jq -Rn --arg v "$operation_work_dir" '$v')" \
     "$(jq -Rn --arg v "$adapter" '$v')" \
     "$(jq -Rn --arg v "$status" '$v')" \
     "$(jq -Rn --arg v "$created_ts" '$v')")"
@@ -613,6 +623,9 @@ pmctl_ship_run() {
   local repo_root="${1:-}" work_dir="${2:-}" ticket_id="${3:-}"
   shift 3 2>/dev/null || true
   [[ -n "$work_dir" ]] || work_dir="$repo_root"
+  # The parallel caller reads these documented globals after each invocation.
+  # Clear stale values before any early/manual return.
+  PMCTL_SHIP_OPERATION_ID=""
 
   local from="" isolation="workspace-network" model="" auto_pack_flag=""
   local adapter="" want_worktree=0 args=("$@") i=0
@@ -771,14 +784,54 @@ pmctl_ship_run() {
   [[ -n "$model" ]] && dispatch_args+=(--model "$model")
   [[ -n "$auto_pack_flag" ]] && dispatch_args+=("$auto_pack_flag")
 
+  # A dispatched ship lane is a producer-owned operation, not merely a loose
+  # worktree plus a child run.  Create its durable parent before launch so a
+  # failed launch is still explainable; attach the child only after dispatch
+  # has returned its authoritative run id.
+  local operation_id=""
+  # Ship is also used as a standalone library by its focused fixture.  The CLI
+  # loads pmctl-operation before pmctl-ship, but retain this one compatibility
+  # import for that supported library entry point; all readiness validation then
+  # goes through the operation layer's shared helper.
+  if ! declare -F _pmctl_operation_ensure_loaded >/dev/null 2>&1; then
+    local _operation_lib="$repo_root/runtime/lib/pmctl-operation.sh"
+    # shellcheck disable=SC1090,SC1091 # repo-root-relative runtime library
+    [[ -r "$_operation_lib" ]] && . "$_operation_lib"
+  fi
+  if declare -F _pmctl_operation_ensure_loaded >/dev/null 2>&1 \
+      && _pmctl_operation_ensure_loaded "$repo_root"; then
+    operation_id="$(pmctl_operation_create "$repo_root" "$work_dir" ship "$adapter")" || {
+      _pmctl_ship_lanes_tracking_write "$reg_dir" "$ticket_id" "$branch" "$lane_path" "" "$adapter" "dispatch-failed" "$created_ts" || true
+      printf 'pmctl ship: %s could not create its parent operation record; refusing to dispatch an unowned lane\n' "$ticket_id" >&2
+      return 1
+    }
+  else
+    printf 'pmctl ship: parent-operation control library unavailable; refusing to dispatch an unowned lane\n' >&2
+    return 2
+  fi
+  # dispatch run attaches this child before invoking the detached executor.
+  # Passing the parent explicitly makes an attach failure a launch failure,
+  # instead of leaving a running but unowned ship lane behind.
+  dispatch_args+=(--parent-operation "$operation_id" --parent-operation-cd "$work_dir")
+
   if ! run_id="$(pmctl_dispatch_run "$repo_root" "${dispatch_args[@]}")"; then
+    # Terminalize the producer now so ship status, doctor, and the lane record
+    # agree on the known failure rather than leaving a stale running operation.
+    # Two distinct failure shapes reach here: dispatch failed before reserving a
+    # child (childless -> failed), or it reserved one and then failed at the
+    # launch boundary.  The latter cannot be terminalized by the childless path,
+    # so converge it through reconcile, which reads the failed terminal claim
+    # dispatch wrote for the child that never launched.
+    if ! pmctl_operation_fail_if_childless "$repo_root" ship "$operation_id" "$work_dir" >&2; then
+      pmctl_operation_reconcile "$repo_root" ship "$operation_id" --cd "$work_dir" >&2 || true
+    fi
     _pmctl_ship_lanes_tracking_write "$reg_dir" "$ticket_id" "$branch" "$lane_path" "" "$adapter" "dispatch-failed" "$created_ts" || true
     printf 'pmctl ship: %s dispatch run failed -- lane worktree stays at %s for manual inspection, tracked as dispatch-failed\n' "$ticket_id" "$lane_path" >&2
     return 1
   fi
   run_id="$(printf '%s\n' "$run_id" | tail -1 | tr -d '[:space:]')"
 
-  if ! _pmctl_ship_lanes_tracking_write "$reg_dir" "$ticket_id" "$branch" "$lane_path" "$run_id" "$adapter" "dispatched" "$created_ts"; then
+  if ! _pmctl_ship_lanes_tracking_write "$reg_dir" "$ticket_id" "$branch" "$lane_path" "$run_id" "$adapter" "dispatched" "$created_ts" "$operation_id" "$work_dir"; then
     # Backticks below are literal Markdown code spans, not command substitution.
     # shellcheck disable=SC2016
     printf 'pmctl ship: %s CRITICAL -- dispatched (run_id=%s) at %s but tracking-append failed; the executor IS running but `pmctl ship status`/`list` cannot see it. Recover manually via `pmctl worktree list` / `pmctl artifacts show %s`.\n' \
@@ -786,7 +839,7 @@ pmctl_ship_run() {
     return 1
   fi
 
-  printf 'dispatched: run_id=%s lane=%s\n' "$run_id" "$lane_path"
+  printf 'dispatched: operation_id=%s run_id=%s lane=%s\n' "$operation_id" "$run_id" "$lane_path"
   # These three globals are this function's documented single-ticket return
   # channel (see the header comment above) -- read by pmctl_ship_parallel_run
   # in the sibling file pmctl-ship-parallel.sh, which shellcheck (run per-file
@@ -795,6 +848,8 @@ pmctl_ship_run() {
   PMCTL_SHIP_RUN_LANE_PATH="$lane_path"
   # shellcheck disable=SC2034
   PMCTL_SHIP_RUN_ID="$run_id"
+  # shellcheck disable=SC2034
+  PMCTL_SHIP_OPERATION_ID="$operation_id"
   # shellcheck disable=SC2034
   PMCTL_SHIP_RUN_BRANCH="$branch"
   return 0

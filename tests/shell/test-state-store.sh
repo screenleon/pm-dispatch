@@ -179,7 +179,7 @@ case_state_store_init_structure() {
   # Steps:
   #   1. Set PM_DISPATCH_STATE_ROOT to a fresh tmpdir.
   #   2. Call state_store_init.
-  #   3. Assert tasks/, reviews/, decisions/, context-packs/, and archive/ all exist.
+  #   3. Assert tasks/, reviews/, decisions/, operations/, context-packs/, and archive/ all exist.
   #   4. Assert $STORE/VERSION contains exactly "1".
   local name="state_store_init: creates directory structure"
   should_run "$name" || return 0
@@ -187,7 +187,7 @@ case_state_store_init_structure() {
   store="$tmp_root/state-init"
   PM_DISPATCH_STATE_ROOT="$store" state_store_init
   proj_dir="$(PM_DISPATCH_STATE_ROOT="$store" _sw_project_dir)"
-  for d in tasks reviews decisions context-packs archive; do
+  for d in tasks reviews decisions operations context-packs archive; do
     [[ -d "$proj_dir/$d" ]] || missing+=("$d")
   done
   if [[ "${#missing[@]}" -eq 0 && -f "$store/VERSION" && "$(cat "$store/VERSION")" == "1" ]]; then

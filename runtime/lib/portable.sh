@@ -442,7 +442,10 @@ _portable_lock_preflight_warn() {
 _portable_normalize_path() {
   local path="$1"
   local root="" relative=1
-  local -a parts out
+  # Explicit empty initialisers: under `set -u`, bash before 5.2 treats a
+  # declared-but-unassigned array as unbound, so `${#out[@]}` aborts for inputs
+  # that normalise to nothing (".", "./.") before any element is appended.
+  local -a parts=() out=()
   local -i i
   local part
 

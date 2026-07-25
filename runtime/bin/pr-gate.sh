@@ -353,6 +353,7 @@ else
   # built-in executors. Only codex is sent --sandbox/--approval; claude (headless
   # `claude --print`) accepts but ignores them as no-ops, so copy-mode omits them
   # — a deliberate simplification of the lib's per-runner-kind rule.
+  # shellcheck disable=SC2317 # copy-mode entry is selected dynamically below.
   dispatch_via() {
     local executor=${1-}
     local brief_file=${2-}
@@ -501,13 +502,139 @@ EXECUTOR="$(resolve_executor "$EXECUTOR_OPTION")" || exit 2
 # behavior is unchanged rather than fail-closing the whole gate on it.
 GUARD_PMCTL_CMD="pmctl"
 if [[ "$EXECUTOR" == "codex" ]]; then
-  _guard_pmctl_abs="$(command -v pmctl 2>/dev/null || true)"
-  _guard_repo_root="${SCRIPT_DIR%/scripts}"
-  if [[ -z "$_guard_pmctl_abs" && -x "$_guard_repo_root/cli/pmctl" ]]; then
-    _guard_pmctl_abs="$_guard_repo_root/cli/pmctl"
+  # Prefer an explicit transport bundled beside a copy-mode gate before the
+  # host PATH.  A standalone copied gate must not accidentally bind to an
+  # unrelated installed pmctl when its fixture/deployment provides bin/pmctl.
+  _guard_pmctl_abs=""
+  if [[ -x "$SCRIPT_DIR/cli/pmctl" ]]; then
+    _guard_pmctl_abs="$SCRIPT_DIR/cli/pmctl"
+  elif [[ -x "$SCRIPT_DIR/bin/pmctl" ]]; then
+    _guard_pmctl_abs="$SCRIPT_DIR/bin/pmctl"
+  elif [[ -x "$SCRIPT_DIR/../../cli/pmctl" ]]; then
+    _guard_pmctl_abs="$SCRIPT_DIR/../../cli/pmctl"
+  else
+    _guard_pmctl_abs="$(command -v pmctl 2>/dev/null || true)"
   fi
   [[ -n "$_guard_pmctl_abs" ]] && GUARD_PMCTL_CMD="$_guard_pmctl_abs"
-  unset _guard_pmctl_abs _guard_repo_root
+  unset _guard_pmctl_abs
+fi
+
+# Gate reviewers are producer children, not opaque adapter processes.  Resolve
+# the dispatch lifecycle as a SHARED RUNTIME dependency, not as a callback into
+# the public CLI: docs/architecture/script-domain-ownership.md requires
+# dependencies to flow cli/pmctl -> shared runtime -> adapter, so a producer
+# entrypoint under runtime/bin must reach `pmctl_dispatch_run` through
+# runtime/lib rather than by re-entering `cli/pmctl`.
+#
+# Only the repo layout can take this route.  The shared libraries derive their
+# own root as `<lib>/../..` (executor-router.sh), which holds for
+# `<root>/runtime/lib` but not for a copy-mode bundle that carries `lib/`
+# directly beside the gate — there the derived root lands one level above the
+# bundle and its `adapters/` tree is invisible.  A copy-mode bundle therefore
+# keeps the pre-existing degraded path (direct adapter dispatch, no parent
+# operation) rather than loading libraries under a root they cannot resolve.
+PMCTL_DISPATCH_LIB_DIR=""
+PMCTL_DISPATCH_ROOT=""
+if [[ -r "$SCRIPT_DIR/../lib/pmctl-dispatch.sh" && -d "$SCRIPT_DIR/../../adapters" ]]; then
+  PMCTL_DISPATCH_LIB_DIR="$SCRIPT_DIR/../lib"
+  PMCTL_DISPATCH_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+fi
+if [[ -z "$PMCTL_DISPATCH_LIB_DIR" && ( "$EXECUTOR" == codex || "$EXECUTOR" == claude ) ]]; then
+  printf 'pr-gate: parent-operation tracking unavailable for this deployment layout; using compatible direct reviewer dispatch\n' >&2
+fi
+
+# Libraries are sourced per dispatch inside a subshell rather than at this
+# script's top level.  The gate's own shell is long-lived: it evaluates reviewer
+# commands, runs a parallel watchdog, and parses results, so importing pmctl's
+# whole global namespace into it would trade one coupling problem for a worse
+# one.  A subshell keeps the previous process-level isolation while the
+# dependency direction stays runtime -> runtime.
+pmctl_gate_dispatch_lib_load() {
+  local _lib
+  for _lib in repo-layout detached-launch pmctl-policy pmctl-fs pmctl-adapter \
+    pmctl-guard executor-router pmctl-dispatch pmctl-operation; do
+    # shellcheck disable=SC1090
+    [[ -r "$PMCTL_DISPATCH_LIB_DIR/$_lib.sh" ]] && . "$PMCTL_DISPATCH_LIB_DIR/$_lib.sh"
+  done
+  declare -F pmctl_dispatch_run >/dev/null || return 1
+  return 0
+}
+
+# Gate reviewers are producer children, not opaque adapter processes.  Route
+# each invocation through pmctl's detached dispatch lifecycle, then wait for
+# its authenticated terminal sentinel.  The optional parent id is injected by
+# `pmctl gate run`; without it this remains a compatible standalone gate path.
+pmctl_gate_dispatch_and_wait() {
+  local executor="$1" brief_file="$2" working_dir="$3" model="$4" sandbox="$5" approval="$6" timeout="$7" isolation_level="${8:-}" effort="${9:-}"
+  # pmctl dispatch enforces the executor write boundary at `/tmp/brief-*.md`.
+  # Gate briefs are intentionally retained under the private run directory, so
+  # copy each one to a one-shot guardable snapshot before handing it to pmctl.
+  # Detached dispatch snapshots that input again before its supervisor starts;
+  # removing this intermediate copy after `dispatch run` returns is therefore
+  # safe and keeps the gate's durable source of truth inside the run directory.
+  local dispatch_brief dispatch_brief_name rc
+  dispatch_brief="$(mktemp -p /tmp "brief-gate-XXXXXX.md")" || {
+    printf 'pr-gate: failed to create guardable dispatch brief\n' >&2
+    return 1
+  }
+  # Preserve the source basename (notably the `-synthesis.md` role suffix)
+  # across the guarded /tmp snapshot.  Adapters may use the brief role to
+  # select their result contract; a generic mktemp basename erased it.
+  dispatch_brief_name="${dispatch_brief%.md}-$(basename "$brief_file")"
+  if ! command -p mv "$dispatch_brief" "$dispatch_brief_name"; then
+    rm -f "$dispatch_brief"
+    printf 'pr-gate: failed to name guardable dispatch brief\n' >&2
+    return 1
+  fi
+  dispatch_brief="$dispatch_brief_name"
+  if ! cp "$brief_file" "$dispatch_brief"; then
+    rm -f "$dispatch_brief"
+    printf 'pr-gate: failed to snapshot reviewer brief for dispatch\n' >&2
+    return 1
+  fi
+  local -a args=(--adapter "$executor" --cd "$working_dir" --brief-file "$dispatch_brief" --lifecycle detached --timeout "$timeout")
+  [[ -n "$model" && "$model" != default ]] && args+=(--model "$model")
+  [[ -n "$isolation_level" ]] && args+=(--isolation "$isolation_level")
+  [[ -n "$effort" ]] && args+=(--effort "$effort")
+  [[ -n "${PM_DISPATCH_TRACE_DIR:-}" ]] && args+=(--trace-dir "$PM_DISPATCH_TRACE_DIR")
+  [[ "$executor" == codex ]] && args+=(--sandbox "$sandbox" --approval "$approval")
+  [[ -n "${PM_GATE_PARENT_OPERATION:-}" ]] && args+=(--parent-operation "$PM_GATE_PARENT_OPERATION")
+  local run_id
+  run_id="$(
+    pmctl_gate_dispatch_lib_load || exit 2
+    pmctl_dispatch_run "$PMCTL_DISPATCH_ROOT" "${args[@]}"
+  )" || {
+    rc=$?
+    rm -f "$dispatch_brief"
+    return "$rc"
+  }
+  run_id="$(printf '%s\n' "$run_id" | tail -1 | tr -d '[:space:]')"
+  if ! [[ "$run_id" =~ ^run-[A-Za-z0-9]+-[A-Za-z0-9]+$ ]]; then
+    rm -f "$dispatch_brief"
+    printf 'pr-gate: dispatch returned invalid run id\n' >&2
+    return 2
+  fi
+  (
+    pmctl_gate_dispatch_lib_load || exit 2
+    pmctl_dispatch_wait "$PMCTL_DISPATCH_ROOT" "$run_id" --cd "$working_dir" --timeout "$timeout"
+  )
+  rc=$?
+  rm -f "$dispatch_brief"
+  return "$rc"
+}
+
+# Override the adapter-command formatter loaded above for gate execution only.
+# Call sites still receive a safely-quoted command string, preserving the
+# parallel watchdog/eval structure while moving lifecycle ownership to pmctl.
+if [[ -n "$PMCTL_DISPATCH_LIB_DIR" ]]; then
+dispatch_via() {
+  local first=1 arg
+  for arg in pmctl_gate_dispatch_and_wait "$@"; do
+    if [[ "$first" -eq 1 ]]; then first=0; else printf ' '; fi
+    printf '%q' "$arg"
+  done
+  printf '\n'
+}
 fi
 
 # Every supported executor now dispatches an INDEPENDENT subprocess (codex `codex
@@ -1745,7 +1872,7 @@ RBRIEF_EOF
     # per-reviewer TIMEOUT + 60s overhead; override via _PM_DISPATCH_GATE_WATCHDOG_TIMEOUT.
     _GATE_WATCHDOG_TIMEOUT="${_PM_DISPATCH_GATE_WATCHDOG_TIMEOUT:-$((TIMEOUT + 60))}"
     (
-      sleep "$_GATE_WATCHDOG_TIMEOUT"
+      command -p sleep "$_GATE_WATCHDOG_TIMEOUT"
       for _wpid in "${DISPATCH_PIDS[@]}"; do
         _kill_process_tree "$_wpid" TERM
       done
@@ -2035,7 +2162,7 @@ SBRIEF_P2
   _SYNTHESIS_PID=$!
   _GATE_SYNTHESIS_WATCHDOG_TIMEOUT="${_PM_DISPATCH_GATE_SYNTHESIS_WATCHDOG_TIMEOUT:-$((TIMEOUT + 60))}"
   (
-    sleep "$_GATE_SYNTHESIS_WATCHDOG_TIMEOUT"
+    command -p sleep "$_GATE_SYNTHESIS_WATCHDOG_TIMEOUT"
     _kill_process_tree "$_SYNTHESIS_PID" TERM
   ) &
   _SYNTHESIS_WATCHDOG_PID=$!
@@ -2202,7 +2329,18 @@ elif [[ -x "$_POST_GATE_HOOK" ]]; then
     say '\nSkipping post-gate hook: gate result is %s (post-gate runs only on GO)\n' "${_GATE_FINAL:-unknown}"
   else
     say '\nRunning post-gate hook: .pm-dispatch/post-gate.sh\n'
-    if ! (cd "$WORK_DIR" && bash "$_POST_GATE_HOOK"); then
+    # Keep this teardown path free of a subshell conditional.  Some deployed
+    # gate copies reached this branch through an incompatible parser and
+    # reported a syntax error after a valid GO artifact had already been
+    # written.  Save/restore explicitly so the hook still runs in WORK_DIR.
+    _POST_GATE_HOOK_RC=0
+    _POST_GATE_PREV_DIR="$PWD"
+    cd "$WORK_DIR" || _POST_GATE_HOOK_RC=$?
+    if [[ "$_POST_GATE_HOOK_RC" -eq 0 ]]; then
+      bash "$_POST_GATE_HOOK" || _POST_GATE_HOOK_RC=$?
+    fi
+    cd "$_POST_GATE_PREV_DIR" || exit 2
+    if [[ "$_POST_GATE_HOOK_RC" -ne 0 ]]; then
       printf '\n## Post-Gate Hook Failure\n**post-gate.sh exited nonzero -- this gate run is INCOMPLETE despite Final: GO above. Re-run after fixing the hook.**\n' >> "$OUTPUT_FILE"
       printf 'Error: post-gate hook failed\n' >&2
       exit 1

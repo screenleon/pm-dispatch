@@ -50,6 +50,7 @@ _write_sentinel() {
     _sentinel_path="$(detached_launch_sentinel_path "pm-gate" "$gate_id" "$_sentinel_nonce")"
     local -a _pairs=("final_state=$_state" "exit_code=$_rc")
     [[ -n "$_result" ]] && _pairs+=("result_file=$_result")
+    [[ -n "${PM_GATE_PARENT_OPERATION:-}" ]] && _pairs+=("parent_operation=$PM_GATE_PARENT_OPERATION")
     detached_launch_write_sentinel "$_sentinel_path" "${_pairs[@]}"
   fi
 }
