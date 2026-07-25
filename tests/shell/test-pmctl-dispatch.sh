@@ -1523,6 +1523,9 @@ case_parent_launch_failure_terminalizes_reserved_child() {
       # shellcheck disable=SC1090
       . "$REPO_ROOT/runtime/lib/$_lib.sh"
     done
+    # Overrides the real implementation for the pmctl_dispatch_run call below;
+    # ShellCheck cannot see that indirect invocation.
+    # shellcheck disable=SC2317
     pmctl_dispatch_run_detached() { printf 'forced launch failure\n' >&2; return 7; }
     pmctl_dispatch_run "$REPO_ROOT" --lifecycle detached --adapter codex --cd "$target" \
       --brief-file "$brief" --parent-operation "$op" --parent-operation-cd "$owner" 2>&1
