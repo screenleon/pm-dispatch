@@ -142,13 +142,15 @@ check_production_no_direct_state_writes() {
           || s ~ /(^|[^<])>>?/
       }
       function load_bearing_target(s) {
-        return s ~ /(runs[.]jsonl|events[.]jsonl|repo[.]json|runs[.]lock|events[.]lock)/ \
-          || s ~ /\/(tasks|reviews|decisions|context-packs|archive)(\/|["'\''${}[:space:]])/ \
+        return s ~ /(runs[.]jsonl|events[.]jsonl|children[.](jsonl|lock|lockdir)|repo[.]json|runs[.]lock|events[.]lock)/ \
+          || s ~ /(op-[0-9]{8}T[0-9]{6}Z-[a-f0-9]{6}|[$]operation_id|[$][{]operation_id[}])[.]json/ \
+          || s ~ /(^|[\/"'\''[:space:]])(tasks|reviews|decisions|operations|context-packs|archive)(\/|["'\''${}[:space:]])/ \
           || s ~ /\/VERSION(["'\''${}[:space:]]|$)/
       }
       function state_scope(s) {
         return s ~ /(PM_DISPATCH_STATE_ROOT|_sw_store_root|_sw_project_dir|\/projects\/)/ \
-          || s ~ /[$][{]?(store_root|proj_dir|version_file|runs_file|events_file|task_file|review_file|decision_file|context_pack[^}]*)[}]?/
+          || s ~ /[$][{](store_root|proj_dir|version_file|runs_file|events_file|task_file|review_file|decision_file|operation_file|operation_dir|op_dir|operation_children_file|context_pack[A-Za-z0-9_]*)([^A-Za-z0-9_]|$)/ \
+          || s ~ /[$](store_root|proj_dir|version_file|runs_file|events_file|task_file|review_file|decision_file|operation_file|operation_dir|op_dir|operation_children_file|context_pack[A-Za-z0-9_]*)([^A-Za-z0-9_]|$)/
       }
       function inspect_line(raw, line_number, line, load_bearing, scoped) {
         line = raw
@@ -340,6 +342,69 @@ if should_run "selftest/production_state_writer catches mv destination"; then
   rm -rf "$FIX"
 fi
 
+if should_run "selftest/production_state_writer catches operation projection variable"; then
+  name="selftest/production_state_writer catches operation projection variable"
+  _fixture
+  printf '#!/usr/bin/env bash\nmv -f "$tmp" "$operation_file"\n' \
+    > "$FIX/runtime/lib/direct-operation.sh"
+  _expect_fires "$name" "$(check_production_no_direct_state_writes "$FIX")"
+  rm -rf "$FIX"
+fi
+
+if should_run "selftest/production_state_writer catches operation child append"; then
+  name="selftest/production_state_writer catches operation child append"
+  _fixture
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$child" >> "$entity_root/operations/$operation_id/children.jsonl"\n' \
+    > "$FIX/runtime/lib/direct-operation-child.sh"
+  _expect_fires "$name" "$(check_production_no_direct_state_writes "$FIX")"
+  rm -rf "$FIX"
+fi
+
+if should_run "selftest/production_state_writer catches split-line relative child append"; then
+  name="selftest/production_state_writer catches split-line relative child append"
+  _fixture
+  printf '#!/usr/bin/env bash\ncd "$op_dir"\nprintf "%%s\\n" "$child" >> children.jsonl\n' \
+    > "$FIX/runtime/lib/direct-relative-operation-child.sh"
+  _expect_fires "$name" "$(check_production_no_direct_state_writes "$FIX")"
+  rm -rf "$FIX"
+fi
+
+if should_run "selftest/production_state_writer catches relative operation projection"; then
+  name="selftest/production_state_writer catches relative operation projection"
+  _fixture
+  printf '#!/usr/bin/env bash\nmv -f "$tmp" "operations/$operation_id.json"\n' \
+    > "$FIX/runtime/lib/direct-relative-operation.sh"
+  _expect_fires "$name" "$(check_production_no_direct_state_writes "$FIX")"
+  rm -rf "$FIX"
+fi
+
+if should_run "selftest/production_state_writer catches split-line operation projection"; then
+  name="selftest/production_state_writer catches split-line operation projection"
+  _fixture
+  printf '#!/usr/bin/env bash\ncd "$op_dir"\nmv -f "$tmp" "$operation_id.json"\n' \
+    > "$FIX/runtime/lib/direct-split-operation.sh"
+  _expect_fires "$name" "$(check_production_no_direct_state_writes "$FIX")"
+  rm -rf "$FIX"
+fi
+
+if should_run "selftest/production_state_writer catches operation directory variable"; then
+  name="selftest/production_state_writer catches operation directory variable"
+  _fixture
+  printf '#!/usr/bin/env bash\nmkdir -p "$op_dir"\n' \
+    > "$FIX/runtime/lib/direct-operation-dir.sh"
+  _expect_fires "$name" "$(check_production_no_direct_state_writes "$FIX")"
+  rm -rf "$FIX"
+fi
+
+if should_run "selftest/production_state_writer does NOT match longer operation variable"; then
+  name="selftest/production_state_writer does NOT match longer operation variable"
+  _fixture
+  printf '#!/usr/bin/env bash\nmkdir -p "$op_directory_cache"\n' \
+    > "$FIX/runtime/lib/unrelated-operation-cache.sh"
+  _expect_clean "$name" "$(check_production_no_direct_state_writes "$FIX")"
+  rm -rf "$FIX"
+fi
+
 if should_run "selftest/production_state_writer catches multiline mv destination"; then
   name="selftest/production_state_writer catches multiline mv destination"
   _fixture
@@ -381,7 +446,7 @@ fi
 if should_run "selftest/production_state_writer allows state readers"; then
   name="selftest/production_state_writer allows state readers"
   _fixture
-  printf '#!/usr/bin/env bash\njq -c . "$proj_dir/tasks/CC-1.json"\n' \
+  printf '#!/usr/bin/env bash\njq -c . "$operation_file"\n' \
     > "$FIX/runtime/lib/state-reader.sh"
   _expect_clean "$name" "$(check_production_no_direct_state_writes "$FIX")"
   rm -rf "$FIX"

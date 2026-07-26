@@ -94,6 +94,14 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Operation state writes now participate in writer-boundary parity
+  (CC-508).** `layout.yaml` declares the three operation writer entry points
+  and the append-locked `children.jsonl` relation, while dropping the stale,
+  unimplemented `review_upsert` declaration. The production-domain ratchet now
+  recognizes operation projections and child relations as load-bearing state,
+  and the affected-test planner selects layout parity whenever either the
+  layout contract or state writer changes.
+
 - **A detached gate launcher failure terminalizes its childless parent
   (CC-508).** `pmctl gate run` creates the parent operation before either
   lifecycle path starts, but the detached branch returned the launcher's status
