@@ -18,7 +18,7 @@ make_fixture() {
   local name="$1" repo
   repo="$TMP_ROOT/$name"
   mkdir -p "$repo/scripts/lib" "$repo/runtime/lib" "$repo/tests/bin" "$repo/tests/lib" \
-    "$repo/core/schema"
+    "$repo/core/schema" "$repo/core/state"
   cp "$REPO_ROOT/tests/bin/run-tests.sh" "$repo/tests/bin/run-tests.sh"
   cp "$REPO_ROOT/tests/bin/run-all-tests.sh" "$repo/tests/bin/run-all-tests.sh"
   cp "$SCRIPT_DIR/../lib/test-result.sh" "$repo/tests/lib/test-result.sh"
@@ -28,7 +28,7 @@ make_fixture() {
   cat > "$repo/tests/lib/test-suite-runner.sh" <<'RUNNER'
 #!/usr/bin/env bash
 set -euo pipefail
-suites=(lint-agents lint-scripts lint-script-domain-inventory lint-portable-repo-paths test-lint-shellcheck test-script-domain-inventory test-lint-portable-repo-paths test-lint-frontmatter test-commands test-check-docs-freshness test-guards test-migrate test-install test-doctor test-pmctl-dispatch test-pmctl-context test-pmctl-memory test-pr-gate test-host-manifest test-host-write-codex test-codex-dispatch-continuation test-host-write-parity test-core-schemas test-layer-boundaries test-pm-scripts test-run-tests)
+suites=(lint-agents lint-scripts lint-script-domain-inventory lint-portable-repo-paths test-lint-shellcheck test-script-domain-inventory test-lint-portable-repo-paths test-lint-frontmatter test-commands test-check-docs-freshness test-guards test-migrate test-install test-doctor test-pmctl-dispatch test-pmctl-context test-pmctl-memory test-pr-gate test-pmctl-operation test-host-manifest test-host-write-codex test-codex-dispatch-continuation test-host-write-parity test-core-schemas test-layer-boundaries test-pm-scripts test-run-tests test-state-store test-state-layout-parity)
 for arg in "$@"; do
   if [[ "$arg" == --list ]]; then printf '%s\n' "${suites[@]}"; exit 0; fi
 done
@@ -91,6 +91,36 @@ case_memory_config_mapping_has_no_gap() {
     pass "$name"
   else
     fail "$name" "status=$status out=$out args=$(cat "$args" 2>/dev/null)"
+  fi
+}
+
+case_state_writer_mapping_runs_operation_parity() {
+  local name=state-writer-mapping-runs-operation-parity repo out status=0 args
+  args="$TMP_ROOT/$name.args"
+  repo="$(make_fixture "$name")"
+  out=$(RUN_TESTS_ARGS_LOG="$args" "$repo/tests/bin/run-tests.sh" \
+    --path runtime/lib/state-writer.sh --list 2>&1) || status=$?
+  if [[ "$status" -eq 0 && "$out" == *"test-state-store"* &&
+        "$out" == *"test-state-layout-parity"* && "$out" == *"test-pmctl-operation"* &&
+        "$out" != *"coverage gaps"* && ! -e "$args" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out executed=$([[ -e "$args" ]] && echo yes || echo no)"
+  fi
+}
+
+case_state_layout_mapping_runs_parity() {
+  local name=state-layout-mapping-runs-parity repo out status=0 args
+  args="$TMP_ROOT/$name.args"
+  repo="$(make_fixture "$name")"
+  out=$(RUN_TESTS_ARGS_LOG="$args" "$repo/tests/bin/run-tests.sh" \
+    --path core/state/layout.yaml --list 2>&1) || status=$?
+  if [[ "$status" -eq 0 && "$out" == *"test-state-store"* &&
+        "$out" == *"test-state-layout-parity"* && "$out" != *"coverage gaps"* &&
+        ! -e "$args" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out executed=$([[ -e "$args" ]] && echo yes || echo no)"
   fi
 }
 
@@ -362,6 +392,8 @@ case_invalid_structured_sink_fails_closed() {
 
 case_direct_library_mapping
 case_memory_config_mapping_has_no_gap
+case_state_writer_mapping_runs_operation_parity
+case_state_layout_mapping_runs_parity
 case_docs_mapping_list_only
 case_operational_docs_map_to_stale_reference_lint
 case_agent_mapping_uses_registered_frontmatter_suite

@@ -203,7 +203,10 @@ map_path() {
       add_suite test-pmctl-adapter-generate; add_suite test-pmctl-artifacts
       add_suite test-pmctl-gate; add_suite test-pmctl-discovery; behavioral=1 ;;
     runtime/lib/state-writer.sh)
-      add_suite test-state-store; behavioral=1 ;;
+      add_suite test-state-store; add_suite test-state-layout-parity
+      add_suite test-pmctl-operation; behavioral=1 ;;
+    core/state/layout.yaml)
+      add_suite test-state-store; add_suite test-state-layout-parity; behavioral=1 ;;
     runtime/lib/state-paths.sh)
       add_suite test-state-paths; add_suite test-state-store-rotation; behavioral=1 ;;
     runtime/lib/pmctl-policy.sh)

@@ -11,7 +11,8 @@
 #                       3. store_root_default below  (fallback)
 #   $PROJECT       := sha1(git rev-parse --show-toplevel) — partitioning key
 #   $TASK_ID       := pattern ^[A-Z]{1,4}-[0-9]+$ (task.schema.json)
-#   $TS_HEX        := YYYYMMDDTHHMMSSZ-<6 hex>   (run/event/review id suffix)
+#   $OPERATION_ID  := pattern ^op-[0-9]{8}T[0-9]{6}Z-[a-f0-9]{6}$
+#   $TS_HEX        := YYYYMMDDTHHMMSSZ-<6 hex>   (run/event/review/operation id suffix)
 #   $YYYYMM        := archive rotation period (UTC month)
 #   $NNNN          := zero-padded monotonic archive segment within $YYYYMM
 
@@ -100,7 +101,14 @@ project_partition:
       file_pattern: "op-$TS_HEX.json"
       schema: ../schema/operation.schema.json
       description: "Parent-operation lifecycle records and append-only child relations."
-      write_strategy: write-temp-then-rename
+      write_strategies:
+        create: write-temp-then-hard-link-exclusive
+        update: write-temp-then-rename
+      child_relation:
+        path_pattern: "$OPERATION_ID/children.jsonl"
+        format: jsonl
+        write_strategy: append-locked
+        lock_base_pattern: "$OPERATION_ID/children"
 
     - path: "context-packs/"
       file_pattern: "$TASK_ID-$TS_HEX.json"
@@ -117,13 +125,17 @@ project_partition:
 
 # Writer-boundary contract
 writer:
-  description: "Single designated write boundary. The runtime layer owns the concrete module binding; only the designated writer module may write to $STORE paths."
+  description: "Single designated write boundary. The runtime layer owns the concrete module binding; only the designated writer module may write to $STORE paths. entry_points enumerates every public mutating API in that module."
   entry_points:
+    - state_project_identity_write
+    - state_store_init
     - runs_append
     - events_append
+    - operation_upsert
+    - operation_create
+    - operation_child_append
     - task_upsert
     - task_delete
-    - review_upsert
     - decision_upsert
     - decision_delete
 
