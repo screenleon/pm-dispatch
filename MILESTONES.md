@@ -107,7 +107,7 @@
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-512 | Slice A coordinate sources／CLI resolution 已交付；machine-owned assurance envelope、evidence capture、verifier 仍待 B／C；targeted 不再是 tier | ⚠️ |
+| CC-512 | Slices A／B／C：coordinate sources／CLI resolution、machine-owned assurance envelope／evidence capture、shared verifier／parity ratchets；targeted 不再是 tier | ✅ pr:#451 |
 | CC-513 | canonical resolver：minimum tier、required reviewers、recommended/required mode、generic vs maintainer policy 與 downgrade audit | 🔵 |
 | CC-515 | immutable subject；artifact validity、subject freshness、policy applicability 三軸 shared verifier | 🔵 |
 
@@ -122,6 +122,7 @@
 | CC-519 | selected-reviewer coverage/finding contract；sequential logical sections 與 parallel session isolation 分開 | 🔵 |
 | CC-520 | synthesis findings-union parity、root-cause grouping、coverage matrix、remediation seed、no silent drop | 🔵 |
 | CC-521 | actionable test-gap matrix + bounded protocol recovery；seeded live recall 僅作 quality evaluation | 🔵 |
+| CC-522 | arbitrary `--test-cmd` opaque／structured negotiation；test failure 與 timeout／environment INCOMPLETE 分流 | 🔵 |
 
 ### Phase 9 — maintainer closure + publish authorization
 

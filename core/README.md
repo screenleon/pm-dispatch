@@ -2,9 +2,8 @@
 
 This directory contains the canonical PM-runtime data contract. **`core/` is definitions only — it knows nothing executable.**
 
-- `schema/`        — JSON Schema files (`.schema.json`) for the 8 first-class
-                     entities: Task, Run, Event, Review, Decision, Brief,
-                     Handover, ContextPack.
+- `schema/`        — JSON Schema files (`.schema.json`) for runtime entities
+                     and evidence envelopes, including gate assurance.
 - `policy/`        — declarative YAML/TSV tables for enums, presets, and state
                      machines.
 - `state/`         — definition of the on-disk state-store layout
@@ -38,4 +37,7 @@ The designated writer module in `runtime/lib/state-writer.sh` is the sole manage
 
 ## Schema versioning
 
-Every payload schema includes `schema_version: { const: 1 }` as a required field. Future breaking changes bump the int; old payloads remain valid against the old schema version. `jq '.schema_version'` is the bash-readable discriminator. No `$id` URLs.
+Every payload schema includes `schema_version` as a required integer `const`
+field. Breaking changes bump that integer; old payloads remain valid against
+the schema version that defines them. `jq '.schema_version'` is the
+bash-readable discriminator. No `$id` URLs.

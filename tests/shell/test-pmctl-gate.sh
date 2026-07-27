@@ -22,6 +22,13 @@ th_init "$@"
 # deterministic and never collide with a real gate run on this host.
 _GATE_CLI_XDG_RUNTIME_DIR="$tmp_root/gate-cli-xdg-runtime"
 mkdir -p "$_GATE_CLI_XDG_RUNTIME_DIR" && chmod 700 "$_GATE_CLI_XDG_RUNTIME_DIR"
+_GATE_VERIFY_REPO="$tmp_root/gate-verify-repo"
+_GATE_VERIFY_STATE_ROOT="$tmp_root/gate-verify-state"
+mkdir -p "$_GATE_VERIFY_REPO" "$_GATE_VERIFY_STATE_ROOT"
+git -C "$_GATE_VERIFY_REPO" init -q
+
+# shellcheck source=runtime/lib/state-paths.sh
+. "$REPO_ROOT/runtime/lib/state-paths.sh"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -394,6 +401,132 @@ Final: ${body_final}
 RESULT
 }
 
+_mk_gate_result_v2() {
+  local path="$1" result_sha
+  _mk_gate_result "$path" GO
+  sed -i \
+    -e 's/^gate_result_version: pr_gate_result_v1$/gate_result_version: pr_gate_result_v2/' \
+    -e '/^gate_result_version:/a gate_assurance: result.md.assurance.json' \
+    "$path"
+  result_sha="$(sha256sum "$path" | awk '{print $1}')"
+  jq -n --arg result_sha "$result_sha" '{
+    kind:"gate_assurance_v2",
+    schema_version:2,
+    result:{final:"GO"},
+    bindings:{
+      result_sha256:$result_sha,
+      repo_root:"/tmp/repo",
+      repo_identity:("b" * 64),
+      base_commit:("c" * 40),
+      head_commit:("d" * 40),
+      subject_fingerprint:("e" * 64)
+    },
+    coordinates:{
+      tier:{requested:"auto",resolved:"express",evidence_floor:"reviewer-verdicts"},
+      mode:{requested:"default",resolved:"sequential",topology:"combined-session",synthesis:"inline"},
+      pass:{requested:"initial",resolved:"initial",scope:"comprehensive",initial_result:null},
+      coverage:{requested:null,selected:["critic"],skipped:["qa-tester"],
+        vocabulary:["critic","qa-tester"]},
+      independence:{implementation_context_isolated:null,
+        reviewer_topology:"combined-session",per_reviewer_independent:null,
+        evidence_status:"unavailable"}
+    },
+    dispatch:{outcomes:[{role:"combined",reviewer:null,status:"passed",
+      run_id:null,evidence_status:"unavailable"}]},
+    provenance:{producer:"pr-gate.sh",policy_source:"canonical",attestation:null}
+  }' > "${path}.assurance.json"
+}
+
+_mk_gate_result_v2_verified() {
+  local path="$1" bound_repo="${2:-/tmp/repo}" sidecar="${1}.assurance.json"
+  local result_parent run_root project_dir attestation assurance_sha
+  _mk_gate_result_v2 "$path"
+  result_parent="$(dirname "$path")"
+  run_root="$(dirname "$result_parent")"
+  project_dir="$(dirname "$(dirname "$run_root")")"
+  attestation="$run_root/gate-assurance-20260727-000000.attestation.json"
+  mkdir -p "$run_root/.agent-trace" "$project_dir"
+  printf 'trace\n' > "$run_root/.agent-trace/test.last"
+  jq --arg bound_repo "$bound_repo" '
+    .bindings.repo_root = $bound_repo |
+    .coordinates.independence = {
+      implementation_context_isolated:true,
+      reviewer_topology:"combined-session",
+      per_reviewer_independent:false,
+      evidence_status:"verified"
+    } |
+    .dispatch.outcomes = [{
+      role:"combined",reviewer:null,status:"passed",
+      run_id:"run-20260727T000000Z-aaaaaa",evidence_status:"verified"
+    }] |
+    .provenance.attestation = "gate-assurance-20260727-000000.attestation.json"
+  ' "$sidecar" > "${sidecar}.tmp"
+  mv "${sidecar}.tmp" "$sidecar"
+  jq -nc --arg trace "$run_root/.agent-trace/test.last" \
+    --arg bound_repo "$bound_repo" '{
+    schema_version:3,id:"run-20260727T000000Z-aaaaaa",task_id:"UNKN-0",
+    executor:"codex",state:"ok",exit_code:0,model:"default",
+    brief_file:"/tmp/brief.md",working_dir:$bound_repo,trace_path:$trace,
+    created_ts:"2026-07-27T00:00:00Z",operation_id:"op-20260727T000000Z-aaaaaa"
+  }' > "$project_dir/runs.jsonl"
+  assurance_sha="$(sha256sum "$sidecar" | awk '{print $1}')"
+  jq -n --arg assurance_sha "$assurance_sha" --slurpfile a "$sidecar" '
+    $a[0] as $sidecar | {
+      kind:"gate_assurance_attestation_v1",
+      schema_version:1,
+      result_sha256:$sidecar.bindings.result_sha256,
+      assurance_sha256:$assurance_sha,
+      repo_root:$sidecar.bindings.repo_root,
+      repo_identity:$sidecar.bindings.repo_identity,
+      base_commit:$sidecar.bindings.base_commit,
+      head_commit:$sidecar.bindings.head_commit,
+      subject_fingerprint:$sidecar.bindings.subject_fingerprint,
+      run_ids:[$sidecar.dispatch.outcomes[].run_id]
+    }
+  ' > "$attestation"
+}
+
+_gate_verify_result_path() {
+  local slug="$1" run_root
+  run_root="$(
+    PM_DISPATCH_STATE_ROOT="$_GATE_VERIFY_STATE_ROOT" \
+      _SW_REPO_ROOT="$_GATE_VERIFY_REPO" \
+      sw_project_run_dir "gate-$slug"
+  )"
+  printf '%s/.gate-results/result.md\n' "$run_root"
+}
+
+_run_canonical_gate_verify() {
+  local result="$1"
+  (
+    cd "$_GATE_VERIFY_REPO"
+    PM_DISPATCH_STATE_ROOT="$_GATE_VERIFY_STATE_ROOT" \
+      "$PMCTL" gate verify "$result"
+  )
+}
+
+_mk_gate_result_v2_legacy_assurance() {
+  local path="$1" sidecar="${1}.assurance.json"
+  _mk_gate_result_v2 "$path"
+  jq '
+    .kind = "gate_assurance_v1" |
+    .schema_version = 1 |
+    del(.bindings) |
+    .coordinates.independence = {
+      implementation_context_isolated:true,
+      reviewer_topology:"combined-session",
+      per_reviewer_independent:false,
+      evidence_status:"verified"
+    } |
+    .dispatch.outcomes = [{
+      role:"combined",reviewer:null,status:"passed",
+      run_id:"run-20260727T000000Z-aaaaaa",evidence_status:"verified"
+    }] |
+    .provenance = {producer:"pr-gate.sh",policy_source:"canonical"}
+  ' "$sidecar" > "${sidecar}.tmp"
+  mv "${sidecar}.tmp" "$sidecar"
+}
+
 # ---- 6: gate verify accepts a structurally valid result ----------------------
 case_verify_valid() {
   local name="gate/verify: valid result exits 0"
@@ -402,7 +535,297 @@ case_verify_valid() {
   _mk_gate_result "$result" GO
   local out code
   set +e; out="$("$PMCTL" gate verify "$result" 2>&1)"; code=$?; set -e
-  if [[ "$code" -eq 0 ]] && [[ "$out" == *"gate result OK"* ]]; then
+  if [[ "$code" -eq 0 ]] && [[ "$out" == *"gate result OK"* ]] \
+      && [[ "$out" == *"assurance: unavailable"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+case_verify_v2_assurance() {
+  local name="gate/verify: v2 machine assurance exits 0"
+  should_run "$name" || return 0
+  local result="$tmp_root/v2-assurance/result.md" out code
+  _mk_gate_result_v2 "$result"
+  set +e; out="$("$PMCTL" gate verify "$result" 2>&1)"; code=$?; set -e
+  if [[ "$code" -eq 0 && "$out" == *"assurance: verified"* \
+      && "$out" == *"assurance file:"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+case_verify_v2_canonical_authorization() {
+  local name="gate/verify: v2 protected attestation and canonical runs exit 0"
+  should_run "$name" || return 0
+  local result
+  local out code
+  result="$(_gate_verify_result_path auth)"
+  _mk_gate_result_v2_verified "$result" "$_GATE_VERIFY_REPO"
+  set +e; out="$(_run_canonical_gate_verify "$result" 2>&1)"; code=$?; set -e
+  if [[ "$code" -eq 0 && "$out" == *"assurance: verified"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+case_verify_v2_forged_state_tree_rejected() {
+  local name="gate/verify: self-consistent noncanonical state tree exits 1"
+  should_run "$name" || return 0
+  local result="$tmp_root/forged/projects/key/runs/gate-forged/.gate-results/result.md"
+  local out code
+  _mk_gate_result_v2_verified "$result" "$_GATE_VERIFY_REPO"
+  set +e; out="$(_run_canonical_gate_verify "$result" 2>&1)"; code=$?; set -e
+  if [[ "$code" -eq 1 \
+      && "$out" == *"outside the invoking repository canonical state partition"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+case_verify_v2_repo_binding_rejected() {
+  local name="gate/verify: canonical state with wrong repository binding exits 1"
+  should_run "$name" || return 0
+  local result out code
+  result="$(_gate_verify_result_path repo-binding)"
+  _mk_gate_result_v2_verified "$result" "/tmp/not-the-invoking-repo"
+  set +e; out="$(_run_canonical_gate_verify "$result" 2>&1)"; code=$?; set -e
+  if [[ "$code" -eq 1 \
+      && "$out" == *"repository binding does not match the invoking repository"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+case_verify_v2_legacy_assurance_is_unavailable() {
+  local name="gate/verify: unbound v1 envelope remains readable but unavailable"
+  should_run "$name" || return 0
+  local result="$tmp_root/v2-legacy-envelope/result.md" out code
+  _mk_gate_result_v2_legacy_assurance "$result"
+  set +e; out="$("$PMCTL" gate verify "$result" 2>&1)"; code=$?; set -e
+  if [[ "$code" -eq 0 && "$out" == *"assurance: unavailable"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+case_verify_v2_claim_mismatch() {
+  local name="gate/verify: v2 coverage partition mismatch exits 1"
+  should_run "$name" || return 0
+  local result="$tmp_root/v2-mismatch/result.md" out code
+  _mk_gate_result_v2 "$result"
+  jq '.coordinates.coverage.skipped = []' "${result}.assurance.json" \
+    > "${result}.assurance.tmp"
+  mv "${result}.assurance.tmp" "${result}.assurance.json"
+  set +e; out="$("$PMCTL" gate verify "$result" 2>&1)"; code=$?; set -e
+  if [[ "$code" -eq 1 && "$out" == *"structural/claim verification"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+case_verify_v2_surplus_topology_record() {
+  local name="gate/verify: v2 surplus topology record exits 1"
+  should_run "$name" || return 0
+  local result="$tmp_root/v2-surplus/result.md" out code
+  _mk_gate_result_v2 "$result"
+  jq '.dispatch.outcomes += [{
+    role:"synthesis",reviewer:null,status:"passed",
+    run_id:null,evidence_status:"unavailable"
+  }]' "${result}.assurance.json" > "${result}.assurance.tmp"
+  mv "${result}.assurance.tmp" "${result}.assurance.json"
+  set +e; out="$("$PMCTL" gate verify "$result" 2>&1)"; code=$?; set -e
+  if [[ "$code" -eq 1 && "$out" == *"structural/claim verification"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+case_verify_v2_unknown_fields_rejected() {
+  local name="gate/verify: v2 unknown top-level and nested fields exit 1"
+  should_run "$name" || return 0
+  local variant result out code
+  for variant in top-level nested; do
+    result="$tmp_root/v2-unknown-$variant/result.md"
+    _mk_gate_result_v2 "$result"
+    if [[ "$variant" == top-level ]]; then
+      jq '.unexpected = true' "${result}.assurance.json" > "${result}.assurance.tmp"
+    else
+      jq '.coordinates.tier.unexpected = true' "${result}.assurance.json" \
+        > "${result}.assurance.tmp"
+    fi
+    mv "${result}.assurance.tmp" "${result}.assurance.json"
+    set +e; out="$("$PMCTL" gate verify "$result" 2>&1)"; code=$?; set -e
+    if [[ "$code" -ne 1 || "$out" != *"structural/claim verification"* ]]; then
+      fail "$name" "$variant code=$code out=$out"
+      return
+    fi
+  done
+  pass "$name"
+}
+
+case_verify_v2_result_binding_tamper() {
+  local name="gate/verify: v2 changed result digest exits 1"
+  should_run "$name" || return 0
+  local result="$tmp_root/v2-result-tamper/projects/key/runs/gate-test/.gate-results/result.md"
+  local out code
+  _mk_gate_result_v2_verified "$result"
+  printf '\npost-finalization mutation\n' >> "$result"
+  set +e; out="$("$PMCTL" gate verify "$result" 2>&1)"; code=$?; set -e
+  if [[ "$code" -eq 1 && "$out" == *"structural/claim verification"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+case_verify_v2_sidecar_attestation_tamper() {
+  local name="gate/verify: v2 substituted sidecar exits 1"
+  should_run "$name" || return 0
+  local result
+  local out code sidecar
+  result="$(_gate_verify_result_path sidecar-tamper)"
+  sidecar="${result}.assurance.json"
+  _mk_gate_result_v2_verified "$result" "$_GATE_VERIFY_REPO"
+  jq '.coordinates.tier.evidence_floor = "forged"' "$sidecar" > "${sidecar}.tmp"
+  mv "${sidecar}.tmp" "$sidecar"
+  set +e; out="$(_run_canonical_gate_verify "$result" 2>&1)"; code=$?; set -e
+  if [[ "$code" -eq 1 && "$out" == *"protected attestation mismatch"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+case_verify_v2_subject_binding_tamper() {
+  local name="gate/verify: v2 changed subject fingerprint exits 1"
+  should_run "$name" || return 0
+  local result
+  local out code sidecar
+  result="$(_gate_verify_result_path subject-tamper)"
+  sidecar="${result}.assurance.json"
+  _mk_gate_result_v2_verified "$result" "$_GATE_VERIFY_REPO"
+  jq '.bindings.subject_fingerprint = ("f" * 64)' "$sidecar" > "${sidecar}.tmp"
+  mv "${sidecar}.tmp" "$sidecar"
+  set +e; out="$(_run_canonical_gate_verify "$result" 2>&1)"; code=$?; set -e
+  if [[ "$code" -eq 1 && "$out" == *"protected attestation mismatch"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+case_verify_v2_canonical_run_mismatch() {
+  local name="gate/verify: v2 unresolvable canonical run exits 1"
+  should_run "$name" || return 0
+  local result
+  local out code run_root project_dir
+  result="$(_gate_verify_result_path run-tamper)"
+  _mk_gate_result_v2_verified "$result" "$_GATE_VERIFY_REPO"
+  run_root="$(dirname "$(dirname "$result")")"
+  project_dir="$(dirname "$(dirname "$run_root")")"
+  jq '.state = "failed" | .exit_code = 1' "$project_dir/runs.jsonl" \
+    > "$project_dir/runs.tmp"
+  mv "$project_dir/runs.tmp" "$project_dir/runs.jsonl"
+  set +e; out="$(_run_canonical_gate_verify "$result" 2>&1)"; code=$?; set -e
+  if [[ "$code" -eq 1 && "$out" == *"canonical run records"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+case_verify_v2_publication_race_retries() {
+  local name="gate/verify: canonical v2 publication race retries"
+  should_run "$name" || return 0
+  local result sidecar staged out code publisher
+  result="$(_gate_verify_result_path publication-race)"
+  sidecar="${result}.assurance.json"
+  staged="${sidecar}.staged"
+  _mk_gate_result_v2 "$result"
+  mv "$sidecar" "$staged"
+  (
+    sleep 0.2
+    mv "$staged" "$sidecar"
+  ) &
+  publisher=$!
+  set +e; out="$(_run_canonical_gate_verify "$result" 2>&1)"; code=$?; set -e
+  wait "$publisher"
+  if [[ "$code" -eq 0 && "$out" == *"gate result OK"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+case_verify_v2_attestation_publication_race_retries() {
+  local name="gate/verify: canonical v2 attestation publication race retries"
+  should_run "$name" || return 0
+  local result run_root attestation staged out code publisher
+  result="$(_gate_verify_result_path attestation-race)"
+  _mk_gate_result_v2_verified "$result" "$_GATE_VERIFY_REPO"
+  run_root="$(dirname "$(dirname "$result")")"
+  attestation="$run_root/gate-assurance-20260727-000000.attestation.json"
+  staged="${attestation}.staged"
+  mv "$attestation" "$staged"
+  (
+    sleep 0.2
+    mv "$staged" "$attestation"
+  ) &
+  publisher=$!
+  set +e; out="$(_run_canonical_gate_verify "$result" 2>&1)"; code=$?; set -e
+  wait "$publisher"
+  if [[ "$code" -eq 0 && "$out" == *"assurance: verified"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+case_verify_v2_pointer_escape() {
+  local name="gate/verify: v2 sidecar pointer escape exits 1"
+  should_run "$name" || return 0
+  local result="$tmp_root/v2-pointer/result.md" out code
+  _mk_gate_result_v2 "$result"
+  sed -i 's|^gate_assurance:.*|gate_assurance: ../outside.json|' "$result"
+  set +e; out="$("$PMCTL" gate verify "$result" 2>&1)"; code=$?; set -e
+  if [[ "$code" -eq 1 && "$out" == *"bounded sibling"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+case_verify_v2_missing_sidecar() {
+  local name="gate/verify: v2 missing assurance sidecar exits 1"
+  should_run "$name" || return 0
+  local result="$tmp_root/v2-missing-sidecar/result.md" out code
+  _mk_gate_result_v2 "$result"
+  rm -f "${result}.assurance.json"
+  set +e; out="$("$PMCTL" gate verify "$result" 2>&1)"; code=$?; set -e
+  if [[ "$code" -eq 1 && "$out" == *"sidecar missing or empty"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+case_verify_v2_empty_sidecar() {
+  local name="gate/verify: v2 empty assurance sidecar exits 1"
+  should_run "$name" || return 0
+  local result="$tmp_root/v2-empty-sidecar/result.md" out code
+  _mk_gate_result_v2 "$result"
+  : > "${result}.assurance.json"
+  set +e; out="$("$PMCTL" gate verify "$result" 2>&1)"; code=$?; set -e
+  if [[ "$code" -eq 1 && "$out" == *"sidecar missing or empty"* ]]; then
     pass "$name"
   else
     fail "$name" "code=$code out=$out"
@@ -874,6 +1297,23 @@ case_cd_missing_value_rejected
 case_pmctl_routing
 case_help_bypasses_detached_default
 case_verify_valid
+case_verify_v2_assurance
+case_verify_v2_canonical_authorization
+case_verify_v2_forged_state_tree_rejected
+case_verify_v2_repo_binding_rejected
+case_verify_v2_legacy_assurance_is_unavailable
+case_verify_v2_claim_mismatch
+case_verify_v2_surplus_topology_record
+case_verify_v2_unknown_fields_rejected
+case_verify_v2_result_binding_tamper
+case_verify_v2_sidecar_attestation_tamper
+case_verify_v2_subject_binding_tamper
+case_verify_v2_canonical_run_mismatch
+case_verify_v2_publication_race_retries
+case_verify_v2_attestation_publication_race_retries
+case_verify_v2_pointer_escape
+case_verify_v2_missing_sidecar
+case_verify_v2_empty_sidecar
 case_verify_empty
 case_verify_no_final
 case_verify_parity_mismatch

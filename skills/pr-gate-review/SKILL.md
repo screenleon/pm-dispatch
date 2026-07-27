@@ -31,9 +31,20 @@ implement → pr-gate → fix NO-GO → push → PR).
 
 ## Reading the result
 
-The result file carries `pr_gate_result_v1` frontmatter with `final: GO|NO-GO`
-and per-reviewer verdicts. The `Final: GO|NO-GO` line is the parser-significant
-one (plain text, exact shape).
+The result file carries `pr_gate_result_v2` frontmatter with `final: GO|NO-GO`,
+per-reviewer verdicts, and a bounded pointer to its sibling
+`gate_assurance_v2` JSON envelope. The `Final: GO|NO-GO` line is the
+parser-significant one (plain text, exact shape). Run
+`pmctl gate verify <result-file>` from the reviewed repository before consuming
+assurance claims; legacy
+`pr_gate_result_v1` files and unbound v1 envelopes verify only as
+`assurance: unavailable`. A standalone
+copy-mode v2 result may also carry `evidence_status: unavailable` inside its
+valid envelope; treat its verdict as structurally valid without inferring
+implementation isolation or independent reviewer sessions. Repo-layout
+independence is authoritative only when verification also confirms the
+protected producer attestation, the invoking repository's canonical state
+partition, and every claimed canonical run record.
 
 - **NO-GO** (a reviewer returned `block`): fix the blocking finding. Per project
   convention, clear **every** finding (high/med/low/advise) on a NO-GO, not just

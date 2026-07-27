@@ -741,6 +741,88 @@ case_preflight_reusable_evidence_requires_fingerprint() {
   rm -f "$tmpf"
 }
 
+_gate_assurance_valid_instance() {
+  jq -n '{
+    kind:"gate_assurance_v2",
+    schema_version:2,
+    result:{final:"GO"},
+    bindings:{
+      result_sha256:("a" * 64),
+      repo_root:"/tmp/repo",
+      repo_identity:("b" * 64),
+      base_commit:("c" * 40),
+      head_commit:("d" * 40),
+      subject_fingerprint:("e" * 64)
+    },
+    coordinates:{
+      tier:{requested:"standard",resolved:"standard",evidence_floor:"critic plus QA"},
+      mode:{
+        requested:"sequential",
+        resolved:"sequential",
+        topology:"combined-session",
+        synthesis:"inline"
+      },
+      pass:{
+        requested:"initial",
+        resolved:"initial",
+        scope:"comprehensive",
+        initial_result:null
+      },
+      coverage:{
+        requested:null,
+        selected:["critic","qa-tester"],
+        skipped:["security"],
+        vocabulary:["critic","qa-tester","security"]
+      },
+      independence:{
+        implementation_context_isolated:null,
+        reviewer_topology:"combined-session",
+        per_reviewer_independent:null,
+        evidence_status:"unavailable"
+      }
+    },
+    dispatch:{
+      outcomes:[{
+        role:"combined",
+        reviewer:null,
+        status:"passed",
+        run_id:null,
+        evidence_status:"unavailable"
+      }]
+    },
+    provenance:{producer:"pr-gate.sh",policy_source:"canonical",attestation:null}
+  }'
+}
+
+case_gate_assurance_valid_instance() {
+  local name="gate-assurance: canonical sequential envelope validates"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/gate-assurance.schema.json" tmpf
+  tmpf="$(mktemp /tmp/gate-assurance-valid-XXXXXX.json)"
+  _gate_assurance_valid_instance > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name" "schema rejected a canonical sequential assurance envelope"
+  fi
+  rm -f "$tmpf"
+}
+
+case_gate_assurance_invalid_outcome_rejected() {
+  local name="gate-assurance: unknown dispatch status is rejected"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/gate-assurance.schema.json" tmpf
+  tmpf="$(mktemp /tmp/gate-assurance-invalid-XXXXXX.json)"
+  _gate_assurance_valid_instance |
+    jq '.dispatch.outcomes[0].status = "timed-out"' > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    fail "$name" "schema accepted an outcome status outside the contract"
+  else
+    pass "$name"
+  fi
+  rm -f "$tmpf"
+}
+
 case_context_pack_v1_still_valid
 case_context_pack_v2_new_fields_valid
 case_context_pack_memory_source_domain_valid
@@ -748,5 +830,7 @@ case_context_pack_invalid_source_domain_rejected
 case_context_pack_invalid_trust_level_rejected
 case_preflight_basic_evidence_needs_no_git_provenance
 case_preflight_reusable_evidence_requires_fingerprint
+case_gate_assurance_valid_instance
+case_gate_assurance_invalid_outcome_rejected
 
 th_summary

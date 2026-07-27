@@ -64,6 +64,51 @@ _pmctl_gate_operation_ensure_loaded() {
     && _pmctl_operation_ensure_loaded "$repo_root"
 }
 
+# A v2 result and its bound sidecar cannot be renamed into place as one
+# filesystem operation. If a verifier races the producer between those
+# renames, wait briefly for the sidecar (and, for verified independence,
+# its protected attestation) instead of turning a valid in-flight
+# finalization into a permanent false negative.
+_pmctl_gate_wait_for_assurance_publication() {
+  local result_file="$1" version pointer result_parent assurance_file
+  local assurance_kind evidence_status attestation_pointer run_root
+  local attempt=0 max_attempts=20
+
+  version="$(_gate_result_frontmatter_value "$result_file" gate_result_version)"
+  [[ "$version" == pr_gate_result_v2 ]] || return 0
+  result_parent="$(cd "$(dirname "$result_file")" 2>/dev/null && pwd -P)" || return 0
+  # Only canonical run-layout results have an asynchronous producer
+  # finalization lifecycle. Ad-hoc and copy-mode results fail immediately.
+  [[ "$(basename "$result_parent")" == ".gate-results" ]] || return 0
+  pointer="$(_gate_result_frontmatter_value "$result_file" gate_assurance)"
+  if [[ -z "$pointer" || "$pointer" == */* || "$pointer" == "." || "$pointer" == ".." \
+      || ! "$pointer" =~ ^[A-Za-z0-9._-]+\.json$ ]]; then
+    return 0
+  fi
+  assurance_file="$result_parent/$pointer"
+  run_root="$(dirname "$result_parent")"
+
+  while (( attempt < max_attempts )); do
+    if [[ -s "$assurance_file" ]]; then
+      assurance_kind="$(jq -r '.kind // empty' "$assurance_file" 2>/dev/null)"
+      evidence_status="$(jq -r \
+        '.coordinates.independence.evidence_status // "unavailable"' \
+        "$assurance_file" 2>/dev/null || printf 'unavailable')"
+      if [[ "$assurance_kind" != gate_assurance_v2 || "$evidence_status" != verified ]]; then
+        return 0
+      fi
+      attestation_pointer="$(jq -r '.provenance.attestation // empty' \
+        "$assurance_file" 2>/dev/null)"
+      if [[ -n "$attestation_pointer" && "$attestation_pointer" != */* \
+          && -s "$run_root/$attestation_pointer" ]]; then
+        return 0
+      fi
+    fi
+    attempt=$((attempt + 1))
+    sleep 0.1
+  done
+}
+
 pmctl_gate_run() {
   local repo_root="$1"; shift
 
@@ -659,6 +704,9 @@ pmctl_gate_verify() {
     return 2
   fi
   local result_file="$1"
+  local evidence_status attestation_pointer result_parent run_root run_id
+  local attestation_file runs_file canonical_repo_root assurance_repo_root
+  local canonical_run_root
 
   if ! declare -F gate_result_verify >/dev/null; then
     local lib="$repo_root/runtime/lib/gate-result-verify.sh"
@@ -670,8 +718,61 @@ pmctl_gate_verify() {
     . "$lib"
   fi
 
+  _pmctl_gate_wait_for_assurance_publication "$result_file"
   if gate_result_verify "$result_file"; then
+    evidence_status="$(jq -r '.coordinates.independence.evidence_status // "unavailable"' \
+      "${GATE_RESULT_ASSURANCE_FILE:-/dev/null}" 2>/dev/null || printf 'unavailable')"
+    if [[ "${GATE_RESULT_ASSURANCE:-unavailable}" == verified \
+        && "$evidence_status" == verified ]]; then
+      attestation_pointer="$(jq -r '.provenance.attestation // empty' \
+        "$GATE_RESULT_ASSURANCE_FILE" 2>/dev/null)"
+      if [[ -z "$attestation_pointer" || "$attestation_pointer" == */* \
+          || ! "$attestation_pointer" =~ ^gate-assurance-[0-9]{8}-[0-9]{6}\.attestation\.json$ ]]; then
+        printf 'Error: verified gate assurance requires a bounded protected attestation pointer\n' >&2
+        return 1
+      fi
+      result_parent="$(cd "$(dirname "$result_file")" && pwd -P)" || return 1
+      if [[ "$(basename "$result_parent")" != ".gate-results" ]]; then
+        printf 'Error: verified gate assurance result is outside a canonical gate run directory\n' >&2
+        return 1
+      fi
+      run_root="$(dirname "$result_parent")"
+      run_id="$(basename "$run_root")"
+      canonical_repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || {
+        printf 'Error: verified gate assurance requires invocation from its repository\n' >&2
+        return 1
+      }
+      canonical_repo_root="$(cd "$canonical_repo_root" && pwd -P)" || return 1
+      assurance_repo_root="$(jq -r '.bindings.repo_root // empty' \
+        "$GATE_RESULT_ASSURANCE_FILE" 2>/dev/null)"
+      if [[ -z "$assurance_repo_root" || ! -d "$assurance_repo_root" \
+          || "$(cd "$assurance_repo_root" && pwd -P)" != "$canonical_repo_root" ]]; then
+        printf 'Error: verified gate assurance repository binding does not match the invoking repository\n' >&2
+        return 1
+      fi
+      if ! _pmctl_gate_ensure_run_dir_fn "$repo_root"; then
+        printf 'Error: verified gate assurance requires canonical state-path resolution\n' >&2
+        return 2
+      fi
+      canonical_run_root="$(
+        cd "$canonical_repo_root" || exit 1
+        _SW_REPO_ROOT="$canonical_repo_root" sw_project_run_dir "$run_id"
+      )" || return 1
+      if [[ ! -d "$canonical_run_root" \
+          || "$(cd "$canonical_run_root" && pwd -P)" != "$run_root" ]]; then
+        printf 'Error: verified gate assurance result is outside the invoking repository canonical state partition\n' >&2
+        return 1
+      fi
+      attestation_file="$run_root/$attestation_pointer"
+      runs_file="$(dirname "$(dirname "$canonical_run_root")")/runs.jsonl"
+      gate_assurance_authorization_verify "$result_file" "$GATE_RESULT_ASSURANCE_FILE" \
+        "$attestation_file" "$runs_file" || return $?
+    fi
     printf 'gate result OK: %s\n' "$result_file"
+    printf 'assurance: %s\n' "${GATE_RESULT_ASSURANCE:-unavailable}"
+    if [[ -n "${GATE_RESULT_ASSURANCE_FILE:-}" ]]; then
+      printf 'assurance file: %s\n' "$GATE_RESULT_ASSURANCE_FILE"
+    fi
     return 0
   fi
   return 1

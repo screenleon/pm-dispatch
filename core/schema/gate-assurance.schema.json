@@ -1,0 +1,155 @@
+{
+  "title": "Gate assurance envelope",
+  "description": "Machine-owned portable gate assurance envelope.",
+  "type": "object",
+  "required": ["kind", "schema_version", "result", "bindings", "coordinates", "dispatch", "provenance"],
+  "properties": {
+    "kind": { "const": "gate_assurance_v2" },
+    "schema_version": { "const": 2 },
+    "result": {
+      "type": "object",
+      "required": ["final"],
+      "properties": { "final": { "enum": ["GO", "NO-GO"] } },
+      "additionalProperties": false
+    },
+    "bindings": {
+      "type": "object",
+      "required": [
+        "result_sha256",
+        "repo_root",
+        "repo_identity",
+        "base_commit",
+        "head_commit",
+        "subject_fingerprint"
+      ],
+      "properties": {
+        "result_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "repo_root": { "type": "string", "pattern": "^/" },
+        "repo_identity": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "base_commit": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+        "head_commit": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+        "subject_fingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+      },
+      "additionalProperties": false
+    },
+    "coordinates": {
+      "type": "object",
+      "required": ["tier", "mode", "pass", "coverage", "independence"],
+      "properties": {
+        "tier": {
+          "type": "object",
+          "required": ["requested", "resolved", "evidence_floor"],
+          "properties": {
+            "requested": { "enum": ["auto", "express", "standard", "full"] },
+            "resolved": { "enum": ["express", "standard", "full"] },
+            "evidence_floor": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": false
+        },
+        "mode": {
+          "type": "object",
+          "required": ["requested", "resolved", "topology", "synthesis"],
+          "properties": {
+            "requested": { "enum": ["default", "sequential", "parallel"] },
+            "resolved": { "enum": ["sequential", "parallel"] },
+            "topology": { "enum": ["combined-session", "per-reviewer-sessions"] },
+            "synthesis": { "enum": ["inline", "separate-session"] }
+          },
+          "additionalProperties": false
+        },
+        "pass": {
+          "type": "object",
+          "required": ["requested", "resolved", "scope", "initial_result"],
+          "properties": {
+            "requested": { "enum": ["initial", "targeted"] },
+            "resolved": { "enum": ["initial", "targeted"] },
+            "scope": { "enum": ["comprehensive", "remediation-delta"] },
+            "initial_result": { "type": ["string", "null"] }
+          },
+          "additionalProperties": false
+        },
+        "coverage": {
+          "type": "object",
+          "required": ["requested", "selected", "skipped", "vocabulary"],
+          "properties": {
+            "requested": {
+              "oneOf": [
+                { "type": "null" },
+                { "$ref": "#/definitions/reviewerSet" }
+              ]
+            },
+            "selected": { "$ref": "#/definitions/reviewerSet" },
+            "skipped": { "$ref": "#/definitions/reviewerSet" },
+            "vocabulary": { "$ref": "#/definitions/reviewerSet" }
+          },
+          "additionalProperties": false
+        },
+        "independence": {
+          "type": "object",
+          "required": [
+            "implementation_context_isolated",
+            "reviewer_topology",
+            "per_reviewer_independent",
+            "evidence_status"
+          ],
+          "properties": {
+            "implementation_context_isolated": { "type": ["boolean", "null"] },
+            "reviewer_topology": { "enum": ["combined-session", "per-reviewer-sessions"] },
+            "per_reviewer_independent": { "type": ["boolean", "null"] },
+            "evidence_status": { "enum": ["verified", "unavailable", "unverified"] }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "dispatch": {
+      "type": "object",
+      "required": ["outcomes"],
+      "properties": {
+        "outcomes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["role", "reviewer", "status", "run_id", "evidence_status"],
+            "properties": {
+              "role": { "enum": ["combined", "reviewer", "synthesis", "preflight"] },
+              "reviewer": { "type": ["string", "null"] },
+              "status": { "enum": ["passed", "failed", "skipped"] },
+              "run_id": { "type": ["string", "null"] },
+              "evidence_status": { "enum": ["verified", "unavailable", "unverified"] }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "provenance": {
+      "type": "object",
+      "required": ["producer", "policy_source", "attestation"],
+      "properties": {
+        "producer": { "const": "pr-gate.sh" },
+        "policy_source": { "enum": ["canonical", "generated-snapshot", "mixed"] },
+        "attestation": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "string", "pattern": "^gate-assurance-[0-9]{8}-[0-9]{6}\\.attestation\\.json$" }
+          ]
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "definitions": {
+    "reviewerSet": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9-]*$"
+      }
+    }
+  },
+  "additionalProperties": false
+}
