@@ -277,14 +277,18 @@ When the `pmctl gate wait` background Bash completion notification arrives:
    brief failure summary: exit code + last ~20 lines of the supervisor log at
    `pmctl artifacts show <gate_id> --cd "<work_dir>"`).
 4. Read `result_file` directly (both executor routes write it in-process). To
-   re-confirm out of band, run `pmctl gate verify <result_file_path>` (the
-   literal path parsed in step 2, not a shell variable; exit 0 = valid).
+   re-confirm out of band, run `pmctl gate verify <result_file_path>` from the
+   repository the gate reviewed (use the literal path parsed in step 2, not a
+   shell variable; exit 0 = valid).
    New results must report `assurance: verified` and point to a sibling
    `gate_assurance_v2` JSON file. A legacy result or unbound v1 envelope may report
    `assurance: unavailable`; do not treat that as proof of tier/mode/coverage
    or reviewer-session independence. For repo-layout results that claim
    verified independence, verification also requires the protected producer
-   attestation and matching canonical terminal run records.
+   attestation, a result under that repository's canonical state partition,
+   and matching canonical terminal run records. Verification briefly retries
+   when it observes an in-flight v2 result before its sidecar or attestation
+   rename completes.
 5. Prepend `PR-gate complete.` to completion relay and include the full gate
    result (including `Final: GO` / `Final: NO-GO`) unchanged.
 6. On failure, avoid collapsing findings; relay the actual stderr summary and

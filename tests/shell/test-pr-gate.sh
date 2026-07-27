@@ -3347,7 +3347,11 @@ STUB_PMCTL
     fail "$name" "assurance envelope did not capture the repo-layout run id"
     return
   }
-  if ! "$REPO_ROOT/cli/pmctl" gate verify "$result" >/dev/null 2>&1; then
+  if ! (
+    cd "$repo"
+    PM_DISPATCH_STATE_ROOT="$dir/state" \
+      "$REPO_ROOT/cli/pmctl" gate verify "$result" >/dev/null 2>&1
+  ); then
     fail "$name" "repo-layout assurance did not validate against protected canonical evidence"
     return
   fi
@@ -5642,14 +5646,17 @@ test_relative_output_normalized_to_absolute() {
   pass "$name"
 }
 
-# Behavior: every verifier helper embedded for standalone copy-mode stays
-# identical (modulo indentation) to runtime/lib/gate-result-verify.sh.
-# Steps: extract each helper from the shared library and inline fallback,
-# then assert every complete function body matches exactly.
+# Behavior: the generated standalone copy-mode verifier fallback is current.
+# Steps: run the checked-in generator in check mode, then retain function-level
+# diagnostics if a future generator bug produces an incomplete block.
 test_inline_fallback_matches_lib() {
   local name="inline-fallback-matches-lib"
   should_run "$name" || return 0
   local function_name lib_body inline_body
+  if ! bash "$REPO_ROOT/tools/generate-gate-result-verifier-fallback.sh" --check; then
+    fail "$name" "generated verifier fallback is stale"
+    return
+  fi
   local -a verifier_functions=(
     gate_result_verdict_verify
     _gate_result_frontmatter_value

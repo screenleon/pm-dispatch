@@ -37,4 +37,7 @@ The designated writer module in `runtime/lib/state-writer.sh` is the sole manage
 
 ## Schema versioning
 
-Every payload schema includes `schema_version: { const: 1 }` as a required field. Future breaking changes bump the int; old payloads remain valid against the old schema version. `jq '.schema_version'` is the bash-readable discriminator. No `$id` URLs.
+Every payload schema includes `schema_version` as a required integer `const`
+field. Breaking changes bump that integer; old payloads remain valid against
+the schema version that defines them. `jq '.schema_version'` is the
+bash-readable discriminator. No `$id` URLs.

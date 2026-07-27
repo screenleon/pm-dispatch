@@ -179,7 +179,11 @@ outcomes, run IDs, subject commits/fingerprint, and the evidence status behind
 independence claims. Repo-layout results with verified independence also carry
 a shell-owned attestation in the protected gate run directory. `pmctl gate
 verify` validates result/sidecar digests and resolves every claimed run ID
-against the canonical terminal records for that same run directory. Legacy
+against the canonical terminal records for the invoking repository and rejects
+self-consistent artifacts outside that repository's resolved state partition.
+Because result, sidecar, and attestation publication requires separate atomic
+renames, verification uses a bounded retry when it observes an in-flight
+canonical v2 finalization. Legacy
 `pr_gate_result_v1` and unbound `gate_assurance_v1` artifacts remain
 structurally readable, but verification reports `assurance: unavailable`;
 consumers must not infer mode, coverage, or independence from them.

@@ -453,8 +453,9 @@ if [[ -r "$GATE_RESULT_VERIFY_PATH" ]]; then
   . "$GATE_RESULT_VERIFY_PATH"
 else
   # Inline fallback for copy-mode (pr-gate.sh run standalone without runtime/lib/).
-  # MUST stay in sync with runtime/lib/gate-result-verify.sh; the copy-mode
-  # regression test exercises this path.
+  # Generated from runtime/lib/gate-result-verify.sh by
+  # scripts/sync-gate-result-verifier-fallback.sh. Do not edit this block by hand.
+  # gate-result-verifier-fallback:start
   gate_result_verdict_verify() {
     local result_file=${1-} expected_final=${2-} route_label=${3-gate}
     local final_count frontmatter_final body_final
@@ -471,7 +472,7 @@ else
     final_count=$(grep -cE '^Final: (GO|NO-GO)$' "$result_file" || true)
     if [[ "$final_count" -ne 1 ]]; then
       printf 'Error: gate result file must contain exactly one Final: GO/NO-GO line (found %d): %s\n' \
-      "$final_count" "$result_file" >&2
+        "$final_count" "$result_file" >&2
       return 1
     fi
     frontmatter_final=$(awk 'BEGIN{s=0} /^---$/ { if (s == 0) { s=1; next } else if (s == 1) { exit } } s && $1 == "final:" { print $2; exit }' "$result_file")
@@ -482,7 +483,7 @@ else
     body_final=$(grep -E '^Final: (GO|NO-GO)$' "$result_file" | awk '{print $2}')
     if [[ "$frontmatter_final" != "$body_final" ]]; then
       printf 'Error: frontmatter final: (%s) does not match body Final: (%s) in gate result: %s\n' \
-      "$frontmatter_final" "$body_final" "$result_file" >&2
+        "$frontmatter_final" "$body_final" "$result_file" >&2
       return 1
     fi
     if [[ -n "$expected_final" && "$body_final" != "$expected_final" ]]; then
@@ -711,6 +712,8 @@ else
         ;;
     esac
   }
+
+  # gate-result-verifier-fallback:end
 fi
 
 if ! command -v jq >/dev/null 2>&1; then

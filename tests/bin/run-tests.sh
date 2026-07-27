@@ -215,6 +215,8 @@ map_path() {
       add_suite test-pmctl-task; behavioral=1 ;;
     core/schema/preflight-evidence.schema.json)
       add_suite test-pr-gate; behavioral=1 ;;
+    tools/generate-gate-result-verifier-fallback.sh)
+      add_suite test-pr-gate; behavioral=1 ;;
     core/policy/gate-tiers.tsv|core/policy/gate-modes.tsv|core/policy/gate-pass-kinds.tsv)
       add_suite test-pr-gate; add_suite test-pr-gate-profile; behavioral=1 ;;
     runtime/lib/pmctl-config.sh)
