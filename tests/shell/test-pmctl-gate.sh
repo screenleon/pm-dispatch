@@ -403,8 +403,8 @@ _mk_gate_result_v2() {
     "$path"
   result_sha="$(sha256sum "$path" | awk '{print $1}')"
   jq -n --arg result_sha "$result_sha" '{
-    kind:"gate_assurance_v1",
-    schema_version:1,
+    kind:"gate_assurance_v2",
+    schema_version:2,
     result:{final:"GO"},
     bindings:{
       result_sha256:$result_sha,
@@ -478,6 +478,28 @@ _mk_gate_result_v2_verified() {
   ' > "$attestation"
 }
 
+_mk_gate_result_v2_legacy_assurance() {
+  local path="$1" sidecar="${1}.assurance.json"
+  _mk_gate_result_v2 "$path"
+  jq '
+    .kind = "gate_assurance_v1" |
+    .schema_version = 1 |
+    del(.bindings) |
+    .coordinates.independence = {
+      implementation_context_isolated:true,
+      reviewer_topology:"combined-session",
+      per_reviewer_independent:false,
+      evidence_status:"verified"
+    } |
+    .dispatch.outcomes = [{
+      role:"combined",reviewer:null,status:"passed",
+      run_id:"run-20260727T000000Z-aaaaaa",evidence_status:"verified"
+    }] |
+    .provenance = {producer:"pr-gate.sh",policy_source:"canonical"}
+  ' "$sidecar" > "${sidecar}.tmp"
+  mv "${sidecar}.tmp" "$sidecar"
+}
+
 # ---- 6: gate verify accepts a structurally valid result ----------------------
 case_verify_valid() {
   local name="gate/verify: valid result exits 0"
@@ -516,6 +538,19 @@ case_verify_v2_canonical_authorization() {
   _mk_gate_result_v2_verified "$result"
   set +e; out="$("$PMCTL" gate verify "$result" 2>&1)"; code=$?; set -e
   if [[ "$code" -eq 0 && "$out" == *"assurance: verified"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+case_verify_v2_legacy_assurance_is_unavailable() {
+  local name="gate/verify: unbound v1 envelope remains readable but unavailable"
+  should_run "$name" || return 0
+  local result="$tmp_root/v2-legacy-envelope/result.md" out code
+  _mk_gate_result_v2_legacy_assurance "$result"
+  set +e; out="$("$PMCTL" gate verify "$result" 2>&1)"; code=$?; set -e
+  if [[ "$code" -eq 0 && "$out" == *"assurance: unavailable"* ]]; then
     pass "$name"
   else
     fail "$name" "code=$code out=$out"
@@ -1131,6 +1166,7 @@ case_help_bypasses_detached_default
 case_verify_valid
 case_verify_v2_assurance
 case_verify_v2_canonical_authorization
+case_verify_v2_legacy_assurance_is_unavailable
 case_verify_v2_claim_mismatch
 case_verify_v2_surplus_topology_record
 case_verify_v2_result_binding_tamper

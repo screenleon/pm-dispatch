@@ -33,10 +33,11 @@ implement → pr-gate → fix NO-GO → push → PR).
 
 The result file carries `pr_gate_result_v2` frontmatter with `final: GO|NO-GO`,
 per-reviewer verdicts, and a bounded pointer to its sibling
-`gate_assurance_v1` JSON envelope. The `Final: GO|NO-GO` line is the
+`gate_assurance_v2` JSON envelope. The `Final: GO|NO-GO` line is the
 parser-significant one (plain text, exact shape). Run
 `pmctl gate verify <result-file>` before consuming assurance claims; legacy
-`pr_gate_result_v1` files verify only as `assurance: unavailable`. A standalone
+`pr_gate_result_v1` files and unbound v1 envelopes verify only as
+`assurance: unavailable`. A standalone
 copy-mode v2 result may also carry `evidence_status: unavailable` inside its
 valid envelope; treat its verdict as structurally valid without inferring
 implementation isolation or independent reviewer sessions. Repo-layout

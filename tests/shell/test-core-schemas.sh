@@ -743,8 +743,8 @@ case_preflight_reusable_evidence_requires_fingerprint() {
 
 _gate_assurance_valid_instance() {
   jq -n '{
-    kind:"gate_assurance_v1",
-    schema_version:1,
+    kind:"gate_assurance_v2",
+    schema_version:2,
     result:{final:"GO"},
     bindings:{
       result_sha256:("a" * 64),

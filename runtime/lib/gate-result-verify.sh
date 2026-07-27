@@ -3,9 +3,9 @@
 #
 # pr_gate_result_v1 remains valid legacy structural evidence.  It proves only
 # frontmatter/body verdict parity and is reported as assurance=unavailable.
-# pr_gate_result_v2 additionally points at a sibling gate_assurance_v1 JSON
-# envelope owned by the gate shell; the verifier checks its structural and
-# claim consistency.
+# pr_gate_result_v2 points at a sibling assurance JSON envelope owned by the
+# gate shell. Legacy gate_assurance_v1 remains readable but non-authorizing;
+# gate_assurance_v2 adds subject/result bindings and protected attestation.
 
 # gate_result_verdict_verify <result_file> [expected_final] [route_label]
 gate_result_verdict_verify() {
@@ -62,7 +62,7 @@ _gate_result_frontmatter_value() {
 # gate_assurance_verify <result_file> <assurance_file> <body_final>
 gate_assurance_verify() {
   local result_file="$1" assurance_file="$2" body_final="$3"
-  local markdown_tier markdown_mode result_sha
+  local markdown_tier markdown_mode result_sha assurance_kind
   command -v jq >/dev/null 2>&1 || {
     printf 'Error: gate assurance verification requires jq\n' >&2
     return 2
@@ -73,6 +73,23 @@ gate_assurance_verify() {
   fi
   markdown_tier="$(_gate_result_frontmatter_value "$result_file" tier)"
   markdown_mode="$(_gate_result_frontmatter_value "$result_file" mode)"
+  assurance_kind="$(jq -r '.kind // empty' "$assurance_file" 2>/dev/null)"
+  if [[ "$assurance_kind" == gate_assurance_v1 ]]; then
+    jq -e --arg final "$body_final" --arg markdown_tier "$markdown_tier" \
+      --arg markdown_mode "$markdown_mode" '
+        .kind == "gate_assurance_v1" and .schema_version == 1 and
+        .result.final == $final and
+        .coordinates.tier.resolved == $markdown_tier and
+        .coordinates.mode.resolved == $markdown_mode
+      ' "$assurance_file" >/dev/null || {
+      printf 'Error: legacy gate assurance sidecar failed claim verification: %s\n' \
+        "$assurance_file" >&2
+      return 1
+    }
+    GATE_ASSURANCE_BOUND=false
+    export GATE_ASSURANCE_BOUND
+    return 0
+  fi
   result_sha="$(_gate_result_sha256_file "$result_file")" || return $?
   jq -e --arg final "$body_final" --arg result_sha "$result_sha" \
     --arg markdown_tier "$markdown_tier" \
@@ -81,7 +98,7 @@ gate_assurance_verify() {
       type == "array" and all(.[]; type == "string" and length > 0) and
       (length == (unique | length));
     def same_set($a; $b): ($a | sort) == ($b | sort);
-    .kind == "gate_assurance_v1" and .schema_version == 1 and
+    .kind == "gate_assurance_v2" and .schema_version == 2 and
     .result.final == $final and
     .bindings.result_sha256 == $result_sha and
     (.bindings.repo_root | type == "string" and startswith("/")) and
@@ -188,6 +205,8 @@ gate_assurance_verify() {
       "$assurance_file" >&2
     return 1
   }
+  GATE_ASSURANCE_BOUND=true
+  export GATE_ASSURANCE_BOUND
 }
 
 _gate_result_sha256_file() {
@@ -284,7 +303,11 @@ gate_result_verify() {
       assurance_file="$result_parent/$pointer"
       body_final=$(grep -E '^Final: (GO|NO-GO)$' "$result_file" | awk '{print $2}')
       gate_assurance_verify "$result_file" "$assurance_file" "$body_final" || return $?
-      GATE_RESULT_ASSURANCE=verified
+      if [[ "${GATE_ASSURANCE_BOUND:-false}" == true ]]; then
+        GATE_RESULT_ASSURANCE=verified
+      else
+        GATE_RESULT_ASSURANCE=unavailable
+      fi
       GATE_RESULT_ASSURANCE_FILE="$assurance_file"
       export GATE_RESULT_ASSURANCE GATE_RESULT_ASSURANCE_FILE
       ;;

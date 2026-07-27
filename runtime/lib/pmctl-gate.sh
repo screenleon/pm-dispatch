@@ -675,7 +675,8 @@ pmctl_gate_verify() {
   if gate_result_verify "$result_file"; then
     evidence_status="$(jq -r '.coordinates.independence.evidence_status // "unavailable"' \
       "${GATE_RESULT_ASSURANCE_FILE:-/dev/null}" 2>/dev/null || printf 'unavailable')"
-    if [[ "$evidence_status" == verified ]]; then
+    if [[ "${GATE_RESULT_ASSURANCE:-unavailable}" == verified \
+        && "$evidence_status" == verified ]]; then
       attestation_pointer="$(jq -r '.provenance.attestation // empty' \
         "$GATE_RESULT_ASSURANCE_FILE" 2>/dev/null)"
       if [[ -z "$attestation_pointer" || "$attestation_pointer" == */* \

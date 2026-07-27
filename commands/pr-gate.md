@@ -280,7 +280,7 @@ When the `pmctl gate wait` background Bash completion notification arrives:
    re-confirm out of band, run `pmctl gate verify <result_file_path>` (the
    literal path parsed in step 2, not a shell variable; exit 0 = valid).
    New results must report `assurance: verified` and point to a sibling
-   `gate_assurance_v1` JSON file. A legacy result may report
+   `gate_assurance_v2` JSON file. A legacy result or unbound v1 envelope may report
    `assurance: unavailable`; do not treat that as proof of tier/mode/coverage
    or reviewer-session independence. For repo-layout results that claim
    verified independence, verification also requires the protected producer

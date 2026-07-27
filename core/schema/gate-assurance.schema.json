@@ -4,8 +4,8 @@
   "type": "object",
   "required": ["kind", "schema_version", "result", "bindings", "coordinates", "dispatch", "provenance"],
   "properties": {
-    "kind": { "const": "gate_assurance_v1" },
-    "schema_version": { "const": 1 },
+    "kind": { "const": "gate_assurance_v2" },
+    "schema_version": { "const": 2 },
     "result": {
       "type": "object",
       "required": ["final"],
