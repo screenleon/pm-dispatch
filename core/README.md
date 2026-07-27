@@ -5,7 +5,8 @@ This directory contains the canonical PM-runtime data contract. **`core/` is def
 - `schema/`        — JSON Schema files (`.schema.json`) for the 8 first-class
                      entities: Task, Run, Event, Review, Decision, Brief,
                      Handover, ContextPack.
-- `policy/`        — declarative tables (YAML) for enums and state machines.
+- `policy/`        — declarative YAML/TSV tables for enums, presets, and state
+                     machines.
 - `state/`         — definition of the on-disk state-store layout
                      (`~/.local/share/pm-dispatch/state/`). **Definitions, not the writer.**
 - `context-pack/`  — source-interface contract for ContextPack assembly.
@@ -25,7 +26,7 @@ This directory contains the canonical PM-runtime data contract. **`core/` is def
 ## Dependency graph (acyclic, downward)
 
 ```
-core/schema/         → core/policy/  (via inline enum + YAML editing source-of-truth)
+core/schema/         → core/policy/  (via inline enum + declarative editing source-of-truth)
 core/state/          → core/schema/  (layout.yaml names which schema each path conforms to)
 core/context-pack/   → core/schema/  (source.interface.md references context-pack.schema.json)
 ```
@@ -33,7 +34,7 @@ core/context-pack/   → core/schema/  (source.interface.md references context-p
 `core/policy/` is a leaf — depends on nothing.
 `core/state/` does NOT import `core/policy/`.
 
-The designated writer module in `runtime/lib/state-writer.sh` is the sole manager of writes to `~/.local/share/pm-dispatch/state/` paths. It validates every durable Run, Event, Task, and Decision write against recursive object requirements, constants, primitive types, enums, and `if`/`then` conditionals declared in `core/schema/`, using `jq` only. Runtime enum consumers read the corresponding `core/policy/` YAML, while parity tests keep the inline schema enum mirrors synchronized. Full draft-07 validation remains a development/test concern rather than a runtime dependency.
+The designated writer module in `runtime/lib/state-writer.sh` is the sole manager of writes to `~/.local/share/pm-dispatch/state/` paths. It validates every durable Run, Event, Task, and Decision write against recursive object requirements, constants, primitive types, enums, and `if`/`then` conditionals declared in `core/schema/`, using `jq` only. Runtime enum consumers read the corresponding declarative source under `core/policy/`, while parity tests keep inline schema mirrors and generated portability snapshots synchronized. Full draft-07 validation remains a development/test concern rather than a runtime dependency.
 
 ## Schema versioning
 

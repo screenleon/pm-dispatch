@@ -68,6 +68,9 @@ create_runner() {
   cp -R "$REPO_ROOT/runtime/lib/." "$dir/lib/"
   mkdir -p "$dir/core/policy"
   cp "$REPO_ROOT/core/policy/isolation-level.yaml" "$dir/core/policy/isolation-level.yaml"
+  cp "$REPO_ROOT/core/policy/gate-tiers.tsv" "$dir/core/policy/gate-tiers.tsv"
+  cp "$REPO_ROOT/core/policy/gate-modes.tsv" "$dir/core/policy/gate-modes.tsv"
+  cp "$REPO_ROOT/core/policy/gate-pass-kinds.tsv" "$dir/core/policy/gate-pass-kinds.tsv"
   mkdir -p "$dir/adapters/codex"
   cat > "$dir/adapters/codex/dispatch.sh" <<'STUB_EOF'
 #!/usr/bin/env bash
@@ -503,6 +506,135 @@ run_gate() {
   return "$code"
 }
 
+write_valid_initial_gate_result() {
+  local path="$1" final="${2:-NO-GO}"
+  cat > "$path" << INITIAL_GATE_EOF
+---
+gate_result_version: pr_gate_result_v1
+final: ${final}
+tier: standard
+mode: sequential
+most_severe: block
+reviewers:
+  critic: block
+escalation:
+  recommended: false
+  reviewers: []
+  reason: []
+---
+
+# Initial gate result
+
+## Gate Conclusion
+Final: ${final}
+INITIAL_GATE_EOF
+}
+
+# Behavior: the bounded copy-mode policy snapshot is byte-for-byte equivalent
+# to all three canonical gate policy TSV sources.
+# Steps: extract each generated heredoc from pr-gate.sh, compare it with the
+# matching core/policy file, and fail on any drift.
+test_gate_assurance_policy_snapshot_matches_sources() {
+  local name="gate-assurance-policy-snapshot-matches-sources"
+  should_run "$name" || return 0
+  local table delimiter source snapshot
+  for table in tiers modes pass-kinds; do
+    case "$table" in
+      tiers)
+        delimiter="GATE_ASSURANCE_TIERS_TSV"
+        source="$REPO_ROOT/core/policy/gate-tiers.tsv"
+        ;;
+      modes)
+        delimiter="GATE_ASSURANCE_MODES_TSV"
+        source="$REPO_ROOT/core/policy/gate-modes.tsv"
+        ;;
+      pass-kinds)
+        delimiter="GATE_ASSURANCE_PASS_KINDS_TSV"
+        source="$REPO_ROOT/core/policy/gate-pass-kinds.tsv"
+        ;;
+    esac
+    snapshot="$(awk -v marker="$delimiter" '
+      index($0, "cat <<\047" marker "\047") { inside=1; next }
+      inside && $0 == marker { exit }
+      inside { print }
+    ' "$REPO_ROOT/runtime/bin/pr-gate.sh")"
+    if [[ "$snapshot" != "$(cat "$source")" ]]; then
+      fail "$name" "generated snapshot drifted from $source"
+      return
+    fi
+  done
+  pass "$name"
+}
+
+# Behavior: a repo-layout/copy-bundle policy source controls tier-default
+# reviewer selection instead of the generated fallback or a hardcoded case.
+# Steps: change only the copied express default to critic, run a docs gate, and
+# assert the captured brief selects critic while retaining express tier.
+test_gate_tier_policy_source_controls_default_coverage() {
+  local name="gate-tier-policy-source-controls-default-coverage"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" brief="$dir/brief.md" rewritten="$dir/gate-tiers.tsv"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  awk -F '\t' -v OFS='\t' '
+    $1 == "express" { $2="critic" }
+    { print }
+  ' "$runner/core/policy/gate-tiers.tsv" > "$rewritten"
+  mv "$rewritten" "$runner/core/policy/gate-tiers.tsv"
+
+  set +e
+  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  assert_file_contains "$name" "$brief" "Tier: express" || return
+  assert_file_contains "$name" "$brief" "coverage.selected: critic" || return
+  assert_file_contains "$name" "$brief" "Reviewers: critic" || return
+  assert_not_contains "$name" "$brief" "Process each reviewer IN ORDER: critic,qa-tester" || return
+  pass "$name"
+}
+
+# Behavior: a copied gate without canonical policy files resolves the same
+# defaults from its bounded generated snapshot and reports the degraded source.
+# Steps: remove the copied TSV files, run a docs gate, and assert express /
+# sequential / initial defaults plus generated-snapshot provenance.
+test_gate_assurance_policy_snapshot_is_copy_mode_fallback() {
+  local name="gate-assurance-policy-snapshot-is-copy-mode-fallback"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  rm -f \
+    "$runner/core/policy/gate-tiers.tsv" \
+    "$runner/core/policy/gate-modes.tsv" \
+    "$runner/core/policy/gate-pass-kinds.tsv"
+
+  set +e
+  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  assert_file_contains "$name" "$brief" "tier.resolved: express" || return
+  assert_file_contains "$name" "$brief" "mode.resolved: sequential" || return
+  assert_file_contains "$name" "$brief" "pass.resolved: initial" || return
+  assert_file_contains "$name" "$brief" "policy.source: generated-snapshot" || return
+  pass "$name"
+}
+
 # Behavior: express-tier diff with no overrides routes to codex with the
 # express reviewer set (critic, qa-tester).
 # Steps: run the gate on a docs-only diff, assert stderr shows dispatch
@@ -530,6 +662,15 @@ test_tier_detection() {
   # Sequential dispatch chatter now lands on stderr, not stdout.
   assert_file_contains "$name" "$err" "DISPATCH_STUB:success" || return
   assert_file_contains "$name" "$brief" "Tier: express" || return
+  assert_file_contains "$name" "$brief" "tier.requested: auto" || return
+  assert_file_contains "$name" "$brief" "tier.resolved: express" || return
+  assert_file_contains "$name" "$brief" "tier.evidence_floor: reviewer-verdicts" || return
+  assert_file_contains "$name" "$brief" "mode.requested: default" || return
+  assert_file_contains "$name" "$brief" "mode.resolved: sequential" || return
+  assert_file_contains "$name" "$brief" "mode.synthesis: inline" || return
+  assert_file_contains "$name" "$brief" "pass.resolved: initial" || return
+  assert_file_contains "$name" "$brief" "coverage.requested: default" || return
+  assert_file_contains "$name" "$brief" "coverage.selected: critic,qa-tester" || return
   assert_file_contains "$name" "$brief" "Executor: codex" || return
   assert_file_contains "$name" "$brief" "Reviewers: critic,qa-tester" || return
   pass "$name"
@@ -955,14 +1096,13 @@ test_no_changed_files() {
   pass "$name"
 }
 
-# Behavior: an explicit --reviewers list overrides tier auto-detection
-# (Tier: targeted) and the parallel synthesis brief embeds reviewer findings
-# inline rather than pointing at read: paths for reviewers not in the list.
+# Behavior: an explicit --reviewers list overrides requested coverage without
+# changing auto-detected tier or review pass kind. The parallel synthesis brief
+# embeds only selected reviewer findings inline.
 # Steps: run the gate with --reviewers critic --parallel against a diff that
-# would otherwise tier-detect to something else, and assert the captured
-# synthesis brief has Tier: targeted, Reviewers: critic, inline
-# "--- critic findings ---", and no reviewer-critic-/qa-tester read: paths.
-test_reviewers_override_skips_tier_detection() {
+# tier-detects to standard, and assert standard/initial coordinates, critic-only
+# coverage, inline findings, and no reviewer output read paths.
+test_reviewers_override_preserves_tier_detection() {
   local name="reviewers-override"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -971,7 +1111,7 @@ test_reviewers_override_skips_tier_detection() {
   mkdir -p "$dir"
   create_runner "$runner"
   create_agents "$home" critic
-  create_repo "$repo" many
+  create_repo_with_branch "$repo" standard
 
   set +e
   CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --reviewers critic --parallel
@@ -982,13 +1122,51 @@ test_reviewers_override_skips_tier_detection() {
     return
   fi
   # Parallel mode: CAPTURE_BRIEF receives the synthesis brief (last dispatch)
-  assert_file_contains "$name" "$brief" "Tier: targeted" || return
+  assert_file_contains "$name" "$brief" "Tier: standard" || return
+  assert_file_contains "$name" "$brief" "tier.requested: auto" || return
+  assert_file_contains "$name" "$brief" "tier.resolved: standard" || return
+  assert_file_contains "$name" "$brief" "pass.resolved: initial" || return
+  assert_file_contains "$name" "$brief" "coverage.requested: critic" || return
+  assert_file_contains "$name" "$brief" "coverage.selected: critic" || return
   assert_file_contains "$name" "$brief" "Executor: codex" || return
   assert_file_contains "$name" "$brief" "Reviewers: critic" || return
   # Synthesis brief embeds reviewer findings inline — no read: paths to reviewer output files
   assert_file_contains "$name" "$brief" "--- critic findings ---" || return
   assert_not_contains "$name" "$brief" "reviewer-critic-" || return
   assert_not_contains "$name" "$brief" "read: $home/.claude/agents/qa-tester.md" || return
+  pass "$name"
+}
+
+# Behavior: explicit full-tier intent and critic-only requested coverage remain
+# independent; neither value rewrites the other.
+# Steps: run a docs diff with --tier full --reviewers critic, then assert the
+# combined brief records full requested/resolved tier and critic-only coverage.
+test_full_tier_with_critic_only_coverage_is_truthful() {
+  local name="full-tier-with-critic-only-coverage-is-truthful"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic
+  create_repo "$repo" docs
+
+  set +e
+  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" \
+    --base main --tier full --reviewers critic --mode sequential
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  assert_file_contains "$name" "$brief" "tier.requested: full" || return
+  assert_file_contains "$name" "$brief" "tier.resolved: full" || return
+  assert_file_contains "$name" "$brief" "mode.resolved: sequential" || return
+  assert_file_contains "$name" "$brief" "coverage.requested: critic" || return
+  assert_file_contains "$name" "$brief" "coverage.selected: critic" || return
+  assert_file_contains "$name" "$brief" "Reviewers: critic" || return
   pass "$name"
 }
 
@@ -2331,15 +2509,16 @@ test_preflight_runs_even_when_qa_tester_not_targeted() {
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
-  local out="$dir/out" err="$dir/err" result="$dir/result.md"
+  local out="$dir/out" err="$dir/err" result="$dir/result.md" initial="$dir/initial.md"
   mkdir -p "$dir"
   create_runner "$runner"
   create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
   create_repo "$repo" docs
+  write_valid_initial_gate_result "$initial"
 
   set +e
   run_gate "$home" "$runner" "$repo" "$out" "$err" --base main \
-    --targeted critic --test-cmd "exit 0" --output "$result"
+    --targeted critic --initial-result "$initial" --test-cmd "exit 0" --output "$result"
   local code=$?
   set -e
   if [[ "$code" -ne 0 ]]; then
@@ -3446,6 +3625,9 @@ test_untracked_binary_routes_to_standard() {
   pass "$name"
 }
 
+run_test test_gate_assurance_policy_snapshot_matches_sources
+run_test test_gate_tier_policy_source_controls_default_coverage
+run_test test_gate_assurance_policy_snapshot_is_copy_mode_fallback
 run_test test_tier_detection
 run_test test_pr_gate_does_not_mutate_gitignore
 run_test test_artifact_filter_drops_gate_artifacts
@@ -3458,7 +3640,8 @@ run_test test_copy_mode_artifact_fallback_body_parity
 run_test test_missing_reviewer_agent
 run_test test_invalid_base_ref
 run_test test_no_changed_files
-run_test test_reviewers_override_skips_tier_detection
+run_test test_reviewers_override_preserves_tier_detection
+run_test test_full_tier_with_critic_only_coverage_is_truthful
 run_test test_brief_file_snapshot_exists_at_dispatch
 run_test test_reviewer_definitions_are_workspace_snapshots
 run_test test_brief_cleanup_on_dispatch_failure
@@ -4085,12 +4268,41 @@ test_copy_mode_dispatches_via_adapter() {
   pass "$name"
 }
 
+# Behavior: --help prints only the bounded user-facing usage contract and
+# includes the canonical assurance flags.
+# Steps: invoke a copied gate with --help and assert current flags are present
+# while shell implementation and generated policy internals are absent.
+test_help_output_is_bounded_and_current() {
+  local name="help-output-is-bounded-and-current"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local runner="$dir/runner" out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+
+  set +e
+  "$runner/pr-gate.sh" --help > "$out" 2> "$err"
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  assert_file_contains "$name" "$out" "Usage:" || return
+  assert_file_contains "$name" "$out" "--mode <mode>" || return
+  assert_file_contains "$name" "$out" "--targeted <list>" || return
+  assert_file_contains "$name" "$out" "--initial-result <f>" || return
+  assert_not_contains "$name" "$out" "_gate_assurance_policy_snapshot" || return
+  assert_not_contains "$name" "$out" "set -euo pipefail" || return
+  pass "$name"
+}
+
 # Behavior: an unrecognized flag exits 2 and prints an actionable
 # accepted-flags list (not just a bare "Unknown arg"), so callers
 # self-correct on first failure.
 # Steps: run the gate with --bogus-flag, and assert exit 2 and stderr
-# contains "Unknown arg: --bogus-flag", "Accepted:", and
-# "--reviewers|--targeted".
+# contains "Unknown arg: --bogus-flag", "Accepted:", "--targeted", and
+# "--initial-result".
 test_unknown_arg_message() {
   local name="unknown-arg-message"
   should_run "$name" || return 0
@@ -4112,30 +4324,31 @@ test_unknown_arg_message() {
   fi
   assert_file_contains "$name" "$err" "Unknown arg: --bogus-flag" || return
   assert_file_contains "$name" "$err" "Accepted:" || return
-  assert_file_contains "$name" "$err" "--reviewers|--targeted" || return
+  assert_file_contains "$name" "$err" "--targeted" || return
+  assert_file_contains "$name" "$err" "--initial-result" || return
   pass "$name"
 }
 
-# Behavior: --targeted is accepted as an alias of --reviewers (the
-# /pr-gate skill and the script's own comments use "targeted"
-# vocabulary). Scoping a parallel gate to critic must launch critic only --
-# same as --reviewers critic.
-# Steps: run the gate with --targeted critic --parallel, and assert exit
-# 0, no "unknown arg" in stderr, "launched critic" in stdout, and no
-# "launched qa-tester" line.
-test_targeted_alias() {
-  local name="targeted-alias"
+# Behavior: --targeted selects a remediation-delta pass, preserves detected
+# tier, accepts canonical --mode, and carries a structurally valid initial
+# result reference into the resolved assurance context.
+# Steps: create a valid initial result, run a critic-only targeted gate with
+# --mode parallel, and assert the pass/mode/tier/reference/coverage coordinates.
+test_targeted_pass_references_initial_result() {
+  local name="targeted-pass-references-initial-result"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
-  local out="$dir/out" err="$dir/err"
+  local out="$dir/out" err="$dir/err" brief="$dir/brief.md" initial="$dir/initial.md"
   mkdir -p "$dir"
   create_runner "$runner"
   create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
   create_repo "$repo" docs
+  write_valid_initial_gate_result "$initial"
 
   set +e
-  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --targeted critic --parallel
+  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" \
+    --base main --targeted critic --initial-result "$initial" --mode parallel
   local code=$?
   set -e
 
@@ -4143,15 +4356,179 @@ test_targeted_alias() {
     fail "$name" "exit $code, expected 0 (stderr: $(head -3 "$err" 2>/dev/null))"
     return
   fi
-  if grep -qi "unknown arg" "$err"; then
-    fail "$name" "--targeted was rejected as an unknown arg"
-    return
-  fi
+  assert_file_contains "$name" "$brief" "tier.resolved: express" || return
+  assert_file_contains "$name" "$brief" "mode.requested: parallel" || return
+  assert_file_contains "$name" "$brief" "mode.resolved: parallel" || return
+  assert_file_contains "$name" "$brief" "mode.topology: per-reviewer-sessions" || return
+  assert_file_contains "$name" "$brief" "mode.synthesis: separate-session" || return
+  assert_file_contains "$name" "$brief" "pass.resolved: targeted" || return
+  assert_file_contains "$name" "$brief" "pass.scope: remediation-delta" || return
+  assert_file_contains "$name" "$brief" "pass.initial_result: $initial" || return
+  assert_file_contains "$name" "$brief" "coverage.selected: critic" || return
   assert_file_contains "$name" "$out" "launched critic" || return
   if grep -q "launched qa-tester" "$out"; then
     fail "$name" "--targeted critic did not scope reviewers — qa-tester was launched"
     return
   fi
+  pass "$name"
+}
+
+# Behavior: a targeted pass without an initial result fails before dispatch.
+# Steps: invoke --targeted critic without --initial-result and assert exit 2,
+# the explicit requirement error, and no dispatch marker.
+test_targeted_requires_initial_result() {
+  local name="targeted-requires-initial-result"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_repo "$repo" docs
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --targeted critic
+  local code=$?
+  set -e
+  if [[ "$code" -ne 2 ]]; then
+    fail "$name" "exit $code, expected 2"
+    return
+  fi
+  assert_file_contains "$name" "$err" "--targeted requires --initial-result <path>" || return
+  assert_not_contains "$name" "$out" "DISPATCH_STUB" || return
+  pass "$name"
+}
+
+# Behavior: a targeted gate cannot reuse its referenced initial result as the
+# output destination, including a lexical alias of the same path.
+# Steps: pass the initial result back through --output using a ./ alias, assert
+# exit 2 before dispatch, and confirm the initial artifact is unchanged.
+test_targeted_output_cannot_overwrite_initial_result() {
+  local name="targeted-output-cannot-overwrite-initial-result"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" initial="$dir/initial.md" before
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_repo "$repo" docs
+  write_valid_initial_gate_result "$initial"
+  before="$(cat "$initial")"
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main \
+    --targeted critic --initial-result "$initial" --output "$dir/./initial.md"
+  local code=$?
+  set -e
+  if [[ "$code" -ne 2 ]]; then
+    fail "$name" "exit $code, expected 2"
+    return
+  fi
+  assert_file_contains "$name" "$err" "--output must not overwrite" || return
+  assert_not_contains "$name" "$out" "DISPATCH_STUB" || return
+  if [[ "$(cat "$initial")" != "$before" ]]; then
+    fail "$name" "initial result content changed"
+    return
+  fi
+  pass "$name"
+}
+
+# Behavior: canonical and compatibility mode spellings fail closed when they
+# request different topologies.
+# Steps: combine --mode parallel with --sequential and assert a controlled
+# exit-2 conflict before dispatch.
+test_conflicting_mode_options_are_rejected() {
+  local name="conflicting-mode-options-are-rejected"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_repo "$repo" docs
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --mode parallel --sequential
+  local code=$?
+  set -e
+  if [[ "$code" -ne 2 ]]; then
+    fail "$name" "exit $code, expected 2"
+    return
+  fi
+  assert_file_contains "$name" "$err" "conflicting gate mode options" || return
+  assert_not_contains "$name" "$out" "DISPATCH_STUB" || return
+  pass "$name"
+}
+
+# Behavior: canonical and compatibility mode spellings may be combined when
+# they request the same topology.
+# Steps: run --mode parallel with --parallel, capture the synthesis brief, and
+# assert one successful parallel resolution.
+test_equivalent_mode_spellings_are_accepted() {
+  local name="equivalent-mode-spellings-are-accepted"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic
+  create_repo "$repo" docs
+
+  set +e
+  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" \
+    --base main --reviewers critic --mode parallel --parallel
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  assert_file_contains "$name" "$brief" "mode.requested: parallel" || return
+  assert_file_contains "$name" "$brief" "mode.resolved: parallel" || return
+  assert_file_contains "$name" "$out" "launched critic" || return
+  pass "$name"
+}
+
+# Behavior: invalid tier, mode, reviewer, and mixed coverage/pass selectors are
+# rejected as closed CLI inputs instead of falling back to another profile.
+# Steps: run a malformed-input matrix and require exit 2 plus no dispatch for
+# every case.
+test_invalid_assurance_inputs_are_rejected() {
+  local name="invalid-assurance-inputs-are-rejected"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" code args
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_repo "$repo" docs
+
+  for args in \
+    "--tier targeted" \
+    "--mode default" \
+    "--reviewers unknown-reviewer" \
+    "--reviewers critic,critic" \
+    "--reviewers critic,,qa-tester" \
+    "--initial-result missing.md" \
+    "--reviewers critic --targeted critic"
+  do
+    : > "$out"
+    : > "$err"
+    set +e
+    # shellcheck disable=SC2086 # fixture intentionally expands a small argv matrix
+    run_gate "$home" "$runner" "$repo" "$out" "$err" --base main $args
+    code=$?
+    set -e
+    if [[ "$code" -ne 2 ]]; then
+      fail "$name" "args '$args' exited $code, expected 2"
+      return
+    fi
+    if grep -q "DISPATCH_STUB" "$out" "$err"; then
+      fail "$name" "args '$args' reached dispatch"
+      return
+    fi
+  done
   pass "$name"
 }
 
@@ -4763,8 +5140,14 @@ run_test test_isolation_forwarding_through_pr_gate
 run_test test_effort_forwarding_through_pr_gate
 run_test test_effort_invalid_value_rejected
 run_test test_copy_mode_dispatches_via_adapter
+run_test test_help_output_is_bounded_and_current
 run_test test_unknown_arg_message
-run_test test_targeted_alias
+run_test test_targeted_pass_references_initial_result
+run_test test_targeted_requires_initial_result
+run_test test_targeted_output_cannot_overwrite_initial_result
+run_test test_conflicting_mode_options_are_rejected
+run_test test_equivalent_mode_spellings_are_accepted
+run_test test_invalid_assurance_inputs_are_rejected
 run_test test_seq_brief_ascii_separator
 run_test test_parallel_synthesis_brief_ascii_separator
 run_test test_parallel_reviewer_brief_ascii_separator

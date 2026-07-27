@@ -1,6 +1,6 @@
 ---
 description: Run the tiered pre-PR review pipeline on the current branch.
-argument-hint: "[express|standard|full] [--targeted r1,r2] [--scope context] [--parallel]"
+argument-hint: "[express|standard|full] [--targeted r1,r2 --initial-result path] [--scope context] [--mode sequential|parallel]"
 ---
 
 Run the PR gate via `pmctl gate run`. The `runtime/bin/pr-gate.sh` script is the
@@ -9,15 +9,15 @@ internal implementation; `pmctl gate run` is the preferred invocation surface.
 **Sequential mode (default):** all reviewers run in one combined session.
 Low main-thread token cost (~5k dispatch + read result).
 
-**Parallel mode (`--parallel`):** each reviewer runs in its own independent session
+**Parallel mode (`--mode parallel`; `--parallel` is compatible):** each reviewer runs in its own independent session
 followed by a PM synthesis session. Higher token cost — use for auth/payment/migration
 paths or when reviewer independence matters.
 
 | Situation | Args |
 |---|---|
 | Routine code / seed / docs changes | _(none)_ |
-| Re-gate after fixing specific findings | `--targeted qa-tester,risk-reviewer` |
-| Auth / payment / migration / sensitive paths | `--parallel` |
+| Re-gate after fixing specific findings | `--targeted qa-tester,risk-reviewer --initial-result <path>` |
+| Auth / payment / migration / sensitive paths | `--mode parallel` |
 | Force a specific tier | `express` / `standard` / `full` |
 
 ## Step 1 - Invoke pmctl directly
@@ -78,8 +78,9 @@ implementation model or alternate executor availability cannot be determined.
 RAW_ARGS="${ARGUMENTS:-}"
 TIER_OVERRIDE=""
 TARGETED_REVIEWERS=""
+INITIAL_RESULT=""
 SCOPE_TOKENS=()
-PARALLEL=false
+GATE_MODE=""
 GATE_EXECUTOR="<gate_executor>"
 GATE_MODEL=""
 
@@ -105,13 +106,37 @@ while [[ "$idx" -lt "${#TOKENS[@]}" ]]; do
     --targeted)
       idx=$((idx + 1))
       TARGETED_REVIEWERS="${TOKENS[$idx]:-}"
+      [[ -n "$TARGETED_REVIEWERS" ]] || { echo "error: --targeted requires a reviewer list" >&2; exit 2; }
+      ;;
+    --initial-result)
+      idx=$((idx + 1))
+      INITIAL_RESULT="${TOKENS[$idx]:-}"
+      [[ -n "$INITIAL_RESULT" ]] || { echo "error: --initial-result requires a path" >&2; exit 2; }
       ;;
     --scope)
       idx=$((idx + 1))
       [[ -n "${TOKENS[$idx]:-}" ]] && SCOPE_TOKENS+=("${TOKENS[$idx]}")
       ;;
-    --parallel)
-      PARALLEL=true
+    --mode)
+      idx=$((idx + 1))
+      requested_mode="${TOKENS[$idx]:-}"
+      case "$requested_mode" in
+        sequential|parallel) ;;
+        *) echo "error: --mode requires sequential or parallel" >&2; exit 2 ;;
+      esac
+      if [[ -n "$GATE_MODE" && "$GATE_MODE" != "$requested_mode" ]]; then
+        echo "error: conflicting gate mode options" >&2
+        exit 2
+      fi
+      GATE_MODE="$requested_mode"
+      ;;
+    --parallel|--sequential)
+      requested_mode="${tok#--}"
+      if [[ -n "$GATE_MODE" && "$GATE_MODE" != "$requested_mode" ]]; then
+        echo "error: conflicting gate mode options" >&2
+        exit 2
+      fi
+      GATE_MODE="$requested_mode"
       ;;
     --executor)
       idx=$((idx + 1))
@@ -128,6 +153,15 @@ while [[ "$idx" -lt "${#TOKENS[@]}" ]]; do
   esac
   idx=$((idx + 1))
 done
+
+if [[ -n "$TARGETED_REVIEWERS" && -z "$INITIAL_RESULT" ]]; then
+  echo "error: --targeted requires --initial-result <path>" >&2
+  exit 2
+fi
+if [[ -z "$TARGETED_REVIEWERS" && -n "$INITIAL_RESULT" ]]; then
+  echo "error: --initial-result is only valid with --targeted" >&2
+  exit 2
+fi
 
 # Validate after parsing so this also rejects a missing substitution of the
 # <gate_executor> default, not only an invalid explicit --executor value.
@@ -148,9 +182,9 @@ SCOPE="${SCOPE_TOKENS[*]:-}"
 GATE_ARGS=(--cd "<work_dir>" --executor "$GATE_EXECUTOR")
 [[ -n "$GATE_MODEL" ]] && GATE_ARGS+=(--model "$GATE_MODEL")
 [[ -n "$TIER_OVERRIDE" ]] && GATE_ARGS+=(--tier "$TIER_OVERRIDE")
-[[ -n "$TARGETED_REVIEWERS" ]] && GATE_ARGS+=(--reviewers "$TARGETED_REVIEWERS")
+[[ -n "$TARGETED_REVIEWERS" ]] && GATE_ARGS+=(--targeted "$TARGETED_REVIEWERS" --initial-result "$INITIAL_RESULT")
 [[ -n "$SCOPE" ]] && GATE_ARGS+=(--scope "$SCOPE")
-[[ "$PARALLEL" == "true" ]] && GATE_ARGS+=(--parallel)
+[[ -n "$GATE_MODE" ]] && GATE_ARGS+=(--mode "$GATE_MODE")
 
 # Launch detached: this call is inline (NOT run_in_background) and returns in
 # well under a second once the supervisor is forked -- stdout prints exactly

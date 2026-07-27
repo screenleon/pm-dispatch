@@ -17,6 +17,168 @@ trap '' PIPE
 # shellcheck disable=SC2059  # printf passthrough wrapper: the caller owns the format string
 say() { printf "$@" 2>/dev/null || true; }
 
+# Portable policy reader for the gate assurance coordinates.
+#
+# Repo-layout runs read the canonical TSV files under core/policy/. A copied
+# gate may not carry that tree, so it falls back to the bounded generated
+# snapshot below. tests/shell/test-pr-gate.sh compares each heredoc byte-for-
+# byte with its canonical source so this fallback cannot drift silently.
+_gate_assurance_policy_snapshot() {
+  case "${1:-}" in
+    tiers)
+      # BEGIN GENERATED from core/policy/gate-tiers.tsv
+      cat <<'GATE_ASSURANCE_TIERS_TSV'
+# Gate rigor presets. Defaults do not assert actual coverage or execution topology.
+tier	default_reviewers	evidence_floor
+express	critic,qa-tester	reviewer-verdicts
+standard	critic,qa-tester,architecture-reviewer	reviewer-verdicts
+full	critic,qa-tester,architecture-reviewer,security-reviewer,risk-reviewer	reviewer-verdicts
+GATE_ASSURANCE_TIERS_TSV
+      # END GENERATED from core/policy/gate-tiers.tsv
+      ;;
+    modes)
+      # BEGIN GENERATED from core/policy/gate-modes.tsv
+      cat <<'GATE_ASSURANCE_MODES_TSV'
+# Gate execution topology. Mode does not imply tier or reviewer coverage.
+mode	topology	synthesis	is_default
+sequential	combined-session	inline	true
+parallel	per-reviewer-sessions	separate-session	false
+GATE_ASSURANCE_MODES_TSV
+      # END GENERATED from core/policy/gate-modes.tsv
+      ;;
+    pass-kinds)
+      # BEGIN GENERATED from core/policy/gate-pass-kinds.tsv
+      cat <<'GATE_ASSURANCE_PASS_KINDS_TSV'
+# Gate review-pass semantics. Pass kind does not imply tier or execution mode.
+pass_kind	scope	requires_initial_result	is_default
+initial	comprehensive	false	true
+targeted	remediation-delta	true	false
+GATE_ASSURANCE_PASS_KINDS_TSV
+      # END GENERATED from core/policy/gate-pass-kinds.tsv
+      ;;
+    *)
+      printf 'pr-gate: unknown assurance policy table: %s\n' "${1:-empty}" >&2
+      return 2
+      ;;
+  esac
+}
+
+_gate_assurance_policy_filename() {
+  case "${1:-}" in
+    tiers) printf 'gate-tiers.tsv\n' ;;
+    modes) printf 'gate-modes.tsv\n' ;;
+    pass-kinds) printf 'gate-pass-kinds.tsv\n' ;;
+    *) return 2 ;;
+  esac
+}
+
+_gate_assurance_policy_path() {
+  local filename candidate
+  filename="$(_gate_assurance_policy_filename "${1:-}")" || return 2
+  for candidate in \
+    "$SCRIPT_DIR/../../core/policy/$filename" \
+    "$SCRIPT_DIR/core/policy/$filename"
+  do
+    if [[ -r "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+_gate_assurance_policy_emit() {
+  local path
+  if path="$(_gate_assurance_policy_path "${1:-}")"; then
+    cat "$path"
+  else
+    _gate_assurance_policy_snapshot "${1:-}"
+  fi
+}
+
+# _gate_assurance_policy_lookup <table> <key-column> <key> <value-column>
+# Requires exactly one matching row and rejects malformed/duplicate tables.
+_gate_assurance_policy_lookup() {
+  local table="${1:-}" key_column="${2:-}" key="${3:-}" value_column="${4:-}"
+  [[ $# -eq 4 ]] || return 2
+  _gate_assurance_policy_emit "$table" | awk -F '\t' \
+    -v key_name="$key_column" -v wanted="$key" -v value_name="$value_column" '
+      /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
+      !header_seen {
+        header_seen=1
+        header_width=NF
+        for (i=1; i<=NF; i++) {
+          sub(/\r$/, "", $i)
+          if ($i == key_name) key_index=i
+          if ($i == value_name) value_index=i
+        }
+        if (!key_index || !value_index) { malformed=1; exit }
+        next
+      }
+      {
+        sub(/\r$/, "", $NF)
+        if (NF != header_width) { malformed=1; exit }
+        if ($(key_index) == wanted) {
+          matches++
+          result=$(value_index)
+        }
+      }
+      END {
+        if (malformed || !header_seen || matches != 1 || result == "") exit 2
+        print result
+      }
+    '
+}
+
+# _gate_assurance_policy_values <table> <key-column>
+# Emits a unique, non-empty closed enum in source order.
+_gate_assurance_policy_values() {
+  local table="${1:-}" key_column="${2:-}"
+  [[ $# -eq 2 ]] || return 2
+  _gate_assurance_policy_emit "$table" | awk -F '\t' -v key_name="$key_column" '
+    /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
+    !header_seen {
+      header_seen=1
+      header_width=NF
+      for (i=1; i<=NF; i++) {
+        sub(/\r$/, "", $i)
+        if ($i == key_name) key_index=i
+      }
+      if (!key_index) { malformed=1; exit }
+      next
+    }
+    {
+      sub(/\r$/, "", $NF)
+      value=$(key_index)
+      if (NF != header_width || value == "" || seen[value]++) {
+        malformed=1
+        exit
+      }
+      values[++count]=value
+    }
+    END {
+      if (malformed || !header_seen || count == 0) exit 2
+      for (i=1; i<=count; i++) print values[i]
+    }
+  '
+}
+
+_gate_set_mode_requested() {
+  local candidate="$1" spelling="$2"
+  if [[ "$MODE_OPTION_SEEN" == false ]]; then
+    MODE_REQUESTED="$candidate"
+    MODE_OPTION_SEEN=true
+    MODE_OPTION_SPELLING="$spelling"
+    return 0
+  fi
+  if [[ "$MODE_REQUESTED" != "$candidate" ]]; then
+    printf 'Error: conflicting gate mode options: %s requested %s, but %s requested %s\n' \
+      "$MODE_OPTION_SPELLING" "$MODE_REQUESTED" "$spelling" "$candidate" >&2
+    return 2
+  fi
+  return 0
+}
+
 # verify_reviewer_artifact_hashes <hash_cmd> <name> <path> <baseline> [...]
 # Print every reviewer whose artifact differs from its captured baseline.
 verify_reviewer_artifact_hashes() {
@@ -45,6 +207,7 @@ _kill_process_tree() {
   kill -"$_sig" "$_pid" 2>/dev/null || true
 }
 
+# pr-gate-help:start
 # pr-gate.sh -- PR-gate review via a dispatched session
 #
 # DEFAULT (single-session / sequential):
@@ -52,7 +215,7 @@ _kill_process_tree() {
 #   Lower token cost. All reviewer findings appear in a single output file.
 #   Use this for most routine changes.
 #
-# MULTI-SESSION (--parallel):
+# MULTI-SESSION (--mode parallel; --parallel is compatible):
 #   Each reviewer runs in its own INDEPENDENT dispatch session, followed by a
 #   separate PM synthesis session. Reviewers share no context window, which
 #   eliminates anchoring bias across reviewers.
@@ -69,9 +232,11 @@ _kill_process_tree() {
 # Options:
 #   --cd <dir>           working directory (required)
 #   --tier <tier>        express|standard|full -- overrides auto-detection
+#   --mode <mode>        sequential|parallel execution topology (default: sequential)
 #   --brief <file>       dispatch brief for this change; architecture_impact field informs tier suggestion
-#   --reviewers <list>   comma-separated names -- overrides tier default (targeted re-gate)
-#   --targeted <list>    alias for --reviewers (matches /pr-gate skill vocabulary)
+#   --reviewers <list>   comma-separated requested coverage; does not change tier or pass kind
+#   --targeted <list>    remediation-delta pass over these reviewers; requires --initial-result
+#   --initial-result <f> initial gate result referenced by a --targeted pass; relative to --cd
 #   --reviewer-dir <dir> explicit reviewer-definition source; defaults to the repo-owned agents/ directory
 #   --scope <text>       context hint passed into the review brief
 #   --base <branch>      base branch for diff (default: origin/HEAD → main)
@@ -94,8 +259,8 @@ _kill_process_tree() {
 #                        this to dial reasoning depth up/down without switching models.
 #   --isolation <level>  isolation level: none|read-only|workspace-write|workspace-network|sandboxed
 #   --timeout <secs>     dispatch timeout per session (default: 1200)
-#   --parallel           multi-session: one dispatch per reviewer + synthesis (higher token cost)
-#   --sequential         alias for default single-session mode (kept for backward compatibility)
+#   --parallel           compatibility spelling for --mode parallel
+#   --sequential         compatibility spelling for --mode sequential
 #   --allow-hooks        execute repo-local .pm-dispatch hook scripts (trusted branches only)
 #   --allow-dirty        review the working tree as-is instead of failing on a dirty tree atop committed changes
 #   --override-file <f>  inject accepted-risk overrides into every reviewer brief; auto-discovered
@@ -120,18 +285,26 @@ _kill_process_tree() {
 #   --test-timeout <s>   timeout for --test-cmd (default: 1800), decoupled from --timeout so a slow
 #                        test suite can never cause a reviewer dispatch session to time out.
 #   --skip-preflight-tests   force-disable the pre-flight test check even if --test-cmd is passed.
+# pr-gate-help:end
 
 WORK_DIR=""
 GATE_RUN_DIR_OVERRIDE=""   # out-of-repo artifact root; set via --run-dir from pmctl-gate
 TIER_OVERRIDE=""
+TIER_REQUESTED="auto"
 REVIEWERS_OVERRIDE=""
+REVIEWERS_OPTION_SOURCE=""
+MODE_REQUESTED="default"
+MODE_OPTION_SEEN=false
+MODE_OPTION_SPELLING=""
+PASS_KIND_REQUESTED="initial"
+INITIAL_RESULT_INPUT=""
+INITIAL_RESULT_OPTION_SEEN=false
 REVIEWER_DIR_OVERRIDE=""
 SCOPE=""
 BASE_OVERRIDE=""
 HEAD_OVERRIDE=""
 OUTPUT_OVERRIDE=""
 TIMEOUT="1200"
-SEQUENTIAL=true   # default: sequential (lower token cost)
 EXECUTOR_OPTION="auto"
 ALLOW_HOOKS=false   # hooks require explicit --allow-hooks opt-in (security)
 ALLOW_DIRTY=false   # gate refuses a dirty tree atop committed changes unless this opt-in
@@ -156,12 +329,42 @@ SKIP_PREFLIGHT_TESTS=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --cd)         WORK_DIR="$2";           shift 2;;
-    --run-dir)    GATE_RUN_DIR_OVERRIDE="$2"; shift 2;;
-    --tier)       TIER_OVERRIDE="$2";      shift 2;;
+    --cd)
+      [[ $# -ge 2 && -n "$2" && "$2" != --* ]] || { printf 'Error: --cd requires a directory\n' >&2; exit 2; }
+      WORK_DIR="$2"; shift 2;;
+    --run-dir)
+      [[ $# -ge 2 && -n "$2" && "$2" != --* ]] || { printf 'Error: --run-dir requires a directory\n' >&2; exit 2; }
+      GATE_RUN_DIR_OVERRIDE="$2"; shift 2;;
+    --tier)
+      [[ $# -ge 2 && -n "$2" && "$2" != --* ]] || { printf 'Error: --tier requires a value\n' >&2; exit 2; }
+      TIER_OVERRIDE="$2"; TIER_REQUESTED="$2"; shift 2;;
+    --mode)
+      [[ $# -ge 2 && -n "$2" && "$2" != --* ]] || { printf 'Error: --mode requires sequential or parallel\n' >&2; exit 2; }
+      _gate_set_mode_requested "$2" "--mode" || exit 2
+      shift 2;;
     --brief)      BRIEF_FILE="$2";         shift 2;;
-    --reviewers)  REVIEWERS_OVERRIDE="$2"; shift 2;;
-    --targeted)   REVIEWERS_OVERRIDE="$2"; shift 2;;   # alias: /pr-gate skill + script comments say "targeted"
+    --reviewers)
+      [[ $# -ge 2 && -n "$2" && "$2" != --* ]] || { printf 'Error: --reviewers requires a reviewer list\n' >&2; exit 2; }
+      [[ -z "$REVIEWERS_OPTION_SOURCE" ]] || {
+        printf 'Error: --reviewers and --targeted may not be combined or repeated\n' >&2
+        exit 2
+      }
+      REVIEWERS_OVERRIDE="$2"; REVIEWERS_OPTION_SOURCE="--reviewers"; shift 2;;
+    --targeted)
+      [[ $# -ge 2 && -n "$2" && "$2" != --* ]] || { printf 'Error: --targeted requires a reviewer list\n' >&2; exit 2; }
+      [[ -z "$REVIEWERS_OPTION_SOURCE" ]] || {
+        printf 'Error: --reviewers and --targeted may not be combined or repeated\n' >&2
+        exit 2
+      }
+      REVIEWERS_OVERRIDE="$2"; REVIEWERS_OPTION_SOURCE="--targeted"
+      PASS_KIND_REQUESTED="targeted"; shift 2;;
+    --initial-result)
+      [[ $# -ge 2 && -n "$2" && "$2" != --* ]] || { printf 'Error: --initial-result requires a result path\n' >&2; exit 2; }
+      [[ "$INITIAL_RESULT_OPTION_SEEN" == false ]] || {
+        printf 'Error: --initial-result may only be provided once\n' >&2
+        exit 2
+      }
+      INITIAL_RESULT_INPUT="$2"; INITIAL_RESULT_OPTION_SEEN=true; shift 2;;
     --reviewer-dir)
       [[ $# -ge 2 ]] || { printf 'Error: --reviewer-dir requires a directory\n' >&2; exit 2; }
       REVIEWER_DIR_OVERRIDE="$2"; shift 2;;
@@ -184,8 +387,12 @@ while [[ $# -gt 0 ]]; do
       DISPATCH_EFFORT="$2"; shift 2;;
     --isolation)  DISPATCH_ISOLATION="$2"; shift 2;;
     --timeout)    TIMEOUT="$2";            shift 2;;
-    --parallel)   SEQUENTIAL=false;        shift;;
-    --sequential) SEQUENTIAL=true;         shift;;   # backward compat
+    --parallel)
+      _gate_set_mode_requested "parallel" "--parallel" || exit 2
+      shift;;
+    --sequential)
+      _gate_set_mode_requested "sequential" "--sequential" || exit 2
+      shift;;
     --allow-hooks) ALLOW_HOOKS=true;       shift;;
     --allow-dirty) ALLOW_DIRTY=true;       shift;;
     --override-file)
@@ -202,11 +409,19 @@ while [[ $# -gt 0 ]]; do
       TEST_TIMEOUT="$2";   shift 2;;
     --skip-preflight-tests) SKIP_PREFLIGHT_TESTS=true; shift;;
     -h|--help)
-      sed -n '2,99p' "$0" | sed 's/^# \{0,1\}//'
+      awk '
+        /^# pr-gate-help:start$/ { help=1; next }
+        /^# pr-gate-help:end$/ { exit }
+        help {
+          line=$0
+          sub(/^# ?/, "", line)
+          print line
+        }
+      ' "$0"
       exit 0;;
     *)
       printf 'Unknown arg: %s\n' "$1" >&2
-      printf 'Accepted: --cd --run-dir --tier --brief --reviewers|--targeted --reviewer-dir --scope --base --head --output --executor --model --effort --isolation --timeout --parallel --sequential --allow-hooks --allow-dirty --override-file --test-cmd --test-timeout --skip-preflight-tests (-h for help)\n' >&2
+      printf 'Accepted: --cd --run-dir --tier --mode --brief --reviewers --targeted --initial-result --reviewer-dir --scope --base --head --output --executor --model --effort --isolation --timeout --parallel --sequential --allow-hooks --allow-dirty --override-file --test-cmd --test-timeout --skip-preflight-tests (-h for help)\n' >&2
       exit 2;;
   esac
 done
@@ -284,6 +499,186 @@ else
     return 0
   }
 fi
+
+# ── Resolve assurance policy coordinates ─────────────────────────────────────
+# These are resolved before any executor routing or dispatch. The LLM receives
+# the resolved values as read-only context; it does not choose or infer them.
+if ! GATE_TIER_VALUES="$(_gate_assurance_policy_values tiers tier)"; then
+  printf 'Error: invalid gate tier policy source\n' >&2
+  exit 2
+fi
+if ! GATE_MODE_VALUES="$(_gate_assurance_policy_values modes mode)"; then
+  printf 'Error: invalid gate mode policy source\n' >&2
+  exit 2
+fi
+if ! GATE_PASS_KIND_VALUES="$(_gate_assurance_policy_values pass-kinds pass_kind)"; then
+  printf 'Error: invalid gate pass-kind policy source\n' >&2
+  exit 2
+fi
+
+if ! GATE_MODE_DEFAULT="$(_gate_assurance_policy_lookup modes is_default true mode)"; then
+  printf 'Error: gate mode policy must declare exactly one default\n' >&2
+  exit 2
+fi
+if ! GATE_PASS_KIND_DEFAULT="$(_gate_assurance_policy_lookup pass-kinds is_default true pass_kind)"; then
+  printf 'Error: gate pass-kind policy must declare exactly one default\n' >&2
+  exit 2
+fi
+if [[ "$GATE_MODE_DEFAULT" != "sequential" ]]; then
+  printf 'Error: gate mode policy default must remain sequential\n' >&2
+  exit 2
+fi
+if [[ "$GATE_PASS_KIND_DEFAULT" != "initial" ]]; then
+  printf 'Error: gate pass-kind policy default must remain initial\n' >&2
+  exit 2
+fi
+
+if [[ -n "$TIER_OVERRIDE" ]] \
+    && ! _gate_assurance_policy_lookup tiers tier "$TIER_OVERRIDE" default_reviewers >/dev/null; then
+  printf 'Error: --tier must be one of: %s (got: %s)\n' \
+    "$(printf '%s\n' "$GATE_TIER_VALUES" | awk 'BEGIN{ORS=" "} {print} END{print "\n"}' | sed 's/[[:space:]]*$//')" \
+    "$TIER_OVERRIDE" >&2
+  exit 2
+fi
+
+if [[ "$MODE_OPTION_SEEN" == false ]]; then
+  MODE_RESOLVED="$GATE_MODE_DEFAULT"
+else
+  MODE_RESOLVED="$MODE_REQUESTED"
+fi
+if ! MODE_TOPOLOGY="$(_gate_assurance_policy_lookup modes mode "$MODE_RESOLVED" topology)" \
+    || ! MODE_SYNTHESIS="$(_gate_assurance_policy_lookup modes mode "$MODE_RESOLVED" synthesis)"; then
+  printf 'Error: --mode must be one of: %s (got: %s)\n' \
+    "$(printf '%s\n' "$GATE_MODE_VALUES" | awk 'BEGIN{ORS=" "} {print} END{print "\n"}' | sed 's/[[:space:]]*$//')" \
+    "$MODE_RESOLVED" >&2
+  exit 2
+fi
+case "$MODE_TOPOLOGY:$MODE_SYNTHESIS" in
+  combined-session:inline) SEQUENTIAL=true ;;
+  per-reviewer-sessions:separate-session) SEQUENTIAL=false ;;
+  *)
+    printf 'Error: unsupported gate mode topology for %s: %s + %s\n' \
+      "$MODE_RESOLVED" "$MODE_TOPOLOGY" "$MODE_SYNTHESIS" >&2
+    exit 2
+    ;;
+esac
+
+PASS_KIND_RESOLVED="$PASS_KIND_REQUESTED"
+if ! PASS_SCOPE="$(_gate_assurance_policy_lookup pass-kinds pass_kind "$PASS_KIND_RESOLVED" scope)" \
+    || ! PASS_REQUIRES_INITIAL="$(_gate_assurance_policy_lookup pass-kinds pass_kind "$PASS_KIND_RESOLVED" requires_initial_result)"; then
+  printf 'Error: gate pass kind must be one of: %s (got: %s)\n' \
+    "$(printf '%s\n' "$GATE_PASS_KIND_VALUES" | awk 'BEGIN{ORS=" "} {print} END{print "\n"}' | sed 's/[[:space:]]*$//')" \
+    "$PASS_KIND_RESOLVED" >&2
+  exit 2
+fi
+case "$PASS_REQUIRES_INITIAL" in
+  true)
+    if [[ -z "$INITIAL_RESULT_INPUT" ]]; then
+      printf 'Error: --targeted requires --initial-result <path>\n' >&2
+      exit 2
+    fi
+    ;;
+  false)
+    if [[ -n "$INITIAL_RESULT_INPUT" ]]; then
+      printf 'Error: --initial-result is only valid with --targeted\n' >&2
+      exit 2
+    fi
+    ;;
+  *)
+    printf 'Error: invalid requires_initial_result value for pass kind %s: %s\n' \
+      "$PASS_KIND_RESOLVED" "$PASS_REQUIRES_INITIAL" >&2
+    exit 2
+    ;;
+esac
+
+INITIAL_RESULT_RESOLVED=""
+if [[ -n "$INITIAL_RESULT_INPUT" ]]; then
+  _initial_result_candidate="$INITIAL_RESULT_INPUT"
+  [[ "$_initial_result_candidate" == /* ]] \
+    || _initial_result_candidate="$WORK_DIR/$_initial_result_candidate"
+  if [[ ! -f "$_initial_result_candidate" || ! -r "$_initial_result_candidate" \
+      || ! -s "$_initial_result_candidate" ]]; then
+    printf 'Error: --initial-result must name a readable, non-empty file: %s\n' \
+      "$INITIAL_RESULT_INPUT" >&2
+    exit 2
+  fi
+  _initial_result_parent="$(cd "$(dirname "$_initial_result_candidate")" && pwd -P)" || {
+    printf 'Error: cannot resolve --initial-result parent: %s\n' "$INITIAL_RESULT_INPUT" >&2
+    exit 2
+  }
+  INITIAL_RESULT_RESOLVED="$_initial_result_parent/$(basename "$_initial_result_candidate")"
+  if ! gate_result_verify "$INITIAL_RESULT_RESOLVED" "" "targeted initial result"; then
+    printf 'Error: --initial-result is not a structurally valid gate result: %s\n' \
+      "$INITIAL_RESULT_INPUT" >&2
+    exit 2
+  fi
+  unset _initial_result_candidate _initial_result_parent
+fi
+
+# Build the closed reviewer vocabulary from tier defaults in source order.
+# This is a vocabulary only: a tier default is not actual selected coverage.
+ALL_REVIEWERS=""
+while IFS= read -r _policy_tier; do
+  _policy_reviewers="$(_gate_assurance_policy_lookup tiers tier "$_policy_tier" default_reviewers)" || {
+    printf 'Error: invalid default_reviewers for gate tier: %s\n' "$_policy_tier" >&2
+    exit 2
+  }
+  _gate_assurance_policy_lookup tiers tier "$_policy_tier" evidence_floor >/dev/null || {
+    printf 'Error: missing evidence_floor for gate tier: %s\n' "$_policy_tier" >&2
+    exit 2
+  }
+  for _policy_reviewer in $(printf '%s' "$_policy_reviewers" | tr ',' ' '); do
+    if [[ ! "$_policy_reviewer" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
+      printf 'Error: invalid reviewer name in gate tier policy: %s\n' "$_policy_reviewer" >&2
+      exit 2
+    fi
+    if [[ " $ALL_REVIEWERS " != *" $_policy_reviewer "* ]]; then
+      ALL_REVIEWERS="${ALL_REVIEWERS:+$ALL_REVIEWERS }$_policy_reviewer"
+    fi
+  done
+done <<< "$GATE_TIER_VALUES"
+unset _policy_tier _policy_reviewers _policy_reviewer
+if [[ -z "$ALL_REVIEWERS" ]]; then
+  printf 'Error: gate tier policy did not declare any reviewers\n' >&2
+  exit 2
+fi
+
+_gate_normalize_reviewer_list() {
+  local raw="$1" source_label="$2" normalized="" reviewer
+  if [[ -z "${raw//[[:space:]]/}" || "$raw" == ,* || "$raw" == *, || "$raw" == *,,* ]]; then
+    printf 'Error: %s requires a non-empty comma-separated reviewer list\n' "$source_label" >&2
+    return 2
+  fi
+  raw="${raw//,/ }"
+  for reviewer in $raw; do
+    if [[ " $ALL_REVIEWERS " != *" $reviewer "* ]]; then
+      printf 'Error: %s contains unknown reviewer %s (allowed: %s)\n' \
+        "$source_label" "$reviewer" "$ALL_REVIEWERS" >&2
+      return 2
+    fi
+    if [[ " $normalized " == *" $reviewer "* ]]; then
+      printf 'Error: %s contains duplicate reviewer: %s\n' "$source_label" "$reviewer" >&2
+      return 2
+    fi
+    normalized="${normalized:+$normalized }$reviewer"
+  done
+  [[ -n "$normalized" ]] || return 2
+  printf '%s\n' "$normalized"
+}
+
+_gate_policy_source_count=0
+for _gate_policy_table in tiers modes pass-kinds; do
+  if _gate_assurance_policy_path "$_gate_policy_table" >/dev/null; then
+    _gate_policy_source_count=$((_gate_policy_source_count + 1))
+  fi
+done
+case "$_gate_policy_source_count" in
+  3) GATE_ASSURANCE_POLICY_SOURCE="canonical" ;;
+  0) GATE_ASSURANCE_POLICY_SOURCE="generated-snapshot" ;;
+  *) GATE_ASSURANCE_POLICY_SOURCE="mixed" ;;
+esac
+unset _gate_policy_source_count _gate_policy_table
+
 EXECUTOR_ROUTER_PATH="$SCRIPT_DIR/../lib/executor-router.sh"
 if [[ -r "$EXECUTOR_ROUTER_PATH" ]]; then
   # shellcheck source=runtime/lib/executor-router.sh
@@ -851,24 +1246,31 @@ fi
 
 # ── Detect tier ───────────────────────────────────────────────────────────────
 if [[ -n "$TIER_OVERRIDE" ]]; then
-  TIER="$TIER_OVERRIDE"
-elif [[ -n "$REVIEWERS_OVERRIDE" ]]; then
-  TIER="targeted"
+  TIER_RESOLVED="$TIER_OVERRIDE"
 else
   NON_DOCS=$(printf '%s\n' "$DIFF_FILES" | grep -vE '\.(md|jsonl|txt)$|^\.gitignore$|^audits/|^docs/' || true)
   SENSITIVE_HIT=$(printf '%s\n' "$DIFF_FILES" | { grep -iE '(^|[/_.-])(auth|oauth|jwt|session|secret|password|token|credential|cors|csrf|webhook|sudo|ssh|payment|billing)([/_.-]|$)|(^|/)migrations?/|^\.github/' || true; } | wc -l)
 
   if [[ -z "$NON_DOCS" ]]; then
-    TIER=express
+    TIER_RESOLVED=express
   elif [[ "$SENSITIVE_HIT" -gt 0 || "$LINES" -gt 500 ]]; then
-    TIER=full
+    TIER_RESOLVED=full
   elif [[ "$LINES" -lt 100 && "${BINARY_HIT:-0}" -eq 0 ]]; then
     # Binary files have no line count but represent real changes -- treat as standard+
-    TIER=express
+    TIER_RESOLVED=express
   else
-    TIER=standard
+    TIER_RESOLVED=standard
   fi
 fi
+if ! _gate_assurance_policy_lookup tiers tier "$TIER_RESOLVED" default_reviewers >/dev/null; then
+  printf 'Error: detected gate tier is absent from policy: %s\n' "$TIER_RESOLVED" >&2
+  exit 2
+fi
+TIER="$TIER_RESOLVED"
+TIER_EVIDENCE_FLOOR="$(_gate_assurance_policy_lookup tiers tier "$TIER" evidence_floor)" || {
+  printf 'Error: gate tier policy has no evidence floor for: %s\n' "$TIER" >&2
+  exit 2
+}
 
 # ── Brief-based tier suggestion (advisory; never overrides --tier) ────────────
 if [[ -n "$BRIEF_FILE" && -f "$BRIEF_FILE" && -z "$TIER_OVERRIDE" ]]; then
@@ -888,21 +1290,21 @@ if [[ -n "$BRIEF_FILE" && -f "$BRIEF_FILE" && -z "$TIER_OVERRIDE" ]]; then
 fi
 
 # ── Determine reviewer list ───────────────────────────────────────────────────
-ALL_REVIEWERS="critic qa-tester architecture-reviewer security-reviewer risk-reviewer"
-
 if [[ -n "$REVIEWERS_OVERRIDE" ]]; then
-  REVIEWERS=$(printf '%s' "$REVIEWERS_OVERRIDE" | tr ',' ' ')
+  REVIEWERS="$(_gate_normalize_reviewer_list "$REVIEWERS_OVERRIDE" "$REVIEWERS_OPTION_SOURCE")" || exit 2
+  COVERAGE_REQUESTED_DISPLAY="$(printf '%s' "$REVIEWERS" | tr ' ' ',')"
 else
-  case "$TIER" in
-    express)  REVIEWERS="critic qa-tester";;
-    standard) REVIEWERS="critic qa-tester architecture-reviewer";;
-    full)     REVIEWERS="$ALL_REVIEWERS";;
-    *)        REVIEWERS="$ALL_REVIEWERS";;
-  esac
+  _tier_default_reviewers="$(_gate_assurance_policy_lookup tiers tier "$TIER" default_reviewers)" || {
+    printf 'Error: gate tier policy has no default reviewer coverage for: %s\n' "$TIER" >&2
+    exit 2
+  }
+  REVIEWERS="$(_gate_normalize_reviewer_list "$_tier_default_reviewers" "tier $TIER default_reviewers")" || exit 2
+  COVERAGE_REQUESTED_DISPLAY="default"
+  unset _tier_default_reviewers
 fi
 
 REVIEWER_DISPLAY=$(printf '%s' "$REVIEWERS" | tr ' ' ',')
-NUM_REVIEWERS=$(printf '%s\n' $REVIEWERS | wc -l | tr -d ' ')
+NUM_REVIEWERS=$(printf '%s\n' "$REVIEWERS" | awk '{print NF}')
 
 # Compute skipped dimensions
 SKIPPED=""
@@ -912,6 +1314,8 @@ for r in $ALL_REVIEWERS; do
   fi
 done
 SKIPPED_DISPLAY="${SKIPPED:-none}"
+COVERAGE_SELECTED_DISPLAY="$REVIEWER_DISPLAY"
+COVERAGE_SKIPPED_DISPLAY="$SKIPPED_DISPLAY"
 
 # ── Resolve reviewer definitions ─────────────────────────────────────────────
 # Definitions outside the reviewed workspace are trusted installation assets.
@@ -979,6 +1383,16 @@ OUTPUT_FILE="${OUTPUT_OVERRIDE:-$WORK_DIR/.gate-results/gate-${TIMESTAMP}.md}"
 # here IS the absolute working dir and a relative OUTPUT_FILE resolves to an absolute path under it.
 [[ "$OUTPUT_FILE" = /* ]] || OUTPUT_FILE="$PWD/$OUTPUT_FILE"
 mkdir -p "$(dirname "$OUTPUT_FILE")"
+_output_parent="$(cd "$(dirname "$OUTPUT_FILE")" && pwd -P)"
+OUTPUT_FILE="$_output_parent/$(basename "$OUTPUT_FILE")"
+unset _output_parent
+if [[ -n "$INITIAL_RESULT_RESOLVED" \
+    && ( "$OUTPUT_FILE" == "$INITIAL_RESULT_RESOLVED" \
+      || ( -e "$OUTPUT_FILE" && "$OUTPUT_FILE" -ef "$INITIAL_RESULT_RESOLVED" ) ) ]]; then
+  printf 'Error: --output must not overwrite the referenced --initial-result: %s\n' \
+    "$INITIAL_RESULT_RESOLVED" >&2
+  exit 2
+fi
 touch "$OUTPUT_FILE"
 
 # Track all brief files for EXIT cleanup
@@ -1131,7 +1545,22 @@ render_gate_overrides_block() {
 # Pre-format the override block for heredoc injection (empty when no overrides).
 GATE_OVERRIDES_CONTEXT_BLOCK="$(render_gate_overrides_block "$GATE_OVERRIDES_CONTENT")"
 
-say 'pr-gate: %s tier -- %s\n' "$TIER" "$REVIEWER_DISPLAY"
+INITIAL_RESULT_DISPLAY="${INITIAL_RESULT_RESOLVED:-none}"
+printf -v GATE_ASSURANCE_CONTEXT_BLOCK \
+  '  Assurance coordinates (resolved by the gate shell; do not reinterpret):\n    tier.requested: %s\n    tier.resolved: %s\n    tier.evidence_floor: %s\n    mode.requested: %s\n    mode.resolved: %s\n    mode.topology: %s\n    mode.synthesis: %s\n    pass.requested: %s\n    pass.resolved: %s\n    pass.scope: %s\n    pass.initial_result: %s\n    coverage.requested: %s\n    coverage.selected: %s\n    coverage.skipped: %s\n    policy.source: %s\n' \
+  "$TIER_REQUESTED" "$TIER_RESOLVED" "$TIER_EVIDENCE_FLOOR" \
+  "$MODE_REQUESTED" "$MODE_RESOLVED" "$MODE_TOPOLOGY" "$MODE_SYNTHESIS" \
+  "$PASS_KIND_REQUESTED" "$PASS_KIND_RESOLVED" "$PASS_SCOPE" "$INITIAL_RESULT_DISPLAY" \
+  "$COVERAGE_REQUESTED_DISPLAY" \
+  "$COVERAGE_SELECTED_DISPLAY" "$COVERAGE_SKIPPED_DISPLAY" \
+  "$GATE_ASSURANCE_POLICY_SOURCE"
+
+say 'pr-gate: tier %s -> %s; mode %s -> %s; pass %s -> %s\n' \
+  "$TIER_REQUESTED" "$TIER_RESOLVED" "$MODE_REQUESTED" "$MODE_RESOLVED" \
+  "$PASS_KIND_REQUESTED" "$PASS_KIND_RESOLVED"
+say 'pr-gate: coverage requested=%s selected=%s skipped=%s; policy=%s\n' \
+  "$COVERAGE_REQUESTED_DISPLAY" "$COVERAGE_SELECTED_DISPLAY" \
+  "$COVERAGE_SKIPPED_DISPLAY" "$GATE_ASSURANCE_POLICY_SOURCE"
 [[ "${ADJ_COUNT:-0}" -gt 0 ]] && say '  adjacent test files added: %d\n' "$ADJ_COUNT"
 say 'result will be written to: %s\n\n' "$OUTPUT_FILE"
 
@@ -1589,7 +2018,7 @@ context:
   Base: ${BASE}${HEAD_METADATA_LINE}
   Scope: ${SCOPE:-none}
   Date: $(date '+%Y-%m-%d')
-${GATE_OVERRIDES_CONTEXT_BLOCK}${TEST_EVIDENCE_CONTEXT_BLOCK}
+${GATE_ASSURANCE_CONTEXT_BLOCK}${GATE_OVERRIDES_CONTEXT_BLOCK}${TEST_EVIDENCE_CONTEXT_BLOCK}
 ${MEMORY_CONTEXT_BLOCK}
   Verified reference files (exist in working tree -- check before citing):
 ${REPO_REF_INDEX}
@@ -1632,8 +2061,8 @@ output_format: |
   ---
   gate_result_version: pr_gate_result_v1
   final: GO|NO-GO
-  tier: express|standard|full|targeted
-  mode: sequential
+  tier: ${TIER}
+  mode: ${MODE_RESOLVED}
   most_severe: approve|advise|block-soft|block
   reviewers:
     critic: approve|advise|block-soft|skipped
@@ -1823,7 +2252,7 @@ context:
   Base: ${BASE}${HEAD_METADATA_LINE}
   Scope: ${SCOPE:-none}
   Date: $(date '+%Y-%m-%d')
-${GATE_OVERRIDES_CONTEXT_BLOCK}${TEST_EVIDENCE_CONTEXT_BLOCK}
+${GATE_ASSURANCE_CONTEXT_BLOCK}${GATE_OVERRIDES_CONTEXT_BLOCK}${TEST_EVIDENCE_CONTEXT_BLOCK}
 ${MEMORY_CONTEXT_BLOCK}
   Verified reference files (exist in working tree -- check before citing):
 ${REPO_REF_INDEX}
@@ -2045,7 +2474,7 @@ context:
   Base: ${BASE}${HEAD_METADATA_LINE}
   Scope: ${SCOPE:-none}
   Date: $(date '+%Y-%m-%d')
-${GATE_OVERRIDES_CONTEXT_BLOCK}${TEST_EVIDENCE_CONTEXT_BLOCK}
+${GATE_ASSURANCE_CONTEXT_BLOCK}${GATE_OVERRIDES_CONTEXT_BLOCK}${TEST_EVIDENCE_CONTEXT_BLOCK}
   Verified reference files (exist in working tree -- check before citing):
 ${REPO_REF_INDEX}
   Reviewer findings (embedded -- do NOT attempt to read any external reviewer output file):
@@ -2081,7 +2510,7 @@ output_format: |
   gate_result_version: pr_gate_result_v1
   final: GO|NO-GO
   tier: ${TIER}
-  mode: parallel
+  mode: ${MODE_RESOLVED}
   most_severe: approve|advise|block-soft|block
   reviewers:
     critic: approve|advise|block-soft|skipped
