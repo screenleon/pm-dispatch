@@ -31,7 +31,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-509 | ✅ closed 2026-07-22 | detached gate launch liveness：對 sandbox parent-death 早期死亡 fail-loud，提供 supervisor readiness／identity evidence | arch/gate | 2026-07-22 | pr:#440 | P2 | hygiene |
 | CC-510 | ✅ closed 2026-07-23 | Codex detached dispatch continuation：App Server callback、authenticated completion envelope 與 foreground fallback | arch/DX | 2026-07-23 | pr:#443 | P2 | design |
 | CC-511 | ⚠️ partial 2026-07-24 | ship publish authorization：Phase A current-tree authoritative full-suite 已交付；Phase B review-closure evidence 仍待 CC-515／CC-517 | release/gate | 2026-07-23 | pr:#446 | P1 | design |
-| CC-512 | ⚠️ partial 2026-07-27 | Slice A 已交付 coordinate sources／CLI resolution；machine envelope、evidence capture 與 shared verifier 仍待 Slice B／C | ops/gate | 2026-07-23 | — | P1 | design |
+| CC-512 | ✅ closed 2026-07-27 | Slices A／B／C 已交付：coordinate sources／CLI resolution、machine-owned assurance envelope／evidence capture、shared verifier／parity ratchets；targeted 不再是 tier | ops/gate | 2026-07-23 | pr:#451 | P1 | design |
 | CC-513 | 🔵 active | canonical gate policy resolver：minimum tier、required reviewers、mode recommendation 與 downgrade audit | security/gate | 2026-07-23 | — | P1 | design |
 | CC-514 | 🔵 active | orthogonal delivery assurance map、machine-derived tables 與 feature/docs/high-risk recipes | docs/process | 2026-07-23 | — | P2 | design |
 | CC-515 | 🔵 active | gate artifact immutable subject、freshness 與 consumer applicability shared verifier | arch/gate | 2026-07-23 | — | P1 | design |
@@ -1617,7 +1617,7 @@ authorization。
 
 ---
 
-## CC-512 — tier／mode／pass／coverage／independence assurance 正交化 ⚠️ partial 2026-07-27
+## CC-512 — tier／mode／pass／coverage／independence assurance 正交化 ✅ 2026-07-27
 
 **Problem**: runtime 雖已將 tier detection、reviewer selection 與
 `SEQUENTIAL=true|false` 分開，但目前仍有三個 truth gap：
@@ -1696,11 +1696,12 @@ authorization。
    invalid/conflicting inputs，以及 dispatch brief 中的 requested/resolved／coverage
    coordinates。`--tier full --reviewers critic` 保留 full intent + critic-only
    selection；新 producer／verifier 尚未交付。
-2. **B — machine-owned envelope + evidence capture（pending）**：sequential combined session、
-   parallel per-reviewer/synthesis sessions、targeted initial reference、copy-mode
-   truthful degradation。
-3. **C — verifier + remaining parity ratchets（pending）**：claim consistency、v1 legacy
-   classification、result/help/docs parity、affected-test mapping。
+2. **B — machine-owned envelope + evidence capture（✅ delivered 2026-07-27,
+   pr:#451）**：sequential combined session、parallel per-reviewer/synthesis sessions、
+   targeted initial reference、copy-mode truthful degradation。
+3. **C — verifier + remaining parity ratchets（✅ delivered 2026-07-27,
+   pr:#451）**：claim consistency、v1 legacy classification、result/help/docs parity、
+   affected-test mapping。
 
 **Done-when**:
 
@@ -1722,6 +1723,17 @@ engine、FSM或 mandatory parallel policy。
 **Dependencies**: 無 hard implementation dependency；本票先鎖定 coordinates，
 [[CC-513]]再產 policy resolution，[[CC-515]]再把 structural evidence 與
 subject/freshness/applicability接起來。
+
+**Outcome**: Slices A／B／C 已完成。Gate producer 現在以分離的 portable policy
+sources解析 tier、mode、pass、coverage與independence，並產生 machine-owned
+assurance sidecar；dispatch outcome、canonical run evidence、result／repository／
+subject bindings與protected attestation皆由 runtime 擷取，不再由 reviewer Markdown
+自述。Shared verifier會檢查 structural／claim consistency、coverage partition、
+mode／topology、targeted initial reference與v1 legacy降級；copy-mode fallback由
+shared verifier產生並受parity ratchet保護。Formal full gate為GO且assurance verified，
+current-tree authoritative full suite為97 passed、0 failed、0 skipped。
+
+**See**: pr:#451
 
 **Cross-link**: [[CC-513]]、[[CC-515]]、[[CC-518]]、[[CC-519]]、
 `docs/review-model.md`。

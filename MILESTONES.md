@@ -107,7 +107,7 @@
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-512 | Slice A coordinate sources／CLI resolution 已交付；machine-owned assurance envelope、evidence capture、verifier 仍待 B／C；targeted 不再是 tier | ⚠️ |
+| CC-512 | Slices A／B／C：coordinate sources／CLI resolution、machine-owned assurance envelope／evidence capture、shared verifier／parity ratchets；targeted 不再是 tier | ✅ pr:#451 |
 | CC-513 | canonical resolver：minimum tier、required reviewers、recommended/required mode、generic vs maintainer policy 與 downgrade audit | 🔵 |
 | CC-515 | immutable subject；artifact validity、subject freshness、policy applicability 三軸 shared verifier | 🔵 |
 
