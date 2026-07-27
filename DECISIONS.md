@@ -7,10 +7,54 @@ H2 標題格式：## YYYY-MM-DD: <短描述>
 與 BACKLOG closure 對應的 entry，內文首行寫：Closes: BACKLOG.md#<PREFIX>-NNN
 -->
 
+## 2026-07-27: targeted-review-is-a-pass-kind-not-a-tier
+
+Relates: CC-512, CC-513, CC-515, CC-517, CC-519
+
+**Context**: 2026-07-27 的 runtime planning audit確認：`pr-gate.sh` 在提供
+`--reviewers`、未提供 explicit `--tier` 時直接把 tier 設成 `targeted`；
+`--targeted` 只是同一 coverage override 的 alias。同時 final Markdown frontmatter
+由 reviewer／synthesis session撰寫，shared verifier只驗 `Final:` parity，無法證明
+實際 tier、mode、reviewer coverage或session independence。這使
+2026-07-23 decision裡「targeted屬於tier」與「tier／coverage／subject必須正交」
+互相矛盾。
+
+**Decision**:
+
+1. Tier closed enum收斂為 `express|standard|full`，表示 rigor intent/preset；
+   requested與resolved分開，default reviewer/evidence floor不是actual coverage。
+2. Review pass獨立為 `initial|targeted`。Targeted表示remediation delta，必須引用
+   initial result；它可和任一tier、sequential/parallel mode組合，但不得呈現為initial
+   comprehensive coverage。
+3. `--reviewers`只設定requested coverage；`--targeted`不再只是alias，並要求
+   `--initial-result`。Mode新增canonical `--mode`，既有`--parallel`／`--sequential`
+   保留為compatibility spelling。
+4. Tier、mode、pass、coverage與independence由gate shell產生machine-owned assurance
+   envelope；LLM Markdown只承載findings與human summary。CC-512 verifier只驗
+   structural/claim consistency；CC-513擁有risk/policy resolution，CC-515擁有
+   subject validity/freshness/applicability。
+
+**Alternatives considered**: (a) 保留`targeted`為第四種tier——否決，scope/delta不是
+rigor depth，且會繼續讓coverage override改寫tier。(b) 只在Markdown增加更多欄位——
+否決，欄位仍由LLM自述，無法作machine assurance。(c) 等CC-515一次解決——否決，
+CC-515需要先有穩定coordinates，否則subject verifier會同時承擔CLI語意與policy來源。
+
+**Constraints introduced**: 新producer不得再產生把targeted當tier的artifact；
+`pr_gate_result_v1`只能被分類為legacy structural evidence，不能被新consumer當成
+完整assurance。不得以tier名稱推論actual reviewer coverage、mode或publish
+authorization；不得新增gate kind、workflow engine或FSM。本決策只取代
+2026-07-23 entry中「targeted屬tier」的部分，其餘六維正交與publish authorization
+決策維持有效。
+
+---
+
 ## 2026-07-23: gate-delivery-assurance-dimensions-are-orthogonal
 
 Relates: CC-511, CC-512, CC-513, CC-514, CC-515, CC-517, CC-518, CC-519,
 CC-520, CC-521
+
+> 2026-07-27 clarification：本條目的 `targeted`-as-tier 部分已由
+> `targeted-review-is-a-pass-kind-not-a-tier` 取代；其餘六維正交決策不變。
 
 **Context**: 現有 runtime 已將 tier detection、reviewer selection 與
 `SEQUENTIAL=true|false` 分開處理，但 review 文件與規畫曾把 `full`、五個 reviewers、

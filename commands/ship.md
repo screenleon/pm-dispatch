@@ -173,10 +173,11 @@ once the call returns.
     assertion or fixture adjustment, or a small guard/error-handling fix.
 
   Then re-run `pmctl gate run --executor <gate_executor> --cd "<work_dir>"
-  --lifecycle foreground --reviewers <reviewer,...>` (same literal-path
-  substitution as Step 3's first call — never `"$PWD"`; the `/pr-gate`
-  `--targeted` flag maps to this same `--reviewers` option) for the reviewers
-  whose territory the fix touched. Repeat.
+  --lifecycle foreground --targeted <reviewer,...> --initial-result
+  "<initial_gate_result_path>"` (same literal-path substitution as Step 3's
+  first call — never `"$PWD"`). The initial-result path is the comprehensive
+  gate result that opened this remediation loop; keep it explicit on every
+  targeted pass. Repeat for the reviewers whose territory the fix touched.
 
 **Stop the loop only when**:
 1. Step 0's check would have caught this but didn't — implementation revealed

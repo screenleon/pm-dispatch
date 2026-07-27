@@ -18,16 +18,16 @@ implement → pr-gate → fix NO-GO → push → PR).
 
 - Slash command: `/pr-gate` (see `commands/pr-gate.md`). It dispatches the
   reviewers and writes a typed result to `.gate-results/`.
-- Direct: `bash runtime/bin/pr-gate.sh --cd <repo> --executor auto [--parallel]`.
+- Direct: `bash runtime/bin/pr-gate.sh --cd <repo> --executor auto [--mode sequential|parallel]`.
 - Reasoning effort defaults to `medium` (`--effort low|medium|high`, independent of `--model`/`--executor`). Only reach for `--effort high` when you need deeper analysis — e.g. a hard-to-diagnose finding, or escalating after repeated NO-GO rounds on the same issue.
 
 **Tier / mode** (tiers reflect rigor level, not reviewer count):
 - `express` — hotfix, docs-only, `architecture_impact: none`; machine verify + critic + qa.
 - `standard` — feature, `architecture_impact: minor`; adds architecture-reviewer with conceptual map.
-- `full` — architectural change, `architecture_impact: major`, sensitive path; parallel cross-context + security + risk hard gates.
-- Default = **sequential**, low token cost. `--parallel` gives each reviewer an independent session.
+- `full` — architectural change, `architecture_impact: major`, sensitive path; defaults to all reviewer dimensions.
+- Default = **sequential**, low token cost. `--mode parallel` gives each reviewer an independent session; `--parallel` remains a compatibility spelling.
 - Pass `--brief <file>` to get an advisory tier suggestion based on the brief's `architecture_impact`.
-- Force a tier with `--tier express|standard|full`; re-gate a subset with `--targeted r1,r2`.
+- Force a tier with `--tier express|standard|full`; re-gate a remediation subset with `--targeted r1,r2 --initial-result <path>`.
 
 ## Reading the result
 

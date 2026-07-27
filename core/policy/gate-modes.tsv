@@ -1,0 +1,4 @@
+# Gate execution topology. Mode does not imply tier or reviewer coverage.
+mode	topology	synthesis	is_default
+sequential	combined-session	inline	true
+parallel	per-reviewer-sessions	separate-session	false

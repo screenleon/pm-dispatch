@@ -3,13 +3,13 @@
 #
 # These tests validate that:
 #   1. Every JSON Schema file under core/schema/ is valid JSON
-#   2. Every YAML file under core/policy/ and core/state/ is valid YAML
+#   2. Every YAML/TSV file under core/policy/ and core/state/ has valid structure
 #   3. Schemas declaring schema_version do so as a positive integer `const`
 #   4. Enum values referenced inline in schemas stay in sync with the
-#      corresponding policy YAML files (the documented editing source).
+#      corresponding declarative policy files (the documented editing source).
 #
 # Per docs/spikes/CC-229-substrate-synthesis.md §E Q1: JSON Schema is the
-# ajv-compliant source-of-truth; policy YAML is the human editing surface.
+# ajv-compliant source-of-truth; policy YAML/TSV is the human editing surface.
 # This test enforces the sync that comment-level documentation requests.
 #
 # Runs via: tests/shell/test-core-schemas.sh
@@ -60,6 +60,29 @@ _schema_enum() {
   jq -r "$path | .[]" "$file" 2>/dev/null || true
 }
 
+_tsv_column() {
+  # Extract a named column from a headered TSV, excluding comments/blank lines.
+  local file="$1" column="$2"
+  awk -F '\t' -v wanted="$column" '
+    /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
+    !header_seen {
+      header_seen=1
+      width=NF
+      for (i=1; i<=NF; i++) {
+        sub(/\r$/, "", $i)
+        if ($i == wanted) column_index=i
+      }
+      if (!column_index) exit 2
+      next
+    }
+    {
+      sub(/\r$/, "", $NF)
+      if (NF != width || $(column_index) == "") exit 2
+      print $(column_index)
+    }
+  ' "$file"
+}
+
 # ---------- tests ----------
 
 case_schema_parse() {
@@ -101,6 +124,35 @@ case_yaml_parse() {
     return
   fi
   pass "$name"
+}
+
+case_tsv_parse() {
+  # Verifies that a policy TSV has a header, at least one row, consistent
+  # tab-separated width, and no empty cells.
+  local file="$1"
+  local name="TSV: $file has valid structure"
+  should_run "$name" || return 0
+  if awk -F '\t' '
+      /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
+      !header_seen {
+        header_seen=1
+        width=NF
+        for (i=1; i<=NF; i++) if ($i == "") exit 2
+        next
+      }
+      {
+        rows++
+        if (NF != width) exit 2
+        for (i=1; i<=NF; i++) if ($i == "") exit 2
+      }
+      END {
+        if (!header_seen || width < 2 || rows < 1) exit 2
+      }
+    ' "$file"; then
+    pass "$name"
+  else
+    fail "$name" "invalid header or row structure"
+  fi
 }
 
 case_schema_version_const() {
@@ -153,6 +205,28 @@ case_enum_sync() {
   fi
 }
 
+case_review_tier_policy_compatibility() {
+  # Verify current Review tiers match the canonical TSV while schema_version 1
+  # retains only `targeted` as its documented legacy compatibility value.
+  local schema_file="$CORE_DIR/schema/review.schema.json"
+  local tsv_file="$CORE_DIR/policy/gate-tiers.tsv"
+  local name="enum-sync: review tiers == gate-tiers.tsv plus legacy targeted"
+  should_run "$name" || return 0
+
+  local current_schema_vals tsv_vals legacy_count
+  current_schema_vals=$(_schema_enum "$schema_file" '.properties.tier.enum' \
+    | grep -vx 'targeted' | sort)
+  tsv_vals=$(_tsv_column "$tsv_file" "tier" | sort)
+  legacy_count=$(_schema_enum "$schema_file" '.properties.tier.enum' \
+    | grep -cx 'targeted' || true)
+
+  if [[ "$current_schema_vals" == "$tsv_vals" && "$legacy_count" -eq 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "current tiers differ from TSV or legacy targeted is not unique"
+  fi
+}
+
 # ---------- run ----------
 
 # 1. JSON Schema parse
@@ -163,6 +237,11 @@ done
 # 2. YAML parse
 for f in "$CORE_DIR"/policy/*.yaml "$CORE_DIR"/state/layout.yaml; do
   case_yaml_parse "$f"
+done
+
+# 2b. TSV parse
+for f in "$CORE_DIR"/policy/*.tsv; do
+  case_tsv_parse "$f"
 done
 
 # 3. schema_version: const 1 on every payload schema that declares it
@@ -221,6 +300,10 @@ case_enum_sync "$CORE_DIR/schema/review.schema.json" \
   '.properties.findings.items.properties.verdict.enum' \
   "$CORE_DIR/policy/reviewer-policy.yaml" \
   "verdicts"
+
+# Gate rigor tiers: new producers use the TSV; Review schema v1 still accepts
+# its historical targeted value so old state remains structurally valid.
+case_review_tier_policy_compatibility
 
 case_enum_sync_crlf_input() {
   # A YAML file checked out with CRLF endings (Windows core.autocrlf re-applying

@@ -15,7 +15,7 @@
 #
 # Boundary the rules encode (calibrated against the real tree, CC-233):
 #   - `core/` is definitions only: no shell/executables, no CLI-product-named
-#     files/dirs, only .yaml/.json/.md, no CLI product name as a field-name KEY.
+#     files/dirs, only .yaml/.json/.md/.tsv, no CLI product name as a field-name KEY.
 #     (CLI names MAY appear as enum VALUES / schema descriptions / prose — those
 #      are data, not structure; the rules check structure, ignore prose.)
 #   - `adapters/**/*.sh` must NOT call the shared FLOW (brief-validate, guard,
@@ -55,12 +55,13 @@ check_core_no_cli_named_paths() {
     -o -iname '*antigravity*' -o -iname '*opencode*' \) 2>/dev/null
 }
 
-# C3: core/ holds only declarative file types (.yaml/.yml/.json/.md).
+# C3: core/ holds only declarative file types (.yaml/.yml/.json/.md/.tsv).
 check_core_only_declarative() {
   local root="$1"
   [[ -d "$root/core" ]] || return 0
   find "$root/core" -type f \
-    ! \( -name '*.yaml' -o -name '*.yml' -o -name '*.json' -o -name '*.md' \) 2>/dev/null
+    ! \( -name '*.yaml' -o -name '*.yml' -o -name '*.json' -o -name '*.md' \
+      -o -name '*.tsv' \) 2>/dev/null
 }
 
 # C4: no CLI product name appears as a field-name KEY (YAML/JSON) in core/.

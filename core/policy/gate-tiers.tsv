@@ -1,0 +1,5 @@
+# Gate rigor presets. Defaults do not assert actual coverage or execution topology.
+tier	default_reviewers	evidence_floor
+express	critic,qa-tester	reviewer-verdicts
+standard	critic,qa-tester,architecture-reviewer	reviewer-verdicts
+full	critic,qa-tester,architecture-reviewer,security-reviewer,risk-reviewer	reviewer-verdicts

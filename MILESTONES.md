@@ -101,11 +101,15 @@
 
 ### Phase 7 — evidence + policy foundations
 
+> 實作順序：CC-512 先鎖定 machine-owned assurance coordinates；CC-513 才能在同一
+> vocabulary 上產 policy resolution；CC-515 最後把 structural evidence 與 immutable
+> subject／freshness／consumer applicability 接起來。三者是不同責任，不合併成 profile。
+
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-515 | immutable subject；artifact validity、subject freshness、policy applicability 三軸 shared verifier | 🔵 |
-| CC-512 | tier／mode／reviewer coverage／independence 正交化；full+sequential、express+parallel 均合法 | 🔵 |
+| CC-512 | Slice A coordinate sources／CLI resolution 已交付；machine-owned assurance envelope、evidence capture、verifier 仍待 B／C；targeted 不再是 tier | ⚠️ |
 | CC-513 | canonical resolver：minimum tier、required reviewers、recommended/required mode、generic vs maintainer policy 與 downgrade audit | 🔵 |
+| CC-515 | immutable subject；artifact validity、subject freshness、policy applicability 三軸 shared verifier | 🔵 |
 
 ### Phase 8 — existing gate structured evidence
 

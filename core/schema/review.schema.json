@@ -1,6 +1,6 @@
 {
   "title": "Review",
-  "description": "A PR-gate review verdict, optionally with per-reviewer findings. `tier` mirrors /pr-gate tier names (express/standard/full/targeted). `findings_path` points at .gate-results/<gate-id>/<reviewer>.{json,md} — Review row is the INDEX, not the data.",
+  "description": "A PR-gate review verdict, optionally with per-reviewer findings. Current rigor tiers come from core/policy/gate-tiers.tsv. The schema_version 1 `targeted` tier value is retained only to validate legacy payloads; targeted remediation is now a pass kind. `findings_path` points at .gate-results/<gate-id>/<reviewer>.{json,md} — Review row is the INDEX, not the data.",
   "type": "object",
   "required": ["id", "schema_version", "task_id", "tier", "verdict", "findings", "created_ts"],
   "properties": {
@@ -20,7 +20,8 @@
       "description": "Optional link to the Run that triggered the gate."
     },
     "tier": {
-      "enum": ["express", "standard", "full", "targeted"]
+      "enum": ["express", "standard", "full", "targeted"],
+      "description": "Current editing source: core/policy/gate-tiers.tsv. `targeted` is a schema_version 1 compatibility value and must not be emitted by new producers."
     },
     "verdict": {
       "enum": ["GO", "NO-GO", "pending"]

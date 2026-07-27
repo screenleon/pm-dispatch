@@ -1,0 +1,4 @@
+# Gate review-pass semantics. Pass kind does not imply tier or execution mode.
+pass_kind	scope	requires_initial_result	is_default
+initial	comprehensive	false	true
+targeted	remediation-delta	true	false

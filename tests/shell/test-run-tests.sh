@@ -18,17 +18,20 @@ make_fixture() {
   local name="$1" repo
   repo="$TMP_ROOT/$name"
   mkdir -p "$repo/scripts/lib" "$repo/runtime/lib" "$repo/tests/bin" "$repo/tests/lib" \
-    "$repo/core/schema" "$repo/core/state"
+    "$repo/core/schema" "$repo/core/state" "$repo/core/policy"
   cp "$REPO_ROOT/tests/bin/run-tests.sh" "$repo/tests/bin/run-tests.sh"
   cp "$REPO_ROOT/tests/bin/run-all-tests.sh" "$repo/tests/bin/run-all-tests.sh"
   cp "$SCRIPT_DIR/../lib/test-result.sh" "$repo/tests/lib/test-result.sh"
   cp "$REPO_ROOT/runtime/lib/artifact-paths.sh" "$repo/runtime/lib/artifact-paths.sh"
   cp "$REPO_ROOT/core/schema/test-result.schema.json" "$repo/core/schema/test-result.schema.json"
+  cp "$REPO_ROOT/core/policy/gate-tiers.tsv" "$repo/core/policy/gate-tiers.tsv"
+  cp "$REPO_ROOT/core/policy/gate-modes.tsv" "$repo/core/policy/gate-modes.tsv"
+  cp "$REPO_ROOT/core/policy/gate-pass-kinds.tsv" "$repo/core/policy/gate-pass-kinds.tsv"
   chmod +x "$repo/tests/bin/run-tests.sh"
   cat > "$repo/tests/lib/test-suite-runner.sh" <<'RUNNER'
 #!/usr/bin/env bash
 set -euo pipefail
-suites=(lint-agents lint-scripts lint-script-domain-inventory lint-portable-repo-paths test-lint-shellcheck test-script-domain-inventory test-lint-portable-repo-paths test-lint-frontmatter test-commands test-check-docs-freshness test-guards test-migrate test-install test-doctor test-pmctl-dispatch test-pmctl-context test-pmctl-memory test-pr-gate test-pmctl-operation test-host-manifest test-host-write-codex test-codex-dispatch-continuation test-host-write-parity test-core-schemas test-layer-boundaries test-pm-scripts test-run-tests test-state-store test-state-layout-parity)
+suites=(lint-agents lint-scripts lint-script-domain-inventory lint-portable-repo-paths test-lint-shellcheck test-script-domain-inventory test-lint-portable-repo-paths test-lint-frontmatter test-commands test-check-docs-freshness test-guards test-migrate test-install test-doctor test-pmctl-dispatch test-pmctl-context test-pmctl-memory test-pr-gate test-pr-gate-profile test-pmctl-operation test-host-manifest test-host-write-codex test-codex-dispatch-continuation test-host-write-parity test-core-schemas test-layer-boundaries test-pm-scripts test-run-tests test-state-store test-state-layout-parity)
 for arg in "$@"; do
   if [[ "$arg" == --list ]]; then printf '%s\n' "${suites[@]}"; exit 0; fi
 done
@@ -228,6 +231,23 @@ case_evidence_contract_maps_to_runner_regression() {
   fi
 }
 
+case_gate_assurance_policy_maps_gate_consumers() {
+  local name=gate-assurance-policy-maps-gate-consumers repo out status=0 args
+  args="$TMP_ROOT/$name.args"
+  repo="$(make_fixture "$name")"
+  out=$(RUN_TESTS_ARGS_LOG="$args" "$repo/tests/bin/run-tests.sh" \
+    --path core/policy/gate-tiers.tsv --path core/policy/gate-modes.tsv \
+    --path core/policy/gate-pass-kinds.tsv --list 2>&1) || status=$?
+  if [[ "$status" -eq 0 && "$out" == *"test-pr-gate"* &&
+        "$out" == *"test-pr-gate-profile"* && "$out" == *"test-core-schemas"* &&
+        "$out" == *"test-layer-boundaries"* && "$out" != *"coverage gaps"* &&
+        ! -e "$args" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out"
+  fi
+}
+
 case_high_fanout_escalates_full() {
   local name=high-fanout-escalates-full repo out status=0 args
   args="$TMP_ROOT/$name.args"
@@ -402,6 +422,7 @@ case_skill_mapping_uses_registered_frontmatter_suite
 case_guard_family_maps_to_guard_suite
 case_prompt_context_timeout_contract_maps_all_consumers
 case_evidence_contract_maps_to_runner_regression
+case_gate_assurance_policy_maps_gate_consumers
 case_high_fanout_escalates_full
 case_repeated_high_fanout_escalation_succeeds
 case_unknown_path_fails_without_test_evidence

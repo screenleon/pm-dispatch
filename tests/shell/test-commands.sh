@@ -477,6 +477,59 @@ STUB
 }
 pr_gate_fence_executor_model_behavior
 
+pr_gate_fence_assurance_behavior() {
+  local name="pr-gate: assurance argument parser behavior"
+  should_run "$name" || return 0
+  local case_dir="$tmp_root/pr-gate-fence-assurance"
+  local snippet="$case_dir/snippet.sh" bin_dir="$case_dir/bin"
+  local args_log="$case_dir/args.log" out="$case_dir/out" err="$case_dir/err"
+  local valid_status missing_initial_status initial_only_status conflict_status invalid_mode_status
+  mkdir -p "$bin_dir"
+  extract_pr_gate_bash_fence "$snippet"
+  cat > "$bin_dir/pmctl" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$@" > "${PR_GATE_ARGS_LOG:?}"
+STUB
+  chmod +x "$bin_dir/pmctl"
+
+  ARGUMENTS="--executor claude --targeted critic --initial-result /tmp/initial.md --mode parallel" \
+    PR_GATE_ARGS_LOG="$args_log" PATH="$bin_dir:$PATH" bash "$snippet" > "$out" 2> "$err"
+  valid_status=$?
+  if [[ "$valid_status" -ne 0 ]] ||
+     ! grep -qx -- '--targeted' "$args_log" ||
+     ! grep -qx 'critic' "$args_log" ||
+     ! grep -qx -- '--initial-result' "$args_log" ||
+     ! grep -qx '/tmp/initial.md' "$args_log" ||
+     ! grep -qx -- '--mode' "$args_log" ||
+     ! grep -qx 'parallel' "$args_log" ||
+     grep -qx -- '--reviewers' "$args_log"; then
+    fail "$name" "valid targeted invocation was not forwarded canonically"
+    return
+  fi
+
+  rm -f "$args_log"
+  ARGUMENTS="--executor claude --targeted critic" \
+    PR_GATE_ARGS_LOG="$args_log" PATH="$bin_dir:$PATH" bash "$snippet" > "$out" 2> "$err"
+  missing_initial_status=$?
+  ARGUMENTS="--executor claude --initial-result /tmp/initial.md" \
+    PR_GATE_ARGS_LOG="$args_log" PATH="$bin_dir:$PATH" bash "$snippet" > "$out" 2> "$err"
+  initial_only_status=$?
+  ARGUMENTS="--executor claude --mode parallel --sequential" \
+    PR_GATE_ARGS_LOG="$args_log" PATH="$bin_dir:$PATH" bash "$snippet" > "$out" 2> "$err"
+  conflict_status=$?
+  ARGUMENTS="--executor claude --mode default" \
+    PR_GATE_ARGS_LOG="$args_log" PATH="$bin_dir:$PATH" bash "$snippet" > "$out" 2> "$err"
+  invalid_mode_status=$?
+
+  if [[ "$missing_initial_status" -eq 2 && "$initial_only_status" -eq 2 &&
+        "$conflict_status" -eq 2 && "$invalid_mode_status" -eq 2 ]]; then
+    pass "$name"
+  else
+    fail "$name" "statuses missing_initial=$missing_initial_status initial_only=$initial_only_status conflict=$conflict_status invalid_mode=$invalid_mode_status"
+  fi
+}
+pr_gate_fence_assurance_behavior
+
 assert_frontmatter "ship: frontmatter valid" "$SHIP"
 should_run "ship: scoped to a single named ticket per invocation" && assert_file_contains "ship: scoped to a single named ticket per invocation" "$SHIP" "one ticket per invocation" && pass "ship: scoped to a single named ticket per invocation"
 should_run "ship: does not batch-scan BACKLOG for candidates" && assert_file_contains "ship: does not batch-scan BACKLOG for candidates" "$SHIP" "Do not scan" && pass "ship: does not batch-scan BACKLOG for candidates"
@@ -536,7 +589,7 @@ fi
 should_run "ship: explains why detached+wait is unnecessary here" && assert_file_contains "ship: explains why detached+wait is unnecessary here" "$SHIP" "nothing else for the main thread to do while it waits" && pass "ship: explains why detached+wait is unnecessary here"
 should_run "ship: reads Final GO/NO-GO verdict" && assert_file_contains "ship: reads Final GO/NO-GO verdict" "$SHIP" "Final:" && pass "ship: reads Final GO/NO-GO verdict"
 should_run "ship: NO-GO fixes every finding not only blocking ones" && assert_file_contains "ship: NO-GO fixes every finding not only blocking ones" "$SHIP" "the blocking ones" && pass "ship: NO-GO fixes every finding not only blocking ones"
-should_run "ship: re-runs gate with --reviewers targeting" && assert_file_contains "ship: re-runs gate with --reviewers targeting" "$SHIP" "--reviewers <reviewer,...>" && pass "ship: re-runs gate with --reviewers targeting"
+should_run "ship: re-runs gate with explicit targeted initial reference" && assert_file_contains "ship: re-runs gate with explicit targeted initial reference" "$SHIP" "--targeted <reviewer,...>" && assert_file_contains "ship: re-runs gate with explicit targeted initial reference" "$SHIP" "--initial-result" && pass "ship: re-runs gate with explicit targeted initial reference"
 should_run "ship: references project-pm Rules A/B synthesis" && assert_file_contains "ship: references project-pm Rules A/B synthesis" "$SHIP" "Rules A/B" && pass "ship: references project-pm Rules A/B synthesis"
 should_run "project-pm: classifies refactor/reuse recheck after gate fixes" && assert_file_contains "project-pm: classifies refactor/reuse recheck after gate fixes" "$PROJECT_PM" "refactor_reuse_recheck: required" && assert_file_contains "project-pm: classifies refactor/reuse recheck after gate fixes" "$PROJECT_PM" "refactor_reuse_recheck: skip" && pass "project-pm: classifies refactor/reuse recheck after gate fixes"
 # exactly two stop conditions, no more

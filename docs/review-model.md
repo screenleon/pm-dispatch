@@ -143,19 +143,33 @@ When an artifact is missing — no `conceptual_map`, no `self_verify cmd:`, no i
 
 ---
 
-## pr-gate rigor tiers
+## pr-gate assurance coordinates
 
 The `/pr-gate` `--tier` flag selects the **rigor level** required for this change — not just the number of reviewers. Choose based on `architecture_impact` and blast radius:
 
-| Tier | When | Rigor |
+| Tier | When | Default reviewer coverage |
 |---|---|---|
-| `express` | hotfix, docs-only, `architecture_impact: none` | machine verification + combined session (critic + qa) |
+| `express` | hotfix, docs-only, `architecture_impact: none` | critic + qa |
 | `standard` | feature, `architecture_impact: minor` | conceptual map required + critic + qa + architecture-reviewer |
-| `full` | architectural change, `architecture_impact: major`, sensitive path | parallel cross-context sessions + security + risk hard gates + synthesis |
+| `full` | architectural change, `architecture_impact: major`, sensitive path | critic + qa + architecture-reviewer + security + risk |
 
 **Tier suggestion**: when a `--brief` is passed to `pr-gate.sh`, it reads `architecture_impact` from the brief and emits an advisory to stderr before dispatch if the auto-detected tier is lower than the impact level implies. The user-selected or auto-detected tier always takes precedence; the advisory is informational only and does not block or alter the tier.
 
-**Tier vs. reviewer count**: `express` is not "fewer reviewers" — it is "this change has bounded impact and does not need architecture-level judgment." `full` is not "more reviewers" — it is "this change has wide blast radius and needs independent parallel review with hard security/risk gates."
+**Tier, mode, pass kind, and coverage are independent**:
+
+- Tier records rigor intent and supplies default reviewer coverage. `--reviewers`
+  may override the selected coverage without rewriting the tier.
+- Mode records execution topology. The default is `sequential`; select
+  `--mode parallel` when separate reviewer sessions and synthesis are required.
+  A `full` tier does not select parallel mode by itself.
+- Pass kind records whether the review is initial or a remediation-delta
+  targeted pass. `--targeted <reviewers>` requires
+  `--initial-result <path>` and is not a tier alias.
+
+The portable policy sources are
+[`core/policy/gate-tiers.tsv`](../core/policy/gate-tiers.tsv),
+[`core/policy/gate-modes.tsv`](../core/policy/gate-modes.tsv), and
+[`core/policy/gate-pass-kinds.tsv`](../core/policy/gate-pass-kinds.tsv).
 
 ---
 
