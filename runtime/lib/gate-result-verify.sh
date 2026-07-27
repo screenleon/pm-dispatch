@@ -62,7 +62,7 @@ _gate_result_frontmatter_value() {
 # gate_assurance_verify <result_file> <assurance_file> <body_final>
 gate_assurance_verify() {
   local result_file="$1" assurance_file="$2" body_final="$3"
-  local markdown_tier markdown_mode
+  local markdown_tier markdown_mode result_sha
   command -v jq >/dev/null 2>&1 || {
     printf 'Error: gate assurance verification requires jq\n' >&2
     return 2
@@ -73,7 +73,9 @@ gate_assurance_verify() {
   fi
   markdown_tier="$(_gate_result_frontmatter_value "$result_file" tier)"
   markdown_mode="$(_gate_result_frontmatter_value "$result_file" mode)"
-  jq -e --arg final "$body_final" --arg markdown_tier "$markdown_tier" \
+  result_sha="$(_gate_result_sha256_file "$result_file")" || return $?
+  jq -e --arg final "$body_final" --arg result_sha "$result_sha" \
+    --arg markdown_tier "$markdown_tier" \
     --arg markdown_mode "$markdown_mode" '
     def strings_unique:
       type == "array" and all(.[]; type == "string" and length > 0) and
@@ -81,6 +83,12 @@ gate_assurance_verify() {
     def same_set($a; $b): ($a | sort) == ($b | sort);
     .kind == "gate_assurance_v1" and .schema_version == 1 and
     .result.final == $final and
+    .bindings.result_sha256 == $result_sha and
+    (.bindings.repo_root | type == "string" and startswith("/")) and
+    (.bindings.repo_identity | test("^[a-f0-9]{64}$")) and
+    (.bindings.base_commit | test("^[a-f0-9]{40}$")) and
+    (.bindings.head_commit | test("^[a-f0-9]{40}$")) and
+    (.bindings.subject_fingerprint | test("^[a-f0-9]{64}$")) and
     .coordinates.tier.resolved == $markdown_tier and
     .coordinates.mode.resolved == $markdown_mode and
     .provenance.producer == "pr-gate.sh" and
@@ -134,18 +142,31 @@ gate_assurance_verify() {
     (if .coordinates.mode.resolved == "parallel" and
         ([.dispatch.outcomes[] | select(.role == "preflight")] | length) == 0
      then
+       (.dispatch.outcomes | length) ==
+         ((.coordinates.coverage.selected | length) + 1) and
+       (all(.dispatch.outcomes[];
+         (.role == "reviewer" or .role == "synthesis"))) and
        ([.dispatch.outcomes[] | select(.role == "reviewer") | .reviewer] | sort) ==
          (.coordinates.coverage.selected | sort) and
        ([.dispatch.outcomes[] | select(.role == "synthesis")] | length) == 1
      elif .coordinates.mode.resolved == "sequential" and
           ([.dispatch.outcomes[] | select(.role == "preflight")] | length) == 0
      then
-       ([.dispatch.outcomes[] | select(.role == "combined")] | length) == 1
+       (.dispatch.outcomes | length) == 1 and
+       .dispatch.outcomes[0].role == "combined"
      else
-       ([.dispatch.outcomes[] | select(.role == "preflight" and .status == "failed")] | length) == 1
+       (.dispatch.outcomes | length) == 1 and
+       .dispatch.outcomes[0].role == "preflight" and
+       .dispatch.outcomes[0].status == "failed"
      end) and
     (.coordinates.independence.evidence_status |
       IN("verified","unavailable","unverified")) and
+    (if .coordinates.independence.evidence_status == "verified"
+     then (.provenance.attestation |
+       type == "string" and
+       test("^gate-assurance-[0-9]{8}-[0-9]{6}\\.attestation\\.json$"))
+     else .provenance.attestation == null
+     end) and
     .coordinates.independence.reviewer_topology ==
       .coordinates.mode.topology and
     (if .coordinates.independence.evidence_status == "verified"
@@ -165,6 +186,71 @@ gate_assurance_verify() {
   ' "$assurance_file" >/dev/null || {
     printf 'Error: gate assurance sidecar failed structural/claim verification: %s\n' \
       "$assurance_file" >&2
+    return 1
+  }
+}
+
+_gate_result_sha256_file() {
+  local file="$1" digest=""
+  if command -v sha256sum >/dev/null 2>&1 \
+      && digest="$(sha256sum -- "$file" 2>/dev/null | awk '{print $1}')" \
+      && [[ -n "$digest" ]]; then
+    printf '%s\n' "$digest"
+    return 0
+  fi
+  if command -v shasum >/dev/null 2>&1 \
+      && digest="$(shasum -a 256 -- "$file" 2>/dev/null | awk '{print $1}')" \
+      && [[ -n "$digest" ]]; then
+    printf '%s\n' "$digest"
+    return 0
+  fi
+  printf 'Error: no sha256sum or shasum found -- cannot verify gate assurance binding\n' >&2
+  return 2
+}
+
+# gate_assurance_authorization_verify <result> <assurance> <attestation> <runs.jsonl>
+# Validates the protected producer attestation and resolves every claimed run ID
+# to the latest canonical terminal record for the same gate run and repository.
+gate_assurance_authorization_verify() {
+  local result_file="$1" assurance_file="$2" attestation_file="$3" runs_file="$4"
+  local result_sha assurance_sha run_root
+  [[ -s "$attestation_file" && -s "$runs_file" ]] || {
+    printf 'Error: verified gate assurance requires protected attestation and canonical run records\n' >&2
+    return 1
+  }
+  result_sha="$(_gate_result_sha256_file "$result_file")" || return $?
+  assurance_sha="$(_gate_result_sha256_file "$assurance_file")" || return $?
+  run_root="$(cd "$(dirname "$attestation_file")" && pwd -P)" || return 1
+  jq -e --arg result_sha "$result_sha" --arg assurance_sha "$assurance_sha" \
+    --slurpfile assurance "$assurance_file" '
+      $assurance[0] as $a |
+      .kind == "gate_assurance_attestation_v1" and .schema_version == 1 and
+      .result_sha256 == $result_sha and .assurance_sha256 == $assurance_sha and
+      .repo_root == $a.bindings.repo_root and
+      .repo_identity == $a.bindings.repo_identity and
+      .base_commit == $a.bindings.base_commit and
+      .head_commit == $a.bindings.head_commit and
+      .subject_fingerprint == $a.bindings.subject_fingerprint and
+      ([.run_ids[]] | sort) ==
+        ([$a.dispatch.outcomes[].run_id] | sort)
+    ' "$attestation_file" >/dev/null || {
+    printf 'Error: gate assurance protected attestation mismatch: %s\n' \
+      "$attestation_file" >&2
+    return 1
+  }
+  jq -s -e --slurpfile assurance "$assurance_file" \
+    --arg run_root "$run_root" '
+      $assurance[0] as $a |
+      . as $records |
+      all($a.dispatch.outcomes[].run_id;
+        . as $id |
+        ([$records[] | select(.id == $id)] | last) as $record |
+        $record != null and $record.state == "ok" and $record.exit_code == 0 and
+        $record.working_dir == $a.bindings.repo_root and
+        ($record.trace_path | type == "string" and
+          startswith($run_root + "/.agent-trace/")))
+    ' "$runs_file" >/dev/null || {
+    printf 'Error: gate assurance dispatch evidence does not match canonical run records\n' >&2
     return 1
   }
 }
@@ -210,4 +296,5 @@ gate_result_verify() {
   esac
 }
 
-export -f gate_result_verdict_verify gate_assurance_verify gate_result_verify
+export -f gate_result_verdict_verify gate_assurance_verify \
+  gate_assurance_authorization_verify gate_result_verify

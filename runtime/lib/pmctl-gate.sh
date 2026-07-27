@@ -659,6 +659,8 @@ pmctl_gate_verify() {
     return 2
   fi
   local result_file="$1"
+  local evidence_status attestation_pointer result_parent run_root project_dir
+  local attestation_file runs_file
 
   if ! declare -F gate_result_verify >/dev/null; then
     local lib="$repo_root/runtime/lib/gate-result-verify.sh"
@@ -671,6 +673,28 @@ pmctl_gate_verify() {
   fi
 
   if gate_result_verify "$result_file"; then
+    evidence_status="$(jq -r '.coordinates.independence.evidence_status // "unavailable"' \
+      "${GATE_RESULT_ASSURANCE_FILE:-/dev/null}" 2>/dev/null || printf 'unavailable')"
+    if [[ "$evidence_status" == verified ]]; then
+      attestation_pointer="$(jq -r '.provenance.attestation // empty' \
+        "$GATE_RESULT_ASSURANCE_FILE" 2>/dev/null)"
+      if [[ -z "$attestation_pointer" || "$attestation_pointer" == */* \
+          || ! "$attestation_pointer" =~ ^gate-assurance-[0-9]{8}-[0-9]{6}\.attestation\.json$ ]]; then
+        printf 'Error: verified gate assurance requires a bounded protected attestation pointer\n' >&2
+        return 1
+      fi
+      result_parent="$(cd "$(dirname "$result_file")" && pwd -P)" || return 1
+      if [[ "$(basename "$result_parent")" != ".gate-results" ]]; then
+        printf 'Error: verified gate assurance result is outside a canonical gate run directory\n' >&2
+        return 1
+      fi
+      run_root="$(dirname "$result_parent")"
+      project_dir="$(dirname "$(dirname "$run_root")")"
+      attestation_file="$run_root/$attestation_pointer"
+      runs_file="$project_dir/runs.jsonl"
+      gate_assurance_authorization_verify "$result_file" "$GATE_RESULT_ASSURANCE_FILE" \
+        "$attestation_file" "$runs_file" || return $?
+    fi
     printf 'gate result OK: %s\n' "$result_file"
     printf 'assurance: %s\n' "${GATE_RESULT_ASSURANCE:-unavailable}"
     if [[ -n "${GATE_RESULT_ASSURANCE_FILE:-}" ]]; then

@@ -3275,7 +3275,7 @@ test_gate_result_frontmatter_and_escalation() {
 test_repo_layout_captures_dispatch_run_id() {
   local name="gate-assurance/repo-layout-captures-run-id"
   should_run "$name" || return 0
-  local dir source_runner layout home repo out err result
+  local dir source_runner layout home repo out err result project_key run_dir runs_file
   dir="$TMP_ROOT/$name"
   source_runner="$dir/source-runner"
   layout="$dir/layout"
@@ -3283,7 +3283,6 @@ test_repo_layout_captures_dispatch_run_id() {
   repo="$dir/repo"
   out="$dir/out"
   err="$dir/err"
-  result="$dir/result.md"
   mkdir -p "$dir" "$layout/runtime/bin" "$layout/runtime/lib" "$layout/core/policy"
   create_runner "$source_runner"
   cp "$source_runner/pr-gate.sh" "$layout/runtime/bin/pr-gate.sh"
@@ -3306,24 +3305,37 @@ pmctl_dispatch_run() {
     esac
   done
   "$root/adapters/codex/dispatch.sh" --brief-file "$brief" --cd "$work" --timeout "$timeout"
+  mkdir -p "$PM_DISPATCH_TRACE_DIR"
+  printf 'trace\n' > "$PM_DISPATCH_TRACE_DIR/test.last"
+  jq -nc --arg work "$work" --arg trace "$PM_DISPATCH_TRACE_DIR/test.last" '{
+    schema_version:3,id:"run-20260727T000000Z-aaaaaa",task_id:"UNKN-0",
+    executor:"codex",state:"ok",exit_code:0,model:"default",
+    brief_file:"/tmp/brief.md",working_dir:$work,trace_path:$trace,
+    created_ts:"2026-07-27T00:00:00Z",operation_id:"op-20260727T000000Z-aaaaaa"
+  }' >> "$CODEX_GATE_TEST_RUNS_FILE"
   printf 'run-20260727T000000Z-aaaaaa\n'
 }
 pmctl_dispatch_wait() { return 0; }
 STUB_PMCTL
   create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
   create_repo "$repo" docs
+  project_key="$(printf '%s\n' "$repo" | sha1sum | awk '{print $1}')"
+  run_dir="$dir/state/projects/$project_key/runs/gate-fixture"
+  runs_file="$dir/state/projects/$project_key/runs.jsonl"
+  mkdir -p "$run_dir" "$(dirname "$runs_file")"
 
   local code=0
   set +e
-  HOME="$home" PM_DISPATCH_STATE_ROOT="$dir/state" \
+  HOME="$home" PM_DISPATCH_STATE_ROOT="$dir/state" CODEX_GATE_TEST_RUNS_FILE="$runs_file" \
     "$layout/runtime/bin/pr-gate.sh" --cd "$repo" --base main --executor codex \
-      --mode sequential --output "$result" > "$out" 2> "$err"
+      --mode sequential --run-dir "$run_dir" > "$out" 2> "$err"
   code=$?
   set -e
   [[ "$code" -eq 0 ]] || {
     fail "$name" "exit $code, expected 0: $(tail -n 20 "$err" 2>/dev/null)"
     return
   }
+  result="$(awk -F'result: ' '/^result: /{path=$2} END{print path}' "$out")"
   jq -e '
     .coordinates.independence.evidence_status == "verified" and
     .coordinates.independence.per_reviewer_independent == false and
@@ -3335,6 +3347,10 @@ STUB_PMCTL
     fail "$name" "assurance envelope did not capture the repo-layout run id"
     return
   }
+  if ! "$REPO_ROOT/cli/pmctl" gate verify "$result" >/dev/null 2>&1; then
+    fail "$name" "repo-layout assurance did not validate against protected canonical evidence"
+    return
+  fi
   pass "$name"
 }
 
@@ -5637,6 +5653,7 @@ test_inline_fallback_matches_lib() {
   local -a verifier_functions=(
     gate_result_verdict_verify
     _gate_result_frontmatter_value
+    _gate_result_sha256_file
     gate_assurance_verify
     gate_result_verify
   )

@@ -39,7 +39,9 @@ parser-significant one (plain text, exact shape). Run
 `pr_gate_result_v1` files verify only as `assurance: unavailable`. A standalone
 copy-mode v2 result may also carry `evidence_status: unavailable` inside its
 valid envelope; treat its verdict as structurally valid without inferring
-implementation isolation or independent reviewer sessions.
+implementation isolation or independent reviewer sessions. Repo-layout
+independence is authoritative only when verification also confirms the
+protected producer attestation and every claimed canonical run record.
 
 - **NO-GO** (a reviewer returned `block`): fix the blocking finding. Per project
   convention, clear **every** finding (high/med/low/advise) on a NO-GO, not just

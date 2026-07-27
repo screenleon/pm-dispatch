@@ -1,8 +1,8 @@
 {
   "title": "Gate assurance envelope",
-  "description": "Portable structural contract. Cross-artifact and coordinate claim consistency is enforced by runtime/lib/gate-result-verify.sh.",
+  "description": "Machine-owned portable gate assurance envelope.",
   "type": "object",
-  "required": ["kind", "schema_version", "result", "coordinates", "dispatch", "provenance"],
+  "required": ["kind", "schema_version", "result", "bindings", "coordinates", "dispatch", "provenance"],
   "properties": {
     "kind": { "const": "gate_assurance_v1" },
     "schema_version": { "const": 1 },
@@ -10,6 +10,26 @@
       "type": "object",
       "required": ["final"],
       "properties": { "final": { "enum": ["GO", "NO-GO"] } },
+      "additionalProperties": false
+    },
+    "bindings": {
+      "type": "object",
+      "required": [
+        "result_sha256",
+        "repo_root",
+        "repo_identity",
+        "base_commit",
+        "head_commit",
+        "subject_fingerprint"
+      ],
+      "properties": {
+        "result_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "repo_root": { "type": "string", "pattern": "^/" },
+        "repo_identity": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "base_commit": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+        "head_commit": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+        "subject_fingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+      },
       "additionalProperties": false
     },
     "coordinates": {
@@ -107,10 +127,16 @@
     },
     "provenance": {
       "type": "object",
-      "required": ["producer", "policy_source"],
+      "required": ["producer", "policy_source", "attestation"],
       "properties": {
         "producer": { "const": "pr-gate.sh" },
-        "policy_source": { "enum": ["canonical", "generated-snapshot", "mixed"] }
+        "policy_source": { "enum": ["canonical", "generated-snapshot", "mixed"] },
+        "attestation": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "string", "pattern": "^gate-assurance-[0-9]{8}-[0-9]{6}\\.attestation\\.json$" }
+          ]
+        }
       },
       "additionalProperties": false
     }

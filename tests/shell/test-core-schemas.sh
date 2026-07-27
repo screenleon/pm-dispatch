@@ -746,6 +746,14 @@ _gate_assurance_valid_instance() {
     kind:"gate_assurance_v1",
     schema_version:1,
     result:{final:"GO"},
+    bindings:{
+      result_sha256:("a" * 64),
+      repo_root:"/tmp/repo",
+      repo_identity:("b" * 64),
+      base_commit:("c" * 40),
+      head_commit:("d" * 40),
+      subject_fingerprint:("e" * 64)
+    },
     coordinates:{
       tier:{requested:"standard",resolved:"standard",evidence_floor:"critic plus QA"},
       mode:{
@@ -782,7 +790,7 @@ _gate_assurance_valid_instance() {
         evidence_status:"unavailable"
       }]
     },
-    provenance:{producer:"pr-gate.sh",policy_source:"canonical"}
+    provenance:{producer:"pr-gate.sh",policy_source:"canonical",attestation:null}
   }'
 }
 

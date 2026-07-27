@@ -282,7 +282,9 @@ When the `pmctl gate wait` background Bash completion notification arrives:
    New results must report `assurance: verified` and point to a sibling
    `gate_assurance_v1` JSON file. A legacy result may report
    `assurance: unavailable`; do not treat that as proof of tier/mode/coverage
-   or reviewer-session independence.
+   or reviewer-session independence. For repo-layout results that claim
+   verified independence, verification also requires the protected producer
+   attestation and matching canonical terminal run records.
 5. Prepend `PR-gate complete.` to completion relay and include the full gate
    result (including `Final: GO` / `Final: NO-GO`) unchanged.
 6. On failure, avoid collapsing findings; relay the actual stderr summary and

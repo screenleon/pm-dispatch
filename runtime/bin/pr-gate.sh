@@ -501,9 +501,27 @@ else
     ' "$result_file"
   }
 
+  _gate_result_sha256_file() {
+    local file="$1" digest=""
+    if command -v sha256sum >/dev/null 2>&1 \
+        && digest="$(sha256sum -- "$file" 2>/dev/null | awk '{print $1}')" \
+        && [[ -n "$digest" ]]; then
+      printf '%s\n' "$digest"
+      return 0
+    fi
+    if command -v shasum >/dev/null 2>&1 \
+        && digest="$(shasum -a 256 -- "$file" 2>/dev/null | awk '{print $1}')" \
+        && [[ -n "$digest" ]]; then
+      printf '%s\n' "$digest"
+      return 0
+    fi
+    printf 'Error: no sha256sum or shasum found -- cannot verify gate assurance binding\n' >&2
+    return 2
+  }
+
   gate_assurance_verify() {
     local result_file="$1" assurance_file="$2" body_final="$3"
-    local markdown_tier markdown_mode
+    local markdown_tier markdown_mode result_sha
     command -v jq >/dev/null 2>&1 || {
       printf 'Error: gate assurance verification requires jq\n' >&2
       return 2
@@ -514,7 +532,9 @@ else
     fi
     markdown_tier="$(_gate_result_frontmatter_value "$result_file" tier)"
     markdown_mode="$(_gate_result_frontmatter_value "$result_file" mode)"
-    jq -e --arg final "$body_final" --arg markdown_tier "$markdown_tier" \
+    result_sha="$(_gate_result_sha256_file "$result_file")" || return $?
+    jq -e --arg final "$body_final" --arg result_sha "$result_sha" \
+      --arg markdown_tier "$markdown_tier" \
       --arg markdown_mode "$markdown_mode" '
       def strings_unique:
         type == "array" and all(.[]; type == "string" and length > 0) and
@@ -522,6 +542,12 @@ else
       def same_set($a; $b): ($a | sort) == ($b | sort);
       .kind == "gate_assurance_v1" and .schema_version == 1 and
       .result.final == $final and
+      .bindings.result_sha256 == $result_sha and
+      (.bindings.repo_root | type == "string" and startswith("/")) and
+      (.bindings.repo_identity | test("^[a-f0-9]{64}$")) and
+      (.bindings.base_commit | test("^[a-f0-9]{40}$")) and
+      (.bindings.head_commit | test("^[a-f0-9]{40}$")) and
+      (.bindings.subject_fingerprint | test("^[a-f0-9]{64}$")) and
       .coordinates.tier.resolved == $markdown_tier and
       .coordinates.mode.resolved == $markdown_mode and
       .provenance.producer == "pr-gate.sh" and
@@ -575,18 +601,31 @@ else
       (if .coordinates.mode.resolved == "parallel" and
           ([.dispatch.outcomes[] | select(.role == "preflight")] | length) == 0
        then
+         (.dispatch.outcomes | length) ==
+           ((.coordinates.coverage.selected | length) + 1) and
+         (all(.dispatch.outcomes[];
+           (.role == "reviewer" or .role == "synthesis"))) and
          ([.dispatch.outcomes[] | select(.role == "reviewer") | .reviewer] | sort) ==
            (.coordinates.coverage.selected | sort) and
          ([.dispatch.outcomes[] | select(.role == "synthesis")] | length) == 1
        elif .coordinates.mode.resolved == "sequential" and
             ([.dispatch.outcomes[] | select(.role == "preflight")] | length) == 0
        then
-         ([.dispatch.outcomes[] | select(.role == "combined")] | length) == 1
+         (.dispatch.outcomes | length) == 1 and
+         .dispatch.outcomes[0].role == "combined"
        else
-         ([.dispatch.outcomes[] | select(.role == "preflight" and .status == "failed")] | length) == 1
+         (.dispatch.outcomes | length) == 1 and
+         .dispatch.outcomes[0].role == "preflight" and
+         .dispatch.outcomes[0].status == "failed"
        end) and
       (.coordinates.independence.evidence_status |
         IN("verified","unavailable","unverified")) and
+      (if .coordinates.independence.evidence_status == "verified"
+       then (.provenance.attestation |
+         type == "string" and
+         test("^gate-assurance-[0-9]{8}-[0-9]{6}\\.attestation\\.json$"))
+       else .provenance.attestation == null
+       end) and
       .coordinates.independence.reviewer_topology ==
         .coordinates.mode.topology and
       (if .coordinates.independence.evidence_status == "verified"
@@ -1579,6 +1618,19 @@ OUTPUT_FILE="$_output_parent/$(basename "$OUTPUT_FILE")"
 unset _output_parent
 ASSURANCE_FILE="${OUTPUT_FILE}.assurance.json"
 ASSURANCE_POINTER="$(basename "$ASSURANCE_FILE")"
+ASSURANCE_ATTESTATION_FILE=""
+ASSURANCE_ATTESTATION_POINTER=""
+GATE_ASSURANCE_RUNS_FILE=""
+if [[ -n "$GATE_RUN_DIR_OVERRIDE" && -n "$PMCTL_DISPATCH_LIB_DIR" ]]; then
+  ASSURANCE_ATTESTATION_POINTER="gate-assurance-${TIMESTAMP}.attestation.json"
+  ASSURANCE_ATTESTATION_FILE="$GATE_RUN_DIR_OVERRIDE/$ASSURANCE_ATTESTATION_POINTER"
+  GATE_ASSURANCE_RUNS_FILE="$(
+    # shellcheck source=runtime/lib/state-paths.sh
+    . "$PMCTL_DISPATCH_LIB_DIR/state-paths.sh"
+    cd "$WORK_DIR" || exit 1
+    _SW_REPO_ROOT="$WORK_DIR" _sw_project_dir
+  )runs.jsonl"
+fi
 
 _gate_assurance_destination_check() {
   local path="$1" nlink
@@ -1685,6 +1737,7 @@ gate_finalize_assurance() {
   local result_file="$1" assurance_file="$2"
   local final requested_json outcomes_json independence_status implementation_isolated
   local per_reviewer_independent expected_count capture_count assurance_tmp result_tmp
+  local result_sha assurance_sha attestation_tmp run_ids_json
   local -a capture_files=()
 
   final="$(grep -E '^Final: (GO|NO-GO)$' "$result_file" | awk '{print $2}')"
@@ -1709,7 +1762,9 @@ gate_finalize_assurance() {
     independence_status=unavailable
     implementation_isolated=null
     per_reviewer_independent=null
-  elif [[ -n "$PMCTL_DISPATCH_LIB_DIR" ]]; then
+  elif [[ -n "$PMCTL_DISPATCH_LIB_DIR" \
+      && -n "$ASSURANCE_ATTESTATION_FILE" \
+      && -n "$GATE_ASSURANCE_RUNS_FILE" ]]; then
     if [[ "$SEQUENTIAL" == true ]]; then expected_count=1; else expected_count=$((NUM_REVIEWERS + 1)); fi
     if [[ "$capture_count" -ne "$expected_count" ]]; then
       printf 'Error: gate dispatch evidence incomplete (expected %d capture(s), found %d)\n' \
@@ -1740,13 +1795,46 @@ gate_finalize_assurance() {
     fi
   fi
 
+  result_tmp="$(mktemp "${result_file}.assurance-tmp.XXXXXX")" || {
+    printf 'Error: unable to create gate result temporary file beside: %s\n' \
+      "$result_file" >&2
+    return 1
+  }
+  awk -v pointer="$ASSURANCE_POINTER" '
+    /^---$/ {
+      fence++
+      print
+      next
+    }
+    fence == 1 && /^gate_result_version:/ {
+      print "gate_result_version: pr_gate_result_v2"
+      print "gate_assurance: " pointer
+      next
+    }
+    fence == 1 && /^gate_assurance:/ { next }
+    { print }
+  ' "$result_file" > "$result_tmp" || {
+    rm -f -- "$result_tmp"
+    return 1
+  }
+  result_sha="$(_gate_result_sha256_file "$result_tmp")" || {
+    rm -f -- "$result_tmp"
+    return 1
+  }
+
   assurance_tmp="$(mktemp "${assurance_file}.tmp.XXXXXX")" || {
+    rm -f -- "$result_tmp"
     printf 'Error: unable to create gate assurance temporary file beside: %s\n' \
       "$assurance_file" >&2
     return 1
   }
   if ! jq -n \
     --arg final "$final" \
+    --arg result_sha "$result_sha" \
+    --arg repo_root "$WORK_DIR" --arg repo_identity "$GATE_BINDING_REPO_IDENTITY" \
+    --arg base_commit "$GATE_BINDING_BASE_COMMIT" \
+    --arg head_commit "$GATE_BINDING_HEAD_COMMIT" \
+    --arg subject_fingerprint "$GATE_BINDING_SUBJECT_FINGERPRINT" \
     --arg tier_requested "$TIER_REQUESTED" --arg tier_resolved "$TIER_RESOLVED" \
     --arg evidence_floor "$TIER_EVIDENCE_FLOOR" \
     --arg mode_requested "$MODE_REQUESTED" --arg mode_resolved "$MODE_RESOLVED" \
@@ -1758,12 +1846,21 @@ gate_finalize_assurance() {
     --arg reviewer_topology "$MODE_TOPOLOGY" \
     --arg independence_status "$independence_status" \
     --arg policy_source "$GATE_ASSURANCE_POLICY_SOURCE" \
+    --arg attestation "$ASSURANCE_ATTESTATION_POINTER" \
     --argjson requested "$requested_json" --argjson outcomes "$outcomes_json" \
     --argjson implementation_isolated "$implementation_isolated" \
     --argjson per_reviewer_independent "$per_reviewer_independent" '
       {
         kind:"gate_assurance_v1",schema_version:1,
         result:{final:$final},
+        bindings:{
+          result_sha256:$result_sha,
+          repo_root:$repo_root,
+          repo_identity:$repo_identity,
+          base_commit:$base_commit,
+          head_commit:$head_commit,
+          subject_fingerprint:$subject_fingerprint
+        },
         coordinates:{
           tier:{requested:$tier_requested,resolved:$tier_resolved,
             evidence_floor:$evidence_floor},
@@ -1785,35 +1882,16 @@ gate_finalize_assurance() {
           }
         },
         dispatch:{outcomes:$outcomes},
-        provenance:{producer:"pr-gate.sh",policy_source:$policy_source}
+        provenance:{
+          producer:"pr-gate.sh",
+          policy_source:$policy_source,
+          attestation:(if $attestation == "" then null else $attestation end)
+        }
       }' > "$assurance_tmp"; then
-    rm -f -- "$assurance_tmp"
+    rm -f -- "$assurance_tmp" "$result_tmp"
     return 1
   fi
 
-  result_tmp="$(mktemp "${result_file}.assurance-tmp.XXXXXX")" || {
-    rm -f -- "$assurance_tmp"
-    printf 'Error: unable to create gate result temporary file beside: %s\n' \
-      "$result_file" >&2
-    return 1
-  }
-  awk -v pointer="$ASSURANCE_POINTER" '
-    /^---$/ {
-      fence++
-      print
-      next
-    }
-    fence == 1 && /^gate_result_version:/ {
-      print "gate_result_version: pr_gate_result_v2"
-      print "gate_assurance: " pointer
-      next
-    }
-    fence == 1 && /^gate_assurance:/ { next }
-    { print }
-  ' "$result_file" > "$result_tmp" || {
-    rm -f -- "$assurance_tmp" "$result_tmp"
-    return 1
-  }
   _gate_assurance_destination_check "$assurance_file" || {
     rm -f -- "$assurance_tmp" "$result_tmp"
     return 1
@@ -1826,7 +1904,44 @@ gate_finalize_assurance() {
     rm -f -- "$assurance_tmp"
     return 1
   }
-  gate_result_verify "$result_file" "" "machine assurance finalization"
+  gate_result_verify "$result_file" "" "machine assurance finalization" || return $?
+
+  if [[ "$independence_status" == verified ]]; then
+    assurance_sha="$(_gate_result_sha256_file "$assurance_file")" || return $?
+    run_ids_json="$(jq -c '[.[].run_id]' <<<"$outcomes_json")" || return 1
+    _gate_assurance_destination_check "$ASSURANCE_ATTESTATION_FILE" || return 1
+    attestation_tmp="$(mktemp "${ASSURANCE_ATTESTATION_FILE}.tmp.XXXXXX")" || {
+      printf 'Error: unable to create protected gate assurance attestation\n' >&2
+      return 1
+    }
+    if ! jq -n \
+      --arg result_sha "$result_sha" --arg assurance_sha "$assurance_sha" \
+      --arg repo_root "$WORK_DIR" --arg repo_identity "$GATE_BINDING_REPO_IDENTITY" \
+      --arg base_commit "$GATE_BINDING_BASE_COMMIT" \
+      --arg head_commit "$GATE_BINDING_HEAD_COMMIT" \
+      --arg subject_fingerprint "$GATE_BINDING_SUBJECT_FINGERPRINT" \
+      --argjson run_ids "$run_ids_json" '{
+        kind:"gate_assurance_attestation_v1",
+        schema_version:1,
+        result_sha256:$result_sha,
+        assurance_sha256:$assurance_sha,
+        repo_root:$repo_root,
+        repo_identity:$repo_identity,
+        base_commit:$base_commit,
+        head_commit:$head_commit,
+        subject_fingerprint:$subject_fingerprint,
+        run_ids:$run_ids
+      }' > "$attestation_tmp"; then
+      rm -f -- "$attestation_tmp"
+      return 1
+    fi
+    mv -- "$attestation_tmp" "$ASSURANCE_ATTESTATION_FILE" || {
+      rm -f -- "$attestation_tmp"
+      return 1
+    }
+    gate_assurance_authorization_verify "$result_file" "$assurance_file" \
+      "$ASSURANCE_ATTESTATION_FILE" "$GATE_ASSURANCE_RUNS_FILE"
+  fi
 }
 
 SYNTHESIS_BRIEF="$BRIEF_DIR/pr-gate-${TIMESTAMP}-synthesis.md"
@@ -2059,6 +2174,11 @@ _preflight_repo_identity() {
   printf '%s\n%s\n' "$WORK_DIR" "$remote" | _preflight_sha256_stream
 }
 
+GATE_BINDING_SUBJECT_FINGERPRINT="$(_preflight_tree_fingerprint)" || exit 2
+GATE_BINDING_REPO_IDENTITY="$(_preflight_repo_identity)" || exit 2
+GATE_BINDING_BASE_COMMIT="$(git rev-parse "${BASE}^{commit}")" || exit 2
+GATE_BINDING_HEAD_COMMIT="$(git rev-parse "${HEAD_REF}^{commit}")" || exit 2
+
 if [[ "$SKIP_PREFLIGHT_TESTS" != "true" && -n "$TEST_CMD_OVERRIDE" ]]; then
   # pr-gate.sh is designed to be copied standalone into any repo (copy-mode --
   # see the file header), so it must not hardcode any repo-specific test
@@ -2073,10 +2193,10 @@ if [[ "$SKIP_PREFLIGHT_TESTS" != "true" && -n "$TEST_CMD_OVERRIDE" ]]; then
   PREFLIGHT_EVIDENCE_PATH="$WORK_DIR/.gate-results/preflight-evidence-${TIMESTAMP}.json"
   PREFLIGHT_RICH_RESULT_PATH="$WORK_DIR/.gate-results/preflight-rich-result-${TIMESTAMP}.json"
   _preflight_command_digest="$(printf '%s' "$TEST_CMD_OVERRIDE" | _preflight_sha256_stream)" || exit 2
-  _preflight_before="$(_preflight_tree_fingerprint)" || exit 2
-  _preflight_repo_id="$(_preflight_repo_identity)" || exit 2
-  _preflight_base_commit="$(git rev-parse "${BASE}^{commit}")" || exit 2
-  _preflight_head_commit="$(git rev-parse "${HEAD_REF}^{commit}")" || exit 2
+  _preflight_before="$GATE_BINDING_SUBJECT_FINGERPRINT"
+  _preflight_repo_id="$GATE_BINDING_REPO_IDENTITY"
+  _preflight_base_commit="$GATE_BINDING_BASE_COMMIT"
+  _preflight_head_commit="$GATE_BINDING_HEAD_COMMIT"
   _preflight_started="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
   say 'pr-gate: running pre-flight test suite (timeout %ss, command sha256:%s)\n' \
     "$TEST_TIMEOUT" "${_preflight_command_digest:0:12}"

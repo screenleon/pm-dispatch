@@ -175,8 +175,11 @@ The final producer writes `pr_gate_result_v2` Markdown plus a sibling
 `gate_assurance_v1` JSON envelope. The Markdown contains human findings and a
 bounded relative `gate_assurance` pointer; the shell-owned envelope records
 requested/resolved coordinates, selected/skipped coverage, actual dispatch
-outcomes, run IDs, and the evidence status behind independence claims.
-`pmctl gate verify` validates both files and their claim parity. Legacy
+outcomes, run IDs, subject commits/fingerprint, and the evidence status behind
+independence claims. Repo-layout results with verified independence also carry
+a shell-owned attestation in the protected gate run directory. `pmctl gate
+verify` validates result/sidecar digests and resolves every claimed run ID
+against the canonical terminal records for that same run directory. Legacy
 `pr_gate_result_v1` remains structurally readable, but verification reports
 `assurance: unavailable`; consumers must not infer mode, coverage, or
 independence from its prose/frontmatter.
