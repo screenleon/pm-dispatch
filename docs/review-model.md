@@ -181,9 +181,11 @@ a shell-owned attestation in the protected gate run directory. `pmctl gate
 verify` validates result/sidecar digests and resolves every claimed run ID
 against the canonical terminal records for the invoking repository and rejects
 self-consistent artifacts outside that repository's resolved state partition.
-Because result, sidecar, and attestation publication requires separate atomic
-renames, verification uses a bounded retry when it observes an in-flight
-canonical v2 finalization. Legacy
+The producer publishes the sidecar before atomically replacing the
+self-contained v1 result with the v2 result that references it, so interruption
+cannot strand a v2 result with a missing sidecar. The protected attestation is
+published afterward; verification uses a bounded retry when it observes that
+in-flight canonical v2 finalization. Legacy
 `pr_gate_result_v1` and unbound `gate_assurance_v1` artifacts remain
 structurally readable, but verification reports `assurance: unavailable`;
 consumers must not infer mode, coverage, or independence from them.

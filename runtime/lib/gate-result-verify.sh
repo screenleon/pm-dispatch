@@ -94,10 +94,30 @@ gate_assurance_verify() {
   jq -e --arg final "$body_final" --arg result_sha "$result_sha" \
     --arg markdown_tier "$markdown_tier" \
     --arg markdown_mode "$markdown_mode" '
+    def only_keys($allowed):
+      type == "object" and ((keys_unsorted - $allowed) | length) == 0;
     def strings_unique:
       type == "array" and all(.[]; type == "string" and length > 0) and
       (length == (unique | length));
     def same_set($a; $b): ($a | sort) == ($b | sort);
+    only_keys(["kind","schema_version","result","bindings","coordinates",
+      "dispatch","provenance"]) and
+    (.result | only_keys(["final"])) and
+    (.bindings | only_keys(["result_sha256","repo_root","repo_identity",
+      "base_commit","head_commit","subject_fingerprint"])) and
+    (.coordinates | only_keys(["tier","mode","pass","coverage","independence"])) and
+    (.coordinates.tier | only_keys(["requested","resolved","evidence_floor"])) and
+    (.coordinates.mode | only_keys(["requested","resolved","topology","synthesis"])) and
+    (.coordinates.pass | only_keys(["requested","resolved","scope","initial_result"])) and
+    (.coordinates.coverage |
+      only_keys(["requested","selected","skipped","vocabulary"])) and
+    (.coordinates.independence |
+      only_keys(["implementation_context_isolated","reviewer_topology",
+        "per_reviewer_independent","evidence_status"])) and
+    (.dispatch | only_keys(["outcomes"])) and
+    (all(.dispatch.outcomes[];
+      only_keys(["role","reviewer","status","run_id","evidence_status"]))) and
+    (.provenance | only_keys(["producer","policy_source","attestation"])) and
     .kind == "gate_assurance_v2" and .schema_version == 2 and
     .result.final == $final and
     .bindings.result_sha256 == $result_sha and

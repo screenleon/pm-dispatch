@@ -286,9 +286,10 @@ When the `pmctl gate wait` background Bash completion notification arrives:
    or reviewer-session independence. For repo-layout results that claim
    verified independence, verification also requires the protected producer
    attestation, a result under that repository's canonical state partition,
-   and matching canonical terminal run records. Verification briefly retries
-   when it observes an in-flight v2 result before its sidecar or attestation
-   rename completes.
+   and matching canonical terminal run records. The producer publishes the
+   sidecar before the v2 result that references it; verification briefly
+   retries when it observes an in-flight v2 result before its protected
+   attestation rename completes.
 5. Prepend `PR-gate complete.` to completion relay and include the full gate
    result (including `Final: GO` / `Final: NO-GO`) unchanged.
 6. On failure, avoid collapsing findings; relay the actual stderr summary and

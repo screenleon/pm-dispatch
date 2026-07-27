@@ -554,10 +554,30 @@ else
     jq -e --arg final "$body_final" --arg result_sha "$result_sha" \
       --arg markdown_tier "$markdown_tier" \
       --arg markdown_mode "$markdown_mode" '
+      def only_keys($allowed):
+        type == "object" and ((keys_unsorted - $allowed) | length) == 0;
       def strings_unique:
         type == "array" and all(.[]; type == "string" and length > 0) and
         (length == (unique | length));
       def same_set($a; $b): ($a | sort) == ($b | sort);
+      only_keys(["kind","schema_version","result","bindings","coordinates",
+        "dispatch","provenance"]) and
+      (.result | only_keys(["final"])) and
+      (.bindings | only_keys(["result_sha256","repo_root","repo_identity",
+        "base_commit","head_commit","subject_fingerprint"])) and
+      (.coordinates | only_keys(["tier","mode","pass","coverage","independence"])) and
+      (.coordinates.tier | only_keys(["requested","resolved","evidence_floor"])) and
+      (.coordinates.mode | only_keys(["requested","resolved","topology","synthesis"])) and
+      (.coordinates.pass | only_keys(["requested","resolved","scope","initial_result"])) and
+      (.coordinates.coverage |
+        only_keys(["requested","selected","skipped","vocabulary"])) and
+      (.coordinates.independence |
+        only_keys(["implementation_context_isolated","reviewer_topology",
+          "per_reviewer_independent","evidence_status"])) and
+      (.dispatch | only_keys(["outcomes"])) and
+      (all(.dispatch.outcomes[];
+        only_keys(["role","reviewer","status","run_id","evidence_status"]))) and
+      (.provenance | only_keys(["producer","policy_source","attestation"])) and
       .kind == "gate_assurance_v2" and .schema_version == 2 and
       .result.final == $final and
       .bindings.result_sha256 == $result_sha and
@@ -1178,7 +1198,7 @@ pmctl_gate_dispatch_lib_load() {
 
 _gate_dispatch_capture() {
   local brief_file="$1" run_id="$2" status="$3"
-  local brief_base role=combined reviewer="" capture_file r
+  local brief_base role=combined reviewer="" capture_file capture_tmp r
   [[ -n "${GATE_ASSURANCE_CAPTURE_DIR:-}" ]] || return 0
   brief_base="$(basename "$brief_file")"
   if [[ "$brief_base" == *-synthesis.md ]]; then
@@ -1193,10 +1213,25 @@ _gate_dispatch_capture() {
     done
   fi
   capture_file="$GATE_ASSURANCE_CAPTURE_DIR/${role}${reviewer:+-$reviewer}.json"
-  jq -n --arg role "$role" --arg reviewer "$reviewer" --arg status "$status" \
+  capture_tmp="$(mktemp "$GATE_ASSURANCE_CAPTURE_DIR/.capture.XXXXXX")" || {
+    printf 'Error: unable to create private gate dispatch capture\n' >&2
+    return 1
+  }
+  if ! jq -n --arg role "$role" --arg reviewer "$reviewer" --arg status "$status" \
     --arg run_id "$run_id" \
     '{role:$role,reviewer:(if $reviewer == "" then null else $reviewer end),
-      status:$status,run_id:$run_id,evidence_status:"verified"}' > "$capture_file"
+      status:$status,run_id:$run_id,evidence_status:"verified"}' > "$capture_tmp"; then
+    rm -f -- "$capture_tmp"
+    return 1
+  fi
+  _gate_assurance_destination_check "$capture_file" || {
+    rm -f -- "$capture_tmp"
+    return 1
+  }
+  mv -- "$capture_tmp" "$capture_file" || {
+    rm -f -- "$capture_tmp"
+    return 1
+  }
 }
 
 # Gate reviewers are producer children, not opaque adapter processes.  Route
@@ -1617,8 +1652,11 @@ TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 _ARTIFACT_ROOT="${GATE_RUN_DIR_OVERRIDE:-$WORK_DIR}"
 BRIEF_DIR="$_ARTIFACT_ROOT/.gate-briefs"
 mkdir -p "$BRIEF_DIR"
-GATE_ASSURANCE_CAPTURE_DIR="$BRIEF_DIR/.assurance-capture-${TIMESTAMP}"
-mkdir -p "$GATE_ASSURANCE_CAPTURE_DIR"
+GATE_ASSURANCE_CAPTURE_DIR="$(mktemp -d "/tmp/pm-gate-assurance-${TIMESTAMP}.XXXXXX")" || {
+  printf 'Error: unable to create private gate assurance capture directory\n' >&2
+  exit 1
+}
+command -p chmod 700 "$GATE_ASSURANCE_CAPTURE_DIR" || exit 1
 # Route executor traces (adapter JSONL/last/stderr) to the run dir when provided.
 # PM_DISPATCH_TRACE_DIR is read by dispatch_via (lib and copy-mode) to forward
 # --trace-dir to the adapter, so the adapter's own trace files follow the run dir.
@@ -1922,12 +1960,16 @@ gate_finalize_assurance() {
     rm -f -- "$assurance_tmp" "$result_tmp"
     return 1
   }
-  mv -- "$result_tmp" "$result_file" || {
+  # Publish the sidecar before the v2 result that references it. A verifier
+  # racing this boundary sees either the original self-contained v1 result or
+  # the complete v2 pair; a host failure cannot strand a v2 result with a
+  # permanently missing sidecar.
+  mv -- "$assurance_tmp" "$assurance_file" || {
     rm -f -- "$assurance_tmp" "$result_tmp"
     return 1
   }
-  mv -- "$assurance_tmp" "$assurance_file" || {
-    rm -f -- "$assurance_tmp"
+  mv -- "$result_tmp" "$result_file" || {
+    rm -f -- "$result_tmp"
     return 1
   }
   gate_result_verify "$result_file" "" "machine assurance finalization" || return $?

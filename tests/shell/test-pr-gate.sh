@@ -3295,6 +3295,7 @@ test_repo_layout_captures_dispatch_run_id() {
   cat > "$layout/runtime/lib/pmctl-dispatch.sh" <<'STUB_PMCTL'
 pmctl_dispatch_run() {
   local root="$1" brief="" work="" timeout=""
+  local capture_mode
   shift
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -3304,6 +3305,13 @@ pmctl_dispatch_run() {
       *) shift ;;
     esac
   done
+  capture_mode="$(stat -c '%a' "$GATE_ASSURANCE_CAPTURE_DIR" 2>/dev/null)" || return 2
+  case "$GATE_ASSURANCE_CAPTURE_DIR" in
+    /tmp/pm-gate-assurance-*) ;;
+    *) return 2 ;;
+  esac
+  [[ -d "$GATE_ASSURANCE_CAPTURE_DIR" && ! -L "$GATE_ASSURANCE_CAPTURE_DIR" \
+      && "$capture_mode" == 700 ]] || return 2
   "$root/adapters/codex/dispatch.sh" --brief-file "$brief" --cd "$work" --timeout "$timeout"
   mkdir -p "$PM_DISPATCH_TRACE_DIR"
   printf 'trace\n' > "$PM_DISPATCH_TRACE_DIR/test.last"

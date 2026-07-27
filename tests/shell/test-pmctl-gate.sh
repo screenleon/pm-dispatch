@@ -649,6 +649,29 @@ case_verify_v2_surplus_topology_record() {
   fi
 }
 
+case_verify_v2_unknown_fields_rejected() {
+  local name="gate/verify: v2 unknown top-level and nested fields exit 1"
+  should_run "$name" || return 0
+  local variant result out code
+  for variant in top-level nested; do
+    result="$tmp_root/v2-unknown-$variant/result.md"
+    _mk_gate_result_v2 "$result"
+    if [[ "$variant" == top-level ]]; then
+      jq '.unexpected = true' "${result}.assurance.json" > "${result}.assurance.tmp"
+    else
+      jq '.coordinates.tier.unexpected = true' "${result}.assurance.json" \
+        > "${result}.assurance.tmp"
+    fi
+    mv "${result}.assurance.tmp" "${result}.assurance.json"
+    set +e; out="$("$PMCTL" gate verify "$result" 2>&1)"; code=$?; set -e
+    if [[ "$code" -ne 1 || "$out" != *"structural/claim verification"* ]]; then
+      fail "$name" "$variant code=$code out=$out"
+      return
+    fi
+  done
+  pass "$name"
+}
+
 case_verify_v2_result_binding_tamper() {
   local name="gate/verify: v2 changed result digest exits 1"
   should_run "$name" || return 0
@@ -1281,6 +1304,7 @@ case_verify_v2_repo_binding_rejected
 case_verify_v2_legacy_assurance_is_unavailable
 case_verify_v2_claim_mismatch
 case_verify_v2_surplus_topology_record
+case_verify_v2_unknown_fields_rejected
 case_verify_v2_result_binding_tamper
 case_verify_v2_sidecar_attestation_tamper
 case_verify_v2_subject_binding_tamper
