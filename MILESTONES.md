@@ -122,6 +122,7 @@
 | CC-519 | selected-reviewer coverage/finding contract；sequential logical sections 與 parallel session isolation 分開 | 🔵 |
 | CC-520 | synthesis findings-union parity、root-cause grouping、coverage matrix、remediation seed、no silent drop | 🔵 |
 | CC-521 | actionable test-gap matrix + bounded protocol recovery；seeded live recall 僅作 quality evaluation | 🔵 |
+| CC-522 | arbitrary `--test-cmd` opaque／structured negotiation；test failure 與 timeout／environment INCOMPLETE 分流 | 🔵 |
 
 ### Phase 9 — maintainer closure + publish authorization
 

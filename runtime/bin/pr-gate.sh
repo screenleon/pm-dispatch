@@ -455,48 +455,199 @@ else
   # Inline fallback for copy-mode (pr-gate.sh run standalone without runtime/lib/).
   # MUST stay in sync with runtime/lib/gate-result-verify.sh; the copy-mode
   # regression test exercises this path.
-  gate_result_verify() {
+  gate_result_verdict_verify() {
     local result_file=${1-} expected_final=${2-} route_label=${3-gate}
     local final_count frontmatter_final body_final
 
     [[ $# -ge 1 && $# -le 3 ]] || {
-      printf 'gate-result-verify: gate_result_verify expects <result_file> [expected_final] [route_label]\n' >&2
+      printf 'gate-result-verify: gate_result_verdict_verify expects <result_file> [expected_final] [route_label]\n' >&2
       return 2
     }
-
     if [[ ! -s "$result_file" ]]; then
       printf 'Error: %s did not produce the result file: %s\n' "$route_label" "$result_file" >&2
       printf 'Gate aborted -- the executor session may have exited 0 without writing a verdict.\n' >&2
       return 1
     fi
-
     final_count=$(grep -cE '^Final: (GO|NO-GO)$' "$result_file" || true)
     if [[ "$final_count" -ne 1 ]]; then
       printf 'Error: gate result file must contain exactly one Final: GO/NO-GO line (found %d): %s\n' \
-        "$final_count" "$result_file" >&2
+      "$final_count" "$result_file" >&2
       return 1
     fi
-
     frontmatter_final=$(awk 'BEGIN{s=0} /^---$/ { if (s == 0) { s=1; next } else if (s == 1) { exit } } s && $1 == "final:" { print $2; exit }' "$result_file")
     if [[ -z "$frontmatter_final" ]]; then
       printf 'Error: gate result YAML frontmatter missing required field: final: (%s)\n' "$result_file" >&2
       return 1
     fi
-
     body_final=$(grep -E '^Final: (GO|NO-GO)$' "$result_file" | awk '{print $2}')
     if [[ "$frontmatter_final" != "$body_final" ]]; then
       printf 'Error: frontmatter final: (%s) does not match body Final: (%s) in gate result: %s\n' \
-        "$frontmatter_final" "$body_final" "$result_file" >&2
+      "$frontmatter_final" "$body_final" "$result_file" >&2
       return 1
     fi
-
     if [[ -n "$expected_final" && "$body_final" != "$expected_final" ]]; then
       printf 'Error: %s verdict (%s) contradicts shell-computed verdict (%s) -- gate result may have been manipulated: %s\n' \
         "$route_label" "$body_final" "$expected_final" "$result_file" >&2
       return 1
     fi
+  }
 
-    return 0
+  _gate_result_frontmatter_value() {
+    local result_file="$1" key="$2"
+    awk -v wanted="$key" '
+      BEGIN{s=0}
+      /^---$/ { if (s == 0) { s=1; next } else if (s == 1) { exit } }
+      s && $1 == wanted ":" { print $2; exit }
+    ' "$result_file"
+  }
+
+  gate_assurance_verify() {
+    local result_file="$1" assurance_file="$2" body_final="$3"
+    local markdown_tier markdown_mode
+    command -v jq >/dev/null 2>&1 || {
+      printf 'Error: gate assurance verification requires jq\n' >&2
+      return 2
+    }
+    if [[ ! -s "$assurance_file" ]]; then
+      printf 'Error: gate assurance sidecar missing or empty: %s\n' "$assurance_file" >&2
+      return 1
+    fi
+    markdown_tier="$(_gate_result_frontmatter_value "$result_file" tier)"
+    markdown_mode="$(_gate_result_frontmatter_value "$result_file" mode)"
+    jq -e --arg final "$body_final" --arg markdown_tier "$markdown_tier" \
+      --arg markdown_mode "$markdown_mode" '
+      def strings_unique:
+        type == "array" and all(.[]; type == "string" and length > 0) and
+        (length == (unique | length));
+      def same_set($a; $b): ($a | sort) == ($b | sort);
+      .kind == "gate_assurance_v1" and .schema_version == 1 and
+      .result.final == $final and
+      .coordinates.tier.resolved == $markdown_tier and
+      .coordinates.mode.resolved == $markdown_mode and
+      .provenance.producer == "pr-gate.sh" and
+      (.provenance.policy_source |
+        IN("canonical","generated-snapshot","mixed")) and
+      (.coordinates.tier.evidence_floor | type == "string" and length > 0) and
+      (.coordinates.tier.requested == "auto" or
+        (.coordinates.tier.requested == .coordinates.tier.resolved and
+         (.coordinates.tier.requested | IN("express","standard","full")))) and
+      (.coordinates.tier.resolved | IN("express","standard","full")) and
+      (.coordinates.mode.requested | IN("default","sequential","parallel")) and
+      (.coordinates.mode.resolved | IN("sequential","parallel")) and
+      (.coordinates.mode.requested == "default" or
+        .coordinates.mode.requested == .coordinates.mode.resolved) and
+      ((.coordinates.mode.resolved == "sequential" and
+         .coordinates.mode.topology == "combined-session" and
+         .coordinates.mode.synthesis == "inline") or
+       (.coordinates.mode.resolved == "parallel" and
+         .coordinates.mode.topology == "per-reviewer-sessions" and
+         .coordinates.mode.synthesis == "separate-session")) and
+      (.coordinates.pass.requested | IN("initial","targeted")) and
+      (.coordinates.pass.resolved | IN("initial","targeted")) and
+      .coordinates.pass.requested == .coordinates.pass.resolved and
+      ((.coordinates.pass.resolved == "initial" and
+         .coordinates.pass.scope == "comprehensive" and
+         .coordinates.pass.initial_result == null) or
+       (.coordinates.pass.resolved == "targeted" and
+         .coordinates.pass.scope == "remediation-delta" and
+         (.coordinates.pass.initial_result | type == "string" and length > 0))) and
+      (.coordinates.coverage.vocabulary | strings_unique) and
+      (.coordinates.coverage.selected | strings_unique) and
+      (.coordinates.coverage.skipped | strings_unique) and
+      ((.coordinates.coverage.selected + .coordinates.coverage.skipped) | strings_unique) and
+      same_set(.coordinates.coverage.selected + .coordinates.coverage.skipped;
+        .coordinates.coverage.vocabulary) and
+      (.coordinates.coverage.requested == null or
+        ((.coordinates.coverage.requested | strings_unique) and
+         same_set(.coordinates.coverage.requested;
+           .coordinates.coverage.selected))) and
+      (.dispatch.outcomes | type == "array") and
+      (all(.dispatch.outcomes[];
+        (.role | IN("combined","reviewer","synthesis","preflight")) and
+        (if .role == "reviewer"
+         then (.reviewer | type == "string" and length > 0)
+         else .reviewer == null
+         end) and
+        (.status | IN("passed","failed","skipped")) and
+        (.evidence_status | IN("verified","unavailable","unverified")) and
+        (.run_id == null or
+          (.run_id | type == "string" and test("^run-[A-Za-z0-9]+-[A-Za-z0-9]+$"))))) and
+      (if .coordinates.mode.resolved == "parallel" and
+          ([.dispatch.outcomes[] | select(.role == "preflight")] | length) == 0
+       then
+         ([.dispatch.outcomes[] | select(.role == "reviewer") | .reviewer] | sort) ==
+           (.coordinates.coverage.selected | sort) and
+         ([.dispatch.outcomes[] | select(.role == "synthesis")] | length) == 1
+       elif .coordinates.mode.resolved == "sequential" and
+            ([.dispatch.outcomes[] | select(.role == "preflight")] | length) == 0
+       then
+         ([.dispatch.outcomes[] | select(.role == "combined")] | length) == 1
+       else
+         ([.dispatch.outcomes[] | select(.role == "preflight" and .status == "failed")] | length) == 1
+       end) and
+      (.coordinates.independence.evidence_status |
+        IN("verified","unavailable","unverified")) and
+      .coordinates.independence.reviewer_topology ==
+        .coordinates.mode.topology and
+      (if .coordinates.independence.evidence_status == "verified"
+       then
+         .coordinates.independence.implementation_context_isolated == true and
+         (all(.dispatch.outcomes[]; .evidence_status == "verified" and .run_id != null)) and
+         ([.dispatch.outcomes[].run_id] | length == (unique | length)) and
+         (if .coordinates.mode.resolved == "parallel"
+          then .coordinates.independence.per_reviewer_independent == true
+          else .coordinates.independence.per_reviewer_independent == false
+          end)
+       else
+         .coordinates.independence.implementation_context_isolated != true and
+         .coordinates.independence.per_reviewer_independent != true and
+         (all(.dispatch.outcomes[]; .evidence_status != "verified"))
+       end)
+    ' "$assurance_file" >/dev/null || {
+      printf 'Error: gate assurance sidecar failed structural/claim verification: %s\n' \
+        "$assurance_file" >&2
+      return 1
+    }
+  }
+
+  gate_result_verify() {
+    local result_file=${1-} expected_final=${2-} route_label=${3-gate}
+    local version pointer result_parent assurance_file body_final
+    [[ $# -ge 1 && $# -le 3 ]] || {
+      printf 'gate-result-verify: gate_result_verify expects <result_file> [expected_final] [route_label]\n' >&2
+      return 2
+    }
+    gate_result_verdict_verify "$result_file" "$expected_final" "$route_label" || return $?
+    version="$(_gate_result_frontmatter_value "$result_file" gate_result_version)"
+    case "$version" in
+      pr_gate_result_v1)
+        GATE_RESULT_ASSURANCE=unavailable
+        unset GATE_RESULT_ASSURANCE_FILE
+        export GATE_RESULT_ASSURANCE
+        return 0
+        ;;
+      pr_gate_result_v2)
+        pointer="$(_gate_result_frontmatter_value "$result_file" gate_assurance)"
+        if [[ -z "$pointer" || "$pointer" == */* || "$pointer" == "." || "$pointer" == ".." \
+            || ! "$pointer" =~ ^[A-Za-z0-9._-]+\.json$ ]]; then
+          printf 'Error: pr_gate_result_v2 requires a bounded sibling gate_assurance pointer: %s\n' \
+            "$result_file" >&2
+          return 1
+        fi
+        result_parent="$(cd "$(dirname "$result_file")" && pwd -P)" || return 1
+        assurance_file="$result_parent/$pointer"
+        body_final=$(grep -E '^Final: (GO|NO-GO)$' "$result_file" | awk '{print $2}')
+        gate_assurance_verify "$result_file" "$assurance_file" "$body_final" || return $?
+        GATE_RESULT_ASSURANCE=verified
+        GATE_RESULT_ASSURANCE_FILE="$assurance_file"
+        export GATE_RESULT_ASSURANCE GATE_RESULT_ASSURANCE_FILE
+        ;;
+      *)
+        printf 'Error: unsupported or missing gate_result_version in gate result: %s\n' \
+          "$result_file" >&2
+        return 1
+        ;;
+    esac
   }
 fi
 
@@ -955,6 +1106,29 @@ pmctl_gate_dispatch_lib_load() {
   return 0
 }
 
+_gate_dispatch_capture() {
+  local brief_file="$1" run_id="$2" status="$3"
+  local brief_base role=combined reviewer="" capture_file r
+  [[ -n "${GATE_ASSURANCE_CAPTURE_DIR:-}" ]] || return 0
+  brief_base="$(basename "$brief_file")"
+  if [[ "$brief_base" == *-synthesis.md ]]; then
+    role=synthesis
+  else
+    for r in ${REVIEWERS:-}; do
+      if [[ "$brief_base" == *-"$r".md ]]; then
+        role=reviewer
+        reviewer="$r"
+        break
+      fi
+    done
+  fi
+  capture_file="$GATE_ASSURANCE_CAPTURE_DIR/${role}${reviewer:+-$reviewer}.json"
+  jq -n --arg role "$role" --arg reviewer "$reviewer" --arg status "$status" \
+    --arg run_id "$run_id" \
+    '{role:$role,reviewer:(if $reviewer == "" then null else $reviewer end),
+      status:$status,run_id:$run_id,evidence_status:"verified"}' > "$capture_file"
+}
+
 # Gate reviewers are producer children, not opaque adapter processes.  Route
 # each invocation through pmctl's detached dispatch lifecycle, then wait for
 # its authenticated terminal sentinel.  The optional parent id is injected by
@@ -1009,11 +1183,19 @@ pmctl_gate_dispatch_and_wait() {
     printf 'pr-gate: dispatch returned invalid run id\n' >&2
     return 2
   fi
+  local dispatch_status=passed
+  rc=0
   (
     pmctl_gate_dispatch_lib_load || exit 2
     pmctl_dispatch_wait "$PMCTL_DISPATCH_ROOT" "$run_id" --cd "$working_dir" --timeout "$timeout"
-  )
-  rc=$?
+  ) || {
+    rc=$?
+    dispatch_status=failed
+  }
+  _gate_dispatch_capture "$brief_file" "$run_id" "$dispatch_status" || {
+    rm -f "$dispatch_brief"
+    return 1
+  }
   rm -f "$dispatch_brief"
   return "$rc"
 }
@@ -1308,9 +1490,11 @@ NUM_REVIEWERS=$(printf '%s\n' "$REVIEWERS" | awk '{print NF}')
 
 # Compute skipped dimensions
 SKIPPED=""
+SKIPPED_WORDS=""
 for r in $ALL_REVIEWERS; do
   if ! printf '%s' "$REVIEWERS" | grep -qw "$r"; then
     SKIPPED="${SKIPPED:+$SKIPPED, }$r"
+    SKIPPED_WORDS="${SKIPPED_WORDS:+$SKIPPED_WORDS }$r"
   fi
 done
 SKIPPED_DISPLAY="${SKIPPED:-none}"
@@ -1363,6 +1547,8 @@ TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 _ARTIFACT_ROOT="${GATE_RUN_DIR_OVERRIDE:-$WORK_DIR}"
 BRIEF_DIR="$_ARTIFACT_ROOT/.gate-briefs"
 mkdir -p "$BRIEF_DIR"
+GATE_ASSURANCE_CAPTURE_DIR="$BRIEF_DIR/.assurance-capture-${TIMESTAMP}"
+mkdir -p "$GATE_ASSURANCE_CAPTURE_DIR"
 # Route executor traces (adapter JSONL/last/stderr) to the run dir when provided.
 # PM_DISPATCH_TRACE_DIR is read by dispatch_via (lib and copy-mode) to forward
 # --trace-dir to the adapter, so the adapter's own trace files follow the run dir.
@@ -1386,10 +1572,19 @@ mkdir -p "$(dirname "$OUTPUT_FILE")"
 _output_parent="$(cd "$(dirname "$OUTPUT_FILE")" && pwd -P)"
 OUTPUT_FILE="$_output_parent/$(basename "$OUTPUT_FILE")"
 unset _output_parent
+ASSURANCE_FILE="${OUTPUT_FILE}.assurance.json"
+ASSURANCE_POINTER="$(basename "$ASSURANCE_FILE")"
 if [[ -n "$INITIAL_RESULT_RESOLVED" \
     && ( "$OUTPUT_FILE" == "$INITIAL_RESULT_RESOLVED" \
       || ( -e "$OUTPUT_FILE" && "$OUTPUT_FILE" -ef "$INITIAL_RESULT_RESOLVED" ) ) ]]; then
   printf 'Error: --output must not overwrite the referenced --initial-result: %s\n' \
+    "$INITIAL_RESULT_RESOLVED" >&2
+  exit 2
+fi
+if [[ -n "$INITIAL_RESULT_RESOLVED" \
+    && ( "$ASSURANCE_FILE" == "$INITIAL_RESULT_RESOLVED" \
+      || ( -e "$ASSURANCE_FILE" && "$ASSURANCE_FILE" -ef "$INITIAL_RESULT_RESOLVED" ) ) ]]; then
+  printf 'Error: the assurance sidecar must not overwrite the referenced --initial-result: %s\n' \
     "$INITIAL_RESULT_RESOLVED" >&2
   exit 2
 fi
@@ -1408,6 +1603,7 @@ cleanup_briefs() {
     rm -rf -- "$REVIEWER_DEFINITION_DIR"
     rmdir "$WORK_DIR/.gate-briefs" 2>/dev/null || true
   fi
+  rm -rf -- "${GATE_ASSURANCE_CAPTURE_DIR:-}"
 }
 
 # Relocate gate result artifacts out of the repo when a run dir was supplied.
@@ -1449,6 +1645,126 @@ gate_exit_cleanup() {
   cleanup_briefs
 }
 trap gate_exit_cleanup EXIT
+
+gate_finalize_assurance() {
+  local result_file="$1" assurance_file="$2"
+  local final requested_json outcomes_json independence_status implementation_isolated
+  local per_reviewer_independent expected_count capture_count
+  local -a capture_files=()
+
+  final="$(grep -E '^Final: (GO|NO-GO)$' "$result_file" | awk '{print $2}')"
+  [[ -n "$final" ]] || {
+    printf 'Error: cannot finalize gate assurance without a unique final verdict\n' >&2
+    return 1
+  }
+  if [[ -n "$REVIEWERS_OVERRIDE" ]]; then
+    requested_json="$(jq -nc --arg reviewers "$REVIEWERS" \
+      '$reviewers | split(" ") | map(select(length > 0))')"
+  else
+    requested_json=null
+  fi
+
+  while IFS= read -r _capture_file; do
+    capture_files+=("$_capture_file")
+  done < <(find "$GATE_ASSURANCE_CAPTURE_DIR" -maxdepth 1 -type f -name '*.json' -print | LC_ALL=C sort)
+  capture_count="${#capture_files[@]}"
+
+  if [[ "$PREFLIGHT_STATUS" == fail ]]; then
+    outcomes_json='[{"role":"preflight","reviewer":null,"status":"failed","run_id":null,"evidence_status":"unavailable"}]'
+    independence_status=unavailable
+    implementation_isolated=null
+    per_reviewer_independent=null
+  elif [[ -n "$PMCTL_DISPATCH_LIB_DIR" ]]; then
+    if [[ "$SEQUENTIAL" == true ]]; then expected_count=1; else expected_count=$((NUM_REVIEWERS + 1)); fi
+    if [[ "$capture_count" -ne "$expected_count" ]]; then
+      printf 'Error: gate dispatch evidence incomplete (expected %d capture(s), found %d)\n' \
+        "$expected_count" "$capture_count" >&2
+      return 1
+    fi
+    outcomes_json="$(jq -s '.' "${capture_files[@]}")" || return 1
+    independence_status=verified
+    implementation_isolated=true
+    if [[ "$SEQUENTIAL" == true ]]; then
+      per_reviewer_independent=false
+    else
+      per_reviewer_independent=true
+    fi
+  else
+    independence_status=unavailable
+    implementation_isolated=null
+    per_reviewer_independent=null
+    if [[ "$SEQUENTIAL" == true ]]; then
+      outcomes_json='[{"role":"combined","reviewer":null,"status":"passed","run_id":null,"evidence_status":"unavailable"}]'
+    else
+      outcomes_json="$(jq -nc --arg reviewers "$REVIEWERS" '
+        ($reviewers | split(" ") | map(select(length > 0))) as $selected |
+        ([$selected[] | {role:"reviewer",reviewer:.,status:"passed",run_id:null,
+          evidence_status:"unavailable"}] +
+         [{role:"synthesis",reviewer:null,status:"passed",run_id:null,
+          evidence_status:"unavailable"}])')"
+    fi
+  fi
+
+  jq -n \
+    --arg final "$final" \
+    --arg tier_requested "$TIER_REQUESTED" --arg tier_resolved "$TIER_RESOLVED" \
+    --arg evidence_floor "$TIER_EVIDENCE_FLOOR" \
+    --arg mode_requested "$MODE_REQUESTED" --arg mode_resolved "$MODE_RESOLVED" \
+    --arg topology "$MODE_TOPOLOGY" --arg synthesis "$MODE_SYNTHESIS" \
+    --arg pass_requested "$PASS_KIND_REQUESTED" --arg pass_resolved "$PASS_KIND_RESOLVED" \
+    --arg pass_scope "$PASS_SCOPE" --arg initial_result "$INITIAL_RESULT_RESOLVED" \
+    --arg selected "$REVIEWERS" --arg skipped "$SKIPPED_WORDS" \
+    --arg vocabulary "$ALL_REVIEWERS" \
+    --arg reviewer_topology "$MODE_TOPOLOGY" \
+    --arg independence_status "$independence_status" \
+    --arg policy_source "$GATE_ASSURANCE_POLICY_SOURCE" \
+    --argjson requested "$requested_json" --argjson outcomes "$outcomes_json" \
+    --argjson implementation_isolated "$implementation_isolated" \
+    --argjson per_reviewer_independent "$per_reviewer_independent" '
+      {
+        kind:"gate_assurance_v1",schema_version:1,
+        result:{final:$final},
+        coordinates:{
+          tier:{requested:$tier_requested,resolved:$tier_resolved,
+            evidence_floor:$evidence_floor},
+          mode:{requested:$mode_requested,resolved:$mode_resolved,
+            topology:$topology,synthesis:$synthesis},
+          pass:{requested:$pass_requested,resolved:$pass_resolved,scope:$pass_scope,
+            initial_result:(if $initial_result == "" then null else $initial_result end)},
+          coverage:{
+            requested:$requested,
+            selected:($selected | split(" ") | map(select(length > 0))),
+            skipped:($skipped | split(" ") | map(select(length > 0))),
+            vocabulary:($vocabulary | split(" ") | map(select(length > 0)))
+          },
+          independence:{
+            implementation_context_isolated:$implementation_isolated,
+            reviewer_topology:$reviewer_topology,
+            per_reviewer_independent:$per_reviewer_independent,
+            evidence_status:$independence_status
+          }
+        },
+        dispatch:{outcomes:$outcomes},
+        provenance:{producer:"pr-gate.sh",policy_source:$policy_source}
+      }' > "$assurance_file" || return 1
+
+  awk -v pointer="$ASSURANCE_POINTER" '
+    /^---$/ {
+      fence++
+      print
+      next
+    }
+    fence == 1 && /^gate_result_version:/ {
+      print "gate_result_version: pr_gate_result_v2"
+      print "gate_assurance: " pointer
+      next
+    }
+    fence == 1 && /^gate_assurance:/ { next }
+    { print }
+  ' "$result_file" > "${result_file}.assurance-tmp" || return 1
+  mv "${result_file}.assurance-tmp" "$result_file"
+  gate_result_verify "$result_file" "" "machine assurance finalization"
+}
 
 SYNTHESIS_BRIEF="$BRIEF_DIR/pr-gate-${TIMESTAMP}-synthesis.md"
 BRIEF_FILES+=("$SYNTHESIS_BRIEF")
@@ -1881,7 +2197,7 @@ _write_preflight_failure_result() {
 gate_result_version: pr_gate_result_v1
 final: NO-GO
 tier: ${TIER}
-mode: preflight-fail-fast
+mode: ${MODE_RESOLVED}
 most_severe: block
 reviewers:
 ${reviewer_lines}escalation:
@@ -2740,6 +3056,11 @@ if [[ -n "$GATE_OVERRIDES_CONTENT" ]]; then
   # parser-hostile override file (containing `Final: GO` / `---`) must stay neutralized.
   gate_result_verify "$OUTPUT_FILE" "" "post-provenance-append" || exit 1
 fi
+
+# Replace the executor-authored legacy frontmatter with a v2 pointer and write
+# the machine-owned assurance sidecar only after every deterministic rewrite is
+# complete.  The shared verifier then checks result/pointer/envelope parity.
+gate_finalize_assurance "$OUTPUT_FILE" "$ASSURANCE_FILE" || exit 1
 
 # ── Post-gate hook ─────────────────────────────────────────────────────────
 # Both executors complete the gate in-process now, so post-gate fires at true

@@ -41,6 +41,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-519 | 🔵 active | selected-reviewer coverage／finding contract：declared coverage、stable IDs 與 actionable fix boundary | ops/gate | 2026-07-23 | — | P1 | design |
 | CC-520 | 🔵 active | synthesis parity 與 remediation seed：findings union、root-cause grouping、coverage matrix 與 no-silent-drop | ops/gate | 2026-07-23 | — | P1 | design |
 | CC-521 | 🔵 active | test-gap matrix、protocol recovery 與 live recall evaluation 分層 | ops/test | 2026-07-23 | — | P2 | design |
+| CC-522 | 🔵 active | 任意 `--test-cmd` 的 opaque／structured capability negotiation、執行失敗分類與外部 evidence recovery | ops/test | 2026-07-27 | feedback:2026-07-27 | P1 | design |
 | CC-465 | 🔵 active | memory/context 關鍵詞管線 CJK 支援：抽出共用零依賴斷詞 lib，取代三處各自 ASCII-only 抽詞；工作序列起點（465→467→468→466）（2026-07-07 記憶系統深入分析） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-466 | ⏸ deferred | 記憶卡片生命週期閉環：expires_at 執行 + 關窗式 supersede + usage sidecar 休眠偵測 + doctor→distill 接線；僅在 CC-467 證明 stale/dormant card 已形成實際問題時啟動 | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-467 | 🔵 active | `pmctl memory stats`：注入效益可視化（唯讀聚合器）——注入 bytes/卡片命中分佈/從未命中卡/episode 填寫率，回答「記憶有跟沒有差在哪」；排在 CC-466 之前（2026-07-07；業界僅離線 recall 評測，無 per-injection 遙測） | DX/memory | 2026-07-07 | — | P2 | retrieval |
@@ -2116,6 +2117,92 @@ deterministic fail closed，後者具模型波動，不應混成 CI hard gate。
 **Dependencies**: [[CC-518]]、[[CC-519]]、[[CC-520]]。P2。
 
 **Cross-link**: [[CC-470]]、[[CC-481]]、[[CC-491]]、[[CC-517]]。
+
+---
+
+## CC-522 — `--test-cmd` execution outcome 與 evidence capability 分層 🔵 active
+
+**Framing**: 本票強化既有 `pmctl gate run --test-cmd` pre-flight 與 qa-tester
+對測試執行證據的解讀，不重寫 gate 流程。任意可執行 shell command 永遠是合法輸入；
+structured result 是 opt-in capability，不是導入 gate 前必須先改造各 repo runner 的
+門檻。本票保留 [[CC-491]] 的 portable opaque evidence 與 structured reusable
+evidence 分工；tier／mode／pass／coverage／independence 仍由 [[CC-512]] 擁有，
+subject freshness／consumer applicability 仍由 [[CC-515]] 擁有，test-gap內容仍由
+[[CC-521]] 擁有。禁止新增 gate kind、workflow engine、強制 runner migration，
+或以 stdout/stderr 關鍵字猜測 assertion／環境失敗。
+
+**Problem**: `--test-cmd` 可能是任意 legacy command，未必產生建議的 structured
+result；即使 command 有執行，也可能因 reviewer sandbox、依賴、網路、資源限制或
+timeout 非零退出，而同一 tree 在外部環境可正常通過。目前 pre-flight 雖能保存
+opaque evidence 並在內部辨識 timeout／stale／invalid，最後仍把所有非 PASS 合併成
+一般 test FAIL／NO-GO；qa-tester 也把 non-runnable／flaky 一律視為 block。這會把
+「沒有可用 authorization evidence」誤寫成「diff 已證明有 defect」，同時迫使使用者
+為了避免 false block 先投入 runner 格式改造。
+
+**Requirement**:
+
+1. capability negotiation 必須是漸進式：
+   - command 未寫 structured sink 時，接受 portable opaque evidence；
+   - command 寫出 schema-valid result 時，提升為 structured evidence；
+   - command 有寫 sink 但內容 malformed／subject 不符時標 `invalid-evidence`，
+     不得靜默降級 opaque。
+2. machine outcome 分開記錄 command execution、test verdict、evidence richness 與
+   authorization applicability。closed execution classification 至少涵蓋
+   `pass|test-fail|timeout|environment-error|stale|invalid-evidence|
+   unclassified-nonzero`；opaque 非零不得靠 log heuristic 自動宣稱 `test-fail`。
+3. 只有 subject-valid structured assertion/test failure 可產生機械 test NO-GO。
+   `timeout|environment-error|unclassified-nonzero` 使 operation
+   `INCOMPLETE/non-authorizing`，保留 command digest、exit、timeout、log digest、
+   tree fingerprint與 recovery instructions，但不得冒充 diff-caused reviewer
+   blocker。Opaque PASS 只證明該 command 對該 subject exit 0，不宣稱 suite coverage
+   完整或可作 no-duplicate reuse。
+4. qa-tester output 增加 `inconclusive` run result、failure class 與 evidence refs。
+   已有 outer pre-flight PASS 時不得反射性重跑 full suite，只能追加 scope-bounded
+   targeted checks；reviewer sandbox 的 timeout／environment failure回報
+   inconclusive，只有可歸因 assertion failure、diff-caused coverage gap或測試
+   anti-pattern 可 block。
+5. qa-tester 在執行任何可能耗時的自主測試前，必須先寫入並 flush early
+   checkpoint，至少含已完成 matrix/audit、預定 command、開始時間、timeout budget、
+   evidence refs 與 `run.status: running`。測試必須經 bounded shell-owned wrapper
+   執行，持續保存 stdout/stderr log、process exit／timeout 與最後可觀察進度；
+   reviewer session被外層 watchdog終止時，gate仍機械產生
+   `partial/inconclusive` artifact，列出完成／未完成 sections、checkpoint與 log
+   pointer。不得只依賴模型在 command 返回後才首次寫檔，也不得讓 timeout留下
+   0-byte／無結果。
+6. sequential combined session與parallel reviewer session都必須保留上述 qa
+   checkpoint/result；partial qa artifact不是有效 reviewer verdict，synthesis不得
+   將它補寫成 pass／block或納入正常 findings union，operation只能
+   `INCOMPLETE/non-authorizing`。若模型在 checkpoint 前違規直接執行長測試，wrapper
+   仍須留下 shell-owned attempt/log evidence並明示 `checkpoint: missing`。
+7. 外部執行 evidence recovery 必須驗證同一 repository subject、HEAD/tree
+   fingerprint、command digest、suite identity與 artifact integrity；符合
+   [[CC-515]] freshness/applicability 才能取代 inconclusive。口頭／純 log PASS
+   可作 manual clue，不得單獨授權 GO。不得自動重跑或提高 timeout 掩蓋 performance
+   regression；重跑由使用者明示或 policy-bounded recovery 觸發並記錄 attempts。
+8. human result 明確區分 `code/test NO-GO`、`gate INCOMPLETE` 與
+   `evidence unavailable`，提供可複製的 same-command／adjusted-timeout／external
+   evidence recovery 指令，不要求使用者先採用 structured producer。
+9. deterministic fixtures 覆蓋：opaque PASS、opaque nonzero、structured PASS／
+   test-fail、sink missing、sink malformed、timeout、environment error、tree drift、
+   external evidence subject match/mismatch、qa targeted failure、timeout 前已寫
+   checkpoint、checkpoint 前違規執行仍有 shell log、sequential／parallel partial
+   preservation，以及不得把 inconclusive轉成 blocker或 GO。
+
+**Done-when**: 任意 legacy `--test-cmd` 不需格式改造即可得到 truthful opaque
+evidence；structured producer可獲得更強 reuse/coverage 語意；環境／timeout失敗會
+fail closed 但不誤報產品 defect；qa-tester與 gate artifact對同一 execution class
+給出一致、可恢復的結論；qa自主測試即使 timeout 也必有非空 checkpoint、attempt
+metadata與 log pointer。
+
+**Non-goals**: 不保證任意 command 可自動判斷失敗根因；不解析自由文字 log 作
+authorization；不降低 current-tree test evidence要求；不讓 external PASS 省略
+subject/digest驗證；不在本票建立通用 CI provider integration。
+
+**Dependencies**: outcome/capability Phase A 複用 [[CC-470]]／[[CC-491]] 可先行；
+external reusable evidence Phase B 依賴 [[CC-515]]。與 [[CC-521]] 的 test-gap／
+protocol recovery contract保持正交。P1。
+
+**Cross-link**: [[CC-470]]、[[CC-491]]、[[CC-512]]、[[CC-515]]、[[CC-521]]。
 
 ---
 

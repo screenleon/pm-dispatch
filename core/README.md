@@ -2,9 +2,8 @@
 
 This directory contains the canonical PM-runtime data contract. **`core/` is definitions only — it knows nothing executable.**
 
-- `schema/`        — JSON Schema files (`.schema.json`) for the 8 first-class
-                     entities: Task, Run, Event, Review, Decision, Brief,
-                     Handover, ContextPack.
+- `schema/`        — JSON Schema files (`.schema.json`) for runtime entities
+                     and evidence envelopes, including gate assurance.
 - `policy/`        — declarative YAML/TSV tables for enums, presets, and state
                      machines.
 - `state/`         — definition of the on-disk state-store layout

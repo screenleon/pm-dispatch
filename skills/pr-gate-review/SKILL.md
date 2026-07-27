@@ -31,9 +31,12 @@ implement → pr-gate → fix NO-GO → push → PR).
 
 ## Reading the result
 
-The result file carries `pr_gate_result_v1` frontmatter with `final: GO|NO-GO`
-and per-reviewer verdicts. The `Final: GO|NO-GO` line is the parser-significant
-one (plain text, exact shape).
+The result file carries `pr_gate_result_v2` frontmatter with `final: GO|NO-GO`,
+per-reviewer verdicts, and a bounded pointer to its sibling
+`gate_assurance_v1` JSON envelope. The `Final: GO|NO-GO` line is the
+parser-significant one (plain text, exact shape). Run
+`pmctl gate verify <result-file>` before consuming assurance claims; legacy
+`pr_gate_result_v1` files verify only as `assurance: unavailable`.
 
 - **NO-GO** (a reviewer returned `block`): fix the blocking finding. Per project
   convention, clear **every** finding (high/med/low/advise) on a NO-GO, not just

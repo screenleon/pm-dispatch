@@ -171,6 +171,16 @@ The portable policy sources are
 [`core/policy/gate-modes.tsv`](../core/policy/gate-modes.tsv), and
 [`core/policy/gate-pass-kinds.tsv`](../core/policy/gate-pass-kinds.tsv).
 
+The final producer writes `pr_gate_result_v2` Markdown plus a sibling
+`gate_assurance_v1` JSON envelope. The Markdown contains human findings and a
+bounded relative `gate_assurance` pointer; the shell-owned envelope records
+requested/resolved coordinates, selected/skipped coverage, actual dispatch
+outcomes, run IDs, and the evidence status behind independence claims.
+`pmctl gate verify` validates both files and their claim parity. Legacy
+`pr_gate_result_v1` remains structurally readable, but verification reports
+`assurance: unavailable`; consumers must not infer mode, coverage, or
+independence from its prose/frontmatter.
+
 ---
 
 ## When line-by-line review is appropriate

@@ -672,6 +672,10 @@ pmctl_gate_verify() {
 
   if gate_result_verify "$result_file"; then
     printf 'gate result OK: %s\n' "$result_file"
+    printf 'assurance: %s\n' "${GATE_RESULT_ASSURANCE:-unavailable}"
+    if [[ -n "${GATE_RESULT_ASSURANCE_FILE:-}" ]]; then
+      printf 'assurance file: %s\n' "$GATE_RESULT_ASSURANCE_FILE"
+    fi
     return 0
   fi
   return 1

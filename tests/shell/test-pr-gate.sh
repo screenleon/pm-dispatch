@@ -194,6 +194,11 @@ write_frontmatter_stub_gate_result() {
   local output_path="$1"
   local final_verdict="${2:-GO}"
   local final_line="Final: ${final_verdict}"
+  local resolved_tier resolved_mode
+  resolved_tier="$(awk '/^[[:space:]]*tier\.resolved:/ {print $2; exit}' "$brief_file")"
+  resolved_mode="$(awk '/^[[:space:]]*mode\.resolved:/ {print $2; exit}' "$brief_file")"
+  : "${resolved_tier:=express}"
+  : "${resolved_mode:=parallel}"
 
   # Regression seam: when CODEX_GATE_STUB_BOLD_FINAL=1, emit the Final
   # line wrapped in markdown bold (simulates codex applying prose emphasis).
@@ -206,8 +211,8 @@ write_frontmatter_stub_gate_result() {
 ---
 gate_result_version: pr_gate_result_v1
 final: ${CODEX_GATE_STUB_FRONTMATTER_FINAL:-${final_verdict}}
-tier: express
-mode: parallel
+tier: ${resolved_tier}
+mode: ${resolved_mode}
 most_severe: approve
 reviewers:
   critic: approve
@@ -1365,6 +1370,20 @@ test_parallel_launches_per_reviewer() {
   assert_file_contains "$name" "$out" "[parallel] launched critic" || return
   assert_file_contains "$name" "$out" "[parallel] launched qa-tester" || return
   assert_file_contains "$name" "$out" "[synthesis] running PM consolidation" || return
+  local result_path
+  result_path="$(awk -F'result: ' '/^result: /{path=$2} END{print path}' "$out")"
+  jq -e '
+    .coordinates.mode.resolved == "parallel" and
+    .coordinates.independence.evidence_status == "unavailable" and
+    .coordinates.independence.per_reviewer_independent == null and
+    ([.dispatch.outcomes[] | select(.role == "reviewer") | .reviewer] | sort) ==
+      ["critic","qa-tester"] and
+    ([.dispatch.outcomes[] | select(.role == "synthesis")] | length) == 1 and
+    all(.dispatch.outcomes[]; .run_id == null and .evidence_status == "unavailable")
+  ' "${result_path}.assurance.json" >/dev/null || {
+    fail "$name" "copy-mode parallel envelope claimed unavailable evidence incorrectly"
+    return
+  }
   pass "$name"
 }
 
@@ -3183,10 +3202,30 @@ test_gate_result_frontmatter_and_escalation() {
   fi
   local frontmatter
   frontmatter="$(sed -n "1,${frontmatter_end}p" "$result")"
-  if ! printf '%s\n' "$frontmatter" | grep -q '^gate_result_version: pr_gate_result_v1$'; then
-    fail "$name" "frontmatter missing gate_result_version: pr_gate_result_v1"
+  if ! printf '%s\n' "$frontmatter" | grep -q '^gate_result_version: pr_gate_result_v2$'; then
+    fail "$name" "frontmatter missing gate_result_version: pr_gate_result_v2"
     return
   fi
+  if ! printf '%s\n' "$frontmatter" | grep -q '^gate_assurance: result.md.assurance.json$'; then
+    fail "$name" "frontmatter missing bounded gate_assurance sidecar pointer"
+    return
+  fi
+  if [[ ! -s "${result}.assurance.json" ]]; then
+    fail "$name" "machine-owned assurance sidecar missing"
+    return
+  fi
+  jq -e '
+    .coordinates.mode.resolved == "sequential" and
+    .coordinates.independence.evidence_status == "unavailable" and
+    .coordinates.independence.per_reviewer_independent == null and
+    .dispatch.outcomes == [{
+      role:"combined",reviewer:null,status:"passed",run_id:null,
+      evidence_status:"unavailable"
+    }]
+  ' "${result}.assurance.json" >/dev/null || {
+    fail "$name" "copy-mode sequential envelope did not degrade truthfully"
+    return
+  }
   if ! printf '%s\n' "$frontmatter" | grep -Eq '^final: (GO|NO-GO)$'; then
     fail "$name" "missing frontmatter final in GO|NO-GO form"
     return
@@ -3227,6 +3266,75 @@ test_gate_result_frontmatter_and_escalation() {
   assert_file_contains "$name" "$result" "**Recommended**:" || return
   assert_file_contains "$name" "$result" "**Reviewers**:" || return
   assert_file_contains "$name" "$result" "**Reason**:" || return
+  pass "$name"
+}
+
+# Behavior: repo-layout dispatches record the actual pmctl run id in the
+# machine-owned assurance envelope instead of claiming verified independence
+# from executor prose.
+test_repo_layout_captures_dispatch_run_id() {
+  local name="gate-assurance/repo-layout-captures-run-id"
+  should_run "$name" || return 0
+  local dir source_runner layout home repo out err result
+  dir="$TMP_ROOT/$name"
+  source_runner="$dir/source-runner"
+  layout="$dir/layout"
+  home="$dir/home"
+  repo="$dir/repo"
+  out="$dir/out"
+  err="$dir/err"
+  result="$dir/result.md"
+  mkdir -p "$dir" "$layout/runtime/bin" "$layout/runtime/lib" "$layout/core/policy"
+  create_runner "$source_runner"
+  cp "$source_runner/pr-gate.sh" "$layout/runtime/bin/pr-gate.sh"
+  cp -R "$source_runner/lib/." "$layout/runtime/lib/"
+  cp -R "$source_runner/core/policy/." "$layout/core/policy/"
+  cp -R "$REPO_ROOT/agents" "$layout/agents"
+  cp -R "$REPO_ROOT/adapters" "$layout/adapters"
+  cp "$source_runner/adapters/codex/dispatch.sh" "$layout/adapters/codex/dispatch.sh"
+  chmod +x "$layout/runtime/bin/pr-gate.sh" "$layout/adapters/codex/dispatch.sh"
+  cat > "$layout/runtime/lib/pmctl-dispatch.sh" <<'STUB_PMCTL'
+pmctl_dispatch_run() {
+  local root="$1" brief="" work="" timeout=""
+  shift
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --brief-file) brief="$2"; shift 2 ;;
+      --cd) work="$2"; shift 2 ;;
+      --timeout) timeout="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  "$root/adapters/codex/dispatch.sh" --brief-file "$brief" --cd "$work" --timeout "$timeout"
+  printf 'run-20260727T000000Z-aaaaaa\n'
+}
+pmctl_dispatch_wait() { return 0; }
+STUB_PMCTL
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  local code=0
+  set +e
+  HOME="$home" PM_DISPATCH_STATE_ROOT="$dir/state" \
+    "$layout/runtime/bin/pr-gate.sh" --cd "$repo" --base main --executor codex \
+      --mode sequential --output "$result" > "$out" 2> "$err"
+  code=$?
+  set -e
+  [[ "$code" -eq 0 ]] || {
+    fail "$name" "exit $code, expected 0: $(tail -n 20 "$err" 2>/dev/null)"
+    return
+  }
+  jq -e '
+    .coordinates.independence.evidence_status == "verified" and
+    .coordinates.independence.per_reviewer_independent == false and
+    .dispatch.outcomes == [{
+      role:"combined",reviewer:null,status:"passed",
+      run_id:"run-20260727T000000Z-aaaaaa",evidence_status:"verified"
+    }]
+  ' "${result}.assurance.json" >/dev/null || {
+    fail "$name" "assurance envelope did not capture the repo-layout run id"
+    return
+  }
   pass "$name"
 }
 
@@ -3662,6 +3770,7 @@ run_test test_sequential_combined_brief_validates
 run_test test_parallel_reviewer_brief_validates
 run_test test_parallel_synthesis_brief_validates
 run_test test_gate_result_frontmatter_and_escalation
+run_test test_repo_layout_captures_dispatch_run_id
 run_test test_gate_result_final_line_back_compat
 run_test test_frontmatter_escalation_parity
 run_test test_failed_reviewer_aborts_gate
@@ -4370,6 +4479,18 @@ test_targeted_pass_references_initial_result() {
     fail "$name" "--targeted critic did not scope reviewers — qa-tester was launched"
     return
   fi
+  local result_path
+  result_path="$(awk -F'result: ' '/^result: /{path=$2} END{print path}' "$out")"
+  jq -e --arg initial "$initial" '
+    .coordinates.pass.resolved == "targeted" and
+    .coordinates.pass.scope == "remediation-delta" and
+    .coordinates.pass.initial_result == $initial and
+    .coordinates.coverage.requested == ["critic"] and
+    .coordinates.coverage.selected == ["critic"]
+  ' "${result_path}.assurance.json" >/dev/null || {
+    fail "$name" "targeted assurance envelope lost its initial reference or coverage"
+    return
+  }
   pass "$name"
 }
 
@@ -4430,6 +4551,37 @@ test_targeted_output_cannot_overwrite_initial_result() {
     fail "$name" "initial result content changed"
     return
   fi
+  pass "$name"
+}
+
+# Behavior: the deterministic v2 sidecar path cannot overwrite a targeted
+# pass's referenced initial result.
+test_targeted_sidecar_cannot_overwrite_initial_result() {
+  local name="targeted-sidecar-cannot-overwrite-initial-result"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  local result="$dir/result.md" initial
+  initial="${result}.assurance.json"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  write_valid_initial_gate_result "$initial"
+
+  local code=0
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main \
+    --targeted critic --initial-result "$initial" --output "$result"
+  code=$?
+  set -e
+  [[ "$code" -eq 2 ]] || {
+    fail "$name" "sidecar/initial collision exited $code, expected 2"
+    return
+  }
+  assert_file_contains "$name" "$err" "assurance sidecar must not overwrite" || return
+  assert_not_contains "$name" "$out" "DISPATCH_STUB" || return
   pass "$name"
 }
 
@@ -5005,7 +5157,7 @@ _cc469_build_pmctl_less_path() {
   local minpath="$runner/.no-pmctl-bin"
   mkdir -p "$minpath"
   local cmd
-  for cmd in bash git date readlink dirname basename cp mkdir touch ln cat grep sort wc awk sed mktemp rm head tail tr true false sha256sum shasum; do
+  for cmd in bash git date readlink dirname basename cp mkdir touch ln cat grep sort wc awk sed mktemp rm head tail tr true false sha256sum shasum find jq; do
     local src
     src="$(command -v "$cmd" 2>/dev/null || true)"
     [[ -n "$src" ]] && ln -sf "$src" "$minpath/$cmd"
@@ -5145,6 +5297,7 @@ run_test test_unknown_arg_message
 run_test test_targeted_pass_references_initial_result
 run_test test_targeted_requires_initial_result
 run_test test_targeted_output_cannot_overwrite_initial_result
+run_test test_targeted_sidecar_cannot_overwrite_initial_result
 run_test test_conflicting_mode_options_are_rejected
 run_test test_equivalent_mode_spellings_are_accepted
 run_test test_invalid_assurance_inputs_are_rejected
@@ -5375,28 +5528,41 @@ test_relative_output_normalized_to_absolute() {
   pass "$name"
 }
 
-# Behavior: pr-gate.sh's inline copy of gate_result_verify (for copy-mode,
-# run standalone without runtime/lib/) stays identical (modulo
-# indentation) to runtime/lib/gate-result-verify.sh -- a drifted copy
-# would silently diverge the gate's integrity contract.
-# Steps: extract the gate_result_verify function body from both the lib
-# and the pr-gate.sh inline fallback, and assert the two bodies match
-# exactly.
+# Behavior: every verifier helper embedded for standalone copy-mode stays
+# identical (modulo indentation) to runtime/lib/gate-result-verify.sh.
+# Steps: extract each helper from the shared library and inline fallback,
+# then assert every complete function body matches exactly.
 test_inline_fallback_matches_lib() {
   local name="inline-fallback-matches-lib"
   should_run "$name" || return 0
-  local lib_body inline_body
-  lib_body="$(awk '/^gate_result_verify\(\) \{/{f=1} f{print} f&&/^\}$/{exit}' "$REPO_ROOT/runtime/lib/gate-result-verify.sh" | sed 's/^[[:space:]]*//')"
-  inline_body="$(awk '/gate_result_verify\(\) \{/{f=1} f{print} f&&/^  \}$/{exit}' "$REPO_ROOT/runtime/bin/pr-gate.sh" | sed 's/^[[:space:]]*//')"
-  if [[ -z "$lib_body" || -z "$inline_body" ]]; then
-    fail "$name" "could not extract gate_result_verify from lib and/or pr-gate.sh inline fallback"
-    return
-  fi
-  if [[ "$lib_body" == "$inline_body" ]]; then
-    pass "$name"
-  else
-    fail "$name" "inline gate_result_verify in pr-gate.sh drifted from runtime/lib/gate-result-verify.sh -- keep them in sync"
-  fi
+  local function_name lib_body inline_body
+  local -a verifier_functions=(
+    gate_result_verdict_verify
+    _gate_result_frontmatter_value
+    gate_assurance_verify
+    gate_result_verify
+  )
+  for function_name in "${verifier_functions[@]}"; do
+    lib_body="$(awk -v signature="$function_name() {" '
+      $0 == signature {found=1}
+      found {print}
+      found && $0 == "}" {exit}
+    ' "$REPO_ROOT/runtime/lib/gate-result-verify.sh" | sed 's/^[[:space:]]*//')"
+    inline_body="$(awk -v signature="  $function_name() {" '
+      $0 == signature {found=1}
+      found {print}
+      found && $0 == "  }" {exit}
+    ' "$REPO_ROOT/runtime/bin/pr-gate.sh" | sed 's/^[[:space:]]*//')"
+    if [[ -z "$lib_body" || -z "$inline_body" ]]; then
+      fail "$name" "could not extract $function_name from shared and/or inline verifier"
+      return
+    fi
+    if [[ "$lib_body" != "$inline_body" ]]; then
+      fail "$name" "inline $function_name drifted from runtime/lib/gate-result-verify.sh"
+      return
+    fi
+  done
+  pass "$name"
 }
 
 # Behavior: a repo-root .gate-overrides.md is injected into the sequential
@@ -5965,6 +6131,17 @@ test_gate_artifacts_land_out_of_repo() {
     return
   fi
   assert_file_contains "$name" "$result_path" "test_evidence: $evidence_path" || return
+  local assurance_pointer assurance_path
+  assurance_pointer="$(awk '$1 == "gate_assurance:" {print $2; exit}' "$result_path")"
+  assurance_path="$(dirname "$result_path")/$assurance_pointer"
+  if [[ ! -s "$assurance_path" ]]; then
+    fail "$name" "gate assurance sidecar was not relocated with the result"
+    return
+  fi
+  if ! "$REPO_ROOT/cli/pmctl" gate verify "$result_path" >/dev/null 2>&1; then
+    fail "$name" "relocated result/assurance pointer failed shared verification"
+    return
+  fi
   # repo must NOT have a .gate-results dir (--run-dir should have redirected it).
   if [[ -d "$repo/.gate-results" ]]; then
     fail "$name" ".gate-results appeared inside repo -- --run-dir did not redirect results"
