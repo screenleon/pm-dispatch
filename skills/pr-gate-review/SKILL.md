@@ -36,7 +36,10 @@ per-reviewer verdicts, and a bounded pointer to its sibling
 `gate_assurance_v1` JSON envelope. The `Final: GO|NO-GO` line is the
 parser-significant one (plain text, exact shape). Run
 `pmctl gate verify <result-file>` before consuming assurance claims; legacy
-`pr_gate_result_v1` files verify only as `assurance: unavailable`.
+`pr_gate_result_v1` files verify only as `assurance: unavailable`. A standalone
+copy-mode v2 result may also carry `evidence_status: unavailable` inside its
+valid envelope; treat its verdict as structurally valid without inferring
+implementation isolation or independent reviewer sessions.
 
 - **NO-GO** (a reviewer returned `block`): fix the blocking finding. Per project
   convention, clear **every** finding (high/med/low/advise) on a NO-GO, not just

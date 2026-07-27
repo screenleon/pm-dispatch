@@ -3984,6 +3984,9 @@ test_post_gate_hook_runs() {
   mkdir -p "$repo/.pm-dispatch"
   {
     printf '#!/usr/bin/env bash\n'
+    printf 'result="$(find .gate-results -maxdepth 1 -type f -name '\''gate-*.md'\'' | head -n 1)"\n'
+    printf 'grep -q '\''^gate_result_version: pr_gate_result_v1$'\'' "$result" || exit 8\n'
+    printf 'test ! -e "${result}.assurance.json" || exit 9\n'
     printf 'touch "%s"\n' "$hook_marker"
   } > "$repo/.pm-dispatch/post-gate.sh"
   chmod +x "$repo/.pm-dispatch/post-gate.sh"
@@ -3998,6 +4001,13 @@ test_post_gate_hook_runs() {
   fi
   if [[ ! -f "$hook_marker" ]]; then
     fail "$name" "post-gate hook did not run (marker missing)"
+    return
+  fi
+  local result_path
+  result_path="$(awk -F'result: ' '/^result: /{path=$2} END{print path}' "$out")"
+  assert_file_contains "$name" "$result_path" "gate_result_version: pr_gate_result_v2" || return
+  if [[ ! -s "${result_path}.assurance.json" ]]; then
+    fail "$name" "assurance was not finalized after the successful post-gate hook"
     return
   fi
   pass "$name"
@@ -4585,6 +4595,59 @@ test_targeted_sidecar_cannot_overwrite_initial_result() {
   pass "$name"
 }
 
+# Behavior: a pre-existing symlink, non-regular file, or hardlink at the
+# deterministic assurance destination is rejected before reviewer dispatch.
+# Steps: prepare each unsafe destination type, run with an explicit output, and
+# assert exit 2, no dispatch, and no write through linked targets.
+test_assurance_unsafe_destinations_rejected() {
+  local name="assurance-unsafe-destinations-rejected"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local kind result sidecar target out err code
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  for kind in symlink directory hardlink; do
+    result="$dir/result-$kind.md"
+    sidecar="${result}.assurance.json"
+    target="$dir/target-$kind"
+    out="$dir/out-$kind"
+    err="$dir/err-$kind"
+    case "$kind" in
+      symlink)
+        printf 'sentinel\n' > "$target"
+        ln -s "$target" "$sidecar"
+        ;;
+      directory)
+        mkdir -p "$sidecar"
+        ;;
+      hardlink)
+        printf 'sentinel\n' > "$target"
+        ln "$target" "$sidecar"
+        ;;
+    esac
+
+    code=0
+    set +e
+    run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --output "$result"
+    code=$?
+    set -e
+    if [[ "$code" -ne 2 ]]; then
+      fail "$name" "$kind destination exited $code, expected 2"
+      return
+    fi
+    assert_not_contains "$name" "$out" "DISPATCH_STUB" || return
+    if [[ "$kind" != directory && "$(<"$target")" != "sentinel" ]]; then
+      fail "$name" "$kind destination modified its linked target"
+      return
+    fi
+  done
+  pass "$name"
+}
+
 # Behavior: canonical and compatibility mode spellings fail closed when they
 # request different topologies.
 # Steps: combine --mode parallel with --sequential and assert a controlled
@@ -5157,7 +5220,7 @@ _cc469_build_pmctl_less_path() {
   local minpath="$runner/.no-pmctl-bin"
   mkdir -p "$minpath"
   local cmd
-  for cmd in bash git date readlink dirname basename cp mkdir touch ln cat grep sort wc awk sed mktemp rm head tail tr true false sha256sum shasum find jq; do
+  for cmd in bash git date readlink dirname basename cp mv mkdir touch ln cat grep sort wc awk sed mktemp rm head tail tr true false sha256sum shasum find jq; do
     local src
     src="$(command -v "$cmd" 2>/dev/null || true)"
     [[ -n "$src" ]] && ln -sf "$src" "$minpath/$cmd"
@@ -5166,6 +5229,40 @@ _cc469_build_pmctl_less_path() {
   printf '#!/usr/bin/env bash\nexit 0\n' > "$runner/cli/pmctl"
   chmod +x "$runner/cli/pmctl"
   REPLY="$minpath:$_codex_stub_bin"
+}
+
+# Behavior: the mandatory jq dependency is checked before any reviewer work.
+# Steps: build the minimal standalone PATH, remove jq, and assert a clear
+# configuration error with no dispatch.
+test_missing_jq_fails_before_dispatch() {
+  local name="missing-jq-fails-before-dispatch"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  local REPLY
+  _cc469_build_pmctl_less_path "$runner"
+  local minpath="$REPLY"
+  rm -f "$runner/.no-pmctl-bin/jq"
+
+  local code=0
+  set +e
+  HOME="$home" PATH="$minpath" \
+    "$runner/pr-gate.sh" --cd "$repo" --base main > "$out" 2> "$err"
+  code=$?
+  set -e
+  if [[ "$code" -ne 2 ]]; then
+    fail "$name" "exit $code, expected 2"
+    return
+  fi
+  assert_file_contains "$name" "$err" "requires jq on PATH" || return
+  assert_not_contains "$name" "$out" "DISPATCH_STUB" || return
+  pass "$name"
 }
 
 # Behavior: when the real `pmctl` is not resolvable on PATH, the sequential
@@ -5298,6 +5395,7 @@ run_test test_targeted_pass_references_initial_result
 run_test test_targeted_requires_initial_result
 run_test test_targeted_output_cannot_overwrite_initial_result
 run_test test_targeted_sidecar_cannot_overwrite_initial_result
+run_test test_assurance_unsafe_destinations_rejected
 run_test test_conflicting_mode_options_are_rejected
 run_test test_equivalent_mode_spellings_are_accepted
 run_test test_invalid_assurance_inputs_are_rejected
@@ -5787,6 +5885,7 @@ run_test test_parallel_reviewer_brief_has_guard_constraint
 run_test test_seq_brief_guard_absolute_path_when_pmctl_not_on_path
 run_test test_parallel_reviewer_brief_guard_absolute_path_when_pmctl_not_on_path
 run_test test_claude_seq_brief_guard_stays_bare_pmctl_when_pmctl_not_on_path
+run_test test_missing_jq_fails_before_dispatch
 run_test test_relative_output_normalized_to_absolute
 run_test test_inline_fallback_matches_lib
 run_test test_brief_major_suggests_full

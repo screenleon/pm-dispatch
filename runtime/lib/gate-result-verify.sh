@@ -54,6 +54,11 @@ _gate_result_frontmatter_value() {
   ' "$result_file"
 }
 
+# The core JSON Schema owns portable envelope shape. This runtime predicate owns
+# cross-artifact and semantic claim consistency that JSON Schema cannot establish
+# from the Markdown result. The standalone fallback is an exact generated-style
+# copy guarded by test_inline_fallback_matches_lib.
+#
 # gate_assurance_verify <result_file> <assurance_file> <body_final>
 gate_assurance_verify() {
   local result_file="$1" assurance_file="$2" body_final="$3"

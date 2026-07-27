@@ -494,6 +494,34 @@ case_verify_v2_pointer_escape() {
   fi
 }
 
+case_verify_v2_missing_sidecar() {
+  local name="gate/verify: v2 missing assurance sidecar exits 1"
+  should_run "$name" || return 0
+  local result="$tmp_root/v2-missing-sidecar/result.md" out code
+  _mk_gate_result_v2 "$result"
+  rm -f "${result}.assurance.json"
+  set +e; out="$("$PMCTL" gate verify "$result" 2>&1)"; code=$?; set -e
+  if [[ "$code" -eq 1 && "$out" == *"sidecar missing or empty"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+case_verify_v2_empty_sidecar() {
+  local name="gate/verify: v2 empty assurance sidecar exits 1"
+  should_run "$name" || return 0
+  local result="$tmp_root/v2-empty-sidecar/result.md" out code
+  _mk_gate_result_v2 "$result"
+  : > "${result}.assurance.json"
+  set +e; out="$("$PMCTL" gate verify "$result" 2>&1)"; code=$?; set -e
+  if [[ "$code" -eq 1 && "$out" == *"sidecar missing or empty"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
 # ---- 7: gate verify rejects an empty (0-byte) result -------------------------
 case_verify_empty() {
   # The exact failure mode pmctl gate verify exists to catch: a session that
@@ -962,6 +990,8 @@ case_verify_valid
 case_verify_v2_assurance
 case_verify_v2_claim_mismatch
 case_verify_v2_pointer_escape
+case_verify_v2_missing_sidecar
+case_verify_v2_empty_sidecar
 case_verify_empty
 case_verify_no_final
 case_verify_parity_mismatch

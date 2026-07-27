@@ -651,6 +651,11 @@ else
   }
 fi
 
+if ! command -v jq >/dev/null 2>&1; then
+  printf 'Error: pr-gate requires jq on PATH to produce and verify gate assurance\n' >&2
+  exit 2
+fi
+
 # ── Resolve assurance policy coordinates ─────────────────────────────────────
 # These are resolved before any executor routing or dispatch. The LLM receives
 # the resolved values as read-only context; it does not choose or infer them.
@@ -1574,6 +1579,35 @@ OUTPUT_FILE="$_output_parent/$(basename "$OUTPUT_FILE")"
 unset _output_parent
 ASSURANCE_FILE="${OUTPUT_FILE}.assurance.json"
 ASSURANCE_POINTER="$(basename "$ASSURANCE_FILE")"
+
+_gate_assurance_destination_check() {
+  local path="$1" nlink
+  if [[ -L "$path" ]]; then
+    printf 'Error: gate assurance destination must not be a symlink: %s\n' "$path" >&2
+    return 1
+  fi
+  if [[ -e "$path" ]]; then
+    if [[ ! -f "$path" ]]; then
+      printf 'Error: gate assurance destination must be a regular file: %s\n' "$path" >&2
+      return 1
+    fi
+    if nlink="$(stat -c '%h' "$path" 2>/dev/null)"; then
+      :
+    elif nlink="$(stat -f '%l' "$path" 2>/dev/null)"; then
+      :
+    else
+      printf 'Error: unable to inspect gate assurance destination link count: %s\n' \
+        "$path" >&2
+      return 1
+    fi
+    if [[ ! "$nlink" =~ ^[0-9]+$ || "$nlink" -ne 1 ]]; then
+      printf 'Error: gate assurance destination must not be hardlinked: %s\n' \
+        "$path" >&2
+      return 1
+    fi
+  fi
+}
+
 if [[ -n "$INITIAL_RESULT_RESOLVED" \
     && ( "$OUTPUT_FILE" == "$INITIAL_RESULT_RESOLVED" \
       || ( -e "$OUTPUT_FILE" && "$OUTPUT_FILE" -ef "$INITIAL_RESULT_RESOLVED" ) ) ]]; then
@@ -1588,6 +1622,7 @@ if [[ -n "$INITIAL_RESULT_RESOLVED" \
     "$INITIAL_RESULT_RESOLVED" >&2
   exit 2
 fi
+_gate_assurance_destination_check "$ASSURANCE_FILE" || exit 2
 touch "$OUTPUT_FILE"
 
 # Track all brief files for EXIT cleanup
@@ -1649,7 +1684,7 @@ trap gate_exit_cleanup EXIT
 gate_finalize_assurance() {
   local result_file="$1" assurance_file="$2"
   local final requested_json outcomes_json independence_status implementation_isolated
-  local per_reviewer_independent expected_count capture_count
+  local per_reviewer_independent expected_count capture_count assurance_tmp result_tmp
   local -a capture_files=()
 
   final="$(grep -E '^Final: (GO|NO-GO)$' "$result_file" | awk '{print $2}')"
@@ -1705,7 +1740,12 @@ gate_finalize_assurance() {
     fi
   fi
 
-  jq -n \
+  assurance_tmp="$(mktemp "${assurance_file}.tmp.XXXXXX")" || {
+    printf 'Error: unable to create gate assurance temporary file beside: %s\n' \
+      "$assurance_file" >&2
+    return 1
+  }
+  if ! jq -n \
     --arg final "$final" \
     --arg tier_requested "$TIER_REQUESTED" --arg tier_resolved "$TIER_RESOLVED" \
     --arg evidence_floor "$TIER_EVIDENCE_FLOOR" \
@@ -1746,8 +1786,17 @@ gate_finalize_assurance() {
         },
         dispatch:{outcomes:$outcomes},
         provenance:{producer:"pr-gate.sh",policy_source:$policy_source}
-      }' > "$assurance_file" || return 1
+      }' > "$assurance_tmp"; then
+    rm -f -- "$assurance_tmp"
+    return 1
+  fi
 
+  result_tmp="$(mktemp "${result_file}.assurance-tmp.XXXXXX")" || {
+    rm -f -- "$assurance_tmp"
+    printf 'Error: unable to create gate result temporary file beside: %s\n' \
+      "$result_file" >&2
+    return 1
+  }
   awk -v pointer="$ASSURANCE_POINTER" '
     /^---$/ {
       fence++
@@ -1761,8 +1810,22 @@ gate_finalize_assurance() {
     }
     fence == 1 && /^gate_assurance:/ { next }
     { print }
-  ' "$result_file" > "${result_file}.assurance-tmp" || return 1
-  mv "${result_file}.assurance-tmp" "$result_file"
+  ' "$result_file" > "$result_tmp" || {
+    rm -f -- "$assurance_tmp" "$result_tmp"
+    return 1
+  }
+  _gate_assurance_destination_check "$assurance_file" || {
+    rm -f -- "$assurance_tmp" "$result_tmp"
+    return 1
+  }
+  mv -- "$result_tmp" "$result_file" || {
+    rm -f -- "$assurance_tmp" "$result_tmp"
+    return 1
+  }
+  mv -- "$assurance_tmp" "$assurance_file" || {
+    rm -f -- "$assurance_tmp"
+    return 1
+  }
   gate_result_verify "$result_file" "" "machine assurance finalization"
 }
 
@@ -3057,11 +3120,6 @@ if [[ -n "$GATE_OVERRIDES_CONTENT" ]]; then
   gate_result_verify "$OUTPUT_FILE" "" "post-provenance-append" || exit 1
 fi
 
-# Replace the executor-authored legacy frontmatter with a v2 pointer and write
-# the machine-owned assurance sidecar only after every deterministic rewrite is
-# complete.  The shared verifier then checks result/pointer/envelope parity.
-gate_finalize_assurance "$OUTPUT_FILE" "$ASSURANCE_FILE" || exit 1
-
 # ── Post-gate hook ─────────────────────────────────────────────────────────
 # Both executors complete the gate in-process now, so post-gate fires at true
 # gate completion regardless of executor. It runs only when --allow-hooks is set
@@ -3098,6 +3156,12 @@ elif [[ -x "$_POST_GATE_HOOK" ]]; then
     say 'post-gate hook completed.\n'
   fi
 fi
+
+# Replace the executor-authored staging frontmatter with a v2 pointer and write
+# the machine-owned assurance sidecar only after every deterministic rewrite
+# and explicitly enabled post-gate hook is complete. The shared verifier then
+# checks result/pointer/envelope parity before publication or relocation.
+gate_finalize_assurance "$OUTPUT_FILE" "$ASSURANCE_FILE" || exit 1
 
 # ── Relocate result to run dir (post-verification) ───────────────────────────
 # OUTPUT_FILE was written by the executor in WORK_DIR (workspace-write sandbox

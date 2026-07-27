@@ -1,5 +1,6 @@
 {
   "title": "Gate assurance envelope",
+  "description": "Portable structural contract. Cross-artifact and coordinate claim consistency is enforced by runtime/lib/gate-result-verify.sh.",
   "type": "object",
   "required": ["kind", "schema_version", "result", "coordinates", "dispatch", "provenance"],
   "properties": {
