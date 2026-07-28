@@ -1405,8 +1405,9 @@ case_foreground_cancel_stops_preflight_process_tree() {
   git -C "$work" init -q
   git -C "$work" config user.email test@example.com
   git -C "$work" config user.name "Gate Test"
+  printf '.pm-dispatch/\n' > "$work/.gitignore"
   printf 'base\n' > "$work/input.txt"
-  git -C "$work" add input.txt
+  git -C "$work" add .gitignore input.txt
   git -C "$work" commit -qm base
   printf 'changed\n' > "$work/input.txt"
   git -C "$work" add input.txt
@@ -1439,7 +1440,7 @@ RUNNER
     fail "$name" "preflight never reached deterministic readiness; err=$(cat "$err" 2>/dev/null || true)"
     return
   }
-  operation="$(sed -n 's/.*parent operation: \\(op-[0-9TZ-]*[a-f0-9]\\{6\\}\\).*/\\1/p' "$err" | tail -1)"
+  operation="$(sed -n 's/.*parent operation: \(op-[0-9TZ-]*[a-f0-9]\{6\}\).*/\1/p' "$err" | tail -1)"
   if [[ "$ready_value" != ready || ! "$operation" =~ ^op-[0-9]{8}T[0-9]{6}Z-[a-f0-9]{6}$ ]]; then
     kill "$gate_pid" 2>/dev/null || true
     wait "$gate_pid" 2>/dev/null || true
@@ -1507,7 +1508,11 @@ FAKE_GATE
     fail "$name" "detached producer never reached readiness; gate=$gate_id err=$(cat "$err" 2>/dev/null || true)"
     return
   fi
-  operation="$(sed -n 's/.*parent operation: \\(op-[0-9TZ-]*[a-f0-9]\\{6\\}\\).*/\\1/p' "$err" | tail -1)"
+  operation="$(sed -n 's/.*parent operation: \(op-[0-9TZ-]*[a-f0-9]\{6\}\).*/\1/p' "$err" | tail -1)"
+  if ! [[ "$operation" =~ ^op-[0-9]{8}T[0-9]{6}Z-[a-f0-9]{6}$ ]]; then
+    fail "$name" "detached operation id was not published: gate=$gate_id operation=$operation err=$(cat "$err" 2>/dev/null || true)"
+    return
+  fi
   cancel_out="$(PM_DISPATCH_STATE_ROOT="$state" XDG_RUNTIME_DIR="$_GATE_CLI_XDG_RUNTIME_DIR" \
     "$fixture/cli/pmctl" gate cancel "$operation" --cd "$work" --grace 2 2>&1)" || cancel_rc=$?
   wait_out="$(PM_DISPATCH_STATE_ROOT="$state" XDG_RUNTIME_DIR="$_GATE_CLI_XDG_RUNTIME_DIR" \

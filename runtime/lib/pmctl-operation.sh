@@ -409,6 +409,7 @@ pmctl_operation_cancellation_requested() {
   record="$(_pmctl_operation_record_path "$repo_root" "$work_dir" "$operation_id")" || return 2
   _pmctl_operation_validate_record "$record" "$expected_kind" "$work_dir" || return 2
   state="$PMCTL_OPERATION_RECORD_STATE"
+  # shellcheck disable=SC2034 # public output consumed by pmctl-gate after this function returns.
   PMCTL_OPERATION_CANCELLATION_STATE="$state"
   [[ "$state" == cancelling || "$state" == cancelled \
     || ( "$state" == indeterminate \

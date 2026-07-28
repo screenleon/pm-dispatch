@@ -35,6 +35,7 @@ case_writer_loader_repairs_partial_inherited_functions() {
   out="$(
     export -f operation_create
     export -n -f operation_upsert operation_child_append 2>/dev/null || true
+    # shellcheck disable=SC2016 # variables are expanded by the spawned bash.
     PM_DISPATCH_STATE_ROOT="$store" setsid bash -c '
       set -euo pipefail
       . "$1/runtime/lib/pmctl-operation.sh"
@@ -243,6 +244,7 @@ case_cancel_refuses_reused_producer_identity() {
   make_repo "$work"
   release="$tmp_root/producer-mismatch-release"
   mkfifo "$release"
+  # shellcheck disable=SC2016 # $1 belongs to the spawned bash.
   setsid bash -c 'IFS= read -r _ < "$1"' _ "$release" &
   producer=$!
   op="$(PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_create "$REPO_ROOT" "$work" gate codex)"
@@ -275,6 +277,7 @@ case_cancel_accepts_producer_that_exited_before_signal() {
   make_repo "$work"
   release="$tmp_root/producer-gone-release"
   mkfifo "$release"
+  # shellcheck disable=SC2016 # $1 belongs to the spawned bash.
   setsid bash -c 'IFS= read -r _ < "$1"' _ "$release" &
   producer=$!
   op="$(PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_create "$REPO_ROOT" "$work" gate codex)"

@@ -114,6 +114,7 @@ done
 
 mkdir -p "$run_dir" || _die "failed to create run dir: $run_dir"
 
+# shellcheck disable=SC2317 # invoked indirectly by the TERM/INT trap.
 _cancel_supervisor() {
   _write_sentinel "cancelled" 130 ""
   exit 130

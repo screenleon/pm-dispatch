@@ -316,6 +316,7 @@ pmctl_gate_run() {
     # producer tree from the invoking shell.  The new session registers its
     # own kernel identity before execing pr-gate.sh; cancellation can therefore
     # stop preflight/timeout descendants without accepting a caller-supplied PID.
+    # shellcheck disable=SC2016 # variables are expanded by the spawned bash, not this shell.
     setsid bash -c '
       repo_root="$1"; work_dir="$2"; operation_id="$3"; gate_script="$4"
       shift 4
