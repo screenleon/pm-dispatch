@@ -167,6 +167,10 @@ _pmctl_operation_validate_record() {
 _pmctl_operation_with_record_lock() {
   local repo_root="$1" work_dir="$2" operation_id="$3"; shift 3
   local lock_base record
+  # Path resolution below runs in command substitutions.  Any lazy-loaded
+  # writer functions would otherwise disappear with those subshells before the
+  # locked callback uses operation_upsert/operation_child_append.
+  _pmctl_operation_load_writer "$repo_root" || return 2
   record="$(_pmctl_operation_record_path "$repo_root" "$work_dir" "$operation_id")" || return 2
   [[ -f "$record" ]] || return 5
   lock_base="$(_pmctl_operation_record_lock_base "$repo_root" "$work_dir" "$operation_id")" || return 2

@@ -23,25 +23,35 @@ make_repo() {
 }
 
 case_writer_loader_repairs_partial_inherited_functions() {
-  local name="operation loader: partial inherited writer functions reload the complete boundary"
+  local name="operation lock: partial inherited writer functions reload before producer registration"
   should_run "$name" || return 0
-  local out rc=0
+  local work="$tmp_root/partial-writer-work" store="$tmp_root/partial-writer-state"
+  local op out rc=0 state record
+  make_repo "$work"
+  op="$(PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_create "$REPO_ROOT" "$work" gate)"
+  PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_expect_producer \
+    "$REPO_ROOT" gate "$op" "$work"
   _pmctl_operation_load_writer "$REPO_ROOT"
   out="$(
     export -f operation_create
     export -n -f operation_upsert operation_child_append 2>/dev/null || true
-    bash -c '
+    PM_DISPATCH_STATE_ROOT="$store" setsid bash -c '
       set -euo pipefail
       . "$1/runtime/lib/pmctl-operation.sh"
-      _pmctl_operation_load_writer "$1"
+      pmctl_operation_register_producer "$1" gate "$2" "$3" "$BASHPID"
       declare -F operation_create operation_upsert operation_child_append
-    ' _ "$REPO_ROOT"
+    ' _ "$REPO_ROOT" "$op" "$work"
   )" || rc=$?
+  state="$(PM_DISPATCH_STATE_ROOT="$store" bash -c \
+    '. "$1/runtime/lib/state-writer.sh"; cd "$2"; _sw_project_dir' \
+    _ "$REPO_ROOT" "$work")"
+  record="${state%/}/operations/$op.json"
   if [[ "$rc" -eq 0 && "$out" == *"operation_create"* \
-    && "$out" == *"operation_upsert"* && "$out" == *"operation_child_append"* ]]; then
+    && "$out" == *"operation_upsert"* && "$out" == *"operation_child_append"* \
+    && "$(jq -r .producer.status "$record")" == running ]]; then
     pass "$name"
   else
-    fail "$name" "rc=$rc out=$out"
+    fail "$name" "rc=$rc out=$out record=$(jq -c . "$record" 2>/dev/null || true)"
   fi
 }
 
