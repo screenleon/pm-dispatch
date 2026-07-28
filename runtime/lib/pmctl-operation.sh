@@ -16,11 +16,15 @@ _pmctl_operation_load_writer() {
   local repo_root lib
   repo_root="$1"
   lib="$repo_root/runtime/lib/state-writer.sh"
-  [[ "$(type -t operation_create 2>/dev/null)" == function ]] && return 0
+  [[ "$(type -t operation_create 2>/dev/null)" == function \
+    && "$(type -t operation_upsert 2>/dev/null)" == function \
+    && "$(type -t operation_child_append 2>/dev/null)" == function ]] && return 0
   [[ -r "$lib" ]] || return 1
   # shellcheck source=/dev/null # repo-root-relative runtime library
   . "$lib"
-  [[ "$(type -t operation_create 2>/dev/null)" == function ]]
+  [[ "$(type -t operation_create 2>/dev/null)" == function \
+    && "$(type -t operation_upsert 2>/dev/null)" == function \
+    && "$(type -t operation_child_append 2>/dev/null)" == function ]]
 }
 
 _pmctl_operation_load_detached_launch() {

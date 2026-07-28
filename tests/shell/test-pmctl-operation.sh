@@ -22,6 +22,29 @@ make_repo() {
   git -C "$dir" init -q
 }
 
+case_writer_loader_repairs_partial_inherited_functions() {
+  local name="operation loader: partial inherited writer functions reload the complete boundary"
+  should_run "$name" || return 0
+  local out rc=0
+  _pmctl_operation_load_writer "$REPO_ROOT"
+  out="$(
+    export -f operation_create
+    export -n -f operation_upsert operation_child_append 2>/dev/null || true
+    bash -c '
+      set -euo pipefail
+      . "$1/runtime/lib/pmctl-operation.sh"
+      _pmctl_operation_load_writer "$1"
+      declare -F operation_create operation_upsert operation_child_append
+    ' _ "$REPO_ROOT"
+  )" || rc=$?
+  if [[ "$rc" -eq 0 && "$out" == *"operation_create"* \
+    && "$out" == *"operation_upsert"* && "$out" == *"operation_child_append"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc out=$out"
+  fi
+}
+
 case_reconcile_uses_trusted_terminal_claims() {
   local name="operation reconcile: all trusted child claims converge parent to completed"
   should_run "$name" || return 0
@@ -328,6 +351,7 @@ case_relative_cd_resolves_to_the_same_operation() {
   fi
 }
 
+case_writer_loader_repairs_partial_inherited_functions
 case_reconcile_uses_trusted_terminal_claims
 case_create_collision_never_overwrites_record
 case_unknown_operation_is_diagnosed_not_silent
