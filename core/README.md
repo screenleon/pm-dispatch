@@ -10,6 +10,18 @@ This directory contains the canonical PM-runtime data contract. **`core/` is def
                      (`~/.local/share/pm-dispatch/state/`). **Definitions, not the writer.**
 - `context-pack/`  — source-interface contract for ContextPack assembly.
 
+Gate assurance definitions are split deliberately:
+
+- `policy/gate-tiers.tsv`, `gate-modes.tsv`, and `gate-pass-kinds.tsv` define
+  the independent assurance coordinates.
+- `policy/gate-policy-consumers.tsv` and `gate-policy-signals.tsv` define
+  consumer-specific coverage and deterministic risk floors.
+- `schema/gate-policy-override.schema.json` defines explicit scope-bound user
+  approval for a tier or reviewer-coverage downgrade; mode remains a direct
+  user choice.
+- `schema/gate-assurance.schema.json` defines the portable envelope that records
+  both resolved coordinates and the policy resolution that produced them.
+
 ## Invariants
 
 1. **`core/*` may NOT import / reference `runtime/`, `scripts/`, `adapters/`,

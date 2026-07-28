@@ -5,7 +5,13 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 SETUP_SCRIPT="$REPO_ROOT/ops/setup/setup-project.sh"
-EXPECTED_ENTRIES=(".agent-trace/" ".gate-briefs/" ".gate-results/" ".agents/")
+EXPECTED_ENTRIES=(
+  ".agent-trace/"
+  ".gate-briefs/"
+  ".gate-results/"
+  ".agents/"
+  ".pm-dispatch-state/"
+)
 # shellcheck source=tests/lib/test-harness.sh
 . "$SCRIPT_DIR/../lib/test-harness.sh"
 th_init "$@"

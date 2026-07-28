@@ -41,11 +41,11 @@ The point is not to produce documentation — it is to catch a wrong direction b
 
 **When**: after the executor finishes; triggered by `/pr-gate`.
 
-**Mechanism**: `/pr-gate` runs its reviewers (`critic`, `qa-tester`, `security-reviewer`, `risk-reviewer`, `architecture-reviewer`) in a review session *separate from the one that produced the diff*. Each reviewer receives a brief with the diff, task context, and (if present) the conceptual map — but not the dispatch session's reasoning, prior attempts, or implicit anchors. The default sequential gate runs the reviewers together in one fresh session (codex or Claude, per `--executor`); the `--parallel` path gives each reviewer its own independent session followed by a PM synthesis pass.
+**Mechanism**: `/pr-gate` runs its reviewers (`critic`, `qa-tester`, `security-reviewer`, `risk-reviewer`, `architecture-reviewer`) in a review session *separate from the one that produced the diff*. Each reviewer receives a brief with the diff, task context, and (if present) the conceptual map — but not the dispatch session's reasoning, prior attempts, or implicit anchors. A sequential gate runs the reviewers together in one fresh session (codex or Claude, per `--executor`); the parallel path gives each reviewer its own independent session followed by a PM synthesis pass. An explicit user choice wins; when mode is omitted, policy selects its recommendation.
 
 This isolation matters because context-window anchoring is real: a reviewer who watched the code being written will tend to evaluate the approach rather than the outcome. A reviewer who arrives at the finished diff cold asks "does this make sense in isolation?" — a harder and more valuable question.
 
-The isolation *from the dispatch session* is structural, not advisory: the review session is a separate process and cannot read the implementer's context. Per-reviewer independence — each reviewer also blind to the others — is provided by the `--parallel` path; the sequential default trades that for a single combined review session. See [pr-gate-handover-schema.md](pr-gate-handover-schema.md) for the handover protocol.
+The isolation *from the dispatch session* is structural, not advisory: the review session is a separate process and cannot read the implementer's context. Per-reviewer independence — each reviewer also blind to the others — is provided by the parallel path; sequential mode trades that for a single combined review session. See [pr-gate-handover-schema.md](pr-gate-handover-schema.md) for the handover protocol.
 
 ### Layer 3 — Conceptual Map review
 
@@ -145,38 +145,75 @@ When an artifact is missing — no `conceptual_map`, no `self_verify cmd:`, no i
 
 ## pr-gate assurance coordinates
 
-The `/pr-gate` `--tier` flag selects the **rigor level** required for this change — not just the number of reviewers. Choose based on `architecture_impact` and blast radius:
+The gate resolves one canonical policy result from the complete diff
+classification, trusted brief metadata, requested coordinates, consumer policy,
+and any explicit scope-bound downgrade authorization. `--tier` requests a
+**rigor level**; it cannot silently lower the resolver's minimum floor.
 
 | Tier | When | Default reviewer coverage |
 |---|---|---|
-| `express` | hotfix, docs-only, `architecture_impact: none` | critic + qa |
-| `standard` | feature, `architecture_impact: minor` | conceptual map required + critic + qa + architecture-reviewer |
-| `full` | architectural change, `architecture_impact: major`, sensitive path | critic + qa + architecture-reviewer + security + risk |
+| `express` | docs-only or bounded low-blast-radius change | critic + qa |
+| `standard` | medium/binary/cross-boundary change, `architecture_impact: minor` | critic + qa + architecture-reviewer |
+| `full` | large change or `architecture_impact: major` | critic + qa + architecture-reviewer + security + risk |
 
-**Tier suggestion**: when a `--brief` is passed to `pr-gate.sh`, it reads `architecture_impact` from the brief and emits an advisory to stderr before dispatch if the auto-detected tier is lower than the impact level implies. The user-selected or auto-detected tier always takes precedence; the advisory is informational only and does not block or alter the tier.
+Sensitive paths add the corresponding security, risk, or architecture reviewer
+to required coverage without automatically converting every bounded change to
+`full`. Trusted `architecture_impact` is an enforced policy input:
+`minor` establishes a `standard` floor and `major` establishes a `full` floor.
 
 **Tier, mode, pass kind, and coverage are independent**:
 
-- Tier records rigor intent and supplies default reviewer coverage. `--reviewers`
-  may override the selected coverage without rewriting the tier.
-- Mode records execution topology. The default is `sequential`; select
-  `--mode parallel` when separate reviewer sessions and synthesis are required.
-  A `full` tier does not select parallel mode by itself.
+- Tier records rigor intent and supplies default reviewer coverage. An explicit
+  `--reviewers` list does not rewrite the tier, but it must still include every
+  reviewer required by the matched risk signals.
+- Mode records execution topology and remains a user-owned cost/independence
+  choice. When mode is omitted, policy auto-selects its recommendation from the
+  consumer and matched signals. Explicit `--mode sequential` or
+  `--mode parallel` always wins; the envelope records recommendation divergence
+  without treating it as a downgrade. A `full` tier does not force parallel.
 - Pass kind records whether the review is initial or a remediation-delta
   targeted pass. `--targeted <reviewers>` requires
   `--initial-result <path>` and is not a tier alias.
 
+The generic consumer policy keeps risk-based coverage: initial passes require
+critic and QA plus signal-specific dimensions. The maintainer `/ship` initial
+pass fixes coverage at all five reviewer dimensions while preserving the
+independently resolved tier and mode. Targeted passes under either consumer
+remain scoped to the requested remediation reviewers.
+
+Any requested tier or coverage below the policy floor fails before reviewer
+dispatch. A tier/coverage downgrade is accepted only through an explicitly
+supplied `gate_policy_override_v1` JSON file bound to the exact scope fingerprint
+and recording user approval. Mode is not a downgrade coordinate: explicit user
+selection needs no override. The fingerprint includes the content-addressed
+tracked patch and every in-scope untracked file, not only file names or aggregate
+line counts. The free-form `.gate-overrides.md` file remains reviewer
+finding/suppression context; it is recorded separately and cannot authorize a
+policy downgrade.
+
 The portable policy sources are
 [`core/policy/gate-tiers.tsv`](../core/policy/gate-tiers.tsv),
 [`core/policy/gate-modes.tsv`](../core/policy/gate-modes.tsv), and
-[`core/policy/gate-pass-kinds.tsv`](../core/policy/gate-pass-kinds.tsv).
+[`core/policy/gate-pass-kinds.tsv`](../core/policy/gate-pass-kinds.tsv), plus
+the consumer and risk-signal tables
+[`core/policy/gate-policy-consumers.tsv`](../core/policy/gate-policy-consumers.tsv)
+and
+[`core/policy/gate-policy-signals.tsv`](../core/policy/gate-policy-signals.tsv).
+Changes under `core/policy/` are themselves a full-tier signal with
+architecture, security, and risk coverage, so the governance tables cannot
+quietly lower their own future review floor through a small edit.
 
 The final producer writes `pr_gate_result_v2` Markdown plus a sibling
 `gate_assurance_v2` JSON envelope. The Markdown contains human findings and a
 bounded relative `gate_assurance` pointer; the shell-owned envelope records
 requested/resolved coordinates, selected/skipped coverage, actual dispatch
 outcomes, run IDs, subject commits/fingerprint, and the evidence status behind
-independence claims. Repo-layout results with verified independence also carry
+independence claims. New envelopes also embed the canonical policy result:
+classification facts, every matched signal and path, minimum tier, required
+coverage, recommended mode, whether policy or the user selected the mode,
+recommendation divergence, enforcement status, and both policy-override and
+reviewer-override provenance. Repo-layout results with
+verified independence also carry
 a shell-owned attestation in the protected gate run directory. `pmctl gate
 verify` validates result/sidecar digests and resolves every claimed run ID
 against the canonical terminal records for the invoking repository and rejects
@@ -188,7 +225,9 @@ published afterward; verification uses a bounded retry when it observes that
 in-flight canonical v2 finalization. Legacy
 `pr_gate_result_v1` and unbound `gate_assurance_v1` artifacts remain
 structurally readable, but verification reports `assurance: unavailable`;
-consumers must not infer mode, coverage, or independence from them.
+consumers must not infer mode, coverage, or independence from them. Earlier
+`gate_assurance_v2` envelopes without the optional policy block remain
+readable, while current producers always emit it.
 
 ---
 

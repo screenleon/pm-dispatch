@@ -71,6 +71,8 @@ create_runner() {
   cp "$REPO_ROOT/core/policy/gate-tiers.tsv" "$dir/core/policy/gate-tiers.tsv"
   cp "$REPO_ROOT/core/policy/gate-modes.tsv" "$dir/core/policy/gate-modes.tsv"
   cp "$REPO_ROOT/core/policy/gate-pass-kinds.tsv" "$dir/core/policy/gate-pass-kinds.tsv"
+  cp "$REPO_ROOT/core/policy/gate-policy-consumers.tsv" "$dir/core/policy/gate-policy-consumers.tsv"
+  cp "$REPO_ROOT/core/policy/gate-policy-signals.tsv" "$dir/core/policy/gate-policy-signals.tsv"
   mkdir -p "$dir/adapters/codex"
   cat > "$dir/adapters/codex/dispatch.sh" <<'STUB_EOF'
 #!/usr/bin/env bash
@@ -89,6 +91,9 @@ while [[ $# -gt 0 ]]; do
     *) shift;;
   esac
 done
+
+reviewer_name="$(awk '$1 == "Reviewer:" { print $2; exit }' "$brief_file")"
+: "${reviewer_name:=stub-reviewer}"
 
 printf 'DISPATCH_STUB:%s\n' "${CODEX_GATE_STUB_MODE:-success}"
 
@@ -116,7 +121,10 @@ if [[ -n "${CODEX_GATE_CAPTURE_BRIEF:-}" ]]; then
 fi
 
 if [[ -n "${CODEX_GATE_CAPTURE_REVIEWER_BRIEF:-}" && "$brief_file" != *-synthesis.md ]]; then
-  cp "$brief_file" "$CODEX_GATE_CAPTURE_REVIEWER_BRIEF"
+  if [[ -z "${CODEX_GATE_CAPTURE_REVIEWER_FILTER:-}" \
+        || "$brief_file" == *-"${CODEX_GATE_CAPTURE_REVIEWER_FILTER}".md ]]; then
+    cp "$brief_file" "$CODEX_GATE_CAPTURE_REVIEWER_BRIEF"
+  fi
 fi
 
 if [[ -n "${CODEX_GATE_REVIEWER_DEFS_MARKER:-}" && "$brief_file" != *-synthesis.md ]]; then
@@ -173,7 +181,35 @@ if [[ "${CODEX_GATE_STUB_VERDICT_PREFIX_ONLY:-}" == "1" && "$brief_file" != *-sy
   output_path=$(grep -o '\- new:.*' "$brief_file" | head -1 | awk '{print $NF}')
   if [[ -n "$output_path" ]]; then
     mkdir -p "$(dirname "$output_path")"
-    printf '## stub-reviewer -- approved\nVerdict: approved. Prefix-only bypass attempt.\n' > "$output_path"
+    printf '## %s -- approved\nVerdict: approved. Prefix-only bypass attempt.\n' \
+      "$reviewer_name" > "$output_path"
+  fi
+  exit 0
+fi
+
+# Simulate the structured output emitted by base-pinned reviewer definitions:
+# the machine verdict is in the canonical heading and the definition's
+# lower-case `verdict:` field is narrative rather than a second token.
+if [[ "${CODEX_GATE_STUB_HEADER_ONLY_VERDICT:-}" == "1" \
+    && "$brief_file" != *-synthesis.md ]]; then
+  output_path=$(grep -o '\- new:.*' "$brief_file" | head -1 | awk '{print $NF}')
+  if [[ -n "$output_path" ]]; then
+    mkdir -p "$(dirname "$output_path")"
+    printf '## %s -- advise\n\nstatus: advise\nfindings: []\nverdict: Structured narrative.\n' \
+      "$reviewer_name" > "$output_path"
+  fi
+  exit 0
+fi
+
+# Simulate a conflicting optional legacy Verdict marker. The heading remains
+# authoritative, but disagreement must abort rather than silently choose one.
+if [[ "${CODEX_GATE_STUB_CONFLICTING_VERDICT:-}" == "1" \
+    && "$brief_file" != *-synthesis.md ]]; then
+  output_path=$(grep -o '\- new:.*' "$brief_file" | head -1 | awk '{print $NF}')
+  if [[ -n "$output_path" ]]; then
+    mkdir -p "$(dirname "$output_path")"
+    printf '## %s -- approve\nVerdict: block. Conflicting marker.\n' \
+      "$reviewer_name" > "$output_path"
   fi
   exit 0
 fi
@@ -185,7 +221,8 @@ if [[ "${CODEX_GATE_STUB_MULTIPLE_VERDICTS:-}" == "1" && "$brief_file" != *-synt
   output_path=$(grep -o '\- new:.*' "$brief_file" | head -1 | awk '{print $NF}')
   if [[ -n "$output_path" ]]; then
     mkdir -p "$(dirname "$output_path")"
-    printf '## stub-reviewer -- approve\nVerdict: approve. First verdict line.\nSome additional content.\nVerdict: block. Second verdict line.\n' > "$output_path"
+    printf '## %s -- approve\nVerdict: approve. First verdict line.\nSome additional content.\nVerdict: block. Second verdict line.\n' \
+      "$reviewer_name" > "$output_path"
   fi
   exit 0
 fi
@@ -348,7 +385,8 @@ PARTIAL_EOF
         fi
         # Reviewer brief: CODEX_GATE_STUB_VERDICT controls the verdict line (default advise).
         stub_verdict="${CODEX_GATE_STUB_VERDICT:-advise}"
-        printf '## stub-reviewer -- %s\nVerdict: %s. Stub output.\n' "$stub_verdict" "$stub_verdict" > "$output_path"
+        printf '## %s -- %s\nVerdict: %s. Stub output.\n' \
+          "$reviewer_name" "$stub_verdict" "$stub_verdict" > "$output_path"
         if [[ "$(basename "$output_path")" == pr-gate-result-* || "$(basename "$output_path")" == gate-* ]]; then
           printf 'Final: GO\n' >> "$output_path"
         fi
@@ -491,7 +529,7 @@ create_repo_with_branch() {
         git commit -q -m "add large code"
         ;;
       full-sensitive)
-        # sensitive filename → full tier regardless of line count
+        # Bounded sensitive filename → signal-specific security coverage.
         printf 'package main\n' > auth-handler.go
         git add auth-handler.go
         git commit -q -m "add auth handler"
@@ -536,14 +574,14 @@ INITIAL_GATE_EOF
 }
 
 # Behavior: the bounded copy-mode policy snapshot is byte-for-byte equivalent
-# to all three canonical gate policy TSV sources.
+# to all canonical gate policy TSV sources.
 # Steps: extract each generated heredoc from pr-gate.sh, compare it with the
 # matching core/policy file, and fail on any drift.
 test_gate_assurance_policy_snapshot_matches_sources() {
   local name="gate-assurance-policy-snapshot-matches-sources"
   should_run "$name" || return 0
   local table delimiter source snapshot
-  for table in tiers modes pass-kinds; do
+  for table in tiers modes pass-kinds consumers signals; do
     case "$table" in
       tiers)
         delimiter="GATE_ASSURANCE_TIERS_TSV"
@@ -556,6 +594,14 @@ test_gate_assurance_policy_snapshot_matches_sources() {
       pass-kinds)
         delimiter="GATE_ASSURANCE_PASS_KINDS_TSV"
         source="$REPO_ROOT/core/policy/gate-pass-kinds.tsv"
+        ;;
+      consumers)
+        delimiter="GATE_POLICY_CONSUMERS_TSV"
+        source="$REPO_ROOT/core/policy/gate-policy-consumers.tsv"
+        ;;
+      signals)
+        delimiter="GATE_POLICY_SIGNALS_TSV"
+        source="$REPO_ROOT/core/policy/gate-policy-signals.tsv"
         ;;
     esac
     snapshot="$(awk -v marker="$delimiter" '
@@ -571,16 +617,17 @@ test_gate_assurance_policy_snapshot_matches_sources() {
   pass "$name"
 }
 
-# Behavior: a repo-layout/copy-bundle policy source controls tier-default
-# reviewer selection instead of the generated fallback or a hardcoded case.
-# Steps: change only the copied express default to critic, run a docs gate, and
-# assert the captured brief selects critic while retaining express tier.
-test_gate_tier_policy_source_controls_default_coverage() {
-  local name="gate-tier-policy-source-controls-default-coverage"
+# Behavior: repo-layout policy sources jointly control tier-default and consumer
+# required coverage instead of a generated fallback or hardcoded branch.
+# Steps: narrow both the copied express default and generic-initial requirement
+# to critic, then assert the captured brief selects only critic.
+test_gate_policy_sources_control_default_coverage() {
+  local name="gate-policy-sources-control-default-coverage"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
-  local out="$dir/out" err="$dir/err" brief="$dir/brief.md" rewritten="$dir/gate-tiers.tsv"
+  local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
+  local rewritten="$dir/gate-tiers.tsv" rewritten_consumer="$dir/gate-policy-consumers.tsv"
   mkdir -p "$dir"
   create_runner "$runner"
   create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
@@ -590,6 +637,11 @@ test_gate_tier_policy_source_controls_default_coverage() {
     { print }
   ' "$runner/core/policy/gate-tiers.tsv" > "$rewritten"
   mv "$rewritten" "$runner/core/policy/gate-tiers.tsv"
+  awk -F '\t' -v OFS='\t' '
+    $1 == "generic:initial" { $5="critic" }
+    { print }
+  ' "$runner/core/policy/gate-policy-consumers.tsv" > "$rewritten_consumer"
+  mv "$rewritten_consumer" "$runner/core/policy/gate-policy-consumers.tsv"
 
   set +e
   CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
@@ -602,14 +654,14 @@ test_gate_tier_policy_source_controls_default_coverage() {
   assert_file_contains "$name" "$brief" "Tier: express" || return
   assert_file_contains "$name" "$brief" "coverage.selected: critic" || return
   assert_file_contains "$name" "$brief" "Reviewers: critic" || return
-  assert_not_contains "$name" "$brief" "Process each reviewer IN ORDER: critic,qa-tester" || return
+  assert_file_contains "$name" "$brief" "policy.required_reviewers: critic" || return
   pass "$name"
 }
 
 # Behavior: a copied gate without canonical policy files resolves the same
-# defaults from its bounded generated snapshot and reports the degraded source.
+# coordinates from its bounded generated snapshot and reports the degraded source.
 # Steps: remove the copied TSV files, run a docs gate, and assert express /
-# sequential / initial defaults plus generated-snapshot provenance.
+# policy-selected sequential mode / initial pass plus generated-snapshot provenance.
 test_gate_assurance_policy_snapshot_is_copy_mode_fallback() {
   local name="gate-assurance-policy-snapshot-is-copy-mode-fallback"
   should_run "$name" || return 0
@@ -623,7 +675,9 @@ test_gate_assurance_policy_snapshot_is_copy_mode_fallback() {
   rm -f \
     "$runner/core/policy/gate-tiers.tsv" \
     "$runner/core/policy/gate-modes.tsv" \
-    "$runner/core/policy/gate-pass-kinds.tsv"
+    "$runner/core/policy/gate-pass-kinds.tsv" \
+    "$runner/core/policy/gate-policy-consumers.tsv" \
+    "$runner/core/policy/gate-policy-signals.tsv"
 
   set +e
   CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
@@ -637,6 +691,231 @@ test_gate_assurance_policy_snapshot_is_copy_mode_fallback() {
   assert_file_contains "$name" "$brief" "mode.resolved: sequential" || return
   assert_file_contains "$name" "$brief" "pass.resolved: initial" || return
   assert_file_contains "$name" "$brief" "policy.source: generated-snapshot" || return
+  pass "$name"
+}
+
+# Behavior: every policy row is validated before dispatch, even when its signal
+# would not match the current diff.
+test_dormant_policy_signal_with_unknown_reviewer_fails_before_dispatch() {
+  local name="dormant-policy-signal-with-unknown-reviewer-fails-before-dispatch"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  printf '%s\n' \
+    $'dormant-signal\tpath-regex\tnever-match-this-fixture\tstandard\tunknown-reviewer\tparallel' \
+    >> "$runner/core/policy/gate-policy-signals.tsv"
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  local code=$?
+  set -e
+  if [[ "$code" -ne 2 ]]; then
+    fail "$name" "exit $code, expected policy-source failure 2"
+    return
+  fi
+  assert_file_contains "$name" "$err" \
+    "signal dormant-signal names unknown reviewer unknown-reviewer" || return
+  assert_not_contains "$name" "$err" "DISPATCH_STUB" || return
+  pass "$name"
+}
+
+# Behavior: signal IDs form a closed unique inventory before any one signal is
+# matched or copied into an assurance artifact.
+test_duplicate_policy_signal_id_fails_before_dispatch() {
+  local name="duplicate-policy-signal-id-fails-before-dispatch"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  printf '%s\n' \
+    $'docs-only\tpath-regex\tnever-match-this-fixture\texpress\tnone\tsequential' \
+    >> "$runner/core/policy/gate-policy-signals.tsv"
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  local code=$?
+  set -e
+  if [[ "$code" -ne 2 ]]; then
+    fail "$name" "exit $code, expected policy-source failure 2"
+    return
+  fi
+  assert_file_contains "$name" "$err" \
+    "invalid gate policy signals source" || return
+  assert_not_contains "$name" "$err" "DISPATCH_STUB" || return
+  pass "$name"
+}
+
+# Behavior: the maintainer initial-pass policy fixes reviewer coverage at all
+# five dimensions and supplies parallel as the auto-selected mode while leaving
+# an explicit user mode authoritative.
+test_maintainer_initial_policy_sets_coverage_and_auto_mode() {
+  local name="maintainer-initial-policy-sets-coverage-and-auto-mode"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" brief="$dir/brief.md" result_path
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" \
+    --base main --policy maintainer
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  assert_file_contains "$name" "$brief" "tier.resolved: express" || return
+  assert_file_contains "$name" "$brief" "mode.resolved: parallel" || return
+  assert_file_contains "$name" "$brief" "mode.selection_source: policy" || return
+  assert_file_contains "$name" "$brief" "mode.recommendation_overridden: false" || return
+  assert_file_contains "$name" "$brief" "policy.consumer: maintainer" || return
+  assert_file_contains "$name" "$brief" "policy.recommended_mode: parallel" || return
+  assert_file_contains "$name" "$brief" \
+    "coverage.selected: critic,qa-tester,architecture-reviewer,security-reviewer,risk-reviewer" || return
+  result_path="$(awk '/^result: / {sub(/^result: /, ""); print; exit}' "$out")"
+  jq -e '
+    .policy.consumer_policy == "maintainer" and
+    .policy.resolved.tier == "express" and
+    .policy.resolved.mode == "parallel" and
+    .policy.resolution.mode_selection_source == "policy" and
+    .policy.resolution.mode_recommendation_overridden == false and
+    .policy.resolved.reviewers ==
+      ["critic","qa-tester","architecture-reviewer","security-reviewer","risk-reviewer"]
+  ' "${result_path}.assurance.json" >/dev/null || {
+    fail "$name" "maintainer policy coordinates were not preserved in assurance"
+    return
+  }
+  pass "$name"
+}
+
+# Behavior: the maintainer targeted-pass policy scopes coverage to requested
+# remediation reviewers instead of silently expanding back to all five.
+test_maintainer_targeted_policy_preserves_remediation_scope() {
+  local name="maintainer-targeted-policy-preserves-remediation-scope"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
+  local initial="$dir/initial.md" result_path
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" clean
+  printf 'package auth\n' > "$repo/auth-handler.go"
+  write_valid_initial_gate_result "$initial"
+
+  set +e
+  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" \
+    --base main --policy maintainer --targeted critic --initial-result "$initial"
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  assert_file_contains "$name" "$brief" "policy.consumer: maintainer" || return
+  assert_file_contains "$name" "$brief" "pass.resolved: targeted" || return
+  assert_file_contains "$name" "$brief" "coverage.selected: critic" || return
+  assert_file_contains "$name" "$brief" "policy.required_reviewers: none" || return
+  result_path="$(awk '/^result: / {sub(/^result: /, ""); print; exit}' "$out")"
+  jq -e '
+    any(.policy.matched_signals[];
+      .id == "security-sensitive-path" and
+      .matches == ["auth-handler.go"] and
+      .required_reviewers == [])
+  ' "${result_path}.assurance.json" >/dev/null || {
+    fail "$name" "targeted policy did not retain the security signal as non-expanding evidence"
+    return
+  }
+  pass "$name"
+}
+
+# Behavior: an input/execution boundary signal auto-selects parallel when mode
+# is omitted, but an explicit sequential request remains authoritative and is
+# recorded as an override of the recommendation rather than a policy downgrade.
+test_input_execution_signal_auto_selects_parallel_but_respects_user_mode() {
+  local name="input-execution-signal-auto-selects-parallel-but-respects-user-mode"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" brief="$dir/brief.md" result_path
+  local sequential_brief="$dir/sequential-brief.md"
+  local sequential_result="$dir/sequential-result.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" clean
+  mkdir -p "$repo/.github/workflows"
+  printf '#!/usr/bin/env bash\nprintf safe\n' > "$repo/command-runner.sh"
+  printf 'name: fixture\n' > "$repo/.github/workflows/ci.yml"
+
+  set +e
+  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" \
+    --base main --output "$dir/parallel-result.md"
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "auto mode exited $code, expected 0"
+    return
+  fi
+  assert_file_contains "$name" "$brief" "tier.resolved: standard" || return
+  assert_file_contains "$name" "$brief" "mode.resolved: parallel" || return
+  assert_file_contains "$name" "$brief" "mode.selection_source: policy" || return
+  assert_file_contains "$name" "$brief" "mode.recommendation_overridden: false" || return
+  assert_file_contains "$name" "$brief" "policy.escalation_signals:" || return
+  assert_file_contains "$name" "$brief" '"id":"input-execution-path"' || return
+  assert_not_contains "$name" "$brief" "any diff file matches (" || return
+  assert_file_contains "$name" "$brief" \
+    "coverage.selected: critic,qa-tester,architecture-reviewer,security-reviewer" || return
+  result_path="$dir/parallel-result.md"
+  jq -e '
+    any(.policy.matched_signals[];
+      .id == "input-execution-path" and
+      (.matches | index(".github/workflows/ci.yml")) != null)
+  ' "${result_path}.assurance.json" >/dev/null || {
+    fail "$name" "CI execution path was not recorded as an isolation signal"
+    return
+  }
+
+  set +e
+  CODEX_GATE_CAPTURE_BRIEF="$sequential_brief" \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --mode sequential --output "$sequential_result"
+  code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "explicit sequential mode exited $code, expected user choice to pass"
+    return
+  fi
+  assert_file_contains "$name" "$sequential_brief" "mode.requested: sequential" || return
+  assert_file_contains "$name" "$sequential_brief" "mode.resolved: sequential" || return
+  assert_file_contains "$name" "$sequential_brief" "mode.selection_source: user" || return
+  assert_file_contains "$name" "$sequential_brief" \
+    "mode.recommendation_overridden: true" || return
+  jq -e '
+    .policy.resolution.recommended_mode == "parallel" and
+    .policy.resolution.mode_selection_source == "user" and
+    .policy.resolution.mode_recommendation_overridden == true and
+    .policy.resolution.downgrade_requested == false and
+    .policy.resolved.mode == "sequential" and
+    .policy.enforcement.status == "pass"
+  ' "${sequential_result}.assurance.json" >/dev/null || {
+    fail "$name" "assurance did not preserve the explicit sequential choice"
+    return
+  }
   pass "$name"
 }
 
@@ -1101,69 +1380,177 @@ test_no_changed_files() {
   pass "$name"
 }
 
-# Behavior: an explicit --reviewers list overrides requested coverage without
-# changing auto-detected tier or review pass kind. The parallel synthesis brief
-# embeds only selected reviewer findings inline.
-# Steps: run the gate with --reviewers critic --parallel against a diff that
-# tier-detects to standard, and assert standard/initial coordinates, critic-only
-# coverage, inline findings, and no reviewer output read paths.
-test_reviewers_override_preserves_tier_detection() {
-  local name="reviewers-override"
+# Behavior: an explicit reviewer selection below the canonical risk floor fails
+# before dispatch instead of being mistaken for policy-sufficient coverage.
+# Steps: request critic-only coverage for a medium runtime diff whose policy
+# requires critic, QA, and architecture; assert the violation is diagnostic.
+test_reviewers_override_below_policy_floor_fails_closed() {
+  local name="reviewers-override-below-policy-floor"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
-  local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
+  local out="$dir/out" err="$dir/err"
   mkdir -p "$dir"
   create_runner "$runner"
   create_agents "$home" critic
   create_repo_with_branch "$repo" standard
 
   set +e
-  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --reviewers critic --parallel
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --reviewers critic --parallel
   local code=$?
   set -e
-  if [[ "$code" -ne 0 ]]; then
-    fail "$name" "exit $code, expected 0"
+  if [[ "$code" -eq 0 ]]; then
+    fail "$name" "critic-only policy downgrade was accepted without user authorization"
     return
   fi
-  # Parallel mode: CAPTURE_BRIEF receives the synthesis brief (last dispatch)
-  assert_file_contains "$name" "$brief" "Tier: standard" || return
-  assert_file_contains "$name" "$brief" "tier.requested: auto" || return
-  assert_file_contains "$name" "$brief" "tier.resolved: standard" || return
-  assert_file_contains "$name" "$brief" "pass.resolved: initial" || return
-  assert_file_contains "$name" "$brief" "coverage.requested: critic" || return
-  assert_file_contains "$name" "$brief" "coverage.selected: critic" || return
-  assert_file_contains "$name" "$brief" "Executor: codex" || return
-  assert_file_contains "$name" "$brief" "Reviewers: critic" || return
-  # Synthesis brief embeds reviewer findings inline — no read: paths to reviewer output files
-  assert_file_contains "$name" "$brief" "--- critic findings ---" || return
-  assert_not_contains "$name" "$brief" "reviewer-critic-" || return
-  assert_not_contains "$name" "$brief" "read: $home/.claude/agents/qa-tester.md" || return
+  assert_file_contains "$name" "$err" "below the canonical generic policy floor" || return
+  assert_file_contains "$name" "$err" "coverage" || return
+  assert_file_contains "$name" "$err" "qa-tester" || return
+  assert_file_contains "$name" "$err" "architecture-reviewer" || return
+  assert_not_contains "$name" "$err" "DISPATCH_STUB" || return
   pass "$name"
 }
 
-# Behavior: explicit full-tier intent and critic-only requested coverage remain
-# independent; neither value rewrites the other.
-# Steps: run a docs diff with --tier full --reviewers critic, then assert the
-# combined brief records full requested/resolved tier and critic-only coverage.
-test_full_tier_with_critic_only_coverage_is_truthful() {
-  local name="full-tier-with-critic-only-coverage-is-truthful"
+# Behavior: the public CLI rejects an unknown policy consumer before any
+# repository work or reviewer dispatch.
+test_invalid_policy_consumer_fails_before_dispatch() {
+  local name="invalid-policy-consumer-fails-before-dispatch"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester
+  create_repo "$repo" docs
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" \
+    --base main --policy bogus
+  local code=$?
+  set -e
+  if [[ "$code" -ne 2 ]]; then
+    fail "$name" "exit $code, expected CLI failure 2"
+    return
+  fi
+  assert_file_contains "$name" "$err" \
+    "Error: --policy must be generic or maintainer (got: bogus)" || return
+  assert_not_contains "$name" "$err" "DISPATCH_STUB" || return
+  pass "$name"
+}
+
+# Behavior: an empty policy-override file is rejected at the CLI trust
+# boundary before policy resolution or reviewer dispatch.
+test_empty_policy_override_fails_before_dispatch() {
+  local name="empty-policy-override-fails-before-dispatch"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" policy_override="$dir/empty.json"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester
+  create_repo "$repo" docs
+  printf '' > "$policy_override"
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" \
+    --base main --policy-override "$policy_override"
+  local code=$?
+  set -e
+  if [[ "$code" -ne 2 ]]; then
+    fail "$name" "exit $code, expected CLI failure 2"
+    return
+  fi
+  assert_file_contains "$name" "$err" \
+    "--policy-override must name a readable, non-empty, regular non-symlink JSON file" \
+    || return
+  assert_not_contains "$name" "$err" "DISPATCH_STUB" || return
+  pass "$name"
+}
+
+# Behavior: the runtime's inline policy-override validator rejects a non-empty
+# JSON document that does not satisfy gate_policy_override_v1.
+test_malformed_policy_override_contract_fails_before_dispatch() {
+  local name="malformed-policy-override-contract-fails-before-dispatch"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" policy_override="$dir/malformed.json"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester
+  create_repo "$repo" docs
+  jq -n '{
+    kind:"gate_policy_override_v1",
+    schema_version:1,
+    scope_fingerprint:("a" * 64),
+    allow:{tier:null,omit_reviewers:["qa-tester"]},
+    approver:{kind:"user",identity:"fixture-user",approval_ref:"conversation:test"}
+  }' > "$policy_override"
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" \
+    --base main --policy-override "$policy_override"
+  local code=$?
+  set -e
+  if [[ "$code" -ne 2 ]]; then
+    fail "$name" "exit $code, expected contract failure 2"
+    return
+  fi
+  assert_file_contains "$name" "$err" \
+    "Error: invalid gate policy override contract: $policy_override" || return
+  assert_not_contains "$name" "$err" "DISPATCH_STUB" || return
+  pass "$name"
+}
+
+# Behavior: a structured user-approved override may authorize an exact
+# scope-bound reviewer omission without rewriting full-tier intent.
+# Steps: capture the rejected scope fingerprint, bind a user approval to that
+# scope and qa-tester omission, then assert the policy audit is embedded.
+test_scope_bound_policy_override_authorizes_exact_coverage_downgrade() {
+  local name="scope-bound-policy-override"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
   local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
+  local policy_override="$dir/policy-override.json" scope_fingerprint result_path
   mkdir -p "$dir"
   create_runner "$runner"
   create_agents "$home" critic
   create_repo "$repo" docs
 
   set +e
-  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" \
+  run_gate "$home" "$runner" "$repo" "$out" "$err" \
     --base main --tier full --reviewers critic --mode sequential
   local code=$?
   set -e
+  if [[ "$code" -eq 0 ]]; then
+    fail "$name" "coverage downgrade unexpectedly passed without an override"
+    return
+  fi
+  scope_fingerprint="$(awk '/policy scope fingerprint:/ {print $NF; exit}' "$err")"
+  [[ "$scope_fingerprint" =~ ^[a-f0-9]{64}$ ]] || {
+    fail "$name" "rejection did not disclose a usable scope fingerprint"
+    return
+  }
+  jq -n --arg scope "$scope_fingerprint" '{
+    kind:"gate_policy_override_v1",
+    schema_version:1,
+    scope_fingerprint:$scope,
+    allow:{tier:null,omit_reviewers:["qa-tester"]},
+    reason:"User accepts critic-only coverage for this bounded fixture.",
+    approver:{kind:"user",identity:"fixture-user",approval_ref:"conversation:test"}
+  }' > "$policy_override"
+
+  set +e
+  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" \
+    --base main --tier full --reviewers critic --mode sequential \
+    --policy-override "$policy_override"
+  code=$?
+  set -e
   if [[ "$code" -ne 0 ]]; then
-    fail "$name" "exit $code, expected 0"
+    fail "$name" "scope-bound user override was rejected (exit $code): $(cat "$err")"
     return
   fi
   assert_file_contains "$name" "$brief" "tier.requested: full" || return
@@ -1172,6 +1559,195 @@ test_full_tier_with_critic_only_coverage_is_truthful() {
   assert_file_contains "$name" "$brief" "coverage.requested: critic" || return
   assert_file_contains "$name" "$brief" "coverage.selected: critic" || return
   assert_file_contains "$name" "$brief" "Reviewers: critic" || return
+  result_path="$(awk '/^result: / {sub(/^result: /, ""); print; exit}' "$out")"
+  jq -e '
+    .policy.resolution.downgrade_requested == true and
+    .policy.resolution.downgrade_allowed == true and
+    .policy.override.status == "applied" and
+    .policy.override.approver.kind == "user" and
+    .policy.enforcement.status == "pass"
+  ' "${result_path}.assurance.json" >/dev/null || {
+    fail "$name" "assurance sidecar did not retain applied override provenance"
+    return
+  }
+  pass "$name"
+}
+
+# Behavior: policy approval for any other scope cannot authorize the current
+# downgrade, even when its allowance fields exactly match the violation.
+test_policy_override_scope_mismatch_fails_closed() {
+  local name="policy-override-scope-mismatch-fails-closed"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" policy_override="$dir/policy-override.json"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic
+  create_repo "$repo" docs
+  jq -n '{
+    kind:"gate_policy_override_v1",
+    schema_version:1,
+    scope_fingerprint:("0" * 64),
+    allow:{tier:null,omit_reviewers:["qa-tester"]},
+    reason:"Approval belongs to a different change scope.",
+    approver:{kind:"user",identity:"fixture-user",approval_ref:"conversation:other"}
+  }' > "$policy_override"
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" \
+    --base main --reviewers critic --policy-override "$policy_override"
+  local code=$?
+  set -e
+  if [[ "$code" -ne 3 ]]; then
+    fail "$name" "exit $code, expected policy rejection 3"
+    return
+  fi
+  assert_file_contains "$name" "$err" "supplied override status: scope_mismatch" || return
+  assert_not_contains "$name" "$err" "DISPATCH_STUB" || return
+  pass "$name"
+}
+
+# Behavior: a policy override cannot be replayed after diff content changes,
+# even when the changed path, status, total line count, and byte count stay the
+# same.
+test_policy_override_scope_binds_diff_content() {
+  local name="policy-override-scope-binds-diff-content"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" policy_override="$dir/policy-override.json"
+  local original_scope current_scope
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic
+  create_repo "$repo" docs
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" \
+    --base main --reviewers critic
+  local code=$?
+  set -e
+  if [[ "$code" -ne 3 ]]; then
+    fail "$name" "initial downgrade exited $code, expected policy rejection 3"
+    return
+  fi
+  original_scope="$(awk '/policy scope fingerprint:/ {print $NF; exit}' "$err")"
+  [[ "$original_scope" =~ ^[a-f0-9]{64}$ ]] || {
+    fail "$name" "initial rejection did not disclose a usable scope fingerprint"
+    return
+  }
+  jq -n --arg scope "$original_scope" '{
+    kind:"gate_policy_override_v1",
+    schema_version:1,
+    scope_fingerprint:$scope,
+    allow:{tier:null,omit_reviewers:["qa-tester"]},
+    reason:"Approval is intentionally bound to the original fixture content.",
+    approver:{kind:"user",identity:"fixture-user",approval_ref:"conversation:content"}
+  }' > "$policy_override"
+
+  # Same path, status, lines, and bytes; only the patch content changes.
+  printf 'initial\ndocs CHANGE\n' > "$repo/README.md"
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" \
+    --base main --reviewers critic --policy-override "$policy_override"
+  code=$?
+  set -e
+  if [[ "$code" -ne 3 ]]; then
+    fail "$name" "content-changed scope exited $code, expected policy rejection 3"
+    return
+  fi
+  current_scope="$(awk '/policy scope fingerprint:/ {print $NF; exit}' "$err")"
+  if [[ ! "$current_scope" =~ ^[a-f0-9]{64}$ \
+      || "$current_scope" == "$original_scope" ]]; then
+    fail "$name" "scope fingerprint did not change with same-shape diff content"
+    return
+  fi
+  assert_file_contains "$name" "$err" \
+    "supplied override status: scope_mismatch" || return
+  assert_not_contains "$name" "$err" "DISPATCH_STUB" || return
+  pass "$name"
+}
+
+# Behavior: an override bound to the current scope still fails closed when its
+# allowance does not exactly cover the requested downgrade.
+test_policy_override_allowance_mismatch_fails_closed() {
+  local name="policy-override-allowance-mismatch-fails-closed"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" policy_override="$dir/policy-override.json"
+  local scope_fingerprint
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic
+  create_repo "$repo" docs
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" \
+    --base main --reviewers critic
+  local code=$?
+  set -e
+  if [[ "$code" -ne 3 ]]; then
+    fail "$name" "initial downgrade exited $code, expected policy rejection 3"
+    return
+  fi
+  scope_fingerprint="$(awk '/policy scope fingerprint:/ {print $NF; exit}' "$err")"
+  [[ "$scope_fingerprint" =~ ^[a-f0-9]{64}$ ]] || {
+    fail "$name" "initial rejection did not disclose a usable scope fingerprint"
+    return
+  }
+  jq -n --arg scope "$scope_fingerprint" '{
+    kind:"gate_policy_override_v1",
+    schema_version:1,
+    scope_fingerprint:$scope,
+    allow:{tier:null,omit_reviewers:[]},
+    reason:"This allowance intentionally omits none of the missing reviewers.",
+    approver:{kind:"user",identity:"fixture-user",approval_ref:"conversation:mismatch"}
+  }' > "$policy_override"
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" \
+    --base main --reviewers critic --policy-override "$policy_override"
+  code=$?
+  set -e
+  if [[ "$code" -ne 3 ]]; then
+    fail "$name" "exit $code, expected policy rejection 3"
+    return
+  fi
+  assert_file_contains "$name" "$err" \
+    "supplied override status: allowance_mismatch" || return
+  assert_not_contains "$name" "$err" "DISPATCH_STUB" || return
+  pass "$name"
+}
+
+# Behavior: policy resolution has one producer call site and its fail-closed
+# enforcement check precedes every resolved-coordinate consumer.
+test_policy_enforcement_precedes_resolved_coordinate_consumers() {
+  local name="policy-enforcement-precedes-resolved-coordinate-consumers"
+  should_run "$name" || return 0
+  local gate="$REPO_ROOT/runtime/bin/pr-gate.sh"
+  local assignment_count assignment_line enforcement_count enforcement_line
+  local first_consumer_line
+  assignment_count="$(grep -c '^GATE_POLICY_RESOLUTION=' "$gate" || true)"
+  enforcement_count="$(grep -c "jq -r '.enforcement.status'" "$gate" || true)"
+  assignment_line="$(grep -n '^GATE_POLICY_RESOLUTION=' "$gate" \
+    | cut -d: -f1 | head -1)"
+  enforcement_line="$(grep -n "jq -r '.enforcement.status'" "$gate" \
+    | cut -d: -f1 | head -1)"
+  first_consumer_line="$(grep -n '^TIER_RESOLVED=' "$gate" \
+    | cut -d: -f1 | head -1)"
+
+  if [[ "$assignment_count" -ne 1 || "$enforcement_count" -ne 1 \
+      || ! "$assignment_line" =~ ^[0-9]+$ \
+      || ! "$enforcement_line" =~ ^[0-9]+$ \
+      || ! "$first_consumer_line" =~ ^[0-9]+$ \
+      || "$assignment_line" -ge "$enforcement_line" \
+      || "$enforcement_line" -ge "$first_consumer_line" ]]; then
+    fail "$name" \
+      "assignment=$assignment_count@$assignment_line enforcement=$enforcement_count@$enforcement_line first-consumer=$first_consumer_line"
+    return
+  fi
   pass "$name"
 }
 
@@ -1403,7 +1979,7 @@ test_parallel_timeout_kills_hanging_reviewer() {
   local out="$dir/out" err="$dir/err"
   mkdir -p "$dir"
   create_runner "$runner"
-  create_agents "$home" critic
+  create_agents "$home" critic qa-tester
   create_repo "$repo" docs
 
   set +e
@@ -1414,7 +1990,8 @@ test_parallel_timeout_kills_hanging_reviewer() {
   _PM_DISPATCH_GATE_WATCHDOG_TIMEOUT=2 \
     CODEX_GATE_STUB_MODE=hang \
     CODEX_GATE_HANG_SECONDS="$marker" \
-    run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --reviewers critic --parallel
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester --parallel
   local code=$?
   set -e
   if [[ "$code" -eq 0 ]]; then
@@ -1442,7 +2019,7 @@ test_parallel_timeout_kills_hanging_synthesis() {
   local out="$dir/out" err="$dir/err"
   mkdir -p "$dir"
   create_runner "$runner"
-  create_agents "$home" critic
+  create_agents "$home" critic qa-tester
   create_repo "$repo" docs
 
   set +e
@@ -1453,7 +2030,8 @@ test_parallel_timeout_kills_hanging_synthesis() {
   _PM_DISPATCH_GATE_SYNTHESIS_WATCHDOG_TIMEOUT=2 \
     CODEX_GATE_STUB_SYNTHESIS_MODE=hang \
     CODEX_GATE_HANG_SECONDS="$marker" \
-    run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --reviewers critic --parallel
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester --parallel
   local code=$?
   set -e
   if [[ "$code" -eq 0 ]]; then
@@ -1536,8 +2114,8 @@ test_sequential_combined_brief_validates() {
 
 # Behavior: each parallel per-reviewer brief satisfies brief-validate.sh
 # (same dispatch contract the reviewer executor validates first).
-# Steps: run the gate with --reviewers critic --parallel, capture the
-# per-reviewer brief, run brief-validate.sh on it, and assert it exits 0.
+# Steps: run the gate with the generic docs policy coverage in parallel,
+# capture the critic brief, run brief-validate.sh on it, and assert it exits 0.
 test_parallel_reviewer_brief_validates() {
   local name="parallel-reviewer-brief-validates"
   should_run "$name" || return 0
@@ -1546,12 +2124,14 @@ test_parallel_reviewer_brief_validates() {
   local out="$dir/out" err="$dir/err" reviewer_brief="$dir/reviewer-brief.md"
   mkdir -p "$dir"
   create_runner "$runner"
-  create_agents "$home" critic
+  create_agents "$home" critic qa-tester
   create_repo "$repo" docs
 
   set +e
   CODEX_GATE_CAPTURE_REVIEWER_BRIEF="$reviewer_brief" \
-    run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --reviewers critic --parallel
+    CODEX_GATE_CAPTURE_REVIEWER_FILTER=critic \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester --parallel
   local code=$?
   set -e
   if [[ "$code" -ne 0 ]]; then
@@ -1908,7 +2488,7 @@ test_adjacent_test_not_duplicated_when_in_diff() {
 #   1. Create a minimal repo (express tier, docs change)
 #   2. CODEX_GATE_STUB_VERDICT=block: reviewers write Verdict: block → SHELL_FINAL=NO-GO
 #      CODEX_GATE_STUB_SYNTHESIS_FINAL=GO: synthesis stub writes Final: GO
-#   3. Run gate in parallel mode (default)
+#   3. Run gate in explicit parallel mode
 #   4. Assert non-zero exit and "contradicts shell-computed" in stderr
 test_synthesis_verdict_mismatch_aborts_gate() {
   local name="synthesis-verdict-mismatch-aborts-gate"
@@ -1940,7 +2520,7 @@ test_synthesis_verdict_mismatch_aborts_gate() {
 # Steps:
 #   1. Create a repo with a committed service.go (clean tracked file)
 #   2. CODEX_GATE_STUB_SYNTHESIS_INJECT_FILE=service.go: synthesis stub appends to service.go
-#   3. Run gate in parallel mode (default)
+#   3. Run gate in explicit parallel mode
 #   4. Assert non-zero exit, "synthesis session modified" in stderr
 test_post_synthesis_injection_detected() {
   local name="post-synthesis-injection-detected"
@@ -1975,7 +2555,7 @@ test_post_synthesis_injection_detected() {
 # Steps:
 #   1. Create a minimal repo (express tier, docs change)
 #   2. CODEX_GATE_STUB_SYNTHESIS_MODE=no-output: reviewers write output; synthesis does not
-#   3. Run gate in parallel mode (default)
+#   3. Run gate in explicit parallel mode
 #   4. Assert non-zero exit and "synthesis did not produce" in stderr
 test_synthesis_no_output_aborts_gate() {
   local name="synthesis-no-output-aborts-gate"
@@ -2005,7 +2585,7 @@ test_synthesis_no_output_aborts_gate() {
 # Steps:
 #   1. Create a minimal repo (express tier, docs change)
 #   2. CODEX_GATE_STUB_MODE=no-verdict: reviewer writes output but no Verdict line
-#   3. Run gate in parallel mode (default)
+#   3. Run gate in explicit parallel mode
 #   4. Assert non-zero exit and "exactly one valid Verdict line" in stderr
 test_reviewer_invalid_verdict_aborts_gate() {
   local name="reviewer-invalid-verdict-aborts-gate"
@@ -2026,7 +2606,63 @@ test_reviewer_invalid_verdict_aborts_gate() {
     fail "$name" "expected non-zero exit when reviewer output has no valid Verdict line"
     return
   fi
-  assert_file_contains "$name" "$err" "exactly one valid Verdict line" || return
+  assert_file_contains "$name" "$err" \
+    "invalid or ambiguous canonical verdict" || return
+  pass "$name"
+}
+
+# Behavior: base-pinned reviewer definitions may emit their narrative verdict
+# as lower-case YAML while the canonical machine verdict remains in the
+# reviewer-matched heading.
+test_reviewer_heading_only_verdict_is_accepted() {
+  local name="reviewer-heading-only-verdict-is-accepted"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  CODEX_GATE_STUB_HEADER_ONLY_VERDICT=1 \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --parallel
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "heading-only structured verdict exited $code: $(cat "$err")"
+    return
+  fi
+  assert_file_contains "$name" "$out" "result: " || return
+  pass "$name"
+}
+
+# Behavior: when an optional upper-case Verdict marker conflicts with the
+# canonical heading, the gate fails closed before synthesis.
+test_reviewer_heading_and_explicit_verdict_must_agree() {
+  local name="reviewer-heading-and-explicit-verdict-must-agree"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  CODEX_GATE_STUB_CONFLICTING_VERDICT=1 \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --parallel
+  local code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then
+    fail "$name" "conflicting heading and Verdict marker unexpectedly passed"
+    return
+  fi
+  assert_file_contains "$name" "$err" \
+    "invalid or ambiguous canonical verdict" || return
+  assert_not_contains "$name" "$out" "[synthesis]" || return
   pass "$name"
 }
 
@@ -2035,7 +2671,7 @@ test_reviewer_invalid_verdict_aborts_gate() {
 # Steps:
 #   1. Create a minimal repo (express tier, docs change)
 #   2. CODEX_GATE_STUB_MODE=no-output: all dispatches (reviewers + synthesis) omit output
-#   3. Run gate in parallel mode (default)
+#   3. Run gate in explicit parallel mode
 #   4. Assert non-zero exit and "reviewer output missing or empty" in stderr
 test_reviewer_no_output_aborts_gate() {
   local name="reviewer-no-output-aborts-gate"
@@ -2065,7 +2701,7 @@ test_reviewer_no_output_aborts_gate() {
 # Steps:
 #   1. Create a minimal repo (express tier, docs change)
 #   2. CODEX_GATE_STUB_MODE=no-output: dispatch exits 0 without output
-#   3. Run gate in sequential mode (default)
+#   3. Run gate in policy-selected sequential mode
 #   4. Assert non-zero exit and "sequential gate did not produce" in stderr
 test_sequential_no_output_aborts_gate() {
   local name="sequential-no-output-aborts-gate"
@@ -2095,7 +2731,7 @@ test_sequential_no_output_aborts_gate() {
 # Steps:
 #   1. Create a minimal repo (express tier, docs change)
 #   2. CODEX_GATE_STUB_MODE=no-verdict: dispatch writes output but no Final line
-#   3. Run gate in sequential mode (default)
+#   3. Run gate in policy-selected sequential mode
 #   4. Assert non-zero exit and "must contain exactly one Final" in stderr
 test_sequential_no_final_line_aborts_gate() {
   local name="sequential-no-final-line-aborts-gate"
@@ -2129,7 +2765,7 @@ test_sequential_no_final_line_aborts_gate() {
 #   1. Create a full-tier repo change (5 reviewers)
 #   2. CODEX_GATE_STUB_MODE=sequential-partial-timeout: dispatch writes 2 of
 #      5 reviewer sections then exits 124 (simulated timeout)
-#   3. Run gate in sequential mode (default)
+#   3. Run gate in policy-selected sequential mode
 #   4. Assert non-zero exit, stderr reports Timeout + partial completion
 #      counts + the completed/incomplete reviewer names, and the output
 #      file on disk still contains the 2 completed reviewer sections
@@ -2783,7 +3419,7 @@ test_parallel_frontmatter_parity_mismatch_aborts_gate() {
 # Steps:
 #   1. Create a repo with a committed service.go (clean tracked file)
 #   2. CODEX_GATE_STUB_INJECT_FILE=service.go: reviewer stub appends to service.go
-#   3. Run gate in parallel mode (default)
+#   3. Run gate in explicit parallel mode
 #   4. Assert non-zero exit, "prompt injection" in stderr, and no "[synthesis]" in stdout
 test_prompt_injection_detected() {
   local name="prompt-injection-detected"
@@ -2905,7 +3541,10 @@ if [[ "$brief_file" == *-synthesis.md ]]; then
   printf -- '---\ngate_result_version: pr_gate_result_v1\nfinal: GO\ntier: full\nmode: parallel\nmost_severe: advise\nreviewers:\n  critic: skipped\n  qa-tester: skipped\n  architecture-reviewer: skipped\n  security-reviewer: skipped\n  risk-reviewer: skipped\nescalation:\n  recommended: false\n  reviewers: []\n  reason: []\n---\n# PR-Gate Result\n**Date**: 2026-01-01\n**Reviewers**: stub\n**Not reviewed**: none\n\n## stub-reviewer -- advise\n- stub finding\n\nVerdict: advise. Stub.\n\n## Cross-Reviewer Overlaps\nnone\n\n## Coverage Notes\n**Dimensions not covered**: none\n\n## Gate Conclusion\n**Overall verdict**: advise\n**Most severe individual verdict**: advise\nFinal: GO\n\n## Escalation\n**Recommended**: false\n**Reviewers**: none\n**Reason**:\n- none\n\nRequired fixes before GO: none\n\nRecommended follow-ups:\n- none\n\nRationale: Stub.\n' > "$output_path"
 else
   stub_verdict="${CODEX_GATE_STUB_VERDICT:-advise}"
-  printf '## stub-reviewer -- %s\nVerdict: %s. Stub output.\n' "$stub_verdict" "$stub_verdict" > "$output_path"
+  reviewer_name="$(awk '$1 == "Reviewer:" { print $2; exit }' "$brief_file")"
+  : "${reviewer_name:=stub-reviewer}"
+  printf '## %s -- %s\nVerdict: %s. Stub output.\n' \
+    "$reviewer_name" "$stub_verdict" "$stub_verdict" > "$output_path"
 fi
 exit 0
 TWRAP_EOF
@@ -2954,7 +3593,8 @@ test_verdict_prefix_rejected() {
     fail "$name" "expected non-zero exit when verdict uses invalid prefix-only token"
     return
   fi
-  assert_file_contains "$name" "$err" "exactly one valid Verdict line" || return
+  assert_file_contains "$name" "$err" \
+    "invalid or ambiguous canonical verdict" || return
   pass "$name"
 }
 
@@ -3131,7 +3771,8 @@ test_multiple_verdict_lines_aborts_gate() {
     fail "$name" "expected non-zero exit when reviewer artifact has multiple valid Verdict lines"
     return
   fi
-  assert_file_contains "$name" "$err" "exactly one valid Verdict line" || return
+  assert_file_contains "$name" "$err" \
+    "invalid or ambiguous canonical verdict" || return
   pass "$name"
 }
 
@@ -3366,6 +4007,79 @@ STUB_PMCTL
   pass "$name"
 }
 
+# Behavior: a repo-layout gate whose pre-flight command fails publishes a
+# complete NO-GO result with unavailable dispatch evidence. The run-dir makes
+# an attestation destination available, but no reviewer was dispatched, so the
+# sidecar must leave provenance.attestation null instead of pointing at a file
+# that cannot and must not exist.
+# Steps: run a repo-layout fixture with --run-dir and a failing --test-cmd,
+# then assert exit 1, a verified relocated result, the preflight-only outcome,
+# null attestation provenance, and no protected attestation artifact.
+test_repo_layout_preflight_failure_publishes_unattested_nogo() {
+  local name="gate-assurance/repo-layout-preflight-failure-publishes-unattested-nogo"
+  should_run "$name" || return 0
+  local dir source_runner layout home repo out err result run_dir code
+  dir="$TMP_ROOT/$name"
+  source_runner="$dir/source-runner"
+  layout="$dir/layout"
+  home="$dir/home"
+  repo="$dir/repo"
+  out="$dir/out"
+  err="$dir/err"
+  run_dir="$dir/gate-run"
+  mkdir -p "$dir" "$layout/runtime/bin" "$layout/runtime/lib" \
+    "$layout/core/policy" "$run_dir"
+  create_runner "$source_runner"
+  cp "$source_runner/pr-gate.sh" "$layout/runtime/bin/pr-gate.sh"
+  cp -R "$source_runner/lib/." "$layout/runtime/lib/"
+  cp -R "$source_runner/core/policy/." "$layout/core/policy/"
+  cp -R "$REPO_ROOT/agents" "$layout/agents"
+  cp -R "$REPO_ROOT/adapters" "$layout/adapters"
+  cp "$source_runner/adapters/codex/dispatch.sh" "$layout/adapters/codex/dispatch.sh"
+  chmod +x "$layout/runtime/bin/pr-gate.sh" "$layout/adapters/codex/dispatch.sh"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  code=0
+  set +e
+  HOME="$home" PM_DISPATCH_STATE_ROOT="$dir/state" \
+    "$layout/runtime/bin/pr-gate.sh" --cd "$repo" --base main --executor codex \
+      --run-dir "$run_dir" --test-cmd "exit 1" > "$out" 2> "$err"
+  code=$?
+  set -e
+  if [[ "$code" -ne 1 ]]; then
+    fail "$name" "exit $code, expected published NO-GO exit 1: $(tail -n 20 "$err" 2>/dev/null)"
+    return
+  fi
+  result="$(awk -F'result: ' '/^result: /{path=$2} END{print path}' "$out")"
+  if [[ -z "$result" || ! -s "$result" || "$result" != "$run_dir"/.gate-results/* ]]; then
+    fail "$name" "verified result handoff missing or outside run-dir: result=$result"
+    return
+  fi
+  if ! jq -e '
+      .result.final == "NO-GO" and
+      .coordinates.independence.evidence_status == "unavailable" and
+      .dispatch.outcomes == [{
+        role:"preflight",reviewer:null,status:"failed",run_id:null,
+        evidence_status:"unavailable"
+      }] and
+      .provenance.attestation == null
+    ' "${result}.assurance.json" >/dev/null; then
+    fail "$name" "preflight assurance claimed a nonexistent dispatch attestation"
+    return
+  fi
+  if find "$run_dir" -maxdepth 1 -name 'gate-assurance-*.attestation.json' -print -quit \
+      | grep -q .; then
+    fail "$name" "preflight-only gate unexpectedly wrote a dispatch attestation"
+    return
+  fi
+  if ! "$REPO_ROOT/cli/pmctl" gate verify "$result" >/dev/null 2>&1; then
+    fail "$name" "published preflight NO-GO failed shared verification"
+    return
+  fi
+  pass "$name"
+}
+
 # Behavior: the parallel gate result body still carries exactly one
 # plain-text Final: (GO|NO-GO) line, preserving the pre-frontmatter
 # back-compat contract that downstream consumers grep for.
@@ -3571,12 +4285,13 @@ test_full_tier_line_count() {
   pass "$name"
 }
 
-# Behavior: a sensitive filename (auth-*) triggers full tier regardless of
-# how few lines changed.
-# Steps: create a repo/branch with a tiny diff to a sensitive filename, run
-# the gate, and assert the captured brief has Tier: full.
-test_full_tier_sensitive_file() {
-  local name="full-tier-sensitive-file"
+# Behavior: a bounded auth-path change adds the security reviewer without
+# conflating sensitive coverage with full-tier intent; because mode is omitted,
+# the parallel recommendation becomes the auto-selected topology.
+# Steps: create a tiny auth diff and assert express intent, the security
+# dimension, and policy-selected parallel mode.
+test_sensitive_file_adds_security_without_forcing_full() {
+  local name="sensitive-file-adds-security"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
@@ -3594,7 +4309,97 @@ test_full_tier_sensitive_file() {
     fail "$name" "exit $code, expected 0"
     return
   fi
-  assert_file_contains "$name" "$brief" "Tier: full" || return
+  assert_file_contains "$name" "$brief" "Tier: express" || return
+  assert_file_contains "$name" "$brief" "Reviewers: critic,qa-tester,security-reviewer" || return
+  assert_file_contains "$name" "$brief" "policy.required_reviewers: critic,qa-tester,security-reviewer" || return
+  assert_file_contains "$name" "$brief" "policy.recommended_mode: parallel" || return
+  assert_file_contains "$name" "$brief" \
+    'policy.escalation_signals: [{"id":"security-sensitive-path"' || return
+  assert_not_contains "$name" "$brief" "any diff file matches (" || return
+  assert_file_contains "$name" "$brief" "mode.resolved: parallel" || return
+  assert_file_contains "$name" "$brief" "mode.selection_source: policy" || return
+  pass "$name"
+}
+
+# Behavior: pluralized security/risk directories and a public schema path map
+# to their three signal-specific reviewer dimensions through one resolver.
+test_plural_signal_paths_add_required_dimensions() {
+  local name="plural-signal-paths-add-required-dimensions"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" brief="$dir/brief.md" result_path
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" clean
+  mkdir -p "$repo/credentials" "$repo/migrations" "$repo/api"
+  printf 'package credentials\n' > "$repo/credentials/store.go"
+  printf 'select 1;\n' > "$repo/migrations/001.sql"
+  printf '{}\n' > "$repo/api/schema.json"
+
+  set +e
+  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" \
+    --base main
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  assert_file_contains "$name" "$brief" "tier.resolved: standard" || return
+  assert_file_contains "$name" "$brief" \
+    "coverage.selected: critic,qa-tester,architecture-reviewer,security-reviewer,risk-reviewer" || return
+  assert_file_contains "$name" "$brief" "mode.resolved: parallel" || return
+  assert_file_contains "$name" "$brief" "mode.selection_source: policy" || return
+  result_path="$(awk -F'result: ' '/^result: /{path=$2} END{print path}' "$out")"
+  jq -e '
+    any(.policy.matched_signals[];
+      .id == "security-sensitive-path" and
+      (.matches | index("credentials/store.go")) != null) and
+    any(.policy.matched_signals[];
+      .id == "risk-sensitive-path" and
+      (.matches | index("migrations/001.sql")) != null) and
+    any(.policy.matched_signals[];
+      .id == "public-contract-path" and
+      (.matches | index("api/schema.json")) != null)
+  ' "${result_path}.assurance.json" >/dev/null || {
+    fail "$name" "policy artifact omitted a plural-path signal match"
+    return
+  }
+  pass "$name"
+}
+
+# Behavior: changes to the canonical policy tables force the gate's highest
+# rigor and the architecture/security/risk dimensions, preventing a small
+# policy edit from quietly weakening its own future review floor.
+test_policy_source_path_is_self_protecting() {
+  local name="policy-source-path-is-self-protecting"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" clean
+  mkdir -p "$repo/core/policy"
+  printf 'policy fixture\n' > "$repo/core/policy/example.tsv"
+
+  set +e
+  CODEX_GATE_CAPTURE_BRIEF="$brief" \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0: $(cat "$err")"
+    return
+  fi
+  assert_file_contains "$name" "$brief" "tier.resolved: full" || return
+  assert_file_contains "$name" "$brief" \
+    "coverage.selected: critic,qa-tester,architecture-reviewer,security-reviewer,risk-reviewer" \
+    || return
+  assert_file_contains "$name" "$brief" '"id":"policy-source-path"' || return
   pass "$name"
 }
 
@@ -3633,10 +4438,10 @@ test_via_symlink() {
   pass "$name"
 }
 
-# Behavior: renaming a sensitive file (auth.ts -> login.ts) still triggers
-# full tier by matching the rename's old name, not just the new one.
-# Steps: commit auth.ts on main, then rename it to login.ts on a feature
-# branch, run the gate, and assert the captured brief has Tier: full.
+# Behavior: renaming a sensitive file (auth.ts -> login.ts) preserves both the
+# rename fact and the security signal without conflating either with full tier.
+# Steps: commit auth.ts on main, rename it on a feature branch, and assert the
+# policy artifact records the old path under both matched signals.
 test_rename_sensitive_old_name() {
   local name="rename-sensitive-old-name"
   should_run "$name" || return 0
@@ -3668,7 +4473,19 @@ test_rename_sensitive_old_name() {
     fail "$name" "exit $code, expected 0"
     return
   fi
-  assert_file_contains "$name" "$brief" "Tier: full" || return
+  assert_file_contains "$name" "$brief" "Tier: express" || return
+  assert_file_contains "$name" "$brief" "Reviewers: critic,qa-tester,security-reviewer" || return
+  local result_path
+  result_path="$(awk -F'result: ' '/^result: /{path=$2} END{print path}' "$out")"
+  jq -e '
+    any(.policy.matched_signals[];
+      .id == "renamed-input" and (.matches | index("auth.ts")) != null) and
+    any(.policy.matched_signals[];
+      .id == "security-sensitive-path" and (.matches | index("auth.ts")) != null)
+  ' "${result_path}.assurance.json" >/dev/null || {
+    fail "$name" "policy artifact did not preserve rename-origin security evidence"
+    return
+  }
   pass "$name"
 }
 
@@ -3762,8 +4579,13 @@ test_untracked_binary_routes_to_standard() {
 }
 
 run_test test_gate_assurance_policy_snapshot_matches_sources
-run_test test_gate_tier_policy_source_controls_default_coverage
+run_test test_gate_policy_sources_control_default_coverage
 run_test test_gate_assurance_policy_snapshot_is_copy_mode_fallback
+run_test test_dormant_policy_signal_with_unknown_reviewer_fails_before_dispatch
+run_test test_duplicate_policy_signal_id_fails_before_dispatch
+run_test test_maintainer_initial_policy_sets_coverage_and_auto_mode
+run_test test_maintainer_targeted_policy_preserves_remediation_scope
+run_test test_input_execution_signal_auto_selects_parallel_but_respects_user_mode
 run_test test_tier_detection
 run_test test_pr_gate_does_not_mutate_gitignore
 run_test test_artifact_filter_drops_gate_artifacts
@@ -3776,8 +4598,15 @@ run_test test_copy_mode_artifact_fallback_body_parity
 run_test test_missing_reviewer_agent
 run_test test_invalid_base_ref
 run_test test_no_changed_files
-run_test test_reviewers_override_preserves_tier_detection
-run_test test_full_tier_with_critic_only_coverage_is_truthful
+run_test test_reviewers_override_below_policy_floor_fails_closed
+run_test test_invalid_policy_consumer_fails_before_dispatch
+run_test test_empty_policy_override_fails_before_dispatch
+run_test test_malformed_policy_override_contract_fails_before_dispatch
+run_test test_scope_bound_policy_override_authorizes_exact_coverage_downgrade
+run_test test_policy_override_scope_mismatch_fails_closed
+run_test test_policy_override_scope_binds_diff_content
+run_test test_policy_override_allowance_mismatch_fails_closed
+run_test test_policy_enforcement_precedes_resolved_coordinate_consumers
 run_test test_brief_file_snapshot_exists_at_dispatch
 run_test test_reviewer_definitions_are_workspace_snapshots
 run_test test_brief_cleanup_on_dispatch_failure
@@ -3785,7 +4614,9 @@ run_test test_output_directory_created
 run_test test_claude_adapter_dispatches_subprocess
 run_test test_standard_tier_detection
 run_test test_full_tier_line_count
-run_test test_full_tier_sensitive_file
+run_test test_sensitive_file_adds_security_without_forcing_full
+run_test test_plural_signal_paths_add_required_dimensions
+run_test test_policy_source_path_is_self_protecting
 run_test test_via_symlink
 run_test test_rename_sensitive_old_name
 run_test test_binary_file_routes_to_standard
@@ -3799,6 +4630,7 @@ run_test test_parallel_reviewer_brief_validates
 run_test test_parallel_synthesis_brief_validates
 run_test test_gate_result_frontmatter_and_escalation
 run_test test_repo_layout_captures_dispatch_run_id
+run_test test_repo_layout_preflight_failure_publishes_unattested_nogo
 run_test test_gate_result_final_line_back_compat
 run_test test_frontmatter_escalation_parity
 run_test test_failed_reviewer_aborts_gate
@@ -3806,6 +4638,8 @@ run_test test_synthesis_verdict_mismatch_aborts_gate
 run_test test_post_synthesis_injection_detected
 run_test test_synthesis_no_output_aborts_gate
 run_test test_reviewer_invalid_verdict_aborts_gate
+run_test test_reviewer_heading_only_verdict_is_accepted
+run_test test_reviewer_heading_and_explicit_verdict_must_agree
 run_test test_reviewer_no_output_aborts_gate
 run_test test_sequential_no_output_aborts_gate
 run_test test_sequential_no_final_line_aborts_gate
@@ -4437,6 +5271,8 @@ test_help_output_is_bounded_and_current() {
   fi
   assert_file_contains "$name" "$out" "Usage:" || return
   assert_file_contains "$name" "$out" "--mode <mode>" || return
+  assert_file_contains "$name" "$out" "--policy <name>" || return
+  assert_file_contains "$name" "$out" "--policy-override <f>" || return
   assert_file_contains "$name" "$out" "--targeted <list>" || return
   assert_file_contains "$name" "$out" "--initial-result <f>" || return
   assert_not_contains "$name" "$out" "_gate_assurance_policy_snapshot" || return
@@ -4529,6 +5365,42 @@ test_targeted_pass_references_initial_result() {
     fail "$name" "targeted assurance envelope lost its initial reference or coverage"
     return
   }
+  pass "$name"
+}
+
+# Behavior: a targeted pass with auto mode and no input brief resolves all
+# policy coordinates before constructing the policy-selected sequential reviewer brief.
+# Steps: run a critic-only targeted gate without --mode or --brief and assert
+# successful dispatch plus initialized sequential coordinates. This covers the
+# real runtime path that previously aborted on unbound MODE_RESOLVED/BRIEF_FILE.
+test_targeted_auto_mode_initializes_brief_coordinates() {
+  local name="targeted-auto-mode-initializes-brief-coordinates"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" brief="$dir/brief.md" initial="$dir/initial.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  write_valid_initial_gate_result "$initial"
+
+  set +e
+  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" \
+    --base main --targeted critic --initial-result "$initial"
+  local code=$?
+  set -e
+
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0 (stderr: $(head -3 "$err" 2>/dev/null))"
+    return
+  fi
+  assert_file_contains "$name" "$brief" "mode.requested: default" || return
+  assert_file_contains "$name" "$brief" "mode.resolved: sequential" || return
+  assert_file_contains "$name" "$brief" "mode.selection_source: policy" || return
+  assert_file_contains "$name" "$brief" "mode.recommendation_overridden: false" || return
+  assert_file_contains "$name" "$brief" "pass.resolved: targeted" || return
+  assert_not_contains "$name" "$err" "unbound variable" || return
   pass "$name"
 }
 
@@ -4715,12 +5587,12 @@ test_equivalent_mode_spellings_are_accepted() {
   local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
   mkdir -p "$dir"
   create_runner "$runner"
-  create_agents "$home" critic
+  create_agents "$home" critic qa-tester
   create_repo "$repo" docs
 
   set +e
   CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" \
-    --base main --reviewers critic --mode parallel --parallel
+    --base main --reviewers critic,qa-tester --mode parallel --parallel
   local code=$?
   set -e
   if [[ "$code" -ne 0 ]]; then
@@ -4729,6 +5601,8 @@ test_equivalent_mode_spellings_are_accepted() {
   fi
   assert_file_contains "$name" "$brief" "mode.requested: parallel" || return
   assert_file_contains "$name" "$brief" "mode.resolved: parallel" || return
+  assert_file_contains "$name" "$brief" "mode.selection_source: user" || return
+  assert_file_contains "$name" "$brief" "mode.recommendation_overridden: true" || return
   assert_file_contains "$name" "$out" "launched critic" || return
   pass "$name"
 }
@@ -4799,6 +5673,8 @@ test_seq_brief_ascii_separator() {
     fail "$name" "exit $code, expected 0"
     return
   fi
+  assert_file_contains "$name" "$brief" "mode.selection_source: user" || return
+  assert_file_contains "$name" "$brief" "mode.recommendation_overridden: false" || return
   # Template heading must use ASCII -- not em dash
   assert_file_contains "$name" "$brief" "PR-Gate Result --" || return
   # Reviewer heading format must use ASCII -- not em dash
@@ -4850,10 +5726,10 @@ test_parallel_synthesis_brief_ascii_separator() {
 
 # Behavior: the per-reviewer brief emitted in parallel mode by pr-gate.sh
 # uses ASCII -- separators and contains no em dash (U+2014).
-# CODEX_GATE_CAPTURE_REVIEWER_BRIEF captures the last non-synthesis brief
-# dispatched during a parallel run.
-# Steps: run the gate with --reviewers critic --parallel, and assert the
-# captured reviewer brief contains "Executor: codex" and "file:line --"
+# CODEX_GATE_CAPTURE_REVIEWER_FILTER selects the critic brief from the
+# policy-complete parallel dispatch.
+# Steps: run the gate with generic docs coverage, and assert the captured
+# critic brief contains "Executor: codex" and "file:line --"
 # using ASCII dashes, and no UTF-8 em dash byte sequence is present.
 test_parallel_reviewer_brief_ascii_separator() {
   local name="parallel-reviewer-brief-ascii-separator"
@@ -4863,12 +5739,14 @@ test_parallel_reviewer_brief_ascii_separator() {
   local out="$dir/out" err="$dir/err" reviewer_brief="$dir/reviewer-brief.md"
   mkdir -p "$dir"
   create_runner "$runner"
-  create_agents "$home" critic
+  create_agents "$home" critic qa-tester
   create_repo "$repo" docs
 
   set +e
   CODEX_GATE_CAPTURE_REVIEWER_BRIEF="$reviewer_brief" \
-    run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --reviewers critic --parallel
+    CODEX_GATE_CAPTURE_REVIEWER_FILTER=critic \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester --parallel
   local code=$?
   set -e
   if [[ "$code" -ne 0 ]]; then
@@ -4928,8 +5806,8 @@ test_sequential_brief_has_citation_guard() {
 # Behavior: the per-reviewer parallel brief contains the citation-guard
 # preamble ("Verified reference files") and the explicit constraint ("do
 # not invent citations"), listing real repo files.
-# Steps: commit a fixture agent file, run the gate with --reviewers critic
-# --parallel, and assert the captured reviewer brief contains "Verified
+# Steps: commit a fixture agent file, run the generic docs coverage in
+# parallel, and assert the captured critic brief contains "Verified
 # reference files", "do not invent citations", and the fixture path.
 test_parallel_reviewer_brief_has_citation_guard() {
   local name="parallel-reviewer-brief-has-citation-guard"
@@ -4948,7 +5826,9 @@ test_parallel_reviewer_brief_has_citation_guard() {
 
   set +e
   CODEX_GATE_CAPTURE_REVIEWER_BRIEF="$reviewer_brief" \
-    run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --reviewers critic --parallel
+    CODEX_GATE_CAPTURE_REVIEWER_FILTER=critic \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester --parallel
   local code=$?
   set -e
   if [[ "$code" -ne 0 ]]; then
@@ -4968,8 +5848,8 @@ test_parallel_reviewer_brief_has_citation_guard() {
 # Behavior: the parallel synthesis brief contains the citation-guard
 # preamble ("Verified reference files") and the explicit constraint ("do
 # not invent citations"), listing real repo files.
-# Steps: commit a fixture agent file, run the gate with --reviewers critic
-# --parallel, and assert the captured synthesis brief contains "Verified
+# Steps: commit a fixture agent file, run the generic docs coverage in
+# parallel, and assert the captured synthesis brief contains "Verified
 # reference files", "do not invent citations", and the fixture path.
 test_parallel_synthesis_brief_has_citation_guard() {
   local name="parallel-synthesis-brief-has-citation-guard"
@@ -4988,7 +5868,8 @@ test_parallel_synthesis_brief_has_citation_guard() {
 
   set +e
   CODEX_GATE_CAPTURE_BRIEF="$brief" \
-    run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --reviewers critic --parallel
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester --parallel
   local code=$?
   set -e
   if [[ "$code" -ne 0 ]]; then
@@ -5037,7 +5918,9 @@ test_dirty_preflight_fails_on_committed_plus_dirty() {
 # Steps: create a repo with committed feature-branch changes, add an
 # untracked file (dirtysrc.go), run the gate against main with
 # --allow-dirty, and assert exit 0, dispatch succeeds, the brief lists
-# dirtysrc.go, and stderr notes --allow-dirty was set.
+# dirtysrc.go, and stderr notes --allow-dirty was set. The test explicitly
+# selects sequential so CODEX_GATE_CAPTURE_BRIEF receives the combined reviewer
+# brief rather than a policy-selected parallel synthesis brief.
 test_dirty_preflight_allow_dirty_includes_worktree() {
   local name="dirty-preflight-allow-dirty-includes-worktree"
   should_run "$name" || return 0
@@ -5051,7 +5934,8 @@ test_dirty_preflight_allow_dirty_includes_worktree() {
   (cd "$repo" && printf 'x\n' > dirtysrc.go)
 
   set +e
-  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --allow-dirty
+  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" \
+    --base main --allow-dirty --mode sequential
   local code=$?
   set -e
   if [[ "$code" -ne 0 ]]; then
@@ -5073,8 +5957,8 @@ test_dirty_preflight_allow_dirty_includes_worktree() {
 # Steps: commit tracked_base.go on main, branch to feature, commit app.go
 # (so BASE...HEAD covers app.go but NOT tracked_base.go), modify
 # tracked_base.go in the worktree without committing, run the gate against
-# main with --allow-dirty, and assert exit 0 and the brief includes
-# tracked_base.go.
+# main with --allow-dirty and explicit sequential mode, then assert exit 0 and
+# the combined reviewer brief includes tracked_base.go.
 test_allow_dirty_includes_uncommitted_tracked() {
   local name="allow-dirty-includes-uncommitted-tracked"
   should_run "$name" || return 0
@@ -5103,7 +5987,8 @@ test_allow_dirty_includes_uncommitted_tracked() {
   )
 
   set +e
-  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --allow-dirty
+  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" \
+    --base main --allow-dirty --mode sequential
   local code=$?
   set -e
   if [[ "$code" -ne 0 ]]; then
@@ -5203,10 +6088,10 @@ test_seq_brief_has_reviewer_guard_constraint() {
 
 # Behavior: each per-reviewer parallel brief contains the explicit pmctl
 # guard check constraint that must be called before writing the reviewer
-# output file. CODEX_GATE_CAPTURE_REVIEWER_BRIEF captures the last
-# non-synthesis brief dispatched during a parallel run.
-# Steps: run the gate with --reviewers critic --parallel, and assert the
-# captured reviewer brief contains "pmctl guard check --role reviewer" and
+# output file. CODEX_GATE_CAPTURE_REVIEWER_FILTER selects the critic brief
+# from the policy-complete parallel dispatch.
+# Steps: run the generic docs coverage in parallel, and assert the captured
+# critic brief contains "pmctl guard check --role reviewer" and
 # "--event pre-write".
 test_parallel_reviewer_brief_has_guard_constraint() {
   local name="parallel-reviewer-brief-has-guard-constraint"
@@ -5216,12 +6101,14 @@ test_parallel_reviewer_brief_has_guard_constraint() {
   local out="$dir/out" err="$dir/err" reviewer_brief="$dir/reviewer-brief.md"
   mkdir -p "$dir"
   create_runner "$runner"
-  create_agents "$home" critic
+  create_agents "$home" critic qa-tester
   create_repo "$repo" docs
 
   set +e
   CODEX_GATE_CAPTURE_REVIEWER_BRIEF="$reviewer_brief" \
-    run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --reviewers critic --parallel
+    CODEX_GATE_CAPTURE_REVIEWER_FILTER=critic \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester --parallel
   local code=$?
   set -e
   if [[ "$code" -ne 0 ]]; then
@@ -5330,9 +6217,9 @@ test_seq_brief_guard_absolute_path_when_pmctl_not_on_path() {
 
 # Behavior: same as the sequential case above, but for the --parallel
 # per-reviewer brief's guard-check instruction.
-# Steps: strip pmctl from PATH, stage runner/cli/pmctl, run --parallel with a
-# single reviewer, assert the captured reviewer brief's guard-check line uses
-# the absolute path.
+# Steps: strip pmctl from PATH, stage runner/cli/pmctl, run the generic docs
+# coverage in parallel, and assert the captured critic brief's guard-check line
+# uses the absolute path.
 test_parallel_reviewer_brief_guard_absolute_path_when_pmctl_not_on_path() {
   local name="parallel-reviewer-brief-guard-absolute-path-when-pmctl-not-on-path"
   should_run "$name" || return 0
@@ -5341,7 +6228,7 @@ test_parallel_reviewer_brief_guard_absolute_path_when_pmctl_not_on_path() {
   local out="$dir/out" err="$dir/err" reviewer_brief="$dir/reviewer-brief.md"
   mkdir -p "$dir"
   create_runner "$runner"
-  create_agents "$home" critic
+  create_agents "$home" critic qa-tester
   create_repo "$repo" docs
 
   local REPLY
@@ -5349,8 +6236,10 @@ test_parallel_reviewer_brief_guard_absolute_path_when_pmctl_not_on_path() {
   local minpath="$REPLY"
 
   set +e
-  CODEX_GATE_CAPTURE_REVIEWER_BRIEF="$reviewer_brief" HOME="$home" PATH="$minpath" \
-    "$runner/pr-gate.sh" --cd "$repo" --base main --reviewers critic --parallel > "$out" 2> "$err"
+  CODEX_GATE_CAPTURE_REVIEWER_BRIEF="$reviewer_brief" \
+    CODEX_GATE_CAPTURE_REVIEWER_FILTER=critic HOME="$home" PATH="$minpath" \
+    "$runner/pr-gate.sh" --cd "$repo" --base main \
+      --reviewers critic,qa-tester --parallel > "$out" 2> "$err"
   local code=$?
   set -e
   if [[ "$code" -ne 0 ]]; then
@@ -5420,6 +6309,7 @@ run_test test_copy_mode_dispatches_via_adapter
 run_test test_help_output_is_bounded_and_current
 run_test test_unknown_arg_message
 run_test test_targeted_pass_references_initial_result
+run_test test_targeted_auto_mode_initializes_brief_coordinates
 run_test test_targeted_requires_initial_result
 run_test test_targeted_output_cannot_overwrite_initial_result
 run_test test_targeted_sidecar_cannot_overwrite_initial_result
@@ -5440,23 +6330,23 @@ run_test test_dirty_preflight_allow_dirty_includes_worktree
 run_test test_allow_dirty_includes_uncommitted_tracked
 run_test test_clean_committed_tree_passes_preflight
 run_test test_dirty_only_no_commit_still_reviewed
-# Behavior: a brief with architecture_impact:major emits a tier advisory
-# to stderr when the auto-detected tier is not full.
-# Steps: run the gate with --brief pointing at a major-impact brief on a
-# docs-only diff, and assert stderr contains "architecture_impact:major"
-# and "suggested tier: full".
-test_brief_major_suggests_full() {
-  local name="brief-major-suggests-full"
+# Behavior: trusted architecture_impact:major metadata is a canonical full-tier
+# policy input, not a reviewer advisory.
+# Steps: run a docs-only gate with a major-impact brief and assert the resolved
+# tier and reviewer coverage satisfy the full floor.
+test_brief_major_resolves_full() {
+  local name="brief-major-resolves-full"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
-  local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
+  local out="$dir/out" err="$dir/err"
+  local input_brief="$dir/input-brief.md" gate_brief="$dir/gate-brief.md"
   mkdir -p "$dir"
   create_runner "$runner"
   create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
   create_repo "$repo" docs
 
-  cat > "$brief" <<'BRIEF_EOF'
+  cat > "$input_brief" <<'BRIEF_EOF'
 schema_version: 1
 working_dir: /tmp
 goal: test
@@ -5468,32 +6358,37 @@ acceptance:
 BRIEF_EOF
 
   set +e
-  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --brief "$brief"
+  CODEX_GATE_CAPTURE_BRIEF="$gate_brief" run_gate \
+    "$home" "$runner" "$repo" "$out" "$err" --base main --brief "$input_brief"
+  local code=$?
   set -e
 
-  assert_file_contains "$name" "$err" "architecture_impact:major" || return
-  assert_file_contains "$name" "$err" "suggested tier: full" || return
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  assert_file_contains "$name" "$gate_brief" "Tier: full" || return
+  assert_file_contains "$name" "$gate_brief" "policy.minimum_tier: full" || return
+  assert_file_contains "$name" "$gate_brief" \
+    "Reviewers: critic,qa-tester,architecture-reviewer,security-reviewer,risk-reviewer" || return
   pass "$name"
 }
 
-# Behavior: a brief with architecture_impact:minor emits a standard-tier
-# advisory to stderr when the auto-detected tier is express (docs-only
-# diff).
-# Steps: run the gate with --brief pointing at a minor-impact brief on a
-# docs-only diff, and assert stderr contains "architecture_impact:minor"
-# and "suggested tier: standard".
-test_brief_minor_express_suggests_standard() {
-  local name="brief-minor-express-suggests-standard"
+# Behavior: trusted architecture_impact:minor metadata raises a docs-only diff
+# to the canonical standard floor and architecture coverage.
+test_brief_minor_resolves_standard() {
+  local name="brief-minor-resolves-standard"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
-  local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
+  local out="$dir/out" err="$dir/err"
+  local input_brief="$dir/input-brief.md" gate_brief="$dir/gate-brief.md"
   mkdir -p "$dir"
   create_runner "$runner"
   create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
   create_repo "$repo" docs
 
-  cat > "$brief" <<'BRIEF_EOF'
+  cat > "$input_brief" <<'BRIEF_EOF'
 schema_version: 1
 working_dir: /tmp
 goal: test
@@ -5505,25 +6400,69 @@ acceptance:
 BRIEF_EOF
 
   set +e
-  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --brief "$brief"
+  CODEX_GATE_CAPTURE_BRIEF="$gate_brief" run_gate \
+    "$home" "$runner" "$repo" "$out" "$err" --base main --brief "$input_brief"
+  local code=$?
   set -e
 
-  assert_file_contains "$name" "$err" "architecture_impact:minor" || return
-  assert_file_contains "$name" "$err" "suggested tier: standard" || return
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  assert_file_contains "$name" "$gate_brief" "Tier: standard" || return
+  assert_file_contains "$name" "$gate_brief" "policy.minimum_tier: standard" || return
+  assert_file_contains "$name" "$gate_brief" \
+    "Reviewers: critic,qa-tester,architecture-reviewer" || return
   pass "$name"
 }
 
-# Behavior: when --tier is explicitly set, the brief advisory is
-# suppressed because TIER_OVERRIDE is populated and the advisory block is
-# skipped.
-# Steps: run the gate with --tier full and --brief pointing at a
-# major-impact brief, and assert stderr does not contain "suggested tier".
-test_brief_explicit_tier_suppresses_advisory() {
-  local name="brief-explicit-tier-suppresses-advisory"
+# Behavior: an explicit tier at the major-impact floor is accepted unchanged.
+test_brief_explicit_full_satisfies_policy_floor() {
+  local name="brief-explicit-full-satisfies-policy-floor"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
-  local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
+  local out="$dir/out" err="$dir/err"
+  local input_brief="$dir/input-brief.md" gate_brief="$dir/gate-brief.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  cat > "$input_brief" <<'BRIEF_EOF'
+schema_version: 1
+working_dir: /tmp
+goal: test
+files:
+  - read: README.md
+architecture_impact: major
+acceptance:
+  - test
+BRIEF_EOF
+
+  set +e
+  CODEX_GATE_CAPTURE_BRIEF="$gate_brief" run_gate "$home" "$runner" "$repo" \
+    "$out" "$err" --base main --tier full --brief "$input_brief"
+  local code=$?
+  set -e
+
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  assert_file_contains "$name" "$gate_brief" "tier.requested: full" || return
+  assert_file_contains "$name" "$gate_brief" "tier.resolved: full" || return
+  pass "$name"
+}
+
+# Behavior: an explicit tier below the major-impact floor fails before dispatch
+# unless a separately validated, scope-bound policy override is supplied.
+test_brief_explicit_tier_below_policy_floor_fails() {
+  local name="brief-explicit-tier-below-policy-floor-fails"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" brief="$dir/input-brief.md"
   mkdir -p "$dir"
   create_runner "$runner"
   create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
@@ -5541,23 +6480,24 @@ acceptance:
 BRIEF_EOF
 
   set +e
-  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --tier full --brief "$brief"
+  run_gate "$home" "$runner" "$repo" "$out" "$err" \
+    --base main --tier express --brief "$brief"
+  local code=$?
   set -e
 
-  if grep -q "suggested tier" "$err"; then
-    fail "$name" "--tier full should suppress the advisory but stderr contains 'suggested tier'"
+  if [[ "$code" -ne 3 ]]; then
+    fail "$name" "exit $code, expected policy rejection 3"
     return
   fi
+  assert_file_contains "$name" "$err" "requested=express required=full" || return
+  assert_not_contains "$name" "$err" "DISPATCH_STUB" || return
   pass "$name"
 }
 
-# Behavior: passing a --brief path that does not exist is benign -- the
-# gate runs normally and emits no advisory (the brief block checks -f
-# before reading).
-# Steps: run the gate with --brief pointing at a nonexistent file, and
-# assert stderr does not contain "suggested tier".
-test_brief_nonexistent_file_is_benign() {
-  local name="brief-nonexistent-file-is-benign"
+# Behavior: explicitly supplied brief metadata is trusted input only when the
+# file exists and is readable; a missing path fails before policy resolution.
+test_brief_nonexistent_file_fails_closed() {
+  local name="brief-nonexistent-file-fails-closed"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
@@ -5569,31 +6509,33 @@ test_brief_nonexistent_file_is_benign() {
 
   set +e
   run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --brief "$dir/no-such-brief.md"
+  local code=$?
   set -e
 
-  if grep -q "suggested tier" "$err"; then
-    fail "$name" "missing brief should produce no advisory but stderr contains 'suggested tier'"
+  if [[ "$code" -ne 2 ]]; then
+    fail "$name" "exit $code, expected 2"
     return
   fi
+  assert_file_contains "$name" "$err" "--brief must name a readable file" || return
+  assert_not_contains "$name" "$err" "DISPATCH_STUB" || return
   pass "$name"
 }
 
-# Behavior: a brief with architecture_impact:none produces no tier
-# advisory in stderr.
-# Steps: run the gate with --brief pointing at a none-impact brief, and
-# assert stderr does not contain "suggested tier".
-test_brief_none_no_advisory() {
-  local name="brief-none-no-advisory"
+# Behavior: architecture_impact:none adds no risk floor beyond the diff's
+# own docs-only classification.
+test_brief_none_preserves_docs_floor() {
+  local name="brief-none-preserves-docs-floor"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
-  local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
+  local out="$dir/out" err="$dir/err"
+  local input_brief="$dir/input-brief.md" gate_brief="$dir/gate-brief.md"
   mkdir -p "$dir"
   create_runner "$runner"
   create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
   create_repo "$repo" docs
 
-  cat > "$brief" <<'BRIEF_EOF'
+  cat > "$input_brief" <<'BRIEF_EOF'
 schema_version: 1
 working_dir: /tmp
 goal: test
@@ -5605,13 +6547,17 @@ acceptance:
 BRIEF_EOF
 
   set +e
-  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --brief "$brief"
+  CODEX_GATE_CAPTURE_BRIEF="$gate_brief" run_gate \
+    "$home" "$runner" "$repo" "$out" "$err" --base main --brief "$input_brief"
+  local code=$?
   set -e
 
-  if grep -q "suggested tier" "$err"; then
-    fail "$name" "architecture_impact:none should produce no advisory but stderr contains 'suggested tier'"
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
     return
   fi
+  assert_file_contains "$name" "$gate_brief" "Tier: express" || return
+  assert_file_contains "$name" "$gate_brief" "policy.minimum_tier: express" || return
   pass "$name"
 }
 
@@ -5847,9 +6793,8 @@ test_no_overrides_brief_unchanged() {
 # Behavior: the override block is injected into the --parallel per-reviewer
 # brief too -- a distinct insertion site (pr-gate.sh:906) from the
 # sequential one, needing its own coverage.
-# Steps: write a .gate-overrides.md, run the gate with --reviewers critic
-# --parallel (a single reviewer avoids a last-writer-wins race on the
-# capture target), and assert the captured reviewer brief (not synthesis)
+# Steps: write a .gate-overrides.md, run the generic docs coverage in parallel,
+# capture only the critic brief, and assert the reviewer brief (not synthesis)
 # contains "Accepted-risk overrides" and the override's content.
 test_override_file_injected_into_parallel_reviewer_brief() {
   local name="override-file-injected-parallel-reviewer"
@@ -5864,7 +6809,10 @@ test_override_file_injected_into_parallel_reviewer_brief() {
   printf '## Gate Overrides\n\n- [risk] Accepted: storage cleanup may fail. Owner: test.\n' > "$repo/.gate-overrides.md"
 
   set +e
-  CODEX_GATE_CAPTURE_REVIEWER_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --reviewers critic --parallel
+  CODEX_GATE_CAPTURE_REVIEWER_BRIEF="$brief" \
+    CODEX_GATE_CAPTURE_REVIEWER_FILTER=critic \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester --parallel
   local code=$?
   set -e
   if [[ "$code" -ne 0 ]]; then
@@ -5880,8 +6828,8 @@ test_override_file_injected_into_parallel_reviewer_brief() {
 
 # Behavior: the override block is injected into the parallel synthesis
 # brief too -- a third distinct insertion site (pr-gate.sh:1128).
-# Steps: write a .gate-overrides.md, run the gate with --reviewers critic
-# --parallel (CODEX_GATE_CAPTURE_BRIEF receives the synthesis brief, the
+# Steps: write a .gate-overrides.md, run the generic docs coverage in parallel
+# (CODEX_GATE_CAPTURE_BRIEF receives the synthesis brief, the
 # last dispatch), and assert the captured brief contains the synthesis
 # marker "Reviewer findings (embedded" plus "Accepted-risk overrides" and
 # the override's content.
@@ -5898,7 +6846,9 @@ test_override_file_injected_into_parallel_synthesis_brief() {
   printf '## Gate Overrides\n\n- [risk] Accepted: storage cleanup may fail. Owner: test.\n' > "$repo/.gate-overrides.md"
 
   set +e
-  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --reviewers critic --parallel
+  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate \
+    "$home" "$runner" "$repo" "$out" "$err" \
+    --base main --reviewers critic,qa-tester --parallel
   local code=$?
   set -e
   if [[ "$code" -ne 0 ]]; then
@@ -5920,11 +6870,12 @@ run_test test_claude_seq_brief_guard_stays_bare_pmctl_when_pmctl_not_on_path
 run_test test_missing_jq_fails_before_dispatch
 run_test test_relative_output_normalized_to_absolute
 run_test test_inline_fallback_matches_lib
-run_test test_brief_major_suggests_full
-run_test test_brief_minor_express_suggests_standard
-run_test test_brief_explicit_tier_suppresses_advisory
-run_test test_brief_nonexistent_file_is_benign
-run_test test_brief_none_no_advisory
+run_test test_brief_major_resolves_full
+run_test test_brief_minor_resolves_standard
+run_test test_brief_explicit_full_satisfies_policy_floor
+run_test test_brief_explicit_tier_below_policy_floor_fails
+run_test test_brief_nonexistent_file_fails_closed
+run_test test_brief_none_preserves_docs_floor
 run_test test_override_file_injected_into_sequential_brief
 run_test test_override_file_autodiscovery
 run_test test_override_file_explicit_flag
@@ -6457,7 +7408,8 @@ run_test test_gate_run_dir_parallel_failure_leaves_no_repo_artifacts
 #    committed change.
 # 2. Check out main (NOT feature) so the working tree is not on
 #    the reviewed ref.
-# 3. Run the gate with --base main --head feature.
+# 3. Run the gate with --base main --head feature and explicit sequential mode
+#    so the captured brief is the combined reviewer brief.
 # 4. Assert exit 0, the brief records "Head: feature", and the
 #    feature-only file is in scope.
 test_head_override_diffs_fixed_ref() {
@@ -6476,7 +7428,8 @@ test_head_override_diffs_fixed_ref() {
 
   set +e
   CODEX_GATE_CAPTURE_BRIEF="$brief" \
-    run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --head feature
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --head feature --mode sequential
   local code=$?
   set -e
   if [[ "$code" -ne 0 ]]; then
@@ -6560,7 +7513,8 @@ test_head_override_rejects_allow_dirty() {
 # Steps:
 # 1. Build a repo with main + a feature branch carrying a committed change (app.go).
 # 2. Check out main and commit an independent main-only file the feature branch never sees.
-# 3. Run the gate with --base main --head feature (base and head now diverged both ways).
+# 3. Run the gate with --base main --head feature and explicit sequential mode
+#    (base and head now diverged both ways).
 # 4. Assert exit 0, app.go is in scope, and main-only.txt is NOT in scope --
 #    a two-dot diff would additionally report main-only.txt as removed.
 test_head_override_merge_base_semantics() {
@@ -6583,7 +7537,8 @@ test_head_override_merge_base_semantics() {
 
   set +e
   CODEX_GATE_CAPTURE_BRIEF="$brief" \
-    run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --head feature
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --head feature --mode sequential
   local code=$?
   set -e
   if [[ "$code" -ne 0 ]]; then
@@ -6914,14 +7869,15 @@ test_workspace_reviewer_definitions_are_base_pinned() {
   create_repo "$repo" docs
   mkdir -p "$repo/agents"
   printf '# trusted-base-reviewer\n' > "$repo/agents/critic.md"
-  git -C "$repo" add agents/critic.md
-  git -C "$repo" commit -q -m 'add trusted reviewer definition'
+  printf '# trusted-base-qa-reviewer\n' > "$repo/agents/qa-tester.md"
+  git -C "$repo" add agents/critic.md agents/qa-tester.md
+  git -C "$repo" commit -q -m 'add trusted reviewer definitions'
   printf '# malicious-working-tree-reviewer\n' > "$repo/agents/critic.md"
 
   set +e
   CODEX_GATE_CAPTURE_REVIEWER_DEFS="$captured" run_gate \
     "$home" "$runner" "$repo" "$out" "$err" --base main --executor codex \
-    --reviewers critic --reviewer-dir "$repo/agents" --allow-dirty
+    --reviewers critic,qa-tester --reviewer-dir "$repo/agents" --allow-dirty
   local code=$?
   set -e
   [[ "$code" -eq 0 ]] || { fail "$name" "exit $code, expected 0: $(cat "$err" 2>/dev/null)"; return; }
@@ -6945,8 +7901,9 @@ test_relative_work_dir_preserves_base_pinned_reviewer_boundary() {
   create_repo "$repo" docs
   mkdir -p "$repo/agents"
   printf '# trusted-relative-base-reviewer\n' > "$repo/agents/critic.md"
-  git -C "$repo" add agents/critic.md
-  git -C "$repo" commit -q -m 'add relative-path reviewer definition'
+  printf '# trusted-relative-base-qa-reviewer\n' > "$repo/agents/qa-tester.md"
+  git -C "$repo" add agents/critic.md agents/qa-tester.md
+  git -C "$repo" commit -q -m 'add relative-path reviewer definitions'
   printf '# malicious-relative-working-tree-reviewer\n' > "$repo/agents/critic.md"
 
   local code=0
@@ -6955,7 +7912,7 @@ test_relative_work_dir_preserves_base_pinned_reviewer_boundary() {
     cd "$repo"
     HOME="$home" CODEX_GATE_CAPTURE_REVIEWER_DEFS="$captured" \
       "$runner/pr-gate.sh" --cd . --base main --executor codex \
-        --reviewers critic --reviewer-dir "$repo/agents" --allow-dirty
+        --reviewers critic,qa-tester --reviewer-dir "$repo/agents" --allow-dirty
   ) > "$out" 2> "$err"
   code=$?
   set -e
@@ -6982,7 +7939,8 @@ test_trusted_reviewer_symlink_is_rejected() {
   rm -f "$runner/agents/critic.md"
   ln -s "$dir/foreign.md" "$runner/agents/critic.md"
   set +e
-  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --reviewers critic
+  run_gate "$home" "$runner" "$repo" "$out" "$err" \
+    --base main --reviewers critic,qa-tester
   local code=$?
   set -e
   [[ "$code" -ne 0 ]] || { fail "$name" "symlinked reviewer was accepted"; return; }
@@ -7005,7 +7963,8 @@ test_trusted_reviewer_hardlink_is_rejected() {
   create_repo "$repo" docs
   ln "$runner/agents/critic.md" "$dir/critic-hardlink.md"
   set +e
-  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --reviewers critic
+  run_gate "$home" "$runner" "$repo" "$out" "$err" \
+    --base main --reviewers critic,qa-tester
   local code=$?
   set -e
   [[ "$code" -ne 0 ]] || { fail "$name" "hardlinked reviewer was accepted"; return; }
@@ -7038,7 +7997,7 @@ STUB_EOF
   local code=0
   set +e
   PATH="$shim_bin:$PATH" run_gate "$home" "$runner" "$repo" "$out" "$err" \
-    --base main --reviewers critic
+    --base main --reviewers critic,qa-tester
   code=$?
   set -e
   [[ "$code" -ne 0 ]] || { fail "$name" "mid-copy mutation was accepted"; return; }

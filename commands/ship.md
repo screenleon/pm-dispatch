@@ -133,9 +133,13 @@ using the authoritative [gate model diversity policy](../docs/review-model.md#ga
 Base the choice on actual model identities, record both identities in the
 handoff, and keep the same resolved pair for targeted re-runs. Add
 `--model "<gate_model>"` below only when the executor default does not already
-resolve to the selected gate model.
+resolve to the selected gate model. Mode is user-owned: append the literal
+`--mode sequential` when token budget favors one combined reviewer session, or
+`--mode parallel` when independent sessions are desired. If neither is present,
+the gate auto-selects the policy recommendation. Preserve the user's explicit
+choice on targeted re-runs unless the user changes it.
 
-Run `pmctl gate run --executor <gate_executor> --cd "<work_dir>" --lifecycle foreground`
+Run `pmctl gate run --executor <gate_executor> --policy maintainer --cd "<work_dir>" --lifecycle foreground`
 (substitute `<work_dir>` with the literal absolute working directory, not
 `"$PWD"` — a shell-variable expansion makes the command unanalyzable
 statically and forces a manual approval every time even though a bare
@@ -172,7 +176,7 @@ once the call returns.
     preserve the established structure, such as wording/comments, a narrow
     assertion or fixture adjustment, or a small guard/error-handling fix.
 
-  Then re-run `pmctl gate run --executor <gate_executor> --cd "<work_dir>"
+  Then re-run `pmctl gate run --executor <gate_executor> --policy maintainer --cd "<work_dir>"
   --lifecycle foreground --targeted <reviewer,...> --initial-result
   "<initial_gate_result_path>"` (same literal-path substitution as Step 3's
   first call — never `"$PWD"`). The initial-result path is the comprehensive

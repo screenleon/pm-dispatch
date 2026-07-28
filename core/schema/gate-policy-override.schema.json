@@ -1,0 +1,82 @@
+{
+  "title": "Gate tier and coverage downgrade override",
+  "description": "Explicit user authorization for a scope-bound gate tier or reviewer-coverage downgrade. Execution mode is selected directly by the user and is not an override coordinate.",
+  "type": "object",
+  "required": [
+    "kind",
+    "schema_version",
+    "scope_fingerprint",
+    "allow",
+    "reason",
+    "approver"
+  ],
+  "properties": {
+    "kind": {
+      "const": "gate_policy_override_v1"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "scope_fingerprint": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "allow": {
+      "type": "object",
+      "required": [
+        "tier",
+        "omit_reviewers"
+      ],
+      "properties": {
+        "tier": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "express",
+            "standard",
+            "full",
+            null
+          ]
+        },
+        "omit_reviewers": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]*$"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1
+    },
+    "approver": {
+      "type": "object",
+      "required": [
+        "kind",
+        "identity",
+        "approval_ref"
+      ],
+      "properties": {
+        "kind": {
+          "const": "user"
+        },
+        "identity": {
+          "type": "string",
+          "minLength": 1
+        },
+        "approval_ref": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

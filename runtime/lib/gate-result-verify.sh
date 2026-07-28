@@ -101,7 +101,7 @@ gate_assurance_verify() {
       (length == (unique | length));
     def same_set($a; $b): ($a | sort) == ($b | sort);
     only_keys(["kind","schema_version","result","bindings","coordinates",
-      "dispatch","provenance"]) and
+      "policy","dispatch","provenance"]) and
     (.result | only_keys(["final"])) and
     (.bindings | only_keys(["result_sha256","repo_root","repo_identity",
       "base_commit","head_commit","subject_fingerprint"])) and
@@ -114,6 +114,127 @@ gate_assurance_verify() {
     (.coordinates.independence |
       only_keys(["implementation_context_isolated","reviewer_topology",
         "per_reviewer_independent","evidence_status"])) and
+    (if has("policy") then
+      (.policy |
+        only_keys(["kind","schema_version","consumer_policy","policy_source",
+          "scope_fingerprint","request","classification","resolution",
+          "matched_signals","resolved","enforcement","override",
+          "reviewer_override"])) and
+      (.policy.request |
+        only_keys(["tier","mode","pass_kind","reviewers"])) and
+      (.policy.classification |
+        only_keys(["architecture_impact","line_changes",
+          "binary_or_unknown_count","layer_roots"])) and
+      (.policy.resolution |
+        only_keys(["minimum_tier","required_reviewers","recommended_mode",
+          "mode_selection_source","mode_recommendation_overridden",
+          "downgrade_requested","downgrade_allowed"])) and
+      (.policy.resolved | only_keys(["tier","mode","reviewers"])) and
+      (.policy.enforcement | only_keys(["status","violations"])) and
+      (.policy.override |
+        only_keys(["status","source","sha256","reason","approver"])) and
+      (.policy.reviewer_override |
+        only_keys(["status","source","sha256"])) and
+      .policy.kind == "gate_policy_resolution_v1" and
+      .policy.schema_version == 1 and
+      (.policy.consumer_policy | IN("generic","maintainer")) and
+      .policy.policy_source == .provenance.policy_source and
+      (.policy.scope_fingerprint | test("^[a-f0-9]{64}$")) and
+      .policy.request.tier == .coordinates.tier.requested and
+      .policy.request.mode == .coordinates.mode.requested and
+      .policy.request.pass_kind == .coordinates.pass.resolved and
+      ((.policy.request.reviewers == null and
+        .coordinates.coverage.requested == null) or
+       (same_set(.policy.request.reviewers;
+         .coordinates.coverage.requested))) and
+      (.policy.classification.architecture_impact |
+        IN("unknown","none","minor","major")) and
+      (.policy.classification.line_changes |
+        type == "number" and . >= 0 and floor == .) and
+      (.policy.classification.binary_or_unknown_count |
+        type == "number" and . >= 0 and floor == .) and
+      (.policy.classification.layer_roots | strings_unique) and
+      (.policy.resolution.minimum_tier |
+        IN("express","standard","full")) and
+      (.policy.resolution.required_reviewers | strings_unique) and
+      (.policy as $policy |
+        all($policy.resolution.required_reviewers[];
+          . as $reviewer |
+          ($policy.resolved.reviewers | index($reviewer)) != null or
+          $policy.resolution.downgrade_allowed)) and
+      (.policy.resolution.recommended_mode |
+        IN("sequential","parallel")) and
+      (.policy.resolution.mode_selection_source | IN("user","policy")) and
+      (.policy.resolution.mode_recommendation_overridden | type == "boolean") and
+      (if .policy.request.mode == "default"
+       then
+         .policy.resolution.mode_selection_source == "policy" and
+         .policy.resolved.mode == .policy.resolution.recommended_mode and
+         .policy.resolution.mode_recommendation_overridden == false
+       else
+         .policy.resolution.mode_selection_source == "user" and
+         .policy.resolved.mode == .policy.request.mode and
+         .policy.resolution.mode_recommendation_overridden ==
+           (.policy.request.mode != .policy.resolution.recommended_mode)
+       end) and
+      (.policy.resolution.downgrade_requested | type == "boolean") and
+      (.policy.resolution.downgrade_allowed | type == "boolean") and
+      (.policy.matched_signals | type == "array" and length > 0) and
+      ([.policy.matched_signals[].id] | strings_unique) and
+      (all(.policy.matched_signals[];
+        only_keys(["id","source","matches","minimum_tier",
+          "required_reviewers","recommended_mode"]) and
+        (.id | type == "string" and length > 0) and
+        (.source |
+          IN("consumer-policy","classification","path-regex","brief-value")) and
+        (.matches | strings_unique and length > 0) and
+        (.minimum_tier | IN("express","standard","full")) and
+        (.required_reviewers | strings_unique) and
+        (.recommended_mode | IN("sequential","parallel")))) and
+      .policy.resolved.tier == .coordinates.tier.resolved and
+      .policy.resolved.mode == .coordinates.mode.resolved and
+      same_set(.policy.resolved.reviewers;
+        .coordinates.coverage.selected) and
+      .policy.enforcement.status == "pass" and
+      (.policy.enforcement.violations | type == "array") and
+      (all(.policy.enforcement.violations[];
+        only_keys(["coordinate","requested","required"]) and
+        (.coordinate | IN("tier","coverage")))) and
+      (.policy.override.status |
+        IN("not_provided","not_needed","applied","scope_mismatch",
+          "allowance_mismatch")) and
+      (if .policy.resolution.downgrade_requested
+       then
+         .policy.resolution.downgrade_allowed == true and
+         .policy.override.status == "applied" and
+         (.policy.override.source |
+           type == "string" and startswith("/")) and
+         (.policy.override.sha256 | test("^[a-f0-9]{64}$")) and
+         (.policy.override.reason | type == "string" and length > 0) and
+         (.policy.override.approver |
+           only_keys(["kind","identity","approval_ref"])) and
+         .policy.override.approver.kind == "user" and
+         (.policy.override.approver.identity |
+           type == "string" and length > 0) and
+         (.policy.override.approver.approval_ref |
+           type == "string" and length > 0)
+       else
+         .policy.resolution.downgrade_allowed == false and
+         (.policy.override.status |
+           IN("not_provided","not_needed"))
+       end) and
+      (.policy.reviewer_override.status |
+        IN("not_provided","provided")) and
+      (if .policy.reviewer_override.status == "provided"
+       then
+         (.policy.reviewer_override.source |
+           type == "string" and startswith("/")) and
+         (.policy.reviewer_override.sha256 | test("^[a-f0-9]{64}$"))
+       else
+         .policy.reviewer_override.source == null and
+         .policy.reviewer_override.sha256 == null
+       end)
+    else true end) and
     (.dispatch | only_keys(["outcomes"])) and
     (all(.dispatch.outcomes[];
       only_keys(["role","reviewer","status","run_id","evidence_status"]))) and
@@ -339,5 +460,8 @@ gate_result_verify() {
   esac
 }
 
-export -f gate_result_verdict_verify gate_assurance_verify \
-  gate_assurance_authorization_verify gate_result_verify
+# These functions are a sourced-library API, not a `bash -c` API. Exporting
+# only the public entry points leaks an incomplete closure into descendants:
+# gate_result_verify also needs private helpers such as
+# _gate_result_frontmatter_value. A nested pmctl could then mistake the
+# inherited entry point for a fully loaded verifier and reject valid results.

@@ -64,6 +64,22 @@ _pmctl_gate_operation_ensure_loaded() {
     && _pmctl_operation_ensure_loaded "$repo_root"
 }
 
+# Load the verifier from the selected pmctl repository even when the caller
+# exported a function with the same name. Bash function exports do not carry a
+# dependency manifest, so trusting an inherited gate_result_verify can leave
+# its private helpers missing or mix functions from different revisions.
+_pmctl_gate_result_verifier_load() {
+  local repo_root="$1" verifier_lib
+  verifier_lib="$repo_root/runtime/lib/gate-result-verify.sh"
+  [[ -r "$verifier_lib" ]] || return 1
+  # shellcheck disable=SC1090,SC1091
+  . "$verifier_lib" || return 1
+  declare -F gate_result_verify >/dev/null 2>&1 \
+    && declare -F gate_result_verdict_verify >/dev/null 2>&1 \
+    && declare -F _gate_result_frontmatter_value >/dev/null 2>&1 \
+    && declare -F _gate_result_sha256_file >/dev/null 2>&1
+}
+
 # A v2 result and its bound sidecar cannot be renamed into place as one
 # filesystem operation. If a verifier races the producer between those
 # renames, wait briefly for the sidecar (and, for verified independence,
@@ -307,6 +323,12 @@ pmctl_gate_run() {
 pmctl_gate_run_detached() {
   local repo_root="$1" effective_cd="$2"; shift 2
   local -a forward=("$@")
+  local _ready_timeout="${PM_GATE_READY_TIMEOUT:-5}"
+
+  if ! [[ "$_ready_timeout" =~ ^[1-9][0-9]*$ ]]; then
+    printf 'pmctl gate run: invalid PM_GATE_READY_TIMEOUT %q (expected positive seconds)\n' "$_ready_timeout" >&2
+    return 2
+  fi
 
   if [[ "$(type -t detached_launch_generate_nonce 2>/dev/null)" != function ]]; then
     local _dl_lib="$repo_root/runtime/lib/detached-launch.sh"
@@ -395,11 +417,7 @@ pmctl_gate_run_detached() {
   # the supervisor has exited in the intervening scheduling window.
   detached_launch_capture_identity "$_sup_pid" "$_isolated" >"$supervisor_identity" 2>/dev/null || true
 
-  local _ready_timeout="${PM_GATE_READY_TIMEOUT:-5}" _ready_start _ready_state _ready_pid _ready_starttime _ready_rc _pre_ready_evidence_polls=0
-  if ! [[ "$_ready_timeout" =~ ^[1-9][0-9]*$ ]]; then
-    printf 'pmctl gate run: invalid PM_GATE_READY_TIMEOUT %q (expected positive seconds)\n' "$_ready_timeout" >&2
-    return 2
-  fi
+  local _ready_start _ready_state _ready_pid _ready_starttime _ready_rc
   _ready_start=$SECONDS
   while true; do
     if [[ -f "$ready_sentinel" ]]; then
@@ -443,24 +461,21 @@ pmctl_gate_run_detached() {
       _ready_rc=0
     else
       # The child can publish ready + terminal after the parent's first
-      # identity snapshot, then exit before this liveness check. The ready
-      # record is the authoritative evidence, so give its atomic rename a
-      # bounded observation window for both a missing and a now-dead identity.
-      _pre_ready_evidence_polls=$((_pre_ready_evidence_polls + 1))
-      if (( _pre_ready_evidence_polls <= 5 )); then
-        sleep 0.05
-        continue
-      fi
+      # identity snapshot, then exit before this liveness check. A loaded host
+      # can also delay the separately scheduled supervisor after the launch
+      # PID stops being observable. The configured readiness timeout owns that
+      # whole evidence window; a fixed sub-second poll count would turn normal
+      # scheduler latency into a false early-death result.
       _ready_rc=1
     fi
-    if [[ "$_ready_rc" -ne 0 ]]; then
-      printf 'pmctl gate run: detached supervisor exited before readiness for %s; inspect %s and retry with --lifecycle foreground (sandbox parent-death may prevent detached runs)\n' \
-        "$gate_id" "$supervisor_log" >&2
-      return 2
-    fi
     if (( SECONDS - _ready_start >= _ready_timeout )); then
-      printf 'pmctl gate run: detached supervisor did not become ready within %ss for %s; inspect %s and retry with --lifecycle foreground\n' \
-        "$_ready_timeout" "$gate_id" "$supervisor_log" >&2
+      if [[ "$_ready_rc" -ne 0 ]]; then
+        printf 'pmctl gate run: detached supervisor exited before readiness for %s; inspect %s and retry with --lifecycle foreground (sandbox parent-death may prevent detached runs)\n' \
+          "$gate_id" "$supervisor_log" >&2
+      else
+        printf 'pmctl gate run: detached supervisor did not become ready within %ss for %s; inspect %s and retry with --lifecycle foreground\n' \
+          "$_ready_timeout" "$gate_id" "$supervisor_log" >&2
+      fi
       return 2
     fi
     sleep 0.05
@@ -568,15 +583,16 @@ pmctl_gate_wait() {
     return 2
   fi
 
-  local _sentinel
+  local _sentinel _ready_sentinel
   _sentinel="$(detached_launch_sentinel_path "pm-gate" "$gate_id" "$_key_nonce")"
+  _ready_sentinel="$(detached_launch_sentinel_path "pm-gate-ready" "$gate_id" "$_key_nonce")"
   if detached_launch_wait_for_sentinel "$_sentinel" "$timeout" "${PM_GATE_WAIT_POLL_INTERVAL:-2}"; then
       local _state _exit _result
       _state="$(grep -m1 '^final_state=' "$_sentinel" 2>/dev/null | cut -d= -f2-)" || true
       _exit="$(grep -m1 '^exit_code=' "$_sentinel" 2>/dev/null | cut -d= -f2-)" || true
       _result="$(grep -m1 '^result_file=' "$_sentinel" 2>/dev/null | cut -d= -f2-)" || true
       _operation="$(grep -m1 '^parent_operation=' "$_sentinel" 2>/dev/null | cut -d= -f2-)" || true
-      rm -f "$_sentinel" "$_key_file" 2>/dev/null || true
+      rm -f "$_sentinel" "$_ready_sentinel" "$_key_file" 2>/dev/null || true
       [[ "$_exit" =~ ^-?[0-9]+$ ]] || _exit="1"
       printf 'gate: %s  state: %s  exit: %s\n' "$gate_id" "${_state:-unknown}" "$_exit"
       if [[ -n "$_result" ]]; then
@@ -613,14 +629,7 @@ pmctl_gate_wait() {
             return 2
           fi
         fi
-        if ! declare -F gate_result_verify >/dev/null 2>&1; then
-          local _gr_lib="$repo_root/runtime/lib/gate-result-verify.sh"
-          if [[ -r "$_gr_lib" ]]; then
-            # shellcheck disable=SC1090,SC1091
-            . "$_gr_lib" 2>/dev/null || true
-          fi
-        fi
-        if ! declare -F gate_result_verify >/dev/null 2>&1; then
+        if ! _pmctl_gate_result_verifier_load "$repo_root"; then
           printf 'pmctl gate wait: FAIL: gate_result_verify unavailable -- cannot confirm result integrity for %s, treating as failed wait\n' "$_result" >&2
           return 2
         fi
@@ -661,8 +670,7 @@ pmctl_gate_wait() {
   # it the supervisor never became ready; with it but a dead recorded identity,
   # it died after launch.  Keep those failures distinct from a live gate that
   # merely exceeded the caller's wait budget.
-  local _ready_sentinel _wait_run_dir _wait_identity _wait_liveness
-  _ready_sentinel="$(detached_launch_sentinel_path "pm-gate-ready" "$gate_id" "$_key_nonce")"
+  local _wait_run_dir _wait_identity _wait_liveness
   if [[ ! -f "$_ready_sentinel" ]]; then
     printf 'pmctl gate wait: indeterminate: %s never reached supervisor readiness; detached launch did not start a waitable gate (exit=3)\n' "$gate_id" >&2
     return 3
@@ -708,14 +716,10 @@ pmctl_gate_verify() {
   local attestation_file runs_file canonical_repo_root assurance_repo_root
   local canonical_run_root
 
-  if ! declare -F gate_result_verify >/dev/null; then
-    local lib="$repo_root/runtime/lib/gate-result-verify.sh"
-    if [[ ! -r "$lib" ]]; then
-      printf 'pmctl gate verify: required library not found: %s\n' "$lib" >&2
-      return 2
-    fi
-    # shellcheck source=runtime/lib/gate-result-verify.sh
-    . "$lib"
+  if ! _pmctl_gate_result_verifier_load "$repo_root"; then
+    printf 'pmctl gate verify: required verifier library is missing or incomplete: %s\n' \
+      "$repo_root/runtime/lib/gate-result-verify.sh" >&2
+    return 2
   fi
 
   _pmctl_gate_wait_for_assurance_publication "$result_file"

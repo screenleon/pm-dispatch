@@ -122,16 +122,25 @@ _rc=0
 "$REPO_ROOT/runtime/bin/pr-gate.sh" --run-dir "$run_dir" --cd "$cd_arg" ${native[@]+"${native[@]}"} \
   > "$_log" 2>&1 || _rc=$?
 
-# pr-gate.sh prints `result: <path>` on completion (runtime/bin/pr-gate.sh:1493,
-# both the GO and integrity-checked NO-GO paths); extract it for the sentinel
-# so `pmctl gate wait` can surface it without re-deriving OUTPUT_FILE naming.
+# pr-gate.sh prints `result: <path>` on both the GO and integrity-checked
+# NO-GO paths; extract it for the sentinel so `pmctl gate wait` can surface it
+# without re-deriving OUTPUT_FILE naming.
 _result_file="$(grep -m1 '^result: ' "$_log" 2>/dev/null | sed 's/^result: //')" || _result_file=""
 
-case "$_rc" in
-  0) _state="GO" ;;
-  1) _state="NO-GO" ;;
-  *) _state="failed" ;;
-esac
+_terminal_rc="$_rc"
+if [[ -z "$_result_file" && ( "$_rc" -eq 0 || "$_rc" -eq 1 ) ]]; then
+  # Exit 0/1 is only a GO/NO-GO verdict after pr-gate publishes the verified
+  # `result:` handoff. Without it, finalization or result publication failed;
+  # never encode that infrastructure failure as a verdict in the sentinel.
+  _state="failed"
+  _terminal_rc=2
+else
+  case "$_rc" in
+    0) _state="GO" ;;
+    1) _state="NO-GO" ;;
+    *) _state="failed" ;;
+  esac
+fi
 
-_write_sentinel "$_state" "$_rc" "$_result_file"
-exit "$_rc"
+_write_sentinel "$_state" "$_terminal_rc" "$_result_file"
+exit "$_terminal_rc"

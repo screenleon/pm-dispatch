@@ -55,6 +55,10 @@ CC-520, CC-521
 
 > 2026-07-27 clarification：本條目的 `targeted`-as-tier 部分已由
 > `targeted-review-is-a-pass-kind-not-a-tier` 取代；其餘六維正交決策不變。
+>
+> 2026-07-28 clarification：mode 是使用者擁有的成本／獨立性選擇。policy 只輸出
+> recommendation；使用者未指定時才自動採用，明確 sequential／parallel 永遠優先。
+> recommendation divergence 只記錄於 evidence，不是 downgrade，也不需要 override。
 
 **Context**: 現有 runtime 已將 tier detection、reviewer selection 與
 `SEQUENTIAL=true|false` 分開處理，但 review 文件與規畫曾把 `full`、五個 reviewers、
@@ -70,15 +74,16 @@ local closure、targeted confirmation 或拆票，但不建立新的 gate 或 wo
 1. **Tier** 表示審查深度與 evidence floor（express/standard/full/targeted），不決定
    execution topology。
 2. **Mode** 表示 sequential combined session 或 parallel per-reviewer sessions；
-   不提升 tier，也不保證 reviewer coverage。policy 可分別輸出 recommended mode 與
-   required mode。
+   不提升 tier，也不保證 reviewer coverage。policy 輸出 recommended mode；
+   明確 user choice 優先，只有 omitted mode 才採 recommendation。
 3. **Reviewer coverage／independence** 記錄實際 selected/skipped reviewers、
    implementation-context isolation 與 reviewer-to-reviewer context model；不得由
    tier 或 reviewer 數量推論。
 4. **Policy classification** 由 canonical resolver 根據 diff、brief、敏感 surface
-   與 override 算出 minimum tier、required reviewers、recommended/required mode
-   與 downgrade audit；generic `pmctl gate` risk-based policy 與 maintainer `/ship`
-   primary full-coverage policy分開。
+   與 override 算出 minimum tier、required reviewers、recommended mode、
+   mode selection source／recommendation divergence 與 downgrade audit；generic
+   `pmctl gate` risk-based policy 與 maintainer `/ship` primary full-coverage
+   policy分開。
 5. **Artifact subject** 以 stable repository identity、base/head commit、tree
    fingerprint 與 subject kind 說明 evidence 審查／測試了什麼；artifact validity、
    subject freshness 與 consumer policy applicability 分開判斷。
@@ -87,10 +92,11 @@ local closure、targeted confirmation 或拆票，但不建立新的 gate 或 wo
    + closed remediation ledger + required targeted confirmations。branch/HEAD/tree、
    manual evidence與 accepted-risk override 仍須符合 consumer policy。
 
-合法組合包含 express/standard/full/targeted × sequential/parallel；只有 policy
-明確要求 reviewer isolation 時 `required_mode: parallel` 才是 hard requirement。
-Maintainer `/ship` 使用一次 primary comprehensive review、structured remediation
-closure、必要時一次 targeted confirmation，再對 final tree 執行 affected/full tests。
+合法組合包含 express/standard/full/targeted × sequential/parallel；policy 不得把
+mode 變成 hard requirement。未指定時可自動採 recommendation，明確 user choice
+不得被 resolver 改寫。Maintainer `/ship` 使用一次 primary comprehensive review、
+structured remediation closure、必要時一次 targeted confirmation，再對 final tree
+執行 affected/full tests。
 
 **Alternatives considered**: (a) `full => parallel => five reviewers => publishable`
 單一 profile——否決，因深度、拓撲、coverage 與發布證據是不同問題，且與現有 runtime

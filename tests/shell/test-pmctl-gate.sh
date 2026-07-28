@@ -29,6 +29,8 @@ git -C "$_GATE_VERIFY_REPO" init -q
 
 # shellcheck source=runtime/lib/state-paths.sh
 . "$REPO_ROOT/runtime/lib/state-paths.sh"
+# shellcheck source=runtime/lib/detached-launch.sh
+. "$REPO_ROOT/runtime/lib/detached-launch.sh"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -425,11 +427,62 @@ _mk_gate_result_v2() {
       tier:{requested:"auto",resolved:"express",evidence_floor:"reviewer-verdicts"},
       mode:{requested:"default",resolved:"sequential",topology:"combined-session",synthesis:"inline"},
       pass:{requested:"initial",resolved:"initial",scope:"comprehensive",initial_result:null},
-      coverage:{requested:null,selected:["critic"],skipped:["qa-tester"],
+      coverage:{requested:null,selected:["critic","qa-tester"],skipped:[],
         vocabulary:["critic","qa-tester"]},
       independence:{implementation_context_isolated:null,
         reviewer_topology:"combined-session",per_reviewer_independent:null,
         evidence_status:"unavailable"}
+    },
+    policy:{
+      kind:"gate_policy_resolution_v1",
+      schema_version:1,
+      consumer_policy:"generic",
+      policy_source:"canonical",
+      scope_fingerprint:("f" * 64),
+      request:{tier:"auto",mode:"default",pass_kind:"initial",reviewers:null},
+      classification:{
+        architecture_impact:"unknown",
+        line_changes:1,
+        binary_or_unknown_count:0,
+        layer_roots:[]
+      },
+      resolution:{
+        minimum_tier:"express",
+        required_reviewers:["critic","qa-tester"],
+        recommended_mode:"sequential",
+        mode_selection_source:"policy",
+        mode_recommendation_overridden:false,
+        downgrade_requested:false,
+        downgrade_allowed:false
+      },
+      matched_signals:[
+        {
+          id:"consumer-policy",
+          source:"consumer-policy",
+          matches:["generic:initial"],
+          minimum_tier:"express",
+          required_reviewers:["critic","qa-tester"],
+          recommended_mode:"sequential"
+        },
+        {
+          id:"docs-only",
+          source:"classification",
+          matches:["README.md"],
+          minimum_tier:"express",
+          required_reviewers:[],
+          recommended_mode:"sequential"
+        }
+      ],
+      resolved:{
+        tier:"express",
+        mode:"sequential",
+        reviewers:["critic","qa-tester"]
+      },
+      enforcement:{status:"pass",violations:[]},
+      override:{
+        status:"not_provided",source:null,sha256:null,reason:null,approver:null
+      },
+      reviewer_override:{status:"not_provided",source:null,sha256:null}
     },
     dispatch:{outcomes:[{role:"combined",reviewer:null,status:"passed",
       run_id:null,evidence_status:"unavailable"}]},
@@ -511,7 +564,7 @@ _mk_gate_result_v2_legacy_assurance() {
   jq '
     .kind = "gate_assurance_v1" |
     .schema_version = 1 |
-    del(.bindings) |
+    del(.bindings, .policy) |
     .coordinates.independence = {
       implementation_context_isolated:true,
       reviewer_topology:"combined-session",
@@ -551,6 +604,21 @@ case_verify_v2_assurance() {
   set +e; out="$("$PMCTL" gate verify "$result" 2>&1)"; code=$?; set -e
   if [[ "$code" -eq 0 && "$out" == *"assurance: verified"* \
       && "$out" == *"assurance file:"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+case_verify_v2_without_policy_remains_readable() {
+  local name="gate/verify: pre-policy v2 assurance remains readable"
+  should_run "$name" || return 0
+  local result="$tmp_root/v2-pre-policy/result.md" out code
+  _mk_gate_result_v2 "$result"
+  jq 'del(.policy)' "${result}.assurance.json" > "${result}.assurance.tmp"
+  mv "${result}.assurance.tmp" "${result}.assurance.json"
+  set +e; out="$("$PMCTL" gate verify "$result" 2>&1)"; code=$?; set -e
+  if [[ "$code" -eq 0 && "$out" == *"assurance: verified"* ]]; then
     pass "$name"
   else
     fail "$name" "code=$code out=$out"
@@ -620,7 +688,23 @@ case_verify_v2_claim_mismatch() {
   should_run "$name" || return 0
   local result="$tmp_root/v2-mismatch/result.md" out code
   _mk_gate_result_v2 "$result"
-  jq '.coordinates.coverage.skipped = []' "${result}.assurance.json" \
+  jq '.coordinates.coverage.selected = ["critic"]' "${result}.assurance.json" \
+    > "${result}.assurance.tmp"
+  mv "${result}.assurance.tmp" "${result}.assurance.json"
+  set +e; out="$("$PMCTL" gate verify "$result" 2>&1)"; code=$?; set -e
+  if [[ "$code" -eq 1 && "$out" == *"structural/claim verification"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+case_verify_v2_policy_claim_tamper() {
+  local name="gate/verify: v2 policy coordinate tamper exits 1"
+  should_run "$name" || return 0
+  local result="$tmp_root/v2-policy-tamper/result.md" out code
+  _mk_gate_result_v2 "$result"
+  jq '.policy.resolved.reviewers = ["critic"]' "${result}.assurance.json" \
     > "${result}.assurance.tmp"
   mv "${result}.assurance.tmp" "${result}.assurance.json"
   set +e; out="$("$PMCTL" gate verify "$result" 2>&1)"; code=$?; set -e
@@ -979,13 +1063,33 @@ case_default_lifecycle_is_detached() {
 
   # stdout must stay a single bare gate_id line (callers capture it with
   # command substitution); the copy-paste wait hint goes to stderr only.
-  local err_out; err_out="$(cat "$err_file" 2>/dev/null)"
+  local err_out key_file nonce ready_sentinel terminal_sentinel cleanup_ok=true
+  err_out="$(cat "$err_file" 2>/dev/null)"
+  if [[ "$out" =~ ^gate-[0-9]{8}-[0-9]{6}-[A-Za-z0-9]{6,}$ ]]; then
+    key_file="$XDG_RUNTIME_DIR/pm-gate-dispatch/$out"
+    nonce="$(cat "$key_file" 2>/dev/null || true)"
+    if [[ -n "$nonce" ]]; then
+      ready_sentinel="$(detached_launch_sentinel_path "pm-gate-ready" "$out" "$nonce")"
+      terminal_sentinel="$(detached_launch_sentinel_path "pm-gate" "$out" "$nonce")"
+      PM_DISPATCH_STATE_ROOT="$PM_DISPATCH_STATE_ROOT" XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \
+        PM_GATE_WAIT_POLL_INTERVAL=0.01 \
+        bash -c '. "$1/runtime/lib/pmctl-gate.sh"; pmctl_gate_wait "$1" "$2" --cd "$3" --timeout 5' \
+        _ "$fixture" "$out" "$work" >/dev/null 2>&1 || true
+    else
+      cleanup_ok=false
+    fi
+    if [[ "$cleanup_ok" == true ]] \
+      && [[ -e "$key_file" || -e "$ready_sentinel" || -e "$terminal_sentinel" ]]; then
+      cleanup_ok=false
+    fi
+  fi
   if [[ "$code" -eq 0 ]] \
      && [[ "$out" =~ ^gate-[0-9]{8}-[0-9]{6}-[A-Za-z0-9]{6,}$ ]] \
-     && [[ "$err_out" == *"pmctl gate wait $out --cd"* ]]; then
+     && [[ "$err_out" == *"pmctl gate wait $out --cd"* ]] \
+     && [[ "$cleanup_ok" == true ]]; then
     pass "$name"
   else
-    fail "$name" "code=$code out=$out err=$err_out (expected bare gate_id on stdout + wait hint on stderr)"
+    fail "$name" "code=$code cleanup_ok=$cleanup_ok out=$out err=$err_out (expected bare gate_id on stdout + wait hint on stderr)"
   fi
 }
 
@@ -1298,11 +1402,13 @@ case_pmctl_routing
 case_help_bypasses_detached_default
 case_verify_valid
 case_verify_v2_assurance
+case_verify_v2_without_policy_remains_readable
 case_verify_v2_canonical_authorization
 case_verify_v2_forged_state_tree_rejected
 case_verify_v2_repo_binding_rejected
 case_verify_v2_legacy_assurance_is_unavailable
 case_verify_v2_claim_mismatch
+case_verify_v2_policy_claim_tamper
 case_verify_v2_surplus_topology_record
 case_verify_v2_unknown_fields_rejected
 case_verify_v2_result_binding_tamper

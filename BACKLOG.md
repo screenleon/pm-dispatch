@@ -42,6 +42,11 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-520 | 🔵 active | synthesis parity 與 remediation seed：findings union、root-cause grouping、coverage matrix 與 no-silent-drop | ops/gate | 2026-07-23 | — | P1 | design |
 | CC-521 | 🔵 active | test-gap matrix、protocol recovery 與 live recall evaluation 分層 | ops/test | 2026-07-23 | — | P2 | design |
 | CC-522 | 🔵 active | 任意 `--test-cmd` 的 opaque／structured capability negotiation、執行失敗分類與外部 evidence recovery | ops/test | 2026-07-27 | feedback:2026-07-27 | P1 | design |
+| CC-523 | 🔵 active | `pmctl gate cancel` 必須終止 reviewer 派發前仍在執行的 foreground preflight 與其 process tree | arch/gate | 2026-07-27 | feedback:2026-07-27 | P1 | hygiene |
+| CC-524 | 🔵 active | `pmctl artifacts show` 顯示 canonical absolute run root 並提供穩定 machine-readable locator | ux/ops | 2026-07-27 | feedback:2026-07-27 | P2 | hygiene |
+| CC-525 | 🔵 active | copy-mode verifier fallback 的 generated provenance 必須指向實際 generator，並由 parity ratchet 防止再次漂移 | ops/test | 2026-07-28 | feedback:2026-07-28 | P3 | hygiene |
+| CC-526 | 🔵 active | reviewer override file 的 symlink trust-boundary hardening 與相容性契約 | security/gate | 2026-07-28 | feedback:2026-07-28 | P2 | hygiene |
+| CC-527 | 🔵 active | targeted gate CLI 拆分 pass、reviewer coverage 與 tier，避免 full targeted 語意重疊 | ux/gate | 2026-07-28 | feedback:2026-07-28 | P2 | design |
 | CC-465 | 🔵 active | memory/context 關鍵詞管線 CJK 支援：抽出共用零依賴斷詞 lib，取代三處各自 ASCII-only 抽詞；工作序列起點（465→467→468→466）（2026-07-07 記憶系統深入分析） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-466 | ⏸ deferred | 記憶卡片生命週期閉環：expires_at 執行 + 關窗式 supersede + usage sidecar 休眠偵測 + doctor→distill 接線；僅在 CC-467 證明 stale/dormant card 已形成實際問題時啟動 | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-467 | 🔵 active | `pmctl memory stats`：注入效益可視化（唯讀聚合器）——注入 bytes/卡片命中分佈/從未命中卡/episode 填寫率，回答「記憶有跟沒有差在哪」；排在 CC-466 之前（2026-07-07；業界僅離線 recall 評測，無 per-injection 遙測） | DX/memory | 2026-07-07 | — | P2 | retrieval |
@@ -1657,7 +1662,8 @@ authorization。
    `core/policy/gate-tiers.tsv`、`core/policy/gate-modes.tsv`、
    `core/policy/gate-pass-kinds.tsv`）；repo-layout runtime 直接讀 source，
    standalone/copy-mode fallback 使用 bounded generated snapshot + freshness ratchet，
-   不手寫第二份 policy。三表分別擁有 defaults／topology／initial-reference requirement，
+   不手寫第二份 policy。三表分別擁有 reviewer defaults／topology／
+   initial-reference requirement，
    不建立合併 profile。
 2. CLI canonicalize：
    - 新增 `--mode sequential|parallel`；既有 `--parallel`／`--sequential` 為
@@ -1666,8 +1672,9 @@ authorization。
    - `--targeted <reviewers>` 表示 `pass.kind=targeted`，不再只是 alias；必須搭配
      `--initial-result <path>`。Initial-result 的結構存在性在本票驗，subject freshness
      與 applicability 留給 [[CC-515]]。
-   - omitted tier/mode/pass 分別 resolve 為 `auto`→detected tier、
-     `default`→sequential、`initial`。
+   - omitted tier/mode/pass 分別記錄為 `auto`、`default`、`initial`；tier 由
+     detector resolve，`default` mode 代表未明確選擇並由 [[CC-513]] policy
+     recommendation resolve，pass 預設為 initial。
 3. Gate shell 在 dispatch 前決定 coordinates，並在 dispatch／wait 時機械擷取實際
    reviewer/synthesis session evidence；reviewer LLM 不得自行宣稱 tier、mode、
    coverage 或 independence。
@@ -1753,8 +1760,9 @@ generic 使用者會被不必要強制，maintainer 路徑則可能漏掉必要 
 1. 建立單一可測 resolver，輸入 diff classification、trusted brief metadata、
    generated/untracked/renamed paths、requested tier/mode/pass/reviewers、repo policy
    與 accepted-risk override；輸出：
-   `minimum_tier`、`required_reviewers`、`recommended_mode`、`required_mode|null`、
-   `downgrade_allowed`、matched signals 與 override provenance。
+   `minimum_tier`、`required_reviewers`、`recommended_mode`、mode selection
+   source／recommendation divergence、`downgrade_allowed`、matched signals 與
+   override provenance。
 2. **Generic `pmctl gate` risk-based floor**：
    - docs-only：critic/qa；
    - bounded runtime：critic/qa，依 matched signal增加 dimensions；
@@ -1766,19 +1774,21 @@ generic 使用者會被不必要強制，maintainer 路徑則可能漏掉必要 
 3. **Maintainer `/ship` policy**：primary comprehensive review 固定要求 critic、
    qa、architecture、security、risk 全 coverage，因 [[CC-517]] 預設只做一次
    primary discovery；這是 repo-owned recipe，不強迫 generic gate。
-4. Mode 與 tier 分離：resolver 通常輸出 `recommended_mode: parallel`；只有 policy
-   明確要求 reviewer isolation 才輸出 `required_mode: parallel`。`minimum_tier:
-   full` 本身不得暗示 parallel。
-5. requested tier/reviewer/mode 低於 resolver floor 時 fail closed，除非使用者提供
-   scope-bounded accepted-risk override；security/risk hard-gate override 不能由 PM
-   自行接受。未來 [[CC-065]] repo config 可加嚴，不得靜默降低 canonical floor。
+4. Mode 與 tier 分離且 mode 為 user-owned：使用者未指定時，resolver 才採用
+   `recommended_mode` 自動選擇；明確 sequential／parallel 一律優先，偏離建議只記錄
+   selection source 與 divergence，不視為 downgrade，也不要求 policy override。
+   `minimum_tier: full` 本身不得強制 parallel。
+5. requested tier/reviewer 低於 resolver floor 時 fail closed，除非使用者提供
+   scope-bounded accepted-risk override；mode 不屬於 downgrade allowance。
+   security/risk hard-gate override 不能由 PM 自行接受。未來 [[CC-065]] repo config
+   可加嚴 tier／coverage，不得靜默降低 canonical floor。
 6. classification/resolution artifact 列出每個 matched path/field/signal、selected/
-   skipped dimensions、recommendation vs requirement、downgrade reason 與 override
-   provenance；所有 consumer 使用同一 output，不各自複製 regex。
+   skipped dimensions、mode recommendation／selection source／divergence、downgrade
+   reason 與 override provenance；所有 consumer 使用同一 output，不各自複製 regex。
 
-**Done-when**: 每份 gate artifact 都能機械回答「為什麼需要這個 minimum tier、
-reviewers 與 recommended/required mode」；generic 與 maintainer policy 可獨立測試，
-full 不再隱含 parallel。
+**Done-when**: 每份 gate artifact 都能機械回答「為什麼需要這個 minimum tier／
+reviewers、policy 建議哪個 mode、以及最終是 user 或 policy 選擇」；generic 與
+maintainer policy 可獨立測試，full 不再隱含或強制 parallel。
 
 **Non-goals**: 不以分類 signal 取代真正 review；不把 architecture reviewer 全域
 升為 hard gate；不讓 maintainer recipe 改寫 generic defaults。
@@ -1937,8 +1947,8 @@ project 使用。
 
 1. 更新 `commands/ship.md` 與 maintainer review model：primary implementation、
    affected tests、refactor/reuse audit 完成後，只執行一次 comprehensive PR gate。
-   [[CC-513]] maintainer policy 固定要求五 reviewer coverage；mode 由 policy
-   recommended/required mode 與 caller 選擇解析，不把 full coverage 寫成必然
+   [[CC-513]] maintainer policy 固定要求五 reviewer coverage；mode 未指定時採
+   policy recommendation，caller 明確選擇則優先，不把 full coverage 寫成必然
    parallel。Gate 使用 [[CC-518]]～[[CC-521]] 的 structured outputs。
 2. 產生 `remediation_closure_v1` evidence，至少含 primary gate/result/subject、
    final subject、每個 stable finding ID 的 disposition、changed files、affected-test
@@ -2215,6 +2225,268 @@ external reusable evidence Phase B 依賴 [[CC-515]]。與 [[CC-521]] 的 test-g
 protocol recovery contract保持正交。P1。
 
 **Cross-link**: [[CC-470]]、[[CC-491]]、[[CC-512]]、[[CC-515]]、[[CC-521]]。
+
+---
+
+## CC-523 — gate cancel 終止 pre-review foreground producer work 🔵 active
+
+**Framing**: 本票是 [[CC-508]] parent-operation cancellation 契約的 regression
+closure，不重做 operation control plane、`pmctl dispatch cancel` 或 gate workflow。
+範圍限於 gate 已建立 parent operation、但尚未派發第一個 reviewer child 時仍由
+producer 擁有的執行工作；foreground preflight 是必須通過的原始重現，detached
+lifecycle 若共用同一 pre-review seam 也不得保留分歧。允許加入最小、可重用的
+producer execution identity／cancellation metadata，但不建立泛用 job-control
+framework，也不接受使用者提供的裸 PID。
+
+**Problem**: 現行 `pmctl_operation_cancel` 只遍歷 parent record 已記錄的 child
+dispatch runs。foreground `pmctl gate run` 在 reviewer 派發前會同步執行
+`--test-cmd` preflight；此時 operation 已存在但 `children.jsonl` 仍為空。
+`pmctl gate cancel <operation-id>` 因而可把 operation 直接寫成 `cancelled`，卻沒有
+停止仍在執行的 `pr-gate.sh`、`timeout` wrapper 或測試 process tree。2026-07-27
+實際操作已觀察到 cancel 回報後 foreground preflight 仍持續執行。這使 durable
+state 與真實 liveness 互相矛盾，也可能讓已取消 producer 繼續寫 artifact、晚到
+派發 reviewer，違反 [[CC-508]]「任一 in-flight producer 可驗證取消且無孤兒」的
+Done-when。
+
+**Requirement**:
+
+1. gate 必須在進入任何 pre-review 工作前，發布與 operation ID、canonical
+   repository／workdir 綁定的 producer execution identity；若以 PID／process
+   group 表示，必須含 starttime 或等價 anti-reuse evidence，並由 producer 自行
+   寫入 trusted state，cancel caller 不得注入任意 PID。
+2. `pmctl gate cancel` 遇到尚無 reviewer child、但 producer／preflight 仍 live
+   的 operation 時，必須先要求 producer 停止並終止該次 preflight 的完整 process
+   tree；沿用 bounded grace 後 escalation 的取消語意。只有確認 producer 與其
+   owned descendants 已停止後才能寫 `cancelled`；identity mismatch、無法確認
+   termination 或部分停止一律收斂為 `indeterminate`／非零。
+3. gate producer 必須在 preflight 完成後、每次 reviewer dispatch 前與
+   finalization 前檢查 durable cancellation intent。cancel 已勝出的 operation
+   不得再派發 child、不得以 late GO／NO-GO／failed 覆寫 `cancelled`，也不得把
+   cancelled preflight 誤報成程式碼 test failure。
+4. foreground caller 必須以明確非成功狀態返回，並輸出 operation ID、取消結果與
+   可查 evidence；若 detached gate 在同一階段被取消，supervisor、sentinel 與
+   wait 結論必須使用相同 terminal semantics，不得只殺 child 或只改 state。
+5. 已派發 reviewer 後的既有 child ownership／`pmctl dispatch cancel` 路徑、
+   foreign-project 拒絕、cancel-vs-complete 單一終態與 reconcile 規則必須保持；
+   producer cancellation primitive 應為窄 API，不在 gate／ship 各自複製未驗證的
+   signal 邏輯。
+6. deterministic regression 使用 FIFO／readiness handshake 啟動會阻塞的
+   foreground preflight，從另一 process 執行 `pmctl gate cancel`，驗證 bounded
+   return、preflight 與 descendants 全部死亡、operation 為 `cancelled`、零
+   reviewer dispatch、零 late artifact overwrite。另覆蓋 cancel/finish race、
+   PID reuse／identity mismatch、重複 cancel、preflight 已退出與 termination
+   失敗轉 `indeterminate`；禁止以裸 sleep 猜時序。
+
+**Done-when**: 對 reviewer 派發前仍在執行的 foreground gate operation 執行
+`pmctl gate cancel <operation-id>` 後，cancel 只有在 producer-owned preflight
+process tree 已可驗證停止時才回報 `cancelled`；原 foreground caller bounded
+返回、沒有 reviewer child 或孤兒程序、沒有 late terminal overwrite，且
+foreground／detached 共用一致的 cancellation terminal contract。
+
+**Non-goals**: 不重寫 preflight evidence classification（→ [[CC-522]]）；不擴張
+為任意 shell job manager；不允許 PID-only cancellation；不變更使用者未要求的
+timeout 預設。
+
+**Dependencies**: regression boundary 直接承接 [[CC-508]]，並複用 [[CC-495]]
+dispatch cancellation 與 [[CC-509]] supervisor identity／liveness evidence。P1，
+應先於下一次依賴 foreground gate cancellation 的 maintainer delivery 處理。
+
+---
+
+## CC-524 — artifacts show canonical absolute run root 🔵 active
+
+**Framing**: 本票補齊 [[CC-418]] observer／discoverability 已交付後暴露的 locator
+缺口，不搬動 artifact、不改 state partition layout，也不把 `artifacts show`
+擴張成檔案內容 viewer。human output 與 machine output 都必須由同一 canonical
+state-path resolver 產生，不能另做 repo-local fallback 或掃描猜測。
+
+**Problem**: `pmctl artifacts show <run-id> --cd <repo>` 已能從 canonical project
+partition 找到 run directory，成功時卻只列出 `<bytes><TAB><relative-path>`。
+使用者因此知道 `.gate-results/foo.md` 存在，卻不知道它實際位於哪個絕對根目錄；
+尤其 artifact 已搬離 target repo、`PM_DISPATCH_STATE_ROOT`／XDG／HOME precedence
+可能不同時，只能再次猜測或全檔案系統搜尋。錯誤路徑反而會印出 resolved run
+directory，形成成功與失敗輸出的可發現性倒置。
+
+**Requirement**:
+
+1. 成功的 human output 必須在任何 file rows 前明確印出 canonical physical
+   `run root: <absolute-path>`，其值為同一 `--cd` project partition 下
+   `runs/<run-id>` 的實際目錄；即使 run directory 為空也必須印 root。
+2. 保留現有檔案 size 與 relative-path 資訊；新增穩定 `--json` locator contract，
+   至少含 schema/kind、run ID、canonical repository root、canonical absolute run
+   root，以及依穩定順序排列的 `{relative_path,size_bytes}` files。human label 與
+   JSON field 的 root 必須完全一致。
+3. root 必須經 canonical path resolution，且驗證仍位於 resolver 選出的 project
+   `runs/` containment 下；symlinked state root、relative `--cd`、git subdirectory
+   與 custom `PM_DISPATCH_STATE_ROOT` 都不得產生 lexical-only、foreign partition
+   或不存在的 success locator。
+4. state-root precedence 繼續使用現行
+   `PM_DISPATCH_STATE_ROOT` → `XDG_DATA_HOME` → HOME fallback；不得因 target repo
+   找不到 `.gate-results` 就掃描其他 project partitions。unknown run／wrong
+   `--cd` 維持非零，並在不越權搜尋的前提下給出可複製的 `artifacts list/show`
+   recovery 指令。
+5. regression fixtures 覆蓋 default 與 custom state root、含空白路徑、空 run、
+   多層 artifact、human/JSON parity、stable ordering、wrong project、symlink
+   canonicalization 與 containment rejection；現有 size/relative-path consumer
+   必須有明確 compatibility 測試或 migration 說明。
+
+**Done-when**: 操作者只執行一次
+`pmctl artifacts show <run-id> --cd <repo>` 就能複製 canonical absolute run root
+並直接定位列出的 artifact；automation 可用 `--json` 取得同一 locator，不需猜測
+state store、搜尋 target repo 或解析錯誤訊息。
+
+**Non-goals**: 不新增 `cat`／download／open 子指令；不改 artifact retention／GC；
+不遷移既有 runs；不放寬 project partition containment；不替 missing artifact
+重建內容。
+
+**Dependencies**: 延伸 [[CC-418]] 已建立的 artifacts observer 與
+`state-paths.sh` canonical partition seam；與 [[CC-515]] artifact
+freshness／applicability verifier 正交。P2。
+
+---
+
+## CC-525 — generated verifier fallback provenance path ratchet 🔵 active
+
+**Framing**: 本票是 copy-mode 維護資訊的窄幅清理，不改 verifier 行為、gate
+verdict 或 bundle layout。`runtime/bin/pr-gate.sh` 的 inline fallback 仍由唯一既有
+generator 管理；修正與 ratchet 應併入後續小型 maintenance change。
+
+**Problem**: inline fallback 的 generated block 註解目前宣稱由不存在的
+`scripts/sync-gate-result-verifier-fallback.sh` 產生，實際 canonical generator
+是 `tools/generate-gate-result-verifier-fallback.sh`。現有 `--check` 能驗證內容
+parity，卻沒有驗證 provenance 指向可執行、存在且唯一的 generator；維護者依註解
+操作時會走到錯誤 recovery path。
+
+**Requirement**:
+
+1. generated block 的 provenance 必須指向 repo 內實際 canonical generator，
+   路徑可由 repository root 穩定解析，且文件與測試不得另宣告第二個同步工具。
+2. 擴充既有 generator `--check` 或相鄰 contract test，同時驗證 marker、generated
+   body parity 與 provenance path；不存在、不可執行或漂移到非 canonical 路徑時
+   必須 fail-loud。
+3. copy-mode standalone fallback、repo-layout shared verifier 與現有 ShellCheck
+   source annotation 均保持；註解修正不得手動改寫 generated verifier body。
+
+**Done-when**: 維護者可直接依 inline 註解執行實際 generator；CI 在 provenance
+再次指向不存在或非 canonical 工具時失敗，而目前 verifier parity 與 copy-mode
+行為完全不變。
+
+**Non-goals**: 不新增 generator；不改 verdict parser、artifact schema 或 fallback
+內容；不把 generator 搬到另一個目錄；不併入 [[CC-513]] 的 policy resolver。
+
+**Dependencies**: 延伸 [[CC-512]] 的 shared verifier／fallback parity seam，與
+[[CC-513]] 僅共享發現時點、沒有交付依賴。P3，適合後續小型 maintenance PR。
+
+---
+
+## CC-526 — reviewer override symlink trust-boundary hardening 🔵 active
+
+**Framing**: 本票只處理 free-form reviewer override channel
+（auto-discovered `.gate-overrides.md` 與 explicit `--override-file`）的檔案信任
+邊界。它與 [[CC-513]] 的 machine-validated policy override 是不同輸入面；因為
+拒絕 symlink 會改變既有信任／相容行為，必須獨立交付並明確測試。
+
+**Problem**: reviewer override 目前只以 `-f` 接受檔案，再 canonicalize parent
+並讀取內容；symlink 指向 regular target 仍會通過。workspace 內的
+`.gate-overrides.md` 或 explicit path 因此可把 reviewer prompt content
+重新導向其他位置，而現有 provenance 只記錄 symlink lexical path 與 target
+content hash，沒有把這項 redirect semantics 當成可見的 trust decision。
+
+**Requirement**:
+
+1. auto-discovered 與 explicit reviewer override 必須使用同一窄 validator，只接受
+   readable、non-empty、regular、non-symlink file；拒絕訊息需指出輸入與違反的
+   contract，且在任何 reviewer dispatch／brief injection 前 fail-closed。
+2. validation、canonical path、讀取與 sha256 provenance 的順序必須避免
+   check/use 間把 symlink 或 target 換入；若 shell primitive 無法提供原子 open，
+   必須以可驗證 identity／content stability check 收斂，而非只增加一次 `-L`。
+3. regular file 的 auto-discovery、relative explicit path、含空白路徑、content
+   injection 與 provenance 行為保持相容；若 empty／unreadable file 原先可用而
+   新契約改為拒絕，需在 CLI／review docs 明示 migration。
+4. deterministic regression 覆蓋 auto 與 explicit symlink、absolute／relative
+   external target、dangling link、empty／unreadable file、正常檔案及 validation
+   後置換情境；測試必須證明被拒內容不會出現在 reviewer brief 或 result
+   provenance。
+
+**Done-when**: symlink 或 validation 後遭置換的 reviewer override 無法影響任何
+reviewer brief；regular override 的既有使用方式維持，新的拒絕行為有契約測試與
+相容性說明。
+
+**Non-goals**: 不重新設計 accepted-risk 語法；不把 reviewer override 升格為
+policy downgrade；不宣稱防禦具有同一 OS 帳號寫入權限的攻擊者；不順帶修改
+[[CC-513]] policy override validation。
+
+**Dependencies**: 與 [[CC-513]] 的 policy override trust boundary 保持正交，並
+可參考 [[CC-258]] 的 symlink-safe install contract，但不得假設 realpath-only
+即足夠。P2，需獨立 review 與 compatibility evidence。
+
+---
+
+## CC-527 — targeted gate CLI coordinate separation 與 truthful labeling 🔵 active
+
+**Framing**: 本票只收斂既有 gate assurance coordinates 的 CLI 表達與 human
+label，不新增 gate kind、review workflow、tier 或 reviewer。[[CC-512]] 已確立
+tier、pass kind 與 reviewer coverage 是正交座標；本票讓 public CLI 也能直接表達
+這三軸，而不是由一個 `--targeted <reviewers>` 同時承擔 pass kind 與 coverage。
+既有 shorthand 必須保留 bounded compatibility，不能藉語意清理限制 generic gate
+使用者選擇 reviewer 或 execution mode。
+
+**Problem**: `--tier full --targeted qa-tester --initial-result <path>` 在 machine
+contract 中可解析為 `tier=full`、`pass=targeted`、`coverage=[qa-tester]`，但 human
+語意容易把 `full` 誤讀成完整五 reviewer comprehensive gate。`--targeted` 目前又
+同時選擇 remediation-delta pass 與 reviewer coverage，而 tier table 仍提供 default
+reviewers；即使 resolver 有確定 precedence，CLI 表面仍讓 rigor、pass scope 與
+coverage 看似互相覆蓋。這可能導致 maintainer recipe 錯稱「full gate」、重啟不必要
+的 comprehensive discovery，或誤以為 targeted qa 已取得 full reviewer coverage。
+
+**Requirement**:
+
+1. 定義 canonical explicit form，設計目標為
+   `--pass targeted --reviewers qa-tester --initial-result <path>`；pass kind、
+   coverage 與 initial-result 必須各自驗證。既有 `--targeted <reviewers>` 保留為
+   compatibility shorthand，且必須機械展開為完全相同的 coordinates，不能形成
+   第二條 resolver path。
+2. Targeted tier resolution 必須有單一、可解釋的 basis：未明確指定 tier 時，優先
+   繼承 subject-applicable initial result 的 resolved tier；若 initial artifact
+   無法提供可信 tier，必須使用 canonical policy resolution 或 fail closed，不得從
+   targeted reviewer 數量反推 tier。這項 inheritance/applicability 接線依賴
+   [[CC-515]]，不可用未驗證 frontmatter prose 代替。
+3. 使用者若有獨立 rigor 理由仍可明確請求 tier，但 explicit tier 不得擴張、替代或
+   暗示 targeted coverage。CLI progress、brief、result 與 assurance 必須並列輸出
+   `tier=<resolved>`、`pass=targeted`、`coverage=[...]` 及各自 selection basis；
+   `tier=full` 不得被 human 文案命名為 `full gate` 或 comprehensive review。
+4. Canonical 與 compatibility spellings 混用時，同值可接受、不同 pass／coverage
+   請求 fail closed；`targeted` 缺 `--initial-result`、initial pass 帶 initial result、
+   duplicate／empty reviewer、tier inheritance 不可驗證都必須在 dispatch 前給出
+   actionable error。
+5. 更新 `/pr-gate`、maintainer `/ship` 與 review model：follow-up confirmation
+   必須描述為 targeted remediation pass，列出 tier 與 selected reviewers，不得以
+   「full」代稱 coverage。[[CC-517]] 的 conditional targeted confirmation 使用
+   canonical explicit form，但本票不實作 remediation closure。
+6. Artifact/verifier 必須能機械回答 pass kind、tier basis、coverage basis、initial
+   result reference 與 shorthand provenance；copy-mode、repo-layout、
+   sequential／parallel 必須 meaning-parity。若既有 `gate_assurance_v2` 已可完整
+   表達，優先重用而不新增 schema family。
+7. Deterministic fixtures 覆蓋 canonical targeted、legacy shorthand parity、
+   explicit full-tier + QA-only coverage 的 truthful labeling、tier inheritance、
+   stale／legacy initial result、conflicting spellings、缺 initial result，以及
+   consumer 不得把 targeted artifact 當 comprehensive full-coverage evidence。
+
+**Done-when**: 操作者看到任一 targeted command／result 都能分辨「審查 rigor、
+remediation pass scope、實際 reviewer coverage」；canonical form 不再由
+`--targeted` 一個參數承擔兩個座標，legacy shorthand 仍相容，且任何
+`tier=full + pass=targeted + coverage=[qa-tester]` artifact 都不會被 UI、文件或
+consumer 誤稱為 full/comprehensive gate。
+
+**Non-goals**: 不移除 targeted confirmation；不強制 targeted 使用特定 tier、
+reviewer 或 mode；不新增 workflow engine／FSM／gate kind；不把本票擴張成
+[[CC-517]] remediation ledger、[[CC-515]] freshness verifier或新的 tier taxonomy。
+
+**Dependencies**: CLI coordinate 分離延伸 [[CC-512]]；可信 initial-tier
+inheritance 依賴 [[CC-515]]；maintainer consumer 接線由 [[CC-517]] 使用。P2，
+可先交付 syntax/parity，再於 applicability verifier 完成後接 inheritance。
+
+**Cross-link**: [[CC-512]]、[[CC-513]]、[[CC-514]]、[[CC-515]]、[[CC-517]]。
 
 ---
 

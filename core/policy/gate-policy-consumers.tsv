@@ -1,0 +1,6 @@
+# Gate policy consumers. Mode is inferred from recommended_mode only when the user does not select one explicitly.
+policy_pass	policy	pass_kind	minimum_tier	required_reviewers	recommended_mode
+generic:initial	generic	initial	express	critic,qa-tester	sequential
+generic:targeted	generic	targeted	express	none	sequential
+maintainer:initial	maintainer	initial	express	critic,qa-tester,architecture-reviewer,security-reviewer,risk-reviewer	parallel
+maintainer:targeted	maintainer	targeted	express	none	parallel

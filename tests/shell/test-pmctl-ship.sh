@@ -1384,10 +1384,13 @@ case_finish_reviewers_flag_reaches_gate_call() {
   ' _ "$REPO_ROOT" "$work" "CC-9001" "$argv_file" >/dev/null 2>&1 || true
   local argv
   argv="$(cat "$argv_file" 2>/dev/null)"
-  if grep -q -- '--reviewers' <<<"$argv" && grep -Fxq 'critic,qa-tester' <<<"$argv"; then
+  if grep -q -- '--reviewers' <<<"$argv" \
+      && grep -Fxq 'critic,qa-tester' <<<"$argv" \
+      && grep -q -- '--policy' <<<"$argv" \
+      && grep -Fxq 'maintainer' <<<"$argv"; then
     pass "$name"
   else
-    fail "$name" "expected --reviewers critic,qa-tester in captured gate argv, got: $argv"
+    fail "$name" "expected maintainer policy plus --reviewers critic,qa-tester in captured gate argv, got: $argv"
   fi
 }
 
