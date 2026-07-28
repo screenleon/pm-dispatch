@@ -2,6 +2,13 @@
 set -euo pipefail
 trap '' PIPE
 
+GATE_CANCELLED=false
+gate_cancel_signal() {
+  GATE_CANCELLED=true
+  exit 130
+}
+trap gate_cancel_signal TERM INT
+
 # say -- emit a progress/diagnostic line on stdout that tolerates a closed pipe.
 #
 # A consumer that reads a prefix of our stdout and closes the pipe early
@@ -2796,6 +2803,8 @@ if [[ -n "$INITIAL_RESULT_RESOLVED" \
   exit 2
 fi
 _gate_assurance_destination_check "$ASSURANCE_FILE" || exit 2
+GATE_OUTPUT_EXISTED=false
+[[ -e "$OUTPUT_FILE" ]] && GATE_OUTPUT_EXISTED=true
 touch "$OUTPUT_FILE"
 
 # Track all brief files for EXIT cleanup
@@ -2849,7 +2858,18 @@ gate_exit_cleanup() {
   # Relocate first (preserves the result artifact out-of-repo for post-mortem on failure
   # paths), then drop transient briefs. Both are idempotent / no-ops on the success path
   # where relocation already ran inline.
-  relocate_gate_artifacts
+  if [[ "$GATE_CANCELLED" == true ]]; then
+    # Cancellation is an operation terminal, not a reviewer verdict.  Do not
+    # publish an empty/partial result that a later consumer could mistake for a
+    # late gate outcome; operation state remains the cancellation evidence.
+    rm -f -- "$WORK_DIR/.gate-results/"*"${TIMESTAMP}"* 2>/dev/null || true
+    if [[ "$GATE_OUTPUT_EXISTED" != true ]]; then
+      rm -f -- "$OUTPUT_FILE"
+    fi
+    rmdir "$WORK_DIR/.gate-results" 2>/dev/null || true
+  else
+    relocate_gate_artifacts
+  fi
   cleanup_briefs
 }
 trap gate_exit_cleanup EXIT

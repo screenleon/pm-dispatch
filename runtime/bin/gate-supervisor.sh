@@ -114,6 +114,29 @@ done
 
 mkdir -p "$run_dir" || _die "failed to create run dir: $run_dir"
 
+_cancel_supervisor() {
+  _write_sentinel "cancelled" 130 ""
+  exit 130
+}
+trap _cancel_supervisor TERM INT
+
+if [[ -n "${PM_GATE_PARENT_OPERATION:-}" ]]; then
+  # Register the already-isolated supervisor as the producer before readiness
+  # or any pre-review work is published.  A cancellation that won the launch
+  # race records the identity but refuses to release pr-gate.sh.
+  # shellcheck source=/dev/null
+  . "$REPO_ROOT/runtime/lib/pmctl-operation.sh"
+  _producer_register_rc=0
+  pmctl_operation_register_producer "$REPO_ROOT" gate "$PM_GATE_PARENT_OPERATION" \
+    "$cd_arg" "$$" || _producer_register_rc=$?
+  if [[ "$_producer_register_rc" -eq 130 ]]; then
+    _write_sentinel "cancelled" 130 ""
+    exit 130
+  fi
+  [[ "$_producer_register_rc" -eq 0 ]] \
+    || _die "failed to register detached producer identity"
+fi
+
 _write_ready || _die "failed to publish supervisor readiness evidence"
 
 # ── Run pr-gate.sh out-of-band, capturing its stdout for result-path discovery ─

@@ -175,7 +175,9 @@ pmctl_gate_run() {
   local _arg
   for _arg in "$@"; do
     if [[ "$_arg" == "-h" || "$_arg" == "--help" ]]; then
-      exec "$gate_script" "$@"
+      gate_rc=0
+      "$gate_script" "$@" || gate_rc=$?
+      exit "$gate_rc"
     fi
   done
 
@@ -214,6 +216,10 @@ pmctl_gate_run() {
       _i=$((_i + 1))
     fi
   done
+  effective_cd="$(cd "$effective_cd" 2>/dev/null && pwd -P)" || {
+    printf 'pmctl gate run: --cd is not an accessible directory: %s\n' "$effective_cd" >&2
+    return 2
+  }
 
   # pmctl-owned workflow boundary: refresh the generic repo context cache
   # before dispatch. pr-gate.sh remains repo-agnostic and knows nothing about
@@ -241,6 +247,12 @@ pmctl_gate_run() {
       return 2
     }
     export PM_GATE_PARENT_OPERATION="$_gate_parent_operation"
+    if ! pmctl_operation_expect_producer "$repo_root" gate "$_gate_parent_operation" "$effective_cd"; then
+      printf 'pmctl gate run: failed to reserve producer ownership under %s\n' \
+        "$_gate_parent_operation" >&2
+      pmctl_operation_fail_if_childless "$repo_root" gate "$_gate_parent_operation" "$effective_cd" >&2 || true
+      return 2
+    fi
     printf 'pmctl gate run: parent operation: %s\n' "$_gate_parent_operation" >&2
   else
     # Standalone/copy-mode test fixtures deliberately carry only the gate shim.
@@ -288,12 +300,58 @@ pmctl_gate_run() {
   # parent operation is converged from trusted child terminal claims.  `exec`
   # here used to strand every foreground gate in `running` forever.
   local _gate_rc=0 _reconcile_rc=0
+  local -a _foreground_args=("${run_dir_args[@]}")
   if [[ "$has_cd" == false ]]; then
-    "$gate_script" "${run_dir_args[@]}" --cd "$effective_cd" "$@" || _gate_rc=$?
+    _foreground_args+=(--cd "$effective_cd" "$@")
   else
-    "$gate_script" "${run_dir_args[@]}" "$@" || _gate_rc=$?
+    _foreground_args+=("$@")
   fi
   if [[ -n "${PM_GATE_PARENT_OPERATION:-}" ]]; then
+    if ! command -v setsid >/dev/null 2>&1; then
+      printf 'pmctl gate run: foreground producer isolation requires setsid; gate was not started\n' >&2
+      pmctl_operation_fail_if_childless "$repo_root" gate "$PM_GATE_PARENT_OPERATION" "$effective_cd" >&2 || true
+      return 2
+    fi
+    # Keep the synchronous user experience while isolating the complete gate
+    # producer tree from the invoking shell.  The new session registers its
+    # own kernel identity before execing pr-gate.sh; cancellation can therefore
+    # stop preflight/timeout descendants without accepting a caller-supplied PID.
+    setsid bash -c '
+      repo_root="$1"; work_dir="$2"; operation_id="$3"; gate_script="$4"
+      shift 4
+      # shellcheck source=/dev/null
+      . "$repo_root/runtime/lib/pmctl-operation.sh"
+      register_rc=0
+      pmctl_operation_register_producer "$repo_root" gate "$operation_id" "$work_dir" "$BASHPID" \
+        || register_rc=$?
+      if [[ "$register_rc" -eq 130 ]]; then
+        exit 130
+      fi
+      if [[ "$register_rc" -ne 0 ]]; then
+        printf "pmctl gate run: failed to register foreground producer identity for %s\n" \
+          "$operation_id" >&2
+        exit 2
+      fi
+      exec "$gate_script" "$@"
+    ' _ "$repo_root" "$effective_cd" "$PM_GATE_PARENT_OPERATION" "$gate_script" \
+      "${_foreground_args[@]}" &
+    local _producer_pid=$!
+    wait "$_producer_pid" || _gate_rc=$?
+  else
+    "$gate_script" "${_foreground_args[@]}" || _gate_rc=$?
+  fi
+  if [[ -n "${PM_GATE_PARENT_OPERATION:-}" ]]; then
+    if pmctl_operation_cancellation_requested "$repo_root" gate \
+      "$PM_GATE_PARENT_OPERATION" "$effective_cd"; then
+      if [[ "${PMCTL_OPERATION_CANCELLATION_STATE:-}" == indeterminate ]]; then
+        printf 'pmctl gate run: operation %s cancellation is indeterminate; inspect operation evidence (exit 2)\n' \
+          "$PM_GATE_PARENT_OPERATION" >&2
+        return 2
+      fi
+      printf 'pmctl gate run: operation %s cancelled; foreground producer stopped (exit 130)\n' \
+        "$PM_GATE_PARENT_OPERATION" >&2
+      return 130
+    fi
     pmctl_operation_reconcile "$repo_root" gate "$PM_GATE_PARENT_OPERATION" --cd "$effective_cd" >&2 || _reconcile_rc=$?
     if [[ "$_reconcile_rc" -ne 0 ]]; then
       # A pre-flight failure can legitimately have no reviewer child.  It is a
