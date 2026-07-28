@@ -36,6 +36,18 @@ git -C "$_GATE_VERIFY_REPO" init -q
 # Helpers
 # ---------------------------------------------------------------------------
 
+# Match the runtime cancellation contract: a zombie remains visible to
+# `kill -0` but cannot execute and is treated as gone by
+# detached_launch_verify_identity.
+_gate_test_pid_stopped() {
+  local pid="$1" snapshot line state=""
+  snapshot="$(detached_launch_capture_identity "$pid" 2>/dev/null)" || return 0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" == state=* ]] && state="${line#state=}"
+  done <<<"$snapshot"
+  [[ "$state" == Z || "$state" == X ]]
+}
+
 # Install a fake pr-gate.sh into fixture/runtime/bin that writes a structurally
 # valid gate result under --run-dir (so gate_result_verify accepts it -- the
 # detached wait path now requires this, per CC-423's result-integrity fix)
@@ -1459,8 +1471,8 @@ RUNNER
   if [[ "$cancel_rc" -eq 0 && "$gate_rc" -eq 130 && "$elapsed" -lt 10 ]] \
      && [[ -n "$record" && "$(jq -r .state "$record")" == cancelled ]] \
      && [[ "$(jq -r .producer.status "$record")" == stopped ]] \
-     && ! kill -0 "$producer_pid" 2>/dev/null \
-     && ! kill -0 "$descendant_pid" 2>/dev/null \
+     && _gate_test_pid_stopped "$producer_pid" \
+     && _gate_test_pid_stopped "$descendant_pid" \
      && [[ ! -s "$op_dir/children.jsonl" ]] \
      && ! find "$state" -type f -name 'gate-result-*.md' -print -quit 2>/dev/null | grep -q . \
      && { [[ ! -d "$work/.gate-results" ]] \
@@ -1526,8 +1538,8 @@ FAKE_GATE
      && [[ "$wait_out" == *"state: cancelled"* && "$wait_out" == *"exit: 130"* ]] \
      && [[ -n "$record" && "$(jq -r .state "$record")" == cancelled ]] \
      && [[ "$(jq -r .producer.status "$record")" == stopped ]] \
-     && ! kill -0 "$producer_pid" 2>/dev/null \
-     && ! kill -0 "$descendant_pid" 2>/dev/null \
+     && _gate_test_pid_stopped "$producer_pid" \
+     && _gate_test_pid_stopped "$descendant_pid" \
      && [[ ! -s "$op_dir/children.jsonl" ]] \
      && [[ "$cancel_out" == *"producer_failures: 0"* ]]; then
     pass "$name"
