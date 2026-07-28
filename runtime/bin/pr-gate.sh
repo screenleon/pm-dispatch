@@ -40,9 +40,10 @@ GATE_ASSURANCE_TIERS_TSV
       # BEGIN GENERATED from core/policy/gate-modes.tsv
       cat <<'GATE_ASSURANCE_MODES_TSV'
 # Gate execution topology. Mode does not imply tier or reviewer coverage.
-mode	topology	synthesis	is_default
-sequential	combined-session	inline	true
-parallel	per-reviewer-sessions	separate-session	false
+# Omitted mode is resolved from policy recommendations, not from this table.
+mode	topology	synthesis
+sequential	combined-session	inline
+parallel	per-reviewer-sessions	separate-session
 GATE_ASSURANCE_MODES_TSV
       # END GENERATED from core/policy/gate-modes.tsv
       ;;
@@ -59,12 +60,12 @@ GATE_ASSURANCE_PASS_KINDS_TSV
     consumers)
       # BEGIN GENERATED from core/policy/gate-policy-consumers.tsv
       cat <<'GATE_POLICY_CONSUMERS_TSV'
-# Gate policy consumers. Consumer policy does not rewrite tier, mode, or pass semantics.
-policy_pass	policy	pass_kind	minimum_tier	required_reviewers	recommended_mode	required_mode
-generic:initial	generic	initial	express	critic,qa-tester	sequential	none
-generic:targeted	generic	targeted	express	none	sequential	none
-maintainer:initial	maintainer	initial	express	critic,qa-tester,architecture-reviewer,security-reviewer,risk-reviewer	parallel	none
-maintainer:targeted	maintainer	targeted	express	none	parallel	none
+# Gate policy consumers. Mode is inferred from recommended_mode only when the user does not select one explicitly.
+policy_pass	policy	pass_kind	minimum_tier	required_reviewers	recommended_mode
+generic:initial	generic	initial	express	critic,qa-tester	sequential
+generic:targeted	generic	targeted	express	none	sequential
+maintainer:initial	maintainer	initial	express	critic,qa-tester,architecture-reviewer,security-reviewer,risk-reviewer	parallel
+maintainer:targeted	maintainer	targeted	express	none	parallel
 GATE_POLICY_CONSUMERS_TSV
       # END GENERATED from core/policy/gate-policy-consumers.tsv
       ;;
@@ -72,23 +73,23 @@ GATE_POLICY_CONSUMERS_TSV
       # BEGIN GENERATED from core/policy/gate-policy-signals.tsv
       cat <<'GATE_POLICY_SIGNALS_TSV'
 # Gate policy signals. Reviewer requirements apply to initial discovery; targeted passes retain tier/mode signals but use requested remediation coverage.
-signal	match_source	pattern	minimum_tier	required_reviewers	recommended_mode	required_mode
-docs-only	classification	docs-only	express	none	sequential	none
-bounded-runtime	classification	bounded-runtime	express	none	sequential	none
-medium-change	classification	medium-change	standard	architecture-reviewer	parallel	none
-large-change	classification	large-change	full	critic,qa-tester,architecture-reviewer,security-reviewer,risk-reviewer	parallel	none
-binary-change	classification	binary-change	standard	architecture-reviewer	parallel	none
-renamed-input	classification	renamed	express	none	sequential	none
-untracked-input	classification	untracked	express	none	sequential	none
-generated-input	classification	generated	express	none	sequential	none
-cross-boundary	classification	cross-boundary	standard	architecture-reviewer	parallel	none
-security-sensitive-path	path-regex	(^|[/_.-])(auth|oauth|jwt|sessions?|secrets?|passwords?|tokens?|credentials?|cors|csrf|webhooks?|sudo|ssh|payments?|billing)([/_.-]|$)	express	security-reviewer	parallel	none
-input-execution-path	path-regex	(^|[/_.-])(eval|exec|execute|command|shell|hook|guard|allowlist)([/_.-]|$)|(^|/)(\.github|workflows?|ci)(/|$)	standard	security-reviewer	parallel	parallel
-risk-sensitive-path	path-regex	(^|[/_.-])(migrations?|migrate|destructive|deletions?|delete|removals?|remove|rollback|concurrency|concurrent|race|locks?|cancel|reconcile)([/_.-]|$)	express	risk-reviewer	parallel	none
-public-contract-path	path-regex	(^|/)(cli|commands|skills|core/schema)(/|$)|(^|[/_.-])(apis?|schemas?|contracts?)([/_.-]|$)	standard	architecture-reviewer	parallel	none
-policy-source-path	path-regex	(^|/)core/policy(/|$)	full	architecture-reviewer,security-reviewer,risk-reviewer	parallel	none
-brief-architecture-minor	brief-value	minor	standard	architecture-reviewer	parallel	none
-brief-architecture-major	brief-value	major	full	critic,qa-tester,architecture-reviewer,security-reviewer,risk-reviewer	parallel	none
+signal	match_source	pattern	minimum_tier	required_reviewers	recommended_mode
+docs-only	classification	docs-only	express	none	sequential
+bounded-runtime	classification	bounded-runtime	express	none	sequential
+medium-change	classification	medium-change	standard	architecture-reviewer	parallel
+large-change	classification	large-change	full	critic,qa-tester,architecture-reviewer,security-reviewer,risk-reviewer	parallel
+binary-change	classification	binary-change	standard	architecture-reviewer	parallel
+renamed-input	classification	renamed	express	none	sequential
+untracked-input	classification	untracked	express	none	sequential
+generated-input	classification	generated	express	none	sequential
+cross-boundary	classification	cross-boundary	standard	architecture-reviewer	parallel
+security-sensitive-path	path-regex	(^|[/_.-])(auth|oauth|jwt|sessions?|secrets?|passwords?|tokens?|credentials?|cors|csrf|webhooks?|sudo|ssh|payments?|billing)([/_.-]|$)	express	security-reviewer	parallel
+input-execution-path	path-regex	(^|[/_.-])(eval|exec|execute|command|shell|hook|guard|allowlist)([/_.-]|$)|(^|/)(\.github|workflows?|ci)(/|$)	standard	security-reviewer	parallel
+risk-sensitive-path	path-regex	(^|[/_.-])(migrations?|migrate|destructive|deletions?|delete|removals?|remove|rollback|concurrency|concurrent|race|locks?|cancel|reconcile)([/_.-]|$)	express	risk-reviewer	parallel
+public-contract-path	path-regex	(^|/)(cli|commands|skills|core/schema)(/|$)|(^|[/_.-])(apis?|schemas?|contracts?)([/_.-]|$)	standard	architecture-reviewer	parallel
+policy-source-path	path-regex	(^|/)core/policy(/|$)	full	architecture-reviewer,security-reviewer,risk-reviewer	parallel
+brief-architecture-minor	brief-value	minor	standard	architecture-reviewer	parallel
+brief-architecture-major	brief-value	major	full	critic,qa-tester,architecture-reviewer,security-reviewer,risk-reviewer	parallel
 GATE_POLICY_SIGNALS_TSV
       # END GENERATED from core/policy/gate-policy-signals.tsv
       ;;
@@ -308,20 +309,20 @@ _gate_policy_validate_reviewer_csv() {
 
 _gate_policy_validate_sources() {
   local vocabulary="${1:-}" policy_pass policy pass_kind minimum_tier
-  local required_reviewers recommended_mode required_mode consumer_keys=""
+  local required_reviewers recommended_mode consumer_keys=""
   local signal match_source pattern signal_tier signal_reviewers
-  local signal_recommended signal_required grep_status
+  local signal_recommended grep_status
   [[ $# -eq 1 && -n "$vocabulary" ]] || return 2
 
   _gate_policy_source_shape_validate consumers \
-    $'policy_pass\tpolicy\tpass_kind\tminimum_tier\trequired_reviewers\trecommended_mode\trequired_mode' \
+    $'policy_pass\tpolicy\tpass_kind\tminimum_tier\trequired_reviewers\trecommended_mode' \
     || return 2
   _gate_policy_source_shape_validate signals \
-    $'signal\tmatch_source\tpattern\tminimum_tier\trequired_reviewers\trecommended_mode\trequired_mode' \
+    $'signal\tmatch_source\tpattern\tminimum_tier\trequired_reviewers\trecommended_mode' \
     || return 2
 
   while IFS=$'\t' read -r policy_pass policy pass_kind minimum_tier \
-      required_reviewers recommended_mode required_mode; do
+      required_reviewers recommended_mode; do
     [[ -n "$policy_pass" && "$policy_pass" != \#* \
         && "$policy_pass" != policy_pass ]] || continue
     case "$policy" in generic|maintainer) ;; *)
@@ -355,14 +356,6 @@ _gate_policy_validate_sources() {
           "$policy_pass" "$recommended_mode" >&2
         return 2
       }
-    if [[ "$required_mode" != none ]]; then
-      _gate_assurance_policy_lookup modes mode "$required_mode" topology >/dev/null \
-        || {
-          printf 'Error: gate policy consumer %s has invalid required mode: %s\n' \
-            "$policy_pass" "$required_mode" >&2
-          return 2
-        }
-    fi
     consumer_keys="${consumer_keys:+$consumer_keys }$policy_pass"
   done < <(_gate_assurance_policy_emit consumers)
 
@@ -381,7 +374,7 @@ _gate_policy_validate_sources() {
   fi
 
   while IFS=$'\t' read -r signal match_source pattern signal_tier \
-      signal_reviewers signal_recommended signal_required; do
+      signal_reviewers signal_recommended; do
     [[ -n "$signal" && "$signal" != \#* && "$signal" != signal ]] || continue
     if [[ ! "$signal" =~ ^[a-z0-9][a-z0-9-]*$ \
         || "$signal" == consumer-policy ]]; then
@@ -440,14 +433,6 @@ _gate_policy_validate_sources() {
           "$signal" "$signal_recommended" >&2
         return 2
       }
-    if [[ "$signal_required" != none ]]; then
-      _gate_assurance_policy_lookup modes mode "$signal_required" topology >/dev/null \
-        || {
-          printf 'Error: gate policy signal %s has invalid required mode: %s\n' \
-            "$signal" "$signal_required" >&2
-          return 2
-        }
-    fi
   done < <(_gate_assurance_policy_emit signals)
 }
 
@@ -528,18 +513,19 @@ _gate_policy_scope_content_digest() {
 _gate_policy_resolve() {
   local input_json="${1:-}" policy_override="${2:-}"
   local policy pass_kind policy_pass scope_fingerprint vocabulary
-  local minimum_tier required_reviewers recommended_mode required_mode
+  local minimum_tier required_reviewers recommended_mode
   local signal match_source pattern signal_tier signal_reviewers
   local normalized_signal_reviewers effective_signal_reviewers
-  local signal_recommended signal_required matches_json matches_text
+  local signal_recommended matches_json matches_text
   local current_rank candidate_rank signal_json signals_file
   local requested_tier requested_mode requested_reviewers_json
-  local resolved_tier resolved_mode tier_defaults selected_reviewers
-  local missing_reviewers="" reviewer tier_violation=false mode_violation=false
+  local resolved_tier resolved_mode mode_selection_source
+  local mode_recommendation_overridden=false tier_defaults selected_reviewers
+  local missing_reviewers="" reviewer tier_violation=false
   local violations_json downgrade_requested=false downgrade_allowed=false
   local enforcement_status=pass override_status=not_provided
   local override_sha="" override_reason="" override_approver_json=null
-  local expected_tier=null expected_mode=null missing_json override_json=null
+  local expected_tier=null missing_json override_json=null
   local reviewer_override_json classification_json policy_source
 
   [[ $# -ge 1 && $# -le 2 ]] || return 2
@@ -583,8 +569,6 @@ _gate_policy_resolve() {
     || return 2
   recommended_mode="$(_gate_assurance_policy_lookup consumers policy_pass "$policy_pass" recommended_mode)" \
     || return 2
-  required_mode="$(_gate_assurance_policy_lookup consumers policy_pass "$policy_pass" required_mode)" \
-    || return 2
   required_reviewers="$(_gate_policy_add_reviewers "" "$required_reviewers" "$vocabulary")" \
     || return 2
 
@@ -600,24 +584,14 @@ _gate_policy_resolve() {
         "$recommended_mode" >&2
       return 2
     }
-  if [[ "$required_mode" != none ]]; then
-    _gate_assurance_policy_lookup modes mode "$required_mode" topology >/dev/null \
-      || {
-        printf 'Error: gate policy consumer has invalid required mode: %s\n' \
-          "$required_mode" >&2
-        return 2
-      }
-  fi
-
   signals_file="$(mktemp "${TMPDIR:-/tmp}/gate-policy-signals.XXXXXX")" || return 2
   signal_json="$(jq -nc \
     --arg id "consumer-policy" --arg source "consumer-policy" \
     --arg match "$policy_pass" --arg minimum_tier "$minimum_tier" \
     --argjson required_reviewers "$(_gate_policy_words_json "$required_reviewers")" \
-    --arg recommended_mode "$recommended_mode" --arg required_mode "$required_mode" '{
+    --arg recommended_mode "$recommended_mode" '{
       id:$id,source:$source,matches:[$match],minimum_tier:$minimum_tier,
-      required_reviewers:$required_reviewers,recommended_mode:$recommended_mode,
-      required_mode:(if $required_mode == "none" then null else $required_mode end)
+      required_reviewers:$required_reviewers,recommended_mode:$recommended_mode
     }')" || {
       rm -f "$signals_file"
       return 2
@@ -625,11 +599,10 @@ _gate_policy_resolve() {
   printf '%s\n' "$signal_json" > "$signals_file"
 
   while IFS=$'\t' read -r signal match_source pattern signal_tier \
-      signal_reviewers signal_recommended signal_required; do
+      signal_reviewers signal_recommended; do
     [[ -n "$signal" && "$signal" != \#* && "$signal" != signal ]] || continue
     if [[ -z "$match_source" || -z "$pattern" || -z "$signal_tier" \
-        || -z "$signal_reviewers" || -z "$signal_recommended" \
-        || -z "$signal_required" ]]; then
+        || -z "$signal_reviewers" || -z "$signal_recommended" ]]; then
       printf 'Error: malformed gate policy signal row: %s\n' "$signal" >&2
       rm -f "$signals_file"
       return 2
@@ -709,25 +682,14 @@ _gate_policy_resolve() {
         return 2
         ;;
     esac
-    if [[ "$signal_required" != none ]]; then
-      if [[ "$required_mode" != none && "$required_mode" != "$signal_required" ]]; then
-        printf 'Error: conflicting required gate modes: %s and %s\n' \
-          "$required_mode" "$signal_required" >&2
-        rm -f "$signals_file"
-        return 2
-      fi
-      required_mode="$signal_required"
-    fi
     signal_json="$(jq -nc \
       --arg id "$signal" --arg source "$match_source" \
       --argjson matches "$matches_json" --arg minimum_tier "$signal_tier" \
       --argjson required_reviewers \
         "$(_gate_policy_words_json "$effective_signal_reviewers")" \
-      --arg recommended_mode "$signal_recommended" \
-      --arg required_mode "$signal_required" '{
+      --arg recommended_mode "$signal_recommended" '{
         id:$id,source:$source,matches:$matches,minimum_tier:$minimum_tier,
-        required_reviewers:$required_reviewers,recommended_mode:$recommended_mode,
-        required_mode:(if $required_mode == "none" then null else $required_mode end)
+        required_reviewers:$required_reviewers,recommended_mode:$recommended_mode
       }')" || {
         rm -f "$signals_file"
         return 2
@@ -754,16 +716,13 @@ _gate_policy_resolve() {
   fi
 
   if [[ "$requested_mode" == default ]]; then
-    if [[ "$required_mode" == none ]]; then
-      resolved_mode="$GATE_MODE_DEFAULT"
-    else
-      resolved_mode="$required_mode"
-    fi
+    resolved_mode="$recommended_mode"
+    mode_selection_source=policy
   else
     resolved_mode="$requested_mode"
-    if [[ "$required_mode" != none && "$resolved_mode" != "$required_mode" ]]; then
-      mode_violation=true
-    fi
+    mode_selection_source=user
+    [[ "$resolved_mode" == "$recommended_mode" ]] \
+      || mode_recommendation_overridden=true
   fi
 
   if [[ "$requested_reviewers_json" == null ]]; then
@@ -796,17 +755,12 @@ _gate_policy_resolve() {
   violations_json="$(jq -nc \
     --argjson tier_violation "$tier_violation" \
     --arg requested_tier "$requested_tier" --arg minimum_tier "$minimum_tier" \
-    --argjson missing_reviewers "$missing_json" \
-    --argjson mode_violation "$mode_violation" \
-    --arg requested_mode "$requested_mode" --arg required_mode "$required_mode" '[
+    --argjson missing_reviewers "$missing_json" '[
       if $tier_violation then {
         coordinate:"tier",requested:$requested_tier,required:$minimum_tier
       } else empty end,
       if ($missing_reviewers | length) > 0 then {
         coordinate:"coverage",requested:"explicit",required:$missing_reviewers
-      } else empty end,
-      if $mode_violation then {
-        coordinate:"mode",requested:$requested_mode,required:$required_mode
       } else empty end
     ]')"
   if [[ "$(jq -r 'length' <<<"$violations_json")" -gt 0 ]]; then
@@ -831,9 +785,8 @@ _gate_policy_resolve() {
       .kind == "gate_policy_override_v1" and .schema_version == 1 and
       (.scope_fingerprint | type == "string" and test("^[a-f0-9]{64}$")) and
       (.allow | type == "object" and
-        (keys | sort) == (["mode","omit_reviewers","tier"] | sort)) and
+        (keys | sort) == (["omit_reviewers","tier"] | sort)) and
       (.allow.tier == null or (.allow.tier | IN("express","standard","full"))) and
-      (.allow.mode == null or (.allow.mode | IN("sequential","parallel"))) and
       (.allow.omit_reviewers | type == "array" and
         all(.[]; type == "string" and test("^[a-z0-9][a-z0-9-]*$")) and
         length == (unique | length)) and
@@ -856,12 +809,9 @@ _gate_policy_resolve() {
       override_status=scope_mismatch
     else
       [[ "$tier_violation" == true ]] && expected_tier="$(jq -nc --arg value "$requested_tier" '$value')"
-      [[ "$mode_violation" == true ]] && expected_mode="$(jq -nc --arg value "$requested_mode" '$value')"
       if jq -e --argjson expected_tier "$expected_tier" \
-          --argjson expected_mode "$expected_mode" \
           --argjson expected_reviewers "$missing_json" '
           .allow.tier == $expected_tier and
-          .allow.mode == $expected_mode and
           (.allow.omit_reviewers | sort) == ($expected_reviewers | sort)
         ' "$policy_override" >/dev/null; then
         override_status=applied
@@ -894,7 +844,9 @@ _gate_policy_resolve() {
     --argjson classification "$classification_json" \
     --arg minimum_tier "$minimum_tier" \
     --argjson required_reviewers "$(_gate_policy_words_json "$required_reviewers")" \
-    --arg recommended_mode "$recommended_mode" --arg required_mode "$required_mode" \
+    --arg recommended_mode "$recommended_mode" \
+    --arg mode_selection_source "$mode_selection_source" \
+    --argjson mode_recommendation_overridden "$mode_recommendation_overridden" \
     --argjson downgrade_requested "$downgrade_requested" \
     --argjson downgrade_allowed "$downgrade_allowed" \
     --argjson matched_signals "$signal_json" \
@@ -919,7 +871,8 @@ _gate_policy_resolve() {
         minimum_tier:$minimum_tier,
         required_reviewers:$required_reviewers,
         recommended_mode:$recommended_mode,
-        required_mode:(if $required_mode == "none" then null else $required_mode end),
+        mode_selection_source:$mode_selection_source,
+        mode_recommendation_overridden:$mode_recommendation_overridden,
         downgrade_requested:$downgrade_requested,
         downgrade_allowed:$downgrade_allowed
       },
@@ -1024,7 +977,7 @@ _kill_process_tree() {
 # pr-gate-help:start
 # pr-gate.sh -- PR-gate review via a dispatched session
 #
-# DEFAULT (single-session / sequential):
+# SINGLE-SESSION (--mode sequential; --sequential is compatible):
 #   All reviewers run in order inside ONE combined dispatch session.
 #   Lower token cost. All reviewer findings appear in a single output file.
 #   Use this for most routine changes.
@@ -1036,6 +989,9 @@ _kill_process_tree() {
 #   Higher token cost. Use for auth/payment/migration paths or when reviewer
 #   independence is worth the extra cost.
 #
+# Explicit user mode always wins. When mode is omitted, policy automatically
+# selects its recommendation from the consumer and matched risk signals.
+#
 # Adjacent test files (not in the diff but directly paired to a changed source
 # file) are automatically added to every reviewer brief so coverage gaps in
 # unchanged test files are visible to the gate.
@@ -1046,7 +1002,7 @@ _kill_process_tree() {
 # Options:
 #   --cd <dir>           working directory (required)
 #   --tier <tier>        express|standard|full -- overrides auto-detection
-#   --mode <mode>        sequential|parallel execution topology (default: sequential)
+#   --mode <mode>        sequential|parallel; omitted mode follows the policy recommendation
 #   --brief <file>       dispatch brief; trusted architecture_impact contributes to policy resolution
 #   --policy <name>      generic|maintainer consumer policy (default: generic)
 #   --reviewers <list>   comma-separated requested coverage; does not change tier or pass kind
@@ -1418,7 +1374,8 @@ else
             "binary_or_unknown_count","layer_roots"])) and
         (.policy.resolution |
           only_keys(["minimum_tier","required_reviewers","recommended_mode",
-            "required_mode","downgrade_requested","downgrade_allowed"])) and
+            "mode_selection_source","mode_recommendation_overridden",
+            "downgrade_requested","downgrade_allowed"])) and
         (.policy.resolved | only_keys(["tier","mode","reviewers"])) and
         (.policy.enforcement | only_keys(["status","violations"])) and
         (.policy.override |
@@ -1454,25 +1411,33 @@ else
             $policy.resolution.downgrade_allowed)) and
         (.policy.resolution.recommended_mode |
           IN("sequential","parallel")) and
-        (.policy.resolution.required_mode == null or
-          (.policy.resolution.required_mode |
-            IN("sequential","parallel"))) and
+        (.policy.resolution.mode_selection_source | IN("user","policy")) and
+        (.policy.resolution.mode_recommendation_overridden | type == "boolean") and
+        (if .policy.request.mode == "default"
+         then
+           .policy.resolution.mode_selection_source == "policy" and
+           .policy.resolved.mode == .policy.resolution.recommended_mode and
+           .policy.resolution.mode_recommendation_overridden == false
+         else
+           .policy.resolution.mode_selection_source == "user" and
+           .policy.resolved.mode == .policy.request.mode and
+           .policy.resolution.mode_recommendation_overridden ==
+             (.policy.request.mode != .policy.resolution.recommended_mode)
+         end) and
         (.policy.resolution.downgrade_requested | type == "boolean") and
         (.policy.resolution.downgrade_allowed | type == "boolean") and
         (.policy.matched_signals | type == "array" and length > 0) and
         ([.policy.matched_signals[].id] | strings_unique) and
         (all(.policy.matched_signals[];
           only_keys(["id","source","matches","minimum_tier",
-            "required_reviewers","recommended_mode","required_mode"]) and
+            "required_reviewers","recommended_mode"]) and
           (.id | type == "string" and length > 0) and
           (.source |
             IN("consumer-policy","classification","path-regex","brief-value")) and
           (.matches | strings_unique and length > 0) and
           (.minimum_tier | IN("express","standard","full")) and
           (.required_reviewers | strings_unique) and
-          (.recommended_mode | IN("sequential","parallel")) and
-          (.required_mode == null or
-            (.required_mode | IN("sequential","parallel"))))) and
+          (.recommended_mode | IN("sequential","parallel")))) and
         .policy.resolved.tier == .coordinates.tier.resolved and
         .policy.resolved.mode == .coordinates.mode.resolved and
         same_set(.policy.resolved.reviewers;
@@ -1481,7 +1446,7 @@ else
         (.policy.enforcement.violations | type == "array") and
         (all(.policy.enforcement.violations[];
           only_keys(["coordinate","requested","required"]) and
-          (.coordinate | IN("tier","coverage","mode")))) and
+          (.coordinate | IN("tier","coverage")))) and
         (.policy.override.status |
           IN("not_provided","not_needed","applied","scope_mismatch",
             "allowance_mismatch")) and
@@ -1700,16 +1665,8 @@ if ! GATE_PASS_KIND_VALUES="$(_gate_assurance_policy_values pass-kinds pass_kind
   exit 2
 fi
 
-if ! GATE_MODE_DEFAULT="$(_gate_assurance_policy_lookup modes is_default true mode)"; then
-  printf 'Error: gate mode policy must declare exactly one default\n' >&2
-  exit 2
-fi
 if ! GATE_PASS_KIND_DEFAULT="$(_gate_assurance_policy_lookup pass-kinds is_default true pass_kind)"; then
   printf 'Error: gate pass-kind policy must declare exactly one default\n' >&2
-  exit 2
-fi
-if [[ "$GATE_MODE_DEFAULT" != "sequential" ]]; then
-  printf 'Error: gate mode policy default must remain sequential\n' >&2
   exit 2
 fi
 if [[ "$GATE_PASS_KIND_DEFAULT" != "initial" ]]; then
@@ -3217,29 +3174,32 @@ INITIAL_RESULT_DISPLAY="${INITIAL_RESULT_RESOLVED:-none}"
 POLICY_REQUIRED_REVIEWERS_DISPLAY="$(jq -r \
   '.resolution.required_reviewers | if length == 0 then "none" else join(",") end' \
   <<<"$GATE_POLICY_RESOLUTION")"
-POLICY_REQUIRED_MODE_DISPLAY="$(jq -r '.resolution.required_mode // "none"' \
+POLICY_MODE_SELECTION_SOURCE="$(jq -r '.resolution.mode_selection_source' \
   <<<"$GATE_POLICY_RESOLUTION")"
+POLICY_MODE_RECOMMENDATION_OVERRIDDEN="$(jq -r \
+  '.resolution.mode_recommendation_overridden' <<<"$GATE_POLICY_RESOLUTION")"
 POLICY_ESCALATION_SIGNALS_DISPLAY="$(jq -c '[
   .matched_signals[]
   | select(.source != "consumer-policy")
-  | select((.required_reviewers | length) > 0 or .required_mode != null)
+  | select((.required_reviewers | length) > 0 or .recommended_mode == "parallel")
   | {
       id,
       required_reviewers,
-      required_mode
+      recommended_mode
     }
 ]' <<<"$GATE_POLICY_RESOLUTION")"
 printf -v GATE_ASSURANCE_CONTEXT_BLOCK \
-  '  Assurance coordinates (resolved by the gate shell; do not reinterpret):\n    tier.requested: %s\n    tier.resolved: %s\n    tier.evidence_floor: %s\n    mode.requested: %s\n    mode.resolved: %s\n    mode.topology: %s\n    mode.synthesis: %s\n    pass.requested: %s\n    pass.resolved: %s\n    pass.scope: %s\n    pass.initial_result: %s\n    coverage.requested: %s\n    coverage.selected: %s\n    coverage.skipped: %s\n    policy.consumer: %s\n    policy.minimum_tier: %s\n    policy.required_reviewers: %s\n    policy.recommended_mode: %s\n    policy.required_mode: %s\n    policy.escalation_signals: %s\n    policy.scope_fingerprint: %s\n    policy.source: %s\n' \
+  '  Assurance coordinates (resolved by the gate shell; do not reinterpret):\n    tier.requested: %s\n    tier.resolved: %s\n    tier.evidence_floor: %s\n    mode.requested: %s\n    mode.resolved: %s\n    mode.topology: %s\n    mode.synthesis: %s\n    mode.selection_source: %s\n    mode.recommendation_overridden: %s\n    pass.requested: %s\n    pass.resolved: %s\n    pass.scope: %s\n    pass.initial_result: %s\n    coverage.requested: %s\n    coverage.selected: %s\n    coverage.skipped: %s\n    policy.consumer: %s\n    policy.minimum_tier: %s\n    policy.required_reviewers: %s\n    policy.recommended_mode: %s\n    policy.escalation_signals: %s\n    policy.scope_fingerprint: %s\n    policy.source: %s\n' \
   "$TIER_REQUESTED" "$TIER_RESOLVED" "$TIER_EVIDENCE_FLOOR" \
   "$MODE_REQUESTED" "$MODE_RESOLVED" "$MODE_TOPOLOGY" "$MODE_SYNTHESIS" \
+  "$POLICY_MODE_SELECTION_SOURCE" "$POLICY_MODE_RECOMMENDATION_OVERRIDDEN" \
   "$PASS_KIND_REQUESTED" "$PASS_KIND_RESOLVED" "$PASS_SCOPE" "$INITIAL_RESULT_DISPLAY" \
   "$COVERAGE_REQUESTED_DISPLAY" \
   "$COVERAGE_SELECTED_DISPLAY" "$COVERAGE_SKIPPED_DISPLAY" \
   "$POLICY_CONSUMER" "$(jq -r '.resolution.minimum_tier' <<<"$GATE_POLICY_RESOLUTION")" \
   "$POLICY_REQUIRED_REVIEWERS_DISPLAY" \
   "$(jq -r '.resolution.recommended_mode' <<<"$GATE_POLICY_RESOLUTION")" \
-  "$POLICY_REQUIRED_MODE_DISPLAY" "$POLICY_ESCALATION_SIGNALS_DISPLAY" \
+  "$POLICY_ESCALATION_SIGNALS_DISPLAY" \
   "$POLICY_SCOPE_FINGERPRINT" \
   "$GATE_ASSURANCE_POLICY_SOURCE"
 
@@ -3249,11 +3209,12 @@ say 'pr-gate: tier %s -> %s; mode %s -> %s; pass %s -> %s\n' \
 say 'pr-gate: coverage requested=%s selected=%s skipped=%s; policy=%s/%s\n' \
   "$COVERAGE_REQUESTED_DISPLAY" "$COVERAGE_SELECTED_DISPLAY" \
   "$COVERAGE_SKIPPED_DISPLAY" "$POLICY_CONSUMER" "$GATE_ASSURANCE_POLICY_SOURCE"
-say 'pr-gate: policy minimum-tier=%s required-reviewers=%s recommended-mode=%s required-mode=%s scope=%s\n' \
+say 'pr-gate: policy minimum-tier=%s required-reviewers=%s recommended-mode=%s mode-source=%s recommendation-overridden=%s scope=%s\n' \
   "$(jq -r '.resolution.minimum_tier' <<<"$GATE_POLICY_RESOLUTION")" \
   "$POLICY_REQUIRED_REVIEWERS_DISPLAY" \
   "$(jq -r '.resolution.recommended_mode' <<<"$GATE_POLICY_RESOLUTION")" \
-  "$POLICY_REQUIRED_MODE_DISPLAY" "$POLICY_SCOPE_FINGERPRINT"
+  "$POLICY_MODE_SELECTION_SOURCE" "$POLICY_MODE_RECOMMENDATION_OVERRIDDEN" \
+  "$POLICY_SCOPE_FINGERPRINT"
 [[ "${ADJ_COUNT:-0}" -gt 0 ]] && say '  adjacent test files added: %d\n' "$ADJ_COUNT"
 say 'result will be written to: %s\n\n' "$OUTPUT_FILE"
 

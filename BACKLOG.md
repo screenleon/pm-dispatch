@@ -1661,7 +1661,8 @@ authorization。
    `core/policy/gate-tiers.tsv`、`core/policy/gate-modes.tsv`、
    `core/policy/gate-pass-kinds.tsv`）；repo-layout runtime 直接讀 source，
    standalone/copy-mode fallback 使用 bounded generated snapshot + freshness ratchet，
-   不手寫第二份 policy。三表分別擁有 defaults／topology／initial-reference requirement，
+   不手寫第二份 policy。三表分別擁有 reviewer defaults／topology／
+   initial-reference requirement，
    不建立合併 profile。
 2. CLI canonicalize：
    - 新增 `--mode sequential|parallel`；既有 `--parallel`／`--sequential` 為
@@ -1670,8 +1671,9 @@ authorization。
    - `--targeted <reviewers>` 表示 `pass.kind=targeted`，不再只是 alias；必須搭配
      `--initial-result <path>`。Initial-result 的結構存在性在本票驗，subject freshness
      與 applicability 留給 [[CC-515]]。
-   - omitted tier/mode/pass 分別 resolve 為 `auto`→detected tier、
-     `default`→sequential、`initial`。
+   - omitted tier/mode/pass 分別記錄為 `auto`、`default`、`initial`；tier 由
+     detector resolve，`default` mode 代表未明確選擇並由 [[CC-513]] policy
+     recommendation resolve，pass 預設為 initial。
 3. Gate shell 在 dispatch 前決定 coordinates，並在 dispatch／wait 時機械擷取實際
    reviewer/synthesis session evidence；reviewer LLM 不得自行宣稱 tier、mode、
    coverage 或 independence。
@@ -1757,8 +1759,9 @@ generic 使用者會被不必要強制，maintainer 路徑則可能漏掉必要 
 1. 建立單一可測 resolver，輸入 diff classification、trusted brief metadata、
    generated/untracked/renamed paths、requested tier/mode/pass/reviewers、repo policy
    與 accepted-risk override；輸出：
-   `minimum_tier`、`required_reviewers`、`recommended_mode`、`required_mode|null`、
-   `downgrade_allowed`、matched signals 與 override provenance。
+   `minimum_tier`、`required_reviewers`、`recommended_mode`、mode selection
+   source／recommendation divergence、`downgrade_allowed`、matched signals 與
+   override provenance。
 2. **Generic `pmctl gate` risk-based floor**：
    - docs-only：critic/qa；
    - bounded runtime：critic/qa，依 matched signal增加 dimensions；
@@ -1770,19 +1773,21 @@ generic 使用者會被不必要強制，maintainer 路徑則可能漏掉必要 
 3. **Maintainer `/ship` policy**：primary comprehensive review 固定要求 critic、
    qa、architecture、security、risk 全 coverage，因 [[CC-517]] 預設只做一次
    primary discovery；這是 repo-owned recipe，不強迫 generic gate。
-4. Mode 與 tier 分離：resolver 通常輸出 `recommended_mode: parallel`；只有 policy
-   明確要求 reviewer isolation 才輸出 `required_mode: parallel`。`minimum_tier:
-   full` 本身不得暗示 parallel。
-5. requested tier/reviewer/mode 低於 resolver floor 時 fail closed，除非使用者提供
-   scope-bounded accepted-risk override；security/risk hard-gate override 不能由 PM
-   自行接受。未來 [[CC-065]] repo config 可加嚴，不得靜默降低 canonical floor。
+4. Mode 與 tier 分離且 mode 為 user-owned：使用者未指定時，resolver 才採用
+   `recommended_mode` 自動選擇；明確 sequential／parallel 一律優先，偏離建議只記錄
+   selection source 與 divergence，不視為 downgrade，也不要求 policy override。
+   `minimum_tier: full` 本身不得強制 parallel。
+5. requested tier/reviewer 低於 resolver floor 時 fail closed，除非使用者提供
+   scope-bounded accepted-risk override；mode 不屬於 downgrade allowance。
+   security/risk hard-gate override 不能由 PM 自行接受。未來 [[CC-065]] repo config
+   可加嚴 tier／coverage，不得靜默降低 canonical floor。
 6. classification/resolution artifact 列出每個 matched path/field/signal、selected/
-   skipped dimensions、recommendation vs requirement、downgrade reason 與 override
-   provenance；所有 consumer 使用同一 output，不各自複製 regex。
+   skipped dimensions、mode recommendation／selection source／divergence、downgrade
+   reason 與 override provenance；所有 consumer 使用同一 output，不各自複製 regex。
 
-**Done-when**: 每份 gate artifact 都能機械回答「為什麼需要這個 minimum tier、
-reviewers 與 recommended/required mode」；generic 與 maintainer policy 可獨立測試，
-full 不再隱含 parallel。
+**Done-when**: 每份 gate artifact 都能機械回答「為什麼需要這個 minimum tier／
+reviewers、policy 建議哪個 mode、以及最終是 user 或 policy 選擇」；generic 與
+maintainer policy 可獨立測試，full 不再隱含或強制 parallel。
 
 **Non-goals**: 不以分類 signal 取代真正 review；不把 architecture reviewer 全域
 升為 hard gate；不讓 maintainer recipe 改寫 generic defaults。
@@ -1941,8 +1946,8 @@ project 使用。
 
 1. 更新 `commands/ship.md` 與 maintainer review model：primary implementation、
    affected tests、refactor/reuse audit 完成後，只執行一次 comprehensive PR gate。
-   [[CC-513]] maintainer policy 固定要求五 reviewer coverage；mode 由 policy
-   recommended/required mode 與 caller 選擇解析，不把 full coverage 寫成必然
+   [[CC-513]] maintainer policy 固定要求五 reviewer coverage；mode 未指定時採
+   policy recommendation，caller 明確選擇則優先，不把 full coverage 寫成必然
    parallel。Gate 使用 [[CC-518]]～[[CC-521]] 的 structured outputs。
 2. 產生 `remediation_closure_v1` evidence，至少含 primary gate/result/subject、
    final subject、每個 stable finding ID 的 disposition、changed files、affected-test

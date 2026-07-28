@@ -17,7 +17,8 @@ Gate assurance definitions are split deliberately:
 - `policy/gate-policy-consumers.tsv` and `gate-policy-signals.tsv` define
   consumer-specific coverage and deterministic risk floors.
 - `schema/gate-policy-override.schema.json` defines explicit scope-bound user
-  approval for a downgrade.
+  approval for a tier or reviewer-coverage downgrade; mode remains a direct
+  user choice.
 - `schema/gate-assurance.schema.json` defines the portable envelope that records
   both resolved coordinates and the policy resolution that produced them.
 

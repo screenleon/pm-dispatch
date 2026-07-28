@@ -26,7 +26,12 @@ implement → pr-gate → fix NO-GO → push → PR).
 - `standard` — feature, `architecture_impact: minor`; adds architecture-reviewer with conceptual map.
 - `full` — large or architectural change, `architecture_impact: major`; defaults to all reviewer dimensions.
 - Sensitive paths add their security/risk/architecture reviewer without automatically forcing `full`.
-- Default = **sequential**, low token cost. `--mode parallel` gives each reviewer an independent session; `--parallel` remains a compatibility spelling.
+- With no mode flag, policy auto-selects its recommendation. An explicit
+  `--mode sequential` (lower token cost) or `--mode parallel` (independent
+  reviewer sessions) always wins; `--sequential` / `--parallel` remain
+  compatibility spellings.
+- Preserve an explicit user mode on follow-up or targeted gates after NO-GO;
+  omit the flag only when the user left mode selection to policy.
 - Trusted `architecture_impact` from `--brief <file>` is enforced by the canonical policy resolver (`minor` → at least `standard`, `major` → `full`).
 - Request a tier with `--tier express|standard|full`; a request below the policy floor fails before dispatch. Re-gate a remediation subset with `--targeted r1,r2 --initial-result <path>`.
 

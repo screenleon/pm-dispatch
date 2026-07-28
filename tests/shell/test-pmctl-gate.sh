@@ -448,7 +448,8 @@ _mk_gate_result_v2() {
         minimum_tier:"express",
         required_reviewers:["critic","qa-tester"],
         recommended_mode:"sequential",
-        required_mode:null,
+        mode_selection_source:"policy",
+        mode_recommendation_overridden:false,
         downgrade_requested:false,
         downgrade_allowed:false
       },
@@ -459,8 +460,7 @@ _mk_gate_result_v2() {
           matches:["generic:initial"],
           minimum_tier:"express",
           required_reviewers:["critic","qa-tester"],
-          recommended_mode:"sequential",
-          required_mode:null
+          recommended_mode:"sequential"
         },
         {
           id:"docs-only",
@@ -468,8 +468,7 @@ _mk_gate_result_v2() {
           matches:["README.md"],
           minimum_tier:"express",
           required_reviewers:[],
-          recommended_mode:"sequential",
-          required_mode:null
+          recommended_mode:"sequential"
         }
       ],
       resolved:{

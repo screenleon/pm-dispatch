@@ -803,7 +803,8 @@ _gate_assurance_valid_instance() {
         minimum_tier:"standard",
         required_reviewers:["critic","qa-tester","architecture-reviewer"],
         recommended_mode:"parallel",
-        required_mode:null,
+        mode_selection_source:"user",
+        mode_recommendation_overridden:true,
         downgrade_requested:false,
         downgrade_allowed:false
       },
@@ -814,8 +815,7 @@ _gate_assurance_valid_instance() {
           matches:["generic:initial"],
           minimum_tier:"express",
           required_reviewers:["critic","qa-tester"],
-          recommended_mode:"sequential",
-          required_mode:null
+          recommended_mode:"sequential"
         },
         {
           id:"medium-change",
@@ -823,8 +823,7 @@ _gate_assurance_valid_instance() {
           matches:["changed-lines:120"],
           minimum_tier:"standard",
           required_reviewers:["architecture-reviewer"],
-          recommended_mode:"parallel",
-          required_mode:null
+          recommended_mode:"parallel"
         }
       ],
       resolved:{
@@ -908,8 +907,7 @@ _gate_policy_override_valid_instance() {
     scope_fingerprint:("a" * 64),
     allow:{
       tier:"express",
-      omit_reviewers:["security-reviewer"],
-      mode:null
+      omit_reviewers:["security-reviewer"]
     },
     reason:"User accepted this exact bounded downgrade.",
     approver:{
@@ -964,6 +962,21 @@ case_gate_policy_override_extra_key_rejected() {
   rm -f "$tmpf"
 }
 
+case_gate_policy_override_mode_key_rejected() {
+  local name="gate-policy-override: mode is user choice, not a downgrade key"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/gate-policy-override.schema.json" tmpf
+  tmpf="$(mktemp /tmp/gate-policy-override-mode-key-XXXXXX.json)"
+  _gate_policy_override_valid_instance |
+    jq '.allow.mode = "sequential"' > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    fail "$name" "schema accepted mode as a policy downgrade allowance"
+  else
+    pass "$name"
+  fi
+  rm -f "$tmpf"
+}
+
 case_context_pack_v1_still_valid
 case_context_pack_v2_new_fields_valid
 case_context_pack_memory_source_domain_valid
@@ -977,5 +990,6 @@ case_gate_assurance_non_user_policy_approver_rejected
 case_gate_policy_override_valid_instance
 case_gate_policy_override_non_user_approver_rejected
 case_gate_policy_override_extra_key_rejected
+case_gate_policy_override_mode_key_rejected
 
 th_summary

@@ -266,7 +266,8 @@
             "minimum_tier",
             "required_reviewers",
             "recommended_mode",
-            "required_mode",
+            "mode_selection_source",
+            "mode_recommendation_overridden",
             "downgrade_requested",
             "downgrade_allowed"
           ],
@@ -287,16 +288,14 @@
                 "parallel"
               ]
             },
-            "required_mode": {
-              "type": [
-                "string",
-                "null"
-              ],
+            "mode_selection_source": {
               "enum": [
-                "sequential",
-                "parallel",
-                null
+                "user",
+                "policy"
               ]
+            },
+            "mode_recommendation_overridden": {
+              "type": "boolean"
             },
             "downgrade_requested": {
               "type": "boolean"
@@ -318,8 +317,7 @@
               "matches",
               "minimum_tier",
               "required_reviewers",
-              "recommended_mode",
-              "required_mode"
+              "recommended_mode"
             ],
             "properties": {
               "id": {
@@ -351,17 +349,6 @@
                 "enum": [
                   "sequential",
                   "parallel"
-                ]
-              },
-              "required_mode": {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "enum": [
-                  "sequential",
-                  "parallel",
-                  null
                 ]
               }
             },

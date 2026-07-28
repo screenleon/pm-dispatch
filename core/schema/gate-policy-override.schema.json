@@ -1,6 +1,6 @@
 {
-  "title": "Gate policy downgrade override",
-  "description": "Explicit user authorization for a scope-bound gate policy downgrade.",
+  "title": "Gate tier and coverage downgrade override",
+  "description": "Explicit user authorization for a scope-bound gate tier or reviewer-coverage downgrade. Execution mode is selected directly by the user and is not an override coordinate.",
   "type": "object",
   "required": [
     "kind",
@@ -25,8 +25,7 @@
       "type": "object",
       "required": [
         "tier",
-        "omit_reviewers",
-        "mode"
+        "omit_reviewers"
       ],
       "properties": {
         "tier": {
@@ -48,17 +47,6 @@
             "type": "string",
             "pattern": "^[a-z0-9][a-z0-9-]*$"
           }
-        },
-        "mode": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "enum": [
-            "sequential",
-            "parallel",
-            null
-          ]
         }
       },
       "additionalProperties": false

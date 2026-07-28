@@ -9,28 +9,35 @@ This command uses the `generic` consumer policy: one canonical resolver combines
 the diff, trusted brief metadata, requested tier/mode/pass/coverage, and
 repository policy before any reviewer is dispatched.
 
-**Sequential mode (default):** all reviewers run in one combined session.
-Low main-thread token cost (~5k dispatch + read result).
+**Sequential mode (`--mode sequential`; `--sequential` is compatible):** all
+reviewers run in one combined session. Lower token cost.
 
 **Parallel mode (`--mode parallel`; `--parallel` is compatible):** each reviewer runs in its own independent session
 followed by a PM synthesis session. Higher token cost — use for auth/payment/migration
 paths or when reviewer independence matters.
+
+When mode is omitted, policy automatically selects its recommendation from the
+consumer and matched risk signals. Any explicit sequential or parallel choice
+wins; the assurance records when that choice differs from the recommendation,
+but does not treat it as a downgrade.
 
 | Situation | Args |
 |---|---|
 | Routine code / seed / docs changes | _(none)_ |
 | Re-gate after fixing specific findings | `--targeted qa-tester,risk-reviewer --initial-result <path>` |
 | Auth / payment / migration / sensitive paths | _(none; policy adds the matching reviewer and recommends parallel)_ |
-| Input/evaluation/command execution boundary | _(none; policy requires parallel)_ |
+| Input/evaluation/command execution boundary | _(none; policy recommends parallel)_ |
+| Conserve reviewer-session token usage | `--mode sequential` |
 | Request independent reviewer sessions | `--mode parallel` |
 | Request a specific tier | `express` / `standard` / `full` (cannot lower the policy floor) |
 
-A policy rejection happens before reviewer dispatch and is an execution/policy
-failure, not a `Final: NO-GO` reviewer verdict. Scope-bound downgrades use the
-runtime's explicit structured policy-override contract. Its scope fingerprint
-binds the actual tracked patch plus in-scope untracked content, so an approval
-cannot be replayed after a same-shape content change. `.gate-overrides.md` only
-supplies reviewer finding context and cannot lower policy.
+A tier or reviewer-coverage policy rejection happens before reviewer dispatch
+and is an execution/policy failure, not a `Final: NO-GO` reviewer verdict.
+Scope-bound tier/coverage downgrades use the runtime's explicit structured
+policy-override contract. Its scope fingerprint binds the actual tracked patch
+plus in-scope untracked content, so an approval cannot be replayed after a
+same-shape content change. `.gate-overrides.md` only supplies reviewer finding
+context and cannot lower policy.
 
 ## Step 1 - Invoke pmctl directly
 
@@ -311,6 +318,10 @@ When the `pmctl gate wait` background Bash completion notification arrives:
    exit 0 from `/pm` only if needed by the conversation protocol.
 
 ## Local verification after gate findings
+
+For a follow-up gate after a complete analysis or `Final: NO-GO`, preserve the
+user's explicit `--mode sequential` or `--mode parallel` choice. Omit the flag
+only when the user has not chosen a mode and wants policy to infer it again.
 
 After fixing a NO-GO finding, run only the affected tests before re-gating:
 

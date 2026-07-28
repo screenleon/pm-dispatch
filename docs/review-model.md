@@ -41,11 +41,11 @@ The point is not to produce documentation — it is to catch a wrong direction b
 
 **When**: after the executor finishes; triggered by `/pr-gate`.
 
-**Mechanism**: `/pr-gate` runs its reviewers (`critic`, `qa-tester`, `security-reviewer`, `risk-reviewer`, `architecture-reviewer`) in a review session *separate from the one that produced the diff*. Each reviewer receives a brief with the diff, task context, and (if present) the conceptual map — but not the dispatch session's reasoning, prior attempts, or implicit anchors. The default sequential gate runs the reviewers together in one fresh session (codex or Claude, per `--executor`); the `--parallel` path gives each reviewer its own independent session followed by a PM synthesis pass.
+**Mechanism**: `/pr-gate` runs its reviewers (`critic`, `qa-tester`, `security-reviewer`, `risk-reviewer`, `architecture-reviewer`) in a review session *separate from the one that produced the diff*. Each reviewer receives a brief with the diff, task context, and (if present) the conceptual map — but not the dispatch session's reasoning, prior attempts, or implicit anchors. A sequential gate runs the reviewers together in one fresh session (codex or Claude, per `--executor`); the parallel path gives each reviewer its own independent session followed by a PM synthesis pass. An explicit user choice wins; when mode is omitted, policy selects its recommendation.
 
 This isolation matters because context-window anchoring is real: a reviewer who watched the code being written will tend to evaluate the approach rather than the outcome. A reviewer who arrives at the finished diff cold asks "does this make sense in isolation?" — a harder and more valuable question.
 
-The isolation *from the dispatch session* is structural, not advisory: the review session is a separate process and cannot read the implementer's context. Per-reviewer independence — each reviewer also blind to the others — is provided by the `--parallel` path; the sequential default trades that for a single combined review session. See [pr-gate-handover-schema.md](pr-gate-handover-schema.md) for the handover protocol.
+The isolation *from the dispatch session* is structural, not advisory: the review session is a separate process and cannot read the implementer's context. Per-reviewer independence — each reviewer also blind to the others — is provided by the parallel path; sequential mode trades that for a single combined review session. See [pr-gate-handover-schema.md](pr-gate-handover-schema.md) for the handover protocol.
 
 ### Layer 3 — Conceptual Map review
 
@@ -166,11 +166,11 @@ to required coverage without automatically converting every bounded change to
 - Tier records rigor intent and supplies default reviewer coverage. An explicit
   `--reviewers` list does not rewrite the tier, but it must still include every
   reviewer required by the matched risk signals.
-- Mode records execution topology. The default is `sequential`; select
-  `--mode parallel` when separate reviewer sessions and synthesis are desired.
-  Policy records recommendation separately from requirement; only an explicit
-  isolation signal requires parallel mode. A `full` tier does not select
-  parallel mode by itself.
+- Mode records execution topology and remains a user-owned cost/independence
+  choice. When mode is omitted, policy auto-selects its recommendation from the
+  consumer and matched signals. Explicit `--mode sequential` or
+  `--mode parallel` always wins; the envelope records recommendation divergence
+  without treating it as a downgrade. A `full` tier does not force parallel.
 - Pass kind records whether the review is initial or a remediation-delta
   targeted pass. `--targeted <reviewers>` requires
   `--initial-result <path>` and is not a tier alias.
@@ -181,12 +181,13 @@ pass fixes coverage at all five reviewer dimensions while preserving the
 independently resolved tier and mode. Targeted passes under either consumer
 remain scoped to the requested remediation reviewers.
 
-Any requested tier, coverage, or mode below the policy floor fails before
-reviewer dispatch. A downgrade is accepted only through an explicitly supplied
-`gate_policy_override_v1` JSON file bound to the exact scope fingerprint and
-recording user approval. The fingerprint includes the content-addressed tracked
-patch and every in-scope untracked file, not only file names or aggregate line
-counts. The free-form `.gate-overrides.md` file remains reviewer
+Any requested tier or coverage below the policy floor fails before reviewer
+dispatch. A tier/coverage downgrade is accepted only through an explicitly
+supplied `gate_policy_override_v1` JSON file bound to the exact scope fingerprint
+and recording user approval. Mode is not a downgrade coordinate: explicit user
+selection needs no override. The fingerprint includes the content-addressed
+tracked patch and every in-scope untracked file, not only file names or aggregate
+line counts. The free-form `.gate-overrides.md` file remains reviewer
 finding/suppression context; it is recorded separately and cannot authorize a
 policy downgrade.
 
@@ -209,8 +210,9 @@ requested/resolved coordinates, selected/skipped coverage, actual dispatch
 outcomes, run IDs, subject commits/fingerprint, and the evidence status behind
 independence claims. New envelopes also embed the canonical policy result:
 classification facts, every matched signal and path, minimum tier, required
-coverage, recommended versus required mode, enforcement status, and both
-policy-override and reviewer-override provenance. Repo-layout results with
+coverage, recommended mode, whether policy or the user selected the mode,
+recommendation divergence, enforcement status, and both policy-override and
+reviewer-override provenance. Repo-layout results with
 verified independence also carry
 a shell-owned attestation in the protected gate run directory. `pmctl gate
 verify` validates result/sidecar digests and resolves every claimed run ID

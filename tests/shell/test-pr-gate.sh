@@ -659,9 +659,9 @@ test_gate_policy_sources_control_default_coverage() {
 }
 
 # Behavior: a copied gate without canonical policy files resolves the same
-# defaults from its bounded generated snapshot and reports the degraded source.
+# coordinates from its bounded generated snapshot and reports the degraded source.
 # Steps: remove the copied TSV files, run a docs gate, and assert express /
-# sequential / initial defaults plus generated-snapshot provenance.
+# policy-selected sequential mode / initial pass plus generated-snapshot provenance.
 test_gate_assurance_policy_snapshot_is_copy_mode_fallback() {
   local name="gate-assurance-policy-snapshot-is-copy-mode-fallback"
   should_run "$name" || return 0
@@ -707,7 +707,7 @@ test_dormant_policy_signal_with_unknown_reviewer_fails_before_dispatch() {
   create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
   create_repo "$repo" docs
   printf '%s\n' \
-    $'dormant-signal\tpath-regex\tnever-match-this-fixture\tstandard\tunknown-reviewer\tparallel\tnone' \
+    $'dormant-signal\tpath-regex\tnever-match-this-fixture\tstandard\tunknown-reviewer\tparallel' \
     >> "$runner/core/policy/gate-policy-signals.tsv"
 
   set +e
@@ -737,7 +737,7 @@ test_duplicate_policy_signal_id_fails_before_dispatch() {
   create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
   create_repo "$repo" docs
   printf '%s\n' \
-    $'docs-only\tpath-regex\tnever-match-this-fixture\texpress\tnone\tsequential\tnone' \
+    $'docs-only\tpath-regex\tnever-match-this-fixture\texpress\tnone\tsequential' \
     >> "$runner/core/policy/gate-policy-signals.tsv"
 
   set +e
@@ -755,9 +755,10 @@ test_duplicate_policy_signal_id_fails_before_dispatch() {
 }
 
 # Behavior: the maintainer initial-pass policy fixes reviewer coverage at all
-# five dimensions without rewriting express tier or requiring parallel mode.
-test_maintainer_initial_policy_fixes_coverage_only() {
-  local name="maintainer-initial-policy-fixes-coverage-only"
+# five dimensions and supplies parallel as the auto-selected mode while leaving
+# an explicit user mode authoritative.
+test_maintainer_initial_policy_sets_coverage_and_auto_mode() {
+  local name="maintainer-initial-policy-sets-coverage-and-auto-mode"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
@@ -777,17 +778,20 @@ test_maintainer_initial_policy_fixes_coverage_only() {
     return
   fi
   assert_file_contains "$name" "$brief" "tier.resolved: express" || return
-  assert_file_contains "$name" "$brief" "mode.resolved: sequential" || return
+  assert_file_contains "$name" "$brief" "mode.resolved: parallel" || return
+  assert_file_contains "$name" "$brief" "mode.selection_source: policy" || return
+  assert_file_contains "$name" "$brief" "mode.recommendation_overridden: false" || return
   assert_file_contains "$name" "$brief" "policy.consumer: maintainer" || return
   assert_file_contains "$name" "$brief" "policy.recommended_mode: parallel" || return
-  assert_file_contains "$name" "$brief" "policy.required_mode: none" || return
   assert_file_contains "$name" "$brief" \
     "coverage.selected: critic,qa-tester,architecture-reviewer,security-reviewer,risk-reviewer" || return
   result_path="$(awk '/^result: / {sub(/^result: /, ""); print; exit}' "$out")"
   jq -e '
     .policy.consumer_policy == "maintainer" and
     .policy.resolved.tier == "express" and
-    .policy.resolved.mode == "sequential" and
+    .policy.resolved.mode == "parallel" and
+    .policy.resolution.mode_selection_source == "policy" and
+    .policy.resolution.mode_recommendation_overridden == false and
     .policy.resolved.reviewers ==
       ["critic","qa-tester","architecture-reviewer","security-reviewer","risk-reviewer"]
   ' "${result_path}.assurance.json" >/dev/null || {
@@ -839,14 +843,17 @@ test_maintainer_targeted_policy_preserves_remediation_scope() {
   pass "$name"
 }
 
-# Behavior: an explicit input/execution boundary signal requires parallel
-# isolation independently of its standard tier and security coverage.
-test_input_execution_signal_requires_parallel_mode() {
-  local name="input-execution-signal-requires-parallel-mode"
+# Behavior: an input/execution boundary signal auto-selects parallel when mode
+# is omitted, but an explicit sequential request remains authoritative and is
+# recorded as an override of the recommendation rather than a policy downgrade.
+test_input_execution_signal_auto_selects_parallel_but_respects_user_mode() {
+  local name="input-execution-signal-auto-selects-parallel-but-respects-user-mode"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
   local out="$dir/out" err="$dir/err" brief="$dir/brief.md" result_path
+  local sequential_brief="$dir/sequential-brief.md"
+  local sequential_result="$dir/sequential-result.md"
   mkdir -p "$dir"
   create_runner "$runner"
   create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
@@ -866,7 +873,8 @@ test_input_execution_signal_requires_parallel_mode() {
   fi
   assert_file_contains "$name" "$brief" "tier.resolved: standard" || return
   assert_file_contains "$name" "$brief" "mode.resolved: parallel" || return
-  assert_file_contains "$name" "$brief" "policy.required_mode: parallel" || return
+  assert_file_contains "$name" "$brief" "mode.selection_source: policy" || return
+  assert_file_contains "$name" "$brief" "mode.recommendation_overridden: false" || return
   assert_file_contains "$name" "$brief" "policy.escalation_signals:" || return
   assert_file_contains "$name" "$brief" '"id":"input-execution-path"' || return
   assert_not_contains "$name" "$brief" "any diff file matches (" || return
@@ -883,15 +891,31 @@ test_input_execution_signal_requires_parallel_mode() {
   }
 
   set +e
-  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --mode sequential
+  CODEX_GATE_CAPTURE_BRIEF="$sequential_brief" \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --mode sequential --output "$sequential_result"
   code=$?
   set -e
-  if [[ "$code" -ne 3 ]]; then
-    fail "$name" "explicit sequential mode exited $code, expected policy rejection 3"
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "explicit sequential mode exited $code, expected user choice to pass"
     return
   fi
-  assert_file_contains "$name" "$err" "requested=sequential required=parallel" || return
-  assert_not_contains "$name" "$err" "DISPATCH_STUB" || return
+  assert_file_contains "$name" "$sequential_brief" "mode.requested: sequential" || return
+  assert_file_contains "$name" "$sequential_brief" "mode.resolved: sequential" || return
+  assert_file_contains "$name" "$sequential_brief" "mode.selection_source: user" || return
+  assert_file_contains "$name" "$sequential_brief" \
+    "mode.recommendation_overridden: true" || return
+  jq -e '
+    .policy.resolution.recommended_mode == "parallel" and
+    .policy.resolution.mode_selection_source == "user" and
+    .policy.resolution.mode_recommendation_overridden == true and
+    .policy.resolution.downgrade_requested == false and
+    .policy.resolved.mode == "sequential" and
+    .policy.enforcement.status == "pass"
+  ' "${sequential_result}.assurance.json" >/dev/null || {
+    fail "$name" "assurance did not preserve the explicit sequential choice"
+    return
+  }
   pass "$name"
 }
 
@@ -1461,7 +1485,7 @@ test_malformed_policy_override_contract_fails_before_dispatch() {
     kind:"gate_policy_override_v1",
     schema_version:1,
     scope_fingerprint:("a" * 64),
-    allow:{tier:null,omit_reviewers:["qa-tester"],mode:null},
+    allow:{tier:null,omit_reviewers:["qa-tester"]},
     approver:{kind:"user",identity:"fixture-user",approval_ref:"conversation:test"}
   }' > "$policy_override"
 
@@ -1514,7 +1538,7 @@ test_scope_bound_policy_override_authorizes_exact_coverage_downgrade() {
     kind:"gate_policy_override_v1",
     schema_version:1,
     scope_fingerprint:$scope,
-    allow:{tier:null,omit_reviewers:["qa-tester"],mode:null},
+    allow:{tier:null,omit_reviewers:["qa-tester"]},
     reason:"User accepts critic-only coverage for this bounded fixture.",
     approver:{kind:"user",identity:"fixture-user",approval_ref:"conversation:test"}
   }' > "$policy_override"
@@ -1565,7 +1589,7 @@ test_policy_override_scope_mismatch_fails_closed() {
     kind:"gate_policy_override_v1",
     schema_version:1,
     scope_fingerprint:("0" * 64),
-    allow:{tier:null,omit_reviewers:["qa-tester"],mode:null},
+    allow:{tier:null,omit_reviewers:["qa-tester"]},
     reason:"Approval belongs to a different change scope.",
     approver:{kind:"user",identity:"fixture-user",approval_ref:"conversation:other"}
   }' > "$policy_override"
@@ -1617,7 +1641,7 @@ test_policy_override_scope_binds_diff_content() {
     kind:"gate_policy_override_v1",
     schema_version:1,
     scope_fingerprint:$scope,
-    allow:{tier:null,omit_reviewers:["qa-tester"],mode:null},
+    allow:{tier:null,omit_reviewers:["qa-tester"]},
     reason:"Approval is intentionally bound to the original fixture content.",
     approver:{kind:"user",identity:"fixture-user",approval_ref:"conversation:content"}
   }' > "$policy_override"
@@ -1677,7 +1701,7 @@ test_policy_override_allowance_mismatch_fails_closed() {
     kind:"gate_policy_override_v1",
     schema_version:1,
     scope_fingerprint:$scope,
-    allow:{tier:null,omit_reviewers:[],mode:null},
+    allow:{tier:null,omit_reviewers:[]},
     reason:"This allowance intentionally omits none of the missing reviewers.",
     approver:{kind:"user",identity:"fixture-user",approval_ref:"conversation:mismatch"}
   }' > "$policy_override"
@@ -2464,7 +2488,7 @@ test_adjacent_test_not_duplicated_when_in_diff() {
 #   1. Create a minimal repo (express tier, docs change)
 #   2. CODEX_GATE_STUB_VERDICT=block: reviewers write Verdict: block → SHELL_FINAL=NO-GO
 #      CODEX_GATE_STUB_SYNTHESIS_FINAL=GO: synthesis stub writes Final: GO
-#   3. Run gate in parallel mode (default)
+#   3. Run gate in explicit parallel mode
 #   4. Assert non-zero exit and "contradicts shell-computed" in stderr
 test_synthesis_verdict_mismatch_aborts_gate() {
   local name="synthesis-verdict-mismatch-aborts-gate"
@@ -2496,7 +2520,7 @@ test_synthesis_verdict_mismatch_aborts_gate() {
 # Steps:
 #   1. Create a repo with a committed service.go (clean tracked file)
 #   2. CODEX_GATE_STUB_SYNTHESIS_INJECT_FILE=service.go: synthesis stub appends to service.go
-#   3. Run gate in parallel mode (default)
+#   3. Run gate in explicit parallel mode
 #   4. Assert non-zero exit, "synthesis session modified" in stderr
 test_post_synthesis_injection_detected() {
   local name="post-synthesis-injection-detected"
@@ -2531,7 +2555,7 @@ test_post_synthesis_injection_detected() {
 # Steps:
 #   1. Create a minimal repo (express tier, docs change)
 #   2. CODEX_GATE_STUB_SYNTHESIS_MODE=no-output: reviewers write output; synthesis does not
-#   3. Run gate in parallel mode (default)
+#   3. Run gate in explicit parallel mode
 #   4. Assert non-zero exit and "synthesis did not produce" in stderr
 test_synthesis_no_output_aborts_gate() {
   local name="synthesis-no-output-aborts-gate"
@@ -2561,7 +2585,7 @@ test_synthesis_no_output_aborts_gate() {
 # Steps:
 #   1. Create a minimal repo (express tier, docs change)
 #   2. CODEX_GATE_STUB_MODE=no-verdict: reviewer writes output but no Verdict line
-#   3. Run gate in parallel mode (default)
+#   3. Run gate in explicit parallel mode
 #   4. Assert non-zero exit and "exactly one valid Verdict line" in stderr
 test_reviewer_invalid_verdict_aborts_gate() {
   local name="reviewer-invalid-verdict-aborts-gate"
@@ -2647,7 +2671,7 @@ test_reviewer_heading_and_explicit_verdict_must_agree() {
 # Steps:
 #   1. Create a minimal repo (express tier, docs change)
 #   2. CODEX_GATE_STUB_MODE=no-output: all dispatches (reviewers + synthesis) omit output
-#   3. Run gate in parallel mode (default)
+#   3. Run gate in explicit parallel mode
 #   4. Assert non-zero exit and "reviewer output missing or empty" in stderr
 test_reviewer_no_output_aborts_gate() {
   local name="reviewer-no-output-aborts-gate"
@@ -2677,7 +2701,7 @@ test_reviewer_no_output_aborts_gate() {
 # Steps:
 #   1. Create a minimal repo (express tier, docs change)
 #   2. CODEX_GATE_STUB_MODE=no-output: dispatch exits 0 without output
-#   3. Run gate in sequential mode (default)
+#   3. Run gate in policy-selected sequential mode
 #   4. Assert non-zero exit and "sequential gate did not produce" in stderr
 test_sequential_no_output_aborts_gate() {
   local name="sequential-no-output-aborts-gate"
@@ -2707,7 +2731,7 @@ test_sequential_no_output_aborts_gate() {
 # Steps:
 #   1. Create a minimal repo (express tier, docs change)
 #   2. CODEX_GATE_STUB_MODE=no-verdict: dispatch writes output but no Final line
-#   3. Run gate in sequential mode (default)
+#   3. Run gate in policy-selected sequential mode
 #   4. Assert non-zero exit and "must contain exactly one Final" in stderr
 test_sequential_no_final_line_aborts_gate() {
   local name="sequential-no-final-line-aborts-gate"
@@ -2741,7 +2765,7 @@ test_sequential_no_final_line_aborts_gate() {
 #   1. Create a full-tier repo change (5 reviewers)
 #   2. CODEX_GATE_STUB_MODE=sequential-partial-timeout: dispatch writes 2 of
 #      5 reviewer sections then exits 124 (simulated timeout)
-#   3. Run gate in sequential mode (default)
+#   3. Run gate in policy-selected sequential mode
 #   4. Assert non-zero exit, stderr reports Timeout + partial completion
 #      counts + the completed/incomplete reviewer names, and the output
 #      file on disk still contains the 2 completed reviewer sections
@@ -3395,7 +3419,7 @@ test_parallel_frontmatter_parity_mismatch_aborts_gate() {
 # Steps:
 #   1. Create a repo with a committed service.go (clean tracked file)
 #   2. CODEX_GATE_STUB_INJECT_FILE=service.go: reviewer stub appends to service.go
-#   3. Run gate in parallel mode (default)
+#   3. Run gate in explicit parallel mode
 #   4. Assert non-zero exit, "prompt injection" in stderr, and no "[synthesis]" in stdout
 test_prompt_injection_detected() {
   local name="prompt-injection-detected"
@@ -4262,9 +4286,10 @@ test_full_tier_line_count() {
 }
 
 # Behavior: a bounded auth-path change adds the security reviewer without
-# conflating sensitive coverage with full-tier or parallel topology.
-# Steps: create a tiny auth diff and assert express intent plus the security
-# dimension, while parallel remains only a recommendation.
+# conflating sensitive coverage with full-tier intent; because mode is omitted,
+# the parallel recommendation becomes the auto-selected topology.
+# Steps: create a tiny auth diff and assert express intent, the security
+# dimension, and policy-selected parallel mode.
 test_sensitive_file_adds_security_without_forcing_full() {
   local name="sensitive-file-adds-security"
   should_run "$name" || return 0
@@ -4288,11 +4313,11 @@ test_sensitive_file_adds_security_without_forcing_full() {
   assert_file_contains "$name" "$brief" "Reviewers: critic,qa-tester,security-reviewer" || return
   assert_file_contains "$name" "$brief" "policy.required_reviewers: critic,qa-tester,security-reviewer" || return
   assert_file_contains "$name" "$brief" "policy.recommended_mode: parallel" || return
-  assert_file_contains "$name" "$brief" "policy.required_mode: none" || return
   assert_file_contains "$name" "$brief" \
     'policy.escalation_signals: [{"id":"security-sensitive-path"' || return
   assert_not_contains "$name" "$brief" "any diff file matches (" || return
-  assert_file_contains "$name" "$brief" "mode.resolved: sequential" || return
+  assert_file_contains "$name" "$brief" "mode.resolved: parallel" || return
+  assert_file_contains "$name" "$brief" "mode.selection_source: policy" || return
   pass "$name"
 }
 
@@ -4325,7 +4350,8 @@ test_plural_signal_paths_add_required_dimensions() {
   assert_file_contains "$name" "$brief" "tier.resolved: standard" || return
   assert_file_contains "$name" "$brief" \
     "coverage.selected: critic,qa-tester,architecture-reviewer,security-reviewer,risk-reviewer" || return
-  assert_file_contains "$name" "$brief" "policy.required_mode: none" || return
+  assert_file_contains "$name" "$brief" "mode.resolved: parallel" || return
+  assert_file_contains "$name" "$brief" "mode.selection_source: policy" || return
   result_path="$(awk -F'result: ' '/^result: /{path=$2} END{print path}' "$out")"
   jq -e '
     any(.policy.matched_signals[];
@@ -4557,9 +4583,9 @@ run_test test_gate_policy_sources_control_default_coverage
 run_test test_gate_assurance_policy_snapshot_is_copy_mode_fallback
 run_test test_dormant_policy_signal_with_unknown_reviewer_fails_before_dispatch
 run_test test_duplicate_policy_signal_id_fails_before_dispatch
-run_test test_maintainer_initial_policy_fixes_coverage_only
+run_test test_maintainer_initial_policy_sets_coverage_and_auto_mode
 run_test test_maintainer_targeted_policy_preserves_remediation_scope
-run_test test_input_execution_signal_requires_parallel_mode
+run_test test_input_execution_signal_auto_selects_parallel_but_respects_user_mode
 run_test test_tier_detection
 run_test test_pr_gate_does_not_mutate_gitignore
 run_test test_artifact_filter_drops_gate_artifacts
@@ -5343,7 +5369,7 @@ test_targeted_pass_references_initial_result() {
 }
 
 # Behavior: a targeted pass with auto mode and no input brief resolves all
-# policy coordinates before constructing the default sequential reviewer brief.
+# policy coordinates before constructing the policy-selected sequential reviewer brief.
 # Steps: run a critic-only targeted gate without --mode or --brief and assert
 # successful dispatch plus initialized sequential coordinates. This covers the
 # real runtime path that previously aborted on unbound MODE_RESOLVED/BRIEF_FILE.
@@ -5371,6 +5397,8 @@ test_targeted_auto_mode_initializes_brief_coordinates() {
   fi
   assert_file_contains "$name" "$brief" "mode.requested: default" || return
   assert_file_contains "$name" "$brief" "mode.resolved: sequential" || return
+  assert_file_contains "$name" "$brief" "mode.selection_source: policy" || return
+  assert_file_contains "$name" "$brief" "mode.recommendation_overridden: false" || return
   assert_file_contains "$name" "$brief" "pass.resolved: targeted" || return
   assert_not_contains "$name" "$err" "unbound variable" || return
   pass "$name"
@@ -5573,6 +5601,8 @@ test_equivalent_mode_spellings_are_accepted() {
   fi
   assert_file_contains "$name" "$brief" "mode.requested: parallel" || return
   assert_file_contains "$name" "$brief" "mode.resolved: parallel" || return
+  assert_file_contains "$name" "$brief" "mode.selection_source: user" || return
+  assert_file_contains "$name" "$brief" "mode.recommendation_overridden: true" || return
   assert_file_contains "$name" "$out" "launched critic" || return
   pass "$name"
 }
@@ -5643,6 +5673,8 @@ test_seq_brief_ascii_separator() {
     fail "$name" "exit $code, expected 0"
     return
   fi
+  assert_file_contains "$name" "$brief" "mode.selection_source: user" || return
+  assert_file_contains "$name" "$brief" "mode.recommendation_overridden: false" || return
   # Template heading must use ASCII -- not em dash
   assert_file_contains "$name" "$brief" "PR-Gate Result --" || return
   # Reviewer heading format must use ASCII -- not em dash
@@ -5886,7 +5918,9 @@ test_dirty_preflight_fails_on_committed_plus_dirty() {
 # Steps: create a repo with committed feature-branch changes, add an
 # untracked file (dirtysrc.go), run the gate against main with
 # --allow-dirty, and assert exit 0, dispatch succeeds, the brief lists
-# dirtysrc.go, and stderr notes --allow-dirty was set.
+# dirtysrc.go, and stderr notes --allow-dirty was set. The test explicitly
+# selects sequential so CODEX_GATE_CAPTURE_BRIEF receives the combined reviewer
+# brief rather than a policy-selected parallel synthesis brief.
 test_dirty_preflight_allow_dirty_includes_worktree() {
   local name="dirty-preflight-allow-dirty-includes-worktree"
   should_run "$name" || return 0
@@ -5900,7 +5934,8 @@ test_dirty_preflight_allow_dirty_includes_worktree() {
   (cd "$repo" && printf 'x\n' > dirtysrc.go)
 
   set +e
-  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --allow-dirty
+  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" \
+    --base main --allow-dirty --mode sequential
   local code=$?
   set -e
   if [[ "$code" -ne 0 ]]; then
@@ -5922,8 +5957,8 @@ test_dirty_preflight_allow_dirty_includes_worktree() {
 # Steps: commit tracked_base.go on main, branch to feature, commit app.go
 # (so BASE...HEAD covers app.go but NOT tracked_base.go), modify
 # tracked_base.go in the worktree without committing, run the gate against
-# main with --allow-dirty, and assert exit 0 and the brief includes
-# tracked_base.go.
+# main with --allow-dirty and explicit sequential mode, then assert exit 0 and
+# the combined reviewer brief includes tracked_base.go.
 test_allow_dirty_includes_uncommitted_tracked() {
   local name="allow-dirty-includes-uncommitted-tracked"
   should_run "$name" || return 0
@@ -5952,7 +5987,8 @@ test_allow_dirty_includes_uncommitted_tracked() {
   )
 
   set +e
-  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --allow-dirty
+  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" \
+    --base main --allow-dirty --mode sequential
   local code=$?
   set -e
   if [[ "$code" -ne 0 ]]; then
@@ -7372,7 +7408,8 @@ run_test test_gate_run_dir_parallel_failure_leaves_no_repo_artifacts
 #    committed change.
 # 2. Check out main (NOT feature) so the working tree is not on
 #    the reviewed ref.
-# 3. Run the gate with --base main --head feature.
+# 3. Run the gate with --base main --head feature and explicit sequential mode
+#    so the captured brief is the combined reviewer brief.
 # 4. Assert exit 0, the brief records "Head: feature", and the
 #    feature-only file is in scope.
 test_head_override_diffs_fixed_ref() {
@@ -7391,7 +7428,8 @@ test_head_override_diffs_fixed_ref() {
 
   set +e
   CODEX_GATE_CAPTURE_BRIEF="$brief" \
-    run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --head feature
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --head feature --mode sequential
   local code=$?
   set -e
   if [[ "$code" -ne 0 ]]; then
@@ -7475,7 +7513,8 @@ test_head_override_rejects_allow_dirty() {
 # Steps:
 # 1. Build a repo with main + a feature branch carrying a committed change (app.go).
 # 2. Check out main and commit an independent main-only file the feature branch never sees.
-# 3. Run the gate with --base main --head feature (base and head now diverged both ways).
+# 3. Run the gate with --base main --head feature and explicit sequential mode
+#    (base and head now diverged both ways).
 # 4. Assert exit 0, app.go is in scope, and main-only.txt is NOT in scope --
 #    a two-dot diff would additionally report main-only.txt as removed.
 test_head_override_merge_base_semantics() {
@@ -7498,7 +7537,8 @@ test_head_override_merge_base_semantics() {
 
   set +e
   CODEX_GATE_CAPTURE_BRIEF="$brief" \
-    run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --head feature
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --head feature --mode sequential
   local code=$?
   set -e
   if [[ "$code" -ne 0 ]]; then

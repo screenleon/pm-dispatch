@@ -127,7 +127,8 @@ gate_assurance_verify() {
           "binary_or_unknown_count","layer_roots"])) and
       (.policy.resolution |
         only_keys(["minimum_tier","required_reviewers","recommended_mode",
-          "required_mode","downgrade_requested","downgrade_allowed"])) and
+          "mode_selection_source","mode_recommendation_overridden",
+          "downgrade_requested","downgrade_allowed"])) and
       (.policy.resolved | only_keys(["tier","mode","reviewers"])) and
       (.policy.enforcement | only_keys(["status","violations"])) and
       (.policy.override |
@@ -163,25 +164,33 @@ gate_assurance_verify() {
           $policy.resolution.downgrade_allowed)) and
       (.policy.resolution.recommended_mode |
         IN("sequential","parallel")) and
-      (.policy.resolution.required_mode == null or
-        (.policy.resolution.required_mode |
-          IN("sequential","parallel"))) and
+      (.policy.resolution.mode_selection_source | IN("user","policy")) and
+      (.policy.resolution.mode_recommendation_overridden | type == "boolean") and
+      (if .policy.request.mode == "default"
+       then
+         .policy.resolution.mode_selection_source == "policy" and
+         .policy.resolved.mode == .policy.resolution.recommended_mode and
+         .policy.resolution.mode_recommendation_overridden == false
+       else
+         .policy.resolution.mode_selection_source == "user" and
+         .policy.resolved.mode == .policy.request.mode and
+         .policy.resolution.mode_recommendation_overridden ==
+           (.policy.request.mode != .policy.resolution.recommended_mode)
+       end) and
       (.policy.resolution.downgrade_requested | type == "boolean") and
       (.policy.resolution.downgrade_allowed | type == "boolean") and
       (.policy.matched_signals | type == "array" and length > 0) and
       ([.policy.matched_signals[].id] | strings_unique) and
       (all(.policy.matched_signals[];
         only_keys(["id","source","matches","minimum_tier",
-          "required_reviewers","recommended_mode","required_mode"]) and
+          "required_reviewers","recommended_mode"]) and
         (.id | type == "string" and length > 0) and
         (.source |
           IN("consumer-policy","classification","path-regex","brief-value")) and
         (.matches | strings_unique and length > 0) and
         (.minimum_tier | IN("express","standard","full")) and
         (.required_reviewers | strings_unique) and
-        (.recommended_mode | IN("sequential","parallel")) and
-        (.required_mode == null or
-          (.required_mode | IN("sequential","parallel"))))) and
+        (.recommended_mode | IN("sequential","parallel")))) and
       .policy.resolved.tier == .coordinates.tier.resolved and
       .policy.resolved.mode == .coordinates.mode.resolved and
       same_set(.policy.resolved.reviewers;
@@ -190,7 +199,7 @@ gate_assurance_verify() {
       (.policy.enforcement.violations | type == "array") and
       (all(.policy.enforcement.violations[];
         only_keys(["coordinate","requested","required"]) and
-        (.coordinate | IN("tier","coverage","mode")))) and
+        (.coordinate | IN("tier","coverage")))) and
       (.policy.override.status |
         IN("not_provided","not_needed","applied","scope_mismatch",
           "allowance_mismatch")) and

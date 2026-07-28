@@ -1,4 +1,5 @@
 # Gate execution topology. Mode does not imply tier or reviewer coverage.
-mode	topology	synthesis	is_default
-sequential	combined-session	inline	true
-parallel	per-reviewer-sessions	separate-session	false
+# Omitted mode is resolved from policy recommendations, not from this table.
+mode	topology	synthesis
+sequential	combined-session	inline
+parallel	per-reviewer-sessions	separate-session
