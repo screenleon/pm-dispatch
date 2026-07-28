@@ -89,6 +89,10 @@ if [[ -n "$output_path" ]]; then
   mkdir -p "$(dirname "$output_path")"
   if [[ "$brief_file" == *-synthesis.md ]]; then
     printf -- '---\ngate_result_version: pr_gate_result_v1\nfinal: GO\ntier: standard\nmode: parallel\nmost_severe: advise\nreviewers:\n  critic: advise\nescalation:\n  recommended: false\n  reviewers: []\n  reason: []\n---\n\n# PR-Gate Result — stub tier\n**Date**: 2026-05-17\n**Reviewers**: stub\n**Not reviewed**: none\n\n## cross-check\nnone\n\n## Gate Conclusion\n**Overall verdict**: advise\n**Most severe individual verdict**: advise\nFinal: GO\n' > "$output_path"
+  elif reviewer_name="$(awk '$1 == "Reviewer:" { print $2; exit }' "$brief_file")" \
+      && [[ -n "$reviewer_name" ]]; then
+    printf '## %s -- advise\n\nstatus: advise\nfindings: []\nverdict: Stub output.\n' \
+      "$reviewer_name" > "$output_path"
   else
     printf -- '---\ngate_result_version: pr_gate_result_v1\nfinal: GO\ntier: standard\nmode: sequential\nmost_severe: advise\nreviewers:\n  critic: advise\nescalation:\n  recommended: false\n  reviewers: []\n  reason: []\n---\n\n## stub-reviewer — advise\nVerdict: advise. Stub output.\nFinal: GO\n' > "$output_path"
   fi
@@ -140,6 +144,10 @@ if [[ -n "$output_path" ]]; then
   mkdir -p "$(dirname "$output_path")"
   if [[ "$brief_file" == *-synthesis.md ]]; then
     printf -- '---\ngate_result_version: pr_gate_result_v1\nfinal: GO\ntier: standard\nmode: parallel\nmost_severe: advise\nreviewers:\n  critic: advise\nescalation:\n  recommended: false\n  reviewers: []\n  reason: []\n---\n\n# PR-Gate Result — stub tier\n**Date**: 2026-05-17\n**Reviewers**: stub\n**Not reviewed**: none\n\n## cross-check\nnone\n\n## Gate Conclusion\n**Overall verdict**: advise\n**Most severe individual verdict**: advise\nFinal: GO\n' > "$output_path"
+  elif reviewer_name="$(awk '$1 == "Reviewer:" { print $2; exit }' "$brief_file")" \
+      && [[ -n "$reviewer_name" ]]; then
+    printf '## %s -- advise\n\nstatus: advise\nfindings: []\nverdict: Stub output.\n' \
+      "$reviewer_name" > "$output_path"
   else
     printf -- '---\ngate_result_version: pr_gate_result_v1\nfinal: GO\ntier: standard\nmode: sequential\nmost_severe: advise\nreviewers:\n  critic: advise\nescalation:\n  recommended: false\n  reviewers: []\n  reason: []\n---\n\n## stub-reviewer — advise\nVerdict: advise. Stub output.\nFinal: GO\n' > "$output_path"
   fi
@@ -286,7 +294,10 @@ test_executor_claude_parallel_dispatches_subprocess() {
   create_repo "$repo"
 
   set +e
-  run_gate "$home" "$runner" "$repo" "$out" "$err" "$runner" --executor claude --reviewers critic,qa-tester --parallel --base main
+  run_gate "$home" "$runner" "$repo" "$out" "$err" "$runner" \
+    --executor claude \
+    --reviewers critic,qa-tester,architecture-reviewer \
+    --parallel --base main
   local code=$?
   set -e
   if [[ "$code" -ne 0 ]]; then

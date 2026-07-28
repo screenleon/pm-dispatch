@@ -335,6 +335,43 @@ case_wait_resolves_go() {
   fi
 }
 
+# A parent gate used to export gate_result_verify without its private helper
+# closure. The nested wait saw the inherited public function, skipped its own
+# library load, and rejected a valid result. The selected pmctl repository must
+# replace any inherited same-name function with its complete verifier library.
+case_wait_reloads_verifier_over_incomplete_export() {
+  local name="gate-lifecycle/gate wait reloads verifier over incomplete inherited function"
+  should_run "$name" || return 0
+
+  local fixture="$tmp_root/c2b/fixture" work="$tmp_root/c2b/work"
+  mkdir -p "$work"
+  _mk_fixture_repo "$fixture"
+  _mk_fake_gate "$fixture" 0
+
+  local run_wrapper="$tmp_root/c2b/run" wait_wrapper="$tmp_root/c2b/wait"
+  _run_gate_wrapper "$fixture" "$run_wrapper"
+  _wait_wrapper "$fixture" "$wait_wrapper"
+
+  local gate_id out code
+  gate_id="$("$run_wrapper" --cd "$work" --lifecycle detached)"
+  set +e
+  out="$(
+    # shellcheck disable=SC2317 # exported fixture is invoked by the child shell
+    gate_result_verify() { _incomplete_inherited_gate_verifier "$@"; }
+    export -f gate_result_verify
+    "$wait_wrapper" "$gate_id" --cd "$work" --timeout "$_WAIT_OK" 2>&1
+  )"
+  code=$?
+  set -e
+
+  if [[ "$code" -eq 0 ]] && [[ "$out" == *"state: GO"* ]] \
+      && [[ "$out" == *"Final: GO"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
 # ---- 3: gate wait resolves NO-GO (exit 1) -------------------------------------
 case_wait_resolves_nogo() {
   local name="gate-lifecycle/gate wait resolves NO-GO"
@@ -569,34 +606,40 @@ case_detached_requires_state_paths() {
   fi
 }
 
-# ---- 9: GO sentinel with no result file fails the wait (exit 2) --------------
+# ---- 9: verdict-like exits without a result are infrastructure failures ------
 case_wait_fails_on_missing_result() {
   # CC-423 pr-gate finding (risk-reviewer, high): a wait must not report
-  # success on a GO/NO-GO state when the sentinel recorded no result file --
-  # that state is unverifiable and must not be trusted.
-  local name="gate-lifecycle/gate wait fails when GO sentinel has no result file"
+  # GO/NO-GO when the supervisor did not observe the verified `result:`
+  # handoff. Both an apparent GO (0) and NO-GO (1) are execution failures in
+  # that state and must be normalized to failed/2 at the producer boundary.
+  local name="gate-lifecycle/gate wait treats verdict exits without result as failed"
   should_run "$name" || return 0
 
-  local fixture="$tmp_root/c9/fixture" work="$tmp_root/c9/work"
-  mkdir -p "$work"
-  _mk_fixture_repo "$fixture"
-  _mk_fake_gate_no_result "$fixture" 0
+  local gate_rc fixture work run_wrapper wait_wrapper gate_id out code
+  for gate_rc in 0 1; do
+    fixture="$tmp_root/c9-$gate_rc/fixture"
+    work="$tmp_root/c9-$gate_rc/work"
+    mkdir -p "$work"
+    _mk_fixture_repo "$fixture"
+    _mk_fake_gate_no_result "$fixture" "$gate_rc"
 
-  local run_wrapper="$tmp_root/c9/run" wait_wrapper="$tmp_root/c9/wait"
-  _run_gate_wrapper "$fixture" "$run_wrapper"
-  _wait_wrapper "$fixture" "$wait_wrapper"
+    run_wrapper="$tmp_root/c9-$gate_rc/run"
+    wait_wrapper="$tmp_root/c9-$gate_rc/wait"
+    _run_gate_wrapper "$fixture" "$run_wrapper"
+    _wait_wrapper "$fixture" "$wait_wrapper"
 
-  local gate_id
-  gate_id="$("$run_wrapper" --cd "$work" --lifecycle detached)"
-
-  local out code
-  set +e; out="$("$wait_wrapper" "$gate_id" --cd "$work" --timeout "$_WAIT_OK" 2>&1)"; code=$?; set -e
-
-  if [[ "$code" -eq 2 ]] && [[ "$out" == *"no result file"* ]]; then
-    pass "$name"
-  else
-    fail "$name" "code=$code out=$out"
-  fi
+    gate_id="$("$run_wrapper" --cd "$work" --lifecycle detached)"
+    set +e
+    out="$("$wait_wrapper" "$gate_id" --cd "$work" --timeout "$_WAIT_OK" 2>&1)"
+    code=$?
+    set -e
+    if [[ "$code" -ne 2 || "$out" != *"state: failed  exit: 2"* \
+        || "$out" == *"state: GO"* || "$out" == *"state: NO-GO"* ]]; then
+      fail "$name" "gate_rc=$gate_rc code=$code out=$out"
+      return
+    fi
+  done
+  pass "$name"
 }
 
 # ---- 10: GO sentinel with a structurally invalid result fails the wait -------
@@ -718,6 +761,7 @@ case_detached_launch_rejects_invalid_ready_timeout
 case_detached_launch_accepts_terminal_evidence_after_capture_race
 case_detached_launch_accepts_terminal_evidence_after_liveness_race
 case_wait_resolves_go
+case_wait_reloads_verifier_over_incomplete_export
 case_wait_resolves_nogo
 case_wait_resolves_failed
 case_wait_indeterminate_on_consumed_sentinel

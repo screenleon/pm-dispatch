@@ -87,7 +87,7 @@ This applies to both `codex` and `claude` executors — Claude has more context 
 
 Use as needed; not all briefs require all of them.
 
-- **`architecture_impact`** — `none | minor | major`. Declares the architectural weight of this change. When `architecture_impact: major`, `conceptual_map` is **required** — `brief-validate.sh` will FAIL without it. When `architecture_impact: minor`, `conceptual_map` is recommended — `brief-validate.sh` will WARN if absent. Drives `pr-gate` tier suggestion: `none` → express; `minor` → standard; `major` → full.
+- **`architecture_impact`** — `none | minor | major`. Declares the architectural weight of this change. When `architecture_impact: major`, `conceptual_map` is **required** — `brief-validate.sh` will FAIL without it. When `architecture_impact: minor`, `conceptual_map` is recommended — `brief-validate.sh` will WARN if absent. When supplied to `pr-gate`, this trusted metadata participates in canonical policy resolution: `minor` establishes at least a `standard` tier, `major` establishes `full`, and `none` adds no floor beyond the diff's own signals.
 
   | Value | Definition | Examples |
   |---|---|---|

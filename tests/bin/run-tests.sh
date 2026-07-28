@@ -187,6 +187,8 @@ map_path() {
   esac
 
   case "$path" in
+    .gitignore)
+      add_suite test-setup-project; behavioral=1 ;;
     tools/lint/lint-shellcheck.sh|tools/lint/shellcheck-domains.tsv|tools/lint/shellcheck-ignores.tsv|tests/shell/test-lint-shellcheck.sh)
       add_suite lint-scripts; add_suite test-lint-shellcheck; behavioral=1 ;;
     tools/lint/lint-script-domain-inventory.sh|tests/shell/test-script-domain-inventory.sh|docs/architecture/script-domain-ownership.md|docs/architecture/script-domain-inventory.tsv|docs/architecture/script-domain-reference-allowlist.tsv|docs/architecture/script-variable-inventory.tsv|docs/architecture/script-variable-consumers.tsv)
@@ -215,9 +217,14 @@ map_path() {
       add_suite test-pmctl-task; behavioral=1 ;;
     core/schema/preflight-evidence.schema.json)
       add_suite test-pr-gate; behavioral=1 ;;
+    core/schema/gate-assurance.schema.json|core/schema/gate-policy-override.schema.json)
+      add_suite test-core-schemas; add_suite test-pr-gate
+      add_suite test-pmctl-gate; behavioral=1 ;;
+    runtime/lib/gate-result-verify.sh)
+      add_suite test-pr-gate; add_suite test-pmctl-gate; behavioral=1 ;;
     tools/generate-gate-result-verifier-fallback.sh)
       add_suite test-pr-gate; behavioral=1 ;;
-    core/policy/gate-tiers.tsv|core/policy/gate-modes.tsv|core/policy/gate-pass-kinds.tsv)
+    core/policy/gate-tiers.tsv|core/policy/gate-modes.tsv|core/policy/gate-pass-kinds.tsv|core/policy/gate-policy-consumers.tsv|core/policy/gate-policy-signals.tsv)
       add_suite test-pr-gate; add_suite test-pr-gate-profile; behavioral=1 ;;
     runtime/lib/pmctl-config.sh)
       add_suite test-pmctl-dispatch; add_suite test-pmctl-memory; add_suite test-pmctl-context; behavioral=1 ;;

@@ -27,11 +27,13 @@ make_fixture() {
   cp "$REPO_ROOT/core/policy/gate-tiers.tsv" "$repo/core/policy/gate-tiers.tsv"
   cp "$REPO_ROOT/core/policy/gate-modes.tsv" "$repo/core/policy/gate-modes.tsv"
   cp "$REPO_ROOT/core/policy/gate-pass-kinds.tsv" "$repo/core/policy/gate-pass-kinds.tsv"
+  cp "$REPO_ROOT/core/policy/gate-policy-consumers.tsv" "$repo/core/policy/gate-policy-consumers.tsv"
+  cp "$REPO_ROOT/core/policy/gate-policy-signals.tsv" "$repo/core/policy/gate-policy-signals.tsv"
   chmod +x "$repo/tests/bin/run-tests.sh"
   cat > "$repo/tests/lib/test-suite-runner.sh" <<'RUNNER'
 #!/usr/bin/env bash
 set -euo pipefail
-suites=(lint-agents lint-scripts lint-script-domain-inventory lint-portable-repo-paths test-lint-shellcheck test-script-domain-inventory test-lint-portable-repo-paths test-lint-frontmatter test-commands test-check-docs-freshness test-guards test-migrate test-install test-doctor test-pmctl-dispatch test-pmctl-context test-pmctl-memory test-pr-gate test-pr-gate-profile test-pmctl-operation test-host-manifest test-host-write-codex test-codex-dispatch-continuation test-host-write-parity test-core-schemas test-layer-boundaries test-pm-scripts test-run-tests test-state-store test-state-layout-parity)
+suites=(lint-agents lint-scripts lint-script-domain-inventory lint-portable-repo-paths test-lint-shellcheck test-script-domain-inventory test-lint-portable-repo-paths test-lint-frontmatter test-commands test-check-docs-freshness test-guards test-migrate test-install test-doctor test-pmctl-dispatch test-pmctl-context test-pmctl-memory test-pmctl-gate test-pr-gate test-pr-gate-profile test-pmctl-operation test-host-manifest test-host-write-codex test-codex-dispatch-continuation test-host-write-parity test-core-schemas test-layer-boundaries test-pm-scripts test-run-tests test-setup-project test-state-store test-state-layout-parity)
 for arg in "$@"; do
   if [[ "$arg" == --list ]]; then printf '%s\n' "${suites[@]}"; exit 0; fi
 done
@@ -151,6 +153,20 @@ case_operational_docs_map_to_stale_reference_lint() {
   fi
 }
 
+case_gitignore_maps_to_setup_project() {
+  local name=gitignore-maps-to-setup-project repo out status=0 args
+  args="$TMP_ROOT/$name.args"
+  repo="$(make_fixture "$name")"
+  out=$(RUN_TESTS_ARGS_LOG="$args" "$repo/tests/bin/run-tests.sh" \
+    --path .gitignore --list 2>&1) || status=$?
+  if [[ "$status" -eq 0 && "$out" == *"test-setup-project"* \
+      && "$out" != *"coverage gaps"* && ! -e "$args" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out"
+  fi
+}
+
 case_agent_mapping_uses_registered_frontmatter_suite() {
   local name=agent-mapping-uses-registered-frontmatter-suite repo out status=0 args
   args="$TMP_ROOT/$name.args"
@@ -237,9 +253,29 @@ case_gate_assurance_policy_maps_gate_consumers() {
   repo="$(make_fixture "$name")"
   out=$(RUN_TESTS_ARGS_LOG="$args" "$repo/tests/bin/run-tests.sh" \
     --path core/policy/gate-tiers.tsv --path core/policy/gate-modes.tsv \
-    --path core/policy/gate-pass-kinds.tsv --list 2>&1) || status=$?
+    --path core/policy/gate-pass-kinds.tsv \
+    --path core/policy/gate-policy-consumers.tsv \
+    --path core/policy/gate-policy-signals.tsv --list 2>&1) || status=$?
   if [[ "$status" -eq 0 && "$out" == *"test-pr-gate"* &&
         "$out" == *"test-pr-gate-profile"* && "$out" == *"test-core-schemas"* &&
+        "$out" == *"test-layer-boundaries"* && "$out" != *"coverage gaps"* &&
+        ! -e "$args" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out"
+  fi
+}
+
+case_gate_assurance_contract_maps_runtime_verifiers() {
+  local name=gate-assurance-contract-maps-runtime-verifiers repo out status=0 args
+  args="$TMP_ROOT/$name.args"
+  repo="$(make_fixture "$name")"
+  out=$(RUN_TESTS_ARGS_LOG="$args" "$repo/tests/bin/run-tests.sh" \
+    --path core/schema/gate-assurance.schema.json \
+    --path core/schema/gate-policy-override.schema.json \
+    --path runtime/lib/gate-result-verify.sh --list 2>&1) || status=$?
+  if [[ "$status" -eq 0 && "$out" == *"test-core-schemas"* &&
+        "$out" == *"test-pr-gate"* && "$out" == *"test-pmctl-gate"* &&
         "$out" == *"test-layer-boundaries"* && "$out" != *"coverage gaps"* &&
         ! -e "$args" ]]; then
     pass "$name"
@@ -416,6 +452,7 @@ case_state_writer_mapping_runs_operation_parity
 case_state_layout_mapping_runs_parity
 case_docs_mapping_list_only
 case_operational_docs_map_to_stale_reference_lint
+case_gitignore_maps_to_setup_project
 case_agent_mapping_uses_registered_frontmatter_suite
 case_command_mapping_uses_registered_frontmatter_suite
 case_skill_mapping_uses_registered_frontmatter_suite
@@ -423,6 +460,7 @@ case_guard_family_maps_to_guard_suite
 case_prompt_context_timeout_contract_maps_all_consumers
 case_evidence_contract_maps_to_runner_regression
 case_gate_assurance_policy_maps_gate_consumers
+case_gate_assurance_contract_maps_runtime_verifiers
 case_high_fanout_escalates_full
 case_repeated_high_fanout_escalation_succeeds
 case_unknown_path_fails_without_test_evidence

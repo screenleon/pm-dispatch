@@ -64,6 +64,22 @@ _pmctl_gate_operation_ensure_loaded() {
     && _pmctl_operation_ensure_loaded "$repo_root"
 }
 
+# Load the verifier from the selected pmctl repository even when the caller
+# exported a function with the same name. Bash function exports do not carry a
+# dependency manifest, so trusting an inherited gate_result_verify can leave
+# its private helpers missing or mix functions from different revisions.
+_pmctl_gate_result_verifier_load() {
+  local repo_root="$1" verifier_lib
+  verifier_lib="$repo_root/runtime/lib/gate-result-verify.sh"
+  [[ -r "$verifier_lib" ]] || return 1
+  # shellcheck disable=SC1090,SC1091
+  . "$verifier_lib" || return 1
+  declare -F gate_result_verify >/dev/null 2>&1 \
+    && declare -F gate_result_verdict_verify >/dev/null 2>&1 \
+    && declare -F _gate_result_frontmatter_value >/dev/null 2>&1 \
+    && declare -F _gate_result_sha256_file >/dev/null 2>&1
+}
+
 # A v2 result and its bound sidecar cannot be renamed into place as one
 # filesystem operation. If a verifier races the producer between those
 # renames, wait briefly for the sidecar (and, for verified independence,
@@ -613,14 +629,7 @@ pmctl_gate_wait() {
             return 2
           fi
         fi
-        if ! declare -F gate_result_verify >/dev/null 2>&1; then
-          local _gr_lib="$repo_root/runtime/lib/gate-result-verify.sh"
-          if [[ -r "$_gr_lib" ]]; then
-            # shellcheck disable=SC1090,SC1091
-            . "$_gr_lib" 2>/dev/null || true
-          fi
-        fi
-        if ! declare -F gate_result_verify >/dev/null 2>&1; then
+        if ! _pmctl_gate_result_verifier_load "$repo_root"; then
           printf 'pmctl gate wait: FAIL: gate_result_verify unavailable -- cannot confirm result integrity for %s, treating as failed wait\n' "$_result" >&2
           return 2
         fi
@@ -708,14 +717,10 @@ pmctl_gate_verify() {
   local attestation_file runs_file canonical_repo_root assurance_repo_root
   local canonical_run_root
 
-  if ! declare -F gate_result_verify >/dev/null; then
-    local lib="$repo_root/runtime/lib/gate-result-verify.sh"
-    if [[ ! -r "$lib" ]]; then
-      printf 'pmctl gate verify: required library not found: %s\n' "$lib" >&2
-      return 2
-    fi
-    # shellcheck source=runtime/lib/gate-result-verify.sh
-    . "$lib"
+  if ! _pmctl_gate_result_verifier_load "$repo_root"; then
+    printf 'pmctl gate verify: required verifier library is missing or incomplete: %s\n' \
+      "$repo_root/runtime/lib/gate-result-verify.sh" >&2
+    return 2
   fi
 
   _pmctl_gate_wait_for_assurance_publication "$result_file"

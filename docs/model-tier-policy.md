@@ -108,7 +108,8 @@ flow above) only when **all three** hold:
 
 1. Tier is `full`
 2. Diff exceeds 1000 changed lines
-3. At least one sensitive path triggered `full` (auth, payments, migrations, CI, etc.)
+3. At least one sensitive-path policy signal contributed required coverage
+   (auth, payments, migrations, CI, etc.)
 
 Example ask:
 > "This PR is large and sensitive (>1000 lines, touches [path]). Opus reviewers

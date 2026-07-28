@@ -502,6 +502,8 @@ STUB
      ! grep -qx '/tmp/initial.md' "$args_log" ||
      ! grep -qx -- '--mode' "$args_log" ||
      ! grep -qx 'parallel' "$args_log" ||
+     ! grep -qx -- '--policy' "$args_log" ||
+     ! grep -qx 'generic' "$args_log" ||
      grep -qx -- '--reviewers' "$args_log"; then
     fail "$name" "valid targeted invocation was not forwarded canonically"
     return
@@ -584,6 +586,16 @@ if should_run "ship: every gate invocation uses --lifecycle foreground"; then
     pass "ship: every gate invocation uses --lifecycle foreground"
   else
     fail "ship: every gate invocation uses --lifecycle foreground" "found $ship_gate_calls occurrence(s) of the gate call but only $ship_foreground_calls paired with --lifecycle foreground in $SHIP"
+  fi
+fi
+if should_run "ship: every gate invocation uses maintainer policy"; then
+  ship_flat=$(tr '\n' ' ' < "$SHIP" | tr -s ' ')
+  ship_gate_calls=$(grep -oE 'pmctl gate run --executor <gate_executor>' <<< "$ship_flat" | wc -l)
+  ship_policy_calls=$(grep -oE 'pmctl gate run --executor <gate_executor> --policy maintainer' <<< "$ship_flat" | wc -l)
+  if [[ "$ship_gate_calls" -gt 0 && "$ship_gate_calls" -eq "$ship_policy_calls" ]]; then
+    pass "ship: every gate invocation uses maintainer policy"
+  else
+    fail "ship: every gate invocation uses maintainer policy" "found $ship_gate_calls occurrence(s) of the gate call but only $ship_policy_calls paired with --policy maintainer in $SHIP"
   fi
 fi
 should_run "ship: explains why detached+wait is unnecessary here" && assert_file_contains "ship: explains why detached+wait is unnecessary here" "$SHIP" "nothing else for the main thread to do while it waits" && pass "ship: explains why detached+wait is unnecessary here"

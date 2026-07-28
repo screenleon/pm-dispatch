@@ -1,0 +1,18 @@
+# Gate policy signals. Reviewer requirements apply to initial discovery; targeted passes retain tier/mode signals but use requested remediation coverage.
+signal	match_source	pattern	minimum_tier	required_reviewers	recommended_mode	required_mode
+docs-only	classification	docs-only	express	none	sequential	none
+bounded-runtime	classification	bounded-runtime	express	none	sequential	none
+medium-change	classification	medium-change	standard	architecture-reviewer	parallel	none
+large-change	classification	large-change	full	critic,qa-tester,architecture-reviewer,security-reviewer,risk-reviewer	parallel	none
+binary-change	classification	binary-change	standard	architecture-reviewer	parallel	none
+renamed-input	classification	renamed	express	none	sequential	none
+untracked-input	classification	untracked	express	none	sequential	none
+generated-input	classification	generated	express	none	sequential	none
+cross-boundary	classification	cross-boundary	standard	architecture-reviewer	parallel	none
+security-sensitive-path	path-regex	(^|[/_.-])(auth|oauth|jwt|sessions?|secrets?|passwords?|tokens?|credentials?|cors|csrf|webhooks?|sudo|ssh|payments?|billing)([/_.-]|$)	express	security-reviewer	parallel	none
+input-execution-path	path-regex	(^|[/_.-])(eval|exec|execute|command|shell|hook|guard|allowlist)([/_.-]|$)|(^|/)(\.github|workflows?|ci)(/|$)	standard	security-reviewer	parallel	parallel
+risk-sensitive-path	path-regex	(^|[/_.-])(migrations?|migrate|destructive|deletions?|delete|removals?|remove|rollback|concurrency|concurrent|race|locks?|cancel|reconcile)([/_.-]|$)	express	risk-reviewer	parallel	none
+public-contract-path	path-regex	(^|/)(cli|commands|skills|core/schema)(/|$)|(^|[/_.-])(apis?|schemas?|contracts?)([/_.-]|$)	standard	architecture-reviewer	parallel	none
+policy-source-path	path-regex	(^|/)core/policy(/|$)	full	architecture-reviewer,security-reviewer,risk-reviewer	parallel	none
+brief-architecture-minor	brief-value	minor	standard	architecture-reviewer	parallel	none
+brief-architecture-major	brief-value	major	full	critic,qa-tester,architecture-reviewer,security-reviewer,risk-reviewer	parallel	none

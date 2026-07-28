@@ -425,11 +425,63 @@ _mk_gate_result_v2() {
       tier:{requested:"auto",resolved:"express",evidence_floor:"reviewer-verdicts"},
       mode:{requested:"default",resolved:"sequential",topology:"combined-session",synthesis:"inline"},
       pass:{requested:"initial",resolved:"initial",scope:"comprehensive",initial_result:null},
-      coverage:{requested:null,selected:["critic"],skipped:["qa-tester"],
+      coverage:{requested:null,selected:["critic","qa-tester"],skipped:[],
         vocabulary:["critic","qa-tester"]},
       independence:{implementation_context_isolated:null,
         reviewer_topology:"combined-session",per_reviewer_independent:null,
         evidence_status:"unavailable"}
+    },
+    policy:{
+      kind:"gate_policy_resolution_v1",
+      schema_version:1,
+      consumer_policy:"generic",
+      policy_source:"canonical",
+      scope_fingerprint:("f" * 64),
+      request:{tier:"auto",mode:"default",pass_kind:"initial",reviewers:null},
+      classification:{
+        architecture_impact:"unknown",
+        line_changes:1,
+        binary_or_unknown_count:0,
+        layer_roots:[]
+      },
+      resolution:{
+        minimum_tier:"express",
+        required_reviewers:["critic","qa-tester"],
+        recommended_mode:"sequential",
+        required_mode:null,
+        downgrade_requested:false,
+        downgrade_allowed:false
+      },
+      matched_signals:[
+        {
+          id:"consumer-policy",
+          source:"consumer-policy",
+          matches:["generic:initial"],
+          minimum_tier:"express",
+          required_reviewers:["critic","qa-tester"],
+          recommended_mode:"sequential",
+          required_mode:null
+        },
+        {
+          id:"docs-only",
+          source:"classification",
+          matches:["README.md"],
+          minimum_tier:"express",
+          required_reviewers:[],
+          recommended_mode:"sequential",
+          required_mode:null
+        }
+      ],
+      resolved:{
+        tier:"express",
+        mode:"sequential",
+        reviewers:["critic","qa-tester"]
+      },
+      enforcement:{status:"pass",violations:[]},
+      override:{
+        status:"not_provided",source:null,sha256:null,reason:null,approver:null
+      },
+      reviewer_override:{status:"not_provided",source:null,sha256:null}
     },
     dispatch:{outcomes:[{role:"combined",reviewer:null,status:"passed",
       run_id:null,evidence_status:"unavailable"}]},
@@ -511,7 +563,7 @@ _mk_gate_result_v2_legacy_assurance() {
   jq '
     .kind = "gate_assurance_v1" |
     .schema_version = 1 |
-    del(.bindings) |
+    del(.bindings, .policy) |
     .coordinates.independence = {
       implementation_context_isolated:true,
       reviewer_topology:"combined-session",
@@ -551,6 +603,21 @@ case_verify_v2_assurance() {
   set +e; out="$("$PMCTL" gate verify "$result" 2>&1)"; code=$?; set -e
   if [[ "$code" -eq 0 && "$out" == *"assurance: verified"* \
       && "$out" == *"assurance file:"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+case_verify_v2_without_policy_remains_readable() {
+  local name="gate/verify: pre-policy v2 assurance remains readable"
+  should_run "$name" || return 0
+  local result="$tmp_root/v2-pre-policy/result.md" out code
+  _mk_gate_result_v2 "$result"
+  jq 'del(.policy)' "${result}.assurance.json" > "${result}.assurance.tmp"
+  mv "${result}.assurance.tmp" "${result}.assurance.json"
+  set +e; out="$("$PMCTL" gate verify "$result" 2>&1)"; code=$?; set -e
+  if [[ "$code" -eq 0 && "$out" == *"assurance: verified"* ]]; then
     pass "$name"
   else
     fail "$name" "code=$code out=$out"
@@ -620,7 +687,23 @@ case_verify_v2_claim_mismatch() {
   should_run "$name" || return 0
   local result="$tmp_root/v2-mismatch/result.md" out code
   _mk_gate_result_v2 "$result"
-  jq '.coordinates.coverage.skipped = []' "${result}.assurance.json" \
+  jq '.coordinates.coverage.selected = ["critic"]' "${result}.assurance.json" \
+    > "${result}.assurance.tmp"
+  mv "${result}.assurance.tmp" "${result}.assurance.json"
+  set +e; out="$("$PMCTL" gate verify "$result" 2>&1)"; code=$?; set -e
+  if [[ "$code" -eq 1 && "$out" == *"structural/claim verification"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+case_verify_v2_policy_claim_tamper() {
+  local name="gate/verify: v2 policy coordinate tamper exits 1"
+  should_run "$name" || return 0
+  local result="$tmp_root/v2-policy-tamper/result.md" out code
+  _mk_gate_result_v2 "$result"
+  jq '.policy.resolved.reviewers = ["critic"]' "${result}.assurance.json" \
     > "${result}.assurance.tmp"
   mv "${result}.assurance.tmp" "${result}.assurance.json"
   set +e; out="$("$PMCTL" gate verify "$result" 2>&1)"; code=$?; set -e
@@ -1298,11 +1381,13 @@ case_pmctl_routing
 case_help_bypasses_detached_default
 case_verify_valid
 case_verify_v2_assurance
+case_verify_v2_without_policy_remains_readable
 case_verify_v2_canonical_authorization
 case_verify_v2_forged_state_tree_rejected
 case_verify_v2_repo_binding_rejected
 case_verify_v2_legacy_assurance_is_unavailable
 case_verify_v2_claim_mismatch
+case_verify_v2_policy_claim_tamper
 case_verify_v2_surplus_topology_record
 case_verify_v2_unknown_fields_rejected
 case_verify_v2_result_binding_tamper

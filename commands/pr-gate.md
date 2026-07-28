@@ -5,6 +5,9 @@ argument-hint: "[express|standard|full] [--targeted r1,r2 --initial-result path]
 
 Run the PR gate via `pmctl gate run`. The `runtime/bin/pr-gate.sh` script is the
 internal implementation; `pmctl gate run` is the preferred invocation surface.
+This command uses the `generic` consumer policy: one canonical resolver combines
+the diff, trusted brief metadata, requested tier/mode/pass/coverage, and
+repository policy before any reviewer is dispatched.
 
 **Sequential mode (default):** all reviewers run in one combined session.
 Low main-thread token cost (~5k dispatch + read result).
@@ -17,8 +20,17 @@ paths or when reviewer independence matters.
 |---|---|
 | Routine code / seed / docs changes | _(none)_ |
 | Re-gate after fixing specific findings | `--targeted qa-tester,risk-reviewer --initial-result <path>` |
-| Auth / payment / migration / sensitive paths | `--mode parallel` |
-| Force a specific tier | `express` / `standard` / `full` |
+| Auth / payment / migration / sensitive paths | _(none; policy adds the matching reviewer and recommends parallel)_ |
+| Input/evaluation/command execution boundary | _(none; policy requires parallel)_ |
+| Request independent reviewer sessions | `--mode parallel` |
+| Request a specific tier | `express` / `standard` / `full` (cannot lower the policy floor) |
+
+A policy rejection happens before reviewer dispatch and is an execution/policy
+failure, not a `Final: NO-GO` reviewer verdict. Scope-bound downgrades use the
+runtime's explicit structured policy-override contract. Its scope fingerprint
+binds the actual tracked patch plus in-scope untracked content, so an approval
+cannot be replayed after a same-shape content change. `.gate-overrides.md` only
+supplies reviewer finding context and cannot lower policy.
 
 ## Step 1 - Invoke pmctl directly
 
@@ -179,7 +191,7 @@ SCOPE="${SCOPE_TOKENS[*]:-}"
 # `pmctl:*` prefix match. The quotes around the placeholder keep this block
 # valid, executable Bash even before that substitution (bare, unquoted
 # `<work_dir>` would be parsed as I/O redirection and fail to parse).
-GATE_ARGS=(--cd "<work_dir>" --executor "$GATE_EXECUTOR")
+GATE_ARGS=(--cd "<work_dir>" --executor "$GATE_EXECUTOR" --policy generic)
 [[ -n "$GATE_MODEL" ]] && GATE_ARGS+=(--model "$GATE_MODEL")
 [[ -n "$TIER_OVERRIDE" ]] && GATE_ARGS+=(--tier "$TIER_OVERRIDE")
 [[ -n "$TARGETED_REVIEWERS" ]] && GATE_ARGS+=(--targeted "$TARGETED_REVIEWERS" --initial-result "$INITIAL_RESULT")
@@ -289,7 +301,10 @@ When the `pmctl gate wait` background Bash completion notification arrives:
    and matching canonical terminal run records. The producer publishes the
    sidecar before the v2 result that references it; verification briefly
    retries when it observes an in-flight v2 result before its protected
-   attestation rename completes.
+   attestation rename completes. Current envelopes also carry the shell-owned
+   policy resolution (classification, matched signals, floors, resolved
+   coordinates, and override provenance); earlier v2 envelopes without that
+   optional block remain readable.
 5. Prepend `PR-gate complete.` to completion relay and include the full gate
    result (including `Final: GO` / `Final: NO-GO`) unchanged.
 6. On failure, avoid collapsing findings; relay the actual stderr summary and

@@ -187,7 +187,9 @@ pmctl_ship_finish() {
   local pre_gate_head
   pre_gate_head="$(git -C "$work_dir" rev-parse HEAD 2>/dev/null)"
 
-  local gate_args=(--executor codex --cd "$work_dir" --lifecycle foreground)
+  # This repo-owned finish path requests the maintainer consumer policy. The
+  # generic `pmctl gate run` default remains risk-based and composable.
+  local gate_args=(--executor codex --policy maintainer --cd "$work_dir" --lifecycle foreground)
   [[ -n "$reviewers" ]] && gate_args+=(--reviewers "$reviewers")
   local gate_out gate_status=0
   gate_out="$(pmctl_gate_run "$repo_root" "${gate_args[@]}" 2>&1)" || gate_status=$?

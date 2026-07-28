@@ -770,9 +770,9 @@ _gate_assurance_valid_instance() {
       },
       coverage:{
         requested:null,
-        selected:["critic","qa-tester"],
+        selected:["critic","qa-tester","architecture-reviewer"],
         skipped:["security"],
-        vocabulary:["critic","qa-tester","security"]
+        vocabulary:["critic","qa-tester","architecture-reviewer","security"]
       },
       independence:{
         implementation_context_isolated:null,
@@ -780,6 +780,67 @@ _gate_assurance_valid_instance() {
         per_reviewer_independent:null,
         evidence_status:"unavailable"
       }
+    },
+    policy:{
+      kind:"gate_policy_resolution_v1",
+      schema_version:1,
+      consumer_policy:"generic",
+      policy_source:"canonical",
+      scope_fingerprint:("f" * 64),
+      request:{
+        tier:"standard",
+        mode:"sequential",
+        pass_kind:"initial",
+        reviewers:null
+      },
+      classification:{
+        architecture_impact:"unknown",
+        line_changes:120,
+        binary_or_unknown_count:0,
+        layer_roots:["runtime"]
+      },
+      resolution:{
+        minimum_tier:"standard",
+        required_reviewers:["critic","qa-tester","architecture-reviewer"],
+        recommended_mode:"parallel",
+        required_mode:null,
+        downgrade_requested:false,
+        downgrade_allowed:false
+      },
+      matched_signals:[
+        {
+          id:"consumer-policy",
+          source:"consumer-policy",
+          matches:["generic:initial"],
+          minimum_tier:"express",
+          required_reviewers:["critic","qa-tester"],
+          recommended_mode:"sequential",
+          required_mode:null
+        },
+        {
+          id:"medium-change",
+          source:"classification",
+          matches:["changed-lines:120"],
+          minimum_tier:"standard",
+          required_reviewers:["architecture-reviewer"],
+          recommended_mode:"parallel",
+          required_mode:null
+        }
+      ],
+      resolved:{
+        tier:"standard",
+        mode:"sequential",
+        reviewers:["critic","qa-tester","architecture-reviewer"]
+      },
+      enforcement:{status:"pass",violations:[]},
+      override:{
+        status:"not_provided",
+        source:null,
+        sha256:null,
+        reason:null,
+        approver:null
+      },
+      reviewer_override:{status:"not_provided",source:null,sha256:null}
     },
     dispatch:{
       outcomes:[{
@@ -823,6 +884,86 @@ case_gate_assurance_invalid_outcome_rejected() {
   rm -f "$tmpf"
 }
 
+case_gate_assurance_non_user_policy_approver_rejected() {
+  local name="gate-assurance: non-user policy approver is rejected"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/gate-assurance.schema.json" tmpf
+  tmpf="$(mktemp /tmp/gate-assurance-policy-approver-XXXXXX.json)"
+  _gate_assurance_valid_instance |
+    jq '.policy.override.approver = {
+      kind:"project-pm",identity:"fixture-pm",approval_ref:"self:approval"
+    }' > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    fail "$name" "schema accepted a project-PM policy self-approval"
+  else
+    pass "$name"
+  fi
+  rm -f "$tmpf"
+}
+
+_gate_policy_override_valid_instance() {
+  jq -n '{
+    kind:"gate_policy_override_v1",
+    schema_version:1,
+    scope_fingerprint:("a" * 64),
+    allow:{
+      tier:"express",
+      omit_reviewers:["security-reviewer"],
+      mode:null
+    },
+    reason:"User accepted this exact bounded downgrade.",
+    approver:{
+      kind:"user",
+      identity:"fixture-user",
+      approval_ref:"conversation:fixture"
+    }
+  }'
+}
+
+case_gate_policy_override_valid_instance() {
+  local name="gate-policy-override: canonical user approval validates"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/gate-policy-override.schema.json" tmpf
+  tmpf="$(mktemp /tmp/gate-policy-override-valid-XXXXXX.json)"
+  _gate_policy_override_valid_instance > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name" "schema rejected a canonical user-approved override"
+  fi
+  rm -f "$tmpf"
+}
+
+case_gate_policy_override_non_user_approver_rejected() {
+  local name="gate-policy-override: project-PM self-approval is rejected"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/gate-policy-override.schema.json" tmpf
+  tmpf="$(mktemp /tmp/gate-policy-override-invalid-XXXXXX.json)"
+  _gate_policy_override_valid_instance |
+    jq '.approver.kind = "project-pm"' > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    fail "$name" "schema accepted a project-PM policy self-approval"
+  else
+    pass "$name"
+  fi
+  rm -f "$tmpf"
+}
+
+case_gate_policy_override_extra_key_rejected() {
+  local name="gate-policy-override: extra contract key is rejected"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/gate-policy-override.schema.json" tmpf
+  tmpf="$(mktemp /tmp/gate-policy-override-extra-key-XXXXXX.json)"
+  _gate_policy_override_valid_instance |
+    jq '.unexpected = true' > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    fail "$name" "schema accepted an undeclared top-level override key"
+  else
+    pass "$name"
+  fi
+  rm -f "$tmpf"
+}
+
 case_context_pack_v1_still_valid
 case_context_pack_v2_new_fields_valid
 case_context_pack_memory_source_domain_valid
@@ -832,5 +973,9 @@ case_preflight_basic_evidence_needs_no_git_provenance
 case_preflight_reusable_evidence_requires_fingerprint
 case_gate_assurance_valid_instance
 case_gate_assurance_invalid_outcome_rejected
+case_gate_assurance_non_user_policy_approver_rejected
+case_gate_policy_override_valid_instance
+case_gate_policy_override_non_user_approver_rejected
+case_gate_policy_override_extra_key_rejected
 
 th_summary
