@@ -197,7 +197,7 @@ router and [`cli/commands.tsv`](cli/commands.tsv).
 - `gate run` — Start the pull-request gate. [experimental; JSON: false; mutating: true]
 - `gate verify` — Verify a gate result artifact. [experimental; JSON: false; mutating: false]
 - `gate wait` — Wait for a detached gate run. [experimental; JSON: false; mutating: true]
-- `gate cancel` — Cancel a gate parent operation and only its recorded child runs. [experimental; JSON: false; mutating: true]
+- `gate cancel` — Stop the verified gate producer process tree, then cancel only its recorded child runs; partial termination stays indeterminate. [experimental; JSON: false; mutating: true]
 - `gate reconcile` — Reconcile a gate operation from trusted child terminal claims. [experimental; JSON: false; mutating: true]
 - `context index` — Build the repository context index. [experimental; JSON: false; mutating: true]
 - `context update` — Update the repository context index. [experimental; JSON: false; mutating: true]

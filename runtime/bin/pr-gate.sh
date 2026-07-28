@@ -2,6 +2,31 @@
 set -euo pipefail
 trap '' PIPE
 
+GATE_CANCELLED=false
+GATE_ACTIVE_PREFLIGHT_PID=""
+GATE_ACTIVE_PREFLIGHT_PGID=""
+
+gate_stop_active_preflight() {
+  local pid="${GATE_ACTIVE_PREFLIGHT_PID:-}" pgid="${GATE_ACTIVE_PREFLIGHT_PGID:-}"
+  [[ "$pid" =~ ^[1-9][0-9]*$ && "$pgid" =~ ^[1-9][0-9]*$ ]] || return 0
+
+  # Operation-owned preflight runs in its own session so timeout and its
+  # managed command share one killable group during cancellation. Stop and
+  # reap that group before pr-gate exits; the parent operation only
+  # reaches `cancelled` after this producer process is gone.
+  detached_launch_kill_process_group "$pgid" 1 || true
+  wait "$pid" 2>/dev/null || true
+  GATE_ACTIVE_PREFLIGHT_PID=""
+  GATE_ACTIVE_PREFLIGHT_PGID=""
+}
+
+gate_cancel_signal() {
+  GATE_CANCELLED=true
+  gate_stop_active_preflight
+  exit 130
+}
+trap gate_cancel_signal TERM INT
+
 # say -- emit a progress/diagnostic line on stdout that tolerates a closed pipe.
 #
 # A consumer that reads a prefix of our stdout and closes the pipe early
@@ -2796,6 +2821,8 @@ if [[ -n "$INITIAL_RESULT_RESOLVED" \
   exit 2
 fi
 _gate_assurance_destination_check "$ASSURANCE_FILE" || exit 2
+GATE_OUTPUT_EXISTED=false
+[[ -e "$OUTPUT_FILE" ]] && GATE_OUTPUT_EXISTED=true
 touch "$OUTPUT_FILE"
 
 # Track all brief files for EXIT cleanup
@@ -2849,7 +2876,18 @@ gate_exit_cleanup() {
   # Relocate first (preserves the result artifact out-of-repo for post-mortem on failure
   # paths), then drop transient briefs. Both are idempotent / no-ops on the success path
   # where relocation already ran inline.
-  relocate_gate_artifacts
+  if [[ "$GATE_CANCELLED" == true ]]; then
+    # Cancellation is an operation terminal, not a reviewer verdict.  Do not
+    # publish an empty/partial result that a later consumer could mistake for a
+    # late gate outcome; operation state remains the cancellation evidence.
+    rm -f -- "$WORK_DIR/.gate-results/"*"${TIMESTAMP}"* 2>/dev/null || true
+    if [[ "$GATE_OUTPUT_EXISTED" != true ]]; then
+      rm -f -- "$OUTPUT_FILE"
+    fi
+    rmdir "$WORK_DIR/.gate-results" 2>/dev/null || true
+  else
+    relocate_gate_artifacts
+  fi
   cleanup_briefs
 }
 trap gate_exit_cleanup EXIT
@@ -3350,12 +3388,45 @@ if [[ "$SKIP_PREFLIGHT_TESTS" != "true" && -n "$TEST_CMD_OVERRIDE" ]]; then
   say 'pr-gate: running pre-flight test suite (timeout %ss, command sha256:%s)\n' \
     "$TEST_TIMEOUT" "${_preflight_command_digest:0:12}"
   _preflight_rc=0
-  ( cd "$WORK_DIR" && PM_DISPATCH_PREFLIGHT_TEST_RESULT="$PREFLIGHT_RICH_RESULT_PATH" \
-      PM_DISPATCH_PREFLIGHT_SUBJECT_FINGERPRINT="$_preflight_before" \
-      PM_DISPATCH_PREFLIGHT_BASE_COMMIT="$_preflight_base_commit" \
-      PM_DISPATCH_PREFLIGHT_HEAD_COMMIT="$_preflight_head_commit" \
-      timeout --kill-after=15 "$TEST_TIMEOUT" bash -c "$TEST_CMD_OVERRIDE" ) \
-    > "$PREFLIGHT_LOG_PATH" 2>&1 || _preflight_rc=$?
+  if [[ -n "${PM_GATE_PARENT_OPERATION:-}" ]]; then
+    _detached_launch_lib="$SCRIPT_DIR/../lib/detached-launch.sh"
+    if ! declare -F detached_launch_kill_process_group >/dev/null 2>&1; then
+      # shellcheck disable=SC1090,SC1091 # resolved repo-relative runtime library.
+      [[ -r "$_detached_launch_lib" ]] && . "$_detached_launch_lib"
+    fi
+    declare -F detached_launch_kill_process_group >/dev/null 2>&1 || {
+      printf 'Error: operation-owned pre-flight cleanup helper is unavailable\n' >&2
+      exit 2
+    }
+    command -v setsid >/dev/null 2>&1 || {
+      printf 'Error: operation-owned pre-flight isolation requires setsid\n' >&2
+      exit 2
+    }
+    (
+      cd "$WORK_DIR"
+      export PM_DISPATCH_PREFLIGHT_TEST_RESULT="$PREFLIGHT_RICH_RESULT_PATH"
+      export PM_DISPATCH_PREFLIGHT_SUBJECT_FINGERPRINT="$_preflight_before"
+      export PM_DISPATCH_PREFLIGHT_BASE_COMMIT="$_preflight_base_commit"
+      export PM_DISPATCH_PREFLIGHT_HEAD_COMMIT="$_preflight_head_commit"
+      # The test command is a subject of this gate, not another producer owned
+      # by the same parent operation.  Do not let nested pmctl/pr-gate fixtures
+      # attach themselves to or infer ownership from the outer gate.
+      unset PM_GATE_PARENT_OPERATION
+      exec setsid timeout --kill-after=15 "$TEST_TIMEOUT" bash -c "$TEST_CMD_OVERRIDE"
+    ) > "$PREFLIGHT_LOG_PATH" 2>&1 &
+    GATE_ACTIVE_PREFLIGHT_PID=$!
+    GATE_ACTIVE_PREFLIGHT_PGID=$!
+    wait "$GATE_ACTIVE_PREFLIGHT_PID" || _preflight_rc=$?
+    GATE_ACTIVE_PREFLIGHT_PID=""
+    GATE_ACTIVE_PREFLIGHT_PGID=""
+  else
+    ( cd "$WORK_DIR" && PM_DISPATCH_PREFLIGHT_TEST_RESULT="$PREFLIGHT_RICH_RESULT_PATH" \
+        PM_DISPATCH_PREFLIGHT_SUBJECT_FINGERPRINT="$_preflight_before" \
+        PM_DISPATCH_PREFLIGHT_BASE_COMMIT="$_preflight_base_commit" \
+        PM_DISPATCH_PREFLIGHT_HEAD_COMMIT="$_preflight_head_commit" \
+        timeout --kill-after=15 "$TEST_TIMEOUT" bash -c "$TEST_CMD_OVERRIDE" ) \
+      > "$PREFLIGHT_LOG_PATH" 2>&1 || _preflight_rc=$?
+  fi
   _preflight_finished="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
   _preflight_after="$(_preflight_tree_fingerprint)" || exit 2
   _preflight_log_digest="$(_preflight_sha256_file "$PREFLIGHT_LOG_PATH")" || exit 2

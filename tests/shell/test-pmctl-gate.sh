@@ -36,6 +36,18 @@ git -C "$_GATE_VERIFY_REPO" init -q
 # Helpers
 # ---------------------------------------------------------------------------
 
+# Match the runtime cancellation contract: a zombie remains visible to
+# `kill -0` but cannot execute and is treated as gone by
+# detached_launch_verify_identity.
+_gate_test_pid_stopped() {
+  local pid="$1" snapshot line state=""
+  snapshot="$(detached_launch_capture_identity "$pid" 2>/dev/null)" || return 0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" == state=* ]] && state="${line#state=}"
+  done <<<"$snapshot"
+  [[ "$state" == Z || "$state" == X ]]
+}
+
 # Install a fake pr-gate.sh into fixture/runtime/bin that writes a structurally
 # valid gate result under --run-dir (so gate_result_verify accepts it -- the
 # detached wait path now requires this, per CC-423's result-integrity fix)
@@ -1310,7 +1322,7 @@ case_foreground_gate_reconciles_parent_operation() {
   mkdir -p "$fixture/runtime/lib" "$fixture/core/schema" "$target"
   git -C "$target" init -q
   _mk_fake_gate "$fixture" 0
-  for lib in pmctl-gate pmctl-operation portable state-writer state-paths state-compat; do
+  for lib in pmctl-gate pmctl-operation portable detached-launch state-writer state-paths state-compat; do
     cp "$REPO_ROOT/runtime/lib/$lib.sh" "$fixture/runtime/lib/$lib.sh"
   done
   cp "$REPO_ROOT/core/schema/operation.schema.json" "$fixture/core/schema/operation.schema.json"
@@ -1344,7 +1356,7 @@ case_detached_launcher_failure_terminalizes_childless_parent() {
   mkdir -p "$fixture/runtime/lib" "$fixture/core/schema" "$target"
   git -C "$target" init -q
   _mk_fake_gate "$fixture" 0
-  for lib in pmctl-gate pmctl-operation portable state-writer state-paths state-compat; do
+  for lib in pmctl-gate pmctl-operation portable detached-launch state-writer state-paths state-compat; do
     cp "$REPO_ROOT/runtime/lib/$lib.sh" "$fixture/runtime/lib/$lib.sh"
   done
   cp "$REPO_ROOT/core/schema/operation.schema.json" "$fixture/core/schema/operation.schema.json"
@@ -1392,6 +1404,151 @@ case_gate_operation_cli_unavailable_fallbacks() {
   if [[ "$cancel_rc" -eq 2 && "$reconcile_rc" -eq 2 && "$cancel_out" == *"gate cancel unavailable"* && "$reconcile_out" == *"gate reconcile unavailable"* ]]; then pass "$name"; else fail "$name" "cancel=$cancel_rc:$cancel_out reconcile=$reconcile_rc:$reconcile_out"; fi
 }
 
+case_foreground_cancel_stops_preflight_process_tree() {
+  local name="gate cancel: foreground preflight process tree stops before cancelled terminal"
+  should_run "$name" || return 0
+  local work="$tmp_root/foreground-cancel-work" state="$tmp_root/foreground-cancel-state"
+  local ready="$tmp_root/foreground-cancel-ready" release="$tmp_root/foreground-cancel-release"
+  local runner="$tmp_root/foreground-cancel-runner" pids="$tmp_root/foreground-cancel-pids"
+  local out="$tmp_root/foreground-cancel-out" err="$tmp_root/foreground-cancel-err"
+  local test_cmd operation record op_dir gate_pid gate_rc=0 cancel_out cancel_rc=0
+  local ready_value producer_pid descendant_pid started elapsed
+  mkdir -p "$work"
+  git -C "$work" init -q
+  git -C "$work" config user.email test@example.com
+  git -C "$work" config user.name "Gate Test"
+  printf '.pm-dispatch/\n' > "$work/.gitignore"
+  printf 'base\n' > "$work/input.txt"
+  git -C "$work" add .gitignore input.txt
+  git -C "$work" commit -qm base
+  printf 'changed\n' > "$work/input.txt"
+  git -C "$work" add input.txt
+  git -C "$work" commit -qm changed
+  mkfifo "$ready" "$release"
+  cat > "$runner" <<'RUNNER'
+#!/usr/bin/env bash
+set -euo pipefail
+ready="$1"; release="$2"; pids="$3"
+sleep 300 &
+descendant=$!
+printf '%s %s\n' "$BASHPID" "$descendant" > "$pids"
+printf 'ready\n' > "$ready"
+IFS= read -r _ < "$release"
+wait "$descendant"
+RUNNER
+  chmod +x "$runner"
+  printf -v test_cmd 'test -z "${PM_GATE_PARENT_OPERATION:-}" && bash %q %q %q %q' \
+    "$runner" "$ready" "$release" "$pids"
+
+  PM_DISPATCH_STATE_ROOT="$state" XDG_RUNTIME_DIR="$_GATE_CLI_XDG_RUNTIME_DIR" \
+    "$PMCTL" gate run --lifecycle foreground --cd "$work" --base HEAD~1 \
+      --tier express --mode sequential --reviewers critic,qa-tester \
+      --executor codex --test-timeout 120 --test-cmd "$test_cmd" \
+      >"$out" 2>"$err" &
+  gate_pid=$!
+
+  ready_value="$(timeout 20 cat "$ready")" || {
+    kill "$gate_pid" 2>/dev/null || true
+    wait "$gate_pid" 2>/dev/null || true
+    fail "$name" "preflight never reached deterministic readiness; err=$(cat "$err" 2>/dev/null || true)"
+    return
+  }
+  operation="$(sed -n 's/.*parent operation: \(op-[0-9TZ-]*[a-f0-9]\{6\}\).*/\1/p' "$err" | tail -1)"
+  if [[ "$ready_value" != ready || ! "$operation" =~ ^op-[0-9]{8}T[0-9]{6}Z-[a-f0-9]{6}$ ]]; then
+    kill "$gate_pid" 2>/dev/null || true
+    wait "$gate_pid" 2>/dev/null || true
+    fail "$name" "invalid readiness/operation: ready=$ready_value operation=$operation err=$(cat "$err" 2>/dev/null || true)"
+    return
+  fi
+
+  started=$SECONDS
+  cancel_out="$(PM_DISPATCH_STATE_ROOT="$state" "$PMCTL" gate cancel "$operation" --cd "$work" --grace 2 2>&1)" || cancel_rc=$?
+  elapsed=$((SECONDS - started))
+  wait "$gate_pid" || gate_rc=$?
+  read -r producer_pid descendant_pid < "$pids"
+  record="$(find "$state" -path "*/operations/$operation.json" -type f | head -1)"
+  op_dir="${record%.json}"
+
+  if [[ "$cancel_rc" -eq 0 && "$gate_rc" -eq 130 && "$elapsed" -lt 10 ]] \
+     && [[ -n "$record" && "$(jq -r .state "$record")" == cancelled ]] \
+     && [[ "$(jq -r .producer.status "$record")" == stopped ]] \
+     && _gate_test_pid_stopped "$producer_pid" \
+     && _gate_test_pid_stopped "$descendant_pid" \
+     && [[ ! -s "$op_dir/children.jsonl" ]] \
+     && ! find "$state" -type f -name 'gate-result-*.md' -print -quit 2>/dev/null | grep -q . \
+     && { [[ ! -d "$work/.gate-results" ]] \
+       || ! find "$work/.gate-results" -type f -name 'gate-result-*.md' -print -quit 2>/dev/null | grep -q .; } \
+     && [[ "$cancel_out" == *"producer_failures: 0"* ]] \
+     && [[ "$(cat "$err")" == *"foreground producer stopped (exit 130)"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "cancel=$cancel_rc:$cancel_out gate_rc=$gate_rc elapsed=$elapsed record=$(jq -c . "$record" 2>/dev/null || true) pids=$producer_pid,$descendant_pid err=$(cat "$err" 2>/dev/null || true)"
+  fi
+}
+
+case_detached_cancel_surfaces_cancelled_wait_terminal() {
+  local name="gate cancel: detached supervisor publishes cancelled wait terminal"
+  should_run "$name" || return 0
+  local fixture="$tmp_root/detached-cancel-fixture" work="$tmp_root/detached-cancel-work"
+  local state="$tmp_root/detached-cancel-state" ready="$tmp_root/detached-cancel-ready"
+  local release="$tmp_root/detached-cancel-release" pids="$tmp_root/detached-cancel-pids"
+  local err="$tmp_root/detached-cancel-err" gate_id operation cancel_out wait_out
+  local cancel_rc=0 wait_rc=0 producer_pid descendant_pid record op_dir
+  mkdir -p "$fixture/core/schema" "$work"
+  _mk_gate_cli_fixture "$fixture"
+  for lib in pmctl-operation state-writer state-compat; do
+    cp "$REPO_ROOT/runtime/lib/$lib.sh" "$fixture/runtime/lib/$lib.sh"
+  done
+  cp "$REPO_ROOT/core/schema/operation.schema.json" "$fixture/core/schema/operation.schema.json"
+  cat > "$fixture/runtime/bin/pr-gate.sh" <<'FAKE_GATE'
+#!/usr/bin/env bash
+set -euo pipefail
+sleep 300 &
+descendant=$!
+printf '%s %s\n' "$BASHPID" "$descendant" > "$TEST_GATE_PIDS"
+printf 'ready\n' > "$TEST_GATE_READY_FIFO"
+IFS= read -r _ < "$TEST_GATE_RELEASE_FIFO"
+wait "$descendant"
+FAKE_GATE
+  chmod +x "$fixture/runtime/bin/pr-gate.sh"
+  git -C "$work" init -q
+  mkfifo "$ready" "$release"
+
+  gate_id="$(PM_DISPATCH_STATE_ROOT="$state" XDG_RUNTIME_DIR="$_GATE_CLI_XDG_RUNTIME_DIR" \
+    TEST_GATE_READY_FIFO="$ready" TEST_GATE_RELEASE_FIFO="$release" TEST_GATE_PIDS="$pids" \
+    "$fixture/cli/pmctl" gate run --lifecycle detached --cd "$work" 2>"$err")"
+  if [[ "$(timeout 20 cat "$ready")" != ready ]]; then
+    fail "$name" "detached producer never reached readiness; gate=$gate_id err=$(cat "$err" 2>/dev/null || true)"
+    return
+  fi
+  operation="$(sed -n 's/.*parent operation: \(op-[0-9TZ-]*[a-f0-9]\{6\}\).*/\1/p' "$err" | tail -1)"
+  if ! [[ "$operation" =~ ^op-[0-9]{8}T[0-9]{6}Z-[a-f0-9]{6}$ ]]; then
+    fail "$name" "detached operation id was not published: gate=$gate_id operation=$operation err=$(cat "$err" 2>/dev/null || true)"
+    return
+  fi
+  cancel_out="$(PM_DISPATCH_STATE_ROOT="$state" XDG_RUNTIME_DIR="$_GATE_CLI_XDG_RUNTIME_DIR" \
+    "$fixture/cli/pmctl" gate cancel "$operation" --cd "$work" --grace 2 2>&1)" || cancel_rc=$?
+  wait_out="$(PM_DISPATCH_STATE_ROOT="$state" XDG_RUNTIME_DIR="$_GATE_CLI_XDG_RUNTIME_DIR" \
+    PM_GATE_WAIT_POLL_INTERVAL=0.1 \
+    "$fixture/cli/pmctl" gate wait "$gate_id" --cd "$work" --timeout 20 2>&1)" || wait_rc=$?
+  read -r producer_pid descendant_pid < "$pids"
+  record="$(find "$state" -path "*/operations/$operation.json" -type f | head -1)"
+  op_dir="${record%.json}"
+
+  if [[ "$cancel_rc" -eq 0 && "$wait_rc" -eq 130 ]] \
+     && [[ "$wait_out" == *"state: cancelled"* && "$wait_out" == *"exit: 130"* ]] \
+     && [[ -n "$record" && "$(jq -r .state "$record")" == cancelled ]] \
+     && [[ "$(jq -r .producer.status "$record")" == stopped ]] \
+     && _gate_test_pid_stopped "$producer_pid" \
+     && _gate_test_pid_stopped "$descendant_pid" \
+     && [[ ! -s "$op_dir/children.jsonl" ]] \
+     && [[ "$cancel_out" == *"producer_failures: 0"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "cancel=$cancel_rc:$cancel_out wait=$wait_rc:$wait_out gate=$gate_id operation=$operation record=$(jq -c . "$record" 2>/dev/null || true) pids=$producer_pid,$descendant_pid err=$(cat "$err" 2>/dev/null || true)"
+  fi
+}
+
 case_explicit_cd_passthrough
 case_gate_run_refreshes_context_before_dispatch
 case_default_cd_injected
@@ -1434,5 +1591,7 @@ case_foreground_gate_reconciles_parent_operation
 case_detached_launcher_failure_terminalizes_childless_parent
 case_gate_operation_routes_via_cli
 case_gate_operation_cli_unavailable_fallbacks
+case_foreground_cancel_stops_preflight_process_tree
+case_detached_cancel_surfaces_cancelled_wait_terminal
 
 th_summary

@@ -22,6 +22,40 @@ make_repo() {
   git -C "$dir" init -q
 }
 
+case_writer_loader_repairs_partial_inherited_functions() {
+  local name="operation lock: partial inherited writer functions reload before producer registration"
+  should_run "$name" || return 0
+  local work="$tmp_root/partial-writer-work" store="$tmp_root/partial-writer-state"
+  local op out rc=0 state record
+  make_repo "$work"
+  op="$(PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_create "$REPO_ROOT" "$work" gate)"
+  PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_expect_producer \
+    "$REPO_ROOT" gate "$op" "$work"
+  _pmctl_operation_load_writer "$REPO_ROOT"
+  out="$(
+    export -f operation_create
+    export -n -f operation_upsert operation_child_append 2>/dev/null || true
+    # shellcheck disable=SC2016 # variables are expanded by the spawned bash.
+    PM_DISPATCH_STATE_ROOT="$store" setsid bash -c '
+      set -euo pipefail
+      . "$1/runtime/lib/pmctl-operation.sh"
+      pmctl_operation_register_producer "$1" gate "$2" "$3" "$BASHPID"
+      declare -F operation_create operation_upsert operation_child_append
+    ' _ "$REPO_ROOT" "$op" "$work"
+  )" || rc=$?
+  state="$(PM_DISPATCH_STATE_ROOT="$store" bash -c \
+    '. "$1/runtime/lib/state-writer.sh"; cd "$2"; _sw_project_dir' \
+    _ "$REPO_ROOT" "$work")"
+  record="${state%/}/operations/$op.json"
+  if [[ "$rc" -eq 0 && "$out" == *"operation_create"* \
+    && "$out" == *"operation_upsert"* && "$out" == *"operation_child_append"* \
+    && "$(jq -r .producer.status "$record")" == running ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc out=$out record=$(jq -c . "$record" 2>/dev/null || true)"
+  fi
+}
+
 case_reconcile_uses_trusted_terminal_claims() {
   local name="operation reconcile: all trusted child claims converge parent to completed"
   should_run "$name" || return 0
@@ -202,6 +236,87 @@ case_cancel_deduplicates_repeated_child_records() {
   fi
 }
 
+case_cancel_refuses_reused_producer_identity() {
+  local name="operation cancel: producer identity mismatch is indeterminate and never signalled"
+  should_run "$name" || return 0
+  local work="$tmp_root/producer-mismatch-work" store="$tmp_root/producer-mismatch-state"
+  local op producer release record state tampered out rc=0 reconcile_rc=0 fail_rc=0
+  make_repo "$work"
+  release="$tmp_root/producer-mismatch-release"
+  mkfifo "$release"
+  # shellcheck disable=SC2016 # $1 belongs to the spawned bash.
+  setsid bash -c 'IFS= read -r _ < "$1"' _ "$release" &
+  producer=$!
+  op="$(PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_create "$REPO_ROOT" "$work" gate codex)"
+  PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_expect_producer "$REPO_ROOT" gate "$op" "$work"
+  PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_register_producer "$REPO_ROOT" gate "$op" "$work" "$producer"
+  state="$(PM_DISPATCH_STATE_ROOT="$store" bash -c '. "$1/runtime/lib/state-writer.sh"; cd "$2"; _sw_project_dir' _ "$REPO_ROOT" "$work")"
+  record="${state%/}/operations/$op.json"
+  tampered="$(jq -c '.producer.identity.starttime="1"' "$record")"
+  ( cd "$work" && PM_DISPATCH_STATE_ROOT="$store" operation_upsert "$op" "$tampered" )
+  out="$(PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_cancel "$REPO_ROOT" gate "$op" --cd "$work" --grace 0 2>&1)" || rc=$?
+  PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_reconcile "$REPO_ROOT" gate "$op" --cd "$work" >/dev/null 2>&1 || reconcile_rc=$?
+  PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_fail_if_childless "$REPO_ROOT" gate "$op" "$work" >/dev/null 2>&1 || fail_rc=$?
+  if [[ "$rc" -ne 0 && "$(jq -r .state "$record")" == indeterminate ]] \
+     && kill -0 "$producer" 2>/dev/null \
+     && [[ "$reconcile_rc" -ne 0 && "$fail_rc" -ne 0 ]] \
+     && [[ "$out" == *"identity mismatch"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc reconcile=$reconcile_rc fail_if_childless=$fail_rc producer=$producer state=$(jq -r .state "$record" 2>/dev/null || true) out=$out"
+  fi
+  kill -TERM -- "-$producer" 2>/dev/null || true
+  wait "$producer" 2>/dev/null || true
+}
+
+case_cancel_accepts_producer_that_exited_before_signal() {
+  local name="operation cancel: an already-exited registered producer can terminalize cancelled"
+  should_run "$name" || return 0
+  local work="$tmp_root/producer-gone-work" store="$tmp_root/producer-gone-state"
+  local op producer release record state out
+  make_repo "$work"
+  release="$tmp_root/producer-gone-release"
+  mkfifo "$release"
+  # shellcheck disable=SC2016 # $1 belongs to the spawned bash.
+  setsid bash -c 'IFS= read -r _ < "$1"' _ "$release" &
+  producer=$!
+  op="$(PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_create "$REPO_ROOT" "$work" gate codex)"
+  PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_expect_producer "$REPO_ROOT" gate "$op" "$work"
+  PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_register_producer "$REPO_ROOT" gate "$op" "$work" "$producer"
+  printf 'release\n' > "$release"
+  wait "$producer"
+  out="$(PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_cancel "$REPO_ROOT" gate "$op" --cd "$work" --grace 0)"
+  state="$(PM_DISPATCH_STATE_ROOT="$store" bash -c '. "$1/runtime/lib/state-writer.sh"; cd "$2"; _sw_project_dir' _ "$REPO_ROOT" "$work")"
+  record="${state%/}/operations/$op.json"
+  if [[ "$(jq -r .state "$record")" == cancelled ]] \
+     && [[ "$(jq -r .producer.status "$record")" == stopped ]] \
+     && [[ "$out" == *"producer_failures: 0"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "state=$(jq -c . "$record" 2>/dev/null || true) out=$out"
+  fi
+}
+
+case_repeated_cancel_preserves_cancelled_terminal() {
+  local name="operation cancel: repeated cancel preserves the first cancelled terminal"
+  should_run "$name" || return 0
+  local work="$tmp_root/repeated-cancel-work" store="$tmp_root/repeated-cancel-state"
+  local op first second rc=0 state record
+  make_repo "$work"
+  op="$(PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_create "$REPO_ROOT" "$work" gate codex)"
+  first="$(PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_cancel "$REPO_ROOT" gate "$op" --cd "$work")"
+  second="$(PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_cancel "$REPO_ROOT" gate "$op" --cd "$work" 2>&1)" || rc=$?
+  state="$(PM_DISPATCH_STATE_ROOT="$store" bash -c '. "$1/runtime/lib/state-writer.sh"; cd "$2"; _sw_project_dir' _ "$REPO_ROOT" "$work")"
+  record="${state%/}/operations/$op.json"
+  if [[ "$rc" -eq 1 && "$(jq -r .state "$record")" == cancelled ]] \
+     && [[ "$first" == *"state: cancelled"* ]] \
+     && [[ "$second" == *"already terminal"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc first=$first second=$second state=$(jq -r .state "$record" 2>/dev/null || true)"
+  fi
+}
+
 case_unknown_operation_is_diagnosed_not_silent() {
   local name="operation cancel/reconcile: unknown id reports why instead of exiting silently"
   should_run "$name" || return 0
@@ -249,6 +364,7 @@ case_relative_cd_resolves_to_the_same_operation() {
   fi
 }
 
+case_writer_loader_repairs_partial_inherited_functions
 case_reconcile_uses_trusted_terminal_claims
 case_create_collision_never_overwrites_record
 case_unknown_operation_is_diagnosed_not_silent
@@ -262,4 +378,7 @@ case_cancel_intent_blocks_reconcile_and_late_attachment
 case_childless_producer_failure_is_terminal
 case_concurrent_attach_preserves_complete_child_records
 case_cancel_deduplicates_repeated_child_records
+case_cancel_refuses_reused_producer_identity
+case_cancel_accepts_producer_that_exited_before_signal
+case_repeated_cancel_preserves_cancelled_terminal
 th_summary

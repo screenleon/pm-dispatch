@@ -16,11 +16,30 @@ _pmctl_operation_load_writer() {
   local repo_root lib
   repo_root="$1"
   lib="$repo_root/runtime/lib/state-writer.sh"
-  [[ "$(type -t operation_create 2>/dev/null)" == function ]] && return 0
+  [[ "$(type -t operation_create 2>/dev/null)" == function \
+    && "$(type -t operation_upsert 2>/dev/null)" == function \
+    && "$(type -t operation_child_append 2>/dev/null)" == function ]] && return 0
   [[ -r "$lib" ]] || return 1
   # shellcheck source=/dev/null # repo-root-relative runtime library
   . "$lib"
-  [[ "$(type -t operation_create 2>/dev/null)" == function ]]
+  [[ "$(type -t operation_create 2>/dev/null)" == function \
+    && "$(type -t operation_upsert 2>/dev/null)" == function \
+    && "$(type -t operation_child_append 2>/dev/null)" == function ]]
+}
+
+_pmctl_operation_load_detached_launch() {
+  local repo_root="$1" lib
+  [[ "$(type -t detached_launch_capture_identity 2>/dev/null)" == function \
+    && "$(type -t detached_launch_verify_identity 2>/dev/null)" == function \
+    && "$(type -t detached_launch_kill_process_group 2>/dev/null)" == function ]] \
+    && return 0
+  lib="$repo_root/runtime/lib/detached-launch.sh"
+  [[ -r "$lib" ]] || return 1
+  # shellcheck source=/dev/null # repo-root-relative runtime library
+  . "$lib"
+  [[ "$(type -t detached_launch_capture_identity 2>/dev/null)" == function \
+    && "$(type -t detached_launch_verify_identity 2>/dev/null)" == function \
+    && "$(type -t detached_launch_kill_process_group 2>/dev/null)" == function ]]
 }
 
 # _pmctl_operation_ensure_loaded <repo-root>
@@ -32,6 +51,8 @@ _pmctl_operation_ensure_loaded() {
   _pmctl_operation_load_writer "$repo_root" || return 1
   declare -F pmctl_operation_create >/dev/null 2>&1 \
     && declare -F pmctl_operation_attach_child >/dev/null 2>&1 \
+    && declare -F pmctl_operation_expect_producer >/dev/null 2>&1 \
+    && declare -F pmctl_operation_register_producer >/dev/null 2>&1 \
     && declare -F pmctl_operation_reconcile >/dev/null 2>&1
 }
 
@@ -53,7 +74,7 @@ pmctl_operation_create() {
   for ((attempt = 0; attempt < 16; attempt += 1)); do
     id="op-$(_pmctl_operation_stamp)-$(_pmctl_operation_hex6)"; ts="$(_pmctl_operation_ts)"
     json="$(jq -cn --arg id "$id" --arg kind "$kind" --arg dir "$work_dir" --arg executor "$executor" --arg ts "$ts" \
-      '{schema_version:1,id:$id,kind:$kind,working_dir:$dir,executor:(if $executor == "" then null else $executor end),state:"running",created_ts:$ts,terminal_ts:null,cancellation:null}')" || return 1
+      '{schema_version:1,id:$id,kind:$kind,working_dir:$dir,executor:(if $executor == "" then null else $executor end),state:"running",created_ts:$ts,terminal_ts:null,producer:null,cancellation:null}')" || return 1
     ( cd "$work_dir" && operation_create "$id" "$json" ) && { printf '%s\n' "$id"; return 0; }
     rc=$?
     [[ "$rc" -eq 3 ]] || return "$rc"
@@ -146,6 +167,10 @@ _pmctl_operation_validate_record() {
 _pmctl_operation_with_record_lock() {
   local repo_root="$1" work_dir="$2" operation_id="$3"; shift 3
   local lock_base record
+  # Path resolution below runs in command substitutions.  Any lazy-loaded
+  # writer functions would otherwise disappear with those subshells before the
+  # locked callback uses operation_upsert/operation_child_append.
+  _pmctl_operation_load_writer "$repo_root" || return 2
   record="$(_pmctl_operation_record_path "$repo_root" "$work_dir" "$operation_id")" || return 2
   [[ -f "$record" ]] || return 5
   lock_base="$(_pmctl_operation_record_lock_base "$repo_root" "$work_dir" "$operation_id")" || return 2
@@ -164,21 +189,231 @@ _pmctl_operation_mark_cancelling_inner() {
   esac
   ts="$(_pmctl_operation_ts)"
   updated="$(jq -c --arg ts "$ts" \
-    '.state="cancelling" | .cancellation={requested_ts:$ts,actor:"pmctl",child_failures:null}' \
+    '.state="cancelling"
+      | .cancellation={requested_ts:$ts,actor:"pmctl",producer_failures:null,child_failures:null}' \
     <<<"$PMCTL_OPERATION_RECORD_JSON")" || return 2
   ( cd "$work_dir" && operation_upsert "$operation_id" "$updated" )
 }
 
 _pmctl_operation_finish_cancel_inner() {
-  local repo_root="$1" expected_kind="$2" work_dir="$3" operation_id="$4" failures="$5" record ts next updated
+  local repo_root="$1" expected_kind="$2" work_dir="$3" operation_id="$4"
+  local producer_failures="$5" child_failures="$6" record ts next updated
   record="$(_pmctl_operation_record_path "$repo_root" "$work_dir" "$operation_id")" || return 2
   _pmctl_operation_validate_record "$record" "$expected_kind" "$work_dir" || return $?
   [[ "$PMCTL_OPERATION_RECORD_STATE" == cancelling ]] || return 3
-  ts="$(_pmctl_operation_ts)"; next="cancelled"; [[ "$failures" -eq 0 ]] || next="indeterminate"
-  updated="$(jq -c --arg state "$next" --arg ts "$ts" --argjson failures "$failures" \
-    '.state=$state | .terminal_ts=$ts | .cancellation.child_failures=$failures' \
+  ts="$(_pmctl_operation_ts)"; next="cancelled"
+  [[ "$producer_failures" -eq 0 && "$child_failures" -eq 0 ]] || next="indeterminate"
+  updated="$(jq -c --arg state "$next" --arg ts "$ts" \
+    --argjson producer_failures "$producer_failures" --argjson child_failures "$child_failures" \
+    '.state=$state | .terminal_ts=$ts
+      | .cancellation.producer_failures=$producer_failures
+      | .cancellation.child_failures=$child_failures' \
     <<<"$PMCTL_OPERATION_RECORD_JSON")" || return 2
   ( cd "$work_dir" && operation_upsert "$operation_id" "$updated" )
+}
+
+_pmctl_operation_identity_json() {
+  local repo_root="$1" pid="$2" snapshot line key value
+  local id_pid="" state="" pgid="" starttime="" comm="" isolated="" boot_id=""
+  _pmctl_operation_load_detached_launch "$repo_root" || return 2
+  snapshot="$(detached_launch_capture_identity "$pid" 2>/dev/null)" || return 2
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    key="${line%%=*}"
+    value="${line#*=}"
+    case "$key" in
+      pid) id_pid="$value" ;;
+      state) state="$value" ;;
+      pgid) pgid="$value" ;;
+      starttime) starttime="$value" ;;
+      comm) comm="$value" ;;
+      isolated) isolated="$value" ;;
+      boot_id) boot_id="$value" ;;
+    esac
+  done <<<"$snapshot"
+  [[ "$id_pid" == "$pid" && "$pid" =~ ^[1-9][0-9]*$ \
+    && "$pgid" =~ ^[1-9][0-9]*$ && "$starttime" =~ ^[0-9]+$ \
+    && "$isolated" =~ ^[01]$ ]] || return 2
+  jq -cn --argjson pid "$pid" --arg state "$state" --argjson pgid "$pgid" \
+    --arg starttime "$starttime" --arg comm "$comm" --arg isolated "$isolated" \
+    --arg boot_id "$boot_id" \
+    '{pid:$pid,state:$state,pgid:$pgid,starttime:$starttime,comm:$comm,
+      isolated:($isolated == "1"),boot_id:$boot_id}'
+}
+
+_pmctl_operation_expect_producer_inner() {
+  local repo_root="$1" expected_kind="$2" work_dir="$3" operation_id="$4"
+  local record ts updated
+  record="$(_pmctl_operation_record_path "$repo_root" "$work_dir" "$operation_id")" || return 2
+  _pmctl_operation_validate_record "$record" "$expected_kind" "$work_dir" || return $?
+  [[ "$PMCTL_OPERATION_RECORD_STATE" == running ]] || return 3
+  [[ "$(jq -r '.producer == null' <<<"$PMCTL_OPERATION_RECORD_JSON")" == true ]] || return 3
+  ts="$(_pmctl_operation_ts)"
+  updated="$(jq -c --arg ts "$ts" \
+    '.producer={status:"pending",phase:"gate",identity:null,
+      expected_ts:$ts,registered_ts:null,stopped_ts:null}' \
+    <<<"$PMCTL_OPERATION_RECORD_JSON")" || return 2
+  ( cd "$work_dir" && operation_upsert "$operation_id" "$updated" )
+}
+
+# Declare that this operation will launch one producer process.  Gate calls
+# this before exposing the operation id, so cancel can never mistake the small
+# launch/registration window for a genuinely childless operation.
+pmctl_operation_expect_producer() {
+  local repo_root="$1" expected_kind="$2" operation_id="$3" work_dir="$4"
+  _pmctl_operation_load_writer "$repo_root" || return 2
+  _pmctl_operation_with_record_lock "$repo_root" "$work_dir" "$operation_id" \
+    _pmctl_operation_expect_producer_inner "$repo_root" "$expected_kind" "$work_dir" "$operation_id"
+}
+
+_pmctl_operation_register_producer_inner() {
+  local repo_root="$1" expected_kind="$2" work_dir="$3" operation_id="$4" identity="$5"
+  local record ts status next_status updated rc=0
+  record="$(_pmctl_operation_record_path "$repo_root" "$work_dir" "$operation_id")" || return 2
+  _pmctl_operation_validate_record "$record" "$expected_kind" "$work_dir" || return $?
+  status="$(jq -r '.producer.status // ""' <<<"$PMCTL_OPERATION_RECORD_JSON")"
+  [[ "$status" == pending ]] || return 3
+  case "$PMCTL_OPERATION_RECORD_STATE" in
+    running) next_status=running ;;
+    cancelling) next_status=stopping; rc=130 ;;
+    cancelled) next_status=stopped; rc=130 ;;
+    *) return 3 ;;
+  esac
+  ts="$(_pmctl_operation_ts)"
+  updated="$(jq -c --arg status "$next_status" --arg ts "$ts" --argjson identity "$identity" \
+    '.producer.status=$status | .producer.identity=$identity
+      | .producer.registered_ts=$ts
+      | if $status == "stopped" then .producer.stopped_ts=$ts else . end' \
+    <<<"$PMCTL_OPERATION_RECORD_JSON")" || return 2
+  ( cd "$work_dir" && operation_upsert "$operation_id" "$updated" ) || return 2
+  return "$rc"
+}
+
+# Register only the calling producer's kernel identity.  The public cancel
+# command never accepts a PID; this producer-side API captures /proc evidence
+# before persisting it in the trusted operation record.
+pmctl_operation_register_producer() {
+  local repo_root="$1" expected_kind="$2" operation_id="$3" work_dir="$4" producer_pid="$5"
+  local identity rc=0
+  identity="$(_pmctl_operation_identity_json "$repo_root" "$producer_pid")" || return 2
+  _pmctl_operation_with_record_lock "$repo_root" "$work_dir" "$operation_id" \
+    _pmctl_operation_register_producer_inner "$repo_root" "$expected_kind" "$work_dir" \
+      "$operation_id" "$identity" || rc=$?
+  return "$rc"
+}
+
+_pmctl_operation_mark_producer_stopped_inner() {
+  local repo_root="$1" expected_kind="$2" work_dir="$3" operation_id="$4"
+  local record ts updated
+  record="$(_pmctl_operation_record_path "$repo_root" "$work_dir" "$operation_id")" || return 2
+  _pmctl_operation_validate_record "$record" "$expected_kind" "$work_dir" || return $?
+  [[ "$PMCTL_OPERATION_RECORD_STATE" == cancelling ]] || return 3
+  [[ "$(jq -r '.producer.status // ""' <<<"$PMCTL_OPERATION_RECORD_JSON")" =~ ^(running|stopping|stopped)$ ]] \
+    || return 3
+  ts="$(_pmctl_operation_ts)"
+  updated="$(jq -c --arg ts "$ts" \
+    '.producer.status="stopped" | .producer.stopped_ts=$ts' \
+    <<<"$PMCTL_OPERATION_RECORD_JSON")" || return 2
+  ( cd "$work_dir" && operation_upsert "$operation_id" "$updated" )
+}
+
+_pmctl_operation_identity_file_from_json() {
+  local identity="$1" destination="$2"
+  jq -er '
+    (.pid | tostring) as $pid
+    | (.pgid | tostring) as $pgid
+    | (.starttime | tostring) as $starttime
+    | (.isolated | if . then "1" else "0" end) as $isolated
+    | "pid=\($pid)\nstate=\(.state)\npgid=\($pgid)\nstarttime=\($starttime)\ncomm=\(.comm)\nisolated=\($isolated)\nboot_id=\(.boot_id)\n"
+  ' <<<"$identity" >"$destination"
+}
+
+_pmctl_operation_stop_producer() {
+  local repo_root="$1" expected_kind="$2" work_dir="$3" operation_id="$4" grace="$5"
+  local record deadline status identity identity_file pid pgid isolated verify_rc
+  _pmctl_operation_load_detached_launch "$repo_root" || return 1
+  record="$(_pmctl_operation_record_path "$repo_root" "$work_dir" "$operation_id")" || return 1
+  deadline=$((SECONDS + grace + 1))
+  while true; do
+    _pmctl_operation_validate_record "$record" "$expected_kind" "$work_dir" || return 1
+    status="$(jq -r '.producer.status // "none"' <<<"$PMCTL_OPERATION_RECORD_JSON")"
+    case "$status" in
+      none|stopped) return 0 ;;
+      pending)
+        if (( SECONDS >= deadline )); then
+          printf 'pmctl %s cancel: producer registration did not settle for %s; refusing cancelled terminal state\n' \
+            "$expected_kind" "$operation_id" >&2
+          return 1
+        fi
+        sleep 0.05
+        continue
+        ;;
+      running|stopping) : ;;
+      *)
+        printf 'pmctl %s cancel: invalid producer status %s for %s\n' \
+          "$expected_kind" "$status" "$operation_id" >&2
+        return 1
+        ;;
+    esac
+    identity="$(jq -c '.producer.identity // null' <<<"$PMCTL_OPERATION_RECORD_JSON")"
+    [[ "$identity" != null ]] || {
+      if (( SECONDS >= deadline )); then return 1; fi
+      sleep 0.05
+      continue
+    }
+    identity_file="$(mktemp /tmp/pm-operation-producer-XXXXXX.identity)" || return 1
+    if ! _pmctl_operation_identity_file_from_json "$identity" "$identity_file" \
+      || ! detached_launch_load_identity_file "$identity_file"; then
+      rm -f "$identity_file"
+      printf 'pmctl %s cancel: invalid trusted producer identity for %s\n' \
+        "$expected_kind" "$operation_id" >&2
+      return 1
+    fi
+    pid="$DL_ID_PID"; pgid="$DL_ID_PGID"; isolated="$DL_ID_ISOLATED"
+    verify_rc=0
+    detached_launch_verify_identity "$pid" "$identity_file" || verify_rc=$?
+    case "$verify_rc" in
+      0)
+        if [[ "$isolated" != 1 || "$pid" != "$pgid" ]]; then
+          rm -f "$identity_file"
+          printf 'pmctl %s cancel: producer %s is not an isolated process-group leader; refusing signal\n' \
+            "$expected_kind" "$operation_id" >&2
+          return 1
+        fi
+        if ! detached_launch_kill_process_group "$pgid" "$grace"; then
+          rm -f "$identity_file"
+          printf 'pmctl %s cancel: producer process group %s for %s remains live; refusing cancelled terminal state\n' \
+            "$expected_kind" "$pgid" "$operation_id" >&2
+          return 1
+        fi
+        ;;
+      1) : ;;
+      2)
+        rm -f "$identity_file"
+        printf 'pmctl %s cancel: producer identity mismatch for %s (pid=%s); refusing signal\n' \
+          "$expected_kind" "$operation_id" "$pid" >&2
+        return 1
+        ;;
+      *) rm -f "$identity_file"; return 1 ;;
+    esac
+    rm -f "$identity_file"
+    _pmctl_operation_with_record_lock "$repo_root" "$work_dir" "$operation_id" \
+      _pmctl_operation_mark_producer_stopped_inner "$repo_root" "$expected_kind" \
+        "$work_dir" "$operation_id" || return 1
+    return 0
+  done
+}
+
+# Returns 0 only when cancellation owns the operation terminal transition.
+pmctl_operation_cancellation_requested() {
+  local repo_root="$1" expected_kind="$2" operation_id="$3" work_dir="$4" record state
+  record="$(_pmctl_operation_record_path "$repo_root" "$work_dir" "$operation_id")" || return 2
+  _pmctl_operation_validate_record "$record" "$expected_kind" "$work_dir" || return 2
+  state="$PMCTL_OPERATION_RECORD_STATE"
+  # shellcheck disable=SC2034 # public output consumed by pmctl-gate after this function returns.
+  PMCTL_OPERATION_CANCELLATION_STATE="$state"
+  [[ "$state" == cancelling || "$state" == cancelled \
+    || ( "$state" == indeterminate \
+      && "$(jq -r '.cancellation != null' <<<"$PMCTL_OPERATION_RECORD_JSON")" == true ) ]]
 }
 
 _pmctl_operation_reconcile_inner() {
@@ -195,6 +430,12 @@ _pmctl_operation_reconcile_inner() {
       printf 'operation: %s  state: cancelling  reconciliation: deferred\n' "$operation_id"
       return 1
       ;;
+    indeterminate)
+      if [[ "$(jq -r '.cancellation != null' <<<"$PMCTL_OPERATION_RECORD_JSON")" == true ]]; then
+        printf 'operation: %s  state: indeterminate  cancellation: unresolved\n' "$operation_id"
+        return 1
+      fi
+      ;;
   esac
   op_dir="$(_pmctl_operation_dir "$repo_root" "$work_dir" "$operation_id")" || return 2
   if [[ -f "$op_dir/children.jsonl" ]]; then
@@ -209,7 +450,11 @@ _pmctl_operation_reconcile_inner() {
   [[ "$children" -gt 0 ]] || missing=1
   if [[ "$missing" -gt 0 ]]; then next="indeterminate"; elif [[ "$cancelled" -gt 0 ]]; then next="cancelled"; elif [[ "$failed" -gt 0 ]]; then next="failed"; else next="completed"; fi
   ts="$(_pmctl_operation_ts)"
-  updated="$(jq -c --arg state "$next" --arg ts "$ts" '.state=$state | .terminal_ts=$ts' <<<"$PMCTL_OPERATION_RECORD_JSON")" || return 2
+  updated="$(jq -c --arg state "$next" --arg ts "$ts" \
+    '.state=$state | .terminal_ts=$ts
+      | if .producer != null then
+          .producer.status="stopped" | .producer.stopped_ts=$ts
+        else . end' <<<"$PMCTL_OPERATION_RECORD_JSON")" || return 2
   ( cd "$work_dir" && operation_upsert "$operation_id" "$updated" ) || return 2
   printf 'operation: %s  state: %s  children: %s  unresolved: %s\n' "$operation_id" "$next" "$children" "$missing"
   [[ "$next" != indeterminate ]]
@@ -220,10 +465,18 @@ _pmctl_operation_fail_if_childless_inner() {
   record="$(_pmctl_operation_record_path "$repo_root" "$work_dir" "$operation_id")" || return 2
   _pmctl_operation_validate_record "$record" "$expected_kind" "$work_dir" || return $?
   [[ "$PMCTL_OPERATION_RECORD_STATE" == running || "$PMCTL_OPERATION_RECORD_STATE" == indeterminate ]] || return 3
+  if [[ "$PMCTL_OPERATION_RECORD_STATE" == indeterminate \
+    && "$(jq -r '.cancellation != null' <<<"$PMCTL_OPERATION_RECORD_JSON")" == true ]]; then
+    return 3
+  fi
   op_dir="$(_pmctl_operation_dir "$repo_root" "$work_dir" "$operation_id")" || return 2
   [[ ! -s "$op_dir/children.jsonl" ]] || return 1
   ts="$(_pmctl_operation_ts)"
-  updated="$(jq -c --arg ts "$ts" '.state="failed" | .terminal_ts=$ts' <<<"$PMCTL_OPERATION_RECORD_JSON")" || return 2
+  updated="$(jq -c --arg ts "$ts" \
+    '.state="failed" | .terminal_ts=$ts
+      | if .producer != null then
+          .producer.status="stopped" | .producer.stopped_ts=$ts
+        else . end' <<<"$PMCTL_OPERATION_RECORD_JSON")" || return 2
   ( cd "$work_dir" && operation_upsert "$operation_id" "$updated" )
 }
 
@@ -266,7 +519,11 @@ pmctl_operation_cancel() {
     *) printf 'pmctl %s cancel: foreign or invalid operation target refused\n' "$expected_kind" >&2; return 2 ;;
   esac
 
-  local line run_id child_dir rc failures=0 seen=" "
+  local producer_failures=0
+  _pmctl_operation_stop_producer "$repo_root" "$expected_kind" "$work_dir" \
+    "$operation_id" "$grace" || producer_failures=1
+
+  local line run_id child_dir rc child_failures=0 seen=" "
   if [[ -f "$op_dir/children.jsonl" ]]; then
     while IFS= read -r line; do
       run_id="$(jq -r '.run_id // ""' <<<"$line" 2>/dev/null || true)"; child_dir="$(jq -r '.working_dir // ""' <<<"$line" 2>/dev/null || true)"
@@ -275,14 +532,17 @@ pmctl_operation_cancel() {
       rc=0; pmctl_dispatch_cancel "$repo_root" "$run_id" --cd "$child_dir" --grace "$grace" || rc=$?
       # A child already terminal is a valid cancel race outcome; unknown or
       # identity failures keep the parent non-successful and diagnosable.
-      [[ "$rc" -eq 0 || "$rc" -eq 1 ]] || failures=$((failures + 1))
+      [[ "$rc" -eq 0 || "$rc" -eq 1 ]] || child_failures=$((child_failures + 1))
     done < "$op_dir/children.jsonl"
   fi
   _pmctl_operation_with_record_lock "$repo_root" "$work_dir" "$operation_id" \
-    _pmctl_operation_finish_cancel_inner "$repo_root" "$expected_kind" "$work_dir" "$operation_id" "$failures" || return $?
-  local next_state="cancelled"; [[ "$failures" -eq 0 ]] || next_state="indeterminate"
-  printf 'operation: %s  state: %s  child_failures: %s\n' "$operation_id" "$next_state" "$failures"
-  [[ "$failures" -eq 0 ]]
+    _pmctl_operation_finish_cancel_inner "$repo_root" "$expected_kind" "$work_dir" \
+      "$operation_id" "$producer_failures" "$child_failures" || return $?
+  local next_state="cancelled"
+  [[ "$producer_failures" -eq 0 && "$child_failures" -eq 0 ]] || next_state="indeterminate"
+  printf 'operation: %s  state: %s  producer_failures: %s  child_failures: %s\n' \
+    "$operation_id" "$next_state" "$producer_failures" "$child_failures"
+  [[ "$producer_failures" -eq 0 && "$child_failures" -eq 0 ]]
 }
 
 # pmctl_operation_reconcile <repo-root> <expected-kind> <operation-id> --cd <dir>
