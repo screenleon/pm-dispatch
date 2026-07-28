@@ -31,6 +31,27 @@ export XDG_RUNTIME_DIR="$_TEST_XDG_RUNTIME_DIR"
 export PM_GATE_WAIT_POLL_INTERVAL="${PM_GATE_WAIT_POLL_INTERVAL:-0.1}"
 _WAIT_OK="${PM_GATE_TEST_WAIT_TIMEOUT:-30}"
 
+# Launch-only cases intentionally do not call `gate wait`, so consume their
+# suite-owned nonce paths before the harness removes its isolated key dir.
+# This keeps concurrent/full test runs from accumulating global /tmp sentinels.
+_cleanup_unconsumed_gate_test_sentinels() {
+  local key_dir="$XDG_RUNTIME_DIR/pm-gate-dispatch"
+  local key_file gate_id nonce ready_sentinel terminal_sentinel
+  [[ -d "$key_dir" ]] || return 0
+  for key_file in "$key_dir"/gate-*; do
+    [[ -f "$key_file" ]] || continue
+    gate_id="${key_file##*/}"
+    nonce="$(cat "$key_file" 2>/dev/null || true)"
+    [[ -n "$nonce" ]] || continue
+    ready_sentinel="$(detached_launch_sentinel_path "pm-gate-ready" "$gate_id" "$nonce")"
+    terminal_sentinel="$(detached_launch_sentinel_path "pm-gate" "$gate_id" "$nonce")"
+    if [[ -e "$ready_sentinel" && ! -e "$terminal_sentinel" ]]; then
+      detached_launch_wait_for_sentinel "$terminal_sentinel" 1 0.01 >/dev/null 2>&1 || true
+    fi
+    rm -f "$ready_sentinel" "$terminal_sentinel" "$key_file" 2>/dev/null || true
+  done
+}
+
 # Build a fixture repo root with the real pmctl-gate.sh + gate-supervisor.sh
 # + their dependencies (state-paths.sh/portable.sh for sw_project_run_dir,
 # gate-result-verify.sh for the post-wait structural check) so
@@ -225,7 +246,7 @@ case_detached_launch_fails_loud_on_early_supervisor_death() {
   _run_gate_wrapper "$fixture" "$run_wrapper"
 
   local out code
-  set +e; out="$("$run_wrapper" --cd "$work" --lifecycle detached 2>&1)"; code=$?; set -e
+  set +e; out="$(PM_GATE_READY_TIMEOUT=1 "$run_wrapper" --cd "$work" --lifecycle detached 2>&1)"; code=$?; set -e
   if [[ "$code" -eq 2 ]] && [[ "$out" == *"exited before readiness"* ]] && [[ "$out" == *"--lifecycle foreground"* ]]; then
     pass "$name"
   else
@@ -306,6 +327,53 @@ WRAPPER
   chmod +x "$run_wrapper"
   set +e; out="$("$run_wrapper" --cd "$work" --lifecycle detached 2>&1)"; code=$?; set -e
   if [[ "$code" -eq 0 && "$out" == *"pmctl gate wait gate-"* && "$out" == *$'\ngate-'* ]]; then pass "$name"; else fail "$name" "code=$code out=$out"; fi
+}
+
+# ---- 1g: the configured readiness timeout owns the full evidence window -----
+case_detached_launch_honors_timeout_during_extended_liveness_gap() {
+  # A loaded host can delay the supervisor after the launcher's PID identity
+  # probe stops succeeding. Drive that gap deterministically for more than the
+  # old five-poll grace, then release readiness while still inside the declared
+  # timeout. The launch must wait for authenticated evidence instead of
+  # reporting a false early death.
+  local name="gate-lifecycle/detached launch honors timeout during extended liveness gap"
+  should_run "$name" || return 0
+  local fixture="$tmp_root/c1g/fixture" work="$tmp_root/c1g/work"
+  local release="$tmp_root/c1g/release" polls="$tmp_root/c1g/polls"
+  mkdir -p "$work"; _mk_fixture_repo "$fixture"; _mk_fake_gate "$fixture" 0
+  # shellcheck disable=SC2016  # sed must preserve the supervisor's env expansion.
+  sed -i 's/_write_ready || _die "failed to publish supervisor readiness evidence"/while [[ ! -f "${PM_TEST_READY_RELEASE:-}" ]]; do sleep 0.01; done\n_write_ready || _die "failed to publish supervisor readiness evidence"/' "$fixture/runtime/bin/gate-supervisor.sh"
+
+  local run_wrapper="$tmp_root/c1g/run" out code
+  cat > "$run_wrapper" <<WRAPPER
+#!/usr/bin/env bash
+set -euo pipefail
+. "$fixture/runtime/lib/pmctl-gate.sh"
+. "$fixture/runtime/lib/detached-launch.sh"
+detached_launch_verify_identity() { return 1; }
+_test_parent_sleep_count=0
+sleep() {
+  _test_parent_sleep_count=\$((_test_parent_sleep_count + 1))
+  printf '.\n' >> "$polls"
+  if (( _test_parent_sleep_count == 6 )); then
+    : > "$release"
+  fi
+  command sleep "\$@"
+}
+export PM_TEST_READY_RELEASE="$release"
+pmctl_gate_run "$fixture" "\$@"
+WRAPPER
+  chmod +x "$run_wrapper"
+  set +e; out="$("$run_wrapper" --cd "$work" --lifecycle detached 2>&1)"; code=$?; set -e
+  # Always release the fixture child so a failing implementation leaves no
+  # blocked detached process behind when the test harness removes its tmp dir.
+  : > "$release"
+  if [[ "$code" -eq 0 && "$out" == *"pmctl gate wait gate-"* && "$out" == *$'\ngate-'* ]] \
+    && [[ "$(wc -l < "$polls" 2>/dev/null || printf '0')" -ge 6 ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code polls=$(wc -l < "$polls" 2>/dev/null || printf '0') out=$out"
+  fi
 }
 
 # ---- 2: gate wait resolves GO (exit 0) after supervisor completes ------------
@@ -440,19 +508,24 @@ case_wait_indeterminate_on_consumed_sentinel() {
   _run_gate_wrapper "$fixture" "$run_wrapper"
   _wait_wrapper "$fixture" "$wait_wrapper"
 
-  local gate_id
+  local gate_id key_file nonce ready_sentinel terminal_sentinel
   gate_id="$("$run_wrapper" --cd "$work" --lifecycle detached)"
+  key_file="$XDG_RUNTIME_DIR/pm-gate-dispatch/$gate_id"
+  nonce="$(cat "$key_file")"
+  ready_sentinel="$(detached_launch_sentinel_path "pm-gate-ready" "$gate_id" "$nonce")"
+  terminal_sentinel="$(detached_launch_sentinel_path "pm-gate" "$gate_id" "$nonce")"
 
-  # First wait consumes the sentinel + key file (one-shot).
+  # First wait consumes terminal + readiness evidence and the key (one-shot).
   "$wait_wrapper" "$gate_id" --cd "$work" --timeout "$_WAIT_OK" >/dev/null 2>&1 || true
 
   local out code
   set +e; out="$("$wait_wrapper" "$gate_id" --cd "$work" --timeout 2 2>&1)"; code=$?; set -e
 
-  if [[ "$code" -eq 3 ]] && [[ "$out" == *"indeterminate"* ]]; then
+  if [[ "$code" -eq 3 ]] && [[ "$out" == *"indeterminate"* ]] \
+    && [[ ! -e "$ready_sentinel" && ! -e "$terminal_sentinel" && ! -e "$key_file" ]]; then
     pass "$name"
   else
-    fail "$name" "code=$code out=$out"
+    fail "$name" "code=$code ready_exists=$([[ -e "$ready_sentinel" ]] && printf yes || printf no) terminal_exists=$([[ -e "$terminal_sentinel" ]] && printf yes || printf no) key_exists=$([[ -e "$key_file" ]] && printf yes || printf no) out=$out"
   fi
 }
 
@@ -760,6 +833,7 @@ case_detached_launch_rejects_invalid_ready_identity
 case_detached_launch_rejects_invalid_ready_timeout
 case_detached_launch_accepts_terminal_evidence_after_capture_race
 case_detached_launch_accepts_terminal_evidence_after_liveness_race
+case_detached_launch_honors_timeout_during_extended_liveness_gap
 case_wait_resolves_go
 case_wait_reloads_verifier_over_incomplete_export
 case_wait_resolves_nogo
@@ -775,4 +849,5 @@ case_wait_fails_on_corrupt_result
 case_wait_fails_on_cd_partition_mismatch
 case_wait_usage_errors
 
+_cleanup_unconsumed_gate_test_sentinels
 th_summary
