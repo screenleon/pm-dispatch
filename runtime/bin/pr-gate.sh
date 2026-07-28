@@ -3408,6 +3408,10 @@ if [[ "$SKIP_PREFLIGHT_TESTS" != "true" && -n "$TEST_CMD_OVERRIDE" ]]; then
       export PM_DISPATCH_PREFLIGHT_SUBJECT_FINGERPRINT="$_preflight_before"
       export PM_DISPATCH_PREFLIGHT_BASE_COMMIT="$_preflight_base_commit"
       export PM_DISPATCH_PREFLIGHT_HEAD_COMMIT="$_preflight_head_commit"
+      # The test command is a subject of this gate, not another producer owned
+      # by the same parent operation.  Do not let nested pmctl/pr-gate fixtures
+      # attach themselves to or infer ownership from the outer gate.
+      unset PM_GATE_PARENT_OPERATION
       exec setsid timeout --kill-after=15 "$TEST_TIMEOUT" bash -c "$TEST_CMD_OVERRIDE"
     ) > "$PREFLIGHT_LOG_PATH" 2>&1 &
     GATE_ACTIVE_PREFLIGHT_PID=$!

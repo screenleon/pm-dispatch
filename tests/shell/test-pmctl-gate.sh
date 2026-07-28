@@ -1437,7 +1437,8 @@ IFS= read -r _ < "$release"
 wait "$descendant"
 RUNNER
   chmod +x "$runner"
-  printf -v test_cmd 'bash %q %q %q %q' "$runner" "$ready" "$release" "$pids"
+  printf -v test_cmd 'test -z "${PM_GATE_PARENT_OPERATION:-}" && bash %q %q %q %q' \
+    "$runner" "$ready" "$release" "$pids"
 
   PM_DISPATCH_STATE_ROOT="$state" XDG_RUNTIME_DIR="$_GATE_CLI_XDG_RUNTIME_DIR" \
     "$PMCTL" gate run --lifecycle foreground --cd "$work" --base HEAD~1 \
