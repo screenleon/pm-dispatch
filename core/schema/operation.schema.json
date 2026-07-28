@@ -14,40 +14,49 @@
     "terminal_ts": {"type": ["string", "null"], "format": "date-time"},
     "producer": {
       "type": ["object", "null"],
-      "required": ["status", "phase", "identity", "expected_ts", "registered_ts", "stopped_ts"],
-      "properties": {
-        "status": {"enum": ["pending", "running", "stopping", "stopped"]},
-        "phase": {"const": "gate"},
-        "identity": {
-          "type": ["object", "null"],
-          "required": ["pid", "state", "pgid", "starttime", "comm", "isolated", "boot_id"],
-          "properties": {
-            "pid": {"type": "integer", "minimum": 1},
-            "state": {"type": "string", "minLength": 1},
-            "pgid": {"type": "integer", "minimum": 1},
-            "starttime": {"type": "string", "pattern": "^[0-9]+$"},
-            "comm": {"type": "string"},
-            "isolated": {"type": "boolean"},
-            "boot_id": {"type": "string"}
+      "if": {"type": "object"},
+      "then": {
+        "required": ["status", "phase", "identity", "expected_ts", "registered_ts", "stopped_ts"],
+        "properties": {
+          "status": {"enum": ["pending", "running", "stopping", "stopped"]},
+          "phase": {"const": "gate"},
+          "identity": {
+            "type": ["object", "null"],
+            "if": {"type": "object"},
+            "then": {
+              "required": ["pid", "state", "pgid", "starttime", "comm", "isolated", "boot_id"],
+              "properties": {
+                "pid": {"type": "integer", "minimum": 1},
+                "state": {"type": "string", "minLength": 1},
+                "pgid": {"type": "integer", "minimum": 1},
+                "starttime": {"type": "string", "pattern": "^[0-9]+$"},
+                "comm": {"type": "string"},
+                "isolated": {"type": "boolean"},
+                "boot_id": {"type": "string"}
+              },
+              "additionalProperties": false
+            }
           },
-          "additionalProperties": false
+          "expected_ts": {"type": "string", "format": "date-time"},
+          "registered_ts": {"type": ["string", "null"], "format": "date-time"},
+          "stopped_ts": {"type": ["string", "null"], "format": "date-time"}
         },
-        "expected_ts": {"type": "string", "format": "date-time"},
-        "registered_ts": {"type": ["string", "null"], "format": "date-time"},
-        "stopped_ts": {"type": ["string", "null"], "format": "date-time"}
-      },
-      "additionalProperties": false
+        "additionalProperties": false
+      }
     },
     "cancellation": {
       "type": ["object", "null"],
-      "required": ["requested_ts", "actor", "child_failures"],
-      "properties": {
-        "requested_ts": {"type": "string", "format": "date-time"},
-        "actor": {"const": "pmctl"},
-        "producer_failures": {"type": ["integer", "null"], "minimum": 0},
-        "child_failures": {"type": ["integer", "null"], "minimum": 0}
-      },
-      "additionalProperties": false
+      "if": {"type": "object"},
+      "then": {
+        "required": ["requested_ts", "actor", "child_failures"],
+        "properties": {
+          "requested_ts": {"type": "string", "format": "date-time"},
+          "actor": {"const": "pmctl"},
+          "producer_failures": {"type": ["integer", "null"], "minimum": 0},
+          "child_failures": {"type": ["integer", "null"], "minimum": 0}
+        },
+        "additionalProperties": false
+      }
     }
   },
   "additionalProperties": false
