@@ -657,6 +657,86 @@
           "maximum": 100
         }
       },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "enum": [
+                  "renamed",
+                  "copied"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "old_path": {
+                "$ref": "#/definitions/path"
+              },
+              "new_path": {
+                "$ref": "#/definitions/path"
+              },
+              "similarity": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 100
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "deleted"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "old_path": {
+                "$ref": "#/definitions/path"
+              },
+              "new_path": {
+                "type": "null"
+              },
+              "similarity": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "enum": [
+                  "added",
+                  "modified",
+                  "type_changed",
+                  "unmerged",
+                  "untracked",
+                  "unknown"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "old_path": {
+                "type": "null"
+              },
+              "new_path": {
+                "$ref": "#/definitions/path"
+              },
+              "similarity": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ],
       "additionalProperties": false
     },
     "sensitiveSignal": {

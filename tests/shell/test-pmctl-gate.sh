@@ -1367,6 +1367,75 @@ case_verify_v3_incomplete_scope_manifest_is_invalid() {
   fi
 }
 
+case_verify_v3_scope_cross_field_mutations_are_invalid() {
+  # Behavior: a fresh manifest digest, assurance digest, and attestation cannot
+  # authorize cross-field claims that disagree with the manifest's own inputs.
+  # Steps:
+  #   1. Build an independently valid v3 artifact for each mutation.
+  #   2. Corrupt one entry shape, derived path set, flag, hunk, or truncation
+  #      relationship and recompute every binding digest.
+  #   3. Assert pmctl gate verify rejects every re-attested artifact.
+  local name="gate/verify: v3 re-attested scope cross-field mutations are invalid"
+  should_run "$name" || return 0
+  local mutation slug result sidecar manifest out report code
+  while IFS= read -r mutation; do
+    slug="${mutation//_/-}"
+    result="$(_gate_verify_result_path "v3-scope-$slug")"
+    sidecar="${result}.assurance.json"
+    _mk_gate_result_v3_verified "$result" "$_GATE_VERIFY_REPO"
+    manifest="$(dirname "$result")/$(jq -r \
+      '.evidence.scope_manifest.artifact' "$sidecar")"
+    case "$mutation" in
+      entry_shape)
+        jq '.changes.entries[0].old_path = "README.md"' \
+          "$manifest" > "${manifest}.tmp"
+        ;;
+      changed_path_set)
+        jq '.changes.changed_paths += ["ghost.txt"]' \
+          "$manifest" > "${manifest}.tmp"
+        ;;
+      flag_membership)
+        jq '.flags.public_interface = {
+          matched:true,paths:["ghost.txt"]
+        }' "$manifest" > "${manifest}.tmp"
+        ;;
+      hunk_membership)
+        jq '.diff.hunks[0].path = "ghost.txt"' \
+          "$manifest" > "${manifest}.tmp"
+        ;;
+      truncation_coherence)
+        jq '.truncation.omitted.matches_per_query = 1' \
+          "$manifest" > "${manifest}.tmp"
+        ;;
+    esac
+    mv "${manifest}.tmp" "$manifest"
+    _refresh_gate_scope_manifest_v3_links "$result"
+    set +e
+    out="$(_run_canonical_gate_verify "$result" \
+      --consumer generic --json 2>&1)"
+    code=$?
+    set -e
+    report="$(tail -n 1 <<<"$out")"
+    if [[ "$code" -ne 1 ]] \
+        || [[ "$out" != *"scope manifest failed structural/claim verification"* ]] \
+        || ! jq -e '
+          .axes.artifact_valid.status == "fail" and
+          (.axes.artifact_valid.reason_codes |
+            index("artifact_integrity_failed")) != null
+        ' <<<"$report" >/dev/null; then
+      fail "$name" "$mutation code=$code out=$out"
+      return
+    fi
+  done <<'CASES'
+entry_shape
+changed_path_set
+flag_membership
+hunk_membership
+truncation_coherence
+CASES
+  pass "$name"
+}
+
 case_verify_v3_linked_evidence_digest_tamper_is_invalid() {
   # Behavior: a linked evidence digest is part of artifact integrity, distinct
   # from whether the otherwise immutable subject is still current.
@@ -2442,6 +2511,7 @@ case_verify_v3_copy_replay_is_valid_but_not_authorizing
 case_verify_v3_valid_but_policy_insufficient
 case_verify_v3_scope_policy_signal_mismatch_is_invalid
 case_verify_v3_incomplete_scope_manifest_is_invalid
+case_verify_v3_scope_cross_field_mutations_are_invalid
 case_verify_v3_linked_evidence_digest_tamper_is_invalid
 case_verify_v3_subject_binding_mismatch_is_invalid
 case_verify_v3_linked_preflight_subject_claim_mismatch_is_invalid

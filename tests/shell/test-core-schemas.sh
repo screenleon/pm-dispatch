@@ -762,7 +762,7 @@ _gate_scope_manifest_valid_instance() {
     changes:{
       entries:[{
         status:"modified",
-        old_path:"runtime/bin/example.sh",
+        old_path:null,
         new_path:"runtime/bin/example.sh",
         similarity:null
       }],
@@ -954,6 +954,54 @@ case_gate_scope_manifest_escaping_path_rejected() {
     pass "$name"
   fi
   rm -f "$tmpf"
+}
+
+case_gate_scope_manifest_change_entry_status_shape_rejected() {
+  # Behavior: each change status has the same old/new path and similarity
+  # contract in the public schema as in the runtime verifier.
+  # Steps:
+  #   1. Mutate the canonical entry into invalid modified, renamed, and deleted
+  #      status-specific shapes.
+  #   2. Validate each independently against the public schema.
+  #   3. Assert every contradictory shape is rejected.
+  local name="gate-scope-manifest: change status controls path shape"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/gate-scope-manifest.schema.json"
+  local tmpf mutation
+  while IFS= read -r mutation; do
+    tmpf="$(mktemp /tmp/gate-scope-change-shape-XXXXXX.json)"
+    case "$mutation" in
+      modified-old-path)
+        _gate_scope_manifest_valid_instance |
+          jq '.changes.entries[0].old_path = "runtime/bin/example.sh"' > "$tmpf"
+        ;;
+      renamed-without-similarity)
+        _gate_scope_manifest_valid_instance |
+          jq '
+            .changes.entries[0].status = "renamed" |
+            .changes.entries[0].old_path = "runtime/bin/old-example.sh"
+          ' > "$tmpf"
+        ;;
+      deleted-with-new-path)
+        _gate_scope_manifest_valid_instance |
+          jq '
+            .changes.entries[0].status = "deleted" |
+            .changes.entries[0].old_path = "runtime/bin/example.sh"
+          ' > "$tmpf"
+        ;;
+    esac
+    if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+      rm -f "$tmpf"
+      fail "$name" "schema accepted invalid $mutation entry"
+      return
+    fi
+    rm -f "$tmpf"
+  done <<'CASES'
+modified-old-path
+renamed-without-similarity
+deleted-with-new-path
+CASES
+  pass "$name"
 }
 
 _gate_assurance_valid_instance() {
@@ -1402,6 +1450,7 @@ case_gate_scope_manifest_valid_accepted_truncation
 case_gate_scope_manifest_inconsistent_status_rejected
 case_gate_scope_manifest_subject_selection_rejected
 case_gate_scope_manifest_escaping_path_rejected
+case_gate_scope_manifest_change_entry_status_shape_rejected
 case_gate_assurance_valid_instance
 case_gate_assurance_v3_valid_instance
 case_gate_assurance_v2_rejects_v3_fields

@@ -4787,6 +4787,11 @@ test_scope_manifest_complete_and_shared_across_parallel_dispatch() {
 # Behavior: the manifest producer transports a maximum-size expansion through
 # a file descriptor instead of one jq argv value, preserving every entry even
 # when the serialized array exceeds Linux MAX_ARG_STRLEN.
+# Steps:
+#   1. Create one changed source with eight symbols and 64 callers per symbol.
+#   2. Run the gate so the bounded expansion contains exactly 512 entries.
+#   3. Assert the complete serialized expansion exceeds 128 KiB and dispatch
+#      succeeds without an argv-size failure.
 test_scope_manifest_large_expansion_uses_file_input() {
   local name="scope-manifest/large-expansion-uses-file-input"
   should_run "$name" || return 0
