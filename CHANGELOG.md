@@ -10,6 +10,17 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Immutable gate subject and shared three-axis verification (CC-515).**
+  Current gate producers emit `gate_assurance_v3` with a stable Git
+  common-directory repository key, provenance-only observed root, base/head
+  refs and commits, tree fingerprint, subject kind/dirty policy, timestamps,
+  and digest-bound evidence links. `pmctl gate verify` now reports
+  `artifact_valid`, `subject_current`, and `policy_applicable` independently
+  with reason codes and optional JSON output. Named consumers require all
+  three axes; default inspection remains compatible with historical
+  artifact-validity checks. Gate wait and ship finish use the same verifier,
+  so stale or policy-insufficient GO text cannot authorize continuation.
+
 - **Parent-operation control plane for indirect dispatch (CC-508).** Producers
   that launch detached children — `pmctl gate run` and `pmctl ship` — now create
   a durable parent operation record (`core/schema/operation.schema.json`, owned

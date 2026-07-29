@@ -718,8 +718,9 @@ case_wait_fails_on_missing_result() {
 # ---- 10: GO sentinel with a structurally invalid result fails the wait -------
 case_wait_fails_on_corrupt_result() {
   # CC-423 pr-gate finding (qa-tester, high): distinct from the missing-result
-  # case above -- here a result file exists but gate_result_verify rejects it
-  # (no Final: line), and the wait must still fail rather than trust it.
+  # case above -- here a result file exists but the shared assessment reports
+  # gate_result_verify's integrity rejection (no Final: line), and the wait
+  # must still fail rather than trust it.
   local name="gate-lifecycle/gate wait fails when result fails gate_result_verify"
   should_run "$name" || return 0
 
@@ -738,7 +739,9 @@ case_wait_fails_on_corrupt_result() {
   local out code
   set +e; out="$("$wait_wrapper" "$gate_id" --cd "$work" --timeout "$_WAIT_OK" 2>&1)"; code=$?; set -e
 
-  if [[ "$code" -eq 2 ]] && [[ "$out" == *"gate_result_verify rejected"* ]]; then
+  if [[ "$code" -eq 2 ]] \
+      && [[ "$out" == *"gate artifact is invalid or stale"* ]] \
+      && [[ "$out" == *'"artifact_integrity_failed"'* ]]; then
     pass "$name"
   else
     fail "$name" "code=$code out=$out"

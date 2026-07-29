@@ -195,19 +195,37 @@ pmctl_ship_finish() {
   gate_out="$(pmctl_gate_run "$repo_root" "${gate_args[@]}" 2>&1)" || gate_status=$?
   printf '%s\n' "$gate_out"
 
-  # Source of truth is the RESULT FILE's `Final:` line, not the captured
-  # exit code or any stdout text -- pr-gate.sh prints `result: <path>` near
-  # the end of its run; read that file directly rather than trust output
-  # that could be truncated/reordered by capture.
-  local result_path final_verdict
+  # Source of truth is the shared three-axis gate assessment, not the captured
+  # exit code, stdout prose, or a local grep of `Final:`. pr-gate.sh prints the
+  # result path; the verifier binds it to the current repository subject and
+  # the maintainer consumer policy before publication can continue.
+  local result_path final_verdict gate_verification gate_verification_status=0
   result_path="$(printf '%s\n' "$gate_out" | grep -m1 '^result: ' | sed 's/^result: *//')"
   if [[ -z "$result_path" || ! -f "$result_path" ]]; then
     printf 'pmctl ship finish: could not locate gate result file (gate exit %s) -- see output above\n' "$gate_status" >&2
     return 1
   fi
-  final_verdict="$(grep -m1 '^Final: ' "$result_path" 2>/dev/null | awk '{print $2}')"
+  if ! declare -F pmctl_gate_verify >/dev/null 2>&1; then
+    printf 'pmctl ship finish: shared gate verifier is unavailable; refusing publication\n' >&2
+    return 2
+  fi
+  gate_verification="$(
+    pmctl_gate_verify "$repo_root" "$result_path" --cd "$work_dir" \
+      --consumer maintainer --json
+  )" || gate_verification_status=$?
+  if ! jq -e '.kind == "gate_verification_v1"' \
+      <<<"$gate_verification" >/dev/null 2>&1; then
+    printf 'pmctl ship finish: shared gate verifier returned no structured assessment; refusing publication\n' >&2
+    return 1
+  fi
+  final_verdict="$(jq -r '.verdict' <<<"$gate_verification")"
   if [[ "$final_verdict" != "GO" ]]; then
     printf 'pmctl ship finish: %s -- fix findings and re-run finish. Result: %s\n' "${final_verdict:-NO VERDICT}" "$result_path" >&2
+    return 1
+  fi
+  if [[ "$gate_verification_status" -ne 0 ]]; then
+    printf 'pmctl ship finish: GO artifact is invalid, stale, or not applicable to maintainer policy; refusing publication: %s\n' \
+      "$(jq -c '.axes' <<<"$gate_verification")" >&2
     return 1
   fi
 

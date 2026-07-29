@@ -110,7 +110,9 @@ _pmctl_gate_wait_for_assurance_publication() {
       evidence_status="$(jq -r \
         '.coordinates.independence.evidence_status // "unavailable"' \
         "$assurance_file" 2>/dev/null || printf 'unavailable')"
-      if [[ "$assurance_kind" != gate_assurance_v2 || "$evidence_status" != verified ]]; then
+      if [[ "$assurance_kind" != gate_assurance_v2 \
+          && "$assurance_kind" != gate_assurance_v3 ]] \
+          || [[ "$evidence_status" != verified ]]; then
         return 0
       fi
       attestation_pointer="$(jq -r '.provenance.attestation // empty' \
@@ -688,12 +690,34 @@ pmctl_gate_wait() {
             return 2
           fi
         fi
-        if ! _pmctl_gate_result_verifier_load "$repo_root"; then
-          printf 'pmctl gate wait: FAIL: gate_result_verify unavailable -- cannot confirm result integrity for %s, treating as failed wait\n' "$_result" >&2
+        local _assessment _assessment_rc=0 _artifact_axis _subject_axis
+        local _policy_axis _assurance_kind
+        _assessment="$(
+          pmctl_gate_verify "$repo_root" "$_result" --cd "$work_dir" \
+            --consumer embedded --json 2>/dev/null
+        )" || _assessment_rc=$?
+        if ! jq -e '.kind == "gate_verification_v1"' \
+            <<<"$_assessment" >/dev/null 2>&1; then
+          printf 'pmctl gate wait: FAIL: shared gate assessment could not evaluate %s -- treating as failed wait\n' "$_result" >&2
           return 2
         fi
-        if ! gate_result_verify "$_result" >/dev/null 2>&1; then
-          printf 'pmctl gate wait: FAIL: gate_result_verify rejected %s -- result is missing/corrupt/unparsable, treating as failed wait\n' "$_result" >&2
+        _artifact_axis="$(jq -r '.axes.artifact_valid.status' <<<"$_assessment")"
+        _subject_axis="$(jq -r '.axes.subject_current.status' <<<"$_assessment")"
+        _policy_axis="$(jq -r '.axes.policy_applicable.status' <<<"$_assessment")"
+        _assurance_kind="$(jq -r '.assurance.kind // "legacy"' <<<"$_assessment")"
+        if [[ "$_artifact_axis" != pass \
+            || ( "$_assurance_kind" == gate_assurance_v3 \
+              && "$_subject_axis" != pass ) ]]; then
+          printf 'pmctl gate wait: FAIL: gate artifact is invalid or stale for --cd %s (%s) -- treating as failed wait\n' \
+            "$work_dir" "$(jq -c '.axes' <<<"$_assessment")" >&2
+          return 2
+        fi
+        if [[ "$_state" == GO \
+            && ( "$_assurance_kind" == gate_assurance_v2 \
+              || "$_assurance_kind" == gate_assurance_v3 ) \
+            && ( "$_assessment_rc" -ne 0 || "$_policy_axis" != pass ) ]]; then
+          printf 'pmctl gate wait: FAIL: GO artifact is not applicable to its embedded consumer policy (%s) -- treating as failed wait\n' \
+            "$(jq -c '.axes.policy_applicable' <<<"$_assessment")" >&2
           return 2
         fi
         # Verdict summary: echo the result file's `Final:` line verbatim —
@@ -756,24 +780,79 @@ pmctl_gate_wait() {
   return 124
 }
 
-# pmctl gate verify <result_file>
-# Confirm a gate result file is structurally complete using the SAME contract
-# the synchronous gate route enforces in-process (gate_result_verify). This is
-# how an out-of-process gate result -- one written outside pr-gate.sh's own
-# in-process check -- becomes confirmable/trackable via pmctl, symmetric to the
-# codex route's built-in post-dispatch check. Exit 0 = valid; 1 = invalid (diagnostic on stderr);
-# 2 = usage/library error.
+# pmctl gate verify <result_file> [--cd <repo>]
+#                    [--consumer embedded|generic|maintainer|publish] [--json]
+# The default inspection mode preserves the historical "is this artifact
+# structurally valid?" exit contract while also reporting subject and policy
+# axes. A named consumer is authorizing: all three axes must pass.
 pmctl_gate_verify() {
   local repo_root="$1"; shift
-
-  if [[ $# -ne 1 || -z "${1:-}" ]]; then
-    printf 'pmctl gate verify: usage: pmctl gate verify <result_file>\n' >&2
+  local result_file="" work_dir="" consumer=inspect json_output=false
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --cd)
+        [[ $# -ge 2 && -n "$2" ]] || {
+          printf 'pmctl gate verify: --cd requires a repository path\n' >&2
+          return 2
+        }
+        work_dir="$2"
+        shift 2
+        ;;
+      --consumer)
+        [[ $# -ge 2 && "$2" =~ ^(embedded|generic|maintainer|publish)$ ]] || {
+          printf 'pmctl gate verify: --consumer requires embedded, generic, maintainer, or publish\n' >&2
+          return 2
+        }
+        consumer="$2"
+        shift 2
+        ;;
+      --json)
+        json_output=true
+        shift
+        ;;
+      --*)
+        printf 'pmctl gate verify: unknown option %s\n' "$1" >&2
+        return 2
+        ;;
+      *)
+        if [[ -n "$result_file" ]]; then
+          printf 'pmctl gate verify: unexpected argument %s\n' "$1" >&2
+          return 2
+        fi
+        result_file="$1"
+        shift
+        ;;
+    esac
+  done
+  if [[ -z "$result_file" ]]; then
+    printf 'pmctl gate verify: usage: pmctl gate verify <result_file> [--cd <repo>] [--consumer embedded|generic|maintainer|publish] [--json]\n' >&2
     return 2
   fi
-  local result_file="$1"
-  local evidence_status attestation_pointer result_parent run_root run_id
+  local result_parent result_name result_abs
+  result_parent="$(cd "$(dirname "$result_file")" 2>/dev/null && pwd -P)" || {
+    printf 'pmctl gate verify: result parent directory is unavailable: %s\n' \
+      "$(dirname "$result_file")" >&2
+    return 1
+  }
+  result_name="$(basename "$result_file")"
+  result_abs="$result_parent/$result_name"
+  if [[ -n "$work_dir" ]]; then
+    work_dir="$(cd "$work_dir" 2>/dev/null && pwd -P)" || {
+      printf 'pmctl gate verify: --cd repository is unavailable: %s\n' "$work_dir" >&2
+      return 2
+    }
+  elif work_dir="$(git rev-parse --show-toplevel 2>/dev/null)" && [[ -n "$work_dir" ]]; then
+    work_dir="$(cd "$work_dir" && pwd -P)" || return 2
+  else
+    work_dir="$PWD"
+  fi
+
+  local evidence_status attestation_pointer run_root run_id assurance_kind
   local attestation_file runs_file canonical_repo_root assurance_repo_root
-  local canonical_run_root
+  local canonical_run_root authorization_status=unavailable
+  local authorization_reason=dispatch_authorization_unavailable
+  local artifact_axis subject_axis policy_axis report verdict=unknown
+  local assurance_status=unavailable assurance_file="" verify_diag verify_rc=0
 
   if ! _pmctl_gate_result_verifier_load "$repo_root"; then
     printf 'pmctl gate verify: required verifier library is missing or incomplete: %s\n' \
@@ -781,62 +860,164 @@ pmctl_gate_verify() {
     return 2
   fi
 
-  _pmctl_gate_wait_for_assurance_publication "$result_file"
-  if gate_result_verify "$result_file"; then
+  _pmctl_gate_wait_for_assurance_publication "$result_abs"
+  verify_diag="$(mktemp "${TMPDIR:-/tmp}/pm-gate-verify.XXXXXX")" || return 2
+  gate_result_verify "$result_abs" 2>"$verify_diag" || verify_rc=$?
+  verdict="$(grep -m1 -E '^Final: (GO|NO-GO)$' "$result_abs" 2>/dev/null \
+    | awk '{print $2}' || true)"
+  [[ "$verdict" == GO || "$verdict" == NO-GO ]] || verdict=unknown
+  if [[ "$verify_rc" -ne 0 ]]; then
+    artifact_axis='{"status":"fail","reason_codes":["artifact_integrity_failed"]}'
+    subject_axis='{"status":"unavailable","reason_codes":["artifact_invalid"]}'
+    policy_axis='{"status":"unavailable","reason_codes":["artifact_invalid"]}'
+    assurance_status=invalid
+    if [[ -s "$verify_diag" ]]; then
+      cat "$verify_diag" >&2
+    fi
+  else
+    artifact_axis='{"status":"pass","reason_codes":[]}'
+    assurance_status="${GATE_RESULT_ASSURANCE:-unavailable}"
+    assurance_file="${GATE_RESULT_ASSURANCE_FILE:-}"
+    assurance_kind="$(jq -r '.kind // empty' "${assurance_file:-/dev/null}" \
+      2>/dev/null || true)"
     evidence_status="$(jq -r '.coordinates.independence.evidence_status // "unavailable"' \
-      "${GATE_RESULT_ASSURANCE_FILE:-/dev/null}" 2>/dev/null || printf 'unavailable')"
-    if [[ "${GATE_RESULT_ASSURANCE:-unavailable}" == verified \
-        && "$evidence_status" == verified ]]; then
+      "${assurance_file:-/dev/null}" 2>/dev/null || printf 'unavailable')"
+
+    if [[ "$assurance_status" == verified && "$evidence_status" == verified ]]; then
       attestation_pointer="$(jq -r '.provenance.attestation // empty' \
-        "$GATE_RESULT_ASSURANCE_FILE" 2>/dev/null)"
-      if [[ -z "$attestation_pointer" || "$attestation_pointer" == */* \
-          || ! "$attestation_pointer" =~ ^gate-assurance-[0-9]{8}-[0-9]{6}\.attestation\.json$ ]]; then
-        printf 'Error: verified gate assurance requires a bounded protected attestation pointer\n' >&2
-        return 1
-      fi
-      result_parent="$(cd "$(dirname "$result_file")" && pwd -P)" || return 1
-      if [[ "$(basename "$result_parent")" != ".gate-results" ]]; then
-        printf 'Error: verified gate assurance result is outside a canonical gate run directory\n' >&2
-        return 1
-      fi
+        "$assurance_file" 2>/dev/null)"
       run_root="$(dirname "$result_parent")"
       run_id="$(basename "$run_root")"
-      canonical_repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || {
-        printf 'Error: verified gate assurance requires invocation from its repository\n' >&2
-        return 1
-      }
-      canonical_repo_root="$(cd "$canonical_repo_root" && pwd -P)" || return 1
+      canonical_repo_root="$(git -C "$work_dir" rev-parse --show-toplevel 2>/dev/null \
+        || true)"
+      [[ -n "$canonical_repo_root" ]] \
+        && canonical_repo_root="$(cd "$canonical_repo_root" && pwd -P)"
       assurance_repo_root="$(jq -r '.bindings.repo_root // empty' \
-        "$GATE_RESULT_ASSURANCE_FILE" 2>/dev/null)"
-      if [[ -z "$assurance_repo_root" || ! -d "$assurance_repo_root" \
-          || "$(cd "$assurance_repo_root" && pwd -P)" != "$canonical_repo_root" ]]; then
-        printf 'Error: verified gate assurance repository binding does not match the invoking repository\n' >&2
-        return 1
-      fi
-      if ! _pmctl_gate_ensure_run_dir_fn "$repo_root"; then
+        "$assurance_file" 2>/dev/null)"
+      if [[ -z "$attestation_pointer" || "$attestation_pointer" == */* \
+          || ! "$attestation_pointer" =~ ^gate-assurance-[0-9]{8}-[0-9]{6}\.attestation\.json$ ]]; then
+        authorization_status=invalid
+        authorization_reason=protected_attestation_pointer_invalid
+      elif [[ "$(basename "$result_parent")" != ".gate-results" \
+          || -z "$canonical_repo_root" ]]; then
+        authorization_reason=canonical_dispatch_evidence_unavailable
+      elif ! _pmctl_gate_ensure_run_dir_fn "$repo_root"; then
+        rm -f -- "$verify_diag"
         printf 'Error: verified gate assurance requires canonical state-path resolution\n' >&2
         return 2
+      else
+        canonical_run_root="$(
+          cd "$canonical_repo_root" || exit 1
+          _SW_REPO_ROOT="$canonical_repo_root" sw_project_run_dir "$run_id"
+        )" || canonical_run_root=""
+        if [[ -z "$canonical_run_root" || ! -d "$canonical_run_root" \
+            || "$(cd "$canonical_run_root" && pwd -P)" != "$run_root" ]]; then
+          authorization_reason=canonical_state_partition_mismatch
+          if [[ "$assurance_kind" == gate_assurance_v2 ]]; then
+            authorization_status=invalid
+          fi
+        elif [[ "$assurance_kind" == gate_assurance_v2 \
+            && ( -z "$assurance_repo_root" || ! -d "$assurance_repo_root" \
+              || "$(cd "$assurance_repo_root" && pwd -P)" != "$canonical_repo_root" ) ]]; then
+          authorization_status=invalid
+          authorization_reason=repository_binding_mismatch
+        else
+          attestation_file="$run_root/$attestation_pointer"
+          runs_file="$(dirname "$(dirname "$canonical_run_root")")/runs.jsonl"
+          if gate_assurance_authorization_verify "$result_abs" "$assurance_file" \
+              "$attestation_file" "$runs_file"; then
+            authorization_status=verified
+            authorization_reason=""
+          else
+            authorization_status=invalid
+            authorization_reason=protected_attestation_invalid
+          fi
+        fi
       fi
-      canonical_run_root="$(
-        cd "$canonical_repo_root" || exit 1
-        _SW_REPO_ROOT="$canonical_repo_root" sw_project_run_dir "$run_id"
-      )" || return 1
-      if [[ ! -d "$canonical_run_root" \
-          || "$(cd "$canonical_run_root" && pwd -P)" != "$run_root" ]]; then
-        printf 'Error: verified gate assurance result is outside the invoking repository canonical state partition\n' >&2
-        return 1
+    fi
+
+    if [[ "$authorization_status" == invalid ]]; then
+      artifact_axis="$(jq -nc --arg reason "$authorization_reason" \
+        '{status:"fail",reason_codes:[$reason]}')"
+      assurance_status=invalid
+      if [[ "$assurance_kind" == gate_assurance_v2 ]]; then
+        case "$authorization_reason" in
+          canonical_state_partition_mismatch)
+            printf 'Error: verified gate assurance result is outside the invoking repository canonical state partition\n' >&2
+            ;;
+          repository_binding_mismatch)
+            printf 'Error: verified gate assurance repository binding does not match the invoking repository\n' >&2
+            ;;
+        esac
       fi
-      attestation_file="$run_root/$attestation_pointer"
-      runs_file="$(dirname "$(dirname "$canonical_run_root")")/runs.jsonl"
-      gate_assurance_authorization_verify "$result_file" "$GATE_RESULT_ASSURANCE_FILE" \
-        "$attestation_file" "$runs_file" || return $?
+      [[ -s "$verify_diag" ]] && cat "$verify_diag" >&2
     fi
-    printf 'gate result OK: %s\n' "$result_file"
-    printf 'assurance: %s\n' "${GATE_RESULT_ASSURANCE:-unavailable}"
-    if [[ -n "${GATE_RESULT_ASSURANCE_FILE:-}" ]]; then
-      printf 'assurance file: %s\n' "$GATE_RESULT_ASSURANCE_FILE"
+    if [[ -n "$assurance_file" ]]; then
+      subject_axis="$(gate_subject_assess "$assurance_file" "$work_dir")"
+      policy_axis="$(
+        gate_policy_applicability_assess "$assurance_file" \
+          "$(if [[ "$consumer" == inspect ]]; then printf embedded; else printf '%s' "$consumer"; fi)" \
+          "$authorization_status" "${authorization_reason:-dispatch_authorization_unavailable}"
+      )"
+    else
+      subject_axis='{"status":"unavailable","reason_codes":["immutable_subject_unavailable"]}'
+      policy_axis='{"status":"unavailable","reason_codes":["consumer_applicability_unavailable"]}'
     fi
-    return 0
   fi
-  return 1
+  rm -f -- "$verify_diag"
+
+  report="$(jq -nc \
+    --arg result_file "$result_abs" --arg verdict "$verdict" \
+    --arg assurance_status "$assurance_status" \
+    --arg assurance_kind "${assurance_kind:-}" \
+    --arg assurance_file "$assurance_file" \
+    --arg consumer "$consumer" \
+    --argjson artifact "$artifact_axis" \
+    --argjson subject "$subject_axis" \
+    --argjson policy "$policy_axis" '{
+      kind:"gate_verification_v1",
+      schema_version:1,
+      result_file:$result_file,
+      verdict:$verdict,
+      assurance:{
+        status:$assurance_status,
+        kind:(if $assurance_kind == "" then null else $assurance_kind end),
+        file:(if $assurance_file == "" then null else $assurance_file end)
+      },
+      consumer:$consumer,
+      axes:{
+        artifact_valid:$artifact,
+        subject_current:$subject,
+        policy_applicable:$policy
+      }
+    }')" || return 2
+
+  if [[ "$json_output" == true ]]; then
+    printf '%s\n' "$report"
+  else
+    if [[ "$(jq -r '.axes.artifact_valid.status' <<<"$report")" == pass ]]; then
+      printf 'gate result OK: %s\n' "$result_abs"
+    fi
+    printf 'assurance: %s\n' "$(jq -r '.assurance.status' <<<"$report")"
+    [[ -n "$assurance_file" ]] && printf 'assurance file: %s\n' "$assurance_file"
+    printf 'artifact_valid: %s\n' \
+      "$(jq -r '.axes.artifact_valid.status' <<<"$report")"
+    printf 'subject_current: %s\n' \
+      "$(jq -r '.axes.subject_current.status' <<<"$report")"
+    printf 'policy_applicable: %s (consumer=%s)\n' \
+      "$(jq -r '.axes.policy_applicable.status' <<<"$report")" "$consumer"
+    jq -r '.axes | to_entries[] |
+      select(.value.reason_codes | length > 0) |
+      "\(.key) reasons: \(.value.reason_codes | join(","))"' <<<"$report"
+  fi
+
+  if [[ "$consumer" == inspect ]]; then
+    [[ "$(jq -r '.axes.artifact_valid.status' <<<"$report")" == pass ]]
+  else
+    jq -e '
+      .axes.artifact_valid.status == "pass" and
+      .axes.subject_current.status == "pass" and
+      .axes.policy_applicable.status == "pass"
+    ' <<<"$report" >/dev/null
+  fi
 }

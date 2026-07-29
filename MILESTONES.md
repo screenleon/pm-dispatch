@@ -108,8 +108,8 @@
 | 票 | 摘要 | 狀態 |
 |----|------|------|
 | CC-512 | Slices A／B／C：coordinate sources／CLI resolution、machine-owned assurance envelope／evidence capture、shared verifier／parity ratchets；targeted 不再是 tier | ✅ pr:#451 |
-| CC-513 | canonical resolver：minimum tier、required reviewers、mode recommendation／user-choice provenance、generic vs maintainer policy 與 tier/coverage downgrade audit | 🔵 |
-| CC-515 | immutable subject；artifact validity、subject freshness、policy applicability 三軸 shared verifier | 🔵 |
+| CC-513 | canonical resolver：minimum tier、required reviewers、mode recommendation／user-choice provenance、generic vs maintainer policy 與 tier/coverage downgrade audit | ✅ pr:#452 |
+| CC-515 | immutable subject、三軸 shared verifier 與 downstream evidence link contract；scope／closure producers 分屬 CC-518／CC-517 | ✅ pr:#454 |
 
 ### Phase 8 — existing gate structured evidence
 

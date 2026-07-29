@@ -1314,6 +1314,17 @@ else
     ' "$result_file"
   }
 
+  _gate_result_sha256_stream() {
+    if command -v sha256sum >/dev/null 2>&1; then
+      sha256sum | awk '{print $1}'
+    elif command -v shasum >/dev/null 2>&1; then
+      shasum -a 256 | awk '{print $1}'
+    else
+      printf 'Error: no sha256sum or shasum found -- cannot identify gate subject\n' >&2
+      return 2
+    fi
+  }
+
   _gate_result_sha256_file() {
     local file="$1" digest=""
     if command -v sha256sum >/dev/null 2>&1 \
@@ -1330,6 +1341,249 @@ else
     fi
     printf 'Error: no sha256sum or shasum found -- cannot verify gate assurance binding\n' >&2
     return 2
+  }
+
+  _gate_subject_common_dir() {
+    local repo_root="$1" common_dir common_parent
+    common_dir="$(git -C "$repo_root" rev-parse --git-common-dir 2>/dev/null)" || {
+      printf 'Error: gate subject is not a Git worktree: %s\n' "$repo_root" >&2
+      return 2
+    }
+    if [[ "$common_dir" != /* ]]; then
+      common_dir="$repo_root/$common_dir"
+    fi
+    common_parent="$(cd "$(dirname "$common_dir")" 2>/dev/null && pwd -P)" || return 2
+    common_dir="$common_parent/$(basename "$common_dir")"
+    [[ -d "$common_dir" ]] || {
+      printf 'Error: gate subject Git common directory is unavailable: %s\n' "$common_dir" >&2
+      return 2
+    }
+    printf '%s\n' "$common_dir"
+  }
+
+  _gate_subject_tree_fingerprint() {
+    local repo_root="$1" subject_kind="$2" head_commit="$3"
+    local manifest path quoted kind executable digest
+    local entry metadata mode object target
+    manifest="$(mktemp "${TMPDIR:-/tmp}/gate-subject-tree.XXXXXX")" || return 2
+    case "$subject_kind" in
+      fixed_ref)
+        while IFS= read -r -d '' entry; do
+          metadata="${entry%%$'\t'*}"
+          path="${entry#*$'\t'}"
+          mode="${metadata%% *}"
+          object="${metadata##* }"
+          quoted="$(printf '%q' "$path")"
+          case "$mode" in
+            120000)
+              kind=symlink
+              executable=false
+              target="$(git -C "$repo_root" cat-file blob "$object" 2>/dev/null)" || {
+                rm -f -- "$manifest"
+                return 2
+              }
+              digest="$(printf '%s' "$target" | _gate_result_sha256_stream)" || {
+                rm -f -- "$manifest"
+                return 2
+              }
+              ;;
+            100644|100755)
+              kind="file"
+              [[ "$mode" == 100755 ]] && executable=true || executable=false
+              digest="$(git -C "$repo_root" cat-file blob "$object" 2>/dev/null \
+                | _gate_result_sha256_stream)" || {
+                rm -f -- "$manifest"
+                return 2
+              }
+              ;;
+            *)
+              # Keep gitlinks and other non-file entries visible without
+              # claiming local file content, matching the workspace manifest.
+              kind=missing
+              executable=false
+              digest=-
+              ;;
+          esac
+          printf '%s\t%s\t%s\t%s\n' "$quoted" "$kind" "$executable" "$digest" \
+            >> "$manifest"
+        done < <(git -C "$repo_root" ls-tree -r -z --full-tree "$head_commit" 2>/dev/null)
+        ;;
+      committed_head|working_tree)
+        while IFS= read -r -d '' path; do
+          case "$path" in
+            .agent-trace|.agent-trace/*|.gate-briefs|.gate-briefs/*|.gate-results|.gate-results/*)
+              continue
+              ;;
+          esac
+          quoted="$(printf '%q' "$path")"
+          if [[ -L "$repo_root/$path" ]]; then
+            kind=symlink
+            executable=false
+            digest="$(printf '%s' "$(readlink "$repo_root/$path")" \
+              | _gate_result_sha256_stream)" || {
+              rm -f -- "$manifest"
+              return 2
+            }
+          elif [[ -f "$repo_root/$path" ]]; then
+            kind="file"
+            [[ -x "$repo_root/$path" ]] && executable=true || executable=false
+            digest="$(_gate_result_sha256_file "$repo_root/$path")" || {
+              rm -f -- "$manifest"
+              return 2
+            }
+          else
+            kind=missing
+            executable=false
+            digest=-
+          fi
+          printf '%s\t%s\t%s\t%s\n' "$quoted" "$kind" "$executable" "$digest" \
+            >> "$manifest"
+        done < <(git -C "$repo_root" ls-files --cached --others --exclude-standard -z)
+        ;;
+      *)
+        printf 'Error: unsupported gate subject kind: %s\n' "$subject_kind" >&2
+        rm -f -- "$manifest"
+        return 2
+        ;;
+    esac
+    LC_ALL=C sort "$manifest" | _gate_result_sha256_stream
+    local rc=$?
+    rm -f -- "$manifest"
+    return "$rc"
+  }
+
+  gate_subject_snapshot() {
+    local repo_root="$1" base_ref="$2" head_ref="$3" subject_kind="$4"
+    local dirty_policy="$5" captured_at="$6"
+    local observed_root common_dir common_identity remote remote_identity repository_key
+    local base_commit head_commit tree_fingerprint fingerprint_kind
+    observed_root="$(cd "$repo_root" 2>/dev/null && pwd -P)" || return 2
+    common_dir="$(_gate_subject_common_dir "$observed_root")" || return $?
+    common_identity="$(printf '%s' "$common_dir" | _gate_result_sha256_stream)" || return $?
+    remote="$(git -C "$observed_root" config --get remote.origin.url 2>/dev/null || true)"
+    remote_identity=""
+    if [[ -n "$remote" ]]; then
+      remote_identity="$(printf '%s' "$remote" | _gate_result_sha256_stream)" || return $?
+    fi
+    repository_key="$(
+      printf 'common:%s\nremote:%s\n' "$common_identity" "${remote_identity:-absent}" \
+        | _gate_result_sha256_stream
+    )" || return $?
+    base_commit="$(git -C "$observed_root" rev-parse "${base_ref}^{commit}" 2>/dev/null)" \
+      || return 2
+    head_commit="$(git -C "$observed_root" rev-parse "${head_ref}^{commit}" 2>/dev/null)" \
+      || return 2
+    fingerprint_kind="$subject_kind"
+    if [[ "$subject_kind" == committed_head ]] \
+        && { ! git -C "$observed_root" diff --quiet HEAD 2>/dev/null \
+          || [[ -n "$(git -C "$observed_root" ls-files --others --exclude-standard)" ]]; }; then
+      fingerprint_kind=working_tree
+    fi
+    tree_fingerprint="$(
+      _gate_subject_tree_fingerprint "$observed_root" "$fingerprint_kind" "$head_commit"
+    )" || return $?
+
+    jq -nc \
+      --arg repository_key "$repository_key" \
+      --arg common_identity "$common_identity" \
+      --arg remote_identity "$remote_identity" \
+      --arg observed_root "$observed_root" \
+      --arg common_dir "$common_dir" \
+      --arg base_ref "$base_ref" --arg base_commit "$base_commit" \
+      --arg head_ref "$head_ref" --arg head_commit "$head_commit" \
+      --arg tree_fingerprint "$tree_fingerprint" \
+      --arg subject_kind "$subject_kind" --arg dirty_policy "$dirty_policy" \
+      --arg captured_at "$captured_at" '{
+        repository:{
+          key:$repository_key,
+          git_common_dir_identity:$common_identity,
+          remote_identity:(if $remote_identity == "" then null else $remote_identity end)
+        },
+        observed:{
+          root:$observed_root,
+          git_common_dir:$common_dir
+        },
+        base:{ref:$base_ref,commit:$base_commit},
+        head:{ref:$head_ref,commit:$head_commit},
+        tree_fingerprint:$tree_fingerprint,
+        subject_kind:$subject_kind,
+        dirty_policy:$dirty_policy,
+        captured_at:$captured_at
+      }'
+  }
+
+  _gate_assurance_linked_evidence_verify() {
+    local assurance_file="$1" assurance_dir label artifact expected_sha
+    local linked_subject subject_fingerprint artifact_path actual_sha
+    local artifact_subject artifact_outcome linked_outcome
+    assurance_dir="$(cd "$(dirname "$assurance_file")" 2>/dev/null && pwd -P)" \
+      || return 1
+    subject_fingerprint="$(jq -r '.subject.tree_fingerprint' "$assurance_file")"
+    while IFS=$'\t' read -r label artifact expected_sha linked_subject; do
+      [[ -n "$label" ]] || continue
+      artifact_path="$assurance_dir/$artifact"
+      if [[ ! -f "$artifact_path" || -L "$artifact_path" ]]; then
+        printf 'Error: gate assurance linked %s evidence is missing or unsafe: %s\n' \
+          "$label" "$artifact_path" >&2
+        return 1
+      fi
+      actual_sha="$(_gate_result_sha256_file "$artifact_path")" || return $?
+      if [[ "$actual_sha" != "$expected_sha" ]]; then
+        printf 'Error: gate assurance linked %s evidence digest mismatch: %s\n' \
+          "$label" "$artifact_path" >&2
+        return 1
+      fi
+      if [[ "$linked_subject" != "$subject_fingerprint" ]]; then
+        printf 'Error: gate assurance linked %s evidence subject mismatch: %s\n' \
+          "$label" "$artifact_path" >&2
+        return 1
+      fi
+      if [[ "$label" == preflight ]]; then
+        if ! artifact_subject="$(
+          jq -er '.subject.fingerprint_before |
+            select(type == "string" and test("^[a-f0-9]{64}$"))' \
+            "$artifact_path" 2>/dev/null
+        )" || ! artifact_outcome="$(
+          jq -er '.status |
+            select(. == "pass" or . == "fail" or . == "timeout" or
+              . == "stale" or . == "invalid")' "$artifact_path" 2>/dev/null
+        )"; then
+          printf 'Error: gate assurance linked preflight evidence claim is malformed: %s\n' \
+            "$artifact_path" >&2
+          return 1
+        fi
+        linked_outcome="$(jq -r '.evidence.preflight.outcome' "$assurance_file")"
+        if [[ "$artifact_subject" != "$linked_subject" ]]; then
+          printf 'Error: gate assurance linked preflight evidence subject claim mismatch: %s\n' \
+            "$artifact_path" >&2
+          return 1
+        fi
+        if [[ ( "$linked_outcome" == pass && "$artifact_outcome" != pass ) \
+            || ( "$linked_outcome" == fail && "$artifact_outcome" == pass ) ]]; then
+          printf 'Error: gate assurance linked preflight evidence outcome mismatch: %s\n' \
+            "$artifact_path" >&2
+          return 1
+        fi
+      fi
+    done < <(
+      jq -r '
+        [
+          (if .evidence.preflight.status == "linked" then
+            ["preflight",.evidence.preflight.artifact,
+              .evidence.preflight.sha256,.evidence.preflight.subject_fingerprint]
+           else empty end),
+          (if .evidence.scope_manifest.status == "verified" then
+            ["scope_manifest",.evidence.scope_manifest.artifact,
+              .evidence.scope_manifest.sha256,
+              .evidence.scope_manifest.subject_fingerprint]
+           else empty end),
+          (if .evidence.closure.status == "verified" then
+            ["closure",.evidence.closure.artifact,
+              .evidence.closure.sha256,.evidence.closure.subject_fingerprint]
+           else empty end)
+        ][] | @tsv
+      ' "$assurance_file"
+    )
   }
 
   gate_assurance_verify() {
@@ -1372,11 +1626,91 @@ else
         type == "array" and all(.[]; type == "string" and length > 0) and
         (length == (unique | length));
       def same_set($a; $b): ($a | sort) == ($b | sort);
-      only_keys(["kind","schema_version","result","bindings","coordinates",
-        "policy","dispatch","provenance"]) and
+      only_keys(["kind","schema_version","result","bindings","subject","evidence",
+        "coordinates","policy","dispatch","provenance"]) and
       (.result | only_keys(["final"])) and
       (.bindings | only_keys(["result_sha256","repo_root","repo_identity",
         "base_commit","head_commit","subject_fingerprint"])) and
+      (if .kind == "gate_assurance_v3" then
+        (.subject |
+          only_keys(["kind","schema_version","repository","observed","base","head",
+            "tree_fingerprint","subject_kind","dirty_policy","created_at",
+            "finished_at","observed_at_finish"])) and
+        .subject.kind == "gate_subject_v1" and .subject.schema_version == 1 and
+        (.subject.repository |
+          only_keys(["key","git_common_dir_identity","remote_identity"])) and
+        (.subject.repository.key | test("^[a-f0-9]{64}$")) and
+        (.subject.repository.git_common_dir_identity | test("^[a-f0-9]{64}$")) and
+        (.subject.repository.remote_identity == null or
+          (.subject.repository.remote_identity | test("^[a-f0-9]{64}$"))) and
+        (.subject.observed | only_keys(["root","git_common_dir"])) and
+        (.subject.observed.root | type == "string" and startswith("/")) and
+        (.subject.observed.git_common_dir | type == "string" and startswith("/")) and
+        (.subject.base | only_keys(["ref","commit"])) and
+        (.subject.base.ref | type == "string" and length > 0) and
+        (.subject.base.commit | test("^[a-f0-9]{40}$")) and
+        (.subject.head | only_keys(["ref","commit"])) and
+        (.subject.head.ref | type == "string" and length > 0) and
+        (.subject.head.commit | test("^[a-f0-9]{40}$")) and
+        (.subject.tree_fingerprint | test("^[a-f0-9]{64}$")) and
+        (.subject.subject_kind | IN("committed_head","working_tree","fixed_ref")) and
+        (.subject.dirty_policy |
+          IN("require_clean","include_working_tree","ignore_working_tree")) and
+        ((.subject.subject_kind == "committed_head" and
+            .subject.dirty_policy == "require_clean") or
+         (.subject.subject_kind == "working_tree" and
+            .subject.dirty_policy == "include_working_tree") or
+         (.subject.subject_kind == "fixed_ref" and
+            .subject.dirty_policy == "ignore_working_tree")) and
+        (.subject.created_at |
+          test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")) and
+        (.subject.finished_at |
+          test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")) and
+        (.subject.observed_at_finish |
+          only_keys(["repository_key","base_commit","head_commit",
+            "tree_fingerprint"])) and
+        (.subject.observed_at_finish.repository_key | test("^[a-f0-9]{64}$")) and
+        (.subject.observed_at_finish.base_commit | test("^[a-f0-9]{40}$")) and
+        (.subject.observed_at_finish.head_commit | test("^[a-f0-9]{40}$")) and
+        (.subject.observed_at_finish.tree_fingerprint | test("^[a-f0-9]{64}$")) and
+        (.evidence | only_keys(["preflight","scope_manifest","closure"])) and
+        (.evidence.preflight |
+          only_keys(["status","outcome","artifact","sha256",
+            "subject_fingerprint"])) and
+        (.evidence.preflight.status | IN("not_run","linked")) and
+        (if .evidence.preflight.status == "linked" then
+          (.evidence.preflight.outcome | IN("pass","fail")) and
+          (.evidence.preflight.artifact |
+            type == "string" and
+            test("^preflight-evidence-[0-9]{8}-[0-9]{6}\\.json$")) and
+          (.evidence.preflight.sha256 | test("^[a-f0-9]{64}$")) and
+          (.evidence.preflight.subject_fingerprint | test("^[a-f0-9]{64}$"))
+         else
+          .evidence.preflight.outcome == null and
+          .evidence.preflight.artifact == null and
+          .evidence.preflight.sha256 == null and
+          .evidence.preflight.subject_fingerprint == null
+         end) and
+        (all([.evidence.scope_manifest,.evidence.closure][];
+          only_keys(["status","artifact","sha256","subject_fingerprint"]) and
+          (.status | IN("unavailable","verified")) and
+          (if .status == "verified" then
+            (.artifact |
+              type == "string" and length > 0 and (contains("/") | not)) and
+            (.sha256 | test("^[a-f0-9]{64}$")) and
+            (.subject_fingerprint | test("^[a-f0-9]{64}$"))
+           else
+            .artifact == null and .sha256 == null and .subject_fingerprint == null
+           end))) and
+        .bindings.repo_root == .subject.observed.root and
+        .bindings.repo_identity == .subject.repository.key and
+        .bindings.base_commit == .subject.base.commit and
+        .bindings.head_commit == .subject.head.commit and
+        .bindings.subject_fingerprint == .subject.tree_fingerprint and
+        .subject.created_at <= .subject.finished_at
+       else
+        (has("subject") | not) and (has("evidence") | not)
+       end) and
       (.coordinates | only_keys(["tier","mode","pass","coverage","independence"])) and
       (.coordinates.tier | only_keys(["requested","resolved","evidence_floor"])) and
       (.coordinates.mode | only_keys(["requested","resolved","topology","synthesis"])) and
@@ -1511,7 +1845,8 @@ else
       (all(.dispatch.outcomes[];
         only_keys(["role","reviewer","status","run_id","evidence_status"]))) and
       (.provenance | only_keys(["producer","policy_source","attestation"])) and
-      .kind == "gate_assurance_v2" and .schema_version == 2 and
+      ((.kind == "gate_assurance_v2" and .schema_version == 2) or
+        (.kind == "gate_assurance_v3" and .schema_version == 3)) and
       .result.final == $final and
       .bindings.result_sha256 == $result_sha and
       (.bindings.repo_root | type == "string" and startswith("/")) and
@@ -1618,6 +1953,9 @@ else
         "$assurance_file" >&2
       return 1
     }
+    if [[ "$assurance_kind" == gate_assurance_v3 ]]; then
+      _gate_assurance_linked_evidence_verify "$assurance_file" || return $?
+    fi
     GATE_ASSURANCE_BOUND=true
     export GATE_ASSURANCE_BOUND
   }
@@ -2896,7 +3234,9 @@ gate_finalize_assurance() {
   local result_file="$1" assurance_file="$2"
   local final requested_json outcomes_json independence_status implementation_isolated
   local per_reviewer_independent expected_count capture_count assurance_tmp result_tmp
-  local result_sha assurance_sha attestation_tmp run_ids_json attestation_pointer
+  local result_sha assurance_sha subject_sha attestation_tmp run_ids_json attestation_pointer
+  local finished_at subject_finish subject_json preflight_json evidence_json
+  local evidence_destination evidence_destination_sha evidence_tmp
   local -a capture_files=()
 
   final="$(grep -E '^Final: (GO|NO-GO)$' "$result_file" | awk '{print $2}')"
@@ -2957,6 +3297,83 @@ gate_finalize_assurance() {
   if [[ "$independence_status" == verified ]]; then
     attestation_pointer="$ASSURANCE_ATTESTATION_POINTER"
   fi
+  finished_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ' 2>/dev/null \
+    || date +'%Y-%m-%dT%H:%M:%SZ')"
+  subject_finish="$(
+    gate_subject_snapshot "$WORK_DIR" "$BASE" "$HEAD_REF" "$GATE_SUBJECT_KIND" \
+      "$GATE_SUBJECT_DIRTY_POLICY" "$finished_at"
+  )" || {
+    printf 'Error: unable to capture final gate subject\n' >&2
+    return 1
+  }
+  subject_json="$(jq -nc \
+    --argjson initial "$GATE_SUBJECT_INITIAL" \
+    --argjson finish "$subject_finish" '{
+      kind:"gate_subject_v1",
+      schema_version:1,
+      repository:$initial.repository,
+      observed:$initial.observed,
+      base:$initial.base,
+      head:$initial.head,
+      tree_fingerprint:$initial.tree_fingerprint,
+      subject_kind:$initial.subject_kind,
+      dirty_policy:$initial.dirty_policy,
+      created_at:$initial.captured_at,
+      finished_at:$finish.captured_at,
+      observed_at_finish:{
+        repository_key:$finish.repository.key,
+        base_commit:$finish.base.commit,
+        head_commit:$finish.head.commit,
+        tree_fingerprint:$finish.tree_fingerprint
+      }
+    }')" || return 1
+  if [[ "$PREFLIGHT_STATUS" == skipped ]]; then
+    preflight_json='{"status":"not_run","outcome":null,"artifact":null,"sha256":null,"subject_fingerprint":null}'
+  else
+    evidence_destination="$(dirname "$assurance_file")/$(basename "$PREFLIGHT_EVIDENCE_PATH")"
+    if [[ "$PREFLIGHT_EVIDENCE_PATH" != "$evidence_destination" ]]; then
+      _gate_assurance_destination_check "$evidence_destination" || return 1
+      if [[ -e "$evidence_destination" ]]; then
+        evidence_destination_sha="$(
+          _gate_result_sha256_file "$evidence_destination"
+        )" || return $?
+        if [[ "$evidence_destination_sha" != "$PREFLIGHT_EVIDENCE_DIGEST" ]]; then
+          printf 'Error: linked preflight evidence destination already exists with different content: %s\n' \
+            "$evidence_destination" >&2
+          return 1
+        fi
+      else
+        evidence_tmp="$(mktemp "${evidence_destination}.tmp.XXXXXX")" || return 1
+        if ! cp -- "$PREFLIGHT_EVIDENCE_PATH" "$evidence_tmp" \
+            || ! mv -- "$evidence_tmp" "$evidence_destination"; then
+          rm -f -- "$evidence_tmp"
+          return 1
+        fi
+      fi
+      PREFLIGHT_EVIDENCE_PATH="$evidence_destination"
+    fi
+    preflight_json="$(jq -nc \
+      --arg outcome "$PREFLIGHT_STATUS" \
+      --arg artifact "$(basename "$PREFLIGHT_EVIDENCE_PATH")" \
+      --arg sha256 "$PREFLIGHT_EVIDENCE_DIGEST" \
+      --arg subject_fingerprint \
+        "$(jq -r '.tree_fingerprint' <<<"$GATE_SUBJECT_INITIAL")" '{
+        status:"linked",
+        outcome:$outcome,
+        artifact:$artifact,
+        sha256:$sha256,
+        subject_fingerprint:$subject_fingerprint
+      }')" || return 1
+  fi
+  evidence_json="$(jq -nc --argjson preflight "$preflight_json" '{
+    preflight:$preflight,
+    scope_manifest:{
+      status:"unavailable",artifact:null,sha256:null,subject_fingerprint:null
+    },
+    closure:{
+      status:"unavailable",artifact:null,sha256:null,subject_fingerprint:null
+    }
+  }')" || return 1
 
   result_tmp="$(mktemp "${result_file}.assurance-tmp.XXXXXX")" || {
     printf 'Error: unable to create gate result temporary file beside: %s\n' \
@@ -2994,7 +3411,7 @@ gate_finalize_assurance() {
   if ! jq -n \
     --arg final "$final" \
     --arg result_sha "$result_sha" \
-    --arg repo_root "$WORK_DIR" --arg repo_identity "$GATE_BINDING_REPO_IDENTITY" \
+    --arg repo_root "$WORK_DIR" --arg repo_identity "$GATE_SUBJECT_REPOSITORY_KEY" \
     --arg base_commit "$GATE_BINDING_BASE_COMMIT" \
     --arg head_commit "$GATE_BINDING_HEAD_COMMIT" \
     --arg subject_fingerprint "$GATE_BINDING_SUBJECT_FINGERPRINT" \
@@ -3011,11 +3428,12 @@ gate_finalize_assurance() {
     --arg policy_source "$GATE_ASSURANCE_POLICY_SOURCE" \
     --arg attestation "$attestation_pointer" \
     --argjson requested "$requested_json" --argjson outcomes "$outcomes_json" \
+    --argjson subject "$subject_json" --argjson evidence "$evidence_json" \
     --argjson policy_resolution "$GATE_POLICY_RESOLUTION" \
     --argjson implementation_isolated "$implementation_isolated" \
     --argjson per_reviewer_independent "$per_reviewer_independent" '
       {
-        kind:"gate_assurance_v2",schema_version:2,
+        kind:"gate_assurance_v3",schema_version:3,
         result:{final:$final},
         bindings:{
           result_sha256:$result_sha,
@@ -3025,6 +3443,8 @@ gate_finalize_assurance() {
           head_commit:$head_commit,
           subject_fingerprint:$subject_fingerprint
         },
+        subject:$subject,
+        evidence:$evidence,
         coordinates:{
           tier:{requested:$tier_requested,resolved:$tier_resolved,
             evidence_floor:$evidence_floor},
@@ -3061,7 +3481,7 @@ gate_finalize_assurance() {
     rm -f -- "$assurance_tmp" "$result_tmp"
     return 1
   }
-  # Publish the sidecar before the v2 result that references it. A verifier
+  # Publish the sidecar before the v2 Markdown result that references it. A verifier
   # racing this boundary sees either the original self-contained v1 result or
   # the complete v2 pair; a host failure cannot strand a v2 result with a
   # permanently missing sidecar.
@@ -3077,6 +3497,8 @@ gate_finalize_assurance() {
 
   if [[ "$independence_status" == verified ]]; then
     assurance_sha="$(_gate_result_sha256_file "$assurance_file")" || return $?
+    subject_sha="$(jq -cS '.subject' "$assurance_file" \
+      | _gate_result_sha256_stream)" || return $?
     run_ids_json="$(jq -c '[.[].run_id]' <<<"$outcomes_json")" || return 1
     _gate_assurance_destination_check "$ASSURANCE_ATTESTATION_FILE" || return 1
     attestation_tmp="$(mktemp "${ASSURANCE_ATTESTATION_FILE}.tmp.XXXXXX")" || {
@@ -3085,13 +3507,15 @@ gate_finalize_assurance() {
     }
     if ! jq -n \
       --arg result_sha "$result_sha" --arg assurance_sha "$assurance_sha" \
-      --arg repo_root "$WORK_DIR" --arg repo_identity "$GATE_BINDING_REPO_IDENTITY" \
+      --arg repo_root "$WORK_DIR" --arg repo_identity "$GATE_SUBJECT_REPOSITORY_KEY" \
       --arg base_commit "$GATE_BINDING_BASE_COMMIT" \
       --arg head_commit "$GATE_BINDING_HEAD_COMMIT" \
       --arg subject_fingerprint "$GATE_BINDING_SUBJECT_FINGERPRINT" \
+      --arg repository_key "$GATE_SUBJECT_REPOSITORY_KEY" \
+      --arg subject_sha "$subject_sha" \
       --argjson run_ids "$run_ids_json" '{
-        kind:"gate_assurance_attestation_v1",
-        schema_version:1,
+        kind:"gate_assurance_attestation_v2",
+        schema_version:2,
         result_sha256:$result_sha,
         assurance_sha256:$assurance_sha,
         repo_root:$repo_root,
@@ -3099,6 +3523,8 @@ gate_finalize_assurance() {
         base_commit:$base_commit,
         head_commit:$head_commit,
         subject_fingerprint:$subject_fingerprint,
+        repository_key:$repository_key,
+        subject_sha256:$subject_sha,
         run_ids:$run_ids
       }' > "$attestation_tmp"; then
       rm -f -- "$attestation_tmp"
@@ -3331,28 +3757,8 @@ _preflight_sha256_file() {
 # untracked content (including executable bits and symlink targets), while
 # excluding only gate-owned runtime artifacts created by this invocation.
 _preflight_tree_fingerprint() {
-  local manifest path quoted kind executable digest
-  manifest="$(mktemp "${TMPDIR:-/tmp}/pr-gate-tree.XXXXXX")" || return 2
-  while IFS= read -r -d '' path; do
-    case "$path" in
-      .agent-trace|.agent-trace/*|.gate-briefs|.gate-briefs/*|.gate-results|.gate-results/*) continue ;;
-    esac
-    quoted="$(printf '%q' "$path")"
-    if [[ -L "$WORK_DIR/$path" ]]; then
-      kind=symlink; executable=false
-      digest="$(printf '%s' "$(readlink "$WORK_DIR/$path")" | _gate_sha256_stream)" || { rm -f "$manifest"; return 2; }
-    elif [[ -f "$WORK_DIR/$path" ]]; then
-      kind=file; [[ -x "$WORK_DIR/$path" ]] && executable=true || executable=false
-      digest="$(_preflight_sha256_file "$WORK_DIR/$path")" || { rm -f "$manifest"; return 2; }
-    else
-      kind=missing; executable=false; digest=-
-    fi
-    printf '%s\t%s\t%s\t%s\n' "$quoted" "$kind" "$executable" "$digest" >> "$manifest"
-  done < <(git -C "$WORK_DIR" ls-files --cached --others --exclude-standard -z)
-  LC_ALL=C sort "$manifest" | _gate_sha256_stream
-  local rc=$?
-  rm -f "$manifest"
-  return "$rc"
+  _gate_subject_tree_fingerprint "$WORK_DIR" working_tree \
+    "$(git -C "$WORK_DIR" rev-parse HEAD 2>/dev/null)"
 }
 
 _preflight_repo_identity() {
@@ -3361,10 +3767,32 @@ _preflight_repo_identity() {
   printf '%s\n%s\n' "$WORK_DIR" "$remote" | _gate_sha256_stream
 }
 
-GATE_BINDING_SUBJECT_FINGERPRINT="$(_preflight_tree_fingerprint)" || exit 2
 GATE_BINDING_REPO_IDENTITY="$(_preflight_repo_identity)" || exit 2
 GATE_BINDING_BASE_COMMIT="$(git rev-parse "${BASE}^{commit}")" || exit 2
 GATE_BINDING_HEAD_COMMIT="$(git rev-parse "${HEAD_REF}^{commit}")" || exit 2
+GATE_SUBJECT_CREATED_AT="$(date -u +'%Y-%m-%dT%H:%M:%SZ' 2>/dev/null \
+  || date +'%Y-%m-%dT%H:%M:%SZ')"
+if [[ "$HEAD_REF" != "HEAD" ]]; then
+  GATE_SUBJECT_KIND=fixed_ref
+  GATE_SUBJECT_DIRTY_POLICY=ignore_working_tree
+elif _worktree_is_dirty; then
+  GATE_SUBJECT_KIND=working_tree
+  GATE_SUBJECT_DIRTY_POLICY=include_working_tree
+else
+  GATE_SUBJECT_KIND=committed_head
+  GATE_SUBJECT_DIRTY_POLICY=require_clean
+fi
+GATE_SUBJECT_INITIAL="$(
+  gate_subject_snapshot "$WORK_DIR" "$BASE" "$HEAD_REF" "$GATE_SUBJECT_KIND" \
+    "$GATE_SUBJECT_DIRTY_POLICY" "$GATE_SUBJECT_CREATED_AT"
+)" || {
+  printf 'Error: unable to capture immutable gate subject\n' >&2
+  exit 2
+}
+GATE_SUBJECT_REPOSITORY_KEY="$(jq -r '.repository.key' <<<"$GATE_SUBJECT_INITIAL")"
+GATE_BINDING_SUBJECT_FINGERPRINT="$(
+  jq -r '.tree_fingerprint' <<<"$GATE_SUBJECT_INITIAL"
+)"
 
 if [[ "$SKIP_PREFLIGHT_TESTS" != "true" && -n "$TEST_CMD_OVERRIDE" ]]; then
   # pr-gate.sh is designed to be copied standalone into any repo (copy-mode --
@@ -3380,7 +3808,7 @@ if [[ "$SKIP_PREFLIGHT_TESTS" != "true" && -n "$TEST_CMD_OVERRIDE" ]]; then
   PREFLIGHT_EVIDENCE_PATH="$WORK_DIR/.gate-results/preflight-evidence-${TIMESTAMP}.json"
   PREFLIGHT_RICH_RESULT_PATH="$WORK_DIR/.gate-results/preflight-rich-result-${TIMESTAMP}.json"
   _preflight_command_digest="$(printf '%s' "$TEST_CMD_OVERRIDE" | _gate_sha256_stream)" || exit 2
-  _preflight_before="$GATE_BINDING_SUBJECT_FINGERPRINT"
+  _preflight_before="$(_preflight_tree_fingerprint)" || exit 2
   _preflight_repo_id="$GATE_BINDING_REPO_IDENTITY"
   _preflight_base_commit="$GATE_BINDING_BASE_COMMIT"
   _preflight_head_commit="$GATE_BINDING_HEAD_COMMIT"

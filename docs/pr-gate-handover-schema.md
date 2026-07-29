@@ -56,11 +56,14 @@ The behavior below describes the retired handover route and no longer occurs;
 - The caller must continue writing final output to the shared `output_file` path
   that the gate script also prints as `result:`.
 - After the route writes `output_file`, the caller must confirm it with
-  `pmctl gate verify <output_file>` (exit 0 = structurally valid result). The
-  codex route runs this same contract in-process after its dispatch; the claude
-  route's write happens out-of-process, so this explicit verify is what makes
-  the host-native result trackable and is the gate's authority on whether a
-  result was actually produced. The gate script prints the exact command to run.
+  `pmctl gate verify <output_file> --cd <reviewed-repo> --consumer embedded --json`.
+  A named consumer requires `artifact_valid`, `subject_current`, and
+  `policy_applicable` all to pass; the default single-argument inspection form
+  preserves only the historical artifact-validity exit contract. The codex
+  route runs this verification in-process after dispatch; the retired claude
+  route's write happened out-of-process, so explicit verification made the
+  host-native result trackable. Legacy results without immutable subject or
+  consumer-applicability evidence cannot authorize continuation.
 
 Implementation reference: `commands/pr-gate.md` and `runtime/bin/pr-gate.sh`.
 

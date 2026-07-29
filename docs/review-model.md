@@ -204,30 +204,66 @@ architecture, security, and risk coverage, so the governance tables cannot
 quietly lower their own future review floor through a small edit.
 
 The final producer writes `pr_gate_result_v2` Markdown plus a sibling
-`gate_assurance_v2` JSON envelope. The Markdown contains human findings and a
+`gate_assurance_v3` JSON envelope. The Markdown contains human findings and a
 bounded relative `gate_assurance` pointer; the shell-owned envelope records
 requested/resolved coordinates, selected/skipped coverage, actual dispatch
-outcomes, run IDs, subject commits/fingerprint, and the evidence status behind
-independence claims. New envelopes also embed the canonical policy result:
+outcomes, run IDs, and the evidence status behind independence claims. The v3
+envelope adds an immutable subject: stable Git common-directory repository
+identity, optional remote identity, provenance-only observed root, base/head
+refs and commits, tree fingerprint, subject kind, dirty policy, and
+created/finished observations. It links preflight evidence by digest and leaves
+future scope-manifest or closure evidence explicitly unavailable until those
+producers exist. Envelopes also embed the canonical policy result:
 classification facts, every matched signal and path, minimum tier, required
 coverage, recommended mode, whether policy or the user selected the mode,
 recommendation divergence, enforcement status, and both policy-override and
 reviewer-override provenance. Repo-layout results with
 verified independence also carry
-a shell-owned attestation in the protected gate run directory. `pmctl gate
-verify` validates result/sidecar digests and resolves every claimed run ID
-against the canonical terminal records for the invoking repository and rejects
-self-consistent artifacts outside that repository's resolved state partition.
+a shell-owned attestation in the protected gate run directory.
+
+`pmctl gate verify <result> [--cd <repo>] [--consumer <name>] [--json]`
+returns three independent axes:
+
+- `artifact_valid`: result/sidecar schema, digest, and content parity;
+- `subject_current`: repository, base, head, and tree freshness;
+- `policy_applicable`: resolved coordinates, review evidence, and any
+  consumer-required closure evidence.
+
+Every axis includes stable reason codes. A copied artifact can remain valid
+while lacking canonical dispatch authorization; a base advance or tree change
+makes the subject stale without reclassifying the artifact as forged. Linked
+worktree paths remain current when their stable Git subject is unchanged.
+Default inspection preserves the historical artifact-validity exit contract;
+passing `--consumer` is authorizing and requires all three axes to pass.
+`gate wait` and `ship finish` consume this shared assessment rather than
+grepping `Final: GO`.
+
+Subject verification intentionally fingerprints the complete included tree,
+not only the diff. Its cost is therefore linear in tracked and included
+untracked files each time a subject is finalized or verified. This is bounded
+and acceptable for the current repository, but callers operating on large
+monorepos should expect verification latency to scale with repository size.
+
+Do not mutate the reviewed tree between gate finalization and `gate wait` or
+`ship finish`. A formatter, test artifact, commit, or other included file write
+correctly changes `subject_current` to `fail`; the consumer refuses the result
+and reports the drift reason instead of silently authorizing a different tree.
+Legacy v1 results retain historical detached-wait completion behavior. A v2 GO
+cannot satisfy the wait path's named embedded consumer, and neither v1 nor v2
+is publication authorization; `ship finish` requires a current, applicable v3
+assessment.
+
 The producer publishes the sidecar before atomically replacing the
 self-contained v1 result with the v2 result that references it, so interruption
 cannot strand a v2 result with a missing sidecar. The protected attestation is
 published afterward; verification uses a bounded retry when it observes that
-in-flight canonical v2 finalization. Legacy
+in-flight canonical finalization. Legacy
 `pr_gate_result_v1` and unbound `gate_assurance_v1` artifacts remain
 structurally readable, but verification reports `assurance: unavailable`;
 consumers must not infer mode, coverage, or independence from them. Earlier
 `gate_assurance_v2` envelopes without the optional policy block remain
-readable, while current producers always emit it.
+readable for artifact inspection, but they cannot supply immutable-subject or
+consumer-applicability evidence.
 
 ---
 

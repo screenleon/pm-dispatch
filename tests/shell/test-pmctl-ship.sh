@@ -182,6 +182,9 @@ pmctl_gate_run() {\
   printf "Final: GO\\n" > "$result_file"\
   printf "result: %s\\n" "$result_file"\
 }\
+pmctl_gate_verify() {\
+  jq -n '"'"'{kind:"gate_verification_v1",verdict:"GO",axes:{artifact_valid:{status:"pass",reason_codes:[]},subject_current:{status:"pass",reason_codes:[]},policy_applicable:{status:"pass",reason_codes:[]}}}'"'"'\
+}\
 ' "$path/cli/pmctl"
   chmod +x "$path/cli/pmctl"
 }
@@ -198,12 +201,31 @@ run_finish_with_fake_gate() {
   shift 3
   bash -c '
     repo_root="$1"; work_dir="$2"; ticket_id="$3"; verdict="$4"; shift 4
+    subject_status="${PM_TEST_GATE_SUBJECT_STATUS:-pass}"
     pmctl_gate_run() {
       local result_file
       result_file="$(mktemp)"
       printf "Final: %s\n" "$verdict" > "$result_file"
       printf "result: %s\n" "$result_file"
       [[ "$verdict" == "GO" ]]
+    }
+    pmctl_gate_verify() {
+      jq -n \
+        --arg verdict "$verdict" \
+        --arg subject_status "$subject_status" \
+        '"'"'{
+          kind:"gate_verification_v1",
+          verdict:$verdict,
+          axes:{
+            artifact_valid:{status:"pass",reason_codes:[]},
+            subject_current:{
+              status:$subject_status,
+              reason_codes:(if $subject_status == "pass" then [] else ["tree_drift"] end)
+            },
+            policy_applicable:{status:"pass",reason_codes:[]}
+          }
+        }'"'"'
+      [[ "$verdict" == "GO" && "$subject_status" == "pass" ]]
     }
     . "$repo_root/runtime/lib/pmctl-ship.sh"
     pmctl_ship_finish "$repo_root" "$work_dir" "$ticket_id" "$@"
@@ -221,6 +243,30 @@ run_finish_with_no_result_line() {
     . "$repo_root/runtime/lib/pmctl-ship.sh"
     pmctl_ship_finish "$repo_root" "$work_dir" "$ticket_id"
   ' _ "$REPO_ROOT" "$work_dir" "$ticket_id"
+}
+
+# run_finish_with_broken_shared_verifier <work_dir> <ticket_id>
+#                                        <missing|malformed>
+# Reaches the post-gate publication boundary with either no shared verifier
+# function or one that violates the structured-assessment contract.
+run_finish_with_broken_shared_verifier() {
+  local work_dir="$1" ticket_id="$2" verifier_mode="$3"
+  bash -c '
+    repo_root="$1"; work_dir="$2"; ticket_id="$3"; verifier_mode="$4"
+    pmctl_gate_run() {
+      local result_file
+      result_file="$(mktemp)"
+      printf "Final: GO\n" > "$result_file"
+      printf "result: %s\n" "$result_file"
+    }
+    . "$repo_root/runtime/lib/pmctl-ship.sh"
+    if [[ "$verifier_mode" == malformed ]]; then
+      pmctl_gate_verify() { printf "{\"kind\":\"unexpected\"}\n"; }
+    else
+      unset -f pmctl_gate_verify 2>/dev/null || true
+    fi
+    pmctl_ship_finish "$repo_root" "$work_dir" "$ticket_id"
+  ' _ "$REPO_ROOT" "$work_dir" "$ticket_id" "$verifier_mode"
 }
 
 # run_ship_parallel_capture_dispatch_argv <store> <work_dir> <ticket-id> [ship --parallel flags...]
@@ -971,6 +1017,69 @@ case_finish_missing_result_file() {
     pass "$name"
 }
 
+case_finish_missing_shared_verifier_refuses_publish() {
+  local name="ship finish: missing shared gate verifier fails closed"
+  should_run "$name" || return 0
+  local work out err status=0
+  work="$tmp_root/work-finish-missing-verifier"
+  make_work_repo "$work" "CC-9001"
+  checkout_ticket_branch "$work" "CC-9001"
+  out="$tmp_root/out-finish-missing-verifier"
+  err="$tmp_root/err-finish-missing-verifier"
+  run_finish_with_broken_shared_verifier "$work" "CC-9001" missing \
+    > "$out" 2> "$err" || status=$?
+  if [[ "$status" -eq 2 ]] \
+      && grep -q "shared gate verifier is unavailable" "$err"; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 2 fail-closed; status=$status stderr=$(cat "$err")"
+  fi
+}
+
+case_finish_malformed_shared_assessment_refuses_publish() {
+  local name="ship finish: malformed shared gate assessment fails closed"
+  should_run "$name" || return 0
+  local work out err status=0
+  work="$tmp_root/work-finish-malformed-verifier"
+  make_work_repo "$work" "CC-9001"
+  checkout_ticket_branch "$work" "CC-9001"
+  out="$tmp_root/out-finish-malformed-verifier"
+  err="$tmp_root/err-finish-malformed-verifier"
+  run_finish_with_broken_shared_verifier "$work" "CC-9001" malformed \
+    > "$out" 2> "$err" || status=$?
+  if [[ "$status" -eq 1 ]] \
+      && grep -q "returned no structured assessment" "$err"; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 1 fail-closed; status=$status stderr=$(cat "$err")"
+  fi
+}
+
+case_finish_go_stale_subject_does_not_push() {
+  local name="ship finish: GO with stale subject exits 1 before push"
+  should_run "$name" || return 0
+  local work out err status=0
+  work="$tmp_root/work-finish-stale-subject"
+  make_work_repo "$work" "CC-9001"
+  checkout_ticket_branch "$work" "CC-9001"
+  add_bare_origin "$work"
+  out="$tmp_root/out-finish-stale-subject"
+  err="$tmp_root/err-finish-stale-subject"
+  PM_TEST_GATE_SUBJECT_STATUS=fail \
+    run_finish_with_fake_gate "$work" "CC-9001" "GO" \
+      > "$out" 2> "$err" || status=$?
+  local pushed=0
+  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 \
+    2>/dev/null && pushed=1
+  if [[ "$status" -eq 1 ]] \
+      && grep -q "invalid, stale, or not applicable" "$err" \
+      && [[ "$pushed" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 1 + no push; got status=$status pushed=$pushed stderr=$(cat "$err")"
+  fi
+}
+
 case_finish_go_dirty_tree_refuses_push() {
   local name="ship finish: GO with an uncommitted (dirty) tree refuses to push -- committed-diff guard"
   should_run "$name" || return 0
@@ -1013,6 +1122,17 @@ case_finish_go_head_moved_refuses_push() {
       printf "Final: GO\n" > "$result_file"
       printf "result: %s\n" "$result_file"
       return 0
+    }
+    pmctl_gate_verify() {
+      jq -n '"'"'{
+        kind:"gate_verification_v1",
+        verdict:"GO",
+        axes:{
+          artifact_valid:{status:"pass",reason_codes:[]},
+          subject_current:{status:"pass",reason_codes:[]},
+          policy_applicable:{status:"pass",reason_codes:[]}
+        }
+      }'"'"'
     }
     . "$repo_root/runtime/lib/pmctl-ship.sh"
     pmctl_ship_finish "$repo_root" "$work_dir" "$ticket_id"
@@ -1870,6 +1990,9 @@ case_run_tracks_adapter_field() {
 
 case_finish_no_go_does_not_push
 case_finish_missing_result_file
+case_finish_missing_shared_verifier_refuses_publish
+case_finish_malformed_shared_assessment_refuses_publish
+case_finish_go_stale_subject_does_not_push
 case_finish_go_dirty_tree_refuses_push
 case_finish_go_head_moved_refuses_push
 case_finish_gh_missing_refuses_before_gate_or_push

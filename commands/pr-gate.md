@@ -296,22 +296,19 @@ When the `pmctl gate wait` background Bash completion notification arrives:
    brief failure summary: exit code + last ~20 lines of the supervisor log at
    `pmctl artifacts show <gate_id> --cd "<work_dir>"`).
 4. Read `result_file` directly (both executor routes write it in-process). To
-   re-confirm out of band, run `pmctl gate verify <result_file_path>` from the
-   repository the gate reviewed (use the literal path parsed in step 2, not a
-   shell variable; exit 0 = valid).
-   New results must report `assurance: verified` and point to a sibling
-   `gate_assurance_v2` JSON file. A legacy result or unbound v1 envelope may report
-   `assurance: unavailable`; do not treat that as proof of tier/mode/coverage
-   or reviewer-session independence. For repo-layout results that claim
-   verified independence, verification also requires the protected producer
-   attestation, a result under that repository's canonical state partition,
-   and matching canonical terminal run records. The producer publishes the
-   sidecar before the v2 result that references it; verification briefly
-   retries when it observes an in-flight v2 result before its protected
-   attestation rename completes. Current envelopes also carry the shell-owned
-   policy resolution (classification, matched signals, floors, resolved
-   coordinates, and override provenance); earlier v2 envelopes without that
-   optional block remain readable.
+   re-confirm out of band, run
+   `pmctl gate verify <result_file_path> --cd "<work_dir>" --consumer embedded --json`
+   using the literal path parsed in step 2. Exit 0 means all three named-consumer
+   axes pass: `artifact_valid`, `subject_current`, and `policy_applicable`.
+   Each axis carries reason codes, so stale subject, malformed artifact, and
+   insufficient consumer policy remain distinct. New results point to a sibling
+   `gate_assurance_v3` JSON file containing immutable repository/base/head/tree
+   subject data, resolved policy/coordinates, and linked evidence digests.
+   A legacy result or v1/v2 assurance may remain structurally readable but
+   cannot prove subject freshness or consumer applicability. Repo-layout
+   artifacts that claim verified independence additionally require their
+   protected producer attestation and matching canonical terminal run records.
+   Copying a valid result/sidecar pair does not copy that authorization.
 5. Prepend `PR-gate complete.` to completion relay and include the full gate
    result (including `Final: GO` / `Final: NO-GO`) unchanged.
 6. On failure, avoid collapsing findings; relay the actual stderr summary and

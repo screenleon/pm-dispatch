@@ -26,7 +26,12 @@ trap cleanup EXIT
 functions=(
   gate_result_verdict_verify
   _gate_result_frontmatter_value
+  _gate_result_sha256_stream
   _gate_result_sha256_file
+  _gate_subject_common_dir
+  _gate_subject_tree_fingerprint
+  gate_subject_snapshot
+  _gate_assurance_linked_evidence_verify
   gate_assurance_verify
   gate_result_verify
 )

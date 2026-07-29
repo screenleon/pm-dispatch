@@ -7,6 +7,45 @@ H2 標題格式：## YYYY-MM-DD: <短描述>
 與 BACKLOG closure 對應的 entry，內文首行寫：Closes: BACKLOG.md#<PREFIX>-NNN
 -->
 
+## 2026-07-28: gate-assurance-v3-separates-validity-freshness-applicability
+
+Relates: CC-515
+
+**Context**: `gate_assurance_v2` 可以驗證 result/sidecar digest、resolved
+coordinates、policy snapshot 與 protected dispatch records，但 repository root
+同時被當作 provenance 和 identity。Consumer 因此無法區分 artifact 被竄改、artifact
+仍完整但 base/head/tree 已漂移，或 evidence 完整但不符合目前 consumer policy。
+`gate wait` 與 `ship finish` 也各自保留 continuation 判定，容易再次退回只讀
+`Final: GO`。
+
+**Decision**: Producer 升級為 `gate_assurance_v3`，加入 `gate_subject_v1`：
+repository key 由 Git common-directory identity 與 optional remote identity
+組成，observed root 只作 provenance；subject 同時綁定 base/head ref+commit、tree
+fingerprint、`committed_head|working_tree|fixed_ref`、對應 dirty policy，以及
+created/finished observation。Evidence 區塊以 digest 和 subject fingerprint 連結
+preflight，並為尚未有 producer 的 scope manifest／closure 明示 `unavailable`。
+Protected attestation 升級並綁定完整 subject digest。
+
+Shared verifier 固定輸出 `artifact_valid`、`subject_current`、
+`policy_applicable` 三軸與 reason codes。預設 inspect 只維持舊 artifact-validity exit
+相容性；指定 consumer 時三軸都必須 pass。`gate wait` 和 `ship finish` 只消費此
+shared assessment。不同 linked worktree 的 physical path 不造成 stale；copy/replay
+可保持 artifact valid，但不攜帶 canonical dispatch authorization。
+
+**Alternatives considered**: (a) 把 freshness 混進 artifact validity——否決，
+base advance 或 working-tree drift 不會改寫歷史 artifact，不能標成 forged。
+(b) 只強化 `ship finish`——否決，會讓 wait、publish 與未來 consumer 各自重做
+identity/freshness 邏輯。(c) 用 observed absolute root 當唯一 repository
+identity——否決，linked worktree 和搬移後的同一 Git subject 會誤判。
+
+**Constraints introduced**: 新 consumer 不得從 `Final: GO` 推論 freshness 或
+policy applicability；不得把 physical worktree path 單獨當失效條件。v1/v2 artifact
+保留 inspection 相容性，但不能提供 immutable-subject/applicability authorization。
+Policy applicable 不等於 merge authorization；current-tree tests、closure 與 merge
+授權仍由各自 consumer contract 決定。
+
+---
+
 ## 2026-07-27: targeted-review-is-a-pass-kind-not-a-tier
 
 Relates: CC-512, CC-513, CC-515, CC-517, CC-519
