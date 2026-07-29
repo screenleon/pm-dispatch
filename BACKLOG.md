@@ -30,11 +30,11 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-508 | ✅ closed 2026-07-25 | executor producer 的 parent-operation control plane：可追溯子 run、受控取消與單一終態；目前納入 gate／ship，task dispatch 保留為後續接入 | arch/gate | 2026-07-21 | pr:#447 | P2 | design |
 | CC-509 | ✅ closed 2026-07-22 | detached gate launch liveness：對 sandbox parent-death 早期死亡 fail-loud，提供 supervisor readiness／identity evidence | arch/gate | 2026-07-22 | pr:#440 | P2 | hygiene |
 | CC-510 | ✅ closed 2026-07-23 | Codex detached dispatch continuation：App Server callback、authenticated completion envelope 與 foreground fallback | arch/DX | 2026-07-23 | pr:#443 | P2 | design |
-| CC-511 | ⚠️ partial 2026-07-24 | ship publish authorization：Phase A current-tree authoritative full-suite 已交付；Phase B review-closure evidence 仍待 CC-515／CC-517 | release/gate | 2026-07-23 | pr:#446 | P1 | design |
+| CC-511 | ⚠️ partial 2026-07-24 | ship publish authorization：Phase A current-tree authoritative full-suite 與 CC-515 shared verifier foundation 已交付；Phase B review-closure evidence 仍待 CC-517 | release/gate | 2026-07-23 | pr:#446 | P1 | design |
 | CC-512 | ✅ closed 2026-07-27 | Slices A／B／C 已交付：coordinate sources／CLI resolution、machine-owned assurance envelope／evidence capture、shared verifier／parity ratchets；targeted 不再是 tier | ops/gate | 2026-07-23 | pr:#451 | P1 | design |
 | CC-513 | ✅ closed 2026-07-28 | canonical gate policy resolver：minimum tier、required reviewers、mode recommendation 與 downgrade audit | security/gate | 2026-07-23 | pr:#452 | P1 | design |
 | CC-514 | 🔵 active | orthogonal delivery assurance map、machine-derived tables 與 feature/docs/high-risk recipes | docs/process | 2026-07-23 | — | P2 | design |
-| CC-515 | ⚠️ partial 2026-07-29 | immutable subject 與三軸 shared verifier 已交付；scope／closure evidence producer 仍待 CC-518／CC-517 | arch/gate | 2026-07-23 | — | P1 | design |
+| CC-515 | ✅ closed 2026-07-29 | `gate_assurance_v3` immutable subject 與 artifact／subject／policy 三軸 shared verifier；downstream scope／closure producers 分屬 CC-518／CC-517 | arch/gate | 2026-07-23 | pr:#454 | P1 | design |
 | CC-516 | ⏸ deferred | evidence-gated thin delivery wrapper 評估；只組合既有 primitives，不建立 workflow engine/FSM | ux/process | 2026-07-23 | — | P3 | spike |
 | CC-517 | 🔵 active | maintainer `/ship`：primary review、structured remediation closure 與 conditional targeted confirmation | process/gate | 2026-07-23 | — | P1 | design |
 | CC-518 | 🔵 active | gate scope manifest v1：immutable subject、changed paths、paired tests、signals 與 bounded expansion | ops/gate | 2026-07-23 | — | P1 | design |
@@ -1603,20 +1603,21 @@ current-tree full PASS 加上適用 delivery policy 的 valid review authorizati
 `tests/bin/run-tests.sh --verify-full` 驗證。direct 與 parallel ship path 共用同一
 finish 邊界；fresh run、invalid supplied result、relative artifact resolution、suite
 failure、tree dirtiness 與 post-suite HEAD drift 都有 fail-closed regression coverage。
-本次僅完成 Phase A；Phase B 的 review authorization 與 closure artifact 不在此 PR
-範圍，仍待 [[CC-515]]、[[CC-517]]。
+本次僅完成 Phase A；[[CC-515]] shared verifier foundation 已於 pr:#454 交付，
+Phase B 的 review authorization 與 closure artifact 不在此 PR 範圍，仍待
+[[CC-517]]。
 
 **Done-when**: 任一官方 ship publish path 都只能在（1）current tree authoritative
 full-suite PASS 有效；（2）review authorization 對目前 delivery policy 有效；
 （3）branch、HEAD、tree 與 evidence subject 匹配後 push／開 PR。Phase A 可先獨立
-ship；Phase B 在 [[CC-515]]、[[CC-517]] 完成後收斂。
+ship；Phase B 在 [[CC-517]] 完成後收斂。
 
 **Non-goals**: 不把 full suite 搬進 generic gate；不要求所有 final tree 都 full
 re-gate；不建立第二套 test-result schema；不把 publish authorization 等同 merge
 authorization。
 
-**Dependencies**: Phase A 複用 [[CC-449]]／[[CC-491]]，可立即實作；Phase B 依賴
-[[CC-515]]、[[CC-517]]。
+**Dependencies**: Phase A 複用 [[CC-449]]／[[CC-491]]，可立即實作；Phase B 的
+[[CC-515]] verifier dependency 已滿足，剩餘依賴為 [[CC-517]]。
 
 **Cross-link**: [[CC-512]]、[[CC-513]]、`docs/test-runner-contract.md`。
 
@@ -1860,7 +1861,7 @@ lint 阻止 tier/mode/full-suite 順序重新漂移。
 
 ---
 
-## CC-515 — immutable subject、freshness 與 applicability verifier ⚠️ partial
+## CC-515 — immutable subject、freshness 與 applicability verifier ✅ 2026-07-29
 
 **Problem**: preflight tests 已有 repo/base/head/tree evidence，但 final gate artifact
 主要依賴 prose `Final:`。外部 consumer 無法分辨 artifact 本身壞掉、subject 已過期，
@@ -1898,13 +1899,19 @@ manifest 與 remediation closure 共同依賴，屬 P1 evidence foundation。
 並以 stable repo subject 驗證 artifact；沒有 consumer 再以 `Final: GO` 當作 freshness
 或 publish authorization。
 
-**Phase A delivery（2026-07-29）**：`gate_assurance_v3`、immutable Git subject、
-linked preflight digest，以及 `pmctl gate verify` 的 artifact／subject／policy 三軸
-assessment 已接入 gate wait 與 ship finish；copy/replay、linked worktree、different
-repo、base/head/tree drift、fixed ref、digest 與 policy insufficiency 都有直接回歸。
-schema 已保留 scope manifest／closure 的 verified link contract，但目前 gate producer
-只能誠實輸出 `unavailable`：scope producer 等 [[CC-518]]，remediation closure 等
-[[CC-517]]。因此本票維持 partial，不把未產生的 downstream evidence 宣稱完成。
+**Outcome**：Shipped `gate_assurance_v3`、immutable Git subject、linked preflight
+digest，以及 `pmctl gate verify` 的 artifact／subject／policy 三軸 assessment；
+gate wait 與 ship finish 都改用同一 shared verifier。Copy/replay、linked worktree、
+different repo、base/head/tree drift、fixed ref、digest 與 policy insufficiency
+都有直接回歸。Evidence link contract 對 scope manifest／closure 明確支援
+`unavailable|verified`，verified link 會驗 basename、digest 與 subject fingerprint。
+
+本票擁有的 verifier foundation 已完整交付。`gate_scope_manifest_v1` 的內容與 producer
+仍由 [[CC-518]] 負責；`remediation_closure_v1` 的 lifecycle 與 producer 仍由
+[[CC-517]] 負責。兩者是依賴 CC-515 的 downstream evidence，不是 CC-515 的未完成
+範圍。
+
+**See**: pr:#454
 
 **Non-goals**: 不以 gate artifact 取代 test result；不把 policy applicable 等同
 merge authorization；不要求 worktree path 永久固定。
