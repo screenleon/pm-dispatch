@@ -854,6 +854,93 @@ _gate_assurance_valid_instance() {
   }'
 }
 
+_gate_assurance_v3_valid_instance() {
+  _gate_assurance_valid_instance |
+    jq '
+      .kind = "gate_assurance_v3" |
+      .schema_version = 3 |
+      .subject = {
+        kind:"gate_subject_v1",
+        schema_version:1,
+        repository:{
+          key:("b" * 64),
+          git_common_dir_identity:("1" * 64),
+          remote_identity:null
+        },
+        observed:{root:"/tmp/repo",git_common_dir:"/tmp/repo/.git"},
+        base:{ref:"main",commit:("c" * 40)},
+        head:{ref:"HEAD",commit:("d" * 40)},
+        tree_fingerprint:("e" * 64),
+        subject_kind:"committed_head",
+        dirty_policy:"require_clean",
+        created_at:"2026-07-28T00:00:00Z",
+        finished_at:"2026-07-28T00:01:00Z",
+        observed_at_finish:{
+          repository_key:("b" * 64),
+          base_commit:("c" * 40),
+          head_commit:("d" * 40),
+          tree_fingerprint:("e" * 64)
+        }
+      } |
+      .evidence = {
+        preflight:{
+          status:"linked",
+          outcome:"pass",
+          artifact:"preflight-evidence-20260728-000000.json",
+          sha256:("2" * 64),
+          subject_fingerprint:("e" * 64)
+        },
+        scope_manifest:{
+          status:"unavailable",
+          artifact:null,
+          sha256:null,
+          subject_fingerprint:null
+        },
+        closure:{
+          status:"unavailable",
+          artifact:null,
+          sha256:null,
+          subject_fingerprint:null
+        }
+      }
+    '
+}
+
+_gate_verification_valid_instance() {
+  jq -n '{
+    kind:"gate_verification_v1",
+    schema_version:1,
+    result_file:"/tmp/result.md",
+    verdict:"GO",
+    assurance:{
+      status:"verified",
+      kind:"gate_assurance_v3",
+      file:"/tmp/result.md.assurance.json"
+    },
+    consumer:"maintainer",
+    axes:{
+      artifact_valid:{status:"pass",reason_codes:[]},
+      subject_current:{
+        status:"pass",
+        reason_codes:[],
+        current:{
+          repository_key:("a" * 64),
+          base_commit:("b" * 40),
+          head_commit:("c" * 40),
+          tree_fingerprint:("d" * 64),
+          observed_root:"/tmp/repo"
+        }
+      },
+      policy_applicable:{
+        status:"pass",
+        reason_codes:[],
+        consumer:"maintainer",
+        embedded_policy:"maintainer"
+      }
+    }
+  }'
+}
+
 case_gate_assurance_valid_instance() {
   local name="gate-assurance: canonical sequential envelope validates"
   should_run "$name" || return 0
@@ -864,6 +951,102 @@ case_gate_assurance_valid_instance() {
     pass "$name"
   else
     fail "$name" "schema rejected a canonical sequential assurance envelope"
+  fi
+  rm -f "$tmpf"
+}
+
+case_gate_assurance_v3_valid_instance() {
+  local name="gate-assurance: v3 subject and evidence envelope validates"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/gate-assurance.schema.json" tmpf
+  tmpf="$(mktemp /tmp/gate-assurance-v3-valid-XXXXXX.json)"
+  _gate_assurance_v3_valid_instance > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name" "schema rejected a canonical v3 assurance envelope"
+  fi
+  rm -f "$tmpf"
+}
+
+case_gate_assurance_v2_rejects_v3_fields() {
+  local name="gate-assurance: v2 cannot carry unversioned v3 subject fields"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/gate-assurance.schema.json" tmpf
+  tmpf="$(mktemp /tmp/gate-assurance-v2-v3-fields-XXXXXX.json)"
+  _gate_assurance_v3_valid_instance |
+    jq '.kind = "gate_assurance_v2" | .schema_version = 2' > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    fail "$name" "schema accepted v3 subject/evidence fields under v2"
+  else
+    pass "$name"
+  fi
+  rm -f "$tmpf"
+}
+
+case_gate_assurance_v3_invalid_dirty_pair_rejected() {
+  local name="gate-assurance: subject kind and dirty policy must agree"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/gate-assurance.schema.json" tmpf
+  tmpf="$(mktemp /tmp/gate-assurance-v3-dirty-pair-XXXXXX.json)"
+  _gate_assurance_v3_valid_instance |
+    jq '.subject.dirty_policy = "ignore_working_tree"' > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    fail "$name" "schema accepted committed_head with ignore_working_tree"
+  else
+    pass "$name"
+  fi
+  rm -f "$tmpf"
+}
+
+case_gate_assurance_v3_evidence_path_rejected() {
+  local name="gate-assurance: linked evidence artifact must be a basename"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/gate-assurance.schema.json" tmpf
+  tmpf="$(mktemp /tmp/gate-assurance-v3-evidence-path-XXXXXX.json)"
+  _gate_assurance_v3_valid_instance |
+    jq '
+      .evidence.scope_manifest = {
+        status:"verified",
+        artifact:"../scope.json",
+        sha256:("3" * 64),
+        subject_fingerprint:("e" * 64)
+      }
+    ' > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    fail "$name" "schema accepted escaping linked-evidence path"
+  else
+    pass "$name"
+  fi
+  rm -f "$tmpf"
+}
+
+case_gate_verification_valid_instance() {
+  local name="gate-verification: canonical three-axis report validates"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/gate-verification.schema.json" tmpf
+  tmpf="$(mktemp /tmp/gate-verification-valid-XXXXXX.json)"
+  _gate_verification_valid_instance > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name" "schema rejected a canonical three-axis report"
+  fi
+  rm -f "$tmpf"
+}
+
+case_gate_verification_duplicate_reason_rejected() {
+  local name="gate-verification: duplicate reason codes are rejected"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/gate-verification.schema.json" tmpf
+  tmpf="$(mktemp /tmp/gate-verification-duplicate-reason-XXXXXX.json)"
+  _gate_verification_valid_instance |
+    jq '.axes.subject_current.reason_codes = ["tree_drift","tree_drift"]' \
+      > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    fail "$name" "schema accepted duplicate reason codes"
+  else
+    pass "$name"
   fi
   rm -f "$tmpf"
 }
@@ -985,6 +1168,12 @@ case_context_pack_invalid_trust_level_rejected
 case_preflight_basic_evidence_needs_no_git_provenance
 case_preflight_reusable_evidence_requires_fingerprint
 case_gate_assurance_valid_instance
+case_gate_assurance_v3_valid_instance
+case_gate_assurance_v2_rejects_v3_fields
+case_gate_assurance_v3_invalid_dirty_pair_rejected
+case_gate_assurance_v3_evidence_path_rejected
+case_gate_verification_valid_instance
+case_gate_verification_duplicate_reason_rejected
 case_gate_assurance_invalid_outcome_rejected
 case_gate_assurance_non_user_policy_approver_rejected
 case_gate_policy_override_valid_instance

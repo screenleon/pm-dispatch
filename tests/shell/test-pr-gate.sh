@@ -2902,6 +2902,19 @@ test_preflight_pass_no_override() {
   fi
   assert_file_contains "$name" "$result" "Final: GO" || return
   assert_file_contains "$name" "$result" "test_suite: pass" || return
+  jq -e '
+    .kind == "gate_assurance_v3" and
+    .evidence.preflight.status == "linked" and
+    .evidence.preflight.outcome == "pass" and
+    (.evidence.preflight.artifact |
+      test("^preflight-evidence-[0-9]{8}-[0-9]{6}\\.json$")) and
+    (.evidence.preflight.sha256 | test("^[a-f0-9]{64}$")) and
+    .evidence.preflight.subject_fingerprint ==
+      .subject.tree_fingerprint
+  ' "${result}.assurance.json" >/dev/null || {
+    fail "$name" "v3 assurance did not bind the passing preflight artifact"
+    return
+  }
   pass "$name"
 }
 
@@ -3856,6 +3869,18 @@ test_gate_result_frontmatter_and_escalation() {
     return
   fi
   jq -e '
+    .kind == "gate_assurance_v3" and
+    .schema_version == 3 and
+    .subject.kind == "gate_subject_v1" and
+    .subject.subject_kind == "working_tree" and
+    .subject.dirty_policy == "include_working_tree" and
+    .bindings.repo_identity == .subject.repository.key and
+    .bindings.base_commit == .subject.base.commit and
+    .bindings.head_commit == .subject.head.commit and
+    .bindings.subject_fingerprint == .subject.tree_fingerprint and
+    .evidence.preflight.status == "not_run" and
+    .evidence.scope_manifest.status == "unavailable" and
+    .evidence.closure.status == "unavailable" and
     .coordinates.mode.resolved == "sequential" and
     .coordinates.independence.evidence_status == "unavailable" and
     .coordinates.independence.per_reviewer_independent == null and
@@ -5926,7 +5951,7 @@ test_dirty_preflight_allow_dirty_includes_worktree() {
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
-  local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
+  local out="$dir/out" err="$dir/err" brief="$dir/brief.md" result
   mkdir -p "$dir"
   create_runner "$runner"
   create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
@@ -5946,6 +5971,15 @@ test_dirty_preflight_allow_dirty_includes_worktree() {
   assert_file_contains "$name" "$err" "DISPATCH_STUB:success" || return
   assert_file_contains "$name" "$brief" "dirtysrc.go" || return
   assert_file_contains "$name" "$err" "--allow-dirty set" || return
+  result="$(awk -F'result: ' '/^result: /{path=$2} END{print path}' "$out")"
+  jq -e '
+    .kind == "gate_assurance_v3" and
+    .subject.subject_kind == "working_tree" and
+    .subject.dirty_policy == "include_working_tree"
+  ' "${result}.assurance.json" >/dev/null || {
+    fail "$name" "allow-dirty result did not bind a working-tree subject"
+    return
+  }
   pass "$name"
 }
 
@@ -7417,7 +7451,7 @@ test_head_override_diffs_fixed_ref() {
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
-  local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
+  local out="$dir/out" err="$dir/err" brief="$dir/brief.md" result
   mkdir -p "$dir"
   create_runner "$runner"
   create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
@@ -7438,6 +7472,16 @@ test_head_override_diffs_fixed_ref() {
   fi
   assert_file_contains "$name" "$brief" "Head: feature" || return
   assert_file_contains "$name" "$brief" "app.go" || return
+  result="$(awk -F'result: ' '/^result: /{path=$2} END{print path}' "$out")"
+  jq -e '
+    .kind == "gate_assurance_v3" and
+    .subject.subject_kind == "fixed_ref" and
+    .subject.dirty_policy == "ignore_working_tree" and
+    .subject.head.ref == "feature"
+  ' "${result}.assurance.json" >/dev/null || {
+    fail "$name" "fixed --head result did not bind an immutable ref subject"
+    return
+  }
   pass "$name"
 }
 

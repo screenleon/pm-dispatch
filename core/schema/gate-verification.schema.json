@@ -1,0 +1,134 @@
+{
+  "title": "Gate artifact verification",
+  "description": "Three-axis assessment of gate artifact integrity, subject freshness, and consumer applicability.",
+  "type": "object",
+  "required": [
+    "kind",
+    "schema_version",
+    "result_file",
+    "verdict",
+    "assurance",
+    "consumer",
+    "axes"
+  ],
+  "properties": {
+    "kind": { "const": "gate_verification_v1" },
+    "schema_version": { "const": 1 },
+    "result_file": { "type": "string", "pattern": "^/" },
+    "verdict": { "enum": ["GO", "NO-GO", "unknown"] },
+    "assurance": {
+      "type": "object",
+      "required": ["status", "kind", "file"],
+      "properties": {
+        "status": { "enum": ["verified", "unavailable", "invalid"] },
+        "kind": {
+          "type": ["string", "null"],
+          "enum": [
+            "gate_assurance_v1",
+            "gate_assurance_v2",
+            "gate_assurance_v3",
+            null
+          ]
+        },
+        "file": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "string", "pattern": "^/" }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "consumer": {
+      "enum": ["inspect", "embedded", "generic", "maintainer", "publish"]
+    },
+    "axes": {
+      "type": "object",
+      "required": ["artifact_valid", "subject_current", "policy_applicable"],
+      "properties": {
+        "artifact_valid": { "$ref": "#/definitions/axis" },
+        "subject_current": { "$ref": "#/definitions/subjectAxis" },
+        "policy_applicable": { "$ref": "#/definitions/policyAxis" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "definitions": {
+    "axis": {
+      "type": "object",
+      "required": ["status", "reason_codes"],
+      "properties": {
+        "status": { "enum": ["pass", "fail", "unavailable"] },
+        "reason_codes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      },
+      "additionalProperties": false
+    },
+    "subjectAxis": {
+      "type": "object",
+      "required": ["status", "reason_codes"],
+      "properties": {
+        "status": { "enum": ["pass", "fail", "unavailable"] },
+        "reason_codes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "current": {
+          "type": "object",
+          "required": [
+            "repository_key",
+            "base_commit",
+            "head_commit",
+            "tree_fingerprint",
+            "observed_root"
+          ],
+          "properties": {
+            "repository_key": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "base_commit": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{40}$"
+            },
+            "head_commit": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{40}$"
+            },
+            "tree_fingerprint": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "observed_root": { "type": "string", "pattern": "^/" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "policyAxis": {
+      "type": "object",
+      "required": ["status", "reason_codes"],
+      "properties": {
+        "status": { "enum": ["pass", "fail", "unavailable"] },
+        "reason_codes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "consumer": {
+          "enum": ["embedded", "generic", "maintainer", "publish"]
+        },
+        "embedded_policy": {
+          "enum": ["generic", "maintainer"]
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

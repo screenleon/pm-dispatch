@@ -3,9 +3,30 @@
   "description": "Machine-owned portable gate assurance envelope.",
   "type": "object",
   "required": ["kind", "schema_version", "result", "bindings", "coordinates", "dispatch", "provenance"],
+  "allOf": [
+    {
+      "if": {
+        "properties": { "kind": { "const": "gate_assurance_v2" } },
+        "required": ["kind"]
+      },
+      "then": {
+        "properties": { "schema_version": { "const": 2 } },
+        "not": {
+          "anyOf": [
+            { "required": ["subject"] },
+            { "required": ["evidence"] }
+          ]
+        }
+      },
+      "else": {
+        "properties": { "schema_version": { "const": 3 } },
+        "required": ["subject", "evidence"]
+      }
+    }
+  ],
   "properties": {
-    "kind": { "const": "gate_assurance_v2" },
-    "schema_version": { "const": 2 },
+    "kind": { "enum": ["gate_assurance_v2", "gate_assurance_v3"] },
+    "schema_version": { "enum": [2, 3] },
     "result": {
       "type": "object",
       "required": ["final"],
@@ -31,6 +52,12 @@
         "subject_fingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
       },
       "additionalProperties": false
+    },
+    "subject": {
+      "$ref": "#/definitions/gateSubject"
+    },
+    "evidence": {
+      "$ref": "#/definitions/linkedEvidence"
     },
     "coordinates": {
       "type": "object",
@@ -145,6 +172,231 @@
     }
   },
   "definitions": {
+    "gateSubject": {
+      "type": "object",
+      "required": [
+        "kind",
+        "schema_version",
+        "repository",
+        "observed",
+        "base",
+        "head",
+        "tree_fingerprint",
+        "subject_kind",
+        "dirty_policy",
+        "created_at",
+        "finished_at",
+        "observed_at_finish"
+      ],
+      "properties": {
+        "kind": { "const": "gate_subject_v1" },
+        "schema_version": { "const": 1 },
+        "repository": {
+          "type": "object",
+          "required": ["key", "git_common_dir_identity", "remote_identity"],
+          "properties": {
+            "key": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+            "git_common_dir_identity": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "remote_identity": {
+              "type": ["string", "null"],
+              "pattern": "^[a-f0-9]{64}$"
+            }
+          },
+          "additionalProperties": false
+        },
+        "observed": {
+          "type": "object",
+          "required": ["root", "git_common_dir"],
+          "properties": {
+            "root": { "type": "string", "pattern": "^/" },
+            "git_common_dir": { "type": "string", "pattern": "^/" }
+          },
+          "additionalProperties": false
+        },
+        "base": { "$ref": "#/definitions/gitRef" },
+        "head": { "$ref": "#/definitions/gitRef" },
+        "tree_fingerprint": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "subject_kind": {
+          "enum": ["committed_head", "working_tree", "fixed_ref"]
+        },
+        "dirty_policy": {
+          "enum": ["require_clean", "include_working_tree", "ignore_working_tree"]
+        },
+        "created_at": { "$ref": "#/definitions/timestamp" },
+        "finished_at": { "$ref": "#/definitions/timestamp" },
+        "observed_at_finish": {
+          "type": "object",
+          "required": [
+            "repository_key",
+            "base_commit",
+            "head_commit",
+            "tree_fingerprint"
+          ],
+          "properties": {
+            "repository_key": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "base_commit": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{40}$"
+            },
+            "head_commit": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{40}$"
+            },
+            "tree_fingerprint": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "subject_kind": { "const": "committed_head" } },
+            "required": ["subject_kind"]
+          },
+          "then": {
+            "properties": { "dirty_policy": { "const": "require_clean" } }
+          }
+        },
+        {
+          "if": {
+            "properties": { "subject_kind": { "const": "working_tree" } },
+            "required": ["subject_kind"]
+          },
+          "then": {
+            "properties": { "dirty_policy": { "const": "include_working_tree" } }
+          }
+        },
+        {
+          "if": {
+            "properties": { "subject_kind": { "const": "fixed_ref" } },
+            "required": ["subject_kind"]
+          },
+          "then": {
+            "properties": { "dirty_policy": { "const": "ignore_working_tree" } }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "gitRef": {
+      "type": "object",
+      "required": ["ref", "commit"],
+      "properties": {
+        "ref": { "type": "string", "minLength": 1 },
+        "commit": { "type": "string", "pattern": "^[a-f0-9]{40}$" }
+      },
+      "additionalProperties": false
+    },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    },
+    "linkedEvidence": {
+      "type": "object",
+      "required": ["preflight", "scope_manifest", "closure"],
+      "properties": {
+        "preflight": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "status",
+                "outcome",
+                "artifact",
+                "sha256",
+                "subject_fingerprint"
+              ],
+              "properties": {
+                "status": { "const": "not_run" },
+                "outcome": { "type": "null" },
+                "artifact": { "type": "null" },
+                "sha256": { "type": "null" },
+                "subject_fingerprint": { "type": "null" }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": [
+                "status",
+                "outcome",
+                "artifact",
+                "sha256",
+                "subject_fingerprint"
+              ],
+              "properties": {
+                "status": { "const": "linked" },
+                "outcome": { "enum": ["pass", "fail"] },
+                "artifact": {
+                  "type": "string",
+                  "pattern": "^preflight-evidence-[0-9]{8}-[0-9]{6}\\.json$"
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "subject_fingerprint": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "scope_manifest": { "$ref": "#/definitions/optionalEvidenceLink" },
+        "closure": { "$ref": "#/definitions/optionalEvidenceLink" }
+      },
+      "additionalProperties": false
+    },
+    "optionalEvidenceLink": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["status", "artifact", "sha256", "subject_fingerprint"],
+          "properties": {
+            "status": { "const": "unavailable" },
+            "artifact": { "type": "null" },
+            "sha256": { "type": "null" },
+            "subject_fingerprint": { "type": "null" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["status", "artifact", "sha256", "subject_fingerprint"],
+          "properties": {
+            "status": { "const": "verified" },
+            "artifact": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[^/]+$"
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "subject_fingerprint": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
     "policyResolution": {
       "type": "object",
       "required": [

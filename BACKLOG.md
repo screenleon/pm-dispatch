@@ -32,7 +32,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-510 | ✅ closed 2026-07-23 | Codex detached dispatch continuation：App Server callback、authenticated completion envelope 與 foreground fallback | arch/DX | 2026-07-23 | pr:#443 | P2 | design |
 | CC-511 | ⚠️ partial 2026-07-24 | ship publish authorization：Phase A current-tree authoritative full-suite 已交付；Phase B review-closure evidence 仍待 CC-515／CC-517 | release/gate | 2026-07-23 | pr:#446 | P1 | design |
 | CC-512 | ✅ closed 2026-07-27 | Slices A／B／C 已交付：coordinate sources／CLI resolution、machine-owned assurance envelope／evidence capture、shared verifier／parity ratchets；targeted 不再是 tier | ops/gate | 2026-07-23 | pr:#451 | P1 | design |
-| CC-513 | 🔵 active | canonical gate policy resolver：minimum tier、required reviewers、mode recommendation 與 downgrade audit | security/gate | 2026-07-23 | — | P1 | design |
+| CC-513 | ✅ closed 2026-07-28 | canonical gate policy resolver：minimum tier、required reviewers、mode recommendation 與 downgrade audit | security/gate | 2026-07-23 | pr:#452 | P1 | design |
 | CC-514 | 🔵 active | orthogonal delivery assurance map、machine-derived tables 與 feature/docs/high-risk recipes | docs/process | 2026-07-23 | — | P2 | design |
 | CC-515 | 🔵 active | gate artifact immutable subject、freshness 與 consumer applicability shared verifier | arch/gate | 2026-07-23 | — | P1 | design |
 | CC-516 | ⏸ deferred | evidence-gated thin delivery wrapper 評估；只組合既有 primitives，不建立 workflow engine/FSM | ux/process | 2026-07-23 | — | P3 | spike |
@@ -42,7 +42,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-520 | 🔵 active | synthesis parity 與 remediation seed：findings union、root-cause grouping、coverage matrix 與 no-silent-drop | ops/gate | 2026-07-23 | — | P1 | design |
 | CC-521 | 🔵 active | test-gap matrix、protocol recovery 與 live recall evaluation 分層 | ops/test | 2026-07-23 | — | P2 | design |
 | CC-522 | 🔵 active | 任意 `--test-cmd` 的 opaque／structured capability negotiation、執行失敗分類與外部 evidence recovery | ops/test | 2026-07-27 | feedback:2026-07-27 | P1 | design |
-| CC-523 | 🔵 active | `pmctl gate cancel` 必須終止 reviewer 派發前仍在執行的 foreground preflight 與其 process tree | arch/gate | 2026-07-27 | feedback:2026-07-27 | P1 | hygiene |
+| CC-523 | ✅ closed 2026-07-28 | `pmctl gate cancel` 必須終止 reviewer 派發前仍在執行的 foreground preflight 與其 process tree | arch/gate | 2026-07-27 | pr:#453 | P1 | hygiene |
 | CC-524 | 🔵 active | `pmctl artifacts show` 顯示 canonical absolute run root 並提供穩定 machine-readable locator | ux/ops | 2026-07-27 | feedback:2026-07-27 | P2 | hygiene |
 | CC-525 | 🔵 active | copy-mode verifier fallback 的 generated provenance 必須指向實際 generator，並由 parity ratchet 防止再次漂移 | ops/test | 2026-07-28 | feedback:2026-07-28 | P3 | hygiene |
 | CC-526 | 🔵 active | reviewer override file 的 symlink trust-boundary hardening 與相容性契約 | security/gate | 2026-07-28 | feedback:2026-07-28 | P2 | hygiene |
@@ -1747,7 +1747,7 @@ current-tree authoritative full suite為97 passed、0 failed、0 skipped。
 
 ---
 
-## CC-513 — canonical gate policy resolver 🔵 active
+## CC-513 — canonical gate policy resolver ✅ 2026-07-28
 
 **Problem**: sensitive-path regex、brief `architecture_impact`、tier detection、
 reviewer defaults、mode suggestions 與 CLI overrides 分散在不同 branches／文件。
@@ -1794,6 +1794,15 @@ maintainer policy 可獨立測試，full 不再隱含或強制 parallel。
 升為 hard gate；不讓 maintainer recipe 改寫 generic defaults。
 
 **Cross-link**: [[CC-065]]、[[CC-512]]、[[CC-515]]、[[CC-517]]、[[CC-518]]。
+
+**Outcome**: Shipped the canonical gate-policy resolver and versioned policy
+registries. Generic and maintainer consumers now resolve minimum tier, required
+reviewer coverage, recommended mode, explicit user-mode provenance, matched
+signals, and bounded downgrade approval once; the machine-owned assurance
+envelope carries and verifies that result across foreground, detached, wait,
+and ship paths. Explicit sequential／parallel choice remains user-owned.
+
+**See**: pr:#452
 
 ---
 
@@ -2228,7 +2237,7 @@ protocol recovery contract保持正交。P1。
 
 ---
 
-## CC-523 — gate cancel 終止 pre-review foreground producer work 🔵 active
+## CC-523 — gate cancel 終止 pre-review foreground producer work ✅ 2026-07-28
 
 **Framing**: 本票是 [[CC-508]] parent-operation cancellation 契約的 regression
 closure，不重做 operation control plane、`pmctl dispatch cancel` 或 gate workflow。
@@ -2290,6 +2299,14 @@ timeout 預設。
 **Dependencies**: regression boundary 直接承接 [[CC-508]]，並複用 [[CC-495]]
 dispatch cancellation 與 [[CC-509]] supervisor identity／liveness evidence。P1，
 應先於下一次依賴 foreground gate cancellation 的 maintainer delivery 處理。
+
+**Outcome**: Gate parent operations now persist verified producer process
+identity before pre-review work. Cancellation stops and reaps the foreground
+preflight or detached supervisor process tree before terminalizing the
+operation, preserves indeterminate on unverifiable termination, and prevents
+late reviewer dispatch or terminal overwrite.
+
+**See**: pr:#453
 
 ---
 

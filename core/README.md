@@ -20,7 +20,10 @@ Gate assurance definitions are split deliberately:
   approval for a tier or reviewer-coverage downgrade; mode remains a direct
   user choice.
 - `schema/gate-assurance.schema.json` defines the portable envelope that records
-  both resolved coordinates and the policy resolution that produced them.
+  resolved coordinates, policy resolution, immutable subject, and linked
+  evidence.
+- `schema/gate-verification.schema.json` defines the shared three-axis
+  assessment returned to gate consumers.
 
 ## Invariants
 
@@ -30,8 +33,8 @@ Gate assurance definitions are split deliberately:
    appears as a hard-coded field name, path segment, or directory name.
    CLI-agnostic by construction.
 3. **Schema is locked.** Subsequent changes are versioned breaking events:
-   bump `schema_version` (each payload carries it as a required `const`
-   field) + add a `CHANGELOG.md` entry + record the migration in
+   bump `schema_version` (each payload carries a required positive integer
+   `const` or a closed compatibility `enum`) + add a `CHANGELOG.md` entry + record the migration in
    `DECISIONS.md`. No directory versioning under `core/schema/`.
 
 ## Dependency graph (acyclic, downward)
@@ -49,7 +52,8 @@ The designated writer module in `runtime/lib/state-writer.sh` is the sole manage
 
 ## Schema versioning
 
-Every payload schema includes `schema_version` as a required integer `const`
-field. Breaking changes bump that integer; old payloads remain valid against
-the schema version that defines them. `jq '.schema_version'` is the
-bash-readable discriminator. No `$id` URLs.
+Every payload schema includes `schema_version` as a required positive integer.
+A single-version schema uses `const`; a compatibility schema may use a closed
+`enum` with kind/version pairing. Breaking changes bump that integer; old
+payloads remain valid against the schema version that defines them.
+`jq '.schema_version'` is the bash-readable discriminator. No `$id` URLs.

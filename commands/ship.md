@@ -153,11 +153,18 @@ background — reading `Final:` right after that call would read a stale or
 missing result. `/ship` is already a long-running autonomous loop with
 nothing else for the main thread to do while it waits, so there is no reason
 to pay the detached/`pmctl gate wait` two-call complexity that `/pr-gate`
-uses to keep the main thread free for other work; run `foreground` and read
-the resulting `Final: GO|NO-GO` verdict directly from the gate result file
-once the call returns.
+uses to keep the main thread free for other work; run `foreground`, parse its
+literal `result: <path>`, then run
+`pmctl gate verify <result_path> --cd "<work_dir>" --consumer maintainer --json`.
+The result file's `Final: GO|NO-GO` remains the review verdict, but it is not
+freshness or continuation authorization by itself. A GO may continue only
+when the named-consumer verification exits 0 and reports `artifact_valid`,
+`subject_current`, and `policy_applicable` all `pass`.
 
-- **GO** → go to Step 3.5.
+- **GO + all three axes pass** → go to Step 3.5.
+- **GO + any axis not pass** → stop before full-suite or publication work.
+  Report the failed axis and reason codes; regenerate evidence against the
+  current subject rather than treating the old GO text as reusable.
 - **NO-GO** → invoke the `project-pm` agent to synthesize the gate result
   against the verdict table and Rules A/B in `agents/project-pm.md` (source-first
   read of every cited diff file, discovery sweep of all call sites of a

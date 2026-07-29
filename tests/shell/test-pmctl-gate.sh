@@ -15,6 +15,8 @@ PMCTL="$REPO_ROOT/cli/pmctl"
 . "$REPO_ROOT/runtime/lib/pmctl-operation.sh"
 # shellcheck source=runtime/lib/pmctl-dispatch.sh
 . "$REPO_ROOT/runtime/lib/pmctl-dispatch.sh"
+# shellcheck source=runtime/lib/gate-result-verify.sh
+. "$REPO_ROOT/runtime/lib/gate-result-verify.sh"
 th_init "$@"
 
 # Isolate the detached-gate sentinel key dir for this suite's cli/pmctl fixture
@@ -26,6 +28,12 @@ _GATE_VERIFY_REPO="$tmp_root/gate-verify-repo"
 _GATE_VERIFY_STATE_ROOT="$tmp_root/gate-verify-state"
 mkdir -p "$_GATE_VERIFY_REPO" "$_GATE_VERIFY_STATE_ROOT"
 git -C "$_GATE_VERIFY_REPO" init -q
+git -C "$_GATE_VERIFY_REPO" config user.email test@example.com
+git -C "$_GATE_VERIFY_REPO" config user.name "Gate Verify Test"
+printf 'fixture\n' > "$_GATE_VERIFY_REPO/input.txt"
+git -C "$_GATE_VERIFY_REPO" add input.txt
+git -C "$_GATE_VERIFY_REPO" commit -qm fixture
+git -C "$_GATE_VERIFY_REPO" branch main
 
 # shellcheck source=runtime/lib/state-paths.sh
 . "$REPO_ROOT/runtime/lib/state-paths.sh"
@@ -551,6 +559,89 @@ _mk_gate_result_v2_verified() {
   ' > "$attestation"
 }
 
+_mk_gate_result_v3_verified() {
+  local path="$1" bound_repo="${2:-$_GATE_VERIFY_REPO}"
+  local base_ref="${3:-main}" sidecar="${1}.assurance.json"
+  local result_parent run_root
+  local created initial subject
+  _mk_gate_result_v2_verified "$path" "$bound_repo"
+  result_parent="$(dirname "$path")"
+  run_root="$(dirname "$result_parent")"
+  created="2026-07-27T00:00:00Z"
+  initial="$(
+    gate_subject_snapshot "$bound_repo" "$base_ref" HEAD committed_head \
+      require_clean "$created"
+  )"
+  subject="$(jq -nc --argjson initial "$initial" '{
+    kind:"gate_subject_v1",
+    schema_version:1,
+    repository:$initial.repository,
+    observed:$initial.observed,
+    base:$initial.base,
+    head:$initial.head,
+    tree_fingerprint:$initial.tree_fingerprint,
+    subject_kind:$initial.subject_kind,
+    dirty_policy:$initial.dirty_policy,
+    created_at:$initial.captured_at,
+    finished_at:$initial.captured_at,
+    observed_at_finish:{
+      repository_key:$initial.repository.key,
+      base_commit:$initial.base.commit,
+      head_commit:$initial.head.commit,
+      tree_fingerprint:$initial.tree_fingerprint
+    }
+  }')"
+  jq --argjson subject "$subject" '
+    .kind = "gate_assurance_v3" |
+    .schema_version = 3 |
+    .bindings.repo_identity = $subject.repository.key |
+    .bindings.base_commit = $subject.base.commit |
+    .bindings.head_commit = $subject.head.commit |
+    .bindings.subject_fingerprint = $subject.tree_fingerprint |
+    .subject = $subject |
+    .evidence = {
+      preflight:{
+        status:"not_run",outcome:null,artifact:null,sha256:null,
+        subject_fingerprint:null
+      },
+      scope_manifest:{
+        status:"unavailable",artifact:null,sha256:null,subject_fingerprint:null
+      },
+      closure:{
+        status:"unavailable",artifact:null,sha256:null,subject_fingerprint:null
+      }
+    }
+  ' "$sidecar" > "${sidecar}.tmp"
+  mv "${sidecar}.tmp" "$sidecar"
+  _refresh_gate_result_v3_attestation "$path"
+}
+
+_refresh_gate_result_v3_attestation() {
+  local path="$1" sidecar="${1}.assurance.json"
+  local run_root attestation assurance_sha subject_sha
+  run_root="$(dirname "$(dirname "$path")")"
+  attestation="$run_root/gate-assurance-20260727-000000.attestation.json"
+  assurance_sha="$(sha256sum "$sidecar" | awk '{print $1}')"
+  subject_sha="$(jq -cS '.subject' "$sidecar" | sha256sum | awk '{print $1}')"
+  jq -n --arg assurance_sha "$assurance_sha" --arg subject_sha "$subject_sha" \
+    --slurpfile a "$sidecar" '
+    $a[0] as $sidecar | {
+      kind:"gate_assurance_attestation_v2",
+      schema_version:2,
+      result_sha256:$sidecar.bindings.result_sha256,
+      assurance_sha256:$assurance_sha,
+      repo_root:$sidecar.bindings.repo_root,
+      repo_identity:$sidecar.bindings.repo_identity,
+      base_commit:$sidecar.bindings.base_commit,
+      head_commit:$sidecar.bindings.head_commit,
+      subject_fingerprint:$sidecar.bindings.subject_fingerprint,
+      repository_key:$sidecar.subject.repository.key,
+      subject_sha256:$subject_sha,
+      run_ids:[$sidecar.dispatch.outcomes[].run_id]
+    }
+  ' > "$attestation"
+}
+
 _gate_verify_result_path() {
   local slug="$1" run_root
   run_root="$(
@@ -562,11 +653,11 @@ _gate_verify_result_path() {
 }
 
 _run_canonical_gate_verify() {
-  local result="$1"
+  local result="$1"; shift
   (
     cd "$_GATE_VERIFY_REPO"
     PM_DISPATCH_STATE_ROOT="$_GATE_VERIFY_STATE_ROOT" \
-      "$PMCTL" gate verify "$result"
+      "$PMCTL" gate verify "$result" "$@"
   )
 }
 
@@ -646,6 +737,407 @@ case_verify_v2_canonical_authorization() {
   _mk_gate_result_v2_verified "$result" "$_GATE_VERIFY_REPO"
   set +e; out="$(_run_canonical_gate_verify "$result" 2>&1)"; code=$?; set -e
   if [[ "$code" -eq 0 && "$out" == *"assurance: verified"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+case_verify_v3_three_axes_current() {
+  # Behavior: a current immutable subject with verified generic review evidence
+  # passes all three independently reported axes.
+  local name="gate/verify: v3 current generic artifact passes all three JSON axes"
+  should_run "$name" || return 0
+  local result out code
+  result="$(_gate_verify_result_path v3-current)"
+  _mk_gate_result_v3_verified "$result" "$_GATE_VERIFY_REPO"
+  set +e
+  out="$(_run_canonical_gate_verify "$result" --consumer generic --json 2>&1)"
+  code=$?
+  set -e
+  if [[ "$code" -eq 0 ]] \
+      && jq -e '
+        .kind == "gate_verification_v1" and
+        .assurance.kind == "gate_assurance_v3" and
+        .axes.artifact_valid.status == "pass" and
+        .axes.subject_current.status == "pass" and
+        .axes.policy_applicable.status == "pass"
+      ' <<<"$out" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+case_verify_v3_dirty_drift_is_stale_not_invalid() {
+  # Behavior: post-finalization working-tree drift keeps result/sidecar integrity
+  # valid but makes the committed-head subject stale.
+  local name="gate/verify: v3 dirty drift is subject fail while artifact stays valid"
+  should_run "$name" || return 0
+  local result out code
+  result="$(_gate_verify_result_path v3-dirty)"
+  _mk_gate_result_v3_verified "$result" "$_GATE_VERIFY_REPO"
+  printf 'dirty\n' > "$_GATE_VERIFY_REPO/untracked.txt"
+  set +e
+  out="$(_run_canonical_gate_verify "$result" --consumer generic --json 2>&1)"
+  code=$?
+  set -e
+  rm -f "$_GATE_VERIFY_REPO/untracked.txt"
+  if [[ "$code" -eq 1 ]] \
+      && jq -e '
+        .axes.artifact_valid.status == "pass" and
+        .axes.subject_current.status == "fail" and
+        (.axes.subject_current.reason_codes | index("tree_drift")) != null
+      ' <<<"$out" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+case_verify_v3_head_moved_is_stale() {
+  # Behavior: moving HEAD after finalization is freshness failure, not artifact
+  # forgery. Restore the disposable fixture ref after the assertion.
+  local name="gate/verify: v3 moved HEAD reports head_moved without invalidating artifact"
+  should_run "$name" || return 0
+  local result out code old_head
+  result="$(_gate_verify_result_path v3-head-moved)"
+  _mk_gate_result_v3_verified "$result" "$_GATE_VERIFY_REPO"
+  old_head="$(git -C "$_GATE_VERIFY_REPO" rev-parse HEAD)"
+  printf 'moved\n' > "$_GATE_VERIFY_REPO/input.txt"
+  git -C "$_GATE_VERIFY_REPO" add input.txt
+  git -C "$_GATE_VERIFY_REPO" commit -qm moved
+  set +e
+  out="$(_run_canonical_gate_verify "$result" --consumer generic --json 2>&1)"
+  code=$?
+  set -e
+  git -C "$_GATE_VERIFY_REPO" reset --hard -q "$old_head"
+  if [[ "$code" -eq 1 ]] \
+      && jq -e '
+        .axes.artifact_valid.status == "pass" and
+        (.axes.subject_current.reason_codes | index("head_moved")) != null
+      ' <<<"$out" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+case_verify_v3_base_advanced_is_stale() {
+  # Behavior: advancing the named base ref without moving the reviewed HEAD
+  # reports base_advanced and keeps the artifact digest valid.
+  local name="gate/verify: v3 advanced base is stale rather than invalid"
+  should_run "$name" || return 0
+  local result out code old_base tree new_base
+  result="$(_gate_verify_result_path v3-base-advanced)"
+  _mk_gate_result_v3_verified "$result" "$_GATE_VERIFY_REPO"
+  old_base="$(git -C "$_GATE_VERIFY_REPO" rev-parse refs/heads/main)"
+  tree="$(git -C "$_GATE_VERIFY_REPO" rev-parse 'HEAD^{tree}')"
+  new_base="$(printf 'base advance\n' \
+    | git -C "$_GATE_VERIFY_REPO" commit-tree "$tree" -p "$old_base")"
+  git -C "$_GATE_VERIFY_REPO" update-ref refs/heads/main "$new_base"
+  set +e
+  out="$(_run_canonical_gate_verify "$result" --consumer generic --json 2>&1)"
+  code=$?
+  set -e
+  git -C "$_GATE_VERIFY_REPO" update-ref refs/heads/main "$old_base"
+  if [[ "$code" -eq 1 ]] \
+      && jq -e '
+        .axes.artifact_valid.status == "pass" and
+        (.axes.subject_current.reason_codes | index("base_advanced")) != null
+      ' <<<"$out" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+case_verify_v3_fixed_ref_ignores_working_tree() {
+  # Behavior: a fixed-ref subject is immutable and deliberately ignores
+  # unrelated working-tree dirt while still binding repository/base/head.
+  local name="gate/verify: v3 fixed ref remains current across working-tree dirt"
+  should_run "$name" || return 0
+  local result sidecar snapshot subject out code
+  result="$(_gate_verify_result_path v3-fixed-ref)"
+  sidecar="${result}.assurance.json"
+  _mk_gate_result_v3_verified "$result" "$_GATE_VERIFY_REPO"
+  snapshot="$(
+    gate_subject_snapshot "$_GATE_VERIFY_REPO" main \
+      "$(git -C "$_GATE_VERIFY_REPO" rev-parse HEAD)" \
+      fixed_ref ignore_working_tree "2026-07-27T00:00:00Z"
+  )"
+  subject="$(jq -nc --argjson snapshot "$snapshot" '{
+    kind:"gate_subject_v1",
+    schema_version:1,
+    repository:$snapshot.repository,
+    observed:$snapshot.observed,
+    base:$snapshot.base,
+    head:$snapshot.head,
+    tree_fingerprint:$snapshot.tree_fingerprint,
+    subject_kind:$snapshot.subject_kind,
+    dirty_policy:$snapshot.dirty_policy,
+    created_at:$snapshot.captured_at,
+    finished_at:$snapshot.captured_at,
+    observed_at_finish:{
+      repository_key:$snapshot.repository.key,
+      base_commit:$snapshot.base.commit,
+      head_commit:$snapshot.head.commit,
+      tree_fingerprint:$snapshot.tree_fingerprint
+    }
+  }')"
+  jq --argjson subject "$subject" '
+    .subject = $subject |
+    .bindings.repo_identity = $subject.repository.key |
+    .bindings.base_commit = $subject.base.commit |
+    .bindings.head_commit = $subject.head.commit |
+    .bindings.subject_fingerprint = $subject.tree_fingerprint
+  ' "$sidecar" > "${sidecar}.tmp"
+  mv "${sidecar}.tmp" "$sidecar"
+  _refresh_gate_result_v3_attestation "$result"
+  printf 'unrelated dirt\n' > "$_GATE_VERIFY_REPO/untracked.txt"
+  set +e
+  out="$(_run_canonical_gate_verify "$result" --consumer generic --json 2>&1)"
+  code=$?
+  set -e
+  rm -f "$_GATE_VERIFY_REPO/untracked.txt"
+  if [[ "$code" -eq 0 ]] \
+      && jq -e '
+        .axes.artifact_valid.status == "pass" and
+        .axes.subject_current.status == "pass" and
+        .axes.policy_applicable.status == "pass"
+      ' <<<"$out" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+case_verify_v3_linked_worktree_path_is_current() {
+  # Behavior: another linked worktree has the same Git common-dir identity; its
+  # different observed path alone does not stale the subject.
+  local name="gate/verify: v3 linked worktree path difference keeps subject current"
+  should_run "$name" || return 0
+  local result linked out code
+  result="$(_gate_verify_result_path v3-linked-worktree)"
+  linked="$tmp_root/gate-verify-linked"
+  _mk_gate_result_v3_verified "$result" "$_GATE_VERIFY_REPO"
+  git -C "$_GATE_VERIFY_REPO" worktree add -q --detach "$linked" HEAD
+  set +e
+  out="$(
+    PM_DISPATCH_STATE_ROOT="$_GATE_VERIFY_STATE_ROOT" \
+      "$PMCTL" gate verify "$result" --cd "$linked" --json 2>&1
+  )"
+  code=$?
+  set -e
+  git -C "$_GATE_VERIFY_REPO" worktree remove -f "$linked"
+  if [[ "$code" -eq 0 ]] \
+      && jq -e --arg original "$_GATE_VERIFY_REPO" '
+        .axes.artifact_valid.status == "pass" and
+        .axes.subject_current.status == "pass" and
+        .axes.subject_current.current.observed_root != $original
+      ' <<<"$out" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+case_verify_v3_different_repo_same_content_is_stale() {
+  # Behavior: equal files and commits in a separate repository do not satisfy
+  # the stable common-dir repository identity.
+  local name="gate/verify: v3 different repository reports repository_mismatch"
+  should_run "$name" || return 0
+  local result other out code
+  result="$(_gate_verify_result_path v3-other-repo)"
+  other="$tmp_root/gate-verify-other"
+  _mk_gate_result_v3_verified "$result" "$_GATE_VERIFY_REPO"
+  git clone -q "$_GATE_VERIFY_REPO" "$other"
+  git -C "$other" branch main origin/main
+  set +e
+  out="$(
+    PM_DISPATCH_STATE_ROOT="$_GATE_VERIFY_STATE_ROOT" \
+      "$PMCTL" gate verify "$result" --cd "$other" --consumer generic --json 2>&1
+  )"
+  code=$?
+  set -e
+  if [[ "$code" -eq 1 ]] \
+      && jq -e '
+        .axes.artifact_valid.status == "pass" and
+        (.axes.subject_current.reason_codes | index("repository_mismatch")) != null
+      ' <<<"$out" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+case_verify_v3_copy_replay_is_valid_but_not_authorizing() {
+  # Behavior: copying the self-contained result/sidecar pair preserves content
+  # validity and subject freshness, but protected dispatch applicability does
+  # not travel outside the canonical run partition.
+  local name="gate/verify: v3 copied pair is valid/current but not policy-authorizing"
+  should_run "$name" || return 0
+  local result copied out code
+  result="$(_gate_verify_result_path v3-copy-source)"
+  copied="$tmp_root/v3-copy/result.md"
+  _mk_gate_result_v3_verified "$result" "$_GATE_VERIFY_REPO"
+  mkdir -p "$(dirname "$copied")"
+  cp "$result" "$copied"
+  cp "${result}.assurance.json" "${copied}.assurance.json"
+  set +e
+  out="$(
+    PM_DISPATCH_STATE_ROOT="$_GATE_VERIFY_STATE_ROOT" \
+      "$PMCTL" gate verify "$copied" --cd "$_GATE_VERIFY_REPO" \
+        --consumer generic --json 2>&1
+  )"
+  code=$?
+  set -e
+  if [[ "$code" -eq 1 ]] \
+      && jq -e '
+        .axes.artifact_valid.status == "pass" and
+        .axes.subject_current.status == "pass" and
+        .axes.policy_applicable.status == "fail" and
+        (.axes.policy_applicable.reason_codes |
+          index("canonical_dispatch_evidence_unavailable")) != null
+      ' <<<"$out" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+case_verify_v3_valid_but_policy_insufficient() {
+  # Behavior: a generic-policy artifact remains valid/current but cannot satisfy
+  # the stronger maintainer consumer.
+  local name="gate/verify: v3 generic artifact is insufficient for maintainer consumer"
+  should_run "$name" || return 0
+  local result out code
+  result="$(_gate_verify_result_path v3-policy-insufficient)"
+  _mk_gate_result_v3_verified "$result" "$_GATE_VERIFY_REPO"
+  set +e
+  out="$(_run_canonical_gate_verify "$result" --consumer maintainer --json 2>&1)"
+  code=$?
+  set -e
+  if [[ "$code" -eq 1 ]] \
+      && jq -e '
+        .axes.artifact_valid.status == "pass" and
+        .axes.subject_current.status == "pass" and
+        (.axes.policy_applicable.reason_codes |
+          index("consumer_policy_mismatch")) != null
+      ' <<<"$out" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+case_verify_v3_linked_evidence_digest_tamper_is_invalid() {
+  # Behavior: a linked evidence digest is part of artifact integrity, distinct
+  # from whether the otherwise immutable subject is still current.
+  local name="gate/verify: v3 malformed linked-evidence digest invalidates artifact"
+  should_run "$name" || return 0
+  local result sidecar evidence evidence_sha out report code
+  result="$(_gate_verify_result_path v3-evidence-tamper)"
+  sidecar="${result}.assurance.json"
+  evidence="$(dirname "$result")/preflight-evidence-20260727-000000.json"
+  _mk_gate_result_v3_verified "$result" "$_GATE_VERIFY_REPO"
+  printf '{"kind":"fixture","status":"pass"}\n' > "$evidence"
+  evidence_sha="$(sha256sum "$evidence" | awk '{print $1}')"
+  jq --arg artifact "$(basename "$evidence")" --arg sha "$evidence_sha" '
+    .evidence.preflight = {
+      status:"linked",
+      outcome:"pass",
+      artifact:$artifact,
+      sha256:$sha,
+      subject_fingerprint:.subject.tree_fingerprint
+    }
+  ' "$sidecar" > "${sidecar}.tmp"
+  mv "${sidecar}.tmp" "$sidecar"
+  _refresh_gate_result_v3_attestation "$result"
+  printf 'tampered\n' >> "$evidence"
+  set +e
+  out="$(_run_canonical_gate_verify "$result" --consumer generic --json 2>&1)"
+  code=$?
+  set -e
+  report="$(tail -n 1 <<<"$out")"
+  if [[ "$code" -eq 1 ]] \
+      && jq -e '
+        .axes.artifact_valid.status == "fail" and
+        (.axes.artifact_valid.reason_codes |
+          index("artifact_integrity_failed")) != null
+      ' <<<"$report" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+case_verify_v3_subject_binding_mismatch_is_invalid() {
+  # Behavior: even a freshly re-attested sidecar cannot separate the legacy
+  # binding field from the immutable v3 subject it claims to summarize.
+  local name="gate/verify: v3 binding fingerprint must match immutable subject"
+  should_run "$name" || return 0
+  local result sidecar out report code
+  result="$(_gate_verify_result_path v3-binding-subject-mismatch)"
+  sidecar="${result}.assurance.json"
+  _mk_gate_result_v3_verified "$result" "$_GATE_VERIFY_REPO"
+  jq '.bindings.subject_fingerprint = ("f" * 64)' "$sidecar" > "${sidecar}.tmp"
+  mv "${sidecar}.tmp" "$sidecar"
+  _refresh_gate_result_v3_attestation "$result"
+  set +e
+  out="$(_run_canonical_gate_verify "$result" --consumer generic --json 2>&1)"
+  code=$?
+  set -e
+  report="$(tail -n 1 <<<"$out")"
+  if [[ "$code" -eq 1 ]] \
+      && [[ "$out" == *"structural/claim verification"* ]] \
+      && jq -e '.axes.artifact_valid.status == "fail"' \
+        <<<"$report" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+case_verify_v3_linked_preflight_subject_claim_mismatch_is_invalid() {
+  # Behavior: the sidecar cannot attach a digest-valid preflight artifact to a
+  # different subject by writing the desired subject only in the link record.
+  local name="gate/verify: v3 linked preflight subject must match evidence claim"
+  should_run "$name" || return 0
+  local result sidecar evidence evidence_sha out report code
+  result="$(_gate_verify_result_path v3-preflight-subject-mismatch)"
+  sidecar="${result}.assurance.json"
+  evidence="$(dirname "$result")/preflight-evidence-20260727-000001.json"
+  _mk_gate_result_v3_verified "$result" "$_GATE_VERIFY_REPO"
+  jq -n '{
+    kind:"pr_gate_preflight_v1",
+    status:"pass",
+    subject:{
+      fingerprint_before:("f" * 64),
+      fingerprint_after:("f" * 64)
+    }
+  }' > "$evidence"
+  evidence_sha="$(sha256sum "$evidence" | awk '{print $1}')"
+  jq --arg artifact "$(basename "$evidence")" --arg sha "$evidence_sha" '
+    .evidence.preflight = {
+      status:"linked",
+      outcome:"pass",
+      artifact:$artifact,
+      sha256:$sha,
+      subject_fingerprint:.subject.tree_fingerprint
+    }
+  ' "$sidecar" > "${sidecar}.tmp"
+  mv "${sidecar}.tmp" "$sidecar"
+  _refresh_gate_result_v3_attestation "$result"
+  set +e
+  out="$(_run_canonical_gate_verify "$result" --consumer generic --json 2>&1)"
+  code=$?
+  set -e
+  report="$(tail -n 1 <<<"$out")"
+  if [[ "$code" -eq 1 ]] \
+      && [[ "$out" == *"linked preflight evidence subject claim mismatch"* ]] \
+      && jq -e '.axes.artifact_valid.status == "fail"' \
+        <<<"$report" >/dev/null; then
     pass "$name"
   else
     fail "$name" "code=$code out=$out"
@@ -1561,6 +2053,18 @@ case_verify_valid
 case_verify_v2_assurance
 case_verify_v2_without_policy_remains_readable
 case_verify_v2_canonical_authorization
+case_verify_v3_three_axes_current
+case_verify_v3_dirty_drift_is_stale_not_invalid
+case_verify_v3_head_moved_is_stale
+case_verify_v3_base_advanced_is_stale
+case_verify_v3_fixed_ref_ignores_working_tree
+case_verify_v3_linked_worktree_path_is_current
+case_verify_v3_different_repo_same_content_is_stale
+case_verify_v3_copy_replay_is_valid_but_not_authorizing
+case_verify_v3_valid_but_policy_insufficient
+case_verify_v3_linked_evidence_digest_tamper_is_invalid
+case_verify_v3_subject_binding_mismatch_is_invalid
+case_verify_v3_linked_preflight_subject_claim_mismatch_is_invalid
 case_verify_v2_forged_state_tree_rejected
 case_verify_v2_repo_binding_rejected
 case_verify_v2_legacy_assurance_is_unavailable
