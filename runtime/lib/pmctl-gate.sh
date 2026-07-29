@@ -712,7 +712,9 @@ pmctl_gate_wait() {
             "$work_dir" "$(jq -c '.axes' <<<"$_assessment")" >&2
           return 2
         fi
-        if [[ "$_state" == GO && "$_assurance_kind" == gate_assurance_v3 \
+        if [[ "$_state" == GO \
+            && ( "$_assurance_kind" == gate_assurance_v2 \
+              || "$_assurance_kind" == gate_assurance_v3 ) \
             && ( "$_assessment_rc" -ne 0 || "$_policy_axis" != pass ) ]]; then
           printf 'pmctl gate wait: FAIL: GO artifact is not applicable to its embedded consumer policy (%s) -- treating as failed wait\n' \
             "$(jq -c '.axes.policy_applicable' <<<"$_assessment")" >&2

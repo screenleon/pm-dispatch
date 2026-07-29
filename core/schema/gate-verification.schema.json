@@ -123,6 +123,9 @@
         "consumer": {
           "enum": ["embedded", "generic", "maintainer", "publish"]
         },
+        "required_policy": {
+          "enum": ["generic", "maintainer"]
+        },
         "embedded_policy": {
           "enum": ["generic", "maintainer"]
         }

@@ -728,6 +728,27 @@ case_verify_v2_without_policy_remains_readable() {
   fi
 }
 
+case_verify_v2_named_consumer_is_not_authorizing() {
+  local name="gate/verify: v2 named consumer reports applicability unavailable"
+  should_run "$name" || return 0
+  local result="$tmp_root/v2-named-consumer/result.md" out code
+  _mk_gate_result_v2 "$result"
+  set +e
+  out="$("$PMCTL" gate verify "$result" --consumer embedded --json 2>&1)"
+  code=$?
+  set -e
+  if [[ "$code" -eq 1 ]] && jq -e '
+      .axes.artifact_valid.status == "pass" and
+      .axes.policy_applicable.status == "unavailable" and
+      (.axes.policy_applicable.reason_codes |
+        index("consumer_applicability_unavailable")) != null
+    ' <<<"$out" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
 case_verify_v2_canonical_authorization() {
   local name="gate/verify: v2 protected attestation and canonical runs exit 0"
   should_run "$name" || return 0
@@ -761,12 +782,109 @@ case_verify_v3_three_axes_current() {
         .assurance.kind == "gate_assurance_v3" and
         .axes.artifact_valid.status == "pass" and
         .axes.subject_current.status == "pass" and
-        .axes.policy_applicable.status == "pass"
+        .axes.policy_applicable.status == "pass" and
+        .axes.policy_applicable.required_policy == "generic"
       ' <<<"$out" >/dev/null; then
     pass "$name"
   else
     fail "$name" "code=$code out=$out"
   fi
+}
+
+case_verify_v3_producer_drift_reason_codes() {
+  local name="gate/verify: v3 producer-finish drift reasons are observable"
+  should_run "$name" || return 0
+  local field reason value result sidecar out code slug
+  while IFS='|' read -r field reason; do
+    slug="${field//_/-}"
+    result="$(_gate_verify_result_path "v3-producer-$slug")"
+    sidecar="${result}.assurance.json"
+    _mk_gate_result_v3_verified "$result" "$_GATE_VERIFY_REPO"
+    case "$field" in
+      repository_key|tree_fingerprint) value="$(printf '%064d' 0)" ;;
+      base_commit|head_commit) value="$(printf '%040d' 0)" ;;
+    esac
+    jq --arg field "$field" --arg value "$value" \
+      '.subject.observed_at_finish[$field] = $value' \
+      "$sidecar" > "${sidecar}.tmp"
+    mv "${sidecar}.tmp" "$sidecar"
+    _refresh_gate_result_v3_attestation "$result"
+    set +e
+    out="$(_run_canonical_gate_verify "$result" --consumer generic --json 2>&1)"
+    code=$?
+    set -e
+    if [[ "$code" -ne 1 ]] || ! jq -e --arg reason "$reason" '
+        .axes.artifact_valid.status == "pass" and
+        .axes.subject_current.status == "fail" and
+        (.axes.subject_current.reason_codes | index($reason)) != null
+      ' <<<"$out" >/dev/null; then
+      fail "$name" "$field code=$code out=$out"
+      return
+    fi
+  done <<'CASES'
+repository_key|producer_repository_drift
+base_commit|producer_base_drift
+head_commit|producer_head_drift
+tree_fingerprint|producer_tree_drift
+CASES
+  pass "$name"
+}
+
+case_verify_v3_policy_reason_codes() {
+  local name="gate/verify: v3 policy-applicability failure reasons are covered"
+  should_run "$name" || return 0
+  local result sidecar fixture mutation reason consumer axis
+  result="$(_gate_verify_result_path v3-policy-reasons)"
+  sidecar="${result}.assurance.json"
+  _mk_gate_result_v3_verified "$result" "$_GATE_VERIFY_REPO"
+  while IFS='|' read -r mutation reason consumer; do
+    fixture="$tmp_root/policy-reason-${reason}.json"
+    case "$mutation" in
+      verdict)
+        jq '.result.final = "NO-GO"' "$sidecar" > "$fixture"
+        ;;
+      no-policy)
+        jq 'del(.policy)' "$sidecar" > "$fixture"
+        ;;
+      enforcement)
+        jq '.policy.enforcement.status = "fail"' "$sidecar" > "$fixture"
+        ;;
+      independence)
+        jq '.coordinates.independence.evidence_status = "unavailable"' \
+          "$sidecar" > "$fixture"
+        ;;
+      dispatch)
+        jq '.dispatch.outcomes[0].run_id = null' "$sidecar" > "$fixture"
+        ;;
+      closure)
+        jq '.policy.consumer_policy = "maintainer"' "$sidecar" > "$fixture"
+        ;;
+    esac
+    axis="$(
+      gate_policy_applicability_assess "$fixture" "$consumer" verified
+    )"
+    if ! jq -e --arg reason "$reason" '
+        .status == "fail" and (.reason_codes | index($reason)) != null
+      ' <<<"$axis" >/dev/null; then
+      fail "$name" "$mutation axis=$axis"
+      return
+    fi
+    if [[ "$consumer" == publish ]] && ! jq -e '
+        .consumer == "publish" and .required_policy == "maintainer" and
+        .embedded_policy == "maintainer"
+      ' <<<"$axis" >/dev/null; then
+      fail "$name" "publish policy mapping is not self-describing: $axis"
+      return
+    fi
+  done <<'CASES'
+verdict|verdict_not_go|generic
+no-policy|policy_resolution_unavailable|generic
+enforcement|policy_enforcement_failed|generic
+independence|review_independence_unverified|generic
+dispatch|review_dispatch_evidence_incomplete|generic
+closure|closure_evidence_unavailable|publish
+CASES
+  pass "$name"
 }
 
 case_verify_v3_dirty_drift_is_stale_not_invalid() {
@@ -1481,6 +1599,45 @@ case_verify_usage() {
   fi
 }
 
+case_verify_argument_errors() {
+  local name="gate/verify: new flag parser rejects malformed arguments"
+  should_run "$name" || return 0
+  local result="$tmp_root/verify-args/result.md" variant expected out code
+  _mk_gate_result "$result" GO
+  while IFS='|' read -r variant expected; do
+    set +e
+    case "$variant" in
+      consumer)
+        out="$("$PMCTL" gate verify "$result" --consumer bogus 2>&1)"
+        code=$?
+        ;;
+      cd)
+        out="$("$PMCTL" gate verify "$result" --cd 2>&1)"
+        code=$?
+        ;;
+      option)
+        out="$("$PMCTL" gate verify "$result" --bogus 2>&1)"
+        code=$?
+        ;;
+      positional)
+        out="$("$PMCTL" gate verify "$result" "$result" 2>&1)"
+        code=$?
+        ;;
+    esac
+    set -e
+    if [[ "$code" -ne 2 || "$out" != *"$expected"* ]]; then
+      fail "$name" "$variant code=$code out=$out"
+      return
+    fi
+  done <<'CASES'
+consumer|requires embedded, generic, maintainer, or publish
+cd|requires a repository path
+option|unknown option
+positional|unexpected argument
+CASES
+  pass "$name"
+}
+
 # ---- 11: pmctl gate run forwards --run-dir to pr-gate.sh --------------------
 case_run_dir_forwarded_to_gate() {
   # Verifies that pmctl_gate_run computes a run dir keyed to the --cd target repo
@@ -2052,8 +2209,11 @@ case_help_bypasses_detached_default
 case_verify_valid
 case_verify_v2_assurance
 case_verify_v2_without_policy_remains_readable
+case_verify_v2_named_consumer_is_not_authorizing
 case_verify_v2_canonical_authorization
 case_verify_v3_three_axes_current
+case_verify_v3_producer_drift_reason_codes
+case_verify_v3_policy_reason_codes
 case_verify_v3_dirty_drift_is_stale_not_invalid
 case_verify_v3_head_moved_is_stale
 case_verify_v3_base_advanced_is_stale
@@ -2085,6 +2245,7 @@ case_verify_empty
 case_verify_no_final
 case_verify_parity_mismatch
 case_verify_usage
+case_verify_argument_errors
 case_run_dir_forwarded_to_gate
 case_default_lifecycle_is_detached
 case_gate_wait_go_route_via_cli

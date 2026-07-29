@@ -1051,6 +1051,21 @@ case_gate_verification_duplicate_reason_rejected() {
   rm -f "$tmpf"
 }
 
+case_gate_verification_invalid_consumer_rejected() {
+  local name="gate-verification: unknown policy consumer is rejected"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/gate-verification.schema.json" tmpf
+  tmpf="$(mktemp /tmp/gate-verification-consumer-XXXXXX.json)"
+  _gate_verification_valid_instance |
+    jq '.axes.policy_applicable.consumer = "deployment"' > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    fail "$name" "schema accepted a policy consumer outside the contract"
+  else
+    pass "$name"
+  fi
+  rm -f "$tmpf"
+}
+
 case_gate_assurance_invalid_outcome_rejected() {
   local name="gate-assurance: unknown dispatch status is rejected"
   should_run "$name" || return 0
@@ -1174,6 +1189,7 @@ case_gate_assurance_v3_invalid_dirty_pair_rejected
 case_gate_assurance_v3_evidence_path_rejected
 case_gate_verification_valid_instance
 case_gate_verification_duplicate_reason_rejected
+case_gate_verification_invalid_consumer_rejected
 case_gate_assurance_invalid_outcome_rejected
 case_gate_assurance_non_user_policy_approver_rejected
 case_gate_policy_override_valid_instance

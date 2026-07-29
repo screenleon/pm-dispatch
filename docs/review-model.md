@@ -238,6 +238,21 @@ passing `--consumer` is authorizing and requires all three axes to pass.
 `gate wait` and `ship finish` consume this shared assessment rather than
 grepping `Final: GO`.
 
+Subject verification intentionally fingerprints the complete included tree,
+not only the diff. Its cost is therefore linear in tracked and included
+untracked files each time a subject is finalized or verified. This is bounded
+and acceptable for the current repository, but callers operating on large
+monorepos should expect verification latency to scale with repository size.
+
+Do not mutate the reviewed tree between gate finalization and `gate wait` or
+`ship finish`. A formatter, test artifact, commit, or other included file write
+correctly changes `subject_current` to `fail`; the consumer refuses the result
+and reports the drift reason instead of silently authorizing a different tree.
+Legacy v1 results retain historical detached-wait completion behavior. A v2 GO
+cannot satisfy the wait path's named embedded consumer, and neither v1 nor v2
+is publication authorization; `ship finish` requires a current, applicable v3
+assessment.
+
 The producer publishes the sidecar before atomically replacing the
 self-contained v1 result with the v2 result that references it, so interruption
 cannot strand a v2 result with a missing sidecar. The protected attestation is

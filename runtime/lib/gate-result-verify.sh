@@ -422,6 +422,7 @@ gate_policy_applicability_assess() {
       status:(if ($reasons | length) == 0 then "pass" else "fail" end),
       reason_codes:$reasons,
       consumer:$consumer,
+      required_policy:$required_policy,
       embedded_policy:$a.policy.consumer_policy
     }'
 }

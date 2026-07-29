@@ -245,6 +245,30 @@ run_finish_with_no_result_line() {
   ' _ "$REPO_ROOT" "$work_dir" "$ticket_id"
 }
 
+# run_finish_with_broken_shared_verifier <work_dir> <ticket_id>
+#                                        <missing|malformed>
+# Reaches the post-gate publication boundary with either no shared verifier
+# function or one that violates the structured-assessment contract.
+run_finish_with_broken_shared_verifier() {
+  local work_dir="$1" ticket_id="$2" verifier_mode="$3"
+  bash -c '
+    repo_root="$1"; work_dir="$2"; ticket_id="$3"; verifier_mode="$4"
+    pmctl_gate_run() {
+      local result_file
+      result_file="$(mktemp)"
+      printf "Final: GO\n" > "$result_file"
+      printf "result: %s\n" "$result_file"
+    }
+    . "$repo_root/runtime/lib/pmctl-ship.sh"
+    if [[ "$verifier_mode" == malformed ]]; then
+      pmctl_gate_verify() { printf "{\"kind\":\"unexpected\"}\n"; }
+    else
+      unset -f pmctl_gate_verify 2>/dev/null || true
+    fi
+    pmctl_ship_finish "$repo_root" "$work_dir" "$ticket_id"
+  ' _ "$REPO_ROOT" "$work_dir" "$ticket_id" "$verifier_mode"
+}
+
 # run_ship_parallel_capture_dispatch_argv <store> <work_dir> <ticket-id> [ship --parallel flags...]
 # Runs the REAL `pmctl_ship_parallel_run` (real worktree creation, so
 # --from is genuinely exercised against git) but with `pmctl_dispatch_run`
@@ -991,6 +1015,44 @@ case_finish_missing_result_file() {
   assert_exit "$name" "$status" 1 && \
     assert_file_contains "$name" "$err" "could not locate gate result file" && \
     pass "$name"
+}
+
+case_finish_missing_shared_verifier_refuses_publish() {
+  local name="ship finish: missing shared gate verifier fails closed"
+  should_run "$name" || return 0
+  local work out err status=0
+  work="$tmp_root/work-finish-missing-verifier"
+  make_work_repo "$work" "CC-9001"
+  checkout_ticket_branch "$work" "CC-9001"
+  out="$tmp_root/out-finish-missing-verifier"
+  err="$tmp_root/err-finish-missing-verifier"
+  run_finish_with_broken_shared_verifier "$work" "CC-9001" missing \
+    > "$out" 2> "$err" || status=$?
+  if [[ "$status" -eq 2 ]] \
+      && grep -q "shared gate verifier is unavailable" "$err"; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 2 fail-closed; status=$status stderr=$(cat "$err")"
+  fi
+}
+
+case_finish_malformed_shared_assessment_refuses_publish() {
+  local name="ship finish: malformed shared gate assessment fails closed"
+  should_run "$name" || return 0
+  local work out err status=0
+  work="$tmp_root/work-finish-malformed-verifier"
+  make_work_repo "$work" "CC-9001"
+  checkout_ticket_branch "$work" "CC-9001"
+  out="$tmp_root/out-finish-malformed-verifier"
+  err="$tmp_root/err-finish-malformed-verifier"
+  run_finish_with_broken_shared_verifier "$work" "CC-9001" malformed \
+    > "$out" 2> "$err" || status=$?
+  if [[ "$status" -eq 1 ]] \
+      && grep -q "returned no structured assessment" "$err"; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 1 fail-closed; status=$status stderr=$(cat "$err")"
+  fi
 }
 
 case_finish_go_stale_subject_does_not_push() {
@@ -1928,6 +1990,8 @@ case_run_tracks_adapter_field() {
 
 case_finish_no_go_does_not_push
 case_finish_missing_result_file
+case_finish_missing_shared_verifier_refuses_publish
+case_finish_malformed_shared_assessment_refuses_publish
 case_finish_go_stale_subject_does_not_push
 case_finish_go_dirty_tree_refuses_push
 case_finish_go_head_moved_refuses_push
