@@ -303,6 +303,252 @@ gate_subject_assess() {
     }'
 }
 
+# gate_scope_manifest_verify <manifest> <repository-key> <base-commit>
+#                            <head-commit> <tree-fingerprint> <subject-kind>
+#                            <base-ref> <head-ref>
+#
+# JSON Schema owns the portable development contract. This jq predicate is the
+# copy-mode runtime mirror: it verifies closed shapes, cross-field parity,
+# truncation truthfulness, immutable-subject binding, and the self-addressed
+# canonical content digest without requiring a jsonschema executable.
+gate_scope_manifest_verify() {
+  local manifest_file="$1" repository_key="$2" base_commit="$3"
+  local head_commit="$4" tree_fingerprint="$5" subject_kind="$6"
+  local base_ref="$7" head_ref="$8"
+  local expected_digest actual_digest
+  [[ -s "$manifest_file" ]] || {
+    printf 'Error: gate scope manifest is missing or empty: %s\n' \
+      "$manifest_file" >&2
+    return 1
+  }
+  expected_digest="$(jq -r '.content.digest // empty' "$manifest_file" 2>/dev/null)"
+  actual_digest="$(jq -cS 'del(.content.digest)' "$manifest_file" 2>/dev/null \
+    | _gate_result_sha256_stream)" || return $?
+  if [[ ! "$expected_digest" =~ ^[a-f0-9]{64}$ \
+      || "$actual_digest" != "$expected_digest" ]]; then
+    printf 'Error: gate scope manifest content digest mismatch: %s\n' \
+      "$manifest_file" >&2
+    return 1
+  fi
+  jq -e \
+    --arg repository_key "$repository_key" \
+    --arg base_commit "$base_commit" \
+    --arg head_commit "$head_commit" \
+    --arg tree_fingerprint "$tree_fingerprint" \
+    --arg subject_kind "$subject_kind" \
+    --arg base_ref "$base_ref" \
+    --arg head_ref "$head_ref" '
+    def only_keys($allowed):
+      (keys | sort) == ($allowed | sort);
+    def strings_unique:
+      type == "array" and all(.[]; type == "string" and length > 0) and
+      length == (unique | length);
+    def safe_path:
+      type == "string" and length > 0 and
+      (startswith("/") | not) and
+      ((split("/") | index("..")) == null);
+    def paths_unique:
+      strings_unique and all(.[]; safe_path);
+    def exact_set($other):
+      (sort) == ($other | sort);
+    def scope_counts:
+      only_keys(["diff_hunks","expansion_source_paths",
+        "symbols_per_source","matches_per_query","expansion_entries"]) and
+      all(.[]; type == "number" and . >= 0 and floor == .);
+    def scope_flag($changed):
+      only_keys(["matched","paths"]) and
+      (.matched | type == "boolean") and
+      (.paths | paths_unique) and
+      (.matched == ((.paths | length) > 0)) and
+      all(.paths[]; . as $path | ($changed | index($path)) != null);
+
+    only_keys(["kind","schema_version","status","subject","selection",
+      "changes","diff","paired_tests","sensitive_signals","flags",
+      "expansion","truncation","content"]) and
+    .kind == "gate_scope_manifest_v1" and .schema_version == 1 and
+    (.status | IN("complete","accepted_truncation","incomplete")) and
+    (.subject |
+      only_keys(["repository_key","base_commit","head_commit",
+        "tree_fingerprint","subject_kind"]) and
+      .repository_key == $repository_key and
+      .base_commit == $base_commit and
+      .head_commit == $head_commit and
+      .tree_fingerprint == $tree_fingerprint and
+      .subject_kind == $subject_kind and
+      (.repository_key | test("^[a-f0-9]{64}$")) and
+      (.base_commit | test("^[a-f0-9]{40}$")) and
+      (.head_commit | test("^[a-f0-9]{40}$")) and
+      (.tree_fingerprint | test("^[a-f0-9]{64}$")) and
+      (.subject_kind | IN("committed_head","working_tree","fixed_ref"))) and
+    (.selection |
+      only_keys(["diff_kind","base_ref","head_ref","include_untracked"]) and
+      (.diff_kind | IN("committed","working-tree","allow-dirty","fixed-head")) and
+      .base_ref == $base_ref and
+      .head_ref == $head_ref and
+      (.include_untracked | type == "boolean")) and
+    ((.subject.subject_kind == "committed_head" and
+        .selection.diff_kind == "committed") or
+     (.subject.subject_kind == "working_tree" and
+        (.selection.diff_kind == "working-tree" or
+          .selection.diff_kind == "allow-dirty")) or
+     (.subject.subject_kind == "fixed_ref" and
+        .selection.diff_kind == "fixed-head")) and
+    (.selection.include_untracked ==
+      (.subject.subject_kind == "working_tree")) and
+    (.changes |
+      only_keys(["entries","changed_paths","renamed_paths","untracked_paths"]) and
+      (.entries | type == "array" and length > 0) and
+      all(.entries[];
+        only_keys(["status","old_path","new_path","similarity"]) and
+        (.status | IN("added","modified","deleted","renamed","copied",
+          "type_changed","unmerged","untracked","unknown")) and
+        (.old_path == null or (.old_path | safe_path)) and
+        (.new_path == null or (.new_path | safe_path)) and
+        (if (.status | IN("renamed","copied"))
+         then
+           (.old_path | safe_path) and (.new_path | safe_path) and
+           (.similarity | type == "number" and . >= 0 and . <= 100 and floor == .)
+         elif .status == "deleted"
+         then (.old_path | safe_path) and .new_path == null and .similarity == null
+         else .old_path == null and (.new_path | safe_path) and .similarity == null
+         end)) and
+      (.changed_paths | paths_unique) and
+      (. as $changes |
+        ([.entries[] | .old_path,.new_path | select(. != null)] | unique) |
+        exact_set($changes.changed_paths)) and
+      (.renamed_paths | type == "array" and
+        all(.[];
+          only_keys(["from","to","similarity"]) and
+          (.from | safe_path) and (.to | safe_path) and
+          (.similarity | type == "number" and . >= 0 and . <= 100 and floor == .))) and
+      (. as $changes |
+        ([.entries[] | select(.status == "renamed") |
+          {from:.old_path,to:.new_path,similarity:(.similarity // 0)}] | sort) ==
+        ($changes.renamed_paths | sort)) and
+      (.untracked_paths | paths_unique) and
+      (. as $changes |
+        ([.entries[] | select(.status == "untracked") | .new_path] | unique) |
+        exact_set($changes.untracked_paths))) and
+    (.changes.changed_paths as $changed |
+      (.diff |
+        only_keys(["hunks","binary_or_special_paths"]) and
+        (.hunks | type == "array" and
+          all(.[];
+            only_keys(["path","source","old_start","old_lines",
+              "new_start","new_lines","header"]) and
+            (.path | safe_path) and
+            (.source | IN("tracked","untracked")) and
+            all([.old_start,.old_lines,.new_start,.new_lines][];
+              type == "number" and . >= 0 and floor == .) and
+            (.header | type == "string" and length > 0) and
+            (.path as $path | ($changed | index($path)) != null))) and
+        (.binary_or_special_paths | paths_unique) and
+        all(.binary_or_special_paths[];
+          . as $path | ($changed | index($path)) != null)) and
+      (.paired_tests | type == "array" and
+        all(.[];
+          only_keys(["source_path","test_path","reason"]) and
+          (.source_path | safe_path) and (.test_path | safe_path) and
+          .reason == "language-convention" and
+          (.source_path as $path | ($changed | index($path)) != null))) and
+      (.sensitive_signals | type == "array" and
+        ([.[].id] | strings_unique) and
+        all(.[];
+          only_keys(["id","source","matches","minimum_tier",
+            "required_reviewers","recommended_mode"]) and
+          (.id | type == "string" and length > 0) and
+          .source == "path-regex" and
+          (.matches | strings_unique) and
+          all(.matches[]; . as $path | ($changed | index($path)) != null) and
+          (.minimum_tier | IN("express","standard","full")) and
+          (.required_reviewers | strings_unique) and
+          (.recommended_mode | IN("sequential","parallel")))) and
+      (.flags as $flags |
+        ($flags |
+          only_keys(["public_interface","schema","config","install","ci",
+            "release","migration"])) and
+        ($flags.public_interface | scope_flag($changed)) and
+        ($flags.schema | scope_flag($changed)) and
+        ($flags.config | scope_flag($changed)) and
+        ($flags.install | scope_flag($changed)) and
+        ($flags.ci | scope_flag($changed)) and
+        ($flags.release | scope_flag($changed)) and
+        ($flags.migration | scope_flag($changed)))) and
+    (.expansion |
+      only_keys(["claim","entries","included_paths"]) and
+      .claim == "bounded-hints-not-complete-call-graph" and
+      (.entries | type == "array" and
+        all(.[];
+          only_keys(["path","reason","source","evidence","limit"]) and
+          (.path | safe_path) and
+          (.reason | IN("same-stem-peer","call-site-hint",
+            "shared-helper-consumer")) and
+          (.source | type == "string" and length > 0) and
+          (.evidence | IN("peer-convention","symbol-reference","path-reference")) and
+          (.limit |
+            only_keys(["kind","maximum"]) and
+            (.kind | IN("per-source","per-symbol","global")) and
+            (.maximum | type == "number" and . >= 1 and floor == .)))) and
+      (.included_paths | paths_unique) and
+      (. as $expansion |
+        ([.entries[].path] | unique | exact_set($expansion.included_paths)))) and
+    (. as $manifest | .truncation |
+      only_keys(["occurred","budgets","omitted","reasons","acceptance"]) and
+      (.occurred | type == "boolean") and
+      (.budgets | scope_counts and all(.[]; . >= 1)) and
+      (.omitted | scope_counts) and
+      (.reasons | strings_unique) and
+      all(.reasons[];
+        IN("diff-hunk-budget","expansion-source-budget","symbol-budget",
+          "search-match-budget","expansion-entry-budget")) and
+      (.omitted as $o |
+        .occurred == ([$o[]] | any(. > 0)) and
+        (.reasons | exact_set([
+          if $o.diff_hunks > 0 then "diff-hunk-budget" else empty end,
+          if $o.expansion_source_paths > 0
+            then "expansion-source-budget" else empty end,
+          if $o.symbols_per_source > 0 then "symbol-budget" else empty end,
+          if $o.matches_per_query > 0
+            then "search-match-budget" else empty end,
+          if $o.expansion_entries > 0
+            then "expansion-entry-budget" else empty end
+        ]))) and
+      (($manifest.diff.hunks | length) <= .budgets.diff_hunks) and
+      (($manifest.expansion.entries | length) <= .budgets.expansion_entries) and
+      (.acceptance |
+        only_keys(["required","accepted","source"]) and
+        (.required | type == "boolean") and
+        (.accepted | type == "boolean") and
+        (.source == null or .source == "--accept-scope-truncation")) and
+      (if .occurred
+       then
+         .acceptance.required == true and
+         (if .acceptance.accepted
+          then .acceptance.source == "--accept-scope-truncation"
+          else .acceptance.source == null
+          end)
+       else
+         .acceptance == {required:false,accepted:false,source:null} and
+         (.reasons | length) == 0
+       end)) and
+    ((.status == "complete" and .truncation.occurred == false) or
+     (.status == "accepted_truncation" and
+       .truncation.occurred == true and
+       .truncation.acceptance.accepted == true) or
+     (.status == "incomplete" and
+       .truncation.occurred == true and
+       .truncation.acceptance.accepted == false)) and
+    (.content |
+      only_keys(["digest_algorithm","digest"]) and
+      .digest_algorithm == "sha256-canonical-json-without-content-digest" and
+      (.digest | test("^[a-f0-9]{64}$")))
+  ' "$manifest_file" >/dev/null || {
+    printf 'Error: gate scope manifest failed structural/claim verification: %s\n' \
+      "$manifest_file" >&2
+    return 1
+  }
+}
+
 _gate_assurance_linked_evidence_verify() {
   local assurance_file="$1" assurance_dir label artifact expected_sha
   local linked_subject subject_fingerprint artifact_path actual_sha
@@ -352,6 +598,31 @@ _gate_assurance_linked_evidence_verify() {
       if [[ ( "$linked_outcome" == pass && "$artifact_outcome" != pass ) \
           || ( "$linked_outcome" == fail && "$artifact_outcome" == pass ) ]]; then
         printf 'Error: gate assurance linked preflight evidence outcome mismatch: %s\n' \
+          "$artifact_path" >&2
+        return 1
+      fi
+    elif [[ "$label" == scope_manifest ]]; then
+      if ! gate_scope_manifest_verify "$artifact_path" \
+          "$(jq -r '.subject.repository.key' "$assurance_file")" \
+          "$(jq -r '.subject.base.commit' "$assurance_file")" \
+          "$(jq -r '.subject.head.commit' "$assurance_file")" \
+          "$linked_subject" \
+          "$(jq -r '.subject.subject_kind' "$assurance_file")" \
+          "$(jq -r '.subject.base.ref' "$assurance_file")" \
+          "$(jq -r '.subject.head.ref' "$assurance_file")"; then
+        return 1
+      fi
+      if ! jq -e --slurpfile scope "$artifact_path" '
+          ([.policy.matched_signals[] |
+            select(.source == "path-regex")] | sort_by(.id)) ==
+          ($scope[0].sensitive_signals | sort_by(.id))
+        ' "$assurance_file" >/dev/null; then
+        printf 'Error: gate scope manifest sensitive signals do not match resolved policy: %s\n' \
+          "$artifact_path" >&2
+        return 1
+      fi
+      if [[ "$(jq -r '.status' "$artifact_path")" == incomplete ]]; then
+        printf 'Error: incomplete gate scope manifest cannot authorize a gate result: %s\n' \
           "$artifact_path" >&2
         return 1
       fi
@@ -413,6 +684,8 @@ gate_policy_applicability_assess() {
       if any($a.dispatch.outcomes[];
         .status != "passed" or .evidence_status != "verified" or .run_id == null)
         then "review_dispatch_evidence_incomplete" else empty end,
+      if $a.evidence.scope_manifest.status != "verified"
+        then "scope_manifest_unavailable" else empty end,
       if $authorization_status != "verified"
         then $authorization_reason else empty end,
       if $consumer == "publish" and $a.evidence.closure.status != "verified"

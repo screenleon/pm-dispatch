@@ -1,0 +1,887 @@
+{
+  "title": "Gate scope manifest",
+  "description": "Immutable, bounded declaration of the repository scope supplied to selected gate reviewers.",
+  "type": "object",
+  "required": [
+    "kind",
+    "schema_version",
+    "status",
+    "subject",
+    "selection",
+    "changes",
+    "diff",
+    "paired_tests",
+    "sensitive_signals",
+    "flags",
+    "expansion",
+    "truncation",
+    "content"
+  ],
+  "properties": {
+    "kind": {
+      "const": "gate_scope_manifest_v1"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "status": {
+      "enum": [
+        "complete",
+        "accepted_truncation",
+        "incomplete"
+      ]
+    },
+    "subject": {
+      "type": "object",
+      "required": [
+        "repository_key",
+        "base_commit",
+        "head_commit",
+        "tree_fingerprint",
+        "subject_kind"
+      ],
+      "properties": {
+        "repository_key": {
+          "$ref": "#/definitions/sha256"
+        },
+        "base_commit": {
+          "$ref": "#/definitions/sha1"
+        },
+        "head_commit": {
+          "$ref": "#/definitions/sha1"
+        },
+        "tree_fingerprint": {
+          "$ref": "#/definitions/sha256"
+        },
+        "subject_kind": {
+          "enum": [
+            "committed_head",
+            "working_tree",
+            "fixed_ref"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "selection": {
+      "type": "object",
+      "required": [
+        "diff_kind",
+        "base_ref",
+        "head_ref",
+        "include_untracked"
+      ],
+      "properties": {
+        "diff_kind": {
+          "enum": [
+            "committed",
+            "working-tree",
+            "allow-dirty",
+            "fixed-head"
+          ]
+        },
+        "base_ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "head_ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "include_untracked": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "changes": {
+      "type": "object",
+      "required": [
+        "entries",
+        "changed_paths",
+        "renamed_paths",
+        "untracked_paths"
+      ],
+      "properties": {
+        "entries": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/definitions/changeEntry"
+          }
+        },
+        "changed_paths": {
+          "$ref": "#/definitions/nonEmptyPathSet"
+        },
+        "renamed_paths": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "from",
+              "to",
+              "similarity"
+            ],
+            "properties": {
+              "from": {
+                "$ref": "#/definitions/path"
+              },
+              "to": {
+                "$ref": "#/definitions/path"
+              },
+              "similarity": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 100
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "untracked_paths": {
+          "$ref": "#/definitions/pathSet"
+        }
+      },
+      "additionalProperties": false
+    },
+    "diff": {
+      "type": "object",
+      "required": [
+        "hunks",
+        "binary_or_special_paths"
+      ],
+      "properties": {
+        "hunks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "path",
+              "source",
+              "old_start",
+              "old_lines",
+              "new_start",
+              "new_lines",
+              "header"
+            ],
+            "properties": {
+              "path": {
+                "$ref": "#/definitions/path"
+              },
+              "source": {
+                "enum": [
+                  "tracked",
+                  "untracked"
+                ]
+              },
+              "old_start": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "old_lines": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "new_start": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "new_lines": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "header": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "binary_or_special_paths": {
+          "$ref": "#/definitions/pathSet"
+        }
+      },
+      "additionalProperties": false
+    },
+    "paired_tests": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "source_path",
+          "test_path",
+          "reason"
+        ],
+        "properties": {
+          "source_path": {
+            "$ref": "#/definitions/path"
+          },
+          "test_path": {
+            "$ref": "#/definitions/path"
+          },
+          "reason": {
+            "const": "language-convention"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "sensitive_signals": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/sensitiveSignal"
+      }
+    },
+    "flags": {
+      "type": "object",
+      "required": [
+        "public_interface",
+        "schema",
+        "config",
+        "install",
+        "ci",
+        "release",
+        "migration"
+      ],
+      "properties": {
+        "public_interface": {
+          "$ref": "#/definitions/scopeFlag"
+        },
+        "schema": {
+          "$ref": "#/definitions/scopeFlag"
+        },
+        "config": {
+          "$ref": "#/definitions/scopeFlag"
+        },
+        "install": {
+          "$ref": "#/definitions/scopeFlag"
+        },
+        "ci": {
+          "$ref": "#/definitions/scopeFlag"
+        },
+        "release": {
+          "$ref": "#/definitions/scopeFlag"
+        },
+        "migration": {
+          "$ref": "#/definitions/scopeFlag"
+        }
+      },
+      "additionalProperties": false
+    },
+    "expansion": {
+      "type": "object",
+      "required": [
+        "claim",
+        "entries",
+        "included_paths"
+      ],
+      "properties": {
+        "claim": {
+          "const": "bounded-hints-not-complete-call-graph"
+        },
+        "entries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/expansionEntry"
+          }
+        },
+        "included_paths": {
+          "$ref": "#/definitions/pathSet"
+        }
+      },
+      "additionalProperties": false
+    },
+    "truncation": {
+      "type": "object",
+      "required": [
+        "occurred",
+        "budgets",
+        "omitted",
+        "reasons",
+        "acceptance"
+      ],
+      "properties": {
+        "occurred": {
+          "type": "boolean"
+        },
+        "budgets": {
+          "$ref": "#/definitions/scopeCounts"
+        },
+        "omitted": {
+          "$ref": "#/definitions/scopeCounts"
+        },
+        "reasons": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "diff-hunk-budget",
+              "expansion-source-budget",
+              "symbol-budget",
+              "search-match-budget",
+              "expansion-entry-budget"
+            ]
+          }
+        },
+        "acceptance": {
+          "type": "object",
+          "required": [
+            "required",
+            "accepted",
+            "source"
+          ],
+          "properties": {
+            "required": {
+              "type": "boolean"
+            },
+            "accepted": {
+              "type": "boolean"
+            },
+            "source": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "enum": [
+                null,
+                "--accept-scope-truncation"
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "content": {
+      "type": "object",
+      "required": [
+        "digest_algorithm",
+        "digest"
+      ],
+      "properties": {
+        "digest_algorithm": {
+          "const": "sha256-canonical-json-without-content-digest"
+        },
+        "digest": {
+          "$ref": "#/definitions/sha256"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "subject": {
+            "properties": {
+              "subject_kind": {
+                "const": "committed_head"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "selection": {
+            "properties": {
+              "diff_kind": {
+                "const": "committed"
+              },
+              "include_untracked": {
+                "const": false
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "subject": {
+            "properties": {
+              "subject_kind": {
+                "const": "working_tree"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "selection": {
+            "properties": {
+              "diff_kind": {
+                "enum": [
+                  "working-tree",
+                  "allow-dirty"
+                ]
+              },
+              "include_untracked": {
+                "const": true
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "subject": {
+            "properties": {
+              "subject_kind": {
+                "const": "fixed_ref"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "selection": {
+            "properties": {
+              "diff_kind": {
+                "const": "fixed-head"
+              },
+              "include_untracked": {
+                "const": false
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "complete"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "truncation": {
+            "properties": {
+              "occurred": {
+                "const": false
+              },
+              "reasons": {
+                "maxItems": 0
+              },
+              "acceptance": {
+                "properties": {
+                  "required": {
+                    "const": false
+                  },
+                  "accepted": {
+                    "const": false
+                  },
+                  "source": {
+                    "type": "null"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "accepted_truncation"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "truncation": {
+            "properties": {
+              "occurred": {
+                "const": true
+              },
+              "reasons": {
+                "minItems": 1
+              },
+              "acceptance": {
+                "properties": {
+                  "required": {
+                    "const": true
+                  },
+                  "accepted": {
+                    "const": true
+                  },
+                  "source": {
+                    "const": "--accept-scope-truncation"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "incomplete"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "truncation": {
+            "properties": {
+              "occurred": {
+                "const": true
+              },
+              "reasons": {
+                "minItems": 1
+              },
+              "acceptance": {
+                "properties": {
+                  "required": {
+                    "const": true
+                  },
+                  "accepted": {
+                    "const": false
+                  },
+                  "source": {
+                    "type": "null"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "additionalProperties": false,
+  "definitions": {
+    "sha1": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)",
+      "not": {
+        "pattern": "(^|/)\\.\\.(/|$)"
+      }
+    },
+    "pathSet": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/definitions/path"
+      }
+    },
+    "nonEmptyPathSet": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/definitions/path"
+      }
+    },
+    "stringSet": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "changeEntry": {
+      "type": "object",
+      "required": [
+        "status",
+        "old_path",
+        "new_path",
+        "similarity"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "added",
+            "modified",
+            "deleted",
+            "renamed",
+            "copied",
+            "type_changed",
+            "unmerged",
+            "untracked",
+            "unknown"
+          ]
+        },
+        "old_path": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/path"
+            }
+          ]
+        },
+        "new_path": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/path"
+            }
+          ]
+        },
+        "similarity": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 100
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "enum": [
+                  "renamed",
+                  "copied"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "old_path": {
+                "$ref": "#/definitions/path"
+              },
+              "new_path": {
+                "$ref": "#/definitions/path"
+              },
+              "similarity": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 100
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "deleted"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "old_path": {
+                "$ref": "#/definitions/path"
+              },
+              "new_path": {
+                "type": "null"
+              },
+              "similarity": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "enum": [
+                  "added",
+                  "modified",
+                  "type_changed",
+                  "unmerged",
+                  "untracked",
+                  "unknown"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "old_path": {
+                "type": "null"
+              },
+              "new_path": {
+                "$ref": "#/definitions/path"
+              },
+              "similarity": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "sensitiveSignal": {
+      "type": "object",
+      "required": [
+        "id",
+        "source",
+        "matches",
+        "minimum_tier",
+        "required_reviewers",
+        "recommended_mode"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source": {
+          "const": "path-regex"
+        },
+        "matches": {
+          "$ref": "#/definitions/pathSet"
+        },
+        "minimum_tier": {
+          "enum": [
+            "express",
+            "standard",
+            "full"
+          ]
+        },
+        "required_reviewers": {
+          "$ref": "#/definitions/stringSet"
+        },
+        "recommended_mode": {
+          "enum": [
+            "sequential",
+            "parallel"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "scopeFlag": {
+      "type": "object",
+      "required": [
+        "matched",
+        "paths"
+      ],
+      "properties": {
+        "matched": {
+          "type": "boolean"
+        },
+        "paths": {
+          "$ref": "#/definitions/pathSet"
+        }
+      },
+      "additionalProperties": false
+    },
+    "expansionEntry": {
+      "type": "object",
+      "required": [
+        "path",
+        "reason",
+        "source",
+        "evidence",
+        "limit"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/definitions/path"
+        },
+        "reason": {
+          "enum": [
+            "same-stem-peer",
+            "call-site-hint",
+            "shared-helper-consumer"
+          ]
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence": {
+          "enum": [
+            "peer-convention",
+            "symbol-reference",
+            "path-reference"
+          ]
+        },
+        "limit": {
+          "type": "object",
+          "required": [
+            "kind",
+            "maximum"
+          ],
+          "properties": {
+            "kind": {
+              "enum": [
+                "per-source",
+                "per-symbol",
+                "global"
+              ]
+            },
+            "maximum": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "scopeCounts": {
+      "type": "object",
+      "required": [
+        "diff_hunks",
+        "expansion_source_paths",
+        "symbols_per_source",
+        "matches_per_query",
+        "expansion_entries"
+      ],
+      "properties": {
+        "diff_hunks": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "expansion_source_paths": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "symbols_per_source": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "matches_per_query": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "expansion_entries": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

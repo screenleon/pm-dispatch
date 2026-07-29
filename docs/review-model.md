@@ -211,15 +211,33 @@ outcomes, run IDs, and the evidence status behind independence claims. The v3
 envelope adds an immutable subject: stable Git common-directory repository
 identity, optional remote identity, provenance-only observed root, base/head
 refs and commits, tree fingerprint, subject kind, dirty policy, and
-created/finished observations. It links preflight evidence by digest and leaves
-future scope-manifest or closure evidence explicitly unavailable until those
-producers exist. Envelopes also embed the canonical policy result:
+created/finished observations. It links preflight evidence and a
+`gate_scope_manifest_v1` by digest; closure evidence remains explicitly
+unavailable until that producer exists. Envelopes also embed the canonical
+policy result:
 classification facts, every matched signal and path, minimum tier, required
 coverage, recommended mode, whether policy or the user selected the mode,
 recommendation divergence, enforcement status, and both policy-override and
 reviewer-override provenance. Repo-layout results with
 verified independence also carry
 a shell-owned attestation in the protected gate run directory.
+
+Before any reviewer dispatch, the producer creates one manifest bound to that
+immutable subject. It records the complete changed-path set (including rename
+origins/destinations and in-scope untracked files), zero-context diff hunk
+ranges, conventional paired tests, matched sensitive-path signals, and
+public-interface/schema/config/install/CI/release/migration flags. It also adds
+bounded same-stem peers, symbol call-site hints, and direct shared-helper
+consumers. Every expansion entry states its reason, source, evidence kind, and
+limit; the manifest explicitly says this is not a complete call graph.
+
+The manifest publishes its budgets, omitted counts/reasons, and a canonical
+content digest. Any omission makes the gate `INCOMPLETE` before reviewer
+dispatch unless the operator explicitly supplies `--accept-scope-truncation`;
+accepted omissions remain visible as `accepted_truncation`. Sequential,
+parallel, and synthesis briefs all carry the same artifact digest, so execution
+mode cannot silently change the declared review scope. The manifest is a scope
+declaration, not proof that a reviewer understood or exhaustively reviewed it.
 
 `pmctl gate verify <result> [--cd <repo>] [--consumer <name>] [--json]`
 returns three independent axes:
@@ -237,6 +255,10 @@ Default inspection preserves the historical artifact-validity exit contract;
 passing `--consumer` is authorizing and requires all three axes to pass.
 `gate wait` and `ship finish` consume this shared assessment rather than
 grepping `Final: GO`.
+
+Historical v3 envelopes that record `scope_manifest: unavailable` remain
+artifact-readable under default inspection, but they do not satisfy a named
+consumer after the scope-manifest producer is installed.
 
 Subject verification intentionally fingerprints the complete included tree,
 not only the diff. Its cost is therefore linear in tracked and included

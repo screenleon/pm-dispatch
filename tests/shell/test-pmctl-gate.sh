@@ -613,6 +613,133 @@ _mk_gate_result_v3_verified() {
     }
   ' "$sidecar" > "${sidecar}.tmp"
   mv "${sidecar}.tmp" "$sidecar"
+  _attach_gate_scope_manifest_v3 "$path"
+  _refresh_gate_result_v3_attestation "$path"
+}
+
+_attach_gate_scope_manifest_v3() {
+  local path="$1" sidecar="${1}.assurance.json"
+  local manifest manifest_digest manifest_sha
+  manifest="$(dirname "$path")/gate-scope-manifest-fixture.json"
+  jq -n --slurpfile assurance "$sidecar" '
+    $assurance[0].subject as $subject | {
+      kind:"gate_scope_manifest_v1",
+      schema_version:1,
+      status:"complete",
+      subject:{
+        repository_key:$subject.repository.key,
+        base_commit:$subject.base.commit,
+        head_commit:$subject.head.commit,
+        tree_fingerprint:$subject.tree_fingerprint,
+        subject_kind:$subject.subject_kind
+      },
+      selection:{
+        diff_kind:(
+          if $subject.subject_kind == "fixed_ref" then "fixed-head"
+          elif $subject.subject_kind == "working_tree" then "working-tree"
+          else "committed"
+          end
+        ),
+        base_ref:$subject.base.ref,
+        head_ref:$subject.head.ref,
+        include_untracked:($subject.subject_kind == "working_tree")
+      },
+      changes:{
+        entries:[{
+          status:"modified",
+          old_path:null,
+          new_path:"README.md",
+          similarity:null
+        }],
+        changed_paths:["README.md"],
+        renamed_paths:[],
+        untracked_paths:[]
+      },
+      diff:{
+        hunks:[{
+          path:"README.md",
+          source:"tracked",
+          old_start:1,
+          old_lines:1,
+          new_start:1,
+          new_lines:1,
+          header:"@@ -1 +1 @@"
+        }],
+        binary_or_special_paths:[]
+      },
+      paired_tests:[],
+      sensitive_signals:[],
+      flags:{
+        public_interface:{matched:true,paths:["README.md"]},
+        schema:{matched:false,paths:[]},
+        config:{matched:false,paths:[]},
+        install:{matched:false,paths:[]},
+        ci:{matched:false,paths:[]},
+        release:{matched:false,paths:[]},
+        migration:{matched:false,paths:[]}
+      },
+      expansion:{
+        claim:"bounded-hints-not-complete-call-graph",
+        entries:[],
+        included_paths:[]
+      },
+      truncation:{
+        occurred:false,
+        budgets:{
+          diff_hunks:512,
+          expansion_source_paths:256,
+          symbols_per_source:1024,
+          matches_per_query:64,
+          expansion_entries:512
+        },
+        omitted:{
+          diff_hunks:0,
+          expansion_source_paths:0,
+          symbols_per_source:0,
+          matches_per_query:0,
+          expansion_entries:0
+        },
+        reasons:[],
+        acceptance:{required:false,accepted:false,source:null}
+      },
+      content:{
+        digest_algorithm:"sha256-canonical-json-without-content-digest",
+        digest:""
+      }
+    }
+  ' > "${manifest}.tmp"
+  manifest_digest="$(jq -cS 'del(.content.digest)' "${manifest}.tmp" \
+    | sha256sum | awk '{print $1}')"
+  jq --arg digest "$manifest_digest" '.content.digest = $digest' \
+    "${manifest}.tmp" > "$manifest"
+  rm -f "${manifest}.tmp"
+  manifest_sha="$(sha256sum "$manifest" | awk '{print $1}')"
+  jq --arg artifact "$(basename "$manifest")" \
+    --arg sha "$manifest_sha" '
+      .evidence.scope_manifest = {
+        status:"verified",
+        artifact:$artifact,
+        sha256:$sha,
+        subject_fingerprint:.subject.tree_fingerprint
+      }
+    ' "$sidecar" > "${sidecar}.tmp"
+  mv "${sidecar}.tmp" "$sidecar"
+}
+
+_refresh_gate_scope_manifest_v3_links() {
+  local path="$1" sidecar="${1}.assurance.json"
+  local manifest manifest_digest manifest_sha
+  manifest="$(dirname "$path")/$(jq -r '.evidence.scope_manifest.artifact' \
+    "$sidecar")"
+  manifest_digest="$(jq -cS 'del(.content.digest)' "$manifest" \
+    | sha256sum | awk '{print $1}')"
+  jq --arg digest "$manifest_digest" '.content.digest = $digest' \
+    "$manifest" > "${manifest}.tmp"
+  mv "${manifest}.tmp" "$manifest"
+  manifest_sha="$(sha256sum "$manifest" | awk '{print $1}')"
+  jq --arg sha "$manifest_sha" '.evidence.scope_manifest.sha256 = $sha' \
+    "$sidecar" > "${sidecar}.tmp"
+  mv "${sidecar}.tmp" "$sidecar"
   _refresh_gate_result_v3_attestation "$path"
 }
 
@@ -859,6 +986,14 @@ case_verify_v3_policy_reason_codes() {
       closure)
         jq '.policy.consumer_policy = "maintainer"' "$sidecar" > "$fixture"
         ;;
+      scope)
+        jq '.evidence.scope_manifest = {
+          status:"unavailable",
+          artifact:null,
+          sha256:null,
+          subject_fingerprint:null
+        }' "$sidecar" > "$fixture"
+        ;;
     esac
     axis="$(
       gate_policy_applicability_assess "$fixture" "$consumer" verified
@@ -882,6 +1017,7 @@ no-policy|policy_resolution_unavailable|generic
 enforcement|policy_enforcement_failed|generic
 independence|review_independence_unverified|generic
 dispatch|review_dispatch_evidence_incomplete|generic
+scope|scope_manifest_unavailable|generic
 closure|closure_evidence_unavailable|publish
 CASES
   pass "$name"
@@ -1011,6 +1147,7 @@ case_verify_v3_fixed_ref_ignores_working_tree() {
     .bindings.subject_fingerprint = $subject.tree_fingerprint
   ' "$sidecar" > "${sidecar}.tmp"
   mv "${sidecar}.tmp" "$sidecar"
+  _attach_gate_scope_manifest_v3 "$result"
   _refresh_gate_result_v3_attestation "$result"
   printf 'unrelated dirt\n' > "$_GATE_VERIFY_REPO/untracked.txt"
   set +e
@@ -1090,10 +1227,10 @@ case_verify_v3_different_repo_same_content_is_stale() {
 }
 
 case_verify_v3_copy_replay_is_valid_but_not_authorizing() {
-  # Behavior: copying the self-contained result/sidecar pair preserves content
-  # validity and subject freshness, but protected dispatch applicability does
-  # not travel outside the canonical run partition.
-  local name="gate/verify: v3 copied pair is valid/current but not policy-authorizing"
+  # Behavior: copying the self-contained result/sidecar/evidence set preserves
+  # content validity and subject freshness, but protected dispatch
+  # applicability does not travel outside the canonical run partition.
+  local name="gate/verify: v3 copied artifact set is valid/current but not policy-authorizing"
   should_run "$name" || return 0
   local result copied out code
   result="$(_gate_verify_result_path v3-copy-source)"
@@ -1102,6 +1239,8 @@ case_verify_v3_copy_replay_is_valid_but_not_authorizing() {
   mkdir -p "$(dirname "$copied")"
   cp "$result" "$copied"
   cp "${result}.assurance.json" "${copied}.assurance.json"
+  cp "$(dirname "$result")/$(jq -r '.evidence.scope_manifest.artifact' \
+    "${result}.assurance.json")" "$(dirname "$copied")/"
   set +e
   out="$(
     PM_DISPATCH_STATE_ROOT="$_GATE_VERIFY_STATE_ROOT" \
@@ -1147,6 +1286,154 @@ case_verify_v3_valid_but_policy_insufficient() {
   else
     fail "$name" "code=$code out=$out"
   fi
+}
+
+case_verify_v3_scope_policy_signal_mismatch_is_invalid() {
+  # Behavior: independently valid and re-attested scope evidence cannot
+  # authorize a result when its sensitive path signals differ from policy.
+  local name="gate/verify: v3 scope policy-signal mismatch invalidates artifact"
+  should_run "$name" || return 0
+  local result sidecar manifest out report code
+  result="$(_gate_verify_result_path v3-scope-policy-signal-mismatch)"
+  sidecar="${result}.assurance.json"
+  _mk_gate_result_v3_verified "$result" "$_GATE_VERIFY_REPO"
+  manifest="$(dirname "$result")/$(jq -r '.evidence.scope_manifest.artifact' \
+    "$sidecar")"
+  jq '.sensitive_signals = [{
+    id:"fixture-sensitive-path",
+    source:"path-regex",
+    matches:["README.md"],
+    minimum_tier:"express",
+    required_reviewers:["critic"],
+    recommended_mode:"sequential"
+  }]' "$manifest" > "${manifest}.tmp"
+  mv "${manifest}.tmp" "$manifest"
+  _refresh_gate_scope_manifest_v3_links "$result"
+  set +e
+  out="$(_run_canonical_gate_verify "$result" --consumer generic --json 2>&1)"
+  code=$?
+  set -e
+  report="$(tail -n 1 <<<"$out")"
+  if [[ "$code" -eq 1 ]] \
+      && [[ "$out" == *"sensitive signals do not match resolved policy"* ]] \
+      && jq -e '
+        .axes.artifact_valid.status == "fail" and
+        (.axes.artifact_valid.reason_codes |
+          index("artifact_integrity_failed")) != null
+      ' <<<"$report" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+case_verify_v3_incomplete_scope_manifest_is_invalid() {
+  # Behavior: recomputing every digest cannot turn an explicitly incomplete
+  # declared scope into authorizing linked evidence.
+  local name="gate/verify: v3 incomplete scope manifest invalidates artifact"
+  should_run "$name" || return 0
+  local result sidecar manifest out report code
+  result="$(_gate_verify_result_path v3-incomplete-scope)"
+  sidecar="${result}.assurance.json"
+  _mk_gate_result_v3_verified "$result" "$_GATE_VERIFY_REPO"
+  manifest="$(dirname "$result")/$(jq -r '.evidence.scope_manifest.artifact' \
+    "$sidecar")"
+  jq '
+    .status = "incomplete" |
+    .truncation.occurred = true |
+    .truncation.omitted.matches_per_query = 1 |
+    .truncation.reasons = ["search-match-budget"] |
+    .truncation.acceptance = {
+      required:true,accepted:false,source:null
+    }
+  ' "$manifest" > "${manifest}.tmp"
+  mv "${manifest}.tmp" "$manifest"
+  _refresh_gate_scope_manifest_v3_links "$result"
+  set +e
+  out="$(_run_canonical_gate_verify "$result" --consumer generic --json 2>&1)"
+  code=$?
+  set -e
+  report="$(tail -n 1 <<<"$out")"
+  if [[ "$code" -eq 1 ]] \
+      && [[ "$out" == *"incomplete gate scope manifest cannot authorize"* ]] \
+      && jq -e '
+        .axes.artifact_valid.status == "fail" and
+        (.axes.artifact_valid.reason_codes |
+          index("artifact_integrity_failed")) != null
+      ' <<<"$report" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+case_verify_v3_scope_cross_field_mutations_are_invalid() {
+  # Behavior: a fresh manifest digest, assurance digest, and attestation cannot
+  # authorize cross-field claims that disagree with the manifest's own inputs.
+  # Steps:
+  #   1. Build an independently valid v3 artifact for each mutation.
+  #   2. Corrupt one entry shape, derived path set, flag, hunk, or truncation
+  #      relationship and recompute every binding digest.
+  #   3. Assert pmctl gate verify rejects every re-attested artifact.
+  local name="gate/verify: v3 re-attested scope cross-field mutations are invalid"
+  should_run "$name" || return 0
+  local mutation slug result sidecar manifest out report code
+  while IFS= read -r mutation; do
+    slug="${mutation//_/-}"
+    result="$(_gate_verify_result_path "v3-scope-$slug")"
+    sidecar="${result}.assurance.json"
+    _mk_gate_result_v3_verified "$result" "$_GATE_VERIFY_REPO"
+    manifest="$(dirname "$result")/$(jq -r \
+      '.evidence.scope_manifest.artifact' "$sidecar")"
+    case "$mutation" in
+      entry_shape)
+        jq '.changes.entries[0].old_path = "README.md"' \
+          "$manifest" > "${manifest}.tmp"
+        ;;
+      changed_path_set)
+        jq '.changes.changed_paths += ["ghost.txt"]' \
+          "$manifest" > "${manifest}.tmp"
+        ;;
+      flag_membership)
+        jq '.flags.public_interface = {
+          matched:true,paths:["ghost.txt"]
+        }' "$manifest" > "${manifest}.tmp"
+        ;;
+      hunk_membership)
+        jq '.diff.hunks[0].path = "ghost.txt"' \
+          "$manifest" > "${manifest}.tmp"
+        ;;
+      truncation_coherence)
+        jq '.truncation.omitted.matches_per_query = 1' \
+          "$manifest" > "${manifest}.tmp"
+        ;;
+    esac
+    mv "${manifest}.tmp" "$manifest"
+    _refresh_gate_scope_manifest_v3_links "$result"
+    set +e
+    out="$(_run_canonical_gate_verify "$result" \
+      --consumer generic --json 2>&1)"
+    code=$?
+    set -e
+    report="$(tail -n 1 <<<"$out")"
+    if [[ "$code" -ne 1 ]] \
+        || [[ "$out" != *"scope manifest failed structural/claim verification"* ]] \
+        || ! jq -e '
+          .axes.artifact_valid.status == "fail" and
+          (.axes.artifact_valid.reason_codes |
+            index("artifact_integrity_failed")) != null
+        ' <<<"$report" >/dev/null; then
+      fail "$name" "$mutation code=$code out=$out"
+      return
+    fi
+  done <<'CASES'
+entry_shape
+changed_path_set
+flag_membership
+hunk_membership
+truncation_coherence
+CASES
+  pass "$name"
 }
 
 case_verify_v3_linked_evidence_digest_tamper_is_invalid() {
@@ -2222,6 +2509,9 @@ case_verify_v3_linked_worktree_path_is_current
 case_verify_v3_different_repo_same_content_is_stale
 case_verify_v3_copy_replay_is_valid_but_not_authorizing
 case_verify_v3_valid_but_policy_insufficient
+case_verify_v3_scope_policy_signal_mismatch_is_invalid
+case_verify_v3_incomplete_scope_manifest_is_invalid
+case_verify_v3_scope_cross_field_mutations_are_invalid
 case_verify_v3_linked_evidence_digest_tamper_is_invalid
 case_verify_v3_subject_binding_mismatch_is_invalid
 case_verify_v3_linked_preflight_subject_claim_mismatch_is_invalid

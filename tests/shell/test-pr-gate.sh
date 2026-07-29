@@ -95,6 +95,16 @@ done
 reviewer_name="$(awk '$1 == "Reviewer:" { print $2; exit }' "$brief_file")"
 : "${reviewer_name:=stub-reviewer}"
 
+if [[ -n "${CODEX_GATE_CAPTURE_SCOPE_DIR:-}" ]]; then
+  mkdir -p "$CODEX_GATE_CAPTURE_SCOPE_DIR"
+  capture_name="$reviewer_name"
+  [[ "$brief_file" == *-synthesis.md ]] && capture_name=synthesis
+  scope_digest="$(awk '$1 == "artifact_sha256:" { print $2; exit }' "$brief_file")"
+  scope_artifact="$(awk '$1 == "artifact:" { print $2; exit }' "$brief_file")"
+  printf '%s\t%s\n' "$scope_digest" "$scope_artifact" \
+    > "$CODEX_GATE_CAPTURE_SCOPE_DIR/$capture_name"
+fi
+
 printf 'DISPATCH_STUB:%s\n' "${CODEX_GATE_STUB_MODE:-success}"
 
 if [[ -n "${CODEX_GATE_BRIEF_EXISTS_MARKER:-}" ]]; then
@@ -172,6 +182,12 @@ fi
 if [[ "${CODEX_GATE_STUB_TAMPER_PREFLIGHT:-}" == "1" && "$brief_file" != *-synthesis.md ]]; then
   evidence_path=$(awk '$1 == "Artifact:" { print $2; exit }' "$brief_file")
   [[ -n "$evidence_path" ]] && printf '\n' >> "$evidence_path"
+fi
+
+# Simulate reviewer-side tampering with the machine-owned declared scope.
+if [[ "${CODEX_GATE_STUB_TAMPER_SCOPE:-}" == "1" && "$brief_file" != *-synthesis.md ]]; then
+  scope_path=$(awk '$1 == "artifact:" { print $2; exit }' "$brief_file")
+  [[ -n "$scope_path" ]] && printf '\n' >> "$scope_path"
 fi
 
 # Simulate prefix-only verdict (loose regex bypass): writes "Verdict: approved" (invalid token
@@ -3345,6 +3361,37 @@ test_preflight_artifact_tamper_aborts_gate() {
   fi
 }
 
+# Behavior: the manifest artifact is re-hashed during assurance finalization,
+# so a reviewer cannot change declared scope while retaining the original
+# digest supplied to every selected reviewer.
+# Steps:
+#   1. Run a sequential gate whose adapter appends to the scope artifact.
+#   2. Assert finalization rejects the linked digest before reporting success.
+test_scope_manifest_tamper_aborts_gate() {
+  local name="scope-manifest/reviewer-tamper-aborts-gate"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home repo runner out err result
+  home="$dir/home"; repo="$dir/repo"; runner="$dir/runner"
+  out="$dir/out"; err="$dir/err"; result="$dir/result.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  CODEX_GATE_STUB_TAMPER_SCOPE=1 run_gate \
+    "$home" "$runner" "$repo" "$out" "$err" \
+    --base main --mode sequential --output "$result"
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]] \
+      && grep -Fq "linked scope_manifest evidence digest mismatch" "$err"; then
+    pass "$name"
+  else
+    fail "$name" "tampered scope manifest was accepted: code=$code err=$(cat "$err")"
+  fi
+}
+
 # Behavior: valid structured coverage is summarized mechanically in the brief,
 # including each selected suite and the no-reflexive-rerun contract.
 test_preflight_structured_result_is_reused_in_brief() {
@@ -3381,7 +3428,7 @@ PRODUCER
 
   set +e
   CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" \
-    --base main --test-cmd "./produce-result.sh" --output "$result"
+    --base main --mode sequential --test-cmd "./produce-result.sh" --output "$result"
   local code=$?
   set -e
   [[ "$code" -eq 0 ]] || { fail "$name" "exit $code, expected 0: $(cat "$err")"; return; }
@@ -3879,7 +3926,12 @@ test_gate_result_frontmatter_and_escalation() {
     .bindings.head_commit == .subject.head.commit and
     .bindings.subject_fingerprint == .subject.tree_fingerprint and
     .evidence.preflight.status == "not_run" and
-    .evidence.scope_manifest.status == "unavailable" and
+    .evidence.scope_manifest.status == "verified" and
+    (.evidence.scope_manifest.artifact |
+      test("^gate-scope-manifest-[0-9]{8}-[0-9]{6}\\.json$")) and
+    (.evidence.scope_manifest.sha256 | test("^[a-f0-9]{64}$")) and
+    .evidence.scope_manifest.subject_fingerprint ==
+      .subject.tree_fingerprint and
     .evidence.closure.status == "unavailable" and
     .coordinates.mode.resolved == "sequential" and
     .coordinates.independence.evidence_status == "unavailable" and
@@ -4603,6 +4655,305 @@ test_untracked_binary_routes_to_standard() {
   pass "$name"
 }
 
+# Behavior: the producer emits one complete manifest that binds the immutable
+# subject, preserves rename/untracked inputs, and adds only explained bounded
+# review hints; every parallel reviewer and synthesis receive its same digest.
+# Steps:
+#   1. Create a feature diff with a rename, shared-helper edit, paired test,
+#      sensitive old path, and untracked schema/migration inputs.
+#   2. Run a parallel gate and inspect the linked machine-owned manifest.
+#   3. Assert its self-digest, assurance link, flags/signals/expansions, and the
+#      digest captured independently from every dispatch brief.
+test_scope_manifest_complete_and_shared_across_parallel_dispatch() {
+  local name="scope-manifest/complete-and-shared-parallel"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo"
+  local runner="$dir/runner" out="$dir/out" err="$dir/err"
+  local captures="$dir/scope-captures" result assurance manifest
+  local artifact_digest content_digest captured_count captured_unique
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  git init -q -b main "$repo"
+  (
+    cd "$repo"
+    git config user.email test@example.com
+    git config user.name 'Gate Test'
+    mkdir -p runtime/lib runtime/bin tests/shell app
+    write_managed_gitignore
+    printf 'shared_token() { printf old; }\n' > runtime/lib/shared.sh
+    printf '# Shared helper contract\n' > runtime/lib/shared.md
+    printf '. runtime/lib/shared.sh\nshared_token\n' > runtime/bin/use-shared.sh
+    printf '#!/usr/bin/env bash\nshared_token\n' > tests/shell/test-shared.sh
+    printf 'export const authenticate = true;\n' > app/auth.ts
+    git add .
+    git commit -q -m initial
+    git checkout -q -b feature
+    git mv app/auth.ts app/login.ts
+    printf 'shared_token() { printf new; }\n' > runtime/lib/shared.sh
+    git add app/login.ts runtime/lib/shared.sh
+    git commit -q -m change
+    mkdir -p core/schema migrations
+    printf '{"type":"object"}\n' > core/schema/sample.schema.json
+    printf 'ALTER TABLE example ADD COLUMN active boolean;\n' > migrations/001.sql
+  )
+
+  set +e
+  CODEX_GATE_CAPTURE_SCOPE_DIR="$captures" \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --allow-dirty --mode parallel
+  local code=$?
+  set -e
+  [[ "$code" -eq 0 ]] || {
+    fail "$name" "exit $code, expected 0: $(tail -n 30 "$err" 2>/dev/null)"
+    return
+  }
+  result="$(awk -F'result: ' '/^result: /{path=$2} END{print path}' "$out")"
+  assurance="${result}.assurance.json"
+  [[ -s "$assurance" ]] || {
+    fail "$name" "missing assurance sidecar for $result"
+    return
+  }
+  manifest="$(dirname "$assurance")/$(jq -r '.evidence.scope_manifest.artifact' "$assurance")"
+  [[ -s "$manifest" ]] || {
+    fail "$name" "missing linked scope manifest"
+    return
+  }
+  if ! jq -e '
+      .kind == "gate_scope_manifest_v1" and
+      .schema_version == 1 and .status == "complete" and
+      (.changes.entries | any(
+        .status == "renamed" and
+        .old_path == "app/auth.ts" and .new_path == "app/login.ts")) and
+      (.changes.untracked_paths == [
+        "core/schema/sample.schema.json",
+        "migrations/001.sql"
+      ]) and
+      (.paired_tests | any(
+        .source_path == "runtime/lib/shared.sh" and
+        .test_path == "tests/shell/test-shared.sh")) and
+      ([.sensitive_signals[].id] |
+        index("security-sensitive-path") != null and
+        index("risk-sensitive-path") != null and
+        index("public-contract-path") != null) and
+      .flags.public_interface.matched and .flags.schema.matched and
+      .flags.migration.matched and
+      .expansion.claim == "bounded-hints-not-complete-call-graph" and
+      (.expansion.entries | any(
+        .path == "runtime/lib/shared.md" and
+        .reason == "same-stem-peer")) and
+      (.expansion.entries | any(
+        .path == "runtime/bin/use-shared.sh" and
+        .reason == "shared-helper-consumer")) and
+      (.expansion.entries | any(
+        .path == "runtime/bin/use-shared.sh" and
+        .reason == "call-site-hint")) and
+      (.truncation.occurred == false)
+    ' "$manifest" >/dev/null; then
+    fail "$name" "manifest omitted required scope facts: $(jq -c '{
+      status,changes,paired_tests,sensitive_signals,flags,expansion,truncation
+    }' "$manifest" 2>/dev/null)"
+    return
+  fi
+  artifact_digest="$(sha256sum "$manifest" | awk '{print $1}')"
+  content_digest="$(jq -cS 'del(.content.digest)' "$manifest" | sha256sum | awk '{print $1}')"
+  [[ "$content_digest" == "$(jq -r '.content.digest' "$manifest")" ]] || {
+    fail "$name" "manifest self-digest mismatch"
+    return
+  }
+  if ! jq -e --arg digest "$artifact_digest" \
+      --arg subject "$(jq -r '.subject.tree_fingerprint' "$manifest")" '
+        .evidence.scope_manifest.status == "verified" and
+        .evidence.scope_manifest.sha256 == $digest and
+        .evidence.scope_manifest.subject_fingerprint == $subject
+      ' "$assurance" >/dev/null; then
+    fail "$name" "assurance did not bind the scope manifest"
+    return
+  fi
+  captured_count="$(find "$captures" -type f | wc -l | tr -d ' ')"
+  captured_unique="$(cut -f1 "$captures"/* | sort -u | wc -l | tr -d ' ')"
+  [[ "$captured_count" -ge 2 && "$captured_unique" -eq 1 ]] || {
+    fail "$name" "dispatch briefs did not share one manifest digest"
+    return
+  }
+  [[ "$(cut -f1 "$captures"/* | head -n 1)" == "$artifact_digest" ]] || {
+    fail "$name" "brief digest did not match the linked artifact"
+    return
+  }
+  pass "$name"
+}
+
+# Behavior: the manifest producer transports a maximum-size expansion through
+# a file descriptor instead of one jq argv value, preserving every entry even
+# when the serialized array exceeds Linux MAX_ARG_STRLEN.
+# Steps:
+#   1. Create one changed source with eight symbols and 64 callers per symbol.
+#   2. Run the gate so the bounded expansion contains exactly 512 entries.
+#   3. Assert the complete serialized expansion exceeds 128 KiB and dispatch
+#      succeeds without an argv-size failure.
+test_scope_manifest_large_expansion_uses_file_input() {
+  local name="scope-manifest/large-expansion-uses-file-input"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo"
+  local runner="$dir/runner" out="$dir/out" err="$dir/err"
+  local long_stem source_path symbol result assurance manifest
+  local expansion_bytes code
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  git init -q -b main "$repo"
+  long_stem="$(printf 's%.0s' {1..220})"
+  source_path="src/${long_stem}.sh"
+  (
+    cd "$repo"
+    git config user.email test@example.com
+    git config user.name 'Gate Test'
+    mkdir -p src callers
+    write_managed_gitignore
+    printf '# old implementation\n' > "$source_path"
+    for n in $(seq -w 1 64); do
+      for symbol in $(seq -w 1 8); do
+        printf 'scope_expansion_symbol_%s\n' "$symbol"
+      done > "callers/call-${n}.sh"
+    done
+    git add .
+    git commit -q -m initial
+    git checkout -q -b feature
+    for symbol in $(seq -w 1 8); do
+      printf 'scope_expansion_symbol_%s() { :; }\n' "$symbol"
+    done > "$source_path"
+    git add "$source_path"
+    git commit -q -m change
+  )
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" \
+    --base main --mode sequential
+  code=$?
+  set -e
+  [[ "$code" -eq 0 ]] || {
+    fail "$name" "exit $code, expected 0: $(tail -n 30 "$err" 2>/dev/null)"
+    return
+  }
+  result="$(awk -F'result: ' '/^result: /{path=$2} END{print path}' "$out")"
+  assurance="${result}.assurance.json"
+  manifest="$(dirname "$assurance")/$(jq -r '.evidence.scope_manifest.artifact' "$assurance")"
+  expansion_bytes="$(jq -c '.expansion.entries' "$manifest" | wc -c | tr -d ' ')"
+  if ! jq -e '
+      .status == "complete" and
+      (.expansion.entries | length) == 512 and
+      .truncation.occurred == false
+    ' "$manifest" >/dev/null \
+      || [[ "$expansion_bytes" -le 131072 ]]; then
+    fail "$name" "large expansion was narrowed or too small: entries=$(jq -r '.expansion.entries | length' "$manifest" 2>/dev/null) bytes=$expansion_bytes"
+    return
+  fi
+  assert_not_contains "$name" "$err" "Argument list too long" || return
+  pass "$name"
+}
+
+create_scope_truncation_repo() {
+  local repo="$1"
+  git init -q -b main "$repo"
+  (
+    cd "$repo"
+    git config user.email test@example.com
+    git config user.name 'Gate Test'
+    write_managed_gitignore
+    for n in $(seq 1 1026); do
+      printf 'old line %s\n' "$n"
+    done > large.txt
+    git add .
+    git commit -q -m initial
+    git checkout -q -b feature
+    for n in $(seq 1 1026); do
+      if (( n % 2 == 1 )); then
+        printf 'new line %s\n' "$n"
+      else
+        printf 'old line %s\n' "$n"
+      fi
+    done > large.txt
+    git add large.txt
+    git commit -q -m change
+  )
+}
+
+# Behavior: a scope budget overflow is never silently narrowed; dispatch stops
+# as INCOMPLETE unless the operator explicitly accepts the recorded omissions.
+# Steps:
+#   1. Create 513 distinct zero-context diff hunks against a 512-hunk budget.
+#   2. Assert the default run exits 3 before dispatch with an incomplete artifact.
+#   3. Repeat with the explicit acceptance flag and assert the linked manifest
+#      records accepted_truncation plus the exact omitted count and reason.
+test_scope_manifest_truncation_requires_explicit_acceptance() {
+  local name="scope-manifest/truncation-requires-explicit-acceptance"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local runner="$dir/runner" home="$dir/home"
+  local repo_reject="$dir/reject-repo" repo_accept="$dir/accept-repo"
+  local out="$dir/out" err="$dir/err" result assurance manifest code
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_scope_truncation_repo "$repo_reject"
+
+  set +e
+  run_gate "$home" "$runner" "$repo_reject" "$out" "$err" \
+    --base main --mode sequential
+  code=$?
+  set -e
+  [[ "$code" -eq 3 ]] || {
+    fail "$name" "unaccepted truncation exit $code, expected 3"
+    return
+  }
+  assert_file_contains "$name" "$err" "INCOMPLETE: declared scope exceeded" || return
+  assert_not_contains "$name" "$err" "DISPATCH_STUB" || return
+  manifest="$(find "$repo_reject/.gate-results" \
+    -maxdepth 1 -name 'gate-scope-manifest-*.json' -print -quit)"
+  if ! jq -e '
+      .status == "incomplete" and
+      .truncation.occurred and
+      .truncation.omitted.diff_hunks == 1 and
+      .truncation.reasons == ["diff-hunk-budget"] and
+      .truncation.acceptance == {
+        required:true,accepted:false,source:null
+      }
+    ' "$manifest" >/dev/null; then
+    fail "$name" "unaccepted truncation artifact was not truthful"
+    return
+  fi
+
+  create_scope_truncation_repo "$repo_accept"
+  set +e
+  run_gate "$home" "$runner" "$repo_accept" "$out" "$err" \
+    --base main --mode sequential --accept-scope-truncation
+  code=$?
+  set -e
+  [[ "$code" -eq 0 ]] || {
+    fail "$name" "accepted truncation exit $code, expected 0: $(tail -n 30 "$err" 2>/dev/null)"
+    return
+  }
+  result="$(awk -F'result: ' '/^result: /{path=$2} END{print path}' "$out")"
+  assurance="${result}.assurance.json"
+  manifest="$(dirname "$assurance")/$(jq -r '.evidence.scope_manifest.artifact' "$assurance")"
+  if ! jq -e '
+      .status == "accepted_truncation" and
+      .truncation.omitted.diff_hunks == 1 and
+      .truncation.reasons == ["diff-hunk-budget"] and
+      .truncation.acceptance == {
+        required:true,
+        accepted:true,
+        source:"--accept-scope-truncation"
+      }
+    ' "$manifest" >/dev/null; then
+    fail "$name" "explicit acceptance was not recorded in the manifest"
+    return
+  fi
+  pass "$name"
+}
+
 run_test test_gate_assurance_policy_snapshot_matches_sources
 run_test test_gate_policy_sources_control_default_coverage
 run_test test_gate_assurance_policy_snapshot_is_copy_mode_fallback
@@ -4646,6 +4997,9 @@ run_test test_via_symlink
 run_test test_rename_sensitive_old_name
 run_test test_binary_file_routes_to_standard
 run_test test_untracked_binary_routes_to_standard
+run_test test_scope_manifest_complete_and_shared_across_parallel_dispatch
+run_test test_scope_manifest_large_expansion_uses_file_input
+run_test test_scope_manifest_truncation_requires_explicit_acceptance
 run_test test_parallel_launches_per_reviewer
 run_test test_parallel_timeout_kills_hanging_reviewer
 run_test test_parallel_timeout_kills_hanging_synthesis
@@ -4686,6 +5040,7 @@ run_test test_preflight_tree_drift_marks_evidence_stale
 run_test test_preflight_untracked_drift_marks_evidence_stale
 run_test test_preflight_invalid_rich_result_fails_closed
 run_test test_preflight_artifact_tamper_aborts_gate
+run_test test_scope_manifest_tamper_aborts_gate
 run_test test_preflight_structured_result_is_reused_in_brief
 run_test test_parallel_frontmatter_parity_mismatch_aborts_gate
 run_test test_prompt_injection_detected

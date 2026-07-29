@@ -741,6 +741,269 @@ case_preflight_reusable_evidence_requires_fingerprint() {
   rm -f "$tmpf"
 }
 
+_gate_scope_manifest_valid_instance() {
+  jq -n '{
+    kind:"gate_scope_manifest_v1",
+    schema_version:1,
+    status:"complete",
+    subject:{
+      repository_key:("a" * 64),
+      base_commit:("b" * 40),
+      head_commit:("c" * 40),
+      tree_fingerprint:("d" * 64),
+      subject_kind:"committed_head"
+    },
+    selection:{
+      diff_kind:"committed",
+      base_ref:"main",
+      head_ref:"HEAD",
+      include_untracked:false
+    },
+    changes:{
+      entries:[{
+        status:"modified",
+        old_path:null,
+        new_path:"runtime/bin/example.sh",
+        similarity:null
+      }],
+      changed_paths:["runtime/bin/example.sh"],
+      renamed_paths:[],
+      untracked_paths:[]
+    },
+    diff:{
+      hunks:[{
+        path:"runtime/bin/example.sh",
+        source:"tracked",
+        old_start:10,
+        old_lines:1,
+        new_start:10,
+        new_lines:2,
+        header:"@@ -10 +10,2 @@"
+      }],
+      binary_or_special_paths:[]
+    },
+    paired_tests:[{
+      source_path:"runtime/bin/example.sh",
+      test_path:"tests/shell/test-example.sh",
+      reason:"language-convention"
+    }],
+    sensitive_signals:[{
+      id:"public-contract",
+      source:"path-regex",
+      matches:["runtime/bin/example.sh"],
+      minimum_tier:"standard",
+      required_reviewers:["architecture-reviewer"],
+      recommended_mode:"parallel"
+    }],
+    flags:{
+      public_interface:{matched:false,paths:[]},
+      schema:{matched:false,paths:[]},
+      config:{matched:false,paths:[]},
+      install:{matched:false,paths:[]},
+      ci:{matched:false,paths:[]},
+      release:{matched:false,paths:[]},
+      migration:{matched:false,paths:[]}
+    },
+    expansion:{
+      claim:"bounded-hints-not-complete-call-graph",
+      entries:[{
+        path:"tests/shell/test-example.sh",
+        reason:"same-stem-peer",
+        source:"runtime/bin/example.sh",
+        evidence:"peer-convention",
+        limit:{kind:"per-source",maximum:64}
+      }],
+      included_paths:["tests/shell/test-example.sh"]
+    },
+    truncation:{
+      occurred:false,
+      budgets:{
+        diff_hunks:512,
+        expansion_source_paths:256,
+        symbols_per_source:1024,
+        matches_per_query:64,
+        expansion_entries:512
+      },
+      omitted:{
+        diff_hunks:0,
+        expansion_source_paths:0,
+        symbols_per_source:0,
+        matches_per_query:0,
+        expansion_entries:0
+      },
+      reasons:[],
+      acceptance:{required:false,accepted:false,source:null}
+    },
+    content:{
+      digest_algorithm:"sha256-canonical-json-without-content-digest",
+      digest:("e" * 64)
+    }
+  }'
+}
+
+case_gate_scope_manifest_valid_complete() {
+  # Behavior: a complete canonical scope manifest passes the schema.
+  # Steps:
+  #   1. Build a manifest with subject, changes, review hints, and zero omissions.
+  #   2. Validate it against the public schema.
+  local name="gate-scope-manifest: complete canonical instance validates"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/gate-scope-manifest.schema.json" tmpf
+  tmpf="$(mktemp /tmp/gate-scope-valid-XXXXXX.json)"
+  _gate_scope_manifest_valid_instance > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name" "schema rejected a canonical complete scope manifest"
+  fi
+  rm -f "$tmpf"
+}
+
+case_gate_scope_manifest_valid_accepted_truncation() {
+  # Behavior: a bounded omission is representable only with explicit acceptance.
+  # Steps:
+  #   1. Convert the canonical instance to accepted_truncation.
+  #   2. Record the omitted count, reason, and CLI acceptance source.
+  #   3. Assert the schema accepts the coherent state.
+  local name="gate-scope-manifest: explicit accepted truncation validates"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/gate-scope-manifest.schema.json" tmpf
+  tmpf="$(mktemp /tmp/gate-scope-accepted-XXXXXX.json)"
+  _gate_scope_manifest_valid_instance |
+    jq '
+      .status = "accepted_truncation" |
+      .truncation.occurred = true |
+      .truncation.omitted.diff_hunks = 1 |
+      .truncation.reasons = ["diff-hunk-budget"] |
+      .truncation.acceptance = {
+        required:true,
+        accepted:true,
+        source:"--accept-scope-truncation"
+      }
+    ' > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name" "schema rejected coherent accepted truncation"
+  fi
+  rm -f "$tmpf"
+}
+
+case_gate_scope_manifest_inconsistent_status_rejected() {
+  # Behavior: complete status cannot conceal truncation acceptance.
+  # Steps:
+  #   1. Keep status complete but claim a truncation occurred and was accepted.
+  #   2. Assert the conditional schema rejects the contradictory state.
+  local name="gate-scope-manifest: complete status rejects hidden truncation"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/gate-scope-manifest.schema.json" tmpf
+  tmpf="$(mktemp /tmp/gate-scope-inconsistent-XXXXXX.json)"
+  _gate_scope_manifest_valid_instance |
+    jq '
+      .truncation.occurred = true |
+      .truncation.omitted.diff_hunks = 1 |
+      .truncation.reasons = ["diff-hunk-budget"] |
+      .truncation.acceptance = {
+        required:true,
+        accepted:true,
+        source:"--accept-scope-truncation"
+      }
+    ' > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    fail "$name" "schema accepted contradictory complete/truncated state"
+  else
+    pass "$name"
+  fi
+  rm -f "$tmpf"
+}
+
+case_gate_scope_manifest_subject_selection_rejected() {
+  # Behavior: the declared diff selection must agree with the subject kind.
+  # Steps:
+  #   1. Change a committed-head fixture to fixed_ref without changing its
+  #      committed diff kind.
+  #   2. Assert the conditional schema rejects the inconsistent binding.
+  local name="gate-scope-manifest: subject kind and diff selection must agree"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/gate-scope-manifest.schema.json" tmpf
+  tmpf="$(mktemp /tmp/gate-scope-selection-XXXXXX.json)"
+  _gate_scope_manifest_valid_instance |
+    jq '.subject.subject_kind = "fixed_ref"' > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    fail "$name" "schema accepted fixed_ref with committed diff selection"
+  else
+    pass "$name"
+  fi
+  rm -f "$tmpf"
+}
+
+case_gate_scope_manifest_escaping_path_rejected() {
+  # Behavior: manifest paths stay repository relative.
+  # Steps:
+  #   1. Replace a changed path with an escaping path.
+  #   2. Assert the schema rejects it.
+  local name="gate-scope-manifest: escaping repository path is rejected"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/gate-scope-manifest.schema.json" tmpf
+  tmpf="$(mktemp /tmp/gate-scope-path-XXXXXX.json)"
+  _gate_scope_manifest_valid_instance |
+    jq '.changes.entries[0].new_path = "../outside.sh"' > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    fail "$name" "schema accepted an escaping repository path"
+  else
+    pass "$name"
+  fi
+  rm -f "$tmpf"
+}
+
+case_gate_scope_manifest_change_entry_status_shape_rejected() {
+  # Behavior: each change status has the same old/new path and similarity
+  # contract in the public schema as in the runtime verifier.
+  # Steps:
+  #   1. Mutate the canonical entry into invalid modified, renamed, and deleted
+  #      status-specific shapes.
+  #   2. Validate each independently against the public schema.
+  #   3. Assert every contradictory shape is rejected.
+  local name="gate-scope-manifest: change status controls path shape"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/gate-scope-manifest.schema.json"
+  local tmpf mutation
+  while IFS= read -r mutation; do
+    tmpf="$(mktemp /tmp/gate-scope-change-shape-XXXXXX.json)"
+    case "$mutation" in
+      modified-old-path)
+        _gate_scope_manifest_valid_instance |
+          jq '.changes.entries[0].old_path = "runtime/bin/example.sh"' > "$tmpf"
+        ;;
+      renamed-without-similarity)
+        _gate_scope_manifest_valid_instance |
+          jq '
+            .changes.entries[0].status = "renamed" |
+            .changes.entries[0].old_path = "runtime/bin/old-example.sh"
+          ' > "$tmpf"
+        ;;
+      deleted-with-new-path)
+        _gate_scope_manifest_valid_instance |
+          jq '
+            .changes.entries[0].status = "deleted" |
+            .changes.entries[0].old_path = "runtime/bin/example.sh"
+          ' > "$tmpf"
+        ;;
+    esac
+    if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+      rm -f "$tmpf"
+      fail "$name" "schema accepted invalid $mutation entry"
+      return
+    fi
+    rm -f "$tmpf"
+  done <<'CASES'
+modified-old-path
+renamed-without-similarity
+deleted-with-new-path
+CASES
+  pass "$name"
+}
+
 _gate_assurance_valid_instance() {
   jq -n '{
     kind:"gate_assurance_v2",
@@ -1182,6 +1445,12 @@ case_context_pack_invalid_source_domain_rejected
 case_context_pack_invalid_trust_level_rejected
 case_preflight_basic_evidence_needs_no_git_provenance
 case_preflight_reusable_evidence_requires_fingerprint
+case_gate_scope_manifest_valid_complete
+case_gate_scope_manifest_valid_accepted_truncation
+case_gate_scope_manifest_inconsistent_status_rejected
+case_gate_scope_manifest_subject_selection_rejected
+case_gate_scope_manifest_escaping_path_rejected
+case_gate_scope_manifest_change_entry_status_shape_rejected
 case_gate_assurance_valid_instance
 case_gate_assurance_v3_valid_instance
 case_gate_assurance_v2_rejects_v3_fields

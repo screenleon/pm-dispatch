@@ -22,6 +22,10 @@ Gate assurance definitions are split deliberately:
 - `schema/gate-assurance.schema.json` defines the portable envelope that records
   resolved coordinates, policy resolution, immutable subject, and linked
   evidence.
+- `schema/gate-scope-manifest.schema.json` defines the content-addressed,
+  immutable-subject-bound scope declaration shared by every selected reviewer.
+  It records exact changed inputs, bounded review hints, and explicit
+  truncation rather than claiming a complete call graph.
 - `schema/gate-verification.schema.json` defines the shared three-axis
   assessment returned to gate consumers.
 

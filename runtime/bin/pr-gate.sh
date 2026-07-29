@@ -530,6 +530,680 @@ _gate_policy_scope_content_digest() {
   } | _gate_sha256_stream
 }
 
+# Emit the exact status-bearing change set for the same comparison mode used by
+# policy resolution. NUL-delimited Git output keeps paths with whitespace,
+# tabs, or newlines intact until jq encodes them as JSON strings.
+_gate_scope_changes_collect() {
+  local records raw status path old_path new_path similarity
+  records="$(mktemp "${TMPDIR:-/tmp}/gate-scope-changes.XXXXXX")" || return 2
+  : > "$records"
+
+  while IFS= read -r -d '' raw; do
+    status="${raw:0:1}"
+    similarity=null
+    case "$status" in
+      R|C)
+        IFS= read -r -d '' old_path || {
+          rm -f -- "$records"
+          return 2
+        }
+        IFS= read -r -d '' new_path || {
+          rm -f -- "$records"
+          return 2
+        }
+        [[ "${raw:1}" =~ ^[0-9]+$ ]] && similarity="${raw:1}"
+        jq -nc --arg status "$(if [[ "$status" == R ]]; then printf renamed; else printf copied; fi)" \
+          --arg old "$old_path" --arg new "$new_path" \
+          --argjson similarity "$similarity" \
+          '{status:$status,old_path:$old,new_path:$new,similarity:$similarity}' \
+          >> "$records" || {
+            rm -f -- "$records"
+            return 2
+          }
+        ;;
+      *)
+        IFS= read -r -d '' path || {
+          rm -f -- "$records"
+          return 2
+        }
+        case "$status" in
+          A) status=added ;;
+          M) status=modified ;;
+          D) status=deleted ;;
+          T) status=type_changed ;;
+          U) status=unmerged ;;
+          *) status=unknown ;;
+        esac
+        if [[ "$status" == deleted ]]; then
+          jq -nc --arg status "$status" --arg old "$path" \
+            '{status:$status,old_path:$old,new_path:null,similarity:null}' \
+            >> "$records" || {
+              rm -f -- "$records"
+              return 2
+            }
+        else
+          jq -nc --arg status "$status" --arg new "$path" \
+            '{status:$status,old_path:null,new_path:$new,similarity:null}' \
+            >> "$records" || {
+              rm -f -- "$records"
+              return 2
+            }
+        fi
+        ;;
+    esac
+  done < <(
+    case "$POLICY_DIFF_KIND" in
+      fixed-head)
+        git diff --find-renames --name-status -z "$BASE"..."$HEAD_REF" --
+        ;;
+      allow-dirty)
+        git diff --find-renames --name-status -z "$BASE" --
+        ;;
+      committed)
+        git diff --find-renames --name-status -z "$BASE"...HEAD --
+        ;;
+      working-tree)
+        git diff --find-renames --name-status -z HEAD --
+        ;;
+      *)
+        return 2
+        ;;
+    esac
+  )
+
+  if [[ "$POLICY_SCOPE_INCLUDE_UNTRACKED" == true ]]; then
+    while IFS= read -r -d '' path; do
+      jq -nc --arg new "$path" \
+        '{status:"untracked",old_path:null,new_path:$new,similarity:null}' \
+        >> "$records" || {
+          rm -f -- "$records"
+          return 2
+        }
+    done < <(git ls-files --others --exclude-standard -z)
+  fi
+
+  jq -s 'sort_by((.new_path // .old_path),.status)' "$records"
+  status=$?
+  rm -f -- "$records"
+  return "$status"
+}
+
+GATE_SCOPE_MAX_DIFF_HUNKS=512
+GATE_SCOPE_MAX_EXPANSION_SOURCES=256
+GATE_SCOPE_MAX_SYMBOLS_PER_SOURCE=1024
+GATE_SCOPE_MAX_MATCHES_PER_QUERY=64
+GATE_SCOPE_MAX_EXPANSION_ENTRIES=512
+
+_gate_scope_diff_for_path() {
+  local path="$1"
+  case "$POLICY_DIFF_KIND" in
+    fixed-head)
+      git diff --unified=0 --no-color --no-ext-diff \
+        "$BASE"..."$HEAD_REF" -- "$path"
+      ;;
+    allow-dirty)
+      git diff --unified=0 --no-color --no-ext-diff "$BASE" -- "$path"
+      ;;
+    committed)
+      git diff --unified=0 --no-color --no-ext-diff "$BASE"...HEAD -- "$path"
+      ;;
+    working-tree)
+      git diff --unified=0 --no-color --no-ext-diff HEAD -- "$path"
+      ;;
+    *)
+      return 2
+      ;;
+  esac
+}
+
+_gate_scope_numstat_for_path() {
+  local path="$1"
+  case "$POLICY_DIFF_KIND" in
+    fixed-head) git diff --numstat "$BASE"..."$HEAD_REF" -- "$path" ;;
+    allow-dirty) git diff --numstat "$BASE" -- "$path" ;;
+    committed) git diff --numstat "$BASE"...HEAD -- "$path" ;;
+    working-tree) git diff --numstat HEAD -- "$path" ;;
+    *) return 2 ;;
+  esac
+}
+
+_gate_scope_path_exists() {
+  local path="$1"
+  if [[ "$POLICY_DIFF_KIND" == fixed-head ]]; then
+    git cat-file -e "${GATE_BINDING_HEAD_COMMIT}:$path" 2>/dev/null
+  else
+    [[ -f "$WORK_DIR/$path" && ! -L "$WORK_DIR/$path" ]]
+  fi
+}
+
+_gate_scope_path_content() {
+  local path="$1"
+  if [[ "$POLICY_DIFF_KIND" == fixed-head ]]; then
+    git show "${GATE_BINDING_HEAD_COMMIT}:$path" 2>/dev/null
+  else
+    cat -- "$WORK_DIR/$path"
+  fi
+}
+
+_gate_scope_hunks_collect() {
+  local changes_json="$1" output="$2" binary_output="$3"
+  local max_hunks="$GATE_SCOPE_MAX_DIFF_HUNKS"
+  local status path old_path line old_start old_lines
+  local new_start new_lines header line_count path_hunks=0
+  local total_hunks=0
+  : > "$output"
+  : > "$binary_output"
+
+  while IFS= read -r -d '' status \
+      && IFS= read -r -d '' path \
+      && IFS= read -r -d '' old_path; do
+    [[ -n "$path" ]] || path="$old_path"
+    [[ -n "$path" ]] || continue
+    path_hunks=0
+    if [[ "$status" == untracked ]]; then
+      if [[ -L "$WORK_DIR/$path" || ! -f "$WORK_DIR/$path" ]] \
+          || ! grep -Iq . "$WORK_DIR/$path" 2>/dev/null; then
+        jq -nc --arg path "$path" '$path' >> "$binary_output" || return 2
+        continue
+      fi
+      line_count="$(awk 'END { print NR+0 }' "$WORK_DIR/$path")"
+      header="@@ -0,0 +1,${line_count} @@ untracked"
+      total_hunks=$((total_hunks + 1))
+      if [[ "$total_hunks" -le "$max_hunks" ]]; then
+        jq -nc --arg path "$path" --arg header "$header" \
+          --argjson lines "$line_count" '{
+            path:$path,source:"untracked",
+            old_start:0,old_lines:0,new_start:1,new_lines:$lines,header:$header
+          }' >> "$output" || return 2
+      fi
+      continue
+    fi
+
+    while IFS= read -r line; do
+      if [[ "$line" =~ ^@@[[:space:]]-([0-9]+)(,([0-9]+))?[[:space:]]\+([0-9]+)(,([0-9]+))?[[:space:]]@@ ]]; then
+        old_start="${BASH_REMATCH[1]}"
+        old_lines="${BASH_REMATCH[3]:-1}"
+        new_start="${BASH_REMATCH[4]}"
+        new_lines="${BASH_REMATCH[6]:-1}"
+        header="$line"
+        path_hunks=$((path_hunks + 1))
+        total_hunks=$((total_hunks + 1))
+        if [[ "$total_hunks" -le "$max_hunks" ]]; then
+          jq -nc --arg path "$path" --arg header "$header" \
+            --argjson old_start "$old_start" --argjson old_lines "$old_lines" \
+            --argjson new_start "$new_start" --argjson new_lines "$new_lines" '{
+              path:$path,source:"tracked",
+              old_start:$old_start,old_lines:$old_lines,
+              new_start:$new_start,new_lines:$new_lines,header:$header
+            }' >> "$output" || return 2
+        fi
+      fi
+    done < <(_gate_scope_diff_for_path "$path")
+    if [[ "$path_hunks" -eq 0 ]] \
+        && _gate_scope_numstat_for_path "$path" | grep -q $'^-\t-'; then
+      jq -nc --arg path "$path" '$path' >> "$binary_output" || return 2
+    fi
+  done < <(jq -j '.[] |
+    .status, "\u0000", (.new_path // ""), "\u0000",
+    (.old_path // ""), "\u0000"' <<<"$changes_json")
+
+  GATE_SCOPE_OMITTED_DIFF_HUNKS=$((total_hunks > max_hunks ? total_hunks - max_hunks : 0))
+}
+
+_gate_scope_paired_tests_collect() {
+  local changed_paths_json="$1" records source base stem dir candidate
+  records="$(mktemp "${TMPDIR:-/tmp}/gate-scope-pairs.XXXXXX")" || return 2
+  : > "$records"
+  while IFS= read -r -d '' source; do
+    _gate_scope_path_exists "$source" || continue
+    base="$(basename "$source")"
+    stem="${base%.*}"
+    dir="$(dirname "$source")"
+    case "$source" in
+      *.go)
+        [[ "$source" == *_test.go ]] || {
+          candidate="${source%.go}_test.go"
+          if _gate_scope_path_exists "$candidate"; then
+            jq -nc --arg source "$source" --arg test "$candidate" \
+              '{source_path:$source,test_path:$test,reason:"language-convention"}' \
+              >> "$records" || return 2
+          fi
+        }
+        ;;
+      *.ts|*.tsx|*.js|*.jsx)
+        case "$base" in *.test.*|*.spec.*) continue ;; esac
+        for candidate in \
+          "$dir/__tests__/$stem.test.ts" "$dir/__tests__/$stem.test.tsx" \
+          "$dir/__tests__/$stem.spec.ts" "$dir/__tests__/$stem.spec.tsx" \
+          "$dir/$stem.test.ts" "$dir/$stem.test.tsx" \
+          "$dir/$stem.spec.ts" "$dir/$stem.spec.tsx" \
+          "$dir/$stem.test.js" "$dir/$stem.spec.js"; do
+          candidate="${candidate#./}"
+          if _gate_scope_path_exists "$candidate"; then
+            jq -nc --arg source "$source" --arg test "$candidate" \
+              '{source_path:$source,test_path:$test,reason:"language-convention"}' \
+              >> "$records" || return 2
+          fi
+        done
+        ;;
+      *.py)
+        [[ "$base" == test_*.py ]] || {
+          for candidate in "$dir/test_$base" "tests/test_$base"; do
+            candidate="${candidate#./}"
+            if _gate_scope_path_exists "$candidate"; then
+              jq -nc --arg source "$source" --arg test "$candidate" \
+                '{source_path:$source,test_path:$test,reason:"language-convention"}' \
+                >> "$records" || return 2
+            fi
+          done
+        }
+        ;;
+      *.sh)
+        [[ "$base" == test-*.sh ]] || {
+          for candidate in "$dir/test-$base" "tests/shell/test-$base"; do
+            candidate="${candidate#./}"
+            if _gate_scope_path_exists "$candidate"; then
+              jq -nc --arg source "$source" --arg test "$candidate" \
+                '{source_path:$source,test_path:$test,reason:"language-convention"}' \
+                >> "$records" || return 2
+            fi
+          done
+        }
+        ;;
+    esac
+  done < <(jq -j '.[] | ., "\u0000"' <<<"$changed_paths_json")
+  jq -s 'unique_by([.source_path,.test_path]) |
+    sort_by(.source_path,.test_path)' "$records"
+  local rc=$?
+  rm -f -- "$records"
+  return "$rc"
+}
+
+_gate_scope_search_paths() {
+  local query="$1" search_kind="$2" result
+  local -a options=(-l -z -F)
+  [[ "$search_kind" == symbol ]] && options+=(-w)
+  if [[ "$POLICY_DIFF_KIND" == fixed-head ]]; then
+    while IFS= read -r -d '' result; do
+      printf '%s\0' "${result#*:}"
+    done < <(git grep "${options[@]}" "$query" "$GATE_BINDING_HEAD_COMMIT" -- \
+      2>/dev/null || true)
+  else
+    git grep "${options[@]}" "$query" -- 2>/dev/null || true
+    if [[ "$POLICY_SCOPE_INCLUDE_UNTRACKED" == true ]]; then
+      while IFS= read -r -d '' result; do
+        [[ -f "$WORK_DIR/$result" && ! -L "$WORK_DIR/$result" ]] || continue
+        if [[ "$search_kind" == symbol ]]; then
+          grep -IqlwF -- "$query" "$WORK_DIR/$result" 2>/dev/null \
+            && printf '%s\0' "$result"
+        else
+          grep -IqlF -- "$query" "$WORK_DIR/$result" 2>/dev/null \
+            && printf '%s\0' "$result"
+        fi
+      done < <(git ls-files --others --exclude-standard -z)
+    fi
+  fi
+}
+
+_gate_scope_expansion_append() {
+  local output="$1" path="$2" reason="$3" source="$4" evidence="$5"
+  local limit_kind="$6" maximum="$7"
+  [[ -n "$path" && "$path" != /* && "$path" != ../* && "$path" != */../* ]] || return 0
+  case "$path" in
+    .agent-trace|.agent-trace/*|.gate-briefs|.gate-briefs/*|.gate-results|.gate-results/*)
+      return 0
+      ;;
+  esac
+  jq -nc --arg path "$path" --arg reason "$reason" --arg source "$source" \
+    --arg evidence "$evidence" --arg kind "$limit_kind" \
+    --argjson maximum "$maximum" '{
+      path:$path,reason:$reason,source:$source,evidence:$evidence,
+      limit:{kind:$kind,maximum:$maximum}
+    }' >> "$output"
+}
+
+_gate_scope_expansions_collect() {
+  local changed_paths_json="$1" output="$2"
+  local candidates sources source_count=0 source path base stem dir ext candidate
+  local query match eligible_count symbol_count
+  local symbol_limit="$GATE_SCOPE_MAX_SYMBOLS_PER_SOURCE"
+  local match_limit="$GATE_SCOPE_MAX_MATCHES_PER_QUERY"
+  local source_limit="$GATE_SCOPE_MAX_EXPANSION_SOURCES"
+  local expansion_limit="$GATE_SCOPE_MAX_EXPANSION_ENTRIES"
+  local omitted_sources=0 omitted_symbols=0 omitted_matches=0 omitted_entries=0
+  local -a symbols=()
+  local -A query_seen=()
+  candidates="$(mktemp "${TMPDIR:-/tmp}/gate-scope-expansions.XXXXXX")" || return 2
+  sources="$(mktemp "${TMPDIR:-/tmp}/gate-scope-sources.XXXXXX")" || {
+    rm -f -- "$candidates"
+    return 2
+  }
+  : > "$candidates"
+  : > "$sources"
+
+  while IFS= read -r -d '' source; do
+    _gate_scope_path_exists "$source" || continue
+    case "$source" in
+      *.sh|*.bash|*.go|*.py|*.js|*.jsx|*.ts|*.tsx|*.java|*.kt|*.rs)
+        printf '%s\0' "$source" >> "$sources"
+        ;;
+    esac
+  done < <(jq -j '.[] | ., "\u0000"' <<<"$changed_paths_json")
+
+  while IFS= read -r -d '' source; do
+    source_count=$((source_count + 1))
+    if [[ "$source_count" -gt "$source_limit" ]]; then
+      omitted_sources=$((omitted_sources + 1))
+      continue
+    fi
+    base="$(basename "$source")"
+    stem="${base%.*}"
+    dir="$(dirname "$source")"
+
+    for ext in sh bash go py js jsx ts tsx java kt rs md; do
+      candidate="$dir/$stem.$ext"
+      candidate="${candidate#./}"
+      [[ "$candidate" != "$source" ]] || continue
+      if _gate_scope_path_exists "$candidate" \
+          && ! jq -e --arg path "$candidate" 'index($path) != null' \
+            <<<"$changed_paths_json" >/dev/null; then
+        _gate_scope_expansion_append "$candidates" "$candidate" \
+          same-stem-peer "$source" peer-convention per-source 1 || return 2
+      fi
+    done
+
+    if [[ "$source" == */lib/* || "$source" == lib/* \
+        || "$source" == */shared/* || "$source" == shared/* ]]; then
+      eligible_count=0
+      query_seen=()
+      while IFS= read -r -d '' match; do
+        [[ "$match" != "$source" ]] || continue
+        [[ -z "${query_seen[$match]:-}" ]] || continue
+        query_seen["$match"]=1
+        jq -e --arg path "$match" 'index($path) != null' \
+          <<<"$changed_paths_json" >/dev/null && continue
+        eligible_count=$((eligible_count + 1))
+        if [[ "$eligible_count" -le "$match_limit" ]]; then
+          _gate_scope_expansion_append "$candidates" "$match" \
+            shared-helper-consumer "$source" path-reference per-source "$match_limit" \
+            || return 2
+        else
+          omitted_matches=$((omitted_matches + 1))
+        fi
+      done < <(_gate_scope_search_paths "$source" path)
+    fi
+
+    mapfile -t symbols < <(
+      _gate_scope_path_content "$source" 2>/dev/null |
+        sed -nE \
+          -e 's/^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*\(\)[[:space:]]*(\{|$).*/\1/p' \
+          -e 's/^[[:space:]]*func[[:space:]]+\([^)]*\)[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*\(.*/\1/p' \
+          -e 's/^[[:space:]]*func[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*\(.*/\1/p' \
+          -e 's/^[[:space:]]*(export[[:space:]]+)?(async[[:space:]]+)?function[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*\(.*/\3/p' \
+          -e 's/^[[:space:]]*(export[[:space:]]+)?class[[:space:]]+([A-Za-z_][A-Za-z0-9_]*).*/\2/p' \
+          -e 's/^[[:space:]]*(export[[:space:]]+)?(const|let|var)[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=.*/\3/p' \
+          -e 's/^[[:space:]]*(async[[:space:]]+)?def[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*\(.*/\2/p' |
+        awk 'length($0) >= 3 && !seen[$0]++' |
+        LC_ALL=C sort
+    )
+    symbol_count="${#symbols[@]}"
+    if [[ "$symbol_count" -gt "$symbol_limit" ]]; then
+      omitted_symbols=$((omitted_symbols + symbol_count - symbol_limit))
+      symbols=("${symbols[@]:0:symbol_limit}")
+    fi
+    for query in "${symbols[@]}"; do
+      eligible_count=0
+      query_seen=()
+      while IFS= read -r -d '' match; do
+        [[ "$match" != "$source" ]] || continue
+        [[ -z "${query_seen[$match]:-}" ]] || continue
+        query_seen["$match"]=1
+        jq -e --arg path "$match" 'index($path) != null' \
+          <<<"$changed_paths_json" >/dev/null && continue
+        eligible_count=$((eligible_count + 1))
+        if [[ "$eligible_count" -le "$match_limit" ]]; then
+          _gate_scope_expansion_append "$candidates" "$match" \
+            call-site-hint "$source#$query" symbol-reference per-symbol "$match_limit" \
+            || return 2
+        else
+          omitted_matches=$((omitted_matches + 1))
+        fi
+      done < <(_gate_scope_search_paths "$query" symbol)
+    done
+  done < "$sources"
+
+  jq -s 'unique_by([.path,.reason,.source,.evidence]) |
+    sort_by(.path,.reason,.source,.evidence)' "$candidates" |
+    jq --argjson limit "$expansion_limit" '.[:$limit]' > "$output" || {
+      rm -f -- "$candidates" "$sources"
+      return 2
+    }
+  local total_entries
+  total_entries="$(jq -s 'unique_by([.path,.reason,.source,.evidence]) | length' \
+    "$candidates")" || {
+      rm -f -- "$candidates" "$sources"
+      return 2
+    }
+  [[ "$total_entries" -le "$expansion_limit" ]] \
+    || omitted_entries=$((total_entries - expansion_limit))
+  rm -f -- "$candidates" "$sources"
+
+  GATE_SCOPE_OMITTED_EXPANSION_SOURCES="$omitted_sources"
+  GATE_SCOPE_OMITTED_SYMBOLS="$omitted_symbols"
+  GATE_SCOPE_OMITTED_SEARCH_MATCHES="$omitted_matches"
+  GATE_SCOPE_OMITTED_EXPANSION_ENTRIES="$omitted_entries"
+}
+
+_gate_scope_flags_resolve() {
+  local changed_paths_json="$1"
+  jq -nc --argjson paths "$changed_paths_json" '
+    def flag($pattern):
+      ($paths | map(select(test($pattern))) | unique | sort) as $matched |
+      {matched:($matched|length > 0),paths:$matched};
+    {
+      public_interface:flag("^(cli|commands|skills|agents|core/schema)/|(^|/)(README|CONTRIBUTING)\\.md$|(^|/)(api|apis|contract|contracts)(/|$)"),
+      schema:flag("(^|/)(schema|schemas)(/|$)|\\.schema\\.json$"),
+      config:flag("(^|/)(config|configs|\\.github|\\.pm-dispatch)(/|$)|\\.(yaml|yml|toml|ini|conf)$|(^|/)\\.gitignore$"),
+      install:flag("(^|/)(install|uninstall)([^/]*$|/)|(^|/)(setup|bootstrap)(/|[-_.])"),
+      ci:flag("(^|/)(\\.github/workflows|ci)(/|$)|(^|/)(Dockerfile|Makefile)$"),
+      release:flag("(^|/)(CHANGELOG|RELEASE[^/]*)\\.md$|(^|/)release(s)?(/|[-_.])"),
+      migration:flag("(^|/)(migration|migrations|migrate)(/|[-_.])")
+    }
+  '
+}
+
+_gate_scope_manifest_write() {
+  local destination="$1" changes_json="$2" policy_json="$3"
+  local hunks_file binary_file expansion_file manifest_tmp
+  local changed_paths_json renamed_paths_json untracked_paths_json
+  local paired_tests_json sensitive_signals_json flags_json
+  local truncation_occurred=false truncation_accepted=false
+  local status=complete acceptance_source="" reasons_json content_digest
+  hunks_file="$(mktemp "${TMPDIR:-/tmp}/gate-scope-hunks.XXXXXX")" || return 2
+  binary_file="$(mktemp "${TMPDIR:-/tmp}/gate-scope-binary.XXXXXX")" || {
+    rm -f -- "$hunks_file"
+    return 2
+  }
+  expansion_file="$(mktemp "${TMPDIR:-/tmp}/gate-scope-expansion.XXXXXX")" || {
+    rm -f -- "$hunks_file" "$binary_file"
+    return 2
+  }
+  manifest_tmp="$(mktemp "${destination}.tmp.XXXXXX")" || {
+    rm -f -- "$hunks_file" "$binary_file" "$expansion_file"
+    return 2
+  }
+
+  changed_paths_json="$(jq -c '[
+    .[] | .old_path, .new_path | select(. != null)
+  ] | unique | sort' <<<"$changes_json")" || return 2
+  renamed_paths_json="$(jq -c '[.[] |
+    select(.status == "renamed") |
+    {from:.old_path,to:.new_path,similarity:(.similarity // 0)}
+  ] | sort_by(.from,.to)' <<<"$changes_json")" || return 2
+  untracked_paths_json="$(jq -c '[.[] |
+    select(.status == "untracked") | .new_path
+  ] | unique | sort' <<<"$changes_json")" || return 2
+
+  _gate_scope_hunks_collect "$changes_json" "$hunks_file" "$binary_file" || {
+    rm -f -- "$hunks_file" "$binary_file" "$expansion_file" "$manifest_tmp"
+    return 2
+  }
+  paired_tests_json="$(_gate_scope_paired_tests_collect "$changed_paths_json")" || {
+    rm -f -- "$hunks_file" "$binary_file" "$expansion_file" "$manifest_tmp"
+    return 2
+  }
+  _gate_scope_expansions_collect "$changed_paths_json" "$expansion_file" || {
+      rm -f -- "$hunks_file" "$binary_file" "$expansion_file" "$manifest_tmp"
+      return 2
+    }
+  sensitive_signals_json="$(jq -c '[
+    .matched_signals[] | select(.source == "path-regex")
+  ] | sort_by(.id)' <<<"$policy_json")" || return 2
+  flags_json="$(_gate_scope_flags_resolve "$changed_paths_json")" || return 2
+
+  if [[ "$GATE_SCOPE_OMITTED_DIFF_HUNKS" -gt 0 \
+      || "$GATE_SCOPE_OMITTED_EXPANSION_SOURCES" -gt 0 \
+      || "$GATE_SCOPE_OMITTED_SYMBOLS" -gt 0 \
+      || "$GATE_SCOPE_OMITTED_SEARCH_MATCHES" -gt 0 \
+      || "$GATE_SCOPE_OMITTED_EXPANSION_ENTRIES" -gt 0 ]]; then
+    truncation_occurred=true
+    if [[ "$ACCEPT_SCOPE_TRUNCATION" == true ]]; then
+      truncation_accepted=true
+      status=accepted_truncation
+      acceptance_source=--accept-scope-truncation
+    else
+      status=incomplete
+    fi
+  fi
+  reasons_json="$(jq -nc \
+    --argjson hunks "$GATE_SCOPE_OMITTED_DIFF_HUNKS" \
+    --argjson sources "$GATE_SCOPE_OMITTED_EXPANSION_SOURCES" \
+    --argjson symbols "$GATE_SCOPE_OMITTED_SYMBOLS" \
+    --argjson matches "$GATE_SCOPE_OMITTED_SEARCH_MATCHES" \
+    --argjson entries "$GATE_SCOPE_OMITTED_EXPANSION_ENTRIES" '[
+      if $hunks > 0 then "diff-hunk-budget" else empty end,
+      if $sources > 0 then "expansion-source-budget" else empty end,
+      if $symbols > 0 then "symbol-budget" else empty end,
+      if $matches > 0 then "search-match-budget" else empty end,
+      if $entries > 0 then "expansion-entry-budget" else empty end
+    ]')"
+
+  if ! jq -n \
+      --arg status "$status" \
+      --arg repository_key "$GATE_SUBJECT_REPOSITORY_KEY" \
+      --arg base_commit "$GATE_BINDING_BASE_COMMIT" \
+      --arg head_commit "$GATE_BINDING_HEAD_COMMIT" \
+      --arg tree_fingerprint "$GATE_BINDING_SUBJECT_FINGERPRINT" \
+      --arg subject_kind "$GATE_SUBJECT_KIND" \
+      --arg diff_kind "$POLICY_DIFF_KIND" --arg base_ref "$BASE" \
+      --arg head_ref "$HEAD_REF" \
+      --arg acceptance_source "$acceptance_source" \
+      --argjson include_untracked "$POLICY_SCOPE_INCLUDE_UNTRACKED" \
+      --argjson changes "$changes_json" \
+      --argjson changed_paths "$changed_paths_json" \
+      --argjson renamed_paths "$renamed_paths_json" \
+      --argjson untracked_paths "$untracked_paths_json" \
+      --slurpfile hunks "$hunks_file" --slurpfile binary "$binary_file" \
+      --argjson paired_tests "$paired_tests_json" \
+      --argjson sensitive_signals "$sensitive_signals_json" \
+      --argjson flags "$flags_json" --slurpfile expansion "$expansion_file" \
+      --argjson truncation_occurred "$truncation_occurred" \
+      --argjson truncation_accepted "$truncation_accepted" \
+      --argjson omitted_hunks "$GATE_SCOPE_OMITTED_DIFF_HUNKS" \
+      --argjson omitted_sources "$GATE_SCOPE_OMITTED_EXPANSION_SOURCES" \
+      --argjson omitted_symbols "$GATE_SCOPE_OMITTED_SYMBOLS" \
+      --argjson omitted_matches "$GATE_SCOPE_OMITTED_SEARCH_MATCHES" \
+      --argjson omitted_entries "$GATE_SCOPE_OMITTED_EXPANSION_ENTRIES" \
+      --argjson budget_hunks "$GATE_SCOPE_MAX_DIFF_HUNKS" \
+      --argjson budget_sources "$GATE_SCOPE_MAX_EXPANSION_SOURCES" \
+      --argjson budget_symbols "$GATE_SCOPE_MAX_SYMBOLS_PER_SOURCE" \
+      --argjson budget_matches "$GATE_SCOPE_MAX_MATCHES_PER_QUERY" \
+      --argjson budget_entries "$GATE_SCOPE_MAX_EXPANSION_ENTRIES" \
+      --argjson reasons "$reasons_json" '{
+        kind:"gate_scope_manifest_v1",
+        schema_version:1,
+        status:$status,
+        subject:{
+          repository_key:$repository_key,
+          base_commit:$base_commit,
+          head_commit:$head_commit,
+          tree_fingerprint:$tree_fingerprint,
+          subject_kind:$subject_kind
+        },
+        selection:{
+          diff_kind:$diff_kind,
+          base_ref:$base_ref,
+          head_ref:$head_ref,
+          include_untracked:$include_untracked
+        },
+        changes:{
+          entries:$changes,
+          changed_paths:$changed_paths,
+          renamed_paths:$renamed_paths,
+          untracked_paths:$untracked_paths
+        },
+        diff:{
+          hunks:$hunks,
+          binary_or_special_paths:($binary | unique | sort)
+        },
+        paired_tests:$paired_tests,
+        sensitive_signals:$sensitive_signals,
+        flags:$flags,
+        expansion:{
+          claim:"bounded-hints-not-complete-call-graph",
+          entries:$expansion[0],
+          included_paths:([$expansion[0][].path] | unique | sort)
+        },
+        truncation:{
+          occurred:$truncation_occurred,
+          budgets:{
+            diff_hunks:$budget_hunks,
+            expansion_source_paths:$budget_sources,
+            symbols_per_source:$budget_symbols,
+            matches_per_query:$budget_matches,
+            expansion_entries:$budget_entries
+          },
+          omitted:{
+            diff_hunks:$omitted_hunks,
+            expansion_source_paths:$omitted_sources,
+            symbols_per_source:$omitted_symbols,
+            matches_per_query:$omitted_matches,
+            expansion_entries:$omitted_entries
+          },
+          reasons:$reasons,
+          acceptance:{
+            required:$truncation_occurred,
+            accepted:$truncation_accepted,
+            source:(if $acceptance_source == "" then null else $acceptance_source end)
+          }
+        },
+        content:{
+          digest_algorithm:"sha256-canonical-json-without-content-digest",
+          digest:("")
+        }
+      }' > "$manifest_tmp"; then
+    rm -f -- "$hunks_file" "$binary_file" "$expansion_file" "$manifest_tmp"
+    return 2
+  fi
+  content_digest="$(jq -cS 'del(.content.digest)' "$manifest_tmp" |
+    _gate_sha256_stream)" || {
+      rm -f -- "$hunks_file" "$binary_file" "$expansion_file" "$manifest_tmp"
+      return 2
+    }
+  jq --arg digest "$content_digest" '.content.digest=$digest' \
+    "$manifest_tmp" > "${manifest_tmp}.final" || {
+      rm -f -- "$hunks_file" "$binary_file" "$expansion_file" \
+        "$manifest_tmp" "${manifest_tmp}.final"
+      return 2
+    }
+  mv -- "${manifest_tmp}.final" "$destination" || {
+    rm -f -- "$hunks_file" "$binary_file" "$expansion_file" \
+      "$manifest_tmp" "${manifest_tmp}.final"
+    return 2
+  }
+  rm -f -- "$hunks_file" "$binary_file" "$expansion_file" "$manifest_tmp"
+}
+
 # Resolve risk/policy once for every gate consumer. The function owns the
 # relationship between change signals and assurance coordinates; caller paths
 # consume its JSON result instead of copying path regexes or policy floors.
@@ -1059,6 +1733,9 @@ _kill_process_tree() {
 #   --sequential         compatibility spelling for --mode sequential
 #   --allow-hooks        execute repo-local .pm-dispatch hook scripts (trusted branches only)
 #   --allow-dirty        review the working tree as-is instead of failing on a dirty tree atop committed changes
+#   --accept-scope-truncation
+#                        explicitly accept declared scope-manifest omissions caused by bounded
+#                        hunk/expansion budgets; otherwise truncation stops before reviewer dispatch
 #   --override-file <f>  inject accepted-risk overrides into every reviewer brief; auto-discovered
 #                        from .gate-overrides.md at repo root when this flag is omitted. A relative
 #                        <f> is resolved against the working dir (--cd), not the caller's CWD, since
@@ -1108,6 +1785,7 @@ TIMEOUT="1200"
 EXECUTOR_OPTION="auto"
 ALLOW_HOOKS=false   # hooks require explicit --allow-hooks opt-in (security)
 ALLOW_DIRTY=false   # gate refuses a dirty tree atop committed changes unless this opt-in
+ACCEPT_SCOPE_TRUNCATION=false
 OVERRIDE_FILE=""
 # "default" → omit --model → the executor adapter applies its own pinned default
 # (for codex, resolved via share/codex-model-aliases.tsv; decoupled from ~/.codex/config.toml).
@@ -1204,6 +1882,7 @@ while [[ $# -gt 0 ]]; do
       shift;;
     --allow-hooks) ALLOW_HOOKS=true;       shift;;
     --allow-dirty) ALLOW_DIRTY=true;       shift;;
+    --accept-scope-truncation) ACCEPT_SCOPE_TRUNCATION=true; shift;;
     --override-file)
       # Guard the operand explicitly: under `set -u` a bare `--override-file` with
       # no following arg would abort with a raw "unbound variable" instead of the
@@ -1233,7 +1912,7 @@ while [[ $# -gt 0 ]]; do
       exit 0;;
     *)
       printf 'Unknown arg: %s\n' "$1" >&2
-      printf 'Accepted: --cd --run-dir --tier --mode --brief --policy --reviewers --targeted --initial-result --reviewer-dir --scope --base --head --output --executor --model --effort --isolation --timeout --parallel --sequential --allow-hooks --allow-dirty --override-file --policy-override --test-cmd --test-timeout --skip-preflight-tests (-h for help)\n' >&2
+      printf 'Accepted: --cd --run-dir --tier --mode --brief --policy --reviewers --targeted --initial-result --reviewer-dir --scope --base --head --output --executor --model --effort --isolation --timeout --parallel --sequential --allow-hooks --allow-dirty --accept-scope-truncation --override-file --policy-override --test-cmd --test-timeout --skip-preflight-tests (-h for help)\n' >&2
       exit 2;;
   esac
 done
@@ -1512,6 +2191,244 @@ else
       }'
   }
 
+  gate_scope_manifest_verify() {
+    local manifest_file="$1" repository_key="$2" base_commit="$3"
+    local head_commit="$4" tree_fingerprint="$5" subject_kind="$6"
+    local base_ref="$7" head_ref="$8"
+    local expected_digest actual_digest
+    [[ -s "$manifest_file" ]] || {
+      printf 'Error: gate scope manifest is missing or empty: %s\n' \
+        "$manifest_file" >&2
+      return 1
+    }
+    expected_digest="$(jq -r '.content.digest // empty' "$manifest_file" 2>/dev/null)"
+    actual_digest="$(jq -cS 'del(.content.digest)' "$manifest_file" 2>/dev/null \
+      | _gate_result_sha256_stream)" || return $?
+    if [[ ! "$expected_digest" =~ ^[a-f0-9]{64}$ \
+        || "$actual_digest" != "$expected_digest" ]]; then
+      printf 'Error: gate scope manifest content digest mismatch: %s\n' \
+        "$manifest_file" >&2
+      return 1
+    fi
+    jq -e \
+      --arg repository_key "$repository_key" \
+      --arg base_commit "$base_commit" \
+      --arg head_commit "$head_commit" \
+      --arg tree_fingerprint "$tree_fingerprint" \
+      --arg subject_kind "$subject_kind" \
+      --arg base_ref "$base_ref" \
+      --arg head_ref "$head_ref" '
+      def only_keys($allowed):
+        (keys | sort) == ($allowed | sort);
+      def strings_unique:
+        type == "array" and all(.[]; type == "string" and length > 0) and
+        length == (unique | length);
+      def safe_path:
+        type == "string" and length > 0 and
+        (startswith("/") | not) and
+        ((split("/") | index("..")) == null);
+      def paths_unique:
+        strings_unique and all(.[]; safe_path);
+      def exact_set($other):
+        (sort) == ($other | sort);
+      def scope_counts:
+        only_keys(["diff_hunks","expansion_source_paths",
+          "symbols_per_source","matches_per_query","expansion_entries"]) and
+        all(.[]; type == "number" and . >= 0 and floor == .);
+      def scope_flag($changed):
+        only_keys(["matched","paths"]) and
+        (.matched | type == "boolean") and
+        (.paths | paths_unique) and
+        (.matched == ((.paths | length) > 0)) and
+        all(.paths[]; . as $path | ($changed | index($path)) != null);
+
+      only_keys(["kind","schema_version","status","subject","selection",
+        "changes","diff","paired_tests","sensitive_signals","flags",
+        "expansion","truncation","content"]) and
+      .kind == "gate_scope_manifest_v1" and .schema_version == 1 and
+      (.status | IN("complete","accepted_truncation","incomplete")) and
+      (.subject |
+        only_keys(["repository_key","base_commit","head_commit",
+          "tree_fingerprint","subject_kind"]) and
+        .repository_key == $repository_key and
+        .base_commit == $base_commit and
+        .head_commit == $head_commit and
+        .tree_fingerprint == $tree_fingerprint and
+        .subject_kind == $subject_kind and
+        (.repository_key | test("^[a-f0-9]{64}$")) and
+        (.base_commit | test("^[a-f0-9]{40}$")) and
+        (.head_commit | test("^[a-f0-9]{40}$")) and
+        (.tree_fingerprint | test("^[a-f0-9]{64}$")) and
+        (.subject_kind | IN("committed_head","working_tree","fixed_ref"))) and
+      (.selection |
+        only_keys(["diff_kind","base_ref","head_ref","include_untracked"]) and
+        (.diff_kind | IN("committed","working-tree","allow-dirty","fixed-head")) and
+        .base_ref == $base_ref and
+        .head_ref == $head_ref and
+        (.include_untracked | type == "boolean")) and
+      ((.subject.subject_kind == "committed_head" and
+          .selection.diff_kind == "committed") or
+       (.subject.subject_kind == "working_tree" and
+          (.selection.diff_kind == "working-tree" or
+            .selection.diff_kind == "allow-dirty")) or
+       (.subject.subject_kind == "fixed_ref" and
+          .selection.diff_kind == "fixed-head")) and
+      (.selection.include_untracked ==
+        (.subject.subject_kind == "working_tree")) and
+      (.changes |
+        only_keys(["entries","changed_paths","renamed_paths","untracked_paths"]) and
+        (.entries | type == "array" and length > 0) and
+        all(.entries[];
+          only_keys(["status","old_path","new_path","similarity"]) and
+          (.status | IN("added","modified","deleted","renamed","copied",
+            "type_changed","unmerged","untracked","unknown")) and
+          (.old_path == null or (.old_path | safe_path)) and
+          (.new_path == null or (.new_path | safe_path)) and
+          (if (.status | IN("renamed","copied"))
+           then
+             (.old_path | safe_path) and (.new_path | safe_path) and
+             (.similarity | type == "number" and . >= 0 and . <= 100 and floor == .)
+           elif .status == "deleted"
+           then (.old_path | safe_path) and .new_path == null and .similarity == null
+           else .old_path == null and (.new_path | safe_path) and .similarity == null
+           end)) and
+        (.changed_paths | paths_unique) and
+        (. as $changes |
+          ([.entries[] | .old_path,.new_path | select(. != null)] | unique) |
+          exact_set($changes.changed_paths)) and
+        (.renamed_paths | type == "array" and
+          all(.[];
+            only_keys(["from","to","similarity"]) and
+            (.from | safe_path) and (.to | safe_path) and
+            (.similarity | type == "number" and . >= 0 and . <= 100 and floor == .))) and
+        (. as $changes |
+          ([.entries[] | select(.status == "renamed") |
+            {from:.old_path,to:.new_path,similarity:(.similarity // 0)}] | sort) ==
+          ($changes.renamed_paths | sort)) and
+        (.untracked_paths | paths_unique) and
+        (. as $changes |
+          ([.entries[] | select(.status == "untracked") | .new_path] | unique) |
+          exact_set($changes.untracked_paths))) and
+      (.changes.changed_paths as $changed |
+        (.diff |
+          only_keys(["hunks","binary_or_special_paths"]) and
+          (.hunks | type == "array" and
+            all(.[];
+              only_keys(["path","source","old_start","old_lines",
+                "new_start","new_lines","header"]) and
+              (.path | safe_path) and
+              (.source | IN("tracked","untracked")) and
+              all([.old_start,.old_lines,.new_start,.new_lines][];
+                type == "number" and . >= 0 and floor == .) and
+              (.header | type == "string" and length > 0) and
+              (.path as $path | ($changed | index($path)) != null))) and
+          (.binary_or_special_paths | paths_unique) and
+          all(.binary_or_special_paths[];
+            . as $path | ($changed | index($path)) != null)) and
+        (.paired_tests | type == "array" and
+          all(.[];
+            only_keys(["source_path","test_path","reason"]) and
+            (.source_path | safe_path) and (.test_path | safe_path) and
+            .reason == "language-convention" and
+            (.source_path as $path | ($changed | index($path)) != null))) and
+        (.sensitive_signals | type == "array" and
+          ([.[].id] | strings_unique) and
+          all(.[];
+            only_keys(["id","source","matches","minimum_tier",
+              "required_reviewers","recommended_mode"]) and
+            (.id | type == "string" and length > 0) and
+            .source == "path-regex" and
+            (.matches | strings_unique) and
+            all(.matches[]; . as $path | ($changed | index($path)) != null) and
+            (.minimum_tier | IN("express","standard","full")) and
+            (.required_reviewers | strings_unique) and
+            (.recommended_mode | IN("sequential","parallel")))) and
+        (.flags as $flags |
+          ($flags |
+            only_keys(["public_interface","schema","config","install","ci",
+              "release","migration"])) and
+          ($flags.public_interface | scope_flag($changed)) and
+          ($flags.schema | scope_flag($changed)) and
+          ($flags.config | scope_flag($changed)) and
+          ($flags.install | scope_flag($changed)) and
+          ($flags.ci | scope_flag($changed)) and
+          ($flags.release | scope_flag($changed)) and
+          ($flags.migration | scope_flag($changed)))) and
+      (.expansion |
+        only_keys(["claim","entries","included_paths"]) and
+        .claim == "bounded-hints-not-complete-call-graph" and
+        (.entries | type == "array" and
+          all(.[];
+            only_keys(["path","reason","source","evidence","limit"]) and
+            (.path | safe_path) and
+            (.reason | IN("same-stem-peer","call-site-hint",
+              "shared-helper-consumer")) and
+            (.source | type == "string" and length > 0) and
+            (.evidence | IN("peer-convention","symbol-reference","path-reference")) and
+            (.limit |
+              only_keys(["kind","maximum"]) and
+              (.kind | IN("per-source","per-symbol","global")) and
+              (.maximum | type == "number" and . >= 1 and floor == .)))) and
+        (.included_paths | paths_unique) and
+        (. as $expansion |
+          ([.entries[].path] | unique | exact_set($expansion.included_paths)))) and
+      (. as $manifest | .truncation |
+        only_keys(["occurred","budgets","omitted","reasons","acceptance"]) and
+        (.occurred | type == "boolean") and
+        (.budgets | scope_counts and all(.[]; . >= 1)) and
+        (.omitted | scope_counts) and
+        (.reasons | strings_unique) and
+        all(.reasons[];
+          IN("diff-hunk-budget","expansion-source-budget","symbol-budget",
+            "search-match-budget","expansion-entry-budget")) and
+        (.omitted as $o |
+          .occurred == ([$o[]] | any(. > 0)) and
+          (.reasons | exact_set([
+            if $o.diff_hunks > 0 then "diff-hunk-budget" else empty end,
+            if $o.expansion_source_paths > 0
+              then "expansion-source-budget" else empty end,
+            if $o.symbols_per_source > 0 then "symbol-budget" else empty end,
+            if $o.matches_per_query > 0
+              then "search-match-budget" else empty end,
+            if $o.expansion_entries > 0
+              then "expansion-entry-budget" else empty end
+          ]))) and
+        (($manifest.diff.hunks | length) <= .budgets.diff_hunks) and
+        (($manifest.expansion.entries | length) <= .budgets.expansion_entries) and
+        (.acceptance |
+          only_keys(["required","accepted","source"]) and
+          (.required | type == "boolean") and
+          (.accepted | type == "boolean") and
+          (.source == null or .source == "--accept-scope-truncation")) and
+        (if .occurred
+         then
+           .acceptance.required == true and
+           (if .acceptance.accepted
+            then .acceptance.source == "--accept-scope-truncation"
+            else .acceptance.source == null
+            end)
+         else
+           .acceptance == {required:false,accepted:false,source:null} and
+           (.reasons | length) == 0
+         end)) and
+      ((.status == "complete" and .truncation.occurred == false) or
+       (.status == "accepted_truncation" and
+         .truncation.occurred == true and
+         .truncation.acceptance.accepted == true) or
+       (.status == "incomplete" and
+         .truncation.occurred == true and
+         .truncation.acceptance.accepted == false)) and
+      (.content |
+        only_keys(["digest_algorithm","digest"]) and
+        .digest_algorithm == "sha256-canonical-json-without-content-digest" and
+        (.digest | test("^[a-f0-9]{64}$")))
+    ' "$manifest_file" >/dev/null || {
+      printf 'Error: gate scope manifest failed structural/claim verification: %s\n' \
+        "$manifest_file" >&2
+      return 1
+    }
+  }
+
   _gate_assurance_linked_evidence_verify() {
     local assurance_file="$1" assurance_dir label artifact expected_sha
     local linked_subject subject_fingerprint artifact_path actual_sha
@@ -1561,6 +2478,31 @@ else
         if [[ ( "$linked_outcome" == pass && "$artifact_outcome" != pass ) \
             || ( "$linked_outcome" == fail && "$artifact_outcome" == pass ) ]]; then
           printf 'Error: gate assurance linked preflight evidence outcome mismatch: %s\n' \
+            "$artifact_path" >&2
+          return 1
+        fi
+      elif [[ "$label" == scope_manifest ]]; then
+        if ! gate_scope_manifest_verify "$artifact_path" \
+            "$(jq -r '.subject.repository.key' "$assurance_file")" \
+            "$(jq -r '.subject.base.commit' "$assurance_file")" \
+            "$(jq -r '.subject.head.commit' "$assurance_file")" \
+            "$linked_subject" \
+            "$(jq -r '.subject.subject_kind' "$assurance_file")" \
+            "$(jq -r '.subject.base.ref' "$assurance_file")" \
+            "$(jq -r '.subject.head.ref' "$assurance_file")"; then
+          return 1
+        fi
+        if ! jq -e --slurpfile scope "$artifact_path" '
+            ([.policy.matched_signals[] |
+              select(.source == "path-regex")] | sort_by(.id)) ==
+            ($scope[0].sensitive_signals | sort_by(.id))
+          ' "$assurance_file" >/dev/null; then
+          printf 'Error: gate scope manifest sensitive signals do not match resolved policy: %s\n' \
+            "$artifact_path" >&2
+          return 1
+        fi
+        if [[ "$(jq -r '.status' "$artifact_path")" == incomplete ]]; then
+          printf 'Error: incomplete gate scope manifest cannot authorize a gate result: %s\n' \
             "$artifact_path" >&2
           return 1
         fi
@@ -3237,6 +4179,7 @@ gate_finalize_assurance() {
   local result_sha assurance_sha subject_sha attestation_tmp run_ids_json attestation_pointer
   local finished_at subject_finish subject_json preflight_json evidence_json
   local evidence_destination evidence_destination_sha evidence_tmp
+  local scope_destination scope_destination_sha scope_tmp scope_json
   local -a capture_files=()
 
   final="$(grep -E '^Final: (GO|NO-GO)$' "$result_file" | awk '{print $2}')"
@@ -3365,11 +4308,42 @@ gate_finalize_assurance() {
         subject_fingerprint:$subject_fingerprint
       }')" || return 1
   fi
-  evidence_json="$(jq -nc --argjson preflight "$preflight_json" '{
+  scope_destination="$(dirname "$assurance_file")/$(basename "$SCOPE_MANIFEST_PATH")"
+  if [[ "$SCOPE_MANIFEST_PATH" != "$scope_destination" ]]; then
+    _gate_assurance_destination_check "$scope_destination" || return 1
+    if [[ -e "$scope_destination" ]]; then
+      scope_destination_sha="$(
+        _gate_result_sha256_file "$scope_destination"
+      )" || return $?
+      if [[ "$scope_destination_sha" != "$SCOPE_MANIFEST_DIGEST" ]]; then
+        printf 'Error: linked scope manifest destination already exists with different content: %s\n' \
+          "$scope_destination" >&2
+        return 1
+      fi
+    else
+      scope_tmp="$(mktemp "${scope_destination}.tmp.XXXXXX")" || return 1
+      if ! cp -- "$SCOPE_MANIFEST_PATH" "$scope_tmp" \
+          || ! mv -- "$scope_tmp" "$scope_destination"; then
+        rm -f -- "$scope_tmp"
+        return 1
+      fi
+    fi
+    SCOPE_MANIFEST_PATH="$scope_destination"
+  fi
+  scope_json="$(jq -nc \
+    --arg artifact "$(basename "$SCOPE_MANIFEST_PATH")" \
+    --arg sha256 "$SCOPE_MANIFEST_DIGEST" \
+    --arg subject_fingerprint \
+      "$(jq -r '.tree_fingerprint' <<<"$GATE_SUBJECT_INITIAL")" '{
+      status:"verified",
+      artifact:$artifact,
+      sha256:$sha256,
+      subject_fingerprint:$subject_fingerprint
+    }')" || return 1
+  evidence_json="$(jq -nc --argjson preflight "$preflight_json" \
+    --argjson scope "$scope_json" '{
     preflight:$preflight,
-    scope_manifest:{
-      status:"unavailable",artifact:null,sha256:null,subject_fingerprint:null
-    },
+    scope_manifest:$scope,
     closure:{
       status:"unavailable",artifact:null,sha256:null,subject_fingerprint:null
     }
@@ -3557,65 +4531,13 @@ _build_repo_ref_index() {
 }
 
 
-# ── Find adjacent test files not in the diff ─────────────────────────────────
-# For each changed source file, locate its companion test file if it exists and
-# is not already included in the diff. Including adjacent tests allows reviewers
-# to detect coverage gaps in unchanged test files alongside changed source.
-#
-# Go:         <pkg>/<name>.go       → <pkg>/<name>_test.go
-# TypeScript: <dir>/<name>.ts(x)    → <dir>/__tests__/<name>.test.ts(x)
-#                                   → <dir>/<name>.test.ts(x)
-ADJACENT_TEST_FILES=""
-while IFS= read -r f; do
-  [[ -z "$f" ]] && continue
-  case "$f" in
-    *.go)
-      base="$(basename "$f")"
-      if [[ "$base" != *_test.go ]]; then
-        testfile="${f%.go}_test.go"
-        if [[ -f "$WORK_DIR/$testfile" ]] && ! printf '%s\n' "$DIFF_FILES" | grep -qxF "$testfile"; then
-          ADJACENT_TEST_FILES="${ADJACENT_TEST_FILES}${testfile}"$'\n'
-        fi
-      fi
-      ;;
-    *.ts|*.tsx)
-      base="$(basename "$f")"
-      case "$base" in *.test.ts|*.test.tsx|*.spec.ts|*.spec.tsx) continue ;; esac
-      bname="${base%.*}"
-      dname="$(dirname "$f")"
-      for candidate in \
-          "${dname}/__tests__/${bname}.test.ts" \
-          "${dname}/__tests__/${bname}.test.tsx" \
-          "${dname}/__tests__/${bname}.spec.ts" \
-          "${dname}/__tests__/${bname}.spec.tsx" \
-          "${dname}/${bname}.test.ts" \
-          "${dname}/${bname}.test.tsx" \
-          "${dname}/${bname}.spec.ts" \
-          "${dname}/${bname}.spec.tsx"; do
-        if [[ -f "$WORK_DIR/$candidate" ]] && ! printf '%s\n' "$DIFF_FILES" | grep -qxF "$candidate"; then
-          ADJACENT_TEST_FILES="${ADJACENT_TEST_FILES}${candidate}"$'\n'
-        fi
-      done
-      ;;
-  esac
-done <<< "$DIFF_FILES"
-
-# ── Build combined review file list ──────────────────────────────────────────
+# The scope manifest producer below owns paired-test discovery. Keep the
+# pre-manifest list to the actual diff, then merge its declared pairs and
+# bounded expansions once the immutable subject is available.
 ALL_REVIEW_FILES="$DIFF_FILES"
-if [[ -n "$ADJACENT_TEST_FILES" ]]; then
-  ALL_REVIEW_FILES="$(printf '%s\n%s' "$ALL_REVIEW_FILES" "$ADJACENT_TEST_FILES" | sort -u | grep -v '^$')"
-fi
-
-DIFF_FILE_ENTRIES=""
-while IFS= read -r f; do
-  [[ -z "$f" ]] && continue
-  fp="$WORK_DIR/$f"
-  [[ -f "$fp" ]] && DIFF_FILE_ENTRIES="${DIFF_FILE_ENTRIES}  - read: ${fp}"$'\n'
-done <<< "$ALL_REVIEW_FILES"
 
 DIFF_STAT_INDENTED=$(printf '%s\n' "$DIFF_STAT" | sed 's/^/    /')
 REPO_REF_INDEX="$(_build_repo_ref_index "$WORK_DIR")"
-ADJ_COUNT=$(printf '%s\n' "$ADJACENT_TEST_FILES" | grep -c '[^[:space:]]' 2>/dev/null || true)
 
 # Render the accepted-risk override context block injected into EVERY reviewer
 # and synthesis brief. Single source of truth: all three brief templates
@@ -3679,7 +4601,6 @@ say 'pr-gate: policy minimum-tier=%s required-reviewers=%s recommended-mode=%s m
   "$(jq -r '.resolution.recommended_mode' <<<"$GATE_POLICY_RESOLUTION")" \
   "$POLICY_MODE_SELECTION_SOURCE" "$POLICY_MODE_RECOMMENDATION_OVERRIDDEN" \
   "$POLICY_SCOPE_FINGERPRINT"
-[[ "${ADJ_COUNT:-0}" -gt 0 ]] && say '  adjacent test files added: %d\n' "$ADJ_COUNT"
 say 'result will be written to: %s\n\n' "$OUTPUT_FILE"
 
 # ── Pre-gate hook ──────────────────────────────────────────────────────────
@@ -3793,6 +4714,83 @@ GATE_SUBJECT_REPOSITORY_KEY="$(jq -r '.repository.key' <<<"$GATE_SUBJECT_INITIAL
 GATE_BINDING_SUBJECT_FINGERPRINT="$(
   jq -r '.tree_fingerprint' <<<"$GATE_SUBJECT_INITIAL"
 )"
+
+# ── Immutable declared review scope ──────────────────────────────────────────
+# Build one machine-owned manifest before any reviewer dispatch. The artifact
+# is read-only reviewer context; its digest, not prompt prose, proves that
+# sequential and parallel reviewers received the same declared scope.
+mkdir -p "$WORK_DIR/.gate-results"
+SCOPE_MANIFEST_PATH="$WORK_DIR/.gate-results/gate-scope-manifest-${TIMESTAMP}.json"
+SCOPE_CHANGE_ENTRIES_JSON="$(_gate_scope_changes_collect)" || {
+  printf 'Error: unable to collect the gate scope change set\n' >&2
+  exit 2
+}
+if [[ "$(jq -r 'length' <<<"$SCOPE_CHANGE_ENTRIES_JSON")" -eq 0 ]]; then
+  printf 'Error: gate scope manifest found no changed paths\n' >&2
+  exit 2
+fi
+_gate_assurance_destination_check "$SCOPE_MANIFEST_PATH" || exit 2
+_gate_scope_manifest_write "$SCOPE_MANIFEST_PATH" \
+  "$SCOPE_CHANGE_ENTRIES_JSON" "$GATE_POLICY_RESOLUTION" || {
+    printf 'Error: unable to create gate scope manifest\n' >&2
+    exit 2
+  }
+SCOPE_MANIFEST_DIGEST="$(_gate_result_sha256_file "$SCOPE_MANIFEST_PATH")" || exit 2
+SCOPE_MANIFEST_CONTENT_DIGEST="$(jq -r '.content.digest' "$SCOPE_MANIFEST_PATH")"
+SCOPE_MANIFEST_STATUS="$(jq -r '.status' "$SCOPE_MANIFEST_PATH")"
+SCOPE_MANIFEST_EXPANSION_COUNT="$(jq -r '.expansion.entries | length' \
+  "$SCOPE_MANIFEST_PATH")"
+ADJACENT_TEST_FILES="$(jq -r '
+  . as $manifest |
+  .paired_tests[] |
+  .test_path as $test |
+  select(($manifest.changes.changed_paths | index($test)) == null) |
+  $test
+' "$SCOPE_MANIFEST_PATH")"
+ADJ_COUNT="$(printf '%s\n' "$ADJACENT_TEST_FILES" \
+  | grep -c '[^[:space:]]' 2>/dev/null || true)"
+
+SCOPE_DECLARED_REVIEW_FILES="$(jq -r '[
+  .changes.entries[] | .new_path // empty
+] + [.paired_tests[].test_path] + [.expansion.included_paths[]] |
+  unique | sort | .[]' "$SCOPE_MANIFEST_PATH")"
+ALL_REVIEW_FILES="$(printf '%s\n%s\n' "$ALL_REVIEW_FILES" \
+  "$SCOPE_DECLARED_REVIEW_FILES" | awk 'NF && !seen[$0]++')"
+DIFF_FILE_ENTRIES=""
+while IFS= read -r f; do
+  [[ -n "$f" ]] || continue
+  fp="$WORK_DIR/$f"
+  [[ -f "$fp" && ! -L "$fp" ]] \
+    && DIFF_FILE_ENTRIES="${DIFF_FILE_ENTRIES}  - read: ${fp}"$'\n'
+done <<< "$ALL_REVIEW_FILES"
+DIFF_FILE_ENTRIES="${DIFF_FILE_ENTRIES}  - read: ${SCOPE_MANIFEST_PATH}"$'\n'
+
+printf -v SCOPE_MANIFEST_CONTEXT_BLOCK \
+  '  Declared scope manifest (machine-owned; use this digest in every coverage claim):\n    status: %s\n    artifact: %s\n    artifact_sha256: %s\n    content_digest: %s\n    subject_fingerprint: %s\n    expansion_claim: bounded-hints-not-complete-call-graph\n' \
+  "$SCOPE_MANIFEST_STATUS" "$SCOPE_MANIFEST_PATH" "$SCOPE_MANIFEST_DIGEST" \
+  "$SCOPE_MANIFEST_CONTENT_DIGEST" "$GATE_BINDING_SUBJECT_FINGERPRINT"
+say 'pr-gate: scope manifest status=%s sha256=%s expansions=%s artifact=%s\n' \
+  "$SCOPE_MANIFEST_STATUS" "$SCOPE_MANIFEST_DIGEST" \
+  "$SCOPE_MANIFEST_EXPANSION_COUNT" \
+  "$(_preflight_log_display_path "$SCOPE_MANIFEST_PATH")"
+[[ "$ADJ_COUNT" -gt 0 ]] \
+  && say '  adjacent test files added: %d\n' "$ADJ_COUNT"
+
+if [[ "$SCOPE_MANIFEST_STATUS" == incomplete ]]; then
+  {
+    printf 'INCOMPLETE: declared scope exceeded bounded manifest budgets before reviewer dispatch.\n'
+    printf '  manifest: %s\n' "$(_preflight_log_display_path "$SCOPE_MANIFEST_PATH")"
+    printf '  omitted: %s\n' \
+      "$(jq -c '.truncation.omitted' "$SCOPE_MANIFEST_PATH")"
+    printf '  reasons: %s\n' \
+      "$(jq -c '.truncation.reasons' "$SCOPE_MANIFEST_PATH")"
+    printf '  Inspect the manifest, then rerun with --accept-scope-truncation only if those omissions are acceptable.\n'
+  } >&2
+  if [[ "$GATE_OUTPUT_EXISTED" != true ]]; then
+    rm -f -- "$OUTPUT_FILE"
+  fi
+  exit 3
+fi
 
 if [[ "$SKIP_PREFLIGHT_TESTS" != "true" && -n "$TEST_CMD_OVERRIDE" ]]; then
   # pr-gate.sh is designed to be copied standalone into any repo (copy-mode --
@@ -4165,7 +5163,7 @@ context:
   Base: ${BASE}${HEAD_METADATA_LINE}
   Scope: ${SCOPE:-none}
   Date: $(date '+%Y-%m-%d')
-${GATE_ASSURANCE_CONTEXT_BLOCK}${GATE_OVERRIDES_CONTEXT_BLOCK}${TEST_EVIDENCE_CONTEXT_BLOCK}
+${GATE_ASSURANCE_CONTEXT_BLOCK}${SCOPE_MANIFEST_CONTEXT_BLOCK}${GATE_OVERRIDES_CONTEXT_BLOCK}${TEST_EVIDENCE_CONTEXT_BLOCK}
 ${MEMORY_CONTEXT_BLOCK}
   Verified reference files (exist in working tree -- check before citing):
 ${REPO_REF_INDEX}
@@ -4400,7 +5398,7 @@ context:
   Base: ${BASE}${HEAD_METADATA_LINE}
   Scope: ${SCOPE:-none}
   Date: $(date '+%Y-%m-%d')
-${GATE_ASSURANCE_CONTEXT_BLOCK}${GATE_OVERRIDES_CONTEXT_BLOCK}${TEST_EVIDENCE_CONTEXT_BLOCK}
+${GATE_ASSURANCE_CONTEXT_BLOCK}${SCOPE_MANIFEST_CONTEXT_BLOCK}${GATE_OVERRIDES_CONTEXT_BLOCK}${TEST_EVIDENCE_CONTEXT_BLOCK}
 ${MEMORY_CONTEXT_BLOCK}
   Verified reference files (exist in working tree -- check before citing):
 ${REPO_REF_INDEX}
@@ -4627,7 +5625,7 @@ context:
   Base: ${BASE}${HEAD_METADATA_LINE}
   Scope: ${SCOPE:-none}
   Date: $(date '+%Y-%m-%d')
-${GATE_ASSURANCE_CONTEXT_BLOCK}${GATE_OVERRIDES_CONTEXT_BLOCK}${TEST_EVIDENCE_CONTEXT_BLOCK}
+${GATE_ASSURANCE_CONTEXT_BLOCK}${SCOPE_MANIFEST_CONTEXT_BLOCK}${GATE_OVERRIDES_CONTEXT_BLOCK}${TEST_EVIDENCE_CONTEXT_BLOCK}
   Verified reference files (exist in working tree -- check before citing):
 ${REPO_REF_INDEX}
   Reviewer findings (embedded -- do NOT attempt to read any external reviewer output file):
