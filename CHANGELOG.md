@@ -10,6 +10,18 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Immutable gate scope manifest (CC-518).** `pmctl gate run` now creates a
+  content-addressed `gate_scope_manifest_v1` before reviewer dispatch, bound to
+  the immutable gate subject and linked from `gate_assurance_v3`. It declares
+  changed/renamed/untracked paths, hunk ranges, paired tests, sensitive
+  signals, surface flags, and bounded peer/call-site/shared-helper hints.
+  Sequential and parallel reviewers receive the same manifest digest.
+  Budget omissions stop as `INCOMPLETE` unless explicitly accepted with
+  `--accept-scope-truncation`; accepted truncation remains recorded with exact
+  omitted counts and reasons. Named v3 consumers now require verified linked
+  scope evidence; historical v3 envelopes with unavailable scope remain
+  readable only through non-authorizing artifact inspection.
+
 - **Immutable gate subject and shared three-axis verification (CC-515).**
   Current gate producers emit `gate_assurance_v3` with a stable Git
   common-directory repository key, provenance-only observed root, base/head

@@ -31,6 +31,7 @@ functions=(
   _gate_subject_common_dir
   _gate_subject_tree_fingerprint
   gate_subject_snapshot
+  gate_scope_manifest_verify
   _gate_assurance_linked_evidence_verify
   gate_assurance_verify
   gate_result_verify

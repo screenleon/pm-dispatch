@@ -1,6 +1,6 @@
 ---
 description: Run the tiered pre-PR review pipeline on the current branch.
-argument-hint: "[express|standard|full] [--targeted r1,r2 --initial-result path] [--scope context] [--mode sequential|parallel]"
+argument-hint: "[express|standard|full] [--targeted r1,r2 --initial-result path] [--scope context] [--mode sequential|parallel] [--accept-scope-truncation]"
 ---
 
 Run the PR gate via `pmctl gate run`. The `runtime/bin/pr-gate.sh` script is the
@@ -30,6 +30,7 @@ but does not treat it as a downgrade.
 | Conserve reviewer-session token usage | `--mode sequential` |
 | Request independent reviewer sessions | `--mode parallel` |
 | Request a specific tier | `express` / `standard` / `full` (cannot lower the policy floor) |
+| Continue after declared-scope budgets omit entries | `--accept-scope-truncation` (only after inspecting the manifest) |
 
 A tier or reviewer-coverage policy rejection happens before reviewer dispatch
 and is an execution/policy failure, not a `Final: NO-GO` reviewer verdict.
@@ -38,6 +39,15 @@ policy-override contract. Its scope fingerprint binds the actual tracked patch
 plus in-scope untracked content, so an approval cannot be replayed after a
 same-shape content change. `.gate-overrides.md` only supplies reviewer finding
 context and cannot lower policy.
+
+Before dispatch, the gate writes one immutable-subject-bound
+`gate_scope_manifest_v1` containing changed/renamed/untracked paths, hunk
+ranges, paired tests, sensitive signals, explicit surface flags, and bounded
+adjacent review hints. Every selected reviewer receives the same manifest
+digest. If a budget omits entries, the default outcome is `INCOMPLETE` before
+dispatch. `--accept-scope-truncation` permits the run to continue while
+recording `accepted_truncation`, omitted counts, and reasons; it does not claim
+complete semantic or call-graph coverage.
 
 ## Step 1 - Invoke pmctl directly
 
@@ -102,6 +112,7 @@ SCOPE_TOKENS=()
 GATE_MODE=""
 GATE_EXECUTOR="<gate_executor>"
 GATE_MODEL=""
+ACCEPT_SCOPE_TRUNCATION=false
 
 if [[ -n "$RAW_ARGS" ]]; then
   read -r -a TOKENS <<< "$RAW_ARGS"
@@ -166,6 +177,9 @@ while [[ "$idx" -lt "${#TOKENS[@]}" ]]; do
       GATE_MODEL="${TOKENS[$idx]:-}"
       [[ -n "$GATE_MODEL" ]] || { echo "error: --model requires a value" >&2; exit 2; }
       ;;
+    --accept-scope-truncation)
+      ACCEPT_SCOPE_TRUNCATION=true
+      ;;
     *)
       SCOPE_TOKENS+=("$tok")
       ;;
@@ -204,6 +218,7 @@ GATE_ARGS=(--cd "<work_dir>" --executor "$GATE_EXECUTOR" --policy generic)
 [[ -n "$TARGETED_REVIEWERS" ]] && GATE_ARGS+=(--targeted "$TARGETED_REVIEWERS" --initial-result "$INITIAL_RESULT")
 [[ -n "$SCOPE" ]] && GATE_ARGS+=(--scope "$SCOPE")
 [[ -n "$GATE_MODE" ]] && GATE_ARGS+=(--mode "$GATE_MODE")
+[[ "$ACCEPT_SCOPE_TRUNCATION" == true ]] && GATE_ARGS+=(--accept-scope-truncation)
 
 # Launch detached: this call is inline (NOT run_in_background) and returns in
 # well under a second once the supervisor is forked -- stdout prints exactly

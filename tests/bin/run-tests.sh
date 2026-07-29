@@ -217,7 +217,7 @@ map_path() {
       add_suite test-pmctl-task; behavioral=1 ;;
     core/schema/preflight-evidence.schema.json)
       add_suite test-pr-gate; behavioral=1 ;;
-    core/schema/gate-assurance.schema.json|core/schema/gate-policy-override.schema.json|core/schema/gate-verification.schema.json)
+    core/schema/gate-assurance.schema.json|core/schema/gate-policy-override.schema.json|core/schema/gate-scope-manifest.schema.json|core/schema/gate-verification.schema.json)
       add_suite test-core-schemas; add_suite test-pr-gate
       add_suite test-pmctl-gate; behavioral=1 ;;
     runtime/lib/gate-result-verify.sh)

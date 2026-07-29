@@ -613,7 +613,117 @@ _mk_gate_result_v3_verified() {
     }
   ' "$sidecar" > "${sidecar}.tmp"
   mv "${sidecar}.tmp" "$sidecar"
+  _attach_gate_scope_manifest_v3 "$path"
   _refresh_gate_result_v3_attestation "$path"
+}
+
+_attach_gate_scope_manifest_v3() {
+  local path="$1" sidecar="${1}.assurance.json"
+  local manifest manifest_digest manifest_sha
+  manifest="$(dirname "$path")/gate-scope-manifest-fixture.json"
+  jq -n --slurpfile assurance "$sidecar" '
+    $assurance[0].subject as $subject | {
+      kind:"gate_scope_manifest_v1",
+      schema_version:1,
+      status:"complete",
+      subject:{
+        repository_key:$subject.repository.key,
+        base_commit:$subject.base.commit,
+        head_commit:$subject.head.commit,
+        tree_fingerprint:$subject.tree_fingerprint,
+        subject_kind:$subject.subject_kind
+      },
+      selection:{
+        diff_kind:(
+          if $subject.subject_kind == "fixed_ref" then "fixed-head"
+          elif $subject.subject_kind == "working_tree" then "working-tree"
+          else "committed"
+          end
+        ),
+        base_ref:$subject.base.ref,
+        head_ref:$subject.head.ref,
+        include_untracked:($subject.subject_kind == "working_tree")
+      },
+      changes:{
+        entries:[{
+          status:"modified",
+          old_path:null,
+          new_path:"README.md",
+          similarity:null
+        }],
+        changed_paths:["README.md"],
+        renamed_paths:[],
+        untracked_paths:[]
+      },
+      diff:{
+        hunks:[{
+          path:"README.md",
+          source:"tracked",
+          old_start:1,
+          old_lines:1,
+          new_start:1,
+          new_lines:1,
+          header:"@@ -1 +1 @@"
+        }],
+        binary_or_special_paths:[]
+      },
+      paired_tests:[],
+      sensitive_signals:[],
+      flags:{
+        public_interface:{matched:true,paths:["README.md"]},
+        schema:{matched:false,paths:[]},
+        config:{matched:false,paths:[]},
+        install:{matched:false,paths:[]},
+        ci:{matched:false,paths:[]},
+        release:{matched:false,paths:[]},
+        migration:{matched:false,paths:[]}
+      },
+      expansion:{
+        claim:"bounded-hints-not-complete-call-graph",
+        entries:[],
+        included_paths:[]
+      },
+      truncation:{
+        occurred:false,
+        budgets:{
+          diff_hunks:512,
+          expansion_source_paths:256,
+          symbols_per_source:1024,
+          matches_per_query:64,
+          expansion_entries:512
+        },
+        omitted:{
+          diff_hunks:0,
+          expansion_source_paths:0,
+          symbols_per_source:0,
+          matches_per_query:0,
+          expansion_entries:0
+        },
+        reasons:[],
+        acceptance:{required:false,accepted:false,source:null}
+      },
+      content:{
+        digest_algorithm:"sha256-canonical-json-without-content-digest",
+        digest:""
+      }
+    }
+  ' > "${manifest}.tmp"
+  manifest_digest="$(jq -cS 'del(.content.digest)' "${manifest}.tmp" \
+    | sha256sum | awk '{print $1}')"
+  jq --arg digest "$manifest_digest" '.content.digest = $digest' \
+    "${manifest}.tmp" > "$manifest"
+  rm -f "${manifest}.tmp"
+  manifest_sha="$(sha256sum "$manifest" | awk '{print $1}')"
+  jq --arg artifact "$(basename "$manifest")" \
+    --arg sha "$manifest_sha" '
+      .evidence.scope_manifest = {
+        status:"verified",
+        artifact:$artifact,
+        sha256:$sha,
+        subject_fingerprint:.subject.tree_fingerprint
+      }
+    ' "$sidecar" > "${sidecar}.tmp"
+  mv "${sidecar}.tmp" "$sidecar"
 }
 
 _refresh_gate_result_v3_attestation() {
@@ -859,6 +969,14 @@ case_verify_v3_policy_reason_codes() {
       closure)
         jq '.policy.consumer_policy = "maintainer"' "$sidecar" > "$fixture"
         ;;
+      scope)
+        jq '.evidence.scope_manifest = {
+          status:"unavailable",
+          artifact:null,
+          sha256:null,
+          subject_fingerprint:null
+        }' "$sidecar" > "$fixture"
+        ;;
     esac
     axis="$(
       gate_policy_applicability_assess "$fixture" "$consumer" verified
@@ -882,6 +1000,7 @@ no-policy|policy_resolution_unavailable|generic
 enforcement|policy_enforcement_failed|generic
 independence|review_independence_unverified|generic
 dispatch|review_dispatch_evidence_incomplete|generic
+scope|scope_manifest_unavailable|generic
 closure|closure_evidence_unavailable|publish
 CASES
   pass "$name"
@@ -1011,6 +1130,7 @@ case_verify_v3_fixed_ref_ignores_working_tree() {
     .bindings.subject_fingerprint = $subject.tree_fingerprint
   ' "$sidecar" > "${sidecar}.tmp"
   mv "${sidecar}.tmp" "$sidecar"
+  _attach_gate_scope_manifest_v3 "$result"
   _refresh_gate_result_v3_attestation "$result"
   printf 'unrelated dirt\n' > "$_GATE_VERIFY_REPO/untracked.txt"
   set +e
@@ -1090,10 +1210,10 @@ case_verify_v3_different_repo_same_content_is_stale() {
 }
 
 case_verify_v3_copy_replay_is_valid_but_not_authorizing() {
-  # Behavior: copying the self-contained result/sidecar pair preserves content
-  # validity and subject freshness, but protected dispatch applicability does
-  # not travel outside the canonical run partition.
-  local name="gate/verify: v3 copied pair is valid/current but not policy-authorizing"
+  # Behavior: copying the self-contained result/sidecar/evidence set preserves
+  # content validity and subject freshness, but protected dispatch
+  # applicability does not travel outside the canonical run partition.
+  local name="gate/verify: v3 copied artifact set is valid/current but not policy-authorizing"
   should_run "$name" || return 0
   local result copied out code
   result="$(_gate_verify_result_path v3-copy-source)"
@@ -1102,6 +1222,8 @@ case_verify_v3_copy_replay_is_valid_but_not_authorizing() {
   mkdir -p "$(dirname "$copied")"
   cp "$result" "$copied"
   cp "${result}.assurance.json" "${copied}.assurance.json"
+  cp "$(dirname "$result")/$(jq -r '.evidence.scope_manifest.artifact' \
+    "${result}.assurance.json")" "$(dirname "$copied")/"
   set +e
   out="$(
     PM_DISPATCH_STATE_ROOT="$_GATE_VERIFY_STATE_ROOT" \

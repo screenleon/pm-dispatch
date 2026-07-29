@@ -56,6 +56,7 @@ CODEX_GATE_STUB_*	CODEX_GATE_STUB_SYNTHESIS_INJECT_FILE	tests/shell/test-pr-gate
 CODEX_GATE_STUB_*	CODEX_GATE_STUB_SYNTHESIS_MODE	tests/shell/test-pr-gate.sh	test
 CODEX_GATE_STUB_*	CODEX_GATE_STUB_SYNTHESIS_TAMPER_ARTIFACT	tests/shell/test-pr-gate.sh	test
 CODEX_GATE_STUB_*	CODEX_GATE_STUB_TAMPER_PREFLIGHT	tests/shell/test-pr-gate.sh	test
+CODEX_GATE_STUB_*	CODEX_GATE_STUB_TAMPER_SCOPE	tests/shell/test-pr-gate.sh	test
 CODEX_GATE_STUB_*	CODEX_GATE_STUB_VERDICT	tests/shell/test-pr-gate.sh	test
 CODEX_GATE_STUB_*	CODEX_GATE_STUB_VERDICT_PREFIX_ONLY	tests/shell/test-pr-gate.sh	test
 CODEX_HOME	CODEX_HOME	hosts/codex/bin/install.sh	production
