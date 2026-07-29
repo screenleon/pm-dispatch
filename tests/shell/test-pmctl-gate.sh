@@ -726,6 +726,23 @@ _attach_gate_scope_manifest_v3() {
   mv "${sidecar}.tmp" "$sidecar"
 }
 
+_refresh_gate_scope_manifest_v3_links() {
+  local path="$1" sidecar="${1}.assurance.json"
+  local manifest manifest_digest manifest_sha
+  manifest="$(dirname "$path")/$(jq -r '.evidence.scope_manifest.artifact' \
+    "$sidecar")"
+  manifest_digest="$(jq -cS 'del(.content.digest)' "$manifest" \
+    | sha256sum | awk '{print $1}')"
+  jq --arg digest "$manifest_digest" '.content.digest = $digest' \
+    "$manifest" > "${manifest}.tmp"
+  mv "${manifest}.tmp" "$manifest"
+  manifest_sha="$(sha256sum "$manifest" | awk '{print $1}')"
+  jq --arg sha "$manifest_sha" '.evidence.scope_manifest.sha256 = $sha' \
+    "$sidecar" > "${sidecar}.tmp"
+  mv "${sidecar}.tmp" "$sidecar"
+  _refresh_gate_result_v3_attestation "$path"
+}
+
 _refresh_gate_result_v3_attestation() {
   local path="$1" sidecar="${1}.assurance.json"
   local run_root attestation assurance_sha subject_sha
@@ -1265,6 +1282,85 @@ case_verify_v3_valid_but_policy_insufficient() {
         (.axes.policy_applicable.reason_codes |
           index("consumer_policy_mismatch")) != null
       ' <<<"$out" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+case_verify_v3_scope_policy_signal_mismatch_is_invalid() {
+  # Behavior: independently valid and re-attested scope evidence cannot
+  # authorize a result when its sensitive path signals differ from policy.
+  local name="gate/verify: v3 scope policy-signal mismatch invalidates artifact"
+  should_run "$name" || return 0
+  local result sidecar manifest out report code
+  result="$(_gate_verify_result_path v3-scope-policy-signal-mismatch)"
+  sidecar="${result}.assurance.json"
+  _mk_gate_result_v3_verified "$result" "$_GATE_VERIFY_REPO"
+  manifest="$(dirname "$result")/$(jq -r '.evidence.scope_manifest.artifact' \
+    "$sidecar")"
+  jq '.sensitive_signals = [{
+    id:"fixture-sensitive-path",
+    source:"path-regex",
+    matches:["README.md"],
+    minimum_tier:"express",
+    required_reviewers:["critic"],
+    recommended_mode:"sequential"
+  }]' "$manifest" > "${manifest}.tmp"
+  mv "${manifest}.tmp" "$manifest"
+  _refresh_gate_scope_manifest_v3_links "$result"
+  set +e
+  out="$(_run_canonical_gate_verify "$result" --consumer generic --json 2>&1)"
+  code=$?
+  set -e
+  report="$(tail -n 1 <<<"$out")"
+  if [[ "$code" -eq 1 ]] \
+      && [[ "$out" == *"sensitive signals do not match resolved policy"* ]] \
+      && jq -e '
+        .axes.artifact_valid.status == "fail" and
+        (.axes.artifact_valid.reason_codes |
+          index("artifact_integrity_failed")) != null
+      ' <<<"$report" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+case_verify_v3_incomplete_scope_manifest_is_invalid() {
+  # Behavior: recomputing every digest cannot turn an explicitly incomplete
+  # declared scope into authorizing linked evidence.
+  local name="gate/verify: v3 incomplete scope manifest invalidates artifact"
+  should_run "$name" || return 0
+  local result sidecar manifest out report code
+  result="$(_gate_verify_result_path v3-incomplete-scope)"
+  sidecar="${result}.assurance.json"
+  _mk_gate_result_v3_verified "$result" "$_GATE_VERIFY_REPO"
+  manifest="$(dirname "$result")/$(jq -r '.evidence.scope_manifest.artifact' \
+    "$sidecar")"
+  jq '
+    .status = "incomplete" |
+    .truncation.occurred = true |
+    .truncation.omitted.matches_per_query = 1 |
+    .truncation.reasons = ["search-match-budget"] |
+    .truncation.acceptance = {
+      required:true,accepted:false,source:null
+    }
+  ' "$manifest" > "${manifest}.tmp"
+  mv "${manifest}.tmp" "$manifest"
+  _refresh_gate_scope_manifest_v3_links "$result"
+  set +e
+  out="$(_run_canonical_gate_verify "$result" --consumer generic --json 2>&1)"
+  code=$?
+  set -e
+  report="$(tail -n 1 <<<"$out")"
+  if [[ "$code" -eq 1 ]] \
+      && [[ "$out" == *"incomplete gate scope manifest cannot authorize"* ]] \
+      && jq -e '
+        .axes.artifact_valid.status == "fail" and
+        (.axes.artifact_valid.reason_codes |
+          index("artifact_integrity_failed")) != null
+      ' <<<"$report" >/dev/null; then
     pass "$name"
   else
     fail "$name" "code=$code out=$out"
@@ -2344,6 +2440,8 @@ case_verify_v3_linked_worktree_path_is_current
 case_verify_v3_different_repo_same_content_is_stale
 case_verify_v3_copy_replay_is_valid_but_not_authorizing
 case_verify_v3_valid_but_policy_insufficient
+case_verify_v3_scope_policy_signal_mismatch_is_invalid
+case_verify_v3_incomplete_scope_manifest_is_invalid
 case_verify_v3_linked_evidence_digest_tamper_is_invalid
 case_verify_v3_subject_binding_mismatch_is_invalid
 case_verify_v3_linked_preflight_subject_claim_mismatch_is_invalid

@@ -4784,6 +4784,71 @@ test_scope_manifest_complete_and_shared_across_parallel_dispatch() {
   pass "$name"
 }
 
+# Behavior: the manifest producer transports a maximum-size expansion through
+# a file descriptor instead of one jq argv value, preserving every entry even
+# when the serialized array exceeds Linux MAX_ARG_STRLEN.
+test_scope_manifest_large_expansion_uses_file_input() {
+  local name="scope-manifest/large-expansion-uses-file-input"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo"
+  local runner="$dir/runner" out="$dir/out" err="$dir/err"
+  local long_stem source_path symbol result assurance manifest
+  local expansion_bytes code
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  git init -q -b main "$repo"
+  long_stem="$(printf 's%.0s' {1..220})"
+  source_path="src/${long_stem}.sh"
+  (
+    cd "$repo"
+    git config user.email test@example.com
+    git config user.name 'Gate Test'
+    mkdir -p src callers
+    write_managed_gitignore
+    printf '# old implementation\n' > "$source_path"
+    for n in $(seq -w 1 64); do
+      for symbol in $(seq -w 1 8); do
+        printf 'scope_expansion_symbol_%s\n' "$symbol"
+      done > "callers/call-${n}.sh"
+    done
+    git add .
+    git commit -q -m initial
+    git checkout -q -b feature
+    for symbol in $(seq -w 1 8); do
+      printf 'scope_expansion_symbol_%s() { :; }\n' "$symbol"
+    done > "$source_path"
+    git add "$source_path"
+    git commit -q -m change
+  )
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" \
+    --base main --mode sequential
+  code=$?
+  set -e
+  [[ "$code" -eq 0 ]] || {
+    fail "$name" "exit $code, expected 0: $(tail -n 30 "$err" 2>/dev/null)"
+    return
+  }
+  result="$(awk -F'result: ' '/^result: /{path=$2} END{print path}' "$out")"
+  assurance="${result}.assurance.json"
+  manifest="$(dirname "$assurance")/$(jq -r '.evidence.scope_manifest.artifact' "$assurance")"
+  expansion_bytes="$(jq -c '.expansion.entries' "$manifest" | wc -c | tr -d ' ')"
+  if ! jq -e '
+      .status == "complete" and
+      (.expansion.entries | length) == 512 and
+      .truncation.occurred == false
+    ' "$manifest" >/dev/null \
+      || [[ "$expansion_bytes" -le 131072 ]]; then
+    fail "$name" "large expansion was narrowed or too small: entries=$(jq -r '.expansion.entries | length' "$manifest" 2>/dev/null) bytes=$expansion_bytes"
+    return
+  fi
+  assert_not_contains "$name" "$err" "Argument list too long" || return
+  pass "$name"
+}
+
 create_scope_truncation_repo() {
   local repo="$1"
   git init -q -b main "$repo"
@@ -4928,6 +4993,7 @@ run_test test_rename_sensitive_old_name
 run_test test_binary_file_routes_to_standard
 run_test test_untracked_binary_routes_to_standard
 run_test test_scope_manifest_complete_and_shared_across_parallel_dispatch
+run_test test_scope_manifest_large_expansion_uses_file_input
 run_test test_scope_manifest_truncation_requires_explicit_acceptance
 run_test test_parallel_launches_per_reviewer
 run_test test_parallel_timeout_kills_hanging_reviewer

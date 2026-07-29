@@ -1016,7 +1016,7 @@ _gate_scope_manifest_write() {
   local destination="$1" changes_json="$2" policy_json="$3"
   local hunks_file binary_file expansion_file manifest_tmp
   local changed_paths_json renamed_paths_json untracked_paths_json
-  local paired_tests_json sensitive_signals_json flags_json expansion_json
+  local paired_tests_json sensitive_signals_json flags_json
   local truncation_occurred=false truncation_accepted=false
   local status=complete acceptance_source="" reasons_json content_digest
   hunks_file="$(mktemp "${TMPDIR:-/tmp}/gate-scope-hunks.XXXXXX")" || return 2
@@ -1056,7 +1056,6 @@ _gate_scope_manifest_write() {
       rm -f -- "$hunks_file" "$binary_file" "$expansion_file" "$manifest_tmp"
       return 2
     }
-  expansion_json="$(cat "$expansion_file")"
   sensitive_signals_json="$(jq -c '[
     .matched_signals[] | select(.source == "path-regex")
   ] | sort_by(.id)' <<<"$policy_json")" || return 2
@@ -1107,7 +1106,7 @@ _gate_scope_manifest_write() {
       --slurpfile hunks "$hunks_file" --slurpfile binary "$binary_file" \
       --argjson paired_tests "$paired_tests_json" \
       --argjson sensitive_signals "$sensitive_signals_json" \
-      --argjson flags "$flags_json" --argjson expansion "$expansion_json" \
+      --argjson flags "$flags_json" --slurpfile expansion "$expansion_file" \
       --argjson truncation_occurred "$truncation_occurred" \
       --argjson truncation_accepted "$truncation_accepted" \
       --argjson omitted_hunks "$GATE_SCOPE_OMITTED_DIFF_HUNKS" \
@@ -1152,8 +1151,8 @@ _gate_scope_manifest_write() {
         flags:$flags,
         expansion:{
           claim:"bounded-hints-not-complete-call-graph",
-          entries:$expansion,
-          included_paths:([$expansion[].path] | unique | sort)
+          entries:$expansion[0],
+          included_paths:([$expansion[0][].path] | unique | sort)
         },
         truncation:{
           occurred:$truncation_occurred,
