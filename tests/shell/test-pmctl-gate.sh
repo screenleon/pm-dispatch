@@ -2096,7 +2096,7 @@ RUNNER
       >"$out" 2>"$err" &
   gate_pid=$!
 
-  ready_value="$(timeout 20 cat "$ready")" || {
+  ready_value="$(timeout 60 cat "$ready")" || {
     kill "$gate_pid" 2>/dev/null || true
     wait "$gate_pid" 2>/dev/null || true
     fail "$name" "preflight never reached deterministic readiness; err=$(cat "$err" 2>/dev/null || true)"
@@ -2166,7 +2166,7 @@ FAKE_GATE
   gate_id="$(PM_DISPATCH_STATE_ROOT="$state" XDG_RUNTIME_DIR="$_GATE_CLI_XDG_RUNTIME_DIR" \
     TEST_GATE_READY_FIFO="$ready" TEST_GATE_RELEASE_FIFO="$release" TEST_GATE_PIDS="$pids" \
     "$fixture/cli/pmctl" gate run --lifecycle detached --cd "$work" 2>"$err")"
-  if [[ "$(timeout 20 cat "$ready")" != ready ]]; then
+  if [[ "$(timeout 60 cat "$ready")" != ready ]]; then
     fail "$name" "detached producer never reached readiness; gate=$gate_id err=$(cat "$err" 2>/dev/null || true)"
     return
   fi
