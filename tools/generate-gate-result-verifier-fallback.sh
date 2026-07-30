@@ -26,6 +26,13 @@ trap cleanup EXIT
 functions=(
   gate_result_verdict_verify
   _gate_result_frontmatter_value
+  _gate_reviewer_protocol_surfaces
+  _gate_reviewer_protocol_reference_index_json
+  _gate_reviewer_protocol_document_verify
+  _gate_reviewer_protocol_documents
+  _gate_reviewer_protocol_verdict_extract
+  _gate_reviewer_protocol_final_extract
+  gate_reviewer_protocol_verify
   _gate_result_sha256_stream
   _gate_result_sha256_file
   _gate_subject_common_dir

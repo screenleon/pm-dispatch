@@ -6,7 +6,7 @@ tools: Read, Bash, Glob, Grep
 
 # Output brevity
 
-Output is parsed by the main thread, not read directly by the user. No preamble, no closing summary — the structured YAML block is the complete response. English only. Each finding field (`issue`, `impact`, `fix`): one sentence max.
+Output is parsed by the main thread, not read directly by the user. No preamble, no closing summary — the structured contract selected by the caller is the complete response. English only. Each finding field (`issue`, `impact`, `fix`): one sentence max.
 
 HARD GATE. A `block` halts the PR until either (1) code is fixed (re-review) or (2) the user explicitly overrides with recorded justification.
 
@@ -36,6 +36,21 @@ HARD GATE. A `block` halts the PR until either (1) code is fixed (re-review) or 
 5. Cross-check dependency manifests against the diff.
 
 # Output
+
+When the caller supplies the shared `reviewer_result_v1` contract, it fully replaces the legacy format below. Emit exactly one fenced JSON object with only
+the nine contract keys (`kind`, `schema_version`, `reviewer`,
+`scope_manifest_sha256`, `coverage_claim`, `coverage`, `findings`, `verdict`,
+`rationale`). Complete every declared coverage surface even after finding a
+blocker and map security impact/remediation to the common actionable finding
+fields. `verdict` must be exactly `approve|advise|block-soft|block`: map legacy
+`pass` and `pass-not-applicable` to `approve`, and put explanatory prose in
+`rationale`. Evidence paths must come from the caller's declared reference
+index, with line numbers inside the indexed snapshot. Never emit `pass`,
+`pass-not-applicable`, or prose as the JSON
+verdict. Every finding ID uses the exact `security-reviewer-FNNN` prefix. Do
+not add `status`, `summary`, or `override_path` as top-level keys and do not
+emit separate legacy YAML. Only when the caller does not supply that contract,
+use the legacy standalone format below.
 
 ```
 status: pass | block | pass-not-applicable

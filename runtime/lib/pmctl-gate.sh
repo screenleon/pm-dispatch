@@ -80,7 +80,7 @@ _pmctl_gate_result_verifier_load() {
     && declare -F _gate_result_sha256_file >/dev/null 2>&1
 }
 
-# A v2 result and its bound sidecar cannot be renamed into place as one
+# A bound result and its sidecar cannot be renamed into place as one
 # filesystem operation. If a verifier races the producer between those
 # renames, wait briefly for the sidecar (and, for verified independence,
 # its protected attestation) instead of turning a valid in-flight
@@ -91,7 +91,8 @@ _pmctl_gate_wait_for_assurance_publication() {
   local attempt=0 max_attempts=20
 
   version="$(_gate_result_frontmatter_value "$result_file" gate_result_version)"
-  [[ "$version" == pr_gate_result_v2 ]] || return 0
+  [[ "$version" == pr_gate_result_v2 || "$version" == pr_gate_result_v3 ]] \
+    || return 0
   result_parent="$(cd "$(dirname "$result_file")" 2>/dev/null && pwd -P)" || return 0
   # Only canonical run-layout results have an asynchronous producer
   # finalization lifecycle. Ad-hoc and copy-mode results fail immediately.

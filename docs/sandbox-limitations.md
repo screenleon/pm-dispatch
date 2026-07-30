@@ -30,7 +30,7 @@ Understanding the boundary helps you write `self_verify` blocks that actually wo
 > warning. Pass `--allow-hooks` only for repositories and branches you trust.
 >
 > ```bash
-> bash runtime/bin/pr-gate.sh --cd . --allow-hooks
+> pmctl gate run --cd . --allow-hooks --lifecycle foreground
 > ```
 
 The gate lifecycle hooks let the main thread start and stop infrastructure
@@ -60,7 +60,7 @@ around the gate run. Place hook scripts in `.pm-dispatch/` at your project root:
 Depending on your use case, choose the right approach:
 
 **(A) Teardown that must always run** (e.g., `docker compose down`, even if a reviewer fails):
-Wrap `pr-gate.sh` in a shell function or CI step that uses a `trap` in the
+Wrap the foreground gate invocation in a shell function or CI step that uses a `trap` in the
 **caller**, not inside `pre-gate.sh`. The hook exits after setup; any `trap`
 inside it cleans up immediately, not after the gate finishes.
 
@@ -74,7 +74,7 @@ trap cleanup EXIT
 docker compose -f docker-compose.test.yml up -d db
 until docker compose -f docker-compose.test.yml exec -T db pg_isready -q; do sleep 1; done
 
-bash runtime/bin/pr-gate.sh --cd . --allow-hooks
+pmctl gate run --cd . --allow-hooks --lifecycle foreground
 ```
 
 The teardown trap is now in scope for the full gate run. Alternatively, use a
@@ -150,7 +150,7 @@ make test-integration
 Then run the gate:
 
 ```bash
-bash runtime/bin/pr-gate.sh --cd . --allow-hooks
+pmctl gate run --cd . --allow-hooks --lifecycle foreground
 ```
 
 **Why this works**: `pre-gate.sh` runs as the main-thread user with full Docker and

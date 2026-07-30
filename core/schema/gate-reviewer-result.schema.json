@@ -1,0 +1,502 @@
+{
+  "title": "Gate Reviewer Result",
+  "description": "A schema-complete selected-reviewer report bound to one immutable gate scope manifest. Coverage declaration calibrates the review; it does not claim semantic or defect completeness.",
+  "type": "object",
+  "required": [
+    "kind",
+    "schema_version",
+    "reviewer",
+    "scope_manifest_sha256",
+    "coverage_claim",
+    "coverage",
+    "findings",
+    "verdict",
+    "rationale"
+  ],
+  "properties": {
+    "kind": {
+      "const": "gate_reviewer_result_v1"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "reviewer": {
+      "enum": [
+        "critic",
+        "qa-tester",
+        "architecture-reviewer",
+        "security-reviewer",
+        "risk-reviewer"
+      ]
+    },
+    "scope_manifest_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "coverage_claim": {
+      "const": "declared-scope-checklist-not-review-completeness"
+    },
+    "coverage": {
+      "type": "array",
+      "minItems": 11,
+      "maxItems": 11,
+      "items": {
+        "$ref": "#/definitions/coverageEntry"
+      },
+      "allOf": [
+        {
+          "contains": {
+            "properties": {
+              "surface": {
+                "const": "changed_files"
+              }
+            },
+            "required": [
+              "surface"
+            ]
+          }
+        },
+        {
+          "contains": {
+            "properties": {
+              "surface": {
+                "const": "paired_tests"
+              }
+            },
+            "required": [
+              "surface"
+            ]
+          }
+        },
+        {
+          "contains": {
+            "properties": {
+              "surface": {
+                "const": "sensitive_signals"
+              }
+            },
+            "required": [
+              "surface"
+            ]
+          }
+        },
+        {
+          "contains": {
+            "properties": {
+              "surface": {
+                "const": "public_interface"
+              }
+            },
+            "required": [
+              "surface"
+            ]
+          }
+        },
+        {
+          "contains": {
+            "properties": {
+              "surface": {
+                "const": "schema"
+              }
+            },
+            "required": [
+              "surface"
+            ]
+          }
+        },
+        {
+          "contains": {
+            "properties": {
+              "surface": {
+                "const": "config"
+              }
+            },
+            "required": [
+              "surface"
+            ]
+          }
+        },
+        {
+          "contains": {
+            "properties": {
+              "surface": {
+                "const": "install"
+              }
+            },
+            "required": [
+              "surface"
+            ]
+          }
+        },
+        {
+          "contains": {
+            "properties": {
+              "surface": {
+                "const": "ci"
+              }
+            },
+            "required": [
+              "surface"
+            ]
+          }
+        },
+        {
+          "contains": {
+            "properties": {
+              "surface": {
+                "const": "release"
+              }
+            },
+            "required": [
+              "surface"
+            ]
+          }
+        },
+        {
+          "contains": {
+            "properties": {
+              "surface": {
+                "const": "migration"
+              }
+            },
+            "required": [
+              "surface"
+            ]
+          }
+        },
+        {
+          "contains": {
+            "properties": {
+              "surface": {
+                "const": "bounded_expansion"
+              }
+            },
+            "required": [
+              "surface"
+            ]
+          }
+        }
+      ]
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/finding"
+      }
+    },
+    "verdict": {
+      "enum": [
+        "approve",
+        "advise",
+        "block-soft",
+        "block"
+      ]
+    },
+    "rationale": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "verdict": {
+            "const": "block-soft"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "findings": {
+            "contains": {
+              "properties": {
+                "hard_gate_class": {
+                  "const": "soft_block"
+                }
+              },
+              "required": [
+                "hard_gate_class"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "verdict": {
+            "const": "block"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "findings": {
+            "contains": {
+              "properties": {
+                "hard_gate_class": {
+                  "const": "hard_block"
+                }
+              },
+              "required": [
+                "hard_gate_class"
+              ]
+            }
+          }
+        }
+      }
+    }
+  ],
+  "additionalProperties": false,
+  "definitions": {
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)",
+      "not": {
+        "pattern": "(^|/)\\.\\.(/|$)"
+      }
+    },
+    "evidenceRef": {
+      "type": "object",
+      "required": [
+        "path"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/definitions/relativePath"
+        },
+        "line": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "symbol": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        }
+      },
+      "anyOf": [
+        {
+          "required": [
+            "line"
+          ],
+          "properties": {
+            "line": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        {
+          "required": [
+            "symbol"
+          ],
+          "properties": {
+            "symbol": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "coverageEntry": {
+      "type": "object",
+      "required": [
+        "surface",
+        "status",
+        "evidence_refs",
+        "reason"
+      ],
+      "properties": {
+        "surface": {
+          "enum": [
+            "changed_files",
+            "paired_tests",
+            "sensitive_signals",
+            "public_interface",
+            "schema",
+            "config",
+            "install",
+            "ci",
+            "release",
+            "migration",
+            "bounded_expansion"
+          ]
+        },
+        "status": {
+          "enum": [
+            "examined",
+            "not_applicable",
+            "uncertain"
+          ]
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/evidenceRef"
+          }
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "examined"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "evidence_refs": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "finding": {
+      "type": "object",
+      "required": [
+        "id",
+        "reviewer",
+        "severity",
+        "hard_gate_class",
+        "origin",
+        "source",
+        "affected_behavior",
+        "why_it_matters",
+        "failure_mode",
+        "minimum_fix_boundary",
+        "verification_expectation"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^(critic|qa-tester|architecture-reviewer|security-reviewer|risk-reviewer)-F[0-9]{3}$"
+        },
+        "reviewer": {
+          "enum": [
+            "critic",
+            "qa-tester",
+            "architecture-reviewer",
+            "security-reviewer",
+            "risk-reviewer"
+          ]
+        },
+        "severity": {
+          "enum": [
+            "critical",
+            "high",
+            "medium",
+            "low"
+          ]
+        },
+        "hard_gate_class": {
+          "enum": [
+            "none",
+            "soft_block",
+            "hard_block"
+          ]
+        },
+        "origin": {
+          "enum": [
+            "diff_caused",
+            "pre_existing",
+            "uncertain",
+            "caution"
+          ]
+        },
+        "source": {
+          "$ref": "#/definitions/evidenceRef"
+        },
+        "affected_behavior": {
+          "type": "string",
+          "minLength": 1
+        },
+        "why_it_matters": {
+          "type": "string",
+          "minLength": 1
+        },
+        "failure_mode": {
+          "type": "string",
+          "minLength": 1
+        },
+        "minimum_fix_boundary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "verification_expectation": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "hard_gate_class": {
+                "enum": [
+                  "soft_block",
+                  "hard_block"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "enum": [
+                  "critical",
+                  "high"
+                ]
+              },
+              "origin": {
+                "enum": [
+                  "diff_caused",
+                  "uncertain"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "origin": {
+                "enum": [
+                  "pre_existing",
+                  "caution"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "hard_gate_class": {
+                "const": "none"
+              }
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    }
+  }
+}

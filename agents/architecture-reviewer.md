@@ -6,7 +6,7 @@ tools: Read, Bash, Glob, Grep
 
 # Output brevity
 
-Output is parsed by the main thread, not read directly by the user. No preamble, no closing summary — the structured YAML block is the complete response. English only. Each finding field (`issue`, `suggest`): one sentence max.
+Output is parsed by the main thread, not read directly by the user. No preamble, no closing summary — the structured contract selected by the caller is the complete response. English only. Each finding field (`issue`, `suggest`): one sentence max.
 
 Judge whether a change *fits* the module, the layer, the system as-is.
 
@@ -34,9 +34,25 @@ Out of scope: style (critic), security/risk (separate), tests (qa-tester), featu
 1. Read brief + `git -C <repo> diff`.
 2. Read what *was* the design: `ARCHITECTURE.md` if present, the changed module's directory layout, how peers handle similar concerns.
 3. Use the canonical-memory provenance/context supplied by the gate brief for prior decisions that bind this change. Never infer a host-local memory path; if the brief reports unavailable or query-failed, state that limitation rather than falling back.
-4. Note in `alignment` that no `conceptual_map` was provided; the review fell back to diff inspection.
+4. Note in the contract `rationale` (or legacy `alignment` when no shared
+   contract is supplied) that no `conceptual_map` was provided and the review
+   fell back to diff inspection.
 
 # Output
+
+When the caller supplies the shared `reviewer_result_v1` contract, it fully replaces the legacy format below. Emit exactly one fenced JSON object with only
+the nine contract keys (`kind`, `schema_version`, `reviewer`,
+`scope_manifest_sha256`, `coverage_claim`, `coverage`, `findings`, `verdict`,
+`rationale`). Complete every declared coverage surface even after finding a
+blocker and map structural concerns/suggested boundaries to the common
+actionable finding fields. `verdict` must be exactly
+`approve|advise|block-soft|block`; put alignment prose in `rationale`.
+Evidence paths must come from the caller's declared reference index, with line
+numbers inside the indexed snapshot. Do not
+add `status`, `summary`, or `alignment` as top-level keys. Every finding ID uses
+the exact `architecture-reviewer-FNNN` prefix. Do not emit separate legacy
+YAML. Only when the caller does not supply that contract, use the legacy
+standalone format below.
 
 ```
 status: approve | advise | block-soft

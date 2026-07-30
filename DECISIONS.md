@@ -7,6 +7,62 @@ H2 標題格式：## YYYY-MM-DD: <短描述>
 與 BACKLOG closure 對應的 entry，內文首行寫：Closes: BACKLOG.md#<PREFIX>-NNN
 -->
 
+## 2026-07-29: structured-reviewer-verdicts-replace-markdown-heading-parsing
+
+Relates: CC-519
+
+**Context**: Parallel reviewer sessions can finish their substantive work yet
+cause the gate to stop before synthesis when Markdown headings are duplicated,
+omitted, or reformatted. In one observed run, four reviewer artifacts repeated
+the same canonical heading while their actual conclusions remained readable;
+the operation correctly failed closed as protocol incomplete, but the heading
+count neither represented reviewer coverage nor preserved an actionable,
+machine-verifiable finding contract. Requiring another exact prose marker would
+keep transport formatting coupled to review semantics. A later sequential run
+exposed a second producer ambiguity: qa-tester used legacy `pass`,
+architecture-reviewer added legacy `alignment`, and security/risk reviewers put
+legacy narrative prose in `verdict`. The verifier correctly stopped the run as
+`INCOMPLETE`, but its generic coverage/finding diagnostic hid the actual verdict
+and top-level-key violations.
+
+**Decision**: Every selected reviewer emits one scope-bound
+`gate_reviewer_result_v1` JSON object. It carries the complete declared-surface
+checklist, stable actionable findings, and one closed-enum `verdict`.
+`reviewer_result_v1.verdict` is the only canonical reviewer verdict; Markdown
+headings are optional presentation and are ignored for machine decisions.
+The gate shell validates every JSON report before synthesis, calculates
+GO／NO-GO from those verdicts, preserves the original reports in
+`pr_gate_result_v3`, and verifies the aggregate against the final result.
+Sequential combined sessions and parallel per-reviewer sessions use the same
+logical report contract; topology and independence remain separate assurance
+coordinates. Current scope manifests also carry a content-addressed reviewer
+reference index. Every coverage evidence path and finding source must resolve
+to that declared subject/base snapshot, and a line reference cannot exceed the
+indexed line count. The manifest itself is admitted by its verified artifact
+digest; arbitrary or nonexistent repository paths fail before synthesis.
+
+**Alternatives considered**: (a) Continue requiring exactly one Markdown
+heading——否決，duplicate/missing prose remains a false protocol failure after
+substantive review completes. (b) Loosen the heading regex and take the first
+match——否決，conflicting later text could be silently discarded. (c) Let
+synthesis infer verdicts from prose——否決，synthesis is another model session
+and cannot establish deterministic input parity.
+
+**Constraints introduced**: Missing, duplicate, malformed, scope-digest-mismatched,
+or coverage-incomplete JSON reports make the operation `INCOMPLETE`, not
+reviewer `NO-GO`. A blocker cannot early-stop remaining coverage cells.
+Pre-existing/caution findings cannot block, and a blocking finding requires
+source evidence plus fix/verification boundaries. Coverage declaration does
+not guarantee semantic completeness or model recall. Legacy result v1/v2
+artifacts remain readable but cannot claim selected-reviewer protocol evidence.
+Legacy role vocabulary must be mapped into the closed common verdict enum, role
+narrative belongs in `rationale` or findings, and verifier diagnostics must name
+the failing contract component without reclassifying it as a reviewer verdict.
+Legacy scope manifests without a reference index remain readable for historical
+result verification; current producers always emit the index and enforce it.
+
+---
+
 ## 2026-07-28: gate-assurance-v3-separates-validity-freshness-applicability
 
 Relates: CC-515

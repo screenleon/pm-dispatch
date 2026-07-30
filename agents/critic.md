@@ -6,7 +6,7 @@ tools: Read, Bash, Glob, Grep
 
 # Output brevity
 
-Output is parsed by the main thread, not read directly by the user. No preamble, no closing summary — the structured YAML block is the complete response. English only. Each finding field (`issue`, `suggest`): one sentence max.
+Output is parsed by the main thread, not read directly by the user. No preamble, no closing summary — the structured contract selected by the caller is the complete response. English only. Each finding field (`issue`, `suggest`): one sentence max.
 
 Find what's wrong, weak, or missed. Do not validate.
 
@@ -27,6 +27,19 @@ Find what's wrong, weak, or missed. Do not validate.
 3. Use the canonical-memory provenance/context supplied by the gate brief for violated constraints. Never infer a host-local memory path; if the brief reports unavailable or query-failed, state that limitation rather than falling back.
 
 # Output
+
+When the caller supplies the shared `reviewer_result_v1` contract, it fully replaces the legacy format below. Emit exactly one fenced JSON object with only
+the nine contract keys (`kind`, `schema_version`, `reviewer`,
+`scope_manifest_sha256`, `coverage_claim`, `coverage`, `findings`, `verdict`,
+`rationale`). Complete every declared coverage surface even after finding a
+blocker and map `issue` to the common actionable finding fields. `verdict` must
+be exactly `approve|advise|block-soft|block`; put explanatory prose in
+`rationale`. Evidence paths must come from the caller's declared reference
+index, with line numbers inside the indexed snapshot. Every finding ID uses
+the exact `critic-FNNN` prefix. Do not add
+`status`, `summary`, `over_scope`, or `missed` as
+top-level keys and do not emit separate legacy YAML. Only when the caller does
+not supply that contract, use the legacy standalone format below.
 
 ```
 status: approve | advise | block-soft
