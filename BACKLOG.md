@@ -47,6 +47,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-525 | 🔵 active | copy-mode verifier fallback 的 generated provenance 必須指向實際 generator，並由 parity ratchet 防止再次漂移 | ops/test | 2026-07-28 | feedback:2026-07-28 | P3 | hygiene |
 | CC-526 | 🔵 active | reviewer override file 的 symlink trust-boundary hardening 與相容性契約 | security/gate | 2026-07-28 | feedback:2026-07-28 | P2 | hygiene |
 | CC-527 | 🔵 active | targeted gate CLI 拆分 pass、reviewer coverage 與 tier，避免 full targeted 語意重疊 | ux/gate | 2026-07-28 | feedback:2026-07-28 | P2 | design |
+| CC-528 | 🔵 active | publish policy compatibility：generic 為可接受 baseline、maintainer 為 preferred，並允許 ship 驗證既有 current-tree Gate artifact | release/gate | 2026-07-30 | feedback:2026-07-30 | P1 | design |
+| CC-529 | 🔵 active | publish assurance observability：在 ship 成功輸出、PR body 與 finish marker 保留 embedded policy 與 baseline/preferred satisfaction | release/gate | 2026-07-30 | feedback:2026-07-30 | P2 | hygiene |
 | CC-465 | 🔵 active | memory/context 關鍵詞管線 CJK 支援：抽出共用零依賴斷詞 lib，取代三處各自 ASCII-only 抽詞；工作序列起點（465→467→468→466）（2026-07-07 記憶系統深入分析） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-466 | ⏸ deferred | 記憶卡片生命週期閉環：expires_at 執行 + 關窗式 supersede + usage sidecar 休眠偵測 + doctor→distill 接線；僅在 CC-467 證明 stale/dormant card 已形成實際問題時啟動 | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-467 | 🔵 active | `pmctl memory stats`：注入效益可視化（唯讀聚合器）——注入 bytes/卡片命中分佈/從未命中卡/episode 填寫率，回答「記憶有跟沒有差在哪」；排在 CC-466 之前（2026-07-07；業界僅離線 recall 評測，無 per-injection 遙測） | DX/memory | 2026-07-07 | — | P2 | retrieval |
@@ -2528,6 +2530,119 @@ inheritance 依賴 [[CC-515]]；maintainer consumer 接線由 [[CC-517]] 使用�
 可先交付 syntax/parity，再於 applicability verifier 完成後接 inheritance。
 
 **Cross-link**: [[CC-512]]、[[CC-513]]、[[CC-514]]、[[CC-515]]、[[CC-517]]。
+
+---
+
+## CC-528 — publish policy compatibility：generic baseline + maintainer preferred 🔵 active
+
+**Problem**: `generic` 與 `maintainer` 是 Gate consumer policy，不是權限或身分；
+但 shared verifier 目前以 policy 名稱完全相等判斷 applicability，並把 `publish`
+直接映射成 `maintainer`。結果是 valid/current 的 generic GO 被標成
+`consumer_policy_mismatch`，即使它已通過完整 diff classification、risk signals、
+minimum tier、required reviewer coverage 與 dispatch evidence。`pmctl ship finish`
+又只能重新執行 maintainer Gate，無法驗證呼叫者已有的 current-tree generic GO，
+把「maintainer 是較佳發布保證」誤作「maintainer 是唯一可接受身分」。
+
+**Requirement**:
+
+1. 定義 policy compatibility：`generic` 是最低可接受 baseline，`maintainer` 是其
+   stronger policy；explicit `maintainer` consumer 仍嚴格要求 maintainer，
+   `generic` consumer 可接受 generic 或 maintainer，`publish` consumer 接受兩者並
+   以 maintainer 為 preferred。`embedded` consumer 繼續驗 artifact 自己宣告的 policy。
+2. `policy_applicable` 除 required／embedded policy 外，必須輸出
+   `preferred_policy` 與 `policy_satisfaction: baseline|preferred`。未達 preferred
+   只能降為 baseline 訊號，不得讓 applicability fail；低於 required minimum 才以
+   穩定 reason code fail。
+3. `pmctl ship finish` 預設仍執行 maintainer policy；新增明確
+   `--gate-result <artifact>` 讓 caller 沿用既有 initial result。Supplied artifact
+   必須以 publish consumer 通過 artifact validity、current subject、policy
+   applicability、canonical dispatch authorization 與 scope evidence；targeted
+   artifact 在 [[CC-517]] closure path 交付前不得單獨授權 publish，且所有 result
+   仍受 gate 前後
+   HEAD／dirty guards 與 current-tree authoritative full-suite 約束。
+4. `publish` 的 direct current-tree review path 不要求 remediation closure；這是
+   [[CC-511]] 已決定的第一種 review authorization。Primary review 經 remediation
+   後以 closure 授權 final tree 的第二條 path 仍由 [[CC-517]]／CC-511 Phase B
+   實作，本票不得假裝已交付。
+5. CLI 必須拒絕 `--gate-result` 與只對新 Gate 有意義的 `--reviewers` 混用；relative
+   artifact path 以 `--cd` worktree 為基準。不得自動掃描或猜測 latest result。
+6. 回歸覆蓋 generic→generic、maintainer→generic、generic→maintainer、
+   generic→publish baseline、maintainer→publish preferred，以及 supplied
+   valid／stale／invalid Gate result 對 ship publish boundary 的行為。
+
+**Done-when**: valid/current generic GO 可作 publish baseline，maintainer GO 以
+machine-readable preferred 狀態呈現；explicit maintainer verification 仍不接受
+generic；`ship finish --gate-result` 可沿用指定 artifact 且不放寬其他發布軸。
+
+**Non-goals**: 不降低 generic risk-based floor；不改 maintainer initial 五 reviewer
+coverage或 mode recommendation；不實作 remediation ledger／targeted confirmation；
+不自動選擇 result；不把 Gate GO、full-suite PASS、publish authorization 或 merge
+authorization重新合併成單一座標。
+
+**Dependencies**: 延伸 [[CC-513]] policy resolver、[[CC-515]] shared verifier與
+[[CC-518]] scope manifest；是 [[CC-517]]／CC-511 Phase B 前的 policy compatibility
+clarification。P1，排入 v0.11.0 delivery assurance correctness。
+
+**Cross-link**: [[CC-511]]、[[CC-513]]、[[CC-515]]、[[CC-517]]、[[CC-518]]、
+[[CC-529]]。
+
+---
+
+## CC-529 — publish assurance observability：baseline／preferred 可追溯 🔵 active
+
+**Framing**: 本票只延伸 [[CC-528]] 已建立的 publish policy compatibility，
+讓成功發布保留「哪一種 producer policy、以 baseline 或 preferred 滿足 publish」
+的 machine-readable audit trail。Shared verifier 仍是 policy applicability 的唯一
+owner，`pmctl ship finish` 只能呈現 verifier 已驗證的 axes；不得從 tier、reviewer
+數量、mode 或 human `Final: GO` 反推 assurance strength，也不得藉本票改寫
+generic／maintainer policy、publication floor 或 [[CC-517]] remediation closure。
+
+**Problem**: [[CC-528]] 讓 generic current-tree initial GO 可作 publish baseline，
+maintainer GO 則是 preferred；但 successful `pmctl ship finish` stdout、PR body 的
+Gate section 與 `.pm-dispatch-ship-finish.json` marker 目前只保留 `Final: GO` 與
+result path。兩種不同 assurance strength 最後留下相同的 publication record，
+操作者與 incident review 無法事後判斷該次發布是 generic baseline 或 maintainer
+preferred。CLI usage 雖已列出 `--gate-result`，也缺少回歸測試防止 help synopsis
+與 parser mutual-exclusion 契約再次漂移。
+
+**Requirement**:
+
+1. `pmctl ship finish` 只能從已通過 shared verifier 的 structured
+   `policy_applicable` axis 取得 `embedded_policy`、`required_policy`、
+   `preferred_policy` 與 `policy_satisfaction`；缺欄位、未知值或 verifier
+   assessment 不完整時 fail closed，不以 result prose 或 Gate coverage 猜值。
+2. Fresh maintainer Gate 與 supplied generic／maintainer result 的成功路徑，都要在
+   stdout summary、PR body Gate section 及 `.pm-dispatch-ship-finish.json` marker
+   明確保留 producer policy 與 `baseline|preferred` satisfaction。三個 surface
+   必須來自同一份已驗證 assessment，不得各自重算。
+3. Marker 變更採 additive、versioned 或明確 backward-compatible contract；既有
+   不含新欄位的 marker 仍可由 status/list reader 安全讀取，但新 writer 不得在
+   assessment 可用時省略 assurance fields。不得把 baseline 顯示成 failure，
+   也不得把 generic 誤標為 maintainer。
+4. PR body 與 human stdout 必須讓操作者一眼區分 baseline／preferred，同時保留
+   result artifact path 供完整 verifier 重播；不得只加入模糊的「policy checked」
+   文字。
+5. Public help regression 必須斷言 `pmctl ship finish --help`／usage 包含
+   `--gate-result`、`--full-result`，並保留 `--gate-result` 與 `--reviewers`
+   mutual-exclusion 的表達；parser 行為測試仍是獨立 oracle。
+6. Deterministic tests 覆蓋 supplied generic baseline、supplied/fresh maintainer
+   preferred、缺失／malformed assurance fields、舊 marker reader compatibility，
+   以及 stdout／PR body／marker 三個 surface 的值一致性。
+
+**Done-when**: 任一成功 ship publication 都能只靠 stdout、PR body 或 finish
+marker 回答 embedded producer policy 與 publish satisfaction，三者與 shared
+verifier 完全一致；舊 marker 保持可讀，help synopsis 與 parser contract 有回歸
+鎖定。
+
+**Non-goals**: 不改 generic／maintainer reviewer floor、tier、mode 或 compatibility
+ordering；不新增 Gate、publish authorization 或 workflow engine；不實作 dashboard、
+scheduled audit 或歷史 marker backfill；不把 [[CC-517]] remediation closure 併入。
+
+**Dependencies**: 延伸 [[CC-528]] policy compatibility 與 [[CC-515]] shared
+verifier，沿用 [[CC-511]] publish marker／PR boundary。P2，排入 v0.11.0 delivery
+assurance observability。
+
+**Cross-link**: [[CC-511]]、[[CC-513]]、[[CC-515]]、[[CC-517]]、[[CC-528]]。
 
 ---
 

@@ -181,6 +181,23 @@ pass fixes coverage at all five reviewer dimensions while preserving the
 independently resolved tier and mode. Targeted passes under either consumer
 remain scoped to the requested remediation reviewers.
 
+Producer policy names are assurance strategies, not identities. Applicability
+uses this compatibility contract:
+
+| Verifier consumer | Minimum policy | Preferred policy | Accepted producer policy |
+|---|---|---|---|
+| `embedded` | artifact policy | artifact policy | exact artifact policy |
+| `generic` | `generic` | `generic` | `generic` or `maintainer` |
+| `maintainer` | `maintainer` | `maintainer` | `maintainer` only |
+| `publish` | `generic` | `maintainer` | `generic` or `maintainer` |
+
+The policy axis records `required_policy`, `preferred_policy`,
+`embedded_policy`, and `policy_satisfaction`. A generic initial GO therefore
+satisfies publish as `baseline`; a maintainer initial GO satisfies it as
+`preferred`. Missing a preference is not an applicability failure. Falling
+below the required minimum remains a failure. Publish compatibility does not
+change either producer's tier, reviewer floor, or mode recommendation.
+
 Any requested tier or coverage below the policy floor fails before reviewer
 dispatch. A tier/coverage downgrade is accepted only through an explicitly
 supplied `gate_policy_override_v1` JSON file bound to the exact scope fingerprint
@@ -282,8 +299,8 @@ returns three independent axes:
 
 - `artifact_valid`: result/sidecar schema, digest, and content parity;
 - `subject_current`: repository, base, head, and tree freshness;
-- `policy_applicable`: resolved coordinates, review evidence, and any
-  consumer-required closure evidence.
+- `policy_applicable`: resolved coordinates, review evidence, consumer
+  minimum/preference, and required authorization evidence.
 
 Every axis includes stable reason codes. A copied artifact can remain valid
 while lacking canonical dispatch authorization; a base advance or tree change
@@ -293,6 +310,13 @@ Default inspection preserves the historical artifact-validity exit contract;
 passing `--consumer` is authorizing and requires all three axes to pass.
 `gate wait` and `ship finish` consume this shared assessment rather than
 grepping `Final: GO`.
+
+For the direct current-tree publication path, `publish` accepts a current
+initial generic result as baseline and a current initial maintainer result as
+preferred. A targeted result cannot authorize publication by itself. The
+separate primary-review plus remediation-closure path must bind the final tree
+and any required targeted confirmations before it can become an alternative
+publication authorization.
 
 Historical v3 envelopes that record `scope_manifest: unavailable` remain
 artifact-readable under default inspection, but they do not satisfy a named
@@ -311,8 +335,11 @@ and reports the drift reason instead of silently authorizing a different tree.
 Legacy result v1/v2 artifacts remain readable under their historical
 contracts. Result v3 is required for selected-reviewer protocol evidence.
 No gate result version is publication authorization by itself; `ship finish`
-requires a current, applicable gate-assurance v3
-assessment.
+requires a current, applicable gate-assurance v3 assessment plus the
+authoritative current-tree full-suite evidence and publication guards.
+Without `--gate-result`, finish produces a fresh preferred maintainer result.
+With an explicit `--gate-result <artifact>`, it reuses that result only after
+publish-consumer verification; it never guesses a latest artifact.
 
 The producer publishes the sidecar before atomically replacing the
 self-contained staging v1 result with the bound result that references it, so

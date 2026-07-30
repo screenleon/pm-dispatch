@@ -1220,7 +1220,10 @@ _gate_verification_valid_instance() {
         status:"pass",
         reason_codes:[],
         consumer:"maintainer",
-        embedded_policy:"maintainer"
+        required_policy:"maintainer",
+        preferred_policy:"maintainer",
+        embedded_policy:"maintainer",
+        policy_satisfaction:"preferred"
       }
     }
   }'
@@ -1349,6 +1352,32 @@ case_gate_verification_invalid_consumer_rejected() {
     pass "$name"
   fi
   rm -f "$tmpf"
+}
+
+# Behavior: gate verification rejects out-of-contract policy preference and
+# satisfaction values.
+# Steps: mutate each new enum field in the canonical fixture, validate it
+# against the schema, and require both invalid instances to be rejected.
+case_gate_verification_invalid_policy_satisfaction_fields_rejected() {
+  local name="gate-verification: policy preference and satisfaction enums are enforced"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/gate-verification.schema.json"
+  local field tmpf accepted=()
+  for field in preferred_policy policy_satisfaction; do
+    tmpf="$(mktemp "/tmp/gate-verification-${field}-XXXXXX.json")"
+    _gate_verification_valid_instance |
+      jq --arg field "$field" \
+        '.axes.policy_applicable[$field] = "outside-contract"' > "$tmpf"
+    if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+      accepted+=("$field")
+    fi
+    rm -f "$tmpf"
+  done
+  if [[ "${#accepted[@]}" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "schema accepted invalid values for: ${accepted[*]}"
+  fi
 }
 
 case_gate_assurance_invalid_outcome_rejected() {
@@ -1639,6 +1668,7 @@ case_gate_assurance_v3_evidence_path_rejected
 case_gate_verification_valid_instance
 case_gate_verification_duplicate_reason_rejected
 case_gate_verification_invalid_consumer_rejected
+case_gate_verification_invalid_policy_satisfaction_fields_rejected
 case_gate_assurance_invalid_outcome_rejected
 case_gate_assurance_non_user_policy_approver_rejected
 case_gate_reviewer_result_valid_instance

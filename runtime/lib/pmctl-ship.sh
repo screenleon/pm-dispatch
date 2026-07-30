@@ -32,7 +32,7 @@ pmctl_ship_usage() {
   printf '           Start a manual ship lane. Bare: in the current worktree (alias: prepare). --worktree: isolated worktree, no dispatch. --adapter: dispatch (implies --worktree).\n' >&2
   printf '           After implementation, run: pmctl ship finish <ticket-id>\n' >&2
   printf '       pmctl ship prepare <ticket-id> [--cd <work_dir>]\n' >&2
-  printf '       pmctl ship finish  <ticket-id> [--cd <work_dir>] [--reviewers <r,...>] [--full-result <artifact>]\n' >&2
+  printf '       pmctl ship finish  <ticket-id> [--cd <work_dir>] [--reviewers <r,...> | --gate-result <artifact>] [--full-result <artifact>]\n' >&2
   printf '       pmctl ship --parallel <ticket-id> [<ticket-id>...] [--from <base>] [--adapter <codex|claude|opencode|grok>] [--isolation <level>] [--model <alias>] [--cd <work_dir>]\n' >&2
   printf '       pmctl ship status [--cd <work_dir>] [--json]\n' >&2
   printf '       pmctl ship list   [--cd <work_dir>] [--json]\n' >&2
@@ -118,21 +118,26 @@ pmctl_ship_verify_full_suite() {
   printf 'pmctl ship finish: verified current-tree authoritative full-suite PASS: %s\n' "$result_file" >&2
 }
 
-# pmctl_ship_finish <repo_root> <work_dir> <ticket-id> [--reviewers <r,...>] [--full-result <artifact>]
-# Runs ONE gate round in work_dir. GO: push + open PR, print the PR URL.
-# NO-GO: print the verdict/result path and exit 1 -- the caller (agent) is
-# expected to fix findings and call `finish` again, same loop discipline as
-# `/ship` Step 3, just with the gate-invoke/read/push/PR mechanics scripted.
+# pmctl_ship_finish <repo_root> <work_dir> <ticket-id>
+#                   [--reviewers <r,...> | --gate-result <artifact>]
+#                   [--full-result <artifact>]
+# By default, runs ONE maintainer-policy gate round in work_dir. A caller may
+# instead supply one explicit, current-tree gate result; finish never guesses or
+# scans for a "latest" result. An accepted GO continues to the full-suite and
+# publication boundaries. NO-GO prints the verdict/result path and exits 1.
 pmctl_ship_finish() {
   local repo_root="${1:-}" work_dir="${2:-}" ticket_id="${3:-}"
   shift 3 || true
   [[ -n "$work_dir" ]] || work_dir="$repo_root"
-  local reviewers="" full_result="" args=("$@") i=0
+  local reviewers="" gate_result="" full_result="" args=("$@") i=0
   while [[ $i -lt ${#args[@]} ]]; do
     case "${args[$i]}" in
       --reviewers)
         [[ -n "${args[$((i+1))]:-}" ]] || { printf 'pmctl ship finish: --reviewers requires a value\n' >&2; return 2; }
         reviewers="${args[$((i+1))]}"; i=$((i+2)) ;;
+      --gate-result)
+        [[ -n "${args[$((i+1))]:-}" ]] || { printf 'pmctl ship finish: --gate-result requires an artifact path\n' >&2; return 2; }
+        gate_result="${args[$((i+1))]}"; i=$((i+2)) ;;
       --full-result)
         [[ -n "${args[$((i+1))]:-}" ]] || { printf 'pmctl ship finish: --full-result requires an artifact path\n' >&2; return 2; }
         full_result="${args[$((i+1))]}"; i=$((i+2)) ;;
@@ -145,7 +150,11 @@ pmctl_ship_finish() {
     printf 'pmctl ship finish: <ticket-id> is required\n' >&2
     return 2
   fi
-  if ! declare -F pmctl_gate_run >/dev/null; then
+  if [[ -n "$gate_result" && -n "$reviewers" ]]; then
+    printf 'pmctl ship finish: --gate-result cannot be combined with --reviewers; reviewers only apply to a new Gate run\n' >&2
+    return 2
+  fi
+  if [[ -z "$gate_result" ]] && ! declare -F pmctl_gate_run >/dev/null; then
     printf 'pmctl ship finish: pmctl gate unavailable\n' >&2
     return 2
   fi
@@ -187,22 +196,37 @@ pmctl_ship_finish() {
   local pre_gate_head
   pre_gate_head="$(git -C "$work_dir" rev-parse HEAD 2>/dev/null)"
 
-  # This repo-owned finish path requests the maintainer consumer policy. The
-  # generic `pmctl gate run` default remains risk-based and composable.
-  local gate_args=(--executor codex --policy maintainer --cd "$work_dir" --lifecycle foreground)
-  [[ -n "$reviewers" ]] && gate_args+=(--reviewers "$reviewers")
-  local gate_out gate_status=0
-  gate_out="$(pmctl_gate_run "$repo_root" "${gate_args[@]}" 2>&1)" || gate_status=$?
-  printf '%s\n' "$gate_out"
+  local result_path gate_out="" gate_status=0
+  if [[ -n "$gate_result" ]]; then
+    if [[ "$gate_result" == /* ]]; then
+      result_path="$gate_result"
+    else
+      result_path="$work_dir/$gate_result"
+    fi
+    printf 'pmctl ship finish: verifying supplied Gate result: %s\n' "$result_path"
+  else
+    # Maintainer remains the preferred producer policy for a fresh ship Gate.
+    # Generic remains the public Gate default and is accepted as a publish
+    # baseline when the caller supplies its exact current-tree artifact.
+    local gate_args=(--executor codex --policy maintainer --cd "$work_dir" --lifecycle foreground)
+    [[ -n "$reviewers" ]] && gate_args+=(--reviewers "$reviewers")
+    gate_out="$(pmctl_gate_run "$repo_root" "${gate_args[@]}" 2>&1)" || gate_status=$?
+    printf '%s\n' "$gate_out"
+    result_path="$(printf '%s\n' "$gate_out" | grep -m1 '^result: ' | sed 's/^result: *//')"
+  fi
 
   # Source of truth is the shared three-axis gate assessment, not the captured
   # exit code, stdout prose, or a local grep of `Final:`. pr-gate.sh prints the
   # result path; the verifier binds it to the current repository subject and
-  # the maintainer consumer policy before publication can continue.
-  local result_path final_verdict gate_verification gate_verification_status=0
-  result_path="$(printf '%s\n' "$gate_out" | grep -m1 '^result: ' | sed 's/^result: *//')"
+  # publish consumer policy before publication can continue.
+  local final_verdict gate_verification gate_verification_status=0
   if [[ -z "$result_path" || ! -f "$result_path" ]]; then
-    printf 'pmctl ship finish: could not locate gate result file (gate exit %s) -- see output above\n' "$gate_status" >&2
+    if [[ -n "$gate_result" ]]; then
+      printf 'pmctl ship finish: supplied --gate-result artifact not found: %s\n' \
+        "$result_path" >&2
+    else
+      printf 'pmctl ship finish: could not locate gate result file (gate exit %s) -- see output above\n' "$gate_status" >&2
+    fi
     return 1
   fi
   if ! declare -F pmctl_gate_verify >/dev/null 2>&1; then
@@ -211,7 +235,7 @@ pmctl_ship_finish() {
   fi
   gate_verification="$(
     pmctl_gate_verify "$repo_root" "$result_path" --cd "$work_dir" \
-      --consumer maintainer --json
+      --consumer publish --json
   )" || gate_verification_status=$?
   if ! jq -e '.kind == "gate_verification_v1"' \
       <<<"$gate_verification" >/dev/null 2>&1; then
@@ -224,7 +248,7 @@ pmctl_ship_finish() {
     return 1
   fi
   if [[ "$gate_verification_status" -ne 0 ]]; then
-    printf 'pmctl ship finish: GO artifact is invalid, stale, or not applicable to maintainer policy; refusing publication: %s\n' \
+    printf 'pmctl ship finish: GO artifact is invalid, stale, or below the publish policy baseline; refusing publication: %s\n' \
       "$(jq -c '.axes' <<<"$gate_verification")" >&2
     return 1
   fi
@@ -246,8 +270,13 @@ pmctl_ship_finish() {
   local post_gate_head
   post_gate_head="$(git -C "$work_dir" rev-parse HEAD 2>/dev/null)"
   if [[ -z "$pre_gate_head" || "$post_gate_head" != "$pre_gate_head" ]]; then
-    printf 'pmctl ship finish: GO, but HEAD moved during the gate run (%s -> %s) -- refusing to push/PR a commit the gate never reviewed. Re-run finish against the current HEAD.\n' \
-      "${pre_gate_head:-unknown}" "${post_gate_head:-unknown}" >&2
+    if [[ -n "$gate_result" ]]; then
+      printf 'pmctl ship finish: GO, but HEAD moved while verifying supplied --gate-result (%s -> %s) -- refusing to push/PR a commit the artifact does not cover. Supply a Gate result for the current HEAD.\n' \
+        "${pre_gate_head:-unknown}" "${post_gate_head:-unknown}" >&2
+    else
+      printf 'pmctl ship finish: GO, but HEAD moved during the gate run (%s -> %s) -- refusing to push/PR a commit the gate never reviewed. Re-run finish against the current HEAD.\n' \
+        "${pre_gate_head:-unknown}" "${post_gate_head:-unknown}" >&2
+    fi
     return 1
   fi
 

@@ -7,6 +7,45 @@ H2 標題格式：## YYYY-MM-DD: <短描述>
 與 BACKLOG closure 對應的 entry，內文首行寫：Closes: BACKLOG.md#<PREFIX>-NNN
 -->
 
+## 2026-07-30: publish-accepts-generic-baseline-and-prefers-maintainer
+
+Relates: CC-511, CC-513, CC-515, CC-517, CC-528
+
+**Context**: `generic` 與 `maintainer` 是 Gate consumer policy；前者依完整 diff
+classification 與 risk signals 建立 reviewer floor，後者在 initial pass 固定增加五個
+reviewer dimensions。Shared verifier 卻把 producer policy 名稱當成必須完全相等的
+身分，並將 publish consumer 直接等同 maintainer。這讓 valid/current generic GO
+即使已滿足其 risk-based floor，仍因名稱不等而無法作為發布 baseline；`ship finish`
+也只能重跑 maintainer，無法驗證 caller 已明確指定的 current-tree result。Preference
+因而被誤寫為唯一合法性，且較強的 maintainer artifact 也不能滿足 generic consumer。
+
+**Decision**: Policy applicability 使用有方向的 compatibility：generic 是 baseline，
+maintainer 是 stronger policy。Explicit maintainer consumer 仍嚴格要求 maintainer；
+generic consumer 接受 generic 或 maintainer；publish consumer 的 minimum 是 generic、
+preferred 是 maintainer。Verifier 同時輸出 required、preferred、embedded policy 與
+`baseline|preferred` satisfaction；未達 preference 不使 applicability fail。Repo-owned
+`ship finish` 預設仍產生 maintainer Gate，但接受明確 `--gate-result`，以 publish
+consumer 驗證既有 current-tree initial result後再走同一 full-suite 與 publication
+guards。Direct current-tree initial review 是 publish authorization 的第一條路，不
+需要 remediation closure；targeted result 單獨不能取代 initial review。
+
+**Alternatives considered**: (a) 維持 exact-name equality——否決，consumer policy
+不是權限身分，也會反向拒絕 stronger evidence。(b) 讓 ship 永遠重跑 maintainer——
+否決，會把 preferred 變成 mandatory 並重複已完成的 generic review。(c) 自動掃描
+latest Gate result——否決，latest 不代表 caller intent 或 current subject，容易誤用
+stale／不同 scope artifact。(d) 同時實作 primary-remediation closure publish——
+否決，該 lifecycle、ledger 與 targeted confirmation 仍由 CC-517／CC-511 Phase B
+擁有，不應混入 compatibility slice。
+
+**Constraints introduced**: `--gate-result` 必須明確指定且 relative path 以 ship
+worktree 為基準；不得與只影響新 Gate 的 reviewer selection 混用。Supplied result
+不得繞過 artifact integrity、canonical dispatch authorization、scope manifest、
+subject freshness、branch/HEAD/dirty guards 或 current-tree authoritative full
+suite。Maintainer initial 五 reviewer coverage與 mode recommendation不變。Publish
+接受 generic GO 不代表自動 merge，也不表示 targeted remediation closure 已交付。
+
+---
+
 ## 2026-07-29: structured-reviewer-verdicts-replace-markdown-heading-parsing
 
 Relates: CC-519

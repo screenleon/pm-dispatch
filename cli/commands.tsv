@@ -20,7 +20,7 @@ worktree remove	Remove a managed worktree.	pmctl worktree remove <name-or-branch
 worktree gc	Remove stale managed worktree records.	pmctl worktree gc [options]	experimental	false	true	--cd, --dry-run, --merged, --force, --max-age-days	pmctl worktree gc --dry-run
 ship	Run the ticket delivery workflow.	pmctl ship <ticket-id> [options]	experimental	false	true	--worktree, --adapter, --from, --isolation, --model, --auto-pack, --cd	pmctl ship CC-NNN --adapter codex
 ship prepare	Prepare a ticket delivery run.	pmctl ship prepare <ticket-id> [--cd <dir>]	experimental	false	true	--cd	pmctl ship prepare CC-NNN
-ship finish	Finish a prepared ticket delivery run.	pmctl ship finish <ticket-id> [options]	experimental	false	true	--cd, --reviewers, --full-result	pmctl ship finish CC-NNN
+ship finish	Finish a prepared ticket delivery run.	pmctl ship finish <ticket-id> [options]	experimental	false	true	--cd, --reviewers, --gate-result, --full-result	pmctl ship finish CC-NNN
 ship --parallel	Run multiple ticket delivery workflows.	pmctl ship --parallel <ticket-id>... [options]	experimental	false	true	--from, --adapter, --isolation, --model, --auto-pack, --cd	pmctl ship --parallel CC-NNN CC-MMM
 ship status	Show and refresh a parallel ship run.	pmctl ship status [--cd <dir>] [--json]	experimental	true	true	--cd, --json	pmctl ship status --json
 ship list	List and refresh completed parallel ship runs.	pmctl ship list [--cd <dir>] [--json]	experimental	true	true	--cd, --json	pmctl ship list --json

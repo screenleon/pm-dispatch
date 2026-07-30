@@ -982,6 +982,16 @@ _gate_assurance_linked_evidence_verify() {
 gate_policy_applicability_assess() {
   local assurance_file="$1" consumer="$2" authorization_status="$3"
   local authorization_reason="${4:-dispatch_authorization_unavailable}"
+  case "$consumer" in
+    embedded|generic|maintainer|publish) ;;
+    *)
+      jq -nc '{
+        status:"fail",
+        reason_codes:["consumer_policy_unknown"]
+      }'
+      return 0
+      ;;
+  esac
   local kind
   kind="$(jq -r '.kind // empty' "$assurance_file" 2>/dev/null)"
   if [[ "$kind" != gate_assurance_v3 ]]; then
@@ -995,15 +1005,25 @@ gate_policy_applicability_assess() {
     --arg consumer "$consumer" \
     --arg authorization_status "$authorization_status" \
     --arg authorization_reason "$authorization_reason" '
+    def policy_rank:
+      if . == "generic" then 1
+      elif . == "maintainer" then 2
+      else 0
+      end;
     $assurance[0] as $a |
     (if $consumer == "embedded" then $a.policy.consumer_policy
-     elif $consumer == "publish" then "maintainer"
-     else $consumer end) as $required_policy |
+     elif $consumer == "maintainer" then "maintainer"
+     else "generic" end) as $required_policy |
+    (if $consumer == "publish" then "maintainer"
+     else $required_policy end) as $preferred_policy |
+    ($a.policy.consumer_policy | policy_rank) as $embedded_rank |
+    ($required_policy | policy_rank) as $required_rank |
+    ($preferred_policy | policy_rank) as $preferred_rank |
     ([
       if $a.result.final != "GO" then "verdict_not_go" else empty end,
       if ($a | has("policy") | not) then "policy_resolution_unavailable" else empty end,
-      if $a.policy.consumer_policy != $required_policy
-        then "consumer_policy_mismatch" else empty end,
+      if $embedded_rank < $required_rank
+        then "consumer_policy_below_minimum" else empty end,
       if $a.policy.enforcement.status != "pass"
         then "policy_enforcement_failed" else empty end,
       if $a.coordinates.independence.evidence_status != "verified"
@@ -1015,15 +1035,18 @@ gate_policy_applicability_assess() {
         then "scope_manifest_unavailable" else empty end,
       if $authorization_status != "verified"
         then $authorization_reason else empty end,
-      if $consumer == "publish" and $a.evidence.closure.status != "verified"
-        then "closure_evidence_unavailable" else empty end
+      if $consumer == "publish" and $a.coordinates.pass.resolved != "initial"
+        then "publish_initial_review_required" else empty end
     ] | unique) as $reasons |
     {
       status:(if ($reasons | length) == 0 then "pass" else "fail" end),
       reason_codes:$reasons,
       consumer:$consumer,
       required_policy:$required_policy,
-      embedded_policy:$a.policy.consumer_policy
+      preferred_policy:$preferred_policy,
+      embedded_policy:$a.policy.consumer_policy,
+      policy_satisfaction:
+        (if $embedded_rank >= $preferred_rank then "preferred" else "baseline" end)
     }'
 }
 

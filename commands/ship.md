@@ -139,14 +139,18 @@ resolve to the selected gate model. Mode is user-owned: append the literal
 the gate auto-selects the policy recommendation. Preserve the user's explicit
 choice on targeted re-runs unless the user changes it.
 
-Run `pmctl gate run --executor <gate_executor> --policy maintainer --cd "<work_dir>" --lifecycle foreground`
+Prefer `pmctl gate run --executor <gate_executor> --policy maintainer --cd "<work_dir>" --lifecycle foreground`
 (substitute `<work_dir>` with the literal absolute working directory, not
 `"$PWD"` — a shell-variable expansion makes the command unanalyzable
 statically and forces a manual approval every time even though a bare
 `pmctl ...` invocation matches allowlisted `Bash(pmctl:*)`-style permission
 rules). The `/pr-gate` command is the orchestration wrapper around this exact
 invocation — either entry point is acceptable, but the underlying gate call
-is always this one, never `bash runtime/bin/pr-gate.sh` directly.
+is always this one, never `bash runtime/bin/pr-gate.sh` directly. Maintainer is
+the preferred initial publication policy because it fixes coverage at all five
+reviewer dimensions. A valid current-tree initial GO already produced by
+`/pr-gate` with `--policy generic` is also an acceptable publication baseline;
+do not rerun it only to change the policy label.
 `--lifecycle foreground` is required here: the default `--lifecycle detached`
 returns only a `gate_id` immediately and the gate keeps running in the
 background — reading `Final:` right after that call would read a stale or
@@ -155,11 +159,12 @@ nothing else for the main thread to do while it waits, so there is no reason
 to pay the detached/`pmctl gate wait` two-call complexity that `/pr-gate`
 uses to keep the main thread free for other work; run `foreground`, parse its
 literal `result: <path>`, then run
-`pmctl gate verify <result_path> --cd "<work_dir>" --consumer maintainer --json`.
+`pmctl gate verify <result_path> --cd "<work_dir>" --consumer publish --json`.
 The result file's `Final: GO|NO-GO` remains the review verdict, but it is not
 freshness or continuation authorization by itself. A GO may continue only
 when the named-consumer verification exits 0 and reports `artifact_valid`,
-`subject_current`, and `policy_applicable` all `pass`.
+`subject_current`, and `policy_applicable` all `pass`. The policy axis reports
+generic as `baseline` or maintainer as `preferred`; both are accepted here.
 
 - **GO + all three axes pass** → go to Step 3.5.
 - **GO + any axis not pass** → stop before full-suite or publication work.
@@ -212,6 +217,22 @@ can push or create a PR. When following this manual `/ship` workflow rather
 than using that primitive, run `bash tests/bin/run-all-tests.sh` once and
 verify its authoritative result artifact. This is the final repo-wide
 regression check, not an iteration tool.
+
+When the initial Gate result still covers the exact current tree, reuse it
+explicitly:
+
+```bash
+pmctl ship finish <ticket-id> --cd "<work_dir>" \
+  --gate-result "<initial_gate_result_path>"
+```
+
+Relative Gate-result paths resolve against `<work_dir>`. Finish verifies the
+artifact with the `publish` consumer and still enforces branch, HEAD, dirty
+tree, canonical dispatch, scope, and authoritative full-suite boundaries. If
+no `--gate-result` is supplied, finish produces a fresh preferred maintainer
+Gate. Never pass a targeted result as standalone publication authorization:
+until the structured remediation-closure path is available, a remediated tree
+must either receive a fresh current-tree initial Gate or stop before publish.
 
 If the full suite finds a diff-caused failure, fix it, rerun affected tests,
 apply the same refactor/reuse recheck threshold, and return to the targeted
