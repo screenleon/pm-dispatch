@@ -1046,7 +1046,9 @@ case_verify_v3_three_axes_current() {
         .axes.artifact_valid.status == "pass" and
         .axes.subject_current.status == "pass" and
         .axes.policy_applicable.status == "pass" and
-        .axes.policy_applicable.required_policy == "generic"
+        .axes.policy_applicable.required_policy == "generic" and
+        .axes.policy_applicable.preferred_policy == "generic" and
+        .axes.policy_applicable.policy_satisfaction == "preferred"
       ' <<<"$out" >/dev/null; then
     pass "$name"
   else
@@ -1119,8 +1121,8 @@ case_verify_v3_policy_reason_codes() {
       dispatch)
         jq '.dispatch.outcomes[0].run_id = null' "$sidecar" > "$fixture"
         ;;
-      closure)
-        jq '.policy.consumer_policy = "maintainer"' "$sidecar" > "$fixture"
+      targeted)
+        jq '.coordinates.pass.resolved = "targeted"' "$sidecar" > "$fixture"
         ;;
       scope)
         jq '.evidence.scope_manifest = {
@@ -1140,13 +1142,6 @@ case_verify_v3_policy_reason_codes() {
       fail "$name" "$mutation axis=$axis"
       return
     fi
-    if [[ "$consumer" == publish ]] && ! jq -e '
-        .consumer == "publish" and .required_policy == "maintainer" and
-        .embedded_policy == "maintainer"
-      ' <<<"$axis" >/dev/null; then
-      fail "$name" "publish policy mapping is not self-describing: $axis"
-      return
-    fi
   done <<'CASES'
 verdict|verdict_not_go|generic
 no-policy|policy_resolution_unavailable|generic
@@ -1154,9 +1149,150 @@ enforcement|policy_enforcement_failed|generic
 independence|review_independence_unverified|generic
 dispatch|review_dispatch_evidence_incomplete|generic
 scope|scope_manifest_unavailable|generic
-closure|closure_evidence_unavailable|publish
+targeted|publish_initial_review_required|publish
 CASES
   pass "$name"
+}
+
+# Behavior: consumer policies form a directional compatibility relation:
+# publish accepts generic as baseline, while explicit maintainer stays strict.
+# Steps: assess generic- and maintainer-produced fixtures through embedded,
+# generic, publish, and maintainer consumers, then assert every policy axis.
+case_verify_v3_policy_compatibility_matrix() {
+  local name="gate/verify: policy compatibility keeps generic baseline and maintainer preference distinct"
+  should_run "$name" || return 0
+  local result sidecar maintainer embedded_axis generic_axis publish_axis strict_axis
+  local stronger_embedded_axis
+  local stronger_generic_axis stronger_publish_axis stronger_strict_axis
+  result="$(_gate_verify_result_path v3-policy-compatibility)"
+  sidecar="${result}.assurance.json"
+  maintainer="$tmp_root/v3-policy-compatibility-maintainer.json"
+  _mk_gate_result_v3_verified "$result" "$_GATE_VERIFY_REPO"
+
+  embedded_axis="$(gate_policy_applicability_assess "$sidecar" embedded verified)"
+  generic_axis="$(gate_policy_applicability_assess "$sidecar" generic verified)"
+  publish_axis="$(gate_policy_applicability_assess "$sidecar" publish verified)"
+  strict_axis="$(gate_policy_applicability_assess "$sidecar" maintainer verified)"
+  jq '.policy.consumer_policy = "maintainer"' "$sidecar" > "$maintainer"
+  stronger_embedded_axis="$(
+    gate_policy_applicability_assess "$maintainer" embedded verified
+  )"
+  stronger_generic_axis="$(
+    gate_policy_applicability_assess "$maintainer" generic verified
+  )"
+  stronger_publish_axis="$(
+    gate_policy_applicability_assess "$maintainer" publish verified
+  )"
+  stronger_strict_axis="$(
+    gate_policy_applicability_assess "$maintainer" maintainer verified
+  )"
+
+  if jq -e '
+      .status == "pass" and
+      .required_policy == "generic" and
+      .preferred_policy == "generic" and
+      .embedded_policy == "generic" and
+      .policy_satisfaction == "preferred"
+    ' <<<"$embedded_axis" >/dev/null \
+    && jq -e '
+      .status == "pass" and
+      .required_policy == "generic" and
+      .preferred_policy == "generic" and
+      .embedded_policy == "generic" and
+      .policy_satisfaction == "preferred"
+    ' <<<"$generic_axis" >/dev/null \
+    && jq -e '
+      .status == "pass" and
+      .required_policy == "generic" and
+      .preferred_policy == "maintainer" and
+      .embedded_policy == "generic" and
+      .policy_satisfaction == "baseline"
+    ' <<<"$publish_axis" >/dev/null \
+    && jq -e '
+      .status == "fail" and
+      .required_policy == "maintainer" and
+      (.reason_codes | index("consumer_policy_below_minimum")) != null
+    ' <<<"$strict_axis" >/dev/null \
+    && jq -e '
+      .status == "pass" and
+      .required_policy == "maintainer" and
+      .preferred_policy == "maintainer" and
+      .embedded_policy == "maintainer" and
+      .policy_satisfaction == "preferred"
+    ' <<<"$stronger_embedded_axis" >/dev/null \
+    && jq -e '
+      .status == "pass" and .required_policy == "generic" and
+      .embedded_policy == "maintainer"
+    ' <<<"$stronger_generic_axis" >/dev/null \
+    && jq -e '
+      .status == "pass" and .required_policy == "generic" and
+      .preferred_policy == "maintainer" and
+      .policy_satisfaction == "preferred"
+    ' <<<"$stronger_publish_axis" >/dev/null \
+    && jq -e '
+      .status == "pass" and .required_policy == "maintainer" and
+      .embedded_policy == "maintainer"
+    ' <<<"$stronger_strict_axis" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "embedded=$embedded_axis generic=$generic_axis publish=$publish_axis strict=$strict_axis stronger-embedded=$stronger_embedded_axis stronger-generic=$stronger_generic_axis stronger-publish=$stronger_publish_axis stronger-strict=$stronger_strict_axis"
+  fi
+}
+
+# Behavior: the shared applicability seam fails closed when a caller bypasses
+# CLI enum validation with a new or misspelled consumer.
+# Steps: assess a valid assurance with an unknown consumer and require only the
+# explicit fail status and consumer_policy_unknown reason.
+case_verify_v3_unknown_policy_consumer_fails_closed() {
+  local name="gate/verify: unknown policy consumer fails closed"
+  should_run "$name" || return 0
+  local result sidecar axis
+  result="$(_gate_verify_result_path v3-policy-unknown-consumer)"
+  sidecar="${result}.assurance.json"
+  _mk_gate_result_v3_verified "$result" "$_GATE_VERIFY_REPO"
+  axis="$(
+    gate_policy_applicability_assess "$sidecar" deployment verified
+  )"
+  if jq -e '
+      .status == "fail" and
+      .reason_codes == ["consumer_policy_unknown"] and
+      (has("required_policy") | not) and
+      (has("preferred_policy") | not)
+    ' <<<"$axis" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "axis=$axis"
+  fi
+}
+
+# Behavior: the full verifier authorizes a valid/current generic result as the
+# direct publish baseline without reporting it as maintainer-preferred.
+# Steps: verify a canonical generic artifact for the publish consumer and
+# assert all three axes plus baseline policy satisfaction.
+case_verify_v3_generic_is_publish_baseline() {
+  local name="gate/verify: current generic artifact passes publish as baseline"
+  should_run "$name" || return 0
+  local result out code
+  result="$(_gate_verify_result_path v3-generic-publish)"
+  _mk_gate_result_v3_verified "$result" "$_GATE_VERIFY_REPO"
+  set +e
+  out="$(_run_canonical_gate_verify "$result" --consumer publish --json 2>&1)"
+  code=$?
+  set -e
+  if [[ "$code" -eq 0 ]] \
+      && jq -e '
+        .axes.artifact_valid.status == "pass" and
+        .axes.subject_current.status == "pass" and
+        .axes.policy_applicable.status == "pass" and
+        .axes.policy_applicable.required_policy == "generic" and
+        .axes.policy_applicable.preferred_policy == "maintainer" and
+        .axes.policy_applicable.embedded_policy == "generic" and
+        .axes.policy_applicable.policy_satisfaction == "baseline"
+      ' <<<"$out" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
 }
 
 case_verify_v3_dirty_drift_is_stale_not_invalid() {
@@ -1399,10 +1535,12 @@ case_verify_v3_copy_replay_is_valid_but_not_authorizing() {
   fi
 }
 
-case_verify_v3_valid_but_policy_insufficient() {
-  # Behavior: a generic-policy artifact remains valid/current but cannot satisfy
-  # the stronger maintainer consumer.
-  local name="gate/verify: v3 generic artifact is insufficient for maintainer consumer"
+# Behavior: a generic-policy artifact remains valid and current but cannot
+# satisfy an explicitly requested strict maintainer consumer.
+# Steps: verify a canonical generic artifact for the maintainer consumer and
+# require only the policy axis to fail with the below-minimum reason.
+case_verify_v3_valid_but_policy_below_maintainer_minimum() {
+  local name="gate/verify: v3 generic artifact is below explicit maintainer minimum"
   should_run "$name" || return 0
   local result out code
   result="$(_gate_verify_result_path v3-policy-insufficient)"
@@ -1416,7 +1554,7 @@ case_verify_v3_valid_but_policy_insufficient() {
         .axes.artifact_valid.status == "pass" and
         .axes.subject_current.status == "pass" and
         (.axes.policy_applicable.reason_codes |
-          index("consumer_policy_mismatch")) != null
+          index("consumer_policy_below_minimum")) != null
       ' <<<"$out" >/dev/null; then
     pass "$name"
   else
@@ -2640,6 +2778,9 @@ case_verify_v2_canonical_authorization
 case_verify_v3_three_axes_current
 case_verify_v3_producer_drift_reason_codes
 case_verify_v3_policy_reason_codes
+case_verify_v3_policy_compatibility_matrix
+case_verify_v3_unknown_policy_consumer_fails_closed
+case_verify_v3_generic_is_publish_baseline
 case_verify_v3_dirty_drift_is_stale_not_invalid
 case_verify_v3_head_moved_is_stale
 case_verify_v3_base_advanced_is_stale
@@ -2647,7 +2788,7 @@ case_verify_v3_fixed_ref_ignores_working_tree
 case_verify_v3_linked_worktree_path_is_current
 case_verify_v3_different_repo_same_content_is_stale
 case_verify_v3_copy_replay_is_valid_but_not_authorizing
-case_verify_v3_valid_but_policy_insufficient
+case_verify_v3_valid_but_policy_below_maintainer_minimum
 case_verify_v3_scope_policy_signal_mismatch_is_invalid
 case_verify_v3_incomplete_scope_manifest_is_invalid
 case_verify_v3_scope_cross_field_mutations_are_invalid

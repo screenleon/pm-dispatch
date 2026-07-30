@@ -128,6 +128,8 @@
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
+| CC-528 | publish policy compatibility：generic current-tree initial GO 為 baseline、maintainer 為 preferred；ship 可驗證明確 supplied result | 🔵 |
+| CC-529 | publish assurance observability：ship stdout、PR body、finish marker 保留 producer policy 與 baseline/preferred satisfaction | 🔵 |
 | CC-517 | `/ship` primary review→local/targeted/split remediation closure→final affected/full tests；不虛稱 final-tree GO | 🔵 |
 | CC-511 Phase B | final-tree review或 primary-review closure authorization + current-tree full PASS → publish | 🔵 |
 

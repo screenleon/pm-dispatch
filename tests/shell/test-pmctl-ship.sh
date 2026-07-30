@@ -201,8 +201,13 @@ run_finish_with_fake_gate() {
   shift 3
   bash -c '
     repo_root="$1"; work_dir="$2"; ticket_id="$3"; verdict="$4"; shift 4
+    artifact_status="${PM_TEST_GATE_ARTIFACT_STATUS:-pass}"
     subject_status="${PM_TEST_GATE_SUBJECT_STATUS:-pass}"
+    policy_status="${PM_TEST_GATE_POLICY_STATUS:-pass}"
     pmctl_gate_run() {
+      if [[ -n "${PM_TEST_GATE_RUN_MARKER:-}" ]]; then
+        : > "$PM_TEST_GATE_RUN_MARKER"
+      fi
       local result_file
       result_file="$(mktemp)"
       printf "Final: %s\n" "$verdict" > "$result_file"
@@ -210,22 +215,34 @@ run_finish_with_fake_gate() {
       [[ "$verdict" == "GO" ]]
     }
     pmctl_gate_verify() {
+      if [[ -n "${PM_TEST_GATE_VERIFY_ARGV:-}" ]]; then
+        printf "%s\n" "$@" > "$PM_TEST_GATE_VERIFY_ARGV"
+      fi
       jq -n \
         --arg verdict "$verdict" \
+        --arg artifact_status "$artifact_status" \
         --arg subject_status "$subject_status" \
+        --arg policy_status "$policy_status" \
         '"'"'{
           kind:"gate_verification_v1",
           verdict:$verdict,
           axes:{
-            artifact_valid:{status:"pass",reason_codes:[]},
+            artifact_valid:{
+              status:$artifact_status,
+              reason_codes:(if $artifact_status == "pass" then [] else ["artifact_integrity_failed"] end)
+            },
             subject_current:{
               status:$subject_status,
               reason_codes:(if $subject_status == "pass" then [] else ["tree_drift"] end)
             },
-            policy_applicable:{status:"pass",reason_codes:[]}
+            policy_applicable:{
+              status:$policy_status,
+              reason_codes:(if $policy_status == "pass" then [] else ["consumer_policy_below_minimum"] end)
+            }
           }
         }'"'"'
-      [[ "$verdict" == "GO" && "$subject_status" == "pass" ]]
+      [[ "$verdict" == "GO" && "$artifact_status" == "pass" \
+        && "$subject_status" == "pass" && "$policy_status" == "pass" ]]
     }
     . "$repo_root/runtime/lib/pmctl-ship.sh"
     pmctl_ship_finish "$repo_root" "$work_dir" "$ticket_id" "$@"
@@ -1072,11 +1089,173 @@ case_finish_go_stale_subject_does_not_push() {
   git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 \
     2>/dev/null && pushed=1
   if [[ "$status" -eq 1 ]] \
-      && grep -q "invalid, stale, or not applicable" "$err" \
+      && grep -q "invalid, stale, or below the publish policy baseline" "$err" \
       && [[ "$pushed" -eq 0 ]]; then
     pass "$name"
   else
     fail "$name" "expected exit 1 + no push; got status=$status pushed=$pushed stderr=$(cat "$err")"
+  fi
+}
+
+# Behavior: an explicit current-tree Gate result may satisfy the publish review
+# boundary without spending a second Gate round.
+# Steps: supply an absolute artifact, record verifier and Gate invocations, and
+# require publish verification, no new Gate, full-suite evidence, and a push.
+case_finish_valid_supplied_gate_result_publishes_without_new_gate() {
+  local name="ship finish: valid absolute supplied Gate result is verified for publish without a new Gate"
+  should_run "$name" || return 0
+  local work out err marker verify_argv status=0
+  work="$tmp_root/work-finish-gate-supplied"
+  marker="$tmp_root/finish-gate-supplied-run"
+  verify_argv="$tmp_root/finish-gate-supplied-verify-argv"
+  make_work_repo "$work" "CC-9001"
+  checkout_ticket_branch "$work" "CC-9001"
+  add_bare_origin "$work"
+  mkdir -p "$work/evidence"
+  printf 'Final: GO\n' > "$work/evidence/gate.md"
+  git -C "$work" add evidence/gate.md
+  git -C "$work" commit -q -m supplied-gate-result
+  local gh_bin="$tmp_root/fake-gh-gate-supplied-bin"
+  install_fake_gh "$gh_bin" "https://example.invalid/pr/gate-supplied"
+  out="$tmp_root/out-finish-gate-supplied"
+  err="$tmp_root/err-finish-gate-supplied"
+  PM_TEST_GATE_RUN_MARKER="$marker" \
+    PM_TEST_GATE_VERIFY_ARGV="$verify_argv" \
+    PATH="$gh_bin:$PATH" \
+    run_finish_with_fake_gate "$work" "CC-9001" "GO" \
+      --gate-result "$work/evidence/gate.md" > "$out" 2> "$err" || status=$?
+  local pushed=0
+  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 \
+    2>/dev/null && pushed=1
+  if [[ "$status" -eq 0 && "$pushed" -eq 1 && ! -e "$marker" ]] \
+      && grep -Fxq "$work/evidence/gate.md" "$verify_argv" \
+      && grep -Fxq -- '--consumer' "$verify_argv" \
+      && grep -Fxq 'publish' "$verify_argv"; then
+    pass "$name"
+  else
+    fail "$name" "status=$status pushed=$pushed gate_called=$([[ -e "$marker" ]] && echo yes || echo no) verify=$(cat "$verify_argv" 2>/dev/null) stderr=$(cat "$err")"
+  fi
+}
+
+# Behavior: a missing caller-supplied artifact is reported as a path error, not
+# as a Gate process that exited successfully without writing a result.
+# Steps: supply a missing relative artifact and require exit 1, its resolved
+# path in stderr, no fresh Gate invocation, and no pushed branch.
+case_finish_missing_supplied_gate_result_reports_artifact_path() {
+  local name="ship finish: missing supplied Gate result reports the artifact path"
+  should_run "$name" || return 0
+  local work out err marker status=0
+  work="$tmp_root/work-finish-gate-missing"
+  marker="$tmp_root/finish-gate-missing-run"
+  make_work_repo "$work" "CC-9001"
+  checkout_ticket_branch "$work" "CC-9001"
+  add_bare_origin "$work"
+  local gh_bin="$tmp_root/fake-gh-gate-missing-bin"
+  install_fake_gh "$gh_bin" "https://example.invalid/pr/gate-missing"
+  out="$tmp_root/out-finish-gate-missing"
+  err="$tmp_root/err-finish-gate-missing"
+  PM_TEST_GATE_RUN_MARKER="$marker" PATH="$gh_bin:$PATH" \
+    run_finish_with_fake_gate "$work" "CC-9001" "GO" \
+      --gate-result evidence/missing.md > "$out" 2> "$err" || status=$?
+  local pushed=0
+  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 \
+    2>/dev/null && pushed=1
+  if [[ "$status" -eq 1 && "$pushed" -eq 0 && ! -e "$marker" ]] \
+      && grep -Fq \
+        "supplied --gate-result artifact not found: $work/evidence/missing.md" \
+        "$err" \
+      && ! grep -Fq 'gate exit 0' "$err"; then
+    pass "$name"
+  else
+    fail "$name" "status=$status pushed=$pushed gate_called=$([[ -e "$marker" ]] && echo yes || echo no) stderr=$(cat "$err")"
+  fi
+}
+
+# Behavior: supplying an artifact bypasses only Gate dispatch, never the
+# current-subject check.
+# Steps: make the verifier report subject drift for a supplied result and
+# require publication refusal with no pushed branch.
+case_finish_stale_supplied_gate_result_refuses_publish() {
+  local name="ship finish: stale supplied Gate result refuses publication"
+  should_run "$name" || return 0
+  local work out err status=0
+  work="$tmp_root/work-finish-gate-stale"
+  make_work_repo "$work" "CC-9001"
+  checkout_ticket_branch "$work" "CC-9001"
+  add_bare_origin "$work"
+  printf 'Final: GO\n' > "$work/gate.md"
+  git -C "$work" add gate.md
+  git -C "$work" commit -q -m stale-gate-result
+  local gh_bin="$tmp_root/fake-gh-gate-stale-bin"
+  install_fake_gh "$gh_bin" "https://example.invalid/pr/gate-stale"
+  out="$tmp_root/out-finish-gate-stale"
+  err="$tmp_root/err-finish-gate-stale"
+  PM_TEST_GATE_SUBJECT_STATUS=fail PATH="$gh_bin:$PATH" \
+    run_finish_with_fake_gate "$work" "CC-9001" "GO" \
+      --gate-result gate.md > "$out" 2> "$err" || status=$?
+  local pushed=0
+  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 \
+    2>/dev/null && pushed=1
+  if [[ "$status" -eq 1 && "$pushed" -eq 0 ]] \
+      && grep -q "invalid, stale, or below the publish policy baseline" "$err"; then
+    pass "$name"
+  else
+    fail "$name" "status=$status pushed=$pushed stderr=$(cat "$err")"
+  fi
+}
+
+# Behavior: a caller-supplied result remains subject to artifact-integrity
+# verification before any full suite or remote mutation.
+# Steps: make the verifier reject a supplied artifact and require exit 1,
+# the shared verification diagnostic, and no pushed branch.
+case_finish_invalid_supplied_gate_result_refuses_publish() {
+  local name="ship finish: invalid supplied Gate result refuses publication"
+  should_run "$name" || return 0
+  local work out err status=0
+  work="$tmp_root/work-finish-gate-invalid"
+  make_work_repo "$work" "CC-9001"
+  checkout_ticket_branch "$work" "CC-9001"
+  add_bare_origin "$work"
+  printf 'tampered\n' > "$work/gate.md"
+  git -C "$work" add gate.md
+  git -C "$work" commit -q -m invalid-gate-result
+  local gh_bin="$tmp_root/fake-gh-gate-invalid-bin"
+  install_fake_gh "$gh_bin" "https://example.invalid/pr/gate-invalid"
+  out="$tmp_root/out-finish-gate-invalid"
+  err="$tmp_root/err-finish-gate-invalid"
+  PM_TEST_GATE_ARTIFACT_STATUS=fail PATH="$gh_bin:$PATH" \
+    run_finish_with_fake_gate "$work" "CC-9001" "GO" \
+      --gate-result gate.md > "$out" 2> "$err" || status=$?
+  local pushed=0
+  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 \
+    2>/dev/null && pushed=1
+  if [[ "$status" -eq 1 && "$pushed" -eq 0 ]] \
+      && grep -q "invalid, stale, or below the publish policy baseline" "$err"; then
+    pass "$name"
+  else
+    fail "$name" "status=$status pushed=$pushed stderr=$(cat "$err")"
+  fi
+}
+
+# Behavior: reviewer selection is rejected when finish is told to reuse an
+# already-produced Gate artifact.
+# Steps: combine --gate-result with --reviewers through the public CLI and
+# require the mutual-exclusion usage error before side effects.
+case_finish_gate_result_rejects_reviewers() {
+  local name="ship finish: supplied Gate result rejects reviewers"
+  should_run "$name" || return 0
+  local work out err status=0
+  work="$tmp_root/work-finish-gate-reviewers"
+  make_work_repo "$work" "CC-9001"
+  out="$tmp_root/out-finish-gate-reviewers"
+  err="$tmp_root/err-finish-gate-reviewers"
+  "$PMCTL" ship finish CC-9001 --cd "$work" \
+    --gate-result result.md --reviewers critic > "$out" 2> "$err" || status=$?
+  if [[ "$status" -eq 2 ]] \
+      && grep -q -- '--gate-result cannot be combined with --reviewers' "$err"; then
+    pass "$name"
+  else
+    fail "$name" "status=$status stderr=$(cat "$err")"
   fi
 }
 
@@ -1143,6 +1322,62 @@ case_finish_go_head_moved_refuses_push() {
     pass "$name"
   else
     fail "$name" "expected exit 1 + no push; got status=$status pushed=$pushed stderr=$(cat "$err")"
+  fi
+}
+
+# Behavior: HEAD drift while verifying a supplied Gate artifact refuses
+# publication without claiming that a fresh Gate ran.
+# Steps: commit during the verifier stub, then require the supplied-artifact
+# drift diagnostic, no fresh-Gate wording, and no pushed branch.
+case_finish_supplied_gate_result_head_moved_refuses_push() {
+  local name="ship finish: supplied Gate result reports HEAD drift without claiming a Gate ran"
+  should_run "$name" || return 0
+  local work out err status=0
+  work="$tmp_root/work-finish-supplied-headmoved"
+  make_work_repo "$work" "CC-9001"
+  checkout_ticket_branch "$work" "CC-9001"
+  add_bare_origin "$work"
+  printf 'Final: GO\n' > "$work/gate.md"
+  git -C "$work" add gate.md
+  git -C "$work" commit -q -m supplied-gate-result
+  local gh_bin="$tmp_root/fake-gh-supplied-headmoved-bin"
+  install_fake_gh "$gh_bin" "https://example.invalid/pr/supplied-headmoved"
+  out="$tmp_root/out-finish-supplied-headmoved"
+  err="$tmp_root/err-finish-supplied-headmoved"
+  PATH="$gh_bin:$PATH" bash -c '
+    repo_root="$1"; work_dir="$2"; ticket_id="$3"
+    pmctl_gate_run() {
+      printf "unexpected Gate run\n" >&2
+      return 99
+    }
+    pmctl_gate_verify() {
+      printf "sneaky\n" > "$work_dir/sneaky.txt"
+      git -C "$work_dir" add sneaky.txt
+      git -C "$work_dir" commit -q -m sneaky
+      jq -n '"'"'{
+        kind:"gate_verification_v1",
+        verdict:"GO",
+        axes:{
+          artifact_valid:{status:"pass",reason_codes:[]},
+          subject_current:{status:"pass",reason_codes:[]},
+          policy_applicable:{status:"pass",reason_codes:[]}
+        }
+      }'"'"'
+    }
+    . "$repo_root/runtime/lib/pmctl-ship.sh"
+    pmctl_ship_finish "$repo_root" "$work_dir" "$ticket_id" \
+      --gate-result "$work_dir/gate.md"
+  ' _ "$REPO_ROOT" "$work" "CC-9001" > "$out" 2> "$err" || status=$?
+  local pushed=0
+  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 \
+    2>/dev/null && pushed=1
+  if [[ "$status" -eq 1 && "$pushed" -eq 0 ]] \
+      && grep -q "HEAD moved while verifying supplied --gate-result" "$err" \
+      && ! grep -q "HEAD moved during the gate run" "$err" \
+      && ! grep -q "unexpected Gate run" "$err"; then
+    pass "$name"
+  else
+    fail "$name" "status=$status pushed=$pushed stderr=$(cat "$err")"
   fi
 }
 
@@ -1397,6 +1632,64 @@ case_finish_cli_forwards_full_result_option() {
     pass "$name"
   else
     fail "$name" "expected finish-specific --full-result diagnostic; status=$status stderr=$(cat "$err")"
+  fi
+}
+
+# Behavior: the public CLI recognizes --gate-result and reports its
+# finish-specific missing-value diagnostic.
+# Steps: invoke the real CLI without an artifact value and require the
+# --gate-result parser error rather than an unknown-option failure.
+case_finish_cli_forwards_gate_result_option() {
+  local name="ship finish CLI: --gate-result is forwarded to the finish contract"
+  should_run "$name" || return 0
+  local work out err status=0
+  work="$tmp_root/work-finish-cli-gate-result"
+  make_work_repo "$work" "CC-9001"
+  out="$tmp_root/out-finish-cli-gate-result"
+  err="$tmp_root/err-finish-cli-gate-result"
+  "$PMCTL" ship finish CC-9001 --gate-result --cd "$work" \
+    > "$out" 2> "$err" || status=$?
+  if [[ "$status" -eq 2 ]] \
+      && grep -q -- '--gate-result requires an artifact path' "$err"; then
+    pass "$name"
+  else
+    fail "$name" "status=$status stderr=$(cat "$err")"
+  fi
+}
+
+# Behavior: a valid public --gate-result invocation reaches the real finish
+# path without invoking the fixture Gate producer.
+# Steps: pass a committed relative artifact through a CLI fixture and require
+# the resolved verification message plus a successfully pushed branch.
+case_finish_cli_valid_gate_result_publishes() {
+  local name="ship finish CLI: valid --gate-result reaches publish verification"
+  should_run "$name" || return 0
+  local work product out err status=0
+  work="$tmp_root/work-finish-cli-gate-success"
+  product="$tmp_root/product-cli-gate-success"
+  make_work_repo "$work" "CC-9001"
+  checkout_ticket_branch "$work" "CC-9001"
+  add_bare_origin "$work"
+  mkdir -p "$work/evidence"
+  printf 'Final: GO\n' > "$work/evidence/gate.md"
+  git -C "$work" add evidence/gate.md
+  git -C "$work" commit -q -m cli-supplied-gate-result
+  make_cli_fixture_with_fake_gate "$product"
+  local gh_bin="$tmp_root/fake-gh-cli-gate-success-bin"
+  install_fake_gh "$gh_bin" "https://example.invalid/pr/cli-gate-success"
+  out="$tmp_root/out-finish-cli-gate-success"
+  err="$tmp_root/err-finish-cli-gate-success"
+  PATH="$gh_bin:$PATH" \
+    "$product/cli/pmctl" ship finish CC-9001 --cd "$work" \
+      --gate-result evidence/gate.md > "$out" 2> "$err" || status=$?
+  local pushed=0
+  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 \
+    2>/dev/null && pushed=1
+  if [[ "$status" -eq 0 && "$pushed" -eq 1 ]] \
+      && grep -q "verifying supplied Gate result: $work/evidence/gate.md" "$out"; then
+    pass "$name"
+  else
+    fail "$name" "status=$status pushed=$pushed stderr=$(cat "$err")"
   fi
 }
 
@@ -1993,8 +2286,14 @@ case_finish_missing_result_file
 case_finish_missing_shared_verifier_refuses_publish
 case_finish_malformed_shared_assessment_refuses_publish
 case_finish_go_stale_subject_does_not_push
+case_finish_valid_supplied_gate_result_publishes_without_new_gate
+case_finish_missing_supplied_gate_result_reports_artifact_path
+case_finish_stale_supplied_gate_result_refuses_publish
+case_finish_invalid_supplied_gate_result_refuses_publish
+case_finish_gate_result_rejects_reviewers
 case_finish_go_dirty_tree_refuses_push
 case_finish_go_head_moved_refuses_push
+case_finish_supplied_gate_result_head_moved_refuses_push
 case_finish_gh_missing_refuses_before_gate_or_push
 case_finish_wrong_branch_refuses_before_gate_or_push
 case_finish_go_pushes_and_opens_pr
@@ -2004,6 +2303,8 @@ case_finish_failed_full_suite_refuses_publish
 case_finish_post_suite_head_drift_refuses_publish
 case_finish_valid_supplied_full_result_publishes
 case_finish_cli_forwards_full_result_option
+case_finish_cli_forwards_gate_result_option
+case_finish_cli_valid_gate_result_publishes
 case_finish_cli_valid_full_result_publishes
 case_finish_gh_pr_create_runtime_failure_writes_pushed_pr_failed_marker
 case_status_reports_partial_for_pushed_pr_failed

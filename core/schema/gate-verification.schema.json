@@ -126,8 +126,14 @@
         "required_policy": {
           "enum": ["generic", "maintainer"]
         },
+        "preferred_policy": {
+          "enum": ["generic", "maintainer"]
+        },
         "embedded_policy": {
           "enum": ["generic", "maintainer"]
+        },
+        "policy_satisfaction": {
+          "enum": ["baseline", "preferred"]
         }
       },
       "additionalProperties": false

@@ -208,6 +208,9 @@ case "$cmd/$sub" in
       case "$1" in
         --cd) _ship_cd="${2:-}"; shift 2 ;;
         --reviewers) _ship_rest+=(--reviewers "${2:-}"); shift 2 ;;
+        --gate-result)
+          [[ $# -ge 2 && -n "$2" && "$2" != --* ]] || pmctl_die "ship finish: --gate-result requires an artifact path"
+          _ship_rest+=(--gate-result "$2"); shift 2 ;;
         --full-result)
           [[ $# -ge 2 && -n "$2" && "$2" != --* ]] || pmctl_die "ship finish: --full-result requires an artifact path"
           _ship_rest+=(--full-result "$2"); shift 2 ;;
