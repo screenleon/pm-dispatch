@@ -9,17 +9,27 @@
 
 ---
 
-## Pre-v1 stabilization sequence（2026-07-17 重排；v1.0 尚未排程）
+## Pre-v1 stabilization sequence（2026-07-30 重排；v1.0 尚未排程）
 
-> 這不是 v1.0 倒數或 release forecast。以下 v0.x milestones 用來逐版消化目前已知的遷移、操作、安全、證據與公開化缺口；完成 v0.14.0 後才重新做一次 v1.0 readiness review，再決定是否建立 v1.0.0 milestone。任何未完成的 critical surface 都不能因版本接近而自動降級或略過。
+> 這不是 v1.0 倒數或 release forecast。以下 v0.x milestones 用來逐版消化目前
+> 已知的遷移、操作、安全、證據與公開化缺口；當前規劃維持連續的
+> v0.11.0 → v0.12.0，完成 v0.12.0 後才重新做一次 v1.0 readiness review，
+> 再決定是否建立 v1.0.0 milestone。任何未完成的 critical surface 都不能因版本
+> 接近而自動降級或略過。Milestone 同時保留既有版本的交付歷史與 remaining plan；
+> 重排只在既有 phase 後追加新工作，不移除已記錄的完成項目，也不從 archive 拉回
+> 原本不在 milestone 的舊票。
 
-## v0.14.0 — public contract candidate（暫定；未啟動）
+## v0.12.0 — public contract candidate（暫定；未啟動）
 
-> 最後排程更新：2026-07-23（加入 delivery assurance public surface）
+> 最後排程更新：2026-07-30（原 v0.14.0 連續改編為 v0.12.0）
 
-**主題**：完成 public posture 與 stable/experimental contract candidate；本版產物是「是否具備建立 v1.0 milestone 的事實基礎」，不是 v1.0 RC。
+**主題**：完成 public posture 與 stable/experimental contract candidate；本版產物
+是「是否具備建立 v1.0 milestone 的事實基礎」，不是 v1.0 RC。Runtime authority、
+Gate correctness 與 release evidence 仍必須先在 v0.11.0 關閉。
 
-> **設計依據**：契約凍結必須晚於 CLI discovery、state compatibility、upgrade/release evidence 與 detached recovery，避免先承諾再補安全語意。
+> **設計依據**：契約凍結必須晚於 CLI discovery、state compatibility、
+> upgrade/release evidence 與 detached recovery，避免先承諾再補安全語意；
+> manifest／schema／generated distribution 的雙重 authority 也必須先收斂。
 
 ### Phase 1 — public surface
 
@@ -33,7 +43,7 @@
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-446 | stable/experimental CLI + schema、SemVer/deprecation、deprecated surface 清掃 | 🔵 |
+| CC-446 | stable/experimental CLI + schema、SemVer/deprecation、deprecated surface 清掃；補上 authority 分類 | 🔵 |
 
 ### 待後續 / 明確排除
 
@@ -44,11 +54,12 @@
 
 ## v0.11.0 — pre-v1 stabilization：state compatibility + release/operational evidence（暫定；未啟動）
 
-> 最後排程更新：2026-07-23（加入 delivery assurance correctness；原 v0.11.0／v0.12.0／v0.13.0 三版合併；CC-499 已提前隨 v0.10.0 交付）
+> 最後排程更新：2026-07-30（保留既有 Phase 1–9 交付歷史與 remaining scope；
+> 在後方追加 runtime authority／Gate maintainability Phase 10–12）
 
-**主題**：一次消化 v1.0 前已知的 state compatibility、release/upgrade evidence 與 operational evidence 缺口。原 v0.11.0（state compatibility + writer boundary）、v0.12.0（release evidence + upgrade proof）、v0.13.0（detached recovery + operational evidence）合併為本版；其中 detached reconciliation（CC-499）已提前於 v0.10.0 出貨，不在本版 scope。
+**主題**：一次消化 v1.0 前已知的 state compatibility、release/upgrade evidence 與 operational evidence 缺口。原 v0.11.0（state compatibility + writer boundary）、v0.12.0（release evidence + upgrade proof）、v0.13.0（detached recovery + operational evidence）合併為本版；其中 detached reconciliation（CC-499）已提前於 v0.10.0 出貨，不在本版 scope。Phase 10–12 追加 public contract candidate 前必須收斂的 runtime authority、Gate security 與 generated-source 邊界。
 
-> **設計依據**：合併只降低 release closure 次數，不改變原有排序理由——state compatibility 先於 writer ratchet、evidence parity 先於 upgrade smoke、契約凍結（v0.14.0）仍晚於本版全部內容。三版合一後 tag 間隔變長，任何 critical surface 不得因版本收斂而降級或略過。
+> **設計依據**：合併只降低 release closure 次數，不改變原有排序理由——state compatibility 先於 writer ratchet、evidence parity 先於 upgrade smoke、契約凍結（v0.12.0）仍晚於本版全部內容。三版合一後 tag 間隔變長，任何 critical surface 不得因版本收斂而降級或略過；新增架構工作只能在既有 phase 後追加，不覆寫已完成的 milestone history。
 
 ### Phase 1 — state compatibility surface（原 v0.11.0）
 
@@ -133,6 +144,28 @@
 | CC-517 | `/ship` primary review→local/targeted/split remediation closure→final affected/full tests；不虛稱 final-tree GO | 🔵 |
 | CC-511 Phase B | final-tree review或 primary-review closure authorization + current-tree full PASS → publish | 🔵 |
 
+### Phase 10 — runtime foundation + Adapter authority（新增）
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-530 | source-safe runtime libraries + unified identifier policy | 🔵 |
+| CC-531 | Adapter manifest dispatch entrypoint 成為唯一 runtime authority | 🔵 |
+
+### Phase 11 — Gate security + coordinate cleanup（新增）
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-526 | reviewer override symlink／replacement trust-boundary hardening | 🔵 |
+| CC-527 | targeted pass、reviewer coverage 與 tier 的 CLI coordinate 分離 | 🔵 |
+
+### Phase 12 — Gate canonical source + generated artifacts（新增）
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-525 | 修正 verifier fallback provenance 並鎖定唯一 generator | 🔵 |
+| CC-532 | 拆出 canonical Gate modules，release 時產生 standalone dist 並驗 canonical/dist parity | 🔵 |
+| CC-533 | schema-derived structural validator；手寫 verifier 只保留跨 artifact 語意 | 🔵 |
+
 ### 待後續 / 明確排除
 
 - 沒有真實 N→N+1 path 時不建空 migration engine，也不宣稱 `state migrate` 可用。
@@ -140,6 +173,8 @@
 - bootstrap wizard 仍由 smoke 的真實摔倒點決定，不預先實作。
 - 不從 advisory record 推導 success；無可信證據時保留 indeterminate。
 - memory product expansion 不因 telemetry 名稱相近而併入本版。
+- CLI registry、supervised-run kernel、Adapter SDK、test registry、Host primitive 與
+  state-layout generation 以 CC-534～CC-539 保留在 backlog，不擴入 v0.11.0。
 - Tier、mode、reviewer coverage、independence、subject 與 publish authorization 不互相推論；`full` 不等於 parallel，parallel 不等於 full coverage。
 - 不在本版新增 `/deliver`、新 gate kind、workflow profile/preset、persistent workflow state 或 FSM；CC-517 只調整 repo-owned maintainer `/ship` policy，其他使用者可繼續自由組合 generic primitives。thin wrapper 只有在 CC-514 後的真實分類證據觸發 CC-516 才評估。
 
