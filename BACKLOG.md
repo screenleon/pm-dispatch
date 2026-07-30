@@ -49,6 +49,16 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-527 | 🔵 active | targeted gate CLI 拆分 pass、reviewer coverage 與 tier，避免 full targeted 語意重疊 | ux/gate | 2026-07-28 | feedback:2026-07-28 | P2 | design |
 | CC-528 | 🔵 active | publish policy compatibility：generic 為可接受 baseline、maintainer 為 preferred，並允許 ship 驗證既有 current-tree Gate artifact | release/gate | 2026-07-30 | feedback:2026-07-30 | P1 | design |
 | CC-529 | 🔵 active | publish assurance observability：在 ship 成功輸出、PR body 與 finish marker 保留 embedded policy 與 baseline/preferred satisfaction | release/gate | 2026-07-30 | feedback:2026-07-30 | P2 | hygiene |
+| CC-530 | 🔵 active | source-safe runtime library contract + centralized domain identifier policy | arch/reuse | 2026-07-30 | feedback:2026-07-30 | P1 | hygiene |
+| CC-531 | 🔵 active | Adapter manifest contract closure：dispatch entrypoint 成為唯一 runtime authority | arch/schema | 2026-07-30 | feedback:2026-07-30 | P1 | design |
+| CC-532 | 🔵 active | Gate canonical modules + generated standalone distribution + parity fixtures | arch/gate | 2026-07-30 | feedback:2026-07-30 | P1 | reuse-debt |
+| CC-533 | 🔵 active | schema-derived Gate structural validator，手寫 verifier 只保留跨 artifact semantics | schema/gate | 2026-07-30 | feedback:2026-07-30 | P1 | design |
+| CC-534 | 🟢 someday | `commands.tsv` 驅動 CLI routing、safe handler dispatch 與 lazy module loading | arch/DX | 2026-07-30 | feedback:2026-07-30 | P2 | design |
+| CC-535 | 🟢 someday | detached-launch 上的 supervised-run primitive + versioned JSON run-spec | arch/ops | 2026-07-30 | feedback:2026-07-30 | P2 | design |
+| CC-536 | 🟢 someday | 擴充 Adapter SDK 的 shared lifecycle／manifest／trace contract，保留 executor-native behavior | arch/reuse | 2026-07-30 | feedback:2026-07-30 | P2 | reuse-debt |
+| CC-537 | 🟢 someday | suite metadata 與 changed-path impact mapping 資料化；full suite 維持 authoritative | ops/test | 2026-07-30 | feedback:2026-07-30 | P2 | hygiene |
+| CC-538 | 🟢 someday | Host resolver／doctor 共用 primitives，Host policy 繼續由各 Host 擁有 | arch/ops | 2026-07-30 | feedback:2026-07-30 | P2 | reuse-debt |
+| CC-539 | 🟢 someday | state `layout.yaml` build-time authority + generated runtime constants | arch/schema | 2026-07-30 | feedback:2026-07-30 | P2 | design |
 | CC-465 | 🔵 active | memory/context 關鍵詞管線 CJK 支援：抽出共用零依賴斷詞 lib，取代三處各自 ASCII-only 抽詞；工作序列起點（465→467→468→466）（2026-07-07 記憶系統深入分析） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-466 | ⏸ deferred | 記憶卡片生命週期閉環：expires_at 執行 + 關窗式 supersede + usage sidecar 休眠偵測 + doctor→distill 接線；僅在 CC-467 證明 stale/dormant card 已形成實際問題時啟動 | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-467 | 🔵 active | `pmctl memory stats`：注入效益可視化（唯讀聚合器）——注入 bytes/卡片命中分佈/從未命中卡/episode 填寫率，回答「記憶有跟沒有差在哪」；排在 CC-466 之前（2026-07-07；業界僅離線 recall 評測，無 per-injection 遙測） | DX/memory | 2026-07-07 | — | P2 | retrieval |
@@ -59,8 +69,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-018 | 🟢 someday | Codex quota 自動追蹤 + rate-limit 路徑統一（吸收 CC-269）：寫到 `~/.local/share/pm-dispatch/state/rate-limits.json`；解析 API response headers；token-usage.sh 加 Codex pool 顯示 | ux/token | 2026-05-14 | — | P3 | — |
 | CC-023 | ⏸ deferred | `coupling-reviewer`：PR gate 加入語言感知耦合分析（dependency-cruiser/gocyclo/coca） | ops/gate | 2026-05-14 | — | — | — |
 | CC-026 | 🟢 someday | `/skill-distill`：偵測重複工作流，產出草稿 skill .md | ux/memory | 2026-05-15 | — | P3 | — |
-| CC-032 | 🔵 active | `[[feedback_*]]` cross-link 公開化：抽到 `docs/policies/` glossary 避免 dead link（v1.0 前置；v0.14.0 contract candidate） | process/DX | 2026-05-15 | — | P2 | — |
-| CC-033 | 🔵 active | public posture reconciliation：README/協作表面 + **即刻** git history 損害盤點（audit 先行；其餘 v0.14.0） | process | 2026-05-15 | — | P2 | — |
+| CC-032 | 🔵 active | `[[feedback_*]]` cross-link 公開化：抽到 `docs/policies/` glossary 避免 dead link（v1.0 前置；v0.12.0 contract candidate） | process/DX | 2026-05-15 | — | P2 | — |
+| CC-033 | 🔵 active | public posture reconciliation：README/協作表面 + **即刻** git history 損害盤點（audit 先行；其餘 v0.12.0） | process | 2026-05-15 | — | P2 | — |
 | CC-035 | 🟢 someday | install/uninstall-guards basename+scripts/ heuristic：未覆蓋另一工具也在 scripts/ 下同名 hook 的 collision edge case | ops | 2026-05-15 | pr:#53 | P3 | — |
 | CC-038 | ⏸ deferred | Windows/cross-platform 鎖機制：`flock` Linux-only，未來支援需替代方案（parked: CC-370） | ops/portability | 2026-05-15 | — | — | oss |
 | CC-044 | ⏸ deferred | `tool-trace.jsonl` 三階段升級（吸收 CC-027b/c）：Phase 1 rotation/retention；Phase 2 bounded error counter；Phase 3 async validation | ux/memory | 2026-05-15 | — | — | — |
@@ -109,7 +119,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-390 | ⏸ deferred | codex dispatch trace-capture 強化（FD inheritance cold-start flake；fail-closed safe；resume: stable repro；umbrella: CC-333） | arch/portability | 2026-06-15 | — | P3 | design |
 | CC-393 | 🟢 someday | design: portable-skill-substrate — CLI-agnostic skill 控制層（design seed after v0.6.0 N≥2；3 control skills + Portable Skill v0 frontmatter；umbrella: CC-333） | arch | 2026-06-16 | — | — | design |
 | CC-435 | 🟢 someday | **[poll→通知機制 single-waiter guard：條件觸發，非既定後續票]** 只有在真正出現多個 waiter 需要同時等待同一個 run_id/gate_id 的場景時才拿出來討論；候選設計見 `docs/spikes/CC-433.md` Open risks（方案 A：`flock` 搶鎖+敗者退回輪詢；方案 B：per-waiter 專屬 fifo+supervisor 廣播）。CC-434 完成後重新盤點成本效益：輪詢 vs blocking read 在單一 waiter/數分鐘等待場景下資源消耗差距趨近於零，延遲改善（≤2s→近乎即時）對人在等 gate 結果無感，而兩個方案都要在安全敏感的 supervisor 檔案引入新 race condition，投資報酬率目前不足，故不排入既定實作，僅記錄設計供未來觸發條件成立時起步。 | arch/gate | 2026-07-02 | — | P3 | design |
-| CC-446 | 🔵 active | public contract candidate：stable/experimental CLI + schema、SemVer/deprecation 與 CC-296 清掃（v0.14.0；非 v1 RC） | process/DX | 2026-07-04 | — | P2 | design |
+| CC-446 | 🔵 active | public contract candidate：stable/experimental CLI + schema、authority 分類、SemVer/deprecation 與 CC-296 清掃（v0.12.0；非 v1 RC） | process/DX | 2026-07-04 | — | P2 | design |
 | CC-447 | 🔵 active | onboarding 三 smoke：offline clean install + N-1 upgrade（v0.11.0）+ live dogfood（readiness review 後再排） | docs/ops | 2026-07-04 | — | P2 | — |
 | CC-449 | ✅ done | release evidence parity：suite registry、CI parity、OpenCode（吸收 CC-431）、ship/worktree smoke（v0.11.0） | ops/test | 2026-07-04 | pr:#439 | P2 | — |
 | CC-472 | 🟢 someday | spike: antigravity（`agy` CLI）host 唯讀 probe——比照 CC-436/CC-448 階段 1 模式，實測 command 載入能力 + hook/plugin 機制 + 五個 capability enum 的 provider/confidence 判定，不落地 `hosts/antigravity/host.yaml`；排在 CC-445 通用 install/uninstall dispatcher 之後、與 CC-448 opencode 同批或緊接其後評估（N=3 驗證點） | arch/install | 2026-07-08 | — | P3 | spike |
@@ -158,10 +168,14 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `ops/backlog/archive-cl
 3. 執行 [[CC-296]] deprecation 清掃（已過 v0.3.0 起多個正式版本）。
 4. deprecated surface 全清點：README 仍列已標 deprecated 的 `pr-gate-handover-schema.md`（executor-contract 已明言該 fan-out 路徑 retired）——去留與 README 目錄同步，消除自相矛盾。
 5. **契約可驗證性盤點**（2026-07-06 盲測稽核擴充）：(a) stable CLI 分級準則納入 `--json` 支援一致性——現僅約半數子指令支援（task/dispatch/ship/memory/worktree/trace/decision 有；backlog/guard/artifacts/gate/context/validate/pre-release 無），列 stable 的讀取型子指令應有結構化輸出或明文排除；(b) 「schema 承諾與行為不符」項逐一定案去留，如 `core/state/layout.yaml` 的 `threshold_days`（宣告但未實作，rotation 只看 bytes）。與 [[CC-451]] 同批評估——runtime 從不驗證的 schema 不應列 stable。
+6. 每份候選 manifest、schema、registry、policy 與 layout specification 都標記為
+   `runtime authority`、`build-time authority` 或 `parity/documentation
+   specification`；runtime/build-time authority 必須有單一 consumer/generator
+   路徑與 drift check，不得一面宣稱 source of truth、一面維護等價手寫實作。
 
 **Done-when**：分級表覆蓋全部 pmctl 子指令與 schema 檔；CC-296 清掃完成；repo 內無「標 deprecated 但無移除計畫」的懸空表面；README 與分級文件互相一致。
 
-**Dependencies**：吸收 [[CC-296]] 執行。[[CC-451]]、[[CC-460]] command inventory、[[CC-498]] state compatibility 為事實前置。Cross-link [[CC-286]]、[[CC-357]]。v0.14.0 contract candidate；完成後才進行 v1.0 readiness review。
+**Dependencies**：吸收 [[CC-296]] 執行。[[CC-451]]、[[CC-460]] command inventory、[[CC-498]] state compatibility 為事實前置。Cross-link [[CC-286]]、[[CC-357]]、[[CC-531]]～[[CC-539]]。v0.12.0 contract candidate；完成後才進行 v1.0 readiness review。
 **See**: DECISIONS.md 2026-07-04
 
 ## CC-447 — 乾淨機器 onboarding 雙 smoke（offline + live dogfood）🔵 active
@@ -182,7 +196,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `ops/backlog/archive-cl
 
 **Done-when**：在 v0.11.0 release candidate 上，三個 smoke 的實測報告 committed（`docs/notes/` 或票內）；clean install 與 N-1 upgrade 都有可重現證據；摔倒點全部開票；GETTING_STARTED 修正到與實測一致。
 
-**Dependencies**：offline/N-1 smoke 在 [[CC-497]]、[[CC-456]]、[[CC-449]]、[[CC-503]] 後，且 v0.11.0 release freeze 中執行；live smoke 不預先綁 v1.0，待 v0.14.0 後 readiness review 排程。
+**Dependencies**：offline/N-1 smoke 在 [[CC-497]]、[[CC-456]]、[[CC-449]]、[[CC-503]] 後，且 v0.11.0 release freeze 中執行；live smoke 不預先綁 v1.0，待 v0.12.0 後 readiness review 排程。
 **See**: DECISIONS.md 2026-07-04
 
 ## CC-449 — release-verify/test-e2e：ship/worktree surface 煙測 + 套件註冊完整性 lint ✅ 2026-07-21
@@ -552,7 +566,7 @@ bare-fractional catch-all 重複的 fractional-Z 分支。Gate GO
 3. 更新所有 `[[name]]` 改為 `[docs/policies/<slug>.md](docs/policies/<slug>.md)` 或 `[[<slug>]]`（若決定保留 wikilink 風格、配合 CC-030 validator 擴充驗證 link target 存在）。
 4. 個人偏好類 feedback memory（不適合公開）留 local memory 不對外。
 **Note**: 與 CC-030 schema validator 設計協同 — 可同 PR 加上「`[[name]]` link target 必須存在」的 validation。Blocks **CC-033**。
-**Update 2026-07-17**: 排入 v0.14.0 public contract candidate（尚非 v1.0 RC）。repo 已為 public，本票的 link-target validator 綠燈為未來 stable release 的 hard constraint。
+**Update 2026-07-30**: 排入 v0.12.0 public contract candidate（尚非 v1.0 RC）。repo 已為 public，本票的 link-target validator 綠燈為未來 stable release 的 hard constraint。
 **Source**: 2026-05-15 對話 — 公開前置盤點 #3（Explore 未抓到的盲點）。
 
 ## CC-033 — Public flip checklist 與後續觀察
@@ -567,9 +581,9 @@ bare-fractional catch-all 重複的 fractional-Z 分支。Gate GO
 **Update 2026-07-04（rescope：flip 前提已過時）**: 2026-07-04 實測 `gh repo view` 確認 **repo 已經是 public**（`isPrivate: false`）——本票原「flip 前防護」框架失效，rescope 為 **public posture reconciliation**（v1.0 P0，DECISIONS 2026-07-04）：
 1. **即刻 git history 損害盤點**（非 flip 前防護，是已曝光後的發現與處置）：原「git history 已審 clean」結論成於 2026-05-15，之後已累積 ~250 commits（含大量 dispatch trace / memory 路徑相關工作）——重掃 secrets、個人路徑、意外入 repo 的本機 artifact；發現即處置（rotate/清除/評估影響）。
 2. **README posture 一致化**：README 仍寫 "private-maintainer scoped" 而 repo 實際 public——文案改為明確的「publicly readable personal distribution, not a public support contract」定位（或依 v1.0 宣稱調整），與 CONTRIBUTING（不收外部 PR、issue 無 SLA）對齊。
-3. GitHub 設定決策照原 Requirement 1（Issues/Discussions/template/labels/CITATION.cff），在 v0.14.0 完成；觀察期留到未來 stable release 後。
+3. GitHub 設定決策照原 Requirement 1（Issues/Discussions/template/labels/CITATION.cff），在 v0.12.0 完成；觀察期留到未來 stable release 後。
 4. **README 使用者表面重建**（2026-07-06 盲測稽核追加）：README 只記載 15 個 command 中的 2 個（`/pm`、`/pr-gate`）、Agents 段缺 spike agent、Layout 段引用已不存在的 `settings/` 目錄且缺 `skills/`（install.sh 實際會接線）——commands/agents/skills 清單改為與實際目錄一致（可由 `commands/*.md` frontmatter description 派生），Layout 修正到與 install 行為相符。
-5. **Audit slice completed 2026-07-18**：以 `b7799c3` 為 baseline，掃描全部 493 個 reachable commits（含 2026-05-15 後 450 commits）。未發現需 rotation/history rewrite 的 credential、私鑰或誤入 runtime artifact；token-shaped matches 均為測試 fixture／字串誤判。已記錄兩項非 secret exposure（maintainer 絕對路徑、commit Gmail metadata）及一項持續防護缺口（GitHub secret scanning disabled）。處置與可重跑方法見 [docs/audits/CC-033-git-history-audit.md](docs/audits/CC-033-git-history-audit.md)。本票維持 active；README/協作表面、secret-scanning enablement verification 仍屬 v0.14.0。
+5. **Audit slice completed 2026-07-18**：以 `b7799c3` 為 baseline，掃描全部 493 個 reachable commits（含 2026-05-15 後 450 commits）。未發現需 rotation/history rewrite 的 credential、私鑰或誤入 runtime artifact；token-shaped matches 均為測試 fixture／字串誤判。已記錄兩項非 secret exposure（maintainer 絕對路徑、commit Gmail metadata）及一項持續防護缺口（GitHub secret scanning disabled）。處置與可重跑方法見 [docs/audits/CC-033-git-history-audit.md](docs/audits/CC-033-git-history-audit.md)。本票維持 active；README/協作表面、secret-scanning enablement verification 仍屬 v0.12.0。
 someday → active，P3 → P2。
 **Source**: 2026-05-15 對話 — 公開前置盤點 #4。
 
@@ -1844,9 +1858,10 @@ dimensions 都已完成；docs-only、一般功能、高風險／manual UI chang
 5. Tier/mode/reviewer-policy tables 必須來自 [[CC-512]]／[[CC-513]] 的
    machine-readable source 或 bounded generated markers；cross-document lint 不解析
    大段自由文字。README 只保留 discoverable pointer，canonical docs 承載概念。
-6. 分兩步交付：先落 `draft terminology/map` 骨架，不宣稱 runtime 已支援；等
-   [[CC-511]]～[[CC-515]]、[[CC-518]]～[[CC-521]] 收斂後再做
-   `runtime-aligned finalization` 與 drift ratchet。
+6. 分兩步交付：先落 `draft terminology/map` 骨架，不宣稱 runtime 已支援；
+   `runtime-aligned finalization` 等 [[CC-511]] Phase B、[[CC-517]]、
+   [[CC-520]]～[[CC-522]]、[[CC-527]]、[[CC-529]] 及 v0.11.0 authority closure
+   收斂後再做，並加入 drift ratchet。
 7. 明文記錄現階段不新增 `/deliver`、workflow profile、persistent workflow state、
    preset DSL 或 FSM；若短 recipe 的真實使用證據顯示需要 wrapper，再由
    [[CC-516]] 評估。
@@ -1856,8 +1871,9 @@ recipe，並準確判斷每個 assurance dimension 是 pass、未跑、不可用
 lint 阻止 tier/mode/full-suite 順序重新漂移。
 
 **Dependencies**: draft skeleton 可先行；runtime-aligned finalization 等
-[[CC-511]]～[[CC-515]]、[[CC-517]]～[[CC-521]]。排入 v0.14.0 public surface，
-避免文件先承諾尚未落地的行為。
+[[CC-511]] Phase B、[[CC-517]]、[[CC-520]]～[[CC-522]]、[[CC-527]]、
+[[CC-529]]～[[CC-533]]。排入 v0.12.0 public surface，避免文件先承諾尚未落地的
+行為。
 
 **Cross-link**: [[CC-493]]、`commands/ship.md`、`docs/review-model.md`。
 
@@ -2643,6 +2659,270 @@ verifier，沿用 [[CC-511]] publish marker／PR boundary。P2，排入 v0.11.0 
 assurance observability。
 
 **Cross-link**: [[CC-511]]、[[CC-513]]、[[CC-515]]、[[CC-517]]、[[CC-528]]。
+
+---
+
+## CC-530 — source-safe runtime libraries + unified identifier policy 🔵 active
+
+**Problem**: `runtime/lib/portable.sh` 在被 source 時直接修改 strict-mode flags，
+consumer 因此必須自行保存與還原 caller state；同時 Adapter 等 domain identifier
+在 enum、filesystem、router 與 dispatch resolver 使用不同 regex，合法名稱會隨入口
+改變。這兩種隱藏差異會阻礙 Gate module、Adapter manifest 與 CLI lazy-loading
+後續重用。
+
+**Why**: Sourceable library 應只提供 callable behavior，identifier policy 則應有
+單一 ownership。若基礎 library 會改變 shell 狀態、各 consumer 又自行定義名稱，
+後續每次抽 module 都會複製 bootstrap 與 compatibility 邏輯，且安全檢查無法證明
+所有入口一致。
+
+**Requirement**:
+
+1. 定義並機械驗證 `runtime/lib/*.sh` source contract：source 階段不得改變 shell
+   flags、cwd、global trap，不得寫檔、spawn process 或直接 `exit`；strict mode 與
+   lifecycle ownership 留在 `runtime/bin/*`、`cli/pmctl` 與 executable Adapter。
+2. 移除 `portable.sh` 的 caller-state side effect，清理 consumer 的 flag
+   save/restore workaround；既有 callable behavior 與 executable error contract
+   保持。
+3. 建立 centralized identifier policy，明確列出 Adapter、Host、run、operation
+   等 domain 的 canonical grammar；允許 domain 間有不同規則，但同一 domain 的
+   enum、manifest、filesystem、router 與 resolver 必須共用同一 validator。
+4. Source-safety fixtures 在不同 errexit/nounset/pipefail 組合下驗 flags、cwd、
+   files、traps 與 process side effects；identifier conformance fixtures 覆蓋所有
+   production entrypoints 與 boundary values。
+
+---
+
+## CC-531 — Adapter manifest dispatch entrypoint contract closure 🔵 active
+
+**Problem**: Built-in manifests 宣告 `runner_ref: ./dispatch.sh`，generator 卻產生
+`./run.sh`；實際 dispatch runtime 又不讀該欄位，而是硬編碼
+`adapters/<adapter>/dispatch.sh`。Manifest 看似是 source of truth，實際不具
+load-bearing authority，新增或改名 entrypoint 仍需修改 core runtime。
+
+**Why**: v0.12.0 若要把 `adapter.yaml` 列為 public contract，必須先讓 manifest
+真正控制 runtime resolution。否則文件、generator 與執行路徑會形成三份互相矛盾
+的 authority，custom Adapter 無法只靠自己的 manifest 接入。
+
+**Requirement**:
+
+1. 定義語意明確的 canonical dispatch entrypoint 欄位；`runner_ref` 的遷移、
+   deprecated alias 或拒絕策略必須明文且有 compatibility fixtures，generator 與
+   built-in manifests 同步。
+2. 所有 Adapter enum、dispatch、executor routing 與 validation path 都透過同一
+   manifest reader 解析 entrypoint，不再固定尋找 `dispatch.sh`；名稱驗證共用
+   [[CC-530]] identifier policy。
+3. Entrypoint 必須是 Adapter 目錄內的 safe relative path；拒絕 absolute path、
+   `..` escaping、symlink escaping、missing/non-executable target 與不合法
+   `runner_kind` 組合。
+4. Conformance suite 證明將某 Adapter 的 entrypoint 改成 `./worker.sh` 後只改
+   manifest 即可 dispatch，無須修改 `pmctl-dispatch.sh`、executor router 或其他
+   shared runtime。
+
+---
+
+## CC-532 — Gate canonical modules + generated standalone distribution 🔵 active
+
+**Problem**: `runtime/bin/pr-gate.sh` 同時承擔 option parsing、policy、subject、
+scope、reviewer contract、synthesis、assurance、publication 與 copy-mode fallback，
+canonical authoring source已接近 6,500 行。Portability 所需 generated snapshot
+與正常 repo-layout 邏輯混在同一檔，讓每次 contract 變更都擴大 review 與 regression
+surface。
+
+**Why**: Gate 已是專案複雜度中心，但 copy-mode standalone portability 仍是必要
+產品能力。Canonical modules 與 generated distribution 分離後，才能在不增加 runtime
+dependency、不改使用者安裝模式的前提下，讓 domain ownership、測試隔離與 code
+review 回到可維護範圍。
+
+**Requirement**:
+
+1. 依 domain 抽出 source-safe canonical modules，至少涵蓋 options、policy、
+   subject、scope、reviewer contract 與 assurance；`runtime/bin/pr-gate.sh`
+   成為 repo-layout composition root，首批搬移只做 behavior-preserving migration。
+2. Standalone copy-mode 由唯一 build tool 產生 distribution bundle；generated
+   policy/verifier fallback 不再作為日常 canonical authoring source，並延續
+   [[CC-525]] 的 provenance 與 stale check。
+3. Symlink/repo-layout 安裝 canonical entrypoint，copy-mode 安裝 generated
+   distribution；兩者維持相同 prerequisite 與 runtime dependency。
+4. CI 的 build `--check` 拒絕 stale bundle；同一組 fixtures 比對 canonical/dist
+   的 stdout、stderr、exit code 與 artifacts，並覆蓋 copy-mode 無 repo-layout
+   dependency 的真實執行。
+
+---
+
+## CC-533 — schema-derived Gate structural validator 🔵 active
+
+**Problem**: Gate JSON Schema 已定義 required fields、exact keys、enum、patterns、
+conditions 與 finding shape，shared jq verifier 又手寫同一份 structural model。
+Parity tests只能發現漂移，無法消除每次 contract 變更都必須同步修改 schema 與
+validator 的雙重 authority。
+
+**Why**: Structural validation 與跨 artifact domain semantics 是不同責任。前者
+應由 schema authoring source 派生；後者才需要手寫 reviewer identity、subject、
+scope、evidence index、digest 與 line-boundary 驗證。分層後可降低 Gate schema
+演進成本，同時保留 Bash+jq lightweight runtime。
+
+**Requirement**:
+
+1. 由 canonical schema 派生或產生 Gate structural validator，涵蓋 required、
+   type、enum、const、pattern、additional properties、array、`$ref` 與目前使用的
+   conditional vocabulary；coverage surfaces 等 enum 不再手寫第二份。
+2. 手寫 verifier 只保留跨 artifact semantics，例如 expected reviewer、
+   scope/subject digest、reference-index membership、snapshot line bound 與 linked
+   artifact integrity。
+3. Assurance/reviewer contract 的 version dispatch 與各版本 verifier 分離，legacy
+   compatibility 不再與 current exact-key logic 混成單一函式。
+4. Generation 在開發／build 階段完成，runtime 仍只需要 Bash+jq；CI `--check`、
+   schema fixtures 與 canonical/dist parity 證明 generated fragment 未 stale 且
+   semantic checks 未被結構 generator 吸收或放寬。
+
+---
+
+## CC-534 — registry-driven CLI router + lazy loading 🟢 someday
+
+**Problem**: `commands.tsv` 已驅動 help、discovery 與 lint，但 `cli/pmctl` 仍以大型
+手寫 `case`、eager library sourcing 與重複 handler checks 執行 routing。Registry
+與 router 是兩份 implementation，只能靠 awk lint 比對。
+
+**Why**: Command metadata 若是 build-time authority，就應同時產生安全 routing
+table；如此新增 command 才能只增加 handler、registry row 與 tests，並避免每次啟動
+載入所有 command modules。
+
+**Requirement**:
+
+1. 擴充 command registry 表達 module、handler 與 argument mode，並在 build 階段
+   產生 shell routing table；usage/stability/JSON/mutating metadata 維持同一來源。
+2. Generic router 只接受固定 repo-relative module 與 safe function-name handler，
+   lazy source 所選 module 後以直接函式呼叫 dispatch，不使用 `eval`。
+3. Registry lint 驗 module/handler 存在、source-safe、command path 唯一，並以
+   characterization fixtures 鎖定現有 argument forwarding、help、exit 與 JSON
+   behavior。
+4. [[CC-530]] source-safety 完成前不啟動 migration；完成後分批轉接，避免一次改寫
+   全部 CLI contracts。
+
+---
+
+## CC-535 — supervised-run primitive + versioned JSON run-spec 🟢 someday
+
+**Problem**: `detached-launch.sh` 已正確抽出 nonce、setsid/nohup、sentinel wait 與
+process identity，但 Gate、Dispatch、Operation 上層仍各自維護 reserve、spec、
+ready、terminal claim、cancel 與 reconcile。Dispatch supervisor 另使用
+`key=value + native_b64` serialization，增加自訂 parser 與 schema drift surface。
+
+**Why**: Gate 與 Dispatch 需要相同 lifecycle primitives，但擁有不同 policy、
+preflight 與 artifact semantics。窄型 supervised-run layer可收斂真正共享的
+control plane，而不演變成 generic workflow engine。
+
+**Requirement**:
+
+1. 在 `detached-launch.sh` 上定義 reserve ID、versioned spec write/read、launch、
+   ready publication、wait、terminal claim、cancel 與 reconcile primitives。
+2. Run-spec 採 versioned JSON 並以既有 jq prerequisite 驗證；native args、workdir、
+   brief與 domain identity 不再使用自訂 key/value/base64 array format。
+3. Gate policy、Adapter resolution、reviewer dispatch、brief/result validation 與
+   artifact synthesis保留在各 domain；不得建立 DAG、FSM、preset DSL 或 generic
+   workflow engine。
+4. Parent與detached supervisor仍各自在自己的 trust boundary重新執行 preflight，
+   但呼叫同一 shared implementation；不得以抽象化為由刪除 defense-in-depth
+   invocation。
+
+---
+
+## CC-536 — Adapter SDK lifecycle／manifest／trace expansion 🟢 someday
+
+**Problem**: `dispatch-common.sh` 已共用 snapshot、basic validation、trace 與 footer，
+但 Claude、Codex、OpenCode、Grok 仍重複 self-snapshot/re-exec、common option
+parsing、timestamp、manifest list/scalar、isolation translation loading 與 trace
+bootstrap。
+
+**Why**: 重複的是 Adapter lifecycle、transport、trace 與 contract glue，不是
+executor-native behavior。擴充窄型 SDK 可讓新 Adapter 專注 native mapping，同時
+避免製造一個包含所有供應商分支的巨型通用 Adapter。
+
+**Requirement**:
+
+1. 盤點並抽出 snapshot re-exec、common args、manifest access、isolation resolution、
+   trace begin/finish 與 footer publication 等有至少兩個等價 consumer 的 primitives。
+2. Manifest access 共用 [[CC-531]] authority；source behavior 共用 [[CC-530]]
+   contract，且不得重新定義 identifier 或 entrypoint policy。
+3. Codex reasoning/approval/sandbox、OpenCode API fallback、Claude headless output、
+   Grok model/isolation semantics 等 native behavior 保留在各 Adapter。
+4. Adapter conformance fixtures 鎖定 shared contract與每個 native translation；
+   新 Adapter 的 executable主要只需 native CLI 定義、argument mapping、execution
+   與 result parsing。
+
+---
+
+## CC-537 — data-driven test suite + impact registries 🟢 someday
+
+**Problem**: Test suite names與paths在同一 shell file分開維護，changed-path impact
+planner又以另一個大型 `case` 維護 path→suite mapping。Lint可以比對結構，卻無法
+消除三份註冊 authority。
+
+**Why**: Suite metadata與impact selection資料化後，可降低新增或改名 suite 時的
+維護成本，也能讓 broad shared-path escalation規則明確可審；但 focused planner
+不得取代 authoritative full suite。
+
+**Requirement**:
+
+1. 建立 suite registry，表達 name、path、timeout、serial group、tags 與 CI
+   requirement；runner與`--list`從同一 authoring source取得資料。
+2. 建立 impact registry，表達 path pattern、suite、reason與 escalation，
+   並檢查 missing suite、unreachable rule、ambiguous precedence與 shared lifecycle/
+   schema path缺少 broad escalation。
+3. `run-tests.sh --base`只作快速 focused selection；release/gate authoritative
+   evidence仍由 full runner及其 verification contract產生。
+4. 用現有 changed-path fixtures做 before/after parity，另加入新增 suite只改
+   registry即可被 runner與CI發現的 regression。
+
+---
+
+## CC-538 — Host resolver／doctor shared primitives 🟢 someday
+
+**Problem**: Codex、OpenCode與Grok的root resolver幾乎使用相同演算法，只差env、
+default subdirectory與label；doctor modules也重複path normalization、command
+identity、managed block、target/executable checks與diagnostic rendering。Claude
+另有legacy alias conflict，不能直接套用 simple resolver。
+
+**Why**: Shared primitives可降低新增Host成本，但Host policy與ownership仍必須留在
+各Host module；若把host-name switch重新放回shared runtime，會破壞目前正確的
+vertical ownership boundary。
+
+**Requirement**:
+
+1. 提供parameterized simple-root resolver，讓無legacy alias的Host宣告label、
+   primary env與default root；Claude繼續由自身resolver處理primary/legacy conflict。
+2. 抽出純mechanical doctor primitives：JSON path normalization、exact command
+   identity、managed block detection、target existence、executable check與common
+   diagnostic rendering。
+3. 每個Host仍決定設定是否正確、哪些asset屬於自己及修復建議；shared layer不得新增
+   host-name `case`或吸收Host-specific policy。
+4. Conformance tests涵蓋simple resolver parity、Claude conflict semantics與各Host
+   doctor輸出；第二個真正consumer存在前不抽單一用途helper。
+
+---
+
+## CC-539 — state layout build-time authority + generated constants 🟢 someday
+
+**Problem**: `core/state/layout.yaml` 自稱machine-readable state layout並宣告root、
+partition、files、subdirs、schemas與writers，但runtime `state-paths.sh`仍手寫相同
+constants，再由parity tests反向比對。文件宣稱與實際runtime authority不一致。
+
+**Why**: State layout是public contract candidate的基礎；若YAML只作specification就
+應明說，若作authoring authority就應在build階段產生runtime constants。維持模糊
+狀態會讓每次layout change都要求人工同步兩份模型。
+
+**Requirement**:
+
+1. 將`core/state/layout.yaml`定為build-time authoring authority，產生
+   `runtime/generated/state-layout.sh`等runtime constants；若實作盤點證明某欄位
+   只能是parity specification，必須在schema與[[CC-446]] authority表明確降級，
+   不得繼續宣稱runtime直接解析。
+2. Generator涵蓋store root defaults、project/run subdirs、writer entrypoints與其他
+   真正load-bearing constants，並以`--check`拒絕stale output。
+3. Runtime啟動不得新增yq/Python或動態YAML parsing dependency；generation只發生
+   在開發/build階段。
+4. 保留`state-writer.sh` single-writer、atomic writes、rotation recovery與schema
+   validation；layout generation不得重寫writer boundary或migration semantics。
 
 ---
 

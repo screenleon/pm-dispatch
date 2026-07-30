@@ -7,6 +7,48 @@ H2 標題格式：## YYYY-MM-DD: <短描述>
 與 BACKLOG closure 對應的 entry，內文首行寫：Closes: BACKLOG.md#<PREFIX>-NNN
 -->
 
+## 2026-07-30: pre-v1-roadmap-is-contiguous-and-active-work-only
+
+Relates: CC-032, CC-033, CC-358, CC-446, CC-447, CC-511, CC-514, CC-517,
+CC-520, CC-521, CC-522, CC-525, CC-526, CC-527, CC-529, CC-530, CC-531,
+CC-532, CC-533, CC-534, CC-535, CC-536, CC-537, CC-538, CC-539
+
+**Context**: Current planning placed v0.14.0 immediately after v0.11.0 because
+earlier v0.11/v0.12/v0.13 scopes had been consolidated, while the v0.11 section
+also retained many already-delivered rows as phase history. That made the active
+milestone look larger than its remaining work and obscured the next executable
+priority. A 2026-07-30 architecture review also identified runtime-authority
+closures that should be tracked before public contract classification, plus
+valuable follow-ups that should remain visible without all becoming release
+blockers.
+
+**Decision**: The active pre-v1 sequence is contiguous: v0.11.0 followed by
+v0.12.0. v0.11.0 is an active-work milestone containing only new tickets or
+remaining slices of non-terminal tickets; shipped history remains in CHANGELOG,
+release notes and archive. v0.11 prioritizes source-safe/identifier foundations,
+Adapter manifest authority, Gate correctness/security, canonical Gate
+modules/generated validation, maintainer publish closure and release evidence.
+The former v0.14 public contract candidate becomes v0.12.0. Architecture
+follow-ups that are useful but not v0.11 blockers receive explicit someday
+backlog tickets rather than disappearing from planning.
+
+**Alternatives considered**: (a) Keep v0.14.0 to preserve the old numbering——
+rejected because there are no active v0.12/v0.13 milestones between the two
+planned releases. (b) Restore old completed v0.12/v0.13 scope as active
+milestones——rejected because it would revive delivered/archive content instead
+of planning new work. (c) Put every architecture recommendation into
+v0.11.0——rejected because CLI routing, supervised-run, SDK, test registry, Host
+primitives and state-layout generation are valuable but are not all release
+blockers.
+
+**Constraints introduced**: Current milestones may reference only new or
+non-terminal backlog work. Replanning must not copy completed/archive tickets
+back into the active set or rewrite archive history. Non-milestone architecture
+recommendations remain in BACKLOG with explicit IDs and boundaries. v1.0.0 is
+still unscheduled and may only be considered after v0.12.0 readiness review.
+
+---
+
 ## 2026-07-30: publish-accepts-generic-baseline-and-prefers-maintainer
 
 Relates: CC-511, CC-513, CC-515, CC-517, CC-528
