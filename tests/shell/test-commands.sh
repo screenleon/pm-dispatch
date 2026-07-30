@@ -234,6 +234,32 @@ for agent_file in "$AGENTS_DIR"/*.md; do
     "$agent_file" "Output brevity" "English only"
 done
 
+# ── selected-reviewer JSON contract ──────────────────────────────────────────
+
+for reviewer_name in critic qa-tester architecture-reviewer security-reviewer risk-reviewer; do
+  reviewer_file="$AGENTS_DIR/$reviewer_name.md"
+  should_run "agent/$reviewer_name: shared protocol replaces legacy format" \
+    && assert_file_contains \
+      "agent/$reviewer_name: shared protocol replaces legacy format" \
+      "$reviewer_file" "fully replaces the legacy format" \
+    && pass "agent/$reviewer_name: shared protocol replaces legacy format"
+  should_run "agent/$reviewer_name: protocol has exact verdict enum" \
+    && assert_file_contains \
+      "agent/$reviewer_name: protocol has exact verdict enum" \
+      "$reviewer_file" 'approve|advise|block-soft|block' \
+    && pass "agent/$reviewer_name: protocol has exact verdict enum"
+  should_run "agent/$reviewer_name: role-specific prose is not top-level" \
+    && assert_file_contains \
+      "agent/$reviewer_name: role-specific prose is not top-level" \
+      "$reviewer_file" "top-level keys" \
+    && pass "agent/$reviewer_name: role-specific prose is not top-level"
+  should_run "agent/$reviewer_name: finding ID uses full reviewer prefix" \
+    && assert_file_contains \
+      "agent/$reviewer_name: finding ID uses full reviewer prefix" \
+      "$reviewer_file" "$reviewer_name-FNNN" \
+    && pass "agent/$reviewer_name: finding ID uses full reviewer prefix"
+done
+
 # ── next-step uncertainty router contract (discover/research/spike family) ────
 
 DISCOVER="$COMMANDS_DIR/discover.md"

@@ -10,6 +10,24 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Selected-reviewer coverage and finding contract (CC-519).** Every selected
+  reviewer now emits a scope-bound `gate_reviewer_result_v1` JSON report with
+  an explicit eleven-surface checklist, evidence/reasons, stable finding IDs,
+  hard-gate/origin classification, affected behavior, failure mode, minimum
+  fix boundary, and verification expectation. The JSON verdict replaces
+  Markdown headings as the machine source of truth, so duplicate headings no
+  longer abort a completed review. Legacy role values such as `pass` are mapped
+  to the common enum in reviewer instructions, role-specific prose is confined
+  to rationale/findings, and diagnostics distinguish top-level, coverage,
+  finding, evidence-reference, and verdict failures. Current scope manifests
+  include a subject/base snapshot reference index with line counts and content
+  digests; nonexistent, out-of-scope, or out-of-range reviewer references fail
+  before synthesis. Missing/malformed sections, incomplete checklists, invalid
+  IDs, evidence-less blockers, and aggregate verdict drift fail closed as
+  protocol `INCOMPLETE`. Completed reports are preserved in
+  `pr_gate_result_v3`; v1/v2 and pre-index v3 results remain readable under
+  their legacy contracts.
+
 - **Immutable gate scope manifest (CC-518).** `pmctl gate run` now creates a
   content-addressed `gate_scope_manifest_v1` before reviewer dispatch, bound to
   the immutable gate subject and linked from `gate_assurance_v3`. It declares

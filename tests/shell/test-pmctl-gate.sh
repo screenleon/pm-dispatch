@@ -617,6 +617,58 @@ _mk_gate_result_v3_verified() {
   _refresh_gate_result_v3_attestation "$path"
 }
 
+_append_gate_reviewer_protocol_fixture() {
+  local path="$1" reviewer="$2" scope_sha
+  scope_sha="$(jq -r '.evidence.scope_manifest.sha256' \
+    "${path}.assurance.json")"
+  {
+    printf '```reviewer_result_v1\n'
+    jq -nc --arg reviewer "$reviewer" --arg scope_sha "$scope_sha" '
+      ["changed_files","paired_tests","sensitive_signals","public_interface",
+        "schema","config","install","ci","release","migration",
+        "bounded_expansion"] as $surfaces |
+      {
+        kind:"gate_reviewer_result_v1",
+        schema_version:1,
+        reviewer:$reviewer,
+        scope_manifest_sha256:$scope_sha,
+        coverage_claim:"declared-scope-checklist-not-review-completeness",
+        coverage:($surfaces | map({
+          surface:.,
+          status:"examined",
+          evidence_refs:[{path:"README.md",line:1,symbol:null}],
+          reason:"Fixture examined this declared surface."
+        })),
+        findings:[],
+        verdict:"approve",
+        rationale:"Fixture completed every declared surface."
+      }
+    '
+    printf '```\n'
+  } >> "$path"
+}
+
+_refresh_gate_result_protocol_v3_binding() {
+  local path="$1" sidecar="${1}.assurance.json" result_sha
+  result_sha="$(sha256sum "$path" | awk '{print $1}')"
+  jq --arg result_sha "$result_sha" \
+    '.bindings.result_sha256 = $result_sha' \
+    "$sidecar" > "${sidecar}.tmp"
+  mv "${sidecar}.tmp" "$sidecar"
+  _refresh_gate_result_v3_attestation "$path"
+}
+
+_mk_gate_result_protocol_v3_verified() {
+  local path="$1" bound_repo="${2:-$_GATE_VERIFY_REPO}"
+  _mk_gate_result_v3_verified "$path" "$bound_repo"
+  sed -i \
+    's/^gate_result_version: pr_gate_result_v2$/gate_result_version: pr_gate_result_v3/' \
+    "$path"
+  _append_gate_reviewer_protocol_fixture "$path" critic
+  _append_gate_reviewer_protocol_fixture "$path" qa-tester
+  _refresh_gate_result_protocol_v3_binding "$path"
+}
+
 _attach_gate_scope_manifest_v3() {
   local path="$1" sidecar="${1}.assurance.json"
   local manifest manifest_digest manifest_sha
@@ -682,6 +734,15 @@ _attach_gate_scope_manifest_v3() {
         claim:"bounded-hints-not-complete-call-graph",
         entries:[],
         included_paths:[]
+      },
+      reference_index:{
+        claim:"declared-review-reference-set",
+        entries:[{
+          path:"README.md",
+          snapshot:"subject",
+          line_count:1,
+          sha256:("f" * 64)
+        }]
       },
       truncation:{
         occurred:false,
@@ -834,6 +895,81 @@ case_verify_v2_assurance() {
   set +e; out="$("$PMCTL" gate verify "$result" 2>&1)"; code=$?; set -e
   if [[ "$code" -eq 0 && "$out" == *"assurance: verified"* \
       && "$out" == *"assurance file:"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+# Behavior: canonical verification accepts a fully bound result v3 reviewer protocol.
+# Steps:
+#   1. Build a verified result v3 with linked scope and reviewer evidence.
+#   2. Run canonical pmctl gate verification against the generated result.
+#   3. Assert verification succeeds and reports verified machine assurance.
+case_verify_result_v3_reviewer_protocol() {
+  local name="gate/verify: result v3 reviewer protocol exits 0"
+  should_run "$name" || return 0
+  local result out code
+  result="$(_gate_verify_result_path result-v3-reviewer-protocol)"
+  _mk_gate_result_protocol_v3_verified "$result" "$_GATE_VERIFY_REPO"
+  set +e
+  out="$(_run_canonical_gate_verify "$result" 2>&1)"
+  code=$?
+  set -e
+  if [[ "$code" -eq 0 && "$out" == *"assurance: verified"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+case_verify_result_v3_invalid_evidence_reference() {
+  # Behavior: recomputing every result/assurance binding cannot authorize a
+  # reviewer evidence path that is absent from the linked scope index.
+  # Steps:
+  #   1. Build a fully verified result v3 with indexed reviewer evidence.
+  #   2. Replace one reviewer path with an out-of-scope path and re-attest it.
+  #   3. Assert canonical pmctl verification rejects the protocol reference.
+  local name="gate/verify: result v3 out-of-scope evidence reference exits 1"
+  should_run "$name" || return 0
+  local result out code
+  result="$(_gate_verify_result_path result-v3-invalid-evidence-reference)"
+  _mk_gate_result_protocol_v3_verified "$result" "$_GATE_VERIFY_REPO"
+  sed -i \
+    '0,/"path":"README.md"/s//"path":"outside.md"/' \
+    "$result"
+  _refresh_gate_result_protocol_v3_binding "$result"
+  set +e
+  out="$(_run_canonical_gate_verify "$result" 2>&1)"
+  code=$?
+  set -e
+  if [[ "$code" -eq 1 \
+      && "$out" == *"invalid evidence reference contract for critic"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+case_verify_result_v3_protocol_final_mismatch() {
+  local name="gate/verify: result v3 protocol verdict mismatch exits 1"
+  should_run "$name" || return 0
+  local result sidecar out code
+  result="$(_gate_verify_result_path result-v3-protocol-mismatch)"
+  sidecar="${result}.assurance.json"
+  _mk_gate_result_protocol_v3_verified "$result" "$_GATE_VERIFY_REPO"
+  sed -i \
+    -e 's/^final: GO$/final: NO-GO/' \
+    -e 's/^Final: GO$/Final: NO-GO/' \
+    "$result"
+  jq '.result.final = "NO-GO"' "$sidecar" > "${sidecar}.tmp"
+  mv "${sidecar}.tmp" "$sidecar"
+  _refresh_gate_result_protocol_v3_binding "$result"
+  set +e
+  out="$(_run_canonical_gate_verify "$result" 2>&1)"
+  code=$?
+  set -e
+  if [[ "$code" -eq 1 && "$out" == *"reviewer protocol verdict (GO) contradicts gate Final: (NO-GO)"* ]]; then
     pass "$name"
   else
     fail "$name" "code=$code out=$out"
@@ -2495,6 +2631,9 @@ case_pmctl_routing
 case_help_bypasses_detached_default
 case_verify_valid
 case_verify_v2_assurance
+case_verify_result_v3_reviewer_protocol
+case_verify_result_v3_invalid_evidence_reference
+case_verify_result_v3_protocol_final_mismatch
 case_verify_v2_without_policy_remains_readable
 case_verify_v2_named_consumer_is_not_authorizing
 case_verify_v2_canonical_authorization

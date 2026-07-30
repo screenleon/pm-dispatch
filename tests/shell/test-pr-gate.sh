@@ -30,6 +30,8 @@ export PATH="$_codex_stub_bin:$PATH"
 
 # shellcheck source=tests/lib/test-harness.sh
 . "$SCRIPT_DIR/../lib/test-harness.sh"
+# shellcheck source=tests/lib/test-pr-gate-fixture.sh
+. "$SCRIPT_DIR/../lib/test-pr-gate-fixture.sh"
 legacy_tmp_root="$TMP_ROOT"
 th_init "$@"
 TMP_ROOT="$tmp_root"
@@ -66,6 +68,8 @@ create_runner() {
   cp -R "$REPO_ROOT/agents" "$dir/agents"
   mkdir -p "$dir/lib"
   cp -R "$REPO_ROOT/runtime/lib/." "$dir/lib/"
+  cp "$REPO_ROOT/tests/lib/test-pr-gate-fixture.sh" \
+    "$dir/lib/test-pr-gate-fixture.sh"
   mkdir -p "$dir/core/policy"
   cp "$REPO_ROOT/core/policy/isolation-level.yaml" "$dir/core/policy/isolation-level.yaml"
   cp "$REPO_ROOT/core/policy/gate-tiers.tsv" "$dir/core/policy/gate-tiers.tsv"
@@ -77,6 +81,13 @@ create_runner() {
   cat > "$dir/adapters/codex/dispatch.sh" <<'STUB_EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+runner_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=tests/lib/test-pr-gate-fixture.sh
+if [[ -f "$runner_root/lib/test-pr-gate-fixture.sh" ]]; then
+  . "$runner_root/lib/test-pr-gate-fixture.sh"
+else
+  . "$runner_root/runtime/lib/test-pr-gate-fixture.sh"
+fi
 
 # Capture raw dispatch args for isolation-forwarding tests.
 if [[ -n "${CODEX_GATE_CAPTURE_DISPATCH_ARGS:-}" ]]; then
@@ -190,6 +201,10 @@ if [[ "${CODEX_GATE_STUB_TAMPER_SCOPE:-}" == "1" && "$brief_file" != *-synthesis
   [[ -n "$scope_path" ]] && printf '\n' >> "$scope_path"
 fi
 
+write_reviewer_protocol_stub() {
+  pr_gate_fixture_write_reviewer_protocol "$brief_file" "$@"
+}
+
 # Simulate prefix-only verdict (loose regex bypass): writes "Verdict: approved" (invalid token
 # with the right prefix) to verify the anchored regex rejects it.
 # CODEX_GATE_STUB_VERDICT_PREFIX_ONLY=1: write an invalid prefix verdict instead of a valid one.
@@ -203,9 +218,9 @@ if [[ "${CODEX_GATE_STUB_VERDICT_PREFIX_ONLY:-}" == "1" && "$brief_file" != *-sy
   exit 0
 fi
 
-# Simulate the structured output emitted by base-pinned reviewer definitions:
-# the machine verdict is in the canonical heading and the definition's
-# lower-case `verdict:` field is narrative rather than a second token.
+# Simulate a legacy presentation heading plus a narrative lower-case
+# `verdict:` field. The appended reviewer_result_v1 JSON remains the only
+# machine verdict.
 if [[ "${CODEX_GATE_STUB_HEADER_ONLY_VERDICT:-}" == "1" \
     && "$brief_file" != *-synthesis.md ]]; then
   output_path=$(grep -o '\- new:.*' "$brief_file" | head -1 | awk '{print $NF}')
@@ -213,12 +228,13 @@ if [[ "${CODEX_GATE_STUB_HEADER_ONLY_VERDICT:-}" == "1" \
     mkdir -p "$(dirname "$output_path")"
     printf '## %s -- advise\n\nstatus: advise\nfindings: []\nverdict: Structured narrative.\n' \
       "$reviewer_name" > "$output_path"
+    write_reviewer_protocol_stub "$output_path" "$reviewer_name" advise
   fi
   exit 0
 fi
 
-# Simulate a conflicting optional legacy Verdict marker. The heading remains
-# authoritative, but disagreement must abort rather than silently choose one.
+# Simulate conflicting legacy presentation markers without a protocol block.
+# The gate must fail closed because no canonical reviewer_result_v1 exists.
 if [[ "${CODEX_GATE_STUB_CONFLICTING_VERDICT:-}" == "1" \
     && "$brief_file" != *-synthesis.md ]]; then
   output_path=$(grep -o '\- new:.*' "$brief_file" | head -1 | awk '{print $NF}')
@@ -307,6 +323,15 @@ Required fixes before GO: none
 
 Rationale: Stub gate output.
 STUB_GATE_EOF
+
+  if grep -q '^goal: Sequential ' "$brief_file"; then
+    local selected_csv selected_reviewer
+    selected_csv="$(awk '$1 == "coverage.selected:" { print $2; exit }' "$brief_file")"
+    for selected_reviewer in ${selected_csv//,/ }; do
+      printf '\n## %s -- advise\n' "$selected_reviewer" >> "$output_path"
+      write_reviewer_protocol_stub "$output_path" "$selected_reviewer" advise
+    done
+  fi
 }
 
 # Determine effective mode: synthesis briefs can have their own mode override.
@@ -364,11 +389,15 @@ case "$effective_mode" in
 **Not reviewed**: none
 
 ## critic -- advise
+## critic -- advise
 - stub finding, completed before timeout
 
-## qa-tester -- pass
+## qa-tester -- approve
+## qa-tester -- approve
 - stub finding, completed before timeout (this reviewer then stalled running tests)
 PARTIAL_EOF
+        write_reviewer_protocol_stub "$output_path" critic advise
+        write_reviewer_protocol_stub "$output_path" qa-tester approve
       fi
     fi
     exit 124
@@ -403,6 +432,12 @@ PARTIAL_EOF
         stub_verdict="${CODEX_GATE_STUB_VERDICT:-advise}"
         printf '## %s -- %s\nVerdict: %s. Stub output.\n' \
           "$reviewer_name" "$stub_verdict" "$stub_verdict" > "$output_path"
+        write_reviewer_protocol_stub \
+          "$output_path" "$reviewer_name" "$stub_verdict"
+        if [[ "${CODEX_GATE_STUB_DUPLICATE_HEADING:-}" == "1" ]]; then
+          printf '## %s -- %s\n' "$reviewer_name" "$stub_verdict" \
+            >> "$output_path"
+        fi
         if [[ "$(basename "$output_path")" == pr-gate-result-* || "$(basename "$output_path")" == gate-* ]]; then
           printf 'Final: GO\n' >> "$output_path"
         fi
@@ -472,16 +507,6 @@ done
 printf 'run-20260724T000000Z-abcdef\n'
 PMCTL_STUB_EOF
   chmod +x "$dir/bin/pmctl"
-}
-
-create_agents() {
-  local home="$1"
-  shift
-  mkdir -p "$home/.claude/agents"
-  local reviewer
-  for reviewer in "$@"; do
-    printf '# %s\n\nReviewer fixture.\n' "$reviewer" > "$home/.claude/agents/$reviewer.md"
-  done
 }
 
 write_managed_gitignore() {
@@ -2113,7 +2138,7 @@ test_sequential_combined_brief_validates() {
   local code=$?
   set -e
   if [[ "$code" -ne 0 ]]; then
-    fail "$name" "gate exit $code, expected 0"
+    fail "$name" "gate exit $code, expected 0; stderr: $(cat "$err" 2>/dev/null)"
     return
   fi
   set +e
@@ -2151,7 +2176,7 @@ test_parallel_reviewer_brief_validates() {
   local code=$?
   set -e
   if [[ "$code" -ne 0 ]]; then
-    fail "$name" "gate exit $code, expected 0"
+    fail "$name" "gate exit $code, expected 0; stderr: $(cat "$err" 2>/dev/null)"
     return
   fi
   set +e
@@ -2596,13 +2621,13 @@ test_synthesis_no_output_aborts_gate() {
   pass "$name"
 }
 
-# Behavior: a reviewer output file without a valid Verdict line fails the
-# gate before synthesis (guards against malformed or manipulated output).
+# Behavior: a reviewer output file without a reviewer_result_v1 block fails
+# the gate before synthesis (guards against malformed or incomplete output).
 # Steps:
 #   1. Create a minimal repo (express tier, docs change)
 #   2. CODEX_GATE_STUB_MODE=no-verdict: reviewer writes output but no Verdict line
 #   3. Run gate in explicit parallel mode
-#   4. Assert non-zero exit and "exactly one valid Verdict line" in stderr
+#   4. Assert non-zero exit and protocol INCOMPLETE in stderr
 test_reviewer_invalid_verdict_aborts_gate() {
   local name="reviewer-invalid-verdict-aborts-gate"
   should_run "$name" || return 0
@@ -2619,11 +2644,11 @@ test_reviewer_invalid_verdict_aborts_gate() {
   local code=$?
   set -e
   if [[ "$code" -eq 0 ]]; then
-    fail "$name" "expected non-zero exit when reviewer output has no valid Verdict line"
+    fail "$name" "expected non-zero exit when reviewer output has no protocol verdict"
     return
   fi
   assert_file_contains "$name" "$err" \
-    "invalid or ambiguous canonical verdict" || return
+    "reviewer protocol INCOMPLETE" || return
   pass "$name"
 }
 
@@ -2654,8 +2679,8 @@ test_reviewer_heading_only_verdict_is_accepted() {
   pass "$name"
 }
 
-# Behavior: when an optional upper-case Verdict marker conflicts with the
-# canonical heading, the gate fails closed before synthesis.
+# Behavior: legacy heading/Verdict-only output without a reviewer_result_v1
+# block fails closed before synthesis.
 test_reviewer_heading_and_explicit_verdict_must_agree() {
   local name="reviewer-heading-and-explicit-verdict-must-agree"
   should_run "$name" || return 0
@@ -2677,7 +2702,7 @@ test_reviewer_heading_and_explicit_verdict_must_agree() {
     return
   fi
   assert_file_contains "$name" "$err" \
-    "invalid or ambiguous canonical verdict" || return
+    "reviewer protocol INCOMPLETE" || return
   assert_not_contains "$name" "$out" "[synthesis]" || return
   pass "$name"
 }
@@ -2712,13 +2737,13 @@ test_reviewer_no_output_aborts_gate() {
   pass "$name"
 }
 
-# Behavior: sequential mode exiting 0 without writing the gate result file
-# fails the gate before reporting a result.
+# Behavior: sequential mode exiting 0 without writing reviewer protocol
+# evidence fails closed before reporting a result.
 # Steps:
 #   1. Create a minimal repo (express tier, docs change)
 #   2. CODEX_GATE_STUB_MODE=no-output: dispatch exits 0 without output
 #   3. Run gate in policy-selected sequential mode
-#   4. Assert non-zero exit and "sequential gate did not produce" in stderr
+#   4. Assert non-zero exit and protocol INCOMPLETE in stderr
 test_sequential_no_output_aborts_gate() {
   local name="sequential-no-output-aborts-gate"
   should_run "$name" || return 0
@@ -2738,17 +2763,17 @@ test_sequential_no_output_aborts_gate() {
     fail "$name" "expected non-zero exit when sequential dispatch produces no output"
     return
   fi
-  assert_file_contains "$name" "$err" "sequential gate did not produce" || return
+  assert_file_contains "$name" "$err" "reviewer protocol INCOMPLETE" || return
   pass "$name"
 }
 
-# Behavior: sequential mode output without a valid Final line fails the
-# gate before reporting a result.
+# Behavior: sequential mode output without reviewer protocol evidence fails
+# closed before legacy Final-line parsing can report a result.
 # Steps:
 #   1. Create a minimal repo (express tier, docs change)
 #   2. CODEX_GATE_STUB_MODE=no-verdict: dispatch writes output but no Final line
 #   3. Run gate in policy-selected sequential mode
-#   4. Assert non-zero exit and "must contain exactly one Final" in stderr
+#   4. Assert non-zero exit and protocol INCOMPLETE in stderr
 test_sequential_no_final_line_aborts_gate() {
   local name="sequential-no-final-line-aborts-gate"
   should_run "$name" || return 0
@@ -2768,7 +2793,7 @@ test_sequential_no_final_line_aborts_gate() {
     fail "$name" "expected non-zero exit when sequential output has no valid Final line"
     return
   fi
-  assert_file_contains "$name" "$err" "must contain exactly one Final" || return
+  assert_file_contains "$name" "$err" "reviewer protocol INCOMPLETE" || return
   pass "$name"
 }
 
@@ -2816,7 +2841,13 @@ test_sequential_timeout_preserves_partial_result() {
     return
   fi
   assert_file_contains "$name" "$result" "## critic -- advise" || return
-  assert_file_contains "$name" "$result" "## qa-tester -- pass" || return
+  assert_file_contains "$name" "$result" "## qa-tester -- approve" || return
+  local protocol_count
+  protocol_count="$(grep -c '^```reviewer_result_v1$' "$result" || true)"
+  [[ "$protocol_count" -eq 2 ]] || {
+    fail "$name" "expected two completed reviewer protocol blocks, got $protocol_count"
+    return
+  }
   pass "$name"
 }
 
@@ -3361,12 +3392,12 @@ test_preflight_artifact_tamper_aborts_gate() {
   fi
 }
 
-# Behavior: the manifest artifact is re-hashed during assurance finalization,
-# so a reviewer cannot change declared scope while retaining the original
-# digest supplied to every selected reviewer.
+# Behavior: reviewer protocol verification re-hashes the scope manifest before
+# accepting evidence, so a reviewer cannot change declared scope while
+# retaining the original digest supplied to every selected reviewer.
 # Steps:
 #   1. Run a sequential gate whose adapter appends to the scope artifact.
-#   2. Assert finalization rejects the linked digest before reporting success.
+#   2. Assert protocol verification rejects the linked digest before success.
 test_scope_manifest_tamper_aborts_gate() {
   local name="scope-manifest/reviewer-tamper-aborts-gate"
   should_run "$name" || return 0
@@ -3385,7 +3416,8 @@ test_scope_manifest_tamper_aborts_gate() {
   local code=$?
   set -e
   if [[ "$code" -ne 0 ]] \
-      && grep -Fq "linked scope_manifest evidence digest mismatch" "$err"; then
+      && grep -Fq "reviewer protocol reference manifest digest mismatch" \
+        "$err"; then
     pass "$name"
   else
     fail "$name" "tampered scope manifest was accepted: code=$code err=$(cat "$err")"
@@ -3625,9 +3657,8 @@ TWRAP_EOF
   pass "$name"
 }
 
-# Behavior: a verdict line with a valid prefix but invalid suffix is
-# rejected -- e.g. "Verdict: approved" must not be accepted as "Verdict:
-# approve".
+# Behavior: legacy prose using a verdict-like prefix cannot substitute for a
+# schema-complete reviewer_result_v1 verdict.
 # Steps:
 #   1. Create a minimal repo (express tier, docs change)
 #   2. CODEX_GATE_STUB_VERDICT_PREFIX_ONLY=1: stub writes "Verdict: approved" (not "approve")
@@ -3654,7 +3685,7 @@ test_verdict_prefix_rejected() {
     return
   fi
   assert_file_contains "$name" "$err" \
-    "invalid or ambiguous canonical verdict" || return
+    "reviewer protocol INCOMPLETE" || return
   pass "$name"
 }
 
@@ -3802,10 +3833,8 @@ test_synthesis_multiple_final_lines_aborts_gate() {
   pass "$name"
 }
 
-# Behavior: a reviewer artifact with more than one valid Verdict: line is
-# rejected. The gate must fail closed on ambiguous reviewer output --
-# silently taking the first match would allow a more-severe later verdict
-# to be ignored.
+# Behavior: multiple legacy Verdict lines cannot substitute for the unique
+# verdict field in a schema-complete reviewer_result_v1 block.
 # Steps:
 #   1. Create a minimal repo (express tier, docs change)
 #   2. CODEX_GATE_STUB_MULTIPLE_VERDICTS=1: stub writes "Verdict: approve" then "Verdict: block"
@@ -3832,7 +3861,7 @@ test_multiple_verdict_lines_aborts_gate() {
     return
   fi
   assert_file_contains "$name" "$err" \
-    "invalid or ambiguous canonical verdict" || return
+    "reviewer protocol INCOMPLETE" || return
   pass "$name"
 }
 
@@ -3903,8 +3932,8 @@ test_gate_result_frontmatter_and_escalation() {
   fi
   local frontmatter
   frontmatter="$(sed -n "1,${frontmatter_end}p" "$result")"
-  if ! printf '%s\n' "$frontmatter" | grep -q '^gate_result_version: pr_gate_result_v2$'; then
-    fail "$name" "frontmatter missing gate_result_version: pr_gate_result_v2"
+  if ! printf '%s\n' "$frontmatter" | grep -q '^gate_result_version: pr_gate_result_v3$'; then
+    fail "$name" "frontmatter missing gate_result_version: pr_gate_result_v3"
     return
   fi
   if ! printf '%s\n' "$frontmatter" | grep -q '^gate_assurance: result.md.assurance.json$'; then
@@ -4660,7 +4689,7 @@ test_untracked_binary_routes_to_standard() {
 # review hints; every parallel reviewer and synthesis receive its same digest.
 # Steps:
 #   1. Create a feature diff with a rename, shared-helper edit, paired test,
-#      sensitive old path, and untracked schema/migration inputs.
+#      sensitive old path, and untracked schema/migration/symlink inputs.
 #   2. Run a parallel gate and inspect the linked machine-owned manifest.
 #   3. Assert its self-digest, assurance link, flags/signals/expansions, and the
 #      digest captured independently from every dispatch brief.
@@ -4672,6 +4701,7 @@ test_scope_manifest_complete_and_shared_across_parallel_dispatch() {
   local runner="$dir/runner" out="$dir/out" err="$dir/err"
   local captures="$dir/scope-captures" result assurance manifest
   local artifact_digest content_digest captured_count captured_unique
+  local symlink_digest
   mkdir -p "$dir"
   create_runner "$runner"
   create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
@@ -4694,9 +4724,10 @@ test_scope_manifest_complete_and_shared_across_parallel_dispatch() {
     printf 'shared_token() { printf new; }\n' > runtime/lib/shared.sh
     git add app/login.ts runtime/lib/shared.sh
     git commit -q -m change
-    mkdir -p core/schema migrations
+    mkdir -p core/schema migrations docs
     printf '{"type":"object"}\n' > core/schema/sample.schema.json
     printf 'ALTER TABLE example ADD COLUMN active boolean;\n' > migrations/001.sql
+    ln -s ../runtime/lib/shared.sh docs/shared-link.md
   )
 
   set +e
@@ -4720,7 +4751,10 @@ test_scope_manifest_complete_and_shared_across_parallel_dispatch() {
     fail "$name" "missing linked scope manifest"
     return
   }
-  if ! jq -e '
+  symlink_digest="$(
+    printf '%s' '../runtime/lib/shared.sh' | sha256sum | awk '{print $1}'
+  )"
+  if ! jq -e --arg symlink_digest "$symlink_digest" '
       .kind == "gate_scope_manifest_v1" and
       .schema_version == 1 and .status == "complete" and
       (.changes.entries | any(
@@ -4728,6 +4762,7 @@ test_scope_manifest_complete_and_shared_across_parallel_dispatch() {
         .old_path == "app/auth.ts" and .new_path == "app/login.ts")) and
       (.changes.untracked_paths == [
         "core/schema/sample.schema.json",
+        "docs/shared-link.md",
         "migrations/001.sql"
       ]) and
       (.paired_tests | any(
@@ -4749,10 +4784,23 @@ test_scope_manifest_complete_and_shared_across_parallel_dispatch() {
       (.expansion.entries | any(
         .path == "runtime/bin/use-shared.sh" and
         .reason == "call-site-hint")) and
+      .reference_index.claim == "declared-review-reference-set" and
+      (.reference_index.entries | any(
+        .path == "app/login.ts" and .snapshot == "subject" and
+        .line_count == 1 and (.sha256 | test("^[a-f0-9]{64}$")))) and
+      (.reference_index.entries | any(
+        .path == "app/auth.ts" and .snapshot == "base" and
+        .line_count == 1 and (.sha256 | test("^[a-f0-9]{64}$")))) and
+      (.reference_index.entries | any(
+        .path == "runtime/bin/use-shared.sh" and .snapshot == "subject")) and
+      (.reference_index.entries | any(
+        .path == "docs/shared-link.md" and .snapshot == "subject" and
+        .line_count == 1 and .sha256 == $symlink_digest)) and
       (.truncation.occurred == false)
     ' "$manifest" >/dev/null; then
     fail "$name" "manifest omitted required scope facts: $(jq -c '{
-      status,changes,paired_tests,sensitive_signals,flags,expansion,truncation
+      status,changes,paired_tests,sensitive_signals,flags,expansion,
+      reference_index,truncation
     }' "$manifest" 2>/dev/null)"
     return
   fi
@@ -5247,7 +5295,7 @@ test_post_gate_hook_runs() {
   fi
   local result_path
   result_path="$(awk -F'result: ' '/^result: /{path=$2} END{print path}' "$out")"
-  assert_file_contains "$name" "$result_path" "gate_result_version: pr_gate_result_v2" || return
+  assert_file_contains "$name" "$result_path" "gate_result_version: pr_gate_result_v3" || return
   if [[ ! -s "${result_path}.assurance.json" ]]; then
     fail "$name" "assurance was not finalized after the successful post-gate hook"
     return
@@ -6109,8 +6157,8 @@ test_parallel_synthesis_brief_ascii_separator() {
 # CODEX_GATE_CAPTURE_REVIEWER_FILTER selects the critic brief from the
 # policy-complete parallel dispatch.
 # Steps: run the gate with generic docs coverage, and assert the captured
-# critic brief contains "Executor: codex" and "file:line --"
-# using ASCII dashes, and no UTF-8 em dash byte sequence is present.
+# critic brief contains "Executor: codex" and an ASCII "--" constraint,
+# and no UTF-8 em dash byte sequence is present.
 test_parallel_reviewer_brief_ascii_separator() {
   local name="parallel-reviewer-brief-ascii-separator"
   should_run "$name" || return 0
@@ -6139,7 +6187,7 @@ test_parallel_reviewer_brief_ascii_separator() {
   fi
   # Reviewer brief heading format must use ASCII -- not em dash
   assert_file_contains "$name" "$reviewer_brief" "Executor: codex" || return
-  assert_file_contains "$name" "$reviewer_brief" "file:line --" || return
+  assert_file_contains "$name" "$reviewer_brief" "denial -- do NOT" || return
   # No em dash bytes (UTF-8 E2 80 94) must remain in the reviewer brief
   if grep -q $'\xe2\x80\x94' "$reviewer_brief" 2>/dev/null; then
     fail "$name" "em dash (U+2014) found in parallel reviewer brief"
@@ -8091,6 +8139,7 @@ if [[ -n "${CODEX_GATE_REVIEWER_DEFS_MARKER:-}" ]]; then
 fi
 output_path="$(printf '%s\n' "$brief" | grep -o '\- new:.*' | head -1 | awk '{print $NF}')"
 if [[ -n "$output_path" ]]; then
+  scope_sha="$(printf '%s\n' "$brief" | awk '$1 == "artifact_sha256:" { print $2; exit }')"
   mkdir -p "$(dirname "$output_path")"
   cat > "$output_path" <<'GATE_RESULT_EOF'
 ---
@@ -8101,7 +8150,7 @@ mode: sequential
 most_severe: approve
 reviewers:
   critic: approve
-  qa-tester: pass
+  qa-tester: approve
 escalation:
   recommended: false
   reviewers: []
@@ -8122,6 +8171,30 @@ Required fixes before GO: none
 **Reason**:
 - none
 GATE_RESULT_EOF
+  for reviewer in critic qa-tester; do
+    printf '```reviewer_result_v1\n' >> "$output_path"
+    jq -nc --arg reviewer "$reviewer" --arg scope_sha "$scope_sha" '
+      ["changed_files","paired_tests","sensitive_signals","public_interface",
+        "schema","config","install","ci","release","migration",
+        "bounded_expansion"] as $surfaces |
+      {
+        kind:"gate_reviewer_result_v1",
+        schema_version:1,
+        reviewer:$reviewer,
+        scope_manifest_sha256:$scope_sha,
+        coverage_claim:"declared-scope-checklist-not-review-completeness",
+        coverage:($surfaces | map({
+          surface:.,status:"examined",
+          evidence_refs:[{path:"README.md",line:1,symbol:null}],
+          reason:"Fixture examined this declared surface."
+        })),
+        findings:[],
+        verdict:"approve",
+        rationale:"Fixture reviewer completed every declared coverage surface."
+      }
+    ' >> "$output_path"
+    printf '\n```\n' >> "$output_path"
+  done
 fi
 printf 'fake Codex reviewer completed\n' > "$last"
 printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":5}}'
@@ -8516,6 +8589,433 @@ test_shared_gate_reviewer_content_host_boundary_ratchet() {
   pass "$name"
 }
 
+# Behavior: the runtime reviewer checklist cannot drift from the canonical
+# schema surface vocabulary.
+# Steps: source the shared verifier, extract and sort both vocabularies, then
+# assert byte-for-byte equality.
+test_reviewer_protocol_surfaces_match_schema() {
+  local name="reviewer-protocol/surfaces-match-schema"
+  should_run "$name" || return 0
+  local runtime_surfaces schema_surfaces
+  # shellcheck source=runtime/lib/gate-result-verify.sh
+  . "$REPO_ROOT/runtime/lib/gate-result-verify.sh"
+  runtime_surfaces="$(_gate_reviewer_protocol_surfaces | LC_ALL=C sort)"
+  schema_surfaces="$(jq -r '
+    .definitions.coverageEntry.properties.surface.enum[]
+  ' "$REPO_ROOT/core/schema/gate-reviewer-result.schema.json" | LC_ALL=C sort)"
+  if [[ "$runtime_surfaces" != "$schema_surfaces" ]]; then
+    fail "$name" "runtime reviewer surfaces drifted from the canonical schema"
+    return
+  fi
+  pass "$name"
+}
+
+# Behavior: sequential review preserves one complete protocol document per
+# selected reviewer even though all reviewers share one session.
+# Steps: run a two-reviewer sequential gate, count protocol blocks and surfaces,
+# then assert result v3 plus both normalized presentation sections.
+test_sequential_reviewer_protocol_has_independent_logical_sections() {
+  local name="reviewer-protocol/sequential-logical-sections"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home="$TMP_ROOT/$name/home"
+  local repo="$TMP_ROOT/$name/repo" runner="$TMP_ROOT/$name/runner"
+  local out="$TMP_ROOT/$name/out" err="$TMP_ROOT/$name/err"
+  local result="$TMP_ROOT/$name/result.md" code block_count surface_count
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester
+  create_repo "$repo" docs
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" \
+    --base main --reviewers critic,qa-tester --mode sequential --output "$result"
+  code=$?
+  set -e
+  [[ "$code" -eq 0 ]] || {
+    fail "$name" "exit $code, expected 0: $(cat "$err" 2>/dev/null)"
+    return
+  }
+  block_count="$(grep -c '^```reviewer_result_v1$' "$result" || true)"
+  surface_count="$(grep -o '"surface":"' "$result" | wc -l | tr -d ' ')"
+  [[ "$block_count" -eq 2 && "$surface_count" -eq 22 ]] || {
+    fail "$name" "expected 2 complete reviewer blocks, got blocks=$block_count surfaces=$surface_count"
+    return
+  }
+  assert_file_contains "$name" "$result" "gate_result_version: pr_gate_result_v3" || return
+  assert_file_contains "$name" "$result" "## critic -- advise" || return
+  assert_file_contains "$name" "$result" "## qa-tester -- advise" || return
+  pass "$name"
+}
+
+# Behavior: parallel review preserves per-reviewer session independence while
+# enforcing the same reviewer-result contract as sequential mode.
+# Steps: run a two-reviewer parallel gate, inspect its assurance topology and
+# captured brief, then assert both protocol blocks and mandatory instructions.
+test_parallel_reviewer_protocol_preserves_session_topology() {
+  local name="reviewer-protocol/parallel-session-topology"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home="$TMP_ROOT/$name/home"
+  local repo="$TMP_ROOT/$name/repo" runner="$TMP_ROOT/$name/runner"
+  local out="$TMP_ROOT/$name/out" err="$TMP_ROOT/$name/err"
+  local result="$TMP_ROOT/$name/result.md" assurance code block_count
+  local reviewer_brief="$TMP_ROOT/$name/reviewer-brief.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester
+  create_repo "$repo" docs
+  set +e
+  CODEX_GATE_CAPTURE_REVIEWER_BRIEF="$reviewer_brief" \
+    CODEX_GATE_CAPTURE_REVIEWER_FILTER=critic \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester --mode parallel --output "$result"
+  code=$?
+  set -e
+  [[ "$code" -eq 0 ]] || {
+    fail "$name" "exit $code, expected 0: $(cat "$err" 2>/dev/null)"
+    return
+  }
+  assurance="${result}.assurance.json"
+  block_count="$(grep -c '^```reviewer_result_v1$' "$result" || true)"
+  if [[ "$block_count" -ne 2 ]] || ! jq -e '
+      .coordinates.mode.resolved == "parallel" and
+      .coordinates.mode.topology == "per-reviewer-sessions" and
+      .coordinates.coverage.selected == ["critic","qa-tester"] and
+      [.dispatch.outcomes[].role] == ["reviewer","reviewer","synthesis"]
+    ' "$assurance" >/dev/null; then
+    fail "$name" "parallel reviewer protocol or topology evidence was incomplete"
+    return
+  fi
+  assert_file_contains "$name" "$reviewer_brief" \
+    "exactly these nine top-level keys" || return
+  assert_file_contains "$name" "$reviewer_brief" \
+    "Map legacy pass" || return
+  assert_file_contains "$name" "$reviewer_brief" \
+    "must not appear at top level" || return
+  assert_file_contains "$name" "$reviewer_brief" \
+    "risk-reviewer-FNNN" || return
+  assert_file_contains "$name" "$reviewer_brief" \
+    "reference_index.entries[]" || return
+  assert_file_contains "$name" "$reviewer_brief" \
+    "out-of-scope repository paths make the protocol INCOMPLETE" || return
+  pass "$name"
+}
+
+# Behavior: a selected reviewer that omits one declared surface is protocol
+# incomplete and cannot reach synthesis.
+# Steps: mutate one parallel reviewer report to remove a surface, run the gate,
+# then assert a nonzero protocol error and no synthesis marker.
+test_reviewer_protocol_missing_surface_is_incomplete() {
+  local name="reviewer-protocol/missing-surface-incomplete"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home="$TMP_ROOT/$name/home"
+  local repo="$TMP_ROOT/$name/repo" runner="$TMP_ROOT/$name/runner"
+  local out="$TMP_ROOT/$name/out" err="$TMP_ROOT/$name/err" code
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester
+  create_repo "$repo" docs
+  set +e
+  CODEX_GATE_STUB_PROTOCOL_MUTATION=missing-surface \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester --mode parallel
+  code=$?
+  set -e
+  [[ "$code" -ne 0 ]] || {
+    fail "$name" "incomplete coverage unexpectedly passed"
+    return
+  }
+  assert_file_contains "$name" "$err" "reviewer protocol INCOMPLETE" || return
+  assert_not_contains "$name" "$out" "[synthesis]" || return
+  pass "$name"
+}
+
+# Behavior: an actionable finding without the reviewer-prefixed stable ID is
+# protocol incomplete before synthesis.
+# Steps: emit an invalid-ID parallel fixture, run the gate, then assert the
+# protocol failure and absence of synthesis.
+test_reviewer_protocol_invalid_stable_id_is_incomplete() {
+  local name="reviewer-protocol/invalid-stable-id-incomplete"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home="$TMP_ROOT/$name/home"
+  local repo="$TMP_ROOT/$name/repo" runner="$TMP_ROOT/$name/runner"
+  local out="$TMP_ROOT/$name/out" err="$TMP_ROOT/$name/err" code
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester
+  create_repo "$repo" docs
+  set +e
+  CODEX_GATE_STUB_PROTOCOL_MUTATION=invalid-id \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester --mode parallel
+  code=$?
+  set -e
+  [[ "$code" -ne 0 ]] || {
+    fail "$name" "invalid stable ID unexpectedly passed"
+    return
+  }
+  assert_file_contains "$name" "$err" "reviewer protocol INCOMPLETE" || return
+  assert_not_contains "$name" "$out" "[synthesis]" || return
+  pass "$name"
+}
+
+# Behavior: a blocking finding without a usable source reference is protocol
+# incomplete rather than a reviewer NO-GO.
+# Steps: emit a blocker whose source path is empty, run the parallel gate, then
+# assert protocol failure before synthesis.
+test_reviewer_protocol_evidence_less_blocker_is_incomplete() {
+  local name="reviewer-protocol/evidence-less-blocker-incomplete"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home="$TMP_ROOT/$name/home"
+  local repo="$TMP_ROOT/$name/repo" runner="$TMP_ROOT/$name/runner"
+  local out="$TMP_ROOT/$name/out" err="$TMP_ROOT/$name/err" code
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester
+  create_repo "$repo" docs
+  set +e
+  CODEX_GATE_STUB_VERDICT=block \
+    CODEX_GATE_STUB_PROTOCOL_MUTATION=evidence-less-blocker \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester --mode parallel
+  code=$?
+  set -e
+  [[ "$code" -ne 0 ]] || {
+    fail "$name" "evidence-less blocker unexpectedly passed"
+    return
+  }
+  assert_file_contains "$name" "$err" "reviewer protocol INCOMPLETE" || return
+  assert_not_contains "$name" "$out" "[synthesis]" || return
+  pass "$name"
+}
+
+# Behavior: a legacy QA `pass` token is diagnosed as a verdict-contract error,
+# not as a coverage or finding failure.
+# Steps: mutate the QA JSON verdict, run the parallel gate, then assert the
+# precise diagnostic and no synthesis marker.
+test_reviewer_protocol_legacy_pass_reports_verdict_contract() {
+  local name="reviewer-protocol/legacy-pass-diagnostic"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home="$TMP_ROOT/$name/home"
+  local repo="$TMP_ROOT/$name/repo" runner="$TMP_ROOT/$name/runner"
+  local out="$TMP_ROOT/$name/out" err="$TMP_ROOT/$name/err" code
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester
+  create_repo "$repo" docs
+  set +e
+  CODEX_GATE_STUB_PROTOCOL_MUTATION=qa-legacy-pass \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester --mode parallel
+  code=$?
+  set -e
+  [[ "$code" -ne 0 ]] || {
+    fail "$name" "legacy qa pass token unexpectedly passed"
+    return
+  }
+  assert_file_contains "$name" "$err" \
+    "invalid verdict contract for qa-tester" || return
+  assert_not_contains "$name" "$err" \
+    "malformed coverage or finding contract" || return
+  assert_not_contains "$name" "$out" "[synthesis]" || return
+  pass "$name"
+}
+
+# Behavior: role-specific legacy top-level fields are rejected by the common
+# reviewer envelope contract.
+# Steps: add an architecture-style field to the critic fixture, run the gate,
+# then assert the top-level diagnostic and no synthesis marker.
+test_reviewer_protocol_extra_role_field_reports_top_level_contract() {
+  local name="reviewer-protocol/extra-role-field-diagnostic"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home="$TMP_ROOT/$name/home"
+  local repo="$TMP_ROOT/$name/repo" runner="$TMP_ROOT/$name/runner"
+  local out="$TMP_ROOT/$name/out" err="$TMP_ROOT/$name/err" code
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester
+  create_repo "$repo" docs
+  set +e
+  CODEX_GATE_STUB_PROTOCOL_MUTATION=critic-extra-top-level \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester --mode parallel
+  code=$?
+  set -e
+  [[ "$code" -ne 0 ]] || {
+    fail "$name" "legacy role-specific top-level field unexpectedly passed"
+    return
+  }
+  assert_file_contains "$name" "$err" \
+    "invalid top-level or binding contract for critic" || return
+  assert_not_contains "$name" "$out" "[synthesis]" || return
+  pass "$name"
+}
+
+# Behavior: an abbreviated reviewer identity in a stable finding ID is rejected
+# before synthesis.
+# Steps: emit `risk-F001` for risk-reviewer, run the parallel gate, then assert
+# the finding-contract diagnostic and no synthesis marker.
+test_reviewer_protocol_abbreviated_finding_id_is_incomplete() {
+  local name="reviewer-protocol/abbreviated-finding-id"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home="$TMP_ROOT/$name/home"
+  local repo="$TMP_ROOT/$name/repo" runner="$TMP_ROOT/$name/runner"
+  local out="$TMP_ROOT/$name/out" err="$TMP_ROOT/$name/err" code
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester risk-reviewer
+  create_repo "$repo" docs
+  set +e
+  CODEX_GATE_STUB_PROTOCOL_MUTATION=risk-short-id \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester,risk-reviewer --mode parallel
+  code=$?
+  set -e
+  [[ "$code" -ne 0 ]] || {
+    fail "$name" "abbreviated risk finding ID unexpectedly passed"
+    return
+  }
+  assert_file_contains "$name" "$err" \
+    "invalid finding contract for risk-reviewer" || return
+  assert_not_contains "$name" "$out" "[synthesis]" || return
+  pass "$name"
+}
+
+# Behavior: a parallel reviewer cannot cite a syntactically valid repository
+# path that is absent from the scope manifest reference index.
+# Steps: mutate one coverage reference to an out-of-scope path, run the
+# parallel gate, then assert evidence-reference INCOMPLETE before synthesis.
+test_parallel_reviewer_protocol_out_of_scope_reference_is_incomplete() {
+  local name="reviewer-protocol/parallel-out-of-scope-reference"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home="$TMP_ROOT/$name/home"
+  local repo="$TMP_ROOT/$name/repo" runner="$TMP_ROOT/$name/runner"
+  local out="$TMP_ROOT/$name/out" err="$TMP_ROOT/$name/err" code
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester
+  create_repo "$repo" docs
+  set +e
+  CODEX_GATE_STUB_PROTOCOL_MUTATION=out-of-scope-reference \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester --mode parallel
+  code=$?
+  set -e
+  [[ "$code" -ne 0 ]] || {
+    fail "$name" "out-of-scope evidence reference unexpectedly passed"
+    return
+  }
+  assert_file_contains "$name" "$err" \
+    "invalid evidence reference contract for critic" || return
+  assert_not_contains "$name" "$out" "[synthesis]" || return
+  pass "$name"
+}
+
+# Behavior: a sequential reviewer cannot cite a line beyond the immutable
+# reference-index snapshot even when the repository path itself is in scope.
+# Steps: mutate one coverage line beyond line_count, run the sequential gate,
+# then assert evidence-reference INCOMPLETE before machine acceptance.
+test_sequential_reviewer_protocol_out_of_range_line_is_incomplete() {
+  local name="reviewer-protocol/sequential-out-of-range-line"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home="$TMP_ROOT/$name/home"
+  local repo="$TMP_ROOT/$name/repo" runner="$TMP_ROOT/$name/runner"
+  local out="$TMP_ROOT/$name/out" err="$TMP_ROOT/$name/err" code
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester
+  create_repo "$repo" docs
+  set +e
+  CODEX_GATE_STUB_PROTOCOL_MUTATION=out-of-range-line \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester --mode sequential
+  code=$?
+  set -e
+  [[ "$code" -ne 0 ]] || {
+    fail "$name" "out-of-range evidence line unexpectedly passed"
+    return
+  }
+  assert_file_contains "$name" "$err" \
+    "invalid evidence reference contract for critic" || return
+  assert_not_contains "$name" "$out" "[synthesis]" || return
+  pass "$name"
+}
+
+# Behavior: duplicate human presentation headings cannot invalidate a unique,
+# schema-complete JSON reviewer verdict.
+# Steps: duplicate each raw heading, run the parallel gate, then assert the
+# shell-owned result normalizes presentation and reports no protocol error.
+test_reviewer_protocol_duplicate_heading_uses_json_verdict() {
+  local name="reviewer-protocol/duplicate-heading-json-verdict"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home="$TMP_ROOT/$name/home"
+  local repo="$TMP_ROOT/$name/repo" runner="$TMP_ROOT/$name/runner"
+  local out="$TMP_ROOT/$name/out" err="$TMP_ROOT/$name/err"
+  local result="$TMP_ROOT/$name/result.md" code raw heading_count
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester
+  create_repo "$repo" docs
+  set +e
+  CODEX_GATE_STUB_DUPLICATE_HEADING=1 \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester --mode parallel --output "$result"
+  code=$?
+  set -e
+  [[ "$code" -eq 0 ]] || {
+    fail "$name" "duplicate presentation heading blocked valid JSON verdict: $(cat "$err" 2>/dev/null)"
+    return
+  }
+  for raw in "$repo"/.gate-results/reviewer-*.md; do
+    heading_count="$(grep -cE '^## .* -- advise$' "$raw" || true)"
+    [[ "$heading_count" -eq 2 ]] || {
+      fail "$name" "fixture did not create duplicate reviewer headings in $raw"
+      return
+    }
+  done
+  heading_count="$(grep -cE '^## (critic|qa-tester) -- advise$' "$result" || true)"
+  [[ "$heading_count" -eq 2 ]] || {
+    fail "$name" "machine-owned result did not normalize reviewer presentation headings"
+    return
+  }
+  assert_not_contains "$name" "$err" "reviewer protocol INCOMPLETE" || return
+  pass "$name"
+}
+
+# Behavior: a blocker still completes every declared coverage surface and
+# becomes a formal reviewer NO-GO rather than protocol incomplete.
+# Steps: emit two complete blocking reviewer reports, run the parallel gate,
+# then assert 22 surfaces, result v3, and Final NO-GO.
+test_reviewer_protocol_blocker_completes_remaining_surfaces() {
+  local name="reviewer-protocol/blocker-no-early-stop"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home="$TMP_ROOT/$name/home"
+  local repo="$TMP_ROOT/$name/repo" runner="$TMP_ROOT/$name/runner"
+  local out="$TMP_ROOT/$name/out" err="$TMP_ROOT/$name/err"
+  local result="$TMP_ROOT/$name/result.md" code surface_count
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester
+  create_repo "$repo" docs
+  set +e
+  CODEX_GATE_STUB_VERDICT=block CODEX_GATE_STUB_SYNTHESIS_FINAL=NO-GO \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester --mode parallel --output "$result"
+  code=$?
+  set -e
+  [[ "$code" -eq 1 ]] || {
+    fail "$name" "blocker run exit $code, expected reviewer NO-GO exit 1"
+    return
+  }
+  surface_count="$(grep -o '"surface":"' "$result" | wc -l | tr -d ' ')"
+  [[ "$surface_count" -eq 22 ]] || {
+    fail "$name" "blocker early-stopped coverage: expected 22 surfaces, got $surface_count"
+    return
+  }
+  assert_file_contains "$name" "$result" "gate_result_version: pr_gate_result_v3" || return
+  assert_file_contains "$name" "$result" "Final: NO-GO" || return
+  assert_not_contains "$name" "$err" "reviewer protocol INCOMPLETE" || return
+  pass "$name"
+}
+
 run_test test_repo_owned_reviewers_and_canonical_memory_on_clean_home
 run_test test_pmctl_codex_gate_uses_production_memory_on_clean_home
 run_test test_invalid_canonical_memory_does_not_fallback
@@ -8530,5 +9030,18 @@ run_test test_gate_memory_runtime_closes_query_failure
 run_test test_gate_memory_runtime_omits_over_budget_context
 run_test test_gate_memory_runtime_closes_unexpected_success_status
 run_test test_shared_gate_reviewer_content_host_boundary_ratchet
+run_test test_reviewer_protocol_surfaces_match_schema
+run_test test_sequential_reviewer_protocol_has_independent_logical_sections
+run_test test_parallel_reviewer_protocol_preserves_session_topology
+run_test test_reviewer_protocol_missing_surface_is_incomplete
+run_test test_reviewer_protocol_invalid_stable_id_is_incomplete
+run_test test_reviewer_protocol_evidence_less_blocker_is_incomplete
+run_test test_reviewer_protocol_legacy_pass_reports_verdict_contract
+run_test test_reviewer_protocol_extra_role_field_reports_top_level_contract
+run_test test_reviewer_protocol_abbreviated_finding_id_is_incomplete
+run_test test_parallel_reviewer_protocol_out_of_scope_reference_is_incomplete
+run_test test_sequential_reviewer_protocol_out_of_range_line_is_incomplete
+run_test test_reviewer_protocol_duplicate_heading_uses_json_verdict
+run_test test_reviewer_protocol_blocker_completes_remaining_surfaces
 
 th_summary

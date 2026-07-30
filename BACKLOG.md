@@ -37,7 +37,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-515 | ✅ closed 2026-07-29 | `gate_assurance_v3` immutable subject 與 artifact／subject／policy 三軸 shared verifier；downstream scope／closure producers 分屬 CC-518／CC-517 | arch/gate | 2026-07-23 | pr:#454 | P1 | design |
 | CC-516 | ⏸ deferred | evidence-gated thin delivery wrapper 評估；只組合既有 primitives，不建立 workflow engine/FSM | ux/process | 2026-07-23 | — | P3 | spike |
 | CC-517 | 🔵 active | maintainer `/ship`：primary review、structured remediation closure 與 conditional targeted confirmation | process/gate | 2026-07-23 | — | P1 | design |
-| CC-518 | 🔵 active | gate scope manifest v1：immutable subject、changed paths、paired tests、signals 與 bounded expansion | ops/gate | 2026-07-23 | — | P1 | design |
+| CC-518 | ✅ closed 2026-07-29 | gate scope manifest v1：immutable subject、changed paths、paired tests、signals 與 bounded expansion | ops/gate | 2026-07-23 | pr:#455 | P1 | design |
 | CC-519 | 🔵 active | selected-reviewer coverage／finding contract：declared coverage、stable IDs 與 actionable fix boundary | ops/gate | 2026-07-23 | — | P1 | design |
 | CC-520 | 🔵 active | synthesis parity 與 remediation seed：findings union、root-cause grouping、coverage matrix 與 no-silent-drop | ops/gate | 2026-07-23 | — | P1 | design |
 | CC-521 | 🔵 active | test-gap matrix、protocol recovery 與 live recall evaluation 分層 | ops/test | 2026-07-23 | — | P2 | design |
@@ -2021,7 +2021,9 @@ P1，排入 v0.11.0 delivery assurance correctness。
 
 ---
 
-## CC-518 — gate scope manifest v1 🔵 active
+## CC-518 — gate scope manifest v1 ✅ 2026-07-29
+
+**See**: pr:#455
 
 **Problem**: reviewers 目前主要從 diff list 與個別 prompt 探索 scope；renamed/
 untracked paths、paired tests、sensitive signals 與 bounded adjacent context 沒有一份
@@ -2080,6 +2082,13 @@ early stop，finding 也常缺少受影響 behavior、fix boundary 與 verificat
 5. schema/contract deterministic tests涵蓋 sequential logical sections、parallel
    session evidence、blocker no-early-stop、missing checklist、invalid stable ID與
    evidence-less blocker。
+6. `gate_reviewer_result_v1.verdict` 是唯一 machine verdict；Markdown heading
+   只作 human presentation，重複或缺少 heading 不得讓已完成 review 變成格式失敗。
+   Shell 必須從已驗證 JSON verdict 機械聚合 GO／NO-GO，並與 final result parity。
+7. Current scope manifests carry an immutable reviewer reference index with
+   repository path、subject/base snapshot、line count 與 content SHA-256。
+   Coverage evidence refs 與 finding source 必須命中該 index；不存在、scope 外或
+   超出 snapshot line count 的引用使 protocol `INCOMPLETE`。
 
 **Done-when**: selected reviewer outputs 都是 schema-complete、coverage-declared，
 且 finding 可直接作 remediation input；不對未選 reviewer 或模型 recall 作虛假保證。

@@ -292,6 +292,27 @@
       },
       "additionalProperties": false
     },
+    "reference_index": {
+      "description": "Optional on legacy v1 artifacts; current producers emit this immutable subject/base snapshot index and reviewer protocols bind every evidence reference to it.",
+      "type": "object",
+      "required": [
+        "claim",
+        "entries"
+      ],
+      "properties": {
+        "claim": {
+          "const": "declared-review-reference-set"
+        },
+        "entries": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/definitions/referenceEntry"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "truncation": {
       "type": "object",
       "required": [
@@ -846,6 +867,34 @@
             }
           },
           "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "referenceEntry": {
+      "type": "object",
+      "required": [
+        "path",
+        "snapshot",
+        "line_count",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/definitions/path"
+        },
+        "snapshot": {
+          "enum": [
+            "subject",
+            "base"
+          ]
+        },
+        "line_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sha256": {
+          "$ref": "#/definitions/sha256"
         }
       },
       "additionalProperties": false

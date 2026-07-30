@@ -25,7 +25,11 @@ Gate assurance definitions are split deliberately:
 - `schema/gate-scope-manifest.schema.json` defines the content-addressed,
   immutable-subject-bound scope declaration shared by every selected reviewer.
   It records exact changed inputs, bounded review hints, and explicit
-  truncation rather than claiming a complete call graph.
+  truncation rather than claiming a complete call graph. Current producers also
+  index allowed evidence paths with snapshot line counts and content digests.
+- `schema/gate-reviewer-result.schema.json` defines the selected-reviewer
+  coverage checklist and actionable finding contract. Its JSON verdict is the
+  machine source of truth; Markdown headings are presentation only.
 - `schema/gate-verification.schema.json` defines the shared three-axis
   assessment returned to gate consumers.
 

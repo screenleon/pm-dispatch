@@ -4,7 +4,9 @@
 # pr_gate_result_v1 remains valid legacy structural evidence.  It proves only
 # frontmatter/body verdict parity and is reported as assurance=unavailable.
 # pr_gate_result_v2 points at a sibling assurance JSON envelope owned by the
-# gate shell. Legacy gate_assurance_v1 remains readable but non-authorizing;
+# gate shell. pr_gate_result_v3 additionally requires one schema-complete
+# reviewer protocol block per selected reviewer. Legacy gate_assurance_v1
+# remains readable but non-authorizing;
 # gate_assurance_v2 adds result bindings and protected dispatch attestation.
 # gate_assurance_v3 adds an immutable subject plus digest-bound evidence links.
 
@@ -53,6 +55,311 @@ _gate_result_frontmatter_value() {
     /^---$/ { if (s == 0) { s=1; next } else if (s == 1) { exit } }
     s && $1 == wanted ":" { print $2; exit }
   ' "$result_file"
+}
+
+_gate_reviewer_protocol_surfaces() {
+  printf '%s\n' \
+    changed_files \
+    paired_tests \
+    sensitive_signals \
+    public_interface \
+    schema \
+    config \
+    install \
+    ci \
+    release \
+    migration \
+    bounded_expansion
+}
+
+_gate_reviewer_protocol_reference_index_json() {
+  local manifest_file="$1" expected_sha="$2"
+  local actual_sha manifest_ref line_count
+  if [[ ! -f "$manifest_file" || -L "$manifest_file" ]]; then
+    printf 'Error: reviewer protocol reference manifest is missing or unsafe: %s\n' \
+      "$manifest_file" >&2
+    return 1
+  fi
+  actual_sha="$(_gate_result_sha256_file "$manifest_file")" || return $?
+  if [[ "$actual_sha" != "$expected_sha" ]]; then
+    printf 'Error: reviewer protocol reference manifest digest mismatch: %s\n' \
+      "$manifest_file" >&2
+    return 1
+  fi
+  manifest_ref=".gate-results/$(basename "$manifest_file")"
+  line_count="$(awk 'END { print NR+0 }' "$manifest_file")"
+  jq -c \
+    --arg manifest_ref "$manifest_ref" \
+    --arg manifest_sha "$actual_sha" \
+    --argjson manifest_lines "$line_count" '
+    if .reference_index.claim != "declared-review-reference-set" or
+       (.reference_index.entries | type) != "array" or
+       (.reference_index.entries | length) == 0
+    then error("missing reviewer reference index: claim=" +
+      (.reference_index.claim // "<missing>") + " entries=" +
+      ((.reference_index.entries // []) | length | tostring))
+    else
+      ([.reference_index.entries[] | {
+        path:.path,
+        line_count:.line_count,
+        sha256:.sha256
+      }] + [{
+        path:$manifest_ref,
+        line_count:$manifest_lines,
+        sha256:$manifest_sha
+      }] | unique_by(.path) | sort_by(.path))
+    end
+  ' "$manifest_file" || {
+    printf 'Error: reviewer protocol reference manifest has no valid index: %s\n' \
+      "$manifest_file" >&2
+    return 1
+  }
+}
+
+_gate_reviewer_protocol_document_verify() {
+  local document="$1" expected_reviewer="$2" expected_scope_sha="$3"
+  local reference_index_json="${4:-null}"
+  local surfaces_json validation
+  GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR=""
+  surfaces_json="$(_gate_reviewer_protocol_surfaces | jq -Rsc '
+    split("\n") | map(select(length > 0))
+  ')" || return 2
+  validation="$(jq -r \
+    --arg reviewer "$expected_reviewer" \
+    --arg scope_sha "$expected_scope_sha" \
+    --argjson surfaces "$surfaces_json" \
+    --argjson references "$reference_index_json" '
+    def only_keys($allowed):
+      type == "object" and ((keys_unsorted - $allowed) | length) == 0;
+    def exact_keys($required):
+      type == "object" and ((keys_unsorted | sort) == ($required | sort));
+    def nonempty: type == "string" and length > 0;
+    def relative_path:
+      nonempty and (startswith("/") | not) and
+      (test("(^|/)\\.\\.(/|$)") | not);
+    def evidence_ref:
+      only_keys(["path","line","symbol"]) and
+      (.path | relative_path) and
+      (.line == null or (.line | type == "number" and . >= 1 and floor == .)) and
+      (.symbol == null or (.symbol | nonempty)) and
+      (.line != null or .symbol != null);
+    def coverage_entry:
+      only_keys(["surface","status","evidence_refs","reason"]) and
+      (.surface | IN($surfaces[])) and
+      (.status | IN("examined","not_applicable","uncertain")) and
+      (.reason | nonempty) and
+      (.evidence_refs | type == "array" and all(.[]; evidence_ref)) and
+      (if .status == "examined"
+       then (.evidence_refs | length) > 0
+       else true
+       end);
+    def finding:
+      only_keys(["id","reviewer","severity","hard_gate_class","origin","source",
+        "affected_behavior","why_it_matters","failure_mode",
+        "minimum_fix_boundary","verification_expectation"]) and
+      .reviewer == $reviewer and
+      (.id | test("^" + $reviewer + "-F[0-9]{3}$")) and
+      (.severity | IN("critical","high","medium","low")) and
+      (.hard_gate_class | IN("none","soft_block","hard_block")) and
+      (.origin | IN("diff_caused","pre_existing","uncertain","caution")) and
+      (.source | evidence_ref) and
+      (.affected_behavior | nonempty) and
+      (.why_it_matters | nonempty) and
+      (.failure_mode | nonempty) and
+      (.minimum_fix_boundary | nonempty) and
+      (.verification_expectation | nonempty) and
+      (if .hard_gate_class == "none"
+       then true
+       else (.severity | IN("critical","high")) and
+         (.origin | IN("diff_caused","uncertain"))
+       end) and
+      (if (.origin | IN("pre_existing","caution"))
+       then .hard_gate_class == "none"
+       else true
+       end);
+    def envelope_contract:
+      exact_keys(["kind","schema_version","reviewer","scope_manifest_sha256",
+        "coverage_claim","coverage","findings","verdict","rationale"]) and
+      .kind == "gate_reviewer_result_v1" and .schema_version == 1 and
+      .reviewer == $reviewer and .scope_manifest_sha256 == $scope_sha and
+      .coverage_claim == "declared-scope-checklist-not-review-completeness";
+    def coverage_contract:
+      .coverage | type == "array" and length == ($surfaces | length) and
+        all(.[]; coverage_entry) and
+        ([.[].surface] | sort) == ($surfaces | sort);
+    def finding_contract:
+      .findings | type == "array" and all(.[]; finding) and
+        ([.[].id] | length) == ([.[].id] | unique | length);
+    def verdict_contract:
+      (.verdict | IN("approve","advise","block-soft","block")) and
+      (.rationale | nonempty) and
+      (if .verdict == "block-soft"
+       then any(.findings[]; .hard_gate_class == "soft_block")
+       elif .verdict == "block"
+       then any(.findings[]; .hard_gate_class == "hard_block")
+       else all(.findings[]; .hard_gate_class == "none")
+       end);
+    def bound_evidence_ref:
+      .path as $path |
+      ($references | map(select(.path == $path)) | first) as $entry |
+      $entry != null and
+      (if .line != null then .line <= $entry.line_count else true end);
+    def evidence_reference_contract:
+      all(.coverage[].evidence_refs[]; bound_evidence_ref) and
+      all(.findings[].source; bound_evidence_ref);
+    if (envelope_contract | not)
+    then "invalid top-level or binding contract"
+    elif (coverage_contract | not)
+    then "invalid coverage contract"
+    elif (finding_contract | not)
+    then "invalid finding contract"
+    elif $references != null and (evidence_reference_contract | not)
+    then "invalid evidence reference contract"
+    elif (verdict_contract | not)
+    then "invalid verdict contract"
+    else "ok"
+    end
+  ' "$document" 2>/dev/null)" || {
+    GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR="invalid JSON document"
+    return 1
+  }
+  if [[ "$validation" != ok ]]; then
+    GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR="$validation"
+    return 1
+  fi
+}
+
+_gate_reviewer_protocol_documents() {
+  local artifact="$1"
+  awk '
+    $0 == "```reviewer_result_v1" {
+      if (inside) exit 2
+      inside=1
+      next
+    }
+    inside && $0 == "```" {
+      inside=0
+      print ""
+      next
+    }
+    inside { print }
+    END { if (inside) exit 2 }
+  ' "$artifact"
+}
+
+_gate_reviewer_protocol_verdict_extract() {
+  local artifact="$1" reviewer="$2" verdicts count
+  verdicts="$(
+    _gate_reviewer_protocol_documents "$artifact" |
+      jq -r --arg reviewer "$reviewer" \
+        'select(.reviewer == $reviewer) | .verdict // empty'
+  )" || return 1
+  count="$(printf '%s\n' "$verdicts" | awk 'NF { count++ } END { print count+0 }')"
+  [[ "$count" -eq 1 ]] || return 1
+  printf '%s\n' "$verdicts"
+}
+
+_gate_reviewer_protocol_final_extract() {
+  local artifact="$1"
+  _gate_reviewer_protocol_documents "$artifact" |
+    jq -sr '
+      map(.verdict) as $verdicts |
+      if ($verdicts | any(. == "block" or . == "block-soft"))
+      then "NO-GO"
+      else "GO"
+      end
+    '
+}
+
+# gate_reviewer_protocol_verify <artifact> <selected-reviewers> <scope-sha256>
+#                               [scope-manifest]
+#
+# Extract every exact reviewer_result_v1 fenced JSON block and verify that the
+# selected reviewer set is represented once, with the complete declared-surface
+# checklist and actionable finding fields. When the linked scope manifest has a
+# reference index, every evidence path and line is bound to that immutable set.
+# The optional fourth argument preserves readability for legacy v3 artifacts
+# produced before reference indexes existed.
+gate_reviewer_protocol_verify() {
+  local artifact=${1-} selected=${2-} scope_sha=${3-} scope_manifest=${4-}
+  local tmp_dir line block="" in_block=false count=0 reviewer expected document
+  local seen=" " reference_index_json=null
+  [[ $# -ge 3 && $# -le 4 && -s "$artifact" && -n "$selected" \
+      && "$scope_sha" =~ ^[a-f0-9]{64}$ ]] || {
+    printf 'Error: reviewer protocol INCOMPLETE: invalid verifier inputs\n' >&2
+    return 2
+  }
+  if [[ -n "$scope_manifest" ]]; then
+    reference_index_json="$(
+      _gate_reviewer_protocol_reference_index_json \
+        "$scope_manifest" "$scope_sha"
+    )" || return $?
+  fi
+  tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/gate-reviewer-protocol.XXXXXX")" \
+    || return 2
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" == '```reviewer_result_v1' ]]; then
+      if [[ "$in_block" == true ]]; then
+        printf 'Error: reviewer protocol INCOMPLETE: nested result block in %s\n' \
+          "$artifact" >&2
+        rm -rf -- "$tmp_dir"
+        return 1
+      fi
+      in_block=true
+      block=""
+      continue
+    fi
+    if [[ "$in_block" == true && "$line" == '```' ]]; then
+      count=$((count + 1))
+      printf '%s\n' "$block" > "$tmp_dir/$count.json"
+      in_block=false
+      block=""
+      continue
+    fi
+    if [[ "$in_block" == true ]]; then
+      block="${block}${block:+$'\n'}${line}"
+    fi
+  done < "$artifact"
+  if [[ "$in_block" == true ]]; then
+    printf 'Error: reviewer protocol INCOMPLETE: unclosed result block in %s\n' \
+      "$artifact" >&2
+    rm -rf -- "$tmp_dir"
+    return 1
+  fi
+  if [[ "$count" -eq 0 ]]; then
+    printf 'Error: reviewer protocol INCOMPLETE: no reviewer_result_v1 block in %s\n' \
+      "$artifact" >&2
+    rm -rf -- "$tmp_dir"
+    return 1
+  fi
+  for document in "$tmp_dir"/*.json; do
+    reviewer="$(jq -r '.reviewer // empty' "$document" 2>/dev/null)" || reviewer=""
+    if [[ -z "$reviewer" || " $selected " != *" $reviewer "* \
+        || "$seen" == *" $reviewer "* ]]; then
+      printf 'Error: reviewer protocol INCOMPLETE: unexpected or duplicate reviewer %s in %s\n' \
+        "${reviewer:-<missing>}" "$artifact" >&2
+      rm -rf -- "$tmp_dir"
+      return 1
+    fi
+    if ! _gate_reviewer_protocol_document_verify \
+        "$document" "$reviewer" "$scope_sha" "$reference_index_json"; then
+      printf 'Error: reviewer protocol INCOMPLETE: %s for %s in %s\n' \
+        "${GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR:-invalid reviewer document}" \
+        "$reviewer" "$artifact" >&2
+      rm -rf -- "$tmp_dir"
+      return 1
+    fi
+    seen="${seen}${reviewer} "
+  done
+  for expected in $selected; do
+    if [[ "$seen" != *" $expected "* ]]; then
+      printf 'Error: reviewer protocol INCOMPLETE: missing selected reviewer %s in %s\n' \
+        "$expected" "$artifact" >&2
+      rm -rf -- "$tmp_dir"
+      return 1
+    fi
+  done
+  rm -rf -- "$tmp_dir"
 }
 
 _gate_result_sha256_stream() {
@@ -362,9 +669,10 @@ gate_scope_manifest_verify() {
       (.matched == ((.paths | length) > 0)) and
       all(.paths[]; . as $path | ($changed | index($path)) != null);
 
-    only_keys(["kind","schema_version","status","subject","selection",
-      "changes","diff","paired_tests","sensitive_signals","flags",
-      "expansion","truncation","content"]) and
+      ((keys - ["reference_index"]) | sort) ==
+        (["kind","schema_version","status","subject","selection",
+          "changes","diff","paired_tests","sensitive_signals","flags",
+          "expansion","truncation","content"] | sort) and
     .kind == "gate_scope_manifest_v1" and .schema_version == 1 and
     (.status | IN("complete","accepted_truncation","incomplete")) and
     (.subject |
@@ -474,9 +782,9 @@ gate_scope_manifest_verify() {
         ($flags.ci | scope_flag($changed)) and
         ($flags.release | scope_flag($changed)) and
         ($flags.migration | scope_flag($changed)))) and
-    (.expansion |
-      only_keys(["claim","entries","included_paths"]) and
-      .claim == "bounded-hints-not-complete-call-graph" and
+      (.expansion |
+        only_keys(["claim","entries","included_paths"]) and
+        .claim == "bounded-hints-not-complete-call-graph" and
       (.entries | type == "array" and
         all(.[];
           only_keys(["path","reason","source","evidence","limit"]) and
@@ -489,10 +797,29 @@ gate_scope_manifest_verify() {
             only_keys(["kind","maximum"]) and
             (.kind | IN("per-source","per-symbol","global")) and
             (.maximum | type == "number" and . >= 1 and floor == .)))) and
-      (.included_paths | paths_unique) and
-      (. as $expansion |
-        ([.entries[].path] | unique | exact_set($expansion.included_paths)))) and
-    (. as $manifest | .truncation |
+        (.included_paths | paths_unique) and
+        (. as $expansion |
+          ([.entries[].path] | unique | exact_set($expansion.included_paths)))) and
+      (. as $manifest |
+        ([$manifest.changes.changed_paths[]] +
+         [$manifest.paired_tests[] | .source_path,.test_path] +
+         [$manifest.sensitive_signals[] | .matches[]] +
+         [$manifest.flags[] | .paths[]] +
+         [$manifest.expansion.included_paths[]] | unique) as $allowed |
+        ($manifest.reference_index == null or
+          ($manifest.reference_index |
+            only_keys(["claim","entries"]) and
+            .claim == "declared-review-reference-set" and
+            (.entries | type == "array" and length > 0) and
+            ([.entries[].path] | strings_unique) and
+            all(.entries[];
+              only_keys(["path","snapshot","line_count","sha256"]) and
+              (.path | safe_path) and
+              (.path as $path | ($allowed | index($path)) != null) and
+              (.snapshot | IN("subject","base")) and
+              (.line_count | type == "number" and . >= 0 and floor == .) and
+              (.sha256 | test("^[a-f0-9]{64}$")))))) and
+      (. as $manifest | .truncation |
       only_keys(["occurred","budgets","omitted","reasons","acceptance"]) and
       (.occurred | type == "boolean") and
       (.budgets | scope_counts and all(.[]; . >= 1)) and
@@ -1164,6 +1491,8 @@ gate_assurance_authorization_verify() {
 gate_result_verify() {
   local result_file=${1-} expected_final=${2-} route_label=${3-gate}
   local version pointer result_parent assurance_file body_final
+  local selected_reviewers scope_sha scope_artifact scope_manifest
+  local assurance_kind protocol_final
   [[ $# -ge 1 && $# -le 3 ]] || {
     printf 'gate-result-verify: gate_result_verify expects <result_file> [expected_final] [route_label]\n' >&2
     return 2
@@ -1177,18 +1506,54 @@ gate_result_verify() {
       export GATE_RESULT_ASSURANCE
       return 0
       ;;
-    pr_gate_result_v2)
+    pr_gate_result_v2 | pr_gate_result_v3)
       pointer="$(_gate_result_frontmatter_value "$result_file" gate_assurance)"
       if [[ -z "$pointer" || "$pointer" == */* || "$pointer" == "." || "$pointer" == ".." \
           || ! "$pointer" =~ ^[A-Za-z0-9._-]+\.json$ ]]; then
-        printf 'Error: pr_gate_result_v2 requires a bounded sibling gate_assurance pointer: %s\n' \
-          "$result_file" >&2
+        printf 'Error: %s requires a bounded sibling gate_assurance pointer: %s\n' \
+          "$version" "$result_file" >&2
         return 1
       fi
       result_parent="$(cd "$(dirname "$result_file")" && pwd -P)" || return 1
       assurance_file="$result_parent/$pointer"
       body_final=$(grep -E '^Final: (GO|NO-GO)$' "$result_file" | awk '{print $2}')
       gate_assurance_verify "$result_file" "$assurance_file" "$body_final" || return $?
+      if [[ "$version" == pr_gate_result_v3 ]]; then
+        assurance_kind="$(jq -r '.kind // empty' "$assurance_file" 2>/dev/null)"
+        selected_reviewers="$(jq -r \
+          '.coordinates.coverage.selected // [] | join(" ")' \
+          "$assurance_file" 2>/dev/null)"
+        scope_sha="$(jq -r \
+          '.evidence.scope_manifest.sha256 // empty' \
+          "$assurance_file" 2>/dev/null)"
+        scope_artifact="$(jq -r \
+          '.evidence.scope_manifest.artifact // empty' \
+          "$assurance_file" 2>/dev/null)"
+        scope_manifest="$result_parent/$scope_artifact"
+        if [[ "$assurance_kind" != gate_assurance_v3 \
+            || -z "$selected_reviewers" \
+            || ! "$scope_sha" =~ ^[a-f0-9]{64}$ ]]; then
+          printf 'Error: pr_gate_result_v3 requires verified selected-reviewer scope evidence: %s\n' \
+            "$assurance_file" >&2
+          return 1
+        fi
+        if jq -e '.reference_index != null' "$scope_manifest" >/dev/null 2>&1; then
+          gate_reviewer_protocol_verify \
+            "$result_file" "$selected_reviewers" "$scope_sha" \
+            "$scope_manifest" || return $?
+        else
+          gate_reviewer_protocol_verify \
+            "$result_file" "$selected_reviewers" "$scope_sha" || return $?
+        fi
+        protocol_final="$(
+          _gate_reviewer_protocol_final_extract "$result_file"
+        )" || return 1
+        if [[ "$protocol_final" != "$body_final" ]]; then
+          printf 'Error: reviewer protocol verdict (%s) contradicts gate Final: (%s): %s\n' \
+            "$protocol_final" "$body_final" "$result_file" >&2
+          return 1
+        fi
+      fi
       if [[ "${GATE_ASSURANCE_BOUND:-false}" == true ]]; then
         GATE_RESULT_ASSURANCE=verified
       else

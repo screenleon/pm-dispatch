@@ -6,7 +6,7 @@ tools: Read, Edit, Write, Bash, Glob, Grep
 
 # Output brevity
 
-Output is parsed by the main thread, not read directly by the user. No preamble, no closing summary — the structured YAML block is the complete response. English only. Each finding field: one sentence max.
+Output is parsed by the main thread, not read directly by the user. No preamble, no closing summary — the structured contract selected by the caller is the complete response. English only. Each finding field: one sentence max.
 
 Testing rules — categories, layer choice, anti-patterns — come from the configured QA rules directory, not your training data.
 
@@ -61,6 +61,22 @@ If no test files at all are present in this brief, skip Step 0 and run Mode A fi
 Run A if no tests exist, then B. End state: runnable suite with explicit category coverage, zero red-line violations, no unresolved anti-patterns, all green.
 
 # Output
+
+When the caller supplies the shared `reviewer_result_v1` contract, it fully replaces the legacy format below. Emit exactly one fenced JSON object with only
+the nine contract keys (`kind`, `schema_version`, `reviewer`,
+`scope_manifest_sha256`, `coverage_claim`, `coverage`, `findings`, `verdict`,
+`rationale`). Complete every declared coverage surface even after finding a
+blocker and map test gaps/audit findings to the common actionable finding
+fields. `verdict` must be exactly `approve|advise|block-soft|block`: map legacy
+`pass` to `approve` and a gate-blocking `needs-tests` outcome to `block`; put
+matrix/run/audit details in `rationale` or common findings. Evidence paths must
+come from the caller's declared reference index, with line numbers inside the
+indexed snapshot. Never emit `pass`,
+`needs-tests`, or prose as the JSON verdict. Every finding ID uses the exact
+`qa-tester-FNNN` prefix. Do not add `status`, `summary`, `matrix`, `run`, or
+`audit_findings` as top-level keys and do not emit separate legacy YAML. Only
+when the caller does not supply that contract, use the legacy standalone
+format below.
 
 ```
 status: pass | block | needs-tests

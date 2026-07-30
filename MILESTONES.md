@@ -118,7 +118,7 @@
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-518 | `gate_scope_manifest_v1`：immutable subject、changed/renamed/untracked、paired tests、signals、bounded expansion/truncation | 🔵 |
+| CC-518 | `gate_scope_manifest_v1`：immutable subject、changed/renamed/untracked、paired tests、signals、bounded expansion/truncation | ✅ pr:#455 |
 | CC-519 | selected-reviewer coverage/finding contract；sequential logical sections 與 parallel session isolation 分開 | 🔵 |
 | CC-520 | synthesis findings-union parity、root-cause grouping、coverage matrix、remediation seed、no silent drop | 🔵 |
 | CC-521 | actionable test-gap matrix + bounded protocol recovery；seeded live recall 僅作 quality evaluation | 🔵 |

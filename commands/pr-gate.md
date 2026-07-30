@@ -49,6 +49,23 @@ dispatch. `--accept-scope-truncation` permits the run to continue while
 recording `accepted_truncation`, omitted counts, and reasons; it does not claim
 complete semantic or call-graph coverage.
 
+Each selected reviewer must emit one `gate_reviewer_result_v1` JSON block bound
+to that manifest digest. It declares every required surface as
+`examined|not_applicable|uncertain`, includes evidence/reason for every cell,
+continues after blockers, and gives every actionable finding a stable ID,
+source, failure mode, minimum fix boundary, and verification expectation.
+Every evidence path must appear in the manifest's immutable
+`reference_index.entries` (or identify the digest-verified manifest itself), and
+line references must not exceed the indexed snapshot's line count.
+`reviewer_result_v1.verdict` is the only canonical reviewer verdict; Markdown
+headings are presentation only, so duplicate or omitted headings cannot turn a
+completed review into a format failure. Missing or malformed JSON reports stop
+as protocol `INCOMPLETE`, not `Final: NO-GO`. The only valid verdicts are
+`approve`, `advise`, `block-soft`, and `block`; legacy reviewer wording such as
+`pass` or `pass-not-applicable` must be emitted as `approve`. Diagnostics
+distinguish invalid JSON, top-level/binding, coverage, finding,
+evidence-reference, and verdict contracts.
+
 ## Step 1 - Invoke pmctl directly
 
 Call the bare `pmctl` command with no resolution preamble — an installed

@@ -295,6 +295,11 @@ case_enum_sync "$CORE_DIR/schema/review.schema.json" \
   "$CORE_DIR/policy/reviewer-policy.yaml" \
   "reviewers"
 
+case_enum_sync "$CORE_DIR/schema/gate-reviewer-result.schema.json" \
+  '.properties.reviewer.enum' \
+  "$CORE_DIR/policy/reviewer-policy.yaml" \
+  "reviewers"
+
 # verdicts are reviewer-policy.yaml's verdicts list
 case_enum_sync "$CORE_DIR/schema/review.schema.json" \
   '.properties.findings.items.properties.verdict.enum' \
@@ -814,6 +819,23 @@ _gate_scope_manifest_valid_instance() {
         limit:{kind:"per-source",maximum:64}
       }],
       included_paths:["tests/shell/test-example.sh"]
+    },
+    reference_index:{
+      claim:"declared-review-reference-set",
+      entries:[
+        {
+          path:"runtime/bin/example.sh",
+          snapshot:"subject",
+          line_count:40,
+          sha256:("f" * 64)
+        },
+        {
+          path:"tests/shell/test-example.sh",
+          snapshot:"subject",
+          line_count:80,
+          sha256:("0" * 64)
+        }
+      ]
     },
     truncation:{
       occurred:false,
@@ -1361,6 +1383,164 @@ case_gate_assurance_non_user_policy_approver_rejected() {
   rm -f "$tmpf"
 }
 
+_gate_reviewer_result_valid_instance() {
+  jq -n '
+    ["changed_files","paired_tests","sensitive_signals","public_interface",
+      "schema","config","install","ci","release","migration",
+      "bounded_expansion"] as $surfaces |
+    {
+      kind:"gate_reviewer_result_v1",
+      schema_version:1,
+      reviewer:"critic",
+      scope_manifest_sha256:("a" * 64),
+      coverage_claim:"declared-scope-checklist-not-review-completeness",
+      coverage:($surfaces | map({
+        surface:.,
+        status:"examined",
+        evidence_refs:[{path:"runtime/bin/example.sh",line:42,symbol:null}],
+        reason:"The reviewer examined this declared surface."
+      })),
+      findings:[{
+        id:"critic-F001",
+        reviewer:"critic",
+        severity:"high",
+        hard_gate_class:"soft_block",
+        origin:"diff_caused",
+        source:{path:"runtime/bin/example.sh",line:42,symbol:null},
+        affected_behavior:"The changed command can emit an incomplete result.",
+        why_it_matters:"Consumers could accept evidence that was not reviewed.",
+        failure_mode:"The incomplete artifact reaches a publish decision.",
+        minimum_fix_boundary:"Reject the malformed reviewer result before synthesis.",
+        verification_expectation:"Run the malformed-protocol fixture."
+      }],
+      verdict:"block-soft",
+      rationale:"Every declared surface was completed after recording the blocker."
+    }
+  '
+}
+
+case_gate_reviewer_result_valid_instance() {
+  local name="gate-reviewer-result: canonical blocker with complete coverage validates"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/gate-reviewer-result.schema.json" tmpf
+  tmpf="$(mktemp /tmp/gate-reviewer-result-valid-XXXXXX.json)"
+  _gate_reviewer_result_valid_instance > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name" "schema rejected a canonical reviewer result"
+  fi
+  rm -f "$tmpf"
+}
+
+case_gate_reviewer_result_missing_surface_rejected() {
+  local name="gate-reviewer-result: missing coverage surface is rejected"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/gate-reviewer-result.schema.json" tmpf
+  tmpf="$(mktemp /tmp/gate-reviewer-result-missing-surface-XXXXXX.json)"
+  _gate_reviewer_result_valid_instance |
+    jq '.coverage = .coverage[:-1]' > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    fail "$name" "schema accepted an incomplete reviewer coverage checklist"
+  else
+    pass "$name"
+  fi
+  rm -f "$tmpf"
+}
+
+case_gate_reviewer_result_invalid_stable_id_rejected() {
+  local name="gate-reviewer-result: invalid stable finding ID is rejected"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/gate-reviewer-result.schema.json" tmpf
+  tmpf="$(mktemp /tmp/gate-reviewer-result-invalid-id-XXXXXX.json)"
+  _gate_reviewer_result_valid_instance |
+    jq '.findings[0].id = "finding-one"' > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    fail "$name" "schema accepted an unstable finding ID"
+  else
+    pass "$name"
+  fi
+  rm -f "$tmpf"
+}
+
+case_gate_reviewer_result_evidence_less_blocker_rejected() {
+  local name="gate-reviewer-result: evidence-less blocker is rejected"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/gate-reviewer-result.schema.json" tmpf
+  tmpf="$(mktemp /tmp/gate-reviewer-result-no-source-XXXXXX.json)"
+  _gate_reviewer_result_valid_instance |
+    jq '.findings[0].source = {path:"",line:null,symbol:null}' > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    fail "$name" "schema accepted a blocker without source evidence"
+  else
+    pass "$name"
+  fi
+  rm -f "$tmpf"
+}
+
+case_gate_reviewer_result_preexisting_blocker_rejected() {
+  local name="gate-reviewer-result: pre-existing issue cannot be a blocker"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/gate-reviewer-result.schema.json" tmpf
+  tmpf="$(mktemp /tmp/gate-reviewer-result-preexisting-block-XXXXXX.json)"
+  _gate_reviewer_result_valid_instance |
+    jq '.findings[0].origin = "pre_existing"' > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    fail "$name" "schema accepted a pre-existing blocker"
+  else
+    pass "$name"
+  fi
+  rm -f "$tmpf"
+}
+
+case_gate_reviewer_result_omitted_unused_symbol_valid() {
+  local name="gate-reviewer-result: evidence ref may omit unused symbol"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/gate-reviewer-result.schema.json" tmpf
+  tmpf="$(mktemp /tmp/gate-reviewer-result-omitted-symbol-XXXXXX.json)"
+  _gate_reviewer_result_valid_instance |
+    jq 'del(.coverage[0].evidence_refs[0].symbol)' > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name" "schema rejected an evidence ref with path and line"
+  fi
+  rm -f "$tmpf"
+}
+
+case_gate_reviewer_result_missing_line_and_symbol_rejected() {
+  local name="gate-reviewer-result: evidence ref needs line or symbol"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/gate-reviewer-result.schema.json" tmpf
+  tmpf="$(mktemp /tmp/gate-reviewer-result-no-location-XXXXXX.json)"
+  _gate_reviewer_result_valid_instance |
+    jq 'del(.coverage[0].evidence_refs[0].line,
+      .coverage[0].evidence_refs[0].symbol)' > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    fail "$name" "schema accepted an evidence ref without line or symbol"
+  else
+    pass "$name"
+  fi
+  rm -f "$tmpf"
+}
+
+case_gate_reviewer_result_abbreviated_reviewer_id_rejected() {
+  local name="gate-reviewer-result: abbreviated reviewer finding ID is rejected"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/gate-reviewer-result.schema.json" tmpf
+  tmpf="$(mktemp /tmp/gate-reviewer-result-short-id-XXXXXX.json)"
+  _gate_reviewer_result_valid_instance |
+    jq '.reviewer = "risk-reviewer" |
+      .findings[0].reviewer = "risk-reviewer" |
+      .findings[0].id = "risk-F001"' > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    fail "$name" "schema accepted an abbreviated reviewer finding ID"
+  else
+    pass "$name"
+  fi
+  rm -f "$tmpf"
+}
+
 _gate_policy_override_valid_instance() {
   jq -n '{
     kind:"gate_policy_override_v1",
@@ -1461,6 +1641,14 @@ case_gate_verification_duplicate_reason_rejected
 case_gate_verification_invalid_consumer_rejected
 case_gate_assurance_invalid_outcome_rejected
 case_gate_assurance_non_user_policy_approver_rejected
+case_gate_reviewer_result_valid_instance
+case_gate_reviewer_result_missing_surface_rejected
+case_gate_reviewer_result_invalid_stable_id_rejected
+case_gate_reviewer_result_evidence_less_blocker_rejected
+case_gate_reviewer_result_preexisting_blocker_rejected
+case_gate_reviewer_result_omitted_unused_symbol_valid
+case_gate_reviewer_result_missing_line_and_symbol_rejected
+case_gate_reviewer_result_abbreviated_reviewer_id_rejected
 case_gate_policy_override_valid_instance
 case_gate_policy_override_non_user_approver_rejected
 case_gate_policy_override_extra_key_rejected

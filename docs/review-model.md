@@ -203,9 +203,11 @@ Changes under `core/policy/` are themselves a full-tier signal with
 architecture, security, and risk coverage, so the governance tables cannot
 quietly lower their own future review floor through a small edit.
 
-The final producer writes `pr_gate_result_v2` Markdown plus a sibling
-`gate_assurance_v3` JSON envelope. The Markdown contains human findings and a
-bounded relative `gate_assurance` pointer; the shell-owned envelope records
+After reviewer dispatch completes, the final producer writes
+`pr_gate_result_v3` Markdown plus a sibling `gate_assurance_v3` JSON envelope.
+A pre-dispatch fail-fast route has no reviewer protocol and intentionally
+remains `pr_gate_result_v2`. The Markdown contains human findings and a bounded
+relative `gate_assurance` pointer; the shell-owned envelope records
 requested/resolved coordinates, selected/skipped coverage, actual dispatch
 outcomes, run IDs, and the evidence status behind independence claims. The v3
 envelope adds an immutable subject: stable Git common-directory repository
@@ -239,6 +241,42 @@ parallel, and synthesis briefs all carry the same artifact digest, so execution
 mode cannot silently change the declared review scope. The manifest is a scope
 declaration, not proof that a reviewer understood or exhaustively reviewed it.
 
+Every selected reviewer emits one fenced `gate_reviewer_result_v1` JSON object
+bound to the shared scope-manifest SHA-256. Its checklist covers changed files,
+paired tests, sensitive signals, explicit surface flags, and bounded expansion;
+each cell is `examined`, `not_applicable`, or `uncertain`, with evidence
+references and a reason. A blocker does not terminate the checklist early.
+Findings carry reviewer-prefixed stable IDs, severity, hard-gate class, origin,
+source path plus line or symbol, affected behavior, failure mode, minimum fix
+boundary, and verification expectation. Pre-existing issues and cautions cannot
+be blocking.
+
+Current scope manifests include a `declared-review-reference-set` index for the
+subject/base snapshots supplied to reviewers. Each entry records path, snapshot
+kind, line count, and content SHA-256. Coverage references and finding sources
+must use an indexed path (or the digest-verified manifest itself); line
+references must be within the indexed snapshot. Nonexistent, out-of-scope, or
+out-of-range references make the protocol `INCOMPLETE` before synthesis.
+Legacy pre-index manifests remain readable for historical result verification.
+
+The JSON `verdict` is the only canonical reviewer verdict. Markdown headings
+are optional presentation: duplicate, missing, or differently formatted
+headings do not invalidate an otherwise unique schema-complete report. The
+shell validates each report before synthesis, computes GO/NO-GO from the JSON
+verdicts, preserves the original reports in the final result, and verifies
+their aggregate against `Final:`. Missing, duplicate, malformed, or
+coverage-incomplete reports make the operation `INCOMPLETE`; they are not a
+reviewer `NO-GO`. Coverage declaration calibrates what was examined and never
+claims model recall or defect completeness.
+
+The verdict vocabulary is exactly `approve`, `advise`, `block-soft`, or
+`block`. Reviewer prompts map legacy `pass` and `pass-not-applicable` wording
+to `approve`, and place narrative conclusions in `rationale` rather than
+inventing role-specific top-level keys. Protocol failures identify the first
+invalid layer as JSON, top-level/binding, coverage, finding,
+evidence-reference, or verdict so a format error is not misdiagnosed as missing
+coverage.
+
 `pmctl gate verify <result> [--cd <repo>] [--consumer <name>] [--json]`
 returns three independent axes:
 
@@ -270,16 +308,19 @@ Do not mutate the reviewed tree between gate finalization and `gate wait` or
 `ship finish`. A formatter, test artifact, commit, or other included file write
 correctly changes `subject_current` to `fail`; the consumer refuses the result
 and reports the drift reason instead of silently authorizing a different tree.
-Legacy v1 results retain historical detached-wait completion behavior. A v2 GO
-cannot satisfy the wait path's named embedded consumer, and neither v1 nor v2
-is publication authorization; `ship finish` requires a current, applicable v3
+Legacy result v1/v2 artifacts remain readable under their historical
+contracts. Result v3 is required for selected-reviewer protocol evidence.
+No gate result version is publication authorization by itself; `ship finish`
+requires a current, applicable gate-assurance v3
 assessment.
 
 The producer publishes the sidecar before atomically replacing the
-self-contained v1 result with the v2 result that references it, so interruption
-cannot strand a v2 result with a missing sidecar. The protected attestation is
-published afterward; verification uses a bounded retry when it observes that
-in-flight canonical finalization. Legacy
+self-contained staging v1 result with the bound result that references it, so
+interruption cannot strand a result with a missing sidecar. A completed
+selected-reviewer route becomes result v3; a pre-dispatch fail-fast result with
+no reviewer protocol remains result v2. The protected attestation is published
+afterward; verification uses a bounded retry when it observes that in-flight
+canonical finalization. Legacy
 `pr_gate_result_v1` and unbound `gate_assurance_v1` artifacts remain
 structurally readable, but verification reports `assurance: unavailable`;
 consumers must not infer mode, coverage, or independence from them. Earlier

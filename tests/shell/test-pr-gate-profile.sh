@@ -7,6 +7,8 @@ ORIGINAL_PATH="$PATH"
 
 # shellcheck source=tests/lib/test-harness.sh
 . "$SCRIPT_DIR/../lib/test-harness.sh"
+# shellcheck source=tests/lib/test-pr-gate-fixture.sh
+. "$SCRIPT_DIR/../lib/test-pr-gate-fixture.sh"
 # shellcheck source=runtime/lib/portable.sh
 . "$REPO_ROOT/runtime/lib/portable.sh"
 th_init "$@"
@@ -42,6 +44,8 @@ create_runner() {
   cp -R "$REPO_ROOT/agents" "$dir/agents"
   mkdir -p "$dir/lib"
   cp -R "$REPO_ROOT/runtime/lib/." "$dir/lib/"
+  cp "$REPO_ROOT/tests/lib/test-pr-gate-fixture.sh" \
+    "$dir/lib/test-pr-gate-fixture.sh"
   local cmd
   for cmd in bash git date readlink dirname basename cp mkdir touch ln cat grep sort wc awk sed mktemp rm mv find head tail tr true false sha256sum shasum jq; do
     src="$(command -v "$cmd" 2>/dev/null || true)"
@@ -55,117 +59,31 @@ create_runner() {
   cat > "$dir/adapters/codex/dispatch.sh" <<'STUB_EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-
-brief_file=""
-MODE="${CODEX_GATE_STUB_MODE:-success}"
-MARKER="${CODEX_GATE_STUB_CALLED_MARKER:-}"
-
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --brief-file) brief_file="$2"; shift 2 ;;
-    --cd|--timeout) shift 2 ;;
-    *) shift ;;
-  esac
-  :
-done
-
-[[ -n "$MARKER" ]] && printf 'called\n' > "$MARKER"
-printf 'DISPATCH_STUB:%s\n' "$MODE"
-
-if [[ "$MODE" == "exit99" ]]; then
-  exit 99
+runner_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=tests/lib/test-pr-gate-fixture.sh
+if [[ -f "$runner_root/lib/test-pr-gate-fixture.sh" ]]; then
+  . "$runner_root/lib/test-pr-gate-fixture.sh"
+else
+  . "$runner_root/runtime/lib/test-pr-gate-fixture.sh"
 fi
-
-if [[ -z "$brief_file" ]]; then
-  exit 0
-fi
-
-output_path=""
-if [[ -f "$brief_file" ]]; then
-output_path=$(grep -o '\- new:.*' "$brief_file" | head -1 | awk '{print $NF}' || true)
-fi
-
-if [[ -n "$output_path" ]]; then
-  mkdir -p "$(dirname "$output_path")"
-  if [[ "$brief_file" == *-synthesis.md ]]; then
-    printf -- '---\ngate_result_version: pr_gate_result_v1\nfinal: GO\ntier: standard\nmode: parallel\nmost_severe: advise\nreviewers:\n  critic: advise\nescalation:\n  recommended: false\n  reviewers: []\n  reason: []\n---\n\n# PR-Gate Result — stub tier\n**Date**: 2026-05-17\n**Reviewers**: stub\n**Not reviewed**: none\n\n## cross-check\nnone\n\n## Gate Conclusion\n**Overall verdict**: advise\n**Most severe individual verdict**: advise\nFinal: GO\n' > "$output_path"
-  elif reviewer_name="$(awk '$1 == "Reviewer:" { print $2; exit }' "$brief_file")" \
-      && [[ -n "$reviewer_name" ]]; then
-    printf '## %s -- advise\n\nstatus: advise\nfindings: []\nverdict: Stub output.\n' \
-      "$reviewer_name" > "$output_path"
-  else
-    printf -- '---\ngate_result_version: pr_gate_result_v1\nfinal: GO\ntier: standard\nmode: sequential\nmost_severe: advise\nreviewers:\n  critic: advise\nescalation:\n  recommended: false\n  reviewers: []\n  reason: []\n---\n\n## stub-reviewer — advise\nVerdict: advise. Stub output.\nFinal: GO\n' > "$output_path"
-  fi
-fi
-
-exit 0
+pr_gate_fixture_profile_dispatch codex "$@"
 STUB_EOF
   chmod +x "$dir/adapters/codex/dispatch.sh"
 
-  # claude adapter stub (CC-383): claude now dispatches a real subprocess too.
-  # Same result-writing behavior as the codex stub, but keyed on a SEPARATE
-  # called-marker (CLAUDE_GATE_STUB_CALLED_MARKER) so a test can assert the
-  # claude route does NOT invoke the codex adapter.
   mkdir -p "$dir/adapters/claude"
   cat > "$dir/adapters/claude/dispatch.sh" <<'CLAUDE_STUB_EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-
-brief_file=""
-MODE="${CLAUDE_GATE_STUB_MODE:-success}"
-MARKER="${CLAUDE_GATE_STUB_CALLED_MARKER:-}"
-
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --brief-file) brief_file="$2"; shift 2 ;;
-    --cd|--timeout|--model|--isolation) shift 2 ;;
-    *) shift ;;
-  esac
-  :
-done
-
-[[ -n "$MARKER" ]] && printf 'called\n' > "$MARKER"
-printf 'DISPATCH_STUB:%s\n' "$MODE"
-
-if [[ "$MODE" == "exit99" ]]; then
-  exit 99
+runner_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=tests/lib/test-pr-gate-fixture.sh
+if [[ -f "$runner_root/lib/test-pr-gate-fixture.sh" ]]; then
+  . "$runner_root/lib/test-pr-gate-fixture.sh"
+else
+  . "$runner_root/runtime/lib/test-pr-gate-fixture.sh"
 fi
-
-if [[ -z "$brief_file" ]]; then
-  exit 0
-fi
-
-output_path=""
-if [[ -f "$brief_file" ]]; then
-output_path=$(grep -o '\- new:.*' "$brief_file" | head -1 | awk '{print $NF}' || true)
-fi
-
-if [[ -n "$output_path" ]]; then
-  mkdir -p "$(dirname "$output_path")"
-  if [[ "$brief_file" == *-synthesis.md ]]; then
-    printf -- '---\ngate_result_version: pr_gate_result_v1\nfinal: GO\ntier: standard\nmode: parallel\nmost_severe: advise\nreviewers:\n  critic: advise\nescalation:\n  recommended: false\n  reviewers: []\n  reason: []\n---\n\n# PR-Gate Result — stub tier\n**Date**: 2026-05-17\n**Reviewers**: stub\n**Not reviewed**: none\n\n## cross-check\nnone\n\n## Gate Conclusion\n**Overall verdict**: advise\n**Most severe individual verdict**: advise\nFinal: GO\n' > "$output_path"
-  elif reviewer_name="$(awk '$1 == "Reviewer:" { print $2; exit }' "$brief_file")" \
-      && [[ -n "$reviewer_name" ]]; then
-    printf '## %s -- advise\n\nstatus: advise\nfindings: []\nverdict: Stub output.\n' \
-      "$reviewer_name" > "$output_path"
-  else
-    printf -- '---\ngate_result_version: pr_gate_result_v1\nfinal: GO\ntier: standard\nmode: sequential\nmost_severe: advise\nreviewers:\n  critic: advise\nescalation:\n  recommended: false\n  reviewers: []\n  reason: []\n---\n\n## stub-reviewer — advise\nVerdict: advise. Stub output.\nFinal: GO\n' > "$output_path"
-  fi
-fi
-
-exit 0
+pr_gate_fixture_profile_dispatch claude "$@"
 CLAUDE_STUB_EOF
   chmod +x "$dir/adapters/claude/dispatch.sh"
-}
-
-create_agents() {
-  local home="$1"
-  shift
-  mkdir -p "$home/.claude/agents"
-  local reviewer
-  for reviewer in "$@"; do
-    printf '# %s\n\nReviewer fixture.\n' "$reviewer" > "$home/.claude/agents/$reviewer.md"
-  done
 }
 
 create_repo() {
