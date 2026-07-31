@@ -221,7 +221,7 @@ architecture, security, and risk coverage, so the governance tables cannot
 quietly lower their own future review floor through a small edit.
 
 After reviewer dispatch completes, the final producer writes
-`pr_gate_result_v3` Markdown plus a sibling `gate_assurance_v3` JSON envelope.
+`pr_gate_result_v4` Markdown plus a sibling `gate_assurance_v3` JSON envelope.
 A pre-dispatch fail-fast route has no reviewer protocol and intentionally
 remains `pr_gate_result_v2`. The Markdown contains human findings and a bounded
 relative `gate_assurance` pointer; the shell-owned envelope records
@@ -249,6 +249,18 @@ public-interface/schema/config/install/CI/release/migration flags. It also adds
 bounded same-stem peers, symbol call-site hints, and direct shared-helper
 consumers. Every expansion entry states its reason, source, evidence kind, and
 limit; the manifest explicitly says this is not a complete call graph.
+
+Symbol hints are selected by the changed file's language before any search
+budget is applied. Candidate call sites must use a compatible source language;
+foreign-language snippets embedded in a file cannot become symbols for that
+file. Shell functions are file-local unless another shell script directly
+references the defining script, so shell call-site hints are limited to those
+direct consumers. This keeps generic names such as `usage` from expanding to
+unrelated scripts while preserving fail-closed behavior when a semantically
+eligible query really exceeds its declared budget. Consumer content checks read
+the complete snapshot before deciding a match; they do not use an
+early-terminating pipeline that could turn an upstream SIGPIPE into a
+subject-identical but narrower manifest.
 
 The manifest publishes its budgets, omitted counts/reasons, and a canonical
 content digest. Any omission makes the gate `INCOMPLETE` before reviewer
@@ -294,6 +306,25 @@ invalid layer as JSON, top-level/binding, coverage, finding,
 evidence-reference, or verdict so a format error is not misdiagnosed as missing
 coverage.
 
+Completed reviewer routes also carry one `gate_synthesis_result_v1`. Its
+reviewer-by-surface matrix and stable-ID inventory are copied from the raw
+reviewer documents, and its findings union preserves every source field and
+verification expectation. Root-cause groups may consolidate presentation, but
+they partition immutable finding IDs rather than replacing them.
+Disagreements remain explicit; uncertainties and cautions are derived from the
+original coverage statuses and finding origins. The nested
+`remediation_closure_v1` document is only a pending seed, not proof that any
+finding was fixed or that the final tree was re-reviewed.
+
+The shell verifies selected/not-reviewed dimensions, coverage and finding
+parity, unique IDs, exact group membership, uncertainty/caution sets, and seed
+parity. Any silent drop, duplicate, malformed object, or missing verification
+expectation makes synthesis `INCOMPLETE`. The fixed human sections summarize
+must-fix order, advisories/cautions, coverage gaps/uncertainties, and
+recommended verification without replacing the machine evidence. This proves
+union completeness relative to the emitted reviewer documents; it does not
+prove model recall or defect completeness.
+
 `pmctl gate verify <result> [--cd <repo>] [--consumer <name>] [--json]`
 returns three independent axes:
 
@@ -333,7 +364,8 @@ Do not mutate the reviewed tree between gate finalization and `gate wait` or
 correctly changes `subject_current` to `fail`; the consumer refuses the result
 and reports the drift reason instead of silently authorizing a different tree.
 Legacy result v1/v2 artifacts remain readable under their historical
-contracts. Result v3 is required for selected-reviewer protocol evidence.
+contracts. Result v3 proves selected-reviewer protocol evidence; current result
+v4 additionally proves synthesis union and coverage parity.
 No gate result version is publication authorization by itself; `ship finish`
 requires a current, applicable gate-assurance v3 assessment plus the
 authoritative current-tree full-suite evidence and publication guards.
@@ -344,8 +376,9 @@ publish-consumer verification; it never guesses a latest artifact.
 The producer publishes the sidecar before atomically replacing the
 self-contained staging v1 result with the bound result that references it, so
 interruption cannot strand a result with a missing sidecar. A completed
-selected-reviewer route becomes result v3; a pre-dispatch fail-fast result with
-no reviewer protocol remains result v2. The protected attestation is published
+selected-reviewer route becomes result v4; historical reviewer-only result v3
+remains readable, and a pre-dispatch fail-fast result with no reviewer protocol
+remains result v2. The protected attestation is published
 afterward; verification uses a bounded retry when it observes that in-flight
 canonical finalization. Legacy
 `pr_gate_result_v1` and unbound `gate_assurance_v1` artifacts remain
@@ -354,6 +387,15 @@ consumers must not infer mode, coverage, or independence from them. Earlier
 `gate_assurance_v2` envelopes without the optional policy block remain
 readable for artifact inspection, but they cannot supply immutable-subject or
 consumer-applicability evidence.
+
+Executor-authored frontmatter is not allowed to choose that publication
+lifecycle. Before intermediate verdict verification, the producer requires one
+supported version field, rejects multiple model-authored assurance pointers,
+then rewrites the document to an unbound v1 staging form and removes at most one
+model-authored pointer. This means an executor that anticipates the final v4
+shape cannot cause a false protocol failure merely because the shell-owned
+sidecar does not exist yet. Only finalization inserts the bounded sibling
+pointer and upgrades the version.
 
 ---
 

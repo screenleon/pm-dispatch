@@ -10,6 +10,38 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Deterministic synthesis parity and remediation seed (CC-520).** Completed
+  selected-reviewer routes now emit `pr_gate_result_v4` with exactly one
+  `gate_synthesis_result_v1` block. The verifier mechanically reconciles the
+  selected/not-reviewed dimensions, reviewer-by-surface coverage matrix,
+  complete stable-ID inventory and findings union, uncertainty/caution sets,
+  root-cause membership, and a pending `remediation_closure_v1` seed against
+  the authoritative reviewer JSON. Silent drops, duplicate IDs, coverage
+  drift, missing verification expectations, malformed uncertainty objects, or
+  malformed seeds stop as synthesis protocol `INCOMPLETE`. Sequential and
+  parallel modes share the same contract and fixed human sections for must-fix
+  order, advisories/cautions, coverage gaps, and recommended verification;
+  executor-authored frontmatter is normalized to an unbound v1 staging result,
+  so a model that anticipates v4 cannot race the shell-owned assurance sidecar
+  publication. Multiple model-authored assurance pointers fail closed, while
+  the shell alone binds the final bounded pointer and result version.
+  Legacy v1-v3 results remain readable under their historical contracts.
+
+- **Fail-closed gate artifact handoff hardening.** Model staging accepts an exact
+  `+---` patch-marker variant only long enough to canonicalize it back to a real
+  YAML fence; malformed or ambiguous staging still fails closed. Protocol
+  failures now emit `failure-result: <path>` so detached supervisors preserve
+  and surface the inspectable artifact without treating it as a verdict.
+
+- **Reviewer command guard false-positive hardening.** Quoted operands of
+  `rg`/`grep`/`egrep`/`fgrep` are treated as search data during denylist
+  matching, so reviewing source text containing destructive spellings no
+  longer blocks a reviewer; executable `sed`/`awk` programs remain subject to
+  denylist inspection. Command substitutions remain conservative and denied.
+  Actual destructive command forms remain denied. Supervisor EXIT handling also
+  publishes a failed terminal claim when normal dispatch exits before result
+  handoff, while parent reconciliation defers until the producer stops.
+
 - **Selected-reviewer coverage and finding contract (CC-519).** Every selected
   reviewer now emits a scope-bound `gate_reviewer_result_v1` JSON report with
   an explicit eleven-surface checklist, evidence/reasons, stable finding IDs,
@@ -36,8 +68,14 @@ Versions follow [Semantic Versioning](https://semver.org/).
   Sequential and parallel reviewers receive the same manifest digest.
   Budget omissions stop as `INCOMPLETE` unless explicitly accepted with
   `--accept-scope-truncation`; accepted truncation remains recorded with exact
-  omitted counts and reasons. Named v3 consumers now require verified linked
-  scope evidence; historical v3 envelopes with unavailable scope remain
+  omitted counts and reasons. Symbol expansion is language-aware, and shell
+  call-site hints are limited to direct source-path consumers, preventing
+  embedded foreign-language snippets and unrelated local functions with common
+  names from exhausting the search-match budget. Consumer scans read through
+  the full immutable snapshot so `pipefail` cannot turn an early grep match
+  into a nondeterministic omission. A compatible-language query that truly
+  exceeds the limit still fails closed. Named v3 consumers now require verified
+  linked scope evidence; historical v3 envelopes with unavailable scope remain
   readable only through non-authorizing artifact inspection.
 
 - **Immutable gate subject and shared three-axis verification (CC-515).**

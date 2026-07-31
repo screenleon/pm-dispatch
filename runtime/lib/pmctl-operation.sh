@@ -418,7 +418,8 @@ pmctl_operation_cancellation_requested() {
 
 _pmctl_operation_reconcile_inner() {
   local repo_root="$1" expected_kind="$2" work_dir="$3" operation_id="$4"
-  local record op_dir line run_id child_dir missing=0 failed=0 cancelled=0 children=0 next ts updated
+  local record op_dir line run_id child_dir producer_status producer_identity producer_identity_file
+  local producer_verify=0 producer_invalid=false missing=0 failed=0 cancelled=0 children=0 next ts updated
   record="$(_pmctl_operation_record_path "$repo_root" "$work_dir" "$operation_id")" || return 2
   _pmctl_operation_validate_record "$record" "$expected_kind" "$work_dir" || return $?
   case "$PMCTL_OPERATION_RECORD_STATE" in
@@ -437,6 +438,39 @@ _pmctl_operation_reconcile_inner() {
       fi
       ;;
   esac
+  producer_status="$(jq -r '.producer.status // "none"' <<<"$PMCTL_OPERATION_RECORD_JSON")"
+  if [[ "$producer_status" == pending ]]; then
+    printf 'operation: %s  state: %s  reconciliation: producer-active (%s) deferred\n' \
+      "$operation_id" "$PMCTL_OPERATION_RECORD_STATE" "$producer_status"
+    return 1
+  fi
+  if [[ "$producer_status" =~ ^(running|stopping)$ ]]; then
+    _pmctl_operation_load_detached_launch "$repo_root" || return 2
+    producer_identity="$(jq -c '.producer.identity // null' <<<"$PMCTL_OPERATION_RECORD_JSON")"
+    if [[ "$producer_identity" == null ]]; then
+      printf 'operation: %s  state: %s  reconciliation: producer-active (%s) deferred\n' \
+        "$operation_id" "$PMCTL_OPERATION_RECORD_STATE" "$producer_status"
+      return 1
+    fi
+    producer_identity_file="$(mktemp /tmp/pm-operation-reconcile-XXXXXX.identity)" || return 2
+    if ! _pmctl_operation_identity_file_from_json "$producer_identity" "$producer_identity_file" \
+        || ! detached_launch_load_identity_file "$producer_identity_file"; then
+      producer_invalid=true
+      producer_verify=3
+    else
+      detached_launch_verify_identity "$DL_ID_PID" "$producer_identity_file" || producer_verify=$?
+    fi
+    rm -f "$producer_identity_file"
+    case "$producer_verify" in
+      0)
+        printf 'operation: %s  state: %s  reconciliation: producer-active (%s) deferred\n' \
+          "$operation_id" "$PMCTL_OPERATION_RECORD_STATE" "$producer_status"
+        return 1
+        ;;
+      1|2) ;; # producer is gone or its identity has been replaced
+      *) producer_invalid=true ;;
+    esac
+  fi
   op_dir="$(_pmctl_operation_dir "$repo_root" "$work_dir" "$operation_id")" || return 2
   if [[ -f "$op_dir/children.jsonl" ]]; then
     while IFS= read -r line; do
@@ -448,6 +482,7 @@ _pmctl_operation_reconcile_inner() {
     done < "$op_dir/children.jsonl"
   fi
   [[ "$children" -gt 0 ]] || missing=1
+  [[ "$producer_invalid" == true ]] && missing=1
   if [[ "$missing" -gt 0 ]]; then next="indeterminate"; elif [[ "$cancelled" -gt 0 ]]; then next="cancelled"; elif [[ "$failed" -gt 0 ]]; then next="failed"; else next="completed"; fi
   ts="$(_pmctl_operation_ts)"
   updated="$(jq -c --arg state "$next" --arg ts "$ts" \

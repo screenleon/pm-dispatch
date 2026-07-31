@@ -37,6 +37,7 @@ unset _self _dir
 # sentinel path.
 _sentinel_nonce="${PM_GATE_SUPERVISOR_NONCE:-}"
 unset PM_GATE_SUPERVISOR_NONCE
+_terminal_written=false
 
 gate_id=""
 
@@ -52,8 +53,24 @@ _write_sentinel() {
     [[ -n "$_result" ]] && _pairs+=("result_file=$_result")
     [[ -n "${PM_GATE_PARENT_OPERATION:-}" ]] && _pairs+=("parent_operation=$PM_GATE_PARENT_OPERATION")
     detached_launch_write_sentinel "$_sentinel_path" "${_pairs[@]}"
+    _terminal_written=true
   fi
 }
+
+# A child dispatch can terminate the supervisor before pr-gate.sh reaches its
+# normal result handoff.  Always publish a failed terminal claim on ordinary
+# shell exits so wait/reconcile never leave the parent operation apparently
+# running with only readiness evidence. SIGKILL remains inherently
+# uncatchable; its unresolved state is still reported as indeterminate.
+# shellcheck disable=SC2317 # invoked indirectly by the EXIT trap.
+_supervisor_exit() {
+  local rc=$?
+  if [[ "$_terminal_written" != true ]]; then
+    _write_sentinel "failed" "${rc:-2}" ""
+  fi
+  exit "$rc"
+}
+trap _supervisor_exit EXIT
 
 # Publish startup evidence only after the supervisor has parsed its arguments,
 # validated the run directory, and can prove its own PID identity.  The launcher
@@ -146,10 +163,11 @@ _rc=0
 "$REPO_ROOT/runtime/bin/pr-gate.sh" --run-dir "$run_dir" --cd "$cd_arg" ${native[@]+"${native[@]}"} \
   > "$_log" 2>&1 || _rc=$?
 
-# pr-gate.sh prints `result: <path>` on both the GO and integrity-checked
-# NO-GO paths; extract it for the sentinel so `pmctl gate wait` can surface it
-# without re-deriving OUTPUT_FILE naming.
-_result_file="$(grep -m1 '^result: ' "$_log" 2>/dev/null | sed 's/^result: //')" || _result_file=""
+# pr-gate.sh prints `result: <path>` for publishable outcomes and
+# `failure-result: <path>` for protocol failures; extract either for the
+# sentinel so `pmctl gate wait` can surface an inspectable artifact without
+# re-deriving OUTPUT_FILE naming.
+_result_file="$(grep -m1 -E '^(result|failure-result): ' "$_log" 2>/dev/null | sed -E 's/^[^:]+: //')" || _result_file=""
 
 _terminal_rc="$_rc"
 if [[ -z "$_result_file" && ( "$_rc" -eq 0 || "$_rc" -eq 1 ) ]]; then

@@ -160,6 +160,60 @@ fi
 # guard exists to stop evaluating).
 _normalize_for_denylist() {
   local s="$1"
+  local first_word
+  _has_shell_control_operator() {
+    awk '
+      BEGIN { sq=0; dq=0; esc=0; found=0 }
+      {
+        for (i=1; i<=length($0); i++) {
+          c=substr($0, i, 1)
+          if (esc) { esc=0; continue }
+          if (c == "\\") { esc=1; continue }
+          if (sq) { if (c == "\047") sq=0; continue }
+          if (dq) { if (c == "\042") dq=0; continue }
+          if (c == "\047") { sq=1; continue }
+          if (c == "\042") { dq=1; continue }
+          if (c ~ /[;&|<>]/) found=1
+        }
+      }
+      END { exit(found ? 0 : 1) }
+    ' <<<"$1"
+  }
+  first_word="$(awk '{print $1}' <<<"$s")"
+  case "$first_word" in
+    rg|grep|egrep|fgrep)
+      # Search expressions are data, not commands.  Keep the denylist
+      # conservative for normal shell commands, but mask quoted search
+      # operands so a reviewer cannot be blocked merely for searching source
+      # text that contains `rm -rf` or another denylisted spelling.  If the
+      # command contains command substitution, retain the original input: the
+      # substitution is executable shell syntax even when nested in a search
+      # operand, so the security guard must remain conservative.
+      if [[ "$s" != *\$\(* && "$s" != *\`* ]] \
+          && ! _has_shell_control_operator "$s"; then
+        s="$(awk '
+        BEGIN { sq=0; dq=0; esc=0 }
+        {
+          out=""
+          for (i=1; i<=length($0); i++) {
+            c=substr($0, i, 1)
+            if (sq) {
+              if (c == "\047") sq=0
+              out=out " "
+            } else if (dq) {
+              if (esc) { esc=0; out=out " " }
+              else if (c == "\\") { esc=1; out=out " " }
+              else { if (c == "\042") dq=0; out=out " " }
+            } else if (c == "\047") { sq=1; out=out " "
+            } else if (c == "\042") { dq=1; out=out " "
+            } else out=out c
+          }
+          print out
+        }
+        ' <<<"$s")"
+      fi
+      ;;
+  esac
   s="${s//\$\{IFS\}/ }"
   s="${s//\$IFS/ }"
   # ANSI-C quoted whitespace: $'\x20' $'\x09' $'\x0a' $'\t' $'\n' $' '

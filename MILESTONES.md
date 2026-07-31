@@ -130,7 +130,7 @@ Gate correctness 與 release evidence 仍必須先在 v0.11.0 關閉。
 | 票 | 摘要 | 狀態 |
 |----|------|------|
 | CC-518 | `gate_scope_manifest_v1`：immutable subject、changed/renamed/untracked、paired tests、signals、bounded expansion/truncation | ✅ pr:#455 |
-| CC-519 | selected-reviewer coverage/finding contract；sequential logical sections 與 parallel session isolation 分開 | 🔵 |
+| CC-519 | selected-reviewer coverage/finding contract；sequential logical sections 與 parallel session isolation 分開 | ✅ pr:#456 |
 | CC-520 | synthesis findings-union parity、root-cause grouping、coverage matrix、remediation seed、no silent drop | 🔵 |
 | CC-521 | actionable test-gap matrix + bounded protocol recovery；seeded live recall 僅作 quality evaluation | 🔵 |
 | CC-522 | arbitrary `--test-cmd` opaque／structured negotiation；test failure 與 timeout／environment INCOMPLETE 分流 | 🔵 |
@@ -139,7 +139,7 @@ Gate correctness 與 release evidence 仍必須先在 v0.11.0 關閉。
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-528 | publish policy compatibility：generic current-tree initial GO 為 baseline、maintainer 為 preferred；ship 可驗證明確 supplied result | 🔵 |
+| CC-528 | publish policy compatibility：generic current-tree initial GO 為 baseline、maintainer 為 preferred；ship 可驗證明確 supplied result | ✅ pr:#457 |
 | CC-529 | publish assurance observability：ship stdout、PR body、finish marker 保留 producer policy 與 baseline/preferred satisfaction | 🔵 |
 | CC-517 | `/ship` primary review→local/targeted/split remediation closure→final affected/full tests；不虛稱 final-tree GO | 🔵 |
 | CC-511 Phase B | final-tree review或 primary-review closure authorization + current-tree full PASS → publish | 🔵 |

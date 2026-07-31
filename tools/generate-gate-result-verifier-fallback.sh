@@ -33,6 +33,8 @@ functions=(
   _gate_reviewer_protocol_verdict_extract
   _gate_reviewer_protocol_final_extract
   gate_reviewer_protocol_verify
+  _gate_synthesis_protocol_documents
+  gate_synthesis_protocol_verify
   _gate_result_sha256_stream
   _gate_result_sha256_file
   _gate_subject_common_dir

@@ -38,7 +38,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-516 | ⏸ deferred | evidence-gated thin delivery wrapper 評估；只組合既有 primitives，不建立 workflow engine/FSM | ux/process | 2026-07-23 | — | P3 | spike |
 | CC-517 | 🔵 active | maintainer `/ship`：primary review、structured remediation closure 與 conditional targeted confirmation | process/gate | 2026-07-23 | — | P1 | design |
 | CC-518 | ✅ closed 2026-07-29 | gate scope manifest v1：immutable subject、changed paths、paired tests、signals 與 bounded expansion | ops/gate | 2026-07-23 | pr:#455 | P1 | design |
-| CC-519 | 🔵 active | selected-reviewer coverage／finding contract：declared coverage、stable IDs 與 actionable fix boundary | ops/gate | 2026-07-23 | — | P1 | design |
+| CC-519 | ✅ closed 2026-07-30 | selected-reviewer coverage／finding contract：declared coverage、stable IDs 與 actionable fix boundary | ops/gate | 2026-07-23 | pr:#456 | P1 | design |
 | CC-520 | 🔵 active | synthesis parity 與 remediation seed：findings union、root-cause grouping、coverage matrix 與 no-silent-drop | ops/gate | 2026-07-23 | — | P1 | design |
 | CC-521 | 🔵 active | test-gap matrix、protocol recovery 與 live recall evaluation 分層 | ops/test | 2026-07-23 | — | P2 | design |
 | CC-522 | 🔵 active | 任意 `--test-cmd` 的 opaque／structured capability negotiation、執行失敗分類與外部 evidence recovery | ops/test | 2026-07-27 | feedback:2026-07-27 | P1 | design |
@@ -47,7 +47,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-525 | 🔵 active | copy-mode verifier fallback 的 generated provenance 必須指向實際 generator，並由 parity ratchet 防止再次漂移 | ops/test | 2026-07-28 | feedback:2026-07-28 | P3 | hygiene |
 | CC-526 | 🔵 active | reviewer override file 的 symlink trust-boundary hardening 與相容性契約 | security/gate | 2026-07-28 | feedback:2026-07-28 | P2 | hygiene |
 | CC-527 | 🔵 active | targeted gate CLI 拆分 pass、reviewer coverage 與 tier，避免 full targeted 語意重疊 | ux/gate | 2026-07-28 | feedback:2026-07-28 | P2 | design |
-| CC-528 | 🔵 active | publish policy compatibility：generic 為可接受 baseline、maintainer 為 preferred，並允許 ship 驗證既有 current-tree Gate artifact | release/gate | 2026-07-30 | feedback:2026-07-30 | P1 | design |
+| CC-528 | ✅ closed 2026-07-30 | publish policy compatibility：generic 為可接受 baseline、maintainer 為 preferred，並允許 ship 驗證既有 current-tree Gate artifact | release/gate | 2026-07-30 | pr:#457 | P1 | design |
 | CC-529 | 🔵 active | publish assurance observability：在 ship 成功輸出、PR body 與 finish marker 保留 embedded policy 與 baseline/preferred satisfaction | release/gate | 2026-07-30 | feedback:2026-07-30 | P2 | hygiene |
 | CC-530 | 🔵 active | source-safe runtime library contract + centralized domain identifier policy | arch/reuse | 2026-07-30 | feedback:2026-07-30 | P1 | hygiene |
 | CC-531 | 🔵 active | Adapter manifest contract closure：dispatch entrypoint 成為唯一 runtime authority | arch/schema | 2026-07-30 | feedback:2026-07-30 | P1 | design |
@@ -2076,7 +2076,9 @@ expansion 與 truncation 有 deterministic fixtures。
 
 ---
 
-## CC-519 — selected-reviewer coverage／finding contract 🔵 active
+## CC-519 — selected-reviewer coverage／finding contract ✅ 2026-07-30
+
+**See**: pr:#456
 
 **Problem**: reviewer prose 沒有一致的 coverage declaration；找到 blocker 後可能
 early stop，finding 也常缺少受影響 behavior、fix boundary 與 verification expectation。
@@ -2549,7 +2551,9 @@ inheritance 依賴 [[CC-515]]；maintainer consumer 接線由 [[CC-517]] 使用�
 
 ---
 
-## CC-528 — publish policy compatibility：generic baseline + maintainer preferred 🔵 active
+## CC-528 — publish policy compatibility：generic baseline + maintainer preferred ✅ 2026-07-30
+
+**See**: pr:#457
 
 **Problem**: `generic` 與 `maintainer` 是 Gate consumer policy，不是權限或身分；
 但 shared verifier 目前以 policy 名稱完全相等判斷 applicability，並把 `publish`

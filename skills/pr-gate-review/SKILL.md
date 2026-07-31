@@ -37,22 +37,31 @@ implement → pr-gate → fix NO-GO → push → PR).
 
 ## Reading the result
 
-The result file carries `pr_gate_result_v2` frontmatter with `final: GO|NO-GO`,
-per-reviewer verdicts, and a bounded pointer to its sibling
-`gate_assurance_v3` JSON envelope. The `Final: GO|NO-GO` line is
+Completed selected-reviewer results carry `pr_gate_result_v4` frontmatter with
+`final: GO|NO-GO`, per-reviewer verdicts, one synthesis parity block, and a
+bounded pointer to the sibling `gate_assurance_v3` JSON envelope. The
+`Final: GO|NO-GO` line is
 parser-significant (plain text, exact shape), but is not freshness or
 authorization evidence. Run
 `pmctl gate verify <result-file> --cd <reviewed-repo> --consumer embedded --json`
 before consuming assurance claims. Named-consumer success requires all three
 axes to pass: `artifact_valid`, `subject_current`, and `policy_applicable`.
-Legacy `pr_gate_result_v1` and v1/v2 assurance artifacts remain readable for
-historical inspection but cannot prove immutable-subject freshness or consumer
-applicability. Repo-layout authorization is authoritative only when
+Legacy result v1-v3 and v1/v2 assurance artifacts remain readable under their
+historical contracts; result v3 proves reviewer protocol but not synthesis
+parity. They cannot prove capabilities their versions did not record.
+Repo-layout authorization is authoritative only when
 verification also confirms the protected producer attestation, the invoking
 repository's canonical state partition, and every claimed canonical run
 record. Current v3 envelopes also record the shell-owned policy classification,
 matched signals, resolved coordinates, linked evidence, and any scope-bound
 user override.
+
+Treat `gate_synthesis_result_v1` as a parity-preserving view of the raw
+reviewer documents. Its coverage matrix, finding inventory, findings union,
+uncertainties, cautions, and pending remediation seed are machine-checked.
+Root-cause groups organize findings without replacing stable IDs. A synthesis
+protocol `INCOMPLETE` is not reviewer NO-GO and cannot authorize publication,
+even when every reviewer verdict says approve.
 
 - **NO-GO** (a reviewer returned `block`): fix the blocking finding. Per project
   convention, clear **every** finding (high/med/low/advise) on a NO-GO, not just

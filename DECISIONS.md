@@ -7,6 +7,123 @@ H2 標題格式：## YYYY-MM-DD: <短描述>
 與 BACKLOG closure 對應的 entry，內文首行寫：Closes: BACKLOG.md#<PREFIX>-NNN
 -->
 
+## 2026-07-31: reviewer-search-commands-and-supervisor-failures-remain-observable
+
+**Context**: Reviewer dispatch can legitimately search source text containing
+destructive command spellings. Matching the raw command string caused the PM
+Bash guard to block such a search, while an early supervisor exit could leave
+the operation apparently running with readiness evidence but no terminal claim.
+
+**Decision**: For known search tools, quoted operands without command
+substitution are masked before the denylist is evaluated; `$()` and backtick
+substitutions retain conservative denylist matching. Actual destructive command
+syntax outside quoted search data remains covered by the existing denylist. The
+gate supervisor installs an EXIT fallback that publishes a failed terminal
+claim whenever ordinary shell exit occurs before the normal result handoff, and
+parent reconciliation defers while the producer is still active.
+
+**Alternatives considered**: (a) Remove the destructive patterns—rejected
+because that weakens the security boundary. (b) Allow all reviewer commands—
+rejected because reviewers still execute in a protected PM context. (c) Infer a
+verdict from readiness or child disappearance—rejected because protocol
+failure must remain distinct from GO/NO-GO.
+
+**Constraints introduced**: Search-tool masking is intentionally limited to
+quoted operands without executable substitution and does not become a shell
+interpreter. Parent child claims cannot terminalize an operation while its
+producer is pending/running/stopping. SIGKILL or host loss can still prevent an
+EXIT trap; those cases remain indeterminate and require reconciliation rather
+than synthetic verdict publication.
+
+## 2026-07-31: scope-search-budgets-follow-language-and-consumer-selection
+
+Relates: CC-518, CC-520
+
+**Context**: A real CC-520 gate stopped before reviewer dispatch with 379 of
+512 expansion entries but 142 omitted raw matches. The shell producer had
+parsed an embedded jq `def flag(...)` as though it were a Python definition,
+and treated the file-local `usage()` function like one repository-wide symbol.
+The per-query limit therefore measured unrelated lexical collisions rather
+than bounded adjacent review scope, forcing explicit truncation acceptance for
+routine shell changes.
+
+**Decision**: Scope symbol extraction follows the changed source's language,
+and symbol searches only retain compatible-language paths. Shell functions are
+treated as file-local; a shell call-site hint is emitted only when another
+shell file directly references the defining script and also uses the symbol.
+Direct shared-helper consumer evidence remains independent. The existing
+per-symbol budget is applied after this deterministic language/consumer
+selection, so a real compatible-language overflow remains a truthful
+`search-match-budget` omission and fails closed.
+
+**Alternatives considered**: (a) Increase the 64-match limit—rejected because
+common names would hit the next fixed threshold and add noisy references.
+(b) Automatically accept `search-match-budget` truncation—rejected because a
+widely used exported symbol can represent real omitted review scope. (c) Treat
+all raw matches as complete after global deduplication—rejected because omitted
+provenance can still identify unique relevant paths.
+
+**Constraints introduced**: Embedded languages must not leak symbols into the
+host file's query set. Shell call-site expansion must not search unrelated
+same-name scripts. Snapshot-content predicates in a `pipefail` producer must
+consume the complete input rather than use an early-exiting pipeline whose
+upstream SIGPIPE can nondeterministically suppress a match. Language-compatible
+overflow, diff-hunk/source/symbol overflow, and global expansion-entry overflow
+keep the existing explicit acceptance contract; this refinement does not claim
+a complete call graph or change immutable-subject, reviewer, synthesis, or
+publication authorization semantics.
+
+---
+
+## 2026-07-31: synthesis-preserves-reviewer-evidence-without-claiming-defect-completeness
+
+Relates: CC-517, CC-519, CC-520, CC-521
+
+**Context**: Reviewer JSON 已能提供 declared coverage、stable finding IDs 與
+verification expectation，但 consolidated synthesis 仍由模型自由摘要。只檢查最高
+verdict 與 cross-reviewer overlap，無法證明 lower-severity finding、caution、
+uncertainty、disagreement 或 test expectation 沒有在 dedup 時消失；也無法直接產生
+後續 remediation 可沿用的完整 seed。把 synthesis prose 當 authority 會重新引入
+已由 reviewer protocol 排除的格式與遺漏風險。
+
+**Decision**: Completed selected-reviewer routes emit one
+`gate_synthesis_result_v1` and publish `pr_gate_result_v4`. Raw
+`gate_reviewer_result_v1` documents remain authoritative inputs. The synthesis
+copies a deterministic reviewer finding inventory, findings union and
+reviewer-by-surface coverage matrix; root-cause grouping and disagreement
+summaries remain synthesis judgments, but every original finding ID must appear
+in exactly one group and one pending `remediation_closure_v1` seed entry.
+Uncertainty and caution collections are mechanically derived from reviewer
+origins and coverage statuses. The shell verifies all parity before binding the
+result to assurance. Executor frontmatter is untrusted staging input: the shell
+accepts a supported result version, rejects duplicate assurance pointer fields,
+normalizes the document to unbound v1 for intermediate verification, then alone
+publishes the sidecar and upgrades the final bounded result to v4. Human output
+固定呈現 must-fix、advisory/caution、coverage gap/uncertainty 與 recommended
+verification sections。
+
+**Alternatives considered**: (a) 只加強 synthesis prompt——否決，prompt 不能證明
+沒有 silent drop。(b) 由 shell 自動合併所有 human prose——否決，root-cause 與
+disagreement 仍需要語意判斷，且會產生另一套摘要器。(c) 直接把 seed 宣告為
+remediation closure——否決，seed 只保存待處理 finding 與驗證期待，不證明修正、
+final-tree freshness 或 targeted confirmation。
+
+**Constraints introduced**: `uncertainties` 必須是單一
+`{finding_ids,coverage_cells}` object，不得多包 array。Finding/coverage parity、
+stable-ID uniqueness、group membership、caution/uncertainty derivation與 seed parity
+任一失敗都使 protocol `INCOMPLETE`，不能產生 authorization。Result v1-v3 保持歷史
+可讀；v4 證明 union/parity，不宣稱 reviewer recall 或 defect completeness，也不
+實作 CC-521 recovery／test-gap matrix 或 CC-517 closure lifecycle。模型不得決定
+assurance publication 時序；即使模型預先輸出 v4，intermediate verification 也只
+消費 shell-normalized v1 staging，避免在 sidecar 發佈前錯誤 dereference。
+Protocol failure 仍不得轉化為 GO/NO-GO；若結果檔已產生，producer 只透過
+`failure-result` 傳遞可供 post-mortem 的路徑，detached wait 仍以 terminal
+sentinel 與完整 verifier 結果為準。模型意外留下的精確 `+---` patch marker
+只可被 staging normalization canonicalize，其他 frontmatter 變形維持
+fail-closed。
+
+---
+
 ## 2026-07-30: pre-v1-roadmap-is-contiguous-and-preserves-milestone-history
 
 Relates: CC-032, CC-033, CC-358, CC-446, CC-447, CC-511, CC-514, CC-517,

@@ -264,6 +264,77 @@ if should_run "pm-prebash-deny"; then
   fi
 fi
 
+if should_run "pm-prebash-search-literal-rm-is-allowed"; then
+  name="pm-prebash-search-literal-rm-is-allowed"
+  # A reviewer searching source text may legitimately quote a denylisted
+  # spelling.  The guard must inspect executable command syntax, not quoted
+  # rg/grep data.
+  run_guard --event pre-bash --role pm --runtime codex \
+    --command "rg -n -C 6 'failure-result|rm\\\\b.*[[:space:]](-[a-zA-Z]*r[a-zA-Z]*f)' runtime tests"
+  if [[ "$GUARD_EXIT" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "quoted search literal was incorrectly denied: code=$GUARD_EXIT out=$GUARD_OUT"
+  fi
+fi
+
+if should_run "pm-prebash-search-command-substitution-denied"; then
+  name="pm-prebash-search-command-substitution-denied"
+  # Quoted search data is safe, but command substitution remains executable
+  # shell syntax and must retain the denylist's conservative behavior.
+  probe_command="rm"
+  probe_flags="-rf"
+  probe_target="/tmp/pm-dispatch-probe"
+  substitution='$('
+  substitution+="${probe_command} ${probe_flags} ${probe_target}"
+  substitution+=')'
+  search_command="rg \"${substitution}\" runtime"
+  run_guard --event pre-bash --role pm --runtime codex \
+    --command "$search_command"
+  if assert_exit "$name" "$GUARD_EXIT" "2" \
+    && assert_string_contains "$name" "$GUARD_OUT" "denylisted pattern"; then
+    pass "$name"
+  fi
+fi
+
+if should_run "pm-prebash-search-compound-quoted-fragment-denied"; then
+  name="pm-prebash-search-compound-quoted-fragment-denied"
+  # A quoted search operand is safe in isolation, but a later shell command
+  # must remain visible to the denylist even when its executable spelling is
+  # split across quotes.
+  search_command="grep"
+  safe_operand="safe"
+  destructive_prefix="r"
+  destructive_suffix="m"
+  destructive_flags="-rf"
+  destructive_target="/tmp/pm-dispatch-probe"
+  compound_command="${search_command} '${safe_operand}'; ${destructive_prefix}${destructive_suffix} ${destructive_flags} ${destructive_target}"
+  run_guard --event pre-bash --role pm --runtime codex \
+    --command "$compound_command"
+  if assert_exit "$name" "$GUARD_EXIT" "2" \
+    && assert_string_contains "$name" "$GUARD_OUT" "denylisted pattern"; then
+    pass "$name"
+  fi
+fi
+
+if should_run "pm-prebash-executable-awk-sed-program-denied"; then
+  name="pm-prebash-executable-awk-sed-program-denied"
+  probe_command="rm"
+  probe_flags="-rf"
+  probe_target="/tmp/pm-dispatch-probe"
+  awk_program="BEGIN { system(\"${probe_command} ${probe_flags} ${probe_target}\") }"
+  sed_program="s/x/${probe_command} ${probe_flags} ${probe_target}/"
+  run_guard --event pre-bash --role pm --runtime codex --command "awk '${awk_program}' input.txt"
+  awk_exit="$GUARD_EXIT"
+  awk_out="$GUARD_OUT"
+  run_guard --event pre-bash --role pm --runtime codex --command "sed -n '${sed_program}' input.txt"
+  if [[ "$awk_exit" -eq 2 && "$GUARD_EXIT" -eq 2 ]]; then
+    pass "$name"
+  else
+    fail "$name" "awk_code=$awk_exit sed_code=$GUARD_EXIT awk_out=$awk_out sed_out=$GUARD_OUT"
+  fi
+fi
+
 if should_run "pm-prebash-deny-uppercase-recursive"; then
   # rm accepts both -r and -R for recursive; the denylist must not miss the
   # uppercase form (fail-open regression: a prior version's regex only

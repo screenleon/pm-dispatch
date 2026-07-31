@@ -669,6 +669,61 @@ _mk_gate_result_protocol_v3_verified() {
   _refresh_gate_result_protocol_v3_binding "$path"
 }
 
+_mk_gate_result_protocol_v4_verified() {
+  local path="$1" bound_repo="${2:-$_GATE_VERIFY_REPO}"
+  local scope_sha synthesis
+  _mk_gate_result_protocol_v3_verified "$path" "$bound_repo"
+  sed -i \
+    's/^gate_result_version: pr_gate_result_v3$/gate_result_version: pr_gate_result_v4/' \
+    "$path"
+  scope_sha="$(jq -r '.evidence.scope_manifest.sha256' \
+    "${path}.assurance.json")"
+  synthesis="$(
+    _gate_reviewer_protocol_documents "$path" |
+      jq -s --arg scope_sha "$scope_sha" '
+        {
+          kind:"gate_synthesis_result_v1",
+          schema_version:1,
+          scope_manifest_sha256:$scope_sha,
+          selected_reviewers:map(.reviewer),
+          not_reviewed_dimensions:[],
+          coverage_matrix:[
+            .[] as $review |
+            $review.coverage[] |
+            {
+              reviewer:$review.reviewer,
+              surface,
+              status,
+              evidence_refs,
+              reason
+            }
+          ],
+          reviewer_finding_inventory:[],
+          findings_union:[],
+          root_cause_groups:[],
+          disagreements:[],
+          uncertainties:{finding_ids:[],coverage_cells:[]},
+          cautions:[],
+          remediation_seed:{
+            kind:"remediation_closure_v1",
+            schema_version:1,
+            state:"seed",
+            scope_manifest_sha256:$scope_sha,
+            entries:[]
+          }
+        }
+      '
+  )"
+  {
+    printf '```synthesis_result_v1\n%s\n```\n' "$synthesis"
+    printf '## Must-Fix Order\n\nNone.\n\n'
+    printf '## Advisory and Cautions\n\nNone.\n\n'
+    printf '## Coverage Gaps and Uncertainties\n\nNone.\n\n'
+    printf '## Recommended Verification\n\nReuse verified fixture evidence.\n'
+  } >> "$path"
+  _refresh_gate_result_protocol_v3_binding "$path"
+}
+
 _attach_gate_scope_manifest_v3() {
   local path="$1" sidecar="${1}.assurance.json"
   local manifest manifest_digest manifest_sha
@@ -847,6 +902,20 @@ _run_canonical_gate_verify() {
     PM_DISPATCH_STATE_ROOT="$_GATE_VERIFY_STATE_ROOT" \
       "$PMCTL" gate verify "$result" "$@"
   )
+}
+
+_prepare_publication_race_sleep_hook() {
+  local hook_dir="$1" staged="$2" target="$3" real_sleep
+  real_sleep="$(command -v sleep)"
+  mkdir -p "$hook_dir"
+  cat > "$hook_dir/sleep" <<EOF
+#!/usr/bin/env bash
+if [[ ! -e "$target" ]]; then
+  mv -- "$staged" "$target"
+fi
+exec "$real_sleep" "\$@"
+EOF
+  chmod +x "$hook_dir/sleep"
 }
 
 _mk_gate_result_v2_legacy_assurance() {
@@ -2013,20 +2082,49 @@ case_verify_v2_canonical_run_mismatch() {
 case_verify_v2_publication_race_retries() {
   local name="gate/verify: canonical v2 publication race retries"
   should_run "$name" || return 0
-  local result sidecar staged out code publisher
+  local result sidecar staged hook_dir out code
   result="$(_gate_verify_result_path publication-race)"
   sidecar="${result}.assurance.json"
   staged="${sidecar}.staged"
   _mk_gate_result_v2 "$result"
   mv "$sidecar" "$staged"
-  (
-    sleep 0.2
-    mv "$staged" "$sidecar"
-  ) &
-  publisher=$!
-  set +e; out="$(_run_canonical_gate_verify "$result" 2>&1)"; code=$?; set -e
-  wait "$publisher"
+  hook_dir="${sidecar}.hook"
+  _prepare_publication_race_sleep_hook "$hook_dir" "$staged" "$sidecar"
+  set +e
+  out="$(PATH="$hook_dir:$PATH" _run_canonical_gate_verify "$result" 2>&1)"
+  code=$?
+  set -e
   if [[ "$code" -eq 0 && "$out" == *"gate result OK"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+# Behavior: result-v4 canonical verification waits for the assurance sidecar
+# publication rename instead of treating the first observation as a permanent
+# missing-sidecar failure.
+# Steps:
+#   1. Build a fully verified result v4 with reviewer and synthesis protocols.
+#   2. Move its sidecar aside and publish it after the verifier starts.
+#   3. Assert canonical pmctl verification retries and succeeds.
+case_verify_v4_publication_race_retries() {
+  local name="gate/verify: canonical v4 publication race retries"
+  should_run "$name" || return 0
+  local result sidecar staged hook_dir out code
+  result="$(_gate_verify_result_path v4-publication-race)"
+  sidecar="${result}.assurance.json"
+  staged="${sidecar}.staged"
+  _mk_gate_result_protocol_v4_verified "$result" "$_GATE_VERIFY_REPO"
+  mv "$sidecar" "$staged"
+  hook_dir="${sidecar}.hook"
+  _prepare_publication_race_sleep_hook "$hook_dir" "$staged" "$sidecar"
+  set +e
+  out="$(PATH="$hook_dir:$PATH" _run_canonical_gate_verify "$result" 2>&1)"
+  code=$?
+  set -e
+  if [[ "$code" -eq 0 && "$out" == *"gate result OK"* \
+      && "$out" == *"assurance: verified"* ]]; then
     pass "$name"
   else
     fail "$name" "code=$code out=$out"
@@ -2036,20 +2134,19 @@ case_verify_v2_publication_race_retries() {
 case_verify_v2_attestation_publication_race_retries() {
   local name="gate/verify: canonical v2 attestation publication race retries"
   should_run "$name" || return 0
-  local result run_root attestation staged out code publisher
+  local result run_root attestation staged hook_dir out code
   result="$(_gate_verify_result_path attestation-race)"
   _mk_gate_result_v2_verified "$result" "$_GATE_VERIFY_REPO"
   run_root="$(dirname "$(dirname "$result")")"
   attestation="$run_root/gate-assurance-20260727-000000.attestation.json"
   staged="${attestation}.staged"
   mv "$attestation" "$staged"
-  (
-    sleep 0.2
-    mv "$staged" "$attestation"
-  ) &
-  publisher=$!
-  set +e; out="$(_run_canonical_gate_verify "$result" 2>&1)"; code=$?; set -e
-  wait "$publisher"
+  hook_dir="${attestation}.hook"
+  _prepare_publication_race_sleep_hook "$hook_dir" "$staged" "$attestation"
+  set +e
+  out="$(PATH="$hook_dir:$PATH" _run_canonical_gate_verify "$result" 2>&1)"
+  code=$?
+  set -e
   if [[ "$code" -eq 0 && "$out" == *"assurance: verified"* ]]; then
     pass "$name"
   else
@@ -2807,6 +2904,7 @@ case_verify_v2_sidecar_attestation_tamper
 case_verify_v2_subject_binding_tamper
 case_verify_v2_canonical_run_mismatch
 case_verify_v2_publication_race_retries
+case_verify_v4_publication_race_retries
 case_verify_v2_attestation_publication_race_retries
 case_verify_v2_pointer_escape
 case_verify_v2_missing_sidecar

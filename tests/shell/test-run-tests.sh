@@ -304,6 +304,22 @@ case_pr_gate_protocol_contract_maps_profile_and_verifiers() {
   fi
 }
 
+case_gate_synthesis_schema_maps_protocol_verifiers() {
+  local name=gate-synthesis-schema-maps-protocol-verifiers
+  local repo out status=0 args
+  args="$TMP_ROOT/$name.args"
+  repo="$(make_fixture "$name")"
+  out=$(RUN_TESTS_ARGS_LOG="$args" "$repo/tests/bin/run-tests.sh" \
+    --path core/schema/gate-synthesis-result.schema.json --list 2>&1) || status=$?
+  if [[ "$status" -eq 0 && "$out" == *"test-core-schemas"* &&
+        "$out" == *"test-pr-gate"* && "$out" == *"test-pmctl-gate"* &&
+        "$out" != *"coverage gaps"* && ! -e "$args" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out"
+  fi
+}
+
 case_high_fanout_escalates_full() {
   local name=high-fanout-escalates-full repo out status=0 args
   args="$TMP_ROOT/$name.args"
@@ -482,6 +498,7 @@ case_evidence_contract_maps_to_runner_regression
 case_gate_assurance_policy_maps_gate_consumers
 case_gate_assurance_contract_maps_runtime_verifiers
 case_pr_gate_protocol_contract_maps_profile_and_verifiers
+case_gate_synthesis_schema_maps_protocol_verifiers
 case_high_fanout_escalates_full
 case_repeated_high_fanout_escalation_succeeds
 case_unknown_path_fails_without_test_evidence

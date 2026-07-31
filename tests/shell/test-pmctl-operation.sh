@@ -73,6 +73,97 @@ case_reconcile_uses_trusted_terminal_claims() {
   fi
 }
 
+case_reconcile_defers_while_producer_is_running() {
+  local name="operation reconcile: running producer blocks premature child convergence"
+  should_run "$name" || return 0
+  local work="$tmp_root/producer-active-work" store="$tmp_root/producer-active-state"
+  local op run_id producer out rc=0 state
+  make_repo "$work"; run_id="run-20260724T000002Z-fedcba"
+  setsid sleep 30 & producer=$!
+  op="$(PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_create "$REPO_ROOT" "$work" gate codex)"
+  PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_expect_producer "$REPO_ROOT" gate "$op" "$work"
+  PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_register_producer "$REPO_ROOT" gate "$op" "$work" "$producer"
+  PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_attach_child "$REPO_ROOT" "$work" "$op" "$run_id" "$work"
+  PM_DISPATCH_STATE_ROOT="$store" _pmctl_dispatch_try_terminal_claim "$work" "$run_id" ok supervisor
+  out="$(PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_reconcile "$REPO_ROOT" gate "$op" --cd "$work" 2>&1)" || rc=$?
+  state="$(PM_DISPATCH_STATE_ROOT="$store" bash -c '. "$1/runtime/lib/state-writer.sh"; cd "$2"; _sw_project_dir' _ "$REPO_ROOT" "$work")"
+  kill -TERM -- "-$producer" 2>/dev/null || true; wait "$producer" 2>/dev/null || true
+  if [[ "$rc" -ne 0 && "$out" == *"producer-active"* \
+    && "$(jq -r .state "${state%/}/operations/$op.json")" == running ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc out=$out state=$(jq -r .state "${state%/}/operations/$op.json" 2>/dev/null || true)"
+  fi
+}
+
+# Behavior: reconciliation must convert a dead registered producer into a
+# diagnosable terminal state once its trusted child claim is complete.
+# Steps:
+#   1. Register a producer and attach a successful child terminal claim.
+#   2. Kill the producer before reconciliation runs.
+#   3. Assert reconciliation completes and records producer.status=stopped.
+case_reconcile_recovers_dead_registered_producer() {
+  local name="operation reconcile: dead registered producer becomes diagnosable terminal"
+  should_run "$name" || return 0
+  local work="$tmp_root/dead-producer-work" store="$tmp_root/dead-producer-state"
+  local op run_id producer out rc=0 state record
+  make_repo "$work"; run_id="run-20260724T000003Z-deadbe"
+  setsid sleep 30 & producer=$!
+  op="$(PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_create "$REPO_ROOT" "$work" gate codex)"
+  PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_expect_producer "$REPO_ROOT" gate "$op" "$work"
+  PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_register_producer "$REPO_ROOT" gate "$op" "$work" "$producer"
+  PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_attach_child "$REPO_ROOT" "$work" "$op" "$run_id" "$work"
+  PM_DISPATCH_STATE_ROOT="$store" _pmctl_dispatch_try_terminal_claim "$work" "$run_id" ok supervisor
+  kill -KILL -- "$producer" 2>/dev/null || true
+  wait "$producer" 2>/dev/null || true
+  out="$(PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_reconcile "$REPO_ROOT" gate "$op" --cd "$work" 2>&1)" || rc=$?
+  state="$(PM_DISPATCH_STATE_ROOT="$store" bash -c '. "$1/runtime/lib/state-writer.sh"; cd "$2"; _sw_project_dir' _ "$REPO_ROOT" "$work")"
+  record="${state%/}/operations/$op.json"
+  if [[ "$rc" -eq 0 && "$out" == *"state: completed"* \
+      && "$(jq -r .state "$record")" == completed \
+      && "$(jq -r .producer.status "$record")" == stopped ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc out=$out record=$(jq -c . "$record" 2>/dev/null || true)"
+  fi
+}
+
+# Behavior: producer identity conversion failure must fail closed as
+# indeterminate rather than leaving the parent operation running forever.
+# Steps:
+#   1. Register a producer and attach a successful child terminal claim.
+#   2. Force identity conversion to fail during reconciliation.
+#   3. Assert reconciliation returns nonzero and persists state=indeterminate.
+case_reconcile_rejects_malformed_producer_identity() {
+  local name="operation reconcile: producer identity conversion failure becomes indeterminate"
+  should_run "$name" || return 0
+  local work="$tmp_root/malformed-producer-work" store="$tmp_root/malformed-producer-state"
+  local op run_id producer out rc=0 state record
+  make_repo "$work"; run_id="run-20260724T000004Z-badc0d"
+  setsid sleep 30 & producer=$!
+  op="$(PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_create "$REPO_ROOT" "$work" gate codex)"
+  PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_expect_producer "$REPO_ROOT" gate "$op" "$work"
+  PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_register_producer "$REPO_ROOT" gate "$op" "$work" "$producer"
+  PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_attach_child "$REPO_ROOT" "$work" "$op" "$run_id" "$work"
+  PM_DISPATCH_STATE_ROOT="$store" _pmctl_dispatch_try_terminal_claim "$work" "$run_id" ok supervisor
+  state="$(PM_DISPATCH_STATE_ROOT="$store" bash -c '. "$1/runtime/lib/state-writer.sh"; cd "$2"; _sw_project_dir' _ "$REPO_ROOT" "$work")"
+  record="${state%/}/operations/$op.json"
+  kill -KILL -- "$producer" 2>/dev/null || true
+  wait "$producer" 2>/dev/null || true
+  out="$(PM_DISPATCH_STATE_ROOT="$store" bash -c '
+    set -euo pipefail
+    . "$1/runtime/lib/pmctl-operation.sh"
+    _pmctl_operation_identity_file_from_json() { return 1; }
+    PM_DISPATCH_STATE_ROOT="$3" pmctl_operation_reconcile "$1" gate "$2" --cd "$4"
+  ' _ "$REPO_ROOT" "$op" "$store" "$work" 2>&1)" || rc=$?
+  if [[ "$rc" -ne 0 && "$out" == *"state: indeterminate"* \
+      && "$(jq -r .state "$record")" == indeterminate ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc out=$out record=$(jq -c . "$record" 2>/dev/null || true)"
+  fi
+}
+
 case_create_collision_never_overwrites_record() {
   local name="operation create: ID collision never overwrites an existing parent record"
   should_run "$name" || return 0
@@ -366,6 +457,9 @@ case_relative_cd_resolves_to_the_same_operation() {
 
 case_writer_loader_repairs_partial_inherited_functions
 case_reconcile_uses_trusted_terminal_claims
+case_reconcile_defers_while_producer_is_running
+case_reconcile_recovers_dead_registered_producer
+case_reconcile_rejects_malformed_producer_identity
 case_create_collision_never_overwrites_record
 case_unknown_operation_is_diagnosed_not_silent
 case_reconcile_usage_on_malformed_invocation

@@ -1,0 +1,357 @@
+{
+  "title": "Gate synthesis result",
+  "description": "Deterministic synthesis parity contract for selected-reviewer findings, declared coverage, and the initial remediation closure seed.",
+  "type": "object",
+  "required": [
+    "kind",
+    "schema_version",
+    "scope_manifest_sha256",
+    "selected_reviewers",
+    "not_reviewed_dimensions",
+    "coverage_matrix",
+    "reviewer_finding_inventory",
+    "findings_union",
+    "root_cause_groups",
+    "disagreements",
+    "uncertainties",
+    "cautions",
+    "remediation_seed"
+  ],
+  "properties": {
+    "kind": { "const": "gate_synthesis_result_v1" },
+    "schema_version": { "const": 1 },
+    "scope_manifest_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "selected_reviewers": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/definitions/reviewer" }
+    },
+    "not_reviewed_dimensions": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/definitions/reviewer" }
+    },
+    "coverage_matrix": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/coverageCell" }
+    },
+    "reviewer_finding_inventory": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/findingInventoryEntry" }
+    },
+    "findings_union": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/findingUnionEntry" }
+    },
+    "root_cause_groups": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/rootCauseGroup" }
+    },
+    "disagreements": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/disagreement" }
+    },
+    "uncertainties": { "$ref": "#/definitions/uncertainties" },
+    "cautions": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/definitions/findingId" }
+    },
+    "remediation_seed": { "$ref": "#/definitions/remediationSeed" }
+  },
+  "definitions": {
+    "reviewer": {
+      "enum": [
+        "critic",
+        "qa-tester",
+        "architecture-reviewer",
+        "security-reviewer",
+        "risk-reviewer"
+      ]
+    },
+    "surface": {
+      "enum": [
+        "changed_files",
+        "paired_tests",
+        "sensitive_signals",
+        "public_interface",
+        "schema",
+        "config",
+        "install",
+        "ci",
+        "release",
+        "migration",
+        "bounded_expansion"
+      ]
+    },
+    "findingId": {
+      "type": "string",
+      "pattern": "^(critic|qa-tester|architecture-reviewer|security-reviewer|risk-reviewer)-F[0-9]{3,}$"
+    },
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)",
+      "not": {
+        "pattern": "(^|/)\\.\\.(/|$)"
+      }
+    },
+    "evidenceRef": {
+      "type": "object",
+      "required": ["path"],
+      "properties": {
+        "path": { "$ref": "#/definitions/relativePath" },
+        "line": { "type": ["integer", "null"], "minimum": 1 },
+        "symbol": { "type": ["string", "null"], "minLength": 1 }
+      },
+      "anyOf": [
+        {
+          "required": ["line"],
+          "properties": {
+            "line": { "type": "integer", "minimum": 1 }
+          }
+        },
+        {
+          "required": ["symbol"],
+          "properties": {
+            "symbol": { "type": "string", "minLength": 1 }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "sourceRef": {
+      "type": "object",
+      "required": ["path"],
+      "properties": {
+        "path": { "$ref": "#/definitions/relativePath" },
+        "line": { "type": ["integer", "null"], "minimum": 1 },
+        "symbol": { "type": ["string", "null"], "minLength": 1 }
+      },
+      "anyOf": [
+        {
+          "required": ["line"],
+          "properties": {
+            "line": { "type": "integer", "minimum": 1 }
+          }
+        },
+        {
+          "required": ["symbol"],
+          "properties": {
+            "symbol": { "type": "string", "minLength": 1 }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "coverageCell": {
+      "type": "object",
+      "required": [
+        "reviewer",
+        "surface",
+        "status",
+        "evidence_refs",
+        "reason"
+      ],
+      "properties": {
+        "reviewer": { "$ref": "#/definitions/reviewer" },
+        "surface": { "$ref": "#/definitions/surface" },
+        "status": {
+          "enum": ["examined", "not_applicable", "uncertain"]
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/evidenceRef" }
+        },
+        "reason": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "findingInventoryEntry": {
+      "type": "object",
+      "required": [
+        "id",
+        "reviewer",
+        "severity",
+        "hard_gate_class",
+        "origin",
+        "verification_expectation"
+      ],
+      "properties": {
+        "id": { "$ref": "#/definitions/findingId" },
+        "reviewer": { "$ref": "#/definitions/reviewer" },
+        "severity": { "enum": ["critical", "high", "medium", "low"] },
+        "hard_gate_class": {
+          "enum": ["none", "soft_block", "hard_block"]
+        },
+        "origin": {
+          "enum": ["diff_caused", "pre_existing", "uncertain", "caution"]
+        },
+        "verification_expectation": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "findingUnionEntry": {
+      "type": "object",
+      "required": [
+        "id",
+        "reviewer",
+        "severity",
+        "hard_gate_class",
+        "origin",
+        "source",
+        "affected_behavior",
+        "why_it_matters",
+        "failure_mode",
+        "minimum_fix_boundary",
+        "verification_expectation",
+        "root_cause_group_id",
+        "disposition"
+      ],
+      "properties": {
+        "id": { "$ref": "#/definitions/findingId" },
+        "reviewer": { "$ref": "#/definitions/reviewer" },
+        "severity": { "enum": ["critical", "high", "medium", "low"] },
+        "hard_gate_class": {
+          "enum": ["none", "soft_block", "hard_block"]
+        },
+        "origin": {
+          "enum": ["diff_caused", "pre_existing", "uncertain", "caution"]
+        },
+        "source": { "$ref": "#/definitions/sourceRef" },
+        "affected_behavior": { "type": "string", "minLength": 1 },
+        "why_it_matters": { "type": "string", "minLength": 1 },
+        "failure_mode": { "type": "string", "minLength": 1 },
+        "minimum_fix_boundary": { "type": "string", "minLength": 1 },
+        "verification_expectation": {
+          "type": "string",
+          "minLength": 1
+        },
+        "root_cause_group_id": {
+          "type": "string",
+          "pattern": "^RCG-[0-9]{3,}$"
+        },
+        "disposition": { "const": "pending" }
+      },
+      "additionalProperties": false
+    },
+    "rootCauseGroup": {
+      "type": "object",
+      "required": ["id", "summary", "finding_ids"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^RCG-[0-9]{3,}$"
+        },
+        "summary": { "type": "string", "minLength": 1 },
+        "finding_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/definitions/findingId" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "disagreement": {
+      "type": "object",
+      "required": ["id", "summary", "finding_ids"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^D-[0-9]{3,}$"
+        },
+        "summary": { "type": "string", "minLength": 1 },
+        "finding_ids": {
+          "type": "array",
+          "minItems": 2,
+          "uniqueItems": true,
+          "items": { "$ref": "#/definitions/findingId" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "uncertainCoverageCell": {
+      "type": "object",
+      "required": ["reviewer", "surface", "reason"],
+      "properties": {
+        "reviewer": { "$ref": "#/definitions/reviewer" },
+        "surface": { "$ref": "#/definitions/surface" },
+        "reason": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "uncertainties": {
+      "type": "object",
+      "required": ["finding_ids", "coverage_cells"],
+      "properties": {
+        "finding_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/definitions/findingId" }
+        },
+        "coverage_cells": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/uncertainCoverageCell" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "remediationSeedEntry": {
+      "type": "object",
+      "required": [
+        "finding_id",
+        "reviewer",
+        "root_cause_group_id",
+        "disposition",
+        "verification_expectation"
+      ],
+      "properties": {
+        "finding_id": { "$ref": "#/definitions/findingId" },
+        "reviewer": { "$ref": "#/definitions/reviewer" },
+        "root_cause_group_id": {
+          "type": "string",
+          "pattern": "^RCG-[0-9]{3,}$"
+        },
+        "disposition": { "const": "pending" },
+        "verification_expectation": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "remediationSeed": {
+      "type": "object",
+      "required": [
+        "kind",
+        "schema_version",
+        "state",
+        "scope_manifest_sha256",
+        "entries"
+      ],
+      "properties": {
+        "kind": { "const": "remediation_closure_v1" },
+        "schema_version": { "const": 1 },
+        "state": { "const": "seed" },
+        "scope_manifest_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "entries": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/remediationSeedEntry" }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

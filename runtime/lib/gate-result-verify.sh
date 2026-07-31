@@ -10,6 +10,10 @@
 # gate_assurance_v2 adds result bindings and protected dispatch attestation.
 # gate_assurance_v3 adds an immutable subject plus digest-bound evidence links.
 
+# pr_gate_result_v4 additionally requires one synthesis parity document whose
+# inventory and remediation seed are mechanically reconciled with the original
+# reviewer protocol documents.
+#
 # gate_result_verdict_verify <result_file> [expected_final] [route_label]
 gate_result_verdict_verify() {
   local result_file=${1-} expected_final=${2-} route_label=${3-gate}
@@ -388,6 +392,320 @@ gate_reviewer_protocol_verify() {
     if [[ "$seen" != *" $expected "* ]]; then
       printf 'Error: reviewer protocol INCOMPLETE: missing selected reviewer %s in %s\n' \
         "$expected" "$artifact" >&2
+      rm -rf -- "$tmp_dir"
+      return 1
+    fi
+  done
+  rm -rf -- "$tmp_dir"
+}
+
+_gate_synthesis_protocol_documents() {
+  local artifact="$1"
+  awk '
+    $0 == "```synthesis_result_v1" {
+      if (inside) exit 2
+      inside=1
+      next
+    }
+    inside && $0 == "```" {
+      inside=0
+      print ""
+      next
+    }
+    inside { print }
+    END { if (inside) exit 2 }
+  ' "$artifact"
+}
+
+# gate_synthesis_protocol_verify <artifact> <selected-reviewers>
+#                                <skipped-reviewers> <scope-sha256>
+#
+# Validates the synthesis-owned JSON shape and then derives the authoritative
+# finding inventory, coverage matrix, uncertainties, cautions, and remediation
+# entries from the original reviewer_result_v1 documents. Root-cause grouping
+# and disagreement prose remain synthesis judgments, but every referenced ID
+# must belong to that immutable inventory and every finding must be grouped
+# exactly once.
+gate_synthesis_protocol_verify() {
+  local artifact=${1-} selected=${2-} skipped=${3-} scope_sha=${4-}
+  local tmp_dir synthesis_documents reviewer_documents synthesis_count validation
+  local heading heading_count
+  [[ $# -eq 4 && -s "$artifact" && -n "$selected" \
+      && "$scope_sha" =~ ^[a-f0-9]{64}$ ]] || {
+    printf 'Error: synthesis protocol INCOMPLETE: invalid verifier inputs\n' >&2
+    return 2
+  }
+  tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/gate-synthesis-protocol.XXXXXX")" \
+    || return 2
+  synthesis_documents="$tmp_dir/synthesis.jsonl"
+  reviewer_documents="$tmp_dir/reviewers.jsonl"
+  if ! _gate_synthesis_protocol_documents "$artifact" \
+      > "$synthesis_documents"; then
+    printf 'Error: synthesis protocol INCOMPLETE: malformed synthesis_result_v1 fence in %s\n' \
+      "$artifact" >&2
+    rm -rf -- "$tmp_dir"
+    return 1
+  fi
+  synthesis_count="$(jq -s 'length' "$synthesis_documents" 2>/dev/null)" || {
+    printf 'Error: synthesis protocol INCOMPLETE: invalid synthesis JSON in %s\n' \
+      "$artifact" >&2
+    rm -rf -- "$tmp_dir"
+    return 1
+  }
+  if [[ "$synthesis_count" -ne 1 ]]; then
+    printf 'Error: synthesis protocol INCOMPLETE: expected one synthesis_result_v1 block, found %d in %s\n' \
+      "$synthesis_count" "$artifact" >&2
+    rm -rf -- "$tmp_dir"
+    return 1
+  fi
+  if ! _gate_reviewer_protocol_documents "$artifact" \
+      > "$reviewer_documents" \
+      || ! jq -s -e 'length > 0' "$reviewer_documents" >/dev/null 2>&1; then
+    printf 'Error: synthesis protocol INCOMPLETE: reviewer documents unavailable in %s\n' \
+      "$artifact" >&2
+    rm -rf -- "$tmp_dir"
+    return 1
+  fi
+
+  validation="$(
+    jq -nr \
+      --arg selected "$selected" --arg skipped "$skipped" \
+      --arg scope_sha "$scope_sha" \
+      --slurpfile synthesis "$synthesis_documents" \
+      --slurpfile reviewers "$reviewer_documents" '
+      def only_keys($allowed):
+        type == "object" and ((keys_unsorted - $allowed) | length) == 0;
+      def nonempty: type == "string" and length > 0;
+      def reviewer:
+        IN("critic","qa-tester","architecture-reviewer",
+          "security-reviewer","risk-reviewer");
+      def surface:
+        IN("changed_files","paired_tests","sensitive_signals",
+          "public_interface","schema","config","install","ci","release",
+          "migration","bounded_expansion");
+      def finding_id:
+        type == "string" and
+        test("^(critic|qa-tester|architecture-reviewer|security-reviewer|risk-reviewer)-F[0-9]{3,}$");
+      def reference:
+        only_keys(["path","line","symbol"]) and
+        (.path | nonempty) and
+        ((.line | type == "number" and . >= 1 and floor == .) or
+         (.symbol | nonempty));
+      def coverage_cell:
+        only_keys(["reviewer","surface","status","evidence_refs","reason"]) and
+        (.reviewer | reviewer) and (.surface | surface) and
+        (.status | IN("examined","not_applicable","uncertain")) and
+        (.evidence_refs | type == "array" and all(.[]; reference)) and
+        (.reason | nonempty);
+      def finding_inventory:
+        only_keys(["id","reviewer","severity","hard_gate_class","origin",
+          "verification_expectation"]) and
+        (.id | finding_id) and (.reviewer | reviewer) and
+        (.severity | IN("critical","high","medium","low")) and
+        (.hard_gate_class | IN("none","soft_block","hard_block")) and
+        (.origin | IN("diff_caused","pre_existing","uncertain","caution")) and
+        (.verification_expectation | nonempty);
+      def finding_union:
+        only_keys(["id","reviewer","severity","hard_gate_class","origin",
+          "source","affected_behavior","why_it_matters","failure_mode",
+          "minimum_fix_boundary","verification_expectation",
+          "root_cause_group_id","disposition"]) and
+        (.id | finding_id) and (.reviewer | reviewer) and
+        (.severity | IN("critical","high","medium","low")) and
+        (.hard_gate_class | IN("none","soft_block","hard_block")) and
+        (.origin | IN("diff_caused","pre_existing","uncertain","caution")) and
+        (.source | reference) and
+        (.affected_behavior | nonempty) and (.why_it_matters | nonempty) and
+        (.failure_mode | nonempty) and (.minimum_fix_boundary | nonempty) and
+        (.verification_expectation | nonempty) and
+        (.root_cause_group_id |
+          type == "string" and test("^RCG-[0-9]{3,}$")) and
+        .disposition == "pending";
+      def root_group:
+        only_keys(["id","summary","finding_ids"]) and
+        (.id | type == "string" and test("^RCG-[0-9]{3,}$")) and
+        (.summary | nonempty) and
+        (.finding_ids | type == "array" and length > 0 and
+          length == (unique | length) and all(.[]; finding_id));
+      def disagreement:
+        only_keys(["id","summary","finding_ids"]) and
+        (.id | type == "string" and test("^D-[0-9]{3,}$")) and
+        (.summary | nonempty) and
+        (.finding_ids | type == "array" and length >= 2 and
+          length == (unique | length) and all(.[]; finding_id));
+      def uncertain_cell:
+        only_keys(["reviewer","surface","reason"]) and
+        (.reviewer | reviewer) and (.surface | surface) and
+        (.reason | nonempty);
+      def seed_entry:
+        only_keys(["finding_id","reviewer","root_cause_group_id",
+          "disposition","verification_expectation"]) and
+        (.finding_id | finding_id) and (.reviewer | reviewer) and
+        (.root_cause_group_id |
+          type == "string" and test("^RCG-[0-9]{3,}$")) and
+        .disposition == "pending" and
+        (.verification_expectation | nonempty);
+      ($selected | split(" ") | map(select(length > 0))) as $selected_reviewers |
+      ($skipped | split(" ") | map(select(length > 0))) as $skipped_reviewers |
+      $synthesis[0] as $s |
+      ([$reviewers[] as $review |
+        $review.coverage[] |
+        {
+          reviewer:$review.reviewer,
+          surface:.surface,
+          status:.status,
+          evidence_refs:.evidence_refs,
+          reason:.reason
+        }
+      ] | sort_by(.reviewer,.surface)) as $expected_coverage |
+      ([$reviewers[] | .findings[]] | sort_by(.id)) as $expected_findings |
+      ($expected_findings | map({
+        id,reviewer,severity,hard_gate_class,origin,verification_expectation
+      })) as $expected_inventory |
+      ($expected_findings | map({
+        id,reviewer,severity,hard_gate_class,origin,source,affected_behavior,
+        why_it_matters,failure_mode,minimum_fix_boundary,
+        verification_expectation
+      })) as $expected_union |
+      ($expected_findings |
+        map(select(.origin == "uncertain") | .id) | sort) as $expected_uncertain_ids |
+      ([$reviewers[] as $review |
+        $review.coverage[] |
+        select(.status == "uncertain") |
+        {reviewer:$review.reviewer,surface:.surface,reason:.reason}
+      ] | sort_by(.reviewer,.surface)) as $expected_uncertain_coverage |
+      ($expected_findings |
+        map(select(.origin == "caution") | .id) | sort) as $expected_cautions |
+      ($expected_findings | map(.id) | sort) as $expected_ids |
+      if
+        ($s | only_keys([
+          "kind","schema_version","scope_manifest_sha256",
+          "selected_reviewers","not_reviewed_dimensions","coverage_matrix",
+          "reviewer_finding_inventory","findings_union","root_cause_groups",
+          "disagreements","uncertainties","cautions","remediation_seed"
+        ]) | not) or
+        $s.kind != "gate_synthesis_result_v1" or
+        $s.schema_version != 1 or
+        ($s.scope_manifest_sha256 |
+          type != "string" or test("^[a-f0-9]{64}$") | not) or
+        ($s.selected_reviewers | type) != "array" or
+        ($s.not_reviewed_dimensions | type) != "array" or
+        ($s.coverage_matrix | type) != "array" or
+        ($s.reviewer_finding_inventory | type) != "array" or
+        ($s.findings_union | type) != "array" or
+        ($s.root_cause_groups | type) != "array" or
+        ($s.disagreements | type) != "array" or
+        ($s.cautions | type) != "array" or
+        ($s.remediation_seed | type) != "object"
+      then "invalid top-level contract"
+      elif
+        $s.scope_manifest_sha256 != $scope_sha or
+        $s.selected_reviewers != $selected_reviewers or
+        $s.not_reviewed_dimensions != $skipped_reviewers
+      then "selected/not-reviewed dimensions mismatch"
+      elif
+        (all($s.coverage_matrix[]; coverage_cell) | not)
+      then "invalid coverage matrix"
+      elif
+        ($s.coverage_matrix | sort_by(.reviewer,.surface)) != $expected_coverage
+      then "coverage matrix parity mismatch"
+      elif
+        (all($s.reviewer_finding_inventory[]; finding_inventory) | not) or
+        (all($s.findings_union[]; finding_union) | not)
+      then "invalid finding inventory or union"
+      elif
+        (($s.reviewer_finding_inventory | map(.id)) |
+          length != (unique | length)) or
+        (($s.findings_union | map(.id)) |
+          length != (unique | length))
+      then "duplicate finding ID collision"
+      elif
+        ($s.reviewer_finding_inventory | sort_by(.id)) != $expected_inventory
+      then "reviewer finding inventory parity mismatch"
+      elif
+        ($s.findings_union |
+          map(del(.root_cause_group_id,.disposition)) | sort_by(.id)) !=
+          $expected_union
+      then "findings union parity mismatch"
+      elif
+        (all($s.root_cause_groups[]; root_group) | not) or
+        (($s.root_cause_groups | map(.id)) |
+          length != (unique | length)) or
+        ([$s.root_cause_groups[].finding_ids[]] | sort) != $expected_ids or
+        (([$s.root_cause_groups[].finding_ids[]] | length) !=
+          ([$s.root_cause_groups[].finding_ids[]] | unique | length)) or
+        ([$s.findings_union[] as $finding |
+          any($s.root_cause_groups[];
+            .id == $finding.root_cause_group_id and
+            ((.finding_ids | index($finding.id)) != null))
+        ] | all | not)
+      then "root-cause grouping parity mismatch"
+      elif
+        (all($s.disagreements[]; disagreement) | not) or
+        (($s.disagreements | map(.id)) |
+          length != (unique | length)) or
+        ([$s.disagreements[].finding_ids[] as $finding_id |
+          ($expected_ids | index($finding_id)) != null
+        ] | all | not)
+      then "invalid disagreement references"
+      elif
+        ($s.uncertainties | type) != "object" or
+        ($s.uncertainties |
+          only_keys(["finding_ids","coverage_cells"]) | not) or
+        ($s.uncertainties.finding_ids | type) != "array" or
+        ($s.uncertainties.coverage_cells | type) != "array" or
+        (all($s.uncertainties.finding_ids[]; finding_id) | not) or
+        (all($s.uncertainties.coverage_cells[]; uncertain_cell) | not) or
+        ($s.uncertainties.finding_ids | sort) != $expected_uncertain_ids or
+        ($s.uncertainties.coverage_cells |
+          sort_by(.reviewer,.surface)) != $expected_uncertain_coverage
+      then "malformed uncertainties contract or parity mismatch"
+      elif
+        (all($s.cautions[]; finding_id) | not) or
+        ($s.cautions | sort) != $expected_cautions
+      then "caution parity mismatch"
+      elif
+        ($s.remediation_seed |
+          only_keys(["kind","schema_version","state",
+            "scope_manifest_sha256","entries"]) | not) or
+        $s.remediation_seed.kind != "remediation_closure_v1" or
+        $s.remediation_seed.schema_version != 1 or
+        $s.remediation_seed.state != "seed" or
+        $s.remediation_seed.scope_manifest_sha256 != $scope_sha or
+        ($s.remediation_seed.entries | type) != "array" or
+        (all($s.remediation_seed.entries[]; seed_entry) | not)
+      then "malformed remediation seed"
+      elif
+        ($s.remediation_seed.entries | sort_by(.finding_id)) !=
+          ($s.findings_union | map({
+            finding_id:.id,
+            reviewer,
+            root_cause_group_id,
+            disposition,
+            verification_expectation
+          }) | sort_by(.finding_id))
+      then "remediation seed parity mismatch"
+      else "ok"
+      end
+    '
+  )" || validation="invalid synthesis JSON document"
+  if [[ "$validation" != ok ]]; then
+    printf 'Error: synthesis protocol INCOMPLETE: %s in %s\n' \
+      "$validation" "$artifact" >&2
+    rm -rf -- "$tmp_dir"
+    return 1
+  fi
+
+  for heading in \
+    '## Must-Fix Order' \
+    '## Advisory and Cautions' \
+    '## Coverage Gaps and Uncertainties' \
+    '## Recommended Verification'
+  do
+    heading_count="$(grep -Fxc -- "$heading" "$artifact" || true)"
+    if [[ "$heading_count" -ne 1 ]]; then
+      printf 'Error: synthesis protocol INCOMPLETE: required human section %s appears %d time(s) in %s\n' \
+        "$heading" "$heading_count" "$artifact" >&2
       rm -rf -- "$tmp_dir"
       return 1
     fi
@@ -1547,7 +1865,7 @@ gate_assurance_authorization_verify() {
 gate_result_verify() {
   local result_file=${1-} expected_final=${2-} route_label=${3-gate}
   local version pointer result_parent assurance_file body_final
-  local selected_reviewers scope_sha scope_artifact scope_manifest
+  local selected_reviewers skipped_reviewers scope_sha scope_artifact scope_manifest
   local assurance_kind protocol_final
   [[ $# -ge 1 && $# -le 3 ]] || {
     printf 'gate-result-verify: gate_result_verify expects <result_file> [expected_final] [route_label]\n' >&2
@@ -1562,7 +1880,7 @@ gate_result_verify() {
       export GATE_RESULT_ASSURANCE
       return 0
       ;;
-    pr_gate_result_v2 | pr_gate_result_v3)
+    pr_gate_result_v2 | pr_gate_result_v3 | pr_gate_result_v4)
       pointer="$(_gate_result_frontmatter_value "$result_file" gate_assurance)"
       if [[ -z "$pointer" || "$pointer" == */* || "$pointer" == "." || "$pointer" == ".." \
           || ! "$pointer" =~ ^[A-Za-z0-9._-]+\.json$ ]]; then
@@ -1574,10 +1892,14 @@ gate_result_verify() {
       assurance_file="$result_parent/$pointer"
       body_final=$(grep -E '^Final: (GO|NO-GO)$' "$result_file" | awk '{print $2}')
       gate_assurance_verify "$result_file" "$assurance_file" "$body_final" || return $?
-      if [[ "$version" == pr_gate_result_v3 ]]; then
+      if [[ "$version" == pr_gate_result_v3 \
+          || "$version" == pr_gate_result_v4 ]]; then
         assurance_kind="$(jq -r '.kind // empty' "$assurance_file" 2>/dev/null)"
         selected_reviewers="$(jq -r \
           '.coordinates.coverage.selected // [] | join(" ")' \
+          "$assurance_file" 2>/dev/null)"
+        skipped_reviewers="$(jq -r \
+          '.coordinates.coverage.skipped // [] | join(" ")' \
           "$assurance_file" 2>/dev/null)"
         scope_sha="$(jq -r \
           '.evidence.scope_manifest.sha256 // empty' \
@@ -1589,8 +1911,8 @@ gate_result_verify() {
         if [[ "$assurance_kind" != gate_assurance_v3 \
             || -z "$selected_reviewers" \
             || ! "$scope_sha" =~ ^[a-f0-9]{64}$ ]]; then
-          printf 'Error: pr_gate_result_v3 requires verified selected-reviewer scope evidence: %s\n' \
-            "$assurance_file" >&2
+          printf 'Error: %s requires verified selected-reviewer scope evidence: %s\n' \
+            "$version" "$assurance_file" >&2
           return 1
         fi
         if jq -e '.reference_index != null' "$scope_manifest" >/dev/null 2>&1; then
@@ -1608,6 +1930,11 @@ gate_result_verify() {
           printf 'Error: reviewer protocol verdict (%s) contradicts gate Final: (%s): %s\n' \
             "$protocol_final" "$body_final" "$result_file" >&2
           return 1
+        fi
+        if [[ "$version" == pr_gate_result_v4 ]]; then
+          gate_synthesis_protocol_verify \
+            "$result_file" "$selected_reviewers" "$skipped_reviewers" \
+            "$scope_sha" || return $?
         fi
       fi
       if [[ "${GATE_ASSURANCE_BOUND:-false}" == true ]]; then
