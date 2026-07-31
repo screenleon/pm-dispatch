@@ -285,7 +285,7 @@ if should_run "pm-prebash-search-command-substitution-denied"; then
   probe_command="rm"
   probe_flags="-rf"
   probe_target="/tmp/pm-dispatch-probe"
-  substitution='$('
+  substitution="\$("
   substitution+="${probe_command} ${probe_flags} ${probe_target}"
   substitution+=')'
   search_command="rg \"${substitution}\" runtime"
