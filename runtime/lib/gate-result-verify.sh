@@ -190,9 +190,30 @@ _gate_reviewer_protocol_document_verify() {
     def finding_contract:
       .findings | type == "array" and all(.[]; finding) and
         ([.[].id] | length) == ([.[].id] | unique | length);
+    def findings_array:
+      if (.findings | type) == "array" then .findings else [] end;
+    def blocking_severity_violation:
+      [findings_array[] |
+        select(
+          (.hard_gate_class | IN("soft_block","hard_block")) and
+          ((.severity | IN("critical","high")) | not)
+        )
+      ] | first;
+    def blocking_origin_violation:
+      [findings_array[] |
+        select(
+          (.hard_gate_class | IN("soft_block","hard_block")) and
+          ((.origin | IN("diff_caused","uncertain")) | not)
+        )
+      ] | first;
+    def display:
+      if . == null
+      then "<missing>"
+      else (tostring | tojson | .[1:-1])
+      end;
     def verdict_contract:
       (.verdict | IN("approve","advise","block-soft","block")) and
-      (.rationale | nonempty) and
+        (.rationale | nonempty) and
       (if .verdict == "block-soft"
        then any(.findings[]; .hard_gate_class == "soft_block")
        elif .verdict == "block"
@@ -211,6 +232,18 @@ _gate_reviewer_protocol_document_verify() {
     then "invalid top-level or binding contract"
     elif (coverage_contract | not)
     then "invalid coverage contract"
+    elif (blocking_severity_violation != null)
+    then (blocking_severity_violation as $invalid |
+      "invalid finding contract: " + ($invalid.id | display) +
+      " hard_gate_class=" + ($invalid.hard_gate_class | display) +
+      " requires severity=critical|high (got " +
+      ($invalid.severity | display) + ")")
+    elif (blocking_origin_violation != null)
+    then (blocking_origin_violation as $invalid |
+      "invalid finding contract: " + ($invalid.id | display) +
+      " hard_gate_class=" + ($invalid.hard_gate_class | display) +
+      " requires origin=diff_caused|uncertain (got " +
+      ($invalid.origin | display) + ")")
     elif (finding_contract | not)
     then "invalid finding contract"
     elif $references != null and (evidence_reference_contract | not)
