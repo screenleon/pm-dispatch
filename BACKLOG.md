@@ -59,6 +59,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-537 | 🟢 someday | suite metadata 與 changed-path impact mapping 資料化；full suite 維持 authoritative | ops/test | 2026-07-30 | feedback:2026-07-30 | P2 | hygiene |
 | CC-538 | 🟢 someday | Host resolver／doctor 共用 primitives，Host policy 繼續由各 Host 擁有 | arch/ops | 2026-07-30 | feedback:2026-07-30 | P2 | reuse-debt |
 | CC-539 | 🟢 someday | state `layout.yaml` build-time authority + generated runtime constants | arch/schema | 2026-07-30 | feedback:2026-07-30 | P2 | design |
+| CC-540 | 🟢 someday | `pmctl state prune`：刪除前先抽取+驗證 gate/dispatch run 摘要，避免歷史分析資料隨磁碟空間一起消失 | ops/gate | 2026-07-31 | — | P2 | hygiene |
 | CC-465 | 🔵 active | memory/context 關鍵詞管線 CJK 支援：抽出共用零依賴斷詞 lib，取代三處各自 ASCII-only 抽詞；工作序列起點（465→467→468→466）（2026-07-07 記憶系統深入分析） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-466 | ⏸ deferred | 記憶卡片生命週期閉環：expires_at 執行 + 關窗式 supersede + usage sidecar 休眠偵測 + doctor→distill 接線；僅在 CC-467 證明 stale/dormant card 已形成實際問題時啟動 | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-467 | 🔵 active | `pmctl memory stats`：注入效益可視化（唯讀聚合器）——注入 bytes/卡片命中分佈/從未命中卡/episode 填寫率，回答「記憶有跟沒有差在哪」；排在 CC-466 之前（2026-07-07；業界僅離線 recall 評測，無 per-injection 遙測） | DX/memory | 2026-07-07 | — | P2 | retrieval |
@@ -2927,6 +2928,61 @@ constants，再由parity tests反向比對。文件宣稱與實際runtime author
    在開發/build階段。
 4. 保留`state-writer.sh` single-writer、atomic writes、rotation recovery與schema
    validation；layout generation不得重寫writer boundary或migration semantics。
+
+---
+
+## CC-540 — `pmctl state prune`：刪除前摘要抽取＋驗證，避免歷史分析資料隨磁碟空間消失 🟢 someday
+
+**Problem**: `~/.local/share/pm-dispatch/state/projects/<hash>/runs/` 每次
+`gate run`／dispatch 都留下一個完整目錄（`.gate-results`、`.agent-trace`、
+supervisor log 等），目前沒有任何 retention 機制。實測 pm-dispatch 專案本身
+自 2026-06-24 起已累積 615 個 run 目錄、258M；另一個 repo 專案累積到 289M。
+`pmctl` 完全沒有 prune／gc／retention 相關子指令。對這批歷史紀錄做一次性
+分析（gate verdict 分布、reviewer block 原因分群、執行耗時）證明其中有真實
+可複用的訊號（例如 qa-tester 的 high finding 集中在「新行為只驗到鄰近路徑、
+未直接斷言新行為本身」），若日後只靠單純刪除瘦身，這類訊號會隨磁碟清理
+一起消失，且無法回溯重建。
+
+**Why**: 這些 run 目錄同時是「必須清理的體積負擔」與「唯一能重建歷史模式
+分析的原始資料」，兩者互斥。刪除必須是不可逆動作裡少數需要事前防呆的
+案例：若摘要抽取邏輯本身有 bug（漏欄位、誤判 verdict），刪除後就沒有辦法
+重新摘要。且已知原始資料本身可能不完整（[[CC-509]] 修復前的 detached
+launch 早期死亡會留下 0-byte 空殼 gate 結果），摘要邏輯必須把這種情況如實
+標記，不能誤判為抽取失敗或悄悄略過。
+
+**Requirement**:
+
+1. 新增 `pmctl state prune`（或等效子指令），對 `state/projects/<hash>/runs/`
+   下超過 age 門檻的 run 目錄執行「先摘要、驗證、後刪除」流程，順序不可
+   反轉。
+2. 摘要內容至少涵蓋：run id／時間戳、耗時（以目錄內檔案實際 mtime 極差計算，
+   不得信任檔名內嵌時間戳——檔名時間與檔案 mtime 之間曾實測有系統性偏移）、
+   gate YAML front-matter 的 `final`／`tier`／`most_severe`／各 reviewer
+   verdict，以及每個 reviewer 的 finding 數量按 severity 分桶（不需保留
+   finding 全文）。
+3. 摘要寫入 project state 根目錄下永久保留的 `runs-summary.jsonl`（不受
+   prune 影響），append 後必須讀回並 parse，確認必要欄位非 null 才視為
+   驗證通過；驗證失敗時該筆的原始 run 目錄不得刪除，並記錄到
+   `prune-skipped.log`，不得靜默略過。
+4. 原始資料本身不完整（例如空白 `.gate-results/gate-*.md`）必須摘要為
+   明確狀態（如 `status: incomplete_source`），不得因缺少 `final` 欄位而
+   判定為摘要邏輯失敗。
+5. 提供 `--dry-run`：只列出即將摘要＋刪除的 run 清單與抽取出的摘要內容，
+   不寫入 summary 檔也不刪除，供人工抽查。
+6. 摘要寫入與物理刪除之間保留寬限期（預設可設定天數）；寬限期內即使摘要
+   已寫入，原始 run 目錄仍保留，供發現摘要邏輯 bug 時回溯重跑。
+7. 測試需覆蓋摘要抽取的邊界情況，各自獨立 fixture＋斷言：reviewer
+   `skipped`、`block-soft` severity、`tier` 欄位缺失、完全空白的
+   `.gate-results`、單一 reviewer 多筆 finding、耗時計算的檔名時間戳誤導
+   案例。
+
+**Done-when**: `pmctl state prune` 可安全瘦身 `runs/` 目錄且不遺失可分析
+的摘要訊號；摘要驗證失敗或原始資料不完整時行為明確、可觀察，不悄悄砍掉
+無法復原的資料。
+
+**Source**: 2026-07-31 主線程對 615 筆 gate 執行紀錄的一次性分析（NO-GO 率
+57%、qa-tester 為最大 blocker），發現 runs/ 目錄無 retention 且分析價值
+未被保留；使用者要求 prune 時一併產出摘要。
 
 ---
 
