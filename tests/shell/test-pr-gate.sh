@@ -8696,6 +8696,10 @@ test_parallel_reviewer_protocol_preserves_session_topology() {
     "reference_index.entries[]" || return
   assert_file_contains "$name" "$reviewer_brief" \
     "out-of-scope repository paths make the protocol INCOMPLETE" || return
+  assert_file_contains "$name" "$reviewer_brief" \
+    "soft_block/hard_block findings require severity=critical|high" || return
+  assert_file_contains "$name" "$reviewer_brief" \
+    "medium/low and pre_existing/caution findings" || return
   pass "$name"
 }
 
@@ -8879,6 +8883,115 @@ test_reviewer_protocol_abbreviated_finding_id_is_incomplete() {
   pass "$name"
 }
 
+# Behavior: a blocking finding with medium severity is rejected with the exact
+# field-level contract diagnostic that the reviewer brief now documents.
+# Steps: emit the observed architecture-reviewer combination, run the parallel
+# gate, then assert the finding ID, blocking class, and required severity.
+test_reviewer_protocol_blocking_medium_severity_is_diagnosed() {
+  local name="reviewer-protocol/blocking-medium-severity-diagnostic"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home="$TMP_ROOT/$name/home"
+  local repo="$TMP_ROOT/$name/repo" runner="$TMP_ROOT/$name/runner"
+  local out="$TMP_ROOT/$name/out" err="$TMP_ROOT/$name/err" code
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer
+  create_repo "$repo" docs
+  set +e
+  CODEX_GATE_STUB_VERDICT=block-soft \
+    CODEX_GATE_STUB_PROTOCOL_MUTATION=blocking-medium-severity \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester,architecture-reviewer --mode parallel
+  code=$?
+  set -e
+  [[ "$code" -ne 0 ]] || {
+    fail "$name" "medium-severity blocker unexpectedly passed"
+    return
+  }
+  if ! grep -Fq -- \
+      "architecture-reviewer-F001 hard_gate_class=soft_block requires severity=critical|high (got medium)" \
+      "$err"; then
+    fail "$name" "precise blocking-severity diagnostic missing: $(cat "$err" 2>/dev/null)"
+    return
+  fi
+  assert_not_contains "$name" "$out" "[synthesis]" || return
+  pass "$name"
+}
+
+# Behavior: a blocking finding with a pre-existing origin is rejected before
+# synthesis with a precise origin-contract diagnostic.
+# Steps: mutate the architecture-reviewer origin, run the parallel gate, then
+# assert the offending value, permitted origins, and absence of synthesis.
+test_reviewer_protocol_blocking_pre_existing_origin_is_diagnosed() {
+  local name="reviewer-protocol/blocking-pre-existing-origin-diagnostic"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home="$TMP_ROOT/$name/home"
+  local repo="$TMP_ROOT/$name/repo" runner="$TMP_ROOT/$name/runner"
+  local out="$TMP_ROOT/$name/out" err="$TMP_ROOT/$name/err" code
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer
+  create_repo "$repo" docs
+  set +e
+  CODEX_GATE_STUB_VERDICT=block-soft \
+    CODEX_GATE_STUB_PROTOCOL_MUTATION=blocking-pre-existing-origin \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester,architecture-reviewer --mode parallel
+  code=$?
+  set -e
+  [[ "$code" -ne 0 ]] || {
+    fail "$name" "pre-existing-origin blocker unexpectedly passed"
+    return
+  }
+  if ! grep -Fq -- \
+      "architecture-reviewer-F001 hard_gate_class=soft_block requires origin=diff_caused|uncertain (got pre_existing)" \
+      "$err"; then
+    fail "$name" "precise blocking-origin diagnostic missing: $(cat "$err" 2>/dev/null)"
+    return
+  fi
+  assert_not_contains "$name" "$out" "[synthesis]" || return
+  pass "$name"
+}
+
+# Behavior: reviewer-controlled control characters are JSON-escaped before a
+# field-level protocol diagnostic reaches the terminal.
+# Steps: inject ESC into a rejected finding ID, run the parallel gate, then
+# assert literal JSON escaping, no raw ESC byte, and no synthesis.
+test_reviewer_protocol_diagnostic_terminal_escapes_control_characters() {
+  local name="reviewer-protocol/diagnostic-terminal-control-escape"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home="$TMP_ROOT/$name/home"
+  local repo="$TMP_ROOT/$name/repo" runner="$TMP_ROOT/$name/runner"
+  local out="$TMP_ROOT/$name/out" err="$TMP_ROOT/$name/err" code
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer
+  create_repo "$repo" docs
+  set +e
+  CODEX_GATE_STUB_VERDICT=block-soft \
+    CODEX_GATE_STUB_PROTOCOL_MUTATION=blocking-terminal-escape \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester,architecture-reviewer --mode parallel
+  code=$?
+  set -e
+  [[ "$code" -ne 0 ]] || {
+    fail "$name" "control-character finding unexpectedly passed"
+    return
+  }
+  if ! grep -Fq -- \
+      'architecture-reviewer-F001\u001b[31m hard_gate_class=soft_block requires severity=critical|high (got medium)' \
+      "$err"; then
+    fail "$name" "JSON-escaped diagnostic missing: $(cat "$err" 2>/dev/null)"
+    return
+  fi
+  if grep -q $'\033' "$err"; then
+    fail "$name" "raw terminal ESC byte leaked into diagnostic"
+    return
+  fi
+  assert_not_contains "$name" "$out" "[synthesis]" || return
+  pass "$name"
+}
+
 # Behavior: a parallel reviewer cannot cite a syntactically valid repository
 # path that is absent from the scope manifest reference index.
 # Steps: mutate one coverage reference to an out-of-scope path, run the
@@ -9039,6 +9152,9 @@ run_test test_reviewer_protocol_evidence_less_blocker_is_incomplete
 run_test test_reviewer_protocol_legacy_pass_reports_verdict_contract
 run_test test_reviewer_protocol_extra_role_field_reports_top_level_contract
 run_test test_reviewer_protocol_abbreviated_finding_id_is_incomplete
+run_test test_reviewer_protocol_blocking_medium_severity_is_diagnosed
+run_test test_reviewer_protocol_blocking_pre_existing_origin_is_diagnosed
+run_test test_reviewer_protocol_diagnostic_terminal_escapes_control_characters
 run_test test_parallel_reviewer_protocol_out_of_scope_reference_is_incomplete
 run_test test_sequential_reviewer_protocol_out_of_range_line_is_incomplete
 run_test test_reviewer_protocol_duplicate_heading_uses_json_verdict

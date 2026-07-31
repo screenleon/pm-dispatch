@@ -109,6 +109,16 @@ pr_gate_fixture_write_reviewer_protocol() {
         minimum_fix_boundary:"Use the complete reviewer role as the prefix.",
         verification_expectation:"Validate the corrected finding ID."
       }]
+      elif $mutation == "blocking-medium-severity" and
+        $reviewer == "architecture-reviewer"
+      then .findings[0].severity = "medium"
+      elif $mutation == "blocking-pre-existing-origin" and
+        $reviewer == "architecture-reviewer"
+      then .findings[0].origin = "pre_existing"
+      elif $mutation == "blocking-terminal-escape" and
+        $reviewer == "architecture-reviewer"
+      then .findings[0].id = "architecture-reviewer-F001\u001b[31m"
+        | .findings[0].severity = "medium"
       else .
       end
   ' | {
