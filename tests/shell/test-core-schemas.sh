@@ -300,6 +300,11 @@ case_enum_sync "$CORE_DIR/schema/gate-reviewer-result.schema.json" \
   "$CORE_DIR/policy/reviewer-policy.yaml" \
   "reviewers"
 
+case_enum_sync "$CORE_DIR/schema/gate-synthesis-result.schema.json" \
+  '.definitions.reviewer.enum' \
+  "$CORE_DIR/policy/reviewer-policy.yaml" \
+  "reviewers"
+
 # verdicts are reviewer-policy.yaml's verdicts list
 case_enum_sync "$CORE_DIR/schema/review.schema.json" \
   '.properties.findings.items.properties.verdict.enum' \
@@ -1570,6 +1575,134 @@ case_gate_reviewer_result_abbreviated_reviewer_id_rejected() {
   rm -f "$tmpf"
 }
 
+_gate_synthesis_result_valid_instance() {
+  jq -n '
+    {
+      kind:"gate_synthesis_result_v1",
+      schema_version:1,
+      scope_manifest_sha256:("a" * 64),
+      selected_reviewers:["critic"],
+      not_reviewed_dimensions:[
+        "qa-tester",
+        "architecture-reviewer",
+        "security-reviewer",
+        "risk-reviewer"
+      ],
+      coverage_matrix:[{
+        reviewer:"critic",
+        surface:"changed_files",
+        status:"examined",
+        evidence_refs:[{path:"src/example.sh",line:1,symbol:null}],
+        reason:"The fixture examined the changed file."
+      }],
+      reviewer_finding_inventory:[{
+        id:"critic-F001",
+        reviewer:"critic",
+        severity:"low",
+        hard_gate_class:"none",
+        origin:"caution",
+        verification_expectation:"Run the focused fixture check."
+      }],
+      findings_union:[{
+        id:"critic-F001",
+        reviewer:"critic",
+        severity:"low",
+        hard_gate_class:"none",
+        origin:"caution",
+        source:{path:"src/example.sh",line:1,symbol:null},
+        affected_behavior:"The fixture behavior remains advisory.",
+        why_it_matters:"Lower-severity evidence must survive synthesis.",
+        failure_mode:"Synthesis silently discards the caution.",
+        minimum_fix_boundary:"Preserve the original stable finding.",
+        verification_expectation:"Run the focused fixture check.",
+        root_cause_group_id:"RCG-001",
+        disposition:"pending"
+      }],
+      root_cause_groups:[{
+        id:"RCG-001",
+        summary:"One advisory fixture root cause.",
+        finding_ids:["critic-F001"]
+      }],
+      disagreements:[],
+      uncertainties:{finding_ids:[],coverage_cells:[]},
+      cautions:["critic-F001"],
+      remediation_seed:{
+        kind:"remediation_closure_v1",
+        schema_version:1,
+        state:"seed",
+        scope_manifest_sha256:("a" * 64),
+        entries:[{
+          finding_id:"critic-F001",
+          reviewer:"critic",
+          root_cause_group_id:"RCG-001",
+          disposition:"pending",
+          verification_expectation:"Run the focused fixture check."
+        }]
+      }
+    }
+  '
+}
+
+# Behavior: a complete synthesis parity document must satisfy its JSON schema.
+# Steps:
+#   1. Generate the canonical synthesis fixture.
+#   2. Validate it against gate-synthesis-result.schema.json.
+#   3. Assert schema validation succeeds.
+case_gate_synthesis_result_valid_instance() {
+  local name="gate-synthesis-result: canonical parity seed validates"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/gate-synthesis-result.schema.json" tmpf
+  tmpf="$(mktemp /tmp/gate-synthesis-result-valid-XXXXXX.json)"
+  _gate_synthesis_result_valid_instance > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name" "schema rejected a canonical synthesis result"
+  fi
+  rm -f "$tmpf"
+}
+
+# Behavior: a remediation seed without verification expectation must fail
+# schema validation.
+# Steps:
+#   1. Remove verification_expectation from the canonical fixture.
+#   2. Validate the mutated document against the synthesis schema.
+#   3. Assert schema validation rejects the mutation.
+case_gate_synthesis_result_missing_verification_rejected() {
+  local name="gate-synthesis-result: missing verification expectation is rejected"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/gate-synthesis-result.schema.json" tmpf
+  tmpf="$(mktemp /tmp/gate-synthesis-result-no-verification-XXXXXX.json)"
+  _gate_synthesis_result_valid_instance |
+    jq 'del(.remediation_seed.entries[0].verification_expectation)' > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    fail "$name" "schema accepted a seed without verification expectation"
+  else
+    pass "$name"
+  fi
+  rm -f "$tmpf"
+}
+
+# Behavior: a remediation seed cannot claim closure before verification.
+# Steps:
+#   1. Change the canonical seed state to closed.
+#   2. Validate the mutated document against the synthesis schema.
+#   3. Assert schema validation rejects the premature closure.
+case_gate_synthesis_result_closed_seed_rejected() {
+  local name="gate-synthesis-result: seed cannot claim closure"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/gate-synthesis-result.schema.json" tmpf
+  tmpf="$(mktemp /tmp/gate-synthesis-result-closed-seed-XXXXXX.json)"
+  _gate_synthesis_result_valid_instance |
+    jq '.remediation_seed.state = "closed"' > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    fail "$name" "schema accepted a remediation seed claiming closure"
+  else
+    pass "$name"
+  fi
+  rm -f "$tmpf"
+}
+
 _gate_policy_override_valid_instance() {
   jq -n '{
     kind:"gate_policy_override_v1",
@@ -1679,6 +1812,9 @@ case_gate_reviewer_result_preexisting_blocker_rejected
 case_gate_reviewer_result_omitted_unused_symbol_valid
 case_gate_reviewer_result_missing_line_and_symbol_rejected
 case_gate_reviewer_result_abbreviated_reviewer_id_rejected
+case_gate_synthesis_result_valid_instance
+case_gate_synthesis_result_missing_verification_rejected
+case_gate_synthesis_result_closed_seed_rejected
 case_gate_policy_override_valid_instance
 case_gate_policy_override_non_user_approver_rejected
 case_gate_policy_override_extra_key_rejected

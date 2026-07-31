@@ -494,6 +494,40 @@ case_wait_resolves_failed() {
   fi
 }
 
+# Behavior: an ordinary supervisor exit after readiness must publish a failed
+# terminal sentinel that gate waiters can consume.
+# Steps:
+#   1. Force the fixture supervisor to exit immediately after _write_ready.
+#   2. Launch the detached gate and wait for its terminal evidence.
+#   3. Assert wait reports state=failed with exit 2, not indeterminate.
+case_wait_reports_post_readiness_supervisor_failure() {
+  local name="gate-lifecycle/gate wait reports post-readiness supervisor failure"
+  should_run "$name" || return 0
+
+  local fixture="$tmp_root/c4b/fixture" work="$tmp_root/c4b/work"
+  mkdir -p "$work"
+  _mk_fixture_repo "$fixture"
+  _mk_fake_gate "$fixture" 0
+  # Force an ordinary exit immediately after readiness. The EXIT trap must
+  # publish the failed terminal sentinel so wait returns failed (exit 2), not
+  # indeterminate (exit 3).
+  sed -i 's/_write_ready || _die "failed to publish supervisor readiness evidence"/_write_ready || _die "failed to publish supervisor readiness evidence"\nexit 2/' \
+    "$fixture/runtime/bin/gate-supervisor.sh"
+
+  local run_wrapper="$tmp_root/c4b/run" wait_wrapper="$tmp_root/c4b/wait"
+  _run_gate_wrapper "$fixture" "$run_wrapper"
+  _wait_wrapper "$fixture" "$wait_wrapper"
+
+  local gate_id out code
+  gate_id="$($run_wrapper --cd "$work" --lifecycle detached)"
+  set +e; out="$($wait_wrapper "$gate_id" --cd "$work" --timeout "$_WAIT_OK" 2>&1)"; code=$?; set -e
+  if [[ "$code" -eq 2 ]] && [[ "$out" == *"state: failed"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
 # ---- 5: gate wait on nonexistent/consumed gate_id returns 3 (indeterminate) --
 case_wait_indeterminate_on_consumed_sentinel() {
   local name="gate-lifecycle/gate wait returns 3 for consumed/unknown gate_id"
@@ -841,6 +875,7 @@ case_wait_resolves_go
 case_wait_reloads_verifier_over_incomplete_export
 case_wait_resolves_nogo
 case_wait_resolves_failed
+case_wait_reports_post_readiness_supervisor_failure
 case_wait_indeterminate_on_consumed_sentinel
 case_wait_indeterminate_when_no_readiness_evidence
 case_wait_indeterminate_when_ready_supervisor_died

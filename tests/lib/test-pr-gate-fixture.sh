@@ -43,6 +43,23 @@ pr_gate_fixture_write_reviewer_protocol() {
         verification_expectation:"Run the focused regression for the changed behavior."
       }]')"
   fi
+  if [[ "$mutation" == advisory-finding ]]; then
+    findings_json="$(jq -nc \
+      --arg id "${reviewer}-F001" --arg reviewer "$reviewer" \
+      --arg evidence_path "$evidence_path" '[{
+        id:$id,
+        reviewer:$reviewer,
+        severity:"low",
+        hard_gate_class:"none",
+        origin:"caution",
+        source:{path:$evidence_path,line:1,symbol:null},
+        affected_behavior:"The fixture preserves a lower-severity behavior note.",
+        why_it_matters:"Synthesis must not discard advisory findings.",
+        failure_mode:"The advisory disappears from remediation evidence.",
+        minimum_fix_boundary:"Retain the original finding without increasing scope.",
+        verification_expectation:"Run the focused advisory verification."
+      }]')"
+  fi
   if [[ "$mutation" == invalid-id ]]; then
     findings_json="$(jq -nc --arg reviewer "$reviewer" \
       --arg evidence_path "$evidence_path" '[{
@@ -128,6 +145,112 @@ pr_gate_fixture_write_reviewer_protocol() {
   } >> "$output_path"
 }
 
+pr_gate_fixture_write_synthesis_protocol() {
+  local brief_file="$1" output_path="$2"
+  local document_source reviewer_documents synthesis_document
+  reviewer_documents="$(mktemp "${TMPDIR:-/tmp}/gate-fixture-reviewers.XXXXXX")"
+  synthesis_document="$(mktemp "${TMPDIR:-/tmp}/gate-fixture-synthesis.XXXXXX")"
+  document_source="$output_path"
+  if ! grep -q '^```reviewer_result_v1$' "$document_source"; then
+    document_source="$brief_file"
+  fi
+  awk '
+    $0 == "```reviewer_result_v1" { inside=1; next }
+    inside && $0 == "```" { inside=0; print ""; next }
+    inside { print }
+  ' "$document_source" > "$reviewer_documents"
+  jq -s '
+    def rcg($number):
+      "RCG-" +
+      (if $number < 10 then "00"
+       elif $number < 100 then "0"
+       else ""
+       end) + ($number | tostring);
+    . as $reviewers |
+    [$reviewers[].reviewer] as $selected |
+    (["critic","qa-tester","architecture-reviewer",
+      "security-reviewer","risk-reviewer"] - $selected) as $skipped |
+    ([$reviewers[] as $reviewer |
+      $reviewer.coverage[] |
+      {
+        reviewer:$reviewer.reviewer,
+        surface,
+        status,
+        evidence_refs,
+        reason
+      }
+    ]) as $coverage |
+    ([$reviewers[].findings[]] | sort_by(.id)) as $findings |
+    ($findings | to_entries | map(
+      .value + {
+        root_cause_group_id:rcg(.key + 1),
+        disposition:"pending"
+      }
+    )) as $union |
+    {
+      kind:"gate_synthesis_result_v1",
+      schema_version:1,
+      scope_manifest_sha256:$reviewers[0].scope_manifest_sha256,
+      selected_reviewers:$selected,
+      not_reviewed_dimensions:$skipped,
+      coverage_matrix:$coverage,
+      reviewer_finding_inventory:($findings | map({
+        id,
+        reviewer,
+        severity,
+        hard_gate_class,
+        origin,
+        verification_expectation
+      })),
+      findings_union:$union,
+      root_cause_groups:($union | to_entries | map({
+        id:.value.root_cause_group_id,
+        summary:("Fixture root cause for " + .value.id),
+        finding_ids:[.value.id]
+      })),
+      disagreements:[],
+      uncertainties:{
+        finding_ids:($findings |
+          map(select(.origin == "uncertain") | .id)),
+        coverage_cells:([$reviewers[] as $reviewer |
+          $reviewer.coverage[] |
+          select(.status == "uncertain") |
+          {
+            reviewer:$reviewer.reviewer,
+            surface,
+            reason
+          }
+        ])
+      },
+      cautions:($findings |
+        map(select(.origin == "caution") | .id)),
+      remediation_seed:{
+        kind:"remediation_closure_v1",
+        schema_version:1,
+        state:"seed",
+        scope_manifest_sha256:$reviewers[0].scope_manifest_sha256,
+        entries:($union | map({
+          finding_id:.id,
+          reviewer,
+          root_cause_group_id,
+          disposition,
+          verification_expectation
+        }))
+      }
+    }
+  ' "$reviewer_documents" > "$synthesis_document"
+  {
+    printf '\n```synthesis_result_v1\n'
+    cat "$synthesis_document"
+    printf '```\n\n'
+    printf '## Must-Fix Order\nnone\n\n'
+    printf '## Advisory and Cautions\nnone\n\n'
+    printf '## Coverage Gaps and Uncertainties\nnone\n\n'
+    printf '## Recommended Verification\nnone\n'
+  } >> "$output_path"
+  rm -f -- "$reviewer_documents" "$synthesis_document"
+}
+
 pr_gate_fixture_profile_dispatch() {
   local executor="$1"
   shift
@@ -169,6 +292,7 @@ pr_gate_fixture_profile_dispatch() {
 
   if [[ "$brief_file" == *-synthesis.md ]]; then
     printf -- '---\ngate_result_version: pr_gate_result_v1\nfinal: GO\ntier: standard\nmode: parallel\nmost_severe: advise\nreviewers:\n  critic: advise\nescalation:\n  recommended: false\n  reviewers: []\n  reason: []\n---\n\n# PR-Gate Result — stub tier\n**Date**: 2026-05-17\n**Reviewers**: stub\n**Not reviewed**: none\n\n## cross-check\nnone\n\n## Gate Conclusion\n**Overall verdict**: advise\n**Most severe individual verdict**: advise\nFinal: GO\n' > "$output_path"
+    pr_gate_fixture_write_synthesis_protocol "$brief_file" "$output_path"
     return 0
   fi
 
@@ -189,5 +313,6 @@ pr_gate_fixture_profile_dispatch() {
     pr_gate_fixture_write_reviewer_protocol \
       "$brief_file" "$output_path" "$selected_reviewer" advise
   done
+  pr_gate_fixture_write_synthesis_protocol "$brief_file" "$output_path"
   printf 'Final: GO\n' >> "$output_path"
 }

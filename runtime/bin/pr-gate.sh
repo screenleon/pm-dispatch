@@ -819,20 +819,97 @@ _gate_scope_paired_tests_collect() {
   return "$rc"
 }
 
+_gate_scope_symbols_collect() {
+  local source="$1"
+  case "$source" in
+    *.sh|*.bash)
+      _gate_scope_path_content "$source" 2>/dev/null |
+        sed -nE \
+          -e 's/^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*\(\)[[:space:]]*(\{|$).*/\1/p'
+      ;;
+    *.go)
+      _gate_scope_path_content "$source" 2>/dev/null |
+        sed -nE \
+          -e 's/^[[:space:]]*func[[:space:]]+\([^)]*\)[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*\(.*/\1/p' \
+          -e 's/^[[:space:]]*func[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*\(.*/\1/p'
+      ;;
+    *.js|*.jsx|*.ts|*.tsx)
+      _gate_scope_path_content "$source" 2>/dev/null |
+        sed -nE \
+          -e 's/^[[:space:]]*(export[[:space:]]+)?(async[[:space:]]+)?function[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*\(.*/\3/p' \
+          -e 's/^[[:space:]]*(export[[:space:]]+)?class[[:space:]]+([A-Za-z_][A-Za-z0-9_]*).*/\2/p' \
+          -e 's/^[[:space:]]*(export[[:space:]]+)?(const|let|var)[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=.*/\3/p'
+      ;;
+    *.py)
+      _gate_scope_path_content "$source" 2>/dev/null |
+        sed -nE \
+          -e 's/^[[:space:]]*(async[[:space:]]+)?def[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*\(.*/\2/p' \
+          -e 's/^[[:space:]]*class[[:space:]]+([A-Za-z_][A-Za-z0-9_]*).*/\1/p'
+      ;;
+    *.java)
+      _gate_scope_path_content "$source" 2>/dev/null |
+        sed -nE \
+          -e 's/^[[:space:]]*(public|protected|private)?[[:space:]]*(abstract[[:space:]]+|final[[:space:]]+)?class[[:space:]]+([A-Za-z_][A-Za-z0-9_]*).*/\3/p'
+      ;;
+    *.kt)
+      _gate_scope_path_content "$source" 2>/dev/null |
+        sed -nE \
+          -e 's/^[[:space:]]*(public|protected|private|internal)?[[:space:]]*(data[[:space:]]+|sealed[[:space:]]+)?class[[:space:]]+([A-Za-z_][A-Za-z0-9_]*).*/\3/p' \
+          -e 's/^[[:space:]]*(public|protected|private|internal)?[[:space:]]*(suspend[[:space:]]+)?fun[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*\(.*/\3/p'
+      ;;
+    *.rs)
+      _gate_scope_path_content "$source" 2>/dev/null |
+        sed -nE \
+          -e 's/^[[:space:]]*(pub([[:space:]]*\([^)]*\))?[[:space:]]+)?(async[[:space:]]+)?fn[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*\(.*/\4/p'
+      ;;
+  esac |
+    awk 'length($0) >= 3 && !seen[$0]++' |
+    LC_ALL=C sort
+}
+
+_gate_scope_symbol_path_compatible() {
+  local source="$1" candidate="$2"
+  case "$source" in
+    *.sh|*.bash) [[ "$candidate" == *.sh || "$candidate" == *.bash ]] ;;
+    *.go) [[ "$candidate" == *.go ]] ;;
+    *.js|*.jsx|*.ts|*.tsx)
+      [[ "$candidate" == *.js || "$candidate" == *.jsx \
+        || "$candidate" == *.ts || "$candidate" == *.tsx ]]
+      ;;
+    *.py) [[ "$candidate" == *.py ]] ;;
+    *.java|*.kt) [[ "$candidate" == *.java || "$candidate" == *.kt ]] ;;
+    *.rs) [[ "$candidate" == *.rs ]] ;;
+    *) return 1 ;;
+  esac
+}
+
 _gate_scope_search_paths() {
-  local query="$1" search_kind="$2" result
+  local query="$1" search_kind="$2" source="${3-}" result
   local -a options=(-l -z -F)
   [[ "$search_kind" == symbol ]] && options+=(-w)
   if [[ "$POLICY_DIFF_KIND" == fixed-head ]]; then
     while IFS= read -r -d '' result; do
-      printf '%s\0' "${result#*:}"
+      result="${result#*:}"
+      if [[ "$search_kind" != symbol ]] \
+          || _gate_scope_symbol_path_compatible "$source" "$result"; then
+        printf '%s\0' "$result"
+      fi
     done < <(git grep "${options[@]}" "$query" "$GATE_BINDING_HEAD_COMMIT" -- \
       2>/dev/null || true)
   else
-    git grep "${options[@]}" "$query" -- 2>/dev/null || true
+    while IFS= read -r -d '' result; do
+      if [[ "$search_kind" != symbol ]] \
+          || _gate_scope_symbol_path_compatible "$source" "$result"; then
+        printf '%s\0' "$result"
+      fi
+    done < <(git grep "${options[@]}" "$query" -- 2>/dev/null || true)
     if [[ "$POLICY_SCOPE_INCLUDE_UNTRACKED" == true ]]; then
       while IFS= read -r -d '' result; do
         [[ -f "$WORK_DIR/$result" && ! -L "$WORK_DIR/$result" ]] || continue
+        if [[ "$search_kind" == symbol ]] \
+            && ! _gate_scope_symbol_path_compatible "$source" "$result"; then
+          continue
+        fi
         if [[ "$search_kind" == symbol ]]; then
           grep -IqlwF -- "$query" "$WORK_DIR/$result" 2>/dev/null \
             && printf '%s\0' "$result"
@@ -866,12 +943,13 @@ _gate_scope_expansions_collect() {
   local changed_paths_json="$1" output="$2"
   local candidates sources source_count=0 source path base stem dir ext candidate
   local query match eligible_count symbol_count
+  local source_is_shared=false source_is_shell=false
   local symbol_limit="$GATE_SCOPE_MAX_SYMBOLS_PER_SOURCE"
   local match_limit="$GATE_SCOPE_MAX_MATCHES_PER_QUERY"
   local source_limit="$GATE_SCOPE_MAX_EXPANSION_SOURCES"
   local expansion_limit="$GATE_SCOPE_MAX_EXPANSION_ENTRIES"
   local omitted_sources=0 omitted_symbols=0 omitted_matches=0 omitted_entries=0
-  local -a symbols=()
+  local -a symbols=() shell_consumers=()
   local -A query_seen=()
   candidates="$(mktemp "${TMPDIR:-/tmp}/gate-scope-expansions.XXXXXX")" || return 2
   sources="$(mktemp "${TMPDIR:-/tmp}/gate-scope-sources.XXXXXX")" || {
@@ -899,6 +977,15 @@ _gate_scope_expansions_collect() {
     base="$(basename "$source")"
     stem="${base%.*}"
     dir="$(dirname "$source")"
+    source_is_shared=false
+    source_is_shell=false
+    shell_consumers=()
+    case "$source" in
+      */lib/*|lib/*|*/shared/*|shared/*) source_is_shared=true ;;
+    esac
+    case "$source" in
+      *.sh|*.bash) source_is_shell=true ;;
+    esac
 
     for ext in sh bash go py js jsx ts tsx java kt rs md; do
       candidate="$dir/$stem.$ext"
@@ -912,8 +999,7 @@ _gate_scope_expansions_collect() {
       fi
     done
 
-    if [[ "$source" == */lib/* || "$source" == lib/* \
-        || "$source" == */shared/* || "$source" == shared/* ]]; then
+    if [[ "$source_is_shared" == true || "$source_is_shell" == true ]]; then
       eligible_count=0
       query_seen=()
       while IFS= read -r -d '' match; do
@@ -922,30 +1008,24 @@ _gate_scope_expansions_collect() {
         query_seen["$match"]=1
         jq -e --arg path "$match" 'index($path) != null' \
           <<<"$changed_paths_json" >/dev/null && continue
-        eligible_count=$((eligible_count + 1))
-        if [[ "$eligible_count" -le "$match_limit" ]]; then
-          _gate_scope_expansion_append "$candidates" "$match" \
-            shared-helper-consumer "$source" path-reference per-source "$match_limit" \
-            || return 2
-        else
-          omitted_matches=$((omitted_matches + 1))
+        if [[ "$source_is_shell" == true ]] \
+            && _gate_scope_symbol_path_compatible "$source" "$match"; then
+          shell_consumers+=("$match")
+        fi
+        if [[ "$source_is_shared" == true ]]; then
+          eligible_count=$((eligible_count + 1))
+          if [[ "$eligible_count" -le "$match_limit" ]]; then
+            _gate_scope_expansion_append "$candidates" "$match" \
+              shared-helper-consumer "$source" path-reference per-source "$match_limit" \
+              || return 2
+          else
+            omitted_matches=$((omitted_matches + 1))
+          fi
         fi
       done < <(_gate_scope_search_paths "$source" path)
     fi
 
-    mapfile -t symbols < <(
-      _gate_scope_path_content "$source" 2>/dev/null |
-        sed -nE \
-          -e 's/^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*\(\)[[:space:]]*(\{|$).*/\1/p' \
-          -e 's/^[[:space:]]*func[[:space:]]+\([^)]*\)[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*\(.*/\1/p' \
-          -e 's/^[[:space:]]*func[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*\(.*/\1/p' \
-          -e 's/^[[:space:]]*(export[[:space:]]+)?(async[[:space:]]+)?function[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*\(.*/\3/p' \
-          -e 's/^[[:space:]]*(export[[:space:]]+)?class[[:space:]]+([A-Za-z_][A-Za-z0-9_]*).*/\2/p' \
-          -e 's/^[[:space:]]*(export[[:space:]]+)?(const|let|var)[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=.*/\3/p' \
-          -e 's/^[[:space:]]*(async[[:space:]]+)?def[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*\(.*/\2/p' |
-        awk 'length($0) >= 3 && !seen[$0]++' |
-        LC_ALL=C sort
-    )
+    mapfile -t symbols < <(_gate_scope_symbols_collect "$source")
     symbol_count="${#symbols[@]}"
     if [[ "$symbol_count" -gt "$symbol_limit" ]]; then
       omitted_symbols=$((omitted_symbols + symbol_count - symbol_limit))
@@ -954,21 +1034,36 @@ _gate_scope_expansions_collect() {
     for query in "${symbols[@]}"; do
       eligible_count=0
       query_seen=()
-      while IFS= read -r -d '' match; do
-        [[ "$match" != "$source" ]] || continue
-        [[ -z "${query_seen[$match]:-}" ]] || continue
-        query_seen["$match"]=1
-        jq -e --arg path "$match" 'index($path) != null' \
-          <<<"$changed_paths_json" >/dev/null && continue
-        eligible_count=$((eligible_count + 1))
-        if [[ "$eligible_count" -le "$match_limit" ]]; then
-          _gate_scope_expansion_append "$candidates" "$match" \
-            call-site-hint "$source#$query" symbol-reference per-symbol "$match_limit" \
-            || return 2
-        else
-          omitted_matches=$((omitted_matches + 1))
-        fi
-      done < <(_gate_scope_search_paths "$query" symbol)
+      if [[ "$source_is_shell" == true ]]; then
+        for match in "${shell_consumers[@]}"; do
+          _gate_scope_path_content "$match" 2>/dev/null |
+            grep -IwF -- "$query" >/dev/null || continue
+          eligible_count=$((eligible_count + 1))
+          if [[ "$eligible_count" -le "$match_limit" ]]; then
+            _gate_scope_expansion_append "$candidates" "$match" \
+              call-site-hint "$source#$query" symbol-reference per-symbol "$match_limit" \
+              || return 2
+          else
+            omitted_matches=$((omitted_matches + 1))
+          fi
+        done
+      else
+        while IFS= read -r -d '' match; do
+          [[ "$match" != "$source" ]] || continue
+          [[ -z "${query_seen[$match]:-}" ]] || continue
+          query_seen["$match"]=1
+          jq -e --arg path "$match" 'index($path) != null' \
+            <<<"$changed_paths_json" >/dev/null && continue
+          eligible_count=$((eligible_count + 1))
+          if [[ "$eligible_count" -le "$match_limit" ]]; then
+            _gate_scope_expansion_append "$candidates" "$match" \
+              call-site-hint "$source#$query" symbol-reference per-symbol "$match_limit" \
+              || return 2
+          else
+            omitted_matches=$((omitted_matches + 1))
+          fi
+        done < <(_gate_scope_search_paths "$query" symbol "$source")
+      fi
     done
   done < "$sources"
 
@@ -2420,6 +2515,311 @@ else
     rm -rf -- "$tmp_dir"
   }
 
+  _gate_synthesis_protocol_documents() {
+    local artifact="$1"
+    awk '
+      $0 == "```synthesis_result_v1" {
+        if (inside) exit 2
+        inside=1
+        next
+      }
+      inside && $0 == "```" {
+        inside=0
+        print ""
+        next
+      }
+      inside { print }
+      END { if (inside) exit 2 }
+    ' "$artifact"
+  }
+
+  gate_synthesis_protocol_verify() {
+    local artifact=${1-} selected=${2-} skipped=${3-} scope_sha=${4-}
+    local tmp_dir synthesis_documents reviewer_documents synthesis_count validation
+    local heading heading_count
+    [[ $# -eq 4 && -s "$artifact" && -n "$selected" \
+        && "$scope_sha" =~ ^[a-f0-9]{64}$ ]] || {
+      printf 'Error: synthesis protocol INCOMPLETE: invalid verifier inputs\n' >&2
+      return 2
+    }
+    tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/gate-synthesis-protocol.XXXXXX")" \
+      || return 2
+    synthesis_documents="$tmp_dir/synthesis.jsonl"
+    reviewer_documents="$tmp_dir/reviewers.jsonl"
+    if ! _gate_synthesis_protocol_documents "$artifact" \
+        > "$synthesis_documents"; then
+      printf 'Error: synthesis protocol INCOMPLETE: malformed synthesis_result_v1 fence in %s\n' \
+        "$artifact" >&2
+      rm -rf -- "$tmp_dir"
+      return 1
+    fi
+    synthesis_count="$(jq -s 'length' "$synthesis_documents" 2>/dev/null)" || {
+      printf 'Error: synthesis protocol INCOMPLETE: invalid synthesis JSON in %s\n' \
+        "$artifact" >&2
+      rm -rf -- "$tmp_dir"
+      return 1
+    }
+    if [[ "$synthesis_count" -ne 1 ]]; then
+      printf 'Error: synthesis protocol INCOMPLETE: expected one synthesis_result_v1 block, found %d in %s\n' \
+        "$synthesis_count" "$artifact" >&2
+      rm -rf -- "$tmp_dir"
+      return 1
+    fi
+    if ! _gate_reviewer_protocol_documents "$artifact" \
+        > "$reviewer_documents" \
+        || ! jq -s -e 'length > 0' "$reviewer_documents" >/dev/null 2>&1; then
+      printf 'Error: synthesis protocol INCOMPLETE: reviewer documents unavailable in %s\n' \
+        "$artifact" >&2
+      rm -rf -- "$tmp_dir"
+      return 1
+    fi
+
+    validation="$(
+      jq -nr \
+        --arg selected "$selected" --arg skipped "$skipped" \
+        --arg scope_sha "$scope_sha" \
+        --slurpfile synthesis "$synthesis_documents" \
+        --slurpfile reviewers "$reviewer_documents" '
+        def only_keys($allowed):
+          type == "object" and ((keys_unsorted - $allowed) | length) == 0;
+        def nonempty: type == "string" and length > 0;
+        def reviewer:
+          IN("critic","qa-tester","architecture-reviewer",
+            "security-reviewer","risk-reviewer");
+        def surface:
+          IN("changed_files","paired_tests","sensitive_signals",
+            "public_interface","schema","config","install","ci","release",
+            "migration","bounded_expansion");
+        def finding_id:
+          type == "string" and
+          test("^(critic|qa-tester|architecture-reviewer|security-reviewer|risk-reviewer)-F[0-9]{3,}$");
+        def reference:
+          only_keys(["path","line","symbol"]) and
+          (.path | nonempty) and
+          ((.line | type == "number" and . >= 1 and floor == .) or
+           (.symbol | nonempty));
+        def coverage_cell:
+          only_keys(["reviewer","surface","status","evidence_refs","reason"]) and
+          (.reviewer | reviewer) and (.surface | surface) and
+          (.status | IN("examined","not_applicable","uncertain")) and
+          (.evidence_refs | type == "array" and all(.[]; reference)) and
+          (.reason | nonempty);
+        def finding_inventory:
+          only_keys(["id","reviewer","severity","hard_gate_class","origin",
+            "verification_expectation"]) and
+          (.id | finding_id) and (.reviewer | reviewer) and
+          (.severity | IN("critical","high","medium","low")) and
+          (.hard_gate_class | IN("none","soft_block","hard_block")) and
+          (.origin | IN("diff_caused","pre_existing","uncertain","caution")) and
+          (.verification_expectation | nonempty);
+        def finding_union:
+          only_keys(["id","reviewer","severity","hard_gate_class","origin",
+            "source","affected_behavior","why_it_matters","failure_mode",
+            "minimum_fix_boundary","verification_expectation",
+            "root_cause_group_id","disposition"]) and
+          (.id | finding_id) and (.reviewer | reviewer) and
+          (.severity | IN("critical","high","medium","low")) and
+          (.hard_gate_class | IN("none","soft_block","hard_block")) and
+          (.origin | IN("diff_caused","pre_existing","uncertain","caution")) and
+          (.source | reference) and
+          (.affected_behavior | nonempty) and (.why_it_matters | nonempty) and
+          (.failure_mode | nonempty) and (.minimum_fix_boundary | nonempty) and
+          (.verification_expectation | nonempty) and
+          (.root_cause_group_id |
+            type == "string" and test("^RCG-[0-9]{3,}$")) and
+          .disposition == "pending";
+        def root_group:
+          only_keys(["id","summary","finding_ids"]) and
+          (.id | type == "string" and test("^RCG-[0-9]{3,}$")) and
+          (.summary | nonempty) and
+          (.finding_ids | type == "array" and length > 0 and
+            length == (unique | length) and all(.[]; finding_id));
+        def disagreement:
+          only_keys(["id","summary","finding_ids"]) and
+          (.id | type == "string" and test("^D-[0-9]{3,}$")) and
+          (.summary | nonempty) and
+          (.finding_ids | type == "array" and length >= 2 and
+            length == (unique | length) and all(.[]; finding_id));
+        def uncertain_cell:
+          only_keys(["reviewer","surface","reason"]) and
+          (.reviewer | reviewer) and (.surface | surface) and
+          (.reason | nonempty);
+        def seed_entry:
+          only_keys(["finding_id","reviewer","root_cause_group_id",
+            "disposition","verification_expectation"]) and
+          (.finding_id | finding_id) and (.reviewer | reviewer) and
+          (.root_cause_group_id |
+            type == "string" and test("^RCG-[0-9]{3,}$")) and
+          .disposition == "pending" and
+          (.verification_expectation | nonempty);
+        ($selected | split(" ") | map(select(length > 0))) as $selected_reviewers |
+        ($skipped | split(" ") | map(select(length > 0))) as $skipped_reviewers |
+        $synthesis[0] as $s |
+        ([$reviewers[] as $review |
+          $review.coverage[] |
+          {
+            reviewer:$review.reviewer,
+            surface:.surface,
+            status:.status,
+            evidence_refs:.evidence_refs,
+            reason:.reason
+          }
+        ] | sort_by(.reviewer,.surface)) as $expected_coverage |
+        ([$reviewers[] | .findings[]] | sort_by(.id)) as $expected_findings |
+        ($expected_findings | map({
+          id,reviewer,severity,hard_gate_class,origin,verification_expectation
+        })) as $expected_inventory |
+        ($expected_findings | map({
+          id,reviewer,severity,hard_gate_class,origin,source,affected_behavior,
+          why_it_matters,failure_mode,minimum_fix_boundary,
+          verification_expectation
+        })) as $expected_union |
+        ($expected_findings |
+          map(select(.origin == "uncertain") | .id) | sort) as $expected_uncertain_ids |
+        ([$reviewers[] as $review |
+          $review.coverage[] |
+          select(.status == "uncertain") |
+          {reviewer:$review.reviewer,surface:.surface,reason:.reason}
+        ] | sort_by(.reviewer,.surface)) as $expected_uncertain_coverage |
+        ($expected_findings |
+          map(select(.origin == "caution") | .id) | sort) as $expected_cautions |
+        ($expected_findings | map(.id) | sort) as $expected_ids |
+        if
+          ($s | only_keys([
+            "kind","schema_version","scope_manifest_sha256",
+            "selected_reviewers","not_reviewed_dimensions","coverage_matrix",
+            "reviewer_finding_inventory","findings_union","root_cause_groups",
+            "disagreements","uncertainties","cautions","remediation_seed"
+          ]) | not) or
+          $s.kind != "gate_synthesis_result_v1" or
+          $s.schema_version != 1 or
+          ($s.scope_manifest_sha256 |
+            type != "string" or test("^[a-f0-9]{64}$") | not) or
+          ($s.selected_reviewers | type) != "array" or
+          ($s.not_reviewed_dimensions | type) != "array" or
+          ($s.coverage_matrix | type) != "array" or
+          ($s.reviewer_finding_inventory | type) != "array" or
+          ($s.findings_union | type) != "array" or
+          ($s.root_cause_groups | type) != "array" or
+          ($s.disagreements | type) != "array" or
+          ($s.cautions | type) != "array" or
+          ($s.remediation_seed | type) != "object"
+        then "invalid top-level contract"
+        elif
+          $s.scope_manifest_sha256 != $scope_sha or
+          $s.selected_reviewers != $selected_reviewers or
+          $s.not_reviewed_dimensions != $skipped_reviewers
+        then "selected/not-reviewed dimensions mismatch"
+        elif
+          (all($s.coverage_matrix[]; coverage_cell) | not)
+        then "invalid coverage matrix"
+        elif
+          ($s.coverage_matrix | sort_by(.reviewer,.surface)) != $expected_coverage
+        then "coverage matrix parity mismatch"
+        elif
+          (all($s.reviewer_finding_inventory[]; finding_inventory) | not) or
+          (all($s.findings_union[]; finding_union) | not)
+        then "invalid finding inventory or union"
+        elif
+          (($s.reviewer_finding_inventory | map(.id)) |
+            length != (unique | length)) or
+          (($s.findings_union | map(.id)) |
+            length != (unique | length))
+        then "duplicate finding ID collision"
+        elif
+          ($s.reviewer_finding_inventory | sort_by(.id)) != $expected_inventory
+        then "reviewer finding inventory parity mismatch"
+        elif
+          ($s.findings_union |
+            map(del(.root_cause_group_id,.disposition)) | sort_by(.id)) !=
+            $expected_union
+        then "findings union parity mismatch"
+        elif
+          (all($s.root_cause_groups[]; root_group) | not) or
+          (($s.root_cause_groups | map(.id)) |
+            length != (unique | length)) or
+          ([$s.root_cause_groups[].finding_ids[]] | sort) != $expected_ids or
+          (([$s.root_cause_groups[].finding_ids[]] | length) !=
+            ([$s.root_cause_groups[].finding_ids[]] | unique | length)) or
+          ([$s.findings_union[] as $finding |
+            any($s.root_cause_groups[];
+              .id == $finding.root_cause_group_id and
+              ((.finding_ids | index($finding.id)) != null))
+          ] | all | not)
+        then "root-cause grouping parity mismatch"
+        elif
+          (all($s.disagreements[]; disagreement) | not) or
+          (($s.disagreements | map(.id)) |
+            length != (unique | length)) or
+          ([$s.disagreements[].finding_ids[] as $finding_id |
+            ($expected_ids | index($finding_id)) != null
+          ] | all | not)
+        then "invalid disagreement references"
+        elif
+          ($s.uncertainties | type) != "object" or
+          ($s.uncertainties |
+            only_keys(["finding_ids","coverage_cells"]) | not) or
+          ($s.uncertainties.finding_ids | type) != "array" or
+          ($s.uncertainties.coverage_cells | type) != "array" or
+          (all($s.uncertainties.finding_ids[]; finding_id) | not) or
+          (all($s.uncertainties.coverage_cells[]; uncertain_cell) | not) or
+          ($s.uncertainties.finding_ids | sort) != $expected_uncertain_ids or
+          ($s.uncertainties.coverage_cells |
+            sort_by(.reviewer,.surface)) != $expected_uncertain_coverage
+        then "malformed uncertainties contract or parity mismatch"
+        elif
+          (all($s.cautions[]; finding_id) | not) or
+          ($s.cautions | sort) != $expected_cautions
+        then "caution parity mismatch"
+        elif
+          ($s.remediation_seed |
+            only_keys(["kind","schema_version","state",
+              "scope_manifest_sha256","entries"]) | not) or
+          $s.remediation_seed.kind != "remediation_closure_v1" or
+          $s.remediation_seed.schema_version != 1 or
+          $s.remediation_seed.state != "seed" or
+          $s.remediation_seed.scope_manifest_sha256 != $scope_sha or
+          ($s.remediation_seed.entries | type) != "array" or
+          (all($s.remediation_seed.entries[]; seed_entry) | not)
+        then "malformed remediation seed"
+        elif
+          ($s.remediation_seed.entries | sort_by(.finding_id)) !=
+            ($s.findings_union | map({
+              finding_id:.id,
+              reviewer,
+              root_cause_group_id,
+              disposition,
+              verification_expectation
+            }) | sort_by(.finding_id))
+        then "remediation seed parity mismatch"
+        else "ok"
+        end
+      '
+    )" || validation="invalid synthesis JSON document"
+    if [[ "$validation" != ok ]]; then
+      printf 'Error: synthesis protocol INCOMPLETE: %s in %s\n' \
+        "$validation" "$artifact" >&2
+      rm -rf -- "$tmp_dir"
+      return 1
+    fi
+
+    for heading in \
+      '## Must-Fix Order' \
+      '## Advisory and Cautions' \
+      '## Coverage Gaps and Uncertainties' \
+      '## Recommended Verification'
+    do
+      heading_count="$(grep -Fxc -- "$heading" "$artifact" || true)"
+      if [[ "$heading_count" -ne 1 ]]; then
+        printf 'Error: synthesis protocol INCOMPLETE: required human section %s appears %d time(s) in %s\n' \
+          "$heading" "$heading_count" "$artifact" >&2
+        rm -rf -- "$tmp_dir"
+        return 1
+      fi
+    done
+    rm -rf -- "$tmp_dir"
+  }
+
   _gate_result_sha256_stream() {
     if command -v sha256sum >/dev/null 2>&1; then
       sha256sum | awk '{print $1}'
@@ -3352,7 +3752,7 @@ else
   gate_result_verify() {
     local result_file=${1-} expected_final=${2-} route_label=${3-gate}
     local version pointer result_parent assurance_file body_final
-    local selected_reviewers scope_sha scope_artifact scope_manifest
+    local selected_reviewers skipped_reviewers scope_sha scope_artifact scope_manifest
     local assurance_kind protocol_final
     [[ $# -ge 1 && $# -le 3 ]] || {
       printf 'gate-result-verify: gate_result_verify expects <result_file> [expected_final] [route_label]\n' >&2
@@ -3367,7 +3767,7 @@ else
         export GATE_RESULT_ASSURANCE
         return 0
         ;;
-      pr_gate_result_v2 | pr_gate_result_v3)
+      pr_gate_result_v2 | pr_gate_result_v3 | pr_gate_result_v4)
         pointer="$(_gate_result_frontmatter_value "$result_file" gate_assurance)"
         if [[ -z "$pointer" || "$pointer" == */* || "$pointer" == "." || "$pointer" == ".." \
             || ! "$pointer" =~ ^[A-Za-z0-9._-]+\.json$ ]]; then
@@ -3379,10 +3779,14 @@ else
         assurance_file="$result_parent/$pointer"
         body_final=$(grep -E '^Final: (GO|NO-GO)$' "$result_file" | awk '{print $2}')
         gate_assurance_verify "$result_file" "$assurance_file" "$body_final" || return $?
-        if [[ "$version" == pr_gate_result_v3 ]]; then
+        if [[ "$version" == pr_gate_result_v3 \
+            || "$version" == pr_gate_result_v4 ]]; then
           assurance_kind="$(jq -r '.kind // empty' "$assurance_file" 2>/dev/null)"
           selected_reviewers="$(jq -r \
             '.coordinates.coverage.selected // [] | join(" ")' \
+            "$assurance_file" 2>/dev/null)"
+          skipped_reviewers="$(jq -r \
+            '.coordinates.coverage.skipped // [] | join(" ")' \
             "$assurance_file" 2>/dev/null)"
           scope_sha="$(jq -r \
             '.evidence.scope_manifest.sha256 // empty' \
@@ -3394,8 +3798,8 @@ else
           if [[ "$assurance_kind" != gate_assurance_v3 \
               || -z "$selected_reviewers" \
               || ! "$scope_sha" =~ ^[a-f0-9]{64}$ ]]; then
-            printf 'Error: pr_gate_result_v3 requires verified selected-reviewer scope evidence: %s\n' \
-              "$assurance_file" >&2
+            printf 'Error: %s requires verified selected-reviewer scope evidence: %s\n' \
+              "$version" "$assurance_file" >&2
             return 1
           fi
           if jq -e '.reference_index != null' "$scope_manifest" >/dev/null 2>&1; then
@@ -3413,6 +3817,11 @@ else
             printf 'Error: reviewer protocol verdict (%s) contradicts gate Final: (%s): %s\n' \
               "$protocol_final" "$body_final" "$result_file" >&2
             return 1
+          fi
+          if [[ "$version" == pr_gate_result_v4 ]]; then
+            gate_synthesis_protocol_verify \
+              "$result_file" "$selected_reviewers" "$skipped_reviewers" \
+              "$scope_sha" || return $?
           fi
         fi
         if [[ "${GATE_ASSURANCE_BOUND:-false}" == true ]]; then
@@ -4450,6 +4859,14 @@ for r in $ALL_REVIEWERS; do
   fi
 done
 SKIPPED_DISPLAY="${SKIPPED:-none}"
+SYNTHESIS_SELECTED_JSON="$(
+  jq -cn --arg reviewers "$REVIEWERS" \
+    '$reviewers | split(" ") | map(select(length > 0))'
+)" || exit 2
+SYNTHESIS_SKIPPED_JSON="$(
+  jq -cn --arg reviewers "$SKIPPED_WORDS" \
+    '$reviewers | split(" ") | map(select(length > 0))'
+)" || exit 2
 COVERAGE_SELECTED_DISPLAY="$REVIEWER_DISPLAY"
 COVERAGE_SKIPPED_DISPLAY="$SKIPPED_DISPLAY"
 
@@ -4590,6 +5007,7 @@ GATE_OUTPUT_EXISTED=false
 [[ -e "$OUTPUT_FILE" ]] && GATE_OUTPUT_EXISTED=true
 touch "$OUTPUT_FILE"
 REVIEWER_PROTOCOL_COMPLETE=false
+SYNTHESIS_PROTOCOL_COMPLETE=false
 
 # Track all brief files for EXIT cleanup
 BRIEF_FILES=()
@@ -4639,6 +5057,7 @@ relocate_gate_artifacts() {
 }
 
 gate_exit_cleanup() {
+  local _gate_exit_status=$?
   # Relocate first (preserves the result artifact out-of-repo for post-mortem on failure
   # paths), then drop transient briefs. Both are idempotent / no-ops on the success path
   # where relocation already ran inline.
@@ -4654,9 +5073,88 @@ gate_exit_cleanup() {
   else
     relocate_gate_artifacts
   fi
+  # Preserve the post-mortem artifact path even when protocol validation fails
+  # before the normal `result:` handoff. Detached gate wait can then surface a
+  # failed, inspectable artifact instead of leaving callers with only an exit 2.
+  if [[ "$_gate_exit_status" -ne 0 && -n "${OUTPUT_FILE:-}" && -e "${OUTPUT_FILE:-}" ]]; then
+    printf 'failure-result: %s\n' "$OUTPUT_FILE"
+  fi
   cleanup_briefs
+  return "$_gate_exit_status"
 }
 trap gate_exit_cleanup EXIT
+
+gate_result_staging_normalize() {
+  local result_file="$1" route_label="${2:-gate}"
+  local version version_count pointer_count result_tmp
+
+  [[ -s "$result_file" ]] || {
+    printf 'Error: %s did not produce a staging gate result: %s\n' \
+      "$route_label" "$result_file" >&2
+    return 1
+  }
+  version_count="$(awk '
+    /^\+?---$/ {
+      if (fence == 0) { fence=1; next }
+      if (fence == 1) { fence=2; next }
+    }
+    fence == 1 && $1 == "gate_result_version:" { count++ }
+    END { print count+0 }
+  ' "$result_file")"
+  pointer_count="$(awk '
+    /^\+?---$/ {
+      if (fence == 0) { fence=1; next }
+      if (fence == 1) { fence=2; next }
+    }
+    fence == 1 && $1 == "gate_assurance:" { count++ }
+    END { print count+0 }
+  ' "$result_file")"
+  if [[ "$version_count" -ne 1 ]]; then
+    printf 'Error: %s staging frontmatter must contain exactly one gate_result_version (found %d): %s\n' \
+      "$route_label" "$version_count" "$result_file" >&2
+    return 1
+  fi
+  if [[ "$pointer_count" -gt 1 ]]; then
+    printf 'Error: %s staging frontmatter contains multiple model-authored gate_assurance pointers: %s\n' \
+      "$route_label" "$result_file" >&2
+    return 1
+  fi
+  version="$(awk '
+    /^\+?---$/ { if (fence == 0) { fence=1; next } if (fence == 1) exit }
+    fence == 1 && $1 == "gate_result_version:" { print $2; exit }
+  ' "$result_file")"
+  case "$version" in
+    pr_gate_result_v1 | pr_gate_result_v2 | pr_gate_result_v3 | pr_gate_result_v4) ;;
+    *)
+      printf 'Error: unsupported model-authored staging gate_result_version (%s): %s\n' \
+        "${version:-missing}" "$result_file" >&2
+      return 1
+      ;;
+  esac
+
+  result_tmp="$(mktemp "${result_file}.staging-tmp.XXXXXX")" || return 1
+  if ! awk '
+    /^\+?---$/ {
+      if (fence < 2) {
+        fence++
+        print "---"
+      } else {
+        print
+      }
+      next
+    }
+    fence == 1 && $1 == "gate_result_version:" {
+      print "gate_result_version: pr_gate_result_v1"
+      next
+    }
+    fence == 1 && $1 == "gate_assurance:" { next }
+    { print }
+  ' "$result_file" > "$result_tmp"; then
+    rm -f -- "$result_tmp"
+    return 1
+  fi
+  mv -- "$result_tmp" "$result_file"
+}
 
 gate_finalize_assurance() {
   local result_file="$1" assurance_file="$2"
@@ -4841,8 +5339,12 @@ gate_finalize_assurance() {
     return 1
   }
   local result_version=pr_gate_result_v2
-  [[ "$REVIEWER_PROTOCOL_COMPLETE" == true ]] \
-    && result_version=pr_gate_result_v3
+  if [[ "$REVIEWER_PROTOCOL_COMPLETE" == true \
+      && "$SYNTHESIS_PROTOCOL_COMPLETE" == true ]]; then
+    result_version=pr_gate_result_v4
+  elif [[ "$REVIEWER_PROTOCOL_COMPLETE" == true ]]; then
+    result_version=pr_gate_result_v3
+  fi
   awk -v pointer="$ASSURANCE_POINTER" -v result_version="$result_version" '
     /^---$/ {
       fence++
@@ -5288,6 +5790,13 @@ REVIEWER_PROTOCOL_SURFACES="$(
     END { print out }
   '
 )" || exit 2
+REVIEWER_REFERENCE_LINE_BOUNDS="$({
+  jq -r '.reference_index.entries[] | "    \(.path): max-line=\(.line_count)"' \
+    "$SCOPE_MANIFEST_PATH"
+  printf '    .gate-results/%s: max-line=%s\n' \
+    "$(basename "$SCOPE_MANIFEST_PATH")" \
+    "$(awk 'END { print NR+0 }' "$SCOPE_MANIFEST_PATH")"
+} 2>/dev/null)" || exit 2
 # shellcheck disable=SC2016 # Literal Markdown fence delimiters in reviewer prose.
 printf -v REVIEWER_PROTOCOL_INSTRUCTIONS \
   '%s\n' \
@@ -5303,6 +5812,8 @@ printf -v REVIEWER_PROTOCOL_INSTRUCTIONS \
   "    reference .gate-results/$(basename "$SCOPE_MANIFEST_PATH")." \
   '    A line reference must not exceed that index entry line_count. Arbitrary,' \
   '    nonexistent, or out-of-scope repository paths make the protocol INCOMPLETE.' \
+  '  - Reference line bounds (do not cite beyond these immutable snapshot limits):' \
+  "$REVIEWER_REFERENCE_LINE_BOUNDS" \
   '  - coverage_claim=declared-scope-checklist-not-review-completeness.' \
   "  - coverage contains each surface exactly once: ${REVIEWER_PROTOCOL_SURFACES}." \
   '  - Every coverage entry has surface, status=examined|not_applicable|uncertain,' \
@@ -5329,6 +5840,45 @@ printf -v REVIEWER_PROTOCOL_INSTRUCTIONS \
   '  - Legacy fields such as status, summary, matrix, run, audit_findings, over_scope,' \
   '    missed, alignment, reversibility, and override_path must not appear at top level.' \
   '  - Do not claim semantic completeness or coverage for an unselected reviewer.'
+
+# shellcheck disable=SC2016 # Literal Markdown fence delimiters in synthesis prose.
+printf -v SYNTHESIS_PROTOCOL_INSTRUCTIONS \
+  '%s\n' \
+  '  Synthesis protocol (mandatory; parity with reviewer JSON is machine-validated):' \
+  '  - Emit exactly one JSON block opened by ```synthesis_result_v1 and closed by ```.' \
+  '  - The JSON object has exactly these thirteen top-level keys: kind,' \
+  '    schema_version, scope_manifest_sha256, selected_reviewers,' \
+  '    not_reviewed_dimensions, coverage_matrix, reviewer_finding_inventory,' \
+  '    findings_union, root_cause_groups, disagreements, uncertainties, cautions,' \
+  '    remediation_seed. Do not add wrapper objects or arrays.' \
+  '  - kind=gate_synthesis_result_v1, schema_version=1, and' \
+  "    scope_manifest_sha256=${SCOPE_MANIFEST_DIGEST}." \
+  "  - selected_reviewers is exactly ${SYNTHESIS_SELECTED_JSON} in that order." \
+  "  - not_reviewed_dimensions is exactly ${SYNTHESIS_SKIPPED_JSON} in that order." \
+  '  - coverage_matrix copies every reviewer coverage cell without changing reviewer,' \
+  '    surface, status, evidence_refs, or reason.' \
+  '  - reviewer_finding_inventory copies every stable ID, reviewer, severity,' \
+  '    hard_gate_class, origin, and verification_expectation.' \
+  '  - findings_union preserves every original finding field and adds only' \
+  '    root_cause_group_id=RCG-NNN plus disposition=pending. Never drop a lower' \
+  '    severity, caution, uncertainty, disagreement input, or test expectation.' \
+  '  - root_cause_groups partitions every finding ID exactly once. Different reviewers' \
+  '    may share a group only when they describe the same root cause; different issues' \
+  '    in the same file remain distinct. With no findings, emit an empty group array.' \
+  '  - disagreements is an array of {id:D-NNN,summary,finding_ids}; use [] when none.' \
+  '  - uncertainties is exactly one object, never an array:' \
+  '    {finding_ids:[...],coverage_cells:[{reviewer,surface,reason},...]}.' \
+  '    Its two arrays exactly match uncertain findings and coverage statuses.' \
+  '  - cautions is the complete stable-ID list whose origin is caution.' \
+  '  - remediation_seed is {kind:remediation_closure_v1,schema_version:1,state:seed,' \
+  '    scope_manifest_sha256,entries}. It contains one pending entry per finding with' \
+  '    finding_id, reviewer, root_cause_group_id, disposition, and' \
+  '    verification_expectation. This is a seed, never a closure or final-tree GO claim.' \
+  '  - The consolidated human result contains exactly one section each named:' \
+  '    ## Must-Fix Order; ## Advisory and Cautions;' \
+  '    ## Coverage Gaps and Uncertainties; ## Recommended Verification.' \
+  '  - Raw reviewer_result_v1 blocks remain authoritative and traceable. The synthesis' \
+  '    contract proves union/parity only; it does not claim defect or model-recall completeness.'
 
 if [[ "$SKIP_PREFLIGHT_TESTS" != "true" && -n "$TEST_CMD_OVERRIDE" ]]; then
   # pr-gate.sh is designed to be copied standalone into any repo (copy-mode --
@@ -5690,10 +6240,18 @@ constraints:
   - Before your FIRST write to ${OUTPUT_FILE} in this session, call: ${GUARD_PMCTL_CMD} guard check --role reviewer --runtime ${EXECUTOR} --event pre-write --file ${OUTPUT_FILE}
     If that call exits nonzero, abort and report the guard denial -- do NOT write the file.
     You will write to this same file multiple times in this session (once per reviewer, then once for synthesis) -- that is expected. Do not create or write any other file.
+  - If you need to test the PM Bash denylist with a command string containing
+    destructive syntax, construct that string from shell variables before
+    passing it as data to pmctl. Never place a literal destructive invocation
+    in the outer Bash command, and never execute the probe itself.
   - Create parent directories for ${OUTPUT_FILE} if needed (mkdir -p).
   - Only cite files in the verified reference index or the diff list. Read a file before citing its sections; do not invent citations.
   - reviewer_result_v1.verdict is the only machine verdict. Markdown reviewer
     headings are presentation only; do not rely on their count or wording.
+  - Write a self-contained staging frontmatter with exactly
+    gate_result_version: pr_gate_result_v1 and no gate_assurance field. The gate
+    shell owns the final result version and bounded assurance pointer and
+    publishes them only after reviewer and synthesis verification.
 
 context:
   Tier: ${TIER}
@@ -5705,6 +6263,7 @@ context:
   Date: $(date '+%Y-%m-%d')
 ${GATE_ASSURANCE_CONTEXT_BLOCK}${SCOPE_MANIFEST_CONTEXT_BLOCK}${GATE_OVERRIDES_CONTEXT_BLOCK}${TEST_EVIDENCE_CONTEXT_BLOCK}
 ${REVIEWER_PROTOCOL_INSTRUCTIONS}
+${SYNTHESIS_PROTOCOL_INSTRUCTIONS}
 ${MEMORY_CONTEXT_BLOCK}
   Verified reference files (exist in working tree -- check before citing):
 ${REPO_REF_INDEX}
@@ -5735,15 +6294,18 @@ task:
      heading is accidentally duplicated or omitted.
 
   After all reviewers, synthesize as project-pm would:
-  5. Identify cross-reviewer overlaps (same issue raised by multiple reviewers)
-  6. Overall verdict = most severe individual verdict
-  7. State which dimensions were NOT covered (not-reviewed list above)
-  8. Final GO (no blocks) / NO-GO (any block or block-soft) with rationale and override path if applicable
+  5. Build the deterministic finding inventory and coverage matrix from every
+     reviewer_result_v1 block. Preserve all IDs and verification expectations.
+  6. Group findings by root cause without dropping or merging stable IDs, and record
+     disagreements, uncertainties, cautions, and not-reviewed dimensions.
+  7. Emit the complete synthesis_result_v1 JSON block and remediation seed.
+  8. Overall verdict = most severe individual verdict. Final GO (no blocks) /
+     NO-GO (any block or block-soft), with rationale and override path if applicable.
   9. Now that the final verdict is known: PREPEND the YAML frontmatter block to the very
      top of ${OUTPUT_FILE} (before the header already written in step 4), then APPEND the
-     synthesis sections (Cross-Reviewer Overlaps / Coverage Notes / Gate Conclusion /
-     Escalation) to the bottom. Do not rewrite the reviewer sections already written in
-     step 4 -- only prepend the frontmatter and append the synthesis sections.
+     synthesis protocol block and human sections to the bottom. The frontmatter is the
+     self-contained v1 staging form described above; do not add gate_assurance. Do not
+     rewrite the reviewer sections already written in step 4.
 
 output_format: |
   ---
@@ -5776,11 +6338,26 @@ output_format: |
 
   (repeat for each reviewer in order)
 
+  \`\`\`synthesis_result_v1
+  {one JSON object satisfying the synthesis protocol above}
+  \`\`\`
+
   ## Cross-Reviewer Overlaps
   {list issues raised by >1 reviewer; "none" if clean}
 
-  ## Coverage Notes
+  ## Must-Fix Order
+  {ordered blocking findings by stable ID; "none" if clean}
+
+  ## Advisory and Cautions
+  {all non-blocking findings and cautions by stable ID; "none" if clean}
+
+  ## Coverage Gaps and Uncertainties
   **Dimensions not covered**: ${SKIPPED_DISPLAY}
+  {all uncertain coverage cells/findings; "none" if complete}
+
+  ## Recommended Verification
+  {verification expectations grouped without dropping any stable finding ID;
+  "none" if there are no findings}
 
   ## Gate Conclusion
   **Overall verdict**: {most severe}
@@ -5814,6 +6391,9 @@ self_verify:
 
 acceptance:
   - ${OUTPUT_FILE} exists with a verdict section for each of the ${NUM_REVIEWERS} reviewers
+  - exactly one synthesis_result_v1 block preserves reviewer finding and coverage parity
+  - Must-Fix Order / Advisory and Cautions / Coverage Gaps and Uncertainties /
+    Recommended Verification sections are present exactly once
   - "Final: GO" or "Final: NO-GO" is present in Gate Conclusion (plain text, no markdown emphasis)
 BRIEF_EOF
 
@@ -5871,10 +6451,20 @@ BRIEF_EOF
   gate_reviewer_protocol_verify \
     "$OUTPUT_FILE" "$REVIEWERS" "$SCOPE_MANIFEST_DIGEST" \
     "$SCOPE_MANIFEST_PATH" || exit 1
+  gate_synthesis_protocol_verify \
+    "$OUTPUT_FILE" "$REVIEWERS" "$SKIPPED_WORDS" \
+    "$SCOPE_MANIFEST_DIGEST" || exit 1
   SEQ_PROTOCOL_FINAL="$(
     _gate_reviewer_protocol_final_extract "$OUTPUT_FILE"
   )" || exit 1
   REVIEWER_PROTOCOL_COMPLETE=true
+  SYNTHESIS_PROTOCOL_COMPLETE=true
+  # Executors author an unbound staging document only. Normalize a model that
+  # anticipated the final v4 contract back to v1 before the verdict verifier
+  # could dereference an assurance sidecar that the shell has not published.
+  # Protocol verification intentionally precedes this rewrite so malformed or
+  # partial sequential output retains its precise protocol diagnostic.
+  gate_result_staging_normalize "$OUTPUT_FILE" "sequential gate" || exit 1
   gate_result_verify \
     "$OUTPUT_FILE" "$SEQ_PROTOCOL_FINAL" "sequential gate" || exit 1
 
@@ -5942,6 +6532,11 @@ constraints:
   - Only write ${REVIEWER_OUTPUT}.
   - Before writing ${REVIEWER_OUTPUT}, call: ${GUARD_PMCTL_CMD} guard check --role reviewer --runtime ${EXECUTOR} --event pre-write --file ${REVIEWER_OUTPUT}
     If that call exits nonzero, abort and report the guard denial -- do NOT write the file.
+  - If you need to test the PM Bash denylist with a command string containing
+    destructive syntax, construct that string from shell variables (for
+    example, separate command and flag variables) before passing it as data to
+    pmctl. Never place a literal destructive invocation in the outer Bash
+    command, and never execute the probe itself.
   - Create parent directories if needed (mkdir -p).
   - Only cite files in the verified reference index or the diff list. Read a file before citing its sections; do not invent citations.
   - reviewer_result_v1.verdict is the only machine verdict. A Markdown heading
@@ -6172,12 +6767,18 @@ files:
 constraints:
   - Do NOT modify any source file.
   - Only write ${OUTPUT_FILE}.
+  - Before your FIRST write to ${OUTPUT_FILE} in this session, call: ${GUARD_PMCTL_CMD} guard check --role reviewer --runtime ${EXECUTOR} --event pre-write --file ${OUTPUT_FILE}
+    If that call exits nonzero, abort and report the guard denial -- do NOT write the file.
   - Create parent directories if needed (mkdir -p).
   - The Gate Conclusion MUST contain exactly: Final: ${SHELL_FINAL}
     This is pre-computed from the reviewer verdicts and must not be overridden.
   - Only cite files in the verified reference index or reviewer findings; do not invent citations.
   - Do not emit or copy any reviewer_result_v1 fenced block. The gate shell
     validates and appends the original reviewer protocol blocks after synthesis.
+  - Write a self-contained staging frontmatter with exactly
+    gate_result_version: pr_gate_result_v1 and no gate_assurance field. The gate
+    shell owns the final result version and bounded assurance pointer and
+    publishes them only after reviewer and synthesis verification.
 
 context:
   Tier: ${TIER}
@@ -6188,6 +6789,7 @@ context:
   Scope: ${SCOPE:-none}
   Date: $(date '+%Y-%m-%d')
 ${GATE_ASSURANCE_CONTEXT_BLOCK}${SCOPE_MANIFEST_CONTEXT_BLOCK}${GATE_OVERRIDES_CONTEXT_BLOCK}${TEST_EVIDENCE_CONTEXT_BLOCK}
+${SYNTHESIS_PROTOCOL_INSTRUCTIONS}
   Verified reference files (exist in working tree -- check before citing):
 ${REPO_REF_INDEX}
   Reviewer findings (embedded -- do NOT attempt to read any external reviewer output file):
@@ -6209,14 +6811,18 @@ SBRIEF_P1
 
 task:
   1. Use the reviewer findings embedded in the context above.
-  2. Identify cross-reviewer overlaps: issues raised by more than one reviewer.
-  3. Determine the overall verdict: most severe individual verdict across all reviewers
+  2. Build the deterministic finding inventory and coverage matrix from every
+     reviewer_result_v1 block. Preserve all IDs and verification expectations.
+  3. Group findings by root cause without dropping or merging stable IDs, and record
+     disagreements, uncertainties, cautions, and not-reviewed dimensions.
+  4. Emit the complete synthesis_result_v1 JSON block and remediation seed.
+  5. Determine the overall verdict: most severe individual verdict across all reviewers
      (approve < advise < block-soft < block).
-  4. State Final: GO or NO-GO.
+  6. State Final: GO or NO-GO.
      - GO:    no reviewer returned block or block-soft.
      - NO-GO: any reviewer returned block or block-soft. List required fixes and
               any applicable override path.
-  5. Write the complete consolidated result to ${OUTPUT_FILE}.
+  7. Write the complete consolidated result to ${OUTPUT_FILE}.
 
 output_format: |
   ---
@@ -6242,6 +6848,10 @@ output_format: |
   **Reviewers**: ${REVIEWER_DISPLAY}
   **Not reviewed**: ${SKIPPED_DISPLAY}
 
+  \`\`\`synthesis_result_v1
+  {one JSON object satisfying the synthesis protocol above}
+  \`\`\`
+
   ## {reviewer-name} -- {verdict}
   {Summarize findings from that reviewer, one bullet per finding with stable ID,
   severity, and file:line. Do not copy the reviewer_result_v1 fenced block.}
@@ -6253,8 +6863,19 @@ output_format: |
   ## Cross-Reviewer Overlaps
   {list issues raised by more than one reviewer; "none" if clean}
 
-  ## Coverage Notes
+  ## Must-Fix Order
+  {ordered blocking findings by stable ID; "none" if clean}
+
+  ## Advisory and Cautions
+  {all non-blocking findings and cautions by stable ID; "none" if clean}
+
+  ## Coverage Gaps and Uncertainties
   **Dimensions not covered**: ${SKIPPED_DISPLAY}
+  {all uncertain coverage cells/findings; "none" if complete}
+
+  ## Recommended Verification
+  {verification expectations grouped without dropping any stable finding ID;
+  "none" if there are no findings}
 
   ## Gate Conclusion
   **Overall verdict**: {most severe across all reviewers}
@@ -6294,7 +6915,9 @@ self_verify:
 
 acceptance:
   - ${OUTPUT_FILE} exists with a section for each of the ${NUM_REVIEWERS} reviewers
-  - Cross-Reviewer Overlaps section is present
+  - exactly one synthesis_result_v1 block preserves reviewer finding and coverage parity
+  - Must-Fix Order / Advisory and Cautions / Coverage Gaps and Uncertainties /
+    Recommended Verification sections are present exactly once
   - "Final: GO" or "Final: NO-GO" is present in Gate Conclusion (plain text, no markdown emphasis)
 SBRIEF_P2
 
@@ -6321,6 +6944,10 @@ SBRIEF_P2
     printf 'Error: synthesis session failed (exit %d)\n' "$_synthesis_exit" >&2
     exit 1
   fi
+
+  # Keep the parallel synthesis route on the same producer-owned staging
+  # lifecycle as sequential mode.
+  gate_result_staging_normalize "$OUTPUT_FILE" "PM synthesis" || exit 1
 
   # Validate synthesis output via the shared contract, pinned to the
   # shell-computed verdict: a synthesis that contradicts SHELL_FINAL (in either
@@ -6360,7 +6987,11 @@ SBRIEF_P2
   gate_reviewer_protocol_verify \
     "$OUTPUT_FILE" "$REVIEWERS" "$SCOPE_MANIFEST_DIGEST" \
     "$SCOPE_MANIFEST_PATH" || exit 1
+  gate_synthesis_protocol_verify \
+    "$OUTPUT_FILE" "$REVIEWERS" "$SKIPPED_WORDS" \
+    "$SCOPE_MANIFEST_DIGEST" || exit 1
   REVIEWER_PROTOCOL_COMPLETE=true
+  SYNTHESIS_PROTOCOL_COMPLETE=true
   fi
 
 fi
@@ -6503,8 +7134,9 @@ fi
 # Replace the executor-authored staging frontmatter with a bound pointer and
 # write the machine-owned assurance sidecar only after every deterministic
 # rewrite and explicitly enabled post-gate hook is complete. Completed reviewer
-# routes publish result v3; pre-dispatch fail-fast routes without reviewer
-# protocol remain v2. The shared verifier then checks result/pointer/envelope
+# routes publish result v4; historical reviewer-only routes remain readable as
+# v3, while pre-dispatch fail-fast routes without reviewer protocol remain v2.
+# The shared verifier then checks result/pointer/envelope
 # parity before publication or relocation.
 gate_finalize_assurance "$OUTPUT_FILE" "$ASSURANCE_FILE" || exit 2
 

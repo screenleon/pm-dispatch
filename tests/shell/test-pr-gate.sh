@@ -263,11 +263,13 @@ write_frontmatter_stub_gate_result() {
   local output_path="$1"
   local final_verdict="${2:-GO}"
   local final_line="Final: ${final_verdict}"
-  local resolved_tier resolved_mode
+  local resolved_tier resolved_mode staging_version frontmatter_opening
   resolved_tier="$(awk '/^[[:space:]]*tier\.resolved:/ {print $2; exit}' "$brief_file")"
   resolved_mode="$(awk '/^[[:space:]]*mode\.resolved:/ {print $2; exit}' "$brief_file")"
   : "${resolved_tier:=express}"
   : "${resolved_mode:=parallel}"
+  staging_version="${CODEX_GATE_STUB_RESULT_VERSION:-pr_gate_result_v1}"
+  frontmatter_opening="${CODEX_GATE_STUB_FRONTMATTER_OPENING:----}"
 
   # Regression seam: when CODEX_GATE_STUB_BOLD_FINAL=1, emit the Final
   # line wrapped in markdown bold (simulates codex applying prose emphasis).
@@ -277,8 +279,9 @@ write_frontmatter_stub_gate_result() {
   fi
 
   cat > "$output_path" << STUB_GATE_EOF
----
-gate_result_version: pr_gate_result_v1
+${frontmatter_opening}
+gate_result_version: ${staging_version}
+${CODEX_GATE_STUB_ASSURANCE_FRONTMATTER:-}
 final: ${CODEX_GATE_STUB_FRONTMATTER_FINAL:-${final_verdict}}
 tier: ${resolved_tier}
 mode: ${resolved_mode}
@@ -332,6 +335,7 @@ STUB_GATE_EOF
       write_reviewer_protocol_stub "$output_path" "$selected_reviewer" advise
     done
   fi
+  pr_gate_fixture_write_synthesis_protocol "$brief_file" "$output_path"
 }
 
 # Determine effective mode: synthesis briefs can have their own mode override.
@@ -2223,6 +2227,9 @@ test_parallel_synthesis_brief_validates() {
     fail "$name" "brief-validate rejected synthesis brief (exit $vcode): $vout"
     return
   fi
+  assert_file_contains "$name" "$brief" "pmctl guard check --role reviewer" || return
+  assert_file_contains "$name" "$brief" "--event pre-write" || return
+  assert_file_contains "$name" "$brief" "If that call exits nonzero, abort" || return
   pass "$name"
 }
 
@@ -3932,8 +3939,8 @@ test_gate_result_frontmatter_and_escalation() {
   fi
   local frontmatter
   frontmatter="$(sed -n "1,${frontmatter_end}p" "$result")"
-  if ! printf '%s\n' "$frontmatter" | grep -q '^gate_result_version: pr_gate_result_v3$'; then
-    fail "$name" "frontmatter missing gate_result_version: pr_gate_result_v3"
+  if ! printf '%s\n' "$frontmatter" | grep -q '^gate_result_version: pr_gate_result_v4$'; then
+    fail "$name" "frontmatter missing gate_result_version: pr_gate_result_v4"
     return
   fi
   if ! printf '%s\n' "$frontmatter" | grep -q '^gate_assurance: result.md.assurance.json$'; then
@@ -4013,6 +4020,86 @@ test_gate_result_frontmatter_and_escalation() {
   assert_file_contains "$name" "$result" "**Recommended**:" || return
   assert_file_contains "$name" "$result" "**Reviewers**:" || return
   assert_file_contains "$name" "$result" "**Reason**:" || return
+  pass "$name"
+}
+
+# Behavior: executor-authored frontmatter is an untrusted staging document.
+# A model that anticipates the final v4 result but omits the not-yet-published
+# assurance pointer is normalized to v1 for intermediate verification; the
+# shell then publishes the sidecar and atomically upgrades the result to v4.
+# Steps: emit a sequential stub result with v4 frontmatter and no pointer, then
+# assert successful v4 publication, the bounded pointer, and the sibling sidecar.
+test_model_authored_v4_without_pointer_is_normalized_before_publication() {
+  local name="gate-result/model-v4-without-pointer-normalized"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" result="$dir/result.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  CODEX_GATE_STUB_RESULT_VERSION=pr_gate_result_v4 \
+    CODEX_GATE_STUB_FRONTMATTER_OPENING=+--- \
+    CODEX_GATE_STUB_SYNTHESIS_FINAL=GO run_gate \
+      "$home" "$runner" "$repo" "$out" "$err" --base main --output "$result" \
+      --sequential
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected normalized publication to succeed: $(tail -n 20 "$err")"
+    return
+  fi
+  assert_file_contains "$name" "$result" \
+    "gate_result_version: pr_gate_result_v4" || return
+  assert_file_contains "$name" "$result" \
+    "gate_assurance: result.md.assurance.json" || return
+  if [[ ! -s "${result}.assurance.json" ]]; then
+    fail "$name" "machine-owned assurance sidecar missing after normalized publication"
+    return
+  fi
+  assert_not_contains "$name" "$err" \
+    "requires a bounded sibling gate_assurance pointer" || return
+  pass "$name"
+}
+
+# Behavior: normalization removes at most one model-authored pointer. Multiple
+# pointer keys are ambiguous input and fail closed instead of being laundered
+# into a machine-owned publication.
+# Steps: emit two pointer keys in the sequential staging frontmatter and assert
+# the producer rejects them before publishing any assurance sidecar.
+test_multiple_model_authored_assurance_pointers_fail_closed() {
+  local name="gate-result/multiple-model-assurance-pointers-fail"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" result="$dir/result.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  CODEX_GATE_STUB_RESULT_VERSION=pr_gate_result_v4 \
+    CODEX_GATE_STUB_ASSURANCE_FRONTMATTER=$'gate_assurance: first.json\ngate_assurance: second.json' \
+    CODEX_GATE_STUB_SYNTHESIS_FINAL=GO run_gate \
+      "$home" "$runner" "$repo" "$out" "$err" --base main --output "$result" \
+      --sequential
+  local code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then
+    fail "$name" "expected ambiguous model-authored assurance pointers to fail"
+    return
+  fi
+  assert_file_contains "$name" "$err" \
+    "staging frontmatter contains multiple model-authored gate_assurance pointers" || return
+  assert_file_contains "$name" "$out" "failure-result:" || return
+  if [[ -e "${result}.assurance.json" ]]; then
+    fail "$name" "ambiguous staging input must not publish an assurance sidecar"
+    return
+  fi
   pass "$name"
 }
 
@@ -4832,11 +4919,189 @@ test_scope_manifest_complete_and_shared_across_parallel_dispatch() {
   pass "$name"
 }
 
+# Behavior: shell call-site hints are limited to files that directly reference
+# the changed script, while foreign-language snippets embedded in that script
+# cannot create repository-wide symbol searches.
+# Steps:
+#   1. Change a shell script that defines local usage and embeds a jq def flag.
+#   2. Add small and large direct source consumers plus 70 unrelated same-name
+#      shell files; place the large consumer's match before enough padding to
+#      expose a pipefail/SIGPIPE race from an early-exiting grep.
+#   3. Run twice on the same immutable subject and assert byte-identical
+#      manifests where both direct consumers become usage call-site hints;
+#      flag and unrelated collisions are excluded.
+test_scope_manifest_shell_symbols_are_consumer_scoped() {
+  local name="scope-manifest/shell-symbols-are-consumer-scoped"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo"
+  local runner="$dir/runner" out="$dir/out" err="$dir/err"
+  local replay="$dir/replay" out2="$dir/out2" err2="$dir/err2"
+  local result assurance manifest result2 assurance2 manifest2
+  local first_digest second_digest code
+  mkdir -p "$dir" "$replay"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  git init -q -b main "$repo"
+  (
+    cd "$repo"
+    git config user.email test@example.com
+    git config user.name 'Gate Test'
+    mkdir -p scripts consumers unrelated
+    write_managed_gitignore
+    printf '#!/usr/bin/env bash\nold_usage() { :; }\n' > scripts/run.sh
+    printf '. scripts/run.sh\nusage\n' > consumers/use-run.sh
+    {
+      printf '. scripts/run.sh\nusage\n'
+      for n in $(seq 1 12000); do
+        printf '# deterministic padding %s\n' "$n"
+      done
+    } > consumers/large-use-run.sh
+    for n in $(seq -w 1 70); do
+      printf 'usage\nflag\n' > "unrelated/local-${n}.sh"
+    done
+    git add .
+    git commit -q -m initial
+    git checkout -q -b feature
+    cat > scripts/run.sh <<'SHELL_EOF'
+#!/usr/bin/env bash
+usage() { :; }
+jq -n '
+  def flag($pattern): $pattern;
+  flag("embedded-jq")
+'
+SHELL_EOF
+    git add scripts/run.sh
+    git commit -q -m change
+  )
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" \
+    --base main --mode sequential
+  code=$?
+  set -e
+  [[ "$code" -eq 0 ]] || {
+    fail "$name" "exit $code, expected 0: $(tail -n 30 "$err" 2>/dev/null)"
+    return
+  }
+  result="$(awk -F'result: ' '/^result: /{path=$2} END{print path}' "$out")"
+  assurance="${result}.assurance.json"
+  manifest="$(dirname "$assurance")/$(jq -r '.evidence.scope_manifest.artifact' "$assurance")"
+  if ! jq -e '
+      .status == "complete" and
+      .truncation.occurred == false and
+      ([.expansion.entries[] |
+        select(.reason == "call-site-hint" and
+          .source == "scripts/run.sh#usage") | .path] ==
+        ["consumers/large-use-run.sh","consumers/use-run.sh"]) and
+      ([.expansion.entries[] |
+        select(.source == "scripts/run.sh#flag")] | length) == 0 and
+      ([.expansion.entries[] |
+        select(.reason == "call-site-hint" and
+          (.path | startswith("unrelated/")))] | length) == 0
+    ' "$manifest" >/dev/null; then
+    fail "$name" "shell scope leaked across unrelated symbols: $(jq -c '{
+      status,expansion,truncation
+    }' "$manifest" 2>/dev/null)"
+    return
+  fi
+  first_digest="$(sha256sum "$manifest" | awk '{print $1}')"
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out2" "$err2" \
+    --base main --mode sequential --run-dir "$replay"
+  code=$?
+  set -e
+  [[ "$code" -eq 0 ]] || {
+    fail "$name" "replay exit $code, expected 0: $(tail -n 30 "$err2" 2>/dev/null)"
+    return
+  }
+  result2="$(awk -F'result: ' '/^result: /{path=$2} END{print path}' "$out2")"
+  assurance2="${result2}.assurance.json"
+  manifest2="$(dirname "$assurance2")/$(jq -r '.evidence.scope_manifest.artifact' "$assurance2")"
+  second_digest="$(sha256sum "$manifest2" | awk '{print $1}')"
+  if [[ "$first_digest" != "$second_digest" ]]; then
+    fail "$name" "same-subject manifests differ: first=$first_digest second=$second_digest"
+    return
+  fi
+  pass "$name"
+}
+
+# Behavior: a language-compatible call-site query that really exceeds its
+# declared per-symbol budget remains a truthful fail-closed truncation.
+# Steps:
+#   1. Change one TypeScript function with 65 TypeScript callers and 70
+#      same-word Markdown files.
+#   2. Run without acceptance and assert dispatch stops before reviewers.
+#   3. Assert only the one compatible-language caller beyond the 64-path
+#      budget is recorded as omitted.
+test_scope_manifest_semantic_search_overflow_fails_closed() {
+  local name="scope-manifest/semantic-search-overflow-fails-closed"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo"
+  local runner="$dir/runner" out="$dir/out" err="$dir/err"
+  local manifest code
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  git init -q -b main "$repo"
+  (
+    cd "$repo"
+    git config user.email test@example.com
+    git config user.name 'Gate Test'
+    mkdir -p src callers docs
+    write_managed_gitignore
+    printf 'export function scopeBudgetSymbol() { return false; }\n' > src/shared.ts
+    for n in $(seq -w 1 65); do
+      printf 'scopeBudgetSymbol();\n' > "callers/caller-${n}.ts"
+    done
+    for n in $(seq -w 1 70); do
+      printf 'scopeBudgetSymbol\n' > "docs/reference-${n}.md"
+    done
+    git add .
+    git commit -q -m initial
+    git checkout -q -b feature
+    printf 'export function scopeBudgetSymbol() { return true; }\n' > src/shared.ts
+    git add src/shared.ts
+    git commit -q -m change
+  )
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" \
+    --base main --mode sequential
+  code=$?
+  set -e
+  [[ "$code" -eq 3 ]] || {
+    fail "$name" "exit $code, expected 3: $(tail -n 30 "$err" 2>/dev/null)"
+    return
+  }
+  assert_file_contains "$name" "$err" "INCOMPLETE: declared scope exceeded" || return
+  assert_not_contains "$name" "$err" "DISPATCH_STUB" || return
+  manifest="$(find "$repo/.gate-results" \
+    -maxdepth 1 -name 'gate-scope-manifest-*.json' -print -quit)"
+  if ! jq -e '
+      .status == "incomplete" and
+      .truncation.omitted.matches_per_query == 1 and
+      .truncation.reasons == ["search-match-budget"] and
+      .truncation.acceptance == {
+        required:true,accepted:false,source:null
+      }
+    ' "$manifest" >/dev/null; then
+    fail "$name" "semantic overflow was not recorded exactly: $(jq -c '{
+      status,truncation
+    }' "$manifest" 2>/dev/null)"
+    return
+  fi
+  pass "$name"
+}
+
 # Behavior: the manifest producer transports a maximum-size expansion through
 # a file descriptor instead of one jq argv value, preserving every entry even
 # when the serialized array exceeds Linux MAX_ARG_STRLEN.
 # Steps:
-#   1. Create one changed source with eight symbols and 64 callers per symbol.
+#   1. Create one changed TypeScript source with eight symbols and 64
+#      compatible-language callers per symbol.
 #   2. Run the gate so the bounded expansion contains exactly 512 entries.
 #   3. Assert the complete serialized expansion exceeds 128 KiB and dispatch
 #      succeeds without an argv-size failure.
@@ -4853,7 +5118,7 @@ test_scope_manifest_large_expansion_uses_file_input() {
   create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
   git init -q -b main "$repo"
   long_stem="$(printf 's%.0s' {1..220})"
-  source_path="src/${long_stem}.sh"
+  source_path="src/${long_stem}.ts"
   (
     cd "$repo"
     git config user.email test@example.com
@@ -4863,14 +5128,14 @@ test_scope_manifest_large_expansion_uses_file_input() {
     printf '# old implementation\n' > "$source_path"
     for n in $(seq -w 1 64); do
       for symbol in $(seq -w 1 8); do
-        printf 'scope_expansion_symbol_%s\n' "$symbol"
-      done > "callers/call-${n}.sh"
+        printf 'scope_expansion_symbol_%s();\n' "$symbol"
+      done > "callers/call-${n}.ts"
     done
     git add .
     git commit -q -m initial
     git checkout -q -b feature
     for symbol in $(seq -w 1 8); do
-      printf 'scope_expansion_symbol_%s() { :; }\n' "$symbol"
+      printf 'export function scope_expansion_symbol_%s() { return true; }\n' "$symbol"
     done > "$source_path"
     git add "$source_path"
     git commit -q -m change
@@ -5046,6 +5311,8 @@ run_test test_rename_sensitive_old_name
 run_test test_binary_file_routes_to_standard
 run_test test_untracked_binary_routes_to_standard
 run_test test_scope_manifest_complete_and_shared_across_parallel_dispatch
+run_test test_scope_manifest_shell_symbols_are_consumer_scoped
+run_test test_scope_manifest_semantic_search_overflow_fails_closed
 run_test test_scope_manifest_large_expansion_uses_file_input
 run_test test_scope_manifest_truncation_requires_explicit_acceptance
 run_test test_parallel_launches_per_reviewer
@@ -5056,6 +5323,8 @@ run_test test_sequential_combined_brief_validates
 run_test test_parallel_reviewer_brief_validates
 run_test test_parallel_synthesis_brief_validates
 run_test test_gate_result_frontmatter_and_escalation
+run_test test_model_authored_v4_without_pointer_is_normalized_before_publication
+run_test test_multiple_model_authored_assurance_pointers_fail_closed
 run_test test_repo_layout_captures_dispatch_run_id
 run_test test_repo_layout_preflight_failure_publishes_unattested_nogo
 run_test test_gate_result_final_line_back_compat
@@ -5295,7 +5564,7 @@ test_post_gate_hook_runs() {
   fi
   local result_path
   result_path="$(awk -F'result: ' '/^result: /{path=$2} END{print path}' "$out")"
-  assert_file_contains "$name" "$result_path" "gate_result_version: pr_gate_result_v3" || return
+  assert_file_contains "$name" "$result_path" "gate_result_version: pr_gate_result_v4" || return
   if [[ ! -s "${result_path}.assurance.json" ]]; then
     fail "$name" "assurance was not finalized after the successful post-gate hook"
     return
@@ -6228,6 +6497,8 @@ test_sequential_brief_has_citation_guard() {
   assert_file_contains "$name" "$brief" "Verified reference files" || return
   assert_file_contains "$name" "$brief" "do not invent citations" || return
   assert_file_contains "$name" "$brief" "agents/test-agent.md" || return
+  assert_file_contains "$name" "$brief" "pmctl guard check --role reviewer" || return
+  assert_file_contains "$name" "$brief" "--event pre-write" || return
   pass "$name"
 }
 
@@ -6520,6 +6791,8 @@ test_seq_brief_has_reviewer_guard_constraint() {
   fi
   assert_file_contains "$name" "$brief" "pmctl guard check --role reviewer" || return
   assert_file_contains "$name" "$brief" "--event pre-write" || return
+  assert_file_contains "$name" "$brief" "construct that string from shell variables" || return
+  assert_file_contains "$name" "$brief" "Reference line bounds" || return
   pass "$name"
 }
 
@@ -6558,6 +6831,8 @@ test_parallel_reviewer_brief_has_guard_constraint() {
   fi
   assert_file_contains "$name" "$reviewer_brief" "pmctl guard check --role reviewer" || return
   assert_file_contains "$name" "$reviewer_brief" "--event pre-write" || return
+  assert_file_contains "$name" "$reviewer_brief" "construct that string from shell variables" || return
+  assert_file_contains "$name" "$reviewer_brief" "Reference line bounds" || return
   pass "$name"
 }
 
@@ -8195,6 +8470,48 @@ GATE_RESULT_EOF
     ' >> "$output_path"
     printf '\n```\n' >> "$output_path"
   done
+  printf '```synthesis_result_v1\n' >> "$output_path"
+  jq -nc --arg scope_sha "$scope_sha" '
+    ["changed_files","paired_tests","sensitive_signals","public_interface",
+      "schema","config","install","ci","release","migration",
+      "bounded_expansion"] as $surfaces |
+    {
+      kind:"gate_synthesis_result_v1",
+      schema_version:1,
+      scope_manifest_sha256:$scope_sha,
+      selected_reviewers:["critic","qa-tester"],
+      not_reviewed_dimensions:[
+        "architecture-reviewer","security-reviewer","risk-reviewer"
+      ],
+      coverage_matrix:([
+        "critic","qa-tester"
+      ] | map(. as $reviewer | $surfaces | map({
+        reviewer:$reviewer,
+        surface:.,
+        status:"examined",
+        evidence_refs:[{path:"README.md",line:1,symbol:null}],
+        reason:"Fixture examined this declared surface."
+      })) | add),
+      reviewer_finding_inventory:[],
+      findings_union:[],
+      root_cause_groups:[],
+      disagreements:[],
+      uncertainties:{finding_ids:[],coverage_cells:[]},
+      cautions:[],
+      remediation_seed:{
+        kind:"remediation_closure_v1",
+        schema_version:1,
+        state:"seed",
+        scope_manifest_sha256:$scope_sha,
+        entries:[]
+      }
+    }
+  ' >> "$output_path"
+  printf '\n```\n\n' >> "$output_path"
+  printf '## Must-Fix Order\nnone\n\n' >> "$output_path"
+  printf '## Advisory and Cautions\nnone\n\n' >> "$output_path"
+  printf '## Coverage Gaps and Uncertainties\nnone\n\n' >> "$output_path"
+  printf '## Recommended Verification\nnone\n' >> "$output_path"
 fi
 printf 'fake Codex reviewer completed\n' > "$last"
 printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":5}}'
@@ -8620,7 +8937,8 @@ test_sequential_reviewer_protocol_has_independent_logical_sections() {
   local dir="$TMP_ROOT/$name" home="$TMP_ROOT/$name/home"
   local repo="$TMP_ROOT/$name/repo" runner="$TMP_ROOT/$name/runner"
   local out="$TMP_ROOT/$name/out" err="$TMP_ROOT/$name/err"
-  local result="$TMP_ROOT/$name/result.md" code block_count surface_count
+  local result="$TMP_ROOT/$name/result.md" code block_count synthesis_count
+  local surface_count
   mkdir -p "$dir"
   create_runner "$runner"
   create_agents "$home" critic qa-tester
@@ -8635,12 +8953,14 @@ test_sequential_reviewer_protocol_has_independent_logical_sections() {
     return
   }
   block_count="$(grep -c '^```reviewer_result_v1$' "$result" || true)"
-  surface_count="$(grep -o '"surface":"' "$result" | wc -l | tr -d ' ')"
-  [[ "$block_count" -eq 2 && "$surface_count" -eq 22 ]] || {
-    fail "$name" "expected 2 complete reviewer blocks, got blocks=$block_count surfaces=$surface_count"
+  synthesis_count="$(grep -c '^```synthesis_result_v1$' "$result" || true)"
+  surface_count="$(grep -oE '"surface":[[:space:]]*"' "$result" | wc -l | tr -d ' ')"
+  [[ "$block_count" -eq 2 && "$synthesis_count" -eq 1 \
+      && "$surface_count" -eq 44 ]] || {
+    fail "$name" "expected reviewer+synthesis parity blocks, got reviewer=$block_count synthesis=$synthesis_count surfaces=$surface_count"
     return
   }
-  assert_file_contains "$name" "$result" "gate_result_version: pr_gate_result_v3" || return
+  assert_file_contains "$name" "$result" "gate_result_version: pr_gate_result_v4" || return
   assert_file_contains "$name" "$result" "## critic -- advise" || return
   assert_file_contains "$name" "$result" "## qa-tester -- advise" || return
   pass "$name"
@@ -8657,6 +8977,7 @@ test_parallel_reviewer_protocol_preserves_session_topology() {
   local repo="$TMP_ROOT/$name/repo" runner="$TMP_ROOT/$name/runner"
   local out="$TMP_ROOT/$name/out" err="$TMP_ROOT/$name/err"
   local result="$TMP_ROOT/$name/result.md" assurance code block_count
+  local synthesis_count
   local reviewer_brief="$TMP_ROOT/$name/reviewer-brief.md"
   mkdir -p "$dir"
   create_runner "$runner"
@@ -8675,7 +8996,8 @@ test_parallel_reviewer_protocol_preserves_session_topology() {
   }
   assurance="${result}.assurance.json"
   block_count="$(grep -c '^```reviewer_result_v1$' "$result" || true)"
-  if [[ "$block_count" -ne 2 ]] || ! jq -e '
+  synthesis_count="$(grep -c '^```synthesis_result_v1$' "$result" || true)"
+  if [[ "$block_count" -ne 2 || "$synthesis_count" -ne 1 ]] || ! jq -e '
       .coordinates.mode.resolved == "parallel" and
       .coordinates.mode.topology == "per-reviewer-sessions" and
       .coordinates.coverage.selected == ["critic","qa-tester"] and
@@ -8700,6 +9022,10 @@ test_parallel_reviewer_protocol_preserves_session_topology() {
     "soft_block/hard_block findings require severity=critical|high" || return
   assert_file_contains "$name" "$reviewer_brief" \
     "medium/low and pre_existing/caution findings" || return
+  assert_file_contains "$name" "$result" \
+    "gate_result_version: pr_gate_result_v4" || return
+  assert_file_contains "$name" "$result" \
+    "## Coverage Gaps and Uncertainties" || return
   pass "$name"
 }
 
@@ -9096,7 +9422,7 @@ test_reviewer_protocol_duplicate_heading_uses_json_verdict() {
 # Behavior: a blocker still completes every declared coverage surface and
 # becomes a formal reviewer NO-GO rather than protocol incomplete.
 # Steps: emit two complete blocking reviewer reports, run the parallel gate,
-# then assert 22 surfaces, result v3, and Final NO-GO.
+# then assert reviewer/synthesis coverage parity, result v4, and Final NO-GO.
 test_reviewer_protocol_blocker_completes_remaining_surfaces() {
   local name="reviewer-protocol/blocker-no-early-stop"
   should_run "$name" || return 0
@@ -9118,14 +9444,166 @@ test_reviewer_protocol_blocker_completes_remaining_surfaces() {
     fail "$name" "blocker run exit $code, expected reviewer NO-GO exit 1"
     return
   }
-  surface_count="$(grep -o '"surface":"' "$result" | wc -l | tr -d ' ')"
-  [[ "$surface_count" -eq 22 ]] || {
-    fail "$name" "blocker early-stopped coverage: expected 22 surfaces, got $surface_count"
+  surface_count="$(grep -oE '"surface":[[:space:]]*"' "$result" | wc -l | tr -d ' ')"
+  [[ "$surface_count" -eq 44 ]] || {
+    fail "$name" "blocker early-stopped/parity-dropped coverage: expected 44 surfaces, got $surface_count"
     return
   }
-  assert_file_contains "$name" "$result" "gate_result_version: pr_gate_result_v3" || return
+  assert_file_contains "$name" "$result" "gate_result_version: pr_gate_result_v4" || return
   assert_file_contains "$name" "$result" "Final: NO-GO" || return
   assert_not_contains "$name" "$err" "reviewer protocol INCOMPLETE" || return
+  pass "$name"
+}
+
+_write_synthesis_protocol_test_artifact() {
+  local artifact="$1" brief="${1}.brief" scope_sha
+  scope_sha="$(printf 'a%.0s' {1..64})"
+  printf 'artifact_sha256: %s\nartifact: %s\n' \
+    "$scope_sha" "${artifact}.scope.json" > "$brief"
+  : > "$artifact"
+  pr_gate_fixture_write_reviewer_protocol \
+    "$brief" "$artifact" critic block
+  pr_gate_fixture_write_reviewer_protocol \
+    "$brief" "$artifact" qa-tester block
+  pr_gate_fixture_write_reviewer_protocol \
+    "$brief" "$artifact" architecture-reviewer advise advisory-finding
+  pr_gate_fixture_write_synthesis_protocol "$brief" "$artifact"
+}
+
+_rewrite_synthesis_protocol_json() {
+  local artifact="$1" filter="$2"
+  local original mutated rewritten start_line end_line
+  original="$(mktemp "${TMPDIR:-/tmp}/synthesis-original.XXXXXX")"
+  mutated="$(mktemp "${TMPDIR:-/tmp}/synthesis-mutated.XXXXXX")"
+  rewritten="$(mktemp "${TMPDIR:-/tmp}/synthesis-artifact.XXXXXX")"
+  awk '
+    $0 == "```synthesis_result_v1" { inside=1; next }
+    inside && $0 == "```" { exit }
+    inside { print }
+  ' "$artifact" > "$original"
+  jq "$filter" "$original" > "$mutated"
+  start_line="$(awk '$0 == "```synthesis_result_v1" { print NR; exit }' "$artifact")"
+  end_line="$(awk -v start="$start_line" \
+    'NR > start && $0 == "```" { print NR; exit }' "$artifact")"
+  {
+    sed -n "1,${start_line}p" "$artifact"
+    cat "$mutated"
+    sed -n "${end_line},\$p" "$artifact"
+  } > "$rewritten"
+  mv "$rewritten" "$artifact"
+  rm -f -- "$original" "$mutated"
+}
+
+# Behavior: synthesis may group two reviewers under one root cause and record
+# disagreement while preserving a lower-severity caution in a separate group,
+# even when all three findings cite the same file.
+# Steps: build three reviewer documents, rewrite only grouping/disagreement
+# judgments, then verify finding, coverage, caution, and remediation parity.
+test_synthesis_protocol_preserves_grouping_disagreement_and_lower_severity() {
+  local name="synthesis-protocol/grouping-disagreement-lower-severity"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" artifact scope_sha
+  mkdir -p "$dir"
+  artifact="$dir/result.md"
+  scope_sha="$(printf 'a%.0s' {1..64})"
+  # shellcheck source=runtime/lib/gate-result-verify.sh
+  . "$REPO_ROOT/runtime/lib/gate-result-verify.sh"
+  _write_synthesis_protocol_test_artifact "$artifact"
+  _rewrite_synthesis_protocol_json "$artifact" '
+    .findings_union |= map(
+      if .id == "architecture-reviewer-F001"
+      then .root_cause_group_id = "RCG-002"
+      else .root_cause_group_id = "RCG-001"
+      end) |
+    .root_cause_groups = [
+      {
+        id:"RCG-001",
+        summary:"Critic and QA identified the same root cause.",
+        finding_ids:["critic-F001","qa-tester-F001"]
+      },
+      {
+        id:"RCG-002",
+        summary:"Same file, distinct lower-severity architecture caution.",
+        finding_ids:["architecture-reviewer-F001"]
+      }
+    ] |
+    .disagreements = [{
+      id:"D-001",
+      summary:"The reviewers disagree on the remediation emphasis.",
+      finding_ids:["critic-F001","qa-tester-F001"]
+    }] |
+    .remediation_seed.entries |= map(
+      if .finding_id == "architecture-reviewer-F001"
+      then .root_cause_group_id = "RCG-002"
+      else .root_cause_group_id = "RCG-001"
+      end)
+  '
+  if ! gate_synthesis_protocol_verify \
+      "$artifact" "critic qa-tester architecture-reviewer" \
+      "security-reviewer risk-reviewer" "$scope_sha"; then
+    fail "$name" "valid grouped synthesis was rejected"
+    return
+  fi
+  if ! awk '
+      $0 == "```synthesis_result_v1" { inside=1; next }
+      inside && $0 == "```" { exit }
+      inside { print }
+    ' "$artifact" | jq -e '
+      .cautions == ["architecture-reviewer-F001"] and
+      (.reviewer_finding_inventory |
+        any(.id == "architecture-reviewer-F001" and .severity == "low")) and
+      (.root_cause_groups |
+        any(.finding_ids == ["critic-F001","qa-tester-F001"])) and
+      (.root_cause_groups |
+        any(.finding_ids == ["architecture-reviewer-F001"]))
+    ' >/dev/null; then
+    fail "$name" "grouping, disagreement, or lower-severity evidence was lost"
+    return
+  fi
+  pass "$name"
+}
+
+# Behavior: synthesis parity fails closed for dropped/duplicate findings,
+# coverage drift, missing cautions or verification expectations, and malformed
+# remediation seeds.
+# Steps: mutate one valid fake synthesis artifact per contract dimension and
+# assert every mutation is rejected before it can become result v4.
+test_synthesis_protocol_rejects_silent_drop_and_malformed_seed() {
+  local name="synthesis-protocol/rejects-parity-mutations"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" artifact scope_sha mutation filter code
+  local failures=0
+  mkdir -p "$dir"
+  scope_sha="$(printf 'a%.0s' {1..64})"
+  # shellcheck source=runtime/lib/gate-result-verify.sh
+  . "$REPO_ROOT/runtime/lib/gate-result-verify.sh"
+  while IFS='|' read -r mutation filter; do
+    artifact="$dir/${mutation}.md"
+    _write_synthesis_protocol_test_artifact "$artifact"
+    _rewrite_synthesis_protocol_json "$artifact" "$filter"
+    set +e
+    gate_synthesis_protocol_verify \
+      "$artifact" "critic qa-tester architecture-reviewer" \
+      "security-reviewer risk-reviewer" "$scope_sha" \
+      >"$dir/${mutation}.out" 2>"$dir/${mutation}.err"
+    code=$?
+    set -e
+    if [[ "$code" -eq 0 ]]; then
+      fail "$name" "mutation unexpectedly passed: $mutation"
+      failures=$((failures + 1))
+    fi
+  done <<'MUTATIONS'
+dropped-id|.reviewer_finding_inventory |= map(select(.id != "architecture-reviewer-F001"))
+duplicate-id|.reviewer_finding_inventory += [.reviewer_finding_inventory[0]]
+coverage-drift|.coverage_matrix[0].reason = "Changed by synthesis."
+missing-caution|.cautions = []
+missing-verification|.reviewer_finding_inventory[0].verification_expectation = ""
+uncertainties-array|.uncertainties = [.uncertainties]
+malformed-seed|.remediation_seed.state = "closed"
+MUTATIONS
+  [[ "$failures" -eq 0 ]] || return
+  assert_file_contains "$name" "$dir/uncertainties-array.err" \
+    "malformed uncertainties contract or parity mismatch" || return
   pass "$name"
 }
 
@@ -9159,5 +9637,7 @@ run_test test_parallel_reviewer_protocol_out_of_scope_reference_is_incomplete
 run_test test_sequential_reviewer_protocol_out_of_range_line_is_incomplete
 run_test test_reviewer_protocol_duplicate_heading_uses_json_verdict
 run_test test_reviewer_protocol_blocker_completes_remaining_surfaces
+run_test test_synthesis_protocol_preserves_grouping_disagreement_and_lower_severity
+run_test test_synthesis_protocol_rejects_silent_drop_and_malformed_seed
 
 th_summary
