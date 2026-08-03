@@ -3,15 +3,29 @@
   "description": "Portable command evidence. Repository provenance and structured coverage are optional extensions; reusable evidence requires a bound subject fingerprint.",
   "type": "object",
   "required": [
-    "kind", "schema_version", "command_identity", "status", "exit_status",
+    "kind", "schema_version", "command_identity", "status", "exit_status", "outcome",
     "timeout_seconds", "started_at", "finished_at", "subject", "log", "coverage"
   ],
   "properties": {
     "kind": { "const": "pr_gate_preflight_v1" },
     "schema_version": { "const": 1 },
     "command_identity": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
-    "status": { "enum": ["pass", "fail", "timeout", "stale", "invalid"] },
+    "status": {
+      "enum": ["pass", "test-fail", "timeout", "environment-error", "stale", "invalid-evidence", "unclassified-nonzero"]
+    },
     "exit_status": { "type": "integer", "minimum": 0 },
+    "outcome": {
+      "description": "Execution, test verdict, evidence richness, and authorization are deliberately independent.",
+      "type": "object",
+      "required": ["execution", "test_verdict", "evidence_richness", "authorization"],
+      "properties": {
+        "execution": { "enum": ["pass", "nonzero", "timeout"] },
+        "test_verdict": { "enum": ["pass", "fail", "not_available", "inconclusive"] },
+        "evidence_richness": { "enum": ["opaque", "structured", "invalid"] },
+        "authorization": { "enum": ["eligible", "non_authorizing"] }
+      },
+      "additionalProperties": false
+    },
     "timeout_seconds": { "type": "integer", "minimum": 1 },
     "started_at": { "type": "string", "format": "date-time" },
     "finished_at": { "type": "string", "format": "date-time" },

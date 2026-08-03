@@ -342,7 +342,7 @@ When the `pmctl gate wait` background Bash completion notification arrives:
    protected producer attestation and matching canonical terminal run records.
    Copying a valid result/sidecar pair does not copy that authorization.
 5. Prepend `PR-gate complete.` to completion relay and include the full gate
-   result (including `Final: GO` / `Final: NO-GO`) unchanged.
+   result (including `Final: GO`, `Final: NO-GO`, or `Final: INCOMPLETE`) unchanged.
 6. On failure, avoid collapsing findings; relay the actual stderr summary and
    exit 0 from `/pm` only if needed by the conversation protocol.
 
@@ -374,6 +374,16 @@ The target repo may explicitly supply a bounded iteration runner through
 `pmctl gate run --test-cmd '<repo-owned command>'`; `/pr-gate` never auto-detects
 or hardcodes one. Run a repository's authoritative full suite separately before
 final delivery so a long test process cannot consume the gate lifecycle timeout.
+
+`--test-cmd` evidence is capability-negotiated. An exit-0 legacy command produces
+opaque PASS evidence only; it does not claim complete suite coverage. A command
+that writes a valid `pm_test_result_v2` to
+`$PM_DISPATCH_PREFLIGHT_TEST_RESULT` provides structured evidence. Only a
+subject-valid structured assertion failure becomes `Final: NO-GO`; timeout,
+environment errors, malformed structured output, tree drift, and opaque nonzero
+exits are `Final: INCOMPLETE` (exit 3), with the captured command/log evidence for
+recovery. They are non-authorizing, but are not claims that the diff caused a
+product defect.
 
 **Warning**: if the pattern matches zero cases, the harness exits nonzero and prints
 `no tests matched filter <pattern>`. A typo in the filter produces a hard failure,

@@ -713,7 +713,8 @@ case_preflight_basic_evidence_needs_no_git_provenance() {
   local schema_file="$CORE_DIR/schema/preflight-evidence.schema.json" tmpf
   tmpf="$(mktemp /tmp/preflight-basic-XXXXXX.json)"
   jq -n '{kind:"pr_gate_preflight_v1",schema_version:1,
-    command_identity:("sha256:" + ("a" * 64)),status:"pass",exit_status:0,timeout_seconds:60,
+    command_identity:("sha256:" + ("a" * 64)),status:"pass",exit_status:0,
+    outcome:{execution:"pass",test_verdict:"pass",evidence_richness:"opaque",authorization:"eligible"},timeout_seconds:60,
     started_at:"2026-01-01T00:00:00Z",finished_at:"2026-01-01T00:00:01Z",
     subject:{kind:"unbound",reusable:false},
     log:{path:"/tmp/test.log",sha256:("b" * 64)},
@@ -738,7 +739,8 @@ case_preflight_reusable_evidence_requires_fingerprint() {
   local schema_file="$CORE_DIR/schema/preflight-evidence.schema.json" tmpf
   tmpf="$(mktemp /tmp/preflight-reusable-XXXXXX.json)"
   jq -n '{kind:"pr_gate_preflight_v1",schema_version:1,
-    command_identity:("sha256:" + ("a" * 64)),status:"pass",exit_status:0,timeout_seconds:60,
+    command_identity:("sha256:" + ("a" * 64)),status:"pass",exit_status:0,
+    outcome:{execution:"pass",test_verdict:"pass",evidence_richness:"opaque",authorization:"eligible"},timeout_seconds:60,
     started_at:"2026-01-01T00:00:00Z",finished_at:"2026-01-01T00:00:01Z",
     subject:{kind:"workspace",reusable:true},
     log:{path:"/tmp/test.log",sha256:("b" * 64)},

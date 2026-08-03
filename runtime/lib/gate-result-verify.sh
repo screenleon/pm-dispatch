@@ -28,9 +28,9 @@ gate_result_verdict_verify() {
     printf 'Gate aborted -- the executor session may have exited 0 without writing a verdict.\n' >&2
     return 1
   fi
-  final_count=$(grep -cE '^Final: (GO|NO-GO)$' "$result_file" || true)
+  final_count=$(grep -cE '^Final: (GO|NO-GO|INCOMPLETE)$' "$result_file" || true)
   if [[ "$final_count" -ne 1 ]]; then
-    printf 'Error: gate result file must contain exactly one Final: GO/NO-GO line (found %d): %s\n' \
+    printf 'Error: gate result file must contain exactly one Final: GO/NO-GO/INCOMPLETE line (found %d): %s\n' \
       "$final_count" "$result_file" >&2
     return 1
   fi
@@ -39,7 +39,7 @@ gate_result_verdict_verify() {
     printf 'Error: gate result YAML frontmatter missing required field: final: (%s)\n' "$result_file" >&2
     return 1
   fi
-  body_final=$(grep -E '^Final: (GO|NO-GO)$' "$result_file" | awk '{print $2}')
+  body_final=$(grep -E '^Final: (GO|NO-GO|INCOMPLETE)$' "$result_file" | awk '{print $2}')
   if [[ "$frontmatter_final" != "$body_final" ]]; then
     printf 'Error: frontmatter final: (%s) does not match body Final: (%s) in gate result: %s\n' \
       "$frontmatter_final" "$body_final" "$result_file" >&2
@@ -1260,21 +1260,43 @@ _gate_assurance_linked_evidence_verify() {
           "$artifact_path" 2>/dev/null
       )" || ! artifact_outcome="$(
         jq -er '.status |
-          select(. == "pass" or . == "fail" or . == "timeout" or
-            . == "stale" or . == "invalid")' "$artifact_path" 2>/dev/null
+            select(. == "pass" or . == "test-fail" or . == "timeout" or
+              . == "environment-error" or . == "stale" or
+              . == "invalid-evidence" or . == "unclassified-nonzero")' "$artifact_path" 2>/dev/null
       )"; then
         printf 'Error: gate assurance linked preflight evidence claim is malformed: %s\n' \
           "$artifact_path" >&2
         return 1
       fi
       linked_outcome="$(jq -r '.evidence.preflight.outcome' "$assurance_file")"
-      if [[ "$artifact_subject" != "$linked_subject" ]]; then
-        printf 'Error: gate assurance linked preflight evidence subject claim mismatch: %s\n' \
-          "$artifact_path" >&2
-        return 1
-      fi
-      if [[ ( "$linked_outcome" == pass && "$artifact_outcome" != pass ) \
-          || ( "$linked_outcome" == fail && "$artifact_outcome" == pass ) ]]; then
+        if [[ "$artifact_subject" != "$linked_subject" ]]; then
+          printf 'Error: gate assurance linked preflight evidence subject claim mismatch: %s\n' \
+            "$artifact_path" >&2
+          return 1
+        fi
+        if ! jq -e '
+          ((has("outcome") | not) and (.status | IN("pass","fail"))) or
+          (.outcome | type == "object" and
+            (.execution | IN("pass","nonzero","timeout")) and
+            (.test_verdict | IN("pass","fail","not_available","inconclusive")) and
+            (.evidence_richness | IN("opaque","structured","invalid")) and
+            (.authorization | IN("eligible","non_authorizing"))) and
+          ((.status == "pass" and .outcome.execution == "pass" and
+            .outcome.test_verdict == "pass" and
+            .outcome.authorization == "eligible") or
+           (.status == "test-fail" and .outcome.test_verdict == "fail" and
+            .outcome.evidence_richness == "structured" and
+            .outcome.authorization == "non_authorizing") or
+           ((.status | IN("timeout","environment-error","stale",
+             "invalid-evidence","unclassified-nonzero")) and
+            .outcome.test_verdict != "fail" and
+            .outcome.authorization == "non_authorizing"))
+        ' "$artifact_path" >/dev/null 2>&1; then
+          printf 'Error: gate assurance linked preflight evidence outcome contract is malformed: %s\n' \
+            "$artifact_path" >&2
+          return 1
+        fi
+        if [[ "$linked_outcome" != "$artifact_outcome" ]]; then
         printf 'Error: gate assurance linked preflight evidence outcome mismatch: %s\n' \
           "$artifact_path" >&2
         return 1
@@ -1500,7 +1522,9 @@ gate_assurance_verify() {
           "subject_fingerprint"])) and
       (.evidence.preflight.status | IN("not_run","linked")) and
       (if .evidence.preflight.status == "linked" then
-        (.evidence.preflight.outcome | IN("pass","fail")) and
+          (.evidence.preflight.outcome |
+            IN("pass","test-fail","timeout","environment-error","stale",
+              "invalid-evidence","unclassified-nonzero")) and
         (.evidence.preflight.artifact |
           type == "string" and
           test("^preflight-evidence-[0-9]{8}-[0-9]{6}\\.json$")) and
@@ -1721,7 +1745,7 @@ gate_assurance_verify() {
        then (.reviewer | type == "string" and length > 0)
        else .reviewer == null
        end) and
-      (.status | IN("passed","failed","skipped")) and
+      (.status | IN("passed","failed","incomplete","skipped")) and
       (.evidence_status | IN("verified","unavailable","unverified")) and
       (.run_id == null or
         (.run_id | type == "string" and test("^run-[A-Za-z0-9]+-[A-Za-z0-9]+$"))))) and
@@ -1743,7 +1767,8 @@ gate_assurance_verify() {
      else
        (.dispatch.outcomes | length) == 1 and
        .dispatch.outcomes[0].role == "preflight" and
-       .dispatch.outcomes[0].status == "failed"
+       (.dispatch.outcomes[0].status == "failed" or
+        .dispatch.outcomes[0].status == "incomplete")
      end) and
     (.coordinates.independence.evidence_status |
       IN("verified","unavailable","unverified")) and
@@ -1890,7 +1915,7 @@ gate_result_verify() {
       fi
       result_parent="$(cd "$(dirname "$result_file")" && pwd -P)" || return 1
       assurance_file="$result_parent/$pointer"
-      body_final=$(grep -E '^Final: (GO|NO-GO)$' "$result_file" | awk '{print $2}')
+      body_final=$(grep -E '^Final: (GO|NO-GO|INCOMPLETE)$' "$result_file" | awk '{print $2}')
       gate_assurance_verify "$result_file" "$assurance_file" "$body_final" || return $?
       if [[ "$version" == pr_gate_result_v3 \
           || "$version" == pr_gate_result_v4 ]]; then

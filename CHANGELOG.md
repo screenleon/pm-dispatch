@@ -10,6 +10,15 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Truthful `--test-cmd` preflight outcomes (CC-522 Phase A).** Preflight
+  evidence now records execution, test verdict, evidence richness, and
+  authorization independently. Opaque nonzero exits, timeouts, environment
+  failures, stale subjects, and malformed structured evidence terminate as
+  non-authorizing `Final: INCOMPLETE` (exit 3), rather than claiming a
+  diff-caused test failure. Only a subject-valid structured assertion failure
+  yields the mechanical `Final: NO-GO`; legacy exit-0 commands remain valid
+  opaque evidence.
+
 - **Deterministic synthesis parity and remediation seed (CC-520).** Completed
   selected-reviewer routes now emit `pr_gate_result_v4` with exactly one
   `gate_synthesis_result_v1` block. The verifier mechanically reconciles the

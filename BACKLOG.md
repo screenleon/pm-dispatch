@@ -39,7 +39,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-517 | 🔵 active | maintainer `/ship`：primary review、structured remediation closure 與 conditional targeted confirmation | process/gate | 2026-07-23 | — | P1 | design |
 | CC-518 | ✅ closed 2026-07-29 | gate scope manifest v1：immutable subject、changed paths、paired tests、signals 與 bounded expansion | ops/gate | 2026-07-23 | pr:#455 | P1 | design |
 | CC-519 | ✅ closed 2026-07-30 | selected-reviewer coverage／finding contract：declared coverage、stable IDs 與 actionable fix boundary | ops/gate | 2026-07-23 | pr:#456 | P1 | design |
-| CC-520 | 🔵 active | synthesis parity 與 remediation seed：findings union、root-cause grouping、coverage matrix 與 no-silent-drop | ops/gate | 2026-07-23 | — | P1 | design |
+| CC-520 | ✅ closed 2026-07-31 | synthesis parity 與 remediation seed：findings union、root-cause grouping、coverage matrix 與 no-silent-drop | ops/gate | 2026-07-23 | pr:#460 | P1 | design |
 | CC-521 | 🔵 active | test-gap matrix、protocol recovery 與 live recall evaluation 分層 | ops/test | 2026-07-23 | — | P2 | design |
 | CC-522 | 🔵 active | 任意 `--test-cmd` 的 opaque／structured capability negotiation、執行失敗分類與外部 evidence recovery | ops/test | 2026-07-27 | feedback:2026-07-27 | P1 | design |
 | CC-523 | ✅ closed 2026-07-28 | `pmctl gate cancel` 必須終止 reviewer 派發前仍在執行的 foreground preflight 與其 process tree | arch/gate | 2026-07-27 | pr:#453 | P1 | hygiene |
@@ -2123,7 +2123,7 @@ reviewer 完全理解 scope；不讓 parallel 代替 coverage。
 
 ---
 
-## CC-520 — synthesis parity 與 remediation seed 🔵 active
+## CC-520 — synthesis parity 與 remediation seed ✅ 2026-07-31
 
 **Problem**: synthesis 目前強調 cross-reviewer overlaps與最高 severity，可能在
 dedup 時丟失較低 severity finding、test expectation、caution 或 reviewer disagreement。
@@ -2157,6 +2157,15 @@ remediation seed保留所有 actionable evidence，但不宣稱 defect-complete�
 **Dependencies**: [[CC-519]]。P1。
 
 **Cross-link**: [[CC-517]]、[[CC-521]]。
+
+**Outcome**: Selected-reviewer Gate results now emit `pr_gate_result_v4` with one
+`gate_synthesis_result_v1` block. The verifier mechanically proves the complete
+stable-ID inventory/findings union, coverage matrix, root-cause grouping,
+uncertainties/cautions, and pending remediation seed against the authoritative
+reviewer JSON. Silent drops, duplicate IDs, coverage drift, and malformed
+verification expectations or seeds fail closed as `INCOMPLETE`.
+
+**See**: pr:#460
 
 ---
 
