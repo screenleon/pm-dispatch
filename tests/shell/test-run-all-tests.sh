@@ -52,7 +52,10 @@ SUITE_NAMES=(
   test-executor-router
   test-runner-kind
   test-pmctl-adapter-generate
-  test-pr-gate
+  test-pr-gate-shard-1
+  test-pr-gate-shard-2
+  test-pr-gate-shard-3
+  test-pr-gate-shard-4
   test-setup-project
   test-patch-gitignore
   test-portable
@@ -175,7 +178,10 @@ suite_path() {
     test-executor-router) printf 'tests/shell/test-executor-router.sh\n' ;;
     test-runner-kind) printf 'tests/shell/test-runner-kind.sh\n' ;;
     test-pmctl-adapter-generate) printf 'tests/shell/test-pmctl-adapter-generate.sh\n' ;;
-    test-pr-gate) printf 'tests/shell/test-pr-gate.sh\n' ;;
+    test-pr-gate-shard-1) printf 'tests/shell/test-pr-gate-shard-1.sh\n' ;;
+    test-pr-gate-shard-2) printf 'tests/shell/test-pr-gate-shard-2.sh\n' ;;
+    test-pr-gate-shard-3) printf 'tests/shell/test-pr-gate-shard-3.sh\n' ;;
+    test-pr-gate-shard-4) printf 'tests/shell/test-pr-gate-shard-4.sh\n' ;;
     test-setup-project) printf 'tests/shell/test-setup-project.sh\n' ;;
     test-patch-gitignore) printf 'tests/shell/test-patch-gitignore.sh\n' ;;
     test-portable) printf 'tests/shell/test-portable.sh\n' ;;
@@ -422,8 +428,8 @@ test_suite_filter_list() {
   # Behavior: repeated --suite flags select known suites in registry order for --list.
   # Steps: request two suites in reverse order; assert only those two are listed in canonical order.
   local out status=0
-  out=$(bash "$SCRIPT_DIR/../lib/test-suite-runner.sh" --suite test-pr-gate --suite lint-agents --list 2>&1) || status=$?
-  if [[ "$status" -eq 0 && "$out" == $'lint-agents\ntest-pr-gate' ]]; then
+  out=$(bash "$SCRIPT_DIR/../lib/test-suite-runner.sh" --suite test-pr-gate-shard-1 --suite lint-agents --list 2>&1) || status=$?
+  if [[ "$status" -eq 0 && "$out" == $'lint-agents\ntest-pr-gate-shard-1' ]]; then
     pass_case "$name"
   else
     fail_case "$name" "status=$status out=$out"
@@ -534,15 +540,15 @@ test_codex_missing_skips_codex_dispatch() {
 test_fail_on_suite_error() {
   local name="fail-on-suite-error"
   # Behavior: a suite that exits non-zero causes FAIL in output and overall exit 1.
-  # Steps: write test-pr-gate stub as exit 1; run aggregator; assert FAIL and exit 1.
+  # Steps: write one test-pr-gate shard stub as exit 1; run aggregator; assert FAIL and exit 1.
   local repo="$TMP_ROOT/$name" path out status=0
   make_fixture_repo "$repo"
   write_pass_stubs "$repo"
-  write_suite_stub "$repo" test-pr-gate 1
+  write_suite_stub "$repo" test-pr-gate-shard-1 1
   path="$(make_path_with_codex "$repo/bin")"
   out=$(PATH="$path" run_aggregator "$repo" 2>&1) || status=$?
   if [[ "$status" -eq 1 &&
-        "$out" == *"FAIL test-pr-gate"* &&
+        "$out" == *"FAIL test-pr-gate-shard-1"* &&
         "$out" == *"$SUITE_MINUS_ONE passed, 1 failed, 0 skipped"* ]]; then
     pass_case "$name"
   else
@@ -1269,50 +1275,6 @@ test_live_db_exclusive_suites_never_overlap() {
   fi
 }
 
-test_heavy_gate_suite_never_overlaps_other_gate_suite() {
-  # Behavior: test-pr-gate runs alone because its nested gates are process-heavy.
-  # Steps: block test-pr-gate and a later gate suite; assert the later suite is
-  # held despite an available parallel slot, then release in order.
-  local name="heavy-gate-suite-never-overlaps-other-gate-suite"
-  local repo="$TMP_ROOT/$name" path status
-  make_fixture_repo "$repo"
-  write_pass_stubs "$repo"
-  local marker="$TMP_ROOT/$name-markers"; mkdir -p "$marker"
-  write_gated_stub "$repo" test-pr-gate "$marker"
-  write_gated_stub "$repo" test-pr-gate-profile "$marker"
-  path="$(make_path_with_codex "$repo/bin")"
-  local logf="$TMP_ROOT/$name.log"
-  ( PATH="$path" "$repo/tests/lib/test-suite-runner.sh" \
-      --suite test-pr-gate --suite test-pr-gate-profile --jobs 2 > "$logf" 2>&1
-    echo $? > "$marker/rc" ) &
-  local agg_pid=$!
-
-  if ! wait_for_file "$marker/started-test-pr-gate" 300; then
-    fail_case "$name" "test-pr-gate never started"
-    touch "$marker/release-test-pr-gate" "$marker/release-test-pr-gate-profile"
-    wait "$agg_pid" 2>/dev/null; return
-  fi
-  if wait_for_file "$marker/started-test-pr-gate-profile" 100; then
-    fail_case "$name" "test-pr-gate-profile started while test-pr-gate was in-flight"
-    touch "$marker/release-test-pr-gate" "$marker/release-test-pr-gate-profile"
-    wait "$agg_pid" 2>/dev/null; return
-  fi
-  touch "$marker/release-test-pr-gate"
-  if ! wait_for_file "$marker/started-test-pr-gate-profile" 300; then
-    fail_case "$name" "test-pr-gate-profile did not start after test-pr-gate completed"
-    touch "$marker/release-test-pr-gate-profile"
-    wait "$agg_pid" 2>/dev/null; return
-  fi
-  touch "$marker/release-test-pr-gate-profile"
-  wait "$agg_pid" 2>/dev/null
-  status="$(cat "$marker/rc" 2>/dev/null || echo 1)"
-  if [[ "$status" -eq 0 ]]; then
-    pass_case "$name"
-  else
-    fail_case "$name" "status=$status out=$(cat "$logf" 2>/dev/null)"
-  fi
-}
-
 test_list
 test_known_suite_count
 test_suite_filter_list
@@ -1351,7 +1313,6 @@ test_jobs_default_fallback_no_nproc
 test_jobs_default_uses_detected_nproc
 test_jobs_default_caps_high_nproc
 test_live_db_exclusive_suites_never_overlap
-test_heavy_gate_suite_never_overlaps_other_gate_suite
 
 printf '%s passed, %s failed\n' "$PASS" "$FAIL"
 if [[ "$FAIL" -gt 0 ]]; then

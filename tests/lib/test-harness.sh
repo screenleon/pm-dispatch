@@ -22,6 +22,8 @@
 
 th_init() {
   FILTER=""
+  SHARD_INDEX=0
+  SHARD_TOTAL=0
   LIST=false
   FORMAT="colon-flat"
   FAIL_FAST=false
@@ -29,6 +31,20 @@ th_init() {
     case "$1" in
       --filter)
         FILTER="${2:-}"
+        shift 2
+        ;;
+      --shard)
+        shard_spec="${2:-}"
+        if [[ ! "$shard_spec" =~ ^[1-9][0-9]*/[1-9][0-9]*$ ]]; then
+          printf 'error: --shard requires INDEX/TOTAL with positive integers\n' >&2
+          exit 2
+        fi
+        SHARD_INDEX="${shard_spec%/*}"
+        SHARD_TOTAL="${shard_spec#*/}"
+        if (( SHARD_INDEX > SHARD_TOTAL )); then
+          printf 'error: --shard index must not exceed total\n' >&2
+          exit 2
+        fi
         shift 2
         ;;
       --list)
@@ -74,11 +90,19 @@ th_init() {
 }
 
 should_run() {
+  if [[ -n "$FILTER" && "$1" != *"$FILTER"* ]]; then
+    return 1
+  fi
+  if (( SHARD_TOTAL > 0 )); then
+    local shard_hash
+    shard_hash="$(printf '%s' "$1" | cksum | awk '{print $1}')"
+    (( (shard_hash % SHARD_TOTAL) + 1 == SHARD_INDEX )) || return 1
+  fi
   if $LIST; then
     ALL_CASES+=("$1")
     return 1
   fi
-  [[ -z "$FILTER" || "$1" == *"$FILTER"* ]]
+  return 0
 }
 
 pass() {

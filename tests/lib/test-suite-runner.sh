@@ -47,7 +47,10 @@ SUITE_NAMES=(
   test-executor-router
   test-runner-kind
   test-pmctl-adapter-generate
-  test-pr-gate
+  test-pr-gate-shard-1
+  test-pr-gate-shard-2
+  test-pr-gate-shard-3
+  test-pr-gate-shard-4
   test-setup-project
   test-patch-gitignore
   test-portable
@@ -147,7 +150,10 @@ declare -A SUITE_PATHS=(
   [test-executor-router]="tests/shell/test-executor-router.sh"
   [test-runner-kind]="tests/shell/test-runner-kind.sh"
   [test-pmctl-adapter-generate]="tests/shell/test-pmctl-adapter-generate.sh"
-  [test-pr-gate]="tests/shell/test-pr-gate.sh"
+  [test-pr-gate-shard-1]="tests/shell/test-pr-gate-shard-1.sh"
+  [test-pr-gate-shard-2]="tests/shell/test-pr-gate-shard-2.sh"
+  [test-pr-gate-shard-3]="tests/shell/test-pr-gate-shard-3.sh"
+  [test-pr-gate-shard-4]="tests/shell/test-pr-gate-shard-4.sh"
   [test-setup-project]="tests/shell/test-setup-project.sh"
   [test-patch-gitignore]="tests/shell/test-patch-gitignore.sh"
   [test-portable]="tests/shell/test-portable.sh"
@@ -372,15 +378,6 @@ declare -A LIVE_DB_EXCLUSIVE=(
   [test-release-verify]=1
 )
 
-# test-pr-gate creates many nested gate processes and temporary repositories.
-# It is deterministic in isolation but can exhaust process/file-descriptor
-# headroom when paired with other integration suites.  Keep it alone so its
-# per-case watchdog can identify a genuine hang instead of a scheduler-induced
-# timeout.
-declare -A HEAVY_GATE_EXCLUSIVE=(
-  [test-pr-gate]=1
-)
-
 if [[ "$LIST" -eq 1 ]]; then
   printf '%s\n' "${ACTIVE_SUITE_NAMES[@]}"
   exit 0
@@ -531,16 +528,6 @@ else
     return 1
   }
 
-  # True while a heavyweight nested-gate suite is in-flight.  Unlike the
-  # live-context-db group this is capacity isolation, not a database lock.
-  _heavy_gate_inflight() {
-    local i
-    for ((i = 0; i < ${#_if_names[@]}; i++)); do
-      [[ -n "${HEAVY_GATE_EXCLUSIVE[${_if_names[$i]}]:-}" ]] && return 0
-    done
-    return 1
-  }
-
   _drain() {
     local i new_names=() new_pids=() new_dirs=()
     for ((i = 0; i < ${#_if_pids[@]}; i++)); do
@@ -612,15 +599,15 @@ else
     # A live-context suite must run alone: ordinary suites can invoke pmctl
     # indirectly and mutate the same repo-local DB. Conversely, do not launch
     # ordinary work while that invariant is being asserted.
-    if [[ -n "${LIVE_DB_EXCLUSIVE[$name]:-}" || -n "${HEAVY_GATE_EXCLUSIVE[$name]:-}" ]]; then
+    if [[ -n "${LIVE_DB_EXCLUSIVE[$name]:-}" ]]; then
       while [[ ${#_if_pids[@]} -gt 0 ]]; do
         _drain
         [[ ${#_if_pids[@]} -gt 0 ]] && sleep 0.05
       done
     else
-      while _exclusive_inflight || _heavy_gate_inflight; do
+      while _exclusive_inflight; do
         _drain
-        (_exclusive_inflight || _heavy_gate_inflight) && sleep 0.05
+        _exclusive_inflight && sleep 0.05
       done
     fi
 
