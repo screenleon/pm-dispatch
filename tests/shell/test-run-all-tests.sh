@@ -1269,6 +1269,50 @@ test_live_db_exclusive_suites_never_overlap() {
   fi
 }
 
+test_heavy_gate_suite_never_overlaps_other_gate_suite() {
+  # Behavior: test-pr-gate runs alone because its nested gates are process-heavy.
+  # Steps: block test-pr-gate and a later gate suite; assert the later suite is
+  # held despite an available parallel slot, then release in order.
+  local name="heavy-gate-suite-never-overlaps-other-gate-suite"
+  local repo="$TMP_ROOT/$name" path status
+  make_fixture_repo "$repo"
+  write_pass_stubs "$repo"
+  local marker="$TMP_ROOT/$name-markers"; mkdir -p "$marker"
+  write_gated_stub "$repo" test-pr-gate "$marker"
+  write_gated_stub "$repo" test-pr-gate-profile "$marker"
+  path="$(make_path_with_codex "$repo/bin")"
+  local logf="$TMP_ROOT/$name.log"
+  ( PATH="$path" "$repo/tests/lib/test-suite-runner.sh" \
+      --suite test-pr-gate --suite test-pr-gate-profile --jobs 2 > "$logf" 2>&1
+    echo $? > "$marker/rc" ) &
+  local agg_pid=$!
+
+  if ! wait_for_file "$marker/started-test-pr-gate" 300; then
+    fail_case "$name" "test-pr-gate never started"
+    touch "$marker/release-test-pr-gate" "$marker/release-test-pr-gate-profile"
+    wait "$agg_pid" 2>/dev/null; return
+  fi
+  if wait_for_file "$marker/started-test-pr-gate-profile" 100; then
+    fail_case "$name" "test-pr-gate-profile started while test-pr-gate was in-flight"
+    touch "$marker/release-test-pr-gate" "$marker/release-test-pr-gate-profile"
+    wait "$agg_pid" 2>/dev/null; return
+  fi
+  touch "$marker/release-test-pr-gate"
+  if ! wait_for_file "$marker/started-test-pr-gate-profile" 300; then
+    fail_case "$name" "test-pr-gate-profile did not start after test-pr-gate completed"
+    touch "$marker/release-test-pr-gate-profile"
+    wait "$agg_pid" 2>/dev/null; return
+  fi
+  touch "$marker/release-test-pr-gate-profile"
+  wait "$agg_pid" 2>/dev/null
+  status="$(cat "$marker/rc" 2>/dev/null || echo 1)"
+  if [[ "$status" -eq 0 ]]; then
+    pass_case "$name"
+  else
+    fail_case "$name" "status=$status out=$(cat "$logf" 2>/dev/null)"
+  fi
+}
+
 test_list
 test_known_suite_count
 test_suite_filter_list
@@ -1307,6 +1351,7 @@ test_jobs_default_fallback_no_nproc
 test_jobs_default_uses_detected_nproc
 test_jobs_default_caps_high_nproc
 test_live_db_exclusive_suites_never_overlap
+test_heavy_gate_suite_never_overlaps_other_gate_suite
 
 printf '%s passed, %s failed\n' "$PASS" "$FAIL"
 if [[ "$FAIL" -gt 0 ]]; then

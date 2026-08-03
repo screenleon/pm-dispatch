@@ -372,6 +372,15 @@ declare -A LIVE_DB_EXCLUSIVE=(
   [test-release-verify]=1
 )
 
+# test-pr-gate creates many nested gate processes and temporary repositories.
+# It is deterministic in isolation but can exhaust process/file-descriptor
+# headroom when paired with other integration suites.  Keep it alone so its
+# per-case watchdog can identify a genuine hang instead of a scheduler-induced
+# timeout.
+declare -A HEAVY_GATE_EXCLUSIVE=(
+  [test-pr-gate]=1
+)
+
 if [[ "$LIST" -eq 1 ]]; then
   printf '%s\n' "${ACTIVE_SUITE_NAMES[@]}"
   exit 0
@@ -522,6 +531,16 @@ else
     return 1
   }
 
+  # True while a heavyweight nested-gate suite is in-flight.  Unlike the
+  # live-context-db group this is capacity isolation, not a database lock.
+  _heavy_gate_inflight() {
+    local i
+    for ((i = 0; i < ${#_if_names[@]}; i++)); do
+      [[ -n "${HEAVY_GATE_EXCLUSIVE[${_if_names[$i]}]:-}" ]] && return 0
+    done
+    return 1
+  }
+
   _drain() {
     local i new_names=() new_pids=() new_dirs=()
     for ((i = 0; i < ${#_if_pids[@]}; i++)); do
@@ -593,15 +612,15 @@ else
     # A live-context suite must run alone: ordinary suites can invoke pmctl
     # indirectly and mutate the same repo-local DB. Conversely, do not launch
     # ordinary work while that invariant is being asserted.
-    if [[ -n "${LIVE_DB_EXCLUSIVE[$name]:-}" ]]; then
+    if [[ -n "${LIVE_DB_EXCLUSIVE[$name]:-}" || -n "${HEAVY_GATE_EXCLUSIVE[$name]:-}" ]]; then
       while [[ ${#_if_pids[@]} -gt 0 ]]; do
         _drain
         [[ ${#_if_pids[@]} -gt 0 ]] && sleep 0.05
       done
     else
-      while _exclusive_inflight; do
+      while _exclusive_inflight || _heavy_gate_inflight; do
         _drain
-        _exclusive_inflight && sleep 0.05
+        (_exclusive_inflight || _heavy_gate_inflight) && sleep 0.05
       done
     fi
 

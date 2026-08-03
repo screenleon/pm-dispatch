@@ -19,6 +19,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
   yields the mechanical `Final: NO-GO`; legacy exit-0 commands remain valid
   opaque evidence.
 
+- **Nested gate test timeout diagnostics (CC-522 Phase B).** `test-pr-gate`
+  now labels each nested gate invocation with its owning case and duration,
+  bounds it with a configurable case watchdog, and verifies cleanup of a
+  stalled fixture. The affected-test scheduler runs this process-heavy suite
+  alone, preventing concurrent integration suites from turning resource
+  contention into an opaque 15-minute suite timeout.
+
 - **Deterministic synthesis parity and remediation seed (CC-520).** Completed
   selected-reviewer routes now emit `pr_gate_result_v4` with exactly one
   `gate_synthesis_result_v1` block. The verifier mechanically reconciles the

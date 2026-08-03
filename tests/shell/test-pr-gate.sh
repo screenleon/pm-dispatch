@@ -587,11 +587,57 @@ create_repo_with_branch() {
 
 run_gate() {
   local home="$1" runner="$2" repo="$3" out="$4" err="$5"
+  local case_timeout="${PM_DISPATCH_TEST_PR_GATE_CASE_TIMEOUT_SECS:-120}"
+  local started="$SECONDS"
   shift 5
+  printf 'START pr-gate case=%s watchdog=%ss\n' \
+    "${CURRENT_TEST_CASE:-unknown}" "$case_timeout"
   set +e
-  HOME="$home" PATH="$runner/bin:$PATH" "$runner/pr-gate.sh" --cd "$repo" "$@" > "$out" 2> "$err"
+  if command -v timeout >/dev/null 2>&1; then
+    timeout --kill-after=5s "${case_timeout}s" \
+      env HOME="$home" PATH="$runner/bin:$PATH" \
+      "$runner/pr-gate.sh" --cd "$repo" "$@" > "$out" 2> "$err"
+  else
+    HOME="$home" PATH="$runner/bin:$PATH" \
+      "$runner/pr-gate.sh" --cd "$repo" "$@" > "$out" 2> "$err"
+  fi
   local code=$?
+  if [[ "$code" -eq 124 ]]; then
+    printf 'TIMEOUT test-pr-gate case=%s watchdog=%ss\n' \
+      "${CURRENT_TEST_CASE:-unknown}" "$case_timeout" >&2
+  fi
+  printf 'END pr-gate case=%s exit=%s duration=%ss\n' \
+    "${CURRENT_TEST_CASE:-unknown}" "$code" "$((SECONDS - started))"
   return "$code"
+}
+
+# Behavior: a stalled nested gate is bounded at the test-case boundary, so a
+# single fixture cannot hide its identity behind the suite's 15-minute limit.
+# Steps: make the dispatch fixture sleep, give run_gate a one-second watchdog,
+# and assert timeout exit 124 plus child-process cleanup.
+test_run_gate_case_watchdog_bounds_stalled_fixture() {
+  local name="run-gate-case-watchdog-bounds-stalled-fixture"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home repo runner out err code marker="913"
+  home="$dir/home"; repo="$dir/repo"; runner="$dir/runner"
+  out="$dir/out"; err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester
+  create_repo "$repo" docs
+  set +e
+  PM_DISPATCH_TEST_PR_GATE_CASE_TIMEOUT_SECS=1 \
+    CODEX_GATE_STUB_MODE=hang CODEX_GATE_HANG_SECONDS="$marker" \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester --mode sequential --timeout 900
+  code=$?
+  set -e
+  [[ "$code" -eq 124 ]] || {
+    fail "$name" "exit $code, expected watchdog timeout 124: $(cat "$err" 2>/dev/null)"
+    return
+  }
+  assert_no_process_matching "$name" "sleep $marker" || return
+  pass "$name"
 }
 
 write_valid_initial_gate_result() {
@@ -4472,7 +4518,7 @@ FAKE_GH
 }
 
 run_test() {
-  "$@" || true
+  CURRENT_TEST_CASE="$1" "$@" || true
 }
 
 # Behavior: 100-500 non-doc changed lines on a feature branch triggers
@@ -5395,6 +5441,7 @@ run_test test_sequential_no_final_line_aborts_gate
 run_test test_sequential_timeout_preserves_partial_result
 run_test test_piped_stdout_does_not_abort_gate
 run_test test_sequential_frontmatter_parity_mismatch_aborts_gate
+run_test test_run_gate_case_watchdog_bounds_stalled_fixture
 run_test test_preflight_pass_no_override
 run_test test_preflight_fail_short_circuits_without_dispatch
 run_test test_preflight_fail_log_excerpt_is_redacted_not_empty
