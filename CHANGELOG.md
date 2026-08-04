@@ -8,6 +8,16 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Preflight `--test-timeout` default too low for a full-suite escalation
+  (CC-522).** `pr-gate.sh`'s default `--test-timeout` was 1800s. A change to a
+  high-fanout runner/install substrate (e.g. `tests/lib/test-harness.sh`)
+  forces `tests/bin/run-tests.sh` to escalate from an affected-only run to the
+  full suite, which measured 37m22s wall-clock on this repo — every such
+  preflight run was killed at the 1800s ceiling and reported as non-authorizing
+  `Final: INCOMPLETE` rather than completing. Default raised to 3600s.
+
 ### Added
 
 - **Truthful `--test-cmd` preflight outcomes (CC-522 Phase A).** Preflight

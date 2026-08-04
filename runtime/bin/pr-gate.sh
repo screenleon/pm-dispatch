@@ -632,6 +632,10 @@ GATE_SCOPE_MAX_DIFF_HUNKS=512
 GATE_SCOPE_MAX_EXPANSION_SOURCES=256
 GATE_SCOPE_MAX_SYMBOLS_PER_SOURCE=1024
 GATE_SCOPE_MAX_MATCHES_PER_QUERY=64
+# Contract bundles are explicitly enumerated framework surfaces.  They retain
+# a bounded path-reference summary, independently from the tighter symbol
+# call-site search budget used for arbitrary application sources.
+GATE_SCOPE_MAX_CONTRACT_CONSUMERS_PER_SOURCE=128
 GATE_SCOPE_MAX_EXPANSION_ENTRIES=512
 
 _gate_scope_diff_for_path() {
@@ -943,12 +947,14 @@ _gate_scope_expansions_collect() {
   local changed_paths_json="$1" output="$2"
   local candidates sources source_count=0 source path base stem dir ext candidate
   local query match eligible_count symbol_count
-  local source_is_shared=false source_is_shell=false
+  local source_is_shared=false source_is_shell=false source_is_contract_bundle=false
   local symbol_limit="$GATE_SCOPE_MAX_SYMBOLS_PER_SOURCE"
   local match_limit="$GATE_SCOPE_MAX_MATCHES_PER_QUERY"
+  local contract_consumer_limit="$GATE_SCOPE_MAX_CONTRACT_CONSUMERS_PER_SOURCE"
   local source_limit="$GATE_SCOPE_MAX_EXPANSION_SOURCES"
   local expansion_limit="$GATE_SCOPE_MAX_EXPANSION_ENTRIES"
-  local omitted_sources=0 omitted_symbols=0 omitted_matches=0 omitted_entries=0
+  local omitted_sources=0 omitted_symbols=0 omitted_matches=0
+  local omitted_contract_consumers=0 omitted_entries=0
   local -a symbols=() shell_consumers=()
   local -A query_seen=()
   candidates="$(mktemp "${TMPDIR:-/tmp}/gate-scope-expansions.XXXXXX")" || return 2
@@ -979,12 +985,21 @@ _gate_scope_expansions_collect() {
     dir="$(dirname "$source")"
     source_is_shared=false
     source_is_shell=false
+    source_is_contract_bundle=false
     shell_consumers=()
     case "$source" in
       */lib/*|lib/*|*/shared/*|shared/*) source_is_shared=true ;;
     esac
     case "$source" in
       *.sh|*.bash) source_is_shell=true ;;
+    esac
+    case "$source" in
+      tests/lib/test-harness.sh|runtime/lib/gate-result-verify.sh|runtime/bin/pr-gate.sh)
+        source_is_contract_bundle=true
+        # runtime/bin/pr-gate.sh is a shell entry point, not a lib path, but
+        # its direct consumers are still a useful bounded review surface.
+        source_is_shared=true
+        ;;
     esac
 
     for ext in sh bash go py js jsx ts tsx java kt rs md; do
@@ -1014,16 +1029,29 @@ _gate_scope_expansions_collect() {
         fi
         if [[ "$source_is_shared" == true ]]; then
           eligible_count=$((eligible_count + 1))
-          if [[ "$eligible_count" -le "$match_limit" ]]; then
+          local path_limit="$match_limit"
+          [[ "$source_is_contract_bundle" == true ]] \
+            && path_limit="$contract_consumer_limit"
+          if [[ "$eligible_count" -le "$path_limit" ]]; then
             _gate_scope_expansion_append "$candidates" "$match" \
-              shared-helper-consumer "$source" path-reference per-source "$match_limit" \
+              shared-helper-consumer "$source" path-reference per-source "$path_limit" \
               || return 2
+          elif [[ "$source_is_contract_bundle" == true ]]; then
+            omitted_contract_consumers=$((omitted_contract_consumers + 1))
           else
             omitted_matches=$((omitted_matches + 1))
           fi
         fi
       done < <(_gate_scope_search_paths "$source" path)
     fi
+
+    # These framework/verification bundles have deliberately broad consumer
+    # surfaces. Their path-level consumer lists are the authoritative review
+    # hints; expanding generic helpers repeats the same files once per symbol
+    # and can exhaust a per-query budget without adding scope information.
+    # Preserve the bounded consumer summary above and skip symbol-level
+    # call-site expansion for these contract bundles.
+    [[ "$source_is_contract_bundle" == true ]] && continue
 
     mapfile -t symbols < <(_gate_scope_symbols_collect "$source")
     symbol_count="${#symbols[@]}"
@@ -1086,6 +1114,7 @@ _gate_scope_expansions_collect() {
   GATE_SCOPE_OMITTED_EXPANSION_SOURCES="$omitted_sources"
   GATE_SCOPE_OMITTED_SYMBOLS="$omitted_symbols"
   GATE_SCOPE_OMITTED_SEARCH_MATCHES="$omitted_matches"
+  GATE_SCOPE_OMITTED_CONTRACT_CONSUMERS="$omitted_contract_consumers"
   GATE_SCOPE_OMITTED_EXPANSION_ENTRIES="$omitted_entries"
 }
 
@@ -1266,6 +1295,7 @@ _gate_scope_manifest_write() {
       || "$GATE_SCOPE_OMITTED_EXPANSION_SOURCES" -gt 0 \
       || "$GATE_SCOPE_OMITTED_SYMBOLS" -gt 0 \
       || "$GATE_SCOPE_OMITTED_SEARCH_MATCHES" -gt 0 \
+      || "$GATE_SCOPE_OMITTED_CONTRACT_CONSUMERS" -gt 0 \
       || "$GATE_SCOPE_OMITTED_EXPANSION_ENTRIES" -gt 0 ]]; then
     truncation_occurred=true
     if [[ "$ACCEPT_SCOPE_TRUNCATION" == true ]]; then
@@ -1281,11 +1311,13 @@ _gate_scope_manifest_write() {
     --argjson sources "$GATE_SCOPE_OMITTED_EXPANSION_SOURCES" \
     --argjson symbols "$GATE_SCOPE_OMITTED_SYMBOLS" \
     --argjson matches "$GATE_SCOPE_OMITTED_SEARCH_MATCHES" \
+    --argjson contract_consumers "$GATE_SCOPE_OMITTED_CONTRACT_CONSUMERS" \
     --argjson entries "$GATE_SCOPE_OMITTED_EXPANSION_ENTRIES" '[
       if $hunks > 0 then "diff-hunk-budget" else empty end,
       if $sources > 0 then "expansion-source-budget" else empty end,
       if $symbols > 0 then "symbol-budget" else empty end,
       if $matches > 0 then "search-match-budget" else empty end,
+      if $contract_consumers > 0 then "contract-consumer-budget" else empty end,
       if $entries > 0 then "expansion-entry-budget" else empty end
     ]')"
 
@@ -1315,11 +1347,13 @@ _gate_scope_manifest_write() {
       --argjson omitted_sources "$GATE_SCOPE_OMITTED_EXPANSION_SOURCES" \
       --argjson omitted_symbols "$GATE_SCOPE_OMITTED_SYMBOLS" \
       --argjson omitted_matches "$GATE_SCOPE_OMITTED_SEARCH_MATCHES" \
+      --argjson omitted_contract_consumers "$GATE_SCOPE_OMITTED_CONTRACT_CONSUMERS" \
       --argjson omitted_entries "$GATE_SCOPE_OMITTED_EXPANSION_ENTRIES" \
       --argjson budget_hunks "$GATE_SCOPE_MAX_DIFF_HUNKS" \
       --argjson budget_sources "$GATE_SCOPE_MAX_EXPANSION_SOURCES" \
       --argjson budget_symbols "$GATE_SCOPE_MAX_SYMBOLS_PER_SOURCE" \
       --argjson budget_matches "$GATE_SCOPE_MAX_MATCHES_PER_QUERY" \
+      --argjson budget_contract_consumers "$GATE_SCOPE_MAX_CONTRACT_CONSUMERS_PER_SOURCE" \
       --argjson budget_entries "$GATE_SCOPE_MAX_EXPANSION_ENTRIES" \
       --argjson reasons "$reasons_json" '{
         kind:"gate_scope_manifest_v1",
@@ -1367,6 +1401,7 @@ _gate_scope_manifest_write() {
             expansion_source_paths:$budget_sources,
             symbols_per_source:$budget_symbols,
             matches_per_query:$budget_matches,
+            contract_consumers_per_source:$budget_contract_consumers,
             expansion_entries:$budget_entries
           },
           omitted:{
@@ -1374,6 +1409,7 @@ _gate_scope_manifest_write() {
             expansion_source_paths:$omitted_sources,
             symbols_per_source:$omitted_symbols,
             matches_per_query:$omitted_matches,
+            contract_consumers_per_source:$omitted_contract_consumers,
             expansion_entries:$omitted_entries
           },
           reasons:$reasons,
@@ -1951,7 +1987,7 @@ _kill_process_tree() {
 #                        a bounded iteration check chosen by the target repo's caller. Omitting
 #                        this flag skips the pre-flight check entirely (reviewers judge test status
 #                        themselves, as before this feature existed).
-#   --test-timeout <s>   timeout for --test-cmd (default: 1800), decoupled from --timeout so a slow
+#   --test-timeout <s>   timeout for --test-cmd (default: 3600), decoupled from --timeout so a slow
 #                        test suite can never cause a reviewer dispatch session to time out.
 #   --skip-preflight-tests   force-disable the pre-flight test check even if --test-cmd is passed.
 # pr-gate-help:end
@@ -1996,7 +2032,7 @@ DISPATCH_APPROVAL="never"
 DISPATCH_EFFORT=""
 INPUT_BRIEF_FILE=""
 TEST_CMD_OVERRIDE=""   # --test-cmd: explicit pre-flight test command (see CC-470 Part 3)
-TEST_TIMEOUT="1800"    # --test-timeout: independent of --timeout (dispatch budget)
+TEST_TIMEOUT="3600"    # --test-timeout: independent of --timeout (dispatch budget)
 SKIP_PREFLIGHT_TESTS=false
 
 while [[ $# -gt 0 ]]; do
@@ -3061,7 +3097,8 @@ else
         (sort) == ($other | sort);
       def scope_counts:
         only_keys(["diff_hunks","expansion_source_paths",
-          "symbols_per_source","matches_per_query","expansion_entries"]) and
+          "symbols_per_source","matches_per_query",
+          "contract_consumers_per_source","expansion_entries"]) and
         all(.[]; type == "number" and . >= 0 and floor == .);
       def scope_flag($changed):
         only_keys(["matched","paths"]) and
@@ -3228,7 +3265,8 @@ else
         (.reasons | strings_unique) and
         all(.reasons[];
           IN("diff-hunk-budget","expansion-source-budget","symbol-budget",
-            "search-match-budget","expansion-entry-budget")) and
+            "search-match-budget","contract-consumer-budget",
+            "expansion-entry-budget")) and
         (.omitted as $o |
           .occurred == ([$o[]] | any(. > 0)) and
           (.reasons | exact_set([
@@ -3238,6 +3276,8 @@ else
             if $o.symbols_per_source > 0 then "symbol-budget" else empty end,
             if $o.matches_per_query > 0
               then "search-match-budget" else empty end,
+            if $o.contract_consumers_per_source > 0
+              then "contract-consumer-budget" else empty end,
             if $o.expansion_entries > 0
               then "expansion-entry-budget" else empty end
           ]))) and
@@ -3310,7 +3350,7 @@ else
             "$artifact_path" 2>/dev/null
         )" || ! artifact_outcome="$(
           jq -er '.status |
-              select(. == "pass" or . == "test-fail" or . == "timeout" or
+              select(. == "pass" or . == "fail" or . == "test-fail" or . == "timeout" or
                 . == "environment-error" or . == "stale" or
                 . == "invalid-evidence" or . == "unclassified-nonzero")' "$artifact_path" 2>/dev/null
         )"; then
@@ -3492,7 +3532,7 @@ else
         (.evidence.preflight.status | IN("not_run","linked")) and
         (if .evidence.preflight.status == "linked" then
             (.evidence.preflight.outcome |
-              IN("pass","test-fail","timeout","environment-error","stale",
+              IN("pass","fail","test-fail","timeout","environment-error","stale",
                 "invalid-evidence","unclassified-nonzero")) and
           (.evidence.preflight.artifact |
             type == "string" and
@@ -5643,7 +5683,7 @@ fi
 
 # ── Pre-flight test suite (mechanical, decoupled from reviewer --timeout budget) ──
 # Runs BEFORE any dispatch, in plain bash, with its own independent timeout
-# (--test-timeout, default 1800s) -- however long the target repo's test suite
+# (--test-timeout, default 3600s) -- however long the target repo's test suite
 # takes, it can never cause a reviewer session to hit --timeout, because it has
 # already finished by the time dispatch starts. Shared by both sequential and
 # --parallel modes (computed once here, injected into whichever brief(s) follow).
@@ -5935,6 +5975,9 @@ if [[ "$SKIP_PREFLIGHT_TESTS" != "true" && -n "$TEST_CMD_OVERRIDE" ]]; then
   if [[ -n "${PM_GATE_PARENT_OPERATION:-}" ]]; then
     _detached_launch_lib="$SCRIPT_DIR/../lib/detached-launch.sh"
     if ! declare -F detached_launch_kill_process_group >/dev/null 2>&1; then
+      if [[ ! -r "$_detached_launch_lib" && -r "$SCRIPT_DIR/lib/detached-launch.sh" ]]; then
+        _detached_launch_lib="$SCRIPT_DIR/lib/detached-launch.sh"
+      fi
       # shellcheck disable=SC1090,SC1091 # resolved repo-relative runtime library.
       [[ -r "$_detached_launch_lib" ]] && . "$_detached_launch_lib"
     fi
@@ -6144,7 +6187,7 @@ render_test_evidence_block() {
     printf '    QA may run the minimum repo-native validation needed when behavioral coverage\n'
     printf '    cannot be established; record the gap, reason, command, and new evidence.\n'
   fi
-  if [[ "$status" == "fail" && -n "$log_path" ]]; then
+  if [[ "$status" == "test-fail" && -n "$log_path" ]]; then
     # Read from the CURRENT (still in-repo) path -- relocation hasn't happened
     # yet at this point in the script -- but DISPLAY the path it will live at
     # once relocate_gate_artifacts moves it, so any reviewer that quotes this

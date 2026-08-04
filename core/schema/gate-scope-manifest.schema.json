@@ -906,6 +906,7 @@
         "expansion_source_paths",
         "symbols_per_source",
         "matches_per_query",
+        "contract_consumers_per_source",
         "expansion_entries"
       ],
       "properties": {
@@ -922,6 +923,10 @@
           "minimum": 0
         },
         "matches_per_query": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "contract_consumers_per_source": {
           "type": "integer",
           "minimum": 0
         },

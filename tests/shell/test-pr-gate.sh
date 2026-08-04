@@ -3434,6 +3434,7 @@ test_preflight_structured_test_failure_is_nogo() {
   cat > "$producer" <<'PRODUCER'
 #!/usr/bin/env bash
 set -euo pipefail
+printf 'PRODUCER_FAILING_TEST_MARKER: fixture assertion failed\n'
 repo="$PWD"
 repo_id="$(printf '%s\n\n' "$repo" | sha256sum | awk '{print $1}')"
 jq -n --arg repo "$repo" --arg repo_id "$repo_id" \
@@ -3463,6 +3464,8 @@ PRODUCER
   fi
   assert_file_contains "$name" "$result" "Final: NO-GO" || return
   assert_file_contains "$name" "$result" "test_suite: fail" || return
+  assert_file_contains "$name" "$result" "Last ~40 lines" || return
+  assert_file_contains "$name" "$result" "PRODUCER_FAILING_TEST_MARKER" || return
   if jq -e '.status == "test-fail" and .outcome.test_verdict == "fail" and
       .outcome.evidence_richness == "structured" and .outcome.authorization == "non_authorizing"' \
       "$(find "$repo/.gate-results" -name 'preflight-evidence-*.json' -print -quit)" >/dev/null; then
@@ -5126,6 +5129,163 @@ SHELL_EOF
   pass "$name"
 }
 
+# Behavior: framework contract bundles retain their complete bounded direct
+# consumer summary without re-running every generic shell helper as a symbol
+# search.  The dedicated contract budget is larger than ordinary call sites,
+# but remains independently fail-closed.
+test_scope_manifest_contract_bundle_uses_bounded_consumer_summary() {
+  local name="scope-manifest/contract-bundle-bounded-consumer-summary"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo"
+  local runner="$dir/runner" out="$dir/out" err="$dir/err"
+  local result assurance manifest code
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  git init -q -b main "$repo"
+  (
+    cd "$repo"
+    git config user.email test@example.com
+    git config user.name 'Gate Test'
+    mkdir -p tests/lib tests/shell
+    write_managed_gitignore
+    printf 'harness_usage() { :; }\n' > tests/lib/test-harness.sh
+    for n in $(seq -w 1 78); do
+      printf '. tests/lib/test-harness.sh\nharness_usage\n' > "tests/shell/test-consumer-${n}.sh"
+    done
+    git add .
+    git commit -q -m initial
+    git checkout -q -b feature
+    printf 'harness_usage() { printf updated; }\n' > tests/lib/test-harness.sh
+    git add tests/lib/test-harness.sh
+    git commit -q -m change
+  )
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" \
+    --base main --mode sequential
+  code=$?
+  set -e
+  [[ "$code" -eq 0 ]] || {
+    fail "$name" "exit $code, expected 0: $(tail -n 30 "$err" 2>/dev/null)"
+    return
+  }
+  result="$(awk -F'result: ' '/^result: /{path=$2} END{print path}' "$out")"
+  assurance="${result}.assurance.json"
+  manifest="$(dirname "$assurance")/$(jq -r '.evidence.scope_manifest.artifact' "$assurance")"
+  if ! jq -e '
+      .status == "complete" and
+      .truncation.occurred == false and
+      .truncation.budgets.contract_consumers_per_source == 128 and
+      ([.expansion.entries[] |
+        select(.source == "tests/lib/test-harness.sh" and
+          .reason == "shared-helper-consumer" and
+          .limit.maximum == 128)] | length) == 78 and
+      ([.expansion.entries[] |
+        select(.source == "tests/lib/test-harness.sh" and
+          .reason == "call-site-hint")] | length) == 0
+    ' "$manifest" >/dev/null; then
+    fail "$name" "contract summary was incomplete or expanded symbols: $(jq -c '{status,expansion,truncation}' "$manifest" 2>/dev/null)"
+    return
+  fi
+  pass "$name"
+}
+
+# Behavior: a contract bundle with MORE than its 128-consumer budget produces
+# a self-consistent truncated manifest -- the omission count, the
+# "contract-consumer-budget" reason, and (when explicitly accepted) the
+# accepted_truncation status all agree, mirroring the sibling truncation
+# categories' rejected/accepted pair above.
+test_scope_manifest_contract_bundle_overflow_is_truthful_truncation() {
+  local name="scope-manifest/contract-bundle-overflow-is-truthful-truncation"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home"
+  local runner="$dir/runner" out="$dir/out" err="$dir/err"
+  local repo_reject="$dir/reject-repo" repo_accept="$dir/accept-repo"
+  local result assurance manifest code
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+
+  make_overflow_repo() {
+    local repo="$1"
+    git init -q -b main "$repo"
+    (
+      cd "$repo"
+      git config user.email test@example.com
+      git config user.name 'Gate Test'
+      mkdir -p tests/lib tests/shell
+      write_managed_gitignore
+      printf 'harness_usage() { :; }\n' > tests/lib/test-harness.sh
+      for n in $(seq -w 1 129); do
+        printf '. tests/lib/test-harness.sh\nharness_usage\n' > "tests/shell/test-consumer-${n}.sh"
+      done
+      git add .
+      git commit -q -m initial
+      git checkout -q -b feature
+      printf 'harness_usage() { printf updated; }\n' > tests/lib/test-harness.sh
+      git add tests/lib/test-harness.sh
+      git commit -q -m change
+    )
+  }
+
+  make_overflow_repo "$repo_reject"
+  set +e
+  run_gate "$home" "$runner" "$repo_reject" "$out" "$err" \
+    --base main --mode sequential
+  code=$?
+  set -e
+  [[ "$code" -eq 3 ]] || {
+    fail "$name" "unaccepted overflow exit $code, expected 3: $(tail -n 30 "$err" 2>/dev/null)"
+    return
+  }
+  assert_file_contains "$name" "$err" "INCOMPLETE: declared scope exceeded" || return
+  assert_not_contains "$name" "$err" "DISPATCH_STUB" || return
+  manifest="$(find "$repo_reject/.gate-results" \
+    -maxdepth 1 -name 'gate-scope-manifest-*.json' -print -quit)"
+  if ! jq -e '
+      .status == "incomplete" and
+      .truncation.omitted.contract_consumers_per_source == 1 and
+      .truncation.reasons == ["contract-consumer-budget"] and
+      .truncation.acceptance == {
+        required:true,accepted:false,source:null
+      }
+    ' "$manifest" >/dev/null; then
+    fail "$name" "unaccepted overflow artifact was not truthful: $(jq -c '{status,truncation}' "$manifest" 2>/dev/null)"
+    return
+  fi
+
+  make_overflow_repo "$repo_accept"
+  set +e
+  run_gate "$home" "$runner" "$repo_accept" "$out" "$err" \
+    --base main --mode sequential --accept-scope-truncation
+  code=$?
+  set -e
+  [[ "$code" -eq 0 ]] || {
+    fail "$name" "accepted overflow exit $code, expected 0: $(tail -n 30 "$err" 2>/dev/null)"
+    return
+  }
+  result="$(awk -F'result: ' '/^result: /{path=$2} END{print path}' "$out")"
+  assurance="${result}.assurance.json"
+  manifest="$(dirname "$assurance")/$(jq -r '.evidence.scope_manifest.artifact' "$assurance")"
+  if ! jq -e '
+      .status == "accepted_truncation" and
+      .truncation.omitted.contract_consumers_per_source == 1 and
+      .truncation.reasons == ["contract-consumer-budget"] and
+      .truncation.acceptance == {
+        required:true,
+        accepted:true,
+        source:"--accept-scope-truncation"
+      }
+    ' "$manifest" >/dev/null; then
+    fail "$name" "accepted overflow artifact was not truthful: $(jq -c '{status,truncation}' "$manifest" 2>/dev/null)"
+    return
+  fi
+  pass "$name"
+}
+
 # Behavior: a language-compatible call-site query that really exceeds its
 # declared per-symbol budget remains a truthful fail-closed truncation.
 # Steps:
@@ -5411,6 +5571,8 @@ run_test test_binary_file_routes_to_standard
 run_test test_untracked_binary_routes_to_standard
 run_test test_scope_manifest_complete_and_shared_across_parallel_dispatch
 run_test test_scope_manifest_shell_symbols_are_consumer_scoped
+run_test test_scope_manifest_contract_bundle_uses_bounded_consumer_summary
+run_test test_scope_manifest_contract_bundle_overflow_is_truthful_truncation
 run_test test_scope_manifest_semantic_search_overflow_fails_closed
 run_test test_scope_manifest_large_expansion_uses_file_input
 run_test test_scope_manifest_truncation_requires_explicit_acceptance

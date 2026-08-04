@@ -409,6 +409,49 @@ case_harness_list_still_works() {
   fi
 }
 
+case_harness_shard_is_stable_and_partitions_list() {
+  local name="shard-is-stable-and-partitions-list"
+  local out err rc expected_out=$'alpha\nbeta\ngamma'
+  out="$TMP_ROOT/$name.out"; err="$TMP_ROOT/$name.err"
+  set +e
+  bash -c "source '$SCRIPT_DIR/../lib/test-harness.sh'; th_init --list --shard 1/2; should_run alpha; should_run beta; should_run gamma; should_run delta; th_summary" > "$out" 2> "$err"
+  rc=$?
+  set -e
+  # Assert the exact, documented POSIX-cksum-derived partition for this fixed
+  # input set -- not just "some non-empty disjoint split" -- so a future hash
+  # or index arithmetic change that reshuffles allocation is caught here.
+  local all one two
+  all="$(printf '%s\n' alpha beta gamma delta | sort)"
+  one="$(bash -c "source '$SCRIPT_DIR/../lib/test-harness.sh'; th_init --list --shard 1/2; should_run alpha; should_run beta; should_run gamma; should_run delta; th_summary" | sort)"
+  two="$(bash -c "source '$SCRIPT_DIR/../lib/test-harness.sh'; th_init --list --shard 2/2; should_run alpha; should_run beta; should_run gamma; should_run delta; th_summary" | sort)"
+  if [[ "$rc" -eq 0 && ! -s "$err" && "$(cat "$out")" == "$expected_out" &&
+        "$(printf '%s\n%s\n' "$one" "$two" | sort)" == "$all" &&
+        -n "$one" && -n "$two" ]]; then
+    pass_case "$name"
+  else
+    fail_case "$name" "rc=$rc out=$(cat "$out") expected=$expected_out one=$one two=$two all=$all err=$(cat "$err")"
+  fi
+}
+
+case_harness_shard_invalid_spec_rejected() {
+  local name="shard-invalid-spec-rejected"
+  local spec out err rc all_ok=true
+  for spec in "0/2" "2/1" "abc" "1/0" "1" "1/2/3" "-1/2"; do
+    local safe_spec="${spec//\//_}"
+    out="$TMP_ROOT/$name.$safe_spec.out"; err="$TMP_ROOT/$name.$safe_spec.err"
+    set +e
+    bash -c "source '$SCRIPT_DIR/../lib/test-harness.sh'; th_init --shard '$spec'" > "$out" 2> "$err"
+    rc=$?
+    set -e
+    if [[ "$rc" -ne 2 || ! -s "$err" ]]; then
+      all_ok=false
+      fail_case "$name" "spec=$spec rc=$rc err=$(cat "$err" 2>/dev/null)"
+      break
+    fi
+  done
+  [[ "$all_ok" == true ]] && pass_case "$name"
+}
+
 case_harness_should_run_empty_filter
 case_harness_should_run_filter_match
 case_harness_should_run_list_records_case
@@ -429,6 +472,8 @@ case_harness_fail_fast_no_failures
 case_harness_fail_fast_and_format_orthogonal
 case_harness_filter_still_works
 case_harness_list_still_works
+case_harness_shard_is_stable_and_partitions_list
+case_harness_shard_invalid_spec_rejected
 case_assert_exit_pass
 case_assert_exit_fail
 case_assert_file_contains_pass

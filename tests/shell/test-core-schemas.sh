@@ -753,6 +753,53 @@ case_preflight_reusable_evidence_requires_fingerprint() {
   rm -f "$tmpf"
 }
 
+case_preflight_legacy_status_without_outcome_accepted() {
+  # Verifies a pre-CC-522 legacy artifact (status pass/fail, no `outcome`
+  # field at all) remains schema-valid for backward compatibility with
+  # evidence recorded by an older producer.
+  local name="preflight-evidence: legacy pass/fail status without outcome is accepted"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/preflight-evidence.schema.json" tmpf status
+  for status in pass fail; do
+    tmpf="$(mktemp /tmp/preflight-legacy-XXXXXX.json)"
+    jq -n --arg status "$status" '{kind:"pr_gate_preflight_v1",schema_version:1,
+      command_identity:("sha256:" + ("a" * 64)),status:$status,exit_status:0,timeout_seconds:60,
+      started_at:"2026-01-01T00:00:00Z",finished_at:"2026-01-01T00:00:01Z",
+      subject:{kind:"unbound",reusable:false},
+      log:{path:"/tmp/test.log",sha256:("b" * 64)},
+      coverage:{type:"opaque",reuse_policy:"advisory"}}' > "$tmpf"
+    if ! jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+      fail "$name" "schema rejected legacy status=$status without outcome"
+      rm -f "$tmpf"
+      return
+    fi
+    rm -f "$tmpf"
+  done
+  pass "$name"
+}
+
+case_preflight_new_status_without_outcome_rejected() {
+  # Verifies the current producer vocabulary (test-fail, timeout, ...) still
+  # requires the structured `outcome` object -- only the legacy pass/fail
+  # status values are exempt.
+  local name="preflight-evidence: new-vocabulary status without outcome is rejected"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/preflight-evidence.schema.json" tmpf
+  tmpf="$(mktemp /tmp/preflight-new-status-XXXXXX.json)"
+  jq -n '{kind:"pr_gate_preflight_v1",schema_version:1,
+    command_identity:("sha256:" + ("a" * 64)),status:"test-fail",exit_status:1,timeout_seconds:60,
+    started_at:"2026-01-01T00:00:00Z",finished_at:"2026-01-01T00:00:01Z",
+    subject:{kind:"unbound",reusable:false},
+    log:{path:"/tmp/test.log",sha256:("b" * 64)},
+    coverage:{type:"opaque",reuse_policy:"advisory"}}' > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    fail "$name" "schema accepted status=test-fail without outcome"
+  else
+    pass "$name"
+  fi
+  rm -f "$tmpf"
+}
+
 _gate_scope_manifest_valid_instance() {
   jq -n '{
     kind:"gate_scope_manifest_v1",
@@ -851,6 +898,7 @@ _gate_scope_manifest_valid_instance() {
         expansion_source_paths:256,
         symbols_per_source:1024,
         matches_per_query:64,
+        contract_consumers_per_source:128,
         expansion_entries:512
       },
       omitted:{
@@ -858,6 +906,7 @@ _gate_scope_manifest_valid_instance() {
         expansion_source_paths:0,
         symbols_per_source:0,
         matches_per_query:0,
+        contract_consumers_per_source:0,
         expansion_entries:0
       },
       reasons:[],
@@ -1789,6 +1838,8 @@ case_context_pack_invalid_source_domain_rejected
 case_context_pack_invalid_trust_level_rejected
 case_preflight_basic_evidence_needs_no_git_provenance
 case_preflight_reusable_evidence_requires_fingerprint
+case_preflight_legacy_status_without_outcome_accepted
+case_preflight_new_status_without_outcome_rejected
 case_gate_scope_manifest_valid_complete
 case_gate_scope_manifest_valid_accepted_truncation
 case_gate_scope_manifest_inconsistent_status_rejected

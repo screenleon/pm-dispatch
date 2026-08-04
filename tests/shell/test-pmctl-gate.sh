@@ -806,6 +806,7 @@ _attach_gate_scope_manifest_v3() {
           expansion_source_paths:256,
           symbols_per_source:1024,
           matches_per_query:64,
+          contract_consumers_per_source:128,
           expansion_entries:512
         },
         omitted:{
@@ -813,6 +814,7 @@ _attach_gate_scope_manifest_v3() {
           expansion_source_paths:0,
           symbols_per_source:0,
           matches_per_query:0,
+          contract_consumers_per_source:0,
           expansion_entries:0
         },
         reasons:[],
@@ -1841,6 +1843,50 @@ case_verify_v3_subject_binding_mismatch_is_invalid() {
       && [[ "$out" == *"structural/claim verification"* ]] \
       && jq -e '.axes.artifact_valid.status == "fail"' \
         <<<"$report" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+case_verify_v3_linked_legacy_preflight_evidence_accepted() {
+  # Behavior: a pre-CC-522 legacy preflight artifact (status "fail", no
+  # `outcome` field at all) with a matching subject still verifies -- the
+  # legacy no-outcome branch must actually be reachable, not dead code
+  # shadowed by a stricter status extraction upstream of it.
+  local name="gate/verify: v3 linked legacy preflight evidence (no outcome) verifies"
+  should_run "$name" || return 0
+  local result sidecar evidence evidence_sha out code fp
+  result="$(_gate_verify_result_path v3-preflight-legacy-no-outcome)"
+  sidecar="${result}.assurance.json"
+  evidence="$(dirname "$result")/preflight-evidence-20260727-000002.json"
+  _mk_gate_result_v3_verified "$result" "$_GATE_VERIFY_REPO"
+  fp="$(jq -r '.subject.tree_fingerprint' "$sidecar")"
+  jq -n --arg fp "$fp" '{
+    kind:"pr_gate_preflight_v1",
+    status:"fail",
+    subject:{
+      fingerprint_before:$fp,
+      fingerprint_after:$fp
+    }
+  }' > "$evidence"
+  evidence_sha="$(sha256sum "$evidence" | awk '{print $1}')"
+  jq --arg artifact "$(basename "$evidence")" --arg sha "$evidence_sha" '
+    .evidence.preflight = {
+      status:"linked",
+      outcome:"fail",
+      artifact:$artifact,
+      sha256:$sha,
+      subject_fingerprint:.subject.tree_fingerprint
+    }
+  ' "$sidecar" > "${sidecar}.tmp"
+  mv "${sidecar}.tmp" "$sidecar"
+  _refresh_gate_result_v3_attestation "$result"
+  set +e
+  out="$(_run_canonical_gate_verify "$result" --consumer generic --json 2>&1)"
+  code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then
     pass "$name"
   else
     fail "$name" "code=$code out=$out"
@@ -2891,6 +2937,7 @@ case_verify_v3_incomplete_scope_manifest_is_invalid
 case_verify_v3_scope_cross_field_mutations_are_invalid
 case_verify_v3_linked_evidence_digest_tamper_is_invalid
 case_verify_v3_subject_binding_mismatch_is_invalid
+case_verify_v3_linked_legacy_preflight_evidence_accepted
 case_verify_v3_linked_preflight_subject_claim_mismatch_is_invalid
 case_verify_v2_forged_state_tree_rejected
 case_verify_v2_repo_binding_rejected

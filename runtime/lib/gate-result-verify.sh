@@ -1011,7 +1011,8 @@ gate_scope_manifest_verify() {
       (sort) == ($other | sort);
     def scope_counts:
       only_keys(["diff_hunks","expansion_source_paths",
-        "symbols_per_source","matches_per_query","expansion_entries"]) and
+        "symbols_per_source","matches_per_query",
+        "contract_consumers_per_source","expansion_entries"]) and
       all(.[]; type == "number" and . >= 0 and floor == .);
     def scope_flag($changed):
       only_keys(["matched","paths"]) and
@@ -1178,7 +1179,8 @@ gate_scope_manifest_verify() {
       (.reasons | strings_unique) and
       all(.reasons[];
         IN("diff-hunk-budget","expansion-source-budget","symbol-budget",
-          "search-match-budget","expansion-entry-budget")) and
+          "search-match-budget","contract-consumer-budget",
+          "expansion-entry-budget")) and
       (.omitted as $o |
         .occurred == ([$o[]] | any(. > 0)) and
         (.reasons | exact_set([
@@ -1188,6 +1190,8 @@ gate_scope_manifest_verify() {
           if $o.symbols_per_source > 0 then "symbol-budget" else empty end,
           if $o.matches_per_query > 0
             then "search-match-budget" else empty end,
+          if $o.contract_consumers_per_source > 0
+            then "contract-consumer-budget" else empty end,
           if $o.expansion_entries > 0
             then "expansion-entry-budget" else empty end
         ]))) and
@@ -1260,7 +1264,7 @@ _gate_assurance_linked_evidence_verify() {
           "$artifact_path" 2>/dev/null
       )" || ! artifact_outcome="$(
         jq -er '.status |
-            select(. == "pass" or . == "test-fail" or . == "timeout" or
+            select(. == "pass" or . == "fail" or . == "test-fail" or . == "timeout" or
               . == "environment-error" or . == "stale" or
               . == "invalid-evidence" or . == "unclassified-nonzero")' "$artifact_path" 2>/dev/null
       )"; then
@@ -1523,7 +1527,7 @@ gate_assurance_verify() {
       (.evidence.preflight.status | IN("not_run","linked")) and
       (if .evidence.preflight.status == "linked" then
           (.evidence.preflight.outcome |
-            IN("pass","test-fail","timeout","environment-error","stale",
+            IN("pass","fail","test-fail","timeout","environment-error","stale",
               "invalid-evidence","unclassified-nonzero")) and
         (.evidence.preflight.artifact |
           type == "string" and

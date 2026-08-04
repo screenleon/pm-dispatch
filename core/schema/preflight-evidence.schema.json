@@ -3,7 +3,7 @@
   "description": "Portable command evidence. Repository provenance and structured coverage are optional extensions; reusable evidence requires a bound subject fingerprint.",
   "type": "object",
   "required": [
-    "kind", "schema_version", "command_identity", "status", "exit_status", "outcome",
+    "kind", "schema_version", "command_identity", "status", "exit_status",
     "timeout_seconds", "started_at", "finished_at", "subject", "log", "coverage"
   ],
   "properties": {
@@ -11,7 +11,8 @@
     "schema_version": { "const": 1 },
     "command_identity": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
     "status": {
-      "enum": ["pass", "test-fail", "timeout", "environment-error", "stale", "invalid-evidence", "unclassified-nonzero"]
+      "description": "'fail' is a pre-CC-522 legacy status value, accepted without 'outcome' for backward compatibility with evidence recorded by an older producer; current producers always emit 'test-fail' with a populated 'outcome'.",
+      "enum": ["pass", "fail", "test-fail", "timeout", "environment-error", "stale", "invalid-evidence", "unclassified-nonzero"]
     },
     "exit_status": { "type": "integer", "minimum": 0 },
     "outcome": {
@@ -125,5 +126,11 @@
       ]
     }
   },
-  "additionalProperties": false
+  "additionalProperties": false,
+  "if": {
+    "properties": { "status": { "enum": ["pass", "fail"] } }
+  },
+  "else": {
+    "required": ["outcome"]
+  }
 }

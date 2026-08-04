@@ -1,2 +1,3 @@
 # test path\treason
 tests/shell/test-e2e.sh\tlive adapter smoke is release-only and intentionally excluded from the deterministic full runner
+tests/shell/test-pr-gate.sh\tshared case implementation sourced by tests/shell/test-pr-gate-shard-{1,2,3,4}.sh via --shard N/4; not an independently registered suite
