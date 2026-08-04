@@ -8,7 +8,33 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Preflight `--test-timeout` default too low for a full-suite escalation
+  (CC-522).** `pr-gate.sh`'s default `--test-timeout` was 1800s. A change to a
+  high-fanout runner/install substrate (e.g. `tests/lib/test-harness.sh`)
+  forces `tests/bin/run-tests.sh` to escalate from an affected-only run to the
+  full suite, which measured 37m22s wall-clock on this repo — every such
+  preflight run was killed at the 1800s ceiling and reported as non-authorizing
+  `Final: INCOMPLETE` rather than completing. Default raised to 3600s.
+
 ### Added
+
+- **Truthful `--test-cmd` preflight outcomes (CC-522 Phase A).** Preflight
+  evidence now records execution, test verdict, evidence richness, and
+  authorization independently. Opaque nonzero exits, timeouts, environment
+  failures, stale subjects, and malformed structured evidence terminate as
+  non-authorizing `Final: INCOMPLETE` (exit 3), rather than claiming a
+  diff-caused test failure. Only a subject-valid structured assertion failure
+  yields the mechanical `Final: NO-GO`; legacy exit-0 commands remain valid
+  opaque evidence.
+
+- **Nested gate test timeout diagnostics (CC-522 Phase B).** `test-pr-gate`
+  now labels each nested gate invocation with its owning case and duration,
+  bounds it with a configurable case watchdog, and verifies cleanup of a
+  stalled fixture. The affected-test scheduler runs this process-heavy suite
+  alone, preventing concurrent integration suites from turning resource
+  contention into an opaque 15-minute suite timeout.
 
 - **Deterministic synthesis parity and remediation seed (CC-520).** Completed
   selected-reviewer routes now emit `pr_gate_result_v4` with exactly one

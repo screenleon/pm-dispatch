@@ -632,6 +632,10 @@ GATE_SCOPE_MAX_DIFF_HUNKS=512
 GATE_SCOPE_MAX_EXPANSION_SOURCES=256
 GATE_SCOPE_MAX_SYMBOLS_PER_SOURCE=1024
 GATE_SCOPE_MAX_MATCHES_PER_QUERY=64
+# Contract bundles are explicitly enumerated framework surfaces.  They retain
+# a bounded path-reference summary, independently from the tighter symbol
+# call-site search budget used for arbitrary application sources.
+GATE_SCOPE_MAX_CONTRACT_CONSUMERS_PER_SOURCE=128
 GATE_SCOPE_MAX_EXPANSION_ENTRIES=512
 
 _gate_scope_diff_for_path() {
@@ -943,12 +947,14 @@ _gate_scope_expansions_collect() {
   local changed_paths_json="$1" output="$2"
   local candidates sources source_count=0 source path base stem dir ext candidate
   local query match eligible_count symbol_count
-  local source_is_shared=false source_is_shell=false
+  local source_is_shared=false source_is_shell=false source_is_contract_bundle=false
   local symbol_limit="$GATE_SCOPE_MAX_SYMBOLS_PER_SOURCE"
   local match_limit="$GATE_SCOPE_MAX_MATCHES_PER_QUERY"
+  local contract_consumer_limit="$GATE_SCOPE_MAX_CONTRACT_CONSUMERS_PER_SOURCE"
   local source_limit="$GATE_SCOPE_MAX_EXPANSION_SOURCES"
   local expansion_limit="$GATE_SCOPE_MAX_EXPANSION_ENTRIES"
-  local omitted_sources=0 omitted_symbols=0 omitted_matches=0 omitted_entries=0
+  local omitted_sources=0 omitted_symbols=0 omitted_matches=0
+  local omitted_contract_consumers=0 omitted_entries=0
   local -a symbols=() shell_consumers=()
   local -A query_seen=()
   candidates="$(mktemp "${TMPDIR:-/tmp}/gate-scope-expansions.XXXXXX")" || return 2
@@ -979,12 +985,21 @@ _gate_scope_expansions_collect() {
     dir="$(dirname "$source")"
     source_is_shared=false
     source_is_shell=false
+    source_is_contract_bundle=false
     shell_consumers=()
     case "$source" in
       */lib/*|lib/*|*/shared/*|shared/*) source_is_shared=true ;;
     esac
     case "$source" in
       *.sh|*.bash) source_is_shell=true ;;
+    esac
+    case "$source" in
+      tests/lib/test-harness.sh|runtime/lib/gate-result-verify.sh|runtime/bin/pr-gate.sh)
+        source_is_contract_bundle=true
+        # runtime/bin/pr-gate.sh is a shell entry point, not a lib path, but
+        # its direct consumers are still a useful bounded review surface.
+        source_is_shared=true
+        ;;
     esac
 
     for ext in sh bash go py js jsx ts tsx java kt rs md; do
@@ -1014,16 +1029,29 @@ _gate_scope_expansions_collect() {
         fi
         if [[ "$source_is_shared" == true ]]; then
           eligible_count=$((eligible_count + 1))
-          if [[ "$eligible_count" -le "$match_limit" ]]; then
+          local path_limit="$match_limit"
+          [[ "$source_is_contract_bundle" == true ]] \
+            && path_limit="$contract_consumer_limit"
+          if [[ "$eligible_count" -le "$path_limit" ]]; then
             _gate_scope_expansion_append "$candidates" "$match" \
-              shared-helper-consumer "$source" path-reference per-source "$match_limit" \
+              shared-helper-consumer "$source" path-reference per-source "$path_limit" \
               || return 2
+          elif [[ "$source_is_contract_bundle" == true ]]; then
+            omitted_contract_consumers=$((omitted_contract_consumers + 1))
           else
             omitted_matches=$((omitted_matches + 1))
           fi
         fi
       done < <(_gate_scope_search_paths "$source" path)
     fi
+
+    # These framework/verification bundles have deliberately broad consumer
+    # surfaces. Their path-level consumer lists are the authoritative review
+    # hints; expanding generic helpers repeats the same files once per symbol
+    # and can exhaust a per-query budget without adding scope information.
+    # Preserve the bounded consumer summary above and skip symbol-level
+    # call-site expansion for these contract bundles.
+    [[ "$source_is_contract_bundle" == true ]] && continue
 
     mapfile -t symbols < <(_gate_scope_symbols_collect "$source")
     symbol_count="${#symbols[@]}"
@@ -1086,6 +1114,7 @@ _gate_scope_expansions_collect() {
   GATE_SCOPE_OMITTED_EXPANSION_SOURCES="$omitted_sources"
   GATE_SCOPE_OMITTED_SYMBOLS="$omitted_symbols"
   GATE_SCOPE_OMITTED_SEARCH_MATCHES="$omitted_matches"
+  GATE_SCOPE_OMITTED_CONTRACT_CONSUMERS="$omitted_contract_consumers"
   GATE_SCOPE_OMITTED_EXPANSION_ENTRIES="$omitted_entries"
 }
 
@@ -1266,6 +1295,7 @@ _gate_scope_manifest_write() {
       || "$GATE_SCOPE_OMITTED_EXPANSION_SOURCES" -gt 0 \
       || "$GATE_SCOPE_OMITTED_SYMBOLS" -gt 0 \
       || "$GATE_SCOPE_OMITTED_SEARCH_MATCHES" -gt 0 \
+      || "$GATE_SCOPE_OMITTED_CONTRACT_CONSUMERS" -gt 0 \
       || "$GATE_SCOPE_OMITTED_EXPANSION_ENTRIES" -gt 0 ]]; then
     truncation_occurred=true
     if [[ "$ACCEPT_SCOPE_TRUNCATION" == true ]]; then
@@ -1281,11 +1311,13 @@ _gate_scope_manifest_write() {
     --argjson sources "$GATE_SCOPE_OMITTED_EXPANSION_SOURCES" \
     --argjson symbols "$GATE_SCOPE_OMITTED_SYMBOLS" \
     --argjson matches "$GATE_SCOPE_OMITTED_SEARCH_MATCHES" \
+    --argjson contract_consumers "$GATE_SCOPE_OMITTED_CONTRACT_CONSUMERS" \
     --argjson entries "$GATE_SCOPE_OMITTED_EXPANSION_ENTRIES" '[
       if $hunks > 0 then "diff-hunk-budget" else empty end,
       if $sources > 0 then "expansion-source-budget" else empty end,
       if $symbols > 0 then "symbol-budget" else empty end,
       if $matches > 0 then "search-match-budget" else empty end,
+      if $contract_consumers > 0 then "contract-consumer-budget" else empty end,
       if $entries > 0 then "expansion-entry-budget" else empty end
     ]')"
 
@@ -1315,11 +1347,13 @@ _gate_scope_manifest_write() {
       --argjson omitted_sources "$GATE_SCOPE_OMITTED_EXPANSION_SOURCES" \
       --argjson omitted_symbols "$GATE_SCOPE_OMITTED_SYMBOLS" \
       --argjson omitted_matches "$GATE_SCOPE_OMITTED_SEARCH_MATCHES" \
+      --argjson omitted_contract_consumers "$GATE_SCOPE_OMITTED_CONTRACT_CONSUMERS" \
       --argjson omitted_entries "$GATE_SCOPE_OMITTED_EXPANSION_ENTRIES" \
       --argjson budget_hunks "$GATE_SCOPE_MAX_DIFF_HUNKS" \
       --argjson budget_sources "$GATE_SCOPE_MAX_EXPANSION_SOURCES" \
       --argjson budget_symbols "$GATE_SCOPE_MAX_SYMBOLS_PER_SOURCE" \
       --argjson budget_matches "$GATE_SCOPE_MAX_MATCHES_PER_QUERY" \
+      --argjson budget_contract_consumers "$GATE_SCOPE_MAX_CONTRACT_CONSUMERS_PER_SOURCE" \
       --argjson budget_entries "$GATE_SCOPE_MAX_EXPANSION_ENTRIES" \
       --argjson reasons "$reasons_json" '{
         kind:"gate_scope_manifest_v1",
@@ -1367,6 +1401,7 @@ _gate_scope_manifest_write() {
             expansion_source_paths:$budget_sources,
             symbols_per_source:$budget_symbols,
             matches_per_query:$budget_matches,
+            contract_consumers_per_source:$budget_contract_consumers,
             expansion_entries:$budget_entries
           },
           omitted:{
@@ -1374,6 +1409,7 @@ _gate_scope_manifest_write() {
             expansion_source_paths:$omitted_sources,
             symbols_per_source:$omitted_symbols,
             matches_per_query:$omitted_matches,
+            contract_consumers_per_source:$omitted_contract_consumers,
             expansion_entries:$omitted_entries
           },
           reasons:$reasons,
@@ -1937,8 +1973,9 @@ _kill_process_tree() {
 #   --policy-override <f> explicit gate_policy_override_v1 JSON for a scope-bound policy
 #                        downgrade. It is never auto-discovered and requires recorded user approval.
 #   --test-cmd <cmd>     pre-flight test command run in plain bash BEFORE dispatch, independent of
-#                        --timeout; pass/fail is recorded mechanically (frontmatter test_suite: field)
-#                        and a FAIL forces Final: NO-GO regardless of what any reviewer LLM writes.
+#                        --timeout. A subject-valid structured assertion failure forces NO-GO;
+#                        timeout, environment, opaque nonzero, stale, or invalid evidence stop as
+#                        INCOMPLETE/non-authorizing rather than being misreported as a test failure.
 #                        Any command works unchanged and receives basic opaque/advisory evidence.
 #                        A compatible runner may write structured suite evidence to the result path
 #                        exposed in PM_DISPATCH_PREFLIGHT_TEST_RESULT; only current structured PASS
@@ -1950,7 +1987,7 @@ _kill_process_tree() {
 #                        a bounded iteration check chosen by the target repo's caller. Omitting
 #                        this flag skips the pre-flight check entirely (reviewers judge test status
 #                        themselves, as before this feature existed).
-#   --test-timeout <s>   timeout for --test-cmd (default: 1800), decoupled from --timeout so a slow
+#   --test-timeout <s>   timeout for --test-cmd (default: 3600), decoupled from --timeout so a slow
 #                        test suite can never cause a reviewer dispatch session to time out.
 #   --skip-preflight-tests   force-disable the pre-flight test check even if --test-cmd is passed.
 # pr-gate-help:end
@@ -1995,7 +2032,7 @@ DISPATCH_APPROVAL="never"
 DISPATCH_EFFORT=""
 INPUT_BRIEF_FILE=""
 TEST_CMD_OVERRIDE=""   # --test-cmd: explicit pre-flight test command (see CC-470 Part 3)
-TEST_TIMEOUT="1800"    # --test-timeout: independent of --timeout (dispatch budget)
+TEST_TIMEOUT="3600"    # --test-timeout: independent of --timeout (dispatch budget)
 SKIP_PREFLIGHT_TESTS=false
 
 while [[ $# -gt 0 ]]; do
@@ -2153,9 +2190,9 @@ else
       printf 'Gate aborted -- the executor session may have exited 0 without writing a verdict.\n' >&2
       return 1
     fi
-    final_count=$(grep -cE '^Final: (GO|NO-GO)$' "$result_file" || true)
+    final_count=$(grep -cE '^Final: (GO|NO-GO|INCOMPLETE)$' "$result_file" || true)
     if [[ "$final_count" -ne 1 ]]; then
-      printf 'Error: gate result file must contain exactly one Final: GO/NO-GO line (found %d): %s\n' \
+      printf 'Error: gate result file must contain exactly one Final: GO/NO-GO/INCOMPLETE line (found %d): %s\n' \
         "$final_count" "$result_file" >&2
       return 1
     fi
@@ -2164,7 +2201,7 @@ else
       printf 'Error: gate result YAML frontmatter missing required field: final: (%s)\n' "$result_file" >&2
       return 1
     fi
-    body_final=$(grep -E '^Final: (GO|NO-GO)$' "$result_file" | awk '{print $2}')
+    body_final=$(grep -E '^Final: (GO|NO-GO|INCOMPLETE)$' "$result_file" | awk '{print $2}')
     if [[ "$frontmatter_final" != "$body_final" ]]; then
       printf 'Error: frontmatter final: (%s) does not match body Final: (%s) in gate result: %s\n' \
         "$frontmatter_final" "$body_final" "$result_file" >&2
@@ -3060,7 +3097,8 @@ else
         (sort) == ($other | sort);
       def scope_counts:
         only_keys(["diff_hunks","expansion_source_paths",
-          "symbols_per_source","matches_per_query","expansion_entries"]) and
+          "symbols_per_source","matches_per_query",
+          "contract_consumers_per_source","expansion_entries"]) and
         all(.[]; type == "number" and . >= 0 and floor == .);
       def scope_flag($changed):
         only_keys(["matched","paths"]) and
@@ -3227,7 +3265,8 @@ else
         (.reasons | strings_unique) and
         all(.reasons[];
           IN("diff-hunk-budget","expansion-source-budget","symbol-budget",
-            "search-match-budget","expansion-entry-budget")) and
+            "search-match-budget","contract-consumer-budget",
+            "expansion-entry-budget")) and
         (.omitted as $o |
           .occurred == ([$o[]] | any(. > 0)) and
           (.reasons | exact_set([
@@ -3237,6 +3276,8 @@ else
             if $o.symbols_per_source > 0 then "symbol-budget" else empty end,
             if $o.matches_per_query > 0
               then "search-match-budget" else empty end,
+            if $o.contract_consumers_per_source > 0
+              then "contract-consumer-budget" else empty end,
             if $o.expansion_entries > 0
               then "expansion-entry-budget" else empty end
           ]))) and
@@ -3309,21 +3350,43 @@ else
             "$artifact_path" 2>/dev/null
         )" || ! artifact_outcome="$(
           jq -er '.status |
-            select(. == "pass" or . == "fail" or . == "timeout" or
-              . == "stale" or . == "invalid")' "$artifact_path" 2>/dev/null
+              select(. == "pass" or . == "fail" or . == "test-fail" or . == "timeout" or
+                . == "environment-error" or . == "stale" or
+                . == "invalid-evidence" or . == "unclassified-nonzero")' "$artifact_path" 2>/dev/null
         )"; then
           printf 'Error: gate assurance linked preflight evidence claim is malformed: %s\n' \
             "$artifact_path" >&2
           return 1
         fi
         linked_outcome="$(jq -r '.evidence.preflight.outcome' "$assurance_file")"
-        if [[ "$artifact_subject" != "$linked_subject" ]]; then
-          printf 'Error: gate assurance linked preflight evidence subject claim mismatch: %s\n' \
-            "$artifact_path" >&2
-          return 1
-        fi
-        if [[ ( "$linked_outcome" == pass && "$artifact_outcome" != pass ) \
-            || ( "$linked_outcome" == fail && "$artifact_outcome" == pass ) ]]; then
+          if [[ "$artifact_subject" != "$linked_subject" ]]; then
+            printf 'Error: gate assurance linked preflight evidence subject claim mismatch: %s\n' \
+              "$artifact_path" >&2
+            return 1
+          fi
+          if ! jq -e '
+            ((has("outcome") | not) and (.status | IN("pass","fail"))) or
+            (.outcome | type == "object" and
+              (.execution | IN("pass","nonzero","timeout")) and
+              (.test_verdict | IN("pass","fail","not_available","inconclusive")) and
+              (.evidence_richness | IN("opaque","structured","invalid")) and
+              (.authorization | IN("eligible","non_authorizing"))) and
+            ((.status == "pass" and .outcome.execution == "pass" and
+              .outcome.test_verdict == "pass" and
+              .outcome.authorization == "eligible") or
+             (.status == "test-fail" and .outcome.test_verdict == "fail" and
+              .outcome.evidence_richness == "structured" and
+              .outcome.authorization == "non_authorizing") or
+             ((.status | IN("timeout","environment-error","stale",
+               "invalid-evidence","unclassified-nonzero")) and
+              .outcome.test_verdict != "fail" and
+              .outcome.authorization == "non_authorizing"))
+          ' "$artifact_path" >/dev/null 2>&1; then
+            printf 'Error: gate assurance linked preflight evidence outcome contract is malformed: %s\n' \
+              "$artifact_path" >&2
+            return 1
+          fi
+          if [[ "$linked_outcome" != "$artifact_outcome" ]]; then
           printf 'Error: gate assurance linked preflight evidence outcome mismatch: %s\n' \
             "$artifact_path" >&2
           return 1
@@ -3468,7 +3531,9 @@ else
             "subject_fingerprint"])) and
         (.evidence.preflight.status | IN("not_run","linked")) and
         (if .evidence.preflight.status == "linked" then
-          (.evidence.preflight.outcome | IN("pass","fail")) and
+            (.evidence.preflight.outcome |
+              IN("pass","fail","test-fail","timeout","environment-error","stale",
+                "invalid-evidence","unclassified-nonzero")) and
           (.evidence.preflight.artifact |
             type == "string" and
             test("^preflight-evidence-[0-9]{8}-[0-9]{6}\\.json$")) and
@@ -3689,7 +3754,7 @@ else
          then (.reviewer | type == "string" and length > 0)
          else .reviewer == null
          end) and
-        (.status | IN("passed","failed","skipped")) and
+        (.status | IN("passed","failed","incomplete","skipped")) and
         (.evidence_status | IN("verified","unavailable","unverified")) and
         (.run_id == null or
           (.run_id | type == "string" and test("^run-[A-Za-z0-9]+-[A-Za-z0-9]+$"))))) and
@@ -3711,7 +3776,8 @@ else
        else
          (.dispatch.outcomes | length) == 1 and
          .dispatch.outcomes[0].role == "preflight" and
-         .dispatch.outcomes[0].status == "failed"
+         (.dispatch.outcomes[0].status == "failed" or
+          .dispatch.outcomes[0].status == "incomplete")
        end) and
       (.coordinates.independence.evidence_status |
         IN("verified","unavailable","unverified")) and
@@ -3777,7 +3843,7 @@ else
         fi
         result_parent="$(cd "$(dirname "$result_file")" && pwd -P)" || return 1
         assurance_file="$result_parent/$pointer"
-        body_final=$(grep -E '^Final: (GO|NO-GO)$' "$result_file" | awk '{print $2}')
+        body_final=$(grep -E '^Final: (GO|NO-GO|INCOMPLETE)$' "$result_file" | awk '{print $2}')
         gate_assurance_verify "$result_file" "$assurance_file" "$body_final" || return $?
         if [[ "$version" == pr_gate_result_v3 \
             || "$version" == pr_gate_result_v4 ]]; then
@@ -5166,7 +5232,7 @@ gate_finalize_assurance() {
   local scope_destination scope_destination_sha scope_tmp scope_json
   local -a capture_files=()
 
-  final="$(grep -E '^Final: (GO|NO-GO)$' "$result_file" | awk '{print $2}')"
+  final="$(grep -E '^Final: (GO|NO-GO|INCOMPLETE)$' "$result_file" | awk '{print $2}')"
   [[ -n "$final" ]] || {
     printf 'Error: cannot finalize gate assurance without a unique final verdict\n' >&2
     return 1
@@ -5183,8 +5249,12 @@ gate_finalize_assurance() {
   done < <(find "$GATE_ASSURANCE_CAPTURE_DIR" -maxdepth 1 -type f -name '*.json' -print | LC_ALL=C sort)
   capture_count="${#capture_files[@]}"
 
-  if [[ "$PREFLIGHT_STATUS" == fail ]]; then
-    outcomes_json='[{"role":"preflight","reviewer":null,"status":"failed","run_id":null,"evidence_status":"unavailable"}]'
+  if [[ "$PREFLIGHT_STATUS" != pass && "$PREFLIGHT_STATUS" != skipped ]]; then
+    if [[ "$PREFLIGHT_STATUS" == test-fail ]]; then
+      outcomes_json='[{"role":"preflight","reviewer":null,"status":"failed","run_id":null,"evidence_status":"unavailable"}]'
+    else
+      outcomes_json='[{"role":"preflight","reviewer":null,"status":"incomplete","run_id":null,"evidence_status":"unavailable"}]'
+    fi
     independence_status=unavailable
     implementation_isolated=null
     per_reviewer_independent=null
@@ -5613,7 +5683,7 @@ fi
 
 # ── Pre-flight test suite (mechanical, decoupled from reviewer --timeout budget) ──
 # Runs BEFORE any dispatch, in plain bash, with its own independent timeout
-# (--test-timeout, default 1800s) -- however long the target repo's test suite
+# (--test-timeout, default 3600s) -- however long the target repo's test suite
 # takes, it can never cause a reviewer session to hit --timeout, because it has
 # already finished by the time dispatch starts. Shared by both sequential and
 # --parallel modes (computed once here, injected into whichever brief(s) follow).
@@ -5905,6 +5975,9 @@ if [[ "$SKIP_PREFLIGHT_TESTS" != "true" && -n "$TEST_CMD_OVERRIDE" ]]; then
   if [[ -n "${PM_GATE_PARENT_OPERATION:-}" ]]; then
     _detached_launch_lib="$SCRIPT_DIR/../lib/detached-launch.sh"
     if ! declare -F detached_launch_kill_process_group >/dev/null 2>&1; then
+      if [[ ! -r "$_detached_launch_lib" && -r "$SCRIPT_DIR/lib/detached-launch.sh" ]]; then
+        _detached_launch_lib="$SCRIPT_DIR/lib/detached-launch.sh"
+      fi
       # shellcheck disable=SC1090,SC1091 # resolved repo-relative runtime library.
       [[ -r "$_detached_launch_lib" ]] && . "$_detached_launch_lib"
     fi
@@ -5944,13 +6017,30 @@ if [[ "$SKIP_PREFLIGHT_TESTS" != "true" && -n "$TEST_CMD_OVERRIDE" ]]; then
   _preflight_finished="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
   _preflight_after="$(_preflight_tree_fingerprint)" || exit 2
   _preflight_log_digest="$(_preflight_sha256_file "$PREFLIGHT_LOG_PATH")" || exit 2
-  _preflight_status=fail
-  [[ "$_preflight_rc" -eq 0 ]] && _preflight_status=pass
-  [[ "$_preflight_rc" -eq 124 || "$_preflight_rc" -eq 137 ]] && _preflight_status=timeout
+  _preflight_status=unclassified-nonzero
+  _preflight_execution=nonzero
+  _preflight_test_verdict=not_available
+  _preflight_authorization=non_authorizing
+  if [[ "$_preflight_rc" -eq 0 ]]; then
+    _preflight_status=pass
+    _preflight_execution=pass
+    _preflight_test_verdict=pass
+    _preflight_authorization=eligible
+  elif [[ "$_preflight_rc" -eq 124 || "$_preflight_rc" -eq 137 ]]; then
+    _preflight_status=timeout
+    _preflight_execution=timeout
+    _preflight_test_verdict=inconclusive
+  elif [[ "$_preflight_rc" -eq 126 || "$_preflight_rc" -eq 127 ]]; then
+    _preflight_status=environment-error
+    _preflight_test_verdict=inconclusive
+  fi
   if [[ "$_preflight_before" != "$_preflight_after" ]]; then
     _preflight_status=stale
+    _preflight_test_verdict=inconclusive
+    _preflight_authorization=non_authorizing
   fi
   _preflight_coverage='{"type":"opaque","reuse_policy":"advisory"}'
+  _preflight_evidence_richness=opaque
   _preflight_rich_digest=""
   if [[ -s "$PREFLIGHT_RICH_RESULT_PATH" ]]; then
     _preflight_rich_digest="$(_preflight_sha256_file "$PREFLIGHT_RICH_RESULT_PATH")" || exit 2
@@ -5986,8 +6076,26 @@ if [[ "$SKIP_PREFLIGHT_TESTS" != "true" && -n "$TEST_CMD_OVERRIDE" ]]; then
         '{type:"structured",reuse_policy:"no-duplicate-current-pass",
           artifact_path:$path,artifact_sha256:$digest,selection_mode,
           changed_paths,suite_set,suite_results,aggregate}' "$PREFLIGHT_RICH_RESULT_PATH")" || exit 2
+      _preflight_evidence_richness=structured
+      if [[ "$_preflight_status" != stale ]]; then
+        if jq -e '.status == "fail" and .aggregate.failed > 0' \
+            "$PREFLIGHT_RICH_RESULT_PATH" >/dev/null 2>&1; then
+          _preflight_status=test-fail
+          _preflight_test_verdict=fail
+        elif jq -e '.status == "stale"' "$PREFLIGHT_RICH_RESULT_PATH" >/dev/null 2>&1; then
+          _preflight_status=stale
+          _preflight_test_verdict=inconclusive
+        elif jq -e '.aggregate.timed_out > 0' "$PREFLIGHT_RICH_RESULT_PATH" >/dev/null 2>&1; then
+          _preflight_status=timeout
+          _preflight_execution=timeout
+          _preflight_test_verdict=inconclusive
+        fi
+      fi
     else
-      _preflight_status=invalid
+      _preflight_status=invalid-evidence
+      _preflight_test_verdict=inconclusive
+      _preflight_authorization=non_authorizing
+      _preflight_evidence_richness=invalid
       _preflight_coverage="$(jq -nc --arg path "$(_preflight_log_display_path "$PREFLIGHT_RICH_RESULT_PATH")" \
         --arg digest "$_preflight_rich_digest" \
         '{type:"invalid",reuse_policy:"none",artifact_path:$path,artifact_sha256:$digest}')"
@@ -5998,6 +6106,8 @@ if [[ "$SKIP_PREFLIGHT_TESTS" != "true" && -n "$TEST_CMD_OVERRIDE" ]]; then
   jq -n --arg kind pr_gate_preflight_v1 --argjson schema_version 1 \
     --arg command_identity "sha256:${_preflight_command_digest}" --arg status "$_preflight_status" \
     --argjson exit_status "$_preflight_rc" --argjson timeout_seconds "$TEST_TIMEOUT" \
+    --arg execution "$_preflight_execution" --arg test_verdict "$_preflight_test_verdict" \
+    --arg evidence_richness "$_preflight_evidence_richness" --arg authorization "$_preflight_authorization" \
     --arg started_at "$_preflight_started" --arg finished_at "$_preflight_finished" \
     --arg repo_root "$WORK_DIR" --arg repo_identity "$_preflight_repo_id" \
     --arg base_ref "$BASE" --arg base_commit "$_preflight_base_commit" \
@@ -6006,7 +6116,10 @@ if [[ "$SKIP_PREFLIGHT_TESTS" != "true" && -n "$TEST_CMD_OVERRIDE" ]]; then
     --arg log_path "$_preflight_log_display" --arg log_sha256 "$_preflight_log_digest" \
     --argjson coverage "$_preflight_coverage" \
     '{kind:$kind,schema_version:$schema_version,command_identity:$command_identity,
-      status:$status,exit_status:$exit_status,timeout_seconds:$timeout_seconds,
+      status:$status,exit_status:$exit_status,
+      outcome:{execution:$execution,test_verdict:$test_verdict,
+        evidence_richness:$evidence_richness,authorization:$authorization},
+      timeout_seconds:$timeout_seconds,
       started_at:$started_at,finished_at:$finished_at,
       subject:{kind:"workspace",reusable:true,
         fingerprint_before:$tree_before,fingerprint_after:$tree_after},
@@ -6020,10 +6133,15 @@ if [[ "$SKIP_PREFLIGHT_TESTS" != "true" && -n "$TEST_CMD_OVERRIDE" ]]; then
     (.subject.fingerprint_before | test("^[a-f0-9]{64}$")) and
     (.subject.fingerprint_after | test("^[a-f0-9]{64}$")) and
     (.log.sha256 | test("^[a-f0-9]{64}$")) and
+    (.status | IN("pass","test-fail","timeout","environment-error","stale","invalid-evidence","unclassified-nonzero")) and
+    (.outcome.execution | IN("pass","nonzero","timeout")) and
+    (.outcome.test_verdict | IN("pass","fail","not_available","inconclusive")) and
+    (.outcome.evidence_richness | IN("opaque","structured","invalid")) and
+    (.outcome.authorization | IN("eligible","non_authorizing")) and
     (.coverage.type == "opaque" or .coverage.type == "structured" or .coverage.type == "invalid")' \
     "$PREFLIGHT_EVIDENCE_PATH" >/dev/null || { printf 'Error: invalid pre-flight evidence envelope\n' >&2; exit 2; }
   PREFLIGHT_EVIDENCE_DIGEST="$(_preflight_sha256_file "$PREFLIGHT_EVIDENCE_PATH")" || exit 2
-  if [[ "$_preflight_status" == pass ]]; then PREFLIGHT_STATUS=pass; else PREFLIGHT_STATUS=fail; fi
+  PREFLIGHT_STATUS="$_preflight_status"
   say 'pr-gate: pre-flight test suite: %s (evidence: %s)\n\n' "$_preflight_status" "$PREFLIGHT_EVIDENCE_PATH"
 fi
 
@@ -6069,7 +6187,7 @@ render_test_evidence_block() {
     printf '    QA may run the minimum repo-native validation needed when behavioral coverage\n'
     printf '    cannot be established; record the gap, reason, command, and new evidence.\n'
   fi
-  if [[ "$status" == "fail" && -n "$log_path" ]]; then
+  if [[ "$status" == "test-fail" && -n "$log_path" ]]; then
     # Read from the CURRENT (still in-repo) path -- relocation hasn't happened
     # yet at this point in the script -- but DISPLAY the path it will live at
     # once relocate_gate_artifacts moves it, so any reviewer that quotes this
@@ -6102,6 +6220,18 @@ TEST_EVIDENCE_CONTEXT_BLOCK="$(render_test_evidence_block "$PREFLIGHT_STATUS" "$
 # tests are fixed, not blocked from ever happening.
 _write_preflight_failure_result() {
   local result_file="$1" log_path="$2" display_path reviewer_lines=""
+  local final=test_suite_label conclusion reason
+  if [[ "$PREFLIGHT_STATUS" == test-fail ]]; then
+    final=NO-GO
+    test_suite_label=fail
+    conclusion='The structured pre-flight result contains a subject-valid assertion/test failure.'
+    reason='Fix the reported failing tests, then re-run pr-gate.'
+  else
+    final=INCOMPLETE
+    test_suite_label=inconclusive
+    conclusion='The pre-flight command did not yield authorizing test evidence; this is not a claim that the diff caused a product defect.'
+    reason='Follow the recovery instructions below and re-run or supply subject-matching structured evidence.'
+  fi
   display_path="$(_preflight_log_display_path "$log_path")"
   local r
   for r in $REVIEWERS; do
@@ -6112,7 +6242,7 @@ _write_preflight_failure_result() {
   cat > "$result_file" << PREFLIGHT_FAIL_EOF
 ---
 gate_result_version: pr_gate_result_v1
-final: NO-GO
+final: ${final}
 tier: ${TIER}
 mode: ${MODE_RESOLVED}
 most_severe: block
@@ -6121,34 +6251,34 @@ ${reviewer_lines}escalation:
   recommended: false
   reviewers: []
   reason: []
-test_suite: fail
+test_suite: ${test_suite_label}
 test_evidence: $(_preflight_log_display_path "$PREFLIGHT_EVIDENCE_PATH")
 test_evidence_sha256: ${PREFLIGHT_EVIDENCE_DIGEST}
 ---
 
-# PR-Gate Result -- pre-flight fail-fast (${EXECUTOR} mode)
+# PR-Gate Result -- pre-flight ${test_suite_label} (${EXECUTOR} mode)
 **Date**: $(date '+%Y-%m-%d')
 **Reviewers**: ${REVIEWER_DISPLAY}
 **Not reviewed**: all (pre-flight test suite failed; reviewer dispatch was skipped)
 
-## Pre-flight Test Failure
-The pre-flight test command failed before any reviewer was dispatched.
+## Pre-flight Test Evidence
+${conclusion}
 Full log: ${display_path}
 Evidence artifact: $(_preflight_log_display_path "$PREFLIGHT_EVIDENCE_PATH")
 Evidence sha256: ${PREFLIGHT_EVIDENCE_DIGEST}
 Last ~40 lines (secret-shaped substrings redacted):
 ${excerpt}
 
-Reviewer dispatch was skipped because a failing test suite already
-determines this gate's outcome -- fixing the tests is required before code
-review has anything to add. Fix the test suite and re-run pr-gate; reviewers
-will run normally once the pre-flight check passes.
+Reviewer dispatch was skipped because this pre-flight result is non-authorizing.
+For INCOMPLETE, inspect the command log, run the same command externally if the
+reviewer environment is unsuitable, and provide only subject- and command-matching
+structured evidence. Do not infer a test failure from an opaque nonzero exit.
 
 ## Gate Conclusion
-**Overall verdict**: block
-**Most severe individual verdict**: block
-Final: NO-GO
-Required fixes: the pre-flight test command failed. Fix the test suite (see log above), then re-run pr-gate.
+**Overall verdict**: ${final}
+**Most severe individual verdict**: ${test_suite_label}
+Final: ${final}
+Required action: ${reason}
 
 ## Escalation
 **Recommended**: false
@@ -6158,8 +6288,10 @@ Required fixes: the pre-flight test command failed. Fix the test suite (see log 
 PREFLIGHT_FAIL_EOF
 }
 
-if [[ "$PREFLIGHT_STATUS" == "fail" ]]; then
-  say 'pr-gate: pre-flight test suite failed -- skipping reviewer dispatch entirely (fail-fast)\n'
+if [[ "$PREFLIGHT_STATUS" != "pass" && "$PREFLIGHT_STATUS" != "skipped" ]]; then
+  say 'pr-gate: pre-flight status=%s -- skipping reviewer dispatch (%s)\n' \
+    "$PREFLIGHT_STATUS" \
+    "$([[ "$PREFLIGHT_STATUS" == test-fail ]] && printf 'test NO-GO' || printf 'non-authorizing INCOMPLETE')"
   _write_preflight_failure_result "$OUTPUT_FILE" "$PREFLIGHT_LOG_PATH"
   gate_result_verify "$OUTPUT_FILE" "" "preflight-fail-fast" || exit 1
 else
@@ -7161,4 +7293,7 @@ fi
 _FINAL_EXIT_VERDICT=$(grep -m1 '^Final: ' "$OUTPUT_FILE" 2>/dev/null | awk '{print $2}' || true)
 if [[ "$_FINAL_EXIT_VERDICT" == "NO-GO" ]]; then
   exit 1
+fi
+if [[ "$_FINAL_EXIT_VERDICT" == "INCOMPLETE" ]]; then
+  exit 3
 fi

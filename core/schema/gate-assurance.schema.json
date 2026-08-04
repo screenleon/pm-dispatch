@@ -30,7 +30,7 @@
     "result": {
       "type": "object",
       "required": ["final"],
-      "properties": { "final": { "enum": ["GO", "NO-GO"] } },
+      "properties": { "final": { "enum": ["GO", "NO-GO", "INCOMPLETE"] } },
       "additionalProperties": false
     },
     "bindings": {

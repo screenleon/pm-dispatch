@@ -52,7 +52,10 @@ SUITE_NAMES=(
   test-executor-router
   test-runner-kind
   test-pmctl-adapter-generate
-  test-pr-gate
+  test-pr-gate-shard-1
+  test-pr-gate-shard-2
+  test-pr-gate-shard-3
+  test-pr-gate-shard-4
   test-setup-project
   test-patch-gitignore
   test-portable
@@ -175,7 +178,10 @@ suite_path() {
     test-executor-router) printf 'tests/shell/test-executor-router.sh\n' ;;
     test-runner-kind) printf 'tests/shell/test-runner-kind.sh\n' ;;
     test-pmctl-adapter-generate) printf 'tests/shell/test-pmctl-adapter-generate.sh\n' ;;
-    test-pr-gate) printf 'tests/shell/test-pr-gate.sh\n' ;;
+    test-pr-gate-shard-1) printf 'tests/shell/test-pr-gate-shard-1.sh\n' ;;
+    test-pr-gate-shard-2) printf 'tests/shell/test-pr-gate-shard-2.sh\n' ;;
+    test-pr-gate-shard-3) printf 'tests/shell/test-pr-gate-shard-3.sh\n' ;;
+    test-pr-gate-shard-4) printf 'tests/shell/test-pr-gate-shard-4.sh\n' ;;
     test-setup-project) printf 'tests/shell/test-setup-project.sh\n' ;;
     test-patch-gitignore) printf 'tests/shell/test-patch-gitignore.sh\n' ;;
     test-portable) printf 'tests/shell/test-portable.sh\n' ;;
@@ -422,8 +428,8 @@ test_suite_filter_list() {
   # Behavior: repeated --suite flags select known suites in registry order for --list.
   # Steps: request two suites in reverse order; assert only those two are listed in canonical order.
   local out status=0
-  out=$(bash "$SCRIPT_DIR/../lib/test-suite-runner.sh" --suite test-pr-gate --suite lint-agents --list 2>&1) || status=$?
-  if [[ "$status" -eq 0 && "$out" == $'lint-agents\ntest-pr-gate' ]]; then
+  out=$(bash "$SCRIPT_DIR/../lib/test-suite-runner.sh" --suite test-pr-gate-shard-1 --suite lint-agents --list 2>&1) || status=$?
+  if [[ "$status" -eq 0 && "$out" == $'lint-agents\ntest-pr-gate-shard-1' ]]; then
     pass_case "$name"
   else
     fail_case "$name" "status=$status out=$out"
@@ -534,15 +540,15 @@ test_codex_missing_skips_codex_dispatch() {
 test_fail_on_suite_error() {
   local name="fail-on-suite-error"
   # Behavior: a suite that exits non-zero causes FAIL in output and overall exit 1.
-  # Steps: write test-pr-gate stub as exit 1; run aggregator; assert FAIL and exit 1.
+  # Steps: write one test-pr-gate shard stub as exit 1; run aggregator; assert FAIL and exit 1.
   local repo="$TMP_ROOT/$name" path out status=0
   make_fixture_repo "$repo"
   write_pass_stubs "$repo"
-  write_suite_stub "$repo" test-pr-gate 1
+  write_suite_stub "$repo" test-pr-gate-shard-1 1
   path="$(make_path_with_codex "$repo/bin")"
   out=$(PATH="$path" run_aggregator "$repo" 2>&1) || status=$?
   if [[ "$status" -eq 1 &&
-        "$out" == *"FAIL test-pr-gate"* &&
+        "$out" == *"FAIL test-pr-gate-shard-1"* &&
         "$out" == *"$SUITE_MINUS_ONE passed, 1 failed, 0 skipped"* ]]; then
     pass_case "$name"
   else

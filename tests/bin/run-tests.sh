@@ -153,6 +153,13 @@ add_suite() {
   [[ -n "${REGISTERED[$suite]:-}" ]] && SELECTED["$suite"]=1
 }
 
+add_pr_gate_shards() {
+  add_suite test-pr-gate-shard-1
+  add_suite test-pr-gate-shard-2
+  add_suite test-pr-gate-shard-3
+  add_suite test-pr-gate-shard-4
+}
+
 mark_full() {
   ESCALATE_FULL=1
   if [[ -z "$ESCALATE_REASON" ]]; then
@@ -173,6 +180,8 @@ map_path() {
   [[ "$path" == *.sh ]] && add_suite lint-scripts
 
   case "$path" in
+    tests/shell/test-pr-gate.sh|tests/shell/test-pr-gate-shard-*.sh)
+      add_pr_gate_shards; behavioral=1 ;;
     tests/shell/test-*.sh)
       stem="${path#tests/shell/}"
       stem="${stem%.sh}"
@@ -212,25 +221,25 @@ map_path() {
     runtime/lib/state-paths.sh)
       add_suite test-state-paths; add_suite test-state-store-rotation; behavioral=1 ;;
     runtime/lib/pmctl-policy.sh)
-      add_suite test-pmctl-adapter-generate; add_suite test-pr-gate
+      add_suite test-pmctl-adapter-generate; add_pr_gate_shards
       add_suite test-dispatch-handover; add_suite test-handover-validate
       add_suite test-pmctl-task; behavioral=1 ;;
     core/schema/preflight-evidence.schema.json)
-      add_suite test-pr-gate; behavioral=1 ;;
+      add_pr_gate_shards; behavioral=1 ;;
     core/schema/gate-assurance.schema.json|core/schema/gate-policy-override.schema.json|core/schema/gate-reviewer-result.schema.json|core/schema/gate-scope-manifest.schema.json|core/schema/gate-synthesis-result.schema.json|core/schema/gate-verification.schema.json)
-      add_suite test-core-schemas; add_suite test-pr-gate
+      add_suite test-core-schemas; add_pr_gate_shards
       add_suite test-pmctl-gate; behavioral=1 ;;
     runtime/bin/pr-gate.sh)
       add_suite test-pr-gate-profile; behavioral=1 ;;
     runtime/lib/gate-result-verify.sh)
-      add_suite test-pr-gate; add_suite test-pr-gate-profile
+      add_pr_gate_shards; add_suite test-pr-gate-profile
       add_suite test-pmctl-gate; behavioral=1 ;;
     tests/lib/test-pr-gate-fixture.sh)
-      add_suite test-pr-gate; add_suite test-pr-gate-profile; behavioral=1 ;;
+      add_pr_gate_shards; add_suite test-pr-gate-profile; behavioral=1 ;;
     tools/generate-gate-result-verifier-fallback.sh)
-      add_suite test-pr-gate; behavioral=1 ;;
+      add_pr_gate_shards; behavioral=1 ;;
     core/policy/gate-tiers.tsv|core/policy/gate-modes.tsv|core/policy/gate-pass-kinds.tsv|core/policy/gate-policy-consumers.tsv|core/policy/gate-policy-signals.tsv)
-      add_suite test-pr-gate; add_suite test-pr-gate-profile; behavioral=1 ;;
+      add_pr_gate_shards; add_suite test-pr-gate-profile; behavioral=1 ;;
     runtime/lib/pmctl-config.sh)
       add_suite test-pmctl-dispatch; add_suite test-pmctl-memory; add_suite test-pmctl-context; behavioral=1 ;;
     runtime/lib/memory.sh|runtime/lib/memory-dir.sh)

@@ -33,7 +33,7 @@ make_fixture() {
   cat > "$repo/tests/lib/test-suite-runner.sh" <<'RUNNER'
 #!/usr/bin/env bash
 set -euo pipefail
-suites=(lint-agents lint-scripts lint-script-domain-inventory lint-portable-repo-paths test-lint-shellcheck test-script-domain-inventory test-lint-portable-repo-paths test-lint-frontmatter test-commands test-check-docs-freshness test-guards test-migrate test-install test-doctor test-pmctl-dispatch test-pmctl-context test-pmctl-memory test-pmctl-gate test-pr-gate test-pr-gate-profile test-pmctl-operation test-host-manifest test-host-write-codex test-codex-dispatch-continuation test-host-write-parity test-core-schemas test-layer-boundaries test-pm-scripts test-run-tests test-setup-project test-state-store test-state-layout-parity)
+suites=(lint-agents lint-scripts lint-script-domain-inventory lint-portable-repo-paths test-lint-shellcheck test-script-domain-inventory test-lint-portable-repo-paths test-lint-frontmatter test-commands test-check-docs-freshness test-guards test-migrate test-install test-doctor test-pmctl-dispatch test-pmctl-context test-pmctl-memory test-pmctl-gate test-pr-gate-shard-1 test-pr-gate-shard-2 test-pr-gate-shard-3 test-pr-gate-shard-4 test-pr-gate-profile test-pmctl-operation test-host-manifest test-host-write-codex test-codex-dispatch-continuation test-host-write-parity test-core-schemas test-layer-boundaries test-pm-scripts test-run-tests test-setup-project test-state-store test-state-layout-parity)
 for arg in "$@"; do
   if [[ "$arg" == --list ]]; then printf '%s\n' "${suites[@]}"; exit 0; fi
 done

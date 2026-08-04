@@ -587,11 +587,57 @@ create_repo_with_branch() {
 
 run_gate() {
   local home="$1" runner="$2" repo="$3" out="$4" err="$5"
+  local case_timeout="${PM_DISPATCH_TEST_PR_GATE_CASE_TIMEOUT_SECS:-120}"
+  local started="$SECONDS"
   shift 5
+  printf 'START pr-gate case=%s watchdog=%ss\n' \
+    "${CURRENT_TEST_CASE:-unknown}" "$case_timeout"
   set +e
-  HOME="$home" PATH="$runner/bin:$PATH" "$runner/pr-gate.sh" --cd "$repo" "$@" > "$out" 2> "$err"
+  if command -v timeout >/dev/null 2>&1; then
+    timeout --kill-after=5s "${case_timeout}s" \
+      env HOME="$home" PATH="$runner/bin:$PATH" \
+      "$runner/pr-gate.sh" --cd "$repo" "$@" > "$out" 2> "$err"
+  else
+    HOME="$home" PATH="$runner/bin:$PATH" \
+      "$runner/pr-gate.sh" --cd "$repo" "$@" > "$out" 2> "$err"
+  fi
   local code=$?
+  if [[ "$code" -eq 124 ]]; then
+    printf 'TIMEOUT test-pr-gate case=%s watchdog=%ss\n' \
+      "${CURRENT_TEST_CASE:-unknown}" "$case_timeout" >&2
+  fi
+  printf 'END pr-gate case=%s exit=%s duration=%ss\n' \
+    "${CURRENT_TEST_CASE:-unknown}" "$code" "$((SECONDS - started))"
   return "$code"
+}
+
+# Behavior: a stalled nested gate is bounded at the test-case boundary, so a
+# single fixture cannot hide its identity behind the suite's 15-minute limit.
+# Steps: make the dispatch fixture sleep, give run_gate a one-second watchdog,
+# and assert timeout exit 124 plus child-process cleanup.
+test_run_gate_case_watchdog_bounds_stalled_fixture() {
+  local name="run-gate-case-watchdog-bounds-stalled-fixture"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home repo runner out err code marker="913"
+  home="$dir/home"; repo="$dir/repo"; runner="$dir/runner"
+  out="$dir/out"; err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester
+  create_repo "$repo" docs
+  set +e
+  PM_DISPATCH_TEST_PR_GATE_CASE_TIMEOUT_SECS=1 \
+    CODEX_GATE_STUB_MODE=hang CODEX_GATE_HANG_SECONDS="$marker" \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester --mode sequential --timeout 900
+  code=$?
+  set -e
+  [[ "$code" -eq 124 ]] || {
+    fail "$name" "exit $code, expected watchdog timeout 124: $(cat "$err" 2>/dev/null)"
+    return
+  }
+  assert_no_process_matching "$name" "sleep $marker" || return
+  pass "$name"
 }
 
 write_valid_initial_gate_result() {
@@ -2972,13 +3018,12 @@ test_preflight_pass_no_override() {
   pass "$name"
 }
 
-# Behavior: key case -- a FAILING --test-cmd short-circuits the gate to
-# Final: NO-GO WITHOUT dispatching any reviewer at all. Reviewing code that
-# is already guaranteed to be rejected wastes reviewer tokens for nothing,
-# so this must be a fail-fast, not a post-hoc override of a real dispatch.
+# Behavior: an opaque nonzero --test-cmd short-circuits the gate to
+# INCOMPLETE without dispatching any reviewer. A plain shell exit cannot prove
+# an assertion failure, so it must not be represented as a product-test NO-GO.
 # Steps: run gate with --test-cmd "echo boom; exit 1" (stub reviewers would
-# say GO if invoked, but must never be invoked). Assert exit non-zero,
-# Final: NO-GO, frontmatter test_suite: fail, and -- the decisive assertion --
+# say GO if invoked, but must never be invoked). Assert exit 3,
+# Final: INCOMPLETE, frontmatter test_suite: inconclusive, and -- the decisive assertion --
 # no DISPATCH_STUB output anywhere (proves the reviewer session never ran).
 test_preflight_fail_short_circuits_without_dispatch() {
   local name="preflight-fail-short-circuits-without-dispatch"
@@ -3004,8 +3049,9 @@ test_preflight_fail_short_circuits_without_dispatch() {
     fail "$name" "result file missing/empty -- fail-fast must still produce a result"
     return
   fi
-  assert_file_contains "$name" "$result" "Final: NO-GO" || return
-  assert_file_contains "$name" "$result" "test_suite: fail" || return
+  [[ "$code" -eq 3 ]] || { fail "$name" "exit $code, expected 3 for incomplete evidence"; return; }
+  assert_file_contains "$name" "$result" "Final: INCOMPLETE" || return
+  assert_file_contains "$name" "$result" "test_suite: inconclusive" || return
   assert_not_contains "$name" "$out" "DISPATCH_STUB" || return
   assert_not_contains "$name" "$err" "DISPATCH_STUB" || return
   pass "$name"
@@ -3076,11 +3122,9 @@ test_preflight_fail_result_preserves_frontmatter_body_parity() {
   [[ "$rc" -eq 0 ]] && pass "$name" || fail "$name" "gate_result_verify rejected the fail-fast synthesized result file"
 }
 
-# Behavior: --test-cmd exceeding --test-timeout is treated the same as a
-# non-zero exit (fail-fast, no dispatch), not left as "skipped" or silently
-# ignored.
-test_preflight_timeout_treated_as_fail() {
-  local name="preflight-timeout-treated-as-fail"
+# Behavior: timeout is non-authorizing INCOMPLETE, not a claimed test failure.
+test_preflight_timeout_is_inconclusive() {
+  local name="preflight-timeout-is-inconclusive"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
@@ -3099,8 +3143,9 @@ test_preflight_timeout_treated_as_fail() {
     fail "$name" "expected non-zero exit when pre-flight tests time out"
     return
   fi
-  assert_file_contains "$name" "$result" "test_suite: fail" || return
-  assert_file_contains "$name" "$result" "Final: NO-GO" || return
+  [[ "$code" -eq 3 ]] || { fail "$name" "exit $code, expected 3"; return; }
+  assert_file_contains "$name" "$result" "test_suite: inconclusive" || return
+  assert_file_contains "$name" "$result" "Final: INCOMPLETE" || return
   assert_not_contains "$name" "$out" "DISPATCH_STUB" || return
   pass "$name"
 }
@@ -3365,11 +3410,68 @@ test_preflight_invalid_rich_result_fails_closed() {
   set -e
   [[ "$code" -ne 0 ]] || { fail "$name" "expected malformed rich result to fail"; return; }
   evidence="$(find "$repo/.gate-results" -name 'preflight-evidence-*.json' -print -quit)"
-  if jq -e '.status == "invalid" and .coverage.type == "invalid"' "$evidence" >/dev/null 2>&1; then
+  if jq -e '.status == "invalid-evidence" and .coverage.type == "invalid" and
+      .outcome.authorization == "non_authorizing"' "$evidence" >/dev/null 2>&1; then
     assert_not_contains "$name" "$out" "DISPATCH_STUB" || return
     pass "$name"
   else
     fail "$name" "malformed rich result was not rejected: $(cat "$evidence" 2>/dev/null)"
+  fi
+}
+
+# Behavior: only a subject-valid structured assertion failure is a mechanical
+# test NO-GO. This distinguishes it from the opaque nonzero case above.
+test_preflight_structured_test_failure_is_nogo() {
+  local name="preflight-structured-test-failure-is-nogo"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home repo runner out err result producer code
+  home="$dir/home"; repo="$dir/repo"; runner="$dir/runner"
+  out="$dir/out"; err="$dir/err"; result="$dir/result.md"; producer="$dir/produce-fail.sh"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  cat > "$producer" <<'PRODUCER'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'PRODUCER_FAILING_TEST_MARKER: fixture assertion failed\n'
+repo="$PWD"
+repo_id="$(printf '%s\n\n' "$repo" | sha256sum | awk '{print $1}')"
+jq -n --arg repo "$repo" --arg repo_id "$repo_id" \
+  --arg head "$PM_DISPATCH_PREFLIGHT_HEAD_COMMIT" \
+  --arg fp "$PM_DISPATCH_PREFLIGHT_SUBJECT_FINGERPRINT" '
+  {kind:"pm_test_result_v2",schema_version:2,repo_root:$repo,repo_identity:$repo_id,
+   base_ref:null,base_commit:null,head_commit:$head,contract:"iteration",authoritative:false,
+   status:"fail",exit_code:1,started_at:"2026-01-01T00:00:00Z",finished_at:"2026-01-01T00:00:01Z",
+   tree_fingerprint:$fp,observed_tree_fingerprint_after:$fp,
+   runner_contract_hash:("a" * 64),selection_mode:"explicit-paths",changed_paths:["README.md"],
+   suite_set:["fixture"],requested_skips:[],
+   suite_results:[{name:"fixture",status:"fail",exit_code:1,duration_seconds:0}],
+   aggregate:{status:"fail",selected:1,passed:0,failed:1,timed_out:0,skipped:0}}' \
+  > "$PM_DISPATCH_PREFLIGHT_TEST_RESULT"
+exit 1
+PRODUCER
+  chmod +x "$producer"
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main \
+    --test-cmd "$producer" --output "$result"
+  code=$?
+  set -e
+  if [[ "$code" -ne 1 ]]; then
+    fail "$name" "exit $code, expected test NO-GO exit 1: $(cat "$err")"
+    return
+  fi
+  assert_file_contains "$name" "$result" "Final: NO-GO" || return
+  assert_file_contains "$name" "$result" "test_suite: fail" || return
+  assert_file_contains "$name" "$result" "Last ~40 lines" || return
+  assert_file_contains "$name" "$result" "PRODUCER_FAILING_TEST_MARKER" || return
+  if jq -e '.status == "test-fail" and .outcome.test_verdict == "fail" and
+      .outcome.evidence_richness == "structured" and .outcome.authorization == "non_authorizing"' \
+      "$(find "$repo/.gate-results" -name 'preflight-evidence-*.json' -print -quit)" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "structured assertion failure was not classified as test-fail"
   fi
 }
 
@@ -4200,13 +4302,13 @@ STUB_PMCTL
   pass "$name"
 }
 
-# Behavior: a repo-layout gate whose pre-flight command fails publishes a
-# complete NO-GO result with unavailable dispatch evidence. The run-dir makes
+# Behavior: a repo-layout gate whose opaque pre-flight command exits nonzero
+# publishes an INCOMPLETE result with unavailable dispatch evidence. The run-dir makes
 # an attestation destination available, but no reviewer was dispatched, so the
 # sidecar must leave provenance.attestation null instead of pointing at a file
 # that cannot and must not exist.
 # Steps: run a repo-layout fixture with --run-dir and a failing --test-cmd,
-# then assert exit 1, a verified relocated result, the preflight-only outcome,
+# then assert exit 3, a verified relocated result, the preflight-only outcome,
 # null attestation provenance, and no protected attestation artifact.
 test_repo_layout_preflight_failure_publishes_unattested_nogo() {
   local name="gate-assurance/repo-layout-preflight-failure-publishes-unattested-nogo"
@@ -4240,8 +4342,8 @@ test_repo_layout_preflight_failure_publishes_unattested_nogo() {
       --run-dir "$run_dir" --test-cmd "exit 1" > "$out" 2> "$err"
   code=$?
   set -e
-  if [[ "$code" -ne 1 ]]; then
-    fail "$name" "exit $code, expected published NO-GO exit 1: $(tail -n 20 "$err" 2>/dev/null)"
+  if [[ "$code" -ne 3 ]]; then
+    fail "$name" "exit $code, expected published INCOMPLETE exit 3: $(tail -n 20 "$err" 2>/dev/null)"
     return
   fi
   result="$(awk -F'result: ' '/^result: /{path=$2} END{print path}' "$out")"
@@ -4250,10 +4352,10 @@ test_repo_layout_preflight_failure_publishes_unattested_nogo() {
     return
   fi
   if ! jq -e '
-      .result.final == "NO-GO" and
+      .result.final == "INCOMPLETE" and
       .coordinates.independence.evidence_status == "unavailable" and
       .dispatch.outcomes == [{
-        role:"preflight",reviewer:null,status:"failed",run_id:null,
+        role:"preflight",reviewer:null,status:"incomplete",run_id:null,
         evidence_status:"unavailable"
       }] and
       .provenance.attestation == null
@@ -4267,7 +4369,7 @@ test_repo_layout_preflight_failure_publishes_unattested_nogo() {
     return
   fi
   if ! "$REPO_ROOT/cli/pmctl" gate verify "$result" >/dev/null 2>&1; then
-    fail "$name" "published preflight NO-GO failed shared verification"
+    fail "$name" "published preflight INCOMPLETE failed shared verification"
     return
   fi
   pass "$name"
@@ -4419,7 +4521,7 @@ FAKE_GH
 }
 
 run_test() {
-  "$@" || true
+  CURRENT_TEST_CASE="$1" "$@" || true
 }
 
 # Behavior: 100-500 non-doc changed lines on a feature branch triggers
@@ -5027,6 +5129,163 @@ SHELL_EOF
   pass "$name"
 }
 
+# Behavior: framework contract bundles retain their complete bounded direct
+# consumer summary without re-running every generic shell helper as a symbol
+# search.  The dedicated contract budget is larger than ordinary call sites,
+# but remains independently fail-closed.
+test_scope_manifest_contract_bundle_uses_bounded_consumer_summary() {
+  local name="scope-manifest/contract-bundle-bounded-consumer-summary"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo"
+  local runner="$dir/runner" out="$dir/out" err="$dir/err"
+  local result assurance manifest code
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  git init -q -b main "$repo"
+  (
+    cd "$repo"
+    git config user.email test@example.com
+    git config user.name 'Gate Test'
+    mkdir -p tests/lib tests/shell
+    write_managed_gitignore
+    printf 'harness_usage() { :; }\n' > tests/lib/test-harness.sh
+    for n in $(seq -w 1 78); do
+      printf '. tests/lib/test-harness.sh\nharness_usage\n' > "tests/shell/test-consumer-${n}.sh"
+    done
+    git add .
+    git commit -q -m initial
+    git checkout -q -b feature
+    printf 'harness_usage() { printf updated; }\n' > tests/lib/test-harness.sh
+    git add tests/lib/test-harness.sh
+    git commit -q -m change
+  )
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" \
+    --base main --mode sequential
+  code=$?
+  set -e
+  [[ "$code" -eq 0 ]] || {
+    fail "$name" "exit $code, expected 0: $(tail -n 30 "$err" 2>/dev/null)"
+    return
+  }
+  result="$(awk -F'result: ' '/^result: /{path=$2} END{print path}' "$out")"
+  assurance="${result}.assurance.json"
+  manifest="$(dirname "$assurance")/$(jq -r '.evidence.scope_manifest.artifact' "$assurance")"
+  if ! jq -e '
+      .status == "complete" and
+      .truncation.occurred == false and
+      .truncation.budgets.contract_consumers_per_source == 128 and
+      ([.expansion.entries[] |
+        select(.source == "tests/lib/test-harness.sh" and
+          .reason == "shared-helper-consumer" and
+          .limit.maximum == 128)] | length) == 78 and
+      ([.expansion.entries[] |
+        select(.source == "tests/lib/test-harness.sh" and
+          .reason == "call-site-hint")] | length) == 0
+    ' "$manifest" >/dev/null; then
+    fail "$name" "contract summary was incomplete or expanded symbols: $(jq -c '{status,expansion,truncation}' "$manifest" 2>/dev/null)"
+    return
+  fi
+  pass "$name"
+}
+
+# Behavior: a contract bundle with MORE than its 128-consumer budget produces
+# a self-consistent truncated manifest -- the omission count, the
+# "contract-consumer-budget" reason, and (when explicitly accepted) the
+# accepted_truncation status all agree, mirroring the sibling truncation
+# categories' rejected/accepted pair above.
+test_scope_manifest_contract_bundle_overflow_is_truthful_truncation() {
+  local name="scope-manifest/contract-bundle-overflow-is-truthful-truncation"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home"
+  local runner="$dir/runner" out="$dir/out" err="$dir/err"
+  local repo_reject="$dir/reject-repo" repo_accept="$dir/accept-repo"
+  local result assurance manifest code
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+
+  make_overflow_repo() {
+    local repo="$1"
+    git init -q -b main "$repo"
+    (
+      cd "$repo"
+      git config user.email test@example.com
+      git config user.name 'Gate Test'
+      mkdir -p tests/lib tests/shell
+      write_managed_gitignore
+      printf 'harness_usage() { :; }\n' > tests/lib/test-harness.sh
+      for n in $(seq -w 1 129); do
+        printf '. tests/lib/test-harness.sh\nharness_usage\n' > "tests/shell/test-consumer-${n}.sh"
+      done
+      git add .
+      git commit -q -m initial
+      git checkout -q -b feature
+      printf 'harness_usage() { printf updated; }\n' > tests/lib/test-harness.sh
+      git add tests/lib/test-harness.sh
+      git commit -q -m change
+    )
+  }
+
+  make_overflow_repo "$repo_reject"
+  set +e
+  run_gate "$home" "$runner" "$repo_reject" "$out" "$err" \
+    --base main --mode sequential
+  code=$?
+  set -e
+  [[ "$code" -eq 3 ]] || {
+    fail "$name" "unaccepted overflow exit $code, expected 3: $(tail -n 30 "$err" 2>/dev/null)"
+    return
+  }
+  assert_file_contains "$name" "$err" "INCOMPLETE: declared scope exceeded" || return
+  assert_not_contains "$name" "$err" "DISPATCH_STUB" || return
+  manifest="$(find "$repo_reject/.gate-results" \
+    -maxdepth 1 -name 'gate-scope-manifest-*.json' -print -quit)"
+  if ! jq -e '
+      .status == "incomplete" and
+      .truncation.omitted.contract_consumers_per_source == 1 and
+      .truncation.reasons == ["contract-consumer-budget"] and
+      .truncation.acceptance == {
+        required:true,accepted:false,source:null
+      }
+    ' "$manifest" >/dev/null; then
+    fail "$name" "unaccepted overflow artifact was not truthful: $(jq -c '{status,truncation}' "$manifest" 2>/dev/null)"
+    return
+  fi
+
+  make_overflow_repo "$repo_accept"
+  set +e
+  run_gate "$home" "$runner" "$repo_accept" "$out" "$err" \
+    --base main --mode sequential --accept-scope-truncation
+  code=$?
+  set -e
+  [[ "$code" -eq 0 ]] || {
+    fail "$name" "accepted overflow exit $code, expected 0: $(tail -n 30 "$err" 2>/dev/null)"
+    return
+  }
+  result="$(awk -F'result: ' '/^result: /{path=$2} END{print path}' "$out")"
+  assurance="${result}.assurance.json"
+  manifest="$(dirname "$assurance")/$(jq -r '.evidence.scope_manifest.artifact' "$assurance")"
+  if ! jq -e '
+      .status == "accepted_truncation" and
+      .truncation.omitted.contract_consumers_per_source == 1 and
+      .truncation.reasons == ["contract-consumer-budget"] and
+      .truncation.acceptance == {
+        required:true,
+        accepted:true,
+        source:"--accept-scope-truncation"
+      }
+    ' "$manifest" >/dev/null; then
+    fail "$name" "accepted overflow artifact was not truthful: $(jq -c '{status,truncation}' "$manifest" 2>/dev/null)"
+    return
+  fi
+  pass "$name"
+}
+
 # Behavior: a language-compatible call-site query that really exceeds its
 # declared per-symbol budget remains a truthful fail-closed truncation.
 # Steps:
@@ -5312,6 +5571,8 @@ run_test test_binary_file_routes_to_standard
 run_test test_untracked_binary_routes_to_standard
 run_test test_scope_manifest_complete_and_shared_across_parallel_dispatch
 run_test test_scope_manifest_shell_symbols_are_consumer_scoped
+run_test test_scope_manifest_contract_bundle_uses_bounded_consumer_summary
+run_test test_scope_manifest_contract_bundle_overflow_is_truthful_truncation
 run_test test_scope_manifest_semantic_search_overflow_fails_closed
 run_test test_scope_manifest_large_expansion_uses_file_input
 run_test test_scope_manifest_truncation_requires_explicit_acceptance
@@ -5342,11 +5603,12 @@ run_test test_sequential_no_final_line_aborts_gate
 run_test test_sequential_timeout_preserves_partial_result
 run_test test_piped_stdout_does_not_abort_gate
 run_test test_sequential_frontmatter_parity_mismatch_aborts_gate
+run_test test_run_gate_case_watchdog_bounds_stalled_fixture
 run_test test_preflight_pass_no_override
 run_test test_preflight_fail_short_circuits_without_dispatch
 run_test test_preflight_fail_log_excerpt_is_redacted_not_empty
 run_test test_preflight_fail_result_preserves_frontmatter_body_parity
-run_test test_preflight_timeout_treated_as_fail
+run_test test_preflight_timeout_is_inconclusive
 run_test test_preflight_skipped_without_test_cmd
 run_test test_preflight_never_auto_executes_repo_local_script
 run_test test_preflight_explicit_test_cmd_runs_independent_of_repo_scripts
@@ -5356,6 +5618,7 @@ run_test test_preflight_generic_command_emits_basic_evidence
 run_test test_preflight_tree_drift_marks_evidence_stale
 run_test test_preflight_untracked_drift_marks_evidence_stale
 run_test test_preflight_invalid_rich_result_fails_closed
+run_test test_preflight_structured_test_failure_is_nogo
 run_test test_preflight_artifact_tamper_aborts_gate
 run_test test_scope_manifest_tamper_aborts_gate
 run_test test_preflight_structured_result_is_reused_in_brief

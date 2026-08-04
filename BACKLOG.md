@@ -39,7 +39,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-517 | 🔵 active | maintainer `/ship`：primary review、structured remediation closure 與 conditional targeted confirmation | process/gate | 2026-07-23 | — | P1 | design |
 | CC-518 | ✅ closed 2026-07-29 | gate scope manifest v1：immutable subject、changed paths、paired tests、signals 與 bounded expansion | ops/gate | 2026-07-23 | pr:#455 | P1 | design |
 | CC-519 | ✅ closed 2026-07-30 | selected-reviewer coverage／finding contract：declared coverage、stable IDs 與 actionable fix boundary | ops/gate | 2026-07-23 | pr:#456 | P1 | design |
-| CC-520 | 🔵 active | synthesis parity 與 remediation seed：findings union、root-cause grouping、coverage matrix 與 no-silent-drop | ops/gate | 2026-07-23 | — | P1 | design |
+| CC-520 | ✅ closed 2026-07-31 | synthesis parity 與 remediation seed：findings union、root-cause grouping、coverage matrix 與 no-silent-drop | ops/gate | 2026-07-23 | pr:#460 | P1 | design |
 | CC-521 | 🔵 active | test-gap matrix、protocol recovery 與 live recall evaluation 分層 | ops/test | 2026-07-23 | — | P2 | design |
 | CC-522 | 🔵 active | 任意 `--test-cmd` 的 opaque／structured capability negotiation、執行失敗分類與外部 evidence recovery | ops/test | 2026-07-27 | feedback:2026-07-27 | P1 | design |
 | CC-523 | ✅ closed 2026-07-28 | `pmctl gate cancel` 必須終止 reviewer 派發前仍在執行的 foreground preflight 與其 process tree | arch/gate | 2026-07-27 | pr:#453 | P1 | hygiene |
@@ -60,6 +60,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-538 | 🟢 someday | Host resolver／doctor 共用 primitives，Host policy 繼續由各 Host 擁有 | arch/ops | 2026-07-30 | feedback:2026-07-30 | P2 | reuse-debt |
 | CC-539 | 🟢 someday | state `layout.yaml` build-time authority + generated runtime constants | arch/schema | 2026-07-30 | feedback:2026-07-30 | P2 | design |
 | CC-540 | 🟢 someday | `pmctl state prune`：刪除前先抽取+驗證 gate/dispatch run 摘要，避免歷史分析資料隨磁碟空間一起消失 | ops/gate | 2026-07-31 | — | P2 | hygiene |
+| CC-541 | 🔵 active | codex reviewer sandbox 讀不到主機上已存在的 `QA_RULES_DIR`，qa-tester 對 hard-stop 與可用規則來源之間 fail-loud 行為需要釐清並修復 | ops/gate | 2026-08-04 | feedback:2026-08-04 | P2 | hygiene |
 | CC-465 | 🔵 active | memory/context 關鍵詞管線 CJK 支援：抽出共用零依賴斷詞 lib，取代三處各自 ASCII-only 抽詞；工作序列起點（465→467→468→466）（2026-07-07 記憶系統深入分析） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-466 | ⏸ deferred | 記憶卡片生命週期閉環：expires_at 執行 + 關窗式 supersede + usage sidecar 休眠偵測 + doctor→distill 接線；僅在 CC-467 證明 stale/dormant card 已形成實際問題時啟動 | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-467 | 🔵 active | `pmctl memory stats`：注入效益可視化（唯讀聚合器）——注入 bytes/卡片命中分佈/從未命中卡/episode 填寫率，回答「記憶有跟沒有差在哪」；排在 CC-466 之前（2026-07-07；業界僅離線 recall 評測，無 per-injection 遙測） | DX/memory | 2026-07-07 | — | P2 | retrieval |
@@ -2123,7 +2124,7 @@ reviewer 完全理解 scope；不讓 parallel 代替 coverage。
 
 ---
 
-## CC-520 — synthesis parity 與 remediation seed 🔵 active
+## CC-520 — synthesis parity 與 remediation seed ✅ 2026-07-31
 
 **Problem**: synthesis 目前強調 cross-reviewer overlaps與最高 severity，可能在
 dedup 時丟失較低 severity finding、test expectation、caution 或 reviewer disagreement。
@@ -2157,6 +2158,15 @@ remediation seed保留所有 actionable evidence，但不宣稱 defect-complete�
 **Dependencies**: [[CC-519]]。P1。
 
 **Cross-link**: [[CC-517]]、[[CC-521]]。
+
+**Outcome**: Selected-reviewer Gate results now emit `pr_gate_result_v4` with one
+`gate_synthesis_result_v1` block. The verifier mechanically proves the complete
+stable-ID inventory/findings union, coverage matrix, root-cause grouping,
+uncertainties/cautions, and pending remediation seed against the authoritative
+reviewer JSON. Silent drops, duplicate IDs, coverage drift, and malformed
+verification expectations or seeds fail closed as `INCOMPLETE`.
+
+**See**: pr:#460
 
 ---
 
@@ -2983,6 +2993,69 @@ launch 早期死亡會留下 0-byte 空殼 gate 結果），摘要邏輯必須�
 **Source**: 2026-07-31 主線程對 615 筆 gate 執行紀錄的一次性分析（NO-GO 率
 57%、qa-tester 為最大 blocker），發現 runs/ 目錄無 retention 且分析價值
 未被保留；使用者要求 prune 時一併產出摘要。
+
+---
+
+## CC-541 — codex reviewer sandbox 讀不到主機上已存在的 `QA_RULES_DIR` 🔵 active
+
+**Problem**：`agents/qa-tester.md` 規定 qa-tester 必須以
+`${QA_RULES_DIR:-<repos-root>/qa-testing-rules}/AGENT.md` 作為 Tier 1 規則
+來源，缺席時「stop and ask the caller」。2026-08-04 針對 CC-522 timeout／
+scope-manifest 修復的 `pmctl gate run --executor codex --mode sequential`
+實測：該路徑（`/home/screenleon/github/qa-testing-rules`）在主機上確實
+存在，但派發給 codex reviewer 子行程的 sandbox 回報找不到，qa-tester 因而
+對整份 diff 判 `block`（`hard_gate_class: hard_block`），即使它列出需要
+補跑驗證的三個測試檔（`test-test-harness.sh`、`test-run-tests.sh`、
+`test-core-schemas.sh`）在主線程都已個別跑過且全過。此案已用
+`.gate-overrides.md` accepted-risk 走使用者已授權的 override 流程放行，
+非本票範圍；本票是後續調查與根治。
+
+**Why**：目前無法區分兩種情況——(a) `QA_RULES_DIR` 真的在此機器上不存在
+（[[CC-447]] item 5 涵蓋的乾淨機器情境），(b) 目錄存在但 reviewer 執行環境
+的 sandbox／`--cd` 邊界看不到它（本票情境）。兩者的正確修復方向完全不同：
+(a) 需要 qa-tester fail-loud 提示使用者安裝／設定，(b) 需要 dispatch 層把
+`QA_RULES_DIR` 顯式傳入 reviewer sandbox 的可讀路徑，而不是依賴 reviewer
+子行程自行從檔案系統相對路徑猜測。目前 qa-tester 的 hard block 對兩種情況
+一視同仁，讓「路徑存在但沙盒隔離」的可修復狀況也變成整份 gate 的
+`Final: NO-GO`，且沒有任何診斷區分兩者。
+
+**Requirement**：
+1. 先重現並定案 fail-loud 分類：在 codex `--executor codex` 的 reviewer
+   dispatch 路徑，確認 `QA_RULES_DIR`／`PM_DISPATCH_REPOS_ROOT`／
+   `PM_DISPATCH_REPO` 是否有傳入子行程環境；若有傳入但 sandbox
+   （`workspace-write`／`read-only`／`sandboxed`）仍阻擋讀取 repos-root
+   之外的路徑，記錄實際 sandbox 邊界規則來源（codex CLI 的
+   `--sandbox` 語意）。
+2. 依 1. 的結論二選一或並行：(a) dispatch 層在建立 reviewer brief／sandbox
+   前，將已解析的 `QA_RULES_DIR` 內容（或其 Tier 1 entry point 檔案）複製
+   或顯式掛載進 reviewer 可讀的 workspace 快照內，讓 sandbox 邊界不再是
+   讀取障礙；或 (b) 若 sandbox 設計上刻意不允許讀取 repos-root 之外任何
+   路徑，qa-tester 的錯誤訊息與 gate 結果必須清楚標示「規則來源存在但
+   sandbox 拒絕讀取」，不得與「規則來源真的不存在」共用同一段訊息／同一個
+   `uncertain` coverage reason，避免使用者誤判成需要另外安裝
+   qa-testing-rules。
+3. 與 [[CC-447]] item 5（乾淨機器缺 checkout 的行為驗證）交叉驗證：兩個
+   情境（缺席 vs. 存在但不可讀）都要各自有一次可重現的實測記錄。
+4. 新增回歸測試：至少一個 fixture 模擬「`QA_RULES_DIR` 在呼叫端環境存在，
+   但 reviewer dispatch 的 sandbox 看不到」，斷言 gate 產出的訊息／
+   coverage reason 明確區分於「完全缺席」情境。
+
+**Done-when**：codex reviewer sandbox 對已存在的 `QA_RULES_DIR` 要嘛能正常
+讀到（(a) 修復），要嘛在無法讀到時給出與「規則來源缺席」明確不同的診斷
+訊息（(b) 修復）；有回歸測試鎖住兩種情境的區分；與 [[CC-447]] item 5 的
+「缺席」情境分別留下可重現證據。
+
+**Non-goals**：不重新設計 qa-tester 的 override 政策本身（沿用
+`agents/qa-tester.md` §Override policy 既有的「red-line block 不可
+PM-overridable、需使用者明確接受」規則）；不改變 codex sandbox 的整體
+isolation 分級語意（`core/policy/isolation-level.yaml`）。
+
+**Dependencies**：與 [[CC-447]] item 5 協調但不合票（範圍不同：本票是
+sandbox 可見性，CC-447 item 5 是乾淨機器缺 checkout）。P2。
+
+**Source**：2026-08-04 針對 [[CC-522]] timeout／scope-manifest 修復的 gate
+round 實測（gate-20260804-055257-17cd44，qa-tester-F001 block）；使用者
+核准以 `.gate-overrides.md` accepted-risk 放行本輪，並要求另開票追蹤根治。
 
 ---
 

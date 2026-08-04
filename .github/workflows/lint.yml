@@ -131,12 +131,33 @@ jobs:
       - name: Guard framework regression suite
         run: ./tests/shell/test-guard-framework.sh
 
-  test-pr-gate:
+  test-pr-gate-shard-1:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - name: pr-gate regression suite
-        run: ./tests/shell/test-pr-gate.sh
+      - name: pr-gate regression suite (shard 1/4)
+        run: ./tests/shell/test-pr-gate-shard-1.sh
+
+  test-pr-gate-shard-2:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: pr-gate regression suite (shard 2/4)
+        run: ./tests/shell/test-pr-gate-shard-2.sh
+
+  test-pr-gate-shard-3:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: pr-gate regression suite (shard 3/4)
+        run: ./tests/shell/test-pr-gate-shard-3.sh
+
+  test-pr-gate-shard-4:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: pr-gate regression suite (shard 4/4)
+        run: ./tests/shell/test-pr-gate-shard-4.sh
 
   test-executor-router:
     runs-on: ubuntu-latest

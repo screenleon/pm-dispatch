@@ -47,7 +47,10 @@ SUITE_NAMES=(
   test-executor-router
   test-runner-kind
   test-pmctl-adapter-generate
-  test-pr-gate
+  test-pr-gate-shard-1
+  test-pr-gate-shard-2
+  test-pr-gate-shard-3
+  test-pr-gate-shard-4
   test-setup-project
   test-patch-gitignore
   test-portable
@@ -147,7 +150,10 @@ declare -A SUITE_PATHS=(
   [test-executor-router]="tests/shell/test-executor-router.sh"
   [test-runner-kind]="tests/shell/test-runner-kind.sh"
   [test-pmctl-adapter-generate]="tests/shell/test-pmctl-adapter-generate.sh"
-  [test-pr-gate]="tests/shell/test-pr-gate.sh"
+  [test-pr-gate-shard-1]="tests/shell/test-pr-gate-shard-1.sh"
+  [test-pr-gate-shard-2]="tests/shell/test-pr-gate-shard-2.sh"
+  [test-pr-gate-shard-3]="tests/shell/test-pr-gate-shard-3.sh"
+  [test-pr-gate-shard-4]="tests/shell/test-pr-gate-shard-4.sh"
   [test-setup-project]="tests/shell/test-setup-project.sh"
   [test-patch-gitignore]="tests/shell/test-patch-gitignore.sh"
   [test-portable]="tests/shell/test-portable.sh"
