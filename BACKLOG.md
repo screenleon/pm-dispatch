@@ -61,6 +61,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-539 | 🟢 someday | state `layout.yaml` build-time authority + generated runtime constants | arch/schema | 2026-07-30 | feedback:2026-07-30 | P2 | design |
 | CC-540 | 🟢 someday | `pmctl state prune`：刪除前先抽取+驗證 gate/dispatch run 摘要，避免歷史分析資料隨磁碟空間一起消失 | ops/gate | 2026-07-31 | — | P2 | hygiene |
 | CC-541 | 🔵 active | codex reviewer sandbox 讀不到主機上已存在的 `QA_RULES_DIR`，qa-tester 對 hard-stop 與可用規則來源之間 fail-loud 行為需要釐清並修復 | ops/gate | 2026-08-04 | feedback:2026-08-04 | P2 | hygiene |
+| CC-542 | ✅ done | 移除 `test-pmctl-context`／`test-release-verify` 的 LIVE_DB_EXCLUSIVE 全域互斥：release-verify Phase 3 context-index 改用隔離 fixture repo，不再重建 live `context.db` | ops/test | 2026-08-04 | pr:#463 | P1 | hygiene |
+| CC-543 | 🟢 someday | Full test runner 增加 fail-fast structural precheck（registry lint／regression／schema 等便宜檢查獨立成 Phase 0，失敗即中止，不啟動昂貴 suite） | ops/test | 2026-08-04 | — | P2 | hygiene |
 | CC-465 | 🔵 active | memory/context 關鍵詞管線 CJK 支援：抽出共用零依賴斷詞 lib，取代三處各自 ASCII-only 抽詞；工作序列起點（465→467→468→466）（2026-07-07 記憶系統深入分析） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-466 | ⏸ deferred | 記憶卡片生命週期閉環：expires_at 執行 + 關窗式 supersede + usage sidecar 休眠偵測 + doctor→distill 接線；僅在 CC-467 證明 stale/dormant card 已形成實際問題時啟動 | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-467 | 🔵 active | `pmctl memory stats`：注入效益可視化（唯讀聚合器）——注入 bytes/卡片命中分佈/從未命中卡/episode 填寫率，回答「記憶有跟沒有差在哪」；排在 CC-466 之前（2026-07-07；業界僅離線 recall 評測，無 per-injection 遙測） | DX/memory | 2026-07-07 | — | P2 | retrieval |
@@ -3056,6 +3058,123 @@ sandbox 可見性，CC-447 item 5 是乾淨機器缺 checkout）。P2。
 **Source**：2026-08-04 針對 [[CC-522]] timeout／scope-manifest 修復的 gate
 round 實測（gate-20260804-055257-17cd44，qa-tester-F001 block）；使用者
 核准以 `.gate-overrides.md` accepted-risk 放行本輪，並要求另開票追蹤根治。
+
+---
+
+## CC-542 — 移除 test-pmctl-context／test-release-verify 的 live-DB 全域互斥 ✅ 2026-08-05
+
+**Outcome**：`release-verify.sh` Phase 3 的 context-index 目標改為可透過
+`PM_RELEASE_VERIFY_CONTEXT_REPO` 注入（預設仍是 `REPO_ROOT`，正式 release
+sign-off 行為不變）；`test-release-verify.sh` 改成對隔離的 working-tree
+副本執行，並新增 regression 證明 override 未設定時 production fallback
+仍會正確觸發。live-DB fingerprint guard 抽成共用的
+`tests/lib/live-db-guard.sh`（`test-pmctl-context.sh`／`test-release-verify.sh`
+共用），並從 mtime+size 升級為奈秒精度的 content+mtime digest，避免同一秒內
+內容還原的 mutation 被漏偵測。`tests/lib/test-suite-runner.sh` 的
+`LIVE_DB_EXCLUSIVE` 與其排程分支已完全移除，並新增 regression 證明兩個
+suite 現在確實能共用平行 slot。PR-gate 歷經 4 輪（critic／qa-tester／
+architecture-reviewer／security-reviewer）才 GO，每輪 finding 都修正並重新
+驗證後才重新送審；authoritative full suite 100/100 通過，wall time 從
+34:12 降到 29:01–30:14（四次獨立實測）。後續 fail-fast structural precheck
+另開 [[CC-543]] 追蹤，不在本票範圍。
+
+**See**: pr:#463
+
+**Problem**：`tests/lib/test-suite-runner.sh` 的 `LIVE_DB_EXCLUSIVE` 把
+`test-pmctl-context` 與 `test-release-verify` 標記為互斥：兩者都會碰
+`$REPO_ROOT/.pm-dispatch/ctx/context.db`——`test-pmctl-context` 斷言這個
+DB 在測試期間不能被改動，`test-release-verify` 則因為執行
+`release-verify.sh` Phase 3（對**這個 repo 本身**跑
+`pmctl context index`）而確實會重建它。並行執行會讓寫入方觸發讀取方的
+guard，產生 false failure，所以 scheduler 目前的解法是「這兩個 suite
+一律獨佔全部 4 個 job slot」。2026-08-04 完整 34:12 wall-time 實測中，
+這兩段獨佔合計約 6 分鐘（`test-pmctl-context` 162s + `test-release-verify`
+197s），且獨佔期間其餘已排隊 suite 全部停擺，是整趟 run 裡最大的單一
+scheduling 損失（模擬顯示移除後可從 34:12 降到約 28:43）。
+
+**Why**：`test-release-verify` 真正需要驗證的是 `release-verify.sh` 的
+邏輯正確性，不是「這台機器上開發者的 repo context.db 内容」；用 live repo
+當測試 fixture 只是圖方便，代價是把兩個本可平行的 suite 綁死成序列化
+barrier，且每次開發者本機跑 full suite 都要付這筆固定成本。
+
+**Requirement**：
+1. 找出 `release-verify.sh` Phase 3 對 repo root 的依賴點（目前呼叫
+   `pmctl context index "$REPO_ROOT"` 或等價路徑），改為可注入 target
+   repo（例如既有 `--repo`/環境變數模式，比照其他 phase 的 fixture
+   注入方式），production 預設行為（對真正呼叫端 repo 索引）不變。
+2. `test-release-verify.sh` 改成對一個臨時建立的 fixture repo（獨立
+   `.pm-dispatch/ctx/context.db`）執行 Phase 3 驗證，不再觸碰開發者的
+   live repo context.db。
+3. 確認沒有其他 suite（含未來新增）會在測試期間對 live repo 執行
+   `pmctl context index`；若有，一併納入隔離或明確排除。
+4. 兩個 suite 都從 `tests/lib/test-suite-runner.sh` 的 `LIVE_DB_EXCLUSIVE`
+   移除，恢復一般平行排程。
+5. 回歸測試：驗證 `test-release-verify` 執行前後開發者 repo 的
+   `context.db`（mtime／內容）不變（比照 `test-pmctl-context` 既有的
+   no-live-db-mutation 手法）。
+
+**Done-when**：`LIVE_DB_EXCLUSIVE` 為空或已移除；`test-pmctl-context`／
+`test-release-verify` 可與其他 suite 任意並行且穩定通過（連續跑 3 次無
+false failure）；`release-verify.sh` 對真正 repo 的 production 行為（無
+`--repo`/target 覆寫時）不變；有回歸測試鎖住 live repo context.db 不被
+測試修改；full suite wall-time 有實測數字佐證改善（對照 2026-08-04 的
+34:12 基準）。
+
+**Non-goals**：不重寫 `release-verify.sh` 其餘 phase；不改變
+`test-pmctl-context` 既有的 guard 邏輯本身；不在本票內做 duration-aware
+suite 排序（獨立、低優先度，不需開票）。
+
+**Dependencies**：無硬前置。P1——直接對應「full suite 太慢」的最大單一
+可修復項目。
+
+**Source**：2026-08-04 對 07:28:50Z–08:03:02Z 完整 34:12 full-suite 實測的
+事後分析（4-job 平行化耗時分解 + LIVE_DB_EXCLUSIVE 排程模擬），使用者
+確認後開票。
+
+---
+
+## CC-543 — Full test runner fail-fast structural precheck 🟢 someday
+
+**Problem**：`tests/lib/test-suite-runner.sh` 的 `ACTIVE_SUITE_NAMES` 把
+便宜的結構性檢查（`test-lint-test-suite-registry`、
+`test-lint-surface-coverage`、schema 相關 lint 等）與昂貴的行為性 suite
+（PR-gate shards、doctor、e2e smoke）混在同一份註冊順序中間執行，且沒有
+任何機制在前者失敗時提前中止整輪。2026-08-04 的實測中，
+`lint-test-suite-registry`／`test-lint-test-suite-registry`／
+`test-release-verify` 三個失敗其實是同一個根因（registry drift），
+理論上 1 秒內就能判定必然失敗，但完整 runner 仍跑滿 34:12 才回報結果。
+
+**Why**：這不影響「成功跑完整套」的 wall time，但直接影響開發迭代體感與
+CI 資源浪費——結構性設定錯誤本應是最快回饋的一類失敗，目前卻是最慢。
+
+**Requirement**：
+1. 定義一組「Phase 0」suite 清單：純結構性、無需起 process tree／fixture
+   repo、預期在數秒內完成的 lint／registry／schema 檢查。
+2. Full runner（或其上層 CI 入口）先跑 Phase 0；任一 Phase 0 suite 失敗
+   時，跳過所有 Phase 1（其餘）suite，直接回報 FAIL 並在此中止，不啟動
+   PR-gate shards／doctor／e2e 等昂貴 suite。
+3. 提供顯式 opt-out（例如 `--collect-all`）供需要完整診斷輸出的情境（如
+   release-verify 需要蒐集所有 phase 證據時）使用，行為需與現有
+   `release-verify.sh` phase-boundary 註解精神一致。
+4. 回歸測試：模擬 Phase 0 suite 失敗，斷言 runner 在秒級時間內結束且未
+   啟動任何 Phase 1 suite（可用既有 `write_suite_stub` 手法量測是否被
+   呼叫）。
+
+**Done-when**：Phase 0 失敗情境下，full runner 在數十秒內回報 FAIL 並中止
+（不再跑滿全部 100 suite）；有回歸測試鎖住「Phase 0 失敗時 Phase 1 未被
+啟動」；`--collect-all` opt-out 存在且有測試覆蓋；Phase 0 全過時行為與現
+狀完全一致（不影響成功路徑的 wall time 或結果)。
+
+**Non-goals**：不做 duration-aware 排序（獨立低優先度項目，不需開票）；
+不改變個別 suite 內部邏輯；不影響 `LIVE_DB_EXCLUSIVE`／[[CC-542]] 的
+排程行為。
+
+**Dependencies**：無硬前置，可與 [[CC-542]] 並行或先後皆可，兩者範圍不
+重疊。P2。
+
+**Source**：2026-08-04 對完整 full-suite 實測的事後分析；同一次分析中
+「registry drift 三個 failure 同根因」的觀察直接指出目前缺乏 fail-fast
+short circuit。
 
 ---
 

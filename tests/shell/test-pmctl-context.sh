@@ -37,14 +37,9 @@ export PM_DISPATCH_STATE_ROOT="$tmp_root/suite-state"
 # would write or rebuild this DB and, under parallel runs, cause sqlite-busy /
 # FTS-rebuild flakiness). Every context case must operate on an isolated fixture
 # under $tmp_root, never $REPO_ROOT.
-LIVE_DB="$REPO_ROOT/.pm-dispatch/ctx/context.db"
-_live_db_fingerprint() {
-  if [[ -e "$LIVE_DB" ]]; then
-    stat -c '%Y:%s' "$LIVE_DB" 2>/dev/null || stat -f '%m:%z' "$LIVE_DB"
-  else
-    printf 'ABSENT\n'
-  fi
-}
+# shellcheck source=tests/lib/live-db-guard.sh
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/../lib/live-db-guard.sh"
 LIVE_DB_BASELINE="$(_live_db_fingerprint)"
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -1434,6 +1429,60 @@ case_context_no_live_db_mutation() {
     pass "$name"
   else
     fail "$name" "live repo DB changed during suite (a case operated on \$REPO_ROOT): baseline=$LIVE_DB_BASELINE now=$now"
+  fi
+}
+
+case_live_db_guard_detects_metadata_only_touch() {
+  local name="pmctl context suite: live-db-guard fingerprint changes on a metadata-only touch of identical content"
+  # Regression: a content-only fingerprint would miss a write that restores the
+  # exact same bytes (or any metadata-only touch) — still a live-DB mutation
+  # the guard must catch. Exercises the real _live_db_fingerprint function
+  # against a scratch file (never the real live DB) by temporarily pointing
+  # LIVE_DB at it.
+  should_run "$name" || return 0
+
+  local scratch="$tmp_root/live-db-guard-scratch.db"
+  printf 'unchanged-bytes' > "$scratch"
+  local saved_live_db="$LIVE_DB"
+  LIVE_DB="$scratch"
+  local before after
+  before="$(_live_db_fingerprint)"
+  touch -d '@1700000000' "$scratch"
+  after="$(_live_db_fingerprint)"
+  LIVE_DB="$saved_live_db"
+
+  if [[ "$before" != "$after" ]]; then
+    pass "$name"
+  else
+    fail "$name" "fingerprint unchanged after metadata-only touch (before=$before after=$after) — guard would miss a restore-identical-bytes mutation"
+  fi
+}
+
+case_live_db_guard_detects_same_second_touch() {
+  local name="pmctl context suite: live-db-guard fingerprint changes on a same-second identical-content rewrite"
+  # Regression: whole-second mtime alone would miss a rewrite that restores
+  # identical bytes within the same wall-clock second as the baseline — only
+  # nanosecond-precision mtime (or a content change) can distinguish it. Sets
+  # two timestamps that share the same integer second but differ in the
+  # nanosecond component, so a whole-second-only fingerprint would wrongly
+  # report no change.
+  should_run "$name" || return 0
+
+  local scratch="$tmp_root/live-db-guard-scratch-same-second.db"
+  printf 'unchanged-bytes' > "$scratch"
+  local saved_live_db="$LIVE_DB"
+  LIVE_DB="$scratch"
+  touch -d '2024-01-01 00:00:00.100000000' "$scratch"
+  local before after
+  before="$(_live_db_fingerprint)"
+  touch -d '2024-01-01 00:00:00.900000000' "$scratch"
+  after="$(_live_db_fingerprint)"
+  LIVE_DB="$saved_live_db"
+
+  if [[ "$before" != "$after" ]]; then
+    pass "$name"
+  else
+    fail "$name" "fingerprint unchanged after a same-second nanosecond-distinct touch (before=$before after=$after) — guard is only whole-second precise and would miss a same-second restore-identical-bytes mutation"
   fi
 }
 
@@ -3399,5 +3448,7 @@ case_context_prompt_scan_secret_never_persisted
 case_context_prompt_scan_emits_event
 case_context_fts5_availability_is_cached
 case_context_no_live_db_mutation
+case_live_db_guard_detects_metadata_only_touch
+case_live_db_guard_detects_same_second_touch
 
 th_summary

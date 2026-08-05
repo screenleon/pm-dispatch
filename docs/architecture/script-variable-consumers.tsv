@@ -235,6 +235,7 @@ PM_DISPATCH_LOCK_STALE_SECS	PM_DISPATCH_LOCK_STALE_SECS	runtime/lib/portable.sh	
 PM_DISPATCH_LOCK_TIMEOUT_SECS	PM_DISPATCH_LOCK_TIMEOUT_SECS	runtime/lib/portable.sh	production
 PM_DISPATCH_MANIFEST_PATH	PM_DISPATCH_MANIFEST_PATH	install.sh	production
 PM_DISPATCH_MANIFEST_PATH	PM_DISPATCH_MANIFEST_PATH	runtime/lib/portable.sh	production
+PM_RELEASE_VERIFY_CONTEXT_REPO	PM_RELEASE_VERIFY_CONTEXT_REPO	ops/release/release-verify.sh	production
 PM_DISPATCH_PROMPT_CONTEXT_INITIAL_TIMEOUT	PM_DISPATCH_PROMPT_CONTEXT_INITIAL_TIMEOUT	hosts/claude/hooks/inject-context.sh	production
 PM_DISPATCH_PROMPT_CONTEXT_PMCTL	PM_DISPATCH_PROMPT_CONTEXT_PMCTL	runtime/lib/prompt-context.sh	production
 PM_DISPATCH_PROMPT_CONTEXT_TIMEOUT	PM_DISPATCH_PROMPT_CONTEXT_TIMEOUT	hosts/claude/hooks/inject-context.sh	production
@@ -314,6 +315,7 @@ REPO_ROOT	REPO_ROOT	runtime/lib/pmctl-adapter.sh	production
 REPO_ROOT	REPO_ROOT	runtime/lib/pmctl-context.sh	production
 REPO_ROOT	REPO_ROOT	runtime/lib/pmctl-memory.sh	production
 REPO_ROOT	REPO_ROOT	tests/bin/run-tests.sh	production
+REPO_ROOT	REPO_ROOT	tests/lib/live-db-guard.sh	production
 REPO_ROOT	REPO_ROOT	tools/lint/check-docs-freshness.sh	production
 REPO_ROOT	REPO_ROOT	tools/skills/skill-refine.sh	production
 REPO_ROOT	REPO_ROOT	uninstall.sh	production

@@ -179,9 +179,14 @@ fi
 
 # ── Phase 3: Real-binary feature smoke ───────────────────────────────────────
 # The unit suites use fixtures; this phase exercises the headline v0.5.0
-# feature (pmctl context) against the REAL repo with the REAL sqlite3 binary.
-# DB is repo-local (.pm-dispatch/ctx/context.db); usage telemetry is redirected to
-# a throwaway state root below so the smoke never pollutes the real trace store.
+# feature (pmctl context) against a real repo tree with the REAL sqlite3
+# binary. Target defaults to REPO_ROOT itself (actual release sign-off
+# behavior); PM_RELEASE_VERIFY_CONTEXT_REPO lets test-release-verify.sh point
+# this at an isolated fixture tree instead, so the meta-test of this script
+# never rebuilds the operator's live .pm-dispatch/ctx/context.db. DB is
+# repo-local to whichever target is used; usage telemetry is redirected to a
+# throwaway state root below so the smoke never pollutes the real trace store.
+CONTEXT_SMOKE_REPO="${PM_RELEASE_VERIFY_CONTEXT_REPO:-$REPO_ROOT}"
 section "Phase 3 — Real-binary feature smoke (pmctl context on this repo)"
 if [[ ! -x "$PMCTL" ]]; then
   record "context smoke" SKIP "pmctl not found or not executable: $PMCTL"
@@ -197,24 +202,24 @@ else
   smoke_err="$(mktemp)"       # registered in cleanup trap above
   if (
     set -eo pipefail
-    "$PMCTL" context index "$REPO_ROOT" >/dev/null 2>"$smoke_err"
+    "$PMCTL" context index "$CONTEXT_SMOKE_REPO" >/dev/null 2>"$smoke_err"
     # Incremental re-index must skip (proves mtime-skip works on this platform).
-    "$PMCTL" context index "$REPO_ROOT" 2>>"$smoke_err" | grep -qE '0 indexed, [0-9]+ skipped'
+    "$PMCTL" context index "$CONTEXT_SMOKE_REPO" 2>>"$smoke_err" | grep -qE '0 indexed, [0-9]+ skipped'
   ); then
     # A query for a known repo symbol should return at least one clean ref.
-    q="$("$PMCTL" context query "$REPO_ROOT" pmctl_context_index 2>/dev/null || true)"
+    q="$("$PMCTL" context query "$CONTEXT_SMOKE_REPO" pmctl_context_index 2>/dev/null || true)"
     if printf '%s' "$q" | grep -q 'ref: ' && ! printf '%s' "$q" | grep -q $'\r'; then
       record "context index+skip+query" PASS "index, incremental skip, and clean-ref query all OK"
     else
       record "context index+skip+query" FAIL "query returned no clean ref (got: $(printf '%s' "$q" | head -1))"
     fi
     # pack + reuse-scan are the v0.5.0 index consumers.
-    if "$PMCTL" context pack "$REPO_ROOT" --task-id REL-SMOKE --query dispatch >/dev/null 2>&1; then
+    if "$PMCTL" context pack "$CONTEXT_SMOKE_REPO" --task-id REL-SMOKE --query dispatch >/dev/null 2>&1; then
       record "context pack" PASS "context-pack assembled"
     else
       record "context pack" FAIL "pmctl context pack failed"
     fi
-    if "$PMCTL" context reuse-scan "$REPO_ROOT" "dispatch a brief to an executor" >/dev/null 2>&1; then
+    if "$PMCTL" context reuse-scan "$CONTEXT_SMOKE_REPO" "dispatch a brief to an executor" >/dev/null 2>&1; then
       record "context reuse-scan" PASS "reuse-scan emitted candidates"
     else
       record "context reuse-scan" FAIL "pmctl context reuse-scan failed"

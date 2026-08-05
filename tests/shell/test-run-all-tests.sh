@@ -1221,15 +1221,18 @@ test_jobs_default_caps_high_nproc() {
   fi
 }
 
-test_live_db_exclusive_suites_never_overlap() {
-  # Behavior: test-pmctl-context and test-release-verify both touch the live
-  #           $REPO_ROOT/.pm-dispatch/ctx/context.db, so the parallel scheduler
-  #           must never run them concurrently even when slots are free.
-  # Steps: gate both exclusive suites; pass-stub the rest; run --jobs 4 (slots
-  #        are NOT the limiter); assert the earlier suite (test-pmctl-context)
-  #        starts but test-release-verify stays held while it runs; release the
-  #        first and assert the second then starts; release it; assert exit 0.
-  local name="live-db-exclusive-no-overlap"
+test_formerly_exclusive_suites_now_run_concurrently() {
+  # Behavior: test-pmctl-context and test-release-verify used to be forced
+  #           into LIVE_DB_EXCLUSIVE serialization because both touched the
+  #           developer's live repo context.db. CC-542 removed that: each now
+  #           operates on its own isolated fixture, so the pair must be able
+  #           to occupy separate parallel slots like any other suite pair.
+  # Steps: gate both formerly-exclusive suite names; run aggregator --jobs 4
+  #        (plenty of free slots); assert BOTH start without releasing either
+  #        first -- if a name-specific exclusion were reintroduced, the second
+  #        suite would stay held until the first is released and this would
+  #        time out instead.
+  local name="formerly-exclusive-suites-run-concurrently"
   local repo="$TMP_ROOT/$name" path status
   make_fixture_repo "$repo"
   write_pass_stubs "$repo"
@@ -1241,30 +1244,19 @@ test_live_db_exclusive_suites_never_overlap() {
   ( PATH="$path" run_aggregator "$repo" --jobs 4 > "$logf" 2>&1; echo $? > "$marker/rc" ) &
   local agg_pid=$!
 
-  # Reaching this late-registry suite requires draining dozens of earlier pass
-  # stubs. Under the authoritative full runner this self-test competes with
-  # several CPU-heavy suites, so allow 20s while staying below the gated stub's
-  # 30s hard ceiling.
   if ! wait_for_file "$marker/started-test-pmctl-context" 1000; then
-    fail_case "$name" "first exclusive suite (test-pmctl-context) never started"
+    fail_case "$name" "test-pmctl-context never started"
     touch "$marker/release-test-pmctl-context" "$marker/release-test-release-verify"
     wait "$agg_pid" 2>/dev/null; return
   fi
-  # Slots are free (--jobs 4) yet the second exclusive suite must stay held while
-  # the first is in-flight. If exclusion is broken it would start within ~2s.
-  if wait_for_file "$marker/started-test-release-verify" 100; then
-    fail_case "$name" "test-release-verify started while test-pmctl-context in-flight (exclusion broken)"
-    touch "$marker/release-test-pmctl-context" "$marker/release-test-release-verify"
-    wait "$agg_pid" 2>/dev/null; return
-  fi
-  # Release the first exclusive suite -> the second must now launch.
-  touch "$marker/release-test-pmctl-context"
+  # Do NOT release test-pmctl-context yet. If a name-specific exclusion still
+  # existed, test-release-verify would stay blocked and this would time out.
   if ! wait_for_file "$marker/started-test-release-verify" 1000; then
-    fail_case "$name" "test-release-verify never launched after test-pmctl-context finished"
-    touch "$marker/release-test-release-verify"
+    fail_case "$name" "test-release-verify never started while test-pmctl-context was still in-flight -- an exclusivity barrier appears to still be in effect"
+    touch "$marker/release-test-pmctl-context" "$marker/release-test-release-verify"
     wait "$agg_pid" 2>/dev/null; return
   fi
-  touch "$marker/release-test-release-verify"
+  touch "$marker/release-test-pmctl-context" "$marker/release-test-release-verify"
   wait "$agg_pid" 2>/dev/null
   status="$(cat "$marker/rc" 2>/dev/null || echo 1)"
   local out; out="$(cat "$logf" 2>/dev/null)"
@@ -1309,10 +1301,10 @@ test_jobs_no_arg_default
 test_jobs_larger_than_suite_count
 test_jobs_explicit_sequential
 test_jobs_concurrency_and_max_inflight
+test_formerly_exclusive_suites_now_run_concurrently
 test_jobs_default_fallback_no_nproc
 test_jobs_default_uses_detected_nproc
 test_jobs_default_caps_high_nproc
-test_live_db_exclusive_suites_never_overlap
 
 printf '%s passed, %s failed\n' "$PASS" "$FAIL"
 if [[ "$FAIL" -gt 0 ]]; then
