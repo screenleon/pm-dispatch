@@ -411,15 +411,17 @@ case_harness_list_still_works() {
 
 case_harness_shard_is_stable_and_partitions_list() {
   local name="shard-is-stable-and-partitions-list"
-  local out err rc expected_out=$'alpha\nbeta\ngamma'
+  local out err rc expected_out=$'alpha\ngamma'
   out="$TMP_ROOT/$name.out"; err="$TMP_ROOT/$name.err"
   set +e
   bash -c "source '$SCRIPT_DIR/../lib/test-harness.sh'; th_init --list --shard 1/2; should_run alpha; should_run beta; should_run gamma; should_run delta; th_summary" > "$out" 2> "$err"
   rc=$?
   set -e
-  # Assert the exact, documented POSIX-cksum-derived partition for this fixed
-  # input set -- not just "some non-empty disjoint split" -- so a future hash
-  # or index arithmetic change that reshuffles allocation is caught here.
+  # Assert the exact, documented round-robin-by-call-position partition for
+  # this fixed input set -- not just "some non-empty disjoint split" -- so a
+  # future change to the counting/assignment arithmetic that reshuffles
+  # allocation is caught here. Positions 1,3 (alpha,gamma) land in shard 1;
+  # positions 2,4 (beta,delta) land in shard 2.
   local all one two
   all="$(printf '%s\n' alpha beta gamma delta | sort)"
   one="$(bash -c "source '$SCRIPT_DIR/../lib/test-harness.sh'; th_init --list --shard 1/2; should_run alpha; should_run beta; should_run gamma; should_run delta; th_summary" | sort)"
