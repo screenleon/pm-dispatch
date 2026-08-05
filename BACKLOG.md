@@ -61,7 +61,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-539 | 🟢 someday | state `layout.yaml` build-time authority + generated runtime constants | arch/schema | 2026-07-30 | feedback:2026-07-30 | P2 | design |
 | CC-540 | 🟢 someday | `pmctl state prune`：刪除前先抽取+驗證 gate/dispatch run 摘要，避免歷史分析資料隨磁碟空間一起消失 | ops/gate | 2026-07-31 | — | P2 | hygiene |
 | CC-541 | 🔵 active | codex reviewer sandbox 讀不到主機上已存在的 `QA_RULES_DIR`，qa-tester 對 hard-stop 與可用規則來源之間 fail-loud 行為需要釐清並修復 | ops/gate | 2026-08-04 | feedback:2026-08-04 | P2 | hygiene |
-| CC-542 | 🔵 active | 移除 `test-pmctl-context`／`test-release-verify` 的 LIVE_DB_EXCLUSIVE 全域互斥：release-verify Phase 3 context-index 改用隔離 fixture repo，不再重建 live `context.db` | ops/test | 2026-08-04 | — | P1 | hygiene |
+| CC-542 | ✅ done | 移除 `test-pmctl-context`／`test-release-verify` 的 LIVE_DB_EXCLUSIVE 全域互斥：release-verify Phase 3 context-index 改用隔離 fixture repo，不再重建 live `context.db` | ops/test | 2026-08-04 | pr:#463 | P1 | hygiene |
 | CC-543 | 🟢 someday | Full test runner 增加 fail-fast structural precheck（registry lint／regression／schema 等便宜檢查獨立成 Phase 0，失敗即中止，不啟動昂貴 suite） | ops/test | 2026-08-04 | — | P2 | hygiene |
 | CC-465 | 🔵 active | memory/context 關鍵詞管線 CJK 支援：抽出共用零依賴斷詞 lib，取代三處各自 ASCII-only 抽詞；工作序列起點（465→467→468→466）（2026-07-07 記憶系統深入分析） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-466 | ⏸ deferred | 記憶卡片生命週期閉環：expires_at 執行 + 關窗式 supersede + usage sidecar 休眠偵測 + doctor→distill 接線；僅在 CC-467 證明 stale/dormant card 已形成實際問題時啟動 | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
@@ -3061,7 +3061,24 @@ round 實測（gate-20260804-055257-17cd44，qa-tester-F001 block）；使用者
 
 ---
 
-## CC-542 — 移除 test-pmctl-context／test-release-verify 的 live-DB 全域互斥 🔵 active
+## CC-542 — 移除 test-pmctl-context／test-release-verify 的 live-DB 全域互斥 ✅ 2026-08-05
+
+**Outcome**：`release-verify.sh` Phase 3 的 context-index 目標改為可透過
+`PM_RELEASE_VERIFY_CONTEXT_REPO` 注入（預設仍是 `REPO_ROOT`，正式 release
+sign-off 行為不變）；`test-release-verify.sh` 改成對隔離的 working-tree
+副本執行，並新增 regression 證明 override 未設定時 production fallback
+仍會正確觸發。live-DB fingerprint guard 抽成共用的
+`tests/lib/live-db-guard.sh`（`test-pmctl-context.sh`／`test-release-verify.sh`
+共用），並從 mtime+size 升級為奈秒精度的 content+mtime digest，避免同一秒內
+內容還原的 mutation 被漏偵測。`tests/lib/test-suite-runner.sh` 的
+`LIVE_DB_EXCLUSIVE` 與其排程分支已完全移除，並新增 regression 證明兩個
+suite 現在確實能共用平行 slot。PR-gate 歷經 4 輪（critic／qa-tester／
+architecture-reviewer／security-reviewer）才 GO，每輪 finding 都修正並重新
+驗證後才重新送審；authoritative full suite 100/100 通過，wall time 從
+34:12 降到 29:01–30:14（四次獨立實測）。後續 fail-fast structural precheck
+另開 [[CC-543]] 追蹤，不在本票範圍。
+
+**See**: pr:#463
 
 **Problem**：`tests/lib/test-suite-runner.sh` 的 `LIVE_DB_EXCLUSIVE` 把
 `test-pmctl-context` 與 `test-release-verify` 標記為互斥：兩者都會碰
