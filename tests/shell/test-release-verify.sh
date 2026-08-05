@@ -11,6 +11,32 @@ RV="$REPO_ROOT/ops/release/release-verify.sh"
 # shellcheck disable=SC1091
 . "$REPO_ROOT/runtime/lib/adapter-enum.sh"
 
+# Every `bash "$RV"` invocation below exercises Phase 3, which by default
+# indexes/queries/packs against REPO_ROOT — the developer's live
+# .pm-dispatch/ctx/context.db. Point Phase 3 at a throwaway copy of this
+# repo's CURRENT WORKING TREE instead: same real file mix the smoke is meant
+# to exercise, but its own isolated DB, so this suite never mutates the live
+# one (and can safely run in parallel with test-pmctl-context, which asserts
+# that DB is untouched). This must snapshot on-disk content, not `git archive
+# HEAD` — HEAD is the last commit, so an archive-based fixture would silently
+# validate against stale, already-committed code instead of uncommitted
+# changes under test (the failure mode test_phase3_default_target_is_own_repo_root
+# below exists to catch: the fixture's own copy of release-verify.sh must be
+# the one actually being changed).
+CONTEXT_FIXTURE_REPO="$(mktemp -d)"
+git -C "$REPO_ROOT" ls-files -z --cached --others --exclude-standard \
+  | tar -C "$REPO_ROOT" --null -T - -cf - \
+  | tar -xf - -C "$CONTEXT_FIXTURE_REPO"
+export PM_RELEASE_VERIFY_CONTEXT_REPO="$CONTEXT_FIXTURE_REPO"
+trap 'rm -rf "$CONTEXT_FIXTURE_REPO"' EXIT
+
+# Guard: prove the fixture redirect above actually works, by fingerprinting
+# the live DB before any RV invocation and re-checking it at the end of the run.
+# shellcheck source=tests/lib/live-db-guard.sh
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/../lib/live-db-guard.sh"
+LIVE_DB_BASELINE="$(_live_db_fingerprint)"
+
 PASSED=0; FAILED=0
 
 pass() { printf 'PASS: %s\n' "$1"; PASSED=$((PASSED+1)); }
@@ -292,6 +318,30 @@ test_phase3_repo_local_db_smoke() {
   assert_contains "phase3-reuse-scan"       "[PASS] context reuse-scan"       "$out"
 }
 
+# ── Phase 3: production-default branch (PM_RELEASE_VERIFY_CONTEXT_REPO unset) ─
+# Every other case in this file runs the real ops/release/release-verify.sh
+# with the override exported (see top of file), so none of them exercise the
+# `${PM_RELEASE_VERIFY_CONTEXT_REPO:-$REPO_ROOT}` fallback branch that a real
+# release sign-off actually relies on. Prove that branch here by running the
+# FIXTURE's own copy of release-verify.sh (CONTEXT_FIXTURE_REPO is a full
+# working-tree copy, so it carries its own ops/release/release-verify.sh,
+# cli/pmctl, and runtime/lib/) with the override unset. That script resolves
+# its own REPO_ROOT from its own path, so the default branch targets the
+# fixture's tree — never the real developer repo — while still proving the
+# fallback actually fires.
+
+test_phase3_default_target_is_own_repo_root() {
+  local fixture_rv="$CONTEXT_FIXTURE_REPO/ops/release/release-verify.sh"
+  local out
+  out=$(env -u PM_RELEASE_VERIFY_CONTEXT_REPO bash "$fixture_rv" --no-suite 2>&1) || true
+  assert_contains "phase3-default-branch-index-pass" "[PASS] context index+skip+query" "$out"
+  if [[ -f "$CONTEXT_FIXTURE_REPO/.pm-dispatch/ctx/context.db" ]]; then
+    pass "phase3-default-branch-targets-own-repo-root"
+  else
+    fail "phase3-default-branch-targets-own-repo-root" "no context.db created under the fixture's own repo root — default branch did not fire"
+  fi
+}
+
 test_native_windows_refused() {
   # On native Windows (Git Bash) release-verify refuses with exit 2 and a "use
   # WSL2" message instead of running phases. Simulated via a fake `uname -s`
@@ -371,6 +421,20 @@ test_phase3c_pre_release_audit() {
   assert_contains "phase3c-pre-release-audit" "[PASS] pre-release-audit" "$out"
 }
 
+# ── Live-db isolation guard ─────────────────────────────────────────────────
+# Every RV invocation above targets CONTEXT_FIXTURE_REPO, never REPO_ROOT
+# directly. Run this last so it observes the cumulative effect of the whole
+# suite, not just one call.
+
+test_live_db_untouched() {
+  local after; after="$(_live_db_fingerprint)"
+  if [[ "$after" == "$LIVE_DB_BASELINE" ]]; then
+    pass "live-context-db-untouched"
+  else
+    fail "live-context-db-untouched" "developer's live context.db changed (before: $LIVE_DB_BASELINE, after: $after) — a Phase 3 call leaked to REPO_ROOT instead of the fixture"
+  fi
+}
+
 # ── Run ───────────────────────────────────────────────────────────────────────
 
 test_help_contains_usage
@@ -396,6 +460,7 @@ test_e2e_delegation_required_skip
 test_no_e2e_phase4_skip_recorded
 test_phase3_external_repo_cases
 test_phase3_repo_local_db_smoke
+test_phase3_default_target_is_own_repo_root
 test_phase3b_adapter_manifests
 test_phase3b_guard_check
 test_phase3b_brief_validate
@@ -404,6 +469,7 @@ test_phase3c_memory_doctor
 test_phase3c_artifacts_list
 test_phase3c_pre_release_audit
 test_native_windows_refused
+test_live_db_untouched
 
 printf '\n%d passed, %d failed\n' "$PASSED" "$FAILED"
 [[ "$FAILED" -eq 0 ]]

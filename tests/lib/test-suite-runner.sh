@@ -366,18 +366,6 @@ else
 fi
 unset _name
 
-# ── Live-context-db mutual exclusion ─────────────────────────────────────────
-# These suites both contend on the developer's live $REPO_ROOT/.pm-dispatch/ctx/
-# context.db: test-pmctl-context asserts it is unchanged for the suite's
-# duration (its no-live-db-mutation guard), while test-release-verify runs
-# release-verify.sh Phase 3 which indexes THIS repo and rebuilds that same db.
-# Run concurrently, the writer trips the reader's guard (a false failure). The
-# parallel scheduler below never lets two of these run at the same time.
-declare -A LIVE_DB_EXCLUSIVE=(
-  [test-pmctl-context]=1
-  [test-release-verify]=1
-)
-
 if [[ "$LIST" -eq 1 ]]; then
   printf '%s\n' "${ACTIVE_SUITE_NAMES[@]}"
   exit 0
@@ -519,15 +507,6 @@ else
     _if_dirs+=("$d")
   }
 
-  # True while any live-db-exclusive suite is currently in-flight.
-  _exclusive_inflight() {
-    local i
-    for ((i = 0; i < ${#_if_names[@]}; i++)); do
-      [[ -n "${LIVE_DB_EXCLUSIVE[${_if_names[$i]}]:-}" ]] && return 0
-    done
-    return 1
-  }
-
   _drain() {
     local i new_names=() new_pids=() new_dirs=()
     for ((i = 0; i < ${#_if_pids[@]}; i++)); do
@@ -595,21 +574,6 @@ else
       _drain
       [[ ${#_if_pids[@]} -ge "$JOBS" ]] && sleep 0.05
     done
-
-    # A live-context suite must run alone: ordinary suites can invoke pmctl
-    # indirectly and mutate the same repo-local DB. Conversely, do not launch
-    # ordinary work while that invariant is being asserted.
-    if [[ -n "${LIVE_DB_EXCLUSIVE[$name]:-}" ]]; then
-      while [[ ${#_if_pids[@]} -gt 0 ]]; do
-        _drain
-        [[ ${#_if_pids[@]} -gt 0 ]] && sleep 0.05
-      done
-    else
-      while _exclusive_inflight; do
-        _drain
-        _exclusive_inflight && sleep 0.05
-      done
-    fi
 
     _launch "$name" "$script"
   done
