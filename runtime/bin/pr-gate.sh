@@ -2168,6 +2168,50 @@ while [[ -L "$_self" ]]; do
   [[ "$_self" == /* ]] || _self="$_self_dir/$_self"
 done
 SCRIPT_DIR="$(cd "$(dirname "$_self")" && pwd)"
+
+# QA rules dir resolution for reviewer dispatch (CC-541): a codex-dispatched
+# qa-tester reviewer runs in its own subprocess and has no access to this
+# orchestrator's shell environment except what's exported into it. Its own
+# boot logic (agents/qa-tester.md step 1) already says "if QA_RULES_DIR is
+# set, use it directly" -- so resolving and exporting it here, using the same
+# repos-root convention agents/qa-tester.md documents and
+# runtime/lib/repo-layout.sh's pm_dispatch_repos_root() already implements
+# (PM_DISPATCH_REPOS_ROOT -> dirname(PM_DISPATCH_REPO) -> dirname(WORK_DIR)),
+# makes that existing fallback fire deterministically with zero
+# prompt-contract change. A live smoke dispatch confirmed the codex sandbox
+# does not block reads outside --cd; the prior failure was simply that
+# nothing ever told the reviewer where to look. Left unset when genuinely
+# absent so CC-447's clean-machine stop-and-ask path is untouched, and the
+# host-confirmed marker lets downstream diagnostics distinguish "rules exist
+# but reviewer still reported missing" from "rules genuinely absent" instead
+# of sharing one ambiguous message.
+# pm_dispatch_repos_root is called in a subshell (command substitution),
+# consistent with this script's stated policy of not importing runtime lib
+# namespaces into its own long-lived top-level shell (see
+# pmctl_gate_dispatch_lib_load below).
+if [[ -z "${QA_RULES_DIR:-}" ]]; then
+  _qa_repo_layout_path="$SCRIPT_DIR/../lib/repo-layout.sh"
+  if [[ -r "$_qa_repo_layout_path" ]]; then
+    _qa_repos_root="$(. "$_qa_repo_layout_path" && pm_dispatch_repos_root "$WORK_DIR")" || _qa_repos_root=""
+  else
+    # Copy-mode bundle without runtime/lib/ present: fall back to the same
+    # precedence inline (mirrors the gate-result-verify.sh fallback below).
+    _qa_repos_root="${PM_DISPATCH_REPOS_ROOT:-${PM_DISPATCH_REPO:+$(dirname "$PM_DISPATCH_REPO")}}"
+    _qa_repos_root="${_qa_repos_root:-$(dirname "$WORK_DIR")}"
+  fi
+  unset _qa_repo_layout_path
+  if [[ -n "$_qa_repos_root" ]]; then
+    _qa_rules_dir="${_qa_repos_root}/qa-testing-rules"
+    _qa_rules_entry="${QA_RULES_ENTRY:-AGENT.md}"
+    if [[ -d "$_qa_rules_dir" && -r "$_qa_rules_dir/$_qa_rules_entry" ]]; then
+      export QA_RULES_DIR="$_qa_rules_dir"
+      PM_DISPATCH_QA_RULES_DIR_HOST_CONFIRMED=1
+    fi
+    unset _qa_rules_dir _qa_rules_entry
+  fi
+  unset _qa_repos_root
+fi
+
 GATE_RESULT_VERIFY_PATH="$SCRIPT_DIR/../lib/gate-result-verify.sh"
 if [[ -r "$GATE_RESULT_VERIFY_PATH" ]]; then
   # shellcheck source=runtime/lib/gate-result-verify.sh
@@ -2538,6 +2582,20 @@ else
           "$reviewer" "$artifact" >&2
         rm -rf -- "$tmp_dir"
         return 1
+      fi
+      # CC-541: detect (from the already-parsed structured document, not a
+      # later markdown re-scan) a qa-tester block/block-soft finding whose
+      # own text cites the rules source as missing, while this orchestrator
+      # separately host-confirmed QA_RULES_DIR exists and is readable. Sets
+      # a script-global flag consumed once near the end of the run to print
+      # a distinguishing diagnostic -- informational only, never alters this
+      # function's verdict/return value.
+      if [[ "$reviewer" == "qa-tester" && -n "${PM_DISPATCH_QA_RULES_DIR_HOST_CONFIRMED:-}" ]] && \
+         jq -e '(.verdict == "block" or .verdict == "block-soft") and
+           ((.findings // []) | any((.affected_behavior // "") + " " + (.why_it_matters // "")
+             | test("QA_RULES_DIR|qa-testing-rules|AGENT\\.md"; "i")))' \
+           "$document" >/dev/null 2>&1; then
+        PM_DISPATCH_QA_RULES_DIR_REVIEWER_GAP_DETECTED=1
       fi
       seen="${seen}${reviewer} "
     done
@@ -7279,6 +7337,15 @@ gate_finalize_assurance "$OUTPUT_FILE" "$ASSURANCE_FILE" || exit 2
 # Relocation is centralized in relocate_gate_artifacts(), which the EXIT trap also calls
 # so failure paths relocate too; calling it here updates OUTPUT_FILE before the prints
 # below, and the trap's later call is then a no-op. --output overrides are never moved.
+# CC-541: gate_reviewer_protocol_verify already flagged (from the parsed
+# structured qa-tester document, not a markdown re-scan) that this
+# orchestrator host-confirmed QA_RULES_DIR while the reviewer's own block
+# verdict still cited it as missing. Surface that distinction here --
+# informational only, does not alter the verdict or the schema.
+if [[ -n "${PM_DISPATCH_QA_RULES_DIR_REVIEWER_GAP_DETECTED:-}" ]]; then
+  printf '[reviewer-sandbox-visibility] host confirmed QA_RULES_DIR=%s exists and is readable, but the qa-tester reviewer still reported it missing/unreadable in its block verdict -- this is a reviewer-visibility gap, not a genuinely absent rules source (see CC-541).\n' "${QA_RULES_DIR:-<unset>}" >&2
+fi
+
 relocate_gate_artifacts
 
 # ── Print result path for caller ─────────────────────────────────────────────

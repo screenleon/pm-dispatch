@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 # Internal suite executor shared by run-tests.sh and the run-all-tests.sh compatibility wrapper.
-# Usage: tests/lib/test-suite-runner.sh [--suite <name>] [--skip <name>] [--list] [--jobs N] [--suite-timeout N]
+# Usage: tests/lib/test-suite-runner.sh [--suite <name>] [--skip <name>] [--list] [--jobs N] [--suite-timeout N] [--collect-all]
 # Requires a complete developer checkout: registered suites that are missing or
 # non-executable fail loudly (exit 1). Use --skip <name> to opt out of a specific suite.
 # Use --jobs N (or -j N) to set parallelism (default: detected nproc, capped at
 # PM_DISPATCH_TEST_MAX_JOBS or 4; falls back to 1 if nproc unavailable).
 # Each suite has a 15-minute deadline by default. Use --suite-timeout N (seconds) or
 # PM_DISPATCH_TEST_SUITE_TIMEOUT_SECS to tune it for an intentionally slow environment.
+# By default a Phase 0 structural precheck (lint/registry/schema suites) runs
+# first; any Phase 0 failure skips all remaining suites and reports FAIL
+# immediately. Use --collect-all to disable the short-circuit and run every
+# suite regardless (e.g. release-verify wants full diagnostic evidence).
 set -euo pipefail
 export LC_ALL=C.UTF-8
 
@@ -219,10 +223,40 @@ declare -A SUITE_PATHS=(
   [test-e2e-script]="tests/shell/test-e2e-script.sh"
 )
 
+# ── Phase 0: fail-fast structural precheck ───────────────────────────────────
+# Pure structural/lint/registry/schema suites: no process tree, no fixture
+# repo, expected to finish in low single-digit seconds each. Hand-curated,
+# NOT a naming-prefix rule -- lint-scripts (shellcheck over the whole tree,
+# ~52s measured) starts with "lint-" but is far too slow for a fail-fast
+# gate, so prefix-matching would silently misclassify it. Any Phase 0 suite
+# failing skips all remaining (Phase 1) suites -- see the precheck block
+# below. Keep this list short and genuinely cheap; do not add anything that
+# spawns fixture repos, install/dispatch flows, or network/process trees.
+PHASE0_SUITE_NAMES=(
+  lint-agents
+  lint-script-domain-inventory
+  lint-portable-repo-paths
+  lint-pmctl-commands
+  lint-test-docstrings
+  lint-test-suite-registry
+  lint-surface-coverage
+  test-lint-frontmatter
+  test-lint-test-docstrings
+  test-lint-test-suite-registry
+  test-lint-surface-coverage
+  test-lint-model-aliases
+  test-lint-portable-repo-paths
+  test-lint-shellcheck
+  test-core-schemas
+  test-host-manifest
+  test-schema-task-mirrors-backlog
+)
+
 declare -A SKIP_REQUESTED=()
 declare -A SUITE_REQUESTED=()
 SUITE_FILTER=0
 LIST=0
+COLLECT_ALL=0
 _detected_jobs="$(nproc 2>/dev/null || echo 1)"
 [[ "$_detected_jobs" =~ ^[1-9][0-9]*$ ]] || _detected_jobs=1
 # Full-suite fixtures include several process-heavy install/dispatch/gate
@@ -291,6 +325,10 @@ while [[ $# -gt 0 ]]; do
       LIST=1
       shift
       ;;
+    --collect-all)
+      COLLECT_ALL=1
+      shift
+      ;;
     --jobs|-j)
       if [[ -z "${2:-}" || ! "${2:-}" =~ ^[1-9][0-9]*$ ]]; then
         printf 'run-all-tests: --jobs requires a positive integer\n' >&2
@@ -338,6 +376,9 @@ for _name in "${!SUITE_PATHS[@]}"; do
   _found=0
   for _n in "${SUITE_NAMES[@]}"; do [[ "$_n" == "$_name" ]] && { _found=1; break; }; done
   [[ "$_found" -eq 1 ]] || _registry_drift+=("path without name: $_name")
+done
+for _name in "${PHASE0_SUITE_NAMES[@]}"; do
+  [[ -n "${SUITE_PATHS[$_name]:-}" ]] || _registry_drift+=("phase0 name without path: $_name")
 done
 if [[ "${#_registry_drift[@]}" -gt 0 ]]; then
   printf 'run-all-tests: SUITE_NAMES/SUITE_PATHS registry drift:\n' >&2
@@ -416,6 +457,32 @@ run_suite() {
   return "$rc"
 }
 
+# ── Suite outcome recording (shared by phase-0, sequential, and parallel) ────
+# Classifies rc, prints PASS/FAIL, records the structured result, and updates
+# the running counters/duration table. Callers compute duration themselves
+# (their timing sources differ) and pass it in. Returns 1 on fail/timeout so
+# a caller can react (e.g. Phase 0 setting its own failed-flag) without
+# duplicating the classification.
+_record_suite_outcome() {
+  local name="$1" rc="$2" duration="$3"
+  SUITE_DURATIONS["$name"]="$duration"
+  if [[ "$rc" -eq 0 ]]; then
+    printf 'PASS %s\n' "$name"
+    record_suite_result "$name" pass 0 "$duration"
+    passed=$((passed + 1))
+    return 0
+  fi
+  printf 'FAIL %s\n' "$name"
+  if [[ "$rc" -eq 124 ]]; then
+    record_suite_result "$name" timeout "$rc" "$duration"
+  else
+    record_suite_result "$name" fail "$rc" "$duration"
+  fi
+  failed=$((failed + 1))
+  FAILED_SUITE_NAMES+=("$name")
+  return 1
+}
+
 # ── Suite eligibility check (shared by sequential and parallel paths) ─────────
 _suite_skip_reason() {
   local name="$1"
@@ -432,9 +499,100 @@ _suite_skip_reason() {
   return 1
 }
 
+_finish_run() {
+  printf '%s passed, %s failed, %s skipped\n' "$passed" "$failed" "$skipped"
+  if [[ "${#SUITE_DURATIONS[@]}" -gt 0 ]]; then
+    printf 'slowest suites:\n'
+    declare -A _duration_reported=()
+    for ((_rank = 0; _rank < 10; _rank++)); do
+      _slow_name=""
+      _slow_seconds=-1
+      for name in "${!SUITE_DURATIONS[@]}"; do
+        [[ -n "${_duration_reported[$name]:-}" ]] && continue
+        if (( SUITE_DURATIONS[$name] > _slow_seconds )); then
+          _slow_name="$name"
+          _slow_seconds="${SUITE_DURATIONS[$name]}"
+        fi
+      done
+      [[ -n "$_slow_name" ]] || break
+      printf '  %ss %s\n' "$_slow_seconds" "$_slow_name"
+      _duration_reported["$_slow_name"]=1
+    done
+  fi
+  if [[ "${#FAILED_SUITE_NAMES[@]}" -gt 0 ]]; then
+    printf 'failed suites:'
+    printf ' %s' "${FAILED_SUITE_NAMES[@]}"
+    printf '\n'
+    write_suite_results
+    exit 1
+  fi
+  write_suite_results
+}
+
+# ── Phase 0: fail-fast structural precheck ────────────────────────────────────
+# Runs PHASE0_SUITE_NAMES sequentially (they're cheap; a job pool would add
+# complexity for no measurable benefit here -- see CC-543). On any failure,
+# every remaining (Phase 1) suite is recorded as skipped -- never silently
+# omitted, since the structured result sink requires an entry for every
+# ACTIVE_SUITE_NAMES member regardless of pass/fail -- and the run stops
+# immediately instead of paying the full suite's wall time. An explicit
+# --suite filter or --collect-all bypasses this precheck entirely.
+DISPATCH_SUITE_NAMES=("${ACTIVE_SUITE_NAMES[@]+"${ACTIVE_SUITE_NAMES[@]}"}")
+declare -A _PHASE0_LOOKUP=()
+for name in "${PHASE0_SUITE_NAMES[@]}"; do _PHASE0_LOOKUP["$name"]=1; done
+unset name
+
+if [[ "$SUITE_FILTER" -eq 0 && "$COLLECT_ALL" -eq 0 ]]; then
+  _phase0_failed=0
+  for name in "${PHASE0_SUITE_NAMES[@]}"; do
+    if reason="$(_suite_skip_reason "$name")"; then
+      printf 'SKIP %s (%s)\n' "$name" "$reason"
+      record_suite_result "$name" skip 0 0 "$reason"
+      skipped=$((skipped + 1))
+      continue
+    fi
+
+    script="$REPO_ROOT/${SUITE_PATHS[$name]}"
+    if [[ ! -x "$script" ]]; then
+      printf 'FAIL %s (not found or not executable)\n' "$name"
+      record_suite_result "$name" fail 126 0 "not found or not executable"
+      failed=$((failed + 1))
+      FAILED_SUITE_NAMES+=("$name")
+      _phase0_failed=1
+      continue
+    fi
+
+    suite_started="$SECONDS"
+    printf 'START %s\n' "$name"
+    set +e
+    run_suite "$name"
+    rc=$?
+    set -e
+    _record_suite_outcome "$name" "$rc" "$(( SECONDS - suite_started ))" || _phase0_failed=1
+  done
+
+  if [[ "$_phase0_failed" -eq 1 ]]; then
+    for name in "${ACTIVE_SUITE_NAMES[@]}"; do
+      [[ -n "${_PHASE0_LOOKUP[$name]:-}" ]] && continue
+      printf 'SKIP %s (phase 0 failed)\n' "$name"
+      record_suite_result "$name" skip 0 0 "phase 0 failed"
+      skipped=$((skipped + 1))
+    done
+    _finish_run
+    exit 1
+  fi
+
+  DISPATCH_SUITE_NAMES=()
+  for name in "${ACTIVE_SUITE_NAMES[@]+"${ACTIVE_SUITE_NAMES[@]}"}"; do
+    [[ -n "${_PHASE0_LOOKUP[$name]:-}" ]] && continue
+    DISPATCH_SUITE_NAMES+=("$name")
+  done
+fi
+unset name
+
 # ── Sequential path (JOBS=1, used when nproc unavailable or --jobs 1) ─────────
 if [[ "$JOBS" -eq 1 ]]; then
-  for name in "${ACTIVE_SUITE_NAMES[@]}"; do
+  for name in "${DISPATCH_SUITE_NAMES[@]+"${DISPATCH_SUITE_NAMES[@]}"}"; do
     if reason="$(_suite_skip_reason "$name")"; then
       printf 'SKIP %s (%s)\n' "$name" "$reason"
       record_suite_result "$name" skip 0 0 "$reason"
@@ -457,22 +615,7 @@ if [[ "$JOBS" -eq 1 ]]; then
     run_suite "$name"
     rc=$?
     set -e
-    SUITE_DURATIONS["$name"]="$(( SECONDS - suite_started ))"
-
-    if [[ "$rc" -eq 0 ]]; then
-      printf 'PASS %s\n' "$name"
-      record_suite_result "$name" pass 0 "${SUITE_DURATIONS[$name]}"
-      passed=$((passed + 1))
-    else
-      printf 'FAIL %s\n' "$name"
-      if [[ "$rc" -eq 124 ]]; then
-        record_suite_result "$name" timeout "$rc" "${SUITE_DURATIONS[$name]}"
-      else
-        record_suite_result "$name" fail "$rc" "${SUITE_DURATIONS[$name]}"
-      fi
-      failed=$((failed + 1))
-      FAILED_SUITE_NAMES+=("$name")
-    fi
+    _record_suite_outcome "$name" "$rc" "$(( SECONDS - suite_started ))" || true
   done
 else
   # ── Parallel path (--jobs N) ───────────────────────────────────────────────
@@ -519,23 +662,9 @@ else
         local started finished
         started="$(cat "$d/started" 2>/dev/null || printf '%s' "$SECONDS")"
         finished="$SECONDS"
-        SUITE_DURATIONS["$name"]="$((finished - started))"
         # Print buffered suite output then its result line
         [[ -s "$d/out" ]] && cat "$d/out"
-        if [[ "$rc" -eq 0 ]]; then
-          printf 'PASS %s\n' "$name"
-          record_suite_result "$name" pass 0 "${SUITE_DURATIONS[$name]}"
-          passed=$((passed + 1))
-        else
-          printf 'FAIL %s\n' "$name"
-          if [[ "$rc" -eq 124 ]]; then
-            record_suite_result "$name" timeout "$rc" "${SUITE_DURATIONS[$name]}"
-          else
-            record_suite_result "$name" fail "$rc" "${SUITE_DURATIONS[$name]}"
-          fi
-          failed=$((failed + 1))
-          FAILED_SUITE_NAMES+=("$name")
-        fi
+        _record_suite_outcome "$name" "$rc" "$((finished - started))" || true
       else
         local elapsed=$(( SECONDS - $(cat "$d/started" 2>/dev/null || printf '%s' "$SECONDS") ))
         if [[ -z "${_progress_reported[$name]:-}" ]] && (( elapsed >= PROGRESS_INTERVAL_SECS )); then
@@ -552,7 +681,7 @@ else
     _if_dirs=("${new_dirs[@]+"${new_dirs[@]}"}")
   }
 
-  for name in "${ACTIVE_SUITE_NAMES[@]}"; do
+  for name in "${DISPATCH_SUITE_NAMES[@]+"${DISPATCH_SUITE_NAMES[@]}"}"; do
     if reason="$(_suite_skip_reason "$name")"; then
       printf 'SKIP %s (%s)\n' "$name" "$reason"
       record_suite_result "$name" skip 0 0 "$reason"
@@ -585,30 +714,4 @@ else
   done
 fi
 
-printf '%s passed, %s failed, %s skipped\n' "$passed" "$failed" "$skipped"
-if [[ "${#SUITE_DURATIONS[@]}" -gt 0 ]]; then
-  printf 'slowest suites:\n'
-  declare -A _duration_reported=()
-  for ((_rank = 0; _rank < 10; _rank++)); do
-    _slow_name=""
-    _slow_seconds=-1
-    for name in "${!SUITE_DURATIONS[@]}"; do
-      [[ -n "${_duration_reported[$name]:-}" ]] && continue
-      if (( SUITE_DURATIONS[$name] > _slow_seconds )); then
-        _slow_name="$name"
-        _slow_seconds="${SUITE_DURATIONS[$name]}"
-      fi
-    done
-    [[ -n "$_slow_name" ]] || break
-    printf '  %ss %s\n' "$_slow_seconds" "$_slow_name"
-    _duration_reported["$_slow_name"]=1
-  done
-fi
-if [[ "${#FAILED_SUITE_NAMES[@]}" -gt 0 ]]; then
-  printf 'failed suites:'
-  printf ' %s' "${FAILED_SUITE_NAMES[@]}"
-  printf '\n'
-  write_suite_results
-  exit 1
-fi
-write_suite_results
+_finish_run

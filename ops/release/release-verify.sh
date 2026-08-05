@@ -161,7 +161,7 @@ if [[ "$RUN_SUITE" -eq 0 ]]; then
 else
   suite_log="$(mktemp)"  # registered in cleanup trap above
   suite_result="$REPO_ROOT/.pm-dispatch/test-results/latest-full.json"
-  if bash "$REPO_ROOT/tests/bin/run-all-tests.sh" --result-file "$suite_result" >"$suite_log" 2>&1 \
+  if bash "$REPO_ROOT/tests/bin/run-all-tests.sh" --result-file "$suite_result" --collect-all >"$suite_log" 2>&1 \
     && bash "$REPO_ROOT/tests/bin/run-tests.sh" --verify-full "$suite_result" >>"$suite_log" 2>&1; then
     record "run-all-tests" PASS "authoritative full PASS verified for the current tree"
   else

@@ -8,8 +8,13 @@
 # Usage:
 #   tests/bin/run-tests.sh [--base <ref>] [--path <repo-relative-path>]...
 #                        [--result-file <path>] [--list] [--jobs N] [--suite-timeout N]
-#   tests/bin/run-tests.sh --all [--skip <suite>] [--list] [--jobs N] [--suite-timeout N]
+#   tests/bin/run-tests.sh --all [--skip <suite>] [--collect-all] [--list] [--jobs N] [--suite-timeout N]
 #   tests/bin/run-tests.sh --verify-full <result-file>
+#
+# --collect-all (only valid with --all) disables the suite runner's Phase 0
+# fail-fast short-circuit, so every suite runs regardless of a structural
+# precheck failure -- used when full diagnostic evidence across all phases is
+# needed (e.g. release sign-off).
 set -euo pipefail
 export LC_ALL=C.UTF-8
 
@@ -21,6 +26,7 @@ TEST_RESULT_LIB="$SCRIPT_DIR/../lib/test-result.sh"
 BASE_REF=""
 LIST_ONLY=0
 RUN_ALL=0
+COLLECT_ALL=0
 JOBS=""
 SUITE_TIMEOUT=""
 RESULT_FILE="${PM_DISPATCH_PREFLIGHT_TEST_RESULT:-}"
@@ -42,6 +48,7 @@ while [[ $# -gt 0 ]]; do
       EXPLICIT_PATHS+=("$2"); shift 2 ;;
     --list) LIST_ONLY=1; shift ;;
     --all) RUN_ALL=1; shift ;;
+    --collect-all) COLLECT_ALL=1; shift ;;
     --result-file)
       [[ $# -ge 2 && -n "$2" && "$2" != --* ]] || { printf 'run-tests: --result-file requires a path\n' >&2; exit 2; }
       RESULT_FILE="$2"; shift 2 ;;
@@ -81,6 +88,7 @@ fi
 runner_args=()
 [[ -n "$JOBS" ]] && runner_args+=(--jobs "$JOBS")
 [[ -n "$SUITE_TIMEOUT" ]] && runner_args+=(--suite-timeout "$SUITE_TIMEOUT")
+[[ "$COLLECT_ALL" -eq 1 ]] && runner_args+=(--collect-all)
 if [[ "$RUN_ALL" -eq 1 ]]; then
   [[ "$LIST_ONLY" -eq 1 ]] && runner_args+=(--list)
   for suite in "${FULL_SKIPS[@]}"; do runner_args+=(--skip "$suite"); done
@@ -105,6 +113,10 @@ if [[ "$RUN_ALL" -eq 1 ]]; then
     "$full_suite_json" "$skip_json" "" \
     "$SUITE_RUNNER" "${runner_args[@]}"
   exit $?
+fi
+if [[ "$COLLECT_ALL" -eq 1 ]]; then
+  printf 'run-tests: --collect-all is only valid with --all\n' >&2
+  exit 2
 fi
 if [[ "${#FULL_SKIPS[@]}" -gt 0 ]]; then
   printf 'run-tests: --skip is only valid with --all\n' >&2
