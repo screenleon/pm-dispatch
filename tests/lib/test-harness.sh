@@ -24,6 +24,7 @@ th_init() {
   FILTER=""
   SHARD_INDEX=0
   SHARD_TOTAL=0
+  SHARD_COUNTER=0
   LIST=false
   FORMAT="colon-flat"
   FAIL_FAST=false
@@ -90,13 +91,22 @@ th_init() {
 }
 
 should_run() {
+  # Shard membership is round-robin over call *position*, not a hash of the
+  # case name. should_run is invoked once per test case, in the same fixed
+  # order, by every shard process (every run_test call executes unconditionally
+  # -- only the case body short-circuits via this function's return value), so
+  # the position-based counter stays aligned across shards. This keeps shard
+  # sizes within 1 of each other regardless of how case names happen to hash;
+  # a name-hash split can skew badly (e.g. 67 cases in one shard vs 49 in
+  # another, observed on the pr-gate suite pre-fix).
+  if (( SHARD_TOTAL > 0 )); then
+    SHARD_COUNTER=$((SHARD_COUNTER + 1))
+  fi
   if [[ -n "$FILTER" && "$1" != *"$FILTER"* ]]; then
     return 1
   fi
   if (( SHARD_TOTAL > 0 )); then
-    local shard_hash
-    shard_hash="$(printf '%s' "$1" | cksum | awk '{print $1}')"
-    (( (shard_hash % SHARD_TOTAL) + 1 == SHARD_INDEX )) || return 1
+    (( (SHARD_COUNTER - 1) % SHARD_TOTAL + 1 == SHARD_INDEX )) || return 1
   fi
   if $LIST; then
     ALL_CASES+=("$1")
