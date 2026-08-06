@@ -608,10 +608,12 @@ run_gate() {
   set +e
   if command -v timeout >/dev/null 2>&1; then
     timeout --kill-after=5s "${case_timeout}s" \
-      env HOME="$home" PATH="$runner/bin:$PATH" \
+      env -u QA_RULES_DIR -u PM_DISPATCH_QA_RULES_DIR_HOST_CONFIRMED \
+      HOME="$home" PATH="$runner/bin:$PATH" \
       "$runner/pr-gate.sh" --cd "$repo" "$@" > "$out" 2> "$err"
   else
-    HOME="$home" PATH="$runner/bin:$PATH" \
+    env -u QA_RULES_DIR -u PM_DISPATCH_QA_RULES_DIR_HOST_CONFIRMED \
+      HOME="$home" PATH="$runner/bin:$PATH" \
       "$runner/pr-gate.sh" --cd "$repo" "$@" > "$out" 2> "$err"
   fi
   local code=$?
