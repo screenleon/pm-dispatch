@@ -9762,12 +9762,12 @@ test_sequential_reviewer_protocol_out_of_range_line_is_incomplete() {
   pass "$name"
 }
 
-# Behavior (CC-545): an evidence-reference-contract violation gets exactly
-# one corrective retry, and a reviewer whose retry resolves the citation
+# Behavior: an evidence-reference-contract violation gets exactly one
+# corrective retry, and a reviewer whose retry resolves the citation
 # recovers -- the gate proceeds to synthesis rather than failing outright.
 # Steps: mutate critic's first attempt to cite an out-of-scope reference, but
-# let the CC-545 retry attempt (brief named *-retry1-critic.md) write a
-# clean document; assert the gate exits 0, a retry was logged, and synthesis
+# let the retry attempt (brief named *-retry1-critic.md) write a clean
+# document; assert the gate exits 0, a retry was logged, and synthesis
 # still ran.
 test_parallel_reviewer_protocol_evidence_contract_recovers_on_retry() {
   local name="reviewer-protocol/evidence-contract-recovers-on-retry"
@@ -9801,9 +9801,9 @@ test_parallel_reviewer_protocol_evidence_contract_recovers_on_retry() {
   pass "$name"
 }
 
-# Behavior (CC-545): the corrective retry is exactly one attempt -- a
-# reviewer that fails the evidence-reference contract on every attempt still
-# ends the gate as INCOMPLETE, not an infinite or repeated retry loop.
+# Behavior: the corrective retry is exactly one attempt -- a reviewer that
+# fails the evidence-reference contract on every attempt still ends the gate
+# as INCOMPLETE, not an infinite or repeated retry loop.
 # Steps: mutate critic's output on every attempt (no _ONLY_FIRST); assert the
 # gate still fails, a retry was attempted (visible in stdout), and synthesis
 # never ran.
