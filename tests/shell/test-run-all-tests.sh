@@ -662,13 +662,18 @@ test_suite_retry_off_by_default() {
   # This keeps a plain run-tests.sh --all (a developer's machine, CI, or the
   # authoritative --verify-full evidence path) from ever silently tolerating
   # a flaky test; only pr-gate.sh's own preflight subprocess opts in.
+  # `env -u` scrubs this suite's own ambient value: this whole file is one
+  # of the suites pr-gate.sh's real preflight runs, and that outer gate
+  # exports PM_DISPATCH_TEST_SUITE_RETRY_ON_FAIL=1 for its own subprocess --
+  # without scrubbing, this fixture would silently inherit "on" and the
+  # "default is off" premise being tested would never actually run.
   local repo="$TMP_ROOT/$name" path out status=0 counter
   make_fixture_repo "$repo"
   write_pass_stubs "$repo"
   counter="$TMP_ROOT/$name-counter"
   write_flaky_stub "$repo" lint-agents 1 "$counter"
   path="$(make_path_with_codex "$repo/bin")"
-  out=$(PATH="$path" run_aggregator "$repo" 2>&1) || status=$?
+  out=$( (unset PM_DISPATCH_TEST_SUITE_RETRY_ON_FAIL; PATH="$path" run_aggregator "$repo") 2>&1) || status=$?
   if [[ "$status" -eq 1 &&
         "$out" != *"RETRY lint-agents"* &&
         "$out" == *"FAIL lint-agents"* &&
