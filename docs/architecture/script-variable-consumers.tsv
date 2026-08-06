@@ -328,6 +328,7 @@ RUN_TESTS_*	RUN_TESTS_ARGS_LOG	tests/shell/test-run-tests.sh	test
 RUN_TESTS_*	RUN_TESTS_INVALID_SINK	tests/shell/test-run-tests.sh	test
 RUN_TESTS_*	RUN_TESTS_MUTATE_PATH	tests/shell/test-run-tests.sh	test
 RUN_TESTS_*	RUN_TESTS_SKIP_SINK	tests/shell/test-run-tests.sh	test
+RUN_TESTS_*	RUN_TESTS_STUB_FLAKY_REASON	tests/shell/test-run-tests.sh	test
 RUN_TESTS_*	RUN_TESTS_STUB_STATUS	tests/shell/test-run-tests.sh	test
 SCRIPT_DIR	SCRIPT_DIR	adapters/claude/dispatch.sh	production
 SCRIPT_DIR	SCRIPT_DIR	adapters/codex/dispatch.sh	production
