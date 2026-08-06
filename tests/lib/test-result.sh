@@ -221,6 +221,19 @@ pm_test_verify_full_result() {
     printf 'run-tests: artifact is not an authoritative full PASS: %s\n' "$file" >&2
     return 1
   }
+  # A retry-recovered suite (see run_suite_retry_once in test-suite-runner.sh)
+  # failed at least once before passing; that is legitimate diagnostic signal
+  # for an interactive/gate run, but this verifier backs the authoritative
+  # release-readiness claim, where a suite that failed even once must not be
+  # indistinguishable from one that passed cleanly on its first attempt. Any
+  # retry-recovered suite makes the artifact non-authoritative here -- get a
+  # clean rerun (PM_DISPATCH_TEST_SUITE_RETRY_ON_FAIL=0 catches this
+  # deterministically) before it can back a release.
+  if jq -e '.suite_results | any(.[]; .reason == "flaky, passed on retry")' \
+      "$file" >/dev/null 2>&1; then
+    printf 'run-tests: artifact contains a retry-recovered suite (failed once, passed on retry) -- not authoritative for release; rerun with PM_DISPATCH_TEST_SUITE_RETRY_ON_FAIL=0 for a clean result\n' >&2
+    return 1
+  fi
   current_tree="$(pm_test_tree_fingerprint "$repo")" || return 2
   current_contract="$(pm_test_runner_contract_hash "$repo")" || return 2
   expected_suites="$("$repo/tests/lib/test-suite-runner.sh" --list | jq -Rsc 'split("\n") | map(select(length > 0))')" || return 2

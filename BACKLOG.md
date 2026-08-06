@@ -3193,7 +3193,21 @@ short circuit。
 路徑透過額外的 `$d/note` 檔案把 retry 註記從背景 subshell 帶回父行程。新增
 4 個回歸測試：flaky suite 重試後通過、確定性失敗重試一次後仍記為 FAIL（
 非無限重試）、`PM_DISPATCH_TEST_SUITE_RETRY_ON_FAIL=0` 恢復嚴格單次語意、
-parallel `--jobs` 模式下 retry 註記正確傳遞。
+parallel `--jobs` 模式下 retry 註記正確傳遞。**pr-gate 第 6 輪 NO-GO 修正**：
+qa-tester 與 risk-reviewer 各自獨立指出同一根因（RCG-001）——`--verify-full`
+（`tests/lib/test-result.sh:pm_test_verify_full_result`，`release-verify.sh`
+用它判定「可對外發布」）沒有區分「乾淨一次通過」與「重試後才過」，讓帶隱性
+瑕疵的 suite 靜默拿到與乾淨通過完全相同的 `authoritative: true` PASS
+record。修法：`pm_test_verify_full_result` 新增檢查，只要 artifact 的
+`suite_results[]` 裡任何一筆帶 `reason: "flaky, passed on retry"`，即拒絕
+（回傳 1，訊息提示改用 `PM_DISPATCH_TEST_SUITE_RETRY_ON_FAIL=0` 重跑取得
+乾淨結果）——刻意不採用 qa-tester 建議的「移除預設重試」（那會讓 CC-544
+存在的理由整個消失），而是精準只鎖住「authoritative／release 用途」這個
+真正會被誤判的邊界；一般 gate 自身 preflight（用的是同一份 evidence，但
+不要求 `--verify-full`）仍受益於 retry-once 省下的 30-40 分鐘重跑成本。新增
+回歸測試 `verify-full-rejects-retry-recovered-suite`。critic 同輪另一個
+advisory finding（重派邏輯複製而非共用 dispatch pipeline）維持先前已記錄的
+刻意延後決定，未在本輪追加處理。
 
 **See**: 隨 CC-543/CC-541 分支一併交付（無獨立 PR）。
 

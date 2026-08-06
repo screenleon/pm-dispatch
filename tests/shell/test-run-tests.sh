@@ -59,8 +59,9 @@ if [[ -n "${PM_TEST_SUITE_RESULTS_FILE:-}" && "${RUN_TESTS_SKIP_SINK:-0}" != "1"
   if [[ "${RUN_TESTS_INVALID_SINK:-0}" == "1" ]]; then
     printf '%s\n' '[{"name":"wrong-suite","status":"bogus","exit_code":0,"duration_seconds":"fast"}]' > "$PM_TEST_SUITE_RESULTS_FILE"
   else
-    jq -n --argjson names "$names_json" --argjson rc "$rc" '
-      [$names[] | {name:.,status:(if $rc == 0 then "pass" else "fail" end),exit_code:$rc,duration_seconds:0}]
+    jq -n --argjson names "$names_json" --argjson rc "$rc" --arg flaky_reason "${RUN_TESTS_STUB_FLAKY_REASON:-}" '
+      [$names[] | {name:.,status:(if $rc == 0 then "pass" else "fail" end),exit_code:$rc,duration_seconds:0}
+        + (if $flaky_reason != "" and . == $names[0] then {reason:$flaky_reason} else {} end)]
     ' > "$PM_TEST_SUITE_RESULTS_FILE"
   fi
 fi
@@ -417,6 +418,23 @@ case_verify_full_rejects_collect_all() {
   fi
 }
 
+case_verify_full_rejects_retry_recovered_suite() {
+  local name=verify-full-rejects-retry-recovered-suite repo out status=0 args artifact
+  args="$TMP_ROOT/$name.args"
+  repo="$(make_fixture "$name")"
+  artifact="$repo/.pm-dispatch/test-results/full.json"
+  RUN_TESTS_ARGS_LOG="$args" RUN_TESTS_STUB_FLAKY_REASON="flaky, passed on retry" \
+    "$repo/tests/bin/run-tests.sh" --all --result-file "$artifact" >/dev/null 2>&1 || {
+    fail "$name" "setup full run failed"; return;
+  }
+  out=$("$repo/tests/bin/run-tests.sh" --verify-full "$artifact" 2>&1) || status=$?
+  if [[ "$status" -eq 1 && "$out" == *"retry-recovered suite"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out"
+  fi
+}
+
 case_full_result_rejects_changed_tree() {
   local name=full-result-rejects-changed-tree repo out status=0 args artifact
   args="$TMP_ROOT/$name.args"
@@ -518,6 +536,7 @@ case_selected_failure_propagates
 case_explicit_all_delegates_without_selector
 case_full_result_verifies_same_tree
 case_verify_full_rejects_collect_all
+case_verify_full_rejects_retry_recovered_suite
 case_full_result_rejects_changed_tree
 case_tree_change_during_run_marks_stale
 case_iteration_result_cannot_verify_as_full
