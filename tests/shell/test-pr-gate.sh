@@ -3700,58 +3700,6 @@ PRODUCER
   pass "$name"
 }
 
-# Behavior: the gate's own preflight subprocess opts into suite retry-once
-# even though the mechanism defaults to off everywhere else -- this is the
-# one context (this suite plus the gate's own reviewer fan-out both under
-# way at once) the feature exists to compensate for.
-# Steps: a --test-cmd producer script records whatever
-# PM_DISPATCH_TEST_SUITE_RETRY_ON_FAIL it inherited, then writes a minimal
-# passing structured result; assert the recorded value is exactly "1".
-test_preflight_subprocess_opts_into_suite_retry() {
-  local name="preflight-subprocess-opts-into-suite-retry"
-  should_run "$name" || return 0
-  local dir="$TMP_ROOT/$name" home repo runner out err result producer marker
-  home="$dir/home"; repo="$dir/repo"; runner="$dir/runner"
-  out="$dir/out"; err="$dir/err"; result="$dir/result.md"
-  producer="$repo/produce-result.sh"; marker="$dir/retry-env.txt"
-  mkdir -p "$dir"
-  create_runner "$runner"
-  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
-  create_repo "$repo" docs
-  cat > "$producer" <<PRODUCER
-#!/usr/bin/env bash
-set -euo pipefail
-printf '%s' "\${PM_DISPATCH_TEST_SUITE_RETRY_ON_FAIL:-<unset>}" > "$marker"
-repo="\$PWD"
-repo_id="\$(printf '%s\n\n' "\$repo" | sha256sum | awk '{print \$1}')"
-jq -n --arg repo "\$repo" --arg repo_id "\$repo_id" \\
-  --arg head "\$PM_DISPATCH_PREFLIGHT_HEAD_COMMIT" \\
-  --arg fp "\$PM_DISPATCH_PREFLIGHT_SUBJECT_FINGERPRINT" \\
-  '{kind:"pm_test_result_v2",schema_version:2,repo_root:\$repo,repo_identity:\$repo_id,
-    base_ref:null,base_commit:null,head_commit:\$head,contract:"iteration",authoritative:false,
-    status:"pass",exit_code:0,started_at:"2026-01-01T00:00:00Z",finished_at:"2026-01-01T00:00:01Z",
-    tree_fingerprint:\$fp,observed_tree_fingerprint_after:\$fp,
-    runner_contract_hash:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    selection_mode:"explicit-paths",changed_paths:["src/widget.js"],suite_set:["s1"],requested_skips:[],
-    suite_results:[{name:"s1",status:"pass",exit_code:0,duration_seconds:1}],
-    aggregate:{status:"pass",selected:1,passed:1,failed:0,timed_out:0,skipped:0}}' \\
-  > "\$PM_DISPATCH_PREFLIGHT_TEST_RESULT"
-PRODUCER
-  chmod +x "$producer"
-
-  set +e
-  run_gate "$home" "$runner" "$repo" "$out" "$err" \
-    --base main --mode sequential --test-cmd "./produce-result.sh" --output "$result"
-  local code=$?
-  set -e
-  [[ "$code" -eq 0 ]] || { fail "$name" "exit $code, expected 0: $(cat "$err")"; return; }
-  if [[ "$(cat "$marker" 2>/dev/null)" == "1" ]]; then
-    pass "$name"
-  else
-    fail "$name" "preflight subprocess saw PM_DISPATCH_TEST_SUITE_RETRY_ON_FAIL=$(cat "$marker" 2>/dev/null)"
-  fi
-}
-
 # Behavior: parallel mode aborts when the synthesis YAML frontmatter final:
 # field disagrees with the shell-computed verdict.
 # Steps:
@@ -5795,7 +5743,6 @@ run_test test_preflight_structured_test_failure_is_nogo
 run_test test_preflight_artifact_tamper_aborts_gate
 run_test test_scope_manifest_tamper_aborts_gate
 run_test test_preflight_structured_result_is_reused_in_brief
-run_test test_preflight_subprocess_opts_into_suite_retry
 run_test test_parallel_frontmatter_parity_mismatch_aborts_gate
 run_test test_prompt_injection_detected
 run_test test_block_soft_verdict_is_no_go

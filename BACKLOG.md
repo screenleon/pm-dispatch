@@ -63,7 +63,6 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-541 | 🔵 active | codex reviewer sandbox 讀不到主機上已存在的 `QA_RULES_DIR`，qa-tester 對 hard-stop 與可用規則來源之間 fail-loud 行為需要釐清並修復 | ops/gate | 2026-08-04 | feedback:2026-08-04 | P2 | hygiene |
 | CC-542 | ✅ done | 移除 `test-pmctl-context`／`test-release-verify` 的 LIVE_DB_EXCLUSIVE 全域互斥：release-verify Phase 3 context-index 改用隔離 fixture repo，不再重建 live `context.db` | ops/test | 2026-08-04 | pr:#463 | P1 | hygiene |
 | CC-543 | 🟢 someday | Full test runner 增加 fail-fast structural precheck（registry lint／regression／schema 等便宜檢查獨立成 Phase 0，失敗即中止，不啟動昂貴 suite） | ops/test | 2026-08-04 | — | P2 | hygiene |
-| CC-544 | ✅ done | Suite retry-once-on-fail：任一 suite 首次失敗自動重跑一次，兩次皆敗才記為真 FAIL；解決 full-suite 重負載下隨機 suite 計時飛幫（歷史 8+ 種不同 suite 中獎） | ops/test | 2026-08-06 | — | P2 | hygiene |
 | CC-545 | ✅ done | Reviewer evidence-reference-contract INCOMPLETE 的單次修正性重派：僅限該單一違規類別，附具體錯誤引用重跑違規 reviewer，不必整輪 gate（30-40 分鐘）重來 | ops/gate | 2026-08-06 | — | P2 | hygiene |
 | CC-465 | 🔵 active | memory/context 關鍵詞管線 CJK 支援：抽出共用零依賴斷詞 lib，取代三處各自 ASCII-only 抽詞；工作序列起點（465→467→468→466）（2026-07-07 記憶系統深入分析） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-466 | ⏸ deferred | 記憶卡片生命週期閉環：expires_at 執行 + 關窗式 supersede + usage sidecar 休眠偵測 + doctor→distill 接線；僅在 CC-467 證明 stale/dormant card 已形成實際問題時啟動 | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
@@ -3177,100 +3176,6 @@ CI 資源浪費——結構性設定錯誤本應是最快回饋的一類失敗�
 **Source**：2026-08-04 對完整 full-suite 實測的事後分析；同一次分析中
 「registry drift 三個 failure 同根因」的觀察直接指出目前缺乏 fail-fast
 short circuit。
-
----
-
-## CC-544 — Suite retry-once-on-fail ✅ 2026-08-06
-
-**Outcome**：`tests/lib/test-suite-runner.sh` 新增 `run_suite_retry_once()`：
-任一 suite（含 Phase 0）首次失敗（非 timeout）自動立即重跑一次；第二次通過
-記為 `pass` 並帶 `reason: "flaky, passed on retry"`，兩次皆敗才記為真正
-`fail`／`timeout`（帶 `reason: "failed twice (retried once)"`），兩種情況
-在結果 sink 與終端輸出都可見（不靜默）。Timeout（rc=124）不重試，避免掛住
-的 suite 讓最壞情境等待時間翻倍。新增
-`PM_DISPATCH_TEST_SUITE_RETRY_ON_FAIL`（預設 1）可關閉回到嚴格單次語意。
-三條路徑（Phase 0 序列、sequential、parallel subshell）都已接入；parallel
-路徑透過額外的 `$d/note` 檔案把 retry 註記從背景 subshell 帶回父行程。新增
-4 個回歸測試：flaky suite 重試後通過、確定性失敗重試一次後仍記為 FAIL（
-非無限重試）、`PM_DISPATCH_TEST_SUITE_RETRY_ON_FAIL=0` 恢復嚴格單次語意、
-parallel `--jobs` 模式下 retry 註記正確傳遞。**pr-gate 第 6 輪 NO-GO 修正**：
-qa-tester 與 risk-reviewer 各自獨立指出同一根因（RCG-001）——`--verify-full`
-（`tests/lib/test-result.sh:pm_test_verify_full_result`，`release-verify.sh`
-用它判定「可對外發布」）沒有區分「乾淨一次通過」與「重試後才過」，讓帶隱性
-瑕疵的 suite 靜默拿到與乾淨通過完全相同的 `authoritative: true` PASS
-record。修法：`pm_test_verify_full_result` 新增檢查，只要 artifact 的
-`suite_results[]` 裡任何一筆帶 `reason: "flaky, passed on retry"`，即拒絕
-（回傳 1，訊息提示改用 `PM_DISPATCH_TEST_SUITE_RETRY_ON_FAIL=0` 重跑取得
-乾淨結果）——刻意不採用 qa-tester 建議的「移除預設重試」（那會讓 CC-544
-存在的理由整個消失），而是精準只鎖住「authoritative／release 用途」這個
-真正會被誤判的邊界；一般 gate 自身 preflight（用的是同一份 evidence，但
-不要求 `--verify-full`）仍受益於 retry-once 省下的 30-40 分鐘重跑成本。新增
-回歸測試 `verify-full-rejects-retry-recovered-suite`。critic 同輪另一個
-advisory finding（重派邏輯複製而非共用 dispatch pipeline）維持先前已記錄的
-刻意延後決定，未在本輪追加處理。
-
-**pr-gate 第 7 輪 NO-GO 追加修正**：qa-tester 對第 6 輪的修法仍不滿意——
-它的立場是「一般 gate/full-run 路徑本身」就不該讓重試把首次失敗變成 PASS，
-不只是 `--verify-full` 這個 release 邊界（`agents/qa-tester.md`：
-「Non-runnable or flaky → block」）。沒有採用 qa-tester 建議的字面修法
-（「移除預設重試」，那會讓 CC-544 整個失去存在理由），而是改變設計：
-`PM_DISPATCH_TEST_SUITE_RETRY_ON_FAIL` 預設值從 1 改成 **0（opt-in，預設
-關閉）**——一般 `run-tests.sh --all`（開發者本機、CI、`--verify-full` 的
-authoritative 證據）維持嚴格單次語意；只有 `runtime/bin/pr-gate.sh` 自己
-的 preflight subprocess（無論 parent-operation 或非 parent-operation 兩條
-派發路徑）顯式 `export PM_DISPATCH_TEST_SUITE_RETRY_ON_FAIL=1`，因為那正是
-本票最初要解決的「這個 suite 本身加上 gate 自己 5 個 reviewer fan-out 同時
-重負載」場景，其他呼叫情境不該無聲繼承這個容忍度。同輪
-architecture-reviewer 另外抓到一個真實缺口：新環境變數完全沒有登記進
-`docs/architecture/script-variable-inventory.tsv`（不是 consumers.tsv 缺列
-那種「有申報但漏引用」，是連 ownership 宣告都沒有，導致變數消費者掃描完全
-看不到它），已補上 inventory 與對應 4 個 consumer 列（`test-suite-runner.sh`
-／`test-result.sh`／`test-pr-gate.sh`／`test-run-all-tests.sh`／
-`pr-gate.sh` 本身）。回歸測試相應調整：4 個既有 CC-544 測試改為顯式
-`PM_DISPATCH_TEST_SUITE_RETRY_ON_FAIL=1` 才觸發重試，新增
-`suite-retry-off-by-default`（鎖住新預設值）與
-`preflight-subprocess-opts-into-suite-retry`（鎖住 gate 自己的 preflight
-確實有 opt-in，證明修法真的解決原始問題，不是空修）。
-
-**See**: 隨 CC-543/CC-541 分支一併交付（無獨立 PR）。
-
-**Problem**：full suite 在 gate 自身重負載（4 shard + preflight 平行執行）
-下會隨機讓某個 suite 因排程延遲而計時性失敗——2026-08-06 的事後分析顯示過去
-半年至少 8 種不同 suite 都中過獎（`test-doctor`、`test-pmctl-memory`、
-`lint-scripts`、`test-pr-gate-shard-*`、`test-gate-lifecycle`……），每次都是
-不同 suite，證明根因是「這趟 run 自己的資源競爭」而非任一 suite 本身的
-bug。這類飛幫目前會讓整個 gate 的 preflight 判 `test_suite: fail`，強迫
-使用者重跑整輪 gate（30-40 分鐘）。
-
-**Why**：既有的判斷（例如 `test-gate-lifecycle` 用 `PM_GATE_READY_TIMEOUT=1`
-故意製造的極短窗口，用來區分「supervisor 提前死亡」vs「真的 timeout」兩種
-訊息）在正常負載下綽綽有餘，但在 gate 自己重負載下 fork/exec 排程延遲吃光
-了原本的容錯空間。逐一調整每個計時敏感 suite 的 timeout 治標不治本——真正
-根因是「隨機哪個 suite 抽到誰」的模式，systemic retry-once 是唯一覆蓋全部
-既有與未來 suite 的修法。
-
-**Requirement**：
-1. suite 首次失敗（非 timeout）自動重跑一次；兩次結果都要在 stdout／
-   結果 sink 留痕，不得靜默掩蓋。
-2. timeout（rc=124）不重試。
-3. 提供環境變數關閉此行為，供刻意追查真實間歇性 bug 的情境使用。
-4. 三條執行路徑（Phase 0、sequential、parallel）行為一致。
-5. 回歸測試覆蓋：重試後通過、重試後仍敗、關閉開關、parallel 模式下正確
-   運作。
-
-**Done-when**：以上 Requirement 全部滿足；`tests/shell/test-run-all-tests.sh`
-新增測試全過；既有測試套件無回歸。
-
-**Non-goals**：不做「重試 N 次」的通用機制（只覆蓋 retry-once，這是本票
-的明確範圍收斂，非遺漏）；不修正個別 suite 內部的計時假設（例如
-`test-gate-lifecycle` 的 1 秒窗口本身）——那是每個 suite 自己的設計選擇，
-retry-once 是外層安全網，不取代它。
-
-**Dependencies**：無。P2。
-
-**Source**：2026-08-06 對 CC-543/CC-541 gate 第 5 次嘗試（`test-gate-lifecycle`
-preflight 失敗）的事後根因分析；使用者要求針對「pr-gate 屢次出現非預期內容」
-做系統性改善，經歷史 gate 紀錄比對後開票。
 
 ---
 
