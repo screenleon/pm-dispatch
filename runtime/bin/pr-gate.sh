@@ -2192,6 +2192,7 @@ SCRIPT_DIR="$(cd "$(dirname "$_self")" && pwd)"
 if [[ -z "${QA_RULES_DIR:-}" ]]; then
   _qa_repo_layout_path="$SCRIPT_DIR/../lib/repo-layout.sh"
   if [[ -r "$_qa_repo_layout_path" ]]; then
+    # shellcheck source=runtime/lib/repo-layout.sh
     _qa_repos_root="$(. "$_qa_repo_layout_path" && pm_dispatch_repos_root "$WORK_DIR")" || _qa_repos_root=""
   else
     # Copy-mode bundle without runtime/lib/ present: fall back to the same
@@ -2595,6 +2596,7 @@ else
            ((.findings // []) | any((.affected_behavior // "") + " " + (.why_it_matters // "")
              | test("QA_RULES_DIR|qa-testing-rules|AGENT\\.md"; "i")))' \
            "$document" >/dev/null 2>&1; then
+        # shellcheck disable=SC2034  # consumed by pr-gate.sh after this function returns.
         PM_DISPATCH_QA_RULES_DIR_REVIEWER_GAP_DETECTED=1
       fi
       seen="${seen}${reviewer} "

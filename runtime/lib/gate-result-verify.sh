@@ -386,6 +386,21 @@ gate_reviewer_protocol_verify() {
       rm -rf -- "$tmp_dir"
       return 1
     fi
+    # CC-541: detect (from the already-parsed structured document, not a
+    # later markdown re-scan) a qa-tester block/block-soft finding whose
+    # own text cites the rules source as missing, while this orchestrator
+    # separately host-confirmed QA_RULES_DIR exists and is readable. Sets
+    # a script-global flag consumed once near the end of the run to print
+    # a distinguishing diagnostic -- informational only, never alters this
+    # function's verdict/return value.
+    if [[ "$reviewer" == "qa-tester" && -n "${PM_DISPATCH_QA_RULES_DIR_HOST_CONFIRMED:-}" ]] && \
+       jq -e '(.verdict == "block" or .verdict == "block-soft") and
+         ((.findings // []) | any((.affected_behavior // "") + " " + (.why_it_matters // "")
+           | test("QA_RULES_DIR|qa-testing-rules|AGENT\\.md"; "i")))' \
+         "$document" >/dev/null 2>&1; then
+      # shellcheck disable=SC2034  # consumed by pr-gate.sh after this function returns.
+      PM_DISPATCH_QA_RULES_DIR_REVIEWER_GAP_DETECTED=1
+    fi
     seen="${seen}${reviewer} "
   done
   for expected in $selected; do
