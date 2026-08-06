@@ -545,6 +545,13 @@ unset name
 if [[ "$SUITE_FILTER" -eq 0 && "$COLLECT_ALL" -eq 0 ]]; then
   _phase0_failed=0
   for name in "${PHASE0_SUITE_NAMES[@]}"; do
+    if [[ "$_phase0_failed" -eq 1 ]]; then
+      printf 'SKIP %s (phase 0 failed)\n' "$name"
+      record_suite_result "$name" skip 0 0 "phase 0 failed"
+      skipped=$((skipped + 1))
+      continue
+    fi
+
     if reason="$(_suite_skip_reason "$name")"; then
       printf 'SKIP %s (%s)\n' "$name" "$reason"
       record_suite_result "$name" skip 0 0 "$reason"

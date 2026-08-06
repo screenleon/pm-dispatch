@@ -77,7 +77,7 @@ done
 . "$REPO_ROOT/runtime/lib/artifact-paths.sh"
 
 if [[ -n "$VERIFY_FULL_FILE" ]]; then
-  [[ "$RUN_ALL" -eq 0 && "$LIST_ONLY" -eq 0 && "${#EXPLICIT_PATHS[@]}" -eq 0 && -z "$BASE_REF" && "${#FULL_SKIPS[@]}" -eq 0 && -z "$RESULT_FILE" ]] || {
+  [[ "$RUN_ALL" -eq 0 && "$LIST_ONLY" -eq 0 && "${#EXPLICIT_PATHS[@]}" -eq 0 && -z "$BASE_REF" && "${#FULL_SKIPS[@]}" -eq 0 && -z "$RESULT_FILE" && "$COLLECT_ALL" -eq 0 ]] || {
     printf 'run-tests: --verify-full cannot be combined with planning or execution flags\n' >&2
     exit 2
   }

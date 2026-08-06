@@ -559,11 +559,15 @@ test_fail_on_suite_error() {
 test_phase0_failure_skips_phase1() {
   local name="phase0-failure-skips-phase1"
   # Behavior: a Phase 0 (structural) suite failing skips every Phase 1 suite
-  # instead of running the full registry, and reports FAIL fast.
-  # Steps: fail a Phase 0 suite (lint-agents); assert it's reported FAIL, a
-  # Phase 1 suite (test-pr-gate-shard-1) never starts but is recorded as
-  # skipped with a "phase 0 failed" reason, overall exit is 1, and the run
-  # finishes well under the suite-timeout ceiling (stubs are instant).
+  # instead of running the full registry, and reports FAIL fast. It must also
+  # stop the Phase 0 precheck itself -- CC-543's fail-fast contract promises
+  # an immediate stop, so a later Phase 0 suite (lint-script-domain-inventory)
+  # must never start either, only be recorded as skipped.
+  # Steps: fail the first Phase 0 suite (lint-agents); assert it's reported
+  # FAIL, the next Phase 0 suite (lint-script-domain-inventory) and a Phase 1
+  # suite (test-pr-gate-shard-1) never start but are both recorded as skipped
+  # with a "phase 0 failed" reason, overall exit is 1, and the run finishes
+  # well under the suite-timeout ceiling (stubs are instant).
   local repo="$TMP_ROOT/$name" path out status=0 start_s end_s elapsed
   make_fixture_repo "$repo"
   write_pass_stubs "$repo"
@@ -575,6 +579,8 @@ test_phase0_failure_skips_phase1() {
   elapsed=$((end_s - start_s))
   if [[ "$status" -eq 1 &&
         "$out" == *"FAIL lint-agents"* &&
+        "$out" != *"START lint-script-domain-inventory"* &&
+        "$out" == *"SKIP lint-script-domain-inventory (phase 0 failed)"* &&
         "$out" != *"START test-pr-gate-shard-1"* &&
         "$out" == *"SKIP test-pr-gate-shard-1 (phase 0 failed)"* &&
         "$elapsed" -lt 15 ]]; then
