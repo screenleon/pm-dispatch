@@ -3209,6 +3209,29 @@ record。修法：`pm_test_verify_full_result` 新增檢查，只要 artifact �
 advisory finding（重派邏輯複製而非共用 dispatch pipeline）維持先前已記錄的
 刻意延後決定，未在本輪追加處理。
 
+**pr-gate 第 7 輪 NO-GO 追加修正**：qa-tester 對第 6 輪的修法仍不滿意——
+它的立場是「一般 gate/full-run 路徑本身」就不該讓重試把首次失敗變成 PASS，
+不只是 `--verify-full` 這個 release 邊界（`agents/qa-tester.md`：
+「Non-runnable or flaky → block」）。沒有採用 qa-tester 建議的字面修法
+（「移除預設重試」，那會讓 CC-544 整個失去存在理由），而是改變設計：
+`PM_DISPATCH_TEST_SUITE_RETRY_ON_FAIL` 預設值從 1 改成 **0（opt-in，預設
+關閉）**——一般 `run-tests.sh --all`（開發者本機、CI、`--verify-full` 的
+authoritative 證據）維持嚴格單次語意；只有 `runtime/bin/pr-gate.sh` 自己
+的 preflight subprocess（無論 parent-operation 或非 parent-operation 兩條
+派發路徑）顯式 `export PM_DISPATCH_TEST_SUITE_RETRY_ON_FAIL=1`，因為那正是
+本票最初要解決的「這個 suite 本身加上 gate 自己 5 個 reviewer fan-out 同時
+重負載」場景，其他呼叫情境不該無聲繼承這個容忍度。同輪
+architecture-reviewer 另外抓到一個真實缺口：新環境變數完全沒有登記進
+`docs/architecture/script-variable-inventory.tsv`（不是 consumers.tsv 缺列
+那種「有申報但漏引用」，是連 ownership 宣告都沒有，導致變數消費者掃描完全
+看不到它），已補上 inventory 與對應 4 個 consumer 列（`test-suite-runner.sh`
+／`test-result.sh`／`test-pr-gate.sh`／`test-run-all-tests.sh`／
+`pr-gate.sh` 本身）。回歸測試相應調整：4 個既有 CC-544 測試改為顯式
+`PM_DISPATCH_TEST_SUITE_RETRY_ON_FAIL=1` 才觸發重試，新增
+`suite-retry-off-by-default`（鎖住新預設值）與
+`preflight-subprocess-opts-into-suite-retry`（鎖住 gate 自己的 preflight
+確實有 opt-in，證明修法真的解決原始問題，不是空修）。
+
 **See**: 隨 CC-543/CC-541 分支一併交付（無獨立 PR）。
 
 **Problem**：full suite 在 gate 自身重負載（4 shard + preflight 平行執行）

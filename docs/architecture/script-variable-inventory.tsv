@@ -57,6 +57,7 @@ PM_RELEASE_VERIFY_CONTEXT_REPO	ops-release	public-override	REPO_ROOT (own script
 PM_DISPATCH_TEST_MAX_JOBS	test-harness	test-config	4	explicit env then built-in	consume inside suite runner	parallelism and contention	bounded fixture value
 PM_DISPATCH_TEST_SUITE_TIMEOUT_SECS	test-harness	test-config	900	explicit env then built-in	consume inside suite runner	per-suite deadline	short hanging-suite fixture
 PM_DISPATCH_TEST_PROGRESS_SECS	test-harness	test-config	60	explicit env then built-in	consume inside suite runner	progress heartbeat cadence	fast fixture value
+PM_DISPATCH_TEST_SUITE_RETRY_ON_FAIL	test-harness	test-config	1	explicit env then built-in	consume inside suite runner	default retry-once masks a non-timeout suite failure as pass if the retry succeeds	explicit strict-mode fixture sets 0 and asserts no retry occurs
 TEST_GUARDS_*	test-harness	test-injection	test defaults	explicit test env then test default	never propagate to production modules	fault injection timeouts and diagnostics	clear after each case
 CODEX_GATE_STUB_*	test-harness	test-injection	none	explicit test env only	consume only in gate test stubs	artifact tamper hang and verdict injection	clear after each case
 CLAUDE_GATE_STUB_*	test-harness	test-injection	none	explicit test env only	consume only in gate test stubs	gate-mode and call-marker injection	clear after each case

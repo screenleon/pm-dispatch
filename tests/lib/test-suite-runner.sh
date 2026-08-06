@@ -275,11 +275,17 @@ SUITE_TIMEOUT_SECS="${PM_DISPATCH_TEST_SUITE_TIMEOUT_SECS:-900}"
 PROGRESS_INTERVAL_SECS="${PM_DISPATCH_TEST_PROGRESS_SECS:-60}"
 [[ "$PROGRESS_INTERVAL_SECS" =~ ^[1-9][0-9]*$ ]] || PROGRESS_INTERVAL_SECS=60
 # CC-544: a suite that fails once because the full run is itself heavy
-# parallel load (fork/exec scheduling delays, not a real regression) gets
-# exactly one retry before being recorded as a genuine failure. Set to 0 to
-# get strict single-shot semantics (e.g. hunting a suspected real flake).
-SUITE_RETRY_ON_FAIL="${PM_DISPATCH_TEST_SUITE_RETRY_ON_FAIL:-1}"
-[[ "$SUITE_RETRY_ON_FAIL" == "0" || "$SUITE_RETRY_ON_FAIL" == "1" ]] || SUITE_RETRY_ON_FAIL=1
+# parallel load (fork/exec scheduling delays, not a real regression) can get
+# exactly one retry before being recorded as a genuine failure. Opt-in, off
+# by default: an ordinary run-tests.sh --all invocation (a developer's own
+# machine, CI, or --verify-full's authoritative evidence) stays strict
+# single-shot, so a real flaky test still fails loud instead of being
+# quietly tolerated. pr-gate.sh explicitly turns this on for its own
+# preflight subprocess, because that specific context -- 4 shards plus this
+# same suite running concurrently -- is the one this exists to compensate
+# for (see BACKLOG CC-544's Source).
+SUITE_RETRY_ON_FAIL="${PM_DISPATCH_TEST_SUITE_RETRY_ON_FAIL:-0}"
+[[ "$SUITE_RETRY_ON_FAIL" == "0" || "$SUITE_RETRY_ON_FAIL" == "1" ]] || SUITE_RETRY_ON_FAIL=0
 SUITE_RESULTS_FILE="${PM_TEST_SUITE_RESULTS_FILE:-}"
 SUITE_RESULTS_TMP=""
 if [[ -n "$SUITE_RESULTS_FILE" ]]; then

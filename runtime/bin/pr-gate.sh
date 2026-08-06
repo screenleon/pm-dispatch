@@ -6055,6 +6055,13 @@ if [[ "$SKIP_PREFLIGHT_TESTS" != "true" && -n "$TEST_CMD_OVERRIDE" ]]; then
       export PM_DISPATCH_PREFLIGHT_SUBJECT_FINGERPRINT="$_preflight_before"
       export PM_DISPATCH_PREFLIGHT_BASE_COMMIT="$_preflight_base_commit"
       export PM_DISPATCH_PREFLIGHT_HEAD_COMMIT="$_preflight_head_commit"
+      # CC-544's suite retry-once is opt-in and off by default everywhere
+      # else (an ordinary run-tests.sh --all stays strict single-shot), but
+      # this preflight subprocess is exactly the heavy-parallel-load context
+      # (this suite plus the gate's own reviewer fan-out) that motivated it;
+      # a test-cmd that isn't tests/bin/run-tests.sh --all simply ignores
+      # this env var.
+      export PM_DISPATCH_TEST_SUITE_RETRY_ON_FAIL=1
       # The test command is a subject of this gate, not another producer owned
       # by the same parent operation.  Do not let nested pmctl/pr-gate fixtures
       # attach themselves to or infer ownership from the outer gate.
@@ -6071,6 +6078,7 @@ if [[ "$SKIP_PREFLIGHT_TESTS" != "true" && -n "$TEST_CMD_OVERRIDE" ]]; then
         PM_DISPATCH_PREFLIGHT_SUBJECT_FINGERPRINT="$_preflight_before" \
         PM_DISPATCH_PREFLIGHT_BASE_COMMIT="$_preflight_base_commit" \
         PM_DISPATCH_PREFLIGHT_HEAD_COMMIT="$_preflight_head_commit" \
+        PM_DISPATCH_TEST_SUITE_RETRY_ON_FAIL=1 \
         timeout --kill-after=15 "$TEST_TIMEOUT" bash -c "$TEST_CMD_OVERRIDE" ) \
       > "$PREFLIGHT_LOG_PATH" 2>&1 || _preflight_rc=$?
   fi
