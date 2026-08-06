@@ -6862,10 +6862,20 @@ RBRIEF_EOF
     # its JSON verdict. Markdown headings are presentation only: duplicate or
     # omitted headings cannot turn a completed review into a protocol failure.
     PROTOCOL_INVALID_OUTPUTS=()
+    PROTOCOL_INVALID_REASONS=()
     REVIEWER_VERDICTS=()
     for i in "${!REVIEWER_OUTPUT_FILES[@]}"; do
       rf="${REVIEWER_OUTPUT_FILES[$i]}"
       r="${REVIEWER_NAMES[$i]}"
+      # CC-545: gate_reviewer_protocol_verify only clears/sets this global when
+      # it reaches per-document verification; several of its own earlier
+      # failure paths (duplicate reviewer, unclosed/missing block, ...) return
+      # before ever touching it. Reset before each call so a prior reviewer's
+      # leftover reason in this same loop can never be misattributed to this
+      # one -- otherwise PROTOCOL_INVALID_REASONS below could wrongly read as
+      # "evidence reference contract" and make an unrelated failure eligible
+      # for the CC-545 corrective retry.
+      GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR=""
       if gate_reviewer_protocol_verify \
           "$rf" "$r" "$SCOPE_MANIFEST_DIGEST" "$SCOPE_MANIFEST_PATH" \
           && reviewer_verdict="$(
@@ -6874,8 +6884,233 @@ RBRIEF_EOF
         REVIEWER_VERDICTS+=("$reviewer_verdict")
       else
         PROTOCOL_INVALID_OUTPUTS+=("$r")
+        PROTOCOL_INVALID_REASONS+=("${GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR:-<other>}")
       fi
     done
+
+    # CC-545: an evidence-reference-contract violation is a reviewer citation
+    # mistake (wrong path/line against the immutable reference index), not a
+    # structurally broken document -- unlike a missing block or malformed
+    # JSON, it is plausibly recoverable with a corrective, more pointed
+    # instruction. Retry exactly once, only when EVERY invalid reviewer's
+    # failure reason is in this narrow retryable set; any other protocol
+    # failure (malformed JSON, missing block, wrong reviewer, ...) still
+    # fails the gate immediately as before -- this is not a general
+    # retry-on-any-INCOMPLETE policy. A table (not a single hardcoded
+    # equality) so a future plausibly-recoverable reason can be added here
+    # without restructuring this check.
+    _GATE_RETRYABLE_PROTOCOL_REASONS=("invalid evidence reference contract")
+    if [[ "${#PROTOCOL_INVALID_OUTPUTS[@]}" -gt 0 ]]; then
+      _RETRY_ELIGIBLE=true
+      for _reason in "${PROTOCOL_INVALID_REASONS[@]}"; do
+        _reason_retryable=false
+        for _retryable in "${_GATE_RETRYABLE_PROTOCOL_REASONS[@]}"; do
+          [[ "$_reason" == "$_retryable" ]] && { _reason_retryable=true; break; }
+        done
+        [[ "$_reason_retryable" == true ]] || { _RETRY_ELIGIBLE=false; break; }
+      done
+      if [[ "$_RETRY_ELIGIBLE" == true ]]; then
+        say '\n  %d reviewer(s) failed the evidence-reference contract; retrying once with a corrective note: %s\n' \
+          "${#PROTOCOL_INVALID_OUTPUTS[@]}" "${PROTOCOL_INVALID_OUTPUTS[*]}"
+        _RETRY_REF_INDEX_JSON="$(
+          _gate_reviewer_protocol_reference_index_json \
+            "$SCOPE_MANIFEST_PATH" "$SCOPE_MANIFEST_DIGEST" 2>/dev/null
+        )" || _RETRY_REF_INDEX_JSON=null
+
+        _RETRY_PIDS=()
+        _RETRY_NAMES=()
+        _RETRY_OUTPUT_FILES=()
+        _RETRY_POST_WAIT_HASHES=()
+        for r in "${PROTOCOL_INVALID_OUTPUTS[@]}"; do
+          # Find this reviewer's already-failed output file to extract its
+          # specific bad citation(s); best-effort only -- an extraction
+          # failure still retries, just with the generic reminder alone.
+          _retry_orig_rf=""
+          for i in "${!REVIEWER_NAMES[@]}"; do
+            [[ "${REVIEWER_NAMES[$i]}" == "$r" ]] && { _retry_orig_rf="${REVIEWER_OUTPUT_FILES[$i]}"; break; }
+          done
+          _retry_bad_citations=""
+          if [[ -n "$_retry_orig_rf" && "$_RETRY_REF_INDEX_JSON" != null ]]; then
+            _retry_bad_citations="$(
+              _gate_reviewer_protocol_documents "$_retry_orig_rf" 2>/dev/null | jq -rs --argjson refs "$_RETRY_REF_INDEX_JSON" '
+                def bound($r):
+                  ($r.path) as $p | ($r.line // null) as $ln |
+                  (($refs[] | select(.path == $p)) // null) as $e |
+                  { path: $p, line: $ln, ok: ( ($e != null) and ($ln == null or $ln <= $e.line_count) ) };
+                (.[0] // {}) as $d |
+                [ ($d.coverage[]?.evidence_refs[]? // empty), ($d.findings[]?.source? // empty) ]
+                | map(bound(.)) | map(select(.ok == false))
+                | map("    - " + .path + (if .line then (":" + (.line|tostring)) else "" end) +
+                    " is not in the declared scope manifest reference index (or exceeds its recorded line count)")
+                | .[]
+              ' 2>/dev/null
+            )" || _retry_bad_citations=""
+          fi
+
+          _RETRY_TS="${TIMESTAMP}-retry1"
+          _RETRY_OUTPUT="$WORK_DIR/.gate-results/reviewer-${r}-${_RETRY_TS}.md"
+          _RETRY_BRIEF="$BRIEF_DIR/pr-gate-${_RETRY_TS}-${r}.md"
+          _RETRY_LOG="$_ARTIFACT_ROOT/.agent-trace/gate-${_RETRY_TS}-${r}.log"
+          AGENT_PATH="$REVIEWER_DEFINITION_DIR/${r}.md"
+
+          cat > "$_RETRY_BRIEF" << RETRY_RBRIEF_EOF
+schema_version: 1
+working_dir: ${WORK_DIR}
+
+goal: You are acting as the ${r} reviewer. This is a corrective retry of a
+  prior review that failed the evidence-reference contract -- your job is
+  the same review, done carefully enough to satisfy that contract this time.
+  Read your agent definition, apply your specific review criteria to the
+  changed files, and write your structured findings to ${_RETRY_OUTPUT}.
+
+correction: |
+  Your previous submission for this diff failed the mandatory
+  evidence-reference contract: every coverage evidence_refs[] and finding
+  source must cite a path that is EXACTLY one of the declared scope-manifest
+  reference-index paths below (not merely a real file on disk -- an in-scope
+  or adjacent-but-undeclared file is still a protocol failure), and any line
+  number must not exceed that path's recorded line count.
+${_retry_bad_citations:+  Specifically rejected citation(s) from your previous submission:
+$_retry_bad_citations
+}
+  Before writing each citation this time, re-read the exact path spelling
+  character-by-character against the reference index -- similarly-named
+  files in this diff (e.g. run-tests.sh vs run-all-tests.sh, or
+  test-run-tests.sh vs test-run-all-tests.sh) are a known source of this
+  mistake.
+
+files:
+  - read: ${AGENT_PATH}
+${DIFF_FILE_ENTRIES}  - new:  ${_RETRY_OUTPUT}
+
+constraints:
+  - Do NOT modify any source file.
+  - Only write ${_RETRY_OUTPUT}.
+  - Before writing ${_RETRY_OUTPUT}, call: ${GUARD_PMCTL_CMD} guard check --role reviewer --runtime ${EXECUTOR} --event pre-write --file ${_RETRY_OUTPUT}
+    If that call exits nonzero, abort and report the guard denial -- do NOT write the file.
+  - Create parent directories if needed (mkdir -p).
+  - Only cite files in the verified reference index or the diff list. Read a file before citing its sections; do not invent citations.
+  - reviewer_result_v1.verdict is the only machine verdict. A Markdown heading
+    is optional presentation and may not act as a second output contract.
+
+context:
+  Tier: ${TIER}
+  Executor: ${EXECUTOR}
+  Reviewer: ${r}
+  Base: ${BASE}${HEAD_METADATA_LINE}
+  Scope: ${SCOPE:-none}
+  Date: $(date '+%Y-%m-%d')
+${GATE_ASSURANCE_CONTEXT_BLOCK}${SCOPE_MANIFEST_CONTEXT_BLOCK}${GATE_OVERRIDES_CONTEXT_BLOCK}${TEST_EVIDENCE_CONTEXT_BLOCK}
+${REVIEWER_PROTOCOL_INSTRUCTIONS}
+${MEMORY_CONTEXT_BLOCK}
+  Verified reference files (exist in working tree -- check before citing):
+${REPO_REF_INDEX}
+  Diff (${LINES} changed lines):
+${DIFF_STAT_INDENTED}
+
+task:
+  1. Read your agent definition (${AGENT_PATH}). Follow its boot instructions
+     and internalize your specific review criteria and verdict scale.
+  2. Review the changed files strictly from the ${r} perspective only.
+     Do not attempt to cover other reviewer dimensions.
+  3. Write a structured findings block with:
+     - The complete mandatory reviewer_result_v1 coverage/finding JSON block
+     - Optionally one human-readable heading:
+       ## ${r} -- approve | advise | block-soft | block
+     - One-sentence rationale for your verdict
+
+  Write your complete review to ${_RETRY_OUTPUT}.
+
+output_format: |
+  ## ${r} -- {verdict}
+  \`\`\`reviewer_result_v1
+  {one JSON object satisfying the selected-reviewer protocol above}
+  \`\`\`
+
+  The JSON verdict is canonical. Do not emit an upper-case Verdict: marker.
+
+self_verify:
+  - cmd: "test -f ${_RETRY_OUTPUT}"
+
+acceptance:
+  - ${_RETRY_OUTPUT} exists with exactly one reviewer_result_v1 JSON block
+RETRY_RBRIEF_EOF
+
+          _RETRY_DISPATCH_CMD="$(dispatch_via "$EXECUTOR" "$_RETRY_BRIEF" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT" "$DISPATCH_ISOLATION" "$DISPATCH_EFFORT")" || exit 2
+          eval "$_RETRY_DISPATCH_CMD" > "$_RETRY_LOG" 2>&1 &
+          _RETRY_PIDS+=($!)
+          _RETRY_NAMES+=("$r")
+          _RETRY_OUTPUT_FILES+=("$_RETRY_OUTPUT")
+          say '  [retry] launched %s (pid %d)\n' "$r" "$!"
+        done
+
+        _RETRY_WATCHDOG_TIMEOUT="${_PM_DISPATCH_GATE_WATCHDOG_TIMEOUT:-$((TIMEOUT + 60))}"
+        (
+          command -p sleep "$_RETRY_WATCHDOG_TIMEOUT"
+          for _wpid in "${_RETRY_PIDS[@]}"; do
+            _kill_process_tree "$_wpid" TERM
+          done
+        ) &
+        _RETRY_WATCHDOG_PID=$!
+
+        _RETRY_FAILED_PIDS=()
+        for i in "${!_RETRY_PIDS[@]}"; do
+          _retry_wait_exit=0
+          wait "${_RETRY_PIDS[$i]}" || _retry_wait_exit=$?
+          if [[ "$_retry_wait_exit" -ne 0 ]]; then
+            _RETRY_FAILED_PIDS+=("${_RETRY_NAMES[$i]}")
+            _RETRY_POST_WAIT_HASHES+=("none")
+          else
+            _RETRY_POST_WAIT_HASHES+=("$(cat "${_RETRY_OUTPUT_FILES[$i]}" 2>/dev/null | $_HASH_CMD || echo 'missing')")
+          fi
+        done
+        kill "$_RETRY_WATCHDOG_PID" 2>/dev/null || true
+        wait "$_RETRY_WATCHDOG_PID" 2>/dev/null || true
+
+        _retry_artifact_check_args=()
+        for i in "${!_RETRY_OUTPUT_FILES[@]}"; do
+          _retry_artifact_check_args+=("${_RETRY_NAMES[$i]}" "${_RETRY_OUTPUT_FILES[$i]}" "${_RETRY_POST_WAIT_HASHES[$i]}")
+        done
+        mapfile -t _RETRY_TAMPERED < <(verify_reviewer_artifact_hashes "$_HASH_CMD" "${_retry_artifact_check_args[@]}")
+
+        # Re-verify the retry batch and fold recovered reviewers back into
+        # the main REVIEWER_OUTPUT_FILES/REVIEWER_VERDICTS bookkeeping so the
+        # rest of the pipeline (worktree integrity, synthesis) sees one
+        # consistent set. A reviewer that still fails -- even after retry --
+        # falls through to the same INCOMPLETE exit as before, unretried.
+        PROTOCOL_INVALID_OUTPUTS=()
+        for i in "${!_RETRY_OUTPUT_FILES[@]}"; do
+          r="${_RETRY_NAMES[$i]}"
+          rf="${_RETRY_OUTPUT_FILES[$i]}"
+          if [[ " ${_RETRY_FAILED_PIDS[*]:-} " == *" $r "* ]] || \
+             [[ " ${_RETRY_TAMPERED[*]:-} " == *" $r "* ]] || \
+             [[ ! -s "$rf" ]] || \
+             ! gate_reviewer_protocol_verify \
+               "$rf" "$r" "$SCOPE_MANIFEST_DIGEST" "$SCOPE_MANIFEST_PATH" \
+             || ! reviewer_verdict="$(_gate_reviewer_protocol_verdict_extract "$rf" "$r")"; then
+            PROTOCOL_INVALID_OUTPUTS+=("$r")
+            printf 'Error: retry still failed for %s\n' "$r" >&2
+            continue
+          fi
+          REVIEWER_VERDICTS+=("$reviewer_verdict")
+          for j in "${!REVIEWER_NAMES[@]}"; do
+            if [[ "${REVIEWER_NAMES[$j]}" == "$r" ]]; then
+              REVIEWER_OUTPUT_FILES[$j]="$rf"
+              # The cross-tamper check below compares REVIEWER_POST_WAIT_HASHES
+              # against a fresh re-hash of REVIEWER_OUTPUT_FILES; since that now
+              # points at the retry file, its baseline must move to the retry's
+              # own post-wait hash, or an untampered recovered reviewer would
+              # always appear "modified after completion" against the original
+              # (now-superseded) attempt's hash.
+              REVIEWER_POST_WAIT_HASHES[$j]="${_RETRY_POST_WAIT_HASHES[$i]}"
+              break
+            fi
+          done
+          say '  [retry] %s recovered on retry.\n' "$r"
+        done
+      fi
+    fi
+
     if [[ "${#PROTOCOL_INVALID_OUTPUTS[@]}" -gt 0 ]]; then
       printf 'Error: reviewer protocol INCOMPLETE for: %s\n' \
         "${PROTOCOL_INVALID_OUTPUTS[*]}" >&2

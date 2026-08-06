@@ -449,6 +449,14 @@ PARTIAL_EOF
         stub_verdict="${CODEX_GATE_STUB_VERDICT:-advise}"
         printf '## %s -- %s\nVerdict: %s. Stub output.\n' \
           "$reviewer_name" "$stub_verdict" "$stub_verdict" > "$output_path"
+        # CC-545: CODEX_GATE_STUB_PROTOCOL_MUTATION_ONLY_FIRST=1 simulates a
+        # reviewer that gets its citation right on pr-gate.sh's corrective
+        # retry -- a CC-545 retry brief is always named *-retry1-<reviewer>.md,
+        # so this only ever affects that second attempt, never the first.
+        if [[ -n "${CODEX_GATE_STUB_PROTOCOL_MUTATION_ONLY_FIRST:-}" \
+              && "$brief_file" == *-retry1-*.md ]]; then
+          CODEX_GATE_STUB_PROTOCOL_MUTATION=none
+        fi
         write_reviewer_protocol_stub \
           "$output_path" "$reviewer_name" "$stub_verdict"
         if [[ "${CODEX_GATE_STUB_DUPLICATE_HEADING:-}" == "1" ]]; then
@@ -9754,6 +9762,81 @@ test_sequential_reviewer_protocol_out_of_range_line_is_incomplete() {
   pass "$name"
 }
 
+# Behavior (CC-545): an evidence-reference-contract violation gets exactly
+# one corrective retry, and a reviewer whose retry resolves the citation
+# recovers -- the gate proceeds to synthesis rather than failing outright.
+# Steps: mutate critic's first attempt to cite an out-of-scope reference, but
+# let the CC-545 retry attempt (brief named *-retry1-critic.md) write a
+# clean document; assert the gate exits 0, a retry was logged, and synthesis
+# still ran.
+test_parallel_reviewer_protocol_evidence_contract_recovers_on_retry() {
+  local name="reviewer-protocol/evidence-contract-recovers-on-retry"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home="$TMP_ROOT/$name/home"
+  local repo="$TMP_ROOT/$name/repo" runner="$TMP_ROOT/$name/runner"
+  local out="$TMP_ROOT/$name/out" err="$TMP_ROOT/$name/err" code=0
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester
+  create_repo "$repo" docs
+  set +e
+  CODEX_GATE_STUB_PROTOCOL_MUTATION=out-of-scope-reference \
+    CODEX_GATE_STUB_PROTOCOL_MUTATION_ONLY_FIRST=1 \
+    CODEX_GATE_STUB_SYNTHESIS_FINAL=GO \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester --mode parallel
+  code=$?
+  set -e
+  [[ "$code" -eq 0 ]] || {
+    fail "$name" "gate did not recover after retry: code=$code err=$(cat "$err" 2>/dev/null)"
+    return
+  }
+  assert_file_contains "$name" "$err" \
+    "invalid evidence reference contract for critic" || return
+  assert_file_contains "$name" "$out" \
+    "retrying once with a corrective note" || return
+  assert_file_contains "$name" "$out" \
+    "critic recovered on retry" || return
+  assert_file_contains "$name" "$out" "[synthesis]" || return
+  pass "$name"
+}
+
+# Behavior (CC-545): the corrective retry is exactly one attempt -- a
+# reviewer that fails the evidence-reference contract on every attempt still
+# ends the gate as INCOMPLETE, not an infinite or repeated retry loop.
+# Steps: mutate critic's output on every attempt (no _ONLY_FIRST); assert the
+# gate still fails, a retry was attempted (visible in stdout), and synthesis
+# never ran.
+test_parallel_reviewer_protocol_evidence_contract_retry_still_fails() {
+  local name="reviewer-protocol/evidence-contract-retry-still-fails"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home="$TMP_ROOT/$name/home"
+  local repo="$TMP_ROOT/$name/repo" runner="$TMP_ROOT/$name/runner"
+  local out="$TMP_ROOT/$name/out" err="$TMP_ROOT/$name/err" code=0
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester
+  create_repo "$repo" docs
+  set +e
+  CODEX_GATE_STUB_PROTOCOL_MUTATION=out-of-scope-reference \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester --mode parallel
+  code=$?
+  set -e
+  [[ "$code" -ne 0 ]] || {
+    fail "$name" "gate unexpectedly recovered with no fix applied"
+    return
+  }
+  assert_file_contains "$name" "$out" \
+    "retrying once with a corrective note" || return
+  assert_file_contains "$name" "$err" \
+    "retry still failed for critic" || return
+  assert_file_contains "$name" "$err" \
+    "reviewer protocol INCOMPLETE for: critic" || return
+  assert_not_contains "$name" "$out" "[synthesis]" || return
+  pass "$name"
+}
+
 # Behavior: duplicate human presentation headings cannot invalidate a unique,
 # schema-complete JSON reviewer verdict.
 # Steps: duplicate each raw heading, run the parallel gate, then assert the
@@ -10011,6 +10094,8 @@ run_test test_reviewer_protocol_blocking_pre_existing_origin_is_diagnosed
 run_test test_reviewer_protocol_diagnostic_terminal_escapes_control_characters
 run_test test_parallel_reviewer_protocol_out_of_scope_reference_is_incomplete
 run_test test_sequential_reviewer_protocol_out_of_range_line_is_incomplete
+run_test test_parallel_reviewer_protocol_evidence_contract_recovers_on_retry
+run_test test_parallel_reviewer_protocol_evidence_contract_retry_still_fails
 run_test test_reviewer_protocol_duplicate_heading_uses_json_verdict
 run_test test_reviewer_protocol_blocker_completes_remaining_surfaces
 run_test test_synthesis_protocol_preserves_grouping_disagreement_and_lower_severity

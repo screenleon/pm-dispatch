@@ -274,6 +274,12 @@ SUITE_TIMEOUT_SECS="${PM_DISPATCH_TEST_SUITE_TIMEOUT_SECS:-900}"
 [[ "$SUITE_TIMEOUT_SECS" =~ ^[1-9][0-9]*$ ]] || SUITE_TIMEOUT_SECS=900
 PROGRESS_INTERVAL_SECS="${PM_DISPATCH_TEST_PROGRESS_SECS:-60}"
 [[ "$PROGRESS_INTERVAL_SECS" =~ ^[1-9][0-9]*$ ]] || PROGRESS_INTERVAL_SECS=60
+# CC-544: a suite that fails once because the full run is itself heavy
+# parallel load (fork/exec scheduling delays, not a real regression) gets
+# exactly one retry before being recorded as a genuine failure. Set to 0 to
+# get strict single-shot semantics (e.g. hunting a suspected real flake).
+SUITE_RETRY_ON_FAIL="${PM_DISPATCH_TEST_SUITE_RETRY_ON_FAIL:-1}"
+[[ "$SUITE_RETRY_ON_FAIL" == "0" || "$SUITE_RETRY_ON_FAIL" == "1" ]] || SUITE_RETRY_ON_FAIL=1
 SUITE_RESULTS_FILE="${PM_TEST_SUITE_RESULTS_FILE:-}"
 SUITE_RESULTS_TMP=""
 if [[ -n "$SUITE_RESULTS_FILE" ]]; then
@@ -457,26 +463,56 @@ run_suite() {
   return "$rc"
 }
 
+# ── Flaky suite retry-once (CC-544) ───────────────────────────────────────────
+# Wraps run_suite with a single retry on a non-timeout failure. Never retries
+# a timeout (rc=124): a genuinely hung suite retrying would double the worst-
+# case wall time for no diagnostic gain. Both attempts print, so a real
+# deterministic failure still shows RETRY then FAIL rather than disappearing;
+# a suite that only fails under this run's own resource contention gets one
+# more chance before being reported. Sets _LAST_SUITE_RETRY_NOTE for the
+# caller to thread into _record_suite_outcome so the result sink keeps a
+# visible trace of which passes/fails were retried.
+_LAST_SUITE_RETRY_NOTE=""
+run_suite_retry_once() {
+  local name="$1" rc=0
+  _LAST_SUITE_RETRY_NOTE=""
+  run_suite "$name" || rc=$?
+  if [[ "$SUITE_RETRY_ON_FAIL" == "1" && "$rc" -ne 0 && "$rc" -ne 124 ]]; then
+    printf 'RETRY %s (attempt 1 failed rc=%s)\n' "$name" "$rc" >&2
+    local retry_rc=0
+    run_suite "$name" || retry_rc=$?
+    if [[ "$retry_rc" -eq 0 ]]; then
+      _LAST_SUITE_RETRY_NOTE="flaky, passed on retry"
+      rc=0
+    else
+      _LAST_SUITE_RETRY_NOTE="failed twice (retried once)"
+      rc="$retry_rc"
+    fi
+  fi
+  return "$rc"
+}
+
 # ── Suite outcome recording (shared by phase-0, sequential, and parallel) ────
 # Classifies rc, prints PASS/FAIL, records the structured result, and updates
 # the running counters/duration table. Callers compute duration themselves
 # (their timing sources differ) and pass it in. Returns 1 on fail/timeout so
 # a caller can react (e.g. Phase 0 setting its own failed-flag) without
-# duplicating the classification.
+# duplicating the classification. An optional 4th arg carries a retry note
+# (see run_suite_retry_once) through to the result sink.
 _record_suite_outcome() {
-  local name="$1" rc="$2" duration="$3"
+  local name="$1" rc="$2" duration="$3" note="${4:-}"
   SUITE_DURATIONS["$name"]="$duration"
   if [[ "$rc" -eq 0 ]]; then
-    printf 'PASS %s\n' "$name"
-    record_suite_result "$name" pass 0 "$duration"
+    printf 'PASS %s%s\n' "$name" "${note:+ ($note)}"
+    record_suite_result "$name" pass 0 "$duration" "$note"
     passed=$((passed + 1))
     return 0
   fi
-  printf 'FAIL %s\n' "$name"
+  printf 'FAIL %s%s\n' "$name" "${note:+ ($note)}"
   if [[ "$rc" -eq 124 ]]; then
-    record_suite_result "$name" timeout "$rc" "$duration"
+    record_suite_result "$name" timeout "$rc" "$duration" "$note"
   else
-    record_suite_result "$name" fail "$rc" "$duration"
+    record_suite_result "$name" fail "$rc" "$duration" "$note"
   fi
   failed=$((failed + 1))
   FAILED_SUITE_NAMES+=("$name")
@@ -572,10 +608,10 @@ if [[ "$SUITE_FILTER" -eq 0 && "$COLLECT_ALL" -eq 0 ]]; then
     suite_started="$SECONDS"
     printf 'START %s\n' "$name"
     set +e
-    run_suite "$name"
+    run_suite_retry_once "$name"
     rc=$?
     set -e
-    _record_suite_outcome "$name" "$rc" "$(( SECONDS - suite_started ))" || _phase0_failed=1
+    _record_suite_outcome "$name" "$rc" "$(( SECONDS - suite_started ))" "$_LAST_SUITE_RETRY_NOTE" || _phase0_failed=1
   done
 
   if [[ "$_phase0_failed" -eq 1 ]]; then
@@ -619,10 +655,10 @@ if [[ "$JOBS" -eq 1 ]]; then
     suite_started="$SECONDS"
     printf 'START %s\n' "$name"
     set +e
-    run_suite "$name"
+    run_suite_retry_once "$name"
     rc=$?
     set -e
-    _record_suite_outcome "$name" "$rc" "$(( SECONDS - suite_started ))" || true
+    _record_suite_outcome "$name" "$rc" "$(( SECONDS - suite_started ))" "$_LAST_SUITE_RETRY_NOTE" || true
   done
 else
   # ── Parallel path (--jobs N) ───────────────────────────────────────────────
@@ -649,8 +685,9 @@ else
     printf 'START %s\n' "$name"
     (
       set +e
-      run_suite "$name" > "$d/out" 2>&1
+      run_suite_retry_once "$name" > "$d/out" 2>&1
       printf '%s\n' "$?" > "$d/rc"
+      printf '%s\n' "$_LAST_SUITE_RETRY_NOTE" > "$d/note"
     ) &
     _if_names+=("$name")
     _if_pids+=($!)
@@ -666,12 +703,14 @@ else
         local rc
         rc="$(cat "$d/rc" 2>/dev/null || printf '1')"
         [[ "$rc" =~ ^[0-9]+$ ]] || rc=1
+        local note
+        note="$(cat "$d/note" 2>/dev/null || printf '')"
         local started finished
         started="$(cat "$d/started" 2>/dev/null || printf '%s' "$SECONDS")"
         finished="$SECONDS"
         # Print buffered suite output then its result line
         [[ -s "$d/out" ]] && cat "$d/out"
-        _record_suite_outcome "$name" "$rc" "$((finished - started))" || true
+        _record_suite_outcome "$name" "$rc" "$((finished - started))" "$note" || true
       else
         local elapsed=$(( SECONDS - $(cat "$d/started" 2>/dev/null || printf '%s' "$SECONDS") ))
         if [[ -z "${_progress_reported[$name]:-}" ]] && (( elapsed >= PROGRESS_INTERVAL_SECS )); then

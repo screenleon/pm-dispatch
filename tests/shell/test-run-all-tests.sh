@@ -635,6 +635,116 @@ test_phase0_suite_filter_bypasses_precheck() {
   fi
 }
 
+write_flaky_stub() {
+  # A stub that fails its first N invocations (via a counter file) then
+  # passes. Lets a test simulate "flaked under load once, would have passed
+  # on its own" without any real timing dependency.
+  local repo="$1" sname="$2" fail_times="$3" counter="$4" path
+  path="$repo/$(suite_path "$sname")"
+  mkdir -p "$(dirname "$path")"
+  cat > "$path" <<STUB
+#!/bin/sh
+c=\$(cat "$counter" 2>/dev/null || echo 0)
+c=\$((c + 1))
+echo "\$c" > "$counter"
+if [ "\$c" -le $fail_times ]; then exit 1; fi
+exit 0
+STUB
+  chmod +x "$path"
+}
+
+test_suite_retry_once_recovers_flaky_suite() {
+  local name="suite-retry-once-recovers-flaky-suite"
+  # Behavior (CC-544): a suite that fails on its first attempt but passes on
+  # an immediate retry is recorded as PASS with a "flaky, passed on retry"
+  # note, not a hard FAIL -- and the run's overall exit is 0.
+  # Steps: stub lint-agents to fail exactly once then pass; assert both a
+  # RETRY line and an eventual PASS-with-note line appear, invocation count
+  # is exactly 2, and overall exit is 0.
+  local repo="$TMP_ROOT/$name" path out status=0 counter
+  make_fixture_repo "$repo"
+  write_pass_stubs "$repo"
+  counter="$TMP_ROOT/$name-counter"
+  write_flaky_stub "$repo" lint-agents 1 "$counter"
+  path="$(make_path_with_codex "$repo/bin")"
+  out=$(PATH="$path" run_aggregator "$repo" 2>&1) || status=$?
+  if [[ "$status" -eq 0 &&
+        "$out" == *"RETRY lint-agents (attempt 1 failed rc=1)"* &&
+        "$out" == *"PASS lint-agents (flaky, passed on retry)"* &&
+        "$(cat "$counter")" == "2" ]]; then
+    pass_case "$name"
+  else
+    fail_case "$name" "status=$status counter=$(cat "$counter" 2>/dev/null) out=$out"
+  fi
+}
+
+test_suite_retry_once_still_fails_after_retry() {
+  local name="suite-retry-once-still-fails-after-retry"
+  # Behavior (CC-544): a suite that fails deterministically is retried
+  # exactly once (not looped), then reported as a genuine FAIL with a
+  # "failed twice (retried once)" note -- retry-once must not mask a real
+  # regression, only give it one extra chance.
+  local repo="$TMP_ROOT/$name" path out status=0 counter
+  make_fixture_repo "$repo"
+  write_pass_stubs "$repo"
+  counter="$TMP_ROOT/$name-counter"
+  write_flaky_stub "$repo" lint-agents 99 "$counter"
+  path="$(make_path_with_codex "$repo/bin")"
+  out=$(PATH="$path" run_aggregator "$repo" 2>&1) || status=$?
+  if [[ "$status" -eq 1 &&
+        "$out" == *"RETRY lint-agents (attempt 1 failed rc=1)"* &&
+        "$out" == *"FAIL lint-agents (failed twice (retried once))"* &&
+        "$(cat "$counter")" == "2" ]]; then
+    pass_case "$name"
+  else
+    fail_case "$name" "status=$status counter=$(cat "$counter" 2>/dev/null) out=$out"
+  fi
+}
+
+test_suite_retry_disabled_via_env() {
+  local name="suite-retry-disabled-via-env"
+  # Behavior (CC-544): PM_DISPATCH_TEST_SUITE_RETRY_ON_FAIL=0 restores strict
+  # single-shot semantics -- a suite that would have recovered on retry still
+  # fails immediately, with no RETRY line and exactly one invocation.
+  local repo="$TMP_ROOT/$name" path out status=0 counter
+  make_fixture_repo "$repo"
+  write_pass_stubs "$repo"
+  counter="$TMP_ROOT/$name-counter"
+  write_flaky_stub "$repo" lint-agents 1 "$counter"
+  path="$(make_path_with_codex "$repo/bin")"
+  out=$(PM_DISPATCH_TEST_SUITE_RETRY_ON_FAIL=0 PATH="$path" run_aggregator "$repo" 2>&1) || status=$?
+  if [[ "$status" -eq 1 &&
+        "$out" != *"RETRY lint-agents"* &&
+        "$out" == *"FAIL lint-agents"* &&
+        "$(cat "$counter")" == "1" ]]; then
+    pass_case "$name"
+  else
+    fail_case "$name" "status=$status counter=$(cat "$counter" 2>/dev/null) out=$out"
+  fi
+}
+
+test_suite_retry_once_recovers_in_parallel_mode() {
+  local name="suite-retry-once-recovers-in-parallel-mode"
+  # Behavior (CC-544): the retry-once note survives the parallel dispatch
+  # path too (subshell + result files), not just the sequential/Phase 0
+  # paths -- this is where the real gate preflight failures were observed.
+  local repo="$TMP_ROOT/$name" path out status=0 counter
+  make_fixture_repo "$repo"
+  write_pass_stubs "$repo"
+  counter="$TMP_ROOT/$name-counter"
+  write_flaky_stub "$repo" test-pr-gate-shard-1 1 "$counter"
+  path="$(make_path_with_codex "$repo/bin")"
+  out=$(PATH="$path" run_aggregator "$repo" --jobs 2 2>&1) || status=$?
+  if [[ "$status" -eq 0 &&
+        "$out" == *"RETRY test-pr-gate-shard-1 (attempt 1 failed rc=1)"* &&
+        "$out" == *"PASS test-pr-gate-shard-1 (flaky, passed on retry)"* &&
+        "$(cat "$counter")" == "2" ]]; then
+    pass_case "$name"
+  else
+    fail_case "$name" "status=$status counter=$(cat "$counter" 2>/dev/null) out=$out"
+  fi
+}
+
 test_skip_missing_arg() {
   # Behavior: --skip without a suite name argument exits 2 with an error message.
   # Steps: invoke run-all-tests.sh with --skip as the last arg; assert exit 2 and message.
@@ -1359,6 +1469,10 @@ test_fail_on_suite_error
 test_phase0_failure_skips_phase1
 test_collect_all_bypasses_phase0_shortcircuit
 test_phase0_suite_filter_bypasses_precheck
+test_suite_retry_once_recovers_flaky_suite
+test_suite_retry_once_still_fails_after_retry
+test_suite_retry_disabled_via_env
+test_suite_retry_once_recovers_in_parallel_mode
 test_skip_missing_arg
 test_unknown_flag
 test_skip_empty_arg
