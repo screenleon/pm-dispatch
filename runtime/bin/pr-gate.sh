@@ -7095,14 +7095,14 @@ RETRY_RBRIEF_EOF
           REVIEWER_VERDICTS+=("$reviewer_verdict")
           for j in "${!REVIEWER_NAMES[@]}"; do
             if [[ "${REVIEWER_NAMES[$j]}" == "$r" ]]; then
-              REVIEWER_OUTPUT_FILES[$j]="$rf"
+              REVIEWER_OUTPUT_FILES[j]="$rf"
               # The cross-tamper check below compares REVIEWER_POST_WAIT_HASHES
               # against a fresh re-hash of REVIEWER_OUTPUT_FILES; since that now
               # points at the retry file, its baseline must move to the retry's
               # own post-wait hash, or an untampered recovered reviewer would
               # always appear "modified after completion" against the original
               # (now-superseded) attempt's hash.
-              REVIEWER_POST_WAIT_HASHES[$j]="${_RETRY_POST_WAIT_HASHES[$i]}"
+              REVIEWER_POST_WAIT_HASHES[j]="${_RETRY_POST_WAIT_HASHES[$i]}"
               break
             fi
           done
