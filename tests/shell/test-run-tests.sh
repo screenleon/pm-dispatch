@@ -405,6 +405,18 @@ case_full_result_verifies_same_tree() {
   fi
 }
 
+case_verify_full_rejects_collect_all() {
+  local name=verify-full-rejects-collect-all repo out status=0 artifact
+  repo="$(make_fixture "$name")"
+  artifact="$repo/.pm-dispatch/test-results/full.json"
+  out=$("$repo/tests/bin/run-tests.sh" --verify-full "$artifact" --collect-all 2>&1) || status=$?
+  if [[ "$status" -eq 2 && "$out" == *"cannot be combined with planning or execution flags"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out"
+  fi
+}
+
 case_full_result_rejects_changed_tree() {
   local name=full-result-rejects-changed-tree repo out status=0 args artifact
   args="$TMP_ROOT/$name.args"
@@ -505,6 +517,7 @@ case_unknown_path_fails_without_test_evidence
 case_selected_failure_propagates
 case_explicit_all_delegates_without_selector
 case_full_result_verifies_same_tree
+case_verify_full_rejects_collect_all
 case_full_result_rejects_changed_tree
 case_tree_change_during_run_marks_stale
 case_iteration_result_cannot_verify_as_full

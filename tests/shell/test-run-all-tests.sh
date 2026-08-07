@@ -556,6 +556,85 @@ test_fail_on_suite_error() {
   fi
 }
 
+test_phase0_failure_skips_phase1() {
+  local name="phase0-failure-skips-phase1"
+  # Behavior: a Phase 0 (structural) suite failing skips every Phase 1 suite
+  # instead of running the full registry, and reports FAIL fast. It must also
+  # stop the Phase 0 precheck itself -- CC-543's fail-fast contract promises
+  # an immediate stop, so a later Phase 0 suite (lint-script-domain-inventory)
+  # must never start either, only be recorded as skipped.
+  # Steps: fail the first Phase 0 suite (lint-agents); assert it's reported
+  # FAIL, the next Phase 0 suite (lint-script-domain-inventory) and a Phase 1
+  # suite (test-pr-gate-shard-1) never start but are both recorded as skipped
+  # with a "phase 0 failed" reason, overall exit is 1, and the run finishes
+  # well under the suite-timeout ceiling (stubs are instant).
+  local repo="$TMP_ROOT/$name" path out status=0 start_s end_s elapsed
+  make_fixture_repo "$repo"
+  write_pass_stubs "$repo"
+  write_suite_stub "$repo" lint-agents 1
+  path="$(make_path_with_codex "$repo/bin")"
+  start_s="$SECONDS"
+  out=$(PATH="$path" run_aggregator "$repo" 2>&1) || status=$?
+  end_s="$SECONDS"
+  elapsed=$((end_s - start_s))
+  if [[ "$status" -eq 1 &&
+        "$out" == *"FAIL lint-agents"* &&
+        "$out" != *"START lint-script-domain-inventory"* &&
+        "$out" == *"SKIP lint-script-domain-inventory (phase 0 failed)"* &&
+        "$out" != *"START test-pr-gate-shard-1"* &&
+        "$out" == *"SKIP test-pr-gate-shard-1 (phase 0 failed)"* &&
+        "$elapsed" -lt 15 ]]; then
+    pass_case "$name"
+  else
+    fail_case "$name" "status=$status elapsed=${elapsed}s out=$out"
+  fi
+}
+
+test_collect_all_bypasses_phase0_shortcircuit() {
+  local name="collect-all-bypasses-phase0-shortcircuit"
+  # Behavior: --collect-all disables the Phase 0 short-circuit, so a failing
+  # Phase 0 suite no longer prevents Phase 1 suites from launching.
+  # Steps: fail lint-agents as before, but pass --collect-all; assert
+  # test-pr-gate-shard-1 does START (and passes, since it's stubbed green),
+  # while overall exit is still 1 (lint-agents itself still failed).
+  local repo="$TMP_ROOT/$name" path out status=0
+  make_fixture_repo "$repo"
+  write_pass_stubs "$repo"
+  write_suite_stub "$repo" lint-agents 1
+  path="$(make_path_with_codex "$repo/bin")"
+  out=$(PATH="$path" run_aggregator "$repo" --collect-all 2>&1) || status=$?
+  if [[ "$status" -eq 1 &&
+        "$out" == *"FAIL lint-agents"* &&
+        "$out" == *"START test-pr-gate-shard-1"* &&
+        "$out" == *"PASS test-pr-gate-shard-1"* ]]; then
+    pass_case "$name"
+  else
+    fail_case "$name" "status=$status out=$out"
+  fi
+}
+
+test_phase0_suite_filter_bypasses_precheck() {
+  local name="phase0-suite-filter-bypasses-precheck"
+  # Behavior: an explicit --suite selection runs exactly that suite with no
+  # Phase 0 special-casing, even when the selected suite itself fails.
+  # Steps: select only lint-agents (stubbed to fail) directly via the suite
+  # runner; assert it fails standalone with no other suite ever starting.
+  local repo="$TMP_ROOT/$name" path out status=0
+  make_fixture_repo "$repo"
+  write_pass_stubs "$repo"
+  write_suite_stub "$repo" lint-agents 1
+  path="$(make_path_with_codex "$repo/bin")"
+  out=$(PATH="$path" bash "$repo/tests/lib/test-suite-runner.sh" --suite lint-agents 2>&1) || status=$?
+  if [[ "$status" -eq 1 &&
+        "$out" == *"FAIL lint-agents"* &&
+        "$out" == *"0 passed, 1 failed, 0 skipped"* &&
+        "$out" != *"START lint-scripts"* ]]; then
+    pass_case "$name"
+  else
+    fail_case "$name" "status=$status out=$out"
+  fi
+}
+
 test_skip_missing_arg() {
   # Behavior: --skip without a suite name argument exits 2 with an error message.
   # Steps: invoke run-all-tests.sh with --skip as the last arg; assert exit 2 and message.
@@ -939,23 +1018,23 @@ test_parallel_progress_reports_slow_suite() {
   make_fixture_repo "$repo"
   write_pass_stubs "$repo"
   local marker="$TMP_ROOT/$name-markers"; mkdir -p "$marker"
-  write_gated_stub "$repo" lint-agents "$marker"
+  write_gated_stub "$repo" lint-scripts "$marker"
   path="$(make_path_with_codex "$repo/bin")"
   local logf="$TMP_ROOT/$name.log"
   ( PM_DISPATCH_TEST_PROGRESS_SECS=1 PATH="$path" run_aggregator "$repo" --jobs 2 > "$logf" 2>&1; echo $? > "$marker/rc" ) &
   local agg_pid=$!
 
-  if ! wait_for_file "$marker/started-lint-agents" 300; then
+  if ! wait_for_file "$marker/started-lint-scripts" 300; then
     fail_case "$name" "blocked suite never started"
-    touch "$marker/release-lint-agents"
+    touch "$marker/release-lint-scripts"
     wait "$agg_pid" 2>/dev/null; return
   fi
-  if ! wait_for_log_pattern "$logf" 'RUNNING lint-agents (.*s)' 300; then
+  if ! wait_for_log_pattern "$logf" 'RUNNING lint-scripts (.*s)' 300; then
     fail_case "$name" "missing progress line: $(cat "$logf" 2>/dev/null)"
-    touch "$marker/release-lint-agents"
+    touch "$marker/release-lint-scripts"
     wait "$agg_pid" 2>/dev/null; return
   fi
-  touch "$marker/release-lint-agents"
+  touch "$marker/release-lint-scripts"
   wait "$agg_pid" 2>/dev/null
   status="$(cat "$marker/rc" 2>/dev/null || echo 1)"
   if [[ "$status" -eq 0 ]]; then
@@ -1034,34 +1113,34 @@ test_jobs_concurrency_and_max_inflight() {
   make_fixture_repo "$repo"
   write_pass_stubs "$repo"
   local marker="$TMP_ROOT/$name-markers"; mkdir -p "$marker"
-  write_gated_stub "$repo" lint-agents "$marker"
   write_gated_stub "$repo" lint-scripts "$marker"
   write_gated_stub "$repo" test-guards "$marker"
+  write_gated_stub "$repo" test-guard-framework "$marker"
   path="$(make_path_with_codex "$repo/bin")"
   local logf="$TMP_ROOT/$name.log"
   ( PATH="$path" run_aggregator "$repo" --jobs 2 > "$logf" 2>&1; echo $? > "$marker/rc" ) &
   local agg_pid=$!
 
-  if ! wait_for_file "$marker/started-lint-agents" 300 || \
-     ! wait_for_file "$marker/started-lint-scripts" 300; then
+  if ! wait_for_file "$marker/started-lint-scripts" 300 || \
+     ! wait_for_file "$marker/started-test-guards" 300; then
     fail_case "$name" "two suites did not start concurrently (parallel path not taken)"
-    touch "$marker/release-lint-agents" "$marker/release-lint-scripts" "$marker/release-test-guards"
+    touch "$marker/release-lint-scripts" "$marker/release-test-guards" "$marker/release-test-guard-framework"
     wait "$agg_pid" 2>/dev/null; return
   fi
   # Both slots occupied by blocked stubs -> the third suite must not have launched.
-  if [[ -e "$marker/started-test-guards" ]]; then
+  if [[ -e "$marker/started-test-guard-framework" ]]; then
     fail_case "$name" "third suite started while 2 slots busy (max-JOBS not enforced)"
-    touch "$marker/release-lint-agents" "$marker/release-lint-scripts" "$marker/release-test-guards"
+    touch "$marker/release-lint-scripts" "$marker/release-test-guards" "$marker/release-test-guard-framework"
     wait "$agg_pid" 2>/dev/null; return
   fi
   # Free one slot -> the held suite should now launch.
-  touch "$marker/release-lint-agents"
-  if ! wait_for_file "$marker/started-test-guards" 300; then
+  touch "$marker/release-lint-scripts"
+  if ! wait_for_file "$marker/started-test-guard-framework" 300; then
     fail_case "$name" "third suite never launched after a slot freed (drain broken)"
-    touch "$marker/release-lint-scripts" "$marker/release-test-guards"
+    touch "$marker/release-test-guards" "$marker/release-test-guard-framework"
     wait "$agg_pid" 2>/dev/null; return
   fi
-  touch "$marker/release-lint-scripts" "$marker/release-test-guards"
+  touch "$marker/release-test-guards" "$marker/release-test-guard-framework"
   wait "$agg_pid" 2>/dev/null
   status="$(cat "$marker/rc" 2>/dev/null || echo 1)"
   local out; out="$(cat "$logf" 2>/dev/null)"
@@ -1130,31 +1209,31 @@ test_jobs_default_uses_detected_nproc() {
   make_fixture_repo "$repo"
   write_pass_stubs "$repo"
   local marker="$TMP_ROOT/$name-markers"; mkdir -p "$marker"
-  write_gated_stub "$repo" lint-agents "$marker"
   write_gated_stub "$repo" lint-scripts "$marker"
   write_gated_stub "$repo" test-guards "$marker"
   write_gated_stub "$repo" test-guard-framework "$marker"
+  write_gated_stub "$repo" test-migrate "$marker"
   path="$(make_path_codex_nproc_stub "$repo/bin" 'echo 3')"
   local logf="$TMP_ROOT/$name.log"
   ( PATH="$path" run_aggregator "$repo" > "$logf" 2>&1; echo $? > "$marker/rc" ) &
   local agg_pid=$!
 
   _release_all_gated() {
-    touch "$marker/release-lint-agents" "$marker/release-lint-scripts" \
-          "$marker/release-test-guards" "$marker/release-test-guard-framework"
+    touch "$marker/release-lint-scripts" "$marker/release-test-guards" \
+          "$marker/release-test-guard-framework" "$marker/release-test-migrate"
   }
-  if ! wait_for_file "$marker/started-lint-agents" 300 || \
-     ! wait_for_file "$marker/started-lint-scripts" 300 || \
-     ! wait_for_file "$marker/started-test-guards" 300; then
+  if ! wait_for_file "$marker/started-lint-scripts" 300 || \
+     ! wait_for_file "$marker/started-test-guards" 300 || \
+     ! wait_for_file "$marker/started-test-guard-framework" 300; then
     fail_case "$name" "fewer than 3 suites started; default did not honor nproc=3"
     _release_all_gated; wait "$agg_pid" 2>/dev/null; return
   fi
-  if [[ -e "$marker/started-test-guard-framework" ]]; then
+  if [[ -e "$marker/started-test-migrate" ]]; then
     fail_case "$name" "4th suite started; default exceeded detected nproc=3"
     _release_all_gated; wait "$agg_pid" 2>/dev/null; return
   fi
-  touch "$marker/release-lint-agents"
-  if ! wait_for_file "$marker/started-test-guard-framework" 300; then
+  touch "$marker/release-lint-scripts"
+  if ! wait_for_file "$marker/started-test-migrate" 300; then
     fail_case "$name" "4th suite never launched after a slot freed"
     _release_all_gated; wait "$agg_pid" 2>/dev/null; return
   fi
@@ -1179,34 +1258,34 @@ test_jobs_default_caps_high_nproc() {
   make_fixture_repo "$repo"
   write_pass_stubs "$repo"
   local marker="$TMP_ROOT/$name-markers"; mkdir -p "$marker"
-  write_gated_stub "$repo" lint-agents "$marker"
   write_gated_stub "$repo" lint-scripts "$marker"
   write_gated_stub "$repo" test-guards "$marker"
   write_gated_stub "$repo" test-guard-framework "$marker"
   write_gated_stub "$repo" test-migrate "$marker"
+  write_gated_stub "$repo" test-migrate-to-events "$marker"
   path="$(make_path_codex_nproc_stub "$repo/bin" 'echo 32')"
   local logf="$TMP_ROOT/$name.log"
   ( PATH="$path" run_aggregator "$repo" > "$logf" 2>&1; echo $? > "$marker/rc" ) &
   local agg_pid=$!
 
   _release_all_gated() {
-    touch "$marker/release-lint-agents" "$marker/release-lint-scripts" \
-          "$marker/release-test-guards" "$marker/release-test-guard-framework" \
-          "$marker/release-test-migrate"
+    touch "$marker/release-lint-scripts" "$marker/release-test-guards" \
+          "$marker/release-test-guard-framework" "$marker/release-test-migrate" \
+          "$marker/release-test-migrate-to-events"
   }
-  if ! wait_for_file "$marker/started-lint-agents" 300 || \
-     ! wait_for_file "$marker/started-lint-scripts" 300 || \
+  if ! wait_for_file "$marker/started-lint-scripts" 300 || \
      ! wait_for_file "$marker/started-test-guards" 300 || \
-     ! wait_for_file "$marker/started-test-guard-framework" 300; then
+     ! wait_for_file "$marker/started-test-guard-framework" 300 || \
+     ! wait_for_file "$marker/started-test-migrate" 300; then
     fail_case "$name" "fewer than 4 suites started; default is no longer parallel"
     _release_all_gated; wait "$agg_pid" 2>/dev/null; return
   fi
-  if [[ -e "$marker/started-test-migrate" ]]; then
+  if [[ -e "$marker/started-test-migrate-to-events" ]]; then
     fail_case "$name" "5th suite started; default exceeded high-nproc safety cap of 4"
     _release_all_gated; wait "$agg_pid" 2>/dev/null; return
   fi
-  touch "$marker/release-lint-agents"
-  if ! wait_for_file "$marker/started-test-migrate" 300; then
+  touch "$marker/release-lint-scripts"
+  if ! wait_for_file "$marker/started-test-migrate-to-events" 300; then
     fail_case "$name" "5th suite never launched after a capped slot freed"
     _release_all_gated; wait "$agg_pid" 2>/dev/null; return
   fi
@@ -1277,6 +1356,9 @@ test_skip_known_suite
 test_suite_not_found_skip
 test_codex_missing_skips_codex_dispatch
 test_fail_on_suite_error
+test_phase0_failure_skips_phase1
+test_collect_all_bypasses_phase0_shortcircuit
+test_phase0_suite_filter_bypasses_precheck
 test_skip_missing_arg
 test_unknown_flag
 test_skip_empty_arg

@@ -106,6 +106,13 @@ done
 reviewer_name="$(awk '$1 == "Reviewer:" { print $2; exit }' "$brief_file")"
 : "${reviewer_name:=stub-reviewer}"
 
+# CC-541: capture whatever QA_RULES_DIR value (if any) this dispatch inherited,
+# so tests can assert pr-gate.sh's host-side resolution reached the reviewer
+# subprocess env without needing a real codex model to interpret it.
+if [[ -n "${CODEX_GATE_CAPTURE_QA_RULES_DIR:-}" && "$brief_file" != *-synthesis.md ]]; then
+  printf '%s\n' "${QA_RULES_DIR:-<unset>}" > "$CODEX_GATE_CAPTURE_QA_RULES_DIR"
+fi
+
 if [[ -n "${CODEX_GATE_CAPTURE_SCOPE_DIR:-}" ]]; then
   mkdir -p "$CODEX_GATE_CAPTURE_SCOPE_DIR"
   capture_name="$reviewer_name"
@@ -278,6 +285,13 @@ write_frontmatter_stub_gate_result() {
     final_line="**Final: ${final_verdict}**"
   fi
 
+  # Regression seam (CC-541): lets a test substitute the hardcoded
+  # "## stub-reviewer -- advise" section below with a specific reviewer
+  # heading/rationale, so synthesis-stage output can be asserted on without
+  # a live model authoring it.
+  local reviewer_section="${CODEX_GATE_STUB_SYNTHESIS_REVIEWER_SECTION:-## stub-reviewer -- advise
+- stub finding}"
+
   cat > "$output_path" << STUB_GATE_EOF
 ${frontmatter_opening}
 gate_result_version: ${staging_version}
@@ -303,8 +317,7 @@ escalation:
 **Reviewers**: stub
 **Not reviewed**: none
 
-## stub-reviewer -- advise
-- stub finding
+${reviewer_section}
 
 ## Cross-Reviewer Overlaps
 none
@@ -436,6 +449,14 @@ PARTIAL_EOF
         stub_verdict="${CODEX_GATE_STUB_VERDICT:-advise}"
         printf '## %s -- %s\nVerdict: %s. Stub output.\n' \
           "$reviewer_name" "$stub_verdict" "$stub_verdict" > "$output_path"
+        # CC-545: CODEX_GATE_STUB_PROTOCOL_MUTATION_ONLY_FIRST=1 simulates a
+        # reviewer that gets its citation right on pr-gate.sh's corrective
+        # retry -- a CC-545 retry brief is always named *-retry1-<reviewer>.md,
+        # so this only ever affects that second attempt, never the first.
+        if [[ -n "${CODEX_GATE_STUB_PROTOCOL_MUTATION_ONLY_FIRST:-}" \
+              && "$brief_file" == *-retry1-*.md ]]; then
+          CODEX_GATE_STUB_PROTOCOL_MUTATION=none
+        fi
         write_reviewer_protocol_stub \
           "$output_path" "$reviewer_name" "$stub_verdict"
         if [[ "${CODEX_GATE_STUB_DUPLICATE_HEADING:-}" == "1" ]]; then
@@ -595,10 +616,12 @@ run_gate() {
   set +e
   if command -v timeout >/dev/null 2>&1; then
     timeout --kill-after=5s "${case_timeout}s" \
-      env HOME="$home" PATH="$runner/bin:$PATH" \
+      env -u QA_RULES_DIR -u PM_DISPATCH_QA_RULES_DIR_HOST_CONFIRMED \
+      HOME="$home" PATH="$runner/bin:$PATH" \
       "$runner/pr-gate.sh" --cd "$repo" "$@" > "$out" 2> "$err"
   else
-    HOME="$home" PATH="$runner/bin:$PATH" \
+    env -u QA_RULES_DIR -u PM_DISPATCH_QA_RULES_DIR_HOST_CONFIRMED \
+      HOME="$home" PATH="$runner/bin:$PATH" \
       "$runner/pr-gate.sh" --cd "$repo" "$@" > "$out" 2> "$err"
   fi
   local code=$?
@@ -637,6 +660,101 @@ test_run_gate_case_watchdog_bounds_stalled_fixture() {
     return
   }
   assert_no_process_matching "$name" "sleep $marker" || return
+  pass "$name"
+}
+
+# Behavior: (CC-541) when a sibling qa-testing-rules/AGENT.md exists next to
+# the repo on the host, pr-gate.sh resolves it and exports QA_RULES_DIR into
+# the reviewer dispatch environment -- so a codex-dispatched qa-tester's own
+# "if QA_RULES_DIR is set, use it directly" boot logic can find it, instead
+# of the reviewer subprocess having to guess from an unset PM_DISPATCH_REPO.
+# Steps: create a sibling qa-testing-rules/AGENT.md next to the repo; run the
+# gate with a capture hook; assert the reviewer dispatch env carried the
+# resolved absolute path.
+test_qa_rules_dir_resolved_and_exported() {
+  local name="qa-rules-dir-resolved-and-exported"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester
+  create_repo "$repo" docs
+  mkdir -p "$dir/qa-testing-rules"
+  printf '# AGENT.md fixture\n' > "$dir/qa-testing-rules/AGENT.md"
+  local captured="$dir/qa-rules-dir-captured"
+  set +e
+  CODEX_GATE_CAPTURE_QA_RULES_DIR="$captured" \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester --mode sequential
+  set -e
+  assert_file_contains "$name" "$captured" "$dir/qa-testing-rules" || return
+  pass "$name"
+}
+
+# Behavior: (CC-541) when no sibling qa-testing-rules directory exists on the
+# host, pr-gate.sh must leave QA_RULES_DIR unset -- this is the CC-447
+# clean-machine boundary and must not regress: a genuinely absent rules
+# source must still let qa-tester's own stop-and-ask fallback fire.
+# Steps: run the gate with no sibling qa-testing-rules dir; assert the
+# reviewer dispatch env captured no QA_RULES_DIR value.
+test_qa_rules_dir_absent_stays_unset() {
+  local name="qa-rules-dir-absent-stays-unset"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester
+  create_repo "$repo" docs
+  local captured="$dir/qa-rules-dir-captured"
+  set +e
+  CODEX_GATE_CAPTURE_QA_RULES_DIR="$captured" \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester --mode sequential
+  set -e
+  assert_file_contains "$name" "$captured" "<unset>" || return
+  pass "$name"
+}
+
+# Behavior: (CC-541) if the host-side resolution above confirmed
+# QA_RULES_DIR exists and is readable, but the published gate result still
+# shows a qa-tester block citing the rules source as missing, pr-gate.sh
+# must surface a diagnostic distinguishing that from a genuinely absent
+# rules source -- so an operator does not misdiagnose a reviewer-visibility
+# gap as "go install qa-testing-rules".
+# Steps: create the sibling rules dir (host-confirms), stub qa-tester to
+# return a block finding whose rationale cites QA_RULES_DIR as missing
+# (CODEX_GATE_STUB_PROTOCOL_MUTATION=qa-rules-dir-missing), and have the
+# parallel synthesis stub carry that heading into the final published
+# result; assert stderr carries the distinguishing [reviewer-sandbox-
+# visibility] diagnostic rather than treating it as a plain absence.
+test_qa_rules_dir_present_but_reviewer_reports_missing_gets_distinct_diagnostic() {
+  local name="qa-rules-dir-present-but-reviewer-reports-missing"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester
+  create_repo "$repo" docs
+  mkdir -p "$dir/qa-testing-rules"
+  printf '# AGENT.md fixture\n' > "$dir/qa-testing-rules/AGENT.md"
+  set +e
+  CODEX_GATE_STUB_VERDICT=block \
+    CODEX_GATE_STUB_PROTOCOL_MUTATION=qa-rules-dir-missing \
+    CODEX_GATE_STUB_SYNTHESIS_FINAL=NO-GO \
+    CODEX_GATE_STUB_SYNTHESIS_REVIEWER_SECTION='## qa-tester -- block
+QA_RULES_DIR (qa-testing-rules/AGENT.md) could not be read; Tier 1 rules unavailable.
+
+Verdict: block. Tier 1 rules source unreadable.' \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester --mode parallel
+  set -e
+  assert_file_contains "$name" "$err" "[reviewer-sandbox-visibility]" || return
   pass "$name"
 }
 
@@ -5604,6 +5722,9 @@ run_test test_sequential_timeout_preserves_partial_result
 run_test test_piped_stdout_does_not_abort_gate
 run_test test_sequential_frontmatter_parity_mismatch_aborts_gate
 run_test test_run_gate_case_watchdog_bounds_stalled_fixture
+run_test test_qa_rules_dir_resolved_and_exported
+run_test test_qa_rules_dir_absent_stays_unset
+run_test test_qa_rules_dir_present_but_reviewer_reports_missing_gets_distinct_diagnostic
 run_test test_preflight_pass_no_override
 run_test test_preflight_fail_short_circuits_without_dispatch
 run_test test_preflight_fail_log_excerpt_is_redacted_not_empty
@@ -9641,6 +9762,81 @@ test_sequential_reviewer_protocol_out_of_range_line_is_incomplete() {
   pass "$name"
 }
 
+# Behavior: an evidence-reference-contract violation gets exactly one
+# corrective retry, and a reviewer whose retry resolves the citation
+# recovers -- the gate proceeds to synthesis rather than failing outright.
+# Steps: mutate critic's first attempt to cite an out-of-scope reference, but
+# let the retry attempt (brief named *-retry1-critic.md) write a clean
+# document; assert the gate exits 0, a retry was logged, and synthesis
+# still ran.
+test_parallel_reviewer_protocol_evidence_contract_recovers_on_retry() {
+  local name="reviewer-protocol/evidence-contract-recovers-on-retry"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home="$TMP_ROOT/$name/home"
+  local repo="$TMP_ROOT/$name/repo" runner="$TMP_ROOT/$name/runner"
+  local out="$TMP_ROOT/$name/out" err="$TMP_ROOT/$name/err" code=0
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester
+  create_repo "$repo" docs
+  set +e
+  CODEX_GATE_STUB_PROTOCOL_MUTATION=out-of-scope-reference \
+    CODEX_GATE_STUB_PROTOCOL_MUTATION_ONLY_FIRST=1 \
+    CODEX_GATE_STUB_SYNTHESIS_FINAL=GO \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester --mode parallel
+  code=$?
+  set -e
+  [[ "$code" -eq 0 ]] || {
+    fail "$name" "gate did not recover after retry: code=$code err=$(cat "$err" 2>/dev/null)"
+    return
+  }
+  assert_file_contains "$name" "$err" \
+    "invalid evidence reference contract for critic" || return
+  assert_file_contains "$name" "$out" \
+    "retrying once with a corrective note" || return
+  assert_file_contains "$name" "$out" \
+    "critic recovered on retry" || return
+  assert_file_contains "$name" "$out" "[synthesis]" || return
+  pass "$name"
+}
+
+# Behavior: the corrective retry is exactly one attempt -- a reviewer that
+# fails the evidence-reference contract on every attempt still ends the gate
+# as INCOMPLETE, not an infinite or repeated retry loop.
+# Steps: mutate critic's output on every attempt (no _ONLY_FIRST); assert the
+# gate still fails, a retry was attempted (visible in stdout), and synthesis
+# never ran.
+test_parallel_reviewer_protocol_evidence_contract_retry_still_fails() {
+  local name="reviewer-protocol/evidence-contract-retry-still-fails"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home="$TMP_ROOT/$name/home"
+  local repo="$TMP_ROOT/$name/repo" runner="$TMP_ROOT/$name/runner"
+  local out="$TMP_ROOT/$name/out" err="$TMP_ROOT/$name/err" code=0
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester
+  create_repo "$repo" docs
+  set +e
+  CODEX_GATE_STUB_PROTOCOL_MUTATION=out-of-scope-reference \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester --mode parallel
+  code=$?
+  set -e
+  [[ "$code" -ne 0 ]] || {
+    fail "$name" "gate unexpectedly recovered with no fix applied"
+    return
+  }
+  assert_file_contains "$name" "$out" \
+    "retrying once with a corrective note" || return
+  assert_file_contains "$name" "$err" \
+    "retry still failed for critic" || return
+  assert_file_contains "$name" "$err" \
+    "reviewer protocol INCOMPLETE for: critic" || return
+  assert_not_contains "$name" "$out" "[synthesis]" || return
+  pass "$name"
+}
+
 # Behavior: duplicate human presentation headings cannot invalidate a unique,
 # schema-complete JSON reviewer verdict.
 # Steps: duplicate each raw heading, run the parallel gate, then assert the
@@ -9898,6 +10094,8 @@ run_test test_reviewer_protocol_blocking_pre_existing_origin_is_diagnosed
 run_test test_reviewer_protocol_diagnostic_terminal_escapes_control_characters
 run_test test_parallel_reviewer_protocol_out_of_scope_reference_is_incomplete
 run_test test_sequential_reviewer_protocol_out_of_range_line_is_incomplete
+run_test test_parallel_reviewer_protocol_evidence_contract_recovers_on_retry
+run_test test_parallel_reviewer_protocol_evidence_contract_retry_still_fails
 run_test test_reviewer_protocol_duplicate_heading_uses_json_verdict
 run_test test_reviewer_protocol_blocker_completes_remaining_surfaces
 run_test test_synthesis_protocol_preserves_grouping_disagreement_and_lower_severity

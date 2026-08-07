@@ -101,14 +101,23 @@ test_help_short() {
 }
 
 test_release_suite_verifies_state_bound_artifact() {
-  # Release sign-off must freshly run the full suite and verify its tree-bound
-  # artifact before any later smoke/e2e phase can produce GO.
+  # Release sign-off must freshly run the full suite (with every flag
+  # declared in _release_phase2_suite_flags -- currently --result-file and
+  # --collect-all; a structural precheck failure must still surface every
+  # suite's PASS/FAIL instead of short-circuiting and hiding the rest of
+  # this report) and verify its tree-bound artifact before any later
+  # smoke/e2e phase can produce GO. Asserted against the flags array
+  # declaration and its actual use in the invocation, not a hand-grepped
+  # copy of the invocation line -- a future flag addition/removal only
+  # needs updating that one array, and this test tracks it automatically.
   local name="release-suite-verifies-state-bound-artifact"
-  if grep -q 'run-all-tests.sh.*--result-file' "$RV" \
+  # shellcheck disable=SC2016  # Literal grep patterns, not meant to expand.
+  if grep -q '_release_phase2_suite_flags=(--result-file "\$suite_result" --collect-all)' "$RV" \
+    && grep -q 'run-all-tests.sh".*"\${_release_phase2_suite_flags\[@\]}"' "$RV" \
     && grep -q 'run-tests.sh.*--verify-full' "$RV"; then
     pass "$name"
   else
-    fail "$name" "release Phase 2 does not run+verify the full test artifact"
+    fail "$name" "release Phase 2 does not run+verify the full test artifact with its declared flags"
   fi
 }
 

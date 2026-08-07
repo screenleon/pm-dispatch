@@ -63,6 +63,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-541 | 🔵 active | codex reviewer sandbox 讀不到主機上已存在的 `QA_RULES_DIR`，qa-tester 對 hard-stop 與可用規則來源之間 fail-loud 行為需要釐清並修復 | ops/gate | 2026-08-04 | feedback:2026-08-04 | P2 | hygiene |
 | CC-542 | ✅ done | 移除 `test-pmctl-context`／`test-release-verify` 的 LIVE_DB_EXCLUSIVE 全域互斥：release-verify Phase 3 context-index 改用隔離 fixture repo，不再重建 live `context.db` | ops/test | 2026-08-04 | pr:#463 | P1 | hygiene |
 | CC-543 | 🟢 someday | Full test runner 增加 fail-fast structural precheck（registry lint／regression／schema 等便宜檢查獨立成 Phase 0，失敗即中止，不啟動昂貴 suite） | ops/test | 2026-08-04 | — | P2 | hygiene |
+| CC-545 | ✅ done | Reviewer evidence-reference-contract INCOMPLETE 的單次修正性重派：僅限該單一違規類別，附具體錯誤引用重跑違規 reviewer，不必整輪 gate（30-40 分鐘）重來 | ops/gate | 2026-08-06 | — | P2 | hygiene |
 | CC-465 | 🔵 active | memory/context 關鍵詞管線 CJK 支援：抽出共用零依賴斷詞 lib，取代三處各自 ASCII-only 抽詞；工作序列起點（465→467→468→466）（2026-07-07 記憶系統深入分析） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-466 | ⏸ deferred | 記憶卡片生命週期閉環：expires_at 執行 + 關窗式 supersede + usage sidecar 休眠偵測 + doctor→distill 接線；僅在 CC-467 證明 stale/dormant card 已形成實際問題時啟動 | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-467 | 🔵 active | `pmctl memory stats`：注入效益可視化（唯讀聚合器）——注入 bytes/卡片命中分佈/從未命中卡/episode 填寫率，回答「記憶有跟沒有差在哪」；排在 CC-466 之前（2026-07-07；業界僅離線 recall 評測，無 per-injection 遙測） | DX/memory | 2026-07-07 | — | P2 | retrieval |
@@ -3175,6 +3176,88 @@ CI 資源浪費——結構性設定錯誤本應是最快回饋的一類失敗�
 **Source**：2026-08-04 對完整 full-suite 實測的事後分析；同一次分析中
 「registry drift 三個 failure 同根因」的觀察直接指出目前缺乏 fail-fast
 short circuit。
+
+---
+
+## CC-545 — Reviewer evidence-reference-contract INCOMPLETE 的單次修正性重派 ✅ 2026-08-06
+
+**Outcome**：`runtime/bin/pr-gate.sh`（`--mode parallel`）在偵測到
+`PROTOCOL_INVALID_OUTPUTS` 非空時，若**每一個**違規 reviewer 的失敗原因都
+精準等於 `invalid evidence reference contract`（其他任何協定失敗類別——
+缺區塊、JSON 格式錯誤、reviewer 不符——仍立即整輪失敗，不觸發重派），則對
+這些 reviewer 執行恰好一次修正性重派：重新計算 scope manifest reference
+index，比對該 reviewer 原始輸出的每個 `evidence_refs`／`finding.source`
+引用，抽出具體違規的 path/line 清單，寫入一份新 brief（檔名帶
+`-retry1-<reviewer>` 後綴）的 `correction:` 區塊，明確列出被拒絕的引用並
+提醒「相似檔名是已知常見錯誤來源」。重派沿用既有的 watchdog／artifact
+tamper 偵測機制。重試後仍失敗的 reviewer 才真正判 INCOMPLETE 並整輪失敗；
+復原的 reviewer 其輸出檔案與 post-wait hash 都正確替換回主要記帳陣列，
+避免被下游 cross-tamper 檢查誤判（開發時就踩到這個 bug 並修正：復原後若
+未同步更新 `REVIEWER_POST_WAIT_HASHES`，會拿舊檔案的 hash 去比對新檔案
+內容，永遠判定「被竄改」）。新增 2 個回歸測試：重試後復原（gate 正常進入
+synthesis）、重試後仍敗（維持原有 INCOMPLETE 行為，且訊息可見重試曾發生）；
+既有 `reviewer-protocol/*` 18 個測試全數維持通過。實作後跑了 4-agent
+reuse/simplification/efficiency/altitude 交叉審查：修掉一個真實 bug（
+`GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR` 是每次呼叫共用的 global，前一個
+reviewer 若透過「document-level 驗證之前」的路徑失敗——例如 duplicate
+reviewer、缺區塊——不會清掉這個 global，會讓下一個 reviewer 的失敗原因
+誤讀成前一個的殘值，導致重派資格誤判；已在逐一驗證迴圈裡逐次重置修正）；
+retryable reason 從單一硬編字串改成陣列比對，降低未來新增可重試原因時的
+改動幅度。**已知限制、刻意不做**：3 位獨立 reviewer 都指出重派區塊是把
+原始 dispatch 迴圈（~140 行：brief heredoc／watchdog／wait／hash 驗證／
+tamper 偵測）整段複製而非抽成共用函式呼叫兩次，屬於架構層級的重複（非單純
+行數重複）——未來若 watchdog／hash 驗證邏輯需要修正，得改兩處。刻意不在
+本次處理：原始迴圈是被 ~200 個既有測試覆蓋的已驗證路徑，抽取共用函式需要
+一併重構它，風險與本次改動範圍不成比例；留給後續一張獨立票專門處理這個
+抽象。
+
+**See**: 隨 CC-543/CC-541 分支一併交付（無獨立 PR）。
+
+**Problem**：2026-08-06 同一分支的 gate 第 4 次嘗試，`architecture-reviewer`
+與 `security-reviewer` 同時因引用了不在 scope manifest reference index 內
+的路徑／超出行數範圍而觸發 `invalid evidence reference contract`，導致整輪
+gate（preflight + 5 個 reviewer，30-40 分鐘）直接作廢重來，即使另外 3 個
+reviewer 的輸出完全合法。事後查證：過去 6 天 25+ 次 gate 執行從未觸發過
+這個特定違規類別，只在這個分支連中兩次；根因是這次 diff 剛好同時動到
+`tests/bin/run-tests.sh`／`tests/bin/run-all-tests.sh`／
+`tests/shell/test-run-tests.sh`／`tests/shell/test-run-all-tests.sh` 這組
+高度同名、大小差異懸殊的檔案，統計上明顯提高 reviewer 引用錯位機率
+（例如把 528 行的 `test-run-tests.sh` 誤植為 1395 行 `test-run-all-tests.sh`
+裡合理的行號）。
+
+**Why**：這類違規本質是「reviewer 對已提供的正確 reference index 資訊犯了
+引用錯誤」，不是文件結構性損壞（缺區塊／JSON 壞掉／reviewer 名稱不符）—
+brief 裡其實已經完整列出每個檔案的 `max-line` 邊界與明確警告文字，代表
+問題不在資訊缺失，而在單次生成時的疏漏，統計上有意義的機率能在重新生成
+時修正。整輪重跑的成本（30-40 分鐘）與問題的實際範圍（往往只有 1-2 個
+reviewer）不成比例。
+
+**Requirement**：
+1. 偵測到協定違規時先分類原因；只有「所有違規 reviewer 的原因都是
+   evidence-reference-contract」才觸發重派，其他任何原因維持原有立即
+   失敗行為。
+2. 重派時附上具體被拒引用清單（best-effort，抽取失敗時退回通用提醒，
+   仍照樣重派)。
+3. 重派沿用既有 watchdog timeout、artifact 完整性（tamper）偵測。
+4. 復原的 reviewer 正確併回主要記帳陣列（輸出檔案、verdict、hash 基準）
+   供下游 worktree／tamper 檢查與 synthesis 使用。
+5. 僅重試一次；重試後仍失敗的 reviewer 才真正判 INCOMPLETE。
+6. 回歸測試覆蓋：重試後復原、重試後仍敗；不得影響既有 18 個
+   `reviewer-protocol/*` 測試。
+
+**Done-when**：以上 Requirement 全部滿足；新增測試全過；既有
+`reviewer-protocol/*` 測試套件無回歸。
+
+**Non-goals**：不放寬 `bound_evidence_ref` 契約本身（不做模糊比對／自動
+修正引用，那會削弱契約存在的意義）；不擴及 sequential 模式（該模式是單一
+共享 session，「重派單一 reviewer」的概念不適用）；不做通用的「任何
+INCOMPLETE 都重試」機制（範圍刻意收斂在這一種可判斷、可能修復的違規類別）。
+
+**Dependencies**：無。P2。
+
+**Source**：2026-08-06 對 CC-543/CC-541 gate 第 4 次嘗試 INCOMPLETE
+（`gate-20260806-041615-57e625`）的根因分析；使用者要求針對「pr-gate 屢次
+出現非預期內容」做系統性改善後開票並直接實作。
 
 ---
 

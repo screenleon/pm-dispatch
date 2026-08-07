@@ -136,6 +136,9 @@ pr_gate_fixture_write_reviewer_protocol() {
         $reviewer == "architecture-reviewer"
       then .findings[0].id = "architecture-reviewer-F001\u001b[31m"
         | .findings[0].severity = "medium"
+      elif $mutation == "qa-rules-dir-missing" and $reviewer == "qa-tester"
+      then .findings[0].affected_behavior =
+        "QA_RULES_DIR (qa-testing-rules/AGENT.md) could not be read; Tier 1 rules unavailable."
       else .
       end
   ' | {
