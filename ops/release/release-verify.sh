@@ -161,7 +161,14 @@ if [[ "$RUN_SUITE" -eq 0 ]]; then
 else
   suite_log="$(mktemp)"  # registered in cleanup trap above
   suite_result="$REPO_ROOT/.pm-dispatch/test-results/latest-full.json"
-  if bash "$REPO_ROOT/tests/bin/run-all-tests.sh" --result-file "$suite_result" --collect-all >"$suite_log" 2>&1 \
+  # Single source of truth for the run-all-tests.sh flags this release sign-off
+  # requires (--collect-all: a structural precheck failure must still surface
+  # every suite's PASS/FAIL, not short-circuit and hide the rest from this
+  # report). test-release-verify.sh asserts against this declaration, not the
+  # invocation line below, so adding/removing a required flag only means
+  # editing this one array.
+  _release_phase2_suite_flags=(--result-file "$suite_result" --collect-all)
+  if bash "$REPO_ROOT/tests/bin/run-all-tests.sh" "${_release_phase2_suite_flags[@]}" >"$suite_log" 2>&1 \
     && bash "$REPO_ROOT/tests/bin/run-tests.sh" --verify-full "$suite_result" >>"$suite_log" 2>&1; then
     record "run-all-tests" PASS "authoritative full PASS verified for the current tree"
   else
