@@ -141,6 +141,23 @@ Each layer produces an artifact that the next layer consumes. This is not abstra
 
 When an artifact is missing — no `conceptual_map`, no `self_verify cmd:`, no isolated review — the downstream consumer degrades or falls back. The four-layer model produces a reliable signal only when the full chain is intact.
 
+### Gate result reuse
+
+A gate verdict is reusable only when three independent checks remain true:
+
+1. `artifact_valid` verifies the result structure and its content digest.
+2. `subject_current` binds the result to the repository, base/head commits, and
+   tree fingerprint that were actually reviewed.
+3. `policy_applicable` evaluates any tier or execution-mode floor supplied by
+   the current consumer.
+
+Use `pmctl gate verify <result> --cd <repo> --json` to inspect these axes.
+Moving between linked worktrees does not invalidate the same Git subject, but
+HEAD, base, or working-tree drift makes an otherwise intact artifact stale.
+Legacy unattested results can still pass structural verification, but report an
+unknown subject and cannot authorize a freshness-sensitive consumer such as
+`pmctl ship finish`.
+
 ---
 
 ## pr-gate rigor tiers

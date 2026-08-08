@@ -956,6 +956,7 @@ done
 
 # ── Prepare output paths ─────────────────────────────────────────────────────
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+GATE_CREATED_AT=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
 _ARTIFACT_ROOT="${GATE_RUN_DIR_OVERRIDE:-$WORK_DIR}"
 BRIEF_DIR="$_ARTIFACT_ROOT/.gate-briefs"
 mkdir -p "$BRIEF_DIR"
@@ -2312,6 +2313,27 @@ if [[ -n "$GATE_OVERRIDES_CONTENT" ]]; then
   gate_result_verify "$OUTPUT_FILE" "" "post-provenance-append" || exit 1
 fi
 
+# Attach the immutable Git subject after every deterministic result rewrite and
+# before the optional success hook. The digest covers the final review bytes;
+# a post-hook freshness check below rejects any hook that changes that subject.
+# Standalone copy-mode intentionally retains
+# the legacy structural-only result because its copied script has no shared
+# subject library; installed/canonical routes always provide gate_result_attest.
+if declare -F gate_result_attest >/dev/null 2>&1; then
+  _GATE_SUBJECT_KIND=committed_head
+  if [[ "$HEAD_REF" != "HEAD" ]]; then
+    _GATE_SUBJECT_KIND=fixed_ref
+  elif [[ -n "$(git -C "$WORK_DIR" status --porcelain 2>/dev/null | artifact_filter_porcelain)" ]]; then
+    _GATE_SUBJECT_KIND=working_tree
+  fi
+  gate_result_attest "$OUTPUT_FILE" "$WORK_DIR" "$BASE" "$HEAD_REF" \
+    "$_GATE_SUBJECT_KIND" "$GATE_CREATED_AT" || {
+      printf 'Error: failed to attest final gate subject\n' >&2
+      exit 1
+    }
+  gate_result_verify "$OUTPUT_FILE" "" "post-subject-attestation" || exit 1
+fi
+
 # ── Post-gate hook ─────────────────────────────────────────────────────────
 # Both executors complete the gate in-process now, so post-gate fires at true
 # gate completion regardless of executor. It runs only when --allow-hooks is set
@@ -2347,6 +2369,13 @@ elif [[ -x "$_POST_GATE_HOOK" ]]; then
     fi
     say 'post-gate hook completed.\n'
   fi
+fi
+
+if declare -F gate_result_assess >/dev/null 2>&1; then
+  gate_result_assess "$OUTPUT_FILE" "$WORK_DIR" >/dev/null || {
+    printf 'Error: gate result subject changed after finalization (including post-gate hooks)\n' >&2
+    exit 1
+  }
 fi
 
 # ── Relocate result to run dir (post-verification) ───────────────────────────

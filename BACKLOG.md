@@ -34,7 +34,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-512 | 🔵 active | gate tier、execution mode、reviewer coverage 與 independence assurance 正交化 | ops/gate | 2026-07-23 | — | P1 | design |
 | CC-513 | 🔵 active | canonical gate policy resolver：minimum tier、required reviewers、mode recommendation 與 downgrade audit | security/gate | 2026-07-23 | — | P1 | design |
 | CC-514 | 🔵 active | orthogonal delivery assurance map、machine-derived tables 與 feature/docs/high-risk recipes | docs/process | 2026-07-23 | — | P2 | design |
-| CC-515 | 🔵 active | gate artifact immutable subject、freshness 與 consumer applicability shared verifier | arch/gate | 2026-07-23 | — | P1 | design |
+| CC-515 | ⚠️ partial 2026-08-08 | gate artifact immutable subject、freshness 與 consumer applicability shared verifier；subject/digest/三軸 verifier + ship consumer 已交付，待 CC-512/513/518 evidence links | arch/gate | 2026-07-23 | — | P1 | design |
 | CC-516 | ⏸ deferred | evidence-gated thin delivery wrapper 評估；只組合既有 primitives，不建立 workflow engine/FSM | ux/process | 2026-07-23 | — | P3 | spike |
 | CC-517 | 🔵 active | maintainer `/ship`：primary review、structured remediation closure 與 conditional targeted confirmation | process/gate | 2026-07-23 | — | P1 | design |
 | CC-518 | 🔵 active | gate scope manifest v1：immutable subject、changed paths、paired tests、signals 與 bounded expansion | ops/gate | 2026-07-23 | — | P1 | design |
@@ -1761,7 +1761,7 @@ lint 阻止 tier/mode/full-suite 順序重新漂移。
 
 ---
 
-## CC-515 — immutable subject、freshness 與 applicability verifier 🔵 active
+## CC-515 — immutable subject、freshness 與 applicability verifier ⚠️ partial 2026-08-08
 
 **Problem**: preflight tests 已有 repo/base/head/tree evidence，但 final gate artifact
 主要依賴 prose `Final:`。外部 consumer 無法分辨 artifact 本身壞掉、subject 已過期，
@@ -1802,6 +1802,20 @@ manifest 與 remediation closure 共同依賴，屬 P1 evidence foundation。
 merge authorization；不要求 worktree path 永久固定。
 
 **Priority**: P1。
+
+**Phase 1 outcome（2026-08-08）**：gate producer 現在於所有 deterministic rewrite
+完成後附加 repository/common-dir identity、base/head commits、tree fingerprint、subject
+kind、timestamps 與 self-excluding content digest。`pmctl gate verify` 以 JSON 或人類輸出
+分開回報 `artifact_valid`／`subject_current`／`policy_applicable`，並支援 consumer 提供
+minimum tier/mode；linked worktree、tamper、tree/HEAD drift 與 insufficient policy 均有
+直接 regression coverage。`pmctl ship finish` 已改用 shared verifier，在 full suite 或
+任何 remote mutation 前拒絕 invalid/stale artifact。Legacy unattested result 僅保留
+structural compatibility，不能通過 ship freshness authorization。
+
+**Remaining**：[[CC-512]] resolved tier/mode/coverage、[[CC-513]] policy resolution、
+[[CC-518]] scope manifest 尚未有 producer contract，因此 Requirement 4 的 evidence links
+與完整 applicability rules 留待三票落地後接入；base-advanced、fixed-ref 與不同 clone
+case 仍需補成 explicit named fixtures 後才能關票。
 
 **Cross-link**: [[CC-491]]、[[CC-509]]、[[CC-511]]、[[CC-512]]、[[CC-513]]、
 [[CC-517]]、[[CC-518]]。

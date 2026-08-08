@@ -193,14 +193,22 @@ pmctl_ship_finish() {
   gate_out="$(pmctl_gate_run "$repo_root" "${gate_args[@]}" 2>&1)" || gate_status=$?
   printf '%s\n' "$gate_out"
 
-  # Source of truth is the RESULT FILE's `Final:` line, not the captured
-  # exit code or any stdout text -- pr-gate.sh prints `result: <path>` near
-  # the end of its run; read that file directly rather than trust output
-  # that could be truncated/reordered by capture.
-  local result_path final_verdict
+  # Locate the artifact from the producer's bounded result pointer, then use
+  # the same shared validity/freshness verifier as `pmctl gate verify`.
+  # A prose Final line alone is never publication authorization.
+  local result_path final_verdict gate_assessment gate_assessment_status=0
   result_path="$(printf '%s\n' "$gate_out" | grep -m1 '^result: ' | sed 's/^result: *//')"
   if [[ -z "$result_path" || ! -f "$result_path" ]]; then
     printf 'pmctl ship finish: could not locate gate result file (gate exit %s) -- see output above\n' "$gate_status" >&2
+    return 1
+  fi
+  if ! declare -F gate_result_assess >/dev/null 2>&1; then
+    # shellcheck source=runtime/lib/gate-result-verify.sh
+    . "$repo_root/runtime/lib/gate-result-verify.sh" || return 2
+  fi
+  gate_assessment="$(gate_result_assess "$result_path" "$work_dir")" || gate_assessment_status=$?
+  if [[ "$gate_assessment_status" -ne 0 ]]; then
+    printf 'pmctl ship finish: gate result is invalid or stale for the current tree; refusing publication: %s\n' "$gate_assessment" >&2
     return 1
   fi
   final_verdict="$(grep -m1 '^Final: ' "$result_path" 2>/dev/null | awk '{print $2}')"

@@ -195,7 +195,7 @@ router and [`cli/commands.tsv`](cli/commands.tsv).
 - `validate brief` — Validate a dispatch brief. [experimental; JSON: false; mutating: false]
 - `decision add` — Append a structured decision. [experimental; JSON: true; mutating: true]
 - `gate run` — Start the pull-request gate. [experimental; JSON: false; mutating: true]
-- `gate verify` — Verify a gate result artifact. [experimental; JSON: false; mutating: false]
+- `gate verify` — Verify gate artifact validity, subject freshness, and policy applicability. [experimental; JSON: true; mutating: false]
 - `gate wait` — Wait for a detached gate run. [experimental; JSON: false; mutating: true]
 - `gate cancel` — Cancel a gate parent operation and only its recorded child runs. [experimental; JSON: false; mutating: true]
 - `gate reconcile` — Reconcile a gate operation from trusted child terminal claims. [experimental; JSON: false; mutating: true]
