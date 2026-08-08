@@ -42,8 +42,10 @@ create_runner() {
   cp -R "$REPO_ROOT/agents" "$dir/agents"
   mkdir -p "$dir/lib"
   cp -R "$REPO_ROOT/runtime/lib/." "$dir/lib/"
+  mkdir -p "$dir/core/policy"
+  cp "$REPO_ROOT/core/policy/gate-assurance.yaml" "$dir/core/policy/gate-assurance.yaml"
   local cmd
-  for cmd in bash git date readlink dirname basename cp mkdir touch ln cat grep sort wc awk sed mktemp rm head tail tr true false sha256sum shasum; do
+  for cmd in bash git date readlink dirname basename cp mv mkdir touch ln cat grep sort wc awk sed jq mktemp rm head tail tr true false sha256sum shasum; do
     src="$(command -v "$cmd" 2>/dev/null || true)"
     if [[ -n "$src" ]]; then
       ln -sf "$src" "$dir/$cmd"
@@ -92,6 +94,10 @@ if [[ -n "$output_path" ]]; then
   else
     printf -- '---\ngate_result_version: pr_gate_result_v1\nfinal: GO\ntier: standard\nmode: sequential\nmost_severe: advise\nreviewers:\n  critic: advise\nescalation:\n  recommended: false\n  reviewers: []\n  reason: []\n---\n\n## stub-reviewer — advise\nVerdict: advise. Stub output.\nFinal: GO\n' > "$output_path"
   fi
+  stub_tier=$(awk '$1 ~ /^[Tt]ier:$/ && $2 ~ /^(express|standard|full|targeted)$/ {print $2; exit}' "$brief_file")
+  [[ -n "$stub_tier" ]] || stub_tier=express
+  if [[ "$brief_file" == *-synthesis.md ]]; then stub_mode=parallel; else stub_mode=sequential; fi
+  sed -i "s/^tier: standard$/tier: $stub_tier/; s/^mode: sequential$/mode: $stub_mode/" "$output_path"
 fi
 
 exit 0
@@ -143,6 +149,10 @@ if [[ -n "$output_path" ]]; then
   else
     printf -- '---\ngate_result_version: pr_gate_result_v1\nfinal: GO\ntier: standard\nmode: sequential\nmost_severe: advise\nreviewers:\n  critic: advise\nescalation:\n  recommended: false\n  reviewers: []\n  reason: []\n---\n\n## stub-reviewer — advise\nVerdict: advise. Stub output.\nFinal: GO\n' > "$output_path"
   fi
+  stub_tier=$(awk '$1 ~ /^[Tt]ier:$/ && $2 ~ /^(express|standard|full|targeted)$/ {print $2; exit}' "$brief_file")
+  [[ -n "$stub_tier" ]] || stub_tier=express
+  if [[ "$brief_file" == *-synthesis.md ]]; then stub_mode=parallel; else stub_mode=sequential; fi
+  sed -i "s/^tier: standard$/tier: $stub_tier/; s/^mode: sequential$/mode: $stub_mode/" "$output_path"
 fi
 
 exit 0
@@ -184,7 +194,7 @@ build_no_codex_path() {
   local dir="$1/no-codex-bin"
   mkdir -p "$dir"
   local cmd
-  for cmd in bash git date readlink dirname basename cp mkdir touch ln cat grep sort wc awk sed mktemp rm cat sort head tail tr wc awk date sha256sum shasum git; do
+  for cmd in bash git date readlink dirname basename cp mv mkdir touch ln cat grep sort wc awk sed jq mktemp rm cat sort head tail tr wc awk date sha256sum shasum git; do
     src="$(command -v "$cmd" 2>/dev/null || true)"
     if [[ -n "$src" ]]; then
       ln -sf "$src" "$dir/$cmd"

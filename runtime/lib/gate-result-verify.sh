@@ -107,18 +107,19 @@ _grv_common_dir_identity() {
 # contents. `git diff --binary` carries modes and symlink targets without a
 # process-per-tracked-file scan, keeping verification practical on real repos.
 _grv_tree_fingerprint() {
-  local root="$1" manifest path quoted kind executable digest
+  local root="$1" excluded_path="${2-}" manifest path quoted kind executable digest
+  local -a pathspec=(. ':(exclude).agent-trace/**' ':(exclude).gate-briefs/**' ':(exclude).gate-results/**')
+  [[ -z "$excluded_path" ]] || pathspec+=(":(exclude,literal)$excluded_path")
   manifest="$(mktemp "${TMPDIR:-/tmp}/gate-subject.XXXXXX")" || return 2
-  git -C "$root" ls-files -s -- \
-    . ':(exclude).agent-trace/**' ':(exclude).gate-briefs/**' ':(exclude).gate-results/**' \
-    >> "$manifest" || { rm -f "$manifest"; return 2; }
-  git -C "$root" diff --binary HEAD -- \
-    . ':(exclude).agent-trace/**' ':(exclude).gate-briefs/**' ':(exclude).gate-results/**' \
-    >> "$manifest" || { rm -f "$manifest"; return 2; }
+  git -C "$root" ls-files -s -- "${pathspec[@]}" >> "$manifest" \
+    || { rm -f "$manifest"; return 2; }
+  git -C "$root" diff --binary HEAD -- "${pathspec[@]}" >> "$manifest" \
+    || { rm -f "$manifest"; return 2; }
   while IFS= read -r -d '' path; do
     case "$path" in
       .agent-trace|.agent-trace/*|.gate-briefs|.gate-briefs/*|.gate-results|.gate-results/*) continue ;;
     esac
+    [[ -z "$excluded_path" || "$path" != "$excluded_path" ]] || continue
     quoted="$(printf '%q' "$path")"
     if [[ -L "$root/$path" ]]; then
       kind='symlink'; executable='false'
@@ -173,7 +174,7 @@ gate_result_attest() {
   local file="$1" root="$2" base_ref="$3" head_ref="$4" subject_kind="$5" created_at="$6"
   local tier_requested="${7-}" tier_resolved="${8-}" mode_requested="${9-}" mode_resolved="${10-}"
   local coverage_reviewers="${11-}" coverage_skipped="${12-}" topology="" independent="" session_evidence=""
-  local physical canonical common repo_key common_id remote_id base_commit head_commit tree finished tmp digest
+  local physical canonical common repo_key common_id remote_id base_commit head_commit tree finished tmp digest artifact_repo_path=""
   physical="$(cd "$root" && pwd)"; canonical="$(_grv_canonical_path "$root")" || return 1
   common="$(_grv_git_common_dir "$canonical")" || return 1
   repo_key="$(_grv_repository_key "$canonical")" || return 1
@@ -181,9 +182,10 @@ gate_result_attest() {
   remote_id="$(_grv_remote_identity "$canonical")" || return 1
   base_commit="$(git -C "$canonical" rev-parse "${base_ref}^{commit}")" || return 1
   head_commit="$(git -C "$canonical" rev-parse "${head_ref}^{commit}")" || return 1
+  case "$file" in "$canonical"/*) artifact_repo_path="${file#"$canonical"/}" ;; esac
   if [[ "$subject_kind" == fixed_ref ]]; then
     tree="$(_grv_ref_fingerprint "$canonical" "$head_ref")" || return 1
-  else tree="$(_grv_tree_fingerprint "$canonical")" || return 1
+  else tree="$(_grv_tree_fingerprint "$canonical" "$artifact_repo_path")" || return 1
   fi
   finished="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
   if [[ -n "$tier_resolved" ]]; then
@@ -196,7 +198,7 @@ gate_result_attest() {
   tmp="${file}.attest-tmp"
   awk -v rk="$repo_key" -v ci="$common_id" -v ri="$remote_id" -v pr="$physical" -v cr="$canonical" \
     -v br="$base_ref" -v bc="$base_commit" -v hr="$head_ref" -v hc="$head_commit" -v tf="$tree" \
-    -v sk="$subject_kind" -v ca="$created_at" -v fa="$finished" \
+    -v sk="$subject_kind" -v ca="$created_at" -v fa="$finished" -v arp="$artifact_repo_path" \
     -v trq="$tier_requested" -v trs="$tier_resolved" -v mrq="$mode_requested" -v mrs="$mode_resolved" \
     -v cov="$coverage_reviewers" -v skip="$coverage_skipped" -v topology="$topology" -v independent="$independent" \
     -v session_evidence="$session_evidence" '
@@ -205,6 +207,7 @@ gate_result_attest() {
       print "remote_identity: " ri; print "observed_physical_root: " pr; print "observed_canonical_root: " cr
       print "base_ref: " br; print "base_commit: " bc; print "head_ref: " hr; print "head_commit: " hc
       print "tree_fingerprint: " tf; print "subject_kind: " sk; print "dirty_policy: " (sk == "working_tree" ? "allow" : "deny")
+      print "artifact_repo_path: " (arp == "" ? "none" : arp)
       print "created_at: " ca; print "finished_at: " fa; print "artifact_sha256: PENDING"
       if (trs != "") {
         print "assurance_contract_version: 1"
@@ -265,7 +268,10 @@ gate_result_assess() {
             if [[ "$actual" == fixed_ref ]]; then
               expected_value="$(_grv_yaml_field "$file" head_ref)"
               current="$(_grv_ref_fingerprint "$root" "$expected_value" 2>/dev/null || true)"
-            else current="$(_grv_tree_fingerprint "$root" 2>/dev/null || true)"
+            else
+              expected_value="$(_grv_yaml_field "$file" artifact_repo_path)"
+              [[ "$expected_value" != none ]] || expected_value=""
+              current="$(_grv_tree_fingerprint "$root" "$expected_value" 2>/dev/null || true)"
             fi
             ;;
         esac

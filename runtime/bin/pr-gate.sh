@@ -261,6 +261,9 @@ else
   # The digest covers the complete artifact except its own digest field.
   _grv_content_digest() { sed '/^artifact_sha256: /d' "$1" | _grv_sha256_stream; }
 
+  # Standalone copy mode does not emit the installed assurance contract.
+  _grv_validate_assurance() { return 0; }
+
   gate_result_verify() {
     local result_file=${1-} expected_final=${2-} route_label=${3-gate}
     local final_count frontmatter_final body_final expected_digest current_digest
@@ -276,6 +279,7 @@ else
     body_final=$(grep -E '^Final: (GO|NO-GO)$' "$result_file" | awk '{print $2}')
     [[ "$frontmatter_final" == "$body_final" ]] || { printf 'Error: frontmatter final: (%s) does not match body Final: (%s) in gate result: %s\n' "$frontmatter_final" "$body_final" "$result_file" >&2; return 1; }
     [[ -z "$expected_final" || "$body_final" == "$expected_final" ]] || { printf 'Error: %s verdict (%s) contradicts shell-computed verdict (%s) -- gate result may have been manipulated: %s\n' "$route_label" "$body_final" "$expected_final" "$result_file" >&2; return 1; }
+    _grv_validate_assurance "$result_file" || return 1
     expected_digest="$(_grv_yaml_field "$result_file" artifact_sha256)"
     if [[ -n "$expected_digest" ]]; then
       [[ "$expected_digest" =~ ^[a-f0-9]{64}$ ]] || { printf 'Error: malformed artifact_sha256 in gate result: %s\n' "$result_file" >&2; return 1; }
@@ -298,6 +302,9 @@ if ! declare -F gate_assurance_default_reviewers >/dev/null 2>&1; then
   # historical built-in tiers without claiming the installed assurance
   # contract; canonical and portable-bundle routes always use the policy.
   gate_assurance_default_reviewers() {
+    # BEGIN GENERATED gate-assurance-copy-mode-reviewers
+    # Source: core/policy/gate-assurance.yaml. The regression suite compares
+    # every tier with the canonical reader; never edit this block alone.
     case "$1" in
       express) printf 'critic qa-tester\n' ;;
       standard) printf 'critic qa-tester architecture-reviewer\n' ;;
@@ -305,8 +312,14 @@ if ! declare -F gate_assurance_default_reviewers >/dev/null 2>&1; then
       targeted) printf '\n' ;;
       *) return 1 ;;
     esac
+    # END GENERATED gate-assurance-copy-mode-reviewers
   }
+  gate_assurance_validate_policy() { return 0; }
 fi
+gate_assurance_validate_policy || {
+  printf 'Error: gate assurance policy is invalid: %s\n' "${_GATE_ASSURANCE_POLICY_FILE:-copy-mode fallback}" >&2
+  exit 2
+}
 EXECUTOR_ROUTER_PATH="$SCRIPT_DIR/../lib/executor-router.sh"
 if [[ -r "$EXECUTOR_ROUTER_PATH" ]]; then
   # shellcheck source=runtime/lib/executor-router.sh
@@ -2344,16 +2357,24 @@ fi
 # the legacy structural-only result because its copied script has no shared
 # subject library; installed/canonical routes always provide gate_result_attest.
 if declare -F gate_result_attest >/dev/null 2>&1; then
+  _GATE_ASSURANCE_ATTEST_ARGS=()
   _GATE_SUBJECT_KIND=committed_head
   if [[ "$HEAD_REF" != "HEAD" ]]; then
     _GATE_SUBJECT_KIND=fixed_ref
   elif declare -F _grv_tree_is_dirty >/dev/null 2>&1 && _grv_tree_is_dirty "$WORK_DIR"; then
     _GATE_SUBJECT_KIND=working_tree
   fi
+  # A fail-fast preflight result has no reviewer execution topology or coverage;
+  # attest its Git subject without manufacturing sequential/parallel assurance.
+  if [[ "$PREFLIGHT_STATUS" != fail ]]; then
+    _GATE_ASSURANCE_ATTEST_ARGS=(
+      "$TIER_REQUESTED" "$TIER" "$MODE_REQUESTED" "$MODE_RESOLVED"
+      "$(printf '%s' "$REVIEWER_DISPLAY" | sed 's/,/, /g')"
+      "$(printf '%s' "$SKIPPED" | sed 's/, */, /g')"
+    )
+  fi
   gate_result_attest "$OUTPUT_FILE" "$WORK_DIR" "$BASE" "$HEAD_REF" \
-    "$_GATE_SUBJECT_KIND" "$GATE_CREATED_AT" \
-    "$TIER_REQUESTED" "$TIER" "$MODE_REQUESTED" "$MODE_RESOLVED" \
-    "$(printf '%s' "$REVIEWER_DISPLAY" | sed 's/,/, /g')" "$(printf '%s' "$SKIPPED" | sed 's/, */, /g')" || {
+    "$_GATE_SUBJECT_KIND" "$GATE_CREATED_AT" "${_GATE_ASSURANCE_ATTEST_ARGS[@]}" || {
       printf 'Error: failed to attest final gate subject\n' >&2
       exit 1
     }

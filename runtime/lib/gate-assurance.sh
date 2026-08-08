@@ -27,8 +27,20 @@ _gate_assurance_property() {
     in_item && $0 ~ "^    " property ":" {
       sub("^    " property ":[[:space:]]*", "")
       gsub(/^\[|\]$/, ""); gsub(/,[[:space:]]*/, " ")
-      print; exit
+      print; found=1; exit
     }
+    END { if (!found) exit 1 }
+  ' "$_GATE_ASSURANCE_POLICY_FILE"
+}
+
+_gate_assurance_items() {
+  local section="$1"
+  _gate_assurance_require_policy || return
+  awk -v section="$section" '
+    $0 == section ":" { in_section=1; found=1; next }
+    in_section && /^[^ ]/ { exit }
+    in_section && /^  [a-z][a-z-]*:$/ { value=$0; sub(/^  /,"",value); sub(/:$/,"",value); print value }
+    END { if (!found) exit 1 }
   ' "$_GATE_ASSURANCE_POLICY_FILE"
 }
 
@@ -41,6 +53,44 @@ gate_assurance_mode_evidence() { _gate_assurance_property modes "$1" session_evi
 gate_assurance_valid_tier() { [[ -n "$(gate_assurance_tier_rank "$1")" ]]; }
 gate_assurance_valid_mode() { [[ -n "$(gate_assurance_mode_topology "$1")" ]]; }
 
+# Fail loudly when the deliberately small policy shape drifts. This is not a
+# general YAML parser: it is a strict reader for this contract, and accepting a
+# partially parsed policy would be less safe than rejecting formatting changes.
+gate_assurance_validate_policy() {
+  local tiers modes tier mode rank reviewers topology independent evidence reviewer
+  tiers="$(_gate_assurance_items tiers)" || return 2
+  modes="$(_gate_assurance_items modes)" || return 2
+  [[ "$tiers" == $'express\nstandard\nfull\ntargeted' ]] || {
+    printf 'gate-assurance: tier set/order must be express, standard, full, targeted\n' >&2; return 2;
+  }
+  [[ "$modes" == $'sequential\nparallel' ]] || {
+    printf 'gate-assurance: mode set/order must be sequential, parallel\n' >&2; return 2;
+  }
+  for tier in $tiers; do
+    rank="$(gate_assurance_tier_rank "$tier")" || return 2
+    reviewers="$(gate_assurance_default_reviewers "$tier")" || return 2
+    [[ "$rank" =~ ^[0-9]+$ ]] || { printf 'gate-assurance: invalid rank for %s\n' "$tier" >&2; return 2; }
+    for reviewer in $reviewers; do
+      [[ "$reviewer" =~ ^[a-z][a-z-]*$ ]] || {
+        printf 'gate-assurance: invalid reviewer token for %s: %s\n' "$tier" "$reviewer" >&2; return 2;
+      }
+    done
+    [[ "$tier" == targeted || -n "$reviewers" ]] || {
+      printf 'gate-assurance: default reviewer set is empty for %s\n' "$tier" >&2; return 2;
+    }
+  done
+  for mode in $modes; do
+    topology="$(gate_assurance_mode_topology "$mode")" || return 2
+    independent="$(gate_assurance_mode_independence "$mode")" || return 2
+    evidence="$(gate_assurance_mode_evidence "$mode")" || return 2
+    [[ "$topology" =~ ^[a-z][a-z-]*$ && "$independent" =~ ^(true|false)$ \
+      && "$evidence" =~ ^[a-z][a-z-]*$ ]] || {
+      printf 'gate-assurance: invalid mode contract for %s\n' "$mode" >&2; return 2;
+    }
+  done
+}
+
 export -f gate_assurance_tier_rank gate_assurance_default_reviewers \
   gate_assurance_mode_topology gate_assurance_mode_independence \
-  gate_assurance_mode_evidence gate_assurance_valid_tier gate_assurance_valid_mode
+  gate_assurance_mode_evidence gate_assurance_valid_tier gate_assurance_valid_mode \
+  gate_assurance_validate_policy

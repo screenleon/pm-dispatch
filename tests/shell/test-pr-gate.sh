@@ -128,7 +128,8 @@ if [[ -n "${CODEX_GATE_REVIEWER_DEFS_MARKER:-}" && "$brief_file" != *-synthesis.
       *) printf 'reviewer definition escaped workspace snapshot: %s\n' "$def_path" >&2; exit 4 ;;
     esac
     [[ -s "$def_path" ]] || { printf 'reviewer definition snapshot missing/empty: %s\n' "$def_path" >&2; exit 4; }
-    [[ ! -w "$def_path" ]] || { printf 'reviewer definition snapshot is writable: %s\n' "$def_path" >&2; exit 4; }
+    def_mode=$(stat -c '%A' "$def_path" 2>/dev/null || stat -f '%Sp' "$def_path")
+    [[ "$def_mode" != *w* ]] || { printf 'reviewer definition snapshot has write bits: %s (%s)\n' "$def_path" "$def_mode" >&2; exit 4; }
   done < <(awk '/^  - read: .*\/\.gate-briefs\/reviewer-definitions-.*\.md$/ {sub(/^  - read: /, ""); print}' "$brief_file")
   [[ "$defs" -gt 0 ]] || { printf 'no workspace reviewer definition snapshots in brief\n' >&2; exit 4; }
   printf '%s\n' "$defs" > "$CODEX_GATE_REVIEWER_DEFS_MARKER"
@@ -193,7 +194,7 @@ write_frontmatter_stub_gate_result() {
   local final_verdict="${2:-GO}"
   local final_line="Final: ${final_verdict}"
   local stub_tier stub_mode
-  stub_tier=$(awk '$1 == "tier:" && $2 ~ /^(express|standard|full|targeted)$/ {print $2; exit}' "$brief_file")
+  stub_tier=$(awk '$1 ~ /^[Tt]ier:$/ && $2 ~ /^(express|standard|full|targeted)$/ {print $2; exit}' "$brief_file")
   [[ -n "$stub_tier" ]] || stub_tier=express
   if [[ "$brief_file" == *-synthesis.md ]]; then stub_mode=parallel; else stub_mode=sequential; fi
 
@@ -2972,7 +2973,7 @@ test_reviewer_cross_artifact_tamper_detected() {
 # Behavior: the sequential gate result file carries a well-formed YAML
 # frontmatter block (gate_result_version, final, per-reviewer verdicts,
 # escalation) followed by a matching "## Escalation" body section.
-# Steps: run the gate with --sequential and --output, and assert the result
+# Steps: run the gate with the default sequential mode and --output, and assert the result
 # file starts and ends its frontmatter with "---", and both the frontmatter
 # and body contain gate_result_version, final, all five reviewer verdicts,
 # and the escalation recommendation/reviewers/reason fields.
@@ -2989,8 +2990,7 @@ test_gate_result_frontmatter_and_escalation() {
 
   set +e
   CODEX_GATE_STUB_SYNTHESIS_FINAL=GO run_gate \
-    "$home" "$runner" "$repo" "$out" "$err" --base main --output "$result" \
-    --sequential
+    "$home" "$runner" "$repo" "$out" "$err" --base main --output "$result"
   local code=$?
   set -e
   if [[ "$code" -ne 0 ]]; then
@@ -3051,7 +3051,7 @@ test_gate_result_frontmatter_and_escalation() {
     '  requested: auto' \
     '  resolved: express' \
     'mode_assurance:' \
-    '  requested: sequential' \
+    '  requested: default' \
     '  resolved: sequential' \
     'coverage_assurance:' \
     '  reviewers: [critic, qa-tester]' \
@@ -4657,7 +4657,7 @@ _cc469_build_pmctl_less_path() {
   local minpath="$runner/.no-pmctl-bin"
   mkdir -p "$minpath"
   local cmd
-  for cmd in bash git date readlink dirname basename cp mkdir touch ln cat grep sort wc awk sed mktemp rm head tail tr true false sha256sum shasum; do
+  for cmd in bash git date readlink dirname basename cp mv mkdir touch ln cat grep sort wc awk sed jq mktemp rm head tail tr true false sha256sum shasum; do
     local src
     src="$(command -v "$cmd" 2>/dev/null || true)"
     [[ -n "$src" ]] && ln -sf "$src" "$minpath/$cmd"
@@ -6050,7 +6050,7 @@ test_pmctl_codex_gate_uses_production_memory_on_clean_home() {
   cp -R "$REPO_ROOT/adapters" "$product/adapters"
   cp -R "$REPO_ROOT/share" "$product/share"
   cp -R "$REPO_ROOT/ops" "$product/ops"
-  cp -R "$bundle/core" "$product/core"
+  cp -R "$bundle/core/." "$product/core/"
   cp -R "$REPO_ROOT/core/schema/." "$product/core/schema/"
   chmod +x "$product/cli/pmctl" "$product/runtime/bin/pr-gate.sh"
 
@@ -6543,12 +6543,79 @@ EOF
   file="$dir/express-parallel.md"
   _write_assurance_fixture express parallel per-reviewer-sessions true per-reviewer-artifacts > "$file"
   gate_result_verify "$file" || { fail "$name" "express+parallel was rejected"; return; }
+  sed 's/  requested: parallel/  requested: default/' "$file" > "$dir/default-mode.md"
+  gate_result_verify "$dir/default-mode.md" || { fail "$name" "default requested mode was rejected"; return; }
   file="$dir/contradictory.md"
   _write_assurance_fixture express parallel combined-session false combined-result > "$file"
   if gate_result_verify "$file" >/dev/null 2>&1; then
     fail "$name" "parallel claim with combined-session evidence was accepted"
     return
   fi
+  pass "$name"
+}
+
+# Behavior: the strict policy reader fails loudly for a missing property or a
+# formatting/value change instead of silently returning an empty policy value.
+# Steps: validate the canonical policy, remove one required property in a copy,
+# add an inline comment to a boolean in another copy, and require both to fail.
+test_gate_assurance_policy_sanity_checks() {
+  local name="gate-assurance/policy-sanity" dir="$TMP_ROOT/gate-assurance-policy-sanity"
+  local missing="$dir/missing.yaml" commented="$dir/commented.yaml"
+  should_run "$name" || return 0
+  mkdir -p "$dir"
+  (
+    # shellcheck source=runtime/lib/gate-assurance.sh
+    . "$REPO_ROOT/runtime/lib/gate-assurance.sh"
+    gate_assurance_validate_policy
+  ) || { fail "$name" "canonical policy failed sanity validation"; return; }
+  sed '/    session_evidence: combined-result/d' "$REPO_ROOT/core/policy/gate-assurance.yaml" > "$missing"
+  if GATE_ASSURANCE_POLICY_FILE="$missing" bash -c '. "$1"; gate_assurance_validate_policy' _ \
+    "$REPO_ROOT/runtime/lib/gate-assurance.sh" >/dev/null 2>&1; then
+    fail "$name" "policy missing session_evidence was accepted"
+    return
+  fi
+  sed 's/per_reviewer_independent: false/per_reviewer_independent: false # drift/' \
+    "$REPO_ROOT/core/policy/gate-assurance.yaml" > "$commented"
+  if GATE_ASSURANCE_POLICY_FILE="$commented" bash -c '. "$1"; gate_assurance_validate_policy' _ \
+    "$REPO_ROOT/runtime/lib/gate-assurance.sh" >/dev/null 2>&1; then
+    fail "$name" "silently misparsed inline-comment policy was accepted"
+    return
+  fi
+  pass "$name"
+}
+
+# Behavior: the standalone copy-mode reviewer fallback cannot drift from the
+# canonical tier policy without a regression failure.
+# Steps: extract only the generated fallback function, compare every tier with
+# gate-assurance.yaml through the canonical reader, and assert targeted is empty.
+test_gate_assurance_copy_mode_fallback_parity() {
+  local name="gate-assurance/copy-mode-fallback-parity" tier canonical fallback extracted
+  should_run "$name" || return 0
+  extracted="$TMP_ROOT/gate-assurance-fallback.sh"
+  awk '
+    /BEGIN GENERATED gate-assurance-copy-mode-reviewers/ { capture=1 }
+    capture && /^[[:space:]]*case / { function_body=1 }
+    function_body { sub(/^    /, ""); print }
+    /END GENERATED gate-assurance-copy-mode-reviewers/ { exit }
+  ' "$REPO_ROOT/runtime/bin/pr-gate.sh" > "$extracted"
+  {
+    printf 'gate_assurance_copy_mode_reviewers() {\n'
+    cat "$extracted"
+    printf '}\n'
+  } > "$extracted.tmp"
+  mv "$extracted.tmp" "$extracted"
+  # shellcheck source=runtime/lib/gate-assurance.sh
+  . "$REPO_ROOT/runtime/lib/gate-assurance.sh"
+  # shellcheck disable=SC1090 -- generated fixture path
+  . "$extracted"
+  for tier in express standard full targeted; do
+    canonical="$(gate_assurance_default_reviewers "$tier")"
+    fallback="$(gate_assurance_copy_mode_reviewers "$tier")"
+    [[ "$canonical" == "$fallback" ]] || {
+      fail "$name" "$tier fallback drifted: canonical=[$canonical] fallback=[$fallback]"
+      return
+    }
+  done
   pass "$name"
 }
 
@@ -6567,5 +6634,7 @@ run_test test_gate_memory_runtime_omits_over_budget_context
 run_test test_gate_memory_runtime_closes_unexpected_success_status
 run_test test_shared_gate_reviewer_content_host_boundary_ratchet
 run_test test_gate_assurance_axes_are_orthogonal_and_validated
+run_test test_gate_assurance_policy_sanity_checks
+run_test test_gate_assurance_copy_mode_fallback_parity
 
 th_summary
