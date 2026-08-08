@@ -463,8 +463,7 @@ case_assess_missing_jq_is_actionable() {
   set +e
   out="$(
     . "$REPO_ROOT/runtime/lib/gate-result-verify.sh"
-    command() { if [[ "$1" == -v && "${2:-}" == jq ]]; then return 1; fi; builtin command "$@"; }
-    gate_result_assess "$result" "$REPO_ROOT" 2>&1
+    PATH="$tmp_root/v-no-jq/empty-path" gate_result_assess "$result" "$REPO_ROOT" 2>&1
   )"; rc=$?
   set -e
   if [[ "$rc" -eq 2 && "$out" == *"jq is required for structured gate assessment"* ]]; then pass "$name"; else fail "$name" "rc=$rc out=$out"; fi
