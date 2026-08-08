@@ -6606,7 +6606,8 @@ test_gate_assurance_copy_mode_fallback_parity() {
   mv "$extracted.tmp" "$extracted"
   # shellcheck source=runtime/lib/gate-assurance.sh
   . "$REPO_ROOT/runtime/lib/gate-assurance.sh"
-  # shellcheck disable=SC1090 -- generated fixture path
+  # Generated fixture path; static source resolution is intentionally unavailable.
+  # shellcheck disable=SC1090
   . "$extracted"
   for tier in express standard full targeted; do
     canonical="$(gate_assurance_default_reviewers "$tier")"

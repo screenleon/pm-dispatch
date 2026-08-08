@@ -3,7 +3,9 @@
 
 _GRV_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -r "$_GRV_LIB_DIR/gate-assurance.sh" ]]; then
+  # Optional sibling library, guarded above.
   # shellcheck source=runtime/lib/gate-assurance.sh
+  # shellcheck disable=SC1091
   . "$_GRV_LIB_DIR/gate-assurance.sh"
 fi
 
@@ -48,10 +50,16 @@ _grv_validate_assurance() {
   topology="$(_grv_yaml_nested_field "$file" independence_assurance session_topology)"
   independent="$(_grv_yaml_nested_field "$file" independence_assurance per_reviewer_independent)"
   evidence="$(_grv_yaml_nested_field "$file" independence_assurance session_evidence)"
-  declare -F gate_assurance_valid_tier >/dev/null && gate_assurance_valid_tier "$tier" \
-    || { printf 'Error: invalid resolved tier assurance: %s\n' "$tier" >&2; return 1; }
-  declare -F gate_assurance_valid_mode >/dev/null && gate_assurance_valid_mode "$mode" \
-    || { printf 'Error: invalid resolved mode assurance: %s\n' "$mode" >&2; return 1; }
+  if ! declare -F gate_assurance_valid_tier >/dev/null \
+    || ! gate_assurance_valid_tier "$tier"; then
+    printf 'Error: invalid resolved tier assurance: %s\n' "$tier" >&2
+    return 1
+  fi
+  if ! declare -F gate_assurance_valid_mode >/dev/null \
+    || ! gate_assurance_valid_mode "$mode"; then
+    printf 'Error: invalid resolved mode assurance: %s\n' "$mode" >&2
+    return 1
+  fi
   [[ "$requested_tier" == auto || "$requested_tier" == targeted ]] \
     || gate_assurance_valid_tier "$requested_tier" \
     || { printf 'Error: invalid requested tier assurance: %s\n' "$requested_tier" >&2; return 1; }
@@ -189,8 +197,14 @@ gate_result_attest() {
   fi
   finished="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
   if [[ -n "$tier_resolved" ]]; then
-    declare -F gate_assurance_valid_tier >/dev/null && gate_assurance_valid_tier "$tier_resolved" || return 1
-    declare -F gate_assurance_valid_mode >/dev/null && gate_assurance_valid_mode "$mode_resolved" || return 1
+    if ! declare -F gate_assurance_valid_tier >/dev/null \
+      || ! gate_assurance_valid_tier "$tier_resolved"; then
+      return 1
+    fi
+    if ! declare -F gate_assurance_valid_mode >/dev/null \
+      || ! gate_assurance_valid_mode "$mode_resolved"; then
+      return 1
+    fi
     topology="$(gate_assurance_mode_topology "$mode_resolved")" || return 1
     independent="$(gate_assurance_mode_independence "$mode_resolved")" || return 1
     session_evidence="$(gate_assurance_mode_evidence "$mode_resolved")" || return 1
