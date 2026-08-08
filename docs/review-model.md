@@ -151,12 +151,21 @@ A gate verdict is reusable only when three independent checks remain true:
 3. `policy_applicable` evaluates any tier or execution-mode floor supplied by
    the current consumer.
 
-Use `pmctl gate verify <result> --cd <repo> --json` to inspect these axes.
+Use `pmctl gate verify <result> --cd <repo> --json` to inspect these axes. If
+`--cd` is omitted, the CLI uses the current Git repository; outside a Git
+repository it reports `subject_not_checked` and exits nonzero rather than
+treating an unknown subject as current.
 Moving between linked worktrees does not invalidate the same Git subject, but
 HEAD, base, or working-tree drift makes an otherwise intact artifact stale.
 Legacy unattested results can still pass structural verification, but report an
 unknown subject and cannot authorize a freshness-sensitive consumer such as
 `pmctl ship finish`.
+
+`targeted` is deliberately not ranked below or above the initial
+`express`/`standard`/`full` tiers. It can satisfy an explicitly targeted
+consumer, but cannot satisfy even an `express` initial-review floor without the
+initial-coverage linkage planned by CC-512. The verifier reports
+`targeted_requires_initial_coverage` for that fail-closed case.
 
 ---
 

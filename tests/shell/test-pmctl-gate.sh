@@ -394,19 +394,110 @@ Final: ${body_final}
 RESULT
 }
 
-# ---- 6: gate verify accepts a structurally valid result ----------------------
+# ---- 6: freshness-aware CLI rejects a legacy unattested result ---------------
 case_verify_valid() {
-  local name="gate/verify: valid result exits 0"
+  local name="gate/verify: legacy structurally-valid result is not current-subject evidence"
   should_run "$name" || return 0
   local result="$tmp_root/v6/result.md"
   _mk_gate_result "$result" GO
   local out code
   set +e; out="$("$PMCTL" gate verify "$result" 2>&1)"; code=$?; set -e
-  if [[ "$code" -eq 0 ]] && [[ "$out" == *"artifact_valid=true"* ]]; then
+  if [[ "$code" -eq 1 ]] && [[ "$out" == *"artifact_valid=true"* ]] && [[ "$out" == *"subject_current=false"* ]]; then
     pass "$name"
   else
     fail "$name" "code=$code out=$out"
   fi
+}
+
+case_verify_defaults_subject_to_cwd_repo() {
+  local name="gate/verify: omitted --cd defaults subject verification to the current Git repository"
+  should_run "$name" || return 0
+  local repo="$tmp_root/v-default-cd/repo" result out rc=0
+  mkdir -p "$repo"; git -C "$repo" init -q
+  git -C "$repo" config user.email test@example.invalid; git -C "$repo" config user.name test
+  printf 'one\n' > "$repo/file.txt"; git -C "$repo" add file.txt; git -C "$repo" commit -qm initial
+  result="$tmp_root/v-default-cd/result.md"; _mk_gate_result "$result" GO
+  . "$REPO_ROOT/runtime/lib/gate-result-verify.sh"
+  gate_result_attest "$result" "$repo" HEAD HEAD committed_head 2026-08-08T00:00:00Z
+  out="$(cd "$repo" && "$PMCTL" gate verify "$result" --json 2>/dev/null)" || rc=$?
+  if [[ "$rc" -eq 0 ]] && jq -e '.subject_current == true' <<<"$out" >/dev/null; then pass "$name"; else fail "$name" "rc=$rc out=$out"; fi
+}
+
+case_verify_without_subject_context_fails_closed() {
+  local name="gate/verify: omitted --cd outside Git reports subject_not_checked and exits nonzero"
+  should_run "$name" || return 0
+  local repo="$tmp_root/v-no-cd/repo" outside="$tmp_root/v-no-cd/outside" result out rc=0
+  mkdir -p "$repo" "$outside"; git -C "$repo" init -q
+  git -C "$repo" config user.email test@example.invalid; git -C "$repo" config user.name test
+  printf 'one\n' > "$repo/file.txt"; git -C "$repo" add file.txt; git -C "$repo" commit -qm initial
+  result="$tmp_root/v-no-cd/result.md"; _mk_gate_result "$result" GO
+  . "$REPO_ROOT/runtime/lib/gate-result-verify.sh"
+  gate_result_attest "$result" "$repo" HEAD HEAD committed_head 2026-08-08T00:00:00Z
+  out="$(cd "$outside" && "$PMCTL" gate verify "$result" --json 2>/dev/null)" || rc=$?
+  if [[ "$rc" -eq 1 ]] && jq -e '.subject_current == null and (.reasons.subject|index("subject_not_checked")) != null' <<<"$out" >/dev/null; then pass "$name"; else fail "$name" "rc=$rc out=$out"; fi
+}
+
+case_verify_targeted_tier_is_explicitly_incomparable() {
+  local name="gate/verify: targeted satisfies targeted policy but cannot impersonate initial express coverage"
+  should_run "$name" || return 0
+  local repo="$tmp_root/v-targeted/repo" result targeted initial targeted_rc=0 initial_rc=0
+  mkdir -p "$repo"; git -C "$repo" init -q
+  git -C "$repo" config user.email test@example.invalid; git -C "$repo" config user.name test
+  printf 'one\n' > "$repo/file.txt"; git -C "$repo" add file.txt; git -C "$repo" commit -qm initial
+  result="$tmp_root/v-targeted/result.md"; _mk_gate_result "$result" GO
+  sed -i 's/^tier: express$/tier: targeted/' "$result"
+  . "$REPO_ROOT/runtime/lib/gate-result-verify.sh"
+  gate_result_attest "$result" "$repo" HEAD HEAD committed_head 2026-08-08T00:00:00Z
+  targeted="$("$PMCTL" gate verify "$result" --cd "$repo" --require-tier targeted --json 2>/dev/null)" || targeted_rc=$?
+  initial="$("$PMCTL" gate verify "$result" --cd "$repo" --require-tier express --json 2>/dev/null)" || initial_rc=$?
+  if [[ "$targeted_rc" -eq 0 && "$initial_rc" -eq 1 ]] \
+    && jq -e '.policy_applicable == true' <<<"$targeted" >/dev/null \
+    && jq -e '.policy_applicable == false and (.reasons.policy|index("targeted_requires_initial_coverage")) != null' <<<"$initial" >/dev/null; then pass "$name"; else fail "$name" "targeted=$targeted_rc:$targeted initial=$initial_rc:$initial"; fi
+}
+
+case_assess_missing_jq_is_actionable() {
+  local name="gate/verify: missing jq returns dependency error instead of false subject-drift diagnosis"
+  should_run "$name" || return 0
+  local result="$tmp_root/v-no-jq/result.md" out rc=0
+  _mk_gate_result "$result" GO
+  set +e
+  out="$(
+    . "$REPO_ROOT/runtime/lib/gate-result-verify.sh"
+    command() { if [[ "$1" == -v && "${2:-}" == jq ]]; then return 1; fi; builtin command "$@"; }
+    gate_result_assess "$result" "$REPO_ROOT" 2>&1
+  )"; rc=$?
+  set -e
+  if [[ "$rc" -eq 2 && "$out" == *"jq is required for structured gate assessment"* ]]; then pass "$name"; else fail "$name" "rc=$rc out=$out"; fi
+}
+
+case_verify_dirty_policy_is_enforced() {
+  local name="gate/verify: committed-head dirty_policy deny reports violation after working-tree mutation"
+  should_run "$name" || return 0
+  local repo="$tmp_root/v-dirty-policy/repo" result out rc=0
+  mkdir -p "$repo"; git -C "$repo" init -q
+  git -C "$repo" config user.email test@example.invalid; git -C "$repo" config user.name test
+  printf 'one\n' > "$repo/file.txt"; git -C "$repo" add file.txt; git -C "$repo" commit -qm initial
+  result="$tmp_root/v-dirty-policy/result.md"; _mk_gate_result "$result" GO
+  . "$REPO_ROOT/runtime/lib/gate-result-verify.sh"
+  gate_result_attest "$result" "$repo" HEAD HEAD committed_head 2026-08-08T00:00:00Z
+  printf 'dirty\n' >> "$repo/file.txt"
+  out="$("$PMCTL" gate verify "$result" --cd "$repo" --json 2>/dev/null)" || rc=$?
+  if [[ "$rc" -eq 1 ]] && jq -e '(.reasons.subject|index("dirty_policy_violation")) != null' <<<"$out" >/dev/null; then pass "$name"; else fail "$name" "rc=$rc out=$out"; fi
+}
+
+case_verify_working_tree_allow_is_current() {
+  local name="gate/verify: working-tree subject with dirty_policy allow remains current"
+  should_run "$name" || return 0
+  local repo="$tmp_root/v-dirty-allow/repo" result out rc=0
+  mkdir -p "$repo"; git -C "$repo" init -q
+  git -C "$repo" config user.email test@example.invalid; git -C "$repo" config user.name test
+  printf 'one\n' > "$repo/file.txt"; git -C "$repo" add file.txt; git -C "$repo" commit -qm initial
+  printf 'reviewed dirty content\n' >> "$repo/file.txt"
+  result="$tmp_root/v-dirty-allow/result.md"; _mk_gate_result "$result" GO
+  . "$REPO_ROOT/runtime/lib/gate-result-verify.sh"
+  gate_result_attest "$result" "$repo" HEAD HEAD working_tree 2026-08-08T00:00:00Z
+  out="$("$PMCTL" gate verify "$result" --cd "$repo" --json 2>/dev/null)" || rc=$?
+  if [[ "$rc" -eq 0 ]] && jq -e '.subject_current == true' <<<"$out" >/dev/null; then pass "$name"; else fail "$name" "rc=$rc out=$out"; fi
 }
 
 case_verify_attested_subject_and_policy() {
@@ -950,6 +1041,12 @@ case_verify_empty
 case_verify_no_final
 case_verify_parity_mismatch
 case_verify_usage
+case_verify_defaults_subject_to_cwd_repo
+case_verify_without_subject_context_fails_closed
+case_verify_targeted_tier_is_explicitly_incomparable
+case_assess_missing_jq_is_actionable
+case_verify_dirty_policy_is_enforced
+case_verify_working_tree_allow_is_current
 case_verify_attested_subject_and_policy
 case_verify_attested_tamper_and_drift_are_distinct
 case_verify_policy_insufficient_keeps_artifact_current

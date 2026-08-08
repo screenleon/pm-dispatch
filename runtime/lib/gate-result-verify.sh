@@ -146,11 +146,21 @@ gate_result_attest() {
 
 _grv_tier_rank() { case "$1" in express) echo 1;; standard) echo 2;; full) echo 3;; *) echo 0;; esac; }
 
+_grv_tree_is_dirty() {
+  ! git -C "$1" diff --quiet --ignore-submodules -- 2>/dev/null \
+    || ! git -C "$1" diff --cached --quiet --ignore-submodules -- 2>/dev/null \
+    || [[ -n "$(git -C "$1" ls-files --others --exclude-standard 2>/dev/null | head -1)" ]]
+}
+
 # gate_result_assess <file> [repo_root] [required_tier] [required_mode]
 # Emits one JSON object and returns 0 only when every requested axis passes.
 gate_result_assess() {
   local file="$1" root="${2-}" required_tier="${3-}" required_mode="${4-}"
-  local av=true sc=null pa=null ar= sr= pr= expected current field expected_value actual tier mode
+  local av=true sc=null pa=null ar= sr= pr= expected current field expected_value actual tier mode dirty_policy
+  if ! command -v jq >/dev/null 2>&1; then
+    printf 'gate-result-verify: jq is required for structured gate assessment\n' >&2
+    return 2
+  fi
   if ! gate_result_verify "$file" >/dev/null 2>&1; then av=false; ar=artifact_invalid; fi
   if [[ "$av" == true && -n "$root" ]]; then
     sc=true
@@ -183,16 +193,37 @@ gate_result_assess() {
       expected="$(_grv_yaml_field "$file" base_commit)"; actual="$(_grv_yaml_field "$file" base_ref)"
       current="$(git -C "$root" rev-parse "${actual}^{commit}" 2>/dev/null || true)"
       [[ -n "$expected" && "$expected" == "$current" ]] || { sc=false; sr="${sr:+$sr,}base_commit_mismatch"; }
+      actual="$(_grv_yaml_field "$file" subject_kind)"
+      dirty_policy="$(_grv_yaml_field "$file" dirty_policy)"
+      case "$actual:$dirty_policy" in
+        working_tree:allow|committed_head:deny|fixed_ref:deny) : ;;
+        *) sc=false; sr="${sr:+$sr,}dirty_policy_mismatch" ;;
+      esac
+      if [[ "$actual" == committed_head && "$dirty_policy" == deny ]] && _grv_tree_is_dirty "$root"; then
+        sc=false; sr="${sr:+$sr,}dirty_policy_violation"
+      fi
     fi
+  elif [[ "$av" == true ]]; then
+    sr=subject_not_checked
   fi
   if [[ "$av" == true && ( -n "$required_tier" || -n "$required_mode" ) ]]; then
     pa=true; tier="$(_grv_yaml_field "$file" tier)"; mode="$(_grv_yaml_field "$file" mode)"
-    if [[ -n "$required_tier" && $(_grv_tier_rank "$tier") -lt $(_grv_tier_rank "$required_tier") ]]; then pa=false; pr=tier_insufficient; fi
+    if [[ -n "$required_tier" ]]; then
+      if [[ "$tier" == targeted && "$required_tier" != targeted ]]; then
+        pa=false; pr=targeted_requires_initial_coverage
+      elif [[ "$required_tier" == targeted && "$tier" != targeted ]]; then
+        pa=false; pr=targeted_tier_required
+      elif [[ "$tier" != targeted && $(_grv_tier_rank "$tier") -eq 0 ]]; then
+        pa=false; pr=tier_unknown
+      elif [[ "$tier" != targeted && $(_grv_tier_rank "$tier") -lt $(_grv_tier_rank "$required_tier") ]]; then
+        pa=false; pr=tier_insufficient
+      fi
+    fi
     if [[ -n "$required_mode" && "$mode" != "$required_mode" ]]; then pa=false; pr="${pr:+$pr,}mode_mismatch"; fi
   fi
   jq -nc --argjson av "$av" --argjson sc "$sc" --argjson pa "$pa" --arg ar "$ar" --arg sr "$sr" --arg pr "$pr" \
     '{artifact_valid:$av,subject_current:$sc,policy_applicable:$pa,reasons:{artifact:(if ($ar|length)>0 then $ar else null end),subject:(if ($sr|length)>0 then ($sr|split(",")) else [] end),policy:(if ($pr|length)>0 then ($pr|split(",")) else [] end)}}'
-  [[ "$av" == true && "$sc" != false && "$pa" != false ]]
+  [[ "$av" == true && "$sc" == true && "$pa" != false ]]
 }
 
 export -f gate_result_verify gate_result_attest gate_result_assess

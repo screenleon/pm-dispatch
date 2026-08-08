@@ -240,47 +240,44 @@ else
   # Inline fallback for copy-mode (pr-gate.sh run standalone without runtime/lib/).
   # MUST stay in sync with runtime/lib/gate-result-verify.sh; the copy-mode
   # regression test exercises this path.
+  _grv_yaml_field() {
+    local file="$1" key="$2"
+    awk -v key="$key" 'BEGIN{s=0} /^---$/ { if (s == 0) { s=1; next } else if (s == 1) exit } s && index($0,key ": ")==1 { sub("^[^:]+: ",""); print; exit }' "$file"
+  }
+
+  _grv_sha256_stream() {
+    if command -v sha256sum >/dev/null 2>&1; then sha256sum | awk '{print $1}'
+    elif command -v shasum >/dev/null 2>&1; then shasum -a 256 | awk '{print $1}'
+    else printf 'gate-result-verify: sha256sum or shasum is required\n' >&2; return 2
+    fi
+  }
+
+  _grv_sha256_file() { _grv_sha256_stream < "$1"; }
+
+  # The digest covers the complete artifact except its own digest field.
+  _grv_content_digest() { sed '/^artifact_sha256: /d' "$1" | _grv_sha256_stream; }
+
   gate_result_verify() {
     local result_file=${1-} expected_final=${2-} route_label=${3-gate}
-    local final_count frontmatter_final body_final
-
-    [[ $# -ge 1 && $# -le 3 ]] || {
-      printf 'gate-result-verify: gate_result_verify expects <result_file> [expected_final] [route_label]\n' >&2
-      return 2
-    }
-
+    local final_count frontmatter_final body_final expected_digest current_digest
+    [[ $# -ge 1 && $# -le 3 ]] || { printf 'gate-result-verify: gate_result_verify expects <result_file> [expected_final] [route_label]\n' >&2; return 2; }
     if [[ ! -s "$result_file" ]]; then
       printf 'Error: %s did not produce the result file: %s\n' "$route_label" "$result_file" >&2
-      printf 'Gate aborted -- the executor session may have exited 0 without writing a verdict.\n' >&2
-      return 1
+      printf 'Gate aborted -- the executor session may have exited 0 without writing a verdict.\n' >&2; return 1
     fi
-
     final_count=$(grep -cE '^Final: (GO|NO-GO)$' "$result_file" || true)
-    if [[ "$final_count" -ne 1 ]]; then
-      printf 'Error: gate result file must contain exactly one Final: GO/NO-GO line (found %d): %s\n' \
-        "$final_count" "$result_file" >&2
-      return 1
-    fi
-
-    frontmatter_final=$(awk 'BEGIN{s=0} /^---$/ { if (s == 0) { s=1; next } else if (s == 1) { exit } } s && $1 == "final:" { print $2; exit }' "$result_file")
-    if [[ -z "$frontmatter_final" ]]; then
-      printf 'Error: gate result YAML frontmatter missing required field: final: (%s)\n' "$result_file" >&2
-      return 1
-    fi
-
+    [[ "$final_count" -eq 1 ]] || { printf 'Error: gate result file must contain exactly one Final: GO/NO-GO line (found %d): %s\n' "$final_count" "$result_file" >&2; return 1; }
+    frontmatter_final="$(_grv_yaml_field "$result_file" final)"
+    [[ -n "$frontmatter_final" ]] || { printf 'Error: gate result YAML frontmatter missing required field: final: (%s)\n' "$result_file" >&2; return 1; }
     body_final=$(grep -E '^Final: (GO|NO-GO)$' "$result_file" | awk '{print $2}')
-    if [[ "$frontmatter_final" != "$body_final" ]]; then
-      printf 'Error: frontmatter final: (%s) does not match body Final: (%s) in gate result: %s\n' \
-        "$frontmatter_final" "$body_final" "$result_file" >&2
-      return 1
+    [[ "$frontmatter_final" == "$body_final" ]] || { printf 'Error: frontmatter final: (%s) does not match body Final: (%s) in gate result: %s\n' "$frontmatter_final" "$body_final" "$result_file" >&2; return 1; }
+    [[ -z "$expected_final" || "$body_final" == "$expected_final" ]] || { printf 'Error: %s verdict (%s) contradicts shell-computed verdict (%s) -- gate result may have been manipulated: %s\n' "$route_label" "$body_final" "$expected_final" "$result_file" >&2; return 1; }
+    expected_digest="$(_grv_yaml_field "$result_file" artifact_sha256)"
+    if [[ -n "$expected_digest" ]]; then
+      [[ "$expected_digest" =~ ^[a-f0-9]{64}$ ]] || { printf 'Error: malformed artifact_sha256 in gate result: %s\n' "$result_file" >&2; return 1; }
+      current_digest="$(_grv_content_digest "$result_file")" || return 2
+      [[ "$current_digest" == "$expected_digest" ]] || { printf 'Error: gate result content digest mismatch: %s\n' "$result_file" >&2; return 1; }
     fi
-
-    if [[ -n "$expected_final" && "$body_final" != "$expected_final" ]]; then
-      printf 'Error: %s verdict (%s) contradicts shell-computed verdict (%s) -- gate result may have been manipulated: %s\n' \
-        "$route_label" "$body_final" "$expected_final" "$result_file" >&2
-      return 1
-    fi
-
     return 0
   }
 fi
@@ -2323,7 +2320,7 @@ if declare -F gate_result_attest >/dev/null 2>&1; then
   _GATE_SUBJECT_KIND=committed_head
   if [[ "$HEAD_REF" != "HEAD" ]]; then
     _GATE_SUBJECT_KIND=fixed_ref
-  elif [[ -n "$(git -C "$WORK_DIR" status --porcelain 2>/dev/null | artifact_filter_porcelain)" ]]; then
+  elif declare -F _grv_tree_is_dirty >/dev/null 2>&1 && _grv_tree_is_dirty "$WORK_DIR"; then
     _GATE_SUBJECT_KIND=working_tree
   fi
   gate_result_attest "$OUTPUT_FILE" "$WORK_DIR" "$BASE" "$HEAD_REF" \
@@ -2373,7 +2370,7 @@ fi
 
 if declare -F gate_result_assess >/dev/null 2>&1; then
   gate_result_assess "$OUTPUT_FILE" "$WORK_DIR" >/dev/null || {
-    printf 'Error: gate result subject changed after finalization (including post-gate hooks)\n' >&2
+    printf 'Error: final gate artifact assessment failed after finalization; inspect the verifier diagnostic above\n' >&2
     exit 1
   }
 fi

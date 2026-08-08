@@ -666,8 +666,12 @@ pmctl_gate_verify() {
     printf 'pmctl gate verify: usage: pmctl gate verify <result_file> [--cd <repo>] [--require-tier <tier>] [--require-mode <mode>] [--json]\n' >&2
     return 2
   fi
-  case "$required_tier" in ""|express|standard|full) :;; *) printf 'pmctl gate verify: invalid tier: %s\n' "$required_tier" >&2; return 2;; esac
-  [[ -z "$work_dir" ]] || work_dir="$(cd "$work_dir" 2>/dev/null && pwd -P)" || { printf 'pmctl gate verify: invalid --cd: %s\n' "$work_dir" >&2; return 2; }
+  case "$required_tier" in ""|express|standard|full|targeted) :;; *) printf 'pmctl gate verify: invalid tier: %s\n' "$required_tier" >&2; return 2;; esac
+  if [[ -n "$work_dir" ]]; then
+    work_dir="$(cd "$work_dir" 2>/dev/null && pwd -P)" || { printf 'pmctl gate verify: invalid --cd: %s\n' "$work_dir" >&2; return 2; }
+  else
+    work_dir="$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null || true)"
+  fi
 
   if ! declare -F gate_result_verify >/dev/null; then
     local lib="$repo_root/runtime/lib/gate-result-verify.sh"
@@ -680,9 +684,8 @@ pmctl_gate_verify() {
   fi
 
   local rc=0
-  if ! assessment="$(gate_result_assess "$result_file" "$work_dir" "$required_tier" "$required_mode")"; then
-    rc=1
-  fi
+  if assessment="$(gate_result_assess "$result_file" "$work_dir" "$required_tier" "$required_mode")"; then :; else rc=$?; fi
+  [[ "$rc" -ne 2 ]] || return 2
   if [[ "$json" == true ]]; then printf '%s\n' "$assessment"
   else
     if [[ "$rc" -ne 0 ]] && [[ "$(jq -r .artifact_valid <<<"$assessment")" == false ]]; then
