@@ -177,9 +177,14 @@ make_cli_fixture_with_fake_gate() {
   # shellcheck disable=SC2016
   sed -i '/^case "\$cmd\/\$sub" in$/i\
 pmctl_gate_run() {\
-  local result_file\
+  local result_file gate_cd="" previous="" arg\
+  for arg in "$@"; do\
+    [[ "$previous" != --cd ]] || gate_cd="$arg"\
+    previous="$arg"\
+  done\
   result_file="$(mktemp)"\
-  printf "Final: GO\\n" > "$result_file"\
+  printf -- "---\\ngate_result_version: pr_gate_result_v1\\nfinal: GO\\ntier: full\\nmode: sequential\\n---\\n\\nFinal: GO\\n" > "$result_file"\
+  gate_result_attest "$result_file" "$gate_cd" HEAD HEAD committed_head 2026-08-08T00:00:00Z\
   printf "result: %s\\n" "$result_file"\
 }\
 ' "$path/cli/pmctl"
@@ -201,7 +206,11 @@ run_finish_with_fake_gate() {
     pmctl_gate_run() {
       local result_file
       result_file="$(mktemp)"
-      printf "Final: %s\n" "$verdict" > "$result_file"
+      printf -- "---\ngate_result_version: pr_gate_result_v1\nfinal: %s\ntier: full\nmode: sequential\n---\n\nFinal: %s\n" "$verdict" "$verdict" > "$result_file"
+      . "$repo_root/runtime/lib/gate-result-verify.sh"
+      local subject_kind=committed_head
+      [[ -z "$(git -C "$work_dir" status --porcelain)" ]] || subject_kind=working_tree
+      gate_result_attest "$result_file" "$work_dir" HEAD HEAD "$subject_kind" 2026-08-08T00:00:00Z
       printf "result: %s\n" "$result_file"
       [[ "$verdict" == "GO" ]]
     }
@@ -1005,12 +1014,14 @@ case_finish_go_head_moved_refuses_push() {
   bash -c '
     repo_root="$1"; work_dir="$2"; ticket_id="$3"
     pmctl_gate_run() {
+      local result_file
+      result_file="$(mktemp)"
+      printf -- "---\ngate_result_version: pr_gate_result_v1\nfinal: GO\ntier: full\nmode: sequential\n---\n\nFinal: GO\n" > "$result_file"
+      . "$repo_root/runtime/lib/gate-result-verify.sh"
+      gate_result_attest "$result_file" "$work_dir" HEAD HEAD committed_head 2026-08-08T00:00:00Z
       printf "sneaky\n" > "'"$work"'/sneaky.txt"
       git -C "'"$work"'" add sneaky.txt
       git -C "'"$work"'" commit -q -m sneaky
-      local result_file
-      result_file="$(mktemp)"
-      printf "Final: GO\n" > "$result_file"
       printf "result: %s\n" "$result_file"
       return 0
     }
@@ -1019,7 +1030,7 @@ case_finish_go_head_moved_refuses_push() {
   ' _ "$REPO_ROOT" "$work" "CC-9001" > "$out" 2> "$err" || status=$?
   local pushed=0
   git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
-  if [[ "$status" -eq 1 ]] && grep -q "HEAD moved during the gate run" "$err" && [[ "$pushed" -eq 0 ]]; then
+  if [[ "$status" -eq 1 ]] && grep -q "invalid or stale for the current tree" "$err" && [[ "$pushed" -eq 0 ]]; then
     pass "$name"
   else
     fail "$name" "expected exit 1 + no push; got status=$status pushed=$pushed stderr=$(cat "$err")"

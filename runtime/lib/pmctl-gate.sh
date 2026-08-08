@@ -644,21 +644,34 @@ pmctl_gate_wait() {
   return 124
 }
 
-# pmctl gate verify <result_file>
-# Confirm a gate result file is structurally complete using the SAME contract
-# the synchronous gate route enforces in-process (gate_result_verify). This is
-# how an out-of-process gate result -- one written outside pr-gate.sh's own
-# in-process check -- becomes confirmable/trackable via pmctl, symmetric to the
-# codex route's built-in post-dispatch check. Exit 0 = valid; 1 = invalid (diagnostic on stderr);
-# 2 = usage/library error.
+# pmctl gate verify <result_file> [--cd <repo>] [--require-tier <tier>]
+# [--require-mode <mode>] [--json]
+# Structural integrity is always assessed. Subject freshness and policy
+# applicability are independently reported when their consumer inputs exist.
 pmctl_gate_verify() {
   local repo_root="$1"; shift
-
-  if [[ $# -ne 1 || -z "${1:-}" ]]; then
-    printf 'pmctl gate verify: usage: pmctl gate verify <result_file>\n' >&2
+  local result_file="" work_dir="" required_tier="" required_mode="" json=false arg assessment
+  while [[ $# -gt 0 ]]; do
+    arg="$1"
+    case "$arg" in
+      --cd) [[ $# -ge 2 ]] || { printf 'pmctl gate verify: --cd requires a value\n' >&2; return 2; }; work_dir="$2"; shift 2;;
+      --require-tier) [[ $# -ge 2 ]] || { printf 'pmctl gate verify: --require-tier requires a value\n' >&2; return 2; }; required_tier="$2"; shift 2;;
+      --require-mode) [[ $# -ge 2 ]] || { printf 'pmctl gate verify: --require-mode requires a value\n' >&2; return 2; }; required_mode="$2"; shift 2;;
+      --json) json=true; shift;;
+      -*) printf 'pmctl gate verify: unknown option: %s\n' "$arg" >&2; return 2;;
+      *) [[ -z "$result_file" ]] || { printf 'pmctl gate verify: unexpected argument: %s\n' "$arg" >&2; return 2; }; result_file="$arg"; shift;;
+    esac
+  done
+  if [[ -z "$result_file" ]]; then
+    printf 'pmctl gate verify: usage: pmctl gate verify <result_file> [--cd <repo>] [--require-tier <tier>] [--require-mode <mode>] [--json]\n' >&2
     return 2
   fi
-  local result_file="$1"
+  case "$required_tier" in ""|express|standard|full|targeted) :;; *) printf 'pmctl gate verify: invalid tier: %s\n' "$required_tier" >&2; return 2;; esac
+  if [[ -n "$work_dir" ]]; then
+    work_dir="$(cd "$work_dir" 2>/dev/null && pwd -P)" || { printf 'pmctl gate verify: invalid --cd: %s\n' "$work_dir" >&2; return 2; }
+  else
+    work_dir="$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null || true)"
+  fi
 
   if ! declare -F gate_result_verify >/dev/null; then
     local lib="$repo_root/runtime/lib/gate-result-verify.sh"
@@ -670,9 +683,18 @@ pmctl_gate_verify() {
     . "$lib"
   fi
 
-  if gate_result_verify "$result_file"; then
-    printf 'gate result OK: %s\n' "$result_file"
-    return 0
+  local rc=0
+  if assessment="$(gate_result_assess "$result_file" "$work_dir" "$required_tier" "$required_mode")"; then :; else rc=$?; fi
+  [[ "$rc" -ne 2 ]] || return 2
+  if [[ "$json" == true ]]; then printf '%s\n' "$assessment"
+  else
+    if [[ "$rc" -ne 0 ]] && [[ "$(jq -r .artifact_valid <<<"$assessment")" == false ]]; then
+      gate_result_verify "$result_file" || true
+    fi
+    printf 'gate result assessment: artifact_valid=%s subject_current=%s policy_applicable=%s file=%s\n' \
+      "$(jq -r .artifact_valid <<<"$assessment")" "$(jq -r .subject_current <<<"$assessment")" \
+      "$(jq -r .policy_applicable <<<"$assessment")" "$result_file"
+    [[ "$rc" -eq 0 ]] || jq -r '.reasons | to_entries[] | select(.value != null and .value != [] and .value != "") | "  \(.key): \(.value|if type=="array" then join(",") else . end)"' <<<"$assessment" >&2
   fi
-  return 1
+  return "$rc"
 }

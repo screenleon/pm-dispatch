@@ -39,7 +39,7 @@ safe bash	Run a shell command through guard policy.	pmctl safe bash --role <role
 validate brief	Validate a dispatch brief.	pmctl validate brief <path> [options]	experimental	false	false	--schema	pmctl validate brief /tmp/brief.md
 decision add	Append a structured decision.	pmctl decision add --date <date> --title <title> --path <path> [options]	experimental	true	true	--date, --title, --path, --closes, --tags, --evidence, --json	pmctl decision add --date 2026-01-01 --title "Example" --path DECISIONS.md
 gate run	Start the pull-request gate.	pmctl gate run [options]	experimental	false	true	--executor, --test-cmd, --cd	pmctl gate run --executor codex
-gate verify	Verify a gate result artifact.	pmctl gate verify <result-file>	experimental	false	false	none	pmctl gate verify .gate-results/result.json
+gate verify	Verify gate artifact validity, subject freshness, and policy applicability.	pmctl gate verify <result-file> [options]	experimental	true	false	--cd, --require-tier, --require-mode, --json	pmctl gate verify .gate-results/result.md --cd . --json
 gate wait	Wait for a detached gate run.	pmctl gate wait <gate-id> [options]	experimental	false	true	--cd, --timeout	pmctl gate wait gate-123 --cd .
 gate cancel	Cancel a gate parent operation and only its recorded child runs.	pmctl gate cancel <operation-id> --cd <dir> [--grace <seconds>]	experimental	false	true	--cd, --grace	pmctl gate cancel op-20260724T000000Z-abcdef --cd .
 gate reconcile	Reconcile a gate operation from trusted child terminal claims.	pmctl gate reconcile <operation-id> --cd <dir>	experimental	false	true	--cd	pmctl gate reconcile op-20260724T000000Z-abcdef --cd .
