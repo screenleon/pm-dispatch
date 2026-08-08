@@ -5012,7 +5012,9 @@ test_inline_fallback_matches_lib() {
   if [[ "$lib_body" == "$inline_body" ]]; then
     pass "$name"
   else
-    fail "$name" "inline gate_result_verify in pr-gate.sh drifted from runtime/lib/gate-result-verify.sh -- keep them in sync"
+    local parity_diff
+    parity_diff="$(diff -u <(printf '%s\n' "$lib_body") <(printf '%s\n' "$inline_body") || true)"
+    fail "$name" "inline gate_result_verify in pr-gate.sh drifted from runtime/lib/gate-result-verify.sh -- keep them in sync:\n$parity_diff"
   fi
 }
 

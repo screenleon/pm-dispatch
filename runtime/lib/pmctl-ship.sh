@@ -204,6 +204,7 @@ pmctl_ship_finish() {
   fi
   if ! declare -F gate_result_assess >/dev/null 2>&1; then
     # shellcheck source=runtime/lib/gate-result-verify.sh
+    # shellcheck disable=SC1091 # dynamic repo_root is validated by the caller
     . "$repo_root/runtime/lib/gate-result-verify.sh" || return 2
   fi
   gate_assessment="$(gate_result_assess "$result_path" "$work_dir")" || gate_assessment_status=$?

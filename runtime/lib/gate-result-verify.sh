@@ -68,12 +68,13 @@ _grv_tree_fingerprint() {
     esac
     quoted="$(printf '%q' "$path")"
     if [[ -L "$root/$path" ]]; then
-      kind=symlink; executable=false
+      kind='symlink'; executable='false'
       digest="$(printf '%s' "$(readlink "$root/$path")" | _grv_sha256_stream)" || { rm -f "$manifest"; return 2; }
     elif [[ -f "$root/$path" ]]; then
-      kind=file; [[ -x "$root/$path" ]] && executable=true || executable=false
+      kind='file'
+      if [[ -x "$root/$path" ]]; then executable='true'; else executable='false'; fi
       digest="$(_grv_sha256_file "$root/$path")" || { rm -f "$manifest"; return 2; }
-    else kind=missing; executable=false; digest=-
+    else kind='missing'; executable='false'; digest='-'
     fi
     printf '%s\t%s\t%s\t%s\n' "$quoted" "$kind" "$executable" "$digest" >> "$manifest"
   done < <(git -C "$root" ls-files --others --exclude-standard -z)
@@ -156,7 +157,7 @@ _grv_tree_is_dirty() {
 # Emits one JSON object and returns 0 only when every requested axis passes.
 gate_result_assess() {
   local file="$1" root="${2-}" required_tier="${3-}" required_mode="${4-}"
-  local av=true sc=null pa=null ar= sr= pr= expected current field expected_value actual tier mode dirty_policy
+  local av=true sc=null pa=null ar='' sr='' pr='' expected current field expected_value actual tier mode dirty_policy
   if ! command -v jq >/dev/null 2>&1; then
     printf 'gate-result-verify: jq is required for structured gate assessment\n' >&2
     return 2
