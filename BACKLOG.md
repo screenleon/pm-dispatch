@@ -31,7 +31,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-509 | ✅ closed 2026-07-22 | detached gate launch liveness：對 sandbox parent-death 早期死亡 fail-loud，提供 supervisor readiness／identity evidence | arch/gate | 2026-07-22 | pr:#440 | P2 | hygiene |
 | CC-510 | ✅ closed 2026-07-23 | Codex detached dispatch continuation：App Server callback、authenticated completion envelope 與 foreground fallback | arch/DX | 2026-07-23 | pr:#443 | P2 | design |
 | CC-511 | ⚠️ partial 2026-07-24 | ship publish authorization：Phase A current-tree authoritative full-suite 已交付；Phase B review-closure evidence 仍待 CC-515／CC-517 | release/gate | 2026-07-23 | pr:#446 | P1 | design |
-| CC-512 | 🔵 active | gate tier、execution mode、reviewer coverage 與 independence assurance 正交化 | ops/gate | 2026-07-23 | — | P1 | design |
+| CC-512 | ⚠️ partial 2026-08-08 | gate tier、execution mode、reviewer coverage 與 independence assurance 正交化 | ops/gate | 2026-07-23 | — | P1 | design |
 | CC-513 | 🔵 active | canonical gate policy resolver：minimum tier、required reviewers、mode recommendation 與 downgrade audit | security/gate | 2026-07-23 | — | P1 | design |
 | CC-514 | 🔵 active | orthogonal delivery assurance map、machine-derived tables 與 feature/docs/high-risk recipes | docs/process | 2026-07-23 | — | P2 | design |
 | CC-515 | ⚠️ partial 2026-08-08 | gate artifact immutable subject、freshness 與 consumer applicability shared verifier；subject/digest/三軸 verifier + ship consumer 已交付，待 CC-512/513/518 evidence links | arch/gate | 2026-07-23 | — | P1 | design |
@@ -1616,7 +1616,7 @@ authorization。
 
 ---
 
-## CC-512 — tier／mode／coverage／independence assurance 正交化 🔵 active
+## CC-512 — tier／mode／coverage／independence assurance 正交化 ⚠️ partial 2026-08-08
 
 **Problem**: runtime 原本就將 tier detection、reviewer selection 與
 `SEQUENTIAL=true|false` 分開，但文件曾把 `full` 描述成 parallel cross-context +
@@ -1655,6 +1655,20 @@ coverage、取得何種 independence」，所有合法組合 round-trip，錯誤
 
 **Non-goals**: 不讓 full 自動 parallel；不讓 parallel 自動 full；不決定 risk-based
 minimum floor（見 [[CC-513]]）；不新增另一種 gate。
+
+**Phase 1 outcome（2026-08-08）**：新增 canonical
+`core/policy/gate-assurance.yaml`，tier reviewer defaults 與 mode topology 分開；gate
+producer 不再自行複製 tier→reviewer case table。所有 attested result 現在記錄
+requested/resolved tier、requested/resolved mode、實際 selected/skipped reviewers、
+implementation-context isolation、combined/per-reviewer session topology、
+per-reviewer independence 與 session evidence。shared verifier 會拒絕 mode／topology／
+independence／evidence 或 legacy scalar 互相矛盾的結果；legacy unattested 與 standalone
+copy-mode 保留結構相容。
+
+**Remaining**：targeted result 尚待 [[CC-519]] finding/coverage contract 才能連結 initial
+coverage；parallel session evidence 目前是 producer-owned artifact marker，待 [[CC-519]]
+加入逐 reviewer session identity/digest 後才能驗證完整 provenance。CLI/help/result
+schema 的完整 generated-marker drift ratchet 亦留待 structured result contract 收斂後完成。
 
 **Cross-link**: [[CC-515]]、[[CC-518]]、[[CC-519]]、`docs/review-model.md`。
 

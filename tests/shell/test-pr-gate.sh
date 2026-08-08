@@ -68,6 +68,7 @@ create_runner() {
   cp -R "$REPO_ROOT/runtime/lib/." "$dir/lib/"
   mkdir -p "$dir/core/policy"
   cp "$REPO_ROOT/core/policy/isolation-level.yaml" "$dir/core/policy/isolation-level.yaml"
+  cp "$REPO_ROOT/core/policy/gate-assurance.yaml" "$dir/core/policy/gate-assurance.yaml"
   mkdir -p "$dir/adapters/codex"
   cat > "$dir/adapters/codex/dispatch.sh" <<'STUB_EOF'
 #!/usr/bin/env bash
@@ -191,6 +192,10 @@ write_frontmatter_stub_gate_result() {
   local output_path="$1"
   local final_verdict="${2:-GO}"
   local final_line="Final: ${final_verdict}"
+  local stub_tier stub_mode
+  stub_tier=$(awk '$1 == "tier:" && $2 ~ /^(express|standard|full|targeted)$/ {print $2; exit}' "$brief_file")
+  [[ -n "$stub_tier" ]] || stub_tier=express
+  if [[ "$brief_file" == *-synthesis.md ]]; then stub_mode=parallel; else stub_mode=sequential; fi
 
   # Regression seam: when CODEX_GATE_STUB_BOLD_FINAL=1, emit the Final
   # line wrapped in markdown bold (simulates codex applying prose emphasis).
@@ -203,8 +208,8 @@ write_frontmatter_stub_gate_result() {
 ---
 gate_result_version: pr_gate_result_v1
 final: ${CODEX_GATE_STUB_FRONTMATTER_FINAL:-${final_verdict}}
-tier: express
-mode: parallel
+tier: ${stub_tier}
+mode: ${stub_mode}
 most_severe: approve
 reviewers:
   critic: approve
@@ -3040,6 +3045,26 @@ test_gate_result_frontmatter_and_escalation() {
     fail "$name" "frontmatter missing escalation block"
     return
   fi
+  for expected in \
+    'assurance_contract_version: 1' \
+    'tier_assurance:' \
+    '  requested: auto' \
+    '  resolved: express' \
+    'mode_assurance:' \
+    '  requested: sequential' \
+    '  resolved: sequential' \
+    'coverage_assurance:' \
+    '  reviewers: [critic, qa-tester]' \
+    'independence_assurance:' \
+    '  implementation_context_isolated: true' \
+    '  session_topology: combined-session' \
+    '  per_reviewer_independent: false' \
+    '  session_evidence: combined-result'; do
+    if ! printf '%s\n' "$frontmatter" | grep -Fqx "$expected"; then
+      fail "$name" "frontmatter missing assurance contract line: $expected"
+      return
+    fi
+  done
   if ! printf '%s\n' "$frontmatter" | grep -q '^[[:space:]]*recommended: '; then
     fail "$name" "frontmatter missing escalation recommendation"
     return
@@ -3082,6 +3107,10 @@ test_gate_result_final_line_back_compat() {
     fail "$name" "expected exactly one Final line, got $final_count"
     return
   fi
+  assert_file_contains "$name" "$result" "  resolved: parallel" || return
+  assert_file_contains "$name" "$result" "  session_topology: per-reviewer-sessions" || return
+  assert_file_contains "$name" "$result" "  per_reviewer_independent: true" || return
+  assert_file_contains "$name" "$result" "  session_evidence: per-reviewer-artifacts" || return
   pass "$name"
 }
 
@@ -6469,6 +6498,60 @@ test_shared_gate_reviewer_content_host_boundary_ratchet() {
   pass "$name"
 }
 
+# Behavior: assurance verification accepts orthogonal full+sequential and
+# express+parallel combinations, but rejects a parallel claim backed by a
+# combined-session topology instead of per-reviewer evidence.
+# Steps: write three structurally valid synthetic artifacts, verify the two
+# legal cross-axis combinations, then assert the contradictory claim fails.
+test_gate_assurance_axes_are_orthogonal_and_validated() {
+  local name="gate-assurance/orthogonal-combinations" dir file
+  dir="$TMP_ROOT/$name"
+  should_run "$name" || return 0
+  mkdir -p "$dir"
+  # shellcheck source=runtime/lib/gate-result-verify.sh
+  . "$REPO_ROOT/runtime/lib/gate-result-verify.sh"
+  _write_assurance_fixture() {
+    local tier="$1" mode="$2" topology="$3" independent="$4" evidence="$5"
+    cat <<EOF
+---
+gate_result_version: pr_gate_result_v1
+final: GO
+tier: $tier
+mode: $mode
+assurance_contract_version: 1
+tier_assurance:
+  requested: $tier
+  resolved: $tier
+mode_assurance:
+  requested: $mode
+  resolved: $mode
+coverage_assurance:
+  reviewers: [critic]
+  skipped: [qa-tester]
+independence_assurance:
+  implementation_context_isolated: true
+  session_topology: $topology
+  per_reviewer_independent: $independent
+  session_evidence: $evidence
+---
+Final: GO
+EOF
+  }
+  file="$dir/full-sequential.md"
+  _write_assurance_fixture full sequential combined-session false combined-result > "$file"
+  gate_result_verify "$file" || { fail "$name" "full+sequential was rejected"; return; }
+  file="$dir/express-parallel.md"
+  _write_assurance_fixture express parallel per-reviewer-sessions true per-reviewer-artifacts > "$file"
+  gate_result_verify "$file" || { fail "$name" "express+parallel was rejected"; return; }
+  file="$dir/contradictory.md"
+  _write_assurance_fixture express parallel combined-session false combined-result > "$file"
+  if gate_result_verify "$file" >/dev/null 2>&1; then
+    fail "$name" "parallel claim with combined-session evidence was accepted"
+    return
+  fi
+  pass "$name"
+}
+
 run_test test_repo_owned_reviewers_and_canonical_memory_on_clean_home
 run_test test_pmctl_codex_gate_uses_production_memory_on_clean_home
 run_test test_invalid_canonical_memory_does_not_fallback
@@ -6483,5 +6566,6 @@ run_test test_gate_memory_runtime_closes_query_failure
 run_test test_gate_memory_runtime_omits_over_budget_context
 run_test test_gate_memory_runtime_closes_unexpected_success_status
 run_test test_shared_gate_reviewer_content_host_boundary_ratchet
+run_test test_gate_assurance_axes_are_orthogonal_and_validated
 
 th_summary

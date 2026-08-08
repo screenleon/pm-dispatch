@@ -132,6 +132,7 @@ HEAD_OVERRIDE=""
 OUTPUT_OVERRIDE=""
 TIMEOUT="1200"
 SEQUENTIAL=true   # default: sequential (lower token cost)
+MODE_REQUESTED=default
 EXECUTOR_OPTION="auto"
 ALLOW_HOOKS=false   # hooks require explicit --allow-hooks opt-in (security)
 ALLOW_DIRTY=false   # gate refuses a dirty tree atop committed changes unless this opt-in
@@ -184,8 +185,8 @@ while [[ $# -gt 0 ]]; do
       DISPATCH_EFFORT="$2"; shift 2;;
     --isolation)  DISPATCH_ISOLATION="$2"; shift 2;;
     --timeout)    TIMEOUT="$2";            shift 2;;
-    --parallel)   SEQUENTIAL=false;        shift;;
-    --sequential) SEQUENTIAL=true;         shift;;   # backward compat
+    --parallel)   SEQUENTIAL=false; MODE_REQUESTED=parallel; shift;;
+    --sequential) SEQUENTIAL=true; MODE_REQUESTED=sequential; shift;;   # backward compat
     --allow-hooks) ALLOW_HOOKS=true;       shift;;
     --allow-dirty) ALLOW_DIRTY=true;       shift;;
     --override-file)
@@ -233,6 +234,9 @@ while [[ -L "$_self" ]]; do
 done
 SCRIPT_DIR="$(cd "$(dirname "$_self")" && pwd)"
 GATE_RESULT_VERIFY_PATH="$SCRIPT_DIR/../lib/gate-result-verify.sh"
+if [[ ! -r "$GATE_RESULT_VERIFY_PATH" && -r "$SCRIPT_DIR/lib/gate-result-verify.sh" ]]; then
+  GATE_RESULT_VERIFY_PATH="$SCRIPT_DIR/lib/gate-result-verify.sh"
+fi
 if [[ -r "$GATE_RESULT_VERIFY_PATH" ]]; then
   # shellcheck source=runtime/lib/gate-result-verify.sh
   . "$GATE_RESULT_VERIFY_PATH"
@@ -279,6 +283,28 @@ else
       [[ "$current_digest" == "$expected_digest" ]] || { printf 'Error: gate result content digest mismatch: %s\n' "$result_file" >&2; return 1; }
     fi
     return 0
+  }
+fi
+
+if ! declare -F gate_assurance_default_reviewers >/dev/null 2>&1 \
+  && [[ -r "$SCRIPT_DIR/lib/gate-assurance.sh" ]]; then
+  # Portable bundles place the shared library below the script rather than at
+  # runtime/bin/../lib.
+  # shellcheck source=runtime/lib/gate-assurance.sh
+  . "$SCRIPT_DIR/lib/gate-assurance.sh"
+fi
+if ! declare -F gate_assurance_default_reviewers >/dev/null 2>&1; then
+  # Degraded single-file copy mode has no machine policy tree. Preserve its
+  # historical built-in tiers without claiming the installed assurance
+  # contract; canonical and portable-bundle routes always use the policy.
+  gate_assurance_default_reviewers() {
+    case "$1" in
+      express) printf 'critic qa-tester\n' ;;
+      standard) printf 'critic qa-tester architecture-reviewer\n' ;;
+      full) printf 'critic qa-tester architecture-reviewer security-reviewer risk-reviewer\n' ;;
+      targeted) printf '\n' ;;
+      *) return 1 ;;
+    esac
   }
 fi
 EXECUTOR_ROUTER_PATH="$SCRIPT_DIR/../lib/executor-router.sh"
@@ -849,9 +875,12 @@ fi
 # ── Detect tier ───────────────────────────────────────────────────────────────
 if [[ -n "$TIER_OVERRIDE" ]]; then
   TIER="$TIER_OVERRIDE"
+  TIER_REQUESTED="$TIER_OVERRIDE"
 elif [[ -n "$REVIEWERS_OVERRIDE" ]]; then
   TIER="targeted"
+  TIER_REQUESTED="targeted"
 else
+  TIER_REQUESTED="auto"
   NON_DOCS=$(printf '%s\n' "$DIFF_FILES" | grep -vE '\.(md|jsonl|txt)$|^\.gitignore$|^audits/|^docs/' || true)
   SENSITIVE_HIT=$(printf '%s\n' "$DIFF_FILES" | { grep -iE '(^|[/_.-])(auth|oauth|jwt|session|secret|password|token|credential|cors|csrf|webhook|sudo|ssh|payment|billing)([/_.-]|$)|(^|/)migrations?/|^\.github/' || true; } | wc -l)
 
@@ -885,18 +914,16 @@ if [[ -n "$BRIEF_FILE" && -f "$BRIEF_FILE" && -z "$TIER_OVERRIDE" ]]; then
 fi
 
 # ── Determine reviewer list ───────────────────────────────────────────────────
-ALL_REVIEWERS="critic qa-tester architecture-reviewer security-reviewer risk-reviewer"
+ALL_REVIEWERS="$(gate_assurance_default_reviewers full)"
 
 if [[ -n "$REVIEWERS_OVERRIDE" ]]; then
   REVIEWERS=$(printf '%s' "$REVIEWERS_OVERRIDE" | tr ',' ' ')
 else
-  case "$TIER" in
-    express)  REVIEWERS="critic qa-tester";;
-    standard) REVIEWERS="critic qa-tester architecture-reviewer";;
-    full)     REVIEWERS="$ALL_REVIEWERS";;
-    *)        REVIEWERS="$ALL_REVIEWERS";;
-  esac
+  REVIEWERS="$(gate_assurance_default_reviewers "$TIER")"
+  [[ -n "$REVIEWERS" ]] || { printf 'Error: no default reviewers defined for tier: %s\n' "$TIER" >&2; exit 2; }
 fi
+
+if [[ "$SEQUENTIAL" == true ]]; then MODE_RESOLVED=sequential; else MODE_RESOLVED=parallel; fi
 
 REVIEWER_DISPLAY=$(printf '%s' "$REVIEWERS" | tr ' ' ',')
 NUM_REVIEWERS=$(printf '%s\n' $REVIEWERS | wc -l | tr -d ' ')
@@ -2324,7 +2351,9 @@ if declare -F gate_result_attest >/dev/null 2>&1; then
     _GATE_SUBJECT_KIND=working_tree
   fi
   gate_result_attest "$OUTPUT_FILE" "$WORK_DIR" "$BASE" "$HEAD_REF" \
-    "$_GATE_SUBJECT_KIND" "$GATE_CREATED_AT" || {
+    "$_GATE_SUBJECT_KIND" "$GATE_CREATED_AT" \
+    "$TIER_REQUESTED" "$TIER" "$MODE_REQUESTED" "$MODE_RESOLVED" \
+    "$(printf '%s' "$REVIEWER_DISPLAY" | sed 's/,/, /g')" "$(printf '%s' "$SKIPPED" | sed 's/, */, /g')" || {
       printf 'Error: failed to attest final gate subject\n' >&2
       exit 1
     }
