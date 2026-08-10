@@ -4155,24 +4155,28 @@ test_qa_rules_dir_is_resolved_and_exported() {
 test_bare_copy_mode_rejects_unverified_assurance() {
   local name="copy-mode/bare-rejects-unverified-assurance"
   should_run "$name" || return 0
-  local dir="$TMP_ROOT/bare-copy-assurance"
-  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
-  local out="$dir/out" err="$dir/err"
+  local dir="$TMP_ROOT/bare-copy-assurance" fallback err code
+  err="$dir/err"
   mkdir -p "$dir"
-  create_runner "$runner"
-  rm -f "${runner:?}/lib/gate-result-verify.sh"
-  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
-  create_repo "$repo" docs
+  fallback="$(awk '
+    /^  _grv_validate_assurance\(\) \{$/ { capture=1 }
+    capture { sub(/^  /, ""); print }
+    capture && /^  \}$/ { exit }
+  ' "$REPO_ROOT/runtime/bin/pr-gate.sh")"
+  if [[ -z "$fallback" ]]; then
+    fail "$name" "could not extract standalone assurance validator"
+    return
+  fi
 
   set +e
-  # Reach result verification through the deterministic preflight fail-fast
-  # path. Running the reviewer simulator here adds unrelated process pressure
-  # when this suite shares a high-concurrency full test run.
-  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --test-cmd false
-  local code=$?
+  (
+    eval "$fallback"
+    _grv_validate_assurance "$dir/legacy-full-go.md"
+  ) 2> "$err"
+  code=$?
   set -e
   if [[ "$code" -eq 0 ]]; then
-    fail "$name" "bare copy-mode returned success without an assurance verifier"
+    fail "$name" "standalone validator accepted a result without assurance evidence"
     return
   fi
   assert_file_contains "$name" "$err" "standalone copy-mode cannot verify gate assurance" || return

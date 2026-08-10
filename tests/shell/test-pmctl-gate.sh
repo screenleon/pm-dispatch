@@ -558,16 +558,17 @@ case_verify_policy_insufficient_keeps_artifact_current() {
 }
 
 case_verify_required_assurance_rejects_legacy_tier_labels() {
-  local name="gate/verify: required assurance rejects legacy tier and mode labels"
+  local name="gate/verify: required full assurance rejects legacy full-tier labels"
   should_run "$name" || return 0
   local repo="$tmp_root/v-required-assurance/repo" result out rc=0
   mkdir -p "$repo"; git -C "$repo" init -q
   git -C "$repo" config user.email test@example.invalid; git -C "$repo" config user.name test
   printf 'one\n' > "$repo/file.txt"; git -C "$repo" add file.txt; git -C "$repo" commit -qm initial
   result="$tmp_root/v-required-assurance/result.md"; _mk_gate_result "$result" GO
+  sed -i 's/^tier: express$/tier: full/' "$result"
   . "$REPO_ROOT/runtime/lib/gate-result-verify.sh"
   gate_result_attest "$result" "$repo" HEAD HEAD committed_head 2026-08-08T00:00:00Z
-  out="$("$PMCTL" gate verify "$result" --cd "$repo" --require-tier express --require-mode sequential --json 2>/dev/null)" || rc=$?
+  out="$("$PMCTL" gate verify "$result" --cd "$repo" --require-tier full --require-mode sequential --json 2>/dev/null)" || rc=$?
   if [[ "$rc" -eq 1 ]] \
     && jq -e '.artifact_valid == true and .subject_current == true and .policy_applicable == false and (.reasons.policy|index("assurance_contract_missing")) != null' <<<"$out" >/dev/null; then
     pass "$name"
