@@ -579,8 +579,14 @@ pmctl_gate_wait() {
           printf 'pmctl gate wait: FAIL: gate_result_verify unavailable -- cannot confirm result integrity for %s, treating as failed wait\n' "$_result" >&2
           return 2
         fi
-        if ! gate_result_verify "$_result" >/dev/null 2>&1; then
+        local _verify_error _verify_line
+        if ! _verify_error="$(gate_result_verify "$_result" 2>&1)"; then
           printf 'pmctl gate wait: FAIL: gate_result_verify rejected %s -- result is missing/corrupt/unparsable, treating as failed wait\n' "$_result" >&2
+          if [[ -n "$_verify_error" ]]; then
+            while IFS= read -r _verify_line; do
+              printf 'pmctl gate wait: verifier: %s\n' "$_verify_line" >&2
+            done <<< "$_verify_error"
+          fi
           return 2
         fi
         # Verdict summary: echo the result file's `Final:` line verbatim —

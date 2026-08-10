@@ -642,7 +642,9 @@ case_wait_fails_on_corrupt_result() {
   local out code
   set +e; out="$("$wait_wrapper" "$gate_id" --cd "$work" --timeout "$_WAIT_OK" 2>&1)"; code=$?; set -e
 
-  if [[ "$code" -eq 2 ]] && [[ "$out" == *"gate_result_verify rejected"* ]]; then
+  if [[ "$code" -eq 2 ]] \
+    && [[ "$out" == *"gate_result_verify rejected"* ]] \
+    && [[ "$out" == *"pmctl gate wait: verifier: Error: gate result file must contain exactly one Final:"* ]]; then
     pass "$name"
   else
     fail "$name" "code=$code out=$out"

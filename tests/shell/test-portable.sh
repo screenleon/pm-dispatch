@@ -156,20 +156,59 @@ case_mkdir_lock_release() {
   fi
 }
 
+case_mkdir_unlock_expected_owner_preserves_successor() {
+  local name="portable-mkdir-unlock-expected-owner-preserves-successor"
+  should_run "$name" || return 0
+  local lock="$tmp_root/lock-owner-fence" first_owner second_owner
+
+  mkdir_lock "$lock" 2 || { fail "$name" "first acquire failed"; return; }
+  first_owner="$(_portable_lock_read_owner "$lock")"
+  mkdir_unlock "$lock" "$first_owner"
+  mkdir_lock "$lock" 2 || { fail "$name" "second acquire failed"; return; }
+  second_owner="$(_portable_lock_read_owner "$lock")"
+
+  mkdir_unlock "$lock" "$first_owner"
+  if [[ -d "$lock" && "$(_portable_lock_read_owner "$lock" 2>/dev/null || true)" == "$second_owner" ]]; then
+    mkdir_unlock "$lock" "$second_owner"
+    pass "$name"
+  else
+    fail "$name" "a delayed old-owner unlock removed or changed the successor"
+  fi
+}
+
+case_mkdir_lock_owner_election_is_noclobber() {
+  local name="portable-mkdir-lock-owner-election-is-noclobber"
+  should_run "$name" || return 0
+  local lock="$tmp_root/lock-owner-election" first_owner second_owner second_status=0
+  mkdir "$lock"
+  _portable_lock_write_owner "$lock" || { fail "$name" "first owner claim failed"; return; }
+  first_owner="$(_portable_lock_read_owner "$lock")"
+  _portable_lock_write_owner "$lock" || second_status=$?
+  second_owner="$(_portable_lock_read_owner "$lock")"
+  rm -f "$lock/owner"
+  rmdir "$lock"
+  if [[ "$second_status" -ne 0 && "$second_owner" == "$first_owner" ]]; then
+    pass "$name"
+  else
+    fail "$name" "second_status=$second_status first=$first_owner second=$second_owner"
+  fi
+}
+
 case_mkdir_lock_writes_owner_metadata() {
   local name="portable-mkdir-lock-writes-owner-metadata"
   should_run "$name" || return 0
-  local lock="$tmp_root/lock-owner" owner pid host epoch extra
+  local lock="$tmp_root/lock-owner" owner pid host epoch nonce extra
 
   if ! mkdir_lock "$lock" 2; then
     fail "$name" "lock acquire failed"
     return
   fi
   owner="$(cat "$lock/owner" 2>/dev/null || true)"
-  read -r pid host epoch extra <<< "$owner"
+  read -r pid host epoch nonce extra <<< "$owner"
   mkdir_unlock "$lock"
 
-  if [[ "$pid" =~ ^[0-9]+$ && -n "$host" && "$epoch" =~ ^[0-9]+$ && -z "${extra:-}" ]]; then
+  if [[ "$pid" =~ ^[0-9]+$ && -n "$host" && "$epoch" =~ ^[0-9]+$ \
+    && -n "$nonce" && -z "${extra:-}" ]]; then
     pass "$name"
   else
     fail "$name" "owner metadata malformed: ${owner:-empty}"
@@ -182,7 +221,7 @@ case_mkdir_lock_owner_is_background_holder() {
   local lock="$tmp_root/lock-background-owner"
   local ready="$tmp_root/lock-background-owner.ready"
   local release="$tmp_root/lock-background-owner.release"
-  local holder_pid owner_pid host epoch extra child rc=0
+  local holder_pid owner_pid host epoch nonce extra child rc=0
   mkfifo "$ready" "$release"
 
   (
@@ -190,24 +229,24 @@ case_mkdir_lock_owner_is_background_holder() {
       printf 'acquire-failed\n' > "$ready"
       exit 1
     fi
-    read -r owner_pid host epoch extra < "$lock/owner"
-    printf '%s %s %s %s\n' "$BASHPID" "$owner_pid" "$host" "$epoch" > "$ready"
+    read -r owner_pid host epoch nonce extra < "$lock/owner"
+    printf '%s %s %s %s %s\n' "$BASHPID" "$owner_pid" "$host" "$epoch" "$nonce" > "$ready"
     IFS= read -r _ < "$release" || true
     mkdir_unlock "$lock"
   ) &
   child=$!
 
-  if ! read -r holder_pid owner_pid host epoch extra < "$ready"; then
+  if ! read -r holder_pid owner_pid host epoch nonce extra < "$ready"; then
     rc=1
   fi
   printf 'release\n' > "$release" || rc=1
   wait "$child" || rc=1
 
   if [[ "$rc" -eq 0 && "$holder_pid" =~ ^[0-9]+$ && "$holder_pid" == "$owner_pid" \
-        && -n "$host" && "$epoch" =~ ^[0-9]+$ && -z "${extra:-}" ]]; then
+        && -n "$host" && "$epoch" =~ ^[0-9]+$ && -n "$nonce" && -z "${extra:-}" ]]; then
     pass "$name"
   else
-    fail "$name" "rc=$rc holder=${holder_pid:-missing} owner=${owner_pid:-missing} metadata=${host:-missing}/${epoch:-missing}/${extra:-unexpected}"
+    fail "$name" "rc=$rc holder=${holder_pid:-missing} owner=${owner_pid:-missing} metadata=${host:-missing}/${epoch:-missing}/${nonce:-missing}/${extra:-unexpected}"
   fi
 }
 
@@ -226,7 +265,7 @@ case_mkdir_lock_reclaims_dead_same_host_owner() {
   fi
   owner="$(cat "$lock/owner" 2>/dev/null || true)"
   mkdir_unlock "$lock"
-  if [[ "$owner" =~ ^[0-9]+[[:space:]]+[^[:space:]]+[[:space:]]+[0-9]+$ ]]; then
+  if [[ "$owner" =~ ^[0-9]+[[:space:]]+[^[:space:]]+[[:space:]]+[0-9]+[[:space:]]+[^[:space:]]+$ ]]; then
     pass "$name"
   else
     fail "$name" "new owner metadata missing after reclaim"
@@ -337,6 +376,12 @@ _slw_return_42() {
 
 _slw_write_fallback() {
   printf 'fallback ok\n' > "$1"
+}
+
+_slw_report_owner_and_body() {
+  local lockdir="$1" out_file="$2" owner_pid host epoch nonce extra
+  read -r owner_pid host epoch nonce extra < "$lockdir/owner"
+  printf '%s %s %s %s %s\n' "$BASHPID" "$owner_pid" "$host" "$epoch" "$nonce" > "$out_file"
 }
 
 _slw_hold_lock() {
@@ -465,6 +510,24 @@ case_serialize_with_lock_fallback() {
     return
   fi
   pass "$name"
+}
+
+case_serialize_with_lock_fallback_owner_is_body() {
+  local name="portable-serialize-with-lock-mkdir-owner-is-critical-body"
+  should_run "$name" || return 0
+  local lockbase="$tmp_root/slw-owner-body" out_file="$tmp_root/slw-owner-body.out"
+  local body_pid owner_pid host epoch nonce extra
+  FAKE_FLOCK_MISSING=1 serialize_with_lock "$lockbase" \
+    _slw_report_owner_and_body "$lockbase.lockdir" "$out_file" \
+    || { fail "$name" "fallback call failed"; return; }
+  read -r body_pid owner_pid host epoch nonce extra < "$out_file"
+  if [[ "$body_pid" =~ ^[0-9]+$ && "$body_pid" == "$owner_pid" \
+    && -n "$host" && "$epoch" =~ ^[0-9]+$ && -n "$nonce" \
+    && -z "${extra:-}" && ! -e "$lockbase.lockdir" ]]; then
+    pass "$name"
+  else
+    fail "$name" "body=${body_pid:-missing} owner=${owner_pid:-missing} metadata=${host:-missing}/${epoch:-missing}/${nonce:-missing}/${extra:-unexpected}"
+  fi
 }
 
 # Behavior: serialize_with_lock returns non-zero when the lock parent directory does not exist.
@@ -1134,6 +1197,8 @@ case_realpath_m_windows_mode_relative_path
 case_safe_tmpdir
 case_mkdir_lock_contention
 case_mkdir_lock_release
+case_mkdir_unlock_expected_owner_preserves_successor
+case_mkdir_lock_owner_election_is_noclobber
 case_mkdir_lock_writes_owner_metadata
 case_mkdir_lock_owner_is_background_holder
 case_mkdir_lock_reclaims_dead_same_host_owner
@@ -1144,6 +1209,7 @@ case_serialize_with_lock_basic
 case_serialize_with_lock_propagates_rc
 case_serialize_with_lock_contention_diagnostic
 case_serialize_with_lock_fallback
+case_serialize_with_lock_fallback_owner_is_body
 case_serialize_with_lock_fallback_signal_cleanup
 case_serialize_with_lock_missing_parent
 case_mkdir_lock_unc_warning_nonfatal

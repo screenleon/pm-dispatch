@@ -51,14 +51,14 @@ memory_path="$memory_dir/MEMORY.md"
 usage_sidecar=$(memory_usage_sidecar_path "$memory_dir")
 today_day=$(( $(date +%s) / 86400 ))
 declare -A _usage_acc=() _usage_last=()
-if [[ -f "$usage_sidecar" ]]; then
+if [[ -f "$usage_sidecar" || ( "$usage_sidecar" == *.sqlite3 && -f "${usage_sidecar%.sqlite3}.tsv" ) ]]; then
   while IFS=$'\t' read -r _u_rel _u_acc _u_last; do
     [[ -z "$_u_rel" || "$_u_rel" == \#* ]] && continue
     [[ "$_u_acc"  =~ ^[0-9]+$ ]] || _u_acc=0
     [[ "$_u_last" =~ ^[0-9]+$ ]] || _u_last=0
     _usage_acc["$_u_rel"]="$_u_acc"
     _usage_last["$_u_rel"]="$_u_last"
-  done < "$usage_sidecar"
+  done < <(memory_usage_read "$usage_sidecar")
 fi
 # Relpaths whose access_count should be incremented this run (keyword hits).
 usage_hits=()
@@ -181,16 +181,21 @@ if [[ "$tier2_count" -gt 0 ]]; then
   done < <(sort -t$'\t' -k1,1n -k2,2rn -k3,3n "$_t2tmp")
 fi
 
-# Persist this run's keyword-hit accesses (and apply periodic decay) under an
-# exclusive lock. Best-effort: a lock contention or write failure must never
-# block or fail the prompt hook.
+# Persist this run's keyword-hit accesses (and apply periodic decay).
+# SQLite is transactionally safe across hook processes; the TSV compatibility
+# fallback retains the existing shell lock. Failures remain best-effort.
 if [[ "${#usage_hits[@]}" -gt 0 ]]; then
   # The lock file lives beside the sidecar; its directory must exist before
   # serialize_with_lock opens it.
   mkdir -p "$(dirname "$usage_sidecar")" 2>/dev/null || true
-  serialize_with_lock "$usage_sidecar" \
+  if [[ "$usage_sidecar" == *.sqlite3 ]]; then
     memory_usage_commit "$usage_sidecar" "$MEMORY_DECAY_THRESHOLD" "$today_day" \
-    "${usage_hits[@]}" >/dev/null 2>&1 || true
+      "${usage_hits[@]}" >/dev/null 2>&1 || true
+  else
+    serialize_with_lock "$usage_sidecar" \
+      memory_usage_commit "$usage_sidecar" "$MEMORY_DECAY_THRESHOLD" "$today_day" \
+      "${usage_hits[@]}" >/dev/null 2>&1 || true
+  fi
 fi
 
 # Determine how many tier2 slots remain after tier1

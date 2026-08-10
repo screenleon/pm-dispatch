@@ -982,6 +982,38 @@ case_finish_missing_result_file() {
     pass "$name"
 }
 
+case_finish_corrupt_gate_result_reports_verifier() {
+  local name="ship finish: corrupt gate result reports verifier detail and refuses push"
+  should_run "$name" || return 0
+  local work out err status=0
+  work="$tmp_root/work-finish-corrupt-result"
+  make_work_repo "$work" "CC-9001"
+  checkout_ticket_branch "$work" "CC-9001"
+  add_bare_origin "$work"
+  out="$tmp_root/out-finish-corrupt-result"; err="$tmp_root/err-finish-corrupt-result"
+  bash -c '
+    repo_root="$1"; work_dir="$2"; ticket_id="$3"
+    pmctl_gate_run() {
+      local result_file
+      result_file="$(mktemp)"
+      printf "corrupt result without verdict\n" > "$result_file"
+      printf "result: %s\n" "$result_file"
+      return 0
+    }
+    . "$repo_root/runtime/lib/pmctl-ship.sh"
+    pmctl_ship_finish "$repo_root" "$work_dir" "$ticket_id"
+  ' _ "$REPO_ROOT" "$work" "CC-9001" > "$out" 2> "$err" || status=$?
+  local pushed=0
+  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
+  if [[ "$status" -eq 1 && "$pushed" -eq 0 ]] \
+    && grep -q "invalid or stale for the current tree" "$err" \
+    && grep -q "pmctl ship finish: verifier: Error: gate result file must contain exactly one Final:" "$err"; then
+    pass "$name"
+  else
+    fail "$name" "status=$status pushed=$pushed stderr=$(cat "$err")"
+  fi
+}
+
 case_finish_go_dirty_tree_refuses_push() {
   local name="ship finish: GO with an uncommitted (dirty) tree refuses to push -- committed-diff guard"
   should_run "$name" || return 0
@@ -1881,6 +1913,7 @@ case_run_tracks_adapter_field() {
 
 case_finish_no_go_does_not_push
 case_finish_missing_result_file
+case_finish_corrupt_gate_result_reports_verifier
 case_finish_go_dirty_tree_refuses_push
 case_finish_go_head_moved_refuses_push
 case_finish_gh_missing_refuses_before_gate_or_push

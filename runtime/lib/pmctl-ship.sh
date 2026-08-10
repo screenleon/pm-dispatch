@@ -210,6 +210,15 @@ pmctl_ship_finish() {
   gate_assessment="$(gate_result_assess "$result_path" "$work_dir")" || gate_assessment_status=$?
   if [[ "$gate_assessment_status" -ne 0 ]]; then
     printf 'pmctl ship finish: gate result is invalid or stale for the current tree; refusing publication: %s\n' "$gate_assessment" >&2
+    if [[ "$(jq -r '.artifact_valid' <<< "$gate_assessment" 2>/dev/null)" == "false" ]]; then
+      local verify_error verify_line
+      verify_error="$(gate_result_verify "$result_path" 2>&1)" || true
+      if [[ -n "$verify_error" ]]; then
+        while IFS= read -r verify_line; do
+          printf 'pmctl ship finish: verifier: %s\n' "$verify_line" >&2
+        done <<< "$verify_error"
+      fi
+    fi
     return 1
   fi
   final_verdict="$(grep -m1 '^Final: ' "$result_path" 2>/dev/null | awk '{print $2}')"
