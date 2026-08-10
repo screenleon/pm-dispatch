@@ -37,13 +37,14 @@ _WAIT_OK="${PM_GATE_TEST_WAIT_TIMEOUT:-30}"
 # --lifecycle detached exercises the actual code, not a stand-in.
 _mk_fixture_repo() {
   local fixture="$1"
-  mkdir -p "$fixture/runtime/lib" "$fixture/runtime/bin"
+  mkdir -p "$fixture/runtime/lib" "$fixture/runtime/bin" "$fixture/core/policy"
   cp "$REPO_ROOT/runtime/lib/pmctl-gate.sh" "$fixture/runtime/lib/pmctl-gate.sh"
   cp "$REPO_ROOT/runtime/bin/gate-supervisor.sh" "$fixture/runtime/bin/gate-supervisor.sh"
   chmod +x "$fixture/runtime/bin/gate-supervisor.sh"
   for _lib in state-paths.sh portable.sh gate-assurance.sh gate-result-verify.sh detached-launch.sh; do
     cp "$REPO_ROOT/runtime/lib/$_lib" "$fixture/runtime/lib/$_lib"
   done
+  cp "$REPO_ROOT/core/policy/gate-assurance.yaml" "$fixture/core/policy/gate-assurance.yaml"
 }
 
 # Install a fake pr-gate.sh that signals $started_fifo then blocks reading
@@ -91,7 +92,7 @@ if [[ -n "\$rd" ]]; then
 ---
 gate_result_version: pr_gate_result_v1
 final: $([[ $code -eq 0 ]] && printf GO || printf NO-GO)
-tier: express
+tier: full
 mode: sequential
 most_severe: approve
 ---

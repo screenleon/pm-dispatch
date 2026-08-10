@@ -363,13 +363,14 @@ unset _name
 # ── Live-context-db mutual exclusion ─────────────────────────────────────────
 # These suites both contend on the developer's live $REPO_ROOT/.pm-dispatch/ctx/
 # context.db: test-pmctl-context asserts it is unchanged for the suite's
-# duration (its no-live-db-mutation guard), while test-release-verify runs
-# release-verify.sh Phase 3 which indexes THIS repo and rebuilds that same db.
+# duration (its no-live-db-mutation guard), while test-release-verify and
+# test-e2e-script invoke flows that refresh THIS repo's context index.
 # Run concurrently, the writer trips the reader's guard (a false failure). The
 # parallel scheduler below never lets two of these run at the same time.
 declare -A LIVE_DB_EXCLUSIVE=(
   [test-pmctl-context]=1
   [test-release-verify]=1
+  [test-e2e-script]=1
 )
 
 if [[ "$LIST" -eq 1 ]]; then
