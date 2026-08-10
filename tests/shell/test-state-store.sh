@@ -90,9 +90,9 @@ FAKEOF
   chmod +x "$bindir/codex"
 }
 
-# Poison codex: makes events.jsonl unwritable (chmod 000) after the adapter
-# runs so a post-adapter transition Event append fails while the paired Run
-# append still succeeds.
+# Poison codex: replaces events.jsonl with a directory after the adapter runs,
+# so a post-adapter transition Event append fails while the paired Run append
+# still succeeds.  This is deterministic even when tests run as root.
 install_poison_codex() {
   local bindir="$1" code="${2:-0}"
   cat > "$bindir/codex" <<FAKEOF
@@ -106,7 +106,8 @@ while [[ \$# -gt 0 ]]; do
 done
 if [[ -n "\${PM_DISPATCH_STATE_ROOT:-}" ]]; then
   while IFS= read -r -d '' _ef; do
-    chmod 000 "\$_ef"
+    rm -f "\$_ef"
+    mkdir "\$_ef"
   done < <(find "\${PM_DISPATCH_STATE_ROOT}" -name events.jsonl -type f -print0 2>/dev/null)
 fi
 [[ -n "\$_last" ]] && printf 'dispatch complete (poison codex)\n' > "\$_last"
@@ -300,6 +301,7 @@ case_state_store_init_world_writable_rejected_when_chmod_cannot_secure() {
   mkdir -p "$store"
   chmod 0777 "$store"
   stderr_out="$({
+    # shellcheck disable=SC2329 # Indirectly invoked by state_store_init.
     chmod() {
       if [[ "${1:-}" == "0700" ]]; then
         return 0
@@ -330,6 +332,7 @@ case_state_store_init_world_writable_escape_hatch() {
   mkdir -p "$store"
   chmod 0777 "$store"
   stderr_out="$({
+    # shellcheck disable=SC2329 # Indirectly invoked by state_store_init.
     chmod() {
       if [[ "${1:-}" == "0700" ]]; then
         return 0
@@ -362,6 +365,7 @@ case_state_store_init_group_only_writable_rejected() {
   mkdir -p "$store"
   chmod 0720 "$store"
   stderr_out="$({
+    # shellcheck disable=SC2329 # Indirectly invoked by state_store_init.
     chmod() {
       if [[ "${1:-}" == "0700" ]]; then
         return 0
@@ -393,6 +397,7 @@ case_state_store_init_world_only_writable_rejected() {
   mkdir -p "$store"
   chmod 0702 "$store"
   stderr_out="$({
+    # shellcheck disable=SC2329 # Indirectly invoked by state_store_init.
     chmod() {
       if [[ "${1:-}" == "0700" ]]; then
         return 0
@@ -1658,8 +1663,6 @@ case_pmctl_dispatch_terminal_event_append_fail() {
   PM_DISPATCH_STATE_ROOT="$store" PATH="$fake_bin_dir:$PATH" \
     "$PMCTL" dispatch run --adapter codex --lifecycle foreground --no-auto-pack \
     --cd "$work_dir" --brief-file "$brief_file" >/dev/null 2>&1 || rc=$?
-  # Restore events.jsonl permissions so the temp dir can be cleaned up.
-  find "$store" -name events.jsonl | xargs chmod 600 2>/dev/null || true
   runs_file="$(find "$store" -name runs.jsonl -type f 2>/dev/null | head -1 || true)"
   if [[ "$rc" -ne 0 && -s "$runs_file" ]]; then
     pass "$name"
@@ -1929,17 +1932,16 @@ case_state_store_init_mkdir_fail_loud() {
   # Verifies that layout mkdir failure propagates as non-zero rather than being silently swallowed.
   #
   # Steps:
-  #   1. Create store root with a pre-existing projects/ dir; chmod it to 500 (no write).
+  #   1. Create store root with a projects path that is a regular file.
   #   2. Call state_store_init; assert non-zero exit and stderr contains "mkdir failed".
   local name="state_store_init: layout mkdir failure propagates loud"
   should_run "$name" || return 0
   local store projects_dir rc=0 stderr_out
   store="$tmp_root/mkdir-fail-loud"
   projects_dir="$store/projects"
-  mkdir -p "$projects_dir"
-  chmod 500 "$projects_dir"
+  mkdir -p "$store"
+  : > "$projects_dir"
   stderr_out="$(PM_DISPATCH_STATE_ROOT="$store" state_store_init 2>&1 >/dev/null)" || rc=$?
-  chmod 700 "$projects_dir"
   if [[ "$rc" -ne 0 ]] && printf '%s' "$stderr_out" | grep -q "mkdir failed"; then
     pass "$name"
   else

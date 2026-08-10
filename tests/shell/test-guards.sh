@@ -55,7 +55,7 @@ guard_log_dir_fallback_case() {
   shift 2
   should_run "$name" || return 0
   local actual status=0
-  actual="$(env -u PM_GUARD_LOG_DIR "$@" bash -c '. "$1"; pm_guard_log_dir' _ "$REPO_ROOT/runtime/lib/guard-log.sh")" || status=$?
+  actual="$(env -u PM_GUARD_LOG_DIR -u PM_DISPATCH_STATE_ROOT "$@" bash -c '. "$1"; pm_guard_log_dir' _ "$REPO_ROOT/runtime/lib/guard-log.sh")" || status=$?
   if [[ "$status" -eq 0 && "$actual" == "$expected" ]]; then
     pass "$name"
   else
@@ -455,17 +455,19 @@ run_case "pm: Write /tmp/rogue/docs/spikes/CC-999-evil.md → deny (Rule B in /t
   '{"agent_type":"project-pm","tool_name":"Write","tool_input":{"file_path":"/tmp/rogue/docs/spikes/CC-999-evil.md"}}' \
   "outside direct-write handoff zones"
 
-# Cross-repo Rule B: PM dispatched to work on another repo — spike files there
-# should be allowed.  Use a sibling directory next to REPO_ROOT so the path is
-# outside /tmp/ and does not rely on the file existing.
+# Cross-repo Rule B: a real second worktree must be allowed.  This also proves
+# arbitrary paths merely named docs/spikes are not treated as repositories.
+_pm_cross_repo="$tmp_root/other-project"
+mkdir -p "$_pm_cross_repo/docs/spikes"
+git -C "$_pm_cross_repo" init -q
 run_case "pm: Write cross-repo docs/spikes/CC-999-cross-repo.md → allow (Rule B, any repo)" 0 "$PMHOOK" \
-  "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$REPO_ROOT/../other-project/docs/spikes/CC-999-cross-repo.md\"}}"
+  "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_pm_cross_repo/docs/spikes/CC-999-cross-repo.md\"}}"
 
 run_case "pm: Write cross-repo docs/spikes/analysis-scope.md → allow (Rule B, *-scope, any repo)" 0 "$PMHOOK" \
-  "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$REPO_ROOT/../other-project/docs/spikes/analysis-scope.md\"}}"
+  "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_pm_cross_repo/docs/spikes/analysis-scope.md\"}}"
 
 run_case "pm: Write cross-repo docs/spikes/notes.md → deny (no pattern match, cross-repo)" 2 "$PMHOOK" \
-  "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$REPO_ROOT/../other-project/docs/spikes/notes.md\"}}" \
+  "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_pm_cross_repo/docs/spikes/notes.md\"}}" \
   "outside direct-write handoff zones"
 
 # Rule A traversal: the lexical normalizer must collapse /tmp/<slug>/../ before
@@ -990,14 +992,18 @@ stop_failure_logged() {
   transcript="$home/transcript-fail.jsonl"
   printf '%s\n' '{"role":"assistant","usage":{"input_tokens":1000,"output_tokens":200}}' > "$transcript"
   logfile="$home/.pm-dispatch/usage-tracker.jsonl"
-  mkdir -p "$(dirname "$logfile")"
-  : > "$logfile"
-  chmod 444 "$logfile"
+  # chmod-based failure injection is ineffective when the suite runs as root.
+  # Replace the delegated writer with a deterministic non-zero stub instead.
+  rm "$home/.claude/scripts/log-usage.sh"
+  cat > "$home/.claude/scripts/log-usage.sh" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+  chmod +x "$home/.claude/scripts/log-usage.sh"
   payload="$(jq -nc --arg path "$transcript" --arg session "s1" '{transcript_path:$path,session_id:$session}')"
   truncate_log
   printf '%s' "$payload" | HOME="$home" PM_GUARD_LOG_DIR="$PM_GUARD_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
   status=$?
-  chmod 644 "$logfile"
   if [[ "$status" == "0" && -f "$TEST_LOG_FILE" ]] && grep -q -F "failed" "$TEST_LOG_FILE"; then
     PASS=$((PASS+1))
     [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
@@ -1489,7 +1495,7 @@ rl_hook_write_failure_chains() {
   # must still exit 0 so the chained StatusLine command is not silently dropped.
   # Steps:
   #   1. Create a temp dir; add statusline-chain.conf pointing to a chain script
-  #   2. Make the dir read-only so rate-limits.json cannot be written
+  #   2. Make mktemp fail only for the rate-limit staging path
   #   3. Run the hook with a valid rate_limits payload
   #   4. Assert exit 0, chain sentinel exists, rate-limits.json absent
   local name="rl-hook/write-failure-chains" rl_home chain_dir chain_script chain_log status
@@ -1504,11 +1510,19 @@ touch "$(dirname "$0")/chain-called"
 CHAINEOF
   chmod +x "$chain_script"
   printf '%s\n' "$chain_script" > "$rl_home/statusline-chain.conf"
-  chmod 555 "$rl_home"
+  local mock_bin="$chain_dir/mock-bin"
+  mkdir -p "$mock_bin"
+  cat > "$mock_bin/mktemp" <<EOF
+#!/usr/bin/env bash
+case "\${1:-}" in
+  "$rl_home"/.rate-limits.json.tmp.*) exit 1 ;;
+esac
+exec /usr/bin/mktemp "\$@"
+EOF
+  chmod +x "$mock_bin/mktemp"
   printf '%s' '{"rate_limits":{"five_hour":{"used_percentage":50,"resets_at":9999999999}}}' \
-    | CLAUDE_CONFIG_DIR="$rl_home" "$RL_HOOK" 2>/dev/null
+    | PATH="$mock_bin:$PATH" CLAUDE_CONFIG_DIR="$rl_home" "$RL_HOOK" 2>/dev/null
   status=$?
-  chmod 755 "$rl_home"
   if [[ "$status" == "0" && -f "$chain_log" && ! -f "$rl_home/rate-limits.json" ]]; then
     PASS=$((PASS+1))
     [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
@@ -2317,6 +2331,7 @@ memory_usage_commit_contention_matrix() {
     . "$REPO_ROOT/runtime/lib/memory.sh"
     # shellcheck disable=SC1091
     . "$REPO_ROOT/runtime/lib/portable.sh"
+    # shellcheck disable=SC2329 # Invoked by the concurrent fixture workers below.
     _cc477_commit() {
       local sidecar="$1" trace="$2" writer_id="$3"
       printf '%s acquired\n' "$writer_id" >> "$trace"

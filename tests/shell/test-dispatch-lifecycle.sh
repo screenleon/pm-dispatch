@@ -550,6 +550,7 @@ case_detached_ineligible_rejected() {
   bindir="$(mktemp -d)"; _install_fake_codex "$bindir" 0
   # Simulate a host-native (non-detachable) adapter via override; codex is a real
   # cli-subprocess adapter, so the override is the only way to exercise the gate.
+  # shellcheck disable=SC2329 # Indirectly invoked by the sourced dispatch library.
   pmctl_dispatch_detach_eligible() { printf 'fake: not detach-eligible\n' >&2; return 1; }
   set +e
   out="$(PATH="$bindir:$PATH" pmctl_dispatch_run "$REPO_ROOT" --adapter codex --cd "$work" --brief-file "$brief" --lifecycle detached 2>&1)"; code=$?
@@ -1447,7 +1448,7 @@ case_dispatch_wait_poll_interval_honored() {
 
   # Override sleep as a bash function: records the interval on first call, then
   # writes the sentinel file so the next pmctl_dispatch_wait poll finds it and exits 0.
-  # shellcheck disable=SC2317
+  # shellcheck disable=SC2317,SC2329 # Indirectly invoked by pmctl_dispatch_wait.
   sleep() {
     if [[ ! -s "$sleep_log" ]]; then
       printf '%s\n' "$1" >> "$sleep_log"

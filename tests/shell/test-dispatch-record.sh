@@ -167,6 +167,7 @@ case_record_failure_is_soft() {
   work="$(mktemp -d)"; git init -q "$work"
   brief="$(_mk_guard_brief "$work")"
   bindir="$(mktemp -d)"; _install_fake_codex "$bindir" 0
+  # shellcheck disable=SC2329 # Indirectly invoked by the sourced dispatch library.
   dispatch_record_write() { return 42; }
   set +e
   out="$(PATH="$bindir:$PATH" pmctl_dispatch_run "$REPO_ROOT" --adapter codex --lifecycle foreground --cd "$work" --brief-file "$brief" 2>&1)"; code=$?

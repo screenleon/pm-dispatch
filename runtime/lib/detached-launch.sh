@@ -40,12 +40,13 @@ detached_launch_generate_nonce() {
 }
 
 # Per-user private key-file path for a given namespace (e.g. "pm-dispatch",
-# "pm-gate-dispatch") and id. Prefers XDG_RUNTIME_DIR (tmpfs, already
-# per-user/per-session) and falls back to a uid-suffixed /tmp dir.
+# "pm-gate-dispatch") and id. Prefers a writable XDG_RUNTIME_DIR (tmpfs,
+# already per-user/per-session) and falls back to a uid-suffixed /tmp dir when
+# a sandbox exposes an existing but read-only runtime directory.
 detached_launch_key_file() {
   local namespace="${1:?namespace required}" id="${2:?id required}" uid key_dir
   uid="$(id -u 2>/dev/null)" || uid="0"
-  if [[ -n "${XDG_RUNTIME_DIR:-}" && -d "${XDG_RUNTIME_DIR}" ]]; then
+  if [[ -n "${XDG_RUNTIME_DIR:-}" && -d "${XDG_RUNTIME_DIR}" && -w "${XDG_RUNTIME_DIR}" ]]; then
     key_dir="${XDG_RUNTIME_DIR}/${namespace}"
   else
     key_dir="/tmp/${namespace}-${uid}"

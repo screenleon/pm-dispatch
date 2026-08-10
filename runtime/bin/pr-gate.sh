@@ -25,7 +25,7 @@ verify_reviewer_artifact_hashes() {
   while [[ $# -ge 3 ]]; do
     name="$1" path="$2" baseline="$3"; shift 3
     [[ "$baseline" == "none" ]] && continue
-    current="$(cat "$path" 2>/dev/null | $hash_cmd || echo 'missing')"
+    current="$(cat "$path" 2>/dev/null | $hash_cmd | awk '{print $1}' || echo 'missing')"
     [[ "$current" != "$baseline" ]] && printf '%s\n' "$name"
   done
 }
@@ -1937,7 +1937,7 @@ RBRIEF_EOF
         FAILED_REVIEWERS+=("$r")
         REVIEWER_POST_WAIT_HASHES+=("none")
       else
-        REVIEWER_POST_WAIT_HASHES+=("$(cat "$rf" 2>/dev/null | $_HASH_CMD || echo 'missing')")
+        REVIEWER_POST_WAIT_HASHES+=("$(cat "$rf" 2>/dev/null | $_HASH_CMD | awk '{print $1}' || echo 'missing')")
       fi
     done
 
@@ -2028,8 +2028,13 @@ RBRIEF_EOF
   # before synthesis, to detect synthesis-side tampering of reviewer artifacts.
   # Reviewer outputs are gitignored and not covered by the worktree hash above.
   REVIEWER_ARTIFACT_HASHES=()
-  for rf in "${REVIEWER_OUTPUT_FILES[@]}"; do
-    REVIEWER_ARTIFACT_HASHES+=("$(cat "$rf" | $_HASH_CMD)")
+  PARALLEL_REVIEWER_HASHES=""
+  for i in "${!REVIEWER_OUTPUT_FILES[@]}"; do
+    rf="${REVIEWER_OUTPUT_FILES[$i]}"
+    r="${REVIEWER_NAMES[$i]}"
+    current_hash="$(cat "$rf" | $_HASH_CMD | awk '{print $1}')"
+    REVIEWER_ARTIFACT_HASHES+=("$current_hash")
+    PARALLEL_REVIEWER_HASHES="${PARALLEL_REVIEWER_HASHES:+$PARALLEL_REVIEWER_HASHES }${r}:$current_hash"
   done
 
   say '  all reviewer sessions done.\n\n'
@@ -2228,7 +2233,7 @@ SBRIEF_P2
   for i in "${!REVIEWER_OUTPUT_FILES[@]}"; do
     rf="${REVIEWER_OUTPUT_FILES[$i]}"
     r="${REVIEWER_NAMES[$i]}"
-    current_hash="$(cat "$rf" | $_HASH_CMD)"
+    current_hash="$(cat "$rf" | $_HASH_CMD | awk '{print $1}')"
     if [[ "${REVIEWER_ARTIFACT_HASHES[$i]}" != "$current_hash" ]]; then
       TAMPERED_ARTIFACTS+=("$r")
     fi
@@ -2372,6 +2377,23 @@ if declare -F gate_result_attest >/dev/null 2>&1; then
       "$(printf '%s' "$REVIEWER_DISPLAY" | sed 's/,/, /g')"
       "$(printf '%s' "$SKIPPED" | sed 's/, */, /g')"
     )
+    if [[ "$MODE_RESOLVED" == parallel ]]; then
+      # The final result attests each parallel reviewer artifact by a digest.
+      # Keep a stable companion copy next to an explicit --output result as
+      # well; the default already writes both into .gate-results.  This makes
+      # verification self-contained after a user moves or archives the result.
+      _reviewer_evidence_dir="$(dirname "$OUTPUT_FILE")"
+      for i in "${!REVIEWER_OUTPUT_FILES[@]}"; do
+        _reviewer_evidence="$_reviewer_evidence_dir/reviewer-${REVIEWER_NAMES[$i]}-${TIMESTAMP}.md"
+        if [[ "${REVIEWER_OUTPUT_FILES[$i]}" != "$_reviewer_evidence" ]]; then
+          cp "${REVIEWER_OUTPUT_FILES[$i]}" "$_reviewer_evidence" || {
+            printf 'Error: failed to preserve parallel reviewer evidence: %s\n' "$_reviewer_evidence" >&2
+            exit 1
+          }
+        fi
+      done
+      _GATE_ASSURANCE_ATTEST_ARGS+=("$TIMESTAMP" "${PARALLEL_REVIEWER_HASHES:-}")
+    fi
   fi
   gate_result_attest "$OUTPUT_FILE" "$WORK_DIR" "$BASE" "$HEAD_REF" \
     "$_GATE_SUBJECT_KIND" "$GATE_CREATED_AT" "${_GATE_ASSURANCE_ATTEST_ARGS[@]}" || {

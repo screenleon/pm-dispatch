@@ -2726,7 +2726,7 @@ case_context_default_repo_root_uses_cwd_git_toplevel() {
   should_run "$name" || return 0
   local ext_repo="$tmp_root/defroot-ext-repo"
   make_fixture_repo "$ext_repo"
-  ( cd "$ext_repo" && git init -q && git add -A && git commit -q -m init )
+  ( cd "$ext_repo" && git init -q && git config user.email test@example.invalid && git config user.name 'pm-dispatch test' && git add -A && git commit -q -m init )
   local out err status=0
   out="$tmp_root/defroot-idx.out"; err="$tmp_root/defroot-idx.err"
   ( cd "$ext_repo" && "$PMCTL" context index --source repo > "$out" 2> "$err" ) || status=$?
@@ -2766,7 +2766,7 @@ case_context_default_repo_root_pm_dispatch_tree_unchanged() {
   # REPO_ROOT, mirroring the case where the two values coincide.
   local self_repo="$tmp_root/defroot-self-repo"
   make_fixture_repo "$self_repo"
-  ( cd "$self_repo" && git init -q && git add -A && git commit -q -m init )
+  ( cd "$self_repo" && git init -q && git config user.email test@example.invalid && git config user.name 'pm-dispatch test' && git add -A && git commit -q -m init )
   local out err status=0
   out="$tmp_root/defroot-self.out"; err="$tmp_root/defroot-self.err"
   ( cd "$self_repo" && REPO_ROOT="$self_repo" bash -c \
@@ -2784,7 +2784,7 @@ case_context_no_arg_cross_repo_never_touches_pm_dispatch_db() {
   should_run "$name" || return 0
   local ext_repo="$tmp_root/defroot-cross-repo"
   make_fixture_repo "$ext_repo"
-  ( cd "$ext_repo" && git init -q && git add -A && git commit -q -m init )
+  ( cd "$ext_repo" && git init -q && git config user.email test@example.invalid && git config user.name 'pm-dispatch test' && git add -A && git commit -q -m init )
   local before after
   before="$(_live_db_fingerprint)"
   ( cd "$ext_repo" && "$PMCTL" context index --source repo > /dev/null 2>&1 )
@@ -2802,7 +2802,7 @@ case_context_default_repo_root_update_uses_cwd() {
   should_run "$name" || return 0
   local ext_repo="$tmp_root/defroot-update-repo"
   make_fixture_repo "$ext_repo"
-  ( cd "$ext_repo" && git init -q && git add -A && git commit -q -m init )
+  ( cd "$ext_repo" && git init -q && git config user.email test@example.invalid && git config user.name 'pm-dispatch test' && git add -A && git commit -q -m init )
   ( cd "$ext_repo" && "$PMCTL" context index --source repo > /dev/null 2>&1 )
   local out err status=0
   out="$tmp_root/defroot-update.out"; err="$tmp_root/defroot-update.err"
@@ -2819,7 +2819,7 @@ case_context_default_repo_root_pack_uses_cwd() {
   should_run "$name" || return 0
   local ext_repo="$tmp_root/defroot-pack-repo"
   make_fixture_repo "$ext_repo"
-  ( cd "$ext_repo" && git init -q && git add -A && git commit -q -m init )
+  ( cd "$ext_repo" && git init -q && git config user.email test@example.invalid && git config user.name 'pm-dispatch test' && git add -A && git commit -q -m init )
   local out err status=0
   out="$tmp_root/defroot-pack.out"; err="$tmp_root/defroot-pack.err"
   ( cd "$ext_repo" && "$PMCTL" context pack --task-id T-DEFROOT --query my_func_alpha > "$out" 2> "$err" ) || status=$?
@@ -2835,7 +2835,7 @@ case_context_default_repo_root_reuse_scan_uses_cwd() {
   should_run "$name" || return 0
   local ext_repo="$tmp_root/defroot-reuse-repo"
   make_fixture_repo "$ext_repo"
-  ( cd "$ext_repo" && git init -q && git add -A && git commit -q -m init )
+  ( cd "$ext_repo" && git init -q && git config user.email test@example.invalid && git config user.name 'pm-dispatch test' && git add -A && git commit -q -m init )
   local out err status=0
   out="$tmp_root/defroot-reuse.out"; err="$tmp_root/defroot-reuse.err"
   ( cd "$ext_repo" && "$PMCTL" context reuse-scan "reuse my_func_alpha helper" > "$out" 2> "$err" ) || status=$?

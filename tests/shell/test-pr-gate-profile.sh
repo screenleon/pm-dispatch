@@ -14,6 +14,13 @@ th_init "$@"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
+# The profile cases launch nested pr-gate processes. Keep their short-lived
+# artifacts inside this suite's private root so an unrelated suite or a
+# lingering child cannot interfere through the shared system /tmp namespace.
+_suite_tmpdir="$TMP_ROOT/tmp"
+mkdir -p "$_suite_tmpdir"
+export TMPDIR="$_suite_tmpdir"
+
 assert_contains() {
   local name="$1" file="$2" needle="$3"
   if ! grep -Fq -- "$needle" "$file"; then
@@ -394,7 +401,10 @@ test_no_lib_copy_mode_uses_inline_executor_fallback() {
   set +e
   (
     cd "$isolated_cwd"
-    HOME="$home" PATH="$no_codex_path" "$runner/pr-gate.sh" --cd "$repo" --executor auto --base __missing_base__
+    # Copy-mode must not inherit ambient gate/preflight state from the parent
+    # runner. Its assertion is specifically about a standalone deployment with
+    # only the fixture's HOME and command path available.
+    env -i HOME="$home" PATH="$no_codex_path" "$runner/pr-gate.sh" --cd "$repo" --executor auto --base __missing_base__
   ) > "$out" 2> "$err"
   local code=$?
   set -e

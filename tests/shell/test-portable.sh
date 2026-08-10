@@ -176,6 +176,41 @@ case_mkdir_lock_writes_owner_metadata() {
   fi
 }
 
+case_mkdir_lock_owner_is_background_holder() {
+  local name="portable-mkdir-lock-owner-is-background-holder"
+  should_run "$name" || return 0
+  local lock="$tmp_root/lock-background-owner"
+  local ready="$tmp_root/lock-background-owner.ready"
+  local release="$tmp_root/lock-background-owner.release"
+  local holder_pid owner_pid host epoch extra child rc=0
+  mkfifo "$ready" "$release"
+
+  (
+    if ! mkdir_lock "$lock" 2; then
+      printf 'acquire-failed\n' > "$ready"
+      exit 1
+    fi
+    read -r owner_pid host epoch extra < "$lock/owner"
+    printf '%s %s %s %s\n' "$BASHPID" "$owner_pid" "$host" "$epoch" > "$ready"
+    IFS= read -r _ < "$release" || true
+    mkdir_unlock "$lock"
+  ) &
+  child=$!
+
+  if ! read -r holder_pid owner_pid host epoch extra < "$ready"; then
+    rc=1
+  fi
+  printf 'release\n' > "$release" || rc=1
+  wait "$child" || rc=1
+
+  if [[ "$rc" -eq 0 && "$holder_pid" =~ ^[0-9]+$ && "$holder_pid" == "$owner_pid" \
+        && -n "$host" && "$epoch" =~ ^[0-9]+$ && -z "${extra:-}" ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc holder=${holder_pid:-missing} owner=${owner_pid:-missing} metadata=${host:-missing}/${epoch:-missing}/${extra:-unexpected}"
+  fi
+}
+
 case_mkdir_lock_reclaims_dead_same_host_owner() {
   local name="portable-mkdir-lock-reclaims-dead-same-host-owner"
   should_run "$name" || return 0
@@ -1100,6 +1135,7 @@ case_safe_tmpdir
 case_mkdir_lock_contention
 case_mkdir_lock_release
 case_mkdir_lock_writes_owner_metadata
+case_mkdir_lock_owner_is_background_holder
 case_mkdir_lock_reclaims_dead_same_host_owner
 case_mkdir_lock_reclaims_age_ceiling_owner
 case_mkdir_lock_does_not_steal_live_lock

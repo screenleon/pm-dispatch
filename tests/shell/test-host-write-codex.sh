@@ -184,13 +184,13 @@ test_host_manifest_declares_codex_memory_update_module() {
 test_host_write_dispatches_codex_from_manifest() {
   local name="host-write-dispatches-codex-from-manifest"
   should_run "$name" || return 0
-  local codex_home="$tmp_root/hwd-codex/.codex"
+  local codex_home="$tmp_root/hwd-codex/.codex" claude_home="$tmp_root/hwd-codex/.claude"
   CODEX_HOME="$codex_home" host_write_install "$REPO_ROOT" codex 0 >/dev/null 2>&1
   if [[ ! -f "$codex_home/hooks.json" ]]; then
     fail "$name" "generic dispatcher did not create hooks.json"
     return
   fi
-  CODEX_HOME="$codex_home" host_write_uninstall_all "$REPO_ROOT" 0 >/dev/null 2>&1
+  CLAUDE_HOME="$claude_home" CODEX_HOME="$codex_home" host_write_uninstall_all "$REPO_ROOT" 0 >/dev/null 2>&1
   [[ "$(jq -c . "$codex_home/hooks.json")" == "{}" ]] \
     && pass "$name" || fail "$name" "generic teardown did not remove managed hook"
 }
@@ -198,13 +198,13 @@ test_host_write_dispatches_codex_from_manifest() {
 test_host_write_dispatches_opencode_stage3() {
   local name="host-write-dispatches-opencode-stage3"
   should_run "$name" || return 0
-  local xdg="$tmp_root/hwd-opencode" codex="$tmp_root/hwd-opencode-codex"
+  local xdg="$tmp_root/hwd-opencode" codex="$tmp_root/hwd-opencode-codex" claude="$tmp_root/hwd-opencode-claude"
   XDG_CONFIG_HOME="$xdg" host_write_install "$REPO_ROOT" opencode 0 >/dev/null 2>&1
   if [[ ! -f "$xdg/opencode/commands/pm.md" ]]; then
     fail "$name" "generic dispatcher did not wire OpenCode"
     return
   fi
-  XDG_CONFIG_HOME="$xdg" CODEX_HOME="$codex" host_write_uninstall_all "$REPO_ROOT" 0 >/dev/null 2>&1
+  CLAUDE_HOME="$claude" XDG_CONFIG_HOME="$xdg" CODEX_HOME="$codex" host_write_uninstall_all "$REPO_ROOT" 0 >/dev/null 2>&1
   [[ ! -e "$xdg/opencode/opencode.json" ]] \
     && pass "$name" || fail "$name" "generic teardown did not remove OpenCode wiring"
 }

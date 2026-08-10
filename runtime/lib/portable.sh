@@ -331,10 +331,14 @@ _portable_lock_stale_secs() {
 }
 
 _portable_lock_write_owner() {
-  local lockdir="$1" host epoch
+  local lockdir="$1" host epoch owner_pid
   host="$(_portable_lock_host)"
   epoch="$(_portable_lock_now)"
-  printf '%s %s %s\n' "$$" "$host" "$epoch" > "$lockdir/owner" 2>/dev/null || true
+  # `$$` remains the coordinator PID in Bash background subshells.  Record the
+  # actual process holding this lock so a dead worker can be reclaimed without
+  # treating its still-live coordinator as the owner.
+  owner_pid="${BASHPID:-$$}"
+  printf '%s %s %s\n' "$owner_pid" "$host" "$epoch" > "$lockdir/owner" 2>/dev/null || true
 }
 
 _portable_lock_read_owner() {
@@ -401,10 +405,10 @@ _portable_lock_stale_owner() {
     return 1
   fi
 
-  if _portable_lock_owner_line_stale "$lockdir" ""; then
-    printf '\n'
-    return 0
-  fi
+  # Never reclaim an ownerless directory. A prior owner can be between mkdir
+  # and writing its metadata; reclaiming based only on the directory mtime can
+  # delete that newly acquired lock. The caller will time out safely instead of
+  # allowing two writers into the critical section.
   return 1
 }
 

@@ -296,10 +296,13 @@ case_prepare_reports_memory_query_failure() {
   local work="$tmp_root/query-failed-work" mdir="$tmp_root/query-failed-memory" out="$tmp_root/query-failed.json" code=0
   mkdir -p "$work" "$mdir"
   git -C "$work" init -q
+  # shellcheck disable=SC2329 # Indirectly invoked by pmctl_pm_prepare.
   pmctl_memory_resolve() {
     jq -cn --arg repo "$work" --arg mdir "$mdir" '{schema_version:1,status:"resolved",repo_root:$repo,project_key:"test",memory_dir:$mdir,resolution_source:"env",readable:true,writable:true,reason:null}'
   }
+  # shellcheck disable=SC2329 # Indirectly invoked by pmctl_pm_prepare.
   _ctx_extract_terms() { printf 'queryfailureterm\n'; }
+  # shellcheck disable=SC2329 # Indirectly invoked by pmctl_pm_prepare.
   pmctl_context_pack() { return 9; }
   pmctl_pm_prepare "$REPO_ROOT" --cd "$work" --request 'queryfailureterm' --json > "$out" 2>/dev/null || code=$?
   unset -f pmctl_memory_resolve _ctx_extract_terms pmctl_context_pack
@@ -320,10 +323,13 @@ case_prepare_bounds_memory_pack_without_corruption() {
   local work="$tmp_root/oversized-pack-work" mdir="$tmp_root/oversized-pack-memory" out="$tmp_root/oversized-pack.json" code=0
   mkdir -p "$work" "$mdir"
   git -C "$work" init -q
+  # shellcheck disable=SC2329 # Indirectly invoked by pmctl_pm_prepare.
   pmctl_memory_resolve() {
     jq -cn --arg repo "$work" --arg mdir "$mdir" '{schema_version:1,status:"resolved",repo_root:$repo,project_key:"test",memory_dir:$mdir,resolution_source:"env",readable:true,writable:true,reason:null}'
   }
+  # shellcheck disable=SC2329 # Indirectly invoked by pmctl_pm_prepare.
   _ctx_extract_terms() { printf 'oversizedpackterm\n'; }
+  # shellcheck disable=SC2329 # Indirectly invoked by pmctl_pm_prepare.
   pmctl_context_pack() {
     jq -cn '{schema_version:2,task_id:"pm-prepare",built_ts:"2026-07-12T00:00:00Z",sources:[{name:"memory-index",version:"1"}],files:[],symbols:[],memories:[range(0;80) as $i | {ref:("card-"+($i|tostring)+"-"+("x"*120)+".md:1"),source:"memory-index",confidence:0.75,source_domain:"memory",why_relevant:"memory match",trust_level:"high"}],risks:[]}'
   }
@@ -346,10 +352,13 @@ case_prepare_human_emits_hydrated_memory_contract() {
   local work="$tmp_root/human-memory-work" mdir="$tmp_root/human-memory-dir" out="$tmp_root/human-memory.out" code=0
   mkdir -p "$work" "$mdir"
   git -C "$work" init -q
+  # shellcheck disable=SC2329 # Indirectly invoked by pmctl_pm_prepare.
   pmctl_memory_resolve() {
     jq -cn --arg repo "$work" --arg mdir "$mdir" '{schema_version:1,status:"resolved",repo_root:$repo,project_key:"test",memory_dir:$mdir,resolution_source:"env",readable:true,writable:true,reason:null}'
   }
+  # shellcheck disable=SC2329 # Indirectly invoked by pmctl_pm_prepare.
   _ctx_extract_terms() { printf 'humanmemoryterm\n'; }
+  # shellcheck disable=SC2329 # Indirectly invoked by pmctl_pm_prepare.
   pmctl_context_pack() {
     printf '%s\n' '{"schema_version":2,"task_id":"pm-prepare","built_ts":"2026-07-12T00:00:00Z","sources":[{"name":"memory-index","version":"1"}],"files":[],"symbols":[],"memories":[{"ref":"card.md:1","source":"memory-index","confidence":0.75,"source_domain":"memory","why_relevant":"memory match","trust_level":"high"}],"risks":[]}'
   }
@@ -376,6 +385,7 @@ case_prepare_human_emits_unavailable_memory_contract() {
   local work="$tmp_root/human-no-memory-work" out="$tmp_root/human-no-memory.out" code=0
   mkdir -p "$work"
   git -C "$work" init -q
+  # shellcheck disable=SC2329 # Indirectly invoked by pmctl_pm_prepare.
   pmctl_memory_resolve() {
     printf '%s\n' '{"schema_version":1,"status":"unavailable","repo_root":"x","project_key":"x","memory_dir":null,"resolution_source":"none","readable":false,"writable":false,"reason":null}'
     return 1
@@ -420,6 +430,7 @@ case_prepare_invalid_memory_cleans_snapshot() {
     "printf 'snapshot fixture\\n' > '$snapshot'" \
     "printf '%s\\n' '$snapshot'" > "$toolroot/runtime/bin/pm-prep-snapshot.sh"
   chmod +x "$toolroot/runtime/bin/pm-prep-snapshot.sh"
+  # shellcheck disable=SC2329 # Indirectly invoked by pmctl_pm_prepare.
   pmctl_memory_resolve() {
     printf '%s\n' '{"schema_version":1,"status":"invalid-explicit","repo_root":"x","project_key":"x","memory_dir":null,"resolution_source":"env","readable":false,"writable":false,"reason":"missing"}'
     return 3
@@ -511,11 +522,17 @@ case_run_carries_memory_provenance_into_dispatch_brief() {
   mkdir -p "$work" "$mdir"
   git -C "$work" init -q
   printf 'working_dir: %s\ngoal: cc483 dispatch provenance\nfiles:\n  - read: README.md\nacceptance:\n  - provenance\n' "$work" > "$brief"
+  # shellcheck disable=SC2329 # Indirectly invoked by pmctl_pm_run.
   pmctl_validate_brief() { return 0; }
+  # shellcheck disable=SC2329 # Indirectly invoked by pmctl_pm_run.
   pmctl_memory_resolve() { jq -cn --arg repo "$work" --arg mdir "$mdir" '{schema_version:1,status:"resolved",repo_root:$repo,project_key:"cc483-key",memory_dir:$mdir,resolution_source:"env",readable:true,writable:true,reason:null}'; }
+  # shellcheck disable=SC2329 # Indirectly invoked by pmctl_pm_run.
   pmctl_dispatch_extract_goal() { printf 'cc483 dispatch provenance\n'; }
+  # shellcheck disable=SC2329 # Indirectly invoked by pmctl_pm_run.
   pmctl_context_pack() { printf '%s\n' '{"schema_version":2,"task_id":"pm-run","memories":[{"ref":"canonical.md:7"}]}' ; }
+  # shellcheck disable=SC2329 # Indirectly invoked by pmctl_pm_run.
   pmctl_dispatch_run() { printf '%s\n' "$*" > "$trace"; printf 'run-test-provenance\n'; }
+  # shellcheck disable=SC2329 # Indirectly invoked by pmctl_pm_run.
   pmctl_dispatch_wait() { return 0; }
   pmctl_pm_run "$REPO_ROOT" --adapter codex --brief-file "$brief" --cd "$work" --host opencode --json > "$out" || code=$?
   unset -f pmctl_validate_brief pmctl_memory_resolve pmctl_dispatch_extract_goal pmctl_context_pack pmctl_dispatch_run pmctl_dispatch_wait
