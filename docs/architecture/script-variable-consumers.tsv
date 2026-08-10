@@ -231,9 +231,11 @@ PM_DISPATCH_PROMPT_CONTEXT_TIMEOUT	PM_DISPATCH_PROMPT_CONTEXT_TIMEOUT	hosts/clau
 PM_DISPATCH_PROMPT_SCAN_MAX_TERMS	PM_DISPATCH_PROMPT_SCAN_MAX_TERMS	runtime/lib/pmctl-context.sh	production
 PM_DISPATCH_REPO	PM_DISPATCH_REPO	hosts/claude/bin/install-guards.sh	production
 PM_DISPATCH_REPO	PM_DISPATCH_REPO	install.sh	production
+PM_DISPATCH_REPO	PM_DISPATCH_REPO	runtime/bin/pr-gate.sh	production
 PM_DISPATCH_REPO	PM_DISPATCH_REPO	runtime/hooks/guard-pm-write.sh	production
 PM_DISPATCH_REPO	PM_DISPATCH_REPO	runtime/lib/repo-layout.sh	production
 PM_DISPATCH_REPO	PM_DISPATCH_REPO	tools/lint/lint-portable-repo-paths.sh	production
+PM_DISPATCH_REPOS_ROOT	PM_DISPATCH_REPOS_ROOT	runtime/bin/pr-gate.sh	production
 PM_DISPATCH_REPOS_ROOT	PM_DISPATCH_REPOS_ROOT	runtime/lib/repo-layout.sh	production
 PM_DISPATCH_REPOS_ROOT	PM_DISPATCH_REPOS_ROOT	tools/lint/lint-portable-repo-paths.sh	production
 PM_DISPATCH_ROTATE_MAX_BYTES	PM_DISPATCH_ROTATE_MAX_BYTES	runtime/lib/state-writer.sh	production

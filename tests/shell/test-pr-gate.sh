@@ -79,6 +79,11 @@ if [[ -n "${CODEX_GATE_CAPTURE_DISPATCH_ARGS:-}" ]]; then
   printf '%s\n' "$@" > "$CODEX_GATE_CAPTURE_DISPATCH_ARGS"
 fi
 
+if [[ -n "${CODEX_GATE_CAPTURE_QA_RULES_ENV:-}" ]]; then
+  printf 'QA_RULES_DIR=%s\nQA_RULES_ENTRY=%s\n' \
+    "${QA_RULES_DIR:-}" "${QA_RULES_ENTRY:-AGENT.md}" > "$CODEX_GATE_CAPTURE_QA_RULES_ENV"
+fi
+
 brief_file=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -4114,6 +4119,63 @@ test_copy_mode_dispatches_via_adapter() {
   pass "$name"
 }
 
+# Behavior: a fresh reviewer process receives the sibling qa-testing-rules
+# checkout even when QA_RULES_DIR was not present in the caller environment.
+test_qa_rules_dir_is_resolved_and_exported() {
+  local name="qa-rules/resolved-and-exported-to-reviewer"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/qa-rules-resolved" repos home repo runner rules capture out err
+  repos="$dir/repos"
+  home="$dir/home"; repo="$repos/project"; runner="$dir/runner"
+  rules="$repos/qa-testing-rules"; capture="$dir/qa-env"; out="$dir/out"; err="$dir/err"
+  mkdir -p "$rules"
+  printf '# deterministic QA rules fixture\n' > "$rules/AGENT.md"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  env -u QA_RULES_DIR -u QA_RULES_ENTRY \
+    CODEX_GATE_CAPTURE_QA_RULES_ENV="$capture" \
+    HOME="$home" PATH="$PATH" \
+    "$runner/pr-gate.sh" --cd "$repo" --base main --executor codex > "$out" 2> "$err"
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0: $(cat "$err" 2>/dev/null)"
+    return
+  fi
+  assert_file_contains "$name" "$capture" "QA_RULES_DIR=$rules" || return
+  assert_file_contains "$name" "$capture" "QA_RULES_ENTRY=AGENT.md" || return
+  pass "$name"
+}
+
+# Behavior: a truly bare single-file copy cannot turn unverified reviewer
+# coverage into a successful gate. The portable bundle remains supported.
+test_bare_copy_mode_rejects_unverified_assurance() {
+  local name="copy-mode/bare-rejects-unverified-assurance"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/bare-copy-assurance"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  rm -f "${runner:?}/lib/gate-result-verify.sh"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  local code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then
+    fail "$name" "bare copy-mode returned success without an assurance verifier"
+    return
+  fi
+  assert_file_contains "$name" "$err" "standalone copy-mode cannot verify gate assurance" || return
+  pass "$name"
+}
+
 # Behavior: an unrecognized flag exits 2 and prints an actionable
 # accepted-flags list (not just a bare "Unknown arg"), so callers
 # self-correct on first failure.
@@ -4792,6 +4854,8 @@ run_test test_isolation_forwarding_through_pr_gate
 run_test test_effort_forwarding_through_pr_gate
 run_test test_effort_invalid_value_rejected
 run_test test_copy_mode_dispatches_via_adapter
+run_test test_qa_rules_dir_is_resolved_and_exported
+run_test test_bare_copy_mode_rejects_unverified_assurance
 run_test test_unknown_arg_message
 run_test test_targeted_alias
 run_test test_seq_brief_ascii_separator

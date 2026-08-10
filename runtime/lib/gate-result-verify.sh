@@ -513,9 +513,11 @@ gate_result_assess() {
       tier="$(_grv_yaml_nested_field "$file" tier_assurance resolved)"
       mode="$(_grv_yaml_nested_field "$file" mode_assurance resolved)"
     else
-      tier="$(_grv_yaml_field "$file" tier)"; mode="$(_grv_yaml_field "$file" mode)"
+      pa=false
+      pr=assurance_contract_missing
+      tier=""; mode=""
     fi
-    if [[ -n "$required_tier" ]]; then
+    if [[ "$pa" == true && -n "$required_tier" ]]; then
       if [[ "$tier" == targeted && "$required_tier" != targeted ]]; then
         pa=false; pr=targeted_requires_initial_coverage
       elif [[ "$required_tier" == targeted && "$tier" != targeted ]]; then
@@ -526,7 +528,7 @@ gate_result_assess() {
         pa=false; pr=tier_insufficient
       fi
     fi
-    if [[ -n "$required_mode" && "$mode" != "$required_mode" ]]; then pa=false; pr="${pr:+$pr,}mode_mismatch"; fi
+    if [[ "$pa" == true && -n "$required_mode" && "$mode" != "$required_mode" ]]; then pa=false; pr="${pr:+$pr,}mode_mismatch"; fi
   fi
   jq -nc --argjson av "$av" --argjson sc "$sc" --argjson pa "$pa" --arg ar "$ar" --arg sr "$sr" --arg pr "$pr" \
     '{artifact_valid:$av,subject_current:$sc,policy_applicable:$pa,reasons:{artifact:(if ($ar|length)>0 then $ar else null end),subject:(if ($sr|length)>0 then ($sr|split(",")) else [] end),policy:(if ($pr|length)>0 then ($pr|split(",")) else [] end)}}'

@@ -447,7 +447,8 @@ case_verify_targeted_tier_is_explicitly_incomparable() {
   result="$tmp_root/v-targeted/result.md"; _mk_gate_result "$result" GO
   sed -i 's/^tier: express$/tier: targeted/' "$result"
   . "$REPO_ROOT/runtime/lib/gate-result-verify.sh"
-  gate_result_attest "$result" "$repo" HEAD HEAD committed_head 2026-08-08T00:00:00Z
+  gate_result_attest "$result" "$repo" HEAD HEAD committed_head 2026-08-08T00:00:00Z \
+    targeted targeted default sequential critic 'qa-tester, architecture-reviewer, security-reviewer, risk-reviewer'
   targeted="$("$PMCTL" gate verify "$result" --cd "$repo" --require-tier targeted --json 2>/dev/null)" || targeted_rc=$?
   initial="$("$PMCTL" gate verify "$result" --cd "$repo" --require-tier express --json 2>/dev/null)" || initial_rc=$?
   if [[ "$targeted_rc" -eq 0 && "$initial_rc" -eq 1 ]] \
@@ -510,7 +511,8 @@ case_verify_attested_subject_and_policy() {
   result="$tmp_root/v-subject/result.md"; _mk_gate_result "$result" GO
   # shellcheck source=runtime/lib/gate-result-verify.sh
   . "$REPO_ROOT/runtime/lib/gate-result-verify.sh"
-  gate_result_attest "$result" "$repo" HEAD HEAD committed_head 2026-08-08T00:00:00Z
+  gate_result_attest "$result" "$repo" HEAD HEAD committed_head 2026-08-08T00:00:00Z \
+    auto express default sequential 'critic, qa-tester' 'architecture-reviewer, security-reviewer, risk-reviewer'
   out="$("$PMCTL" gate verify "$result" --cd "$repo" --require-tier express --require-mode sequential --json)" || code=$?
   if [[ "$code" -eq 0 ]] && jq -e '.artifact_valid == true and .subject_current == true and .policy_applicable == true' <<<"$out" >/dev/null; then
     pass "$name"
@@ -547,11 +549,31 @@ case_verify_policy_insufficient_keeps_artifact_current() {
   printf 'one\n' > "$repo/file.txt"; git -C "$repo" add file.txt; git -C "$repo" commit -qm initial
   result="$tmp_root/v-policy/result.md"; _mk_gate_result "$result" GO
   . "$REPO_ROOT/runtime/lib/gate-result-verify.sh"
-  gate_result_attest "$result" "$repo" HEAD HEAD committed_head 2026-08-08T00:00:00Z
+  gate_result_attest "$result" "$repo" HEAD HEAD committed_head 2026-08-08T00:00:00Z \
+    auto express default sequential 'critic, qa-tester' 'architecture-reviewer, security-reviewer, risk-reviewer'
   out="$("$PMCTL" gate verify "$result" --cd "$repo" --require-tier full --json 2>/dev/null)" || rc=$?
   if [[ "$rc" -eq 1 ]] && jq -e '.artifact_valid == true and .subject_current == true and .policy_applicable == false and (.reasons.policy|index("tier_insufficient")) != null' <<<"$out" >/dev/null; then
     pass "$name"
   else fail "$name" "rc=$rc out=$out"; fi
+}
+
+case_verify_required_assurance_rejects_legacy_tier_labels() {
+  local name="gate/verify: required assurance rejects legacy tier and mode labels"
+  should_run "$name" || return 0
+  local repo="$tmp_root/v-required-assurance/repo" result out rc=0
+  mkdir -p "$repo"; git -C "$repo" init -q
+  git -C "$repo" config user.email test@example.invalid; git -C "$repo" config user.name test
+  printf 'one\n' > "$repo/file.txt"; git -C "$repo" add file.txt; git -C "$repo" commit -qm initial
+  result="$tmp_root/v-required-assurance/result.md"; _mk_gate_result "$result" GO
+  . "$REPO_ROOT/runtime/lib/gate-result-verify.sh"
+  gate_result_attest "$result" "$repo" HEAD HEAD committed_head 2026-08-08T00:00:00Z
+  out="$("$PMCTL" gate verify "$result" --cd "$repo" --require-tier express --require-mode sequential --json 2>/dev/null)" || rc=$?
+  if [[ "$rc" -eq 1 ]] \
+    && jq -e '.artifact_valid == true and .subject_current == true and .policy_applicable == false and (.reasons.policy|index("assurance_contract_missing")) != null' <<<"$out" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc out=$out"
+  fi
 }
 
 case_verify_linked_worktree_is_same_subject() {
@@ -1049,6 +1071,7 @@ case_verify_working_tree_allow_is_current
 case_verify_attested_subject_and_policy
 case_verify_attested_tamper_and_drift_are_distinct
 case_verify_policy_insufficient_keeps_artifact_current
+case_verify_required_assurance_rejects_legacy_tier_labels
 case_verify_linked_worktree_is_same_subject
 case_run_dir_forwarded_to_gate
 case_default_lifecycle_is_detached

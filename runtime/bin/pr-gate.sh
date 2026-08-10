@@ -233,6 +233,33 @@ while [[ -L "$_self" ]]; do
   [[ "$_self" == /* ]] || _self="$_self_dir/$_self"
 done
 SCRIPT_DIR="$(cd "$(dirname "$_self")" && pwd)"
+
+# Resolve the shared QA rules before reviewer dispatch. Reviewer subprocesses
+# only inherit exported variables, so relying on the orchestrator's implicit
+# repository layout leaves qa-tester unable to load the required Tier-1 rules.
+# Use the same repositories-root precedence as runtime/lib/repo-layout.sh and
+# leave QA_RULES_DIR untouched when the rules checkout is genuinely absent.
+if [[ -z "${QA_RULES_DIR:-}" ]]; then
+  _qa_repo_layout_path="$SCRIPT_DIR/../lib/repo-layout.sh"
+  if [[ -r "$_qa_repo_layout_path" ]]; then
+    # shellcheck source=runtime/lib/repo-layout.sh
+    _qa_repos_root="$(. "$_qa_repo_layout_path" && pm_dispatch_repos_root "$WORK_DIR")" || _qa_repos_root=""
+  else
+    _qa_repos_root="${PM_DISPATCH_REPOS_ROOT:-${PM_DISPATCH_REPO:+$(dirname "$PM_DISPATCH_REPO")}}"
+    _qa_repos_root="${_qa_repos_root:-$(dirname "$WORK_DIR")}"
+  fi
+  unset _qa_repo_layout_path
+  if [[ -n "$_qa_repos_root" ]]; then
+    _qa_rules_dir="${_qa_repos_root}/qa-testing-rules"
+    _qa_rules_entry="${QA_RULES_ENTRY:-AGENT.md}"
+    if [[ -d "$_qa_rules_dir" && -r "$_qa_rules_dir/$_qa_rules_entry" ]]; then
+      export QA_RULES_DIR="$_qa_rules_dir"
+    fi
+    unset _qa_rules_dir _qa_rules_entry
+  fi
+  unset _qa_repos_root
+fi
+
 GATE_RESULT_VERIFY_PATH="$SCRIPT_DIR/../lib/gate-result-verify.sh"
 if [[ ! -r "$GATE_RESULT_VERIFY_PATH" && -r "$SCRIPT_DIR/lib/gate-result-verify.sh" ]]; then
   GATE_RESULT_VERIFY_PATH="$SCRIPT_DIR/lib/gate-result-verify.sh"
@@ -261,8 +288,13 @@ else
   # The digest covers the complete artifact except its own digest field.
   _grv_content_digest() { sed '/^artifact_sha256: /d' "$1" | _grv_sha256_stream; }
 
-  # Standalone copy mode does not emit the installed assurance contract.
-  _grv_validate_assurance() { return 0; }
+  # A standalone script has neither the canonical assurance policy nor the
+  # complete verifier needed to prove reviewer coverage and execution topology.
+  # Fail closed instead of accepting legacy tier/mode labels as assurance.
+  _grv_validate_assurance() {
+    printf 'Error: standalone copy-mode cannot verify gate assurance; use the portable bundle with lib/gate-result-verify.sh and core/policy/gate-assurance.yaml\n' >&2
+    return 1
+  }
 
   gate_result_verify() {
     local result_file=${1-} expected_final=${2-} route_label=${3-gate}
