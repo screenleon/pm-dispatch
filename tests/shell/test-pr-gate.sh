@@ -4165,7 +4165,10 @@ test_bare_copy_mode_rejects_unverified_assurance() {
   create_repo "$repo" docs
 
   set +e
-  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  # Reach result verification through the deterministic preflight fail-fast
+  # path. Running the reviewer simulator here adds unrelated process pressure
+  # when this suite shares a high-concurrency full test run.
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --test-cmd false
   local code=$?
   set -e
   if [[ "$code" -eq 0 ]]; then
