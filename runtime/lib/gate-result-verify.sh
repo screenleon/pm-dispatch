@@ -533,4 +533,17 @@ gate_result_assess() {
   [[ "$av" == true && "$sc" == true && "$pa" != false ]]
 }
 
-export -f gate_result_verify gate_result_attest gate_result_assess
+# Exported public functions can outlive their private dependencies when a Bash
+# child inherits BASH_FUNC_* entries without sourcing this library. Consumers
+# use this readiness predicate before trusting an inherited public function.
+gate_result_library_ready() {
+  local fn
+  for fn in gate_result_verify gate_result_attest gate_result_assess \
+    _grv_yaml_field _grv_yaml_nested_field _grv_validate_assurance \
+    _grv_content_digest _grv_tree_is_dirty _grv_repository_key; do
+    declare -F "$fn" >/dev/null 2>&1 || return 1
+  done
+  return 0
+}
+
+export -f gate_result_verify gate_result_attest gate_result_assess gate_result_library_ready

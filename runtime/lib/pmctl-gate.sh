@@ -568,14 +568,16 @@ pmctl_gate_wait() {
             return 2
           fi
         fi
-        if ! declare -F gate_result_verify >/dev/null 2>&1; then
+        if ! declare -F gate_result_library_ready >/dev/null 2>&1 \
+          || ! gate_result_library_ready; then
           local _gr_lib="$repo_root/runtime/lib/gate-result-verify.sh"
           if [[ -r "$_gr_lib" ]]; then
             # shellcheck disable=SC1090,SC1091
             . "$_gr_lib" 2>/dev/null || true
           fi
         fi
-        if ! declare -F gate_result_verify >/dev/null 2>&1; then
+        if ! declare -F gate_result_library_ready >/dev/null 2>&1 \
+          || ! gate_result_library_ready; then
           printf 'pmctl gate wait: FAIL: gate_result_verify unavailable -- cannot confirm result integrity for %s, treating as failed wait\n' "$_result" >&2
           return 2
         fi
@@ -679,7 +681,8 @@ pmctl_gate_verify() {
     work_dir="$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null || true)"
   fi
 
-  if ! declare -F gate_result_verify >/dev/null; then
+  if ! declare -F gate_result_library_ready >/dev/null 2>&1 \
+    || ! gate_result_library_ready; then
     local lib="$repo_root/runtime/lib/gate-result-verify.sh"
     if [[ ! -r "$lib" ]]; then
       printf 'pmctl gate verify: required library not found: %s\n' "$lib" >&2

@@ -958,7 +958,15 @@ case_finish_no_go_does_not_push() {
   checkout_ticket_branch "$work" "CC-9001"
   add_bare_origin "$work"
   out="$tmp_root/out-finish-nogo"; err="$tmp_root/err-finish-nogo"
+  # shellcheck disable=SC2329 # Exported fixture; invoked only by the child shell.
+  gate_result_verify() { _grv_yaml_field "$1" >/dev/null; }
+  # shellcheck disable=SC2329 # Exported fixture; invoked only by the child shell.
+  gate_result_assess() { gate_result_verify "$1"; }
+  # shellcheck disable=SC2329 # Exported fixture; invoked only by the child shell.
+  gate_result_library_ready() { declare -F _grv_yaml_field >/dev/null 2>&1; }
+  export -f gate_result_verify gate_result_assess gate_result_library_ready
   run_finish_with_fake_gate "$work" "CC-9001" "NO-GO" > "$out" 2> "$err" || status=$?
+  unset -f gate_result_verify gate_result_assess gate_result_library_ready
   local pushed=0
   git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
   if [[ "$status" -eq 1 ]] && grep -q "NO-GO" "$err" && [[ "$pushed" -eq 0 ]]; then

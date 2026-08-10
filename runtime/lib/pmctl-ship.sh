@@ -202,7 +202,8 @@ pmctl_ship_finish() {
     printf 'pmctl ship finish: could not locate gate result file (gate exit %s) -- see output above\n' "$gate_status" >&2
     return 1
   fi
-  if ! declare -F gate_result_assess >/dev/null 2>&1; then
+  if ! declare -F gate_result_library_ready >/dev/null 2>&1 \
+    || ! gate_result_library_ready; then
     # shellcheck source=runtime/lib/gate-result-verify.sh
     # shellcheck disable=SC1091 # dynamic repo_root is validated by the caller
     . "$repo_root/runtime/lib/gate-result-verify.sh" || return 2

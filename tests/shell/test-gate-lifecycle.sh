@@ -344,8 +344,17 @@ case_wait_resolves_go() {
   local gate_id
   gate_id="$("$run_wrapper" --cd "$work" --lifecycle detached)"
 
+  # Simulate a parent that exported the public verifier functions but not their
+  # private helpers. The wait route must detect the incomplete inherited API
+  # and source its own complete library before verifying the result.
+  # shellcheck disable=SC2329 # Exported fixture; invoked only by the child shell.
+  gate_result_verify() { _grv_yaml_field "$1" >/dev/null; }
+  # shellcheck disable=SC2329 # Exported fixture; invoked only by the child shell.
+  gate_result_library_ready() { declare -F _grv_yaml_field >/dev/null 2>&1; }
+  export -f gate_result_verify gate_result_library_ready
   local out code
   set +e; out="$("$wait_wrapper" "$gate_id" --cd "$work" --timeout "$_WAIT_OK" 2>&1)"; code=$?; set -e
+  unset -f gate_result_verify gate_result_library_ready
 
   if [[ "$code" -eq 0 ]] && [[ "$out" == *"state: GO"* ]] && [[ "$out" == *"result: "* ]]; then
     pass "$name"
