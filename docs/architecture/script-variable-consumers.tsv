@@ -372,6 +372,7 @@ TMPDIR	TMPDIR	ops/release/upgrade-smoke-v0.8-v0.9.sh	production
 TMPDIR	TMPDIR	runtime/bin/pr-gate.sh	production
 TMPDIR	TMPDIR	runtime/lib/gate-result-verify.sh	production
 TMPDIR	TMPDIR	runtime/lib/handover-validate.sh	production
+TMPDIR	TMPDIR	runtime/lib/memory.sh	production
 TMPDIR	TMPDIR	runtime/lib/pmctl-artifacts.sh	production
 TMPDIR	TMPDIR	runtime/lib/pmctl-gate.sh	production
 TMPDIR	TMPDIR	runtime/lib/pmctl-pm.sh	production

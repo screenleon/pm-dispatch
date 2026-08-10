@@ -532,7 +532,12 @@ pmctl_gate_run_detached() {
       _ready_rc=1
     fi
     if (( SECONDS - _ready_start >= _ready_timeout )); then
-      if [[ "$_ready_rc" -ne 0 ]]; then
+      # The nonce-authenticated terminal sentinel is stronger evidence of an
+      # early supervisor exit than a momentary /proc identity snapshot.  A
+      # just-exited process can remain observable until its parent reaps it;
+      # classify that proven terminal-before-ready state consistently instead
+      # of reporting an ordinary readiness timeout under host load.
+      if [[ -f "$terminal_sentinel" || "$_ready_rc" -ne 0 ]]; then
         printf 'pmctl gate run: detached supervisor exited before readiness for %s; inspect %s and retry with --lifecycle foreground (sandbox parent-death may prevent detached runs)\n' \
           "$gate_id" "$supervisor_log" >&2
       else
@@ -693,14 +698,26 @@ pmctl_gate_wait() {
           fi
         fi
         local _assessment _assessment_rc=0 _artifact_axis _subject_axis
-        local _policy_axis _assurance_kind
+        local _policy_axis _assurance_kind _assessment_diag _assessment_error
+        local _assessment_line
+        _assessment_diag="$(mktemp "${TMPDIR:-/tmp}/pm-gate-wait-verify.XXXXXX")" || {
+          printf 'pmctl gate wait: FAIL: cannot allocate verifier diagnostic file\n' >&2
+          return 2
+        }
         _assessment="$(
           pmctl_gate_verify "$repo_root" "$_result" --cd "$work_dir" \
-            --consumer embedded --json 2>/dev/null
+            --consumer embedded --json 2>"$_assessment_diag"
         )" || _assessment_rc=$?
+        _assessment_error="$(cat "$_assessment_diag" 2>/dev/null || true)"
+        rm -f -- "$_assessment_diag"
         if ! jq -e '.kind == "gate_verification_v1"' \
             <<<"$_assessment" >/dev/null 2>&1; then
           printf 'pmctl gate wait: FAIL: shared gate assessment could not evaluate %s -- treating as failed wait\n' "$_result" >&2
+          if [[ -n "$_assessment_error" ]]; then
+            while IFS= read -r _assessment_line; do
+              printf 'pmctl gate wait: verifier: %s\n' "$_assessment_line" >&2
+            done <<< "$_assessment_error"
+          fi
           return 2
         fi
         _artifact_axis="$(jq -r '.axes.artifact_valid.status' <<<"$_assessment")"
@@ -712,6 +729,11 @@ pmctl_gate_wait() {
               && "$_subject_axis" != pass ) ]]; then
           printf 'pmctl gate wait: FAIL: gate artifact is invalid or stale for --cd %s (%s) -- treating as failed wait\n' \
             "$work_dir" "$(jq -c '.axes' <<<"$_assessment")" >&2
+          if [[ -n "$_assessment_error" ]]; then
+            while IFS= read -r _assessment_line; do
+              printf 'pmctl gate wait: verifier: %s\n' "$_assessment_line" >&2
+            done <<< "$_assessment_error"
+          fi
           return 2
         fi
         if [[ "$_state" == GO \

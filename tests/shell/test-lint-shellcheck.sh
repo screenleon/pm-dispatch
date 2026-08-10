@@ -172,12 +172,14 @@ test_default_worker_cap() {
   cat > "$root/bin/shellcheck" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
-printf 'start %s\n' "$$" >> "${SHELLCHECK_EVENTS:?}"
+events="${SHELLCHECK_EVENTS:?}"
+printf 'start %s\n' "$$" >> "$events"
 sleep 0.1
-printf 'end %s\n' "$$" >> "$SHELLCHECK_EVENTS"
+printf 'end %s\n' "$$" >> "$events"
 STUB
   chmod +x "$root/bin/shellcheck"
-  output="$(PATH="$root/bin:$PATH" SHELLCHECK_EVENTS="$events" \
+  # Assert the built-in default, not an override inherited from the caller.
+  output="$(env -u PM_DISPATCH_SHELLCHECK_JOBS PATH="$root/bin:$PATH" SHELLCHECK_EVENTS="$events" \
     bash "$root/tools/lint/lint-shellcheck.sh" --repo "$root" 2>&1)" || status=$?
   max_active="$(awk '
     $1 == "start" { active++; if (active > max) max = active }

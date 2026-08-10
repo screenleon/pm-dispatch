@@ -129,19 +129,18 @@ shellcheck_file() {
   fi
 }
 
-running=0
+declare -a worker_pids=()
 failures=0
 for file in "${all_files[@]}"; do
   shellcheck_file "$file" &
-  running=$((running + 1))
-  if [[ "$running" -ge "$jobs" ]]; then
-    if ! wait -n; then failures=$((failures + 1)); fi
-    running=$((running - 1))
+  worker_pids+=("$!")
+  if [[ "${#worker_pids[@]}" -ge "$jobs" ]]; then
+    if ! wait "${worker_pids[0]}"; then failures=$((failures + 1)); fi
+    worker_pids=("${worker_pids[@]:1}")
   fi
 done
-while [[ "$running" -gt 0 ]]; do
-  if ! wait -n; then failures=$((failures + 1)); fi
-  running=$((running - 1))
+for worker_pid in "${worker_pids[@]}"; do
+  if ! wait "$worker_pid"; then failures=$((failures + 1)); fi
 done
 [[ "$failures" -eq 0 ]] || exit 1
 printf 'lint-shellcheck: OK (%s shell files checked, %s code-scoped suppressions)\n' \

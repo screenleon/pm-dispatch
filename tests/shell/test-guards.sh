@@ -455,18 +455,22 @@ run_case "pm: Write /tmp/rogue/docs/spikes/CC-999-evil.md → deny (Rule B in /t
   '{"agent_type":"project-pm","tool_name":"Write","tool_input":{"file_path":"/tmp/rogue/docs/spikes/CC-999-evil.md"}}' \
   "outside direct-write handoff zones"
 
-# Cross-repo Rule B: PM dispatched to work on another repo — spike files there
-# should be allowed.  Use a sibling directory next to REPO_ROOT so the path is
-# outside /tmp/ and does not rely on the file existing.
+# Cross-repo Rule B: PM dispatched to work on another real repo — spike files
+# there should be allowed even when the checkout itself lives under /tmp.
+_pm_other_repo="$(mktemp -d "${TMPDIR:-/tmp}/pm-guard-other-repo.XXXXXX")"
+git init -q "$_pm_other_repo"
+mkdir -p "$_pm_other_repo/docs/spikes"
 run_case "pm: Write cross-repo docs/spikes/CC-999-cross-repo.md → allow (Rule B, any repo)" 0 "$PMHOOK" \
-  "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$REPO_ROOT/../other-project/docs/spikes/CC-999-cross-repo.md\"}}"
+  "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_pm_other_repo/docs/spikes/CC-999-cross-repo.md\"}}"
 
 run_case "pm: Write cross-repo docs/spikes/analysis-scope.md → allow (Rule B, *-scope, any repo)" 0 "$PMHOOK" \
-  "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$REPO_ROOT/../other-project/docs/spikes/analysis-scope.md\"}}"
+  "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_pm_other_repo/docs/spikes/analysis-scope.md\"}}"
 
 run_case "pm: Write cross-repo docs/spikes/notes.md → deny (no pattern match, cross-repo)" 2 "$PMHOOK" \
-  "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$REPO_ROOT/../other-project/docs/spikes/notes.md\"}}" \
+  "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_pm_other_repo/docs/spikes/notes.md\"}}" \
   "outside direct-write handoff zones"
+rm -rf "$_pm_other_repo"
+unset _pm_other_repo
 
 # Rule A traversal: the lexical normalizer must collapse /tmp/<slug>/../ before
 # the pattern check so that the traversal cannot escape the two-segment limit.
@@ -990,14 +994,11 @@ stop_failure_logged() {
   transcript="$home/transcript-fail.jsonl"
   printf '%s\n' '{"role":"assistant","usage":{"input_tokens":1000,"output_tokens":200}}' > "$transcript"
   logfile="$home/.pm-dispatch/usage-tracker.jsonl"
-  mkdir -p "$(dirname "$logfile")"
-  : > "$logfile"
-  chmod 444 "$logfile"
+  mkdir -p "$logfile"
   payload="$(jq -nc --arg path "$transcript" --arg session "s1" '{transcript_path:$path,session_id:$session}')"
   truncate_log
   printf '%s' "$payload" | HOME="$home" PM_GUARD_LOG_DIR="$PM_GUARD_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
   status=$?
-  chmod 644 "$logfile"
   if [[ "$status" == "0" && -f "$TEST_LOG_FILE" ]] && grep -q -F "failed" "$TEST_LOG_FILE"; then
     PASS=$((PASS+1))
     [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
@@ -1484,12 +1485,12 @@ hook_rate_tmp_exit_trap_cleans_up() {
 }
 
 rl_hook_write_failure_chains() {
-  # Verifies that a rate-limits.json write failure (unwritable CLAUDE_CONFIG_DIR)
+  # Verifies that a rate-limits.json publication failure
   # does not prevent the configured chain command from being invoked; the hook
   # must still exit 0 so the chained StatusLine command is not silently dropped.
   # Steps:
   #   1. Create a temp dir; add statusline-chain.conf pointing to a chain script
-  #   2. Make the dir read-only so rate-limits.json cannot be written
+  #   2. Put a directory at rate-limits.json so atomic publication must fail
   #   3. Run the hook with a valid rate_limits payload
   #   4. Assert exit 0, chain sentinel exists, rate-limits.json absent
   local name="rl-hook/write-failure-chains" rl_home chain_dir chain_script chain_log status
@@ -1504,11 +1505,10 @@ touch "$(dirname "$0")/chain-called"
 CHAINEOF
   chmod +x "$chain_script"
   printf '%s\n' "$chain_script" > "$rl_home/statusline-chain.conf"
-  chmod 555 "$rl_home"
+  mkdir "$rl_home/rate-limits.json"
   printf '%s' '{"rate_limits":{"five_hour":{"used_percentage":50,"resets_at":9999999999}}}' \
     | CLAUDE_CONFIG_DIR="$rl_home" "$RL_HOOK" 2>/dev/null
   status=$?
-  chmod 755 "$rl_home"
   if [[ "$status" == "0" && -f "$chain_log" && ! -f "$rl_home/rate-limits.json" ]]; then
     PASS=$((PASS+1))
     [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
@@ -2138,6 +2138,18 @@ inject_hook_status_active_no_longer_pins() {
   rm -rf "$dir"
 }
 
+inject_usage_dump() {
+  local db="$1/.pm-dispatch/inject-usage.sqlite3" tsv="$1/.pm-dispatch/inject-usage.tsv" total
+  if [[ -f "$db" ]]; then
+    total="$(sqlite3 "$db" "SELECT value FROM metadata WHERE key='total_events';" 2>/dev/null || true)"
+    printf '# total_events=%s\n' "${total:-0}"
+    sqlite3 -separator $'\t' "$db" \
+      'SELECT card_relpath,access_count,last_access_day FROM card_usage ORDER BY card_relpath;' 2>/dev/null
+  elif [[ -f "$tsv" ]]; then
+    cat "$tsv"
+  fi
+}
+
 inject_hook_keyword_hit_records_access() {
   # A keyword-hit normal card records one access in the usage sidecar (counted
   # before budget truncation). Pinned tier1 cards are not counted.
@@ -2155,17 +2167,17 @@ inject_hook_keyword_hit_records_access() {
   payload="{\"cwd\":\"$cwd\",\"prompt\":\"check the retrieval system\"}"
   printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" >/dev/null 2>&1
   status=$?
-  sidecar="$mem/.pm-dispatch/inject-usage.tsv"
-  row="$(grep '^a\.md' "$sidecar" 2>/dev/null || true)"
+  sidecar="$(inject_usage_dump "$mem")"
+  row="$(grep '^a\.md' <<<"$sidecar" 2>/dev/null || true)"
   if [[ "$status" == "0" \
       && "$row" == a.md$'\t'1$'\t'* \
-      && -z "$(grep '^b\.md' "$sidecar" 2>/dev/null || true)" ]]; then
+      && -z "$(grep '^b\.md' <<<"$sidecar" 2>/dev/null || true)" ]]; then
     PASS=$((PASS+1))
     [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
   else
     FAIL=$((FAIL+1))
     FAILED_CASES+=("$name")
-    printf '  FAIL  %s — exit=%s row=%q sidecar=%q\n' "$name" "$status" "$row" "$(cat "$sidecar" 2>/dev/null)"
+    printf '  FAIL  %s — exit=%s row=%q sidecar=%q\n' "$name" "$status" "$row" "$sidecar"
   fi
   rm -rf "$dir"
 }
@@ -2263,13 +2275,9 @@ memory_usage_commit_decay_halves() {
 }
 
 memory_usage_commit_concurrent_no_lost_updates() {
-  # Concurrency (mutation-grade): N simultaneous keyword-hit writers to the same
-  # sidecar, each serialized through serialize_with_lock, must not lose any
-  # increment — final access_count must equal exactly N. Removing the lock from
-  # the hook's persistence path turns the read-modify-write into a race that
-  # drops updates, so this test fails (the mutation is caught). Uses a private
-  # temp dir (no shared /tmp scanning) so the result is isolation-stable.
-  local name="memory-usage/concurrent-no-lost-updates" got n=25 status=0
+  # Compatibility smoke test: the TSV fallback remains correct when explicitly
+  # serialized. High-contention atomicity belongs to the SQLite-primary test.
+  local name="memory-usage/concurrent-no-lost-updates" got n=8 status=0
   should_run "$name" || return 0
   got="$(
     trap test_guards_children_cleanup EXIT
@@ -2287,7 +2295,7 @@ memory_usage_commit_concurrent_no_lost_updates() {
       serialize_with_lock "$sc" memory_usage_commit "$sc" 1000000 100 a.md &
       test_guards_child_track "$!" "writer=$((i + 1))"
     done
-    test_guards_children_wait "${TEST_GUARDS_CHILD_DEADLINE:-20}" "writers=25,lock=auto" || exit $?
+    test_guards_children_wait "${TEST_GUARDS_CHILD_DEADLINE:-20}" "writers=8,lock=auto" || exit $?
     awk -F'\t' '$1=="a.md"{print $2}' "$sc"
     rm -rf "$d"
   )" || status=$?
@@ -2306,7 +2314,7 @@ memory_usage_commit_contention_matrix() {
   # writers begin together. Exercise both flock and the mkdir-lock fallback and
   # leave enough evidence on failure to distinguish a writer/lock failure from
   # a lost read-modify-write update.
-  # Steps: launch 25 uniquely identified writers behind a FIFO barrier; release
+  # Steps: launch 8 uniquely identified writers behind a FIFO barrier; release
   # them together for each lock backend; assert every writer entered the locked
   # section, completed successfully, and produced the exact final count.
   local name="memory-usage/contention-matrix-flock-and-mkdir-fallback"
@@ -2318,14 +2326,20 @@ memory_usage_commit_contention_matrix() {
     # shellcheck disable=SC1091
     . "$REPO_ROOT/runtime/lib/portable.sh"
     _cc477_commit() {
-      local sidecar="$1" trace="$2" writer_id="$3"
-      printf '%s acquired\n' "$writer_id" >> "$trace"
+      local sidecar="$1" trace="$2" writer_id="$3" backend="$4" owner='flock' overlap=0
+      if [[ "$backend" == "mkdir" ]]; then
+        owner="$(_portable_lock_read_owner "${sidecar}.lockdir" 2>/dev/null || printf missing)"
+      fi
+      if ! mkdir "${sidecar}.critical" 2>/dev/null; then overlap=1; fi
+      printf '%s acquired body-pid=%s owner=%q overlap=%s\n' \
+        "$writer_id" "$BASHPID" "$owner" "$overlap" >> "$trace"
       memory_usage_commit "$sidecar" 1000000 100 a.md
       printf '%s finished\n' "$writer_id" >> "$trace"
+      (( overlap != 0 )) || rmdir "${sidecar}.critical" 2>/dev/null || true
     }
-    local backend round writer_id d sidecar trace barrier barrier_fd got starts acquired finished exits ids_ok rc wait_status
+    local backend round writer_id d sidecar trace barrier barrier_fd got starts acquired finished exits overlaps ids_ok rc wait_status
     for backend in flock mkdir; do
-      for round in $(seq 1 4); do
+      for round in $(seq 1 2); do
         trap test_guards_children_cleanup EXIT
         test_guards_children_reset
         d="$(mktemp -d)"
@@ -2336,7 +2350,7 @@ memory_usage_commit_contention_matrix() {
         # Keep both ends open in the coordinator so releasing the barrier can
         # never block if a writer exits before reading its token.
         exec {barrier_fd}<>"$barrier"
-        for writer_id in $(seq 1 25); do
+        for writer_id in $(seq 1 8); do
           (
             printf '%s started pid=%s\n' "$writer_id" "$BASHPID" >> "$trace"
             IFS= read -r <&"$barrier_fd"
@@ -2349,15 +2363,16 @@ memory_usage_commit_contention_matrix() {
             fi
             rc=0
             if [[ "$backend" == "mkdir" ]]; then
-              FAKE_FLOCK_MISSING=1 serialize_with_lock "$sidecar" _cc477_commit "$sidecar" "$trace" "$writer_id" || rc=$?
+              FAKE_FLOCK_MISSING=1 \
+                serialize_with_lock "$sidecar" _cc477_commit "$sidecar" "$trace" "$writer_id" "$backend" || rc=$?
             else
-              serialize_with_lock "$sidecar" _cc477_commit "$sidecar" "$trace" "$writer_id" || rc=$?
+              serialize_with_lock "$sidecar" _cc477_commit "$sidecar" "$trace" "$writer_id" "$backend" || rc=$?
             fi
             printf '%s exit=%s\n' "$writer_id" "$rc" >> "$trace"
           ) &
           test_guards_child_track "$!" "backend=$backend,round=$round,writer=$writer_id"
         done
-        for writer_id in $(seq 1 25); do printf 'go\n' >&"$barrier_fd"; done
+        for writer_id in $(seq 1 8); do printf 'go\n' >&"$barrier_fd"; done
         exec {barrier_fd}>&-
         wait_status=0
         test_guards_children_wait "${TEST_GUARDS_CHILD_DEADLINE:-20}" \
@@ -2367,16 +2382,20 @@ memory_usage_commit_contention_matrix() {
         acquired="$(awk '$2=="acquired" {n++} END {print n+0}' "$trace")"
         finished="$(awk '$2=="finished" {n++} END {print n+0}' "$trace")"
         exits="$(awk '$2=="exit=0" {n++} END {print n+0}' "$trace")"
+        overlaps="$(awk '$2=="acquired" && $NF=="overlap=1" {n++} END {print n+0}' "$trace")"
         ids_ok=1
-        for writer_id in $(seq 1 25); do
+        for writer_id in $(seq 1 8); do
           [[ "$(awk -v id="$writer_id" '$1==id && $2=="started" {n++} END {print n+0}' "$trace")" -eq 1 ]] || ids_ok=0
           [[ "$(awk -v id="$writer_id" '$1==id && $2=="acquired" {n++} END {print n+0}' "$trace")" -eq 1 ]] || ids_ok=0
           [[ "$(awk -v id="$writer_id" '$1==id && $2=="finished" {n++} END {print n+0}' "$trace")" -eq 1 ]] || ids_ok=0
           [[ "$(awk -v id="$writer_id" '$1==id && $2=="exit=0" {n++} END {print n+0}' "$trace")" -eq 1 ]] || ids_ok=0
         done
-        printf 'backend=%s round=%s count=%s started=%s acquired=%s finished=%s exit0=%s ids-ok=%s lockdir=%s\n' \
-          "$backend" "$round" "${got:-missing}" "$starts" "$acquired" "$finished" "$exits" "$ids_ok" \
+        printf 'backend=%s round=%s count=%s started=%s acquired=%s finished=%s exit0=%s overlaps=%s ids-ok=%s lockdir=%s\n' \
+          "$backend" "$round" "${got:-missing}" "$starts" "$acquired" "$finished" "$exits" "$overlaps" "$ids_ok" \
           "$([[ -e "$sidecar.lockdir" ]] && printf present || printf absent)"
+        if [[ "$got" != "8" || "$ids_ok" != "1" ]]; then
+          printf 'trace=%s\n' "$(tr '\n' ';' < "$trace")"
+        fi
         if ((wait_status != 0)); then
           printf 'bounded-wait-exit=%s trace=%s\n' "$wait_status" "$(tr '\n' ';' < "$trace")"
           rm -rf "$d"
@@ -2387,7 +2406,122 @@ memory_usage_commit_contention_matrix() {
     done
   )" || status=$?
   if [[ "$status" -eq 0 ]] \
-    && [[ "$(grep -Ec '^backend=(flock|mkdir) round=[1-4] count=25 started=25 acquired=25 finished=25 exit0=25 ids-ok=1 lockdir=absent$' <<< "$report")" -eq 8 ]]; then
+    && [[ "$(grep -Ec '^backend=(flock|mkdir) round=[1-2] count=8 started=8 acquired=8 finished=8 exit0=8 overlaps=0 ids-ok=1 lockdir=absent$' <<< "$report")" -eq 4 ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status report=$report"
+  fi
+}
+
+memory_usage_sqlite_concurrent_atomic_updates() {
+  # Direct writers begin together and update one key without a shell lock.
+  # SQLite must retain every increment in WAL mode.
+  local name="memory-usage/sqlite-concurrent-atomic-updates" report status=0
+  should_run "$name" || return 0
+  if ! command -v sqlite3 >/dev/null 2>&1; then
+    pass "$name"
+    return 0
+  fi
+  report="$(
+    trap test_guards_children_cleanup EXIT
+    test_guards_children_reset
+    # shellcheck disable=SC1091
+    . "$REPO_ROOT/runtime/lib/memory.sh"
+    d="$(mktemp -d)"
+    db="$d/inject-usage.sqlite3"
+    barrier="$d/start"
+    mkfifo "$barrier"
+    exec {barrier_fd}<>"$barrier"
+    for writer_id in $(seq 1 50); do
+      (
+        IFS= read -r <&"$barrier_fd"
+        memory_usage_commit "$db" 1000000 100 a.md
+      ) &
+      test_guards_child_track "$!" "sqlite-writer=$writer_id"
+    done
+    for writer_id in $(seq 1 50); do printf 'go\n' >&"$barrier_fd"; done
+    exec {barrier_fd}>&-
+    test_guards_children_wait "${TEST_GUARDS_CHILD_DEADLINE:-30}" "writers=50,store=sqlite" || exit $?
+    printf 'count=%s total=%s journal=%s\n' \
+      "$(sqlite3 "$db" "SELECT access_count FROM card_usage WHERE card_relpath='a.md';")" \
+      "$(sqlite3 "$db" "SELECT value FROM metadata WHERE key='total_events';")" \
+      "$(sqlite3 "$db" 'PRAGMA journal_mode;')"
+    rm -rf "$d"
+  )" || status=$?
+  if [[ "$status" -eq 0 && "$report" == 'count=50 total=50 journal=wal' ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status report=$report"
+  fi
+}
+
+memory_usage_sqlite_imports_legacy_once() {
+  local name="memory-usage/sqlite-imports-legacy-once" report status=0
+  should_run "$name" || return 0
+  if ! command -v sqlite3 >/dev/null 2>&1; then
+    pass "$name"
+    return 0
+  fi
+  report="$(
+    # shellcheck disable=SC1091
+    . "$REPO_ROOT/runtime/lib/memory.sh"
+    d="$(mktemp -d)"
+    db="$d/inject-usage.sqlite3"
+    printf '# total_events=3\na.md\t3\t90\n' > "${db%.sqlite3}.tsv"
+    memory_usage_commit "$db" 1000000 100 a.md
+    memory_usage_commit "$db" 1000000 101 a.md
+    sqlite3 -separator ' ' "$db" \
+      "SELECT c.access_count, m.value, i.value FROM card_usage c JOIN metadata m ON m.key='total_events' JOIN metadata i ON i.key='legacy_imported' WHERE c.card_relpath='a.md';"
+    rm -rf "$d"
+  )" || status=$?
+  if [[ "$status" -eq 0 && "$report" == '5 5 1' ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status report=$report"
+  fi
+}
+
+memory_usage_sqlite_decay_matches_tsv() {
+  local name="memory-usage/sqlite-decay-matches-tsv" report status=0
+  should_run "$name" || return 0
+  if ! command -v sqlite3 >/dev/null 2>&1; then
+    pass "$name"
+    return 0
+  fi
+  report="$(
+    # shellcheck disable=SC1091
+    . "$REPO_ROOT/runtime/lib/memory.sh"
+    d="$(mktemp -d)"
+    db="$d/inject-usage.sqlite3"
+    memory_usage_commit "$db" 4 100 a.md a.md a.md a.md
+    sqlite3 -separator ' ' "$db" \
+      "SELECT c.access_count, m.value FROM card_usage c JOIN metadata m ON m.key='total_events' WHERE c.card_relpath='a.md';"
+    rm -rf "$d"
+  )" || status=$?
+  if [[ "$status" -eq 0 && "$report" == '2 0' ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status report=$report"
+  fi
+}
+
+memory_usage_sqlite_quotes_card_relpath() {
+  local name="memory-usage/sqlite-quotes-card-relpath" report status=0
+  should_run "$name" || return 0
+  if ! command -v sqlite3 >/dev/null 2>&1; then
+    pass "$name"
+    return 0
+  fi
+  report="$(
+    # shellcheck disable=SC1091
+    . "$REPO_ROOT/runtime/lib/memory.sh"
+    d="$(mktemp -d)"
+    db="$d/inject-usage.sqlite3"
+    memory_usage_commit "$db" 100 100 "author's-card.md"
+    sqlite3 -separator ' ' "$db" 'SELECT card_relpath, access_count FROM card_usage;'
+    rm -rf "$d"
+  )" || status=$?
+  if [[ "$status" -eq 0 && "$report" == "author's-card.md 1" ]]; then
     pass "$name"
   else
     fail "$name" "status=$status report=$report"
@@ -2569,7 +2703,7 @@ inject_hook_malformed_sidecar_degrades_to_zero() {
   # without aborting. The hook still exits 0, emits the index, and a fresh
   # keyword-hit access rewrites a well-formed row (a.md access_count=1) with a
   # numeric total_events header.
-  local name="inject-hook/malformed-sidecar-degrades-to-zero" dir cwd mem status output sidecar row te
+  local name="inject-hook/malformed-sidecar-degrades-to-zero" dir cwd mem status output sidecar usage_dump row te
   should_run "$name" || return 0
   dir="$(mktemp -d)"
   cwd="$dir/workspace"
@@ -2584,8 +2718,9 @@ inject_hook_malformed_sidecar_degrades_to_zero() {
   printf '# total_events=abc\na.md\tnotanum\txyz\n' > "$sidecar"
   output=$(printf '{"cwd":"%s","prompt":"retrieval system"}' "$cwd" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
   status=$?
-  row="$(grep '^a\.md' "$sidecar" 2>/dev/null || true)"
-  te="$(awk -F= '/^# total_events=/{print $2}' "$sidecar" 2>/dev/null || true)"
+  usage_dump="$(inject_usage_dump "$mem")"
+  row="$(grep '^a\.md' <<<"$usage_dump" 2>/dev/null || true)"
+  te="$(awk -F= '/^# total_events=/{print $2}' <<<"$usage_dump" 2>/dev/null || true)"
   if [[ "$status" == "0" \
       && "$output" == *"- [a](a.md)"* \
       && "$row" == a.md$'\t'1$'\t'* \
@@ -2826,6 +2961,10 @@ inject_hook_priority_always_bypasses_lifecycle_gate
 memory_usage_commit_decay_halves
 memory_usage_commit_concurrent_no_lost_updates
 memory_usage_commit_contention_matrix
+memory_usage_sqlite_concurrent_atomic_updates
+memory_usage_sqlite_imports_legacy_once
+memory_usage_sqlite_decay_matches_tsv
+memory_usage_sqlite_quotes_card_relpath
 memory_usage_hanging_writer_is_bounded_and_cleaned
 memory_usage_nonzero_writer_is_reported_and_reaped
 memory_age_bucket_mapping

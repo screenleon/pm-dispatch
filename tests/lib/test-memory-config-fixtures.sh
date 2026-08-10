@@ -3,8 +3,15 @@
 # Source from tests after their temporary root is initialized.
 
 memory_fixture_project_key() {
-  local repo="$1" root
-  root="$(git -C "$repo" rev-parse --show-toplevel 2>/dev/null || (cd "$repo" && pwd -P))"
+  local repo="$1" root common_dir
+  common_dir="$(git -C "$repo" rev-parse --git-common-dir 2>/dev/null || true)"
+  if [[ "$common_dir" == /* ]]; then
+    # Linked worktrees share the primary checkout's project identity.
+    root="$(dirname "$common_dir")"
+  else
+    root="$(git -C "$repo" rev-parse --show-toplevel 2>/dev/null || (cd "$repo" && pwd -P))"
+  fi
+  root="$(cd "$root" 2>/dev/null && pwd -P || printf '%s' "$root")"
   if command -v sha1sum >/dev/null 2>&1; then
     printf '%s\n' "$root" | sha1sum | awk '{print $1}'
   else

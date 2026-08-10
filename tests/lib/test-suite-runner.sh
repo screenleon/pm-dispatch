@@ -422,7 +422,10 @@ run_with_suite_timeout() {
   # The result sink belongs to this runner process. Do not leak it into a
   # suite that happens to launch another runner, or the nested process could
   # overwrite its parent's evidence artifact.
-  ( unset PM_TEST_SUITE_RESULTS_FILE PM_DISPATCH_PREFLIGHT_TEST_RESULT
+  # A gate's orchestration state is likewise not test state. Letting every
+  # parallel suite inherit it makes fixture pmctl calls contend on one shared
+  # store; suites that need state must declare their own temporary root.
+  ( unset PM_TEST_SUITE_RESULTS_FILE PM_DISPATCH_PREFLIGHT_TEST_RESULT PM_DISPATCH_STATE_ROOT
     "$TIMEOUT_BIN" --kill-after=15s "${SUITE_TIMEOUT_SECS}s" "$@"
   )
 }
@@ -430,27 +433,43 @@ run_with_suite_timeout() {
 run_suite() {
   local name="$1"
   local script="$REPO_ROOT/${SUITE_PATHS[$name]}"
-  local rc=0
+  local rc=0 suite_tmp suite_runtime
+
+  # A suite can launch helpers that use plain `mktemp`. Giving each suite a
+  # private TMPDIR prevents concurrent cleanup and fixtures from observing
+  # transient files owned by another suite.
+  suite_tmp="$(mktemp -d "${TMPDIR:-/tmp}/pm-suite-${name}.XXXXXX")" || {
+    printf 'run-all-tests: failed to create private TMPDIR for %s\n' "$name" >&2
+    return 1
+  }
 
   # A hung suite used to hold a parallel slot indefinitely while all of its
   # output stayed buffered. Keep the deadline per suite so one stalled child
   # cannot consume the gate's whole aggregate timeout.
-  case "$name" in
-    test-guards)
-      HOME="${CLAUDE_CONFIG_TEST_PREFLIGHT_HOME:-$HOME}" \
-        TEST_GUARDS_PROGRESS="${TEST_GUARDS_PROGRESS:-1}" \
+  (
+    trap 'rm -rf "$suite_tmp"' EXIT
+    export TMPDIR="$suite_tmp"
+    suite_runtime="$suite_tmp/xdg-runtime"
+    mkdir -p "$suite_runtime"
+    chmod 700 "$suite_runtime"
+    export XDG_RUNTIME_DIR="$suite_runtime"
+    case "$name" in
+      test-guards)
+        HOME="${CLAUDE_CONFIG_TEST_PREFLIGHT_HOME:-$HOME}" \
+          TEST_GUARDS_PROGRESS="${TEST_GUARDS_PROGRESS:-1}" \
+          run_with_suite_timeout "$script"
+        ;;
+      test-install)
+        CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 run_with_suite_timeout bash "$script"
+        ;;
+      test-pm-scripts)
+        run_with_suite_timeout bash "$script"
+        ;;
+      *)
         run_with_suite_timeout "$script"
-      ;;
-    test-install)
-      CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 run_with_suite_timeout bash "$script"
-      ;;
-    test-pm-scripts)
-      run_with_suite_timeout bash "$script"
-      ;;
-    *)
-      run_with_suite_timeout "$script"
-      ;;
-  esac || rc=$?
+        ;;
+    esac
+  ) || rc=$?
   if [[ "$rc" -eq 124 ]]; then
     printf 'TIMEOUT %s (%ss)\n' "$name" "$SUITE_TIMEOUT_SECS" >&2
   fi
