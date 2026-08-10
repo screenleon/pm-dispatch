@@ -399,27 +399,41 @@ run_with_suite_timeout() {
 run_suite() {
   local name="$1"
   local script="$REPO_ROOT/${SUITE_PATHS[$name]}"
-  local rc=0
+  local rc=0 suite_tmp
+
+  # A suite can launch helpers that use plain `mktemp` (including temporary
+  # gate-result manifests).  Giving each suite a private TMPDIR prevents a
+  # concurrent suite's cleanup or fixture from observing that transient state.
+  # Keep the directory alive for the whole timeout-wrapped child, then remove
+  # it after the suite and every foreground helper have finished.
+  suite_tmp="$(mktemp -d "${TMPDIR:-/tmp}/pm-suite-${name}.XXXXXX")" || {
+    printf 'run-all-tests: failed to create private TMPDIR for %s\n' "$name" >&2
+    return 1
+  }
 
   # A hung suite used to hold a parallel slot indefinitely while all of its
   # output stayed buffered. Keep the deadline per suite so one stalled child
   # cannot consume the gate's whole aggregate timeout.
-  case "$name" in
-    test-guards)
-      HOME="${CLAUDE_CONFIG_TEST_PREFLIGHT_HOME:-$HOME}" \
-        TEST_GUARDS_PROGRESS="${TEST_GUARDS_PROGRESS:-1}" \
+  (
+    trap 'rm -rf "$suite_tmp"' EXIT
+    export TMPDIR="$suite_tmp"
+    case "$name" in
+      test-guards)
+        HOME="${CLAUDE_CONFIG_TEST_PREFLIGHT_HOME:-$HOME}" \
+          TEST_GUARDS_PROGRESS="${TEST_GUARDS_PROGRESS:-1}" \
+          run_with_suite_timeout "$script"
+        ;;
+      test-install)
+        CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 run_with_suite_timeout bash "$script"
+        ;;
+      test-pm-scripts)
+        run_with_suite_timeout bash "$script"
+        ;;
+      *)
         run_with_suite_timeout "$script"
-      ;;
-    test-install)
-      CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 run_with_suite_timeout bash "$script"
-      ;;
-    test-pm-scripts)
-      run_with_suite_timeout bash "$script"
-      ;;
-    *)
-      run_with_suite_timeout "$script"
-      ;;
-  esac || rc=$?
+        ;;
+    esac
+  ) || rc=$?
   if [[ "$rc" -eq 124 ]]; then
     printf 'TIMEOUT %s (%ss)\n' "$name" "$SUITE_TIMEOUT_SECS" >&2
   fi

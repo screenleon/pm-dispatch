@@ -105,7 +105,8 @@ RESULT
   . "$fixture/runtime/lib/gate-result-verify.sh"
   gate_result_attest "\$rd/result.md" "\$cd_path" HEAD HEAD committed_head \
     2026-08-08T00:00:00Z full full sequential sequential \
-    "critic,qa-tester,architecture-reviewer,security-reviewer,risk-reviewer" ""
+    "critic,qa-tester,architecture-reviewer,security-reviewer,risk-reviewer" "" \
+    || { printf 'fake gate attestation failed\n' >&2; exit 2; }
   printf 'result: %s\n' "\$rd/result.md"
 fi
 exit $code
@@ -662,11 +663,11 @@ case_wait_fails_on_cd_partition_mismatch() {
   mkdir -p "$work" "$other_work"
   # sw_project_run_dir partitions by git top-level; a plain non-repo dir
   # falls back to a shared "global" bucket, which would make work and
-  # other_work collide into the SAME partition and defeat this test. `git
-  # init` alone is enough for `rev-parse --show-toplevel` to resolve (no
-  # commit needed), so give each its own throwaway repo root.
-  git init -q "$work"
-  git init -q "$other_work"
+  # other_work collide into the SAME partition and defeat this test. The fake
+  # gate also attests its result, which requires a root commit for the stable
+  # repository key, so give each throwaway repo a committed fixture.
+  _mk_git_workdir "$work"
+  _mk_git_workdir "$other_work"
   _mk_fixture_repo "$fixture"
   _mk_fake_gate "$fixture" 0
 

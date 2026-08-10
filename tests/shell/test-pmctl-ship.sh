@@ -185,7 +185,7 @@ pmctl_gate_run() {\
   done\
   result_file="$(mktemp)"\
   printf -- "---\\ngate_result_version: pr_gate_result_v1\\nfinal: GO\\ntier: full\\nmode: sequential\\n---\\n\\nFinal: GO\\n" > "$result_file"\
-  gate_result_attest "$result_file" "$gate_cd" HEAD HEAD committed_head 2026-08-08T00:00:00Z full full sequential sequential "critic,qa-tester,architecture-reviewer,security-reviewer,risk-reviewer" ""\
+  gate_result_attest "$result_file" "$gate_cd" HEAD HEAD committed_head 2026-08-08T00:00:00Z full full sequential sequential "critic,qa-tester,architecture-reviewer,security-reviewer,risk-reviewer" "" || { printf "fake gate result attestation failed\\n" >&2; return 2; }\
   printf "result: %s\\n" "$result_file"\
 }\
 ' "$path/cli/pmctl"
@@ -211,7 +211,8 @@ run_finish_with_fake_gate() {
       . "$repo_root/runtime/lib/gate-result-verify.sh"
       local subject_kind=committed_head
       [[ -z "$(git -C "$work_dir" status --porcelain)" ]] || subject_kind=working_tree
-      gate_result_attest "$result_file" "$work_dir" HEAD HEAD "$subject_kind" 2026-08-08T00:00:00Z full full sequential sequential "critic,qa-tester,architecture-reviewer,security-reviewer,risk-reviewer" ""
+      gate_result_attest "$result_file" "$work_dir" HEAD HEAD "$subject_kind" 2026-08-08T00:00:00Z full full sequential sequential "critic,qa-tester,architecture-reviewer,security-reviewer,risk-reviewer" "" \
+        || { printf "fake gate result attestation failed\n" >&2; return 2; }
       printf "result: %s\n" "$result_file"
       [[ "$verdict" == "GO" ]]
     }
@@ -1019,7 +1020,8 @@ case_finish_go_head_moved_refuses_push() {
       result_file="$(mktemp)"
       printf -- "---\ngate_result_version: pr_gate_result_v1\nfinal: GO\ntier: full\nmode: sequential\n---\n\nFinal: GO\n" > "$result_file"
       . "$repo_root/runtime/lib/gate-result-verify.sh"
-      gate_result_attest "$result_file" "$work_dir" HEAD HEAD committed_head 2026-08-08T00:00:00Z full full sequential sequential "critic,qa-tester,architecture-reviewer,security-reviewer,risk-reviewer" ""
+      gate_result_attest "$result_file" "$work_dir" HEAD HEAD committed_head 2026-08-08T00:00:00Z full full sequential sequential "critic,qa-tester,architecture-reviewer,security-reviewer,risk-reviewer" "" \
+        || { printf "fake gate result attestation failed\n" >&2; return 2; }
       printf "sneaky\n" > "'"$work"'/sneaky.txt"
       git -C "'"$work"'" add sneaky.txt
       git -C "'"$work"'" commit -q -m sneaky
