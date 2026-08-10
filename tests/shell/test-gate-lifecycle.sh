@@ -41,7 +41,7 @@ _mk_fixture_repo() {
   cp "$REPO_ROOT/runtime/lib/pmctl-gate.sh" "$fixture/runtime/lib/pmctl-gate.sh"
   cp "$REPO_ROOT/runtime/bin/gate-supervisor.sh" "$fixture/runtime/bin/gate-supervisor.sh"
   chmod +x "$fixture/runtime/bin/gate-supervisor.sh"
-  for _lib in state-paths.sh portable.sh gate-result-verify.sh detached-launch.sh; do
+  for _lib in state-paths.sh portable.sh gate-assurance.sh gate-result-verify.sh detached-launch.sh; do
     cp "$REPO_ROOT/runtime/lib/$_lib" "$fixture/runtime/lib/$_lib"
   done
 }
@@ -77,9 +77,11 @@ _mk_fake_gate() {
   cat > "$fixture/runtime/bin/pr-gate.sh" <<FAKEGATE
 #!/usr/bin/env bash
 rd=""
+cd_path=""
 while [[ \$# -gt 0 ]]; do
   case "\$1" in
     --run-dir) rd="\$2"; shift 2 ;;
+    --cd) cd_path="\$2"; shift 2 ;;
     *) shift ;;
   esac
 done
@@ -99,11 +101,25 @@ most_severe: approve
 ## Gate Conclusion
 Final: $([[ $code -eq 0 ]] && printf GO || printf NO-GO)
 RESULT
+  . "$fixture/runtime/lib/gate-result-verify.sh"
+  gate_result_attest "\$rd/result.md" "\$cd_path" HEAD HEAD committed_head \
+    2026-08-08T00:00:00Z full full sequential sequential \
+    "critic,qa-tester,architecture-reviewer,security-reviewer,risk-reviewer" ""
   printf 'result: %s\n' "\$rd/result.md"
 fi
 exit $code
 FAKEGATE
   chmod +x "$fixture/runtime/bin/pr-gate.sh"
+}
+
+_mk_git_workdir() {
+  local work="$1"
+  git -C "$work" init -q
+  git -C "$work" config user.email test@example.invalid
+  git -C "$work" config user.name "pm-dispatch test"
+  printf 'fixture\n' > "$work/.gate-fixture"
+  git -C "$work" add .gate-fixture
+  git -C "$work" commit -q -m fixture
 }
 
 # Install a fake pr-gate.sh that exits 0 (GO) but never writes a result file
@@ -315,6 +331,7 @@ case_wait_resolves_go() {
 
   local fixture="$tmp_root/c2/fixture" work="$tmp_root/c2/work"
   mkdir -p "$work"
+  _mk_git_workdir "$work"
   _mk_fixture_repo "$fixture"
   _mk_fake_gate "$fixture" 0
 
@@ -342,6 +359,7 @@ case_wait_resolves_nogo() {
 
   local fixture="$tmp_root/c3/fixture" work="$tmp_root/c3/work"
   mkdir -p "$work"
+  _mk_git_workdir "$work"
   _mk_fixture_repo "$fixture"
   _mk_fake_gate "$fixture" 1
 
