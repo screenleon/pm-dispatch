@@ -1009,6 +1009,38 @@ STUB
   fi
 }
 
+test_suite_ephemeral_environment_is_isolated() {
+  # Every suite receives private, short-lived TMPDIR/XDG runtime directories
+  # and no outer dispatch state root, so parallel fixtures cannot share state.
+  local name="suite-ephemeral-environment-is-isolated"
+  local repo="$TMP_ROOT/$name" path ambient ambient_runtime state out status=0 stub assigned assigned_runtime
+  make_fixture_repo "$repo"
+  write_pass_stubs "$repo"
+  stub="$repo/$(suite_path lint-agents)"
+  cat > "$stub" <<'STUB'
+#!/bin/sh
+[ -z "${PM_DISPATCH_STATE_ROOT:-}" ] || exit 33
+printf 'TMPDIR_IS=%s\n' "$TMPDIR"
+printf 'XDG_RUNTIME_DIR_IS=%s\n' "$XDG_RUNTIME_DIR"
+STUB
+  chmod +x "$stub"
+  ambient="$TMP_ROOT/$name-ambient"; ambient_runtime="$TMP_ROOT/$name-runtime"; state="$TMP_ROOT/$name-state"
+  mkdir -p "$ambient" "$ambient_runtime"
+  path="$(make_path_with_codex "$repo/bin")"
+  out=$(PATH="$path" TMPDIR="$ambient" XDG_RUNTIME_DIR="$ambient_runtime" PM_DISPATCH_STATE_ROOT="$state" \
+    "$repo/tests/lib/test-suite-runner.sh" --suite lint-agents --jobs 1 2>&1) || status=$?
+  assigned="$(sed -n 's/^TMPDIR_IS=//p' <<<"$out" | tail -n 1)"
+  assigned_runtime="$(sed -n 's/^XDG_RUNTIME_DIR_IS=//p' <<<"$out" | tail -n 1)"
+  if [[ "$status" -eq 0 \
+      && "$assigned" == "$ambient"/pm-suite-lint-agents.* \
+      && "$assigned_runtime" == "$assigned/xdg-runtime" \
+      && ! -e "$assigned" ]]; then
+    pass_case "$name"
+  else
+    fail_case "$name" "status=$status assigned=$assigned runtime=$assigned_runtime out=$out"
+  fi
+}
+
 test_parallel_progress_reports_slow_suite() {
   # Behavior: a still-running parallel suite emits one visible progress line before it finishes.
   # Steps: block the first suite, set the progress interval to one second, wait past it, and
@@ -1378,6 +1410,7 @@ test_suite_timeout_fails_loudly
 test_suite_result_artifact_records_ordered_outcomes
 test_suite_result_artifact_records_timeout
 test_result_sinks_do_not_leak_into_suites
+test_suite_ephemeral_environment_is_isolated
 test_parallel_progress_reports_slow_suite
 test_jobs_no_arg_default
 test_jobs_larger_than_suite_count

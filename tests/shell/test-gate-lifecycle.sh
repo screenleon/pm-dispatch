@@ -775,7 +775,8 @@ case_wait_fails_on_corrupt_result() {
 
   if [[ "$code" -eq 2 ]] \
       && [[ "$out" == *"gate artifact is invalid or stale"* ]] \
-      && [[ "$out" == *'"artifact_integrity_failed"'* ]]; then
+      && [[ "$out" == *'"artifact_integrity_failed"'* ]] \
+      && [[ "$out" == *"pmctl gate wait: verifier: Error: gate result file must contain exactly one Final:"* ]]; then
     pass "$name"
   else
     fail "$name" "code=$code out=$out"

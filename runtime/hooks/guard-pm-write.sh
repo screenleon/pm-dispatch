@@ -56,6 +56,26 @@ Bypass for one turn: set PM_GUARD_PM_WRITE=off (logged).
 EOF
 }
 
+# Resolve the repository that owns a prospective spike path.  The file itself
+# may not exist yet, so walk to the nearest existing parent before asking git.
+# Print the canonical repository root only when the path is directly in that
+# repository's docs/spikes handoff directory.
+_pm_spike_repo_root() {
+  local candidate="$1" parent repo_root
+  parent="$(dirname "$candidate")"
+  while [[ ! -e "$parent" ]]; do
+    [[ "$parent" != "/" ]] || return 1
+    parent="$(dirname "$parent")"
+  done
+  [[ -d "$parent" ]] || return 1
+  repo_root="$(git -C "$parent" rev-parse --show-toplevel 2>/dev/null)" || return 1
+  repo_root="$(cd "$repo_root" 2>/dev/null && pwd -P)" || return 1
+  case "$candidate" in
+    "$repo_root"/docs/spikes/*) printf '%s\n' "$repo_root" ;;
+    *) return 1 ;;
+  esac
+}
+
 # ---------- preflight ----------
 
 g_require_jq
@@ -97,13 +117,16 @@ if [[ "$lex_path" =~ ^/tmp/[a-z][^/]*/[^/]+\.md$ ]]; then
   fi
 fi
 
-# Rule B: any repo's docs/spikes/<name>.md — CC-NNN*, *-scope, *-rfc only.
-# Paths in /tmp/ are excluded (those belong to Rule A's zone).  Both lex_path
-# and abs_path must satisfy the same predicate (cross-rule escape prevention).
-if [[ "$lex_path" != /tmp/* ]] && \
-   [[ "$lex_path" =~ /docs/spikes/(CC-[0-9][^/]*|[^/]+-scope|[^/]+-rfc)\.md$ ]]; then
-  if [[ "$abs_path" != /tmp/* ]] && \
-     [[ "$abs_path" =~ /docs/spikes/(CC-[0-9][^/]*|[^/]+-scope|[^/]+-rfc)\.md$ ]]; then
+# Rule B: a real git repository's docs/spikes/<name>.md — CC-NNN*, *-scope,
+# *-rfc only.  Repository ownership, rather than a blanket /tmp exclusion,
+# keeps temporary worktrees usable while rejecting lookalike paths.  Lexical
+# and resolved paths must belong to the same repository to prevent symlink
+# cross-rule escapes.
+if [[ "$lex_path" =~ /docs/spikes/(CC-[0-9][^/]*|[^/]+-scope|[^/]+-rfc)\.md$ ]] && \
+   lex_repo="$(_pm_spike_repo_root "$lex_path" 2>/dev/null)"; then
+  if [[ "$abs_path" =~ /docs/spikes/(CC-[0-9][^/]*|[^/]+-scope|[^/]+-rfc)\.md$ ]] && \
+     abs_repo="$(_pm_spike_repo_root "$abs_path" 2>/dev/null)" && \
+     [[ "$lex_repo" == "$abs_repo" ]]; then
     g_allow "docs/spikes PM-authored file" "$file_path"
   fi
 fi

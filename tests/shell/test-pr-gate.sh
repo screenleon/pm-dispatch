@@ -166,7 +166,11 @@ if [[ -n "${CODEX_GATE_REVIEWER_DEFS_MARKER:-}" && "$brief_file" != *-synthesis.
       *) printf 'reviewer definition escaped workspace snapshot: %s\n' "$def_path" >&2; exit 4 ;;
     esac
     [[ -s "$def_path" ]] || { printf 'reviewer definition snapshot missing/empty: %s\n' "$def_path" >&2; exit 4; }
-    [[ ! -w "$def_path" ]] || { printf 'reviewer definition snapshot is writable: %s\n' "$def_path" >&2; exit 4; }
+    def_mode=$(stat -c '%a' "$def_path" 2>/dev/null || stat -f '%Lp' "$def_path" 2>/dev/null || true)
+    [[ "$def_mode" =~ ^[0-7]+$ ]] && (( (8#$def_mode & 8#222) == 0 )) || {
+      printf 'reviewer definition snapshot has write mode bits: %s (%s)\n' "$def_path" "${def_mode:-unknown}" >&2
+      exit 4
+    }
   done < <(awk '/^  - read: .*\/\.gate-briefs\/reviewer-definitions-.*\.md$/ {sub(/^  - read: /, ""); print}' "$brief_file")
   [[ "$defs" -gt 0 ]] || { printf 'no workspace reviewer definition snapshots in brief\n' >&2; exit 4; }
   printf '%s\n' "$defs" > "$CODEX_GATE_REVIEWER_DEFS_MARKER"

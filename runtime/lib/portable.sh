@@ -157,13 +157,13 @@ safe_tmpdir() {
   printf '%s\n' "$tmpdir"
 }
 
-# Acquire an atomic directory lock.
+# Acquire a directory lock with an exclusive owner-file election.
 mkdir_lock() {
   local lockdir="$1"
   local timeout_sec="${2:-2}"
   local attempts
   local i
-  local stale_owner owner_now stale_reclaims=0 max_reclaims=2
+  local stale_owner owner_now reclaimdir stale_reclaims=0 max_reclaims=2
 
   [[ -n "$lockdir" ]] || return 1
 
@@ -172,23 +172,39 @@ mkdir_lock() {
   fi
 
   _portable_lock_preflight_warn "$lockdir"
+  reclaimdir="${lockdir}.reclaim"
 
   attempts=$(( timeout_sec * 20 ))
   (( attempts > 0 )) || attempts=1
 
   for ((i = 0; i < attempts; i++)); do
+    # A stale-owner reclaimer temporarily fences normal acquisitions. Without
+    # this guard, two waiters can both validate the same dead owner: the first
+    # removes the old directory, then the second removes its successor (ABA).
+    if [[ -d "$reclaimdir" ]]; then
+      sleep 0.05
+      continue
+    fi
     if mkdir "$lockdir" 2>/dev/null; then
-      _portable_lock_write_owner "$lockdir"
-      return 0
+      if _portable_lock_write_owner "$lockdir"; then
+        return 0
+      fi
+      # Some network/overlay filesystems can expose a just-created directory
+      # to simultaneous creators in surprising ways. The owner file is the
+      # second, exclusive election: never overwrite another claimant.
     fi
     if (( stale_reclaims < max_reclaims )) && stale_owner="$(_portable_lock_stale_owner "$lockdir")"; then
-      owner_now="$(_portable_lock_read_owner "$lockdir" 2>/dev/null || true)"
-      if [[ "$owner_now" == "$stale_owner" ]]; then
-        rm -f -- "$lockdir/owner" 2>/dev/null || true
-        if rmdir "$lockdir" 2>/dev/null; then
-          stale_reclaims=$((stale_reclaims + 1))
-          continue
+      if mkdir "$reclaimdir" 2>/dev/null; then
+        owner_now="$(_portable_lock_read_owner "$lockdir" 2>/dev/null || true)"
+        if [[ "$owner_now" == "$stale_owner" ]] \
+          && _portable_lock_owner_line_stale "$lockdir" "$owner_now"; then
+          rm -f -- "$lockdir/owner" 2>/dev/null || true
+          if rmdir "$lockdir" 2>/dev/null; then
+            stale_reclaims=$((stale_reclaims + 1))
+          fi
         fi
+        rmdir "$reclaimdir" 2>/dev/null || true
+        continue
       fi
     fi
     sleep 0.05
@@ -198,14 +214,23 @@ mkdir_lock() {
   return 1
 }
 
-# mkdir_unlock <lockdir>
+# mkdir_unlock <lockdir> [expected_owner]
 # Release a lock acquired with mkdir_lock. Because mkdir_lock now leaves an
 # `owner` metadata file inside the lockdir, a bare `rmdir` no longer suffices —
 # callers MUST release through this helper (it removes the owner file then the
 # directory). Always succeeds (best-effort).
 mkdir_unlock() {
   local lockdir="$1"
+  local expected_owner="${2:-}" owner_now
   [[ -n "$lockdir" ]] || return 0
+  if [[ -n "$expected_owner" ]]; then
+    owner_now="$(_portable_lock_read_owner "$lockdir" 2>/dev/null || true)"
+    # A delayed EXIT trap must never remove a successor that acquired the same
+    # path after stale recovery or another release/acquire cycle.
+    if [[ "$owner_now" != "$expected_owner" ]]; then
+      return 0
+    fi
+  fi
   rm -f -- "$lockdir/owner" 2>/dev/null || true
   rmdir "$lockdir" 2>/dev/null || true
   return 0
@@ -238,13 +263,23 @@ serialize_with_lock() {
     return $_slw_rc
   else
     local lockdir="${lockbase}.lockdir"
-    if ! mkdir_lock "$lockdir" "$timeout_secs"; then
-      printf 'serialize_with_lock: timed out after %ss acquiring %s\n' "$timeout_secs" "$lockdir" >&2
-      return 1
-    fi
     local _slw_rc=0
     (
-      trap 'mkdir_unlock "$lockdir"' EXIT
+      # Acquire and execute in the same process. Recording an outer waiter as
+      # owner while a child runs the critical section makes stale-owner
+      # liveness diverge from the process that actually holds the lock.
+      if ! mkdir_lock "$lockdir" "$timeout_secs"; then
+        printf 'serialize_with_lock: timed out after %ss acquiring %s\n' "$timeout_secs" "$lockdir" >&2
+        exit 1
+      fi
+      local lock_owner
+      lock_owner="$(_portable_lock_read_owner "$lockdir" 2>/dev/null || true)"
+      if [[ -z "$lock_owner" ]]; then
+        printf 'serialize_with_lock: owner metadata unavailable after acquiring %s\n' "$lockdir" >&2
+        mkdir_unlock "$lockdir"
+        exit 1
+      fi
+      trap 'mkdir_unlock "$lockdir" "$lock_owner"' EXIT
       "$@"
     ) || _slw_rc=$?
     # The EXIT trap above is the sole releaser. Releasing again here is not
@@ -331,10 +366,19 @@ _portable_lock_stale_secs() {
 }
 
 _portable_lock_write_owner() {
-  local lockdir="$1" host epoch
+  local lockdir="$1" host epoch owner_pid nonce
   host="$(_portable_lock_host)"
   epoch="$(_portable_lock_now)"
-  printf '%s %s %s\n' "$$" "$host" "$epoch" > "$lockdir/owner" 2>/dev/null || true
+  # `$$` remains the coordinator PID in Bash background subshells. Record the
+  # actual process holding this lock so a dead worker can be reclaimed without
+  # treating its still-live coordinator as the owner.
+  owner_pid="${BASHPID:-$$}"
+  # The nonce distinguishes consecutive owners with the same PID in the same
+  # second, allowing delayed releasers to fence against path reuse.
+  nonce="${owner_pid}-${epoch}-${RANDOM}-${RANDOM}"
+  ( set -o noclobber
+    printf '%s %s %s %s\n' "$owner_pid" "$host" "$epoch" "$nonce" > "$lockdir/owner"
+  ) 2>/dev/null
 }
 
 _portable_lock_read_owner() {
@@ -359,11 +403,12 @@ _portable_lock_mtime() {
 
 _portable_lock_owner_line_stale() {
   local lockdir="$1" owner_line="$2"
-  local pid host epoch extra our_host now stale_secs mtime
-  read -r pid host epoch extra <<< "$owner_line"
+  local pid host epoch nonce extra our_host now stale_secs mtime
+  read -r pid host epoch nonce extra <<< "$owner_line"
   now="$(_portable_lock_now)"
   stale_secs="$(_portable_lock_stale_secs)"
 
+  # Accept legacy three-field owner records (nonce empty) during upgrade.
   if [[ "$pid" =~ ^[0-9]+$ && -n "$host" && "$epoch" =~ ^[0-9]+$ && -z "${extra:-}" ]]; then
     our_host="$(_portable_lock_host)"
     if [[ "$host" == "$our_host" ]]; then
@@ -401,10 +446,10 @@ _portable_lock_stale_owner() {
     return 1
   fi
 
-  if _portable_lock_owner_line_stale "$lockdir" ""; then
-    printf '\n'
-    return 0
-  fi
+  # Never reclaim an ownerless directory. A prior owner can be between mkdir
+  # and writing its metadata; reclaiming based only on the directory mtime can
+  # delete that newly acquired lock. The caller will time out safely instead of
+  # allowing two writers into the critical section.
   return 1
 }
 

@@ -69,7 +69,12 @@ find_memory_dir() {
 # markdown cards in a sidecar TSV so card frontmatter stays human-owned and the
 # high-frequency telemetry writes never produce git diff noise.
 #
-# Sidecar format (TSV, integer-only, zero-LLM):
+# Primary store (when sqlite3 is available):
+#   .pm-dispatch/inject-usage.sqlite3
+# Writers use a single BEGIN IMMEDIATE transaction with WAL + busy_timeout, so
+# increments remain atomic across prompt-hook processes without a shell lock.
+#
+# Compatibility fallback (sqlite3 unavailable): TSV, integer-only, zero-LLM:
 #   # total_events=<N>            <- global W-TinyLFU decay counter (header line)
 #   <card_relpath>\t<access_count>\t<last_access_day>
 #   ...
@@ -82,7 +87,85 @@ find_memory_dir() {
 # from memory indexing.
 memory_usage_sidecar_path() {
   local memory_dir="$1"
-  printf '%s/.pm-dispatch/inject-usage.tsv' "${memory_dir%/}"
+  if command -v sqlite3 >/dev/null 2>&1; then
+    printf '%s/.pm-dispatch/inject-usage.sqlite3' "${memory_dir%/}"
+  else
+    printf '%s/.pm-dispatch/inject-usage.tsv' "${memory_dir%/}"
+  fi
+}
+
+# Emit either store in the legacy TSV read shape used by the ranking hook.
+# Before the first SQLite write, an existing TSV remains readable so upgrades
+# do not temporarily lose ranking history.
+memory_usage_read() {
+  local store="$1" legacy total
+  if [[ "$store" == *.sqlite3 ]]; then
+    if [[ -f "$store" ]]; then
+      total="$(sqlite3 -cmd '.timeout 10000' "$store" \
+        "SELECT value FROM metadata WHERE key='total_events';" 2>/dev/null || true)"
+      printf '# total_events=%s\n' "${total:-0}"
+      sqlite3 -cmd '.timeout 10000' -separator $'\t' "$store" \
+        'SELECT card_relpath, access_count, last_access_day FROM card_usage ORDER BY card_relpath;' \
+        2>/dev/null || return 1
+      return 0
+    fi
+    legacy="${store%.sqlite3}.tsv"
+    [[ -f "$legacy" ]] && cat "$legacy"
+    return 0
+  fi
+  [[ -f "$store" ]] && cat "$store"
+}
+
+_memory_usage_sql_quote() {
+  local value="$1"
+  value="${value//\'/\'\'}"
+  printf "'%s'" "$value"
+}
+
+_memory_usage_commit_sqlite() {
+  local store="$1" threshold="$2" today="$3"; shift 3
+  local dir legacy sql rel acc last total_events=0 quoted rc=0
+  dir="$(dirname "$store")"
+  mkdir -p "$dir" 2>/dev/null || return 1
+  legacy="${store%.sqlite3}.tsv"
+  sql="$(mktemp "${TMPDIR:-/tmp}/memory-usage.XXXXXX.sql")" || return 1
+  {
+    printf '%s\n' 'PRAGMA journal_mode=WAL;' 'PRAGMA synchronous=NORMAL;' 'BEGIN IMMEDIATE;'
+    printf '%s\n' \
+      'CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value INTEGER NOT NULL);' \
+      'CREATE TABLE IF NOT EXISTS card_usage (card_relpath TEXT PRIMARY KEY, access_count INTEGER NOT NULL CHECK(access_count >= 0), last_access_day INTEGER NOT NULL);' \
+      "INSERT OR IGNORE INTO metadata(key,value) VALUES('schema_version',1);" \
+      "INSERT OR IGNORE INTO metadata(key,value) VALUES('total_events',0);"
+    if [[ -f "$legacy" ]]; then
+      while IFS=$'\t' read -r rel acc last; do
+        [[ -z "$rel" ]] && continue
+        if [[ "$rel" == '# total_events='* ]]; then
+          total_events="${rel#\# total_events=}"
+          [[ "$total_events" =~ ^[0-9]+$ ]] || total_events=0
+          continue
+        fi
+        [[ "$rel" == \#* || "$rel" == *$'\n'* || "$rel" == *$'\t'* ]] && continue
+        [[ "$acc" =~ ^[0-9]+$ ]] || acc=0
+        [[ "$last" =~ ^[0-9]+$ ]] || last=0
+        quoted="$(_memory_usage_sql_quote "$rel")"
+        printf "INSERT INTO card_usage(card_relpath,access_count,last_access_day) SELECT %s,%s,%s WHERE NOT EXISTS (SELECT 1 FROM metadata WHERE key='legacy_imported') ON CONFLICT(card_relpath) DO NOTHING;\n" "$quoted" "$acc" "$last"
+      done < "$legacy"
+      printf "UPDATE metadata SET value=%s WHERE key='total_events' AND NOT EXISTS (SELECT 1 FROM metadata WHERE key='legacy_imported');\n" "$total_events"
+      printf "INSERT OR IGNORE INTO metadata(key,value) VALUES('legacy_imported',1);\n"
+    fi
+    for rel in "$@"; do
+      [[ -n "$rel" && "$rel" != *$'\n'* && "$rel" != *$'\t'* ]] || continue
+      quoted="$(_memory_usage_sql_quote "$rel")"
+      printf "INSERT INTO card_usage(card_relpath,access_count,last_access_day) VALUES(%s,1,%s) ON CONFLICT(card_relpath) DO UPDATE SET access_count=access_count+1,last_access_day=excluded.last_access_day;\n" "$quoted" "$today"
+      printf "UPDATE metadata SET value=value+1 WHERE key='total_events';\n"
+    done
+    printf "UPDATE card_usage SET access_count=access_count >> 1 WHERE (SELECT value FROM metadata WHERE key='total_events') >= %s;\n" "$threshold"
+    printf "UPDATE metadata SET value=0 WHERE key='total_events' AND value >= %s;\n" "$threshold"
+    printf '%s\n' 'COMMIT;'
+  } > "$sql"
+  sqlite3 -batch -cmd '.timeout 10000' "$store" < "$sql" >/dev/null || rc=$?
+  rm -f "$sql"
+  return "$rc"
 }
 
 # Firefox bucketed frecency age weight. Maps the day-distance between today and
@@ -99,17 +182,28 @@ memory_age_bucket() {
   fi
 }
 
-# Commit usage increments to the sidecar (read-modify-write; call under
-# serialize_with_lock so concurrent hooks cannot lose updates). Re-reads the
-# sidecar fresh, applies +1 access (and today's last_access) to each relpath
-# argument, bumps the global event counter once per increment, then -- when the
-# counter reaches the decay threshold -- halves every card's access_count
-# (W-TinyLFU aging) and resets the counter. Writes atomically via tmp + mv.
+# Commit usage increments to the selected sidecar. SQLite stores perform the
+# complete increment/decay operation in one BEGIN IMMEDIATE transaction and do
+# not need an external shell lock. TSV fallback stores still require callers to
+# serialize the read-modify-write operation. Both paths apply +1 access (and
+# today's last_access) to each relpath argument, bump the global event counter,
+# then halve every count and reset the counter at the decay threshold.
 #   memory_usage_commit <sidecar> <threshold> <today_day> [relpath ...]
 memory_usage_commit() {
   local sidecar="$1" threshold="$2" today="$3"; shift 3
   local -a hits=("$@")
   [[ "${#hits[@]}" -gt 0 ]] || return 0
+  [[ "$threshold" =~ ^[0-9]+$ ]] || return 1
+  [[ "$today" =~ ^[0-9]+$ ]] || return 1
+  threshold="$((10#$threshold))"
+  today="$((10#$today))"
+  (( threshold > 0 )) || return 1
+
+  if [[ "$sidecar" == *.sqlite3 ]]; then
+    command -v sqlite3 >/dev/null 2>&1 || return 1
+    _memory_usage_commit_sqlite "$sidecar" "$threshold" "$today" "${hits[@]}"
+    return $?
+  fi
 
   local dir tmp total_events=0 rel acc last
   dir="$(dirname "$sidecar")"

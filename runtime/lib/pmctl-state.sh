@@ -97,14 +97,20 @@ pmctl_state_status() {
     # Store dir exists but VERSION was never published — writer treats this as
     # first-time init territory, so status reports it the same way.
     store_state="uninitialized"
-  elif ! observed_version="$(cat "$version_file" 2>/dev/null)"; then
-    store_state="unreadable"
   else
-    observed_version="${observed_version//[$'\r\n']/}"
-    if sw_layout_version_supported "$observed_version"; then
-      store_state="compatible"
+    local version_mode=""
+    version_mode="$(stat -c '%a' "$version_file" 2>/dev/null || stat -f '%Lp' "$version_file" 2>/dev/null || true)"
+    if [[ "$version_mode" =~ ^[0-7]+$ ]] && (( (8#$version_mode & 8#444) == 0 )); then
+      store_state="unreadable"
+    elif ! observed_version="$(cat "$version_file" 2>/dev/null)"; then
+      store_state="unreadable"
     else
-      store_state="incompatible"
+      observed_version="${observed_version//[$'\r\n']/}"
+      if sw_layout_version_supported "$observed_version"; then
+        store_state="compatible"
+      else
+        store_state="incompatible"
+      fi
     fi
   fi
 

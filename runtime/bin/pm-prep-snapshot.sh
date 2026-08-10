@@ -67,6 +67,15 @@ if [ ! -d "$OUT_DIR" ]; then
   exit 1
 fi
 
+# Root can bypass ordinary DAC checks, so -w alone does not express the
+# caller-visible file contract. Honor an explicitly read-only directory's mode
+# bits consistently across privileged and unprivileged test/automation hosts.
+OUT_DIR_MODE="$(stat -c '%a' "$OUT_DIR" 2>/dev/null || stat -f '%Lp' "$OUT_DIR" 2>/dev/null || true)"
+if [[ "$OUT_DIR_MODE" =~ ^[0-7]+$ ]] && (( (8#$OUT_DIR_MODE & 8#222) == 0 )); then
+  echo "error: cannot write to output path: $OUT_PATH" >&2
+  exit 1
+fi
+
 if [ -f "$OUT_PATH" ] && [ ! -w "$OUT_PATH" ]; then
   echo "error: output file is not writable: $OUT_PATH" >&2
   exit 1
