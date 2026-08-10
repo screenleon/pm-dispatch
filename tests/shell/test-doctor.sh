@@ -265,7 +265,7 @@ case_doctor_all_ok_exits_0() {
   # install it as a symlink to cli/pmctl rather than a generic stub.
   ln -sf "$REPO_ROOT/cli/pmctl" "$tmp_root/bin-all-ok/pmctl"
 
-  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
+  out="$(PM_DISPATCH_STATE_ROOT="$tmp_root/state-all-ok" HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
   if [[ "$status" -eq 0 && "$out" == *"0 FAIL"* && "$out" == *"0 WARN"* ]]; then
     pass "$name"
   else
@@ -299,7 +299,7 @@ case_doctor_executor_unauthed_fails() {
   write_manifest "$home"
   path="$(make_stub_bin "$tmp_root/bin-unauthed" claude codex grok)"
 
-  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
+  out="$(PM_DISPATCH_STATE_ROOT="$tmp_root/state-authed-credfile" HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
     OPENAI_API_KEY='' ANTHROPIC_API_KEY='' CLAUDE_CODE_OAUTH_TOKEN='' \
     XAI_API_KEY='' GROK_API_KEY='' GROK_HOME='' \
     bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
@@ -332,7 +332,7 @@ case_doctor_executor_authed_via_credfile_ok() {
   path="$(make_stub_bin "$tmp_root/bin-authed-credfile" claude codex grok)"
   ln -sf "$REPO_ROOT/cli/pmctl" "$tmp_root/bin-authed-credfile/pmctl"
 
-  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
+  out="$(PM_DISPATCH_STATE_ROOT="$tmp_root/state-authed-credfile" HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
     OPENAI_API_KEY='' ANTHROPIC_API_KEY='' CLAUDE_CODE_OAUTH_TOKEN='' \
     XAI_API_KEY='' GROK_API_KEY='' GROK_HOME='' \
     bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?

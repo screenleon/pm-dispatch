@@ -47,6 +47,23 @@ This isolation matters because context-window anchoring is real: a reviewer who 
 
 The isolation *from the dispatch session* is structural, not advisory: the review session is a separate process and cannot read the implementer's context. Per-reviewer independence — each reviewer also blind to the others — is provided by the `--parallel` path; the sequential default trades that for a single combined review session. See [pr-gate-handover-schema.md](pr-gate-handover-schema.md) for the handover protocol.
 
+### Assurance axes are independent
+
+Gate depth, execution topology, actual reviewer coverage, and independence are
+four separate claims. The canonical defaults live in
+`core/policy/gate-assurance.yaml`; `full` does not select parallel mode, and
+parallel mode does not upgrade an express or targeted review to full coverage.
+All tier/mode combinations are valid. A targeted result describes only its
+selected remediation delta and does not replace its referenced initial review.
+
+Attested results record requested and resolved tier/mode separately, list the
+reviewers actually selected and skipped, and record both implementation-context
+isolation and session topology. `sequential` means one combined reviewer session
+and therefore no per-reviewer independence; `parallel` requires per-reviewer
+artifacts as session evidence. `pmctl gate verify` rejects a result whose mode,
+topology, independence, evidence marker, or legacy compatibility fields
+contradict one another.
+
 ### Layer 3 — Conceptual Map review
 
 **When**: as part of the Layer 2 gate; specifically the `architecture-reviewer` subagent's role.

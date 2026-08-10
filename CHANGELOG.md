@@ -10,6 +10,15 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Orthogonal gate assurance contract (CC-512 Phase 1).** A canonical
+  `core/policy/gate-assurance.yaml` now defines tier reviewer defaults separately
+  from sequential/parallel topology. Attested gate results record requested and
+  resolved tier/mode, actual selected/skipped reviewers, implementation-context
+  isolation, session topology, per-reviewer independence, and session evidence.
+  The shared verifier rejects contradictory assurance claims while retaining
+  structural compatibility for legacy unattested results and standalone
+  copy-mode gates.
+
 - **Parent-operation control plane for indirect dispatch (CC-508).** Producers
   that launch detached children — `pmctl gate run` and `pmctl ship` — now create
   a durable parent operation record (`core/schema/operation.schema.json`, owned

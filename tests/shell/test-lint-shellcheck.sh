@@ -177,7 +177,9 @@ sleep 0.1
 printf 'end %s\n' "$$" >> "$SHELLCHECK_EVENTS"
 STUB
   chmod +x "$root/bin/shellcheck"
-  output="$(PATH="$root/bin:$PATH" SHELLCHECK_EVENTS="$events" \
+  # Assert the linter's built-in default, not a worker override inherited from
+  # a concurrently running suite or the caller's environment.
+  output="$(env -u PM_DISPATCH_SHELLCHECK_JOBS PATH="$root/bin:$PATH" SHELLCHECK_EVENTS="$events" \
     bash "$root/tools/lint/lint-shellcheck.sh" --repo "$root" 2>&1)" || status=$?
   max_active="$(awk '
     $1 == "start" { active++; if (active > max) max = active }

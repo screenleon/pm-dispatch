@@ -25,7 +25,7 @@ verify_reviewer_artifact_hashes() {
   while [[ $# -ge 3 ]]; do
     name="$1" path="$2" baseline="$3"; shift 3
     [[ "$baseline" == "none" ]] && continue
-    current="$(cat "$path" 2>/dev/null | $hash_cmd || echo 'missing')"
+    current="$(cat "$path" 2>/dev/null | $hash_cmd | awk '{print $1}' || echo 'missing')"
     [[ "$current" != "$baseline" ]] && printf '%s\n' "$name"
   done
 }
@@ -132,6 +132,7 @@ HEAD_OVERRIDE=""
 OUTPUT_OVERRIDE=""
 TIMEOUT="1200"
 SEQUENTIAL=true   # default: sequential (lower token cost)
+MODE_REQUESTED=default
 EXECUTOR_OPTION="auto"
 ALLOW_HOOKS=false   # hooks require explicit --allow-hooks opt-in (security)
 ALLOW_DIRTY=false   # gate refuses a dirty tree atop committed changes unless this opt-in
@@ -184,8 +185,8 @@ while [[ $# -gt 0 ]]; do
       DISPATCH_EFFORT="$2"; shift 2;;
     --isolation)  DISPATCH_ISOLATION="$2"; shift 2;;
     --timeout)    TIMEOUT="$2";            shift 2;;
-    --parallel)   SEQUENTIAL=false;        shift;;
-    --sequential) SEQUENTIAL=true;         shift;;   # backward compat
+    --parallel)   SEQUENTIAL=false; MODE_REQUESTED=parallel; shift;;
+    --sequential) SEQUENTIAL=true; MODE_REQUESTED=sequential; shift;;   # backward compat
     --allow-hooks) ALLOW_HOOKS=true;       shift;;
     --allow-dirty) ALLOW_DIRTY=true;       shift;;
     --override-file)
@@ -233,6 +234,9 @@ while [[ -L "$_self" ]]; do
 done
 SCRIPT_DIR="$(cd "$(dirname "$_self")" && pwd)"
 GATE_RESULT_VERIFY_PATH="$SCRIPT_DIR/../lib/gate-result-verify.sh"
+if [[ ! -r "$GATE_RESULT_VERIFY_PATH" && -r "$SCRIPT_DIR/lib/gate-result-verify.sh" ]]; then
+  GATE_RESULT_VERIFY_PATH="$SCRIPT_DIR/lib/gate-result-verify.sh"
+fi
 if [[ -r "$GATE_RESULT_VERIFY_PATH" ]]; then
   # shellcheck source=runtime/lib/gate-result-verify.sh
   . "$GATE_RESULT_VERIFY_PATH"
@@ -257,6 +261,9 @@ else
   # The digest covers the complete artifact except its own digest field.
   _grv_content_digest() { sed '/^artifact_sha256: /d' "$1" | _grv_sha256_stream; }
 
+  # Standalone copy mode does not emit the installed assurance contract.
+  _grv_validate_assurance() { return 0; }
+
   gate_result_verify() {
     local result_file=${1-} expected_final=${2-} route_label=${3-gate}
     local final_count frontmatter_final body_final expected_digest current_digest
@@ -272,6 +279,7 @@ else
     body_final=$(grep -E '^Final: (GO|NO-GO)$' "$result_file" | awk '{print $2}')
     [[ "$frontmatter_final" == "$body_final" ]] || { printf 'Error: frontmatter final: (%s) does not match body Final: (%s) in gate result: %s\n' "$frontmatter_final" "$body_final" "$result_file" >&2; return 1; }
     [[ -z "$expected_final" || "$body_final" == "$expected_final" ]] || { printf 'Error: %s verdict (%s) contradicts shell-computed verdict (%s) -- gate result may have been manipulated: %s\n' "$route_label" "$body_final" "$expected_final" "$result_file" >&2; return 1; }
+    _grv_validate_assurance "$result_file" || return 1
     expected_digest="$(_grv_yaml_field "$result_file" artifact_sha256)"
     if [[ -n "$expected_digest" ]]; then
       [[ "$expected_digest" =~ ^[a-f0-9]{64}$ ]] || { printf 'Error: malformed artifact_sha256 in gate result: %s\n' "$result_file" >&2; return 1; }
@@ -281,6 +289,37 @@ else
     return 0
   }
 fi
+
+if ! declare -F gate_assurance_default_reviewers >/dev/null 2>&1 \
+  && [[ -r "$SCRIPT_DIR/lib/gate-assurance.sh" ]]; then
+  # Portable bundles place the shared library below the script rather than at
+  # runtime/bin/../lib.
+  # shellcheck source=runtime/lib/gate-assurance.sh
+  . "$SCRIPT_DIR/lib/gate-assurance.sh"
+fi
+if ! declare -F gate_assurance_default_reviewers >/dev/null 2>&1; then
+  # Degraded single-file copy mode has no machine policy tree. Preserve its
+  # historical built-in tiers without claiming the installed assurance
+  # contract; canonical and portable-bundle routes always use the policy.
+  gate_assurance_default_reviewers() {
+    # BEGIN GENERATED gate-assurance-copy-mode-reviewers
+    # Source: core/policy/gate-assurance.yaml. The regression suite compares
+    # every tier with the canonical reader; never edit this block alone.
+    case "$1" in
+      express) printf 'critic qa-tester\n' ;;
+      standard) printf 'critic qa-tester architecture-reviewer\n' ;;
+      full) printf 'critic qa-tester architecture-reviewer security-reviewer risk-reviewer\n' ;;
+      targeted) printf '\n' ;;
+      *) return 1 ;;
+    esac
+    # END GENERATED gate-assurance-copy-mode-reviewers
+  }
+  gate_assurance_validate_policy() { return 0; }
+fi
+gate_assurance_validate_policy || {
+  printf 'Error: gate assurance policy is invalid: %s\n' "${_GATE_ASSURANCE_POLICY_FILE:-copy-mode fallback}" >&2
+  exit 2
+}
 EXECUTOR_ROUTER_PATH="$SCRIPT_DIR/../lib/executor-router.sh"
 if [[ -r "$EXECUTOR_ROUTER_PATH" ]]; then
   # shellcheck source=runtime/lib/executor-router.sh
@@ -849,9 +888,12 @@ fi
 # ── Detect tier ───────────────────────────────────────────────────────────────
 if [[ -n "$TIER_OVERRIDE" ]]; then
   TIER="$TIER_OVERRIDE"
+  TIER_REQUESTED="$TIER_OVERRIDE"
 elif [[ -n "$REVIEWERS_OVERRIDE" ]]; then
   TIER="targeted"
+  TIER_REQUESTED="targeted"
 else
+  TIER_REQUESTED="auto"
   NON_DOCS=$(printf '%s\n' "$DIFF_FILES" | grep -vE '\.(md|jsonl|txt)$|^\.gitignore$|^audits/|^docs/' || true)
   SENSITIVE_HIT=$(printf '%s\n' "$DIFF_FILES" | { grep -iE '(^|[/_.-])(auth|oauth|jwt|session|secret|password|token|credential|cors|csrf|webhook|sudo|ssh|payment|billing)([/_.-]|$)|(^|/)migrations?/|^\.github/' || true; } | wc -l)
 
@@ -885,18 +927,16 @@ if [[ -n "$BRIEF_FILE" && -f "$BRIEF_FILE" && -z "$TIER_OVERRIDE" ]]; then
 fi
 
 # ── Determine reviewer list ───────────────────────────────────────────────────
-ALL_REVIEWERS="critic qa-tester architecture-reviewer security-reviewer risk-reviewer"
+ALL_REVIEWERS="$(gate_assurance_default_reviewers full)"
 
 if [[ -n "$REVIEWERS_OVERRIDE" ]]; then
   REVIEWERS=$(printf '%s' "$REVIEWERS_OVERRIDE" | tr ',' ' ')
 else
-  case "$TIER" in
-    express)  REVIEWERS="critic qa-tester";;
-    standard) REVIEWERS="critic qa-tester architecture-reviewer";;
-    full)     REVIEWERS="$ALL_REVIEWERS";;
-    *)        REVIEWERS="$ALL_REVIEWERS";;
-  esac
+  REVIEWERS="$(gate_assurance_default_reviewers "$TIER")"
+  [[ -n "$REVIEWERS" ]] || { printf 'Error: no default reviewers defined for tier: %s\n' "$TIER" >&2; exit 2; }
 fi
+
+if [[ "$SEQUENTIAL" == true ]]; then MODE_RESOLVED=sequential; else MODE_RESOLVED=parallel; fi
 
 REVIEWER_DISPLAY=$(printf '%s' "$REVIEWERS" | tr ' ' ',')
 NUM_REVIEWERS=$(printf '%s\n' $REVIEWERS | wc -l | tr -d ' ')
@@ -1897,7 +1937,7 @@ RBRIEF_EOF
         FAILED_REVIEWERS+=("$r")
         REVIEWER_POST_WAIT_HASHES+=("none")
       else
-        REVIEWER_POST_WAIT_HASHES+=("$(cat "$rf" 2>/dev/null | $_HASH_CMD || echo 'missing')")
+        REVIEWER_POST_WAIT_HASHES+=("$(cat "$rf" 2>/dev/null | $_HASH_CMD | awk '{print $1}' || echo 'missing')")
       fi
     done
 
@@ -1988,8 +2028,13 @@ RBRIEF_EOF
   # before synthesis, to detect synthesis-side tampering of reviewer artifacts.
   # Reviewer outputs are gitignored and not covered by the worktree hash above.
   REVIEWER_ARTIFACT_HASHES=()
-  for rf in "${REVIEWER_OUTPUT_FILES[@]}"; do
-    REVIEWER_ARTIFACT_HASHES+=("$(cat "$rf" | $_HASH_CMD)")
+  PARALLEL_REVIEWER_HASHES=""
+  for i in "${!REVIEWER_OUTPUT_FILES[@]}"; do
+    rf="${REVIEWER_OUTPUT_FILES[$i]}"
+    r="${REVIEWER_NAMES[$i]}"
+    current_hash="$(cat "$rf" | $_HASH_CMD | awk '{print $1}')"
+    REVIEWER_ARTIFACT_HASHES+=("$current_hash")
+    PARALLEL_REVIEWER_HASHES="${PARALLEL_REVIEWER_HASHES:+$PARALLEL_REVIEWER_HASHES }${r}:$current_hash"
   done
 
   say '  all reviewer sessions done.\n\n'
@@ -2188,7 +2233,7 @@ SBRIEF_P2
   for i in "${!REVIEWER_OUTPUT_FILES[@]}"; do
     rf="${REVIEWER_OUTPUT_FILES[$i]}"
     r="${REVIEWER_NAMES[$i]}"
-    current_hash="$(cat "$rf" | $_HASH_CMD)"
+    current_hash="$(cat "$rf" | $_HASH_CMD | awk '{print $1}')"
     if [[ "${REVIEWER_ARTIFACT_HASHES[$i]}" != "$current_hash" ]]; then
       TAMPERED_ARTIFACTS+=("$r")
     fi
@@ -2317,14 +2362,41 @@ fi
 # the legacy structural-only result because its copied script has no shared
 # subject library; installed/canonical routes always provide gate_result_attest.
 if declare -F gate_result_attest >/dev/null 2>&1; then
+  _GATE_ASSURANCE_ATTEST_ARGS=()
   _GATE_SUBJECT_KIND=committed_head
   if [[ "$HEAD_REF" != "HEAD" ]]; then
     _GATE_SUBJECT_KIND=fixed_ref
   elif declare -F _grv_tree_is_dirty >/dev/null 2>&1 && _grv_tree_is_dirty "$WORK_DIR"; then
     _GATE_SUBJECT_KIND=working_tree
   fi
+  # A fail-fast preflight result has no reviewer execution topology or coverage;
+  # attest its Git subject without manufacturing sequential/parallel assurance.
+  if [[ "$PREFLIGHT_STATUS" != fail ]]; then
+    _GATE_ASSURANCE_ATTEST_ARGS=(
+      "$TIER_REQUESTED" "$TIER" "$MODE_REQUESTED" "$MODE_RESOLVED"
+      "$(printf '%s' "$REVIEWER_DISPLAY" | sed 's/,/, /g')"
+      "$(printf '%s' "$SKIPPED" | sed 's/, */, /g')"
+    )
+    if [[ "$MODE_RESOLVED" == parallel ]]; then
+      # The final result attests each parallel reviewer artifact by a digest.
+      # Keep a stable companion copy next to an explicit --output result as
+      # well; the default already writes both into .gate-results.  This makes
+      # verification self-contained after a user moves or archives the result.
+      _reviewer_evidence_dir="$(dirname "$OUTPUT_FILE")"
+      for i in "${!REVIEWER_OUTPUT_FILES[@]}"; do
+        _reviewer_evidence="$_reviewer_evidence_dir/reviewer-${REVIEWER_NAMES[$i]}-${TIMESTAMP}.md"
+        if [[ "${REVIEWER_OUTPUT_FILES[$i]}" != "$_reviewer_evidence" ]]; then
+          cp "${REVIEWER_OUTPUT_FILES[$i]}" "$_reviewer_evidence" || {
+            printf 'Error: failed to preserve parallel reviewer evidence: %s\n' "$_reviewer_evidence" >&2
+            exit 1
+          }
+        fi
+      done
+      _GATE_ASSURANCE_ATTEST_ARGS+=("$TIMESTAMP" "${PARALLEL_REVIEWER_HASHES:-}")
+    fi
+  fi
   gate_result_attest "$OUTPUT_FILE" "$WORK_DIR" "$BASE" "$HEAD_REF" \
-    "$_GATE_SUBJECT_KIND" "$GATE_CREATED_AT" || {
+    "$_GATE_SUBJECT_KIND" "$GATE_CREATED_AT" "${_GATE_ASSURANCE_ATTEST_ARGS[@]}" || {
       printf 'Error: failed to attest final gate subject\n' >&2
       exit 1
     }

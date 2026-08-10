@@ -1,9 +1,29 @@
 #!/usr/bin/env bash
 # Shared gate-result integrity, subject freshness, and applicability verification.
 
+_GRV_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -r "$_GRV_LIB_DIR/gate-assurance.sh" ]]; then
+  # Optional sibling library, guarded above.
+  # shellcheck source=runtime/lib/gate-assurance.sh
+  # shellcheck disable=SC1091
+  . "$_GRV_LIB_DIR/gate-assurance.sh"
+fi
+
 _grv_yaml_field() {
   local file="$1" key="$2"
   awk -v key="$key" 'BEGIN{s=0} /^---$/ { if (s == 0) { s=1; next } else if (s == 1) exit } s && index($0,key ": ")==1 { sub("^[^:]+: ",""); print; exit }' "$file"
+}
+
+_grv_yaml_nested_field() {
+  local file="$1" parent="$2" key="$3"
+  awk -v parent="$parent" -v key="$key" '
+    /^---$/ { fence++; next }
+    fence == 1 && $0 == parent ":" { in_parent=1; next }
+    in_parent && /^[^ ]/ { exit }
+    in_parent && index($0, "  " key ": ") == 1 {
+      sub("^  " key ":[[:space:]]*", ""); print; exit
+    }
+  ' "$file"
 }
 
 _grv_sha256_stream() {
@@ -17,6 +37,202 @@ _grv_sha256_file() { _grv_sha256_stream < "$1"; }
 
 # The digest covers the complete artifact except its own digest field.
 _grv_content_digest() { sed '/^artifact_sha256: /d' "$1" | _grv_sha256_stream; }
+
+_grv_assurance_list() {
+  local value="$1" item
+  [[ "$value" == \[*\] ]] || return 1
+  value="${value#[}"
+  value="${value%]}"
+  [[ -z "${value//[[:space:]]/}" ]] && return 0
+  while IFS= read -r item || [[ -n "$item" ]]; do
+    item="$(printf '%s' "$item" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+    [[ "$item" =~ ^[a-z][a-z-]*$ ]] || return 1
+    printf '%s\n' "$item"
+  done < <(printf '%s' "$value" | tr ',' '\n')
+}
+
+_grv_assurance_has_token() {
+  local tokens="${1//$'\n'/ }"
+  [[ " $tokens " == *" $2 "* ]]
+}
+
+_grv_assurance_token_count() {
+  awk -v token="$2" '$0 == token { count++ } END { print count + 0 }' <<<"$1"
+}
+
+_grv_validate_coverage_assurance() {
+  local file="$1" tier="$2" reviewers_raw skipped_raw expected known reviewer selected="" skipped=""
+  reviewers_raw="$(_grv_yaml_nested_field "$file" coverage_assurance reviewers)"
+  skipped_raw="$(_grv_yaml_nested_field "$file" coverage_assurance skipped)"
+  [[ -n "$reviewers_raw" && -n "$skipped_raw" ]] || {
+    printf 'Error: assurance coverage declaration is incomplete\n' >&2
+    return 1
+  }
+  selected="$(_grv_assurance_list "$reviewers_raw")" || {
+    printf 'Error: assurance reviewers must be a bracketed reviewer list\n' >&2
+    return 1
+  }
+  skipped="$(_grv_assurance_list "$skipped_raw")" || {
+    printf 'Error: assurance skipped must be a bracketed reviewer list\n' >&2
+    return 1
+  }
+  expected="$(gate_assurance_default_reviewers "$tier")" || return 1
+  known="$(gate_assurance_mandatory_full_reviewers)" || return 1
+  [[ -n "$selected" ]] || {
+    printf 'Error: assurance coverage has no selected reviewers\n' >&2
+    return 1
+  }
+  for reviewer in $selected $skipped; do
+    _grv_assurance_has_token "$known" "$reviewer" || {
+      printf 'Error: assurance coverage names unknown reviewer: %s\n' "$reviewer" >&2
+      return 1
+    }
+  done
+  for reviewer in $selected; do
+    [[ "$(_grv_assurance_token_count "$selected" "$reviewer")" -eq 1 ]] || {
+      printf 'Error: assurance coverage duplicates selected reviewer: %s\n' "$reviewer" >&2
+      return 1
+    }
+    _grv_assurance_has_token "$skipped" "$reviewer" && {
+      printf 'Error: assurance coverage overlaps selected/skipped reviewer: %s\n' "$reviewer" >&2
+      return 1
+    }
+  done
+  for reviewer in $skipped; do
+    [[ "$(_grv_assurance_token_count "$skipped" "$reviewer")" -eq 1 ]] || {
+      printf 'Error: assurance coverage duplicates skipped reviewer: %s\n' "$reviewer" >&2
+      return 1
+    }
+  done
+  if [[ "$tier" != targeted ]]; then
+    for reviewer in $expected; do
+      _grv_assurance_has_token "$selected" "$reviewer" || {
+        printf 'Error: assurance coverage misses required %s reviewer: %s\n' "$tier" "$reviewer" >&2
+        return 1
+      }
+    done
+    [[ "$(wc -w <<<"$selected")" -eq "$(wc -w <<<"$expected")" ]] || {
+      printf 'Error: assurance coverage has reviewers outside resolved %s tier\n' "$tier" >&2
+      return 1
+    }
+  fi
+  for reviewer in $known; do
+    if _grv_assurance_has_token "$selected" "$reviewer"; then
+      ! _grv_assurance_has_token "$skipped" "$reviewer" || return 1
+    else
+      _grv_assurance_has_token "$skipped" "$reviewer" || {
+        printf 'Error: assurance coverage omits reviewer from selected/skipped partition: %s\n' "$reviewer" >&2
+        return 1
+      }
+    fi
+  done
+}
+
+_grv_parallel_evidence_hash() {
+  local file="$1" reviewer="$2"
+  awk -v reviewer="$reviewer" '
+    /^---$/ { fence++; next }
+    fence == 1 && $0 == "parallel_reviewer_evidence:" { in_evidence=1; next }
+    in_evidence && /^[^ ]/ { exit }
+    in_evidence && $0 == "  artifacts:" { in_artifacts=1; next }
+    in_artifacts && /^  [^ ]/ { exit }
+    in_artifacts && $0 ~ "^    " reviewer ": " {
+      sub("^    " reviewer ":[[:space:]]*", ""); print; exit
+    }
+  ' "$file"
+}
+
+_grv_parallel_evidence_names() {
+  awk '
+    /^---$/ { fence++; next }
+    fence == 1 && $0 == "parallel_reviewer_evidence:" { in_evidence=1; next }
+    in_evidence && /^[^ ]/ { exit }
+    in_evidence && $0 == "  artifacts:" { in_artifacts=1; next }
+    in_artifacts && /^  [^ ]/ { exit }
+    in_artifacts && /^    [a-z][a-z-]*:/ {
+      name=$1; sub(/:$/, "", name); print name
+    }
+  ' "$1"
+}
+
+_grv_validate_parallel_evidence() {
+  local file="$1" reviewers_raw selected run_id evidence_names reviewer digest artifact_dir artifact
+  reviewers_raw="$(_grv_yaml_nested_field "$file" coverage_assurance reviewers)"
+  selected="$(_grv_assurance_list "$reviewers_raw")" || return 1
+  run_id="$(_grv_yaml_nested_field "$file" parallel_reviewer_evidence run_id)"
+  [[ "$run_id" =~ ^[0-9]{8}-[0-9]{6}$ ]] || {
+    printf 'Error: parallel assurance lacks a valid reviewer evidence run id\n' >&2
+    return 1
+  }
+  evidence_names="$(_grv_parallel_evidence_names "$file")"
+  for reviewer in $selected; do
+    [[ "$(_grv_assurance_token_count "$evidence_names" "$reviewer")" -eq 1 ]] || {
+      printf 'Error: parallel assurance lacks evidence for reviewer: %s\n' "$reviewer" >&2
+      return 1
+    }
+    digest="$(_grv_parallel_evidence_hash "$file" "$reviewer")"
+    [[ "$digest" =~ ^[a-f0-9]{64}$ ]] || {
+      printf 'Error: parallel assurance has malformed evidence digest for reviewer: %s\n' "$reviewer" >&2
+      return 1
+    }
+    artifact_dir="$(dirname "$file")"
+    artifact="$artifact_dir/reviewer-${reviewer}-${run_id}.md"
+    [[ -f "$artifact" ]] || {
+      printf 'Error: parallel assurance reviewer artifact is missing: %s\n' "$artifact" >&2
+      return 1
+    }
+    [[ "$(_grv_sha256_file "$artifact")" == "$digest" ]] || {
+      printf 'Error: parallel assurance reviewer artifact digest mismatch: %s\n' "$artifact" >&2
+      return 1
+    }
+  done
+  for reviewer in $evidence_names; do
+    _grv_assurance_has_token "$selected" "$reviewer" || {
+      printf 'Error: parallel assurance has evidence for unselected reviewer: %s\n' "$reviewer" >&2
+      return 1
+    }
+  done
+}
+
+_grv_validate_assurance() {
+  local file="$1" version tier mode requested_tier requested_mode topology independent evidence legacy
+  version="$(_grv_yaml_field "$file" assurance_contract_version)"
+  [[ -z "$version" ]] && return 0
+  [[ "$version" == 1 ]] || { printf 'Error: unsupported assurance_contract_version: %s\n' "$version" >&2; return 1; }
+  tier="$(_grv_yaml_nested_field "$file" tier_assurance resolved)"
+  mode="$(_grv_yaml_nested_field "$file" mode_assurance resolved)"
+  requested_tier="$(_grv_yaml_nested_field "$file" tier_assurance requested)"
+  requested_mode="$(_grv_yaml_nested_field "$file" mode_assurance requested)"
+  topology="$(_grv_yaml_nested_field "$file" independence_assurance session_topology)"
+  independent="$(_grv_yaml_nested_field "$file" independence_assurance per_reviewer_independent)"
+  evidence="$(_grv_yaml_nested_field "$file" independence_assurance session_evidence)"
+  if ! declare -F gate_assurance_valid_tier >/dev/null \
+    || ! gate_assurance_valid_tier "$tier"; then
+    printf 'Error: invalid resolved tier assurance: %s\n' "$tier" >&2
+    return 1
+  fi
+  if ! declare -F gate_assurance_valid_mode >/dev/null \
+    || ! gate_assurance_valid_mode "$mode"; then
+    printf 'Error: invalid resolved mode assurance: %s\n' "$mode" >&2
+    return 1
+  fi
+  [[ "$requested_tier" == auto || "$requested_tier" == targeted ]] \
+    || gate_assurance_valid_tier "$requested_tier" \
+    || { printf 'Error: invalid requested tier assurance: %s\n' "$requested_tier" >&2; return 1; }
+  [[ "$requested_mode" == default ]] || gate_assurance_valid_mode "$requested_mode" \
+    || { printf 'Error: invalid requested mode assurance: %s\n' "$requested_mode" >&2; return 1; }
+  [[ "$topology" == "$(gate_assurance_mode_topology "$mode")" \
+    && "$independent" == "$(gate_assurance_mode_independence "$mode")" ]] \
+    || { printf 'Error: mode assurance contradicts topology/independence evidence\n' >&2; return 1; }
+  [[ "$evidence" == "$(gate_assurance_mode_evidence "$mode")" ]] \
+    || { printf 'Error: mode assurance lacks matching session evidence\n' >&2; return 1; }
+  legacy="$(_grv_yaml_field "$file" tier)"; [[ -z "$legacy" || "$legacy" == "$tier" ]] \
+    || { printf 'Error: legacy tier contradicts resolved tier assurance\n' >&2; return 1; }
+  legacy="$(_grv_yaml_field "$file" mode)"; [[ -z "$legacy" || "$legacy" == "$mode" ]] \
+    || { printf 'Error: legacy mode contradicts resolved mode assurance\n' >&2; return 1; }
+  _grv_validate_coverage_assurance "$file" "$tier" || return 1
+  [[ "$mode" != parallel ]] || _grv_validate_parallel_evidence "$file"
+}
 
 _grv_canonical_path() { (cd "$1" 2>/dev/null && pwd -P); }
 
@@ -54,18 +270,25 @@ _grv_common_dir_identity() {
 # contents. `git diff --binary` carries modes and symlink targets without a
 # process-per-tracked-file scan, keeping verification practical on real repos.
 _grv_tree_fingerprint() {
-  local root="$1" manifest path quoted kind executable digest
+  local root="$1" manifest path quoted kind executable digest excluded_path
+  shift
+  local -a excluded_paths=("$@")
+  local -a pathspec=(. ':(exclude).agent-trace/**' ':(exclude).gate-briefs/**' ':(exclude).gate-results/**')
+  for excluded_path in "${excluded_paths[@]}"; do
+    [[ -z "$excluded_path" ]] || pathspec+=(":(exclude,literal)$excluded_path")
+  done
   manifest="$(mktemp "${TMPDIR:-/tmp}/gate-subject.XXXXXX")" || return 2
-  git -C "$root" ls-files -s -- \
-    . ':(exclude).agent-trace/**' ':(exclude).gate-briefs/**' ':(exclude).gate-results/**' \
-    >> "$manifest" || { rm -f "$manifest"; return 2; }
-  git -C "$root" diff --binary HEAD -- \
-    . ':(exclude).agent-trace/**' ':(exclude).gate-briefs/**' ':(exclude).gate-results/**' \
-    >> "$manifest" || { rm -f "$manifest"; return 2; }
+  git -C "$root" ls-files -s -- "${pathspec[@]}" >> "$manifest" \
+    || { rm -f "$manifest"; return 2; }
+  git -C "$root" diff --binary HEAD -- "${pathspec[@]}" >> "$manifest" \
+    || { rm -f "$manifest"; return 2; }
   while IFS= read -r -d '' path; do
     case "$path" in
       .agent-trace|.agent-trace/*|.gate-briefs|.gate-briefs/*|.gate-results|.gate-results/*) continue ;;
     esac
+    for excluded_path in "${excluded_paths[@]}"; do
+      [[ -z "$excluded_path" || "$path" != "$excluded_path" ]] || continue 2
+    done
     quoted="$(printf '%q' "$path")"
     if [[ -L "$root/$path" ]]; then
       kind='symlink'; executable='false'
@@ -104,6 +327,7 @@ gate_result_verify() {
   body_final=$(grep -E '^Final: (GO|NO-GO)$' "$result_file" | awk '{print $2}')
   [[ "$frontmatter_final" == "$body_final" ]] || { printf 'Error: frontmatter final: (%s) does not match body Final: (%s) in gate result: %s\n' "$frontmatter_final" "$body_final" "$result_file" >&2; return 1; }
   [[ -z "$expected_final" || "$body_final" == "$expected_final" ]] || { printf 'Error: %s verdict (%s) contradicts shell-computed verdict (%s) -- gate result may have been manipulated: %s\n' "$route_label" "$body_final" "$expected_final" "$result_file" >&2; return 1; }
+  _grv_validate_assurance "$result_file" || return 1
   expected_digest="$(_grv_yaml_field "$result_file" artifact_sha256)"
   if [[ -n "$expected_digest" ]]; then
     [[ "$expected_digest" =~ ^[a-f0-9]{64}$ ]] || { printf 'Error: malformed artifact_sha256 in gate result: %s\n' "$result_file" >&2; return 1; }
@@ -114,9 +338,15 @@ gate_result_verify() {
 }
 
 # gate_result_attest <result_file> <repo_root> <base_ref> <head_ref> <subject_kind> <created_at>
+#   [tier_requested tier_resolved mode_requested mode_resolved reviewers skipped
+#    parallel_run_id parallel_reviewer_hashes]
 gate_result_attest() {
   local file="$1" root="$2" base_ref="$3" head_ref="$4" subject_kind="$5" created_at="$6"
-  local physical canonical common repo_key common_id remote_id base_commit head_commit tree finished tmp digest
+  local tier_requested="${7-}" tier_resolved="${8-}" mode_requested="${9-}" mode_resolved="${10-}"
+  local coverage_reviewers="${11-}" coverage_skipped="${12-}" parallel_run_id="${13-}" parallel_hashes="${14-}"
+  local topology="" independent="" session_evidence="" reviewer pair digest evidence_count=0
+  local physical canonical common repo_key common_id remote_id base_commit head_commit tree finished tmp digest artifact_repo_path=""
+  local -a artifact_exclusions=()
   physical="$(cd "$root" && pwd)"; canonical="$(_grv_canonical_path "$root")" || return 1
   common="$(_grv_git_common_dir "$canonical")" || return 1
   repo_key="$(_grv_repository_key "$canonical")" || return 1
@@ -124,28 +354,85 @@ gate_result_attest() {
   remote_id="$(_grv_remote_identity "$canonical")" || return 1
   base_commit="$(git -C "$canonical" rev-parse "${base_ref}^{commit}")" || return 1
   head_commit="$(git -C "$canonical" rev-parse "${head_ref}^{commit}")" || return 1
+  case "$file" in "$canonical"/*) artifact_repo_path="${file#"$canonical"/}" ;; esac
+  [[ -z "$artifact_repo_path" ]] || artifact_exclusions+=("$artifact_repo_path")
   if [[ "$subject_kind" == fixed_ref ]]; then
     tree="$(_grv_ref_fingerprint "$canonical" "$head_ref")" || return 1
-  else tree="$(_grv_tree_fingerprint "$canonical")" || return 1
   fi
   finished="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+  if [[ -n "$tier_resolved" ]]; then
+    if ! declare -F gate_assurance_valid_tier >/dev/null \
+      || ! gate_assurance_valid_tier "$tier_resolved"; then
+      return 1
+    fi
+    if ! declare -F gate_assurance_valid_mode >/dev/null \
+      || ! gate_assurance_valid_mode "$mode_resolved"; then
+      return 1
+    fi
+    topology="$(gate_assurance_mode_topology "$mode_resolved")" || return 1
+    independent="$(gate_assurance_mode_independence "$mode_resolved")" || return 1
+    session_evidence="$(gate_assurance_mode_evidence "$mode_resolved")" || return 1
+    if [[ "$mode_resolved" == parallel ]]; then
+      [[ "$parallel_run_id" =~ ^[0-9]{8}-[0-9]{6}$ ]] || return 1
+      for reviewer in ${coverage_reviewers//,/ }; do
+        digest=""
+        for pair in $parallel_hashes; do
+          [[ "${pair%%:*}" == "$reviewer" ]] && digest="${pair#*:}"
+        done
+        [[ "$digest" =~ ^[a-f0-9]{64}$ ]] || return 1
+        evidence_count=$((evidence_count + 1))
+        if [[ -n "$artifact_repo_path" ]]; then
+          artifact_exclusions+=("$(dirname "$artifact_repo_path")/reviewer-${reviewer}-${parallel_run_id}.md")
+        fi
+      done
+      [[ "$evidence_count" -eq "$(wc -w <<<"$parallel_hashes")" ]] || return 1
+    fi
+  fi
+  if [[ "$subject_kind" != fixed_ref ]]; then
+    tree="$(_grv_tree_fingerprint "$canonical" "${artifact_exclusions[@]}")" || return 1
+  fi
   tmp="${file}.attest-tmp"
   awk -v rk="$repo_key" -v ci="$common_id" -v ri="$remote_id" -v pr="$physical" -v cr="$canonical" \
     -v br="$base_ref" -v bc="$base_commit" -v hr="$head_ref" -v hc="$head_commit" -v tf="$tree" \
-    -v sk="$subject_kind" -v ca="$created_at" -v fa="$finished" '
+    -v sk="$subject_kind" -v ca="$created_at" -v fa="$finished" -v arp="$artifact_repo_path" \
+    -v trq="$tier_requested" -v trs="$tier_resolved" -v mrq="$mode_requested" -v mrs="$mode_resolved" \
+    -v cov="$coverage_reviewers" -v skip="$coverage_skipped" -v topology="$topology" -v independent="$independent" \
+    -v session_evidence="$session_evidence" -v parallel_run_id="$parallel_run_id" -v parallel_hashes="$parallel_hashes" '
     /^---$/ { fence++; if (fence == 2) {
       print "gate_subject_version: 1"; print "repository_key: " rk; print "git_common_dir_identity: " ci
       print "remote_identity: " ri; print "observed_physical_root: " pr; print "observed_canonical_root: " cr
       print "base_ref: " br; print "base_commit: " bc; print "head_ref: " hr; print "head_commit: " hc
       print "tree_fingerprint: " tf; print "subject_kind: " sk; print "dirty_policy: " (sk == "working_tree" ? "allow" : "deny")
+      print "artifact_repo_path: " (arp == "" ? "none" : arp)
       print "created_at: " ca; print "finished_at: " fa; print "artifact_sha256: PENDING"
+      if (trs != "") {
+        print "assurance_contract_version: 1"
+        print "tier_assurance:"; print "  requested: " trq; print "  resolved: " trs
+        print "mode_assurance:"; print "  requested: " mrq; print "  resolved: " mrs
+        print "coverage_assurance:"; print "  reviewers: [" cov "]"; print "  skipped: [" skip "]"
+        print "independence_assurance:"; print "  implementation_context_isolated: true"
+        print "  session_topology: " topology; print "  per_reviewer_independent: " independent
+        print "  session_evidence: " session_evidence
+        if (mrs == "parallel") {
+          print "parallel_reviewer_evidence:"; print "  run_id: " parallel_run_id; print "  artifacts:"
+          count=split(parallel_hashes, entries, " ")
+          for (i = 1; i <= count; i++) {
+            split(entries[i], pair, ":")
+            print "    " pair[1] ": " pair[2]
+          }
+        }
+      }
     }} { print }' "$file" > "$tmp" || return 1
   mv "$tmp" "$file"
   digest="$(_grv_content_digest "$file")" || return 1
   sed "s/^artifact_sha256: PENDING$/artifact_sha256: $digest/" "$file" > "$tmp" && mv "$tmp" "$file"
 }
 
-_grv_tier_rank() { case "$1" in express) echo 1;; standard) echo 2;; full) echo 3;; *) echo 0;; esac; }
+_grv_tier_rank() {
+  if declare -F gate_assurance_tier_rank >/dev/null; then gate_assurance_tier_rank "$1"
+  else case "$1" in express) echo 1;; standard) echo 2;; full) echo 3;; *) echo 0;; esac
+  fi
+}
 
 _grv_tree_is_dirty() {
   ! git -C "$1" diff --quiet --ignore-submodules -- 2>/dev/null \
@@ -158,6 +445,8 @@ _grv_tree_is_dirty() {
 gate_result_assess() {
   local file="$1" root="${2-}" required_tier="${3-}" required_mode="${4-}"
   local av=true sc=null pa=null ar='' sr='' pr='' expected current field expected_value actual tier mode dirty_policy
+  local reviewer run_id artifact_repo_path
+  local -a artifact_exclusions=()
   if ! command -v jq >/dev/null 2>&1; then
     printf 'gate-result-verify: jq is required for structured gate assessment\n' >&2
     return 2
@@ -185,7 +474,18 @@ gate_result_assess() {
             if [[ "$actual" == fixed_ref ]]; then
               expected_value="$(_grv_yaml_field "$file" head_ref)"
               current="$(_grv_ref_fingerprint "$root" "$expected_value" 2>/dev/null || true)"
-            else current="$(_grv_tree_fingerprint "$root" 2>/dev/null || true)"
+            else
+              artifact_repo_path="$(_grv_yaml_field "$file" artifact_repo_path)"
+              [[ "$artifact_repo_path" != none ]] || artifact_repo_path=""
+              artifact_exclusions=()
+              [[ -z "$artifact_repo_path" ]] || artifact_exclusions+=("$artifact_repo_path")
+              if [[ "$(_grv_yaml_nested_field "$file" mode_assurance resolved)" == parallel && -n "$artifact_repo_path" ]]; then
+                run_id="$(_grv_yaml_nested_field "$file" parallel_reviewer_evidence run_id)"
+                for reviewer in $(_grv_assurance_list "$(_grv_yaml_nested_field "$file" coverage_assurance reviewers)" 2>/dev/null || true); do
+                  artifact_exclusions+=("$(dirname "$artifact_repo_path")/reviewer-${reviewer}-${run_id}.md")
+                done
+              fi
+              current="$(_grv_tree_fingerprint "$root" "${artifact_exclusions[@]}" 2>/dev/null || true)"
             fi
             ;;
         esac
@@ -208,7 +508,13 @@ gate_result_assess() {
     sr=subject_not_checked
   fi
   if [[ "$av" == true && ( -n "$required_tier" || -n "$required_mode" ) ]]; then
-    pa=true; tier="$(_grv_yaml_field "$file" tier)"; mode="$(_grv_yaml_field "$file" mode)"
+    pa=true
+    if [[ -n "$(_grv_yaml_field "$file" assurance_contract_version)" ]]; then
+      tier="$(_grv_yaml_nested_field "$file" tier_assurance resolved)"
+      mode="$(_grv_yaml_nested_field "$file" mode_assurance resolved)"
+    else
+      tier="$(_grv_yaml_field "$file" tier)"; mode="$(_grv_yaml_field "$file" mode)"
+    fi
     if [[ -n "$required_tier" ]]; then
       if [[ "$tier" == targeted && "$required_tier" != targeted ]]; then
         pa=false; pr=targeted_requires_initial_coverage

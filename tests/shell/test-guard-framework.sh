@@ -89,6 +89,7 @@ fw_validate_path_arg() {
 }
 
 fw_validate_path_realpath_failure() {
+  # shellcheck disable=SC2329 # Indirectly invoked by g_validate_path.
   realpath_m() {
     return 1
   }

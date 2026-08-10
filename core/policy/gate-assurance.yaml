@@ -1,0 +1,27 @@
+# Canonical PR-gate assurance axes. Tier controls review depth and default
+# reviewer coverage; mode controls execution topology only. Consumers must not
+# infer either axis, actual coverage, or independence from another axis.
+
+tiers:
+  express:
+    rank: 1
+    default_reviewers: [critic, qa-tester]
+  standard:
+    rank: 2
+    default_reviewers: [critic, qa-tester, architecture-reviewer]
+  full:
+    rank: 3
+    default_reviewers: [critic, qa-tester, architecture-reviewer, security-reviewer, risk-reviewer]
+  targeted:
+    rank: 0
+    default_reviewers: []
+
+modes:
+  sequential:
+    session_topology: combined-session
+    per_reviewer_independent: false
+    session_evidence: combined-result
+  parallel:
+    session_topology: per-reviewer-sessions
+    per_reviewer_independent: true
+    session_evidence: per-reviewer-artifacts

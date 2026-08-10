@@ -73,7 +73,7 @@ ship_smoke_dir=""
 ship_smoke_state=""
 gate_result=""
 e2e_log=""
-# shellcheck disable=SC2317  # all commands run indirectly via trap (EXIT/INT/TERM)
+# shellcheck disable=SC2317,SC2329  # all commands run indirectly via trap (EXIT/INT/TERM)
 cleanup() {
   rm -f "$brief_file" "$e2e_log" 2>/dev/null || true
   if [[ -n "$smoke_dir"        ]]; then rm -rf "$smoke_dir"        2>/dev/null || true; fi

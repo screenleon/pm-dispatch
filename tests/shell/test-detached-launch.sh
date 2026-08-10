@@ -142,7 +142,30 @@ case_key_file_tmp_fallback() {
   fi
 }
 
-# ---- 6: secure_key_dir creates a mode-700 dir owned by current user ----------
+# ---- 6: key_file falls back when XDG_RUNTIME_DIR is mounted read-only ---------
+case_key_file_read_only_xdg_fallback() {
+  local name="detached-launch/key_file falls back when XDG_RUNTIME_DIR is read-only"
+  should_run "$name" || return 0
+
+  # /proc is a portable Linux example of an existing directory that cannot be
+  # used for private runtime files. On hosts without such a mount, keep this
+  # environment-specific regression case neutral.
+  if [[ ! -d /proc || -w /proc ]]; then
+    pass "$name"
+    return
+  fi
+
+  local out uid
+  uid="$(id -u)"
+  out="$(XDG_RUNTIME_DIR=/proc detached_launch_key_file "pm-test-ns" "some-id")"
+  if [[ "$out" == "/tmp/pm-test-ns-${uid}/some-id" ]]; then
+    pass "$name"
+  else
+    fail "$name" "out=$out"
+  fi
+}
+
+# ---- 7: secure_key_dir creates a mode-700 dir owned by current user ----------
 case_secure_key_dir_creates_700() {
   local name="detached-launch/secure_key_dir creates mode-700 dir"
   should_run "$name" || return 0
@@ -400,6 +423,7 @@ case_generate_nonce_full_entropy_under_pipefail
 case_generate_nonce_varies
 case_key_file_xdg_runtime_dir
 case_key_file_tmp_fallback
+case_key_file_read_only_xdg_fallback
 case_secure_key_dir_creates_700
 case_secure_key_dir_mkdir_failure
 case_write_key_file_roundtrip

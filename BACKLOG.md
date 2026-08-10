@@ -31,7 +31,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-509 | ✅ closed 2026-07-22 | detached gate launch liveness：對 sandbox parent-death 早期死亡 fail-loud，提供 supervisor readiness／identity evidence | arch/gate | 2026-07-22 | pr:#440 | P2 | hygiene |
 | CC-510 | ✅ closed 2026-07-23 | Codex detached dispatch continuation：App Server callback、authenticated completion envelope 與 foreground fallback | arch/DX | 2026-07-23 | pr:#443 | P2 | design |
 | CC-511 | ⚠️ partial 2026-07-24 | ship publish authorization：Phase A current-tree authoritative full-suite 已交付；Phase B review-closure evidence 仍待 CC-515／CC-517 | release/gate | 2026-07-23 | pr:#446 | P1 | design |
-| CC-512 | 🔵 active | gate tier、execution mode、reviewer coverage 與 independence assurance 正交化 | ops/gate | 2026-07-23 | — | P1 | design |
+| CC-512 | ⚠️ partial 2026-08-08 | gate tier、execution mode、reviewer coverage 與 independence assurance 正交化 | ops/gate | 2026-07-23 | — | P1 | design |
 | CC-513 | 🔵 active | canonical gate policy resolver：minimum tier、required reviewers、mode recommendation 與 downgrade audit | security/gate | 2026-07-23 | — | P1 | design |
 | CC-514 | 🔵 active | orthogonal delivery assurance map、machine-derived tables 與 feature/docs/high-risk recipes | docs/process | 2026-07-23 | — | P2 | design |
 | CC-515 | ⚠️ partial 2026-08-08 | gate artifact immutable subject、freshness 與 consumer applicability shared verifier；subject/digest/三軸 verifier + ship consumer 已交付，待 CC-512/513/518 evidence links | arch/gate | 2026-07-23 | — | P1 | design |
@@ -41,6 +41,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-519 | 🔵 active | selected-reviewer coverage／finding contract：declared coverage、stable IDs 與 actionable fix boundary | ops/gate | 2026-07-23 | — | P1 | design |
 | CC-520 | 🔵 active | synthesis parity 與 remediation seed：findings union、root-cause grouping、coverage matrix 與 no-silent-drop | ops/gate | 2026-07-23 | — | P1 | design |
 | CC-521 | 🔵 active | test-gap matrix、protocol recovery 與 live recall evaluation 分層 | ops/test | 2026-07-23 | — | P2 | design |
+| CC-522 | 🟢 someday | detached gate completion receipt：保留可驗證 terminal evidence，避免 one-shot `gate wait` 後只能 indeterminate | arch/gate | 2026-08-10 | feedback:2026-08-10 | P2 | design |
 | CC-465 | 🔵 active | memory/context 關鍵詞管線 CJK 支援：抽出共用零依賴斷詞 lib，取代三處各自 ASCII-only 抽詞；工作序列起點（465→467→468→466）（2026-07-07 記憶系統深入分析） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-466 | ⏸ deferred | 記憶卡片生命週期閉環：expires_at 執行 + 關窗式 supersede + usage sidecar 休眠偵測 + doctor→distill 接線；僅在 CC-467 證明 stale/dormant card 已形成實際問題時啟動 | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-467 | 🔵 active | `pmctl memory stats`：注入效益可視化（唯讀聚合器）——注入 bytes/卡片命中分佈/從未命中卡/episode 填寫率，回答「記憶有跟沒有差在哪」；排在 CC-466 之前（2026-07-07；業界僅離線 recall 評測，無 per-injection 遙測） | DX/memory | 2026-07-07 | — | P2 | retrieval |
@@ -594,6 +595,20 @@ someday → active，P3 → P2。
 3. **Phase 3 — async validation**: async post-validation path (append first, validate sampled fraction asynchronously, or move strict validation to downstream CC-025/026 consumer where 25ms/call amortizes over rare reads). Garbage line is data-quality concern only — no security vector.
 **Activate when**: CC-025/CC-026 consumers are close to implementation and reliable trace data becomes load-bearing.
 **Source**: 2026-05-15 CC-027 brief + PR-gate critic/arch/risk (rotation), risk-reviewer (health, CC-027b), critic+qa-tester (validation, CC-027c).
+
+## CC-522 — [P2] Detached gate completion receipt
+
+**Problem**：`pmctl gate wait` 以 nonce key 驗證完成 sentinel，成功讀取後即刪除兩者。這不只影響前景重複查詢；對 detached/background gate，原始 terminal、App Server callback 或第一個 waiter 消失後，後續人員與自動化只能看到未經驗證的 result artifact，無法區分「已被可信 waiter 消費」與「key 被 tmp cleanup、reboot 或 producer 異常遺失」。
+
+**Requirement**：建立前景與背景共用的 durable completion contract：
+
+1. supervisor 在 nonce 驗證後寫入不可被 workspace executor 偽造的 terminal receipt，至少綁定 gate id、terminal state、exit code、result path、result digest、supervisor identity、完成時間與 receipt version；
+2. `gate wait` 預設可重複驗證，不讓單一 waiter 破壞其他 CLI、background continuation、App Server callback 或人工查詢；若保留 consume/ack 語意，必須是明確 opt-in，且不刪除可驗證 receipt；
+3. 定義 retention/GC 與 acknowledge policy：短生命週期 nonce key 可以清理，但 receipt 必須保留到 retention 條件滿足；
+4. operation record 需可診斷 verified-complete、acknowledged、expired、missing、receipt-invalid 與 producer-died；背景 callback 必須傳遞 receipt identity/digest，而非僅傳 gate id；
+5. 維持 fail-closed：裸 workspace artifact、裸 gate id、錯 nonce、receipt/result digest 不符都不能被視為成功。
+
+**Acceptance**：首次與重複的前景 wait、background/detached 完成後的新 CLI query、App Server callback 與多 waiter 都回報同一可驗證 terminal outcome；reboot/tmpwatch、nonce mismatch、receipt tamper、result tamper、key cleanup、callback 重送及 supervisor crash 都能明確分類且不會誤報成功；新增 lifecycle/retention/multi-waiter 的自動化測試。
 
 ## CC-023 — `coupling-reviewer` PR gate 耦合分析（deferred）
 
@@ -1616,7 +1631,7 @@ authorization。
 
 ---
 
-## CC-512 — tier／mode／coverage／independence assurance 正交化 🔵 active
+## CC-512 — tier／mode／coverage／independence assurance 正交化 ⚠️ partial 2026-08-08
 
 **Problem**: runtime 原本就將 tier detection、reviewer selection 與
 `SEQUENTIAL=true|false` 分開，但文件曾把 `full` 描述成 parallel cross-context +
@@ -1655,6 +1670,20 @@ coverage、取得何種 independence」，所有合法組合 round-trip，錯誤
 
 **Non-goals**: 不讓 full 自動 parallel；不讓 parallel 自動 full；不決定 risk-based
 minimum floor（見 [[CC-513]]）；不新增另一種 gate。
+
+**Phase 1 outcome（2026-08-08）**：新增 canonical
+`core/policy/gate-assurance.yaml`，tier reviewer defaults 與 mode topology 分開；gate
+producer 不再自行複製 tier→reviewer case table。所有 attested result 現在記錄
+requested/resolved tier、requested/resolved mode、實際 selected/skipped reviewers、
+implementation-context isolation、combined/per-reviewer session topology、
+per-reviewer independence 與 session evidence。shared verifier 會拒絕 mode／topology／
+independence／evidence 或 legacy scalar 互相矛盾的結果；legacy unattested 與 standalone
+copy-mode 保留結構相容。
+
+**Remaining**：targeted result 尚待 [[CC-519]] finding/coverage contract 才能連結 initial
+coverage；parallel session evidence 目前是 producer-owned artifact marker，待 [[CC-519]]
+加入逐 reviewer session identity/digest 後才能驗證完整 provenance。CLI/help/result
+schema 的完整 generated-marker drift ratchet 亦留待 structured result contract 收斂後完成。
 
 **Cross-link**: [[CC-515]]、[[CC-518]]、[[CC-519]]、`docs/review-model.md`。
 

@@ -38,6 +38,7 @@ else
   # Copy-mode parity: portable.sh would supply codex_available(); define a
   # matching fallback so check_codex() / the hook-profile case do not hit an
   # undefined function when lib/ is absent.
+  # shellcheck disable=SC2329 # Called indirectly by host checks when portable.sh is absent.
   codex_available() { command -v codex >/dev/null 2>&1; }
 fi
 
@@ -241,6 +242,7 @@ emit_summary() {
 # Usage: emit_capability <slug> <status: ok|warn|fail> <host> <capability> \
 #          <provider> <enforcement> <coverage> <stability> <confidence> \
 #          <message> [fix]
+# shellcheck disable=SC2329 # Invoked by dynamically sourced doctor host modules.
 emit_capability() {
   local slug="$1" status="$2" host="$3" capability="$4" provider="$5"
   local enforcement="$6" coverage="$7" stability="$8" confidence="$9"
@@ -291,6 +293,7 @@ check_jq() {
 # supported platform (Linux/WSL2) uses files, and the dispatch-time semantic
 # terminal-event check is the authoritative backstop (an unauthed run emits no
 # terminal event → post-verify fails). See docs/executor-contract.md.
+# shellcheck disable=SC2329 # Invoked by dynamically sourced doctor host modules.
 executor_authed() {
   local executor="$1"
   case "$executor" in
@@ -313,6 +316,7 @@ executor_authed() {
   return 1
 }
 
+# shellcheck disable=SC2329 # Invoked by dynamically sourced doctor host modules.
 doctor_check_executor_auth() {
   local host="$1" binary="$2" missing_message="$3" missing_fix="$4" unauth_message="$5" unauth_fix="$6"
   if ! command -v "$binary" >/dev/null 2>&1; then

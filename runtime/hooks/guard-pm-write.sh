@@ -97,13 +97,24 @@ if [[ "$lex_path" =~ ^/tmp/[a-z][^/]*/[^/]+\.md$ ]]; then
   fi
 fi
 
-# Rule B: any repo's docs/spikes/<name>.md — CC-NNN*, *-scope, *-rfc only.
-# Paths in /tmp/ are excluded (those belong to Rule A's zone).  Both lex_path
-# and abs_path must satisfy the same predicate (cross-rule escape prevention).
-if [[ "$lex_path" != /tmp/* ]] && \
-   [[ "$lex_path" =~ /docs/spikes/(CC-[0-9][^/]*|[^/]+-scope|[^/]+-rfc)\.md$ ]]; then
-  if [[ "$abs_path" != /tmp/* ]] && \
-     [[ "$abs_path" =~ /docs/spikes/(CC-[0-9][^/]*|[^/]+-scope|[^/]+-rfc)\.md$ ]]; then
+# Rule B: a Git worktree's docs/spikes/<name>.md — CC-NNN*, *-scope, *-rfc
+# only.  A legitimate worktree may itself live under /tmp (as isolated PR
+# worktrees do), so a blanket /tmp denial breaks the documented handoff.  Find
+# the nearest existing ancestor and require both lexical and resolved paths to
+# be within the same Git root; this keeps arbitrary /tmp/.../docs/spikes paths
+# and cross-rule symlink escapes denied.
+g_git_root_for_path() {
+  local candidate="$1"
+  while [[ "$candidate" != / && ! -d "$candidate" ]]; do candidate="$(dirname "$candidate")"; done
+  [[ -d "$candidate" ]] || return 1
+  git -C "$candidate" rev-parse --show-toplevel 2>/dev/null
+}
+if [[ "$lex_path" =~ /docs/spikes/(CC-[0-9][^/]*|[^/]+-scope|[^/]+-rfc)\.md$ ]] && \
+   [[ "$abs_path" =~ /docs/spikes/(CC-[0-9][^/]*|[^/]+-scope|[^/]+-rfc)\.md$ ]]; then
+  lex_repo="$(g_git_root_for_path "$lex_path" || true)"
+  abs_repo="$(g_git_root_for_path "$abs_path" || true)"
+  if [[ -n "$lex_repo" && "$lex_repo" == "$abs_repo" && \
+        "$lex_path" == "$lex_repo"/docs/spikes/* && "$abs_path" == "$abs_repo"/docs/spikes/* ]]; then
     g_allow "docs/spikes PM-authored file" "$file_path"
   fi
 fi

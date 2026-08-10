@@ -68,6 +68,7 @@ create_runner() {
   cp -R "$REPO_ROOT/runtime/lib/." "$dir/lib/"
   mkdir -p "$dir/core/policy"
   cp "$REPO_ROOT/core/policy/isolation-level.yaml" "$dir/core/policy/isolation-level.yaml"
+  cp "$REPO_ROOT/core/policy/gate-assurance.yaml" "$dir/core/policy/gate-assurance.yaml"
   mkdir -p "$dir/adapters/codex"
   cat > "$dir/adapters/codex/dispatch.sh" <<'STUB_EOF'
 #!/usr/bin/env bash
@@ -127,7 +128,8 @@ if [[ -n "${CODEX_GATE_REVIEWER_DEFS_MARKER:-}" && "$brief_file" != *-synthesis.
       *) printf 'reviewer definition escaped workspace snapshot: %s\n' "$def_path" >&2; exit 4 ;;
     esac
     [[ -s "$def_path" ]] || { printf 'reviewer definition snapshot missing/empty: %s\n' "$def_path" >&2; exit 4; }
-    [[ ! -w "$def_path" ]] || { printf 'reviewer definition snapshot is writable: %s\n' "$def_path" >&2; exit 4; }
+    def_mode=$(stat -c '%A' "$def_path" 2>/dev/null || stat -f '%Sp' "$def_path")
+    [[ "$def_mode" != *w* ]] || { printf 'reviewer definition snapshot has write bits: %s (%s)\n' "$def_path" "$def_mode" >&2; exit 4; }
   done < <(awk '/^  - read: .*\/\.gate-briefs\/reviewer-definitions-.*\.md$/ {sub(/^  - read: /, ""); print}' "$brief_file")
   [[ "$defs" -gt 0 ]] || { printf 'no workspace reviewer definition snapshots in brief\n' >&2; exit 4; }
   printf '%s\n' "$defs" > "$CODEX_GATE_REVIEWER_DEFS_MARKER"
@@ -191,6 +193,10 @@ write_frontmatter_stub_gate_result() {
   local output_path="$1"
   local final_verdict="${2:-GO}"
   local final_line="Final: ${final_verdict}"
+  local stub_tier stub_mode
+  stub_tier=$(awk '$1 ~ /^[Tt]ier:$/ && $2 ~ /^(express|standard|full|targeted)$/ {print $2; exit}' "$brief_file")
+  [[ -n "$stub_tier" ]] || stub_tier=express
+  if [[ "$brief_file" == *-synthesis.md ]]; then stub_mode=parallel; else stub_mode=sequential; fi
 
   # Regression seam: when CODEX_GATE_STUB_BOLD_FINAL=1, emit the Final
   # line wrapped in markdown bold (simulates codex applying prose emphasis).
@@ -203,8 +209,8 @@ write_frontmatter_stub_gate_result() {
 ---
 gate_result_version: pr_gate_result_v1
 final: ${CODEX_GATE_STUB_FRONTMATTER_FINAL:-${final_verdict}}
-tier: express
-mode: parallel
+tier: ${stub_tier}
+mode: ${stub_mode}
 most_severe: approve
 reviewers:
   critic: approve
@@ -1047,7 +1053,7 @@ test_reviewer_definitions_are_workspace_snapshots() {
   local code=$?
   set -e
   if [[ "$code" -ne 0 ]]; then
-    fail "$name" "exit $code, expected 0: $(cat "$err" 2>/dev/null)"
+    fail "$name" "exit $code, expected 0"
     return
   fi
   assert_file_contains "$name" "$marker" "5" || return
@@ -1181,7 +1187,7 @@ test_parallel_launches_per_reviewer() {
   local code=$?
   set -e
   if [[ "$code" -ne 0 ]]; then
-    fail "$name" "exit $code, expected 0"
+    fail "$name" "exit $code, expected 0: $(cat "$err" 2>/dev/null)"
     return
   fi
   assert_file_contains "$name" "$out" "[parallel] launched critic" || return
@@ -2953,8 +2959,8 @@ test_reviewer_cross_artifact_tamper_detected() {
   source <(sed -n '/^verify_reviewer_artifact_hashes()/,/^}/p' "$REPO_ROOT/runtime/bin/pr-gate.sh")
   printf 'Verdict: approve.\n' > "$qa"
   printf 'Verdict: approve.\n' > "$critic"
-  qa_hash="$(sha256sum < "$qa")"
-  critic_hash="$(sha256sum < "$critic")"
+  qa_hash="$(sha256sum < "$qa" | awk '{print $1}')"
+  critic_hash="$(sha256sum < "$critic" | awk '{print $1}')"
   printf 'tampered\n' >> "$qa"
   out="$(verify_reviewer_artifact_hashes sha256sum qa-tester "$qa" "$qa_hash" critic "$critic" "$critic_hash")"
   if [[ "$out" != "qa-tester" ]]; then
@@ -2967,7 +2973,7 @@ test_reviewer_cross_artifact_tamper_detected() {
 # Behavior: the sequential gate result file carries a well-formed YAML
 # frontmatter block (gate_result_version, final, per-reviewer verdicts,
 # escalation) followed by a matching "## Escalation" body section.
-# Steps: run the gate with --sequential and --output, and assert the result
+# Steps: run the gate with the default sequential mode and --output, and assert the result
 # file starts and ends its frontmatter with "---", and both the frontmatter
 # and body contain gate_result_version, final, all five reviewer verdicts,
 # and the escalation recommendation/reviewers/reason fields.
@@ -2984,8 +2990,7 @@ test_gate_result_frontmatter_and_escalation() {
 
   set +e
   CODEX_GATE_STUB_SYNTHESIS_FINAL=GO run_gate \
-    "$home" "$runner" "$repo" "$out" "$err" --base main --output "$result" \
-    --sequential
+    "$home" "$runner" "$repo" "$out" "$err" --base main --output "$result"
   local code=$?
   set -e
   if [[ "$code" -ne 0 ]]; then
@@ -3040,6 +3045,26 @@ test_gate_result_frontmatter_and_escalation() {
     fail "$name" "frontmatter missing escalation block"
     return
   fi
+  for expected in \
+    'assurance_contract_version: 1' \
+    'tier_assurance:' \
+    '  requested: auto' \
+    '  resolved: express' \
+    'mode_assurance:' \
+    '  requested: default' \
+    '  resolved: sequential' \
+    'coverage_assurance:' \
+    '  reviewers: [critic, qa-tester]' \
+    'independence_assurance:' \
+    '  implementation_context_isolated: true' \
+    '  session_topology: combined-session' \
+    '  per_reviewer_independent: false' \
+    '  session_evidence: combined-result'; do
+    if ! printf '%s\n' "$frontmatter" | grep -Fqx "$expected"; then
+      fail "$name" "frontmatter missing assurance contract line: $expected"
+      return
+    fi
+  done
   if ! printf '%s\n' "$frontmatter" | grep -q '^[[:space:]]*recommended: '; then
     fail "$name" "frontmatter missing escalation recommendation"
     return
@@ -3082,6 +3107,10 @@ test_gate_result_final_line_back_compat() {
     fail "$name" "expected exactly one Final line, got $final_count"
     return
   fi
+  assert_file_contains "$name" "$result" "  resolved: parallel" || return
+  assert_file_contains "$name" "$result" "  session_topology: per-reviewer-sessions" || return
+  assert_file_contains "$name" "$result" "  per_reviewer_independent: true" || return
+  assert_file_contains "$name" "$result" "  session_evidence: per-reviewer-artifacts" || return
   pass "$name"
 }
 
@@ -4628,7 +4657,7 @@ _cc469_build_pmctl_less_path() {
   local minpath="$runner/.no-pmctl-bin"
   mkdir -p "$minpath"
   local cmd
-  for cmd in bash git date readlink dirname basename cp mkdir touch ln cat grep sort wc awk sed mktemp rm head tail tr true false sha256sum shasum; do
+  for cmd in bash git date readlink dirname basename cp mv mkdir touch ln cat grep sort wc awk sed jq mktemp rm head tail tr true false sha256sum shasum; do
     local src
     src="$(command -v "$cmd" 2>/dev/null || true)"
     [[ -n "$src" ]] && ln -sf "$src" "$minpath/$cmd"
@@ -4987,6 +5016,44 @@ test_relative_output_normalized_to_absolute() {
   # And must NOT carry the bare relative form that the write-guard would reject.
   if grep -qE -- '--file sub/rel-result\.md' "$brief"; then
     fail "$name" "brief embeds a relative --file path; the reviewer write-guard would reject it"
+    return
+  fi
+  pass "$name"
+}
+
+# Behavior: an explicitly requested result path inside the repository, but
+# outside .gate-results, is excluded only from its own working-tree subject
+# fingerprint.  The freshly attested artifact must therefore assess as current.
+# Steps: run the gate to a custom in-repository output path, then invoke the
+# shared assessor directly and require an artifact-valid, current subject.
+test_custom_in_repo_output_is_subject_current() {
+  local name="custom-in-repo-output-is-subject-current"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" result="$dir/reports/gate-result.md" assessment
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --sequential --output "$result"
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0: $(cat "$err" 2>/dev/null)"
+    return
+  fi
+  [[ -s "$result" ]] || { fail "$name" "custom result was not written"; return; }
+  # shellcheck source=runtime/lib/gate-result-verify.sh
+  . "$REPO_ROOT/runtime/lib/gate-result-verify.sh"
+  assessment="$(gate_result_assess "$result" "$repo")" || {
+    fail "$name" "custom result failed freshness assessment: $assessment"
+    return
+  }
+  if ! jq -e '.artifact_valid == true and .subject_current == true' >/dev/null <<<"$assessment"; then
+    fail "$name" "custom result did not assess as current: $assessment"
     return
   fi
   pass "$name"
@@ -6021,7 +6088,7 @@ test_pmctl_codex_gate_uses_production_memory_on_clean_home() {
   cp -R "$REPO_ROOT/adapters" "$product/adapters"
   cp -R "$REPO_ROOT/share" "$product/share"
   cp -R "$REPO_ROOT/ops" "$product/ops"
-  cp -R "$bundle/core" "$product/core"
+  cp -R "$bundle/core/." "$product/core/"
   cp -R "$REPO_ROOT/core/schema/." "$product/core/schema/"
   chmod +x "$product/cli/pmctl" "$product/runtime/bin/pr-gate.sh"
 
@@ -6469,6 +6536,223 @@ test_shared_gate_reviewer_content_host_boundary_ratchet() {
   pass "$name"
 }
 
+# Behavior: assurance verification accepts orthogonal full+sequential and
+# express+parallel combinations, but rejects a parallel claim backed by a
+# combined-session topology instead of per-reviewer evidence.
+# Steps: write three structurally valid synthetic artifacts, verify the two
+# legal cross-axis combinations, then assert the contradictory claim fails.
+test_gate_assurance_axes_are_orthogonal_and_validated() {
+  local name="gate-assurance/orthogonal-combinations" dir file run_id="20260809-000000"
+  dir="$TMP_ROOT/$name"
+  should_run "$name" || return 0
+  mkdir -p "$dir"
+  # shellcheck source=runtime/lib/gate-result-verify.sh
+  . "$REPO_ROOT/runtime/lib/gate-result-verify.sh"
+  _write_assurance_fixture() {
+    local tier="$1" mode="$2" topology="$3" independent="$4" evidence="$5" reviewers="$6" skipped="$7"
+    local reviewer digest
+    if [[ "$mode" == parallel ]]; then
+      for reviewer in ${reviewers//,/ }; do
+        printf '%s reviewer evidence\n' "$reviewer" > "$dir/reviewer-${reviewer}-${run_id}.md"
+        digest="$(sha256sum "$dir/reviewer-${reviewer}-${run_id}.md" | awk '{print $1}')"
+      done
+    fi
+    cat <<EOF
+---
+gate_result_version: pr_gate_result_v1
+final: GO
+tier: $tier
+mode: $mode
+assurance_contract_version: 1
+tier_assurance:
+  requested: $tier
+  resolved: $tier
+mode_assurance:
+  requested: $mode
+  resolved: $mode
+coverage_assurance:
+  reviewers: [$reviewers]
+  skipped: [$skipped]
+independence_assurance:
+  implementation_context_isolated: true
+  session_topology: $topology
+  per_reviewer_independent: $independent
+  session_evidence: $evidence
+EOF
+    if [[ "$mode" == parallel ]]; then
+      printf 'parallel_reviewer_evidence:\n  run_id: %s\n  artifacts:\n' "$run_id"
+      for reviewer in ${reviewers//,/ }; do
+        digest="$(sha256sum "$dir/reviewer-${reviewer}-${run_id}.md" | awk '{print $1}')"
+        printf '    %s: %s\n' "$reviewer" "$digest"
+      done
+    fi
+    cat <<EOF
+---
+Final: GO
+EOF
+  }
+  file="$dir/full-sequential.md"
+  _write_assurance_fixture full sequential combined-session false combined-result 'critic, qa-tester, architecture-reviewer, security-reviewer, risk-reviewer' '' > "$file"
+  gate_result_verify "$file" || { fail "$name" "full+sequential was rejected"; return; }
+  file="$dir/express-parallel.md"
+  _write_assurance_fixture express parallel per-reviewer-sessions true per-reviewer-artifacts 'critic, qa-tester' 'architecture-reviewer, security-reviewer, risk-reviewer' > "$file"
+  gate_result_verify "$file" || { fail "$name" "express+parallel was rejected"; return; }
+  sed 's/  requested: parallel/  requested: default/' "$file" > "$dir/default-mode.md"
+  gate_result_verify "$dir/default-mode.md" || { fail "$name" "default requested mode was rejected"; return; }
+  file="$dir/contradictory.md"
+  _write_assurance_fixture express parallel combined-session false combined-result 'critic, qa-tester' 'architecture-reviewer, security-reviewer, risk-reviewer' > "$file"
+  if gate_result_verify "$file" >/dev/null 2>&1; then
+    fail "$name" "parallel claim with combined-session evidence was accepted"
+    return
+  fi
+  _write_assurance_fixture full sequential combined-session false combined-result 'critic' 'qa-tester, architecture-reviewer, security-reviewer, risk-reviewer' > "$dir/missing.md"
+  if gate_result_verify "$dir/missing.md" >/dev/null 2>&1; then
+    fail "$name" "full tier with missing required reviewers was accepted"
+    return
+  fi
+  _write_assurance_fixture express sequential combined-session false combined-result 'critic, critic, qa-tester' 'architecture-reviewer, security-reviewer, risk-reviewer' > "$dir/duplicate.md"
+  if gate_result_verify "$dir/duplicate.md" >/dev/null 2>&1; then
+    fail "$name" "duplicate selected reviewer was accepted"
+    return
+  fi
+  _write_assurance_fixture express sequential combined-session false combined-result 'critic, qa-tester' 'critic, architecture-reviewer, security-reviewer, risk-reviewer' > "$dir/overlap.md"
+  if gate_result_verify "$dir/overlap.md" >/dev/null 2>&1; then
+    fail "$name" "overlapping selected/skipped reviewer was accepted"
+    return
+  fi
+  _write_assurance_fixture targeted sequential combined-session false combined-result 'critic' 'qa-tester, architecture-reviewer, security-reviewer' > "$dir/missing-partition.md"
+  if gate_result_verify "$dir/missing-partition.md" >/dev/null 2>&1; then
+    fail "$name" "targeted tier with an incomplete reviewer partition was accepted"
+    return
+  fi
+  _write_assurance_fixture targeted sequential combined-session false combined-result '' 'critic, qa-tester, architecture-reviewer, security-reviewer, risk-reviewer' > "$dir/empty-targeted.md"
+  if gate_result_verify "$dir/empty-targeted.md" >/dev/null 2>&1; then
+    fail "$name" "targeted tier with no selected reviewer was accepted"
+    return
+  fi
+  _write_assurance_fixture express sequential combined-session false combined-result 'critic, unknown-reviewer' 'qa-tester, architecture-reviewer, security-reviewer, risk-reviewer' > "$dir/unknown.md"
+  if gate_result_verify "$dir/unknown.md" >/dev/null 2>&1; then
+    fail "$name" "unknown assurance reviewer was accepted"
+    return
+  fi
+  _write_assurance_fixture express sequential combined-session false combined-result 'critic, qa-tester' 'architecture-reviewer, security-reviewer, security-reviewer, risk-reviewer' > "$dir/duplicate-skipped.md"
+  if gate_result_verify "$dir/duplicate-skipped.md" >/dev/null 2>&1; then
+    fail "$name" "duplicate skipped reviewer was accepted"
+    return
+  fi
+  sed 's/reviewers: \[critic, qa-tester\]/reviewers: critic, qa-tester/' "$dir/express-parallel.md" > "$dir/malformed-list.md"
+  if gate_result_verify "$dir/malformed-list.md" >/dev/null 2>&1; then
+    fail "$name" "malformed reviewer list was accepted"
+    return
+  fi
+  rm "$dir/reviewer-critic-${run_id}.md"
+  if gate_result_verify "$dir/express-parallel.md" >/dev/null 2>&1; then
+    fail "$name" "parallel assurance accepted a missing reviewer artifact"
+    return
+  fi
+  pass "$name"
+}
+
+# Behavior: the strict policy reader fails loudly for a missing property or a
+# formatting/value change instead of silently returning an empty policy value.
+# Steps: validate the canonical policy, remove one required property in a copy,
+# add an inline comment to a boolean in another copy, and require both to fail.
+test_gate_assurance_policy_sanity_checks() {
+  local name="gate-assurance/policy-sanity" dir="$TMP_ROOT/gate-assurance-policy-sanity"
+  local missing="$dir/missing.yaml" commented="$dir/commented.yaml" reduced_full="$dir/reduced-full.yaml"
+  should_run "$name" || return 0
+  mkdir -p "$dir"
+  (
+    # shellcheck source=runtime/lib/gate-assurance.sh
+    . "$REPO_ROOT/runtime/lib/gate-assurance.sh"
+    gate_assurance_validate_policy
+  ) || { fail "$name" "canonical policy failed sanity validation"; return; }
+  sed '/    session_evidence: combined-result/d' "$REPO_ROOT/core/policy/gate-assurance.yaml" > "$missing"
+  if GATE_ASSURANCE_POLICY_FILE="$missing" bash -c '. "$1"; gate_assurance_validate_policy' _ \
+    "$REPO_ROOT/runtime/lib/gate-assurance.sh" >/dev/null 2>&1; then
+    fail "$name" "policy missing session_evidence was accepted"
+    return
+  fi
+  sed 's/per_reviewer_independent: false/per_reviewer_independent: false # drift/' \
+    "$REPO_ROOT/core/policy/gate-assurance.yaml" > "$commented"
+  if GATE_ASSURANCE_POLICY_FILE="$commented" bash -c '. "$1"; gate_assurance_validate_policy' _ \
+    "$REPO_ROOT/runtime/lib/gate-assurance.sh" >/dev/null 2>&1; then
+    fail "$name" "silently misparsed inline-comment policy was accepted"
+    return
+  fi
+  sed 's/, security-reviewer//' "$REPO_ROOT/core/policy/gate-assurance.yaml" > "$reduced_full"
+  if GATE_ASSURANCE_POLICY_FILE="$reduced_full" bash -c '. "$1"; gate_assurance_validate_policy' _ \
+    "$REPO_ROOT/runtime/lib/gate-assurance.sh" >/dev/null 2>&1; then
+    fail "$name" "policy removing mandatory full security reviewer was accepted"
+    return
+  fi
+  pass "$name"
+}
+
+# Behavior: a candidate-controlled policy cannot reduce full-tier mandatory
+# coverage, even before reviewer selection is resolved.
+# Steps: remove security-reviewer from a runner-local policy, invoke the gate,
+# and require the trusted full-coverage validation to reject the candidate.
+test_candidate_policy_cannot_reduce_full_reviewer_coverage() {
+  local name="gate-assurance/candidate-policy-cannot-reduce-full-coverage"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" code
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  sed -i 's/, security-reviewer//' "$runner/core/policy/gate-assurance.yaml"
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err"
+  code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then
+    fail "$name" "gate accepted a policy that removed the mandatory security reviewer"
+    return
+  fi
+  assert_file_contains "$name" "$err" "full reviewer set must match mandatory trusted coverage" || return
+  pass "$name"
+}
+
+# Behavior: the standalone copy-mode reviewer fallback cannot drift from the
+# canonical tier policy without a regression failure.
+# Steps: extract only the generated fallback function, compare every tier with
+# gate-assurance.yaml through the canonical reader, and assert targeted is empty.
+test_gate_assurance_copy_mode_fallback_parity() {
+  local name="gate-assurance/copy-mode-fallback-parity" tier canonical fallback extracted
+  should_run "$name" || return 0
+  extracted="$TMP_ROOT/gate-assurance-fallback.sh"
+  awk '
+    /BEGIN GENERATED gate-assurance-copy-mode-reviewers/ { capture=1 }
+    capture && /^[[:space:]]*case / { function_body=1 }
+    function_body { sub(/^    /, ""); print }
+    /END GENERATED gate-assurance-copy-mode-reviewers/ { exit }
+  ' "$REPO_ROOT/runtime/bin/pr-gate.sh" > "$extracted"
+  {
+    printf 'gate_assurance_copy_mode_reviewers() {\n'
+    cat "$extracted"
+    printf '}\n'
+  } > "$extracted.tmp"
+  mv "$extracted.tmp" "$extracted"
+  # shellcheck source=runtime/lib/gate-assurance.sh
+  . "$REPO_ROOT/runtime/lib/gate-assurance.sh"
+  # Generated fixture path; static source resolution is intentionally unavailable.
+  # shellcheck disable=SC1090
+  . "$extracted"
+  for tier in express standard full targeted; do
+    canonical="$(gate_assurance_default_reviewers "$tier")"
+    fallback="$(gate_assurance_copy_mode_reviewers "$tier")"
+    [[ "$canonical" == "$fallback" ]] || {
+      fail "$name" "$tier fallback drifted: canonical=[$canonical] fallback=[$fallback]"
+      return
+    }
+  done
+  pass "$name"
+}
+
 run_test test_repo_owned_reviewers_and_canonical_memory_on_clean_home
 run_test test_pmctl_codex_gate_uses_production_memory_on_clean_home
 run_test test_invalid_canonical_memory_does_not_fallback
@@ -6483,5 +6767,10 @@ run_test test_gate_memory_runtime_closes_query_failure
 run_test test_gate_memory_runtime_omits_over_budget_context
 run_test test_gate_memory_runtime_closes_unexpected_success_status
 run_test test_shared_gate_reviewer_content_host_boundary_ratchet
+run_test test_custom_in_repo_output_is_subject_current
+run_test test_gate_assurance_axes_are_orthogonal_and_validated
+run_test test_gate_assurance_policy_sanity_checks
+run_test test_candidate_policy_cannot_reduce_full_reviewer_coverage
+run_test test_gate_assurance_copy_mode_fallback_parity
 
 th_summary

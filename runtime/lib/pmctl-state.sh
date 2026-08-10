@@ -93,11 +93,12 @@ pmctl_state_status() {
   version_file="$store_root/VERSION"
   if [[ ! -e "$store_root" ]]; then
     store_state="uninitialized"
-  elif [[ ! -f "$version_file" ]]; then
+  elif [[ ! -e "$version_file" ]]; then
     # Store dir exists but VERSION was never published — writer treats this as
     # first-time init territory, so status reports it the same way.
     store_state="uninitialized"
-  elif ! observed_version="$(cat "$version_file" 2>/dev/null)"; then
+  elif [[ ! -f "$version_file" || ! -r "$version_file" ]] \
+    || ! observed_version="$(cat "$version_file" 2>/dev/null)"; then
     store_state="unreadable"
   else
     observed_version="${observed_version//[$'\r\n']/}"

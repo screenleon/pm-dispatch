@@ -400,28 +400,25 @@ if should_run "error-hard-non-git"; then
 fi
 
 # Verifies that pm-prep-snapshot.sh exits non-zero with a clear error message
-# when the --out path is inside a non-writable directory.
+# when the --out path has an invalid parent.
 #
 # Steps:
-#   1. Create a directory with mode 500 (no write permission).
-#   2. Run pm-prep-snapshot.sh --out <dir>/out.md.
-#   3. Assert exit is non-zero and error output contains "cannot write to output path".
-if should_run "error-hard-unwritable-output"; then
+#   1. Create a regular file where the output's parent directory must be.
+#   2. Run pm-prep-snapshot.sh --out <file>/out.md.
+#   3. Assert exit is non-zero and error output identifies the invalid output directory.
+if should_run "error-hard-invalid-output-parent"; then
   ro="$tmp_root/unwritable"
-  mkdir -p "$ro"
-  chmod 500 "$ro"
+  printf 'not a directory\n' > "$ro"
   out="$ro/out.md"
   if (PATH="$FAKE_GH_DIR:$PATH" "$SCRIPT_PATH" --out "$out" >/tmp/pm-prep-snapshot.err 2>&1); then
-    chmod 700 "$ro"
-    fail "error-hard-unwritable-output" "expected non-zero exit"
+    fail "error-hard-invalid-output-parent" "expected non-zero exit"
   else
-    if grep -q "cannot write to output path" /tmp/pm-prep-snapshot.err; then
-      pass "error-hard-unwritable-output"
+    if grep -q "output directory not found" /tmp/pm-prep-snapshot.err; then
+      pass "error-hard-invalid-output-parent"
     else
-      fail "error-hard-unwritable-output" "missing clear unwritable-output error"
+      fail "error-hard-invalid-output-parent" "missing clear invalid-output error"
     fi
   fi
-  chmod 700 "$ro"
 fi
 
 # Verifies that pm-prep-snapshot.sh --help exits 0 and prints "Usage:" to stderr.
