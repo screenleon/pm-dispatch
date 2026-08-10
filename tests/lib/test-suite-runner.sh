@@ -388,7 +388,10 @@ run_with_suite_timeout() {
   # The result sink belongs to this runner process. Do not leak it into a
   # suite that happens to launch another runner, or the nested process could
   # overwrite its parent's evidence artifact.
-  ( unset PM_TEST_SUITE_RESULTS_FILE PM_DISPATCH_PREFLIGHT_TEST_RESULT
+  # A gate's orchestration state is likewise not test state.  Letting every
+  # parallel suite inherit it makes fixture pmctl calls contend on one shared
+  # store; suites that need state must declare their own temporary root.
+  ( unset PM_TEST_SUITE_RESULTS_FILE PM_DISPATCH_PREFLIGHT_TEST_RESULT PM_DISPATCH_STATE_ROOT
     "$TIMEOUT_BIN" --kill-after=15s "${SUITE_TIMEOUT_SECS}s" "$@"
   )
 }

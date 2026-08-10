@@ -172,9 +172,10 @@ test_default_worker_cap() {
   cat > "$root/bin/shellcheck" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
-printf 'start %s\n' "$$" >> "${SHELLCHECK_EVENTS:?}"
+events="${SHELLCHECK_EVENTS:?}"
+printf 'start %s\n' "$$" >> "$events"
 sleep 0.1
-printf 'end %s\n' "$$" >> "$SHELLCHECK_EVENTS"
+printf 'end %s\n' "$$" >> "$events"
 STUB
   chmod +x "$root/bin/shellcheck"
   # Assert the linter's built-in default, not a worker override inherited from
