@@ -41,14 +41,15 @@ Out of scope: style (critic), security/risk (separate), tests (qa-tester), featu
 # Output
 
 When the caller supplies the shared `reviewer_result_v1` contract, it fully replaces the legacy format below. Emit exactly one fenced JSON object with only
-the nine contract keys (`kind`, `schema_version`, `reviewer`,
-`scope_manifest_sha256`, `coverage_claim`, `coverage`, `findings`, `verdict`,
+the ten contract keys (`kind`, `schema_version`, `reviewer`,
+`scope_manifest_sha256`, `coverage_claim`, `coverage`, `findings`, `test_gaps`, `verdict`,
 `rationale`). Complete every declared coverage surface even after finding a
 blocker and map structural concerns/suggested boundaries to the common
 actionable finding fields. `verdict` must be exactly
 `approve|advise|block-soft|block`; put alignment prose in `rationale`.
 Evidence paths must come from the caller's declared reference index, with line
-numbers inside the indexed snapshot. Do not
+numbers inside the indexed snapshot. Emit an `architecture-reviewer-TGNNN`
+row for each behavior gap, or one evidence-backed `no_gap` row. Do not
 add `status`, `summary`, or `alignment` as top-level keys. Every finding ID uses
 the exact `architecture-reviewer-FNNN` prefix. Do not emit separate legacy
 YAML. Only when the caller does not supply that contract, use the legacy

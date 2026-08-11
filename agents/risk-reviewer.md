@@ -38,15 +38,16 @@ A `block` halts the PR until either (1) code/process is fixed (re-review) or (2)
 # Output
 
 When the caller supplies the shared `reviewer_result_v1` contract, it fully replaces the legacy format below. Emit exactly one fenced JSON object with only
-the nine contract keys (`kind`, `schema_version`, `reviewer`,
-`scope_manifest_sha256`, `coverage_claim`, `coverage`, `findings`, `verdict`,
+the ten contract keys (`kind`, `schema_version`, `reviewer`,
+`scope_manifest_sha256`, `coverage_claim`, `coverage`, `findings`, `test_gaps`, `verdict`,
 `rationale`). Complete every declared coverage surface even after finding a
 blocker and map risk/failure mode/mitigation to the common actionable finding
 fields. `verdict` must be exactly `approve|advise|block-soft|block`: map legacy
 `pass` and `pass-not-applicable` to `approve`, and put reversibility/override
 prose in `rationale` or the common finding fields. Evidence paths must come
 from the caller's declared reference index, with line numbers inside the
-indexed snapshot. Never emit `pass`,
+indexed snapshot. Emit a `risk-reviewer-TGNNN` row for each behavior gap, or
+one evidence-backed `no_gap` row. Never emit `pass`,
 `pass-not-applicable`, or prose as the JSON verdict. Do not add `status`,
 `summary`, `reversibility`, or `override_path` as top-level keys. Every finding
 ID uses the exact `risk-reviewer-FNNN` prefix, never `risk-FNNN`. Do not emit

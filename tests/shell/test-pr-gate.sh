@@ -361,6 +361,17 @@ if [[ "$brief_file" == *-synthesis.md ]]; then
 else
   effective_mode="${CODEX_GATE_STUB_MODE:-success}"
 fi
+if [[ "$effective_mode" == fail \
+    && -n "${CODEX_GATE_STUB_FAIL_REVIEWER:-}" \
+    && "$reviewer_name" != "$CODEX_GATE_STUB_FAIL_REVIEWER" ]]; then
+  effective_mode=success
+fi
+if [[ "$effective_mode" == fail \
+    && -n "${CODEX_GATE_STUB_FAIL_ONLY_FIRST:-}" ]] \
+    && { [[ "$brief_file" == *-retry1-*.md ]] \
+      || grep -q '^correction_retry:' "$brief_file"; }; then
+  effective_mode=success
+fi
 
 case "$effective_mode" in
   fail)
@@ -2136,7 +2147,7 @@ test_claude_adapter_dispatches_subprocess() {
 # synthesis dispatch.
 # Steps: run the gate with --parallel and two reviewers, and assert stdout
 # shows a "[parallel] launched" line for each reviewer and a
-# "[synthesis] running PM consolidation" line.
+# "[synthesis attempt 1] running PM consolidation" line.
 test_parallel_launches_per_reviewer() {
   local name="parallel-launches-per-reviewer"
   should_run "$name" || return 0
@@ -2158,7 +2169,7 @@ test_parallel_launches_per_reviewer() {
   fi
   assert_file_contains "$name" "$out" "[parallel] launched critic" || return
   assert_file_contains "$name" "$out" "[parallel] launched qa-tester" || return
-  assert_file_contains "$name" "$out" "[synthesis] running PM consolidation" || return
+  assert_file_contains "$name" "$out" "[synthesis attempt 1] running PM consolidation" || return
   local result_path
   result_path="$(awk -F'result: ' '/^result: /{path=$2} END{print path}' "$out")"
   jq -e '
@@ -2283,7 +2294,7 @@ test_sequential_flag_produces_combined_brief() {
   fi
   assert_file_contains "$name" "$brief" "Process each reviewer IN ORDER" || return
   assert_not_contains "$name" "$out" "[parallel]" || return
-  assert_not_contains "$name" "$out" "[synthesis]" || return
+  assert_not_contains "$name" "$out" "[synthesis attempt" || return
   pass "$name"
 }
 
@@ -2427,7 +2438,7 @@ test_failed_reviewer_aborts_gate() {
   fi
   assert_file_contains "$name" "$err" "reviewer session(s) failed:" || return
   # Synthesis must not run after reviewer failure
-  assert_not_contains "$name" "$out" "[synthesis]" || return
+  assert_not_contains "$name" "$out" "[synthesis attempt" || return
   pass "$name"
 }
 
@@ -2878,7 +2889,7 @@ test_reviewer_heading_and_explicit_verdict_must_agree() {
   fi
   assert_file_contains "$name" "$err" \
     "reviewer protocol INCOMPLETE" || return
-  assert_not_contains "$name" "$out" "[synthesis]" || return
+  assert_not_contains "$name" "$out" "[synthesis attempt" || return
   pass "$name"
 }
 
@@ -3743,7 +3754,7 @@ test_parallel_frontmatter_parity_mismatch_aborts_gate() {
 #   1. Create a repo with a committed service.go (clean tracked file)
 #   2. CODEX_GATE_STUB_INJECT_FILE=service.go: reviewer stub appends to service.go
 #   3. Run gate in explicit parallel mode
-#   4. Assert non-zero exit, "prompt injection" in stderr, and no "[synthesis]" in stdout
+#   4. Assert non-zero exit, "prompt injection" in stderr, and no synthesis attempt in stdout
 test_prompt_injection_detected() {
   local name="prompt-injection-detected"
   should_run "$name" || return 0
@@ -3769,7 +3780,7 @@ test_prompt_injection_detected() {
     return
   fi
   assert_file_contains "$name" "$err" "prompt injection" || return
-  assert_not_contains "$name" "$out" "[synthesis]" || return
+  assert_not_contains "$name" "$out" "[synthesis attempt" || return
   pass "$name"
 }
 
@@ -4163,8 +4174,8 @@ test_gate_result_frontmatter_and_escalation() {
   fi
   local frontmatter
   frontmatter="$(sed -n "1,${frontmatter_end}p" "$result")"
-  if ! printf '%s\n' "$frontmatter" | grep -q '^gate_result_version: pr_gate_result_v4$'; then
-    fail "$name" "frontmatter missing gate_result_version: pr_gate_result_v4"
+  if ! printf '%s\n' "$frontmatter" | grep -q '^gate_result_version: pr_gate_result_v5$'; then
+    fail "$name" "frontmatter missing gate_result_version: pr_gate_result_v5"
     return
   fi
   if ! printf '%s\n' "$frontmatter" | grep -q '^gate_assurance: result.md.assurance.json$'; then
@@ -4277,7 +4288,7 @@ test_model_authored_v4_without_pointer_is_normalized_before_publication() {
     return
   fi
   assert_file_contains "$name" "$result" \
-    "gate_result_version: pr_gate_result_v4" || return
+    "gate_result_version: pr_gate_result_v5" || return
   assert_file_contains "$name" "$result" \
     "gate_assurance: result.md.assurance.json" || return
   if [[ ! -s "${result}.assurance.json" ]]; then
@@ -5952,7 +5963,7 @@ test_post_gate_hook_runs() {
   fi
   local result_path
   result_path="$(awk -F'result: ' '/^result: /{path=$2} END{print path}' "$out")"
-  assert_file_contains "$name" "$result_path" "gate_result_version: pr_gate_result_v4" || return
+  assert_file_contains "$name" "$result_path" "gate_result_version: pr_gate_result_v5" || return
   if [[ ! -s "${result_path}.assurance.json" ]]; then
     fail "$name" "assurance was not finalized after the successful post-gate hook"
     return
@@ -8852,6 +8863,14 @@ GATE_RESULT_EOF
           reason:"Fixture examined this declared surface."
         })),
         findings:[],
+        test_gaps:[{
+          id:($reviewer + "-TG001"),reviewer:$reviewer,status:"no_gap",
+          affected_behavior:"The integration fixture behavior is covered.",
+          contract:"The fake Codex gate preserves its structured result.",
+          existing_evidence:[{path:"README.md",line:1,symbol:null}],
+          coverage_dimensions:["happy","regression"],missing_layer:"none",
+          scenario:null,oracle:null,failure_signal:null,suggested_command:null
+        }],
         verdict:"approve",
         rationale:"Fixture reviewer completed every declared coverage surface."
       }
@@ -8886,6 +8905,17 @@ GATE_RESULT_EOF
       disagreements:[],
       uncertainties:{finding_ids:[],coverage_cells:[]},
       cautions:[],
+      test_gap_matrix:(["critic","qa-tester"] | map(. as $reviewer | {
+        id:($reviewer + "-TG001"),reviewer:$reviewer,status:"no_gap",
+        affected_behavior:"The integration fixture behavior is covered.",
+        contract:"The fake Codex gate preserves its structured result.",
+        existing_evidence:[{path:"README.md",line:1,symbol:null}],
+        coverage_dimensions:["happy","regression"],missing_layer:"none",
+        scenario:null,oracle:null,failure_signal:null,suggested_command:null
+      })),
+      operational_cautions:[],
+      user_cautions:[],
+      verification_plan:{focused:[],manual:[],full:["bash tests/bin/run-tests.sh"]},
       remediation_seed:{
         kind:"remediation_closure_v1",
         schema_version:1,
@@ -8899,6 +8929,9 @@ GATE_RESULT_EOF
   printf '## Must-Fix Order\nnone\n\n' >> "$output_path"
   printf '## Advisory and Cautions\nnone\n\n' >> "$output_path"
   printf '## Coverage Gaps and Uncertainties\nnone\n\n' >> "$output_path"
+  printf '## Test Coverage to Add or Strengthen\nnone\n\n' >> "$output_path"
+  printf '## Operational and User Cautions\nnone\n\n' >> "$output_path"
+  printf '## Post-Fix Verification Plan\nfocused/manual/full\n\n' >> "$output_path"
   printf '## Recommended Verification\nnone\n' >> "$output_path"
 fi
 printf 'fake Codex reviewer completed\n' > "$last"
@@ -9348,7 +9381,7 @@ test_sequential_reviewer_protocol_has_independent_logical_sections() {
     fail "$name" "expected reviewer+synthesis parity blocks, got reviewer=$block_count synthesis=$synthesis_count surfaces=$surface_count"
     return
   }
-  assert_file_contains "$name" "$result" "gate_result_version: pr_gate_result_v4" || return
+  assert_file_contains "$name" "$result" "gate_result_version: pr_gate_result_v5" || return
   assert_file_contains "$name" "$result" "## critic -- advise" || return
   assert_file_contains "$name" "$result" "## qa-tester -- advise" || return
   pass "$name"
@@ -9395,7 +9428,7 @@ test_parallel_reviewer_protocol_preserves_session_topology() {
     return
   fi
   assert_file_contains "$name" "$reviewer_brief" \
-    "exactly these nine top-level keys" || return
+    "exactly these ten top-level keys" || return
   assert_file_contains "$name" "$reviewer_brief" \
     "Map legacy pass" || return
   assert_file_contains "$name" "$reviewer_brief" \
@@ -9411,7 +9444,7 @@ test_parallel_reviewer_protocol_preserves_session_topology() {
   assert_file_contains "$name" "$reviewer_brief" \
     "medium/low and pre_existing/caution findings" || return
   assert_file_contains "$name" "$result" \
-    "gate_result_version: pr_gate_result_v4" || return
+    "gate_result_version: pr_gate_result_v5" || return
   assert_file_contains "$name" "$result" \
     "## Coverage Gaps and Uncertainties" || return
   pass "$name"
@@ -9442,7 +9475,7 @@ test_reviewer_protocol_missing_surface_is_incomplete() {
     return
   }
   assert_file_contains "$name" "$err" "reviewer protocol INCOMPLETE" || return
-  assert_not_contains "$name" "$out" "[synthesis]" || return
+  assert_not_contains "$name" "$out" "[synthesis attempt" || return
   pass "$name"
 }
 
@@ -9471,7 +9504,7 @@ test_reviewer_protocol_invalid_stable_id_is_incomplete() {
     return
   }
   assert_file_contains "$name" "$err" "reviewer protocol INCOMPLETE" || return
-  assert_not_contains "$name" "$out" "[synthesis]" || return
+  assert_not_contains "$name" "$out" "[synthesis attempt" || return
   pass "$name"
 }
 
@@ -9501,7 +9534,7 @@ test_reviewer_protocol_evidence_less_blocker_is_incomplete() {
     return
   }
   assert_file_contains "$name" "$err" "reviewer protocol INCOMPLETE" || return
-  assert_not_contains "$name" "$out" "[synthesis]" || return
+  assert_not_contains "$name" "$out" "[synthesis attempt" || return
   pass "$name"
 }
 
@@ -9533,7 +9566,7 @@ test_reviewer_protocol_legacy_pass_reports_verdict_contract() {
     "invalid verdict contract for qa-tester" || return
   assert_not_contains "$name" "$err" \
     "malformed coverage or finding contract" || return
-  assert_not_contains "$name" "$out" "[synthesis]" || return
+  assert_not_contains "$name" "$out" "[synthesis attempt" || return
   pass "$name"
 }
 
@@ -9563,7 +9596,7 @@ test_reviewer_protocol_extra_role_field_reports_top_level_contract() {
   }
   assert_file_contains "$name" "$err" \
     "invalid top-level or binding contract for critic" || return
-  assert_not_contains "$name" "$out" "[synthesis]" || return
+  assert_not_contains "$name" "$out" "[synthesis attempt" || return
   pass "$name"
 }
 
@@ -9593,7 +9626,7 @@ test_reviewer_protocol_abbreviated_finding_id_is_incomplete() {
   }
   assert_file_contains "$name" "$err" \
     "invalid finding contract for risk-reviewer" || return
-  assert_not_contains "$name" "$out" "[synthesis]" || return
+  assert_not_contains "$name" "$out" "[synthesis attempt" || return
   pass "$name"
 }
 
@@ -9628,7 +9661,7 @@ test_reviewer_protocol_blocking_medium_severity_is_diagnosed() {
     fail "$name" "precise blocking-severity diagnostic missing: $(cat "$err" 2>/dev/null)"
     return
   fi
-  assert_not_contains "$name" "$out" "[synthesis]" || return
+  assert_not_contains "$name" "$out" "[synthesis attempt" || return
   pass "$name"
 }
 
@@ -9663,7 +9696,7 @@ test_reviewer_protocol_blocking_pre_existing_origin_is_diagnosed() {
     fail "$name" "precise blocking-origin diagnostic missing: $(cat "$err" 2>/dev/null)"
     return
   fi
-  assert_not_contains "$name" "$out" "[synthesis]" || return
+  assert_not_contains "$name" "$out" "[synthesis attempt" || return
   pass "$name"
 }
 
@@ -9702,7 +9735,7 @@ test_reviewer_protocol_diagnostic_terminal_escapes_control_characters() {
     fail "$name" "raw terminal ESC byte leaked into diagnostic"
     return
   fi
-  assert_not_contains "$name" "$out" "[synthesis]" || return
+  assert_not_contains "$name" "$out" "[synthesis attempt" || return
   pass "$name"
 }
 
@@ -9732,7 +9765,7 @@ test_parallel_reviewer_protocol_out_of_scope_reference_is_incomplete() {
   }
   assert_file_contains "$name" "$err" \
     "invalid evidence reference contract for critic" || return
-  assert_not_contains "$name" "$out" "[synthesis]" || return
+  assert_not_contains "$name" "$out" "[synthesis attempt" || return
   pass "$name"
 }
 
@@ -9762,7 +9795,7 @@ test_sequential_reviewer_protocol_out_of_range_line_is_incomplete() {
   }
   assert_file_contains "$name" "$err" \
     "invalid evidence reference contract for critic" || return
-  assert_not_contains "$name" "$out" "[synthesis]" || return
+  assert_not_contains "$name" "$out" "[synthesis attempt" || return
   pass "$name"
 }
 
@@ -9801,7 +9834,7 @@ test_parallel_reviewer_protocol_evidence_contract_recovers_on_retry() {
     "retrying once with a corrective note" || return
   assert_file_contains "$name" "$out" \
     "critic recovered on retry" || return
-  assert_file_contains "$name" "$out" "[synthesis]" || return
+  assert_file_contains "$name" "$out" "[synthesis attempt 1]" || return
   pass "$name"
 }
 
@@ -9837,7 +9870,237 @@ test_parallel_reviewer_protocol_evidence_contract_retry_still_fails() {
     "retry still failed for critic" || return
   assert_file_contains "$name" "$err" \
     "reviewer protocol INCOMPLETE for: critic" || return
-  assert_not_contains "$name" "$out" "[synthesis]" || return
+  assert_not_contains "$name" "$out" "[synthesis attempt" || return
+  pass "$name"
+}
+
+# Behavior: a missing CC-521 test-gap matrix is a retryable schema failure and
+# only the invalid reviewer is replaced by one corrected attempt.
+# Steps: omit test_gaps on critic's first output, restore it on retry, and
+# assert the gate reaches synthesis with a recorded recovery.
+test_parallel_reviewer_missing_test_gap_recovers_on_retry() {
+  local name="reviewer-protocol/missing-test-gap-recovers-on-retry"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home="$TMP_ROOT/$name/home"
+  local repo="$TMP_ROOT/$name/repo" runner="$TMP_ROOT/$name/runner"
+  local out="$TMP_ROOT/$name/out" err="$TMP_ROOT/$name/err" code=0 attempts
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester
+  create_repo "$repo" docs
+  set +e
+  CODEX_GATE_STUB_PROTOCOL_MUTATION=missing-test-gap \
+    CODEX_GATE_STUB_PROTOCOL_MUTATION_ONLY_FIRST=1 \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester --mode parallel
+  code=$?
+  set -e
+  [[ "$code" -eq 0 ]] || {
+    fail "$name" "gate did not recover missing test_gaps: code=$code"
+    return
+  }
+  assert_file_contains "$name" "$err" "invalid test-gap matrix contract" || return
+  assert_file_contains "$name" "$out" "critic recovered on retry" || return
+  assert_file_contains "$name" "$out" "[synthesis attempt 1]" || return
+  attempts="$(find "$repo/.gate-results" -maxdepth 1 \
+    -name 'gate-protocol-attempts-*.jsonl' -type f | head -n 1)"
+  if [[ -z "$attempts" ]] || ! jq -s -e '
+      any(.[]; .role == "reviewer" and .reviewer == "critic" and
+        .attempt == 1 and .outcome == "retryable-failure") and
+      any(.[]; .role == "reviewer" and .reviewer == "critic" and
+        .attempt == 2 and .outcome == "recovered")
+    ' "$attempts" >/dev/null; then
+    fail "$name" "reviewer recovery attempts were not recorded"
+    return
+  fi
+  pass "$name"
+}
+
+# Behavior: immutable subject mismatch is stale evidence and is never retried.
+# Steps: bind reviewer output to a different scope digest and assert immediate
+# stale failure with no retry marker.
+test_parallel_reviewer_wrong_subject_is_stale_without_retry() {
+  local name="reviewer-protocol/wrong-subject-stale-no-retry"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home="$TMP_ROOT/$name/home"
+  local repo="$TMP_ROOT/$name/repo" runner="$TMP_ROOT/$name/runner"
+  local out="$TMP_ROOT/$name/out" err="$TMP_ROOT/$name/err" code=0
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester
+  create_repo "$repo" docs
+  set +e
+  CODEX_GATE_STUB_PROTOCOL_MUTATION=wrong-subject \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester --mode parallel
+  code=$?
+  set -e
+  [[ "$code" -ne 0 ]] || {
+    fail "$name" "wrong-subject reviewer unexpectedly passed"
+    return
+  }
+  assert_file_contains "$name" "$err" "stale subject binding" || return
+  assert_not_contains "$name" "$out" "retrying once" || return
+  pass "$name"
+}
+
+# Behavior: malformed JSON and a truncated reviewer fence fail the deterministic
+# protocol verifier before synthesis.
+# Steps: verify two fake artifacts directly under the strict CC-521 contract and
+# assert both malformed shapes are rejected.
+test_reviewer_protocol_rejects_malformed_and_truncated_artifacts() {
+  local name="reviewer-protocol/rejects-malformed-and-truncated"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" malformed truncated scope_sha code failures=0
+  mkdir -p "$dir"
+  malformed="$dir/malformed.md"
+  truncated="$dir/truncated.md"
+  scope_sha="$(printf 'a%.0s' {1..64})"
+  # shellcheck source=runtime/lib/gate-result-verify.sh
+  . "$REPO_ROOT/runtime/lib/gate-result-verify.sh"
+  printf '%s\n' '```reviewer_result_v1' '{"kind":' '```' > "$malformed"
+  printf '%s\n' '```reviewer_result_v1' '{}' > "$truncated"
+  for artifact in "$malformed" "$truncated"; do
+    set +e
+    gate_reviewer_protocol_verify "$artifact" critic "$scope_sha" "" true \
+      >"${artifact}.out" 2>"${artifact}.err"
+    code=$?
+    set -e
+    if [[ "$code" -eq 0 ]]; then
+      fail "$name" "malformed artifact unexpectedly passed: $artifact"
+      failures=$((failures + 1))
+    fi
+  done
+  [[ "$failures" -eq 0 ]] || return
+  assert_file_contains "$name" "${malformed}.err" "invalid JSON document" || return
+  assert_file_contains "$name" "${truncated}.err" "unclosed result block" || return
+  pass "$name"
+}
+
+# Behavior: synthesis parity failure retries only synthesis and preserves the
+# already-validated reviewer outputs.
+# Steps: drop one test-gap row only on the first synthesis attempt and assert
+# the second attempt completes the gate.
+test_parallel_synthesis_test_gap_parity_recovers_on_retry() {
+  local name="synthesis-protocol/test-gap-parity-recovers-on-retry"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home="$TMP_ROOT/$name/home"
+  local repo="$TMP_ROOT/$name/repo" runner="$TMP_ROOT/$name/runner"
+  local out="$TMP_ROOT/$name/out" err="$TMP_ROOT/$name/err" code=0 attempts
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester
+  create_repo "$repo" docs
+  set +e
+  CODEX_GATE_STUB_SYNTHESIS_PROTOCOL_MUTATION=drop-test-gap-row \
+    CODEX_GATE_STUB_SYNTHESIS_PROTOCOL_MUTATION_ONLY_FIRST=1 \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester --mode parallel
+  code=$?
+  set -e
+  [[ "$code" -eq 0 ]] || {
+    fail "$name" "synthesis did not recover: code=$code"
+    return
+  }
+  assert_file_contains "$name" "$err" "test-gap matrix parity mismatch" || return
+  assert_file_contains "$name" "$out" "retrying once after test-gap matrix parity mismatch" || return
+  assert_file_contains "$name" "$out" "[synthesis attempt 2]" || return
+  attempts="$(find "$repo/.gate-results" -maxdepth 1 \
+    -name 'gate-protocol-attempts-*.jsonl' -type f | head -n 1)"
+  if [[ -z "$attempts" ]] || ! jq -s -e '
+      any(.[]; .role == "synthesis" and .attempt == 1 and
+        .outcome == "retryable-failure") and
+      any(.[]; .role == "synthesis" and .attempt == 2 and
+        .outcome == "accepted")
+    ' "$attempts" >/dev/null; then
+    fail "$name" "synthesis recovery attempts were not recorded"
+    return
+  fi
+  pass "$name"
+}
+
+# Behavior: synthesis recovery is bounded to one retry.
+# Steps: drop a test-gap row on both attempts and assert exhaustion fails closed.
+test_parallel_synthesis_test_gap_parity_retry_exhausts() {
+  local name="synthesis-protocol/test-gap-parity-retry-exhausts"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home="$TMP_ROOT/$name/home"
+  local repo="$TMP_ROOT/$name/repo" runner="$TMP_ROOT/$name/runner"
+  local out="$TMP_ROOT/$name/out" err="$TMP_ROOT/$name/err" code=0
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester
+  create_repo "$repo" docs
+  set +e
+  CODEX_GATE_STUB_SYNTHESIS_PROTOCOL_MUTATION=drop-test-gap-row \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester --mode parallel
+  code=$?
+  set -e
+  [[ "$code" -ne 0 ]] || {
+    fail "$name" "persistently invalid synthesis unexpectedly passed"
+    return
+  }
+  assert_file_contains "$name" "$out" "[synthesis attempt 2]" || return
+  assert_file_contains "$name" "$err" "synthesis recovery exhausted" || return
+  pass "$name"
+}
+
+# Behavior: reviewer transport failure is retried once without re-running a
+# reviewer that already completed successfully.
+# Steps: fail the first critic transport, allow its corrective brief to succeed,
+# and assert synthesis completes.
+test_parallel_reviewer_transport_failure_recovers_once() {
+  local name="reviewer-recovery/transport-failure-recovers-once"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home="$TMP_ROOT/$name/home"
+  local repo="$TMP_ROOT/$name/repo" runner="$TMP_ROOT/$name/runner"
+  local out="$TMP_ROOT/$name/out" err="$TMP_ROOT/$name/err" code=0
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester
+  create_repo "$repo" docs
+  set +e
+  CODEX_GATE_STUB_MODE=fail CODEX_GATE_STUB_FAIL_REVIEWER=critic \
+    CODEX_GATE_STUB_FAIL_ONLY_FIRST=1 \
+    CODEX_GATE_STUB_SYNTHESIS_MODE=success \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester --mode parallel
+  code=$?
+  set -e
+  [[ "$code" -eq 0 ]] || {
+    fail "$name" "reviewer transport recovery failed: code=$code"
+    return
+  }
+  assert_file_contains "$name" "$out" "critic recovered on retry" || return
+  pass "$name"
+}
+
+# Behavior: synthesis transport failure is retried once using the same reviewer
+# artifacts and immutable subject.
+# Steps: fail the first synthesis dispatch only and assert attempt two succeeds.
+test_parallel_synthesis_transport_failure_recovers_once() {
+  local name="synthesis-recovery/transport-failure-recovers-once"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home="$TMP_ROOT/$name/home"
+  local repo="$TMP_ROOT/$name/repo" runner="$TMP_ROOT/$name/runner"
+  local out="$TMP_ROOT/$name/out" err="$TMP_ROOT/$name/err" code=0
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester
+  create_repo "$repo" docs
+  set +e
+  CODEX_GATE_STUB_SYNTHESIS_MODE=fail CODEX_GATE_STUB_FAIL_ONLY_FIRST=1 \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester --mode parallel
+  code=$?
+  set -e
+  [[ "$code" -eq 0 ]] || {
+    fail "$name" "synthesis transport recovery failed: code=$code"
+    return
+  }
+  assert_file_contains "$name" "$out" "retrying once after transport failure" || return
+  assert_file_contains "$name" "$out" "[synthesis attempt 2]" || return
   pass "$name"
 }
 
@@ -9912,7 +10175,7 @@ test_reviewer_protocol_blocker_completes_remaining_surfaces() {
     fail "$name" "blocker early-stopped/parity-dropped coverage: expected 44 surfaces, got $surface_count"
     return
   }
-  assert_file_contains "$name" "$result" "gate_result_version: pr_gate_result_v4" || return
+  assert_file_contains "$name" "$result" "gate_result_version: pr_gate_result_v5" || return
   assert_file_contains "$name" "$result" "Final: NO-GO" || return
   assert_not_contains "$name" "$err" "reviewer protocol INCOMPLETE" || return
   pass "$name"
@@ -10062,11 +10325,97 @@ coverage-drift|.coverage_matrix[0].reason = "Changed by synthesis."
 missing-caution|.cautions = []
 missing-verification|.reviewer_finding_inventory[0].verification_expectation = ""
 uncertainties-array|.uncertainties = [.uncertainties]
+missing-test-gap-row|.test_gap_matrix = .test_gap_matrix[1:]
 malformed-seed|.remediation_seed.state = "closed"
 MUTATIONS
   [[ "$failures" -eq 0 ]] || return
   assert_file_contains "$name" "$dir/uncertainties-array.err" \
     "malformed uncertainties contract or parity mismatch" || return
+  pass "$name"
+}
+
+# Behavior: the opt-in live evaluator reports recall distribution and keeps
+# correctness_gate=false instead of converting model recall into CI pass/fail.
+# Steps: analyze two deterministic fake Gate artifacts with different seeded
+# signal matches and assert recall, variance, and regression-report shape.
+test_gate_test_gap_live_eval_reports_observation_only() {
+  local name="live-eval/test-gap-recall-is-observation-only"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" first second report fixture
+  local lower_baseline upper_baseline lower_report upper_report invalid_baseline code
+  mkdir -p "$dir"
+  first="$dir/first.md"
+  second="$dir/second.md"
+  report="$dir/report.json"
+  fixture="$REPO_ROOT/tests/fixtures/gate-live-eval/multi-gap-v1.json"
+  _write_synthesis_protocol_test_artifact "$first"
+  _write_synthesis_protocol_test_artifact "$second"
+  _rewrite_synthesis_protocol_json "$first" '
+    .test_gap_matrix[0].affected_behavior = "A stale subject must not retry."'
+  _rewrite_synthesis_protocol_json "$second" '
+    .test_gap_matrix[0].affected_behavior =
+      "A stale subject and dropped test-gap row are both observable."'
+  "$REPO_ROOT/tools/eval/gate-test-gap-live-eval.sh" \
+    --fixture "$fixture" --result "$first" --result "$second" \
+    --output "$report"
+  if ! jq -e '
+      .kind == "gate_test_gap_live_report_v1" and
+      .correctness_gate == false and .summary.run_count == 2 and
+      ((.summary.mean_recall - 0.3) | if . < 0 then -. else . end) < 0.000001 and
+      ((.summary.variance - 0.01) | if . < 0 then -. else . end) < 0.000001
+    ' "$report" >/dev/null; then
+    fail "$name" "live evaluation report did not preserve observation semantics"
+    return
+  fi
+
+  lower_baseline="$dir/lower-baseline.json"
+  upper_baseline="$dir/upper-baseline.json"
+  lower_report="$dir/lower-baseline-report.json"
+  upper_report="$dir/upper-baseline-report.json"
+  invalid_baseline="$dir/invalid-baseline.json"
+  jq -n '{kind:"gate_test_gap_live_report_v1",summary:{mean_recall:0.2}}' \
+    > "$lower_baseline"
+  jq -n '{kind:"gate_test_gap_live_report_v1",summary:{mean_recall:0.4}}' \
+    > "$upper_baseline"
+  "$REPO_ROOT/tools/eval/gate-test-gap-live-eval.sh" \
+    --fixture "$fixture" --result "$first" --result "$second" \
+    --baseline "$lower_baseline" --output "$lower_report"
+  "$REPO_ROOT/tools/eval/gate-test-gap-live-eval.sh" \
+    --fixture "$fixture" --result "$first" --result "$second" \
+    --baseline "$upper_baseline" --output "$upper_report"
+  if ! jq -e '
+      .correctness_gate == false and
+      .regression_observation.baseline_mean_recall == 0.2 and
+      ((.regression_observation.delta - 0.1) |
+        if . < 0 then -. else . end) < 0.000001 and
+      .regression_observation.observed == false
+    ' "$lower_report" >/dev/null; then
+    fail "$name" "lower baseline did not produce the expected positive delta"
+    return
+  fi
+  if ! jq -e '
+      .correctness_gate == false and
+      .regression_observation.baseline_mean_recall == 0.4 and
+      ((.regression_observation.delta + 0.1) |
+        if . < 0 then -. else . end) < 0.000001 and
+      .regression_observation.observed == true
+    ' "$upper_report" >/dev/null; then
+    fail "$name" "upper baseline did not report an observed regression"
+    return
+  fi
+
+  printf '{invalid\n' > "$invalid_baseline"
+  set +e
+  "$REPO_ROOT/tools/eval/gate-test-gap-live-eval.sh" \
+    --fixture "$fixture" --result "$first" \
+    --baseline "$invalid_baseline" --output "$dir/invalid-report.json" \
+    >/dev/null 2>&1
+  code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then
+    fail "$name" "malformed baseline unexpectedly produced a report"
+    return
+  fi
   pass "$name"
 }
 
@@ -10100,9 +10449,17 @@ run_test test_parallel_reviewer_protocol_out_of_scope_reference_is_incomplete
 run_test test_sequential_reviewer_protocol_out_of_range_line_is_incomplete
 run_test test_parallel_reviewer_protocol_evidence_contract_recovers_on_retry
 run_test test_parallel_reviewer_protocol_evidence_contract_retry_still_fails
+run_test test_parallel_reviewer_missing_test_gap_recovers_on_retry
+run_test test_parallel_reviewer_wrong_subject_is_stale_without_retry
+run_test test_reviewer_protocol_rejects_malformed_and_truncated_artifacts
+run_test test_parallel_synthesis_test_gap_parity_recovers_on_retry
+run_test test_parallel_synthesis_test_gap_parity_retry_exhausts
+run_test test_parallel_reviewer_transport_failure_recovers_once
+run_test test_parallel_synthesis_transport_failure_recovers_once
 run_test test_reviewer_protocol_duplicate_heading_uses_json_verdict
 run_test test_reviewer_protocol_blocker_completes_remaining_surfaces
 run_test test_synthesis_protocol_preserves_grouping_disagreement_and_lower_severity
 run_test test_synthesis_protocol_rejects_silent_drop_and_malformed_seed
+run_test test_gate_test_gap_live_eval_reports_observation_only
 
 th_summary

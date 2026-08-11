@@ -41,7 +41,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-519 | ✅ closed 2026-07-30 | selected-reviewer coverage／finding contract：declared coverage、stable IDs 與 actionable fix boundary | ops/gate | 2026-07-23 | pr:#456 | P1 | design |
 | CC-520 | ✅ closed 2026-07-31 | synthesis parity 與 remediation seed：findings union、root-cause grouping、coverage matrix 與 no-silent-drop | ops/gate | 2026-07-23 | pr:#460 | P1 | design |
 | CC-521 | 🔵 active | test-gap matrix、protocol recovery 與 live recall evaluation 分層 | ops/test | 2026-07-23 | — | P2 | design |
-| CC-522 | 🔵 active | 任意 `--test-cmd` 的 opaque／structured capability negotiation、執行失敗分類與外部 evidence recovery | ops/test | 2026-07-27 | feedback:2026-07-27 | P1 | design |
+| CC-522 | ⚠️ partial 2026-08-04 | `--test-cmd` preflight 分類已交付；剩餘 QA checkpoint／partial evidence 與外部 structured evidence recovery | ops/test | 2026-07-27 | pr:#462 | P1 | design |
 | CC-523 | ✅ closed 2026-07-28 | `pmctl gate cancel` 必須終止 reviewer 派發前仍在執行的 foreground preflight 與其 process tree | arch/gate | 2026-07-27 | pr:#453 | P1 | hygiene |
 | CC-524 | 🔵 active | `pmctl artifacts show` 顯示 canonical absolute run root 並提供穩定 machine-readable locator | ux/ops | 2026-07-27 | feedback:2026-07-27 | P2 | hygiene |
 | CC-525 | 🔵 active | copy-mode verifier fallback 的 generated provenance 必須指向實際 generator，並由 parity ratchet 防止再次漂移 | ops/test | 2026-07-28 | feedback:2026-07-28 | P3 | hygiene |
@@ -60,10 +60,10 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-538 | 🟢 someday | Host resolver／doctor 共用 primitives，Host policy 繼續由各 Host 擁有 | arch/ops | 2026-07-30 | feedback:2026-07-30 | P2 | reuse-debt |
 | CC-539 | 🟢 someday | state `layout.yaml` build-time authority + generated runtime constants | arch/schema | 2026-07-30 | feedback:2026-07-30 | P2 | design |
 | CC-540 | 🟢 someday | `pmctl state prune`：刪除前先抽取+驗證 gate/dispatch run 摘要，避免歷史分析資料隨磁碟空間一起消失 | ops/gate | 2026-07-31 | — | P2 | hygiene |
-| CC-541 | 🔵 active | codex reviewer sandbox 讀不到主機上已存在的 `QA_RULES_DIR`，qa-tester 對 hard-stop 與可用規則來源之間 fail-loud 行為需要釐清並修復 | ops/gate | 2026-08-04 | feedback:2026-08-04 | P2 | hygiene |
+| CC-541 | ✅ done | codex reviewer 由 host-side 解析並傳入 `QA_RULES_DIR`，且區分規則真缺席與 reviewer 異常回報 | ops/gate | 2026-08-04 | pr:#465 | P2 | hygiene |
 | CC-542 | ✅ done | 移除 `test-pmctl-context`／`test-release-verify` 的 LIVE_DB_EXCLUSIVE 全域互斥：release-verify Phase 3 context-index 改用隔離 fixture repo，不再重建 live `context.db` | ops/test | 2026-08-04 | pr:#463 | P1 | hygiene |
-| CC-543 | 🟢 someday | Full test runner 增加 fail-fast structural precheck（registry lint／regression／schema 等便宜檢查獨立成 Phase 0，失敗即中止，不啟動昂貴 suite） | ops/test | 2026-08-04 | — | P2 | hygiene |
-| CC-545 | ✅ done | Reviewer evidence-reference-contract INCOMPLETE 的單次修正性重派：僅限該單一違規類別，附具體錯誤引用重跑違規 reviewer，不必整輪 gate（30-40 分鐘）重來 | ops/gate | 2026-08-06 | — | P2 | hygiene |
+| CC-543 | ✅ done | Full test runner Phase 0 fail-fast structural precheck；`--collect-all` 保留 release 全證據路徑 | ops/test | 2026-08-04 | pr:#465 | P2 | hygiene |
+| CC-545 | ✅ done | Reviewer evidence-reference-contract INCOMPLETE 的單次修正性重派：僅限該單一違規類別，附具體錯誤引用重跑違規 reviewer，不必整輪 gate（30-40 分鐘）重來 | ops/gate | 2026-08-06 | pr:#465 | P2 | hygiene |
 | CC-465 | 🔵 active | memory/context 關鍵詞管線 CJK 支援：抽出共用零依賴斷詞 lib，取代三處各自 ASCII-only 抽詞；工作序列起點（465→467→468→466）（2026-07-07 記憶系統深入分析） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-466 | ⏸ deferred | 記憶卡片生命週期閉環：expires_at 執行 + 關窗式 supersede + usage sidecar 休眠偵測 + doctor→distill 接線；僅在 CC-467 證明 stale/dormant card 已形成實際問題時啟動 | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-467 | 🔵 active | `pmctl memory stats`：注入效益可視化（唯讀聚合器）——注入 bytes/卡片命中分佈/從未命中卡/episode 填寫率，回答「記憶有跟沒有差在哪」；排在 CC-466 之前（2026-07-07；業界僅離線 recall 評測，無 per-injection 遙測） | DX/memory | 2026-07-07 | — | P2 | retrieval |
@@ -370,9 +370,15 @@ bare-fractional catch-all 重複的 fractional-Z 分支。Gate GO
 
 ## CC-467 — `pmctl memory stats`：注入效益可視化 🔵 active
 
+**Main 進度（2026-08-10，pr:#469）**: usage sidecar 寫入基礎已從單一
+TSV read-modify-write 升級為 SQLite primary（WAL／`BEGIN IMMEDIATE`／atomic
+UPSERT）加 TSV compatibility fallback，並保留舊 TSV 一次性匯入。這只完成
+可靠的既有原料層；`pmctl memory stats` reader、`--json` 與 episode 填寫率
+仍未實作，本票維持 active。
+
 **Problem**: 記憶注入每 prompt 默默執行，維護者無法回答「有記憶跟沒記憶差在哪」：沒有指標顯示注入了多少 bytes、哪些卡常被命中、哪些卡從未命中、episodes 骨架的語意摘要填寫率（Stop hook 只寫空骨架、`/mem-log` 靠人跑；填寫率低則 `/mem-distill` 上游是乾的，且此事目前完全不可見）。
 
-**Why**: 2026-07-07 外部研究——全業界（Letta / mem0 / Zep / Claude Code 社群工具）都只量離線 retrieval recall，無人做 per-injection 效益遙測；唯一在野的 token 可視化是 claude-mem 的 token economics 顯示。pm-dispatch 原料已齊（inject-usage.tsv、episodes.jsonl、doctor）——一個唯讀聚合報表即可回答維護者的核心疑問，符合「輕量執行」方向：不加新遙測寫入面，只聚合既有資料。範圍刻意收斂為純唯讀聚合器（無新寫入面），先讓維護者看得見注入效益，再由 [[CC-466]] 在可信賴的遙測基礎上建置生命週期判斷。
+**Why**: 2026-07-07 外部研究——全業界（Letta / mem0 / Zep / Claude Code 社群工具）都只量離線 retrieval recall，無人做 per-injection 效益遙測；唯一在野的 token 可視化是 claude-mem 的 token economics 顯示。pm-dispatch 原料已齊（SQLite usage sidecar／TSV fallback、episodes.jsonl、doctor）——一個唯讀聚合報表即可回答維護者的核心疑問，符合「輕量執行」方向：不加新遙測寫入面，只聚合既有資料。範圍刻意收斂為純唯讀聚合器（無新寫入面），先讓維護者看得見注入效益，再由 [[CC-466]] 在可信賴的遙測基礎上建置生命週期判斷。
 
 **Requirement**:
 1. 唯讀子指令輸出：卡片總數與注入預算使用、各卡命中次數與最後命中時間分佈、從未命中卡清單、episode 填寫率（非空 summary 佔比）。
@@ -2209,7 +2215,7 @@ deterministic fail closed，後者具模型波動，不應混成 CI hard gate。
 
 ---
 
-## CC-522 — `--test-cmd` execution outcome 與 evidence capability 分層 🔵 active
+## CC-522 — `--test-cmd` execution outcome 與 evidence capability 分層 ⚠️ partial 2026-08-04
 
 **Framing**: 本票強化既有 `pmctl gate run --test-cmd` pre-flight 與 qa-tester
 對測試執行證據的解讀，不重寫 gate 流程。任意可執行 shell command 永遠是合法輸入；
@@ -2220,13 +2226,44 @@ subject freshness／consumer applicability 仍由 [[CC-515]] 擁有，test-gap�
 [[CC-521]] 擁有。禁止新增 gate kind、workflow engine、強制 runner migration，
 或以 stdout/stderr 關鍵字猜測 assertion／環境失敗。
 
+**Delivery status（2026-08-04，pr:#462）：⚠️ partial**
+
+- 已交付 **Slice A — preflight truthful classification**：Requirement 1–3 已落地；
+  preflight evidence 分開 execution、test verdict、evidence richness 與
+  authorization，並將 opaque nonzero、timeout、environment error、stale 與
+  malformed structured sink 統一 fail-closed 為非授權 `INCOMPLETE`。只有
+  subject-valid structured assertion failure 能機械產生 `NO-GO`；opaque exit 0
+  維持可用但不虛稱 structured coverage。Requirement 8 的 preflight human
+  diagnostic/recovery command 與 Requirement 9 的對應 deterministic fixtures 也已交付。
+- 同 PR 將高 fan-out full-suite escalation 的預設 `--test-timeout` 由 1800s
+  調為 3600s，並將 `test-pr-gate` 分 shard／加上 case watchdog。這是
+  執行可觀測性修復，不代表下列 QA／external evidence 範圍已完成。
+- 未交付：Requirement 4–6 的 qa-tester 自主測試 checkpoint／bounded
+  execution／partial artifact，Requirement 7 的外部 structured evidence recovery，
+  以及這些路徑在 Requirement 8–9 的 human output 與 fixtures。
+
+**Converged remaining scope（2026-08-10）**
+
+1. **Slice B — QA execution evidence（下一個實作 slice）**：只處理
+   qa-tester 自主測試的 `inconclusive` 分類、early checkpoint、shell-owned
+   bounded wrapper/log/attempt metadata，以及 sequential/parallel watchdog 終止後
+   的 non-authorizing partial artifact。測試缺口「內容」與 matrix schema
+   繼續由 [[CC-521]] 擁有；本 slice 只擁有「執行證據怎麼留下」。
+2. **Slice C — external structured evidence recovery（後續獨立 slice）**：只接受
+   schema-valid producer artifact，機械驗證 repository/subject、HEAD/tree fingerprint、
+   command digest、suite identity 與 artifact integrity，通過 [[CC-515]]
+   freshness/applicability 後才可取代 Slice B 的 inconclusive evidence。不建 CI
+   provider integration，不接受純 log／口頭 PASS，不自動提高 timeout。
+3. Slice B/C 各自獨立驗收；不重寫 Slice A、不再擴充 preflight
+   classification enum，不把 [[CC-521]] 的 protocol retry/live recall 併回本票。
+
 **Problem**: `--test-cmd` 可能是任意 legacy command，未必產生建議的 structured
 result；即使 command 有執行，也可能因 reviewer sandbox、依賴、網路、資源限制或
-timeout 非零退出，而同一 tree 在外部環境可正常通過。目前 pre-flight 雖能保存
-opaque evidence 並在內部辨識 timeout／stale／invalid，最後仍把所有非 PASS 合併成
-一般 test FAIL／NO-GO；qa-tester 也把 non-runnable／flaky 一律視為 block。這會把
-「沒有可用 authorization evidence」誤寫成「diff 已證明有 defect」，同時迫使使用者
-為了避免 false block 先投入 runner 格式改造。
+timeout 非零退出，而同一 tree 在外部環境可正常通過。pr:#462 已修復
+pre-flight 把「沒有可用 authorization evidence」誤寫成「diff 已證明有
+defect」的第一層問題；剩餘缺口是 qa-tester 自主測試仍可在 timeout／
+watchdog termination 後不留下可用 checkpoint／partial evidence，且外部環境產生的
+structured evidence 還沒有 subject-bound recovery 路徑。
 
 **Requirement**:
 
@@ -2277,19 +2314,21 @@ opaque evidence 並在內部辨識 timeout／stale／invalid，最後仍把所�
    checkpoint、checkpoint 前違規執行仍有 shell log、sequential／parallel partial
    preservation，以及不得把 inconclusive轉成 blocker或 GO。
 
-**Done-when**: 任意 legacy `--test-cmd` 不需格式改造即可得到 truthful opaque
-evidence；structured producer可獲得更強 reuse/coverage 語意；環境／timeout失敗會
-fail closed 但不誤報產品 defect；qa-tester與 gate artifact對同一 execution class
-給出一致、可恢復的結論；qa自主測試即使 timeout 也必有非空 checkpoint、attempt
-metadata與 log pointer。
+**Done-when**: Slice A 的已交付契約維持回歸；Slice B 讓 qa-tester
+自主測試即使 timeout/watchdog termination 也必有非空 checkpoint、attempt
+metadata與 log pointer，且不能被 synthesis 轉成 blocker 或 GO；Slice C 只在
+外部 structured evidence 通過 subject/digest/integrity/applicability 後取代
+inconclusive。兩個剩餘 slice 的 deterministic fixtures 全數通過後才關閉本票。
 
 **Non-goals**: 不保證任意 command 可自動判斷失敗根因；不解析自由文字 log 作
 authorization；不降低 current-tree test evidence要求；不讓 external PASS 省略
 subject/digest驗證；不在本票建立通用 CI provider integration。
 
-**Dependencies**: outcome/capability Phase A 複用 [[CC-470]]／[[CC-491]] 可先行；
-external reusable evidence Phase B 依賴 [[CC-515]]。與 [[CC-521]] 的 test-gap／
-protocol recovery contract保持正交。P1。
+**Dependencies**: Slice A 已透過 pr:#462 複用 [[CC-470]]／[[CC-491]] 交付。
+Slice B 的 matrix/checkpoint 交界依賴 [[CC-521]] 定義內容契約，但本票仍
+獨立擁有 execution evidence transport。Slice C 依賴 [[CC-515]] 的
+freshness/applicability，並以 Slice B 的 inconclusive/attempt artifact 為取代目標。
+與 [[CC-521]] 的 protocol recovery/live recall 保持正交。P1。
 
 **Cross-link**: [[CC-470]]、[[CC-491]]、[[CC-512]]、[[CC-515]]、[[CC-521]]。
 
@@ -2999,7 +3038,19 @@ launch 早期死亡會留下 0-byte 空殼 gate 結果），摘要邏輯必須�
 
 ---
 
-## CC-541 — codex reviewer sandbox 讀不到主機上已存在的 `QA_RULES_DIR` 🔵 active
+## CC-541 — codex reviewer sandbox 讀不到主機上已存在的 `QA_RULES_DIR` ✅ 2026-08-07
+
+**Outcome**：pr:#465 實測證明 codex reviewer sandbox 並未禁止讀取
+`--cd` 之外路徑；真正根因是 reviewer dispatch 從未告知子行程
+`QA_RULES_DIR` 在哪裡。`pr-gate.sh` 現在在 host-side 透過
+`pm_dispatch_repos_root()` 解析規則目錄，並在派發前顯式 export；
+canonical reviewer protocol verifier 從已解析的 structured JSON 區分「主機
+確認規則存在但 reviewer 仍回報缺席」與「規則真正缺席」。Fixture
+runner 會清除外層 `QA_RULES_DIR` 與 host-confirmed marker，避免真實 gate
+的環境泄漏到內層測試。乾淨機器上規則真缺席的產品行為仍由
+[[CC-447]] item 5 在 release freeze 驗證，不重開本票。
+
+**See**: pr:#465
 
 **Problem**：`agents/qa-tester.md` 規定 qa-tester 必須以
 `${QA_RULES_DIR:-<repos-root>/qa-testing-rules}/AGENT.md` 作為 Tier 1 規則
@@ -3134,7 +3185,16 @@ suite 排序（獨立、低優先度，不需開票）。
 
 ---
 
-## CC-543 — Full test runner fail-fast structural precheck 🟢 someday
+## CC-543 — Full test runner fail-fast structural precheck ✅ 2026-08-07
+
+**Outcome**：pr:#465 將 hand-curated structural/lint/schema suite 收斂為
+Phase 0。第一個 Phase 0 failure 發生後，runner 不再啟動後續 Phase 0
+或任何 Phase 1 suite，但仍為 structured result 保留完整 skip rows；
+`--collect-all` 顯式保留 release-verify 所需的全診斷路徑，且
+`--verify-full` 會拒絕與它混用。Release Phase 2 flags 亦收斂為單一
+array source，回歸測試釘住 fail-fast、collect-all 與未啟動昂貴 suite 三條路徑。
+
+**See**: pr:#465
 
 **Problem**：`tests/lib/test-suite-runner.sh` 的 `ACTIVE_SUITE_NAMES` 把
 便宜的結構性檢查（`test-lint-test-suite-registry`、

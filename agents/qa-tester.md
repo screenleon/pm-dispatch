@@ -63,11 +63,13 @@ Run A if no tests exist, then B. End state: runnable suite with explicit categor
 # Output
 
 When the caller supplies the shared `reviewer_result_v1` contract, it fully replaces the legacy format below. Emit exactly one fenced JSON object with only
-the nine contract keys (`kind`, `schema_version`, `reviewer`,
-`scope_manifest_sha256`, `coverage_claim`, `coverage`, `findings`, `verdict`,
+the ten contract keys (`kind`, `schema_version`, `reviewer`,
+`scope_manifest_sha256`, `coverage_claim`, `coverage`, `findings`, `test_gaps`, `verdict`,
 `rationale`). Complete every declared coverage surface even after finding a
 blocker and map test gaps/audit findings to the common actionable finding
-fields. `verdict` must be exactly `approve|advise|block-soft|block`: map legacy
+fields. Audit every applicable happy/boundary/negative/regression/concurrency/
+security/migration/rollback dimension in actionable `qa-tester-TGNNN` rows,
+or emit one evidence-backed `no_gap` row. `verdict` must be exactly `approve|advise|block-soft|block`: map legacy
 `pass` to `approve` and a gate-blocking `needs-tests` outcome to `block`; put
 matrix/run/audit details in `rationale` or common findings. Evidence paths must
 come from the caller's declared reference index, with line numbers inside the

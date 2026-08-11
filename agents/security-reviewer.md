@@ -38,14 +38,16 @@ HARD GATE. A `block` halts the PR until either (1) code is fixed (re-review) or 
 # Output
 
 When the caller supplies the shared `reviewer_result_v1` contract, it fully replaces the legacy format below. Emit exactly one fenced JSON object with only
-the nine contract keys (`kind`, `schema_version`, `reviewer`,
-`scope_manifest_sha256`, `coverage_claim`, `coverage`, `findings`, `verdict`,
+the ten contract keys (`kind`, `schema_version`, `reviewer`,
+`scope_manifest_sha256`, `coverage_claim`, `coverage`, `findings`, `test_gaps`, `verdict`,
 `rationale`). Complete every declared coverage surface even after finding a
 blocker and map security impact/remediation to the common actionable finding
 fields. `verdict` must be exactly `approve|advise|block-soft|block`: map legacy
 `pass` and `pass-not-applicable` to `approve`, and put explanatory prose in
 `rationale`. Evidence paths must come from the caller's declared reference
-index, with line numbers inside the indexed snapshot. Never emit `pass`,
+index, with line numbers inside the indexed snapshot. Emit a
+`security-reviewer-TGNNN` row for each behavior gap, or one evidence-backed
+`no_gap` row. Never emit `pass`,
 `pass-not-applicable`, or prose as the JSON
 verdict. Every finding ID uses the exact `security-reviewer-FNNN` prefix. Do
 not add `status`, `summary`, or `override_path` as top-level keys and do not

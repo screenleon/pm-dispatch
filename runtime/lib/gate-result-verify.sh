@@ -13,6 +13,8 @@
 # pr_gate_result_v4 additionally requires one synthesis parity document whose
 # inventory and remediation seed are mechanically reconciled with the original
 # reviewer protocol documents.
+# pr_gate_result_v5 adds strict test-gap parity, caution, and verification-plan
+# contracts while preserving v3/v4 readability.
 #
 # gate_result_verdict_verify <result_file> [expected_final] [route_label]
 gate_result_verdict_verify() {
@@ -123,6 +125,7 @@ _gate_reviewer_protocol_reference_index_json() {
 _gate_reviewer_protocol_document_verify() {
   local document="$1" expected_reviewer="$2" expected_scope_sha="$3"
   local reference_index_json="${4:-null}"
+  local require_test_gaps="${5:-false}"
   local surfaces_json validation
   GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR=""
   surfaces_json="$(_gate_reviewer_protocol_surfaces | jq -Rsc '
@@ -131,6 +134,7 @@ _gate_reviewer_protocol_document_verify() {
   validation="$(jq -r \
     --arg reviewer "$expected_reviewer" \
     --arg scope_sha "$expected_scope_sha" \
+    --argjson require_test_gaps "$require_test_gaps" \
     --argjson surfaces "$surfaces_json" \
     --argjson references "$reference_index_json" '
     def only_keys($allowed):
@@ -181,11 +185,36 @@ _gate_reviewer_protocol_document_verify() {
        then .hard_gate_class == "none"
        else true
        end);
+    def test_gap:
+      only_keys(["id","reviewer","status","affected_behavior","contract",
+        "existing_evidence","coverage_dimensions","missing_layer","scenario",
+        "oracle","failure_signal","suggested_command"]) and
+      .reviewer == $reviewer and
+      (.id | test("^" + $reviewer + "-TG[0-9]{3}$")) and
+      (.status | IN("gap","no_gap")) and
+      (.affected_behavior | nonempty) and (.contract | nonempty) and
+      (.existing_evidence | type == "array" and length > 0 and
+        all(.[]; evidence_ref)) and
+      (.coverage_dimensions | type == "array" and length > 0 and
+        length == (unique | length) and
+        all(.[]; IN("happy","boundary","negative","regression",
+          "concurrency","security","migration","rollback"))) and
+      (if .status == "gap"
+       then (.missing_layer | IN("unit","integration","contract","e2e",
+          "manual","operational")) and
+         (.scenario | nonempty) and (.oracle | nonempty) and
+         (.failure_signal | nonempty) and (.suggested_command | nonempty)
+       else .missing_layer == "none" and .scenario == null and
+         .oracle == null and .failure_signal == null and
+         .suggested_command == null
+       end);
     def envelope_contract:
-      exact_keys(["kind","schema_version","reviewer","scope_manifest_sha256",
-        "coverage_claim","coverage","findings","verdict","rationale"]) and
+      only_keys(["kind","schema_version","reviewer","scope_manifest_sha256",
+        "coverage_claim","coverage","findings","test_gaps","verdict","rationale"]) and
+      ((keys_unsorted | length) == 9 or
+        (has("test_gaps") and (keys_unsorted | length) == 10)) and
       .kind == "gate_reviewer_result_v1" and .schema_version == 1 and
-      .reviewer == $reviewer and .scope_manifest_sha256 == $scope_sha and
+      .reviewer == $reviewer and
       .coverage_claim == "declared-scope-checklist-not-review-completeness";
     def coverage_contract:
       .coverage | type == "array" and length == ($surfaces | length) and
@@ -194,6 +223,22 @@ _gate_reviewer_protocol_document_verify() {
     def finding_contract:
       .findings | type == "array" and all(.[]; finding) and
         ([.[].id] | length) == ([.[].id] | unique | length);
+    def test_gap_contract:
+      if has("test_gaps")
+      then .test_gaps | type == "array" and length > 0 and
+        all(.[]; test_gap) and
+        ([.[].id] | length) == ([.[].id] | unique | length)
+      else ($require_test_gaps | not)
+      end;
+    def finding_test_gap_contract:
+      if has("test_gaps")
+      then . as $document |
+        [$document.findings[] | . as $finding |
+          any($document.test_gaps[];
+            .status == "gap" and
+            .affected_behavior == $finding.affected_behavior)] | all
+      else ($require_test_gaps | not)
+      end;
     def findings_array:
       if (.findings | type) == "array" then .findings else [] end;
     def blocking_severity_violation:
@@ -231,9 +276,12 @@ _gate_reviewer_protocol_document_verify() {
       (if .line != null then .line <= $entry.line_count else true end);
     def evidence_reference_contract:
       all(.coverage[].evidence_refs[]; bound_evidence_ref) and
-      all(.findings[].source; bound_evidence_ref);
+      all(.findings[].source; bound_evidence_ref) and
+      all((.test_gaps // [])[].existing_evidence[]; bound_evidence_ref);
     if (envelope_contract | not)
     then "invalid top-level or binding contract"
+    elif .scope_manifest_sha256 != $scope_sha
+    then "stale subject binding"
     elif (coverage_contract | not)
     then "invalid coverage contract"
     elif (blocking_severity_violation != null)
@@ -250,6 +298,10 @@ _gate_reviewer_protocol_document_verify() {
       ($invalid.origin | display) + ")")
     elif (finding_contract | not)
     then "invalid finding contract"
+    elif (test_gap_contract | not)
+    then "invalid test-gap matrix contract"
+    elif (finding_test_gap_contract | not)
+    then "finding lacks actionable test-gap row"
     elif $references != null and (evidence_reference_contract | not)
     then "invalid evidence reference contract"
     elif (verdict_contract | not)
@@ -319,9 +371,11 @@ _gate_reviewer_protocol_final_extract() {
 # produced before reference indexes existed.
 gate_reviewer_protocol_verify() {
   local artifact=${1-} selected=${2-} scope_sha=${3-} scope_manifest=${4-}
+  local require_test_gaps=${5-false}
   local tmp_dir line block="" in_block=false count=0 reviewer expected document
   local seen=" " reference_index_json=null
-  [[ $# -ge 3 && $# -le 4 && -s "$artifact" && -n "$selected" \
+  GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR=""
+  [[ $# -ge 3 && $# -le 5 && -s "$artifact" && -n "$selected" \
       && "$scope_sha" =~ ^[a-f0-9]{64}$ ]] || {
     printf 'Error: reviewer protocol INCOMPLETE: invalid verifier inputs\n' >&2
     return 2
@@ -337,6 +391,7 @@ gate_reviewer_protocol_verify() {
   while IFS= read -r line || [[ -n "$line" ]]; do
     if [[ "$line" == '```reviewer_result_v1' ]]; then
       if [[ "$in_block" == true ]]; then
+        GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR="malformed reviewer result fence"
         printf 'Error: reviewer protocol INCOMPLETE: nested result block in %s\n' \
           "$artifact" >&2
         rm -rf -- "$tmp_dir"
@@ -358,28 +413,38 @@ gate_reviewer_protocol_verify() {
     fi
   done < "$artifact"
   if [[ "$in_block" == true ]]; then
+    GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR="truncated reviewer result"
     printf 'Error: reviewer protocol INCOMPLETE: unclosed result block in %s\n' \
       "$artifact" >&2
     rm -rf -- "$tmp_dir"
     return 1
   fi
   if [[ "$count" -eq 0 ]]; then
+    GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR="missing reviewer result"
     printf 'Error: reviewer protocol INCOMPLETE: no reviewer_result_v1 block in %s\n' \
       "$artifact" >&2
     rm -rf -- "$tmp_dir"
     return 1
   fi
   for document in "$tmp_dir"/*.json; do
-    reviewer="$(jq -r '.reviewer // empty' "$document" 2>/dev/null)" || reviewer=""
+    reviewer="$(jq -r '.reviewer // empty' "$document" 2>/dev/null)" || {
+      GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR="invalid JSON document"
+      printf 'Error: reviewer protocol INCOMPLETE: invalid JSON document in %s\n' \
+        "$artifact" >&2
+      rm -rf -- "$tmp_dir"
+      return 1
+    }
     if [[ -z "$reviewer" || " $selected " != *" $reviewer "* \
         || "$seen" == *" $reviewer "* ]]; then
+      GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR="invalid reviewer binding"
       printf 'Error: reviewer protocol INCOMPLETE: unexpected or duplicate reviewer %s in %s\n' \
         "${reviewer:-<missing>}" "$artifact" >&2
       rm -rf -- "$tmp_dir"
       return 1
     fi
     if ! _gate_reviewer_protocol_document_verify \
-        "$document" "$reviewer" "$scope_sha" "$reference_index_json"; then
+        "$document" "$reviewer" "$scope_sha" "$reference_index_json" \
+        "$require_test_gaps"; then
       printf 'Error: reviewer protocol INCOMPLETE: %s for %s in %s\n' \
         "${GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR:-invalid reviewer document}" \
         "$reviewer" "$artifact" >&2
@@ -405,6 +470,7 @@ gate_reviewer_protocol_verify() {
   done
   for expected in $selected; do
     if [[ "$seen" != *" $expected "* ]]; then
+      GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR="missing selected reviewer"
       printf 'Error: reviewer protocol INCOMPLETE: missing selected reviewer %s in %s\n' \
         "$expected" "$artifact" >&2
       rm -rf -- "$tmp_dir"
@@ -443,9 +509,11 @@ _gate_synthesis_protocol_documents() {
 # exactly once.
 gate_synthesis_protocol_verify() {
   local artifact=${1-} selected=${2-} skipped=${3-} scope_sha=${4-}
+  local require_test_gaps=${5-false}
   local tmp_dir synthesis_documents reviewer_documents synthesis_count validation
   local heading heading_count
-  [[ $# -eq 4 && -s "$artifact" && -n "$selected" \
+  GATE_SYNTHESIS_PROTOCOL_ERROR=""
+  [[ $# -ge 4 && $# -le 5 && -s "$artifact" && -n "$selected" \
       && "$scope_sha" =~ ^[a-f0-9]{64}$ ]] || {
     printf 'Error: synthesis protocol INCOMPLETE: invalid verifier inputs\n' >&2
     return 2
@@ -456,18 +524,21 @@ gate_synthesis_protocol_verify() {
   reviewer_documents="$tmp_dir/reviewers.jsonl"
   if ! _gate_synthesis_protocol_documents "$artifact" \
       > "$synthesis_documents"; then
+    GATE_SYNTHESIS_PROTOCOL_ERROR="malformed synthesis result fence"
     printf 'Error: synthesis protocol INCOMPLETE: malformed synthesis_result_v1 fence in %s\n' \
       "$artifact" >&2
     rm -rf -- "$tmp_dir"
     return 1
   fi
   synthesis_count="$(jq -s 'length' "$synthesis_documents" 2>/dev/null)" || {
+    GATE_SYNTHESIS_PROTOCOL_ERROR="invalid synthesis JSON"
     printf 'Error: synthesis protocol INCOMPLETE: invalid synthesis JSON in %s\n' \
       "$artifact" >&2
     rm -rf -- "$tmp_dir"
     return 1
   }
   if [[ "$synthesis_count" -ne 1 ]]; then
+    GATE_SYNTHESIS_PROTOCOL_ERROR="missing or duplicate synthesis result"
     printf 'Error: synthesis protocol INCOMPLETE: expected one synthesis_result_v1 block, found %d in %s\n' \
       "$synthesis_count" "$artifact" >&2
     rm -rf -- "$tmp_dir"
@@ -476,6 +547,7 @@ gate_synthesis_protocol_verify() {
   if ! _gate_reviewer_protocol_documents "$artifact" \
       > "$reviewer_documents" \
       || ! jq -s -e 'length > 0' "$reviewer_documents" >/dev/null 2>&1; then
+    GATE_SYNTHESIS_PROTOCOL_ERROR="reviewer documents unavailable"
     printf 'Error: synthesis protocol INCOMPLETE: reviewer documents unavailable in %s\n' \
       "$artifact" >&2
     rm -rf -- "$tmp_dir"
@@ -486,6 +558,7 @@ gate_synthesis_protocol_verify() {
     jq -nr \
       --arg selected "$selected" --arg skipped "$skipped" \
       --arg scope_sha "$scope_sha" \
+      --argjson require_test_gaps "$require_test_gaps" \
       --slurpfile synthesis "$synthesis_documents" \
       --slurpfile reviewers "$reviewer_documents" '
       def only_keys($allowed):
@@ -560,6 +633,31 @@ gate_synthesis_protocol_verify() {
           type == "string" and test("^RCG-[0-9]{3,}$")) and
         .disposition == "pending" and
         (.verification_expectation | nonempty);
+      def test_gap:
+        only_keys(["id","reviewer","status","affected_behavior","contract",
+          "existing_evidence","coverage_dimensions","missing_layer","scenario",
+          "oracle","failure_signal","suggested_command"]) and
+        (.id | type == "string" and
+          test("^(critic|qa-tester|architecture-reviewer|security-reviewer|risk-reviewer)-TG[0-9]{3}$")) and
+        (.reviewer | reviewer) and (.status | IN("gap","no_gap")) and
+        (.affected_behavior | nonempty) and (.contract | nonempty) and
+        (.existing_evidence | type == "array" and length > 0 and
+          all(.[]; reference)) and
+        (.coverage_dimensions | type == "array" and length > 0 and
+          length == (unique | length) and
+          all(.[]; IN("happy","boundary","negative","regression",
+            "concurrency","security","migration","rollback"))) and
+        (if .status == "gap"
+         then (.missing_layer | IN("unit","integration","contract","e2e",
+            "manual","operational")) and
+           (.scenario | nonempty) and (.oracle | nonempty) and
+           (.failure_signal | nonempty) and (.suggested_command | nonempty)
+         else .missing_layer == "none" and .scenario == null and
+           .oracle == null and .failure_signal == null and
+           .suggested_command == null
+         end);
+      def string_array:
+        type == "array" and length == (unique | length) and all(.[]; nonempty);
       ($selected | split(" ") | map(select(length > 0))) as $selected_reviewers |
       ($skipped | split(" ") | map(select(length > 0))) as $skipped_reviewers |
       $synthesis[0] as $s |
@@ -592,12 +690,17 @@ gate_synthesis_protocol_verify() {
       ($expected_findings |
         map(select(.origin == "caution") | .id) | sort) as $expected_cautions |
       ($expected_findings | map(.id) | sort) as $expected_ids |
+      ([$reviewers[] | (.test_gaps // [])[]] | sort_by(.id)) as $expected_test_gaps |
+      ($expected_test_gaps | map(select(.status == "gap") | .suggested_command) |
+        unique | sort) as $expected_focused |
       if
         ($s | only_keys([
           "kind","schema_version","scope_manifest_sha256",
           "selected_reviewers","not_reviewed_dimensions","coverage_matrix",
           "reviewer_finding_inventory","findings_union","root_cause_groups",
-          "disagreements","uncertainties","cautions","remediation_seed"
+          "disagreements","uncertainties","cautions","test_gap_matrix",
+          "operational_cautions","user_cautions","verification_plan",
+          "remediation_seed"
         ]) | not) or
         $s.kind != "gate_synthesis_result_v1" or
         $s.schema_version != 1 or
@@ -611,10 +714,16 @@ gate_synthesis_protocol_verify() {
         ($s.root_cause_groups | type) != "array" or
         ($s.disagreements | type) != "array" or
         ($s.cautions | type) != "array" or
-        ($s.remediation_seed | type) != "object"
+        ($s.remediation_seed | type) != "object" or
+        (if $require_test_gaps
+         then ($s | has("test_gap_matrix") and has("operational_cautions") and
+           has("user_cautions") and has("verification_plan")) | not
+         else false
+         end)
       then "invalid top-level contract"
+      elif $s.scope_manifest_sha256 != $scope_sha
+      then "stale subject binding"
       elif
-        $s.scope_manifest_sha256 != $scope_sha or
         $s.selected_reviewers != $selected_reviewers or
         $s.not_reviewed_dimensions != $skipped_reviewers
       then "selected/not-reviewed dimensions mismatch"
@@ -680,6 +789,24 @@ gate_synthesis_protocol_verify() {
         ($s.cautions | sort) != $expected_cautions
       then "caution parity mismatch"
       elif
+        (($s.test_gap_matrix // []) | type) != "array" or
+        (all(($s.test_gap_matrix // [])[]; test_gap) | not) or
+        (($s.test_gap_matrix // []) | sort_by(.id)) != $expected_test_gaps
+      then "test-gap matrix parity mismatch"
+      elif $require_test_gaps and
+        ((($s.operational_cautions // null) | string_array | not) or
+         (($s.user_cautions // null) | string_array | not) or
+         (($s.verification_plan // null) | type) != "object" or
+         (($s.verification_plan | only_keys(["focused","manual","full"])) | not) or
+         (($s.verification_plan.focused | string_array) | not) or
+         (($s.verification_plan.manual | string_array) | not) or
+         (($s.verification_plan.full | string_array) | not) or
+         ($s.verification_plan.full | length) == 0)
+      then "invalid cautions or verification plan"
+      elif $require_test_gaps and
+        (($s.verification_plan.focused | sort) != $expected_focused)
+      then "focused verification parity mismatch"
+      elif
         ($s.remediation_seed |
           only_keys(["kind","schema_version","state",
             "scope_manifest_sha256","entries"]) | not) or
@@ -705,6 +832,7 @@ gate_synthesis_protocol_verify() {
     '
   )" || validation="invalid synthesis JSON document"
   if [[ "$validation" != ok ]]; then
+    GATE_SYNTHESIS_PROTOCOL_ERROR="$validation"
     printf 'Error: synthesis protocol INCOMPLETE: %s in %s\n' \
       "$validation" "$artifact" >&2
     rm -rf -- "$tmp_dir"
@@ -725,6 +853,23 @@ gate_synthesis_protocol_verify() {
       return 1
     fi
   done
+  if [[ "$require_test_gaps" == true ]]; then
+    for heading in \
+      '## Test Coverage to Add or Strengthen' \
+      '## Operational and User Cautions' \
+      '## Post-Fix Verification Plan'
+    do
+      heading_count="$(grep -Fxc -- "$heading" "$artifact" || true)"
+      if [[ "$heading_count" -ne 1 ]]; then
+        # shellcheck disable=SC2034 # consumed by pr-gate.sh recovery classification.
+        GATE_SYNTHESIS_PROTOCOL_ERROR="missing required CC-521 human section"
+        printf 'Error: synthesis protocol INCOMPLETE: required human section %s appears %d time(s) in %s\n' \
+          "$heading" "$heading_count" "$artifact" >&2
+        rm -rf -- "$tmp_dir"
+        return 1
+      fi
+    done
+  fi
   rm -rf -- "$tmp_dir"
 }
 
@@ -1910,7 +2055,7 @@ gate_result_verify() {
   local result_file=${1-} expected_final=${2-} route_label=${3-gate}
   local version pointer result_parent assurance_file body_final
   local selected_reviewers skipped_reviewers scope_sha scope_artifact scope_manifest
-  local assurance_kind protocol_final
+  local assurance_kind protocol_final require_test_gaps=false
   [[ $# -ge 1 && $# -le 3 ]] || {
     printf 'gate-result-verify: gate_result_verify expects <result_file> [expected_final] [route_label]\n' >&2
     return 2
@@ -1924,7 +2069,7 @@ gate_result_verify() {
       export GATE_RESULT_ASSURANCE
       return 0
       ;;
-    pr_gate_result_v2 | pr_gate_result_v3 | pr_gate_result_v4)
+    pr_gate_result_v2 | pr_gate_result_v3 | pr_gate_result_v4 | pr_gate_result_v5)
       pointer="$(_gate_result_frontmatter_value "$result_file" gate_assurance)"
       if [[ -z "$pointer" || "$pointer" == */* || "$pointer" == "." || "$pointer" == ".." \
           || ! "$pointer" =~ ^[A-Za-z0-9._-]+\.json$ ]]; then
@@ -1937,7 +2082,8 @@ gate_result_verify() {
       body_final=$(grep -E '^Final: (GO|NO-GO|INCOMPLETE)$' "$result_file" | awk '{print $2}')
       gate_assurance_verify "$result_file" "$assurance_file" "$body_final" || return $?
       if [[ "$version" == pr_gate_result_v3 \
-          || "$version" == pr_gate_result_v4 ]]; then
+          || "$version" == pr_gate_result_v4 \
+          || "$version" == pr_gate_result_v5 ]]; then
         assurance_kind="$(jq -r '.kind // empty' "$assurance_file" 2>/dev/null)"
         selected_reviewers="$(jq -r \
           '.coordinates.coverage.selected // [] | join(" ")' \
@@ -1952,6 +2098,7 @@ gate_result_verify() {
           '.evidence.scope_manifest.artifact // empty' \
           "$assurance_file" 2>/dev/null)"
         scope_manifest="$result_parent/$scope_artifact"
+        [[ "$version" == pr_gate_result_v5 ]] && require_test_gaps=true
         if [[ "$assurance_kind" != gate_assurance_v3 \
             || -z "$selected_reviewers" \
             || ! "$scope_sha" =~ ^[a-f0-9]{64}$ ]]; then
@@ -1962,7 +2109,8 @@ gate_result_verify() {
         if jq -e '.reference_index != null' "$scope_manifest" >/dev/null 2>&1; then
           gate_reviewer_protocol_verify \
             "$result_file" "$selected_reviewers" "$scope_sha" \
-            "$scope_manifest" || return $?
+            "$scope_manifest" "$require_test_gaps" \
+            || return $?
         else
           gate_reviewer_protocol_verify \
             "$result_file" "$selected_reviewers" "$scope_sha" || return $?
@@ -1975,10 +2123,12 @@ gate_result_verify() {
             "$protocol_final" "$body_final" "$result_file" >&2
           return 1
         fi
-        if [[ "$version" == pr_gate_result_v4 ]]; then
+        if [[ "$version" == pr_gate_result_v4 \
+            || "$version" == pr_gate_result_v5 ]]; then
           gate_synthesis_protocol_verify \
             "$result_file" "$selected_reviewers" "$skipped_reviewers" \
-            "$scope_sha" || return $?
+            "$scope_sha" "$require_test_gaps" \
+            || return $?
         fi
       fi
       if [[ "${GATE_ASSURANCE_BOUND:-false}" == true ]]; then

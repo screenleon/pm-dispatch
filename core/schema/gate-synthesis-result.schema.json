@@ -61,6 +61,22 @@
       "uniqueItems": true,
       "items": { "$ref": "#/definitions/findingId" }
     },
+    "test_gap_matrix": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/definitions/testGap" }
+    },
+    "operational_cautions": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "user_cautions": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "verification_plan": { "$ref": "#/definitions/verificationPlan" },
     "remediation_seed": { "$ref": "#/definitions/remediationSeed" }
   },
   "definitions": {
@@ -300,6 +316,102 @@
         "coverage_cells": {
           "type": "array",
           "items": { "$ref": "#/definitions/uncertainCoverageCell" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "testGapId": {
+      "type": "string",
+      "pattern": "^(critic|qa-tester|architecture-reviewer|security-reviewer|risk-reviewer)-TG[0-9]{3}$"
+    },
+    "testGap": {
+      "type": "object",
+      "required": [
+        "id", "reviewer", "status", "affected_behavior", "contract",
+        "existing_evidence", "coverage_dimensions", "missing_layer",
+        "scenario", "oracle", "failure_signal", "suggested_command"
+      ],
+      "properties": {
+        "id": { "$ref": "#/definitions/testGapId" },
+        "reviewer": { "$ref": "#/definitions/reviewer" },
+        "status": { "enum": ["gap", "no_gap"] },
+        "affected_behavior": { "type": "string", "minLength": 1 },
+        "contract": { "type": "string", "minLength": 1 },
+        "existing_evidence": {
+          "type": "array", "minItems": 1,
+          "items": { "$ref": "#/definitions/evidenceRef" }
+        },
+        "coverage_dimensions": {
+          "type": "array", "minItems": 1, "uniqueItems": true,
+          "items": {
+            "enum": [
+              "happy", "boundary", "negative", "regression", "concurrency",
+              "security", "migration", "rollback"
+            ]
+          }
+        },
+        "missing_layer": {
+          "enum": [
+            "none", "unit", "integration", "contract", "e2e", "manual",
+            "operational"
+          ]
+        },
+        "scenario": { "type": ["string", "null"], "minLength": 1 },
+        "oracle": { "type": ["string", "null"], "minLength": 1 },
+        "failure_signal": { "type": ["string", "null"], "minLength": 1 },
+        "suggested_command": { "type": ["string", "null"], "minLength": 1 }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "status": { "const": "gap" } }
+          },
+          "then": {
+            "properties": {
+              "missing_layer": {
+                "enum": [
+                  "unit",
+                  "integration",
+                  "contract",
+                  "e2e",
+                  "manual",
+                  "operational"
+                ]
+              },
+              "scenario": { "type": "string", "minLength": 1 },
+              "oracle": { "type": "string", "minLength": 1 },
+              "failure_signal": { "type": "string", "minLength": 1 },
+              "suggested_command": { "type": "string", "minLength": 1 }
+            }
+          },
+          "else": {
+            "properties": {
+              "missing_layer": { "const": "none" },
+              "scenario": { "type": "null" },
+              "oracle": { "type": "null" },
+              "failure_signal": { "type": "null" },
+              "suggested_command": { "type": "null" }
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "verificationPlan": {
+      "type": "object",
+      "required": ["focused", "manual", "full"],
+      "properties": {
+        "focused": {
+          "type": "array", "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "manual": {
+          "type": "array", "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "full": {
+          "type": "array", "minItems": 1, "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
         }
       },
       "additionalProperties": false

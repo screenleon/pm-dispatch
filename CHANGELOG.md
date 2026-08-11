@@ -10,6 +10,19 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Concurrent memory, lock, state, and Gate lifecycle hardening.** Memory usage
+  telemetry now uses a WAL-enabled SQLite primary store with atomic updates and
+  a TSV migration/fallback path; portable mkdir locks use verifiable owner
+  nonces and fenced unlock/reclaim behavior. Test suites receive isolated
+  `TMPDIR`/`XDG_RUNTIME_DIR` state, terminal sentinels win the detached-readiness
+  race, and state-writer failures remain fail-loud. (PR #469)
+
+- **Codex reviewer `QA_RULES_DIR` resolution (CC-541).** Gate dispatch resolves
+  the rules directory host-side and exports it before launching reviewers.
+  Structured diagnostics distinguish a genuinely absent rules source from a
+  reviewer that reports it missing despite host confirmation; nested fixtures
+  scrub inherited rule-path state. (PR #465)
+
 - **Preflight `--test-timeout` default too low for a full-suite escalation
   (CC-522).** `pr-gate.sh`'s default `--test-timeout` was 1800s. A change to a
   high-fanout runner/install substrate (e.g. `tests/lib/test-harness.sh`)
@@ -20,6 +33,30 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Actionable Gate test-gap evidence and bounded protocol recovery (CC-521).**
+  Current selected-reviewer results publish `pr_gate_result_v5`: every reviewer
+  emits evidence-backed test-gap rows, synthesis preserves their exact union,
+  separates operational/user cautions, and produces focused/manual/full
+  verification plans. Parallel Gate retries only failed reviewer roles or
+  synthesis once for transport, malformed-output, schema, or parity failures;
+  attempts are recorded against the immutable subject, while stale bindings
+  and analysis uncertainty are never retried. Deterministic fixtures cover
+  malformed/truncated/wrong-subject/dropped-row and recovery exhaustion. An
+  opt-in seeded live evaluator reports recall and variance with
+  `correctness_gate:false`. Historical v1-v4 artifacts remain readable.
+
+- **Full-runner Phase 0 structural fail-fast (CC-543).** Cheap registry, lint,
+  and schema suites run before behavioral suites; the first Phase 0 failure
+  prevents any remaining expensive suite from starting while preserving
+  structured skip rows. `--collect-all` retains the release-diagnostic path,
+  and `--verify-full` rejects incompatible flag combinations. (PR #465)
+
+- **Bounded reviewer citation correction (CC-545).** Parallel Gate retries only
+  reviewers whose sole protocol error is an invalid evidence reference, once,
+  with the rejected citations in a corrective brief. Other protocol failures
+  remain immediately `INCOMPLETE`, and retry output stays under the existing
+  watchdog, hash, and tamper checks. (PR #465)
+
 - **Truthful `--test-cmd` preflight outcomes (CC-522 Phase A).** Preflight
   evidence now records execution, test verdict, evidence richness, and
   authorization independently. Opaque nonzero exits, timeouts, environment
@@ -29,7 +66,7 @@ Versions follow [Semantic Versioning](https://semver.org/).
   yields the mechanical `Final: NO-GO`; legacy exit-0 commands remain valid
   opaque evidence.
 
-- **Nested gate test timeout diagnostics (CC-522 Phase B).** `test-pr-gate`
+- **Nested gate test timeout diagnostics (CC-522 test-harness follow-up).** `test-pr-gate`
   now labels each nested gate invocation with its owning case and duration,
   bounds it with a configurable case watchdog, and verifies cleanup of a
   stalled fixture. The affected-test scheduler runs this process-heavy suite
