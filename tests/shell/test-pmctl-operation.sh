@@ -22,6 +22,20 @@ make_repo() {
   git -C "$dir" init -q
 }
 
+# Operation reconciliation needs the PID that will actually remain alive for
+# identity verification.  Do not use `setsid` here: it may fork when invoked
+# by a process-group leader, leaving $! as a short-lived wrapper PID.
+start_live_test_producer() {
+  sleep 30 &
+  TEST_PRODUCER_PID=$!
+}
+
+stop_live_test_producer() {
+  local producer="$1" signal="${2:-TERM}"
+  kill -s "$signal" -- "$producer" 2>/dev/null || true
+  wait "$producer" 2>/dev/null || true
+}
+
 case_writer_loader_repairs_partial_inherited_functions() {
   local name="operation lock: partial inherited writer functions reload before producer registration"
   should_run "$name" || return 0
@@ -79,7 +93,7 @@ case_reconcile_defers_while_producer_is_running() {
   local work="$tmp_root/producer-active-work" store="$tmp_root/producer-active-state"
   local op run_id producer out rc=0 state
   make_repo "$work"; run_id="run-20260724T000002Z-fedcba"
-  setsid sleep 30 & producer=$!
+  start_live_test_producer; producer="$TEST_PRODUCER_PID"
   op="$(PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_create "$REPO_ROOT" "$work" gate codex)"
   PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_expect_producer "$REPO_ROOT" gate "$op" "$work"
   PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_register_producer "$REPO_ROOT" gate "$op" "$work" "$producer"
@@ -87,7 +101,7 @@ case_reconcile_defers_while_producer_is_running() {
   PM_DISPATCH_STATE_ROOT="$store" _pmctl_dispatch_try_terminal_claim "$work" "$run_id" ok supervisor
   out="$(PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_reconcile "$REPO_ROOT" gate "$op" --cd "$work" 2>&1)" || rc=$?
   state="$(PM_DISPATCH_STATE_ROOT="$store" bash -c '. "$1/runtime/lib/state-writer.sh"; cd "$2"; _sw_project_dir' _ "$REPO_ROOT" "$work")"
-  kill -TERM -- "-$producer" 2>/dev/null || true; wait "$producer" 2>/dev/null || true
+  stop_live_test_producer "$producer"
   if [[ "$rc" -ne 0 && "$out" == *"producer-active"* \
     && "$(jq -r .state "${state%/}/operations/$op.json")" == running ]]; then
     pass "$name"
@@ -108,14 +122,13 @@ case_reconcile_recovers_dead_registered_producer() {
   local work="$tmp_root/dead-producer-work" store="$tmp_root/dead-producer-state"
   local op run_id producer out rc=0 state record
   make_repo "$work"; run_id="run-20260724T000003Z-deadbe"
-  setsid sleep 30 & producer=$!
+  start_live_test_producer; producer="$TEST_PRODUCER_PID"
   op="$(PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_create "$REPO_ROOT" "$work" gate codex)"
   PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_expect_producer "$REPO_ROOT" gate "$op" "$work"
   PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_register_producer "$REPO_ROOT" gate "$op" "$work" "$producer"
   PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_attach_child "$REPO_ROOT" "$work" "$op" "$run_id" "$work"
   PM_DISPATCH_STATE_ROOT="$store" _pmctl_dispatch_try_terminal_claim "$work" "$run_id" ok supervisor
-  kill -KILL -- "$producer" 2>/dev/null || true
-  wait "$producer" 2>/dev/null || true
+  stop_live_test_producer "$producer" KILL
   out="$(PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_reconcile "$REPO_ROOT" gate "$op" --cd "$work" 2>&1)" || rc=$?
   state="$(PM_DISPATCH_STATE_ROOT="$store" bash -c '. "$1/runtime/lib/state-writer.sh"; cd "$2"; _sw_project_dir' _ "$REPO_ROOT" "$work")"
   record="${state%/}/operations/$op.json"
@@ -140,7 +153,7 @@ case_reconcile_rejects_malformed_producer_identity() {
   local work="$tmp_root/malformed-producer-work" store="$tmp_root/malformed-producer-state"
   local op run_id producer out rc=0 state record
   make_repo "$work"; run_id="run-20260724T000004Z-badc0d"
-  setsid sleep 30 & producer=$!
+  start_live_test_producer; producer="$TEST_PRODUCER_PID"
   op="$(PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_create "$REPO_ROOT" "$work" gate codex)"
   PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_expect_producer "$REPO_ROOT" gate "$op" "$work"
   PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_register_producer "$REPO_ROOT" gate "$op" "$work" "$producer"
@@ -148,8 +161,7 @@ case_reconcile_rejects_malformed_producer_identity() {
   PM_DISPATCH_STATE_ROOT="$store" _pmctl_dispatch_try_terminal_claim "$work" "$run_id" ok supervisor
   state="$(PM_DISPATCH_STATE_ROOT="$store" bash -c '. "$1/runtime/lib/state-writer.sh"; cd "$2"; _sw_project_dir' _ "$REPO_ROOT" "$work")"
   record="${state%/}/operations/$op.json"
-  kill -KILL -- "$producer" 2>/dev/null || true
-  wait "$producer" 2>/dev/null || true
+  stop_live_test_producer "$producer" KILL
   out="$(PM_DISPATCH_STATE_ROOT="$store" bash -c '
     set -euo pipefail
     . "$1/runtime/lib/pmctl-operation.sh"
