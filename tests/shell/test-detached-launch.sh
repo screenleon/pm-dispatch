@@ -210,6 +210,20 @@ case_sentinel_path_deterministic() {
   fi
 }
 
+# ---- 9b: gate sentinels stay in the private per-user control directory ------
+case_private_sentinel_path_uses_key_namespace() {
+  local name="detached-launch/private sentinel path uses key namespace"
+  should_run "$name" || return 0
+
+  local p
+  p="$(detached_launch_private_sentinel_path "pm-gate-dispatch" "pm-gate" "gate-1" "nonceX")"
+  if [[ "$p" == "$XDG_RUNTIME_DIR/pm-gate-dispatch/.pm-gate-sentinel-gate-1-nonceX" ]]; then
+    pass "$name"
+  else
+    fail "$name" "path=$p"
+  fi
+}
+
 # ---- 10: write_sentinel + wait_for_sentinel round-trip on immediate write ---
 case_wait_for_sentinel_success() {
   local name="detached-launch/wait_for_sentinel returns 0 once file exists"
@@ -404,6 +418,7 @@ case_secure_key_dir_creates_700
 case_secure_key_dir_mkdir_failure
 case_write_key_file_roundtrip
 case_sentinel_path_deterministic
+case_private_sentinel_path_uses_key_namespace
 case_wait_for_sentinel_success
 case_wait_for_sentinel_timeout
 case_under_setsid_launches_and_records_pid

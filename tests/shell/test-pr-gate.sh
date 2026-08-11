@@ -216,6 +216,34 @@ write_reviewer_protocol_stub() {
   pr_gate_fixture_write_reviewer_protocol "$brief_file" "$@"
 }
 
+# Simulate a QA helper whose process disappears after atomically recording its
+# early checkpoint.  The reviewer still returns a valid result, so exit cleanup
+# must distinguish a real `running` attempt from an untouched checkpoint.
+if [[ "${CODEX_GATE_STUB_QA_ABORT_AFTER_CHECKPOINT:-}" == "1" \
+      && "$reviewer_name" == "qa-tester" && "$brief_file" != *-synthesis.md ]]; then
+  checkpoint="$(awk '$1 == "checkpoint:" { print $2; exit }' "$brief_file")"
+  helper="$(awk '$1 == "helper:" { print $2; exit }' "$brief_file")"
+  [[ -x "$helper" && -f "$checkpoint" ]] || {
+    printf 'QA checkpoint helper context missing\n' >&2; exit 4; }
+  "$helper" --checkpoint "$checkpoint" --log "${checkpoint%.json}.interrupted.log" \
+    --timeout 1 -- bash -c 'sleep 10' &
+  helper_pid=$!
+  for _checkpoint_wait in {1..100}; do
+    jq -e '.status == "running"' "$checkpoint" >/dev/null 2>&1 && break
+    sleep 0.01
+  done
+  jq -e '.status == "running"' "$checkpoint" >/dev/null 2>&1 || {
+    kill -KILL "$helper_pid" 2>/dev/null || true
+    wait "$helper_pid" 2>/dev/null || true
+    printf 'QA helper did not flush running checkpoint\n' >&2; exit 4; }
+  kill -KILL "$helper_pid" 2>/dev/null || true
+  wait "$helper_pid" 2>/dev/null || true
+  output_path=$(grep -o '\- new:.*' "$brief_file" | head -1 | awk '{print $NF}')
+  mkdir -p "$(dirname "$output_path")"
+  write_reviewer_protocol_stub "$output_path" "$reviewer_name" advise
+  exit 0
+fi
+
 # Simulate prefix-only verdict (loose regex bypass): writes "Verdict: approved" (invalid token
 # with the right prefix) to verify the anchored regex rejects it.
 # CODEX_GATE_STUB_VERDICT_PREFIX_ONLY=1: write an invalid prefix verdict instead of a valid one.
@@ -3034,6 +3062,17 @@ test_sequential_timeout_preserves_partial_result() {
     fail "$name" "expected two completed reviewer protocol blocks, got $protocol_count"
     return
   }
+  local qa_evidence
+  qa_evidence="$(find "$repo/.gate-results" -name 'qa-execution-*.json' -print -quit)"
+  if [[ -s "$qa_evidence" ]] && jq -e '
+      .kind == "qa_execution_evidence_v1" and .status == "inconclusive" and
+      .host_finalization.reason == "reviewer session ended before QA evidence reached a terminal state"' \
+      "$qa_evidence" >/dev/null 2>&1; then
+    :
+  else
+    fail "$name" "timeout did not preserve a non-authorizing QA partial artifact"
+    return
+  fi
   pass "$name"
 }
 
@@ -3149,6 +3188,113 @@ test_preflight_pass_no_override() {
     return
   }
   pass "$name"
+}
+
+# Behavior: the host-owned QA helper writes a checkpoint before it runs a
+# supplemental command, so a later timeout has a non-empty evidence artifact.
+# Steps: complete a normal qa-tester gate, invoke its generated helper, and
+# assert the checkpoint, command outcome, and log digest are persisted.
+test_qa_execution_helper_flushes_checkpoint_before_command() {
+  local name="qa-execution-helper-flushes-checkpoint-before-command"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home repo runner out err result qa_evidence qa_helper qa_log expected_identity code
+  home="$dir/home"; repo="$dir/repo"; runner="$dir/runner"; out="$dir/out"; err="$dir/err"; result="$dir/result.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --test-cmd "exit 0" --output "$result"
+  code=$?
+  set -e
+  [[ "$code" -eq 0 ]] || { fail "$name" "seed gate failed: $(cat "$err")"; return; }
+  qa_evidence="$(find "$repo/.gate-results" -name 'qa-execution-*.json' -print -quit)"
+  qa_helper="$(find "$repo/.gate-results" -name 'qa-test-attempt-*.sh' -print -quit)"
+  qa_log="$repo/.gate-results/qa-test-attempt-probe.log"
+  expected_identity="sha256:$(printf '%q\037' bash -c 'printf qa-wrapper-probe' | sha256sum | awk '{print $1}')"
+  if [[ -x "$qa_helper" ]] \
+      && "$qa_helper" --checkpoint "$qa_evidence" --log "$qa_log" --timeout 5 -- \
+        bash -c 'printf qa-wrapper-probe' \
+      && jq -e --arg expected_identity "$expected_identity" '.kind == "qa_execution_evidence_v1" and .status == "completed" and
+        .checkpoint.status == "present" and .checkpoint.matrix_audit == "completed" and
+        .checkpoint.command_identity == $expected_identity and
+        .attempt.status == "pass" and (.attempt.log.sha256 | test("^[a-f0-9]{64}$"))' \
+        "$qa_evidence" >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name" "QA helper did not persist checkpoint-before-execution evidence"
+  fi
+}
+
+# Behavior: terminal nonzero and timeout supplemental QA commands must retain
+# the checkpoint, command outcome, exit status, and log digest.  These paths
+# are non-authorizing inconclusive evidence, not silently discarded work.
+test_qa_execution_helper_records_nonzero_and_timeout() {
+  local name="qa-execution-helper-records-nonzero-and-timeout"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home repo runner out err result qa_evidence qa_helper qa_log code
+  home="$dir/home"; repo="$dir/repo"; runner="$dir/runner"; out="$dir/out"; err="$dir/err"; result="$dir/result.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --test-cmd "exit 0" --output "$result"
+  code=$?
+  set -e
+  [[ "$code" -eq 0 ]] || { fail "$name" "seed gate failed: $(cat "$err")"; return; }
+  qa_evidence="$(find "$repo/.gate-results" -name 'qa-execution-*.json' -print -quit)"
+  qa_helper="$(find "$repo/.gate-results" -name 'qa-test-attempt-*.sh' -print -quit)"
+  qa_log="$repo/.gate-results/qa-test-attempt-terminal.log"
+  set +e
+  "$qa_helper" --checkpoint "$qa_evidence" --log "$qa_log" --timeout 5 -- bash -c 'exit 7'
+  code=$?
+  set -e
+  if [[ "$code" -ne 7 ]] || ! jq -e '.status == "inconclusive" and .checkpoint.status == "present" and .attempt.status == "nonzero" and .attempt.exit_status == 7 and (.attempt.log.sha256 | test("^[a-f0-9]{64}$"))' "$qa_evidence" >/dev/null 2>&1; then
+    fail "$name" "nonzero QA attempt was not durably recorded"
+    return
+  fi
+  set +e
+  "$qa_helper" --checkpoint "$qa_evidence" --log "$qa_log" --timeout 1 -- bash -c 'sleep 2'
+  code=$?
+  set -e
+  if [[ "$code" -eq 124 ]] && jq -e '.status == "inconclusive" and .checkpoint.status == "present" and .attempt.status == "timeout" and .attempt.exit_status == 124 and (.attempt.log.sha256 | test("^[a-f0-9]{64}$"))' "$qa_evidence" >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name" "timeout QA attempt was not durably recorded: code=$code"
+  fi
+}
+
+# Behavior: a running QA checkpoint proves supplemental execution began, even
+# if its helper is killed before the terminal update and every reviewer result
+# is otherwise valid. The host finalizer must preserve it as inconclusive.
+# Steps: make the qa-tester fixture kill its generated helper after its early
+# checkpoint, then complete a parallel gate normally. Assert the final artifact
+# is inconclusive rather than not_run and keeps the recorded checkpoint.
+test_qa_execution_running_checkpoint_finalizes_inconclusive() {
+  local name="qa-execution-running-checkpoint-finalizes-inconclusive"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home repo runner out err result qa_evidence code
+  home="$dir/home"; repo="$dir/repo"; runner="$dir/runner"; out="$dir/out"; err="$dir/err"; result="$dir/result.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  set +e
+  CODEX_GATE_STUB_QA_ABORT_AFTER_CHECKPOINT=1 run_gate "$home" "$runner" "$repo" "$out" "$err" \
+    --base main --mode parallel --test-cmd "exit 0" --output "$result"
+  code=$?
+  set -e
+  qa_evidence="$(find "$repo/.gate-results" -name 'qa-execution-*.json' -print -quit)"
+  if [[ "$code" -eq 0 ]] && jq -e '
+      .status == "inconclusive" and .checkpoint.status == "present" and
+      .attempt.status == "running" and
+      .host_finalization.reason == "QA test attempt ended before it reached a terminal state"' \
+      "$qa_evidence" >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name" "running QA checkpoint was not preserved as inconclusive: code=$code err=$(cat "$err" 2>/dev/null)"
+  fi
 }
 
 # Behavior: an opaque nonzero --test-cmd short-circuits the gate to
@@ -3712,6 +3858,174 @@ PRODUCER
   assert_file_contains "$name" "$brief" "Do not rerun a suite with current PASS evidence" || return
   assert_file_contains "$name" "$brief" "Duplicate suite count" || return
   assert_file_contains "$name" "$result" "test_evidence_sha256:" || return
+  pass "$name"
+}
+
+# Behavior: locally supplied external evidence is never an authorization
+# boundary.  A caller-controlled JSON file and its caller-supplied digest do
+# not prove who ran the test, so the retired options must fail before any
+# reviewer dispatch occurs.
+test_preflight_rejects_external_evidence_options() {
+  local name="preflight-rejects-external-evidence-options"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home repo runner out err code
+  home="$dir/home"; repo="$dir/repo"; runner="$dir/runner"; out="$dir/out"; err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --test-cmd "exit 0" \
+    --external-test-evidence "$dir/self-authored.json" --output "$dir/result.md"
+  code=$?
+  set -e
+  if [[ "$code" -eq 2 ]] && grep -Fq 'Unknown arg: --external-test-evidence' "$err" \
+      && ! grep -Fq 'DISPATCH_STUB' "$out"; then
+    pass "$name"
+  else
+    fail "$name" "external evidence option was accepted: code=$code err=$(cat "$err")"
+  fi
+}
+
+# Historical fixtures retained as a migration reference only.  The option is
+# intentionally no longer invoked by the suite above.
+# Behavior: historical external-evidence fixtures retain their original
+# subject-and-command binding assertions for migration-reference coverage.
+test_preflight_external_structured_recovery_is_subject_and_command_bound() {
+  local name="preflight-external-structured-recovery-is-subject-and-command-bound"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home repo runner out err result recovered_result external producer sha code
+  home="$dir/home"; repo="$dir/repo"; runner="$dir/runner"; out="$dir/out"; err="$dir/err"
+  result="$dir/result.md"; recovered_result="$dir/recovered-result.md"; external="$dir/external-result.json"; producer="$repo/external-producer.sh"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  cat > "$producer" <<'PRODUCER'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ ! -e .gate-results/recovery-fail ]] || exit 1
+repo="$PWD"
+repo_id="$(printf '%s\n\n' "$repo" | sha256sum | awk '{print $1}')"
+jq -n --arg repo "$repo" --arg repo_id "$repo_id" \
+  --arg base "$PM_DISPATCH_PREFLIGHT_BASE_COMMIT" --arg head "$PM_DISPATCH_PREFLIGHT_HEAD_COMMIT" \
+  --arg fp "$PM_DISPATCH_PREFLIGHT_SUBJECT_FINGERPRINT" \
+  --arg command_identity "$PM_DISPATCH_TEST_COMMAND_IDENTITY" '
+  {kind:"pm_test_result_v2",schema_version:2,repo_root:$repo,repo_identity:$repo_id,
+   base_ref:"main",base_commit:$base,head_commit:$head,contract:"iteration",authoritative:false,
+   status:"pass",exit_code:0,started_at:"2026-01-01T00:00:00Z",finished_at:"2026-01-01T00:00:01Z",
+   tree_fingerprint:$fp,observed_tree_fingerprint_after:$fp,
+   runner_contract_hash:("a" * 64),command_identity:$command_identity,
+   selection_mode:"explicit-paths",changed_paths:["README.md"],suite_set:["fixture"],requested_skips:[],
+   suite_results:[{name:"fixture",status:"pass",exit_code:0,duration_seconds:1}],
+   aggregate:{status:"pass",selected:1,passed:1,failed:0,timed_out:0,skipped:0}}' > "$EXTERNAL_RESULT"
+PRODUCER
+  chmod +x "$producer"
+  set +e
+  EXTERNAL_RESULT="$external" run_gate "$home" "$runner" "$repo" "$out" "$err" \
+    --base main --test-cmd "./external-producer.sh" --output "$result"
+  code=$?
+  set -e
+  [[ "$code" -eq 0 && -s "$external" ]] || { fail "$name" "failed to seed external evidence: code=$code err=$(cat "$err")"; return; }
+  sha="$(sha256sum "$external" | awk '{print $1}')"
+  mkdir -p "$repo/.gate-results"
+  : > "$repo/.gate-results/recovery-fail"
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main \
+    --test-cmd "./external-producer.sh" --external-test-evidence "$external" \
+    --external-test-evidence-sha256 "$sha" --output "$recovered_result"
+  code=$?
+  set -e
+  local evidence
+  evidence="$(find "$repo/.gate-results" -name 'preflight-evidence-*.json' -printf '%T@ %p\n' | sort -nr | awk 'NR == 1 { print $2 }')"
+  if [[ "$code" -eq 0 ]] && grep -Fq "accepted subject-bound external evidence" "$err" \
+      && jq -e '.status == "pass" and .coverage.type == "structured" and .coverage.artifact_path == $path' \
+        --arg path "$external" "$evidence" >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name" "external recovery was not accepted: code=$code err=$(cat "$err") evidence=$(cat "$external")"
+  fi
+}
+
+# Behavior: every external-recovery trust binding fails closed independently.
+# Steps: seed one valid external pm_test_result_v2, force the local producer to
+# fail opaquely, then separately corrupt the caller digest, command identity,
+# subject fingerprint, aggregate, terminal status, and file type.
+# Assert each attempt remains INCOMPLETE and never reaches reviewer dispatch.
+test_preflight_external_structured_recovery_rejects_invalid_evidence() {
+  local name="preflight-external-structured-recovery-rejects-invalid-evidence"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home repo runner out err external producer code
+  home="$dir/home"; repo="$dir/repo"; runner="$dir/runner"; out="$dir/out"; err="$dir/err"
+  external="$dir/external-result.json"; producer="$repo/external-producer.sh"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  cat > "$producer" <<'PRODUCER'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ ! -e .gate-results/recovery-fail ]] || exit 1
+repo="$PWD"
+repo_id="$(printf '%s\n\n' "$repo" | sha256sum | awk '{print $1}')"
+jq -n --arg repo "$repo" --arg repo_id "$repo_id" \
+  --arg base "$PM_DISPATCH_PREFLIGHT_BASE_COMMIT" --arg head "$PM_DISPATCH_PREFLIGHT_HEAD_COMMIT" \
+  --arg fp "$PM_DISPATCH_PREFLIGHT_SUBJECT_FINGERPRINT" \
+  --arg command_identity "$PM_DISPATCH_TEST_COMMAND_IDENTITY" '
+  {kind:"pm_test_result_v2",schema_version:2,repo_root:$repo,repo_identity:$repo_id,
+   base_ref:"main",base_commit:$base,head_commit:$head,contract:"iteration",authoritative:false,
+   status:"pass",exit_code:0,started_at:"2026-01-01T00:00:00Z",finished_at:"2026-01-01T00:00:01Z",
+   tree_fingerprint:$fp,observed_tree_fingerprint_after:$fp,
+   runner_contract_hash:("a" * 64),command_identity:$command_identity,
+   selection_mode:"explicit-paths",changed_paths:["README.md"],suite_set:["fixture"],requested_skips:[],
+   suite_results:[{name:"fixture",status:"pass",exit_code:0,duration_seconds:1}],
+   aggregate:{status:"pass",selected:1,passed:1,failed:0,timed_out:0,skipped:0}}' > "$EXTERNAL_RESULT"
+PRODUCER
+  chmod +x "$producer"
+  set +e
+  EXTERNAL_RESULT="$external" run_gate "$home" "$runner" "$repo" "$out" "$err" \
+    --base main --test-cmd "./external-producer.sh" --output "$dir/seed-result.md"
+  code=$?
+  set -e
+  [[ "$code" -eq 0 && -s "$external" ]] || {
+    fail "$name" "failed to seed external evidence: code=$code err=$(cat "$err")"; return; }
+  mkdir -p "$repo/.gate-results"
+  : > "$repo/.gate-results/recovery-fail"
+
+  run_invalid_recovery() {
+    local label="$1" candidate="$2" supplied_sha="$3" invalid_result
+    invalid_result="$dir/${label}.md"
+    set +e
+    run_gate "$home" "$runner" "$repo" "$out" "$err" --base main \
+      --test-cmd "./external-producer.sh" --external-test-evidence "$candidate" \
+      --external-test-evidence-sha256 "$supplied_sha" --output "$invalid_result"
+    code=$?
+    set -e
+    [[ "$code" -eq 3 ]] \
+      && grep -Fq "Final: INCOMPLETE" "$invalid_result" \
+      && ! grep -Fq "accepted subject-bound external evidence" "$err" \
+      && ! grep -Fq "DISPATCH_STUB" "$out"
+  }
+
+  local candidate sha
+  candidate="$dir/digest-mismatch.json"; cp "$external" "$candidate"
+  run_invalid_recovery digest-mismatch "$candidate" "$(printf '0%.0s' {1..64})" || {
+    fail "$name" "digest mismatch authorized recovery"; return; }
+  candidate="$dir/command-mismatch.json"; jq '.command_identity = "sha256:" + ("b" * 64)' "$external" > "$candidate"
+  sha="$(sha256sum "$candidate" | awk '{print $1}')"
+  run_invalid_recovery command-mismatch "$candidate" "$sha" || { fail "$name" "command mismatch authorized recovery"; return; }
+  candidate="$dir/subject-mismatch.json"; jq '.tree_fingerprint = ("c" * 64) | .observed_tree_fingerprint_after = ("c" * 64)' "$external" > "$candidate"
+  sha="$(sha256sum "$candidate" | awk '{print $1}')"
+  run_invalid_recovery subject-mismatch "$candidate" "$sha" || { fail "$name" "subject mismatch authorized recovery"; return; }
+  candidate="$dir/aggregate-mismatch.json"; jq '.aggregate.passed = 0' "$external" > "$candidate"
+  sha="$(sha256sum "$candidate" | awk '{print $1}')"
+  run_invalid_recovery aggregate-mismatch "$candidate" "$sha" || { fail "$name" "aggregate mismatch authorized recovery"; return; }
+  candidate="$dir/status-mismatch.json"; jq '.status = "timeout" | .aggregate.status = "timeout" | .aggregate.passed = 0 | .aggregate.timed_out = 1 | .suite_results[0].status = "timeout"' "$external" > "$candidate"
+  sha="$(sha256sum "$candidate" | awk '{print $1}')"
+  run_invalid_recovery status-mismatch "$candidate" "$sha" || { fail "$name" "non-authorizing status authorized recovery"; return; }
+  candidate="$dir/symlink-evidence.json"; ln -s "$external" "$candidate"
+  sha="$(sha256sum "$external" | awk '{print $1}')"
+  run_invalid_recovery symlink-evidence "$candidate" "$sha" || { fail "$name" "symlink evidence authorized recovery"; return; }
   pass "$name"
 }
 
@@ -5741,6 +6055,9 @@ run_test test_qa_rules_dir_resolved_and_exported
 run_test test_qa_rules_dir_absent_stays_unset
 run_test test_qa_rules_dir_present_but_reviewer_reports_missing_gets_distinct_diagnostic
 run_test test_preflight_pass_no_override
+run_test test_qa_execution_helper_flushes_checkpoint_before_command
+run_test test_qa_execution_helper_records_nonzero_and_timeout
+run_test test_qa_execution_running_checkpoint_finalizes_inconclusive
 run_test test_preflight_fail_short_circuits_without_dispatch
 run_test test_preflight_fail_log_excerpt_is_redacted_not_empty
 run_test test_preflight_fail_result_preserves_frontmatter_body_parity
@@ -5758,6 +6075,7 @@ run_test test_preflight_structured_test_failure_is_nogo
 run_test test_preflight_artifact_tamper_aborts_gate
 run_test test_scope_manifest_tamper_aborts_gate
 run_test test_preflight_structured_result_is_reused_in_brief
+run_test test_preflight_rejects_external_evidence_options
 run_test test_parallel_frontmatter_parity_mismatch_aborts_gate
 run_test test_prompt_injection_detected
 run_test test_block_soft_verdict_is_no_go

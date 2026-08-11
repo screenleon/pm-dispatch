@@ -100,7 +100,7 @@ pm_test_write_result() {
   local exit_code="$6" started="$7" finished="$8" before="$9" after="${10}"
   local contract_hash="${11}" selection_mode="${12}" changed_json="${13}"
   local suite_json="${14}" skips_json="${15}" suite_results_json="${16}" base_ref="${17}"
-  local repo_identity head_commit base_commit aggregate_json
+  local repo_identity head_commit base_commit aggregate_json command_identity
   local dir tmp
   repo_identity="$(pm_test_repo_identity "$repo")" || return 2
   head_commit="$(git -C "$repo" rev-parse HEAD 2>/dev/null || true)"
@@ -114,6 +114,11 @@ pm_test_write_result() {
      failed:([$results[]|select(.status=="fail")]|length),
      timed_out:([$results[]|select(.status=="timeout")]|length),
      skipped:([$results[]|select(.status=="skip")]|length)}')" || return 2
+  command_identity="${PM_DISPATCH_TEST_COMMAND_IDENTITY:-}"
+  if [[ -n "$command_identity" && ! "$command_identity" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+    printf 'pm-test-result: invalid PM_DISPATCH_TEST_COMMAND_IDENTITY\n' >&2
+    return 2
+  fi
   dir="$(dirname "$file")"
   mkdir -p "$dir" || return 2
   tmp="$(mktemp "$dir/.pm-test-result.XXXXXX")" || return 2
@@ -134,6 +139,7 @@ pm_test_write_result() {
     --arg tree_fingerprint "$before" \
     --arg observed_tree_fingerprint_after "$after" \
     --arg runner_contract_hash "$contract_hash" \
+    --arg command_identity "$command_identity" \
     --arg selection_mode "$selection_mode" \
     --argjson changed_paths "$changed_json" \
     --argjson suite_set "$suite_json" \
@@ -148,7 +154,9 @@ pm_test_write_result() {
       started_at:$started_at,finished_at:$finished_at,
       tree_fingerprint:$tree_fingerprint,
       observed_tree_fingerprint_after:$observed_tree_fingerprint_after,
-      runner_contract_hash:$runner_contract_hash,selection_mode:$selection_mode,
+      runner_contract_hash:$runner_contract_hash,
+      command_identity:(if $command_identity=="" then null else $command_identity end),
+      selection_mode:$selection_mode,
       changed_paths:$changed_paths,suite_set:$suite_set,requested_skips:$requested_skips,
       suite_results:$suite_results,aggregate:$aggregate}' > "$tmp" || { rm -f "$tmp"; return 2; }
   chmod 0600 "$tmp" 2>/dev/null || true

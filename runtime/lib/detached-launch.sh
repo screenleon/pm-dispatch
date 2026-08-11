@@ -91,6 +91,19 @@ detached_launch_sentinel_path() {
   printf '/tmp/%s-sentinel-%s-%s' "$prefix" "$id" "$nonce"
 }
 
+# Gate lifecycle sentinels are control-plane evidence, not workspace artifacts.
+# Keep them beside the mode-700 per-user nonce key rather than in shared /tmp:
+# tmpwatch and another successful waiter must not turn an already terminal gate
+# into an unverifiable one.  The namespace is also part of the path so the gate
+# and dispatch lifecycles remain disjoint.
+detached_launch_private_sentinel_path() {
+  local namespace="${1:?namespace required}" prefix="${2:?prefix required}"
+  local id="${3:?id required}" nonce="${4:?nonce required}" key_file key_dir
+  key_file="$(detached_launch_key_file "$namespace" "$id")" || return 1
+  key_dir="$(dirname -- "$key_file")" || return 1
+  printf '%s/.%s-sentinel-%s-%s' "$key_dir" "$prefix" "$id" "$nonce"
+}
+
 # Launch <script_path> [args...] detached via setsid+nohup (falling back to
 # nohup+disown when setsid is unavailable). stdout+stderr go to <log_file>;
 # if <pid_file> is non-empty, the backgrounded PID is recorded there.

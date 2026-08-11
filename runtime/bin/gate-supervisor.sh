@@ -41,14 +41,13 @@ _terminal_written=false
 
 gate_id=""
 
-# Writes the authoritative sentinel /tmp/pm-gate-sentinel-<gate_id>-<nonce> that
-# `pmctl gate wait` polls for. Only written when gate_id/nonce are both known
-# and well-formed, mirroring dispatch-supervisor.sh's _write_sentinel.
+# Writes the authoritative per-user private sentinel that `pmctl gate wait`
+# polls for. Only written when gate_id/nonce are both known and well-formed.
 _write_sentinel() {
   local _state="${1:-failed}" _rc="${2:-2}" _result="${3:-}"
   if [[ "$gate_id" =~ ^gate-[0-9]{8}-[0-9]{6}-[A-Za-z0-9]{6,}$ ]] && [[ -n "$_sentinel_nonce" ]]; then
     local _sentinel_path
-    _sentinel_path="$(detached_launch_sentinel_path "pm-gate" "$gate_id" "$_sentinel_nonce")"
+    _sentinel_path="$(detached_launch_private_sentinel_path "pm-gate-dispatch" "pm-gate" "$gate_id" "$_sentinel_nonce")"
     local -a _pairs=("final_state=$_state" "exit_code=$_rc")
     [[ -n "$_result" ]] && _pairs+=("result_file=$_result")
     [[ -n "${PM_GATE_PARENT_OPERATION:-}" ]] && _pairs+=("parent_operation=$PM_GATE_PARENT_OPERATION")
@@ -84,7 +83,7 @@ _write_ready() {
   _pid="$(printf '%s\n' "$_identity" | grep -m1 '^pid=' | cut -d= -f2-)" || return 1
   _starttime="$(printf '%s\n' "$_identity" | grep -m1 '^starttime=' | cut -d= -f2-)" || return 1
   [[ "$_pid" == "$$" && -n "$_starttime" ]] || return 1
-  _ready_path="$(detached_launch_sentinel_path "pm-gate-ready" "$gate_id" "$_sentinel_nonce")"
+  _ready_path="$(detached_launch_private_sentinel_path "pm-gate-dispatch" "pm-gate-ready" "$gate_id" "$_sentinel_nonce")"
   detached_launch_write_sentinel "$_ready_path" "state=ready" "pid=$_pid" "starttime=$_starttime"
 }
 
