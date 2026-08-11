@@ -47,6 +47,8 @@ CODEX_GATE_STUB_*	CODEX_GATE_STUB_CONFLICTING_VERDICT	tests/shell/test-pr-gate.s
 CODEX_GATE_STUB_*	CODEX_GATE_STUB_CROSS_TAMPER_REVIEWER	tests/shell/test-pr-gate.sh	test
 CODEX_GATE_STUB_*	CODEX_GATE_STUB_CROSS_TAMPER_VICTIM	tests/shell/test-pr-gate.sh	test
 CODEX_GATE_STUB_*	CODEX_GATE_STUB_DUPLICATE_HEADING	tests/shell/test-pr-gate.sh	test
+CODEX_GATE_STUB_*	CODEX_GATE_STUB_FAIL_ONLY_FIRST	tests/shell/test-pr-gate.sh	test
+CODEX_GATE_STUB_*	CODEX_GATE_STUB_FAIL_REVIEWER	tests/shell/test-pr-gate.sh	test
 CODEX_GATE_STUB_*	CODEX_GATE_STUB_FRONTMATTER_FINAL	tests/shell/test-pr-gate.sh	test
 CODEX_GATE_STUB_*	CODEX_GATE_STUB_FRONTMATTER_OPENING	tests/shell/test-pr-gate.sh	test
 CODEX_GATE_STUB_*	CODEX_GATE_STUB_HEADER_ONLY_VERDICT	tests/shell/test-pr-gate.sh	test
@@ -62,6 +64,10 @@ CODEX_GATE_STUB_*	CODEX_GATE_STUB_SYNTHESIS_EXTRA_FINAL	tests/shell/test-pr-gate
 CODEX_GATE_STUB_*	CODEX_GATE_STUB_SYNTHESIS_FINAL	tests/shell/test-pr-gate.sh	test
 CODEX_GATE_STUB_*	CODEX_GATE_STUB_SYNTHESIS_INJECT_FILE	tests/shell/test-pr-gate.sh	test
 CODEX_GATE_STUB_*	CODEX_GATE_STUB_SYNTHESIS_MODE	tests/shell/test-pr-gate.sh	test
+CODEX_GATE_STUB_*	CODEX_GATE_STUB_SYNTHESIS_PROTOCOL_MUTATION	tests/lib/test-pr-gate-fixture.sh	test
+CODEX_GATE_STUB_*	CODEX_GATE_STUB_SYNTHESIS_PROTOCOL_MUTATION	tests/shell/test-pr-gate.sh	test
+CODEX_GATE_STUB_*	CODEX_GATE_STUB_SYNTHESIS_PROTOCOL_MUTATION_ONLY_FIRST	tests/lib/test-pr-gate-fixture.sh	test
+CODEX_GATE_STUB_*	CODEX_GATE_STUB_SYNTHESIS_PROTOCOL_MUTATION_ONLY_FIRST	tests/shell/test-pr-gate.sh	test
 CODEX_GATE_STUB_*	CODEX_GATE_STUB_SYNTHESIS_REVIEWER_SECTION	tests/shell/test-pr-gate.sh	test
 CODEX_GATE_STUB_*	CODEX_GATE_STUB_SYNTHESIS_TAMPER_ARTIFACT	tests/shell/test-pr-gate.sh	test
 CODEX_GATE_STUB_*	CODEX_GATE_STUB_TAMPER_PREFLIGHT	tests/shell/test-pr-gate.sh	test
@@ -377,6 +383,7 @@ TMPDIR	TMPDIR	runtime/lib/pmctl-artifacts.sh	production
 TMPDIR	TMPDIR	runtime/lib/pmctl-gate.sh	production
 TMPDIR	TMPDIR	runtime/lib/pmctl-pm.sh	production
 TMPDIR	TMPDIR	runtime/lib/portable.sh	production
+TMPDIR	TMPDIR	tools/eval/gate-test-gap-live-eval.sh	production
 XAI_API_KEY	XAI_API_KEY	hosts/grok/lib/doctor.sh	production
 XAI_API_KEY	XAI_API_KEY	runtime/bin/doctor.sh	production
 XDG_CONFIG_HOME	XDG_CONFIG_HOME	hosts/opencode/lib/path-resolver.sh	production

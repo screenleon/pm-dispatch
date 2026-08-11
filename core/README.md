@@ -28,8 +28,14 @@ Gate assurance definitions are split deliberately:
   truncation rather than claiming a complete call graph. Current producers also
   index allowed evidence paths with snapshot line counts and content digests.
 - `schema/gate-reviewer-result.schema.json` defines the selected-reviewer
-  coverage checklist and actionable finding contract. Its JSON verdict is the
-  machine source of truth; Markdown headings are presentation only.
+  coverage checklist, actionable finding contract, and optional backward-
+  compatible test-gap matrix shape. Current `pr_gate_result_v5` producers
+  require the matrix; historical v3/v4 artifacts remain readable. Its JSON
+  verdict is the machine source of truth; Markdown headings are presentation
+  only.
+- `schema/gate-synthesis-result.schema.json` defines reviewer finding/coverage
+  parity plus the CC-521 test-gap union, caution arrays, and focused/manual/full
+  verification plan used by current v5 results.
 - `schema/gate-verification.schema.json` defines the shared three-axis
   assessment returned to gate consumers.
 

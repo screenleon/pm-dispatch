@@ -98,6 +98,33 @@ pr_gate_fixture_write_reviewer_protocol() {
         reason:"Fixture examined this declared surface."
       })),
       findings:$findings,
+      test_gaps:[(if ($findings | length) > 0 then {
+        id:($reviewer + "-TG001"),
+        reviewer:$reviewer,
+        status:"gap",
+        affected_behavior:$findings[0].affected_behavior,
+        contract:"The changed behavior must fail under a focused regression mutation.",
+        existing_evidence:[{path:$evidence_path,line:1,symbol:null}],
+        coverage_dimensions:["negative","regression"],
+        missing_layer:"integration",
+        scenario:"Exercise the changed behavior under the recorded failure mode.",
+        oracle:"The focused regression observes the expected contract outcome.",
+        failure_signal:$findings[0].failure_mode,
+        suggested_command:"bash tests/bin/run-tests.sh --path tests/shell/test-pr-gate.sh"
+      } else {
+        id:($reviewer + "-TG001"),
+        reviewer:$reviewer,
+        status:"no_gap",
+        affected_behavior:"The fixture-reviewed behavior has sufficient regression evidence.",
+        contract:"The declared behavior remains covered by the focused fixture.",
+        existing_evidence:[{path:$evidence_path,line:1,symbol:null}],
+        coverage_dimensions:["happy","boundary","negative","regression"],
+        missing_layer:"none",
+        scenario:null,
+        oracle:null,
+        failure_signal:null,
+        suggested_command:null
+      } end)],
       verdict:$verdict,
       rationale:"Fixture reviewer completed every declared coverage surface."
     }
@@ -139,6 +166,27 @@ pr_gate_fixture_write_reviewer_protocol() {
       elif $mutation == "qa-rules-dir-missing" and $reviewer == "qa-tester"
       then .findings[0].affected_behavior =
         "QA_RULES_DIR (qa-testing-rules/AGENT.md) could not be read; Tier 1 rules unavailable."
+        | .test_gaps[0].affected_behavior = .findings[0].affected_behavior
+      elif $mutation == "missing-test-gap" then del(.test_gaps)
+      elif $mutation == "malformed-test-gap"
+      then .test_gaps[0].coverage_dimensions = []
+      elif $mutation == "wrong-subject"
+      then .scope_manifest_sha256 = ("b" * 64)
+      elif $mutation == "test-gap"
+      then .test_gaps[0] = {
+        id:($reviewer + "-TG001"),
+        reviewer:$reviewer,
+        status:"gap",
+        affected_behavior:"The retry behavior lacks a negative-path regression.",
+        contract:"A failed first attempt is retried once and then fails closed.",
+        existing_evidence:[{path:$evidence_path,line:1,symbol:null}],
+        coverage_dimensions:["negative","regression"],
+        missing_layer:"integration",
+        scenario:"The first protocol artifact is malformed and the corrective attempt is valid.",
+        oracle:"Only the failed reviewer is retried and synthesis receives the corrected row.",
+        failure_signal:"The gate aborts early or retries an already-valid reviewer.",
+        suggested_command:"bash tests/bin/run-tests.sh --path tests/shell/test-pr-gate.sh"
+      }
       else .
       end
   ' | {
@@ -184,6 +232,7 @@ pr_gate_fixture_write_synthesis_protocol() {
       }
     ]) as $coverage |
     ([$reviewers[].findings[]] | sort_by(.id)) as $findings |
+    ([$reviewers[].test_gaps[]] | sort_by(.id)) as $test_gaps |
     ($findings | to_entries | map(
       .value + {
         root_cause_group_id:rcg(.key + 1),
@@ -227,6 +276,15 @@ pr_gate_fixture_write_synthesis_protocol() {
       },
       cautions:($findings |
         map(select(.origin == "caution") | .id)),
+      test_gap_matrix:$test_gaps,
+      operational_cautions:[],
+      user_cautions:[],
+      verification_plan:{
+        focused:($test_gaps |
+          map(select(.status == "gap") | .suggested_command) | unique | sort),
+        manual:[],
+        full:["bash tests/bin/run-tests.sh"]
+      },
       remediation_seed:{
         kind:"remediation_closure_v1",
         schema_version:1,
@@ -242,6 +300,27 @@ pr_gate_fixture_write_synthesis_protocol() {
       }
     }
   ' "$reviewer_documents" > "$synthesis_document"
+  if [[ -n "${CODEX_GATE_STUB_SYNTHESIS_PROTOCOL_MUTATION:-}" ]]; then
+    local apply_mutation=true mutated_document
+    if [[ -n "${CODEX_GATE_STUB_SYNTHESIS_PROTOCOL_MUTATION_ONLY_FIRST:-}" ]] \
+        && grep -q '^correction_retry:' "$brief_file"; then
+      apply_mutation=false
+    fi
+    if [[ "$apply_mutation" == true ]]; then
+      mutated_document="$(mktemp "${TMPDIR:-/tmp}/gate-fixture-synthesis-mutated.XXXXXX")"
+      case "$CODEX_GATE_STUB_SYNTHESIS_PROTOCOL_MUTATION" in
+        drop-test-gap-row)
+          jq '.test_gap_matrix = .test_gap_matrix[1:]' \
+            "$synthesis_document" > "$mutated_document"
+          mv -- "$mutated_document" "$synthesis_document"
+          ;;
+        malformed-json)
+          printf '{"kind":\n' > "$synthesis_document"
+          rm -f -- "$mutated_document"
+          ;;
+      esac
+    fi
+  fi
   {
     printf '\n```synthesis_result_v1\n'
     cat "$synthesis_document"
@@ -249,6 +328,9 @@ pr_gate_fixture_write_synthesis_protocol() {
     printf '## Must-Fix Order\nnone\n\n'
     printf '## Advisory and Cautions\nnone\n\n'
     printf '## Coverage Gaps and Uncertainties\nnone\n\n'
+    printf '## Test Coverage to Add or Strengthen\nnone\n\n'
+    printf '## Operational and User Cautions\nnone\n\n'
+    printf '## Post-Fix Verification Plan\nfocused/manual/full\n\n'
     printf '## Recommended Verification\nnone\n'
   } >> "$output_path"
   rm -f -- "$reviewer_documents" "$synthesis_document"

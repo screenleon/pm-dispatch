@@ -1498,6 +1498,20 @@ _gate_reviewer_result_valid_instance() {
         minimum_fix_boundary:"Reject the malformed reviewer result before synthesis.",
         verification_expectation:"Run the malformed-protocol fixture."
       }],
+      test_gaps:[{
+        id:"critic-TG001",
+        reviewer:"critic",
+        status:"gap",
+        affected_behavior:"Malformed reviewer output lacks negative-path coverage.",
+        contract:"Malformed output fails closed and is retried once.",
+        existing_evidence:[{path:"runtime/bin/example.sh",line:42,symbol:null}],
+        coverage_dimensions:["negative","regression"],
+        missing_layer:"integration",
+        scenario:"The first reviewer result is malformed and the second is valid.",
+        oracle:"Only the failed reviewer is retried.",
+        failure_signal:"A valid reviewer is dispatched again.",
+        suggested_command:"bash tests/bin/run-tests.sh --path tests/shell/test-pr-gate.sh"
+      }],
       verdict:"block-soft",
       rationale:"Every declared surface was completed after recording the blocker."
     }
@@ -1626,6 +1640,21 @@ case_gate_reviewer_result_abbreviated_reviewer_id_rejected() {
   rm -f "$tmpf"
 }
 
+case_gate_reviewer_result_malformed_test_gap_rejected() {
+  local name="gate-reviewer-result: malformed test-gap row is rejected"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/gate-reviewer-result.schema.json" tmpf
+  tmpf="$(mktemp /tmp/gate-reviewer-result-test-gap-XXXXXX.json)"
+  _gate_reviewer_result_valid_instance |
+    jq '.test_gaps[0].coverage_dimensions = []' > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    fail "$name" "schema accepted an empty test-gap coverage dimension set"
+  else
+    pass "$name"
+  fi
+  rm -f "$tmpf"
+}
+
 _gate_synthesis_result_valid_instance() {
   jq -n '
     {
@@ -1677,6 +1706,25 @@ _gate_synthesis_result_valid_instance() {
       disagreements:[],
       uncertainties:{finding_ids:[],coverage_cells:[]},
       cautions:["critic-F001"],
+      test_gap_matrix:[{
+        id:"critic-TG001",reviewer:"critic",status:"gap",
+        affected_behavior:"Malformed reviewer output lacks negative-path coverage.",
+        contract:"Malformed output fails closed and is retried once.",
+        existing_evidence:[{path:"src/example.sh",line:1,symbol:null}],
+        coverage_dimensions:["negative","regression"],
+        missing_layer:"integration",
+        scenario:"The first reviewer result is malformed and the second is valid.",
+        oracle:"Only the failed reviewer is retried.",
+        failure_signal:"A valid reviewer is dispatched again.",
+        suggested_command:"bash tests/bin/run-tests.sh --path tests/shell/test-pr-gate.sh"
+      }],
+      operational_cautions:[],
+      user_cautions:[],
+      verification_plan:{
+        focused:["bash tests/bin/run-tests.sh --path tests/shell/test-pr-gate.sh"],
+        manual:[],
+        full:["bash tests/bin/run-tests.sh"]
+      },
       remediation_seed:{
         kind:"remediation_closure_v1",
         schema_version:1,
@@ -1748,6 +1796,55 @@ case_gate_synthesis_result_closed_seed_rejected() {
     jq '.remediation_seed.state = "closed"' > "$tmpf"
   if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
     fail "$name" "schema accepted a remediation seed claiming closure"
+  else
+    pass "$name"
+  fi
+  rm -f "$tmpf"
+}
+
+case_gate_synthesis_result_invalid_verification_plan_rejected() {
+  local name="gate-synthesis-result: full verification plan cannot be empty"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/gate-synthesis-result.schema.json" tmpf
+  tmpf="$(mktemp /tmp/gate-synthesis-result-plan-XXXXXX.json)"
+  _gate_synthesis_result_valid_instance |
+    jq '.verification_plan.full = []' > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    fail "$name" "schema accepted an empty full verification plan"
+  else
+    pass "$name"
+  fi
+  rm -f "$tmpf"
+}
+
+case_gate_synthesis_result_contradictory_no_gap_rejected() {
+  local name="gate-synthesis-result: no-gap row rejects gap-only fields"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/gate-synthesis-result.schema.json" tmpf
+  tmpf="$(mktemp /tmp/gate-synthesis-result-no-gap-shape-XXXXXX.json)"
+  _gate_synthesis_result_valid_instance |
+    jq '.test_gap_matrix[0].status = "no_gap"' > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    fail "$name" "schema accepted a no-gap row with a missing layer and gap-only fields"
+  else
+    pass "$name"
+  fi
+  rm -f "$tmpf"
+}
+
+case_gate_synthesis_result_incomplete_gap_rejected() {
+  local name="gate-synthesis-result: gap row requires a missing layer and execution details"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/gate-synthesis-result.schema.json" tmpf
+  tmpf="$(mktemp /tmp/gate-synthesis-result-gap-shape-XXXXXX.json)"
+  _gate_synthesis_result_valid_instance |
+    jq '.test_gap_matrix[0].missing_layer = "none" |
+      .test_gap_matrix[0].scenario = null |
+      .test_gap_matrix[0].oracle = null |
+      .test_gap_matrix[0].failure_signal = null |
+      .test_gap_matrix[0].suggested_command = null' > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    fail "$name" "schema accepted a gap row without a missing layer or execution details"
   else
     pass "$name"
   fi
@@ -1865,9 +1962,13 @@ case_gate_reviewer_result_preexisting_blocker_rejected
 case_gate_reviewer_result_omitted_unused_symbol_valid
 case_gate_reviewer_result_missing_line_and_symbol_rejected
 case_gate_reviewer_result_abbreviated_reviewer_id_rejected
+case_gate_reviewer_result_malformed_test_gap_rejected
 case_gate_synthesis_result_valid_instance
 case_gate_synthesis_result_missing_verification_rejected
 case_gate_synthesis_result_closed_seed_rejected
+case_gate_synthesis_result_invalid_verification_plan_rejected
+case_gate_synthesis_result_contradictory_no_gap_rejected
+case_gate_synthesis_result_incomplete_gap_rejected
 case_gate_policy_override_valid_instance
 case_gate_policy_override_non_user_approver_rejected
 case_gate_policy_override_extra_key_rejected

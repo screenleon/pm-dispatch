@@ -1,0 +1,33 @@
+{
+  "kind": "gate_test_gap_live_fixture_v1",
+  "schema_version": 1,
+  "fixture_id": "cc521-multi-gap-v1",
+  "purpose": "Seed independent behavior and test gaps for repeated live-model observation; this fixture is not a CI correctness oracle.",
+  "seeds": [
+    {
+      "id": "TG-SEED-TRANSPORT-EXHAUSTION",
+      "behavior": "A second transport failure must exhaust bounded recovery.",
+      "signals": ["second transport failure", "recovery exhausted", "bounded retry"]
+    },
+    {
+      "id": "TG-SEED-STALE-SUBJECT",
+      "behavior": "A changed scope digest is stale and must not be retried.",
+      "signals": ["stale subject", "scope digest mismatch", "must not retry"]
+    },
+    {
+      "id": "TG-SEED-SYNTHESIS-DROP",
+      "behavior": "Synthesis silently drops one reviewer test-gap row.",
+      "signals": ["dropped test-gap row", "test-gap parity", "silent drop"]
+    },
+    {
+      "id": "TG-SEED-CONCURRENCY",
+      "behavior": "Two reviewer attempts race to replace the same artifact.",
+      "signals": ["concurrent replacement", "artifact race", "cross-reviewer tamper"]
+    },
+    {
+      "id": "TG-SEED-ROLLBACK",
+      "behavior": "A recovered run lacks a rollback or operator recovery check.",
+      "signals": ["rollback", "operator recovery", "recovery check"]
+    }
+  ]
+}

@@ -220,8 +220,9 @@ Changes under `core/policy/` are themselves a full-tier signal with
 architecture, security, and risk coverage, so the governance tables cannot
 quietly lower their own future review floor through a small edit.
 
-After reviewer dispatch completes, the final producer writes
-`pr_gate_result_v4` Markdown plus a sibling `gate_assurance_v3` JSON envelope.
+After reviewer dispatch completes, the current producer writes
+`pr_gate_result_v5` Markdown plus a sibling `gate_assurance_v3` JSON envelope.
+Historical v4 results remain readable under the earlier synthesis contract.
 A pre-dispatch fail-fast route has no reviewer protocol and intentionally
 remains `pr_gate_result_v2`. The Markdown contains human findings and a bounded
 relative `gate_assurance` pointer; the shell-owned envelope records
@@ -280,6 +281,14 @@ source path plus line or symbol, affected behavior, failure mode, minimum fix
 boundary, and verification expectation. Pre-existing issues and cautions cannot
 be blocking.
 
+Current v5 reviewers also emit a non-empty `test_gaps` matrix. Each row binds an
+affected behavior and contract to existing evidence, applicable happy/boundary/
+negative/regression/concurrency/security/migration/rollback dimensions, a
+missing test layer, scenario, oracle, failure signal, and suggested command.
+Sufficient coverage is explicit as `no_gap` plus evidence; silence is not a
+coverage claim. Any reviewer that finds a behavior gap records it, while
+qa-tester owns the full applicable-dimension audit.
+
 Current scope manifests include a `declared-review-reference-set` index for the
 subject/base snapshots supplied to reviewers. Each entry records path, snapshot
 kind, line count, and content SHA-256. Coverage references and finding sources
@@ -316,6 +325,12 @@ original coverage statuses and finding origins. The nested
 `remediation_closure_v1` document is only a pending seed, not proof that any
 finding was fixed or that the final tree was re-reviewed.
 
+For v5, synthesis additionally copies every reviewer test-gap row into one
+parity-checked matrix, separates operational and user cautions, and publishes a
+focused/manual/full post-fix verification plan. Focused commands are derived
+exactly from gap rows, so consolidation cannot silently discard a requested
+test.
+
 The shell verifies selected/not-reviewed dimensions, coverage and finding
 parity, unique IDs, exact group membership, uncertainty/caution sets, and seed
 parity. Any silent drop, duplicate, malformed object, or missing verification
@@ -324,6 +339,20 @@ must-fix order, advisories/cautions, coverage gaps/uncertainties, and
 recommended verification without replacing the machine evidence. This proves
 union completeness relative to the emitted reviewer documents; it does not
 prove model recall or defect completeness.
+
+Parallel mode provides one bounded in-operation recovery attempt for transport,
+malformed-output, reviewer schema, and synthesis parity failures. Only failed
+reviewer roles or synthesis are re-dispatched; validated reviewer artifacts and
+the immutable subject are retained. Attempt records are written as
+`gate_protocol_attempt_v1` JSONL bound to the scope digest and subject
+fingerprint. Subject mismatch is stale and never retried, while valid analysis
+uncertainty is preserved as evidence. Sequential combined sessions remain
+fail-closed because their reviewer work is not independently addressable.
+
+Seeded multi-gap live-model runs are evaluated separately with
+`tools/eval/gate-test-gap-live-eval.sh`. The report exposes recall, range,
+variance, and optional regression observations with `correctness_gate:false`;
+it is deliberately outside deterministic CI correctness.
 
 `pmctl gate verify <result> [--cd <repo>] [--consumer <name>] [--json]`
 returns three independent axes:

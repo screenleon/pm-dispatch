@@ -52,10 +52,11 @@ Gate correctness 與 release evidence 仍必須先在 v0.11.0 關閉。
 
 ---
 
-## v0.11.0 — pre-v1 stabilization：state compatibility + release/operational evidence（暫定；未啟動）
+## v0.11.0 — pre-v1 stabilization：state compatibility + release/operational evidence（進行中）
 
-> 最後排程更新：2026-07-30（保留既有 Phase 1–9 交付歷史與 remaining scope；
-> 在後方追加 runtime authority／Gate maintainability Phase 10–12）
+> 最後排程更新：2026-08-10（保留既有 Phase 1–9 交付歷史與 remaining scope；
+> 對齊 pr:#462／#465／#469 已合併事實，並將 CC-522 剩餘範圍收斂為
+> QA execution evidence 與 external structured evidence recovery 兩個 slices）
 
 **主題**：一次消化 v1.0 前已知的 state compatibility、release/upgrade evidence 與 operational evidence 缺口。原 v0.11.0（state compatibility + writer boundary）、v0.12.0（release evidence + upgrade proof）、v0.13.0（detached recovery + operational evidence）合併為本版；其中 detached reconciliation（CC-499）已提前於 v0.10.0 出貨，不在本版 scope。Phase 10–12 追加 public contract candidate 前必須收斂的 runtime authority、Gate security 與 generated-source 邊界。
 
@@ -133,7 +134,10 @@ Gate correctness 與 release evidence 仍必須先在 v0.11.0 關閉。
 | CC-519 | selected-reviewer coverage/finding contract；sequential logical sections 與 parallel session isolation 分開 | ✅ pr:#456 |
 | CC-520 | synthesis findings-union parity、root-cause grouping、coverage matrix、remediation seed、no silent drop | ✅ pr:#460 |
 | CC-521 | actionable test-gap matrix + bounded protocol recovery；seeded live recall 僅作 quality evaluation | 🔵 |
-| CC-522 | arbitrary `--test-cmd` opaque／structured negotiation；test failure 與 timeout／environment INCOMPLETE 分流 | 🔵 |
+| CC-522 | Slice A preflight truthful classification 已交付；Slice B QA partial evidence + Slice C external recovery 待作 | ⚠️ partial pr:#462 |
+| CC-541 | host-side `QA_RULES_DIR` resolution/export + missing-source diagnostic | ✅ pr:#465 |
+| CC-543 | full runner Phase 0 structural fail-fast + `--collect-all` | ✅ pr:#465 |
+| CC-545 | evidence-reference-contract 違規 reviewer 單次修正性重派 | ✅ pr:#465 |
 
 ### Phase 9 — maintainer closure + publish authorization
 
@@ -165,6 +169,12 @@ Gate correctness 與 release evidence 仍必須先在 v0.11.0 關閉。
 | CC-525 | 修正 verifier fallback provenance 並鎖定唯一 generator | 🔵 |
 | CC-532 | 拆出 canonical Gate modules，release 時產生 standalone dist 並驗 canonical/dist parity | 🔵 |
 | CC-533 | schema-derived structural validator；手寫 verifier 只保留跨 artifact 語意 | 🔵 |
+
+### 計畫外同期 correctness hardening（已合併 main）
+
+| 交付 | 摘要 | 狀態 |
+|------|------|------|
+| PR #469 | SQLite memory usage concurrency、portable lock fencing、operation/sentinel consistency、suite temp/state isolation 與 gate readiness race hardening | ✅ |
 
 ### 待後續 / 明確排除
 

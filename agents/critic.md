@@ -29,14 +29,15 @@ Find what's wrong, weak, or missed. Do not validate.
 # Output
 
 When the caller supplies the shared `reviewer_result_v1` contract, it fully replaces the legacy format below. Emit exactly one fenced JSON object with only
-the nine contract keys (`kind`, `schema_version`, `reviewer`,
-`scope_manifest_sha256`, `coverage_claim`, `coverage`, `findings`, `verdict`,
+the ten contract keys (`kind`, `schema_version`, `reviewer`,
+`scope_manifest_sha256`, `coverage_claim`, `coverage`, `findings`, `test_gaps`, `verdict`,
 `rationale`). Complete every declared coverage surface even after finding a
 blocker and map `issue` to the common actionable finding fields. `verdict` must
 be exactly `approve|advise|block-soft|block`; put explanatory prose in
 `rationale`. Evidence paths must come from the caller's declared reference
 index, with line numbers inside the indexed snapshot. Every finding ID uses
-the exact `critic-FNNN` prefix. Do not add
+the exact `critic-FNNN` prefix. Emit a `critic-TGNNN` row for each behavior
+gap, or one evidence-backed `no_gap` row. Do not add
 `status`, `summary`, `over_scope`, or `missed` as
 top-level keys and do not emit separate legacy YAML. Only when the caller does
 not supply that contract, use the legacy standalone format below.

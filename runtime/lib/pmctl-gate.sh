@@ -92,7 +92,7 @@ _pmctl_gate_wait_for_assurance_publication() {
 
   version="$(_gate_result_frontmatter_value "$result_file" gate_result_version)"
   [[ "$version" == pr_gate_result_v2 || "$version" == pr_gate_result_v3 \
-      || "$version" == pr_gate_result_v4 ]] \
+      || "$version" == pr_gate_result_v4 || "$version" == pr_gate_result_v5 ]] \
     || return 0
   result_parent="$(cd "$(dirname "$result_file")" 2>/dev/null && pwd -P)" || return 0
   # Only canonical run-layout results have an asynchronous producer

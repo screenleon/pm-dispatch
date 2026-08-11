@@ -250,6 +250,8 @@ map_path() {
       add_pr_gate_shards; add_suite test-pr-gate-profile; behavioral=1 ;;
     tools/generate-gate-result-verifier-fallback.sh)
       add_pr_gate_shards; behavioral=1 ;;
+    tools/eval/gate-test-gap-live-eval.sh|tests/fixtures/gate-live-eval/*)
+      add_pr_gate_shards; behavioral=1 ;;
     core/policy/gate-tiers.tsv|core/policy/gate-modes.tsv|core/policy/gate-pass-kinds.tsv|core/policy/gate-policy-consumers.tsv|core/policy/gate-policy-signals.tsv)
       add_pr_gate_shards; add_suite test-pr-gate-profile; behavioral=1 ;;
     runtime/lib/pmctl-config.sh)
