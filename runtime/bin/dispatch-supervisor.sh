@@ -35,7 +35,7 @@ REPO_ROOT="$(cd "$(dirname "$_self")/../.." && pwd)"
 unset _self _dir
 # END resolve-root
 
-for _lib in pmctl-config portable runner-kind executor-router pmctl-guard dispatch-record pmctl-dispatch detached-launch; do
+for _lib in identifier-policy pmctl-config portable runner-kind executor-router pmctl-guard dispatch-record pmctl-dispatch detached-launch; do
   # shellcheck source=/dev/null
   [[ -r "$REPO_ROOT/runtime/lib/$_lib.sh" ]] && . "$REPO_ROOT/runtime/lib/$_lib.sh"
 done
@@ -56,7 +56,7 @@ unset PM_SUPERVISOR_NONCE
 # Takes final_state (ok|failed) and exit_code as arguments.
 _write_sentinel() {
   local _state="${1:-failed}" _rc="${2:-2}"
-  if [[ "${spec_run_id:-}" =~ ^run-[A-Za-z0-9]+-[A-Za-z0-9]+$ ]] \
+  if pm_identifier_run_is_valid "${spec_run_id:-}" \
      && [[ -n "${_sentinel_nonce:-}" ]]; then
     local _sentinel_path
     _sentinel_path="$(detached_launch_sentinel_path "pm-supervisor" "$spec_run_id" "$_sentinel_nonce")"
@@ -71,7 +71,7 @@ _die() {
   # has been parsed and the run_id + work_dir are valid. Skip sentinel when
   # cancel (or another terminal winner) already holds the exclusive claim.
   local _own_terminal=1
-  if [[ "${spec_run_id:-}" =~ ^run-[A-Za-z0-9]+-[A-Za-z0-9]+$ ]] \
+  if pm_identifier_run_is_valid "${spec_run_id:-}" \
     && [[ -n "${spec_work_dir:-}" ]] \
     && declare -F _pmctl_dispatch_try_terminal_claim >/dev/null 2>&1; then
     if ! _pmctl_dispatch_try_terminal_claim "$spec_work_dir" "$spec_run_id" "failed" "supervisor"; then
@@ -82,7 +82,7 @@ _die() {
   # Always attempt the observability record on preflight failure when we know
   # the work dir — even if the terminal claim was unavailable (state partition
   # missing) so humans and tests still see a failed result file.
-  if [[ "${spec_run_id:-}" =~ ^run-[A-Za-z0-9]+-[A-Za-z0-9]+$ ]] \
+  if pm_identifier_run_is_valid "${spec_run_id:-}" \
     && [[ -n "${spec_work_dir:-}" ]] \
     && declare -F dispatch_record_write >/dev/null 2>&1; then
     local _finished_ts
@@ -159,7 +159,7 @@ done < "$run_spec"
 
 # ── Validate the spec's own fields (independent of pmctl) ────────────────────
 [[ "$spec_schema" == "2" ]] || _die "unsupported run-spec schema_version: ${spec_schema:-<empty>}"
-[[ "$spec_run_id" =~ ^run-[A-Za-z0-9]+-[A-Za-z0-9]+$ ]] || _die "invalid run_id in run-spec: ${spec_run_id:-<empty>}"
+pm_identifier_run_is_valid "$spec_run_id" || _die "invalid run_id in run-spec: ${spec_run_id:-<empty>}"
 [[ -n "$spec_adapter" ]] || _die "missing adapter in run-spec"
 [[ -n "$spec_work_dir" ]] || _die "missing work_dir in run-spec"
 [[ -n "$spec_cd_arg" ]] || _die "missing cd_arg in run-spec"

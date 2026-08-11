@@ -1,5 +1,13 @@
 #!/usr/bin/env bash
 
+if ! declare -F pm_identifier_adapter_is_valid >/dev/null 2>&1; then
+  _pmctl_guard_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  # shellcheck source=runtime/lib/identifier-policy.sh
+  # shellcheck disable=SC1091
+  . "$_pmctl_guard_lib_dir/identifier-policy.sh"
+  unset _pmctl_guard_lib_dir
+fi
+
 # Executor-agnostic guard-check front-end.
 #
 # `pmctl guard check` lets ANY host — not just Claude's PreToolUse auto-hooks —
@@ -164,7 +172,7 @@ pmctl_guard_check() {
   #     accepted. A future non-codex/claude runtime must be explicitly added here.
   case "$role" in
     executor)
-      if ! [[ "$runtime" =~ ^[a-z][a-z0-9_-]*$ ]]; then
+      if ! pm_identifier_adapter_is_valid "$runtime"; then
         printf 'pmctl guard check: invalid runtime: %s (want a bare identifier ^[a-z][a-z0-9_-]*$)\n' "$runtime" >&2
         return 2
       fi

@@ -2386,8 +2386,27 @@ case_ship_operation_cli_unavailable_fallbacks() {
   if [[ "$cancel_rc" -eq 2 && "$reconcile_rc" -eq 2 && "$cancel_out" == *"ship cancel unavailable"* && "$reconcile_out" == *"ship reconcile unavailable"* ]]; then pass "$name"; else fail "$name" "cancel=$cancel_rc:$cancel_out reconcile=$reconcile_rc:$reconcile_out"; fi
 }
 
+case_ship_standalone_source_loads_identifier_policy_for_terminal_reconciliation() {
+  local name="ship tracking refresh: standalone pmctl-ship import reconciles a valid terminal operation"
+  should_run "$name" || return 0
+  local fixture="$tmp_root/ship-standalone-policy" tracking="$tmp_root/ship-standalone-policy/ship-lanes.jsonl"
+  local marker="$tmp_root/ship-standalone-policy/reconciled" status=0
+  mkdir -p "$fixture"
+  printf '%s\n' '{"ticket":"CC-9001","branch":"feat/CC-9001","path":"/tmp/ship-standalone-lane","run_id":"run-20260811T000000Z-abcdef","operation_id":"op-20260811T000000Z-a1b2c3","operation_work_dir":"/tmp","status":"dispatched"}' > "$tracking"
+  bash -c '
+    repo_root="$1"; tracking="$2"; marker="$3"
+    . "$repo_root/runtime/lib/pmctl-ship.sh"
+    _pmctl_ship_lane_status() { printf "failed\\n"; }
+    pmctl_operation_reconcile() { printf "%s\\n" "$3" > "$marker"; }
+    _pmctl_ship_lanes_tracking_refresh_inner "$repo_root" "$tracking" 1 >/dev/null
+    test "$(cat "$marker")" = "op-20260811T000000Z-a1b2c3"
+  ' _ "$REPO_ROOT" "$tracking" "$marker" || status=$?
+  if [[ "$status" -eq 0 ]]; then pass "$name"; else fail "$name" "standalone refresh did not reconcile the terminal operation"; fi
+}
+
 case_ship_operation_routes_via_cli
 case_ship_operation_cli_unavailable_fallbacks
+case_ship_standalone_source_loads_identifier_policy_for_terminal_reconciliation
 
 # Detached dispatch supervisors from the fake-codex/claude runs above can
 # still be mid-write (dispatch record, trace files) a moment after their

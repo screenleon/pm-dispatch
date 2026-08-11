@@ -19,6 +19,12 @@ done
 EXECUTOR_ROUTER_LIB_DIR="$(cd "$(dirname "$_EXECUTOR_ROUTER_SELF")" && pwd)"
 EXECUTOR_ROUTER_REPO_ROOT="$(cd "$EXECUTOR_ROUTER_LIB_DIR/../.." && pwd)"
 
+if ! declare -F pm_identifier_adapter_is_valid >/dev/null 2>&1; then
+  # shellcheck source=runtime/lib/identifier-policy.sh
+  # shellcheck disable=SC1091
+  . "$EXECUTOR_ROUTER_LIB_DIR/identifier-policy.sh"
+fi
+
 # runner-kind mapping: the single source of truth for deriving dispatch_route /
 # write_guard_mode / needs_bash_guard from an adapter's declared runner_kind.
 # bash+grep only — no shell-policy side effects, safe to import here.
@@ -38,7 +44,7 @@ _er_codex_available() {
 # path separators, '..', and leading digits/dashes, so a validated name is safe to
 # interpolate into adapters/<name>/… without traversal.
 _er_strict_name() {
-  [[ "${1-}" =~ ^[a-z][a-z0-9_-]*$ ]]
+  pm_identifier_adapter_is_valid "$@"
 }
 
 # _er_adapter_manifest <name> — print the manifest path for a validated adapter

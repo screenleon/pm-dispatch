@@ -13,26 +13,13 @@
 
 SCRIPT_DIR_SP="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Project-key hashing needs portable.sh (_portable_canonical_path,
-# _portable_sha1). Load it (guarded) so standalone callers work; state-writer.sh
+# _portable_sha1). Load it guarded so standalone callers work; state-writer.sh
 # already loads portable before sourcing this file, so the guard is a no-op
-# there. portable.sh sets shell options on source, so preserve the caller's
-# flags around the load (mirrors state-writer.sh's portable bootstrap).
+# there. portable.sh is source-safe and does not alter caller shell policy.
 if [[ "$(type -t _portable_sha1 2>/dev/null)" != function || "$(type -t _portable_canonical_path 2>/dev/null)" != function ]]; then
-  _SP_SHELL_FLAGS="$-"
-  _SP_PIPEFAIL=0
-  set -o | grep -qE '^pipefail[[:space:]]+on$' && _SP_PIPEFAIL=1
   # shellcheck source=runtime/lib/portable.sh
   # shellcheck disable=SC1091
   . "$SCRIPT_DIR_SP/portable.sh" 2>/dev/null || true
-  case "$_SP_SHELL_FLAGS" in *e*) set -e ;; *) set +e ;; esac
-  case "$_SP_SHELL_FLAGS" in *u*) set -u ;; *) set +u ;; esac
-  case "$_SP_SHELL_FLAGS" in *x*) set -x ;; *) set +x ;; esac
-  if [[ "$_SP_PIPEFAIL" -eq 1 ]]; then
-    set -o pipefail
-  else
-    set +o pipefail
-  fi
-  unset _SP_SHELL_FLAGS _SP_PIPEFAIL
 fi
 
 _sw_log_error() {

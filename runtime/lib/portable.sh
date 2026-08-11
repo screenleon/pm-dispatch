@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Cross-platform path and locking helpers for PM Dispatch shell scripts.
 
-set -euo pipefail
+# This file is a library: sourcing it must not change the caller's shell
+# policy.  Executable entry points own `set -euo pipefail`; callers that want
+# strict behavior must enable it before calling these helpers.
 
 # Public helper return-code contract:
 #   link_or_copy:

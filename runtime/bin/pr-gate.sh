@@ -4726,7 +4726,10 @@ pmctl_gate_dispatch_and_wait() {
     return "$rc"
   }
   run_id="$(printf '%s\n' "$run_id" | tail -1 | tr -d '[:space:]')"
-  if ! [[ "$run_id" =~ ^run-[A-Za-z0-9]+-[A-Za-z0-9]+$ ]]; then
+  if ! (
+    pmctl_gate_dispatch_lib_load || exit 2
+    pm_identifier_run_is_valid "$run_id"
+  ); then
     rm -f "$dispatch_brief"
     printf 'pr-gate: dispatch returned invalid run id\n' >&2
     return 2
@@ -6344,6 +6347,10 @@ printf -v REVIEWER_PROTOCOL_INSTRUCTIONS \
   '    manual|operational and non-empty scenario/oracle/failure_signal/command.' \
   '    Sufficient coverage uses no_gap, missing_layer=none, null scenario/oracle/' \
   '    failure_signal/suggested_command, and concrete existing_evidence.' \
+  '    existing_evidence MUST be a non-empty JSON array of evidence-ref objects,' \
+  '    for example [{"path":"tests/shell/test-example.sh","line":42}]; never' \
+  '    use a string or Markdown citation. Every object needs path plus line or' \
+  '    symbol, and must appear in the verified reference index.' \
   '    Every finding must have a status=gap row with the exact same' \
   '    affected_behavior so its test direction remains mechanically traceable.' \
   '  - findings is an array. Each finding requires id=<reviewer>-FNNN, reviewer,' \
@@ -6895,15 +6902,20 @@ task:
      heading is accidentally duplicated or omitted.
 
   After all reviewers, synthesize as project-pm would:
-  5. Build the deterministic finding inventory, coverage matrix, and test-gap
+  5. Before writing ANY synthesis text or fence, re-read ${OUTPUT_FILE} and verify it
+     contains exactly ${NUM_REVIEWERS} reviewer_result_v1 blocks, one for each selected
+     reviewer in the listed order. If any reviewer block is missing, append the missing
+     reviewer section first. The synthesis_result_v1 block MUST appear only after the
+     final reviewer block; never place it inside or before a reviewer section.
+  6. Build the deterministic finding inventory, coverage matrix, and test-gap
      matrix from every reviewer_result_v1 block. Preserve all IDs, rows, and
      verification expectations.
-  6. Group findings by root cause without dropping or merging stable IDs, and record
+  7. Group findings by root cause without dropping or merging stable IDs, and record
      disagreements, uncertainties, cautions, and not-reviewed dimensions.
-  7. Emit the complete synthesis_result_v1 JSON block and remediation seed.
-  8. Overall verdict = most severe individual verdict. Final GO (no blocks) /
+  8. Emit the complete synthesis_result_v1 JSON block and remediation seed.
+  9. Overall verdict = most severe individual verdict. Final GO (no blocks) /
      NO-GO (any block or block-soft), with rationale and override path if applicable.
-  9. Now that the final verdict is known: PREPEND the YAML frontmatter block to the very
+  10. Now that the final verdict is known: PREPEND the YAML frontmatter block to the very
      top of ${OUTPUT_FILE} (before the header already written in step 4), then APPEND the
      synthesis protocol block and human sections to the bottom. The frontmatter is the
      self-contained v1 staging form described above; do not add gate_assurance. Do not
