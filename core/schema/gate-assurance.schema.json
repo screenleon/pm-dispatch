@@ -166,6 +166,15 @@
             { "type": "null" },
             { "type": "string", "pattern": "^gate-assurance-[0-9]{8}-[0-9]{6}\\.attestation\\.json$" }
           ]
+        },
+        "coordinate_syntax": {
+          "type": "object",
+          "required": ["pass", "coverage"],
+          "properties": {
+            "pass": { "enum": ["default", "explicit", "targeted-shorthand", "mixed"] },
+            "coverage": { "enum": ["default", "explicit", "targeted-shorthand", "mixed"] }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false

@@ -172,8 +172,12 @@ to required coverage without automatically converting every bounded change to
   `--mode parallel` always wins; the envelope records recommendation divergence
   without treating it as a downgrade. A `full` tier does not force parallel.
 - Pass kind records whether the review is initial or a remediation-delta
-  targeted pass. `--targeted <reviewers>` requires
-  `--initial-result <path>` and is not a tier alias.
+  targeted pass. The canonical spelling is `--pass targeted --reviewers
+  <reviewers> --initial-result <path>`; it is not a tier alias. The legacy
+  `--targeted <reviewers>` shorthand expands to those same pass and coverage
+  coordinates. Mixed canonical/shorthand input is accepted only when both
+  request the same pass and reviewer set, and the assurance sidecar records
+  the spelling provenance.
 
 The generic consumer policy keeps risk-based coverage: initial passes require
 critic and QA plus signal-specific dimensions. The maintainer `/ship` initial

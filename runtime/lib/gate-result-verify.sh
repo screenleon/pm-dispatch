@@ -1853,7 +1853,15 @@ gate_assurance_verify() {
     (.dispatch | only_keys(["outcomes"])) and
     (all(.dispatch.outcomes[];
       only_keys(["role","reviewer","status","run_id","evidence_status"]))) and
-    (.provenance | only_keys(["producer","policy_source","attestation"])) and
+    (.provenance |
+      only_keys(["producer","policy_source","attestation","coordinate_syntax"])) and
+    (if .provenance.coordinate_syntax? == null then true else
+      (.provenance.coordinate_syntax | only_keys(["pass","coverage"])) and
+      (.provenance.coordinate_syntax.pass |
+        IN("default","explicit","targeted-shorthand","mixed")) and
+      (.provenance.coordinate_syntax.coverage |
+        IN("default","explicit","targeted-shorthand","mixed"))
+     end) and
     ((.kind == "gate_assurance_v2" and .schema_version == 2) or
       (.kind == "gate_assurance_v3" and .schema_version == 3)) and
     .result.final == $final and

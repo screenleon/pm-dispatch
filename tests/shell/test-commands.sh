@@ -522,7 +522,9 @@ STUB
     PR_GATE_ARGS_LOG="$args_log" PATH="$bin_dir:$PATH" bash "$snippet" > "$out" 2> "$err"
   valid_status=$?
   if [[ "$valid_status" -ne 0 ]] ||
-     ! grep -qx -- '--targeted' "$args_log" ||
+     ! grep -qx -- '--pass' "$args_log" ||
+     ! grep -qx 'targeted' "$args_log" ||
+     ! grep -qx -- '--reviewers' "$args_log" ||
      ! grep -qx 'critic' "$args_log" ||
      ! grep -qx -- '--initial-result' "$args_log" ||
      ! grep -qx '/tmp/initial.md' "$args_log" ||
@@ -530,8 +532,8 @@ STUB
      ! grep -qx 'parallel' "$args_log" ||
      ! grep -qx -- '--policy' "$args_log" ||
      ! grep -qx 'generic' "$args_log" ||
-     grep -qx -- '--reviewers' "$args_log"; then
-    fail "$name" "valid targeted invocation was not forwarded canonically"
+     grep -qx -- '--targeted' "$args_log"; then
+    fail "$name" "targeted shorthand was not expanded to canonical coordinates"
     return
   fi
 
@@ -628,7 +630,7 @@ fi
 should_run "ship: explains why detached+wait is unnecessary here" && assert_file_contains "ship: explains why detached+wait is unnecessary here" "$SHIP" "nothing else for the main thread to do while it waits" && pass "ship: explains why detached+wait is unnecessary here"
 should_run "ship: reads Final GO/NO-GO verdict" && assert_file_contains "ship: reads Final GO/NO-GO verdict" "$SHIP" "Final:" && pass "ship: reads Final GO/NO-GO verdict"
 should_run "ship: NO-GO fixes every finding not only blocking ones" && assert_file_contains "ship: NO-GO fixes every finding not only blocking ones" "$SHIP" "the blocking ones" && pass "ship: NO-GO fixes every finding not only blocking ones"
-should_run "ship: re-runs gate with explicit targeted initial reference" && assert_file_contains "ship: re-runs gate with explicit targeted initial reference" "$SHIP" "--targeted <reviewer,...>" && assert_file_contains "ship: re-runs gate with explicit targeted initial reference" "$SHIP" "--initial-result" && pass "ship: re-runs gate with explicit targeted initial reference"
+should_run "ship: re-runs gate with explicit targeted coordinates" && assert_file_contains "ship: re-runs gate with explicit targeted coordinates" "$SHIP" "--pass targeted" && assert_file_contains "ship: re-runs gate with explicit targeted coordinates" "$SHIP" "--reviewers <reviewer,...>" && assert_file_contains "ship: re-runs gate with explicit targeted coordinates" "$SHIP" "--initial-result" && pass "ship: re-runs gate with explicit targeted coordinates"
 should_run "ship: references project-pm Rules A/B synthesis" && assert_file_contains "ship: references project-pm Rules A/B synthesis" "$SHIP" "Rules A/B" && pass "ship: references project-pm Rules A/B synthesis"
 should_run "project-pm: classifies refactor/reuse recheck after gate fixes" && assert_file_contains "project-pm: classifies refactor/reuse recheck after gate fixes" "$PROJECT_PM" "refactor_reuse_recheck: required" && assert_file_contains "project-pm: classifies refactor/reuse recheck after gate fixes" "$PROJECT_PM" "refactor_reuse_recheck: skip" && pass "project-pm: classifies refactor/reuse recheck after gate fixes"
 # exactly two stop conditions, no more
