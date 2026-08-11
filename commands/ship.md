@@ -189,7 +189,7 @@ generic as `baseline` or maintainer as `preferred`; both are accepted here.
     assertion or fixture adjustment, or a small guard/error-handling fix.
 
   Then re-run `pmctl gate run --executor <gate_executor> --policy maintainer --cd "<work_dir>"
-  --lifecycle foreground --targeted <reviewer,...> --initial-result
+  --lifecycle foreground --pass targeted --reviewers <reviewer,...> --initial-result
   "<initial_gate_result_path>"` (same literal-path substitution as Step 3's
   first call — never `"$PWD"`). The initial-result path is the comprehensive
   gate result that opened this remediation loop; keep it explicit on every

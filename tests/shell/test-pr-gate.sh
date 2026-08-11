@@ -658,12 +658,17 @@ run_gate() {
     "${CURRENT_TEST_CASE:-unknown}" "$case_timeout"
   set +e
   if command -v timeout >/dev/null 2>&1; then
+    # Keep the fixture's repository layout authoritative.  In particular,
+    # an operator-provided PM_DISPATCH_REPOS_ROOT must not make a fixture
+    # discover the host's qa-testing-rules sibling instead.
     timeout --kill-after=5s "${case_timeout}s" \
       env -u QA_RULES_DIR -u PM_DISPATCH_QA_RULES_DIR_HOST_CONFIRMED \
+        -u PM_DISPATCH_REPOS_ROOT -u PM_DISPATCH_REPO -u QA_RULES_ENTRY \
       HOME="$home" PATH="$runner/bin:$PATH" \
       "$runner/pr-gate.sh" --cd "$repo" "$@" > "$out" 2> "$err"
   else
     env -u QA_RULES_DIR -u PM_DISPATCH_QA_RULES_DIR_HOST_CONFIRMED \
+      -u PM_DISPATCH_REPOS_ROOT -u PM_DISPATCH_REPO -u QA_RULES_ENTRY \
       HOME="$home" PATH="$runner/bin:$PATH" \
       "$runner/pr-gate.sh" --cd "$repo" "$@" > "$out" 2> "$err"
   fi
@@ -6687,6 +6692,7 @@ test_help_output_is_bounded_and_current() {
   assert_file_contains "$name" "$out" "--mode <mode>" || return
   assert_file_contains "$name" "$out" "--policy <name>" || return
   assert_file_contains "$name" "$out" "--policy-override <f>" || return
+  assert_file_contains "$name" "$out" "--pass <kind>" || return
   assert_file_contains "$name" "$out" "--targeted <list>" || return
   assert_file_contains "$name" "$out" "--initial-result <f>" || return
   assert_not_contains "$name" "$out" "_gate_assurance_policy_snapshot" || return
@@ -6698,8 +6704,8 @@ test_help_output_is_bounded_and_current() {
 # accepted-flags list (not just a bare "Unknown arg"), so callers
 # self-correct on first failure.
 # Steps: run the gate with --bogus-flag, and assert exit 2 and stderr
-# contains "Unknown arg: --bogus-flag", "Accepted:", "--targeted", and
-# "--initial-result".
+# contains "Unknown arg: --bogus-flag", "Accepted:", "--pass", "--targeted",
+# and "--initial-result".
 test_unknown_arg_message() {
   local name="unknown-arg-message"
   should_run "$name" || return 0
@@ -6721,8 +6727,82 @@ test_unknown_arg_message() {
   fi
   assert_file_contains "$name" "$err" "Unknown arg: --bogus-flag" || return
   assert_file_contains "$name" "$err" "Accepted:" || return
+  assert_file_contains "$name" "$err" "--pass" || return
   assert_file_contains "$name" "$err" "--targeted" || return
   assert_file_contains "$name" "$err" "--initial-result" || return
+  pass "$name"
+}
+
+# Behavior: explicit canonical pass syntax is recorded for both initial and
+# targeted flows; mixed equal coverage spellings retain their provenance.
+test_canonical_targeted_coordinates_and_mixed_compatibility() {
+  local name="canonical-targeted-coordinates-and-mixed-compatibility"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" initial="$dir/initial.md" result_path
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  write_valid_initial_gate_result "$initial"
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main \
+    --pass initial --output "$dir/explicit-initial.md"
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "explicit initial invocation exited $code"
+    return
+  fi
+  result_path="$(awk -F'result: ' '/^result: /{path=$2} END{print path}' "$out")"
+  jq -e '
+    .coordinates.pass.resolved == "initial" and
+    .coordinates.pass.initial_result == null and
+    .provenance.coordinate_syntax == {pass:"explicit",coverage:"default"}
+  ' "${result_path}.assurance.json" >/dev/null || {
+    fail "$name" "explicit initial invocation lost canonical pass provenance"
+    return
+  }
+
+  : > "$out"; : > "$err"
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main \
+    --pass targeted --reviewers critic --initial-result "$initial" --output "$dir/canonical.md"
+  code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "canonical invocation exited $code"
+    return
+  fi
+  result_path="$(awk -F'result: ' '/^result: /{path=$2} END{print path}' "$out")"
+  jq -e '
+    .coordinates.pass.resolved == "targeted" and
+    .coordinates.coverage.requested == ["critic"] and
+    .provenance.coordinate_syntax == {pass:"explicit",coverage:"explicit"}
+  ' "${result_path}.assurance.json" >/dev/null || {
+    fail "$name" "canonical flags did not produce explicit coordinate provenance"
+    return
+  }
+
+  : > "$out"; : > "$err"
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main \
+    --pass targeted --reviewers critic,qa-tester --targeted qa-tester,critic --initial-result "$initial" \
+    --output "$dir/mixed.md"
+  code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "matching mixed invocation exited $code"
+    return
+  fi
+  result_path="$(awk -F'result: ' '/^result: /{path=$2} END{print path}' "$out")"
+  jq -e '.provenance.coordinate_syntax == {pass:"mixed",coverage:"mixed"}' \
+    "${result_path}.assurance.json" >/dev/null || {
+    fail "$name" "matching mixed flags lost compatibility provenance"
+    return
+  }
   pass "$name"
 }
 
@@ -6774,7 +6854,8 @@ test_targeted_pass_references_initial_result() {
     .coordinates.pass.scope == "remediation-delta" and
     .coordinates.pass.initial_result == $initial and
     .coordinates.coverage.requested == ["critic"] and
-    .coordinates.coverage.selected == ["critic"]
+    .coordinates.coverage.selected == ["critic"] and
+    .provenance.coordinate_syntax == {pass:"targeted-shorthand",coverage:"targeted-shorthand"}
   ' "${result_path}.assurance.json" >/dev/null || {
     fail "$name" "targeted assurance envelope lost its initial reference or coverage"
     return
@@ -6839,7 +6920,7 @@ test_targeted_requires_initial_result() {
     fail "$name" "exit $code, expected 2"
     return
   fi
-  assert_file_contains "$name" "$err" "--targeted requires --initial-result <path>" || return
+  assert_file_contains "$name" "$err" "--pass targeted requires --initial-result <path>" || return
   assert_not_contains "$name" "$out" "DISPATCH_STUB" || return
   pass "$name"
 }
@@ -7037,12 +7118,14 @@ test_invalid_assurance_inputs_are_rejected() {
 
   for args in \
     "--tier targeted" \
+    "--pass unknown" \
     "--mode default" \
     "--reviewers unknown-reviewer" \
     "--reviewers critic,critic" \
     "--reviewers critic,,qa-tester" \
     "--initial-result missing.md" \
-    "--reviewers critic --targeted critic"
+    "--pass initial --targeted critic" \
+    "--reviewers critic --targeted qa-tester"
   do
     : > "$out"
     : > "$err"
@@ -7737,6 +7820,7 @@ run_test test_effort_invalid_value_rejected
 run_test test_copy_mode_dispatches_via_adapter
 run_test test_help_output_is_bounded_and_current
 run_test test_unknown_arg_message
+run_test test_canonical_targeted_coordinates_and_mixed_compatibility
 run_test test_targeted_pass_references_initial_result
 run_test test_targeted_auto_mode_initializes_brief_coordinates
 run_test test_targeted_requires_initial_result

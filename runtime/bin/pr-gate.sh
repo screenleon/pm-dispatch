@@ -1848,6 +1848,26 @@ _gate_set_mode_requested() {
   return 0
 }
 
+_gate_set_pass_requested() {
+  local candidate="$1" spelling="$2" syntax_source="$3"
+  if [[ "$PASS_OPTION_SEEN" == false ]]; then
+    PASS_KIND_REQUESTED="$candidate"
+    PASS_OPTION_SEEN=true
+    PASS_OPTION_SPELLING="$spelling"
+    PASS_SYNTAX_SOURCE="$syntax_source"
+    return 0
+  fi
+  if [[ "$PASS_KIND_REQUESTED" != "$candidate" ]]; then
+    printf 'Error: conflicting gate pass options: %s requested %s, but %s requested %s\n' \
+      "$PASS_OPTION_SPELLING" "$PASS_KIND_REQUESTED" "$spelling" "$candidate" >&2
+    return 2
+  fi
+  if [[ "$PASS_OPTION_SPELLING" != "$spelling" ]]; then
+    PASS_SYNTAX_SOURCE="mixed"
+  fi
+  return 0
+}
+
 # verify_reviewer_artifact_hashes <hash_cmd> <name> <path> <baseline> [...]
 # Print every reviewer whose artifact differs from its captured baseline.
 verify_reviewer_artifact_hashes() {
@@ -1933,9 +1953,10 @@ _kill_process_tree() {
 #   --mode <mode>        sequential|parallel; omitted mode follows the policy recommendation
 #   --brief <file>       dispatch brief; trusted architecture_impact contributes to policy resolution
 #   --policy <name>      generic|maintainer consumer policy (default: generic)
+#   --pass <kind>        initial|targeted review-pass scope; targeted requires --reviewers and --initial-result
 #   --reviewers <list>   comma-separated requested coverage; does not change tier or pass kind
-#   --targeted <list>    remediation-delta pass over these reviewers; requires --initial-result
-#   --initial-result <f> initial gate result referenced by a --targeted pass; relative to --cd
+#   --targeted <list>    compatibility shorthand for --pass targeted --reviewers <list>
+#   --initial-result <f> initial gate result referenced by a targeted pass; relative to --cd
 #   --reviewer-dir <dir> explicit reviewer-definition source; defaults to the repo-owned agents/ directory
 #   --scope <text>       context hint passed into the review brief
 #   --base <branch>      base branch for diff (default: origin/HEAD → main)
@@ -2007,8 +2028,16 @@ MODE_REQUESTED="default"
 MODE_OPTION_SEEN=false
 MODE_OPTION_SPELLING=""
 PASS_KIND_REQUESTED="initial"
+PASS_OPTION_SEEN=false
+PASS_OPTION_SPELLING=""
+PASS_SYNTAX_SOURCE="default"
 INITIAL_RESULT_INPUT=""
 INITIAL_RESULT_OPTION_SEEN=false
+REVIEWERS_EXPLICIT_INPUT=""
+REVIEWERS_SHORTHAND_INPUT=""
+REVIEWERS_EXPLICIT_SEEN=false
+REVIEWERS_SHORTHAND_SEEN=false
+COVERAGE_SYNTAX_SOURCE="default"
 POLICY_CONSUMER="generic"
 POLICY_OVERRIDE_FILE=""
 REVIEWER_DIR_OVERRIDE=""
@@ -2065,21 +2094,26 @@ while [[ $# -gt 0 ]]; do
         *) printf 'Error: --policy must be generic or maintainer (got: %s)\n' "$2" >&2; exit 2 ;;
       esac
       shift 2;;
+    --pass)
+      [[ $# -ge 2 && -n "$2" && "$2" != --* ]] || { printf 'Error: --pass requires initial or targeted\n' >&2; exit 2; }
+      _gate_set_pass_requested "$2" "--pass" "explicit" || exit 2
+      shift 2;;
     --reviewers)
       [[ $# -ge 2 && -n "$2" && "$2" != --* ]] || { printf 'Error: --reviewers requires a reviewer list\n' >&2; exit 2; }
-      [[ -z "$REVIEWERS_OPTION_SOURCE" ]] || {
-        printf 'Error: --reviewers and --targeted may not be combined or repeated\n' >&2
+      [[ "$REVIEWERS_EXPLICIT_SEEN" == false ]] || {
+        printf 'Error: --reviewers may only be provided once\n' >&2
         exit 2
       }
-      REVIEWERS_OVERRIDE="$2"; REVIEWERS_OPTION_SOURCE="--reviewers"; shift 2;;
+      REVIEWERS_EXPLICIT_INPUT="$2"; REVIEWERS_EXPLICIT_SEEN=true; shift 2;;
     --targeted)
       [[ $# -ge 2 && -n "$2" && "$2" != --* ]] || { printf 'Error: --targeted requires a reviewer list\n' >&2; exit 2; }
-      [[ -z "$REVIEWERS_OPTION_SOURCE" ]] || {
-        printf 'Error: --reviewers and --targeted may not be combined or repeated\n' >&2
+      [[ "$REVIEWERS_SHORTHAND_SEEN" == false ]] || {
+        printf 'Error: --targeted may only be provided once\n' >&2
         exit 2
       }
-      REVIEWERS_OVERRIDE="$2"; REVIEWERS_OPTION_SOURCE="--targeted"
-      PASS_KIND_REQUESTED="targeted"; shift 2;;
+      REVIEWERS_SHORTHAND_INPUT="$2"; REVIEWERS_SHORTHAND_SEEN=true
+      _gate_set_pass_requested "targeted" "--targeted" "targeted-shorthand" || exit 2
+      shift 2;;
     --initial-result)
       [[ $# -ge 2 && -n "$2" && "$2" != --* ]] || { printf 'Error: --initial-result requires a result path\n' >&2; exit 2; }
       [[ "$INITIAL_RESULT_OPTION_SEEN" == false ]] || {
@@ -2147,7 +2181,7 @@ while [[ $# -gt 0 ]]; do
       exit 0;;
     *)
       printf 'Unknown arg: %s\n' "$1" >&2
-      printf 'Accepted: --cd --run-dir --tier --mode --brief --policy --reviewers --targeted --initial-result --reviewer-dir --scope --base --head --output --executor --model --effort --isolation --timeout --parallel --sequential --allow-hooks --allow-dirty --accept-scope-truncation --override-file --policy-override --test-cmd --test-timeout --skip-preflight-tests (-h for help)\n' >&2
+      printf 'Accepted: --cd --run-dir --tier --mode --brief --policy --pass --reviewers --targeted --initial-result --reviewer-dir --scope --base --head --output --executor --model --effort --isolation --timeout --parallel --sequential --allow-hooks --allow-dirty --accept-scope-truncation --override-file --policy-override --test-cmd --test-timeout --skip-preflight-tests (-h for help)\n' >&2
       exit 2;;
   esac
 done
@@ -3906,7 +3940,15 @@ else
       (.dispatch | only_keys(["outcomes"])) and
       (all(.dispatch.outcomes[];
         only_keys(["role","reviewer","status","run_id","evidence_status"]))) and
-      (.provenance | only_keys(["producer","policy_source","attestation"])) and
+      (.provenance |
+        only_keys(["producer","policy_source","attestation","coordinate_syntax"])) and
+      (if .provenance.coordinate_syntax? == null then true else
+        (.provenance.coordinate_syntax | only_keys(["pass","coverage"])) and
+        (.provenance.coordinate_syntax.pass |
+          IN("default","explicit","targeted-shorthand","mixed")) and
+        (.provenance.coordinate_syntax.coverage |
+          IN("default","explicit","targeted-shorthand","mixed"))
+       end) and
       ((.kind == "gate_assurance_v2" and .schema_version == 2) or
         (.kind == "gate_assurance_v3" and .schema_version == 3)) and
       .result.final == $final and
@@ -4179,13 +4221,13 @@ fi
 case "$PASS_REQUIRES_INITIAL" in
   true)
     if [[ -z "$INITIAL_RESULT_INPUT" ]]; then
-      printf 'Error: --targeted requires --initial-result <path>\n' >&2
+      printf 'Error: --pass targeted requires --initial-result <path>\n' >&2
       exit 2
     fi
     ;;
   false)
     if [[ -n "$INITIAL_RESULT_INPUT" ]]; then
-      printf 'Error: --initial-result is only valid with --targeted\n' >&2
+      printf 'Error: --initial-result is only valid with --pass targeted\n' >&2
       exit 2
     fi
     ;;
@@ -4271,6 +4313,42 @@ _gate_normalize_reviewer_list() {
   [[ -n "$normalized" ]] || return 2
   printf '%s\n' "$normalized"
 }
+
+# --reviewers owns the coverage coordinate and --targeted is its compatibility
+# spelling. Normalize both only after the policy vocabulary is available, so
+# equal reviewer sets remain compatible even when their input order differs.
+if [[ "$REVIEWERS_EXPLICIT_SEEN" == true ]]; then
+  _explicit_reviewers="$(_gate_normalize_reviewer_list \
+    "$REVIEWERS_EXPLICIT_INPUT" "--reviewers")" || exit 2
+fi
+if [[ "$REVIEWERS_SHORTHAND_SEEN" == true ]]; then
+  _shorthand_reviewers="$(_gate_normalize_reviewer_list \
+    "$REVIEWERS_SHORTHAND_INPUT" "--targeted")" || exit 2
+fi
+if [[ "$REVIEWERS_EXPLICIT_SEEN" == true && "$REVIEWERS_SHORTHAND_SEEN" == true ]]; then
+  if [[ "$(printf '%s\n' $_explicit_reviewers | LC_ALL=C sort)" \
+      != "$(printf '%s\n' $_shorthand_reviewers | LC_ALL=C sort)" ]]; then
+    printf 'Error: --reviewers and --targeted request different reviewer coverage\n' >&2
+    exit 2
+  fi
+  REVIEWERS_OVERRIDE="$REVIEWERS_EXPLICIT_INPUT"
+  REVIEWERS_OPTION_SOURCE="--reviewers/--targeted"
+  COVERAGE_SYNTAX_SOURCE="mixed"
+elif [[ "$REVIEWERS_EXPLICIT_SEEN" == true ]]; then
+  REVIEWERS_OVERRIDE="$REVIEWERS_EXPLICIT_INPUT"
+  REVIEWERS_OPTION_SOURCE="--reviewers"
+  COVERAGE_SYNTAX_SOURCE="explicit"
+elif [[ "$REVIEWERS_SHORTHAND_SEEN" == true ]]; then
+  REVIEWERS_OVERRIDE="$REVIEWERS_SHORTHAND_INPUT"
+  REVIEWERS_OPTION_SOURCE="--targeted"
+  COVERAGE_SYNTAX_SOURCE="targeted-shorthand"
+fi
+unset _explicit_reviewers _shorthand_reviewers
+
+if [[ "$PASS_KIND_REQUESTED" == targeted && -z "$REVIEWERS_OVERRIDE" ]]; then
+  printf 'Error: --pass targeted requires --reviewers <list> (or --targeted <list>)\n' >&2
+  exit 2
+fi
 
 _gate_policy_source_count=0
 for _gate_policy_table in tiers modes pass-kinds consumers signals; do
@@ -5686,6 +5764,7 @@ gate_finalize_assurance() {
     --arg topology "$MODE_TOPOLOGY" --arg synthesis "$MODE_SYNTHESIS" \
     --arg pass_requested "$PASS_KIND_REQUESTED" --arg pass_resolved "$PASS_KIND_RESOLVED" \
     --arg pass_scope "$PASS_SCOPE" --arg initial_result "$INITIAL_RESULT_RESOLVED" \
+    --arg pass_syntax "$PASS_SYNTAX_SOURCE" --arg coverage_syntax "$COVERAGE_SYNTAX_SOURCE" \
     --arg selected "$REVIEWERS" --arg skipped "$SKIPPED_WORDS" \
     --arg vocabulary "$ALL_REVIEWERS" \
     --arg reviewer_topology "$MODE_TOPOLOGY" \
@@ -5735,7 +5814,8 @@ gate_finalize_assurance() {
         provenance:{
           producer:"pr-gate.sh",
           policy_source:$policy_source,
-          attestation:(if $attestation == "" then null else $attestation end)
+          attestation:(if $attestation == "" then null else $attestation end),
+          coordinate_syntax:{pass:$pass_syntax,coverage:$coverage_syntax}
         }
       }' > "$assurance_tmp"; then
     rm -f -- "$assurance_tmp" "$result_tmp"

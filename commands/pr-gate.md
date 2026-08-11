@@ -1,6 +1,6 @@
 ---
 description: Run the tiered pre-PR review pipeline on the current branch.
-argument-hint: "[express|standard|full] [--targeted r1,r2 --initial-result path] [--scope context] [--mode sequential|parallel] [--accept-scope-truncation]"
+argument-hint: "[express|standard|full] [--pass targeted --reviewers r1,r2 --initial-result path] [--scope context] [--mode sequential|parallel] [--accept-scope-truncation]"
 ---
 
 Run the PR gate via `pmctl gate run`. The `runtime/bin/pr-gate.sh` script is the
@@ -24,7 +24,7 @@ but does not treat it as a downgrade.
 | Situation | Args |
 |---|---|
 | Routine code / seed / docs changes | _(none)_ |
-| Re-gate after fixing specific findings | `--targeted qa-tester,risk-reviewer --initial-result <path>` |
+| Re-gate after fixing specific findings | `--pass targeted --reviewers qa-tester,risk-reviewer --initial-result <path>` |
 | Auth / payment / migration / sensitive paths | _(none; policy adds the matching reviewer and recommends parallel)_ |
 | Input/evaluation/command execution boundary | _(none; policy recommends parallel)_ |
 | Conserve reviewer-session token usage | `--mode sequential` |
@@ -39,6 +39,13 @@ policy-override contract. Its scope fingerprint binds the actual tracked patch
 plus in-scope untracked content, so an approval cannot be replayed after a
 same-shape content change. `.gate-overrides.md` only supplies reviewer finding
 context and cannot lower policy.
+
+`--pass initial|targeted` controls review-pass scope, and `--reviewers` controls
+selected reviewer coverage. For a targeted remediation pass, both
+`--reviewers <list>` and `--initial-result <path>` are required. The legacy
+`--targeted <list>` spelling remains supported as an exact compatibility
+shorthand; when mixed with canonical flags, its pass and reviewer set must
+match them.
 
 Before dispatch, the gate writes one immutable-subject-bound
 `gate_scope_manifest_v1` containing changed/renamed/untracked paths, hunk
@@ -123,6 +130,8 @@ implementation model or alternate executor availability cannot be determined.
 ```bash
 RAW_ARGS="${ARGUMENTS:-}"
 TIER_OVERRIDE=""
+PASS_KIND=""
+REVIEWERS=""
 TARGETED_REVIEWERS=""
 INITIAL_RESULT=""
 SCOPE_TOKENS=()
@@ -150,10 +159,33 @@ fi
 while [[ "$idx" -lt "${#TOKENS[@]}" ]]; do
   tok="${TOKENS[$idx]}"
   case "$tok" in
+    --pass)
+      idx=$((idx + 1))
+      requested_pass="${TOKENS[$idx]:-}"
+      case "$requested_pass" in
+        initial|targeted) ;;
+        *) echo "error: --pass requires initial or targeted" >&2; exit 2 ;;
+      esac
+      if [[ -n "$PASS_KIND" && "$PASS_KIND" != "$requested_pass" ]]; then
+        echo "error: conflicting gate pass options" >&2
+        exit 2
+      fi
+      PASS_KIND="$requested_pass"
+      ;;
+    --reviewers)
+      idx=$((idx + 1))
+      REVIEWERS="${TOKENS[$idx]:-}"
+      [[ -n "$REVIEWERS" ]] || { echo "error: --reviewers requires a reviewer list" >&2; exit 2; }
+      ;;
     --targeted)
       idx=$((idx + 1))
       TARGETED_REVIEWERS="${TOKENS[$idx]:-}"
       [[ -n "$TARGETED_REVIEWERS" ]] || { echo "error: --targeted requires a reviewer list" >&2; exit 2; }
+      if [[ -n "$PASS_KIND" && "$PASS_KIND" != targeted ]]; then
+        echo "error: conflicting gate pass options" >&2
+        exit 2
+      fi
+      PASS_KIND="targeted"
       ;;
     --initial-result)
       idx=$((idx + 1))
@@ -204,12 +236,27 @@ while [[ "$idx" -lt "${#TOKENS[@]}" ]]; do
   idx=$((idx + 1))
 done
 
-if [[ -n "$TARGETED_REVIEWERS" && -z "$INITIAL_RESULT" ]]; then
-  echo "error: --targeted requires --initial-result <path>" >&2
+if [[ -n "$TARGETED_REVIEWERS" && -n "$REVIEWERS" ]]; then
+  targeted_set="$(printf '%s\n' "${TARGETED_REVIEWERS//,/ }" | tr ' ' '\n' | sed '/^$/d' | LC_ALL=C sort -u)"
+  reviewers_set="$(printf '%s\n' "${REVIEWERS//,/ }" | tr ' ' '\n' | sed '/^$/d' | LC_ALL=C sort -u)"
+  if [[ "$targeted_set" != "$reviewers_set" ]]; then
+    echo "error: --reviewers and --targeted request different reviewer coverage" >&2
+    exit 2
+  fi
+fi
+if [[ -n "$TARGETED_REVIEWERS" && -z "$REVIEWERS" ]]; then
+  REVIEWERS="$TARGETED_REVIEWERS"
+fi
+if [[ "$PASS_KIND" == targeted && -z "$REVIEWERS" ]]; then
+  echo "error: --pass targeted requires --reviewers <list>" >&2
   exit 2
 fi
-if [[ -z "$TARGETED_REVIEWERS" && -n "$INITIAL_RESULT" ]]; then
-  echo "error: --initial-result is only valid with --targeted" >&2
+if [[ "$PASS_KIND" == targeted && -z "$INITIAL_RESULT" ]]; then
+  echo "error: --pass targeted requires --initial-result <path>" >&2
+  exit 2
+fi
+if [[ "$PASS_KIND" != targeted && -n "$INITIAL_RESULT" ]]; then
+  echo "error: --initial-result is only valid with --pass targeted" >&2
   exit 2
 fi
 
@@ -232,7 +279,9 @@ SCOPE="${SCOPE_TOKENS[*]:-}"
 GATE_ARGS=(--cd "<work_dir>" --executor "$GATE_EXECUTOR" --policy generic)
 [[ -n "$GATE_MODEL" ]] && GATE_ARGS+=(--model "$GATE_MODEL")
 [[ -n "$TIER_OVERRIDE" ]] && GATE_ARGS+=(--tier "$TIER_OVERRIDE")
-[[ -n "$TARGETED_REVIEWERS" ]] && GATE_ARGS+=(--targeted "$TARGETED_REVIEWERS" --initial-result "$INITIAL_RESULT")
+[[ -n "$PASS_KIND" ]] && GATE_ARGS+=(--pass "$PASS_KIND")
+[[ -n "$REVIEWERS" ]] && GATE_ARGS+=(--reviewers "$REVIEWERS")
+[[ -n "$INITIAL_RESULT" ]] && GATE_ARGS+=(--initial-result "$INITIAL_RESULT")
 [[ -n "$SCOPE" ]] && GATE_ARGS+=(--scope "$SCOPE")
 [[ -n "$GATE_MODE" ]] && GATE_ARGS+=(--mode "$GATE_MODE")
 [[ "$ACCEPT_SCOPE_TRUNCATION" == true ]] && GATE_ARGS+=(--accept-scope-truncation)
