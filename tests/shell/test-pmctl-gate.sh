@@ -2428,33 +2428,34 @@ case_default_lifecycle_is_detached() {
 
   # stdout must stay a single bare gate_id line (callers capture it with
   # command substitution); the copy-paste wait hint goes to stderr only.
-  local err_out key_file nonce ready_sentinel terminal_sentinel cleanup_ok=true
+  local err_out key_file nonce ready_sentinel terminal_sentinel retained_ok=true
   err_out="$(cat "$err_file" 2>/dev/null)"
   if [[ "$out" =~ ^gate-[0-9]{8}-[0-9]{6}-[A-Za-z0-9]{6,}$ ]]; then
     key_file="$XDG_RUNTIME_DIR/pm-gate-dispatch/$out"
     nonce="$(cat "$key_file" 2>/dev/null || true)"
     if [[ -n "$nonce" ]]; then
-      ready_sentinel="$(detached_launch_sentinel_path "pm-gate-ready" "$out" "$nonce")"
-      terminal_sentinel="$(detached_launch_sentinel_path "pm-gate" "$out" "$nonce")"
+      ready_sentinel="$(detached_launch_private_sentinel_path "pm-gate-dispatch" "pm-gate-ready" "$out" "$nonce")"
+      terminal_sentinel="$(detached_launch_private_sentinel_path "pm-gate-dispatch" "pm-gate" "$out" "$nonce")"
       PM_DISPATCH_STATE_ROOT="$PM_DISPATCH_STATE_ROOT" XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \
         PM_GATE_WAIT_POLL_INTERVAL=0.01 \
         bash -c '. "$1/runtime/lib/pmctl-gate.sh"; pmctl_gate_wait "$1" "$2" --cd "$3" --timeout 5' \
         _ "$fixture" "$out" "$work" >/dev/null 2>&1 || true
     else
-      cleanup_ok=false
+      retained_ok=false
     fi
-    if [[ "$cleanup_ok" == true ]] \
-      && [[ -e "$key_file" || -e "$ready_sentinel" || -e "$terminal_sentinel" ]]; then
-      cleanup_ok=false
+    if [[ "$retained_ok" == true ]] \
+      && [[ ! -e "$key_file" || ! -e "$ready_sentinel" || ! -e "$terminal_sentinel" ]]; then
+      retained_ok=false
     fi
+    rm -f "$key_file" "$ready_sentinel" "$terminal_sentinel" 2>/dev/null || true
   fi
   if [[ "$code" -eq 0 ]] \
      && [[ "$out" =~ ^gate-[0-9]{8}-[0-9]{6}-[A-Za-z0-9]{6,}$ ]] \
      && [[ "$err_out" == *"pmctl gate wait $out --cd"* ]] \
-     && [[ "$cleanup_ok" == true ]]; then
+     && [[ "$retained_ok" == true ]]; then
     pass "$name"
   else
-    fail "$name" "code=$code cleanup_ok=$cleanup_ok out=$out err=$err_out (expected bare gate_id on stdout + wait hint on stderr)"
+    fail "$name" "code=$code retained_ok=$retained_ok out=$out err=$err_out (expected bare gate_id on stdout + wait hint on stderr)"
   fi
 }
 

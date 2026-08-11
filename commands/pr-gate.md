@@ -284,9 +284,13 @@ detached; note the `gate_id` before the interrupt (or recover it via
 `pmctl gate wait <gate_id> --cd "<work_dir>"` in a new session -- a fresh
 `/pr-gate` invocation starts a NEW gate and does NOT reattach to the
 interrupted one.
-(gate wait exit 3 means the sentinel was already consumed by a prior wait —
+(gate wait exit 3 means the private sentinel key is unavailable —
 check `pmctl artifacts show <gate_id> --cd "<work_dir>"` for the durable result
 file in that case).
+Completed private sentinel evidence is retained for seven days by default so a
+later wait can re-verify it. When a new detached gate starts, only an expired
+key plus its matching regular terminal sentinel is reclaimed; fresh evidence,
+active launches, and symlink candidates are preserved.
 
 ## Executor routes — both dispatch an independent subprocess
 
@@ -323,7 +327,7 @@ When the `pmctl gate wait` background Bash completion notification arrives:
    error), 124 = wait timed out (gate may still be
    running detached -- retry `pmctl gate wait <gate_id> --cd "<work_dir>"` once with
    the same `gate_id` before treating it as stuck), 3 = indeterminate (sentinel
-   already consumed by a prior wait; use `pmctl artifacts show <gate_id> --cd "<work_dir>"`
+   unavailable after runtime/session cleanup; use `pmctl artifacts show <gate_id> --cd "<work_dir>"`
    to locate the durable result instead), other non-zero = gate failed (surface a
    brief failure summary: exit code + last ~20 lines of the supervisor log at
    `pmctl artifacts show <gate_id> --cd "<work_dir>"`).
@@ -384,6 +388,13 @@ environment errors, malformed structured output, tree drift, and opaque nonzero
 exits are `Final: INCOMPLETE` (exit 3), with the captured command/log evidence for
 recovery. They are non-authorizing, but are not claims that the diff caused a
 product defect.
+
+An externally supplied result is currently **non-authorizing**.  Its digest can
+show that a file was not changed after the caller selected it; it cannot show
+which runner executed the test.  If a local pre-flight is inconclusive, rerun
+the repository-owned command locally rather than supplying a PASS JSON.  A
+future CI-provider OIDC/provenance verifier may add an explicitly authenticated
+remote-evidence path; until then no external evidence option is accepted.
 
 **Warning**: if the pattern matches zero cases, the harness exits nonzero and prints
 `no tests matched filter <pattern>`. A typo in the filter produces a hard failure,

@@ -54,9 +54,9 @@ Gate correctness 與 release evidence 仍必須先在 v0.11.0 關閉。
 
 ## v0.11.0 — pre-v1 stabilization：state compatibility + release/operational evidence（進行中）
 
-> 最後排程更新：2026-08-10（保留既有 Phase 1–9 交付歷史與 remaining scope；
-> 對齊 pr:#462／#465／#469 已合併事實，並將 CC-522 剩餘範圍收斂為
-> QA execution evidence 與 external structured evidence recovery 兩個 slices）
+> 最後排程更新：2026-08-11（保留既有 Phase 1–9 交付歷史；CC-521 已由
+> pr:#470 關閉，CC-522 的 QA execution evidence 與 self-authored external
+> evidence fail-closed boundary 兩個 slices 已交付）
 
 **主題**：一次消化 v1.0 前已知的 state compatibility、release/upgrade evidence 與 operational evidence 缺口。原 v0.11.0（state compatibility + writer boundary）、v0.12.0（release evidence + upgrade proof）、v0.13.0（detached recovery + operational evidence）合併為本版；其中 detached reconciliation（CC-499）已提前於 v0.10.0 出貨，不在本版 scope。Phase 10–12 追加 public contract candidate 前必須收斂的 runtime authority、Gate security 與 generated-source 邊界。
 
@@ -133,8 +133,8 @@ Gate correctness 與 release evidence 仍必須先在 v0.11.0 關閉。
 | CC-518 | `gate_scope_manifest_v1`：immutable subject、changed/renamed/untracked、paired tests、signals、bounded expansion/truncation | ✅ pr:#455 |
 | CC-519 | selected-reviewer coverage/finding contract；sequential logical sections 與 parallel session isolation 分開 | ✅ pr:#456 |
 | CC-520 | synthesis findings-union parity、root-cause grouping、coverage matrix、remediation seed、no silent drop | ✅ pr:#460 |
-| CC-521 | actionable test-gap matrix + bounded protocol recovery；seeded live recall 僅作 quality evaluation | 🔵 |
-| CC-522 | Slice A preflight truthful classification 已交付；Slice B QA partial evidence + Slice C external recovery 待作 | ⚠️ partial pr:#462 |
+| CC-521 | actionable test-gap matrix + bounded protocol recovery；seeded live recall 僅作 quality evaluation | ✅ pr:#470 |
+| CC-522 | Slice A truthful preflight、Slice B QA partial evidence、Slice C external evidence disabled pending CI attestation | ✅ |
 | CC-541 | host-side `QA_RULES_DIR` resolution/export + missing-source diagnostic | ✅ pr:#465 |
 | CC-543 | full runner Phase 0 structural fail-fast + `--collect-all` | ✅ pr:#465 |
 | CC-545 | evidence-reference-contract 違規 reviewer 單次修正性重派 | ✅ pr:#465 |

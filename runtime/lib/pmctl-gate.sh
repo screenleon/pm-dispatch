@@ -38,6 +38,33 @@ _pmctl_gate_sentinel_key_file() {
   detached_launch_key_file "pm-gate-dispatch" "$_gate_id"
 }
 
+# Keep completed private gate evidence available for a bounded retry window,
+# without allowing long-lived hosts to accumulate nonce keys and sentinels
+# forever. Only a key with its matching terminal sentinel may be reclaimed;
+# active launches retain their key even when old. The default is seven days and
+# can be tuned for constrained hosts with PM_GATE_SENTINEL_RETENTION_SECONDS.
+_pmctl_gate_prune_terminal_evidence() {
+  local key_dir="$1" retention="${PM_GATE_SENTINEL_RETENTION_SECONDS:-604800}"
+  [[ "$retention" =~ ^[1-9][0-9]*$ && -d "$key_dir" ]] || return 0
+  local now key gate_id nonce terminal ready modified age
+  now="$(date +%s 2>/dev/null)" || return 0
+  for key in "$key_dir"/gate-*; do
+    [[ -f "$key" && ! -L "$key" ]] || continue
+    gate_id="${key##*/}"
+    [[ "$gate_id" =~ ^gate-[0-9]{8}-[0-9]{6}-[A-Za-z0-9]{6,}$ ]] || continue
+    nonce="$(cat "$key" 2>/dev/null || true)"
+    [[ -n "$nonce" ]] || continue
+    terminal="$(detached_launch_private_sentinel_path "pm-gate-dispatch" "pm-gate" "$gate_id" "$nonce")"
+    ready="$(detached_launch_private_sentinel_path "pm-gate-dispatch" "pm-gate-ready" "$gate_id" "$nonce")"
+    [[ -f "$terminal" && ! -L "$terminal" ]] || continue
+    modified="$(stat -c '%Y' "$terminal" 2>/dev/null || stat -f '%m' "$terminal" 2>/dev/null || true)"
+    [[ "$modified" =~ ^[0-9]+$ ]] || continue
+    age=$((now - modified))
+    (( age >= retention )) || continue
+    rm -f -- "$terminal" "$ready" "$key"
+  done
+}
+
 # Load the single canonical run-dir resolver for both detached launch and wait.
 _pmctl_gate_ensure_run_dir_fn() {
   local repo_root="${1:?repo root required}" _sp_lib
@@ -445,6 +472,7 @@ pmctl_gate_run_detached() {
     2) printf 'pmctl gate run: failed to secure private key directory (not owner?): %s\n' "$_key_dir" >&2; return 2 ;;
     3) printf 'pmctl gate run: refusing key directory not owned by current user: %s\n' "$_key_dir" >&2; return 2 ;;
   esac
+  _pmctl_gate_prune_terminal_evidence "$_key_dir"
   detached_launch_write_key_file "$_key_file" "$_nonce" || {
     printf 'pmctl gate run: failed to write sentinel key file\n' >&2
     return 2
@@ -453,8 +481,8 @@ pmctl_gate_run_detached() {
   local supervisor_log="$gate_run_dir/supervisor.log" supervisor_pid_file="$gate_run_dir/supervisor.pid"
   local supervisor_identity="$gate_run_dir/supervisor.identity"
   local ready_sentinel terminal_sentinel
-  ready_sentinel="$(detached_launch_sentinel_path "pm-gate-ready" "$gate_id" "$_nonce")"
-  terminal_sentinel="$(detached_launch_sentinel_path "pm-gate" "$gate_id" "$_nonce")"
+  ready_sentinel="$(detached_launch_private_sentinel_path "pm-gate-dispatch" "pm-gate-ready" "$gate_id" "$_nonce")"
+  terminal_sentinel="$(detached_launch_private_sentinel_path "pm-gate-dispatch" "pm-gate" "$gate_id" "$_nonce")"
   if ! PM_GATE_SUPERVISOR_NONCE="$_nonce" detached_launch_under_setsid \
     "$gate_script" "$supervisor_log" "$supervisor_pid_file" \
     -- --gate-id "$gate_id" --cd "$effective_cd" --run-dir "$gate_run_dir" -- ${forward[@]+"${forward[@]}"}; then
@@ -559,8 +587,9 @@ pmctl_gate_run_detached() {
 }
 
 # pmctl gate wait <gate_id> [--cd <work_dir>] [--timeout N]
-# Polls for the nonce-authenticated sentinel runtime/bin/gate-supervisor.sh writes
-# on completion, mirroring pmctl_dispatch_wait. --cd defaults to the CWD git
+# Polls for the nonce-authenticated private sentinel runtime/bin/gate-supervisor.sh
+# writes on completion. It deliberately preserves terminal evidence for a
+# second verifier rather than consuming it. --cd defaults to the CWD git
 # toplevel (then $PWD) via _pmctl_gate_default_cd — the same derivation
 # `pmctl gate run` uses — so run/wait recompute the identical partition.
 # On a verified GO/NO-GO the result file's `Final:` line is echoed to stdout.
@@ -639,8 +668,8 @@ pmctl_gate_wait() {
   local _key_file _key_nonce
   _key_file="$(_pmctl_gate_sentinel_key_file "$gate_id")"
   if [[ ! -f "$_key_file" ]]; then
-    # Sentinel key absent: either already consumed by a prior wait, cleaned up
-    # by reboot/tmpwatch, or never created. There is no authenticated
+    # Sentinel key absent: it was cleaned up by session/runtime cleanup or was
+    # never created. There is no authenticated
     # completion signal without it — never treat this as success.
     printf 'pmctl gate wait: indeterminate: sentinel key absent; completion is unverified for %s (exit=3)\n' "$gate_id" >&2
     return 3
@@ -652,15 +681,14 @@ pmctl_gate_wait() {
   fi
 
   local _sentinel _ready_sentinel
-  _sentinel="$(detached_launch_sentinel_path "pm-gate" "$gate_id" "$_key_nonce")"
-  _ready_sentinel="$(detached_launch_sentinel_path "pm-gate-ready" "$gate_id" "$_key_nonce")"
+  _sentinel="$(detached_launch_private_sentinel_path "pm-gate-dispatch" "pm-gate" "$gate_id" "$_key_nonce")"
+  _ready_sentinel="$(detached_launch_private_sentinel_path "pm-gate-dispatch" "pm-gate-ready" "$gate_id" "$_key_nonce")"
   if detached_launch_wait_for_sentinel "$_sentinel" "$timeout" "${PM_GATE_WAIT_POLL_INTERVAL:-2}"; then
       local _state _exit _result
       _state="$(grep -m1 '^final_state=' "$_sentinel" 2>/dev/null | cut -d= -f2-)" || true
       _exit="$(grep -m1 '^exit_code=' "$_sentinel" 2>/dev/null | cut -d= -f2-)" || true
       _result="$(grep -m1 '^result_file=' "$_sentinel" 2>/dev/null | cut -d= -f2-)" || true
       _operation="$(grep -m1 '^parent_operation=' "$_sentinel" 2>/dev/null | cut -d= -f2-)" || true
-      rm -f "$_sentinel" "$_ready_sentinel" "$_key_file" 2>/dev/null || true
       [[ "$_exit" =~ ^-?[0-9]+$ ]] || _exit="1"
       printf 'gate: %s  state: %s  exit: %s\n' "$gate_id" "${_state:-unknown}" "$_exit"
       if [[ -n "$_result" ]]; then

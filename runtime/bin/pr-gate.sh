@@ -1989,6 +1989,11 @@ _kill_process_tree() {
 #                        themselves, as before this feature existed).
 #   --test-timeout <s>   timeout for --test-cmd (default: 3600), decoupled from --timeout so a slow
 #                        test suite can never cause a reviewer dispatch session to time out.
+#                        Evidence produced outside this local gate is deliberately
+#                        non-authorizing.  A digest supplied by the same operator can
+#                        prove transport integrity, not who executed the test.  Remote
+#                        evidence will be accepted only after a CI-provider attestation
+#                        verifier is introduced.
 #   --skip-preflight-tests   force-disable the pre-flight test check even if --test-cmd is passed.
 # pr-gate-help:end
 
@@ -5332,6 +5337,10 @@ relocate_gate_artifacts() {
 
 gate_exit_cleanup() {
   local _gate_exit_status=$?
+  # CC-522 Slice B: a killed reviewer cannot be trusted to write a final
+  # result. Preserve the host-owned QA checkpoint/log pointer as an explicit
+  # non-authorizing partial artifact before any run-dir relocation.
+  qa_execution_finalize "$_gate_exit_status" || true
   # Relocate first (preserves the result artifact out-of-repo for post-mortem on failure
   # paths), then drop transient briefs. Both are idempotent / no-ops on the success path
   # where relocation already ran inline.
@@ -5345,6 +5354,19 @@ gate_exit_cleanup() {
     fi
     rmdir "$WORK_DIR/.gate-results" 2>/dev/null || true
   else
+    # An interrupted synthesis used to relocate the placeholder created before
+    # dispatch as a 0-byte "result". Preserve an explicit non-verdict record
+    # instead, so artifact inspection distinguishes publication failure from a
+    # missing or successful gate result. SIGKILL remains inherently
+    # uncatchable; its absence is still surfaced by the supervisor/wait path.
+    if [[ "$_gate_exit_status" -ne 0 && "${GATE_OUTPUT_EXISTED:-false}" != true \
+        && -n "${OUTPUT_FILE:-}" && -e "$OUTPUT_FILE" && ! -s "$OUTPUT_FILE" ]]; then
+      {
+        printf '# PR-Gate Result Publication Failure\n\n'
+        printf 'The gate stopped before a verified synthesis result was published.\n\n'
+        printf 'Final: INCOMPLETE\n'
+      } > "$OUTPUT_FILE" 2>/dev/null || true
+    fi
     relocate_gate_artifacts
   fi
   # Preserve the post-mortem artifact path even when protocol validation fails
@@ -6005,6 +6027,124 @@ _gate_scope_manifest_write "$SCOPE_MANIFEST_PATH" \
     exit 2
   }
 SCOPE_MANIFEST_DIGEST="$(_gate_result_sha256_file "$SCOPE_MANIFEST_PATH")" || exit 2
+QA_EXECUTION_EVIDENCE_PATH=""
+QA_EXECUTION_HELPER_PATH=""
+QA_EXECUTION_CONTEXT_BLOCK=""
+
+# CC-522 Slice B.  The reviewer cannot make a watchdog-safe test execution
+# record by writing prose after a command returns: a timeout may prevent that
+# write forever.  This host-created helper commits a checkpoint before it
+# execs the requested command, owns stdout/stderr, and leaves a non-authorizing
+# partial record when its parent reviewer is killed.
+qa_execution_prepare() {
+  [[ " $REVIEWERS " == *" qa-tester "* ]] || return 0
+  QA_EXECUTION_EVIDENCE_PATH="$WORK_DIR/.gate-results/qa-execution-${TIMESTAMP}.json"
+  QA_EXECUTION_HELPER_PATH="$WORK_DIR/.gate-results/qa-test-attempt-${TIMESTAMP}.sh"
+  local created_at
+  created_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date +'%Y-%m-%dT%H:%M:%SZ')"
+  jq -n --arg subject "$GATE_BINDING_SUBJECT_FINGERPRINT" \
+    --arg scope "$SCOPE_MANIFEST_DIGEST" --arg created_at "$created_at" '
+      {kind:"qa_execution_evidence_v1",schema_version:1,reviewer:"qa-tester",
+       subject_fingerprint:$subject,scope_manifest_sha256:$scope,created_at:$created_at,
+       status:"awaiting_checkpoint",
+       checkpoint:{status:"missing",matrix_audit:"not_recorded",command_identity:null,
+         timeout_seconds:null,created_at:null},
+       attempt:{status:"not_started",exit_status:null,started_at:null,finished_at:null,
+         log:{path:null,sha256:null}},host_finalization:null}' > "$QA_EXECUTION_EVIDENCE_PATH" || return 1
+  cat > "$QA_EXECUTION_HELPER_PATH" <<'QA_ATTEMPT_EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+checkpoint=""; log=""; timeout_seconds=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --checkpoint) checkpoint="${2:?missing checkpoint}"; shift 2 ;;
+    --log) log="${2:?missing log}"; shift 2 ;;
+    --timeout) timeout_seconds="${2:?missing timeout}"; shift 2 ;;
+    --) shift; break ;;
+    *) printf 'qa-test-attempt: unknown argument: %s\n' "$1" >&2; exit 2 ;;
+  esac
+done
+[[ -n "$checkpoint" && -n "$log" && "$timeout_seconds" =~ ^[1-9][0-9]*$ && $# -gt 0 ]] || {
+  printf 'qa-test-attempt: usage: --checkpoint FILE --log FILE --timeout SEC -- COMMAND...\n' >&2; exit 2; }
+[[ -f "$checkpoint" && ! -L "$checkpoint" ]] || { printf 'qa-test-attempt: checkpoint must be a regular file\n' >&2; exit 2; }
+sha_stream() {
+  if command -v sha256sum >/dev/null 2>&1 \
+      && printf '' | sha256sum >/dev/null 2>&1; then
+    sha256sum | awk '{print $1}'
+    return 0
+  fi
+  if command -v shasum >/dev/null 2>&1 \
+      && printf '' | shasum -a 256 >/dev/null 2>&1; then
+    shasum -a 256 | awk '{print $1}'
+    return 0
+  fi
+  printf 'qa-test-attempt: no sha256sum or shasum found\n' >&2
+  return 2
+}
+sha_file() { sha_stream < "$1"; }
+command_digest="$(printf '%q\037' "$@" | sha_stream)" || exit 2
+command_identity="sha256:${command_digest}"
+started="$(date -u +'%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date +'%Y-%m-%dT%H:%M:%SZ')"
+tmp="$(mktemp "${checkpoint}.tmp.XXXXXX")"
+jq --arg command_identity "$command_identity" --argjson timeout "$timeout_seconds" --arg started "$started" --arg log "$log" '
+  .status="running" | .checkpoint={status:"present",matrix_audit:"completed",
+    command_identity:$command_identity,timeout_seconds:$timeout,created_at:$started} |
+  .attempt={status:"running",exit_status:null,started_at:$started,finished_at:null,
+    log:{path:$log,sha256:null}} | .host_finalization=null' "$checkpoint" > "$tmp"
+mv "$tmp" "$checkpoint"
+set +e
+timeout --kill-after=15 "$timeout_seconds" "$@" > "$log" 2>&1
+rc=$?
+set -e
+finished="$(date -u +'%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date +'%Y-%m-%dT%H:%M:%SZ')"
+if [[ "$rc" -eq 0 ]]; then status=pass; overall=completed
+elif [[ "$rc" -eq 124 || "$rc" -eq 137 ]]; then status=timeout; overall=inconclusive
+else status=nonzero; overall=inconclusive; fi
+log_sha="$(sha_file "$log")" || exit 2
+tmp="$(mktemp "${checkpoint}.tmp.XXXXXX")"
+jq --arg status "$status" --arg overall "$overall" --argjson rc "$rc" \
+  --arg finished "$finished" --arg log_sha "$log_sha" '
+  .status=$overall | .attempt.status=$status | .attempt.exit_status=$rc |
+  .attempt.finished_at=$finished | .attempt.log.sha256=$log_sha' "$checkpoint" > "$tmp"
+mv "$tmp" "$checkpoint"
+exit "$rc"
+QA_ATTEMPT_EOF
+  chmod 0700 "$QA_EXECUTION_HELPER_PATH" || return 1
+  printf -v QA_EXECUTION_CONTEXT_BLOCK \
+    '  QA execution evidence (qa-tester only):\n    checkpoint: %s\n    helper: %s\n    Contract: before every supplemental test command, invoke the host helper as\n      %s --checkpoint %s --log %s --timeout <seconds> -- <command>\n    The helper flushes a checkpoint before execution and owns the command log. Do not run\n    a supplemental test directly. If no supplemental test is needed, leave this artifact\n    untouched and explain that in Evidence Accounting.\n' \
+    "$QA_EXECUTION_EVIDENCE_PATH" "$QA_EXECUTION_HELPER_PATH" "$QA_EXECUTION_HELPER_PATH" \
+    "$QA_EXECUTION_EVIDENCE_PATH" "$WORK_DIR/.gate-results/qa-test-attempt-${TIMESTAMP}.log"
+}
+
+qa_execution_finalize() {
+  local exit_status="${1:-0}" now tmp terminal
+  [[ -n "$QA_EXECUTION_EVIDENCE_PATH" && -f "$QA_EXECUTION_EVIDENCE_PATH" ]] || return 0
+  terminal="$(jq -r '.status // empty' "$QA_EXECUTION_EVIDENCE_PATH" 2>/dev/null || true)"
+  [[ "$terminal" == completed || "$terminal" == inconclusive || "$terminal" == not_run ]] && return 0
+  now="$(date -u +'%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date +'%Y-%m-%dT%H:%M:%SZ')"
+  tmp="$(mktemp "${QA_EXECUTION_EVIDENCE_PATH}.tmp.XXXXXX")" || return 0
+  # `not_run` is truthful only when the helper never wrote its early
+  # checkpoint.  A `running` record proves that supplemental execution was
+  # requested; if its writer disappears before the terminal update, retain it
+  # as non-authorizing inconclusive evidence even when the overall gate exits
+  # successfully.
+  if [[ "$exit_status" -eq 0 && "$terminal" == awaiting_checkpoint ]]; then
+    if jq --arg now "$now" '.status="not_run" | .host_finalization={reason:"no supplemental QA command requested",at:$now}' \
+        "$QA_EXECUTION_EVIDENCE_PATH" > "$tmp"; then
+      mv "$tmp" "$QA_EXECUTION_EVIDENCE_PATH" || rm -f "$tmp"
+    else
+      rm -f "$tmp"
+    fi
+  else
+    if jq --arg now "$now" --argjson exit_status "$exit_status" --arg terminal "$terminal" \
+        '.status="inconclusive" | .host_finalization={reason:(if $terminal == "running" then "QA test attempt ended before it reached a terminal state" else "reviewer session ended before QA evidence reached a terminal state" end),at:$now,gate_exit_status:$exit_status}' \
+        "$QA_EXECUTION_EVIDENCE_PATH" > "$tmp"; then
+      mv "$tmp" "$QA_EXECUTION_EVIDENCE_PATH" || rm -f "$tmp"
+    else
+      rm -f "$tmp"
+    fi
+  fi
+}
 PROTOCOL_RECOVERY_PATH="$WORK_DIR/.gate-results/gate-protocol-attempts-${TIMESTAMP}.jsonl"
 _gate_protocol_attempt_record() {
   local role="$1" reviewer="$2" attempt="$3" outcome="$4" reason="$5" artifact="$6"
@@ -6238,6 +6378,7 @@ if [[ "$SKIP_PREFLIGHT_TESTS" != "true" && -n "$TEST_CMD_OVERRIDE" ]]; then
       export PM_DISPATCH_PREFLIGHT_SUBJECT_FINGERPRINT="$_preflight_before"
       export PM_DISPATCH_PREFLIGHT_BASE_COMMIT="$_preflight_base_commit"
       export PM_DISPATCH_PREFLIGHT_HEAD_COMMIT="$_preflight_head_commit"
+      export PM_DISPATCH_TEST_COMMAND_IDENTITY="sha256:${_preflight_command_digest}"
       # The test command is a subject of this gate, not another producer owned
       # by the same parent operation.  Do not let nested pmctl/pr-gate fixtures
       # attach themselves to or infer ownership from the outer gate.
@@ -6254,6 +6395,7 @@ if [[ "$SKIP_PREFLIGHT_TESTS" != "true" && -n "$TEST_CMD_OVERRIDE" ]]; then
         PM_DISPATCH_PREFLIGHT_SUBJECT_FINGERPRINT="$_preflight_before" \
         PM_DISPATCH_PREFLIGHT_BASE_COMMIT="$_preflight_base_commit" \
         PM_DISPATCH_PREFLIGHT_HEAD_COMMIT="$_preflight_head_commit" \
+        PM_DISPATCH_TEST_COMMAND_IDENTITY="sha256:${_preflight_command_digest}" \
         timeout --kill-after=15 "$TEST_TIMEOUT" bash -c "$TEST_CMD_OVERRIDE" ) \
       > "$PREFLIGHT_LOG_PATH" 2>&1 || _preflight_rc=$?
   fi
@@ -6539,6 +6681,8 @@ if [[ "$PREFLIGHT_STATUS" != "pass" && "$PREFLIGHT_STATUS" != "skipped" ]]; then
   gate_result_verify "$OUTPUT_FILE" "" "preflight-fail-fast" || exit 1
 else
 
+qa_execution_prepare || { printf 'Error: unable to prepare QA execution evidence\n' >&2; exit 2; }
+
 # Snapshot only the selected repo-owned definitions into an artifact-only
 # directory inside the reviewed workspace. Both Claude and Codex can read these
 # immutable local copies without broad host-home access; cleanup_briefs removes
@@ -6611,7 +6755,9 @@ ${AGENT_FILE_ENTRIES}${DIFF_FILE_ENTRIES}  - new:  ${OUTPUT_FILE}
 
 constraints:
   - Do NOT modify any source file.
-  - Only write ${OUTPUT_FILE}.
+  - Only write ${OUTPUT_FILE}. The qa-tester alone may additionally invoke the
+    host-created QA helper named in its context; that helper is the only allowed
+    writer of its pre-created checkpoint and log under .gate-results/.
   - Before your FIRST write to ${OUTPUT_FILE} in this session, call: ${GUARD_PMCTL_CMD} guard check --role reviewer --runtime ${EXECUTOR} --event pre-write --file ${OUTPUT_FILE}
     If that call exits nonzero, abort and report the guard denial -- do NOT write the file.
     You will write to this same file multiple times in this session (once per reviewer, then once for synthesis) -- that is expected. Do not create or write any other file.
@@ -6636,7 +6782,7 @@ context:
   Base: ${BASE}${HEAD_METADATA_LINE}
   Scope: ${SCOPE:-none}
   Date: $(date '+%Y-%m-%d')
-${GATE_ASSURANCE_CONTEXT_BLOCK}${SCOPE_MANIFEST_CONTEXT_BLOCK}${GATE_OVERRIDES_CONTEXT_BLOCK}${TEST_EVIDENCE_CONTEXT_BLOCK}
+${GATE_ASSURANCE_CONTEXT_BLOCK}${SCOPE_MANIFEST_CONTEXT_BLOCK}${GATE_OVERRIDES_CONTEXT_BLOCK}${TEST_EVIDENCE_CONTEXT_BLOCK}${QA_EXECUTION_CONTEXT_BLOCK}
 ${REVIEWER_PROTOCOL_INSTRUCTIONS}
 ${SYNTHESIS_PROTOCOL_INSTRUCTIONS}
 ${MEMORY_CONTEXT_BLOCK}
@@ -6915,7 +7061,9 @@ ${DIFF_FILE_ENTRIES}  - new:  ${REVIEWER_OUTPUT}
 
 constraints:
   - Do NOT modify any source file.
-  - Only write ${REVIEWER_OUTPUT}.
+  - Only write ${REVIEWER_OUTPUT}. If and only if Reviewer=qa-tester, you may
+    invoke the host-created QA helper named in context; do not write its
+    checkpoint or log directly and do not run supplemental tests directly.
   - Before writing ${REVIEWER_OUTPUT}, call: ${GUARD_PMCTL_CMD} guard check --role reviewer --runtime ${EXECUTOR} --event pre-write --file ${REVIEWER_OUTPUT}
     If that call exits nonzero, abort and report the guard denial -- do NOT write the file.
   - If you need to test the PM Bash denylist with a command string containing
@@ -6935,7 +7083,7 @@ context:
   Base: ${BASE}${HEAD_METADATA_LINE}
   Scope: ${SCOPE:-none}
   Date: $(date '+%Y-%m-%d')
-${GATE_ASSURANCE_CONTEXT_BLOCK}${SCOPE_MANIFEST_CONTEXT_BLOCK}${GATE_OVERRIDES_CONTEXT_BLOCK}${TEST_EVIDENCE_CONTEXT_BLOCK}
+${GATE_ASSURANCE_CONTEXT_BLOCK}${SCOPE_MANIFEST_CONTEXT_BLOCK}${GATE_OVERRIDES_CONTEXT_BLOCK}${TEST_EVIDENCE_CONTEXT_BLOCK}${QA_EXECUTION_CONTEXT_BLOCK}
 ${REVIEWER_PROTOCOL_INSTRUCTIONS}
 ${MEMORY_CONTEXT_BLOCK}
   Verified reference files (exist in working tree -- check before citing):
@@ -7200,7 +7348,9 @@ ${DIFF_FILE_ENTRIES}  - new:  ${_RETRY_OUTPUT}
 
 constraints:
   - Do NOT modify any source file.
-  - Only write ${_RETRY_OUTPUT}.
+  - Only write ${_RETRY_OUTPUT}. If and only if Reviewer=qa-tester, you may
+    invoke the host-created QA helper named in context; do not write its
+    checkpoint or log directly and do not run supplemental tests directly.
   - Before writing ${_RETRY_OUTPUT}, call: ${GUARD_PMCTL_CMD} guard check --role reviewer --runtime ${EXECUTOR} --event pre-write --file ${_RETRY_OUTPUT}
     If that call exits nonzero, abort and report the guard denial -- do NOT write the file.
   - Create parent directories if needed (mkdir -p).
@@ -7215,7 +7365,7 @@ context:
   Base: ${BASE}${HEAD_METADATA_LINE}
   Scope: ${SCOPE:-none}
   Date: $(date '+%Y-%m-%d')
-${GATE_ASSURANCE_CONTEXT_BLOCK}${SCOPE_MANIFEST_CONTEXT_BLOCK}${GATE_OVERRIDES_CONTEXT_BLOCK}${TEST_EVIDENCE_CONTEXT_BLOCK}
+${GATE_ASSURANCE_CONTEXT_BLOCK}${SCOPE_MANIFEST_CONTEXT_BLOCK}${GATE_OVERRIDES_CONTEXT_BLOCK}${TEST_EVIDENCE_CONTEXT_BLOCK}${QA_EXECUTION_CONTEXT_BLOCK}
 ${REVIEWER_PROTOCOL_INSTRUCTIONS}
 ${MEMORY_CONTEXT_BLOCK}
   Verified reference files (exist in working tree -- check before citing):

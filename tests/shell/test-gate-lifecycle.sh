@@ -17,6 +17,8 @@ th_init "$@"
 
 # shellcheck source=runtime/lib/detached-launch.sh
 . "$REPO_ROOT/runtime/lib/detached-launch.sh"
+# shellcheck source=runtime/lib/pmctl-gate.sh
+. "$REPO_ROOT/runtime/lib/pmctl-gate.sh"
 
 export PM_DISPATCH_STATE_ROOT="$tmp_root/gate-lifecycle-state"
 
@@ -43,8 +45,8 @@ _cleanup_unconsumed_gate_test_sentinels() {
     gate_id="${key_file##*/}"
     nonce="$(cat "$key_file" 2>/dev/null || true)"
     [[ -n "$nonce" ]] || continue
-    ready_sentinel="$(detached_launch_sentinel_path "pm-gate-ready" "$gate_id" "$nonce")"
-    terminal_sentinel="$(detached_launch_sentinel_path "pm-gate" "$gate_id" "$nonce")"
+    ready_sentinel="$(detached_launch_private_sentinel_path "pm-gate-dispatch" "pm-gate-ready" "$gate_id" "$nonce")"
+    terminal_sentinel="$(detached_launch_private_sentinel_path "pm-gate-dispatch" "pm-gate" "$gate_id" "$nonce")"
     if [[ -e "$ready_sentinel" && ! -e "$terminal_sentinel" ]]; then
       detached_launch_wait_for_sentinel "$terminal_sentinel" 1 0.01 >/dev/null 2>&1 || true
     fi
@@ -528,9 +530,9 @@ case_wait_reports_post_readiness_supervisor_failure() {
   fi
 }
 
-# ---- 5: gate wait on nonexistent/consumed gate_id returns 3 (indeterminate) --
-case_wait_indeterminate_on_consumed_sentinel() {
-  local name="gate-lifecycle/gate wait returns 3 for consumed/unknown gate_id"
+# ---- 5: repeated gate waits retain the same authenticated terminal evidence --
+case_wait_reverifies_retained_sentinel() {
+  local name="gate-lifecycle/gate wait re-verifies retained terminal evidence"
   should_run "$name" || return 0
 
   local fixture="$tmp_root/c5/fixture" work="$tmp_root/c5/work"
@@ -546,20 +548,76 @@ case_wait_indeterminate_on_consumed_sentinel() {
   gate_id="$("$run_wrapper" --cd "$work" --lifecycle detached)"
   key_file="$XDG_RUNTIME_DIR/pm-gate-dispatch/$gate_id"
   nonce="$(cat "$key_file")"
-  ready_sentinel="$(detached_launch_sentinel_path "pm-gate-ready" "$gate_id" "$nonce")"
-  terminal_sentinel="$(detached_launch_sentinel_path "pm-gate" "$gate_id" "$nonce")"
+  ready_sentinel="$(detached_launch_private_sentinel_path "pm-gate-dispatch" "pm-gate-ready" "$gate_id" "$nonce")"
+  terminal_sentinel="$(detached_launch_private_sentinel_path "pm-gate-dispatch" "pm-gate" "$gate_id" "$nonce")"
 
-  # First wait consumes terminal + readiness evidence and the key (one-shot).
+  # The first verified wait must not consume terminal evidence. A second wait
+  # is a genuine re-verification, not an indeterminate best-effort read.
   "$wait_wrapper" "$gate_id" --cd "$work" --timeout "$_WAIT_OK" >/dev/null 2>&1 || true
 
   local out code
   set +e; out="$("$wait_wrapper" "$gate_id" --cd "$work" --timeout 2 2>&1)"; code=$?; set -e
 
-  if [[ "$code" -eq 3 ]] && [[ "$out" == *"indeterminate"* ]] \
-    && [[ ! -e "$ready_sentinel" && ! -e "$terminal_sentinel" && ! -e "$key_file" ]]; then
+  if [[ "$code" -eq 0 ]] && [[ "$out" == *"state: GO"* ]] \
+    && [[ -e "$ready_sentinel" && -e "$terminal_sentinel" && -e "$key_file" ]]; then
     pass "$name"
   else
     fail "$name" "code=$code ready_exists=$([[ -e "$ready_sentinel" ]] && printf yes || printf no) terminal_exists=$([[ -e "$terminal_sentinel" ]] && printf yes || printf no) key_exists=$([[ -e "$key_file" ]] && printf yes || printf no) out=$out"
+  fi
+}
+
+# ---- 5a: pruning only reclaims expired, completed evidence ------------------
+# The bounded-retention sweep runs before each new detached launch.  Exercise
+# its decision boundary directly: an expired terminal triple can be removed,
+# while fresh completed evidence, an active key with no terminal sentinel, and
+# symlink candidates all remain available for a retry or later investigation.
+case_prune_terminal_evidence_preserves_non_expired_candidates() {
+  local name="gate-lifecycle/prune retains fresh active and symlink evidence"
+  should_run "$name" || return 0
+
+  local key_dir="$XDG_RUNTIME_DIR/pm-gate-dispatch"
+  mkdir -p "$key_dir" && chmod 700 "$key_dir"
+
+  local expired_id="gate-20260101-000000-exp001" fresh_id="gate-20260101-000001-fre001"
+  local active_id="gate-20260101-000002-act001" symlink_id="gate-20260101-000003-sym001"
+  local expired_nonce="expired-nonce" fresh_nonce="fresh-nonce" active_nonce="active-nonce" symlink_nonce="symlink-nonce"
+  local expired_key="$key_dir/$expired_id" fresh_key="$key_dir/$fresh_id"
+  local active_key="$key_dir/$active_id" symlink_key="$key_dir/$symlink_id"
+  local expired_terminal expired_ready fresh_terminal fresh_ready symlink_terminal symlink_ready symlink_target
+
+  expired_terminal="$(detached_launch_private_sentinel_path "pm-gate-dispatch" "pm-gate" "$expired_id" "$expired_nonce")"
+  expired_ready="$(detached_launch_private_sentinel_path "pm-gate-dispatch" "pm-gate-ready" "$expired_id" "$expired_nonce")"
+  fresh_terminal="$(detached_launch_private_sentinel_path "pm-gate-dispatch" "pm-gate" "$fresh_id" "$fresh_nonce")"
+  fresh_ready="$(detached_launch_private_sentinel_path "pm-gate-dispatch" "pm-gate-ready" "$fresh_id" "$fresh_nonce")"
+  symlink_terminal="$(detached_launch_private_sentinel_path "pm-gate-dispatch" "pm-gate" "$symlink_id" "$symlink_nonce")"
+  symlink_ready="$(detached_launch_private_sentinel_path "pm-gate-dispatch" "pm-gate-ready" "$symlink_id" "$symlink_nonce")"
+
+  printf '%s\n' "$expired_nonce" > "$expired_key"
+  printf '%s\n' "$fresh_nonce" > "$fresh_key"
+  printf '%s\n' "$active_nonce" > "$active_key"
+  printf '%s\n' "$symlink_nonce" > "$symlink_key"
+  detached_launch_write_sentinel "$expired_terminal" final_state=GO exit_code=0
+  detached_launch_write_sentinel "$expired_ready" state=ready
+  detached_launch_write_sentinel "$fresh_terminal" final_state=GO exit_code=0
+  detached_launch_write_sentinel "$fresh_ready" state=ready
+  symlink_target="$tmp_root/c5a/symlink-target"
+  mkdir -p "${symlink_target%/*}"
+  printf 'do-not-follow\n' > "$symlink_target"
+  ln -s "$symlink_target" "$symlink_terminal"
+  ln -s "$symlink_target" "$symlink_ready"
+
+  # Make the expired completed triple and an old active key equally old.  The
+  # latter must remain because it has no terminal sentinel proving completion.
+  touch -d '2 seconds ago' "$expired_terminal" "$expired_ready" "$expired_key" "$active_key"
+  PM_GATE_SENTINEL_RETENTION_SECONDS=1 _pmctl_gate_prune_terminal_evidence "$key_dir"
+
+  if [[ ! -e "$expired_terminal" && ! -e "$expired_ready" && ! -e "$expired_key" \
+    && -e "$fresh_terminal" && -e "$fresh_ready" && -e "$fresh_key" \
+    && -e "$active_key" \
+    && -L "$symlink_terminal" && -L "$symlink_ready" && -e "$symlink_key" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expired_terminal=$([[ -e "$expired_terminal" ]] && printf present || printf absent) fresh_terminal=$([[ -e "$fresh_terminal" ]] && printf present || printf absent) active_key=$([[ -e "$active_key" ]] && printf present || printf absent) symlink_terminal=$([[ -L "$symlink_terminal" ]] && printf preserved || printf absent)"
   fi
 }
 
@@ -601,7 +659,7 @@ case_wait_indeterminate_when_ready_supervisor_died() {
   run_dir="$(PM_DISPATCH_STATE_ROOT="$PM_DISPATCH_STATE_ROOT" bash -c '. "$1/runtime/lib/state-paths.sh"; cd "$2"; sw_project_run_dir "$3"' _ "$fixture" "$work" "$gate_id")"
   mkdir -p "$run_dir"
   printf 'pid=999999\nstate=Z\npgid=999999\nstarttime=1\ncomm=bash\nisolated=1\nboot_id=\n' > "$run_dir/supervisor.identity"
-  detached_launch_write_sentinel "$(detached_launch_sentinel_path "pm-gate-ready" "$gate_id" "$nonce")" "state=ready" "pid=999999" "starttime=1"
+  detached_launch_write_sentinel "$(detached_launch_private_sentinel_path "pm-gate-dispatch" "pm-gate-ready" "$gate_id" "$nonce")" "state=ready" "pid=999999" "starttime=1"
   local out code
   set +e; out="$("$wait_wrapper" "$gate_id" --cd "$work" --timeout 1 2>&1)"; code=$?; set -e
   rm -f "$XDG_RUNTIME_DIR/pm-gate-dispatch/$gate_id"
@@ -877,7 +935,8 @@ case_wait_reloads_verifier_over_incomplete_export
 case_wait_resolves_nogo
 case_wait_resolves_failed
 case_wait_reports_post_readiness_supervisor_failure
-case_wait_indeterminate_on_consumed_sentinel
+case_wait_reverifies_retained_sentinel
+case_prune_terminal_evidence_preserves_non_expired_candidates
 case_wait_indeterminate_when_no_readiness_evidence
 case_wait_indeterminate_when_ready_supervisor_died
 case_wait_times_out

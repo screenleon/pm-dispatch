@@ -40,8 +40,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-518 | ✅ closed 2026-07-29 | gate scope manifest v1：immutable subject、changed paths、paired tests、signals 與 bounded expansion | ops/gate | 2026-07-23 | pr:#455 | P1 | design |
 | CC-519 | ✅ closed 2026-07-30 | selected-reviewer coverage／finding contract：declared coverage、stable IDs 與 actionable fix boundary | ops/gate | 2026-07-23 | pr:#456 | P1 | design |
 | CC-520 | ✅ closed 2026-07-31 | synthesis parity 與 remediation seed：findings union、root-cause grouping、coverage matrix 與 no-silent-drop | ops/gate | 2026-07-23 | pr:#460 | P1 | design |
-| CC-521 | 🔵 active | test-gap matrix、protocol recovery 與 live recall evaluation 分層 | ops/test | 2026-07-23 | — | P2 | design |
-| CC-522 | ⚠️ partial 2026-08-04 | `--test-cmd` preflight 分類已交付；剩餘 QA checkpoint／partial evidence 與外部 structured evidence recovery | ops/test | 2026-07-27 | pr:#462 | P1 | design |
+| CC-521 | ✅ done | test-gap matrix、protocol recovery 與 live recall evaluation 分層 | ops/test | 2026-07-23 | pr:#470 | P2 | design |
+| CC-522 | ✅ done | Slice A truthful preflight、Slice B QA checkpoint/partial evidence、Slice C disables self-authored external-evidence recovery pending CI attestation | ops/test | 2026-07-27 | pr:#462 | P1 | design |
 | CC-523 | ✅ closed 2026-07-28 | `pmctl gate cancel` 必須終止 reviewer 派發前仍在執行的 foreground preflight 與其 process tree | arch/gate | 2026-07-27 | pr:#453 | P1 | hygiene |
 | CC-524 | 🔵 active | `pmctl artifacts show` 顯示 canonical absolute run root 並提供穩定 machine-readable locator | ux/ops | 2026-07-27 | feedback:2026-07-27 | P2 | hygiene |
 | CC-525 | 🔵 active | copy-mode verifier fallback 的 generated provenance 必須指向實際 generator，並由 parity ratchet 防止再次漂移 | ops/test | 2026-07-28 | feedback:2026-07-28 | P3 | hygiene |
@@ -2179,7 +2179,9 @@ verification expectations or seeds fail closed as `INCOMPLETE`.
 
 ---
 
-## CC-521 — test-gap matrix、protocol recovery 與 live evaluation 分層 🔵 active
+## CC-521 — test-gap matrix、protocol recovery 與 live evaluation 分層 ✅ 2026-08-09
+
+**See**: pr:#470
 
 **Problem**: 「請補測試」缺少 layer/scenario/oracle/failure signal，無法一次修正；
 同時 transport/schema recovery 與模型能否找出 seeded defects 是不同性質。前者可
@@ -2206,6 +2208,10 @@ deterministic fail closed，後者具模型波動，不應混成 CI hard gate。
 **Done-when**: protocol/schema/recovery 有穩定 CI contract；使用者可從一次 gate取得
 具體補測與驗證方向；live recall品質另有可觀察 benchmark，不污染 correctness gate。
 
+**Outcome**: PR #470 delivered the actionable matrix, bounded reviewer/synthesis
+protocol recovery, deterministic contract fixtures, and the seeded live recall
+evaluator. The evaluator remains observational rather than a CI authorization gate.
+
 **Non-goals**: 不把模型 recall 當 deterministic invariant；不因 uncertainty自動重試；
 不新增另一套 gate。
 
@@ -2215,7 +2221,9 @@ deterministic fail closed，後者具模型波動，不應混成 CI hard gate。
 
 ---
 
-## CC-522 — `--test-cmd` execution outcome 與 evidence capability 分層 ⚠️ partial 2026-08-04
+## CC-522 — `--test-cmd` execution outcome 與 evidence capability 分層 ✅ 2026-08-11
+
+**See**: `docs/spikes/CC-522-slice-b-c.md`
 
 **Framing**: 本票強化既有 `pmctl gate run --test-cmd` pre-flight 與 qa-tester
 對測試執行證據的解讀，不重寫 gate 流程。任意可執行 shell command 永遠是合法輸入；
@@ -2224,9 +2232,11 @@ structured result 是 opt-in capability，不是導入 gate 前必須先改造�
 evidence 分工；tier／mode／pass／coverage／independence 仍由 [[CC-512]] 擁有，
 subject freshness／consumer applicability 仍由 [[CC-515]] 擁有，test-gap內容仍由
 [[CC-521]] 擁有。禁止新增 gate kind、workflow engine、強制 runner migration，
-或以 stdout/stderr 關鍵字猜測 assertion／環境失敗。
+或以 stdout/stderr 關鍵字猜測 assertion／環境失敗。Slice B/C 已補足 reviewer
+自主 execution evidence 與 external structured recovery；剩餘風險由下列
+non-goals 保持界定，而非再擴張 gate workflow。
 
-**Delivery status（2026-08-04，pr:#462）：⚠️ partial**
+**Delivery status（2026-08-11）：✅ complete**
 
 - 已交付 **Slice A — preflight truthful classification**：Requirement 1–3 已落地；
   preflight evidence 分開 execution、test verdict、evidence richness 與
@@ -2237,23 +2247,27 @@ subject freshness／consumer applicability 仍由 [[CC-515]] 擁有，test-gap�
   diagnostic/recovery command 與 Requirement 9 的對應 deterministic fixtures 也已交付。
 - 同 PR 將高 fan-out full-suite escalation 的預設 `--test-timeout` 由 1800s
   調為 3600s，並將 `test-pr-gate` 分 shard／加上 case watchdog。這是
-  執行可觀測性修復，不代表下列 QA／external evidence 範圍已完成。
-- 未交付：Requirement 4–6 的 qa-tester 自主測試 checkpoint／bounded
-  execution／partial artifact，Requirement 7 的外部 structured evidence recovery，
-  以及這些路徑在 Requirement 8–9 的 human output 與 fixtures。
+  執行可觀測性修復，後續 Slice B/C 已在本票完成。
+- 已交付 **Slice B**：host 在 qa-tester dispatch 前建立
+  `qa_execution_evidence_v1`；受限 helper 先 atomically flush checkpoint，再由
+  shell-owned `timeout --kill-after=15` 執行、保存 log／exit metadata。gate failure
+  會把 pending record 收斂為 non-authorizing `inconclusive`，正常未執行則保留
+  `not_run`。這份 artifact 不會進入 reviewer finding 或 synthesis union。
+- 已交付 **Slice C**：停用 `--external-test-evidence` recovery。呼叫端可自行
+  撰寫 PASS JSON 與 digest；digest 只能證明檔案位元未變，不能證明哪個 runner
+  執行測試。因此 local preflight 的 `INCOMPLETE` 必須本地重跑；未來只會透過
+  CI-provider OIDC/provenance verifier 加入遠端授權路徑。
 
-**Converged remaining scope（2026-08-10）**
+**Converged scope（2026-08-11，implemented）**
 
-1. **Slice B — QA execution evidence（下一個實作 slice）**：只處理
+1. **Slice B — QA execution evidence**：只處理
    qa-tester 自主測試的 `inconclusive` 分類、early checkpoint、shell-owned
    bounded wrapper/log/attempt metadata，以及 sequential/parallel watchdog 終止後
    的 non-authorizing partial artifact。測試缺口「內容」與 matrix schema
    繼續由 [[CC-521]] 擁有；本 slice 只擁有「執行證據怎麼留下」。
-2. **Slice C — external structured evidence recovery（後續獨立 slice）**：只接受
-   schema-valid producer artifact，機械驗證 repository/subject、HEAD/tree fingerprint、
-   command digest、suite identity 與 artifact integrity，通過 [[CC-515]]
-   freshness/applicability 後才可取代 Slice B 的 inconclusive evidence。不建 CI
-   provider integration，不接受純 log／口頭 PASS，不自動提高 timeout。
+2. **Slice C — external evidence boundary**：local gate 不接受外部 result 作為
+   recovery 或 authorization。schema/digest/subject matching 仍不足以建立 producer
+   identity；不接受純 log、口頭 PASS 或 self-authored JSON，不自動提高 timeout。
 3. Slice B/C 各自獨立驗收；不重寫 Slice A、不再擴充 preflight
    classification enum，不把 [[CC-521]] 的 protocol retry/live recall 併回本票。
 
@@ -2261,9 +2275,11 @@ subject freshness／consumer applicability 仍由 [[CC-515]] 擁有，test-gap�
 result；即使 command 有執行，也可能因 reviewer sandbox、依賴、網路、資源限制或
 timeout 非零退出，而同一 tree 在外部環境可正常通過。pr:#462 已修復
 pre-flight 把「沒有可用 authorization evidence」誤寫成「diff 已證明有
-defect」的第一層問題；剩餘缺口是 qa-tester 自主測試仍可在 timeout／
-watchdog termination 後不留下可用 checkpoint／partial evidence，且外部環境產生的
-structured evidence 還沒有 subject-bound recovery 路徑。
+defect」的第一層問題；本次實作再讓 qa-tester timeout/watchdog termination
+留下 checkpoint／partial evidence。外部 structured evidence 目前一律
+non-authorizing 且 local gate 明確拒絕；只有未來經 CI-provider
+OIDC/provenance verifier 驗證、並綁定 repository、workflow、commit 與 command 的
+遠端 evidence，才可能成為授權路徑。
 
 **Requirement**:
 
@@ -2300,29 +2316,27 @@ structured evidence 還沒有 subject-bound recovery 路徑。
    將它補寫成 pass／block或納入正常 findings union，operation只能
    `INCOMPLETE/non-authorizing`。若模型在 checkpoint 前違規直接執行長測試，wrapper
    仍須留下 shell-owned attempt/log evidence並明示 `checkpoint: missing`。
-7. 外部執行 evidence recovery 必須驗證同一 repository subject、HEAD/tree
-   fingerprint、command digest、suite identity與 artifact integrity；符合
-   [[CC-515]] freshness/applicability 才能取代 inconclusive。口頭／純 log PASS
-   可作 manual clue，不得單獨授權 GO。不得自動重跑或提高 timeout 掩蓋 performance
-   regression；重跑由使用者明示或 policy-bounded recovery 觸發並記錄 attempts。
+7. 外部執行 evidence 在未驗 CI-provider OIDC/provenance 前不得取代
+   `INCOMPLETE` 或授權 GO。口頭／純 log PASS、self-authored JSON 與其 digest
+   都只能作 manual clue；不得自動重跑或提高 timeout 掩蓋 performance regression。
 8. human result 明確區分 `code/test NO-GO`、`gate INCOMPLETE` 與
    `evidence unavailable`，提供可複製的 same-command／adjusted-timeout／external
    evidence recovery 指令，不要求使用者先採用 structured producer。
 9. deterministic fixtures 覆蓋：opaque PASS、opaque nonzero、structured PASS／
    test-fail、sink missing、sink malformed、timeout、environment error、tree drift、
-   external evidence subject match/mismatch、qa targeted failure、timeout 前已寫
+   self-authored external evidence rejection、qa targeted failure、timeout 前已寫
    checkpoint、checkpoint 前違規執行仍有 shell log、sequential／parallel partial
    preservation，以及不得把 inconclusive轉成 blocker或 GO。
 
 **Done-when**: Slice A 的已交付契約維持回歸；Slice B 讓 qa-tester
 自主測試即使 timeout/watchdog termination 也必有非空 checkpoint、attempt
-metadata與 log pointer，且不能被 synthesis 轉成 blocker 或 GO；Slice C 只在
-外部 structured evidence 通過 subject/digest/integrity/applicability 後取代
-inconclusive。兩個剩餘 slice 的 deterministic fixtures 全數通過後才關閉本票。
+metadata與 log pointer，且不能被 synthesis 轉成 blocker 或 GO；Slice C 不允許
+外部 structured evidence 取代 inconclusive，直到 CI attestation verifier 到位。
+Slice B/C 的 deterministic fixtures 通過後關閉本票。
 
 **Non-goals**: 不保證任意 command 可自動判斷失敗根因；不解析自由文字 log 作
-authorization；不降低 current-tree test evidence要求；不讓 external PASS 省略
-subject/digest驗證；不在本票建立通用 CI provider integration。
+authorization；不降低 current-tree test evidence要求；不讓 external PASS 取得授權；
+不在本票建立通用 CI provider integration。
 
 **Dependencies**: Slice A 已透過 pr:#462 複用 [[CC-470]]／[[CC-491]] 交付。
 Slice B 的 matrix/checkpoint 交界依賴 [[CC-521]] 定義內容契約，但本票仍

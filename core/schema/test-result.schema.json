@@ -26,6 +26,11 @@
     "tree_fingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
     "observed_tree_fingerprint_after": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
     "runner_contract_hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "command_identity": {
+      "description": "Optional caller-supplied digest of the exact command whose result this artifact records. Required only by consumers that explicitly bind evidence to a command.",
+      "type": ["string", "null"],
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
     "selection_mode": { "enum": ["all", "working-tree", "base-diff", "explicit-paths", "escalated-full"] },
     "changed_paths": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
     "suite_set": { "type": "array", "minItems": 1, "items": { "type": "string" }, "uniqueItems": true },
