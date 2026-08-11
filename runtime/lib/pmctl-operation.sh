@@ -2,6 +2,11 @@
 # Durable parent-operation control plane shared by dispatch-capable producers.
 
 _PMCTL_OPERATION_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ "$(type -t pm_identifier_operation_is_valid 2>/dev/null)" != function ]]; then
+  # shellcheck source=runtime/lib/identifier-policy.sh
+  # shellcheck disable=SC1091
+  . "$_PMCTL_OPERATION_LIB_DIR/identifier-policy.sh"
+fi
 if [[ "$(type -t _portable_canonical_path 2>/dev/null)" != function ]]; then
   # shellcheck source=runtime/lib/portable.sh
   # shellcheck disable=SC1091 # sourced by repository-relative runtime path
@@ -99,7 +104,7 @@ _pmctl_operation_attach_child_inner() {
 
 pmctl_operation_attach_child() {
   local repo_root="$1" parent_dir="$2" op_id="$3" run_id="$4" child_dir="$5" op_dir
-  [[ "$run_id" =~ ^run-[A-Za-z0-9]+-[A-Za-z0-9]+$ && "$child_dir" == /* ]] || return 2
+  pm_identifier_run_is_valid "$run_id" && [[ "$child_dir" == /* ]] || return 2
   _pmctl_operation_load_writer "$repo_root" || return 2
   op_dir="$(_pmctl_operation_dir "$repo_root" "$parent_dir" "$op_id")" || return 2
   [[ -f "${op_dir%/*}/${op_id}.json" ]] || return 2
@@ -475,7 +480,10 @@ _pmctl_operation_reconcile_inner() {
   if [[ -f "$op_dir/children.jsonl" ]]; then
     while IFS= read -r line; do
       run_id="$(jq -r '.run_id // ""' <<<"$line")"; child_dir="$(jq -r '.working_dir // ""' <<<"$line")"
-      [[ "$run_id" =~ ^run-[A-Za-z0-9]+-[A-Za-z0-9]+$ && "$child_dir" == /* ]] || { missing=$((missing + 1)); continue; }
+      if ! pm_identifier_run_is_valid "$run_id" || [[ "$child_dir" != /* ]]; then
+        missing=$((missing + 1))
+        continue
+      fi
       children=$((children + 1))
       if ! _pmctl_dispatch_read_terminal_claim "$child_dir" "$run_id"; then missing=$((missing + 1)); continue; fi
       case "$PMCTL_TERMINAL_STATE" in failed|partial) failed=$((failed + 1)) ;; cancelled) cancelled=$((cancelled + 1)) ;; ok) : ;; *) missing=$((missing + 1)) ;; esac
@@ -540,7 +548,10 @@ pmctl_operation_cancel() {
       *) [[ -z "$operation_id" ]] || { _pmctl_operation_usage; return 2; }; operation_id="$1"; shift ;;
     esac
   done
-  [[ "$operation_id" =~ ^op-[0-9]{8}T[0-9]{6}Z-[a-f0-9]{6}$ && -n "$work_dir" && -d "$work_dir" ]] || { _pmctl_operation_usage; return 2; }
+  if ! pm_identifier_operation_is_valid "$operation_id" || [[ -z "$work_dir" || ! -d "$work_dir" ]]; then
+    _pmctl_operation_usage
+    return 2
+  fi
   _pmctl_operation_load_writer "$repo_root" || return 2
   local op_dir mark_rc=0
   op_dir="$(_pmctl_operation_dir "$repo_root" "$work_dir" "$operation_id")" || return 2
@@ -562,7 +573,9 @@ pmctl_operation_cancel() {
   if [[ -f "$op_dir/children.jsonl" ]]; then
     while IFS= read -r line; do
       run_id="$(jq -r '.run_id // ""' <<<"$line" 2>/dev/null || true)"; child_dir="$(jq -r '.working_dir // ""' <<<"$line" 2>/dev/null || true)"
-      [[ "$run_id" =~ ^run-[A-Za-z0-9]+-[A-Za-z0-9]+$ && "$child_dir" == /* && "$seen" != *" $run_id "* ]] || continue
+      if ! pm_identifier_run_is_valid "$run_id" || [[ "$child_dir" != /* || "$seen" == *" $run_id "* ]]; then
+        continue
+      fi
       seen+="$run_id "
       rc=0; pmctl_dispatch_cancel "$repo_root" "$run_id" --cd "$child_dir" --grace "$grace" || rc=$?
       # A child already terminal is a valid cancel race outcome; unknown or
@@ -593,7 +606,10 @@ pmctl_operation_reconcile() {
       *) [[ -z "$operation_id" ]] || { _pmctl_operation_reconcile_usage; return 2; }; operation_id="$1"; shift ;;
     esac
   done
-  [[ "$operation_id" =~ ^op-[0-9]{8}T[0-9]{6}Z-[a-f0-9]{6}$ && -n "$work_dir" && -d "$work_dir" ]] || { _pmctl_operation_reconcile_usage; return 2; }
+  if ! pm_identifier_operation_is_valid "$operation_id" || [[ -z "$work_dir" || ! -d "$work_dir" ]]; then
+    _pmctl_operation_reconcile_usage
+    return 2
+  fi
   _pmctl_operation_load_writer "$repo_root" || return 2
   local rc=0
   _pmctl_operation_with_record_lock "$repo_root" "$work_dir" "$operation_id" \

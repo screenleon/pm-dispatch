@@ -1566,6 +1566,34 @@ case_portable_canonical_path() {
   fi
 }
 
+# Behavior: importing a runtime library leaves the caller's execution context
+# untouched.  Steps: source portable.sh under several strict-mode combinations
+# and verify flags, cwd, traps, and the watched directory are unchanged.
+case_portable_source_is_side_effect_free() {
+  local name="portable/source-is-side-effect-free" watched
+  should_run "$name" || return 0
+  watched="$tmp_root/source-contract"
+  mkdir -p "$watched"
+  printf 'sentinel\n' > "$watched/sentinel"
+
+  local mode
+  for mode in none errexit nounset pipefail all; do
+    if ! bash -c '
+      mode="$1"; lib="$2"; watched="$3"
+      case "$mode" in none) ;; errexit) set -e ;; nounset) set -u ;; pipefail) set -o pipefail ;; all) set -euo pipefail ;; esac
+      trap "printf trapped >&2" USR1
+      before_flags="$-"; before_pipefail="$(set -o | awk '\''$1 == "pipefail" { print $2 }'\'')"; before_cwd="$PWD"; before_trap="$(trap -p USR1)"; before_files="$(find "$watched" -mindepth 1 -printf "%P\\n" | sort)"
+      . "$lib"
+      after_pipefail="$(set -o | awk '\''$1 == "pipefail" { print $2 }'\'')"; after_trap="$(trap -p USR1)"; after_files="$(find "$watched" -mindepth 1 -printf "%P\\n" | sort)"
+      [[ "$before_flags" == "$-" && "$before_pipefail" == "$after_pipefail" && "$before_cwd" == "$PWD" && "$before_trap" == "$after_trap" && "$before_files" == "$after_files" ]]
+    ' _ "$mode" "$REPO_ROOT/runtime/lib/portable.sh" "$watched"; then
+      fail "$name" "source contract failed under $mode"
+      return
+    fi
+  done
+  pass "$name"
+}
+
 case_link_or_copy_symlink_success
 case_link_or_copy_post_check_reject
 case_link_or_copy_copy_fallback
@@ -1578,5 +1606,6 @@ case_link_or_copy_copy_refresh_dry_run
 case_portable_sha1_shasum_fallback
 case_portable_sha1_both_missing
 case_portable_canonical_path
+case_portable_source_is_side_effect_free
 
 th_summary

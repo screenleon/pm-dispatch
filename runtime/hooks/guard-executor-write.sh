@@ -42,6 +42,8 @@ _SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 _REPO_ROOT="$(cd "$_SCRIPT_DIR/../.." 2>/dev/null && pwd)"
 # shellcheck source=runtime/lib/portable.sh
 . "$_SCRIPT_DIR/../lib/portable.sh"
+# shellcheck source=runtime/lib/identifier-policy.sh
+. "$_SCRIPT_DIR/../lib/identifier-policy.sh"
 # shellcheck source=runtime/lib/runner-kind.sh
 . "$_SCRIPT_DIR/../lib/runner-kind.sh"
 # shellcheck source=runtime/lib/guard-log.sh
@@ -98,7 +100,7 @@ g_read_json
 [[ "$G_TOOL_NAME" == "Edit" || "$G_TOOL_NAME" == "Write" ]] || exit 0
 
 RUNTIME="${G_AGENT_TYPE%-executor}"
-[[ "$RUNTIME" =~ ^[a-z][a-z0-9_-]*$ ]] || exit 0
+pm_identifier_adapter_is_valid "$RUNTIME" || exit 0
 
 # Resolve the runtime's write-guard mode from its adapter manifest. The
 # strict-identifier check above keeps RUNTIME safe to interpolate into the path.

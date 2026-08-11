@@ -64,7 +64,7 @@ _mk_fixture_repo() {
   cp "$REPO_ROOT/runtime/lib/pmctl-gate.sh" "$fixture/runtime/lib/pmctl-gate.sh"
   cp "$REPO_ROOT/runtime/bin/gate-supervisor.sh" "$fixture/runtime/bin/gate-supervisor.sh"
   chmod +x "$fixture/runtime/bin/gate-supervisor.sh"
-  for _lib in state-paths.sh portable.sh gate-result-verify.sh detached-launch.sh; do
+  for _lib in identifier-policy.sh state-paths.sh portable.sh gate-result-verify.sh detached-launch.sh; do
     cp "$REPO_ROOT/runtime/lib/$_lib" "$fixture/runtime/lib/$_lib"
   done
 }
@@ -753,9 +753,11 @@ case_detached_requires_state_paths() {
   local fixture="$tmp_root/c8/fixture" work="$tmp_root/c8/work"
   mkdir -p "$fixture/runtime/lib" "$fixture/runtime/bin" "$work"
   cp "$REPO_ROOT/runtime/lib/pmctl-gate.sh" "$fixture/runtime/lib/pmctl-gate.sh"
+  cp "$REPO_ROOT/runtime/lib/identifier-policy.sh" "$fixture/runtime/lib/identifier-policy.sh"
   cp "$REPO_ROOT/runtime/bin/gate-supervisor.sh" "$fixture/runtime/bin/gate-supervisor.sh"
   chmod +x "$fixture/runtime/bin/gate-supervisor.sh"
-  # Deliberately omit state-paths.sh/portable.sh.
+  # Deliberately omit state-paths.sh/portable.sh, but retain the mandatory
+  # source-safe identifier policy dependency.
   _mk_fake_gate "$fixture" 0
 
   local run_wrapper="$tmp_root/c8/run"

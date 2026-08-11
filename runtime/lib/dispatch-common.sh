@@ -9,7 +9,7 @@ dc_snapshot_copy_libs() {
   local snapshot_dir="$1" repo_root="$2"
   mkdir -p -- "$snapshot_dir/lib"
   local _lib
-  for _lib in state-writer.sh state-paths.sh portable.sh model-aliases.sh \
+  for _lib in identifier-policy.sh state-writer.sh state-paths.sh portable.sh model-aliases.sh \
               reasoning-effort.sh timeout-resolve.sh dispatch-common.sh; do
     if [[ -r "$repo_root/runtime/lib/$_lib" ]]; then
       cp -- "$repo_root/runtime/lib/$_lib" "$snapshot_dir/lib/$_lib" || true

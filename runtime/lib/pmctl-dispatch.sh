@@ -50,6 +50,13 @@
 
 # Source the shared config loader so pmctl_dispatch_run can resolve config
 # defaults and export them to adapter subprocesses.
+if ! declare -F pm_identifier_adapter_is_valid >/dev/null 2>&1; then
+  _pmctl_dispatch_lib_dir="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  # shellcheck disable=SC1091  # dynamic path; identifier policy is source-safe
+  . "$_pmctl_dispatch_lib_dir/identifier-policy.sh" 2>/dev/null || true
+  unset _pmctl_dispatch_lib_dir
+fi
+
 if ! declare -F pm_config_load >/dev/null 2>&1; then
   _pmctl_dispatch_lib_dir="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   # shellcheck disable=SC1091  # dynamic path; pmctl-config.sh scanned separately
@@ -854,7 +861,7 @@ pmctl_dispatch_execute_tail() {
 pmctl_dispatch_resolve_adapter() {
   local repo_root="${1:-}" adapter="${2:-}"
 
-  if ! [[ "$adapter" =~ ^[a-z][a-z0-9_-]*$ ]]; then
+  if ! pm_identifier_adapter_is_valid "$adapter"; then
     printf 'pmctl dispatch run: invalid adapter name %q (must be a bare lowercase identifier: a letter, then letters/digits/hyphen/underscore — no path separators)\n' "$adapter" >&2
     return 2
   fi
@@ -1247,7 +1254,7 @@ pmctl_dispatch_wait() {
     printf 'pmctl dispatch wait: <run_id> is required\n' >&2
     return 2
   fi
-  if ! [[ "$run_id" =~ ^run-[A-Za-z0-9]+-[A-Za-z0-9]+$ ]]; then
+  if ! pm_identifier_run_is_valid "$run_id"; then
     printf 'pmctl dispatch wait: invalid run_id %q\n' "$run_id" >&2
     return 2
   fi
@@ -1375,7 +1382,7 @@ pmctl_dispatch_cancel() {
     printf 'pmctl dispatch cancel: <run_id> is required\n' >&2
     return 2
   fi
-  if ! [[ "$run_id" =~ ^run-[A-Za-z0-9]+-[A-Za-z0-9]+$ ]]; then
+  if ! pm_identifier_run_is_valid "$run_id"; then
     printf 'pmctl dispatch cancel: invalid run_id %q\n' "$run_id" >&2
     return 2
   fi
@@ -1610,7 +1617,7 @@ pmctl_dispatch_status() {
   for run_path in "$runs_root"/*; do
     [[ -d "$run_path" ]] || continue
     run_id="$(basename "$run_path")"
-    [[ "$run_id" =~ ^run-[A-Za-z0-9]+-[A-Za-z0-9]+$ ]] || continue
+    pm_identifier_run_is_valid "$run_id" || continue
     art_dir="$run_path/.agent-trace"
     if [[ -f "$art_dir/$run_id.terminal" ]]; then
       claim_state="$(grep -m1 '^final_state=' "$art_dir/$run_id.terminal" 2>/dev/null | cut -d= -f2-)" || claim_state="?"
@@ -1835,7 +1842,7 @@ pmctl_dispatch_reconcile() {
     printf 'pmctl dispatch reconcile: <run_id> is required unless --all is given\n' >&2
     return 2
   fi
-  if [[ "$all" -eq 0 ]] && ! [[ "$run_id" =~ ^run-[A-Za-z0-9]+-[A-Za-z0-9]+$ ]]; then
+  if [[ "$all" -eq 0 ]] && ! pm_identifier_run_is_valid "$run_id"; then
     printf 'pmctl dispatch reconcile: invalid run_id %q\n' "$run_id" >&2
     return 2
   fi
@@ -1862,7 +1869,7 @@ pmctl_dispatch_reconcile() {
   for run_path in "$runs_root"/*; do
     [[ -d "$run_path" ]] || continue
     run_id="$(basename "$run_path")"
-    [[ "$run_id" =~ ^run-[A-Za-z0-9]+-[A-Za-z0-9]+$ ]] || continue
+    pm_identifier_run_is_valid "$run_id" || continue
     _pmctl_dispatch_reconcile_one "$repo_root" "$work_dir" "$run_id" "$apply" || true
     found=1
   done
@@ -1946,7 +1953,7 @@ pmctl_dispatch_run() {
         shift 2
         ;;
       --parent-operation)
-        if [[ $# -lt 2 || ! "$2" =~ ^op-[0-9]{8}T[0-9]{6}Z-[a-f0-9]{6}$ ]]; then
+        if [[ $# -lt 2 ]] || ! pm_identifier_operation_is_valid "$2"; then
           printf 'pmctl dispatch run: --parent-operation requires a valid operation id\n' >&2
           return 2
         fi
@@ -1989,7 +1996,7 @@ pmctl_dispatch_run() {
   fi
   # Strict identifier: a bare adapter name, never a path. Blocks `../` traversal
   # and any value that could resolve a dispatch.sh outside adapters/<name>/.
-  if ! [[ "$adapter" =~ ^[a-z][a-z0-9_-]*$ ]]; then
+  if ! pm_identifier_adapter_is_valid "$adapter"; then
     printf 'pmctl dispatch run: invalid adapter name %q (must be a bare lowercase identifier: a letter, then letters/digits/hyphen/underscore — no path separators)\n' "$adapter" >&2
     return 2
   fi

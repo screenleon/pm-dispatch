@@ -321,7 +321,7 @@ case_snapshot_copy_libs_copies_all_core_libs() {
   dc_snapshot_copy_libs "$snap" "$REPO_ROOT"
   # Assert: all six expected libs are present
   local missing=()
-  for lib in state-writer.sh state-paths.sh portable.sh model-aliases.sh \
+  for lib in identifier-policy.sh state-writer.sh state-paths.sh portable.sh model-aliases.sh \
              timeout-resolve.sh dispatch-common.sh; do
     [[ -f "$snap/lib/$lib" ]] || missing+=("$lib")
   done

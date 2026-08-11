@@ -2,21 +2,14 @@
 # Canonical state-store writer for pm-dispatch.
 
 SCRIPT_DIR_SW="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ "$(type -t pm_identifier_operation_is_valid 2>/dev/null)" != function ]]; then
+  # shellcheck source=runtime/lib/identifier-policy.sh
+  # shellcheck disable=SC1091
+  . "$SCRIPT_DIR_SW/identifier-policy.sh"
+fi
 # shellcheck source=runtime/lib/portable.sh
 if [[ "$(type -t serialize_with_lock 2>/dev/null)" != function || "$(type -t _portable_sha1 2>/dev/null)" != function || "$(type -t file_size_bytes 2>/dev/null)" != function ]]; then
-  _SW_SHELL_FLAGS="$-"
-  _SW_PIPEFAIL=0
-  set -o | grep -qE '^pipefail[[:space:]]+on$' && _SW_PIPEFAIL=1
   . "$SCRIPT_DIR_SW/portable.sh" 2>/dev/null || true
-  case "$_SW_SHELL_FLAGS" in *e*) set -e ;; *) set +e ;; esac
-  case "$_SW_SHELL_FLAGS" in *u*) set -u ;; *) set +u ;; esac
-  case "$_SW_SHELL_FLAGS" in *x*) set -x ;; *) set +x ;; esac
-  if [[ "$_SW_PIPEFAIL" -eq 1 ]]; then
-    set -o pipefail
-  else
-    set +o pipefail
-  fi
-  unset _SW_SHELL_FLAGS _SW_PIPEFAIL
 fi
 
 # Shared PATH resolvers (_sw_log_error, _sw_store_root, _sw_project_key,
@@ -596,9 +589,7 @@ _sw_decision_id_valid() {
   [[ "${1:-}" =~ ^dec-[0-9]{4}-[0-9]{2}-[0-9]{2}-[a-z0-9-]+$ ]]
 }
 
-_sw_operation_id_valid() {
-  [[ "${1:-}" =~ ^op-[0-9]{8}T[0-9]{6}Z-[a-f0-9]{6}$ ]]
-}
+_sw_operation_id_valid() { pm_identifier_operation_is_valid "$@"; }
 
 # operation_upsert <operation-id> <JSON>
 # The operation projection is deliberately separate from Run transition

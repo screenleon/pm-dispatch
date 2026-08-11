@@ -4,6 +4,14 @@
 # this shim adds --cd defaulting, run-dir partitioning, and (CC-423) an
 # opt-in detached lifecycle mirroring `pmctl dispatch run --lifecycle detached`.
 
+if ! declare -F pm_identifier_gate_is_valid >/dev/null 2>&1; then
+  _pmctl_gate_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  # shellcheck source=runtime/lib/identifier-policy.sh
+  # shellcheck disable=SC1091
+  . "$_pmctl_gate_lib_dir/identifier-policy.sh"
+  unset _pmctl_gate_lib_dir
+fi
+
 # 6 random hex chars, used to make generated gate ids unguessable/unique.
 # Deliberately self-contained (not reused from pmctl-dispatch.sh) so
 # tests/shell/test-pmctl-gate.sh and tests/shell/test-gate-lifecycle.sh can source
@@ -51,7 +59,7 @@ _pmctl_gate_prune_terminal_evidence() {
   for key in "$key_dir"/gate-*; do
     [[ -f "$key" && ! -L "$key" ]] || continue
     gate_id="${key##*/}"
-    [[ "$gate_id" =~ ^gate-[0-9]{8}-[0-9]{6}-[A-Za-z0-9]{6,}$ ]] || continue
+    pm_identifier_gate_is_valid "$gate_id" || continue
     nonce="$(cat "$key" 2>/dev/null || true)"
     [[ -n "$nonce" ]] || continue
     terminal="$(detached_launch_private_sentinel_path "pm-gate-dispatch" "pm-gate" "$gate_id" "$nonce")"
@@ -654,7 +662,7 @@ pmctl_gate_wait() {
     printf 'pmctl gate wait: <gate_id> is required\n' >&2
     return 2
   fi
-  if ! [[ "$gate_id" =~ ^gate-[0-9]{8}-[0-9]{6}-[A-Za-z0-9]{6,}$ ]]; then
+  if ! pm_identifier_gate_is_valid "$gate_id"; then
     printf 'pmctl gate wait: invalid gate_id %q\n' "$gate_id" >&2
     return 2
   fi

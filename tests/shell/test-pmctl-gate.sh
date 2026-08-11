@@ -114,6 +114,7 @@ _mk_gate_wrapper() {
   local fixture="$1" out="$2"
   mkdir -p "$fixture/runtime/lib" "$fixture/runtime/bin"
   cp "$REPO_ROOT/runtime/lib/pmctl-gate.sh" "$fixture/runtime/lib/pmctl-gate.sh"
+  cp "$REPO_ROOT/runtime/lib/identifier-policy.sh" "$fixture/runtime/lib/identifier-policy.sh"
   cp "$REPO_ROOT/runtime/lib/detached-launch.sh" "$fixture/runtime/lib/detached-launch.sh"
   cat > "$out" <<WRAPPER
 #!/usr/bin/env bash
@@ -182,6 +183,7 @@ case_gate_run_refreshes_context_before_dispatch() {
   git -C "$target" init -q
   _mk_fake_gate "$fixture" 0
   cp "$REPO_ROOT/runtime/lib/pmctl-gate.sh" "$fixture/runtime/lib/pmctl-gate.sh"
+  cp "$REPO_ROOT/runtime/lib/identifier-policy.sh" "$fixture/runtime/lib/identifier-policy.sh"
   cat > "$wrapper" <<WRAPPER
 #!/usr/bin/env bash
 set -euo pipefail
@@ -294,6 +296,7 @@ case_missing_gate_script() {
   local fixture="$tmp_root/f4" wrapper="$tmp_root/b4/wrapper"
   mkdir -p "$(dirname "$wrapper")" "$fixture/runtime/lib"
   cp "$REPO_ROOT/runtime/lib/pmctl-gate.sh" "$fixture/runtime/lib/pmctl-gate.sh"
+  cp "$REPO_ROOT/runtime/lib/identifier-policy.sh" "$fixture/runtime/lib/identifier-policy.sh"
   cat > "$wrapper" <<WRAPPER
 #!/usr/bin/env bash
 set -euo pipefail
@@ -2676,7 +2679,7 @@ case_foreground_gate_reconciles_parent_operation() {
   mkdir -p "$fixture/runtime/lib" "$fixture/core/schema" "$target"
   git -C "$target" init -q
   _mk_fake_gate "$fixture" 0
-  for lib in pmctl-gate pmctl-operation portable detached-launch state-writer state-paths state-compat; do
+  for lib in identifier-policy pmctl-gate pmctl-operation portable detached-launch state-writer state-paths state-compat; do
     cp "$REPO_ROOT/runtime/lib/$lib.sh" "$fixture/runtime/lib/$lib.sh"
   done
   cp "$REPO_ROOT/core/schema/operation.schema.json" "$fixture/core/schema/operation.schema.json"
@@ -2710,7 +2713,7 @@ case_detached_launcher_failure_terminalizes_childless_parent() {
   mkdir -p "$fixture/runtime/lib" "$fixture/core/schema" "$target"
   git -C "$target" init -q
   _mk_fake_gate "$fixture" 0
-  for lib in pmctl-gate pmctl-operation portable detached-launch state-writer state-paths state-compat; do
+  for lib in identifier-policy pmctl-gate pmctl-operation portable detached-launch state-writer state-paths state-compat; do
     cp "$REPO_ROOT/runtime/lib/$lib.sh" "$fixture/runtime/lib/$lib.sh"
   done
   cp "$REPO_ROOT/core/schema/operation.schema.json" "$fixture/core/schema/operation.schema.json"

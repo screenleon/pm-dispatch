@@ -30,6 +30,8 @@ unset _self _dir
 # END resolve-root
 
 # shellcheck disable=SC1091
+. "$REPO_ROOT/runtime/lib/identifier-policy.sh"
+# shellcheck disable=SC1091
 . "$REPO_ROOT/runtime/lib/detached-launch.sh"
 
 # Capture the parent-supplied sentinel nonce and immediately unset it so
@@ -45,7 +47,7 @@ gate_id=""
 # polls for. Only written when gate_id/nonce are both known and well-formed.
 _write_sentinel() {
   local _state="${1:-failed}" _rc="${2:-2}" _result="${3:-}"
-  if [[ "$gate_id" =~ ^gate-[0-9]{8}-[0-9]{6}-[A-Za-z0-9]{6,}$ ]] && [[ -n "$_sentinel_nonce" ]]; then
+  if pm_identifier_gate_is_valid "$gate_id" && [[ -n "$_sentinel_nonce" ]]; then
     local _sentinel_path
     _sentinel_path="$(detached_launch_private_sentinel_path "pm-gate-dispatch" "pm-gate" "$gate_id" "$_sentinel_nonce")"
     local -a _pairs=("final_state=$_state" "exit_code=$_rc")
@@ -77,7 +79,7 @@ trap _supervisor_exit EXIT
 # therefore a successful `pmctl gate run` means more than a shell fork.
 _write_ready() {
   local _ready_path _identity _pid _starttime
-  [[ "$gate_id" =~ ^gate-[0-9]{8}-[0-9]{6}-[A-Za-z0-9]{6,}$ ]] || return 1
+  pm_identifier_gate_is_valid "$gate_id" || return 1
   [[ -n "$_sentinel_nonce" ]] || return 1
   _identity="$(detached_launch_capture_identity "$$" 1 2>/dev/null)" || return 1
   _pid="$(printf '%s\n' "$_identity" | grep -m1 '^pid=' | cut -d= -f2-)" || return 1
@@ -124,7 +126,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-[[ "$gate_id" =~ ^gate-[0-9]{8}-[0-9]{6}-[A-Za-z0-9]{6,}$ ]] || _die "invalid --gate-id: ${gate_id:-<empty>}"
+pm_identifier_gate_is_valid "$gate_id" || _die "invalid --gate-id: ${gate_id:-<empty>}"
 [[ -n "$cd_arg" ]] || _die "--cd is required"
 [[ -n "$run_dir" ]] || _die "--run-dir is required"
 

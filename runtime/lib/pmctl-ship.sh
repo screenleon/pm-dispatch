@@ -27,6 +27,14 @@
 # exists. `pmctl ship prepare <id>` also stays as an explicit, permanent
 # alias for the in-place case -- not deprecated, not removed.
 
+if [[ "$(type -t pm_identifier_operation_is_valid 2>/dev/null)" != function ]]; then
+  _pmctl_ship_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  # shellcheck source=runtime/lib/identifier-policy.sh
+  # shellcheck disable=SC1091
+  . "$_pmctl_ship_lib_dir/identifier-policy.sh"
+  unset _pmctl_ship_lib_dir
+fi
+
 pmctl_ship_usage() {
   printf 'usage: pmctl ship <ticket-id> [--worktree] [--adapter <codex|claude|opencode|grok>] [--from <base>] [--isolation <level>] [--model <alias>] [--auto-pack|--no-auto-pack] [--cd <work_dir>]\n' >&2
   printf '           Start a manual ship lane. Bare: in the current worktree (alias: prepare). --worktree: isolated worktree, no dispatch. --adapter: dispatch (implies --worktree).\n' >&2
@@ -444,8 +452,8 @@ _pmctl_ship_lanes_tracking_refresh_inner() {
     operation_work_dir="$(jq -r '.operation_work_dir // ""' <<<"$line")"
     cur_status="$(jq -r '.status' <<<"$line")"
     new_status="$(_pmctl_ship_lane_status "$path" "$run_id" "$cur_status")"
-    if [[ "$operation_id" =~ ^op-[0-9]{8}T[0-9]{6}Z-[a-f0-9]{6}$ \
-          && "$operation_work_dir" == /* \
+    if pm_identifier_operation_is_valid "$operation_id" \
+          && [[ "$operation_work_dir" == /* \
           && "$new_status" =~ ^(go|no-go|partial|failed)$ \
           && "$(type -t pmctl_operation_reconcile 2>/dev/null)" == function ]]; then
       pmctl_operation_reconcile "$repo_root" ship "$operation_id" --cd "$operation_work_dir" >&2 || true

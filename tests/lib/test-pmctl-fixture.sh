@@ -7,5 +7,6 @@ pmctl_fixture_copy_spine() {
   cp "$source_root/cli/pmctl" "$target_root/cli/pmctl"
   cp "$source_root/cli/commands.tsv" "$target_root/cli/commands.tsv"
   cp "$source_root/runtime/lib/pmctl-command-catalog.sh" "$target_root/runtime/lib/pmctl-command-catalog.sh"
+  cp "$source_root/runtime/lib/identifier-policy.sh" "$target_root/runtime/lib/identifier-policy.sh"
   chmod +x "$target_root/cli/pmctl"
 }
