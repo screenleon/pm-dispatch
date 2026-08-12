@@ -210,7 +210,10 @@ map_path() {
   case "$path" in
     .gitignore)
       add_suite test-setup-project; behavioral=1 ;;
-    tools/lint/lint-shellcheck.sh|tools/lint/shellcheck-domains.tsv|tools/lint/shellcheck-ignores.tsv|tests/shell/test-lint-shellcheck.sh)
+    .shellcheck-version|tools/lint/bootstrap-shellcheck.sh)
+      add_suite lint-scripts; add_suite test-lint-shellcheck
+      add_suite test-release-verify; behavioral=1 ;;
+    tools/lint/lint-shellcheck.sh|tools/lint/shellcheck-assets.tsv|tools/lint/shellcheck-domains.tsv|tools/lint/shellcheck-ignores.tsv|tests/shell/test-lint-shellcheck.sh)
       add_suite lint-scripts; add_suite test-lint-shellcheck; behavioral=1 ;;
     tools/lint/lint-script-domain-inventory.sh|tests/shell/test-script-domain-inventory.sh|docs/architecture/script-domain-ownership.md|docs/architecture/script-domain-inventory.tsv|docs/architecture/script-domain-reference-allowlist.tsv|docs/architecture/script-variable-inventory.tsv|docs/architecture/script-variable-consumers.tsv)
       add_suite lint-script-domain-inventory; add_suite test-script-domain-inventory; behavioral=1 ;;
@@ -242,7 +245,9 @@ map_path() {
       add_suite test-core-schemas; add_pr_gate_shards
       add_suite test-pmctl-gate; behavioral=1 ;;
     runtime/bin/pr-gate.sh)
-      add_suite test-pr-gate-profile; behavioral=1 ;;
+      add_pr_gate_shards; add_suite test-pr-gate-profile; behavioral=1 ;;
+    runtime/bin/dispatch-supervisor.sh)
+      add_suite test-dispatch-lifecycle; behavioral=1 ;;
     runtime/lib/gate-result-verify.sh)
       add_pr_gate_shards; add_suite test-pr-gate-profile
       add_suite test-pmctl-gate; behavioral=1 ;;
@@ -256,6 +261,24 @@ map_path() {
       add_pr_gate_shards; add_suite test-pr-gate-profile; behavioral=1 ;;
     runtime/lib/pmctl-config.sh)
       add_suite test-pmctl-dispatch; add_suite test-pmctl-memory; add_suite test-pmctl-context; behavioral=1 ;;
+    runtime/lib/adapter-manifest.sh)
+      add_suite test-executor-router; add_suite test-pmctl-dispatch
+      add_suite test-runner-kind; add_suite test-e2e-script
+      add_suite test-pmctl-adapter-generate; add_suite test-release-verify
+      add_suite test-install; add_suite test-doctor
+      add_suite test-dispatch-lifecycle; add_suite test-pr-gate-profile
+      add_suite test-guards; add_suite test-uninstall; add_suite test-hook-profile-parity
+      add_pr_gate_shards; add_suite test-runtime-lib-coverage; behavioral=1 ;;
+    runtime/lib/executor-router.sh)
+      add_suite test-executor-router; add_suite test-install
+      add_pr_gate_shards; add_suite test-pr-gate-profile; behavioral=1 ;;
+    runtime/lib/adapter-enum.sh)
+      add_suite test-release-verify; add_suite test-e2e-script; behavioral=1 ;;
+    runtime/lib/allowlist.sh)
+      add_suite test-install; add_suite test-uninstall; add_suite test-doctor; behavioral=1 ;;
+    runtime/lib/install-receipt.sh)
+      add_suite test-portable; add_suite test-install
+      add_suite test-uninstall; add_suite test-doctor; behavioral=1 ;;
     runtime/lib/memory.sh|runtime/lib/memory-dir.sh)
       add_suite test-pmctl-memory; add_suite test-pmctl-context; add_suite test-migrate; add_suite test-guards; behavioral=1 ;;
     runtime/lib/prompt-context.sh)
@@ -290,7 +313,7 @@ map_path() {
   esac
 
   case "$path" in
-    README.md|agents/*.md|commands/*.md|skills/*|scripts/*|scripts/**/*|runtime/*|runtime/**/*|pm/*|pm/**/*|docs/*.md)
+    CONTRIBUTING.md|README.md|agents/*.md|commands/*.md|skills/*|scripts/*|scripts/**/*|runtime/*|runtime/**/*|pm/*|pm/**/*|docs/*.md)
       add_suite lint-portable-repo-paths; add_suite test-lint-portable-repo-paths; behavioral=1 ;;
   esac
 

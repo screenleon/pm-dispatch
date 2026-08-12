@@ -150,33 +150,24 @@ runner_kind_detach_eligible() {
 }
 
 # runner_kind_manifest_field <adapter.yaml> <key>
-# Reads one top-level flat scalar from an adapter manifest. Tolerant of inline
-# `# comments` and surrounding quotes; prints nothing (exit 0) when the key is
-# absent so callers can fall back to a derived default. Bash+grep only — no YAML
-# parser dependency (manifests are flat key: value, matching pmctl-policy.sh's
-# list-only constraint).
+# Deprecated compatibility wrapper. Adapter manifest parsing is owned by
+# adapter-manifest.sh so duplicate-key and trust-boundary behavior cannot drift
+# between runner-kind consumers and dispatch resolution.
 runner_kind_manifest_field() {
-  local file=${1-} key=${2-} line value
+  local file=${1-} key=${2-} lib_dir
 
   [[ $# -eq 2 ]] || {
     printf 'runner-kind: runner_kind_manifest_field expects <file> <key>\n' >&2
     return 2
   }
-  [[ -r "$file" ]] || {
-    printf 'runner-kind: cannot read manifest: %s\n' "$file" >&2
-    return 2
-  }
-
-  line="$(grep -m1 -E "^${key}:[[:space:]]" "$file" 2>/dev/null || true)"
-  [[ -n "$line" ]] || return 0
-
-  value="${line#"${key}":}"
-  value="${value%%#*}"                       # strip inline comment
-  value="${value#"${value%%[![:space:]]*}"}" # ltrim
-  value="${value%"${value##*[![:space:]]}"}" # rtrim
-  value="${value#\"}"; value="${value%\"}"   # strip double quotes
-  value="${value#\'}"; value="${value%\'}"   # strip single quotes
-  printf '%s\n' "$value"
+  if ! declare -F adapter_manifest_scalar >/dev/null 2>&1; then
+    lib_dir="${BASH_SOURCE[0]%/*}"
+    [[ "$lib_dir" != "${BASH_SOURCE[0]}" ]] || lib_dir=.
+    # shellcheck source=runtime/lib/adapter-manifest.sh
+    # shellcheck disable=SC1091
+    . "$lib_dir/adapter-manifest.sh" || return 2
+  fi
+  adapter_manifest_scalar "$file" "$key"
 }
 
 export -f runner_kind_valid

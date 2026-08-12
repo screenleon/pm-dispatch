@@ -540,6 +540,12 @@ PARTIAL_EOF
 esac
 STUB_EOF
   chmod +x "$dir/adapters/codex/dispatch.sh"
+  printf '%s\n' \
+    'schema_version: 1' \
+    'adapter_name: codex' \
+    'runner_kind: cli-subprocess' \
+    'dispatch_entrypoint: ./dispatch.sh' \
+    > "$dir/adapters/codex/adapter.yaml"
 
   # claude adapter stub: same behavior as the codex stub (parses --brief-file,
   # writes a stub result to the brief's `- new:` path, honors CODEX_GATE_STUB_*).
@@ -548,6 +554,12 @@ STUB_EOF
   mkdir -p "$dir/adapters/claude"
   cp "$dir/adapters/codex/dispatch.sh" "$dir/adapters/claude/dispatch.sh"
   chmod +x "$dir/adapters/claude/dispatch.sh"
+  printf '%s\n' \
+    'schema_version: 1' \
+    'adapter_name: claude' \
+    'runner_kind: cli-subprocess' \
+    'dispatch_entrypoint: ./dispatch.sh' \
+    > "$dir/adapters/claude/adapter.yaml"
   # The production gate now owns reviewer lifecycle through `pmctl dispatch`.
   # Copy-mode unit fixtures retain their local adapter seam behind a minimal
   # pmctl transport shim; production-path attachment is covered separately by
@@ -6630,12 +6642,13 @@ test_effort_invalid_value_rejected() {
   pass "$name"
 }
 
-# Behavior: when lib/executor-router.sh is absent (copy-mode), pr-gate.sh
-# dispatches via adapters/codex/dispatch.sh -- NOT the deleted
-# scripts/codex-dispatch.sh shim.
-# Steps: build a copy-mode runner (lib absent) with the adapter stub at
-# adapters/codex/dispatch.sh, run the gate, and assert exit 0 (a resolve to
-# the old shim path would fail with file-not-found).
+# Behavior: standalone copy-mode sources the same canonical executor-router as
+# repo layout and can dispatch a renamed worker through its explicit bundle root.
+# Steps:
+#   1. Arrange: create a standalone runner with its canonical router, replace
+#      dispatch.sh with an executable worker.sh, and declare it in adapter.yaml.
+#   2. Act: run the Gate against a repository and complete agent fixture.
+#   3. Assert: require a valid worker-only fixture and a zero Gate exit status.
 test_copy_mode_dispatches_via_adapter() {
   local name="copy-mode/dispatches-via-adapter"
   should_run "$name" || return 0
@@ -6644,15 +6657,18 @@ test_copy_mode_dispatches_via_adapter() {
   local out="$dir/out" err="$dir/err"
   mkdir -p "$dir"
   create_runner "$runner"
-  rm -f "${runner:?}/lib/executor-router.sh"
-  # copy-mode requires lib/executor-router.sh to be absent
-  if [[ -f "$runner/lib/executor-router.sh" ]]; then
-    fail "$name" "lib/executor-router.sh present — copy-mode not in effect"
+  if [[ ! -r "$runner/lib/executor-router.sh" ]]; then
+    fail "$name" "canonical lib/executor-router.sh missing from standalone bundle"
     return
   fi
-  # adapter stub must exist at the path the copy-mode fallback resolves to
-  if [[ ! -x "$runner/adapters/codex/dispatch.sh" ]]; then
-    fail "$name" "adapter stub not found at runner/adapters/codex/dispatch.sh"
+  mv "$runner/adapters/codex/dispatch.sh" "$runner/adapters/codex/worker.sh"
+  printf '%s\n' \
+    'schema_version: 1' 'adapter_name: codex' \
+    'runner_kind: cli-subprocess' 'dispatch_entrypoint: ./worker.sh' \
+    > "$runner/adapters/codex/adapter.yaml"
+  if [[ ! -x "$runner/adapters/codex/worker.sh" \
+      || -e "$runner/adapters/codex/dispatch.sh" ]]; then
+    fail "$name" "copy-mode worker-only fixture was not created"
     return
   fi
   create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
@@ -6662,10 +6678,106 @@ test_copy_mode_dispatches_via_adapter() {
   local code=$?
   set -e
   if [[ "$code" -ne 0 ]]; then
-    fail "$name" "copy-mode dispatch exited $code; adapter stub not reached (old shim path?)"
+    fail "$name" "copy-mode dispatch exited $code; manifest worker was not reached"
     return
   fi
   pass "$name"
+}
+
+# Behavior: A standalone bundle whose canonical router cannot load the manifest
+# reader exits with a canonical-router load failure.
+# Steps:
+#   1. Arrange: create a standalone runner and complete Gate fixture, retain the
+#      router, and remove only its adapter-manifest reader.
+#   2. Act: run the Gate against the fixture repository.
+#   3. Assert: require exit 2 and the failed-to-load canonical-router diagnostic.
+test_copy_mode_missing_manifest_reader_fails_closed() {
+  local name="copy-mode/missing-manifest-reader-fails-closed"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home="$TMP_ROOT/$name-home"
+  local repo="$TMP_ROOT/$name-repo" runner="$TMP_ROOT/$name-runner"
+  local out="$TMP_ROOT/$name.out" err="$TMP_ROOT/$name.err" code=0
+  mkdir -p "$dir"
+  create_runner "$runner"
+  rm -f "${runner:?}/lib/adapter-manifest.sh"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  code=$?
+  set -e
+  if [[ "$code" -eq 2 ]] \
+      && grep -q 'failed to load canonical executor router' "$err"; then
+    pass "$name"
+  else
+    fail "$name" "code=$code err=$(tail -5 "$err" | tr '\n' '|')"
+  fi
+}
+
+# Behavior: A standalone bundle missing its own router reports the standalone
+# canonical-router failure even when an adjacent parent router exists.
+# Steps:
+#   1. Arrange: create a standalone runner and complete Gate fixture, copy a
+#      router into its parent lib directory, and remove the bundle-owned router.
+#   2. Act: run the Gate against the fixture repository.
+#   3. Assert: require exit 2 and the standalone-copy router-unavailable
+#      diagnostic.
+test_copy_mode_missing_router_fails_closed() {
+  local name="copy-mode/missing-router-fails-closed"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" parent="$dir/deployment"
+  local runner="$dir/deployment/runner" out="$dir/out" err="$dir/err" code=0
+  mkdir -p "$parent/lib"
+  create_runner "$runner"
+  cp "$REPO_ROOT/runtime/lib/executor-router.sh" "$parent/lib/executor-router.sh"
+  rm -f "${runner:?}/lib/executor-router.sh"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  code=$?
+  set -e
+  if [[ "$code" -eq 2 ]] \
+      && grep -q 'canonical executor router unavailable for standalone-copy layout' "$err"; then
+    pass "$name"
+  else
+    fail "$name" "code=$code err=$(tail -5 "$err" | tr '\n' '|')"
+  fi
+}
+
+# Behavior: An installed scripts entrypoint with no scripts-owned router reports
+# an installed-copy failure even when the install root contains a decoy router.
+# Steps:
+#   1. Arrange: copy pr-gate.sh under install/scripts, place a router only under
+#      install/lib, and create the repository fixture without scripts/lib.
+#   2. Act: run the installed Gate entrypoint against the fixture repository.
+#   3. Assert: require exit 2, the installed-copy router-unavailable diagnostic,
+#      and the missing scripts/lib/executor-router.sh path in stderr.
+test_installed_copy_missing_router_fails_closed() {
+  local name="copy-mode/installed-missing-router-fails-closed"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home="$TMP_ROOT/$name/home"
+  local repo="$TMP_ROOT/$name/repo" install_root="$TMP_ROOT/$name/install"
+  local scripts="$TMP_ROOT/$name/install/scripts"
+  local out="$TMP_ROOT/$name/out" err="$TMP_ROOT/$name/err" code=0
+  mkdir -p "$scripts" "$install_root/lib"
+  cp "$REPO_ROOT/runtime/bin/pr-gate.sh" "$scripts/pr-gate.sh"
+  chmod +x "$scripts/pr-gate.sh"
+  cp "$REPO_ROOT/runtime/lib/executor-router.sh" \
+    "$install_root/lib/executor-router.sh"
+  create_repo "$repo" docs
+  set +e
+  run_gate "$home" "$scripts" "$repo" "$out" "$err" --base main
+  code=$?
+  set -e
+  if [[ "$code" -eq 2 ]] \
+      && grep -q 'canonical executor router unavailable for installed-copy layout' "$err" \
+      && grep -q "$scripts/lib/executor-router.sh" "$err"; then
+    pass "$name"
+  else
+    fail "$name" "code=$code err=$(tail -5 "$err" | tr '\n' '|')"
+  fi
 }
 
 # Behavior: --help prints only the bounded user-facing usage contract and
@@ -7818,6 +7930,9 @@ run_test test_isolation_forwarding_through_pr_gate
 run_test test_effort_forwarding_through_pr_gate
 run_test test_effort_invalid_value_rejected
 run_test test_copy_mode_dispatches_via_adapter
+run_test test_copy_mode_missing_manifest_reader_fails_closed
+run_test test_copy_mode_missing_router_fails_closed
+run_test test_installed_copy_missing_router_fails_closed
 run_test test_help_output_is_bounded_and_current
 run_test test_unknown_arg_message
 run_test test_canonical_targeted_coordinates_and_mixed_compatibility

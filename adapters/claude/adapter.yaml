@@ -7,7 +7,7 @@ adapter_name: claude
 executor: claude
 cli_binary: claude
 isolation_map_ref: ./isolation-map.yaml
-runner_ref: ./dispatch.sh
+dispatch_entrypoint: ./dispatch.sh
 dispatch_contract: dispatch_handover_v1
 # runner_kind classifies the execution topology; dispatch_route /
 # write_guard_mode / needs_bash_guard derive from it (runtime/lib/runner-kind.sh).

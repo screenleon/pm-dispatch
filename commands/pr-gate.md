@@ -1,6 +1,6 @@
 ---
 description: Run the tiered pre-PR review pipeline on the current branch.
-argument-hint: "[express|standard|full] [--pass targeted --reviewers r1,r2 --initial-result path] [--scope context] [--mode sequential|parallel] [--accept-scope-truncation]"
+argument-hint: "[express|standard|full] [--pass targeted --reviewers r1,r2 --initial-result path] [--scope context] [--mode sequential|parallel] [--executor <codex|claude|auto>] [--model <id>] [--accept-scope-truncation]"
 ---
 
 Run the PR gate via `pmctl gate run`. The `runtime/bin/pr-gate.sh` script is the
@@ -118,7 +118,7 @@ Resolve actual model identities rather than inferring them from host or adapter
 names. Replace `<gate_executor>` below with the selected literal value and pass
 `--model <gate_model>` when the route default is not the selected model.
 
-This command should pass exactly one of these explicit modes when known:
+This command should pass exactly one of these supported reviewer-policy modes:
 
 - `--executor codex` for codex route (or when `command -v codex` is true and user explicitly requested)
 - `--executor claude` for claude-only path
@@ -260,11 +260,12 @@ if [[ "$PASS_KIND" != targeted && -n "$INITIAL_RESULT" ]]; then
   exit 2
 fi
 
-# Validate after parsing so this also rejects a missing substitution of the
-# <gate_executor> default, not only an invalid explicit --executor value.
+# This is the current reviewer guard support set, not an entrypoint path
+# authority. pr-gate still resolves either supported Adapter through the
+# canonical manifest reader.
 case "$GATE_EXECUTOR" in
   codex|claude|auto) ;;
-  *) echo "error: gate executor must resolve to codex, claude, or auto" >&2; exit 2 ;;
+  *) echo "error: gate executor reviewer policy supports codex, claude, or auto" >&2; exit 2 ;;
 esac
 
 SCOPE="${SCOPE_TOKENS[*]:-}"

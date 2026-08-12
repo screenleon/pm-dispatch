@@ -284,18 +284,17 @@ _doctor_host_claude_check_hooks() {
 
   # Collect adapter bash guards from manifests (full profile only).
   local -a _adapter_bg_names=()
-  if [[ "$_want_full" -eq 1 && "$_RUNNER_KIND_AVAILABLE" -eq 1 ]]; then
+  if [[ "$_want_full" -eq 1 && "$_RUNNER_KIND_AVAILABLE" -eq 1 \
+      && "${_ADAPTER_MANIFEST_AVAILABLE:-0}" -eq 1 ]]; then
     local _manifest _adapter_name _rk _nbg_override _nbg
-    for _manifest in "$REPO_ROOT"/adapters/*/adapter.yaml; do
-      [[ -f "$_manifest" ]] || continue
-      _adapter_name="${_manifest%/adapter.yaml}"
-      _adapter_name="${_adapter_name##*/}"
-      _rk="$(runner_kind_manifest_field "$_manifest" runner_kind)"
-      [[ -n "$_rk" ]] || continue
-      _nbg_override="$(runner_kind_manifest_field "$_manifest" needs_bash_guard)"
+    while IFS= read -r _adapter_name; do
+      [[ -n "$_adapter_name" ]] || continue
+      _manifest="$(adapter_manifest_file "$REPO_ROOT" "$_adapter_name")" || continue
+      _rk="$(adapter_manifest_runner_kind "$REPO_ROOT" "$_adapter_name")" || continue
+      _nbg_override="$(adapter_manifest_scalar "$_manifest" needs_bash_guard)" || continue
       _nbg="$(runner_kind_resolve_flag "$_rk" needs_bash_guard "$_nbg_override")"
       [[ "$_nbg" == "true" ]] && _adapter_bg_names+=("$_adapter_name")
-    done
+    done < <(adapter_manifest_names "$REPO_ROOT")
   fi
 
   if [[ "$_want_full" -eq 1 ]]; then
@@ -385,14 +384,10 @@ _doctor_host_claude_check_dispatch_allowlist() {
         "$settings" >/dev/null 2>&1 || all_ok=0
     done < <(dispatch_allowlist_entries)
   else
-    local f rel
-    for f in "$REPO_ROOT/adapters"/*/dispatch.sh; do
-      [[ -f "$f" ]] || continue
-      any=1; rel="${f#"$HOME/"}"
-      jq -e --arg a "Bash($f:*)" --arg t "Bash(~/$rel:*)" \
-        '(.permissions.allow // []) | (index($a) != null or index($t) != null)' \
-        "$settings" >/dev/null 2>&1 || all_ok=0
-    done
+    emit_check dispatch-allowlist fail \
+      "dispatch allowlist cannot be validated: canonical Adapter manifest reader unavailable" \
+      "run doctor from a complete checkout"
+    return
   fi
 
   if [[ $any -eq 0 || $all_ok -eq 0 ]]; then
@@ -411,8 +406,23 @@ _doctor_host_claude_check_manifest() {
     return
   fi
 
-  if command -v jq >/dev/null 2>&1 && ! jq -e '.manifest_version == 1' "$manifest_path" >/dev/null 2>&1; then
+  if [[ "${_INSTALL_RECEIPT_AVAILABLE:-0}" -ne 1 ]]; then
+    emit_check manifest warn "install manifest cannot be validated: canonical receipt reader unavailable" \
+      "bash '${REPO_ROOT}/install.sh' to restore the runtime bundle"
+    return
+  fi
+
+  local receipt_rc=0
+  pm_dispatch_receipt_validate "$manifest_path" || receipt_rc=$?
+  if [[ "$receipt_rc" -eq 4 \
+      || ( "$receipt_rc" -eq 0 \
+        && "$PM_DISPATCH_RECEIPT_MANIFEST_VERSION_STATUS" != supported ) ]]; then
     emit_check manifest warn "install manifest has unexpected version" \
+      "bash '${REPO_ROOT}/install.sh' to regenerate"
+    return
+  fi
+  if [[ "$receipt_rc" -ne 0 ]]; then
+    emit_check manifest warn "install manifest is malformed or has an invalid schema" \
       "bash '${REPO_ROOT}/install.sh' to regenerate"
     return
   fi

@@ -82,6 +82,7 @@ bash ops/release/release-verify.sh --e2e --adapter claude
 | bash ≥ 4, git | system / Git for Windows | system / Git for Windows |
 | `jq` | `apt install jq` | `winget install jqlang.jq` |
 | **`sqlite3`** (FTS5 optional — context uses LIKE fallback when absent) | `apt install sqlite3` | `winget install SQLite.SQLite` |
+| **ShellCheck** (exact repository pin) | run the two-step bootstrap in `CONTRIBUTING.md` | use the repository bootstrap from WSL2 |
 | `codex` (optional, `full` profile) | `npm i -g @openai/codex` | not supported on Windows |
 | `claude` (optional, for real E2E) | per Claude Code install | per Claude Code install |
 

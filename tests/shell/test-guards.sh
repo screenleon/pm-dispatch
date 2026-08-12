@@ -2413,9 +2413,282 @@ memory_usage_commit_contention_matrix() {
   fi
 }
 
+# Install a deterministic sqlite3 shim for transaction-retry tests.  Failed
+# attempts consume the SQL stream without touching the database; successful
+# attempts delegate the captured, byte-identical stream to the real CLI.
+memory_usage_fake_sqlite_install() {
+  local root="$1" real_sqlite="$2"
+  mkdir -p "$root/bin" "$root/state"
+  printf '%s\n' "$real_sqlite" > "$root/state/real-sqlite"
+  cat > "$root/bin/sqlite3" <<'FAKESQLITE'
+#!/usr/bin/env bash
+set -u
+fake_root="$(cd "$(dirname "$0")/.." && pwd)"
+state="$fake_root/state"
+mode="$(cat "$state/mode")"
+real_sqlite="$(cat "$state/real-sqlite")"
+call=0
+[[ -f "$state/calls" ]] && read -r call < "$state/calls"
+call=$((call + 1))
+printf '%s\n' "$call" > "$state/calls"
+sql="$state/sql.$call"
+cat > "$sql"
+printf '%s\0' "$@" > "$state/argv.$call"
+case "$mode" in
+  busy-twice)
+    if (( call <= 2 )); then
+      printf 'Runtime error near line 1: database is locked (5)\n' >&2
+      exit 1
+    fi
+    ;;
+  busy-once)
+    if (( call == 1 )); then
+      printf 'Runtime error near line 3: database table is locked: main (6)\n' >&2
+      exit 1
+    fi
+    ;;
+  always-busy)
+    printf 'Runtime error near line 1: database schema is locked (6)\n' >&2
+    exit 1
+    ;;
+  nonbusy)
+    printf 'Parse error near line 1: near "BROKEN": syntax error\n' >&2
+    exit 1
+    ;;
+  success)
+    ;;
+  *)
+    printf 'fake sqlite: unknown mode %s\n' "$mode" >&2
+    exit 97
+    ;;
+esac
+exec "$real_sqlite" "$@" < "$sql"
+FAKESQLITE
+  chmod +x "$root/bin/sqlite3"
+}
+
+# Count how many captured sqlite invocations carried the fail-fast CLI flag.
+memory_usage_fake_sqlite_bail_count() {
+  local state="$1" argv_file count=0
+  for argv_file in "$state"/argv.*; do
+    [[ -f "$argv_file" ]] || continue
+    if tr '\0' '\n' < "$argv_file" | grep -Fxq -- '-bail'; then
+      count=$((count + 1))
+    fi
+  done
+  printf '%s\n' "$count"
+}
+
+# Behavior: Two injected SQLITE_BUSY failures retry one byte-identical bailed
+# transaction and commit the logical memory access exactly once on attempt three.
+# Steps:
+#   1. Arrange: install the fake sqlite CLI in busy-twice mode with a recorded
+#      retry-pause seam, an empty database path, and an isolated temp directory.
+#   2. Act: commit one access to a.md through memory_usage_commit.
+#   3. Assert: require success, three calls, two pauses, -bail on every call,
+#      identical SQL, access/total counts of one, empty stderr, and no temp files.
+memory_usage_sqlite_busy_retries_exactly_once() {
+  local name="memory-usage/sqlite-busy-retries-exactly-once" report status=0
+  should_run "$name" || return 0
+  command -v sqlite3 >/dev/null 2>&1 || { pass "$name"; return 0; }
+  report="$(
+    # shellcheck disable=SC1091
+    . "$REPO_ROOT/runtime/lib/memory.sh"
+    d="$(mktemp -d)"; mkdir -p "$d/tmp"
+    real_sqlite="$(command -v sqlite3)"
+    memory_usage_fake_sqlite_install "$d/fake" "$real_sqlite"
+    state="$d/fake/state"; db="$d/inject-usage.sqlite3"
+    _memory_usage_sqlite_retry_pause() { printf '%s\n' "$1" >> "$state/pauses"; }
+    printf '%s\n' busy-twice > "$state/mode"
+    rc=0
+    PATH="$d/fake/bin:$PATH" TMPDIR="$d/tmp" \
+      memory_usage_commit "$db" 1000000 100 a.md 2> "$d/stderr" || rc=$?
+    calls="$(cat "$state/calls" 2>/dev/null || printf 0)"
+    pauses=0; [[ -f "$state/pauses" ]] && pauses="$(wc -l < "$state/pauses" | tr -d ' ')"
+    bail_count="$(memory_usage_fake_sqlite_bail_count "$state")"
+    sql_same=no
+    cmp -s "$state/sql.1" "$state/sql.2" && cmp -s "$state/sql.2" "$state/sql.3" && sql_same=yes
+    count="$($real_sqlite "$db" "SELECT access_count FROM card_usage WHERE card_relpath='a.md';" 2>/dev/null || true)"
+    total="$($real_sqlite "$db" "SELECT value FROM metadata WHERE key='total_events';" 2>/dev/null || true)"
+    stderr_state=nonempty; [[ ! -s "$d/stderr" ]] && stderr_state=empty
+    leftovers="$(find "$d/tmp" -maxdepth 1 \( -name 'memory-usage.*.sql' -o -name 'memory-usage.*.err' \) -print | wc -l | tr -d ' ')"
+    printf 'rc=%s calls=%s pauses=%s bail=%s sql-same=%s count=%s total=%s stderr=%s leftovers=%s\n' \
+      "$rc" "$calls" "$pauses" "$bail_count" "$sql_same" "${count:-missing}" "${total:-missing}" "$stderr_state" "$leftovers"
+    rm -rf "$d"
+  )" || status=$?
+  if [[ "$status" -eq 0 && "$report" == 'rc=0 calls=3 pauses=2 bail=3 sql-same=yes count=1 total=1 stderr=empty leftovers=0' ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status report=$report"
+  fi
+}
+
+# Behavior: A successful first SQLite transaction executes once without entering
+# the retry-pause path and commits one logical memory access.
+# Steps:
+#   1. Arrange: install the fake sqlite CLI in success mode with a recorded
+#      retry-pause seam and an empty database path.
+#   2. Act: commit one access to a.md through memory_usage_commit.
+#   3. Assert: require success, one call, zero pauses, one -bail flag, an access
+#      count of one, and empty stderr.
+memory_usage_sqlite_success_does_not_retry() {
+  local name="memory-usage/sqlite-success-does-not-retry" report status=0
+  should_run "$name" || return 0
+  command -v sqlite3 >/dev/null 2>&1 || { pass "$name"; return 0; }
+  report="$(
+    # shellcheck disable=SC1091
+    . "$REPO_ROOT/runtime/lib/memory.sh"
+    d="$(mktemp -d)"; mkdir -p "$d/tmp"
+    real_sqlite="$(command -v sqlite3)"
+    memory_usage_fake_sqlite_install "$d/fake" "$real_sqlite"
+    state="$d/fake/state"; db="$d/inject-usage.sqlite3"
+    _memory_usage_sqlite_retry_pause() { printf '%s\n' "$1" >> "$state/pauses"; }
+    printf '%s\n' success > "$state/mode"
+    rc=0
+    PATH="$d/fake/bin:$PATH" TMPDIR="$d/tmp" \
+      memory_usage_commit "$db" 1000000 100 a.md 2> "$d/stderr" || rc=$?
+    calls="$(cat "$state/calls" 2>/dev/null || printf 0)"
+    pauses=0; [[ -f "$state/pauses" ]] && pauses="$(wc -l < "$state/pauses" | tr -d ' ')"
+    count="$($real_sqlite "$db" "SELECT access_count FROM card_usage WHERE card_relpath='a.md';" 2>/dev/null || true)"
+    printf 'rc=%s calls=%s pauses=%s bail=%s count=%s stderr-empty=%s\n' \
+      "$rc" "$calls" "$pauses" "$(memory_usage_fake_sqlite_bail_count "$state")" \
+      "${count:-missing}" "$([[ ! -s "$d/stderr" ]] && printf yes || printf no)"
+    rm -rf "$d"
+  )" || status=$?
+  if [[ "$status" -eq 0 && "$report" == 'rc=0 calls=1 pauses=0 bail=1 count=1 stderr-empty=yes' ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status report=$report"
+  fi
+}
+
+# Behavior: Persistent SQLITE_BUSY contention stops after the bounded fourth
+# attempt without creating the database and preserves the final diagnostic.
+# Steps:
+#   1. Arrange: install the fake sqlite CLI in always-busy mode with a recorded
+#      retry-pause seam, an empty database path, and an isolated temp directory.
+#   2. Act: attempt to commit one access to a.md through memory_usage_commit.
+#   3. Assert: require failure, four bailed calls, three pauses, no database, the
+#      schema-locked diagnostic, and no runtime SQL or error temp files.
+memory_usage_sqlite_busy_retry_is_bounded() {
+  local name="memory-usage/sqlite-busy-retry-is-bounded" report status=0
+  should_run "$name" || return 0
+  command -v sqlite3 >/dev/null 2>&1 || { pass "$name"; return 0; }
+  report="$(
+    # shellcheck disable=SC1091
+    . "$REPO_ROOT/runtime/lib/memory.sh"
+    d="$(mktemp -d)"; mkdir -p "$d/tmp"
+    real_sqlite="$(command -v sqlite3)"
+    memory_usage_fake_sqlite_install "$d/fake" "$real_sqlite"
+    state="$d/fake/state"; db="$d/inject-usage.sqlite3"
+    _memory_usage_sqlite_retry_pause() { printf '%s\n' "$1" >> "$state/pauses"; }
+    printf '%s\n' always-busy > "$state/mode"
+    rc=0
+    PATH="$d/fake/bin:$PATH" TMPDIR="$d/tmp" \
+      memory_usage_commit "$db" 1000000 100 a.md 2> "$d/stderr" || rc=$?
+    pauses=0; [[ -f "$state/pauses" ]] && pauses="$(wc -l < "$state/pauses" | tr -d ' ')"
+    leftovers="$(find "$d/tmp" -maxdepth 1 \( -name 'memory-usage.*.sql' -o -name 'memory-usage.*.err' \) -print | wc -l | tr -d ' ')"
+    printf 'rc=%s calls=%s pauses=%s bail=%s db=%s diagnostic=%s leftovers=%s\n' \
+      "$rc" "$(cat "$state/calls" 2>/dev/null || printf 0)" "$pauses" \
+      "$(memory_usage_fake_sqlite_bail_count "$state")" "$([[ -e "$db" ]] && printf present || printf absent)" \
+      "$(grep -Fq 'database schema is locked' "$d/stderr" && printf present || printf missing)" "$leftovers"
+    rm -rf "$d"
+  )" || status=$?
+  if [[ "$status" -eq 0 && "$report" == 'rc=1 calls=4 pauses=3 bail=4 db=absent diagnostic=present leftovers=0' ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status report=$report"
+  fi
+}
+
+# Behavior: A non-contention SQLite syntax error fails immediately without a
+# retry pause, database creation, or loss of the original diagnostic.
+# Steps:
+#   1. Arrange: install the fake sqlite CLI in nonbusy syntax-error mode with a
+#      recorded retry-pause seam and an empty database path.
+#   2. Act: attempt to commit one access to a.md through memory_usage_commit.
+#   3. Assert: require failure after one call and zero pauses, no database, and
+#      the syntax-error diagnostic on stderr.
+memory_usage_sqlite_nonbusy_fails_immediately() {
+  local name="memory-usage/sqlite-nonbusy-fails-immediately" report status=0
+  should_run "$name" || return 0
+  command -v sqlite3 >/dev/null 2>&1 || { pass "$name"; return 0; }
+  report="$(
+    # shellcheck disable=SC1091
+    . "$REPO_ROOT/runtime/lib/memory.sh"
+    d="$(mktemp -d)"; mkdir -p "$d/tmp"
+    real_sqlite="$(command -v sqlite3)"
+    memory_usage_fake_sqlite_install "$d/fake" "$real_sqlite"
+    state="$d/fake/state"; db="$d/inject-usage.sqlite3"
+    _memory_usage_sqlite_retry_pause() { printf '%s\n' "$1" >> "$state/pauses"; }
+    printf '%s\n' nonbusy > "$state/mode"
+    rc=0
+    PATH="$d/fake/bin:$PATH" TMPDIR="$d/tmp" \
+      memory_usage_commit "$db" 1000000 100 a.md 2> "$d/stderr" || rc=$?
+    pauses=0; [[ -f "$state/pauses" ]] && pauses="$(wc -l < "$state/pauses" | tr -d ' ')"
+    printf 'rc=%s calls=%s pauses=%s db=%s diagnostic=%s\n' \
+      "$rc" "$(cat "$state/calls" 2>/dev/null || printf 0)" "$pauses" \
+      "$([[ -e "$db" ]] && printf present || printf absent)" \
+      "$(grep -Fq 'syntax error' "$d/stderr" && printf present || printf missing)"
+    rm -rf "$d"
+  )" || status=$?
+  if [[ "$status" -eq 0 && "$report" == 'rc=1 calls=1 pauses=0 db=absent diagnostic=present' ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status report=$report"
+  fi
+}
+
+# Behavior: Retrying a transaction that imports legacy usage and crosses the
+# decay threshold produces the same database state as one successful commit.
+# Steps:
+#   1. Arrange: seed legacy total/access counts of three, install a fake SQLite
+#      CLI that reports one busy failure, and record retry pauses.
+#   2. Act: commit a.md with a threshold of four and a decay window of 100.
+#   3. Assert: require success after two calls and one pause, access/total/import
+#      values of 2/0/1, and empty stderr.
+memory_usage_sqlite_retry_keeps_import_and_decay_exactly_once() {
+  local name="memory-usage/sqlite-retry-keeps-import-and-decay-exactly-once" report status=0
+  should_run "$name" || return 0
+  command -v sqlite3 >/dev/null 2>&1 || { pass "$name"; return 0; }
+  report="$(
+    # shellcheck disable=SC1091
+    . "$REPO_ROOT/runtime/lib/memory.sh"
+    d="$(mktemp -d)"; mkdir -p "$d/tmp"
+    real_sqlite="$(command -v sqlite3)"
+    memory_usage_fake_sqlite_install "$d/fake" "$real_sqlite"
+    state="$d/fake/state"; db="$d/inject-usage.sqlite3"
+    printf '# total_events=3\na.md\t3\t90\n' > "${db%.sqlite3}.tsv"
+    _memory_usage_sqlite_retry_pause() { printf '%s\n' "$1" >> "$state/pauses"; }
+    printf '%s\n' busy-once > "$state/mode"
+    rc=0
+    PATH="$d/fake/bin:$PATH" TMPDIR="$d/tmp" \
+      memory_usage_commit "$db" 4 100 a.md 2> "$d/stderr" || rc=$?
+    row="$($real_sqlite -separator ' ' "$db" \
+      "SELECT c.access_count,m.value,i.value FROM card_usage c JOIN metadata m ON m.key='total_events' JOIN metadata i ON i.key='legacy_imported' WHERE c.card_relpath='a.md';" 2>/dev/null || true)"
+    printf 'rc=%s calls=%s pauses=%s row=%s stderr-empty=%s\n' \
+      "$rc" "$(cat "$state/calls" 2>/dev/null || printf 0)" \
+      "$(wc -l < "$state/pauses" 2>/dev/null | tr -d ' ')" "${row:-missing}" \
+      "$([[ ! -s "$d/stderr" ]] && printf yes || printf no)"
+    rm -rf "$d"
+  )" || status=$?
+  if [[ "$status" -eq 0 && "$report" == 'rc=0 calls=2 pauses=1 row=2 0 1 stderr-empty=yes' ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status report=$report"
+  fi
+}
+
+# Behavior: Two synchronized rounds of 50 SQLite writers preserve every shared
+# and per-writer increment across cold initialization and warm WAL contention.
+# Steps:
+#   1. Arrange: create an empty database and barriers for cold and warm rounds of
+#      50 writers, with one stderr file per child.
+#   2. Act: release each round so every writer commits shared.md and its own key,
+#      then wait for all children within the configured deadline.
+#   3. Assert: require shared count 100, 50 unique rows each counted twice, 51
+#      rows and 200 total events, WAL mode, and zero non-empty diagnostics.
 memory_usage_sqlite_concurrent_atomic_updates() {
-  # Direct writers begin together and update one key without a shell lock.
-  # SQLite must retain every increment in WAL mode.
   local name="memory-usage/sqlite-concurrent-atomic-updates" report status=0
   should_run "$name" || return 0
   if ! command -v sqlite3 >/dev/null 2>&1; then
@@ -2429,26 +2702,44 @@ memory_usage_sqlite_concurrent_atomic_updates() {
     . "$REPO_ROOT/runtime/lib/memory.sh"
     d="$(mktemp -d)"
     db="$d/inject-usage.sqlite3"
-    barrier="$d/start"
-    mkfifo "$barrier"
-    exec {barrier_fd}<>"$barrier"
-    for writer_id in $(seq 1 50); do
-      (
-        IFS= read -r <&"$barrier_fd"
-        memory_usage_commit "$db" 1000000 100 a.md
-      ) &
-      test_guards_child_track "$!" "sqlite-writer=$writer_id"
+    for round in 1 2; do
+      test_guards_children_reset
+      barrier="$d/start-$round"
+      mkfifo "$barrier"
+      exec {barrier_fd}<>"$barrier"
+      for writer_id in $(seq 1 50); do
+        (
+          IFS= read -r <&"$barrier_fd"
+          memory_usage_commit "$db" 1000000 100 shared.md "writer-$writer_id.md" \
+            2> "$d/writer-$round-$writer_id.err"
+        ) &
+        test_guards_child_track "$!" "sqlite-round=$round,writer=$writer_id"
+      done
+      for writer_id in $(seq 1 50); do printf 'go\n' >&"$barrier_fd"; done
+      exec {barrier_fd}>&-
+      wait_status=0
+      test_guards_children_wait "${TEST_GUARDS_CHILD_DEADLINE:-60}" \
+        "round=$round,writers=50,store=sqlite" || wait_status=$?
+      if (( wait_status != 0 )); then
+        for writer_err in "$d"/writer-"$round"-*.err; do
+          [[ -s "$writer_err" ]] || continue
+          printf 'writer-diagnostic=%s:%s\n' "${writer_err##*/}" "$(tr '\n' ';' < "$writer_err")"
+        done
+        exit "$wait_status"
+      fi
     done
-    for writer_id in $(seq 1 50); do printf 'go\n' >&"$barrier_fd"; done
-    exec {barrier_fd}>&-
-    test_guards_children_wait "${TEST_GUARDS_CHILD_DEADLINE:-30}" "writers=50,store=sqlite" || exit $?
-    printf 'count=%s total=%s journal=%s\n' \
-      "$(sqlite3 "$db" "SELECT access_count FROM card_usage WHERE card_relpath='a.md';")" \
+    printf 'shared=%s unique-rows=%s unique-bad=%s rows=%s total=%s journal=%s diagnostics=%s\n' \
+      "$(sqlite3 "$db" "SELECT access_count FROM card_usage WHERE card_relpath='shared.md';")" \
+      "$(sqlite3 "$db" "SELECT COUNT(*) FROM card_usage WHERE card_relpath GLOB 'writer-*.md';")" \
+      "$(sqlite3 "$db" "SELECT COUNT(*) FROM card_usage WHERE card_relpath GLOB 'writer-*.md' AND access_count<>2;")" \
+      "$(sqlite3 "$db" 'SELECT COUNT(*) FROM card_usage;')" \
       "$(sqlite3 "$db" "SELECT value FROM metadata WHERE key='total_events';")" \
-      "$(sqlite3 "$db" 'PRAGMA journal_mode;')"
+      "$(sqlite3 "$db" 'PRAGMA journal_mode;')" \
+      "$(find "$d" -name 'writer-*.err' -size +0c -print | wc -l | tr -d ' ')"
     rm -rf "$d"
   )" || status=$?
-  if [[ "$status" -eq 0 && "$report" == 'count=50 total=50 journal=wal' ]]; then
+  if [[ "$status" -eq 0 \
+    && "$report" == 'shared=100 unique-rows=50 unique-bad=0 rows=51 total=200 journal=wal diagnostics=0' ]]; then
     pass "$name"
   else
     fail "$name" "status=$status report=$report"
@@ -2961,6 +3252,11 @@ inject_hook_priority_always_bypasses_lifecycle_gate
 memory_usage_commit_decay_halves
 memory_usage_commit_concurrent_no_lost_updates
 memory_usage_commit_contention_matrix
+memory_usage_sqlite_busy_retries_exactly_once
+memory_usage_sqlite_success_does_not_retry
+memory_usage_sqlite_busy_retry_is_bounded
+memory_usage_sqlite_nonbusy_fails_immediately
+memory_usage_sqlite_retry_keeps_import_and_decay_exactly_once
 memory_usage_sqlite_concurrent_atomic_updates
 memory_usage_sqlite_imports_legacy_once
 memory_usage_sqlite_decay_matches_tsv

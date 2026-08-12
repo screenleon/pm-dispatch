@@ -4,9 +4,9 @@
 # Routing is DATA-DRIVEN: the dispatch allowlist and per-executor route
 # are derived from on-disk adapter manifests (adapters/<name>/adapter.yaml), not a
 # hardcoded codex|claude enum. An executor is routable iff its adapter directory
-# carries a readable, non-symlink manifest declaring a valid runner_kind. Adding
-# an adapter is therefore "drop adapters/<name>/ with a valid manifest" — no edit
-# to this file is required.
+# carries a valid manifest whose dispatch_entrypoint resolves to a safe,
+# executable target. Adding an adapter is therefore "drop adapters/<name>/ with
+# a valid manifest" — no edit to this file is required.
 #
 # No shell options are set here; callers own their execution policy.
 
@@ -19,19 +19,29 @@ done
 EXECUTOR_ROUTER_LIB_DIR="$(cd "$(dirname "$_EXECUTOR_ROUTER_SELF")" && pwd)"
 EXECUTOR_ROUTER_REPO_ROOT="$(cd "$EXECUTOR_ROUTER_LIB_DIR/../.." && pwd)"
 
-if ! declare -F pm_identifier_adapter_is_valid >/dev/null 2>&1; then
-  # shellcheck source=runtime/lib/identifier-policy.sh
-  # shellcheck disable=SC1091
-  . "$EXECUTOR_ROUTER_LIB_DIR/identifier-policy.sh"
-fi
+_er_source_required() {
+  local required="$1"
+  if [[ ! -r "$required" ]]; then
+    printf 'executor-router: required library unavailable: %s\n' "$required" >&2
+    return 2
+  fi
+  # Never trust an exported function with the same name. Loading each
+  # dependency from this router's classified lib root overwrites inherited
+  # definitions and makes missing receipt-owned bytes a hard failure.
+  # shellcheck disable=SC1090
+  . "$required" || {
+    printf 'executor-router: required library unavailable: %s\n' "$required" >&2
+    return 2
+  }
+}
 
-# runner-kind mapping: the single source of truth for deriving dispatch_route /
-# write_guard_mode / needs_bash_guard from an adapter's declared runner_kind.
-# bash+grep only — no shell-policy side effects, safe to import here.
-if ! declare -F runner_kind_resolve_flag >/dev/null 2>&1; then
-  # shellcheck source=runtime/lib/runner-kind.sh
-  . "$EXECUTOR_ROUTER_LIB_DIR/runner-kind.sh"
-fi
+# These libraries are source-safe and are intentionally loaded unconditionally
+# in dependency order. adapter-manifest may reuse the first two only after this
+# router has established their canonical definitions from the same lib root.
+_er_source_required "$EXECUTOR_ROUTER_LIB_DIR/identifier-policy.sh" || return 2
+_er_source_required "$EXECUTOR_ROUTER_LIB_DIR/runner-kind.sh" || return 2
+_er_source_required "$EXECUTOR_ROUTER_LIB_DIR/adapter-manifest.sh" || return 2
+unset -f _er_source_required
 
 # Local helper: avoid importing portable.sh shell policy into caller space.
 _er_codex_available() {
@@ -47,27 +57,33 @@ _er_strict_name() {
   pm_identifier_adapter_is_valid "$@"
 }
 
-# _er_adapter_manifest <name> — print the manifest path for a validated adapter
-# name, or fail (2). Fail-closed: an invalid name, a missing/unreadable manifest,
-# or a symlinked manifest (trust-boundary escape) all refuse. The authoritative
-# exec-path boundary check on adapters/<name>/dispatch.sh lives in
-# runtime/lib/pmctl-dispatch.sh; this is the upstream allowlist read.
-_er_adapter_manifest() {
-  local name=${1-}
-  _er_strict_name "$name" || return 2
-  local manifest="$EXECUTOR_ROUTER_REPO_ROOT/adapters/$name/adapter.yaml"
-  [[ -f "$manifest" && ! -L "$manifest" ]] || return 2
-  printf '%s\n' "$manifest"
+# _er_adapter_manifest_at <repo-root> <name> — compatibility wrapper over the
+# canonical reader for callers that select a deployment root explicitly.
+_er_adapter_manifest_at() {
+  local repo_root=${1-} name=${2-}
+  [[ $# -eq 2 ]] || return 2
+  adapter_manifest_file "$repo_root" "$name"
 }
 
-# _er_adapter_runner_kind <name> — print an adapter's validated runner_kind, or
-# fail (2) when the adapter is not routable or declares an invalid runner_kind.
+# _er_adapter_manifest <name> — compatibility wrapper using the source-layout
+# default. New layout-aware callers should use the explicit-root APIs below.
+_er_adapter_manifest() {
+  local name=${1-}
+  _er_adapter_manifest_at "$EXECUTOR_ROUTER_REPO_ROOT" "$name"
+}
+
+# _er_adapter_runner_kind_at <repo-root> <name> — print an adapter's validated
+# runner_kind, or fail (2) when the adapter is not routable or declares an
+# invalid runner_kind.
+_er_adapter_runner_kind_at() {
+  local repo_root=${1-} name=${2-}
+  [[ $# -eq 2 ]] || return 2
+  adapter_manifest_runner_kind "$repo_root" "$name"
+}
+
+# _er_adapter_runner_kind <name> — source-layout compatibility wrapper.
 _er_adapter_runner_kind() {
-  local manifest runner_kind
-  manifest="$(_er_adapter_manifest "$1")" || return 2
-  runner_kind="$(runner_kind_manifest_field "$manifest" runner_kind)" || return 2
-  runner_kind_valid "$runner_kind" || return 2
-  printf '%s\n' "$runner_kind"
+  _er_adapter_runner_kind_at "$EXECUTOR_ROUTER_REPO_ROOT" "$1"
 }
 
 detect_executor_auto() {
@@ -78,55 +94,71 @@ detect_executor_auto() {
   fi
 }
 
-resolve_executor() {
-  local option=${1-}
+resolve_executor_at() {
+  local repo_root=${1-} option=${2-} resolved
 
-  [[ $# -eq 1 ]] || {
-    printf 'executor-router: resolve_executor expects exactly one argument\n' >&2
+  [[ $# -eq 2 ]] || {
+    printf 'executor-router: resolve_executor_at expects repo root and executor option\n' >&2
     return 2
   }
 
-  # auto autodetects; a named executor must be a routable adapter (in the
-  # manifest-derived dispatch allowlist). The former codex|claude enum is gone.
+  # Auto detection chooses a candidate, then passes through the exact same
+  # manifest-derived dispatch allowlist as an explicit executor. This keeps
+  # repo, installed-copy, and standalone-copy semantics identical and prevents
+  # a PATH binary from selecting an adapter missing from the trusted root.
+  resolved=$option
   if [[ "$option" == auto ]]; then
-    detect_executor_auto
-    return
+    resolved="$(detect_executor_auto)" || return 2
   fi
-  if dispatch_route_for "$option" >/dev/null 2>&1; then
-    printf '%s\n' "$option"
+  if dispatch_route_for_at "$repo_root" "$resolved" >/dev/null 2>&1; then
+    printf '%s\n' "$resolved"
   else
-    printf 'executor-router: unknown executor: %s (expected auto or a registered adapter)\n' "$option" >&2
+    if [[ "$option" == auto ]]; then
+      printf 'executor-router: auto-detected executor is not registered or routable: %s\n' "$resolved" >&2
+    else
+      printf 'executor-router: unknown executor: %s (expected auto or a registered adapter)\n' "$option" >&2
+    fi
     return 2
   fi
 }
 
+resolve_executor() {
+  [[ $# -eq 1 ]] || {
+    printf 'executor-router: resolve_executor expects exactly one argument\n' >&2
+    return 2
+  }
+  resolve_executor_at "$EXECUTOR_ROUTER_REPO_ROOT" "$1"
+}
+
 # dispatch_route_for <name>
 # The dispatch ALLOWLIST gate and route resolver in one. An executor is routable
-# iff adapters/<name>/ carries a valid manifest (readable, non-symlink) declaring
-# a valid runner_kind; the route is derived from that runner_kind via the single
-# runner-kind mapping table (honoring an explicit dispatch_route override in the
-# manifest). Fail-closed: any failure → exit 2, which callers (pmctl dispatch run)
-# treat as "not in the allowlist".
-dispatch_route_for() {
-  local executor=${1-}
+# iff adapters/<name>/ carries a complete, dispatchable manifest; the route is
+# derived from runner_kind via the single mapping table (honoring a valid
+# dispatch_route override). A shell dispatch entrypoint is valid only for the
+# main-thread subprocess route. Fail-closed: any failure -> exit 2.
+dispatch_route_for_at() {
+  local repo_root=${1-} executor=${2-}
 
+  [[ $# -eq 2 ]] || {
+    printf 'executor-router: dispatch_route_for_at expects repo root and executor\n' >&2
+    return 2
+  }
+
+  local route
+  if ! adapter_manifest_dispatch_path "$repo_root" "$executor" >/dev/null; then
+    printf 'executor-router: %s is not a routable executor (no valid adapter manifest)\n' "$executor" >&2
+    return 2
+  fi
+  route="$(adapter_manifest_effective_route "$repo_root" "$executor")" || return 2
+  printf '%s\n' "$route"
+}
+
+dispatch_route_for() {
   [[ $# -eq 1 ]] || {
     printf 'executor-router: dispatch_route_for expects exactly one argument\n' >&2
     return 2
   }
-
-  local manifest runner_kind override
-  manifest="$(_er_adapter_manifest "$executor")" || {
-    printf 'executor-router: %s is not a routable executor (no valid adapter manifest)\n' "$executor" >&2
-    return 2
-  }
-  runner_kind="$(runner_kind_manifest_field "$manifest" runner_kind)" || return 2
-  runner_kind_valid "$runner_kind" || {
-    printf 'executor-router: adapter %s declares invalid runner_kind: %s\n' "$executor" "$runner_kind" >&2
-    return 2
-  }
-  override="$(runner_kind_manifest_field "$manifest" dispatch_route)" || return 2
-  runner_kind_resolve_flag "$runner_kind" dispatch_route "$override"
+  dispatch_route_for_at "$EXECUTOR_ROUTER_REPO_ROOT" "$1"
 }
 
 executor_router_safe_argv() {
@@ -134,9 +166,10 @@ executor_router_safe_argv() {
   printf '%q' "$value"
 }
 
-# dispatch_via <executor> <brief_file> <working_dir> <model> <sandbox> <approval> <timeout> [isolation_level] [effort]
-# Generic dispatcher: resolves adapters/<executor>/dispatch.sh from the VALIDATED
-# executor name and prints a safely-quoted command string. The caller still owns
+# dispatch_via_at <repo-root> <executor> <brief_file> <working_dir> <model>
+#   <sandbox> <approval> <timeout> [isolation_level] [effort]
+# Generic dispatcher: resolves the manifest-declared dispatch_entrypoint and
+# prints a safely-quoted command string. The caller still owns
 # when/how to execute it (foreground/background, redirection). Universal flags
 # (--cd / --model / --timeout / --brief-file / --isolation / --effort) are always
 # forwarded — every adapter accepts --effort (opencode no-ops it; see
@@ -147,33 +180,36 @@ executor_router_safe_argv() {
 # as no-ops (it self-governs via --permission-mode). A host-native runner-kind has
 # no subprocess sandbox/approval surface and drops them. NOTE: the sandbox/approval
 # flag surface is provisional — it will fold into the unified --isolation contract.
-dispatch_via() {
-  local executor=${1-}
-  local brief_file=${2-}
-  local working_dir=${3-}
-  local model=${4-}
-  local sandbox=${5-}
-  local approval=${6-}
-  local timeout=${7-}
-  local isolation_level=${8-}
-  local effort=${9-}
+dispatch_via_at() {
+  local repo_root=${1-}
+  local executor=${2-}
+  local brief_file=${3-}
+  local working_dir=${4-}
+  local model=${5-}
+  local sandbox=${6-}
+  local approval=${7-}
+  local timeout=${8-}
+  local isolation_level=${9-}
+  local effort=${10-}
   local -a cmd
   local arg
   local first=1
 
-  [[ $# -ge 7 && $# -le 9 ]] || {
-    printf 'executor-router: dispatch_via expects executor, brief_file, working_dir, model, sandbox, approval, timeout[, isolation_level[, effort]]\n' >&2
+  [[ $# -ge 8 && $# -le 10 ]] || {
+    printf 'executor-router: dispatch_via_at expects repo root, executor, brief_file, working_dir, model, sandbox, approval, timeout[, isolation_level[, effort]]\n' >&2
     return 2
   }
 
   local runner_kind
-  runner_kind="$(_er_adapter_runner_kind "$executor")" || {
+  runner_kind="$(_er_adapter_runner_kind_at "$repo_root" "$executor")" || {
     printf 'executor-router: %s is not a routable executor (no valid adapter manifest)\n' "$executor" >&2
     return 2
   }
-  # The validated name resolves the adapter path by convention (the real
-  # adapter, not the legacy scripts/<name>-dispatch.sh compatibility shim).
-  local dispatch_script="$EXECUTOR_ROUTER_REPO_ROOT/adapters/$executor/dispatch.sh"
+  local dispatch_script
+  dispatch_script="$(adapter_manifest_dispatch_path "$repo_root" "$executor")" || {
+    printf 'executor-router: %s has no valid manifest dispatch entrypoint\n' "$executor" >&2
+    return 2
+  }
 
   cmd=(bash "$dispatch_script" --cd "$working_dir")
   [[ -n "$model" && "$model" != "default" ]] && cmd+=(--model "$model")
@@ -199,6 +235,18 @@ dispatch_via() {
     executor_router_safe_argv "$arg"
   done
   printf '\n'
+}
+
+# dispatch_via <executor> <brief_file> <working_dir> <model> <sandbox>
+#   <approval> <timeout> [isolation_level] [effort]
+# Source-layout compatibility wrapper. Layout-aware consumers should call
+# dispatch_via_at so sourcing the library never dictates their Adapter root.
+dispatch_via() {
+  [[ $# -ge 7 && $# -le 9 ]] || {
+    printf 'executor-router: dispatch_via expects executor, brief_file, working_dir, model, sandbox, approval, timeout[, isolation_level[, effort]]\n' >&2
+    return 2
+  }
+  dispatch_via_at "$EXECUTOR_ROUTER_REPO_ROOT" "$@"
 }
 
 # dispatch_via_codex / dispatch_via_claude — thin compatibility shims over the
@@ -227,11 +275,16 @@ export EXECUTOR_ROUTER_REPO_ROOT
 export -f _er_codex_available
 export -f detect_executor_auto
 export -f resolve_executor
+export -f resolve_executor_at
 export -f dispatch_route_for
+export -f dispatch_route_for_at
 export -f _er_strict_name
 export -f _er_adapter_manifest
+export -f _er_adapter_manifest_at
 export -f _er_adapter_runner_kind
+export -f _er_adapter_runner_kind_at
 export -f executor_router_safe_argv
 export -f dispatch_via
+export -f dispatch_via_at
 export -f dispatch_via_codex
 export -f dispatch_via_claude

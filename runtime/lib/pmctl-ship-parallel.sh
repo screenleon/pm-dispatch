@@ -12,7 +12,7 @@
 # worktree convention (per CC-441 Framing).
 
 pmctl_ship_parallel_usage() {
-  printf 'usage: pmctl ship --parallel <ticket-id> [<ticket-id>...] [--from <base-branch>] [--adapter <codex|claude|opencode|grok>] [--isolation <level>] [--model <alias>] [--auto-pack|--no-auto-pack] [--cd <work_dir>]\n' >&2
+  printf 'usage: pmctl ship --parallel <ticket-id> [<ticket-id>...] [--from <base-branch>] [--adapter <name>] [--isolation <level>] [--model <alias>] [--auto-pack|--no-auto-pack] [--cd <work_dir>]\n' >&2
   printf '       pmctl ship status [--cd <work_dir>] [--json]\n' >&2
   printf '       pmctl ship list   [--cd <work_dir>] [--json]\n' >&2
 }

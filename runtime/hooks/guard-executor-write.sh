@@ -46,6 +46,8 @@ _REPO_ROOT="$(cd "$_SCRIPT_DIR/../.." 2>/dev/null && pwd)"
 . "$_SCRIPT_DIR/../lib/identifier-policy.sh"
 # shellcheck source=runtime/lib/runner-kind.sh
 . "$_SCRIPT_DIR/../lib/runner-kind.sh"
+# shellcheck source=runtime/lib/adapter-manifest.sh
+. "$_SCRIPT_DIR/../lib/adapter-manifest.sh"
 # shellcheck source=runtime/lib/guard-log.sh
 . "$_SCRIPT_DIR/../lib/guard-log.sh"
 
@@ -104,14 +106,16 @@ pm_identifier_adapter_is_valid "$RUNTIME" || exit 0
 
 # Resolve the runtime's write-guard mode from its adapter manifest. The
 # strict-identifier check above keeps RUNTIME safe to interpolate into the path.
-manifest="$_REPO_ROOT/adapters/$RUNTIME/adapter.yaml"
-[[ -f "$manifest" && ! -L "$manifest" ]] || refuse "unregistered runtime: $RUNTIME (no valid adapter manifest)"
-runner_kind="$(runner_kind_manifest_field "$manifest" runner_kind)" || refuse "cannot read runner_kind for runtime: $RUNTIME"
-runner_kind_valid "$runner_kind" || refuse "invalid runner_kind for runtime $RUNTIME: $runner_kind"
+adapter_manifest_dispatch_path "$_REPO_ROOT" "$RUNTIME" >/dev/null \
+  || refuse "unregistered runtime: $RUNTIME (no valid dispatchable Adapter manifest)"
+manifest="$(adapter_manifest_file "$_REPO_ROOT" "$RUNTIME")" \
+  || refuse "cannot resolve Adapter manifest for runtime: $RUNTIME"
+runner_kind="$(adapter_manifest_runner_kind "$_REPO_ROOT" "$RUNTIME")" \
+  || refuse "cannot read runner_kind for runtime: $RUNTIME"
 # runner_kind_resolve_flag's 3rd arg is the OVERRIDE candidate: the manifest's
 # explicit write_guard_mode field if present (may be empty), else the resolver
 # falls back to the runner_kind-derived default for that flag.
-write_guard_mode="$(runner_kind_resolve_flag "$runner_kind" write_guard_mode "$(runner_kind_manifest_field "$manifest" write_guard_mode)")" || refuse "cannot resolve write_guard_mode for runtime: $RUNTIME"
+write_guard_mode="$(runner_kind_resolve_flag "$runner_kind" write_guard_mode "$(adapter_manifest_scalar "$manifest" write_guard_mode)")" || refuse "cannot resolve write_guard_mode for runtime: $RUNTIME"
 
 # Live PreToolUse context (no PM_GUARD_CHECK_CLI marker): a cli-only runtime
 # self-executes under the host harness, so a live hook must not gate it.

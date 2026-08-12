@@ -98,7 +98,7 @@ case_missing_adapter() {
   fi
 }
 
-# ---- 2: unknown adapter (no adapters/<name>/dispatch.sh) → exit 2 ----
+# ---- 2: unknown adapter (no valid manifest entrypoint) → exit 2 ----
 case_unknown_adapter() {
   local name="dispatch/unknown adapter exits 2"
   should_run "$name" || return 0
@@ -106,7 +106,7 @@ case_unknown_adapter() {
   set +e
   err="$("$PMCTL" dispatch run --lifecycle foreground --adapter nope --cd /tmp --brief-file /tmp/x.md 2>&1)"; code=$?
   set -e
-  if [[ "$code" -eq 2 ]] && grep -qi 'unknown adapter' <<<"$err"; then
+  if [[ "$code" -eq 2 ]] && grep -Eqi 'no valid manifest dispatch_entrypoint|adapter directory must be a real directory' <<<"$err"; then
     pass "$name"
   else
     fail "$name" "code=$code err=$(head -1 <<<"$err")"
@@ -345,9 +345,8 @@ case_inline_brief_rejected() {
 }
 
 # ---- 11: present-but-non-routable adapter is blocked by the allowlist ----
-# Drives pmctl_dispatch_run directly against a fixture repo whose adapter dir
-# exists but whose name is not a registered route — exercising the route-failure
-# branch (the dispatch allowlist) before brief-validate/guard are reached.
+# Drives pmctl_dispatch_run directly against a valid fixture manifest while a
+# fail-closed test router rejects it, exercising the allowlist-failure branch.
 case_route_failure_branch() {
   local name="dispatch/non-routable adapter blocked by allowlist"
   should_run "$name" || return 0
@@ -356,10 +355,16 @@ case_route_failure_branch() {
   mkdir -p "$fixture/adapters/faketest"
   printf '#!/usr/bin/env bash\nexit 0\n' > "$fixture/adapters/faketest/dispatch.sh"
   chmod +x "$fixture/adapters/faketest/dispatch.sh"
+  printf '%s\n' \
+    'schema_version: 1' 'adapter_name: faketest' \
+    'runner_kind: cli-subprocess' 'dispatch_entrypoint: ./dispatch.sh' \
+    > "$fixture/adapters/faketest/adapter.yaml"
   brief="/tmp/brief-pmctl-dispatch-$$-route.md"
   printf 'schema_version: 1\n' > "$brief"; _BRIEFS+=("$brief")
   set +e
-  err="$(pmctl_dispatch_run "$fixture" --adapter faketest --cd "$fixture" --brief-file "$brief" 2>&1)"; code=$?
+  # shellcheck disable=SC2317,SC2329  # pmctl_dispatch_run invokes this test override indirectly.
+  err="$( dispatch_route_for_at() { return 2; }
+          pmctl_dispatch_run "$fixture" --adapter faketest --cd "$fixture" --brief-file "$brief" 2>&1 )"; code=$?
   set -e
   if [[ "$code" -eq 2 ]] && grep -qi 'not a routable executor' <<<"$err"; then
     pass "$name"
@@ -377,9 +382,9 @@ case_routing_unavailable_fails_closed() {
   local work code err
   work="$(mktemp -d)"; git init -q "$work"
   set +e
-  # Drop dispatch_route_for in a subshell; codex adapter exists + name is valid,
+  # Drop dispatch_route_for_at in a subshell; codex adapter exists + name is valid,
   # so the function reaches the route step and must fail closed.
-  err="$( unset -f dispatch_route_for
+  err="$( unset -f dispatch_route_for_at
           pmctl_dispatch_run "$REPO_ROOT" --adapter codex --cd "$work" --brief-file /tmp/x.md 2>&1 )"; code=$?
   set -e
   if [[ "$code" -eq 2 ]] && grep -qi 'routing registry unavailable' <<<"$err"; then
@@ -443,15 +448,19 @@ case_missing_brief_file() {
   rm -rf "$work"
 }
 
-# ---- 16: a symlinked adapter dispatch.sh is rejected (trust-boundary escape) ----
+# ---- 16: a symlinked manifest dispatch entrypoint is rejected ----
 case_symlinked_adapter_rejected() {
-  local name="dispatch/symlinked adapter dispatch.sh rejected"
+  local name="dispatch/symlinked adapter entrypoint rejected"
   should_run "$name" || return 0
   local fixture target work brief code err
   fixture="$(mktemp -d)"
   mkdir -p "$fixture/adapters/evil"
   target="$(mktemp)"; printf '#!/usr/bin/env bash\nexit 0\n' > "$target"; chmod +x "$target"
   ln -s "$target" "$fixture/adapters/evil/dispatch.sh"   # points OUTSIDE the repo
+  printf '%s\n' \
+    'schema_version: 1' 'adapter_name: evil' \
+    'runner_kind: cli-subprocess' 'dispatch_entrypoint: ./dispatch.sh' \
+    > "$fixture/adapters/evil/adapter.yaml"
   # MSYS/Git-Bash without Developer Mode copies on `ln -s`; with no symlink to
   # reject this case has nothing to assert, so skip rather than fail.
   if [[ ! -L "$fixture/adapters/evil/dispatch.sh" ]]; then
@@ -464,12 +473,123 @@ case_symlinked_adapter_rejected() {
   set +e
   err="$(pmctl_dispatch_run "$fixture" --adapter evil --cd "$work" --brief-file "$brief" 2>&1)"; code=$?
   set -e
-  if [[ "$code" -eq 2 ]] && grep -qi 'must not be a symlink' <<<"$err"; then
+  if [[ "$code" -eq 2 ]] && grep -qi 'must not traverse a symlink' <<<"$err"; then
     pass "$name"
   else
     fail "$name" "code=$code err=$(head -1 <<<"$err")"
   fi
   rm -rf "$fixture" "$work"; rm -f "$target"
+}
+
+# ---- 16b: pmctl resolver follows a manifest-only executable rename ---------
+# Behavior: pmctl resolves a custom Adapter exclusively from its manifest-owned
+# worker entrypoint and reports the derived shell route.
+# Steps:
+#   1. Arrange a fixture with executable worker.sh, a selecting manifest, and no dispatch.sh.
+#   2. Act by resolving the custom Adapter while capturing route diagnostics.
+#   3. Assert success, the worker.sh path, absence of dispatch.sh, and the main-thread shell route.
+case_manifest_worker_entrypoint_resolved() {
+  local name="dispatch/manifest worker entrypoint is the pmctl authority"
+  should_run "$name" || return 0
+  local fixture resolved code=0
+  fixture="$(mktemp -d)"
+  mkdir -p "$fixture/adapters/custom"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$fixture/adapters/custom/worker.sh"
+  chmod +x "$fixture/adapters/custom/worker.sh"
+  printf '%s\n' \
+    'schema_version: 1' 'adapter_name: custom' \
+    'runner_kind: cli-subprocess' 'dispatch_entrypoint: ./worker.sh' \
+    > "$fixture/adapters/custom/adapter.yaml"
+  resolved="$(pmctl_dispatch_resolve_adapter "$fixture" custom 2>"$fixture/route.err")" || code=$?
+  if [[ "$code" -eq 0 \
+      && "$resolved" == "$fixture/adapters/custom/worker.sh" \
+      && ! -e "$fixture/adapters/custom/dispatch.sh" \
+      && "$(<"$fixture/route.err")" == *'route=main_thread_bash_background'* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code resolved=$resolved err=$(<"$fixture/route.err")"
+  fi
+  rm -rf "$fixture"
+}
+
+# Behavior: Tail execution revalidates manifest semantics and fails before
+# launching an Adapter whose terminal_event key is duplicated.
+# Steps:
+#   1. Arrange a marker-writing worker and a manifest with duplicate terminal_event keys.
+#   2. Act by invoking pmctl_dispatch_execute_tail with a valid run context.
+#   3. Assert exit 2, no marker, and duplicate-key plus semantic-downgrade diagnostics.
+case_execute_tail_manifest_error_fails_before_launch() {
+  local name="dispatch/manifest error before tail launch fails closed"
+  should_run "$name" || return 0
+  local fixture work brief marker script out code=0 run_id created_ts
+  fixture="$(mktemp -d)"; work="$(mktemp -d)"; git init -q "$work"
+  mkdir -p "$fixture/adapters/custom"
+  marker="$fixture/executed.marker"
+  script="$fixture/adapters/custom/worker.sh"
+  printf '#!/usr/bin/env bash\ntouch %q\n' "$marker" > "$script"
+  chmod +x "$script"
+  printf '%s\n' \
+    'schema_version: 1' 'adapter_name: custom' \
+    'runner_kind: cli-subprocess' 'dispatch_entrypoint: ./worker.sh' \
+    'terminal_event: turn.completed' 'terminal_event: forged.completed' \
+    > "$fixture/adapters/custom/adapter.yaml"
+  brief="$(_mk_guard_brief "$work")"
+  run_id="run-$(pmctl_dispatch_stamp)-$(pmctl_dispatch_hex6)"
+  created_ts="$(pmctl_dispatch_utc_ts)"
+  set +e
+  out="$(pmctl_dispatch_execute_tail "$fixture" "$work" custom "$script" \
+    "$run_id" "" "$brief" "$created_ts" 0 \
+    --cd "$work" --brief-file "$brief" 2>&1)"
+  code=$?
+  set -e
+  if [[ "$code" -eq 2 && ! -e "$marker" \
+      && "$out" == *"duplicate top-level key 'terminal_event'"* \
+      && "$out" == *"refusing semantic-verification downgrade"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code marker=$([[ -e "$marker" ]] && echo yes || echo no) out=$out"
+  fi
+  rm -rf "$fixture" "$work"
+}
+
+# Behavior: Tail execution rejects an entrypoint that differs from the path
+# accepted during parent preflight before either executable can run.
+# Steps:
+#   1. Arrange stale and replacement marker scripts while the manifest selects replacement.sh.
+#   2. Act by invoking pmctl_dispatch_execute_tail with stale.sh as the preflight path.
+#   3. Assert exit 2, no marker, and an entrypoint-changed-after-preflight diagnostic.
+case_execute_tail_entrypoint_change_fails_before_launch() {
+  local name="dispatch/entrypoint change after preflight fails closed"
+  should_run "$name" || return 0
+  local fixture work brief stale replacement marker out code=0 run_id created_ts
+  fixture="$(mktemp -d)"; work="$(mktemp -d)"; git init -q "$work"
+  mkdir -p "$fixture/adapters/custom"
+  marker="$fixture/executed.marker"
+  stale="$fixture/adapters/custom/stale.sh"
+  replacement="$fixture/adapters/custom/replacement.sh"
+  printf '#!/usr/bin/env bash\ntouch %q\n' "$marker" > "$stale"
+  printf '#!/usr/bin/env bash\ntouch %q\n' "$marker" > "$replacement"
+  chmod +x "$stale" "$replacement"
+  printf '%s\n' \
+    'schema_version: 1' 'adapter_name: custom' \
+    'runner_kind: cli-subprocess' 'dispatch_entrypoint: ./replacement.sh' \
+    > "$fixture/adapters/custom/adapter.yaml"
+  brief="$(_mk_guard_brief "$work")"
+  run_id="run-$(pmctl_dispatch_stamp)-$(pmctl_dispatch_hex6)"
+  created_ts="$(pmctl_dispatch_utc_ts)"
+  set +e
+  out="$(pmctl_dispatch_execute_tail "$fixture" "$work" custom "$stale" \
+    "$run_id" "" "$brief" "$created_ts" 0 \
+    --cd "$work" --brief-file "$brief" 2>&1)"
+  code=$?
+  set -e
+  if [[ "$code" -eq 2 && ! -e "$marker" \
+      && "$out" == *"entrypoint changed after preflight"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code marker=$([[ -e "$marker" ]] && echo yes || echo no) out=$out"
+  fi
+  rm -rf "$fixture" "$work"
 }
 
 # ---- 17: a non-core adapter-specific flag is forwarded unchanged ----
@@ -1578,6 +1698,9 @@ case_guard_unavailable_fails_closed
 case_missing_cd
 case_missing_brief_file
 case_symlinked_adapter_rejected
+case_manifest_worker_entrypoint_resolved
+case_execute_tail_manifest_error_fails_before_launch
+case_execute_tail_entrypoint_change_fails_before_launch
 case_stale_latest_symlink_avoidance
 case_footer_trace_threaded_to_post_verify
 case_footer_persisted_and_paths_parse

@@ -71,8 +71,11 @@ find_memory_dir() {
 #
 # Primary store (when sqlite3 is available):
 #   .pm-dispatch/inject-usage.sqlite3
-# Writers use a single BEGIN IMMEDIATE transaction with WAL + busy_timeout, so
-# increments remain atomic across prompt-hook processes without a shell lock.
+# Writers use a single BEGIN IMMEDIATE transaction with WAL, a bounded SQLite
+# busy timeout, and whole-transaction retry, so increments remain atomic across
+# prompt-hook processes without a shell lock.  The CLI runs with `-bail`: a
+# failed BEGIN or WAL bootstrap must stop before later statements can escape
+# into autocommit and make a retry double-count the access.
 #
 # Compatibility fallback (sqlite3 unavailable): TSV, integer-only, zero-LLM:
 #   # total_events=<N>            <- global W-TinyLFU decay counter (header line)
@@ -122,13 +125,41 @@ _memory_usage_sql_quote() {
   printf "'%s'" "$value"
 }
 
+# Retry only SQLite's lock-contention class.  Schema, permission, I/O, and
+# corruption errors are permanent for this call and must remain immediately
+# visible to the caller.  SQLite can spell SQLITE_LOCKED as either "database
+# table is locked" or "database schema is locked" depending on the statement.
+_memory_usage_sqlite_error_is_retryable() {
+  local error_file="${1:-}"
+  [[ -s "$error_file" ]] || return 1
+  LC_ALL=C grep -Eiq \
+    'database( table| schema)? is (locked|busy)([[:space:](:]|$)' "$error_file"
+}
+
+# Give cold-start WAL contenders different retry slots.  BASHPID separates
+# sibling hook processes while RANDOM prevents repeated collisions within one
+# process.  Tests override this private seam so retry semantics are proven
+# without timing assertions or real sleeps.
+_memory_usage_sqlite_retry_pause() {
+  local retry_index="${1:-1}" delay_ms delay
+  [[ "$retry_index" =~ ^[1-9][0-9]*$ ]] || retry_index=1
+  delay_ms=$(( retry_index * 50 + (BASHPID + RANDOM) % 101 ))
+  printf -v delay '0.%03d' "$delay_ms"
+  sleep "$delay"
+}
+
 _memory_usage_commit_sqlite() {
   local store="$1" threshold="$2" today="$3"; shift 3
-  local dir legacy sql rel acc last total_events=0 quoted rc=0
+  local dir legacy sql error_file rel acc last total_events=0 quoted
+  local attempt rc=0 max_attempts=4
   dir="$(dirname "$store")"
   mkdir -p "$dir" 2>/dev/null || return 1
   legacy="${store%.sqlite3}.tsv"
   sql="$(mktemp "${TMPDIR:-/tmp}/memory-usage.XXXXXX.sql")" || return 1
+  error_file="$(mktemp "${TMPDIR:-/tmp}/memory-usage.XXXXXX.err")" || {
+    rm -f "$sql"
+    return 1
+  }
   {
     printf '%s\n' 'PRAGMA journal_mode=WAL;' 'PRAGMA synchronous=NORMAL;' 'BEGIN IMMEDIATE;'
     printf '%s\n' \
@@ -162,10 +193,37 @@ _memory_usage_commit_sqlite() {
     printf "UPDATE card_usage SET access_count=access_count >> 1 WHERE (SELECT value FROM metadata WHERE key='total_events') >= %s;\n" "$threshold"
     printf "UPDATE metadata SET value=0 WHERE key='total_events' AND value >= %s;\n" "$threshold"
     printf '%s\n' 'COMMIT;'
-  } > "$sql"
-  sqlite3 -batch -cmd '.timeout 10000' "$store" < "$sql" >/dev/null || rc=$?
-  rm -f "$sql"
-  return "$rc"
+  } > "$sql" || {
+    rm -f "$sql" "$error_file"
+    return 1
+  }
+
+  # Retrying the complete script is exactly-once only because `-bail` stops at
+  # the first failed statement.  If BEGIN IMMEDIATE has started, closing the
+  # failed CLI connection rolls it back; if only journal_mode=WAL succeeded,
+  # repeating that persistent idempotent PRAGMA is harmless.
+  for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do
+    : > "$error_file"
+    rc=0
+    sqlite3 -batch -bail -cmd '.timeout 1500' "$store" < "$sql" \
+      >/dev/null 2>"$error_file" || rc=$?
+    if (( rc == 0 )); then
+      rm -f "$sql" "$error_file"
+      return 0
+    fi
+    if ! _memory_usage_sqlite_error_is_retryable "$error_file" \
+      || (( attempt == max_attempts )); then
+      cat "$error_file" >&2
+      rm -f "$sql" "$error_file"
+      return "$rc"
+    fi
+    _memory_usage_sqlite_retry_pause "$attempt" || true
+  done
+
+  # The bounded loop always returns above; retain a fail-closed guard against
+  # future edits that accidentally make max_attempts empty or non-positive.
+  rm -f "$sql" "$error_file"
+  return 1
 }
 
 # Firefox bucketed frecency age weight. Maps the day-distance between today and

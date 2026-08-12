@@ -45,14 +45,11 @@ if [[ -f "$repo_root/runtime/lib/allowlist.sh" ]]; then
   # shellcheck disable=SC1091
   . "$repo_root/runtime/lib/allowlist.sh"
 else
-  # copy-mode fallback: scan adapters dynamically so removal stays concrete
+  # A fixed filename fallback would recreate a second Adapter path authority.
+  # Copy-mode packages must carry the canonical manifest reader/allowlist lib.
   dispatch_allowlist_entries() {
-    local f rel
-    for f in "$REPO_ROOT/adapters"/*/dispatch.sh; do
-      [[ -f "$f" ]] || continue
-      rel="${f#"$HOME/"}"
-      printf 'Bash(%s:*)\nBash(~/%s:*)\n' "$f" "$rel"
-    done
+    printf 'uninstall-guards: canonical Adapter manifest reader unavailable; run from a complete checkout\n' >&2
+    return 2
   }
 fi
 # Use the same host-owned canonical/default/legacy contract as base uninstall.

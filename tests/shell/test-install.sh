@@ -15,6 +15,8 @@ REAL_HOME="$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f6 || true)"
 # (MSYS) installs directories via junction and files via copy.
 # shellcheck source=runtime/lib/portable.sh
 . "$REPO_ROOT/runtime/lib/portable.sh"
+# shellcheck source=runtime/lib/adapter-manifest.sh
+. "$REPO_ROOT/runtime/lib/adapter-manifest.sh"
 th_init "$@"
 
 # --group core|guards — run only one subset so CI can fan out two parallel jobs
@@ -315,8 +317,8 @@ run_install_case() {
       assert_symlink_target "$name" "$home/.claude/scripts/pr-gate.sh" "$REPO_ROOT/runtime/bin/pr-gate.sh" || return
       ;;
     scripts-wrong-symlink-real-run)
-      assert_file_contains "$name" "$err" "CONFLICT" || return
-      assert_file_contains "$name" "$err" "expected $REPO_ROOT/runtime/bin/pr-gate.sh" || return
+      assert_file_contains "$name" "$err" \
+        "load-bearing copy bundle conflict: $home/.claude/scripts/pr-gate.sh" || return
       assert_symlink_target "$name" "$home/.claude/scripts/pr-gate.sh" "$decoy/pr-gate.sh" || return
       ;;
   esac
@@ -345,8 +347,460 @@ else
   run_install_case "pm-wrong-symlink-real-run" wrong-symlink 1
   run_install_case "pm-real-dir-dry-run" real-dir 1 --dry-run
   run_install_case "scripts-correct-symlink-idempotent" script-correct-symlink 0
-  run_install_case "scripts-wrong-symlink-real-run" script-wrong-symlink 0
+  run_install_case "scripts-wrong-symlink-real-run" script-wrong-symlink 1
 fi
+
+# Behavior: a copy-fallback install publishes a self-contained, receipt-owned
+# adapter/doctor/Gate topology and never falls through to foreign parent paths.
+# Steps: Arrange an isolated home with decoys and a copy install; Act by running
+# copied entrypoints then removing owned pieces; Assert owned routing and closed failure.
+case_installed_copy_gate_reader_layout() {
+  local name="installed-copy-gate-reader-layout"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name-home" install_out="$tmp_root/$name-install.out"
+  local err="$tmp_root/$name-install.err" gate_out="$tmp_root/$name-gate.out"
+  local gate_err="$tmp_root/$name-gate.err" gate_repo="$tmp_root/$name-repo"
+  local marker="$tmp_root/$name.marker" code=0 lib adapter adapter_out adapter_err assurance
+  local doctor_out doctor_err foreign_pmctl dependency_line agents_line adapters_line entrypoint_line
+  local foreign_router_marker="$tmp_root/$name-foreign-router.marker"
+  local foreign_adapter_marker="$tmp_root/$name-foreign-adapter.marker"
+  local foreign_lib_marker="$tmp_root/$name-foreign-lib.marker"
+  # An unrelated legacy directory above ~/.claude must not shadow the
+  # receipt-owned reviewer definitions in the installed copy layout.
+  mkdir -p "$home/.claude" "$home/agents"
+
+  set +e
+  HOME="$home" PMCTL_BIN_DIR="$home/.local/bin" \
+    FAKE_SYMLINK_UNSUPPORTED=1 \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
+    bash "$REPO_ROOT/install.sh" --profile minimal >"$install_out" 2>"$err"
+  code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "copy-fallback install exited $code: $(tail -3 "$err" | tr '\n' '|')"
+    return
+  fi
+
+  dependency_line="$(grep -nF '==> load-bearing dependency bundle' "$install_out" | head -1 | cut -d: -f1)"
+  agents_line="$(grep -nF '==> agents' "$install_out" | head -1 | cut -d: -f1)"
+  adapters_line="$(grep -nF '==> adapters' "$install_out" | head -1 | cut -d: -f1)"
+  entrypoint_line="$(grep -nF '==> load-bearing entrypoints' "$install_out" | head -1 | cut -d: -f1)"
+  if [[ -z "$dependency_line" || -z "$agents_line" || -z "$adapters_line" \
+      || -z "$entrypoint_line" || "$dependency_line" -ge "$agents_line" \
+      || "$dependency_line" -ge "$adapters_line" || "$agents_line" -ge "$entrypoint_line" \
+      || "$adapters_line" -ge "$entrypoint_line" ]]; then
+    fail "$name" "load-bearing apply order was not dependencies -> managed trees -> entrypoints"
+    return
+  fi
+
+  for lib in identifier-policy runner-kind adapter-manifest dispatch-common \
+      state-writer state-paths portable model-aliases reasoning-effort timeout-resolve; do
+    assert_copy_of "$name" "$home/.claude/runtime/lib/$lib.sh" \
+      "$REPO_ROOT/runtime/lib/$lib.sh" || return
+  done
+  assert_copy_of "$name" "$home/.claude/scripts/lib/adapter-manifest.sh" \
+    "$REPO_ROOT/runtime/lib/adapter-manifest.sh" || return
+  assert_copy_of "$name" "$home/.claude/scripts/lib/gate-memory-context.sh" \
+    "$REPO_ROOT/runtime/lib/gate-memory-context.sh" || return
+  assert_copy_of "$name" "$home/.claude/scripts/core/policy/isolation-level.yaml" \
+    "$REPO_ROOT/core/policy/isolation-level.yaml" || return
+  for adapter in codex claude opencode grok; do
+    assert_copy_of "$name" "$home/.claude/share/$adapter-model-aliases.tsv" \
+      "$REPO_ROOT/share/$adapter-model-aliases.tsv" || return
+  done
+  assert_copy_of "$name" "$home/.claude/ops/usage/log-usage.sh" \
+    "$REPO_ROOT/ops/usage/log-usage.sh" || return
+  assert_copy_of "$name" "$home/.claude/scripts/pr-gate.sh" \
+    "$REPO_ROOT/runtime/bin/pr-gate.sh" || return
+
+  # Every copied built-in must complete its bootstrap without reaching a live
+  # executor. --print-cmd proves the copied entrypoint can snapshot the bundled
+  # runtime/share dependencies and construct its command.
+  for adapter in codex claude opencode grok; do
+    adapter_out="$tmp_root/$name-$adapter.out"
+    adapter_err="$tmp_root/$name-$adapter.err"
+    set +e
+    HOME="$home" bash "$home/.claude/adapters/$adapter/dispatch.sh" \
+      --cd "$REPO_ROOT" --print-cmd >"$adapter_out" 2>"$adapter_err"
+    code=$?
+    set -e
+    if [[ "$code" -ne 0 || ! -s "$adapter_out" ]]; then
+      fail "$name" "$adapter copy bootstrap failed rc=$code err=$(tail -3 "$adapter_err" | tr '\n' '|')"
+      return
+    fi
+  done
+
+  # Replace the copied codex implementation with a deterministic Gate fixture,
+  # leaving adapter.yaml unchanged. This proves the installed pr-gate reaches a
+  # valid manifest entrypoint, not merely that invalid-name resolution works.
+  cat > "$home/.claude/adapters/codex/dispatch.sh" <<'GATE_STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+: "${PM_INSTALL_COPY_MARKER:?}"
+: "${PM_INSTALL_GATE_FIXTURE:?}"
+touch "$PM_INSTALL_COPY_MARKER"
+# shellcheck disable=SC1090
+. "$PM_INSTALL_GATE_FIXTURE"
+pr_gate_fixture_profile_dispatch codex "$@"
+GATE_STUB
+  chmod +x "$home/.claude/adapters/codex/dispatch.sh"
+
+  # Foreign/stale paths that match older heuristic locations must not shadow
+  # the receipt-owned installed root selected above.
+  mkdir -p "$home/.claude/lib" "$home/.claude/scripts/adapters/codex"
+  cat > "$home/.claude/lib/executor-router.sh" <<'FOREIGN_ROUTER'
+#!/usr/bin/env bash
+touch "${PM_INSTALL_FOREIGN_ROUTER_MARKER:?}"
+FOREIGN_ROUTER
+  for lib in portable repo-layout gate-result-verify artifact-paths pmctl-policy detached-launch; do
+    cat > "$home/.claude/lib/$lib.sh" <<'FOREIGN_LIB'
+#!/usr/bin/env bash
+touch "${PM_INSTALL_FOREIGN_LIB_MARKER:?}"
+FOREIGN_LIB
+  done
+  mkdir -p "$home/core/policy"
+  for lib in gate-tiers gate-modes gate-pass-kinds gate-policy-consumers gate-policy-signals; do
+    printf 'foreign-policy-must-not-be-read\n' > "$home/core/policy/$lib.tsv"
+  done
+  printf 'foreign-isolation-policy-must-not-be-read\n' \
+    > "$home/core/policy/isolation-level.yaml"
+  cat > "$home/.claude/scripts/adapters/codex/adapter.yaml" <<'FOREIGN_MANIFEST'
+schema_version: 1
+adapter_name: codex
+runner_kind: cli-subprocess
+dispatch_entrypoint: ./dispatch.sh
+FOREIGN_MANIFEST
+  cat > "$home/.claude/scripts/adapters/codex/dispatch.sh" <<'FOREIGN_ADAPTER'
+#!/usr/bin/env bash
+touch "${PM_INSTALL_FOREIGN_ADAPTER_MARKER:?}"
+exit 99
+FOREIGN_ADAPTER
+  chmod +x "$home/.claude/scripts/adapters/codex/dispatch.sh"
+  mkdir -p "$home/cli" "$home/.claude/scripts/cli" "$home/.claude/scripts/bin"
+  for foreign_pmctl in "$home/cli/pmctl" \
+      "$home/.claude/scripts/cli/pmctl" "$home/.claude/scripts/bin/pmctl"; do
+    printf '#!/usr/bin/env bash\nexit 99\n' > "$foreign_pmctl"
+    chmod +x "$foreign_pmctl"
+  done
+
+  doctor_out="$tmp_root/$name-doctor.out"
+  doctor_err="$tmp_root/$name-doctor.err"
+  code=0
+  PM_INSTALL_FOREIGN_LIB_MARKER="$foreign_lib_marker" HOME="$home" \
+    bash "$home/.claude/scripts/doctor.sh" --no-color --repo "$REPO_ROOT" \
+    >"$doctor_out" 2>"$doctor_err" || code=$?
+  if [[ "$code" -gt 1 || -e "$foreign_lib_marker" \
+      || "$(<"$doctor_out")" != *"Summary:"* ]]; then
+    fail "$name" "installed doctor did not use child bundle rc=$code err=$(tail -3 "$doctor_err" | tr '\n' '|')"
+    return
+  fi
+  code=0
+  HOME="$home" bash "$home/.claude/scripts/doctor.sh" --no-color \
+    >"$doctor_out" 2>"$doctor_err" || code=$?
+  if [[ "$code" -ne 1 || "$(<"$doctor_out")" != *"requires an explicit checkout via --repo"* \
+      || -e "$foreign_lib_marker" ]]; then
+    fail "$name" "installed doctor without --repo did not fail closed rc=$code"
+    return
+  fi
+  mv "$home/.claude/scripts/lib/host-manifest.sh" \
+    "$home/.claude/scripts/lib/host-manifest.sh.missing"
+  code=0
+  PM_INSTALL_FOREIGN_LIB_MARKER="$foreign_lib_marker" HOME="$home" \
+    bash "$home/.claude/scripts/doctor.sh" --help \
+    >"$doctor_out" 2>"$doctor_err" || code=$?
+  mv "$home/.claude/scripts/lib/host-manifest.sh.missing" \
+    "$home/.claude/scripts/lib/host-manifest.sh"
+  if [[ "$code" -ne 0 || -e "$foreign_lib_marker" ]]; then
+    fail "$name" "incomplete installed doctor bundle fell back to parent lib rc=$code"
+    return
+  fi
+  git init -q -b main "$gate_repo"
+  git -C "$gate_repo" config user.email test@example.com
+  git -C "$gate_repo" config user.name 'Gate Test'
+  printf 'initial\n' > "$gate_repo/README.md"
+  printf '.agent-trace/\n.gate-briefs/\n.gate-results/\n' > "$gate_repo/.gitignore"
+  git -C "$gate_repo" add README.md .gitignore
+  git -C "$gate_repo" commit -q -m initial
+  cat > "$gate_repo/app.go" <<'GATE_REPO_SOURCE'
+package main
+
+func main() {}
+GATE_REPO_SOURCE
+
+  set +e
+  PM_INSTALL_COPY_MARKER="$marker" \
+    PM_INSTALL_GATE_FIXTURE="$REPO_ROOT/tests/lib/test-pr-gate-fixture.sh" \
+    PM_INSTALL_FOREIGN_ROUTER_MARKER="$foreign_router_marker" \
+    PM_INSTALL_FOREIGN_ADAPTER_MARKER="$foreign_adapter_marker" \
+    PM_INSTALL_FOREIGN_LIB_MARKER="$foreign_lib_marker" \
+    HOME="$home" bash "$home/.claude/scripts/pr-gate.sh" \
+    --cd "$gate_repo" --executor codex --base main --isolation workspace-write \
+    >"$gate_out" 2>"$gate_err"
+  code=$?
+  set -e
+  assurance="$(find "$gate_repo/.gate-results" -maxdepth 1 -type f \
+    -name '*.assurance.json' -print -quit 2>/dev/null || true)"
+  if [[ "$code" -eq 0 && -f "$marker" \
+      && ! -e "$foreign_router_marker" && ! -e "$foreign_adapter_marker" \
+      && ! -e "$foreign_lib_marker" \
+      && -n "$assurance" \
+      && "$(jq -r '.provenance.policy_source // empty' "$assurance")" == generated-snapshot \
+      && "$(<"$gate_err")" != *"manifest reader/tree unavailable"* ]]; then
+    :
+  else
+    fail "$name" "code=$code marker=$([[ -f "$marker" ]] && echo yes || echo no) err=$(tail -5 "$gate_err" | tr '\n' '|') out=$(tail -5 "$gate_out" | tr '\n' '|')"
+    return
+  fi
+  for foreign_pmctl in "$home/cli/pmctl" \
+      "$home/.claude/scripts/cli/pmctl" "$home/.claude/scripts/bin/pmctl"; do
+    if grep -R -Fq -- "$foreign_pmctl" "$gate_repo/.gate-briefs" 2>/dev/null; then
+      fail "$name" "installed Gate embedded foreign pmctl candidate: $foreign_pmctl"
+      return
+    fi
+  done
+
+  # Installed-topology classification must not depend on every receipt-owned
+  # child still being present. Missing either an early manifest dependency or
+  # a later Gate dependency must fail closed without sourcing adjacent parent
+  # libraries prepared above.
+  local missing_lib missing_diagnostic
+  for missing_lib in adapter-manifest gate-memory-context; do
+    case "$missing_lib" in
+      adapter-manifest) missing_diagnostic="failed to load canonical executor router" ;;
+      gate-memory-context) missing_diagnostic="shared gate memory runtime not found" ;;
+    esac
+    mv "$home/.claude/scripts/lib/$missing_lib.sh" \
+      "$home/.claude/scripts/lib/$missing_lib.sh.missing"
+    rm -f "$marker" "$foreign_router_marker" "$foreign_adapter_marker" \
+      "$foreign_lib_marker"
+    gate_out="$tmp_root/$name-missing-$missing_lib.out"
+    gate_err="$tmp_root/$name-missing-$missing_lib.err"
+    code=0
+    (
+      # This suite exports manifest functions to subprocesses. The copied Gate
+      # must still reject a missing receipt-owned reader rather than trusting
+      # those inherited definitions.
+      PM_INSTALL_COPY_MARKER="$marker" \
+        PM_INSTALL_GATE_FIXTURE="$REPO_ROOT/tests/lib/test-pr-gate-fixture.sh" \
+        PM_INSTALL_FOREIGN_ROUTER_MARKER="$foreign_router_marker" \
+        PM_INSTALL_FOREIGN_ADAPTER_MARKER="$foreign_adapter_marker" \
+        PM_INSTALL_FOREIGN_LIB_MARKER="$foreign_lib_marker" \
+        HOME="$home" bash "$home/.claude/scripts/pr-gate.sh" \
+        --cd "$gate_repo" --executor codex --base main --isolation workspace-write \
+        >"$gate_out" 2>"$gate_err"
+    ) || code=$?
+    mv "$home/.claude/scripts/lib/$missing_lib.sh.missing" \
+      "$home/.claude/scripts/lib/$missing_lib.sh"
+    if [[ "$code" -eq 0 || -e "$marker" \
+        || -e "$foreign_router_marker" || -e "$foreign_adapter_marker" \
+        || -e "$foreign_lib_marker" \
+        || "$(<"$gate_err")" != *"$missing_diagnostic"* ]]; then
+      fail "$name" "incomplete installed Gate bundle fell through for $missing_lib rc=$code err=$(tail -5 "$gate_err" | tr '\n' '|')"
+      return
+    fi
+  done
+
+  # Once the installed topology is selected, a missing receipt-owned reviewer
+  # bundle must fail closed rather than falling through to the legacy ~/agents
+  # directory prepared above.
+  mv "$home/.claude/agents" "$home/.claude/agents.receipt-missing"
+  rm -f "$marker"
+  gate_out="$tmp_root/$name-missing-agents.out"
+  gate_err="$tmp_root/$name-missing-agents.err"
+  code=0
+  PM_INSTALL_COPY_MARKER="$marker" \
+    PM_INSTALL_GATE_FIXTURE="$REPO_ROOT/tests/lib/test-pr-gate-fixture.sh" \
+    HOME="$home" bash "$home/.claude/scripts/pr-gate.sh" \
+    --cd "$gate_repo" --executor codex --base main --isolation workspace-write \
+    >"$gate_out" 2>"$gate_err" || code=$?
+  if [[ "$code" -eq 0 || -e "$marker" \
+      || "$(<"$gate_err")" != *"reviewer definition directory not found"* ]]; then
+    fail "$name" "missing installed reviewer bundle did not fail closed rc=$code err=$(tail -5 "$gate_err" | tr '\n' '|')"
+    return
+  fi
+
+  pass "$name"
+}
+
+case_installed_copy_gate_reader_layout
+
+# Behavior: copy-fallback receipts describe exact installed bytes, permit an
+# idempotent reinstall, and let uninstall remove every untouched managed bundle.
+# Steps: Arrange a copy install and its receipt; Act by reinstalling then
+# uninstalling; Assert exact digests, no conflict, and complete managed removal.
+case_copy_install_receipt_lifecycle() {
+  local name="copy-install-receipt-lifecycle"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name-home" bin="$tmp_root/$name-bin"
+  local first_out="$tmp_root/$name-first.out" first_err="$tmp_root/$name-first.err"
+  local second_out="$tmp_root/$name-second.out" second_err="$tmp_root/$name-second.err"
+  local uninstall_out="$tmp_root/$name-uninstall.out"
+  local receipt="$home/.pm-dispatch/install-manifest.json"
+  local config_root="$tmp_root/$name-config-root"
+  local dst expected actual code=0
+  mkdir -p "$home" "$bin"
+  if _ti_is_windows; then
+    mkdir -p "$home/.claude"
+  else
+    mkdir -p "$config_root"
+    ln -s "$config_root" "$home/.claude"
+  fi
+
+  HOME="$home" PMCTL_BIN_DIR="$bin" FAKE_SYMLINK_UNSUPPORTED=1 \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
+    bash "$REPO_ROOT/install.sh" --profile minimal >"$first_out" 2>"$first_err" || code=$?
+  if [[ "$code" -ne 0 || ! -f "$receipt" ]]; then
+    fail "$name" "first copy install failed rc=$code err=$(tail -3 "$first_err" | tr '\n' '|')"
+    return
+  fi
+
+  while IFS=$'\t' read -r dst expected; do
+    [[ -n "$dst" && -n "$expected" ]] || continue
+    actual="$(_portable_sha256_path "$dst")" || {
+      fail "$name" "cannot hash copied receipt destination: $dst"; return; }
+    if [[ "$actual" != "$expected" ]]; then
+      fail "$name" "fresh copy digest mismatch: $dst"
+      return
+    fi
+  done < <(jq -r '.entries[] | select(.mode == "copy") | [.dst,.sha256] | @tsv' "$receipt")
+
+  code=0
+  HOME="$home" PMCTL_BIN_DIR="$bin" FAKE_SYMLINK_UNSUPPORTED=1 \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
+    bash "$REPO_ROOT/install.sh" --profile minimal >"$second_out" 2>"$second_err" || code=$?
+  if [[ "$code" -ne 0 ]] || grep -q 'CONFLICT' "$second_out" "$second_err"; then
+    fail "$name" "second copy install was not idempotent rc=$code err=$(tail -3 "$second_err" | tr '\n' '|')"
+    return
+  fi
+
+  code=0
+  HOME="$home" PMCTL_BIN_DIR="$bin" \
+    bash "$REPO_ROOT/uninstall.sh" >"$uninstall_out" 2>&1 || code=$?
+  if [[ "$code" -ne 0 || -e "$receipt" \
+      || -e "$home/.claude/.pm-dispatch/install-manifest.json" \
+      || -e "$home/.claude/runtime" || -e "$home/.claude/ops" \
+      || -e "$home/.claude/scripts/core" \
+      || "$(<"$uninstall_out")" == *"modified since install"* ]]; then
+    fail "$name" "untouched copy uninstall was incomplete rc=$code out=$(tail -8 "$uninstall_out" | tr '\n' '|')"
+    return
+  fi
+
+  pass "$name"
+}
+
+case_copy_install_receipt_lifecycle
+
+# Behavior: foreign load-bearing files or trees, including stale claimed Windows
+# junctions, stop installation before any managed state is published or overwritten.
+# Steps: Arrange each protected destination with a sentinel; Act by installing;
+# Assert exit 1, the exact conflict, unchanged bytes, and no pmctl or receipt.
+case_load_bearing_bundle_conflicts_fail() {
+  local name="load-bearing-copy-bundle-conflicts-fail"
+  should_run "$name" || return 0
+  local variant home bin out err target sentinel code
+
+  for variant in doctor-entrypoint gate-entrypoint gate-runtime adapter-runtime adapter-tree reviewer-tree alias-asset usage-helper; do
+    home="$tmp_root/$name-$variant-home"
+    bin="$tmp_root/$name-$variant-bin"
+    out="$tmp_root/$name-$variant.out"
+    err="$tmp_root/$name-$variant.err"
+    mkdir -p "$home/.claude" "$bin"
+    case "$variant" in
+      doctor-entrypoint)
+        target="$home/.claude/scripts/doctor.sh"
+        mkdir -p "${target%/*}"
+        sentinel="$target"
+        printf 'foreign\n' > "$sentinel"
+        ;;
+      gate-entrypoint)
+        target="$home/.claude/scripts/pr-gate.sh"
+        mkdir -p "${target%/*}"
+        sentinel="$target"
+        printf 'foreign\n' > "$sentinel"
+        ;;
+      gate-runtime)
+        target="$home/.claude/scripts/lib"
+        mkdir -p "$target"
+        sentinel="$target/foreign.txt"
+        printf 'foreign\n' > "$sentinel"
+        ;;
+      adapter-runtime)
+        target="$home/.claude/runtime/lib/adapter-manifest.sh"
+        mkdir -p "${target%/*}"
+        sentinel="$target"
+        printf 'foreign\n' > "$sentinel"
+        ;;
+      adapter-tree)
+        target="$home/.claude/adapters/codex"
+        mkdir -p "$target"
+        sentinel="$target/foreign.txt"
+        printf 'foreign\n' > "$sentinel"
+        ;;
+      reviewer-tree)
+        target="$home/.claude/agents/critic.md"
+        mkdir -p "${target%/*}"
+        sentinel="$target"
+        printf 'foreign\n' > "$sentinel"
+        ;;
+      alias-asset)
+        target="$home/.claude/share/codex-model-aliases.tsv"
+        mkdir -p "${target%/*}"
+        sentinel="$target"
+        printf 'foreign\n' > "$sentinel"
+        ;;
+      usage-helper)
+        target="$home/.claude/ops/usage/log-usage.sh"
+        mkdir -p "${target%/*}"
+        sentinel="$target"
+        printf 'foreign\n' > "$sentinel"
+        ;;
+    esac
+
+    code=0
+    HOME="$home" PMCTL_BIN_DIR="$bin" \
+      CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+      CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
+      bash "$REPO_ROOT/install.sh" --profile minimal >"$out" 2>"$err" || code=$?
+    if [[ "$code" -ne 1 || "$(<"$err")" != *"load-bearing copy bundle conflict: $target"* \
+        || "$(<"$sentinel")" != foreign || -e "$bin/pmctl" \
+        || -e "$home/.pm-dispatch/install-manifest.json" ]]; then
+      fail "$name" "$variant did not fail closed rc=$code err=$(tail -3 "$err" | tr '\n' '|')"
+      return
+    fi
+  done
+
+  # A stale receipt claiming a Windows junction is not proof that an existing
+  # real directory is still that junction. Probe its shipped children and
+  # reject foreign bytes before any mutation.
+  home="$tmp_root/$name-windows-stale-junction-home"
+  bin="$tmp_root/$name-windows-stale-junction-bin"
+  out="$tmp_root/$name-windows-stale-junction.out"
+  err="$tmp_root/$name-windows-stale-junction.err"
+  target="$home/.claude/adapters/codex"
+  sentinel="$target/dispatch.sh"
+  mkdir -p "$target" "$home/.pm-dispatch" "$bin"
+  printf 'foreign\n' > "$sentinel"
+  printf '{"manifest_version":1,"entries":[{"src":"%s","dst":"%s","mode":"junction"}]}\n' \
+    "$REPO_ROOT/adapters" "$home/.claude/adapters" \
+    > "$home/.pm-dispatch/install-manifest.json"
+  code=0
+  HOME="$home" PMCTL_BIN_DIR="$bin" PM_DISPATCH_PLATFORM=windows \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
+    bash "$REPO_ROOT/install.sh" --profile minimal >"$out" 2>"$err" || code=$?
+  if [[ "$code" -ne 1 || "$(<"$err")" != *"load-bearing copy bundle conflict: $target"* \
+      || "$(<"$sentinel")" != foreign || -e "$bin/pmctl" ]]; then
+    fail "$name" "stale Windows junction receipt bypassed preflight rc=$code err=$(tail -3 "$err" | tr '\n' '|')"
+    return
+  fi
+
+  pass "$name"
+}
+
+case_load_bearing_bundle_conflicts_fail
 
 test_pmctl_symlink_install_idempotent() {
   # Verifies install symlinks cli/pmctl into ~/.local/bin and is idempotent.
@@ -552,8 +1006,18 @@ test_install_manifest_atomic() {
   for script in token-usage.sh log-usage.sh pr-gate.sh setup-project.sh patch-gitignore.sh doctor.sh; do
     [[ -e "$REPO_ROOT/scripts/$script" ]] && expected_entries=$((expected_entries + 1))
   done
+  [[ -d "$REPO_ROOT/runtime/lib" ]] && expected_entries=$((expected_entries + 1))
+  [[ -f "$REPO_ROOT/core/policy/isolation-level.yaml" ]] \
+    && expected_entries=$((expected_entries + 1))
   [[ -d "$REPO_ROOT/pm" ]] && expected_entries=$((expected_entries + 1))
-  [[ -f "$REPO_ROOT/share/codex-model-aliases.tsv" ]] && expected_entries=$((expected_entries + 1))
+  for lib in identifier-policy runner-kind adapter-manifest dispatch-common \
+      state-writer state-paths portable model-aliases reasoning-effort timeout-resolve; do
+    [[ -f "$REPO_ROOT/runtime/lib/$lib.sh" ]] && expected_entries=$((expected_entries + 1))
+  done
+  [[ -f "$REPO_ROOT/ops/usage/log-usage.sh" ]] && expected_entries=$((expected_entries + 1))
+  for adapter in codex claude opencode grok; do
+    [[ -f "$REPO_ROOT/share/$adapter-model-aliases.tsv" ]] && expected_entries=$((expected_entries + 1))
+  done
   shopt -u nullglob
 
   manifest="$home/.claude/.pm-dispatch/install-manifest.json"
@@ -576,11 +1040,13 @@ test_install_manifest_atomic() {
       (
         ((.mode == "symlink" or .mode == "junction")
          and (has("sha256") | not)
+         and (has("digest_scheme") | not)
          and (has("fallback_reason") | not))
         or
         (.mode == "copy"
          and has("sha256")
          and (.sha256 | test("^[0-9a-f]{64}$"))
+         and (.digest_scheme == "file-v1" or .digest_scheme == "logical-tree-v1")
          and has("fallback_reason")
          and (.fallback_reason != ""))
       )
@@ -819,13 +1285,14 @@ dispatch_allowlist_entries_for_home() {
   # Mirrors dispatch_allowlist_entries() from runtime/lib/allowlist.sh but accepts
   # an explicit home arg (tests use a temp dir, not the real $HOME).
   local home="$1"
-  local f rel
+  local adapter f rel
 
-  for f in "$REPO_ROOT/adapters"/*/dispatch.sh; do
-    [[ -f "$f" ]] || continue
+  while IFS= read -r adapter; do
+    [[ -n "$adapter" ]] || continue
+    f="$(adapter_manifest_dispatch_path "$REPO_ROOT" "$adapter")" || continue
     rel="${f#"$home/"}"
     printf 'Bash(%s:*)\nBash(~/%s:*)\n' "$f" "$rel"
-  done
+  done < <(adapter_manifest_names "$REPO_ROOT")
 
   printf 'Bash(pmctl:*)\n'
   printf 'Bash(bash cli/pmctl:*)\n'
@@ -978,13 +1445,40 @@ test_install_dispatch_allowlist_refreshes_other_checkout_paths() {
   fi
 }
 
+# Behavior: changing dispatch_entrypoint in the same checkout revokes the old
+# Adapter Bash grant instead of accumulating a stale executable permission.
+# Steps: Arrange a same-root obsolete entrypoint grant; Act by installing; Assert
+# only current manifest-derived Adapter grants remain while unrelated grants survive.
+test_install_dispatch_allowlist_prunes_same_checkout_old_entrypoint() {
+  local name="test_install_dispatch_allowlist_prunes_same_checkout_old_entrypoint"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name" settings="$tmp_root/$name/.claude/settings.json"
+  local stale="Bash($REPO_ROOT/adapters/codex/old-dispatch.sh:*)"
+  mkdir -p "$home/.claude"
+  jq -n --arg stale "$stale" '{permissions:{allow:[$stale,"Bash(echo:*)"]}}' > "$settings"
+
+  HOME="$home" CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
+    bash "$REPO_ROOT/install.sh" >/dev/null 2>&1
+
+  if jq -e --arg stale "$stale" --arg current "Bash($REPO_ROOT/adapters/codex/dispatch.sh:*)" '
+      (.permissions.allow | index($stale)) == null and
+      (.permissions.allow | index($current)) != null and
+      (.permissions.allow | index("Bash(echo:*)")) != null
+    ' "$settings" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "stale same-checkout entrypoint grant survived: $(jq -c . "$settings")"
+  fi
+}
+
 test_dispatch_allowlist_lib_parity() {
   local name="test_dispatch_allowlist_lib_parity"
   should_run "$name" || return 0
   # Verifies that runtime/lib/allowlist.sh dispatch_allowlist_entries() produces
   # the same entries as the test helper dispatch_allowlist_entries_for_home()
   # for the same home directory, proving they share one source of truth.
-  # Entry count is dynamic (compat shim + one entry per adapters/*/dispatch.sh).
+  # Entry count is dynamic (pmctl entries + one pair per manifest entrypoint).
   local parity_home="$tmp_root/parity-home"
   mkdir -p "$parity_home"
 
@@ -2784,6 +3278,7 @@ test_install_adds_dispatch_allowlist
 test_install_dispatch_allowlist_idempotent
 test_install_dispatch_allowlist_backup_timestamped
 test_install_dispatch_allowlist_refreshes_other_checkout_paths
+test_install_dispatch_allowlist_prunes_same_checkout_old_entrypoint
 test_dispatch_allowlist_lib_parity
 test_dispatch_allowlist_uninstall_removes_entries
 test_dispatch_allowlist_uninstall_dryrun
@@ -3020,28 +3515,33 @@ test_install_share_asset_installed() {
 }
 
 test_install_share_asset_conflict() {
-  # Verifies install.sh exits 0 when ~/.claude/share/codex-model-aliases.tsv already
-  # exists from another source (conflict path must be graceful, not fatal).
+  # A model-alias table is executable Adapter input in copy mode. A foreign
+  # table must therefore stop install during the read-only load-bearing
+  # preflight rather than leave a copied entrypoint wired to unowned policy.
   #
   # Steps:
   #   1. Pre-create ~/.claude/share/codex-model-aliases.tsv with existing content.
   #   2. Run install.sh in that same temp HOME.
-  #   3. Assert install.sh exits 0 (graceful conflict handling, no fatal error).
+  #   3. Assert install.sh exits 1, preserves the foreign bytes, and reports the
+  #      load-bearing conflict.
   local name="install-share-asset-conflict"
   should_run "$name" || return 0
-  local home
+  local home err
   home="$tmp_root/$name"
+  err="$tmp_root/$name.err"
   mkdir -p "$home/.claude/share"
   printf 'existing-content\n' > "$home/.claude/share/codex-model-aliases.tsv"
   set +e
   HOME="$home" \
     CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
     CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
-    bash "$REPO_ROOT/install.sh" >/dev/null 2>&1
+    bash "$REPO_ROOT/install.sh" >/dev/null 2>"$err"
   local rc=$?
   set -e
-  if [[ $rc -ne 0 ]]; then
-    fail "$name" "install.sh exited $rc on share asset conflict (expected 0)"
+  if [[ $rc -ne 1 \
+      || "$(<"$home/.claude/share/codex-model-aliases.tsv")" != existing-content \
+      || "$(<"$err")" != *"load-bearing copy bundle conflict"* ]]; then
+    fail "$name" "share asset conflict did not fail closed rc=$rc err=$(tail -3 "$err" | tr '\n' '|')"
     return
   fi
   pass "$name"
@@ -3557,6 +4057,9 @@ test_install_missing_host_write_library_fails_loudly() {
   cp "$REPO_ROOT/install.sh" "$mock_repo/install.sh"
   cp "$REPO_ROOT/runtime/lib/portable.sh" "$mock_repo/runtime/lib/portable.sh"
   cp "$REPO_ROOT/runtime/lib/allowlist.sh" "$mock_repo/runtime/lib/allowlist.sh"
+  cp "$REPO_ROOT/runtime/lib/identifier-policy.sh" "$mock_repo/runtime/lib/identifier-policy.sh"
+  cp "$REPO_ROOT/runtime/lib/runner-kind.sh" "$mock_repo/runtime/lib/runner-kind.sh"
+  cp "$REPO_ROOT/runtime/lib/adapter-manifest.sh" "$mock_repo/runtime/lib/adapter-manifest.sh"
   cp "$REPO_ROOT/hosts/claude/lib/path-resolver.sh" "$mock_repo/hosts/claude/lib/path-resolver.sh"
 
   HOME="$home" bash "$mock_repo/install.sh" >"$out" 2>&1 || rc=$?
@@ -3567,6 +4070,93 @@ test_install_missing_host_write_library_fails_loudly() {
   assert_file_contains "$name" "$out" "host write libraries unavailable in this install layout" || return
   if [[ -e "$home/.claude/settings.json" ]]; then
     fail "$name" "install mutated Claude settings before rejecting the incomplete checkout"
+    return
+  fi
+  pass "$name"
+}
+
+# Behavior: a missing load-bearing source aborts bundle preflight before the
+# installer changes an existing receipt or publishes any destination.
+# Steps: Arrange an installer-shaped tree missing model-aliases.sh; Act by
+# installing; Assert the conflict and no pmctl, Gate, or receipt mutation.
+test_install_missing_load_bearing_source_fails_before_mutation() {
+  local name="install-missing-load-bearing-source-fails-before-mutation"
+  should_run "$name" || return 0
+  local mock_repo="$tmp_root/$name-repo" home="$tmp_root/$name-home"
+  local out="$tmp_root/$name.out" rc=0
+  local legacy="$home/.claude/.pm-dispatch/install-manifest.json"
+  mkdir -p "$mock_repo" "${legacy%/*}"
+  printf '%s\n' '{"manifest_version":1,"entries":[]}' > "$legacy"
+
+  # Build a complete installer-shaped source tree, then remove a dependency that
+  # install.sh itself does not source before bundle preflight. This distinguishes
+  # the load-bearing inventory check from a generic shell source failure.
+  cp "$REPO_ROOT/install.sh" "$mock_repo/install.sh"
+  cp -R "$REPO_ROOT/agents" "$REPO_ROOT/adapters" "$REPO_ROOT/cli" \
+    "$REPO_ROOT/commands" "$REPO_ROOT/core" "$REPO_ROOT/hosts" \
+    "$REPO_ROOT/ops" "$REPO_ROOT/pm" "$REPO_ROOT/runtime" \
+    "$REPO_ROOT/scripts" "$REPO_ROOT/share" "$REPO_ROOT/skills" \
+    "$mock_repo/"
+  rm "$mock_repo/runtime/lib/model-aliases.sh"
+
+  HOME="$home" PMCTL_BIN_DIR="$tmp_root/$name-bin" \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    bash "$mock_repo/install.sh" >"$out" 2>&1 || rc=$?
+
+  if [[ "$rc" -eq 0 ]] \
+      || ! grep -Fq 'load-bearing copy bundle conflict' "$out" \
+      || ! grep -Fq "$home/.claude/runtime/lib/model-aliases.sh" "$out"; then
+    fail "$name" "missing required bundle source did not fail during preflight (rc=$rc)"
+    return
+  fi
+  if [[ -e "$tmp_root/$name-bin/pmctl" \
+      || -e "$home/.pm-dispatch/install-manifest.json" \
+      || -e "$home/.claude/scripts/pr-gate.sh" \
+      || "$(<"$legacy")" != '{"manifest_version":1,"entries":[]}' ]]; then
+    fail "$name" "missing source failure left an unreceipted partial install"
+    return
+  fi
+  pass "$name"
+}
+
+# Behavior: removing a managed source tree after preflight is detected before
+# load-bearing doctor or Gate entrypoints can be published.
+# Steps: Arrange ln to move the agents tree during apply; Act by installing;
+# Assert exit 1 with the TOCTOU error and neither installed entrypoint present.
+test_install_managed_tree_removed_after_preflight_blocks_entrypoints() {
+  local name="install-managed-tree-removed-after-preflight-blocks-entrypoints"
+  should_run "$name" || return 0
+  _ti_is_windows && { pass "$name (POSIX ln interception only)"; return 0; }
+  local mock_repo="$tmp_root/$name-repo" home="$tmp_root/$name-home"
+  local shim_dir="$tmp_root/$name-bin-shim" pmctl_dir="$tmp_root/$name-pmctl"
+  local out="$tmp_root/$name.out" rc=0
+  mkdir -p "$mock_repo" "$home" "$shim_dir"
+  cp "$REPO_ROOT/install.sh" "$mock_repo/install.sh"
+  cp -R "$REPO_ROOT/agents" "$REPO_ROOT/adapters" "$REPO_ROOT/cli" \
+    "$REPO_ROOT/commands" "$REPO_ROOT/core" "$REPO_ROOT/hosts" \
+    "$REPO_ROOT/ops" "$REPO_ROOT/pm" "$REPO_ROOT/runtime" \
+    "$REPO_ROOT/scripts" "$REPO_ROOT/share" "$REPO_ROOT/skills" \
+    "$mock_repo/"
+  cat > "$shim_dir/ln" <<'LN_SHIM'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ -n "${PM_TEST_REMOVE_TREE:-}" && -d "$PM_TEST_REMOVE_TREE" ]]; then
+  mv "$PM_TEST_REMOVE_TREE" "$PM_TEST_REMOVE_TREE.removed-after-preflight"
+fi
+exec /bin/ln "$@"
+LN_SHIM
+  chmod +x "$shim_dir/ln"
+
+  HOME="$home" PMCTL_BIN_DIR="$pmctl_dir" \
+    PM_TEST_REMOVE_TREE="$mock_repo/agents" PATH="$shim_dir:$PATH" \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    bash "$mock_repo/install.sh" >"$out" 2>&1 || rc=$?
+
+  if [[ "$rc" -ne 1 \
+      || "$(<"$out")" != *"load-bearing agents source tree changed after preflight"* \
+      || -e "$home/.claude/scripts/pr-gate.sh" \
+      || -e "$home/.claude/scripts/doctor.sh" ]]; then
+    fail "$name" "managed-tree TOCTOU did not fail before entrypoint publication (rc=$rc)"
     return
   fi
   pass "$name"
@@ -3734,6 +4324,8 @@ test_uninstall_missing_host_write_library_preserves_manifest_teardown() {
   mkdir -p "$mock_repo/runtime/lib" "$mock_repo/hosts/claude/lib" "$source" "$claude_home/.pm-dispatch"
   cp "$REPO_ROOT/uninstall.sh" "$mock_repo/uninstall.sh"
   cp "$REPO_ROOT/runtime/lib/portable.sh" "$mock_repo/runtime/lib/portable.sh"
+  cp "$REPO_ROOT/runtime/lib/install-receipt.sh" \
+    "$mock_repo/runtime/lib/install-receipt.sh"
   cp "$REPO_ROOT/hosts/claude/lib/path-resolver.sh" "$mock_repo/hosts/claude/lib/path-resolver.sh"
   ln -s "$source" "$destination"
   printf '{"manifest_version":1,"entries":[{"src":"%s","dst":"%s","mode":"symlink","sha256":""}]}\n' \
@@ -3837,6 +4429,8 @@ test_install_hooks_msys_native_jq_boundary
 test_install_refreshes_relocated_helper_symlinks
 test_uninstall_prunes_empty_adapters_dir
 test_install_missing_host_write_library_fails_loudly
+test_install_missing_load_bearing_source_fails_before_mutation
+test_install_managed_tree_removed_after_preflight_blocks_entrypoints
 test_host_selected_codex_lifecycle_skips_claude_tree
 test_host_selected_opencode_lifecycle_skips_claude_tree
 test_host_equals_form_codex_lifecycle_skips_claude_tree

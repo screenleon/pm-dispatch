@@ -8,6 +8,8 @@ UNINSTALL="$REPO_ROOT/uninstall.sh"
 
 # shellcheck disable=SC1091
 . "$REPO_ROOT/runtime/lib/portable.sh"
+# shellcheck disable=SC1091
+. "$REPO_ROOT/runtime/lib/install-receipt.sh"
 
 # shellcheck source=tests/lib/test-harness.sh
 . "$SCRIPT_DIR/../lib/test-harness.sh"
@@ -94,8 +96,15 @@ symlink_entry() {
 }
 
 copy_entry() {
+  local src="$1" dst="$2" sha="$3" digest_scheme
+  digest_scheme="$(_portable_digest_scheme_for_path "$src")" || return 1
+  printf '{"src":"%s","dst":"%s","mode":"copy","sha256":"%s","digest_scheme":"%s","fallback_reason":"test"}' \
+    "$(manifest_escape "$src")" "$(manifest_escape "$dst")" "$sha" "$digest_scheme"
+}
+
+legacy_copy_entry() {
   local src="$1" dst="$2" sha="$3"
-  printf '{"src":"%s","dst":"%s","mode":"copy","sha256":"%s","fallback_reason":"test"}' \
+  printf '{"src":"%s","dst":"%s","mode":"copy","sha256":"%s","fallback_reason":"legacy"}' \
     "$(manifest_escape "$src")" "$(manifest_escape "$dst")" "$sha"
 }
 
@@ -389,6 +398,34 @@ test_copy_dir_sha_match() {
   fi
   if [[ -d "$dst_dir" ]]; then
     fail "$name" "$dst_dir should have been removed"
+    return
+  fi
+  pass "$name"
+}
+
+# Behavior: uninstall removes an untouched legacy copy directory when its stored
+# tar-v0 digest matches the destination tree.
+# Steps: Arrange identical trees and a matching legacy receipt; Act by
+# uninstalling; Assert success and recursive removal of the destination.
+test_legacy_copy_dir_tar_sha_match() {
+  local name="TC-09b legacy-copy-dir-tar-sha-match"
+  local home="$tmp_root/home-legacy-copy-dir-tar-sha-match"
+  local src_dir="$tmp_root/legacy-copy-dir-tar-sha-match-src"
+  local dst_dir="$home/.claude/legacy-copy-dir"
+  local out="$tmp_root/legacy-copy-dir-tar-sha-match.out" sha
+  mkdir -p "$home/.claude" "$src_dir"
+  printf 'legacy\n' > "$src_dir/subfile.txt"
+  cp -a "$src_dir" "$dst_dir"
+  sha="$(_portable_sha256_tar_v0 "$dst_dir")" || {
+    fail "$name" "could not create legacy tar-v0 fixture"; return; }
+  write_manifest "$home" "$(legacy_copy_entry "$src_dir" "$dst_dir" "$sha")"
+
+  if ! run_uninstall "$home" "$out"; then
+    fail "$name" "uninstall exited non-zero"
+    return
+  fi
+  if [[ -d "$dst_dir" ]]; then
+    fail "$name" "$dst_dir should have been removed after legacy verification"
     return
   fi
   pass "$name"
@@ -700,6 +737,7 @@ test_hooks_failure_preserves_manifest() {
 
   cp "$REPO_ROOT/uninstall.sh" "$mock_repo/uninstall.sh"
   cp "$REPO_ROOT/runtime/lib/portable.sh" "$mock_repo/runtime/lib/portable.sh"
+  cp "$REPO_ROOT/runtime/lib/install-receipt.sh" "$mock_repo/runtime/lib/install-receipt.sh"
   cp "$REPO_ROOT/runtime/lib/host-manifest.sh" "$mock_repo/runtime/lib/host-manifest.sh"
   cp "$REPO_ROOT/runtime/lib/host-write.sh" "$mock_repo/runtime/lib/host-write.sh"
   cp "$REPO_ROOT/hosts/claude/lib/path-resolver.sh" "$mock_repo/hosts/claude/lib/path-resolver.sh"
@@ -739,16 +777,19 @@ test_hooks_failure_preserves_manifest() {
   fi
 }
 
-# Verifies that a manifest containing pretty-printed (multi-line) JSON entries,
-# which the grep-based parser cannot match, causes a warning and preserves the
-# manifest rather than silently treating all entries as processed.
+# Verifies that canonical jq parsing accepts pretty-printed (multi-line) JSON
+# entries instead of depending on one physical line per entry.
 #
 # Steps:
 #   1. Write a manifest whose entry fields each occupy a separate line.
 #   2. Run uninstall.sh.
-#   3. Assert manifest still exists (no silent empty-manifest deletion).
-test_multi_line_manifest_preserved() {
-  local name="TC-20 multi-line-manifest-preserved"
+#   3. Assert its already-gone entry is processed and the manifest converges.
+# Behavior: canonical receipt parsing accepts a pretty-printed entry spread over
+# multiple lines and processes it normally.
+# Steps: Arrange a multiline already-gone symlink entry; Act by uninstalling;
+# Assert the entry is visited and the converged manifest is removed.
+test_multi_line_manifest_parsed() {
+  local name="TC-20 multi-line-manifest-parsed"
   local fake_home="$tmp_root/home20"
   local manifest20 out20
   mkdir -p "$fake_home/.claude/.pm-dispatch"
@@ -757,13 +798,184 @@ test_multi_line_manifest_preserved() {
     "$fake_home" > "$manifest20"
 
   out20="$(HOME="$fake_home" bash "$UNINSTALL" 2>&1 || true)"
-  if [[ ! -f "$manifest20" ]]; then
-    fail "$name" "manifest deleted despite unparseable multi-line format"
-  elif ! printf '%s' "$out20" | grep -q "warning: manifest entries could not be parsed"; then
-    fail "$name" "expected warning about unparseable manifest, got: $out20"
-  else
-    pass "$name"
+  if [[ -f "$manifest20" ]]; then
+    fail "$name" "valid pretty-printed receipt was not processed: $out20"
+    return
   fi
+  if [[ "$out20" != *"already gone"* ]]; then
+    fail "$name" "pretty-printed entry was not visited: $out20"
+    return
+  fi
+  pass "$name"
+}
+
+# Behavior: uninstall preserves JSON-decoded path bytes and removes the exact
+# owned copy destination containing quotes, backslashes, and a newline.
+# Steps: Arrange special-character paths and a matching receipt; Act by
+# uninstalling; Assert success and absence of the exact destination.
+test_receipt_special_path_round_trip() {
+  local name="TC-20b receipt-special-path-round-trip"
+  local home="$tmp_root/home-special-path" root="$tmp_root/special-path-source"
+  local src="$tmp_root/special-path-source/"$'source "quoted" \\ path\nfile.txt'
+  local dst="$tmp_root/home-special-path/.claude/agents/"$'dest "quoted" \\ path\nfile.txt'
+  local out="$tmp_root/special-path.out" sha
+  mkdir -p "$home/.claude/agents" "$root"
+  printf 'owned\n' > "$src"
+  printf 'owned\n' > "$dst"
+  sha="$(_portable_sha256_path "$dst")"
+  write_manifest "$home" "$(copy_entry "$src" "$dst" "$sha")"
+
+  if ! run_uninstall "$home" "$out"; then
+    fail "$name" "uninstall rejected a valid escaped receipt: $(<"$out")"
+    return
+  fi
+  if [[ -e "$dst" || -L "$dst" ]]; then
+    fail "$name" "exact special-character destination was not removed"
+    return
+  fi
+  pass "$name"
+}
+
+# Behavior: a malformed product receipt stops uninstall before it removes an
+# owned pmctl symlink or discards the unreadable receipt.
+# Steps: Arrange invalid JSON plus a managed pmctl link; Act by uninstalling;
+# Assert exit 2, both artifacts preserved, and the cannot-safely-read diagnostic.
+test_malformed_receipt_fails_before_mutation() {
+  local name="TC-20c malformed-receipt-fails-before-mutation"
+  _tu_needs_symlink "$name" || return 0
+  local home="$tmp_root/home-malformed-receipt" manifest out pmctl rc=0
+  manifest="$home/.claude/.pm-dispatch/install-manifest.json"
+  pmctl="$home/.local/bin/pmctl"
+  out="$tmp_root/malformed-receipt.out"
+  mkdir -p "${manifest%/*}" "${pmctl%/*}"
+  printf '{"entries":[{"src":"broken"\n' > "$manifest"
+  ln -s "$REPO_ROOT/cli/pmctl" "$pmctl"
+
+  run_uninstall "$home" "$out" || rc=$?
+  if [[ "$rc" -ne 2 || ! -L "$pmctl" || ! -f "$manifest" ]]; then
+    fail "$name" "malformed receipt did not preserve pre-existing state (rc=$rc)"
+    return
+  fi
+  assert_contains "$name" "$out" "cannot safely read" || return
+  pass "$name"
+}
+
+# Behavior: the canonical selected-host reader preserves ordered host values from
+# pretty-printed JSON.
+# Steps: Arrange a multiline codex/claude host array; Act by loading it; Assert
+# success and the exact ordered selected-host result.
+test_selected_hosts_pretty_json() {
+  local name="TC-20d selected-hosts-pretty-json"
+  local receipt="$tmp_root/selected-hosts-pretty.json"
+  printf '{\n  "selected_hosts": [\n    "codex",\n    "claude"\n  ],\n  "entries": []\n}\n' > "$receipt"
+  if ! pm_dispatch_receipt_load_selected_hosts "$receipt"; then
+    fail "$name" "canonical selected_hosts reader rejected pretty JSON"
+    return
+  fi
+  if [[ "${PM_DISPATCH_RECEIPT_SELECTED_HOSTS[*]}" != "codex claude" ]]; then
+    fail "$name" "unexpected selected hosts: ${PM_DISPATCH_RECEIPT_SELECTED_HOSTS[*]}"
+    return
+  fi
+  pass "$name"
+}
+
+# Behavior: duplicate receipt destinations are rejected before uninstall mutates
+# managed state.
+# Steps: Arrange two sources for one destination beside managed state; Act by
+# uninstalling; Assert exit 2, preserved state, and a duplicate diagnostic.
+test_duplicate_receipt_destination_fails_closed() {
+  local name="TC-20e duplicate-receipt-destination-fails-closed"
+  _tu_needs_symlink "$name" || return 0
+  local home="$tmp_root/home-duplicate-receipt" manifest out pmctl rc=0 dst
+  manifest="$home/.claude/.pm-dispatch/install-manifest.json"
+  pmctl="$home/.local/bin/pmctl"
+  dst="$home/.claude/agents/duplicate.md"
+  out="$tmp_root/duplicate-receipt.out"
+  mkdir -p "${manifest%/*}" "${pmctl%/*}"
+  jq -n --arg dst "$dst" '{entries: [
+      {src: "/first", dst: $dst, mode: "symlink"},
+      {src: "/second", dst: $dst, mode: "symlink"}
+    ]}' > "$manifest"
+  ln -s "$REPO_ROOT/cli/pmctl" "$pmctl"
+
+  run_uninstall "$home" "$out" || rc=$?
+  if [[ "$rc" -ne 2 || ! -L "$pmctl" || ! -f "$manifest" ]]; then
+    fail "$name" "duplicate destination did not preserve pre-existing state (rc=$rc)"
+    return
+  fi
+  assert_contains "$name" "$out" "duplicate destination" || return
+  pass "$name"
+}
+
+# Behavior: receipt validation rejects a decoded NUL in a path without exposing
+# any partially loaded destination entries.
+# Steps: Arrange a receipt containing an escaped NUL; Act by validating it;
+# Assert exit 2 with an empty destination array.
+test_nul_receipt_field_fails_closed() {
+  local name="TC-20f nul-receipt-field-fails-closed"
+  local receipt="$tmp_root/nul-receipt-field.json" rc=0
+  printf '{"manifest_version":1,"entries":[{"src":"/safe","dst":"/bad\\u0000path","mode":"symlink"}]}\n' \
+    > "$receipt"
+  pm_dispatch_receipt_validate "$receipt" >/dev/null 2>&1 || rc=$?
+  if [[ "$rc" -ne 2 || "${#PM_DISPATCH_RECEIPT_ENTRY_DSTS[@]}" -ne 0 ]]; then
+    fail "$name" "NUL-bearing receipt field was accepted or partially loaded (rc=$rc)"
+    return
+  fi
+  pass "$name"
+}
+
+# Behavior: an explicit Codex uninstall validates a malformed product receipt
+# before changing Codex hook state.
+# Steps: Arrange invalid entry structure and managed hooks; Act via explicit
+# Codex uninstall; Assert exit 2, retained receipt, unchanged hooks, and an error.
+test_explicit_codex_malformed_receipt_precedes_host_mutation() {
+  local name="TC-20g explicit-codex-malformed-receipt-precedes-host-mutation"
+  local home="$tmp_root/home-explicit-codex-malformed"
+  local codex_home="$tmp_root/codex-explicit-malformed" receipt hooks before out rc=0
+  receipt="$home/.pm-dispatch/install-manifest.json"
+  hooks="$codex_home/hooks.json"
+  before="$tmp_root/explicit-codex-malformed.before"
+  out="$tmp_root/explicit-codex-malformed.out"
+  mkdir -p "${receipt%/*}" "$codex_home"
+  printf '{"manifest_version":1,"selected_hosts":["codex"],"entries":"invalid"}\n' > "$receipt"
+  printf '{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"%s/hosts/codex/hooks/command-guard.sh"}]}]}}\n' \
+    "$REPO_ROOT" > "$hooks"
+  cp "$hooks" "$before"
+
+  HOME="$home" CODEX_HOME="$codex_home" bash "$UNINSTALL" --host codex > "$out" 2>&1 || rc=$?
+  if [[ "$rc" -ne 2 || ! -f "$receipt" ]] || ! cmp -s "$before" "$hooks"; then
+    fail "$name" "host state changed before malformed explicit receipt rejection (rc=$rc)"
+    return
+  fi
+  assert_contains "$name" "$out" "cannot safely read product receipt" || return
+  pass "$name"
+}
+
+# Behavior: an explicit Codex uninstall rejects an unsupported receipt schema
+# before changing Codex hook state.
+# Steps: Arrange a version-99 receipt and managed hooks; Act via explicit Codex
+# uninstall; Assert exit 2, retained receipt, unchanged hooks, and an error.
+test_explicit_codex_unknown_version_precedes_host_mutation() {
+  local name="TC-20h explicit-codex-unknown-version-precedes-host-mutation"
+  local home="$tmp_root/home-explicit-codex-version"
+  local codex_home="$tmp_root/codex-explicit-version" receipt hooks before out rc=0
+  receipt="$home/.pm-dispatch/install-manifest.json"
+  hooks="$codex_home/hooks.json"
+  before="$tmp_root/explicit-codex-version.before"
+  out="$tmp_root/explicit-codex-version.out"
+  mkdir -p "${receipt%/*}" "$codex_home"
+  printf '{"manifest_version":99,"selected_hosts":["codex"],"entries":[]}\n' > "$receipt"
+  printf '{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"%s/hosts/codex/hooks/command-guard.sh"}]}]}}\n' \
+    "$REPO_ROOT" > "$hooks"
+  cp "$hooks" "$before"
+
+  HOME="$home" CODEX_HOME="$codex_home" bash "$UNINSTALL" --host codex > "$out" 2>&1 || rc=$?
+  if [[ "$rc" -ne 2 || ! -f "$receipt" ]] || ! cmp -s "$before" "$hooks"; then
+    fail "$name" "unknown schema changed host state before rejection (rc=$rc)"
+    return
+  fi
+  assert_contains "$name" "$out" "cannot safely read product receipt" || return
+  pass "$name"
 }
 
 # Verifies that a copy-mode dst that lexically starts with $HOME/.claude but
@@ -832,6 +1044,7 @@ test_symlink_parent_no_realpath_rejected() {
   # Set up a mock repo with a real uninstall.sh, portable helpers, and working hooks.
   cp "$REPO_ROOT/uninstall.sh" "$mock_repo/uninstall.sh"
   cp "$REPO_ROOT/runtime/lib/portable.sh" "$mock_repo/runtime/lib/portable.sh"
+  cp "$REPO_ROOT/runtime/lib/install-receipt.sh" "$mock_repo/runtime/lib/install-receipt.sh"
   cp "$REPO_ROOT/hosts/claude/lib/path-resolver.sh" "$mock_repo/hosts/claude/lib/path-resolver.sh"
   printf '#!/usr/bin/env bash\nexit 0\n' > "$mock_repo/scripts/uninstall-guards.sh"
   chmod +x "$mock_repo/scripts/uninstall-guards.sh"
@@ -1127,6 +1340,7 @@ run_case "TC-06 dry-run" test_dry_run
 run_case "TC-07 empty-dir-removed" test_empty_dir_removed
 run_case "TC-08 hooks-called" test_hooks_called
 run_case "TC-09 copy-dir-sha-match" test_copy_dir_sha_match
+run_case "TC-09b legacy-copy-dir-tar-sha-match" test_legacy_copy_dir_tar_sha_match
 run_case "TC-10 copy-dir-sha-mismatch" test_copy_dir_sha_mismatch
 run_case "TC-11 dry-run-copy" test_dry_run_copy
 run_case "TC-12 unknown-flag" test_unknown_flag
@@ -1137,7 +1351,14 @@ run_case "TC-16 out-of-root-dst-rejected" test_out_of_root_dst_rejected
 run_case "TC-17 out-of-root-copy-rejected" test_out_of_root_copy_rejected
 run_case "TC-18 dot-dot-traversal-rejected" test_dot_dot_traversal_rejected
 run_case "TC-19 hooks-failure-preserves-manifest" test_hooks_failure_preserves_manifest
-run_case "TC-20 multi-line-manifest-preserved" test_multi_line_manifest_preserved
+run_case "TC-20 multi-line-manifest-parsed" test_multi_line_manifest_parsed
+run_case "TC-20b receipt-special-path-round-trip" test_receipt_special_path_round_trip
+run_case "TC-20c malformed-receipt-fails-before-mutation" test_malformed_receipt_fails_before_mutation
+run_case "TC-20d selected-hosts-pretty-json" test_selected_hosts_pretty_json
+run_case "TC-20e duplicate-receipt-destination-fails-closed" test_duplicate_receipt_destination_fails_closed
+run_case "TC-20f nul-receipt-field-fails-closed" test_nul_receipt_field_fails_closed
+run_case "TC-20g explicit-codex-malformed-receipt-precedes-host-mutation" test_explicit_codex_malformed_receipt_precedes_host_mutation
+run_case "TC-20h explicit-codex-unknown-version-precedes-host-mutation" test_explicit_codex_unknown_version_precedes_host_mutation
 run_case "TC-21 symlink-parent-traversal-rejected" test_symlink_parent_traversal_rejected
 run_case "TC-22 symlink-parent-no-realpath-rejected" test_symlink_parent_no_realpath_rejected
 run_case "TC-23 claude-home-symlink" test_claude_home_symlink

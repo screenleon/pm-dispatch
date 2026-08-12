@@ -46,11 +46,11 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-524 | 🔵 active | `pmctl artifacts show` 顯示 canonical absolute run root 並提供穩定 machine-readable locator | ux/ops | 2026-07-27 | feedback:2026-07-27 | P2 | hygiene |
 | CC-525 | 🔵 active | copy-mode verifier fallback 的 generated provenance 必須指向實際 generator，並由 parity ratchet 防止再次漂移 | ops/test | 2026-07-28 | feedback:2026-07-28 | P3 | hygiene |
 | CC-526 | 🔵 active | reviewer override file 的 symlink trust-boundary hardening 與相容性契約 | security/gate | 2026-07-28 | feedback:2026-07-28 | P2 | hygiene |
-| CC-527 | 🔵 active | targeted gate CLI 拆分 pass、reviewer coverage 與 tier，避免 full targeted 語意重疊 | ux/gate | 2026-07-28 | feedback:2026-07-28 | P2 | design |
+| CC-527 | 🔵 active | targeted gate CLI 拆分 pass、reviewer coverage 與 tier，避免 full targeted 語意重疊 | ux/gate | 2026-07-28 | pr:#472 (partial) | P2 | design |
 | CC-528 | ✅ closed 2026-07-30 | publish policy compatibility：generic 為可接受 baseline、maintainer 為 preferred，並允許 ship 驗證既有 current-tree Gate artifact | release/gate | 2026-07-30 | pr:#457 | P1 | design |
 | CC-529 | 🔵 active | publish assurance observability：在 ship 成功輸出、PR body 與 finish marker 保留 embedded policy 與 baseline/preferred satisfaction | release/gate | 2026-07-30 | feedback:2026-07-30 | P2 | hygiene |
-| CC-530 | 🔵 active | source-safe runtime library contract + centralized domain identifier policy | arch/reuse | 2026-07-30 | feedback:2026-07-30 | P1 | hygiene |
-| CC-531 | 🔵 active | Adapter manifest contract closure：dispatch entrypoint 成為唯一 runtime authority | arch/schema | 2026-07-30 | feedback:2026-07-30 | P1 | design |
+| CC-530 | 🔵 active | source-safe runtime library contract + centralized domain identifier policy | arch/reuse | 2026-07-30 | pr:#473 (partial) | P1 | hygiene |
+| CC-531 | ✅ closed 2026-08-11 | Adapter manifest contract closure：dispatch entrypoint 成為唯一 runtime authority | arch/schema | 2026-07-30 | feedback:2026-08-11 | P1 | design |
 | CC-532 | 🔵 active | Gate canonical modules + generated standalone distribution + parity fixtures | arch/gate | 2026-07-30 | feedback:2026-07-30 | P1 | reuse-debt |
 | CC-533 | 🔵 active | schema-derived Gate structural validator，手寫 verifier 只保留跨 artifact semantics | schema/gate | 2026-07-30 | feedback:2026-07-30 | P1 | design |
 | CC-534 | 🟢 someday | `commands.tsv` 驅動 CLI routing、safe handler dispatch 與 lazy module loading | arch/DX | 2026-07-30 | feedback:2026-07-30 | P2 | design |
@@ -2567,6 +2567,15 @@ reviewers；即使 resolver 有確定 precedence，CLI 表面仍讓 rigor、pass
 coverage 看似互相覆蓋。這可能導致 maintainer recipe 錯稱「full gate」、重啟不必要
 的 comprehensive discovery，或誤以為 targeted qa 已取得 full reviewer coverage。
 
+**Update 2026-08-11 (PR #472, partial; ticket remains active)**: PR #472 已交付
+canonical `--pass targeted --reviewers ... --initial-result ...`、legacy
+`--targeted` shorthand 的同路徑展開、同值混用相容／衝突 fail-closed、CLI spelling
+provenance，以及部分 deterministic fixtures。尚未完成的是 subject-applicable initial
+result 的 tier inheritance、tier／coverage 各自的 machine-readable selection basis、
+stale／legacy initial-result 行為、`tier=full + QA-only` truthful labeling，以及
+copy-mode／repo-layout、sequential／parallel 的完整 meaning-parity 與 consumer
+不得誤認 comprehensive coverage 的驗收。因此 PR #472 不構成 CC-527 closure。
+
 **Requirement**:
 
 1. 定義 canonical explicit form，設計目標為
@@ -2746,6 +2755,15 @@ consumer 因此必須自行保存與還原 caller state；同時 Adapter 等 dom
 後續每次抽 module 都會複製 bootstrap 與 compatibility 邏輯，且安全檢查無法證明
 所有入口一致。
 
+**Update 2026-08-11 (PR #473, partial; ticket remains active)**: PR #473 已讓
+`portable.sh` source 時不再主動改寫 strict-mode flags，移除 `state-paths.sh`／
+`state-writer.sh` 的 caller-state save/restore workaround，並加入 shared identifier
+policy、接上主要 runtime consumers。尚未機械證明完整 source contract：現有 fixture
+不足以捕捉短暫子行程、直接 `exit`、任意路徑寫檔與所有 trap 變更；部分 run-id
+production entrypoints、state-path resolver 與 verifier／copy fallback 也仍未統一使用
+canonical validator。需補齊這些 coverage 並取得 current-tree full-suite evidence 後，
+才能關閉 CC-530；PR #473 本身只代表 foundation slice。
+
 **Requirement**:
 
 1. 定義並機械驗證 `runtime/lib/*.sh` source contract：source 階段不得改變 shell
@@ -2763,7 +2781,9 @@ consumer 因此必須自行保存與還原 caller state；同時 Adapter 等 dom
 
 ---
 
-## CC-531 — Adapter manifest dispatch entrypoint contract closure 🔵 active
+## CC-531 — Adapter manifest dispatch entrypoint contract closure ✅ 2026-08-11
+
+**See**: [Adapter manifest dispatch contract](docs/adapter-contract.md)
 
 **Problem**: Built-in manifests 宣告 `runner_ref: ./dispatch.sh`，generator 卻產生
 `./run.sh`；實際 dispatch runtime 又不讀該欄位，而是硬編碼
@@ -2774,11 +2794,24 @@ load-bearing authority，新增或改名 entrypoint 仍需修改 core runtime。
 真正控制 runtime resolution。否則文件、generator 與執行路徑會形成三份互相矛盾
 的 authority，custom Adapter 無法只靠自己的 manifest 接入。
 
+**Contract completed 2026-08-11**: canonical
+欄位定名為 `dispatch_entrypoint`，詳細契約與 schema v1 migration window 見
+[`docs/adapter-contract.md`](docs/adapter-contract.md)。`runner_ref` 是歷史 metadata，
+不得再被解讀為 runtime path：schema v1 manifest 缺 `dispatch_entrypoint` 時，reader
+只可 deprecated fallback 到歷史真正執行慣例 `./dispatch.sh`，即使舊 generator 留下
+`runner_ref: ./run.sh` 也不得跟著執行或因此中斷；canonical 欄位存在時則是唯一
+authority，即使 `runner_ref` 不同仍以 canonical 為準並可發出 deprecation warning。
+新 built-ins 與 generator 已移除 `runner_ref`。Runtime、repo-layout／copy-mode、
+foreground／detached 與 Gate／router conformance 均已完成；installed snapshot 的
+load-bearing conflict／缺件也會 fail closed，並由 matching current-tree full suite
+完成最終驗收。
+
 **Requirement**:
 
-1. 定義語意明確的 canonical dispatch entrypoint 欄位；`runner_ref` 的遷移、
-   deprecated alias 或拒絕策略必須明文且有 compatibility fixtures，generator 與
-   built-in manifests 同步。
+1. `dispatch_entrypoint` 是唯一 canonical runtime authority。schema v1 migration
+   window 內，缺欄位才 deprecated fallback 到 `./dispatch.sh`；`runner_ref` 的值永不
+   參與路徑解析，canonical 存在時也不得覆蓋或與它形成第二 authority。新 generator
+   與 built-in manifests 移除 `runner_ref`，compatibility fixtures 鎖定上述邊界。
 2. 所有 Adapter enum、dispatch、executor routing 與 validation path 都透過同一
    manifest reader 解析 entrypoint，不再固定尋找 `dispatch.sh`；名稱驗證共用
    [[CC-530]] identifier policy。
@@ -2788,6 +2821,19 @@ load-bearing authority，新增或改名 entrypoint 仍需修改 core runtime。
 4. Conformance suite 證明將某 Adapter 的 entrypoint 改成 `./worker.sh` 後只改
    manifest 即可 dispatch，無須修改 `pmctl-dispatch.sh`、executor router 或其他
    shared runtime。
+5. Repo-layout 與 copy-mode 必須攜帶並使用同一 canonical manifest reader 與
+   `adapter.yaml`；缺 reader、缺 manifest 或無法解析時 fail closed，不得退回內嵌
+   `dispatch.sh` 常數或另建 generated path authority。
+
+**Closure evidence**: 所有 runtime consumers 都由同一 reader 取得經安全驗證的
+`dispatch_entrypoint`；schema v1 fallback／deprecation、manifest-only
+`./worker.sh` foreground／detached dispatch、copy-mode parity、installed-bundle
+fail-closed 與 negative path fixtures 全數通過。Closure refactor 另以 single bundle
+inventory 鎖定 preflight/apply、dependencies → managed trees → entrypoints 的發佈順序、
+explicit-root canonical router、single schema-validating receipt reader 與 23-suite
+changed-path ratchet；authoritative full-suite PASS artifact 的 source-tree fingerprint
+綁定本次 accepted tree。Focused branch 保留
+terminal row/body；既有 terminal tickets 的 broad archive sweep 另行處理。
 
 ---
 

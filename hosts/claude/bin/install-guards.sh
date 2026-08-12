@@ -166,18 +166,19 @@ statusline_chain_conf="$CLAUDE_HOME/statusline-chain.conf"
 
 # shellcheck source=runtime/lib/runner-kind.sh
 . "$repo_root/runtime/lib/runner-kind.sh"
+# shellcheck source=runtime/lib/adapter-manifest.sh
+. "$repo_root/runtime/lib/adapter-manifest.sh"
 
 # Scan adapters/ manifests and collect bash-guard command paths for adapters
 # where needs_bash_guard resolves to true. Builds _bash_guard_cmds[] (absolute
 # paths) and _bg_json (JSON array of printf-%q-escaped paths for jq).
 _bash_guard_cmds=()
-for _manifest in "$repo_root"/adapters/*/adapter.yaml; do
-  [[ -f "$_manifest" ]] || continue
-  _adapter_dir="$(dirname "$_manifest")"
-  _adapter_name="$(basename "$_adapter_dir")"
-  _rk="$(runner_kind_manifest_field "$_manifest" runner_kind)"
-  [[ -n "$_rk" ]] || continue
-  _nbg_override="$(runner_kind_manifest_field "$_manifest" needs_bash_guard)"
+while IFS= read -r _adapter_name; do
+  [[ -n "$_adapter_name" ]] || continue
+  _manifest="$(adapter_manifest_file "$repo_root" "$_adapter_name")" || continue
+  _adapter_dir="${_manifest%/adapter.yaml}"
+  _rk="$(adapter_manifest_runner_kind "$repo_root" "$_adapter_name")" || continue
+  _nbg_override="$(adapter_manifest_scalar "$_manifest" needs_bash_guard)" || continue
   _nbg="$(runner_kind_resolve_flag "$_rk" needs_bash_guard "$_nbg_override")"
   if [[ "$_nbg" == "true" ]]; then
     _guard_file="$_adapter_dir/bash-guard.sh"
@@ -187,7 +188,7 @@ for _manifest in "$repo_root"/adapters/*/adapter.yaml; do
     }
     _bash_guard_cmds+=("$_guard_file")
   fi
-done
+done < <(adapter_manifest_names "$repo_root")
 if [[ ${#_bash_guard_cmds[@]} -eq 0 ]]; then
   _bg_json='[]'
 else

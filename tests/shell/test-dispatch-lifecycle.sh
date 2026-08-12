@@ -343,6 +343,85 @@ case_default_detach_terminal_record_is_ok() {
   rm -rf "$work" "$bindir"
 }
 
+# Behavior: Detached dispatch resolves and executes the same manifest-owned
+# worker entrypoint through parent preflight and supervisor revalidation.
+# Steps:
+#   1. Arrange a fixture Adapter with only worker.sh, a matching manifest, and a marker-writing terminal event.
+#   2. Act by launching it detached and waiting for the returned run id.
+#   3. Assert launch and wait succeed, worker.sh ran without dispatch.sh, and the absolute record is final_state ok.
+case_detached_manifest_worker_launches() {
+  local name="lifecycle/detached launches manifest-only worker entrypoint"
+  should_run "$name" || return 0
+  local root work brief marker err run_id code wait_out wait_code record
+  root="$(mktemp -d)"
+  mkdir -p "$root/adapters/codex"
+  cp -R "$REPO_ROOT/runtime" "$root/runtime"
+  cp -R "$REPO_ROOT/core" "$root/core"
+  cat > "$root/adapters/codex/adapter.yaml" <<'MANIFEST'
+schema_version: 1
+adapter_name: codex
+runner_kind: cli-subprocess
+write_guard_mode: cli-only
+needs_bash_guard: false
+dispatch_entrypoint: ./worker.sh
+terminal_event: worker.completed
+MANIFEST
+  cat > "$root/adapters/codex/worker.sh" <<'WORKER'
+#!/usr/bin/env bash
+set -euo pipefail
+trace_dir=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --trace-dir) trace_dir="${2:-}"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+: "${trace_dir:?missing --trace-dir}"
+: "${PM_LIFECYCLE_WORKER_MARKER:?}"
+mkdir -p "$trace_dir"
+trace_file="$trace_dir/worker.jsonl"
+last_file="$trace_dir/worker.last"
+stderr_file="$trace_dir/worker.stderr"
+printf '%s\n' '{"type":"worker.completed","usage":{"input_tokens":1,"output_tokens":1}}' > "$trace_file"
+printf 'worker complete\n' > "$last_file"
+: > "$stderr_file"
+touch "$PM_LIFECYCLE_WORKER_MARKER"
+printf 'trace:  %s\nlast:   %s\nstderr: %s\nmodel:  fixture\n' \
+  "$trace_file" "$last_file" "$stderr_file"
+WORKER
+  chmod +x "$root/adapters/codex/worker.sh"
+
+  work="$(mktemp -d)"; git init -q "$work"
+  brief="$(_mk_brief "$work")"
+  marker="$work/worker-launched.marker"
+  err="$(mktemp)"
+  code=0
+  export PM_LIFECYCLE_WORKER_MARKER="$marker"
+  run_id="$(pmctl_dispatch_run "$root" --adapter codex --cd "$work" \
+    --brief-file "$brief" --lifecycle detached --no-auto-pack 2>"$err")" || code=$?
+  unset PM_LIFECYCLE_WORKER_MARKER
+  if [[ "$code" -ne 0 || ! "$run_id" =~ ^run-[A-Za-z0-9]+-[A-Za-z0-9]+$ ]]; then
+    fail "$name" "dispatch run failed rc=$code run_id=${run_id:-empty} err=$(tail -3 "$err" | tr '\n' '|')"
+    rm -rf "$root" "$work"; rm -f "$err"
+    return
+  fi
+
+  wait_code=0
+  wait_out="$(pmctl_dispatch_wait "$root" "$run_id" --cd "$work" \
+    --timeout "$_WAIT_OK" 2>&1)" || wait_code=$?
+  record="$(_record_for_run "$work" "$run_id")"
+  if [[ "$wait_code" -eq 0 && -e "$marker" \
+      && ! -e "$root/adapters/codex/dispatch.sh" \
+      && -n "$record" && "$record" == /* \
+      && "$(<"$record")" == *'final_state: "ok"'* \
+      && "$wait_out" == *"state: ok  exit: 0"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "wait=$wait_code marker=$([[ -e "$marker" ]] && echo yes || echo no) record=${record:-missing} err=$(tail -3 "$err" | tr '\n' '|') wait_out=$(tail -3 <<<"$wait_out" | tr '\n' '|')"
+  fi
+  rm -rf "$root" "$work"; rm -f "$err"
+}
+
 # ── detached launches supervisor and returns run_id immediately ──────────────
 # Deterministic proof: dispatch returns while the adapter is still blocked on
 # release_fifo. After reading from started_fifo (FIFO-based — no sleep) we
@@ -574,10 +653,10 @@ case_detach_eligible_unit() {
   local root code_cli code_host code_missing code_unknown
   root="$(mktemp -d)"
   mkdir -p "$root/adapters/acli" "$root/adapters/ahost" "$root/adapters/anone" "$root/adapters/abad"
-  printf 'runner_kind: cli-subprocess\n' > "$root/adapters/acli/adapter.yaml"
-  printf 'runner_kind: host-native\n'    > "$root/adapters/ahost/adapter.yaml"
-  printf 'name: anone\n'                 > "$root/adapters/anone/adapter.yaml"
-  printf 'runner_kind: nonsense\n'       > "$root/adapters/abad/adapter.yaml"
+  printf '%s\n' 'schema_version: 1' 'adapter_name: acli' 'runner_kind: cli-subprocess' > "$root/adapters/acli/adapter.yaml"
+  printf '%s\n' 'schema_version: 1' 'adapter_name: ahost' 'runner_kind: host-native' > "$root/adapters/ahost/adapter.yaml"
+  printf '%s\n' 'schema_version: 1' 'adapter_name: anone' > "$root/adapters/anone/adapter.yaml"
+  printf '%s\n' 'schema_version: 1' 'adapter_name: abad' 'runner_kind: nonsense' > "$root/adapters/abad/adapter.yaml"
   set +e
   pmctl_dispatch_detach_eligible "$root" acli  >/dev/null 2>&1; code_cli=$?
   pmctl_dispatch_detach_eligible "$root" ahost >/dev/null 2>&1; code_host=$?
@@ -720,7 +799,7 @@ case_supervisor_rejects_unroutable() {
   # The adapter is refused by the shared security preflight (file-existence check
   # fires before the route check; either refusal is correct) and no executor runs.
   if [[ "$code" -eq 2 ]] \
-    && grep -qiE 'unknown adapter|not a routable executor' <<<"$err"; then
+    && grep -qiE 'unknown adapter|not a routable executor|no valid manifest dispatch_entrypoint|adapter directory must be a real directory' <<<"$err"; then
     pass "$name"
   else
     fail "$name" "code=$code err=$(tail -2 <<<"$err" | tr '\n' '|')"
@@ -745,6 +824,54 @@ case_supervisor_rejects_traversal_name() {
     fail "$name" "code=$code err=$(tail -2 <<<"$err" | tr '\n' '|')"
   fi
   rm -rf "$work"
+}
+
+# Behavior: A detached supervisor rejects an Adapter whose runner kind drifted
+# from cli-subprocess to host-native after parent preflight.
+# Steps:
+#   1. Arrange a host-native manifest with a valid route override, executable marker script, and persisted run spec.
+#   2. Act by invoking the supervisor directly at the final launch boundary.
+#   3. Assert exit 2, no marker, one failed record, and a no-longer-eligible diagnostic.
+case_supervisor_rejects_runner_kind_drift() {
+  local name="supervisor/runner-kind drift rejected at final detached boundary"
+  should_run "$name" || return 0
+  local root="$tmp_root/$name-root" work brief spec marker code err record count
+  mkdir -p "$root" "$root/adapters/drift"
+  cp -R "$REPO_ROOT/runtime" "$root/runtime"
+  cp -R "$REPO_ROOT/core" "$root/core"
+  cat > "$root/adapters/drift/adapter.yaml" <<'MANIFEST'
+schema_version: 1
+adapter_name: drift
+runner_kind: host-native
+dispatch_route: main_thread_bash_background
+dispatch_entrypoint: ./dispatch.sh
+MANIFEST
+  cat > "$root/adapters/drift/dispatch.sh" <<'ADAPTER'
+#!/usr/bin/env bash
+touch "${PM_LIFECYCLE_DRIFT_MARKER:?}"
+exit 0
+ADAPTER
+  chmod +x "$root/adapters/drift/dispatch.sh"
+
+  work="$(mktemp -d)"; git init -q "$work"
+  brief="$(_mk_brief "$work")"
+  spec="$work/.agent-trace/drift.runspec"; mkdir -p "$work/.agent-trace"
+  _write_runspec "$spec" drift "$work" "$brief"
+  marker="$work/adapter-launched.marker"
+  set +e
+  err="$(PM_LIFECYCLE_DRIFT_MARKER="$marker" \
+    bash "$root/runtime/bin/dispatch-supervisor.sh" --run-spec "$spec" \
+    2>&1 >/dev/null)"; code=$?
+  set -e
+  record="$(_first_record "$work")"
+  count="$(find "$work/.dispatch-results" -type f -name 'run-*.md' 2>/dev/null | wc -l | tr -d '[:space:]')"
+  if [[ "$code" -eq 2 && ! -e "$marker" && "$count" == 1 \
+      && -n "$record" && "$(<"$record")" == *'final_state: "failed"'* \
+      && "$err" == *"no longer eligible for detached launch"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code marker=$([[ -e "$marker" ]] && echo yes || echo no) records=$count err=$(tail -3 <<<"$err" | tr '\n' '|')"
+  fi
 }
 
 case_supervisor_missing_spec() {
@@ -1479,6 +1606,7 @@ case_dispatch_wait_poll_interval_honored() {
 case_detached_is_default
 case_foreground_explicit_no_runspec
 case_default_detach_terminal_record_is_ok
+case_detached_manifest_worker_launches
 case_detached_true_detach
 case_dispatch_wait_failure_propagates
 case_dispatch_wait_timeout
@@ -1494,6 +1622,7 @@ case_detached_brief_snapshot_survives_cleanup
 case_flag_beats_config
 case_supervisor_rejects_unroutable
 case_supervisor_rejects_traversal_name
+case_supervisor_rejects_runner_kind_drift
 case_supervisor_missing_spec
 case_supervisor_rejects_malformed_brief
 case_supervisor_rejects_native_brief_smuggle

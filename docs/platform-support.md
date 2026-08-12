@@ -64,9 +64,11 @@ bash install.sh --enable-host opencode
 OpenCode uses `${XDG_CONFIG_HOME:-$HOME/.config}/opencode/opencode.json` and
 refuses to overwrite an existing `permission.bash` policy.
 
-`install.sh` symlinks each file individually into `~/.claude/agents/`,
-`~/.claude/commands/`, `~/.claude/scripts/`, and `~/.claude/.pm/` so that
-updates to this repo are automatically reflected without re-running the installer.
+`install.sh` symlinks managed agents, commands, Adapters, helpers, and schema
+assets into `~/.claude/`. It also installs receipt-owned Gate runtime/policy and
+Adapter runtime/share/usage bundles needed when symlinks fall back to copies.
+On symlink-capable hosts, updates to linked paths are reflected automatically;
+re-run the installer when new entries are added.
 It also symlinks `cli/pmctl` into `${PMCTL_BIN_DIR:-$HOME/.local/bin}/pmctl`;
 if that bin directory is not already on PATH, the installer prints the exact
 `export PATH=...` command to add.
@@ -99,13 +101,17 @@ export PATH="${PM_DISPATCH_REPO}/cli:$PATH"
 > **Symlink support:** On Git Bash, `ln -s` does not create real
 > symlinks. `install.sh` uses `powershell.exe New-Item -ItemType Junction`
 > for `agents/`, `commands/`, `skills/`, `adapters/`, and `pm-schema` directories
-> so those paths auto-sync after pulling. Individual helper scripts are still
-> copied. See *Update* below.
+> so those paths auto-sync after pulling. Individual helpers plus the Gate
+> shared runtime/policy and Adapter runtime/share/usage assets are receipt-owned
+> copies. See *Update* below.
 
-> **Copy-mode installs (no dev-mode):** Individual helper scripts are
-> always installed via copy on Git Bash. Re-run `bash install.sh` after pulling to
-> refresh copied files — the installer compares source vs installed sha256 and
-> re-copies only files whose source has changed.
+> **Copy-mode installs (no dev-mode):** Helpers and runtime/assets are installed
+> via copy on Git Bash. Re-run `bash install.sh` after pulling to refresh the
+> receipt-owned snapshot — files use content SHA-256 and directories use a
+> deterministic logical-tree digest, so only unchanged owned copies are refreshed.
+> Legacy untagged directory receipts are refreshed only when their prior tar
+> digest can still be verified exactly; otherwise install preserves the copy and
+> reports a conflict for manual comparison.
 > `install.sh` prints a summary banner listing how many files were installed or refreshed via copy.
 > `pmctl` is the exception: it is never copied because a copied `pmctl` treats
 > the copy location as its repo root and cannot find `runtime/lib/*.sh`.
@@ -151,10 +157,10 @@ bash install.sh    # creates symlinks for any new files
 
 ### Windows Git Bash
 
-Pull and agents/commands/skills auto-sync via junction. Individual helper executables
-from their canonical `runtime/`, `ops/`, or host owner are installed under
-`~/.claude/scripts/` via copy. Re-run `install.sh` to refresh stale copies
-— the installer compares `sha256(src)` vs `sha256(dst)` and re-copies only changed files:
+Pull and agents/commands/skills/adapters auto-sync via junction. Helpers, the
+Gate shared runtime/policy, and Adapter bootstrap/share/usage assets are copied
+to their receipt-owned locations. Re-run `install.sh` to refresh stale copies;
+foreign or locally modified load-bearing paths fail closed instead of being used:
 
 ```bash
 cd "${PM_DISPATCH_REPO}"
@@ -184,10 +190,11 @@ bash "${PM_DISPATCH_REPO}/hosts/claude/bin/uninstall-guards.sh" --dry-run
 
 ### Part 2 — remove managed files from ~/.claude
 
-Removes the symlinks, junctions, or copies for agents, commands, scripts, and
-the .pm schema. It also removes `~/.local/bin/pmctl` only when that path is a
-symlink to this checkout's `cli/pmctl`; foreign files or symlinks are preserved.
-Run after Part 1.
+Removes receipt-owned agents, commands, skills, Adapters, share assets, Gate
+and Adapter runtime bundles, usage support, helper scripts, and the `.pm`
+schema. It also removes `~/.local/bin/pmctl` only when that path is a symlink to
+this checkout's `cli/pmctl`; foreign files or symlinks are preserved. Run after
+Part 1.
 
 **Recommended:** Use the manifest-driven uninstaller on Linux/WSL2:
 
@@ -197,7 +204,12 @@ bash "${PM_DISPATCH_REPO}/uninstall.sh"
 bash "${PM_DISPATCH_REPO}/uninstall.sh" --dry-run
 ```
 
-**Alternative: manual removal (Linux/WSL2)**
+**Legacy alternative: manual removal (Linux/WSL2)**
+
+The list below is only for legacy link-only installs. Current installs also own
+`scripts/lib`, `scripts/core/policy`, `runtime/lib`, and `ops/usage` through the
+receipt; use `uninstall.sh` so those bundles are hash-checked and empty parent
+directories are pruned without deleting foreign content.
 
 > **Warning (Windows Git Bash / junction installs):** Do NOT use the `rm -f`
 > commands below on `~/.claude/agents`, `~/.claude/commands`, or `~/.claude/skills`
@@ -254,14 +266,6 @@ if [ "$(readlink ~/.local/bin/pmctl 2>/dev/null)" = "${PM_DISPATCH_REPO}/cli/pmc
   rm -f ~/.local/bin/pmctl
 fi
 ```
-
-> **Tip:** If pm-dispatch is the **only** source of agents and commands in
-> `~/.claude/`, you can remove the directories entirely:
-> ```bash
-> rm -rf ~/.claude/agents ~/.claude/commands ~/.claude/scripts ~/.claude/.pm
-> ```
-> Only do this if you have not added other agents or commands from other sources.
-> On Windows junction installs, prefer `bash "${PM_DISPATCH_REPO}/uninstall.sh"` to avoid data loss.
 
 ---
 

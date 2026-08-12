@@ -312,6 +312,10 @@ case_snapshot_copy_libs_copies_dispatch_common() {
   fi
 }
 
+# Behavior: snapshot creation copies every library declared by the canonical
+# dispatch snapshot inventory.
+# Steps: Arrange an empty snapshot; Act by copying the shared libraries; Assert
+# every canonical inventory entry exists in the resulting lib directory.
 case_snapshot_copy_libs_copies_all_core_libs() {
   local name="dc_snapshot_copy_libs/copies all core shared libs"; should_run "$name" || return 0
   # Arrange: an empty snapshot dir and the real repo root
@@ -319,16 +323,33 @@ case_snapshot_copy_libs_copies_all_core_libs() {
   mkdir -p "$snap"
   # Act: call dc_snapshot_copy_libs
   dc_snapshot_copy_libs "$snap" "$REPO_ROOT"
-  # Assert: all six expected libs are present
+  # Assert: every item in the canonical snapshot inventory is present.
   local missing=()
-  for lib in identifier-policy.sh state-writer.sh state-paths.sh portable.sh model-aliases.sh \
-             timeout-resolve.sh dispatch-common.sh; do
+  while IFS= read -r lib; do
+    [[ -n "$lib" ]] || continue
     [[ -f "$snap/lib/$lib" ]] || missing+=("$lib")
-  done
+  done < <(dc_snapshot_lib_names)
   if [[ "${#missing[@]}" -eq 0 ]]; then
     pass "$name"
   else
     fail "$name" "missing: ${missing[*]}"
+  fi
+}
+
+# Behavior: the installed Adapter bootstrap inventory extends the canonical
+# dispatch snapshot with runner and manifest readers exactly once.
+# Steps: Arrange the expected snapshot-plus-bootstrap list; Act by reading the
+# installed inventory; Assert exact ordering and the absence of duplicate names.
+case_installed_adapter_inventory_extends_snapshot_once() {
+  local name="dc_installed_adapter_lib_names/extends canonical snapshot"; should_run "$name" || return 0
+  local expected actual
+  expected="$(dc_snapshot_lib_names)"$'\n''runner-kind.sh'$'\n''adapter-manifest.sh'
+  actual="$(dc_installed_adapter_lib_names)"
+  if [[ "$actual" == "$expected" \
+      && "$(printf '%s\n' "$actual" | sort | uniq -d)" == "" ]]; then
+    pass "$name"
+  else
+    fail "$name" "installed Adapter inventory drifted or contains duplicates"
   fi
 }
 
@@ -372,6 +393,7 @@ case_print_footer_skips_empty_last
 
 case_snapshot_copy_libs_copies_dispatch_common
 case_snapshot_copy_libs_copies_all_core_libs
+case_installed_adapter_inventory_extends_snapshot_once
 case_snapshot_copy_libs_creates_lib_dir
 
 th_summary

@@ -5,7 +5,7 @@
 # PASS/FAIL table plus a final GO / NO-GO verdict.
 #
 # Usage:
-#   ops/release/release-verify.sh [--no-suite] [--e2e] [--adapter claude|codex|opencode|grok|auto] [--help]
+#   ops/release/release-verify.sh [--no-suite] [--e2e] [--adapter <name|auto>] [--help]
 #
 #   --no-suite        Skip run-all-tests.sh (fast iteration only; NEVER skip
 #                     for an actual release sign-off).
@@ -129,7 +129,14 @@ need git     required git --version
 need sqlite3 required sqlite3 --version
 need codex   optional codex --version
 need claude  optional claude --version
-need shellcheck optional shellcheck --version
+if shellcheck_check_output="$(bash "$REPO_ROOT/tools/lint/bootstrap-shellcheck.sh" \
+  --repo "$REPO_ROOT" --check 2>&1)"; then
+  shellcheck_version="$(shellcheck --version | awk -F ':[[:space:]]*' \
+    '$1 == "version" { print $2; exit }')"
+  record "shellcheck" PASS "version $shellcheck_version matches repository pin"
+else
+  record "shellcheck" FAIL "${shellcheck_check_output##*$'\n'}"
+fi
 
 # These inventories protect the release evidence boundary before a potentially
 # expensive full suite or live E2E invocation starts.
@@ -288,16 +295,27 @@ fi
 # policy changes (legacy trio removal + isolation_level:none codex rejection).
 section "Phase 3b — v0.6.0 feature smoke (adapters · guard · brief-validate)"
 
-# Adapter manifests — codex/claude/opencode must declare runner_kind
+# Adapter manifests — every shipped Adapter must resolve through the canonical
+# reader to a valid runner kind and executable dispatch entrypoint.
 for _adapter in codex claude opencode grok; do
-  _manifest="$REPO_ROOT/adapters/$_adapter/adapter.yaml"
-  if [[ ! -f "$_manifest" ]]; then
-    record "adapter-manifest-$_adapter" FAIL "adapter.yaml not found"
-  elif grep -q "^runner_kind:" "$_manifest"; then
-    _rk="$(awk '/^runner_kind:/{print $2;exit}' "$_manifest")"
-    record "adapter-manifest-$_adapter" PASS "runner_kind=$_rk"
+  _manifest="$(adapter_manifest_file "$REPO_ROOT" "$_adapter" 2>/dev/null || true)"
+  _rk="$(adapter_manifest_runner_kind "$REPO_ROOT" "$_adapter" 2>/dev/null || true)"
+  _entrypoint="$(adapter_manifest_dispatch_path "$REPO_ROOT" "$_adapter" 2>/dev/null || true)"
+  _canonical_rc=2
+  _legacy_rc=2
+  if [[ -n "$_manifest" ]]; then
+    adapter_manifest_has_key "$_manifest" dispatch_entrypoint >/dev/null 2>&1
+    _canonical_rc=$?
+    adapter_manifest_has_key "$_manifest" runner_ref >/dev/null 2>&1
+    _legacy_rc=$?
+  fi
+  if [[ -n "$_rk" && -n "$_entrypoint" \
+      && "$_canonical_rc" -eq 0 && "$_legacy_rc" -eq 1 ]]; then
+    record "adapter-manifest-$_adapter" PASS \
+      "runner_kind=$_rk dispatch_entrypoint=${_entrypoint#"$REPO_ROOT/"}"
   else
-    record "adapter-manifest-$_adapter" FAIL "adapter.yaml missing runner_kind"
+    record "adapter-manifest-$_adapter" FAIL \
+      "invalid runner_kind/dispatch_entrypoint, missing canonical field, or deprecated runner_ref present"
   fi
 done
 
