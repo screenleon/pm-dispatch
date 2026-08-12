@@ -1085,7 +1085,8 @@ test_maintainer_initial_policy_sets_coverage_and_auto_mode() {
 }
 
 # Behavior: the maintainer targeted-pass policy scopes coverage to requested
-# remediation reviewers instead of silently expanding back to all five.
+# remediation reviewers while retaining a security reviewer required by the
+# current sensitive-path signal.
 test_maintainer_targeted_policy_preserves_remediation_scope() {
   local name="maintainer-targeted-policy-preserves-remediation-scope"
   should_run "$name" || return 0
@@ -1102,25 +1103,25 @@ test_maintainer_targeted_policy_preserves_remediation_scope() {
 
   set +e
   CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" \
-    --base main --policy maintainer --targeted critic --initial-result "$initial"
+    --base main --policy maintainer --targeted critic,architecture-reviewer,security-reviewer --initial-result "$initial"
   local code=$?
   set -e
   if [[ "$code" -ne 0 ]]; then
-    fail "$name" "exit $code, expected 0"
+    fail "$name" "exit $code, expected 0: $(head -5 "$err")"
     return
   fi
   assert_file_contains "$name" "$brief" "policy.consumer: maintainer" || return
   assert_file_contains "$name" "$brief" "pass.resolved: targeted" || return
-  assert_file_contains "$name" "$brief" "coverage.selected: critic" || return
-  assert_file_contains "$name" "$brief" "policy.required_reviewers: none" || return
+  assert_file_contains "$name" "$brief" "coverage.selected: critic,architecture-reviewer,security-reviewer" || return
+  assert_file_contains "$name" "$brief" "policy.required_reviewers: architecture-reviewer,security-reviewer" || return
   result_path="$(awk '/^result: / {sub(/^result: /, ""); print; exit}' "$out")"
   jq -e '
     any(.policy.matched_signals[];
       .id == "security-sensitive-path" and
       .matches == ["auth-handler.go"] and
-      .required_reviewers == [])
+      .required_reviewers == ["security-reviewer"])
   ' "${result_path}.assurance.json" >/dev/null || {
-    fail "$name" "targeted policy did not retain the security signal as non-expanding evidence"
+    fail "$name" "targeted policy did not retain the security requirement"
     return
   }
   pass "$name"
@@ -1691,6 +1692,96 @@ test_reviewers_override_below_policy_floor_fails_closed() {
   assert_file_contains "$name" "$err" "qa-tester" || return
   assert_file_contains "$name" "$err" "architecture-reviewer" || return
   assert_not_contains "$name" "$err" "DISPATCH_STUB" || return
+  pass "$name"
+}
+
+# Behavior: explicit coverage cannot silently bypass a security reviewer that
+# a sensitive-path signal requires.
+test_targeted_sensitive_signal_reviewer_requirement_fails_closed() {
+  local name="targeted-sensitive-signal-reviewer-requirement-fails-closed"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" initial="$dir/initial.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic
+  create_repo_with_branch "$repo" full-sensitive
+  write_valid_initial_gate_result "$initial"
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main \
+    --pass targeted --reviewers critic --initial-result "$initial"
+  local code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then
+    fail "$name" "sensitive security coverage was accepted without user authorization"
+    return
+  fi
+  assert_file_contains "$name" "$err" "below the canonical generic policy floor" || return
+  assert_file_contains "$name" "$err" "security-reviewer" || return
+  assert_not_contains "$name" "$err" "DISPATCH_STUB" || return
+  pass "$name"
+}
+
+# Behavior: a targeted sensitive-path gate accepts an omitted security reviewer
+# only when a user approval is bound to this exact scope and omission.
+test_targeted_sensitive_signal_scope_bound_override_authorizes_omission() {
+  local name="targeted-sensitive-signal-scope-bound-override-authorizes-omission"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" initial="$dir/initial.md"
+  local override="$dir/policy-override.json" scope result_path code
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic
+  create_repo_with_branch "$repo" full-sensitive
+  write_valid_initial_gate_result "$initial"
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main \
+    --pass targeted --reviewers critic --initial-result "$initial"
+  code=$?
+  set -e
+  [[ "$code" -ne 0 ]] || { fail "$name" "unapproved sensitive omission unexpectedly passed"; return; }
+  scope="$(awk '/policy scope fingerprint:/ {print $NF; exit}' "$err")"
+  [[ "$scope" =~ ^[a-f0-9]{64}$ ]] || { fail "$name" "missing policy scope fingerprint"; return; }
+  jq -n --arg scope "$scope" '{
+    kind:"gate_policy_override_v1",schema_version:1,scope_fingerprint:$scope,
+    allow:{tier:null,omit_reviewers:["security-reviewer"]},
+    reason:"Fixture approves the targeted sensitive omission for this exact scope.",
+    approver:{kind:"user",identity:"fixture-user",approval_ref:"conversation:test"}
+  }' > "$override"
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main \
+    --pass targeted --reviewers critic --initial-result "$initial" \
+    --policy-override "$override"
+  code=$?
+  set -e
+  [[ "$code" -eq 0 ]] || { fail "$name" "exact scope override was rejected: $(head -5 "$err")"; return; }
+  result_path="$(awk '/^result: / {sub(/^result: /, ""); print; exit}' "$out")"
+  jq -e '.policy.resolution.downgrade_allowed == true and
+    .policy.override.status == "applied" and
+    .policy.enforcement.status == "pass"' "${result_path}.assurance.json" >/dev/null || {
+    fail "$name" "exact override did not retain applied provenance"
+    return
+  }
+
+  jq '.allow.omit_reviewers = ["risk-reviewer"]' "$override" > "${override}.tmp"
+  mv "${override}.tmp" "$override"
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main \
+    --pass targeted --reviewers critic --initial-result "$initial" \
+    --policy-override "$override"
+  code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then
+    fail "$name" "mismatched override omission unexpectedly passed"
+    return
+  fi
+  assert_file_contains "$name" "$err" "allowance_mismatch" || return
   pass "$name"
 }
 
@@ -3325,6 +3416,38 @@ test_qa_execution_running_checkpoint_finalizes_inconclusive() {
     pass "$name"
   else
     fail "$name" "running QA checkpoint was not preserved as inconclusive: code=$code err=$(cat "$err" 2>/dev/null)"
+  fi
+}
+
+# Behavior: a run-dir gate finalizes a stale QA checkpoint before moving it out
+# of the workspace, so postmortem evidence can never remain `running` after the
+# gate itself has exited.
+# Steps: kill the QA helper after its checkpoint, run with --run-dir, then
+# inspect the relocated evidence and require the terminal inconclusive record.
+test_qa_execution_running_checkpoint_finalizes_before_run_dir_relocation() {
+  local name="qa-execution-running-checkpoint-finalizes-before-run-dir-relocation"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home repo runner out err run_dir qa_evidence code
+  home="$dir/home"; repo="$dir/repo"; runner="$dir/runner"; out="$dir/out"; err="$dir/err"
+  run_dir="$dir/run-state"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  set +e
+  CODEX_GATE_STUB_QA_ABORT_AFTER_CHECKPOINT=1 run_gate "$home" "$runner" "$repo" "$out" "$err" \
+    --base main --mode parallel --test-cmd "exit 0" --run-dir "$run_dir"
+  code=$?
+  set -e
+  qa_evidence="$(find "$run_dir/.gate-results" -name 'qa-execution-*.json' -print -quit)"
+  if [[ "$code" -eq 0 && -s "$qa_evidence" ]] && jq -e '
+      .status == "inconclusive" and .checkpoint.status == "present" and
+      .attempt.status == "running" and
+      .host_finalization.reason == "QA test attempt ended before it reached a terminal state"' \
+      "$qa_evidence" >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name" "relocated QA checkpoint was not finalized: code=$code err=$(cat "$err" 2>/dev/null)"
   fi
 }
 
@@ -6025,6 +6148,8 @@ run_test test_missing_reviewer_agent
 run_test test_invalid_base_ref
 run_test test_no_changed_files
 run_test test_reviewers_override_below_policy_floor_fails_closed
+run_test test_targeted_sensitive_signal_reviewer_requirement_fails_closed
+run_test test_targeted_sensitive_signal_scope_bound_override_authorizes_omission
 run_test test_invalid_policy_consumer_fails_before_dispatch
 run_test test_empty_policy_override_fails_before_dispatch
 run_test test_malformed_policy_override_contract_fails_before_dispatch
@@ -6089,6 +6214,7 @@ run_test test_preflight_pass_no_override
 run_test test_qa_execution_helper_flushes_checkpoint_before_command
 run_test test_qa_execution_helper_records_nonzero_and_timeout
 run_test test_qa_execution_running_checkpoint_finalizes_inconclusive
+run_test test_qa_execution_running_checkpoint_finalizes_before_run_dir_relocation
 run_test test_preflight_fail_short_circuits_without_dispatch
 run_test test_preflight_fail_log_excerpt_is_redacted_not_empty
 run_test test_preflight_fail_result_preserves_frontmatter_body_parity
@@ -6886,6 +7012,8 @@ test_canonical_targeted_coordinates_and_mixed_compatibility() {
   jq -e '
     .coordinates.pass.resolved == "initial" and
     .coordinates.pass.initial_result == null and
+    .coordinates.tier.selection_basis == "policy" and
+    .coordinates.coverage.selection_basis == "policy-default" and
     .provenance.coordinate_syntax == {pass:"explicit",coverage:"default"}
   ' "${result_path}.assurance.json" >/dev/null || {
     fail "$name" "explicit initial invocation lost canonical pass provenance"
@@ -6906,6 +7034,8 @@ test_canonical_targeted_coordinates_and_mixed_compatibility() {
   jq -e '
     .coordinates.pass.resolved == "targeted" and
     .coordinates.coverage.requested == ["critic"] and
+    .coordinates.tier.selection_basis == "policy" and
+    .coordinates.coverage.selection_basis == "explicit" and
     .provenance.coordinate_syntax == {pass:"explicit",coverage:"explicit"}
   ' "${result_path}.assurance.json" >/dev/null || {
     fail "$name" "canonical flags did not produce explicit coordinate provenance"
@@ -6924,9 +7054,29 @@ test_canonical_targeted_coordinates_and_mixed_compatibility() {
     return
   fi
   result_path="$(awk -F'result: ' '/^result: /{path=$2} END{print path}' "$out")"
-  jq -e '.provenance.coordinate_syntax == {pass:"mixed",coverage:"mixed"}' \
+  jq -e '.coordinates.tier.selection_basis == "policy" and
+    .coordinates.coverage.selection_basis == "mixed" and
+    .provenance.coordinate_syntax == {pass:"mixed",coverage:"mixed"}' \
     "${result_path}.assurance.json" >/dev/null || {
     fail "$name" "matching mixed flags lost compatibility provenance"
+    return
+  }
+
+  : > "$out"; : > "$err"
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --tier express \
+    --output "$dir/explicit-tier.md"
+  code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "explicit tier invocation exited $code"
+    return
+  fi
+  result_path="$(awk -F'result: ' '/^result: /{path=$2} END{print path}' "$out")"
+  jq -e '.coordinates.tier.selection_basis == "explicit" and
+    .coordinates.coverage.selection_basis == "policy-default"' \
+    "${result_path}.assurance.json" >/dev/null || {
+    fail "$name" "explicit tier invocation emitted incorrect selection bases"
     return
   }
   pass "$name"
@@ -6981,9 +7131,55 @@ test_targeted_pass_references_initial_result() {
     .coordinates.pass.initial_result == $initial and
     .coordinates.coverage.requested == ["critic"] and
     .coordinates.coverage.selected == ["critic"] and
+    .coordinates.tier.selection_basis == "policy" and
+    .coordinates.coverage.selection_basis == "targeted-shorthand" and
     .provenance.coordinate_syntax == {pass:"targeted-shorthand",coverage:"targeted-shorthand"}
   ' "${result_path}.assurance.json" >/dev/null || {
     fail "$name" "targeted assurance envelope lost its initial reference or coverage"
+    return
+  }
+  pass "$name"
+}
+
+# Behavior: a targeted pass records its initial result as remediation context,
+# while resolving tier from the current subject rather than a prior gate.
+test_targeted_resolves_current_policy_without_reusing_initial_tier() {
+  local name="targeted-resolves-current-policy-without-reusing-initial-tier"
+  should_run "$name" || return 0
+  local dir home repo runner out err initial result_path code
+  dir="$TMP_ROOT/$name"
+  home="$dir/home"; repo="$dir/repo"; runner="$dir/runner"
+  out="$dir/out"; err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --tier full \
+    --output "$dir/initial.md"
+  code=$?
+  set -e
+  [[ "$code" -eq 0 ]] || { fail "$name" "initial gate exited $code: $(head -3 "$err")"; return; }
+  initial="$dir/initial.md"
+
+  : > "$out"; : > "$err"
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main \
+    --pass targeted --reviewers critic --initial-result "$initial" \
+    --output "$dir/targeted.md"
+  code=$?
+  set -e
+  [[ "$code" -eq 0 ]] || { fail "$name" "targeted gate exited $code: $(head -3 "$err")"; return; }
+  result_path="$dir/targeted.md"
+  jq -e '
+    .coordinates.tier.resolved == "express" and
+    .coordinates.tier.selection_basis == "policy" and
+    .coordinates.coverage.selected == ["critic"] and
+    .coordinates.coverage.selection_basis == "explicit" and
+    .provenance.coordinate_syntax == {pass:"explicit",coverage:"explicit"}
+  ' "${result_path}.assurance.json" >/dev/null || {
+    fail "$name" "targeted assurance reused a prior tier instead of current policy"
     return
   }
   pass "$name"
@@ -7951,6 +8147,7 @@ run_test test_help_output_is_bounded_and_current
 run_test test_unknown_arg_message
 run_test test_canonical_targeted_coordinates_and_mixed_compatibility
 run_test test_targeted_pass_references_initial_result
+run_test test_targeted_resolves_current_policy_without_reusing_initial_tier
 run_test test_targeted_auto_mode_initializes_brief_coordinates
 run_test test_targeted_requires_initial_result
 run_test test_targeted_output_cannot_overwrite_initial_result

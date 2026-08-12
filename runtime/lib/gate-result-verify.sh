@@ -1572,8 +1572,10 @@ gate_policy_applicability_assess() {
         then "scope_manifest_unavailable" else empty end,
       if $authorization_status != "verified"
         then $authorization_reason else empty end,
-      if $consumer == "publish" and $a.coordinates.pass.resolved != "initial"
-        then "publish_initial_review_required" else empty end
+      if ($consumer == "maintainer" or $consumer == "publish") and
+         ($a.coordinates.pass.resolved != "initial" or
+          $a.coordinates.pass.scope != "comprehensive")
+        then "comprehensive_review_required" else empty end
     ] | unique) as $reasons |
     {
       status:(if ($reasons | length) == 0 then "pass" else "fail" end),
@@ -1721,11 +1723,11 @@ gate_assurance_verify() {
       (has("subject") | not) and (has("evidence") | not)
      end) and
     (.coordinates | only_keys(["tier","mode","pass","coverage","independence"])) and
-    (.coordinates.tier | only_keys(["requested","resolved","evidence_floor"])) and
+    (.coordinates.tier | only_keys(["requested","resolved","evidence_floor","selection_basis"])) and
     (.coordinates.mode | only_keys(["requested","resolved","topology","synthesis"])) and
     (.coordinates.pass | only_keys(["requested","resolved","scope","initial_result"])) and
     (.coordinates.coverage |
-      only_keys(["requested","selected","skipped","vocabulary"])) and
+      only_keys(["requested","selected","skipped","vocabulary","selection_basis"])) and
     (.coordinates.independence |
       only_keys(["implementation_context_isolated","reviewer_topology",
         "per_reviewer_independent","evidence_status"])) and
@@ -1776,7 +1778,7 @@ gate_assurance_verify() {
         all($policy.resolution.required_reviewers[];
           . as $reviewer |
           ($policy.resolved.reviewers | index($reviewer)) != null or
-          $policy.resolution.downgrade_allowed)) and
+            $policy.resolution.downgrade_allowed)) and
       (.policy.resolution.recommended_mode |
         IN("sequential","parallel")) and
       (.policy.resolution.mode_selection_source | IN("user","policy")) and
@@ -1877,6 +1879,29 @@ gate_assurance_verify() {
     (.provenance.policy_source |
       IN("canonical","generated-snapshot","mixed")) and
     (.coordinates.tier.evidence_floor | type == "string" and length > 0) and
+    (if .kind == "gate_assurance_v3" then
+       # Historical v3 artifacts predate selection_basis. They remain readable
+       # only when both additions are absent; a partial claim is always invalid.
+       (if ((.coordinates.tier | has("selection_basis")) and
+            (.coordinates.coverage | has("selection_basis"))) then
+          (.coordinates.tier.selection_basis | IN("policy","explicit")) and
+          (.coordinates.coverage.selection_basis |
+            IN("policy-default","explicit","targeted-shorthand","mixed")) and
+          (.coordinates.tier.selection_basis ==
+            (if .coordinates.tier.requested == "auto" then "policy" else "explicit" end)) and
+          (.coordinates.coverage.selection_basis ==
+            (if .coordinates.coverage.requested == null then "policy-default"
+             elif .provenance.coordinate_syntax.coverage? != null
+             then .provenance.coordinate_syntax.coverage
+             else .coordinates.coverage.selection_basis end))
+        else
+          ((.coordinates.tier | has("selection_basis")) | not) and
+          ((.coordinates.coverage | has("selection_basis")) | not)
+        end)
+     else
+       ((.coordinates.tier | has("selection_basis")) | not) and
+       ((.coordinates.coverage | has("selection_basis")) | not)
+     end) and
     (.coordinates.tier.requested == "auto" or
       (.coordinates.tier.requested == .coordinates.tier.resolved and
        (.coordinates.tier.requested | IN("express","standard","full")))) and

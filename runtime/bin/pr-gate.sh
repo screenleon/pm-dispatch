@@ -116,7 +116,7 @@ GATE_POLICY_CONSUMERS_TSV
     signals)
       # BEGIN GENERATED from core/policy/gate-policy-signals.tsv
       cat <<'GATE_POLICY_SIGNALS_TSV'
-# Gate policy signals. Reviewer requirements apply to initial discovery; targeted passes retain tier/mode signals but use requested remediation coverage.
+# Gate policy signals. Reviewer requirements apply whenever the current subject matches; targeted passes narrow remediation coverage but cannot omit a matched risk reviewer without a scope-bound override.
 signal	match_source	pattern	minimum_tier	required_reviewers	recommended_mode
 docs-only	classification	docs-only	express	none	sequential
 bounded-runtime	classification	bounded-runtime	express	none	sequential
@@ -1624,14 +1624,11 @@ _gate_policy_resolve() {
         rm -f "$signals_file"
         return 2
       }
+    # A targeted pass narrows remediation coverage, but it does not weaken
+    # reviewers required by risks present in this current subject.  The initial
+    # artifact supplies context only; current signals remain independently
+    # enforceable and may be omitted solely by a scope-bound user override.
     effective_signal_reviewers="$normalized_signal_reviewers"
-    # A targeted pass is an explicit remediation-delta confirmation, not a
-    # second comprehensive discovery pass. Preserve every matched risk signal
-    # and its tier/mode implications, but let the requested targeted reviewers
-    # own coverage. Initial-pass evidence/closure is verified by its consumer.
-    if [[ "$pass_kind" == targeted ]]; then
-      effective_signal_reviewers=""
-    fi
     required_reviewers="$(_gate_policy_add_reviewers "$required_reviewers" \
       "$(printf '%s' "$effective_signal_reviewers" | tr ' ' ',')" \
       "$vocabulary")" || {
@@ -1712,6 +1709,9 @@ _gate_policy_resolve() {
     selected_reviewers="$(_gate_policy_order_reviewers "$selected_reviewers" "$vocabulary")"
   fi
 
+  # Tier defaults never expand an explicit reviewer choice.  Risk-derived
+  # required reviewers remain an independent security boundary for every
+  # consumer and may only be omitted through a scope-bound policy override.
   for reviewer in $required_reviewers; do
     if [[ " $selected_reviewers " != *" $reviewer "* ]]; then
       missing_reviewers="${missing_reviewers:+$missing_reviewers }$reviewer"
@@ -2048,6 +2048,7 @@ WORK_DIR=""
 GATE_RUN_DIR_OVERRIDE=""   # out-of-repo artifact root; set via --run-dir from pmctl-gate
 TIER_OVERRIDE=""
 TIER_REQUESTED="auto"
+TIER_SELECTION_BASIS="policy"
 REVIEWERS_OVERRIDE=""
 REVIEWERS_OPTION_SOURCE=""
 MODE_REQUESTED="default"
@@ -2064,6 +2065,7 @@ REVIEWERS_SHORTHAND_INPUT=""
 REVIEWERS_EXPLICIT_SEEN=false
 REVIEWERS_SHORTHAND_SEEN=false
 COVERAGE_SYNTAX_SOURCE="default"
+COVERAGE_SELECTION_BASIS="policy-default"
 POLICY_CONSUMER="generic"
 POLICY_OVERRIDE_FILE=""
 REVIEWER_DIR_OVERRIDE=""
@@ -3864,11 +3866,11 @@ else
         (has("subject") | not) and (has("evidence") | not)
        end) and
       (.coordinates | only_keys(["tier","mode","pass","coverage","independence"])) and
-      (.coordinates.tier | only_keys(["requested","resolved","evidence_floor"])) and
+      (.coordinates.tier | only_keys(["requested","resolved","evidence_floor","selection_basis"])) and
       (.coordinates.mode | only_keys(["requested","resolved","topology","synthesis"])) and
       (.coordinates.pass | only_keys(["requested","resolved","scope","initial_result"])) and
       (.coordinates.coverage |
-        only_keys(["requested","selected","skipped","vocabulary"])) and
+        only_keys(["requested","selected","skipped","vocabulary","selection_basis"])) and
       (.coordinates.independence |
         only_keys(["implementation_context_isolated","reviewer_topology",
           "per_reviewer_independent","evidence_status"])) and
@@ -3919,7 +3921,7 @@ else
           all($policy.resolution.required_reviewers[];
             . as $reviewer |
             ($policy.resolved.reviewers | index($reviewer)) != null or
-            $policy.resolution.downgrade_allowed)) and
+              $policy.resolution.downgrade_allowed)) and
         (.policy.resolution.recommended_mode |
           IN("sequential","parallel")) and
         (.policy.resolution.mode_selection_source | IN("user","policy")) and
@@ -4020,6 +4022,29 @@ else
       (.provenance.policy_source |
         IN("canonical","generated-snapshot","mixed")) and
       (.coordinates.tier.evidence_floor | type == "string" and length > 0) and
+      (if .kind == "gate_assurance_v3" then
+         # Historical v3 artifacts predate selection_basis. They remain readable
+         # only when both additions are absent; a partial claim is always invalid.
+         (if ((.coordinates.tier | has("selection_basis")) and
+              (.coordinates.coverage | has("selection_basis"))) then
+            (.coordinates.tier.selection_basis | IN("policy","explicit")) and
+            (.coordinates.coverage.selection_basis |
+              IN("policy-default","explicit","targeted-shorthand","mixed")) and
+            (.coordinates.tier.selection_basis ==
+              (if .coordinates.tier.requested == "auto" then "policy" else "explicit" end)) and
+            (.coordinates.coverage.selection_basis ==
+              (if .coordinates.coverage.requested == null then "policy-default"
+               elif .provenance.coordinate_syntax.coverage? != null
+               then .provenance.coordinate_syntax.coverage
+               else .coordinates.coverage.selection_basis end))
+          else
+            ((.coordinates.tier | has("selection_basis")) | not) and
+            ((.coordinates.coverage | has("selection_basis")) | not)
+          end)
+       else
+         ((.coordinates.tier | has("selection_basis")) | not) and
+         ((.coordinates.coverage | has("selection_basis")) | not)
+       end) and
       (.coordinates.tier.requested == "auto" or
         (.coordinates.tier.requested == .coordinates.tier.resolved and
          (.coordinates.tier.requested | IN("express","standard","full")))) and
@@ -4315,6 +4340,9 @@ if [[ -n "$INITIAL_RESULT_INPUT" ]]; then
       "$INITIAL_RESULT_INPUT" >&2
     exit 2
   fi
+  # The initial result proves this is a remediation pass, but it never
+  # authorizes reuse of an earlier gate's tier or conclusion. This invocation
+  # resolves rigor from its own immutable subject and current policy.
   unset _initial_result_candidate _initial_result_parent
 fi
 
@@ -4400,6 +4428,13 @@ elif [[ "$REVIEWERS_SHORTHAND_SEEN" == true ]]; then
   COVERAGE_SYNTAX_SOURCE="targeted-shorthand"
 fi
 unset _explicit_reviewers _shorthand_reviewers
+
+case "$COVERAGE_SYNTAX_SOURCE" in
+  default) COVERAGE_SELECTION_BASIS="policy-default" ;;
+  explicit) COVERAGE_SELECTION_BASIS="explicit" ;;
+  targeted-shorthand) COVERAGE_SELECTION_BASIS="targeted-shorthand" ;;
+  mixed) COVERAGE_SELECTION_BASIS="mixed" ;;
+esac
 
 if [[ "$PASS_KIND_REQUESTED" == targeted && -z "$REVIEWERS_OVERRIDE" ]]; then
   printf 'Error: --pass targeted requires --reviewers <list> (or --targeted <list>)\n' >&2
@@ -5328,6 +5363,7 @@ if [[ "$(jq -r '.enforcement.status' <<<"$GATE_POLICY_RESOLUTION")" != pass ]]; 
 fi
 
 TIER_RESOLVED="$(jq -r '.resolved.tier' <<<"$GATE_POLICY_RESOLUTION")"
+[[ -n "$TIER_OVERRIDE" ]] && TIER_SELECTION_BASIS="explicit"
 TIER="$TIER_RESOLVED"
 TIER_EVIDENCE_FLOOR="$(_gate_assurance_policy_lookup tiers tier "$TIER" evidence_floor)" || {
   printf 'Error: gate tier policy has no evidence floor for: %s\n' "$TIER" >&2
@@ -5910,6 +5946,7 @@ gate_finalize_assurance() {
     --arg head_commit "$GATE_BINDING_HEAD_COMMIT" \
     --arg subject_fingerprint "$GATE_BINDING_SUBJECT_FINGERPRINT" \
     --arg tier_requested "$TIER_REQUESTED" --arg tier_resolved "$TIER_RESOLVED" \
+    --arg tier_selection_basis "$TIER_SELECTION_BASIS" \
     --arg evidence_floor "$TIER_EVIDENCE_FLOOR" \
     --arg mode_requested "$MODE_REQUESTED" --arg mode_resolved "$MODE_RESOLVED" \
     --arg topology "$MODE_TOPOLOGY" --arg synthesis "$MODE_SYNTHESIS" \
@@ -5917,6 +5954,7 @@ gate_finalize_assurance() {
     --arg pass_scope "$PASS_SCOPE" --arg initial_result "$INITIAL_RESULT_RESOLVED" \
     --arg pass_syntax "$PASS_SYNTAX_SOURCE" --arg coverage_syntax "$COVERAGE_SYNTAX_SOURCE" \
     --arg selected "$REVIEWERS" --arg skipped "$SKIPPED_WORDS" \
+    --arg coverage_selection_basis "$COVERAGE_SELECTION_BASIS" \
     --arg vocabulary "$ALL_REVIEWERS" \
     --arg reviewer_topology "$MODE_TOPOLOGY" \
     --arg independence_status "$independence_status" \
@@ -5942,7 +5980,7 @@ gate_finalize_assurance() {
         evidence:$evidence,
         coordinates:{
           tier:{requested:$tier_requested,resolved:$tier_resolved,
-            evidence_floor:$evidence_floor},
+            evidence_floor:$evidence_floor,selection_basis:$tier_selection_basis},
           mode:{requested:$mode_requested,resolved:$mode_resolved,
             topology:$topology,synthesis:$synthesis},
           pass:{requested:$pass_requested,resolved:$pass_resolved,scope:$pass_scope,
@@ -5951,7 +5989,8 @@ gate_finalize_assurance() {
             requested:$requested,
             selected:($selected | split(" ") | map(select(length > 0))),
             skipped:($skipped | split(" ") | map(select(length > 0))),
-            vocabulary:($vocabulary | split(" ") | map(select(length > 0)))
+            vocabulary:($vocabulary | split(" ") | map(select(length > 0))),
+            selection_basis:$coverage_selection_basis
           },
           independence:{
             implementation_context_isolated:$implementation_isolated,
@@ -6097,13 +6136,13 @@ POLICY_ESCALATION_SIGNALS_DISPLAY="$(jq -c '[
     }
 ]' <<<"$GATE_POLICY_RESOLUTION")"
 printf -v GATE_ASSURANCE_CONTEXT_BLOCK \
-  '  Assurance coordinates (resolved by the gate shell; do not reinterpret):\n    tier.requested: %s\n    tier.resolved: %s\n    tier.evidence_floor: %s\n    mode.requested: %s\n    mode.resolved: %s\n    mode.topology: %s\n    mode.synthesis: %s\n    mode.selection_source: %s\n    mode.recommendation_overridden: %s\n    pass.requested: %s\n    pass.resolved: %s\n    pass.scope: %s\n    pass.initial_result: %s\n    coverage.requested: %s\n    coverage.selected: %s\n    coverage.skipped: %s\n    policy.consumer: %s\n    policy.minimum_tier: %s\n    policy.required_reviewers: %s\n    policy.recommended_mode: %s\n    policy.escalation_signals: %s\n    policy.scope_fingerprint: %s\n    policy.source: %s\n' \
-  "$TIER_REQUESTED" "$TIER_RESOLVED" "$TIER_EVIDENCE_FLOOR" \
+  '  Assurance coordinates (resolved by the gate shell; do not reinterpret):\n    tier.requested: %s\n    tier.resolved: %s\n    tier.evidence_floor: %s\n    tier.selection_basis: %s\n    mode.requested: %s\n    mode.resolved: %s\n    mode.topology: %s\n    mode.synthesis: %s\n    mode.selection_source: %s\n    mode.recommendation_overridden: %s\n    pass.requested: %s\n    pass.resolved: %s\n    pass.scope: %s\n    pass.initial_result: %s\n    coverage.requested: %s\n    coverage.selected: %s\n    coverage.skipped: %s\n    coverage.selection_basis: %s\n    policy.consumer: %s\n    policy.minimum_tier: %s\n    policy.required_reviewers: %s\n    policy.recommended_mode: %s\n    policy.escalation_signals: %s\n    policy.scope_fingerprint: %s\n    policy.source: %s\n' \
+  "$TIER_REQUESTED" "$TIER_RESOLVED" "$TIER_EVIDENCE_FLOOR" "$TIER_SELECTION_BASIS" \
   "$MODE_REQUESTED" "$MODE_RESOLVED" "$MODE_TOPOLOGY" "$MODE_SYNTHESIS" \
   "$POLICY_MODE_SELECTION_SOURCE" "$POLICY_MODE_RECOMMENDATION_OVERRIDDEN" \
   "$PASS_KIND_REQUESTED" "$PASS_KIND_RESOLVED" "$PASS_SCOPE" "$INITIAL_RESULT_DISPLAY" \
   "$COVERAGE_REQUESTED_DISPLAY" \
-  "$COVERAGE_SELECTED_DISPLAY" "$COVERAGE_SKIPPED_DISPLAY" \
+  "$COVERAGE_SELECTED_DISPLAY" "$COVERAGE_SKIPPED_DISPLAY" "$COVERAGE_SELECTION_BASIS" \
   "$POLICY_CONSUMER" "$(jq -r '.resolution.minimum_tier' <<<"$GATE_POLICY_RESOLUTION")" \
   "$POLICY_REQUIRED_REVIEWERS_DISPLAY" \
   "$(jq -r '.resolution.recommended_mode' <<<"$GATE_POLICY_RESOLUTION")" \
@@ -6491,7 +6530,9 @@ printf -v REVIEWER_PROTOCOL_INSTRUCTIONS \
   '    reviewer, status=gap|no_gap, affected_behavior, contract, existing_evidence,' \
   '    coverage_dimensions (happy|boundary|negative|regression|concurrency|security|' \
   '    migration|rollback), missing_layer, scenario, oracle, failure_signal, and' \
-  '    suggested_command. A gap uses missing_layer=unit|integration|contract|e2e|' \
+  '    suggested_command. coverage_dimensions permits only those eight enum tokens;' \
+  '    contract is a missing_layer value, never a coverage_dimensions value.' \
+  '    A gap uses missing_layer=unit|integration|contract|e2e|' \
   '    manual|operational and non-empty scenario/oracle/failure_signal/command.' \
   '    Sufficient coverage uses no_gap, missing_layer=none, null scenario/oracle/' \
   '    failure_signal/suggested_command, and concrete existing_evidence.' \
@@ -8220,6 +8261,13 @@ fi
 # The shared verifier then checks result/pointer/envelope
 # parity before publication or relocation.
 gate_finalize_assurance "$OUTPUT_FILE" "$ASSURANCE_FILE" || exit 2
+
+# ── Finalize QA evidence before relocation ──────────────────────────────────
+# The EXIT trap also finalizes QA evidence, but a successful run relocates its
+# per-run artifacts before that trap fires.  Finalize here while the checkpoint
+# still resides under WORK_DIR; otherwise a killed QA helper can leave a stale
+# `running` record in the relocated run directory indefinitely.
+qa_execution_finalize 0 || true
 
 # ── Relocate result to run dir (post-verification) ───────────────────────────
 # OUTPUT_FILE was written by the executor in WORK_DIR (workspace-write sandbox

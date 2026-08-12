@@ -69,7 +69,9 @@ the ten contract keys (`kind`, `schema_version`, `reviewer`,
 blocker and map test gaps/audit findings to the common actionable finding
 fields. Audit every applicable happy/boundary/negative/regression/concurrency/
 security/migration/rollback dimension in actionable `qa-tester-TGNNN` rows,
-or emit one evidence-backed `no_gap` row. `verdict` must be exactly `approve|advise|block-soft|block`: map legacy
+or emit one evidence-backed `no_gap` row. `coverage_dimensions` accepts only
+those eight tokens; use `missing_layer: "contract"`, not a `contract`
+coverage-dimension token, for a contract-layer gap. `verdict` must be exactly `approve|advise|block-soft|block`: map legacy
 `pass` to `approve` and a gate-blocking `needs-tests` outcome to `block`; put
 matrix/run/audit details in `rationale` or common findings. Evidence paths must
 come from the caller's declared reference index, with line numbers inside the

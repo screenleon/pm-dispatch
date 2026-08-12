@@ -1200,6 +1200,8 @@ _gate_assurance_v3_valid_instance() {
     jq '
       .kind = "gate_assurance_v3" |
       .schema_version = 3 |
+      .coordinates.tier.selection_basis = "explicit" |
+      .coordinates.coverage.selection_basis = "policy-default" |
       .subject = {
         kind:"gate_subject_v1",
         schema_version:1,
@@ -1359,6 +1361,44 @@ case_gate_assurance_v3_evidence_path_rejected() {
     ' > "$tmpf"
   if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
     fail "$name" "schema accepted escaping linked-evidence path"
+  else
+    pass "$name"
+  fi
+  rm -f "$tmpf"
+}
+
+case_gate_assurance_selection_basis_rejected() {
+  local name="gate-assurance: unknown coordinate selection basis is rejected"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/gate-assurance.schema.json" tmpf
+  tmpf="$(mktemp /tmp/gate-assurance-selection-basis-XXXXXX.json)"
+  for mutation in \
+    'del(.coordinates.tier.selection_basis)' \
+    'del(.coordinates.coverage.selection_basis)' \
+    '.coordinates.tier.selection_basis = "unknown"' \
+    '.coordinates.coverage.selection_basis = "tier-implies-coverage"' \
+    '.coordinates.tier.selection_basis = "policy"' \
+    '.coordinates.coverage.selection_basis = "explicit"' \
+    '.coordinates.coverage.requested = ["critic"] | .coordinates.coverage.selection_basis = "policy-default"'
+  do
+    _gate_assurance_v3_valid_instance | jq "$mutation" > "$tmpf"
+    if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+      fail "$name" "schema accepted invalid v3 selection-basis mutation: $mutation"
+      rm -f "$tmpf"
+      return
+    fi
+  done
+  _gate_assurance_v3_valid_instance |
+    jq 'del(.coordinates.tier.selection_basis, .coordinates.coverage.selection_basis)' > "$tmpf"
+  if ! jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    fail "$name" "schema rejected a complete historical v3 selection-basis omission"
+    rm -f "$tmpf"
+    return
+  fi
+  _gate_assurance_valid_instance |
+    jq '.coordinates.tier.selection_basis = "policy"' > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    fail "$name" "schema accepted a v3-only selection basis on v2"
   else
     pass "$name"
   fi
@@ -1948,6 +1988,7 @@ case_gate_assurance_v3_valid_instance
 case_gate_assurance_v2_rejects_v3_fields
 case_gate_assurance_v3_invalid_dirty_pair_rejected
 case_gate_assurance_v3_evidence_path_rejected
+case_gate_assurance_selection_basis_rejected
 case_gate_verification_valid_instance
 case_gate_verification_duplicate_reason_rejected
 case_gate_verification_invalid_consumer_rejected

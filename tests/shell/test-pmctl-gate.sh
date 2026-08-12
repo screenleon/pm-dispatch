@@ -597,6 +597,8 @@ _mk_gate_result_v3_verified() {
   jq --argjson subject "$subject" '
     .kind = "gate_assurance_v3" |
     .schema_version = 3 |
+    .coordinates.tier.selection_basis = "policy" |
+    .coordinates.coverage.selection_basis = "policy-default" |
     .bindings.repo_identity = $subject.repository.key |
     .bindings.base_commit = $subject.base.commit |
     .bindings.head_commit = $subject.head.commit |
@@ -1223,7 +1225,7 @@ enforcement|policy_enforcement_failed|generic
 independence|review_independence_unverified|generic
 dispatch|review_dispatch_evidence_incomplete|generic
 scope|scope_manifest_unavailable|generic
-targeted|publish_initial_review_required|publish
+targeted|comprehensive_review_required|publish
 CASES
   pass "$name"
 }
@@ -2054,6 +2056,61 @@ case_verify_v2_unknown_fields_rejected() {
       return
     fi
   done
+  pass "$name"
+}
+
+# Behavior: selection-basis coordinates are versioned claims.  A v3 result
+# must name valid bases, while v2 must not smuggle the v3-only fields through
+# structural verification.
+case_verify_selection_basis_contract_rejected() {
+  local name="gate/verify: selection-basis version contract exits 1"
+  should_run "$name" || return 0
+  local variant result out code mutation
+  for variant in v3-missing-tier v3-invalid-coverage v3-contradictory-tier v3-contradictory-coverage v3-explicit-coverage-policy-default v2-forbidden; do
+    result="$tmp_root/selection-basis-$variant/projects/key/runs/gate-test/.gate-results/result.md"
+    if [[ "$variant" == v2-forbidden ]]; then
+      _mk_gate_result_v2 "$result"
+      mutation='.coordinates.tier.selection_basis = "policy"'
+    else
+      _mk_gate_result_v3_verified "$result"
+      case "$variant" in
+        v3-missing-tier) mutation='del(.coordinates.tier.selection_basis)' ;;
+        v3-invalid-coverage) mutation='.coordinates.coverage.selection_basis = "invalid"' ;;
+        v3-contradictory-tier) mutation='.coordinates.tier.selection_basis = "explicit"' ;;
+        v3-contradictory-coverage) mutation='.coordinates.coverage.selection_basis = "explicit"' ;;
+        v3-explicit-coverage-policy-default) mutation='.coordinates.coverage.requested = ["critic"] | .coordinates.coverage.selection_basis = "policy-default"' ;;
+      esac
+    fi
+    jq "$mutation" "${result}.assurance.json" > "${result}.assurance.tmp"
+    mv "${result}.assurance.tmp" "${result}.assurance.json"
+    [[ "$variant" != v2-forbidden ]] && _refresh_gate_result_v3_attestation "$result"
+    set +e; out="$("$PMCTL" gate verify "$result" 2>&1)"; code=$?; set -e
+    if [[ "$code" -ne 1 || "$out" != *"structural/claim verification"* ]]; then
+      fail "$name" "$variant code=$code out=$out"
+      return
+    fi
+  done
+  pass "$name"
+}
+
+# Behavior: persisted v3 artifacts created before selection_basis existed remain
+# readable. Only the complete absence of both fields is legacy-compatible;
+# partial modern claims remain rejected by the preceding contract test.
+case_verify_historical_v3_selection_basis_accepted() {
+  local name="gate/verify: complete historical v3 selection-basis omission is accepted"
+  should_run "$name" || return 0
+  local result out code
+  result="$tmp_root/historical-v3-selection-basis/projects/key/runs/gate-test/.gate-results/result.md"
+  _mk_gate_result_v3_verified "$result"
+  jq 'del(.coordinates.tier.selection_basis, .coordinates.coverage.selection_basis)' \
+    "${result}.assurance.json" > "${result}.assurance.tmp"
+  mv "${result}.assurance.tmp" "${result}.assurance.json"
+  _refresh_gate_result_v3_attestation "$result"
+  set +e; out="$("$PMCTL" gate verify "$result" 2>&1)"; code=$?; set -e
+  if [[ "$code" -ne 0 || "$out" != *"valid"* ]]; then
+    fail "$name" "code=$code out=$out"
+    return
+  fi
   pass "$name"
 }
 
@@ -2950,6 +3007,8 @@ case_verify_v2_claim_mismatch
 case_verify_v2_policy_claim_tamper
 case_verify_v2_surplus_topology_record
 case_verify_v2_unknown_fields_rejected
+case_verify_selection_basis_contract_rejected
+case_verify_historical_v3_selection_basis_accepted
 case_verify_v2_result_binding_tamper
 case_verify_v2_sidecar_attestation_tamper
 case_verify_v2_subject_binding_tamper

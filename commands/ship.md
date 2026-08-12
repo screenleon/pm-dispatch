@@ -193,7 +193,10 @@ generic as `baseline` or maintainer as `preferred`; both are accepted here.
   "<initial_gate_result_path>"` (same literal-path substitution as Step 3's
   first call — never `"$PWD"`). The initial-result path is the comprehensive
   gate result that opened this remediation loop; keep it explicit on every
-  targeted pass. Repeat for the reviewers whose territory the fix touched.
+  targeted pass. A targeted pass resolves its tier from the current change and
+  preserves only the selected remediation coverage, so it is not a replacement for the
+  comprehensive initial review. Repeat for the reviewers whose territory the
+  fix touched.
 
 **Stop the loop only when**:
 1. Step 0's check would have caught this but didn't — implementation revealed

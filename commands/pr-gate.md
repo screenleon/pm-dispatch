@@ -56,7 +56,13 @@ selected reviewer coverage. For a targeted remediation pass, both
 `--reviewers <list>` and `--initial-result <path>` are required. The legacy
 `--targeted <list>` spelling remains supported as an exact compatibility
 shorthand; when mixed with canonical flags, its pass and reviewer set must
-match them.
+match them. Tier, coverage, and pass remain independent: an explicit tier
+never expands a selected reviewer list, and risk-derived required reviewers
+remain mandatory unless a scope-bound policy override approves their omission.
+An initial result is remediation context only: a targeted pass always resolves
+its tier from the current subject and policy, not from the prior artifact.
+The result sidecar and reviewer briefs show both tier and coverage selection
+bases, plus shorthand provenance.
 
 Before dispatch, the gate writes one immutable-subject-bound
 `gate_scope_manifest_v1` containing changed/renamed/untracked paths, hunk

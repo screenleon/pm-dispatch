@@ -163,9 +163,11 @@ to required coverage without automatically converting every bounded change to
 
 **Tier, mode, pass kind, and coverage are independent**:
 
-- Tier records rigor intent and supplies default reviewer coverage. An explicit
-  `--reviewers` list does not rewrite the tier, but it must still include every
-  reviewer required by the matched risk signals.
+- Tier records rigor intent and supplies default reviewer coverage only when
+  coverage is omitted. An explicit `--reviewers` list never rewrites tier, but
+  it must still include risk-derived required reviewers unless a scope-bound
+  user policy override records an approved omission. Maintainer publication
+  policy remains stricter.
 - Mode records execution topology and remains a user-owned cost/independence
   choice. When mode is omitted, policy auto-selects its recommendation from the
   consumer and matched signals. Explicit `--mode sequential` or
@@ -177,13 +179,18 @@ to required coverage without automatically converting every bounded change to
   `--targeted <reviewers>` shorthand expands to those same pass and coverage
   coordinates. Mixed canonical/shorthand input is accepted only when both
   request the same pass and reviewer set, and the assurance sidecar records
-  the spelling provenance.
+  the spelling provenance. The initial artifact is remediation context only:
+  every targeted pass resolves its tier from the current subject and policy,
+  even when its content overlaps a prior gate. Tier and coverage selection
+  bases are recorded independently.
 
-The generic consumer policy keeps risk-based coverage: initial passes require
-critic and QA plus signal-specific dimensions. The maintainer `/ship` initial
-pass fixes coverage at all five reviewer dimensions while preserving the
-independently resolved tier and mode. Targeted passes under either consumer
-remain scoped to the requested remediation reviewers.
+The generic consumer preserves an explicit coverage choice only when it keeps
+all risk-derived required reviewers (or a scope-bound override authorizes an
+omission). The maintainer
+`/ship` initial pass fixes coverage at all five reviewer dimensions while
+preserving the independently resolved tier and mode. Targeted passes under
+either consumer remain scoped to the requested remediation reviewers and do
+not satisfy a comprehensive-review consumer.
 
 Producer policy names are assurance strategies, not identities. Applicability
 uses this compatibility contract:
@@ -237,10 +244,14 @@ quietly lower their own future review floor through a small edit.
 After reviewer dispatch completes, the current producer writes
 `pr_gate_result_v5` Markdown plus a sibling `gate_assurance_v3` JSON envelope.
 Historical v4 results remain readable under the earlier synthesis contract.
+Historical v3 assurance envelopes written before `selection_basis` was added
+remain readable only when both selection-basis fields are absent; current v3
+producers emit both fields, and a partial or contradictory claim is invalid.
 A pre-dispatch fail-fast route has no reviewer protocol and intentionally
 remains `pr_gate_result_v2`. The Markdown contains human findings and a bounded
 relative `gate_assurance` pointer; the shell-owned envelope records
-requested/resolved coordinates, selected/skipped coverage, actual dispatch
+requested/resolved coordinates, independent tier/coverage selection bases,
+selected/skipped coverage, actual dispatch
 outcomes, run IDs, and the evidence status behind independence claims. The v3
 envelope adds an immutable subject: stable Git common-directory repository
 identity, optional remote identity, provenance-only observed root, base/head

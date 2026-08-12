@@ -22,6 +22,150 @@
         "properties": { "schema_version": { "const": 3 } },
         "required": ["subject", "evidence"]
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": { "const": "gate_assurance_v3" },
+          "coordinates": {
+            "properties": {
+              "tier": {
+                "properties": { "requested": { "enum": ["express", "standard", "full"] } },
+                "required": ["requested"]
+              }
+            },
+            "required": ["tier"]
+          }
+        },
+        "required": ["kind", "coordinates"]
+      },
+      "then": {
+        "properties": {
+          "coordinates": {
+            "properties": {
+              "tier": { "properties": { "selection_basis": { "const": "explicit" } } }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "kind": { "const": "gate_assurance_v3" } },
+        "required": ["kind"]
+      },
+      "then": {
+        "properties": {
+          "coordinates": {
+            "oneOf": [
+              {
+                "properties": {
+                  "tier": { "required": ["selection_basis"] },
+                  "coverage": { "required": ["selection_basis"] }
+                }
+              },
+              {
+                "properties": {
+                  "tier": { "not": { "required": ["selection_basis"] } },
+                  "coverage": { "not": { "required": ["selection_basis"] } }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "coordinates": {
+            "properties": {
+              "tier": { "not": { "required": ["selection_basis"] } },
+              "coverage": { "not": { "required": ["selection_basis"] } }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": { "const": "gate_assurance_v3" },
+          "coordinates": {
+            "properties": {
+              "tier": {
+                "properties": { "requested": { "const": "auto" } },
+                "required": ["requested"]
+              }
+            },
+            "required": ["tier"]
+          }
+        },
+        "required": ["kind", "coordinates"]
+      },
+      "then": {
+        "properties": {
+          "coordinates": {
+            "properties": {
+              "tier": { "properties": { "selection_basis": { "const": "policy" } } }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": { "const": "gate_assurance_v3" },
+          "coordinates": {
+            "properties": {
+              "coverage": {
+                "properties": { "requested": { "type": "null" } },
+                "required": ["requested"]
+              }
+            },
+            "required": ["coverage"]
+          }
+        },
+        "required": ["kind", "coordinates"]
+      },
+      "then": {
+        "properties": {
+          "coordinates": {
+            "properties": {
+              "coverage": { "properties": { "selection_basis": { "const": "policy-default" } } }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": { "const": "gate_assurance_v3" },
+          "coordinates": {
+            "properties": {
+              "coverage": {
+                "properties": { "requested": { "$ref": "#/definitions/reviewerSet" } },
+                "required": ["requested"]
+              }
+            },
+            "required": ["coverage"]
+          }
+        },
+        "required": ["kind", "coordinates"]
+      },
+      "then": {
+        "properties": {
+          "coordinates": {
+            "properties": {
+              "coverage": {
+                "properties": {
+                  "selection_basis": { "not": { "const": "policy-default" } }
+                }
+              }
+            }
+          }
+        }
+      }
     }
   ],
   "properties": {
@@ -69,7 +213,8 @@
           "properties": {
             "requested": { "enum": ["auto", "express", "standard", "full"] },
             "resolved": { "enum": ["express", "standard", "full"] },
-            "evidence_floor": { "type": "string", "minLength": 1 }
+            "evidence_floor": { "type": "string", "minLength": 1 },
+            "selection_basis": { "enum": ["policy", "explicit"] }
           },
           "additionalProperties": false
         },
@@ -107,7 +252,10 @@
             },
             "selected": { "$ref": "#/definitions/reviewerSet" },
             "skipped": { "$ref": "#/definitions/reviewerSet" },
-            "vocabulary": { "$ref": "#/definitions/reviewerSet" }
+            "vocabulary": { "$ref": "#/definitions/reviewerSet" },
+            "selection_basis": {
+              "enum": ["policy-default", "explicit", "targeted-shorthand", "mixed"]
+            }
           },
           "additionalProperties": false
         },
