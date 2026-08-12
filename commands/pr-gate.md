@@ -40,6 +40,17 @@ plus in-scope untracked content, so an approval cannot be replayed after a
 same-shape content change. `.gate-overrides.md` only supplies reviewer finding
 context and cannot lower policy.
 
+Reviewer overrides (auto-discovered `.gate-overrides.md` or `--override-file`)
+must be readable, non-empty, NUL-free regular files whose final path component
+is not a symlink; dangling links are rejected too. A relative `--override-file`
+is resolved from `--cd`. This is a migration rejection for legacy symlink,
+empty, unreadable, non-regular, and NUL-containing inputs. Before dispatch on
+Linux/WSL2 the gate takes a private snapshot and rechecks source identity and
+bytes, then uses only that snapshot for reviewer briefs and provenance. It does
+not claim to defend a malicious concurrent writer running under the same OS uid.
+This free-form channel remains distinct from the machine-validated
+`--policy-override` JSON contract.
+
 `--pass initial|targeted` controls review-pass scope, and `--reviewers` controls
 selected reviewer coverage. For a targeted remediation pass, both
 `--reviewers <list>` and `--initial-result <path>` are required. The legacy

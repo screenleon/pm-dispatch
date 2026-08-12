@@ -45,6 +45,20 @@ assert_not_contains() {
   fi
 }
 
+assert_override_rejected_before_dispatch() {
+  local name="$1" out="$2" err="$3" brief="$4" result="$5"
+  assert_not_contains "$name" "$out" "DISPATCH_STUB:" || return 1
+  assert_not_contains "$name" "$err" "DISPATCH_STUB:" || return 1
+  if [[ -e "$brief" ]]; then
+    fail "$name" "rejected override still produced a reviewer brief: $brief"
+    return 1
+  fi
+  if [[ -e "$result" || -e "${result}.assurance.json" ]]; then
+    fail "$name" "rejected override still produced result provenance: $result"
+    return 1
+  fi
+}
+
 # Assert no live process matches the given pgrep -f pattern. The watchdog kills
 # the executor tree asynchronously, so poll briefly (up to ~3s) before failing to
 # avoid a race on the kill signal landing.
@@ -8333,24 +8347,27 @@ test_override_file_autodiscovery() {
 
 # Behavior: --override-file with an explicit path is honored even when
 # the file lives outside the repo.
-# Steps: write an override file outside the repo, run the gate with
-# --sequential --override-file pointing at it, and assert the captured
-# brief contains its content.
+# Steps: write an override file with spaces in its external path, run the gate
+# with --override-file, and assert the brief, result provenance, and assurance
+# sidecar all describe the accepted content and its exact full-file digest.
 test_override_file_explicit_flag() {
   local name="override-file-explicit-flag"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
-  local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
-  local override="$dir/my-overrides.md"
+  local out="$dir/out" err="$dir/err" brief="$dir/brief.md" result="$dir/result.md"
+  local override="$dir/my overrides.md" expected_source expected_sha
   mkdir -p "$dir"
   create_runner "$runner"
   create_agents "$home" critic qa-tester
   create_repo "$repo" docs
   printf 'explicit override content\n' > "$override"
+  expected_source="$(cd "$(dirname "$override")" && pwd -P)/$(basename "$override")"
+  expected_sha="$(sha256sum "$override" | awk '{print $1}')"
 
   set +e
-  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --sequential --override-file "$override"
+  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" \
+    --base main --sequential --override-file "$override" --output "$result"
   local code=$?
   set -e
   if [[ "$code" -ne 0 ]]; then
@@ -8358,14 +8375,23 @@ test_override_file_explicit_flag() {
     return
   fi
   assert_file_contains "$name" "$brief" "explicit override content" || return
+  assert_file_contains "$name" "$result" "## Gate Overrides Applied" || return
+  assert_file_contains "$name" "$result" "explicit override content" || return
+  if ! jq -e --arg source "$expected_source" --arg sha "$expected_sha" '
+      .policy.reviewer_override == {
+        status:"provided", source:$source, sha256:$sha
+      }
+    ' "${result}.assurance.json" >/dev/null; then
+    fail "$name" "assurance provenance did not bind the canonical source and full-file digest"
+    return
+  fi
   pass "$name"
 }
 
 # Behavior: --override-file pointing at a nonexistent path is a hard
 # error, not a silent no-op.
 # Steps: run the gate with --override-file pointing at a nonexistent file,
-# and assert a non-zero exit and an "Error: override file not found"
-# stderr message.
+# and assert a non-zero exit naming both the input and missing-file violation.
 test_override_file_missing_errors() {
   local name="override-file-missing-errors"
   should_run "$name" || return 0
@@ -8385,7 +8411,9 @@ test_override_file_missing_errors() {
     fail "$name" "expected non-zero exit for missing override file"
     return
   fi
-  assert_file_contains "$name" "$err" "Error: override file not found" || return
+  assert_file_contains "$name" "$err" "reviewer override must name a readable, non-empty, NUL-free regular non-symlink file" || return
+  assert_file_contains "$name" "$err" "$dir/no-such-file.md" || return
+  assert_file_contains "$name" "$err" "file does not exist" || return
   pass "$name"
 }
 
@@ -8637,8 +8665,228 @@ test_override_file_missing_operand_controlled_error() {
   pass "$name"
 }
 
+# Behavior: discovery and explicit paths reject final-component symlinks,
+# including absolute/relative external targets and a dangling auto-discovery.
+# Steps: exercise each link form with brief/result capture enabled; assert the
+# controlled contract error names the input and no dispatch/provenance exists.
+test_override_file_symlinks_fail_closed() {
+  local name="override-file-symlinks-fail-closed"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" brief="$dir/rejected-brief.md"
+  local result="$dir/rejected-result.md" outside="$dir/outside.md" code
+  mkdir -p "$dir"
+  create_runner "$runner"; create_agents "$home" critic qa-tester; create_repo "$repo" docs
+  printf 'outside override bytes\n' > "$outside"
+  ln -s "$outside" "$repo/.gate-overrides.md"
+  set +e
+  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" \
+    --base main --sequential --output "$result"
+  code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then fail "$name" "auto symlink unexpectedly dispatched"; return; fi
+  assert_file_contains "$name" "$err" "$repo/.gate-overrides.md" || return
+  assert_file_contains "$name" "$err" "final path component is a symlink" || return
+  assert_override_rejected_before_dispatch "$name" "$out" "$err" "$brief" "$result" || return
+  rm -f "$repo/.gate-overrides.md"
+  printf 'inside override bytes\n' > "$repo/inside.md"
+  ln -s "inside.md" "$repo/linked override.md"
+  set +e
+  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" \
+    --base main --sequential --override-file "linked override.md" --output "$result"
+  code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then fail "$name" "explicit symlink unexpectedly dispatched"; return; fi
+  assert_file_contains "$name" "$err" "linked override.md" || return
+  assert_file_contains "$name" "$err" "final path component is a symlink" || return
+  assert_override_rejected_before_dispatch "$name" "$out" "$err" "$brief" "$result" || return
+  ln -s "../outside.md" "$repo/external-link.md"
+  set +e
+  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" \
+    --base main --sequential --override-file "$repo/external-link.md" --output "$result"
+  code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then fail "$name" "external explicit symlink unexpectedly dispatched"; return; fi
+  assert_file_contains "$name" "$err" "$repo/external-link.md" || return
+  assert_file_contains "$name" "$err" "final path component is a symlink" || return
+  assert_override_rejected_before_dispatch "$name" "$out" "$err" "$brief" "$result" || return
+  rm -f "$repo/linked override.md"
+  ln -s "$dir/missing-target.md" "$repo/.gate-overrides.md"
+  set +e
+  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" \
+    --base main --sequential --output "$result"
+  code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then fail "$name" "dangling auto symlink unexpectedly dispatched"; return; fi
+  assert_file_contains "$name" "$err" "$repo/.gate-overrides.md" || return
+  assert_file_contains "$name" "$err" "final path component is a symlink" || return
+  assert_override_rejected_before_dispatch "$name" "$out" "$err" "$brief" "$result" || return
+  pass "$name"
+}
+
+# Behavior: invalid reviewer-override file kinds fail with their exact contract
+# reason before dispatch, including root-visible permission and NUL edge cases.
+# Steps: exercise empty/directory/unreadable/special-bit/NUL/dangling inputs;
+# assert each input and reason, plus the absence of briefs and provenance.
+test_override_file_invalid_contracts_fail_closed() {
+  local name="override-file-invalid-contracts-fail-closed"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" brief="$dir/rejected-brief.md"
+  local result="$dir/rejected-result.md" candidate reason index code
+  local -a candidates reasons
+  mkdir -p "$dir"
+  create_runner "$runner"; create_agents "$home" critic qa-tester; create_repo "$repo" docs
+  : > "$dir/empty.md"
+  mkdir "$dir/a-directory"
+  printf 'hidden\n' > "$dir/unreadable.md"
+  chmod 000 "$dir/unreadable.md"
+  printf 'special-only\n' > "$dir/special-only.md"
+  chmod 4000 "$dir/special-only.md"
+  printf 'prefix\0REJECTED NUL bytes\n' > "$dir/nul.md"
+  ln -s "$dir/missing-target.md" "$dir/dangling.md"
+  candidates=(
+    "$dir/empty.md"
+    "$dir/a-directory"
+    "$dir/unreadable.md"
+    "$dir/special-only.md"
+    "$dir/nul.md"
+    "$dir/dangling.md"
+  )
+  reasons=(
+    "file is empty"
+    "not a regular file"
+    "file is not readable"
+    "file is not readable"
+    "file contains a NUL byte"
+    "final path component is a symlink"
+  )
+  for index in "${!candidates[@]}"; do
+    candidate="${candidates[$index]}"
+    reason="${reasons[$index]}"
+    set +e
+    CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --sequential --override-file "$candidate" --output "$result"
+    code=$?
+    set -e
+    if [[ "$code" -eq 0 ]]; then
+      chmod 644 "$dir/unreadable.md" "$dir/special-only.md"
+      fail "$name" "invalid input dispatched: $candidate"
+      return
+    fi
+    assert_file_contains "$name" "$err" \
+      "reviewer override must name a readable, non-empty, NUL-free regular non-symlink file" || return
+    assert_file_contains "$name" "$err" "$candidate" || return
+    assert_file_contains "$name" "$err" "$reason" || return
+    assert_override_rejected_before_dispatch "$name" "$out" "$err" "$brief" "$result" || return
+  done
+  chmod 644 "$dir/unreadable.md" "$dir/special-only.md"
+  pass "$name"
+}
+
+# Behavior: a test-only stat shim replaces the source immediately after its
+# initial identity capture. The in-validation replacement must fail closed and
+# neither its content nor any provenance artifact may reach reviewer dispatch.
+# Steps: replace after the first source identity stat, then assert the stability
+# error and the absence of a captured brief/result.
+test_override_file_replacement_during_validation_fails_closed() {
+  local name="override-file-replacement-during-validation"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" brief="$dir/brief.md" result="$dir/result.md"
+  local override="$dir/override.md" code
+  mkdir -p "$dir"
+  create_runner "$runner"; create_agents "$home" critic qa-tester; create_repo "$repo" docs
+  printf 'accepted snapshot bytes\n' > "$override"
+  printf 'REJECTED replacement bytes\n' > "$dir/replacement.md"
+  cat > "$runner/bin/stat" <<EOF
+#!/usr/bin/env bash
+/usr/bin/stat "\$@"
+rc=\$?
+if [[ "\$*" == *'%d:%i:%s:%Y:%Z:%f'* && "\$*" == *'$override'* && ! -e '$dir/replaced' ]]; then
+  mv '$dir/replacement.md' '$override'
+  : > '$dir/replaced'
+fi
+exit "\$rc"
+EOF
+  chmod +x "$runner/bin/stat"
+  set +e
+  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" \
+    --base main --sequential --override-file "$override" --output "$result"
+  code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then fail "$name" "replacement unexpectedly dispatched"; return; fi
+  assert_file_contains "$name" "$err" "file identity changed while being read" || return
+  assert_not_contains "$name" "$out" "REJECTED replacement bytes" || return
+  assert_override_rejected_before_dispatch "$name" "$out" "$err" "$brief" "$result" || return
+  pass "$name"
+}
+
+# Behavior: replacement after the loader's final identity validation cannot
+# redirect accepted content; reviewer briefs and provenance use the snapshot.
+# Steps: a cat shim swaps the source when the already-validated private snapshot
+# is loaded, then assert exact original bytes/digest downstream.
+test_override_file_post_validation_replacement_uses_snapshot() {
+  local name="override-file-post-validation-replacement-uses-snapshot"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" brief="$dir/brief.md" result="$dir/result.md"
+  local override="$dir/override.md" expected_source expected_sha code
+  mkdir -p "$dir"
+  create_runner "$runner"; create_agents "$home" critic qa-tester; create_repo "$repo" docs
+  printf 'accepted snapshot bytes\n' > "$override"
+  printf 'REJECTED post-validation bytes\n' > "$dir/replacement.md"
+  expected_source="$(cd "$(dirname "$override")" && pwd -P)/$(basename "$override")"
+  expected_sha="$(sha256sum "$override" | awk '{print $1}')"
+  cat > "$runner/bin/cat" <<EOF
+#!/usr/bin/env bash
+if [[ "\$*" == *'/pr-gate-reviewer-override.'* && ! -e '$dir/replaced-after-validation' ]]; then
+  mv '$dir/replacement.md' '$override'
+  : > '$dir/replaced-after-validation'
+fi
+exec /usr/bin/cat "\$@"
+EOF
+  chmod +x "$runner/bin/cat"
+  set +e
+  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" \
+    --base main --sequential --override-file "$override" --output "$result"
+  code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "post-validation replacement changed gate outcome (exit $code)"
+    return
+  fi
+  if [[ ! -e "$dir/replaced-after-validation" ]]; then
+    fail "$name" "cat fixture did not replace the source after final validation"
+    return
+  fi
+  assert_file_contains "$name" "$override" "REJECTED post-validation bytes" || return
+  assert_file_contains "$name" "$brief" "accepted snapshot bytes" || return
+  assert_not_contains "$name" "$brief" "REJECTED post-validation bytes" || return
+  assert_file_contains "$name" "$result" "## Gate Overrides Applied" || return
+  assert_file_contains "$name" "$result" "accepted snapshot bytes" || return
+  assert_not_contains "$name" "$result" "REJECTED post-validation bytes" || return
+  if ! jq -e --arg source "$expected_source" --arg sha "$expected_sha" '
+      .policy.reviewer_override == {
+        status:"provided", source:$source, sha256:$sha
+      }
+    ' "${result}.assurance.json" >/dev/null; then
+    fail "$name" "post-validation provenance did not retain the accepted snapshot digest"
+    return
+  fi
+  pass "$name"
+}
+
 run_test test_override_file_injected_into_parallel_reviewer_brief
 run_test test_override_file_injected_into_parallel_synthesis_brief
+run_test test_override_file_symlinks_fail_closed
+run_test test_override_file_invalid_contracts_fail_closed
+run_test test_override_file_replacement_during_validation_fails_closed
+run_test test_override_file_post_validation_replacement_uses_snapshot
 run_test test_override_provenance_recorded_in_result
 run_test test_no_overrides_no_provenance_in_result
 # Behavior: an override file carrying parser-hostile lines (a bare
