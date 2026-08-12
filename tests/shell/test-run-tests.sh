@@ -33,7 +33,7 @@ make_fixture() {
   cat > "$repo/tests/lib/test-suite-runner.sh" <<'RUNNER'
 #!/usr/bin/env bash
 set -euo pipefail
-suites=(lint-agents lint-scripts lint-script-domain-inventory lint-portable-repo-paths test-lint-shellcheck test-script-domain-inventory test-lint-portable-repo-paths test-lint-frontmatter test-commands test-check-docs-freshness test-guards test-migrate test-install test-doctor test-pmctl-dispatch test-pmctl-context test-pmctl-memory test-pmctl-gate test-pr-gate-shard-1 test-pr-gate-shard-2 test-pr-gate-shard-3 test-pr-gate-shard-4 test-pr-gate-profile test-pmctl-operation test-host-manifest test-host-write-codex test-codex-dispatch-continuation test-host-write-parity test-core-schemas test-layer-boundaries test-pm-scripts test-run-tests test-setup-project test-state-store test-state-layout-parity)
+suites=(lint-agents lint-scripts lint-script-domain-inventory lint-portable-repo-paths test-lint-shellcheck test-script-domain-inventory test-lint-portable-repo-paths test-lint-frontmatter test-commands test-check-docs-freshness test-guards test-migrate test-portable test-install test-uninstall test-doctor test-hook-profile-parity test-pmctl-dispatch test-pmctl-context test-pmctl-memory test-pmctl-gate test-pmctl-adapter-generate test-executor-router test-runner-kind test-release-verify test-dispatch-lifecycle test-runtime-lib-coverage test-e2e-script test-pr-gate-shard-1 test-pr-gate-shard-2 test-pr-gate-shard-3 test-pr-gate-shard-4 test-pr-gate-profile test-pmctl-operation test-host-manifest test-host-write-codex test-codex-dispatch-continuation test-host-write-parity test-core-schemas test-layer-boundaries test-pm-scripts test-run-tests test-setup-project test-state-store test-state-layout-parity)
 for arg in "$@"; do
   if [[ "$arg" == --list ]]; then printf '%s\n' "${suites[@]}"; exit 0; fi
 done
@@ -96,6 +96,128 @@ case_memory_config_mapping_has_no_gap() {
     pass "$name"
   else
     fail "$name" "status=$status out=$out args=$(cat "$args" 2>/dev/null)"
+  fi
+}
+
+# Behavior: A changed adapter-manifest library selects every registered direct
+# consumer suite without executing any suite during list mode.
+# Steps:
+#   1. Arrange a runner fixture with argument and diagnostic capture files.
+#   2. Act by listing suites selected for runtime/lib/adapter-manifest.sh.
+#   3. Assert the exact 23-suite set, zero execution, successful status, and no coverage-gap diagnostic.
+case_adapter_manifest_mapping_covers_consumers() {
+  local name=adapter-manifest-mapping-covers-consumers repo out status=0 args diagnostics
+  local actual expected
+  args="$TMP_ROOT/$name.args"
+  diagnostics="$TMP_ROOT/$name.diagnostics"
+  repo="$(make_fixture "$name")"
+  out=$(RUN_TESTS_ARGS_LOG="$args" "$repo/tests/bin/run-tests.sh" \
+    --path runtime/lib/adapter-manifest.sh --list 2>"$diagnostics") || status=$?
+  actual="$(printf '%s\n' "$out" | LC_ALL=C sort)"
+  expected="$(printf '%s\n' \
+    lint-scripts \
+    lint-script-domain-inventory \
+    lint-portable-repo-paths \
+    test-dispatch-lifecycle \
+    test-doctor \
+    test-e2e-script \
+    test-executor-router \
+    test-guards \
+    test-hook-profile-parity \
+    test-install \
+    test-layer-boundaries \
+    test-lint-portable-repo-paths \
+    test-pmctl-adapter-generate \
+    test-pmctl-dispatch \
+    test-pr-gate-profile \
+    test-pr-gate-shard-1 \
+    test-pr-gate-shard-2 \
+    test-pr-gate-shard-3 \
+    test-pr-gate-shard-4 \
+    test-release-verify \
+    test-runner-kind \
+    test-runtime-lib-coverage \
+    test-uninstall | LC_ALL=C sort)"
+  if [[ "$status" -eq 0 && "$actual" == "$expected" \
+      && $(wc -l <<< "$out") -eq 23 \
+      && ! -s "$args" \
+      && "$(<"$diagnostics")" != *"coverage gaps"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status expected=$expected actual=$actual diagnostics=$(<"$diagnostics") executed=$([[ -s "$args" ]] && echo yes || echo no)"
+  fi
+}
+
+# Behavior: A changed install-receipt library selects its complete registered
+# consumer set without executing any suite during list mode.
+# Steps:
+#   1. Arrange a runner fixture with argument and diagnostic capture files.
+#   2. Act by listing suites selected for runtime/lib/install-receipt.sh.
+#   3. Assert the exact nine-suite set, zero execution, successful status, and no coverage-gap diagnostic.
+case_install_receipt_mapping_covers_consumers() {
+  local name=install-receipt-mapping-covers-consumers repo out status=0 args diagnostics
+  local actual expected
+  args="$TMP_ROOT/$name.args"
+  diagnostics="$TMP_ROOT/$name.diagnostics"
+  repo="$(make_fixture "$name")"
+  out=$(RUN_TESTS_ARGS_LOG="$args" "$repo/tests/bin/run-tests.sh" \
+    --path runtime/lib/install-receipt.sh --list 2>"$diagnostics") || status=$?
+  actual="$(printf '%s\n' "$out" | LC_ALL=C sort)"
+  expected="$(printf '%s\n' \
+    lint-portable-repo-paths \
+    lint-script-domain-inventory \
+    lint-scripts \
+    test-doctor \
+    test-install \
+    test-layer-boundaries \
+    test-lint-portable-repo-paths \
+    test-portable \
+    test-uninstall | LC_ALL=C sort)"
+  if [[ "$status" -eq 0 && "$actual" == "$expected" \
+      && $(wc -l <<< "$out") -eq 9 \
+      && ! -s "$args" \
+      && "$(<"$diagnostics")" != *"coverage gaps"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status expected=$expected actual=$actual diagnostics=$(<"$diagnostics") executed=$([[ -s "$args" ]] && echo yes || echo no)"
+  fi
+}
+
+# Behavior: A changed executor-router library selects router consumers and all
+# four deployed PR Gate shards without executing suites during list mode.
+# Steps:
+#   1. Arrange a runner fixture with argument and diagnostic capture files.
+#   2. Act by listing suites selected for runtime/lib/executor-router.sh.
+#   3. Assert the exact 12-suite set, zero execution, successful status, and no coverage-gap diagnostic.
+case_executor_router_mapping_covers_gate_deployments() {
+  local name=executor-router-mapping-covers-gate-deployments repo out status=0 args diagnostics
+  local actual expected
+  args="$TMP_ROOT/$name.args"
+  diagnostics="$TMP_ROOT/$name.diagnostics"
+  repo="$(make_fixture "$name")"
+  out=$(RUN_TESTS_ARGS_LOG="$args" "$repo/tests/bin/run-tests.sh" \
+    --path runtime/lib/executor-router.sh --list 2>"$diagnostics") || status=$?
+  actual="$(printf '%s\n' "$out" | LC_ALL=C sort)"
+  expected="$(printf '%s\n' \
+    lint-portable-repo-paths \
+    lint-script-domain-inventory \
+    lint-scripts \
+    test-executor-router \
+    test-install \
+    test-layer-boundaries \
+    test-lint-portable-repo-paths \
+    test-pr-gate-profile \
+    test-pr-gate-shard-1 \
+    test-pr-gate-shard-2 \
+    test-pr-gate-shard-3 \
+    test-pr-gate-shard-4 | LC_ALL=C sort)"
+  if [[ "$status" -eq 0 && "$actual" == "$expected" \
+      && $(wc -l <<< "$out") -eq 12 \
+      && ! -s "$args" \
+      && "$(<"$diagnostics")" != *"coverage gaps"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status expected=$expected actual=$actual diagnostics=$(<"$diagnostics") executed=$([[ -s "$args" ]] && echo yes || echo no)"
   fi
 }
 
@@ -496,6 +618,9 @@ case_invalid_structured_sink_fails_closed() {
 
 case_direct_library_mapping
 case_memory_config_mapping_has_no_gap
+case_adapter_manifest_mapping_covers_consumers
+case_install_receipt_mapping_covers_consumers
+case_executor_router_mapping_covers_gate_deployments
 case_state_writer_mapping_runs_operation_parity
 case_state_layout_mapping_runs_parity
 case_docs_mapping_list_only

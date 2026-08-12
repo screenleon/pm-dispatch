@@ -9,6 +9,12 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 . "$SCRIPT_DIR/../lib/test-harness.sh"
 th_init "$@"
 
+# The canonical manifest reader owns adapter enumeration, identity validation,
+# runner-kind validation, and scalar parsing for both simulated consumers.
+# shellcheck source=runtime/lib/adapter-manifest.sh
+# shellcheck disable=SC1091
+. "$REPO_ROOT/runtime/lib/adapter-manifest.sh"
+
 # Doctor's claude-host module owns the hooks=() inventory (doctor.sh core is
 # host-agnostic and dispatches into lib/doctor-host-*.sh modules).
 DOCTOR_HOST_CLAUDE="$REPO_ROOT/hosts/claude/lib/doctor.sh"
@@ -31,41 +37,33 @@ _install_hooks() {
 # Simulates doctor.sh check_hooks(): adapter names from manifests where
 # needs_bash_guard resolves to true (manifest-only check, no file existence).
 _doctor_full_guards() {
-  # shellcheck source=runtime/lib/runner-kind.sh
-  # shellcheck disable=SC1091
-  . "$REPO_ROOT/runtime/lib/runner-kind.sh"
   local _manifest _adapter_name _rk _nbg_override _nbg
-  for _manifest in "$REPO_ROOT"/adapters/*/adapter.yaml; do
-    [[ -f "$_manifest" ]] || continue
-    _adapter_name="$(basename "$(dirname "$_manifest")")"
-    _rk="$(runner_kind_manifest_field "$_manifest" runner_kind)"
-    [[ -n "$_rk" ]] || continue
-    _nbg_override="$(runner_kind_manifest_field "$_manifest" needs_bash_guard)"
+  while IFS= read -r _adapter_name; do
+    [[ -n "$_adapter_name" ]] || continue
+    _manifest="$(adapter_manifest_file "$REPO_ROOT" "$_adapter_name")" || return
+    _rk="$(adapter_manifest_runner_kind "$REPO_ROOT" "$_adapter_name")" || return
+    _nbg_override="$(adapter_manifest_scalar "$_manifest" needs_bash_guard)" || return
     _nbg="$(runner_kind_resolve_flag "$_rk" needs_bash_guard "$_nbg_override")"
     if [[ "$_nbg" == "true" ]]; then printf '%s\n' "$_adapter_name"; fi
-  done | sort
+  done < <(adapter_manifest_names "$REPO_ROOT") | sort
 }
 
 # Simulates install-guards.sh: adapter names where needs_bash_guard=true AND
 # bash-guard.sh exists and is executable in the adapter directory.
 _install_full_guards() {
-  # shellcheck source=runtime/lib/runner-kind.sh
-  # shellcheck disable=SC1091
-  . "$REPO_ROOT/runtime/lib/runner-kind.sh"
   local _manifest _adapter_dir _adapter_name _rk _nbg_override _nbg _guard_file
-  for _manifest in "$REPO_ROOT"/adapters/*/adapter.yaml; do
-    [[ -f "$_manifest" ]] || continue
-    _adapter_dir="$(dirname "$_manifest")"
-    _adapter_name="$(basename "$_adapter_dir")"
-    _rk="$(runner_kind_manifest_field "$_manifest" runner_kind)"
-    [[ -n "$_rk" ]] || continue
-    _nbg_override="$(runner_kind_manifest_field "$_manifest" needs_bash_guard)"
+  while IFS= read -r _adapter_name; do
+    [[ -n "$_adapter_name" ]] || continue
+    _manifest="$(adapter_manifest_file "$REPO_ROOT" "$_adapter_name")" || return
+    _adapter_dir="${_manifest%/adapter.yaml}"
+    _rk="$(adapter_manifest_runner_kind "$REPO_ROOT" "$_adapter_name")" || return
+    _nbg_override="$(adapter_manifest_scalar "$_manifest" needs_bash_guard)" || return
     _nbg="$(runner_kind_resolve_flag "$_rk" needs_bash_guard "$_nbg_override")"
     if [[ "$_nbg" == "true" ]]; then
       _guard_file="$_adapter_dir/bash-guard.sh"
       if [[ -x "$_guard_file" ]]; then printf '%s\n' "$_adapter_name"; fi
     fi
-  done | sort
+  done < <(adapter_manifest_names "$REPO_ROOT") | sort
 }
 
 # Behavior: doctor's claude-host module declares a non-empty minimal hook list.
@@ -118,25 +116,26 @@ $diff_out"
 }
 
 # Behavior: both doctor's claude-host module and install-guards.sh derive the
-# full-profile bash-guard list from adapter manifests (needs_bash_guard), not
-# from hardcoded lists.
-# Steps:
-#   1. Assert lib/doctor-host-claude.sh contains the needs_bash_guard manifest-scan pattern.
-#   2. Assert install-guards.sh contains the needs_bash_guard manifest-scan pattern.
+# full-profile bash-guard list through the complete canonical manifest API, not
+# through a private glob, scalar parser, or compatibility wrapper.
+# Steps: Arrange the two production consumers; Act by inspecting each one;
+# Assert both use canonical names, file, runner-kind, and scalar helpers.
 should_run "full-profile-uses-manifest-scan"
 {
   status=0
-  if ! grep -q 'needs_bash_guard' "$DOCTOR_HOST_CLAUDE"; then
-    fail "full-profile-uses-manifest-scan" "doctor-host-claude.sh no longer contains needs_bash_guard manifest scan"
-    status=1
-  fi
-  if ! grep -q 'needs_bash_guard' "$INSTALL_GUARDS_CLAUDE"; then
-    fail "full-profile-uses-manifest-scan" "install-guards.sh no longer contains needs_bash_guard manifest scan"
-    status=1
-  fi
+  for consumer in "$DOCTOR_HOST_CLAUDE" "$INSTALL_GUARDS_CLAUDE"; do
+    for api in adapter_manifest_names adapter_manifest_file \
+      adapter_manifest_runner_kind adapter_manifest_scalar; do
+      if ! grep -Fq "$api" "$consumer"; then
+        fail "full-profile-uses-manifest-scan" \
+          "${consumer#"$REPO_ROOT"/} no longer uses canonical $api"
+        status=1
+      fi
+    done
+  done
   if [[ "$status" -eq 0 ]]; then
     pass "full-profile-uses-manifest-scan" \
-      "both files derive full-profile bash-guard list from adapter manifests"
+      "both files derive full-profile bash guards through the canonical manifest API"
   fi
 }
 

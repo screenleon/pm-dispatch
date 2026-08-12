@@ -16,6 +16,8 @@ th_init "$@"
 . "$REPO_ROOT/runtime/lib/state-paths.sh"
 # shellcheck source=runtime/lib/detached-launch.sh
 . "$REPO_ROOT/runtime/lib/detached-launch.sh"
+# shellcheck source=runtime/lib/adapter-manifest.sh
+. "$REPO_ROOT/runtime/lib/adapter-manifest.sh"
 
 # check_codex/check_claude/check_grok FAIL when an executor CLI is present but
 # unauthenticated. The many stub-claude/codex/grok tests below model a HEALTHY
@@ -68,14 +70,15 @@ add_dispatch_allowlist() {
   # Mirrors dispatch_allowlist_entries() using an explicit home arg for path stripping.
   local home_dir="$1"
   local settings="$home_dir/.claude/settings.json"
-  local f rel allow_json
+  local adapter f rel allow_json
   allow_json="$(
     {
-      for f in "$REPO_ROOT/adapters"/*/dispatch.sh; do
-        [[ -f "$f" ]] || continue
+      while IFS= read -r adapter; do
+        [[ -n "$adapter" ]] || continue
+        f="$(adapter_manifest_dispatch_path "$REPO_ROOT" "$adapter")" || continue
         rel="${f#"$home_dir/"}"
         printf 'Bash(%s:*)\nBash(~/%s:*)\n' "$f" "$rel"
-      done
+      done < <(adapter_manifest_names "$REPO_ROOT")
       printf 'Bash(pmctl:*)\nBash(bash cli/pmctl:*)\n'
     } | jq -Rn '[inputs]'
   )"
@@ -1045,7 +1048,8 @@ case_doctor_manifest_bad_version_warn() {
   path="$(make_stub_bin "$tmp_root/bin-bad-manifest" claude codex)"
 
   out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
-  if [[ "$out" == *"manifest"* && "$out" == *"[WARN]"* && "$status" -eq 0 ]]; then
+  if [[ "$out" == *"manifest"* && "$out" == *"[WARN]"* \
+      && "$out" == *"host selection ignored"* && "$status" -eq 0 ]]; then
     pass "$name"
   else
     fail "$name" "status=$status out=$out"
@@ -2101,14 +2105,14 @@ case_doctor_codex_module_no_binary_degrades() {
 
 case_doctor_copy_mode_hooks_degraded() {
   # Verifies that in copy-mode (lib/ absent, so no host modules load) the
-  # hooks check degrades to a single WARN while settings-file and manifest
-  # stay concrete — the compact fallback must not silently drop the slugs.
+  # hooks check degrades to a single WARN while settings-file stays concrete;
+  # receipt validation must report the missing canonical reader, not grow a
+  # fallback JSON parser in the lone-file topology.
   #
   # Steps:
   #   1. Copy doctor.sh alone to a temp dir (no lib/).
   #   2. Run with healthy minimal settings + manifest.
-  #   3. Assert WARN "hook inventory check unavailable in copy-mode" plus
-  #      concrete settings-file and manifest OK lines.
+  #   3. Assert the hooks WARN, settings OK, and canonical-reader WARN.
   local name="doctor-copy-mode-hooks-degraded"
   should_run "$name" || return 0
   local copydir="$tmp_root/copy-scripts-hooks-degraded"
@@ -2124,10 +2128,10 @@ case_doctor_copy_mode_hooks_degraded() {
 
   if [[ "$out" == *"hook inventory check unavailable in copy-mode"* \
     && "$out" == *"settings.json present"* \
-    && "$out" == *"install manifest present"* ]]; then
+    && "$out" == *"install manifest cannot be validated: canonical receipt reader unavailable"* ]]; then
     pass "$name"
   else
-    fail "$name" "expected degraded hooks WARN with concrete settings/manifest; status=$status out=$out"
+    fail "$name" "expected degraded hooks/settings checks with receipt-reader warning; status=$status out=$out"
   fi
 }
 
@@ -2623,6 +2627,35 @@ case_doctor_receipt_selected_hosts_filter_and_drift_warn() {
   pass "$name"
 }
 
+# Behavior: Doctor treats a truncated product install receipt as a hard failure
+# and reports the receipt as malformed.
+# Steps:
+#   1. Arrange: create full host settings, stub host binaries, and a truncated
+#      install-manifest.json under the product state directory.
+#   2. Act: run Doctor without color against the repository fixture.
+#   3. Assert: require exit 1 plus the product-receipt FAIL label and malformed
+#      receipt diagnostic.
+case_doctor_malformed_product_receipt_fails() {
+  local name="doctor-malformed-product-receipt-fails"
+  should_run "$name" || return 0
+  local home="$tmp_root/home-receipt-malformed" out status=0 path
+  write_full_settings "$home"
+  mkdir -p "$home/.pm-dispatch"
+  printf '{"manifest_version":1,"selected_hosts":["codex"],"entries":[\n' \
+    > "$home/.pm-dispatch/install-manifest.json"
+  path="$(make_stub_bin "$tmp_root/bin-receipt-malformed" claude codex)"
+
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
+    OPENAI_API_KEY=dummy ANTHROPIC_API_KEY=dummy \
+    bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
+  if [[ "$status" -ne 1 || "$out" != *"[FAIL] product install receipt"* \
+      || "$out" != *"product install receipt is malformed"* ]]; then
+    fail "$name" "malformed receipt status was swallowed: status=$status out=$out"
+    return
+  fi
+  pass "$name"
+}
+
 case_doctor_parent_operation_warns_with_reconcile_hint() {
   local name="doctor-parent-operation-warns-with-reconcile-hint"
   should_run "$name" || return 0
@@ -2716,6 +2749,7 @@ case_doctor_repo_trusted_linter
 case_doctor_stale_hook_sibling_prefix_warns
 case_doctor_native_windows_notice
 case_doctor_receipt_selected_hosts_filter_and_drift_warn
+case_doctor_malformed_product_receipt_fails
 case_doctor_parent_operation_warns_with_reconcile_hint
 case_doctor_usage_tracker_legacy_history_warns
 

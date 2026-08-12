@@ -69,6 +69,10 @@ fi
 pr_gate_fixture_profile_dispatch codex "$@"
 STUB_EOF
   chmod +x "$dir/adapters/codex/dispatch.sh"
+  printf '%s\n' \
+    'schema_version: 1' 'adapter_name: codex' \
+    'runner_kind: cli-subprocess' 'dispatch_entrypoint: ./dispatch.sh' \
+    > "$dir/adapters/codex/adapter.yaml"
 
   mkdir -p "$dir/adapters/claude"
   cat > "$dir/adapters/claude/dispatch.sh" <<'CLAUDE_STUB_EOF'
@@ -84,6 +88,10 @@ fi
 pr_gate_fixture_profile_dispatch claude "$@"
 CLAUDE_STUB_EOF
   chmod +x "$dir/adapters/claude/dispatch.sh"
+  printf '%s\n' \
+    'schema_version: 1' 'adapter_name: claude' \
+    'runner_kind: cli-subprocess' 'dispatch_entrypoint: ./dispatch.sh' \
+    > "$dir/adapters/claude/adapter.yaml"
 }
 
 create_repo() {
@@ -292,8 +300,16 @@ test_executor_auto_without_codex() {
   pass "$name"
 }
 
-test_no_lib_copy_mode_uses_inline_executor_fallback() {
-  local name="no-lib-copy-mode-uses-inline-executor-fallback"
+# Behavior: A standalone runner without its canonical lib bundle fails closed
+# before executor auto-detection can proceed to base-ref validation.
+# Steps:
+#   1. Arrange: create an isolated standalone runner and repository, remove the
+#      runner lib directory, and build a PATH without Codex.
+#   2. Act: run the Gate with executor auto and a deliberately missing base ref.
+#   3. Assert: require exit 2 and the standalone canonical-router diagnostic,
+#      with no missing-base diagnostic.
+test_no_lib_copy_mode_fails_without_canonical_router() {
+  local name="no-lib-copy-mode-fails-without-canonical-router"
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner" isolated_cwd="$dir/isolated-cwd"
   local out="$dir/out" err="$dir/err"
@@ -318,13 +334,49 @@ test_no_lib_copy_mode_uses_inline_executor_fallback() {
   local code=$?
   set -e
 
-  if [[ "$code" -eq 0 ]]; then
-    fail "$name" "expected non-zero exit from missing base ref"
+  if [[ "$code" -ne 2 ]]; then
+    fail "$name" "expected exit 2 without canonical router, got $code"
     return
   fi
-  assert_contains "$name" "$err" "Error: base ref not found: __missing_base__" || return
-  assert_not_contains "$name" "$err" "executor router not found" || return
-  assert_not_contains "$name" "$err" "executor-router.sh" || return
+  assert_contains "$name" "$err" \
+    "canonical executor router unavailable for standalone-copy layout" || return
+  assert_not_contains "$name" "$err" "Error: base ref not found" || return
+  pass "$name"
+}
+
+# Behavior: Executor auto-detection rejects a PATH-visible Codex binary when the
+# standalone runner has no registered Codex adapter manifest.
+# Steps:
+#   1. Arrange: add an executable Codex stub to PATH, create the runner and repo,
+#      and remove the runner's Codex adapter directory.
+#   2. Act: run the Gate with executor auto and a deliberately missing base ref.
+#   3. Assert: require exit 2 and the unregistered-or-unroutable diagnostic,
+#      with no missing-base diagnostic.
+test_executor_auto_rejects_unregistered_path_candidate() {
+  local name="executor-auto-rejects-unregistered-path-candidate"
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner" codex_bin="$dir/codex-bin"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir" "$codex_bin"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$codex_bin/codex"
+  chmod +x "$codex_bin/codex"
+
+  create_runner "$runner"
+  create_repo "$repo"
+  rm -rf "${runner:?}/adapters/codex"
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" \
+    "$runner:$codex_bin" --executor auto --base __missing_base__
+  local code=$?
+  set -e
+  if [[ "$code" -ne 2 ]]; then
+    fail "$name" "expected exit 2 for PATH candidate without manifest, got $code"
+    return
+  fi
+  assert_contains "$name" "$err" \
+    "auto-detected executor is not registered or routable: codex" || return
+  assert_not_contains "$name" "$err" "Error: base ref not found" || return
   pass "$name"
 }
 
@@ -347,10 +399,12 @@ test_executor_invalid_value_rejected() {
     fail "$name" "expected non-zero exit"
     return
   fi
-  # Validation is delegated to resolve_executor (CC-373): unknown names are
-  # rejected fail-closed. The "unknown executor: <name>" substring is emitted by
-  # both the data-driven lib and the copy-mode inline fallback.
-  assert_contains "$name" "$err" "unknown executor: invalid" || return
+  # Validation is delegated to the same canonical explicit-root resolver in
+  # repo, installed-copy, and standalone-copy layouts.
+  if [[ "$(<"$err")" != *"unknown executor: invalid"* ]]; then
+    fail "$name" "missing unknown/invalid manifest executor diagnostic"
+    return
+  fi
   pass "$name"
 }
 
@@ -534,7 +588,8 @@ run_case "executor-claude-sequential-dispatches-subprocess" test_executor_claude
 run_case "executor-claude-parallel-dispatches-subprocess" test_executor_claude_parallel_dispatches_subprocess
 run_case "executor-auto-with-codex" test_executor_auto_with_codex
 run_case "executor-auto-without-codex" test_executor_auto_without_codex
-run_case "no-lib-copy-mode-uses-inline-executor-fallback" test_no_lib_copy_mode_uses_inline_executor_fallback
+run_case "executor-auto-rejects-unregistered-path-candidate" test_executor_auto_rejects_unregistered_path_candidate
+run_case "no-lib-copy-mode-fails-without-canonical-router" test_no_lib_copy_mode_fails_without_canonical_router
 run_case "executor-claude-post-gate-hook-skipped-without-allow-hooks" test_executor_claude_post_gate_hook_skipped_without_allow_hooks
 run_case "executor-claude-never-calls-codex" test_executor_claude_never_calls_codex
 run_case "executor-invalid-value-rejected" test_executor_invalid_value_rejected

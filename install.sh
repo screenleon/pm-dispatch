@@ -120,6 +120,8 @@ fi
 . "$REPO_ROOT/runtime/lib/install-receipt.sh"
 # shellcheck disable=SC1091
 . "$REPO_ROOT/runtime/lib/allowlist.sh"
+# shellcheck disable=SC1091
+. "$REPO_ROOT/runtime/lib/dispatch-common.sh"
 _HOST_WRITE_AVAILABLE=0
 if [[ -f "$REPO_ROOT/runtime/lib/host-manifest.sh" && -f "$REPO_ROOT/runtime/lib/host-write.sh" ]]; then
   # shellcheck disable=SC1091
@@ -162,13 +164,13 @@ for _host in "${SELECTED_HOSTS[@]}"; do
 done
 unset _host
 if [[ "$_INSTALL_CLAUDE" -eq 1 ]]; then
-  # Link/copy refresh uses the prior receipt for ownership evidence.  Import an
-  # old Claude-local receipt only when this lifecycle actually selects Claude;
-  # a Codex/OpenCode-only install must never inspect or copy Claude state.
-  if [[ ! -f "$RECEIPT_PATH" && -n "$LEGACY_RECEIPT_PATH" && -f "$LEGACY_RECEIPT_PATH" && "$DRY_RUN" -eq 0 ]]; then
-    mkdir -p "${RECEIPT_PATH%/*}"
-    cp "$LEGACY_RECEIPT_PATH" "$RECEIPT_PATH"
-    echo "  migrated install receipt: $LEGACY_RECEIPT_PATH -> $RECEIPT_PATH"
+  # Link/copy refresh uses the prior receipt for ownership evidence. Read an old
+  # Claude-local receipt in place when the canonical receipt does not yet exist;
+  # preflight must stay mutation-free. A successful final manifest_flush writes
+  # the canonical receipt and refreshes the compatibility mirror below.
+  if [[ ! -f "$RECEIPT_PATH" && -n "$LEGACY_RECEIPT_PATH" && -f "$LEGACY_RECEIPT_PATH" ]]; then
+    PM_DISPATCH_MANIFEST_PATH="$LEGACY_RECEIPT_PATH"
+    export PM_DISPATCH_MANIFEST_PATH
   fi
   # shellcheck source=hosts/claude/lib/path-resolver.sh
   . "$REPO_ROOT/hosts/claude/lib/path-resolver.sh"
@@ -208,6 +210,125 @@ link() {
   esac
 }
 
+# Read-only ownership probe for runtime paths that an installed copied
+# entrypoint will source. Reuse link_or_copy's exact symlink/receipt/SHA policy
+# under dry-run, while restoring this transaction's pending receipt records.
+_install_load_bearing_path_ready() {
+  local src="$1" dst="$2" old_dry_run="$DRY_RUN" rc=0
+  local -a saved_records=("${_PORTABLE_MANIFEST_RECORDS[@]}")
+  DRY_RUN=1
+  if ! link "$src" "$dst" >/dev/null 2>&1; then
+    rc=1
+  fi
+  DRY_RUN="$old_dry_run"
+  _PORTABLE_MANIFEST_RECORDS=("${saved_records[@]}")
+  return "$rc"
+}
+
+# Canonical receipt-owned copy bundle. Preflight and apply intentionally consume
+# these same parallel arrays: adding a runtime dependency, asset, or installed
+# entrypoint cannot update one phase while silently skipping the other.
+_INSTALL_BUNDLE_PHASES=()
+_INSTALL_BUNDLE_LABELS=()
+_INSTALL_BUNDLE_SRCS=()
+_INSTALL_BUNDLE_DSTS=()
+_INSTALL_MANAGED_TREES=(agents adapters)
+
+_install_bundle_add() {
+  _INSTALL_BUNDLE_PHASES+=("$1")
+  _INSTALL_BUNDLE_LABELS+=("$2")
+  _INSTALL_BUNDLE_SRCS+=("$3")
+  _INSTALL_BUNDLE_DSTS+=("$4")
+}
+
+_install_bundle_init() {
+  local _lib _adapter
+  [[ "${#_INSTALL_BUNDLE_SRCS[@]}" -eq 0 ]] || return 0
+
+  _install_bundle_add dependency gate-runtime \
+    "$REPO_ROOT/runtime/lib" "$CLAUDE_HOME/scripts/lib"
+  _install_bundle_add dependency gate-isolation-policy \
+    "$REPO_ROOT/core/policy/isolation-level.yaml" \
+    "$CLAUDE_HOME/scripts/core/policy/isolation-level.yaml"
+  _install_bundle_add dependency adapter-usage \
+    "$REPO_ROOT/ops/usage/log-usage.sh" \
+    "$CLAUDE_HOME/ops/usage/log-usage.sh"
+
+  # Built-in Adapter bootstrap and installed dispatch resolution share one
+  # canonical dependency inventory with Adapter self-snapshots.
+  while IFS= read -r _lib; do
+    [[ -n "$_lib" ]] || continue
+    _install_bundle_add dependency "adapter-runtime:${_lib%.sh}" \
+      "$REPO_ROOT/runtime/lib/$_lib" "$CLAUDE_HOME/runtime/lib/$_lib"
+  done < <(dc_installed_adapter_lib_names)
+
+  for _adapter in codex claude opencode grok; do
+    _install_bundle_add dependency "adapter-alias:$_adapter" \
+      "$REPO_ROOT/share/$_adapter-model-aliases.tsv" \
+      "$CLAUDE_HOME/share/$_adapter-model-aliases.tsv"
+  done
+
+  # Load-bearing helpers are published only after every dependency and managed
+  # reviewer/Adapter tree has been installed successfully.
+  _install_bundle_add entrypoint pr-gate \
+    "$REPO_ROOT/runtime/bin/pr-gate.sh" "$CLAUDE_HOME/scripts/pr-gate.sh"
+  _install_bundle_add entrypoint doctor \
+    "$REPO_ROOT/runtime/bin/doctor.sh" "$CLAUDE_HOME/scripts/doctor.sh"
+}
+
+_install_bundle_preflight() {
+  local i conflicts=0
+  _install_bundle_init
+  for ((i = 0; i < ${#_INSTALL_BUNDLE_SRCS[@]}; i++)); do
+    if ! _install_load_bearing_path_ready \
+        "${_INSTALL_BUNDLE_SRCS[i]}" "${_INSTALL_BUNDLE_DSTS[i]}"; then
+      printf 'install: load-bearing copy bundle conflict: %s\n' \
+        "${_INSTALL_BUNDLE_DSTS[i]}" >&2
+      conflicts=$((conflicts + 1))
+    fi
+  done
+  [[ "$conflicts" -eq 0 ]] || {
+    printf 'install: refusing to wire copied entrypoints with %s unresolved load-bearing conflict(s)\n' \
+      "$conflicts" >&2
+    return 1
+  }
+}
+
+_install_bundle_apply_phase() {
+  local phase="$1" i attempted=0 conflicts=0 dst_parent
+  printf '==> load-bearing %s bundle\n' "$phase"
+  for ((i = 0; i < ${#_INSTALL_BUNDLE_SRCS[@]}; i++)); do
+    [[ "${_INSTALL_BUNDLE_PHASES[i]}" == "$phase" ]] || continue
+    attempted=$((attempted + 1))
+    dst_parent="${_INSTALL_BUNDLE_DSTS[i]%/*}"
+    if [[ ! -d "$dst_parent" ]]; then
+      if [[ "$DRY_RUN" -eq 1 ]]; then
+        printf '  would mkdir %s\n' "$dst_parent"
+      else
+        mkdir -p -- "$dst_parent"
+      fi
+    fi
+    if ! link "${_INSTALL_BUNDLE_SRCS[i]}" "${_INSTALL_BUNDLE_DSTS[i]}"; then
+      printf 'install: load-bearing bundle item changed after preflight: %s (%s)\n' \
+        "${_INSTALL_BUNDLE_DSTS[i]}" "${_INSTALL_BUNDLE_LABELS[i]}" >&2
+      conflicts=$((conflicts + 1))
+    fi
+  done
+  printf '  (%s attempted, %s conflicts)\n' "$attempted" "$conflicts"
+  [[ "$conflicts" -eq 0 ]]
+}
+
+_install_managed_tree_source_ready() {
+  local tree="$1" entry found=0
+  [[ -d "$REPO_ROOT/$tree" && -r "$REPO_ROOT/$tree" ]] || return 1
+  for entry in "$REPO_ROOT/$tree"/*; do
+    [[ -e "$entry" ]] || continue
+    found=1
+    break
+  done
+  [[ "$found" -eq 1 ]]
+}
+
 remove_legacy_symlink() {
   local path="$1" old_target="$2"
   [[ -L "$path" ]] || return 0
@@ -225,6 +346,7 @@ remove_legacy_symlink() {
 install_dispatch_allowlist() {
   local settings="$CLAUDE_HOME/settings.json"
   local previous_adapter_src="" previous_repo_root="" previous_repo_rel=""
+  local current_repo_rel=""
 
   previous_adapter_src="$(_portable_manifest_prev_symlink_src \
     "$(_portable_normalize_path "$CLAUDE_HOME/adapters/claude")" || true)"
@@ -233,6 +355,9 @@ install_dispatch_allowlist() {
   esac
   if [[ -n "$previous_repo_root" && "$previous_repo_root" == "$HOME/"* ]]; then
     previous_repo_rel="${previous_repo_root#"$HOME/"}"
+  fi
+  if [[ "$REPO_ROOT" == "$HOME/"* ]]; then
+    current_repo_rel="${REPO_ROOT#"$HOME/"}"
   fi
 
   # Collect all managed dispatch entries once (avoids re-running the generator
@@ -243,6 +368,8 @@ install_dispatch_allowlist() {
     _all_entries+=("$_entry")
   done < <(dispatch_allowlist_entries)
   [[ "${#_all_entries[@]}" -gt 0 ]] || return 0
+  local _all_entries_json
+  _all_entries_json="$(printf '%s\n' "${_all_entries[@]}" | jq -R . | jq -s .)"
 
   # One jq read to learn which entries are already present.
   local _present=""
@@ -256,6 +383,16 @@ install_dispatch_allowlist() {
           || { [[ -n "$previous_repo_rel" ]] \
             && grep -Fq "~/$previous_repo_rel/adapters/" "$settings" 2>/dev/null; }; }; then
       printf '  permissions.allow: would remove stale managed entries for %s\n' "$previous_repo_root"
+    fi
+    if [[ -f "$settings" ]] && jq -e \
+      --arg root "$REPO_ROOT" --arg rel "$current_repo_rel" \
+      --argjson keep "$_all_entries_json" '
+        any((.permissions.allow // [])[]?; . as $entry |
+          ((startswith("Bash(" + $root + "/adapters/") or
+            ($rel != "" and startswith("Bash(~/" + $rel + "/adapters/"))) and
+           (($keep | index($entry)) == null)))
+      ' "$settings" >/dev/null 2>&1; then
+      printf '  permissions.allow: would remove stale manifest entrypoints for %s\n' "$REPO_ROOT"
     fi
     for _entry in "${_all_entries[@]}"; do
       if printf '%s\n' "$_present" | grep -qxF -- "$_entry" 2>/dev/null; then
@@ -292,6 +429,22 @@ install_dispatch_allowlist() {
     _present="$(jq -r '.permissions.allow // [] | .[]' "$settings" 2>/dev/null || true)"
   fi
 
+  # A manifest-only executable rename must revoke the permission for the old
+  # entrypoint in this same checkout. Entries below adapters/ are installer-
+  # managed; keep only the exact current manifest-derived set.
+  jq --arg root "$REPO_ROOT" --arg rel "$current_repo_rel" \
+    --argjson keep "$_all_entries_json" '
+      .permissions.allow = ((.permissions.allow // []) | map(
+        . as $entry | select(
+          (((startswith("Bash(" + $root + "/adapters/") or
+             ($rel != "" and startswith("Bash(~/" + $rel + "/adapters/"))) and
+            (($keep | index($entry)) == null))) | not
+        )
+      ))
+    ' "$settings" > "${settings}.tmp"
+  mv "${settings}.tmp" "$settings"
+  _present="$(jq -r '.permissions.allow // [] | .[]' "$settings" 2>/dev/null || true)"
+
   # Identify missing entries and print status; then add all at once (one write).
   local -a _missing=()
   for _entry in "${_all_entries[@]}"; do
@@ -317,6 +470,13 @@ install_dir_junction() {
   local src_dir="$REPO_ROOT/$subdir"
   local dest_dir="$CLAUDE_HOME/$subdir"
 
+  if [[ "$subdir" == agents || "$subdir" == adapters ]]; then
+    if ! _install_managed_tree_source_ready "$subdir"; then
+      printf 'install: load-bearing %s source tree changed after preflight\n' \
+        "$subdir" >&2
+      return 1
+    fi
+  fi
   [[ -d "$src_dir" ]] || { echo "skip $subdir (no source)"; return 0; }
 
   echo "==> $subdir (windows junction)"
@@ -367,6 +527,13 @@ install_dir() {
   local src_dir="$REPO_ROOT/$subdir"
   local dest_dir="$CLAUDE_HOME/$subdir"
 
+  if [[ "$subdir" == agents || "$subdir" == adapters ]]; then
+    if ! _install_managed_tree_source_ready "$subdir"; then
+      printf 'install: load-bearing %s source tree changed after preflight\n' \
+        "$subdir" >&2
+      return 1
+    fi
+  fi
   [[ -d "$src_dir" ]] || { echo "skip $subdir (no source)"; return 0; }
 
   echo "==> $subdir"
@@ -393,6 +560,11 @@ install_dir() {
   done
   shopt -u nullglob
   echo "  ($count linked, $conflicts conflicts)"
+  if [[ ( "$conflicts" -gt 0 || "$count" -eq 0 ) \
+      && ( "$subdir" == agents || "$subdir" == adapters ) ]]; then
+    printf 'install: load-bearing %s tree changed after preflight\n' "$subdir" >&2
+    return 1
+  fi
 }
 
 _install_symlink_target_resolves_to() {
@@ -584,27 +756,55 @@ if [[ "$_INSTALL_CLAUDE" -eq 0 ]]; then
   exit 0
 fi
 
+# Fail before installing Adapter trees or helper entrypoints when any canonical
+# copy-mode dependency is missing, foreign, or locally modified. Otherwise a
+# successful install could leave trusted entrypoints sourcing non-receipt-owned
+# bytes. Preflight and apply consume the same canonical bundle inventory above.
+_install_bundle_preflight || exit 1
+
+# Adapter implementations and reviewer definitions are load-bearing trusted
+# inputs. They are per-entry on POSIX/copy fallback, but may each be one Windows
+# junction. A receipt-owned junction is already canonical; an existing real
+# coexistence directory is probed per shipped entry so unrelated custom names
+# remain allowed while foreign built-ins/reviewers cannot shadow shipped code.
+_load_bearing_conflicts=0
+for _load_bearing_tree in "${_INSTALL_MANAGED_TREES[@]}"; do
+  if ! _install_managed_tree_source_ready "$_load_bearing_tree"; then
+    printf 'install: required load-bearing source tree is missing or empty: %s\n' \
+      "$REPO_ROOT/$_load_bearing_tree" >&2
+    _load_bearing_conflicts=$((_load_bearing_conflicts + 1))
+    continue
+  fi
+  _load_bearing_root="$CLAUDE_HOME/$_load_bearing_tree"
+  if [[ "$_INSTALL_PLATFORM" == windows \
+      && ( ! -e "$_load_bearing_root" || -L "$_load_bearing_root" ) ]]; then
+    if ! _install_load_bearing_path_ready \
+        "$REPO_ROOT/$_load_bearing_tree" "$_load_bearing_root"; then
+      printf 'install: load-bearing copy bundle conflict: %s\n' "$_load_bearing_root" >&2
+      _load_bearing_conflicts=$((_load_bearing_conflicts + 1))
+    fi
+  else
+    for _load_bearing_src in "$REPO_ROOT/$_load_bearing_tree"/*; do
+      [[ -e "$_load_bearing_src" || -L "$_load_bearing_src" ]] || continue
+      _load_bearing_dst="$_load_bearing_root/${_load_bearing_src##*/}"
+      if ! _install_load_bearing_path_ready "$_load_bearing_src" "$_load_bearing_dst"; then
+        printf 'install: load-bearing copy bundle conflict: %s\n' "$_load_bearing_dst" >&2
+        _load_bearing_conflicts=$((_load_bearing_conflicts + 1))
+      fi
+    done
+  fi
+done
+unset _load_bearing_tree _load_bearing_root _load_bearing_src _load_bearing_dst
+if [[ "$_load_bearing_conflicts" -gt 0 ]]; then
+  printf 'install: refusing to wire copied entrypoints with %s unresolved load-bearing conflict(s)\n' \
+    "$_load_bearing_conflicts" >&2
+  exit 1
+fi
+unset _load_bearing_conflicts
+
 install_pmctl_cli
 echo
 
-if [[ "$_INSTALL_PLATFORM" == "windows" ]]; then
-  install_dir_junction agents
-  install_dir_junction skills
-  install_dir_junction commands
-  # adapters/ must be installed so pmctl dispatch run --adapter codex can
-  # resolve adapters/codex/dispatch.sh from the repo root.
-  install_dir_junction adapters
-else
-  install_dir agents
-  install_dir skills
-  install_dir commands
-  install_dir adapters
-fi
-
-# Helper scripts — symlinked into ~/.claude/scripts/ so the user can
-# call them as `bash ~/.claude/scripts/<script>` regardless of where
-# this repo is cloned.
-echo "==> helper scripts"
 SCRIPTS_DEST="$CLAUDE_HOME/scripts"
 if [[ ! -d "$SCRIPTS_DEST" ]]; then
   if [[ "$DRY_RUN" -eq 1 ]]; then
@@ -615,6 +815,32 @@ if [[ ! -d "$SCRIPTS_DEST" ]]; then
   fi
 fi
 
+# Install every runtime/policy/asset dependency before publishing reviewer or
+# Adapter entrypoints. A post-preflight failure therefore cannot expose a copied
+# Adapter that is already visible but unable to bootstrap.
+_install_bundle_apply_phase dependency || exit 1
+echo
+
+# Non-load-bearing coexistence trees retain their established install behavior.
+if [[ "$_INSTALL_PLATFORM" == "windows" ]]; then
+  install_dir_junction skills
+  install_dir_junction commands
+else
+  install_dir skills
+  install_dir commands
+fi
+
+# Reviewer definitions and Adapter implementations are trusted executable
+# inputs. Their names come from the same managed-tree inventory as preflight.
+for _managed_tree in "${_INSTALL_MANAGED_TREES[@]}"; do
+  if [[ "$_INSTALL_PLATFORM" == "windows" ]]; then
+    install_dir_junction "$_managed_tree" || exit 1
+  else
+    install_dir "$_managed_tree" || exit 1
+  fi
+done
+unset _managed_tree
+
 echo "==> legacy cleanup"
 remove_legacy_symlink "$SCRIPTS_DEST/codex-pr-gate.sh" "$REPO_ROOT/scripts/codex-pr-gate.sh"
 remove_legacy_symlink "$CLAUDE_HOME/commands/codex-pr-gate.md" "$REPO_ROOT/commands/codex-pr-gate.md"
@@ -623,6 +849,7 @@ remove_legacy_symlink "$CLAUDE_HOME/commands/caveman-commit.md" "$REPO_ROOT/comm
 remove_legacy_symlink "$SCRIPTS_DEST/claude-usage.sh" "$REPO_ROOT/scripts/claude-usage.sh"
 remove_legacy_symlink "$SCRIPTS_DEST/codex-dispatch.sh" "$REPO_ROOT/scripts/codex-dispatch.sh"
 
+echo "==> helper scripts"
 us_count=0; us_conflicts=0
 # Allowlist: user-facing scripts only. Excluded intentionally:
 #   test-*.sh   — run as install preflights above, not user tools
@@ -631,10 +858,8 @@ us_count=0; us_conflicts=0
 helper_specs=(
   $'token-usage.sh\tops/usage/token-usage.sh\tscripts/token-usage.sh'
   $'log-usage.sh\tops/usage/log-usage.sh\tscripts/log-usage.sh'
-  $'pr-gate.sh\truntime/bin/pr-gate.sh\tscripts/pr-gate.sh'
   $'setup-project.sh\tops/setup/setup-project.sh\tscripts/setup-project.sh'
   $'patch-gitignore.sh\tops/setup/patch-gitignore.sh\tscripts/patch-gitignore.sh'
-  $'doctor.sh\truntime/bin/doctor.sh\tscripts/doctor.sh'
 )
 for helper_spec in "${helper_specs[@]}"; do
   IFS=$'\t' read -r script source_path legacy_source_path <<< "$helper_spec"
@@ -645,28 +870,6 @@ for helper_spec in "${helper_specs[@]}"; do
   fi
 done
 echo "  ($us_count linked, $us_conflicts conflicts)"
-
-echo
-
-# Share assets - codex-model-aliases.tsv must be co-installed with scripts so
-# adapters/codex/dispatch.sh resolves $SCRIPT_DIR/../share/codex-model-aliases.tsv correctly.
-echo "==> share assets"
-SHARE_DEST="$CLAUDE_HOME/share"
-if [[ ! -d "$SHARE_DEST" ]]; then
-  if [[ "$DRY_RUN" -eq 1 ]]; then
-    echo "  would mkdir $SHARE_DEST"
-  else
-    mkdir -p "$SHARE_DEST"
-    echo "  mkdir  $SHARE_DEST"
-  fi
-fi
-sa_count=0; sa_conflicts=0
-if link "$REPO_ROOT/share/codex-model-aliases.tsv" "$SHARE_DEST/codex-model-aliases.tsv"; then
-  sa_count=$((sa_count + 1))
-else
-  sa_conflicts=$((sa_conflicts + 1))
-fi
-echo "  ($sa_count linked, $sa_conflicts conflicts)"
 
 echo
 
@@ -748,6 +951,12 @@ for _host in "${SELECTED_HOSTS[@]}"; do
   echo
 done
 unset _host _installed_hosts _enable_host _HOST_WRITE_AVAILABLE
+
+# Publish trusted user-facing Gate/doctor entrypoints last. Every runtime,
+# policy, asset, reviewer, Adapter, permission, and selected-host dependency is
+# now installed; a failure above cannot leave a newly visible partial entrypoint.
+echo "==> load-bearing entrypoints"
+_install_bundle_apply_phase entrypoint || exit 1
 
 if [[ "$_COPY_FALLBACK_COUNT" -gt 0 && "$DRY_RUN" -eq 0 ]]; then
   echo

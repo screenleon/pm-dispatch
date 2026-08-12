@@ -242,7 +242,9 @@ map_path() {
       add_suite test-core-schemas; add_pr_gate_shards
       add_suite test-pmctl-gate; behavioral=1 ;;
     runtime/bin/pr-gate.sh)
-      add_suite test-pr-gate-profile; behavioral=1 ;;
+      add_pr_gate_shards; add_suite test-pr-gate-profile; behavioral=1 ;;
+    runtime/bin/dispatch-supervisor.sh)
+      add_suite test-dispatch-lifecycle; behavioral=1 ;;
     runtime/lib/gate-result-verify.sh)
       add_pr_gate_shards; add_suite test-pr-gate-profile
       add_suite test-pmctl-gate; behavioral=1 ;;
@@ -256,6 +258,24 @@ map_path() {
       add_pr_gate_shards; add_suite test-pr-gate-profile; behavioral=1 ;;
     runtime/lib/pmctl-config.sh)
       add_suite test-pmctl-dispatch; add_suite test-pmctl-memory; add_suite test-pmctl-context; behavioral=1 ;;
+    runtime/lib/adapter-manifest.sh)
+      add_suite test-executor-router; add_suite test-pmctl-dispatch
+      add_suite test-runner-kind; add_suite test-e2e-script
+      add_suite test-pmctl-adapter-generate; add_suite test-release-verify
+      add_suite test-install; add_suite test-doctor
+      add_suite test-dispatch-lifecycle; add_suite test-pr-gate-profile
+      add_suite test-guards; add_suite test-uninstall; add_suite test-hook-profile-parity
+      add_pr_gate_shards; add_suite test-runtime-lib-coverage; behavioral=1 ;;
+    runtime/lib/executor-router.sh)
+      add_suite test-executor-router; add_suite test-install
+      add_pr_gate_shards; add_suite test-pr-gate-profile; behavioral=1 ;;
+    runtime/lib/adapter-enum.sh)
+      add_suite test-release-verify; add_suite test-e2e-script; behavioral=1 ;;
+    runtime/lib/allowlist.sh)
+      add_suite test-install; add_suite test-uninstall; add_suite test-doctor; behavioral=1 ;;
+    runtime/lib/install-receipt.sh)
+      add_suite test-portable; add_suite test-install
+      add_suite test-uninstall; add_suite test-doctor; behavioral=1 ;;
     runtime/lib/memory.sh|runtime/lib/memory-dir.sh)
       add_suite test-pmctl-memory; add_suite test-pmctl-context; add_suite test-migrate; add_suite test-guards; behavioral=1 ;;
     runtime/lib/prompt-context.sh)

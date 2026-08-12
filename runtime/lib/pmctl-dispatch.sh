@@ -3,12 +3,12 @@
 # Executor-agnostic dispatch orchestrator.
 #
 # `pmctl dispatch run --adapter <name> --cd <dir> --brief-file <path>` OWNS the
-# shared dispatch flow and composes the M2-extracted pieces; the adapter under
-# `adapters/<name>/dispatch.sh` stays thin (executor invocation + the
+# shared dispatch flow and composes the M2-extracted pieces; the manifest-owned
+# Adapter dispatch entrypoint stays thin (executor invocation + the
 # `.agent-trace/latest.last` output-contract glue only).
 #
 # Flow (each step is executor-agnostic except step 5):
-#   1. validate adapter name (strict identifier) + resolve by convention
+#   1. validate adapter name + resolve manifest dispatch_entrypoint
 #   2. route + allowlist             executor-router: MANDATORY, fail-closed
 #   3. brief-validate                runtime/bin/brief-validate.sh
 #  3a. optional auto-pack             context reuse-scan + pointer-only brief copy
@@ -31,7 +31,7 @@
 #     form for direct smoke checks, but the policy surface — pmctl — does not.)
 #   - `--adapter` MUST be a bare identifier `^[a-z][a-z0-9_-]*$`; it is never a
 #     path, so a crafted value cannot traverse out of `adapters/` to execute an
-#     arbitrary `dispatch.sh`.
+#     arbitrary executable.
 #   - Routing is the allowlist: the executor MUST resolve to a registered route.
 #     If the routing registry (executor-router) or the guard (pmctl-guard) is not
 #     available, the dispatch is REFUSED — the allowlist/guard is never skipped.
@@ -54,6 +54,15 @@ if ! declare -F pm_identifier_adapter_is_valid >/dev/null 2>&1; then
   _pmctl_dispatch_lib_dir="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   # shellcheck disable=SC1091  # dynamic path; identifier policy is source-safe
   . "$_pmctl_dispatch_lib_dir/identifier-policy.sh" 2>/dev/null || true
+  unset _pmctl_dispatch_lib_dir
+fi
+
+if ! declare -F adapter_manifest_dispatch_path >/dev/null 2>&1 \
+    || ! declare -F pm_identifier_adapter_is_valid >/dev/null 2>&1; then
+  _pmctl_dispatch_lib_dir="${BASH_SOURCE[0]%/*}"
+  [[ "$_pmctl_dispatch_lib_dir" != "${BASH_SOURCE[0]}" ]] || _pmctl_dispatch_lib_dir=.
+  # shellcheck disable=SC1091  # canonical Adapter manifest trust boundary
+  . "$_pmctl_dispatch_lib_dir/adapter-manifest.sh" 2>/dev/null || true
   unset _pmctl_dispatch_lib_dir
 fi
 
@@ -694,6 +703,41 @@ pmctl_dispatch_execute_tail() {
   shift 9 || true
   local -a _forward=("$@")
 
+  # Snapshot optional semantic verification policy immediately before launch.
+  # A missing terminal_event is valid and yields structure-only verification;
+  # an unreadable, replaced, or duplicate-key manifest is not equivalent to an
+  # absent field and must fail closed before the Adapter can execute.
+  local _terminal_event="" _adapter_manifest="" _current_adapter_path=""
+  if ! declare -F adapter_manifest_file >/dev/null 2>&1 \
+      || ! declare -F adapter_manifest_scalar >/dev/null 2>&1 \
+      || ! declare -F adapter_manifest_dispatch_path >/dev/null 2>&1; then
+    printf 'pmctl dispatch run: Adapter manifest reader unavailable before executor launch\n' >&2
+    return 2
+  fi
+  if ! _current_adapter_path="$(adapter_manifest_dispatch_path "$repo_root" "$adapter")"; then
+    printf 'pmctl dispatch run: Adapter entrypoint became invalid before executor launch\n' >&2
+    return 2
+  fi
+  if [[ "$_current_adapter_path" != "$adapter_path" ]]; then
+    printf 'pmctl dispatch run: Adapter entrypoint changed after preflight; refusing stale path %s\n' \
+      "$adapter_path" >&2
+    return 2
+  fi
+  if [[ "${PMCTL_DISPATCH_REQUIRE_DETACH_ELIGIBLE:-0}" == 1 ]]; then
+    if ! pmctl_dispatch_detach_eligible "$repo_root" "$adapter"; then
+      printf 'pmctl dispatch run: Adapter is no longer eligible for detached launch\n' >&2
+      return 2
+    fi
+  fi
+  if ! _adapter_manifest="$(adapter_manifest_file "$repo_root" "$adapter")"; then
+    printf 'pmctl dispatch run: Adapter manifest changed or became invalid before executor launch\n' >&2
+    return 2
+  fi
+  if ! _terminal_event="$(adapter_manifest_scalar "$_adapter_manifest" terminal_event)"; then
+    printf 'pmctl dispatch run: invalid terminal_event manifest field; refusing semantic-verification downgrade\n' >&2
+    return 2
+  fi
+
   local _initial_state_written="${PMCTL_DISPATCH_INITIAL_STATE_WRITTEN:-0}"
   if [[ "$print_cmd" -eq 0 && "$_initial_state_written" != "1" ]]; then
     pmctl_dispatch_write_transition "$repo_root" "$work_dir" "$adapter" "$_dispatch_run_id" \
@@ -782,23 +826,6 @@ pmctl_dispatch_execute_tail() {
   # Post-verify (shared): pass explicit per-run paths parsed from the footer, so
   # post-verify does not depend on shared latest.* symlinks. Falls back to
   # latest.* defaults when footer parsing found nothing.
-  # Read the adapter's declared semantic terminal_event from its manifest and
-  # thread it to post-verify, which asserts the trace carries at least one such
-  # event (semantic completion, layered on the structural integrity check). Read
-  # via the canonical manifest-field helper; sourced defensively so a missing lib
-  # or absent field leaves the value empty and post-verify stays structure-only
-  # (back-compat) rather than aborting dispatch.
-  local _terminal_event="" _adapter_manifest="$repo_root/adapters/$adapter/adapter.yaml"
-  if [[ -f "$_adapter_manifest" ]]; then
-    if ! declare -F runner_kind_manifest_field >/dev/null 2>&1; then
-      # shellcheck disable=SC1091  # dynamic repo root path.
-      . "$repo_root/runtime/lib/runner-kind.sh" 2>/dev/null || true
-    fi
-    if declare -F runner_kind_manifest_field >/dev/null 2>&1; then
-      _terminal_event="$(runner_kind_manifest_field "$_adapter_manifest" terminal_event 2>/dev/null || true)"
-    fi
-  fi
-
   local -a _pv_args=("$work_dir" "$brief_file")
   # Containment boundary + trace base follow the relocated artifacts (CC-417/CC-415
   # seam) so the post-verify .agent-trace guard checks the out-of-repo run dir.
@@ -849,8 +876,8 @@ pmctl_dispatch_execute_tail() {
 }
 
 # Resolve + security-gate an adapter by NAME: validate the bare identifier,
-# resolve adapters/<name>/dispatch.sh, reject symlink/containment escapes, and
-# enforce the route allowlist. Echoes the validated adapter_path on stdout; the
+# resolve the manifest-owned dispatch_entrypoint, reject path/symlink escapes,
+# and enforce the route allowlist. Echoes the validated adapter_path on stdout; the
 # route log line and all errors go to stderr; returns 2 on any failure.
 #
 # This is the shared security preflight used by BOTH pmctl_dispatch_run and the
@@ -866,38 +893,22 @@ pmctl_dispatch_resolve_adapter() {
     return 2
   fi
 
-  local adapter_path="$repo_root/adapters/$adapter/dispatch.sh"
-  if [[ ! -f "$adapter_path" ]]; then
-    printf 'pmctl dispatch run: unknown adapter %q (no %s). An adapter must provide adapters/<name>/dispatch.sh; run pmctl adapter generate to scaffold it.\n' "$adapter" "$adapter_path" >&2
+  if ! declare -F adapter_manifest_dispatch_path >/dev/null 2>&1; then
+    printf 'pmctl dispatch run: Adapter manifest reader unavailable — refusing to resolve an executable by convention\n' >&2
     return 2
   fi
-  if [[ -L "$adapter_path" ]]; then
-    printf 'pmctl dispatch run: adapter dispatch script must not be a symlink: %s\n' "$adapter_path" >&2
+  local adapter_path
+  if ! adapter_path="$(adapter_manifest_dispatch_path "$repo_root" "$adapter")"; then
+    printf 'pmctl dispatch run: adapter %q has no valid manifest dispatch_entrypoint\n' "$adapter" >&2
     return 2
   fi
-  local _adapters_base _adapter_dir_real
-  if ! _adapters_base="$(cd -P -- "$repo_root/adapters" 2>/dev/null && pwd -P)"; then
-    printf 'pmctl dispatch run: adapters directory not found under %s\n' "$repo_root" >&2
-    return 2
-  fi
-  if ! _adapter_dir_real="$(cd -P -- "$(dirname "$adapter_path")" 2>/dev/null && pwd -P)"; then
-    printf 'pmctl dispatch run: cannot resolve adapter directory for %q\n' "$adapter" >&2
-    return 2
-  fi
-  case "$_adapter_dir_real" in
-    "$_adapters_base"/?*) : ;;
-    *)
-      printf 'pmctl dispatch run: adapter path escapes the adapters/ boundary: %s\n' "$_adapter_dir_real" >&2
-      return 2
-      ;;
-  esac
 
-  if ! declare -F dispatch_route_for >/dev/null; then
+  if ! declare -F dispatch_route_for_at >/dev/null; then
     printf 'pmctl dispatch run: routing registry unavailable (executor-router not sourced) — refusing to dispatch without allowlist enforcement\n' >&2
     return 2
   fi
   local route
-  if ! route="$(dispatch_route_for "$adapter" 2>/dev/null)"; then
+  if ! route="$(dispatch_route_for_at "$repo_root" "$adapter" 2>/dev/null)"; then
     printf 'pmctl dispatch run: %q is not a routable executor (not in the dispatch allowlist)\n' "$adapter" >&2
     return 2
   fi
@@ -934,7 +945,7 @@ pmctl_dispatch_validate_brief() {
 # closed). Prints a diagnostic on stderr for the non-eligible cases.
 pmctl_dispatch_detach_eligible() {
   local repo_root="${1:-}" adapter="${2:-}"
-  local manifest="$repo_root/adapters/$adapter/adapter.yaml" rk elig=0
+  local rk elig=0
 
   if ! declare -F runner_kind_detach_eligible >/dev/null 2>&1; then
     # shellcheck disable=SC1091  # dynamic repo root path.
@@ -944,13 +955,12 @@ pmctl_dispatch_detach_eligible() {
     printf 'pmctl dispatch run: cannot evaluate detach eligibility for %q (runner-kind lib unavailable)\n' "$adapter" >&2
     return 2
   fi
-  if [[ ! -r "$manifest" ]]; then
-    printf 'pmctl dispatch run: cannot evaluate detach eligibility for %q (no readable manifest %s)\n' "$adapter" "$manifest" >&2
+  if ! declare -F adapter_manifest_runner_kind >/dev/null 2>&1; then
+    printf 'pmctl dispatch run: cannot evaluate detach eligibility for %q (Adapter manifest reader unavailable)\n' "$adapter" >&2
     return 2
   fi
-  rk="$(runner_kind_manifest_field "$manifest" runner_kind 2>/dev/null || true)"
-  if [[ -z "$rk" ]]; then
-    printf 'pmctl dispatch run: adapter %q declares no runner_kind; detached dispatch requires a known runner-kind\n' "$adapter" >&2
+  if ! rk="$(adapter_manifest_runner_kind "$repo_root" "$adapter")"; then
+    printf 'pmctl dispatch run: cannot evaluate detach eligibility for %q (invalid Adapter manifest)\n' "$adapter" >&2
     return 2
   fi
   runner_kind_detach_eligible "$rk" || elig=$?

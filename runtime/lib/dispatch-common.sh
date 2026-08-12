@@ -2,6 +2,32 @@
 # dispatch-common.sh — shared init helpers for adapter dispatch.sh scripts.
 # Sourced by adapters; do NOT set -euo pipefail here (callers carry their own flags).
 
+# dc_snapshot_lib_names
+# Print the canonical shared-library dependency set for built-in Adapter
+# snapshots. Installer copy bundles consume this same inventory so bootstrap and
+# self-snapshot dependencies cannot drift into two independently maintained
+# lists.
+dc_snapshot_lib_names() {
+  printf '%s\n' \
+    identifier-policy.sh \
+    state-writer.sh \
+    state-paths.sh \
+    portable.sh \
+    model-aliases.sh \
+    reasoning-effort.sh \
+    timeout-resolve.sh \
+    dispatch-common.sh
+}
+
+# dc_installed_adapter_lib_names
+# Print the complete library bundle required by an installed built-in Adapter.
+# The first group is also used by detached self-snapshots; the final two files
+# provide manifest/route authority before the Adapter entrypoint is launched.
+dc_installed_adapter_lib_names() {
+  dc_snapshot_lib_names
+  printf '%s\n' runner-kind.sh adapter-manifest.sh
+}
+
 # dc_snapshot_copy_libs <snapshot_dir> <repo_root>
 # Copy all shared lib files needed by dispatch adapters into snapshot_dir/lib/.
 # Call this from within the self-snapshot block (initial run only) before exec.
@@ -9,12 +35,12 @@ dc_snapshot_copy_libs() {
   local snapshot_dir="$1" repo_root="$2"
   mkdir -p -- "$snapshot_dir/lib"
   local _lib
-  for _lib in identifier-policy.sh state-writer.sh state-paths.sh portable.sh model-aliases.sh \
-              reasoning-effort.sh timeout-resolve.sh dispatch-common.sh; do
+  while IFS= read -r _lib; do
+    [[ -n "$_lib" ]] || continue
     if [[ -r "$repo_root/runtime/lib/$_lib" ]]; then
       cp -- "$repo_root/runtime/lib/$_lib" "$snapshot_dir/lib/$_lib" || true
     fi
-  done
+  done < <(dc_snapshot_lib_names)
 }
 
 # dc_validate_args <work_dir> <brief_file> <print_cmd> <timeout>

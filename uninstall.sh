@@ -74,17 +74,31 @@ else
   echo "uninstall: warning: host write libraries unavailable; Claude and optional-host hooks will not be removed" >&2
 fi
 
+# Validate the complete ownership receipt before any selected host module can
+# mutate its target. This also covers explicit non-Claude uninstalls, whose
+# early-return lifecycle previously reached receipt validation too late.
+_RECEIPT_SNAPSHOT_AVAILABLE=0
+if [[ "$_INSTALL_RECEIPT_AVAILABLE" -eq 1 && -n "$RECEIPT_SOURCE" ]]; then
+  if ! pm_dispatch_receipt_load "$RECEIPT_SOURCE"; then
+    echo "uninstall: cannot safely read product receipt; preserving installed files" >&2
+    exit 2
+  fi
+  _RECEIPT_SNAPSHOT_AVAILABLE=1
+fi
+
 _UNINSTALL_CLAUDE=0
 if [[ "$_HOST_WRITE_AVAILABLE" -eq 1 ]]; then
   # A v2 product receipt is the durable source of ownership for a no-selector
   # uninstall.  Legacy receipts intentionally retain the historical Claude
   # default because they have no selected_hosts field.
   if [[ "$_INSTALL_RECEIPT_AVAILABLE" -eq 1 && "$HOST_SELECTION_EXPLICIT" -eq 0 && -n "$RECEIPT_SOURCE" ]]; then
-    mapfile -t _receipt_hosts < <(pm_dispatch_receipt_selected_hosts "$RECEIPT_SOURCE")
-    if [[ "${#_receipt_hosts[@]}" -gt 0 ]]; then
-      SELECTED_HOSTS=("${_receipt_hosts[@]}")
+    [[ "$_RECEIPT_SNAPSHOT_AVAILABLE" -eq 1 ]] || {
+      echo "uninstall: product receipt snapshot unavailable" >&2
+      exit 2
+    }
+    if [[ "${#PM_DISPATCH_RECEIPT_SELECTED_HOSTS[@]}" -gt 0 ]]; then
+      SELECTED_HOSTS=("${PM_DISPATCH_RECEIPT_SELECTED_HOSTS[@]}")
     fi
-    unset _receipt_hosts
   fi
   mapfile -t SELECTED_HOSTS < <(host_selection_unique "${SELECTED_HOSTS[@]}")
   for _host in "${SELECTED_HOSTS[@]}"; do
@@ -152,6 +166,20 @@ unset _claude_root
 _UNINSTALL_PLATFORM="$(detect_platform)"
 
 MANIFEST="${RECEIPT_SOURCE:-$RECEIPT_PATH}"
+
+# Validate and snapshot the receipt before any filesystem mutation.  An
+# unavailable jq/parser or malformed JSON must preserve every installed item
+# for a safe retry.
+if [[ -f "$MANIFEST" ]]; then
+  if ! declare -F pm_dispatch_receipt_load_entries >/dev/null 2>&1; then
+    echo "uninstall: canonical install receipt reader unavailable; preserving installed files" >&2
+    exit 3
+  fi
+  if ! pm_dispatch_receipt_load_entries "$MANIFEST"; then
+    echo "uninstall: cannot safely read manifest entries; preserving installed files" >&2
+    exit 3
+  fi
+fi
 
 removed=0
 skipped=0
@@ -327,16 +355,12 @@ if [[ ! -f "$MANIFEST" ]]; then
 fi
 
 echo "==> manifest entries"
-parsed_any=0
-while IFS= read -r line; do
-  [[ "$line" == *'"src"'* ]] || continue
-  [[ "$line" == *'"dst"'* ]] || continue
-  parsed_any=1
-
-  src="$(_portable_json_unescape "$(_portable_extract_json_field "$line" "src")")"
-  dst="$(_portable_json_unescape "$(_portable_extract_json_field "$line" "dst")")"
-  mode="$(_portable_json_unescape "$(_portable_extract_json_field "$line" "mode")")"
-  sha256="$(_portable_json_unescape "$(_portable_extract_json_field "$line" "sha256")")"
+for ((manifest_i = 0; manifest_i < ${#PM_DISPATCH_RECEIPT_ENTRY_DSTS[@]}; manifest_i++)); do
+  src="${PM_DISPATCH_RECEIPT_ENTRY_SRCS[manifest_i]}"
+  dst="${PM_DISPATCH_RECEIPT_ENTRY_DSTS[manifest_i]}"
+  mode="${PM_DISPATCH_RECEIPT_ENTRY_MODES[manifest_i]}"
+  sha256="${PM_DISPATCH_RECEIPT_ENTRY_SHA256S[manifest_i]}"
+  digest_scheme="${PM_DISPATCH_RECEIPT_ENTRY_DIGEST_SCHEMES[manifest_i]}"
 
   if [[ -z "$dst" ]]; then
     skipped=$((skipped + 1))
@@ -398,7 +422,12 @@ while IFS= read -r line; do
       fi
       if [[ -f "$dst" || ( -d "$dst" && ! -L "$dst" ) ]]; then
         curr_sha="$(_portable_sha256_path "$dst")"
-        if [[ "$curr_sha" == "$sha256" ]]; then
+        legacy_curr_sha=""
+        if [[ -z "$digest_scheme" && -d "$dst" ]]; then
+          legacy_curr_sha="$(_portable_sha256_tar_v0 "$dst" 2>/dev/null || true)"
+        fi
+        if [[ "$curr_sha" == "$sha256" \
+            || ( -n "$legacy_curr_sha" && "$legacy_curr_sha" == "$sha256" ) ]]; then
           remove_item "$dst"
         else
           skipped=$((skipped + 1))
@@ -459,14 +488,7 @@ while IFS= read -r line; do
       echo "  skip $dst (unknown mode: $mode)"
       ;;
   esac
-done < <(grep '"src"' "$MANIFEST" | grep '"dst"' || true)
-
-# Fail closed: manifest has entries but nothing matched the grep-based parser
-if [[ "$parsed_any" -eq 0 ]] && grep -q '"mode"' "$MANIFEST" 2>/dev/null; then
-  echo "  warning: manifest entries could not be parsed (check format — expected compact JSON)"
-  skipped=$((skipped + 1))
-  safety_skipped=$((safety_skipped + 1))
-fi
+done
 
 # Explicit selection tears down only the named host modules. The no-selector
 # compatibility path retains the historic all-module cleanup for existing
@@ -492,7 +514,14 @@ if [[ "$DRY_RUN" -ne 1 ]]; then
     echo "  note: $safety_skipped item(s) require manual attention — manifest preserved for re-run"
     echo "  resolve conflicts manually, then re-run uninstall.sh"
   fi
-  for d in "$CLAUDE_HOME/agents" "$CLAUDE_HOME/commands" "$CLAUDE_HOME/skills" "$CLAUDE_HOME/scripts" "$CLAUDE_HOME/share" "$CLAUDE_HOME/adapters"; do
+  # Prune only empty receipt-created containers, deepest first. The runtime and
+  # ops paths host the copy-mode Adapter bootstrap bundle; rmdir preserves any
+  # foreign files or sibling tools automatically.
+  for d in "$CLAUDE_HOME/runtime/lib" "$CLAUDE_HOME/runtime" \
+      "$CLAUDE_HOME/ops/usage" "$CLAUDE_HOME/ops" \
+      "$CLAUDE_HOME/scripts/core/policy" "$CLAUDE_HOME/scripts/core" \
+      "$CLAUDE_HOME/agents" "$CLAUDE_HOME/commands" "$CLAUDE_HOME/skills" \
+      "$CLAUDE_HOME/scripts" "$CLAUDE_HOME/share" "$CLAUDE_HOME/adapters"; do
     [[ -d "$d" ]] || continue
     if rmdir "$d" 2>/dev/null; then
       echo "  pruned $d"

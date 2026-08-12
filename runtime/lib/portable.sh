@@ -703,7 +703,10 @@ _PORTABLE_MANIFEST_PREV_SRCS=()
 _PORTABLE_MANIFEST_PREV_DSTS=()
 _PORTABLE_MANIFEST_PREV_MODES=()
 _PORTABLE_MANIFEST_PREV_SHA256S=()
+_PORTABLE_MANIFEST_PREV_DIGEST_SCHEMES=()
 _PORTABLE_MANIFEST_PREV_INITIALIZED=0
+_PORTABLE_MANIFEST_PREV_LOAD_STATUS=0
+_PORTABLE_MANIFEST_PREV_PATH=""
 _PORTABLE_SHA256_TOOL=""
 
 _portable_manifest_path() {
@@ -732,26 +735,6 @@ _portable_json_escape() {
   value="${value//$'\b'/\\b}"
   value="${value//$'\f'/\\f}"
   printf '%s\n' "$value"
-}
-
-_portable_json_unescape() {
-  local value="${1-}"
-  value="${value//\\n/$'\n'}"
-  value="${value//\\r/$'\r'}"
-  value="${value//\\t/$'\t'}"
-  value="${value//\\b/$'\b'}"
-  value="${value//\\f/$'\f'}"
-  value="${value//\\\\/\\}"
-  value="${value//\\\"/\"}"
-  printf '%s\n' "$value"
-}
-
-_portable_extract_json_field() {
-  local line="${1-}"
-  local field="${2-}"
-  local extracted
-  extracted="$(printf '%s\n' "$line" | sed -n "s/.*\"${field}\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p")"
-  printf '%s\n' "$extracted"
 }
 
 # Test-only shims for deterministic link/copy branching when
@@ -791,6 +774,53 @@ _portable_sha256_stream() {
   esac
 }
 
+# Emit a canonical logical tree stream for directory ownership digests.
+# Globbing under the C locale gives deterministic byte ordering without relying
+# on GNU-only `find -print0 | sort -z` or tar header/order behavior. NUL framing
+# keeps whitespace and newlines in path or symlink names unambiguous. Ownership
+# tracks entry type, relative path, regular-file content, executable status,
+# symlink target, and empty directories; host-specific uid/gid/mtime metadata is
+# deliberately excluded.
+_portable_sha256_tree_stream() {
+  local root=${1-} relative=${2-} base entry name child digest executable target
+  local -a entries
+
+  [[ -d "$root" ]] || return 1
+  if [[ -z "$relative" ]]; then
+    printf 'pm-dispatch-directory-digest-v1\0'
+    base=$root
+  else
+    base="$root/$relative"
+  fi
+
+  entries=("$base"/*)
+  for entry in "${entries[@]}"; do
+    name=${entry##*/}
+    child=${relative:+$relative/}$name
+    if [[ -L "$entry" ]]; then
+      target="$(
+        readlink "$entry"
+        _portable_readlink_rc=$?
+        printf .
+        exit "$_portable_readlink_rc"
+      )" || return 1
+      target=${target%.}
+      printf 'l\0%s\0%s\0' "$child" "$target"
+    elif [[ -d "$entry" ]]; then
+      printf 'd\0%s\0' "$child"
+      _portable_sha256_tree_stream "$root" "$child" || return 1
+    elif [[ -f "$entry" ]]; then
+      digest="$(_portable_sha256_path "$entry")" || return 1
+      executable=0
+      [[ -x "$entry" ]] && executable=1
+      printf 'f\0%s\0%s\0%s\0' "$child" "$executable" "$digest"
+    else
+      printf 'portable: unsupported special file in directory digest: %s\n' "$entry" >&2
+      return 1
+    fi
+  done
+}
+
 _portable_sha256_path() {
   local path="${1-}"
   local digest
@@ -801,66 +831,126 @@ _portable_sha256_path() {
   if [[ -f "$path" ]]; then
     case "$_PORTABLE_SHA256_TOOL" in
       sha256sum)
-        digest="$(sha256sum "$path" | awk '{print $1}')"
+        # Hash stdin so coreutils never prefixes the digest with `\` to mark
+        # an escaped filename containing a newline or backslash.
+        digest="$(sha256sum < "$path" | awk '{print $1}')"
         ;;
       shasum)
-        digest="$(shasum -a 256 "$path" | awk '{print $1}')"
+        digest="$(shasum -a 256 < "$path" | awk '{print $1}')"
         ;;
     esac
     printf '%s\n' "$digest"
     return 0
   fi
   if [[ -d "$path" ]]; then
-    if command -v tar >/dev/null 2>&1; then
-      digest="$(tar -cf - -C "$path" . | _portable_sha256_stream)"
-      printf '%s\n' "$digest"
-      return 0
-    fi
+    digest="$(
+      set +e
+      export LC_ALL=C
+      unset GLOBIGNORE GLOBSORT
+      shopt -s dotglob nullglob
+      _portable_sha256_tree_stream "$path" | _portable_sha256_stream
+      _portable_digest_status=("${PIPESTATUS[@]}")
+      [[ "${_portable_digest_status[0]}" -eq 0 \
+        && "${_portable_digest_status[1]}" -eq 0 ]] || exit 1
+    )" || return 1
+    printf '%s\n' "$digest"
+    return 0
   fi
   return 1
 }
 
+_portable_digest_scheme_for_path() {
+  local path=${1-}
+  if [[ -d "$path" ]]; then
+    printf 'logical-tree-v1\n'
+  elif [[ -f "$path" ]]; then
+    printf 'file-v1\n'
+  else
+    return 1
+  fi
+}
+
+# Reproduce the pre-logical-tree directory receipt hash only for a bounded
+# migration check. New receipts must never use this archive-byte digest: tar
+# traversal order and headers are not deterministic across copied trees.
+_portable_sha256_tar_v0() {
+  local path=${1-} digest
+  [[ -d "$path" ]] || return 1
+  command -v tar >/dev/null 2>&1 || return 1
+  digest="$(
+    set +e
+    tar -cf - -C "$path" . | _portable_sha256_stream
+    _portable_tar_status=("${PIPESTATUS[@]}")
+    [[ "${_portable_tar_status[0]}" -eq 0 \
+      && "${_portable_tar_status[1]}" -eq 0 ]] || exit 1
+  )" || return 1
+  printf '%s\n' "$digest"
+}
+
 _portable_manifest_prev_load() {
   local path="${1-}"
-  local line src dst mode sha
+  local receipt_lib i
 
-  if [[ "$_PORTABLE_MANIFEST_PREV_INITIALIZED" -eq 1 ]]; then
-    return 0
+  if [[ "$_PORTABLE_MANIFEST_PREV_INITIALIZED" -eq 1 \
+      && "$_PORTABLE_MANIFEST_PREV_PATH" == "$path" ]]; then
+    return "$_PORTABLE_MANIFEST_PREV_LOAD_STATUS"
   fi
 
   _PORTABLE_MANIFEST_PREV_INITIALIZED=1
+  _PORTABLE_MANIFEST_PREV_LOAD_STATUS=0
+  _PORTABLE_MANIFEST_PREV_PATH="$path"
   _PORTABLE_MANIFEST_PREV_SRCS=()
   _PORTABLE_MANIFEST_PREV_DSTS=()
   _PORTABLE_MANIFEST_PREV_MODES=()
   _PORTABLE_MANIFEST_PREV_SHA256S=()
+  _PORTABLE_MANIFEST_PREV_DIGEST_SCHEMES=()
 
   [[ -f "$path" ]] || return 0
 
-  while IFS= read -r line; do
-    [[ "$line" == *'"src"'* ]] || continue
-    [[ "$line" == *'"dst"'* ]] || continue
-    src="$(_portable_extract_json_field "$line" "src")"
-    dst="$(_portable_extract_json_field "$line" "dst")"
-    mode="$(_portable_extract_json_field "$line" "mode")"
-    sha="$(_portable_extract_json_field "$line" "sha256")"
-    src="$(_portable_json_unescape "${src-}")"
-    dst="$(_portable_json_unescape "${dst-}")"
-    mode="$(_portable_json_unescape "${mode-}")"
-    sha="$(_portable_json_unescape "${sha-}")"
-    if [[ -z "$dst" ]]; then
-      continue
+  if ! declare -F pm_dispatch_receipt_load_entries >/dev/null 2>&1; then
+    receipt_lib="${BASH_SOURCE[0]%/*}/install-receipt.sh"
+    if [[ ! -r "$receipt_lib" ]]; then
+      printf 'portable: canonical install receipt reader unavailable: %s\n' "$receipt_lib" >&2
+      _PORTABLE_MANIFEST_PREV_LOAD_STATUS=3
+      return 3
     fi
-    _PORTABLE_MANIFEST_PREV_SRCS+=("$src")
-    _PORTABLE_MANIFEST_PREV_DSTS+=("$dst")
-    _PORTABLE_MANIFEST_PREV_MODES+=("$mode")
-    _PORTABLE_MANIFEST_PREV_SHA256S+=("$sha")
-  done < "$path"
+    # shellcheck source=runtime/lib/install-receipt.sh disable=SC1091
+    . "$receipt_lib"
+  fi
+  if ! pm_dispatch_receipt_load_entries "$path"; then
+    printf 'portable: refusing to use unreadable install receipt: %s\n' "$path" >&2
+    _PORTABLE_MANIFEST_PREV_LOAD_STATUS=3
+    return 3
+  fi
+
+  for ((i = 0; i < ${#PM_DISPATCH_RECEIPT_ENTRY_DSTS[@]}; i++)); do
+    [[ -n "${PM_DISPATCH_RECEIPT_ENTRY_DSTS[i]}" ]] || continue
+    _PORTABLE_MANIFEST_PREV_SRCS+=("${PM_DISPATCH_RECEIPT_ENTRY_SRCS[i]}")
+    _PORTABLE_MANIFEST_PREV_DSTS+=("${PM_DISPATCH_RECEIPT_ENTRY_DSTS[i]}")
+    _PORTABLE_MANIFEST_PREV_MODES+=("${PM_DISPATCH_RECEIPT_ENTRY_MODES[i]}")
+    _PORTABLE_MANIFEST_PREV_SHA256S+=("${PM_DISPATCH_RECEIPT_ENTRY_SHA256S[i]}")
+    _PORTABLE_MANIFEST_PREV_DIGEST_SCHEMES+=("${PM_DISPATCH_RECEIPT_ENTRY_DIGEST_SCHEMES[i]}")
+  done
+}
+
+_portable_manifest_prev_digest_scheme() {
+  local dst="${1-}" i path
+  path="$(_portable_manifest_path)" || return 1
+  _portable_manifest_prev_load "$path" || return $?
+  for ((i = 0; i < ${#_PORTABLE_MANIFEST_PREV_DSTS[@]}; i++)); do
+    if [[ "${_PORTABLE_MANIFEST_PREV_DSTS[i]}" == "$dst" ]]; then
+      [[ "${_PORTABLE_MANIFEST_PREV_MODES[i]:-}" == copy ]] || return 1
+      printf '%s\n' "${_PORTABLE_MANIFEST_PREV_DIGEST_SCHEMES[i]:-}"
+      return 0
+    fi
+  done
+  return 1
 }
 
 _portable_manifest_prev_symlink_src() {
   local dst="${1-}" i path
   path="$(_portable_manifest_path)" || return 1
-  _portable_manifest_prev_load "$path"
+  _portable_manifest_prev_load "$path" || return $?
   for ((i = 0; i < ${#_PORTABLE_MANIFEST_PREV_DSTS[@]}; i++)); do
     if [[ "${_PORTABLE_MANIFEST_PREV_DSTS[i]}" == "$dst" ]]; then
       [[ "${_PORTABLE_MANIFEST_PREV_MODES[i]:-}" == "symlink" ]] || return 1
@@ -877,7 +967,7 @@ _portable_manifest_prev_sha256() {
   local path
   path="$(_portable_manifest_path)" || return 1
 
-  _portable_manifest_prev_load "$path"
+  _portable_manifest_prev_load "$path" || return $?
 
   for ((i = 0; i < ${#_PORTABLE_MANIFEST_PREV_DSTS[@]}; i++)); do
     if [[ "${_PORTABLE_MANIFEST_PREV_DSTS[i]}" == "$dst" ]]; then
@@ -889,6 +979,24 @@ _portable_manifest_prev_sha256() {
   return 1
 }
 
+# Canonical receipt identity for a destination path: physically resolve only
+# its parent, then append the lexical leaf. This follows a symlinked config root
+# consistently without following a final symlink that the receipt itself owns.
+_portable_manifest_dst_key() {
+  local dst=${1-} parent leaf parent_real
+  [[ -n "$dst" ]] || return 1
+  parent="$(dirname "$dst")"
+  leaf="$(basename "$dst")"
+  parent_real="$(realpath -- "$parent" 2>/dev/null \
+    || { cd "$parent" 2>/dev/null && pwd -P; } \
+    || printf '%s' "$parent")"
+  if [[ "$parent_real" == / ]]; then
+    printf '/%s\n' "$leaf"
+  else
+    printf '%s/%s\n' "${parent_real%/}" "$leaf"
+  fi
+}
+
 manifest_record() {
   local src="${1-}"
   local dst="${2-}"
@@ -897,10 +1005,9 @@ manifest_record() {
   local fallback_reason="${5-}"
   local src_abs
   local dst_abs
-  local dst_parent
   local escaped_src
   local escaped_dst
-  local entry
+  local entry digest_scheme
 
   if [[ -z "$src" || -z "$dst" || -z "$mode" ]]; then
     printf 'portable: manifest_record requires src, dst, mode\n' >&2
@@ -921,6 +1028,10 @@ manifest_record() {
         printf 'portable: manifest_record copy entry missing fallback_reason\n' >&2
         return 3
       }
+      digest_scheme="$(_portable_digest_scheme_for_path "$src")" || {
+        printf 'portable: manifest_record cannot classify copy digest source: %s\n' "$src" >&2
+        return 3
+      }
       ;;
     *)
       printf 'portable: manifest_record unsupported mode: %s\n' "$mode" >&2
@@ -929,15 +1040,14 @@ manifest_record() {
   esac
 
   src_abs="$(realpath_m "$src" 2>/dev/null || printf '%s' "$src")"
-  dst_parent="$(realpath -- "$(dirname "$dst")" 2>/dev/null || { cd "$(dirname "$dst")" 2>/dev/null && pwd -P; } || printf '%s' "$(dirname "$dst")")"
-  dst_abs="$dst_parent/$(basename "$dst")"
+  dst_abs="$(_portable_manifest_dst_key "$dst")" || return 3
   escaped_src="$(_portable_json_escape "$src_abs")"
   escaped_dst="$(_portable_json_escape "$dst_abs")"
 
   if [[ "$mode" == "symlink" || "$mode" == "junction" ]]; then
     entry="{\"src\":\"$escaped_src\",\"dst\":\"$escaped_dst\",\"mode\":\"$mode\"}"
   else
-    entry="{\"src\":\"$escaped_src\",\"dst\":\"$escaped_dst\",\"mode\":\"copy\",\"sha256\":\"$sha256\",\"fallback_reason\":\"$(_portable_json_escape "$fallback_reason")\"}"
+    entry="{\"src\":\"$escaped_src\",\"dst\":\"$escaped_dst\",\"mode\":\"copy\",\"sha256\":\"$sha256\",\"digest_scheme\":\"$digest_scheme\",\"fallback_reason\":\"$(_portable_json_escape "$fallback_reason")\"}"
   fi
 
   _PORTABLE_MANIFEST_RECORDS+=("$entry")
@@ -1101,20 +1211,42 @@ link_or_copy() {
   local existing_symlink_target
   local prev_src
   local prev_sha
+  local prev_digest_scheme
   local curr_sha
   local src_sha
+  local current_digest_scheme
+  local legacy_curr_sha
+  local receipt_owned=0
   local fallback_reason
   local sha256
   local ln_rc=0
   local current
+  local manifest_path
 
   if [[ -z "$src" || -z "$dst" ]]; then
     printf 'portable: link_or_copy requires src and dst\n' >&2
     return 3
   fi
 
+  if [[ ! -e "$src" ]]; then
+    printf 'portable: link_or_copy source does not exist: %s\n' "$src" >&2
+    return 3
+  fi
+  if [[ ! -f "$src" && ! -d "$src" ]]; then
+    printf 'portable: link_or_copy source must be a regular file or directory: %s\n' "$src" >&2
+    return 3
+  fi
+  if [[ ! -r "$src" || ( -d "$src" && ! -x "$src" ) ]]; then
+    printf 'portable: link_or_copy source is not readable: %s\n' "$src" >&2
+    return 3
+  fi
+
   src_abs="$(realpath_m "$src" 2>/dev/null || printf '%s' "$src")"
-  dst_abs="$(realpath_m_lex "$dst" 2>/dev/null || printf '%s' "$dst")"
+  dst_abs="$(_portable_manifest_dst_key "$dst" 2>/dev/null || printf '%s' "$dst")"
+  manifest_path="$(_portable_manifest_path 2>/dev/null || true)"
+  if [[ -n "$manifest_path" ]] && ! _portable_manifest_prev_load "$manifest_path"; then
+    return 3
+  fi
 
   if [[ -L "$dst" ]]; then
     existing_symlink_target="$(_portable_resolve_symlink "$dst")"
@@ -1141,6 +1273,7 @@ link_or_copy() {
   fi
 
   prev_sha="$(_portable_manifest_prev_sha256 "$dst_abs" || true)"
+  prev_digest_scheme="$(_portable_manifest_prev_digest_scheme "$dst_abs" || true)"
 
   # Guard: dst is a real directory (not a symlink) — ln would create a link inside it.
   # Exempt manifest-managed destinations: if prev_sha is set, we installed it; fall
@@ -1154,12 +1287,30 @@ link_or_copy() {
     if [[ -n "$prev_sha" ]] && _portable_sha256_path "$dst" >/dev/null 2>&1; then
       src_sha="$(_portable_sha256_path "$src")"
       curr_sha="$(_portable_sha256_path "$dst")"
+      current_digest_scheme="$(_portable_digest_scheme_for_path "$src" || true)"
       if [[ "$curr_sha" == "$src_sha" ]]; then
         echo "  ok    $dst"
         manifest_record "$src" "$dst" copy "$src_sha" "already up to date (sha256 match)" || return 3
         return 0
       fi
-      if [[ "$curr_sha" == "$prev_sha" ]]; then
+      receipt_owned=0
+      if [[ -n "$current_digest_scheme" \
+          && "$prev_digest_scheme" == "$current_digest_scheme" \
+          && "$curr_sha" == "$prev_sha" ]]; then
+        receipt_owned=1
+      elif [[ -z "$prev_digest_scheme" && -f "$src" && -f "$dst" \
+          && "$curr_sha" == "$prev_sha" ]]; then
+        # Pre-scheme file receipts already used the same content digest.
+        receipt_owned=1
+      elif [[ -z "$prev_digest_scheme" && -d "$src" && -d "$dst" ]]; then
+        # Legacy directory receipts hashed raw tar bytes. Migrate only when the
+        # exact old digest can still prove this copy untouched; otherwise the
+        # ambiguity is a conflict, never permission to overwrite user bytes.
+        legacy_curr_sha="$(_portable_sha256_tar_v0 "$dst" 2>/dev/null || true)"
+        [[ -n "$legacy_curr_sha" && "$legacy_curr_sha" == "$prev_sha" ]] \
+          && receipt_owned=1
+      fi
+      if [[ "$receipt_owned" -eq 1 ]]; then
         if [[ "${DRY_RUN:-0}" == "1" ]]; then
           echo "  would refresh $dst -> $src"
           manifest_record "$src" "$dst" copy "$src_sha" "dry-run refresh" || return 3

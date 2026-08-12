@@ -197,7 +197,11 @@ test_opencode_adapter_is_accepted() {
 test_adapter_enum_rejects_invalid_and_symlinked_manifest() {
   local root manifest
   root=$(mktemp -d); mkdir -p "$root/adapters/demo"
-  manifest="$root/adapters/demo/adapter.yaml"; printf 'name: demo\n' > "$manifest"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$root/adapters/demo/worker.sh"
+  chmod +x "$root/adapters/demo/worker.sh"
+  manifest="$root/adapters/demo/adapter.yaml"
+  printf '%s\n' 'schema_version: 1' 'adapter_name: demo' \
+    'runner_kind: cli-subprocess' 'dispatch_entrypoint: ./worker.sh' > "$manifest"
   if ! pm_adapter_is_valid "$root" 'Bad_Name' && ! pm_adapter_is_valid "$root" '-demo'; then pass "adapter-enum-invalid-names-rejected"; else fail "adapter-enum-invalid-names-rejected"; fi
   rm -f "$manifest"; ln -s /dev/null "$manifest"
   if ! pm_adapter_is_valid "$root" demo; then pass "adapter-enum-symlink-manifest-rejected"; else fail "adapter-enum-symlink-manifest-rejected"; fi
@@ -206,9 +210,17 @@ test_adapter_enum_rejects_invalid_and_symlinked_manifest() {
 
 test_adapter_enum_expected_values() {
   local root values
-  root=$(mktemp -d); mkdir -p "$root/adapters/zeta" "$root/adapters/alpha"
-  printf 'name: zeta\n' > "$root/adapters/zeta/adapter.yaml"
-  printf 'name: alpha\n' > "$root/adapters/alpha/adapter.yaml"
+  root=$(mktemp -d); mkdir -p "$root/adapters/zeta" "$root/adapters/alpha" "$root/adapters/broken"
+  for adapter in zeta alpha; do
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$root/adapters/$adapter/worker.sh"
+    chmod +x "$root/adapters/$adapter/worker.sh"
+    printf '%s\n' 'schema_version: 1' "adapter_name: $adapter" \
+      'runner_kind: cli-subprocess' 'dispatch_entrypoint: ./worker.sh' \
+      > "$root/adapters/$adapter/adapter.yaml"
+  done
+  printf '%s\n' 'schema_version: 1' 'adapter_name: broken' \
+    'runner_kind: cli-subprocess' 'dispatch_entrypoint: ./missing.sh' \
+    > "$root/adapters/broken/adapter.yaml"
   values="$(pm_adapter_expected_values "$root")"; rm -rf "$root"
   if [[ "$values" == 'auto|alpha|zeta' ]]; then pass "adapter-enum-expected-values"; else fail "adapter-enum-expected-values" "values=$values"; fi
 }

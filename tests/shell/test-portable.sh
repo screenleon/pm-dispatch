@@ -852,6 +852,59 @@ case_file_size_bytes_missing_file() {
   fi
 }
 
+# Behavior: link_or_copy rejects missing and special-file sources in dry-run and
+# real modes without creating a destination or recording receipt state.
+# Steps: Arrange a missing path and FIFO; Act by invoking both modes; Assert exit
+# 3, no destination or symlink, and an empty pending manifest.
+case_link_or_copy_missing_source_fails_closed() {
+  local name="link-or-copy-missing-source-fails-closed"
+  should_run "$name" || return 0
+  local root="$tmp_root/$name" missing="$tmp_root/$name/missing.txt"
+  local dry_dst="$tmp_root/$name/dry-dst.txt" real_dst="$tmp_root/$name/real-dst.txt"
+  local special="$tmp_root/$name/source.fifo" out_file="$tmp_root/$name/out" rc dry_before
+  mkdir -p "$root"
+  dry_before="${DRY_RUN-0}"
+
+  _PORTABLE_MANIFEST_RECORDS=()
+  set +e
+  DRY_RUN=1 link_or_copy "$missing" "$dry_dst" > "$out_file" 2>&1
+  rc=$?
+  set -e
+  if [[ "$rc" -ne 3 || -e "$dry_dst" || -L "$dry_dst" \
+      || "${#_PORTABLE_MANIFEST_RECORDS[@]}" -ne 0 ]]; then
+    DRY_RUN="$dry_before"
+    fail "$name" "dry-run missing source was not rejected cleanly (rc=$rc)"
+    return
+  fi
+
+  set +e
+  DRY_RUN=0 link_or_copy "$missing" "$real_dst" > "$out_file" 2>&1
+  rc=$?
+  set -e
+  if [[ "$rc" -ne 3 || -e "$real_dst" || -L "$real_dst" \
+      || "${#_PORTABLE_MANIFEST_RECORDS[@]}" -ne 0 ]]; then
+    DRY_RUN="$dry_before"
+    fail "$name" "real-run missing source created state (rc=$rc)"
+    return
+  fi
+
+  if mkfifo "$special" 2>/dev/null; then
+    set +e
+    link_or_copy "$special" "$real_dst" > "$out_file" 2>&1
+    rc=$?
+    set -e
+    if [[ "$rc" -ne 3 || -e "$real_dst" || -L "$real_dst" \
+        || "${#_PORTABLE_MANIFEST_RECORDS[@]}" -ne 0 ]]; then
+      DRY_RUN="$dry_before"
+      fail "$name" "special-file source was not rejected (rc=$rc)"
+      return
+    fi
+  fi
+
+  DRY_RUN="$dry_before"
+  pass "$name"
+}
+
 case_link_or_copy_symlink_success() {
   local name="link-or-copy-symlink-success"
   should_run "$name" || return 0
@@ -922,6 +975,10 @@ case_link_or_copy_symlink_success() {
     fail "$name" "symlink-mode entry contains fallback_reason"
     return
   fi
+  if grep -q '"digest_scheme"' "$manifest"; then
+    fail "$name" "symlink-mode entry contains digest_scheme"
+    return
+  fi
   pass "$name"
 }
 
@@ -985,6 +1042,10 @@ case_link_or_copy_post_check_reject() {
   fi
   if ! grep -Fq '"fallback_reason":"symlink post-check failed"' "$manifest"; then
     fail "$name" "manifest copy entry fallback_reason incorrect"
+    return
+  fi
+  if ! grep -Fq '"digest_scheme":"file-v1"' "$manifest"; then
+    fail "$name" "manifest copy entry missing file-v1 digest scheme"
     return
   fi
   if ! [[ -f "$dst" ]]; then
@@ -1060,6 +1121,10 @@ case_link_or_copy_copy_fallback() {
   fi
   if ! grep -Fq '"fallback_reason":"symlink unsupported on host"' "$manifest"; then
     fail "$name" "manifest copy entry fallback_reason incorrect"
+    return
+  fi
+  if ! grep -Fq '"digest_scheme":"file-v1"' "$manifest"; then
+    fail "$name" "manifest copy entry missing file-v1 digest scheme"
     return
   fi
   if ! [[ -f "$dst" ]]; then
@@ -1222,6 +1287,7 @@ case_detect_executor_profile_full_when_stub_present
 case_detect_executor_profile_minimal_without_stub
 case_file_size_bytes_returns_size
 case_file_size_bytes_missing_file
+case_link_or_copy_missing_source_fails_closed
 case_link_or_copy_copy_refresh_stale() {
   local name="link-or-copy-copy-refresh-stale"
   should_run "$name" || return 0
@@ -1462,6 +1528,123 @@ case_link_or_copy_copy_refresh_dry_run() {
   pass "$name"
 }
 
+# Behavior: the receipt writer and canonical reader preserve special path bytes
+# and let the exact recorded copy destination refresh.
+# Steps: Arrange quoted, backslash, and newline-bearing paths in a receipt; Act by
+# reloading and refreshing; Assert new bytes and exact source/destination values.
+case_link_or_copy_receipt_json_round_trip() {
+  local name="link-or-copy-receipt-json-special-path-round-trip"
+  should_run "$name" || return 0
+  local root="$tmp_root/$name" manifest="$tmp_root/$name/receipt.json"
+  local src="$tmp_root/$name/"$'source "quoted" \\ path\nfile.txt'
+  local dst="$tmp_root/$name/"$'dest "quoted" \\ path\nfile.txt'
+  local out="$tmp_root/$name/out" old_sha rc old_unsupported
+  mkdir -p "$root"
+  printf 'old\n' > "$src"
+  printf 'old\n' > "$dst"
+  old_sha="$(_portable_sha256_path "$dst")"
+  _PORTABLE_MANIFEST_RECORDS=()
+  manifest_record "$src" "$dst" copy "$old_sha" "special path fixture" || {
+    fail "$name" "could not serialize special-character receipt entry"; return; }
+  manifest_flush "$manifest" "$REPO_ROOT" >/dev/null || {
+    fail "$name" "could not flush special-character receipt"; return; }
+  printf 'new\n' > "$src"
+
+  PM_DISPATCH_MANIFEST_PATH="$manifest"
+  _PORTABLE_MANIFEST_PREV_INITIALIZED=0
+  _PORTABLE_MANIFEST_PREV_LOAD_STATUS=0
+  _PORTABLE_MANIFEST_PREV_PATH=""
+  _PORTABLE_MANIFEST_RECORDS=()
+  old_unsupported="${FAKE_SYMLINK_UNSUPPORTED-0}"
+  set +e
+  FAKE_SYMLINK_UNSUPPORTED=1 link_or_copy "$src" "$dst" > "$out" 2>&1
+  rc=$?
+  set -e
+  FAKE_SYMLINK_UNSUPPORTED="$old_unsupported"
+  unset PM_DISPATCH_MANIFEST_PATH
+
+  if [[ "$rc" -ne 1 || "$(<"$dst")" != new ]]; then
+    fail "$name" "special-character receipt did not authorize its exact refresh (rc=$rc out=$(<"$out"))"
+    return
+  fi
+  if [[ "${_PORTABLE_MANIFEST_PREV_SRCS[0]-}" != "$src" \
+      || "${_PORTABLE_MANIFEST_PREV_DSTS[0]-}" != "$dst" ]]; then
+    fail "$name" "canonical reader did not preserve the exact source/destination bytes"
+    return
+  fi
+  pass "$name"
+}
+
+# Behavior: the canonical receipt reader fails closed with an actionable error
+# when jq is unavailable.
+# Steps: Arrange an isolated PATH without jq; Act by reading a receipt; Assert
+# exit 2 and the jq-required diagnostic.
+case_receipt_reader_requires_jq() {
+  local name="install-receipt-reader-requires-jq"
+  should_run "$name" || return 0
+  local root="$tmp_root/$name" receipt="$tmp_root/$name/receipt.json" out rc
+  mkdir -p "$root/empty-path"
+  printf '{"entries":[]}\n' > "$receipt"
+  set +e
+  out="$(PATH="$root/empty-path" /bin/bash -c '
+    . "$1"
+    pm_dispatch_receipt_load_entries "$2"
+  ' _ "$REPO_ROOT/runtime/lib/install-receipt.sh" "$receipt" 2>&1)"
+  rc=$?
+  set -e
+  if [[ "$rc" -ne 2 || "$out" != *"jq is required"* ]]; then
+    fail "$name" "missing jq did not fail closed with an actionable diagnostic (rc=$rc out=$out)"
+    return
+  fi
+  pass "$name"
+}
+
+# Behavior: an unsupported receipt schema cannot authorize or record a copy
+# refresh and leaves the installed destination unchanged.
+# Steps: Arrange a version-99 receipt with a changed source; Act via link_or_copy;
+# Assert exit 3, old destination bytes, no records, and unsupported status.
+case_receipt_unknown_version_denies_refresh() {
+  local name="install-receipt-unknown-version-denies-refresh"
+  should_run "$name" || return 0
+  local root="$tmp_root/$name" src dst receipt out old_sha rc old_unsupported
+  root="$tmp_root/$name"
+  src="$root/src.txt"
+  dst="$root/dst.txt"
+  receipt="$root/receipt.json"
+  out="$root/out"
+  mkdir -p "$root"
+  printf 'old\n' > "$src"
+  printf 'old\n' > "$dst"
+  old_sha="$(_portable_sha256_path "$dst")"
+  jq -n --arg src "$src" --arg dst "$dst" --arg sha "$old_sha" '{
+      manifest_version: 99,
+      entries: [{src: $src, dst: $dst, mode: "copy", sha256: $sha,
+        digest_scheme: "file-v1", fallback_reason: "unknown schema"}]
+    }' > "$receipt"
+  printf 'new\n' > "$src"
+
+  PM_DISPATCH_MANIFEST_PATH="$receipt"
+  _PORTABLE_MANIFEST_PREV_INITIALIZED=0
+  _PORTABLE_MANIFEST_PREV_LOAD_STATUS=0
+  _PORTABLE_MANIFEST_PREV_PATH=""
+  _PORTABLE_MANIFEST_RECORDS=()
+  old_unsupported="${FAKE_SYMLINK_UNSUPPORTED-0}"
+  set +e
+  FAKE_SYMLINK_UNSUPPORTED=1 link_or_copy "$src" "$dst" > "$out" 2>&1
+  rc=$?
+  set -e
+  FAKE_SYMLINK_UNSUPPORTED="$old_unsupported"
+  unset PM_DISPATCH_MANIFEST_PATH
+
+  if [[ "$rc" -ne 3 || "$(<"$dst")" != old \
+      || "${#_PORTABLE_MANIFEST_RECORDS[@]}" -ne 0 \
+      || "$PM_DISPATCH_RECEIPT_MANIFEST_VERSION_STATUS" != unsupported ]]; then
+    fail "$name" "unknown receipt schema authorized or recorded refresh state (rc=$rc)"
+    return
+  fi
+  pass "$name"
+}
+
 case_portable_sha1_shasum_fallback() {
   local name="portable-sha1: shasum fallback produces 40-char hex digest"
   should_run "$name" || return 0
@@ -1515,6 +1698,163 @@ case_portable_sha1_both_missing() {
   else
     fail "$name" "expected non-zero rc and warning; got rc=${rc} stderr='${stderr_out:-empty}'"
   fi
+}
+
+# Behavior: directory digests are creation/glob-order independent while changes
+# to file content, executable mode, or empty-directory membership change the hash.
+# Steps: Arrange equivalent trees in different orders; Act by hashing then
+# mutating each logical attribute; Assert equality first and divergence after each change.
+case_portable_directory_digest_is_canonical() {
+  local name="portable-directory-digest-canonical-logical-tree"
+  should_run "$name" || return 0
+  local root="$tmp_root/$name" first second
+  first="$root/first"
+  second="$root/second"
+  local newline_name=$'line\nbreak.txt' first_sha second_sha mutated_sha
+
+  # Create the same logical tree in deliberately different filesystem orders.
+  mkdir -p "$first/z-empty" "$first/a dir/nested"
+  printf 'hidden\n' > "$first/.hidden"
+  printf 'payload\n' > "$first/a dir/nested/$newline_name"
+  printf '#!/bin/sh\nexit 0\n' > "$first/tool.sh"
+  chmod +x "$first/tool.sh"
+
+  mkdir -p "$second/a dir/nested" "$second/z-empty"
+  printf '#!/bin/sh\nexit 0\n' > "$second/tool.sh"
+  chmod +x "$second/tool.sh"
+  printf 'payload\n' > "$second/a dir/nested/$newline_name"
+  printf 'hidden\n' > "$second/.hidden"
+
+  if ln -s 'a dir/nested' "$first/link" 2>/dev/null \
+      && ln -s 'a dir/nested' "$second/link" 2>/dev/null \
+      && [[ -L "$first/link" && -L "$second/link" ]]; then
+    :
+  else
+    rm -f "$first/link" "$second/link"
+  fi
+
+  # Bash 5.3 lets callers override glob order with GLOBSORT; digesting must
+  # neutralize it just like GLOBIGNORE and remain creation-order independent.
+  first_sha="$(GLOBSORT=nosort _portable_sha256_path "$first")" || {
+    fail "$name" "first tree digest failed"; return; }
+  second_sha="$(GLOBSORT=nosort _portable_sha256_path "$second")" || {
+    fail "$name" "second tree digest failed"; return; }
+  if [[ "$first_sha" != "$second_sha" ]]; then
+    fail "$name" "equivalent trees hashed differently"
+    return
+  fi
+
+  printf 'changed\n' > "$second/a dir/nested/$newline_name"
+  mutated_sha="$(_portable_sha256_path "$second")"
+  if [[ "$mutated_sha" == "$first_sha" ]]; then
+    fail "$name" "file-content mutation did not change digest"
+    return
+  fi
+  printf 'payload\n' > "$second/a dir/nested/$newline_name"
+  chmod -x "$second/tool.sh"
+  mutated_sha="$(_portable_sha256_path "$second")"
+  if [[ "$mutated_sha" == "$first_sha" ]]; then
+    fail "$name" "executable-bit mutation did not change digest"
+    return
+  fi
+  chmod +x "$second/tool.sh"
+  mkdir "$second/new-empty"
+  mutated_sha="$(_portable_sha256_path "$second")"
+  if [[ "$mutated_sha" == "$first_sha" ]]; then
+    fail "$name" "empty-directory mutation did not change digest"
+    return
+  fi
+
+  pass "$name"
+}
+
+# Behavior: a verified tar-v0 directory receipt refreshes and migrates to the
+# logical-tree digest, while mismatched or unverifiable legacy state is preserved.
+# Steps: Arrange matching, mismatched, and unverifiable legacy receipts; Act by
+# refreshing each; Assert migration for the match and preserved conflicts otherwise.
+case_portable_legacy_directory_receipt_migration() {
+  local name="portable-legacy-directory-receipt-migration"
+  should_run "$name" || return 0
+  local root="$tmp_root/$name" src dst manifest legacy_sha out out_file rc
+  mkdir -p "$root"
+
+  # An exact tar-v0 match proves the legacy copy untouched, so a changed source
+  # may refresh it and the pending receipt migrates to logical-tree-v1.
+  src="$root/hit-src"; dst="$root/hit-dst"; manifest="$root/hit.json"
+  mkdir -p "$src" "$dst"
+  printf 'old\n' > "$src/value"; cp -a "$src/." "$dst/"
+  legacy_sha="$(_portable_sha256_tar_v0 "$dst")" || {
+    fail "$name" "could not create legacy tar-v0 fixture"; return; }
+  printf '{"manifest_version":1,"entries":[{"src":"%s","dst":"%s","mode":"copy","sha256":"%s","fallback_reason":"legacy"}]}\n' \
+    "$(_portable_json_escape "$src")" "$(_portable_json_escape "$dst")" "$legacy_sha" > "$manifest"
+  printf 'upstream\n' > "$src/value"
+  PM_DISPATCH_MANIFEST_PATH="$manifest"
+  _PORTABLE_MANIFEST_PREV_INITIALIZED=0
+  _PORTABLE_MANIFEST_PREV_SRCS=(); _PORTABLE_MANIFEST_PREV_DSTS=()
+  _PORTABLE_MANIFEST_PREV_MODES=(); _PORTABLE_MANIFEST_PREV_SHA256S=()
+  _PORTABLE_MANIFEST_PREV_DIGEST_SCHEMES=(); _PORTABLE_MANIFEST_RECORDS=()
+  out_file="$root/hit.out"
+  set +e
+  FAKE_SYMLINK_UNSUPPORTED=1 link_or_copy "$src" "$dst" > "$out_file" 2>&1; rc=$?
+  set -e
+  out="$(<"$out_file")"
+  if [[ "$rc" -ne 1 || "$(<"$dst/value")" != upstream \
+      || "${_PORTABLE_MANIFEST_RECORDS[*]}" != *'"digest_scheme":"logical-tree-v1"'* ]]; then
+    fail "$name" "legacy verified refresh did not migrate rc=$rc out=$out"
+    return
+  fi
+
+  # A mismatched legacy digest is ambiguous and must preserve local bytes.
+  src="$root/mismatch-src"; dst="$root/mismatch-dst"; manifest="$root/mismatch.json"
+  mkdir -p "$src" "$dst"
+  printf 'old\n' > "$src/value"; cp -a "$src/." "$dst/"
+  legacy_sha="$(_portable_sha256_tar_v0 "$dst")"
+  printf '{"manifest_version":1,"entries":[{"src":"%s","dst":"%s","mode":"copy","sha256":"%s","fallback_reason":"legacy"}]}\n' \
+    "$(_portable_json_escape "$src")" "$(_portable_json_escape "$dst")" "$legacy_sha" > "$manifest"
+  printf 'upstream\n' > "$src/value"; printf 'user-change\n' > "$dst/value"
+  PM_DISPATCH_MANIFEST_PATH="$manifest"
+  _PORTABLE_MANIFEST_PREV_INITIALIZED=0
+  _PORTABLE_MANIFEST_PREV_SRCS=(); _PORTABLE_MANIFEST_PREV_DSTS=()
+  _PORTABLE_MANIFEST_PREV_MODES=(); _PORTABLE_MANIFEST_PREV_SHA256S=()
+  _PORTABLE_MANIFEST_PREV_DIGEST_SCHEMES=(); _PORTABLE_MANIFEST_RECORDS=()
+  out_file="$root/mismatch.out"
+  set +e
+  FAKE_SYMLINK_UNSUPPORTED=1 link_or_copy "$src" "$dst" > "$out_file" 2>&1; rc=$?
+  set -e
+  out="$(<"$out_file")"
+  if [[ "$rc" -ne 2 || "$(<"$dst/value")" != user-change || "$out" != *CONFLICT* ]]; then
+    fail "$name" "legacy mismatch did not fail closed rc=$rc out=$out"
+    return
+  fi
+
+  # Missing tar evidence is the same fail-closed case; it is never permission
+  # to overwrite a legacy directory receipt.
+  src="$root/no-tar-src"; dst="$root/no-tar-dst"; manifest="$root/no-tar.json"
+  mkdir -p "$src" "$dst"
+  printf 'old\n' > "$src/value"; cp -a "$src/." "$dst/"
+  legacy_sha="$(_portable_sha256_tar_v0 "$dst")"
+  printf '{"manifest_version":1,"entries":[{"src":"%s","dst":"%s","mode":"copy","sha256":"%s","fallback_reason":"legacy"}]}\n' \
+    "$(_portable_json_escape "$src")" "$(_portable_json_escape "$dst")" "$legacy_sha" > "$manifest"
+  printf 'upstream\n' > "$src/value"
+  set +e
+  out="$({
+    PM_DISPATCH_MANIFEST_PATH="$manifest"
+    _PORTABLE_MANIFEST_PREV_INITIALIZED=0
+    _PORTABLE_MANIFEST_PREV_SRCS=(); _PORTABLE_MANIFEST_PREV_DSTS=()
+    _PORTABLE_MANIFEST_PREV_MODES=(); _PORTABLE_MANIFEST_PREV_SHA256S=()
+    _PORTABLE_MANIFEST_PREV_DIGEST_SCHEMES=(); _PORTABLE_MANIFEST_RECORDS=()
+    # shellcheck disable=SC2329  # link_or_copy invokes this test override indirectly.
+    _portable_sha256_tar_v0() { return 1; }
+    FAKE_SYMLINK_UNSUPPORTED=1 link_or_copy "$src" "$dst"
+  } 2>&1)"; rc=$?
+  set -e
+  if [[ "$rc" -ne 2 || "$(<"$dst/value")" != old || "$out" != *CONFLICT* ]]; then
+    fail "$name" "missing legacy verifier did not preserve copy rc=$rc out=$out"
+    return
+  fi
+
+  unset PM_DISPATCH_MANIFEST_PATH
+  pass "$name"
 }
 
 # Writes a cygpath shim mimicking `cygpath -m` (POSIX /c/x and drive forms ->
@@ -1603,8 +1943,13 @@ case_link_or_copy_copy_refresh_stale
 case_link_or_copy_copy_no_refresh_when_up_to_date
 case_link_or_copy_copy_refresh_user_modified_conflict
 case_link_or_copy_copy_refresh_dry_run
+case_link_or_copy_receipt_json_round_trip
+case_receipt_reader_requires_jq
+case_receipt_unknown_version_denies_refresh
 case_portable_sha1_shasum_fallback
 case_portable_sha1_both_missing
+case_portable_directory_digest_is_canonical
+case_portable_legacy_directory_receipt_migration
 case_portable_canonical_path
 case_portable_source_is_side_effect_free
 

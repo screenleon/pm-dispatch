@@ -9,6 +9,8 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 . "$SCRIPT_DIR/../lib/test-harness.sh"
 # shellcheck source=tests/lib/test-pmctl-fixture.sh
 . "$SCRIPT_DIR/../lib/test-pmctl-fixture.sh"
+# shellcheck source=runtime/lib/adapter-manifest.sh
+. "$REPO_ROOT/runtime/lib/adapter-manifest.sh"
 th_init "test-pmctl-adapter-generate" "$@"
 
 make_fixture_repo() {
@@ -24,8 +26,6 @@ make_fixture_repo() {
   # flow (CC-289), so the fixture must carry them to exercise that route.
   cp "$REPO_ROOT/runtime/lib/pmctl-dispatch.sh" "$repo/runtime/lib/pmctl-dispatch.sh"
   cp "$REPO_ROOT/runtime/lib/executor-router.sh" "$repo/runtime/lib/executor-router.sh"
-  # executor-router.sh sources runner-kind.sh for manifest-derived routing (CC-373).
-  cp "$REPO_ROOT/runtime/lib/runner-kind.sh" "$repo/runtime/lib/runner-kind.sh"
   {
     printf 'values:\n'
     for value in $enum_values; do
@@ -173,20 +173,41 @@ if should_run "run.sh is executable"; then
   fi
 fi
 
-# Behavior: adapter.yaml contains the expected top-level contract fields
-# Steps: generate codex and compare adapter.yaml field order and count
+# Behavior: adapter.yaml contains the complete ordered top-level contract,
+# including the canonical dispatch entrypoint field.
+# Steps: Arrange an empty fixture repository; Act by generating codex; Assert
+# the manifest has exactly the expected nine fields in contract order.
 if should_run "adapter.yaml has 9 fields"; then
   name="adapter.yaml has 9 fields"
   repo="$tmp_root/$name"
   make_fixture_repo "$repo"
   run_pmctl "$repo" adapter generate codex >/dev/null
   fields="$(awk -F: '/^[a-z_]+:/ { print $1 }' "$repo/adapters/codex/adapter.yaml")"
-  expected=$'schema_version\nadapter_name\nexecutor\ncli_binary\nisolation_map_ref\nrunner_ref\ndispatch_contract\nrunner_kind\ngenerated_files'
+  expected=$'schema_version\nadapter_name\nexecutor\ncli_binary\nisolation_map_ref\ndispatch_entrypoint\ndispatch_contract\nrunner_kind\ngenerated_files'
   count="$(printf '%s\n' "$fields" | wc -l | tr -d ' ')"
   if [[ "$count" == "9" && "$fields" == "$expected" ]]; then
     pass "$name"
   else
     fail "$name" "count=$count fields=$fields"
+  fi
+fi
+
+# Behavior: generated manifest declares the canonical runtime entrypoint and
+# never emits the ambiguous legacy runner_ref field.
+# Steps: Arrange an empty fixture repository; Act by generating and resolving
+# the codex Adapter; Assert the canonical dispatch field and absence of runner_ref.
+if should_run "generated manifest owns dispatch entrypoint"; then
+  name="generated manifest owns dispatch entrypoint"
+  repo="$tmp_root/$name"
+  make_fixture_repo "$repo"
+  run_pmctl "$repo" adapter generate codex >/dev/null
+  resolved="$(adapter_manifest_dispatch_path "$repo" codex)"
+  if [[ "$resolved" == "$repo/adapters/codex/dispatch.sh" ]] \
+      && grep -qx 'dispatch_entrypoint: ./dispatch.sh' "$repo/adapters/codex/adapter.yaml" \
+      && ! grep -q '^runner_ref:' "$repo/adapters/codex/adapter.yaml"; then
+    pass "$name"
+  else
+    fail "$name" "resolved=$resolved"
   fi
 fi
 

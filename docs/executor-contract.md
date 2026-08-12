@@ -187,6 +187,13 @@ This asymmetry is inherent to the host's CLI capabilities — both paths evaluat
 
 **On the dispatch entrypoint and the low-level primitive (single policy, not split-brain):** `pmctl dispatch run` is the **sole routine** codex path and the policy surface — it runs `brief-validate` + `pmctl guard check` before invoking the adapter, and no executor subagent ever holds brief-write authority. The codex adapter (`adapters/codex/dispatch.sh`) is also directly callable as a low-level primitive; because codex's `write_guard_mode` is `cli-only` the live PreToolUse hook **no-ops** there, so the brief-location policy is enforced via `pmctl guard check`, not a live hook. The directly-callable adapter is the low-level primitive, not an unguarded bypass. A non-Claude host that calls the adapter directly (outside `pmctl dispatch run`) is responsible for calling `pmctl guard check` itself, exactly as the non-Claude row above requires.
 
+The built-in filename above is an example, not a resolver convention. Generic
+runtime paths obtain the executable exclusively from
+`adapter.yaml:dispatch_entrypoint` through the canonical manifest reader. The
+field's schema-v1 migration and path-security rules are defined in
+[`docs/adapter-contract.md`](adapter-contract.md); a custom Adapter may use a
+different safe relative filename without a core runtime edit.
+
 The surface is **fail-closed**: a success exit (`0`) always means a registered policy ran and permitted the action — never that enforcement was skipped. Exit codes:
 
 | Exit | Meaning |

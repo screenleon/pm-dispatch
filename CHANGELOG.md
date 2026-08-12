@@ -12,7 +12,10 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 - **Concurrent memory, lock, state, and Gate lifecycle hardening.** Memory usage
   telemetry now uses a WAL-enabled SQLite primary store with atomic updates and
-  a TSV migration/fallback path; portable mkdir locks use verifiable owner
+  a TSV migration/fallback path. Cold-start WAL contention now runs the SQLite
+  CLI in fail-fast mode and retries only BUSY/LOCKED whole transactions with a
+  bounded jittered backoff, preventing both dropped telemetry and a partial
+  autocommit/double-count retry. Portable mkdir locks use verifiable owner
   nonces and fenced unlock/reclaim behavior. Test suites receive isolated
   `TMPDIR`/`XDG_RUNTIME_DIR` state, terminal sentinels win the detached-readiness
   race, and state-writer failures remain fail-loud. (PR #469)
@@ -30,6 +33,44 @@ Versions follow [Semantic Versioning](https://semver.org/).
   full suite, which measured 37m22s wall-clock on this repo — every such
   preflight run was killed at the 1800s ceiling and reported as non-authorizing
   `Final: INCOMPLETE` rather than completing. Default raised to 3600s.
+
+### Changed
+
+- **Targeted Gate coordinate separation foundation (CC-527 partial, PR #472).**
+  Added the canonical `--pass targeted --reviewers ... --initial-result ...`
+  form, retained the legacy shorthand through the same resolver, rejected
+  conflicting mixed spellings, and recorded spelling provenance. Initial-tier
+  inheritance, explicit tier/coverage selection bases, stale/legacy initial
+  handling, truthful full-tier/QA-only labeling, and complete execution-mode
+  parity remain open; CC-527 is not closed by this PR.
+
+- **Source-safe runtime and identifier-policy foundation (CC-530 partial, PR
+  #473).** `portable.sh` no longer changes strict-mode flags when sourced,
+  caller-state workarounds were removed from the state libraries, and a shared
+  identifier policy now serves the primary runtime consumers. Complete
+  source-side-effect enforcement and migration of the remaining production and
+  fallback validators remain open; CC-530 is not closed by this PR.
+
+- **Manifest-authoritative Adapter dispatch entrypoint (CC-531).** The
+  implementation establishes
+  `dispatch_entrypoint` as the sole runtime path authority and centralizes safe
+  manifest resolution. During the bounded schema v1 migration window, a
+  manifest without that field falls back with a deprecation warning to the
+  historical runtime convention `./dispatch.sh`; legacy `runner_ref` metadata
+  is never interpreted as a path, and cannot override a present canonical
+  value. New built-ins and generated manifests omit `runner_ref`; installed
+  copy-mode carries a receipt-owned Gate runtime/policy snapshot plus bounded
+  Adapter runtime, alias, and usage assets, and fails before wiring entrypoints
+  when a load-bearing path conflicts or required bundle content is incomplete.
+  A closure refactor makes preflight and apply consume one bundle inventory,
+  publishes dependencies and managed trees before entrypoints, routes every
+  Gate deployment through the canonical explicit-root executor router, and
+  gives install refresh, uninstall, and doctor one schema-validating receipt
+  reader. Changed-path selection ratchets every direct manifest consumer,
+  including runner-kind, end-to-end, hook-profile, Gate shard, guard, and
+  uninstall coverage.
+  Deterministic repo/copy, foreground/detached, Gate/router, path-security,
+  receipt-lifecycle, and matching current-tree full-suite evidence close CC-531.
 
 ### Added
 

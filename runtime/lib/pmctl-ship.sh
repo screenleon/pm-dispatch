@@ -36,12 +36,12 @@ if [[ "$(type -t pm_identifier_operation_is_valid 2>/dev/null)" != function ]]; 
 fi
 
 pmctl_ship_usage() {
-  printf 'usage: pmctl ship <ticket-id> [--worktree] [--adapter <codex|claude|opencode|grok>] [--from <base>] [--isolation <level>] [--model <alias>] [--auto-pack|--no-auto-pack] [--cd <work_dir>]\n' >&2
+  printf 'usage: pmctl ship <ticket-id> [--worktree] [--adapter <name>] [--from <base>] [--isolation <level>] [--model <alias>] [--auto-pack|--no-auto-pack] [--cd <work_dir>]\n' >&2
   printf '           Start a manual ship lane. Bare: in the current worktree (alias: prepare). --worktree: isolated worktree, no dispatch. --adapter: dispatch (implies --worktree).\n' >&2
   printf '           After implementation, run: pmctl ship finish <ticket-id>\n' >&2
   printf '       pmctl ship prepare <ticket-id> [--cd <work_dir>]\n' >&2
   printf '       pmctl ship finish  <ticket-id> [--cd <work_dir>] [--reviewers <r,...> | --gate-result <artifact>] [--full-result <artifact>]\n' >&2
-  printf '       pmctl ship --parallel <ticket-id> [<ticket-id>...] [--from <base>] [--adapter <codex|claude|opencode|grok>] [--isolation <level>] [--model <alias>] [--cd <work_dir>]\n' >&2
+  printf '       pmctl ship --parallel <ticket-id> [<ticket-id>...] [--from <base>] [--adapter <name>] [--isolation <level>] [--model <alias>] [--cd <work_dir>]\n' >&2
   printf '       pmctl ship status [--cd <work_dir>] [--json]\n' >&2
   printf '       pmctl ship list   [--cd <work_dir>] [--json]\n' >&2
 }

@@ -8,7 +8,7 @@
 #
 # Security boundary: the supervisor is NOT a bypass door. Before invoking any
 # executor it re-runs the SAME security preflight pmctl dispatch run does —
-# adapter name validation, dispatch.sh symlink/containment guard, route
+# adapter name validation, manifest entrypoint trust-boundary guard, route
 # allowlist, and `pmctl guard check` for the brief write. A tampered run-spec can
 # therefore never reach an executor that `pmctl dispatch run` would have refused.
 # REPO_ROOT is derived from this script's own resolved location (mirroring
@@ -35,7 +35,7 @@ REPO_ROOT="$(cd "$(dirname "$_self")/../.." && pwd)"
 unset _self _dir
 # END resolve-root
 
-for _lib in identifier-policy pmctl-config portable runner-kind executor-router pmctl-guard dispatch-record pmctl-dispatch detached-launch; do
+for _lib in identifier-policy pmctl-config portable runner-kind adapter-manifest executor-router pmctl-guard dispatch-record pmctl-dispatch detached-launch; do
   # shellcheck source=/dev/null
   [[ -r "$REPO_ROOT/runtime/lib/$_lib.sh" ]] && . "$REPO_ROOT/runtime/lib/$_lib.sh"
 done
@@ -210,6 +210,7 @@ forward+=(${native[@]+"${native[@]}"})
 declare -F pmctl_dispatch_execute_tail >/dev/null || _die "pmctl_dispatch_execute_tail unavailable"
 _execute_rc=0
 PMCTL_DISPATCH_INITIAL_STATE_WRITTEN="$spec_initial_state_written" \
+  PMCTL_DISPATCH_REQUIRE_DETACH_ELIGIBLE=1 \
   pmctl_dispatch_execute_tail "$REPO_ROOT" "$spec_work_dir" "$spec_adapter" "$adapter_path" \
   "$spec_run_id" "$spec_model" "$spec_brief_file" "$spec_created_ts" "$spec_print_cmd" \
   "${forward[@]}" || _execute_rc=$?

@@ -10,14 +10,26 @@ if [[ -L "${BASH_SOURCE[0]}" ]]; then
   SCRIPT_DIR="$(cd "$(dirname "$_real")" 2>/dev/null && pwd || printf '%s' "$SCRIPT_DIR")"
   unset _real
 fi
+
+# Resolve one trusted library topology before sourcing any shell. A symlinked
+# repo entrypoint resolves above to runtime/bin and uses ../lib. The official
+# copied helper lives under scripts/ with its receipt-owned bundle at
+# scripts/lib and sibling adapters/; it must never fall through to a foreign
+# ~/.claude/lib tree.
+DOCTOR_INSTALLED_COPY_ROOT=""
+DOCTOR_LIB_DIR="$SCRIPT_DIR/../lib"
+if [[ "${SCRIPT_DIR##*/}" == scripts ]]; then
+  DOCTOR_INSTALLED_COPY_ROOT="$(cd "$SCRIPT_DIR/.." 2>/dev/null && pwd -P)"
+  DOCTOR_LIB_DIR="$SCRIPT_DIR/lib"
+fi
 DOCTOR_INSTALL_ROOT="$(cd "$SCRIPT_DIR/../.." 2>/dev/null && pwd)"
 
 # Source libs with graceful fallback for copy-mode (Windows) where lib/ is absent.
-if [[ -f "$SCRIPT_DIR/../lib/portable.sh" ]]; then
+if [[ -f "$DOCTOR_LIB_DIR/portable.sh" ]]; then
   # shellcheck source=runtime/lib/portable.sh
-  . "$SCRIPT_DIR/../lib/portable.sh"
+  . "$DOCTOR_LIB_DIR/portable.sh"
   # shellcheck source=runtime/lib/allowlist.sh
-  [[ -f "$SCRIPT_DIR/../lib/allowlist.sh" ]] && . "$SCRIPT_DIR/../lib/allowlist.sh"
+  [[ -f "$DOCTOR_LIB_DIR/allowlist.sh" ]] && . "$DOCTOR_LIB_DIR/allowlist.sh"
   _PORTABLE_AVAILABLE=1
 else
   _PORTABLE_AVAILABLE=0
@@ -41,48 +53,56 @@ else
   codex_available() { command -v codex >/dev/null 2>&1; }
 fi
 
-if [[ -f "$SCRIPT_DIR/../lib/install-receipt.sh" ]]; then
+if [[ -f "$DOCTOR_LIB_DIR/install-receipt.sh" ]]; then
   # shellcheck source=runtime/lib/install-receipt.sh
-  . "$SCRIPT_DIR/../lib/install-receipt.sh"
+  . "$DOCTOR_LIB_DIR/install-receipt.sh"
   _INSTALL_RECEIPT_AVAILABLE=1
 else
   _INSTALL_RECEIPT_AVAILABLE=0
 fi
 
-if [[ "$_PORTABLE_AVAILABLE" -eq 1 && -f "$SCRIPT_DIR/../lib/memory-dir.sh" ]]; then
+if [[ "$_PORTABLE_AVAILABLE" -eq 1 && -f "$DOCTOR_LIB_DIR/memory-dir.sh" ]]; then
   # shellcheck source=runtime/lib/memory-dir.sh
-  . "$SCRIPT_DIR/../lib/memory-dir.sh"
+  . "$DOCTOR_LIB_DIR/memory-dir.sh"
   _MEMORY_DIR_AVAILABLE=1
 else
   _MEMORY_DIR_AVAILABLE=0
 fi
 
-if [[ -f "$SCRIPT_DIR/../lib/runner-kind.sh" ]]; then
+if [[ -f "$DOCTOR_LIB_DIR/runner-kind.sh" ]]; then
   # shellcheck source=runtime/lib/runner-kind.sh
-  . "$SCRIPT_DIR/../lib/runner-kind.sh"
+  . "$DOCTOR_LIB_DIR/runner-kind.sh"
   _RUNNER_KIND_AVAILABLE=1
 else
   _RUNNER_KIND_AVAILABLE=0
 fi
 
-if [[ -f "$SCRIPT_DIR/../lib/host-manifest.sh" ]]; then
+if [[ -f "$DOCTOR_LIB_DIR/adapter-manifest.sh" ]]; then
+  # shellcheck source=runtime/lib/adapter-manifest.sh
+  . "$DOCTOR_LIB_DIR/adapter-manifest.sh"
+  _ADAPTER_MANIFEST_AVAILABLE=1
+else
+  _ADAPTER_MANIFEST_AVAILABLE=0
+fi
+
+if [[ -f "$DOCTOR_LIB_DIR/host-manifest.sh" ]]; then
   # shellcheck source=runtime/lib/host-manifest.sh
-  . "$SCRIPT_DIR/../lib/host-manifest.sh"
+  . "$DOCTOR_LIB_DIR/host-manifest.sh"
   _HOST_MANIFEST_AVAILABLE=1
 else
   _HOST_MANIFEST_AVAILABLE=0
 fi
 
 if [[ "$_PORTABLE_AVAILABLE" -eq 1 \
-   && -f "$SCRIPT_DIR/../lib/state-paths.sh" \
-   && -f "$SCRIPT_DIR/../lib/detached-launch.sh" \
-   && -f "$SCRIPT_DIR/../lib/pmctl-dispatch.sh" ]]; then
+   && -f "$DOCTOR_LIB_DIR/state-paths.sh" \
+   && -f "$DOCTOR_LIB_DIR/detached-launch.sh" \
+   && -f "$DOCTOR_LIB_DIR/pmctl-dispatch.sh" ]]; then
   # shellcheck source=runtime/lib/state-paths.sh
-  . "$SCRIPT_DIR/../lib/state-paths.sh"
+  . "$DOCTOR_LIB_DIR/state-paths.sh"
   # shellcheck source=runtime/lib/detached-launch.sh
-  . "$SCRIPT_DIR/../lib/detached-launch.sh"
+  . "$DOCTOR_LIB_DIR/detached-launch.sh"
   # shellcheck source=runtime/lib/pmctl-dispatch.sh
-  . "$SCRIPT_DIR/../lib/pmctl-dispatch.sh"
+  . "$DOCTOR_LIB_DIR/pmctl-dispatch.sh"
   _DISPATCH_RECONCILE_AVAILABLE=1
 else
   _DISPATCH_RECONCILE_AVAILABLE=0
@@ -90,14 +110,29 @@ fi
 
 _DOCTOR_HOST_NAMES=()
 _DOCTOR_SELECTED_HOSTS=()
+_DOCTOR_RECEIPT_LOAD_ERROR=""
+_DOCTOR_RECEIPT_LOAD_STATUS=0
 
 load_doctor_receipt_selection() {
   _DOCTOR_SELECTED_HOSTS=()
+  _DOCTOR_RECEIPT_LOAD_ERROR=""
+  _DOCTOR_RECEIPT_LOAD_STATUS=0
   [[ "$_INSTALL_RECEIPT_AVAILABLE" -eq 1 ]] || return 0
   local receipt
   receipt="$(pm_dispatch_receipt_existing_path 2>/dev/null || true)"
   [[ -n "$receipt" ]] || return 0
-  mapfile -t _DOCTOR_SELECTED_HOSTS < <(pm_dispatch_receipt_selected_hosts "$receipt")
+  local receipt_rc=0
+  pm_dispatch_receipt_load "$receipt" || receipt_rc=$?
+  if [[ "$receipt_rc" -ne 0 ]]; then
+    _DOCTOR_RECEIPT_LOAD_STATUS="$receipt_rc"
+    if [[ "$receipt_rc" -eq 4 ]]; then
+      _DOCTOR_RECEIPT_LOAD_ERROR="product install receipt has an unsupported manifest version: $receipt"
+    else
+      _DOCTOR_RECEIPT_LOAD_ERROR="product install receipt is malformed or cannot be read safely: $receipt"
+    fi
+    return "$receipt_rc"
+  fi
+  _DOCTOR_SELECTED_HOSTS=("${PM_DISPATCH_RECEIPT_SELECTED_HOSTS[@]}")
 }
 
 load_doctor_host_modules() {
@@ -397,20 +432,9 @@ check_host_fallback_copy_mode() {
     if ! command -v jq >/dev/null 2>&1; then
       emit_check dispatch-allowlist warn "jq not available — cannot verify dispatch-allowlist"
     else
-      local all_ok=1 any=0 f rel
-      for f in "$REPO_ROOT/adapters"/*/dispatch.sh; do
-        [[ -f "$f" ]] || continue
-        any=1; rel="${f#"$HOME/"}"
-        jq -e --arg a "Bash($f:*)" --arg t "Bash(~/$rel:*)" \
-          '(.permissions.allow // []) | (index($a) != null or index($t) != null)' \
-          "$settings" >/dev/null 2>&1 || all_ok=0
-      done
-      if [[ $any -eq 0 || $all_ok -eq 0 ]]; then
-        emit_check dispatch-allowlist fail "dispatch allowlist incomplete or missing" \
-          "bash '${REPO_ROOT}/install.sh'"
-      else
-        emit_check dispatch-allowlist ok "dispatch allowlist present (all adapters)"
-      fi
+      emit_check dispatch-allowlist fail \
+        "dispatch allowlist cannot be validated: canonical Adapter manifest reader unavailable in copy-mode" \
+        "run doctor from the checkout: bash '${REPO_ROOT}/runtime/bin/doctor.sh'"
     fi
   fi
 
@@ -419,11 +443,23 @@ check_host_fallback_copy_mode() {
   if [[ ! -f "$manifest_path" ]]; then
     emit_check manifest warn "install manifest missing — uninstall.sh cannot track files" \
       "bash '${REPO_ROOT}/install.sh' to regenerate"
-  elif command -v jq >/dev/null 2>&1 && ! jq -e '.manifest_version == 1' "$manifest_path" >/dev/null 2>&1; then
-    emit_check manifest warn "install manifest has unexpected version" \
-      "bash '${REPO_ROOT}/install.sh' to regenerate"
+  elif [[ "$_INSTALL_RECEIPT_AVAILABLE" -ne 1 ]]; then
+    emit_check manifest warn "install manifest cannot be validated: canonical receipt reader unavailable" \
+      "bash '${REPO_ROOT}/install.sh' to restore the installed runtime bundle"
   else
-    emit_check manifest ok "install manifest present"
+    local receipt_rc=0
+    pm_dispatch_receipt_validate "$manifest_path" || receipt_rc=$?
+    if [[ "$receipt_rc" -eq 4 \
+        || ( "$receipt_rc" -eq 0 \
+          && "$PM_DISPATCH_RECEIPT_MANIFEST_VERSION_STATUS" != supported ) ]]; then
+      emit_check manifest warn "install manifest has unexpected version" \
+        "bash '${REPO_ROOT}/install.sh' to regenerate"
+    elif [[ "$receipt_rc" -ne 0 ]]; then
+      emit_check manifest warn "install manifest is malformed or has an invalid schema" \
+        "bash '${REPO_ROOT}/install.sh' to regenerate"
+    else
+      emit_check manifest ok "install manifest present"
+    fi
   fi
 }
 
@@ -480,6 +516,11 @@ check_frontmatter_lint() {
   # In copy-mode (no lib/), lint-frontmatter.sh is not co-installed with doctor.sh.
   # This check degrades to WARN in that case.
   # Always run the installed (trusted) linter; never execute scripts from --repo target.
+  if [[ -n "$DOCTOR_INSTALLED_COPY_ROOT" ]]; then
+    emit_check frontmatter-lint warn "lint-frontmatter.sh is not part of the installed copy bundle" \
+      "run the checkout linter under the explicit --repo path"
+    return
+  fi
   local lint_script="$DOCTOR_INSTALL_ROOT/tools/lint/lint-frontmatter.sh"
   if [[ ! -x "$lint_script" ]]; then
     emit_check frontmatter-lint warn "lint-frontmatter.sh not found or not executable" \
@@ -651,6 +692,13 @@ main() {
   done
 
   if [[ -z "$REPO_ROOT" ]]; then
+    if [[ -n "$DOCTOR_INSTALLED_COPY_ROOT" ]]; then
+      emit_check "repo-root" "fail" \
+        "installed copy-mode doctor requires an explicit checkout via --repo" \
+        "re-run with: bash $(basename "${BASH_SOURCE[0]}") --repo <path-to-pm-dispatch-checkout>"
+      emit_summary 1
+      exit 1
+    fi
     REPO_ROOT="$(cd "$SCRIPT_DIR/../.." 2>/dev/null && pwd || printf '%s/..' "$SCRIPT_DIR")"
     if [[ "$_PORTABLE_AVAILABLE" -eq 0 && ! -f "$REPO_ROOT/install.sh" ]]; then
       emit_check "repo-root" "fail" \
@@ -668,7 +716,17 @@ main() {
     emit_summary 1
     exit 1
   fi
-  load_doctor_receipt_selection
+  if ! load_doctor_receipt_selection; then
+    if [[ "$_DOCTOR_RECEIPT_LOAD_STATUS" -eq 4 ]]; then
+      emit_check "install-receipt" "warn" \
+        "$_DOCTOR_RECEIPT_LOAD_ERROR; host selection ignored" \
+        "run bash '${REPO_ROOT}/install.sh' to regenerate a supported receipt"
+    else
+      emit_check "install-receipt" "fail" \
+        "$_DOCTOR_RECEIPT_LOAD_ERROR" \
+        "repair or remove the malformed receipt, then run bash '${REPO_ROOT}/install.sh'"
+    fi
+  fi
 
   # Native Windows Git Bash is not an officially supported platform; WSL2
   # (treated as Linux) is the supported path. Surface that up front so the checks

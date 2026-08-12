@@ -157,6 +157,7 @@ PATH	PATH	runtime/bin/doctor.sh	production
 PATH	PATH	runtime/bin/pr-gate.sh	production
 PATH	PATH	runtime/lib/allowlist.sh	production
 PATH	PATH	runtime/lib/artifact-paths.sh	production
+PATH	PATH	runtime/lib/executor-router.sh	production
 PATH	PATH	runtime/lib/guard-framework.sh	production
 PATH	PATH	runtime/lib/pmctl-context.sh	production
 PATH	PATH	runtime/lib/pmctl-decision.sh	production
@@ -348,7 +349,6 @@ SCRIPT_DIR	SCRIPT_DIR	hosts/codex/bin/uninstall.sh	production
 SCRIPT_DIR	SCRIPT_DIR	hosts/codex/hooks/command-guard.sh	production
 SCRIPT_DIR	SCRIPT_DIR	hosts/opencode/bin/install.sh	production
 SCRIPT_DIR	SCRIPT_DIR	hosts/opencode/bin/uninstall.sh	production
-SCRIPT_DIR	SCRIPT_DIR	install.sh	production
 SCRIPT_DIR	SCRIPT_DIR	ops/backlog/archive-closed-backlog.sh	production
 SCRIPT_DIR	SCRIPT_DIR	ops/diagnostics/codex-watch.sh	production
 SCRIPT_DIR	SCRIPT_DIR	ops/migrations/migrate-routing-log.sh	production
@@ -379,6 +379,7 @@ TMPDIR	TMPDIR	ops/release/upgrade-smoke-v0.8-v0.9.sh	production
 TMPDIR	TMPDIR	runtime/bin/pr-gate.sh	production
 TMPDIR	TMPDIR	runtime/lib/gate-result-verify.sh	production
 TMPDIR	TMPDIR	runtime/lib/handover-validate.sh	production
+TMPDIR	TMPDIR	runtime/lib/install-receipt.sh	production
 TMPDIR	TMPDIR	runtime/lib/memory.sh	production
 TMPDIR	TMPDIR	runtime/lib/pmctl-artifacts.sh	production
 TMPDIR	TMPDIR	runtime/lib/pmctl-gate.sh	production

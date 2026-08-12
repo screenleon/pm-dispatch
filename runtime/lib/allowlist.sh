@@ -1,18 +1,26 @@
 #!/usr/bin/env bash
 # Shared allowlist path helpers - sourced by install.sh, doctor.sh, uninstall-guards.sh.
 
+if ! declare -F adapter_manifest_dispatch_path >/dev/null 2>&1 \
+    || ! declare -F pm_identifier_adapter_is_valid >/dev/null 2>&1; then
+  # shellcheck source=runtime/lib/adapter-manifest.sh
+  # shellcheck disable=SC1091
+  . "${BASH_SOURCE[0]%/*}/adapter-manifest.sh"
+fi
+
 dispatch_allowlist_entries() {
   # REPO_ROOT and HOME must be set by the caller.
   # Emits one "Bash(path:*)" entry per line — absolute and tilde-relative forms —
-  # for every adapters/*/dispatch.sh that exists.
-  local f rel
+  # for every valid manifest dispatch_entrypoint.
+  local adapter f rel
 
-  # All registered adapter dispatch scripts
-  for f in "$REPO_ROOT/adapters"/*/dispatch.sh; do
-    [[ -f "$f" ]] || continue
+  # All registered Adapter dispatch entrypoints.
+  while IFS= read -r adapter; do
+    [[ -n "$adapter" ]] || continue
+    f="$(adapter_manifest_dispatch_path "$REPO_ROOT" "$adapter")" || continue
     rel="${f#"$HOME/"}"
     printf 'Bash(%s:*)\nBash(~/%s:*)\n' "$f" "$rel"
-  done
+  done < <(adapter_manifest_names "$REPO_ROOT")
 
   # A headless `claude` dispatch (adapters/claude/dispatch.sh) always runs
   # with --permission-mode acceptEdits or stricter (isolation-map.yaml) --

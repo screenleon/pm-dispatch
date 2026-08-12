@@ -139,6 +139,9 @@ _gate_assurance_policy_filename() {
 _gate_assurance_policy_path() {
   local filename candidate
   filename="$(_gate_assurance_policy_filename "${1:-}")" || return 2
+  # Installed copy-mode carries the generated policy snapshot in this script;
+  # never treat an unrelated ~/core tree as canonical policy.
+  [[ -z "${PR_GATE_INSTALLED_COPY_ROOT:-}" ]] || return 1
   for candidate in \
     "$SCRIPT_DIR/../../core/policy/$filename" \
     "$SCRIPT_DIR/core/policy/$filename"
@@ -2206,7 +2209,29 @@ while [[ -L "$_self" ]]; do
   _self="$(readlink "$_self")"
   [[ "$_self" == /* ]] || _self="$_self_dir/$_self"
 done
-SCRIPT_DIR="$(cd "$(dirname "$_self")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$_self")" && pwd -P)"
+
+# Classify the entrypoint topology before sourcing any adjacent library. The
+# classification depends only on the physical script location, not on whether
+# a child dependency happens to exist. A damaged bundle therefore fails closed
+# in its original topology instead of probing a foreign parent tree.
+#
+#   repo:            <root>/runtime/bin/pr-gate.sh
+#   installed-copy:  <root>/scripts/pr-gate.sh
+#   standalone-copy: <root>/pr-gate.sh
+PR_GATE_LAYOUT="standalone-copy"
+PR_GATE_EXECUTOR_ROOT="$SCRIPT_DIR"
+PR_GATE_INSTALLED_COPY_ROOT=""
+if [[ "${SCRIPT_DIR##*/}" == scripts ]]; then
+  PR_GATE_LAYOUT="installed-copy"
+  PR_GATE_INSTALLED_COPY_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
+  PR_GATE_EXECUTOR_ROOT="$PR_GATE_INSTALLED_COPY_ROOT"
+elif [[ "${SCRIPT_DIR##*/}" == bin \
+    && "${SCRIPT_DIR%/*}" != "$SCRIPT_DIR" \
+    && "${SCRIPT_DIR%/*}" == */runtime ]]; then
+  PR_GATE_LAYOUT="repo"
+  PR_GATE_EXECUTOR_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd -P)"
+fi
 
 # QA rules dir resolution for reviewer dispatch (CC-541): a codex-dispatched
 # qa-tester reviewer runs in its own subprocess and has no access to this
@@ -2229,7 +2254,11 @@ SCRIPT_DIR="$(cd "$(dirname "$_self")" && pwd)"
 # namespaces into its own long-lived top-level shell (see
 # pmctl_gate_dispatch_lib_load below).
 if [[ -z "${QA_RULES_DIR:-}" ]]; then
-  _qa_repo_layout_path="$SCRIPT_DIR/../lib/repo-layout.sh"
+  if [[ -n "$PR_GATE_INSTALLED_COPY_ROOT" ]]; then
+    _qa_repo_layout_path="$SCRIPT_DIR/lib/repo-layout.sh"
+  else
+    _qa_repo_layout_path="$SCRIPT_DIR/../lib/repo-layout.sh"
+  fi
   if [[ -r "$_qa_repo_layout_path" ]]; then
     # shellcheck source=runtime/lib/repo-layout.sh
     _qa_repos_root="$(. "$_qa_repo_layout_path" && pm_dispatch_repos_root "$WORK_DIR")" || _qa_repos_root=""
@@ -2252,7 +2281,11 @@ if [[ -z "${QA_RULES_DIR:-}" ]]; then
   unset _qa_repos_root
 fi
 
-GATE_RESULT_VERIFY_PATH="$SCRIPT_DIR/../lib/gate-result-verify.sh"
+if [[ -n "$PR_GATE_INSTALLED_COPY_ROOT" ]]; then
+  GATE_RESULT_VERIFY_PATH="$SCRIPT_DIR/lib/gate-result-verify.sh"
+else
+  GATE_RESULT_VERIFY_PATH="$SCRIPT_DIR/../lib/gate-result-verify.sh"
+fi
 if [[ -r "$GATE_RESULT_VERIFY_PATH" ]]; then
   # shellcheck source=runtime/lib/gate-result-verify.sh
   . "$GATE_RESULT_VERIFY_PATH"
@@ -4363,127 +4396,48 @@ case "$_gate_policy_source_count" in
 esac
 unset _gate_policy_source_count _gate_policy_table
 
-EXECUTOR_ROUTER_PATH="$SCRIPT_DIR/../lib/executor-router.sh"
-if [[ -r "$EXECUTOR_ROUTER_PATH" ]]; then
-  # shellcheck source=runtime/lib/executor-router.sh
-  . "$EXECUTOR_ROUTER_PATH"
-  EXECUTOR_ROUTER_SCRIPT_DIR="$SCRIPT_DIR"
-else
-  # DEGRADED copy-mode fallback (no runtime/lib/ alongside this script). It
-  # INTENTIONALLY diverges from the data-driven lib (runtime/lib/executor-router.sh):
-  # copy-mode has no adapters/ manifest tree to read, so routing is hardcoded to the
-  # two built-in executors (codex|claude). The lib is the data-driven authority; this
-  # block only needs to keep the gate runnable standalone for those two.
-  EXECUTOR_ROUTER_SCRIPT_DIR="$SCRIPT_DIR"
-
-  detect_executor_auto() {
-    if command -v codex >/dev/null 2>&1; then
-      printf 'codex\n'
-    else
-      printf 'claude\n'
-    fi
-  }
-
-  resolve_executor() {
-    local option=${1-}
-
-    [[ $# -eq 1 ]] || {
-      printf 'executor-router: resolve_executor expects exactly one argument\n' >&2
-      return 2
-    }
-
-    case "$option" in
-      auto) detect_executor_auto ;;
-      codex|claude) printf '%s\n' "$option" ;;
-      *)
-        printf 'executor-router: unknown executor: %s (expected codex, claude, or auto)\n' "$option" >&2
-        return 2
-        ;;
-    esac
-  }
-
-  dispatch_route_for() {
-    local executor=${1-}
-
-    [[ $# -eq 1 ]] || {
-      printf 'executor-router: dispatch_route_for expects exactly one argument\n' >&2
-      return 2
-    }
-
-    # Both built-in executors run as headless CLI subprocesses (cli-subprocess);
-    # claude's canonical route is `claude --print` driven by pmctl dispatch run,
-    # not Agent-spawn. Mirrors the data-driven lib resolving both to this route.
-    case "$executor" in
-      codex) printf 'main_thread_bash_background\n' ;;
-      claude) printf 'main_thread_bash_background\n' ;;
-      *)
-        printf 'executor-router: unknown executor: %s (expected codex or claude)\n' "$executor" >&2
-        return 2
-        ;;
-    esac
-  }
-
-  executor_router_safe_argv() {
-    local value=${1-}
-    printf '%q' "$value"
-  }
-
-  # Generic dispatcher mirroring the lib's dispatch_via, hardcoded to the two
-  # built-in executors. Only codex is sent --sandbox/--approval; claude (headless
-  # `claude --print`) accepts but ignores them as no-ops, so copy-mode omits them
-  # — a deliberate simplification of the lib's per-runner-kind rule.
-  # shellcheck disable=SC2317 # copy-mode entry is selected dynamically below.
-  dispatch_via() {
-    local executor=${1-}
-    local brief_file=${2-}
-    local working_dir=${3-}
-    local model=${4-}
-    local sandbox=${5-}
-    local approval=${6-}
-    local timeout=${7-}
-    local isolation_level=${8-}
-    local effort=${9-}
-    local -a cmd
-    local arg
-    local first=1
-
-    [[ $# -ge 7 && $# -le 9 ]] || {
-      printf 'executor-router: dispatch_via expects executor, brief_file, working_dir, model, sandbox, approval, timeout[, isolation_level[, effort]]\n' >&2
-      return 2
-    }
-
-    case "$executor" in
-      codex|claude) ;;
-      *)
-        printf 'executor-router: %s is not a routable executor (copy-mode supports codex|claude only)\n' "$executor" >&2
-        return 2
-        ;;
-    esac
-
-    local dispatch_script="${EXECUTOR_ROUTER_SCRIPT_DIR%/scripts}/adapters/$executor/dispatch.sh"
-    cmd=(bash "$dispatch_script" --cd "$working_dir")
-    [[ -n "$model" && "$model" != "default" ]] && cmd+=(--model "$model")
-    if [[ "$executor" == "codex" ]]; then
-      cmd+=(--sandbox "$sandbox" --approval "$approval")
-    fi
-    cmd+=(--timeout "$timeout" --brief-file "$brief_file")
-    [[ -n "$isolation_level" ]] && cmd+=(--isolation "$isolation_level")
-    [[ -n "$effort" ]] && cmd+=(--effort "$effort")
-    [[ -n "${PM_DISPATCH_TRACE_DIR:-}" ]] && cmd+=(--trace-dir "$PM_DISPATCH_TRACE_DIR")
-
-    for arg in "${cmd[@]}"; do
-      if [[ "$first" -eq 1 ]]; then
-        first=0
-      else
-        printf ' '
-      fi
-      executor_router_safe_argv "$arg"
-    done
-    printf '\n'
-  }
+# Every topology sources the same executor router. The explicit-root API keeps
+# the library reusable when lib/ is directly beneath a copy bundle instead of
+# <root>/runtime/lib. Missing router/reader dependencies are hard failures; the
+# gate never reconstructs a conventional dispatch.sh path or sources a router
+# from outside the classified topology.
+case "$PR_GATE_LAYOUT" in
+  repo) EXECUTOR_ROUTER_PATH="$SCRIPT_DIR/../lib/executor-router.sh" ;;
+  installed-copy|standalone-copy)
+    EXECUTOR_ROUTER_PATH="$SCRIPT_DIR/lib/executor-router.sh"
+    ;;
+  *)
+    printf 'pr-gate: unsupported entrypoint layout: %s\n' "$PR_GATE_LAYOUT" >&2
+    exit 2
+    ;;
+esac
+if [[ ! -r "$EXECUTOR_ROUTER_PATH" ]]; then
+  printf 'pr-gate: canonical executor router unavailable for %s layout: %s\n' \
+    "$PR_GATE_LAYOUT" "$EXECUTOR_ROUTER_PATH" >&2
+  exit 2
 fi
+# shellcheck source=runtime/lib/executor-router.sh
+# shellcheck disable=SC1090  # path is selected from the classified topology
+if ! . "$EXECUTOR_ROUTER_PATH"; then
+  printf 'pr-gate: failed to load canonical executor router: %s\n' \
+    "$EXECUTOR_ROUTER_PATH" >&2
+  exit 2
+fi
+for _gate_router_fn in resolve_executor_at dispatch_via_at \
+  adapter_manifest_dispatch_path adapter_manifest_runner_kind; do
+  if ! declare -F "$_gate_router_fn" >/dev/null 2>&1; then
+    printf 'pr-gate: canonical executor router dependency unavailable: %s\n' \
+      "$_gate_router_fn" >&2
+    exit 2
+  fi
+done
+unset _gate_router_fn
 
-ARTIFACT_PATHS_PATH="$SCRIPT_DIR/../lib/artifact-paths.sh"
+if [[ -n "$PR_GATE_INSTALLED_COPY_ROOT" ]]; then
+  ARTIFACT_PATHS_PATH="$SCRIPT_DIR/lib/artifact-paths.sh"
+else
+  ARTIFACT_PATHS_PATH="$SCRIPT_DIR/../lib/artifact-paths.sh"
+fi
 if [[ -r "$ARTIFACT_PATHS_PATH" ]]; then
   # shellcheck source=runtime/lib/artifact-paths.sh
   . "$ARTIFACT_PATHS_PATH"
@@ -4519,17 +4473,22 @@ else
   }
 fi
 
-# Executor-name validation is delegated to resolve_executor (below): it is the
-# single, data-driven authority — `auto` autodetects and any other value must be a
-# routable adapter (a valid on-disk manifest), fail-closed on unknown. A hardcoded
-# auto|codex|claude pre-check here would re-introduce the very enum the router refactoring removed,
-# silently rejecting a manifest-only adapter before resolve_executor is reached.
+# Executor-name validation is delegated to canonical resolve_executor_at: it is
+# the single, data-driven authority — `auto` autodetects and any other value must
+# be a routable Adapter in the classified root, fail-closed on unknown. A local
+# enum pre-check would silently reject a manifest-only Adapter before the router.
 
 _validate_isolation_level() {
   local level="$1" policy_file="$2"
-  local policy_lib="$SCRIPT_DIR/../lib/pmctl-policy.sh"
+  local policy_lib
+  if [[ -n "$PR_GATE_INSTALLED_COPY_ROOT" ]]; then
+    policy_lib="$SCRIPT_DIR/lib/pmctl-policy.sh"
+  else
+    policy_lib="$SCRIPT_DIR/../lib/pmctl-policy.sh"
+  fi
   if ! declare -F pmctl_policy_contains >/dev/null 2>&1; then
-    if [[ ! -r "$policy_lib" && -r "$SCRIPT_DIR/lib/pmctl-policy.sh" ]]; then
+    if [[ -z "$PR_GATE_INSTALLED_COPY_ROOT" \
+        && ! -r "$policy_lib" && -r "$SCRIPT_DIR/lib/pmctl-policy.sh" ]]; then
       policy_lib="$SCRIPT_DIR/lib/pmctl-policy.sh"
     fi
     if [[ ! -r "$policy_lib" ]]; then
@@ -4553,14 +4512,18 @@ _validate_isolation_level() {
 }
 
 if [[ -n "$DISPATCH_ISOLATION" ]]; then
-  ISOLATION_POLICY_FILE="$SCRIPT_DIR/../../core/policy/isolation-level.yaml"
-  if [[ ! -r "$ISOLATION_POLICY_FILE" && -r "$SCRIPT_DIR/core/policy/isolation-level.yaml" ]]; then
+  if [[ -n "$PR_GATE_INSTALLED_COPY_ROOT" ]]; then
     ISOLATION_POLICY_FILE="$SCRIPT_DIR/core/policy/isolation-level.yaml"
+  else
+    ISOLATION_POLICY_FILE="$SCRIPT_DIR/../../core/policy/isolation-level.yaml"
+    if [[ ! -r "$ISOLATION_POLICY_FILE" && -r "$SCRIPT_DIR/core/policy/isolation-level.yaml" ]]; then
+      ISOLATION_POLICY_FILE="$SCRIPT_DIR/core/policy/isolation-level.yaml"
+    fi
   fi
   _validate_isolation_level "$DISPATCH_ISOLATION" "$ISOLATION_POLICY_FILE" || exit 2
 fi
 
-EXECUTOR="$(resolve_executor "$EXECUTOR_OPTION")" || exit 2
+EXECUTOR="$(resolve_executor_at "$PR_GATE_EXECUTOR_ROOT" "$EXECUTOR_OPTION")" || exit 2
 
 # Reviewer briefs instruct the dispatched session to call `pmctl guard check`
 # before writing its output file. For a claude reviewer, that instruction must
@@ -4585,7 +4548,12 @@ if [[ "$EXECUTOR" == "codex" ]]; then
   # host PATH.  A standalone copied gate must not accidentally bind to an
   # unrelated installed pmctl when its fixture/deployment provides bin/pmctl.
   _guard_pmctl_abs=""
-  if [[ -x "$SCRIPT_DIR/cli/pmctl" ]]; then
+  if [[ -n "$PR_GATE_INSTALLED_COPY_ROOT" ]]; then
+    # The official installed topology does not carry cli/ below scripts/. Use
+    # its installer-managed PATH entry (or retain the bare fail-loud command)
+    # and never probe foreign ~/cli or ~/.claude/scripts/{cli,bin} candidates.
+    _guard_pmctl_abs="$(command -v pmctl 2>/dev/null || true)"
+  elif [[ -x "$SCRIPT_DIR/cli/pmctl" ]]; then
     _guard_pmctl_abs="$SCRIPT_DIR/cli/pmctl"
   elif [[ -x "$SCRIPT_DIR/bin/pmctl" ]]; then
     _guard_pmctl_abs="$SCRIPT_DIR/bin/pmctl"
@@ -4605,18 +4573,17 @@ fi
 # entrypoint under runtime/bin must reach `pmctl_dispatch_run` through
 # runtime/lib rather than by re-entering `cli/pmctl`.
 #
-# Only the repo layout can take this route.  The shared libraries derive their
-# own root as `<lib>/../..` (executor-router.sh), which holds for
-# `<root>/runtime/lib` but not for a copy-mode bundle that carries `lib/`
-# directly beside the gate — there the derived root lands one level above the
-# bundle and its `adapters/` tree is invisible.  A copy-mode bundle therefore
-# keeps the pre-existing degraded path (direct adapter dispatch, no parent
-# operation) rather than loading libraries under a root they cannot resolve.
+# Only the repo layout can take this route. The parent-operation libraries still
+# derive their shared runtime root from <root>/runtime/lib; installed and
+# standalone copies intentionally keep direct Adapter dispatch even though the
+# executor router itself now supports their explicit bundle roots.
 PMCTL_DISPATCH_LIB_DIR=""
 PMCTL_DISPATCH_ROOT=""
-if [[ -r "$SCRIPT_DIR/../lib/pmctl-dispatch.sh" && -d "$SCRIPT_DIR/../../adapters" ]]; then
+if [[ "$PR_GATE_LAYOUT" == repo \
+    && -r "$SCRIPT_DIR/../lib/pmctl-dispatch.sh" \
+    && -d "$SCRIPT_DIR/../../adapters" ]]; then
   PMCTL_DISPATCH_LIB_DIR="$SCRIPT_DIR/../lib"
-  PMCTL_DISPATCH_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+  PMCTL_DISPATCH_ROOT="$PR_GATE_EXECUTOR_ROOT"
 fi
 if [[ -z "$PMCTL_DISPATCH_LIB_DIR" && ( "$EXECUTOR" == codex || "$EXECUTOR" == claude ) ]]; then
   printf 'pr-gate: parent-operation tracking unavailable for this deployment layout; using compatible direct reviewer dispatch\n' >&2
@@ -4630,8 +4597,9 @@ fi
 # dependency direction stays runtime -> runtime.
 pmctl_gate_dispatch_lib_load() {
   local _lib
-  for _lib in repo-layout detached-launch pmctl-policy pmctl-fs pmctl-adapter \
-    pmctl-guard executor-router pmctl-dispatch pmctl-operation; do
+  for _lib in identifier-policy runner-kind adapter-manifest repo-layout \
+    detached-launch pmctl-policy pmctl-fs pmctl-adapter pmctl-guard \
+    executor-router pmctl-dispatch pmctl-operation; do
     # shellcheck disable=SC1090
     [[ -r "$PMCTL_DISPATCH_LIB_DIR/$_lib.sh" ]] && . "$PMCTL_DISPATCH_LIB_DIR/$_lib.sh"
   done
@@ -4751,11 +4719,17 @@ pmctl_gate_dispatch_and_wait() {
   return "$rc"
 }
 
-# Override the adapter-command formatter loaded above for gate execution only.
-# Call sites still receive a safely-quoted command string, preserving the
-# parallel watchdog/eval structure while moving lifecycle ownership to pmctl.
+# Format direct Adapter dispatch through the canonical explicit-root router.
+# The repo-layout branch overrides this Gate-level transport seam only; it does
+# not replace any executor detection, manifest routing, or argv construction.
+gate_dispatch_command() {
+  dispatch_via_at "$PR_GATE_EXECUTOR_ROOT" "$@"
+}
+
+# Call sites receive a safely-quoted command string, preserving the parallel
+# watchdog/eval structure while moving repo-layout lifecycle ownership to pmctl.
 if [[ -n "$PMCTL_DISPATCH_LIB_DIR" ]]; then
-dispatch_via() {
+gate_dispatch_command() {
   local first=1 arg
   for arg in pmctl_gate_dispatch_and_wait "$@"; do
     if [[ "$first" -eq 1 ]]; then first=0; else printf ' '; fi
@@ -4874,8 +4848,12 @@ fi
 # the resulting provenance/context to every reviewer. Ref/argument validation
 # intentionally precedes runtime loading so malformed invocations remain
 # diagnosable even for a deliberately minimal copied gate.
-_gate_memory_lib="$SCRIPT_DIR/lib/gate-memory-context.sh"
-[[ -r "$_gate_memory_lib" ]] || _gate_memory_lib="$SCRIPT_DIR/../lib/gate-memory-context.sh"
+if [[ -n "$PR_GATE_INSTALLED_COPY_ROOT" ]]; then
+  _gate_memory_lib="$SCRIPT_DIR/lib/gate-memory-context.sh"
+else
+  _gate_memory_lib="$SCRIPT_DIR/../lib/gate-memory-context.sh"
+  [[ -r "$_gate_memory_lib" ]] || _gate_memory_lib="$SCRIPT_DIR/lib/gate-memory-context.sh"
+fi
 if [[ ! -r "$_gate_memory_lib" ]]; then
   printf 'Error: shared gate memory runtime not found: %s\n' "$_gate_memory_lib" >&2
   exit 1
@@ -5235,10 +5213,10 @@ COVERAGE_SKIPPED_DISPLAY="$SKIPPED_DISPLAY"
 # A definition directory inside the reviewed workspace is attacker-controlled,
 # so read it from the trusted base revision rather than from the working tree.
 AGENT_DIR="$REVIEWER_DIR_OVERRIDE"
-if [[ -z "$AGENT_DIR" && -d "$SCRIPT_DIR/../../agents" ]]; then
-  AGENT_DIR="$SCRIPT_DIR/../../agents"
-elif [[ -z "$AGENT_DIR" && -d "$SCRIPT_DIR/agents" ]]; then
-  AGENT_DIR="$SCRIPT_DIR/agents"
+if [[ -z "$AGENT_DIR" ]]; then
+  # Reviewer definitions share the already-classified trust root with Adapter
+  # manifests. Missing assets fail below instead of probing another topology.
+  AGENT_DIR="$PR_GATE_EXECUTOR_ROOT/agents"
 fi
 if [[ ! -d "$AGENT_DIR" ]]; then
   printf 'Error: reviewer definition directory not found; use --reviewer-dir: %s\n' "${AGENT_DIR:-unset}" >&2; exit 1
@@ -5282,8 +5260,8 @@ GATE_ASSURANCE_CAPTURE_DIR="$(mktemp -d "/tmp/pm-gate-assurance-${TIMESTAMP}.XXX
 }
 command -p chmod 700 "$GATE_ASSURANCE_CAPTURE_DIR" || exit 1
 # Route executor traces (adapter JSONL/last/stderr) to the run dir when provided.
-# PM_DISPATCH_TRACE_DIR is read by dispatch_via (lib and copy-mode) to forward
-# --trace-dir to the adapter, so the adapter's own trace files follow the run dir.
+# PM_DISPATCH_TRACE_DIR is read by the canonical router to forward --trace-dir
+# to the Adapter, so the Adapter's own trace files follow the run dir.
 if [[ -n "$GATE_RUN_DIR_OVERRIDE" ]]; then
   export PM_DISPATCH_TRACE_DIR="$GATE_RUN_DIR_OVERRIDE/.agent-trace"
 fi
@@ -6443,9 +6421,14 @@ if [[ "$SKIP_PREFLIGHT_TESTS" != "true" && -n "$TEST_CMD_OVERRIDE" ]]; then
     "$TEST_TIMEOUT" "${_preflight_command_digest:0:12}"
   _preflight_rc=0
   if [[ -n "${PM_GATE_PARENT_OPERATION:-}" ]]; then
-    _detached_launch_lib="$SCRIPT_DIR/../lib/detached-launch.sh"
+    if [[ -n "$PR_GATE_INSTALLED_COPY_ROOT" ]]; then
+      _detached_launch_lib="$SCRIPT_DIR/lib/detached-launch.sh"
+    else
+      _detached_launch_lib="$SCRIPT_DIR/../lib/detached-launch.sh"
+    fi
     if ! declare -F detached_launch_kill_process_group >/dev/null 2>&1; then
-      if [[ ! -r "$_detached_launch_lib" && -r "$SCRIPT_DIR/lib/detached-launch.sh" ]]; then
+      if [[ -z "$PR_GATE_INSTALLED_COPY_ROOT" \
+          && ! -r "$_detached_launch_lib" && -r "$SCRIPT_DIR/lib/detached-launch.sh" ]]; then
         _detached_launch_lib="$SCRIPT_DIR/lib/detached-launch.sh"
       fi
       # shellcheck disable=SC1090,SC1091 # resolved repo-relative runtime library.
@@ -7022,10 +7005,10 @@ acceptance:
 BRIEF_EOF
 
   # Every executor dispatches an independent subprocess (codex `codex exec`, claude
-  # headless `claude --print`). The generic dispatch_via takes the executor name as
-  # its first arg, so the call site is uniform; sandbox/approval are forwarded only
-  # to adapters whose runner_kind accepts them.
-  DISPATCH_CMD="$(dispatch_via "$EXECUTOR" "$BRIEF_FILE" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT" "$DISPATCH_ISOLATION" "$DISPATCH_EFFORT")" || exit 2
+  # headless `claude --print`). The Gate transport seam takes the executor name
+  # first; direct copy layouts delegate argv construction to dispatch_via_at,
+  # while repo layout retains parent-operation lifecycle tracking.
+  DISPATCH_CMD="$(gate_dispatch_command "$EXECUTOR" "$BRIEF_FILE" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT" "$DISPATCH_ISOLATION" "$DISPATCH_EFFORT")" || exit 2
   # Send the dispatch child's stdout to our stderr: it is diagnostic chatter,
   # not gate data (the verdict lands in the result file). If it inherited our
   # stdout and a consumer closed that pipe (`gate run | head`), the child's
@@ -7211,7 +7194,7 @@ acceptance:
   - ${REVIEWER_OUTPUT} exists with exactly one reviewer_result_v1 JSON block
 RBRIEF_EOF
 
-    REVIEWER_DISPATCH_CMD="$(dispatch_via "$EXECUTOR" "$REVIEWER_BRIEF" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT" "$DISPATCH_ISOLATION" "$DISPATCH_EFFORT")" || exit 2
+    REVIEWER_DISPATCH_CMD="$(gate_dispatch_command "$EXECUTOR" "$REVIEWER_BRIEF" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT" "$DISPATCH_ISOLATION" "$DISPATCH_EFFORT")" || exit 2
     eval "$REVIEWER_DISPATCH_CMD" > "$DISPATCH_LOG" 2>&1 &
     DISPATCH_PIDS+=($!)
     say '  [parallel] launched %s (pid %d)\n' "$r" "$!"
@@ -7493,7 +7476,7 @@ acceptance:
   - ${_RETRY_OUTPUT} exists with exactly one reviewer_result_v1 JSON block
 RETRY_RBRIEF_EOF
 
-          _RETRY_DISPATCH_CMD="$(dispatch_via "$EXECUTOR" "$_RETRY_BRIEF" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT" "$DISPATCH_ISOLATION" "$DISPATCH_EFFORT")" || exit 2
+          _RETRY_DISPATCH_CMD="$(gate_dispatch_command "$EXECUTOR" "$_RETRY_BRIEF" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT" "$DISPATCH_ISOLATION" "$DISPATCH_EFFORT")" || exit 2
           eval "$_RETRY_DISPATCH_CMD" > "$_RETRY_LOG" 2>&1 &
           _RETRY_PIDS+=($!)
           _RETRY_NAMES+=("$r")
@@ -7831,7 +7814,7 @@ correction_retry: |
 SYNTHESIS_RETRY_EOF
     fi
     say '  [synthesis attempt %d] running PM consolidation...\n' "$_synthesis_attempt"
-    SYNTHESIS_DISPATCH_CMD="$(dispatch_via "$EXECUTOR" "$SYNTHESIS_BRIEF" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT" "$DISPATCH_ISOLATION" "$DISPATCH_EFFORT")" || exit 2
+    SYNTHESIS_DISPATCH_CMD="$(gate_dispatch_command "$EXECUTOR" "$SYNTHESIS_BRIEF" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT" "$DISPATCH_ISOLATION" "$DISPATCH_EFFORT")" || exit 2
     eval "$SYNTHESIS_DISPATCH_CMD" >&2 &
     _SYNTHESIS_PID=$!
     _GATE_SYNTHESIS_WATCHDOG_TIMEOUT="${_PM_DISPATCH_GATE_SYNTHESIS_WATCHDOG_TIMEOUT:-$((TIMEOUT + 60))}"
