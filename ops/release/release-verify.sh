@@ -129,7 +129,14 @@ need git     required git --version
 need sqlite3 required sqlite3 --version
 need codex   optional codex --version
 need claude  optional claude --version
-need shellcheck optional shellcheck --version
+if shellcheck_check_output="$(bash "$REPO_ROOT/tools/lint/bootstrap-shellcheck.sh" \
+  --repo "$REPO_ROOT" --check 2>&1)"; then
+  shellcheck_version="$(shellcheck --version | awk -F ':[[:space:]]*' \
+    '$1 == "version" { print $2; exit }')"
+  record "shellcheck" PASS "version $shellcheck_version matches repository pin"
+else
+  record "shellcheck" FAIL "${shellcheck_check_output##*$'\n'}"
+fi
 
 # These inventories protect the release evidence boundary before a potentially
 # expensive full suite or live E2E invocation starts.

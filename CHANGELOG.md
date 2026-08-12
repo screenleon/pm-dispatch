@@ -10,6 +10,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Reproducible ShellCheck toolchain.** CI and maintainer lint now resolve one
+  repository-pinned ShellCheck version instead of inheriting different analyzer
+  rules from `ubuntu-latest` or a host package manager. The shared bootstrap
+  verifies official release assets by SHA-256, lint and release verification
+  reject version drift before scanning, and affected-test ratchets cover the
+  pin, asset manifest, bootstrap, workflow, and exact-version diagnostics.
+
 - **Concurrent memory, lock, state, and Gate lifecycle hardening.** Memory usage
   telemetry now uses a WAL-enabled SQLite primary store with atomic updates and
   a TSV migration/fallback path. Cold-start WAL contention now runs the SQLite

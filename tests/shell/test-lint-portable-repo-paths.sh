@@ -14,6 +14,7 @@ make_fake_repo() {
   local root="$1"
   mkdir -p "$root/tools/lint" "$root/agents" "$root/docs/spikes" "$root/tests/fixtures"
   cp "$LINTER" "$root/tools/lint/lint-portable-repo-paths.sh"
+  printf 'Use a neutral checkout path.\n' > "$root/CONTRIBUTING.md"
   printf 'Use ${PM_DISPATCH_REPOS_ROOT}/project.\n' > "$root/agents/project-pm.md"
 }
 
@@ -46,6 +47,23 @@ case_operational_literal_fails() {
   fi
 }
 
+# Behavior: contributor setup guidance cannot encode a maintainer-local repository layout.
+# Steps: 1) Arrange a fixture with the forbidden literal in CONTRIBUTING.md;
+# 2) Act by running the portability ratchet; 3) Assert failure with file provenance.
+case_contributing_literal_fails() {
+  local name="lint-portable-repo-paths/contributing literal fails" root status=0 out
+  should_run "$name" || return 0
+  root="$tmp_root/contributing"
+  make_fake_repo "$root"
+  printf 'clone into ~%s/project\n' '/github' > "$root/CONTRIBUTING.md"
+  out="$(bash "$root/tools/lint/lint-portable-repo-paths.sh" 2>&1)" || status=$?
+  if [[ "$status" -ne 0 && "$out" == *"CONTRIBUTING.md"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out"
+  fi
+}
+
 case_historical_spike_is_excluded() {
   # behavior: historical spike evidence may retain observed machine paths
   # Steps: inject a forbidden literal only under docs/spikes; assert success
@@ -64,5 +82,6 @@ case_historical_spike_is_excluded() {
 
 case_current_tree_passes
 case_operational_literal_fails
+case_contributing_literal_fails
 case_historical_spike_is_excluded
 th_summary

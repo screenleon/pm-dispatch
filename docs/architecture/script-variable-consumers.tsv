@@ -127,6 +127,7 @@ HOME	HOME	runtime/lib/pmctl-memory-config.sh	production
 HOME	HOME	runtime/lib/pmctl-ship.sh	production
 HOME	HOME	runtime/lib/portable.sh	production
 HOME	HOME	runtime/lib/state-paths.sh	production
+HOME	HOME	tools/lint/bootstrap-shellcheck.sh	production
 HOME	HOME	tools/lint/lint-pmctl-commands.sh	production
 HOME	HOME	tools/lint/lint-portable-repo-paths.sh	production
 HOME	HOME	uninstall.sh	production
@@ -168,7 +169,9 @@ PATH	PATH	runtime/lib/pmctl-worktree.sh	production
 PATH	PATH	runtime/lib/portable.sh	production
 PATH	PATH	runtime/lib/state-paths.sh	production
 PATH	PATH	runtime/lib/state-writer.sh	production
+PATH	PATH	tools/lint/bootstrap-shellcheck.sh	production
 PATH	PATH	tools/lint/check-docs-freshness.sh	production
+PM_DISPATCH_TOOL_CACHE	PM_DISPATCH_TOOL_CACHE	tools/lint/bootstrap-shellcheck.sh	production
 PMCTL_BIN_DIR	PMCTL_BIN_DIR	hosts/claude/bin/install-guards.sh	production
 PMCTL_BIN_DIR	PMCTL_BIN_DIR	hosts/claude/bin/uninstall-guards.sh	production
 PMCTL_BIN_DIR	PMCTL_BIN_DIR	install.sh	production
@@ -388,6 +391,7 @@ TMPDIR	TMPDIR	runtime/lib/portable.sh	production
 TMPDIR	TMPDIR	tools/eval/gate-test-gap-live-eval.sh	production
 XAI_API_KEY	XAI_API_KEY	hosts/grok/lib/doctor.sh	production
 XAI_API_KEY	XAI_API_KEY	runtime/bin/doctor.sh	production
+XDG_CACHE_HOME	XDG_CACHE_HOME	tools/lint/bootstrap-shellcheck.sh	production
 XDG_CONFIG_HOME	XDG_CONFIG_HOME	hosts/opencode/lib/path-resolver.sh	production
 XDG_CONFIG_HOME	XDG_CONFIG_HOME	ops/release/upgrade-smoke-v0.8-v0.9.sh	production
 XDG_DATA_HOME	XDG_DATA_HOME	hosts/claude/lib/doctor.sh	production

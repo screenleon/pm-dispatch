@@ -9,6 +9,7 @@ TMPDIR	shared-runtime	ambient-public	/tmp	ambient	inherit	controls temporary art
 OSTYPE	portability	ambient-public	shell supplied	ambient	inherit	selects platform-specific behavior	linux macOS and Windows spelling fixtures
 MSYS2_ARG_CONV_EXCL	portability	child-control	unset	module-local assignment	pass only to jq child	Windows argument rewriting	assert parent environment unchanged
 MSYS_NO_PATHCONV	portability	child-control	unset	module-local assignment	pass only to jq child	Windows path conversion	assert parent environment unchanged
+XDG_CACHE_HOME	bootstrap	ambient-public	$HOME/.cache	--cache-dir then PM_DISPATCH_TOOL_CACHE then explicit env then HOME fallback	consume inside maintainer tool bootstrap	selects maintainer tool cache root	fixture-local cache root
 XDG_CONFIG_HOME	host-opencode	host-root	$HOME/.config	explicit env then host default	pass only to OpenCode host modules	selects OpenCode config commands tools and receipts	isolated HOME plus explicit XDG root
 XDG_DATA_HOME	shared-runtime	ambient-public	$HOME/.local/share	explicit env then platform default	pass to state resolver	selects canonical runtime state root	fixture-local XDG data root
 XDG_RUNTIME_DIR	shared-runtime	ambient-public	platform fallback	explicit valid directory then fallback	pass to detached launcher	selects sentinel and detached runtime location	fixture-local existing and missing variants
@@ -31,6 +32,7 @@ OPENCODE_DISPATCH_TIMEOUT	adapter-opencode	public-override	1200	CLI flag then ad
 GROK_DISPATCH_TIMEOUT	adapter-grok	public-override	1200	CLI flag then adapter env then PM_CFG_TIMEOUT then built-in	consume inside Grok adapter only	bounds Grok executor runtime	precedence and invalid-value fixtures
 PM_DISPATCH_TRACE_DIR	shared-runtime	public-override	worktree .agent-trace	CLI flag then env then legacy fallback	pass to adapter and verifier	trace and post-verification write target	fixture absolute path and traversal rejection
 PM_DISPATCH_STATE_ROOT	shared-runtime	public-override	XDG data or HOME fallback	explicit env then platform fallback	pass to state writers and readers	canonical run event and artifact state	fixture-local root for every stateful test
+PM_DISPATCH_TOOL_CACHE	bootstrap	public-override	XDG cache or HOME cache	--cache-dir then explicit env then XDG_CACHE_HOME then HOME fallback	consume inside ShellCheck bootstrap only	selects maintainer tool cache and write target	fixture-local cache root
 PM_DISPATCH_ALLOW_UNSAFE_STATE_ROOT	shared-runtime	emergency-override	disabled	explicit opt-in only	consume inside state writer	can weaken state-root containment	disabled by default and isolated unsafe fixture
 PM_DISPATCH_ROTATE_MAX_BYTES	shared-runtime	public-override	52428800	explicit env then built-in	consume inside state writer	changes state rotation threshold	tiny fixture threshold
 PM_DISPATCH_LOCK_TIMEOUT_SECS	shared-runtime	public-override	implementation default	explicit env then built-in	consume inside locking helper	bounds lock acquisition	short deterministic timeout fixture

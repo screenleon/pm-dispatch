@@ -210,7 +210,10 @@ map_path() {
   case "$path" in
     .gitignore)
       add_suite test-setup-project; behavioral=1 ;;
-    tools/lint/lint-shellcheck.sh|tools/lint/shellcheck-domains.tsv|tools/lint/shellcheck-ignores.tsv|tests/shell/test-lint-shellcheck.sh)
+    .shellcheck-version|tools/lint/bootstrap-shellcheck.sh)
+      add_suite lint-scripts; add_suite test-lint-shellcheck
+      add_suite test-release-verify; behavioral=1 ;;
+    tools/lint/lint-shellcheck.sh|tools/lint/shellcheck-assets.tsv|tools/lint/shellcheck-domains.tsv|tools/lint/shellcheck-ignores.tsv|tests/shell/test-lint-shellcheck.sh)
       add_suite lint-scripts; add_suite test-lint-shellcheck; behavioral=1 ;;
     tools/lint/lint-script-domain-inventory.sh|tests/shell/test-script-domain-inventory.sh|docs/architecture/script-domain-ownership.md|docs/architecture/script-domain-inventory.tsv|docs/architecture/script-domain-reference-allowlist.tsv|docs/architecture/script-variable-inventory.tsv|docs/architecture/script-variable-consumers.tsv)
       add_suite lint-script-domain-inventory; add_suite test-script-domain-inventory; behavioral=1 ;;
@@ -310,7 +313,7 @@ map_path() {
   esac
 
   case "$path" in
-    README.md|agents/*.md|commands/*.md|skills/*|scripts/*|scripts/**/*|runtime/*|runtime/**/*|pm/*|pm/**/*|docs/*.md)
+    CONTRIBUTING.md|README.md|agents/*.md|commands/*.md|skills/*|scripts/*|scripts/**/*|runtime/*|runtime/**/*|pm/*|pm/**/*|docs/*.md)
       add_suite lint-portable-repo-paths; add_suite test-lint-portable-repo-paths; behavioral=1 ;;
   esac
 

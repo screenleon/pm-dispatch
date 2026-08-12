@@ -5,7 +5,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "$0")/../.." && pwd)"
 home_token='$HOME'
 patterns=("~""/github" "${home_token}""/github")
-scan_roots=(README.md agents commands skills scripts runtime pm docs)
+scan_roots=(CONTRIBUTING.md README.md agents commands skills scripts runtime pm docs)
 status=0
 
 for scan_root in "${scan_roots[@]}"; do

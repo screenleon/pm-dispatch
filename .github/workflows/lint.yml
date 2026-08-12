@@ -53,6 +53,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - name: Install repository-pinned ShellCheck
+        run: |
+          shellcheck_bin_dir="$(bash tools/lint/bootstrap-shellcheck.sh --cache-dir "$RUNNER_TEMP/pm-dispatch-tools")"
+          printf '%s\n' "$shellcheck_bin_dir" >> "$GITHUB_PATH"
+      - name: Report ShellCheck version
+        run: shellcheck --version
       - name: Validate canonical shell domains and compatibility shims
         run: ./tools/lint/lint-shellcheck.sh
       - name: ShellCheck domain and ratchet regression suite

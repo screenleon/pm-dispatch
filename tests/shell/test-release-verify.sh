@@ -144,6 +144,30 @@ test_release_phase1_runs_evidence_inventory_lints() {
   fi
 }
 
+# Behavior: release authorization rejects an ambient ShellCheck whose version
+# differs from the repository pin even when the executable exists on PATH.
+# Steps: Arrange a 0.10.0 ShellCheck and failing SQLite shim; Act by running
+# no-suite release verification; Assert the version mismatch makes the verdict NO-GO.
+test_release_phase1_rejects_shellcheck_version_drift() {
+  local name="release-phase1-rejects-shellcheck-version-drift" shim_dir out status=0
+  shim_dir="$(mktemp -d)"
+  printf '%s\n' '#!/usr/bin/env bash' \
+    'printf "ShellCheck\nversion: 0.10.0\n"' > "$shim_dir/shellcheck"
+  # Keep the behavioral check away from the context DB after Phase 1 records
+  # the mismatch; the SQLite smoke remains a deterministic NO-GO contributor.
+  printf '%s\n' '#!/usr/bin/env bash' 'exit 1' > "$shim_dir/sqlite3"
+  chmod +x "$shim_dir/shellcheck" "$shim_dir/sqlite3"
+  out="$(PATH="$shim_dir:$PATH" bash "$RV" --no-suite 2>&1)" || status=$?
+  rm -rf "$shim_dir"
+  if [[ "$status" -eq 1 && "$out" == *'[FAIL] shellcheck'* \
+      && "$out" == *'expected 0.11.0, got 0.10.0'* \
+      && "$out" == *'AUTOMATED VERDICT: NO-GO'* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out"
+  fi
+}
+
 test_release_e2e_keeps_full_and_excludes_affected_phase() {
   # The fixed release entry point is release-verify.sh --e2e. It must keep the
   # default fresh full suite, add E2E after that suite, and never grow an
@@ -464,6 +488,7 @@ test_help_exits_0
 test_help_short
 test_release_suite_verifies_state_bound_artifact
 test_release_phase1_runs_evidence_inventory_lints
+test_release_phase1_rejects_shellcheck_version_drift
 test_release_e2e_keeps_full_and_excludes_affected_phase
 test_unknown_flag
 test_adapter_missing_value

@@ -35,10 +35,12 @@ done
 
 domains="$repo_root/tools/lint/shellcheck-domains.tsv"
 ignores="$repo_root/tools/lint/shellcheck-ignores.tsv"
+bootstrap="$repo_root/tools/lint/bootstrap-shellcheck.sh"
 expected_domains=$'root\trole\nruntime\tcanonical\ntests\tcanonical\ntools\tcanonical\nops\tcanonical\nhosts\tcanonical\nscripts\tcompatibility'
 
 [[ -f "$domains" ]] || { printf 'lint-shellcheck: missing tools/lint/shellcheck-domains.tsv\n' >&2; exit 1; }
 [[ -f "$ignores" ]] || { printf 'lint-shellcheck: missing tools/lint/shellcheck-ignores.tsv\n' >&2; exit 1; }
+[[ -f "$bootstrap" ]] || { printf 'lint-shellcheck: missing tools/lint/bootstrap-shellcheck.sh\n' >&2; exit 1; }
 [[ "$(cat "$domains")" == "$expected_domains" ]] || {
   printf 'lint-shellcheck: domain inventory must contain the five canonical roots and scripts compatibility root\n' >&2
   exit 1
@@ -107,10 +109,7 @@ if [[ "$list_only" -eq 1 ]]; then
   exit 0
 fi
 
-command -v shellcheck >/dev/null 2>&1 || {
-  printf 'lint-shellcheck: shellcheck is required\n' >&2
-  exit 2
-}
+bash "$bootstrap" --repo "$repo_root" --check || exit $?
 
 jobs="${PM_DISPATCH_SHELLCHECK_JOBS:-2}"
 [[ "$jobs" =~ ^[1-8]$ ]] || {

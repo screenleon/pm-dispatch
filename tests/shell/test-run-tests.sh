@@ -99,6 +99,39 @@ case_memory_config_mapping_has_no_gap() {
   fi
 }
 
+# Behavior: every repository-owned ShellCheck version or installation contract
+# selects canonical lint plus the relevant toolchain and release regressions.
+# Steps: Arrange an isolated runner fixture; Act by listing each toolchain path
+# independently; Assert the pin selects lint plus both regression boundaries,
+# tool assets add inventory, and bootstrap also selects layer-boundary coverage.
+case_shellcheck_toolchain_mapping_is_complete() {
+  local name=shellcheck-toolchain-mapping-is-complete repo path out status expected
+  local diagnostics
+  name=shellcheck-toolchain-mapping-is-complete
+  repo="$(make_fixture "$name")"
+  diagnostics="$TMP_ROOT/$name.diagnostics"
+  for path in .shellcheck-version tools/lint/shellcheck-assets.tsv \
+    tools/lint/bootstrap-shellcheck.sh; do
+    status=0
+    out="$(RUN_TESTS_ARGS_LOG="$TMP_ROOT/$name.args" \
+      "$repo/tests/bin/run-tests.sh" --path "$path" --list 2>"$diagnostics")" || status=$?
+    case "$path" in
+      .shellcheck-version)
+        expected=$'lint-scripts\ntest-lint-shellcheck\ntest-release-verify' ;;
+      *.sh)
+        expected=$'lint-script-domain-inventory\nlint-scripts\ntest-layer-boundaries\ntest-lint-shellcheck\ntest-release-verify' ;;
+      *)
+        expected=$'lint-script-domain-inventory\nlint-scripts\ntest-lint-shellcheck' ;;
+    esac
+    if [[ "$status" -ne 0 || "$(printf '%s\n' "$out" | LC_ALL=C sort)" != "$expected" \
+        || "$(<"$diagnostics")" == *"coverage gaps"* ]]; then
+      fail "$name" "path=$path status=$status expected=$expected out=$out diagnostics=$(<"$diagnostics")"
+      return
+    fi
+  done
+  pass "$name"
+}
+
 # Behavior: A changed adapter-manifest library selects every registered direct
 # consumer suite without executing any suite during list mode.
 # Steps:
@@ -618,6 +651,7 @@ case_invalid_structured_sink_fails_closed() {
 
 case_direct_library_mapping
 case_memory_config_mapping_has_no_gap
+case_shellcheck_toolchain_mapping_is_complete
 case_adapter_manifest_mapping_covers_consumers
 case_install_receipt_mapping_covers_consumers
 case_executor_router_mapping_covers_gate_deployments
