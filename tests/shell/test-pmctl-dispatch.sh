@@ -362,6 +362,7 @@ case_route_failure_branch() {
   brief="/tmp/brief-pmctl-dispatch-$$-route.md"
   printf 'schema_version: 1\n' > "$brief"; _BRIEFS+=("$brief")
   set +e
+  # shellcheck disable=SC2317,SC2329  # pmctl_dispatch_run invokes this test override indirectly.
   err="$( dispatch_route_for_at() { return 2; }
           pmctl_dispatch_run "$fixture" --adapter faketest --cd "$fixture" --brief-file "$brief" 2>&1 )"; code=$?
   set -e

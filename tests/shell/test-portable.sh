@@ -1843,7 +1843,7 @@ case_portable_legacy_directory_receipt_migration() {
     _PORTABLE_MANIFEST_PREV_SRCS=(); _PORTABLE_MANIFEST_PREV_DSTS=()
     _PORTABLE_MANIFEST_PREV_MODES=(); _PORTABLE_MANIFEST_PREV_SHA256S=()
     _PORTABLE_MANIFEST_PREV_DIGEST_SCHEMES=(); _PORTABLE_MANIFEST_RECORDS=()
-    # shellcheck disable=SC2329  # link_or_copy invokes this test override indirectly.
+    # shellcheck disable=SC2317,SC2329  # link_or_copy invokes this test override indirectly.
     _portable_sha256_tar_v0() { return 1; }
     FAKE_SYMLINK_UNSUPPORTED=1 link_or_copy "$src" "$dst"
   } 2>&1)"; rc=$?
