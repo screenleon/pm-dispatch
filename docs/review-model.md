@@ -212,6 +212,16 @@ line counts. The free-form `.gate-overrides.md` file remains reviewer
 finding/suppression context; it is recorded separately and cannot authorize a
 policy downgrade.
 
+The reviewer-override channel accepts only readable, non-empty, NUL-free regular
+files whose final path component is not a symlink, including dangling symlinks.
+`.gate-overrides.md` is discovered at the physical workspace root; explicit
+relative `--override-file` paths are based at `--cd`. Legacy symlink, empty,
+unreadable, non-regular, and NUL-containing override paths now fail before
+reviewer dispatch. On Linux and WSL2 the gate validates identity and content
+around a private snapshot, and uses that accepted snapshot—not a later source
+reread—for briefs and recorded provenance. This bounded check does not claim
+protection against a malicious concurrent writer using the same OS uid.
+
 The portable policy sources are
 [`core/policy/gate-tiers.tsv`](../core/policy/gate-tiers.tsv),
 [`core/policy/gate-modes.tsv`](../core/policy/gate-modes.tsv), and

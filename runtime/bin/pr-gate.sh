@@ -5,6 +5,24 @@ trap '' PIPE
 GATE_CANCELLED=false
 GATE_ACTIVE_PREFLIGHT_PID=""
 GATE_ACTIVE_PREFLIGHT_PGID=""
+GATE_REVIEWER_OVERRIDE_SNAPSHOT=""
+
+gate_cleanup_reviewer_override_snapshot() {
+  local snapshot="${GATE_REVIEWER_OVERRIDE_SNAPSHOT:-}"
+  [[ -n "$snapshot" ]] || return 0
+  rm -f -- "$snapshot" 2>/dev/null || true
+  GATE_REVIEWER_OVERRIDE_SNAPSHOT=""
+}
+
+# The full gate cleanup is installed only after result/brief paths exist.  This
+# early trap covers the reviewer-override snapshot created before that point;
+# gate_exit_cleanup() calls the same helper after it replaces this trap.
+gate_early_exit_cleanup() {
+  local gate_status=$?
+  gate_cleanup_reviewer_override_snapshot
+  return "$gate_status"
+}
+trap gate_early_exit_cleanup EXIT
 
 gate_stop_active_preflight() {
   local pid="${GATE_ACTIVE_PREFLIGHT_PID:-}" pgid="${GATE_ACTIVE_PREFLIGHT_PGID:-}"
@@ -23,6 +41,7 @@ gate_stop_active_preflight() {
 gate_cancel_signal() {
   GATE_CANCELLED=true
   gate_stop_active_preflight
+  gate_cleanup_reviewer_override_snapshot
   exit 130
 }
 trap gate_cancel_signal TERM INT
@@ -1992,8 +2011,12 @@ _kill_process_tree() {
 #   --override-file <f>  inject accepted-risk overrides into every reviewer brief; auto-discovered
 #                        from .gate-overrides.md at repo root when this flag is omitted. A relative
 #                        <f> is resolved against the working dir (--cd), not the caller's CWD, since
-#                        the file is loaded after the gate cd's into the work dir. The loaded source
-#                        and content are recorded in the gate result (## Gate Overrides Applied).
+#                        the file is loaded after the gate cd's into the work dir. It must be readable,
+#                        non-empty, regular, NUL-free, and have a non-symlink final component (including
+#                        no dangling link); legacy inputs that violate this fail before dispatch. The loader
+#                        snapshots and rechecks source identity on Linux/WSL2, but cannot defend a
+#                        malicious concurrent writer using the same OS uid. Accepted snapshot source and
+#                        content are recorded in the gate result (## Gate Overrides Applied).
 #   --policy-override <f> explicit gate_policy_override_v1 JSON for a scope-bound policy
 #                        downgrade. It is never auto-discovered and requires recorded user approval.
 #   --test-cmd <cmd>     pre-flight test command run in plain bash BEFORE dispatch, independent of
@@ -4751,29 +4774,175 @@ unset _self _self_dir EXECUTOR_ROUTER_PATH
 cd "$WORK_DIR"
 
 # ── Load gate overrides ───────────────────────────────────────────────────────
+# Load a free-form reviewer override into memory only after its final path
+# component and the bytes copied to a private snapshot agree.  Bash has no
+# O_NOFOLLOW open primitive, so this is deliberately a bounded Linux/WSL2
+# check/use protocol rather than a claim of protection from a same-uid writer.
+# It protects the reviewer channel from ordinary symlink redirects and from a
+# replacement observed while this loader is running; dispatches consume only
+# GATE_OVERRIDES_CONTENT, never the source path again.
+gate_load_reviewer_override() {
+  local caller_input="$1" candidate="$2" parent source snapshot
+  local identity_before identity_after identity_final snapshot_sha source_sha
+  local mode permissions snapshot_size nul_stripped_size
+
+  _gate_reviewer_override_error() {
+    printf 'Error: reviewer override must name a readable, non-empty, NUL-free regular non-symlink file: %s (%s)\n' \
+      "$caller_input" "$1" >&2
+  }
+
+  if [[ -L "$candidate" ]]; then
+    _gate_reviewer_override_error 'final path component is a symlink'
+    return 2
+  fi
+  if [[ ! -e "$candidate" ]]; then
+    _gate_reviewer_override_error 'file does not exist'
+    return 2
+  fi
+  if [[ ! -f "$candidate" ]]; then
+    _gate_reviewer_override_error 'not a regular file'
+    return 2
+  fi
+  if [[ ! -r "$candidate" ]]; then
+    _gate_reviewer_override_error 'file is not readable'
+    return 2
+  fi
+  if [[ ! -s "$candidate" ]]; then
+    _gate_reviewer_override_error 'file is empty'
+    return 2
+  fi
+  if ! command -v stat >/dev/null 2>&1; then
+    _gate_reviewer_override_error 'required file identity primitive (stat) is unavailable'
+    return 2
+  fi
+  # `-c` is the supported GNU stat interface on Linux and WSL2.  Checking a
+  # readable permission bit avoids root making a chmod 000 fixture look usable.
+  mode="$(stat -Lc '%a' -- "$candidate" 2>/dev/null)" || {
+    _gate_reviewer_override_error 'cannot inspect file identity'
+    return 2
+  }
+  if [[ ! "$mode" =~ ^[0-7]{1,4}$ ]]; then
+    _gate_reviewer_override_error 'cannot interpret file permission bits'
+    return 2
+  fi
+  permissions="00$mode"
+  permissions="${permissions: -3}"
+  if [[ "$permissions" != *[4567]* ]]; then
+    _gate_reviewer_override_error 'file is not readable'
+    return 2
+  fi
+  parent="$(cd "$(dirname "$candidate")" && pwd -P)" || {
+    _gate_reviewer_override_error 'parent directory cannot be resolved'
+    return 2
+  }
+  source="$parent/$(basename "$candidate")"
+  identity_before="$(stat -Lc '%d:%i:%s:%Y:%Z:%f' -- "$source" 2>/dev/null)" || {
+    _gate_reviewer_override_error 'cannot capture file identity'
+    return 2
+  }
+  snapshot="$(mktemp "${TMPDIR:-/tmp}/pr-gate-reviewer-override.XXXXXX")" || {
+    _gate_reviewer_override_error 'cannot create private content snapshot'
+    return 2
+  }
+  GATE_REVIEWER_OVERRIDE_SNAPSHOT="$snapshot"
+  if ! cat -- "$source" > "$snapshot"; then
+    gate_cleanup_reviewer_override_snapshot
+    _gate_reviewer_override_error 'file could not be read into a private snapshot'
+    return 2
+  fi
+  if [[ -L "$candidate" || ! -f "$candidate" || ! -r "$candidate" || ! -s "$candidate" ]]; then
+    gate_cleanup_reviewer_override_snapshot
+    _gate_reviewer_override_error 'file changed or was redirected while being read'
+    return 2
+  fi
+  identity_after="$(stat -Lc '%d:%i:%s:%Y:%Z:%f' -- "$source" 2>/dev/null)" || {
+    gate_cleanup_reviewer_override_snapshot
+    _gate_reviewer_override_error 'file identity disappeared while being read'
+    return 2
+  }
+  if [[ "$identity_before" != "$identity_after" ]]; then
+    gate_cleanup_reviewer_override_snapshot
+    _gate_reviewer_override_error 'file identity changed while being read'
+    return 2
+  fi
+  snapshot_size="$(stat -Lc '%s' -- "$snapshot" 2>/dev/null)" || {
+    gate_cleanup_reviewer_override_snapshot
+    _gate_reviewer_override_error 'cannot inspect private content snapshot'
+    return 2
+  }
+  nul_stripped_size="$(LC_ALL=C tr -d '\000' < "$snapshot" | wc -c)" || {
+    gate_cleanup_reviewer_override_snapshot
+    _gate_reviewer_override_error 'cannot validate override text bytes'
+    return 2
+  }
+  nul_stripped_size="${nul_stripped_size//[[:space:]]/}"
+  if [[ "$snapshot_size" != "$nul_stripped_size" ]]; then
+    gate_cleanup_reviewer_override_snapshot
+    _gate_reviewer_override_error 'file contains a NUL byte'
+    return 2
+  fi
+  snapshot_sha="$(_gate_result_sha256_file "$snapshot")" || {
+    gate_cleanup_reviewer_override_snapshot
+    return 2
+  }
+  source_sha="$(_gate_result_sha256_file "$source")" || {
+    gate_cleanup_reviewer_override_snapshot
+    _gate_reviewer_override_error 'file could not be rechecked after snapshot'
+    return 2
+  }
+  if [[ "$snapshot_sha" != "$source_sha" ]]; then
+    gate_cleanup_reviewer_override_snapshot
+    _gate_reviewer_override_error 'file content changed while being read'
+    return 2
+  fi
+  if [[ -L "$candidate" || -L "$source" ]]; then
+    gate_cleanup_reviewer_override_snapshot
+    _gate_reviewer_override_error 'file was redirected after its content was checked'
+    return 2
+  fi
+  identity_final="$(stat -Lc '%d:%i:%s:%Y:%Z:%f' -- "$source" 2>/dev/null)" || {
+    gate_cleanup_reviewer_override_snapshot
+    _gate_reviewer_override_error 'file identity disappeared after content validation'
+    return 2
+  }
+  if [[ "$identity_before" != "$identity_final" ]]; then
+    gate_cleanup_reviewer_override_snapshot
+    _gate_reviewer_override_error 'file identity changed after content validation'
+    return 2
+  fi
+
+  OVERRIDE_FILE="$source"
+  # Keep the legacy content-normalization contract: Bash command substitution
+  # strips trailing newlines.  The source is never reread; both normalized
+  # prompt content and the full-byte provenance digest come from this snapshot.
+  if ! GATE_OVERRIDES_CONTENT="$(cat -- "$snapshot")"; then
+    gate_cleanup_reviewer_override_snapshot
+    _gate_reviewer_override_error 'private content snapshot could not be loaded'
+    return 2
+  fi
+  if ! REVIEWER_OVERRIDE_PROVENANCE_JSON="$(jq -nc \
+    --arg source "$source" --arg sha256 "$snapshot_sha" \
+    '{status:"provided",source:$source,sha256:$sha256}')"; then
+    gate_cleanup_reviewer_override_snapshot
+    printf 'Error: cannot record accepted reviewer override provenance\n' >&2
+    return 2
+  fi
+  gate_cleanup_reviewer_override_snapshot
+}
+
 # Auto-discover .gate-overrides.md when --override-file is not specified.
 # Overrides are injected into every reviewer brief so accepted-risk items are
 # not re-blocked across rounds without a material change to the reviewed code.
-if [[ -z "$OVERRIDE_FILE" && -f "$WORK_DIR/.gate-overrides.md" ]]; then
+if [[ -z "$OVERRIDE_FILE" && ( -e "$WORK_DIR/.gate-overrides.md" || -L "$WORK_DIR/.gate-overrides.md" ) ]]; then
   OVERRIDE_FILE="$WORK_DIR/.gate-overrides.md"
   say 'pr-gate: discovered override file: .gate-overrides.md\n'
 fi
 GATE_OVERRIDES_CONTENT=""
 REVIEWER_OVERRIDE_PROVENANCE_JSON='{"status":"not_provided","source":null,"sha256":null}'
 if [[ -n "$OVERRIDE_FILE" ]]; then
-  if [[ ! -f "$OVERRIDE_FILE" ]]; then
-    printf 'Error: override file not found: %s\n' "$OVERRIDE_FILE" >&2
-    exit 2
-  fi
-  _override_parent="$(cd "$(dirname "$OVERRIDE_FILE")" && pwd -P)" || exit 2
-  OVERRIDE_FILE="$_override_parent/$(basename "$OVERRIDE_FILE")"
-  unset _override_parent
-  GATE_OVERRIDES_CONTENT=$(cat "$OVERRIDE_FILE")
-  _reviewer_override_sha="$(_gate_result_sha256_file "$OVERRIDE_FILE")" || exit 2
-  REVIEWER_OVERRIDE_PROVENANCE_JSON="$(jq -nc \
-    --arg source "$OVERRIDE_FILE" --arg sha256 "$_reviewer_override_sha" \
-    '{status:"provided",source:$source,sha256:$sha256}')"
-  unset _reviewer_override_sha
+  _override_caller_input="$OVERRIDE_FILE"
+  gate_load_reviewer_override "$_override_caller_input" "$OVERRIDE_FILE" || exit $?
+  unset _override_caller_input
   say 'pr-gate: override file loaded: %s (%d bytes)\n' "$OVERRIDE_FILE" "${#GATE_OVERRIDES_CONTENT}"
 fi
 if [[ -n "$POLICY_OVERRIDE_FILE" ]]; then
@@ -5396,6 +5565,7 @@ relocate_gate_artifacts() {
 
 gate_exit_cleanup() {
   local _gate_exit_status=$?
+  gate_cleanup_reviewer_override_snapshot
   # CC-522 Slice B: a killed reviewer cannot be trusted to write a final
   # result. Preserve the host-owned QA checkpoint/log pointer as an explicit
   # non-authorizing partial artifact before any run-dir relocation.
