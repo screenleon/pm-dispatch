@@ -1,4 +1,4 @@
-# Gate policy signals. Reviewer requirements apply to initial discovery; targeted passes retain tier/mode signals but use requested remediation coverage.
+# Gate policy signals. Reviewer requirements apply whenever the current subject matches; targeted passes narrow remediation coverage but cannot omit a matched risk reviewer without a scope-bound override.
 signal	match_source	pattern	minimum_tier	required_reviewers	recommended_mode
 docs-only	classification	docs-only	express	none	sequential
 bounded-runtime	classification	bounded-runtime	express	none	sequential
