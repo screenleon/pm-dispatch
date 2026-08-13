@@ -8480,6 +8480,122 @@ test_inline_fallback_matches_lib() {
   pass "$name"
 }
 
+# Behavior: fallback provenance, marker structure, and generator executability
+# are part of the generated-artifact contract, not just body parity.
+# Steps: copy the canonical generator inputs into an isolated fixture, then
+# assert canonical provenance passes while a drifted path, a missing marker, and
+# a non-executable generator each fail loudly in --check mode.
+test_inline_fallback_provenance_contract() {
+  local name="inline-fallback-provenance-contract"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" output code
+  mkdir -p "$dir/tools" "$dir/runtime/lib" "$dir/runtime/bin"
+  cp "$REPO_ROOT/tools/generate-gate-result-verifier-fallback.sh" "$dir/tools/"
+  cp "$REPO_ROOT/runtime/lib/gate-result-verify.sh" "$dir/runtime/lib/"
+  cp "$REPO_ROOT/runtime/lib/identifier-policy.sh" "$dir/runtime/lib/"
+  cp "$REPO_ROOT/runtime/bin/pr-gate.sh" "$dir/runtime/bin/"
+  chmod +x "$dir/tools/generate-gate-result-verifier-fallback.sh"
+
+  if ! output="$(bash "$dir/tools/generate-gate-result-verifier-fallback.sh" --check 2>&1)"; then
+    fail "$name" "canonical fixture rejected: $output"
+    return
+  fi
+
+  mkdir -p "$dir/alternate"
+  cp "$dir/tools/generate-gate-result-verifier-fallback.sh" \
+    "$dir/alternate/generate-gate-result-verifier-fallback.sh"
+  chmod +x "$dir/alternate/generate-gate-result-verifier-fallback.sh"
+  set +e
+  output="$(bash "$dir/alternate/generate-gate-result-verifier-fallback.sh" --check 2>&1)"
+  code=$?
+  set -e
+  if [[ "$code" -eq 0 || "$output" != *"not the canonical generator"* ]]; then
+    fail "$name" "non-canonical invocation was not rejected: code=$code output=$output"
+    return
+  fi
+
+  sed -i 's|^  # tools/generate-gate-result-verifier-fallback\.sh\. Do not edit this block by hand\.$|  # tools/non-canonical-verifier-generator.sh. Do not edit this block by hand.|' \
+    "$dir/runtime/bin/pr-gate.sh"
+  set +e
+  output="$(bash "$dir/tools/generate-gate-result-verifier-fallback.sh" --check 2>&1)"
+  code=$?
+  set -e
+  if [[ "$code" -eq 0 || "$output" != *"provenance"* ]]; then
+    fail "$name" "provenance drift was not rejected: code=$code output=$output"
+    return
+  fi
+  if ! output="$(bash "$dir/tools/generate-gate-result-verifier-fallback.sh" sync 2>&1)"; then
+    fail "$name" "sync did not repair provenance drift: $output"
+    return
+  fi
+  if ! bash "$dir/tools/generate-gate-result-verifier-fallback.sh" --check >/dev/null 2>&1; then
+    fail "$name" "repaired fallback still fails generated-artifact check"
+    return
+  fi
+
+  cp "$REPO_ROOT/runtime/bin/pr-gate.sh" "$dir/runtime/bin/pr-gate.sh"
+  sed -i 's|^  # gate-result-verifier-fallback:start$|  # gate-result-verifier-fallback:missing-start|' \
+    "$dir/runtime/bin/pr-gate.sh"
+  set +e
+  output="$(bash "$dir/tools/generate-gate-result-verifier-fallback.sh" --check 2>&1)"
+  code=$?
+  set -e
+  if [[ "$code" -eq 0 || "$output" != *"markers"* ]]; then
+    fail "$name" "marker drift was not rejected: code=$code output=$output"
+    return
+  fi
+
+  cp "$REPO_ROOT/runtime/bin/pr-gate.sh" "$dir/runtime/bin/pr-gate.sh"
+  sed -i '/^  # gate-result-verifier-fallback:start$/a\  # gate-result-verifier-fallback:start' \
+    "$dir/runtime/bin/pr-gate.sh"
+  set +e
+  output="$(bash "$dir/tools/generate-gate-result-verifier-fallback.sh" --check 2>&1)"
+  code=$?
+  set -e
+  if [[ "$code" -eq 0 || "$output" != *"markers"* ]]; then
+    fail "$name" "duplicate marker drift was not rejected: code=$code output=$output"
+    return
+  fi
+
+  cp "$REPO_ROOT/runtime/bin/pr-gate.sh" "$dir/runtime/bin/pr-gate.sh"
+  awk -v start='  # gate-result-verifier-fallback:start' \
+      -v finish='  # gate-result-verifier-fallback:end' '
+    {
+      lines[NR] = $0
+      if ($0 == start) start_line = NR
+      if ($0 == finish) finish_line = NR
+    }
+    END {
+      for (line = 1; line <= NR; line++) {
+        if (line == start_line) print finish
+        else if (line == finish_line) print start
+        else print lines[line]
+      }
+    }
+  ' "$dir/runtime/bin/pr-gate.sh" > "$dir/runtime/bin/pr-gate.reversed.sh"
+  mv "$dir/runtime/bin/pr-gate.reversed.sh" "$dir/runtime/bin/pr-gate.sh"
+  set +e
+  output="$(bash "$dir/tools/generate-gate-result-verifier-fallback.sh" --check 2>&1)"
+  code=$?
+  set -e
+  if [[ "$code" -eq 0 || "$output" != *"markers"* ]]; then
+    fail "$name" "reversed marker drift was not rejected: code=$code output=$output"
+    return
+  fi
+
+  cp "$REPO_ROOT/runtime/bin/pr-gate.sh" "$dir/runtime/bin/pr-gate.sh"
+  chmod a-x "$dir/tools/generate-gate-result-verifier-fallback.sh"
+  set +e
+  output="$(bash "$dir/tools/generate-gate-result-verifier-fallback.sh" --check 2>&1)"
+  code=$?
+  set -e
+  if [[ "$code" -eq 0 || "$output" != *"not executable"* ]]; then
+    fail "$name" "non-executable generator was not rejected: code=$code output=$output"
+    return
+  fi
+  pass "$name"
+}
+
 # Behavior: a repo-root .gate-overrides.md is injected into the sequential
 # reviewer brief as an "Accepted-risk overrides" section.
 # Steps: write a .gate-overrides.md with an accepted-risk entry, run the
@@ -8723,6 +8839,7 @@ run_test test_claude_seq_brief_guard_stays_bare_pmctl_when_pmctl_not_on_path
 run_test test_missing_jq_fails_before_dispatch
 run_test test_relative_output_normalized_to_absolute
 run_test test_inline_fallback_matches_lib
+run_test test_inline_fallback_provenance_contract
 run_test test_brief_major_resolves_full
 run_test test_brief_minor_resolves_standard
 run_test test_brief_explicit_full_satisfies_policy_floor

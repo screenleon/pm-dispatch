@@ -582,7 +582,7 @@ case_prune_terminal_evidence_preserves_non_expired_candidates() {
   local active_id="gate-20260101-000002-act001" symlink_id="gate-20260101-000003-sym001"
   local expired_nonce="expired-nonce" fresh_nonce="fresh-nonce" active_nonce="active-nonce" symlink_nonce="symlink-nonce"
   local expired_key="$key_dir/$expired_id" fresh_key="$key_dir/$fresh_id"
-  local active_key="$key_dir/$active_id" symlink_key="$key_dir/$symlink_id"
+  local active_key="$key_dir/$active_id" symlink_key="$key_dir/$symlink_id" test_now
   local expired_terminal expired_ready fresh_terminal fresh_ready symlink_terminal symlink_ready symlink_target
 
   expired_terminal="$(detached_launch_private_sentinel_path "pm-gate-dispatch" "pm-gate" "$expired_id" "$expired_nonce")"
@@ -606,10 +606,17 @@ case_prune_terminal_evidence_preserves_non_expired_candidates() {
   ln -s "$symlink_target" "$symlink_terminal"
   ln -s "$symlink_target" "$symlink_ready"
 
-  # Make the expired completed triple and an old active key equally old.  The
-  # latter must remain because it has no terminal sentinel proving completion.
-  touch -d '2 seconds ago' "$expired_terminal" "$expired_ready" "$expired_key" "$active_key"
-  PM_GATE_SENTINEL_RETENTION_SECONDS=1 _pmctl_gate_prune_terminal_evidence "$key_dir"
+  # Use a fixed clock and explicit mtimes. The production path derives `now`
+  # from date(1), but a full suite may deschedule this case across a one-second
+  # boundary before prune runs. The latter must remain because it has no
+  # terminal sentinel proving completion.
+  # Keep this epoch deliberately independent from the host clock. If the
+  # helper ignores its injected `now` argument and calls date(1), the fresh
+  # fixture appears years old and this regression test fails deterministically.
+  test_now=1704067200
+  touch -d "@$((test_now - 2))" "$expired_terminal" "$expired_ready" "$expired_key" "$active_key"
+  touch -d "@$test_now" "$fresh_terminal" "$fresh_ready" "$fresh_key"
+  PM_GATE_SENTINEL_RETENTION_SECONDS=1 _pmctl_gate_prune_terminal_evidence "$key_dir" "$test_now"
 
   if [[ ! -e "$expired_terminal" && ! -e "$expired_ready" && ! -e "$expired_key" \
     && -e "$fresh_terminal" && -e "$fresh_ready" && -e "$fresh_key" \

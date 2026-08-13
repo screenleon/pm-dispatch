@@ -166,7 +166,7 @@ Gate correctness 與 release evidence 仍必須先在 v0.11.0 關閉。
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-525 | 修正 verifier fallback provenance 並鎖定唯一 generator | 🔵 |
+| CC-525 | 修正 verifier fallback provenance 並鎖定唯一 generator；generator identity、marker、provenance 與 body parity 已有 fail-closed ratchet | ✅ closed 2026-08-13 |
 | CC-532 | 拆出 canonical Gate modules，release 時產生 standalone dist 並驗 canonical/dist parity | 🔵 |
 | CC-533 | schema-derived structural validator；手寫 verifier 只保留跨 artifact 語意 | 🔵 |
 

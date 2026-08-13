@@ -2317,7 +2317,7 @@ if [[ -r "$GATE_RESULT_VERIFY_PATH" ]]; then
 else
   # Inline fallback for copy-mode (pr-gate.sh run standalone without runtime/lib/).
   # Generated from runtime/lib/gate-result-verify.sh by
-  # scripts/sync-gate-result-verifier-fallback.sh. Do not edit this block by hand.
+  # tools/generate-gate-result-verifier-fallback.sh. Do not edit this block by hand.
   # gate-result-verifier-fallback:start
   pm_identifier_run_ere_pattern() {
     printf '%s\n' '^run-[A-Za-z0-9]+-[A-Za-z0-9]+$'

@@ -53,10 +53,15 @@ _pmctl_gate_sentinel_key_file() {
 # active launches retain their key even when old. The default is seven days and
 # can be tuned for constrained hosts with PM_GATE_SENTINEL_RETENTION_SECONDS.
 _pmctl_gate_prune_terminal_evidence() {
-  local key_dir="$1" retention="${PM_GATE_SENTINEL_RETENTION_SECONDS:-604800}"
+  local key_dir="$1" retention="${PM_GATE_SENTINEL_RETENTION_SECONDS:-604800}" now_override="${2:-}"
   [[ "$retention" =~ ^[1-9][0-9]*$ && -d "$key_dir" ]] || return 0
   local now key gate_id nonce terminal ready modified age
-  now="$(date +%s 2>/dev/null)" || return 0
+  if [[ -n "$now_override" ]]; then
+    [[ "$now_override" =~ ^[0-9]+$ ]] || return 0
+    now="$now_override"
+  else
+    now="$(date +%s 2>/dev/null)" || return 0
+  fi
   for key in "$key_dir"/gate-*; do
     [[ -f "$key" && ! -L "$key" ]] || continue
     gate_id="${key##*/}"
