@@ -105,6 +105,28 @@ test_waiter_rejects_invalid_run_id() {
   fi
 }
 
+test_waiter_rejects_loose_run_id_before_pmctl() {
+  # Behavior: a formerly accepted loose run ID is rejected before pmctl is invoked.
+  # Steps: 1. create a successful pmctl stub that records invocation; 2. invoke with run-legacy;
+  # 3. assert exit 2, the validation diagnostic, and no stub invocation.
+  local name="waiter-rejects-loose-run-id-before-pmctl"
+  should_run "$name" || return 0
+  local stub="$tmp_root/loose/pmctl" work="$tmp_root/loose/work" err="$tmp_root/loose.err" invoked="$tmp_root/loose.invoked" rc=0
+  mkdir -p "$work"
+  cat > "$stub" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' invoked > "$invoked"
+exit 0
+EOF
+  chmod +x "$stub"
+  run_waiter "$stub" run-legacy "$work" 5 >/dev/null 2>"$err" || rc=$?
+  if [[ "$rc" -eq 2 && "$(<"$err")" == *'invalid --run-id: run-legacy'* && ! -e "$invoked" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected rc 2, invalid-ID diagnostic, and no pmctl invocation, got rc=$rc err=$(<"$err")"
+  fi
+}
+
 test_waiter_rejects_non_checkout_repo_root() {
   # Behavior: a repo root without executable cli/pmctl is rejected before waiting.
   # Steps: 1. create an absolute non-checkout directory; 2. invoke the waiter; 3. assert exit 2 and stderr.
@@ -252,6 +274,7 @@ test_waiter_completed_envelope_preserves_success
 test_waiter_indeterminate_recommends_foreground_fallback
 test_waiter_timeout_does_not_recommend_redispatch
 test_waiter_rejects_invalid_run_id
+test_waiter_rejects_loose_run_id_before_pmctl
 test_waiter_rejects_non_checkout_repo_root
 test_waiter_rejects_invalid_work_dir
 test_waiter_rejects_invalid_timeout
