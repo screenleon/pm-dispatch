@@ -51,12 +51,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
   handling, truthful full-tier/QA-only labeling, and complete execution-mode
   parity remain open; CC-527 is not closed by this PR.
 
-- **Source-safe runtime and identifier-policy foundation (CC-530 partial, PR
-  #473).** `portable.sh` no longer changes strict-mode flags when sourced,
-  caller-state workarounds were removed from the state libraries, and a shared
-  identifier policy now serves the primary runtime consumers. Complete
-  source-side-effect enforcement and migration of the remaining production and
-  fallback validators remain open; CC-530 is not closed by this PR.
+- **Source-safe runtime and identifier-policy closure (CC-530, PR #473
+  foundation).** Every `runtime/lib/*.sh` now has a mechanically checked
+  no-side-effect source contract under caller-owned strict modes: no shell
+  policy/cwd/trap/job mutation, direct exit, process spawn, external exec, or
+  filesystem write. Identifier validation centrally owns strict domain
+  grammars plus safe artifact-leaf compatibility, and the Gate verifier's
+  standalone fallback derives its run-id ERE from that canonical policy.
 
 - **Manifest-authoritative Adapter dispatch entrypoint (CC-531).** The
   implementation establishes

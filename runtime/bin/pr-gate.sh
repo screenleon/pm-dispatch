@@ -2319,6 +2319,10 @@ else
   # Generated from runtime/lib/gate-result-verify.sh by
   # scripts/sync-gate-result-verifier-fallback.sh. Do not edit this block by hand.
   # gate-result-verifier-fallback:start
+  pm_identifier_run_ere_pattern() {
+    printf '%s\n' '^run-[A-Za-z0-9]+-[A-Za-z0-9]+$'
+  }
+
   gate_result_verdict_verify() {
     local result_file=${1-} expected_final=${2-} route_label=${3-gate}
     local final_count frontmatter_final body_final
@@ -3771,7 +3775,8 @@ else
     result_sha="$(_gate_result_sha256_file "$result_file")" || return $?
     jq -e --arg final "$body_final" --arg result_sha "$result_sha" \
       --arg markdown_tier "$markdown_tier" \
-      --arg markdown_mode "$markdown_mode" '
+      --arg markdown_mode "$markdown_mode" \
+      --arg run_id_pattern "$(pm_identifier_run_ere_pattern)" '
       def only_keys($allowed):
         type == "object" and ((keys_unsorted - $allowed) | length) == 0;
       def strings_unique:
@@ -4088,7 +4093,7 @@ else
         (.status | IN("passed","failed","incomplete","skipped")) and
         (.evidence_status | IN("verified","unavailable","unverified")) and
         (.run_id == null or
-          (.run_id | type == "string" and test("^run-[A-Za-z0-9]+-[A-Za-z0-9]+$"))))) and
+          (.run_id | type == "string" and test($run_id_pattern))))) and
       (if .coordinates.mode.resolved == "parallel" and
           ([.dispatch.outcomes[] | select(.role == "preflight")] | length) == 0
        then

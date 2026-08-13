@@ -8,7 +8,7 @@
 
 # shellcheck source=runtime/lib/host-names.sh
 # shellcheck disable=SC1091
-. "$(dirname "${BASH_SOURCE[0]}")/host-names.sh"
+. "${BASH_SOURCE[0]%/*}/host-names.sh"
 
 pmctl_pm_usage() {
   cat >&2 <<'EOF'
@@ -310,7 +310,7 @@ pmctl_pm_run() {
   [[ "$no_auto_pack" -eq 1 ]] && dispatch_args+=(--no-auto-pack)
   local run_id wait_rc=0
   run_id="$(pmctl_dispatch_run "$repo_root" "${dispatch_args[@]}")" || return $?
-  [[ "$run_id" =~ ^run-[A-Za-z0-9._-]+$ ]] || { printf 'pmctl pm run: dispatch returned invalid run id: %s\n' "$run_id" >&2; return 1; }
+  pm_identifier_run_is_valid "$run_id" || { printf 'pmctl pm run: dispatch returned invalid run id: %s\n' "$run_id" >&2; return 1; }
   local -a wait_args=("$run_id" --cd "$work_dir")
   [[ -n "$timeout" ]] && wait_args+=(--timeout "$timeout")
   # In JSON mode the coordinator owns stdout. dispatch wait may print an

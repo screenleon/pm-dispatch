@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
-_HANDOVER_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_HANDOVER_LIB_DIR="${BASH_SOURCE[0]%/*}"
+[[ "$_HANDOVER_LIB_DIR" == "${BASH_SOURCE[0]}" ]] && _HANDOVER_LIB_DIR=.
 _HANDOVER_EXECUTOR_POLICY_FILE="${_HANDOVER_EXECUTOR_POLICY_FILE:-$_HANDOVER_LIB_DIR/../../core/policy/executor-enum.yaml}"
 _HANDOVER_DISPATCH_ROUTE_POLICY_FILE="${_HANDOVER_DISPATCH_ROUTE_POLICY_FILE:-$_HANDOVER_LIB_DIR/../../core/policy/dispatch-routes.yaml}"
 _HANDOVER_ISOLATION_POLICY_FILE="${_HANDOVER_ISOLATION_POLICY_FILE:-$_HANDOVER_LIB_DIR/../../core/policy/isolation-level.yaml}"

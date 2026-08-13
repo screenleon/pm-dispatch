@@ -27,8 +27,9 @@
 # exists. `pmctl ship prepare <id>` also stays as an explicit, permanent
 # alias for the in-place case -- not deprecated, not removed.
 
-if [[ "$(type -t pm_identifier_operation_is_valid 2>/dev/null)" != function ]]; then
-  _pmctl_ship_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if ! declare -F pm_identifier_operation_is_valid >/dev/null 2>&1; then
+  _pmctl_ship_lib_dir="${BASH_SOURCE[0]%/*}"
+  [[ "$_pmctl_ship_lib_dir" == "${BASH_SOURCE[0]}" ]] && _pmctl_ship_lib_dir=.
   # shellcheck source=runtime/lib/identifier-policy.sh
   # shellcheck disable=SC1091
   . "$_pmctl_ship_lib_dir/identifier-policy.sh"

@@ -152,15 +152,15 @@ Gate correctness 與 release evidence 仍必須先在 v0.11.0 關閉。
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-530 | source-safe runtime libraries + unified identifier policy；PR #473 foundation 已合入，完整 source/consumer coverage 待補 | 🔵 partial (pr:#473) |
+| CC-530 | source-safe runtime libraries + unified identifier policy；source-side-effect contract、production/copy-mode consumer parity 與 current-tree full-suite evidence 已完成 | ✅ closed 2026-08-12 (pr:#473, closure) |
 | CC-531 | canonical `dispatch_entrypoint`、schema v1 bounded migration、copy-mode reader/manifest parity | ✅ 2026-08-11 |
 
 ### Phase 11 — Gate security + coordinate cleanup（新增）
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-526 | reviewer override symlink／replacement trust-boundary hardening | 🔵 |
-| CC-527 | targeted pass、reviewer coverage 與 tier 的 CLI coordinate 分離；PR #472 syntax slice 已合入，inheritance/basis/parity 待補 | 🔵 partial (pr:#472) |
+| CC-526 | reviewer override symlink／replacement trust-boundary hardening | ✅ pr:#475 |
+| CC-527 | targeted pass、reviewer coverage 與 tier 的 CLI coordinate 分離；tier 由 current subject/policy 解析，仍待 complete parity closure | ⚠️ partial (pr:#472, #476) |
 
 ### Phase 12 — Gate canonical source + generated artifacts（新增）
 

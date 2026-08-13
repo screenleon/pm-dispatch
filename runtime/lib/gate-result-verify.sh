@@ -17,6 +17,12 @@
 # contracts while preserving v3/v4 readability.
 #
 # gate_result_verdict_verify <result_file> [expected_final] [route_label]
+if ! declare -F pm_identifier_run_ere_pattern >/dev/null 2>&1; then
+  # shellcheck source=runtime/lib/identifier-policy.sh
+  # shellcheck disable=SC1091
+  . "${BASH_SOURCE[0]%/*}/identifier-policy.sh"
+fi
+
 gate_result_verdict_verify() {
   local result_file=${1-} expected_final=${2-} route_label=${3-gate}
   local final_count frontmatter_final body_final
@@ -1628,7 +1634,8 @@ gate_assurance_verify() {
   result_sha="$(_gate_result_sha256_file "$result_file")" || return $?
   jq -e --arg final "$body_final" --arg result_sha "$result_sha" \
     --arg markdown_tier "$markdown_tier" \
-    --arg markdown_mode "$markdown_mode" '
+    --arg markdown_mode "$markdown_mode" \
+    --arg run_id_pattern "$(pm_identifier_run_ere_pattern)" '
     def only_keys($allowed):
       type == "object" and ((keys_unsorted - $allowed) | length) == 0;
     def strings_unique:
@@ -1945,7 +1952,7 @@ gate_assurance_verify() {
       (.status | IN("passed","failed","incomplete","skipped")) and
       (.evidence_status | IN("verified","unavailable","unverified")) and
       (.run_id == null or
-        (.run_id | type == "string" and test("^run-[A-Za-z0-9]+-[A-Za-z0-9]+$"))))) and
+        (.run_id | type == "string" and test($run_id_pattern))))) and
     (if .coordinates.mode.resolved == "parallel" and
         ([.dispatch.outcomes[] | select(.role == "preflight")] | length) == 0
      then

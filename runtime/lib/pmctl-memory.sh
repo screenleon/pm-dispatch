@@ -12,39 +12,39 @@
 
 # shellcheck source=runtime/lib/memory.sh
 # shellcheck disable=SC1091
-. "$(dirname "${BASH_SOURCE[0]}")/memory.sh"
+. "${BASH_SOURCE[0]%/*}/memory.sh"
 
 # shellcheck source=runtime/lib/host-names.sh
 # shellcheck disable=SC1091
-. "$(dirname "${BASH_SOURCE[0]}")/host-names.sh"
+. "${BASH_SOURCE[0]%/*}/host-names.sh"
 
-if [[ "$(type -t serialize_with_lock 2>/dev/null)" != function ]]; then
+if ! declare -F serialize_with_lock >/dev/null 2>&1; then
   # shellcheck source=runtime/lib/portable.sh
   # shellcheck disable=SC1091
-  . "$(dirname "${BASH_SOURCE[0]}")/portable.sh"
+  . "${BASH_SOURCE[0]%/*}/portable.sh"
 fi
 
 # Explicitly own the project-scoped memory config dependency (not pmctl-dispatch.sh
 # or an adapter module, so the "MUST NOT source adapters" rule does not apply)
 # instead of relying on cli/pmctl's lib-load ordering having already sourced it.
-if [[ "$(type -t pm_config_load 2>/dev/null)" != function ]]; then
+if ! declare -F pm_config_load >/dev/null 2>&1; then
   # shellcheck source=runtime/lib/pmctl-config.sh
   # shellcheck disable=SC1091
-  . "$(dirname "${BASH_SOURCE[0]}")/pmctl-config.sh" 2>/dev/null || true
+  . "${BASH_SOURCE[0]%/*}/pmctl-config.sh" 2>/dev/null || true
 fi
 
 # Stable project identity shared with the state substrate. The worktree-aware
 # key keeps a main checkout and its linked worktrees in one project partition.
-if [[ "$(type -t _sw_worktree_project_key 2>/dev/null)" != function ]]; then
+if ! declare -F _sw_worktree_project_key >/dev/null 2>&1; then
   # shellcheck source=runtime/lib/state-paths.sh
   # shellcheck disable=SC1091
-  . "$(dirname "${BASH_SOURCE[0]}")/state-paths.sh" 2>/dev/null || true
+  . "${BASH_SOURCE[0]%/*}/state-paths.sh" 2>/dev/null || true
 fi
 
-if [[ "$(type -t pmctl_memory_config 2>/dev/null)" != function ]]; then
+if ! declare -F pmctl_memory_config >/dev/null 2>&1; then
   # shellcheck source=runtime/lib/pmctl-memory-config.sh
   # shellcheck disable=SC1091
-  . "$(dirname "${BASH_SOURCE[0]}")/pmctl-memory-config.sh" 2>/dev/null || true
+  . "${BASH_SOURCE[0]%/*}/pmctl-memory-config.sh" 2>/dev/null || true
 fi
 
 # Selects ~/.pm-dispatch/config's project-scoped memory entry for repo_root.

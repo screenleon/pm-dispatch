@@ -45,11 +45,11 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-523 | ✅ closed 2026-07-28 | `pmctl gate cancel` 必須終止 reviewer 派發前仍在執行的 foreground preflight 與其 process tree | arch/gate | 2026-07-27 | pr:#453 | P1 | hygiene |
 | CC-524 | 🔵 active | `pmctl artifacts show` 顯示 canonical absolute run root 並提供穩定 machine-readable locator | ux/ops | 2026-07-27 | feedback:2026-07-27 | P2 | hygiene |
 | CC-525 | 🔵 active | copy-mode verifier fallback 的 generated provenance 必須指向實際 generator，並由 parity ratchet 防止再次漂移 | ops/test | 2026-07-28 | feedback:2026-07-28 | P3 | hygiene |
-| CC-526 | 🔵 active | reviewer override file 的 symlink trust-boundary hardening 與相容性契約 | security/gate | 2026-07-28 | feedback:2026-07-28 | P2 | hygiene |
-| CC-527 | 🔵 active | targeted gate CLI 拆分 pass、reviewer coverage 與 tier，避免 full targeted 語意重疊 | ux/gate | 2026-07-28 | pr:#472 (partial) | P2 | design |
+| CC-526 | ✅ closed 2026-08-12 | reviewer override file 的 symlink trust-boundary hardening 與相容性契約 | security/gate | 2026-07-28 | pr:#475 | P2 | hygiene |
+| CC-527 | ⚠️ partial 2026-08-12 | targeted gate CLI 拆分 pass、reviewer coverage 與 tier；tier 由 current subject/policy 解析，initial result 僅為 remediation context | ux/gate | 2026-07-28 | pr:#472, pr:#476 | P2 | design |
 | CC-528 | ✅ closed 2026-07-30 | publish policy compatibility：generic 為可接受 baseline、maintainer 為 preferred，並允許 ship 驗證既有 current-tree Gate artifact | release/gate | 2026-07-30 | pr:#457 | P1 | design |
 | CC-529 | 🔵 active | publish assurance observability：在 ship 成功輸出、PR body 與 finish marker 保留 embedded policy 與 baseline/preferred satisfaction | release/gate | 2026-07-30 | feedback:2026-07-30 | P2 | hygiene |
-| CC-530 | 🔵 active | source-safe runtime library contract + centralized domain identifier policy | arch/reuse | 2026-07-30 | pr:#473 (partial) | P1 | hygiene |
+| CC-530 | ✅ closed 2026-08-12 | source-safe runtime library contract + centralized domain identifier policy | arch/reuse | 2026-07-30 | pr:#473 | P1 | hygiene |
 | CC-531 | ✅ closed 2026-08-11 | Adapter manifest contract closure：dispatch entrypoint 成為唯一 runtime authority | arch/schema | 2026-07-30 | feedback:2026-08-11 | P1 | design |
 | CC-532 | 🔵 active | Gate canonical modules + generated standalone distribution + parity fixtures | arch/gate | 2026-07-30 | feedback:2026-07-30 | P1 | reuse-debt |
 | CC-533 | 🔵 active | schema-derived Gate structural validator，手寫 verifier 只保留跨 artifact semantics | schema/gate | 2026-07-30 | feedback:2026-07-30 | P1 | design |
@@ -2507,7 +2507,7 @@ parity，卻沒有驗證 provenance 指向可執行、存在且唯一的 generat
 
 ---
 
-## CC-526 — reviewer override symlink trust-boundary hardening 🔵 active
+## CC-526 — reviewer override symlink trust-boundary hardening ✅ 2026-08-12
 
 **Framing**: 本票只處理 free-form reviewer override channel
 （auto-discovered `.gate-overrides.md` 與 explicit `--override-file`）的檔案信任
@@ -2536,9 +2536,13 @@ content hash，沒有把這項 redirect semantics 當成可見的 trust decision
    後置換情境；測試必須證明被拒內容不會出現在 reviewer brief 或 result
    provenance。
 
-**Done-when**: symlink 或 validation 後遭置換的 reviewer override 無法影響任何
-reviewer brief；regular override 的既有使用方式維持，新的拒絕行為有契約測試與
-相容性說明。
+**Outcome**: PR #475 以 private snapshot + identity/content recheck 實作 bounded
+check/use protocol；auto/explicit symlink（含 dangling/external）、empty/unreadable
+file、validation-time replacement 與 post-validation replacement 全有 deterministic
+coverage。brief 與 provenance 只消費接受的 snapshot；同 OS uid 的惡意並行 writer
+仍是明示的信任邊界，而非錯誤宣稱的防護範圍。
+
+**See**: pr:#475, `tests/shell/test-pr-gate.sh`.
 
 **Non-goals**: 不重新設計 accepted-risk 語法；不把 reviewer override 升格為
 policy downgrade；不宣稱防禦具有同一 OS 帳號寫入權限的攻擊者；不順帶修改
@@ -2550,7 +2554,7 @@ policy downgrade；不宣稱防禦具有同一 OS 帳號寫入權限的攻擊者
 
 ---
 
-## CC-527 — targeted gate CLI coordinate separation 與 truthful labeling 🔵 active
+## CC-527 — targeted gate CLI coordinate separation 與 truthful labeling ⚠️ partial 2026-08-12
 
 **Framing**: 本票只收斂既有 gate assurance coordinates 的 CLI 表達與 human
 label，不新增 gate kind、review workflow、tier 或 reviewer。[[CC-512]] 已確立
@@ -2576,6 +2580,11 @@ stale／legacy initial-result 行為、`tier=full + QA-only` truthful labeling�
 copy-mode／repo-layout、sequential／parallel 的完整 meaning-parity 與 consumer
 不得誤認 comprehensive coverage 的驗收。因此 PR #472 不構成 CC-527 closure。
 
+**Decision 2026-08-12 (PR #476)**: targeted pass 的 tier 必須從 current immutable
+subject 與 current policy 重新解析；initial result 只證明 remediation context，不能
+把舊 tree 的 tier 或 policy 帶進新 subject。這取代早期「subject-applicable initial
+result 優先繼承 tier」草案，避免 stale/prior evidence 變成 current rigor authority。
+
 **Requirement**:
 
 1. 定義 canonical explicit form，設計目標為
@@ -2583,11 +2592,11 @@ copy-mode／repo-layout、sequential／parallel 的完整 meaning-parity 與 con
    coverage 與 initial-result 必須各自驗證。既有 `--targeted <reviewers>` 保留為
    compatibility shorthand，且必須機械展開為完全相同的 coordinates，不能形成
    第二條 resolver path。
-2. Targeted tier resolution 必須有單一、可解釋的 basis：未明確指定 tier 時，優先
-   繼承 subject-applicable initial result 的 resolved tier；若 initial artifact
-   無法提供可信 tier，必須使用 canonical policy resolution 或 fail closed，不得從
-   targeted reviewer 數量反推 tier。這項 inheritance/applicability 接線依賴
-   [[CC-515]]，不可用未驗證 frontmatter prose 代替。
+2. Targeted tier resolution 必須有單一、可解釋的 basis：無論有無 initial result，
+   都從 current immutable subject 的 canonical policy resolution 取得 tier；使用者
+   可明確指定 tier。initial result 只作 remediation context，不能提供或覆寫 current
+   tier；不得從 targeted reviewer 數量反推 tier。不可用未驗證 frontmatter prose
+   代替 current policy/subject evidence。
 3. 使用者若有獨立 rigor 理由仍可明確請求 tier，但 explicit tier 不得擴張、替代或
    暗示 targeted coverage。CLI progress、brief、result 與 assurance 必須並列輸出
    `tier=<resolved>`、`pass=targeted`、`coverage=[...]` 及各自 selection basis；
@@ -2605,7 +2614,8 @@ copy-mode／repo-layout、sequential／parallel 的完整 meaning-parity 與 con
    sequential／parallel 必須 meaning-parity。若既有 `gate_assurance_v2` 已可完整
    表達，優先重用而不新增 schema family。
 7. Deterministic fixtures 覆蓋 canonical targeted、legacy shorthand parity、
-   explicit full-tier + QA-only coverage 的 truthful labeling、tier inheritance、
+   explicit full-tier + QA-only coverage 的 truthful labeling、current-policy tier
+   resolution、
    stale／legacy initial result、conflicting spellings、缺 initial result，以及
    consumer 不得把 targeted artifact 當 comprehensive full-coverage evidence。
 
@@ -2742,7 +2752,10 @@ assurance observability。
 
 ---
 
-## CC-530 — source-safe runtime libraries + unified identifier policy 🔵 active
+## CC-530 — source-safe runtime libraries + unified identifier policy ✅ 2026-08-12
+
+**See**: `tests/shell/test-runtime-lib-coverage.sh`,
+`tools/generate-gate-result-verifier-fallback.sh`, `pr:#473`.
 
 **Problem**: `runtime/lib/portable.sh` 在被 source 時直接修改 strict-mode flags，
 consumer 因此必須自行保存與還原 caller state；同時 Adapter 等 domain identifier
@@ -2755,14 +2768,18 @@ consumer 因此必須自行保存與還原 caller state；同時 Adapter 等 dom
 後續每次抽 module 都會複製 bootstrap 與 compatibility 邏輯，且安全檢查無法證明
 所有入口一致。
 
-**Update 2026-08-11 (PR #473, partial; ticket remains active)**: PR #473 已讓
-`portable.sh` source 時不再主動改寫 strict-mode flags，移除 `state-paths.sh`／
-`state-writer.sh` 的 caller-state save/restore workaround，並加入 shared identifier
-policy、接上主要 runtime consumers。尚未機械證明完整 source contract：現有 fixture
-不足以捕捉短暫子行程、直接 `exit`、任意路徑寫檔與所有 trap 變更；部分 run-id
-production entrypoints、state-path resolver 與 verifier／copy fallback 也仍未統一使用
-canonical validator。需補齊這些 coverage 並取得 current-tree full-suite evidence 後，
-才能關閉 CC-530；PR #473 本身只代表 foundation slice。
+**Completed 2026-08-12**: PR #473 的 foundation 已完成收尾。所有
+`runtime/lib/*.sh` 現在可在 caller-owned strict modes 下 source；conformance fixture
+同時驗 shell flags、cwd、global trap、background jobs、隔離 writable roots，並以
+`strace` 拒絕 source-time fork/clone、external exec、write-capable open 與 filesystem
+mutation，避免短暫子行程或直接 `exit` 被誤判為成功。Source bootstrap 改為 lexical
+library paths，lifecycle／symlink canonicalization 留在 executable entrypoint。
+
+Identifier policy 已明確分開 strict Adapter／Host／run／operation／Gate grammars，與
+compatibility-preserving safe artifact-leaf domain；dispatch supervisor、pmctl result
+consumer、Codex waiter、state-path resolver、Gate verifier 都採同一 ownership。copy-mode
+verifier fallback 的 run-id ERE 亦由 canonical policy generator 匯入，而非獨立 regex。
+完整 current-tree suite 與 `--verify-full` evidence 參見本次 closure artifact。
 
 **Requirement**:
 

@@ -52,7 +52,7 @@ test_waiter_completed_envelope_preserves_success() {
   should_run "$name" || return 0
   local stub="$tmp_root/complete/pmctl" work="$tmp_root/complete/work" out rc=0
   mkdir -p "$work"; make_pmctl_stub "$stub" 0
-  out="$(run_waiter "$stub" run-complete "$work" 5)" || rc=$?
+  out="$(run_waiter "$stub" run-20260812T000000Z-complete "$work" 5)" || rc=$?
   if [[ "$rc" -eq 0 && "$out" == *'state: completed'* && "$out" == *'wait_exit_code: 0'* ]]; then
     pass "$name"
   else
@@ -67,7 +67,7 @@ test_waiter_indeterminate_recommends_foreground_fallback() {
   should_run "$name" || return 0
   local stub="$tmp_root/indeterminate/pmctl" work="$tmp_root/indeterminate/work" out rc=0
   mkdir -p "$work"; make_pmctl_stub "$stub" 3
-  out="$(run_waiter "$stub" run-indeterminate "$work" 5)" || rc=$?
+  out="$(run_waiter "$stub" run-20260812T000000Z-indeterminate "$work" 5)" || rc=$?
   if [[ "$rc" -eq 3 && "$out" == *'state: indeterminate'* && "$out" == *'use foreground lifecycle for a new attempt'* ]]; then
     pass "$name"
   else
@@ -82,7 +82,7 @@ test_waiter_timeout_does_not_recommend_redispatch() {
   should_run "$name" || return 0
   local stub="$tmp_root/timeout/pmctl" work="$tmp_root/timeout/work" out rc=0
   mkdir -p "$work"; make_pmctl_stub "$stub" 124
-  out="$(run_waiter "$stub" run-timeout "$work" 5)" || rc=$?
+  out="$(run_waiter "$stub" run-20260812T000000Z-timeout "$work" 5)" || rc=$?
   if [[ "$rc" -eq 124 && "$out" == *'state: timed_out'* && "$out" == *'do not re-dispatch'* ]]; then
     pass "$name"
   else
@@ -113,7 +113,7 @@ test_waiter_rejects_non_checkout_repo_root() {
   local fake_root="$tmp_root/not-checkout" work="$tmp_root/not-checkout-work" err="$tmp_root/not-checkout.err" rc=0
   mkdir -p "$fake_root" "$work"
   bash "$REPO_ROOT/hosts/codex/bin/wait-dispatch.sh" \
-    --repo-root "$fake_root" --run-id run-invalid-root --cd "$work" >/dev/null 2>"$err" || rc=$?
+    --repo-root "$fake_root" --run-id run-20260812T000000Z-invalidroot --cd "$work" >/dev/null 2>"$err" || rc=$?
   if [[ "$rc" -eq 2 && -s "$err" ]]; then
     pass "$name"
   else
@@ -129,7 +129,7 @@ test_waiter_rejects_invalid_work_dir() {
   local stub="$tmp_root/invalid-work/pmctl" err="$tmp_root/invalid-work.err" rc=0
   make_pmctl_stub "$stub" 0
   PM_DISPATCH_CODEX_PMCTL_BIN="$stub" bash "$REPO_ROOT/hosts/codex/bin/wait-dispatch.sh" \
-    --repo-root "$REPO_ROOT" --run-id run-invalid-work --cd relative >/dev/null 2>"$err" || rc=$?
+    --repo-root "$REPO_ROOT" --run-id run-20260812T000000Z-invalidwork --cd relative >/dev/null 2>"$err" || rc=$?
   if [[ "$rc" -eq 2 && -s "$err" ]]; then
     pass "$name"
   else
@@ -145,7 +145,7 @@ test_waiter_rejects_invalid_timeout() {
   local stub="$tmp_root/invalid-timeout/pmctl" work="$tmp_root/invalid-timeout/work" err="$tmp_root/invalid-timeout.err" rc=0
   mkdir -p "$work"; make_pmctl_stub "$stub" 0
   PM_DISPATCH_CODEX_PMCTL_BIN="$stub" bash "$REPO_ROOT/hosts/codex/bin/wait-dispatch.sh" \
-    --repo-root "$REPO_ROOT" --run-id run-invalid-timeout --cd "$work" --timeout 0 >/dev/null 2>"$err" || rc=$?
+    --repo-root "$REPO_ROOT" --run-id run-20260812T000000Z-invalidtimeout --cd "$work" --timeout 0 >/dev/null 2>"$err" || rc=$?
   if [[ "$rc" -eq 2 && -s "$err" ]]; then
     pass "$name"
   else
@@ -160,7 +160,7 @@ test_waiter_failed_envelope_preserves_failure() {
   should_run "$name" || return 0
   local stub="$tmp_root/failed/pmctl" work="$tmp_root/failed/work" out rc=0
   mkdir -p "$work"; make_pmctl_stub "$stub" 1
-  out="$(run_waiter "$stub" run-failed "$work" 5)" || rc=$?
+  out="$(run_waiter "$stub" run-20260812T000000Z-failed "$work" 5)" || rc=$?
   if [[ "$rc" -eq 1 && "$out" == *'state: failed'* && "$out" == *'supervisor stderr'* ]]; then
     pass "$name"
   else
@@ -175,7 +175,7 @@ test_waiter_cancelled_envelope_preserves_cancellation() {
   should_run "$name" || return 0
   local stub="$tmp_root/cancelled/pmctl" work="$tmp_root/cancelled/work" out rc=0
   mkdir -p "$work"; make_pmctl_stub "$stub" 130
-  out="$(run_waiter "$stub" run-cancelled "$work" 5)" || rc=$?
+  out="$(run_waiter "$stub" run-20260812T000000Z-cancelled "$work" 5)" || rc=$?
   if [[ "$rc" -eq 130 && "$out" == *'state: cancelled'* && "$out" == *'terminally cancelled'* ]]; then
     pass "$name"
   else
@@ -190,7 +190,7 @@ test_waiter_unknown_exit_uses_failed_guidance() {
   should_run "$name" || return 0
   local stub="$tmp_root/unknown/pmctl" work="$tmp_root/unknown/work" out rc=0
   mkdir -p "$work"; make_pmctl_stub "$stub" 5
-  out="$(run_waiter "$stub" run-unknown "$work" 5)" || rc=$?
+  out="$(run_waiter "$stub" run-20260812T000000Z-unknown "$work" 5)" || rc=$?
   if [[ "$rc" -eq 5 && "$out" == *'state: failed'* && "$out" == *'supervisor stderr'* ]]; then
     pass "$name"
   else
@@ -205,7 +205,7 @@ test_background_supervisor_injects_verified_continuation_turn() {
   should_run "$name" || return 0
   local pmctl_stub="$tmp_root/bridge/pmctl" proxy_stub="$tmp_root/bridge/codex" capture="$tmp_root/bridge/request.jsonl" work="$tmp_root/bridge/work" out rc=0
   mkdir -p "$work"; make_pmctl_stub "$pmctl_stub" 0; make_proxy_stub "$proxy_stub" "$capture" ok
-  out="$(run_continuation "$pmctl_stub" "$proxy_stub" run-bridge "$work" thread-123)" || rc=$?
+  out="$(run_continuation "$pmctl_stub" "$proxy_stub" run-20260812T000000Z-bridge "$work" thread-123)" || rc=$?
   if [[ "$rc" -eq 0 && "$out" == *'continuation delivered to Codex thread thread-123'* ]] \
     && grep -Fq '"method":"initialize"' "$capture" \
     && grep -Fq '"method":"turn/start"' "$capture" \
@@ -224,7 +224,7 @@ test_background_supervisor_fails_loudly_when_callback_rejected() {
   should_run "$name" || return 0
   local pmctl_stub="$tmp_root/bridge-error/pmctl" proxy_stub="$tmp_root/bridge-error/codex" capture="$tmp_root/bridge-error/request.jsonl" work="$tmp_root/bridge-error/work" err="$tmp_root/bridge-error/err" rc=0
   mkdir -p "$work"; make_pmctl_stub "$pmctl_stub" 0; make_proxy_stub "$proxy_stub" "$capture" error
-  run_continuation "$pmctl_stub" "$proxy_stub" run-bridge-error "$work" thread-456 >/dev/null 2>"$err" || rc=$?
+  run_continuation "$pmctl_stub" "$proxy_stub" run-20260812T000000Z-bridgeerror "$work" thread-456 >/dev/null 2>"$err" || rc=$?
   if [[ "$rc" -eq 4 && "$(<"$err")" == *'foreground continuation is required'* ]]; then
     pass "$name"
   else
@@ -240,7 +240,7 @@ test_background_supervisor_rejects_invalid_thread_id() {
   local pmctl_stub="$tmp_root/invalid-thread/pmctl" proxy_stub="$tmp_root/invalid-thread/codex" capture="$tmp_root/invalid-thread/request.jsonl" work="$tmp_root/invalid-thread/work" rc=0
   mkdir -p "$work"; make_pmctl_stub "$pmctl_stub" 0; make_proxy_stub "$proxy_stub" "$capture" ok
   PM_DISPATCH_CODEX_PMCTL_BIN="$pmctl_stub" PM_DISPATCH_CODEX_APP_SERVER_PROXY_BIN="$proxy_stub" \
-    bash "$REPO_ROOT/hosts/codex/bin/continue-dispatch.sh" --repo-root "$REPO_ROOT" --run-id run-invalid-thread --cd "$work" --thread-id 'bad thread' >/dev/null 2>&1 || rc=$?
+    bash "$REPO_ROOT/hosts/codex/bin/continue-dispatch.sh" --repo-root "$REPO_ROOT" --run-id run-20260812T000000Z-invalidthread --cd "$work" --thread-id 'bad thread' >/dev/null 2>&1 || rc=$?
   if [[ "$rc" -eq 2 && ! -e "$capture" ]]; then
     pass "$name"
   else

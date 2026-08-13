@@ -4,10 +4,11 @@
 # Does NOT call serialize_with_lock; index DB is a derived cache — SQLite WAL provides concurrency guarantees.
 # MUST NOT source pmctl-dispatch.sh or any adapter module.
 
-_CTX_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_CTX_LIB_DIR="${BASH_SOURCE[0]%/*}"
+[[ "$_CTX_LIB_DIR" == "${BASH_SOURCE[0]}" ]] && _CTX_LIB_DIR=.
 
 # Source state-writer.sh (which pulls in portable.sh) for path helpers.
-if [[ "$(type -t _sw_store_root 2>/dev/null)" != function ]]; then
+if ! declare -F _sw_store_root >/dev/null 2>&1; then
   # shellcheck source=runtime/lib/state-writer.sh
   # shellcheck disable=SC1091
   . "$_CTX_LIB_DIR/state-writer.sh" 2>/dev/null || true
@@ -16,7 +17,7 @@ fi
 # Source memory.sh (leaf helper: find_memory_dir / encode_path, no side effects)
 # for the memory retrieval plane (--source memory). It is a pure path resolver,
 # not an adapter module, so the "MUST NOT source adapters" rule does not apply.
-if [[ "$(type -t find_memory_dir 2>/dev/null)" != function ]]; then
+if ! declare -F find_memory_dir >/dev/null 2>&1; then
   # shellcheck source=runtime/lib/memory.sh
   # shellcheck disable=SC1091
   . "$_CTX_LIB_DIR/memory.sh" 2>/dev/null || true
@@ -26,7 +27,7 @@ fi
 # so the "MUST NOT source adapters" rule does not apply) so project-scoped memory
 # resolution does not depend on cli/pmctl's lib-load ordering happening to have
 # already sourced it via pmctl-dispatch.sh.
-if [[ "$(type -t pm_config_load 2>/dev/null)" != function ]]; then
+if ! declare -F pm_config_load >/dev/null 2>&1; then
   # shellcheck source=runtime/lib/pmctl-config.sh
   # shellcheck disable=SC1091
   . "$_CTX_LIB_DIR/pmctl-config.sh" 2>/dev/null || true

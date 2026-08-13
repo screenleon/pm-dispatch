@@ -9,6 +9,13 @@
 
 set -uo pipefail
 
+# Keep the host continuation boundary on the same run-id grammar as pmctl's
+# dispatch, supervisor, state-path, and verifier paths.
+_wait_dispatch_dir="${BASH_SOURCE[0]%/*}"
+# shellcheck disable=SC1091 # Runtime library path is resolved from this host entrypoint.
+. "$_wait_dispatch_dir/../../../runtime/lib/identifier-policy.sh"
+unset _wait_dispatch_dir
+
 usage() {
   cat >&2 <<'EOF'
 usage: wait-dispatch.sh --repo-root <pm-dispatch-root> --run-id <run-id> --cd <work-dir> [--timeout <seconds>]
@@ -36,7 +43,7 @@ done
   printf 'wait-dispatch.sh: --repo-root must be a pm-dispatch checkout with executable cli/pmctl\n' >&2
   exit 2
 }
-[[ "$run_id" =~ ^run-[A-Za-z0-9._-]+$ ]] || {
+pm_identifier_run_is_valid "$run_id" || {
   printf 'wait-dispatch.sh: invalid --run-id: %s\n' "$run_id" >&2
   exit 2
 }

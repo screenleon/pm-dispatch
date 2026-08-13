@@ -487,11 +487,11 @@ case_run_emits_human_contract() {
   . "$REPO_ROOT/runtime/lib/pmctl-pm.sh"
   local out="$tmp_root/run-human.out" code=0
   pmctl_validate_brief() { return 0; }
-  pmctl_dispatch_run() { printf 'run-test-human-output\n'; }
+  pmctl_dispatch_run() { printf 'run-20260812T000000Z-humanoutput\n'; }
   pmctl_dispatch_wait() { return 0; }
   pmctl_pm_run "$REPO_ROOT" --adapter codex --brief-file /tmp/brief-test.md --cd "$REPO_ROOT" > "$out" || code=$?
   if [[ "$code" -eq 0 ]] \
-    && grep -q '^run_id: run-test-human-output$' "$out" \
+    && grep -q '^run_id: run-20260812T000000Z-humanoutput$' "$out" \
     && grep -q '^memory_provider: pmctl$' "$out" \
     && grep -q '^auxiliary_memory_status: unknown$' "$out" \
     && grep -q '^wait_exit_code: 0$' "$out"; then
@@ -599,10 +599,10 @@ case_run_propagates_wait_failure() {
   . "$REPO_ROOT/runtime/lib/pmctl-pm.sh"
   local out="$tmp_root/wait-failure.out" code=0
   pmctl_validate_brief() { return 0; }
-  pmctl_dispatch_run() { printf 'run-test-wait-failure\n'; }
+  pmctl_dispatch_run() { printf 'run-20260812T000000Z-waitfailure\n'; }
   pmctl_dispatch_wait() { [[ "${1:-}" == "$REPO_ROOT" ]] || return 97; return 42; }
   pmctl_pm_run "$REPO_ROOT" --adapter codex --brief-file /tmp/brief-test.md --cd "$REPO_ROOT" --json > "$out" || code=$?
-  if [[ "$code" -eq 42 ]] && jq -e '.run_id == "run-test-wait-failure" and .wait_exit_code == 42' "$out" >/dev/null; then
+  if [[ "$code" -eq 42 ]] && jq -e '.run_id == "run-20260812T000000Z-waitfailure" and .wait_exit_code == 42' "$out" >/dev/null; then
     pass "$name"
   else
     fail "$name" "expected wait exit 42, got $code out=$(<"$out")"
@@ -618,10 +618,10 @@ case_run_json_suppresses_wait_stdout() {
   . "$REPO_ROOT/runtime/lib/pmctl-pm.sh"
   local out="$tmp_root/json-wait-stdout.out" code=0
   pmctl_validate_brief() { return 0; }
-  pmctl_dispatch_run() { printf 'run-test-json-output\n'; }
+  pmctl_dispatch_run() { printf 'run-20260812T000000Z-jsonoutput\n'; }
   pmctl_dispatch_wait() { printf 'advisory wait output\n'; return 0; }
   pmctl_pm_run "$REPO_ROOT" --adapter codex --brief-file /tmp/brief-test.md --cd "$REPO_ROOT" --json > "$out" || code=$?
-  if [[ "$code" -eq 0 ]] && jq -e '.run_id == "run-test-json-output" and .wait_exit_code == 0' "$out" >/dev/null; then
+  if [[ "$code" -eq 0 ]] && jq -e '.run_id == "run-20260812T000000Z-jsonoutput" and .wait_exit_code == 0' "$out" >/dev/null; then
     pass "$name"
   else
     fail "$name" "expected parseable JSON, got $code out=$(<"$out")"
@@ -637,7 +637,7 @@ case_run_forwards_optional_dispatch_flags() {
   . "$REPO_ROOT/runtime/lib/pmctl-pm.sh"
   local trace="$tmp_root/optional-flags-trace" code=0
   pmctl_validate_brief() { return 0; }
-  pmctl_dispatch_run() { printf '%s\n' "$*" > "$trace"; printf 'run-test-optional-flags\n'; }
+  pmctl_dispatch_run() { printf '%s\n' "$*" > "$trace"; printf 'run-20260812T000000Z-optionalflags\n'; }
   pmctl_dispatch_wait() { [[ "${1:-}" == "$REPO_ROOT" ]] || return 97; return 0; }
   pmctl_pm_run "$REPO_ROOT" --adapter codex --brief-file /tmp/brief-test.md --cd "$REPO_ROOT" \
     --model gpt-5.5 --isolation read-only --no-auto-pack >/dev/null || code=$?

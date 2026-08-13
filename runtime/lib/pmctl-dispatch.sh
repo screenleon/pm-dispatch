@@ -51,7 +51,8 @@
 # Source the shared config loader so pmctl_dispatch_run can resolve config
 # defaults and export them to adapter subprocesses.
 if ! declare -F pm_identifier_adapter_is_valid >/dev/null 2>&1; then
-  _pmctl_dispatch_lib_dir="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  _pmctl_dispatch_lib_dir="${BASH_SOURCE[0]%/*}"
+  [[ "$_pmctl_dispatch_lib_dir" == "${BASH_SOURCE[0]}" ]] && _pmctl_dispatch_lib_dir=.
   # shellcheck disable=SC1091  # dynamic path; identifier policy is source-safe
   . "$_pmctl_dispatch_lib_dir/identifier-policy.sh" 2>/dev/null || true
   unset _pmctl_dispatch_lib_dir
@@ -67,7 +68,8 @@ if ! declare -F adapter_manifest_dispatch_path >/dev/null 2>&1 \
 fi
 
 if ! declare -F pm_config_load >/dev/null 2>&1; then
-  _pmctl_dispatch_lib_dir="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  _pmctl_dispatch_lib_dir="${BASH_SOURCE[0]%/*}"
+  [[ "$_pmctl_dispatch_lib_dir" == "${BASH_SOURCE[0]}" ]] && _pmctl_dispatch_lib_dir=.
   # shellcheck disable=SC1091  # dynamic path; pmctl-config.sh scanned separately
   . "$_pmctl_dispatch_lib_dir/pmctl-config.sh" 2>/dev/null || true
   unset _pmctl_dispatch_lib_dir
@@ -77,14 +79,16 @@ fi
 # even when this lib is loaded standalone (e.g. unit tests); no-op in the full
 # pmctl runtime where portable.sh is already loaded.
 if ! declare -F _portable_canonical_path >/dev/null 2>&1; then
-  _pmctl_dispatch_lib_dir="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  _pmctl_dispatch_lib_dir="${BASH_SOURCE[0]%/*}"
+  [[ "$_pmctl_dispatch_lib_dir" == "${BASH_SOURCE[0]}" ]] && _pmctl_dispatch_lib_dir=.
   # shellcheck disable=SC1091  # dynamic path; portable.sh scanned separately
   . "$_pmctl_dispatch_lib_dir/portable.sh" 2>/dev/null || true
   unset _pmctl_dispatch_lib_dir
 fi
 
 if ! declare -F dispatch_record_write >/dev/null 2>&1; then
-  _pmctl_dispatch_lib_dir="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  _pmctl_dispatch_lib_dir="${BASH_SOURCE[0]%/*}"
+  [[ "$_pmctl_dispatch_lib_dir" == "${BASH_SOURCE[0]}" ]] && _pmctl_dispatch_lib_dir=.
   # shellcheck disable=SC1091  # dynamic path; dispatch-record.sh scanned separately
   . "$_pmctl_dispatch_lib_dir/dispatch-record.sh" 2>/dev/null || true
   unset _pmctl_dispatch_lib_dir

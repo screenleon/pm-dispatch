@@ -50,36 +50,75 @@ test_identifier_policy_domains() {
     pm_identifier_host_is_valid generic && ! pm_identifier_host_is_valid custom &&
     pm_identifier_run_is_valid run-Ab9-z0 && ! pm_identifier_run_is_valid run-a_b-c &&
     pm_identifier_operation_is_valid op-20260811T092500Z-a1b2c3 && ! pm_identifier_operation_is_valid op-20260811-a1b2c3 &&
-    pm_identifier_gate_is_valid gate-20260811-092500-Ab9def && ! pm_identifier_gate_is_valid gate-20260811-092500-short
+    pm_identifier_gate_is_valid gate-20260811-092500-Ab9def && ! pm_identifier_gate_is_valid gate-20260811-092500-short &&
+    pm_identifier_artifact_leaf_is_valid legacy-fixture-root && ! pm_identifier_artifact_leaf_is_valid ../escape
   ' _ "$REPO_ROOT" 2>&1)" || true
   if [[ -z "$output" ]]; then pass "$name"; else fail "$name" "$output"; fi
 }
 
 # Behavior: every runtime library is safe to import into a caller that owns its
 # own shell policy. Steps: source every library under each strict-mode variant
-# and require shell flags, cwd, traps, watched files, and background jobs to
-# remain unchanged.
+# and require shell flags, cwd, traps, writable roots, and background jobs to
+# remain unchanged. A return marker prevents a source-time `exit 0` from being
+# mistaken for a passing subshell.
 test_all_runtime_libraries_are_source_safe() {
-  local name="runtime-lib-coverage/all-runtime-libraries-source-safe" watched lib mode
+  local name="runtime-lib-coverage/all-runtime-libraries-source-safe" watched lib mode marker
   should_run "$name" || return 0
   watched="$tmp_root/source-contract"
   mkdir -p "$watched"
   printf 'sentinel\n' > "$watched/sentinel"
   for mode in none errexit nounset pipefail all; do
     for lib in "$REPO_ROOT"/runtime/lib/*.sh; do
-      if ! bash -c '
+      marker="$watched/returned-${mode}-${lib##*/}"
+      : > "$marker"
+      if ! SOURCE_RETURN_MARKER="$marker" bash -c '
         mode="$1"; lib="$2"; watched="$3"
         case "$mode" in none) ;; errexit) set -e ;; nounset) set -u ;; pipefail) set -o pipefail ;; all) set -euo pipefail ;; esac
         trap "printf trapped >&2" USR1
+        mkdir -p "$watched/home" "$watched/xdg-cache" "$watched/xdg-data" "$watched/tmp"
         before_flags="$-"; before_pipefail="$(set -o | awk '\''$1 == "pipefail" { print $2 }'\'')"; before_cwd="$PWD"; before_trap="$(trap -p USR1)"; before_files="$(find "$watched" -mindepth 1 -printf "%P\\n" | sort)"; before_jobs="$(jobs -p)"
+        export HOME="$watched/home" XDG_CACHE_HOME="$watched/xdg-cache" XDG_DATA_HOME="$watched/xdg-data" TMPDIR="$watched/tmp"
         . "$lib"
         after_pipefail="$(set -o | awk '\''$1 == "pipefail" { print $2 }'\'')"; after_trap="$(trap -p USR1)"; after_files="$(find "$watched" -mindepth 1 -printf "%P\\n" | sort)"; after_jobs="$(jobs -p)"
-        [[ "$before_flags" == "$-" && "$before_pipefail" == "$after_pipefail" && "$before_cwd" == "$PWD" && "$before_trap" == "$after_trap" && "$before_files" == "$after_files" && "$before_jobs" == "$after_jobs" ]]
+        [[ "$before_flags" == "$-" && "$before_pipefail" == "$after_pipefail" && "$before_cwd" == "$PWD" && "$before_trap" == "$after_trap" && "$before_files" == "$after_files" && "$before_jobs" == "$after_jobs" ]] || exit 1
+        printf __SOURCE_RETURNED__ > "$SOURCE_RETURN_MARKER"
       ' _ "$mode" "$lib" "$watched"; then
         fail "$name" "source contract failed: mode=$mode lib=${lib#"$REPO_ROOT"/}"
         return
       fi
+      if [[ "$(<"$marker")" != __SOURCE_RETURNED__ ]]; then
+        fail "$name" "source returned via exit before contract checks: mode=$mode lib=${lib#"$REPO_ROOT"/}"
+        return
+      fi
     done
+  done
+  pass "$name"
+}
+
+# Behavior: every runtime library import does not spawn a process, including a
+# short-lived external helper or a command-substitution subshell, and does not
+# write anywhere on disk. Steps: trace process and file activity for each
+# library; reject every fork/clone, every exec other than the hosting shell,
+# and every write-capable open or filesystem mutation.
+test_runtime_libraries_do_not_exec_on_source() {
+  local name="runtime-lib-coverage/all-libraries-no-source-side-effects" lib trace external spawned writes
+  should_run "$name" || return 0
+  if ! command -v strace >/dev/null 2>&1; then
+    fail "$name" "strace is required to verify short-lived source-time processes"
+    return
+  fi
+  for lib in "$REPO_ROOT"/runtime/lib/*.sh; do
+    # The single-quoted child program must preserve $1 for bash -c, not expand
+    # it in this test process.
+    # shellcheck disable=SC2016
+    trace="$(strace -f -qq -e trace=process,file bash -c '. "$1"' _ "$lib" 2>&1 >/dev/null)"
+    external="$(printf '%s\n' "$trace" | grep 'execve(' | grep -v 'execve("/usr/bin/bash"' || true)"
+    spawned="$(printf '%s\n' "$trace" | grep -E '(^|[[:space:]])(clone|clone3|fork|vfork)\(' || true)"
+    writes="$(printf '%s\n' "$trace" | grep -E 'O_(WRONLY|RDWR|CREAT|TRUNC)|(^|[[:space:]])(mkdir|mkdirat|rmdir|unlink|unlinkat|rename|renameat|link|linkat|symlink|symlinkat|chmod|fchmod|chown|fchown|truncate|ftruncate)\(' | grep -vE '"/dev/(null|tty)"' || true)"
+    if [[ -n "$external" || -n "$spawned" || -n "$writes" ]]; then
+      fail "$name" "source side effect: $lib: ${external}${spawned}${writes}"
+      return
+    fi
   done
   pass "$name"
 }
@@ -89,4 +128,5 @@ test_pmctl_config_loads_valid_values
 test_pmctl_config_rejects_legacy_global_memory
 test_identifier_policy_domains
 test_all_runtime_libraries_are_source_safe
+test_runtime_libraries_do_not_exec_on_source
 th_summary

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
-_PMCTL_DECISION_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_PMCTL_DECISION_LIB_DIR="${BASH_SOURCE[0]%/*}"
+[[ "$_PMCTL_DECISION_LIB_DIR" == "${BASH_SOURCE[0]}" ]] && _PMCTL_DECISION_LIB_DIR=.
 # shellcheck source=runtime/lib/state-writer.sh
 # shellcheck disable=SC1091
 . "$_PMCTL_DECISION_LIB_DIR/state-writer.sh"

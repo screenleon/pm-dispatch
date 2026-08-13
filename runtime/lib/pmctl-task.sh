@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
-_PMCTL_TASK_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_PMCTL_TASK_LIB_DIR="${BASH_SOURCE[0]%/*}"
+[[ "$_PMCTL_TASK_LIB_DIR" == "${BASH_SOURCE[0]}" ]] && _PMCTL_TASK_LIB_DIR=.
 # shellcheck source=runtime/lib/pmctl-policy.sh
 if ! declare -F pmctl_policy_contains >/dev/null 2>&1; then
   . "$_PMCTL_TASK_LIB_DIR/pmctl-policy.sh"

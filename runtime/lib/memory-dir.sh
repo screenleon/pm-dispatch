@@ -2,7 +2,7 @@
 # Shared project-memory discovery helpers for installer/migrator paths.
 
 # shellcheck source=runtime/lib/memory.sh
-. "$(dirname "${BASH_SOURCE[0]}")/memory.sh"
+. "${BASH_SOURCE[0]%/*}/memory.sh"
 
 # Installer/migrator/doctor callers are not on the hook latency path, so they
 # additionally honor ~/.pm-dispatch/config `dispatch.memory_dir` (load it if
@@ -10,13 +10,13 @@
 if ! declare -F pm_config_load >/dev/null 2>&1; then
   # shellcheck source=runtime/lib/pmctl-config.sh
   # shellcheck disable=SC1091
-  . "$(dirname "${BASH_SOURCE[0]}")/pmctl-config.sh" 2>/dev/null || true
+  . "${BASH_SOURCE[0]%/*}/pmctl-config.sh" 2>/dev/null || true
 fi
 
 if ! declare -F _sw_worktree_project_key >/dev/null 2>&1; then
   # shellcheck source=runtime/lib/state-paths.sh
   # shellcheck disable=SC1091
-  . "$(dirname "${BASH_SOURCE[0]}")/state-paths.sh" 2>/dev/null || true
+  . "${BASH_SOURCE[0]%/*}/state-paths.sh" 2>/dev/null || true
 fi
 
 # Installer/migrator callers support the routing log directory override.

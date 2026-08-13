@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Durable parent-operation control plane shared by dispatch-capable producers.
 
-_PMCTL_OPERATION_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [[ "$(type -t pm_identifier_operation_is_valid 2>/dev/null)" != function ]]; then
+_PMCTL_OPERATION_LIB_DIR="${BASH_SOURCE[0]%/*}"
+[[ "$_PMCTL_OPERATION_LIB_DIR" == "${BASH_SOURCE[0]}" ]] && _PMCTL_OPERATION_LIB_DIR=.
+if ! declare -F pm_identifier_operation_is_valid >/dev/null 2>&1; then
   # shellcheck source=runtime/lib/identifier-policy.sh
   # shellcheck disable=SC1091
   . "$_PMCTL_OPERATION_LIB_DIR/identifier-policy.sh"
 fi
-if [[ "$(type -t _portable_canonical_path 2>/dev/null)" != function ]]; then
+if ! declare -F _portable_canonical_path >/dev/null 2>&1; then
   # shellcheck source=runtime/lib/portable.sh
   # shellcheck disable=SC1091 # sourced by repository-relative runtime path
   . "$_PMCTL_OPERATION_LIB_DIR/portable.sh"

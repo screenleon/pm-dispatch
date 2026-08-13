@@ -7,6 +7,33 @@ H2 標題格式：## YYYY-MM-DD: <短描述>
 與 BACKLOG closure 對應的 entry，內文首行寫：Closes: BACKLOG.md#<PREFIX>-NNN
 -->
 
+## 2026-08-12: targeted-pass-tier-is-current-subject-policy-not-inherited-evidence
+
+Closes: BACKLOG.md#CC-527 design discrepancy only; CC-527 implementation remains partial.
+
+**Context**: The initial CC-527 draft preferred inheriting a tier from a
+subject-applicable initial result. That made an earlier artifact appear to be
+authority for the remediation tree's rigor, even though the current subject can
+have different risk signals and policy applicability. PR #476 already resolved
+the runtime in the safer direction, while the backlog still described the
+superseded inheritance rule.
+
+**Decision**: A targeted remediation pass always resolves tier from its current
+immutable subject and the current canonical policy; an explicit tier remains a
+separate user choice. `--initial-result` proves remediation context only. It
+cannot supply, weaken, or override the tier, reviewer requirements, or policy
+applicability for the new subject. Tier, pass kind, and selected reviewer
+coverage continue to be independently recorded and labeled.
+
+**Alternatives considered**: Inherit the previous resolved tier when the
+artifact appears subject-applicable — rejected because it makes a prior policy
+decision authoritative for the current tree and invites stale-evidence errors.
+
+**Constraints introduced**: CC-527 acceptance tests must assert current-policy
+resolution rather than inheritance. It remains partial until copy/repo and
+topology parity, stale/legacy handling, and consumer truthful-label coverage
+are complete.
+
 ## 2026-07-31: reviewer-search-commands-and-supervisor-failures-remain-observable
 
 **Context**: Reviewer dispatch can legitimately search source text containing
