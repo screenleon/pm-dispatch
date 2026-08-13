@@ -80,6 +80,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
   Deterministic repo/copy, foreground/detached, Gate/router, path-security,
   receipt-lifecycle, and matching current-tree full-suite evidence close CC-531.
 
+- **Copy-mode verifier fallback provenance ratchet (CC-525).** The generated
+  inline verifier now points to the executable canonical generator at
+  `tools/generate-gate-result-verifier-fallback.sh`. Generator checks fail loud
+  on generator identity or executable drift, malformed markers, provenance
+  drift, and generated-body parity changes; the verifier behavior and bundle
+  layout remain unchanged.
+
 ### Added
 
 - **Actionable Gate test-gap evidence and bounded protocol recovery (CC-521).**

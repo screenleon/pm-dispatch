@@ -44,7 +44,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-522 | ✅ done | Slice A truthful preflight、Slice B QA checkpoint/partial evidence、Slice C disables self-authored external-evidence recovery pending CI attestation | ops/test | 2026-07-27 | pr:#462 | P1 | design |
 | CC-523 | ✅ closed 2026-07-28 | `pmctl gate cancel` 必須終止 reviewer 派發前仍在執行的 foreground preflight 與其 process tree | arch/gate | 2026-07-27 | pr:#453 | P1 | hygiene |
 | CC-524 | 🔵 active | `pmctl artifacts show` 顯示 canonical absolute run root 並提供穩定 machine-readable locator | ux/ops | 2026-07-27 | feedback:2026-07-27 | P2 | hygiene |
-| CC-525 | 🔵 active | copy-mode verifier fallback 的 generated provenance 必須指向實際 generator，並由 parity ratchet 防止再次漂移 | ops/test | 2026-07-28 | feedback:2026-07-28 | P3 | hygiene |
+| CC-525 | ✅ closed 2026-08-13 | copy-mode verifier fallback 的 generated provenance 必須指向實際 generator，並由 parity ratchet 防止再次漂移 | ops/test | 2026-07-28 | feedback:2026-08-13 | P3 | hygiene |
 | CC-526 | ✅ closed 2026-08-12 | reviewer override file 的 symlink trust-boundary hardening 與相容性契約 | security/gate | 2026-07-28 | pr:#475 | P2 | hygiene |
 | CC-527 | ⚠️ partial 2026-08-12 | targeted gate CLI 拆分 pass、reviewer coverage 與 tier；tier 由 current subject/policy 解析，initial result 僅為 remediation context | ux/gate | 2026-07-28 | pr:#472, pr:#476 | P2 | design |
 | CC-528 | ✅ closed 2026-07-30 | publish policy compatibility：generic 為可接受 baseline、maintainer 為 preferred，並允許 ship 驗證既有 current-tree Gate artifact | release/gate | 2026-07-30 | pr:#457 | P1 | design |
@@ -2473,17 +2473,16 @@ freshness／applicability verifier 正交。P2。
 
 ---
 
-## CC-525 — generated verifier fallback provenance path ratchet 🔵 active
+## CC-525 — generated verifier fallback provenance path ratchet ✅ 2026-08-13
 
 **Framing**: 本票是 copy-mode 維護資訊的窄幅清理，不改 verifier 行為、gate
 verdict 或 bundle layout。`runtime/bin/pr-gate.sh` 的 inline fallback 仍由唯一既有
 generator 管理；修正與 ratchet 應併入後續小型 maintenance change。
 
-**Problem**: inline fallback 的 generated block 註解目前宣稱由不存在的
-`scripts/sync-gate-result-verifier-fallback.sh` 產生，實際 canonical generator
-是 `tools/generate-gate-result-verifier-fallback.sh`。現有 `--check` 能驗證內容
-parity，卻沒有驗證 provenance 指向可執行、存在且唯一的 generator；維護者依註解
-操作時會走到錯誤 recovery path。
+**Problem**: inline fallback 的 generated block 註解目前沒有指向實際的
+canonical generator。現有 `--check` 能驗證內容 parity，卻沒有驗證 provenance
+指向可執行、存在且唯一的 generator；維護者依註解操作時會走到錯誤 recovery
+path。
 
 **Requirement**:
 
@@ -2495,9 +2494,16 @@ parity，卻沒有驗證 provenance 指向可執行、存在且唯一的 generat
 3. copy-mode standalone fallback、repo-layout shared verifier 與現有 ShellCheck
    source annotation 均保持；註解修正不得手動改寫 generated verifier body。
 
-**Done-when**: 維護者可直接依 inline 註解執行實際 generator；CI 在 provenance
-再次指向不存在或非 canonical 工具時失敗，而目前 verifier parity 與 copy-mode
-行為完全不變。
+**Outcome**: `tools/generate-gate-result-verifier-fallback.sh` now owns the
+canonical provenance path, validates its own repository-relative executable
+identity, requires exactly one ordered marker pair, and checks the provenance
+header plus full generated-file parity. The copy-mode inline comment points to
+the executable generator, while the isolated PR-gate fixture proves canonical
+provenance passes and drifted provenance, marker structure, or executable mode
+fails closed. The verifier body and copy-mode behavior are unchanged.
+
+**See**: `tools/generate-gate-result-verifier-fallback.sh`,
+`tests/shell/test-pr-gate.sh`, current-tree affected-test evidence.
 
 **Non-goals**: 不新增 generator；不改 verdict parser、artifact schema 或 fallback
 內容；不把 generator 搬到另一個目錄；不併入 [[CC-513]] 的 policy resolver。
