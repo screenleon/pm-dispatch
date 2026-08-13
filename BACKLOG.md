@@ -2502,8 +2502,13 @@ the executable generator, while the isolated PR-gate fixture proves canonical
 provenance passes and drifted provenance, marker structure, or executable mode
 fails closed. The verifier body and copy-mode behavior are unchanged.
 
-**See**: `tools/generate-gate-result-verifier-fallback.sh`,
-`tests/shell/test-pr-gate.sh`, current-tree affected-test evidence.
+**See**: `tests/shell/test-pr-gate.sh`, current-tree affected-test evidence.
+
+**Superseded**: [[CC-532]] 移除了本票守護的 inline verifier fallback 與其
+generator（`tools/generate-gate-result-verifier-fallback.sh`）。該 fallback 之所以
+在 standalone-copy 下被觸發，是 lib 路徑解析缺陷而非可攜性需求；改為單一
+layout-aware 解析後，canonical lib 在三種 topology 都會載入，generated 副本不再存在。
+本票的 provenance ratchet 在其存續期間有效，此處保留為交付紀錄。
 
 **Non-goals**: 不新增 generator；不改 verdict parser、artifact schema 或 fallback
 內容；不把 generator 搬到另一個目錄；不併入 [[CC-513]] 的 policy resolver。
@@ -2886,6 +2891,22 @@ review 回到可維護範圍。
 4. CI 的 build `--check` 拒絕 stale bundle；同一組 fixtures 比對 canonical/dist
    的 stdout、stderr、exit code 與 artifacts，並覆蓋 copy-mode 無 repo-layout
    dependency 的真實執行。
+
+**Slice 1 — library resolution single authority（已交付）**：實測推翻了票面對
+copy-mode 的前提。`pr-gate.sh` 對 executor router、memory runtime 與 policy reader
+本來就是硬依賴（缺檔即 exit 2），所以「單一檔案的 standalone gate」從來不可執行；
+實際 bundle 一直是目錄契約（`pr-gate.sh` + `lib/` + `core/policy/` + `agents/` +
+`adapters/`）。inline verifier/artifact-paths fallback 之所以會在 standalone-copy
+被觸發，是因為那兩處只看 installed-copy root，解析成 bundle 之外的 `../lib`——
+是路徑缺陷，不是可攜性需求。Slice 1 因此把所有 library 解析收斂到單一
+layout-aware root，刪除兩份 in-script 副本與其 generator（-2,260 行），並讓缺件
+bundle 在載入點 fail closed。requirement 2 的 verifier fallback 部分就此消滅而非
+搬移；bounded policy snapshot 不受影響，對 installed copy 仍是 load-bearing
+（install 不複製 `core/policy/gate-*.tsv`）。
+
+**Slice 2+（未動）**：requirement 1 的 domain module 抽取、requirement 3/4 的
+build tool 與 canonical/dist parity 仍待處理，且需在正確前提下重新設計——dist 是
+目錄樹而非串接單檔。
 
 ---
 
