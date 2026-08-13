@@ -183,6 +183,15 @@ if should_run "dispatch_route_for: codex and claude routes"; then
   fi
 fi
 
+if should_run "router source: repository-relative path preserves checkout root"; then
+  result="$(cd "$REPO_ROOT" && bash -c '. runtime/lib/executor-router.sh && dispatch_route_for codex' 2>&1)"
+  if [[ "$result" == "main_thread_bash_background" ]]; then
+    pass "router source: repository-relative path preserves checkout root"
+  else
+    fail "router source: repository-relative path preserves checkout root" "result=$result"
+  fi
+fi
+
 if should_run "dispatch_via_codex: safe argv passthrough"; then
   work_dir="$tmp_root/work dir"
   brief_file="$tmp_root/brief file.md"

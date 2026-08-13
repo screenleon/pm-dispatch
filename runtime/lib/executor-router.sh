@@ -10,14 +10,17 @@
 #
 # No shell options are set here; callers own their execution policy.
 
-_EXECUTOR_ROUTER_SELF="${BASH_SOURCE[0]}"
-while [[ -L "$_EXECUTOR_ROUTER_SELF" ]]; do
-  _EXECUTOR_ROUTER_DIR="$(cd "$(dirname "$_EXECUTOR_ROUTER_SELF")" && pwd)"
-  _EXECUTOR_ROUTER_SELF="$(readlink "$_EXECUTOR_ROUTER_SELF")"
-  [[ "$_EXECUTOR_ROUTER_SELF" == /* ]] || _EXECUTOR_ROUTER_SELF="$_EXECUTOR_ROUTER_DIR/$_EXECUTOR_ROUTER_SELF"
-done
-EXECUTOR_ROUTER_LIB_DIR="$(cd "$(dirname "$_EXECUTOR_ROUTER_SELF")" && pwd)"
-EXECUTOR_ROUTER_REPO_ROOT="$(cd "$EXECUTOR_ROUTER_LIB_DIR/../.." && pwd)"
+# Importing a library must not fork `dirname`, `readlink`, or `pwd`.  The
+# runtime loader supplies a lexical path rooted in the deployed layout; all
+# routing paths below are relative to that same layout. Executable entrypoints
+# perform symlink canonicalization before they source runtime libraries.
+EXECUTOR_ROUTER_LIB_DIR="${BASH_SOURCE[0]%/*}"
+[[ "$EXECUTOR_ROUTER_LIB_DIR" == "${BASH_SOURCE[0]}" ]] && EXECUTOR_ROUTER_LIB_DIR=.
+case "$EXECUTOR_ROUTER_LIB_DIR" in
+  */runtime/lib) EXECUTOR_ROUTER_REPO_ROOT="${EXECUTOR_ROUTER_LIB_DIR%/runtime/lib}" ;;
+  runtime/lib) EXECUTOR_ROUTER_REPO_ROOT=. ;;
+  *) EXECUTOR_ROUTER_REPO_ROOT="${EXECUTOR_ROUTER_LIB_DIR%/lib}" ;;
+esac
 
 _er_source_required() {
   local required="$1"

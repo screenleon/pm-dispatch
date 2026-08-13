@@ -2,14 +2,15 @@
 # Canonical-memory hydration for shared gate/runtime consumers.
 # Source this file; public entrypoint: gate_memory_context_hydrate.
 
-_GATE_MEMORY_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_GATE_MEMORY_LIB_DIR="${BASH_SOURCE[0]%/*}"
+[[ "$_GATE_MEMORY_LIB_DIR" == "${BASH_SOURCE[0]}" ]] && _GATE_MEMORY_LIB_DIR=.
 
-if [[ "$(type -t pmctl_memory_resolve 2>/dev/null)" != function ]]; then
+if ! declare -F pmctl_memory_resolve >/dev/null 2>&1; then
   # shellcheck source=runtime/lib/pmctl-memory.sh
   # shellcheck disable=SC1091
   . "$_GATE_MEMORY_LIB_DIR/pmctl-memory.sh"
 fi
-if [[ "$(type -t pmctl_context_pack 2>/dev/null)" != function ]]; then
+if ! declare -F pmctl_context_pack >/dev/null 2>&1; then
   # shellcheck source=runtime/lib/pmctl-context.sh
   # shellcheck disable=SC1091
   . "$_GATE_MEMORY_LIB_DIR/pmctl-context.sh"

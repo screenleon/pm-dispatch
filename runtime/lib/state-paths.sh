@@ -11,15 +11,25 @@
 # directory. state-writer.sh owns the mutating side (safety checks, mkdir,
 # chmod, JSONL appends) and sources this file for the shared resolvers.
 
-SCRIPT_DIR_SP="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Do not use command substitution/dirname while this library is sourced: the
+# source contract permits function definitions and guarded imports only, not a
+# transient helper process. Runtime libraries are always addressed by a path.
+SCRIPT_DIR_SP="${BASH_SOURCE[0]%/*}"
+[[ "$SCRIPT_DIR_SP" == "${BASH_SOURCE[0]}" ]] && SCRIPT_DIR_SP=.
 # Project-key hashing needs portable.sh (_portable_canonical_path,
 # _portable_sha1). Load it guarded so standalone callers work; state-writer.sh
 # already loads portable before sourcing this file, so the guard is a no-op
 # there. portable.sh is source-safe and does not alter caller shell policy.
-if [[ "$(type -t _portable_sha1 2>/dev/null)" != function || "$(type -t _portable_canonical_path 2>/dev/null)" != function ]]; then
+if ! declare -F _portable_sha1 >/dev/null 2>&1 \
+    || ! declare -F _portable_canonical_path >/dev/null 2>&1; then
   # shellcheck source=runtime/lib/portable.sh
   # shellcheck disable=SC1091
   . "$SCRIPT_DIR_SP/portable.sh" 2>/dev/null || true
+fi
+if ! declare -F pm_identifier_artifact_leaf_is_valid >/dev/null 2>&1; then
+  # shellcheck source=runtime/lib/identifier-policy.sh
+  # shellcheck disable=SC1091
+  . "$SCRIPT_DIR_SP/identifier-policy.sh" 2>/dev/null || true
 fi
 
 _sw_log_error() {
@@ -180,14 +190,15 @@ sw_project_worktree_dir() {
 # is responsible for mkdir + permissions. This is the seam that later phases
 # route gate and dispatch artifacts through, replacing the legacy in-repo
 # $WORK_DIR/.agent-trace location. run_id is rejected if it could escape the
-# partition (a slash or `..`), so a hostile run id cannot redirect writes.
+# partition. Its compatibility-preserving artifact-leaf grammar is owned by
+# identifier-policy.sh; strict run/gate grammars remain producer boundaries.
 sw_project_run_dir() {
   local run_id="${1:-}"
   if [[ -z "$run_id" ]]; then
     printf 'state-paths: sw_project_run_dir requires a run_id\n' >&2
     return 1
   fi
-  if [[ "$run_id" == */* || "$run_id" == *..* ]]; then
+  if ! pm_identifier_artifact_leaf_is_valid "$run_id"; then
     printf 'state-paths: invalid run_id (no slashes or ".." allowed): %s\n' "$run_id" >&2
     return 1
   fi

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 
 if ! declare -F pm_identifier_adapter_is_valid >/dev/null 2>&1; then
-  _pmctl_guard_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  _pmctl_guard_lib_dir="${BASH_SOURCE[0]%/*}"
+  [[ "$_pmctl_guard_lib_dir" == "${BASH_SOURCE[0]}" ]] && _pmctl_guard_lib_dir=.
   # shellcheck source=runtime/lib/identifier-policy.sh
   # shellcheck disable=SC1091
   . "$_pmctl_guard_lib_dir/identifier-policy.sh"

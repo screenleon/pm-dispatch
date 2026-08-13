@@ -5,6 +5,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source_file="$repo_root/runtime/lib/gate-result-verify.sh"
+identifier_policy_file="$repo_root/runtime/lib/identifier-policy.sh"
 target_file="$repo_root/runtime/bin/pr-gate.sh"
 mode="${1:-sync}"
 
@@ -45,6 +46,19 @@ functions=(
   gate_assurance_verify
   gate_result_verify
 )
+
+# Copy-mode has no sibling runtime/lib to source. Embed only the policy helper
+# needed by the verifier, generated from the canonical policy source alongside
+# the verifier functions below.
+awk -v signature="pm_identifier_run_ere_pattern() {" '
+  $0 == signature { found = 1 }
+  found {
+    if ($0 == "") print ""
+    else print "  " $0
+  }
+  found && $0 == "}" { exit }
+' "$identifier_policy_file" >> "$block_file"
+printf '\n' >> "$block_file"
 
 for function_name in "${functions[@]}"; do
   awk -v signature="$function_name() {" '

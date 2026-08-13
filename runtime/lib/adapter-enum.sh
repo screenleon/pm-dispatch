@@ -4,7 +4,7 @@
 if ! declare -F pm_identifier_adapter_is_valid >/dev/null 2>&1; then
   # shellcheck source=runtime/lib/identifier-policy.sh
   # shellcheck disable=SC1091
-  . "$(dirname "${BASH_SOURCE[0]}")/identifier-policy.sh"
+  . "${BASH_SOURCE[0]%/*}/identifier-policy.sh"
 fi
 if ! declare -F adapter_manifest_dispatch_path >/dev/null 2>&1 \
     || ! declare -F pm_identifier_adapter_is_valid >/dev/null 2>&1; then

@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
 # Canonical state-store writer for pm-dispatch.
 
-SCRIPT_DIR_SW="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [[ "$(type -t pm_identifier_operation_is_valid 2>/dev/null)" != function ]]; then
+SCRIPT_DIR_SW="${BASH_SOURCE[0]%/*}"
+[[ "$SCRIPT_DIR_SW" == "${BASH_SOURCE[0]}" ]] && SCRIPT_DIR_SW=.
+if ! declare -F pm_identifier_operation_is_valid >/dev/null 2>&1; then
   # shellcheck source=runtime/lib/identifier-policy.sh
   # shellcheck disable=SC1091
   . "$SCRIPT_DIR_SW/identifier-policy.sh"
 fi
 # shellcheck source=runtime/lib/portable.sh
-if [[ "$(type -t serialize_with_lock 2>/dev/null)" != function || "$(type -t _portable_sha1 2>/dev/null)" != function || "$(type -t file_size_bytes 2>/dev/null)" != function ]]; then
+if ! declare -F serialize_with_lock >/dev/null 2>&1 \
+    || ! declare -F _portable_sha1 >/dev/null 2>&1 \
+    || ! declare -F file_size_bytes >/dev/null 2>&1; then
   . "$SCRIPT_DIR_SW/portable.sh" 2>/dev/null || true
 fi
 
@@ -17,7 +20,7 @@ fi
 # source of truth for the store-root / project-key layout. Source it (guarded)
 # so this writer and every artifact-relocation caller resolve the same paths.
 # shellcheck source=runtime/lib/state-paths.sh
-if [[ "$(type -t sw_project_run_dir 2>/dev/null)" != function ]]; then
+if ! declare -F sw_project_run_dir >/dev/null 2>&1; then
   . "$SCRIPT_DIR_SW/state-paths.sh" 2>/dev/null || true
 fi
 
@@ -25,7 +28,7 @@ fi
 # in state-compat.sh so the writer's version gate and `pmctl state status`
 # consume the same definitions.
 # shellcheck source=runtime/lib/state-compat.sh
-if [[ "$(type -t sw_layout_version_supported 2>/dev/null)" != function ]]; then
+if ! declare -F sw_layout_version_supported >/dev/null 2>&1; then
   . "$SCRIPT_DIR_SW/state-compat.sh" 2>/dev/null || true
 fi
 

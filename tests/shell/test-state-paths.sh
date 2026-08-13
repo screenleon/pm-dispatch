@@ -68,10 +68,10 @@ case_run_dir_composition() {
   repo="$(mktemp -d)"; git init -q "$repo"
   root="/srv/pm-state"
   key="$(PM_DISPATCH_STATE_ROOT="$root" _SW_REPO_ROOT="$repo" _sw_project_key)"
-  expected="$root/projects/$key/runs/run-abc"
-  got="$(PM_DISPATCH_STATE_ROOT="$root" _SW_REPO_ROOT="$repo" sw_project_run_dir run-abc)"
+  expected="$root/projects/$key/runs/run-20260812T000000Z-abc123"
+  got="$(PM_DISPATCH_STATE_ROOT="$root" _SW_REPO_ROOT="$repo" sw_project_run_dir run-20260812T000000Z-abc123)"
   rm -rf "$repo"
-  if [[ "$got" == "$expected" && "$got" != */ && "$got" == *"/runs/run-abc" ]]; then
+  if [[ "$got" == "$expected" && "$got" != */ && "$got" == *"/runs/run-20260812T000000Z-abc123" ]]; then
     pass "$name"
   else
     fail "$name" "got=$got expected=$expected"
@@ -91,11 +91,32 @@ assert_call_rejects() {
 
 # ---- 5-7: run dir rejects missing / path-escaping run_ids ----
 case_run_dir_rejections() {
-  # Behavior: sw_project_run_dir refuses an empty id and any id that could escape
-  # the partition (slash or ".."). Steps: assert each is rejected with no stdout.
+  # Behavior: sw_project_run_dir rejects empty and path-escaping artifact leaves;
+  # safe legacy leaves are covered separately because artifact paths retain compatibility.
   assert_call_rejects "run-dir/empty run_id rejected"  sw_project_run_dir ""
   assert_call_rejects "run-dir/slash run_id rejected"  sw_project_run_dir "a/b"
   assert_call_rejects "run-dir/dotdot run_id rejected" sw_project_run_dir "x..y"
+}
+
+# ---- 8: run dir preserves safe legacy artifact leaves ----
+case_run_dir_legacy_leaf_compatibility() {
+  # Behavior: a non-empty legacy-safe artifact leaf remains routable even when
+  # it is not a strict producer dispatch run ID.
+  # Steps: pin the state root and project key; assert run-abc resolves exactly.
+  local name="run-dir/safe legacy artifact leaf remains compatible"
+  should_run "$name" || return 0
+  local repo root key got expected
+  repo="$(mktemp -d)"; git init -q "$repo"
+  root="/srv/pm-state"
+  key="$(PM_DISPATCH_STATE_ROOT="$root" _SW_REPO_ROOT="$repo" _sw_project_key)"
+  expected="$root/projects/$key/runs/run-abc"
+  got="$(PM_DISPATCH_STATE_ROOT="$root" _SW_REPO_ROOT="$repo" sw_project_run_dir run-abc)"
+  rm -rf "$repo"
+  if [[ "$got" == "$expected" ]]; then
+    pass "$name"
+  else
+    fail "$name" "got=$got expected=$expected"
+  fi
 }
 
 # ---- 8: resolve-trace-dir precedence: explicit override wins ----
@@ -174,6 +195,7 @@ case_store_root_xdg
 case_store_root_home
 case_run_dir_composition
 case_run_dir_rejections
+case_run_dir_legacy_leaf_compatibility
 case_trace_flag_wins
 case_trace_env_wins
 case_trace_legacy_default
