@@ -11,7 +11,9 @@ set -uo pipefail
 
 # Keep the host continuation boundary on the same run-id grammar as pmctl's
 # dispatch, supervisor, state-path, and verifier paths.
-_wait_dispatch_dir="${BASH_SOURCE[0]%/*}"
+_wait_dispatch_source="${BASH_SOURCE[0]}"
+_wait_dispatch_real="$(readlink -f -- "$_wait_dispatch_source" 2>/dev/null || printf '%s' "$_wait_dispatch_source")"
+_wait_dispatch_dir="${_wait_dispatch_real%/*}"
 # shellcheck disable=SC1091 # Runtime library path is resolved from this host entrypoint.
 . "$_wait_dispatch_dir/../../../runtime/lib/identifier-policy.sh"
 unset _wait_dispatch_dir

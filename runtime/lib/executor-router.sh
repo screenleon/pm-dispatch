@@ -16,7 +16,11 @@
 # perform symlink canonicalization before they source runtime libraries.
 EXECUTOR_ROUTER_LIB_DIR="${BASH_SOURCE[0]%/*}"
 [[ "$EXECUTOR_ROUTER_LIB_DIR" == "${BASH_SOURCE[0]}" ]] && EXECUTOR_ROUTER_LIB_DIR=.
-EXECUTOR_ROUTER_REPO_ROOT="${EXECUTOR_ROUTER_LIB_DIR%/runtime/lib}"
+case "$EXECUTOR_ROUTER_LIB_DIR" in
+  */runtime/lib) EXECUTOR_ROUTER_REPO_ROOT="${EXECUTOR_ROUTER_LIB_DIR%/runtime/lib}" ;;
+  runtime/lib) EXECUTOR_ROUTER_REPO_ROOT=. ;;
+  *) EXECUTOR_ROUTER_REPO_ROOT="${EXECUTOR_ROUTER_LIB_DIR%/lib}" ;;
+esac
 
 _er_source_required() {
   local required="$1"

@@ -590,6 +590,25 @@ case_run_rejects_invalid_dispatch_id() {
   fi
 }
 
+# Behavior: run rejects a formerly accepted loose dispatch identifier before waiting.
+# Steps: stub validation and launch with run-legacy; assert exit 1, diagnostic, and no wait trace.
+case_run_rejects_loose_dispatch_id() {
+  local name="pmctl pm run: rejects loose legacy dispatch id before wait"
+  should_run "$name" || return 0
+  # shellcheck source=runtime/lib/pmctl-pm.sh
+  . "$REPO_ROOT/runtime/lib/pmctl-pm.sh"
+  local trace="$tmp_root/loose-id-trace" out="$tmp_root/loose-id.out" code=0
+  pmctl_validate_brief() { return 0; }
+  pmctl_dispatch_run() { printf 'run-legacy\n'; }
+  pmctl_dispatch_wait() { printf 'wait-called\n' >> "$trace"; return 0; }
+  pmctl_pm_run "$REPO_ROOT" --adapter codex --brief-file /tmp/brief-test.md --cd "$REPO_ROOT" > "$out" 2>&1 || code=$?
+  if [[ "$code" -eq 1 ]] && grep -q 'dispatch returned invalid run id: run-legacy' "$out" && [[ ! -e "$trace" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected loose-ID rejection, got $code out=$(<"$out") trace=$(cat "$trace" 2>/dev/null || true)"
+  fi
+}
+
 # Behavior: run preserves a non-zero authenticated wait result after emitting its batch result.
 # Steps: stub a valid launch and a failing wait; assert the returned exit code and JSON wait_exit_code match.
 case_run_propagates_wait_failure() {
@@ -679,6 +698,7 @@ case_run_rejects_invalid_brief
 case_run_requires_adapter_brief_and_workdir
 case_run_rejects_non_git_workdir
 case_run_rejects_invalid_dispatch_id
+case_run_rejects_loose_dispatch_id
 case_run_propagates_wait_failure
 case_run_json_suppresses_wait_stdout
 case_run_forwards_optional_dispatch_flags

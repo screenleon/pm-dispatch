@@ -22,6 +22,12 @@ run_waiter() {
     --repo-root "$REPO_ROOT" --run-id "$run_id" --cd "$work" --timeout "$timeout"
 }
 
+run_waiter_path() {
+  local waiter="$1" stub="$2" run_id="$3" work="$4" timeout="$5"
+  PM_DISPATCH_CODEX_PMCTL_BIN="$stub" bash "$waiter" \
+    --repo-root "$REPO_ROOT" --run-id "$run_id" --cd "$work" --timeout "$timeout"
+}
+
 make_proxy_stub() {
   local path="$1" capture="$2" mode="$3"
   mkdir -p "$(dirname "$path")"
@@ -124,6 +130,23 @@ EOF
     pass "$name"
   else
     fail "$name" "expected rc 2, invalid-ID diagnostic, and no pmctl invocation, got rc=$rc err=$(<"$err")"
+  fi
+}
+
+test_symlinked_waiter_uses_receipt_owned_runtime_policy() {
+  # Behavior: a symlinked installed waiter canonicalizes itself before importing runtime policy.
+  # Steps: 1. create a link with no runtime sibling; 2. invoke it with a valid ID and pmctl stub;
+  # 3. assert the normal wait envelope proves the receipt-owned library was loaded.
+  local name="symlinked-waiter-uses-receipt-owned-runtime-policy"
+  should_run "$name" || return 0
+  local link="$tmp_root/symlinked/wait-dispatch.sh" stub="$tmp_root/symlinked/pmctl" work="$tmp_root/symlinked/work" out rc=0
+  mkdir -p "$(dirname "$link")" "$work"; make_pmctl_stub "$stub" 0
+  ln -s "$REPO_ROOT/hosts/codex/bin/wait-dispatch.sh" "$link"
+  out="$(run_waiter_path "$link" "$stub" run-20260812T000000Z-symlink "$work" 5)" || rc=$?
+  if [[ "$rc" -eq 0 && "$out" == *'state: completed'* ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected symlinked waiter to reach pmctl, got rc=$rc out=$out"
   fi
 }
 
@@ -275,6 +298,7 @@ test_waiter_indeterminate_recommends_foreground_fallback
 test_waiter_timeout_does_not_recommend_redispatch
 test_waiter_rejects_invalid_run_id
 test_waiter_rejects_loose_run_id_before_pmctl
+test_symlinked_waiter_uses_receipt_owned_runtime_policy
 test_waiter_rejects_non_checkout_repo_root
 test_waiter_rejects_invalid_work_dir
 test_waiter_rejects_invalid_timeout
