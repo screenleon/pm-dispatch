@@ -54,13 +54,27 @@ Gate correctness 與 release evidence 仍必須先在 v0.11.0 關閉。
 
 ## v0.11.0 — pre-v1 stabilization：state compatibility + release/operational evidence（進行中）
 
-> 最後排程更新：2026-08-11（保留既有 Phase 1–9 交付歷史；CC-521 已由
+> 最後排程更新：2026-08-14（保留既有 Phase 1–9 交付歷史；CC-521 已由
 > pr:#470 關閉，CC-522 的 QA execution evidence 與 self-authored external
 > evidence fail-closed boundary 兩個 slices 已交付）
 
 **主題**：一次消化 v1.0 前已知的 state compatibility、release/upgrade evidence 與 operational evidence 缺口。原 v0.11.0（state compatibility + writer boundary）、v0.12.0（release evidence + upgrade proof）、v0.13.0（detached recovery + operational evidence）合併為本版；其中 detached reconciliation（CC-499）已提前於 v0.10.0 出貨，不在本版 scope。Phase 10–12 追加 public contract candidate 前必須收斂的 runtime authority、Gate security 與 generated-source 邊界。
 
 > **設計依據**：合併只降低 release closure 次數，不改變原有排序理由——state compatibility 先於 writer ratchet、evidence parity 先於 upgrade smoke、契約凍結（v0.12.0）仍晚於本版全部內容。三版合一後 tag 間隔變長，任何 critical surface 不得因版本收斂而降級或略過；新增架構工作只能在既有 phase 後追加，不覆寫已完成的 milestone history。
+
+### P0 — planning authority + current-tree evidence（2026-08-14）
+
+> 這是 v0.11.0 後續工作的 immediate gate，不是新的 workflow engine。P0 完成前，
+> 不開始 CC-517 的 production dogfood，也不把舊 tree 的 full-suite artifact 當作
+> current main evidence。
+
+| P0 work item | Required outcome | 狀態 |
+|----|------|------|
+| CC-532 scope reconciliation | Linux/WSL2 repo-layout canonical modules 視為本票 scope；standalone distribution／copy parity 移至 CC-546 | ⚠️ closure pending |
+| CC-533 foundation boundary | PR #480 保留為 schema-derived foundation；handwritten structural cleanup 與 version split 維持 partial，不擴大成 Gate workflow 重構 | ⚠️ partial |
+| Planning records | BACKLOG、MILESTONES、DECISIONS 使用同一份 2026-08-14 scope/status | 🔵 required |
+| Current-tree full suite | accepted planning tree 產生 authoritative zero-skip PASS，並以 source-tree fingerprint 綁定 artifact | 🔵 required |
+| CC-546 | standalone distribution／installed copy bundle／canonical-dist parity 的獨立 deferred follow-up | ⏸ deferred |
 
 ### Phase 1 — state compatibility surface（原 v0.11.0）
 
@@ -162,13 +176,13 @@ Gate correctness 與 release evidence 仍必須先在 v0.11.0 關閉。
 | CC-526 | reviewer override symlink／replacement trust-boundary hardening | ✅ pr:#475 |
 | CC-527 | targeted pass、reviewer coverage 與 tier 的 CLI coordinate 分離；tier 由 current subject/policy 解析，仍待 complete parity closure | ⚠️ partial (pr:#472, #476) |
 
-### Phase 12 — Gate canonical source + generated artifacts（新增）
+### Phase 12 — Gate canonical source + schema foundation（新增）
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
 | CC-525 | 修正 verifier fallback provenance 並鎖定唯一 generator；generator identity、marker、provenance 與 body parity 已有 fail-closed ratchet | ✅ closed 2026-08-13 |
-| CC-532 | 拆出 canonical Gate modules，release 時產生 standalone dist 並驗 canonical/dist parity | 🔵 |
-| CC-533 | schema-derived structural validator；手寫 verifier 只保留跨 artifact 語意 | 🔵 |
+| CC-532 | Linux/WSL2 repo-layout canonical Gate modules；P0 current-tree evidence 後 closure，standalone distribution 移至 CC-546 | ⚠️ partial |
+| CC-533 | PR #480 schema-derived structural validation foundation；handwritten structural cleanup 與 version dispatch separation 待 delivery schema 穩定後收尾 | ⚠️ partial |
 
 ### 計畫外同期 correctness hardening（已合併 main）
 

@@ -51,8 +51,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-529 | 🔵 active | publish assurance observability：在 ship 成功輸出、PR body 與 finish marker 保留 embedded policy 與 baseline/preferred satisfaction | release/gate | 2026-07-30 | feedback:2026-07-30 | P2 | hygiene |
 | CC-530 | ✅ closed 2026-08-12 | source-safe runtime library contract + centralized domain identifier policy | arch/reuse | 2026-07-30 | pr:#473 | P1 | hygiene |
 | CC-531 | ✅ closed 2026-08-11 | Adapter manifest contract closure：dispatch entrypoint 成為唯一 runtime authority | arch/schema | 2026-07-30 | feedback:2026-08-11 | P1 | design |
-| CC-532 | 🔵 active | Gate canonical modules + generated standalone distribution + parity fixtures | arch/gate | 2026-07-30 | feedback:2026-07-30 | P1 | reuse-debt |
-| CC-533 | 🔵 active | schema-derived Gate structural validator，手寫 verifier 只保留跨 artifact semantics | schema/gate | 2026-07-30 | feedback:2026-07-30 | P1 | design |
+| CC-532 | ⚠️ partial 2026-08-14 | Linux/WSL2 repo-layout canonical Gate modules 已完成；standalone distribution／copy parity 已移出本票，待 P0 current-tree evidence 後關閉 | arch/gate | 2026-07-30 | feedback:2026-07-30 | P1 | reuse-debt |
+| CC-533 | ⚠️ partial 2026-08-14 | PR #480 已交付 schema-derived structural validation foundation；handwritten structural cleanup、version dispatch separation 與 legacy/current verifier split 仍待 schema 穩定後收尾 | schema/gate | 2026-07-30 | pr:#480 | P1 | design |
 | CC-534 | 🟢 someday | `commands.tsv` 驅動 CLI routing、safe handler dispatch 與 lazy module loading | arch/DX | 2026-07-30 | feedback:2026-07-30 | P2 | design |
 | CC-535 | 🟢 someday | detached-launch 上的 supervised-run primitive + versioned JSON run-spec | arch/ops | 2026-07-30 | feedback:2026-07-30 | P2 | design |
 | CC-536 | 🟢 someday | 擴充 Adapter SDK 的 shared lifecycle／manifest／trace contract，保留 executor-native behavior | arch/reuse | 2026-07-30 | feedback:2026-07-30 | P2 | reuse-debt |
@@ -64,6 +64,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-542 | ✅ done | 移除 `test-pmctl-context`／`test-release-verify` 的 LIVE_DB_EXCLUSIVE 全域互斥：release-verify Phase 3 context-index 改用隔離 fixture repo，不再重建 live `context.db` | ops/test | 2026-08-04 | pr:#463 | P1 | hygiene |
 | CC-543 | ✅ done | Full test runner Phase 0 fail-fast structural precheck；`--collect-all` 保留 release 全證據路徑 | ops/test | 2026-08-04 | pr:#465 | P2 | hygiene |
 | CC-545 | ✅ done | Reviewer evidence-reference-contract INCOMPLETE 的單次修正性重派：僅限該單一違規類別，附具體錯誤引用重跑違規 reviewer，不必整輪 gate（30-40 分鐘）重來 | ops/gate | 2026-08-06 | pr:#465 | P2 | hygiene |
+| CC-546 | ⏸ deferred | standalone Gate distribution／copy parity follow-up：獨立定義 bundle schema、generation、installed parity 與 support boundary；不回併 Linux/WSL2 canonical module extraction | arch/gate | 2026-08-14 | — | P2 | reuse-debt |
 | CC-465 | 🔵 active | memory/context 關鍵詞管線 CJK 支援：抽出共用零依賴斷詞 lib，取代三處各自 ASCII-only 抽詞；工作序列起點（465→467→468→466）（2026-07-07 記憶系統深入分析） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-466 | ⏸ deferred | 記憶卡片生命週期閉環：expires_at 執行 + 關窗式 supersede + usage sidecar 休眠偵測 + doctor→distill 接線；僅在 CC-467 證明 stale/dormant card 已形成實際問題時啟動 | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-467 | 🔵 active | `pmctl memory stats`：注入效益可視化（唯讀聚合器）——注入 bytes/卡片命中分佈/從未命中卡/episode 填寫率，回答「記憶有跟沒有差在哪」；排在 CC-466 之前（2026-07-07；業界僅離線 recall 評測，無 per-injection 遙測） | DX/memory | 2026-07-07 | — | P2 | retrieval |
@@ -2865,7 +2866,7 @@ terminal row/body；既有 terminal tickets 的 broad archive sweep 另行處理
 
 ---
 
-## CC-532 — Gate canonical modules for the Linux/WSL2 developer path 🔵 active
+## CC-532 — Gate canonical modules for the Linux/WSL2 developer path ⚠️ partial 2026-08-14
 
 **Problem**: `runtime/bin/pr-gate.sh` 同時承擔 option parsing、policy、subject、
 scope、reviewer contract、synthesis、assurance、publication 與 copy-mode fallback，
@@ -2917,9 +2918,19 @@ subject fail-closed tests、canonical ownership regression check，並以 affect
 runner 與正式 PR gate 驗證通過。Generated distribution/copy parity 已明確 deferred，
 不在本階段 scope。
 
+**P0 closure boundary（2026-08-14）**：本票的 Linux/WSL2 repo-layout implementation
+scope 已完成；尚未宣稱 terminal closure，直到 accepted planning tree 有一份
+authoritative zero-skip full-suite PASS，且其 source-tree fingerprint 與該 tree
+一致。Standalone distribution、copy-mode bundle schema、generated distribution
+與 canonical/dist parity 移至 [[CC-546]]，不得回併本票。
+
+**Closure evidence required**：P0 closure PR 必須同步更新 BACKLOG、MILESTONES、
+DECISIONS 的 scope/status，並附 current-tree full-suite verifier 可接受的 artifact
+locator；舊 tree 的 full-suite artifact 不能作為本票 closure evidence。
+
 ---
 
-## CC-533 — schema-derived Gate structural validator 🔵 active
+## CC-533 — schema-derived Gate structural validator ⚠️ partial 2026-08-14
 
 **Problem**: Gate JSON Schema 已定義 required fields、exact keys、enum、patterns、
 conditions 與 finding shape，shared jq verifier 又手寫同一份 structural model。
@@ -2944,6 +2955,34 @@ scope、evidence index、digest 與 line-boundary 驗證。分層後可降低 Ga
 4. Generation 在開發／build 階段完成，runtime 仍只需要 Bash+jq；CI `--check`、
    schema fixtures 與 canonical/dist parity 證明 generated fragment 未 stale 且
    semantic checks 未被結構 generator 吸收或放寬。
+
+**Delivered foundation（PR #480）**：canonical Gate schemas 現可生成 checked-in
+runtime bundle，generic jq interpreter 已涵蓋目前使用的 structural vocabulary；
+generator freshness check 與 schema fixtures 已接入。這是 foundation，不是本票
+terminal closure。
+
+**Remaining boundary**：handwritten verifier 仍保留部分 structural shape/version
+branches；需待 [[CC-517]] 的 remediation closure schema 與 [[CC-511]] Phase B
+consumer contract 穩定後，另以 behavior-preserving slice 完成 structural cleanup、
+version dispatch separation 與 legacy/current verifier 分層。不得把這些剩餘工作提前
+擴成 Gate workflow 重構。
+
+---
+
+## CC-546 — standalone Gate distribution／copy parity follow-up ⏸ deferred
+
+**Problem**：CC-532 的 Linux/WSL2 canonical module extraction 已完成，但 standalone
+distribution、installed copy bundle 與 canonical/dist parity 仍需要獨立的 bundle
+schema、generation authority、install layout 與 support contract。把它留在 CC-532
+會重新引入兩條 authoring/runtime authority，並使目前 developer-path scope 漂移。
+
+**Requirement**：另行定義 bundle schema、生成與 freshness check、installed/copy
+layout、缺件 fail-closed contract、canonical/dist behavior parity、CI/release
+coverage 以及正式 support boundary。不得在本票前置實作 native Windows；不得把
+copy compatibility fixture 誤當成 standalone distribution acceptance。
+
+**Activation**：待 CC-517／CC-511 Phase B delivery closure 穩定，且實際需要
+standalone distribution 的使用情境成立後再排程；在此之前保持 deferred。
 
 ---
 

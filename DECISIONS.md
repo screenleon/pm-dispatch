@@ -7,6 +7,38 @@ H2 標題格式：## YYYY-MM-DD: <短描述>
 與 BACKLOG closure 對應的 entry，內文首行寫：Closes: BACKLOG.md#<PREFIX>-NNN
 -->
 
+## 2026-08-14: gate-module-scope-and-p0-closure-boundary
+
+Relates: CC-511, CC-517, CC-532, CC-533, CC-546
+
+**Context**: PR #479 已完成 Gate canonical module extraction 的 Linux/WSL2
+repo-layout slices，PR #480 又交付 schema-derived structural validation
+foundation。原 milestone 仍把 standalone distribution、copy parity 與
+canonical/dist parity 寫在 CC-532，會讓已收斂的 developer-path scope 重新產生
+第二條 runtime authority；同時目前 main 尚缺一份與 accepted tree fingerprint
+相符的 authoritative full-suite artifact。
+
+**Decision**: CC-532 的 current scope 限定為 Linux/WSL2 repo-layout canonical
+modules；standalone distribution、installed copy bundle、bundle schema/generation
+與 canonical/dist parity 移至 deferred CC-546。CC-533 以 PR #480 為 partial
+foundation 保留，handwritten structural cleanup、version dispatch separation 與
+legacy/current verifier split 等剩餘工作，待 CC-517 remediation closure schema
+與 CC-511 Phase B consumer 穩定後再以 behavior-preserving slice 收尾。P0 closure
+必須先同步 BACKLOG、MILESTONES、DECISIONS，並在 accepted planning tree 產生
+zero-skip authoritative full-suite PASS；舊 tree artifact 不具 closure authority。
+
+**Alternatives considered**: (a) 直接以 PR #479/#480 關閉 CC-532/533——拒絕，因為
+目前沒有 current-tree full-suite evidence，且 CC-533 仍有 handwritten structural
+branches。(b) 把 standalone distribution 留在 CC-532——拒絕，會把 developer path
+與尚未需要的 distribution authority 綁在同一票。(c) 立即完成 CC-533 全部 cleanup
+再做 CC-517——拒絕，closure schema 尚未穩定，會造成 verifier 重做與 scope
+耦合。
+
+**Constraints introduced**: P0 是 planning/evidence gate，不是 workflow engine；
+CC-517 production dogfood 須等 P0 完成。CC-546 在 CC-517／CC-511 Phase B
+delivery closure 穩定且有實際 standalone 使用情境前維持 deferred。MILESTONES
+不得重新宣告已移出 CC-532 的 standalone acceptance。
+
 ## 2026-08-12: targeted-pass-tier-is-current-subject-policy-not-inherited-evidence
 
 Closes: BACKLOG.md#CC-527 design discrepancy only; CC-527 implementation remains partial.
