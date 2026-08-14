@@ -7,6 +7,34 @@ H2 標題格式：## YYYY-MM-DD: <短描述>
 與 BACKLOG closure 對應的 entry，內文首行寫：Closes: BACKLOG.md#<PREFIX>-NNN
 -->
 
+## 2026-08-14: p1-delivery-closure-execution-order
+
+Relates: CC-527, CC-517, CC-511, CC-529, CC-505
+
+**Context**: P0 的 planning authority 已在 main 收斂；Gate coordinates 的大部分
+runtime 已存在，但 delivery closure 尚未把 primary review、remediation、final
+tree tests 與 publish authorization 串成可驗證的端到端證據。若先做 schema-derived
+cleanup、retrieval optimization 或新的 workflow primitive，會把尚未穩定的 closure
+contract 擴散到多個 consumer。
+
+**Decision**: P1 固定採垂直切片順序：先完成 CC-527 的 copy-mode／repo-layout 與
+sequential／parallel meaning-parity、truthful human coordinate label；再實作
+CC-517 的 immutable `remediation_closure_v1` evidence；其後才接 CC-511 Phase B
+與 CC-529 的 `/ship` consumption/publication observability；最後以 CC-505 做
+retrieval correctness 與 shadow telemetry。CC-533 的 handwritten structural
+cleanup、CC-546 standalone distribution，以及任何 workflow engine/FSM 均不先行。
+
+**Alternatives considered**: (a) 直接把 CC-517 做成 `/deliver` 或 persistent
+workflow state——拒絕，會把 evidence contract 變成新的 lifecycle authority。
+(b) 先做 CC-505 token optimization——拒絕，沒有 final-tree delivery baseline 時，
+無法解釋 savings 是否來自少重做而非少證據。(c) 先完成 CC-533 cleanup——拒絕，
+closure schema 與 publish assessment 尚未穩定，會造成 verifier 反覆改寫。
+
+**Constraints introduced**: P1 每片必須有 deterministic contract tests；targeted
+artifact 永遠標示 remediation-delta 與實際 reviewer coverage，不能被 consumer
+當作 comprehensive/full-coverage evidence；任何自動降低 reviewer coverage 或
+Gate policy 的行為都不由 P1 順序推導。
+
 ## 2026-08-14: gate-module-scope-and-p0-closure-boundary
 
 Relates: CC-511, CC-517, CC-532, CC-533, CC-546

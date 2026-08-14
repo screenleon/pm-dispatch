@@ -76,6 +76,29 @@ Gate correctness 與 release evidence 仍必須先在 v0.11.0 關閉。
 | Current-tree full suite | accepted planning tree 產生 authoritative zero-skip PASS，並以 source-tree fingerprint 綁定 artifact | 🔵 required |
 | CC-546 | standalone distribution／installed copy bundle／canonical-dist parity 的獨立 deferred follow-up | ⏸ deferred |
 
+### P1 — delivery closure evidence（2026-08-14 起動；垂直切片順序）
+
+> P1 的目標是讓可信的 Gate evidence 真正收斂到「修正後的 final tree 為何可發布」；
+> 不新增 `/deliver`、workflow engine、FSM 或新的 gate kind。每一片都必須保留
+> initial review、remediation delta、affected tests、targeted confirmation 與
+> authoritative full suite 的正交語意。
+
+實作順序固定如下，後一片不得在前一片 contract 未穩定前啟動：
+
+1. **CC-527 parity closure（active first slice）**：完成 truthful coordinate
+   label 與 copy-mode／repo-layout、sequential／parallel meaning-parity fixtures；
+   `tier`、`pass`、`coverage` 的 machine basis 與 human label 由 gate shell 維護。
+2. **CC-517 remediation_closure_v1（next）**：只新增 immutable evidence artifact
+   與 mechanical local／targeted／split classification，不建立 persistent lifecycle。
+3. **CC-511 Phase B + CC-529（after closure schema）**：`/ship` 只消費 shared
+   verifier 已驗證的 closure、tests、targeted confirmation 與 final-tree full-suite
+   artifacts；stdout、PR body、finish marker 從同一份 verified assessment 產生。
+4. **CC-505 Phase 1/2（after delivery closure dogfood）**：先做 lexical retrieval
+   correctness，再做 shadow telemetry；不得先宣稱 token savings 或引入 embeddings。
+
+P1 的每張實作 PR 都應綁定 deterministic contract tests；任何 reviewer coverage
+或 publish policy 的自動降級，均不屬於本順序的隱含結果。
+
 ### Phase 1 — state compatibility surface（原 v0.11.0）
 
 | 票 | 摘要 | 狀態 |

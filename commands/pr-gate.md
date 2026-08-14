@@ -64,6 +64,12 @@ its tier from the current subject and policy, not from the prior artifact.
 The result sidecar and reviewer briefs show both tier and coverage selection
 bases, plus shorthand provenance.
 
+The published result also contains a shell-owned `Gate Coordinates` block. It
+states the resolved rigor tier, pass scope, reviewer coverage, and execution
+mode independently of reviewer prose. Therefore `tier=full` with a targeted
+QA-only pass is visibly a full-rigor remediation delta, not a comprehensive
+full-coverage review.
+
 Before dispatch, the gate writes one immutable-subject-bound
 `gate_scope_manifest_v1` containing changed/renamed/untracked paths, hunk
 ranges, paired tests, sensitive signals, explicit surface flags, and bounded

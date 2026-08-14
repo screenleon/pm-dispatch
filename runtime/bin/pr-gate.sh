@@ -4022,6 +4022,35 @@ elif [[ -x "$_POST_GATE_HOOK" ]]; then
   fi
 fi
 
+# Publish a deterministic human-readable coordinate block before the result
+# digest is bound.  Reviewer prose is not an authority for tier, pass scope, or
+# coverage, so the shell states the resolved axes explicitly.  In particular,
+# a full-rigor targeted pass must not be mistaken for a comprehensive review.
+gate_append_truthful_coordinate_label() {
+  local result_file="$1" pass_label pass_note coverage_label
+  pass_label="$PASS_KIND_RESOLVED"
+  pass_note="$PASS_SCOPE"
+  if [[ "$PASS_KIND_RESOLVED" == targeted ]]; then
+    pass_note="$PASS_SCOPE only; this artifact is not a comprehensive review"
+  fi
+  coverage_label="${COVERAGE_SELECTED_DISPLAY:-none}"
+  {
+    printf '\n## Gate Coordinates (machine-resolved)\n'
+    printf '%s\n' \
+      "- Tier (rigor): \`$TIER_RESOLVED\` (basis: \`$TIER_SELECTION_BASIS\`)"
+    printf '%s\n' "- Pass scope: \`$pass_label\` — $pass_note"
+    printf '%s\n' \
+      "- Reviewer coverage: \`$coverage_label\` (basis: \`$COVERAGE_SELECTION_BASIS\`)"
+    printf '%s\n' "- Execution mode: \`$MODE_RESOLVED\`"
+    if [[ "$PASS_KIND_RESOLVED" == targeted ]]; then
+      printf '%s\n' \
+        "- Initial result (remediation context): \`$INITIAL_RESULT_DISPLAY\`"
+    fi
+  } >> "$result_file"
+}
+
+gate_append_truthful_coordinate_label "$OUTPUT_FILE"
+
 # Replace the executor-authored staging frontmatter with a bound pointer and
 # write the machine-owned assurance sidecar only after every deterministic
 # rewrite and explicitly enabled post-gate hook is complete. Completed reviewer

@@ -7256,6 +7256,195 @@ test_targeted_auto_mode_initializes_brief_coordinates() {
   pass "$name"
 }
 
+# Behavior: a full-rigor targeted pass remains human-readable as a remediation
+# delta rather than being mistaken for a comprehensive full-coverage gate.
+# Steps: run an explicit full-tier, QA-only targeted pass and assert the
+# shell-owned coordinate block records tier, pass, coverage, and their bases.
+test_targeted_full_tier_truthful_coordinate_label() {
+  local name="targeted-full-tier-truthful-coordinate-label"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" initial="$dir/initial.md"
+  local result_path code
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" qa-tester
+  create_repo "$repo" docs
+  write_valid_initial_gate_result "$initial"
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main \
+    --tier full --pass targeted --reviewers qa-tester \
+    --initial-result "$initial" --mode sequential --output "$dir/result.md"
+  code=$?
+  set -e
+  [[ "$code" -eq 0 ]] || {
+    fail "$name" "exit $code, expected 0: $(tail -n 10 "$err" 2>/dev/null)"
+    return
+  }
+  result_path="$dir/result.md"
+  assert_file_contains "$name" "$result_path" \
+    '## Gate Coordinates (machine-resolved)' || return
+  assert_file_contains "$name" "$result_path" \
+    '- Tier (rigor): `full` (basis: `explicit`)' || return
+  assert_file_contains "$name" "$result_path" \
+    '- Pass scope: `targeted` — remediation-delta only; this artifact is not a comprehensive review' || return
+  assert_file_contains "$name" "$result_path" \
+    '- Reviewer coverage: `qa-tester` (basis: `explicit`)' || return
+  assert_not_contains "$name" "$result_path" 'full gate' || return
+  pass "$name"
+}
+
+# Behavior: execution topology does not change targeted meaning.  Sequential
+# and parallel runs resolve the same tier, pass scope, reviewer coverage, and
+# selection bases; only the mode topology differs.
+# Steps: run the same canonical targeted invocation in both modes and compare
+# the machine-owned assurance coordinates plus the truthful human block.
+test_targeted_coordinates_meaning_parity_across_modes() {
+  local name="targeted-coordinates-meaning-parity-across-modes"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" initial="$dir/initial.md"
+  local seq="$dir/sequential.md" par="$dir/parallel.md" code
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" qa-tester
+  create_repo "$repo" docs
+  write_valid_initial_gate_result "$initial"
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main \
+    --pass targeted --reviewers qa-tester --initial-result "$initial" \
+    --mode sequential --output "$seq"
+  code=$?
+  set -e
+  [[ "$code" -eq 0 ]] || {
+    fail "$name" "sequential exit $code: $(tail -n 10 "$err" 2>/dev/null)"
+    return
+  }
+
+  : > "$out"; : > "$err"
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main \
+    --pass targeted --reviewers qa-tester --initial-result "$initial" \
+    --mode parallel --output "$par"
+  code=$?
+  set -e
+  [[ "$code" -eq 0 ]] || {
+    fail "$name" "parallel exit $code: $(tail -n 10 "$err" 2>/dev/null)"
+    return
+  }
+
+  jq -s -e '
+    .[0].coordinates.pass == .[1].coordinates.pass and
+    .[0].coordinates.tier == .[1].coordinates.tier and
+    .[0].coordinates.coverage == .[1].coordinates.coverage and
+    .[0].provenance.coordinate_syntax == .[1].provenance.coordinate_syntax and
+    .[0].coordinates.mode.resolved == "sequential" and
+    .[1].coordinates.mode.resolved == "parallel" and
+    .[0].coordinates.mode.topology == "combined-session" and
+    .[1].coordinates.mode.topology == "per-reviewer-sessions"
+  ' "${seq}.assurance.json" "${par}.assurance.json" >/dev/null || {
+    fail "$name" "sequential/parallel assurance coordinates diverged"
+    return
+  }
+  assert_file_contains "$name" "$seq" \
+    'this artifact is not a comprehensive review' || return
+  assert_file_contains "$name" "$par" \
+    'this artifact is not a comprehensive review' || return
+  pass "$name"
+}
+
+# Behavior: repo-layout dispatch preserves the same targeted coordinates and
+# truthful label as the copy-mode runner; the transport/run-id evidence is
+# orthogonal to pass meaning.
+# Steps: build the minimal repo-layout fixture used by the assurance tests,
+# execute a canonical targeted pass through the pmctl dispatch stub, and assert
+# its published sidecar and result carry the same axes as copy-mode.
+test_repo_layout_targeted_coordinates_match_copy_mode_contract() {
+  local name="repo-layout-targeted-coordinates-match-copy-mode-contract"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" source_runner layout home repo out err initial
+  local run_dir project_key runs_file result code
+  source_runner="$dir/source-runner"; layout="$dir/layout"; home="$dir/home"
+  repo="$dir/repo"; out="$dir/out"; err="$dir/err"; initial="$dir/initial.md"
+  run_dir="$dir/gate-run"
+  mkdir -p "$dir" "$layout/runtime/bin" "$layout/runtime/lib" \
+    "$layout/core/policy" "$run_dir"
+  create_runner "$source_runner"
+  cp "$source_runner/pr-gate.sh" "$layout/runtime/bin/pr-gate.sh"
+  cp -R "$source_runner/lib/." "$layout/runtime/lib/"
+  cp -R "$source_runner/core/policy/." "$layout/core/policy/"
+  cp -R "$REPO_ROOT/agents" "$layout/agents"
+  cp -R "$REPO_ROOT/adapters" "$layout/adapters"
+  cp "$source_runner/adapters/codex/dispatch.sh" "$layout/adapters/codex/dispatch.sh"
+  chmod +x "$layout/runtime/bin/pr-gate.sh" "$layout/adapters/codex/dispatch.sh"
+  cat > "$layout/runtime/lib/pmctl-dispatch.sh" <<'STUB_PMCTL_TARGETED'
+pmctl_dispatch_run() {
+  local root="$1" brief="" work="" timeout=""
+  shift
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --brief-file) brief="$2"; shift 2 ;;
+      --cd) work="$2"; shift 2 ;;
+      --timeout) timeout="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  "$root/adapters/codex/dispatch.sh" --brief-file "$brief" --cd "$work" --timeout "$timeout"
+  mkdir -p "$PM_DISPATCH_TRACE_DIR"
+  printf 'trace\n' > "$PM_DISPATCH_TRACE_DIR/test.last"
+  jq -nc --arg work "$work" --arg trace "$PM_DISPATCH_TRACE_DIR/test.last" '{
+    schema_version:3,id:"run-20260727T000000Z-bbbbbb",task_id:"UNKN-0",
+    executor:"codex",state:"ok",exit_code:0,model:"default",
+    brief_file:"/tmp/brief.md",working_dir:$work,trace_path:$trace,
+    created_ts:"2026-07-27T00:00:00Z",operation_id:"op-20260727T000000Z-bbbbbb"
+  }' >> "$CODEX_GATE_TEST_RUNS_FILE"
+  printf 'run-20260727T000000Z-bbbbbb\n'
+}
+pmctl_dispatch_wait() { return 0; }
+STUB_PMCTL_TARGETED
+  create_agents "$home" qa-tester
+  create_repo "$repo" docs
+  write_valid_initial_gate_result "$initial"
+  project_key="$(printf '%s\n' "$repo" | sha1sum | awk '{print $1}')"
+  runs_file="$dir/state/projects/$project_key/runs.jsonl"
+  mkdir -p "$(dirname "$runs_file")"
+
+  set +e
+  HOME="$home" PM_DISPATCH_STATE_ROOT="$dir/state" \
+    CODEX_GATE_TEST_RUNS_FILE="$runs_file" \
+    "$layout/runtime/bin/pr-gate.sh" --cd "$repo" --base main \
+      --executor codex --mode sequential --run-dir "$run_dir" \
+      --pass targeted --reviewers qa-tester --initial-result "$initial" \
+      --output "$dir/result.md" > "$out" 2> "$err"
+  code=$?
+  set -e
+  [[ "$code" -eq 0 ]] || {
+    fail "$name" "exit $code, expected 0: $(tail -n 15 "$err" 2>/dev/null)"
+    return
+  }
+  result="$dir/result.md"
+  assert_file_contains "$name" "$result" \
+    '- Pass scope: `targeted` — remediation-delta only; this artifact is not a comprehensive review' || return
+  assert_file_contains "$name" "$result" \
+    '- Reviewer coverage: `qa-tester` (basis: `explicit`)' || return
+  jq -e '
+    .coordinates.pass.resolved == "targeted" and
+    .coordinates.pass.scope == "remediation-delta" and
+    .coordinates.coverage.selected == ["qa-tester"] and
+    .coordinates.coverage.selection_basis == "explicit" and
+    .coordinates.independence.evidence_status == "verified" and
+    .dispatch.outcomes[0].run_id == "run-20260727T000000Z-bbbbbb"
+  ' "${result}.assurance.json" >/dev/null || {
+    fail "$name" "repo-layout targeted sidecar lost coordinates or run evidence"
+    return
+  }
+  pass "$name"
+}
+
 # Behavior: a targeted pass without an initial result fails before dispatch.
 # Steps: invoke --targeted critic without --initial-result and assert exit 2,
 # the explicit requirement error, and no dispatch marker.
@@ -8184,6 +8373,9 @@ run_test test_canonical_targeted_coordinates_and_mixed_compatibility
 run_test test_targeted_pass_references_initial_result
 run_test test_targeted_resolves_current_policy_without_reusing_initial_tier
 run_test test_targeted_auto_mode_initializes_brief_coordinates
+run_test test_targeted_full_tier_truthful_coordinate_label
+run_test test_targeted_coordinates_meaning_parity_across_modes
+run_test test_repo_layout_targeted_coordinates_match_copy_mode_contract
 run_test test_targeted_requires_initial_result
 run_test test_targeted_output_cannot_overwrite_initial_result
 run_test test_targeted_sidecar_cannot_overwrite_initial_result
