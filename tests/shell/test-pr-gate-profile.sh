@@ -300,16 +300,17 @@ test_executor_auto_without_codex() {
   pass "$name"
 }
 
-# Behavior: A standalone runner without its canonical lib bundle fails closed
-# before executor auto-detection can proceed to base-ref validation.
+# Behavior: A standalone runner without its canonical executor router fails
+# closed before executor auto-detection can proceed to base-ref validation.
 # Steps:
-#   1. Arrange: create an isolated standalone runner and repository, remove the
-#      runner lib directory, and build a PATH without Codex.
+#   1. Arrange: create an isolated standalone runner and repository, remove only
+#      the router while retaining earlier canonical libraries, and build a PATH
+#      without Codex.
 #   2. Act: run the Gate with executor auto and a deliberately missing base ref.
 #   3. Assert: require exit 2 and the standalone canonical-router diagnostic,
 #      with no missing-base diagnostic.
-test_no_lib_copy_mode_fails_without_canonical_router() {
-  local name="no-lib-copy-mode-fails-without-canonical-router"
+test_missing_router_copy_mode_fails_closed() {
+  local name="missing-router-copy-mode-fails-closed"
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner" isolated_cwd="$dir/isolated-cwd"
   local out="$dir/out" err="$dir/err"
@@ -319,10 +320,10 @@ test_no_lib_copy_mode_fails_without_canonical_router() {
   create_runner "$runner"
   create_repo "$repo"
   no_codex_path="$(build_no_codex_path "$dir")"
-  rm -rf "${runner:?}/lib"
+  rm -f "${runner:?}/lib/executor-router.sh"
 
-  if [[ -e "$runner/lib" ]]; then
-    fail "$name" "copy-mode fixture unexpectedly contains lib/"
+  if [[ ! -d "$runner/lib" || -e "$runner/lib/executor-router.sh" ]]; then
+    fail "$name" "copy-mode fixture did not retain all libraries except router"
     return
   fi
 
@@ -566,6 +567,39 @@ test_commands_pr_gate_md_wait_block_self_resolves_pmctl() {
   pass "$name"
 }
 
+test_canonical_domain_functions_have_single_source_owner() {
+  local name="canonical-domain-functions-have-single-source-owner"
+  local entrypoint="$REPO_ROOT/runtime/bin/pr-gate.sh"
+  local module function
+  for module in \
+    "$REPO_ROOT/runtime/lib/gate-assurance.sh" \
+    "$REPO_ROOT/runtime/lib/gate-digest.sh" \
+    "$REPO_ROOT/runtime/lib/gate-layout.sh" \
+    "$REPO_ROOT/runtime/lib/gate-options.sh" \
+    "$REPO_ROOT/runtime/lib/gate-policy.sh" \
+    "$REPO_ROOT/runtime/lib/gate-scope.sh" \
+    "$REPO_ROOT/runtime/lib/gate-reviewer-contract.sh"; do
+    while IFS= read -r function; do
+      [[ -n "$function" ]] || continue
+      if rg -q "^${function}[[:space:]]*\\(\\)[[:space:]]*\\{" "$entrypoint"; then
+        fail "$name" "${function} is duplicated in $entrypoint and $module"
+        return
+      fi
+    done < <(rg -o '^[A-Za-z_][A-Za-z0-9_]*\(\)[[:space:]]*\{' "$module" \
+      | sed -E 's/\(.*$//')
+  done
+  if rg -q '^SCRIPT_DIR[[:space:]]*=' "$entrypoint" \
+      || rg -q '^PR_GATE_(LAYOUT|LIB_DIR|BUNDLE_ROOT|SCRIPT_DIR)[[:space:]]*=' "$entrypoint"; then
+    fail "$name" 'entrypoint still owns deployment-layout classification'
+    return
+  fi
+  if ! rg -q '^gate_layout_resolve[[:space:]]+' "$entrypoint"; then
+    fail "$name" 'entrypoint does not resolve layout through the canonical module'
+    return
+  fi
+  pass "$name"
+}
+
 run_case() {
   local name="$1" fn="$2"
   should_run "$name" || return 0
@@ -589,7 +623,7 @@ run_case "executor-claude-parallel-dispatches-subprocess" test_executor_claude_p
 run_case "executor-auto-with-codex" test_executor_auto_with_codex
 run_case "executor-auto-without-codex" test_executor_auto_without_codex
 run_case "executor-auto-rejects-unregistered-path-candidate" test_executor_auto_rejects_unregistered_path_candidate
-run_case "no-lib-copy-mode-fails-without-canonical-router" test_no_lib_copy_mode_fails_without_canonical_router
+run_case "missing-router-copy-mode-fails-closed" test_missing_router_copy_mode_fails_closed
 run_case "executor-claude-post-gate-hook-skipped-without-allow-hooks" test_executor_claude_post_gate_hook_skipped_without_allow_hooks
 run_case "executor-claude-never-calls-codex" test_executor_claude_never_calls_codex
 run_case "executor-invalid-value-rejected" test_executor_invalid_value_rejected
@@ -597,5 +631,6 @@ run_case "commands-pr-gate-md-documents-executors" test_commands_pr_gate_md_docu
 run_case "commands-pr-gate-md-uses-detached-lifecycle" test_commands_pr_gate_md_uses_detached_lifecycle
 run_case "commands-pr-gate-md-no-shell-var-reuse-across-bash-calls" test_commands_pr_gate_md_does_not_reuse_shell_var_across_bash_calls
 run_case "commands-pr-gate-md-wait-block-self-resolves-pmctl" test_commands_pr_gate_md_wait_block_self_resolves_pmctl
+run_case "canonical-domain-functions-have-single-source-owner" test_canonical_domain_functions_have_single_source_owner
 
 th_summary

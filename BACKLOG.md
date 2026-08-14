@@ -2865,7 +2865,7 @@ terminal row/body；既有 terminal tickets 的 broad archive sweep 另行處理
 
 ---
 
-## CC-532 — Gate canonical modules + generated standalone distribution 🔵 active
+## CC-532 — Gate canonical modules for the Linux/WSL2 developer path 🔵 active
 
 **Problem**: `runtime/bin/pr-gate.sh` 同時承擔 option parsing、policy、subject、
 scope、reviewer contract、synthesis、assurance、publication 與 copy-mode fallback，
@@ -2873,24 +2873,30 @@ canonical authoring source已接近 6,500 行。Portability 所需 generated sna
 與正常 repo-layout 邏輯混在同一檔，讓每次 contract 變更都擴大 review 與 regression
 surface。
 
-**Why**: Gate 已是專案複雜度中心，但 copy-mode standalone portability 仍是必要
-產品能力。Canonical modules 與 generated distribution 分離後，才能在不增加 runtime
-dependency、不改使用者安裝模式的前提下，讓 domain ownership、測試隔離與 code
-review 回到可維護範圍。
+**Why**: Gate 已是專案複雜度中心。先在 Linux/WSL2 的 repo-layout developer path
+完成 canonical module ownership 與 composition root，才能降低 domain coupling、
+測試隔離與 code review 的 regression surface；distribution portability 之後再
+以獨立 slice 處理。
+
+**Scope decision (2026-08-14)**: 本階段產品明確只支援 Linux/WSL2，先完成
+developer/repo-layout path。Standalone distribution、跨平台 copy fallback 與其
+generated bundle parity 不列入本階段驗收；保留既有相容性行為的歷史測試，但不再
+擴大其 implementation surface。相容性 distribution 另立後續 slice，避免與
+canonical module extraction 同時增加兩條 authoring/runtime authority。
 
 **Requirement**:
 
 1. 依 domain 抽出 source-safe canonical modules，至少涵蓋 options、policy、
    subject、scope、reviewer contract 與 assurance；`runtime/bin/pr-gate.sh`
    成為 repo-layout composition root，首批搬移只做 behavior-preserving migration。
-2. Standalone copy-mode 由唯一 build tool 產生 distribution bundle；generated
-   policy/verifier fallback 不再作為日常 canonical authoring source，並延續
-   [[CC-525]] 的 provenance 與 stale check。
-3. Symlink/repo-layout 安裝 canonical entrypoint，copy-mode 安裝 generated
-   distribution；兩者維持相同 prerequisite 與 runtime dependency。
-4. CI 的 build `--check` 拒絕 stale bundle；同一組 fixtures 比對 canonical/dist
-   的 stdout、stderr、exit code 與 artifacts，並覆蓋 copy-mode 無 repo-layout
-   dependency 的真實執行。
+2. Linux/WSL2 repo-layout 只保留一份 canonical authoring source；本階段不新增
+   standalone distribution builder，也不把 copy-mode fallback 當作新的 runtime
+   authority。
+3. Canonical entrypoint 與 modules 由 repo-layout 載入；現有安裝／copy compatibility
+   surface 維持既有行為，若後續要支援 generated distribution，另以獨立 slice
+   定義 bundle schema、build 與 parity。
+4. CI 以 module source-safety、layer boundary、repo-layout resolution、既有 gate
+   behavior fixtures 驗證本階段；不加入 generated/dist parity 作為本階段 gate。
 
 **Slice 1 — library resolution single authority（已交付）**：實測推翻了票面對
 copy-mode 的前提。`pr-gate.sh` 對 executor router、memory runtime 與 policy reader
@@ -2904,9 +2910,12 @@ bundle 在載入點 fail closed。requirement 2 的 verifier fallback 部分就�
 搬移；bounded policy snapshot 不受影響，對 installed copy 仍是 load-bearing
 （install 不複製 `core/policy/gate-*.tsv`）。
 
-**Slice 2+（未動）**：requirement 1 的 domain module 抽取、requirement 3/4 的
-build tool 與 canonical/dist parity 仍待處理，且需在正確前提下重新設計——dist 是
-目錄樹而非串接單檔。
+**Slice 2（已完成，2026-08-14）**：options、policy、subject、scope、reviewer
+contract 已搬移至 source-safe canonical modules；`runtime/bin/pr-gate.sh` 僅保留
+Linux/WSL2 repo-layout composition/bootstrap 與必要的共用摘要責任。新增 malformed
+subject fail-closed tests、canonical ownership regression check，並以 affected
+runner 與正式 PR gate 驗證通過。Generated distribution/copy parity 已明確 deferred，
+不在本階段 scope。
 
 ---
 

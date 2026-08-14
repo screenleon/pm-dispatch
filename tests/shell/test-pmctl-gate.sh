@@ -134,7 +134,7 @@ _mk_gate_cli_fixture() {
   local fixture="$1"
   mkdir -p "$fixture/runtime/bin"
   pmctl_fixture_copy_spine "$REPO_ROOT" "$fixture"
-  for _lib in pmctl-gate gate-result-verify state-paths portable detached-launch; do
+  for _lib in pmctl-gate gate-digest gate-result-verify state-paths portable detached-launch; do
     cp "$REPO_ROOT/runtime/lib/$_lib.sh" "$fixture/runtime/lib/$_lib.sh"
   done
   cp "$REPO_ROOT/runtime/bin/gate-supervisor.sh" "$fixture/runtime/bin/gate-supervisor.sh"

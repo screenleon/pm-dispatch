@@ -15,6 +15,19 @@
 # reviewer protocol documents.
 # pr_gate_result_v5 adds strict test-gap parity, caution, and verification-plan
 # contracts while preserving v3/v4 readability.
+if ! declare -F gate_digest_stream >/dev/null 2>&1; then
+  _gate_result_verify_dir="${BASH_SOURCE[0]%/*}"
+  _gate_digest_module="$_gate_result_verify_dir/gate-digest.sh"
+  if [[ ! -r "$_gate_digest_module" ]]; then
+    printf 'gate-result-verify: digest module unavailable: %s\n' \
+      "$_gate_digest_module" >&2
+    return 2
+  fi
+  # shellcheck source=runtime/lib/gate-digest.sh
+  # shellcheck disable=SC1091  # dependency path is resolved beside this module
+  . "$_gate_digest_module"
+  unset _gate_result_verify_dir _gate_digest_module
+fi
 #
 # gate_result_verdict_verify <result_file> [expected_final] [route_label]
 if ! declare -F pm_identifier_run_ere_pattern >/dev/null 2>&1; then
@@ -880,14 +893,7 @@ gate_synthesis_protocol_verify() {
 }
 
 _gate_result_sha256_stream() {
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum | awk '{print $1}'
-  elif command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 | awk '{print $1}'
-  else
-    printf 'Error: no sha256sum or shasum found -- cannot identify gate subject\n' >&2
-    return 2
-  fi
+  gate_digest_stream
 }
 
 _gate_subject_common_dir() {
@@ -2011,21 +2017,7 @@ gate_assurance_verify() {
 }
 
 _gate_result_sha256_file() {
-  local file="$1" digest=""
-  if command -v sha256sum >/dev/null 2>&1 \
-      && digest="$(sha256sum -- "$file" 2>/dev/null | awk '{print $1}')" \
-      && [[ -n "$digest" ]]; then
-    printf '%s\n' "$digest"
-    return 0
-  fi
-  if command -v shasum >/dev/null 2>&1 \
-      && digest="$(shasum -a 256 -- "$file" 2>/dev/null | awk '{print $1}')" \
-      && [[ -n "$digest" ]]; then
-    printf '%s\n' "$digest"
-    return 0
-  fi
-  printf 'Error: no sha256sum or shasum found -- cannot verify gate assurance binding\n' >&2
-  return 2
+  gate_digest_file "$1"
 }
 
 # gate_assurance_authorization_verify <result> <assurance> <attestation> <runs.jsonl>

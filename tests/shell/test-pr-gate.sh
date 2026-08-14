@@ -891,7 +891,7 @@ test_gate_assurance_policy_snapshot_matches_sources() {
       index($0, "cat <<\047" marker "\047") { inside=1; next }
       inside && $0 == marker { exit }
       inside { print }
-    ' "$REPO_ROOT/runtime/bin/pr-gate.sh")"
+    ' "$REPO_ROOT/runtime/lib/gate-policy.sh")"
     if [[ "$snapshot" != "$(cat "$source")" ]]; then
       fail "$name" "generated snapshot drifted from $source"
       return
@@ -4614,9 +4614,9 @@ test_reviewer_cross_artifact_tamper_detected() {
   critic="$dir/critic.md"
   local qa_hash critic_hash out
   mkdir -p "$dir"
-  # Source only the production helper, not the executable gate body.
-  # shellcheck disable=SC1090
-  source <(sed -n '/^verify_reviewer_artifact_hashes()/,/^}/p' "$REPO_ROOT/runtime/bin/pr-gate.sh")
+  # Source only the canonical production helper, not the executable gate body.
+  # shellcheck source=runtime/lib/gate-reviewer-contract.sh
+  source "$REPO_ROOT/runtime/lib/gate-reviewer-contract.sh"
   printf 'Verdict: approve.\n' > "$qa"
   printf 'Verdict: approve.\n' > "$critic"
   qa_hash="$(sha256sum < "$qa")"
@@ -8395,6 +8395,85 @@ test_brief_nonexistent_file_fails_closed() {
   pass "$name"
 }
 
+# Behavior: an architecture_impact value outside the closed subject enum is
+# rejected before policy resolution or reviewer dispatch.
+test_brief_invalid_architecture_impact_fails_closed() {
+  local name="brief-invalid-architecture-impact-fails-closed"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" brief="$dir/input-brief.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  cat > "$brief" <<'BRIEF_EOF'
+schema_version: 1
+working_dir: /tmp
+goal: test
+files:
+  - read: README.md
+architecture_impact: invalid
+acceptance:
+  - test
+BRIEF_EOF
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --brief "$brief"
+  local code=$?
+  set -e
+
+  if [[ "$code" -ne 2 ]]; then
+    fail "$name" "exit $code, expected 2"
+    return
+  fi
+  assert_file_contains "$name" "$err" \
+    "--brief has invalid architecture_impact: invalid" || return
+  assert_not_contains "$name" "$err" "DISPATCH_STUB" || return
+  pass "$name"
+}
+
+# Behavior: duplicate architecture_impact declarations are rejected rather
+# than silently selecting one value.
+test_brief_duplicate_architecture_impact_fails_closed() {
+  local name="brief-duplicate-architecture-impact-fails-closed"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" brief="$dir/input-brief.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  cat > "$brief" <<'BRIEF_EOF'
+schema_version: 1
+working_dir: /tmp
+goal: test
+files:
+  - read: README.md
+architecture_impact: minor
+architecture_impact: major
+acceptance:
+  - test
+BRIEF_EOF
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --brief "$brief"
+  local code=$?
+  set -e
+
+  if [[ "$code" -ne 2 ]]; then
+    fail "$name" "exit $code, expected 2"
+    return
+  fi
+  assert_file_contains "$name" "$err" \
+    "--brief has duplicate architecture_impact declarations" || return
+  assert_not_contains "$name" "$err" "DISPATCH_STUB" || return
+  pass "$name"
+}
+
 # Behavior: architecture_impact:none adds no risk floor beyond the diff's
 # own docs-only classification.
 test_brief_none_preserves_docs_floor() {
@@ -8722,6 +8801,8 @@ run_test test_brief_minor_resolves_standard
 run_test test_brief_explicit_full_satisfies_policy_floor
 run_test test_brief_explicit_tier_below_policy_floor_fails
 run_test test_brief_nonexistent_file_fails_closed
+run_test test_brief_invalid_architecture_impact_fails_closed
+run_test test_brief_duplicate_architecture_impact_fails_closed
 run_test test_brief_none_preserves_docs_floor
 run_test test_override_file_injected_into_sequential_brief
 run_test test_override_file_autodiscovery

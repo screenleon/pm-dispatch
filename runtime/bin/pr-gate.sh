@@ -61,1873 +61,47 @@ trap gate_cancel_signal TERM INT
 # shellcheck disable=SC2059  # printf passthrough wrapper: the caller owns the format string
 say() { printf "$@" 2>/dev/null || true; }
 
-# Portable policy reader for the gate assurance coordinates.
-#
-# Repo-layout runs read the canonical TSV files under core/policy/. A copied
-# gate may not carry that tree, so it falls back to the bounded generated
-# snapshot below. tests/shell/test-pr-gate.sh compares each heredoc byte-for-
-# byte with its canonical source so this fallback cannot drift silently.
-_gate_assurance_policy_snapshot() {
-  case "${1:-}" in
-    tiers)
-      # BEGIN GENERATED from core/policy/gate-tiers.tsv
-      cat <<'GATE_ASSURANCE_TIERS_TSV'
-# Gate rigor presets. Defaults do not assert actual coverage or execution topology.
-tier	default_reviewers	evidence_floor
-express	critic,qa-tester	reviewer-verdicts
-standard	critic,qa-tester,architecture-reviewer	reviewer-verdicts
-full	critic,qa-tester,architecture-reviewer,security-reviewer,risk-reviewer	reviewer-verdicts
-GATE_ASSURANCE_TIERS_TSV
-      # END GENERATED from core/policy/gate-tiers.tsv
-      ;;
-    modes)
-      # BEGIN GENERATED from core/policy/gate-modes.tsv
-      cat <<'GATE_ASSURANCE_MODES_TSV'
-# Gate execution topology. Mode does not imply tier or reviewer coverage.
-# Omitted mode is resolved from policy recommendations, not from this table.
-mode	topology	synthesis
-sequential	combined-session	inline
-parallel	per-reviewer-sessions	separate-session
-GATE_ASSURANCE_MODES_TSV
-      # END GENERATED from core/policy/gate-modes.tsv
-      ;;
-    pass-kinds)
-      # BEGIN GENERATED from core/policy/gate-pass-kinds.tsv
-      cat <<'GATE_ASSURANCE_PASS_KINDS_TSV'
-# Gate review-pass semantics. Pass kind does not imply tier or execution mode.
-pass_kind	scope	requires_initial_result	is_default
-initial	comprehensive	false	true
-targeted	remediation-delta	true	false
-GATE_ASSURANCE_PASS_KINDS_TSV
-      # END GENERATED from core/policy/gate-pass-kinds.tsv
-      ;;
-    consumers)
-      # BEGIN GENERATED from core/policy/gate-policy-consumers.tsv
-      cat <<'GATE_POLICY_CONSUMERS_TSV'
-# Gate policy consumers. Mode is inferred from recommended_mode only when the user does not select one explicitly.
-policy_pass	policy	pass_kind	minimum_tier	required_reviewers	recommended_mode
-generic:initial	generic	initial	express	critic,qa-tester	sequential
-generic:targeted	generic	targeted	express	none	sequential
-maintainer:initial	maintainer	initial	express	critic,qa-tester,architecture-reviewer,security-reviewer,risk-reviewer	parallel
-maintainer:targeted	maintainer	targeted	express	none	parallel
-GATE_POLICY_CONSUMERS_TSV
-      # END GENERATED from core/policy/gate-policy-consumers.tsv
-      ;;
-    signals)
-      # BEGIN GENERATED from core/policy/gate-policy-signals.tsv
-      cat <<'GATE_POLICY_SIGNALS_TSV'
-# Gate policy signals. Reviewer requirements apply whenever the current subject matches; targeted passes narrow remediation coverage but cannot omit a matched risk reviewer without a scope-bound override.
-signal	match_source	pattern	minimum_tier	required_reviewers	recommended_mode
-docs-only	classification	docs-only	express	none	sequential
-bounded-runtime	classification	bounded-runtime	express	none	sequential
-medium-change	classification	medium-change	standard	architecture-reviewer	parallel
-large-change	classification	large-change	full	critic,qa-tester,architecture-reviewer,security-reviewer,risk-reviewer	parallel
-binary-change	classification	binary-change	standard	architecture-reviewer	parallel
-renamed-input	classification	renamed	express	none	sequential
-untracked-input	classification	untracked	express	none	sequential
-generated-input	classification	generated	express	none	sequential
-cross-boundary	classification	cross-boundary	standard	architecture-reviewer	parallel
-security-sensitive-path	path-regex	(^|[/_.-])(auth|oauth|jwt|sessions?|secrets?|passwords?|tokens?|credentials?|cors|csrf|webhooks?|sudo|ssh|payments?|billing)([/_.-]|$)	express	security-reviewer	parallel
-input-execution-path	path-regex	(^|[/_.-])(eval|exec|execute|command|shell|hook|guard|allowlist)([/_.-]|$)|(^|/)(\.github|workflows?|ci)(/|$)	standard	security-reviewer	parallel
-risk-sensitive-path	path-regex	(^|[/_.-])(migrations?|migrate|destructive|deletions?|delete|removals?|remove|rollback|concurrency|concurrent|race|locks?|cancel|reconcile)([/_.-]|$)	express	risk-reviewer	parallel
-public-contract-path	path-regex	(^|/)(cli|commands|skills|core/schema)(/|$)|(^|[/_.-])(apis?|schemas?|contracts?)([/_.-]|$)	standard	architecture-reviewer	parallel
-policy-source-path	path-regex	(^|/)core/policy(/|$)	full	architecture-reviewer,security-reviewer,risk-reviewer	parallel
-brief-architecture-minor	brief-value	minor	standard	architecture-reviewer	parallel
-brief-architecture-major	brief-value	major	full	critic,qa-tester,architecture-reviewer,security-reviewer,risk-reviewer	parallel
-GATE_POLICY_SIGNALS_TSV
-      # END GENERATED from core/policy/gate-policy-signals.tsv
-      ;;
-    *)
-      printf 'pr-gate: unknown assurance policy table: %s\n' "${1:-empty}" >&2
-      return 2
-      ;;
-  esac
+# CC-532: resolve the deployment layout once before parsing options. The
+# bootstrap only locates and sources gate-layout.sh; all subsequent module and
+# policy paths come from its canonical PR_GATE_* roots.
+_gate_bootstrap_entry="$0"
+while [[ -L "$_gate_bootstrap_entry" ]]; do
+  _gate_bootstrap_link_dir="$(cd "$(dirname "$_gate_bootstrap_entry")" && pwd)"
+  _gate_bootstrap_entry="$(readlink "$_gate_bootstrap_entry")"
+  [[ "$_gate_bootstrap_entry" == /* ]] || \
+    _gate_bootstrap_entry="$_gate_bootstrap_link_dir/$_gate_bootstrap_entry"
+done
+_gate_bootstrap_dir="$(cd "$(dirname "$_gate_bootstrap_entry")" && pwd -P)"
+if [[ "${_gate_bootstrap_dir##*/}" == bin \
+    && "${_gate_bootstrap_dir%/*}" != "$_gate_bootstrap_dir" \
+    && "${_gate_bootstrap_dir%/*}" == */runtime ]]; then
+  _gate_bootstrap_dir="$_gate_bootstrap_dir/../lib"
+else
+  _gate_bootstrap_dir="$_gate_bootstrap_dir/lib"
+fi
+if [[ ! -r "$_gate_bootstrap_dir/gate-layout.sh" ]]; then
+  printf 'pr-gate: canonical layout module unavailable: %s\n' \
+    "$_gate_bootstrap_dir/gate-layout.sh" >&2
+  exit 2
+fi
+# shellcheck source=runtime/lib/gate-layout.sh
+. "$_gate_bootstrap_dir/gate-layout.sh"
+gate_layout_resolve "$_gate_bootstrap_entry" || {
+  printf 'pr-gate: unable to resolve the gate deployment layout\n' >&2
+  exit 2
 }
 
-_gate_assurance_policy_filename() {
-  case "${1:-}" in
-    tiers) printf 'gate-tiers.tsv\n' ;;
-    modes) printf 'gate-modes.tsv\n' ;;
-    pass-kinds) printf 'gate-pass-kinds.tsv\n' ;;
-    consumers) printf 'gate-policy-consumers.tsv\n' ;;
-    signals) printf 'gate-policy-signals.tsv\n' ;;
-    *) return 2 ;;
-  esac
-}
-
-_gate_assurance_policy_path() {
-  local filename candidate
-  filename="$(_gate_assurance_policy_filename "${1:-}")" || return 2
-  # Installed copy-mode carries the generated policy snapshot in this script;
-  # never treat an unrelated ~/core tree as canonical policy.
-  [[ -z "${PR_GATE_INSTALLED_COPY_ROOT:-}" ]] || return 1
-  for candidate in \
-    "$SCRIPT_DIR/../../core/policy/$filename" \
-    "$SCRIPT_DIR/core/policy/$filename"
-  do
-    if [[ -r "$candidate" ]]; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-  done
-  return 1
-}
-
-_gate_assurance_policy_emit() {
-  local path
-  if path="$(_gate_assurance_policy_path "${1:-}")"; then
-    cat "$path"
-  else
-    _gate_assurance_policy_snapshot "${1:-}"
+for _gate_bootstrap_module in gate-digest.sh gate-options.sh; do
+  if [[ ! -r "$PR_GATE_LIB_DIR/$_gate_bootstrap_module" ]]; then
+    printf 'pr-gate: canonical module unavailable: %s\n' \
+      "$PR_GATE_LIB_DIR/$_gate_bootstrap_module" >&2
+    exit 2
   fi
-}
-
-# _gate_assurance_policy_lookup <table> <key-column> <key> <value-column>
-# Requires exactly one matching row and rejects malformed/duplicate tables.
-_gate_assurance_policy_lookup() {
-  local table="${1:-}" key_column="${2:-}" key="${3:-}" value_column="${4:-}"
-  [[ $# -eq 4 ]] || return 2
-  _gate_assurance_policy_emit "$table" | awk -F '\t' \
-    -v key_name="$key_column" -v wanted="$key" -v value_name="$value_column" '
-      /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
-      !header_seen {
-        header_seen=1
-        header_width=NF
-        for (i=1; i<=NF; i++) {
-          sub(/\r$/, "", $i)
-          if ($i == key_name) key_index=i
-          if ($i == value_name) value_index=i
-        }
-        if (!key_index || !value_index) { malformed=1; exit }
-        next
-      }
-      {
-        sub(/\r$/, "", $NF)
-        if (NF != header_width) { malformed=1; exit }
-        if ($(key_index) == wanted) {
-          matches++
-          result=$(value_index)
-        }
-      }
-      END {
-        if (malformed || !header_seen || matches != 1 || result == "") exit 2
-        print result
-      }
-    '
-}
-
-# _gate_assurance_policy_values <table> <key-column>
-# Emits a unique, non-empty closed enum in source order.
-_gate_assurance_policy_values() {
-  local table="${1:-}" key_column="${2:-}"
-  [[ $# -eq 2 ]] || return 2
-  _gate_assurance_policy_emit "$table" | awk -F '\t' -v key_name="$key_column" '
-    /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
-    !header_seen {
-      header_seen=1
-      header_width=NF
-      for (i=1; i<=NF; i++) {
-        sub(/\r$/, "", $i)
-        if ($i == key_name) key_index=i
-      }
-      if (!key_index) { malformed=1; exit }
-      next
-    }
-    {
-      sub(/\r$/, "", $NF)
-      value=$(key_index)
-      if (NF != header_width || value == "" || seen[value]++) {
-        malformed=1
-        exit
-      }
-      values[++count]=value
-    }
-    END {
-      if (malformed || !header_seen || count == 0) exit 2
-      for (i=1; i<=count; i++) print values[i]
-    }
-  '
-}
-
-_gate_policy_tier_rank() {
-  case "${1:-}" in
-    express) printf '1\n' ;;
-    standard) printf '2\n' ;;
-    full) printf '3\n' ;;
-    *) return 2 ;;
-  esac
-}
-
-_gate_policy_order_reviewers() {
-  local selected="${1:-}" vocabulary="${2:-}" reviewer ordered=""
-  for reviewer in $vocabulary; do
-    if [[ " $selected " == *" $reviewer "* ]]; then
-      ordered="${ordered:+$ordered }$reviewer"
-    fi
-  done
-  printf '%s\n' "$ordered"
-}
-
-_gate_policy_add_reviewers() {
-  local selected="${1:-}" csv="${2:-}" vocabulary="${3:-}" reviewer
-  [[ "$csv" != none ]] || {
-    _gate_policy_order_reviewers "$selected" "$vocabulary"
-    return
-  }
-  for reviewer in $(printf '%s' "$csv" | tr ',' ' '); do
-    if [[ " $vocabulary " != *" $reviewer "* ]]; then
-      printf 'Error: gate policy names unknown reviewer %s (allowed: %s)\n' \
-        "$reviewer" "$vocabulary" >&2
-      return 2
-    fi
-    if [[ " $selected " != *" $reviewer "* ]]; then
-      selected="${selected:+$selected }$reviewer"
-    fi
-  done
-  _gate_policy_order_reviewers "$selected" "$vocabulary"
-}
-
-_gate_policy_words_json() {
-  jq -nc --arg words "${1:-}" '$words | split(" ") | map(select(length > 0))'
-}
-
-_gate_policy_lines_json() {
-  jq -Rsc 'split("\n") | map(select(length > 0))'
-}
-
-# Validate the complete policy sources before resolving any one consumer or
-# signal. Looking up only the rows that happen to match this invocation can
-# leave a dormant typo or duplicate signal undiscovered until final artifact
-# verification, after reviewer dispatch has already spent work.
-_gate_policy_source_shape_validate() {
-  local table="${1:-}" expected_header="${2:-}"
-  [[ $# -eq 2 ]] || return 2
-  if ! _gate_assurance_policy_emit "$table" | awk -F '\t' \
-      -v expected_header="$expected_header" '
-        /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
-        !header_seen {
-          sub(/\r$/, "")
-          if ($0 != expected_header) exit 2
-          header_seen=1
-          width=NF
-          next
-        }
-        {
-          sub(/\r$/, "", $NF)
-          if (NF != width) exit 2
-          for (i=1; i<=NF; i++) if ($i == "") exit 2
-          if (seen[$1]++) exit 2
-          rows++
-        }
-        END {
-          if (!header_seen || rows == 0) exit 2
-        }
-      '; then
-    printf 'Error: invalid gate policy %s source (header, row width, non-empty cells, and unique IDs are required)\n' \
-      "$table" >&2
-    return 2
-  fi
-}
-
-_gate_policy_validate_reviewer_csv() {
-  local csv="${1:-}" vocabulary="${2:-}" source_label="${3:-policy}"
-  local reviewer seen=""
-  [[ "$csv" != none ]] || return 0
-  if [[ -z "$csv" || "$csv" == ,* || "$csv" == *, || "$csv" == *,,* ]]; then
-    printf 'Error: gate policy %s has an invalid reviewer list: %s\n' \
-      "$source_label" "$csv" >&2
-    return 2
-  fi
-  for reviewer in $(printf '%s' "$csv" | tr ',' ' '); do
-    if [[ ! "$reviewer" =~ ^[a-z0-9][a-z0-9-]*$ \
-        || " $vocabulary " != *" $reviewer "* ]]; then
-      printf 'Error: gate policy %s names unknown reviewer %s (allowed: %s)\n' \
-        "$source_label" "$reviewer" "$vocabulary" >&2
-      return 2
-    fi
-    if [[ " $seen " == *" $reviewer "* ]]; then
-      printf 'Error: gate policy %s repeats reviewer %s\n' \
-        "$source_label" "$reviewer" >&2
-      return 2
-    fi
-    seen="${seen:+$seen }$reviewer"
-  done
-}
-
-_gate_policy_validate_sources() {
-  local vocabulary="${1:-}" policy_pass policy pass_kind minimum_tier
-  local required_reviewers recommended_mode consumer_keys=""
-  local signal match_source pattern signal_tier signal_reviewers
-  local signal_recommended grep_status
-  [[ $# -eq 1 && -n "$vocabulary" ]] || return 2
-
-  _gate_policy_source_shape_validate consumers \
-    $'policy_pass\tpolicy\tpass_kind\tminimum_tier\trequired_reviewers\trecommended_mode' \
-    || return 2
-  _gate_policy_source_shape_validate signals \
-    $'signal\tmatch_source\tpattern\tminimum_tier\trequired_reviewers\trecommended_mode' \
-    || return 2
-
-  while IFS=$'\t' read -r policy_pass policy pass_kind minimum_tier \
-      required_reviewers recommended_mode; do
-    [[ -n "$policy_pass" && "$policy_pass" != \#* \
-        && "$policy_pass" != policy_pass ]] || continue
-    case "$policy" in generic|maintainer) ;; *)
-      printf 'Error: gate policy consumer %s has invalid policy: %s\n' \
-        "$policy_pass" "$policy" >&2
-      return 2
-      ;;
-    esac
-    case "$pass_kind" in initial|targeted) ;; *)
-      printf 'Error: gate policy consumer %s has invalid pass kind: %s\n' \
-        "$policy_pass" "$pass_kind" >&2
-      return 2
-      ;;
-    esac
-    if [[ "$policy_pass" != "${policy}:${pass_kind}" ]]; then
-      printf 'Error: gate policy consumer key %s does not match %s:%s\n' \
-        "$policy_pass" "$policy" "$pass_kind" >&2
-      return 2
-    fi
-    _gate_assurance_policy_lookup tiers tier "$minimum_tier" evidence_floor >/dev/null \
-      || {
-        printf 'Error: gate policy consumer %s has invalid minimum tier: %s\n' \
-          "$policy_pass" "$minimum_tier" >&2
-        return 2
-      }
-    _gate_policy_validate_reviewer_csv "$required_reviewers" "$vocabulary" \
-      "consumer $policy_pass" || return 2
-    _gate_assurance_policy_lookup modes mode "$recommended_mode" topology >/dev/null \
-      || {
-        printf 'Error: gate policy consumer %s has invalid recommended mode: %s\n' \
-          "$policy_pass" "$recommended_mode" >&2
-        return 2
-      }
-    consumer_keys="${consumer_keys:+$consumer_keys }$policy_pass"
-  done < <(_gate_assurance_policy_emit consumers)
-
-  for policy_pass in generic:initial generic:targeted \
-      maintainer:initial maintainer:targeted; do
-    if [[ " $consumer_keys " != *" $policy_pass "* ]]; then
-      printf 'Error: gate policy consumers source is missing %s\n' \
-        "$policy_pass" >&2
-      return 2
-    fi
-  done
-  if [[ "$(printf '%s\n' "$consumer_keys" | awk '{print NF}')" -ne 4 ]]; then
-    printf 'Error: gate policy consumers source contains unsupported rows: %s\n' \
-      "$consumer_keys" >&2
-    return 2
-  fi
-
-  while IFS=$'\t' read -r signal match_source pattern signal_tier \
-      signal_reviewers signal_recommended; do
-    [[ -n "$signal" && "$signal" != \#* && "$signal" != signal ]] || continue
-    if [[ ! "$signal" =~ ^[a-z0-9][a-z0-9-]*$ \
-        || "$signal" == consumer-policy ]]; then
-      printf 'Error: gate policy signal has invalid or reserved ID: %s\n' \
-        "$signal" >&2
-      return 2
-    fi
-    case "$match_source" in
-      classification)
-        case "$pattern" in
-          docs-only|bounded-runtime|medium-change|large-change|binary-change|\
-          renamed|untracked|generated|cross-boundary) ;;
-          *)
-            printf 'Error: gate policy signal %s names unknown classification: %s\n' \
-              "$signal" "$pattern" >&2
-            return 2
-            ;;
-        esac
-        ;;
-      path-regex)
-        grep_status=0
-        LC_ALL=C grep -E -- "$pattern" </dev/null >/dev/null 2>&1 \
-          || grep_status=$?
-        if [[ "$grep_status" -gt 1 ]]; then
-          printf 'Error: gate policy signal %s has invalid path regex: %s\n' \
-            "$signal" "$pattern" >&2
-          return 2
-        fi
-        ;;
-      brief-value)
-        case "$pattern" in unknown|none|minor|major) ;;
-          *)
-            printf 'Error: gate policy signal %s has invalid brief value: %s\n' \
-              "$signal" "$pattern" >&2
-            return 2
-            ;;
-        esac
-        ;;
-      *)
-        printf 'Error: gate policy signal %s has invalid match source: %s\n' \
-          "$signal" "$match_source" >&2
-        return 2
-        ;;
-    esac
-    _gate_assurance_policy_lookup tiers tier "$signal_tier" evidence_floor >/dev/null \
-      || {
-        printf 'Error: gate policy signal %s has invalid minimum tier: %s\n' \
-          "$signal" "$signal_tier" >&2
-        return 2
-      }
-    _gate_policy_validate_reviewer_csv "$signal_reviewers" "$vocabulary" \
-      "signal $signal" || return 2
-    _gate_assurance_policy_lookup modes mode "$signal_recommended" topology >/dev/null \
-      || {
-        printf 'Error: gate policy signal %s has invalid recommended mode: %s\n' \
-          "$signal" "$signal_recommended" >&2
-        return 2
-      }
-  done < <(_gate_assurance_policy_emit signals)
-}
-
-_gate_sha256_stream() {
-  if command -v sha256sum >/dev/null 2>&1 \
-      && printf '' | sha256sum >/dev/null 2>&1; then
-    sha256sum | awk '{print $1}'
-    return
-  fi
-  if command -v shasum >/dev/null 2>&1 \
-      && printf '' | shasum -a 256 >/dev/null 2>&1; then
-    shasum -a 256 | awk '{print $1}'
-    return
-  fi
-  printf 'Error: no sha256sum or shasum found -- cannot fingerprint gate inputs.\n' >&2
-  return 2
-}
-
-# Emit a deterministic, content-addressed representation of the exact diff
-# covered by policy resolution. The outer scope fingerprint also binds the
-# requested policy/pass/brief coordinates; this digest prevents an approved
-# downgrade from being replayed against a shape-identical but content-different
-# patch. Working-tree scopes additionally bind every non-ignored untracked
-# file's path, kind, executable bit, and content (or symlink target).
-_gate_policy_scope_content_digest() {
-  local diff_kind="${1:-}" base="${2:-}" head_ref="${3:-HEAD}"
-  local include_untracked="${4:-false}" path quoted kind executable digest
-  {
-    printf 'gate-policy-scope-content-v1\0'
-    case "$diff_kind" in
-      fixed-head)
-        git diff --binary --full-index "$base"..."$head_ref" --
-        ;;
-      allow-dirty)
-        git diff --binary --full-index "$base" --
-        ;;
-      committed)
-        git diff --binary --full-index "$base"...HEAD --
-        ;;
-      working-tree)
-        git diff --binary --full-index HEAD --
-        ;;
-      *)
-        printf 'Error: unknown gate policy diff kind: %s\n' "$diff_kind" >&2
-        return 2
-        ;;
-    esac || return 2
-
-    if [[ "$include_untracked" == true ]]; then
-      while IFS= read -r -d '' path; do
-        quoted="$(printf '%q' "$path")"
-        if [[ -L "$WORK_DIR/$path" ]]; then
-          kind=symlink
-          executable=false
-          digest="$(printf '%s' "$(readlink "$WORK_DIR/$path")" \
-            | _gate_sha256_stream)" || return 2
-        elif [[ -f "$WORK_DIR/$path" ]]; then
-          kind=file
-          [[ -x "$WORK_DIR/$path" ]] && executable=true || executable=false
-          digest="$(_gate_result_sha256_file "$WORK_DIR/$path")" || return 2
-        else
-          printf 'Error: unsupported untracked gate policy input: %s\n' \
-            "$path" >&2
-          return 2
-        fi
-        printf 'untracked\0path=%s\0kind=%s\0executable=%s\0sha256=%s\0' \
-          "$quoted" "$kind" "$executable" "$digest"
-      done < <(git ls-files --others --exclude-standard -z)
-    fi
-  } | _gate_sha256_stream
-}
-
-# Emit the exact status-bearing change set for the same comparison mode used by
-# policy resolution. NUL-delimited Git output keeps paths with whitespace,
-# tabs, or newlines intact until jq encodes them as JSON strings.
-_gate_scope_changes_collect() {
-  local records raw status path old_path new_path similarity
-  records="$(mktemp "${TMPDIR:-/tmp}/gate-scope-changes.XXXXXX")" || return 2
-  : > "$records"
-
-  while IFS= read -r -d '' raw; do
-    status="${raw:0:1}"
-    similarity=null
-    case "$status" in
-      R|C)
-        IFS= read -r -d '' old_path || {
-          rm -f -- "$records"
-          return 2
-        }
-        IFS= read -r -d '' new_path || {
-          rm -f -- "$records"
-          return 2
-        }
-        [[ "${raw:1}" =~ ^[0-9]+$ ]] && similarity="${raw:1}"
-        jq -nc --arg status "$(if [[ "$status" == R ]]; then printf renamed; else printf copied; fi)" \
-          --arg old "$old_path" --arg new "$new_path" \
-          --argjson similarity "$similarity" \
-          '{status:$status,old_path:$old,new_path:$new,similarity:$similarity}' \
-          >> "$records" || {
-            rm -f -- "$records"
-            return 2
-          }
-        ;;
-      *)
-        IFS= read -r -d '' path || {
-          rm -f -- "$records"
-          return 2
-        }
-        case "$status" in
-          A) status=added ;;
-          M) status=modified ;;
-          D) status=deleted ;;
-          T) status=type_changed ;;
-          U) status=unmerged ;;
-          *) status=unknown ;;
-        esac
-        if [[ "$status" == deleted ]]; then
-          jq -nc --arg status "$status" --arg old "$path" \
-            '{status:$status,old_path:$old,new_path:null,similarity:null}' \
-            >> "$records" || {
-              rm -f -- "$records"
-              return 2
-            }
-        else
-          jq -nc --arg status "$status" --arg new "$path" \
-            '{status:$status,old_path:null,new_path:$new,similarity:null}' \
-            >> "$records" || {
-              rm -f -- "$records"
-              return 2
-            }
-        fi
-        ;;
-    esac
-  done < <(
-    case "$POLICY_DIFF_KIND" in
-      fixed-head)
-        git diff --find-renames --name-status -z "$BASE"..."$HEAD_REF" --
-        ;;
-      allow-dirty)
-        git diff --find-renames --name-status -z "$BASE" --
-        ;;
-      committed)
-        git diff --find-renames --name-status -z "$BASE"...HEAD --
-        ;;
-      working-tree)
-        git diff --find-renames --name-status -z HEAD --
-        ;;
-      *)
-        return 2
-        ;;
-    esac
-  )
-
-  if [[ "$POLICY_SCOPE_INCLUDE_UNTRACKED" == true ]]; then
-    while IFS= read -r -d '' path; do
-      jq -nc --arg new "$path" \
-        '{status:"untracked",old_path:null,new_path:$new,similarity:null}' \
-        >> "$records" || {
-          rm -f -- "$records"
-          return 2
-        }
-    done < <(git ls-files --others --exclude-standard -z)
-  fi
-
-  jq -s 'sort_by((.new_path // .old_path),.status)' "$records"
-  status=$?
-  rm -f -- "$records"
-  return "$status"
-}
-
-GATE_SCOPE_MAX_DIFF_HUNKS=512
-GATE_SCOPE_MAX_EXPANSION_SOURCES=256
-GATE_SCOPE_MAX_SYMBOLS_PER_SOURCE=1024
-GATE_SCOPE_MAX_MATCHES_PER_QUERY=64
-# Contract bundles are explicitly enumerated framework surfaces.  They retain
-# a bounded path-reference summary, independently from the tighter symbol
-# call-site search budget used for arbitrary application sources.
-GATE_SCOPE_MAX_CONTRACT_CONSUMERS_PER_SOURCE=128
-GATE_SCOPE_MAX_EXPANSION_ENTRIES=512
-
-_gate_scope_diff_for_path() {
-  local path="$1"
-  case "$POLICY_DIFF_KIND" in
-    fixed-head)
-      git diff --unified=0 --no-color --no-ext-diff \
-        "$BASE"..."$HEAD_REF" -- "$path"
-      ;;
-    allow-dirty)
-      git diff --unified=0 --no-color --no-ext-diff "$BASE" -- "$path"
-      ;;
-    committed)
-      git diff --unified=0 --no-color --no-ext-diff "$BASE"...HEAD -- "$path"
-      ;;
-    working-tree)
-      git diff --unified=0 --no-color --no-ext-diff HEAD -- "$path"
-      ;;
-    *)
-      return 2
-      ;;
-  esac
-}
-
-_gate_scope_numstat_for_path() {
-  local path="$1"
-  case "$POLICY_DIFF_KIND" in
-    fixed-head) git diff --numstat "$BASE"..."$HEAD_REF" -- "$path" ;;
-    allow-dirty) git diff --numstat "$BASE" -- "$path" ;;
-    committed) git diff --numstat "$BASE"...HEAD -- "$path" ;;
-    working-tree) git diff --numstat HEAD -- "$path" ;;
-    *) return 2 ;;
-  esac
-}
-
-_gate_scope_path_exists() {
-  local path="$1"
-  if [[ "$POLICY_DIFF_KIND" == fixed-head ]]; then
-    git cat-file -e "${GATE_BINDING_HEAD_COMMIT}:$path" 2>/dev/null
-  else
-    [[ -f "$WORK_DIR/$path" && ! -L "$WORK_DIR/$path" ]]
-  fi
-}
-
-_gate_scope_path_content() {
-  local path="$1"
-  if [[ "$POLICY_DIFF_KIND" == fixed-head ]]; then
-    git show "${GATE_BINDING_HEAD_COMMIT}:$path" 2>/dev/null
-  else
-    cat -- "$WORK_DIR/$path"
-  fi
-}
-
-_gate_scope_hunks_collect() {
-  local changes_json="$1" output="$2" binary_output="$3"
-  local max_hunks="$GATE_SCOPE_MAX_DIFF_HUNKS"
-  local status path old_path line old_start old_lines
-  local new_start new_lines header line_count path_hunks=0
-  local total_hunks=0
-  : > "$output"
-  : > "$binary_output"
-
-  while IFS= read -r -d '' status \
-      && IFS= read -r -d '' path \
-      && IFS= read -r -d '' old_path; do
-    [[ -n "$path" ]] || path="$old_path"
-    [[ -n "$path" ]] || continue
-    path_hunks=0
-    if [[ "$status" == untracked ]]; then
-      if [[ -L "$WORK_DIR/$path" || ! -f "$WORK_DIR/$path" ]] \
-          || ! grep -Iq . "$WORK_DIR/$path" 2>/dev/null; then
-        jq -nc --arg path "$path" '$path' >> "$binary_output" || return 2
-        continue
-      fi
-      line_count="$(awk 'END { print NR+0 }' "$WORK_DIR/$path")"
-      header="@@ -0,0 +1,${line_count} @@ untracked"
-      total_hunks=$((total_hunks + 1))
-      if [[ "$total_hunks" -le "$max_hunks" ]]; then
-        jq -nc --arg path "$path" --arg header "$header" \
-          --argjson lines "$line_count" '{
-            path:$path,source:"untracked",
-            old_start:0,old_lines:0,new_start:1,new_lines:$lines,header:$header
-          }' >> "$output" || return 2
-      fi
-      continue
-    fi
-
-    while IFS= read -r line; do
-      if [[ "$line" =~ ^@@[[:space:]]-([0-9]+)(,([0-9]+))?[[:space:]]\+([0-9]+)(,([0-9]+))?[[:space:]]@@ ]]; then
-        old_start="${BASH_REMATCH[1]}"
-        old_lines="${BASH_REMATCH[3]:-1}"
-        new_start="${BASH_REMATCH[4]}"
-        new_lines="${BASH_REMATCH[6]:-1}"
-        header="$line"
-        path_hunks=$((path_hunks + 1))
-        total_hunks=$((total_hunks + 1))
-        if [[ "$total_hunks" -le "$max_hunks" ]]; then
-          jq -nc --arg path "$path" --arg header "$header" \
-            --argjson old_start "$old_start" --argjson old_lines "$old_lines" \
-            --argjson new_start "$new_start" --argjson new_lines "$new_lines" '{
-              path:$path,source:"tracked",
-              old_start:$old_start,old_lines:$old_lines,
-              new_start:$new_start,new_lines:$new_lines,header:$header
-            }' >> "$output" || return 2
-        fi
-      fi
-    done < <(_gate_scope_diff_for_path "$path")
-    if [[ "$path_hunks" -eq 0 ]] \
-        && _gate_scope_numstat_for_path "$path" | grep -q $'^-\t-'; then
-      jq -nc --arg path "$path" '$path' >> "$binary_output" || return 2
-    fi
-  done < <(jq -j '.[] |
-    .status, "\u0000", (.new_path // ""), "\u0000",
-    (.old_path // ""), "\u0000"' <<<"$changes_json")
-
-  GATE_SCOPE_OMITTED_DIFF_HUNKS=$((total_hunks > max_hunks ? total_hunks - max_hunks : 0))
-}
-
-_gate_scope_paired_tests_collect() {
-  local changed_paths_json="$1" records source base stem dir candidate
-  records="$(mktemp "${TMPDIR:-/tmp}/gate-scope-pairs.XXXXXX")" || return 2
-  : > "$records"
-  while IFS= read -r -d '' source; do
-    _gate_scope_path_exists "$source" || continue
-    base="$(basename "$source")"
-    stem="${base%.*}"
-    dir="$(dirname "$source")"
-    case "$source" in
-      *.go)
-        [[ "$source" == *_test.go ]] || {
-          candidate="${source%.go}_test.go"
-          if _gate_scope_path_exists "$candidate"; then
-            jq -nc --arg source "$source" --arg test "$candidate" \
-              '{source_path:$source,test_path:$test,reason:"language-convention"}' \
-              >> "$records" || return 2
-          fi
-        }
-        ;;
-      *.ts|*.tsx|*.js|*.jsx)
-        case "$base" in *.test.*|*.spec.*) continue ;; esac
-        for candidate in \
-          "$dir/__tests__/$stem.test.ts" "$dir/__tests__/$stem.test.tsx" \
-          "$dir/__tests__/$stem.spec.ts" "$dir/__tests__/$stem.spec.tsx" \
-          "$dir/$stem.test.ts" "$dir/$stem.test.tsx" \
-          "$dir/$stem.spec.ts" "$dir/$stem.spec.tsx" \
-          "$dir/$stem.test.js" "$dir/$stem.spec.js"; do
-          candidate="${candidate#./}"
-          if _gate_scope_path_exists "$candidate"; then
-            jq -nc --arg source "$source" --arg test "$candidate" \
-              '{source_path:$source,test_path:$test,reason:"language-convention"}' \
-              >> "$records" || return 2
-          fi
-        done
-        ;;
-      *.py)
-        [[ "$base" == test_*.py ]] || {
-          for candidate in "$dir/test_$base" "tests/test_$base"; do
-            candidate="${candidate#./}"
-            if _gate_scope_path_exists "$candidate"; then
-              jq -nc --arg source "$source" --arg test "$candidate" \
-                '{source_path:$source,test_path:$test,reason:"language-convention"}' \
-                >> "$records" || return 2
-            fi
-          done
-        }
-        ;;
-      *.sh)
-        [[ "$base" == test-*.sh ]] || {
-          for candidate in "$dir/test-$base" "tests/shell/test-$base"; do
-            candidate="${candidate#./}"
-            if _gate_scope_path_exists "$candidate"; then
-              jq -nc --arg source "$source" --arg test "$candidate" \
-                '{source_path:$source,test_path:$test,reason:"language-convention"}' \
-                >> "$records" || return 2
-            fi
-          done
-        }
-        ;;
-    esac
-  done < <(jq -j '.[] | ., "\u0000"' <<<"$changed_paths_json")
-  jq -s 'unique_by([.source_path,.test_path]) |
-    sort_by(.source_path,.test_path)' "$records"
-  local rc=$?
-  rm -f -- "$records"
-  return "$rc"
-}
-
-_gate_scope_symbols_collect() {
-  local source="$1"
-  case "$source" in
-    *.sh|*.bash)
-      _gate_scope_path_content "$source" 2>/dev/null |
-        sed -nE \
-          -e 's/^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*\(\)[[:space:]]*(\{|$).*/\1/p'
-      ;;
-    *.go)
-      _gate_scope_path_content "$source" 2>/dev/null |
-        sed -nE \
-          -e 's/^[[:space:]]*func[[:space:]]+\([^)]*\)[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*\(.*/\1/p' \
-          -e 's/^[[:space:]]*func[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*\(.*/\1/p'
-      ;;
-    *.js|*.jsx|*.ts|*.tsx)
-      _gate_scope_path_content "$source" 2>/dev/null |
-        sed -nE \
-          -e 's/^[[:space:]]*(export[[:space:]]+)?(async[[:space:]]+)?function[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*\(.*/\3/p' \
-          -e 's/^[[:space:]]*(export[[:space:]]+)?class[[:space:]]+([A-Za-z_][A-Za-z0-9_]*).*/\2/p' \
-          -e 's/^[[:space:]]*(export[[:space:]]+)?(const|let|var)[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=.*/\3/p'
-      ;;
-    *.py)
-      _gate_scope_path_content "$source" 2>/dev/null |
-        sed -nE \
-          -e 's/^[[:space:]]*(async[[:space:]]+)?def[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*\(.*/\2/p' \
-          -e 's/^[[:space:]]*class[[:space:]]+([A-Za-z_][A-Za-z0-9_]*).*/\1/p'
-      ;;
-    *.java)
-      _gate_scope_path_content "$source" 2>/dev/null |
-        sed -nE \
-          -e 's/^[[:space:]]*(public|protected|private)?[[:space:]]*(abstract[[:space:]]+|final[[:space:]]+)?class[[:space:]]+([A-Za-z_][A-Za-z0-9_]*).*/\3/p'
-      ;;
-    *.kt)
-      _gate_scope_path_content "$source" 2>/dev/null |
-        sed -nE \
-          -e 's/^[[:space:]]*(public|protected|private|internal)?[[:space:]]*(data[[:space:]]+|sealed[[:space:]]+)?class[[:space:]]+([A-Za-z_][A-Za-z0-9_]*).*/\3/p' \
-          -e 's/^[[:space:]]*(public|protected|private|internal)?[[:space:]]*(suspend[[:space:]]+)?fun[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*\(.*/\3/p'
-      ;;
-    *.rs)
-      _gate_scope_path_content "$source" 2>/dev/null |
-        sed -nE \
-          -e 's/^[[:space:]]*(pub([[:space:]]*\([^)]*\))?[[:space:]]+)?(async[[:space:]]+)?fn[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*\(.*/\4/p'
-      ;;
-  esac |
-    awk 'length($0) >= 3 && !seen[$0]++' |
-    LC_ALL=C sort
-}
-
-_gate_scope_symbol_path_compatible() {
-  local source="$1" candidate="$2"
-  case "$source" in
-    *.sh|*.bash) [[ "$candidate" == *.sh || "$candidate" == *.bash ]] ;;
-    *.go) [[ "$candidate" == *.go ]] ;;
-    *.js|*.jsx|*.ts|*.tsx)
-      [[ "$candidate" == *.js || "$candidate" == *.jsx \
-        || "$candidate" == *.ts || "$candidate" == *.tsx ]]
-      ;;
-    *.py) [[ "$candidate" == *.py ]] ;;
-    *.java|*.kt) [[ "$candidate" == *.java || "$candidate" == *.kt ]] ;;
-    *.rs) [[ "$candidate" == *.rs ]] ;;
-    *) return 1 ;;
-  esac
-}
-
-_gate_scope_search_paths() {
-  local query="$1" search_kind="$2" source="${3-}" result
-  local -a options=(-l -z -F)
-  [[ "$search_kind" == symbol ]] && options+=(-w)
-  if [[ "$POLICY_DIFF_KIND" == fixed-head ]]; then
-    while IFS= read -r -d '' result; do
-      result="${result#*:}"
-      if [[ "$search_kind" != symbol ]] \
-          || _gate_scope_symbol_path_compatible "$source" "$result"; then
-        printf '%s\0' "$result"
-      fi
-    done < <(git grep "${options[@]}" "$query" "$GATE_BINDING_HEAD_COMMIT" -- \
-      2>/dev/null || true)
-  else
-    while IFS= read -r -d '' result; do
-      if [[ "$search_kind" != symbol ]] \
-          || _gate_scope_symbol_path_compatible "$source" "$result"; then
-        printf '%s\0' "$result"
-      fi
-    done < <(git grep "${options[@]}" "$query" -- 2>/dev/null || true)
-    if [[ "$POLICY_SCOPE_INCLUDE_UNTRACKED" == true ]]; then
-      while IFS= read -r -d '' result; do
-        [[ -f "$WORK_DIR/$result" && ! -L "$WORK_DIR/$result" ]] || continue
-        if [[ "$search_kind" == symbol ]] \
-            && ! _gate_scope_symbol_path_compatible "$source" "$result"; then
-          continue
-        fi
-        if [[ "$search_kind" == symbol ]]; then
-          grep -IqlwF -- "$query" "$WORK_DIR/$result" 2>/dev/null \
-            && printf '%s\0' "$result"
-        else
-          grep -IqlF -- "$query" "$WORK_DIR/$result" 2>/dev/null \
-            && printf '%s\0' "$result"
-        fi
-      done < <(git ls-files --others --exclude-standard -z)
-    fi
-  fi
-}
-
-_gate_scope_expansion_append() {
-  local output="$1" path="$2" reason="$3" source="$4" evidence="$5"
-  local limit_kind="$6" maximum="$7"
-  [[ -n "$path" && "$path" != /* && "$path" != ../* && "$path" != */../* ]] || return 0
-  case "$path" in
-    .agent-trace|.agent-trace/*|.gate-briefs|.gate-briefs/*|.gate-results|.gate-results/*)
-      return 0
-      ;;
-  esac
-  jq -nc --arg path "$path" --arg reason "$reason" --arg source "$source" \
-    --arg evidence "$evidence" --arg kind "$limit_kind" \
-    --argjson maximum "$maximum" '{
-      path:$path,reason:$reason,source:$source,evidence:$evidence,
-      limit:{kind:$kind,maximum:$maximum}
-    }' >> "$output"
-}
-
-_gate_scope_expansions_collect() {
-  local changed_paths_json="$1" output="$2"
-  local candidates sources source_count=0 source path base stem dir ext candidate
-  local query match eligible_count symbol_count
-  local source_is_shared=false source_is_shell=false source_is_contract_bundle=false
-  local symbol_limit="$GATE_SCOPE_MAX_SYMBOLS_PER_SOURCE"
-  local match_limit="$GATE_SCOPE_MAX_MATCHES_PER_QUERY"
-  local contract_consumer_limit="$GATE_SCOPE_MAX_CONTRACT_CONSUMERS_PER_SOURCE"
-  local source_limit="$GATE_SCOPE_MAX_EXPANSION_SOURCES"
-  local expansion_limit="$GATE_SCOPE_MAX_EXPANSION_ENTRIES"
-  local omitted_sources=0 omitted_symbols=0 omitted_matches=0
-  local omitted_contract_consumers=0 omitted_entries=0
-  local -a symbols=() shell_consumers=()
-  local -A query_seen=()
-  candidates="$(mktemp "${TMPDIR:-/tmp}/gate-scope-expansions.XXXXXX")" || return 2
-  sources="$(mktemp "${TMPDIR:-/tmp}/gate-scope-sources.XXXXXX")" || {
-    rm -f -- "$candidates"
-    return 2
-  }
-  : > "$candidates"
-  : > "$sources"
-
-  while IFS= read -r -d '' source; do
-    _gate_scope_path_exists "$source" || continue
-    case "$source" in
-      *.sh|*.bash|*.go|*.py|*.js|*.jsx|*.ts|*.tsx|*.java|*.kt|*.rs)
-        printf '%s\0' "$source" >> "$sources"
-        ;;
-    esac
-  done < <(jq -j '.[] | ., "\u0000"' <<<"$changed_paths_json")
-
-  while IFS= read -r -d '' source; do
-    source_count=$((source_count + 1))
-    if [[ "$source_count" -gt "$source_limit" ]]; then
-      omitted_sources=$((omitted_sources + 1))
-      continue
-    fi
-    base="$(basename "$source")"
-    stem="${base%.*}"
-    dir="$(dirname "$source")"
-    source_is_shared=false
-    source_is_shell=false
-    source_is_contract_bundle=false
-    shell_consumers=()
-    case "$source" in
-      */lib/*|lib/*|*/shared/*|shared/*) source_is_shared=true ;;
-    esac
-    case "$source" in
-      *.sh|*.bash) source_is_shell=true ;;
-    esac
-    case "$source" in
-      tests/lib/test-harness.sh|runtime/lib/gate-result-verify.sh|runtime/bin/pr-gate.sh)
-        source_is_contract_bundle=true
-        # runtime/bin/pr-gate.sh is a shell entry point, not a lib path, but
-        # its direct consumers are still a useful bounded review surface.
-        source_is_shared=true
-        ;;
-    esac
-
-    for ext in sh bash go py js jsx ts tsx java kt rs md; do
-      candidate="$dir/$stem.$ext"
-      candidate="${candidate#./}"
-      [[ "$candidate" != "$source" ]] || continue
-      if _gate_scope_path_exists "$candidate" \
-          && ! jq -e --arg path "$candidate" 'index($path) != null' \
-            <<<"$changed_paths_json" >/dev/null; then
-        _gate_scope_expansion_append "$candidates" "$candidate" \
-          same-stem-peer "$source" peer-convention per-source 1 || return 2
-      fi
-    done
-
-    if [[ "$source_is_shared" == true || "$source_is_shell" == true ]]; then
-      eligible_count=0
-      query_seen=()
-      while IFS= read -r -d '' match; do
-        [[ "$match" != "$source" ]] || continue
-        [[ -z "${query_seen[$match]:-}" ]] || continue
-        query_seen["$match"]=1
-        jq -e --arg path "$match" 'index($path) != null' \
-          <<<"$changed_paths_json" >/dev/null && continue
-        if [[ "$source_is_shell" == true ]] \
-            && _gate_scope_symbol_path_compatible "$source" "$match"; then
-          shell_consumers+=("$match")
-        fi
-        if [[ "$source_is_shared" == true ]]; then
-          eligible_count=$((eligible_count + 1))
-          local path_limit="$match_limit"
-          [[ "$source_is_contract_bundle" == true ]] \
-            && path_limit="$contract_consumer_limit"
-          if [[ "$eligible_count" -le "$path_limit" ]]; then
-            _gate_scope_expansion_append "$candidates" "$match" \
-              shared-helper-consumer "$source" path-reference per-source "$path_limit" \
-              || return 2
-          elif [[ "$source_is_contract_bundle" == true ]]; then
-            omitted_contract_consumers=$((omitted_contract_consumers + 1))
-          else
-            omitted_matches=$((omitted_matches + 1))
-          fi
-        fi
-      done < <(_gate_scope_search_paths "$source" path)
-    fi
-
-    # These framework/verification bundles have deliberately broad consumer
-    # surfaces. Their path-level consumer lists are the authoritative review
-    # hints; expanding generic helpers repeats the same files once per symbol
-    # and can exhaust a per-query budget without adding scope information.
-    # Preserve the bounded consumer summary above and skip symbol-level
-    # call-site expansion for these contract bundles.
-    [[ "$source_is_contract_bundle" == true ]] && continue
-
-    mapfile -t symbols < <(_gate_scope_symbols_collect "$source")
-    symbol_count="${#symbols[@]}"
-    if [[ "$symbol_count" -gt "$symbol_limit" ]]; then
-      omitted_symbols=$((omitted_symbols + symbol_count - symbol_limit))
-      symbols=("${symbols[@]:0:symbol_limit}")
-    fi
-    for query in "${symbols[@]}"; do
-      eligible_count=0
-      query_seen=()
-      if [[ "$source_is_shell" == true ]]; then
-        for match in "${shell_consumers[@]}"; do
-          _gate_scope_path_content "$match" 2>/dev/null |
-            grep -IwF -- "$query" >/dev/null || continue
-          eligible_count=$((eligible_count + 1))
-          if [[ "$eligible_count" -le "$match_limit" ]]; then
-            _gate_scope_expansion_append "$candidates" "$match" \
-              call-site-hint "$source#$query" symbol-reference per-symbol "$match_limit" \
-              || return 2
-          else
-            omitted_matches=$((omitted_matches + 1))
-          fi
-        done
-      else
-        while IFS= read -r -d '' match; do
-          [[ "$match" != "$source" ]] || continue
-          [[ -z "${query_seen[$match]:-}" ]] || continue
-          query_seen["$match"]=1
-          jq -e --arg path "$match" 'index($path) != null' \
-            <<<"$changed_paths_json" >/dev/null && continue
-          eligible_count=$((eligible_count + 1))
-          if [[ "$eligible_count" -le "$match_limit" ]]; then
-            _gate_scope_expansion_append "$candidates" "$match" \
-              call-site-hint "$source#$query" symbol-reference per-symbol "$match_limit" \
-              || return 2
-          else
-            omitted_matches=$((omitted_matches + 1))
-          fi
-        done < <(_gate_scope_search_paths "$query" symbol "$source")
-      fi
-    done
-  done < "$sources"
-
-  jq -s 'unique_by([.path,.reason,.source,.evidence]) |
-    sort_by(.path,.reason,.source,.evidence)' "$candidates" |
-    jq --argjson limit "$expansion_limit" '.[:$limit]' > "$output" || {
-      rm -f -- "$candidates" "$sources"
-      return 2
-    }
-  local total_entries
-  total_entries="$(jq -s 'unique_by([.path,.reason,.source,.evidence]) | length' \
-    "$candidates")" || {
-      rm -f -- "$candidates" "$sources"
-      return 2
-    }
-  [[ "$total_entries" -le "$expansion_limit" ]] \
-    || omitted_entries=$((total_entries - expansion_limit))
-  rm -f -- "$candidates" "$sources"
-
-  GATE_SCOPE_OMITTED_EXPANSION_SOURCES="$omitted_sources"
-  GATE_SCOPE_OMITTED_SYMBOLS="$omitted_symbols"
-  GATE_SCOPE_OMITTED_SEARCH_MATCHES="$omitted_matches"
-  GATE_SCOPE_OMITTED_CONTRACT_CONSUMERS="$omitted_contract_consumers"
-  GATE_SCOPE_OMITTED_EXPANSION_ENTRIES="$omitted_entries"
-}
-
-_gate_scope_flags_resolve() {
-  local changed_paths_json="$1"
-  jq -nc --argjson paths "$changed_paths_json" '
-    def flag($pattern):
-      ($paths | map(select(test($pattern))) | unique | sort) as $matched |
-      {matched:($matched|length > 0),paths:$matched};
-    {
-      public_interface:flag("^(cli|commands|skills|agents|core/schema)/|(^|/)(README|CONTRIBUTING)\\.md$|(^|/)(api|apis|contract|contracts)(/|$)"),
-      schema:flag("(^|/)(schema|schemas)(/|$)|\\.schema\\.json$"),
-      config:flag("(^|/)(config|configs|\\.github|\\.pm-dispatch)(/|$)|\\.(yaml|yml|toml|ini|conf)$|(^|/)\\.gitignore$"),
-      install:flag("(^|/)(install|uninstall)([^/]*$|/)|(^|/)(setup|bootstrap)(/|[-_.])"),
-      ci:flag("(^|/)(\\.github/workflows|ci)(/|$)|(^|/)(Dockerfile|Makefile)$"),
-      release:flag("(^|/)(CHANGELOG|RELEASE[^/]*)\\.md$|(^|/)release(s)?(/|[-_.])"),
-      migration:flag("(^|/)(migration|migrations|migrate)(/|[-_.])")
-    }
-  '
-}
-
-_gate_scope_reference_index_collect() {
-  local changed_paths_json="$1" paired_tests_json="$2"
-  local sensitive_signals_json="$3" flags_json="$4"
-  local expansion_file="$5" output="$6"
-  local paths_file content_file sorted_file path snapshot line_count digest
-  local reference_fd
-  paths_file="$(mktemp "${TMPDIR:-/tmp}/gate-scope-reference-paths.XXXXXX")" \
-    || return 2
-  content_file="$(mktemp "${TMPDIR:-/tmp}/gate-scope-reference-content.XXXXXX")" \
-    || {
-      rm -f -- "$paths_file"
-      return 2
-    }
-  sorted_file="$(mktemp "${TMPDIR:-/tmp}/gate-scope-reference-index.XXXXXX")" \
-    || {
-      rm -f -- "$paths_file" "$content_file"
-      return 2
-    }
-  : > "$output"
-  if ! jq -jnr \
-      --argjson changed "$changed_paths_json" \
-      --argjson paired "$paired_tests_json" \
-      --argjson signals "$sensitive_signals_json" \
-      --argjson flags "$flags_json" \
-      --slurpfile expansion "$expansion_file" '
-      ([$changed[]] +
-       [$paired[] | .source_path, .test_path] +
-       [$signals[] | .matches[]] +
-       [$flags[] | .paths[]] +
-       [$expansion[0][] | .path] |
-       unique | sort | .[]) + "\u0000"
-    ' > "$paths_file"; then
-    rm -f -- "$paths_file" "$content_file" "$sorted_file"
-    return 2
-  fi
-
-  exec {reference_fd}< "$paths_file" || {
-    rm -f -- "$paths_file" "$content_file" "$sorted_file"
-    return 2
-  }
-  while IFS= read -r -d '' path <&"$reference_fd"; do
-    snapshot=subject
-    if [[ "$POLICY_DIFF_KIND" != fixed-head && -L "$WORK_DIR/$path" ]]; then
-      readlink -n -- "$WORK_DIR/$path" > "$content_file" || {
-        rm -f -- "$paths_file" "$content_file" "$sorted_file"
-        return 2
-      }
-    elif _gate_scope_path_exists "$path"; then
-      _gate_scope_path_content "$path" > "$content_file" || {
-        rm -f -- "$paths_file" "$content_file" "$sorted_file"
-        return 2
-      }
-    elif git -C "$WORK_DIR" cat-file -e \
-        "${GATE_BINDING_BASE_COMMIT}:$path" 2>/dev/null; then
-      snapshot=base
-      git -C "$WORK_DIR" show \
-        "${GATE_BINDING_BASE_COMMIT}:$path" > "$content_file" || {
-        rm -f -- "$paths_file" "$content_file" "$sorted_file"
-        return 2
-      }
-    else
-      continue
-    fi
-    line_count="$(awk 'END { print NR+0 }' "$content_file")"
-    digest="$(_gate_sha256_stream < "$content_file")" || {
-      rm -f -- "$paths_file" "$content_file" "$sorted_file"
-      return 2
-    }
-    jq -nc --arg path "$path" --arg snapshot "$snapshot" \
-      --argjson line_count "$line_count" --arg sha256 "$digest" '{
-        path:$path,
-        snapshot:$snapshot,
-        line_count:$line_count,
-        sha256:$sha256
-      }' >> "$output" || {
-        rm -f -- "$paths_file" "$content_file" "$sorted_file"
-        return 2
-      }
-  done
-  exec {reference_fd}<&-
-
-  jq -s 'unique_by(.path) | sort_by(.path)' "$output" > "$sorted_file" || {
-    rm -f -- "$paths_file" "$content_file" "$sorted_file"
-    return 2
-  }
-  mv -- "$sorted_file" "$output" || {
-    rm -f -- "$paths_file" "$content_file" "$sorted_file"
-    return 2
-  }
-  rm -f -- "$paths_file" "$content_file"
-}
-
-_gate_scope_manifest_write() {
-  local destination="$1" changes_json="$2" policy_json="$3"
-  local hunks_file binary_file expansion_file reference_file manifest_tmp
-  local changed_paths_json renamed_paths_json untracked_paths_json
-  local paired_tests_json sensitive_signals_json flags_json
-  local truncation_occurred=false truncation_accepted=false
-  local status=complete acceptance_source="" reasons_json content_digest
-  hunks_file="$(mktemp "${TMPDIR:-/tmp}/gate-scope-hunks.XXXXXX")" || return 2
-  binary_file="$(mktemp "${TMPDIR:-/tmp}/gate-scope-binary.XXXXXX")" || {
-    rm -f -- "$hunks_file"
-    return 2
-  }
-  expansion_file="$(mktemp "${TMPDIR:-/tmp}/gate-scope-expansion.XXXXXX")" || {
-    rm -f -- "$hunks_file" "$binary_file"
-    return 2
-  }
-  reference_file="$(mktemp "${TMPDIR:-/tmp}/gate-scope-references.XXXXXX")" || {
-    rm -f -- "$hunks_file" "$binary_file" "$expansion_file"
-    return 2
-  }
-  manifest_tmp="$(mktemp "${destination}.tmp.XXXXXX")" || {
-    rm -f -- "$hunks_file" "$binary_file" "$expansion_file" "$reference_file"
-    return 2
-  }
-
-  changed_paths_json="$(jq -c '[
-    .[] | .old_path, .new_path | select(. != null)
-  ] | unique | sort' <<<"$changes_json")" || return 2
-  renamed_paths_json="$(jq -c '[.[] |
-    select(.status == "renamed") |
-    {from:.old_path,to:.new_path,similarity:(.similarity // 0)}
-  ] | sort_by(.from,.to)' <<<"$changes_json")" || return 2
-  untracked_paths_json="$(jq -c '[.[] |
-    select(.status == "untracked") | .new_path
-  ] | unique | sort' <<<"$changes_json")" || return 2
-
-  _gate_scope_hunks_collect "$changes_json" "$hunks_file" "$binary_file" || {
-    rm -f -- "$hunks_file" "$binary_file" "$expansion_file" \
-      "$reference_file" "$manifest_tmp"
-    return 2
-  }
-  paired_tests_json="$(_gate_scope_paired_tests_collect "$changed_paths_json")" || {
-    rm -f -- "$hunks_file" "$binary_file" "$expansion_file" \
-      "$reference_file" "$manifest_tmp"
-    return 2
-  }
-  _gate_scope_expansions_collect "$changed_paths_json" "$expansion_file" || {
-      rm -f -- "$hunks_file" "$binary_file" "$expansion_file" \
-        "$reference_file" "$manifest_tmp"
-      return 2
-    }
-  sensitive_signals_json="$(jq -c '[
-    .matched_signals[] | select(.source == "path-regex")
-  ] | sort_by(.id)' <<<"$policy_json")" || return 2
-  flags_json="$(_gate_scope_flags_resolve "$changed_paths_json")" || return 2
-  _gate_scope_reference_index_collect \
-    "$changed_paths_json" "$paired_tests_json" "$sensitive_signals_json" \
-    "$flags_json" "$expansion_file" "$reference_file" || {
-      rm -f -- "$hunks_file" "$binary_file" "$expansion_file" \
-        "$reference_file" "$manifest_tmp"
-      return 2
-    }
-
-  if [[ "$GATE_SCOPE_OMITTED_DIFF_HUNKS" -gt 0 \
-      || "$GATE_SCOPE_OMITTED_EXPANSION_SOURCES" -gt 0 \
-      || "$GATE_SCOPE_OMITTED_SYMBOLS" -gt 0 \
-      || "$GATE_SCOPE_OMITTED_SEARCH_MATCHES" -gt 0 \
-      || "$GATE_SCOPE_OMITTED_CONTRACT_CONSUMERS" -gt 0 \
-      || "$GATE_SCOPE_OMITTED_EXPANSION_ENTRIES" -gt 0 ]]; then
-    truncation_occurred=true
-    if [[ "$ACCEPT_SCOPE_TRUNCATION" == true ]]; then
-      truncation_accepted=true
-      status=accepted_truncation
-      acceptance_source=--accept-scope-truncation
-    else
-      status=incomplete
-    fi
-  fi
-  reasons_json="$(jq -nc \
-    --argjson hunks "$GATE_SCOPE_OMITTED_DIFF_HUNKS" \
-    --argjson sources "$GATE_SCOPE_OMITTED_EXPANSION_SOURCES" \
-    --argjson symbols "$GATE_SCOPE_OMITTED_SYMBOLS" \
-    --argjson matches "$GATE_SCOPE_OMITTED_SEARCH_MATCHES" \
-    --argjson contract_consumers "$GATE_SCOPE_OMITTED_CONTRACT_CONSUMERS" \
-    --argjson entries "$GATE_SCOPE_OMITTED_EXPANSION_ENTRIES" '[
-      if $hunks > 0 then "diff-hunk-budget" else empty end,
-      if $sources > 0 then "expansion-source-budget" else empty end,
-      if $symbols > 0 then "symbol-budget" else empty end,
-      if $matches > 0 then "search-match-budget" else empty end,
-      if $contract_consumers > 0 then "contract-consumer-budget" else empty end,
-      if $entries > 0 then "expansion-entry-budget" else empty end
-    ]')"
-
-  if ! jq -n \
-      --arg status "$status" \
-      --arg repository_key "$GATE_SUBJECT_REPOSITORY_KEY" \
-      --arg base_commit "$GATE_BINDING_BASE_COMMIT" \
-      --arg head_commit "$GATE_BINDING_HEAD_COMMIT" \
-      --arg tree_fingerprint "$GATE_BINDING_SUBJECT_FINGERPRINT" \
-      --arg subject_kind "$GATE_SUBJECT_KIND" \
-      --arg diff_kind "$POLICY_DIFF_KIND" --arg base_ref "$BASE" \
-      --arg head_ref "$HEAD_REF" \
-      --arg acceptance_source "$acceptance_source" \
-      --argjson include_untracked "$POLICY_SCOPE_INCLUDE_UNTRACKED" \
-      --argjson changes "$changes_json" \
-      --argjson changed_paths "$changed_paths_json" \
-      --argjson renamed_paths "$renamed_paths_json" \
-      --argjson untracked_paths "$untracked_paths_json" \
-      --slurpfile hunks "$hunks_file" --slurpfile binary "$binary_file" \
-      --argjson paired_tests "$paired_tests_json" \
-      --argjson sensitive_signals "$sensitive_signals_json" \
-      --argjson flags "$flags_json" --slurpfile expansion "$expansion_file" \
-      --slurpfile references "$reference_file" \
-      --argjson truncation_occurred "$truncation_occurred" \
-      --argjson truncation_accepted "$truncation_accepted" \
-      --argjson omitted_hunks "$GATE_SCOPE_OMITTED_DIFF_HUNKS" \
-      --argjson omitted_sources "$GATE_SCOPE_OMITTED_EXPANSION_SOURCES" \
-      --argjson omitted_symbols "$GATE_SCOPE_OMITTED_SYMBOLS" \
-      --argjson omitted_matches "$GATE_SCOPE_OMITTED_SEARCH_MATCHES" \
-      --argjson omitted_contract_consumers "$GATE_SCOPE_OMITTED_CONTRACT_CONSUMERS" \
-      --argjson omitted_entries "$GATE_SCOPE_OMITTED_EXPANSION_ENTRIES" \
-      --argjson budget_hunks "$GATE_SCOPE_MAX_DIFF_HUNKS" \
-      --argjson budget_sources "$GATE_SCOPE_MAX_EXPANSION_SOURCES" \
-      --argjson budget_symbols "$GATE_SCOPE_MAX_SYMBOLS_PER_SOURCE" \
-      --argjson budget_matches "$GATE_SCOPE_MAX_MATCHES_PER_QUERY" \
-      --argjson budget_contract_consumers "$GATE_SCOPE_MAX_CONTRACT_CONSUMERS_PER_SOURCE" \
-      --argjson budget_entries "$GATE_SCOPE_MAX_EXPANSION_ENTRIES" \
-      --argjson reasons "$reasons_json" '{
-        kind:"gate_scope_manifest_v1",
-        schema_version:1,
-        status:$status,
-        subject:{
-          repository_key:$repository_key,
-          base_commit:$base_commit,
-          head_commit:$head_commit,
-          tree_fingerprint:$tree_fingerprint,
-          subject_kind:$subject_kind
-        },
-        selection:{
-          diff_kind:$diff_kind,
-          base_ref:$base_ref,
-          head_ref:$head_ref,
-          include_untracked:$include_untracked
-        },
-        changes:{
-          entries:$changes,
-          changed_paths:$changed_paths,
-          renamed_paths:$renamed_paths,
-          untracked_paths:$untracked_paths
-        },
-        diff:{
-          hunks:$hunks,
-          binary_or_special_paths:($binary | unique | sort)
-        },
-        paired_tests:$paired_tests,
-        sensitive_signals:$sensitive_signals,
-        flags:$flags,
-        expansion:{
-          claim:"bounded-hints-not-complete-call-graph",
-          entries:$expansion[0],
-          included_paths:([$expansion[0][].path] | unique | sort)
-        },
-        reference_index:{
-          claim:"declared-review-reference-set",
-          entries:$references[0]
-        },
-        truncation:{
-          occurred:$truncation_occurred,
-          budgets:{
-            diff_hunks:$budget_hunks,
-            expansion_source_paths:$budget_sources,
-            symbols_per_source:$budget_symbols,
-            matches_per_query:$budget_matches,
-            contract_consumers_per_source:$budget_contract_consumers,
-            expansion_entries:$budget_entries
-          },
-          omitted:{
-            diff_hunks:$omitted_hunks,
-            expansion_source_paths:$omitted_sources,
-            symbols_per_source:$omitted_symbols,
-            matches_per_query:$omitted_matches,
-            contract_consumers_per_source:$omitted_contract_consumers,
-            expansion_entries:$omitted_entries
-          },
-          reasons:$reasons,
-          acceptance:{
-            required:$truncation_occurred,
-            accepted:$truncation_accepted,
-            source:(if $acceptance_source == "" then null else $acceptance_source end)
-          }
-        },
-        content:{
-          digest_algorithm:"sha256-canonical-json-without-content-digest",
-          digest:("")
-        }
-      }' > "$manifest_tmp"; then
-    rm -f -- "$hunks_file" "$binary_file" "$expansion_file" \
-      "$reference_file" "$manifest_tmp"
-    return 2
-  fi
-  content_digest="$(jq -cS 'del(.content.digest)' "$manifest_tmp" |
-    _gate_sha256_stream)" || {
-      rm -f -- "$hunks_file" "$binary_file" "$expansion_file" \
-        "$reference_file" "$manifest_tmp"
-      return 2
-    }
-  jq --arg digest "$content_digest" '.content.digest=$digest' \
-    "$manifest_tmp" > "${manifest_tmp}.final" || {
-      rm -f -- "$hunks_file" "$binary_file" "$expansion_file" \
-        "$reference_file" "$manifest_tmp" "${manifest_tmp}.final"
-      return 2
-    }
-  mv -- "${manifest_tmp}.final" "$destination" || {
-    rm -f -- "$hunks_file" "$binary_file" "$expansion_file" \
-      "$reference_file" "$manifest_tmp" "${manifest_tmp}.final"
-    return 2
-  }
-  rm -f -- "$hunks_file" "$binary_file" "$expansion_file" \
-    "$reference_file" "$manifest_tmp"
-}
-
-# Resolve risk/policy once for every gate consumer. The function owns the
-# relationship between change signals and assurance coordinates; caller paths
-# consume its JSON result instead of copying path regexes or policy floors.
-#
-# _gate_policy_resolve <input-json> [structured-policy-override]
-_gate_policy_resolve() {
-  local input_json="${1:-}" policy_override="${2:-}"
-  local policy pass_kind policy_pass scope_fingerprint vocabulary
-  local minimum_tier required_reviewers recommended_mode
-  local signal match_source pattern signal_tier signal_reviewers
-  local normalized_signal_reviewers effective_signal_reviewers
-  local signal_recommended matches_json matches_text
-  local current_rank candidate_rank signal_json signals_file
-  local requested_tier requested_mode requested_reviewers_json
-  local resolved_tier resolved_mode mode_selection_source
-  local mode_recommendation_overridden=false tier_defaults selected_reviewers
-  local missing_reviewers="" reviewer tier_violation=false
-  local violations_json downgrade_requested=false downgrade_allowed=false
-  local enforcement_status=pass override_status=not_provided
-  local override_sha="" override_reason="" override_approver_json=null
-  local expected_tier=null missing_json override_json=null
-  local reviewer_override_json classification_json policy_source
-
-  [[ $# -ge 1 && $# -le 2 ]] || return 2
-  jq -e . >/dev/null 2>&1 <<<"$input_json" || {
-    printf 'Error: invalid gate policy resolver input\n' >&2
-    return 2
-  }
-
-  policy="$(jq -r '.policy' <<<"$input_json")"
-  pass_kind="$(jq -r '.requested.pass_kind' <<<"$input_json")"
-  policy_pass="${policy}:${pass_kind}"
-  scope_fingerprint="$(jq -r '.scope_fingerprint' <<<"$input_json")"
-  vocabulary="$(jq -r '.reviewer_vocabulary | join(" ")' <<<"$input_json")"
-  requested_tier="$(jq -r '.requested.tier' <<<"$input_json")"
-  requested_mode="$(jq -r '.requested.mode' <<<"$input_json")"
-  requested_reviewers_json="$(jq -c '.requested.reviewers' <<<"$input_json")"
-  reviewer_override_json="$(jq -c '.reviewer_override' <<<"$input_json")"
-  classification_json="$(jq -c '.classification' <<<"$input_json")"
-  policy_source="$(jq -r '.policy_source' <<<"$input_json")"
-
-  case "$policy" in generic|maintainer) ;; *)
-    printf 'Error: --policy must be generic or maintainer (got: %s)\n' "$policy" >&2
-    return 2
-  esac
-  [[ "$scope_fingerprint" =~ ^[a-f0-9]{64}$ ]] || {
-    printf 'Error: gate policy scope fingerprint is invalid\n' >&2
-    return 2
-  }
-  [[ -n "$vocabulary" ]] || {
-    printf 'Error: gate policy reviewer vocabulary is empty\n' >&2
-    return 2
-  }
-
-  minimum_tier="$(_gate_assurance_policy_lookup consumers policy_pass "$policy_pass" minimum_tier)" \
-    || {
-      printf 'Error: gate policy consumer source has no unique row for %s\n' \
-        "$policy_pass" >&2
-      return 2
-    }
-  required_reviewers="$(_gate_assurance_policy_lookup consumers policy_pass "$policy_pass" required_reviewers)" \
-    || return 2
-  recommended_mode="$(_gate_assurance_policy_lookup consumers policy_pass "$policy_pass" recommended_mode)" \
-    || return 2
-  required_reviewers="$(_gate_policy_add_reviewers "" "$required_reviewers" "$vocabulary")" \
-    || return 2
-
-  _gate_assurance_policy_lookup tiers tier "$minimum_tier" evidence_floor >/dev/null \
-    || {
-      printf 'Error: gate policy consumer has invalid minimum tier: %s\n' \
-        "$minimum_tier" >&2
-      return 2
-    }
-  _gate_assurance_policy_lookup modes mode "$recommended_mode" topology >/dev/null \
-    || {
-      printf 'Error: gate policy consumer has invalid recommended mode: %s\n' \
-        "$recommended_mode" >&2
-      return 2
-    }
-  signals_file="$(mktemp "${TMPDIR:-/tmp}/gate-policy-signals.XXXXXX")" || return 2
-  signal_json="$(jq -nc \
-    --arg id "consumer-policy" --arg source "consumer-policy" \
-    --arg match "$policy_pass" --arg minimum_tier "$minimum_tier" \
-    --argjson required_reviewers "$(_gate_policy_words_json "$required_reviewers")" \
-    --arg recommended_mode "$recommended_mode" '{
-      id:$id,source:$source,matches:[$match],minimum_tier:$minimum_tier,
-      required_reviewers:$required_reviewers,recommended_mode:$recommended_mode
-    }')" || {
-      rm -f "$signals_file"
-      return 2
-    }
-  printf '%s\n' "$signal_json" > "$signals_file"
-
-  while IFS=$'\t' read -r signal match_source pattern signal_tier \
-      signal_reviewers signal_recommended; do
-    [[ -n "$signal" && "$signal" != \#* && "$signal" != signal ]] || continue
-    if [[ -z "$match_source" || -z "$pattern" || -z "$signal_tier" \
-        || -z "$signal_reviewers" || -z "$signal_recommended" ]]; then
-      printf 'Error: malformed gate policy signal row: %s\n' "$signal" >&2
-      rm -f "$signals_file"
-      return 2
-    fi
-
-    matches_json='[]'
-    case "$match_source" in
-      classification)
-        matches_json="$(jq -c --arg pattern "$pattern" \
-          '[.classifications[] | select(.id == $pattern) | .matches[]]' \
-          <<<"$input_json")" || {
-            rm -f "$signals_file"
-            return 2
-          }
-        ;;
-      path-regex)
-        matches_text="$(jq -r '.changed_paths[]' <<<"$input_json" \
-          | { grep -iE -- "$pattern" || true; })"
-        matches_json="$(printf '%s\n' "$matches_text" | _gate_policy_lines_json)" \
-          || {
-            rm -f "$signals_file"
-            return 2
-          }
-        ;;
-      brief-value)
-        if [[ "$(jq -r '.classification.architecture_impact' <<<"$input_json")" == "$pattern" ]]; then
-          matches_json="$(jq -nc --arg value "$pattern" '[$value]')"
-        fi
-        ;;
-      *)
-        printf 'Error: unsupported gate policy match source: %s\n' "$match_source" >&2
-        rm -f "$signals_file"
-        return 2
-        ;;
-    esac
-    [[ "$(jq -r 'length' <<<"$matches_json")" -gt 0 ]] || continue
-
-    current_rank="$(_gate_policy_tier_rank "$minimum_tier")" || {
-      rm -f "$signals_file"
-      return 2
-    }
-    candidate_rank="$(_gate_policy_tier_rank "$signal_tier")" || {
-      printf 'Error: gate policy signal %s has invalid minimum tier: %s\n' \
-        "$signal" "$signal_tier" >&2
-      rm -f "$signals_file"
-      return 2
-    }
-    if (( candidate_rank > current_rank )); then
-      minimum_tier="$signal_tier"
-    fi
-    normalized_signal_reviewers="$(_gate_policy_add_reviewers "" \
-      "$signal_reviewers" "$vocabulary")" || {
-        rm -f "$signals_file"
-        return 2
-      }
-    # A targeted pass narrows remediation coverage, but it does not weaken
-    # reviewers required by risks present in this current subject.  The initial
-    # artifact supplies context only; current signals remain independently
-    # enforceable and may be omitted solely by a scope-bound user override.
-    effective_signal_reviewers="$normalized_signal_reviewers"
-    required_reviewers="$(_gate_policy_add_reviewers "$required_reviewers" \
-      "$(printf '%s' "$effective_signal_reviewers" | tr ' ' ',')" \
-      "$vocabulary")" || {
-        rm -f "$signals_file"
-        return 2
-      }
-    case "$signal_recommended" in
-      parallel) recommended_mode=parallel ;;
-      sequential) : ;;
-      *)
-        printf 'Error: gate policy signal %s has invalid recommended mode: %s\n' \
-          "$signal" "$signal_recommended" >&2
-        rm -f "$signals_file"
-        return 2
-        ;;
-    esac
-    signal_json="$(jq -nc \
-      --arg id "$signal" --arg source "$match_source" \
-      --argjson matches "$matches_json" --arg minimum_tier "$signal_tier" \
-      --argjson required_reviewers \
-        "$(_gate_policy_words_json "$effective_signal_reviewers")" \
-      --arg recommended_mode "$signal_recommended" '{
-        id:$id,source:$source,matches:$matches,minimum_tier:$minimum_tier,
-        required_reviewers:$required_reviewers,recommended_mode:$recommended_mode
-      }')" || {
-        rm -f "$signals_file"
-        return 2
-      }
-    printf '%s\n' "$signal_json" >> "$signals_file"
-  done < <(_gate_assurance_policy_emit signals)
-
-  required_reviewers="$(_gate_policy_order_reviewers "$required_reviewers" "$vocabulary")"
-  if [[ "$requested_tier" == auto ]]; then
-    resolved_tier="$minimum_tier"
-  else
-    resolved_tier="$requested_tier"
-    current_rank="$(_gate_policy_tier_rank "$minimum_tier")" || {
-      rm -f "$signals_file"
-      return 2
-    }
-    candidate_rank="$(_gate_policy_tier_rank "$resolved_tier")" || {
-      rm -f "$signals_file"
-      return 2
-    }
-    if (( candidate_rank < current_rank )); then
-      tier_violation=true
-    fi
-  fi
-
-  if [[ "$requested_mode" == default ]]; then
-    resolved_mode="$recommended_mode"
-    mode_selection_source=policy
-  else
-    resolved_mode="$requested_mode"
-    mode_selection_source=user
-    [[ "$resolved_mode" == "$recommended_mode" ]] \
-      || mode_recommendation_overridden=true
-  fi
-
-  if [[ "$requested_reviewers_json" == null ]]; then
-    tier_defaults="$(_gate_assurance_policy_lookup tiers tier "$resolved_tier" default_reviewers)" \
-      || {
-        rm -f "$signals_file"
-        return 2
-      }
-    selected_reviewers="$(_gate_policy_add_reviewers "" "$tier_defaults" "$vocabulary")" \
-      || {
-        rm -f "$signals_file"
-        return 2
-      }
-    selected_reviewers="$(_gate_policy_add_reviewers "$selected_reviewers" \
-      "$(printf '%s' "$required_reviewers" | tr ' ' ',')" "$vocabulary")" || {
-        rm -f "$signals_file"
-        return 2
-      }
-  else
-    selected_reviewers="$(jq -r 'join(" ")' <<<"$requested_reviewers_json")"
-    selected_reviewers="$(_gate_policy_order_reviewers "$selected_reviewers" "$vocabulary")"
-  fi
-
-  # Tier defaults never expand an explicit reviewer choice.  Risk-derived
-  # required reviewers remain an independent security boundary for every
-  # consumer and may only be omitted through a scope-bound policy override.
-  for reviewer in $required_reviewers; do
-    if [[ " $selected_reviewers " != *" $reviewer "* ]]; then
-      missing_reviewers="${missing_reviewers:+$missing_reviewers }$reviewer"
-    fi
-  done
-  missing_json="$(_gate_policy_words_json "$missing_reviewers")"
-  violations_json="$(jq -nc \
-    --argjson tier_violation "$tier_violation" \
-    --arg requested_tier "$requested_tier" --arg minimum_tier "$minimum_tier" \
-    --argjson missing_reviewers "$missing_json" '[
-      if $tier_violation then {
-        coordinate:"tier",requested:$requested_tier,required:$minimum_tier
-      } else empty end,
-      if ($missing_reviewers | length) > 0 then {
-        coordinate:"coverage",requested:"explicit",required:$missing_reviewers
-      } else empty end
-    ]')"
-  if [[ "$(jq -r 'length' <<<"$violations_json")" -gt 0 ]]; then
-    downgrade_requested=true
-    enforcement_status=fail
-  fi
-
-  if [[ -n "$policy_override" ]]; then
-    if [[ ! -r "$policy_override" || ! -s "$policy_override" ]]; then
-      printf 'Error: --policy-override must name a readable, non-empty JSON file: %s\n' \
-        "$policy_override" >&2
-      rm -f "$signals_file"
-      return 2
-    fi
-    override_sha="$(_gate_result_sha256_file "$policy_override")" || {
-      rm -f "$signals_file"
-      return 2
-    }
-    if ! jq -e '
-      (keys | sort) ==
-        (["allow","approver","kind","reason","schema_version","scope_fingerprint"] | sort) and
-      .kind == "gate_policy_override_v1" and .schema_version == 1 and
-      (.scope_fingerprint | type == "string" and test("^[a-f0-9]{64}$")) and
-      (.allow | type == "object" and
-        (keys | sort) == (["omit_reviewers","tier"] | sort)) and
-      (.allow.tier == null or (.allow.tier | IN("express","standard","full"))) and
-      (.allow.omit_reviewers | type == "array" and
-        all(.[]; type == "string" and test("^[a-z0-9][a-z0-9-]*$")) and
-        length == (unique | length)) and
-      (.reason | type == "string" and length > 0) and
-      (.approver | type == "object" and
-        (keys | sort) == (["approval_ref","identity","kind"] | sort)) and
-      .approver.kind == "user" and
-      (.approver.identity | type == "string" and length > 0) and
-      (.approver.approval_ref | type == "string" and length > 0)
-    ' "$policy_override" >/dev/null 2>&1; then
-      printf 'Error: invalid gate policy override contract: %s\n' "$policy_override" >&2
-      rm -f "$signals_file"
-      return 2
-    fi
-    override_reason="$(jq -r '.reason' "$policy_override")"
-    override_approver_json="$(jq -c '.approver' "$policy_override")"
-    if [[ "$downgrade_requested" == false ]]; then
-      override_status=not_needed
-    elif [[ "$(jq -r '.scope_fingerprint' "$policy_override")" != "$scope_fingerprint" ]]; then
-      override_status=scope_mismatch
-    else
-      [[ "$tier_violation" == true ]] && expected_tier="$(jq -nc --arg value "$requested_tier" '$value')"
-      if jq -e --argjson expected_tier "$expected_tier" \
-          --argjson expected_reviewers "$missing_json" '
-          .allow.tier == $expected_tier and
-          (.allow.omit_reviewers | sort) == ($expected_reviewers | sort)
-        ' "$policy_override" >/dev/null; then
-        override_status=applied
-        downgrade_allowed=true
-        enforcement_status=pass
-      else
-        override_status=allowance_mismatch
-      fi
-    fi
-    override_json="$(jq -nc --arg status "$override_status" \
-      --arg source "$policy_override" --arg sha256 "$override_sha" \
-      --arg reason "$override_reason" --argjson approver "$override_approver_json" '{
-        status:$status,source:$source,sha256:$sha256,reason:$reason,approver:$approver
-      }')"
-  else
-    override_json='{"status":"not_provided","source":null,"sha256":null,"reason":null,"approver":null}'
-  fi
-
-  signal_json="$(jq -s '.' "$signals_file")" || {
-    rm -f "$signals_file"
-    return 2
-  }
-  rm -f "$signals_file"
-
-  jq -nc \
-    --arg policy "$policy" --arg policy_source "$policy_source" \
-    --arg scope_fingerprint "$scope_fingerprint" \
-    --arg requested_tier "$requested_tier" --arg requested_mode "$requested_mode" \
-    --arg pass_kind "$pass_kind" --argjson requested_reviewers "$requested_reviewers_json" \
-    --argjson classification "$classification_json" \
-    --arg minimum_tier "$minimum_tier" \
-    --argjson required_reviewers "$(_gate_policy_words_json "$required_reviewers")" \
-    --arg recommended_mode "$recommended_mode" \
-    --arg mode_selection_source "$mode_selection_source" \
-    --argjson mode_recommendation_overridden "$mode_recommendation_overridden" \
-    --argjson downgrade_requested "$downgrade_requested" \
-    --argjson downgrade_allowed "$downgrade_allowed" \
-    --argjson matched_signals "$signal_json" \
-    --arg resolved_tier "$resolved_tier" --arg resolved_mode "$resolved_mode" \
-    --argjson selected_reviewers "$(_gate_policy_words_json "$selected_reviewers")" \
-    --arg enforcement_status "$enforcement_status" \
-    --argjson violations "$violations_json" --argjson override "$override_json" \
-    --argjson reviewer_override "$reviewer_override_json" '{
-      kind:"gate_policy_resolution_v1",
-      schema_version:1,
-      consumer_policy:$policy,
-      policy_source:$policy_source,
-      scope_fingerprint:$scope_fingerprint,
-      request:{
-        tier:$requested_tier,
-        mode:$requested_mode,
-        pass_kind:$pass_kind,
-        reviewers:$requested_reviewers
-      },
-      classification:$classification,
-      resolution:{
-        minimum_tier:$minimum_tier,
-        required_reviewers:$required_reviewers,
-        recommended_mode:$recommended_mode,
-        mode_selection_source:$mode_selection_source,
-        mode_recommendation_overridden:$mode_recommendation_overridden,
-        downgrade_requested:$downgrade_requested,
-        downgrade_allowed:$downgrade_allowed
-      },
-      matched_signals:$matched_signals,
-      resolved:{
-        tier:$resolved_tier,
-        mode:$resolved_mode,
-        reviewers:$selected_reviewers
-      },
-      enforcement:{status:$enforcement_status,violations:$violations},
-      override:$override,
-      reviewer_override:$reviewer_override
-    }'
-}
-
-_gate_set_mode_requested() {
-  local candidate="$1" spelling="$2"
-  if [[ "$MODE_OPTION_SEEN" == false ]]; then
-    MODE_REQUESTED="$candidate"
-    MODE_OPTION_SEEN=true
-    MODE_OPTION_SPELLING="$spelling"
-    return 0
-  fi
-  if [[ "$MODE_REQUESTED" != "$candidate" ]]; then
-    printf 'Error: conflicting gate mode options: %s requested %s, but %s requested %s\n' \
-      "$MODE_OPTION_SPELLING" "$MODE_REQUESTED" "$spelling" "$candidate" >&2
-    return 2
-  fi
-  return 0
-}
-
-_gate_set_pass_requested() {
-  local candidate="$1" spelling="$2" syntax_source="$3"
-  if [[ "$PASS_OPTION_SEEN" == false ]]; then
-    PASS_KIND_REQUESTED="$candidate"
-    PASS_OPTION_SEEN=true
-    PASS_OPTION_SPELLING="$spelling"
-    PASS_SYNTAX_SOURCE="$syntax_source"
-    return 0
-  fi
-  if [[ "$PASS_KIND_REQUESTED" != "$candidate" ]]; then
-    printf 'Error: conflicting gate pass options: %s requested %s, but %s requested %s\n' \
-      "$PASS_OPTION_SPELLING" "$PASS_KIND_REQUESTED" "$spelling" "$candidate" >&2
-    return 2
-  fi
-  if [[ "$PASS_OPTION_SPELLING" != "$spelling" ]]; then
-    PASS_SYNTAX_SOURCE="mixed"
-  fi
-  return 0
-}
-
-# verify_reviewer_artifact_hashes <hash_cmd> <name> <path> <baseline> [...]
-# Print every reviewer whose artifact differs from its captured baseline.
-verify_reviewer_artifact_hashes() {
-  local hash_cmd="$1" name path baseline current
-  shift
-  while [[ $# -ge 3 ]]; do
-    name="$1" path="$2" baseline="$3"; shift 3
-    [[ "$baseline" == "none" ]] && continue
-    current="$(cat "$path" 2>/dev/null | $hash_cmd || echo 'missing')"
-    [[ "$current" != "$baseline" ]] && printf '%s\n' "$name"
-  done
-}
-
-_gate_reviewer_protocol_append_blocks() {
-  local destination="$1" artifact reviewer verdict
-  shift
-  if grep -q '^```reviewer_result_v1$' "$destination"; then
-    printf 'Error: reviewer protocol INCOMPLETE: synthesis emitted machine-owned reviewer blocks\n' >&2
-    return 1
-  fi
-  {
-    printf '\n## Reviewer Protocol Evidence\n'
-    printf 'Validated selected-reviewer reports are preserved verbatim below.\n\n'
-    for artifact in "$@"; do
-      reviewer="$(
-        _gate_reviewer_protocol_documents "$artifact" |
-          jq -sr '.[0].reviewer // empty'
-      )" || return 1
-      verdict="$(
-        _gate_reviewer_protocol_verdict_extract "$artifact" "$reviewer"
-      )" || return 1
-      printf '## %s -- %s\n' "$reviewer" "$verdict"
-      # shellcheck disable=SC2016 # Literal Markdown fence delimiters.
-      sed -n '/^```reviewer_result_v1$/,/^```$/p' "$artifact"
-      printf '\n'
-    done
-  } >> "$destination"
-}
+  # shellcheck disable=SC1090  # path is selected by gate-layout.sh
+  . "$PR_GATE_LIB_DIR/$_gate_bootstrap_module"
+done
+unset _gate_bootstrap_dir _gate_bootstrap_entry _gate_bootstrap_link_dir \
+  _gate_bootstrap_module
 
 # _kill_process_tree <pid> [signal] -- signal a process AND all its descendants.
 # A plain `kill <pid>` only reaches the `eval` subshell / dispatch.sh wrapper we
@@ -2053,10 +227,14 @@ REVIEWERS_OVERRIDE=""
 REVIEWERS_OPTION_SOURCE=""
 MODE_REQUESTED="default"
 MODE_OPTION_SEEN=false
+# shellcheck disable=SC2034 # consumed by the sourced canonical option module
 MODE_OPTION_SPELLING=""
 PASS_KIND_REQUESTED="initial"
+# shellcheck disable=SC2034 # consumed by the sourced canonical option module
 PASS_OPTION_SEEN=false
+# shellcheck disable=SC2034 # consumed by the sourced canonical option module
 PASS_OPTION_SPELLING=""
+# shellcheck disable=SC2034 # consumed by the canonical assurance module
 PASS_SYNTAX_SOURCE="default"
 INITIAL_RESULT_INPUT=""
 INITIAL_RESULT_OPTION_SEEN=false
@@ -2097,6 +275,7 @@ TEST_CMD_OVERRIDE=""   # --test-cmd: explicit pre-flight test command (see CC-47
 TEST_TIMEOUT="3600"    # --test-timeout: independent of --timeout (dispatch budget)
 SKIP_PREFLIGHT_TESTS=false
 
+# shellcheck disable=SC2034 # ACCEPT_SCOPE_TRUNCATION is consumed by gate-scope.sh
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --cd)
@@ -2228,45 +407,21 @@ if [[ -n "$GATE_RUN_DIR_OVERRIDE" && "$GATE_RUN_DIR_OVERRIDE" != /* ]]; then
   printf 'Error: --run-dir must be an absolute path: %s\n' "$GATE_RUN_DIR_OVERRIDE" >&2; exit 2
 fi
 
-_self="$0"
-while [[ -L "$_self" ]]; do
-  _self_dir="$(cd "$(dirname "$_self")" && pwd)"
-  _self="$(readlink "$_self")"
-  [[ "$_self" == /* ]] || _self="$_self_dir/$_self"
+# CC-532: load the remaining domain modules only after argument parsing can
+# finish. Their paths are still resolved from the one layout authority loaded
+# by the early bootstrap above.
+_gate_scope_module="$PR_GATE_LIB_DIR/gate-scope.sh"
+_gate_subject_module="$PR_GATE_LIB_DIR/gate-subject.sh"
+for _gate_domain_module in "$_gate_scope_module" "$_gate_subject_module"; do
+  if [[ ! -r "$_gate_domain_module" ]]; then
+    printf "pr-gate: canonical domain module unavailable: %s\n" \
+      "$_gate_domain_module" >&2
+    exit 2
+  fi
+  # shellcheck disable=SC1090  # path is derived by gate-layout.sh
+  . "$_gate_domain_module"
 done
-SCRIPT_DIR="$(cd "$(dirname "$_self")" && pwd -P)"
-
-# Classify the entrypoint topology before sourcing any adjacent library. The
-# classification depends only on the physical script location, not on whether
-# a child dependency happens to exist. A damaged bundle therefore fails closed
-# in its original topology instead of probing a foreign parent tree.
-#
-#   repo:            <root>/runtime/bin/pr-gate.sh
-#   installed-copy:  <root>/scripts/pr-gate.sh
-#   standalone-copy: <root>/pr-gate.sh
-#
-# PR_GATE_LIB_DIR is derived by the same classification, and is the single
-# canonical library root every gate library load resolves through. It must stay
-# the only place a library directory is derived: per-library path guesses
-# previously disagreed, and the loads keyed on PR_GATE_INSTALLED_COPY_ROOT alone
-# resolved to <bundle>/../lib under the standalone-copy layout -- a path outside
-# the bundle -- so a standalone bundle silently missed its canonical libraries
-# and ran an in-script copy instead of the shared implementation.
-PR_GATE_LAYOUT="standalone-copy"
-PR_GATE_EXECUTOR_ROOT="$SCRIPT_DIR"
-PR_GATE_INSTALLED_COPY_ROOT=""
-PR_GATE_LIB_DIR="$SCRIPT_DIR/lib"
-if [[ "${SCRIPT_DIR##*/}" == scripts ]]; then
-  PR_GATE_LAYOUT="installed-copy"
-  PR_GATE_INSTALLED_COPY_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
-  PR_GATE_EXECUTOR_ROOT="$PR_GATE_INSTALLED_COPY_ROOT"
-elif [[ "${SCRIPT_DIR##*/}" == bin \
-    && "${SCRIPT_DIR%/*}" != "$SCRIPT_DIR" \
-    && "${SCRIPT_DIR%/*}" == */runtime ]]; then
-  PR_GATE_LAYOUT="repo"
-  PR_GATE_EXECUTOR_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd -P)"
-  PR_GATE_LIB_DIR="$SCRIPT_DIR/../lib"
-fi
+unset _gate_scope_module _gate_subject_module _gate_domain_module
 
 # _gate_lib_unavailable -- fail closed on a bundle that lost a canonical library.
 #
@@ -2338,6 +493,29 @@ GATE_RESULT_VERIFY_PATH="$PR_GATE_LIB_DIR/gate-result-verify.sh"
 # shellcheck source=runtime/lib/gate-result-verify.sh
 # shellcheck disable=SC1090  # path is derived from the classified topology
 . "$GATE_RESULT_VERIFY_PATH"
+
+# CC-532: assurance path validation and machine sidecar publication have one
+# canonical source owner; the entrypoint only composes the module and invokes it.
+GATE_ASSURANCE_MODULE="$PR_GATE_LIB_DIR/gate-assurance.sh"
+[[ -r "$GATE_ASSURANCE_MODULE" ]] || _gate_lib_unavailable "$GATE_ASSURANCE_MODULE"
+# shellcheck source=runtime/lib/gate-assurance.sh
+# shellcheck disable=SC1090  # path is derived from the classified topology
+. "$GATE_ASSURANCE_MODULE"
+unset GATE_ASSURANCE_MODULE
+
+# CC-532: policy and reviewer contract modules share the same composition root.
+for _gate_contract_module in \
+    "$PR_GATE_LIB_DIR/gate-policy.sh" \
+    "$PR_GATE_LIB_DIR/gate-reviewer-contract.sh"; do
+  if [[ ! -r "$_gate_contract_module" ]]; then
+    printf "pr-gate: canonical contract module unavailable: %s\n" \
+      "$_gate_contract_module" >&2
+    exit 2
+  fi
+  # shellcheck disable=SC1090  # path is derived by gate-layout.sh
+  . "$_gate_contract_module"
+done
+unset _gate_contract_module
 
 if ! command -v jq >/dev/null 2>&1; then
   printf 'Error: pr-gate requires jq on PATH to produce and verify gate assurance\n' >&2
@@ -2469,39 +647,16 @@ if [[ -z "$ALL_REVIEWERS" ]]; then
 fi
 _gate_policy_validate_sources "$ALL_REVIEWERS" || exit 2
 
-_gate_normalize_reviewer_list() {
-  local raw="$1" source_label="$2" normalized="" reviewer
-  if [[ -z "${raw//[[:space:]]/}" || "$raw" == ,* || "$raw" == *, || "$raw" == *,,* ]]; then
-    printf 'Error: %s requires a non-empty comma-separated reviewer list\n' "$source_label" >&2
-    return 2
-  fi
-  raw="${raw//,/ }"
-  for reviewer in $raw; do
-    if [[ " $ALL_REVIEWERS " != *" $reviewer "* ]]; then
-      printf 'Error: %s contains unknown reviewer %s (allowed: %s)\n' \
-        "$source_label" "$reviewer" "$ALL_REVIEWERS" >&2
-      return 2
-    fi
-    if [[ " $normalized " == *" $reviewer "* ]]; then
-      printf 'Error: %s contains duplicate reviewer: %s\n' "$source_label" "$reviewer" >&2
-      return 2
-    fi
-    normalized="${normalized:+$normalized }$reviewer"
-  done
-  [[ -n "$normalized" ]] || return 2
-  printf '%s\n' "$normalized"
-}
-
 # --reviewers owns the coverage coordinate and --targeted is its compatibility
 # spelling. Normalize both only after the policy vocabulary is available, so
 # equal reviewer sets remain compatible even when their input order differs.
 if [[ "$REVIEWERS_EXPLICIT_SEEN" == true ]]; then
-  _explicit_reviewers="$(_gate_normalize_reviewer_list \
-    "$REVIEWERS_EXPLICIT_INPUT" "--reviewers")" || exit 2
+  _explicit_reviewers="$(_gate_policy_normalize_reviewer_list \
+    "$REVIEWERS_EXPLICIT_INPUT" "$ALL_REVIEWERS" "--reviewers")" || exit 2
 fi
 if [[ "$REVIEWERS_SHORTHAND_SEEN" == true ]]; then
-  _shorthand_reviewers="$(_gate_normalize_reviewer_list \
-    "$REVIEWERS_SHORTHAND_INPUT" "--targeted")" || exit 2
+  _shorthand_reviewers="$(_gate_policy_normalize_reviewer_list \
+    "$REVIEWERS_SHORTHAND_INPUT" "$ALL_REVIEWERS" "--targeted")" || exit 2
 fi
 if [[ "$REVIEWERS_EXPLICIT_SEEN" == true && "$REVIEWERS_SHORTHAND_SEEN" == true ]]; then
   if [[ "$(printf '%s\n' $_explicit_reviewers | LC_ALL=C sort)" \
@@ -2612,14 +767,7 @@ _validate_isolation_level() {
 }
 
 if [[ -n "$DISPATCH_ISOLATION" ]]; then
-  if [[ -n "$PR_GATE_INSTALLED_COPY_ROOT" ]]; then
-    ISOLATION_POLICY_FILE="$SCRIPT_DIR/core/policy/isolation-level.yaml"
-  else
-    ISOLATION_POLICY_FILE="$SCRIPT_DIR/../../core/policy/isolation-level.yaml"
-    if [[ ! -r "$ISOLATION_POLICY_FILE" && -r "$SCRIPT_DIR/core/policy/isolation-level.yaml" ]]; then
-      ISOLATION_POLICY_FILE="$SCRIPT_DIR/core/policy/isolation-level.yaml"
-    fi
-  fi
+  ISOLATION_POLICY_FILE="$(gate_layout_policy_file isolation-level.yaml)"
   _validate_isolation_level "$DISPATCH_ISOLATION" "$ISOLATION_POLICY_FILE" || exit 2
 fi
 
@@ -2653,12 +801,10 @@ if [[ "$EXECUTOR" == "codex" ]]; then
     # its installer-managed PATH entry (or retain the bare fail-loud command)
     # and never probe foreign ~/cli or ~/.claude/scripts/{cli,bin} candidates.
     _guard_pmctl_abs="$(command -v pmctl 2>/dev/null || true)"
-  elif [[ -x "$SCRIPT_DIR/cli/pmctl" ]]; then
-    _guard_pmctl_abs="$SCRIPT_DIR/cli/pmctl"
-  elif [[ -x "$SCRIPT_DIR/bin/pmctl" ]]; then
-    _guard_pmctl_abs="$SCRIPT_DIR/bin/pmctl"
-  elif [[ -x "$SCRIPT_DIR/../../cli/pmctl" ]]; then
-    _guard_pmctl_abs="$SCRIPT_DIR/../../cli/pmctl"
+  elif [[ -x "$PR_GATE_BUNDLE_ROOT/cli/pmctl" ]]; then
+    _guard_pmctl_abs="$PR_GATE_BUNDLE_ROOT/cli/pmctl"
+  elif [[ -x "$PR_GATE_BUNDLE_ROOT/bin/pmctl" ]]; then
+    _guard_pmctl_abs="$PR_GATE_BUNDLE_ROOT/bin/pmctl"
   else
     _guard_pmctl_abs="$(command -v pmctl 2>/dev/null || true)"
   fi
@@ -2681,7 +827,7 @@ PMCTL_DISPATCH_LIB_DIR=""
 PMCTL_DISPATCH_ROOT=""
 if [[ "$PR_GATE_LAYOUT" == repo \
     && -r "$PR_GATE_LIB_DIR/pmctl-dispatch.sh" \
-    && -d "$SCRIPT_DIR/../../adapters" ]]; then
+    && -d "$PR_GATE_BUNDLE_ROOT/adapters" ]]; then
   PMCTL_DISPATCH_LIB_DIR="$PR_GATE_LIB_DIR"
   PMCTL_DISPATCH_ROOT="$PR_GATE_EXECUTOR_ROOT"
 fi
@@ -2822,22 +968,20 @@ pmctl_gate_dispatch_and_wait() {
 # Format direct Adapter dispatch through the canonical explicit-root router.
 # The repo-layout branch overrides this Gate-level transport seam only; it does
 # not replace any executor detection, manifest routing, or argv construction.
-gate_dispatch_command() {
-  dispatch_via_at "$PR_GATE_EXECUTOR_ROOT" "$@"
-}
-
 # Call sites receive a safely-quoted command string, preserving the parallel
 # watchdog/eval structure while moving repo-layout lifecycle ownership to pmctl.
-if [[ -n "$PMCTL_DISPATCH_LIB_DIR" ]]; then
 gate_dispatch_command() {
-  local first=1 arg
-  for arg in pmctl_gate_dispatch_and_wait "$@"; do
-    if [[ "$first" -eq 1 ]]; then first=0; else printf ' '; fi
-    printf '%q' "$arg"
-  done
-  printf '\n'
+  if [[ -n "$PMCTL_DISPATCH_LIB_DIR" ]]; then
+    local first=1 arg
+    for arg in pmctl_gate_dispatch_and_wait "$@"; do
+      if [[ "$first" -eq 1 ]]; then first=0; else printf ' '; fi
+      printf '%q' "$arg"
+    done
+    printf '\n'
+  else
+    dispatch_via_at "$PR_GATE_EXECUTOR_ROOT" "$@"
+  fi
 }
-fi
 
 # Every supported executor now dispatches an INDEPENDENT subprocess (codex `codex
 # exec`, claude headless `claude --print`) and writes the result in-process, which
@@ -2846,7 +990,7 @@ fi
 # executors take the subprocess path.
 EXECUTOR_IS_SUBPROCESS=true
 
-unset _self _self_dir EXECUTOR_ROUTER_PATH
+unset EXECUTOR_ROUTER_PATH
 
 cd "$WORK_DIR"
 
@@ -3276,23 +1420,8 @@ if [[ -n "$INPUT_BRIEF_FILE" ]]; then
   fi
   _input_brief_parent="$(cd "$(dirname "$_input_brief_candidate")" && pwd -P)" || exit 2
   INPUT_BRIEF_FILE="$_input_brief_parent/$(basename "$_input_brief_candidate")"
-  ARCHITECTURE_IMPACT="$(awk '
-    /^architecture_impact:[[:space:]]*/ {
-      sub(/^architecture_impact:[[:space:]]*/, "")
-      gsub(/[[:space:]]/, "")
-      print
-      exit
-    }
-  ' "$INPUT_BRIEF_FILE")"
+  ARCHITECTURE_IMPACT="$(gate_subject_architecture_impact "$INPUT_BRIEF_FILE")" || exit 2
   : "${ARCHITECTURE_IMPACT:=unknown}"
-  case "$ARCHITECTURE_IMPACT" in
-    none|minor|major|unknown) ;;
-    *)
-      printf 'Error: --brief has invalid architecture_impact: %s\n' \
-        "$ARCHITECTURE_IMPACT" >&2
-      exit 2
-      ;;
-  esac
   unset _input_brief_candidate _input_brief_parent
 fi
 
@@ -3336,13 +1465,13 @@ POLICY_SCOPE_FINGERPRINT="$(
       "$POLICY_CONSUMER" "$PASS_KIND_RESOLVED" "$ARCHITECTURE_IMPACT" \
       "$LINES" "${BINARY_HIT:-0}" "$POLICY_SCOPE_CONTENT_DIGEST"
     printf '%s\n' "$DIFF_NAME_STATUS"
-  } | _gate_sha256_stream
+  } | gate_digest_stream
 )" || exit 2
 
 REQUESTED_REVIEWERS_JSON=null
 if [[ -n "$REVIEWERS_OVERRIDE" ]]; then
-  _requested_reviewer_words="$(_gate_normalize_reviewer_list \
-    "$REVIEWERS_OVERRIDE" "$REVIEWERS_OPTION_SOURCE")" || exit 2
+  _requested_reviewer_words="$(_gate_policy_normalize_reviewer_list \
+    "$REVIEWERS_OVERRIDE" "$ALL_REVIEWERS" "$REVIEWERS_OPTION_SOURCE")" || exit 2
   REQUESTED_REVIEWERS_JSON="$(_gate_policy_words_json "$_requested_reviewer_words")"
   COVERAGE_REQUESTED_DISPLAY="$(printf '%s' "$_requested_reviewer_words" | tr ' ' ',')"
   unset _requested_reviewer_words
@@ -3525,13 +1654,16 @@ _output_parent="$(cd "$(dirname "$OUTPUT_FILE")" && pwd -P)"
 OUTPUT_FILE="$_output_parent/$(basename "$OUTPUT_FILE")"
 unset _output_parent
 ASSURANCE_FILE="${OUTPUT_FILE}.assurance.json"
+# shellcheck disable=SC2034 # consumed by the canonical assurance module
 ASSURANCE_POINTER="$(basename "$ASSURANCE_FILE")"
 ASSURANCE_ATTESTATION_FILE=""
 ASSURANCE_ATTESTATION_POINTER=""
 GATE_ASSURANCE_RUNS_FILE=""
 if [[ -n "$GATE_RUN_DIR_OVERRIDE" && -n "$PMCTL_DISPATCH_LIB_DIR" ]]; then
   ASSURANCE_ATTESTATION_POINTER="gate-assurance-${TIMESTAMP}.attestation.json"
+  # shellcheck disable=SC2034 # consumed by the canonical assurance module
   ASSURANCE_ATTESTATION_FILE="$GATE_RUN_DIR_OVERRIDE/$ASSURANCE_ATTESTATION_POINTER"
+  # shellcheck disable=SC2034 # consumed by the canonical assurance module
   GATE_ASSURANCE_RUNS_FILE="$(
     # shellcheck source=runtime/lib/state-paths.sh
     . "$PMCTL_DISPATCH_LIB_DIR/state-paths.sh"
@@ -3540,33 +1672,6 @@ if [[ -n "$GATE_RUN_DIR_OVERRIDE" && -n "$PMCTL_DISPATCH_LIB_DIR" ]]; then
   )runs.jsonl"
 fi
 
-_gate_assurance_destination_check() {
-  local path="$1" nlink
-  if [[ -L "$path" ]]; then
-    printf 'Error: gate assurance destination must not be a symlink: %s\n' "$path" >&2
-    return 1
-  fi
-  if [[ -e "$path" ]]; then
-    if [[ ! -f "$path" ]]; then
-      printf 'Error: gate assurance destination must be a regular file: %s\n' "$path" >&2
-      return 1
-    fi
-    if nlink="$(stat -c '%h' "$path" 2>/dev/null)"; then
-      :
-    elif nlink="$(stat -f '%l' "$path" 2>/dev/null)"; then
-      :
-    else
-      printf 'Error: unable to inspect gate assurance destination link count: %s\n' \
-        "$path" >&2
-      return 1
-    fi
-    if [[ ! "$nlink" =~ ^[0-9]+$ || "$nlink" -ne 1 ]]; then
-      printf 'Error: gate assurance destination must not be hardlinked: %s\n' \
-        "$path" >&2
-      return 1
-    fi
-  fi
-}
 
 if [[ -n "$INITIAL_RESULT_RESOLVED" \
     && ( "$OUTPUT_FILE" == "$INITIAL_RESULT_RESOLVED" \
@@ -3754,362 +1859,6 @@ gate_result_staging_normalize() {
   mv -- "$result_tmp" "$result_file"
 }
 
-gate_finalize_assurance() {
-  local result_file="$1" assurance_file="$2"
-  local final requested_json outcomes_json independence_status implementation_isolated
-  local per_reviewer_independent expected_count capture_count assurance_tmp result_tmp
-  local result_sha assurance_sha subject_sha attestation_tmp run_ids_json attestation_pointer
-  local finished_at subject_finish subject_json preflight_json evidence_json
-  local evidence_destination evidence_destination_sha evidence_tmp
-  local scope_destination scope_destination_sha scope_tmp scope_json
-  local -a capture_files=()
-
-  final="$(grep -E '^Final: (GO|NO-GO|INCOMPLETE)$' "$result_file" | awk '{print $2}')"
-  [[ -n "$final" ]] || {
-    printf 'Error: cannot finalize gate assurance without a unique final verdict\n' >&2
-    return 1
-  }
-  if [[ -n "$REVIEWERS_OVERRIDE" ]]; then
-    requested_json="$(jq -nc --arg reviewers "$REVIEWERS" \
-      '$reviewers | split(" ") | map(select(length > 0))')"
-  else
-    requested_json=null
-  fi
-
-  while IFS= read -r _capture_file; do
-    capture_files+=("$_capture_file")
-  done < <(find "$GATE_ASSURANCE_CAPTURE_DIR" -maxdepth 1 -type f -name '*.json' -print | LC_ALL=C sort)
-  capture_count="${#capture_files[@]}"
-
-  if [[ "$PREFLIGHT_STATUS" != pass && "$PREFLIGHT_STATUS" != skipped ]]; then
-    if [[ "$PREFLIGHT_STATUS" == test-fail ]]; then
-      outcomes_json='[{"role":"preflight","reviewer":null,"status":"failed","run_id":null,"evidence_status":"unavailable"}]'
-    else
-      outcomes_json='[{"role":"preflight","reviewer":null,"status":"incomplete","run_id":null,"evidence_status":"unavailable"}]'
-    fi
-    independence_status=unavailable
-    implementation_isolated=null
-    per_reviewer_independent=null
-  elif [[ -n "$PMCTL_DISPATCH_LIB_DIR" \
-      && -n "$ASSURANCE_ATTESTATION_FILE" \
-      && -n "$GATE_ASSURANCE_RUNS_FILE" ]]; then
-    if [[ "$SEQUENTIAL" == true ]]; then expected_count=1; else expected_count=$((NUM_REVIEWERS + 1)); fi
-    if [[ "$capture_count" -ne "$expected_count" ]]; then
-      printf 'Error: gate dispatch evidence incomplete (expected %d capture(s), found %d)\n' \
-        "$expected_count" "$capture_count" >&2
-      return 1
-    fi
-    outcomes_json="$(jq -s '.' "${capture_files[@]}")" || return 1
-    independence_status=verified
-    implementation_isolated=true
-    if [[ "$SEQUENTIAL" == true ]]; then
-      per_reviewer_independent=false
-    else
-      per_reviewer_independent=true
-    fi
-  else
-    independence_status=unavailable
-    implementation_isolated=null
-    per_reviewer_independent=null
-    if [[ "$SEQUENTIAL" == true ]]; then
-      outcomes_json='[{"role":"combined","reviewer":null,"status":"passed","run_id":null,"evidence_status":"unavailable"}]'
-    else
-      outcomes_json="$(jq -nc --arg reviewers "$REVIEWERS" '
-        ($reviewers | split(" ") | map(select(length > 0))) as $selected |
-        ([$selected[] | {role:"reviewer",reviewer:.,status:"passed",run_id:null,
-          evidence_status:"unavailable"}] +
-         [{role:"synthesis",reviewer:null,status:"passed",run_id:null,
-          evidence_status:"unavailable"}])')"
-    fi
-  fi
-  attestation_pointer=""
-  if [[ "$independence_status" == verified ]]; then
-    attestation_pointer="$ASSURANCE_ATTESTATION_POINTER"
-  fi
-  finished_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ' 2>/dev/null \
-    || date +'%Y-%m-%dT%H:%M:%SZ')"
-  subject_finish="$(
-    gate_subject_snapshot "$WORK_DIR" "$BASE" "$HEAD_REF" "$GATE_SUBJECT_KIND" \
-      "$GATE_SUBJECT_DIRTY_POLICY" "$finished_at"
-  )" || {
-    printf 'Error: unable to capture final gate subject\n' >&2
-    return 1
-  }
-  subject_json="$(jq -nc \
-    --argjson initial "$GATE_SUBJECT_INITIAL" \
-    --argjson finish "$subject_finish" '{
-      kind:"gate_subject_v1",
-      schema_version:1,
-      repository:$initial.repository,
-      observed:$initial.observed,
-      base:$initial.base,
-      head:$initial.head,
-      tree_fingerprint:$initial.tree_fingerprint,
-      subject_kind:$initial.subject_kind,
-      dirty_policy:$initial.dirty_policy,
-      created_at:$initial.captured_at,
-      finished_at:$finish.captured_at,
-      observed_at_finish:{
-        repository_key:$finish.repository.key,
-        base_commit:$finish.base.commit,
-        head_commit:$finish.head.commit,
-        tree_fingerprint:$finish.tree_fingerprint
-      }
-    }')" || return 1
-  if [[ "$PREFLIGHT_STATUS" == skipped ]]; then
-    preflight_json='{"status":"not_run","outcome":null,"artifact":null,"sha256":null,"subject_fingerprint":null}'
-  else
-    evidence_destination="$(dirname "$assurance_file")/$(basename "$PREFLIGHT_EVIDENCE_PATH")"
-    if [[ "$PREFLIGHT_EVIDENCE_PATH" != "$evidence_destination" ]]; then
-      _gate_assurance_destination_check "$evidence_destination" || return 1
-      if [[ -e "$evidence_destination" ]]; then
-        evidence_destination_sha="$(
-          _gate_result_sha256_file "$evidence_destination"
-        )" || return $?
-        if [[ "$evidence_destination_sha" != "$PREFLIGHT_EVIDENCE_DIGEST" ]]; then
-          printf 'Error: linked preflight evidence destination already exists with different content: %s\n' \
-            "$evidence_destination" >&2
-          return 1
-        fi
-      else
-        evidence_tmp="$(mktemp "${evidence_destination}.tmp.XXXXXX")" || return 1
-        if ! cp -- "$PREFLIGHT_EVIDENCE_PATH" "$evidence_tmp" \
-            || ! mv -- "$evidence_tmp" "$evidence_destination"; then
-          rm -f -- "$evidence_tmp"
-          return 1
-        fi
-      fi
-      PREFLIGHT_EVIDENCE_PATH="$evidence_destination"
-    fi
-    preflight_json="$(jq -nc \
-      --arg outcome "$PREFLIGHT_STATUS" \
-      --arg artifact "$(basename "$PREFLIGHT_EVIDENCE_PATH")" \
-      --arg sha256 "$PREFLIGHT_EVIDENCE_DIGEST" \
-      --arg subject_fingerprint \
-        "$(jq -r '.tree_fingerprint' <<<"$GATE_SUBJECT_INITIAL")" '{
-        status:"linked",
-        outcome:$outcome,
-        artifact:$artifact,
-        sha256:$sha256,
-        subject_fingerprint:$subject_fingerprint
-      }')" || return 1
-  fi
-  scope_destination="$(dirname "$assurance_file")/$(basename "$SCOPE_MANIFEST_PATH")"
-  if [[ "$SCOPE_MANIFEST_PATH" != "$scope_destination" ]]; then
-    _gate_assurance_destination_check "$scope_destination" || return 1
-    if [[ -e "$scope_destination" ]]; then
-      scope_destination_sha="$(
-        _gate_result_sha256_file "$scope_destination"
-      )" || return $?
-      if [[ "$scope_destination_sha" != "$SCOPE_MANIFEST_DIGEST" ]]; then
-        printf 'Error: linked scope manifest destination already exists with different content: %s\n' \
-          "$scope_destination" >&2
-        return 1
-      fi
-    else
-      scope_tmp="$(mktemp "${scope_destination}.tmp.XXXXXX")" || return 1
-      if ! cp -- "$SCOPE_MANIFEST_PATH" "$scope_tmp" \
-          || ! mv -- "$scope_tmp" "$scope_destination"; then
-        rm -f -- "$scope_tmp"
-        return 1
-      fi
-    fi
-    SCOPE_MANIFEST_PATH="$scope_destination"
-  fi
-  scope_json="$(jq -nc \
-    --arg artifact "$(basename "$SCOPE_MANIFEST_PATH")" \
-    --arg sha256 "$SCOPE_MANIFEST_DIGEST" \
-    --arg subject_fingerprint \
-      "$(jq -r '.tree_fingerprint' <<<"$GATE_SUBJECT_INITIAL")" '{
-      status:"verified",
-      artifact:$artifact,
-      sha256:$sha256,
-      subject_fingerprint:$subject_fingerprint
-    }')" || return 1
-  evidence_json="$(jq -nc --argjson preflight "$preflight_json" \
-    --argjson scope "$scope_json" '{
-    preflight:$preflight,
-    scope_manifest:$scope,
-    closure:{
-      status:"unavailable",artifact:null,sha256:null,subject_fingerprint:null
-    }
-  }')" || return 1
-
-  result_tmp="$(mktemp "${result_file}.assurance-tmp.XXXXXX")" || {
-    printf 'Error: unable to create gate result temporary file beside: %s\n' \
-      "$result_file" >&2
-    return 1
-  }
-  local result_version=pr_gate_result_v2
-  if [[ "$REVIEWER_PROTOCOL_COMPLETE" == true \
-      && "$SYNTHESIS_PROTOCOL_COMPLETE" == true ]]; then
-    result_version=pr_gate_result_v5
-  elif [[ "$REVIEWER_PROTOCOL_COMPLETE" == true ]]; then
-    result_version=pr_gate_result_v3
-  fi
-  awk -v pointer="$ASSURANCE_POINTER" -v result_version="$result_version" '
-    /^---$/ {
-      fence++
-      print
-      next
-    }
-    fence == 1 && /^gate_result_version:/ {
-      print "gate_result_version: " result_version
-      print "gate_assurance: " pointer
-      next
-    }
-    fence == 1 && /^gate_assurance:/ { next }
-    { print }
-  ' "$result_file" > "$result_tmp" || {
-    rm -f -- "$result_tmp"
-    return 1
-  }
-  result_sha="$(_gate_result_sha256_file "$result_tmp")" || {
-    rm -f -- "$result_tmp"
-    return 1
-  }
-
-  assurance_tmp="$(mktemp "${assurance_file}.tmp.XXXXXX")" || {
-    rm -f -- "$result_tmp"
-    printf 'Error: unable to create gate assurance temporary file beside: %s\n' \
-      "$assurance_file" >&2
-    return 1
-  }
-  if ! jq -n \
-    --arg final "$final" \
-    --arg result_sha "$result_sha" \
-    --arg repo_root "$WORK_DIR" --arg repo_identity "$GATE_SUBJECT_REPOSITORY_KEY" \
-    --arg base_commit "$GATE_BINDING_BASE_COMMIT" \
-    --arg head_commit "$GATE_BINDING_HEAD_COMMIT" \
-    --arg subject_fingerprint "$GATE_BINDING_SUBJECT_FINGERPRINT" \
-    --arg tier_requested "$TIER_REQUESTED" --arg tier_resolved "$TIER_RESOLVED" \
-    --arg tier_selection_basis "$TIER_SELECTION_BASIS" \
-    --arg evidence_floor "$TIER_EVIDENCE_FLOOR" \
-    --arg mode_requested "$MODE_REQUESTED" --arg mode_resolved "$MODE_RESOLVED" \
-    --arg topology "$MODE_TOPOLOGY" --arg synthesis "$MODE_SYNTHESIS" \
-    --arg pass_requested "$PASS_KIND_REQUESTED" --arg pass_resolved "$PASS_KIND_RESOLVED" \
-    --arg pass_scope "$PASS_SCOPE" --arg initial_result "$INITIAL_RESULT_RESOLVED" \
-    --arg pass_syntax "$PASS_SYNTAX_SOURCE" --arg coverage_syntax "$COVERAGE_SYNTAX_SOURCE" \
-    --arg selected "$REVIEWERS" --arg skipped "$SKIPPED_WORDS" \
-    --arg coverage_selection_basis "$COVERAGE_SELECTION_BASIS" \
-    --arg vocabulary "$ALL_REVIEWERS" \
-    --arg reviewer_topology "$MODE_TOPOLOGY" \
-    --arg independence_status "$independence_status" \
-    --arg policy_source "$GATE_ASSURANCE_POLICY_SOURCE" \
-    --arg attestation "$attestation_pointer" \
-    --argjson requested "$requested_json" --argjson outcomes "$outcomes_json" \
-    --argjson subject "$subject_json" --argjson evidence "$evidence_json" \
-    --argjson policy_resolution "$GATE_POLICY_RESOLUTION" \
-    --argjson implementation_isolated "$implementation_isolated" \
-    --argjson per_reviewer_independent "$per_reviewer_independent" '
-      {
-        kind:"gate_assurance_v3",schema_version:3,
-        result:{final:$final},
-        bindings:{
-          result_sha256:$result_sha,
-          repo_root:$repo_root,
-          repo_identity:$repo_identity,
-          base_commit:$base_commit,
-          head_commit:$head_commit,
-          subject_fingerprint:$subject_fingerprint
-        },
-        subject:$subject,
-        evidence:$evidence,
-        coordinates:{
-          tier:{requested:$tier_requested,resolved:$tier_resolved,
-            evidence_floor:$evidence_floor,selection_basis:$tier_selection_basis},
-          mode:{requested:$mode_requested,resolved:$mode_resolved,
-            topology:$topology,synthesis:$synthesis},
-          pass:{requested:$pass_requested,resolved:$pass_resolved,scope:$pass_scope,
-            initial_result:(if $initial_result == "" then null else $initial_result end)},
-          coverage:{
-            requested:$requested,
-            selected:($selected | split(" ") | map(select(length > 0))),
-            skipped:($skipped | split(" ") | map(select(length > 0))),
-            vocabulary:($vocabulary | split(" ") | map(select(length > 0))),
-            selection_basis:$coverage_selection_basis
-          },
-          independence:{
-            implementation_context_isolated:$implementation_isolated,
-            reviewer_topology:$reviewer_topology,
-            per_reviewer_independent:$per_reviewer_independent,
-            evidence_status:$independence_status
-          }
-        },
-        policy:$policy_resolution,
-        dispatch:{outcomes:$outcomes},
-        provenance:{
-          producer:"pr-gate.sh",
-          policy_source:$policy_source,
-          attestation:(if $attestation == "" then null else $attestation end),
-          coordinate_syntax:{pass:$pass_syntax,coverage:$coverage_syntax}
-        }
-      }' > "$assurance_tmp"; then
-    rm -f -- "$assurance_tmp" "$result_tmp"
-    return 1
-  fi
-
-  _gate_assurance_destination_check "$assurance_file" || {
-    rm -f -- "$assurance_tmp" "$result_tmp"
-    return 1
-  }
-  # Publish the sidecar before the v2 Markdown result that references it. A verifier
-  # racing this boundary sees either the original self-contained v1 result or
-  # the complete bound pair; a host failure cannot strand a v2/v3 result with
-  # a permanently missing sidecar.
-  mv -- "$assurance_tmp" "$assurance_file" || {
-    rm -f -- "$assurance_tmp" "$result_tmp"
-    return 1
-  }
-  mv -- "$result_tmp" "$result_file" || {
-    rm -f -- "$result_tmp"
-    return 1
-  }
-  gate_result_verify "$result_file" "" "machine assurance finalization" || return $?
-
-  if [[ "$independence_status" == verified ]]; then
-    assurance_sha="$(_gate_result_sha256_file "$assurance_file")" || return $?
-    subject_sha="$(jq -cS '.subject' "$assurance_file" \
-      | _gate_result_sha256_stream)" || return $?
-    run_ids_json="$(jq -c '[.[].run_id]' <<<"$outcomes_json")" || return 1
-    _gate_assurance_destination_check "$ASSURANCE_ATTESTATION_FILE" || return 1
-    attestation_tmp="$(mktemp "${ASSURANCE_ATTESTATION_FILE}.tmp.XXXXXX")" || {
-      printf 'Error: unable to create protected gate assurance attestation\n' >&2
-      return 1
-    }
-    if ! jq -n \
-      --arg result_sha "$result_sha" --arg assurance_sha "$assurance_sha" \
-      --arg repo_root "$WORK_DIR" --arg repo_identity "$GATE_SUBJECT_REPOSITORY_KEY" \
-      --arg base_commit "$GATE_BINDING_BASE_COMMIT" \
-      --arg head_commit "$GATE_BINDING_HEAD_COMMIT" \
-      --arg subject_fingerprint "$GATE_BINDING_SUBJECT_FINGERPRINT" \
-      --arg repository_key "$GATE_SUBJECT_REPOSITORY_KEY" \
-      --arg subject_sha "$subject_sha" \
-      --argjson run_ids "$run_ids_json" '{
-        kind:"gate_assurance_attestation_v2",
-        schema_version:2,
-        result_sha256:$result_sha,
-        assurance_sha256:$assurance_sha,
-        repo_root:$repo_root,
-        repo_identity:$repo_identity,
-        base_commit:$base_commit,
-        head_commit:$head_commit,
-        subject_fingerprint:$subject_fingerprint,
-        repository_key:$repository_key,
-        subject_sha256:$subject_sha,
-        run_ids:$run_ids
-      }' > "$attestation_tmp"; then
-      rm -f -- "$attestation_tmp"
-      return 1
-    fi
-    mv -- "$attestation_tmp" "$ASSURANCE_ATTESTATION_FILE" || {
-      rm -f -- "$attestation_tmp"
-      return 1
-    }
-    gate_assurance_authorization_verify "$result_file" "$assurance_file" \
-      "$ASSURANCE_ATTESTATION_FILE" "$GATE_ASSURANCE_RUNS_FILE"
-  fi
-}
 
 SYNTHESIS_BRIEF="$BRIEF_DIR/pr-gate-${TIMESTAMP}-synthesis.md"
 BRIEF_FILES+=("$SYNTHESIS_BRIEF")
@@ -4255,21 +2004,7 @@ _preflight_log_display_path() {
 }
 
 _preflight_sha256_file() {
-  local file="$1" digest=""
-  if command -v sha256sum >/dev/null 2>&1 \
-      && digest="$(sha256sum -- "$file" 2>/dev/null | awk '{print $1}')" \
-      && [[ -n "$digest" ]]; then
-    printf '%s\n' "$digest"
-    return 0
-  fi
-  if command -v shasum >/dev/null 2>&1 \
-      && digest="$(shasum -a 256 -- "$file" 2>/dev/null | awk '{print $1}')" \
-      && [[ -n "$digest" ]]; then
-    printf '%s\n' "$digest"
-    return 0
-  fi
-  printf 'Error: no sha256sum or shasum found -- cannot fingerprint gate inputs.\n' >&2
-  return 2
+  gate_digest_file "$1"
 }
 
 # Copy-mode portable content identity. It binds tracked and non-ignored
@@ -4283,7 +2018,7 @@ _preflight_tree_fingerprint() {
 _preflight_repo_identity() {
   local remote
   remote="$(git -C "$WORK_DIR" config --get remote.origin.url 2>/dev/null || true)"
-  printf '%s\n%s\n' "$WORK_DIR" "$remote" | _gate_sha256_stream
+  printf '%s\n%s\n' "$WORK_DIR" "$remote" | gate_digest_stream
 }
 
 GATE_BINDING_REPO_IDENTITY="$(_preflight_repo_identity)" || exit 2
@@ -4308,6 +2043,7 @@ GATE_SUBJECT_INITIAL="$(
   printf 'Error: unable to capture immutable gate subject\n' >&2
   exit 2
 }
+# shellcheck disable=SC2034 # consumed by the canonical assurance module
 GATE_SUBJECT_REPOSITORY_KEY="$(jq -r '.repository.key' <<<"$GATE_SUBJECT_INITIAL")"
 GATE_BINDING_SUBJECT_FINGERPRINT="$(
   jq -r '.tree_fingerprint' <<<"$GATE_SUBJECT_INITIAL"
@@ -4659,7 +2395,7 @@ if [[ "$SKIP_PREFLIGHT_TESTS" != "true" && -n "$TEST_CMD_OVERRIDE" ]]; then
   PREFLIGHT_LOG_PATH="$WORK_DIR/.gate-results/preflight-tests-${TIMESTAMP}.log"
   PREFLIGHT_EVIDENCE_PATH="$WORK_DIR/.gate-results/preflight-evidence-${TIMESTAMP}.json"
   PREFLIGHT_RICH_RESULT_PATH="$WORK_DIR/.gate-results/preflight-rich-result-${TIMESTAMP}.json"
-  _preflight_command_digest="$(printf '%s' "$TEST_CMD_OVERRIDE" | _gate_sha256_stream)" || exit 2
+  _preflight_command_digest="$(printf '%s' "$TEST_CMD_OVERRIDE" | gate_digest_stream)" || exit 2
   _preflight_before="$(_preflight_tree_fingerprint)" || exit 2
   _preflight_repo_id="$GATE_BINDING_REPO_IDENTITY"
   _preflight_base_commit="$GATE_BINDING_BASE_COMMIT"
@@ -5304,7 +3040,9 @@ BRIEF_EOF
   SEQ_PROTOCOL_FINAL="$(
     _gate_reviewer_protocol_final_extract "$OUTPUT_FILE"
   )" || exit 1
+  # shellcheck disable=SC2034 # consumed by the canonical assurance module
   REVIEWER_PROTOCOL_COMPLETE=true
+  # shellcheck disable=SC2034 # consumed by the canonical assurance module
   SYNTHESIS_PROTOCOL_COMPLETE=true
   # Executors author an unbound staging document only. Normalize a model that
   # anticipated the final v4 contract back to v1 before the verdict verifier
@@ -6141,7 +3879,9 @@ SYNTHESIS_RETRY_EOF
       exit 1
     fi
   done
+  # shellcheck disable=SC2034 # consumed by the canonical assurance module
   REVIEWER_PROTOCOL_COMPLETE=true
+  # shellcheck disable=SC2034 # consumed by the canonical assurance module
   SYNTHESIS_PROTOCOL_COMPLETE=true
   fi
 
