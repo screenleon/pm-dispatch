@@ -341,6 +341,7 @@
               "expansion-source-budget",
               "symbol-budget",
               "search-match-budget",
+              "contract-consumer-budget",
               "expansion-entry-budget"
             ]
           }

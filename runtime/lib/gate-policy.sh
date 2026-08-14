@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # Source-safe Gate policy and assurance resolver.
 
+if ! declare -F gate_structural_schema_verify >/dev/null 2>&1; then
+  # shellcheck source=runtime/lib/gate-structural-verify.sh
+  # shellcheck disable=SC1091
+  . "${BASH_SOURCE[0]%/*}/gate-structural-verify.sh"
+fi
+
 # Portable policy reader for the gate assurance coordinates.
 #
 # Repo-layout runs read the canonical TSV files under core/policy/. A copied
@@ -718,24 +724,8 @@ _gate_policy_resolve() {
       rm -f "$signals_file"
       return 2
     }
-    if ! jq -e '
-      (keys | sort) ==
-        (["allow","approver","kind","reason","schema_version","scope_fingerprint"] | sort) and
-      .kind == "gate_policy_override_v1" and .schema_version == 1 and
-      (.scope_fingerprint | type == "string" and test("^[a-f0-9]{64}$")) and
-      (.allow | type == "object" and
-        (keys | sort) == (["omit_reviewers","tier"] | sort)) and
-      (.allow.tier == null or (.allow.tier | IN("express","standard","full"))) and
-      (.allow.omit_reviewers | type == "array" and
-        all(.[]; type == "string" and test("^[a-z0-9][a-z0-9-]*$")) and
-        length == (unique | length)) and
-      (.reason | type == "string" and length > 0) and
-      (.approver | type == "object" and
-        (keys | sort) == (["approval_ref","identity","kind"] | sort)) and
-      .approver.kind == "user" and
-      (.approver.identity | type == "string" and length > 0) and
-      (.approver.approval_ref | type == "string" and length > 0)
-    ' "$policy_override" >/dev/null 2>&1; then
+    if ! gate_structural_schema_verify gate-policy-override "$policy_override" \
+        "gate policy override"; then
       printf 'Error: invalid gate policy override contract: %s\n' "$policy_override" >&2
       rm -f "$signals_file"
       return 2

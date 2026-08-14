@@ -331,6 +331,7 @@ REPO_ROOT	REPO_ROOT	runtime/lib/pmctl-context.sh	production
 REPO_ROOT	REPO_ROOT	runtime/lib/pmctl-memory.sh	production
 REPO_ROOT	REPO_ROOT	tests/bin/run-tests.sh	production
 REPO_ROOT	REPO_ROOT	tests/lib/live-db-guard.sh	production
+REPO_ROOT	REPO_ROOT	tools/generate/gate-structural-validator.sh	production
 REPO_ROOT	REPO_ROOT	tools/lint/check-docs-freshness.sh	production
 REPO_ROOT	REPO_ROOT	tools/skills/skill-refine.sh	production
 REPO_ROOT	REPO_ROOT	uninstall.sh	production
@@ -362,6 +363,7 @@ SCRIPT_DIR	SCRIPT_DIR	runtime/bin/dispatch-post-verify.sh	production
 SCRIPT_DIR	SCRIPT_DIR	runtime/bin/doctor.sh	production
 SCRIPT_DIR	SCRIPT_DIR	tests/bin/run-all-tests.sh	production
 SCRIPT_DIR	SCRIPT_DIR	tests/bin/run-tests.sh	production
+SCRIPT_DIR	SCRIPT_DIR	tools/generate/gate-structural-validator.sh	production
 SCRIPT_DIR	SCRIPT_DIR	tools/lint/check-docs-freshness.sh	production
 SCRIPT_DIR	SCRIPT_DIR	tools/skills/skill-refine.sh	production
 TEST_GUARDS_*	TEST_GUARDS_CHILD_DEADLINE	tests/shell/test-guards.sh	test
@@ -382,6 +384,7 @@ TMPDIR	TMPDIR	runtime/bin/pr-gate.sh	production
 TMPDIR	TMPDIR	runtime/lib/gate-policy.sh	production
 TMPDIR	TMPDIR	runtime/lib/gate-result-verify.sh	production
 TMPDIR	TMPDIR	runtime/lib/gate-scope.sh	production
+TMPDIR	TMPDIR	runtime/lib/gate-structural-verify.sh	production
 TMPDIR	TMPDIR	runtime/lib/handover-validate.sh	production
 TMPDIR	TMPDIR	runtime/lib/install-receipt.sh	production
 TMPDIR	TMPDIR	runtime/lib/memory.sh	production
@@ -390,6 +393,7 @@ TMPDIR	TMPDIR	runtime/lib/pmctl-gate.sh	production
 TMPDIR	TMPDIR	runtime/lib/pmctl-pm.sh	production
 TMPDIR	TMPDIR	runtime/lib/portable.sh	production
 TMPDIR	TMPDIR	tools/eval/gate-test-gap-live-eval.sh	production
+TMPDIR	TMPDIR	tools/generate/gate-structural-validator.sh	production
 XAI_API_KEY	XAI_API_KEY	hosts/grok/lib/doctor.sh	production
 XAI_API_KEY	XAI_API_KEY	runtime/bin/doctor.sh	production
 XDG_CACHE_HOME	XDG_CACHE_HOME	tools/lint/bootstrap-shellcheck.sh	production

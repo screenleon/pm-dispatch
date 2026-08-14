@@ -1057,6 +1057,10 @@ pmctl_gate_verify() {
         policy_applicable:$policy
       }
     }')" || return 2
+  if ! gate_structural_schema_verify_json gate-verification "$report" \
+      "gate verification report"; then
+    return 2
+  fi
 
   if [[ "$json_output" == true ]]; then
     printf '%s\n' "$report"
