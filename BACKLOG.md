@@ -2592,6 +2592,14 @@ stale／legacy initial-result 行為、`tier=full + QA-only` truthful labeling�
 copy-mode／repo-layout、sequential／parallel 的完整 meaning-parity 與 consumer
 不得誤認 comprehensive coverage 的驗收。因此 PR #472 不構成 CC-527 closure。
 
+**Update 2026-08-14 (P1 first slice, still partial)**: main 現在由 gate shell 在
+published result 追加 deterministic `Gate Coordinates` block，明確列出 tier
+(rigor)、pass scope、reviewer coverage、各自 selection basis 與 execution mode；
+`tier=full + pass=targeted + coverage=[qa-tester]` 會標示為 remediation-delta，
+不命名為 full/comprehensive gate。新增 fixtures 覆蓋 copy-mode、repo-layout 與
+sequential／parallel meaning-parity。stale／legacy initial-result consumer parity
+與 publish/closure consumption 仍留在後續 slice，票面維持 partial。
+
 **Decision 2026-08-12 (PR #476)**: targeted pass 的 tier 必須從 current immutable
 subject 與 current policy 重新解析；initial result 只證明 remediation context，不能
 把舊 tree 的 tier 或 policy 帶進新 subject。這取代早期「subject-applicable initial
