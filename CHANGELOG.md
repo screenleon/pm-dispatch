@@ -10,6 +10,23 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Standalone Gate bundles load canonical libraries (CC-532).** `pr-gate.sh`
+  derived each library path independently, and the loads keyed only on the
+  installed-copy root resolved to `<bundle>/../lib` under the standalone-copy
+  layout — a path outside the bundle. Those loads silently fell through to
+  generated in-script duplicates of `gate-result-verify.sh` and
+  `artifact-paths.sh` instead of the shared implementations. Every library now
+  resolves through one layout-aware root, so all three topologies run the same
+  canonical code, and a bundle missing a library fails closed at the load site
+  naming the layout and path rather than degrading into a stale copy.
+
+  The two in-script duplicates and their generator
+  (`tools/generate-gate-result-verifier-fallback.sh`) are removed; a Gate bundle
+  is a directory contract (`pr-gate.sh` plus `lib/`, `core/policy/`, `agents/`
+  and `adapters/`), and a single copied `pr-gate.sh` was never runnable on its
+  own — it already failed closed on the executor router. The bounded copy-mode
+  policy snapshot is unaffected and remains load-bearing for installed copies.
+
 - **Reproducible ShellCheck toolchain.** CI and maintainer lint now resolve one
   repository-pinned ShellCheck version instead of inheriting different analyzer
   rules from `ubuntu-latest` or a host package manager. The shared bootstrap

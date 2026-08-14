@@ -246,6 +246,8 @@ map_path() {
       add_suite test-pmctl-gate; behavioral=1 ;;
     runtime/bin/pr-gate.sh)
       add_pr_gate_shards; add_suite test-pr-gate-profile; behavioral=1 ;;
+    runtime/lib/gate-assurance.sh|runtime/lib/gate-digest.sh|runtime/lib/gate-layout.sh|runtime/lib/gate-policy.sh|runtime/lib/gate-options.sh|runtime/lib/gate-reviewer-contract.sh|runtime/lib/gate-scope.sh|runtime/lib/gate-subject.sh)
+      add_pr_gate_shards; add_suite test-pr-gate-profile; behavioral=1 ;;
     runtime/bin/dispatch-supervisor.sh)
       add_suite test-dispatch-lifecycle; behavioral=1 ;;
     runtime/lib/gate-result-verify.sh)
@@ -253,8 +255,6 @@ map_path() {
       add_suite test-pmctl-gate; behavioral=1 ;;
     tests/lib/test-pr-gate-fixture.sh)
       add_pr_gate_shards; add_suite test-pr-gate-profile; behavioral=1 ;;
-    tools/generate-gate-result-verifier-fallback.sh)
-      add_pr_gate_shards; behavioral=1 ;;
     tools/eval/gate-test-gap-live-eval.sh|tests/fixtures/gate-live-eval/*)
       add_pr_gate_shards; behavioral=1 ;;
     core/policy/gate-tiers.tsv|core/policy/gate-modes.tsv|core/policy/gate-pass-kinds.tsv|core/policy/gate-policy-consumers.tsv|core/policy/gate-policy-signals.tsv)

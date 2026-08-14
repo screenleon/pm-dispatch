@@ -891,7 +891,7 @@ test_gate_assurance_policy_snapshot_matches_sources() {
       index($0, "cat <<\047" marker "\047") { inside=1; next }
       inside && $0 == marker { exit }
       inside { print }
-    ' "$REPO_ROOT/runtime/bin/pr-gate.sh")"
+    ' "$REPO_ROOT/runtime/lib/gate-policy.sh")"
     if [[ "$snapshot" != "$(cat "$source")" ]]; then
       fail "$name" "generated snapshot drifted from $source"
       return
@@ -1467,11 +1467,11 @@ _extract_artifact_filter_body() {
   ' "$1"
 }
 
-# Behavior: the copy-mode inline artifact_filter_porcelain fallback in
-# pr-gate.sh filters the gate's own artifacts load-bearingly: a healthy repo
+# Behavior: canonical artifact_filter_porcelain filters the gate's own artifacts
+# load-bearingly under the standalone-copy layout: a healthy repo
 # that never gitignored the artifact dirs (the exact bug condition this
 # guard exists to fix) must not false-abort.
-# Steps: build a copy-mode runner (lib absent) and a repo whose .gitignore
+# Steps: build a copy-mode runner and a repo whose .gitignore
 # omits the artifact dirs, run a full gate so it writes
 # .agent-trace/.gate-briefs/.gate-results into that repo, and assert the
 # gate exits 0, prints no injection abort, and the artifact dir was created
@@ -1486,11 +1486,11 @@ test_copy_mode_artifact_filter_no_false_abort() {
   local out="$dir/out" err="$dir/err"
   mkdir -p "$dir"
   create_runner "$runner"
-  rm -f "${runner:?}/lib/artifact-paths.sh"
-  # copy-mode precondition: the artifact-paths lib must be absent so the inline
-  # fallback (not the lib) is the code under test.
-  if [[ -f "$runner/lib/artifact-paths.sh" ]]; then
-    fail "$name" "lib/artifact-paths.sh present -- copy-mode not in effect"
+  # copy-mode precondition: the bundle carries the canonical lib, which is the
+  # single implementation of the filter in every layout. A bundle that lost the
+  # lib is a damaged bundle and fails closed -- see copy-mode/missing-lib-fails-closed.
+  if [[ ! -f "$runner/lib/artifact-paths.sh" ]]; then
+    fail "$name" "lib/artifact-paths.sh missing from standalone bundle"
     return
   fi
   create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
@@ -1517,7 +1517,7 @@ test_copy_mode_artifact_filter_no_false_abort() {
 
   # Assert
   if [[ "$code" -ne 0 ]]; then
-    fail "$name" "copy-mode gate exited $code (expected 0); fallback filter did not suppress artifact false-abort"
+    fail "$name" "copy-mode gate exited $code (expected 0); artifact filter did not suppress artifact false-abort"
     return
   fi
   # The injection-abort message must NOT appear -- proves the filter, not gitignore,
@@ -1536,46 +1536,74 @@ test_copy_mode_artifact_filter_no_false_abort() {
   pass "$name"
 }
 
-# Behavior: the copy-mode inline fallback in pr-gate.sh is byte-for-byte
-# (whitespace-normalized) identical to the canonical artifact_filter_porcelain
-# in the lib, so any drift in its NUL/rename/drop-keep logic is caught -- not
-# just the leaf list.
-# Steps: extract the whitespace-normalized function body from the lib and
-# from the pr-gate fallback, extract the leaf-array definition line from
-# each file, and assert both the function bodies and the leaf lines match
-# exactly.
-test_copy_mode_artifact_fallback_body_parity() {
-  local name="copy-mode/artifact-fallback-body-parity"
+# Behavior: under the standalone-copy layout the gate loads its canonical
+# libraries from the bundle's own lib/ rather than any in-script copy. The
+# entrypoint previously derived this path from PR_GATE_INSTALLED_COPY_ROOT,
+# which is empty for standalone-copy, so it resolved to <bundle>/../lib --
+# outside the bundle -- and silently ran a generated in-script duplicate.
+# Steps: replace a canonical lib in the bundle with a sentinel that exits 77,
+# run the gate, and assert the sentinel exit is observed. A gate that still
+# carried an in-script duplicate would ignore the sentinel and exit otherwise.
+test_copy_mode_sources_canonical_lib() {
+  local name="copy-mode/sources-canonical-lib"
   should_run "$name" || return 0
 
-  # Arrange
-  local lib_body gate_body lib_line gate_line
-  lib_body="$(_extract_artifact_filter_body "$REPO_ROOT/runtime/lib/artifact-paths.sh")"
-  gate_body="$(_extract_artifact_filter_body "$REPO_ROOT/runtime/bin/pr-gate.sh")"
-  lib_line="$(grep -E '^[[:space:]]*PM_ARTIFACT_LEAVES=\(' "$REPO_ROOT/runtime/lib/artifact-paths.sh" | sed 's/^[[:space:]]*//' | head -1)"
-  gate_line="$(grep -E '^[[:space:]]*PM_ARTIFACT_LEAVES=\(' "$REPO_ROOT/runtime/bin/pr-gate.sh" | sed 's/^[[:space:]]*//' | head -1)"
+  local dir="$TMP_ROOT/copy-mode-sources-canonical-lib"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  printf 'exit 77\n' > "$runner/lib/gate-result-verify.sh"
 
-  # Act -- (extraction above is the work; assertions below)
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  local code=$?
+  set -e
 
-  # Assert
-  if [[ -z "$lib_body" || "$lib_body" != *"artifact_filter_porcelain()"* ]]; then
-    fail "$name" "could not extract artifact_filter_porcelain body from the lib"
-    return
-  fi
-  if [[ -z "$gate_body" || "$gate_body" != *"artifact_filter_porcelain()"* ]]; then
-    fail "$name" "could not extract copy-mode artifact_filter_porcelain fallback body from pr-gate.sh"
-    return
-  fi
-  if [[ "$lib_body" != "$gate_body" ]]; then
-    fail "$name" "copy-mode fallback body drifted from canonical lib (NUL/rename/drop-keep logic differs)"
-    return
-  fi
-  if [[ -z "$lib_line" || "$lib_line" != "$gate_line" ]]; then
-    fail "$name" "leaf-list drift: lib='$lib_line' fallback='$gate_line'"
+  if [[ "$code" -ne 77 ]]; then
+    fail "$name" "standalone bundle exited $code, not the sentinel 77 -- the canonical lib in lib/ was not the code that ran"
     return
   fi
   pass "$name"
 }
+
+# Behavior: a bundle that lost a canonical library fails closed at the load
+# site, naming the layout and the missing path, instead of degrading into a
+# stale in-script copy. A gate bundle is a directory contract, not a single
+# portable file.
+# Steps: build a standalone bundle, delete one canonical lib, run the gate, and
+# assert a nonzero exit plus the bundle-contract diagnostic on stderr.
+test_copy_mode_missing_lib_fails_closed() {
+  local name="copy-mode/missing-lib-fails-closed"
+  should_run "$name" || return 0
+
+  local dir="$TMP_ROOT/copy-mode-missing-lib-fails-closed"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  rm -f "${runner:?}/lib/gate-result-verify.sh"
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  local code=$?
+  set -e
+
+  if [[ "$code" -eq 0 ]]; then
+    fail "$name" "damaged bundle exited 0; a missing canonical lib must fail closed"
+    return
+  fi
+  assert_file_contains "$name" "$err" \
+    "canonical library unavailable for standalone-copy layout" || return
+  assert_file_contains "$name" "$err" \
+    "must carry lib/ beside the entrypoint" || return
+  pass "$name"
+}
+
 
 # Behavior: the gate aborts with a clear error when a configured reviewer's
 # agent file is missing, without dispatching anything.
@@ -4586,9 +4614,9 @@ test_reviewer_cross_artifact_tamper_detected() {
   critic="$dir/critic.md"
   local qa_hash critic_hash out
   mkdir -p "$dir"
-  # Source only the production helper, not the executable gate body.
-  # shellcheck disable=SC1090
-  source <(sed -n '/^verify_reviewer_artifact_hashes()/,/^}/p' "$REPO_ROOT/runtime/bin/pr-gate.sh")
+  # Source only the canonical production helper, not the executable gate body.
+  # shellcheck source=runtime/lib/gate-reviewer-contract.sh
+  source "$REPO_ROOT/runtime/lib/gate-reviewer-contract.sh"
   printf 'Verdict: approve.\n' > "$qa"
   printf 'Verdict: approve.\n' > "$critic"
   qa_hash="$(sha256sum < "$qa")"
@@ -6143,7 +6171,8 @@ run_test test_artifact_filter_symmetry_ignores_artifacts
 run_test test_artifact_filter_handles_special_filenames
 run_test test_artifact_filter_handles_rename_origin
 run_test test_copy_mode_artifact_filter_no_false_abort
-run_test test_copy_mode_artifact_fallback_body_parity
+run_test test_copy_mode_sources_canonical_lib
+run_test test_copy_mode_missing_lib_fails_closed
 run_test test_missing_reviewer_agent
 run_test test_invalid_base_ref
 run_test test_no_changed_files
@@ -6901,9 +6930,15 @@ test_installed_copy_missing_router_fails_closed() {
   local repo="$TMP_ROOT/$name/repo" install_root="$TMP_ROOT/$name/install"
   local scripts="$TMP_ROOT/$name/install/scripts"
   local out="$TMP_ROOT/$name/out" err="$TMP_ROOT/$name/err" code=0
-  mkdir -p "$scripts" "$install_root/lib"
+  mkdir -p "$scripts/lib" "$install_root/lib"
   cp "$REPO_ROOT/runtime/bin/pr-gate.sh" "$scripts/pr-gate.sh"
   chmod +x "$scripts/pr-gate.sh"
+  # The bundle carries every canonical library except the router, so the router
+  # is the only missing dependency and its own diagnostic is what must surface.
+  cp -R "$REPO_ROOT/runtime/lib/." "$scripts/lib/"
+  rm -f "$scripts/lib/executor-router.sh"
+  # Decoy in the foreign parent tree: the gate must fail closed in its own
+  # classified topology instead of probing upward and loading this one.
   cp "$REPO_ROOT/runtime/lib/executor-router.sh" \
     "$install_root/lib/executor-router.sh"
   create_repo "$repo" docs
@@ -8360,6 +8395,85 @@ test_brief_nonexistent_file_fails_closed() {
   pass "$name"
 }
 
+# Behavior: an architecture_impact value outside the closed subject enum is
+# rejected before policy resolution or reviewer dispatch.
+test_brief_invalid_architecture_impact_fails_closed() {
+  local name="brief-invalid-architecture-impact-fails-closed"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" brief="$dir/input-brief.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  cat > "$brief" <<'BRIEF_EOF'
+schema_version: 1
+working_dir: /tmp
+goal: test
+files:
+  - read: README.md
+architecture_impact: invalid
+acceptance:
+  - test
+BRIEF_EOF
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --brief "$brief"
+  local code=$?
+  set -e
+
+  if [[ "$code" -ne 2 ]]; then
+    fail "$name" "exit $code, expected 2"
+    return
+  fi
+  assert_file_contains "$name" "$err" \
+    "--brief has invalid architecture_impact: invalid" || return
+  assert_not_contains "$name" "$err" "DISPATCH_STUB" || return
+  pass "$name"
+}
+
+# Behavior: duplicate architecture_impact declarations are rejected rather
+# than silently selecting one value.
+test_brief_duplicate_architecture_impact_fails_closed() {
+  local name="brief-duplicate-architecture-impact-fails-closed"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" brief="$dir/input-brief.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  cat > "$brief" <<'BRIEF_EOF'
+schema_version: 1
+working_dir: /tmp
+goal: test
+files:
+  - read: README.md
+architecture_impact: minor
+architecture_impact: major
+acceptance:
+  - test
+BRIEF_EOF
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --brief "$brief"
+  local code=$?
+  set -e
+
+  if [[ "$code" -ne 2 ]]; then
+    fail "$name" "exit $code, expected 2"
+    return
+  fi
+  assert_file_contains "$name" "$err" \
+    "--brief has duplicate architecture_impact declarations" || return
+  assert_not_contains "$name" "$err" "DISPATCH_STUB" || return
+  pass "$name"
+}
+
 # Behavior: architecture_impact:none adds no risk floor beyond the diff's
 # own docs-only classification.
 test_brief_none_preserves_docs_floor() {
@@ -8439,162 +8553,6 @@ test_relative_output_normalized_to_absolute() {
   pass "$name"
 }
 
-# Behavior: the generated standalone copy-mode verifier fallback is current.
-# Steps: run the checked-in generator in check mode, then retain function-level
-# diagnostics if a future generator bug produces an incomplete block.
-test_inline_fallback_matches_lib() {
-  local name="inline-fallback-matches-lib"
-  should_run "$name" || return 0
-  local function_name lib_body inline_body
-  if ! bash "$REPO_ROOT/tools/generate-gate-result-verifier-fallback.sh" --check; then
-    fail "$name" "generated verifier fallback is stale"
-    return
-  fi
-  local -a verifier_functions=(
-    gate_result_verdict_verify
-    _gate_result_frontmatter_value
-    _gate_result_sha256_file
-    gate_assurance_verify
-    gate_result_verify
-  )
-  for function_name in "${verifier_functions[@]}"; do
-    lib_body="$(awk -v signature="$function_name() {" '
-      $0 == signature {found=1}
-      found {print}
-      found && $0 == "}" {exit}
-    ' "$REPO_ROOT/runtime/lib/gate-result-verify.sh" | sed 's/^[[:space:]]*//')"
-    inline_body="$(awk -v signature="  $function_name() {" '
-      $0 == signature {found=1}
-      found {print}
-      found && $0 == "  }" {exit}
-    ' "$REPO_ROOT/runtime/bin/pr-gate.sh" | sed 's/^[[:space:]]*//')"
-    if [[ -z "$lib_body" || -z "$inline_body" ]]; then
-      fail "$name" "could not extract $function_name from shared and/or inline verifier"
-      return
-    fi
-    if [[ "$lib_body" != "$inline_body" ]]; then
-      fail "$name" "inline $function_name drifted from runtime/lib/gate-result-verify.sh"
-      return
-    fi
-  done
-  pass "$name"
-}
-
-# Behavior: fallback provenance, marker structure, and generator executability
-# are part of the generated-artifact contract, not just body parity.
-# Steps: copy the canonical generator inputs into an isolated fixture, then
-# assert canonical provenance passes while a drifted path, a missing marker, and
-# a non-executable generator each fail loudly in --check mode.
-test_inline_fallback_provenance_contract() {
-  local name="inline-fallback-provenance-contract"
-  should_run "$name" || return 0
-  local dir="$TMP_ROOT/$name" output code
-  mkdir -p "$dir/tools" "$dir/runtime/lib" "$dir/runtime/bin"
-  cp "$REPO_ROOT/tools/generate-gate-result-verifier-fallback.sh" "$dir/tools/"
-  cp "$REPO_ROOT/runtime/lib/gate-result-verify.sh" "$dir/runtime/lib/"
-  cp "$REPO_ROOT/runtime/lib/identifier-policy.sh" "$dir/runtime/lib/"
-  cp "$REPO_ROOT/runtime/bin/pr-gate.sh" "$dir/runtime/bin/"
-  chmod +x "$dir/tools/generate-gate-result-verifier-fallback.sh"
-
-  if ! output="$(bash "$dir/tools/generate-gate-result-verifier-fallback.sh" --check 2>&1)"; then
-    fail "$name" "canonical fixture rejected: $output"
-    return
-  fi
-
-  mkdir -p "$dir/alternate"
-  cp "$dir/tools/generate-gate-result-verifier-fallback.sh" \
-    "$dir/alternate/generate-gate-result-verifier-fallback.sh"
-  chmod +x "$dir/alternate/generate-gate-result-verifier-fallback.sh"
-  set +e
-  output="$(bash "$dir/alternate/generate-gate-result-verifier-fallback.sh" --check 2>&1)"
-  code=$?
-  set -e
-  if [[ "$code" -eq 0 || "$output" != *"not the canonical generator"* ]]; then
-    fail "$name" "non-canonical invocation was not rejected: code=$code output=$output"
-    return
-  fi
-
-  sed -i 's|^  # tools/generate-gate-result-verifier-fallback\.sh\. Do not edit this block by hand\.$|  # tools/non-canonical-verifier-generator.sh. Do not edit this block by hand.|' \
-    "$dir/runtime/bin/pr-gate.sh"
-  set +e
-  output="$(bash "$dir/tools/generate-gate-result-verifier-fallback.sh" --check 2>&1)"
-  code=$?
-  set -e
-  if [[ "$code" -eq 0 || "$output" != *"provenance"* ]]; then
-    fail "$name" "provenance drift was not rejected: code=$code output=$output"
-    return
-  fi
-  if ! output="$(bash "$dir/tools/generate-gate-result-verifier-fallback.sh" sync 2>&1)"; then
-    fail "$name" "sync did not repair provenance drift: $output"
-    return
-  fi
-  if ! bash "$dir/tools/generate-gate-result-verifier-fallback.sh" --check >/dev/null 2>&1; then
-    fail "$name" "repaired fallback still fails generated-artifact check"
-    return
-  fi
-
-  cp "$REPO_ROOT/runtime/bin/pr-gate.sh" "$dir/runtime/bin/pr-gate.sh"
-  sed -i 's|^  # gate-result-verifier-fallback:start$|  # gate-result-verifier-fallback:missing-start|' \
-    "$dir/runtime/bin/pr-gate.sh"
-  set +e
-  output="$(bash "$dir/tools/generate-gate-result-verifier-fallback.sh" --check 2>&1)"
-  code=$?
-  set -e
-  if [[ "$code" -eq 0 || "$output" != *"markers"* ]]; then
-    fail "$name" "marker drift was not rejected: code=$code output=$output"
-    return
-  fi
-
-  cp "$REPO_ROOT/runtime/bin/pr-gate.sh" "$dir/runtime/bin/pr-gate.sh"
-  sed -i '/^  # gate-result-verifier-fallback:start$/a\  # gate-result-verifier-fallback:start' \
-    "$dir/runtime/bin/pr-gate.sh"
-  set +e
-  output="$(bash "$dir/tools/generate-gate-result-verifier-fallback.sh" --check 2>&1)"
-  code=$?
-  set -e
-  if [[ "$code" -eq 0 || "$output" != *"markers"* ]]; then
-    fail "$name" "duplicate marker drift was not rejected: code=$code output=$output"
-    return
-  fi
-
-  cp "$REPO_ROOT/runtime/bin/pr-gate.sh" "$dir/runtime/bin/pr-gate.sh"
-  awk -v start='  # gate-result-verifier-fallback:start' \
-      -v finish='  # gate-result-verifier-fallback:end' '
-    {
-      lines[NR] = $0
-      if ($0 == start) start_line = NR
-      if ($0 == finish) finish_line = NR
-    }
-    END {
-      for (line = 1; line <= NR; line++) {
-        if (line == start_line) print finish
-        else if (line == finish_line) print start
-        else print lines[line]
-      }
-    }
-  ' "$dir/runtime/bin/pr-gate.sh" > "$dir/runtime/bin/pr-gate.reversed.sh"
-  mv "$dir/runtime/bin/pr-gate.reversed.sh" "$dir/runtime/bin/pr-gate.sh"
-  set +e
-  output="$(bash "$dir/tools/generate-gate-result-verifier-fallback.sh" --check 2>&1)"
-  code=$?
-  set -e
-  if [[ "$code" -eq 0 || "$output" != *"markers"* ]]; then
-    fail "$name" "reversed marker drift was not rejected: code=$code output=$output"
-    return
-  fi
-
-  cp "$REPO_ROOT/runtime/bin/pr-gate.sh" "$dir/runtime/bin/pr-gate.sh"
-  chmod a-x "$dir/tools/generate-gate-result-verifier-fallback.sh"
-  set +e
-  output="$(bash "$dir/tools/generate-gate-result-verifier-fallback.sh" --check 2>&1)"
-  code=$?
-  set -e
-  if [[ "$code" -eq 0 || "$output" != *"not executable"* ]]; then
-    fail "$name" "non-executable generator was not rejected: code=$code output=$output"
-    return
-  fi
-  pass "$name"
-}
 
 # Behavior: a repo-root .gate-overrides.md is injected into the sequential
 # reviewer brief as an "Accepted-risk overrides" section.
@@ -8838,13 +8796,13 @@ run_test test_parallel_reviewer_brief_guard_absolute_path_when_pmctl_not_on_path
 run_test test_claude_seq_brief_guard_stays_bare_pmctl_when_pmctl_not_on_path
 run_test test_missing_jq_fails_before_dispatch
 run_test test_relative_output_normalized_to_absolute
-run_test test_inline_fallback_matches_lib
-run_test test_inline_fallback_provenance_contract
 run_test test_brief_major_resolves_full
 run_test test_brief_minor_resolves_standard
 run_test test_brief_explicit_full_satisfies_policy_floor
 run_test test_brief_explicit_tier_below_policy_floor_fails
 run_test test_brief_nonexistent_file_fails_closed
+run_test test_brief_invalid_architecture_impact_fails_closed
+run_test test_brief_duplicate_architecture_impact_fails_closed
 run_test test_brief_none_preserves_docs_floor
 run_test test_override_file_injected_into_sequential_brief
 run_test test_override_file_autodiscovery
