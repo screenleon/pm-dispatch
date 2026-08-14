@@ -25,6 +25,8 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 th_init "$@"
 
 CORE_DIR="$REPO_ROOT/core"
+# shellcheck source=runtime/lib/gate-structural-verify.sh disable=SC1091
+. "$REPO_ROOT/runtime/lib/gate-structural-verify.sh"
 
 # ---------- helpers ----------
 
@@ -1968,6 +1970,60 @@ case_gate_policy_override_mode_key_rejected() {
   rm -f "$tmpf"
 }
 
+case_gate_structural_generated_bundle_current() {
+  local name="Gate structural schema bundle is fresh"
+  should_run "$name" || return 0
+  if "$REPO_ROOT/tools/generate/gate-structural-validator.sh" --check; then
+    pass "$name"
+  else
+    fail "$name" "generated bundle is stale"
+  fi
+}
+
+case_gate_structural_valid_instances() {
+  local name="schema-derived Gate validator accepts canonical instances"
+  local tmpf
+  should_run "$name" || return 0
+  tmpf="$(mktemp "${TMPDIR:-/tmp}/gate-structural-valid.XXXXXX")"
+  local ok=true schema instance
+  for schema in gate-scope-manifest gate-assurance gate-verification \
+      gate-reviewer-result gate-synthesis-result gate-policy-override; do
+    case "$schema" in
+      gate-scope-manifest) instance="$(_gate_scope_manifest_valid_instance)" ;;
+      gate-assurance) instance="$(_gate_assurance_valid_instance)" ;;
+      gate-verification) instance="$(_gate_verification_valid_instance)" ;;
+      gate-reviewer-result) instance="$(_gate_reviewer_result_valid_instance)" ;;
+      gate-synthesis-result) instance="$(_gate_synthesis_result_valid_instance)" ;;
+      gate-policy-override) instance="$(_gate_policy_override_valid_instance)" ;;
+    esac
+    printf '%s\n' "$instance" > "$tmpf"
+    if ! gate_structural_schema_verify "$schema" "$tmpf" "$name ($schema)"; then
+      ok=false
+    fi
+  done
+  _gate_assurance_v3_valid_instance > "$tmpf"
+  if ! gate_structural_schema_verify gate-assurance "$tmpf" \
+      "$name (gate-assurance v3)"; then
+    ok=false
+  fi
+  rm -f -- "$tmpf"
+  if [[ "$ok" == true ]]; then pass "$name"; else fail "$name" "canonical instance rejected"; fi
+}
+
+case_gate_structural_rejects_extra_key() {
+  local name="schema-derived Gate validator rejects extra keys" tmpf
+  should_run "$name" || return 0
+  tmpf="$(mktemp "${TMPDIR:-/tmp}/gate-structural-invalid.XXXXXX")"
+  _gate_policy_override_valid_instance | jq '.unexpected = true' > "$tmpf"
+  if gate_structural_schema_verify gate-policy-override "$tmpf" "$name"; then
+    rm -f -- "$tmpf"
+    fail "$name" "extra key was accepted"
+  else
+    rm -f -- "$tmpf"
+    pass "$name"
+  fi
+}
+
 case_context_pack_v1_still_valid
 case_context_pack_v2_new_fields_valid
 case_context_pack_memory_source_domain_valid
@@ -2014,5 +2070,8 @@ case_gate_policy_override_valid_instance
 case_gate_policy_override_non_user_approver_rejected
 case_gate_policy_override_extra_key_rejected
 case_gate_policy_override_mode_key_rejected
+case_gate_structural_generated_bundle_current
+case_gate_structural_valid_instances
+case_gate_structural_rejects_extra_key
 
 th_summary

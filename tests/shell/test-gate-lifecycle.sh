@@ -67,6 +67,12 @@ _mk_fixture_repo() {
   for _lib in identifier-policy.sh state-paths.sh portable.sh gate-digest.sh gate-result-verify.sh detached-launch.sh; do
     cp "$REPO_ROOT/runtime/lib/$_lib" "$fixture/runtime/lib/$_lib"
   done
+  cp "$REPO_ROOT/runtime/lib/gate-structural-verify.sh" \
+    "$fixture/runtime/lib/gate-structural-verify.sh"
+  cp "$REPO_ROOT/runtime/lib/gate-structural-validator.jq" \
+    "$fixture/runtime/lib/gate-structural-validator.jq"
+  cp "$REPO_ROOT/runtime/lib/gate-structural-schemas.json" \
+    "$fixture/runtime/lib/gate-structural-schemas.json"
 }
 
 # Install a fake pr-gate.sh that signals $started_fifo then blocks reading

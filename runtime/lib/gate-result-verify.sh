@@ -35,6 +35,11 @@ if ! declare -F pm_identifier_run_ere_pattern >/dev/null 2>&1; then
   # shellcheck disable=SC1091
   . "${BASH_SOURCE[0]%/*}/identifier-policy.sh"
 fi
+if ! declare -F gate_structural_schema_verify >/dev/null 2>&1; then
+  # shellcheck source=runtime/lib/gate-structural-verify.sh
+  # shellcheck disable=SC1091
+  . "${BASH_SOURCE[0]%/*}/gate-structural-verify.sh"
+fi
 
 gate_result_verdict_verify() {
   local result_file=${1-} expected_final=${2-} route_label=${3-gate}
@@ -470,6 +475,12 @@ gate_reviewer_protocol_verify() {
       rm -rf -- "$tmp_dir"
       return 1
     fi
+    if ! gate_structural_schema_verify gate-reviewer-result "$document" \
+        "reviewer protocol ($reviewer)"; then
+      GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR="schema structural contract failed"
+      rm -rf -- "$tmp_dir"
+      return 1
+    fi
     # CC-541: detect (from the already-parsed structured document, not a
     # later markdown re-scan) a qa-tester block/block-soft finding whose
     # own text cites the rules source as missing, while this orchestrator
@@ -529,7 +540,7 @@ _gate_synthesis_protocol_documents() {
 gate_synthesis_protocol_verify() {
   local artifact=${1-} selected=${2-} skipped=${3-} scope_sha=${4-}
   local require_test_gaps=${5-false}
-  local tmp_dir synthesis_documents reviewer_documents synthesis_count validation
+  local tmp_dir synthesis_documents synthesis_document reviewer_documents synthesis_count validation
   local heading heading_count
   GATE_SYNTHESIS_PROTOCOL_ERROR=""
   [[ $# -ge 4 && $# -le 5 && -s "$artifact" && -n "$selected" \
@@ -563,6 +574,12 @@ gate_synthesis_protocol_verify() {
     rm -rf -- "$tmp_dir"
     return 1
   fi
+  synthesis_document="$tmp_dir/synthesis.json"
+  jq -s '.[0]' "$synthesis_documents" > "$synthesis_document" || {
+    GATE_SYNTHESIS_PROTOCOL_ERROR="invalid synthesis JSON"
+    rm -rf -- "$tmp_dir"
+    return 1
+  }
   if ! _gate_reviewer_protocol_documents "$artifact" \
       > "$reviewer_documents" \
       || ! jq -s -e 'length > 0' "$reviewer_documents" >/dev/null 2>&1; then
@@ -854,6 +871,12 @@ gate_synthesis_protocol_verify() {
     GATE_SYNTHESIS_PROTOCOL_ERROR="$validation"
     printf 'Error: synthesis protocol INCOMPLETE: %s in %s\n' \
       "$validation" "$artifact" >&2
+    rm -rf -- "$tmp_dir"
+    return 1
+  fi
+  if ! gate_structural_schema_verify gate-synthesis-result "$synthesis_document" \
+      "synthesis protocol"; then
+    GATE_SYNTHESIS_PROTOCOL_ERROR="schema structural contract failed"
     rm -rf -- "$tmp_dir"
     return 1
   fi
@@ -1151,6 +1174,12 @@ gate_scope_manifest_verify() {
       "$manifest_file" >&2
     return 1
   }
+  if ! gate_structural_schema_verify gate-scope-manifest "$manifest_file" \
+      "gate scope manifest"; then
+    printf 'Error: gate scope manifest failed structural/claim verification: %s\n' \
+      "$manifest_file" >&2
+    return 1
+  fi
   expected_digest="$(jq -r '.content.digest // empty' "$manifest_file" 2>/dev/null)"
   actual_digest="$(jq -cS 'del(.content.digest)' "$manifest_file" 2>/dev/null \
     | _gate_result_sha256_stream)" || return $?
@@ -1636,6 +1665,12 @@ gate_assurance_verify() {
     GATE_ASSURANCE_BOUND=false
     export GATE_ASSURANCE_BOUND
     return 0
+  fi
+  if ! gate_structural_schema_verify gate-assurance "$assurance_file" \
+      "gate assurance"; then
+    printf 'Error: gate assurance failed structural/claim verification: %s\n' \
+      "$assurance_file" >&2
+    return 1
   fi
   result_sha="$(_gate_result_sha256_file "$result_file")" || return $?
   jq -e --arg final "$body_final" --arg result_sha "$result_sha" \
