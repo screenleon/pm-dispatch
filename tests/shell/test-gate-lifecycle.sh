@@ -64,7 +64,7 @@ _mk_fixture_repo() {
   cp "$REPO_ROOT/runtime/lib/pmctl-gate.sh" "$fixture/runtime/lib/pmctl-gate.sh"
   cp "$REPO_ROOT/runtime/bin/gate-supervisor.sh" "$fixture/runtime/bin/gate-supervisor.sh"
   chmod +x "$fixture/runtime/bin/gate-supervisor.sh"
-  for _lib in identifier-policy.sh state-paths.sh portable.sh gate-result-verify.sh detached-launch.sh; do
+  for _lib in identifier-policy.sh state-paths.sh portable.sh gate-digest.sh gate-result-verify.sh detached-launch.sh; do
     cp "$REPO_ROOT/runtime/lib/$_lib" "$fixture/runtime/lib/$_lib"
   done
 }

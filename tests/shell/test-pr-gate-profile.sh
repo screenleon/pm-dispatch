@@ -581,19 +581,19 @@ test_canonical_domain_functions_have_single_source_owner() {
     "$REPO_ROOT/runtime/lib/gate-reviewer-contract.sh"; do
     while IFS= read -r function; do
       [[ -n "$function" ]] || continue
-      if rg -q "^${function}[[:space:]]*\\(\\)[[:space:]]*\\{" "$entrypoint"; then
+      if grep -Eq -- "^${function}[[:space:]]*\\(\\)[[:space:]]*\\{" "$entrypoint"; then
         fail "$name" "${function} is duplicated in $entrypoint and $module"
         return
       fi
-    done < <(rg -o '^[A-Za-z_][A-Za-z0-9_]*\(\)[[:space:]]*\{' "$module" \
+    done < <(grep -Eo -- '^[A-Za-z_][A-Za-z0-9_]*\(\)[[:space:]]*\{' "$module" \
       | sed -E 's/\(.*$//')
   done
-  if rg -q '^SCRIPT_DIR[[:space:]]*=' "$entrypoint" \
-      || rg -q '^PR_GATE_(LAYOUT|LIB_DIR|BUNDLE_ROOT|SCRIPT_DIR)[[:space:]]*=' "$entrypoint"; then
+  if grep -Eq -- '^SCRIPT_DIR[[:space:]]*=' "$entrypoint" \
+      || grep -Eq -- '^PR_GATE_(LAYOUT|LIB_DIR|BUNDLE_ROOT|SCRIPT_DIR)[[:space:]]*=' "$entrypoint"; then
     fail "$name" 'entrypoint still owns deployment-layout classification'
     return
   fi
-  if ! rg -q '^gate_layout_resolve[[:space:]]+' "$entrypoint"; then
+  if ! grep -Eq -- '^gate_layout_resolve[[:space:]]+' "$entrypoint"; then
     fail "$name" 'entrypoint does not resolve layout through the canonical module'
     return
   fi
