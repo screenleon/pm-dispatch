@@ -1232,6 +1232,15 @@ dispatch|review_dispatch_evidence_incomplete|generic
 scope|scope_manifest_unavailable|generic
 targeted|comprehensive_review_required|publish
 CASES
+  axis="$(gate_policy_applicability_assess "$fixture" publish verified "" verified)"
+  if ! jq -e '
+      .status == "pass" and
+      .policy_satisfaction == "baseline" and
+      (.reason_codes | length) == 0
+    ' <<<"$axis" >/dev/null; then
+    fail "$name" "verified closure did not authorize targeted publish assessment: $axis"
+    return
+  fi
   pass "$name"
 }
 

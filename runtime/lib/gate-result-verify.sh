@@ -992,7 +992,7 @@ _gate_subject_tree_fingerprint() {
     committed_head|working_tree)
       while IFS= read -r -d '' path; do
         case "$path" in
-          .agent-trace|.agent-trace/*|.gate-briefs|.gate-briefs/*|.gate-results|.gate-results/*)
+          .agent-trace|.agent-trace/*|.gate-briefs|.gate-briefs/*|.gate-results|.gate-results/*|.pm-dispatch-ship-finish.json)
             continue
             ;;
         esac
@@ -1568,9 +1568,11 @@ _gate_assurance_linked_evidence_verify() {
 #                                  <embedded|generic|maintainer|publish>
 #                                  <verified|unavailable|invalid>
 #                                  [authorization-reason]
+#                                  [closure-authorized]
 gate_policy_applicability_assess() {
   local assurance_file="$1" consumer="$2" authorization_status="$3"
   local authorization_reason="${4:-dispatch_authorization_unavailable}"
+  local closure_authorized="${5:-unavailable}"
   case "$consumer" in
     embedded|generic|maintainer|publish) ;;
     *)
@@ -1593,7 +1595,8 @@ gate_policy_applicability_assess() {
   jq -nc --slurpfile assurance "$assurance_file" \
     --arg consumer "$consumer" \
     --arg authorization_status "$authorization_status" \
-    --arg authorization_reason "$authorization_reason" '
+    --arg authorization_reason "$authorization_reason" \
+    --arg closure_authorized "$closure_authorized" '
     def policy_rank:
       if . == "generic" then 1
       elif . == "maintainer" then 2
@@ -1627,6 +1630,7 @@ gate_policy_applicability_assess() {
       if ($consumer == "maintainer" or $consumer == "publish") and
          ($a.coordinates.pass.resolved != "initial" or
           $a.coordinates.pass.scope != "comprehensive")
+        and $closure_authorized != "verified"
         then "comprehensive_review_required" else empty end
     ] | unique) as $reasons |
     {

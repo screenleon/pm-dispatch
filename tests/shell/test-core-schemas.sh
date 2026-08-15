@@ -1862,6 +1862,79 @@ _gate_remediation_closure_valid_instance() {
   '
 }
 
+_gate_publish_assessment_valid_instance() {
+  jq -n '
+    {
+      kind:"gate_publish_assessment_v1",
+      schema_version:1,
+      ticket:"CC-511",
+      subject:{
+        repository_key:("a" * 64),
+        base_commit:("1" * 40),
+        head_commit:("2" * 40),
+        tree_fingerprint:("b" * 64)
+      },
+      authorization:{status:"authorized",route:"primary_review_closure",reason_codes:[]},
+      policy:{
+        embedded_policy:"generic",
+        required_policy:"generic",
+        preferred_policy:"maintainer",
+        policy_satisfaction:"baseline"
+      },
+      gate:{
+        result_file:"/tmp/gate.md",
+        assurance_file:"/tmp/gate.assurance.json",
+        verdict:"GO",
+        subject_fingerprint:("b" * 64),
+        artifact_sha256:("c" * 64),
+        assurance_sha256:("f" * 64)
+      },
+      closure:{
+        artifact:"/tmp/closure.json",
+        sha256:("d" * 64),
+        state:"closed",
+        subject_fingerprint:("b" * 64),
+        targeted_confirmation:"pass"
+      },
+      full_suite:{
+        artifact:"/tmp/full.json",
+        sha256:("e" * 64),
+        status:"pass",
+        subject_fingerprint:("b" * 64)
+      }
+    }
+  '
+}
+
+case_gate_publish_assessment_valid_instance() {
+  local name="gate-publish-assessment: verified baseline closure artifact validates"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/gate-publish-assessment.schema.json" tmpf
+  tmpf="$(mktemp /tmp/gate-publish-assessment-valid-XXXXXX.json)"
+  _gate_publish_assessment_valid_instance > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name" "schema rejected a canonical publish assessment"
+  fi
+  rm -f "$tmpf"
+}
+
+case_gate_publish_assessment_invalid_policy_rejected() {
+  local name="gate-publish-assessment: unknown policy satisfaction is rejected"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/gate-publish-assessment.schema.json" tmpf
+  tmpf="$(mktemp /tmp/gate-publish-assessment-policy-XXXXXX.json)"
+  _gate_publish_assessment_valid_instance |
+    jq '.policy.policy_satisfaction = "unknown"' > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    fail "$name" "schema accepted an unknown policy satisfaction"
+  else
+    pass "$name"
+  fi
+  rm -f "$tmpf"
+}
+
 case_gate_remediation_closure_valid_instance() {
   local name="remediation-closure: canonical closed artifact validates"
   should_run "$name" || return 0
@@ -2169,7 +2242,7 @@ case_gate_structural_valid_instances() {
   local ok=true schema instance
   for schema in gate-scope-manifest gate-assurance gate-verification \
       gate-reviewer-result gate-synthesis-result gate-policy-override \
-      gate-remediation-closure; do
+      gate-remediation-closure gate-publish-assessment; do
     case "$schema" in
       gate-scope-manifest) instance="$(_gate_scope_manifest_valid_instance)" ;;
       gate-assurance) instance="$(_gate_assurance_valid_instance)" ;;
@@ -2178,6 +2251,7 @@ case_gate_structural_valid_instances() {
       gate-synthesis-result) instance="$(_gate_synthesis_result_valid_instance)" ;;
       gate-policy-override) instance="$(_gate_policy_override_valid_instance)" ;;
       gate-remediation-closure) instance="$(_gate_remediation_closure_valid_instance)" ;;
+      gate-publish-assessment) instance="$(_gate_publish_assessment_valid_instance)" ;;
     esac
     printf '%s\n' "$instance" > "$tmpf"
     if ! gate_structural_schema_verify "$schema" "$tmpf" "$name ($schema)"; then
@@ -2250,6 +2324,8 @@ case_gate_remediation_closure_valid_instance
 case_gate_remediation_closure_invalid_finding_rejected
 case_gate_remediation_closure_runtime_claims
 case_gate_remediation_closure_publish_is_no_replace
+case_gate_publish_assessment_valid_instance
+case_gate_publish_assessment_invalid_policy_rejected
 case_gate_synthesis_result_invalid_verification_plan_rejected
 case_gate_synthesis_result_contradictory_no_gap_rejected
 case_gate_synthesis_result_incomplete_gap_rejected

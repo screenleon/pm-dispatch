@@ -36,6 +36,31 @@ if ! declare -F pm_identifier_operation_is_valid >/dev/null 2>&1; then
   unset _pmctl_ship_lib_dir
 fi
 
+if ! declare -F gate_publish_assessment_build >/dev/null 2>&1; then
+  # shellcheck source=runtime/lib/gate-publish.sh
+  # shellcheck disable=SC1091
+  . "${BASH_SOURCE[0]%/*}/gate-publish.sh"
+fi
+# The final publication check also recomputes the Gate subject fingerprint. In
+# production gate-publish.sh provides the canonical working-tree manifest;
+# the fallback keeps isolated function-level callers deterministic without
+# sourcing the larger Gate module over their test doubles.
+_pmctl_ship_tree_fingerprint() {
+  local work_dir="$1" subject_kind="$2" head_commit="$3"
+  if declare -F _gate_subject_tree_fingerprint >/dev/null 2>&1; then
+    _gate_subject_tree_fingerprint "$work_dir" "$subject_kind" "$head_commit"
+  else
+    git -C "$work_dir" rev-parse "${head_commit}^{tree}"
+  fi
+}
+
+_pmctl_ship_worktree_status() {
+  # The finish marker is an intentionally untracked runtime state artifact.
+  # Exclude only that exact root path; every source or user change remains
+  # visible to the publication guards.
+  git -C "$1" status --porcelain -- . ':(exclude).pm-dispatch-ship-finish.json' 2>/dev/null
+}
+
 pmctl_ship_usage() {
   printf 'usage: pmctl ship <ticket-id> [--worktree] [--adapter <name>] [--from <base>] [--isolation <level>] [--model <alias>] [--auto-pack|--no-auto-pack] [--cd <work_dir>]\n' >&2
   printf '           Start a manual ship lane. Bare: in the current worktree (alias: prepare). --worktree: isolated worktree, no dispatch. --adapter: dispatch (implies --worktree).\n' >&2
@@ -248,6 +273,19 @@ pmctl_ship_finish() {
     pmctl_gate_verify "$repo_root" "$result_path" --cd "$work_dir" \
       --consumer publish --json
   )" || gate_verification_status=$?
+  # A targeted confirmation is not independently publish-authorizing, but a
+  # valid remediation closure can authorize the final tree. Re-read that
+  # current Gate artifact in embedded mode so the publish assessment can bind
+  # the closure without weakening the normal publish policy path.
+  if [[ "$gate_verification_status" -ne 0 ]] \
+      && jq -e '.axes.policy_applicable.reason_codes | index("comprehensive_review_required")' \
+        <<<"$gate_verification" >/dev/null 2>&1; then
+    gate_verification_status=0
+    gate_verification="$(
+      pmctl_gate_verify "$repo_root" "$result_path" --cd "$work_dir" \
+        --consumer embedded --json
+    )" || gate_verification_status=$?
+  fi
   if ! jq -e '.kind == "gate_verification_v1"' \
       <<<"$gate_verification" >/dev/null 2>&1; then
     printf 'pmctl ship finish: shared gate verifier returned no structured assessment; refusing publication\n' >&2
@@ -274,7 +312,7 @@ pmctl_ship_finish() {
   # at all, yet would ride along in the same push). Refuse push/PR in
   # either case rather than publish content the gate verdict does not
   # actually cover.
-  if [[ -n "$(git -C "$work_dir" status --porcelain 2>/dev/null)" ]]; then
+  if [[ -n "$(_pmctl_ship_worktree_status "$work_dir")" ]]; then
     printf 'pmctl ship finish: GO, but the tree is dirty -- refusing to push/PR content the gate did not review. Commit or discard the uncommitted changes and re-run finish.\n' >&2
     return 1
   fi
@@ -305,7 +343,7 @@ pmctl_ship_finish() {
   # ran, not whatever state happens to exist after the runner returns. Keep
   # the same publication boundary used after the gate: no dirty content and
   # no new commit may cross from verified evidence into the remote mutation.
-  if [[ -n "$(git -C "$work_dir" status --porcelain 2>/dev/null)" ]]; then
+  if [[ -n "$(_pmctl_ship_worktree_status "$work_dir")" ]]; then
     printf 'pmctl ship finish: full suite passed, but the tree is dirty -- refusing to push/PR content outside the verified evidence. Commit or discard the uncommitted changes and re-run finish.\n' >&2
     return 1
   fi
@@ -326,7 +364,8 @@ pmctl_ship_finish() {
     printf 'pmctl ship finish: remediation closure publisher is unavailable; refusing publication\n' >&2
     return 2
   fi
-  local remediation_closure
+  local remediation_closure gate_verification_file publish_assessment
+  local producer_policy policy_satisfaction preferred_policy
   remediation_closure="$work_dir/.pm-dispatch/test-results/ship-remediation-closure-${ticket_id}-${post_suite_head}.json"
   mkdir -p "$(dirname "$remediation_closure")" || {
     printf 'pmctl ship finish: unable to create remediation closure directory\n' >&2
@@ -342,6 +381,64 @@ pmctl_ship_finish() {
     return 1
   fi
   printf 'pmctl ship finish: remediation closure: %s\n' "$remediation_closure"
+
+  # This is the only publication assessment consumed below. It binds the
+  # already verified Gate, closure, and full-suite artifacts to one subject;
+  # stdout, the PR body, and the finish marker all read their assurance fields
+  # from this same JSON document.
+  if ! declare -F gate_publish_assessment_build >/dev/null 2>&1 \
+      || ! declare -F gate_publish_assessment_verify >/dev/null 2>&1; then
+    printf 'pmctl ship finish: shared publish assessment verifier is unavailable; refusing publication\n' >&2
+    return 2
+  fi
+  gate_verification_file="$(mktemp "${TMPDIR:-/tmp}/pm-ship-gate-verification.XXXXXX.json")" || return 2
+  printf '%s\n' "$gate_verification" > "$gate_verification_file"
+  publish_assessment="$work_dir/.pm-dispatch/test-results/ship-publish-assessment-${ticket_id}-${post_suite_head}.json"
+  if ! gate_publish_assessment_build \
+      "$publish_assessment" "$gate_verification_file" "$remediation_closure" \
+      "$full_result" "$ticket_id"; then
+    rm -f -- "$gate_verification_file"
+    printf 'pmctl ship finish: verified publish assessment could not be built; refusing publication\n' >&2
+    return 1
+  fi
+  rm -f -- "$gate_verification_file"
+  if ! gate_publish_assessment_verify "$publish_assessment"; then
+    printf 'pmctl ship finish: verified publish assessment failed self-verification; refusing publication\n' >&2
+    return 1
+  fi
+  producer_policy="$(jq -r '.policy.embedded_policy' "$publish_assessment")"
+  policy_satisfaction="$(jq -r '.policy.policy_satisfaction' "$publish_assessment")"
+  preferred_policy="$(jq -r '.policy.preferred_policy' "$publish_assessment")"
+  printf 'pmctl ship finish: publish assurance: producer=%s satisfaction=%s preferred=%s\n' \
+    "$producer_policy" "$policy_satisfaction" "$preferred_policy"
+  printf 'pmctl ship finish: publish assessment: %s\n' "$publish_assessment"
+
+  # Re-check the exact immutable subject immediately before resolving the
+  # branch and pushing. The earlier guards protect the gate/full-suite
+  # transitions; this last check closes the remaining interval in which a
+  # concurrent commit or file change could otherwise cross the irreversible
+  # remote-mutation boundary after assessment self-verification.
+  local verified_head verified_tree current_head current_tree
+  if [[ -n "$(_pmctl_ship_worktree_status "$work_dir")" ]]; then
+    printf 'pmctl ship finish: publish assessment verified, but the tree became dirty before push -- refusing publication. Re-run finish against the current tree.\n' >&2
+    return 1
+  fi
+  verified_head="$(jq -r '.subject.head_commit // empty' "$publish_assessment")"
+  verified_tree="$(jq -r '.subject.tree_fingerprint // empty' "$publish_assessment")"
+  current_head="$(git -C "$work_dir" rev-parse HEAD 2>/dev/null)"
+  if [[ -z "$verified_head" || "$current_head" != "$verified_head" ]]; then
+    printf 'pmctl ship finish: publish assessment verified, but HEAD moved before push (%s -> %s) -- refusing publication. Re-run finish against the current HEAD.\n' \
+      "${verified_head:-unknown}" "${current_head:-unknown}" >&2
+    return 1
+  fi
+  current_tree="$(_pmctl_ship_tree_fingerprint "$work_dir" committed_head "$current_head")" || {
+    printf 'pmctl ship finish: unable to recompute the current tree fingerprint before push -- refusing publication.\n' >&2
+    return 1
+  }
+  if [[ -z "$verified_tree" || "$current_tree" != "$verified_tree" ]]; then
+    printf 'pmctl ship finish: publish assessment verified, but the tree fingerprint changed before push -- refusing publication. Re-run finish against the current tree.\n' >&2
+    return 1
+  fi
 
   local branch
   branch="$(git -C "$work_dir" rev-parse --abbrev-ref HEAD 2>/dev/null)"
@@ -369,8 +466,12 @@ pmctl_ship_finish() {
     printf 'pmctl ship finish: pushed %s, but `gh` is unavailable -- open the PR manually\n' "$branch" >&2
     jq -n --arg ticket "$ticket_id" --arg branch "$branch" \
       --arg remediation_closure "$remediation_closure" \
+      --arg publish_assessment "$publish_assessment" \
+      --arg producer_policy "$producer_policy" \
+      --arg policy_satisfaction "$policy_satisfaction" \
+      --arg preferred_policy "$preferred_policy" \
       --arg finished_ts "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date)" \
-      '{ticket: $ticket, verdict: "PUSHED_NO_PR", branch: $branch, remediation_closure: $remediation_closure, pr_url: null, finished_ts: $finished_ts}' \
+      '{schema_version:2,ticket: $ticket, verdict: "PUSHED_NO_PR", branch: $branch, remediation_closure: $remediation_closure, publish_assessment:$publish_assessment, publish_assurance:{embedded_policy:$producer_policy,preferred_policy:$preferred_policy,policy_satisfaction:$policy_satisfaction}, pr_url: null, finished_ts: $finished_ts}' \
       > "$marker" 2>/dev/null || true
     # Nonzero: gate passed and the branch is pushed, but the ship contract
     # (gate GO -> PR opened) is not yet complete -- the caller must open the
@@ -388,7 +489,7 @@ pmctl_ship_finish() {
   # practice; not adding one speculatively here.
   local pr_url pr_status=0
   pr_url="$(cd "$work_dir" && gh pr create --title "chore(${ticket_id}): ship" \
-    --body "$(printf '## Gate\n- Final verdict: GO\n- Result file: %s\n- Remediation closure: %s\n\nTicket: %s\n' "$result_path" "$remediation_closure" "$ticket_id")")" || pr_status=$?
+    --body "$(printf '## Gate\n- Final verdict: GO\n- Result file: %s\n- Remediation closure: %s\n- Publish assessment: %s\n- Publish assurance: producer=%s, satisfaction=%s (preferred=%s)\n- Full suite: %s\n\nTicket: %s\n' "$result_path" "$remediation_closure" "$publish_assessment" "$producer_policy" "$policy_satisfaction" "$preferred_policy" "$full_result" "$ticket_id")")" || pr_status=$?
   printf '%s\n' "$pr_url"
   if [[ "$pr_status" -ne 0 ]]; then
     # `gh` was confirmed present at the earlier preflight, but `gh pr
@@ -402,16 +503,24 @@ pmctl_ship_finish() {
     # risk-reviewer converged on.
     jq -n --arg ticket "$ticket_id" --arg branch "$branch" \
       --arg remediation_closure "$remediation_closure" \
+      --arg publish_assessment "$publish_assessment" \
+      --arg producer_policy "$producer_policy" \
+      --arg policy_satisfaction "$policy_satisfaction" \
+      --arg preferred_policy "$preferred_policy" \
       --arg finished_ts "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date)" \
-      '{ticket: $ticket, verdict: "PUSHED_PR_FAILED", branch: $branch, remediation_closure: $remediation_closure, pr_url: null, finished_ts: $finished_ts}' \
+      '{schema_version:2,ticket: $ticket, verdict: "PUSHED_PR_FAILED", branch: $branch, remediation_closure: $remediation_closure, publish_assessment:$publish_assessment, publish_assurance:{embedded_policy:$producer_policy,preferred_policy:$preferred_policy,policy_satisfaction:$policy_satisfaction}, pr_url: null, finished_ts: $finished_ts}' \
       > "$marker" 2>/dev/null || true
     return "$pr_status"
   fi
 
   jq -n --arg ticket "$ticket_id" --arg branch "$branch" --arg pr_url "$pr_url" \
     --arg result_path "$result_path" --arg remediation_closure "$remediation_closure" \
+    --arg publish_assessment "$publish_assessment" \
+    --arg producer_policy "$producer_policy" \
+    --arg policy_satisfaction "$policy_satisfaction" \
+    --arg preferred_policy "$preferred_policy" \
     --arg finished_ts "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date)" \
-    '{ticket: $ticket, verdict: "GO", branch: $branch, pr_url: $pr_url, result_path: $result_path, remediation_closure: $remediation_closure, finished_ts: $finished_ts}' \
+    '{schema_version:2,ticket: $ticket, verdict: "GO", branch: $branch, pr_url: $pr_url, result_path: $result_path, remediation_closure: $remediation_closure, publish_assessment:$publish_assessment, publish_assurance:{embedded_policy:$producer_policy,preferred_policy:$preferred_policy,policy_satisfaction:$policy_satisfaction}, finished_ts: $finished_ts}' \
     > "$marker" 2>/dev/null || true
 }
 

@@ -396,6 +396,16 @@ passing `--consumer` is authorizing and requires all three axes to pass.
 `gate wait` and `ship finish` consume this shared assessment rather than
 grepping `Final: GO`.
 
+The publication boundary adds one further shared artifact,
+`gate_publish_assessment_v1`. It is produced only after the Gate assessment,
+the immutable remediation closure, and the authoritative full-suite result
+have all been verified against the same tree subject. Its policy object is
+copied from the shared policy resolver, including producer policy and
+`baseline|preferred` satisfaction. `ship finish` consumes this one assessment
+for publication authorization; its stdout, PR body, and
+`.pm-dispatch-ship-finish.json` marker must not independently recompute those
+fields.
+
 For the direct current-tree publication path, `publish` accepts a current
 initial generic result as baseline and a current initial maintainer result as
 preferred. A targeted result cannot authorize publication by itself. The
@@ -421,8 +431,9 @@ Legacy result v1/v2 artifacts remain readable under their historical
 contracts. Result v3 proves selected-reviewer protocol evidence; current result
 v4 additionally proves synthesis union and coverage parity.
 No gate result version is publication authorization by itself; `ship finish`
-requires a current, applicable gate-assurance v3 assessment plus the
-authoritative current-tree full-suite evidence and publication guards.
+requires a current, applicable gate-assurance v3 assessment plus a verified
+`gate_publish_assessment_v1` containing the authoritative current-tree
+full-suite evidence and publication guards.
 Without `--gate-result`, finish produces a fresh preferred maintainer result.
 With an explicit `--gate-result <artifact>`, it reuses that result only after
 publish-consumer verification; it never guesses a latest artifact.

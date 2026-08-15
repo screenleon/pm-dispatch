@@ -76,15 +76,18 @@ gate_remediation_closure_publish() {
   local full_result="${4:-}" ticket_ref="${5:-}"
   local result_parent scope_artifact scope_file scope_sha subject_json subject_fp
   local final primary_result primary_assurance primary_subject primary_verdict
-  local primary_artifact primary_sha synthesis_tmp findings_json reviewers_json
+  local primary_artifact primary_sha synthesis_tmp initial_synthesis_tmp findings_json reviewers_json
+  local targeted_findings_json required_targeted_ids missing_targeted_ids
   local changed_files_json closure_tmp full_status full_tree full_artifact full_sha
   local test_evidence_json targeted_status targeted_reviewers
   local result_sha
+  local allow_existing_retry=false
 
   [[ $# -ge 3 && $# -le 5 ]] || {
     printf 'gate-closure: publish expects <result> <assurance> <closure> [full-result] [ticket-ref]\n' >&2
     return 2
   }
+  [[ $# -eq 5 && -n "$ticket_ref" ]] && allow_existing_retry=true
   [[ -s "$result_file" && -s "$assurance_file" ]] || {
     printf 'gate-closure: result and assurance artifacts are required\n' >&2
     return 1
@@ -138,9 +141,14 @@ gate_remediation_closure_publish() {
   fi
 
   synthesis_tmp="$(mktemp "${TMPDIR:-/tmp}/gate-closure-synthesis.XXXXXX.json")" || return 1
+  initial_synthesis_tmp=""
   findings_json='[]'
+  targeted_findings_json='[]'
   reviewers_json='[]'
   if _gate_closure_synthesis_json "$result_file" "$synthesis_tmp"; then
+    targeted_findings_json="$(jq -c '.findings_union // []' "$synthesis_tmp")" || {
+      rm -f "$synthesis_tmp"; return 1;
+    }
     findings_json="$(jq -c '.findings_union // []' "$synthesis_tmp")" || {
       rm -f "$synthesis_tmp"; return 1;
     }
@@ -149,13 +157,50 @@ gate_remediation_closure_publish() {
     }
   fi
 
+  # A targeted pass is delta evidence, not a replacement for the initial
+  # comprehensive ledger. When the initial result has an immutable sidecar,
+  # carry its complete finding inventory into the closure and require the
+  # targeted GO to explicitly cover every initial diff-caused/uncertain
+  # finding. Otherwise a targeted reviewer could omit an original blocker and
+  # accidentally authorize publication by virtue of the omission.
+  if [[ "$primary_result" != "$result_file" ]]; then
+    initial_synthesis_tmp="$(mktemp "${TMPDIR:-/tmp}/gate-closure-initial-synthesis.XXXXXX.json")" || {
+      rm -f "$synthesis_tmp"; return 1;
+    }
+    if _gate_closure_synthesis_json "$primary_result" "$initial_synthesis_tmp"; then
+      findings_json="$(jq -c '.findings_union // []' "$initial_synthesis_tmp")" || {
+        rm -f "$synthesis_tmp" "$initial_synthesis_tmp"; return 1;
+      }
+      if [[ "$final" == GO && "$(jq -r '.coordinates.pass.resolved // empty' "$assurance_file")" == targeted ]]; then
+        required_targeted_ids="$(jq -c '[.[] | select(.origin == "diff_caused" or .origin == "uncertain") | .id] | unique' <<<"$findings_json")" || {
+          rm -f "$synthesis_tmp" "$initial_synthesis_tmp"; return 1;
+        }
+        missing_targeted_ids="$(jq -cn --argjson required "$required_targeted_ids" --argjson observed "${targeted_findings_json:-[]}" '
+          ($observed | map(.id) | unique) as $observed_ids |
+          ($required - $observed_ids)')" || {
+          rm -f "$synthesis_tmp" "$initial_synthesis_tmp"; return 1;
+        }
+        if [[ "$missing_targeted_ids" != "[]" ]]; then
+          printf 'gate-closure: targeted pass does not explicitly cover initial blocking findings: %s\n' \
+            "$missing_targeted_ids" >&2
+          rm -f "$synthesis_tmp" "$initial_synthesis_tmp"
+          return 1
+        fi
+      fi
+    elif [[ "$final" == GO && "$(jq -r '.coordinates.pass.resolved // empty' "$assurance_file")" == targeted ]]; then
+      printf 'gate-closure: targeted pass lacks the initial comprehensive finding ledger\n' >&2
+      rm -f "$synthesis_tmp" "$initial_synthesis_tmp"
+      return 1
+    fi
+  fi
+
   changed_files_json="$(jq -c --argjson findings "$findings_json" '
     ([.changes.changed_paths[], .changes.renamed_paths[]?.from,
       .changes.renamed_paths[]?.to, .changes.untracked_paths[],
       .diff.binary_or_special_paths[]]) |
       map(select(type == "string" and length > 0)) | unique | sort
   ' "$scope_file")" || {
-    rm -f "$synthesis_tmp"; return 1;
+    rm -f "$synthesis_tmp" "$initial_synthesis_tmp"; return 1;
   }
 
   full_status=not_run
@@ -169,12 +214,12 @@ gate_remediation_closure_publish() {
       .aggregate.status == "pass" and .exit_code == 0
     ' "$full_result" >/dev/null 2>&1 || [[ "$full_tree" != "$subject_fp" ]]; then
       printf 'gate-closure: supplied full-suite evidence is not an authoritative pass for the Gate subject\n' >&2
-      rm -f "$synthesis_tmp"
+      rm -f "$synthesis_tmp" "$initial_synthesis_tmp"
       return 1
     fi
     full_status=pass
     full_artifact="$(basename "$full_result")"
-    full_sha="$(gate_digest_file "$full_result")" || { rm -f "$synthesis_tmp"; return 1; }
+    full_sha="$(gate_digest_file "$full_result")" || { rm -f "$synthesis_tmp" "$initial_synthesis_tmp"; return 1; }
   fi
 
   targeted_status=not_required
@@ -278,11 +323,30 @@ gate_remediation_closure_publish() {
           $full_status == "pass" and $unresolved == 0)}
     }
   ' > "$closure_tmp"; then
-    rm -f "$closure_tmp" "$synthesis_tmp"
+    rm -f "$closure_tmp" "$synthesis_tmp" "$initial_synthesis_tmp"
     return 1
   fi
-  rm -f "$synthesis_tmp"
-  _gate_closure_destination_check "$closure_file" || { rm -f "$closure_tmp"; return 1; }
+  rm -f "$synthesis_tmp" "$initial_synthesis_tmp"
+  if [[ -e "$closure_file" || -L "$closure_file" ]]; then
+    # A retry after a pushed branch's transient PR failure may rebuild the
+    # same deterministic closure path. Reuse is allowed only for an exact,
+    # already-valid immutable artifact; a changed or redirected destination
+    # remains fail-closed and is never overwritten.
+    if [[ "$allow_existing_retry" == true \
+        && -f "$closure_file" && ! -L "$closure_file" ]] \
+        && cmp -s "$closure_tmp" "$closure_file" \
+        && gate_remediation_closure_verify "$closure_file" "$subject_fp" "$scope_sha"; then
+      rm -f "$closure_tmp" "$initial_synthesis_tmp"
+      printf 'gate-closure: reusing unchanged closure destination: %s\n' "$closure_file" >&2
+      printf '%s\n' "$closure_file"
+      return 0
+    fi
+    _gate_closure_destination_check "$closure_file" || { rm -f "$closure_tmp" "$initial_synthesis_tmp"; return 1; }
+    printf 'gate-closure: closure destination already exists and differs: %s\n' "$closure_file" >&2
+    rm -f "$closure_tmp" "$initial_synthesis_tmp"
+    return 1
+  fi
+  _gate_closure_destination_check "$closure_file" || { rm -f "$closure_tmp" "$initial_synthesis_tmp"; return 1; }
   # Link-then-unlink is an atomic no-replace publish on the same filesystem:
   # unlike `mv`, it cannot overwrite a closure that appeared after the
   # destination check. The temporary file is created beside the destination,
@@ -290,10 +354,10 @@ gate_remediation_closure_publish() {
   if ! ln -- "$closure_tmp" "$closure_file"; then
     printf 'gate-closure: destination already exists or cannot be published: %s\n' \
       "$closure_file" >&2
-    rm -f "$closure_tmp"
+    rm -f "$closure_tmp" "$initial_synthesis_tmp"
     return 1
   fi
-  rm -f "$closure_tmp"
+  rm -f "$closure_tmp" "$initial_synthesis_tmp"
   if ! gate_remediation_closure_verify "$closure_file" "$subject_fp" "$scope_sha"; then
     printf 'gate-closure: published artifact failed its own verification: %s\n' "$closure_file" >&2
     return 1

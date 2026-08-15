@@ -241,7 +241,7 @@ map_path() {
       add_suite test-pmctl-task; behavioral=1 ;;
     core/schema/preflight-evidence.schema.json)
       add_pr_gate_shards; behavioral=1 ;;
-    core/schema/gate-assurance.schema.json|core/schema/gate-policy-override.schema.json|core/schema/gate-reviewer-result.schema.json|core/schema/gate-scope-manifest.schema.json|core/schema/gate-synthesis-result.schema.json|core/schema/gate-verification.schema.json)
+    core/schema/gate-assurance.schema.json|core/schema/gate-policy-override.schema.json|core/schema/gate-publish-assessment.schema.json|core/schema/gate-reviewer-result.schema.json|core/schema/gate-scope-manifest.schema.json|core/schema/gate-synthesis-result.schema.json|core/schema/gate-verification.schema.json)
       add_suite test-core-schemas; add_pr_gate_shards
       add_suite test-pmctl-gate; behavioral=1 ;;
     runtime/bin/pr-gate.sh)
@@ -252,6 +252,9 @@ map_path() {
       add_suite test-dispatch-lifecycle; behavioral=1 ;;
     runtime/lib/gate-result-verify.sh)
       add_pr_gate_shards; add_suite test-pr-gate-profile
+      add_suite test-pmctl-gate; behavioral=1 ;;
+    runtime/lib/gate-publish.sh|runtime/lib/pmctl-ship.sh)
+      add_suite test-pmctl-ship; add_suite test-core-schemas
       add_suite test-pmctl-gate; behavioral=1 ;;
     tests/lib/test-pr-gate-fixture.sh)
       add_pr_gate_shards; add_suite test-pr-gate-profile; behavioral=1 ;;

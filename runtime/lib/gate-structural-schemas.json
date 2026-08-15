@@ -1554,6 +1554,232 @@
     "title": "Gate tier and coverage downgrade override",
     "type": "object"
   },
+  "gate-publish-assessment": {
+    "additionalProperties": false,
+    "definitions": {
+      "policy": {
+        "additionalProperties": false,
+        "properties": {
+          "embedded_policy": {
+            "enum": [
+              "generic",
+              "maintainer"
+            ]
+          },
+          "policy_satisfaction": {
+            "enum": [
+              "baseline",
+              "preferred"
+            ]
+          },
+          "preferred_policy": {
+            "enum": [
+              "generic",
+              "maintainer"
+            ]
+          },
+          "required_policy": {
+            "enum": [
+              "generic",
+              "maintainer"
+            ]
+          }
+        },
+        "required": [
+          "embedded_policy",
+          "required_policy",
+          "preferred_policy",
+          "policy_satisfaction"
+        ],
+        "type": "object"
+      },
+      "sha256": {
+        "pattern": "^[a-f0-9]{64}$",
+        "type": "string"
+      },
+      "subject": {
+        "additionalProperties": false,
+        "properties": {
+          "base_commit": {
+            "pattern": "^[a-f0-9]{40}$",
+            "type": "string"
+          },
+          "head_commit": {
+            "pattern": "^[a-f0-9]{40}$",
+            "type": "string"
+          },
+          "repository_key": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "tree_fingerprint": {
+            "$ref": "#/definitions/sha256"
+          }
+        },
+        "required": [
+          "repository_key",
+          "base_commit",
+          "head_commit",
+          "tree_fingerprint"
+        ],
+        "type": "object"
+      }
+    },
+    "description": "The single immutable assessment consumed by ship publication surfaces.",
+    "properties": {
+      "authorization": {
+        "additionalProperties": false,
+        "properties": {
+          "reason_codes": {
+            "items": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "type": "array",
+            "uniqueItems": true
+          },
+          "route": {
+            "enum": [
+              "final_tree_review",
+              "primary_review_closure"
+            ]
+          },
+          "status": {
+            "enum": [
+              "authorized",
+              "rejected"
+            ]
+          }
+        },
+        "required": [
+          "status",
+          "route",
+          "reason_codes"
+        ],
+        "type": "object"
+      },
+      "closure": {
+        "additionalProperties": false,
+        "properties": {
+          "artifact": {
+            "pattern": "^/",
+            "type": "string"
+          },
+          "sha256": {
+            "$ref": "#/definitions/sha256"
+          },
+          "state": {
+            "const": "closed"
+          },
+          "subject_fingerprint": {
+            "$ref": "#/definitions/sha256"
+          },
+          "targeted_confirmation": {
+            "enum": [
+              "pass",
+              "not_required"
+            ]
+          }
+        },
+        "required": [
+          "artifact",
+          "sha256",
+          "state",
+          "subject_fingerprint",
+          "targeted_confirmation"
+        ],
+        "type": "object"
+      },
+      "full_suite": {
+        "additionalProperties": false,
+        "properties": {
+          "artifact": {
+            "pattern": "^/",
+            "type": "string"
+          },
+          "sha256": {
+            "$ref": "#/definitions/sha256"
+          },
+          "status": {
+            "const": "pass"
+          },
+          "subject_fingerprint": {
+            "$ref": "#/definitions/sha256"
+          }
+        },
+        "required": [
+          "artifact",
+          "sha256",
+          "status",
+          "subject_fingerprint"
+        ],
+        "type": "object"
+      },
+      "gate": {
+        "additionalProperties": false,
+        "properties": {
+          "artifact_sha256": {
+            "$ref": "#/definitions/sha256"
+          },
+          "assurance_file": {
+            "pattern": "^/",
+            "type": "string"
+          },
+          "assurance_sha256": {
+            "$ref": "#/definitions/sha256"
+          },
+          "result_file": {
+            "pattern": "^/",
+            "type": "string"
+          },
+          "subject_fingerprint": {
+            "$ref": "#/definitions/sha256"
+          },
+          "verdict": {
+            "const": "GO"
+          }
+        },
+        "required": [
+          "result_file",
+          "assurance_file",
+          "verdict",
+          "subject_fingerprint",
+          "artifact_sha256",
+          "assurance_sha256"
+        ],
+        "type": "object"
+      },
+      "kind": {
+        "const": "gate_publish_assessment_v1"
+      },
+      "policy": {
+        "$ref": "#/definitions/policy"
+      },
+      "schema_version": {
+        "const": 1
+      },
+      "subject": {
+        "$ref": "#/definitions/subject"
+      },
+      "ticket": {
+        "pattern": "^[A-Z][A-Z0-9]*-[0-9]+$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "kind",
+      "schema_version",
+      "ticket",
+      "subject",
+      "authorization",
+      "policy",
+      "gate",
+      "closure",
+      "full_suite"
+    ],
+    "title": "Verified publish assessment",
+    "type": "object"
+  },
   "gate-remediation-closure": {
     "additionalProperties": false,
     "definitions": {
