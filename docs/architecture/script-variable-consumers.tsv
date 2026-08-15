@@ -384,6 +384,7 @@ TMPDIR	TMPDIR	runtime/bin/pr-gate.sh	production
 TMPDIR	TMPDIR	runtime/lib/gate-closure.sh	production
 TMPDIR	TMPDIR	runtime/lib/gate-policy.sh	production
 TMPDIR	TMPDIR	runtime/lib/gate-result-verify.sh	production
+TMPDIR	TMPDIR	runtime/lib/gate-subject.sh	production
 TMPDIR	TMPDIR	runtime/lib/gate-scope.sh	production
 TMPDIR	TMPDIR	runtime/lib/gate-structural-verify.sh	production
 TMPDIR	TMPDIR	runtime/lib/handover-validate.sh	production

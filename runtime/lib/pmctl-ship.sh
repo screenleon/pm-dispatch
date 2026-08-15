@@ -41,17 +41,26 @@ if ! declare -F gate_publish_assessment_build >/dev/null 2>&1; then
   # shellcheck disable=SC1091
   . "${BASH_SOURCE[0]%/*}/gate-publish.sh"
 fi
-# The final publication check also recomputes the Gate subject fingerprint. In
-# production gate-publish.sh provides the canonical working-tree manifest;
-# the fallback keeps isolated function-level callers deterministic without
-# sourcing the larger Gate module over their test doubles.
+# Test seams may replace the publish builder before this library is sourced.
+# Load the small canonical Gate subject owner independently so those seams
+# cannot accidentally select a weaker fingerprint implementation or import
+# unrelated result-verifier producers.
+if ! declare -F _gate_subject_tree_fingerprint >/dev/null 2>&1; then
+  # shellcheck source=runtime/lib/gate-subject.sh
+  # shellcheck disable=SC1091
+  . "${BASH_SOURCE[0]%/*}/gate-subject.sh"
+fi
+# The final publication check also recomputes the Gate subject fingerprint.
+# gate-publish.sh loads the canonical Gate subject implementation; there is no
+# weaker local fallback because publication must never use a different subject
+# fingerprint algorithm merely because a shared helper was not loaded.
 _pmctl_ship_tree_fingerprint() {
   local work_dir="$1" subject_kind="$2" head_commit="$3"
-  if declare -F _gate_subject_tree_fingerprint >/dev/null 2>&1; then
-    _gate_subject_tree_fingerprint "$work_dir" "$subject_kind" "$head_commit"
-  else
-    git -C "$work_dir" rev-parse "${head_commit}^{tree}"
+  if ! declare -F _gate_subject_tree_fingerprint >/dev/null 2>&1; then
+    printf 'pmctl ship: canonical Gate subject fingerprint helper is unavailable\n' >&2
+    return 2
   fi
+  _gate_subject_tree_fingerprint "$work_dir" "$subject_kind" "$head_commit"
 }
 
 _pmctl_ship_worktree_status() {

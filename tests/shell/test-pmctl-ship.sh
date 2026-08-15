@@ -514,6 +514,28 @@ run_real_publish_assessment_build() {
   ' _ "$REPO_ROOT" "$dir"
 }
 
+# Behavior: ship subject checks refuse to fall back to a weaker fingerprint
+# algorithm when the canonical Gate helper is unavailable.
+# Steps: 1) Create a valid fixture repo; 2) remove the canonical helper from a
+# sourced ship shell; 3) require the subject fingerprint call to fail closed.
+case_ship_subject_fingerprint_requires_canonical_helper() {
+  local name="ship subject fingerprint requires canonical Gate helper"
+  should_run "$name" || return 0
+  local work="$tmp_root/ship-canonical-subject-helper" status=0
+  make_work_repo "$work" "CC-9001"
+  bash -c '
+    repo_root="$1"; work_dir="$2"
+    . "$repo_root/runtime/lib/pmctl-ship.sh"
+    unset -f _gate_subject_tree_fingerprint
+    _pmctl_ship_tree_fingerprint "$work_dir" committed_head HEAD
+  ' _ "$REPO_ROOT" "$work" >/dev/null 2>&1 || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "ship accepted a missing canonical subject helper"
+  fi
+}
+
 # Behavior: the publish-assessment builder refuses a different pre-existing destination without overwriting it.
 # Steps: 1) Arrange valid source fixtures and a sentinel output; 2) invoke the real builder; 3) require failure and byte-for-byte sentinel preservation.
 case_publish_assessment_rejects_existing_destination() {
@@ -2947,6 +2969,7 @@ case_finish_cli_forwards_full_result_option
 case_finish_cli_forwards_gate_result_option
 case_finish_cli_valid_gate_result_publishes
 case_finish_cli_valid_full_result_publishes
+case_ship_subject_fingerprint_requires_canonical_helper
 case_publish_assessment_binds_closure_and_full_suite
 case_publish_assessment_rejects_existing_destination
 case_publish_assessment_and_closure_are_concurrent_no_replace

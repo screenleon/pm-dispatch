@@ -28,6 +28,11 @@ if ! declare -F gate_digest_stream >/dev/null 2>&1; then
   . "$_gate_digest_module"
   unset _gate_result_verify_dir _gate_digest_module
 fi
+if ! declare -F _gate_subject_tree_fingerprint >/dev/null 2>&1; then
+  # shellcheck source=runtime/lib/gate-subject.sh
+  # shellcheck disable=SC1091
+  . "${BASH_SOURCE[0]%/*}/gate-subject.sh"
+fi
 #
 # gate_result_verdict_verify <result_file> [expected_final] [route_label]
 if ! declare -F pm_identifier_run_ere_pattern >/dev/null 2>&1; then
@@ -940,97 +945,6 @@ _gate_subject_common_dir() {
     return 2
   }
   printf '%s\n' "$common_dir"
-}
-
-_gate_subject_tree_fingerprint() {
-  local repo_root="$1" subject_kind="$2" head_commit="$3"
-  local manifest path quoted kind executable digest
-  local entry metadata mode object target
-  manifest="$(mktemp "${TMPDIR:-/tmp}/gate-subject-tree.XXXXXX")" || return 2
-  case "$subject_kind" in
-    fixed_ref)
-      while IFS= read -r -d '' entry; do
-        metadata="${entry%%$'\t'*}"
-        path="${entry#*$'\t'}"
-        mode="${metadata%% *}"
-        object="${metadata##* }"
-        quoted="$(printf '%q' "$path")"
-        case "$mode" in
-          120000)
-            kind=symlink
-            executable=false
-            target="$(git -C "$repo_root" cat-file blob "$object" 2>/dev/null)" || {
-              rm -f -- "$manifest"
-              return 2
-            }
-            digest="$(printf '%s' "$target" | _gate_result_sha256_stream)" || {
-              rm -f -- "$manifest"
-              return 2
-            }
-            ;;
-          100644|100755)
-            kind="file"
-            [[ "$mode" == 100755 ]] && executable=true || executable=false
-            digest="$(git -C "$repo_root" cat-file blob "$object" 2>/dev/null \
-              | _gate_result_sha256_stream)" || {
-              rm -f -- "$manifest"
-              return 2
-            }
-            ;;
-          *)
-            # Keep gitlinks and other non-file entries visible without
-            # claiming local file content, matching the workspace manifest.
-            kind=missing
-            executable=false
-            digest=-
-            ;;
-        esac
-        printf '%s\t%s\t%s\t%s\n' "$quoted" "$kind" "$executable" "$digest" \
-          >> "$manifest"
-      done < <(git -C "$repo_root" ls-tree -r -z --full-tree "$head_commit" 2>/dev/null)
-      ;;
-    committed_head|working_tree)
-      while IFS= read -r -d '' path; do
-        case "$path" in
-          .agent-trace|.agent-trace/*|.gate-briefs|.gate-briefs/*|.gate-results|.gate-results/*|.pm-dispatch-ship-finish.json)
-            continue
-            ;;
-        esac
-        quoted="$(printf '%q' "$path")"
-        if [[ -L "$repo_root/$path" ]]; then
-          kind=symlink
-          executable=false
-          digest="$(printf '%s' "$(readlink "$repo_root/$path")" \
-            | _gate_result_sha256_stream)" || {
-            rm -f -- "$manifest"
-            return 2
-          }
-        elif [[ -f "$repo_root/$path" ]]; then
-          kind="file"
-          [[ -x "$repo_root/$path" ]] && executable=true || executable=false
-          digest="$(_gate_result_sha256_file "$repo_root/$path")" || {
-            rm -f -- "$manifest"
-            return 2
-          }
-        else
-          kind=missing
-          executable=false
-          digest=-
-        fi
-        printf '%s\t%s\t%s\t%s\n' "$quoted" "$kind" "$executable" "$digest" \
-          >> "$manifest"
-      done < <(git -C "$repo_root" ls-files --cached --others --exclude-standard -z)
-      ;;
-    *)
-      printf 'Error: unsupported gate subject kind: %s\n' "$subject_kind" >&2
-      rm -f -- "$manifest"
-      return 2
-      ;;
-  esac
-  LC_ALL=C sort "$manifest" | _gate_result_sha256_stream
-  local rc=$?
-  rm -f -- "$manifest"
-  return "$rc"
 }
 
 # gate_subject_snapshot <repo> <base-ref> <head-ref> <subject-kind>
