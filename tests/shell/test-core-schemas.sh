@@ -27,6 +27,8 @@ th_init "$@"
 CORE_DIR="$REPO_ROOT/core"
 # shellcheck source=runtime/lib/gate-structural-verify.sh disable=SC1091
 . "$REPO_ROOT/runtime/lib/gate-structural-verify.sh"
+# shellcheck source=runtime/lib/gate-closure.sh disable=SC1091
+. "$REPO_ROOT/runtime/lib/gate-closure.sh"
 
 # ---------- helpers ----------
 
@@ -1784,6 +1786,185 @@ _gate_synthesis_result_valid_instance() {
   '
 }
 
+_gate_remediation_closure_valid_instance() {
+  jq -n '
+    {
+      kind:"remediation_closure_v1",
+      schema_version:1,
+      state:"closed",
+      scope_manifest_sha256:("a" * 64),
+      primary:{
+        gate_result:{
+          artifact:"primary-result.md",
+          sha256:("b" * 64),
+          subject_fingerprint:("d" * 64)
+        },
+        verdict:"NO-GO",
+        status:"verified",
+        subject:{
+          repository_key:("c" * 64),
+          base_commit:("1" * 40),
+          head_commit:("2" * 40),
+          tree_fingerprint:("d" * 64),
+          subject_kind:"committed_head"
+        }
+      },
+      final_subject:{
+        repository_key:("c" * 64),
+        base_commit:("1" * 40),
+        head_commit:("2" * 40),
+        tree_fingerprint:("d" * 64),
+        subject_kind:"committed_head"
+      },
+      findings:[{
+        finding_id:"critic-F001",
+        origin:"diff_caused",
+        disposition:"closed",
+        classification:"local",
+        changed_paths:["runtime/lib/gate-closure.sh"],
+        evidence_refs:[{path:"runtime/lib/gate-closure.sh",line:1,symbol:null}],
+        affected_test_ids:["closure-schema"],
+        verification_status:"pass"
+      }],
+      changed_files:["runtime/lib/gate-closure.sh"],
+      affected_tests:[{
+        id:"closure-schema",
+        kind:"focused",
+        command:"bash tests/shell/test-core-schemas.sh",
+        status:"pass",
+        subject_fingerprint:("d" * 64),
+        artifact:null,
+        artifact_sha256:null
+      },{
+        id:"closure-full",
+        kind:"full",
+        command:"bash tests/bin/run-all-tests.sh",
+        status:"pass",
+        subject_fingerprint:("d" * 64),
+        artifact:"latest-full.json",
+        artifact_sha256:("e" * 64)
+      }],
+      targeted_confirmation:{
+        status:"not_required",
+        reviewers:[],
+        delta_only:true,
+        evidence:null
+      },
+      unresolved_counts:{total:0,blocking:0,advisory:0},
+      final_assessment:{
+        remediation_status:"closed",
+        affected_tests_status:"pass",
+        full_suite_status:"pass",
+        subject_fingerprint:("d" * 64),
+        publish_authorized:true
+      }
+    }
+  '
+}
+
+case_gate_remediation_closure_valid_instance() {
+  local name="remediation-closure: canonical closed artifact validates"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/gate-remediation-closure.schema.json" tmpf
+  tmpf="$(mktemp /tmp/gate-remediation-closure-valid-XXXXXX.json)"
+  _gate_remediation_closure_valid_instance > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name" "schema rejected a canonical remediation closure"
+  fi
+  rm -f "$tmpf"
+}
+
+case_gate_remediation_closure_invalid_finding_rejected() {
+  local name="remediation-closure: cross-field finding rules stay runtime-owned"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/gate-remediation-closure.schema.json" tmpf
+  tmpf="$(mktemp /tmp/gate-remediation-closure-invalid-XXXXXX.json)"
+  _gate_remediation_closure_valid_instance |
+    jq '.findings[0].disposition = "tracked"' > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    # The cross-field rule is intentionally runtime-owned; the structural
+    # schema still accepts the enum combination for historical inspection.
+    pass "$name"
+  else
+    fail "$name" "schema rejected a structurally valid finding row"
+  fi
+  rm -f "$tmpf"
+}
+
+case_gate_remediation_closure_runtime_claims() {
+  local name="remediation-closure: runtime verifier enforces finding classification"
+  should_run "$name" || return 0
+  local valid invalid
+  valid="$(mktemp /tmp/gate-remediation-closure-runtime-XXXXXX.json)"
+  invalid="${valid}.invalid"
+  _gate_remediation_closure_valid_instance > "$valid"
+  _gate_remediation_closure_valid_instance |
+    jq '.findings[0].disposition = "tracked"' > "$invalid"
+  if ! gate_remediation_closure_verify "$valid" \
+      "$(printf 'd%.0s' {1..64})" "$(printf 'a%.0s' {1..64})"; then
+    fail "$name" "canonical closure was rejected"
+    rm -f "$valid" "$invalid"
+    return
+  fi
+  if gate_remediation_closure_verify "$invalid" \
+      "$(printf 'd%.0s' {1..64})" "$(printf 'a%.0s' {1..64})" >/dev/null 2>&1; then
+    fail "$name" "invalid finding classification was accepted"
+  else
+    pass "$name"
+  fi
+  rm -f "$valid" "$invalid"
+}
+
+case_gate_remediation_closure_publish_is_no_replace() {
+  local name="remediation-closure: existing artifact is immutable and preserved"
+  should_run "$name" || return 0
+  local dir result assurance scope closure subject scope_sha before after
+  dir="$(mktemp -d /tmp/gate-remediation-closure-publish-XXXXXX)"
+  result="$dir/result.md"
+  assurance="$result.assurance.json"
+  scope="$dir/scope.json"
+  closure="$dir/closure.json"
+  subject="$(printf 'd%.0s' {1..64})"
+  scope_sha="$(printf 'a%.0s' {1..64})"
+
+  printf 'Final: GO\n' > "$result"
+  jq -n --arg subject "$subject" --arg scope_sha "$scope_sha" '{
+    subject:{
+      repository_key:("c" * 64),
+      base_commit:("1" * 40),
+      head_commit:("2" * 40),
+      tree_fingerprint:$subject,
+      subject_kind:"committed_head"
+    },
+    evidence:{scope_manifest:{artifact:"scope.json",sha256:$scope_sha}}
+  }' > "$assurance"
+  jq -n '{
+    changes:{changed_paths:["runtime/lib/gate-closure.sh"],renamed_paths:[],untracked_paths:[]},
+    diff:{binary_or_special_paths:[]}
+  }' > "$scope"
+
+  if ! gate_remediation_closure_publish "$result" "$assurance" "$closure" >/dev/null; then
+    fail "$name" "initial closure publication failed"
+    rm -rf "$dir"
+    return
+  fi
+  before="$(gate_digest_file "$closure")"
+  if gate_remediation_closure_publish "$result" "$assurance" "$closure" >/dev/null 2>&1; then
+    fail "$name" "republish unexpectedly replaced an existing closure"
+    rm -rf "$dir"
+    return
+  fi
+  after="$(gate_digest_file "$closure")"
+  if [[ "$before" != "$after" ]] || ! jq -e '.kind == "remediation_closure_v1"' "$closure" >/dev/null 2>&1; then
+    fail "$name" "existing closure bytes were not preserved"
+  else
+    pass "$name"
+  fi
+  rm -rf "$dir"
+}
+
 # Behavior: a complete synthesis parity document must satisfy its JSON schema.
 # Steps:
 #   1. Generate the canonical synthesis fixture.
@@ -1987,7 +2168,8 @@ case_gate_structural_valid_instances() {
   tmpf="$(mktemp "${TMPDIR:-/tmp}/gate-structural-valid.XXXXXX")"
   local ok=true schema instance
   for schema in gate-scope-manifest gate-assurance gate-verification \
-      gate-reviewer-result gate-synthesis-result gate-policy-override; do
+      gate-reviewer-result gate-synthesis-result gate-policy-override \
+      gate-remediation-closure; do
     case "$schema" in
       gate-scope-manifest) instance="$(_gate_scope_manifest_valid_instance)" ;;
       gate-assurance) instance="$(_gate_assurance_valid_instance)" ;;
@@ -1995,6 +2177,7 @@ case_gate_structural_valid_instances() {
       gate-reviewer-result) instance="$(_gate_reviewer_result_valid_instance)" ;;
       gate-synthesis-result) instance="$(_gate_synthesis_result_valid_instance)" ;;
       gate-policy-override) instance="$(_gate_policy_override_valid_instance)" ;;
+      gate-remediation-closure) instance="$(_gate_remediation_closure_valid_instance)" ;;
     esac
     printf '%s\n' "$instance" > "$tmpf"
     if ! gate_structural_schema_verify "$schema" "$tmpf" "$name ($schema)"; then
@@ -2063,6 +2246,10 @@ case_gate_reviewer_result_malformed_test_gap_rejected
 case_gate_synthesis_result_valid_instance
 case_gate_synthesis_result_missing_verification_rejected
 case_gate_synthesis_result_closed_seed_rejected
+case_gate_remediation_closure_valid_instance
+case_gate_remediation_closure_invalid_finding_rejected
+case_gate_remediation_closure_runtime_claims
+case_gate_remediation_closure_publish_is_no_replace
 case_gate_synthesis_result_invalid_verification_plan_rejected
 case_gate_synthesis_result_contradictory_no_gap_rejected
 case_gate_synthesis_result_incomplete_gap_rejected

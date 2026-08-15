@@ -40,6 +40,11 @@ if ! declare -F gate_structural_schema_verify >/dev/null 2>&1; then
   # shellcheck disable=SC1091
   . "${BASH_SOURCE[0]%/*}/gate-structural-verify.sh"
 fi
+if ! declare -F gate_remediation_closure_verify >/dev/null 2>&1; then
+  # shellcheck source=runtime/lib/gate-closure.sh
+  # shellcheck disable=SC1091
+  . "${BASH_SOURCE[0]%/*}/gate-closure.sh"
+fi
 
 gate_result_verdict_verify() {
   local result_file=${1-} expected_final=${2-} route_label=${3-gate}
@@ -1529,6 +1534,12 @@ _gate_assurance_linked_evidence_verify() {
       if [[ "$(jq -r '.status' "$artifact_path")" == incomplete ]]; then
         printf 'Error: incomplete gate scope manifest cannot authorize a gate result: %s\n' \
           "$artifact_path" >&2
+        return 1
+      fi
+    elif [[ "$label" == closure ]]; then
+      if ! gate_remediation_closure_verify "$artifact_path" \
+          "$linked_subject" \
+          "$(jq -r '.evidence.scope_manifest.sha256 // empty' "$assurance_file")"; then
         return 1
       fi
     fi
