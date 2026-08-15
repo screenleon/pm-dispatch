@@ -1326,6 +1326,69 @@ case_context_reuse_scan_valid_output() {
   fi
 }
 
+case_context_reuse_scan_cjk_terms() {
+  local name="pmctl context reuse-scan: CJK prompt emits bigram terms"
+  # Behavior: reuse-scan extracts CJK 2-grams plus English tokens from mixed
+  # input. Index hits via FTS5 unicode61 remain a separate concern.
+  # Steps: reuse-scan a mixed Chinese/English description on an indexed
+  # fixture and assert the terms: line contains 分析/使用/用量/token.
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-scan-cjk"
+  make_fixture_repo "$fix_repo"
+
+  local out err status=0
+  "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
+
+  out="$tmp_root/scan-cjk.out"; err="$tmp_root/scan-cjk.err"
+  "$PMCTL" context reuse-scan "$fix_repo" "分析 token 使用量" \
+    > "$out" 2> "$err" || status=$?
+
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "reuse-scan exited $status: $(<"$err")"; return 0
+  fi
+  if grep -q '分析' "$out" && grep -q '使用' "$out" && grep -q '用量' "$out" && grep -q 'token' "$out"; then
+    pass "$name"
+  else
+    fail "$name" "missing CJK/English terms: $(<"$out")"
+  fi
+}
+
+case_context_fts5_cjk_query_still_has_like_fallback() {
+  local name="pmctl context query: CJK LIKE fallback remains independent of term lib"
+  # Behavior: FTS5 unicode61 is out of CC-465 scope. With FTS disabled and
+  # autorefresh off, file_chunks LIKE still finds a Chinese substring.
+  # Steps: index a CJK BACKLOG section; drop content_fts; disable refresh;
+  # query 使用量; assert a BACKLOG.md text-match hit.
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-fts5-cjk"
+  make_fixture_repo "$fix_repo"
+  cat >> "$fix_repo/BACKLOG.md" <<'MD'
+
+## 使用量分析
+
+token 使用量與中文檢索訊號。
+MD
+  "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
+
+  local db="$fix_repo/.pm-dispatch/ctx/context.db"
+  sqlite3 "$db" "DROP TABLE IF EXISTS content_fts;" 2>/dev/null || true
+
+  local out err status=0
+  out="$tmp_root/query-cjk.out"; err="$tmp_root/query-cjk.err"
+  PM_DISPATCH_CONTEXT_AUTOREFRESH=0 \
+    "$PMCTL" context query "$fix_repo" --domain knowledge "使用量" \
+    > "$out" 2> "$err" || status=$?
+  if [[ "$status" -eq 0 ]] && grep -q 'BACKLOG.md' "$out" && grep -q 'text match in chunk' "$out"; then
+    pass "$name"
+  else
+    fail "$name" "LIKE fallback missed CJK query; status=$status out=$(<"$out") err=$(<"$err")"
+  fi
+}
+
 case_context_reuse_scan_no_terms() {
   local name="pmctl context reuse-scan: all-stop-word description exits 0 with empty terms and hits"
   # Behavior: when every word in the description is filtered by stop-word logic, output terms: [] and hits: [].
@@ -3398,6 +3461,8 @@ case_context_reuse_scan_autorefresh_existing_db
 case_context_reuse_scan_unknown_flag
 case_context_reuse_scan_valid_output
 case_context_reuse_scan_no_terms
+case_context_reuse_scan_cjk_terms
+case_context_fts5_cjk_query_still_has_like_fallback
 case_context_reuse_scan_dedup
 case_context_reuse_scan_on_real_repo
 case_context_reuse_scan_hit_cap

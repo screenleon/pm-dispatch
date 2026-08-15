@@ -283,6 +283,9 @@ map_path() {
       add_suite test-pmctl-memory; add_suite test-pmctl-context; add_suite test-migrate; add_suite test-guards; behavioral=1 ;;
     runtime/lib/prompt-context.sh)
       add_suite test-guards; behavioral=1 ;;
+    runtime/lib/retrieval-terms.sh)
+      add_suite test-runtime-lib-coverage; add_suite test-guards
+      add_suite test-pmctl-context; behavioral=1 ;;
     runtime/lib/guard-log.sh)
       add_suite test-guards; behavioral=1 ;;
     runtime/lib/pmctl-memory-config.sh)

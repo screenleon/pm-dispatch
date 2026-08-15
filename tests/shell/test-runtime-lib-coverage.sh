@@ -123,10 +123,204 @@ test_runtime_libraries_do_not_exec_on_source() {
   pass "$name"
 }
 
+# Behavior: English extraction keeps identifiers, min-length 3, and the shared
+# stop list; it must not emit 1-2 character tokens or "the"/"and".
+# Steps: source retrieval-terms.sh and extract a mixed English sentence.
+test_retrieval_terms_english() {
+  local name="runtime-lib-coverage/retrieval-terms-english" output expected
+  should_run "$name" || return 0
+  expected=$'cards\nhelper\nmemory\nplus\npmctl_context_pack\nretrieval\nsystem'
+  output="$(bash -c '
+    . "$1/runtime/lib/retrieval-terms.sh"
+    retrieval_extract_terms "The retrieval system and the memory cards plus pmctl_context_pack helper"
+  ' _ "$REPO_ROOT")"
+  if [[ "$output" == "$expected" ]]; then pass "$name"; else fail "$name" "output=$output"; fi
+}
+
+# Behavior: CJK runs become overlapping 2-grams; mixed English tokens survive.
+# Steps: extract "分析 token 使用量" and require token plus 分析/使用/用量.
+test_retrieval_terms_cjk_mixed() {
+  local name="runtime-lib-coverage/retrieval-terms-cjk-mixed" output
+  should_run "$name" || return 0
+  output="$(bash -c '
+    . "$1/runtime/lib/retrieval-terms.sh"
+    retrieval_extract_terms "分析 token 使用量"
+  ' _ "$REPO_ROOT")"
+  if [[ "$output" == *$'\n'"token"$'\n'* || "$output" == "token"$'\n'* || "$output" == *$'\n'"token" || "$output" == "token" ]] \
+     && [[ "$output" == *"分析"* ]] \
+     && [[ "$output" == *"使用"* ]] \
+     && [[ "$output" == *"用量"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "output=$output"
+  fi
+}
+
+# Behavior: a 5-character CJK run emits four overlapping bigrams and no unigram.
+# Steps: extract 關鍵詞管線 and compare against the exact sorted set.
+test_retrieval_terms_cjk_bigrams() {
+  local name="runtime-lib-coverage/retrieval-terms-cjk-bigrams" output expected
+  should_run "$name" || return 0
+  expected=$'管線\n詞管\n鍵詞\n關鍵'
+  output="$(bash -c '
+    . "$1/runtime/lib/retrieval-terms.sh"
+    retrieval_extract_terms "關鍵詞管線"
+  ' _ "$REPO_ROOT")"
+  if [[ "$output" == "$expected" ]]; then pass "$name"; else fail "$name" "output=$output"; fi
+}
+
+# Behavior: non-CJK non-ASCII (Cyrillic / emoji) takes the byte-walk path,
+# exits cleanly, keeps ASCII terms, and does not emit those runs as terms.
+# Steps: extract "привет token 😀" and require only token.
+test_retrieval_terms_non_cjk_non_ascii_skips_cleanly() {
+  local name="runtime-lib-coverage/retrieval-terms-non-cjk-non-ascii-skips-cleanly" output
+  should_run "$name" || return 0
+  output="$(bash -c '
+    . "$1/runtime/lib/retrieval-terms.sh"
+    retrieval_extract_terms "привет token 😀"
+  ' _ "$REPO_ROOT")"
+  if [[ "$output" == "token" ]]; then
+    pass "$name"
+  else
+    fail "$name" "output=$output"
+  fi
+}
+
+# Behavior: _ctx_extract_terms is a thin wrapper and matches the shared lib.
+# Steps: source both libs and compare outputs on English, mixed, and CJK input.
+test_retrieval_terms_wrapper_parity() {
+  local name="runtime-lib-coverage/retrieval-terms-wrapper-parity" output
+  should_run "$name" || return 0
+  output="$(bash -c '
+    . "$1/runtime/lib/retrieval-terms.sh"
+    . "$1/runtime/lib/pmctl-context.sh"
+    mismatch=0
+    for sample in "The retrieval system and the memory cards" "分析 token 使用量" "關鍵詞管線" "a an the or"; do
+      left="$(retrieval_extract_terms "$sample")"
+      right="$(_ctx_extract_terms "$sample")"
+      [[ "$left" == "$right" ]] || { printf "mismatch:%s\nleft=%s\nright=%s\n" "$sample" "$left" "$right"; mismatch=1; }
+    done
+    exit "$mismatch"
+  ' _ "$REPO_ROOT" 2>&1)" || true
+  if [[ -z "$output" ]]; then pass "$name"; else fail "$name" "$output"; fi
+}
+
+# Behavior: streamed output keeps a trailing newline so while-read callers
+# do not drop the last CJK bigram.
+# Steps: consume "分析 token 使用量" via while-read and require four terms.
+test_retrieval_terms_while_read_keeps_last() {
+  local name="runtime-lib-coverage/retrieval-terms-while-read-keeps-last" output
+  should_run "$name" || return 0
+  output="$(bash -c '
+    . "$1/runtime/lib/retrieval-terms.sh"
+    terms=()
+    while IFS= read -r term; do
+      [[ -n "$term" ]] && terms+=("$term")
+    done < <(retrieval_extract_terms "分析 token 使用量")
+    printf "%s\n" "${#terms[@]}"
+    printf "%s\n" "${terms[@]}"
+  ' _ "$REPO_ROOT")"
+  if [[ "$output" == $'4\ntoken\n使用\n分析\n用量' ]]; then
+    pass "$name"
+  else
+    fail "$name" "output=$output"
+  fi
+}
+
+# Behavior: a huge ASCII paste stays on the tr/awk path and still yields terms.
+# Steps: extract a 200KB ASCII buffer that contains "retrieval" and "memory".
+test_retrieval_terms_large_ascii_stays_fast() {
+  local name="runtime-lib-coverage/retrieval-terms-large-ascii-stays-fast" output
+  should_run "$name" || return 0
+  output="$(bash -c '
+    . "$1/runtime/lib/retrieval-terms.sh"
+    blob="the retrieval and memory $(head -c 200000 /dev/zero | tr "\0" "x")"
+    retrieval_extract_terms "$blob"
+  ' _ "$REPO_ROOT")"
+  if [[ "$output" == *"retrieval"* && "$output" == *"memory"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "output=$output"
+  fi
+}
+
+# Behavior: input longer than RETRIEVAL_TERM_MAX_BYTES is truncated; a token
+# only present past the cap is dropped.
+# Steps: put sentinel_head at the start and sentinel_tail after 20KiB of padding.
+test_retrieval_terms_truncates_past_byte_cap() {
+  local name="runtime-lib-coverage/retrieval-terms-truncates-past-byte-cap" output
+  should_run "$name" || return 0
+  output="$(bash -c '
+    . "$1/runtime/lib/retrieval-terms.sh"
+    blob="sentinel_head $(head -c 20000 /dev/zero | tr "\0" "z") sentinel_tail"
+    retrieval_extract_terms "$blob"
+  ' _ "$REPO_ROOT")"
+  if [[ "$output" == *"sentinel_head"* && "$output" != *"sentinel_tail"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "output=$output"
+  fi
+}
+
+# Behavior: CJK input longer than RETRIEVAL_TERM_MAX_BYTES is truncated on
+# the od/awk path; terms after the cap are dropped and a mid-rune cut is quiet.
+# Steps: prefix 分析, pad with 甲 past 16KiB, suffix 用量; assert 分析/甲甲 stay
+# and 用量 does not.
+test_retrieval_terms_truncates_cjk_past_byte_cap() {
+  local name="runtime-lib-coverage/retrieval-terms-truncates-cjk-past-byte-cap" output
+  should_run "$name" || return 0
+  output="$(bash -c '
+    . "$1/runtime/lib/retrieval-terms.sh"
+    pad="$(printf "甲%.0s" {1..6000})"
+    retrieval_extract_terms "分析${pad}用量"
+  ' _ "$REPO_ROOT")"
+  if [[ "$output" == *"分析"* && "$output" == *"甲甲"* && "$output" != *"用量"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "output=$output"
+  fi
+}
+
+# Behavior: CJK extraction uses only tr/od/awk/sort — no python3 on PATH.
+# Steps: isolate PATH to those tools plus bash, extract mixed CJK/English.
+test_retrieval_terms_no_python_needed() {
+  local name="runtime-lib-coverage/retrieval-terms-no-python-needed" output bin path
+  should_run "$name" || return 0
+  bin="$tmp_root/no-python-bin"
+  mkdir -p "$bin"
+  for cmd in tr od awk sort bash wc grep head; do
+    src="$(command -v "$cmd")" || { fail "$name" "missing $cmd"; return 0; }
+    ln -s "$src" "$bin/$cmd"
+  done
+  path="$bin"
+  output="$(PATH="$path" bash -c '
+    . "$1/runtime/lib/retrieval-terms.sh"
+    retrieval_extract_terms "分析 token 使用量"
+  ' _ "$REPO_ROOT")"
+  if [[ "$output" == *$'\n'"token"$'\n'* || "$output" == "token"$'\n'* ]] \
+     && [[ "$output" == *"分析"* ]] \
+     && [[ "$output" == *"使用"* ]] \
+     && [[ "$output" == *"用量"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "output=$output"
+  fi
+}
+
 test_gate_workspace_override
 test_pmctl_config_loads_valid_values
 test_pmctl_config_rejects_legacy_global_memory
 test_identifier_policy_domains
 test_all_runtime_libraries_are_source_safe
 test_runtime_libraries_do_not_exec_on_source
+test_retrieval_terms_english
+test_retrieval_terms_cjk_mixed
+test_retrieval_terms_cjk_bigrams
+test_retrieval_terms_non_cjk_non_ascii_skips_cleanly
+test_retrieval_terms_wrapper_parity
+test_retrieval_terms_while_read_keeps_last
+test_retrieval_terms_large_ascii_stays_fast
+test_retrieval_terms_truncates_past_byte_cap
+test_retrieval_terms_truncates_cjk_past_byte_cap
+test_retrieval_terms_no_python_needed
 th_summary

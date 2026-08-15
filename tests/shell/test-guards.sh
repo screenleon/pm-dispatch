@@ -2018,6 +2018,48 @@ inject_hook_always_priority_bypasses_budget() {
   rm -rf "$dir"
 }
 
+inject_hook_cjk_prompt_ranks_matching_card() {
+  # CC-465: a Chinese prompt must extract CJK bigrams and rank a matching
+  # topics card above an unrelated English-only card.
+  # Steps:
+  #   1. Create two tier2 cards: one with topic 使用量, one with unrelated
+  #   2. Run the hook with prompt "分析 token 使用量"
+  #   3. Assert the CJK card appears first and records a usage access
+  local name="inject-hook/cjk-prompt-ranks-matching-card" dir cwd mem payload output status pos_a pos_b sidecar row
+  should_run "$name" || return 0
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  encoded="$(inject_encoded_path "$cwd")"
+  mem="$dir/projects/$encoded/memory"
+  mkdir -p "$mem"
+
+  printf '# test\n- [card-b](card-b.md) — general card\n- [card-a](card-a.md) — specialized card\n' > "$mem/MEMORY.md"
+  printf -- '---\npriority: normal\nstatus: inactive\ntopics:\n  - unrelated\n---\nCard B\n' > "$mem/card-b.md"
+  printf -- '---\npriority: normal\nstatus: inactive\ntopics:\n  - 使用量\n---\nCard A\n' > "$mem/card-a.md"
+
+  payload="{\"cwd\":\"$cwd\",\"prompt\":\"分析 token 使用量\"}"
+  output=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
+  status=$?
+  pos_a=$(printf '%s\n' "$output" | grep -n 'card-a' | cut -d: -f1 | head -1 || printf '0')
+  pos_b=$(printf '%s\n' "$output" | grep -n 'card-b' | cut -d: -f1 | head -1 || printf '0')
+  sidecar="$(inject_usage_dump "$mem")"
+  row="$(grep '^card-a\.md' <<<"$sidecar" 2>/dev/null || true)"
+  if [[ "$status" == "0" \
+      && -n "$pos_a" && -n "$pos_b" \
+      && "$pos_a" -lt "$pos_b" \
+      && "$row" == card-a.md$'\t'1$'\t'* ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s pos_a=%s pos_b=%s row=%q output=%q\n' \
+      "$name" "$status" "$pos_a" "$pos_b" "$row" "$output"
+  fi
+  rm -rf "$dir"
+}
+
 inject_hook_prompt_aware_scoring() {
   # Verifies that tier2 cards with topics matching prompt keywords rank above others.
   # Steps:
@@ -3236,6 +3278,7 @@ inject_hook_threshold_at_boundary_emits_directive
 inject_hook_threshold_shows_directive
 inject_hook_always_priority_bypasses_budget
 inject_hook_prompt_aware_scoring
+inject_hook_cjk_prompt_ranks_matching_card
 inject_hook_byte_cap_truncates_before_entry_cap
 inject_hook_default_home_fallback
 inject_hook_status_active_no_longer_pins
