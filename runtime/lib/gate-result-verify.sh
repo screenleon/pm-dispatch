@@ -28,6 +28,11 @@ if ! declare -F gate_digest_stream >/dev/null 2>&1; then
   . "$_gate_digest_module"
   unset _gate_result_verify_dir _gate_digest_module
 fi
+if ! declare -F _gate_subject_tree_fingerprint >/dev/null 2>&1; then
+  # shellcheck source=runtime/lib/gate-subject.sh
+  # shellcheck disable=SC1091
+  . "${BASH_SOURCE[0]%/*}/gate-subject.sh"
+fi
 #
 # gate_result_verdict_verify <result_file> [expected_final] [route_label]
 if ! declare -F pm_identifier_run_ere_pattern >/dev/null 2>&1; then
@@ -535,6 +540,7 @@ _gate_synthesis_protocol_documents() {
 
 # gate_synthesis_protocol_verify <artifact> <selected-reviewers>
 #                                <skipped-reviewers> <scope-sha256>
+#                                [require-test-gaps] [initial-finding-ids-json]
 #
 # Validates the synthesis-owned JSON shape and then derives the authoritative
 # finding inventory, coverage matrix, uncertainties, cautions, and remediation
@@ -545,10 +551,11 @@ _gate_synthesis_protocol_documents() {
 gate_synthesis_protocol_verify() {
   local artifact=${1-} selected=${2-} skipped=${3-} scope_sha=${4-}
   local require_test_gaps=${5-false}
+  local initial_finding_ids=${6-null}
   local tmp_dir synthesis_documents synthesis_document reviewer_documents synthesis_count validation
   local heading heading_count
   GATE_SYNTHESIS_PROTOCOL_ERROR=""
-  [[ $# -ge 4 && $# -le 5 && -s "$artifact" && -n "$selected" \
+  [[ $# -ge 4 && $# -le 6 && -s "$artifact" && -n "$selected" \
       && "$scope_sha" =~ ^[a-f0-9]{64}$ ]] || {
     printf 'Error: synthesis protocol INCOMPLETE: invalid verifier inputs\n' >&2
     return 2
@@ -572,6 +579,14 @@ gate_synthesis_protocol_verify() {
     rm -rf -- "$tmp_dir"
     return 1
   }
+  if [[ "$initial_finding_ids" != null ]] && ! jq -e \
+      'type == "array" and length == (unique | length) and
+       all(.[]; type == "string" and test("^(critic|qa-tester|architecture-reviewer|security-reviewer|risk-reviewer)-F[0-9]{3,}$"))' \
+      <<<"$initial_finding_ids" >/dev/null 2>&1; then
+    GATE_SYNTHESIS_PROTOCOL_ERROR="invalid initial finding ID set"
+    printf 'Error: synthesis protocol INCOMPLETE: invalid initial finding ID set\n' >&2
+    return 1
+  fi
   if [[ "$synthesis_count" -ne 1 ]]; then
     GATE_SYNTHESIS_PROTOCOL_ERROR="missing or duplicate synthesis result"
     printf 'Error: synthesis protocol INCOMPLETE: expected one synthesis_result_v1 block, found %d in %s\n' \
@@ -600,6 +615,7 @@ gate_synthesis_protocol_verify() {
       --arg selected "$selected" --arg skipped "$skipped" \
       --arg scope_sha "$scope_sha" \
       --argjson require_test_gaps "$require_test_gaps" \
+      --argjson initial_finding_ids "$initial_finding_ids" \
       --slurpfile synthesis "$synthesis_documents" \
       --slurpfile reviewers "$reviewer_documents" '
       def only_keys($allowed):
@@ -738,7 +754,8 @@ gate_synthesis_protocol_verify() {
         ($s | only_keys([
           "kind","schema_version","scope_manifest_sha256",
           "selected_reviewers","not_reviewed_dimensions","coverage_matrix",
-          "reviewer_finding_inventory","findings_union","root_cause_groups",
+          "reviewer_finding_inventory","findings_union","remediation_confirmations",
+          "root_cause_groups",
           "disagreements","uncertainties","cautions","test_gap_matrix",
           "operational_cautions","user_cautions","verification_plan",
           "remediation_seed"
@@ -752,6 +769,7 @@ gate_synthesis_protocol_verify() {
         ($s.coverage_matrix | type) != "array" or
         ($s.reviewer_finding_inventory | type) != "array" or
         ($s.findings_union | type) != "array" or
+        ($s.remediation_confirmations | type) != "array" or
         ($s.root_cause_groups | type) != "array" or
         ($s.disagreements | type) != "array" or
         ($s.cautions | type) != "array" or
@@ -784,6 +802,22 @@ gate_synthesis_protocol_verify() {
         (($s.findings_union | map(.id)) |
           length != (unique | length))
       then "duplicate finding ID collision"
+      elif
+        (all($s.remediation_confirmations[];
+          (type == "object" and
+           (keys_unsorted - ["finding_id","status","summary","evidence_refs"] | length) == 0 and
+           (.finding_id | finding_id) and .status == "confirmed" and
+           (.summary | nonempty) and
+           (.evidence_refs | type == "array" and length > 0 and all(.[]; reference)))) | not)
+      then "invalid remediation confirmation"
+      elif
+        (($s.remediation_confirmations | map(.finding_id)) |
+          length != (unique | length))
+      then "duplicate remediation confirmation ID"
+      elif $initial_finding_ids != null and
+        (($s.remediation_confirmations | map(.finding_id) | sort) !=
+          ($initial_finding_ids | sort))
+      then "remediation confirmation set mismatch"
       elif
         ($s.reviewer_finding_inventory | sort_by(.id)) != $expected_inventory
       then "reviewer finding inventory parity mismatch"
@@ -940,97 +974,6 @@ _gate_subject_common_dir() {
     return 2
   }
   printf '%s\n' "$common_dir"
-}
-
-_gate_subject_tree_fingerprint() {
-  local repo_root="$1" subject_kind="$2" head_commit="$3"
-  local manifest path quoted kind executable digest
-  local entry metadata mode object target
-  manifest="$(mktemp "${TMPDIR:-/tmp}/gate-subject-tree.XXXXXX")" || return 2
-  case "$subject_kind" in
-    fixed_ref)
-      while IFS= read -r -d '' entry; do
-        metadata="${entry%%$'\t'*}"
-        path="${entry#*$'\t'}"
-        mode="${metadata%% *}"
-        object="${metadata##* }"
-        quoted="$(printf '%q' "$path")"
-        case "$mode" in
-          120000)
-            kind=symlink
-            executable=false
-            target="$(git -C "$repo_root" cat-file blob "$object" 2>/dev/null)" || {
-              rm -f -- "$manifest"
-              return 2
-            }
-            digest="$(printf '%s' "$target" | _gate_result_sha256_stream)" || {
-              rm -f -- "$manifest"
-              return 2
-            }
-            ;;
-          100644|100755)
-            kind="file"
-            [[ "$mode" == 100755 ]] && executable=true || executable=false
-            digest="$(git -C "$repo_root" cat-file blob "$object" 2>/dev/null \
-              | _gate_result_sha256_stream)" || {
-              rm -f -- "$manifest"
-              return 2
-            }
-            ;;
-          *)
-            # Keep gitlinks and other non-file entries visible without
-            # claiming local file content, matching the workspace manifest.
-            kind=missing
-            executable=false
-            digest=-
-            ;;
-        esac
-        printf '%s\t%s\t%s\t%s\n' "$quoted" "$kind" "$executable" "$digest" \
-          >> "$manifest"
-      done < <(git -C "$repo_root" ls-tree -r -z --full-tree "$head_commit" 2>/dev/null)
-      ;;
-    committed_head|working_tree)
-      while IFS= read -r -d '' path; do
-        case "$path" in
-          .agent-trace|.agent-trace/*|.gate-briefs|.gate-briefs/*|.gate-results|.gate-results/*)
-            continue
-            ;;
-        esac
-        quoted="$(printf '%q' "$path")"
-        if [[ -L "$repo_root/$path" ]]; then
-          kind=symlink
-          executable=false
-          digest="$(printf '%s' "$(readlink "$repo_root/$path")" \
-            | _gate_result_sha256_stream)" || {
-            rm -f -- "$manifest"
-            return 2
-          }
-        elif [[ -f "$repo_root/$path" ]]; then
-          kind="file"
-          [[ -x "$repo_root/$path" ]] && executable=true || executable=false
-          digest="$(_gate_result_sha256_file "$repo_root/$path")" || {
-            rm -f -- "$manifest"
-            return 2
-          }
-        else
-          kind=missing
-          executable=false
-          digest=-
-        fi
-        printf '%s\t%s\t%s\t%s\n' "$quoted" "$kind" "$executable" "$digest" \
-          >> "$manifest"
-      done < <(git -C "$repo_root" ls-files --cached --others --exclude-standard -z)
-      ;;
-    *)
-      printf 'Error: unsupported gate subject kind: %s\n' "$subject_kind" >&2
-      rm -f -- "$manifest"
-      return 2
-      ;;
-  esac
-  LC_ALL=C sort "$manifest" | _gate_result_sha256_stream
-  local rc=$?
-  rm -f -- "$manifest"
-  return "$rc"
 }
 
 # gate_subject_snapshot <repo> <base-ref> <head-ref> <subject-kind>
@@ -1568,9 +1511,11 @@ _gate_assurance_linked_evidence_verify() {
 #                                  <embedded|generic|maintainer|publish>
 #                                  <verified|unavailable|invalid>
 #                                  [authorization-reason]
+#                                  [closure-authorized]
 gate_policy_applicability_assess() {
   local assurance_file="$1" consumer="$2" authorization_status="$3"
   local authorization_reason="${4:-dispatch_authorization_unavailable}"
+  local closure_authorized="${5:-unavailable}"
   case "$consumer" in
     embedded|generic|maintainer|publish) ;;
     *)
@@ -1593,7 +1538,8 @@ gate_policy_applicability_assess() {
   jq -nc --slurpfile assurance "$assurance_file" \
     --arg consumer "$consumer" \
     --arg authorization_status "$authorization_status" \
-    --arg authorization_reason "$authorization_reason" '
+    --arg authorization_reason "$authorization_reason" \
+    --arg closure_authorized "$closure_authorized" '
     def policy_rank:
       if . == "generic" then 1
       elif . == "maintainer" then 2
@@ -1627,6 +1573,7 @@ gate_policy_applicability_assess() {
       if ($consumer == "maintainer" or $consumer == "publish") and
          ($a.coordinates.pass.resolved != "initial" or
           $a.coordinates.pass.scope != "comprehensive")
+        and $closure_authorized != "verified"
         then "comprehensive_review_required" else empty end
     ] | unique) as $reasons |
     {

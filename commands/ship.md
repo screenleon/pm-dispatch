@@ -231,11 +231,14 @@ pmctl ship finish <ticket-id> --cd "<work_dir>" \
 
 Relative Gate-result paths resolve against `<work_dir>`. Finish verifies the
 artifact with the `publish` consumer and still enforces branch, HEAD, dirty
-tree, canonical dispatch, scope, and authoritative full-suite boundaries. If
-no `--gate-result` is supplied, finish produces a fresh preferred maintainer
-Gate. Never pass a targeted result as standalone publication authorization:
-until the structured remediation-closure path is available, a remediated tree
-must either receive a fresh current-tree initial Gate or stop before publish.
+tree, canonical dispatch, scope, and authoritative full-suite boundaries. It
+then produces and self-verifies one `gate_publish_assessment_v1` binding the
+Gate result, remediation closure, and full-suite artifact to the same subject.
+The publish assessment is the source for the stdout assurance summary, PR
+body, and finish marker. If no `--gate-result` is supplied, finish produces a
+fresh preferred maintainer Gate. A targeted result is never standalone
+authorization; it can publish only through a verified closed remediation path
+with any required targeted confirmation recorded as passed.
 
 If the full suite finds a diff-caused failure, fix it, rerun affected tests,
 apply the same refactor/reuse recheck threshold, and return to the targeted

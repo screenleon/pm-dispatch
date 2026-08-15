@@ -428,6 +428,7 @@ case_gate_assurance_contract_maps_runtime_verifiers() {
   out=$(RUN_TESTS_ARGS_LOG="$args" "$repo/tests/bin/run-tests.sh" \
     --path core/schema/gate-assurance.schema.json \
     --path core/schema/gate-policy-override.schema.json \
+    --path core/schema/gate-publish-assessment.schema.json \
     --path runtime/lib/gate-result-verify.sh --list 2>&1) || status=$?
   if [[ "$status" -eq 0 && "$out" == *"test-core-schemas"* &&
         "$out" == *"test-pr-gate"* && "$out" == *"test-pmctl-gate"* &&

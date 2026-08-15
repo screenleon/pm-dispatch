@@ -255,6 +255,7 @@ pr_gate_fixture_write_synthesis_protocol() {
         verification_expectation
       })),
       findings_union:$union,
+      remediation_confirmations:[],
       root_cause_groups:($union | to_entries | map({
         id:.value.root_cause_group_id,
         summary:("Fixture root cause for " + .value.id),

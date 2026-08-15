@@ -186,7 +186,7 @@
     },
     "targetedConfirmation": {
       "type": "object",
-      "required": ["status", "reviewers", "delta_only"],
+      "required": ["status", "reviewers", "delta_only", "finding_ids"],
       "properties": {
         "status": { "enum": ["pass", "not_required", "incomplete"] },
         "reviewers": {
@@ -195,6 +195,14 @@
           "items": { "type": "string", "minLength": 1 }
         },
         "delta_only": { "const": true },
+        "finding_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^(critic|qa-tester|architecture-reviewer|security-reviewer|risk-reviewer)-F[0-9]{3,}$"
+          }
+        },
         "evidence": {
           "oneOf": [
             { "type": "null" },

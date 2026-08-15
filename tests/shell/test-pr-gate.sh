@@ -833,7 +833,7 @@ Verdict: block. Tier 1 rules source unreadable.' \
 }
 
 write_valid_initial_gate_result() {
-  local path="$1" final="${2:-NO-GO}"
+  local path="$1" final="${2:-NO-GO}" scope scope_sha repo common_dir common_identity remote remote_identity repository_key base_commit
   cat > "$path" << INITIAL_GATE_EOF
 ---
 gate_result_version: pr_gate_result_v1
@@ -854,6 +854,39 @@ escalation:
 ## Gate Conclusion
 Final: ${final}
 INITIAL_GATE_EOF
+  # Targeted publication now requires the initial result's immutable
+  # assurance sidecar and comprehensive synthesis ledger.  Keep this shared
+  # fixture protocol-shaped so tests exercise the current contract instead of
+  # accidentally depending on legacy prose-only compatibility.
+  scope="${path}.scope.json"
+  jq -n '{changes:{changed_paths:["README.md"],renamed_paths:[],untracked_paths:[]},diff:{binary_or_special_paths:[]}}' > "$scope"
+  scope_sha="$(sha256sum "$scope" | awk '{print $1}')"
+  repo="$(dirname "$path")/repo"
+  if [[ -d "$repo/.git" ]] && common_dir="$(git -C "$repo" rev-parse --git-common-dir 2>/dev/null)"; then
+    [[ "$common_dir" == /* ]] || common_dir="$repo/$common_dir"
+    common_dir="$(cd "$(dirname "$common_dir")" && pwd -P)/$(basename "$common_dir")"
+    common_identity="$(printf '%s' "$common_dir" | sha256sum | awk '{print $1}')"
+    remote="$(git -C "$repo" config --get remote.origin.url 2>/dev/null || true)"
+    remote_identity=""
+    [[ -n "$remote" ]] && remote_identity="$(printf '%s' "$remote" | sha256sum | awk '{print $1}')"
+    repository_key="$(printf 'common:%s\nremote:%s\n' "$common_identity" "${remote_identity:-absent}" | sha256sum | awk '{print $1}')"
+    base_commit="$(git -C "$repo" merge-base main HEAD 2>/dev/null || git -C "$repo" rev-parse HEAD)"
+  else
+    repository_key="$(printf 'fixture-repository' | sha256sum | awk '{print $1}')"
+    base_commit="$(printf 'fixture-base' | sha1sum | awk '{print $1}')"
+  fi
+  # The synthetic initial result deliberately uses a different head/tree from
+  # the targeted run: remediation may advance the reviewed tree. Stable repo
+  # identity, base, and subject kind remain bound; same-subject retries still
+  # require the scope digest to match in gate-closure.sh.
+  jq -n --arg scope_sha "$scope_sha" --arg artifact "$(basename "$scope")" \
+    --arg repository_key "$repository_key" --arg base_commit "$base_commit" \
+    '{subject:{repository_key:$repository_key,base_commit:$base_commit,head_commit:("c"*40),tree_fingerprint:("d"*64),subject_kind:"committed_head"},evidence:{scope_manifest:{artifact:$artifact,sha256:$scope_sha}}}' > "${path}.assurance.json"
+  {
+    printf '```synthesis_result_v1\n'
+    jq -n '{kind:"gate_synthesis_result_v1",schema_version:1,selected_reviewers:["critic"],findings_union:[],remediation_confirmations:[],reviewer_finding_inventory:[],uncertainties:{finding_ids:[],coverage_cells:[]}}'
+    printf '```\n'
+  } >> "$path"
 }
 
 # Behavior: the bounded copy-mode policy snapshot is byte-for-byte equivalent
@@ -10145,6 +10178,7 @@ GATE_RESULT_EOF
       })) | add),
       reviewer_finding_inventory:[],
       findings_union:[],
+      remediation_confirmations:[],
       root_cause_groups:[],
       disagreements:[],
       uncertainties:{finding_ids:[],coverage_cells:[]},
@@ -11578,6 +11612,97 @@ MUTATIONS
   pass "$name"
 }
 
+# Behavior: targeted synthesis must reject a missing initial finding
+# confirmation before the result can be accepted as remediation GO evidence.
+# Steps: build a synthesis with two initial diff-caused findings, verify that
+# an empty confirmation ledger is rejected, then add the exact confirmation set
+# and verify the same artifact is accepted.
+test_targeted_synthesis_requires_initial_confirmation_set() {
+  local name="targeted-synthesis/requires-initial-confirmation-set"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" artifact scope_sha expected_ids code
+  mkdir -p "$dir"
+  artifact="$dir/result.md"
+  scope_sha="$(printf 'a%.0s' {1..64})"
+  expected_ids='["critic-F001","qa-tester-F001"]'
+  # shellcheck source=runtime/lib/gate-result-verify.sh
+  . "$REPO_ROOT/runtime/lib/gate-result-verify.sh"
+  _write_synthesis_protocol_test_artifact "$artifact"
+  set +e
+  gate_synthesis_protocol_verify \
+    "$artifact" "critic qa-tester architecture-reviewer" \
+    "security-reviewer risk-reviewer" "$scope_sha" true "$expected_ids" \
+    >"$dir/missing.out" 2>"$dir/missing.err"
+  code=$?
+  set -e
+  [[ "$code" -ne 0 ]] || {
+    fail "$name" "missing confirmation ledger unexpectedly passed"
+    return
+  }
+  assert_file_contains "$name" "$dir/missing.err" \
+    "remediation confirmation set mismatch" || return
+  _rewrite_synthesis_protocol_json "$artifact" \
+    '.remediation_confirmations = [
+      {finding_id:"critic-F001",status:"confirmed",summary:"Confirmed critic finding.",evidence_refs:[{path:"README.md",line:1}]},
+      {finding_id:"qa-tester-F001",status:"confirmed",summary:"Confirmed QA finding.",evidence_refs:[{path:"README.md",line:1}]}
+    ]'
+  gate_synthesis_protocol_verify \
+    "$artifact" "critic qa-tester architecture-reviewer" \
+    "security-reviewer risk-reviewer" "$scope_sha" true "$expected_ids" \
+    >"$dir/complete.out" 2>"$dir/complete.err" || {
+    fail "$name" "complete confirmation ledger was rejected: $(cat "$dir/complete.err")"
+    return
+  }
+  pass "$name"
+}
+
+# Behavior: the production targeted pr-gate lifecycle rejects a synthesis that
+# omits confirmation for an initial diff-caused finding, before it can publish
+# a GO result.
+# Steps: create a structurally accepted initial result containing one finding,
+# run the real targeted gate fixture whose synthesis emits no confirmations,
+# and assert the verifier blocks the synthesis.
+test_targeted_gate_rejects_missing_initial_confirmation() {
+  local name="targeted-gate/rejects-missing-initial-confirmation"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home="$TMP_ROOT/$name/home"
+  local repo="$TMP_ROOT/$name/repo" runner="$TMP_ROOT/$name/runner"
+  local out="$TMP_ROOT/$name/out" err="$TMP_ROOT/$name/err"
+  local initial="$TMP_ROOT/$name/initial.md" code
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  write_valid_initial_gate_result "$initial"
+  _rewrite_synthesis_protocol_json "$initial" \
+    '.findings_union = [{
+      id:"critic-F001", reviewer:"critic", severity:"high",
+      hard_gate_class:"soft_block", origin:"diff_caused",
+      source:{path:"README.md",line:1,symbol:null},
+      affected_behavior:"The initial fixture finding requires confirmation.",
+      why_it_matters:"The targeted pass must retain initial finding identity.",
+      failure_mode:"An empty remediation ledger could otherwise pass synthesis.",
+      minimum_fix_boundary:"Require exact targeted confirmation-set equality.",
+      verification_expectation:"Run the targeted missing-confirmation regression.",
+      root_cause_group_id:"RCG-001", disposition:"pending"
+    }]'
+  set +e
+  CODEX_GATE_STUB_SYNTHESIS_FINAL=GO \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --pass targeted --reviewers critic \
+      --initial-result "$initial" --mode parallel
+  code=$?
+  set -e
+  [[ "$code" -ne 0 ]] || {
+    fail "$name" "targeted gate unexpectedly accepted missing confirmation"
+    return
+  }
+  assert_file_contains "$name" "$err" \
+    "remediation confirmation set mismatch" || return
+  assert_not_contains "$name" "$out" "Final: GO" || return
+  pass "$name"
+}
+
 # Behavior: the opt-in live evaluator reports recall distribution and keeps
 # correctness_gate=false instead of converting model recall into CI pass/fail.
 # Steps: analyze two deterministic fake Gate artifacts with different seeded
@@ -11704,6 +11829,8 @@ run_test test_reviewer_protocol_duplicate_heading_uses_json_verdict
 run_test test_reviewer_protocol_blocker_completes_remaining_surfaces
 run_test test_synthesis_protocol_preserves_grouping_disagreement_and_lower_severity
 run_test test_synthesis_protocol_rejects_silent_drop_and_malformed_seed
+run_test test_targeted_synthesis_requires_initial_confirmation_set
+run_test test_targeted_gate_rejects_missing_initial_confirmation
 run_test test_gate_test_gap_live_eval_reports_observation_only
 
 th_summary

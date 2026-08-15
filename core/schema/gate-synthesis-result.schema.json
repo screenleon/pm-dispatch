@@ -11,6 +11,7 @@
     "coverage_matrix",
     "reviewer_finding_inventory",
     "findings_union",
+    "remediation_confirmations",
     "root_cause_groups",
     "disagreements",
     "uncertainties",
@@ -46,6 +47,11 @@
     "findings_union": {
       "type": "array",
       "items": { "$ref": "#/definitions/findingUnionEntry" }
+    },
+    "remediation_confirmations": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/definitions/remediationConfirmation" }
     },
     "root_cause_groups": {
       "type": "array",
@@ -255,6 +261,21 @@
           "pattern": "^RCG-[0-9]{3,}$"
         },
         "disposition": { "const": "pending" }
+      },
+      "additionalProperties": false
+    },
+    "remediationConfirmation": {
+      "type": "object",
+      "required": ["finding_id", "status", "summary", "evidence_refs"],
+      "properties": {
+        "finding_id": { "$ref": "#/definitions/findingId" },
+        "status": { "const": "confirmed" },
+        "summary": { "type": "string", "minLength": 1 },
+        "evidence_refs": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/definitions/evidenceRef" }
+        }
       },
       "additionalProperties": false
     },

@@ -48,7 +48,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-526 | ✅ closed 2026-08-12 | reviewer override file 的 symlink trust-boundary hardening 與相容性契約 | security/gate | 2026-07-28 | pr:#475 | P2 | hygiene |
 | CC-527 | ⚠️ partial 2026-08-12 | targeted gate CLI 拆分 pass、reviewer coverage 與 tier；tier 由 current subject/policy 解析，initial result 僅為 remediation context | ux/gate | 2026-07-28 | pr:#472, pr:#476 | P2 | design |
 | CC-528 | ✅ closed 2026-07-30 | publish policy compatibility：generic 為可接受 baseline、maintainer 為 preferred，並允許 ship 驗證既有 current-tree Gate artifact | release/gate | 2026-07-30 | pr:#457 | P1 | design |
-| CC-529 | 🔵 active | publish assurance observability：在 ship 成功輸出、PR body 與 finish marker 保留 embedded policy 與 baseline/preferred satisfaction | release/gate | 2026-07-30 | feedback:2026-07-30 | P2 | hygiene |
+| CC-529 | ⚠️ partial 2026-08-15 | publish assurance observability：以 gate_publish_assessment_v1 將 ship stdout、PR body 與 finish marker 綁到同一份 verified assessment；仍需完成完整 producer/consumer dogfood | release/gate | 2026-07-30 | feedback:2026-07-30 | P2 | hygiene |
 | CC-530 | ✅ closed 2026-08-12 | source-safe runtime library contract + centralized domain identifier policy | arch/reuse | 2026-07-30 | pr:#473 | P1 | hygiene |
 | CC-531 | ✅ closed 2026-08-11 | Adapter manifest contract closure：dispatch entrypoint 成為唯一 runtime authority | arch/schema | 2026-07-30 | feedback:2026-08-11 | P1 | design |
 | CC-532 | ⚠️ partial 2026-08-14 | Linux/WSL2 repo-layout canonical Gate modules 已完成；standalone distribution／copy parity 已移出本票，待 P0 current-tree evidence 後關閉 | arch/gate | 2026-07-30 | feedback:2026-07-30 | P1 | reuse-debt |
@@ -1590,7 +1590,7 @@ callback rejection、timeout、indeterminate 與 legacy-install rollback 均有�
 
 ---
 
-## CC-511 — ship publish authorization：current-tree full suite + review closure 🔵 active
+## CC-511 — ship publish authorization：current-tree full suite + review closure ⚠️ partial 2026-08-15
 
 **Problem**: `pmctl ship finish` 目前在 gate GO、HEAD 未移動且 tree clean 後直接
 push／開 PR，沒有驗證 current tree 的 authoritative full suite。另一方面，
@@ -1634,6 +1634,14 @@ failure、tree dirtiness 與 post-suite HEAD drift 都有 fail-closed regression
 本次僅完成 Phase A；[[CC-515]] shared verifier foundation 已於 pr:#454 交付，
 Phase B 的 review authorization 與 closure artifact 不在此 PR 範圍，仍待
 [[CC-517]]。
+
+**Phase B implementation (2026-08-15, partial)**：新增
+`gate_publish_assessment_v1` shared publish boundary。`ship finish` 會把 current
+Gate assessment、closed remediation closure、required targeted confirmation 與
+authoritative full-suite 綁定到同一 subject；targeted Gate 只有在 closure
+authorization 通過時才可進入 publish route。三個 ship output surface 均消費此
+assessment；真實 producer/consumer dogfood 與完整 final-tree/primary-closure
+矩陣仍需完成後才能收斂本票。
 
 **Done-when**: 任一官方 ship publish path 都只能在（1）current tree authoritative
 full-suite PASS 有效；（2）review authorization 對目前 delivery policy 有效；
@@ -2714,7 +2722,7 @@ clarification。P1，排入 v0.11.0 delivery assurance correctness。
 
 ---
 
-## CC-529 — publish assurance observability：baseline／preferred 可追溯 🔵 active
+## CC-529 — publish assurance observability：baseline／preferred 可追溯 ⚠️ partial 2026-08-15
 
 **Framing**: 本票只延伸 [[CC-528]] 已建立的 publish policy compatibility，
 讓成功發布保留「哪一種 producer policy、以 baseline 或 preferred 滿足 publish」
@@ -2759,6 +2767,13 @@ preferred。CLI usage 雖已列出 `--gate-result`，也缺少回歸測試防止
 marker 回答 embedded producer policy 與 publish satisfaction，三者與 shared
 verifier 完全一致；舊 marker 保持可讀，help synopsis 與 parser contract 有回歸
 鎖定。
+
+**Current implementation (2026-08-15)**：新增 `gate_publish_assessment_v1`，由
+shared verifier 綁定 Gate、remediation closure 與 authoritative full-suite；
+`ship finish` 的 stdout、PR body、finish marker 均從同一份 assessment 讀取
+producer policy、preferred policy 與 baseline/preferred satisfaction。schema、
+marker compatibility、targeted-closure policy 與 builder parity 已有 deterministic
+coverage；仍需完成真實 producer/consumer dogfood 後才能標記 closed。
 
 **Non-goals**: 不改 generic／maintainer reviewer floor、tier、mode 或 compatibility
 ordering；不新增 Gate、publish authorization 或 workflow engine；不實作 dashboard、

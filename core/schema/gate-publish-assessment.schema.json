@@ -1,0 +1,124 @@
+{
+  "title": "Verified publish assessment",
+  "description": "The single immutable assessment consumed by ship publication surfaces.",
+  "type": "object",
+  "required": [
+    "kind",
+    "schema_version",
+    "ticket",
+    "subject",
+    "authorization",
+    "policy",
+    "gate",
+    "closure",
+    "full_suite"
+  ],
+  "properties": {
+    "kind": { "const": "gate_publish_assessment_v1" },
+    "schema_version": { "const": 1 },
+    "ticket": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9]*-[0-9]+$"
+    },
+    "subject": { "$ref": "#/definitions/subject" },
+    "authorization": {
+      "type": "object",
+      "required": ["status", "route", "reason_codes"],
+      "properties": {
+        "status": { "enum": ["authorized", "rejected"] },
+        "route": {
+          "enum": ["final_tree_review", "primary_review_closure"]
+        },
+        "reason_codes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      },
+      "additionalProperties": false
+    },
+    "policy": { "$ref": "#/definitions/policy" },
+    "gate": {
+      "type": "object",
+      "required": [
+        "result_file",
+        "assurance_file",
+        "verdict",
+        "subject_fingerprint",
+        "artifact_sha256",
+        "assurance_sha256"
+      ],
+      "properties": {
+        "result_file": { "type": "string", "pattern": "^/" },
+        "assurance_file": { "type": "string", "pattern": "^/" },
+        "verdict": { "const": "GO" },
+        "subject_fingerprint": { "$ref": "#/definitions/sha256" },
+        "artifact_sha256": { "$ref": "#/definitions/sha256" },
+        "assurance_sha256": { "$ref": "#/definitions/sha256" }
+      },
+      "additionalProperties": false
+    },
+    "closure": {
+      "type": "object",
+      "required": [
+        "artifact",
+        "sha256",
+        "state",
+        "subject_fingerprint",
+        "targeted_confirmation"
+      ],
+      "properties": {
+        "artifact": { "type": "string", "pattern": "^/" },
+        "sha256": { "$ref": "#/definitions/sha256" },
+        "state": { "const": "closed" },
+        "subject_fingerprint": { "$ref": "#/definitions/sha256" },
+        "targeted_confirmation": {
+          "enum": ["pass", "not_required"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "full_suite": {
+      "type": "object",
+      "required": ["artifact", "sha256", "status", "subject_fingerprint"],
+      "properties": {
+        "artifact": { "type": "string", "pattern": "^/" },
+        "sha256": { "$ref": "#/definitions/sha256" },
+        "status": { "const": "pass" },
+        "subject_fingerprint": { "$ref": "#/definitions/sha256" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "definitions": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "subject": {
+      "type": "object",
+      "required": ["repository_key", "base_commit", "head_commit", "tree_fingerprint"],
+      "properties": {
+        "repository_key": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "base_commit": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+        "head_commit": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+        "tree_fingerprint": { "$ref": "#/definitions/sha256" }
+      },
+      "additionalProperties": false
+    },
+    "policy": {
+      "type": "object",
+      "required": [
+        "embedded_policy",
+        "required_policy",
+        "preferred_policy",
+        "policy_satisfaction"
+      ],
+      "properties": {
+        "embedded_policy": { "enum": ["generic", "maintainer"] },
+        "required_policy": { "enum": ["generic", "maintainer"] },
+        "preferred_policy": { "enum": ["generic", "maintainer"] },
+        "policy_satisfaction": { "enum": ["baseline", "preferred"] }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
