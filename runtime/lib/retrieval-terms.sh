@@ -11,6 +11,9 @@ RETRIEVAL_TERM_STOPWORDS="a an and are as at be been by do for from has have he 
 # UserPromptSubmit runs this synchronously. Bound the CJK byte-walk so a
 # huge paste cannot stall the hook. ASCII-only input stays on the cheap
 # tr/awk path and still respects the same cap for ranking keywords.
+# Crossing the cap still extracts from the prefix only; emit one stderr
+# line so CLI callers (reuse-scan / prompt-scan) can tell a silent miss
+# from a genuine empty index.
 RETRIEVAL_TERM_MAX_BYTES=16384
 
 # retrieval_extract_terms <text>
@@ -28,6 +31,8 @@ retrieval_extract_terms() {
   nbytes="${nbytes#"${nbytes%%[![:space:]]*}"}"
   nbytes="${nbytes%"${nbytes##*[![:space:]]}"}"
   if [[ "${nbytes:-0}" -gt "$RETRIEVAL_TERM_MAX_BYTES" ]]; then
+    printf 'retrieval-terms: input truncated from %s bytes to %s bytes\n' \
+      "$nbytes" "$RETRIEVAL_TERM_MAX_BYTES" >&2
     text="$(printf '%s' "$text" | head -c "$RETRIEVAL_TERM_MAX_BYTES")"
   fi
   # ASCII-only: keep the pre-CC-465 tr/awk pipeline (hook-critical path).

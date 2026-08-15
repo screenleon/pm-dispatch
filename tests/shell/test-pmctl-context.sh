@@ -1326,6 +1326,45 @@ case_context_reuse_scan_valid_output() {
   fi
 }
 
+case_context_reuse_scan_truncation_is_loud() {
+  local name="pmctl context reuse-scan: over-cap description warns on stderr and drops tail terms"
+  # Behavior: a description longer than RETRIEVAL_TERM_MAX_BYTES still exits 0,
+  # keeps prefix terms, drops the tail token, and writes a truncation notice.
+  # Steps: index a fixture; reuse-scan a 20KiB-padded description; assert YAML
+  # structure, sentinel_head present, sentinel_tail absent, stderr names the cap.
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-scan-truncate"
+  make_fixture_repo "$fix_repo"
+
+  local out err status=0 desc
+  "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
+
+  desc="sentinel_head $(head -c 20000 /dev/zero | tr '\0' 'z') sentinel_tail"
+  out="$tmp_root/scan-truncate.out"; err="$tmp_root/scan-truncate.err"
+  "$PMCTL" context reuse-scan "$fix_repo" "$desc" \
+    > "$out" 2> "$err" || status=$?
+
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "reuse-scan exited $status: $(<"$err")"; return 0
+  fi
+  if ! grep -q '^reuse_candidates:' "$out"; then
+    fail "$name" "missing reuse_candidates header: $(<"$out")"; return 0
+  fi
+  if ! grep -q 'sentinel_head' "$out"; then
+    fail "$name" "prefix term missing from terms: $(<"$out")"; return 0
+  fi
+  if grep -q 'sentinel_tail' "$out"; then
+    fail "$name" "tail term leaked past the cap: $(<"$out")"; return 0
+  fi
+  if grep -q 'input truncated from ' "$err" && grep -q 'to 16384 bytes' "$err"; then
+    pass "$name"
+  else
+    fail "$name" "missing truncation notice on stderr: $(<"$err")"
+  fi
+}
+
 case_context_reuse_scan_cjk_terms() {
   local name="pmctl context reuse-scan: CJK prompt emits bigram terms"
   # Behavior: reuse-scan extracts CJK 2-grams plus English tokens from mixed
@@ -3462,6 +3501,7 @@ case_context_reuse_scan_unknown_flag
 case_context_reuse_scan_valid_output
 case_context_reuse_scan_no_terms
 case_context_reuse_scan_cjk_terms
+case_context_reuse_scan_truncation_is_loud
 case_context_fts5_cjk_query_still_has_like_fallback
 case_context_reuse_scan_dedup
 case_context_reuse_scan_on_real_repo

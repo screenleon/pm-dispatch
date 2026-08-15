@@ -1623,9 +1623,10 @@ case_receipt_reader_accepts_plain_string_fields() {
   pass "$name"
 }
 
-# Behavior: a JSON unicode NUL in a required string field is rejected.
+# Behavior: a JSON unicode NUL in a required string field is rejected with a
+# NUL-specific diagnostic, not the generic "must be a string" type error.
 # Steps: write a receipt whose src decodes to an embedded NUL; load it;
-# assert nonzero exit and an empty src array.
+# assert exit 2, empty src array, and stderr names NUL.
 case_receipt_reader_rejects_embedded_nul() {
   local name="install-receipt-reader-rejects-embedded-nul"
   should_run "$name" || return 0
@@ -1636,14 +1637,16 @@ case_receipt_reader_rejects_embedded_nul() {
   set +e
   out="$(bash -c '
     . "$1"
-    pm_dispatch_receipt_load "$2"
+    pm_dispatch_receipt_load "$2" || exit $?
+    printf "loaded:%s\n" "${PM_DISPATCH_RECEIPT_ENTRY_SRCS[0]-}"
   ' _ "$REPO_ROOT/runtime/lib/install-receipt.sh" "$receipt" 2>&1)"
   rc=$?
   set -e
-  if [[ "$rc" -ne 0 && "$out" == *"must be a string"* ]]; then
+  if [[ "$rc" -eq 2 && "$out" == *"must not contain a NUL"* \
+      && "$out" != *"loaded:"* && "$out" != *"must be a string"* ]]; then
     pass "$name"
   else
-    fail "$name" "NUL src was not rejected (rc=$rc out=$out)"
+    fail "$name" "NUL src was not rejected with a NUL diagnostic (rc=$rc out=$out)"
   fi
 }
 

@@ -78,20 +78,20 @@ pm_dispatch_receipt_load() {
         # jq 1.6 contains(NUL) is true for every string; scan code points.
         any(explode[]; . == 0);
       def required_string($key):
-        if has($key)
-            and (.[$key] | type) == "string"
-            and ((.[$key] | has_nul) | not)
-        then .[$key]
-        else error("receipt entry " + $key + " must be a string")
+        if (has($key) | not) or (.[$key] | type) != "string" then
+          error("receipt entry " + $key + " must be a string")
+        elif .[$key] | has_nul then
+          error("receipt entry " + $key + " must not contain a NUL")
+        else .[$key]
         end;
       def optional_string($key):
-        if has($key) then
-          if (.[$key] | type) == "string"
-              and ((.[$key] | has_nul) | not)
-          then .[$key]
-          else error("receipt entry " + $key + " must be a string")
-          end
-        else ""
+        if has($key) | not then
+          ""
+        elif (.[$key] | type) != "string" then
+          error("receipt entry " + $key + " must be a string")
+        elif .[$key] | has_nul then
+          error("receipt entry " + $key + " must not contain a NUL")
+        else .[$key]
         end;
       def version_status:
         if has("manifest_version") then

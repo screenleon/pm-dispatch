@@ -263,7 +263,8 @@ test_retrieval_terms_truncates_past_byte_cap() {
 }
 
 # Behavior: CJK input longer than RETRIEVAL_TERM_MAX_BYTES is truncated on
-# the od/awk path; terms after the cap are dropped and a mid-rune cut is quiet.
+# the od/awk path; terms after the cap are dropped. A mid-rune cut is skipped
+# without inventing a term; the cap itself is announced on stderr.
 # Steps: prefix 分析, pad with 甲 past 16KiB, suffix 用量; assert 分析/甲甲 stay
 # and 用量 does not.
 test_retrieval_terms_truncates_cjk_past_byte_cap() {
@@ -278,6 +279,45 @@ test_retrieval_terms_truncates_cjk_past_byte_cap() {
     pass "$name"
   else
     fail "$name" "output=$output"
+  fi
+}
+
+# Behavior: crossing RETRIEVAL_TERM_MAX_BYTES writes one stderr notice and
+# still keeps stdout to the prefix terms only.
+# Steps: extract a padded blob; assert stderr names both sizes and stdout
+# has the head token only.
+test_retrieval_terms_truncate_writes_stderr() {
+  local name="runtime-lib-coverage/retrieval-terms-truncate-writes-stderr" output err
+  should_run "$name" || return 0
+  err="$tmp_root/retrieval-terms-truncate.err"
+  output="$(bash -c '
+    . "$1/runtime/lib/retrieval-terms.sh"
+    blob="sentinel_head $(head -c 20000 /dev/zero | tr "\0" "z") sentinel_tail"
+    retrieval_extract_terms "$blob"
+  ' _ "$REPO_ROOT" 2>"$err")"
+  if [[ "$output" == *"sentinel_head"* && "$output" != *"sentinel_tail"* \
+      && "$(cat "$err")" == *"input truncated from "* \
+      && "$(cat "$err")" == *"to 16384 bytes"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "output=$output err=$(cat "$err")"
+  fi
+}
+
+# Behavior: input at or under the cap does not write a truncation notice.
+# Steps: extract a short token and require empty stderr.
+test_retrieval_terms_under_cap_is_quiet() {
+  local name="runtime-lib-coverage/retrieval-terms-under-cap-is-quiet" output err
+  should_run "$name" || return 0
+  err="$tmp_root/retrieval-terms-under-cap.err"
+  output="$(bash -c '
+    . "$1/runtime/lib/retrieval-terms.sh"
+    retrieval_extract_terms "token"
+  ' _ "$REPO_ROOT" 2>"$err")"
+  if [[ "$output" == "token" && ! -s "$err" ]]; then
+    pass "$name"
+  else
+    fail "$name" "output=$output err=$(cat "$err")"
   fi
 }
 
@@ -372,6 +412,8 @@ test_retrieval_terms_while_read_keeps_last
 test_retrieval_terms_large_ascii_stays_fast
 test_retrieval_terms_truncates_past_byte_cap
 test_retrieval_terms_truncates_cjk_past_byte_cap
+test_retrieval_terms_truncate_writes_stderr
+test_retrieval_terms_under_cap_is_quiet
 test_retrieval_terms_source_is_idempotent
 test_retrieval_terms_metacharacters_stay_data
 test_retrieval_terms_cjk_cap_stays_interactive

@@ -908,17 +908,19 @@ test_duplicate_receipt_destination_fails_closed() {
 }
 
 # Behavior: receipt validation rejects a decoded NUL in a path without exposing
-# any partially loaded destination entries.
+# any partially loaded destination entries, and names NUL on stderr.
 # Steps: Arrange a receipt containing an escaped NUL; Act by validating it;
-# Assert exit 2 with an empty destination array.
+# Assert exit 2, empty destination array, and a NUL-specific diagnostic.
 test_nul_receipt_field_fails_closed() {
   local name="TC-20f nul-receipt-field-fails-closed"
-  local receipt="$tmp_root/nul-receipt-field.json" rc=0
+  local receipt="$tmp_root/nul-receipt-field.json" err rc=0
+  err="$tmp_root/nul-receipt-field.err"
   printf '{"manifest_version":1,"entries":[{"src":"/safe","dst":"/bad\\u0000path","mode":"symlink"}]}\n' \
     > "$receipt"
-  pm_dispatch_receipt_validate "$receipt" >/dev/null 2>&1 || rc=$?
-  if [[ "$rc" -ne 2 || "${#PM_DISPATCH_RECEIPT_ENTRY_DSTS[@]}" -ne 0 ]]; then
-    fail "$name" "NUL-bearing receipt field was accepted or partially loaded (rc=$rc)"
+  pm_dispatch_receipt_validate "$receipt" >/dev/null 2>"$err" || rc=$?
+  if [[ "$rc" -ne 2 || "${#PM_DISPATCH_RECEIPT_ENTRY_DSTS[@]}" -ne 0 ]] \
+      || ! grep -q 'must not contain a NUL' "$err"; then
+    fail "$name" "NUL-bearing receipt field was accepted or diagnostic missing (rc=$rc err=$(cat "$err"))"
     return
   fi
   pass "$name"
