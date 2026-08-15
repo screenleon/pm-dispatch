@@ -361,6 +361,9 @@ JQ
         mv -- "$replacement" "$1"
     }
     . "$repo_root/runtime/lib/pmctl-ship.sh"
+    if [[ "${PM_TEST_FAIL_RECOVERY_RECORD:-}" == 1 ]]; then
+      _pmctl_ship_partial_record_write() { return 1; }
+    fi
     pmctl_ship_finish "$repo_root" "$work_dir" "$ticket_id" "$@"
   ' _ "$REPO_ROOT" "$work_dir" "$ticket_id" "$verdict" "$@"
 }
@@ -531,6 +534,15 @@ run_real_publish_assessment_build() {
     . "$repo_root/runtime/lib/gate-publish.sh"
     gate_publish_assessment_build "$dir/assessment.json" "$dir/gate.json" "$dir/closure.json" "$dir/full.json" CC-511
   ' _ "$REPO_ROOT" "$dir"
+}
+
+run_real_publish_assessment_verify() {
+  local assessment="$1"
+  bash -c '
+    repo_root="$1"; assessment="$2"
+    . "$repo_root/runtime/lib/gate-publish.sh"
+    gate_publish_assessment_verify "$assessment"
+  ' _ "$REPO_ROOT" "$assessment"
 }
 
 # Behavior: ship subject checks refuse to fall back to a weaker fingerprint
@@ -737,6 +749,44 @@ case_publish_assessment_and_closure_are_concurrent_no_replace() {
     return 1
   fi
   pass "$name/closure"
+}
+
+# Behavior: the publish-assessment verifier rejects malformed artifacts before ship can consume them.
+# Steps: 1) Build one canonical assessment; 2) remove a required object, add an undeclared key, and corrupt a referenced path; 3) require each mutation to fail while the original passes.
+case_publish_assessment_verify_rejects_malformed_artifacts() {
+  local name="ship publish assessment: verifier rejects malformed required fields, unknown fields, and artifact paths"
+  should_run "$name" || return 0
+  local dir assessment mutation status=0 variant
+  dir="$tmp_root/publish-assessment-verify-negative"
+  publish_assessment_fixture "$dir"
+  run_real_publish_assessment_build "$dir" >/dev/null 2>"$dir/build.err" || {
+    fail "$name" "failed to build canonical assessment: $(cat "$dir/build.err")"
+    return 0
+  }
+  assessment="$dir/assessment.json"
+  if ! run_real_publish_assessment_verify "$assessment"; then
+    fail "$name" "canonical assessment was rejected"
+    return 0
+  fi
+  for variant in missing-required unknown-field malformed-path; do
+    mutation="$dir/assessment-$variant.json"
+    case "$variant" in
+      missing-required)
+        jq 'del(.closure)' "$assessment" > "$mutation"
+        ;;
+      unknown-field)
+        jq '.unexpected_test_field = true' "$assessment" > "$mutation"
+        ;;
+      malformed-path)
+        jq '.full_suite.artifact = "/tmp/pm-dispatch-missing-full-suite.json"' "$assessment" > "$mutation"
+        ;;
+    esac
+    if run_real_publish_assessment_verify "$mutation"; then
+      fail "$name" "malformed variant was accepted: $variant"
+      status=1
+    fi
+  done
+  [[ "$status" -eq 0 ]] && pass "$name"
 }
 
 # Behavior: a targeted GO cannot replace an initial comprehensive finding ledger or authorize a partial remediation.
@@ -2744,6 +2794,37 @@ case_finish_go_persists_fallback_when_marker_write_fails() {
   fi
 }
 
+# Behavior: a successful push/PR is not reported as normal completion when both recovery sinks fail.
+# Steps: 1) Make the lane marker a directory; 2) force canonical recovery writes to fail; 3) require nonzero finish and a critical manual-recovery signal.
+case_finish_go_fails_when_all_recovery_sinks_fail() {
+  local name="ship finish: GO returns partial failure when all recovery sinks fail"
+  should_run "$name" || return 0
+  local store work gh_bin out err status=0 pushed=0 lane_status
+  store="$tmp_root/state-finish-go-recovery-failure"
+  work="$tmp_root/work-finish-go-recovery-failure"
+  make_work_repo "$work" "CC-9001"
+  checkout_ticket_branch "$work" "CC-9001"
+  add_bare_origin "$work"
+  mkdir -p "$work/.pm-dispatch-ship-finish.json"
+  gh_bin="$tmp_root/fake-gh-go-recovery-failure"
+  install_fake_gh "$gh_bin" "https://example.invalid/pr/go-recovery-failure"
+  out="$tmp_root/out-finish-go-recovery-failure"; err="$tmp_root/err-finish-go-recovery-failure"
+  PM_DISPATCH_STATE_ROOT="$store" PM_TEST_FAIL_RECOVERY_RECORD=1 PATH="$gh_bin:$PATH" \
+    run_finish_with_fake_gate "$work" "CC-9001" GO > "$out" 2> "$err" || status=$?
+  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
+  lane_status="$(PM_DISPATCH_STATE_ROOT="$store" bash -c '
+    . "$1/runtime/lib/pmctl-ship.sh"
+    _pmctl_ship_lane_status "$2" "" "" CC-9001
+  ' _ "$REPO_ROOT" "$work" 2>/dev/null || true)"
+  if [[ "$status" -ne 0 && "$pushed" -eq 1 && "$lane_status" != go ]] \
+      && grep -q 'no durable recovery record was persisted' "$err" \
+      && grep -q 'recover the pushed branch and PR manually' "$err"; then
+    pass "$name"
+  else
+    fail "$name" "expected nonzero recovery failure; status=$status pushed=$pushed lane_status=$lane_status stderr=$(cat "$err")"
+  fi
+}
+
 # Behavior: a transient PR-creation failure can be retried on the unchanged subject using the same verified assessment.
 # Steps: 1) Arrange fake gh to fail once and a clean ticket branch; 2) run finish twice without changing HEAD/tree; 3) require the second run to open the PR and write GO.
 case_finish_retries_after_pr_create_failure() {
@@ -3339,6 +3420,7 @@ case_ship_subject_fingerprint_requires_canonical_helper
 case_publish_assessment_binds_closure_and_full_suite
 case_publish_assessment_rejects_existing_destination
 case_publish_assessment_and_closure_are_concurrent_no_replace
+case_publish_assessment_verify_rejects_malformed_artifacts
 case_targeted_closure_requires_initial_finding_ledger
 case_targeted_closure_rejects_legacy_initial_without_immutable_evidence
 case_targeted_closure_accepts_clean_go_with_confirmations
@@ -3354,6 +3436,7 @@ case_finish_pushes_only_assessed_head_when_branch_advances_at_push
 case_finish_gh_pr_create_runtime_failure_writes_pushed_pr_failed_marker
 case_finish_pr_failure_persists_fallback_when_marker_write_fails
 case_finish_go_persists_fallback_when_marker_write_fails
+case_finish_go_fails_when_all_recovery_sinks_fail
 case_finish_retries_after_pr_create_failure
 case_status_reports_partial_for_pushed_pr_failed
 case_finish_reviewers_flag_reaches_gate_call

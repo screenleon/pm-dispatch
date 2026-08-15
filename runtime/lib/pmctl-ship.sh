@@ -553,7 +553,9 @@ pmctl_ship_finish() {
       "$repo_root" "$work_dir" "$ticket_id" "$marker" "GO" "$branch" \
       "$remediation_closure" "$publish_assessment" "$producer_policy" \
       "$policy_satisfaction" "$preferred_policy" "$pr_url" "$result_path"; then
-    printf 'pmctl ship finish: publication recovery record was not persisted.\n' >&2
+    printf 'pmctl ship finish: CRITICAL: publication completed, but no durable recovery record was persisted; recover the pushed branch and PR manually.\n' >&2
+    rm -f -- "$assessment_snapshot"
+    return 1
   fi
   rm -f -- "$assessment_snapshot"
 }
