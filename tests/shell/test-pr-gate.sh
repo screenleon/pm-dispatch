@@ -833,7 +833,7 @@ Verdict: block. Tier 1 rules source unreadable.' \
 }
 
 write_valid_initial_gate_result() {
-  local path="$1" final="${2:-NO-GO}" scope scope_sha
+  local path="$1" final="${2:-NO-GO}" scope scope_sha repo common_dir common_identity remote remote_identity repository_key base_commit
   cat > "$path" << INITIAL_GATE_EOF
 ---
 gate_result_version: pr_gate_result_v1
@@ -861,8 +861,27 @@ INITIAL_GATE_EOF
   scope="${path}.scope.json"
   jq -n '{changes:{changed_paths:["README.md"],renamed_paths:[],untracked_paths:[]},diff:{binary_or_special_paths:[]}}' > "$scope"
   scope_sha="$(sha256sum "$scope" | awk '{print $1}')"
+  repo="$(dirname "$path")/repo"
+  if [[ -d "$repo/.git" ]] && common_dir="$(git -C "$repo" rev-parse --git-common-dir 2>/dev/null)"; then
+    [[ "$common_dir" == /* ]] || common_dir="$repo/$common_dir"
+    common_dir="$(cd "$(dirname "$common_dir")" && pwd -P)/$(basename "$common_dir")"
+    common_identity="$(printf '%s' "$common_dir" | sha256sum | awk '{print $1}')"
+    remote="$(git -C "$repo" config --get remote.origin.url 2>/dev/null || true)"
+    remote_identity=""
+    [[ -n "$remote" ]] && remote_identity="$(printf '%s' "$remote" | sha256sum | awk '{print $1}')"
+    repository_key="$(printf 'common:%s\nremote:%s\n' "$common_identity" "${remote_identity:-absent}" | sha256sum | awk '{print $1}')"
+    base_commit="$(git -C "$repo" merge-base main HEAD 2>/dev/null || git -C "$repo" rev-parse HEAD)"
+  else
+    repository_key="$(printf 'fixture-repository' | sha256sum | awk '{print $1}')"
+    base_commit="$(printf 'fixture-base' | sha1sum | awk '{print $1}')"
+  fi
+  # The synthetic initial result deliberately uses a different head/tree from
+  # the targeted run: remediation may advance the reviewed tree. Stable repo
+  # identity, base, and subject kind remain bound; same-subject retries still
+  # require the scope digest to match in gate-closure.sh.
   jq -n --arg scope_sha "$scope_sha" --arg artifact "$(basename "$scope")" \
-    '{subject:{repository_key:("a"*64),base_commit:("b"*40),head_commit:("c"*40),tree_fingerprint:("d"*64),subject_kind:"committed_head"},evidence:{scope_manifest:{artifact:$artifact,sha256:$scope_sha}}}' > "${path}.assurance.json"
+    --arg repository_key "$repository_key" --arg base_commit "$base_commit" \
+    '{subject:{repository_key:$repository_key,base_commit:$base_commit,head_commit:("c"*40),tree_fingerprint:("d"*64),subject_kind:"committed_head"},evidence:{scope_manifest:{artifact:$artifact,sha256:$scope_sha}}}' > "${path}.assurance.json"
   {
     printf '```synthesis_result_v1\n'
     jq -n '{kind:"gate_synthesis_result_v1",schema_version:1,selected_reviewers:["critic"],findings_union:[],remediation_confirmations:[],reviewer_finding_inventory:[],uncertainties:{finding_ids:[],coverage_cells:[]}}'

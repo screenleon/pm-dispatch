@@ -121,7 +121,7 @@ gate_remediation_closure_publish() {
   if [[ "$(jq -r '.coordinates.pass.resolved // empty' "$assurance_file")" == targeted \
       && "$final" != INCOMPLETE ]]; then
     local initial_input initial_candidate initial_assurance initial_subject_json
-    local initial_scope_artifact initial_scope_sha initial_scope_file
+    local initial_scope_sha
     initial_input="$(jq -r '.coordinates.pass.initial_result // empty' "$assurance_file")"
     if [[ -z "$initial_input" ]]; then
       printf 'gate-closure: targeted pass requires an immutable initial result reference\n' >&2
@@ -137,17 +137,27 @@ gate_remediation_closure_publish() {
       return 1
     fi
     initial_subject_json="$(_gate_closure_subject_json "$initial_assurance")" || return 1
-    initial_scope_artifact="$(jq -r '.evidence.scope_manifest.artifact // empty' "$initial_assurance")"
     initial_scope_sha="$(jq -r '.evidence.scope_manifest.sha256 // empty' "$initial_assurance")"
-    initial_scope_file="$(cd "$(dirname "$initial_candidate")" && pwd -P)/$initial_scope_artifact" || return 1
-    if [[ ! "$initial_scope_sha" =~ ^[a-f0-9]{64}$ ]] || [[ ! -s "$initial_scope_file" ]] \
-      || [[ "$(gate_digest_file "$initial_scope_file")" != "$initial_scope_sha" ]]; then
+    if [[ ! "$initial_scope_sha" =~ ^[a-f0-9]{64}$ ]]; then
       printf 'gate-closure: targeted pass initial assurance scope provenance is invalid\n' >&2
       return 1
     fi
+    # Remediation may advance the reviewed head/tree (and therefore its
+    # scope manifest) between the comprehensive pass and the targeted delta.
+    # Stable repository identity and base remain mandatory; an unchanged
+    # subject must retain the exact same scope provenance.
     if ! jq -n -e --argjson initial "$initial_subject_json" --argjson targeted "$subject_json" \
-      '$initial == $targeted' >/dev/null 2>&1 \
-      || [[ "$initial_scope_sha" != "$scope_sha" ]]; then
+      --arg initial_scope "$initial_scope_sha" --arg targeted_scope "$scope_sha" '
+      ($initial.repository_key == $targeted.repository_key) and
+      ($initial.base_commit == $targeted.base_commit) and
+      ($initial.subject_kind == $targeted.subject_kind or
+       (($initial.subject_kind == "committed_head" or $initial.subject_kind == "working_tree") and
+        ($targeted.subject_kind == "committed_head" or $targeted.subject_kind == "working_tree"))) and
+      (if $initial.head_commit == $targeted.head_commit and
+          $initial.tree_fingerprint == $targeted.tree_fingerprint then
+         $initial_scope == $targeted_scope
+       else true end)
+    ' >/dev/null 2>&1; then
       printf 'gate-closure: targeted pass initial assurance provenance does not match targeted subject or scope\n' >&2
       return 1
     fi
