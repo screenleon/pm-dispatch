@@ -6,8 +6,10 @@ set -euo pipefail
 
 # shellcheck disable=SC1091
 . "$(dirname "$0")/../lib/pmctl-memory.sh"
-# shellcheck disable=SC1091
-. "$(dirname "$0")/../lib/retrieval-terms.sh"
+if ! declare -F retrieval_extract_terms >/dev/null 2>&1; then
+  # shellcheck disable=SC1091
+  . "$(dirname "$0")/../lib/retrieval-terms.sh"
+fi
 
 MAX_INJECT_ENTRIES=20
 MAX_INJECT_BYTES=3000

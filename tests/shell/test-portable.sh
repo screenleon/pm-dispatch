@@ -1623,6 +1623,30 @@ case_receipt_reader_accepts_plain_string_fields() {
   pass "$name"
 }
 
+# Behavior: a JSON unicode NUL in a required string field is rejected.
+# Steps: write a receipt whose src decodes to an embedded NUL; load it;
+# assert nonzero exit and an empty src array.
+case_receipt_reader_rejects_embedded_nul() {
+  local name="install-receipt-reader-rejects-embedded-nul"
+  should_run "$name" || return 0
+  local receipt="$tmp_root/$name/receipt.json" out rc
+  mkdir -p "$tmp_root/$name"
+  jq -n '{manifest_version:1,entries:[{src:("pre\u0000post"),dst:"/tmp/dst",mode:"symlink"}]}' \
+    > "$receipt"
+  set +e
+  out="$(bash -c '
+    . "$1"
+    pm_dispatch_receipt_load "$2"
+  ' _ "$REPO_ROOT/runtime/lib/install-receipt.sh" "$receipt" 2>&1)"
+  rc=$?
+  set -e
+  if [[ "$rc" -ne 0 && "$out" == *"must be a string"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "NUL src was not rejected (rc=$rc out=$out)"
+  fi
+}
+
 # Behavior: an unsupported receipt schema cannot authorize or record a copy
 # refresh and leaves the installed destination unchanged.
 # Steps: Arrange a version-99 receipt with a changed source; Act via link_or_copy;
@@ -1970,6 +1994,7 @@ case_link_or_copy_copy_refresh_dry_run
 case_link_or_copy_receipt_json_round_trip
 case_receipt_reader_requires_jq
 case_receipt_reader_accepts_plain_string_fields
+case_receipt_reader_rejects_embedded_nul
 case_receipt_unknown_version_denies_refresh
 case_portable_sha1_shasum_fallback
 case_portable_sha1_both_missing

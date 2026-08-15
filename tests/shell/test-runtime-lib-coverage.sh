@@ -281,6 +281,56 @@ test_retrieval_terms_truncates_cjk_past_byte_cap() {
   fi
 }
 
+# Behavior: sourcing retrieval-terms.sh twice does not redefine or fail.
+# Steps: source the lib twice, extract "token", require a single term.
+test_retrieval_terms_source_is_idempotent() {
+  local name="runtime-lib-coverage/retrieval-terms-source-is-idempotent" output
+  should_run "$name" || return 0
+  output="$(bash -c '
+    . "$1/runtime/lib/retrieval-terms.sh"
+    . "$1/runtime/lib/retrieval-terms.sh"
+    retrieval_extract_terms "token"
+  ' _ "$REPO_ROOT" 2>&1)"
+  if [[ "$output" == "token" ]]; then pass "$name"; else fail "$name" "output=$output"; fi
+}
+
+# Behavior: shell/awk metacharacters in the input stay data and do not run.
+# Steps: extract a payload with command substitution, backticks, and system();
+# assert only "token" and that a marker file is not created.
+test_retrieval_terms_metacharacters_stay_data() {
+  local name="runtime-lib-coverage/retrieval-terms-metacharacters-stay-data" output marker
+  should_run "$name" || return 0
+  marker="$tmp_root/retrieval-terms-pwned"
+  rm -f "$marker"
+  output="$(bash -c '
+    . "$1/runtime/lib/retrieval-terms.sh"
+    retrieval_extract_terms "\$(.) \`^\` token"
+  ' _ "$REPO_ROOT" "$marker" 2>&1)"
+  if [[ "$output" == "token" && ! -e "$marker" ]]; then
+    pass "$name"
+  else
+    fail "$name" "output=$output marker_exists=$([[ -e $marker ]] && echo yes || echo no)"
+  fi
+}
+
+# Behavior: a 16KiB CJK walk stays within an interactive hook budget (2s).
+# Steps: extract 5500 copies of 甲 (above the byte cap after truncate) and
+# require the elapsed wall time to be under two seconds.
+test_retrieval_terms_cjk_cap_stays_interactive() {
+  local name="runtime-lib-coverage/retrieval-terms-cjk-cap-stays-interactive" elapsed
+  should_run "$name" || return 0
+  elapsed="$(TIMEFORMAT='%R'; { time bash -c '
+    . "$1/runtime/lib/retrieval-terms.sh"
+    blob="$(printf "甲%.0s" {1..5500})"
+    retrieval_extract_terms "$blob" >/dev/null
+  ' _ "$REPO_ROOT"; } 2>&1)"
+  if awk -v t="$elapsed" 'BEGIN { exit (t+0 < 2.0 ? 0 : 1) }'; then
+    pass "$name"
+  else
+    fail "$name" "elapsed=${elapsed}s (budget 2s)"
+  fi
+}
+
 # Behavior: CJK extraction uses only tr/od/awk/sort — no python3 on PATH.
 # Steps: isolate PATH to those tools plus bash, extract mixed CJK/English.
 test_retrieval_terms_no_python_needed() {
@@ -322,5 +372,8 @@ test_retrieval_terms_while_read_keeps_last
 test_retrieval_terms_large_ascii_stays_fast
 test_retrieval_terms_truncates_past_byte_cap
 test_retrieval_terms_truncates_cjk_past_byte_cap
+test_retrieval_terms_source_is_idempotent
+test_retrieval_terms_metacharacters_stay_data
+test_retrieval_terms_cjk_cap_stays_interactive
 test_retrieval_terms_no_python_needed
 th_summary

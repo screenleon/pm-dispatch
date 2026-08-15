@@ -19,6 +19,7 @@ RETRIEVAL_TERM_MAX_BYTES=16384
 #   CJK: overlapping 2-grams from each contiguous CJK/Hiragana/Katakana/Hangul
 #   run of length >= 2. Single-character runs are dropped (too noisy).
 #   FTS5 tokenization is intentionally not handled here.
+if ! declare -F retrieval_extract_terms >/dev/null 2>&1; then
 retrieval_extract_terms() {
   local text="${1-}"
   local stopwords=" ${RETRIEVAL_TERM_STOPWORDS} "
@@ -117,3 +118,4 @@ retrieval_extract_terms() {
     ' \
     | LC_ALL=C sort -u
 }
+fi
