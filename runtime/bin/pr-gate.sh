@@ -1905,6 +1905,7 @@ GATE_OVERRIDES_CONTEXT_BLOCK="$(render_gate_overrides_block "$GATE_OVERRIDES_CON
 
 INITIAL_RESULT_DISPLAY="${INITIAL_RESULT_RESOLVED:-none}"
 TARGETED_REMEDIATION_CONTEXT_BLOCK=""
+TARGETED_INITIAL_FINDING_IDS=""
 if [[ "$PASS_KIND_RESOLVED" == targeted && -n "$INITIAL_RESULT_RESOLVED" ]]; then
   _targeted_initial_synthesis="$(mktemp "${TMPDIR:-/tmp}/pr-gate-targeted-initial.XXXXXX.json")"
   _targeted_initial_ids='[]'
@@ -1918,6 +1919,7 @@ if [[ "$PASS_KIND_RESOLVED" == targeted && -n "$INITIAL_RESULT_RESOLVED" ]]; the
       select(.origin == "diff_caused" or .origin == "uncertain") | .id] | sort' \
       "$_targeted_initial_synthesis" 2>/dev/null || printf '[]')"
   fi
+  TARGETED_INITIAL_FINDING_IDS="$_targeted_initial_ids"
   TARGETED_REMEDIATION_CONTEXT_BLOCK="Targeted remediation context (machine-checked):
   - This is a targeted delta pass. The initial diff-caused/uncertain finding IDs that must be independently confirmed are:
     $_targeted_initial_ids
@@ -1926,6 +1928,15 @@ if [[ "$PASS_KIND_RESOLVED" == targeted && -n "$INITIAL_RESULT_RESOLVED" ]]; the
   rm -f -- "$_targeted_initial_synthesis"
   unset _targeted_initial_synthesis _targeted_initial_ids
 fi
+
+gate_verify_synthesis_protocol() {
+  if [[ -n "$TARGETED_INITIAL_FINDING_IDS" ]]; then
+    gate_synthesis_protocol_verify \
+      "$1" "$2" "$3" "$4" "$5" "$TARGETED_INITIAL_FINDING_IDS"
+  else
+    gate_synthesis_protocol_verify "$1" "$2" "$3" "$4" "$5"
+  fi
+}
 POLICY_REQUIRED_REVIEWERS_DISPLAY="$(jq -r \
   '.resolution.required_reviewers | if length == 0 then "none" else join(",") end' \
   <<<"$GATE_POLICY_RESOLUTION")"
@@ -3062,7 +3073,7 @@ BRIEF_EOF
   gate_reviewer_protocol_verify \
     "$OUTPUT_FILE" "$REVIEWERS" "$SCOPE_MANIFEST_DIGEST" \
     "$SCOPE_MANIFEST_PATH" true || exit 1
-  gate_synthesis_protocol_verify \
+  gate_verify_synthesis_protocol \
     "$OUTPUT_FILE" "$REVIEWERS" "$SKIPPED_WORDS" \
     "$SCOPE_MANIFEST_DIGEST" true || exit 1
   SEQ_PROTOCOL_FINAL="$(
@@ -3877,7 +3888,7 @@ SYNTHESIS_RETRY_EOF
       gate_reviewer_protocol_verify \
         "$OUTPUT_FILE" "$REVIEWERS" "$SCOPE_MANIFEST_DIGEST" \
         "$SCOPE_MANIFEST_PATH" true || exit 1
-      if gate_synthesis_protocol_verify \
+      if gate_verify_synthesis_protocol \
           "$OUTPUT_FILE" "$REVIEWERS" "$SKIPPED_WORDS" \
           "$SCOPE_MANIFEST_DIGEST" true; then
         _SYNTHESIS_COMPLETE=true

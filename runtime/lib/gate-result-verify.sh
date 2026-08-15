@@ -540,6 +540,7 @@ _gate_synthesis_protocol_documents() {
 
 # gate_synthesis_protocol_verify <artifact> <selected-reviewers>
 #                                <skipped-reviewers> <scope-sha256>
+#                                [require-test-gaps] [initial-finding-ids-json]
 #
 # Validates the synthesis-owned JSON shape and then derives the authoritative
 # finding inventory, coverage matrix, uncertainties, cautions, and remediation
@@ -550,10 +551,11 @@ _gate_synthesis_protocol_documents() {
 gate_synthesis_protocol_verify() {
   local artifact=${1-} selected=${2-} skipped=${3-} scope_sha=${4-}
   local require_test_gaps=${5-false}
+  local initial_finding_ids=${6-null}
   local tmp_dir synthesis_documents synthesis_document reviewer_documents synthesis_count validation
   local heading heading_count
   GATE_SYNTHESIS_PROTOCOL_ERROR=""
-  [[ $# -ge 4 && $# -le 5 && -s "$artifact" && -n "$selected" \
+  [[ $# -ge 4 && $# -le 6 && -s "$artifact" && -n "$selected" \
       && "$scope_sha" =~ ^[a-f0-9]{64}$ ]] || {
     printf 'Error: synthesis protocol INCOMPLETE: invalid verifier inputs\n' >&2
     return 2
@@ -577,6 +579,14 @@ gate_synthesis_protocol_verify() {
     rm -rf -- "$tmp_dir"
     return 1
   }
+  if [[ "$initial_finding_ids" != null ]] && ! jq -e \
+      'type == "array" and length == (unique | length) and
+       all(.[]; type == "string" and test("^(critic|qa-tester|architecture-reviewer|security-reviewer|risk-reviewer)-F[0-9]{3,}$"))' \
+      <<<"$initial_finding_ids" >/dev/null 2>&1; then
+    GATE_SYNTHESIS_PROTOCOL_ERROR="invalid initial finding ID set"
+    printf 'Error: synthesis protocol INCOMPLETE: invalid initial finding ID set\n' >&2
+    return 1
+  fi
   if [[ "$synthesis_count" -ne 1 ]]; then
     GATE_SYNTHESIS_PROTOCOL_ERROR="missing or duplicate synthesis result"
     printf 'Error: synthesis protocol INCOMPLETE: expected one synthesis_result_v1 block, found %d in %s\n' \
@@ -605,6 +615,7 @@ gate_synthesis_protocol_verify() {
       --arg selected "$selected" --arg skipped "$skipped" \
       --arg scope_sha "$scope_sha" \
       --argjson require_test_gaps "$require_test_gaps" \
+      --argjson initial_finding_ids "$initial_finding_ids" \
       --slurpfile synthesis "$synthesis_documents" \
       --slurpfile reviewers "$reviewer_documents" '
       def only_keys($allowed):
@@ -803,6 +814,10 @@ gate_synthesis_protocol_verify() {
         (($s.remediation_confirmations | map(.finding_id)) |
           length != (unique | length))
       then "duplicate remediation confirmation ID"
+      elif $initial_finding_ids != null and
+        (($s.remediation_confirmations | map(.finding_id) | sort) !=
+          ($initial_finding_ids | sort))
+      then "remediation confirmation set mismatch"
       elif
         ($s.reviewer_finding_inventory | sort_by(.id)) != $expected_inventory
       then "reviewer finding inventory parity mismatch"
