@@ -77,7 +77,7 @@ gate_remediation_closure_publish() {
   local result_parent scope_artifact scope_file scope_sha subject_json subject_fp
   local final primary_result primary_assurance primary_subject primary_verdict
   local primary_artifact primary_sha synthesis_tmp initial_synthesis_tmp findings_json reviewers_json
-  local targeted_findings_json required_targeted_ids missing_targeted_ids
+  local targeted_confirmation_ids_json required_targeted_ids missing_targeted_ids
   local changed_files_json closure_tmp full_status full_tree full_artifact full_sha
   local test_evidence_json targeted_status targeted_reviewers
   local result_sha
@@ -143,10 +143,10 @@ gate_remediation_closure_publish() {
   synthesis_tmp="$(mktemp "${TMPDIR:-/tmp}/gate-closure-synthesis.XXXXXX.json")" || return 1
   initial_synthesis_tmp=""
   findings_json='[]'
-  targeted_findings_json='[]'
+  targeted_confirmation_ids_json='[]'
   reviewers_json='[]'
   if _gate_closure_synthesis_json "$result_file" "$synthesis_tmp"; then
-    targeted_findings_json="$(jq -c '.findings_union // []' "$synthesis_tmp")" || {
+    targeted_confirmation_ids_json="$(jq -c '[.remediation_confirmations[]?.finding_id] | unique' "$synthesis_tmp")" || {
       rm -f "$synthesis_tmp"; return 1;
     }
     findings_json="$(jq -c '.findings_union // []' "$synthesis_tmp")" || {
@@ -160,9 +160,11 @@ gate_remediation_closure_publish() {
   # A targeted pass is delta evidence, not a replacement for the initial
   # comprehensive ledger. When the initial result has an immutable sidecar,
   # carry its complete finding inventory into the closure and require the
-  # targeted GO to explicitly cover every initial diff-caused/uncertain
-  # finding. Otherwise a targeted reviewer could omit an original blocker and
-  # accidentally authorize publication by virtue of the omission.
+  # targeted GO to explicitly confirm every initial diff-caused/uncertain
+  # finding. Confirmation is a separate delta ledger: a successful targeted
+  # review should have no current blocking findings left to union into the
+  # result. Requiring the old finding IDs in findings_union made a clean GO
+  # impossible because retaining a blocker would itself contradict GO.
   if [[ "$primary_result" != "$result_file" ]]; then
     initial_synthesis_tmp="$(mktemp "${TMPDIR:-/tmp}/gate-closure-initial-synthesis.XXXXXX.json")" || {
       rm -f "$synthesis_tmp"; return 1;
@@ -175,13 +177,13 @@ gate_remediation_closure_publish() {
         required_targeted_ids="$(jq -c '[.[] | select(.origin == "diff_caused" or .origin == "uncertain") | .id] | unique' <<<"$findings_json")" || {
           rm -f "$synthesis_tmp" "$initial_synthesis_tmp"; return 1;
         }
-        missing_targeted_ids="$(jq -cn --argjson required "$required_targeted_ids" --argjson observed "${targeted_findings_json:-[]}" '
-          ($observed | map(.id) | unique) as $observed_ids |
+        missing_targeted_ids="$(jq -cn --argjson required "$required_targeted_ids" --argjson observed "${targeted_confirmation_ids_json:-[]}" '
+          ($observed | unique) as $observed_ids |
           ($required - $observed_ids)')" || {
           rm -f "$synthesis_tmp" "$initial_synthesis_tmp"; return 1;
         }
         if [[ "$missing_targeted_ids" != "[]" ]]; then
-          printf 'gate-closure: targeted pass does not explicitly cover initial blocking findings: %s\n' \
+          printf 'gate-closure: targeted pass does not explicitly confirm initial blocking findings: %s\n' \
             "$missing_targeted_ids" >&2
           rm -f "$synthesis_tmp" "$initial_synthesis_tmp"
           return 1
@@ -258,6 +260,7 @@ gate_remediation_closure_publish() {
     --arg primary_verdict "$primary_verdict" --argjson final_subject "$subject_json" \
     --argjson findings "$findings_json" --argjson changed_files "$changed_files_json" \
     --argjson tests "$test_evidence_json" --arg targeted_status "$targeted_status" \
+    --argjson targeted_confirmation_ids "$targeted_confirmation_ids_json" \
     --argjson targeted_reviewers "$targeted_reviewers" --arg final "$final" \
     --arg result_artifact "$(basename "$result_file")" --arg result_sha "$result_sha" \
     --arg full_status "$full_status" --arg ticket_ref "$ticket_ref" '
@@ -311,6 +314,7 @@ gate_remediation_closure_publish() {
       final_subject:$final_subject,findings:$closure_findings,
       changed_files:$changed_files,affected_tests:$tests,
       targeted_confirmation:{status:$targeted_status,reviewers:$targeted_reviewers,
+        finding_ids:(if $targeted_status == "pass" then $targeted_confirmation_ids else [] end),
         delta_only:true,evidence:(if $targeted_status == "pass" then
           {artifact:$result_artifact,sha256:$result_sha,
            subject_fingerprint:$final_subject.tree_fingerprint}
@@ -397,6 +401,7 @@ gate_remediation_closure_verify() {
 
     . as $root |
     ($root.findings | any(.[]; .classification == "targeted_confirmation")) as $has_targeted |
+    ($root.targeted_confirmation.finding_ids // []) as $targeted_ids |
     .scope_manifest_sha256 == $expected_scope and
     .final_subject.tree_fingerprint == $expected_subject and
     .final_assessment.subject_fingerprint == $expected_subject and
@@ -444,6 +449,11 @@ gate_remediation_closure_verify() {
     ((.unresolved_counts.total == 0) == (.state == "closed")) and
     (if $has_targeted then .targeted_confirmation.status == "pass" else true end) and
     (.targeted_confirmation.delta_only == true) and
+    ($targeted_ids | type == "array" and length == (unique | length) and
+      all(.[]; type == "string")) and
+    (if $has_targeted then
+      ($targeted_ids | sort) == ([.findings[] | select(.classification == "targeted_confirmation") | .finding_id] | sort)
+     else ($targeted_ids | length == 0) end) and
     (.targeted_confirmation.status != "incomplete") and
     (.targeted_confirmation.evidence == null or
       .targeted_confirmation.evidence.subject_fingerprint == $expected_subject) and

@@ -1742,6 +1742,7 @@ _gate_synthesis_result_valid_instance() {
         root_cause_group_id:"RCG-001",
         disposition:"pending"
       }],
+      remediation_confirmations:[],
       root_cause_groups:[{
         id:"RCG-001",
         summary:"One advisory fixture root cause.",
@@ -1848,6 +1849,7 @@ _gate_remediation_closure_valid_instance() {
         status:"not_required",
         reviewers:[],
         delta_only:true,
+        finding_ids:[],
         evidence:null
       },
       unresolved_counts:{total:0,blocking:0,advisory:0},

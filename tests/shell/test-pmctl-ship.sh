@@ -643,14 +643,14 @@ case_targeted_closure_requires_initial_finding_ledger() {
   {
     printf 'Final: NO-GO\n```synthesis_result_v1\n'
     jq -n '{kind:"gate_synthesis_result_v1",findings_union:[
-      {id:"risk-F001",origin:"diff_caused",hard_gate_class:"hard_block",source:{path:"runtime/lib/gate-closure.sh",line:145,symbol:"gate_remediation_closure_publish"}},
-      {id:"qa-F001",origin:"diff_caused",hard_gate_class:"hard_block",source:{path:"tests/shell/test-pmctl-ship.sh",line:1,symbol:"concurrency"}}],selected_reviewers:["risk-reviewer","qa-tester"]}'
+      {id:"risk-reviewer-F001",origin:"diff_caused",hard_gate_class:"hard_block",source:{path:"runtime/lib/gate-closure.sh",line:145,symbol:"gate_remediation_closure_publish"}},
+      {id:"qa-tester-F001",origin:"diff_caused",hard_gate_class:"hard_block",source:{path:"tests/shell/test-pmctl-ship.sh",line:1,symbol:"concurrency"}}],selected_reviewers:["risk-reviewer","qa-tester"]}'
     printf '```\n'
   } > "$initial"
   jq -n --arg scope_sha "$scope_sha" '{subject:{repository_key:("a"*64),base_commit:("b"*40),head_commit:("c"*40),tree_fingerprint:("d"*64),subject_kind:"committed_head"},evidence:{scope_manifest:{artifact:"scope.json",sha256:$scope_sha}}}' > "$initial.assurance.json"
   {
     printf 'Final: GO\n```synthesis_result_v1\n'
-    jq -n '{kind:"gate_synthesis_result_v1",findings_union:[{id:"risk-F001",origin:"diff_caused",hard_gate_class:"hard_block",source:{path:"runtime/lib/gate-closure.sh",line:145,symbol:"gate_remediation_closure_publish"}}],selected_reviewers:["risk-reviewer"]}'
+    jq -n '{kind:"gate_synthesis_result_v1",findings_union:[{id:"risk-reviewer-F001",origin:"diff_caused",hard_gate_class:"hard_block",source:{path:"runtime/lib/gate-closure.sh",line:145,symbol:"gate_remediation_closure_publish"}}],remediation_confirmations:[{finding_id:"risk-reviewer-F001",status:"confirmed",summary:"The targeted review confirmed the first fix.",evidence_refs:[{path:"runtime/lib/gate-closure.sh",line:145,symbol:"gate_remediation_closure_publish"}]}],selected_reviewers:["risk-reviewer"]}'
     printf '```\n'
   } > "$target"
   jq -n --arg scope_sha "$scope_sha" --arg initial "$initial" '{coordinates:{pass:{resolved:"targeted",initial_result:$initial}},subject:{repository_key:("a"*64),base_commit:("b"*40),head_commit:("c"*40),tree_fingerprint:("d"*64),subject_kind:"committed_head"},evidence:{scope_manifest:{artifact:"scope.json",sha256:$scope_sha}}}' > "$assurance"
@@ -661,10 +661,52 @@ case_targeted_closure_requires_initial_finding_ledger() {
     gate_remediation_closure_publish "$target" "$assurance" "$closure" "$full" CC-511
   ' _ "$REPO_ROOT" "$target" "$assurance" "$closure" "$full" > "$dir/out" 2> "$dir/err" || status=$?
   if [[ "$status" -ne 0 && ! -e "$closure" ]] \
-      && grep -q 'does not explicitly cover initial blocking findings' "$dir/err"; then
+      && grep -q 'does not explicitly confirm initial blocking findings' "$dir/err"; then
     pass "$name"
   else
     fail "$name" "partial targeted closure was accepted: status=$status closure=$(cat "$closure" 2>/dev/null) stderr=$(cat "$dir/err")"
+  fi
+}
+
+# Behavior: a clean targeted GO closes the initial blocker ledger through an independent confirmation ledger.
+# Steps: 1) Arrange a protocol-shaped initial NO-GO with two blockers; 2) arrange a targeted GO with no current findings and two confirmations; 3) require closed authorization and recorded IDs.
+case_targeted_closure_accepts_clean_go_with_confirmations() {
+  local name="ship closure: clean targeted GO closes initial blockers through confirmation ledger"
+  should_run "$name" || return 0
+  local dir initial target assurance scope full closure scope_sha status=0
+  dir="$tmp_root/targeted-closure-confirmations"
+  mkdir -p "$dir"
+  initial="$dir/initial.md"; target="$dir/target.md"; assurance="$dir/target.md.assurance.json"
+  scope="$dir/scope.json"; full="$dir/full.json"; closure="$dir/closure.json"
+  jq -n '{changes:{changed_paths:["runtime/lib/gate-closure.sh","tests/shell/test-pmctl-ship.sh"],renamed_paths:[],untracked_paths:[]},diff:{binary_or_special_paths:[]}}' > "$scope"
+  scope_sha="$(sha256sum "$scope" | awk '{print $1}')"
+  {
+    printf 'Final: NO-GO\n```synthesis_result_v1\n'
+    jq -n '{kind:"gate_synthesis_result_v1",findings_union:[
+      {id:"risk-reviewer-F001",origin:"diff_caused",hard_gate_class:"hard_block",source:{path:"runtime/lib/gate-closure.sh",line:145,symbol:"gate_remediation_closure_publish"}},
+      {id:"qa-tester-F001",origin:"diff_caused",hard_gate_class:"soft_block",source:{path:"tests/shell/test-pmctl-ship.sh",line:1,symbol:"case_targeted_closure_accepts_clean_go_with_confirmations"}}],selected_reviewers:["risk-reviewer","qa-tester"]}'
+    printf '```\n'
+  } > "$initial"
+  jq -n --arg scope_sha "$scope_sha" '{subject:{repository_key:("a"*64),base_commit:("b"*40),head_commit:("c"*40),tree_fingerprint:("d"*64),subject_kind:"committed_head"},evidence:{scope_manifest:{artifact:"scope.json",sha256:$scope_sha}}}' > "$initial.assurance.json"
+  {
+    printf 'Final: GO\n```synthesis_result_v1\n'
+    jq -n '{kind:"gate_synthesis_result_v1",findings_union:[],remediation_confirmations:[
+      {finding_id:"risk-reviewer-F001",status:"confirmed",summary:"Risk fix confirmed by targeted review.",evidence_refs:[{path:"runtime/lib/gate-closure.sh",line:145,symbol:"gate_remediation_closure_publish"}]},
+      {finding_id:"qa-tester-F001",status:"confirmed",summary:"QA fix confirmed by targeted review.",evidence_refs:[{path:"tests/shell/test-pmctl-ship.sh",line:1,symbol:"case_targeted_closure_accepts_clean_go_with_confirmations"}]}],selected_reviewers:["risk-reviewer","qa-tester"]}'
+    printf '```\n'
+  } > "$target"
+  jq -n --arg scope_sha "$scope_sha" --arg initial "$initial" '{coordinates:{pass:{resolved:"targeted",initial_result:$initial}},subject:{repository_key:("a"*64),base_commit:("b"*40),head_commit:("c"*40),tree_fingerprint:("d"*64),subject_kind:"committed_head"},evidence:{scope_manifest:{artifact:"scope.json",sha256:$scope_sha}}}' > "$assurance"
+  jq -n '{kind:"pm_test_result_v2",contract:"full",authoritative:true,status:"pass",aggregate:{status:"pass"},exit_code:0,tree_fingerprint:("d"*64)}' > "$full"
+  bash -c '
+    repo_root="$1"; target="$2"; assurance="$3"; closure="$4"; full="$5"
+    . "$repo_root/runtime/lib/gate-closure.sh"
+    gate_remediation_closure_publish "$target" "$assurance" "$closure" "$full" CC-511
+  ' _ "$REPO_ROOT" "$target" "$assurance" "$closure" "$full" > "$dir/out" 2> "$dir/err" || status=$?
+  if [[ "$status" -eq 0 && -s "$closure" ]] \
+      && jq -e '.state == "closed" and .final_assessment.publish_authorized == true and (.targeted_confirmation.finding_ids | sort) == ["qa-tester-F001","risk-reviewer-F001"]' "$closure" >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name" "clean targeted GO was not authorized: status=$status stderr=$(cat "$dir/err") closure=$(cat "$closure" 2>/dev/null)"
   fi
 }
 
@@ -2974,6 +3016,7 @@ case_publish_assessment_binds_closure_and_full_suite
 case_publish_assessment_rejects_existing_destination
 case_publish_assessment_and_closure_are_concurrent_no_replace
 case_targeted_closure_requires_initial_finding_ledger
+case_targeted_closure_accepts_clean_go_with_confirmations
 case_publish_assessment_rejects_invalid_or_mismatched_evidence
 case_publish_assessment_rejects_post_build_source_mutation
 case_finish_real_publish_assessment_surfaces

@@ -10145,6 +10145,7 @@ GATE_RESULT_EOF
       })) | add),
       reviewer_finding_inventory:[],
       findings_union:[],
+      remediation_confirmations:[],
       root_cause_groups:[],
       disagreements:[],
       uncertainties:{finding_ids:[],coverage_cells:[]},

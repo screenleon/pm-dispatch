@@ -1904,6 +1904,28 @@ render_gate_overrides_block() {
 GATE_OVERRIDES_CONTEXT_BLOCK="$(render_gate_overrides_block "$GATE_OVERRIDES_CONTENT")"
 
 INITIAL_RESULT_DISPLAY="${INITIAL_RESULT_RESOLVED:-none}"
+TARGETED_REMEDIATION_CONTEXT_BLOCK=""
+if [[ "$PASS_KIND_RESOLVED" == targeted && -n "$INITIAL_RESULT_RESOLVED" ]]; then
+  _targeted_initial_synthesis="$(mktemp "${TMPDIR:-/tmp}/pr-gate-targeted-initial.XXXXXX.json")"
+  _targeted_initial_ids='[]'
+  awk '
+    /^```synthesis_result_v1[[:space:]]*$/ { inside=1; next }
+    inside && /^```[[:space:]]*$/ { exit }
+    inside { print }
+  ' "$INITIAL_RESULT_RESOLVED" > "$_targeted_initial_synthesis"
+  if [[ -s "$_targeted_initial_synthesis" ]]; then
+    _targeted_initial_ids="$(jq -c '[.findings_union[]? |
+      select(.origin == "diff_caused" or .origin == "uncertain") | .id] | sort' \
+      "$_targeted_initial_synthesis" 2>/dev/null || printf '[]')"
+  fi
+  TARGETED_REMEDIATION_CONTEXT_BLOCK="Targeted remediation context (machine-checked):
+  - This is a targeted delta pass. The initial diff-caused/uncertain finding IDs that must be independently confirmed are:
+    $_targeted_initial_ids
+  - Put one remediation_confirmations entry with status=confirmed and current evidence_refs for each of those IDs. A clean targeted GO normally has findings_union=[]; do not retain a fixed blocker there.
+"
+  rm -f -- "$_targeted_initial_synthesis"
+  unset _targeted_initial_synthesis _targeted_initial_ids
+fi
 POLICY_REQUIRED_REVIEWERS_DISPLAY="$(jq -r \
   '.resolution.required_reviewers | if length == 0 then "none" else join(",") end' \
   <<<"$GATE_POLICY_RESOLUTION")"
@@ -2340,10 +2362,11 @@ printf -v SYNTHESIS_PROTOCOL_INSTRUCTIONS \
   '%s\n' \
   '  Synthesis protocol (mandatory; parity with reviewer JSON is machine-validated):' \
   '  - Emit exactly one JSON block opened by ```synthesis_result_v1 and closed by ```.' \
-  '  - The JSON object has exactly these seventeen top-level keys: kind,' \
+  '  - The JSON object has exactly these eighteen top-level keys: kind,' \
   '    schema_version, scope_manifest_sha256, selected_reviewers,' \
   '    not_reviewed_dimensions, coverage_matrix, reviewer_finding_inventory,' \
-  '    findings_union, root_cause_groups, disagreements, uncertainties, cautions,' \
+  '    findings_union, remediation_confirmations, root_cause_groups, disagreements,' \
+  '    uncertainties, cautions,' \
   '    test_gap_matrix, operational_cautions, user_cautions, verification_plan,' \
   '    remediation_seed. Do not add wrapper objects or arrays.' \
   '  - kind=gate_synthesis_result_v1, schema_version=1, and' \
@@ -2357,6 +2380,11 @@ printf -v SYNTHESIS_PROTOCOL_INSTRUCTIONS \
   '  - findings_union preserves every original finding field and adds only' \
   '    root_cause_group_id=RCG-NNN plus disposition=pending. Never drop a lower' \
   '    severity, caution, uncertainty, disagreement input, or test expectation.' \
+  '  - remediation_confirmations is [] for an initial pass. For a targeted pass,' \
+  '    emit one {finding_id,status,summary,evidence_refs} object with status=confirmed' \
+  '    for every initial diff-caused/uncertain finding listed in the targeted' \
+  '    remediation context below. This is a separate confirmation ledger; do not' \
+  '    copy fixed findings into findings_union just to prove they were reviewed.' \
   '  - root_cause_groups partitions every finding ID exactly once. Different reviewers' \
   '    may share a group only when they describe the same root cause; different issues' \
   '    in the same file remain distinct. With no findings, emit an empty group array.' \
@@ -3638,6 +3666,7 @@ context:
   Date: $(date '+%Y-%m-%d')
 ${GATE_ASSURANCE_CONTEXT_BLOCK}${SCOPE_MANIFEST_CONTEXT_BLOCK}${GATE_OVERRIDES_CONTEXT_BLOCK}${TEST_EVIDENCE_CONTEXT_BLOCK}
 ${SYNTHESIS_PROTOCOL_INSTRUCTIONS}
+${TARGETED_REMEDIATION_CONTEXT_BLOCK}
   Verified reference files (exist in working tree -- check before citing):
 ${REPO_REF_INDEX}
   Reviewer findings (embedded -- do NOT attempt to read any external reviewer output file):

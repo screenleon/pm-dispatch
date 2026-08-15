@@ -2059,6 +2059,14 @@
               }
             ]
           },
+          "finding_ids": {
+            "items": {
+              "pattern": "^(critic|qa-tester|architecture-reviewer|security-reviewer|risk-reviewer)-F[0-9]{3,}$",
+              "type": "string"
+            },
+            "type": "array",
+            "uniqueItems": true
+          },
           "reviewers": {
             "items": {
               "minLength": 1,
@@ -2078,7 +2086,8 @@
         "required": [
           "status",
           "reviewers",
-          "delta_only"
+          "delta_only",
+          "finding_ids"
         ],
         "type": "object"
       },
@@ -4099,6 +4108,35 @@
         "pattern": "^(?!/)",
         "type": "string"
       },
+      "remediationConfirmation": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence_refs": {
+            "items": {
+              "$ref": "#/definitions/evidenceRef"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "finding_id": {
+            "$ref": "#/definitions/findingId"
+          },
+          "status": {
+            "const": "confirmed"
+          },
+          "summary": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "finding_id",
+          "status",
+          "summary",
+          "evidence_refs"
+        ],
+        "type": "object"
+      },
       "remediationSeed": {
         "additionalProperties": false,
         "properties": {
@@ -4555,6 +4593,13 @@
         "type": "array",
         "uniqueItems": true
       },
+      "remediation_confirmations": {
+        "items": {
+          "$ref": "#/definitions/remediationConfirmation"
+        },
+        "type": "array",
+        "uniqueItems": true
+      },
       "remediation_seed": {
         "$ref": "#/definitions/remediationSeed"
       },
@@ -4616,6 +4661,7 @@
       "coverage_matrix",
       "reviewer_finding_inventory",
       "findings_union",
+      "remediation_confirmations",
       "root_cause_groups",
       "disagreements",
       "uncertainties",

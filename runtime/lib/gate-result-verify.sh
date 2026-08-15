@@ -743,7 +743,8 @@ gate_synthesis_protocol_verify() {
         ($s | only_keys([
           "kind","schema_version","scope_manifest_sha256",
           "selected_reviewers","not_reviewed_dimensions","coverage_matrix",
-          "reviewer_finding_inventory","findings_union","root_cause_groups",
+          "reviewer_finding_inventory","findings_union","remediation_confirmations",
+          "root_cause_groups",
           "disagreements","uncertainties","cautions","test_gap_matrix",
           "operational_cautions","user_cautions","verification_plan",
           "remediation_seed"
@@ -757,6 +758,7 @@ gate_synthesis_protocol_verify() {
         ($s.coverage_matrix | type) != "array" or
         ($s.reviewer_finding_inventory | type) != "array" or
         ($s.findings_union | type) != "array" or
+        ($s.remediation_confirmations | type) != "array" or
         ($s.root_cause_groups | type) != "array" or
         ($s.disagreements | type) != "array" or
         ($s.cautions | type) != "array" or
@@ -789,6 +791,18 @@ gate_synthesis_protocol_verify() {
         (($s.findings_union | map(.id)) |
           length != (unique | length))
       then "duplicate finding ID collision"
+      elif
+        (all($s.remediation_confirmations[];
+          (type == "object" and
+           (keys_unsorted - ["finding_id","status","summary","evidence_refs"] | length) == 0 and
+           (.finding_id | finding_id) and .status == "confirmed" and
+           (.summary | nonempty) and
+           (.evidence_refs | type == "array" and length > 0 and all(.[]; reference)))) | not)
+      then "invalid remediation confirmation"
+      elif
+        (($s.remediation_confirmations | map(.finding_id)) |
+          length != (unique | length))
+      then "duplicate remediation confirmation ID"
       elif
         ($s.reviewer_finding_inventory | sort_by(.id)) != $expected_inventory
       then "reviewer finding inventory parity mismatch"
