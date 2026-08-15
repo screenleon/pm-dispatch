@@ -1599,6 +1599,30 @@ case_receipt_reader_requires_jq() {
   pass "$name"
 }
 
+# Behavior: a well-formed receipt with string fields loads on jq 1.6, where
+# contains(NUL) is true for every string and must not be used as the NUL check.
+# Steps: load a normal symlink entry; assert rc 0 and the recorded src.
+case_receipt_reader_accepts_plain_string_fields() {
+  local name="install-receipt-reader-accepts-plain-string-fields"
+  should_run "$name" || return 0
+  local receipt="$tmp_root/$name/receipt.json" out rc
+  mkdir -p "$tmp_root/$name"
+  printf '%s\n' '{"manifest_version":1,"entries":[{"src":"/tmp/src","dst":"/tmp/dst","mode":"symlink"}]}' > "$receipt"
+  set +e
+  out="$(bash -c '
+    . "$1"
+    pm_dispatch_receipt_load "$2" || exit $?
+    printf "%s\n" "${PM_DISPATCH_RECEIPT_ENTRY_SRCS[0]}"
+  ' _ "$REPO_ROOT/runtime/lib/install-receipt.sh" "$receipt" 2>&1)"
+  rc=$?
+  set -e
+  if [[ "$rc" -ne 0 || "$out" != "/tmp/src" ]]; then
+    fail "$name" "plain string receipt failed (rc=$rc out=$out)"
+    return
+  fi
+  pass "$name"
+}
+
 # Behavior: an unsupported receipt schema cannot authorize or record a copy
 # refresh and leaves the installed destination unchanged.
 # Steps: Arrange a version-99 receipt with a changed source; Act via link_or_copy;
@@ -1945,6 +1969,7 @@ case_link_or_copy_copy_refresh_user_modified_conflict
 case_link_or_copy_copy_refresh_dry_run
 case_link_or_copy_receipt_json_round_trip
 case_receipt_reader_requires_jq
+case_receipt_reader_accepts_plain_string_fields
 case_receipt_unknown_version_denies_refresh
 case_portable_sha1_shasum_fallback
 case_portable_sha1_both_missing

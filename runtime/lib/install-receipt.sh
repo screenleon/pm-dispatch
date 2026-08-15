@@ -74,17 +74,20 @@ pm_dispatch_receipt_load() {
     return 2
   }
   if ! jq -j '
+      def has_nul:
+        # jq 1.6 contains(NUL) is true for every string; scan code points.
+        any(explode[]; . == 0);
       def required_string($key):
         if has($key)
             and (.[$key] | type) == "string"
-            and ((.[$key] | contains("\u0000")) | not)
+            and ((.[$key] | has_nul) | not)
         then .[$key]
         else error("receipt entry " + $key + " must be a string")
         end;
       def optional_string($key):
         if has($key) then
           if (.[$key] | type) == "string"
-              and ((.[$key] | contains("\u0000")) | not)
+              and ((.[$key] | has_nul) | not)
           then .[$key]
           else error("receipt entry " + $key + " must be a string")
           end

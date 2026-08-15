@@ -5,8 +5,10 @@
 # non-executable fail loudly (exit 1). Use --skip <name> to opt out of a specific suite.
 # Use --jobs N (or -j N) to set parallelism (default: detected nproc, capped at
 # PM_DISPATCH_TEST_MAX_JOBS or 4; falls back to 1 if nproc unavailable).
-# Each suite has a 15-minute deadline by default. Use --suite-timeout N (seconds) or
-# PM_DISPATCH_TEST_SUITE_TIMEOUT_SECS to tune it for an intentionally slow environment.
+# Each suite has a 15-minute deadline by default. The four pr-gate shards
+# default to 40 minutes: shard-1 alone is ~11 minutes, and four shards
+# sharing the job cap take longer than 15 minutes. Use --suite-timeout N
+# or PM_DISPATCH_TEST_SUITE_TIMEOUT_SECS to override every suite.
 # By default a Phase 0 structural precheck (lint/registry/schema suites) runs
 # first; any Phase 0 failure skips all remaining suites and reports FAIL
 # immediately. Use --collect-all to disable the short-circuit and run every
@@ -272,6 +274,8 @@ else
 fi
 SUITE_TIMEOUT_SECS="${PM_DISPATCH_TEST_SUITE_TIMEOUT_SECS:-900}"
 [[ "$SUITE_TIMEOUT_SECS" =~ ^[1-9][0-9]*$ ]] || SUITE_TIMEOUT_SECS=900
+SUITE_TIMEOUT_EXPLICIT=0
+[[ -n "${PM_DISPATCH_TEST_SUITE_TIMEOUT_SECS:-}" ]] && SUITE_TIMEOUT_EXPLICIT=1
 PROGRESS_INTERVAL_SECS="${PM_DISPATCH_TEST_PROGRESS_SECS:-60}"
 [[ "$PROGRESS_INTERVAL_SECS" =~ ^[1-9][0-9]*$ ]] || PROGRESS_INTERVAL_SECS=60
 SUITE_RESULTS_FILE="${PM_TEST_SUITE_RESULTS_FILE:-}"
@@ -343,6 +347,7 @@ while [[ $# -gt 0 ]]; do
         exit 2
       fi
       SUITE_TIMEOUT_SECS="$2"
+      SUITE_TIMEOUT_EXPLICIT=1
       shift 2
       ;;
     *)
@@ -418,15 +423,31 @@ skipped=0
 FAILED_SUITE_NAMES=()
 declare -A SUITE_DURATIONS=()
 
+suite_timeout_secs() {
+  local name="${1-}"
+  if [[ "${SUITE_TIMEOUT_EXPLICIT:-0}" -eq 1 ]]; then
+    printf '%s\n' "$SUITE_TIMEOUT_SECS"
+    return
+  fi
+  case "$name" in
+    test-pr-gate-shard-*) printf '2400\n' ;;
+    *) printf '%s\n' "$SUITE_TIMEOUT_SECS" ;;
+  esac
+}
+
 run_with_suite_timeout() {
+  local name="${1-}"
+  local limit
+  shift
   # The result sink belongs to this runner process. Do not leak it into a
   # suite that happens to launch another runner, or the nested process could
   # overwrite its parent's evidence artifact.
   # A gate's orchestration state is likewise not test state. Letting every
   # parallel suite inherit it makes fixture pmctl calls contend on one shared
   # store; suites that need state must declare their own temporary root.
+  limit="$(suite_timeout_secs "$name")"
   ( unset PM_TEST_SUITE_RESULTS_FILE PM_DISPATCH_PREFLIGHT_TEST_RESULT PM_DISPATCH_STATE_ROOT
-    "$TIMEOUT_BIN" --kill-after=15s "${SUITE_TIMEOUT_SECS}s" "$@"
+    "$TIMEOUT_BIN" --kill-after=15s "${limit}s" "$@"
   )
 }
 
@@ -457,21 +478,21 @@ run_suite() {
       test-guards)
         HOME="${CLAUDE_CONFIG_TEST_PREFLIGHT_HOME:-$HOME}" \
           TEST_GUARDS_PROGRESS="${TEST_GUARDS_PROGRESS:-1}" \
-          run_with_suite_timeout "$script"
+          run_with_suite_timeout "$name" "$script"
         ;;
       test-install)
-        CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 run_with_suite_timeout bash "$script"
+        CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 run_with_suite_timeout "$name" bash "$script"
         ;;
       test-pm-scripts)
-        run_with_suite_timeout bash "$script"
+        run_with_suite_timeout "$name" bash "$script"
         ;;
       *)
-        run_with_suite_timeout "$script"
+        run_with_suite_timeout "$name" "$script"
         ;;
     esac
   ) || rc=$?
   if [[ "$rc" -eq 124 ]]; then
-    printf 'TIMEOUT %s (%ss)\n' "$name" "$SUITE_TIMEOUT_SECS" >&2
+    printf 'TIMEOUT %s (%ss)\n' "$name" "$(suite_timeout_secs "$name")" >&2
   fi
   return "$rc"
 }
