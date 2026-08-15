@@ -74,6 +74,8 @@ done < <(grep '^- ' "$memory_path" 2>/dev/null) || true
 total_count="${#index_lines[@]}"
 
 # Extract prompt keywords via the shared retrieval term lib (ASCII + CJK).
+# ASCII min length is 3 with the shared stop list (this hook previously used
+# length>=4 and no stopwords).
 prompt_text=$(jq -r '.prompt // empty' "$_tmp" 2>/dev/null) || prompt_text=""
 prompt_kws=()
 if [[ -n "$prompt_text" ]]; then
