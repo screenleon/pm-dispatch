@@ -14,6 +14,8 @@ PMCTL="$REPO_ROOT/cli/pmctl"
 . "$REPO_ROOT/runtime/lib/pmctl-operation.sh"
 # shellcheck source=runtime/lib/pmctl-dispatch.sh disable=SC1091
 . "$REPO_ROOT/runtime/lib/pmctl-dispatch.sh"
+# shellcheck source=runtime/lib/gate-subject.sh disable=SC1091
+. "$REPO_ROOT/runtime/lib/gate-subject.sh"
 th_init "$@"
 
 # Isolate XDG_RUNTIME_DIR for this suite's detached dispatch launches --
@@ -534,6 +536,98 @@ case_ship_subject_fingerprint_requires_canonical_helper() {
   else
     fail "$name" "ship accepted a missing canonical subject helper"
   fi
+}
+
+# Build the committed-tree digest independently from the production subject helper.
+# This intentionally mirrors only the published manifest contract with direct Git
+# and sha256sum primitives, so a shared helper regression cannot make both sides
+# of the assertion agree.
+independent_fixed_tree_fingerprint() {
+  local repo_root="$1" head_commit="$2" manifest entry metadata path mode object digest
+  manifest="$(mktemp "${TMPDIR:-/tmp}/ship-independent-tree.XXXXXX")" || return 2
+  while IFS= read -r -d '' entry; do
+    metadata="${entry%%$'\t'*}"
+    path="${entry#*$'\t'}"
+    mode="${metadata%% *}"
+    object="${metadata##* }"
+    case "$mode" in
+      120000|100644|100755)
+        digest="$(git -C "$repo_root" cat-file blob "$object" | sha256sum | awk '{print $1}')" || {
+          rm -f -- "$manifest"
+          return 2
+        }
+        ;;
+      *)
+        rm -f -- "$manifest"
+        return 2
+        ;;
+    esac
+    case "$mode" in
+      120000)
+        printf '%s\tsymlink\tfalse\t%s\n' "$(printf '%q' "$path")" "$digest" >> "$manifest"
+        ;;
+      100755)
+        printf '%s\tfile\ttrue\t%s\n' "$(printf '%q' "$path")" "$digest" >> "$manifest"
+        ;;
+      100644)
+        printf '%s\tfile\tfalse\t%s\n' "$(printf '%q' "$path")" "$digest" >> "$manifest"
+        ;;
+    esac
+  done < <(git -C "$repo_root" ls-tree -r -z --full-tree "$head_commit")
+  LC_ALL=C sort "$manifest" | sha256sum | awk '{print $1}'
+  local status=$?
+  rm -f -- "$manifest"
+  return "$status"
+}
+
+# Behavior: the canonical subject helper matches an independent Gate manifest oracle and reacts only to relevant tree mutations.
+# Steps: 1) Arrange committed regular, executable, symlink, and ignored runtime paths; 2) compare the independent committed digest and mutate each working-tree input; 3) assert relevant changes alter the digest, excluded artifacts do not, and invalid kinds fail closed.
+case_ship_subject_fingerprint_matches_independent_gate_oracle() {
+  local name="ship subject fingerprint matches independent Gate oracle and mutation contract"
+  should_run "$name" || return 0
+  local work head expected baseline mode_changed link_changed content_changed excluded invalid status=0
+  work="$tmp_root/ship-independent-subject-oracle"
+  make_work_repo "$work" "CC-9001"
+  printf 'regular fixture\n' > "$work/regular.txt"
+  printf '#!/usr/bin/env bash\nprintf executable\\n\n' > "$work/run.sh"
+  chmod +x "$work/run.sh"
+  ln -s regular.txt "$work/link"
+  printf '.gate-results/\n' >> "$work/.gitignore"
+  git -C "$work" add .gitignore regular.txt run.sh link
+  git -C "$work" -c user.email=test@example.com -c user.name=test commit -q -m subject-fixture
+  head="$(git -C "$work" rev-parse HEAD)"
+  expected="$(independent_fixed_tree_fingerprint "$work" "$head")"
+  actual="$(_gate_subject_tree_fingerprint "$work" fixed_ref "$head")"
+  if [[ "$actual" != "$expected" ]]; then
+    fail "$name" "committed subject differs from independent oracle: expected=$expected actual=$actual"
+    return 0
+  fi
+
+  baseline="$(_gate_subject_tree_fingerprint "$work" working_tree "$head")"
+  chmod -x "$work/run.sh"
+  mode_changed="$(_gate_subject_tree_fingerprint "$work" working_tree "$head")"
+  chmod +x "$work/run.sh"
+  rm -f -- "$work/link"
+  ln -s run.sh "$work/link"
+  link_changed="$(_gate_subject_tree_fingerprint "$work" working_tree "$head")"
+  rm -f -- "$work/link"
+  ln -s regular.txt "$work/link"
+  printf 'changed fixture\n' > "$work/regular.txt"
+  content_changed="$(_gate_subject_tree_fingerprint "$work" working_tree "$head")"
+  printf 'regular fixture\n' > "$work/regular.txt"
+  mkdir -p "$work/.gate-results"
+  printf 'runtime artifact\n' > "$work/.gate-results/ignored.txt"
+  excluded="$(_gate_subject_tree_fingerprint "$work" working_tree "$head")"
+  if [[ "$mode_changed" == "$baseline" || "$link_changed" == "$baseline" ||
+        "$content_changed" == "$baseline" || "$excluded" != "$baseline" ]]; then
+    fail "$name" "mutation contract failed: baseline=$baseline mode=$mode_changed link=$link_changed content=$content_changed excluded=$excluded"
+    return 0
+  fi
+  if _gate_subject_tree_fingerprint "$work" invalid_kind "$head" >/dev/null 2>&1; then
+    fail "$name" "unsupported subject kind was accepted"
+    return 0
+  fi
+  pass "$name"
 }
 
 # Behavior: the publish-assessment builder refuses a different pre-existing destination without overwriting it.
@@ -3017,6 +3111,7 @@ case_publish_assessment_rejects_existing_destination
 case_publish_assessment_and_closure_are_concurrent_no_replace
 case_targeted_closure_requires_initial_finding_ledger
 case_targeted_closure_accepts_clean_go_with_confirmations
+case_ship_subject_fingerprint_matches_independent_gate_oracle
 case_publish_assessment_rejects_invalid_or_mismatched_evidence
 case_publish_assessment_rejects_post_build_source_mutation
 case_finish_real_publish_assessment_surfaces

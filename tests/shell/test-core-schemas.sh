@@ -1908,6 +1908,8 @@ _gate_publish_assessment_valid_instance() {
   '
 }
 
+# Behavior: a complete publish assessment with verified baseline policy and closed remediation validates against the schema.
+# Steps: 1) Arrange a canonical assessment fixture; 2) validate it with the publish-assessment schema; 3) assert schema acceptance.
 case_gate_publish_assessment_valid_instance() {
   local name="gate-publish-assessment: verified baseline closure artifact validates"
   should_run "$name" || return 0
@@ -1922,6 +1924,8 @@ case_gate_publish_assessment_valid_instance() {
   rm -f "$tmpf"
 }
 
+# Behavior: a publish assessment with an unknown policy satisfaction value is rejected by the schema.
+# Steps: 1) Arrange a valid assessment and replace its policy value with an unknown enum; 2) validate it; 3) assert schema rejection.
 case_gate_publish_assessment_invalid_policy_rejected() {
   local name="gate-publish-assessment: unknown policy satisfaction is rejected"
   should_run "$name" || return 0
