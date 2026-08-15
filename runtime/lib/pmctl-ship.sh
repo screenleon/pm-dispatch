@@ -98,6 +98,7 @@ pmctl_ship_prepare() {
 pmctl_ship_verify_full_suite() {
   local work_dir="${1:-}" supplied_result="${2:-}"
   local runner result_file
+  PMCTL_SHIP_FULL_RESULT_FILE=""
   runner="$work_dir/tests/bin/run-tests.sh"
   if [[ ! -x "$runner" ]]; then
     printf 'pmctl ship finish: canonical full-suite runner is unavailable: %s\n' "$runner" >&2
@@ -124,6 +125,7 @@ pmctl_ship_verify_full_suite() {
     printf 'pmctl ship finish: authoritative full-suite evidence is not valid for the current tree; refusing to push or open a PR\n' >&2
     return 1
   fi
+  PMCTL_SHIP_FULL_RESULT_FILE="$result_file"
   printf 'pmctl ship finish: verified current-tree authoritative full-suite PASS: %s\n' "$result_file" >&2
 }
 
@@ -297,6 +299,7 @@ pmctl_ship_finish() {
   if [[ "$full_suite_status" -ne 0 ]]; then
     return "$full_suite_status"
   fi
+  full_result="${PMCTL_SHIP_FULL_RESULT_FILE:-$full_result}"
 
   # The authoritative result proves the tree as it existed while the suite
   # ran, not whatever state happens to exist after the runner returns. Keep
@@ -313,6 +316,32 @@ pmctl_ship_finish() {
       "${post_gate_head:-unknown}" "${post_suite_head:-unknown}" >&2
     return 1
   fi
+
+  # Both Gate and ship are producers of the same immutable closure contract.
+  # Gate publishes the focused, non-authorizing closure; ship enriches it with
+  # the verified full-suite artifact before any remote mutation. Keeping the
+  # builder shared prevents the two publication paths from inventing divergent
+  # finding dispositions or evidence semantics.
+  if ! declare -F gate_remediation_closure_publish >/dev/null 2>&1; then
+    printf 'pmctl ship finish: remediation closure publisher is unavailable; refusing publication\n' >&2
+    return 2
+  fi
+  local remediation_closure
+  remediation_closure="$work_dir/.pm-dispatch/test-results/ship-remediation-closure-${ticket_id}-${post_suite_head}.json"
+  mkdir -p "$(dirname "$remediation_closure")" || {
+    printf 'pmctl ship finish: unable to create remediation closure directory\n' >&2
+    return 1
+  }
+  if ! gate_remediation_closure_publish \
+      "$result_path" \
+      "$(jq -r '.assurance.file // empty' <<<"$gate_verification")" \
+      "$remediation_closure" \
+      "$full_result" \
+      "$ticket_id"; then
+    printf 'pmctl ship finish: unable to publish remediation closure; refusing publication\n' >&2
+    return 1
+  fi
+  printf 'pmctl ship finish: remediation closure: %s\n' "$remediation_closure"
 
   local branch
   branch="$(git -C "$work_dir" rev-parse --abbrev-ref HEAD 2>/dev/null)"
@@ -339,8 +368,9 @@ pmctl_ship_finish() {
     # shellcheck disable=SC2016
     printf 'pmctl ship finish: pushed %s, but `gh` is unavailable -- open the PR manually\n' "$branch" >&2
     jq -n --arg ticket "$ticket_id" --arg branch "$branch" \
+      --arg remediation_closure "$remediation_closure" \
       --arg finished_ts "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date)" \
-      '{ticket: $ticket, verdict: "PUSHED_NO_PR", branch: $branch, pr_url: null, finished_ts: $finished_ts}' \
+      '{ticket: $ticket, verdict: "PUSHED_NO_PR", branch: $branch, remediation_closure: $remediation_closure, pr_url: null, finished_ts: $finished_ts}' \
       > "$marker" 2>/dev/null || true
     # Nonzero: gate passed and the branch is pushed, but the ship contract
     # (gate GO -> PR opened) is not yet complete -- the caller must open the
@@ -358,7 +388,7 @@ pmctl_ship_finish() {
   # practice; not adding one speculatively here.
   local pr_url pr_status=0
   pr_url="$(cd "$work_dir" && gh pr create --title "chore(${ticket_id}): ship" \
-    --body "$(printf '## Gate\n- Final verdict: GO\n- Result file: %s\n\nTicket: %s\n' "$result_path" "$ticket_id")")" || pr_status=$?
+    --body "$(printf '## Gate\n- Final verdict: GO\n- Result file: %s\n- Remediation closure: %s\n\nTicket: %s\n' "$result_path" "$remediation_closure" "$ticket_id")")" || pr_status=$?
   printf '%s\n' "$pr_url"
   if [[ "$pr_status" -ne 0 ]]; then
     # `gh` was confirmed present at the earlier preflight, but `gh pr
@@ -371,15 +401,17 @@ pmctl_ship_finish() {
     # partial-publish gap critic/qa-tester/architecture-reviewer/
     # risk-reviewer converged on.
     jq -n --arg ticket "$ticket_id" --arg branch "$branch" \
+      --arg remediation_closure "$remediation_closure" \
       --arg finished_ts "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date)" \
-      '{ticket: $ticket, verdict: "PUSHED_PR_FAILED", branch: $branch, pr_url: null, finished_ts: $finished_ts}' \
+      '{ticket: $ticket, verdict: "PUSHED_PR_FAILED", branch: $branch, remediation_closure: $remediation_closure, pr_url: null, finished_ts: $finished_ts}' \
       > "$marker" 2>/dev/null || true
     return "$pr_status"
   fi
 
   jq -n --arg ticket "$ticket_id" --arg branch "$branch" --arg pr_url "$pr_url" \
-    --arg result_path "$result_path" --arg finished_ts "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date)" \
-    '{ticket: $ticket, verdict: "GO", branch: $branch, pr_url: $pr_url, result_path: $result_path, finished_ts: $finished_ts}' \
+    --arg result_path "$result_path" --arg remediation_closure "$remediation_closure" \
+    --arg finished_ts "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date)" \
+    '{ticket: $ticket, verdict: "GO", branch: $branch, pr_url: $pr_url, result_path: $result_path, remediation_closure: $remediation_closure, finished_ts: $finished_ts}' \
     > "$marker" 2>/dev/null || true
 }
 

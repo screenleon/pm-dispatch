@@ -1554,6 +1554,449 @@
     "title": "Gate tier and coverage downgrade override",
     "type": "object"
   },
+  "gate-remediation-closure": {
+    "additionalProperties": false,
+    "definitions": {
+      "artifactLink": {
+        "additionalProperties": false,
+        "properties": {
+          "artifact": {
+            "minLength": 1,
+            "pattern": "^(?!/)(?!.*(^|/)\\.\\.(/|$)).+$",
+            "type": "string"
+          },
+          "sha256": {
+            "$ref": "#/definitions/sha256"
+          },
+          "subject_fingerprint": {
+            "$ref": "#/definitions/sha256"
+          }
+        },
+        "required": [
+          "artifact",
+          "sha256",
+          "subject_fingerprint"
+        ],
+        "type": "object"
+      },
+      "evidenceRef": {
+        "additionalProperties": false,
+        "anyOf": [
+          {
+            "required": [
+              "line"
+            ]
+          },
+          {
+            "required": [
+              "symbol"
+            ]
+          }
+        ],
+        "properties": {
+          "line": {
+            "minimum": 1,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "path": {
+            "$ref": "#/definitions/path"
+          },
+          "symbol": {
+            "minLength": 1,
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "finalAssessment": {
+        "additionalProperties": false,
+        "properties": {
+          "affected_tests_status": {
+            "enum": [
+              "pass",
+              "incomplete",
+              "fail"
+            ]
+          },
+          "full_suite_status": {
+            "enum": [
+              "pass",
+              "not_run",
+              "fail"
+            ]
+          },
+          "publish_authorized": {
+            "type": "boolean"
+          },
+          "remediation_status": {
+            "enum": [
+              "closed",
+              "split"
+            ]
+          },
+          "subject_fingerprint": {
+            "$ref": "#/definitions/sha256"
+          }
+        },
+        "required": [
+          "remediation_status",
+          "affected_tests_status",
+          "full_suite_status",
+          "subject_fingerprint",
+          "publish_authorized"
+        ],
+        "type": "object"
+      },
+      "finding": {
+        "additionalProperties": false,
+        "properties": {
+          "affected_test_ids": {
+            "items": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": "array",
+            "uniqueItems": true
+          },
+          "changed_paths": {
+            "$ref": "#/definitions/pathSet"
+          },
+          "classification": {
+            "enum": [
+              "local",
+              "targeted_confirmation",
+              "stop_split"
+            ]
+          },
+          "disposition": {
+            "enum": [
+              "closed",
+              "tracked",
+              "split"
+            ]
+          },
+          "evidence_refs": {
+            "items": {
+              "$ref": "#/definitions/evidenceRef"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "finding_id": {
+            "pattern": "^(critic|qa-tester|architecture-reviewer|security-reviewer|risk-reviewer)-F[0-9]{3,}$",
+            "type": "string"
+          },
+          "origin": {
+            "enum": [
+              "diff_caused",
+              "pre_existing",
+              "uncertain",
+              "caution"
+            ]
+          },
+          "ticket_ref": {
+            "pattern": "^[A-Z][A-Z0-9]*-[0-9]+$",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "verification_status": {
+            "enum": [
+              "pass",
+              "not_required",
+              "split"
+            ]
+          }
+        },
+        "required": [
+          "finding_id",
+          "origin",
+          "disposition",
+          "classification",
+          "changed_paths",
+          "evidence_refs",
+          "affected_test_ids",
+          "verification_status"
+        ],
+        "type": "object"
+      },
+      "path": {
+        "minLength": 1,
+        "not": {
+          "pattern": "(^|/)\\.\\.(/|$)"
+        },
+        "pattern": "^(?!/)",
+        "type": "string"
+      },
+      "pathSet": {
+        "items": {
+          "$ref": "#/definitions/path"
+        },
+        "type": "array",
+        "uniqueItems": true
+      },
+      "primaryEvidence": {
+        "additionalProperties": false,
+        "properties": {
+          "gate_result": {
+            "$ref": "#/definitions/artifactLink"
+          },
+          "status": {
+            "enum": [
+              "verified",
+              "unavailable"
+            ]
+          },
+          "subject": {
+            "$ref": "#/definitions/subject"
+          },
+          "verdict": {
+            "enum": [
+              "GO",
+              "NO-GO",
+              "INCOMPLETE"
+            ]
+          }
+        },
+        "required": [
+          "gate_result",
+          "verdict",
+          "status",
+          "subject"
+        ],
+        "type": "object"
+      },
+      "sha1": {
+        "pattern": "^[a-f0-9]{40}$",
+        "type": "string"
+      },
+      "sha256": {
+        "pattern": "^[a-f0-9]{64}$",
+        "type": "string"
+      },
+      "subject": {
+        "additionalProperties": false,
+        "properties": {
+          "base_commit": {
+            "$ref": "#/definitions/sha1"
+          },
+          "head_commit": {
+            "$ref": "#/definitions/sha1"
+          },
+          "repository_key": {
+            "$ref": "#/definitions/sha256"
+          },
+          "subject_kind": {
+            "enum": [
+              "committed_head",
+              "working_tree",
+              "fixed_ref"
+            ]
+          },
+          "tree_fingerprint": {
+            "$ref": "#/definitions/sha256"
+          }
+        },
+        "required": [
+          "repository_key",
+          "base_commit",
+          "head_commit",
+          "tree_fingerprint",
+          "subject_kind"
+        ],
+        "type": "object"
+      },
+      "targetedConfirmation": {
+        "additionalProperties": false,
+        "properties": {
+          "delta_only": {
+            "const": true
+          },
+          "evidence": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/definitions/artifactLink"
+              }
+            ]
+          },
+          "reviewers": {
+            "items": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "type": "array",
+            "uniqueItems": true
+          },
+          "status": {
+            "enum": [
+              "pass",
+              "not_required",
+              "incomplete"
+            ]
+          }
+        },
+        "required": [
+          "status",
+          "reviewers",
+          "delta_only"
+        ],
+        "type": "object"
+      },
+      "testEvidence": {
+        "additionalProperties": false,
+        "properties": {
+          "artifact": {
+            "minLength": 1,
+            "pattern": "^(?!/)(?!.*(^|/)\\.\\.(/|$)).+$",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "artifact_sha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "command": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "focused",
+              "full"
+            ]
+          },
+          "status": {
+            "enum": [
+              "pass",
+              "fail",
+              "not_run"
+            ]
+          },
+          "subject_fingerprint": {
+            "$ref": "#/definitions/sha256"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "command",
+          "status",
+          "subject_fingerprint"
+        ],
+        "type": "object"
+      },
+      "unresolvedCounts": {
+        "additionalProperties": false,
+        "properties": {
+          "advisory": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "blocking": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "total": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "blocking",
+          "advisory"
+        ],
+        "type": "object"
+      }
+    },
+    "description": "Immutable evidence that a primary Gate finding set was closed, confirmed, or split without claiming a fresh comprehensive review.",
+    "properties": {
+      "affected_tests": {
+        "items": {
+          "$ref": "#/definitions/testEvidence"
+        },
+        "type": "array"
+      },
+      "changed_files": {
+        "$ref": "#/definitions/pathSet"
+      },
+      "final_assessment": {
+        "$ref": "#/definitions/finalAssessment"
+      },
+      "final_subject": {
+        "$ref": "#/definitions/subject"
+      },
+      "findings": {
+        "items": {
+          "$ref": "#/definitions/finding"
+        },
+        "type": "array"
+      },
+      "kind": {
+        "const": "remediation_closure_v1"
+      },
+      "primary": {
+        "$ref": "#/definitions/primaryEvidence"
+      },
+      "schema_version": {
+        "const": 1
+      },
+      "scope_manifest_sha256": {
+        "$ref": "#/definitions/sha256"
+      },
+      "state": {
+        "enum": [
+          "closed",
+          "split"
+        ]
+      },
+      "targeted_confirmation": {
+        "$ref": "#/definitions/targetedConfirmation"
+      },
+      "unresolved_counts": {
+        "$ref": "#/definitions/unresolvedCounts"
+      }
+    },
+    "required": [
+      "kind",
+      "schema_version",
+      "state",
+      "scope_manifest_sha256",
+      "primary",
+      "final_subject",
+      "findings",
+      "changed_files",
+      "affected_tests",
+      "targeted_confirmation",
+      "unresolved_counts",
+      "final_assessment"
+    ],
+    "title": "Gate remediation closure",
+    "type": "object"
+  },
   "gate-reviewer-result": {
     "additionalProperties": false,
     "allOf": [

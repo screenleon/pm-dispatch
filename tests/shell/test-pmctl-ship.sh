@@ -186,6 +186,13 @@ pmctl_gate_verify() {\
   jq -n '"'"'{kind:"gate_verification_v1",verdict:"GO",axes:{artifact_valid:{status:"pass",reason_codes:[]},subject_current:{status:"pass",reason_codes:[]},policy_applicable:{status:"pass",reason_codes:[]}}}'"'"'\
 }\
 ' "$path/cli/pmctl"
+  # These CLI fixtures replace the external Gate path, so replace its closure
+  # publisher too. The real publisher is covered by pr-gate integration tests.
+  printf '%s\n' \
+    'gate_remediation_closure_publish() {' \
+    "  printf \"%s\\n\" \"{}\" > \"\$3\"" \
+    "  printf \"%s\\n\" \"\$3\"" \
+    '}' >> "$path/runtime/lib/pmctl-ship.sh"
   chmod +x "$path/cli/pmctl"
 }
 
@@ -243,6 +250,10 @@ run_finish_with_fake_gate() {
         }'"'"'
       [[ "$verdict" == "GO" && "$artifact_status" == "pass" \
         && "$subject_status" == "pass" && "$policy_status" == "pass" ]]
+    }
+    gate_remediation_closure_publish() {
+      printf "%s\\n" "{}" > "$3"
+      printf "%s\\n" "$3"
     }
     . "$repo_root/runtime/lib/pmctl-ship.sh"
     pmctl_ship_finish "$repo_root" "$work_dir" "$ticket_id" "$@"

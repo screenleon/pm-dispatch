@@ -40,6 +40,7 @@ gate_finalize_assurance() {
   local finished_at subject_finish subject_json preflight_json evidence_json
   local evidence_destination evidence_destination_sha evidence_tmp
   local scope_destination scope_destination_sha scope_tmp scope_json
+  local closure_file closure_sha closure_tmp closure_json
   local -a capture_files=()
 
   final="$(grep -E '^Final: (GO|NO-GO|INCOMPLETE)$' "$result_file" | awk '{print $2}')"
@@ -344,6 +345,35 @@ gate_finalize_assurance() {
     return 1
   }
   gate_result_verify "$result_file" "" "machine assurance finalization" || return $?
+
+  # Publish the first immutable remediation closure only after the final Gate
+  # result and assurance sidecar exist. The closure links the final result
+  # digest, so publishing it earlier would bind the pre-assurance staging
+  # digest rather than the artifact consumers actually verify.
+  closure_file="$(dirname "$assurance_file")/$(basename "$result_file" .md).remediation-closure.json"
+  if ! gate_remediation_closure_publish \
+      "$result_file" "$assurance_file" "$closure_file"; then
+    printf 'Error: unable to publish remediation closure evidence: %s\n' \
+      "$closure_file" >&2
+    return 1
+  fi
+  closure_sha="$(_gate_result_sha256_file "$closure_file")" || return $?
+  closure_json="$(jq -nc \
+    --arg artifact "$(basename "$closure_file")" \
+    --arg sha256 "$closure_sha" \
+    --arg subject_fingerprint "$(jq -r '.subject.tree_fingerprint' "$assurance_file")" \
+    '{status:"verified",artifact:$artifact,sha256:$sha256,subject_fingerprint:$subject_fingerprint}')" || return 1
+  closure_tmp="$(mktemp "${assurance_file}.closure-tmp.XXXXXX")" || return 1
+  if ! jq --argjson closure "$closure_json" '.evidence.closure = $closure' \
+      "$assurance_file" > "$closure_tmp"; then
+    rm -f -- "$closure_tmp"
+    return 1
+  fi
+  mv -- "$closure_tmp" "$assurance_file" || {
+    rm -f -- "$closure_tmp"
+    return 1
+  }
+  gate_result_verify "$result_file" "" "remediation closure finalization" || return $?
 
   if [[ "$independence_status" == verified ]]; then
     assurance_sha="$(_gate_result_sha256_file "$assurance_file")" || return $?

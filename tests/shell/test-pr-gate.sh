@@ -4699,7 +4699,9 @@ test_gate_result_frontmatter_and_escalation() {
     (.evidence.scope_manifest.sha256 | test("^[a-f0-9]{64}$")) and
     .evidence.scope_manifest.subject_fingerprint ==
       .subject.tree_fingerprint and
-    .evidence.closure.status == "unavailable" and
+    .evidence.closure.status == "verified" and
+    (.evidence.closure.artifact | type == "string" and length > 0) and
+    (.evidence.closure.sha256 | test("^[a-f0-9]{64}$")) and
     .coordinates.mode.resolved == "sequential" and
     .coordinates.independence.evidence_status == "unavailable" and
     .coordinates.independence.per_reviewer_independent == null and
@@ -9562,6 +9564,19 @@ test_gate_artifacts_land_out_of_repo() {
   fi
   if ! "$REPO_ROOT/cli/pmctl" gate verify "$result_path" >/dev/null 2>&1; then
     fail "$name" "relocated result/assurance pointer failed shared verification"
+    return
+  fi
+  local closure_artifact closure_path
+  closure_artifact="$(jq -r '.evidence.closure.artifact // empty' "$assurance_path")"
+  closure_path="$(dirname "$assurance_path")/$closure_artifact"
+  if ! jq -e '
+      .evidence.closure.status == "verified" and
+      (.evidence.closure.artifact | type == "string" and length > 0) and
+      (.evidence.closure.sha256 | test("^[a-f0-9]{64}$"))
+    ' "$assurance_path" >/dev/null 2>&1 || [[ ! -s "$closure_path" ]] \
+      || ! jq -e '.kind == "remediation_closure_v1" and .schema_version == 1' \
+        "$closure_path" >/dev/null 2>&1; then
+    fail "$name" "Gate did not publish a verified remediation_closure_v1 beside the assurance sidecar"
     return
   fi
   # repo must NOT have a .gate-results dir (--run-dir should have redirected it).
