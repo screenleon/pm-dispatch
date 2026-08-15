@@ -829,6 +829,45 @@ case_targeted_closure_requires_initial_finding_ledger() {
   fi
 }
 
+# Behavior: a targeted GO cannot consume a valid initial ledger from another immutable subject.
+# Steps: 1) Arrange a valid initial NO-GO and targeted GO; 2) change only the initial subject provenance;
+# 3) require closure publication to fail before emitting any authorization artifact.
+case_targeted_closure_rejects_initial_subject_mismatch() {
+  local name="ship closure: targeted GO rejects initial subject provenance mismatch"
+  should_run "$name" || return 0
+  local dir initial target assurance scope full closure scope_sha status=0
+  dir="$tmp_root/targeted-closure-subject-mismatch"
+  mkdir -p "$dir"
+  initial="$dir/initial.md"; target="$dir/target.md"; assurance="$dir/target.md.assurance.json"
+  scope="$dir/scope.json"; full="$dir/full.json"; closure="$dir/closure.json"
+  jq -n '{changes:{changed_paths:["runtime/lib/gate-closure.sh"],renamed_paths:[],untracked_paths:[]},diff:{binary_or_special_paths:[]}}' > "$scope"
+  scope_sha="$(sha256sum "$scope" | awk '{print $1}')"
+  {
+    printf 'Final: NO-GO\n```synthesis_result_v1\n'
+    jq -n '{kind:"gate_synthesis_result_v1",findings_union:[{id:"critic-F001",origin:"diff_caused",hard_gate_class:"soft_block",source:{path:"runtime/lib/gate-closure.sh",line:131,symbol:"gate_remediation_closure_publish"}}],selected_reviewers:["critic"]}'
+    printf '```\n'
+  } > "$initial"
+  jq -n --arg scope_sha "$scope_sha" '{subject:{repository_key:("f"*64),base_commit:("b"*40),head_commit:("c"*40),tree_fingerprint:("d"*64),subject_kind:"committed_head"},evidence:{scope_manifest:{artifact:"scope.json",sha256:$scope_sha}}}' > "$initial.assurance.json"
+  {
+    printf 'Final: GO\n```synthesis_result_v1\n'
+    jq -n '{kind:"gate_synthesis_result_v1",findings_union:[],remediation_confirmations:[{finding_id:"critic-F001",status:"confirmed",summary:"The targeted review confirmed the fix.",evidence_refs:[{path:"runtime/lib/gate-closure.sh",line:131,symbol:"gate_remediation_closure_publish"}]}],selected_reviewers:["critic"]}'
+    printf '```\n'
+  } > "$target"
+  jq -n --arg scope_sha "$scope_sha" --arg initial "$initial" '{coordinates:{pass:{resolved:"targeted",initial_result:$initial}},subject:{repository_key:("a"*64),base_commit:("b"*40),head_commit:("c"*40),tree_fingerprint:("d"*64),subject_kind:"committed_head"},evidence:{scope_manifest:{artifact:"scope.json",sha256:$scope_sha}}}' > "$assurance"
+  jq -n '{kind:"pm_test_result_v2",contract:"full",authoritative:true,status:"pass",aggregate:{status:"pass"},exit_code:0,tree_fingerprint:("d"*64)}' > "$full"
+  bash -c '
+    repo_root="$1"; target="$2"; assurance="$3"; closure="$4"; full="$5"
+    . "$repo_root/runtime/lib/gate-closure.sh"
+    gate_remediation_closure_publish "$target" "$assurance" "$closure" "$full" CC-511
+  ' _ "$REPO_ROOT" "$target" "$assurance" "$closure" "$full" > "$dir/out" 2> "$dir/err" || status=$?
+  if [[ "$status" -ne 0 && ! -e "$closure" ]] \
+      && grep -q 'initial assurance provenance does not match targeted subject or scope' "$dir/err"; then
+    pass "$name"
+  else
+    fail "$name" "mismatched targeted closure was accepted: status=$status closure=$(cat "$closure" 2>/dev/null) stderr=$(cat "$dir/err")"
+  fi
+}
+
 # Behavior: a legacy initial result without immutable assurance/ledger evidence cannot authorize a targeted GO.
 # Steps: 1) Provide only legacy initial prose and a clean targeted result; 2) publish the targeted closure; 3) require fail-closed refusal.
 case_targeted_closure_rejects_legacy_initial_without_immutable_evidence() {
@@ -3422,6 +3461,7 @@ case_publish_assessment_rejects_existing_destination
 case_publish_assessment_and_closure_are_concurrent_no_replace
 case_publish_assessment_verify_rejects_malformed_artifacts
 case_targeted_closure_requires_initial_finding_ledger
+case_targeted_closure_rejects_initial_subject_mismatch
 case_targeted_closure_rejects_legacy_initial_without_immutable_evidence
 case_targeted_closure_accepts_clean_go_with_confirmations
 case_targeted_closure_accepts_uncertain_go_with_confirmation

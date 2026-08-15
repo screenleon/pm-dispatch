@@ -120,7 +120,8 @@ gate_remediation_closure_publish() {
   # substitute for the assurance sidecar and synthesis ledger.
   if [[ "$(jq -r '.coordinates.pass.resolved // empty' "$assurance_file")" == targeted \
       && "$final" != INCOMPLETE ]]; then
-    local initial_input initial_candidate
+    local initial_input initial_candidate initial_assurance initial_subject_json
+    local initial_scope_artifact initial_scope_sha initial_scope_file
     initial_input="$(jq -r '.coordinates.pass.initial_result // empty' "$assurance_file")"
     if [[ -z "$initial_input" ]]; then
       printf 'gate-closure: targeted pass requires an immutable initial result reference\n' >&2
@@ -128,10 +129,26 @@ gate_remediation_closure_publish() {
     fi
     initial_candidate="$initial_input"
     [[ "$initial_candidate" == /* ]] || initial_candidate="$result_parent/$initial_candidate"
-    if [[ ! -s "$initial_candidate" || ! -s "${initial_candidate}.assurance.json" ]] \
+    initial_assurance="${initial_candidate}.assurance.json"
+    if [[ ! -s "$initial_candidate" || ! -s "$initial_assurance" ]] \
       || ! jq -e '((.subject.head_commit // .subject.head.commit) != null) and (.subject.tree_fingerprint != null)' \
-        "${initial_candidate}.assurance.json" >/dev/null 2>&1; then
+        "$initial_assurance" >/dev/null 2>&1; then
       printf 'gate-closure: targeted pass requires the initial immutable assurance sidecar\n' >&2
+      return 1
+    fi
+    initial_subject_json="$(_gate_closure_subject_json "$initial_assurance")" || return 1
+    initial_scope_artifact="$(jq -r '.evidence.scope_manifest.artifact // empty' "$initial_assurance")"
+    initial_scope_sha="$(jq -r '.evidence.scope_manifest.sha256 // empty' "$initial_assurance")"
+    initial_scope_file="$(cd "$(dirname "$initial_candidate")" && pwd -P)/$initial_scope_artifact" || return 1
+    if [[ ! "$initial_scope_sha" =~ ^[a-f0-9]{64}$ ]] || [[ ! -s "$initial_scope_file" ]] \
+      || [[ "$(gate_digest_file "$initial_scope_file")" != "$initial_scope_sha" ]]; then
+      printf 'gate-closure: targeted pass initial assurance scope provenance is invalid\n' >&2
+      return 1
+    fi
+    if ! jq -n -e --argjson initial "$initial_subject_json" --argjson targeted "$subject_json" \
+      '$initial == $targeted' >/dev/null 2>&1 \
+      || [[ "$initial_scope_sha" != "$scope_sha" ]]; then
+      printf 'gate-closure: targeted pass initial assurance provenance does not match targeted subject or scope\n' >&2
       return 1
     fi
     initial_synthesis_tmp="$(mktemp "${TMPDIR:-/tmp}/gate-closure-initial-synthesis.XXXXXX.json")" || return 1
