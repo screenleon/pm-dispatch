@@ -455,7 +455,11 @@ pmctl_ship_finish() {
     printf 'pmctl ship finish: cannot resolve current branch in %s\n' "$work_dir" >&2
     return 1
   fi
-  if ! git -C "$work_dir" push -u origin "$branch"; then
+  # Push the immutable assessed commit, not the movable local branch name.
+  # A concurrent local commit after the final check must never become the
+  # remote publication merely because the branch advanced before git resolved
+  # the refspec.
+  if ! git -C "$work_dir" push -u origin "$verified_head:refs/heads/$branch"; then
     printf 'pmctl ship finish: git push failed for %s\n' "$branch" >&2
     return 1
   fi

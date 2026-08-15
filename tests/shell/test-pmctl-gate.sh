@@ -735,6 +735,29 @@ _mk_gate_result_protocol_v4_verified() {
   _refresh_gate_result_protocol_v3_binding "$path"
 }
 
+_rewrite_gate_result_synthesis() {
+  local path="$1" filter="$2" replacement output line inside=0
+  replacement="$(mktemp "${TMPDIR:-/tmp}/gate-synthesis-rewrite.XXXXXX")"
+  awk '/^```synthesis_result_v1$/{inside=1;next} inside && /^```$/{exit} inside{print}' \
+    "$path" | jq "$filter" > "$replacement"
+  output="${path}.rewrite.tmp"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" == '```synthesis_result_v1' ]]; then
+      printf '%s\n' "$line"
+      cat "$replacement"
+      inside=1
+    elif (( inside )) && [[ "$line" == '```' ]]; then
+      printf '%s\n' "$line"
+      inside=0
+    elif (( ! inside )); then
+      printf '%s\n' "$line"
+    fi
+  done < "$path" > "$output"
+  mv "$output" "$path"
+  rm -f -- "$replacement"
+  _refresh_gate_result_protocol_v3_binding "$path"
+}
+
 _attach_gate_scope_manifest_v3() {
   local path="$1" sidecar="${1}.assurance.json"
   local manifest manifest_digest manifest_sha
@@ -2252,6 +2275,51 @@ case_verify_v4_publication_race_retries() {
   fi
 }
 
+# Behavior: canonical gate verification rejects a remediation confirmation that omits its required evidence ledger.
+# Steps: 1) Arrange a verified v4 result; 2) replace its synthesis confirmation with a missing-evidence entry; 3) assert pmctl gate verify fails closed.
+case_verify_v4_malformed_remediation_confirmation_rejected() {
+  local name="gate/verify: malformed remediation confirmation is rejected"
+  should_run "$name" || return 0
+  local result out code
+  result="$(_gate_verify_result_path v4-malformed-remediation-confirmation)"
+  _mk_gate_result_protocol_v4_verified "$result" "$_GATE_VERIFY_REPO"
+  _rewrite_gate_result_synthesis "$result" \
+    '.remediation_confirmations=[{finding_id:"critic-F001",status:"confirmed",summary:"missing evidence refs"}]'
+  set +e
+  out="$(_run_canonical_gate_verify "$result" 2>&1)"
+  code=$?
+  set -e
+  if [[ "$code" -eq 1 && "$out" == *"invalid remediation confirmation"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+# Behavior: canonical gate verification rejects duplicate remediation confirmation IDs even when every entry is otherwise well formed.
+# Steps: 1) Arrange a verified v4 result; 2) replace its synthesis with two distinct entries sharing one finding ID; 3) assert duplicate-ID rejection.
+case_verify_v4_duplicate_remediation_confirmation_rejected() {
+  local name="gate/verify: duplicate remediation confirmation ID is rejected"
+  should_run "$name" || return 0
+  local result out code
+  result="$(_gate_verify_result_path v4-duplicate-remediation-confirmation)"
+  _mk_gate_result_protocol_v4_verified "$result" "$_GATE_VERIFY_REPO"
+  _rewrite_gate_result_synthesis "$result" \
+    '.remediation_confirmations=[
+      {finding_id:"critic-F001",status:"confirmed",summary:"first confirmation",evidence_refs:[{path:"README.md",line:1,symbol:null}]},
+      {finding_id:"critic-F001",status:"confirmed",summary:"second confirmation",evidence_refs:[{path:"README.md",line:1,symbol:null}]}
+    ]'
+  set +e
+  out="$(_run_canonical_gate_verify "$result" 2>&1)"
+  code=$?
+  set -e
+  if [[ "$code" -eq 1 && "$out" == *"duplicate remediation confirmation ID"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
 case_verify_v2_attestation_publication_race_retries() {
   local name="gate/verify: canonical v2 attestation publication race retries"
   should_run "$name" || return 0
@@ -3030,6 +3098,8 @@ case_verify_v2_subject_binding_tamper
 case_verify_v2_canonical_run_mismatch
 case_verify_v2_publication_race_retries
 case_verify_v4_publication_race_retries
+case_verify_v4_malformed_remediation_confirmation_rejected
+case_verify_v4_duplicate_remediation_confirmation_rejected
 case_verify_v2_attestation_publication_race_retries
 case_verify_v2_pointer_escape
 case_verify_v2_missing_sidecar

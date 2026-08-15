@@ -1007,6 +1007,52 @@ case_finish_post_assessment_drift_refuses_publish() {
   [[ "$failures" -eq 0 ]]
 }
 
+# Behavior: ship finish pushes the exact assessed commit even if the local branch advances during the push invocation.
+# Steps: 1) Arrange a successful finish against a bare origin; 2) intercept push to add an unassessed local commit; 3) assert the remote receives only the assessed head.
+case_finish_pushes_only_assessed_head_when_branch_advances_at_push() {
+  local name="ship finish: branch advance at push cannot publish an unassessed commit"
+  should_run "$name" || return 0
+  local work gh_bin hook_bin marker out err status=0 real_git assessed_head local_head remote_head
+  work="$tmp_root/work-finish-push-race"
+  make_work_repo "$work" "CC-9001"
+  checkout_ticket_branch "$work" "CC-9001"
+  add_bare_origin "$work"
+  assessed_head="$(git -C "$work" rev-parse HEAD)"
+  gh_bin="$tmp_root/fake-gh-push-race"
+  install_fake_gh "$gh_bin" "https://example.invalid/pr/push-race"
+  hook_bin="$tmp_root/fake-git-push-race"
+  marker="$tmp_root/fake-git-push-race.marker"
+  real_git="$(command -v git)"
+  mkdir -p "$hook_bin"
+  cat > "$hook_bin/git" <<'FAKEOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "-C" && "${3:-}" == "push" \
+    && -n "${PM_TEST_PUSH_RACE_WORK:-}" \
+    && ! -e "${PM_TEST_PUSH_RACE_MARKER:-}" ]]; then
+  printf 'unassessed branch advance\n' > "$PM_TEST_PUSH_RACE_WORK/push-race.txt"
+  "$PM_TEST_REAL_GIT" -C "$PM_TEST_PUSH_RACE_WORK" add push-race.txt
+  "$PM_TEST_REAL_GIT" -C "$PM_TEST_PUSH_RACE_WORK" \
+    -c user.email=test@example.com -c user.name=test commit -q -m push-race
+  : > "$PM_TEST_PUSH_RACE_MARKER"
+fi
+exec "$PM_TEST_REAL_GIT" "$@"
+FAKEOF
+  chmod +x "$hook_bin/git"
+  out="$tmp_root/out-finish-push-race"
+  err="$tmp_root/err-finish-push-race"
+  PM_TEST_PUSH_RACE_WORK="$work" PM_TEST_PUSH_RACE_MARKER="$marker" \
+    PM_TEST_REAL_GIT="$real_git" PATH="$hook_bin:$gh_bin:$PATH" \
+    run_finish_with_fake_gate "$work" "CC-9001" GO > "$out" 2> "$err" || status=$?
+  local_head="$(git -C "$work" rev-parse HEAD)"
+  remote_head="$(git --git-dir="$work.bare-origin.git" rev-parse refs/heads/feat/CC-9001 2>/dev/null || true)"
+  if [[ "$status" -eq 0 && "$local_head" != "$assessed_head" \
+      && "$remote_head" == "$assessed_head" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected assessed head only: status=$status assessed=$assessed_head local=$local_head remote=$remote_head stdout=$(cat "$out") stderr=$(cat "$err")"
+  fi
+}
+
 # run_finish_with_no_result_line <work_dir> <ticket_id>
 # Same stub shape, but the fake gate never prints a `result: <path>` line at
 # all -- covers the "could not locate gate result file" branch.
@@ -3117,6 +3163,7 @@ case_publish_assessment_rejects_post_build_source_mutation
 case_finish_real_publish_assessment_surfaces
 case_finish_real_targeted_publish_assessment_path
 case_finish_post_assessment_drift_refuses_publish
+case_finish_pushes_only_assessed_head_when_branch_advances_at_push
 case_finish_gh_pr_create_runtime_failure_writes_pushed_pr_failed_marker
 case_finish_retries_after_pr_create_failure
 case_status_reports_partial_for_pushed_pr_failed
