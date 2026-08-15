@@ -2833,6 +2833,44 @@ case_finish_go_persists_fallback_when_marker_write_fails() {
   fi
 }
 
+# Behavior: a fallback record from an earlier same-ticket lane is ignored by
+# the later lane until that lane writes its own marker/recovery evidence.
+# Steps: 1) create two tracked-style worktree lanes for the same ticket; 2)
+# persist GO for the old lane; 3) track the new lane with no marker; 4) require
+# status=prepared rather than inheriting the old GO.
+case_status_ignores_stale_fallback_from_replaced_lane() {
+  local name="ship status: ignores stale same-ticket fallback from a replaced lane"
+  should_run "$name" || return 0
+  local store work old_lane new_lane reg_dir tracking old_head old_tree old_payload json
+  store="$tmp_root/state-status-stale-fallback"
+  work="$tmp_root/work-status-stale-fallback"
+  old_lane="$tmp_root/old-lane-status-stale"
+  new_lane="$tmp_root/new-lane-status-stale"
+  make_work_repo "$work" "CC-9001"
+  git -C "$work" worktree add -q -b stale-old "$old_lane" HEAD
+  git -C "$work" worktree add -q -b stale-new "$new_lane" HEAD
+  reg_dir="$(reg_dir_for "$store" "$work")"
+  mkdir -p "$reg_dir"
+  old_head="$(git -C "$old_lane" rev-parse HEAD)"
+  old_tree="$(_gate_subject_tree_fingerprint "$old_lane" committed_head "$old_head")"
+  old_payload="$(jq -nc --arg lane_id old-lane-id --arg head "$old_head" --arg tree "$old_tree" \
+    '{schema_version:2,ticket:"CC-9001",verdict:"GO",lane_id:$lane_id,
+      subject:{head_commit:$head,tree_fingerprint:$tree}}')"
+  printf '%s\n' "$old_payload" > "$reg_dir/ship-partial-CC-9001.json"
+  tracking="$reg_dir/ship-lanes.jsonl"
+  jq -cn --arg path "$new_lane" --arg lane_id new-lane-id \
+    '{ticket:"CC-9001",branch:"feat/CC-9001",path:$path,run_id:"",operation_id:"",
+      operation_work_dir:"",adapter:"",status:"prepared",created_ts:"2026-08-15T15:00:00Z",lane_id:$lane_id}' \
+    > "$tracking"
+  json="$(PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" ship status --cd "$work" --json)"
+  if [[ "$(jq -r '.[0].status' <<<"$json")" == prepared \
+      && "$(jq -r '.[0].lane_id' <<<"$json")" == new-lane-id ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected prepared/new-lane-id, got $json"
+  fi
+}
+
 # Behavior: a successful push/PR is not reported as normal completion when both recovery sinks fail.
 # Steps: 1) Make the lane marker a directory; 2) force canonical recovery writes to fail; 3) require nonzero finish and a critical manual-recovery signal.
 case_finish_go_fails_when_all_recovery_sinks_fail() {
@@ -3476,6 +3514,7 @@ case_finish_pushes_only_assessed_head_when_branch_advances_at_push
 case_finish_gh_pr_create_runtime_failure_writes_pushed_pr_failed_marker
 case_finish_pr_failure_persists_fallback_when_marker_write_fails
 case_finish_go_persists_fallback_when_marker_write_fails
+case_status_ignores_stale_fallback_from_replaced_lane
 case_finish_go_fails_when_all_recovery_sinks_fail
 case_finish_retries_after_pr_create_failure
 case_status_reports_partial_for_pushed_pr_failed

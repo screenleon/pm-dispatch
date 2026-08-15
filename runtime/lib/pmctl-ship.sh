@@ -374,7 +374,7 @@ pmctl_ship_finish() {
     return 2
   fi
   local remediation_closure gate_verification_file publish_assessment
-  local producer_policy policy_satisfaction preferred_policy
+  local producer_policy policy_satisfaction preferred_policy lane_identity subject_json
   remediation_closure="$work_dir/.pm-dispatch/test-results/ship-remediation-closure-${ticket_id}-${post_suite_head}.json"
   mkdir -p "$(dirname "$remediation_closure")" || {
     printf 'pmctl ship finish: unable to create remediation closure directory\n' >&2
@@ -447,6 +447,17 @@ pmctl_ship_finish() {
   producer_policy="$(jq -r '.policy.embedded_policy' "$assessment_snapshot")"
   policy_satisfaction="$(jq -r '.policy.policy_satisfaction' "$assessment_snapshot")"
   preferred_policy="$(jq -r '.policy.preferred_policy' "$assessment_snapshot")"
+  subject_json="$(jq -c '.subject' "$assessment_snapshot")" || {
+    rm -f -- "$assessment_snapshot"
+    printf 'pmctl ship finish: publish assessment subject could not be serialized; refusing publication\n' >&2
+    return 1
+  }
+  lane_identity="$(_pmctl_ship_lane_identity_for_finish "$repo_root" "$work_dir" "$ticket_id" 2>/dev/null || true)"
+  if [[ -z "$lane_identity" ]]; then
+    rm -f -- "$assessment_snapshot"
+    printf 'pmctl ship finish: current lane has no immutable tracking identity; refusing fallback recovery publication\n' >&2
+    return 1
+  fi
   printf 'pmctl ship finish: publish assurance: producer=%s satisfaction=%s preferred=%s\n' \
     "$producer_policy" "$policy_satisfaction" "$preferred_policy"
   printf 'pmctl ship finish: publish assessment: %s\n' "$publish_assessment"
@@ -509,7 +520,7 @@ pmctl_ship_finish() {
     if ! _pmctl_ship_finish_write_recovery_record \
         "$repo_root" "$work_dir" "$ticket_id" "$marker" "PUSHED_NO_PR" "$branch" \
         "$remediation_closure" "$publish_assessment" "$producer_policy" \
-        "$policy_satisfaction" "$preferred_policy"; then
+        "$policy_satisfaction" "$preferred_policy" "$lane_identity" "$subject_json"; then
       printf 'pmctl ship finish: partial-publication recovery record was not persisted.\n' >&2
     fi
     # Nonzero: gate passed and the branch is pushed, but the ship contract
@@ -543,7 +554,7 @@ pmctl_ship_finish() {
     if ! _pmctl_ship_finish_write_recovery_record \
         "$repo_root" "$work_dir" "$ticket_id" "$marker" "PUSHED_PR_FAILED" "$branch" \
         "$remediation_closure" "$publish_assessment" "$producer_policy" \
-        "$policy_satisfaction" "$preferred_policy"; then
+        "$policy_satisfaction" "$preferred_policy" "$lane_identity" "$subject_json" "${pr_url:-}" "${result_path:-}"; then
       printf 'pmctl ship finish: partial-publication recovery record was not persisted.\n' >&2
     fi
     return "$pr_status"
@@ -552,7 +563,7 @@ pmctl_ship_finish() {
   if ! _pmctl_ship_finish_write_recovery_record \
       "$repo_root" "$work_dir" "$ticket_id" "$marker" "GO" "$branch" \
       "$remediation_closure" "$publish_assessment" "$producer_policy" \
-      "$policy_satisfaction" "$preferred_policy" "$pr_url" "$result_path"; then
+      "$policy_satisfaction" "$preferred_policy" "$lane_identity" "$subject_json" "$pr_url" "$result_path"; then
     printf 'pmctl ship finish: CRITICAL: publication completed, but no durable recovery record was persisted; recover the pushed branch and PR manually.\n' >&2
     rm -f -- "$assessment_snapshot"
     return 1
@@ -595,6 +606,41 @@ _pmctl_ship_partial_record_path() {
   printf '%s/ship-partial-%s.json\n' "$reg_dir" "$ticket_id"
 }
 
+# A fallback record is project-wide because the lane-local marker may be
+# unavailable.  It therefore needs a lane identity that survives a later
+# same-ticket lane being created.  Tracked lanes receive a unique identity at
+# creation time; direct/library callers without a tracking entry use a
+# deterministic legacy identity so the finish-focused library tests retain a
+# queryable fallback without weakening tracked-lane isolation.
+_pmctl_ship_legacy_lane_identity() {
+  local work_dir="$1" ticket_id="$2" canonical
+  canonical="$(cd "$work_dir" 2>/dev/null && pwd -P)" || return 1
+  printf 'ship-lane-legacy-v1\n%s\n%s\n' "$ticket_id" "$canonical" \
+    | gate_digest_stream
+}
+
+_pmctl_ship_lane_identity_for_finish() {
+  local repo_root="$1" work_dir="$2" ticket_id="$3" reg_dir tracking_file
+  local canonical_path line tracked_ticket tracked_path tracked_identity
+  canonical_path="$(cd "$work_dir" 2>/dev/null && pwd -P)" || return 1
+  reg_dir="$(_pmctl_ship_lanes_reg_dir "$repo_root" "$work_dir")" || return 1
+  tracking_file="$(_pmctl_ship_lanes_tracking_file "$reg_dir")"
+  if [[ -f "$tracking_file" ]]; then
+    while IFS= read -r line; do
+      [[ -n "$line" ]] || continue
+      tracked_ticket="$(jq -r '.ticket // empty' <<<"$line")"
+      [[ "$tracked_ticket" == "$ticket_id" ]] || continue
+      tracked_path="$(jq -r '.path // empty' <<<"$line")"
+      [[ "$(cd "$tracked_path" 2>/dev/null && pwd -P || true)" == "$canonical_path" ]] || continue
+      tracked_identity="$(jq -r '.lane_id // empty' <<<"$line")"
+      [[ -n "$tracked_identity" ]] || return 1
+      printf '%s\n' "$tracked_identity"
+      return 0
+    done < "$tracking_file"
+  fi
+  _pmctl_ship_legacy_lane_identity "$work_dir" "$ticket_id"
+}
+
 _pmctl_ship_partial_record_write() {
   local repo_root="$1" work_dir="$2" ticket_id="$3" payload="$4"
   local record record_dir tmp
@@ -614,18 +660,20 @@ _pmctl_ship_partial_record_write() {
 _pmctl_ship_finish_write_recovery_record() {
   local repo_root="$1" work_dir="$2" ticket_id="$3" marker="$4" verdict="$5" branch="$6"
   local remediation_closure="$7" publish_assessment="$8" producer_policy="$9"
-  local policy_satisfaction="${10}" preferred_policy="${11}" payload record
+  local policy_satisfaction="${10}" preferred_policy="${11}" lane_identity="${12}" subject_json="${13}" payload record
   local pr_url result_path
-  shift 11
+  shift 13
   pr_url="${1:-}"
   result_path="${2:-}"
   payload="$(jq -nc --arg ticket "$ticket_id" --arg branch "$branch" \
     --arg verdict "$verdict" --arg remediation_closure "$remediation_closure" \
     --arg publish_assessment "$publish_assessment" --arg producer_policy "$producer_policy" \
     --arg policy_satisfaction "$policy_satisfaction" --arg preferred_policy "$preferred_policy" \
+    --arg lane_id "$lane_identity" --argjson subject "$subject_json" \
     --arg pr_url "$pr_url" --arg result_path "$result_path" \
     --arg finished_ts "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date)" \
     '{schema_version:2,ticket:$ticket,verdict:$verdict,branch:$branch,
+      lane_id:$lane_id,subject:$subject,
       remediation_closure:$remediation_closure,publish_assessment:$publish_assessment,
       publish_assurance:{embedded_policy:$producer_policy,preferred_policy:$preferred_policy,
         policy_satisfaction:$policy_satisfaction},
@@ -687,15 +735,16 @@ _pmctl_ship_lanes_tracking_refresh_inner() {
   [[ -n "$content" ]] || return 0
   while IFS= read -r line; do
     [[ -n "$line" ]] || continue
-    local ticket branch path run_id operation_id operation_work_dir cur_status new_status
+    local ticket branch path run_id operation_id operation_work_dir lane_id cur_status new_status
     ticket="$(jq -r '.ticket' <<<"$line")"
     branch="$(jq -r '.branch' <<<"$line")"
     path="$(jq -r '.path' <<<"$line")"
     run_id="$(jq -r '.run_id' <<<"$line")"
     operation_id="$(jq -r '.operation_id // ""' <<<"$line")"
     operation_work_dir="$(jq -r '.operation_work_dir // ""' <<<"$line")"
+    lane_id="$(jq -r '.lane_id // ""' <<<"$line")"
     cur_status="$(jq -r '.status' <<<"$line")"
-    new_status="$(_pmctl_ship_lane_status "$path" "$run_id" "$cur_status" "$ticket")"
+    new_status="$(_pmctl_ship_lane_status "$path" "$run_id" "$cur_status" "$ticket" "$lane_id")"
     if pm_identifier_operation_is_valid "$operation_id" \
           && [[ "$operation_work_dir" == /* \
           && "$new_status" =~ ^(go|no-go|partial|failed)$ \
@@ -723,7 +772,22 @@ pmctl_ship_lanes_tracking_refresh() {
   serialize_with_lock "$reg_dir/ship-lanes" _pmctl_ship_lanes_tracking_refresh_inner "$repo_root" "$tracking_file" "$json_out"
 }
 
-# _pmctl_ship_lane_status <lane_path> <run_id> [<current_status>] [<ticket-id>]
+# _pmctl_ship_recovery_subject_matches_lane <lane_path> <record>
+# A fallback record must describe the same immutable subject currently present
+# in the lane.  This is the second guard after lane_id: it prevents a reused
+# lane path or a manually replaced checkout from inheriting an old verdict.
+_pmctl_ship_recovery_subject_matches_lane() {
+  local lane_path="$1" record="$2" record_head record_tree current_head current_tree
+  record_head="$(jq -r '.subject.head_commit // empty' <<<"$record")"
+  record_tree="$(jq -r '.subject.tree_fingerprint // empty' <<<"$record")"
+  [[ "$record_head" =~ ^[a-f0-9]{40}$ && "$record_tree" =~ ^[a-f0-9]{64}$ ]] || return 1
+  current_head="$(git -C "$lane_path" rev-parse HEAD 2>/dev/null)" || return 1
+  [[ "$current_head" == "$record_head" ]] || return 1
+  current_tree="$(_pmctl_ship_tree_fingerprint "$lane_path" committed_head "$current_head")" || return 1
+  [[ "$current_tree" == "$record_tree" ]]
+}
+
+# _pmctl_ship_lane_status <lane_path> <run_id> [<current_status>] [<ticket-id>] [<lane-id>]
 # Prints one of: prepared | dispatch-failed | dispatched | running | go | no-go | partial | failed
 #
 # GO detection reads ONLY `pmctl ship finish`'s own structured marker file
@@ -744,7 +808,7 @@ pmctl_ship_lanes_tracking_refresh() {
 # converged on in gate round 6. No marker file == not go, full stop; the
 # free-text branch below only distinguishes no-go/failed/running, never go.
 _pmctl_ship_lane_status() {
-  local lane_path="$1" run_id="$2" current_status="${3:-}" ticket_id="${4:-}"
+  local lane_path="$1" run_id="$2" current_status="${3:-}" ticket_id="${4:-}" expected_lane_id="${5:-}"
   if [[ -f "$lane_path/.pm-dispatch-ship-finish.json" ]]; then
     # `pmctl ship finish` also writes this marker with verdict=PUSHED_NO_PR
     # when the gate passed and the branch pushed but `gh` was unavailable to
@@ -768,16 +832,24 @@ _pmctl_ship_lane_status() {
   # persists the same verdict in the canonical registry partition. Treat it
   # as authoritative for status/list, but only for the tracked ticket.
   if [[ -n "$ticket_id" ]]; then
-    local lane_repo partial_record partial_verdict
+    local lane_repo partial_record partial_verdict partial_payload partial_lane_id
     lane_repo="$(git -C "$lane_path" rev-parse --show-toplevel 2>/dev/null || true)"
     if [[ -n "$lane_repo" ]]; then
       partial_record="$(_pmctl_ship_partial_record_path "$lane_repo" "$lane_path" "$ticket_id" 2>/dev/null || true)"
       if [[ -f "$partial_record" ]]; then
-        partial_verdict="$(jq -r '.verdict // ""' "$partial_record" 2>/dev/null || true)"
-        case "$partial_verdict" in
-          GO) printf 'go\n'; return 0 ;;
-          PUSHED_NO_PR|PUSHED_PR_FAILED) printf 'partial\n'; return 0 ;;
-        esac
+        partial_payload="$(cat "$partial_record" 2>/dev/null || true)"
+        partial_lane_id="$(jq -r '.lane_id // empty' <<<"$partial_payload" 2>/dev/null || true)"
+        if [[ -z "$expected_lane_id" ]]; then
+          expected_lane_id="$(_pmctl_ship_legacy_lane_identity "$lane_path" "$ticket_id" 2>/dev/null || true)"
+        fi
+        if [[ -n "$expected_lane_id" && "$partial_lane_id" == "$expected_lane_id" ]] \
+            && _pmctl_ship_recovery_subject_matches_lane "$lane_path" "$partial_payload"; then
+          partial_verdict="$(jq -r '.verdict // ""' <<<"$partial_payload" 2>/dev/null || true)"
+          case "$partial_verdict" in
+            GO) printf 'go\n'; return 0 ;;
+            PUSHED_NO_PR|PUSHED_PR_FAILED) printf 'partial\n'; return 0 ;;
+          esac
+        fi
       fi
     fi
   fi
@@ -879,7 +951,7 @@ _pmctl_ship_lane_in_flight() {
   local line
   while IFS= read -r line; do
     [[ -n "$line" ]] || continue
-    local tracked_ticket tracked_status tracked_run_id tracked_path
+    local tracked_ticket tracked_status tracked_run_id tracked_path tracked_lane_id
     tracked_ticket="$(jq -r '.ticket' <<<"$line")"
     [[ "$tracked_ticket" == "$ticket_id" ]] || continue
     tracked_status="$(jq -r '.status' <<<"$line")"
@@ -887,8 +959,9 @@ _pmctl_ship_lane_in_flight() {
       dispatched|running)
         tracked_run_id="$(jq -r '.run_id' <<<"$line")"
         tracked_path="$(jq -r '.path' <<<"$line")"
+        tracked_lane_id="$(jq -r '.lane_id // ""' <<<"$line")"
         local live_status
-        live_status="$(_pmctl_ship_lane_status "$tracked_path" "$tracked_run_id" "" "$ticket_id")"
+        live_status="$(_pmctl_ship_lane_status "$tracked_path" "$tracked_run_id" "" "$ticket_id" "$tracked_lane_id")"
         if [[ "$live_status" == dispatched || "$live_status" == running ]]; then
           printf '%s %s\n' "$tracked_run_id" "$live_status"
           return 0
@@ -900,15 +973,16 @@ _pmctl_ship_lane_in_flight() {
 }
 
 # _pmctl_ship_lanes_tracking_write <reg_dir> <ticket_id> <branch> <lane_path>
-#                                   <run_id> <adapter> <status> <created_ts> [operation_id] [operation_work_dir]
+#                                   <run_id> <adapter> <status> <created_ts> [operation_id] [operation_work_dir] [lane_id]
 # The ONE call shape `pmctl_ship_run` uses to append a ship-lanes.jsonl entry
 # -- every terminal outcome after a successful `pmctl_worktree_create` goes
 # through this (prepared / dispatch-failed / dispatched), never just the
 # happy path, so a lane can never exist on disk without a corresponding
 # tracking record (CC-442/CC-443 gate finding).
 _pmctl_ship_lanes_tracking_write() {
-  local reg_dir="$1" ticket_id="$2" branch="$3" lane_path="$4" run_id="$5" adapter="$6" status="$7" created_ts="$8" operation_id="${9:-}" operation_work_dir="${10:-}"
+  local reg_dir="$1" ticket_id="$2" branch="$3" lane_path="$4" run_id="$5" adapter="$6" status="$7" created_ts="$8" operation_id="${9:-}" operation_work_dir="${10:-}" lane_id="${11:-}"
   local json_line
+  [[ -n "$lane_id" ]] || lane_id="$(printf 'ship-lane-v1\n%s\n%s\n%s\n' "$ticket_id" "$lane_path" "$created_ts" | gate_digest_stream)"
   json_line="$(printf '{"ticket":%s,"branch":%s,"path":%s,"run_id":%s,"operation_id":%s,"operation_work_dir":%s,"adapter":%s,"status":%s,"created_ts":%s}' \
     "$(jq -Rn --arg v "$ticket_id" '$v')" \
     "$(jq -Rn --arg v "$branch" '$v')" \
@@ -919,6 +993,7 @@ _pmctl_ship_lanes_tracking_write() {
     "$(jq -Rn --arg v "$adapter" '$v')" \
     "$(jq -Rn --arg v "$status" '$v')" \
     "$(jq -Rn --arg v "$created_ts" '$v')")"
+  json_line="$(jq -c --arg lane_id "$lane_id" '. + {lane_id:$lane_id}' <<<"$json_line")"
   pmctl_ship_lanes_tracking_append "$reg_dir" "$json_line"
 }
 
