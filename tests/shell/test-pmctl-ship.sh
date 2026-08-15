@@ -585,7 +585,7 @@ independent_fixed_tree_fingerprint() {
 case_ship_subject_fingerprint_matches_independent_gate_oracle() {
   local name="ship subject fingerprint matches independent Gate oracle and mutation contract"
   should_run "$name" || return 0
-  local work head expected baseline mode_changed link_changed content_changed excluded invalid status=0
+  local work head expected baseline mode_changed link_changed content_changed excluded status=0
   work="$tmp_root/ship-independent-subject-oracle"
   make_work_repo "$work" "CC-9001"
   printf 'regular fixture\n' > "$work/regular.txt"
@@ -801,6 +801,46 @@ case_targeted_closure_accepts_clean_go_with_confirmations() {
     pass "$name"
   else
     fail "$name" "clean targeted GO was not authorized: status=$status stderr=$(cat "$dir/err") closure=$(cat "$closure" 2>/dev/null)"
+  fi
+}
+
+# Behavior: an uncertain initial blocker may close only when the targeted GO independently confirms that exact finding.
+# Steps: 1) Arrange an uncertain initial NO-GO and a clean targeted GO; 2) provide the matching confirmation; 3) require closed authorization and targeted classification.
+case_targeted_closure_accepts_uncertain_go_with_confirmation() {
+  local name="ship closure: uncertain initial blocker closes only with matching targeted confirmation"
+  should_run "$name" || return 0
+  local dir initial target assurance scope full closure scope_sha status=0
+  dir="$tmp_root/targeted-closure-uncertain-confirmation"
+  mkdir -p "$dir"
+  initial="$dir/initial.md"; target="$dir/target.md"; assurance="$dir/target.md.assurance.json"
+  scope="$dir/scope.json"; full="$dir/full.json"; closure="$dir/closure.json"
+  jq -n '{changes:{changed_paths:["runtime/lib/gate-closure.sh"],renamed_paths:[],untracked_paths:[]},diff:{binary_or_special_paths:[]}}' > "$scope"
+  scope_sha="$(sha256sum "$scope" | awk '{print $1}')"
+  {
+    printf 'Final: NO-GO\n```synthesis_result_v1\n'
+    jq -n '{kind:"gate_synthesis_result_v1",findings_union:[
+      {id:"risk-reviewer-F001",origin:"uncertain",hard_gate_class:"hard_block",source:{path:"runtime/lib/gate-closure.sh",line:269,symbol:"gate_remediation_closure_publish"}}],selected_reviewers:["risk-reviewer"]}'
+    printf '```\n'
+  } > "$initial"
+  jq -n --arg scope_sha "$scope_sha" '{subject:{repository_key:("a"*64),base_commit:("b"*40),head_commit:("c"*40),tree_fingerprint:("d"*64),subject_kind:"committed_head"},evidence:{scope_manifest:{artifact:"scope.json",sha256:$scope_sha}}}' > "$initial.assurance.json"
+  {
+    printf 'Final: GO\n```synthesis_result_v1\n'
+    jq -n '{kind:"gate_synthesis_result_v1",findings_union:[],remediation_confirmations:[
+      {finding_id:"risk-reviewer-F001",status:"confirmed",summary:"Uncertain blocker independently confirmed fixed.",evidence_refs:[{path:"runtime/lib/gate-closure.sh",line:269,symbol:"gate_remediation_closure_publish"}]}],selected_reviewers:["risk-reviewer"]}'
+    printf '```\n'
+  } > "$target"
+  jq -n --arg scope_sha "$scope_sha" --arg initial "$initial" '{coordinates:{pass:{resolved:"targeted",initial_result:$initial}},subject:{repository_key:("a"*64),base_commit:("b"*40),head_commit:("c"*40),tree_fingerprint:("d"*64),subject_kind:"committed_head"},evidence:{scope_manifest:{artifact:"scope.json",sha256:$scope_sha}}}' > "$assurance"
+  jq -n '{kind:"pm_test_result_v2",contract:"full",authoritative:true,status:"pass",aggregate:{status:"pass"},exit_code:0,tree_fingerprint:("d"*64)}' > "$full"
+  bash -c '
+    repo_root="$1"; target="$2"; assurance="$3"; closure="$4"; full="$5"
+    . "$repo_root/runtime/lib/gate-closure.sh"
+    gate_remediation_closure_publish "$target" "$assurance" "$closure" "$full" CC-511
+  ' _ "$REPO_ROOT" "$target" "$assurance" "$closure" "$full" > "$dir/out" 2> "$dir/err" || status=$?
+  if [[ "$status" -eq 0 && -s "$closure" ]] \
+      && jq -e '.state == "closed" and .final_assessment.publish_authorized == true and .findings[0].disposition == "closed" and .findings[0].classification == "targeted_confirmation" and .targeted_confirmation.finding_ids == ["risk-reviewer-F001"]' "$closure" >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name" "matching uncertain confirmation was not authorized: status=$status stderr=$(cat "$dir/err") closure=$(cat "$closure" 2>/dev/null)"
   fi
 }
 
@@ -2560,6 +2600,42 @@ case_finish_gh_pr_create_runtime_failure_writes_pushed_pr_failed_marker() {
   fi
 }
 
+# Behavior: a successful push remains queryable when gh fails and the
+# lane-local finish marker cannot be written.
+# Steps: 1) Make the marker path unwritable; 2) simulate PR creation failure
+# after push; 3) require a canonical fallback record and partial status.
+case_finish_pr_failure_persists_fallback_when_marker_write_fails() {
+  local name="ship finish: PR failure persists queryable fallback when marker write fails"
+  should_run "$name" || return 0
+  local store work gh_bin out err status=0 pushed=0 reg_dir partial partial_verdict lane_status
+  store="$tmp_root/state-finish-prfail-fallback"
+  work="$tmp_root/work-finish-prfail-fallback"
+  make_work_repo "$work" "CC-9001"
+  checkout_ticket_branch "$work" "CC-9001"
+  add_bare_origin "$work"
+  mkdir -p "$work/.pm-dispatch-ship-finish.json"
+  gh_bin="$tmp_root/fake-gh-prfail-fallback-bin"
+  install_fake_gh_pr_create_fails "$gh_bin"
+  out="$tmp_root/out-finish-prfail-fallback"; err="$tmp_root/err-finish-prfail-fallback"
+  PM_DISPATCH_STATE_ROOT="$store" PATH="$gh_bin:$PATH" \
+    run_finish_with_fake_gate "$work" "CC-9001" "GO" > "$out" 2> "$err" || status=$?
+  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
+  reg_dir="$(reg_dir_for "$store" "$work")"
+  partial="$reg_dir/ship-partial-CC-9001.json"
+  partial_verdict="$(jq -r '.verdict // ""' "$partial" 2>/dev/null || true)"
+  lane_status="$(PM_DISPATCH_STATE_ROOT="$store" bash -c '
+    . "$1/runtime/lib/pmctl-ship.sh"
+    _pmctl_ship_lane_status "$2" "" "" CC-9001
+  ' _ "$REPO_ROOT" "$work" 2>/dev/null || true)"
+  if [[ "$status" -ne 0 && "$pushed" -eq 1 && "$partial_verdict" == "PUSHED_PR_FAILED" \
+      && "$lane_status" == "partial" ]] \
+      && grep -q 'durable partial-publication record' "$err"; then
+    pass "$name"
+  else
+    fail "$name" "expected durable fallback + partial status; status=$status pushed=$pushed partial=$partial_verdict lane_status=$lane_status stderr=$(cat "$err")"
+  fi
+}
+
 # Behavior: a transient PR-creation failure can be retried on the unchanged subject using the same verified assessment.
 # Steps: 1) Arrange fake gh to fail once and a clean ticket branch; 2) run finish twice without changing HEAD/tree; 3) require the second run to open the PR and write GO.
 case_finish_retries_after_pr_create_failure() {
@@ -3157,6 +3233,7 @@ case_publish_assessment_rejects_existing_destination
 case_publish_assessment_and_closure_are_concurrent_no_replace
 case_targeted_closure_requires_initial_finding_ledger
 case_targeted_closure_accepts_clean_go_with_confirmations
+case_targeted_closure_accepts_uncertain_go_with_confirmation
 case_ship_subject_fingerprint_matches_independent_gate_oracle
 case_publish_assessment_rejects_invalid_or_mismatched_evidence
 case_publish_assessment_rejects_post_build_source_mutation
@@ -3165,6 +3242,7 @@ case_finish_real_targeted_publish_assessment_path
 case_finish_post_assessment_drift_refuses_publish
 case_finish_pushes_only_assessed_head_when_branch_advances_at_push
 case_finish_gh_pr_create_runtime_failure_writes_pushed_pr_failed_marker
+case_finish_pr_failure_persists_fallback_when_marker_write_fails
 case_finish_retries_after_pr_create_failure
 case_status_reports_partial_for_pushed_pr_failed
 case_finish_reviewers_flag_reaches_gate_call

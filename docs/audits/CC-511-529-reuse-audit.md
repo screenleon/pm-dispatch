@@ -1,6 +1,6 @@
 # CC-511 Phase B / CC-529 refactor and reuse audit
 
-Date: 2026-08-15  
+Date: 2026-08-15
 Scope: `gate_publish_assessment_v1`, `/ship finish`, Gate closure, publish
 verification, policy assurance, schema ownership, and their tests.
 

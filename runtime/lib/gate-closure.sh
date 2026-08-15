@@ -267,7 +267,12 @@ gate_remediation_closure_publish() {
     ($findings | map(
       . as $f |
       (if $f.origin == "uncertain" then
-        {disposition:"split",classification:"stop_split",verification_status:"split"}
+        (if $final == "GO" and $targeted_status == "pass" and
+            (($targeted_confirmation_ids | index($f.id)) != null) then
+          {disposition:"closed",classification:"targeted_confirmation",verification_status:"pass"}
+         else
+          {disposition:"split",classification:"stop_split",verification_status:"split"}
+         end)
        elif $f.origin == "pre_existing" then
         {disposition:"tracked",classification:"stop_split",verification_status:"not_required"}
        elif $f.origin == "caution" then
@@ -432,9 +437,12 @@ gate_remediation_closure_verify() {
        $finding.verification_status == "not_required" and
         ($finding.ticket_ref == null or ($finding.ticket_ref | type == "string"))
        elif $finding.origin == "uncertain" then
-        $finding.disposition == "split" and
-        $finding.classification == "stop_split" and
-        $finding.verification_status == "split"
+        (($finding.disposition == "closed" and
+          $finding.classification == "targeted_confirmation" and
+          $finding.verification_status == "pass") or
+         ($root.state == "split" and $finding.disposition == "split" and
+          $finding.classification == "stop_split" and
+          $finding.verification_status == "split"))
        else
         ($finding.disposition | IN("closed","tracked")) and
         ($finding.classification | IN("local","targeted_confirmation")) and

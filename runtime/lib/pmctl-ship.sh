@@ -477,15 +477,12 @@ pmctl_ship_finish() {
     # Backtick below is a literal Markdown code span, not command substitution.
     # shellcheck disable=SC2016
     printf 'pmctl ship finish: pushed %s, but `gh` is unavailable -- open the PR manually\n' "$branch" >&2
-    jq -n --arg ticket "$ticket_id" --arg branch "$branch" \
-      --arg remediation_closure "$remediation_closure" \
-      --arg publish_assessment "$publish_assessment" \
-      --arg producer_policy "$producer_policy" \
-      --arg policy_satisfaction "$policy_satisfaction" \
-      --arg preferred_policy "$preferred_policy" \
-      --arg finished_ts "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date)" \
-      '{schema_version:2,ticket: $ticket, verdict: "PUSHED_NO_PR", branch: $branch, remediation_closure: $remediation_closure, publish_assessment:$publish_assessment, publish_assurance:{embedded_policy:$producer_policy,preferred_policy:$preferred_policy,policy_satisfaction:$policy_satisfaction}, pr_url: null, finished_ts: $finished_ts}' \
-      > "$marker" 2>/dev/null || true
+    if ! _pmctl_ship_finish_write_partial_record \
+        "$repo_root" "$work_dir" "$ticket_id" "$marker" "PUSHED_NO_PR" "$branch" \
+        "$remediation_closure" "$publish_assessment" "$producer_policy" \
+        "$policy_satisfaction" "$preferred_policy"; then
+      printf 'pmctl ship finish: partial-publication recovery record was not persisted.\n' >&2
+    fi
     # Nonzero: gate passed and the branch is pushed, but the ship contract
     # (gate GO -> PR opened) is not yet complete -- the caller must open the
     # PR manually and this is not a state `pmctl ship status` should report
@@ -514,15 +511,12 @@ pmctl_ship_finish() {
     # failed lane to `pmctl ship status`/`list` -- exactly the silent
     # partial-publish gap critic/qa-tester/architecture-reviewer/
     # risk-reviewer converged on.
-    jq -n --arg ticket "$ticket_id" --arg branch "$branch" \
-      --arg remediation_closure "$remediation_closure" \
-      --arg publish_assessment "$publish_assessment" \
-      --arg producer_policy "$producer_policy" \
-      --arg policy_satisfaction "$policy_satisfaction" \
-      --arg preferred_policy "$preferred_policy" \
-      --arg finished_ts "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date)" \
-      '{schema_version:2,ticket: $ticket, verdict: "PUSHED_PR_FAILED", branch: $branch, remediation_closure: $remediation_closure, publish_assessment:$publish_assessment, publish_assurance:{embedded_policy:$producer_policy,preferred_policy:$preferred_policy,policy_satisfaction:$policy_satisfaction}, pr_url: null, finished_ts: $finished_ts}' \
-      > "$marker" 2>/dev/null || true
+    if ! _pmctl_ship_finish_write_partial_record \
+        "$repo_root" "$work_dir" "$ticket_id" "$marker" "PUSHED_PR_FAILED" "$branch" \
+        "$remediation_closure" "$publish_assessment" "$producer_policy" \
+        "$policy_satisfaction" "$preferred_policy"; then
+      printf 'pmctl ship finish: partial-publication recovery record was not persisted.\n' >&2
+    fi
     return "$pr_status"
   fi
 
@@ -551,8 +545,67 @@ pmctl_ship_finish() {
 # lane tracking is a sibling file under it, not a new state root.
 _pmctl_ship_lanes_reg_dir() {
   local repo_root="$1" work_dir="$2"
+  if ! declare -F sw_project_worktree_dir >/dev/null 2>&1; then
+    # Direct library consumers (including ship finish's focused tests) may
+    # source this file without the CLI's usual state-paths bootstrap.
+    # Resolve the same canonical partition rather than losing fallback state.
+    # shellcheck source=runtime/lib/state-paths.sh
+    # shellcheck disable=SC1091
+    . "${BASH_SOURCE[0]%/*}/state-paths.sh"
+  fi
   pmctl_worktree_ensure_state_paths "$repo_root" >/dev/null 2>&1 || true
   sw_project_worktree_dir "$work_dir"
+}
+
+# _pmctl_ship_partial_record_path <repo_root> <work_dir> <ticket-id>
+# Keep a structured partial-publication verdict in the canonical lane
+# registry when the lane-local finish marker cannot be written.
+_pmctl_ship_partial_record_path() {
+  local repo_root="$1" work_dir="$2" ticket_id="$3" reg_dir
+  reg_dir="$(_pmctl_ship_lanes_reg_dir "$repo_root" "$work_dir")" || return 1
+  printf '%s/ship-partial-%s.json\n' "$reg_dir" "$ticket_id"
+}
+
+_pmctl_ship_partial_record_write() {
+  local repo_root="$1" work_dir="$2" ticket_id="$3" payload="$4"
+  local record record_dir tmp
+  record="$(_pmctl_ship_partial_record_path "$repo_root" "$work_dir" "$ticket_id")" || return 1
+  record_dir="$(dirname "$record")"
+  mkdir -p "$record_dir" || return 1
+  tmp="$(mktemp "$record_dir/.ship-partial.XXXXXX")" || return 1
+  if ! printf '%s\n' "$payload" > "$tmp" || ! mv -f -- "$tmp" "$record"; then
+    rm -f -- "$tmp"
+    return 1
+  fi
+  printf '%s\n' "$record"
+}
+
+# Try the lane-local marker first.  If it fails, atomically publish the same
+# verdict in the canonical registry and emit an explicit recovery signal.
+_pmctl_ship_finish_write_partial_record() {
+  local repo_root="$1" work_dir="$2" ticket_id="$3" marker="$4" verdict="$5" branch="$6"
+  local remediation_closure="$7" publish_assessment="$8" producer_policy="$9"
+  local policy_satisfaction="${10}" preferred_policy="${11}" payload record
+  payload="$(jq -nc --arg ticket "$ticket_id" --arg branch "$branch" \
+    --arg verdict "$verdict" --arg remediation_closure "$remediation_closure" \
+    --arg publish_assessment "$publish_assessment" --arg producer_policy "$producer_policy" \
+    --arg policy_satisfaction "$policy_satisfaction" --arg preferred_policy "$preferred_policy" \
+    --arg finished_ts "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date)" \
+    '{schema_version:2,ticket:$ticket,verdict:$verdict,branch:$branch,
+      remediation_closure:$remediation_closure,publish_assessment:$publish_assessment,
+      publish_assurance:{embedded_policy:$producer_policy,preferred_policy:$preferred_policy,
+        policy_satisfaction:$policy_satisfaction},pr_url:null,finished_ts:$finished_ts}')" || return 1
+  if printf '%s\n' "$payload" > "$marker" 2>/dev/null; then
+    return 0
+  fi
+  if record="$(_pmctl_ship_partial_record_write "$repo_root" "$work_dir" "$ticket_id" "$payload")"; then
+    printf 'pmctl ship finish: WARNING: lane marker %s was not writable; durable partial-publication record: %s\n' \
+      "$marker" "$record" >&2
+    return 0
+  fi
+  printf 'pmctl ship finish: CRITICAL: remote branch %s was pushed, but neither the lane marker nor the durable partial-publication record could be written; recover the branch and open the PR manually.\n' \
+    "$branch" >&2
+  return 1
 }
 
 _pmctl_ship_lanes_tracking_file() {
@@ -606,7 +659,7 @@ _pmctl_ship_lanes_tracking_refresh_inner() {
     operation_id="$(jq -r '.operation_id // ""' <<<"$line")"
     operation_work_dir="$(jq -r '.operation_work_dir // ""' <<<"$line")"
     cur_status="$(jq -r '.status' <<<"$line")"
-    new_status="$(_pmctl_ship_lane_status "$path" "$run_id" "$cur_status")"
+    new_status="$(_pmctl_ship_lane_status "$path" "$run_id" "$cur_status" "$ticket")"
     if pm_identifier_operation_is_valid "$operation_id" \
           && [[ "$operation_work_dir" == /* \
           && "$new_status" =~ ^(go|no-go|partial|failed)$ \
@@ -634,7 +687,7 @@ pmctl_ship_lanes_tracking_refresh() {
   serialize_with_lock "$reg_dir/ship-lanes" _pmctl_ship_lanes_tracking_refresh_inner "$repo_root" "$tracking_file" "$json_out"
 }
 
-# _pmctl_ship_lane_status <lane_path> <run_id> [<current_status>]
+# _pmctl_ship_lane_status <lane_path> <run_id> [<current_status>] [<ticket-id>]
 # Prints one of: prepared | dispatch-failed | dispatched | running | go | no-go | partial | failed
 #
 # GO detection reads ONLY `pmctl ship finish`'s own structured marker file
@@ -655,7 +708,7 @@ pmctl_ship_lanes_tracking_refresh() {
 # converged on in gate round 6. No marker file == not go, full stop; the
 # free-text branch below only distinguishes no-go/failed/running, never go.
 _pmctl_ship_lane_status() {
-  local lane_path="$1" run_id="$2" current_status="${3:-}"
+  local lane_path="$1" run_id="$2" current_status="${3:-}" ticket_id="${4:-}"
   if [[ -f "$lane_path/.pm-dispatch-ship-finish.json" ]]; then
     # `pmctl ship finish` also writes this marker with verdict=PUSHED_NO_PR
     # when the gate passed and the branch pushed but `gh` was unavailable to
@@ -674,6 +727,22 @@ _pmctl_ship_lane_status() {
       *) printf 'no-go\n' ;;
     esac
     return 0
+  fi
+  # If the lane-local marker could not be written after a remote push, finish
+  # persists the same verdict in the canonical registry partition. Treat it
+  # as authoritative for status/list, but only for the tracked ticket.
+  if [[ -n "$ticket_id" ]]; then
+    local lane_repo partial_record partial_verdict
+    lane_repo="$(git -C "$lane_path" rev-parse --show-toplevel 2>/dev/null || true)"
+    if [[ -n "$lane_repo" ]]; then
+      partial_record="$(_pmctl_ship_partial_record_path "$lane_repo" "$lane_path" "$ticket_id" 2>/dev/null || true)"
+      if [[ -f "$partial_record" ]]; then
+        partial_verdict="$(jq -r '.verdict // ""' "$partial_record" 2>/dev/null || true)"
+        case "$partial_verdict" in
+          PUSHED_NO_PR|PUSHED_PR_FAILED) printf 'partial\n'; return 0 ;;
+        esac
+      fi
+    fi
   fi
   # A lane with no run_id either (a) was never dispatched at all (manual
   # `--worktree`, no --adapter), or (b) had a dispatch ATTEMPT that failed
@@ -782,7 +851,7 @@ _pmctl_ship_lane_in_flight() {
         tracked_run_id="$(jq -r '.run_id' <<<"$line")"
         tracked_path="$(jq -r '.path' <<<"$line")"
         local live_status
-        live_status="$(_pmctl_ship_lane_status "$tracked_path" "$tracked_run_id")"
+        live_status="$(_pmctl_ship_lane_status "$tracked_path" "$tracked_run_id" "" "$ticket_id")"
         if [[ "$live_status" == dispatched || "$live_status" == running ]]; then
           printf '%s %s\n' "$tracked_run_id" "$live_status"
           return 0
