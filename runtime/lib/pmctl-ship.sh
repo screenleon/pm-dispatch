@@ -415,9 +415,38 @@ pmctl_ship_finish() {
     printf 'pmctl ship finish: verified publish assessment failed self-verification; refusing publication\n' >&2
     return 1
   fi
-  producer_policy="$(jq -r '.policy.embedded_policy' "$publish_assessment")"
-  policy_satisfaction="$(jq -r '.policy.policy_satisfaction' "$publish_assessment")"
-  preferred_policy="$(jq -r '.policy.preferred_policy' "$publish_assessment")"
+  # Bind every later consumer to the exact bytes that passed verification.
+  # A test seam models a concurrent replacement between verification and the
+  # snapshot; the digest comparison below must fail closed before any push.
+  local assessment_sha assessment_snapshot assessment_snapshot_sha
+  assessment_sha="$(gate_digest_file "$publish_assessment")" || {
+    printf 'pmctl ship finish: unable to digest the verified publish assessment; refusing publication\n' >&2
+    return 1
+  }
+  if declare -F pmctl_ship_after_assessment_verify >/dev/null 2>&1; then
+    pmctl_ship_after_assessment_verify "$publish_assessment" || {
+      printf 'pmctl ship finish: assessment post-verification hook failed; refusing publication\n' >&2
+      return 1
+    }
+  fi
+  assessment_snapshot="$(mktemp "${TMPDIR:-/tmp}/pm-ship-publish-assessment.XXXXXX.json")" || return 2
+  if ! cp -- "$publish_assessment" "$assessment_snapshot"; then
+    rm -f -- "$assessment_snapshot"
+    printf 'pmctl ship finish: unable to snapshot the verified publish assessment; refusing publication\n' >&2
+    return 1
+  fi
+  assessment_snapshot_sha="$(gate_digest_file "$assessment_snapshot")" || {
+    rm -f -- "$assessment_snapshot"
+    return 1
+  }
+  if [[ "$assessment_snapshot_sha" != "$assessment_sha" ]]; then
+    rm -f -- "$assessment_snapshot"
+    printf 'pmctl ship finish: publish assessment changed after verification; refusing publication\n' >&2
+    return 1
+  fi
+  producer_policy="$(jq -r '.policy.embedded_policy' "$assessment_snapshot")"
+  policy_satisfaction="$(jq -r '.policy.policy_satisfaction' "$assessment_snapshot")"
+  preferred_policy="$(jq -r '.policy.preferred_policy' "$assessment_snapshot")"
   printf 'pmctl ship finish: publish assurance: producer=%s satisfaction=%s preferred=%s\n' \
     "$producer_policy" "$policy_satisfaction" "$preferred_policy"
   printf 'pmctl ship finish: publish assessment: %s\n' "$publish_assessment"
@@ -432,8 +461,8 @@ pmctl_ship_finish() {
     printf 'pmctl ship finish: publish assessment verified, but the tree became dirty before push -- refusing publication. Re-run finish against the current tree.\n' >&2
     return 1
   fi
-  verified_head="$(jq -r '.subject.head_commit // empty' "$publish_assessment")"
-  verified_tree="$(jq -r '.subject.tree_fingerprint // empty' "$publish_assessment")"
+  verified_head="$(jq -r '.subject.head_commit // empty' "$assessment_snapshot")"
+  verified_tree="$(jq -r '.subject.tree_fingerprint // empty' "$assessment_snapshot")"
   current_head="$(git -C "$work_dir" rev-parse HEAD 2>/dev/null)"
   if [[ -z "$verified_head" || "$current_head" != "$verified_head" ]]; then
     printf 'pmctl ship finish: publish assessment verified, but HEAD moved before push (%s -> %s) -- refusing publication. Re-run finish against the current HEAD.\n' \
@@ -477,7 +506,7 @@ pmctl_ship_finish() {
     # Backtick below is a literal Markdown code span, not command substitution.
     # shellcheck disable=SC2016
     printf 'pmctl ship finish: pushed %s, but `gh` is unavailable -- open the PR manually\n' "$branch" >&2
-    if ! _pmctl_ship_finish_write_partial_record \
+    if ! _pmctl_ship_finish_write_recovery_record \
         "$repo_root" "$work_dir" "$ticket_id" "$marker" "PUSHED_NO_PR" "$branch" \
         "$remediation_closure" "$publish_assessment" "$producer_policy" \
         "$policy_satisfaction" "$preferred_policy"; then
@@ -511,7 +540,7 @@ pmctl_ship_finish() {
     # failed lane to `pmctl ship status`/`list` -- exactly the silent
     # partial-publish gap critic/qa-tester/architecture-reviewer/
     # risk-reviewer converged on.
-    if ! _pmctl_ship_finish_write_partial_record \
+    if ! _pmctl_ship_finish_write_recovery_record \
         "$repo_root" "$work_dir" "$ticket_id" "$marker" "PUSHED_PR_FAILED" "$branch" \
         "$remediation_closure" "$publish_assessment" "$producer_policy" \
         "$policy_satisfaction" "$preferred_policy"; then
@@ -520,15 +549,13 @@ pmctl_ship_finish() {
     return "$pr_status"
   fi
 
-  jq -n --arg ticket "$ticket_id" --arg branch "$branch" --arg pr_url "$pr_url" \
-    --arg result_path "$result_path" --arg remediation_closure "$remediation_closure" \
-    --arg publish_assessment "$publish_assessment" \
-    --arg producer_policy "$producer_policy" \
-    --arg policy_satisfaction "$policy_satisfaction" \
-    --arg preferred_policy "$preferred_policy" \
-    --arg finished_ts "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date)" \
-    '{schema_version:2,ticket: $ticket, verdict: "GO", branch: $branch, pr_url: $pr_url, result_path: $result_path, remediation_closure: $remediation_closure, publish_assessment:$publish_assessment, publish_assurance:{embedded_policy:$producer_policy,preferred_policy:$preferred_policy,policy_satisfaction:$policy_satisfaction}, finished_ts: $finished_ts}' \
-    > "$marker" 2>/dev/null || true
+  if ! _pmctl_ship_finish_write_recovery_record \
+      "$repo_root" "$work_dir" "$ticket_id" "$marker" "GO" "$branch" \
+      "$remediation_closure" "$publish_assessment" "$producer_policy" \
+      "$policy_satisfaction" "$preferred_policy" "$pr_url" "$result_path"; then
+    printf 'pmctl ship finish: publication recovery record was not persisted.\n' >&2
+  fi
+  rm -f -- "$assessment_snapshot"
 }
 
 # ---------------------------------------------------------------------------
@@ -582,28 +609,35 @@ _pmctl_ship_partial_record_write() {
 
 # Try the lane-local marker first.  If it fails, atomically publish the same
 # verdict in the canonical registry and emit an explicit recovery signal.
-_pmctl_ship_finish_write_partial_record() {
+_pmctl_ship_finish_write_recovery_record() {
   local repo_root="$1" work_dir="$2" ticket_id="$3" marker="$4" verdict="$5" branch="$6"
   local remediation_closure="$7" publish_assessment="$8" producer_policy="$9"
   local policy_satisfaction="${10}" preferred_policy="${11}" payload record
+  local pr_url result_path
+  shift 11
+  pr_url="${1:-}"
+  result_path="${2:-}"
   payload="$(jq -nc --arg ticket "$ticket_id" --arg branch "$branch" \
     --arg verdict "$verdict" --arg remediation_closure "$remediation_closure" \
     --arg publish_assessment "$publish_assessment" --arg producer_policy "$producer_policy" \
     --arg policy_satisfaction "$policy_satisfaction" --arg preferred_policy "$preferred_policy" \
+    --arg pr_url "$pr_url" --arg result_path "$result_path" \
     --arg finished_ts "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date)" \
     '{schema_version:2,ticket:$ticket,verdict:$verdict,branch:$branch,
       remediation_closure:$remediation_closure,publish_assessment:$publish_assessment,
       publish_assurance:{embedded_policy:$producer_policy,preferred_policy:$preferred_policy,
-        policy_satisfaction:$policy_satisfaction},pr_url:null,finished_ts:$finished_ts}')" || return 1
+        policy_satisfaction:$policy_satisfaction},
+      pr_url:(if $pr_url == "" then null else $pr_url end),
+      result_path:(if $result_path == "" then null else $result_path end),finished_ts:$finished_ts}')" || return 1
   if printf '%s\n' "$payload" > "$marker" 2>/dev/null; then
     return 0
   fi
   if record="$(_pmctl_ship_partial_record_write "$repo_root" "$work_dir" "$ticket_id" "$payload")"; then
-    printf 'pmctl ship finish: WARNING: lane marker %s was not writable; durable partial-publication record: %s\n' \
+    printf 'pmctl ship finish: WARNING: lane marker %s was not writable; durable publication recovery record: %s\n' \
       "$marker" "$record" >&2
     return 0
   fi
-  printf 'pmctl ship finish: CRITICAL: remote branch %s was pushed, but neither the lane marker nor the durable partial-publication record could be written; recover the branch and open the PR manually.\n' \
+  printf 'pmctl ship finish: CRITICAL: remote branch %s was pushed, but neither the lane marker nor the durable publication recovery record could be written; recover the branch and open the PR manually.\n' \
     "$branch" >&2
   return 1
 }
@@ -739,6 +773,7 @@ _pmctl_ship_lane_status() {
       if [[ -f "$partial_record" ]]; then
         partial_verdict="$(jq -r '.verdict // ""' "$partial_record" 2>/dev/null || true)"
         case "$partial_verdict" in
+          GO) printf 'go\n'; return 0 ;;
           PUSHED_NO_PR|PUSHED_PR_FAILED) printf 'partial\n'; return 0 ;;
         esac
       fi

@@ -114,21 +114,35 @@ gate_remediation_closure_publish() {
   }
 
   primary_result="$result_file"
-  # A targeted pass may reference a legacy v1 result without an immutable
-  # subject sidecar. In that case the current verified Gate result is the
-  # honest primary evidence; targeted coordinates remain recorded below.
+  initial_synthesis_tmp=""
+  # A targeted pass is publish-authorizing only when it can bind back to the
+  # immutable, comprehensive initial review. Legacy result prose is not a
+  # substitute for the assurance sidecar and synthesis ledger.
   if [[ "$(jq -r '.coordinates.pass.resolved // empty' "$assurance_file")" == targeted \
       && "$final" != INCOMPLETE ]]; then
     local initial_input initial_candidate
     initial_input="$(jq -r '.coordinates.pass.initial_result // empty' "$assurance_file")"
-    if [[ -n "$initial_input" ]]; then
-      initial_candidate="$initial_input"
-      [[ "$initial_candidate" == /* ]] || initial_candidate="$result_parent/$initial_candidate"
-      if [[ -s "$initial_candidate" && -s "${initial_candidate}.assurance.json" ]] \
-        && jq -e '.subject.tree_fingerprint != null' "${initial_candidate}.assurance.json" >/dev/null 2>&1; then
-        primary_result="$initial_candidate"
-      fi
+    if [[ -z "$initial_input" ]]; then
+      printf 'gate-closure: targeted pass requires an immutable initial result reference\n' >&2
+      return 1
     fi
+    initial_candidate="$initial_input"
+    [[ "$initial_candidate" == /* ]] || initial_candidate="$result_parent/$initial_candidate"
+    if [[ ! -s "$initial_candidate" || ! -s "${initial_candidate}.assurance.json" ]] \
+      || ! jq -e '((.subject.head_commit // .subject.head.commit) != null) and (.subject.tree_fingerprint != null)' \
+        "${initial_candidate}.assurance.json" >/dev/null 2>&1; then
+      printf 'gate-closure: targeted pass requires the initial immutable assurance sidecar\n' >&2
+      return 1
+    fi
+    initial_synthesis_tmp="$(mktemp "${TMPDIR:-/tmp}/gate-closure-initial-synthesis.XXXXXX.json")" || return 1
+    if ! _gate_closure_synthesis_json "$initial_candidate" "$initial_synthesis_tmp" \
+      || ! jq -e '(.findings_union | type == "array") and ((.selected_reviewers // []) | type == "array")' \
+        "$initial_synthesis_tmp" >/dev/null 2>&1; then
+      printf 'gate-closure: targeted pass requires the initial comprehensive synthesis ledger\n' >&2
+      rm -f "$initial_synthesis_tmp"
+      return 1
+    fi
+    primary_result="$initial_candidate"
   fi
   primary_artifact="$(basename "$primary_result")"
   primary_sha="$(gate_digest_file "$primary_result")" || return 1
@@ -141,7 +155,6 @@ gate_remediation_closure_publish() {
   fi
 
   synthesis_tmp="$(mktemp "${TMPDIR:-/tmp}/gate-closure-synthesis.XXXXXX.json")" || return 1
-  initial_synthesis_tmp=""
   findings_json='[]'
   targeted_confirmation_ids_json='[]'
   reviewers_json='[]'
@@ -166,9 +179,11 @@ gate_remediation_closure_publish() {
   # result. Requiring the old finding IDs in findings_union made a clean GO
   # impossible because retaining a blocker would itself contradict GO.
   if [[ "$primary_result" != "$result_file" ]]; then
-    initial_synthesis_tmp="$(mktemp "${TMPDIR:-/tmp}/gate-closure-initial-synthesis.XXXXXX.json")" || {
-      rm -f "$synthesis_tmp"; return 1;
-    }
+    if [[ -z "$initial_synthesis_tmp" ]]; then
+      initial_synthesis_tmp="$(mktemp "${TMPDIR:-/tmp}/gate-closure-initial-synthesis.XXXXXX.json")" || {
+        rm -f "$synthesis_tmp"; return 1;
+      }
+    fi
     if _gate_closure_synthesis_json "$primary_result" "$initial_synthesis_tmp"; then
       findings_json="$(jq -c '.findings_union // []' "$initial_synthesis_tmp")" || {
         rm -f "$synthesis_tmp" "$initial_synthesis_tmp"; return 1;

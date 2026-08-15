@@ -30,6 +30,10 @@ th_init "$@"
 _TEST_XDG_RUNTIME_DIR="$tmp_root/xdg-runtime"
 mkdir -p "$_TEST_XDG_RUNTIME_DIR" && chmod 700 "$_TEST_XDG_RUNTIME_DIR"
 export XDG_RUNTIME_DIR="$_TEST_XDG_RUNTIME_DIR"
+# The finish fixtures intentionally use command substitutions.  Bash runs the
+# EXIT trap in those subshells too; only the owning suite shell may remove the
+# shared fixture root.
+trap 'if [[ "${BASHPID:-}" == "$$" ]]; then rm -rf "$tmp_root"; fi' EXIT
 
 # Fake codex AND claude on PATH so `pmctl ship --parallel` (detached
 # dispatch; default adapter is `claude`, overridable with --adapter) never
@@ -342,6 +346,19 @@ JQ
           ;;
       esac
       return 0
+    }
+    pmctl_ship_after_assessment_verify() {
+      [[ "${PM_TEST_ASSESSMENT_REPLACE:-}" == 1 ]] || return 0
+      printf "post-verification assessment replacement\n" > "$work_dir/post-assessment-replacement.txt"
+      git -C "$work_dir" add post-assessment-replacement.txt
+      git -C "$work_dir" -c user.email=test@example.com -c user.name=test commit -q -m post-assessment-replacement
+      local forged_head forged_tree replacement
+      forged_head="$(git -C "$work_dir" rev-parse HEAD)"
+      forged_tree="$(_pmctl_ship_tree_fingerprint "$work_dir" committed_head "$forged_head")"
+      replacement="$1.replacement"
+      jq --arg head "$forged_head" --arg tree "$forged_tree" \
+        '"'"' .subject.head_commit=$head | .subject.tree_fingerprint=$tree '"'"' "$1" > "$replacement" &&
+        mv -- "$replacement" "$1"
     }
     . "$repo_root/runtime/lib/pmctl-ship.sh"
     pmctl_ship_finish "$repo_root" "$work_dir" "$ticket_id" "$@"
@@ -762,6 +779,40 @@ case_targeted_closure_requires_initial_finding_ledger() {
   fi
 }
 
+# Behavior: a legacy initial result without immutable assurance/ledger evidence cannot authorize a targeted GO.
+# Steps: 1) Provide only legacy initial prose and a clean targeted result; 2) publish the targeted closure; 3) require fail-closed refusal.
+case_targeted_closure_rejects_legacy_initial_without_immutable_evidence() {
+  local name="ship closure: legacy targeted initial result is not publish-authorizing"
+  should_run "$name" || return 0
+  local dir initial target assurance scope full closure scope_sha status=0
+  dir="$tmp_root/targeted-closure-legacy-initial"
+  mkdir -p "$dir"
+  initial="$dir/initial.md"; target="$dir/target.md"; assurance="$dir/target.md.assurance.json"
+  scope="$dir/scope.json"; full="$dir/full.json"; closure="$dir/closure.json"
+  printf 'Final: NO-GO\nlegacy gate result without synthesis\n' > "$initial"
+  jq -n '{changes:{changed_paths:["runtime/lib/gate-closure.sh"],renamed_paths:[],untracked_paths:[]},diff:{binary_or_special_paths:[]}}' > "$scope"
+  scope_sha="$(sha256sum "$scope" | awk '{print $1}')"
+  {
+    printf 'Final: GO\n```synthesis_result_v1\n'
+    jq -n '{kind:"gate_synthesis_result_v1",findings_union:[],remediation_confirmations:[],selected_reviewers:["risk-reviewer"]}'
+    printf '```\n'
+  } > "$target"
+  jq -n --arg scope_sha "$scope_sha" --arg initial "$initial" \
+    '{coordinates:{pass:{resolved:"targeted",initial_result:$initial}},subject:{repository_key:("a"*64),base_commit:("b"*40),head_commit:("c"*40),tree_fingerprint:("d"*64),subject_kind:"committed_head"},evidence:{scope_manifest:{artifact:"scope.json",sha256:$scope_sha}}}' > "$assurance"
+  jq -n '{kind:"pm_test_result_v2",contract:"full",authoritative:true,status:"pass",aggregate:{status:"pass"},exit_code:0,tree_fingerprint:("d"*64)}' > "$full"
+  bash -c '
+    repo_root="$1"; target="$2"; assurance="$3"; closure="$4"; full="$5"
+    . "$repo_root/runtime/lib/gate-closure.sh"
+    gate_remediation_closure_publish "$target" "$assurance" "$closure" "$full" CC-511
+  ' _ "$REPO_ROOT" "$target" "$assurance" "$closure" "$full" > "$dir/out" 2> "$dir/err" || status=$?
+  if [[ "$status" -ne 0 && ! -e "$closure" ]] &&
+      grep -q 'initial immutable assurance sidecar' "$dir/err"; then
+    pass "$name"
+  else
+    fail "$name" "legacy targeted closure was accepted: status=$status closure=$(cat "$closure" 2>/dev/null) stderr=$(cat "$dir/err")"
+  fi
+}
+
 # Behavior: a clean targeted GO closes the initial blocker ledger through an independent confirmation ledger.
 # Steps: 1) Arrange a protocol-shaped initial NO-GO with two blockers; 2) arrange a targeted GO with no current findings and two confirmations; 3) require closed authorization and recorded IDs.
 case_targeted_closure_accepts_clean_go_with_confirmations() {
@@ -1045,6 +1096,30 @@ case_finish_post_assessment_drift_refuses_publish() {
     fi
   done
   [[ "$failures" -eq 0 ]]
+}
+
+# Behavior: replacing the already verified assessment before the immutable snapshot is detected and cannot authorize a forged subject.
+# Steps: 1) Verify a clean assessment; 2) replace its subject and advance HEAD at the post-verification seam; 3) require refusal with no remote push.
+case_finish_assessment_replacement_after_verification_refuses_publish() {
+  local name="ship finish: assessment replacement after verification refuses push"
+  should_run "$name" || return 0
+  local work gh_bin out err status=0 pushed=0
+  work="$tmp_root/work-finish-assessment-replacement"
+  make_work_repo "$work" "CC-9001"
+  checkout_ticket_branch "$work" "CC-9001"
+  add_bare_origin "$work"
+  gh_bin="$tmp_root/fake-gh-assessment-replacement"
+  install_fake_gh "$gh_bin" "https://example.invalid/pr/assessment-replacement"
+  out="$tmp_root/out-assessment-replacement"; err="$tmp_root/err-assessment-replacement"
+  PM_TEST_ASSESSMENT_REPLACE=1 PATH="$gh_bin:$PATH" \
+    run_finish_with_fake_gate "$work" "CC-9001" GO > "$out" 2> "$err" || status=$?
+  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
+  if [[ "$status" -eq 1 && "$pushed" -eq 0 ]] &&
+      grep -q 'assessment changed after verification' "$err"; then
+    pass "$name"
+  else
+    fail "$name" "expected assessment TOCTOU refusal: status=$status pushed=$pushed stdout=$(cat "$out") stderr=$(cat "$err")"
+  fi
 }
 
 # Behavior: ship finish pushes the exact assessed commit even if the local branch advances during the push invocation.
@@ -2629,10 +2704,43 @@ case_finish_pr_failure_persists_fallback_when_marker_write_fails() {
   ' _ "$REPO_ROOT" "$work" 2>/dev/null || true)"
   if [[ "$status" -ne 0 && "$pushed" -eq 1 && "$partial_verdict" == "PUSHED_PR_FAILED" \
       && "$lane_status" == "partial" ]] \
-      && grep -q 'durable partial-publication record' "$err"; then
+      && grep -q 'durable publication recovery record' "$err"; then
     pass "$name"
   else
     fail "$name" "expected durable fallback + partial status; status=$status pushed=$pushed partial=$partial_verdict lane_status=$lane_status stderr=$(cat "$err")"
+  fi
+}
+
+# Behavior: a successful GO publication remains queryable when only the lane-local marker write fails.
+# Steps: 1) Make the marker path a directory; 2) simulate successful push and PR creation; 3) require a durable GO recovery record and status=go.
+case_finish_go_persists_fallback_when_marker_write_fails() {
+  local name="ship finish: GO persists recovery record when marker write fails"
+  should_run "$name" || return 0
+  local store work gh_bin out err status=0 pushed=0 reg_dir recovery recovery_verdict lane_status
+  store="$tmp_root/state-finish-go-fallback"
+  work="$tmp_root/work-finish-go-fallback"
+  make_work_repo "$work" "CC-9001"
+  checkout_ticket_branch "$work" "CC-9001"
+  add_bare_origin "$work"
+  mkdir -p "$work/.pm-dispatch-ship-finish.json"
+  gh_bin="$tmp_root/fake-gh-go-fallback"
+  install_fake_gh "$gh_bin" "https://example.invalid/pr/go-fallback"
+  out="$tmp_root/out-finish-go-fallback"; err="$tmp_root/err-finish-go-fallback"
+  PM_DISPATCH_STATE_ROOT="$store" PATH="$gh_bin:$PATH" \
+    run_finish_with_fake_gate "$work" "CC-9001" GO > "$out" 2> "$err" || status=$?
+  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
+  reg_dir="$(reg_dir_for "$store" "$work")"
+  recovery="$reg_dir/ship-partial-CC-9001.json"
+  recovery_verdict="$(jq -r '.verdict // ""' "$recovery" 2>/dev/null || true)"
+  lane_status="$(PM_DISPATCH_STATE_ROOT="$store" bash -c '
+    . "$1/runtime/lib/pmctl-ship.sh"
+    _pmctl_ship_lane_status "$2" "" "" CC-9001
+  ' _ "$REPO_ROOT" "$work" 2>/dev/null || true)"
+  if [[ "$status" -eq 0 && "$pushed" -eq 1 && "$recovery_verdict" == GO \
+      && "$lane_status" == go ]] && grep -q 'durable publication recovery record' "$err"; then
+    pass "$name"
+  else
+    fail "$name" "expected durable GO fallback + go status; status=$status pushed=$pushed verdict=$recovery_verdict lane_status=$lane_status stderr=$(cat "$err")"
   fi
 }
 
@@ -3232,6 +3340,7 @@ case_publish_assessment_binds_closure_and_full_suite
 case_publish_assessment_rejects_existing_destination
 case_publish_assessment_and_closure_are_concurrent_no_replace
 case_targeted_closure_requires_initial_finding_ledger
+case_targeted_closure_rejects_legacy_initial_without_immutable_evidence
 case_targeted_closure_accepts_clean_go_with_confirmations
 case_targeted_closure_accepts_uncertain_go_with_confirmation
 case_ship_subject_fingerprint_matches_independent_gate_oracle
@@ -3240,9 +3349,11 @@ case_publish_assessment_rejects_post_build_source_mutation
 case_finish_real_publish_assessment_surfaces
 case_finish_real_targeted_publish_assessment_path
 case_finish_post_assessment_drift_refuses_publish
+case_finish_assessment_replacement_after_verification_refuses_publish
 case_finish_pushes_only_assessed_head_when_branch_advances_at_push
 case_finish_gh_pr_create_runtime_failure_writes_pushed_pr_failed_marker
 case_finish_pr_failure_persists_fallback_when_marker_write_fails
+case_finish_go_persists_fallback_when_marker_write_fails
 case_finish_retries_after_pr_create_failure
 case_status_reports_partial_for_pushed_pr_failed
 case_finish_reviewers_flag_reaches_gate_call

@@ -833,7 +833,7 @@ Verdict: block. Tier 1 rules source unreadable.' \
 }
 
 write_valid_initial_gate_result() {
-  local path="$1" final="${2:-NO-GO}"
+  local path="$1" final="${2:-NO-GO}" scope scope_sha
   cat > "$path" << INITIAL_GATE_EOF
 ---
 gate_result_version: pr_gate_result_v1
@@ -854,6 +854,20 @@ escalation:
 ## Gate Conclusion
 Final: ${final}
 INITIAL_GATE_EOF
+  # Targeted publication now requires the initial result's immutable
+  # assurance sidecar and comprehensive synthesis ledger.  Keep this shared
+  # fixture protocol-shaped so tests exercise the current contract instead of
+  # accidentally depending on legacy prose-only compatibility.
+  scope="${path}.scope.json"
+  jq -n '{changes:{changed_paths:["README.md"],renamed_paths:[],untracked_paths:[]},diff:{binary_or_special_paths:[]}}' > "$scope"
+  scope_sha="$(sha256sum "$scope" | awk '{print $1}')"
+  jq -n --arg scope_sha "$scope_sha" --arg artifact "$(basename "$scope")" \
+    '{subject:{repository_key:("a"*64),base_commit:("b"*40),head_commit:("c"*40),tree_fingerprint:("d"*64),subject_kind:"committed_head"},evidence:{scope_manifest:{artifact:$artifact,sha256:$scope_sha}}}' > "${path}.assurance.json"
+  {
+    printf '```synthesis_result_v1\n'
+    jq -n '{kind:"gate_synthesis_result_v1",schema_version:1,selected_reviewers:["critic"],findings_union:[],remediation_confirmations:[],reviewer_finding_inventory:[],uncertainties:{finding_ids:[],coverage_cells:[]}}'
+    printf '```\n'
+  } >> "$path"
 }
 
 # Behavior: the bounded copy-mode policy snapshot is byte-for-byte equivalent
