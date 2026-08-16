@@ -418,9 +418,21 @@ embeddings/semantic backend——本票是索引層 tokenizer 修正，不是其
 
 **Main 進度（2026-08-10，pr:#469）**: usage sidecar 寫入基礎已從單一
 TSV read-modify-write 升級為 SQLite primary（WAL／`BEGIN IMMEDIATE`／atomic
-UPSERT）加 TSV compatibility fallback，並保留舊 TSV 一次性匯入。這只完成
-可靠的既有原料層；`pmctl memory stats` reader、`--json` 與 episode 填寫率
-仍未實作，本票維持 active。
+UPSERT）加 TSV compatibility fallback，並保留舊 TSV 一次性匯入。這完成了
+可靠的既有原料層。
+
+**Main 進度（2026-08-17）**: Requirement 1／2／3 已實作於 `feat/CC-467`
+（尚未開 PR，故本票維持 🔵 active，待 PR 合併後改 `✅ done` 並補 `**See**`）。
+`pmctl memory stats` reader 已上線：卡片總數與注入預算使用、`card_hits`
+逐卡命中次數與最後命中日（`--hit-limit` 有界）、`last_hit_buckets` 沿用
+`memory_age_bucket` 的實際天數邊界、`never_hit_cards`、episode 填寫率，
+外加 `concentration`（`hit_coverage_pct`／`top5_share_pct`）。`--json`
+帶 `schema_version: 1`。未新增任何寫入面，全部聚合既有資料。
+壞資料一律不得偽裝成「沒有活動」：sidecar 讀不到報 `usage_store: error`、
+episodes 解析失敗計入 `episodes_malformed`／`episodes_status`、
+tab-delimited sidecar 無法表示的路徑列為 `unmeasurable_cards`。
+**剩餘 follow-up（不屬本票）**：sidecar 改用無損編碼以支援任意 POSIX
+路徑（屬寫入面變更，違反本票 Requirement 3，需另立票）。
 
 **Problem**: 記憶注入每 prompt 默默執行，維護者無法回答「有記憶跟沒記憶差在哪」：沒有指標顯示注入了多少 bytes、哪些卡常被命中、哪些卡從未命中、episodes 骨架的語意摘要填寫率（Stop hook 只寫空骨架、`/mem-log` 靠人跑；填寫率低則 `/mem-distill` 上游是乾的，且此事目前完全不可見）。
 
