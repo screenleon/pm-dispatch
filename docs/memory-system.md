@@ -145,7 +145,7 @@ maintain (the MEMORY.md index, the usage sidecar written by
 `guard-inject-memory.sh`, and `episodes.jsonl`).
 
 ```sh
-pmctl memory stats [--json] [--repo-root <path>] [--never-hit-limit <n>]
+pmctl memory stats [--json] [--repo-root <path>] [--never-hit-limit <n>] [--hit-limit <n>]
 ```
 
 Report fields: `index_entry_count` (MEMORY.md index lines — the unit injection
@@ -155,8 +155,9 @@ keys on; two index lines pointing at one card count as one card),
 `usage_store` (`sqlite3` / `tsv` / `none` / `error`), `cards_with_hits`,
 `cards_never_hit`, `total_access`, a `concentration` block, `last_hit_buckets`
 (the same day boundaries `memory_age_bucket` uses for frecency, so the report
-and the ranking agree), `never_hit_cards`, `episodes_total`,
-`episodes_with_summary`, `episode_fill_rate_pct`, and `shard_count`. `--json`
+and the ranking agree), `card_hits`, `never_hit_cards`, `episodes_total`,
+`episodes_with_summary`, `episode_fill_rate_pct`, `episodes_malformed`,
+`episodes_status`, and `shard_count`. `--json`
 emits a single object carrying `schema_version: 1`. Exit codes: `0` report
 emitted, `1` canonical memory selection invalid, `2` usage error — an unhealthy
 *number* is never an error exit, because this is a report, not a gate.
@@ -166,6 +167,13 @@ measures its own budget (`${#line}` under the ambient locale), so the two are
 directly comparable. Note that this is a character count, not a byte count, for
 non-ASCII index text — the number tracks what the hook enforces rather than
 what the name literally promises.
+
+`card_hits` is the per-card answer to "which card is repeatedly selected":
+`{card, access_count, last_access_day}` rows ordered most-hit first, bounded by
+`--hit-limit` (default 20, `0` = no cap) with `card_hits_truncated` marking a
+cut list. Counts and `cards_with_hits` are never capped, so bounding the list
+never falsifies the totals. Cards with no recorded access are absent here and
+listed under `never_hit_cards` instead.
 
 **Reading the concentration block.** `hit_coverage_pct` is the share of cards
 that have ever been hit; `top5_share_pct` is the share of all accesses
@@ -187,6 +195,20 @@ non-whitespace content. The Stop hook writes empty skeletons and `/mem-log`
 fills them in by hand, so a low fill rate means `/mem-distill`'s upstream is
 dry — a fact that was previously invisible. `pmctl memory rebuild-summary`
 applies the same emptiness rule, so one concept does not get two answers.
+
+Rows that fail to parse are reported as `episodes_malformed` rather than
+discarded, and `episodes_status: error` marks an episodes file that exists but
+could not be read at all. Same reasoning as `usage_store: error` — this report
+is cited in retention decisions, so corrupt data must never be presentable as
+an empty history.
+
+Human output renders memory-derived paths with control characters escaped as
+inert `\xNN` text. Index link targets and directory names are attacker-
+influenced in the sense that anyone able to write a card or name a directory
+chooses them, and a terminal will act on ESC/OSC bytes it is handed. The scan
+decodes UTF-8 rather than escaping bytes, so C1 controls (including the raw
+`0x9B` CSI byte, which `[[:cntrl:]]` does not match) are neutralized while CJK
+card names pass through intact.
 
 ## Bootstrap-empty pattern for fork users
 

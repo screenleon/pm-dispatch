@@ -159,8 +159,18 @@ Versions follow [Semantic Versioning](https://semver.org/).
   lines linking one card no longer double-count. The injection budget caps now
   live in `runtime/lib/memory.sh` and are read by both the hook and the
   reporter, so the reported budget cannot drift from the enforced one.
-  `--json` carries `schema_version: 1`; exit `0` report, `1` invalid canonical
-  selection, `2` usage error — an unhealthy number is never an error exit.
+  `card_hits` answers "which card is repeatedly selected" with per-card
+  `{card, access_count, last_access_day}` rows, most-hit first, bounded by
+  `--hit-limit` (counts and totals are never capped, so bounding the list
+  cannot falsify them). Corrupt input is never presentable as absence:
+  `usage_store: error` marks an unreadable sidecar and `episodes_malformed` /
+  `episodes_status` mark unparseable episode rows, because this report is cited
+  in retention decisions. Human output escapes control characters in
+  memory-derived paths — including C1 bytes such as a raw `0x9B` CSI, which
+  `[[:cntrl:]]` does not match — by decoding UTF-8, so CJK card names survive
+  intact. `--json` carries `schema_version: 1`; exit `0` report, `1` invalid
+  canonical selection, `2` usage error — an unhealthy number is never an error
+  exit.
 
 - **Actionable Gate test-gap evidence and bounded protocol recovery (CC-521).**
   Current selected-reviewer results publish `pr_gate_result_v5`: every reviewer

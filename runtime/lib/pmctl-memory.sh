@@ -397,16 +397,46 @@ _mem_json_esc() {
 # MEMORY.md index entry (or name a directory) could otherwise embed ESC/OSC
 # sequences that the reader's terminal executes on display. JSON mode keeps the
 # raw value in its escaped form; only this presentation path is neutralized.
+#
+# C1 controls (U+0080-U+009F) matter as much as C0: a raw 0x9B is CSI on an
+# 8-bit-capable emulator. They cannot be escaped bytewise, though — 0x80-0x9F is
+# also the UTF-8 continuation-byte range, so blanket byte escaping would mangle
+# every CJK card name in this repo's own memory. The scan therefore decodes
+# UTF-8: valid multi-byte sequences pass through intact, while C0/DEL, the
+# UTF-8 encoding of C1 (0xC2 0x80-0x9F), and stray bytes that form no valid
+# sequence are rendered as inert \xNN text.
 _mem_human_safe() {
-  local s="$1"
-  [[ "$s" == *[[:cntrl:]]* ]] || { printf '%s' "$s"; return 0; }
-  local out="" i ch
-  for (( i = 0; i < ${#s}; i++ )); do
-    ch="${s:i:1}"
-    [[ "$ch" == [[:cntrl:]] ]] && printf -v ch '\\x%02x' "'$ch"
-    out+="$ch"
-  done
-  printf '%s' "$out"
+  LC_ALL=C awk '
+    function esc(b) { printf "\\x%02x", b }
+    {
+      n = length($0)
+      for (i = 1; i <= n; i++) {
+        b = ord[substr($0, i, 1)]
+        if (b < 0x20 || b == 0x7f) { esc(b); continue }
+        if (b < 0x80) { printf "%c", b; continue }
+        # Determine the expected length of a UTF-8 sequence from its lead byte.
+        len = (b >= 0xf0 && b <= 0xf4) ? 4 : \
+              (b >= 0xe0 && b <= 0xef) ? 3 : \
+              (b >= 0xc2 && b <= 0xdf) ? 2 : 0
+        if (len == 0) { esc(b); continue }          # stray continuation / invalid lead
+        ok = (i + len - 1 <= n)
+        if (ok) {
+          for (j = 1; j < len; j++) {
+            c = ord[substr($0, i + j, 1)]
+            if (c < 0x80 || c > 0xbf) { ok = 0; break }
+          }
+        }
+        if (!ok) { esc(b); continue }
+        # 0xC2 0x80-0x9F is exactly the C1 range: escape it rather than emit it.
+        if (len == 2 && b == 0xc2) {
+          esc(b); esc(ord[substr($0, i + 1, 1)]); i++; continue
+        }
+        printf "%s", substr($0, i, len)
+        i += len - 1
+      }
+    }
+    BEGIN { for (k = 0; k < 256; k++) ord[sprintf("%c", k)] = k }
+  ' <<<"$1"
 }
 
 # Portable byte size of a single file (0 if absent).
@@ -712,6 +742,21 @@ _mem_doctor_emit_json() {
   printf '%s\n' "$out"
 }
 
+# Build the card_hits array of {card, access_count, last_access_day} objects
+# from the caller's selected rows (already ordered most-hit first).
+_mem_stats_hit_rows_json() {
+  local first=1 out="[" row count rel last
+  for row in ${hit_listed[@]+"${hit_listed[@]}"}; do
+    IFS=$'\t' read -r count rel last <<<"$row"
+    [[ "$first" -eq 1 ]] || out+=","
+    out+="{\"card\":\"$(_mem_json_esc "$rel")\",\"access_count\":$((10#$count))"
+    out+=",\"last_access_day\":$((10#${last:-0}))}"
+    first=0
+  done
+  out+="]"
+  printf '%s' "$out"
+}
+
 # Build a JSON array of strings from the positional args.
 _mem_json_str_array() {
   local first=1 item out="["
@@ -822,8 +867,8 @@ _mem_stats_usage() {
 Usage: pmctl memory stats [--json] [--repo-root <path>] [--never-hit-limit <n>]
 
 Read-only report on memory-injection benefit: index size against the injection
-budget, per-card hit distribution and concentration, never-hit cards, and the
-episode summary fill rate.
+budget, per-card hit counts with last-hit recency, concentration, never-hit
+cards, and the episode summary fill rate.
 
 Options:
   --json                 Emit a single JSON object (schema_version: 1)
@@ -831,24 +876,34 @@ Options:
                          (default: $REPO_ROOT or current directory)
   --never-hit-limit N    Cap the listed never-hit cards at N (0 = no cap,
                          default 20). Counts are never capped.
+  --hit-limit N          Cap the listed per-card hit rows at N, most-hit first
+                         (0 = no cap, default 20). Counts are never capped.
   --help                 Show this help
 
 Exit codes: 0 report emitted, 1 canonical memory selection invalid, 2 usage error.
 EOF
 }
 
-# Count non-whitespace-summary episodes. Prints "<total>\t<with_summary>".
+# Summarize episodes.jsonl. Prints "<total>\t<with_summary>\t<malformed>\t<status>".
+# status is none (no file), ok, or error (the file exists but could not be read).
+# Malformed rows are counted rather than silently dropped: this report is used
+# for retention decisions, so "corrupt data" must never look like "no history".
 _mem_stats_episode_fill() {
-  local episodes="$1"
+  local episodes="$1" out=""
   # Always newline-terminated: the caller reads this with `read`, which reports
   # failure on an unterminated final line and would abort under `set -e`.
-  if [[ ! -f "$episodes" ]]; then printf '0\t0\n'; return 0; fi
-  jq -rRs '
-    [ split("\n")[] | select(length > 0) | (try fromjson catch empty) ] as $e
-    | [ ($e | length),
-        ([ $e[] | (.summary // "") | select((gsub("\\s"; "")) != "") ] | length) ]
+  if [[ ! -f "$episodes" ]]; then printf '0\t0\t0\tnone\n'; return 0; fi
+  out="$(jq -rRs '
+    [ split("\n")[] | select((gsub("\\s"; "")) != "") ] as $lines
+    | [ $lines[] | (try fromjson catch null) ] as $parsed
+    | [ $parsed[] | select(. != null) ] as $ok
+    | [ ($ok | length),
+        ([ $ok[] | (.summary // "") | select((gsub("\\s"; "")) != "") ] | length),
+        ([ $parsed[] | select(. == null) ] | length) ]
     | @tsv
-  ' "$episodes" 2>/dev/null || printf '0\t0\n'
+  ' "$episodes" 2>/dev/null)" || { printf '0\t0\t0\terror\n'; return 0; }
+  [[ -n "$out" ]] || { printf '0\t0\t0\terror\n'; return 0; }
+  printf '%s\tok\n' "$out"
 }
 
 # Map a memory_age_bucket weight to its reporting-bucket index. The weights are
@@ -876,6 +931,7 @@ pmctl_memory_stats() {
   local json=0
   local repo_root="${REPO_ROOT:-$PWD}"
   local never_hit_limit=20
+  local hit_limit=20
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -903,6 +959,16 @@ pmctl_memory_stats() {
           return 2
         fi
         never_hit_limit="$((10#$2))"; shift 2 ;;
+      --hit-limit)
+        if [[ -z "${2:-}" || "${2}" == --* ]]; then
+          printf 'pmctl memory stats: --hit-limit requires a value\n' >&2
+          return 2
+        fi
+        if [[ ! "$2" =~ ^[0-9]{1,18}$ ]]; then
+          printf 'pmctl memory stats: --hit-limit must be a non-negative integer of at most 18 digits\n' >&2
+          return 2
+        fi
+        hit_limit="$((10#$2))"; shift 2 ;;
       --help|-h) _mem_stats_usage; return 0 ;;
       *)
         printf 'pmctl memory stats: unknown argument: %s\n' "$1" >&2
@@ -936,9 +1002,11 @@ pmctl_memory_stats() {
   local cards_with_hits=0 total_access=0 top5_access=0
   local -a never_hit=()
   local -a access_counts=()
+  local -a hit_rows=()
   local -a age_bucket_labels=(recent_0_4 recent_5_14 recent_15_31 recent_32_90 older_90_plus)
   local -a age_bucket_counts=(0 0 0 0 0)
   local episodes_total=0 episodes_with_summary=0 shard_count=0
+  local episodes_malformed=0 episodes_status='none'
   local hit_coverage_pct=0 top5_share_pct=0 episode_fill_rate_pct=0
 
   # No memory dir → nothing to aggregate; emit an empty, well-formed report.
@@ -1001,6 +1069,9 @@ pmctl_memory_stats() {
         cards_with_hits=$((cards_with_hits + 1))
         total_access=$((total_access + a))
         access_counts+=("$a")
+        # Requirement 1 asks for each card's hit count, not just aggregates:
+        # a maintainer must be able to see WHICH card is repeatedly selected.
+        hit_rows+=("$(printf '%010d\t%s\t%s' "$a" "$rel" "${MEMORY_USAGE_LAST["$rel"]:-0}")")
         # Bucket by memory_age_bucket's own weight rather than re-deriving its
         # day boundaries here, so the report cannot drift from the recency
         # weighting that frecency ranking actually applies.
@@ -1028,10 +1099,12 @@ pmctl_memory_stats() {
     top5_share_pct="$(_mem_stats_pct "$top5_access" "$total_access")"
 
     # ── episodes ─────────────────────────────────────────────────────────────
-    IFS=$'\t' read -r episodes_total episodes_with_summary \
+    IFS=$'\t' read -r episodes_total episodes_with_summary episodes_malformed episodes_status \
       < <(_mem_stats_episode_fill "$episodes") || true
     [[ "$episodes_total"        =~ ^[0-9]+$ ]] || episodes_total=0
     [[ "$episodes_with_summary" =~ ^[0-9]+$ ]] || episodes_with_summary=0
+    [[ "$episodes_malformed"    =~ ^[0-9]+$ ]] || episodes_malformed=0
+    case "$episodes_status" in none|ok|error) ;; *) episodes_status='error' ;; esac
     episode_fill_rate_pct="$(_mem_stats_pct "$episodes_with_summary" "$episodes_total")"
 
     local f
@@ -1051,6 +1124,19 @@ pmctl_memory_stats() {
   fi
   local never_hit_truncated=false
   (( ${#never_hit_listed[@]} < never_hit_count )) && never_hit_truncated=true
+
+  # Per-card hit rows, most-hit first. The count prefix is zero-padded so a
+  # plain lexical sort orders numerically without a second pass.
+  local -a hit_listed=()
+  if [[ "${#hit_rows[@]}" -gt 0 ]]; then
+    local _row
+    while IFS= read -r _row; do
+      (( hit_limit == 0 || ${#hit_listed[@]} < hit_limit )) || break
+      hit_listed+=("$_row")
+    done < <(printf '%s\n' "${hit_rows[@]}" | LC_ALL=C sort -r)
+  fi
+  local hit_truncated=false
+  (( ${#hit_listed[@]} < ${#hit_rows[@]} )) && hit_truncated=true
 
   if [[ "$json" -eq 1 ]]; then
     _mem_stats_emit_json
@@ -1082,11 +1168,15 @@ _mem_stats_emit_json() {
     first=0
   done
   out+="}"
+  out+=",\"card_hits\":$(_mem_stats_hit_rows_json)"
+  out+=",\"card_hits_truncated\":$hit_truncated"
   out+=",\"never_hit_cards\":$(_mem_json_str_array ${never_hit_listed[@]+"${never_hit_listed[@]}"})"
   out+=",\"never_hit_cards_truncated\":$never_hit_truncated"
   out+=",\"episodes_total\":$episodes_total"
   out+=",\"episodes_with_summary\":$episodes_with_summary"
   out+=",\"episode_fill_rate_pct\":$episode_fill_rate_pct"
+  out+=",\"episodes_malformed\":$episodes_malformed"
+  out+=",\"episodes_status\":\"$episodes_status\""
   out+=",\"shard_count\":$shard_count}"
   printf '%s\n' "$out"
 }
@@ -1119,6 +1209,20 @@ _mem_stats_emit_human() {
   for ((i = 0; i < ${#age_bucket_labels[@]}; i++)); do
     printf '  - %-14s %s\n' "${age_bucket_labels[$i]}:" "${age_bucket_counts[$i]}"
   done
+  if [[ "${#hit_rows[@]}" -eq 0 ]]; then
+    printf 'card_hits:             (none)\n'
+  else
+    printf 'card_hits (most hit first):\n'
+    local row count rel last
+    for row in ${hit_listed[@]+"${hit_listed[@]}"}; do
+      IFS=$'\t' read -r count rel last <<<"$row"
+      printf '  - %-6s %s (last hit day %s)\n' \
+        "$((10#$count))" "$(_mem_human_safe "$rel")" "$((10#${last:-0}))"
+    done
+    [[ "$hit_truncated" == true ]] && \
+      printf '  (%s more — raise --hit-limit to list them)\n' \
+        "$(( ${#hit_rows[@]} - ${#hit_listed[@]} ))"
+  fi
   if [[ "$never_hit_count" -eq 0 ]]; then
     printf 'never_hit_cards:       (none)\n'
   else
@@ -1133,6 +1237,12 @@ _mem_stats_emit_human() {
   fi
   printf 'episode_fill_rate_pct: %s%% (%s of %s episodes carry a summary)\n' \
     "$episode_fill_rate_pct" "$episodes_with_summary" "$episodes_total"
+  if [[ "$episodes_status" == error ]]; then
+    printf 'episodes_status:       error (episodes.jsonl present but unreadable — counts above are NOT evidence of no history)\n'
+  elif [[ "$episodes_malformed" -gt 0 ]]; then
+    printf 'episodes_status:       ok (%s malformed row(s) skipped — not counted as episodes)\n' \
+      "$episodes_malformed"
+  fi
   printf 'shard_count:           %s\n' "$shard_count"
 }
 

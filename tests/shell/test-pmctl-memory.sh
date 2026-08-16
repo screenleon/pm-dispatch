@@ -2064,29 +2064,149 @@ case_memory_stats_unreadable_sidecar_is_not_zero_activity() {
 
   # Now a present but unreadable store. Both cases yield zero rows; only one of
   # them is evidence that the cards went unused.
+  #
+  # Corrupt the store rather than chmod it: a permission-based fixture is a
+  # no-op for a root test runner, which would leave this case green even if the
+  # error branch were deleted. Corruption fails the read for every uid.
   local sidecar; sidecar="$(memory_usage_sidecar_path "$mdir")"
-  printf 'not a valid store\n' > "$sidecar"
-  chmod 000 "$sidecar" 2>/dev/null || true
-  # A test running as root can read a 000 file, so the unreadable case cannot be
-  # staged; skip rather than assert a condition the environment cannot produce.
-  if [[ -r "$sidecar" ]]; then
-    chmod 644 "$sidecar" 2>/dev/null || true
+  if [[ "$sidecar" != *.sqlite3 ]]; then
+    # Without sqlite3 the sidecar is a plain TSV that `cat` reads regardless of
+    # content, so this boundary has no deterministic failure to stage here.
     pass "$name"
     return 0
   fi
+  printf 'this is not a sqlite database at all\n' > "$sidecar"
 
   local out="$tmp_root/st-corrupt.json" status=0
   run_stats_json "$out" "$cfg" "$repo" || status=$?
-  chmod 644 "$sidecar" 2>/dev/null || true
   if ! assert_exit "$name" "$status" 0; then return 0; fi
   assert_jq "$name" "$out" '.usage_store == "error"' || return 0
+  # A degraded read must not masquerade as measured zero activity.
+  assert_jq "$name" "$out" '.cards_with_hits == 0 and .total_access == 0' || return 0
 
   local hout="$tmp_root/st-corrupt.txt" hstatus=0
-  chmod 000 "$sidecar" 2>/dev/null || true
   CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory stats --repo-root "$repo" > "$hout" 2>/dev/null || hstatus=$?
-  chmod 644 "$sidecar" 2>/dev/null || true
   if ! assert_exit "$name" "$hstatus" 0; then return 0; fi
   if ! assert_file_contains "$name" "$hout" 'NOT evidence of no activity'; then return 0; fi
+  pass "$name"
+}
+
+case_memory_stats_reports_per_card_hit_counts() {
+  local name="pmctl memory stats: reports each card's hit count and last-hit day, most-hit first"
+  should_run "$name" || return 0
+
+  # CC-467 Requirement 1 asks for per-card hit counts, not only aggregates:
+  # global totals cannot tell a maintainer WHICH card is repeatedly selected.
+  local cfg="$tmp_root/st-percard-cfg" repo="$tmp_root/st-percard-repo" mdir
+  mdir="$(make_stats_fixture "$cfg" "$repo" 3)"
+  local sidecar today
+  sidecar="$(memory_usage_sidecar_path "$mdir")"
+  today=$(( $(date +%s) / 86400 ))
+  memory_usage_commit "$sidecar" 100000 "$today" card1.md card2.md card2.md card2.md >/dev/null
+
+  local out="$tmp_root/st-percard.json" status=0
+  run_stats_json "$out" "$cfg" "$repo" || status=$?
+  if ! assert_exit "$name" "$status" 0; then return 0; fi
+  assert_jq "$name" "$out" '(.card_hits | length) == 2' || return 0
+  # Ordered most-hit first, with the exact counts — not a bucket or a share.
+  assert_jq "$name" "$out" '.card_hits[0].card == "card2.md" and .card_hits[0].access_count == 3' || return 0
+  assert_jq "$name" "$out" '.card_hits[1].card == "card1.md" and .card_hits[1].access_count == 1' || return 0
+  assert_jq "$name" "$out" ".card_hits[0].last_access_day == $today" || return 0
+  assert_jq "$name" "$out" '.card_hits_truncated == false' || return 0
+  # Never-hit cards belong in never_hit_cards, never as a zero-count hit row.
+  assert_jq "$name" "$out" '[.card_hits[] | select(.access_count == 0)] | length == 0' || return 0
+
+  # Human mode must carry the same per-card counts.
+  local hout="$tmp_root/st-percard.txt"
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory stats --repo-root "$repo" > "$hout" 2>/dev/null || true
+  if ! assert_file_contains "$name" "$hout" 'card_hits'; then return 0; fi
+  if ! grep -qE '^  - 3 +card2\.md' "$hout"; then
+    fail "$name" "human mode lacks the per-card count row: $(cat "$hout")"
+    return 0
+  fi
+
+  # --hit-limit bounds the list without falsifying the counts.
+  local lout="$tmp_root/st-percard-lim.json" lstatus=0
+  run_stats_json "$lout" "$cfg" "$repo" --hit-limit 1 || lstatus=$?
+  if ! assert_exit "$name" "$lstatus" 0; then return 0; fi
+  assert_jq "$name" "$lout" '(.card_hits | length) == 1 and .card_hits_truncated == true' || return 0
+  assert_jq "$name" "$lout" '.cards_with_hits == 2 and .total_access == 4' || return 0
+  pass "$name"
+}
+
+case_memory_stats_malformed_episodes_are_not_zero_history() {
+  local name="pmctl memory stats: malformed episode rows are counted, not silently dropped"
+  should_run "$name" || return 0
+
+  local cfg="$tmp_root/st-epbad-cfg" repo="$tmp_root/st-epbad-repo" mdir
+  mdir="$(make_stats_fixture "$cfg" "$repo" 1)"
+  {
+    printf '{"date":"2026-08-01","session_id":"a","summary":"real work"}\n'
+    printf '{"date":"2026-08-02","session_id":"b"\n'
+    printf 'not json at all\n'
+  } > "$mdir/episodes.jsonl"
+
+  local out="$tmp_root/st-epbad.json" status=0
+  run_stats_json "$out" "$cfg" "$repo" || status=$?
+  if ! assert_exit "$name" "$status" 0; then return 0; fi
+  # Corrupt rows must be visible: treating them as "no history" could drive a
+  # destructive retention decision.
+  assert_jq "$name" "$out" '.episodes_malformed == 2' || return 0
+  assert_jq "$name" "$out" '.episodes_total == 1 and .episodes_with_summary == 1' || return 0
+  assert_jq "$name" "$out" '.episodes_status == "ok"' || return 0
+
+  local hout="$tmp_root/st-epbad.txt"
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory stats --repo-root "$repo" > "$hout" 2>/dev/null || true
+  if ! assert_file_contains "$name" "$hout" 'malformed row'; then return 0; fi
+
+  # A clean file must NOT claim malformed rows.
+  local cfg2="$tmp_root/st-epok-cfg" repo2="$tmp_root/st-epok-repo" mdir2
+  mdir2="$(make_stats_fixture "$cfg2" "$repo2" 1)"
+  printf '{"date":"2026-08-01","session_id":"a","summary":"x"}\n' > "$mdir2/episodes.jsonl"
+  local out2="$tmp_root/st-epok.json"
+  run_stats_json "$out2" "$cfg2" "$repo2" || true
+  assert_jq "$name" "$out2" '.episodes_malformed == 0 and .episodes_status == "ok"' || return 0
+  pass "$name"
+}
+
+case_memory_human_output_neutralizes_c1_controls() {
+  local name="pmctl memory stats/doctor: C1 controls are neutralized without mangling CJK names"
+  should_run "$name" || return 0
+
+  # 0x9B is CSI on an 8-bit-capable emulator and is NOT matched by [[:cntrl:]].
+  # The same byte range is UTF-8's continuation range, so a naive bytewise
+  # sanitizer would corrupt this repo's own Chinese card names — assert both.
+  local cfg="$tmp_root/st-c1-cfg" repo="$tmp_root/st-c1-repo" mdir
+  mkdir -p "$repo"
+  mdir="$(make_fixture_memory "$cfg" "$repo")"
+  local c1=$'a\x9b31mX.md'
+  local cjk=$'中文記憶卡.md'
+  write_compliant_card "$mdir/$c1" "c1"
+  write_compliant_card "$mdir/$cjk" "cjk"
+  # Only the CJK card is indexed. The C1 card reaches human output through
+  # doctor's orphan-card glob, which — unlike the index-link regex — carries the
+  # raw filename bytes straight to the terminal.
+  printf -- '- [CJK](%s) — hook\n' "$cjk" > "$mdir/MEMORY.md"
+
+  local dout="$tmp_root/st-c1-doctor.txt"
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory doctor --repo-root "$repo" > "$dout" 2>/dev/null || true
+  if LC_ALL=C grep -q $'\x9b' "$dout"; then
+    fail "$name" "doctor human output retained a raw C1 (0x9b) byte"
+    return 0
+  fi
+  if ! assert_file_contains "$name" "$dout" '\x9b'; then return 0; fi
+
+  # The CJK card is indexed and compliant, so doctor lists it nowhere; stats
+  # names it under never_hit_cards. It must survive intact there — a bytewise
+  # sanitizer would escape its UTF-8 continuation bytes and corrupt it.
+  local out="$tmp_root/st-c1.txt" status=0
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory stats --repo-root "$repo" > "$out" 2>/dev/null || status=$?
+  if ! assert_exit "$name" "$status" 0; then return 0; fi
+  if LC_ALL=C grep -q $'\x9b' "$out"; then
+    fail "$name" "stats human output retained a raw C1 (0x9b) byte"
+    return 0
+  fi
+  if ! assert_file_contains "$name" "$out" "$cjk"; then return 0; fi
   pass "$name"
 }
 
@@ -2667,6 +2787,9 @@ case_memory_shared_readers_avoid_bash_43_namerefs
 case_memory_stats_option_like_operand_is_usage_error
 case_memory_stats_oversized_limit_is_usage_error
 case_memory_human_output_neutralizes_terminal_controls
+case_memory_human_output_neutralizes_c1_controls
+case_memory_stats_reports_per_card_hit_counts
+case_memory_stats_malformed_episodes_are_not_zero_history
 case_memory_stats_age_buckets_match_frecency_boundaries
 case_memory_stats_no_live_dir_mutation
 
