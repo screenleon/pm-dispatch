@@ -10,6 +10,21 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **CJK-aware shared retrieval term extraction (CC-465).** Memory-injection
+  ranking and context prompt/reuse scans each carried their own ASCII-only
+  tokenizer, so CJK characters were treated as separators and dropped. For a
+  maintainer working in Chinese this meant the keyword tier scored 0 on every
+  prompt, ranking degraded to pure frecency, and — because the usage sidecar
+  only accrues on keyword hits — the frecency signal never accumulated either.
+  A single `runtime/lib/retrieval-terms.sh` (ASCII identifiers plus overlapping
+  CJK 2-grams) now backs both call sites. English behavior is preserved by
+  parameterizing rather than unifying policy: the injection hook keeps
+  min-length 4 with no stop-list, context/reuse-scan keeps min-3
+  stop-filtered. Input past `RETRIEVAL_TERM_MAX_BYTES` still extracts from the
+  prefix, but says so on stderr so truncation cannot masquerade as an empty
+  index. FTS5 `unicode61` behavior for Chinese queries is a separate concern
+  and is not addressed here.
+
 - **Standalone Gate bundles load canonical libraries (CC-532).** `pr-gate.sh`
   derived each library path independently, and the loads keyed only on the
   installed-copy root resolved to `<bundle>/../lib` under the standalone-copy
@@ -105,6 +120,22 @@ Versions follow [Semantic Versioning](https://semver.org/).
   layout remain unchanged.
 
 ### Added
+
+- **`pmctl memory stats` — injection-benefit report (CC-467).** A read-only
+  aggregator over data that already exists (MEMORY.md, the usage sidecar,
+  `episodes.jsonl`); it opens no new telemetry write surface. Reports index
+  size against the per-prompt injection budget, per-card hit counts and
+  never-hit cards, last-hit recency using the same day boundaries as frecency
+  ranking, and the episode summary fill rate. The concentration block
+  (`hit_coverage_pct`, `top5_share_pct`) exists because raw hit counts look
+  healthiest in the worst state: when nearly every card is hit on nearly every
+  prompt, ranking has no discrimination left and injection degrades into
+  "emit whatever fits". Usage numbers are keyed per card file, so two index
+  lines linking one card no longer double-count. The injection budget caps now
+  live in `runtime/lib/memory.sh` and are read by both the hook and the
+  reporter, so the reported budget cannot drift from the enforced one.
+  `--json` carries `schema_version: 1`; exit `0` report, `1` invalid canonical
+  selection, `2` usage error — an unhealthy number is never an error exit.
 
 - **Actionable Gate test-gap evidence and bounded protocol recovery (CC-521).**
   Current selected-reviewer results publish `pr_gate_result_v5`: every reviewer

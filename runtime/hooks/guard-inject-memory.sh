@@ -11,8 +11,10 @@ if ! declare -F retrieval_extract_terms >/dev/null 2>&1; then
   . "$(dirname "$0")/../lib/retrieval-terms.sh"
 fi
 
-MAX_INJECT_ENTRIES=20
-MAX_INJECT_BYTES=3000
+# Injection budget caps come from lib/memory.sh so `pmctl memory stats` reports
+# the same numbers this hook enforces.
+MAX_INJECT_ENTRIES="$MEMORY_MAX_INJECT_ENTRIES"
+MAX_INJECT_BYTES="$MEMORY_MAX_INJECT_BYTES"
 
 # Usage-based ranking knobs (integer-only; see lib/memory.sh).
 # Decay threshold: global keyword-hit events before W-TinyLFU halving.
@@ -55,15 +57,8 @@ memory_path="$memory_dir/MEMORY.md"
 usage_sidecar=$(memory_usage_sidecar_path "$memory_dir")
 today_day=$(( $(date +%s) / 86400 ))
 declare -A _usage_acc=() _usage_last=()
-if [[ -f "$usage_sidecar" || ( "$usage_sidecar" == *.sqlite3 && -f "${usage_sidecar%.sqlite3}.tsv" ) ]]; then
-  while IFS=$'\t' read -r _u_rel _u_acc _u_last; do
-    [[ -z "$_u_rel" || "$_u_rel" == \#* ]] && continue
-    [[ "$_u_acc"  =~ ^[0-9]+$ ]] || _u_acc=0
-    [[ "$_u_last" =~ ^[0-9]+$ ]] || _u_last=0
-    _usage_acc["$_u_rel"]="$_u_acc"
-    _usage_last["$_u_rel"]="$_u_last"
-  done < <(memory_usage_read "$usage_sidecar")
-fi
+# memory_usage_load absorbs the absent-store and sqlite→legacy-TSV cases.
+memory_usage_load "$usage_sidecar" _usage_acc _usage_last
 # Relpaths whose access_count should be incremented this run (keyword hits).
 usage_hits=()
 

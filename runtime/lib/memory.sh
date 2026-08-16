@@ -61,6 +61,18 @@ find_memory_dir() {
 }
 
 # ---------------------------------------------------------------------------
+# Injection budget — the caps guard-inject-memory.sh enforces per prompt.
+# They live here rather than in the hook so `pmctl memory stats` reports the
+# budget the hook actually applies instead of a second copy that can drift.
+# Deliberately plain constants, not env-overridable: the hook path must stay
+# identical across hosts, and an ambient override would leak into fixtures.
+# ---------------------------------------------------------------------------
+# shellcheck disable=SC2034  # read by guard-inject-memory.sh and pmctl memory stats after sourcing this lib
+MEMORY_MAX_INJECT_ENTRIES=20
+# shellcheck disable=SC2034  # read by guard-inject-memory.sh and pmctl memory stats after sourcing this lib
+MEMORY_MAX_INJECT_BYTES=3000
+
+# ---------------------------------------------------------------------------
 # Usage-based injection ranking (frecency) — sidecar telemetry plane.
 #
 # MEMORY.md injection ranks normal (non-pinned) cards by a usage signal so the
@@ -117,6 +129,26 @@ memory_usage_read() {
     return 0
   fi
   [[ -f "$store" ]] && cat "$store"
+}
+
+# Load the usage sidecar into two caller-supplied associative arrays, keyed by
+# card_relpath. Every reader needs the same parse (skip comments, coerce
+# non-integers to 0) and the same tolerance for an absent store, so the loop
+# lives here rather than being copied into each caller.
+#   declare -A acc=() last=(); memory_usage_load "$store" acc last
+memory_usage_load() {
+  local _mu_store="$1"
+  local -n _mu_acc_ref="$2"
+  local -n _mu_last_ref="$3"
+  local _mu_rel _mu_acc _mu_last
+  while IFS=$'\t' read -r _mu_rel _mu_acc _mu_last; do
+    [[ -z "$_mu_rel" || "$_mu_rel" == \#* ]] && continue
+    [[ "$_mu_acc"  =~ ^[0-9]+$ ]] || _mu_acc=0
+    [[ "$_mu_last" =~ ^[0-9]+$ ]] || _mu_last=0
+    _mu_acc_ref["$_mu_rel"]="$_mu_acc"
+    _mu_last_ref["$_mu_rel"]="$_mu_last"
+  done < <(memory_usage_read "$_mu_store")
+  return 0
 }
 
 _memory_usage_sql_quote() {

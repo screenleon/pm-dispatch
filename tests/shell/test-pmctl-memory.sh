@@ -1744,6 +1744,271 @@ case_memory_doctor_shard_count() {
   pass "$name"
 }
 
+# ── Stats cases ───────────────────────────────────────────────────────────────
+
+# Run stats against a fixture; writes JSON to $1, returns the exit code.
+run_stats_json() {
+  local out="$1" cfg="$2" repo="$3"; shift 3
+  local status=0
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory stats --repo-root "$repo" --json "$@" \
+    > "$out" 2>/dev/null || status=$?
+  return "$status"
+}
+
+# Fixture with $2 linked cards and a MEMORY.md index. Echoes the memory dir.
+make_stats_fixture() {
+  local cfg="$1" repo="$2" count="$3" mdir i
+  mkdir -p "$repo"
+  mdir="$(make_fixture_memory "$cfg" "$repo")"
+  : > "$mdir/MEMORY.md"
+  for ((i = 1; i <= count; i++)); do
+    write_compliant_card "$mdir/card$i.md" "card$i"
+    printf -- '- [Card %d](card%d.md) — hook %d\n' "$i" "$i" "$i" >> "$mdir/MEMORY.md"
+  done
+  printf '%s' "$mdir"
+}
+
+case_memory_stats_no_usage_all_never_hit() {
+  local name="pmctl memory stats: no usage sidecar → every card never-hit, exit 0"
+  should_run "$name" || return 0
+
+  local cfg="$tmp_root/st-none-cfg" repo="$tmp_root/st-none-repo" mdir out="$tmp_root/st-none.json" status=0
+  mdir="$(make_stats_fixture "$cfg" "$repo" 3)"
+  run_stats_json "$out" "$cfg" "$repo" || status=$?
+  if ! assert_exit "$name" "$status" 0; then return 0; fi
+  assert_jq "$name" "$out" '.schema_version == 1' || return 0
+  assert_jq "$name" "$out" '.card_count == 3 and .index_entry_count == 3' || return 0
+  assert_jq "$name" "$out" '.usage_store == "none"' || return 0
+  assert_jq "$name" "$out" '.cards_with_hits == 0 and .cards_never_hit == 3' || return 0
+  assert_jq "$name" "$out" '(.never_hit_cards | length) == 3' || return 0
+  # An empty denominator must report 0, never divide by zero or emit a blank.
+  assert_jq "$name" "$out" '.concentration.hit_coverage_pct == 0 and .concentration.top5_share_pct == 0' || return 0
+  # index_inject_bytes must reflect real index lines, not a placeholder.
+  assert_jq "$name" "$out" '.index_inject_bytes > 0' || return 0
+  assert_jq "$name" "$out" ".inject_budget_entries == $MEMORY_MAX_INJECT_ENTRIES and .inject_budget_bytes == $MEMORY_MAX_INJECT_BYTES" || return 0
+  pass "$name"
+}
+
+case_memory_stats_usage_hits_and_concentration() {
+  local name="pmctl memory stats: sidecar hits drive coverage, total_access, and top5 share"
+  should_run "$name" || return 0
+
+  local cfg="$tmp_root/st-hit-cfg" repo="$tmp_root/st-hit-repo" mdir out="$tmp_root/st-hit.json" status=0
+  mdir="$(make_stats_fixture "$cfg" "$repo" 4)"
+
+  # card1 x3, card2 x1; card3/card4 never accessed. Threshold is far above the
+  # event count so W-TinyLFU decay cannot halve the counts mid-test.
+  local sidecar today
+  sidecar="$(memory_usage_sidecar_path "$mdir")"
+  today=$(( $(date +%s) / 86400 ))
+  memory_usage_commit "$sidecar" 100000 "$today" card1.md card1.md card1.md card2.md >/dev/null
+
+  run_stats_json "$out" "$cfg" "$repo" || status=$?
+  if ! assert_exit "$name" "$status" 0; then return 0; fi
+  assert_jq "$name" "$out" '.cards_with_hits == 2 and .cards_never_hit == 2' || return 0
+  assert_jq "$name" "$out" '.total_access == 4' || return 0
+  # Fewer than 5 hit cards → top5 covers everything → share is 100%.
+  assert_jq "$name" "$out" '.concentration.top5_access == 4 and .concentration.top5_share_pct == 100' || return 0
+  assert_jq "$name" "$out" '.concentration.hit_coverage_pct == 50' || return 0
+  assert_jq "$name" "$out" '(.never_hit_cards | sort) == ["card3.md","card4.md"]' || return 0
+  # Accesses were committed with today's day stamp → most-recent bucket only.
+  assert_jq "$name" "$out" '.last_hit_buckets.recent_0_4 == 2' || return 0
+  assert_jq "$name" "$out" '[.last_hit_buckets | to_entries[] | select(.key != "recent_0_4") | .value] | add == 0' || return 0
+  pass "$name"
+}
+
+case_memory_stats_duplicate_index_link_counted_once() {
+  local name="pmctl memory stats: two index lines linking one card count as one card"
+  should_run "$name" || return 0
+
+  local cfg="$tmp_root/st-dup-cfg" repo="$tmp_root/st-dup-repo" mdir out="$tmp_root/st-dup.json" status=0
+  mkdir -p "$repo"
+  mdir="$(make_fixture_memory "$cfg" "$repo")"
+  write_compliant_card "$mdir/dup.md" "dup"
+  printf -- '- [Dup A](dup.md) — hook a\n- [Dup B](dup.md) — hook b\n' > "$mdir/MEMORY.md"
+
+  local sidecar today
+  sidecar="$(memory_usage_sidecar_path "$mdir")"
+  today=$(( $(date +%s) / 86400 ))
+  memory_usage_commit "$sidecar" 100000 "$today" dup.md >/dev/null
+
+  run_stats_json "$out" "$cfg" "$repo" || status=$?
+  if ! assert_exit "$name" "$status" 0; then return 0; fi
+  # Ranking is per line, so entries stay 2; usage is keyed per card, so 1.
+  assert_jq "$name" "$out" '.index_entry_count == 2 and .card_count == 1' || return 0
+  # Without dedup this would report total_access 2 and coverage over 2 cards.
+  assert_jq "$name" "$out" '.cards_with_hits == 1 and .total_access == 1' || return 0
+  assert_jq "$name" "$out" '.concentration.hit_coverage_pct == 100' || return 0
+  pass "$name"
+}
+
+case_memory_stats_episode_fill_rate() {
+  local name="pmctl memory stats: episode fill rate counts only non-whitespace summaries"
+  should_run "$name" || return 0
+
+  local cfg="$tmp_root/st-ep-cfg" repo="$tmp_root/st-ep-repo" mdir out="$tmp_root/st-ep.json" status=0
+  mdir="$(make_stats_fixture "$cfg" "$repo" 1)"
+  {
+    printf '{"date":"2026-08-01","session_id":"a","summary":"real work"}\n'
+    printf '{"date":"2026-08-02","session_id":"b","summary":""}\n'
+    printf '{"date":"2026-08-03","session_id":"c"}\n'
+    # A whitespace-only summary is an empty skeleton, not a logged episode.
+    printf '{"date":"2026-08-04","session_id":"d","summary":"   "}\n'
+  } > "$mdir/episodes.jsonl"
+
+  run_stats_json "$out" "$cfg" "$repo" || status=$?
+  if ! assert_exit "$name" "$status" 0; then return 0; fi
+  assert_jq "$name" "$out" '.episodes_total == 4 and .episodes_with_summary == 1' || return 0
+  assert_jq "$name" "$out" '.episode_fill_rate_pct == 25' || return 0
+  pass "$name"
+}
+
+case_memory_stats_never_hit_limit() {
+  local name="pmctl memory stats: --never-hit-limit caps the list but not the count"
+  should_run "$name" || return 0
+
+  local cfg="$tmp_root/st-lim-cfg" repo="$tmp_root/st-lim-repo" out="$tmp_root/st-lim.json" status=0
+  make_stats_fixture "$cfg" "$repo" 5 >/dev/null
+
+  run_stats_json "$out" "$cfg" "$repo" --never-hit-limit 2 || status=$?
+  if ! assert_exit "$name" "$status" 0; then return 0; fi
+  assert_jq "$name" "$out" '(.never_hit_cards | length) == 2' || return 0
+  assert_jq "$name" "$out" '.cards_never_hit == 5' || return 0
+  assert_jq "$name" "$out" '.never_hit_cards_truncated == true' || return 0
+
+  # 0 means "no cap", not "list nothing".
+  local out0="$tmp_root/st-lim0.json" status0=0
+  run_stats_json "$out0" "$cfg" "$repo" --never-hit-limit 0 || status0=$?
+  if ! assert_exit "$name" "$status0" 0; then return 0; fi
+  assert_jq "$name" "$out0" '(.never_hit_cards | length) == 5' || return 0
+  assert_jq "$name" "$out0" '.never_hit_cards_truncated == false' || return 0
+  pass "$name"
+}
+
+case_memory_stats_no_memory_dir() {
+  local name="pmctl memory stats: no memory dir → empty report, exit 0"
+  should_run "$name" || return 0
+
+  local cfg="$tmp_root/st-nodir-cfg" repo="$tmp_root/st-nodir-repo" out="$tmp_root/st-nodir.json" status=0
+  mkdir -p "$repo" "$cfg/projects"
+  run_stats_json "$out" "$cfg" "$repo" || status=$?
+  if ! assert_exit "$name" "$status" 0; then return 0; fi
+  assert_jq "$name" "$out" '.card_count == 0 and .cards_with_hits == 0' || return 0
+  assert_jq "$name" "$out" '.episode_fill_rate_pct == 0' || return 0
+  pass "$name"
+}
+
+case_memory_stats_unknown_flag_exit2() {
+  local name="pmctl memory stats: unknown flag → exit 2"
+  should_run "$name" || return 0
+
+  local cfg="$tmp_root/st-uf-cfg" repo="$tmp_root/st-uf-repo" status=0
+  make_stats_fixture "$cfg" "$repo" 1 >/dev/null
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory stats --repo-root "$repo" --frobnicate \
+    >/dev/null 2>&1 || status=$?
+  if assert_exit "$name" "$status" 2; then pass "$name"; fi
+}
+
+case_memory_stats_bad_never_hit_limit_exit2() {
+  local name="pmctl memory stats: non-numeric --never-hit-limit → exit 2 + error"
+  should_run "$name" || return 0
+
+  local err="$tmp_root/st-badlim.err" status=0
+  "$PMCTL" memory stats --never-hit-limit abc >/dev/null 2>"$err" || status=$?
+  if ! assert_exit "$name" "$status" 2; then return 0; fi
+  if ! assert_file_contains "$name" "$err" 'non-negative integer'; then return 0; fi
+
+  # A missing operand is a distinct usage error, not a silent default.
+  local err2="$tmp_root/st-nolim.err" status2=0
+  "$PMCTL" memory stats --never-hit-limit >/dev/null 2>"$err2" || status2=$?
+  if ! assert_exit "$name" "$status2" 2; then return 0; fi
+  if ! assert_file_contains "$name" "$err2" '--never-hit-limit requires a value'; then return 0; fi
+  pass "$name"
+}
+
+case_memory_stats_help_exit0() {
+  local name="pmctl memory stats: --help → exit 0 + usage contract"
+  should_run "$name" || return 0
+
+  local out="$tmp_root/st-help.txt" status=0
+  "$PMCTL" memory stats --help > "$out" 2>&1 || status=$?
+  if ! assert_exit "$name" "$status" 0; then return 0; fi
+  if ! assert_file_contains "$name" "$out" 'Usage: pmctl memory stats'; then return 0; fi
+  if ! assert_file_contains "$name" "$out" '--never-hit-limit'; then return 0; fi
+  pass "$name"
+}
+
+case_memory_stats_age_buckets_match_frecency_boundaries() {
+  local name="pmctl memory stats: last_hit bucket labels match memory_age_bucket's real boundaries"
+  should_run "$name" || return 0
+
+  local cfg="$tmp_root/st-age-cfg" repo="$tmp_root/st-age-repo" mdir out="$tmp_root/st-age.json" status=0
+  mdir="$(make_stats_fixture "$cfg" "$repo" 5)"
+
+  # Seed the legacy TSV directly: memory_usage_commit always stamps today, and
+  # these cases need specific last_access days. memory_usage_read falls back to
+  # the TSV when no sqlite store exists, so this works with or without sqlite3.
+  local today; today=$(( $(date +%s) / 86400 ))
+  mkdir -p "$mdir/.pm-dispatch"
+  {
+    printf '# total_events=5\n'
+    # One card per bucket, at a day distance inside each labeled range.
+    printf 'card1.md\t1\t%d\n' $(( today - 0 ))
+    printf 'card2.md\t1\t%d\n' $(( today - 5 ))
+    printf 'card3.md\t1\t%d\n' $(( today - 20 ))
+    printf 'card4.md\t1\t%d\n' $(( today - 60 ))
+    printf 'card5.md\t1\t%d\n' $(( today - 200 ))
+  } > "$mdir/.pm-dispatch/inject-usage.tsv"
+
+  run_stats_json "$out" "$cfg" "$repo" || status=$?
+  if ! assert_exit "$name" "$status" 0; then return 0; fi
+  assert_jq "$name" "$out" '.cards_with_hits == 5' || return 0
+  # The label day ranges are only honest while these land one-per-bucket. If
+  # memory_age_bucket's boundaries move, this fails instead of the report
+  # quietly mislabeling recency tiers.
+  assert_jq "$name" "$out" '
+    .last_hit_buckets
+    | .recent_0_4 == 1 and .recent_5_14 == 1 and .recent_15_31 == 1
+      and .recent_32_90 == 1 and .older_90_plus == 1' || return 0
+  pass "$name"
+}
+
+case_memory_stats_no_live_dir_mutation() {
+  local name="pmctl memory stats suite: never mutates the live project-memory dir"
+  should_run "$name" || return 0
+  local now; now="$(_live_mem_fingerprint)"
+  if [[ "$now" == "$_LIVE_MEM_BASELINE" ]]; then
+    pass "$name"
+  else
+    fail "$name" "live memory dir changed during suite: baseline/now differ"
+  fi
+}
+
+case_memory_stats_is_read_only() {
+  local name="pmctl memory stats: does not write to the memory dir or the usage sidecar"
+  should_run "$name" || return 0
+
+  local cfg="$tmp_root/st-ro-cfg" repo="$tmp_root/st-ro-repo" mdir out="$tmp_root/st-ro.json" status=0
+  mdir="$(make_stats_fixture "$cfg" "$repo" 2)"
+  local sidecar today
+  sidecar="$(memory_usage_sidecar_path "$mdir")"
+  today=$(( $(date +%s) / 86400 ))
+  memory_usage_commit "$sidecar" 100000 "$today" card1.md >/dev/null
+
+  local before after
+  before="$(find "$mdir" -type f -printf '%P:%s\n' 2>/dev/null | sort)"
+  run_stats_json "$out" "$cfg" "$repo" || status=$?
+  if ! assert_exit "$name" "$status" 0; then return 0; fi
+  after="$(find "$mdir" -type f -printf '%P:%s\n' 2>/dev/null | sort)"
+  if [[ "$before" != "$after" ]]; then
+    fail "$name" "stats mutated the memory dir: before/after differ"
+    return 0
+  fi
+  # Reading must not accrue a synthetic access for the reporting run itself.
+  assert_jq "$name" "$out" '.total_access == 1' || return 0
+  pass "$name"
+}
+
 # Behavior: every host appends through the same project-scoped canonical path.
 # Steps: append one marker per host through one scoped config and assert JSONL/provenance.
 case_memory_append_episode_cross_host_contract() {
@@ -2142,5 +2407,17 @@ case_memory_rebuild_summary_skips_empty_summary
 case_memory_rebuild_summary_deterministic
 case_memory_doctor_ignores_episodes_summary
 case_memory_doctor_shard_count
+case_memory_stats_no_usage_all_never_hit
+case_memory_stats_usage_hits_and_concentration
+case_memory_stats_duplicate_index_link_counted_once
+case_memory_stats_episode_fill_rate
+case_memory_stats_never_hit_limit
+case_memory_stats_no_memory_dir
+case_memory_stats_unknown_flag_exit2
+case_memory_stats_bad_never_hit_limit_exit2
+case_memory_stats_help_exit0
+case_memory_stats_is_read_only
+case_memory_stats_age_buckets_match_frecency_boundaries
+case_memory_stats_no_live_dir_mutation
 
 th_summary

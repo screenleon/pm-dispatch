@@ -65,7 +65,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-543 | ✅ done | Full test runner Phase 0 fail-fast structural precheck；`--collect-all` 保留 release 全證據路徑 | ops/test | 2026-08-04 | pr:#465 | P2 | hygiene |
 | CC-545 | ✅ done | Reviewer evidence-reference-contract INCOMPLETE 的單次修正性重派：僅限該單一違規類別，附具體錯誤引用重跑違規 reviewer，不必整輪 gate（30-40 分鐘）重來 | ops/gate | 2026-08-06 | pr:#465 | P2 | hygiene |
 | CC-546 | ⏸ deferred | standalone Gate distribution／copy parity follow-up：獨立定義 bundle schema、generation、installed parity 與 support boundary；不回併 Linux/WSL2 canonical module extraction | arch/gate | 2026-08-14 | — | P2 | reuse-debt |
-| CC-465 | 🔵 active | memory/context 關鍵詞管線 CJK 支援：抽出共用零依賴斷詞 lib，取代三處各自 ASCII-only 抽詞；工作序列起點（465→467→468→466）（2026-07-07 記憶系統深入分析） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
+| CC-548 | 🔵 active | context.db FTS5 對 CJK 查詢無索引無排序（[[CC-465]] Requirement 3 殘留）：先 spike 驗 `tokenize='trigram'` 的 sqlite 版本下限與 index rebuild 成本，再決定是否實作 | memory | 2026-08-16 | — | P2 | retrieval |
+| CC-465 | ✅ done | memory/context 關鍵詞管線 CJK 支援：抽出共用零依賴斷詞 lib，取代兩處各自 ASCII-only 抽詞；FTS5 tokenizer 殘留另立 [[CC-548]]；工作序列起點（465→467→468→466） | memory | 2026-07-07 | pr:#485 | P2 | retrieval |
 | CC-466 | ⏸ deferred | 記憶卡片生命週期閉環：expires_at 執行 + 關窗式 supersede + usage sidecar 休眠偵測 + doctor→distill 接線；僅在 CC-467 證明 stale/dormant card 已形成實際問題時啟動 | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-467 | 🔵 active | `pmctl memory stats`：注入效益可視化（唯讀聚合器）——注入 bytes/卡片命中分佈/從未命中卡/episode 填寫率，回答「記憶有跟沒有差在哪」；排在 CC-466 之前（2026-07-07；業界僅離線 recall 評測，無 per-injection 遙測） | DX/memory | 2026-07-07 | — | P2 | retrieval |
 | CC-468 | ⏸ deferred | dispatch brief 帶 memory 約束與信任邊界；完成 CC-465→CC-467 後，僅在 usage evidence 證明有價值時啟動 | ops/memory | 2026-07-07 | — | P2 | retrieval |
@@ -353,7 +354,23 @@ bare-fractional catch-all 重複的 fractional-Z 分支。Gate GO
 
 ---
 
-## CC-465 — memory/context 關鍵詞管線 CJK 支援 🔵 active
+## CC-465 — memory/context 關鍵詞管線 CJK 支援 ✅ 2026-08-16
+
+**Outcome**：pr:#485 抽出 `runtime/lib/retrieval-terms.sh` 作為單一抽詞實作
+（ASCII identifier + 連續 CJK 串的 overlapping 2-gram），
+`runtime/hooks/guard-inject-memory.sh` 與 `runtime/lib/pmctl-context.sh` 的
+`_ctx_extract_terms` 都改為呼叫它（Requirement 1、2）。英文行為以參數化保住
+既有政策而非「一體適用」：inject hook 維持 min-length 4 且不套 stop-list，
+context / reuse-scan 維持預設 min-3 + stop-filtered，回歸測試同時涵蓋純英文、
+中英混合、純中文（Requirement 4）。超過 `RETRIEVAL_TERM_MAX_BYTES`（16KiB）時
+只從前綴抽詞，但會寫一行 stderr，讓截斷不會偽裝成空索引。
+
+**Requirement 3（FTS5 unicode61 對中文查詢）未在本票處理**，依本票原文「視為與共用
+lib 分離的關注點，允許各自的修復時程與驗收」轉由 [[CC-548]] 承接；中文查詢目前
+仍只靠 LIKE substring fallback（無索引、無排序），此狀態由
+`tests/shell/test-pmctl-context.sh` 的現有測試釘住。
+
+**See**: pr:#485
 
 **Problem**: 記憶注入排序（`guard-inject-memory.sh` 的 keyword 抽取）、檢索抽詞（`_ctx_extract_terms` → prompt-scan / reuse-scan）、FTS5 索引（unicode61 tokenizer）三處分詞全為 ASCII-only，CJK 字元被當分隔符丟棄。維護者工作語言為中文：中文 prompt 的 keyword tier 恆為 0 分、tier2 排序退化為純 frecency；且 usage sidecar 只在 keyword 命中時累積 access，中文工作流永遠累積不到使用訊號——整套 frecency 機制對 CJK 使用者形同虛設。prompt-scan / reuse-scan 對中文任務描述抽不出任何詞；FTS5 對整段中文只存單一 token，中文查詢僅靠 LIKE substring fallback 硬撐。
 
@@ -366,6 +383,34 @@ bare-fractional catch-all 重複的 fractional-Z 分支。Gate GO
 4. 既有英文行為不變；回歸測試涵蓋純英文、中英混合、純中文三類輸入，並驗證兩個呼叫端遷移至共用 lib 後行為一致。
 
 **Cross-link**: [[CC-340]]（deferred；本票是非 embedding 的分詞修正，非其替代）。**工作序列**：本票是 CC-465 → CC-467 → CC-468 → CC-466 序列化工作串的起點——CJK 抽詞先修好，統計可視化與 brief 約束萃取才有可信賴的中文訊號可用。
+
+---
+
+## CC-548 — context.db FTS5 對 CJK 查詢無索引無排序 🔵 active
+
+**Problem**: [[CC-465]] 修好了注入排序與 prompt/reuse-scan 的 CJK 抽詞，但沒有動
+FTS5 索引層。`context.db` 的 FTS5 表使用 unicode61 tokenizer，對整段中文只會產生
+單一 token，因此中文查詢在 FTS5 上永遠 miss，實務上只靠 LIKE substring fallback
+硬撐——沒有索引（全表掃描）也沒有 ranking（`bm25()` 無從施力）。維護者工作語言為
+中文，代表 `pmctl context query` 的中文查詢品質與延遲都停留在 fallback 水準。
+
+**Why**: 這是 [[CC-465]] Requirement 3 明文分離出來的關注點——該票原文即載明 FTS5
+tokenizer 行為「視為與共用 lib 分離的關注點，允許各自的修復時程與驗收」，因為修法
+與共用抽詞 lib 完全不同：不是改 bash 抽詞，而是換 FTS5 tokenizer 並重建索引。候選解
+是 sqlite ≥3.34 的 `tokenize='trigram'`（CJK substring 可走索引），但它帶來 sqlite
+版本下限與既有 `context.db` 的 rebuild／遷移成本，兩者都必須先量測才知道是否值得。
+不預設要做——先 spike，再決定。
+
+**Requirement**:
+1. Spike：確認 `tokenize='trigram'` 所需的 sqlite 版本下限，以及該下限對
+   [[docs/platform-support.md]] 宣稱的支援平台是否可接受（含無 trigram 時的降級路徑）。
+2. Spike：量測既有 `context.db` 重建索引的成本與相容性影響（schema 版本、遷移是否
+   可省略而直接重建、重建期間的查詢行為）。
+3. Spike 產出 `docs/spikes/CC-548.md` 的 GREEN/AMBER/RED 判定；只有判定為值得做時
+   才開實作切片，不因票已存在自動實作。
+
+**Cross-link**: [[CC-465]]（本票承接其 Requirement 3 殘留）、[[CC-340]]（deferred；
+embeddings/semantic backend——本票是索引層 tokenizer 修正，不是其替代）。
 
 ---
 

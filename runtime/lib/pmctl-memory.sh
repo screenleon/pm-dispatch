@@ -765,6 +765,324 @@ _mem_doctor_human_list() {
   done
 }
 
+# ── Injection-benefit stats (read-only aggregator) ────────────────────────────
+#
+# `pmctl memory stats` answers "what does having memory actually buy me" from
+# data that already exists: the MEMORY.md index, the usage sidecar written by
+# guard-inject-memory.sh, and episodes.jsonl. It opens no new write surface —
+# every number here is derived from files other commands already maintain.
+#
+# The concentration block is the load-bearing part. Raw hit counts look healthy
+# when every card is hit on every prompt, which is exactly the failure mode of a
+# ranking signal with no discrimination: injection silently degrades into "emit
+# everything that fits". hit_coverage_pct near 100 with a flat top5_share_pct is
+# that failure, not health.
+
+_mem_stats_usage() {
+  cat <<'EOF'
+Usage: pmctl memory stats [--json] [--repo-root <path>] [--never-hit-limit <n>]
+
+Read-only report on memory-injection benefit: index size against the injection
+budget, per-card hit distribution and concentration, never-hit cards, and the
+episode summary fill rate.
+
+Options:
+  --json                 Emit a single JSON object (schema_version: 1)
+  --repo-root PATH       Repo root used to locate the memory dir
+                         (default: $REPO_ROOT or current directory)
+  --never-hit-limit N    Cap the listed never-hit cards at N (0 = no cap,
+                         default 20). Counts are never capped.
+  --help                 Show this help
+
+Exit codes: 0 report emitted, 1 canonical memory selection invalid, 2 usage error.
+EOF
+}
+
+# Count non-whitespace-summary episodes. Prints "<total>\t<with_summary>".
+_mem_stats_episode_fill() {
+  local episodes="$1"
+  # Always newline-terminated: the caller reads this with `read`, which reports
+  # failure on an unterminated final line and would abort under `set -e`.
+  if [[ ! -f "$episodes" ]]; then printf '0\t0\n'; return 0; fi
+  jq -rRs '
+    [ split("\n")[] | select(length > 0) | (try fromjson catch empty) ] as $e
+    | [ ($e | length),
+        ([ $e[] | (.summary // "") | select((gsub("\\s"; "")) != "") ] | length) ]
+    | @tsv
+  ' "$episodes" 2>/dev/null || printf '0\t0\n'
+}
+
+# Map a memory_age_bucket weight to its reporting-bucket index. The weights are
+# that function's contract; keeping the mapping here means the day boundaries
+# stay defined in exactly one place (lib/memory.sh) and the report always shows
+# the same recency tiers the ranking weights by.
+_mem_stats_age_bucket_index() {
+  case "$1" in
+    100) printf '0' ;;
+    70)  printf '1' ;;
+    50)  printf '2' ;;
+    30)  printf '3' ;;
+    *)   printf '4' ;;
+  esac
+}
+
+# Integer percent of numerator/denominator, 0 when the denominator is 0.
+_mem_stats_pct() {
+  local num="$1" den="$2"
+  (( den > 0 )) || { printf '0'; return 0; }
+  printf '%d' $(( num * 100 / den ))
+}
+
+pmctl_memory_stats() {
+  local json=0
+  local repo_root="${REPO_ROOT:-$PWD}"
+  local never_hit_limit=20
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json) json=1; shift ;;
+      --repo-root)
+        if [[ -z "${2:-}" ]]; then
+          printf 'pmctl memory stats: --repo-root requires a value\n' >&2
+          return 2
+        fi
+        repo_root="$2"; shift 2 ;;
+      --never-hit-limit)
+        if [[ -z "${2:-}" ]]; then
+          printf 'pmctl memory stats: --never-hit-limit requires a value\n' >&2
+          return 2
+        fi
+        if [[ ! "$2" =~ ^[0-9]+$ ]]; then
+          printf 'pmctl memory stats: --never-hit-limit must be a non-negative integer\n' >&2
+          return 2
+        fi
+        never_hit_limit="$((10#$2))"; shift 2 ;;
+      --help|-h) _mem_stats_usage; return 0 ;;
+      *)
+        printf 'pmctl memory stats: unknown argument: %s\n' "$1" >&2
+        return 2 ;;
+    esac
+  done
+
+  local mem_dir="" resolution="" resolution_rc=0 resolution_reason="" resolution_source="none"
+  resolution="$(pmctl_memory_resolve --repo-root "$repo_root" --allow-non-git --json)" || resolution_rc=$?
+  if [[ "$resolution_rc" -eq 0 ]]; then
+    mem_dir="$(jq -r '.memory_dir // empty' <<<"$resolution")"
+  elif [[ "$resolution_rc" -eq 3 ]]; then
+    resolution_reason="$(jq -r '.reason // "invalid explicit canonical memory configuration"' <<<"$resolution")"
+    resolution_source="$(jq -r '.resolution_source // "none"' <<<"$resolution")"
+    if [[ "$json" -eq 1 ]]; then
+      jq -cn --arg source "$resolution_source" --arg reason "$resolution_reason" \
+        '{schema_version:1,memory_dir:"",resolution_issues:[{source:$source,reason:$reason}]}'
+    else
+      printf 'memory_dir:            (invalid explicit configuration)\n'
+      printf 'resolution_issues:\n  - %s: %s\n' "$resolution_source" "$resolution_reason"
+    fi
+    return 1
+  elif [[ "$resolution_rc" -eq 2 ]]; then
+    printf 'pmctl memory stats: unable to resolve repository root\n' >&2
+    return 2
+  fi
+
+  local index_entry_count=0 card_count=0 index_inject_bytes=0
+  local -a card_rels=()
+  local usage_store='none'
+  local cards_with_hits=0 total_access=0 top5_access=0
+  local -a never_hit=()
+  local -a access_counts=()
+  local -a age_bucket_labels=(recent_0_4 recent_5_14 recent_15_31 recent_32_90 older_90_plus)
+  local -a age_bucket_counts=(0 0 0 0 0)
+  local episodes_total=0 episodes_with_summary=0 shard_count=0
+  local hit_coverage_pct=0 top5_share_pct=0 episode_fill_rate_pct=0
+
+  # No memory dir → nothing to aggregate; emit an empty, well-formed report.
+  if [[ -n "$mem_dir" && -d "$mem_dir" ]]; then
+    local index="$mem_dir/MEMORY.md" episodes="$mem_dir/episodes.jsonl"
+
+    # ── index: card count and what a full, unbudgeted injection would cost ────
+    # Measured exactly the way guard-inject-memory.sh measures its own budget
+    # (${#line} under the ambient locale), so the two numbers are comparable.
+    # Two index lines may link the same card file. Injection ranks per line, so
+    # index_entry_count stays per line, but every usage number below is keyed by
+    # card_relpath (the sidecar's key) and must therefore count each card once —
+    # otherwise a duplicated link inflates both coverage and total_access.
+    if [[ -f "$index" ]]; then
+      local line rel link_re='^\- \[([^]]*)\]\(([^)]*\.md)\)'
+      local -A seen_rel=()
+      while IFS= read -r line; do
+        [[ "$line" =~ ^-\ \[ ]] || continue
+        index_entry_count=$((index_entry_count + 1))
+        index_inject_bytes=$(( index_inject_bytes + ${#line} + 1 ))
+        rel=""
+        [[ "$line" =~ $link_re ]] && rel="${BASH_REMATCH[2]}"
+        # An entry with no parseable link has no sidecar key; keep each such
+        # entry as its own (always never-hit) row rather than collapsing them.
+        if [[ -z "$rel" ]]; then
+          card_rels+=("")
+          card_count=$((card_count + 1))
+          continue
+        fi
+        [[ -n "${seen_rel["$rel"]:-}" ]] && continue
+        seen_rel["$rel"]=1
+        card_rels+=("$rel")
+        card_count=$((card_count + 1))
+      done < "$index"
+    fi
+
+    # ── usage sidecar: hit counts and last-hit recency, read-only ────────────
+    local store today_day
+    store="$(memory_usage_sidecar_path "$mem_dir")"
+    if [[ "$store" == *.sqlite3 && -f "$store" ]]; then
+      usage_store='sqlite3'
+    elif [[ -f "${store%.sqlite3}.tsv" ]]; then
+      usage_store='tsv'
+    fi
+    today_day=$(( $(date +%s) / 86400 ))
+
+    local -A usage_acc=() usage_last=()
+    memory_usage_load "$store" usage_acc usage_last
+
+    # Only index-referenced cards count: a sidecar row for a deleted card is
+    # not evidence that memory helped, and counting it would inflate coverage.
+    local rel a bucket_idx
+    for rel in ${card_rels[@]+"${card_rels[@]}"}; do
+      a=0
+      [[ -n "$rel" ]] && a="${usage_acc["$rel"]:-0}"
+      if (( a > 0 )); then
+        cards_with_hits=$((cards_with_hits + 1))
+        total_access=$((total_access + a))
+        access_counts+=("$a")
+        # Bucket by memory_age_bucket's own weight rather than re-deriving its
+        # day boundaries here, so the report cannot drift from the recency
+        # weighting that frecency ranking actually applies.
+        bucket_idx="$(_mem_stats_age_bucket_index \
+          "$(memory_age_bucket "$today_day" "${usage_last["$rel"]:-0}")")"
+        age_bucket_counts[bucket_idx]=$(( age_bucket_counts[bucket_idx] + 1 ))
+      else
+        never_hit+=("${rel:-<unlinked index entry>}")
+      fi
+    done
+
+    # ── concentration ────────────────────────────────────────────────────────
+    # top5_share_pct near 5*100/cards_with_hits means every hit card carries the
+    # same weight — i.e. the ranking signal is not separating anything.
+    if [[ "${#access_counts[@]}" -gt 0 ]]; then
+      local sorted n=0 v
+      sorted="$(printf '%s\n' "${access_counts[@]}" | sort -rn)"
+      while IFS= read -r v; do
+        (( n < 5 )) || break
+        top5_access=$(( top5_access + v ))
+        n=$((n + 1))
+      done <<<"$sorted"
+    fi
+    hit_coverage_pct="$(_mem_stats_pct "$cards_with_hits" "$card_count")"
+    top5_share_pct="$(_mem_stats_pct "$top5_access" "$total_access")"
+
+    # ── episodes ─────────────────────────────────────────────────────────────
+    IFS=$'\t' read -r episodes_total episodes_with_summary \
+      < <(_mem_stats_episode_fill "$episodes") || true
+    [[ "$episodes_total"        =~ ^[0-9]+$ ]] || episodes_total=0
+    [[ "$episodes_with_summary" =~ ^[0-9]+$ ]] || episodes_with_summary=0
+    episode_fill_rate_pct="$(_mem_stats_pct "$episodes_with_summary" "$episodes_total")"
+
+    local f
+    for f in "$mem_dir"/episodes.????-??.jsonl; do
+      [[ -e "$f" ]] && shard_count=$((shard_count + 1))
+    done
+  fi
+
+  local never_hit_count="${#never_hit[@]}"
+  local -a never_hit_listed=()
+  if [[ "$never_hit_count" -gt 0 ]]; then
+    if (( never_hit_limit == 0 || never_hit_count <= never_hit_limit )); then
+      never_hit_listed=("${never_hit[@]}")
+    else
+      never_hit_listed=("${never_hit[@]:0:never_hit_limit}")
+    fi
+  fi
+  local never_hit_truncated=false
+  (( ${#never_hit_listed[@]} < never_hit_count )) && never_hit_truncated=true
+
+  if [[ "$json" -eq 1 ]]; then
+    _mem_stats_emit_json
+  else
+    _mem_stats_emit_human
+  fi
+  return 0
+}
+
+# Emit the frozen JSON object. Reads the stats locals from its caller's scope.
+_mem_stats_emit_json() {
+  local out="{\"schema_version\":1"
+  out+=",\"memory_dir\":\"$(_mem_json_esc "$mem_dir")\""
+  out+=",\"index_entry_count\":$index_entry_count"
+  out+=",\"card_count\":$card_count"
+  out+=",\"index_inject_bytes\":$index_inject_bytes"
+  out+=",\"inject_budget_entries\":$MEMORY_MAX_INJECT_ENTRIES"
+  out+=",\"inject_budget_bytes\":$MEMORY_MAX_INJECT_BYTES"
+  out+=",\"usage_store\":\"$usage_store\""
+  out+=",\"cards_with_hits\":$cards_with_hits"
+  out+=",\"cards_never_hit\":$never_hit_count"
+  out+=",\"total_access\":$total_access"
+  out+=",\"concentration\":{\"hit_coverage_pct\":$hit_coverage_pct,\"top5_access\":$top5_access,\"top5_share_pct\":$top5_share_pct}"
+  out+=",\"last_hit_buckets\":{"
+  local i first=1
+  for ((i = 0; i < ${#age_bucket_labels[@]}; i++)); do
+    [[ "$first" -eq 1 ]] || out+=","
+    out+="\"${age_bucket_labels[$i]}\":${age_bucket_counts[$i]}"
+    first=0
+  done
+  out+="}"
+  out+=",\"never_hit_cards\":$(_mem_json_str_array ${never_hit_listed[@]+"${never_hit_listed[@]}"})"
+  out+=",\"never_hit_cards_truncated\":$never_hit_truncated"
+  out+=",\"episodes_total\":$episodes_total"
+  out+=",\"episodes_with_summary\":$episodes_with_summary"
+  out+=",\"episode_fill_rate_pct\":$episode_fill_rate_pct"
+  out+=",\"shard_count\":$shard_count}"
+  printf '%s\n' "$out"
+}
+
+# Emit the label-aligned human report. Reads stats locals from caller's scope.
+_mem_stats_emit_human() {
+  if [[ -z "$mem_dir" || ! -d "$mem_dir" ]]; then
+    printf 'memory_dir:            (none found)\n'
+    printf 'card_count:            0\n'
+    return 0
+  fi
+  printf 'memory_dir:            %s\n' "$mem_dir"
+  printf 'index_entry_count:     %s\n' "$index_entry_count"
+  printf 'card_count:            %s\n' "$card_count"
+  printf 'index_inject_bytes:    %s (budget %s bytes / %s entries per prompt)\n' \
+    "$index_inject_bytes" "$MEMORY_MAX_INJECT_BYTES" "$MEMORY_MAX_INJECT_ENTRIES"
+  printf 'usage_store:           %s\n' "$usage_store"
+  printf 'cards_with_hits:       %s\n' "$cards_with_hits"
+  printf 'cards_never_hit:       %s\n' "$never_hit_count"
+  printf 'total_access:          %s\n' "$total_access"
+  printf 'hit_coverage_pct:      %s%%\n' "$hit_coverage_pct"
+  printf 'top5_share_pct:        %s%% (%s of %s accesses)\n' \
+    "$top5_share_pct" "$top5_access" "$total_access"
+  printf 'last_hit_buckets:\n'
+  local i
+  for ((i = 0; i < ${#age_bucket_labels[@]}; i++)); do
+    printf '  - %-14s %s\n' "${age_bucket_labels[$i]}:" "${age_bucket_counts[$i]}"
+  done
+  if [[ "$never_hit_count" -eq 0 ]]; then
+    printf 'never_hit_cards:       (none)\n'
+  else
+    printf 'never_hit_cards:\n'
+    local item
+    for item in ${never_hit_listed[@]+"${never_hit_listed[@]}"}; do
+      printf '  - %s\n' "$item"
+    done
+    [[ "$never_hit_truncated" == true ]] && \
+      printf '  (%s more — raise --never-hit-limit to list them)\n' \
+        "$(( never_hit_count - ${#never_hit_listed[@]} ))"
+  fi
+  printf 'episode_fill_rate_pct: %s%% (%s of %s episodes carry a summary)\n' \
+    "$episode_fill_rate_pct" "$episodes_with_summary" "$episodes_total"
+  printf 'shard_count:           %s\n' "$shard_count"
+}
+
 # ── Episode shard + summary ───────────────────────────────────────────────────
 
 # Maximum lines in episodes.jsonl before shard is triggered.

@@ -213,6 +213,7 @@ router and [`cli/commands.tsv`](cli/commands.tsv).
 - `memory config` — Read or update memory configuration. [experimental; JSON: true; mutating: true]
 - `memory append-episode` — Append a canonical memory episode. [experimental; JSON: true; mutating: true]
 - `memory doctor` — Diagnose canonical memory configuration; exits 0 healthy, 1 issues found, 2 usage error. [experimental; JSON: true; mutating: false]
+- `memory stats` — Report memory-injection benefit: budget use, hit distribution/concentration, never-hit cards, episode fill rate. [experimental; JSON: true; mutating: false]
 - `memory shard` — Build memory retrieval shards. [experimental; JSON: false; mutating: true]
 - `memory rebuild-summary` — Rebuild the memory summary index. [experimental; JSON: false; mutating: true]
 - `pre-release audit` — Audit a milestone before release. [experimental; JSON: false; mutating: false]
