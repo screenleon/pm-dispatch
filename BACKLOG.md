@@ -65,6 +65,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-543 | ✅ done | Full test runner Phase 0 fail-fast structural precheck；`--collect-all` 保留 release 全證據路徑 | ops/test | 2026-08-04 | pr:#465 | P2 | hygiene |
 | CC-545 | ✅ done | Reviewer evidence-reference-contract INCOMPLETE 的單次修正性重派：僅限該單一違規類別，附具體錯誤引用重跑違規 reviewer，不必整輪 gate（30-40 分鐘）重來 | ops/gate | 2026-08-06 | pr:#465 | P2 | hygiene |
 | CC-546 | ⏸ deferred | standalone Gate distribution／copy parity follow-up：獨立定義 bundle schema、generation、installed parity 與 support boundary；不回併 Linux/WSL2 canonical module extraction | arch/gate | 2026-08-14 | — | P2 | reuse-debt |
+| CC-550 | 🔵 active | 測試套件的「live 共用狀態未變動」指紋守衛是假陽性製造機：無法區分「本套件寫的」與「外部行程寫的」，改為確定性 oracle（斷言每次呼叫解析到 fixture 而非 live 目標）；已觀察 3 例（memory doctor／memory stats／context DB） | ops/test | 2026-08-17 | — | P2 | hygiene |
 | CC-549 | 🔵 active | Gate reviewer-protocol 診斷可修正性：test-gap 契約錯誤點名違規欄位／值／允許集合，且 retryable 分類改比對 reason stem（帶明細的 reason 先前一律被判為不可重試） | ops/gate | 2026-08-17 | — | P2 | hygiene |
 | CC-548 | 🔵 active | context.db FTS5 對 CJK 查詢無索引無排序（[[CC-465]] Requirement 3 殘留）：先 spike 驗 `tokenize='trigram'` 的 sqlite 版本下限與 index rebuild 成本，再決定是否實作 | memory | 2026-08-16 | — | P2 | retrieval |
 | CC-465 | ✅ done | memory/context 關鍵詞管線 CJK 支援：抽出共用零依賴斷詞 lib，取代兩處各自 ASCII-only 抽詞；FTS5 tokenizer 殘留另立 [[CC-548]]；工作序列起點（465→467→468→466） | memory | 2026-07-07 | pr:#485 | P2 | retrieval |
@@ -384,6 +385,40 @@ lib 分離的關注點，允許各自的修復時程與驗收」轉由 [[CC-548]
 4. 既有英文行為不變；回歸測試涵蓋純英文、中英混合、純中文三類輸入，並驗證兩個呼叫端遷移至共用 lib 後行為一致。
 
 **Cross-link**: [[CC-340]]（deferred；本票是非 embedding 的分詞修正，非其替代）。**工作序列**：本票是 CC-465 → CC-467 → CC-468 → CC-466 序列化工作串的起點——CJK 抽詞先修好，統計可視化與 brief 約束萃取才有可信賴的中文訊號可用。
+
+---
+
+## CC-550 — live 共用狀態指紋守衛是假陽性製造機 🔵 active
+
+**Problem**: 多個測試套件用「跑完比對 live 共用狀態的指紋」當作『本套件沒有污染
+真實資料』的證據。這個 oracle 從構造上就無法區分「本套件某個 case 寫了那裡」與
+「外部行程寫了那裡」，而那些目標**恰好都會被日常操作寫入**：
+
+- `tests/shell/test-pmctl-context.sh` 的 `case_context_no_live_db_mutation`
+  指紋 `.pm-dispatch/ctx/context.db`——但 `pmctl context query` 本身就會改
+  mtime，而 UserPromptSubmit 的 auto-context hook 每次提示都會呼叫它。
+- `tests/shell/test-pmctl-memory.sh` 曾有兩個同型 case（doctor／stats），指紋
+  canonical memory dir——而注入 hook 每輪對話都寫 usage sidecar。
+
+實測：2026-08-17 一次 gate preflight（約 41 分鐘）中，context 守衛失敗，訊息宣稱
+「a case operated on $REPO_ROOT」，但實際變更者是同一台機器上互動 session 的
+auto-context hook。preflight 因此 `unclassified-nonzero`，整輪 gate 在 reviewer
+派工前中止（非授權 INCOMPLETE）。守衛跑得越久，被外部寫入命中的機率越高。
+
+**Why**: 會因為 diff 以外的原因變紅的阻擋型測試就是假陽性製造機，違反
+[[cc544-retry-once-reverted]] 確立的「flaky 不得 block」紅線；而且它的失敗訊息
+斷言了一個它無法支持的結論，會把調查引向錯誤方向。守衛想保護的性質本身是對的
+（case 不得對 live 目標下手），只是 oracle 選錯了。
+
+**Requirement**:
+1. 以確定性 oracle 取代指紋比對：斷言每次受測呼叫解析到的目標位於 fixture 根下，
+   而非 live 目標；並保留 fixture 層級的唯讀證明。
+2. 移除會因外部寫入而變紅的 live 指紋斷言，不得只是放寬容忍度。
+3. 失敗訊息只陳述可由證據支持的結論。
+
+**Cross-link**: [[CC-467]] 已按此形狀修好 memory 的兩例（`test-pmctl-memory.sh`
+的 `case_memory_commands_resolve_only_fixture_dirs` + fixture 層唯讀 case），
+本票把同一修法套用到 context 套件並清查其餘同型守衛。
 
 ---
 
