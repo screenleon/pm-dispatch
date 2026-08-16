@@ -165,10 +165,11 @@ Versions follow [Semantic Versioning](https://semver.org/).
   cannot falsify them). Corrupt input is never presentable as absence:
   `usage_store: error` marks an unreadable sidecar and `episodes_malformed` /
   `episodes_status` mark unparseable episode rows, because this report is cited
-  in retention decisions. Human output escapes control characters in
-  memory-derived paths — including C1 bytes such as a raw `0x9B` CSI, which
-  `[[:cntrl:]]` does not match — by decoding UTF-8, so CJK card names survive
-  intact. `--json` carries `schema_version: 1`; exit `0` report, `1` invalid
+  in retention decisions, and `unmeasurable_cards` separates cards whose path
+  the tab-delimited sidecar cannot represent from cards genuinely never hit.
+  Both human and JSON output escape control characters in memory-derived paths
+  — including C1 bytes such as a raw `0x9B` CSI, which `[[:cntrl:]]` does not
+  match — by decoding UTF-8, so CJK card names survive intact. `--json` carries `schema_version: 1`; exit `0` report, `1` invalid
   canonical selection, `2` usage error — an unhealthy number is never an error
   exit.
 

@@ -2042,8 +2042,9 @@ case_memory_stats_json_escapes_control_characters() {
     fi
     # Escaping must not corrupt the value — it round-trips to the exact name.
     # jq reads \t in this filter as a real tab, so this compares against the
-    # literal filename, not against its escaped spelling.
-    assert_jq "$name" "$out" '.never_hit_cards[0] == "ta\tbbed.md"' || return 0
+    # literal filename, not against its escaped spelling. A tab-bearing path is
+    # reported as unmeasurable (its usage cannot be recorded), not never-hit.
+    assert_jq "$name" "$out" '.unmeasurable_cards[0] == "ta\tbbed.md"' || return 0
   fi
   pass "$name"
 }
@@ -2131,6 +2132,162 @@ case_memory_stats_reports_per_card_hit_counts() {
   if ! assert_exit "$name" "$lstatus" 0; then return 0; fi
   assert_jq "$name" "$lout" '(.card_hits | length) == 1 and .card_hits_truncated == true' || return 0
   assert_jq "$name" "$lout" '.cards_with_hits == 2 and .total_access == 4' || return 0
+  pass "$name"
+}
+
+case_memory_stats_hit_limit_boundaries() {
+  local name="pmctl memory stats: --hit-limit boundary contract (0, missing, option-like, malformed, oversized)"
+  should_run "$name" || return 0
+
+  local cfg="$tmp_root/st-hlb-cfg" repo="$tmp_root/st-hlb-repo" mdir
+  mdir="$(make_stats_fixture "$cfg" "$repo" 3)"
+  local sidecar today
+  sidecar="$(memory_usage_sidecar_path "$mdir")"
+  today=$(( $(date +%s) / 86400 ))
+  memory_usage_commit "$sidecar" 100000 "$today" card1.md card2.md card3.md >/dev/null
+
+  # 0 means "no cap", not "hide every row" — the inverse would silently make
+  # the report look like there is no hit evidence at all.
+  local out0="$tmp_root/st-hlb0.json" s0=0
+  run_stats_json "$out0" "$cfg" "$repo" --hit-limit 0 || s0=$?
+  if ! assert_exit "$name" "$s0" 0; then return 0; fi
+  assert_jq "$name" "$out0" '(.card_hits | length) == 3 and .card_hits_truncated == false' || return 0
+
+  # Bounding the list must never change the totals it is a view of.
+  local out1="$tmp_root/st-hlb1.json" s1=0
+  run_stats_json "$out1" "$cfg" "$repo" --hit-limit 1 || s1=$?
+  if ! assert_exit "$name" "$s1" 0; then return 0; fi
+  assert_jq "$name" "$out1" '(.card_hits | length) == 1 and .card_hits_truncated == true' || return 0
+  assert_jq "$name" "$out1" '.cards_with_hits == 3 and .total_access == 3' || return 0
+
+  local err status
+  # missing operand
+  err="$tmp_root/st-hlb-missing.err"; status=0
+  "$PMCTL" memory stats --hit-limit >/dev/null 2>"$err" || status=$?
+  if ! assert_exit "$name" "$status" 2; then return 0; fi
+  if ! assert_file_contains "$name" "$err" '--hit-limit requires a value'; then return 0; fi
+
+  # option-like operand
+  err="$tmp_root/st-hlb-optlike.err"; status=0
+  "$PMCTL" memory stats --hit-limit --json >/dev/null 2>"$err" || status=$?
+  if ! assert_exit "$name" "$status" 2; then return 0; fi
+  if ! assert_file_contains "$name" "$err" '--hit-limit requires a value'; then return 0; fi
+
+  # non-numeric
+  err="$tmp_root/st-hlb-nan.err"; status=0
+  "$PMCTL" memory stats --hit-limit 3x >/dev/null 2>"$err" || status=$?
+  if ! assert_exit "$name" "$status" 2; then return 0; fi
+  if ! assert_file_contains "$name" "$err" 'non-negative integer'; then return 0; fi
+
+  # oversized: must be this command's diagnostic, not a raw shell arithmetic error
+  err="$tmp_root/st-hlb-big.err"; status=0
+  "$PMCTL" memory stats --hit-limit 99999999999999999999999999 >/dev/null 2>"$err" || status=$?
+  if ! assert_exit "$name" "$status" 2; then return 0; fi
+  if ! assert_file_contains "$name" "$err" 'non-negative integer'; then return 0; fi
+  if grep -qi 'value too great\|syntax error' "$err"; then
+    fail "$name" "leaked a raw shell arithmetic error: $(cat "$err")"
+    return 0
+  fi
+  pass "$name"
+}
+
+case_memory_stats_hit_rows_sort_numerically() {
+  local name="pmctl memory stats: hit rows order by count numerically, not by a padded lexical key"
+  should_run "$name" || return 0
+
+  # A fixed-width zero-padded sort key silently inverts ordering once a counter
+  # exceeds the pad width. Seed counts that straddle a 10-digit boundary.
+  local cfg="$tmp_root/st-sort-cfg" repo="$tmp_root/st-sort-repo" mdir
+  mdir="$(make_stats_fixture "$cfg" "$repo" 3)"
+  mkdir -p "$mdir/.pm-dispatch"
+  local today; today=$(( $(date +%s) / 86400 ))
+  {
+    printf '# total_events=0\n'
+    printf 'card1.md\t10000000000\t%d\n' "$today"
+    printf 'card2.md\t9999999999\t%d\n'  "$today"
+    printf 'card3.md\t5\t%d\n'           "$today"
+  } > "$mdir/.pm-dispatch/inject-usage.tsv"
+
+  local out="$tmp_root/st-sort.json" status=0
+  run_stats_json "$out" "$cfg" "$repo" || status=$?
+  if ! assert_exit "$name" "$status" 0; then return 0; fi
+  assert_jq "$name" "$out" '[.card_hits[].card] == ["card1.md","card2.md","card3.md"]' || return 0
+  assert_jq "$name" "$out" '.card_hits[0].access_count == 10000000000' || return 0
+  pass "$name"
+}
+
+case_memory_stats_json_escapes_c1_controls() {
+  local name="pmctl memory stats --json: C1 controls are escaped and CJK card names survive"
+  should_run "$name" || return 0
+
+  # JSON output is routinely read straight in a terminal, so a raw 0x9B CSI in
+  # an indexed filename is a live injection vector there too — and a raw C1
+  # byte is not valid UTF-8, so emitting it also breaks the document.
+  local cfg="$tmp_root/st-jc1-cfg" repo="$tmp_root/st-jc1-repo" mdir
+  mkdir -p "$repo"
+  mdir="$(make_fixture_memory "$cfg" "$repo")"
+  local c1=$'a\x9b31mX.md'
+  local cjk=$'中文記憶卡.md'
+  write_compliant_card "$mdir/$c1" "c1"
+  write_compliant_card "$mdir/$cjk" "cjk"
+  printf -- '- [CJK](%s) — hook\n' "$cjk" > "$mdir/MEMORY.md"
+
+  local out="$tmp_root/st-jc1.json" status=0
+  run_stats_json "$out" "$cfg" "$repo" || status=$?
+  if ! assert_exit "$name" "$status" 0; then return 0; fi
+  if LC_ALL=C grep -q $'\x9b' "$out"; then
+    fail "$name" "stats JSON retained a raw C1 (0x9b) byte"
+    return 0
+  fi
+  if [[ "$_HAVE_JQ" -eq 1 ]]; then
+    if ! jq -e . "$out" >/dev/null 2>&1; then
+      fail "$name" "emitted JSON is unparseable: $(cat "$out")"
+      return 0
+    fi
+    # CJK must round-trip exactly; escaping its continuation bytes would corrupt it.
+    assert_jq "$name" "$out" '.never_hit_cards | index("中文記憶卡.md") != null' || return 0
+  fi
+
+  # doctor shares the emitter and reports the C1 card as an orphan.
+  local dout="$tmp_root/st-jc1-doctor.json"
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory doctor --repo-root "$repo" --json > "$dout" 2>/dev/null || true
+  if LC_ALL=C grep -q $'\x9b' "$dout"; then
+    fail "$name" "doctor JSON retained a raw C1 (0x9b) byte"
+    return 0
+  fi
+  if [[ "$_HAVE_JQ" -eq 1 ]] && ! jq -e . "$dout" >/dev/null 2>&1; then
+    fail "$name" "doctor JSON is unparseable: $(cat "$dout")"
+    return 0
+  fi
+  pass "$name"
+}
+
+case_memory_stats_unrecordable_card_is_not_never_hit() {
+  local name="pmctl memory stats: a tab-bearing card path is unmeasurable, not never-hit"
+  should_run "$name" || return 0
+
+  # The sidecar is tab-delimited and memory_usage_commit refuses such a relpath,
+  # so its usage can never be recorded. Calling it "never hit" would assert an
+  # absence of use that this telemetry never measured.
+  local cfg="$tmp_root/st-unmeas-cfg" repo="$tmp_root/st-unmeas-repo" mdir
+  mkdir -p "$repo"
+  mdir="$(make_fixture_memory "$cfg" "$repo")"
+  local tabbed=$'ta\tb.md'
+  write_compliant_card "$mdir/$tabbed" "tabbed"
+  write_compliant_card "$mdir/plain.md" "plain"
+  {
+    printf -- '- [Tabbed](%s) — hook\n' "$tabbed"
+    printf -- '- [Plain](plain.md) — hook\n'
+  } > "$mdir/MEMORY.md"
+
+  local out="$tmp_root/st-unmeas.json" status=0
+  run_stats_json "$out" "$cfg" "$repo" || status=$?
+  if ! assert_exit "$name" "$status" 0; then return 0; fi
+  assert_jq "$name" "$out" '(.unmeasurable_cards | length) == 1' || return 0
+  assert_jq "$name" "$out" '.unmeasurable_cards[0] == "ta\tb.md"' || return 0
+  # It must NOT be double-counted as a never-hit card.
+  assert_jq "$name" "$out" '[.never_hit_cards[] | select(test("\t"))] | length == 0' || return 0
+  assert_jq "$name" "$out" '.never_hit_cards == ["plain.md"]' || return 0
   pass "$name"
 }
 
@@ -2789,6 +2946,10 @@ case_memory_stats_oversized_limit_is_usage_error
 case_memory_human_output_neutralizes_terminal_controls
 case_memory_human_output_neutralizes_c1_controls
 case_memory_stats_reports_per_card_hit_counts
+case_memory_stats_hit_limit_boundaries
+case_memory_stats_hit_rows_sort_numerically
+case_memory_stats_json_escapes_c1_controls
+case_memory_stats_unrecordable_card_is_not_never_hit
 case_memory_stats_malformed_episodes_are_not_zero_history
 case_memory_stats_age_buckets_match_frecency_boundaries
 case_memory_stats_no_live_dir_mutation

@@ -368,28 +368,50 @@ pmctl_memory_append_episode() {
 # path containing a tab (legal on POSIX filesystems) would otherwise emit a
 # document no parser accepts. Characters with a short escape get one; the rest
 # of the C0 range goes out as \u00XX.
+#
+# C1 controls are escaped too. JSON does not require it, but this output is
+# routinely read straight in a terminal, where a raw 0x9B is CSI — and a raw C1
+# byte is not valid UTF-8 either, so passing it through would emit a document
+# that is neither safe nor well-formed. As in _mem_human_safe, the scan decodes
+# UTF-8 rather than working bytewise: 0x80-0x9F is also the continuation-byte
+# range, so blanket byte escaping would corrupt every CJK card name.
 _mem_json_esc() {
-  local s="$1"
-  s="${s//\\/\\\\}"
-  s="${s//\"/\\\"}"
-  s="${s//$'\n'/\\n}"
-  s="${s//$'\r'/\\r}"
-  s="${s//$'\t'/\\t}"
-  s="${s//$'\b'/\\b}"
-  s="${s//$'\f'/\\f}"
-  # The substitutions above have already turned their targets into two-character
-  # sequences, so anything still matching [[:cntrl:]] has no short form. Only pay
-  # for the per-character walk when such a character is actually present.
-  if [[ "$s" == *[[:cntrl:]]* ]]; then
-    local rebuilt="" i ch
-    for (( i = 0; i < ${#s}; i++ )); do
-      ch="${s:i:1}"
-      [[ "$ch" == [[:cntrl:]] ]] && printf -v ch '\\u%04x' "'$ch"
-      rebuilt+="$ch"
-    done
-    s="$rebuilt"
-  fi
-  printf '%s' "$s"
+  LC_ALL=C awk '
+    function esc(b) { printf "\\u%04x", b }
+    {
+      n = length($0)
+      for (i = 1; i <= n; i++) {
+        c = substr($0, i, 1)
+        b = ord[c]
+        if (c == "\\") { printf "\\\\"; continue }
+        if (c == "\"") { printf "\\\""; continue }
+        if (b == 0x08) { printf "\\b"; continue }
+        if (b == 0x09) { printf "\\t"; continue }
+        if (b == 0x0a) { printf "\\n"; continue }
+        if (b == 0x0c) { printf "\\f"; continue }
+        if (b == 0x0d) { printf "\\r"; continue }
+        if (b < 0x20 || b == 0x7f) { esc(b); continue }
+        if (b < 0x80) { printf "%c", b; continue }
+        len = (b >= 0xf0 && b <= 0xf4) ? 4 : \
+              (b >= 0xe0 && b <= 0xef) ? 3 : \
+              (b >= 0xc2 && b <= 0xdf) ? 2 : 0
+        if (len == 0) { esc(b); continue }          # stray continuation / invalid lead
+        ok = (i + len - 1 <= n)
+        if (ok) {
+          for (j = 1; j < len; j++) {
+            cc = ord[substr($0, i + j, 1)]
+            if (cc < 0x80 || cc > 0xbf) { ok = 0; break }
+          }
+        }
+        if (!ok) { esc(b); continue }
+        # 0xC2 0x80-0x9F decodes to exactly the C1 range.
+        if (len == 2 && b == 0xc2) { esc(ord[substr($0, i + 1, 1)]); i++; continue }
+        printf "%s", substr($0, i, len)
+        i += len - 1
+      }
+    }
+    BEGIN { for (k = 0; k < 256; k++) ord[sprintf("%c", k)] = k }
+  ' <<<"$1"
 }
 
 # Render a memory-derived string safely for a terminal. Card paths and the
@@ -749,8 +771,8 @@ _mem_stats_hit_rows_json() {
   for row in ${hit_listed[@]+"${hit_listed[@]}"}; do
     IFS=$'\t' read -r count rel last <<<"$row"
     [[ "$first" -eq 1 ]] || out+=","
-    out+="{\"card\":\"$(_mem_json_esc "$rel")\",\"access_count\":$((10#$count))"
-    out+=",\"last_access_day\":$((10#${last:-0}))}"
+    out+="{\"card\":\"$(_mem_json_esc "$rel")\",\"access_count\":$count"
+    out+=",\"last_access_day\":${last:-0}}"
     first=0
   done
   out+="]"
@@ -1001,6 +1023,7 @@ pmctl_memory_stats() {
   local usage_store='none'
   local cards_with_hits=0 total_access=0 top5_access=0
   local -a never_hit=()
+  local -a unmeasurable=()
   local -a access_counts=()
   local -a hit_rows=()
   local -a age_bucket_labels=(recent_0_4 recent_5_14 recent_15_31 recent_32_90 older_90_plus)
@@ -1063,6 +1086,14 @@ pmctl_memory_stats() {
     # not evidence that memory helped, and counting it would inflate coverage.
     local rel a bucket_idx
     for rel in ${card_rels[@]+"${card_rels[@]}"}; do
+      # The sidecar is tab-delimited and its writer refuses a relpath holding a
+      # tab or newline, so such a card can never accrue usage. Reporting it as
+      # never-hit would assert an absence of use this telemetry never measured;
+      # report it as unmeasurable instead.
+      if [[ -n "$rel" && ( "$rel" == *$'\t'* || "$rel" == *$'\n'* ) ]]; then
+        unmeasurable+=("$rel")
+        continue
+      fi
       a=0
       [[ -n "$rel" ]] && a="${MEMORY_USAGE_ACC["$rel"]:-0}"
       if (( a > 0 )); then
@@ -1071,7 +1102,7 @@ pmctl_memory_stats() {
         access_counts+=("$a")
         # Requirement 1 asks for each card's hit count, not just aggregates:
         # a maintainer must be able to see WHICH card is repeatedly selected.
-        hit_rows+=("$(printf '%010d\t%s\t%s' "$a" "$rel" "${MEMORY_USAGE_LAST["$rel"]:-0}")")
+        hit_rows+=("$(printf '%d\t%s\t%s' "$a" "$rel" "${MEMORY_USAGE_LAST["$rel"]:-0}")")
         # Bucket by memory_age_bucket's own weight rather than re-deriving its
         # day boundaries here, so the report cannot drift from the recency
         # weighting that frecency ranking actually applies.
@@ -1125,15 +1156,16 @@ pmctl_memory_stats() {
   local never_hit_truncated=false
   (( ${#never_hit_listed[@]} < never_hit_count )) && never_hit_truncated=true
 
-  # Per-card hit rows, most-hit first. The count prefix is zero-padded so a
-  # plain lexical sort orders numerically without a second pass.
+  # Per-card hit rows, most-hit first. Sort the count field numerically rather
+  # than lexically on a fixed-width prefix: any padding width is a silent
+  # ordering trap once a counter exceeds it.
   local -a hit_listed=()
   if [[ "${#hit_rows[@]}" -gt 0 ]]; then
     local _row
     while IFS= read -r _row; do
       (( hit_limit == 0 || ${#hit_listed[@]} < hit_limit )) || break
       hit_listed+=("$_row")
-    done < <(printf '%s\n' "${hit_rows[@]}" | LC_ALL=C sort -r)
+    done < <(printf '%s\n' "${hit_rows[@]}" | LC_ALL=C sort -t$'\t' -k1,1nr -k2,2)
   fi
   local hit_truncated=false
   (( ${#hit_listed[@]} < ${#hit_rows[@]} )) && hit_truncated=true
@@ -1168,6 +1200,7 @@ _mem_stats_emit_json() {
     first=0
   done
   out+="}"
+  out+=",\"unmeasurable_cards\":$(_mem_json_str_array ${unmeasurable[@]+"${unmeasurable[@]}"})"
   out+=",\"card_hits\":$(_mem_stats_hit_rows_json)"
   out+=",\"card_hits_truncated\":$hit_truncated"
   out+=",\"never_hit_cards\":$(_mem_json_str_array ${never_hit_listed[@]+"${never_hit_listed[@]}"})"
@@ -1217,11 +1250,18 @@ _mem_stats_emit_human() {
     for row in ${hit_listed[@]+"${hit_listed[@]}"}; do
       IFS=$'\t' read -r count rel last <<<"$row"
       printf '  - %-6s %s (last hit day %s)\n' \
-        "$((10#$count))" "$(_mem_human_safe "$rel")" "$((10#${last:-0}))"
+        "$count" "$(_mem_human_safe "$rel")" "${last:-0}"
     done
     [[ "$hit_truncated" == true ]] && \
       printf '  (%s more — raise --hit-limit to list them)\n' \
         "$(( ${#hit_rows[@]} - ${#hit_listed[@]} ))"
+  fi
+  if [[ "${#unmeasurable[@]}" -gt 0 ]]; then
+    printf 'unmeasurable_cards:    (usage cannot be recorded for these paths)\n'
+    local u
+    for u in "${unmeasurable[@]}"; do
+      printf '  - %s\n' "$(_mem_human_safe "$u")"
+    done
   fi
   if [[ "$never_hit_count" -eq 0 ]]; then
     printf 'never_hit_cards:       (none)\n'

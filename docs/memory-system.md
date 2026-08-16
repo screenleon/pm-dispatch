@@ -155,7 +155,8 @@ keys on; two index lines pointing at one card count as one card),
 `usage_store` (`sqlite3` / `tsv` / `none` / `error`), `cards_with_hits`,
 `cards_never_hit`, `total_access`, a `concentration` block, `last_hit_buckets`
 (the same day boundaries `memory_age_bucket` uses for frecency, so the report
-and the ranking agree), `card_hits`, `never_hit_cards`, `episodes_total`,
+and the ranking agree), `card_hits`, `never_hit_cards`, `unmeasurable_cards`,
+`episodes_total`,
 `episodes_with_summary`, `episode_fill_rate_pct`, `episodes_malformed`,
 `episodes_status`, and `shard_count`. `--json`
 emits a single object carrying `schema_version: 1`. Exit codes: `0` report
@@ -174,6 +175,13 @@ what the name literally promises.
 cut list. Counts and `cards_with_hits` are never capped, so bounding the list
 never falsifies the totals. Cards with no recorded access are absent here and
 listed under `never_hit_cards` instead.
+
+`unmeasurable_cards` holds indexed cards whose path contains a tab or newline.
+The usage sidecar is tab-delimited and its writer refuses such a relpath, so
+their usage can never be recorded — calling them never-hit would assert an
+absence of use this telemetry never measured. Making them measurable requires
+changing the sidecar encoding, which is a write-surface change and therefore
+outside this read-only command.
 
 **Reading the concentration block.** `hit_coverage_pct` is the share of cards
 that have ever been hit; `top5_share_pct` is the share of all accesses
@@ -208,7 +216,9 @@ influenced in the sense that anyone able to write a card or name a directory
 chooses them, and a terminal will act on ESC/OSC bytes it is handed. The scan
 decodes UTF-8 rather than escaping bytes, so C1 controls (including the raw
 `0x9B` CSI byte, which `[[:cntrl:]]` does not match) are neutralized while CJK
-card names pass through intact.
+card names pass through intact. `--json` applies the same decoding, emitting
+C1 as `\u00XX`: JSON does not require escaping C1, but this output is read
+straight in a terminal, and a raw C1 byte is not valid UTF-8 either.
 
 ## Bootstrap-empty pattern for fork users
 
