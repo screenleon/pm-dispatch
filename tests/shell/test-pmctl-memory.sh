@@ -2429,6 +2429,87 @@ case_memory_human_output_neutralizes_c1_controls() {
   pass "$name"
 }
 
+# Behavior: illegal UTF-8 sequences are escaped bytewise while legal multi-byte characters pass through.
+# Steps: source the library; escape overlong, surrogate, above-U+10FFFF, CJK, and 4-byte emoji values; assert the illegal ones are escaped and the legal ones are byte-identical.
+case_memory_escapers_reject_illegal_utf8() {
+  local name="memory escapers: overlong, surrogate, and above-U+10FFFF sequences are escaped, not emitted raw"
+  should_run "$name" || return 0
+
+  # Validating only "lead byte plus continuation bytes" admits sequences that
+  # are structurally shaped like UTF-8 but illegal, so they would be emitted raw
+  # inside a document that claims to be JSON.
+  # shellcheck source=runtime/lib/pmctl-memory.sh
+  # shellcheck disable=SC1091
+  . "$REPO_ROOT/runtime/lib/pmctl-memory.sh"
+
+  local got
+  # Non-shortest form of U+0000.
+  got="$(_mem_json_esc $'\xe0\x80\x80')"
+  if [[ "$got" != '\u00e0\u0080\u0080' ]]; then
+    fail "$name" "overlong sequence not escaped: [$got]"
+    return 0
+  fi
+  # UTF-8-encoded surrogate D800, which is not a legal scalar value.
+  got="$(_mem_json_esc $'\xed\xa0\x80')"
+  if [[ "$got" != '\u00ed\u00a0\u0080' ]]; then
+    fail "$name" "encoded surrogate not escaped: [$got]"
+    return 0
+  fi
+  # Above U+10FFFF.
+  got="$(_mem_json_esc $'\xf4\x90\x80\x80')"
+  if [[ "$got" != '\u00f4\u0090\u0080\u0080' ]]; then
+    fail "$name" "above-U+10FFFF sequence not escaped: [$got]"
+    return 0
+  fi
+  # Legal multi-byte input must be byte-identical — the tightened validation
+  # must not start escaping ordinary CJK or 4-byte characters.
+  got="$(_mem_json_esc '中文.md')"
+  if [[ "$got" != '中文.md' ]]; then
+    fail "$name" "legal CJK was altered: [$got]"
+    return 0
+  fi
+  got="$(_mem_json_esc $'\xf0\x9f\x98\x80')"
+  if [[ "$got" != $'\xf0\x9f\x98\x80' ]]; then
+    fail "$name" "legal 4-byte character was altered: [$got]"
+    return 0
+  fi
+  # The human renderer shares the validation and must agree.
+  got="$(_mem_human_safe $'\xe0\x80\x80')"
+  if [[ "$got" != '\xe0\x80\x80' ]]; then
+    fail "$name" "human renderer left an overlong sequence unescaped: [$got]"
+    return 0
+  fi
+  pass "$name"
+}
+
+# Behavior: an oversized sidecar counter degrades the read instead of wrapping into a negative total.
+# Steps: write a sidecar row with a 26-digit access count; run stats --json; assert usage_store error and a non-negative total.
+case_memory_stats_oversized_counter_degrades() {
+  local name="pmctl memory stats: an oversized sidecar counter degrades rather than wrapping negative"
+  should_run "$name" || return 0
+
+  # Bash arithmetic silently wraps past 2^63 instead of failing, so an
+  # unbounded counter would produce a negative total_access in a report used
+  # for retention decisions — a wrong number is worse than a loud failure.
+  local cfg="$tmp_root/st-bigcnt-cfg" repo="$tmp_root/st-bigcnt-repo" mdir
+  mdir="$(make_stats_fixture "$cfg" "$repo" 2)"
+  mkdir -p "$mdir/.pm-dispatch"
+  local today; today=$(( $(date +%s) / 86400 ))
+  {
+    printf '# total_events=0\n'
+    printf 'card1.md\t99999999999999999999999999\t%d\n' "$today"
+    printf 'card2.md\t3\t%d\n' "$today"
+  } > "$mdir/.pm-dispatch/inject-usage.tsv"
+
+  local out="$tmp_root/st-bigcnt.json" status=0
+  run_stats_json "$out" "$cfg" "$repo" || status=$?
+  if ! assert_exit "$name" "$status" 0; then return 0; fi
+  assert_jq "$name" "$out" '.usage_store == "error"' || return 0
+  assert_jq "$name" "$out" '.total_access >= 0' || return 0
+  assert_jq "$name" "$out" '[.card_hits[] | select(.access_count < 0)] | length == 0' || return 0
+  pass "$name"
+}
+
 # Behavior: a newline inside a memory-derived path is escaped, never swallowed into a joined string.
 # Steps: source the library; escape a two-segment newline-bearing value in JSON and human form; assert each segment survives around an explicit escape.
 case_memory_escapers_preserve_embedded_newlines() {
@@ -3056,6 +3137,8 @@ case_memory_stats_json_escapes_control_characters
 case_memory_stats_unreadable_sidecar_is_not_zero_activity
 case_memory_shared_readers_avoid_bash_43_namerefs
 case_memory_escapers_preserve_embedded_newlines
+case_memory_escapers_reject_illegal_utf8
+case_memory_stats_oversized_counter_degrades
 case_memory_stats_option_like_operand_is_usage_error
 case_memory_stats_oversized_limit_is_usage_error
 case_memory_human_output_neutralizes_terminal_controls

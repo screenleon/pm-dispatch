@@ -400,11 +400,21 @@ _mem_json_esc() {
               (b >= 0xe0 && b <= 0xef) ? 3 : \
               (b >= 0xc2 && b <= 0xdf) ? 2 : 0
         if (len == 0) { esc(b); continue }          # stray continuation / invalid lead
+        # Constrain the SECOND byte per lead so non-shortest forms, UTF-8-encoded
+        # surrogates, and scalars above U+10FFFF are rejected rather than emitted
+        # raw. Accepting "any lead plus continuation bytes" would let an illegal
+        # sequence through in a document that claims to be JSON.
+        lo = 0x80; hi = 0xbf
+        if (b == 0xe0) lo = 0xa0
+        else if (b == 0xed) hi = 0x9f
+        else if (b == 0xf0) lo = 0x90
+        else if (b == 0xf4) hi = 0x8f
         ok = (i + len - 1 <= n)
         if (ok) {
           for (j = 1; j < len; j++) {
             cc = ord[substr($0, i + j, 1)]
-            if (cc < 0x80 || cc > 0xbf) { ok = 0; break }
+            if (j == 1) { if (cc < lo || cc > hi) { ok = 0; break } }
+            else if (cc < 0x80 || cc > 0xbf) { ok = 0; break }
           }
         }
         if (!ok) { esc(b); continue }
@@ -448,11 +458,21 @@ _mem_human_safe() {
               (b >= 0xe0 && b <= 0xef) ? 3 : \
               (b >= 0xc2 && b <= 0xdf) ? 2 : 0
         if (len == 0) { esc(b); continue }          # stray continuation / invalid lead
+        # Constrain the SECOND byte per lead so non-shortest forms, UTF-8-encoded
+        # surrogates, and scalars above U+10FFFF are rejected rather than emitted
+        # raw. Accepting "any lead plus continuation bytes" would let an illegal
+        # sequence through in a document that claims to be JSON.
+        lo = 0x80; hi = 0xbf
+        if (b == 0xe0) lo = 0xa0
+        else if (b == 0xed) hi = 0x9f
+        else if (b == 0xf0) lo = 0x90
+        else if (b == 0xf4) hi = 0x8f
         ok = (i + len - 1 <= n)
         if (ok) {
           for (j = 1; j < len; j++) {
             c = ord[substr($0, i + j, 1)]
-            if (c < 0x80 || c > 0xbf) { ok = 0; break }
+            if (j == 1) { if (c < lo || c > hi) { ok = 0; break } }
+            else if (c < 0x80 || c > 0xbf) { ok = 0; break }
           }
         }
         if (!ok) { esc(b); continue }

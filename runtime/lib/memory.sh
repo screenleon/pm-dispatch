@@ -174,13 +174,23 @@ memory_usage_load() {
     return 1
   fi
 
+  # Bound the digit width, not just the character class. Readers feed these
+  # straight into shell arithmetic, and bash silently WRAPS past 2^63 rather
+  # than failing — a corrupt counter would otherwise turn into a negative
+  # total in a report used for retention decisions. A value this wide cannot
+  # come from the writer, so treat it as corruption and degrade the read.
+  local degraded=0
   while IFS=$'\t' read -r rel acc last; do
     [[ -z "$rel" || "$rel" == \#* ]] && continue
-    [[ "$acc"  =~ ^[0-9]+$ ]] || acc=0
-    [[ "$last" =~ ^[0-9]+$ ]] || last=0
+    if [[ ! "$acc"  =~ ^[0-9]{1,18}$ ]]; then acc=0;  degraded=1; fi
+    if [[ ! "$last" =~ ^[0-9]{1,18}$ ]]; then last=0; degraded=1; fi
     MEMORY_USAGE_ACC["$rel"]="$acc"
     MEMORY_USAGE_LAST["$rel"]="$last"
   done <<<"$rows"
+  if (( degraded )); then
+    MEMORY_USAGE_READ_FAILED=1
+    return 1
+  fi
   return 0
 }
 
