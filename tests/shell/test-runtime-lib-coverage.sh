@@ -108,10 +108,12 @@ test_runtime_libraries_do_not_exec_on_source() {
     return
   fi
   # Gate sandboxes often ship strace but deny ptrace. A failed attach under
-  # `set -e` used to abort the suite before retrieval-term cases ran.
-  if ! strace -qq -e trace=none true >/dev/null 2>&1; then
-    pass "$name"
-    return
+  # `set -e` used to abort the suite before retrieval-term cases ran. Do not
+  # record PASS without a successful probe.
+  if [[ "${PM_TEST_STRACE_UNUSABLE:-}" == 1 ]] \
+      || ! strace -qq -e trace=none true >/dev/null 2>&1; then
+    printf 'UNAVAILABLE: %s: strace cannot attach; source-time syscall contract not verified\n' "$name"
+    return 0
   fi
   for lib in "$REPO_ROOT"/runtime/lib/*.sh; do
     # The single-quoted child program must preserve $1 for bash -c, not expand
@@ -460,12 +462,28 @@ test_retrieval_terms_no_python_needed() {
   fi
 }
 
+# Behavior: a denied strace probe is reported unavailable, not passed.
+# Steps: force PM_TEST_STRACE_UNUSABLE=1 and require UNAVAILABLE without PASS.
+test_runtime_libraries_strace_unavailable_is_not_pass() {
+  local name="runtime-lib-coverage/strace-unavailable-is-not-pass" output
+  should_run "$name" || return 0
+  output="$(PM_TEST_STRACE_UNUSABLE=1 bash "$REPO_ROOT/tests/shell/test-runtime-lib-coverage.sh" \
+    --filter all-libraries-no-source-side-effects 2>&1)" || true
+  if [[ "$output" == *"UNAVAILABLE: runtime-lib-coverage/all-libraries-no-source-side-effects:"* \
+      && "$output" != *"PASS: runtime-lib-coverage/all-libraries-no-source-side-effects"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "output=$output"
+  fi
+}
+
 test_gate_workspace_override
 test_pmctl_config_loads_valid_values
 test_pmctl_config_rejects_legacy_global_memory
 test_identifier_policy_domains
 test_all_runtime_libraries_are_source_safe
 test_runtime_libraries_do_not_exec_on_source
+test_runtime_libraries_strace_unavailable_is_not_pass
 test_retrieval_terms_english
 test_retrieval_terms_hook_english_policy
 test_retrieval_terms_cjk_mixed
