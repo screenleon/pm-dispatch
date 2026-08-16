@@ -1780,6 +1780,8 @@ make_stats_fixture() {
   printf '%s' "$mdir"
 }
 
+# Behavior: with no usage sidecar every indexed card reports as never-hit and the report still succeeds.
+# Steps: build a 3-card fixture with no sidecar; run stats --json; assert counts, usage_store none, and zero-denominator percentages.
 case_memory_stats_no_usage_all_never_hit() {
   local name="pmctl memory stats: no usage sidecar → every card never-hit, exit 0"
   should_run "$name" || return 0
@@ -1801,6 +1803,8 @@ case_memory_stats_no_usage_all_never_hit() {
   pass "$name"
 }
 
+# Behavior: recorded sidecar accesses drive coverage, total_access, concentration, and recency buckets.
+# Steps: seed 3 accesses on card1 and 1 on card2; run stats --json; assert hit/never-hit split, totals, top5 share, and bucket placement.
 case_memory_stats_usage_hits_and_concentration() {
   local name="pmctl memory stats: sidecar hits drive coverage, total_access, and top5 share"
   should_run "$name" || return 0
@@ -1829,6 +1833,8 @@ case_memory_stats_usage_hits_and_concentration() {
   pass "$name"
 }
 
+# Behavior: two index lines linking one card count as two entries but one card for usage purposes.
+# Steps: index the same card file twice and record one access; run stats --json; assert index_entry_count 2, card_count 1, and un-inflated totals.
 case_memory_stats_duplicate_index_link_counted_once() {
   local name="pmctl memory stats: two index lines linking one card count as one card"
   should_run "$name" || return 0
@@ -1854,6 +1860,8 @@ case_memory_stats_duplicate_index_link_counted_once() {
   pass "$name"
 }
 
+# Behavior: the episode fill rate counts only summaries with non-whitespace content.
+# Steps: write 4 episodes of which one has real text; run stats --json; assert totals and a 25 percent fill rate.
 case_memory_stats_episode_fill_rate() {
   local name="pmctl memory stats: episode fill rate counts only non-whitespace summaries"
   should_run "$name" || return 0
@@ -1875,6 +1883,8 @@ case_memory_stats_episode_fill_rate() {
   pass "$name"
 }
 
+# Behavior: --never-hit-limit bounds the listed never-hit cards without capping the count.
+# Steps: build a 5-card fixture with no usage; run stats with limit 2 then 0; assert list length, uncapped count, and the truncation flag.
 case_memory_stats_never_hit_limit() {
   local name="pmctl memory stats: --never-hit-limit caps the list but not the count"
   should_run "$name" || return 0
@@ -1897,6 +1907,8 @@ case_memory_stats_never_hit_limit() {
   pass "$name"
 }
 
+# Behavior: a repo with no resolvable memory dir yields an empty but well-formed report.
+# Steps: point stats at a repo with no projects memory dir; run stats --json; assert exit 0 and zeroed counts.
 case_memory_stats_no_memory_dir() {
   local name="pmctl memory stats: no memory dir → empty report, exit 0"
   should_run "$name" || return 0
@@ -1910,6 +1922,8 @@ case_memory_stats_no_memory_dir() {
   pass "$name"
 }
 
+# Behavior: an unrecognized flag is a usage error rather than a silently ignored argument.
+# Steps: build a fixture; run stats with --frobnicate; assert exit 2.
 case_memory_stats_unknown_flag_exit2() {
   local name="pmctl memory stats: unknown flag → exit 2"
   should_run "$name" || return 0
@@ -1921,6 +1935,8 @@ case_memory_stats_unknown_flag_exit2() {
   if assert_exit "$name" "$status" 2; then pass "$name"; fi
 }
 
+# Behavior: --never-hit-limit rejects non-numeric and missing operands with the documented diagnostic.
+# Steps: run stats with a non-numeric limit then with no operand; assert exit 2 and the specific stderr message for each.
 case_memory_stats_bad_never_hit_limit_exit2() {
   local name="pmctl memory stats: non-numeric --never-hit-limit → exit 2 + error"
   should_run "$name" || return 0
@@ -1938,6 +1954,8 @@ case_memory_stats_bad_never_hit_limit_exit2() {
   pass "$name"
 }
 
+# Behavior: --help prints the usage contract and exits successfully.
+# Steps: run stats --help; capture stdout; assert exit 0 and that the usage line and --never-hit-limit appear.
 case_memory_stats_help_exit0() {
   local name="pmctl memory stats: --help → exit 0 + usage contract"
   should_run "$name" || return 0
@@ -1950,6 +1968,8 @@ case_memory_stats_help_exit0() {
   pass "$name"
 }
 
+# Behavior: an invalid PM_MEMORY_DIR fails closed in both output modes instead of reporting the legacy store.
+# Steps: create a fixture holding a sentinel card, run stats with a nonexistent PM_MEMORY_DIR in JSON then human mode; assert exit 1, resolution_issues fields, and no sentinel leak.
 case_memory_stats_invalid_env_selection_fails_closed() {
   local name="pmctl memory stats: invalid PM_MEMORY_DIR → exit 1, resolution_issues, no legacy fallback"
   should_run "$name" || return 0
@@ -1994,6 +2014,8 @@ case_memory_stats_invalid_env_selection_fails_closed() {
   pass "$name"
 }
 
+# Behavior: a configured memory_dir that does not exist fails closed rather than falling back.
+# Steps: write a project config naming a missing memory dir; run stats --json; assert exit 1, one resolution issue, and no legacy path in the output.
 case_memory_stats_invalid_config_selection_fails_closed() {
   local name="pmctl memory stats: invalid configured memory_dir → exit 1, no legacy fallback"
   should_run "$name" || return 0
@@ -2019,6 +2041,8 @@ case_memory_stats_invalid_config_selection_fails_closed() {
   pass "$name"
 }
 
+# Behavior: a tab in an indexed card path still yields parseable, value-preserving JSON.
+# Steps: index a card whose filename contains a tab; run stats --json; assert jq parses it and the name round-trips exactly.
 case_memory_stats_json_escapes_control_characters() {
   local name="pmctl memory stats: a tab in an indexed path stays valid, value-preserving JSON"
   should_run "$name" || return 0
@@ -2049,6 +2073,8 @@ case_memory_stats_json_escapes_control_characters() {
   pass "$name"
 }
 
+# Behavior: a corrupt usage sidecar reports usage_store error instead of a successful zero-activity report.
+# Steps: run stats with no sidecar, then corrupt the SQLite store and rerun; assert none versus error and the human-mode warning.
 case_memory_stats_unreadable_sidecar_is_not_zero_activity() {
   local name="pmctl memory stats: unreadable sidecar reports usage_store=error, not silent zero activity"
   should_run "$name" || return 0
@@ -2092,6 +2118,8 @@ case_memory_stats_unreadable_sidecar_is_not_zero_activity() {
   pass "$name"
 }
 
+# Behavior: the report names each card's own hit count and last-hit day, ordered most-hit first.
+# Steps: seed 3 accesses on card2 and 1 on card1; run stats --json and human; assert ordering, exact counts, and that --hit-limit does not alter totals.
 case_memory_stats_reports_per_card_hit_counts() {
   local name="pmctl memory stats: reports each card's hit count and last-hit day, most-hit first"
   should_run "$name" || return 0
@@ -2135,6 +2163,8 @@ case_memory_stats_reports_per_card_hit_counts() {
   pass "$name"
 }
 
+# Behavior: --hit-limit honors zero as no-cap and rejects missing, option-like, malformed, and oversized operands.
+# Steps: seed 3 hit cards; run stats with limit 0 then 1; then run the four invalid operand forms; assert list sizes, unchanged totals, and exit 2 with this command's own diagnostic.
 case_memory_stats_hit_limit_boundaries() {
   local name="pmctl memory stats: --hit-limit boundary contract (0, missing, option-like, malformed, oversized)"
   should_run "$name" || return 0
@@ -2191,6 +2221,8 @@ case_memory_stats_hit_limit_boundaries() {
   pass "$name"
 }
 
+# Behavior: hit rows order by count numerically, so a count past a fixed pad width cannot sort below a smaller one.
+# Steps: seed counts straddling the ten-digit boundary via the TSV sidecar; run stats --json; assert descending card order and the exact largest count.
 case_memory_stats_hit_rows_sort_numerically() {
   local name="pmctl memory stats: hit rows order by count numerically, not by a padded lexical key"
   should_run "$name" || return 0
@@ -2216,6 +2248,8 @@ case_memory_stats_hit_rows_sort_numerically() {
   pass "$name"
 }
 
+# Behavior: JSON output escapes C1 controls while leaving CJK card names intact.
+# Steps: place a C1-bearing orphan card beside an indexed CJK card; run stats and doctor with --json; assert no raw 0x9b byte, parseable JSON, and an exact CJK round-trip.
 case_memory_stats_json_escapes_c1_controls() {
   local name="pmctl memory stats --json: C1 controls are escaped and CJK card names survive"
   should_run "$name" || return 0
@@ -2262,6 +2296,8 @@ case_memory_stats_json_escapes_c1_controls() {
   pass "$name"
 }
 
+# Behavior: a card path the tab-delimited sidecar cannot represent reports as unmeasurable rather than never-hit.
+# Steps: index one tab-bearing card and one plain card; run stats --json; assert the tab card appears only under unmeasurable_cards.
 case_memory_stats_unrecordable_card_is_not_never_hit() {
   local name="pmctl memory stats: a tab-bearing card path is unmeasurable, not never-hit"
   should_run "$name" || return 0
@@ -2291,6 +2327,8 @@ case_memory_stats_unrecordable_card_is_not_never_hit() {
   pass "$name"
 }
 
+# Behavior: unparseable episode rows are counted and surfaced instead of being silently dropped.
+# Steps: write an episodes file with one valid and two malformed rows; run stats --json and human; assert the malformed count, status, and that a clean file reports zero malformed.
 case_memory_stats_malformed_episodes_are_not_zero_history() {
   local name="pmctl memory stats: malformed episode rows are counted, not silently dropped"
   should_run "$name" || return 0
@@ -2326,6 +2364,8 @@ case_memory_stats_malformed_episodes_are_not_zero_history() {
   pass "$name"
 }
 
+# Behavior: human output neutralizes C1 controls without mangling CJK card names.
+# Steps: place a C1-bearing orphan card beside an indexed CJK card; run doctor then stats in human mode; assert no raw 0x9b byte, an escaped form, and an intact CJK name.
 case_memory_human_output_neutralizes_c1_controls() {
   local name="pmctl memory stats/doctor: C1 controls are neutralized without mangling CJK names"
   should_run "$name" || return 0
@@ -2367,6 +2407,46 @@ case_memory_human_output_neutralizes_c1_controls() {
   pass "$name"
 }
 
+# Behavior: a newline inside a memory-derived path is escaped, never swallowed into a joined string.
+# Steps: source the library; escape a two-segment newline-bearing value in JSON and human form; assert each segment survives around an explicit escape.
+case_memory_escapers_preserve_embedded_newlines() {
+  local name="memory escapers: an embedded newline is escaped, not silently closed up"
+  should_run "$name" || return 0
+
+  # A newline is legal in a POSIX path. Both escapers run the value through awk,
+  # which consumes newlines as record separators — without re-emitting them,
+  # "a<NL>b" renders as "ab" and attributes data to an object that never existed.
+  # shellcheck source=runtime/lib/pmctl-memory.sh
+  # shellcheck disable=SC1091
+  . "$REPO_ROOT/runtime/lib/pmctl-memory.sh"
+
+  local got
+  got="$(_mem_json_esc $'a\nb')"
+  if [[ "$got" != 'a\nb' ]]; then
+    fail "$name" "json escaper produced [$got], expected [a\\nb]"
+    return 0
+  fi
+  got="$(_mem_human_safe $'a\nb')"
+  if [[ "$got" != 'a\x0ab' ]]; then
+    fail "$name" "human escaper produced [$got], expected [a\\x0ab]"
+    return 0
+  fi
+  # Ordinary and multi-byte values must be untouched by the separator handling.
+  got="$(_mem_json_esc 'plain.md')"
+  if [[ "$got" != 'plain.md' ]]; then
+    fail "$name" "json escaper altered a plain value: [$got]"
+    return 0
+  fi
+  got="$(_mem_json_esc '中文.md')"
+  if [[ "$got" != '中文.md' ]]; then
+    fail "$name" "json escaper mangled a CJK value: [$got]"
+    return 0
+  fi
+  pass "$name"
+}
+
+# Behavior: the shared memory readers on the prompt hook's path declare no bash 4.3 namerefs.
+# Steps: scan memory.sh, pmctl-memory.sh, and guard-inject-memory.sh; grep for nameref declarations; fail naming the offending file if any is found.
 case_memory_shared_readers_avoid_bash_43_namerefs() {
   local name="memory shared readers: no bash-4.3 namerefs in the hook's library path"
   should_run "$name" || return 0
@@ -2387,6 +2467,8 @@ case_memory_shared_readers_avoid_bash_43_namerefs() {
   pass "$name"
 }
 
+# Behavior: an option-like operand is treated as a missing value rather than a path.
+# Steps: run stats with --repo-root --json then --never-hit-limit --json; assert exit 2 and the requires-a-value diagnostic for each.
 case_memory_stats_option_like_operand_is_usage_error() {
   local name="pmctl memory stats: an option-like operand is a missing value, not a path"
   should_run "$name" || return 0
@@ -2405,6 +2487,8 @@ case_memory_stats_option_like_operand_is_usage_error() {
   pass "$name"
 }
 
+# Behavior: a numeric limit wider than a shell integer exits 2 with this command's diagnostic.
+# Steps: run stats with a 26-digit --never-hit-limit; assert exit 2, the non-negative-integer message, and no raw shell arithmetic error.
 case_memory_stats_oversized_limit_is_usage_error() {
   local name="pmctl memory stats: a numeric --never-hit-limit wider than a shell integer exits 2"
   should_run "$name" || return 0
@@ -2425,6 +2509,8 @@ case_memory_stats_oversized_limit_is_usage_error() {
   pass "$name"
 }
 
+# Behavior: human output renders ESC-bearing index paths as inert escaped text.
+# Steps: index a card whose filename embeds an OSC sequence; run stats then doctor in human mode; assert no raw ESC byte survives in either.
 case_memory_human_output_neutralizes_terminal_controls() {
   local name="pmctl memory stats/doctor: human output neutralizes terminal control sequences"
   should_run "$name" || return 0
@@ -2457,6 +2543,8 @@ case_memory_human_output_neutralizes_terminal_controls() {
   pass "$name"
 }
 
+# Behavior: last-hit bucket labels match the day boundaries memory_age_bucket actually applies.
+# Steps: seed five cards at 0, 5, 20, 60, and 200 days old via the TSV sidecar; run stats --json; assert exactly one card lands in each labeled bucket.
 case_memory_stats_age_buckets_match_frecency_boundaries() {
   local name="pmctl memory stats: last_hit bucket labels match memory_age_bucket's real boundaries"
   should_run "$name" || return 0
@@ -2492,6 +2580,8 @@ case_memory_stats_age_buckets_match_frecency_boundaries() {
   pass "$name"
 }
 
+# Behavior: the stats suite never mutates the developer's live project-memory directory.
+# Steps: fingerprint the live memory dir at suite start; compare it after the stats cases run; fail if the two differ.
 case_memory_stats_no_live_dir_mutation() {
   local name="pmctl memory stats suite: never mutates the live project-memory dir"
   should_run "$name" || return 0
@@ -2503,6 +2593,8 @@ case_memory_stats_no_live_dir_mutation() {
   fi
 }
 
+# Behavior: running stats writes nothing to the memory dir and accrues no synthetic access.
+# Steps: seed one access, fingerprint the memory dir, run stats --json, re-fingerprint; assert identical trees and an unchanged total_access.
 case_memory_stats_is_read_only() {
   local name="pmctl memory stats: does not write to the memory dir or the usage sidecar"
   should_run "$name" || return 0
@@ -2941,6 +3033,7 @@ case_memory_stats_invalid_config_selection_fails_closed
 case_memory_stats_json_escapes_control_characters
 case_memory_stats_unreadable_sidecar_is_not_zero_activity
 case_memory_shared_readers_avoid_bash_43_namerefs
+case_memory_escapers_preserve_embedded_newlines
 case_memory_stats_option_like_operand_is_usage_error
 case_memory_stats_oversized_limit_is_usage_error
 case_memory_human_output_neutralizes_terminal_controls

@@ -378,6 +378,10 @@ pmctl_memory_append_episode() {
 _mem_json_esc() {
   LC_ALL=C awk '
     function esc(b) { printf "\\u%04x", b }
+    # A newline is legal in a POSIX path, and awk consumes it as the record
+    # separator. Re-emit it in escaped form between records, or "a<NL>b" would
+    # be rendered as "ab" and silently attribute data to the wrong object.
+    NR > 1 { printf "\\n" }
     {
       n = length($0)
       for (i = 1; i <= n; i++) {
@@ -430,6 +434,9 @@ _mem_json_esc() {
 _mem_human_safe() {
   LC_ALL=C awk '
     function esc(b) { printf "\\x%02x", b }
+    # See _mem_json_esc: awk eats the newline record separator, so re-emit it
+    # escaped rather than concatenating two distinct path segments.
+    NR > 1 { printf "\\x0a" }
     {
       n = length($0)
       for (i = 1; i <= n; i++) {
