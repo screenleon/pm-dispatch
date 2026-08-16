@@ -6,6 +6,10 @@ set -euo pipefail
 
 # shellcheck disable=SC1091
 . "$(dirname "$0")/../lib/pmctl-memory.sh"
+if ! declare -F retrieval_extract_terms >/dev/null 2>&1; then
+  # shellcheck disable=SC1091
+  . "$(dirname "$0")/../lib/retrieval-terms.sh"
+fi
 
 MAX_INJECT_ENTRIES=20
 MAX_INJECT_BYTES=3000
@@ -71,13 +75,15 @@ done < <(grep '^- ' "$memory_path" 2>/dev/null) || true
 
 total_count="${#index_lines[@]}"
 
-# Extract prompt keywords: lowercase words of 4+ chars, sorted unique
+# Extract prompt keywords via the shared retrieval term lib (ASCII + CJK).
+# English policy stays pre-CC-465: length >= 4 and no stop-list filter.
+# CJK overlapping 2-grams come from the shared implementation.
 prompt_text=$(jq -r '.prompt // empty' "$_tmp" 2>/dev/null) || prompt_text=""
 prompt_kws=()
 if [[ -n "$prompt_text" ]]; then
   while IFS= read -r _kw; do
     [[ -n "$_kw" ]] && prompt_kws+=("$_kw")
-  done < <(printf '%s' "$prompt_text" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '\n' | awk 'length>=4' | sort -u)
+  done < <(retrieval_extract_terms "$prompt_text" 4 0)
 fi
 
 # Read a single-line YAML field from a card file's frontmatter block

@@ -33,6 +33,14 @@ if ! declare -F pm_config_load >/dev/null 2>&1; then
   . "$_CTX_LIB_DIR/pmctl-config.sh" 2>/dev/null || true
 fi
 
+# Shared ASCII + CJK term extraction (CC-465). Sourced as a leaf helper so
+# prompt-scan / reuse-scan and the memory inject hook cannot drift.
+if ! declare -F retrieval_extract_terms >/dev/null 2>&1; then
+  # shellcheck source=runtime/lib/retrieval-terms.sh
+  # shellcheck disable=SC1091
+  . "$_CTX_LIB_DIR/retrieval-terms.sh"
+fi
+
 # ── Path resolution ────────────────────────────────────────────────────────────
 
 _ctx_db_path() {
@@ -1079,18 +1087,12 @@ _ctx_emit_usage_event() {
 }
 
 # ── Term extraction from free-text description ────────────────────────────────
-# Outputs unique lower-case terms (≥ 3 chars, not stop words), one per line.
-# Isolated change seam — pmctl_context_pack and pmctl_context_reuse_scan
-# must not inline this logic.
+# Outputs unique lower-case terms (ASCII ≥ 3 chars, not stop words; CJK
+# overlapping 2-grams), one per line. Isolated change seam — callers must
+# not inline this logic; implementation lives in retrieval-terms.sh.
 
 _ctx_extract_terms() {
-  local desc="$1"
-  local stopwords=" a an and are as at be been by do for from has have he in is it its of on or that the to was were will with "
-  printf '%s\n' "$desc" \
-    | tr '[:upper:]' '[:lower:]' \
-    | tr -cs 'a-z0-9_' '\n' \
-    | awk -v sw="$stopwords" 'length($0) >= 3 && index(sw, " " $0 " ") == 0' \
-    | sort -u
+  retrieval_extract_terms "${1-}"
 }
 
 # ── Raw query result emitter (internal only) ───────────────────────────────────

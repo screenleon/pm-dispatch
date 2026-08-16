@@ -901,6 +901,76 @@ test_gtimeout_fallback_runs_suites() {
   fi
 }
 
+test_pr_gate_shard_default_timeout_is_2400() {
+  # Behavior: without an explicit override, test-pr-gate-shard-* uses 2400s.
+  # Steps: wrap timeout to log argv; run a pass-stub shard suite; assert 2400s.
+  local name="pr-gate-shard-default-timeout-is-2400"
+  local repo="$TMP_ROOT/$name" bin="$TMP_ROOT/$name-bin" log="$TMP_ROOT/$name.timeout-args"
+  local path out status=0 timeout_bin
+  make_fixture_repo "$repo"
+  write_pass_stubs "$repo"
+  timeout_bin="$(command -v timeout)"
+  mkdir -p "$bin"
+  printf '#!/bin/sh\nprintf %%s\\n "$*" >> %s\nexec %s "$@"\n' "$log" "$timeout_bin" > "$bin/timeout"
+  chmod +x "$bin/timeout"
+  printf '#!/bin/sh\nexit 0\n' > "$bin/codex"
+  chmod +x "$bin/codex"
+  path="$bin:$PATH"
+  out=$(PATH="$path" bash "$repo/tests/lib/test-suite-runner.sh" \
+    --suite test-pr-gate-shard-1 --jobs 1 2>&1) || status=$?
+  if [[ "$status" -eq 0 && -f "$log" && "$(cat "$log")" == *'2400s'* && "$(cat "$log")" != *'900s'* ]]; then
+    pass_case "$name"
+  else
+    fail_case "$name" "status=$status log=$(cat "$log" 2>/dev/null) out=$out"
+  fi
+}
+
+test_install_default_timeout_is_1800() {
+  # Behavior: without an explicit override, test-install uses 1800s.
+  # Steps: wrap timeout to log argv; run a pass-stub install suite; assert 1800s.
+  local name="install-default-timeout-is-1800"
+  local repo="$TMP_ROOT/$name" bin="$TMP_ROOT/$name-bin" log="$TMP_ROOT/$name.timeout-args"
+  local path out status=0 timeout_bin
+  make_fixture_repo "$repo"
+  write_pass_stubs "$repo"
+  timeout_bin="$(command -v timeout)"
+  mkdir -p "$bin"
+  printf '#!/bin/sh\nprintf %%s\\n "$*" >> %s\nexec %s "$@"\n' "$log" "$timeout_bin" > "$bin/timeout"
+  chmod +x "$bin/timeout"
+  path="$bin:$PATH"
+  out=$(PATH="$path" bash "$repo/tests/lib/test-suite-runner.sh" \
+    --suite test-install --jobs 1 2>&1) || status=$?
+  if [[ "$status" -eq 0 && -f "$log" && "$(cat "$log")" == *'1800s'* && "$(cat "$log")" != *'900s'* ]]; then
+    pass_case "$name"
+  else
+    fail_case "$name" "status=$status log=$(cat "$log" 2>/dev/null) out=$out"
+  fi
+}
+
+test_pr_gate_shard_explicit_timeout_overrides() {
+  # Behavior: --suite-timeout still applies to pr-gate shards (not 2400s).
+  # Steps: wrap timeout to log argv; run a pass-stub shard with --suite-timeout 30.
+  local name="pr-gate-shard-explicit-timeout-overrides"
+  local repo="$TMP_ROOT/$name" bin="$TMP_ROOT/$name-bin" log="$TMP_ROOT/$name.timeout-args"
+  local path out status=0 timeout_bin
+  make_fixture_repo "$repo"
+  write_pass_stubs "$repo"
+  timeout_bin="$(command -v timeout)"
+  mkdir -p "$bin"
+  printf '#!/bin/sh\nprintf %%s\\n "$*" >> %s\nexec %s "$@"\n' "$log" "$timeout_bin" > "$bin/timeout"
+  chmod +x "$bin/timeout"
+  printf '#!/bin/sh\nexit 0\n' > "$bin/codex"
+  chmod +x "$bin/codex"
+  path="$bin:$PATH"
+  out=$(PATH="$path" bash "$repo/tests/lib/test-suite-runner.sh" \
+    --suite test-pr-gate-shard-1 --jobs 1 --suite-timeout 30 2>&1) || status=$?
+  if [[ "$status" -eq 0 && -f "$log" && "$(cat "$log")" == *'30s'* && "$(cat "$log")" != *'2400s'* ]]; then
+    pass_case "$name"
+  else
+    fail_case "$name" "status=$status log=$(cat "$log" 2>/dev/null) out=$out"
+  fi
+}
+
 test_suite_timeout_fails_loudly() {
   # Behavior: a suite exceeding --suite-timeout is failed with an explicit timeout marker.
   # Steps: make lint-agents sleep past a one-second deadline; pass-stub every other suite;
@@ -1407,6 +1477,9 @@ test_suite_timeout_invalid_zero
 test_timeout_binary_missing_fails_loudly
 test_gtimeout_fallback_runs_suites
 test_suite_timeout_fails_loudly
+test_pr_gate_shard_default_timeout_is_2400
+test_install_default_timeout_is_1800
+test_pr_gate_shard_explicit_timeout_overrides
 test_suite_result_artifact_records_ordered_outcomes
 test_suite_result_artifact_records_timeout
 test_result_sinks_do_not_leak_into_suites

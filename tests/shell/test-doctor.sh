@@ -423,7 +423,10 @@ case_doctor_grok_missing_binary_warns() {
   write_manifest "$home"
   bin="$tmp_root/bin-grok-missing"
   mkdir -p "$bin"
-  for cmd in bash dirname pwd readlink uname jq sed grep awk python3 tr; do
+  # Intentionally bundled with CC-465: CJK term extraction must not reintroduce
+  # python3, and isolated PATH must not imply doctor still depends on it
+  # (removed from runtime in CC-104t).
+  for cmd in bash dirname pwd readlink uname jq sed grep awk tr; do
     link_cmd "$bin" "$cmd"
   done
   [[ -x "$bin/jq" ]] || { pass "$name (jq not available - skip)"; return; }
@@ -687,11 +690,13 @@ case_doctor_warn_only_exits_0() {
   # PATH without claude or codex -> those checks return WARN, not FAIL.
   bin="$tmp_root/bin-warn-only"
   mkdir -p "$bin"
-  for cmd in bash dirname pwd readlink uname jq sed grep awk python3 tr; do
+  # Intentionally bundled with CC-465: CJK term extraction must not reintroduce
+  # python3, and isolated PATH must not imply doctor still depends on it
+  # (removed from runtime in CC-104t).
+  for cmd in bash dirname pwd readlink uname jq sed grep awk tr; do
     link_cmd "$bin" "$cmd"
   done
   [[ -x "$bin/jq" ]] || { pass "$name (jq not available - skip)"; return; }
-  [[ -x "$bin/python3" ]] || { pass "$name (python3 not available - skip)"; return; }
   path="$bin"
 
   out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
@@ -2083,7 +2088,10 @@ case_doctor_codex_module_no_binary_degrades() {
   write_manifest "$home"
   bin="$tmp_root/bin-codex-degrade"
   mkdir -p "$bin"
-  for cmd in bash dirname pwd readlink uname jq sed grep awk python3 tr; do
+  # Intentionally bundled with CC-465: CJK term extraction must not reintroduce
+  # python3, and isolated PATH must not imply doctor still depends on it
+  # (removed from runtime in CC-104t).
+  for cmd in bash dirname pwd readlink uname jq sed grep awk tr; do
     link_cmd "$bin" "$cmd"
   done
   [[ -x "$bin/jq" ]] || { pass "$name (jq not available - skip)"; return; }

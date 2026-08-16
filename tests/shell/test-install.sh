@@ -941,7 +941,10 @@ test_doctor_pmctl_missing_reports_remediation() {
   local out status=0 bash_real
   mkdir -p "$home/.claude" "$bin"
   printf '{}\n' > "$home/.claude/settings.json"
-  for cmd in bash dirname pwd readlink uname jq sed grep awk python3 tr basename; do
+  # Intentionally bundled with CC-465: CJK term extraction must not reintroduce
+  # python3, and isolated PATH must not imply doctor still depends on it
+  # (removed from runtime in CC-104t).
+  for cmd in bash dirname pwd readlink uname jq sed grep awk tr basename; do
     link_existing_cmd "$bin" "$cmd"
   done
   bash_real="$(command -v bash)"

@@ -6052,7 +6052,7 @@ test_scope_manifest_large_expansion_uses_file_input() {
     for n in $(seq -w 1 64); do
       for symbol in $(seq -w 1 8); do
         printf 'scope_expansion_symbol_%s();\n' "$symbol"
-      done > "callers/call-${n}.ts"
+      done > "callers/${long_stem}-call-${n}.ts"
     done
     git add .
     git commit -q -m initial

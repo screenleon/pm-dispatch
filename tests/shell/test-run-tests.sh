@@ -99,6 +99,27 @@ case_memory_config_mapping_has_no_gap() {
   fi
 }
 
+# Behavior: --path runtime/lib/retrieval-terms.sh selects the three suites
+# declared in map_path plus the generic *.sh lint-scripts entry.
+# Steps: run the isolated planner against that path and assert the args log.
+case_retrieval_terms_mapping_selects_declared_suites() {
+  local name=retrieval-terms-mapping-selects-declared-suites repo out status=0 args
+  args="$TMP_ROOT/$name.args"
+  repo="$(make_fixture "$name")"
+  out=$(RUN_TESTS_ARGS_LOG="$args" "$repo/tests/bin/run-tests.sh" \
+    --path runtime/lib/retrieval-terms.sh 2>&1) || status=$?
+  if [[ "$status" -eq 0 ]] && grep -qx -- '--suite' "$args" &&
+     grep -qx 'lint-scripts' "$args" &&
+     grep -qx 'test-runtime-lib-coverage' "$args" &&
+     grep -qx 'test-guards' "$args" &&
+     grep -qx 'test-pmctl-context' "$args" &&
+     [[ "$out" == *"contract=iteration-only"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out args=$(cat "$args" 2>/dev/null)"
+  fi
+}
+
 # Behavior: every repository-owned ShellCheck version or installation contract
 # selects canonical lint plus the relevant toolchain and release regressions.
 # Steps: Arrange an isolated runner fixture; Act by listing each toolchain path
@@ -652,6 +673,7 @@ case_invalid_structured_sink_fails_closed() {
 
 case_direct_library_mapping
 case_memory_config_mapping_has_no_gap
+case_retrieval_terms_mapping_selects_declared_suites
 case_shellcheck_toolchain_mapping_is_complete
 case_adapter_manifest_mapping_covers_consumers
 case_install_receipt_mapping_covers_consumers
