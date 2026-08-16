@@ -1046,6 +1046,7 @@ pmctl_memory_stats() {
   fi
 
   local index_entry_count=0 card_count=0 index_inject_bytes=0
+  local unparsed_index_entries=0
   local -a card_rels=()
   local usage_store='none'
   local cards_with_hits=0 total_access=0 top5_access=0
@@ -1079,11 +1080,13 @@ pmctl_memory_stats() {
         index_inject_bytes=$(( index_inject_bytes + ${#line} + 1 ))
         rel=""
         [[ "$line" =~ $link_re ]] && rel="${BASH_REMATCH[2]}"
-        # An entry with no parseable link has no sidecar key; keep each such
-        # entry as its own (always never-hit) row rather than collapsing them.
+        # An entry with no parseable .md link has no sidecar key and is not a
+        # card. Counting it would put a non-card into card_count, inflate
+        # cards_never_hit, and depress hit_coverage_pct — a documented
+        # per-card metric quietly measuring something else. Report the count
+        # separately so the entry stays visible without polluting the ratio.
         if [[ -z "$rel" ]]; then
-          card_rels+=("")
-          card_count=$((card_count + 1))
+          unparsed_index_entries=$((unparsed_index_entries + 1))
           continue
         fi
         [[ -n "${seen_rel["$rel"]:-}" ]] && continue
@@ -1210,6 +1213,7 @@ _mem_stats_emit_json() {
   local out="{\"schema_version\":1"
   out+=",\"memory_dir\":\"$(_mem_json_esc "$mem_dir")\""
   out+=",\"index_entry_count\":$index_entry_count"
+  out+=",\"unparsed_index_entries\":$unparsed_index_entries"
   out+=",\"card_count\":$card_count"
   out+=",\"index_inject_bytes\":$index_inject_bytes"
   out+=",\"inject_budget_entries\":$MEMORY_MAX_INJECT_ENTRIES"
@@ -1250,6 +1254,9 @@ _mem_stats_emit_human() {
   fi
   printf 'memory_dir:            %s\n' "$(_mem_human_safe "$mem_dir")"
   printf 'index_entry_count:     %s\n' "$index_entry_count"
+  [[ "$unparsed_index_entries" -gt 0 ]] && \
+    printf 'unparsed_index_entries: %s (no parseable .md link — not counted as cards)\n' \
+      "$unparsed_index_entries"
   printf 'card_count:            %s\n' "$card_count"
   printf 'index_inject_bytes:    %s (budget %s bytes / %s entries per prompt)\n' \
     "$index_inject_bytes" "$MEMORY_MAX_INJECT_BYTES" "$MEMORY_MAX_INJECT_ENTRIES"

@@ -149,7 +149,9 @@ pmctl memory stats [--json] [--repo-root <path>] [--never-hit-limit <n>] [--hit-
 ```
 
 Report fields: `index_entry_count` (MEMORY.md index lines — the unit injection
-ranks), `card_count` (distinct linked card files — the unit the usage sidecar
+ranks), `unparsed_index_entries` (index lines with no parseable `.md` link;
+counted separately because they are not cards and must not enter the per-card
+ratios), `card_count` (distinct linked card files — the unit the usage sidecar
 keys on; two index lines pointing at one card count as one card),
 `index_inject_bytes` with `inject_budget_bytes` / `inject_budget_entries`,
 `usage_store` (`sqlite3` / `tsv` / `none` / `error`), `cards_with_hits`,

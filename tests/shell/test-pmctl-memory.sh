@@ -23,20 +23,19 @@ th_init "$@"
 export PM_DISPATCH_CONFIG_FILE="$tmp_root/no-operator-config"
 unset PM_MEMORY_DIR PM_CFG_MEMORY_DIR PM_CFG_MEMORY_DIR_INVALID PM_CFG_MEMORY_CONFIG_STATUS
 
-# Snapshot the developer's live project-memory dir up front (a read, for the
-# baseline) so a dedicated guard case proves the suite never MUTATES it — doctor
-# must stay read-only AND no case may accidentally point doctor at the live dir.
-# Every case operates on an isolated fixture under $tmp_root via a fake
-# CLAUDE_CONFIG_DIR.
+# Resolve the developer's live project-memory dir so cases can assert no fixture
+# run ever lands there. Every case operates on an isolated fixture under
+# $tmp_root via a fake CLAUDE_CONFIG_DIR.
+#
+# This is deliberately NOT used as a content-fingerprint mutation guard. Such a
+# guard cannot tell "a case in this suite wrote there" from "an unrelated
+# process did", and the prompt-injection hook writes the live usage sidecar on
+# every turn — so the assertion failed for reasons the suite does not control,
+# blocking on other people's activity. Read-only behavior is proven against
+# isolated fixtures instead (case_memory_doctor_is_read_only,
+# case_memory_stats_is_read_only), and resolution safety by
+# case_memory_commands_resolve_only_fixture_dirs.
 _LIVE_MEM_DIR="$(find_memory_dir "$REPO_ROOT" 2>/dev/null || true)"
-_live_mem_fingerprint() {
-  if [[ -n "$_LIVE_MEM_DIR" && -d "$_LIVE_MEM_DIR" ]]; then
-    find "$_LIVE_MEM_DIR" -type f -printf '%P:%s:%T@\n' 2>/dev/null | sort
-  else
-    printf 'ABSENT\n'
-  fi
-}
-_LIVE_MEM_BASELINE="$(_live_mem_fingerprint)"
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -1036,15 +1035,66 @@ case_memory_dir_no_mutation() {
   pass "$name"
 }
 
-case_memory_doctor_no_live_dir_mutation() {
-  local name="pmctl memory doctor suite: never mutates the live project-memory dir"
+# Behavior: memory commands under test resolve only into fixture directories, never the developer's live memory dir.
+# Steps: run doctor and stats against a fixture; read the memory_dir each reports; assert both are inside tmp_root and neither is the live dir.
+case_memory_commands_resolve_only_fixture_dirs() {
+  local name="pmctl memory doctor/stats: fixture runs resolve inside tmp_root, never the live memory dir"
   should_run "$name" || return 0
-  local now; now="$(_live_mem_fingerprint)"
-  if [[ "$now" == "$_LIVE_MEM_BASELINE" ]]; then
-    pass "$name"
-  else
-    fail "$name" "live memory dir changed during suite: baseline/now differ"
+
+  # This replaces a content-fingerprint guard over the live memory dir. That
+  # oracle could not distinguish "a case in this suite wrote there" from "an
+  # unrelated process did" — and the prompt-injection hook writes the live
+  # usage sidecar on every turn, so it failed for reasons the suite does not
+  # control. Assert the property that actually matters and is deterministic:
+  # a fixture run must never resolve to the live directory in the first place.
+  local cfg="$tmp_root/resolve-fixture-cfg" repo="$tmp_root/resolve-fixture-repo" mdir
+  mdir="$(make_stats_fixture "$cfg" "$repo" 1)"
+
+  local out dir
+  out="$tmp_root/resolve-fixture-doctor.json"
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory doctor --repo-root "$repo" --json > "$out" 2>/dev/null || true
+  dir="$(jq -r '.memory_dir // empty' "$out" 2>/dev/null || printf '')"
+  if [[ "$dir" != "$mdir" ]]; then
+    fail "$name" "doctor resolved [$dir], expected the fixture dir [$mdir]"
+    return 0
   fi
+
+  out="$tmp_root/resolve-fixture-stats.json"
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory stats --repo-root "$repo" --json > "$out" 2>/dev/null || true
+  dir="$(jq -r '.memory_dir // empty' "$out" 2>/dev/null || printf '')"
+  if [[ "$dir" != "$mdir" ]]; then
+    fail "$name" "stats resolved [$dir], expected the fixture dir [$mdir]"
+    return 0
+  fi
+
+  # And the live dir must not be reachable from tmp_root by construction.
+  if [[ -n "$_LIVE_MEM_DIR" && "$_LIVE_MEM_DIR" == "$tmp_root"/* ]]; then
+    fail "$name" "live memory dir resolves inside tmp_root: $_LIVE_MEM_DIR"
+    return 0
+  fi
+  pass "$name"
+}
+
+# Behavior: pmctl memory doctor writes nothing into the memory directory it inspects.
+# Steps: build a fixture with cards and episodes; fingerprint it; run doctor in both modes; assert the fingerprint is unchanged.
+case_memory_doctor_is_read_only() {
+  local name="pmctl memory doctor: does not write to the memory dir it inspects"
+  should_run "$name" || return 0
+
+  local cfg="$tmp_root/doc-ro-cfg" repo="$tmp_root/doc-ro-repo" mdir
+  mdir="$(make_stats_fixture "$cfg" "$repo" 2)"
+  printf '{"date":"2026-08-01","session_id":"a","summary":"x"}\n' > "$mdir/episodes.jsonl"
+
+  local before after
+  before="$(find "$mdir" -type f -printf '%P:%s\n' 2>/dev/null | sort)"
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory doctor --repo-root "$repo" --json >/dev/null 2>&1 || true
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory doctor --repo-root "$repo" >/dev/null 2>&1 || true
+  after="$(find "$mdir" -type f -printf '%P:%s\n' 2>/dev/null | sort)"
+  if [[ "$before" != "$after" ]]; then
+    fail "$name" "doctor mutated the memory dir it inspected"
+    return 0
+  fi
+  pass "$name"
 }
 
 # ── Shard cases ───────────────────────────────────────────────────────────────
@@ -2312,6 +2362,43 @@ case_memory_stats_json_escapes_c1_controls() {
   pass "$name"
 }
 
+# Behavior: an index entry with no parseable .md link is reported separately, not counted as a card.
+# Steps: index one valid card plus a malformed and a non-.md entry; run stats --json; assert card_count, coverage, and the separate unparsed count.
+case_memory_stats_unparsed_index_entries_excluded() {
+  local name="pmctl memory stats: unparseable index entries do not enter card_count or coverage"
+  should_run "$name" || return 0
+
+  # card_count is documented as distinct linked card FILES. Counting a non-card
+  # entry would inflate cards_never_hit and depress hit_coverage_pct, making a
+  # documented per-card ratio quietly measure something else.
+  local cfg="$tmp_root/st-unparsed-cfg" repo="$tmp_root/st-unparsed-repo" mdir
+  mkdir -p "$repo"
+  mdir="$(make_fixture_memory "$cfg" "$repo")"
+  write_compliant_card "$mdir/real.md" "real"
+  {
+    printf -- '- [Real](real.md) — hook\n'
+    printf -- '- [Notes](notes.txt) — a link that is not a card file\n'
+    printf -- '- [Broken] no link at all\n'
+  } > "$mdir/MEMORY.md"
+
+  local sidecar today
+  sidecar="$(memory_usage_sidecar_path "$mdir")"
+  today=$(( $(date +%s) / 86400 ))
+  memory_usage_commit "$sidecar" 100000 "$today" real.md >/dev/null
+
+  local out="$tmp_root/st-unparsed.json" status=0
+  run_stats_json "$out" "$cfg" "$repo" || status=$?
+  if ! assert_exit "$name" "$status" 0; then return 0; fi
+  assert_jq "$name" "$out" '.index_entry_count == 3' || return 0
+  assert_jq "$name" "$out" '.card_count == 1' || return 0
+  assert_jq "$name" "$out" '.unparsed_index_entries == 2' || return 0
+  # The one real card is hit, so coverage is a clean 100 percent.
+  assert_jq "$name" "$out" '.cards_with_hits == 1 and .cards_never_hit == 0' || return 0
+  assert_jq "$name" "$out" '.concentration.hit_coverage_pct == 100' || return 0
+  assert_jq "$name" "$out" '.never_hit_cards == []' || return 0
+  pass "$name"
+}
+
 # Behavior: a card path the tab-delimited sidecar cannot represent reports as unmeasurable rather than never-hit.
 # Steps: index one tab-bearing card and one plain card; run stats --json; assert the tab card appears only under unmeasurable_cards.
 case_memory_stats_unrecordable_card_is_not_never_hit() {
@@ -2681,19 +2768,6 @@ case_memory_stats_age_buckets_match_frecency_boundaries() {
     | .recent_0_4 == 1 and .recent_5_14 == 1 and .recent_15_31 == 1
       and .recent_32_90 == 1 and .older_90_plus == 1' || return 0
   pass "$name"
-}
-
-# Behavior: the stats suite never mutates the developer's live project-memory directory.
-# Steps: fingerprint the live memory dir at suite start; compare it after the stats cases run; fail if the two differ.
-case_memory_stats_no_live_dir_mutation() {
-  local name="pmctl memory stats suite: never mutates the live project-memory dir"
-  should_run "$name" || return 0
-  local now; now="$(_live_mem_fingerprint)"
-  if [[ "$now" == "$_LIVE_MEM_BASELINE" ]]; then
-    pass "$name"
-  else
-    fail "$name" "live memory dir changed during suite: baseline/now differ"
-  fi
 }
 
 # Behavior: running stats writes nothing to the memory dir and accrues no synthetic access.
@@ -3097,7 +3171,8 @@ case_memory_doctor_config_memory_dir_override
 case_memory_doctor_repo_refs_unsafe_path
 case_memory_doctor_fn_symbol_injection
 case_memory_doctor_fn_function_keyword_boundary
-case_memory_doctor_no_live_dir_mutation
+case_memory_commands_resolve_only_fixture_dirs
+case_memory_doctor_is_read_only
 case_memory_shard_below_limit
 case_memory_shard_above_limit
 case_memory_shard_idempotent
@@ -3148,8 +3223,8 @@ case_memory_stats_hit_limit_boundaries
 case_memory_stats_hit_rows_sort_numerically
 case_memory_stats_json_escapes_c1_controls
 case_memory_stats_unrecordable_card_is_not_never_hit
+case_memory_stats_unparsed_index_entries_excluded
 case_memory_stats_malformed_episodes_are_not_zero_history
 case_memory_stats_age_buckets_match_frecency_boundaries
-case_memory_stats_no_live_dir_mutation
 
 th_summary
