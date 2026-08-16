@@ -363,12 +363,32 @@ pmctl_memory_append_episode() {
   fi
 }
 
+# Escape a string for use inside a hand-built JSON string literal. JSON forbids
+# every unescaped control character, not just newline and carriage return, so a
+# path containing a tab (legal on POSIX filesystems) would otherwise emit a
+# document no parser accepts. Characters with a short escape get one; the rest
+# of the C0 range goes out as \u00XX.
 _mem_json_esc() {
   local s="$1"
   s="${s//\\/\\\\}"
   s="${s//\"/\\\"}"
   s="${s//$'\n'/\\n}"
   s="${s//$'\r'/\\r}"
+  s="${s//$'\t'/\\t}"
+  s="${s//$'\b'/\\b}"
+  s="${s//$'\f'/\\f}"
+  # The substitutions above have already turned their targets into two-character
+  # sequences, so anything still matching [[:cntrl:]] has no short form. Only pay
+  # for the per-character walk when such a character is actually present.
+  if [[ "$s" == *[[:cntrl:]]* ]]; then
+    local rebuilt="" i ch
+    for (( i = 0; i < ${#s}; i++ )); do
+      ch="${s:i:1}"
+      [[ "$ch" == [[:cntrl:]] ]] && printf -v ch '\\u%04x' "'$ch"
+      rebuilt+="$ch"
+    done
+    s="$rebuilt"
+  fi
   printf '%s' "$s"
 }
 
@@ -939,15 +959,18 @@ pmctl_memory_stats() {
     fi
     today_day=$(( $(date +%s) / 86400 ))
 
-    local -A usage_acc=() usage_last=()
-    memory_usage_load "$store" usage_acc usage_last
+    # A present-but-unreadable sidecar must not masquerade as "no activity":
+    # both produce zero rows, but only one of them is a fact about usage.
+    if ! memory_usage_load "$store"; then
+      usage_store='error'
+    fi
 
     # Only index-referenced cards count: a sidecar row for a deleted card is
     # not evidence that memory helped, and counting it would inflate coverage.
     local rel a bucket_idx
     for rel in ${card_rels[@]+"${card_rels[@]}"}; do
       a=0
-      [[ -n "$rel" ]] && a="${usage_acc["$rel"]:-0}"
+      [[ -n "$rel" ]] && a="${MEMORY_USAGE_ACC["$rel"]:-0}"
       if (( a > 0 )); then
         cards_with_hits=$((cards_with_hits + 1))
         total_access=$((total_access + a))
@@ -956,7 +979,7 @@ pmctl_memory_stats() {
         # day boundaries here, so the report cannot drift from the recency
         # weighting that frecency ranking actually applies.
         bucket_idx="$(_mem_stats_age_bucket_index \
-          "$(memory_age_bucket "$today_day" "${usage_last["$rel"]:-0}")")"
+          "$(memory_age_bucket "$today_day" "${MEMORY_USAGE_LAST["$rel"]:-0}")")"
         age_bucket_counts[bucket_idx]=$(( age_bucket_counts[bucket_idx] + 1 ))
       else
         never_hit+=("${rel:-<unlinked index entry>}")
@@ -1054,7 +1077,11 @@ _mem_stats_emit_human() {
   printf 'card_count:            %s\n' "$card_count"
   printf 'index_inject_bytes:    %s (budget %s bytes / %s entries per prompt)\n' \
     "$index_inject_bytes" "$MEMORY_MAX_INJECT_BYTES" "$MEMORY_MAX_INJECT_ENTRIES"
-  printf 'usage_store:           %s\n' "$usage_store"
+  if [[ "$usage_store" == 'error' ]]; then
+    printf 'usage_store:           error (sidecar present but unreadable — hit counts below are NOT evidence of no activity)\n'
+  else
+    printf 'usage_store:           %s\n' "$usage_store"
+  fi
   printf 'cards_with_hits:       %s\n' "$cards_with_hits"
   printf 'cards_never_hit:       %s\n' "$never_hit_count"
   printf 'total_access:          %s\n' "$total_access"
@@ -1209,6 +1236,12 @@ pmctl_memory_rebuild_summary() {
       n = split(summary, lines, "\\\\n")
       first_line = lines[1]
       gsub(/^[[:space:]]+|[[:space:]]+$/, "", first_line)
+
+      # Test emptiness AFTER trimming: a whitespace-only summary is an unfilled
+      # skeleton, not a logged episode. Checking before the trim would emit an
+      # empty bullet here while `pmctl memory stats` counted the same entry as
+      # unfilled — one concept, two answers.
+      if (first_line == "") next
 
       # Store: group[ym] += "- DATE: SUMMARY\n"; count[ym]++
       groups[ym] = groups[ym] "- " date ": " first_line "\n"

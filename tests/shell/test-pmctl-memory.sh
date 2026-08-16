@@ -1329,8 +1329,15 @@ case_memory_rebuild_summary_skips_empty_summary() {
   mdir="$(make_fixture_memory "$cfg" "$repo")"
 
   local ep="$mdir/episodes.jsonl"
-  printf '{"date":"2026-05-01","cwd":"%s","session_id":"a","summary":""}\n'         "$repo" >> "$ep"
-  printf '{"date":"2026-05-02","cwd":"%s","session_id":"b","summary":"real entry"}\n' "$repo" >> "$ep"
+  {
+    printf '{"date":"2026-05-01","cwd":"%s","session_id":"a","summary":""}\n'         "$repo"
+    printf '{"date":"2026-05-02","cwd":"%s","session_id":"b","summary":"real entry"}\n' "$repo"
+    # Whitespace-only and leading-blank-line skeletons are unfilled too. `pmctl
+    # memory stats` counts them as unfilled, so this generator must skip them —
+    # otherwise one concept has two answers and the summary gains empty bullets.
+    printf '{"date":"2026-05-03","cwd":"%s","session_id":"c","summary":"   "}\n'      "$repo"
+    printf '{"date":"2026-05-04","cwd":"%s","session_id":"d","summary":"\\n  "}\n'    "$repo"
+  } >> "$ep"
 
   local status=0
   CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory rebuild-summary --repo-root "$repo" >/dev/null 2>&1 || status=$?
@@ -1344,7 +1351,12 @@ case_memory_rebuild_summary_skips_empty_summary() {
   local entry_count
   entry_count="$(grep -c '^- ' "$summary")"
   if [[ "$entry_count" -ne 1 ]]; then
-    fail "$name" "expected 1 bullet (skeleton skipped), got $entry_count"
+    fail "$name" "expected 1 bullet (all skeleton forms skipped), got $entry_count: $(cat "$summary")"
+    return 0
+  fi
+  # No bullet may be emitted with an empty body.
+  if grep -qE '^- [0-9-]+: *$' "$summary"; then
+    fail "$name" "emitted an empty bullet: $(cat "$summary")"
     return 0
   fi
   pass "$name"
@@ -1938,6 +1950,166 @@ case_memory_stats_help_exit0() {
   pass "$name"
 }
 
+case_memory_stats_invalid_env_selection_fails_closed() {
+  local name="pmctl memory stats: invalid PM_MEMORY_DIR → exit 1, resolution_issues, no legacy fallback"
+  should_run "$name" || return 0
+
+  # A perfectly good legacy store exists at the conventional location. An
+  # explicit-but-invalid selection must NOT silently report it: that would make
+  # a misconfigured host look healthy while describing another project's memory.
+  local cfg="$tmp_root/st-badenv-cfg" repo="$tmp_root/st-badenv-repo" mdir
+  mdir="$(make_stats_fixture "$cfg" "$repo" 3)"
+  local sentinel="card2.md"
+
+  local out="$tmp_root/st-badenv.json" status=0
+  PM_MEMORY_DIR="$tmp_root/does-not-exist-anywhere" CLAUDE_CONFIG_DIR="$cfg" \
+    "$PMCTL" memory stats --repo-root "$repo" --json > "$out" 2>/dev/null || status=$?
+  if ! assert_exit "$name" "$status" 1; then return 0; fi
+  assert_jq "$name" "$out" '.schema_version == 1' || return 0
+  assert_jq "$name" "$out" '.memory_dir == ""' || return 0
+  assert_jq "$name" "$out" '(.resolution_issues | length) == 1' || return 0
+  assert_jq "$name" "$out" '.resolution_issues[0].reason | length > 0' || return 0
+  assert_jq "$name" "$out" '.resolution_issues[0] | has("source")' || return 0
+  # Fallback proof: nothing from the legacy store may appear in the report.
+  if grep -q "$sentinel" "$out" 2>/dev/null; then
+    fail "$name" "invalid explicit selection fell back to the legacy store: $(cat "$out")"
+    return 0
+  fi
+  if grep -qF "$mdir" "$out" 2>/dev/null; then
+    fail "$name" "invalid explicit selection leaked the legacy memory dir: $(cat "$out")"
+    return 0
+  fi
+
+  # Human mode must fail closed identically, not degrade into a normal report.
+  local hout="$tmp_root/st-badenv.txt" hstatus=0
+  PM_MEMORY_DIR="$tmp_root/does-not-exist-anywhere" CLAUDE_CONFIG_DIR="$cfg" \
+    "$PMCTL" memory stats --repo-root "$repo" > "$hout" 2>/dev/null || hstatus=$?
+  if ! assert_exit "$name" "$hstatus" 1; then return 0; fi
+  if ! assert_file_contains "$name" "$hout" 'invalid explicit configuration'; then return 0; fi
+  if ! assert_file_contains "$name" "$hout" 'resolution_issues'; then return 0; fi
+  if grep -q "$sentinel" "$hout" 2>/dev/null; then
+    fail "$name" "human mode fell back to the legacy store: $(cat "$hout")"
+    return 0
+  fi
+  pass "$name"
+}
+
+case_memory_stats_invalid_config_selection_fails_closed() {
+  local name="pmctl memory stats: invalid configured memory_dir → exit 1, no legacy fallback"
+  should_run "$name" || return 0
+
+  local cfg="$tmp_root/st-badcfg-cfg" repo="$tmp_root/st-badcfg-repo"
+  local fakehome="$tmp_root/st-badcfg-home" mdir
+  mdir="$(make_stats_fixture "$cfg" "$repo" 2)"
+  mkdir -p "$fakehome/.pm-dispatch"
+  # Config names a memory dir that does not exist — a matched-but-absent
+  # selection, which is distinct from "no configuration at all".
+  write_project_memory_config "$fakehome/.pm-dispatch/config" "$repo" \
+    "$tmp_root/st-badcfg-missing-target"
+
+  local out="$tmp_root/st-badcfg.json" status=0
+  PM_DISPATCH_CONFIG_FILE="$fakehome/.pm-dispatch/config" CLAUDE_CONFIG_DIR="$cfg" \
+    "$PMCTL" memory stats --repo-root "$repo" --json > "$out" 2>/dev/null || status=$?
+  if ! assert_exit "$name" "$status" 1; then return 0; fi
+  assert_jq "$name" "$out" '(.resolution_issues | length) == 1' || return 0
+  if grep -qF "$mdir" "$out" 2>/dev/null; then
+    fail "$name" "invalid configured selection fell back to the legacy store: $(cat "$out")"
+    return 0
+  fi
+  pass "$name"
+}
+
+case_memory_stats_json_escapes_control_characters() {
+  local name="pmctl memory stats: a tab in an indexed path stays valid, value-preserving JSON"
+  should_run "$name" || return 0
+
+  # Tabs are legal in POSIX filenames. A hand-built JSON emitter that only
+  # escapes \n and \r produces a document no parser accepts.
+  local cfg="$tmp_root/st-ctl-cfg" repo="$tmp_root/st-ctl-repo" mdir
+  mkdir -p "$repo"
+  mdir="$(make_fixture_memory "$cfg" "$repo")"
+  local tabbed=$'ta\tbbed.md'
+  write_compliant_card "$mdir/$tabbed" "tabbed"
+  printf -- '- [Tabbed](%s) — hook\n' "$tabbed" > "$mdir/MEMORY.md"
+
+  local out="$tmp_root/st-ctl.json" status=0
+  run_stats_json "$out" "$cfg" "$repo" || status=$?
+  if ! assert_exit "$name" "$status" 0; then return 0; fi
+  if [[ "$_HAVE_JQ" -eq 1 ]]; then
+    if ! jq -e . "$out" >/dev/null 2>&1; then
+      fail "$name" "emitted JSON is unparseable: $(cat "$out")"
+      return 0
+    fi
+    # Escaping must not corrupt the value — it round-trips to the exact name.
+    # jq reads \t in this filter as a real tab, so this compares against the
+    # literal filename, not against its escaped spelling.
+    assert_jq "$name" "$out" '.never_hit_cards[0] == "ta\tbbed.md"' || return 0
+  fi
+  pass "$name"
+}
+
+case_memory_stats_unreadable_sidecar_is_not_zero_activity() {
+  local name="pmctl memory stats: unreadable sidecar reports usage_store=error, not silent zero activity"
+  should_run "$name" || return 0
+
+  local cfg="$tmp_root/st-corrupt-cfg" repo="$tmp_root/st-corrupt-repo" mdir
+  mdir="$(make_stats_fixture "$cfg" "$repo" 2)"
+  mkdir -p "$mdir/.pm-dispatch"
+
+  # Absent sidecar first: this is a legitimate zero-activity report.
+  local absent="$tmp_root/st-absent.json" astatus=0
+  run_stats_json "$absent" "$cfg" "$repo" || astatus=$?
+  if ! assert_exit "$name" "$astatus" 0; then return 0; fi
+  assert_jq "$name" "$absent" '.usage_store == "none" and .cards_with_hits == 0' || return 0
+
+  # Now a present but unreadable store. Both cases yield zero rows; only one of
+  # them is evidence that the cards went unused.
+  local sidecar; sidecar="$(memory_usage_sidecar_path "$mdir")"
+  printf 'not a valid store\n' > "$sidecar"
+  chmod 000 "$sidecar" 2>/dev/null || true
+  # A test running as root can read a 000 file, so the unreadable case cannot be
+  # staged; skip rather than assert a condition the environment cannot produce.
+  if [[ -r "$sidecar" ]]; then
+    chmod 644 "$sidecar" 2>/dev/null || true
+    pass "$name"
+    return 0
+  fi
+
+  local out="$tmp_root/st-corrupt.json" status=0
+  run_stats_json "$out" "$cfg" "$repo" || status=$?
+  chmod 644 "$sidecar" 2>/dev/null || true
+  if ! assert_exit "$name" "$status" 0; then return 0; fi
+  assert_jq "$name" "$out" '.usage_store == "error"' || return 0
+
+  local hout="$tmp_root/st-corrupt.txt" hstatus=0
+  chmod 000 "$sidecar" 2>/dev/null || true
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory stats --repo-root "$repo" > "$hout" 2>/dev/null || hstatus=$?
+  chmod 644 "$sidecar" 2>/dev/null || true
+  if ! assert_exit "$name" "$hstatus" 0; then return 0; fi
+  if ! assert_file_contains "$name" "$hout" 'NOT evidence of no activity'; then return 0; fi
+  pass "$name"
+}
+
+case_memory_shared_readers_avoid_bash_43_namerefs() {
+  local name="memory shared readers: no bash-4.3 namerefs in the hook's library path"
+  should_run "$name" || return 0
+
+  # memory_usage_load originally took caller-named arrays via `local -n`, which
+  # requires bash 4.3 and would have been this repo's only such dependency —
+  # in a shared library sourced by the prompt hook. Pin the decision so it
+  # cannot creep back in unnoticed.
+  local f
+  for f in "$REPO_ROOT/runtime/lib/memory.sh" \
+           "$REPO_ROOT/runtime/lib/pmctl-memory.sh" \
+           "$REPO_ROOT/runtime/hooks/guard-inject-memory.sh"; do
+    if grep -nE '(local|declare|typeset)[[:space:]]+(-[A-Za-z]*n[A-Za-z]*)[[:space:]]' "$f" >/dev/null 2>&1; then
+      fail "$name" "nameref declaration found in $f: $(grep -nE '(local|declare|typeset)[[:space:]]+-[A-Za-z]*n[A-Za-z]*[[:space:]]' "$f")"
+      return 0
+    fi
+  done
+  pass "$name"
+}
+
 case_memory_stats_age_buckets_match_frecency_boundaries() {
   local name="pmctl memory stats: last_hit bucket labels match memory_age_bucket's real boundaries"
   should_run "$name" || return 0
@@ -2417,6 +2589,11 @@ case_memory_stats_unknown_flag_exit2
 case_memory_stats_bad_never_hit_limit_exit2
 case_memory_stats_help_exit0
 case_memory_stats_is_read_only
+case_memory_stats_invalid_env_selection_fails_closed
+case_memory_stats_invalid_config_selection_fails_closed
+case_memory_stats_json_escapes_control_characters
+case_memory_stats_unreadable_sidecar_is_not_zero_activity
+case_memory_shared_readers_avoid_bash_43_namerefs
 case_memory_stats_age_buckets_match_frecency_boundaries
 case_memory_stats_no_live_dir_mutation
 

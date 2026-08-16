@@ -56,9 +56,11 @@ memory_path="$memory_dir/MEMORY.md"
 # Load usage telemetry (read-only snapshot; ranking uses pre-access state).
 usage_sidecar=$(memory_usage_sidecar_path "$memory_dir")
 today_day=$(( $(date +%s) / 86400 ))
-declare -A _usage_acc=() _usage_last=()
-# memory_usage_load absorbs the absent-store and sqlite→legacy-TSV cases.
-memory_usage_load "$usage_sidecar" _usage_acc _usage_last
+# memory_usage_load absorbs the absent-store and sqlite→legacy-TSV cases and
+# publishes MEMORY_USAGE_ACC / MEMORY_USAGE_LAST. Ranking is best-effort: an
+# unreadable sidecar degrades to "no frecency signal" rather than failing the
+# prompt, so a read failure must not trip `set -e` here.
+memory_usage_load "$usage_sidecar" || true
 # Relpaths whose access_count should be incremented this run (keyword hits).
 usage_hits=()
 
@@ -138,9 +140,9 @@ for _line in "${index_lines[@]}"; do
     # cards. Clamp below the keyword weight so a hit always outranks a non-hit.
     frecency=0
     if [[ -n "$card_rel" ]]; then
-      _acc="${_usage_acc["$card_rel"]:-0}"
+      _acc="${MEMORY_USAGE_ACC["$card_rel"]:-0}"
       if (( _acc > 0 )); then
-        _bucket=$(memory_age_bucket "$today_day" "${_usage_last["$card_rel"]:-0}")
+        _bucket=$(memory_age_bucket "$today_day" "${MEMORY_USAGE_LAST["$card_rel"]:-0}")
         frecency=$(( _acc * _bucket ))
         (( frecency >= MEMORY_KEYWORD_WEIGHT )) && frecency=$(( MEMORY_KEYWORD_WEIGHT - 1 ))
       fi

@@ -10,6 +10,23 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Memory reports escape every JSON control character.** `pmctl memory doctor`
+  and `pmctl memory stats` build their JSON by hand and escaped only `\n` and
+  `\r`. A tab in a memory directory or card path — legal on POSIX filesystems —
+  produced a document no parser accepts. All characters with a short escape now
+  get one, and the rest of the C0 range is emitted as `\u00XX`.
+
+- **An unreadable usage sidecar is no longer reported as zero activity.**
+  `memory_usage_read` suppresses store errors, so a corrupt, locked, or
+  permission-denied sidecar previously rendered as a successful all-never-hit
+  report. `pmctl memory stats` now reports `usage_store: error` and says so in
+  human output; an absent sidecar remains a valid zero-activity report.
+
+- **`pmctl memory rebuild-summary` skips whitespace-only summaries.** It tested
+  emptiness before trimming, so a summary of only spaces produced an empty
+  bullet in `episodes.summary.md` while `pmctl memory stats` counted the same
+  entry as unfilled. Both now apply one rule.
+
 - **CJK-aware shared retrieval term extraction (CC-465).** Memory-injection
   ranking and context prompt/reuse scans each carried their own ASCII-only
   tokenizer, so CJK characters were treated as separators and dropped. For a

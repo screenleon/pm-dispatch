@@ -152,7 +152,7 @@ Report fields: `index_entry_count` (MEMORY.md index lines — the unit injection
 ranks), `card_count` (distinct linked card files — the unit the usage sidecar
 keys on; two index lines pointing at one card count as one card),
 `index_inject_bytes` with `inject_budget_bytes` / `inject_budget_entries`,
-`usage_store` (`sqlite3` / `tsv` / `none`), `cards_with_hits`,
+`usage_store` (`sqlite3` / `tsv` / `none` / `error`), `cards_with_hits`,
 `cards_never_hit`, `total_access`, a `concentration` block, `last_hit_buckets`
 (the same day boundaries `memory_age_bucket` uses for frecency, so the report
 and the ranking agree), `never_hit_cards`, `episodes_total`,
@@ -176,10 +176,17 @@ every prompt, ranking has no discrimination left and injection degrades into
 `top5_share_pct` close to `5 × 100 / cards_with_hits` (the perfectly flat
 value) is that failure, not health.
 
+`usage_store: error` means the sidecar exists but could not be read (corrupt,
+locked, or permission-denied). This is reported distinctly because an absent
+sidecar and an unreadable one both yield zero rows, but only the first is
+evidence that the cards went unused — silently collapsing the second into
+"no activity" would invite exactly the wrong retention decision.
+
 `episode_fill_rate_pct` counts only episodes whose `summary` has
 non-whitespace content. The Stop hook writes empty skeletons and `/mem-log`
 fills them in by hand, so a low fill rate means `/mem-distill`'s upstream is
-dry — a fact that was previously invisible.
+dry — a fact that was previously invisible. `pmctl memory rebuild-summary`
+applies the same emptiness rule, so one concept does not get two answers.
 
 ## Bootstrap-empty pattern for fork users
 
