@@ -118,8 +118,8 @@ test_runtime_libraries_do_not_exec_on_source() {
   for lib in "$REPO_ROOT"/runtime/lib/*.sh; do
     # The single-quoted child program must preserve $1 for bash -c, not expand
     # it in this test process.
-    # shellcheck disable=SC2016
     st=0
+    # shellcheck disable=SC2016
     trace="$(strace -f -qq -e trace=process,file bash -c '. "$1"' _ "$lib" 2>&1 >/dev/null)" || st=$?
     if [[ "$st" -ne 0 ]]; then
       fail "$name" "strace failed ($st) sourcing ${lib#"$REPO_ROOT"/}: $trace"

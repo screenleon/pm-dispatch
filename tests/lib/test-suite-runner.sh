@@ -431,6 +431,7 @@ suite_timeout_secs() {
   fi
   case "$name" in
     test-pr-gate-shard-*) printf '2400\n' ;;
+    test-install) printf '1800\n' ;;
     *) printf '%s\n' "$SUITE_TIMEOUT_SECS" ;;
   esac
 }

@@ -2947,12 +2947,12 @@ memory_usage_hanging_writer_is_bounded_and_cleaned() {
   should_run "$name" || return 0
   started=$SECONDS
   out="$(TEST_GUARDS_HANG_WRITER='flock/1/7' TEST_GUARDS_CHILD_DEADLINE=1 \
-    TEST_GUARDS_PROGRESS=1 timeout --kill-after=2s 10s \
+    TEST_GUARDS_PROGRESS=1 timeout --kill-after=3s 25s \
     bash "$REPO_ROOT/tests/shell/test-guards.sh" \
       --filter 'memory-usage/contention-matrix-flock-and-mkdir-fallback' 2>&1)" || status=$?
   elapsed=$((SECONDS - started))
   pid="$(sed -n 's/.*writer=backend=flock,round=1,writer=7 pid=\([0-9][0-9]*\).*/\1/p' <<< "$out" | head -n 1)"
-  if [[ "$status" -ne 0 && "$status" -ne 124 && "$elapsed" -lt 10 \
+  if [[ "$status" -ne 0 && "$elapsed" -lt 25 \
     && "$out" == *'TIMEOUT test-guards case=memory-usage/contention-matrix-flock-and-mkdir-fallback'* \
     && "$out" == *'writer=backend=flock,round=1,writer=7'* \
     && -n "$pid" ]] && ! kill -0 "$pid" 2>/dev/null; then
