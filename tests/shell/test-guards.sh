@@ -2060,14 +2060,14 @@ inject_hook_cjk_prompt_ranks_matching_card() {
   rm -rf "$dir"
 }
 
-inject_hook_three_char_keyword_ranks_matching_card() {
-  # CC-465: shared terms use min length 3 (hook used to require 4). A 3-char
-  # topic must outrank an unrelated card.
+inject_hook_three_char_english_does_not_promote() {
+  # Hook English policy stays pre-CC-465: a 3-char topic such as "api" must
+  # not outrank an unrelated card or record a usage hit.
   # Steps:
-  #   1. Two tier2 cards: card-a topics include "api", card-b is unrelated
-  #   2. Prompt contains only the 3-char word "api" plus stopwords
-  #   3. Assert card-a ranks above card-b
-  local name="inject-hook/three-char-keyword-ranks-matching-card" dir cwd mem payload output status pos_a pos_b
+  #   1. Two tier2 cards listed b then a; card-a topics include "api"
+  #   2. Prompt is "check the api" (only the 3-char topic could match)
+  #   3. Assert insertion order (card-b first) and no card-a usage row
+  local name="inject-hook/three-char-english-does-not-promote" dir cwd mem payload output status pos_a pos_b sidecar row
   should_run "$name" || return 0
   dir="$(mktemp -d)"
   cwd="$dir/workspace"
@@ -2083,14 +2083,55 @@ inject_hook_three_char_keyword_ranks_matching_card() {
   status=$?
   pos_a=$(printf '%s\n' "$output" | grep -n 'card-a' | cut -d: -f1 | head -1 || printf '0')
   pos_b=$(printf '%s\n' "$output" | grep -n 'card-b' | cut -d: -f1 | head -1 || printf '0')
-  if [[ "$status" == "0" && -n "$pos_a" && -n "$pos_b" && "$pos_a" -lt "$pos_b" ]]; then
+  sidecar="$(inject_usage_dump "$mem")"
+  row="$(grep '^card-a\.md' <<<"$sidecar" 2>/dev/null || true)"
+  if [[ "$status" == "0" && -n "$pos_a" && -n "$pos_b" \
+      && "$pos_b" -lt "$pos_a" && -z "$row" ]]; then
     PASS=$((PASS+1))
     [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
   else
     FAIL=$((FAIL+1))
     FAILED_CASES+=("$name")
-    printf '  FAIL  %s — exit=%s pos_a=%s pos_b=%s output=%q\n' \
-      "$name" "$status" "$pos_a" "$pos_b" "$output"
+    printf '  FAIL  %s — exit=%s pos_a=%s pos_b=%s row=%q output=%q\n' \
+      "$name" "$status" "$pos_a" "$pos_b" "$row" "$output"
+  fi
+  rm -rf "$dir"
+}
+
+inject_hook_former_stopword_still_ranks() {
+  # Hook English policy does not apply the shared stop list, so a former
+  # length>=4 stop-word topic such as "from" still promotes its card.
+  # Steps:
+  #   1. Two tier2 cards listed b then a; card-a topics include "from"
+  #   2. Prompt is "results from helper"
+  #   3. Assert card-a ranks first and records a usage access
+  local name="inject-hook/former-stopword-still-ranks" dir cwd mem payload output status pos_a pos_b sidecar row
+  should_run "$name" || return 0
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  encoded="$(inject_encoded_path "$cwd")"
+  mem="$dir/projects/$encoded/memory"
+  mkdir -p "$mem"
+  printf '# test\n- [card-b](card-b.md) — general card\n- [card-a](card-a.md) — specialized card\n' > "$mem/MEMORY.md"
+  printf -- '---\npriority: normal\nstatus: inactive\ntopics:\n  - unrelated\n---\nCard B\n' > "$mem/card-b.md"
+  printf -- '---\npriority: normal\nstatus: inactive\ntopics:\n  - from\n---\nCard A\n' > "$mem/card-a.md"
+  payload="{\"cwd\":\"$cwd\",\"prompt\":\"results from helper\"}"
+  output=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
+  status=$?
+  pos_a=$(printf '%s\n' "$output" | grep -n 'card-a' | cut -d: -f1 | head -1 || printf '0')
+  pos_b=$(printf '%s\n' "$output" | grep -n 'card-b' | cut -d: -f1 | head -1 || printf '0')
+  sidecar="$(inject_usage_dump "$mem")"
+  row="$(grep '^card-a\.md' <<<"$sidecar" 2>/dev/null || true)"
+  if [[ "$status" == "0" && -n "$pos_a" && -n "$pos_b" \
+      && "$pos_a" -lt "$pos_b" && "$row" == card-a.md$'\t'1$'\t'* ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s pos_a=%s pos_b=%s row=%q output=%q\n' \
+      "$name" "$status" "$pos_a" "$pos_b" "$row" "$output"
   fi
   rm -rf "$dir"
 }
@@ -3313,7 +3354,8 @@ inject_hook_threshold_at_boundary_emits_directive
 inject_hook_threshold_shows_directive
 inject_hook_always_priority_bypasses_budget
 inject_hook_prompt_aware_scoring
-inject_hook_three_char_keyword_ranks_matching_card
+inject_hook_three_char_english_does_not_promote
+inject_hook_former_stopword_still_ranks
 inject_hook_cjk_prompt_ranks_matching_card
 inject_hook_byte_cap_truncates_before_entry_cap
 inject_hook_default_home_fallback

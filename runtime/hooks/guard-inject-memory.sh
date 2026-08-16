@@ -76,14 +76,14 @@ done < <(grep '^- ' "$memory_path" 2>/dev/null) || true
 total_count="${#index_lines[@]}"
 
 # Extract prompt keywords via the shared retrieval term lib (ASCII + CJK).
-# ASCII min length is 3 with the shared stop list (this hook previously used
-# length>=4 and no stopwords).
+# English policy stays pre-CC-465: length >= 4 and no stop-list filter.
+# CJK overlapping 2-grams come from the shared implementation.
 prompt_text=$(jq -r '.prompt // empty' "$_tmp" 2>/dev/null) || prompt_text=""
 prompt_kws=()
 if [[ -n "$prompt_text" ]]; then
   while IFS= read -r _kw; do
     [[ -n "$_kw" ]] && prompt_kws+=("$_kw")
-  done < <(retrieval_extract_terms "$prompt_text")
+  done < <(retrieval_extract_terms "$prompt_text" 4 0)
 fi
 
 # Read a single-line YAML field from a card file's frontmatter block

@@ -137,6 +137,36 @@ test_retrieval_terms_english() {
   if [[ "$output" == "$expected" ]]; then pass "$name"; else fail "$name" "output=$output"; fi
 }
 
+# Behavior: hook English policy (min 4, no stop list) keeps length>=4 stop
+# words and drops 3-char tokens, including on the mixed CJK path.
+# Steps: extract the same sentence under defaults and under 4/0; assert
+# "api"/"the" vs "from"/"that" differ, and mixed CJK still emits 分析.
+test_retrieval_terms_hook_english_policy() {
+  local name="runtime-lib-coverage/retrieval-terms-hook-english-policy" default_out hook_out mixed
+  should_run "$name" || return 0
+  default_out="$(bash -c '
+    . "$1/runtime/lib/retrieval-terms.sh"
+    retrieval_extract_terms "check the api from that helper"
+  ' _ "$REPO_ROOT")"
+  hook_out="$(bash -c '
+    . "$1/runtime/lib/retrieval-terms.sh"
+    retrieval_extract_terms "check the api from that helper" 4 0
+  ' _ "$REPO_ROOT")"
+  mixed="$(bash -c '
+    . "$1/runtime/lib/retrieval-terms.sh"
+    retrieval_extract_terms "分析 from api 使用量" 4 0
+  ' _ "$REPO_ROOT")"
+  if [[ "$default_out" == *"api"* && "$default_out" != *$'\n'"from"$'\n'* \
+      && "$default_out" != *$'\n'"that"$'\n'* \
+      && "$hook_out" != *"api"* && "$hook_out" == *"from"* \
+      && "$hook_out" == *"that"* && "$hook_out" != *$'\n'"the"$'\n'* \
+      && "$mixed" == *"from"* && "$mixed" != *"api"* && "$mixed" == *"分析"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "default=$default_out hook=$hook_out mixed=$mixed"
+  fi
+}
+
 # Behavior: CJK runs become overlapping 2-grams; mixed English tokens survive.
 # Steps: extract "分析 token 使用量" and require token plus 分析/使用/用量.
 test_retrieval_terms_cjk_mixed() {
@@ -404,6 +434,7 @@ test_identifier_policy_domains
 test_all_runtime_libraries_are_source_safe
 test_runtime_libraries_do_not_exec_on_source
 test_retrieval_terms_english
+test_retrieval_terms_hook_english_policy
 test_retrieval_terms_cjk_mixed
 test_retrieval_terms_cjk_bigrams
 test_retrieval_terms_non_cjk_non_ascii_skips_cleanly

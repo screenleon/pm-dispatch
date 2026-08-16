@@ -16,17 +16,28 @@ RETRIEVAL_TERM_STOPWORDS="a an and are as at be been by do for from has have he 
 # from a genuine empty index.
 RETRIEVAL_TERM_MAX_BYTES=16384
 
-# retrieval_extract_terms <text>
+# retrieval_extract_terms <text> [ascii_min] [use_stopwords]
 #   Print unique lowercase terms, one per line, sorted.
-#   ASCII: [a-z0-9_]+ of length >= 3, minus the shared English stop list.
+#   ASCII default (context / reuse-scan): [a-z0-9_]+ of length >= 3, minus
+#   the shared English stop list.
+#   Optional ascii_min (positive integer, default 3) and use_stopwords
+#   (1/0, default 1) let the memory hook keep its pre-CC-465 English
+#   policy (min 4, no stop list) while sharing CJK extraction.
 #   CJK: overlapping 2-grams from each contiguous CJK/Hiragana/Katakana/Hangul
 #   run of length >= 2. Single-character runs are dropped (too noisy).
 #   FTS5 tokenization is intentionally not handled here.
 if ! declare -F retrieval_extract_terms >/dev/null 2>&1; then
 retrieval_extract_terms() {
   local text="${1-}"
+  local ascii_min="${2:-3}"
+  local use_stopwords="${3:-1}"
   local stopwords=" ${RETRIEVAL_TERM_STOPWORDS} "
   local nbytes
+  [[ "$ascii_min" =~ ^[1-9][0-9]*$ ]] || ascii_min=3
+  [[ "$use_stopwords" == 0 || "$use_stopwords" == 1 ]] || use_stopwords=1
+  if [[ "$use_stopwords" -eq 0 ]]; then
+    stopwords=" "
+  fi
   nbytes="$(printf '%s' "$text" | wc -c)"
   nbytes="${nbytes#"${nbytes%%[![:space:]]*}"}"
   nbytes="${nbytes%"${nbytes##*[![:space:]]}"}"
@@ -40,7 +51,8 @@ retrieval_extract_terms() {
     printf '%s\n' "$text" \
       | tr '[:upper:]' '[:lower:]' \
       | tr -cs 'a-z0-9_' '\n' \
-      | awk -v sw="$stopwords" 'length($0) >= 3 && index(sw, " " $0 " ") == 0' \
+      | awk -v sw="$stopwords" -v min="$ascii_min" \
+          'length($0) >= min && index(sw, " " $0 " ") == 0' \
       | LC_ALL=C sort -u
     return 0
   fi
@@ -49,7 +61,7 @@ retrieval_extract_terms() {
   printf '%s' "$text" \
     | tr '[:upper:]' '[:lower:]' \
     | od -An -tx1 -v \
-    | LC_ALL=C awk -v sw="$stopwords" '
+    | LC_ALL=C awk -v sw="$stopwords" -v min="$ascii_min" '
       function hexval(h,    n, i, c, v) {
         n = 0
         for (i = 1; i <= length(h); i++) {
@@ -70,7 +82,7 @@ retrieval_extract_terms() {
                (cp >= 44032 && cp <= 55215)
       }
       function flush_ascii() {
-        if (length(ascii) >= 3 && index(sw, " " ascii " ") == 0)
+        if (length(ascii) >= min && index(sw, " " ascii " ") == 0)
           seen[ascii] = 1
         ascii = ""
       }
