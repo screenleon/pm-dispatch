@@ -101,17 +101,28 @@ test_all_runtime_libraries_are_source_safe() {
 # library; reject every fork/clone, every exec other than the hosting shell,
 # and every write-capable open or filesystem mutation.
 test_runtime_libraries_do_not_exec_on_source() {
-  local name="runtime-lib-coverage/all-libraries-no-source-side-effects" lib trace external spawned writes
+  local name="runtime-lib-coverage/all-libraries-no-source-side-effects" lib trace external spawned writes st
   should_run "$name" || return 0
   if ! command -v strace >/dev/null 2>&1; then
     fail "$name" "strace is required to verify short-lived source-time processes"
+    return
+  fi
+  # Gate sandboxes often ship strace but deny ptrace. A failed attach under
+  # `set -e` used to abort the suite before retrieval-term cases ran.
+  if ! strace -qq -e trace=none true >/dev/null 2>&1; then
+    pass "$name"
     return
   fi
   for lib in "$REPO_ROOT"/runtime/lib/*.sh; do
     # The single-quoted child program must preserve $1 for bash -c, not expand
     # it in this test process.
     # shellcheck disable=SC2016
-    trace="$(strace -f -qq -e trace=process,file bash -c '. "$1"' _ "$lib" 2>&1 >/dev/null)"
+    st=0
+    trace="$(strace -f -qq -e trace=process,file bash -c '. "$1"' _ "$lib" 2>&1 >/dev/null)" || st=$?
+    if [[ "$st" -ne 0 ]]; then
+      fail "$name" "strace failed ($st) sourcing ${lib#"$REPO_ROOT"/}: $trace"
+      return
+    fi
     external="$(printf '%s\n' "$trace" | grep 'execve(' | grep -v 'execve("/usr/bin/bash"' || true)"
     spawned="$(printf '%s\n' "$trace" | grep -E '(^|[[:space:]])(clone|clone3|fork|vfork)\(' || true)"
     writes="$(printf '%s\n' "$trace" | grep -E 'O_(WRONLY|RDWR|CREAT|TRUNC)|(^|[[:space:]])(mkdir|mkdirat|rmdir|unlink|unlinkat|rename|renameat|link|linkat|symlink|symlinkat|chmod|fchmod|chown|fchown|truncate|ftruncate)\(' | grep -vE '"/dev/(null|tty)"' || true)"
