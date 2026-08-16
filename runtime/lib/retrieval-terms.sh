@@ -32,7 +32,7 @@ retrieval_extract_terms() {
   local ascii_min="${2:-3}"
   local use_stopwords="${3:-1}"
   local stopwords=" ${RETRIEVAL_TERM_STOPWORDS} "
-  local nbytes
+  local nbytes saved_lc
   [[ "$ascii_min" =~ ^[1-9][0-9]*$ ]] || ascii_min=3
   [[ "$use_stopwords" == 0 || "$use_stopwords" == 1 ]] || use_stopwords=1
   if [[ "$use_stopwords" -eq 0 ]]; then
@@ -44,7 +44,16 @@ retrieval_extract_terms() {
   if [[ "${nbytes:-0}" -gt "$RETRIEVAL_TERM_MAX_BYTES" ]]; then
     printf 'retrieval-terms: input truncated from %s bytes to %s bytes\n' \
       "$nbytes" "$RETRIEVAL_TERM_MAX_BYTES" >&2
-    text="$(printf '%s' "$text" | head -c "$RETRIEVAL_TERM_MAX_BYTES")"
+    # Byte-prefix under LC_ALL=C. Avoid `head -c` in a pipe: SIGPIPE can
+    # add a "Broken pipe" line after the intended diagnostic.
+    saved_lc="${LC_ALL-}"
+    LC_ALL=C
+    text="${text:0:$RETRIEVAL_TERM_MAX_BYTES}"
+    if [[ -n "$saved_lc" ]]; then
+      LC_ALL="$saved_lc"
+    else
+      unset LC_ALL
+    fi
   fi
   # ASCII-only: keep the pre-CC-465 tr/awk pipeline (hook-critical path).
   if ! LC_ALL=C printf '%s' "$text" | LC_ALL=C grep -q $'[\200-\377]'; then
@@ -78,7 +87,10 @@ retrieval_extract_terms() {
         return (cp >= 13312 && cp <= 19903) ||
                (cp >= 19968 && cp <= 40959) ||
                (cp >= 63744 && cp <= 64255) ||
-               (cp >= 12352 && cp <= 12543) ||
+               (cp >= 12353 && cp <= 12438) ||
+               (cp >= 12445 && cp <= 12446) ||
+               (cp >= 12449 && cp <= 12538) ||
+               (cp >= 12540 && cp <= 12542) ||
                (cp >= 44032 && cp <= 55215)
       }
       function flush_ascii() {

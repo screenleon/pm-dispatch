@@ -186,6 +186,23 @@ test_retrieval_terms_cjk_mixed() {
   fi
 }
 
+# Behavior: Japanese punctuation such as the Katakana middle dot splits
+# CJK runs; no emitted term contains the punctuation itself.
+# Steps: extract 分析・使用 and require 分析 plus 使用, with no ・.
+test_retrieval_terms_cjk_punctuation_splits_runs() {
+  local name="runtime-lib-coverage/retrieval-terms-cjk-punctuation-splits-runs" output
+  should_run "$name" || return 0
+  output="$(bash -c '
+    . "$1/runtime/lib/retrieval-terms.sh"
+    retrieval_extract_terms "分析・使用"
+  ' _ "$REPO_ROOT")"
+  if [[ "$output" == *"分析"* && "$output" == *"使用"* && "$output" != *"・"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "output=$output"
+  fi
+}
+
 # Behavior: a 5-character CJK run emits four overlapping bigrams and no unigram.
 # Steps: extract 關鍵詞管線 and compare against the exact sorted set.
 test_retrieval_terms_cjk_bigrams() {
@@ -298,36 +315,41 @@ test_retrieval_terms_truncates_past_byte_cap() {
 # Steps: prefix 分析, pad with 甲 past 16KiB, suffix 用量; assert 分析/甲甲 stay
 # and 用量 does not.
 test_retrieval_terms_truncates_cjk_past_byte_cap() {
-  local name="runtime-lib-coverage/retrieval-terms-truncates-cjk-past-byte-cap" output
+  local name="runtime-lib-coverage/retrieval-terms-truncates-cjk-past-byte-cap" output err
   should_run "$name" || return 0
+  err="$tmp_root/retrieval-terms-cjk-truncate.err"
   output="$(bash -c '
+    set -o pipefail
     . "$1/runtime/lib/retrieval-terms.sh"
     pad="$(printf "甲%.0s" {1..6000})"
     retrieval_extract_terms "分析${pad}用量"
-  ' _ "$REPO_ROOT")"
-  if [[ "$output" == *"分析"* && "$output" == *"甲甲"* && "$output" != *"用量"* ]]; then
+  ' _ "$REPO_ROOT" 2>"$err")"
+  if [[ "$output" == *"分析"* && "$output" == *"甲甲"* && "$output" != *"用量"* \
+      && "$(cat "$err")" == "retrieval-terms: input truncated from 18012 bytes to 16384 bytes" \
+      && "$(wc -l < "$err" | tr -d ' ')" == 1 ]]; then
     pass "$name"
   else
-    fail "$name" "output=$output"
+    fail "$name" "output=$output err=$(cat "$err")"
   fi
 }
 
-# Behavior: crossing RETRIEVAL_TERM_MAX_BYTES writes one stderr notice and
-# still keeps stdout to the prefix terms only.
-# Steps: extract a padded blob; assert stderr names both sizes and stdout
-# has the head token only.
+# Behavior: crossing RETRIEVAL_TERM_MAX_BYTES writes exactly one stderr
+# notice and still keeps stdout to the prefix terms only.
+# Steps: extract a padded blob; assert stderr is the single documented
+# line and stdout has the head token only.
 test_retrieval_terms_truncate_writes_stderr() {
   local name="runtime-lib-coverage/retrieval-terms-truncate-writes-stderr" output err
   should_run "$name" || return 0
   err="$tmp_root/retrieval-terms-truncate.err"
   output="$(bash -c '
+    set -o pipefail
     . "$1/runtime/lib/retrieval-terms.sh"
     blob="sentinel_head $(head -c 20000 /dev/zero | tr "\0" "z") sentinel_tail"
     retrieval_extract_terms "$blob"
   ' _ "$REPO_ROOT" 2>"$err")"
   if [[ "$output" == *"sentinel_head"* && "$output" != *"sentinel_tail"* \
-      && "$(cat "$err")" == *"input truncated from "* \
-      && "$(cat "$err")" == *"to 16384 bytes"* ]]; then
+      && "$(cat "$err")" == "retrieval-terms: input truncated from 20028 bytes to 16384 bytes" \
+      && "$(wc -l < "$err" | tr -d ' ')" == 1 ]]; then
     pass "$name"
   else
     fail "$name" "output=$output err=$(cat "$err")"
@@ -436,6 +458,7 @@ test_runtime_libraries_do_not_exec_on_source
 test_retrieval_terms_english
 test_retrieval_terms_hook_english_policy
 test_retrieval_terms_cjk_mixed
+test_retrieval_terms_cjk_punctuation_splits_runs
 test_retrieval_terms_cjk_bigrams
 test_retrieval_terms_non_cjk_non_ascii_skips_cleanly
 test_retrieval_terms_wrapper_parity
