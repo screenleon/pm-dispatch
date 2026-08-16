@@ -2260,11 +2260,22 @@ case_memory_stats_json_escapes_c1_controls() {
   local cfg="$tmp_root/st-jc1-cfg" repo="$tmp_root/st-jc1-repo" mdir
   mkdir -p "$repo"
   mdir="$(make_fixture_memory "$cfg" "$repo")"
-  local c1=$'a\x9b31mX.md'
+  # The stats path must actually RENDER a C1 value, or the assertions below are
+  # vacuous. A raw 0x9B is invalid UTF-8 and defeats bash's index-link regex, so
+  # such a card never reaches stats output at all. Index the UTF-8 encoding of
+  # the same code point (0xC2 0x9B) instead: it parses as a link, flows into
+  # never_hit_cards, and exercises the escaper's C1 branch for real. The raw
+  # byte is kept as an unindexed orphan so doctor still covers that form.
+  local c1raw=$'a\x9b31mX.md'
+  local c1utf=$'u\xc2\x9b31mX.md'
   local cjk=$'中文記憶卡.md'
-  write_compliant_card "$mdir/$c1" "c1"
+  write_compliant_card "$mdir/$c1raw" "c1raw"
+  write_compliant_card "$mdir/$c1utf" "c1utf"
   write_compliant_card "$mdir/$cjk" "cjk"
-  printf -- '- [CJK](%s) — hook\n' "$cjk" > "$mdir/MEMORY.md"
+  {
+    printf -- '- [C1](%s) — hook\n' "$c1utf"
+    printf -- '- [CJK](%s) — hook\n' "$cjk"
+  } > "$mdir/MEMORY.md"
 
   local out="$tmp_root/st-jc1.json" status=0
   run_stats_json "$out" "$cfg" "$repo" || status=$?
@@ -2280,7 +2291,12 @@ case_memory_stats_json_escapes_c1_controls() {
     fi
     # CJK must round-trip exactly; escaping its continuation bytes would corrupt it.
     assert_jq "$name" "$out" '.never_hit_cards | index("中文記憶卡.md") != null' || return 0
+    # The indexed C1 card is present, and jq decodes it back to the exact
+    # original bytes: escaped on the wire, value-preserving on read.
+    assert_jq "$name" "$out" '.never_hit_cards | index("u\u009b31mX.md") != null' || return 0
   fi
+  # The escape must be the literal \u009b sequence, not the raw code point.
+  if ! assert_file_contains "$name" "$out" '\u009b'; then return 0; fi
 
   # doctor shares the emitter and reports the C1 card as an orphan.
   local dout="$tmp_root/st-jc1-doctor.json"
@@ -2376,14 +2392,20 @@ case_memory_human_output_neutralizes_c1_controls() {
   local cfg="$tmp_root/st-c1-cfg" repo="$tmp_root/st-c1-repo" mdir
   mkdir -p "$repo"
   mdir="$(make_fixture_memory "$cfg" "$repo")"
-  local c1=$'a\x9b31mX.md'
+  local c1raw=$'a\x9b31mX.md'
+  local c1utf=$'u\xc2\x9b31mX.md'
   local cjk=$'中文記憶卡.md'
-  write_compliant_card "$mdir/$c1" "c1"
+  write_compliant_card "$mdir/$c1raw" "c1raw"
+  write_compliant_card "$mdir/$c1utf" "c1utf"
   write_compliant_card "$mdir/$cjk" "cjk"
-  # Only the CJK card is indexed. The C1 card reaches human output through
-  # doctor's orphan-card glob, which — unlike the index-link regex — carries the
-  # raw filename bytes straight to the terminal.
-  printf -- '- [CJK](%s) — hook\n' "$cjk" > "$mdir/MEMORY.md"
+  # Two C1 forms, two render paths. The raw 0x9B byte defeats bash's index-link
+  # regex, so it can only reach output through doctor's orphan-card glob; the
+  # UTF-8 encoding of the same code point parses as a link and so is the form
+  # that actually exercises the stats renderer.
+  {
+    printf -- '- [C1](%s) — hook\n' "$c1utf"
+    printf -- '- [CJK](%s) — hook\n' "$cjk"
+  } > "$mdir/MEMORY.md"
 
   local dout="$tmp_root/st-c1-doctor.txt"
   CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory doctor --repo-root "$repo" > "$dout" 2>/dev/null || true
