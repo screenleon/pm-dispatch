@@ -2110,6 +2110,76 @@ case_memory_shared_readers_avoid_bash_43_namerefs() {
   pass "$name"
 }
 
+case_memory_stats_option_like_operand_is_usage_error() {
+  local name="pmctl memory stats: an option-like operand is a missing value, not a path"
+  should_run "$name" || return 0
+
+  # `--repo-root --json` must not be parsed as a request to stat a repository
+  # literally named "--json"; that silently drops the caller's --json intent.
+  local err="$tmp_root/st-optlike.err" status=0
+  "$PMCTL" memory stats --repo-root --json > /dev/null 2>"$err" || status=$?
+  if ! assert_exit "$name" "$status" 2; then return 0; fi
+  if ! assert_file_contains "$name" "$err" '--repo-root requires a value'; then return 0; fi
+
+  local err2="$tmp_root/st-optlike2.err" status2=0
+  "$PMCTL" memory stats --never-hit-limit --json > /dev/null 2>"$err2" || status2=$?
+  if ! assert_exit "$name" "$status2" 2; then return 0; fi
+  if ! assert_file_contains "$name" "$err2" '--never-hit-limit requires a value'; then return 0; fi
+  pass "$name"
+}
+
+case_memory_stats_oversized_limit_is_usage_error() {
+  local name="pmctl memory stats: a numeric --never-hit-limit wider than a shell integer exits 2"
+  should_run "$name" || return 0
+
+  # Syntactically numeric but unrepresentable: without a width bound this
+  # reaches the arithmetic conversion and dies with a raw bash error instead of
+  # this command's documented usage-error contract.
+  local err="$tmp_root/st-bignum.err" status=0
+  "$PMCTL" memory stats --never-hit-limit 99999999999999999999999999 \
+    > /dev/null 2>"$err" || status=$?
+  if ! assert_exit "$name" "$status" 2; then return 0; fi
+  if ! assert_file_contains "$name" "$err" 'non-negative integer'; then return 0; fi
+  # The diagnostic must be this command's, not bash's arithmetic error.
+  if grep -qi 'value too great\|syntax error' "$err"; then
+    fail "$name" "leaked a raw shell arithmetic error: $(cat "$err")"
+    return 0
+  fi
+  pass "$name"
+}
+
+case_memory_human_output_neutralizes_terminal_controls() {
+  local name="pmctl memory stats/doctor: human output neutralizes terminal control sequences"
+  should_run "$name" || return 0
+
+  # Anyone who can add a MEMORY.md index entry could otherwise embed an OSC/ESC
+  # sequence that the reader's terminal executes when the report is displayed.
+  local cfg="$tmp_root/st-esc-cfg" repo="$tmp_root/st-esc-repo" mdir
+  mkdir -p "$repo"
+  mdir="$(make_fixture_memory "$cfg" "$repo")"
+  local evil=$'ev\x1b]0;pwned\x07il.md'
+  write_compliant_card "$mdir/$evil" "evil"
+  printf -- '- [Evil](%s) — hook\n' "$evil" > "$mdir/MEMORY.md"
+
+  local out="$tmp_root/st-esc.txt" status=0
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory stats --repo-root "$repo" > "$out" 2>/dev/null || status=$?
+  if ! assert_exit "$name" "$status" 0; then return 0; fi
+  if LC_ALL=C grep -q $'\x1b' "$out"; then
+    fail "$name" "stats human output retained an ESC byte"
+    return 0
+  fi
+  if ! assert_file_contains "$name" "$out" '\x1b'; then return 0; fi
+
+  # doctor renders the same index-derived data and must not be the soft spot.
+  local dout="$tmp_root/st-esc-doctor.txt"
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory doctor --repo-root "$repo" > "$dout" 2>/dev/null || true
+  if LC_ALL=C grep -q $'\x1b' "$dout"; then
+    fail "$name" "doctor human output retained an ESC byte"
+    return 0
+  fi
+  pass "$name"
+}
+
 case_memory_stats_age_buckets_match_frecency_boundaries() {
   local name="pmctl memory stats: last_hit bucket labels match memory_age_bucket's real boundaries"
   should_run "$name" || return 0
@@ -2594,6 +2664,9 @@ case_memory_stats_invalid_config_selection_fails_closed
 case_memory_stats_json_escapes_control_characters
 case_memory_stats_unreadable_sidecar_is_not_zero_activity
 case_memory_shared_readers_avoid_bash_43_namerefs
+case_memory_stats_option_like_operand_is_usage_error
+case_memory_stats_oversized_limit_is_usage_error
+case_memory_human_output_neutralizes_terminal_controls
 case_memory_stats_age_buckets_match_frecency_boundaries
 case_memory_stats_no_live_dir_mutation
 

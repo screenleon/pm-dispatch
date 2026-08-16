@@ -392,6 +392,23 @@ _mem_json_esc() {
   printf '%s' "$s"
 }
 
+# Render a memory-derived string safely for a terminal. Card paths and the
+# resolved memory dir reach human output verbatim, and anyone who can add a
+# MEMORY.md index entry (or name a directory) could otherwise embed ESC/OSC
+# sequences that the reader's terminal executes on display. JSON mode keeps the
+# raw value in its escaped form; only this presentation path is neutralized.
+_mem_human_safe() {
+  local s="$1"
+  [[ "$s" == *[[:cntrl:]]* ]] || { printf '%s' "$s"; return 0; }
+  local out="" i ch
+  for (( i = 0; i < ${#s}; i++ )); do
+    ch="${s:i:1}"
+    [[ "$ch" == [[:cntrl:]] ]] && printf -v ch '\\x%02x' "'$ch"
+    out+="$ch"
+  done
+  printf '%s' "$out"
+}
+
 # Portable byte size of a single file (0 if absent).
 _mem_file_bytes() {
   local f="$1"
@@ -743,7 +760,7 @@ _mem_json_missing_array() {
 
 # Emit the label-aligned human report. Reads doctor locals from caller's scope.
 _mem_doctor_emit_human() {
-  printf 'memory_dir:      %s\n' "$mem_dir"
+  printf 'memory_dir:      %s\n' "$(_mem_human_safe "$mem_dir")"
   printf 'entry_count:     %s\n' "$entry_count"
   printf 'memory_bytes:    %s\n' "$memory_bytes"
   printf 'episodes_bytes:  %s\n' "$episodes_bytes"
@@ -757,7 +774,8 @@ _mem_doctor_emit_human() {
     printf 'stale_repo_refs:\n'
     local i
     for ((i = 0; i < ${#stale_refs[@]}; i++)); do
-      printf '  - %s: %s\n' "${stale_cards[$i]}" "${stale_refs[$i]}"
+      printf '  - %s: %s\n' "$(_mem_human_safe "${stale_cards[$i]}")" \
+        "$(_mem_human_safe "${stale_refs[$i]}")"
     done
   fi
   if [[ "${#missing_field_cards[@]}" -eq 0 ]]; then
@@ -766,7 +784,8 @@ _mem_doctor_emit_human() {
     printf 'cards_missing_fields:\n'
     local j
     for ((j = 0; j < ${#missing_field_cards[@]}; j++)); do
-      printf '  - %s: %s\n' "${missing_field_cards[$j]}" "${missing_field_lists[$j]}"
+      printf '  - %s: %s\n' "$(_mem_human_safe "${missing_field_cards[$j]}")" \
+        "${missing_field_lists[$j]}"
     done
   fi
   printf 'issues_count:    %s\n' "$issues_count"
@@ -781,7 +800,7 @@ _mem_doctor_human_list() {
   printf '%s:\n' "$label"
   local item
   for item in "$@"; do
-    printf '  - %s\n' "$item"
+    printf '  - %s\n' "$(_mem_human_safe "$item")"
   done
 }
 
@@ -861,19 +880,26 @@ pmctl_memory_stats() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --json) json=1; shift ;;
+      # An option-like operand is a missing value, not a path: `--repo-root
+      # --json` must be a usage error rather than a request to stat a
+      # repository literally named "--json".
       --repo-root)
-        if [[ -z "${2:-}" ]]; then
+        if [[ -z "${2:-}" || "${2}" == --* ]]; then
           printf 'pmctl memory stats: --repo-root requires a value\n' >&2
           return 2
         fi
         repo_root="$2"; shift 2 ;;
       --never-hit-limit)
-        if [[ -z "${2:-}" ]]; then
+        if [[ -z "${2:-}" || "${2}" == --* ]]; then
           printf 'pmctl memory stats: --never-hit-limit requires a value\n' >&2
           return 2
         fi
-        if [[ ! "$2" =~ ^[0-9]+$ ]]; then
-          printf 'pmctl memory stats: --never-hit-limit must be a non-negative integer\n' >&2
+        # Bound the digit count as well as the character class: a syntactically
+        # numeric value wider than a shell integer would otherwise reach the
+        # arithmetic conversion and fail with a raw bash error instead of this
+        # command's documented usage-error contract.
+        if [[ ! "$2" =~ ^[0-9]{1,18}$ ]]; then
+          printf 'pmctl memory stats: --never-hit-limit must be a non-negative integer of at most 18 digits\n' >&2
           return 2
         fi
         never_hit_limit="$((10#$2))"; shift 2 ;;
@@ -1072,7 +1098,7 @@ _mem_stats_emit_human() {
     printf 'card_count:            0\n'
     return 0
   fi
-  printf 'memory_dir:            %s\n' "$mem_dir"
+  printf 'memory_dir:            %s\n' "$(_mem_human_safe "$mem_dir")"
   printf 'index_entry_count:     %s\n' "$index_entry_count"
   printf 'card_count:            %s\n' "$card_count"
   printf 'index_inject_bytes:    %s (budget %s bytes / %s entries per prompt)\n' \
@@ -1099,7 +1125,7 @@ _mem_stats_emit_human() {
     printf 'never_hit_cards:\n'
     local item
     for item in ${never_hit_listed[@]+"${never_hit_listed[@]}"}; do
-      printf '  - %s\n' "$item"
+      printf '  - %s\n' "$(_mem_human_safe "$item")"
     done
     [[ "$never_hit_truncated" == true ]] && \
       printf '  (%s more — raise --never-hit-limit to list them)\n' \

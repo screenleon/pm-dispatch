@@ -10,6 +10,14 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Memory human output neutralizes terminal control sequences.**
+  `pmctl memory stats` and `pmctl memory doctor` printed index-derived card
+  paths and the resolved memory directory verbatim, so anyone able to add a
+  MEMORY.md entry (or name a directory) could embed ESC/OSC sequences that the
+  reader's terminal executes on display. Control characters are now rendered as
+  inert `\xNN` text in human mode; JSON mode keeps the exact value in its
+  escaped form.
+
 - **Memory reports escape every JSON control character.** `pmctl memory doctor`
   and `pmctl memory stats` build their JSON by hand and escaped only `\n` and
   `\r`. A tab in a memory directory or card path — legal on POSIX filesystems —
