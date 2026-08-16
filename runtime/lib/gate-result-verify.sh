@@ -294,6 +294,75 @@ _gate_reviewer_protocol_document_verify() {
       then "<missing>"
       else (tostring | tojson | .[1:-1])
       end;
+    # Name the exact test-gap row and constraint that failed, the way
+    # blocking_severity_violation already does for findings. A reviewer told
+    # only "invalid test-gap matrix contract" cannot tell which of ~10
+    # constraints it broke, so its one retry tends to reproduce the same class
+    # of error — repeatedly seen as a value borrowed from a SIBLING enum
+    # (`missing_layer`/`contract` values placed in `coverage_dimensions`).
+    # Reporting the field, the offending value, and the permitted set turns a
+    # wasted retry into a correctable one.
+    def test_gap_dimension_vocabulary:
+      ["happy","boundary","negative","regression",
+       "concurrency","security","migration","rollback"];
+    def test_gap_layer_vocabulary:
+      ["unit","integration","contract","e2e","manual","operational"];
+    def test_gaps_array:
+      if (.test_gaps | type) == "array" then .test_gaps else [] end;
+    def test_gap_violation:
+      [test_gaps_array[] | select(test_gap | not) |
+        . as $row |
+        (   if ($row.reviewer != $reviewer)
+            then "reviewer=" + ($row.reviewer | display) +
+                 " must equal " + $reviewer
+            elif (($row.id | type) != "string" or
+                  ($row.id | test("^" + $reviewer + "-TG[0-9]{3}$") | not))
+            then "id=" + ($row.id | display) +
+                 " must match " + $reviewer + "-TG###"
+            elif (($row.status | IN("gap","no_gap")) | not)
+            then "status=" + ($row.status | display) +
+                 " must be one of: gap, no_gap"
+            elif (($row.coverage_dimensions | type) != "array" or
+                  ($row.coverage_dimensions | length) == 0)
+            then "coverage_dimensions must be a non-empty array"
+            elif ([$row.coverage_dimensions[] |
+                   select(IN(test_gap_dimension_vocabulary[]) | not)] |
+                  length) > 0
+            then ([$row.coverage_dimensions[] |
+                   select(IN(test_gap_dimension_vocabulary[]) | not)] |
+                  join(", ")) as $bad |
+                 "coverage_dimensions contains " + $bad +
+                 " — permitted values are: " +
+                 (test_gap_dimension_vocabulary | join(", ")) +
+                 " (note: unit/integration/contract/e2e/manual/operational are" +
+                 " missing_layer values, not coverage_dimensions)"
+            elif (($row.coverage_dimensions | length) !=
+                  ($row.coverage_dimensions | unique | length))
+            then "coverage_dimensions must not repeat a value"
+            elif ($row.status == "gap" and
+                  (($row.missing_layer | IN(test_gap_layer_vocabulary[])) | not))
+            then "missing_layer=" + ($row.missing_layer | display) +
+                 " must be one of: " + (test_gap_layer_vocabulary | join(", "))
+            elif ($row.status == "no_gap" and $row.missing_layer != "none")
+            then "missing_layer=" + ($row.missing_layer | display) +
+                 " must be \"none\" when status=no_gap"
+            elif ($row.status == "no_gap" and
+                  [$row.scenario, $row.oracle, $row.failure_signal,
+                   $row.suggested_command] != [null, null, null, null])
+            then "scenario/oracle/failure_signal/suggested_command must all be" +
+                 " null when status=no_gap"
+            elif ($row.status == "gap" and
+                  [$row.scenario, $row.oracle, $row.failure_signal,
+                   $row.suggested_command] | any(. == null or . == ""))
+            then "scenario, oracle, failure_signal, and suggested_command are" +
+                 " all required when status=gap"
+            elif (($row.existing_evidence | type) != "array" or
+                  ($row.existing_evidence | length) == 0)
+            then "existing_evidence must be a non-empty array"
+            else "row does not satisfy the test-gap contract"
+            end) as $reason |
+        {id: $row.id, reason: $reason}
+      ] | first;
     def verdict_contract:
       (.verdict | IN("approve","advise","block-soft","block")) and
         (.rationale | nonempty) and
@@ -333,7 +402,12 @@ _gate_reviewer_protocol_document_verify() {
     elif (finding_contract | not)
     then "invalid finding contract"
     elif (test_gap_contract | not)
-    then "invalid test-gap matrix contract"
+    then (test_gap_violation as $invalid |
+      if $invalid == null
+      then "invalid test-gap matrix contract"
+      else "invalid test-gap matrix contract: " + ($invalid.id | display) +
+        ": " + $invalid.reason
+      end)
     elif (finding_test_gap_contract | not)
     then "finding lacks actionable test-gap row"
     elif $references != null and (evidence_reference_contract | not)

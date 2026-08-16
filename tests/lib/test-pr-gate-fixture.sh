@@ -170,6 +170,10 @@ pr_gate_fixture_write_reviewer_protocol() {
       elif $mutation == "missing-test-gap" then del(.test_gaps)
       elif $mutation == "malformed-test-gap"
       then .test_gaps[0].coverage_dimensions = []
+      # Observed repeatedly from real reviewers: a value borrowed from the
+      # sibling missing_layer enum placed into coverage_dimensions.
+      elif $mutation == "sibling-enum-test-gap"
+      then .test_gaps[0].coverage_dimensions = ["regression", "integration"]
       elif $mutation == "wrong-subject"
       then .scope_manifest_sha256 = ("b" * 64)
       elif $mutation == "test-gap"

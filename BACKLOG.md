@@ -65,6 +65,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-543 | ✅ done | Full test runner Phase 0 fail-fast structural precheck；`--collect-all` 保留 release 全證據路徑 | ops/test | 2026-08-04 | pr:#465 | P2 | hygiene |
 | CC-545 | ✅ done | Reviewer evidence-reference-contract INCOMPLETE 的單次修正性重派：僅限該單一違規類別，附具體錯誤引用重跑違規 reviewer，不必整輪 gate（30-40 分鐘）重來 | ops/gate | 2026-08-06 | pr:#465 | P2 | hygiene |
 | CC-546 | ⏸ deferred | standalone Gate distribution／copy parity follow-up：獨立定義 bundle schema、generation、installed parity 與 support boundary；不回併 Linux/WSL2 canonical module extraction | arch/gate | 2026-08-14 | — | P2 | reuse-debt |
+| CC-549 | 🔵 active | Gate reviewer-protocol 診斷可修正性：test-gap 契約錯誤點名違規欄位／值／允許集合，且 retryable 分類改比對 reason stem（帶明細的 reason 先前一律被判為不可重試） | ops/gate | 2026-08-17 | — | P2 | hygiene |
 | CC-548 | 🔵 active | context.db FTS5 對 CJK 查詢無索引無排序（[[CC-465]] Requirement 3 殘留）：先 spike 驗 `tokenize='trigram'` 的 sqlite 版本下限與 index rebuild 成本，再決定是否實作 | memory | 2026-08-16 | — | P2 | retrieval |
 | CC-465 | ✅ done | memory/context 關鍵詞管線 CJK 支援：抽出共用零依賴斷詞 lib，取代兩處各自 ASCII-only 抽詞；FTS5 tokenizer 殘留另立 [[CC-548]]；工作序列起點（465→467→468→466） | memory | 2026-07-07 | pr:#485 | P2 | retrieval |
 | CC-466 | ⏸ deferred | 記憶卡片生命週期閉環：expires_at 執行 + 關窗式 supersede + usage sidecar 休眠偵測 + doctor→distill 接線；僅在 CC-467 證明 stale/dormant card 已形成實際問題時啟動 | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
@@ -383,6 +384,36 @@ lib 分離的關注點，允許各自的修復時程與驗收」轉由 [[CC-548]
 4. 既有英文行為不變；回歸測試涵蓋純英文、中英混合、純中文三類輸入，並驗證兩個呼叫端遷移至共用 lib 後行為一致。
 
 **Cross-link**: [[CC-340]]（deferred；本票是非 embedding 的分詞修正，非其替代）。**工作序列**：本票是 CC-465 → CC-467 → CC-468 → CC-466 序列化工作串的起點——CJK 抽詞先修好，統計可視化與 brief 約束萃取才有可信賴的中文訊號可用。
+
+---
+
+## CC-549 — Gate reviewer-protocol 診斷可修正性 🔵 active
+
+**Problem**: reviewer 送出不合契約的 `test_gaps` 時，gate 只回報
+`invalid test-gap matrix contract`——涵蓋約 10 條約束的單一字串。reviewer 因此
+不知道自己違反哪一條，唯一一次 corrective retry 往往重犯同類錯誤，整輪 gate
+（約 20 分鐘、4–5 個 reviewer dispatch）就此作廢。實測三筆真實失敗全部是同一個
+根因：把**兄弟 enum** 的值放進 `coverage_dimensions`（`integration`／`contract`
+是 `missing_layer` 的合法值、`operational` 亦然）。第二個缺陷更隱蔽：
+`pr-gate.sh` 以**整串相等**比對 retryable reason 清單，而 verifier 對
+`invalid finding contract` 這類 reason 早已附加 `": <明細>"`——**越是可修正的
+診斷，越不會被重試**。
+
+**Why**: 這不是排版問題而是可修正性問題。retry 機制存在的前提是「reviewer 拿到
+足夠資訊就能自我修正」；不點名違規值等於讓 retry 淪為抽籤。第二個缺陷則讓既有的
+精確診斷（`blocking_severity_violation` 早就會點名 id 與值）反而喪失重試機會，
+與該診斷的設計意圖相反。
+
+**Requirement**:
+1. test-gap 契約失敗時，回報違規 row 的 id、欄位、實際值與允許集合；若該值屬於
+   兄弟 enum，明確指出（`missing_layer` vs `coverage_dimensions`）。沿用
+   `blocking_severity_violation` 既有的精確診斷模式，不另立風格。
+2. retryable 分類改為比對 reason stem（`"<stem>:"` 前綴），使帶明細的 reason
+   維持可重試；冒號讓前綴不致誤配其他 reason。
+3. 回歸測試以 mutation 驗證：還原前綴比對必須使重試測試失敗。
+
+**Cross-link**: 與 [[CC-545]]（單次修正性重派）同屬 reviewer-protocol 可恢復性
+線；本票補的是「重派時給得出可修正資訊」這一半。
 
 ---
 

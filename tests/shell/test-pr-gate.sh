@@ -11152,6 +11152,74 @@ test_parallel_reviewer_protocol_evidence_contract_retry_still_fails() {
   pass "$name"
 }
 
+# Behavior: a detailed reviewer-contract reason stays retryable, so appending a
+# specific diagnostic never silently declassifies a correctable failure.
+# Steps: make architecture-reviewer emit a blocking finding with medium severity
+# (a reason the verifier reports with an appended detail); assert the gate
+# retries rather than stopping at INCOMPLETE.
+test_parallel_reviewer_detailed_reason_is_retryable() {
+  local name="reviewer-protocol/detailed-reason-stays-retryable"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home="$TMP_ROOT/$name/home"
+  local repo="$TMP_ROOT/$name/repo" runner="$TMP_ROOT/$name/runner"
+  local out="$TMP_ROOT/$name/out" err="$TMP_ROOT/$name/err" code=0
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer
+  create_repo "$repo" docs
+  set +e
+  CODEX_GATE_STUB_VERDICT=block-soft \
+    CODEX_GATE_STUB_PROTOCOL_MUTATION=blocking-medium-severity \
+    CODEX_GATE_STUB_PROTOCOL_MUTATION_ONLY_FIRST=1 \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester,architecture-reviewer --mode parallel
+  code=$?
+  set -e
+  # The classifier compared whole reason strings, so every reason carrying an
+  # appended ": <detail>" fell out of the retryable set — the more actionable
+  # the diagnostic, the less likely it was to be retried.
+  assert_file_contains "$name" "$err" "invalid finding contract:" || return
+  assert_file_contains "$name" "$out" "retrying once with a corrective note" || return
+  assert_file_contains "$name" "$out" "architecture-reviewer recovered on retry" || return
+  pass "$name"
+}
+
+# Behavior: an invalid coverage_dimensions value is reported with the offending
+# value, the permitted set, and the sibling enum it was likely taken from.
+# Steps: place a missing_layer value into coverage_dimensions on critic's first
+# output, restore it on retry, and assert the diagnostic names all three.
+test_parallel_reviewer_test_gap_diagnostic_names_offending_value() {
+  local name="reviewer-protocol/test-gap-diagnostic-names-offending-value"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home="$TMP_ROOT/$name/home"
+  local repo="$TMP_ROOT/$name/repo" runner="$TMP_ROOT/$name/runner"
+  local out="$TMP_ROOT/$name/out" err="$TMP_ROOT/$name/err" code=0
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester
+  create_repo "$repo" docs
+  set +e
+  CODEX_GATE_STUB_PROTOCOL_MUTATION=sibling-enum-test-gap \
+    CODEX_GATE_STUB_PROTOCOL_MUTATION_ONLY_FIRST=1 \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester --mode parallel
+  code=$?
+  set -e
+  [[ "$code" -eq 0 ]] || {
+    fail "$name" "gate did not recover invalid coverage_dimensions: code=$code err=$(cat "$err" 2>/dev/null)"
+    return
+  }
+  # A bare "invalid test-gap matrix contract" leaves the reviewer guessing
+  # which of ~10 constraints it broke, so its single retry tends to reproduce
+  # the same class of error. The diagnostic must be correctable on its own.
+  assert_file_contains "$name" "$err" "critic-TG001" || return
+  assert_file_contains "$name" "$err" "coverage_dimensions contains integration" || return
+  assert_file_contains "$name" "$err" "permitted values are: happy, boundary" || return
+  assert_file_contains "$name" "$err" "missing_layer values" || return
+  assert_file_contains "$name" "$out" "critic recovered on retry" || return
+  pass "$name"
+}
+
 # Behavior: a missing CC-521 test-gap matrix is a retryable schema failure and
 # only the invalid reviewer is replaced by one corrected attempt.
 # Steps: omit test_gaps on critic's first output, restore it on retry, and
@@ -11819,6 +11887,8 @@ run_test test_sequential_reviewer_protocol_out_of_range_line_is_incomplete
 run_test test_parallel_reviewer_protocol_evidence_contract_recovers_on_retry
 run_test test_parallel_reviewer_protocol_evidence_contract_retry_still_fails
 run_test test_parallel_reviewer_missing_test_gap_recovers_on_retry
+run_test test_parallel_reviewer_test_gap_diagnostic_names_offending_value
+run_test test_parallel_reviewer_detailed_reason_is_retryable
 run_test test_parallel_reviewer_wrong_subject_is_stale_without_retry
 run_test test_reviewer_protocol_rejects_malformed_and_truncated_artifacts
 run_test test_parallel_synthesis_test_gap_parity_recovers_on_retry

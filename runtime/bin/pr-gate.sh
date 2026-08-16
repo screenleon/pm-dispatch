@@ -3357,8 +3357,17 @@ RBRIEF_EOF
       _RETRY_ELIGIBLE=true
       for _reason in "${PROTOCOL_INVALID_REASONS[@]}"; do
         _reason_retryable=false
+        # Match the reason STEM, not the whole string. The verifier appends
+        # ": <detail>" to several of these so a reviewer learns which row and
+        # constraint it broke; exact equality silently declassified every such
+        # detailed reason as non-retryable, turning the most correctable
+        # failures into immediate INCOMPLETE. The colon makes the prefix
+        # unambiguous, so no unrelated reason can match by accident.
         for _retryable in "${_GATE_RETRYABLE_PROTOCOL_REASONS[@]}"; do
-          [[ "$_reason" == "$_retryable" ]] && { _reason_retryable=true; break; }
+          if [[ "$_reason" == "$_retryable" || "$_reason" == "$_retryable:"* ]]; then
+            _reason_retryable=true
+            break
+          fi
         done
         [[ "$_reason_retryable" == true ]] || { _RETRY_ELIGIBLE=false; break; }
       done

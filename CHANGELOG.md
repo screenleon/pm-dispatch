@@ -10,6 +10,23 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Gate reviewer-protocol failures are correctable on their retry (CC-549).**
+  An invalid `test_gaps` row was reported as a bare
+  `invalid test-gap matrix contract` covering ~10 constraints, so the reviewer
+  could not tell what it broke and its single corrective retry tended to
+  reproduce the same class of error — discarding a full gate round. Every
+  observed instance was the same root cause: a value taken from a sibling enum
+  (`missing_layer` values placed in `coverage_dimensions`). The diagnostic now
+  names the row, the field, the offending value, the permitted set, and that
+  confusion explicitly, reusing the precise-diagnostic pattern already used for
+  finding contracts.
+
+  Fixing that surfaced a second, pre-existing defect: `pr-gate.sh` classified
+  retryability by whole-string equality, while the verifier already appended
+  `": <detail>"` to the finding-contract reasons — so the most actionable
+  diagnostics were exactly the ones never retried. Retryability now matches the
+  reason stem.
+
 - **Memory human output neutralizes terminal control sequences.**
   `pmctl memory stats` and `pmctl memory doctor` printed index-derived card
   paths and the resolved memory directory verbatim, so anyone able to add a
