@@ -61,29 +61,50 @@ REAL_PMCTL="$PMCTL"
 
 # Containment is decided on resolved paths, never on the string as written:
 # "$tmp_root/../.." is lexically inside the fixture root and actually outside it,
-# and a symlink planted in a fixture can point anywhere. Both seams below use
-# this. Paths that do not exist yet still resolve (-m), because a call may name
-# a directory it is about to create.
+# and a symlink planted in a fixture can point anywhere. The $PMCTL wrapper is a
+# separate process, so this lives in a file both it and this suite source —
+# one implementation, because a second weaker copy is exactly how the wrapper
+# ended up failing OPEN when realpath was unavailable.
+mkdir -p "$tmp_root/bin"
+cat > "$tmp_root/bin/ctx-canon.sh" <<'CANON'
+# Resolve a path to its physical location. Paths that do not exist yet still
+# resolve, because a call may name a directory it is about to create. Prints
+# nothing and returns 1 when resolution cannot be established — callers must
+# treat that as "not contained", never as "unchanged".
 ctx_canonical_path() {
-  if command -v realpath >/dev/null 2>&1; then
-    realpath -m -- "$1" 2>/dev/null && return 0
+  local path="$1" resolved tail_part="" head_part="$1"
+  if resolved="$(realpath -m -- "$path" 2>/dev/null)" && [[ "$resolved" == /* ]]; then
+    printf '%s\n' "$resolved"
+    return 0
   fi
-  # Fallback: resolve the deepest existing ancestor, then re-attach the rest.
-  local path="$1" tail_part="" head_part="$1"
-  while [[ ! -e "$head_part" && "$head_part" == */* ]]; do
+  # Fallback for hosts without GNU realpath -m: resolve the deepest existing
+  # ancestor physically, then re-attach the part that does not exist yet.
+  [[ "$path" == /* ]] || return 1
+  while [[ ! -d "$head_part" && "$head_part" == */* ]]; do
     tail_part="/${head_part##*/}$tail_part"
     head_part="${head_part%/*}"
     [[ -n "$head_part" ]] || head_part=/
   done
-  if [[ -d "$head_part" ]]; then
-    printf '%s%s\n' "$(cd "$head_part" && pwd -P)" "$tail_part"
-  else
-    printf '%s\n' "$path"
-  fi
+  [[ -d "$head_part" ]] || return 1
+  resolved="$(cd "$head_part" 2>/dev/null && pwd -P)" || return 1
+  resolved="$resolved$tail_part"
+  # A surviving traversal segment means resolution did not establish a physical
+  # location; refuse to answer rather than answer wrongly.
+  case "$resolved" in */../*|*/..) return 1 ;; esac
+  printf '%s\n' "$resolved"
 }
+CANON
+# shellcheck source=/dev/null
+. "$tmp_root/bin/ctx-canon.sh"
 
-CTX_FIXTURE_ROOT="$(ctx_canonical_path "$tmp_root")"
-CTX_LIVE_ROOT="$(ctx_canonical_path "$REPO_ROOT")"
+CTX_FIXTURE_ROOT="$(ctx_canonical_path "$tmp_root")" || {
+  printf 'test-pmctl-context: cannot resolve the fixture root\n' >&2
+  exit 1
+}
+CTX_LIVE_ROOT="$(ctx_canonical_path "$REPO_ROOT")" || {
+  printf 'test-pmctl-context: cannot resolve the live repo root\n' >&2
+  exit 1
+}
 
 CTX_GUARD_LOG="$tmp_root/live-target-violations.log"
 : > "$CTX_GUARD_LOG"
@@ -102,12 +123,11 @@ _refuse() {
   printf '%s\t%s\n' "\$1" "\${*:2}" >> "\$_log"
   exit 99
 }
-# Containment is decided on RESOLVED paths: "$tmp_root/../.." is lexically
-# inside the fixture root and actually outside it, and a symlink in a fixture
-# can point anywhere.
-_canon() {
-  realpath -m -- "\$1" 2>/dev/null || printf '%s\n' "\$1"
-}
+# The SAME canonicalizer this suite uses. Carrying a second, weaker copy here
+# is what previously let an unresolvable path fall through as "unchanged" and
+# keep its fixture prefix.
+# shellcheck source=/dev/null
+. "$tmp_root/bin/ctx-canon.sh"
 if [[ "\${1:-}" == context && "\${PM_CTX_GUARD_ALLOW_NON_FIXTURE:-0}" != 1 ]]; then
   _fixture_arg=0
   for _arg in "\$@"; do
@@ -121,7 +141,10 @@ if [[ "\${1:-}" == context && "\${PM_CTX_GUARD_ALLOW_NON_FIXTURE:-0}" != 1 ]]; t
     # memory/ directory. Anything relative simply does not count as a fixture
     # path, which sends the call to the stricter CWD check below.
     [[ "\$_arg" == /* ]] || continue
-    _resolved="\$(_canon "\$_arg")"
+    # Fail CLOSED: an argument whose physical location cannot be established is
+    # not "probably fine", it is undecidable, and undecidable must not pass.
+    _resolved="\$(ctx_canonical_path "\$_arg")" \
+      || _refuse "target path cannot be resolved (\$_arg)" "\$@"
     if [[ "\$_resolved" == "$live_root_canon" || "\$_resolved" == "$live_root_canon"/* ]]; then
       _refuse "resolves to the live repo root (\$_arg -> \$_resolved)" "\$@"
     fi
@@ -132,7 +155,7 @@ if [[ "\${1:-}" == context && "\${PM_CTX_GUARD_ALLOW_NON_FIXTURE:-0}" != 1 ]]; t
     # only when the CWD sits in a worktree under the fixture root; with no
     # worktree at all the CLI falls back to the live repo root.
     _top="\$(git rev-parse --show-toplevel 2>/dev/null || true)"
-    [[ -n "\$_top" ]] && _top="\$(_canon "\$_top")"
+    [[ -n "\$_top" ]] && { _top="\$(ctx_canonical_path "\$_top")" || _top=""; }
     if [[ -z "\$_top" || "\$_top" != "$fixture_root_canon"/* ]]; then
       _refuse "no fixture path and CWD resolves outside the fixture root (\${_top:-no worktree})" "\$@"
     fi
@@ -148,13 +171,13 @@ PMCTL="$tmp_root/bin/pmctl"
 # so they get the same guarantee through this seam instead: echo the target, or
 # refuse and record it exactly as the wrapper would.
 ctx_fixture_target() {
-  local target="$1" resolved
-  resolved="$(ctx_canonical_path "$target")"
+  local target="$1" resolved log="${PM_CTX_GUARD_LOG:-$CTX_GUARD_LOG}"
+  resolved="$(ctx_canonical_path "$target")" || resolved="<unresolvable:$target>"
   if [[ "$resolved" != "$CTX_FIXTURE_ROOT"/* ]]; then
     printf 'test-pmctl-context: refusing a direct context call on a non-fixture target: %s (resolves to %s)\n' \
       "$target" "$resolved" >&2
     printf 'direct call target outside the fixture root\t%s -> %s\n' \
-      "$target" "$resolved" >> "$CTX_GUARD_LOG"
+      "$target" "$resolved" >> "$log"
     return 1
   fi
   printf '%s\n' "$target"
@@ -1827,17 +1850,62 @@ case_context_guard_rejects_traversal_and_symlink_escape() {
   local link="$tmp_root/escape-link"
   ln -sfn "$REPO_ROOT" "$link"
   status=0
-  ctx_fixture_target "$link" > /dev/null 2>> "$err" || status=$?
+  # Its own log: truncating the cumulative one to clean up would erase refusals
+  # recorded by earlier cases and hand the aggregate assertion a false green.
+  : > "$own_log"
+  PM_CTX_GUARD_LOG="$own_log" ctx_fixture_target "$link" > /dev/null 2>> "$err" || status=$?
   if [[ "$status" -eq 0 ]]; then
     fail "$name" "direct seam accepted a fixture symlink resolving to the live repo"
     return 0
   fi
-  # That refusal lands in the suite-wide log by design; this case owns it.
-  if ! grep -q 'escape-link' "$CTX_GUARD_LOG"; then
-    fail "$name" "symlink refusal was not recorded: $(<"$CTX_GUARD_LOG")"
+  if ! grep -q 'escape-link' "$own_log"; then
+    fail "$name" "symlink refusal was not recorded: $(<"$own_log")"
     return 0
   fi
-  : > "$CTX_GUARD_LOG"
+  pass "$name"
+}
+
+# Behavior: the guard still refuses escapes on a host where `realpath -m` is
+# unavailable, rather than falling back to the unresolved string.
+# Steps: shadow realpath with a failing stub; run the CLI seam with a traversal
+# path and with a fixture symlink to the live repo; assert both are refused.
+case_context_guard_fails_closed_without_realpath() {
+  local name="pmctl context suite: the guard fails closed when realpath cannot resolve"
+  should_run "$name" || return 0
+
+  # The earlier wrapper answered "unchanged" when it could not resolve, which
+  # kept the fixture prefix on a traversal path and read as safe. Undecidable
+  # must refuse, and it must do so on hosts without GNU realpath too.
+  local stub_dir="$tmp_root/no-realpath-bin" own_log err status=0
+  mkdir -p "$stub_dir"
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$stub_dir/realpath"
+  chmod +x "$stub_dir/realpath"
+  own_log="$tmp_root/no-realpath.log"
+  err="$tmp_root/no-realpath.err"
+  : > "$own_log"
+
+  PATH="$stub_dir:$PATH" PM_CTX_GUARD_LOG="$own_log" \
+    "$PMCTL" context status --json "$tmp_root/../.." > /dev/null 2> "$err" || status=$?
+  if [[ "$status" -ne 99 ]]; then
+    fail "$name" "traversal path was not refused without realpath (exit $status): $(<"$err")"
+    return 0
+  fi
+
+  local link="$tmp_root/no-realpath-link"
+  ln -sfn "$REPO_ROOT" "$link"
+  status=0
+  PATH="$stub_dir:$PATH" PM_CTX_GUARD_LOG="$own_log" \
+    "$PMCTL" context status --json "$link" > /dev/null 2>> "$err" || status=$?
+  if [[ "$status" -ne 99 ]]; then
+    fail "$name" "fixture symlink was not refused without realpath (exit $status): $(<"$err")"
+    return 0
+  fi
+  # 99 is the wrapper's own refusal code; the real CLI never exits 99, so this
+  # also shows it was never reached.
+  if [[ "$(wc -l < "$own_log")" -ne 2 ]]; then
+    fail "$name" "expected two recorded refusals, got: $(<"$own_log")"
+    return 0
+  fi
   pass "$name"
 }
 
@@ -3174,7 +3242,7 @@ case_context_default_repo_root_falls_back_to_repo_root_env() {
   make_fixture_repo "$fallback_repo"
   local out err status=0
   out="$tmp_root/defroot-fb.out"; err="$tmp_root/defroot-fb.err"
-  ( cd "$nogit_dir" && REPO_ROOT="$fallback_repo" bash -c \
+  ( cd "$nogit_dir" && REPO_ROOT="$(ctx_fixture_target "$fallback_repo")" bash -c \
       ". \"$REPO_ROOT/runtime/lib/pmctl-context.sh\" 2>/dev/null; pmctl_context_index --source repo" \
       > "$out" 2> "$err" ) || status=$?
   if [[ "$status" -ne 0 ]]; then fail "$name" "index exited $status: $(<"$err")"; return 0; fi
@@ -3196,7 +3264,7 @@ case_context_default_repo_root_pm_dispatch_tree_unchanged() {
   git_init_commit_fixture "$self_repo"
   local out err status=0
   out="$tmp_root/defroot-self.out"; err="$tmp_root/defroot-self.err"
-  ( cd "$self_repo" && REPO_ROOT="$self_repo" bash -c \
+  ( cd "$self_repo" && REPO_ROOT="$(ctx_fixture_target "$self_repo")" bash -c \
       ". \"$REPO_ROOT/runtime/lib/pmctl-context.sh\" 2>/dev/null; pmctl_context_index --source repo" \
       > "$out" 2> "$err" ) || status=$?
   if [[ "$status" -eq 0 ]] && [[ -f "$self_repo/.pm-dispatch/ctx/context.db" ]] && ! grep -qi 'falling back' "$err"; then
@@ -3844,6 +3912,7 @@ case_context_every_subcommand_is_exercised
 case_context_live_target_guard_trips
 case_context_live_target_guard_refuses_bare_call_outside_worktree
 case_context_guard_rejects_traversal_and_symlink_escape
+case_context_guard_fails_closed_without_realpath
 case_context_no_call_targeted_the_live_repo
 
 th_summary

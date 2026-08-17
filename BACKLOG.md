@@ -611,6 +611,21 @@ case 確定性失敗並點名該目標，全程未讀寫 live DB。
 查詢字串會被當成 fixture 路徑而**跳過**非 worktree 檢查；最終收斂為只檢查絕對
 路徑，相對引數一律落到較嚴格的 CWD 分支（fail-closed 方向）。
 
+**Gate round 8 補強（security-reviewer-F001，hard_block）**：wrapper 自己帶了一份
+**較弱的** canonicalizer——`realpath -m` 不可用或失敗時回退成原字串，於是
+`$tmp_root/../..` 保留 fixture 前綴而被判為安全，屬 fail-**open**。canonicalizer
+收斂為單一實作（寫入 `$tmp_root/bin/ctx-canon.sh`，suite 與 wrapper 共同 source），
+無法建立實體位置時回傳 1，兩個 seam 一律視為「不包含」而拒絕。新增在 `realpath`
+被停用下的 traversal 與 symlink 回歸。mutation 驗證：把回退改回原字串，該測試失敗。
+
+**Gate round 8 補強（critic-F001，advise）**：另有兩個 direct no-arg 呼叫
+（`case_context_default_repo_root_falls_back_to_repo_root_env` 與
+`..._pm_dispatch_tree_unchanged`）兩個 seam 都沒經過——它們的有效目標是自己設的
+`REPO_ROOT` 值，已改走 `ctx_fixture_target`。mutation 過程順帶揪出**我自己守衛的
+一個缺陷**：escape 自我測試會清空共用 log，把先前記錄的拒絕一併抹掉，正是 critic
+擔心的「彙總斷言仍然變綠」。`ctx_fixture_target` 改為同樣尊重 `PM_CTX_GUARD_LOG`
+重導，自我測試不再碰共用 log；重跑 mutation 後彙總 case 確實一起失敗。
+
 **Cross-link**: [[CC-467]] 已按此形狀修好 memory 的兩例（`test-pmctl-memory.sh`
 的 `case_memory_commands_resolve_only_fixture_dirs` + fixture 層唯讀 case），
 本票把同一修法套用到 context 套件並清查其餘同型守衛。
