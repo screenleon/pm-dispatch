@@ -65,9 +65,11 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-543 | ✅ done | Full test runner Phase 0 fail-fast structural precheck；`--collect-all` 保留 release 全證據路徑 | ops/test | 2026-08-04 | pr:#465 | P2 | hygiene |
 | CC-545 | ✅ done | Reviewer evidence-reference-contract INCOMPLETE 的單次修正性重派：僅限該單一違規類別，附具體錯誤引用重跑違規 reviewer，不必整輪 gate（30-40 分鐘）重來 | ops/gate | 2026-08-06 | pr:#465 | P2 | hygiene |
 | CC-546 | ⏸ deferred | standalone Gate distribution／copy parity follow-up：獨立定義 bundle schema、generation、installed parity 與 support boundary；不回併 Linux/WSL2 canonical module extraction | arch/gate | 2026-08-14 | — | P2 | reuse-debt |
-| CC-551 | 🔵 active | Gate/QA sandbox 取不到釘住的 ShellCheck：`lint-shellcheck.sh` 只 `bootstrap --check`（要求已在 PATH）而不使用已快取的釘住版本，導致 reviewer 的 focused run 卡在結構性 lint、行為性 suite 從未執行；已連續阻擋 5 輪 gate | ops/test | 2026-08-17 | — | P2 | hygiene |
-| CC-550 | 🔵 active | 測試套件的「live 共用狀態未變動」指紋守衛是假陽性製造機：無法區分「本套件寫的」與「外部行程寫的」，改為確定性 oracle（斷言每次呼叫解析到 fixture 而非 live 目標）；已觀察 3 例（memory doctor／memory stats／context DB） | ops/test | 2026-08-17 | — | P2 | hygiene |
-| CC-549 | 🔵 active | Gate reviewer-protocol 診斷可修正性：test-gap 契約錯誤點名違規欄位／值／允許集合，且 retryable 分類改比對 reason stem（帶明細的 reason 先前一律被判為不可重試） | ops/gate | 2026-08-17 | — | P2 | hygiene |
+| CC-553 | 🔵 active | Gate synthesis 的 `invalid disagreement references` 是單一裸字串，涵蓋 6 條獨立約束（`only_keys`／`D-NNN` id 形狀／非空 summary／`finding_ids` 長度 ≥2／不重複／每個 id 須存在於 findings_union），synthesis 無從自我修正，唯一一次重試重犯同錯即整輪作廢；[[CC-549]] 已對 test-gap 契約做過同一修法（2026-08-17 CC-551 gate round 7 實測） | ops/gate | 2026-08-17 | — | P2 | hygiene |
+| CC-552 | 🔵 active | `test_default_worker_cap` 以 `sleep 0.1` 製造 worker 重疊窗口來驗證併發上限，違反 QA 規則的「不得以 sleep 同步」；主機負載會改變觀測到的重疊數，與 worker-cap 正確性無關（2026-08-17 CC-551 gate round 4 qa-tester，pre-existing） | ops/test | 2026-08-17 | — | P3 | hygiene |
+| CC-551 | ✅ closed 2026-08-17 | Gate/QA sandbox 取不到釘住的 ShellCheck：lint 改為離線解析（PATH 相符則用之，否則用已快取的釘住二進位），不再要求釘住版本已在 PATH | ops/test | 2026-08-17 | — | P2 | hygiene |
+| CC-550 | ✅ closed 2026-08-17 | 測試套件的「live 共用狀態未變動」指紋守衛是假陽性製造機：無法區分「本套件寫的」與「外部行程寫的」，已全數改為確定性 resolution oracle | ops/test | 2026-08-17 | — | P2 | hygiene |
+| CC-549 | ✅ closed 2026-08-17 | Gate reviewer-protocol 診斷可修正性：test-gap 契約錯誤點名違規欄位／值／允許集合，且 retryable 分類改比對 reason stem（帶明細的 reason 先前一律被判為不可重試） | ops/gate | 2026-08-17 | pr:#486 | P2 | hygiene |
 | CC-548 | 🔵 active | context.db FTS5 對 CJK 查詢無索引無排序（[[CC-465]] Requirement 3 殘留）：先 spike 驗 `tokenize='trigram'` 的 sqlite 版本下限與 index rebuild 成本，再決定是否實作 | memory | 2026-08-16 | — | P2 | retrieval |
 | CC-465 | ✅ done | memory/context 關鍵詞管線 CJK 支援：抽出共用零依賴斷詞 lib，取代兩處各自 ASCII-only 抽詞；FTS5 tokenizer 殘留另立 [[CC-548]]；工作序列起點（465→467→468→466） | memory | 2026-07-07 | pr:#485 | P2 | retrieval |
 | CC-466 | ⏸ deferred | 記憶卡片生命週期閉環：expires_at 執行 + 關窗式 supersede + usage sidecar 休眠偵測 + doctor→distill 接線；僅在 CC-467 證明 stale/dormant card 已形成實際問題時啟動 | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
@@ -389,7 +391,61 @@ lib 分離的關注點，允許各自的修復時程與驗收」轉由 [[CC-548]
 
 ---
 
-## CC-551 — Gate/QA sandbox 取不到釘住的 ShellCheck 🔵 active
+## CC-553 — synthesis disagreement 契約失敗不可修正 🔵 active
+
+**Problem**: `gate-result-verify.sh` 的 disagreement 檢查把 6 條獨立約束——
+`only_keys(["id","summary","finding_ids"])`、id 須符合 `^D-[0-9]{3,}$`、summary
+非空、`finding_ids` 長度 ≥2、元素不重複、每個 id 都必須存在於 `findings_union`
+——全部收斂成一個回報字串 `invalid disagreement references`。synthesis 因此不知道
+自己違反哪一條，`pr-gate.sh` 僅有的一次修正性重試往往重犯同類錯誤。
+
+實測（2026-08-17，CC-551 gate round 7）：5 個 reviewer 全數 pass／approve、
+文件本身寫 `Final: GO`、preflight 全套 pass，卻因 synthesis 連續兩次寫出不合契約的
+disagreements 而被判 non-authorizing INCOMPLETE，整輪（約 35 分鐘、5 個 reviewer
+dispatch＋2 次 synthesis）作廢。**NO-GO 與 review 結果無關**。
+
+**Why**: 與 [[CC-549]] 同一根因與同一修法——retry 機制的前提是「拿到足夠資訊就能
+自我修正」，不點名違規處等於讓 retry 淪為抽籤。`length >= 2` 這條尤其容易誤觸：
+只有單一 reviewer 提出歧見時，自然會寫出 1 個元素的 `finding_ids`，而診斷不會告訴
+它「disagreement 依定義需要至少兩筆對立的 finding」。
+
+**Requirement**:
+1. disagreement 契約失敗時點名違規 row 的 id、違反的具體約束、實際值與期望；
+   沿用 [[CC-549]] 已落地的精確診斷模式，不另立風格。
+2. 一併盤點 `gate-result-verify.sh` 內其餘同型的「多約束共用單一 reason 字串」
+   分支（`root-cause grouping parity mismatch`、`uncertainties`／`cautions` 等），
+   決定哪些需要同等精度；不需要一次全改，但要留下判斷紀錄。
+3. 回歸測試以 mutation 驗證：以真實失敗樣本重放，斷言訊息點名違規約束。
+
+**Cross-link**: [[CC-549]]（test-gap 契約的同一修法）、[[CC-545]]（單次修正性重派）。
+
+---
+
+## CC-552 — worker-cap 測試以 sleep 製造重疊窗口 🔵 active
+
+**Problem**: `tests/shell/test-lint-shellcheck.sh` 的 `test_default_worker_cap`
+用 ShellCheck stub 內的 `sleep 0.1` 撐開一個時間窗，好讓兩個 worker 的
+start/end 事件重疊，再以事件序列推算最大併發數。負載高或被搶佔的主機上，觀測到
+的重疊數會與 worker-cap 的正確性脫鉤——上限仍是 2，但可能只觀測到 1（現行斷言
+`max_active >= 1` 因此會放過），或在極端情況下產生誤判。
+
+**Why**: 這是 QA 規則明文禁止的 sleep 同步。之所以不併入 [[CC-551]]：該票是
+pre-existing 缺陷、與 ShellCheck 解析改動無關，且改法本身有風險——把 sleep 換成
+檔案式 barrier 時，若併發上限實際為 1，barrier 會等到 timeout 才失敗，正是
+[[CC-543]] 記錄過的 FIFO handshake hang 形狀。要在不引入 hang 的前提下取得確定性
+重疊證明，需要獨立設計而非順手替換。
+
+**Requirement**:
+1. 以確定性的 fixture barrier 或事件協定取代 sleep，證明「同時有兩個 worker」與
+   「沒有第三個」，不依賴經過時間。
+2. barrier 不得在上限實際為 1 時退化成無界等待；失敗必須是有界且訊息明確。
+3. 僅限本測試，不改 `lint-shellcheck.sh` 的併發實作。
+
+**Cross-link**: [[CC-551]]（發現時點）、[[CC-543]]（bounded handshake 的既有教訓）。
+
+---
+
+## CC-551 — Gate/QA sandbox 取不到釘住的 ShellCheck ✅ 2026-08-17
 
 **Problem**: `tools/lint/lint-shellcheck.sh` 以 `bootstrap-shellcheck.sh --check`
 驗證版本——該模式**只檢查 PATH 上的 shellcheck 是否等於釘住版本，不使用也不
@@ -414,11 +470,62 @@ Phase 0 結構性 precheck，**行為性 suite 一個都沒跑到**。qa-tester 
 2. 不得以放寬版本檢查來「解決」——釘住版本是刻意的可重現性契約。
 3. 回歸測試：模擬 PATH 上為錯誤版本、快取中有正確版本，斷言選定政策的行為。
 
+**Outcome**: 採 Requirement 1 的 (a)。`bootstrap-shellcheck.sh` 新增 `--resolve`：
+先看 PATH（版本相符即用），否則查 `<cache>/shellcheck/<ver>/<platform>/bin` 的
+已快取二進位；兩者皆無才 exit 2，並同時點名 PATH 上的實際版本、探測過的快取
+路徑與補齊快取的指令。`lint-shellcheck.sh` 改以解析出的絕對路徑呼叫 ShellCheck，
+不再要求釘住版本已在 PATH。
+
+選 (a) 而非 (b) 的理由：(b) 只修好 gate 一條路徑，任何其他 subprocess（ship、
+本機、CI 以外的呼叫者）仍會復發；(a) 修在共用解析點，所有消費者一次受惠。
+`--resolve` 一律不下載——快取空的時候仍 fail closed，lint 不會變成隱式安裝器；
+釘住版本檢查一步都沒有放寬。`--check`（PATH 必須相符）語意不變，release-verify
+仍用它斷言操作者環境。安裝路徑與 `--resolve` 共用同一個 `cached_bin_dir` 助手，
+探測位置與安裝位置不可能漂移。
+
+回歸測試（`tests/shell/test-lint-shellcheck.sh`）：PATH 為 0.8.0、快取有 0.11.0
+時，斷言 lint 成功且**由快取的二進位執行掃描**（兩支 stub 各自記錄呼叫，PATH 那
+支必須為零次）；兩處皆無時斷言 exit 2 並點名快取探測路徑。mutation 驗證：拿掉
+快取探測會使前者失敗。
+
+**Gate round 5 補強（security-reviewer-F001，soft_block）**：快取原本只以二進位
+**自報的版本字串**驗證身分——被替換的二進位只要印出 `version: 0.11.0` 就會被
+lint 執行。這是本次變更引入的新執行來源（PATH 是操作者自己選的，快取則是本工具
+管理、且現在會被隱式採用），所以必須以 repo 可信資料驗證。`shellcheck-assets.tsv`
+新增 `binary_sha256` 欄，四個平台的值皆由該列已受信任的 archive sha256 下載、
+驗證、解壓後推導而得。`--resolve` 的快取分支、install 的既存快取快路徑、以及
+解壓後的二進位，全部先比對 digest 再執行。PATH 分支維持原樣（操作者自選、且為
+既有行為），此點於程式碼註解明載。
+mutation 驗證：拿掉 digest 檢查後，自報版本正確的假二進位會被實際執行 3 次去
+lint——正是 finding 描述的失效模式。
+
+**Gate round 6 補強（security-reviewer-F001，hard_block）**：上一輪的順序寫反了
+——`check_binary`（會**執行**該二進位跑 `--version`）排在 `verify_binary_digest`
+之前，等於先把控制權交給未經驗證的二進位、再回頭問它是不是對的。兩條快取路徑
+（`--resolve` 與 install 的 reuse 快路徑）都改為 digest 先行、版本探測後行。
+回歸測試改為斷言被篡改的 stub **一次都沒被執行**（log 完全為空，`--version`
+也算執行），並涵蓋 installer reuse 路徑。mutation 驗證：把順序換回去，測試會印出
+`tampered binary was executed before authentication: version`。
+
+**Gate round 6 補強（qa-tester-F001，hard_block）**：解壓後二進位的 digest 檢查
+沒有測試——archive checksum 正確、`binary_sha256` 卻不符的形狀（供應端或鏡像送出
+校驗碼正確但內容不同的封存）未被覆蓋。新增 `test_bootstrap_rejects_wrong_binary_
+digest`，斷言 exit 2、digest 診斷、且**沒有任何二進位被裝進快取**。mutation
+驗證：拿掉該行檢查，測試失敗並印出被安裝的路徑。
+
+**Gate round 5 補強（critic-F001，advise）**：`--resolve` 原本原樣回傳快取路徑，
+但 lint 每次掃描前會 `cd` 到 repo root，因此相對的 `PM_DISPATCH_TOOL_CACHE`
+在 caller CWD ≠ `--repo` 時會解析失敗。改為回傳絕對路徑。首版回歸測試因 caller
+CWD 恰好等於 `--repo` 而空轉（mutation 未失敗），已改為把快取放在獨立的 caller
+目錄下才真正覆蓋此路徑。
+
 **Cross-link**: [[CC-541]]（qa-tester sandbox 可見性）同屬 reviewer 環境可見性線。
+
+**See**: CHANGELOG.md [Unreleased]、[[CC-541]]
 
 ---
 
-## CC-550 — live 共用狀態指紋守衛是假陽性製造機 🔵 active
+## CC-550 — live 共用狀態指紋守衛是假陽性製造機 ✅ 2026-08-17
 
 **Problem**: 多個測試套件用「跑完比對 live 共用狀態的指紋」當作『本套件沒有污染
 真實資料』的證據。這個 oracle 從構造上就無法區分「本套件某個 case 寫了那裡」與
@@ -446,13 +553,101 @@ auto-context hook。preflight 因此 `unclassified-nonzero`，整輪 gate 在 re
 2. 移除會因外部寫入而變紅的 live 指紋斷言，不得只是放寬容忍度。
 3. 失敗訊息只陳述可由證據支持的結論。
 
+**Outcome**: 清查後全 repo 共三處 live 指紋斷言，全部改為確定性 oracle：
+
+1. `test-pmctl-context.sh` 的 suite 級守衛 → `case_context_commands_resolve_
+   only_fixture_roots`：以唯讀的 `pmctl context status --json` 斷言 explicit-arg
+   與 no-arg-from-CWD 兩種入口解析出的 `db_path` 都在 fixture 根下，並斷言 live DB
+   不在 `tmp_root` 之下（構造上無法別名）。
+2. 同檔的 `case_context_no_arg_cross_repo_never_touches_pm_dispatch_db` → 改斷言
+   「寫入落在外部 fixture repo 的 DB」＋「解析結果等於該 fixture DB」，不再比對
+   pm-dispatch 自身 DB 的指紋。
+3. `test-release-verify.sh` 的 `test_live_db_untouched` → `test_context_smoke_
+   targets_fixture_repo`：以 fixture repo 自己的 DB 是否被建立作為 redirect 生效
+   的正面證據（本套件擁有的證據），不再讀 live DB。另補
+   `test_only_memory_source_context_call_names_repo_root` source ratchet——
+   release-verify 的 Phase 3c 確實以 `$REPO_ROOT` 呼叫
+   `context query --source memory`（解析的是 memory DB、不開 repo context DB），
+   故守衛的主張收斂為「除 `--source memory` 外，不得有 context 呼叫指名 live
+   root」，而非籠統宣稱全部呼叫都走 fixture。
+
+`tests/lib/live-db-guard.sh` 隨之刪除——它剩餘的唯二消費者是驗證該守衛自身的兩個
+自我測試，屬循環驗證。所有失敗訊息只陳述證據支持得住的結論（「解析到 X，期望 Y」），
+不再宣稱「某個 case 動了 $REPO_ROOT」。
+
+**Gate round 1 補強（risk-reviewer-F001，advise）**：上述 (1) 只覆蓋兩個唯讀入口，
+失去了舊守衛「整個套件任一 case」的覆蓋面。改以**套件自有的呼叫接縫**補回：
+`$PMCTL` 在 context 套件內改指向一支 wrapper，任何 context 呼叫只要引數指名 live
+repo root 就地拒絕（exit 99）並記錄；最後一個 case 斷言該紀錄為空。這份 log 只由
+本套件的 wrapper 寫入，因此非空只可能是「這些呼叫其中之一」，與被取代的指紋守衛
+相反。另加 surface ratchet：由 CLI 自己的 `help context` 導出已發佈的 subcommand
+清單，要求每個都在本套件有呼叫點，新增 subcommand 不會無聲地缺少隔離覆蓋。
+mutation 驗證：把任一 mutating 呼叫改指 `$REPO_ROOT`，呼叫點與彙總 case 各報一次
+失敗，且 live DB 全程未被寫入。
+
+**Gate round 4 補強（critic-F001，advise）**：上述 wrapper 原本只檢查引數，
+攔不到「無引數且 CWD 不在任何 git worktree 內」——這種形狀 argv 完全沒提到 live
+root，CLI 卻會 fallback 到 `$REPO_ROOT`。改為檢查**隔離的充分前提**而非複製 CLI
+的解析規則：呼叫必須指名 `$tmp_root` 底下的路徑，或從 `$tmp_root` 底下的 git
+worktree 執行；其餘形狀一律拒絕，不去預測它會解析到哪。必須豁免的 3 個 case
+（引數驗證在解析前就退出、故意傳不存在路徑）以
+`PM_CTX_GUARD_ALLOW_NON_FIXTURE=1` 逐點標註理由，例外因此可見可審。
+mutation 驗證：新增一支非 worktree 的無引數呼叫會確定性失敗，且全程未讀寫
+live DB。
+
+**Gate round 6 補強（critic-F001，advise）**：少數 case 直接 source context lib
+呼叫其函式，不經過 `$PMCTL`，因此不受 wrapper 保護，彙總斷言的宣稱比實際強制的
+範圍大。這些 case 的目標都是以引數傳入，故改走同一規則的 `ctx_fixture_target`
+seam：非 `$tmp_root` 底下的目標一律拒絕並記入同一份 log。mutation 驗證（即
+reviewer 指定的情境）：把 direct prompt-scan 的 repo 引數改成 live root，彙總
+case 確定性失敗並點名該目標，全程未讀寫 live DB。
+
+**Gate round 7 補強（critic-F001，advise）**：兩個 seam 原本都用**字串前綴**判斷
+包含關係，於是 `$tmp_root/../..`（字面在 fixture 內、實際在外）與 fixture 內指向
+外部的 symlink 都會被放行。改為先 canonicalize（`realpath -m`，含尚未存在的路徑）
+再判斷，新增 traversal 與 symlink escape 的回歸測試各一。過程中另修掉自己引入的
+一個弱化：起初把所有非旗標引數都當路徑解析，導致 `--source memory` 的旗標值
+`memory` 相對 CWD 解析成 repo 的 `memory/` 目錄而誤判（11 個 case 假陽性），且
+查詢字串會被當成 fixture 路徑而**跳過**非 worktree 檢查；最終收斂為只檢查絕對
+路徑，相對引數一律落到較嚴格的 CWD 分支（fail-closed 方向）。
+
+**Gate round 8 補強（security-reviewer-F001，hard_block）**：wrapper 自己帶了一份
+**較弱的** canonicalizer——`realpath -m` 不可用或失敗時回退成原字串，於是
+`$tmp_root/../..` 保留 fixture 前綴而被判為安全，屬 fail-**open**。canonicalizer
+收斂為單一實作（寫入 `$tmp_root/bin/ctx-canon.sh`，suite 與 wrapper 共同 source），
+無法建立實體位置時回傳 1，兩個 seam 一律視為「不包含」而拒絕。新增在 `realpath`
+被停用下的 traversal 與 symlink 回歸。mutation 驗證：把回退改回原字串，該測試失敗。
+
+**Gate round 8 補強（critic-F001，advise）**：另有兩個 direct no-arg 呼叫
+（`case_context_default_repo_root_falls_back_to_repo_root_env` 與
+`..._pm_dispatch_tree_unchanged`）兩個 seam 都沒經過——它們的有效目標是自己設的
+`REPO_ROOT` 值，已改走 `ctx_fixture_target`。mutation 過程順帶揪出**我自己守衛的
+一個缺陷**：escape 自我測試會清空共用 log，把先前記錄的拒絕一併抹掉，正是 critic
+擔心的「彙總斷言仍然變綠」。`ctx_fixture_target` 改為同樣尊重 `PM_CTX_GUARD_LOG`
+重導，自我測試不再碰共用 log；重跑 mutation 後彙總 case 確實一起失敗。
+
+**Gate round 9 補強（critic-F001，soft_block）**：wrapper 判定「有 fixture 引數」
+時只看絕對路徑與前綴，沒看是不是**目錄**。CLI 自己的判準是 `-d "$1"`——非目錄的
+第一個位置引數根本不會被當成 repo root，而是滑到 query 位置，repo root 因此落回
+CWD 的 worktree（從本 repo 執行時即 live repo）。於是「絕對且在 tmp_root 下的
+非目錄路徑」會取得 fixture 身分並**跳過** CWD 檢查，正好放行需要被擋的那一種呼叫。
+修法是照抄 CLI 自己的 predicate（絕對 **且** 為目錄），非啟發式。新增從 live repo
+CWD 發起、帶絕對非目錄 fixture 路徑的回歸；mutation 驗證：拿掉 `-d` 該測試失敗。
+
+**過程紀錄（值得留存的教訓）**：本票驗證此 finding 時，維護者先跑了一次手動實測，
+看到 `# no hits for: <path>` 就判定「CLI 有吃下該路徑、沒有 fallback」——**讀錯了**：
+那行印的是查詢詞而非 repo root，該次實測其實正是漏洞的重現。結論以讀原始碼的
+`-d "$1"` 分支為準，不以 stdout 的表面訊息為準。
+
 **Cross-link**: [[CC-467]] 已按此形狀修好 memory 的兩例（`test-pmctl-memory.sh`
 的 `case_memory_commands_resolve_only_fixture_dirs` + fixture 層唯讀 case），
 本票把同一修法套用到 context 套件並清查其餘同型守衛。
 
+**See**: CHANGELOG.md [Unreleased]、[[CC-467]]、[[CC-544]]
+
 ---
 
-## CC-549 — Gate reviewer-protocol 診斷可修正性 🔵 active
+## CC-549 — Gate reviewer-protocol 診斷可修正性 ✅ 2026-08-17
 
 **Problem**: reviewer 送出不合契約的 `test_gaps` 時，gate 只回報
 `invalid test-gap matrix contract`——涵蓋約 10 條約束的單一字串。reviewer 因此
@@ -477,8 +672,18 @@ auto-context hook。preflight 因此 `unclassified-nonzero`，整輪 gate 在 re
    維持可重試；冒號讓前綴不致誤配其他 reason。
 3. 回歸測試以 mutation 驗證：還原前綴比對必須使重試測試失敗。
 
+**Outcome**: 兩個缺陷都已隨 pr:#486 進 main（`3831a2b`，實作 commit `e87f136`）。
+`gate-result-verify.sh` 的 test-gap 契約失敗現在點名 row id、欄位、實際值與允許
+集合，並在值來自兄弟 enum 時明說是哪一組混淆；沿用 `blocking_severity_violation`
+既有的精確診斷風格。`pr-gate.sh` 的 retryable 分類改比對 reason stem 前綴
+（`"<stem>:"`），帶明細的 reason 不再一律落為不可重試。以三份真實 reviewer
+artifact 重放驗證，且 mutation 驗證：還原整串相等比對會使重試測試失敗。
+（本票的狀態翻正延後到本次 gate-friction 批次一併處理。）
+
 **Cross-link**: 與 [[CC-545]]（單次修正性重派）同屬 reviewer-protocol 可恢復性
 線；本票補的是「重派時給得出可修正資訊」這一半。
+
+**See**: pr:#486、CHANGELOG.md [Unreleased]、[[CC-545]]
 
 ---
 

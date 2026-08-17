@@ -30,6 +30,41 @@ fixture_repo() {
   printf '%s\n' "$root"
 }
 
+# The asset platform key for this host, or empty where no pinned asset is
+# published — cases that need a cache path or an asset row skip on empty.
+# Mirrors detect_platform in tools/lint/bootstrap-shellcheck.sh; kept here so a
+# test never sources the script it is verifying.
+fixture_platform() {
+  case "$(uname -s):$(uname -m)" in
+    Linux:x86_64) printf 'linux.x86_64\n' ;;
+    Linux:aarch64|Linux:arm64) printf 'linux.aarch64\n' ;;
+    Darwin:x86_64) printf 'darwin.x86_64\n' ;;
+    Darwin:arm64|Darwin:aarch64) printf 'darwin.aarch64\n' ;;
+    *) printf '\n' ;;
+  esac
+}
+
+# Point a fixture's asset manifest at $2 as the trusted binary for $3 (platform),
+# so a stub standing in for the pinned release can pass digest verification.
+# $4 overrides the archive URL/sha columns when a case does not exercise install.
+write_fixture_manifest() {
+  local root="$1" binary="$2" platform="$3" url="${4:-file:///nonexistent.tar.gz}"
+  local archive_sha="${5:-$(printf '%064d' 0)}" digest
+  digest="$(sha256_of "$binary")"
+  {
+    printf 'version\tplatform\turl\tsha256\tbinary_sha256\n'
+    printf '0.11.0\t%s\t%s\t%s\t%s\n' "$platform" "$url" "$archive_sha" "$digest"
+  } > "$root/tools/lint/shellcheck-assets.tsv"
+}
+
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{ print $1 }'
+  else
+    shasum -a 256 "$1" | awk '{ print $1 }'
+  fi
+}
+
 expect_fail() {
   local name="$1" root="$2" needle="$3" output status=0
   output="$(bash "$root/tools/lint/lint-shellcheck.sh" --repo "$root" 2>&1)" || status=$?
@@ -162,30 +197,234 @@ test_ci_local_entrypoint_parity() {
   fi
 }
 
-# Behavior: lint fails before scanning when PATH resolves a ShellCheck version
-# different from the repository pin, and reports both versions.
-# Steps: Arrange a fixture with a 0.10.0 ShellCheck stub; Act by running the
-# linter; Assert exit 2 and an expected-0.11.0/actual-0.10.0 diagnostic.
+# Write a ShellCheck stub at $1 reporting version $2. Each invocation appends
+# `version` or `lint` to the log at $3 (default: discarded), so a test can tell
+# which binary ran and what it was asked to do.
+write_shellcheck_stub() {
+  local path="$1" version="$2" calls="${3:-/dev/null}"
+  mkdir -p "$(dirname "$path")"
+  cat > "$path" <<STUB
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "\${1:-}" == --version ]]; then
+  printf 'version\n' >> '$calls'
+  printf 'ShellCheck\nversion: $version\n'
+  exit 0
+fi
+printf 'lint\n' >> '$calls'
+STUB
+  chmod +x "$path"
+}
+
+# Behavior: lint fails before scanning when neither PATH nor the tool cache can
+# supply the pinned ShellCheck, and names both probes plus the fix.
+# Steps: Arrange a 0.10.0 PATH stub and an empty tool cache; Act by running the
+# linter; Assert exit 2, the expected/actual versions, the exact cache path
+# probed, and the bootstrap command that populates it.
 test_wrong_shellcheck_version_fails_closed() {
   local name="lint-shellcheck/wrong-version-fails-closed" root output status=0
   should_run "$name" || return 0
   root="$(fixture_repo wrong-version)"
-  mkdir -p "$root/bin"
-  cat > "$root/bin/shellcheck" <<'STUB'
-#!/usr/bin/env bash
-if [[ "${1:-}" == --version ]]; then
-  printf 'ShellCheck\nversion: 0.10.0\n'
-  exit 0
-fi
-exit 0
-STUB
-  chmod +x "$root/bin/shellcheck"
-  output="$(PATH="$root/bin:$PATH" \
+  write_shellcheck_stub "$root/bin/shellcheck" 0.10.0
+  # An empty cache: this case is about having no usable binary anywhere. The
+  # maintainer's real cache would otherwise rescue the run and this assertion
+  # would silently stop testing the failure it names.
+  output="$(PATH="$root/bin:$PATH" PM_DISPATCH_TOOL_CACHE="$root/empty-cache" \
     bash "$root/tools/lint/lint-shellcheck.sh" --repo "$root" 2>&1)" || status=$?
-  if [[ "$status" -eq 2 && "$output" == *"expected 0.11.0, got 0.10.0"* ]]; then
+  if [[ "$status" -eq 2 \
+      && "$output" == *"expected 0.11.0, got 0.10.0"* \
+      && "$output" == *"$root/empty-cache/shellcheck/0.11.0/"*"/bin/shellcheck"* \
+      && "$output" == *"bootstrap-shellcheck.sh"* ]]; then
     pass "$name"
   else
     fail "$name" "status=$status output=$output"
+  fi
+}
+
+# Behavior: --check and --resolve cannot be combined, so neither contract can be
+# selected by accident.
+# Steps: Arrange a fixture; Act by invoking bootstrap with both flags; Assert
+# exit 2, the mutual-exclusion diagnostic, and that no bin directory was printed.
+test_check_and_resolve_are_mutually_exclusive() {
+  local name="lint-shellcheck/check-and-resolve-mutually-exclusive" root out err status=0
+  should_run "$name" || return 0
+  root="$(fixture_repo check-resolve)"
+  out="$root/both.out"
+  err="$root/both.err"
+  bash "$root/tools/lint/bootstrap-shellcheck.sh" --repo "$root" --check --resolve \
+    > "$out" 2> "$err" || status=$?
+  if [[ "$status" -eq 2 \
+      && "$(cat "$err")" == *"--check and --resolve are mutually exclusive"* \
+      && ! -s "$out" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status stdout=$(cat "$out") stderr=$(cat "$err")"
+  fi
+}
+
+# Behavior: when PATH holds a non-pinned ShellCheck but the tool cache already
+# holds the pinned one, lint scans with the cached binary instead of stopping.
+# Steps: Arrange a 0.8.0 PATH stub and a cache containing a pinned stub, both
+# instrumented; Act by running the linter; Assert exit 0, that the cached binary
+# performed the lint invocations, and that the PATH binary linted nothing.
+test_cached_pin_used_when_path_version_wrong() {
+  local name="lint-shellcheck/cached-pin-used-when-path-wrong" root platform
+  local cache_bin path_calls cache_calls output status=0
+  should_run "$name" || return 0
+  root="$(fixture_repo cached-pin)"
+  platform="$(fixture_platform)"
+  [[ -n "$platform" ]] || { pass "$name"; return; }
+  # Each stub logs to its own file, so the assertion below can tell which
+  # binary actually performed the scan.
+  path_calls="$root/path-calls.log"
+  cache_calls="$root/cache-calls.log"
+  cache_bin="$root/cache/shellcheck/0.11.0/$platform/bin/shellcheck"
+  write_shellcheck_stub "$root/bin/shellcheck" 0.8.0 "$path_calls"
+  write_shellcheck_stub "$cache_bin" 0.11.0 "$cache_calls"
+  # The cache is authenticated by content, so the fixture must declare this stub
+  # as its trusted binary — the same requirement a real cached release meets.
+  write_fixture_manifest "$root" "$cache_bin" "$platform"
+  : > "$path_calls"
+  : > "$cache_calls"
+
+  output="$(PATH="$root/bin:$PATH" PM_DISPATCH_TOOL_CACHE="$root/cache" \
+    bash "$root/tools/lint/lint-shellcheck.sh" --repo "$root" 2>&1)" || status=$?
+  local cache_lints path_lints
+  cache_lints="$(grep -c '^lint$' "$cache_calls" || true)"
+  path_lints="$(grep -c '^lint$' "$path_calls" || true)"
+  if [[ "$status" -eq 0 && "$cache_lints" -ge 1 && "$path_lints" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status cache_lints=$cache_lints path_lints=$path_lints output=$output"
+  fi
+}
+
+# Behavior: a cached binary that does not match the repository's trusted digest
+# is never executed at all — not to lint, and not even to ask its version.
+# Steps: Arrange a cache stub whose --version says 0.11.0 while the manifest
+# records a different digest; Act by running the linter and the installer reuse
+# path; Assert exit 2, a digest diagnostic, and zero invocations of the stub.
+test_tampered_cache_binary_is_rejected() {
+  local name="lint-shellcheck/tampered-cache-binary-rejected" root platform
+  local cache_bin cache_calls output status=0
+  should_run "$name" || return 0
+  root="$(fixture_repo tampered-cache)"
+  platform="$(fixture_platform)"
+  [[ -n "$platform" ]] || { pass "$name"; return; }
+  cache_bin="$root/cache/shellcheck/0.11.0/$platform/bin/shellcheck"
+  cache_calls="$root/cache-calls.log"
+  # Record the digest of the legitimate binary, then swap in an impostor that
+  # still self-reports the pinned version — the exact shape a version probe
+  # alone cannot catch.
+  write_shellcheck_stub "$cache_bin" 0.11.0 "$cache_calls"
+  write_fixture_manifest "$root" "$cache_bin" "$platform"
+  write_shellcheck_stub "$cache_bin" 0.11.0 "$cache_calls"
+  printf '# tampered\n' >> "$cache_bin"
+  write_shellcheck_stub "$root/bin/shellcheck" 0.8.0
+  : > "$cache_calls"
+
+  output="$(env -u HOME XDG_CACHE_HOME="$root/xdg" PM_DISPATCH_TOOL_CACHE="$root/cache" \
+    PATH="$root/bin:$PATH" \
+    bash "$root/tools/lint/lint-shellcheck.sh" --repo "$root" 2>&1)" || status=$?
+  # Any line at all means the impostor ran: the version probe is an execution
+  # too, and it is the one an attacker reaches first.
+  if [[ "$status" -ne 2 || "$output" != *"does not match the trusted digest"* ]]; then
+    fail "$name" "lint accepted the tampered cache: status=$status output=$output"
+    return
+  fi
+  if [[ -s "$cache_calls" ]]; then
+    fail "$name" "tampered binary was executed before authentication: $(<"$cache_calls")"
+    return
+  fi
+
+  # The installer's reuse-an-existing-cache fast path must hold the same order.
+  status=0
+  output="$(env -u HOME XDG_CACHE_HOME="$root/xdg" PM_DISPATCH_TOOL_CACHE="$root/cache" \
+    PATH="$root/bin:$PATH" \
+    bash "$root/tools/lint/bootstrap-shellcheck.sh" --repo "$root" 2>&1)" || status=$?
+  if [[ -s "$cache_calls" ]]; then
+    fail "$name" "installer reuse path executed the tampered binary: $(<"$cache_calls")"
+    return
+  fi
+  if [[ "$status" -eq 0 ]]; then
+    fail "$name" "installer reuse path accepted the tampered cache: $output"
+    return
+  fi
+  pass "$name"
+}
+
+# Behavior: an archive whose checksum matches but whose extracted binary does not
+# match the manifest digest is rejected before that binary is run or published.
+# Steps: Arrange a valid local archive with a deliberately wrong binary_sha256;
+# Act by bootstrapping it; Assert exit 2, the digest diagnostic, and no binary
+# installed into the cache.
+test_bootstrap_rejects_wrong_binary_digest() {
+  local name="lint-shellcheck/bootstrap-rejects-wrong-binary-digest" root payload archive
+  local platform sha output status=0
+  should_run "$name" || return 0
+  root="$(fixture_repo bad-binary-digest)"
+  platform="$(fixture_platform)"
+  [[ -n "$platform" ]] || { pass "$name"; return; }
+  payload="$root/payload/shellcheck-v0.11.0"
+  archive="$root/shellcheck-v0.11.0.test.tar.gz"
+  write_shellcheck_stub "$payload/shellcheck" 0.11.0
+  tar -czf "$archive" -C "$root/payload" shellcheck-v0.11.0
+  sha="$(sha256_of "$archive")"
+  # Archive checksum honest, binary digest wrong: the shape where a supplier or
+  # a mirror ships a correctly-checksummed archive with different contents than
+  # the one this repository reviewed.
+  printf 'version\tplatform\turl\tsha256\tbinary_sha256\n' \
+    > "$root/tools/lint/shellcheck-assets.tsv"
+  printf '0.11.0\t%s\tfile://%s\t%s\t%s\n' \
+    "$platform" "$archive" "$sha" "$(printf 'a%.0s' {1..64})" \
+    >> "$root/tools/lint/shellcheck-assets.tsv"
+
+  output="$(env -u HOME XDG_CACHE_HOME="$root/xdg" \
+    PM_DISPATCH_TOOL_CACHE="$root/cache" \
+    bash "$root/tools/lint/bootstrap-shellcheck.sh" --repo "$root" 2>&1)" || status=$?
+  if [[ "$status" -ne 2 || "$output" != *"does not match the trusted digest"* ]]; then
+    fail "$name" "wrong binary digest accepted: status=$status output=$output"
+    return
+  fi
+  if [[ -e "$root/cache/shellcheck/0.11.0/$platform/bin/shellcheck" ]]; then
+    fail "$name" "a rejected binary was published into the cache"
+    return
+  fi
+  pass "$name"
+}
+
+# Behavior: a relative tool cache resolves against the caller's directory and
+# still works once lint changes into the repository to scan.
+# Steps: Arrange a cached pinned stub and a relative PM_DISPATCH_TOOL_CACHE; Act
+# by running the linter from a different CWD with an explicit --repo; Assert the
+# scan completes using the cached binary.
+test_relative_cache_survives_repo_chdir() {
+  local name="lint-shellcheck/relative-cache-survives-chdir" root platform
+  local cache_bin cache_calls output status=0 lint_calls
+  should_run "$name" || return 0
+  root="$(fixture_repo relative-cache)"
+  platform="$(fixture_platform)"
+  [[ -n "$platform" ]] || { pass "$name"; return; }
+  # The cache lives under the CALLER's directory, not the repository — otherwise
+  # a relative path would resolve correctly by coincidence once lint chdirs, and
+  # this case would prove nothing.
+  local caller="$root/caller"
+  mkdir -p "$caller"
+  cache_bin="$caller/cache/shellcheck/0.11.0/$platform/bin/shellcheck"
+  cache_calls="$root/cache-calls.log"
+  write_shellcheck_stub "$cache_bin" 0.11.0 "$cache_calls"
+  write_fixture_manifest "$root" "$cache_bin" "$platform"
+  write_shellcheck_stub "$root/bin/shellcheck" 0.8.0
+  : > "$cache_calls"
+
+  output="$(cd "$caller" && env -u HOME XDG_CACHE_HOME="$root/xdg" \
+    PM_DISPATCH_TOOL_CACHE=cache PATH="$root/bin:$PATH" \
+    bash "$root/tools/lint/lint-shellcheck.sh" --repo "$root" 2>&1)" || status=$?
+  lint_calls="$(grep -c '^lint$' "$cache_calls" || true)"
+  if [[ "$status" -eq 0 && "$lint_calls" -ge 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status lint_calls=$lint_calls output=$output"
   fi
 }
 
@@ -199,19 +438,9 @@ test_matching_shellcheck_version_scans() {
   should_run "$name" || return 0
   root="$(fixture_repo matching-version)"
   calls="$root/calls.log"
-  mkdir -p "$root/bin"
-  cat > "$root/bin/shellcheck" <<'STUB'
-#!/usr/bin/env bash
-set -euo pipefail
-if [[ "${1:-}" == --version ]]; then
-  printf 'version\n' >> "${SHELLCHECK_CALLS:?}"
-  printf 'ShellCheck\nversion: 0.11.0\n'
-  exit 0
-fi
-printf 'lint\n' >> "${SHELLCHECK_CALLS:?}"
-STUB
-  chmod +x "$root/bin/shellcheck"
-  output="$(PATH="$root/bin:$PATH" SHELLCHECK_CALLS="$calls" \
+  write_shellcheck_stub "$root/bin/shellcheck" 0.11.0 "$calls"
+  : > "$calls"
+  output="$(PATH="$root/bin:$PATH" \
     bash "$root/tools/lint/lint-shellcheck.sh" --repo "$root" 2>&1)" || status=$?
   version_calls="$(grep -c '^version$' "$calls" || true)"
   lint_calls="$(grep -c '^lint$' "$calls" || true)"
@@ -257,27 +486,17 @@ test_bootstrap_verifies_asset_checksum() {
   root="$(fixture_repo bootstrap-checksum)"
   payload="$root/payload/shellcheck-v0.11.0"
   archive="$root/shellcheck-v0.11.0.test.tar.gz"
-  case "$(uname -s):$(uname -m)" in
-    Linux:x86_64) platform=linux.x86_64 ;;
-    Linux:aarch64|Linux:arm64) platform=linux.aarch64 ;;
-    Darwin:x86_64) platform=darwin.x86_64 ;;
-    Darwin:arm64|Darwin:aarch64) platform=darwin.aarch64 ;;
-    *) pass "$name"; return ;;
-  esac
-  mkdir -p "$payload"
-  cat > "$payload/shellcheck" <<'STUB'
-#!/usr/bin/env bash
-printf 'ShellCheck\nversion: 0.11.0\n'
-STUB
-  chmod +x "$payload/shellcheck"
+  platform="$(fixture_platform)"
+  [[ -n "$platform" ]] || { pass "$name"; return; }
+  write_shellcheck_stub "$payload/shellcheck" 0.11.0
   tar -czf "$archive" -C "$root/payload" shellcheck-v0.11.0
   if command -v sha256sum >/dev/null 2>&1; then
     sha="$(sha256sum "$archive" | awk '{ print $1 }')"
   else
     sha="$(shasum -a 256 "$archive" | awk '{ print $1 }')"
   fi
-  printf 'version\tplatform\turl\tsha256\n0.11.0\t%s\tfile://%s\t%s\n' \
-    "$platform" "$archive" "$sha" > "$root/tools/lint/shellcheck-assets.tsv"
+  write_fixture_manifest "$root" "$payload/shellcheck" "$platform" \
+    "file://$archive" "$sha"
   bin_dir="$(env -u HOME XDG_CACHE_HOME="$root/xdg-cache" \
     PM_DISPATCH_TOOL_CACHE="$root/cache-good" \
     bash "$root/tools/lint/bootstrap-shellcheck.sh" --repo "$root")" || status=$?
@@ -359,6 +578,11 @@ test_ignore_contract_fails_closed
 test_suppression_is_code_scoped
 test_ci_local_entrypoint_parity
 test_wrong_shellcheck_version_fails_closed
+test_check_and_resolve_are_mutually_exclusive
+test_cached_pin_used_when_path_version_wrong
+test_tampered_cache_binary_is_rejected
+test_bootstrap_rejects_wrong_binary_digest
+test_relative_cache_survives_repo_chdir
 test_matching_shellcheck_version_scans
 test_version_pin_shape_fails_closed
 test_bootstrap_verifies_asset_checksum

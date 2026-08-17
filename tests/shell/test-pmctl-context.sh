@@ -32,15 +32,163 @@ fi
 # root override this locally.
 export PM_DISPATCH_STATE_ROOT="$tmp_root/suite-state"
 
-# Snapshot the developer's live repo context DB up-front so a dedicated guard
-# case can prove the suite never indexes/queries/scans the real repo root (which
-# would write or rebuild this DB and, under parallel runs, cause sqlite-busy /
-# FTS-rebuild flakiness). Every context case must operate on an isolated fixture
-# under $tmp_root, never $REPO_ROOT.
-# shellcheck source=tests/lib/live-db-guard.sh
-# shellcheck disable=SC1091
-. "$SCRIPT_DIR/../lib/live-db-guard.sh"
-LIVE_DB_BASELINE="$(_live_db_fingerprint)"
+# The developer's live repo context DB. Every context case must operate on an
+# isolated fixture under $tmp_root, never $REPO_ROOT: indexing/querying the real
+# repo root rebuilds this DB and, under parallel runs, causes sqlite-busy and
+# FTS-rebuild flakiness.
+#
+# Two suite-owned guards keep that true, neither of which reads the live DB —
+# reading it would report on every process on this machine, not on this suite:
+#
+#   1. Per call: $PMCTL is a wrapper that refuses any context invocation which
+#      has not been placed inside the fixture tree, so an unisolated call fails
+#      at its own call site, not later as an unattributed diff. Cases that source
+#      the library and call its functions directly bypass that wrapper, so they
+#      pass their target through ctx_fixture_target, which enforces the same rule.
+#   2. Per entrypoint: case_context_commands_resolve_only_fixture_roots asserts
+#      every context subcommand the CLI publishes resolves inside the fixture.
+#
+# The wrapper checks a SUFFICIENT PRECONDITION for isolation, deliberately not a
+# copy of the CLI's repo-root resolution rules: a call is isolated if it names a
+# path under $tmp_root, or runs from a CWD inside a git worktree under $tmp_root.
+# Every other shape — an explicit live root, a bare call from the repo, a bare
+# call from a directory in no worktree at all (which falls back to $REPO_ROOT
+# inside the CLI) — is refused rather than predicted. Cases that must escape it,
+# such as invalid-argument paths that never reach resolution, set
+# PM_CTX_GUARD_ALLOW_NON_FIXTURE=1 so each exception is visible and reviewable.
+LIVE_DB="$REPO_ROOT/.pm-dispatch/ctx/context.db"
+REAL_PMCTL="$PMCTL"
+
+# Containment is decided on resolved paths, never on the string as written:
+# "$tmp_root/../.." is lexically inside the fixture root and actually outside it,
+# and a symlink planted in a fixture can point anywhere. The $PMCTL wrapper is a
+# separate process, so this lives in a file both it and this suite source —
+# one implementation, because a second weaker copy is exactly how the wrapper
+# ended up failing OPEN when realpath was unavailable.
+mkdir -p "$tmp_root/bin"
+cat > "$tmp_root/bin/ctx-canon.sh" <<'CANON'
+# Resolve a path to its physical location. Paths that do not exist yet still
+# resolve, because a call may name a directory it is about to create. Prints
+# nothing and returns 1 when resolution cannot be established — callers must
+# treat that as "not contained", never as "unchanged".
+ctx_canonical_path() {
+  local path="$1" resolved tail_part="" head_part="$1"
+  if resolved="$(realpath -m -- "$path" 2>/dev/null)" && [[ "$resolved" == /* ]]; then
+    printf '%s\n' "$resolved"
+    return 0
+  fi
+  # Fallback for hosts without GNU realpath -m: resolve the deepest existing
+  # ancestor physically, then re-attach the part that does not exist yet.
+  [[ "$path" == /* ]] || return 1
+  while [[ ! -d "$head_part" && "$head_part" == */* ]]; do
+    tail_part="/${head_part##*/}$tail_part"
+    head_part="${head_part%/*}"
+    [[ -n "$head_part" ]] || head_part=/
+  done
+  [[ -d "$head_part" ]] || return 1
+  resolved="$(cd "$head_part" 2>/dev/null && pwd -P)" || return 1
+  resolved="$resolved$tail_part"
+  # A surviving traversal segment means resolution did not establish a physical
+  # location; refuse to answer rather than answer wrongly.
+  case "$resolved" in */../*|*/..) return 1 ;; esac
+  printf '%s\n' "$resolved"
+}
+CANON
+# shellcheck source=/dev/null
+. "$tmp_root/bin/ctx-canon.sh"
+
+CTX_FIXTURE_ROOT="$(ctx_canonical_path "$tmp_root")" || {
+  printf 'test-pmctl-context: cannot resolve the fixture root\n' >&2
+  exit 1
+}
+CTX_LIVE_ROOT="$(ctx_canonical_path "$REPO_ROOT")" || {
+  printf 'test-pmctl-context: cannot resolve the live repo root\n' >&2
+  exit 1
+}
+
+CTX_GUARD_LOG="$tmp_root/live-target-violations.log"
+: > "$CTX_GUARD_LOG"
+mkdir -p "$tmp_root/bin"
+fixture_root_canon="$CTX_FIXTURE_ROOT"
+live_root_canon="$CTX_LIVE_ROOT"
+cat > "$tmp_root/bin/pmctl" <<GUARD
+#!/usr/bin/env bash
+set -uo pipefail
+# PM_CTX_GUARD_LOG lets the guard's own self-tests collect their deliberate
+# violations somewhere else, so they never contaminate the suite-wide log.
+_log="\${PM_CTX_GUARD_LOG:-$CTX_GUARD_LOG}"
+_refuse() {
+  printf 'test-pmctl-context: refusing an unisolated context call (%s): %s\n' \\
+    "\$1" "\$*" >&2
+  printf '%s\t%s\n' "\$1" "\${*:2}" >> "\$_log"
+  exit 99
+}
+# The SAME canonicalizer this suite uses. Carrying a second, weaker copy here
+# is what previously let an unresolvable path fall through as "unchanged" and
+# keep its fixture prefix.
+# shellcheck source=/dev/null
+. "$tmp_root/bin/ctx-canon.sh"
+if [[ "\${1:-}" == context && "\${PM_CTX_GUARD_ALLOW_NON_FIXTURE:-0}" != 1 ]]; then
+  _fixture_arg=0
+  for _arg in "\$@"; do
+    # Only path-shaped arguments are examined. A bare query term like "alpha"
+    # would otherwise canonicalize against the CWD and count as a fixture path,
+    # which would skip the CWD check below — the opposite of guarding.
+    case "\$_arg" in -*) continue ;; esac
+    # ABSOLUTE paths only. Telling a repo argument from a flag value needs the
+    # CLI's own parser; testing a relative argument for directory-ness resolves
+    # it against the CWD, which made "--source memory" look like the repo's
+    # memory/ directory. Anything relative simply does not count as a fixture
+    # path, which sends the call to the stricter CWD check below.
+    [[ "\$_arg" == /* ]] || continue
+    # Fail CLOSED: an argument whose physical location cannot be established is
+    # not "probably fine", it is undecidable, and undecidable must not pass.
+    _resolved="\$(ctx_canonical_path "\$_arg")" \
+      || _refuse "target path cannot be resolved (\$_arg)" "\$@"
+    if [[ "\$_resolved" == "$live_root_canon" || "\$_resolved" == "$live_root_canon"/* ]]; then
+      _refuse "resolves to the live repo root (\$_arg -> \$_resolved)" "\$@"
+    fi
+    # Fixture status requires a DIRECTORY, because that is the CLI's own test
+    # for "is this positional the repo root": a -d test. An absolute path under
+    # the fixture root that is not a directory is not consumed as the repo root
+    # at all — it slides down to the query position and resolution falls back to
+    # the CWD, i.e. this repository. Granting fixture status for it would skip
+    # the CWD check below on exactly the call that needs it.
+    [[ -d "\$_arg" && "\$_resolved" == "$fixture_root_canon"/* ]] && _fixture_arg=1
+  done
+  if [[ "\$_fixture_arg" -eq 0 ]]; then
+    # No fixture path given, so the CLI will resolve from the CWD. That is safe
+    # only when the CWD sits in a worktree under the fixture root; with no
+    # worktree at all the CLI falls back to the live repo root.
+    _top="\$(git rev-parse --show-toplevel 2>/dev/null || true)"
+    [[ -n "\$_top" ]] && { _top="\$(ctx_canonical_path "\$_top")" || _top=""; }
+    if [[ -z "\$_top" || "\$_top" != "$fixture_root_canon"/* ]]; then
+      _refuse "no fixture path and CWD resolves outside the fixture root (\${_top:-no worktree})" "\$@"
+    fi
+  fi
+fi
+exec "$REAL_PMCTL" "\$@"
+GUARD
+chmod +x "$tmp_root/bin/pmctl"
+PMCTL="$tmp_root/bin/pmctl"
+
+# A few cases source the context library and call its functions directly, which
+# does not go through the wrapper above. They pass their target as an argument,
+# so they get the same guarantee through this seam instead: echo the target, or
+# refuse and record it exactly as the wrapper would.
+ctx_fixture_target() {
+  local target="$1" resolved log="${PM_CTX_GUARD_LOG:-$CTX_GUARD_LOG}"
+  resolved="$(ctx_canonical_path "$target")" || resolved="<unresolvable:$target>"
+  if [[ "$resolved" != "$CTX_FIXTURE_ROOT"/* ]]; then
+    printf 'test-pmctl-context: refusing a direct context call on a non-fixture target: %s (resolves to %s)\n' \
+      "$target" "$resolved" >&2
+    printf 'direct call target outside the fixture root\t%s -> %s\n' \
+      "$target" "$resolved" >> "$log"
+    return 1
+  fi
+  printf '%s\n' "$target"
+}
+SUITE_FILE="$SCRIPT_DIR/$(basename "${BASH_SOURCE[0]}")"
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -163,7 +311,7 @@ case_context_index_missing_repo() {
   # CLI always sets REPO_ROOT; test the function directly with REPO_ROOT unset.
   # Must also run from a CWD outside any git worktree — otherwise the
   # git-toplevel default would resolve to this repo's own toplevel and this
-  # case would start indexing the LIVE repo DB (see LIVE_DB_BASELINE guard).
+  # case would start indexing the LIVE repo DB (see $LIVE_DB).
   local nogit_dir="$tmp_root/idx-mr-nogit"
   mkdir -p "$nogit_dir"
   ( cd "$nogit_dir" && env -u REPO_ROOT bash -c \
@@ -814,7 +962,10 @@ case_context_pack_task_id_without_value() {
   should_run "$name" || return 0
   local out err status=0
   out="$tmp_root/pack-tiwv.out"; err="$tmp_root/pack-tiwv.err"
-    "$PMCTL" context pack --task-id > "$out" 2> "$err" || status=$?
+    # Argument validation rejects this before any repo root is resolved, so the
+    # isolation guard has nothing to protect here.
+    PM_CTX_GUARD_ALLOW_NON_FIXTURE=1 \
+      "$PMCTL" context pack --task-id > "$out" 2> "$err" || status=$?
   if [[ "$status" -ne 2 ]]; then
     fail "$name" "expected exit 2 for --task-id without value; got $status err=$(<"$err")"; return 0
   fi
@@ -831,7 +982,9 @@ case_context_pack_query_without_value() {
   should_run "$name" || return 0
   local out err status=0
   out="$tmp_root/pack-qwv.out"; err="$tmp_root/pack-qwv.err"
-    "$PMCTL" context pack --task-id TASK-1 --query > "$out" 2> "$err" || status=$?
+    # Argument validation rejects this before any repo root is resolved.
+    PM_CTX_GUARD_ALLOW_NON_FIXTURE=1 \
+      "$PMCTL" context pack --task-id TASK-1 --query > "$out" 2> "$err" || status=$?
   if [[ "$status" -ne 2 ]]; then
     fail "$name" "expected exit 2 for --query without value; got $status err=$(<"$err")"; return 0
   fi
@@ -1086,7 +1239,7 @@ case_context_query_no_db_sqlite_missing() {
     _ctx_sqlite3_check() { return 1; }
     _ctx_emit_usage_event() { :; }
     pmctl_context_query "$2" "alpha"
-  ' bash "$REPO_ROOT/runtime" "$nodb_repo" > "$out" 2> "$err" || status=$?
+  ' bash "$REPO_ROOT/runtime" "$(ctx_fixture_target "$nodb_repo")" > "$out" 2> "$err" || status=$?
   if [[ "$status" -ne 0 ]]; then
     fail "$name" "expected exit 0 (graceful empty); got $status err=$(<"$err")"; return 0
   fi
@@ -1527,74 +1680,290 @@ case_context_reuse_scan_on_real_repo() {
   fi
 }
 
-case_context_no_live_db_mutation() {
-  local name="pmctl context suite: never creates or mutates the live repo context DB"
-  # Regression guard: the suite must operate only on isolated $tmp_root fixtures.
-  # Compares the live repo DB fingerprint against the baseline captured before any
-  # case ran; any change means a case indexed/queried/scanned $REPO_ROOT directly.
+# Behavior: every context entrypoint this suite drives resolves its DB inside the
+# fixture root it was pointed at, never the live repo DB.
+# Steps: resolve status for an explicit fixture arg and for a no-arg call from a
+# fixture CWD; assert both report a db_path under that fixture; assert the live
+# DB is not reachable from tmp_root.
+case_context_commands_resolve_only_fixture_roots() {
+  local name="pmctl context suite: fixture invocations resolve inside tmp_root, never the live repo DB"
   should_run "$name" || return 0
 
-  local now
-  now="$(_live_db_fingerprint)"
-  if [[ "$now" == "$LIVE_DB_BASELINE" ]]; then
-    pass "$name"
-  else
-    fail "$name" "live repo DB changed during suite (a case operated on \$REPO_ROOT): baseline=$LIVE_DB_BASELINE now=$now"
+  # This replaces a fingerprint comparison of the live repo DB taken across the
+  # whole suite run. That oracle could not tell "a case here wrote the live DB"
+  # from "another process did" — and the auto-context hook queries it on every
+  # prompt, so the guard went red for writes this suite never made, and its
+  # failure message asserted a conclusion the evidence could not support. The
+  # property worth guarding is upstream of any write: a fixture invocation must
+  # not RESOLVE the live DB in the first place. status is read-only and reports
+  # the resolution it would use, so it can assert that without indexing anything.
+  local fix_repo="$tmp_root/resolve-fixture-repo"
+  make_fixture_repo "$fix_repo"
+  git_init_commit_fixture "$fix_repo"
+
+  local out db
+  out="$tmp_root/resolve-fixture-explicit.json"
+  "$PMCTL" context status --json "$fix_repo" > "$out" 2>/dev/null || true
+  db="$(jq -r '.db_path // empty' "$out" 2>/dev/null || printf '')"
+  if [[ "$db" != "$fix_repo/.pm-dispatch/ctx/context.db" ]]; then
+    fail "$name" "explicit-arg status resolved [$db], expected the fixture DB under $fix_repo"
+    return 0
   fi
+
+  out="$tmp_root/resolve-fixture-cwd.json"
+  ( cd "$fix_repo" && "$PMCTL" context status --json > "$out" 2>/dev/null ) || true
+  db="$(jq -r '.db_path // empty' "$out" 2>/dev/null || printf '')"
+  if [[ "$db" != "$fix_repo/.pm-dispatch/ctx/context.db" ]]; then
+    fail "$name" "no-arg status from the fixture CWD resolved [$db], expected the fixture DB"
+    return 0
+  fi
+
+  # And the live DB must be outside tmp_root by construction, so no fixture path
+  # can alias it.
+  if [[ "$LIVE_DB" == "$tmp_root"/* ]]; then
+    fail "$name" "live repo DB resolves inside tmp_root: $LIVE_DB"
+    return 0
+  fi
+  pass "$name"
 }
 
-case_live_db_guard_detects_metadata_only_touch() {
-  local name="pmctl context suite: live-db-guard fingerprint changes on a metadata-only touch of identical content"
-  # Regression: a content-only fingerprint would miss a write that restores the
-  # exact same bytes (or any metadata-only touch) — still a live-DB mutation
-  # the guard must catch. Exercises the real _live_db_fingerprint function
-  # against a scratch file (never the real live DB) by temporarily pointing
-  # LIVE_DB at it.
+# Behavior: every context subcommand the CLI publishes is exercised by this
+# suite, so a newly added one cannot arrive without isolation coverage.
+# Steps: read the subcommand list out of the CLI's own help; require a call site
+# for each in this file.
+case_context_every_subcommand_is_exercised() {
+  local name="pmctl context suite: every published subcommand has a call site here"
   should_run "$name" || return 0
 
-  local scratch="$tmp_root/live-db-guard-scratch.db"
-  printf 'unchanged-bytes' > "$scratch"
-  local saved_live_db="$LIVE_DB"
-  LIVE_DB="$scratch"
-  local before after
-  before="$(_live_db_fingerprint)"
-  touch -d '@1700000000' "$scratch"
-  after="$(_live_db_fingerprint)"
-  LIVE_DB="$saved_live_db"
-
-  if [[ "$before" != "$after" ]]; then
-    pass "$name"
-  else
-    fail "$name" "fingerprint unchanged after metadata-only touch (before=$before after=$after) — guard would miss a restore-identical-bytes mutation"
+  # Pairs with the $PMCTL wrapper: the wrapper proves no call in this suite
+  # targets the live repo root, and this proves the wrapper is actually in front
+  # of the whole published surface rather than the part that existed when it was
+  # written. Deriving from the CLI means the list cannot silently go stale.
+  local subcommands uncovered=""
+  subcommands="$("$REAL_PMCTL" help context 2>/dev/null \
+    | awk '/^Commands:/ { in_cmds = 1; next }
+           in_cmds && /^[[:space:]]+[a-z]/ { print $1; next }
+           in_cmds && !/^[[:space:]]/ { exit }')"
+  if [[ -z "$subcommands" ]]; then
+    fail "$name" "could not read the context subcommand list from the CLI"
+    return 0
   fi
+
+  local sub
+  while IFS= read -r sub; do
+    [[ -n "$sub" ]] || continue
+    grep -q "\"\$PMCTL\" context $sub" "$SUITE_FILE" || uncovered+="$sub "
+  done <<< "$subcommands"
+
+  if [[ -n "$uncovered" ]]; then
+    fail "$name" "published context subcommands with no call site in this suite: $uncovered"
+    return 0
+  fi
+  pass "$name"
 }
 
-case_live_db_guard_detects_same_second_touch() {
-  local name="pmctl context suite: live-db-guard fingerprint changes on a same-second identical-content rewrite"
-  # Regression: whole-second mtime alone would miss a rewrite that restores
-  # identical bytes within the same wall-clock second as the baseline — only
-  # nanosecond-precision mtime (or a content change) can distinguish it. Sets
-  # two timestamps that share the same integer second but differ in the
-  # nanosecond component, so a whole-second-only fingerprint would wrongly
-  # report no change.
+# Behavior: the suite's $PMCTL wrapper refuses a context call that names the live
+# repo root, rather than letting it reach the CLI.
+# Steps: invoke the wrapper against $REPO_ROOT; assert the refusal exit code, the
+# offending argument in the diagnostic, and that the call was recorded.
+case_context_live_target_guard_trips() {
+  local name="pmctl context suite: the live-target guard refuses a call naming the live repo root"
   should_run "$name" || return 0
 
-  local scratch="$tmp_root/live-db-guard-scratch-same-second.db"
-  printf 'unchanged-bytes' > "$scratch"
-  local saved_live_db="$LIVE_DB"
-  LIVE_DB="$scratch"
-  touch -d '2024-01-01 00:00:00.100000000' "$scratch"
-  local before after
-  before="$(_live_db_fingerprint)"
-  touch -d '2024-01-01 00:00:00.900000000' "$scratch"
-  after="$(_live_db_fingerprint)"
-  LIVE_DB="$saved_live_db"
+  # Without this, the guard could silently stop guarding — every other case
+  # passes a fixture path, so nothing else would notice.
+  local err own_log status=0
+  err="$tmp_root/live-target-guard.err"
+  own_log="$tmp_root/live-target-guard.log"
+  : > "$own_log"
+  PM_CTX_GUARD_LOG="$own_log" "$PMCTL" context status --json "$REPO_ROOT" \
+    > /dev/null 2> "$err" || status=$?
 
-  if [[ "$before" != "$after" ]]; then
-    pass "$name"
-  else
-    fail "$name" "fingerprint unchanged after a same-second nanosecond-distinct touch (before=$before after=$after) — guard is only whole-second precise and would miss a same-second restore-identical-bytes mutation"
+  if [[ "$status" -ne 99 ]]; then
+    fail "$name" "guard let a live-repo-root call through (exit $status)"
+    return 0
   fi
+  if ! grep -qF "$REPO_ROOT" "$err"; then
+    fail "$name" "refusal did not name the offending argument: $(<"$err")"
+    return 0
+  fi
+  if [[ "$(wc -l < "$own_log")" -ne 1 ]]; then
+    fail "$name" "refusal was not recorded: $(<"$own_log")"
+    return 0
+  fi
+  pass "$name"
+}
+
+# Behavior: the guard also refuses the shape that names no target at all — a
+# bare context call from a directory in no git worktree, which the CLI would
+# resolve to the live repo root.
+# Steps: run a no-argument context call from a non-git directory under tmp_root;
+# assert the refusal exit code and that the diagnostic names the reason.
+case_context_live_target_guard_refuses_bare_call_outside_worktree() {
+  local name="pmctl context suite: the live-target guard refuses a bare call from outside any worktree"
+  should_run "$name" || return 0
+
+  # This is the shape the argument check alone cannot see: nothing in the argv
+  # mentions the live root, yet the CLI's own fallback lands there. The guard
+  # asserts a sufficient precondition for isolation instead of predicting that
+  # fallback, so it refuses rather than reasoning about where the call would go
+  # — and it does so without reading or writing the live DB.
+  local nogit="$tmp_root/guard-nogit" err own_log status=0
+  mkdir -p "$nogit"
+  err="$tmp_root/guard-nogit.err"
+  own_log="$tmp_root/guard-nogit.log"
+  : > "$own_log"
+  ( cd "$nogit" && PM_CTX_GUARD_LOG="$own_log" "$PMCTL" context status --json \
+      > /dev/null 2> "$err" ) || status=$?
+
+  if [[ "$status" -ne 99 ]]; then
+    fail "$name" "guard let a bare non-worktree call through (exit $status)"
+    return 0
+  fi
+  if ! grep -q 'no fixture path' "$err"; then
+    fail "$name" "refusal did not name the reason: $(<"$err")"
+    return 0
+  fi
+  if [[ "$(wc -l < "$own_log")" -ne 1 ]]; then
+    fail "$name" "refusal was not recorded: $(<"$own_log")"
+    return 0
+  fi
+  pass "$name"
+}
+
+# Behavior: both guard seams decide containment on the resolved path, so a target
+# that is only lexically inside the fixture root is still refused.
+# Steps: run the CLI seam with a traversal path and the direct seam with a
+# fixture symlink pointing at the live repo; assert both refuse and record.
+case_context_guard_rejects_traversal_and_symlink_escape() {
+  local name="pmctl context suite: guards resolve targets before deciding containment"
+  should_run "$name" || return 0
+
+  # "$tmp_root/../.." passes a string-prefix test and lands outside the fixture
+  # tree; a symlink planted inside a fixture does the same with no traversal in
+  # the string at all. Neither may reach the CLI.
+  local own_log err status=0
+  own_log="$tmp_root/escape-guard.log"
+  err="$tmp_root/escape-guard.err"
+  : > "$own_log"
+  PM_CTX_GUARD_LOG="$own_log" "$PMCTL" context status --json "$tmp_root/../.." \
+    > /dev/null 2> "$err" || status=$?
+  if [[ "$status" -ne 99 ]]; then
+    fail "$name" "CLI seam accepted a traversal path (exit $status)"
+    return 0
+  fi
+
+  local link="$tmp_root/escape-link"
+  ln -sfn "$REPO_ROOT" "$link"
+  status=0
+  # Its own log: truncating the cumulative one to clean up would erase refusals
+  # recorded by earlier cases and hand the aggregate assertion a false green.
+  : > "$own_log"
+  PM_CTX_GUARD_LOG="$own_log" ctx_fixture_target "$link" > /dev/null 2>> "$err" || status=$?
+  if [[ "$status" -eq 0 ]]; then
+    fail "$name" "direct seam accepted a fixture symlink resolving to the live repo"
+    return 0
+  fi
+  if ! grep -q 'escape-link' "$own_log"; then
+    fail "$name" "symlink refusal was not recorded: $(<"$own_log")"
+    return 0
+  fi
+  pass "$name"
+}
+
+# Behavior: the guard still refuses escapes on a host where `realpath -m` is
+# unavailable, rather than falling back to the unresolved string.
+# Steps: shadow realpath with a failing stub; run the CLI seam with a traversal
+# path and with a fixture symlink to the live repo; assert both are refused.
+case_context_guard_fails_closed_without_realpath() {
+  local name="pmctl context suite: the guard fails closed when realpath cannot resolve"
+  should_run "$name" || return 0
+
+  # The earlier wrapper answered "unchanged" when it could not resolve, which
+  # kept the fixture prefix on a traversal path and read as safe. Undecidable
+  # must refuse, and it must do so on hosts without GNU realpath too.
+  local stub_dir="$tmp_root/no-realpath-bin" own_log err status=0
+  mkdir -p "$stub_dir"
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$stub_dir/realpath"
+  chmod +x "$stub_dir/realpath"
+  own_log="$tmp_root/no-realpath.log"
+  err="$tmp_root/no-realpath.err"
+  : > "$own_log"
+
+  PATH="$stub_dir:$PATH" PM_CTX_GUARD_LOG="$own_log" \
+    "$PMCTL" context status --json "$tmp_root/../.." > /dev/null 2> "$err" || status=$?
+  if [[ "$status" -ne 99 ]]; then
+    fail "$name" "traversal path was not refused without realpath (exit $status): $(<"$err")"
+    return 0
+  fi
+
+  local link="$tmp_root/no-realpath-link"
+  ln -sfn "$REPO_ROOT" "$link"
+  status=0
+  PATH="$stub_dir:$PATH" PM_CTX_GUARD_LOG="$own_log" \
+    "$PMCTL" context status --json "$link" > /dev/null 2>> "$err" || status=$?
+  if [[ "$status" -ne 99 ]]; then
+    fail "$name" "fixture symlink was not refused without realpath (exit $status): $(<"$err")"
+    return 0
+  fi
+  # 99 is the wrapper's own refusal code; the real CLI never exits 99, so this
+  # also shows it was never reached.
+  if [[ "$(wc -l < "$own_log")" -ne 2 ]]; then
+    fail "$name" "expected two recorded refusals, got: $(<"$own_log")"
+    return 0
+  fi
+  pass "$name"
+}
+
+# Behavior: an absolute fixture-contained path that is not a directory does not
+# earn fixture status, because the CLI would not accept it as a repo root.
+# Steps: from a CWD outside the fixture tree, run query with an absolute
+# non-directory under tmp_root; assert the wrapper refuses before pmctl runs.
+case_context_guard_refuses_non_directory_fixture_path() {
+  local name="pmctl context suite: an absolute non-directory fixture path does not grant fixture status"
+  should_run "$name" || return 0
+
+  # The CLI consumes the first positional as the repo root only when it is a
+  # directory (`-d "$1"`). A file slides down to the query position and the repo
+  # root falls back to the CWD's worktree — this repository, when a case runs
+  # from here. Treating "absolute and under tmp_root" as isolated would wave
+  # through precisely that call.
+  local not_a_dir="$tmp_root/not-a-repo-dir" own_log err status=0
+  printf 'x\n' > "$not_a_dir"
+  own_log="$tmp_root/non-directory-guard.log"
+  err="$tmp_root/non-directory-guard.err"
+  : > "$own_log"
+
+  ( cd "$REPO_ROOT" && PM_CTX_GUARD_LOG="$own_log" \
+      "$PMCTL" context query "$not_a_dir" someterm > /dev/null 2> "$err" ) || status=$?
+  if [[ "$status" -ne 99 ]]; then
+    fail "$name" "wrapper allowed a non-directory fixture path (exit $status): $(<"$err")"
+    return 0
+  fi
+  if ! grep -q 'no fixture path' "$err"; then
+    fail "$name" "refusal did not name the reason: $(<"$err")"
+    return 0
+  fi
+  pass "$name"
+}
+
+# Behavior: no context call made anywhere in this run fell outside the fixture
+# tree, in any of the shapes that would reach the live repo root.
+# Steps: read the guard's refusal log, written only by this suite's own wrapper;
+# require it to be empty.
+case_context_no_call_targeted_the_live_repo() {
+  local name="pmctl context suite: every case ran isolated from the live repo"
+  should_run "$name" || return 0
+
+  # Run last: this is the cumulative view of every case above. The log is
+  # written by this suite's wrapper and nothing else, so unlike the live-DB
+  # fingerprint it replaces, a non-empty log can only mean one of THESE calls
+  # did it — and the entry names which.
+  if [[ -s "$CTX_GUARD_LOG" ]]; then
+    fail "$name" "unisolated context calls were refused during this run: $(<"$CTX_GUARD_LOG")"
+    return 0
+  fi
+  pass "$name"
 }
 
 case_context_reuse_scan_hit_cap() {
@@ -1852,7 +2221,11 @@ case_context_pack_nondir_repo_path() {
   should_run "$name" || return 0
   local out err status=0
   out="$tmp_root/pack-ndr.out"; err="$tmp_root/pack-ndr.err"
-    "$PMCTL" context pack "/nonexistent/path/xyz" --task-id TASK-1 --query foo > "$out" 2> "$err" || status=$?
+    # The point of this case is a positional path that is deliberately not a
+    # directory, so it cannot be a fixture path.
+    PM_CTX_GUARD_ALLOW_NON_FIXTURE=1 \
+      "$PMCTL" context pack "/nonexistent/path/xyz" --task-id TASK-1 --query foo \
+        > "$out" 2> "$err" || status=$?
   if assert_exit "$name" "$status" 2; then pass "$name"; fi
 }
 
@@ -2365,7 +2738,7 @@ case_context_workflow_refresh_opt_out_reports_skipped() {
   printf '# workflow skip\n\ncc484workflowskipmarker\n' > "$fix_repo/docs/workflow-skip.md"
   before="$(stat -c '%Y:%s' "$fix_repo/.pm-dispatch/ctx/context.db" 2>/dev/null || stat -f '%m:%z' "$fix_repo/.pm-dispatch/ctx/context.db")"
   out="$(PM_DISPATCH_CONTEXT_AUTOREFRESH=0 bash -c \
-    '. "$1"; pmctl_context_workflow_refresh "$2" --json' bash "$REPO_ROOT/runtime/lib/pmctl-context.sh" "$fix_repo" 2>/dev/null)" || {
+    '. "$1"; pmctl_context_workflow_refresh "$2" --json' bash "$REPO_ROOT/runtime/lib/pmctl-context.sh" "$(ctx_fixture_target "$fix_repo")" 2>/dev/null)" || {
       fail "$name" "workflow refresh invocation failed"; return 0;
     }
   after="$(stat -c '%Y:%s' "$fix_repo/.pm-dispatch/ctx/context.db" 2>/dev/null || stat -f '%m:%z' "$fix_repo/.pm-dispatch/ctx/context.db")"
@@ -2387,7 +2760,7 @@ case_context_workflow_refresh_sqlite_unavailable() {
   before="$(stat -c '%Y:%s' "$fix_repo/.pm-dispatch/ctx/context.db" 2>/dev/null || stat -f '%m:%z' "$fix_repo/.pm-dispatch/ctx/context.db")"
   out="$(bash -c \
     '. "$1"; _ctx_sqlite3_check() { return 1; }; pmctl_context_workflow_refresh "$2" --json' \
-    bash "$REPO_ROOT/runtime/lib/pmctl-context.sh" "$fix_repo" 2>/dev/null)" || {
+    bash "$REPO_ROOT/runtime/lib/pmctl-context.sh" "$(ctx_fixture_target "$fix_repo")" 2>/dev/null)" || {
       fail "$name" "workflow refresh invocation failed"; return 0;
     }
   after="$(stat -c '%Y:%s' "$fix_repo/.pm-dispatch/ctx/context.db" 2>/dev/null || stat -f '%m:%z' "$fix_repo/.pm-dispatch/ctx/context.db")"
@@ -2907,7 +3280,7 @@ case_context_default_repo_root_falls_back_to_repo_root_env() {
   make_fixture_repo "$fallback_repo"
   local out err status=0
   out="$tmp_root/defroot-fb.out"; err="$tmp_root/defroot-fb.err"
-  ( cd "$nogit_dir" && REPO_ROOT="$fallback_repo" bash -c \
+  ( cd "$nogit_dir" && REPO_ROOT="$(ctx_fixture_target "$fallback_repo")" bash -c \
       ". \"$REPO_ROOT/runtime/lib/pmctl-context.sh\" 2>/dev/null; pmctl_context_index --source repo" \
       > "$out" 2> "$err" ) || status=$?
   if [[ "$status" -ne 0 ]]; then fail "$name" "index exited $status: $(<"$err")"; return 0; fi
@@ -2929,7 +3302,7 @@ case_context_default_repo_root_pm_dispatch_tree_unchanged() {
   git_init_commit_fixture "$self_repo"
   local out err status=0
   out="$tmp_root/defroot-self.out"; err="$tmp_root/defroot-self.err"
-  ( cd "$self_repo" && REPO_ROOT="$self_repo" bash -c \
+  ( cd "$self_repo" && REPO_ROOT="$(ctx_fixture_target "$self_repo")" bash -c \
       ". \"$REPO_ROOT/runtime/lib/pmctl-context.sh\" 2>/dev/null; pmctl_context_index --source repo" \
       > "$out" 2> "$err" ) || status=$?
   if [[ "$status" -eq 0 ]] && [[ -f "$self_repo/.pm-dispatch/ctx/context.db" ]] && ! grep -qi 'falling back' "$err"; then
@@ -2939,21 +3312,32 @@ case_context_default_repo_root_pm_dispatch_tree_unchanged() {
   fi
 }
 
+# Behavior: a no-arg index/query from an external repo writes that repo's DB and
+# resolves nothing to pm-dispatch's own.
+# Steps: index and query with no path argument from an external fixture CWD;
+# assert the fixture DB was created and that the resolved DB is not the live one.
 case_context_no_arg_cross_repo_never_touches_pm_dispatch_db() {
-  local name="pmctl context index/query: no-arg invocation from an external repo never creates or mutates pm-dispatch's own context.db"
+  local name="pmctl context index/query: no-arg invocation from an external repo resolves that repo, never pm-dispatch's own context.db"
   should_run "$name" || return 0
   local ext_repo="$tmp_root/defroot-cross-repo"
   make_fixture_repo "$ext_repo"
   git_init_commit_fixture "$ext_repo"
-  local before after
-  before="$(_live_db_fingerprint)"
   ( cd "$ext_repo" && "$PMCTL" context index --source repo > /dev/null 2>&1 )
   ( cd "$ext_repo" && "$PMCTL" context query --source repo my_func_alpha > /dev/null 2>&1 )
-  after="$(_live_db_fingerprint)"
-  if [[ "$before" == "$after" ]]; then
+
+  # Where the write landed, not whether an unrelated file happened to change:
+  # a fingerprint of the live DB would also go red for another process's write.
+  local ext_db="$ext_repo/.pm-dispatch/ctx/context.db" resolved
+  if [[ ! -s "$ext_db" ]]; then
+    fail "$name" "no-arg index did not create the external repo's DB at $ext_db"
+    return 0
+  fi
+  resolved="$(cd "$ext_repo" && "$PMCTL" context status --json 2>/dev/null \
+    | jq -r '.db_path // empty' 2>/dev/null || printf '')"
+  if [[ "$resolved" == "$ext_db" ]]; then
     pass "$name"
   else
-    fail "$name" "pm-dispatch's own context.db changed after cross-repo no-arg calls: before=$before after=$after"
+    fail "$name" "no-arg call from $ext_repo resolved [$resolved], expected [$ext_db]"
   fi
 }
 
@@ -3265,7 +3649,7 @@ case_context_prompt_scan_no_sqlite_graceful() {
     _ctx_sqlite3_check() { return 1; }
     _ctx_emit_usage_event() { printf "%s\t%s\t%s\n" "$1" "$3" "${4:-}" >> "$EMIT_FILE"; }
     pmctl_context_prompt_scan "$2" "alpha knowledge question"
-  ' bash "$REPO_ROOT/runtime" "$fix_repo" > "$out" 2> "$err" || status=$?
+  ' bash "$REPO_ROOT/runtime" "$(ctx_fixture_target "$fix_repo")" > "$out" 2> "$err" || status=$?
   if [[ "$status" -ne 0 ]]; then
     fail "$name" "expected exit 0 (graceful empty); got $status err=$(<"$err")"; return 0
   fi
@@ -3426,7 +3810,7 @@ case_context_fts5_availability_is_cached() {
     # bypassed, the second call re-probes through THIS broken stub.
     sqlite3() { return 1; }
     if _ctx_fts5_available "$db"; then echo "second=available"; else echo "second=unavailable"; fi
-  ' bash "$REPO_ROOT/runtime" "$db" > "$out" 2> "$err" || status=$?
+  ' bash "$REPO_ROOT/runtime" "$(ctx_fixture_target "$db")" > "$out" 2> "$err" || status=$?
   if [[ "$status" -ne 0 ]]; then
     fail "$name" "exit $status err=$(<"$err")"; return 0
   fi
@@ -3561,8 +3945,13 @@ case_context_prompt_scan_no_sqlite_graceful
 case_context_prompt_scan_secret_never_persisted
 case_context_prompt_scan_emits_event
 case_context_fts5_availability_is_cached
-case_context_no_live_db_mutation
-case_live_db_guard_detects_metadata_only_touch
-case_live_db_guard_detects_same_second_touch
+case_context_commands_resolve_only_fixture_roots
+case_context_every_subcommand_is_exercised
+case_context_live_target_guard_trips
+case_context_live_target_guard_refuses_bare_call_outside_worktree
+case_context_guard_rejects_traversal_and_symlink_escape
+case_context_guard_fails_closed_without_realpath
+case_context_guard_refuses_non_directory_fixture_path
+case_context_no_call_targeted_the_live_repo
 
 th_summary

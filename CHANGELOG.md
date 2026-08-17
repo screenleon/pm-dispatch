@@ -10,6 +10,48 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Lint resolves the pinned ShellCheck from the tool cache instead of
+  requiring it on `PATH` (CC-551).** `lint-shellcheck.sh` validated only that
+  the ambient `PATH` already carried the pinned version, so a gate reviewer or
+  CI sandbox with a system ShellCheck stopped `run-tests.sh` at its Phase 0
+  structural precheck — no behavioral suite ran at all, and the reviewer
+  reported missing execution evidence every round. Supplying local evidence
+  never stopped it recurring, because it never changed the reviewer's own
+  environment. `bootstrap-shellcheck.sh --resolve` now reports a usable pinned
+  binary offline: `PATH` when it matches, otherwise the already-populated
+  cache. When neither can supply it, lint still fails closed and names both
+  probes plus the command that populates the cache. Resolution never downloads,
+  and the version check itself is unchanged — `--check` keeps its existing
+  meaning for release verification.
+
+  Because that makes the cache an execution source these tools choose rather
+  than one the operator picked, a cached binary is now authenticated by content:
+  `tools/lint/shellcheck-assets.tsv` records a `binary_sha256` per platform,
+  derived from the release archive whose checksum the same row already pinned,
+  and resolution rejects a mismatch before the binary is ever run. A version
+  string a binary prints about itself cannot establish what it is. The same
+  digest is checked when installing, when reusing an existing cache entry, and
+  on the freshly extracted binary — in every case *before* the version probe,
+  since running the candidate is exactly what the digest exists to gate.
+
+- **Test guards no longer fail on other processes' writes to live shared state
+  (CC-550).** Three suites proved "this run did not touch live state" by
+  fingerprinting a shared file before and after. That oracle cannot distinguish
+  this suite's writes from any other process's, and both targets are written by
+  ordinary use: the auto-context hook queries the repo context DB on every
+  prompt. One 41-minute gate preflight died this way — the guard reported that
+  "a case operated on `$REPO_ROOT`", a conclusion its evidence could not
+  support, and the round aborted before any reviewer was dispatched. Each guard
+  now asserts the deterministic property upstream of any write: that the call
+  under test *resolves* to its fixture, never the live target. The context suite
+  additionally routes every call through a wrapper that refuses, at the call site
+  and with the reason, any invocation not placed inside the fixture tree — an
+  explicit live root, or a bare call from a directory the CLI would resolve back
+  to the repository. It checks a sufficient precondition for isolation rather
+  than reimplementing the CLI's resolution rules, so the suite-wide coverage the
+  fingerprint provided is kept without its attribution problem. Failure messages
+  state only what the evidence supports.
+
 - **Gate reviewer-protocol failures are correctable on their retry (CC-549).**
   An invalid `test_gaps` row was reported as a bare
   `invalid test-gap matrix contract` covering ~10 constraints, so the reviewer
