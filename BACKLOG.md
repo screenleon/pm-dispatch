@@ -477,7 +477,12 @@ auto-context hook。preflight 因此 `unclassified-nonzero`，整輪 gate 在 re
    pm-dispatch 自身 DB 的指紋。
 3. `test-release-verify.sh` 的 `test_live_db_untouched` → `test_context_smoke_
    targets_fixture_repo`：以 fixture repo 自己的 DB 是否被建立作為 redirect 生效
-   的正面證據（本套件擁有的證據），不再讀 live DB。
+   的正面證據（本套件擁有的證據），不再讀 live DB。另補
+   `test_only_memory_source_context_call_names_repo_root` source ratchet——
+   release-verify 的 Phase 3c 確實以 `$REPO_ROOT` 呼叫
+   `context query --source memory`（解析的是 memory DB、不開 repo context DB），
+   故守衛的主張收斂為「除 `--source memory` 外，不得有 context 呼叫指名 live
+   root」，而非籠統宣稱全部呼叫都走 fixture。
 
 `tests/lib/live-db-guard.sh` 隨之刪除——它剩餘的唯二消費者是驗證該守衛自身的兩個
 自我測試，屬循環驗證。所有失敗訊息只陳述證據支持得住的結論（「解析到 X，期望 Y」），

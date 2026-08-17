@@ -466,10 +466,16 @@ test_phase3c_pre_release_audit() {
 }
 
 # ── Live-db isolation guard ─────────────────────────────────────────────────
-# Every RV invocation above targets CONTEXT_FIXTURE_REPO, never REPO_ROOT
-# directly. Run this last so it observes the cumulative effect of the whole
-# suite, not just one call.
+# Phase 3's repo-context smoke targets CONTEXT_FIXTURE_REPO. It is not the only
+# context call in release-verify.sh: Phase 3c passes REPO_ROOT to
+# `context query --source memory`, which resolves the repo's MEMORY database and
+# never opens the repo context DB. The two cases below say exactly that — one
+# proves the Phase 3 redirect held, the other pins which calls are allowed to
+# name the live root at all.
 
+# Behavior: Phase 3's context smoke indexed the fixture repo, not this one.
+# Steps: Arrange the fixture redirect at suite start; Act by running RV once;
+# Assert the fixture repo has its own context DB and is not REPO_ROOT.
 test_context_smoke_targets_fixture_repo() {
   local name="context-smoke-targets-fixture-repo"
   # Phase 3 indexes CONTEXT_SMOKE_REPO. If the redirect failed, that work landed
@@ -482,6 +488,32 @@ test_context_smoke_targets_fixture_repo() {
   fi
   if [[ ! -s "$CONTEXT_FIXTURE_REPO/.pm-dispatch/ctx/context.db" ]]; then
     fail "$name" "Phase 3 built no DB under the fixture repo ($CONTEXT_FIXTURE_REPO) — the smoke target was not redirected away from $REPO_ROOT"
+    return
+  fi
+  pass "$name"
+}
+
+# Behavior: only the memory-source probe may name the live repo root; every
+# repo-context call in release-verify.sh goes to the fixture.
+# Steps: Arrange by reading release-verify.sh; Act by collecting its context
+# invocations that mention REPO_ROOT; Assert each one is a --source memory call.
+test_only_memory_source_context_call_names_repo_root() {
+  local name="context-calls-name-repo-root-only-for-memory-source" offenders=""
+  # A source ratchet, not a runtime probe: a future context call added with
+  # REPO_ROOT would otherwise silently rebuild the operator's live context DB on
+  # every release verification, and no runtime oracle here could attribute that
+  # write back to this suite.
+  local line
+  while IFS= read -r line; do
+    # shellcheck disable=SC2016  # Match the literal source text, not its expansion.
+    [[ "$line" == *'"$PMCTL" context'* ]] || continue
+    # shellcheck disable=SC2016  # Same: the script text contains $REPO_ROOT unexpanded.
+    [[ "$line" == *'$REPO_ROOT'* ]] || continue
+    [[ "$line" == *'--source memory'* ]] || offenders+="${line#"${line%%[![:space:]]*}"} "
+  done < "$REPO_ROOT/ops/release/release-verify.sh"
+
+  if [[ -n "$offenders" ]]; then
+    fail "$name" "context calls pass REPO_ROOT without --source memory: $offenders"
     return
   fi
   pass "$name"
@@ -523,6 +555,7 @@ test_phase3c_artifacts_list
 test_phase3c_pre_release_audit
 test_native_windows_refused
 test_context_smoke_targets_fixture_repo
+test_only_memory_source_context_call_names_repo_root
 
 printf '\n%d passed, %d failed\n' "$PASSED" "$FAILED"
 [[ "$FAILED" -eq 0 ]]
