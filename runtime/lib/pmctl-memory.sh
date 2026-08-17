@@ -974,9 +974,20 @@ _mem_stats_age_bucket_index() {
 }
 
 # Integer percent of numerator/denominator, 0 when the denominator is 0.
+#
+# The obvious `num * 100 / den` overflows once num passes INT_MAX/100 — which
+# the saturating aggregate guards make reachable, and it wraps to a plausible
+# small number rather than failing. A capped top-five total near 5e18 reported
+# 0% instead of ~54%. Halving both terms preserves the ratio and converges in a
+# handful of steps, so the multiply always runs in range.
 _mem_stats_pct() {
   local num="$1" den="$2"
   (( den > 0 )) || { printf '0'; return 0; }
+  while (( num > MEMORY_STATS_INT_MAX / 100 )); do
+    num=$(( num / 2 ))
+    den=$(( den / 2 ))
+    (( den > 0 )) || { printf '0'; return 0; }
+  done
   printf '%d' $(( num * 100 / den ))
 }
 

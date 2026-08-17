@@ -2362,6 +2362,41 @@ case_memory_stats_json_escapes_c1_controls() {
   pass "$name"
 }
 
+# Behavior: percentages stay correct when an aggregate has saturated near the integer maximum.
+# Steps: source the library; compute percents across normal, boundary, and saturated inputs; assert each against its known value.
+case_memory_stats_pct_survives_saturated_aggregates() {
+  local name="memory stats: percent helper does not overflow on saturated aggregates"
+  should_run "$name" || return 0
+
+  # `num * 100 / den` overflows once num passes INT_MAX/100 — reachable exactly
+  # because the aggregate guards saturate there — and it wraps to a plausible
+  # small number instead of failing. A capped top-five total near 5e18 reported
+  # 0% rather than ~54%, which is worse than an error in a report cited for
+  # retention decisions.
+  # shellcheck source=runtime/lib/pmctl-memory.sh
+  # shellcheck disable=SC1091
+  . "$REPO_ROOT/runtime/lib/pmctl-memory.sh"
+
+  local got
+  got="$(_mem_stats_pct 5000000000000000000 9223372036854775807)"
+  if [[ "$got" != "54" ]]; then
+    fail "$name" "saturated ratio produced [$got], expected 54"
+    return 0
+  fi
+  # Ordinary values must be unaffected by the scaling path.
+  got="$(_mem_stats_pct 46 394)"
+  [[ "$got" == "11" ]] || { fail "$name" "46/394 produced [$got], expected 11"; return 0; }
+  got="$(_mem_stats_pct 394 394)"
+  [[ "$got" == "100" ]] || { fail "$name" "394/394 produced [$got], expected 100"; return 0; }
+  got="$(_mem_stats_pct 9223372036854775807 9223372036854775807)"
+  [[ "$got" == "100" ]] || { fail "$name" "max/max produced [$got], expected 100"; return 0; }
+  got="$(_mem_stats_pct 0 394)"
+  [[ "$got" == "0" ]] || { fail "$name" "0/394 produced [$got], expected 0"; return 0; }
+  got="$(_mem_stats_pct 5 0)"
+  [[ "$got" == "0" ]] || { fail "$name" "zero denominator produced [$got], expected 0"; return 0; }
+  pass "$name"
+}
+
 # Behavior: many individually-valid counters cannot sum past the integer range into a negative total.
 # Steps: seed ten cards each near 10^18; run stats --json; assert a non-negative total, degraded usage_store, and sane percentages.
 case_memory_stats_aggregate_overflow_degrades() {
@@ -3308,6 +3343,7 @@ case_memory_stats_json_escapes_c1_controls
 case_memory_stats_unrecordable_card_is_not_never_hit
 case_memory_stats_unparsed_index_entries_excluded
 case_memory_stats_aggregate_overflow_degrades
+case_memory_stats_pct_survives_saturated_aggregates
 case_memory_stats_space_bearing_card_path
 case_memory_stats_malformed_episodes_are_not_zero_history
 case_memory_stats_age_buckets_match_frecency_boundaries

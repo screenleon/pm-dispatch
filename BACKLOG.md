@@ -65,6 +65,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-543 | ✅ done | Full test runner Phase 0 fail-fast structural precheck；`--collect-all` 保留 release 全證據路徑 | ops/test | 2026-08-04 | pr:#465 | P2 | hygiene |
 | CC-545 | ✅ done | Reviewer evidence-reference-contract INCOMPLETE 的單次修正性重派：僅限該單一違規類別，附具體錯誤引用重跑違規 reviewer，不必整輪 gate（30-40 分鐘）重來 | ops/gate | 2026-08-06 | pr:#465 | P2 | hygiene |
 | CC-546 | ⏸ deferred | standalone Gate distribution／copy parity follow-up：獨立定義 bundle schema、generation、installed parity 與 support boundary；不回併 Linux/WSL2 canonical module extraction | arch/gate | 2026-08-14 | — | P2 | reuse-debt |
+| CC-551 | 🔵 active | Gate/QA sandbox 取不到釘住的 ShellCheck：`lint-shellcheck.sh` 只 `bootstrap --check`（要求已在 PATH）而不使用已快取的釘住版本，導致 reviewer 的 focused run 卡在結構性 lint、行為性 suite 從未執行；已連續阻擋 5 輪 gate | ops/test | 2026-08-17 | — | P2 | hygiene |
 | CC-550 | 🔵 active | 測試套件的「live 共用狀態未變動」指紋守衛是假陽性製造機：無法區分「本套件寫的」與「外部行程寫的」，改為確定性 oracle（斷言每次呼叫解析到 fixture 而非 live 目標）；已觀察 3 例（memory doctor／memory stats／context DB） | ops/test | 2026-08-17 | — | P2 | hygiene |
 | CC-549 | 🔵 active | Gate reviewer-protocol 診斷可修正性：test-gap 契約錯誤點名違規欄位／值／允許集合，且 retryable 分類改比對 reason stem（帶明細的 reason 先前一律被判為不可重試） | ops/gate | 2026-08-17 | — | P2 | hygiene |
 | CC-548 | 🔵 active | context.db FTS5 對 CJK 查詢無索引無排序（[[CC-465]] Requirement 3 殘留）：先 spike 驗 `tokenize='trigram'` 的 sqlite 版本下限與 index rebuild 成本，再決定是否實作 | memory | 2026-08-16 | — | P2 | retrieval |
@@ -385,6 +386,35 @@ lib 分離的關注點，允許各自的修復時程與驗收」轉由 [[CC-548]
 4. 既有英文行為不變；回歸測試涵蓋純英文、中英混合、純中文三類輸入，並驗證兩個呼叫端遷移至共用 lib 後行為一致。
 
 **Cross-link**: [[CC-340]]（deferred；本票是非 embedding 的分詞修正，非其替代）。**工作序列**：本票是 CC-465 → CC-467 → CC-468 → CC-466 序列化工作串的起點——CJK 抽詞先修好，統計可視化與 brief 約束萃取才有可信賴的中文訊號可用。
+
+---
+
+## CC-551 — Gate/QA sandbox 取不到釘住的 ShellCheck 🔵 active
+
+**Problem**: `tools/lint/lint-shellcheck.sh` 以 `bootstrap-shellcheck.sh --check`
+驗證版本——該模式**只檢查 PATH 上的 shellcheck 是否等於釘住版本，不使用也不
+provision 已快取的釘住二進位**。reviewer sandbox 的 PATH 上是系統版
+（實測 0.8.0），於是 `lint-scripts` 立刻失敗，`tests/bin/run-tests.sh` 停在
+Phase 0 結構性 precheck，**行為性 suite 一個都沒跑到**。qa-tester 因此每輪都
+回報「缺少可執行證據」並判 hard_block。
+
+實測影響：2026-08-17 的 CC-467 gate 連續 5 輪出現此 finding（第 3、4、8、11、
+12 輪）。每輪維護者只能在本機用 `PATH=<cache>/bin` 手動補跑 repo runner 當證據，
+但那不會改變 reviewer 自身環境，下一輪照樣復發。
+
+**Why**: 快取其實已存在（`~/.cache/pm-dispatch/tools/shellcheck/<ver>/<plat>/bin`），
+純粹是 lint 不去用它。`--check` 不 provision 是刻意的政策（避免 lint 期間隱式
+下載），所以修法不是「把 --check 改成安裝」，而要在「不觸發網路」與「能用已備妥
+的工具鏈」之間取捨。
+
+**Requirement**:
+1. 決定政策：(a) lint 在**不下載**的前提下發現並使用已快取的釘住二進位；或
+   (b) gate 對 reviewer sandbox 顯式帶入工具鏈 PATH（比照 `QA_RULES_DIR` 既有
+   作法）；或 (c) 維持現狀但讓失敗訊息可據以自助。擇一並記錄理由。
+2. 不得以放寬版本檢查來「解決」——釘住版本是刻意的可重現性契約。
+3. 回歸測試：模擬 PATH 上為錯誤版本、快取中有正確版本，斷言選定政策的行為。
+
+**Cross-link**: [[CC-541]]（qa-tester sandbox 可見性）同屬 reviewer 環境可見性線。
 
 ---
 
