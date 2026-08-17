@@ -10,6 +10,63 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Gate reviewer-protocol failures are correctable on their retry (CC-549).**
+  An invalid `test_gaps` row was reported as a bare
+  `invalid test-gap matrix contract` covering ~10 constraints, so the reviewer
+  could not tell what it broke and its single corrective retry tended to
+  reproduce the same class of error — discarding a full gate round. Every
+  observed instance was the same root cause: a value taken from a sibling enum
+  (`missing_layer` values placed in `coverage_dimensions`). The diagnostic now
+  names the row, the field, the offending value, the permitted set, and that
+  confusion explicitly, reusing the precise-diagnostic pattern already used for
+  finding contracts.
+
+  Fixing that surfaced a second, pre-existing defect: `pr-gate.sh` classified
+  retryability by whole-string equality, while the verifier already appended
+  `": <detail>"` to the finding-contract reasons — so the most actionable
+  diagnostics were exactly the ones never retried. Retryability now matches the
+  reason stem.
+
+- **Memory human output neutralizes terminal control sequences.**
+  `pmctl memory stats` and `pmctl memory doctor` printed index-derived card
+  paths and the resolved memory directory verbatim, so anyone able to add a
+  MEMORY.md entry (or name a directory) could embed ESC/OSC sequences that the
+  reader's terminal executes on display. Control characters are now rendered as
+  inert `\xNN` text in human mode; JSON mode keeps the exact value in its
+  escaped form.
+
+- **Memory reports escape every JSON control character.** `pmctl memory doctor`
+  and `pmctl memory stats` build their JSON by hand and escaped only `\n` and
+  `\r`. A tab in a memory directory or card path — legal on POSIX filesystems —
+  produced a document no parser accepts. All characters with a short escape now
+  get one, and the rest of the C0 range is emitted as `\u00XX`.
+
+- **An unreadable usage sidecar is no longer reported as zero activity.**
+  `memory_usage_read` suppresses store errors, so a corrupt, locked, or
+  permission-denied sidecar previously rendered as a successful all-never-hit
+  report. `pmctl memory stats` now reports `usage_store: error` and says so in
+  human output; an absent sidecar remains a valid zero-activity report.
+
+- **`pmctl memory rebuild-summary` skips whitespace-only summaries.** It tested
+  emptiness before trimming, so a summary of only spaces produced an empty
+  bullet in `episodes.summary.md` while `pmctl memory stats` counted the same
+  entry as unfilled. Both now apply one rule.
+
+- **CJK-aware shared retrieval term extraction (CC-465).** Memory-injection
+  ranking and context prompt/reuse scans each carried their own ASCII-only
+  tokenizer, so CJK characters were treated as separators and dropped. For a
+  maintainer working in Chinese this meant the keyword tier scored 0 on every
+  prompt, ranking degraded to pure frecency, and — because the usage sidecar
+  only accrues on keyword hits — the frecency signal never accumulated either.
+  A single `runtime/lib/retrieval-terms.sh` (ASCII identifiers plus overlapping
+  CJK 2-grams) now backs both call sites. English behavior is preserved by
+  parameterizing rather than unifying policy: the injection hook keeps
+  min-length 4 with no stop-list, context/reuse-scan keeps min-3
+  stop-filtered. Input past `RETRIEVAL_TERM_MAX_BYTES` still extracts from the
+  prefix, but says so on stderr so truncation cannot masquerade as an empty
+  index. FTS5 `unicode61` behavior for Chinese queries is a separate concern
+  and is not addressed here.
+
 - **Standalone Gate bundles load canonical libraries (CC-532).** `pr-gate.sh`
   derived each library path independently, and the loads keyed only on the
   installed-copy root resolved to `<bundle>/../lib` under the standalone-copy
@@ -105,6 +162,33 @@ Versions follow [Semantic Versioning](https://semver.org/).
   layout remain unchanged.
 
 ### Added
+
+- **`pmctl memory stats` — injection-benefit report (CC-467).** A read-only
+  aggregator over data that already exists (MEMORY.md, the usage sidecar,
+  `episodes.jsonl`); it opens no new telemetry write surface. Reports index
+  size against the per-prompt injection budget, per-card hit counts and
+  never-hit cards, last-hit recency using the same day boundaries as frecency
+  ranking, and the episode summary fill rate. The concentration block
+  (`hit_coverage_pct`, `top5_share_pct`) exists because raw hit counts look
+  healthiest in the worst state: when nearly every card is hit on nearly every
+  prompt, ranking has no discrimination left and injection degrades into
+  "emit whatever fits". Usage numbers are keyed per card file, so two index
+  lines linking one card no longer double-count. The injection budget caps now
+  live in `runtime/lib/memory.sh` and are read by both the hook and the
+  reporter, so the reported budget cannot drift from the enforced one.
+  `card_hits` answers "which card is repeatedly selected" with per-card
+  `{card, access_count, last_access_day}` rows, most-hit first, bounded by
+  `--hit-limit` (counts and totals are never capped, so bounding the list
+  cannot falsify them). Corrupt input is never presentable as absence:
+  `usage_store: error` marks an unreadable sidecar and `episodes_malformed` /
+  `episodes_status` mark unparseable episode rows, because this report is cited
+  in retention decisions, and `unmeasurable_cards` separates cards whose path
+  the tab-delimited sidecar cannot represent from cards genuinely never hit.
+  Both human and JSON output escape control characters in memory-derived paths
+  — including C1 bytes such as a raw `0x9B` CSI, which `[[:cntrl:]]` does not
+  match — by decoding UTF-8, so CJK card names survive intact. `--json` carries `schema_version: 1`; exit `0` report, `1` invalid
+  canonical selection, `2` usage error — an unhealthy number is never an error
+  exit.
 
 - **Actionable Gate test-gap evidence and bounded protocol recovery (CC-521).**
   Current selected-reviewer results publish `pr_gate_result_v5`: every reviewer

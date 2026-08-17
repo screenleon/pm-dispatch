@@ -135,6 +135,93 @@ project store.
 field — useful for spot-checking coverage even though write-time enforcement is
 already active.
 
+## Injection benefit: `pmctl memory stats`
+
+`pmctl memory doctor` answers "is the memory dir well-formed". `pmctl memory
+stats` answers a different question: **what does having memory actually buy
+me?** It is also strictly read-only, and it opens no new telemetry write
+surface — every number is aggregated from files other commands already
+maintain (the MEMORY.md index, the usage sidecar written by
+`guard-inject-memory.sh`, and `episodes.jsonl`).
+
+```sh
+pmctl memory stats [--json] [--repo-root <path>] [--never-hit-limit <n>] [--hit-limit <n>]
+```
+
+Report fields: `index_entry_count` (MEMORY.md index lines — the unit injection
+ranks), `unparsed_index_entries` (index lines with no parseable `.md` link;
+counted separately because they are not cards and must not enter the per-card
+ratios), `card_count` (distinct linked card files — the unit the usage sidecar
+keys on; two index lines pointing at one card count as one card),
+`index_inject_bytes` with `inject_budget_bytes` / `inject_budget_entries`,
+`usage_store` (`sqlite3` / `tsv` / `none` / `error`), `cards_with_hits`,
+`cards_never_hit`, `total_access`, a `concentration` block, `last_hit_buckets`
+(the same day boundaries `memory_age_bucket` uses for frecency, so the report
+and the ranking agree), `card_hits`, `never_hit_cards`, `unmeasurable_cards`,
+`episodes_total`,
+`episodes_with_summary`, `episode_fill_rate_pct`, `episodes_malformed`,
+`episodes_status`, and `shard_count`. `--json`
+emits a single object carrying `schema_version: 1`. Exit codes: `0` report
+emitted, `1` canonical memory selection invalid, `2` usage error — an unhealthy
+*number* is never an error exit, because this is a report, not a gate.
+
+`index_inject_bytes` is measured exactly the way `guard-inject-memory.sh`
+measures its own budget (`${#line}` under the ambient locale), so the two are
+directly comparable. Note that this is a character count, not a byte count, for
+non-ASCII index text — the number tracks what the hook enforces rather than
+what the name literally promises.
+
+`card_hits` is the per-card answer to "which card is repeatedly selected":
+`{card, access_count, last_access_day}` rows ordered most-hit first, bounded by
+`--hit-limit` (default 20, `0` = no cap) with `card_hits_truncated` marking a
+cut list. Counts and `cards_with_hits` are never capped, so bounding the list
+never falsifies the totals. Cards with no recorded access are absent here and
+listed under `never_hit_cards` instead.
+
+`unmeasurable_cards` holds indexed cards whose path contains a tab or newline.
+The usage sidecar is tab-delimited and its writer refuses such a relpath, so
+their usage can never be recorded — calling them never-hit would assert an
+absence of use this telemetry never measured. Making them measurable requires
+changing the sidecar encoding, which is a write-surface change and therefore
+outside this read-only command.
+
+**Reading the concentration block.** `hit_coverage_pct` is the share of cards
+that have ever been hit; `top5_share_pct` is the share of all accesses
+belonging to the five most-hit cards. These exist because raw hit counts look
+*healthiest* in exactly the state that is worst: when every card is hit on
+every prompt, ranking has no discrimination left and injection degrades into
+"emit whatever fits the budget". A coverage near 100% combined with a
+`top5_share_pct` close to `5 × 100 / cards_with_hits` (the perfectly flat
+value) is that failure, not health.
+
+`usage_store: error` means the sidecar exists but could not be read (corrupt,
+locked, or permission-denied). This is reported distinctly because an absent
+sidecar and an unreadable one both yield zero rows, but only the first is
+evidence that the cards went unused — silently collapsing the second into
+"no activity" would invite exactly the wrong retention decision.
+
+`episode_fill_rate_pct` counts only episodes whose `summary` has
+non-whitespace content. The Stop hook writes empty skeletons and `/mem-log`
+fills them in by hand, so a low fill rate means `/mem-distill`'s upstream is
+dry — a fact that was previously invisible. `pmctl memory rebuild-summary`
+applies the same emptiness rule, so one concept does not get two answers.
+
+Rows that fail to parse are reported as `episodes_malformed` rather than
+discarded, and `episodes_status: error` marks an episodes file that exists but
+could not be read at all. Same reasoning as `usage_store: error` — this report
+is cited in retention decisions, so corrupt data must never be presentable as
+an empty history.
+
+Human output renders memory-derived paths with control characters escaped as
+inert `\xNN` text. Index link targets and directory names are attacker-
+influenced in the sense that anyone able to write a card or name a directory
+chooses them, and a terminal will act on ESC/OSC bytes it is handed. The scan
+decodes UTF-8 rather than escaping bytes, so C1 controls (including the raw
+`0x9B` CSI byte, which `[[:cntrl:]]` does not match) are neutralized while CJK
+card names pass through intact. `--json` applies the same decoding, emitting
+C1 as `\u00XX`: JSON does not require escaping C1, but this output is read
+straight in a terminal, and a raw C1 byte is not valid UTF-8 either.
+
 ## Bootstrap-empty pattern for fork users
 
 Fork users can start with no cards and still keep the setup stable:

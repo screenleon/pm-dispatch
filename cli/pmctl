@@ -463,6 +463,12 @@ case "$cmd/$sub" in
     fi
     pmctl_memory_doctor "$@"
     ;;
+  memory/stats)
+    if ! declare -F pmctl_memory_stats >/dev/null; then
+      pmctl_die "memory stats unavailable"
+    fi
+    pmctl_memory_stats "$@"
+    ;;
   memory/shard)
     if ! declare -F pmctl_memory_shard >/dev/null; then
       pmctl_die "memory shard unavailable"

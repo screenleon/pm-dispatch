@@ -65,7 +65,11 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-543 | ✅ done | Full test runner Phase 0 fail-fast structural precheck；`--collect-all` 保留 release 全證據路徑 | ops/test | 2026-08-04 | pr:#465 | P2 | hygiene |
 | CC-545 | ✅ done | Reviewer evidence-reference-contract INCOMPLETE 的單次修正性重派：僅限該單一違規類別，附具體錯誤引用重跑違規 reviewer，不必整輪 gate（30-40 分鐘）重來 | ops/gate | 2026-08-06 | pr:#465 | P2 | hygiene |
 | CC-546 | ⏸ deferred | standalone Gate distribution／copy parity follow-up：獨立定義 bundle schema、generation、installed parity 與 support boundary；不回併 Linux/WSL2 canonical module extraction | arch/gate | 2026-08-14 | — | P2 | reuse-debt |
-| CC-465 | 🔵 active | memory/context 關鍵詞管線 CJK 支援：抽出共用零依賴斷詞 lib，取代三處各自 ASCII-only 抽詞；工作序列起點（465→467→468→466）（2026-07-07 記憶系統深入分析） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
+| CC-551 | 🔵 active | Gate/QA sandbox 取不到釘住的 ShellCheck：`lint-shellcheck.sh` 只 `bootstrap --check`（要求已在 PATH）而不使用已快取的釘住版本，導致 reviewer 的 focused run 卡在結構性 lint、行為性 suite 從未執行；已連續阻擋 5 輪 gate | ops/test | 2026-08-17 | — | P2 | hygiene |
+| CC-550 | 🔵 active | 測試套件的「live 共用狀態未變動」指紋守衛是假陽性製造機：無法區分「本套件寫的」與「外部行程寫的」，改為確定性 oracle（斷言每次呼叫解析到 fixture 而非 live 目標）；已觀察 3 例（memory doctor／memory stats／context DB） | ops/test | 2026-08-17 | — | P2 | hygiene |
+| CC-549 | 🔵 active | Gate reviewer-protocol 診斷可修正性：test-gap 契約錯誤點名違規欄位／值／允許集合，且 retryable 分類改比對 reason stem（帶明細的 reason 先前一律被判為不可重試） | ops/gate | 2026-08-17 | — | P2 | hygiene |
+| CC-548 | 🔵 active | context.db FTS5 對 CJK 查詢無索引無排序（[[CC-465]] Requirement 3 殘留）：先 spike 驗 `tokenize='trigram'` 的 sqlite 版本下限與 index rebuild 成本，再決定是否實作 | memory | 2026-08-16 | — | P2 | retrieval |
+| CC-465 | ✅ done | memory/context 關鍵詞管線 CJK 支援：抽出共用零依賴斷詞 lib，取代兩處各自 ASCII-only 抽詞；FTS5 tokenizer 殘留另立 [[CC-548]]；工作序列起點（465→467→468→466） | memory | 2026-07-07 | pr:#485 | P2 | retrieval |
 | CC-466 | ⏸ deferred | 記憶卡片生命週期閉環：expires_at 執行 + 關窗式 supersede + usage sidecar 休眠偵測 + doctor→distill 接線；僅在 CC-467 證明 stale/dormant card 已形成實際問題時啟動 | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-467 | 🔵 active | `pmctl memory stats`：注入效益可視化（唯讀聚合器）——注入 bytes/卡片命中分佈/從未命中卡/episode 填寫率，回答「記憶有跟沒有差在哪」；排在 CC-466 之前（2026-07-07；業界僅離線 recall 評測，無 per-injection 遙測） | DX/memory | 2026-07-07 | — | P2 | retrieval |
 | CC-468 | ⏸ deferred | dispatch brief 帶 memory 約束與信任邊界；完成 CC-465→CC-467 後，僅在 usage evidence 證明有價值時啟動 | ops/memory | 2026-07-07 | — | P2 | retrieval |
@@ -353,7 +357,23 @@ bare-fractional catch-all 重複的 fractional-Z 分支。Gate GO
 
 ---
 
-## CC-465 — memory/context 關鍵詞管線 CJK 支援 🔵 active
+## CC-465 — memory/context 關鍵詞管線 CJK 支援 ✅ 2026-08-16
+
+**Outcome**：pr:#485 抽出 `runtime/lib/retrieval-terms.sh` 作為單一抽詞實作
+（ASCII identifier + 連續 CJK 串的 overlapping 2-gram），
+`runtime/hooks/guard-inject-memory.sh` 與 `runtime/lib/pmctl-context.sh` 的
+`_ctx_extract_terms` 都改為呼叫它（Requirement 1、2）。英文行為以參數化保住
+既有政策而非「一體適用」：inject hook 維持 min-length 4 且不套 stop-list，
+context / reuse-scan 維持預設 min-3 + stop-filtered，回歸測試同時涵蓋純英文、
+中英混合、純中文（Requirement 4）。超過 `RETRIEVAL_TERM_MAX_BYTES`（16KiB）時
+只從前綴抽詞，但會寫一行 stderr，讓截斷不會偽裝成空索引。
+
+**Requirement 3（FTS5 unicode61 對中文查詢）未在本票處理**，依本票原文「視為與共用
+lib 分離的關注點，允許各自的修復時程與驗收」轉由 [[CC-548]] 承接；中文查詢目前
+仍只靠 LIKE substring fallback（無索引、無排序），此狀態由
+`tests/shell/test-pmctl-context.sh` 的現有測試釘住。
+
+**See**: pr:#485
 
 **Problem**: 記憶注入排序（`guard-inject-memory.sh` 的 keyword 抽取）、檢索抽詞（`_ctx_extract_terms` → prompt-scan / reuse-scan）、FTS5 索引（unicode61 tokenizer）三處分詞全為 ASCII-only，CJK 字元被當分隔符丟棄。維護者工作語言為中文：中文 prompt 的 keyword tier 恆為 0 分、tier2 排序退化為純 frecency；且 usage sidecar 只在 keyword 命中時累積 access，中文工作流永遠累積不到使用訊號——整套 frecency 機制對 CJK 使用者形同虛設。prompt-scan / reuse-scan 對中文任務描述抽不出任何詞；FTS5 對整段中文只存單一 token，中文查詢僅靠 LIKE substring fallback 硬撐。
 
@@ -369,13 +389,146 @@ bare-fractional catch-all 重複的 fractional-Z 分支。Gate GO
 
 ---
 
+## CC-551 — Gate/QA sandbox 取不到釘住的 ShellCheck 🔵 active
+
+**Problem**: `tools/lint/lint-shellcheck.sh` 以 `bootstrap-shellcheck.sh --check`
+驗證版本——該模式**只檢查 PATH 上的 shellcheck 是否等於釘住版本，不使用也不
+provision 已快取的釘住二進位**。reviewer sandbox 的 PATH 上是系統版
+（實測 0.8.0），於是 `lint-scripts` 立刻失敗，`tests/bin/run-tests.sh` 停在
+Phase 0 結構性 precheck，**行為性 suite 一個都沒跑到**。qa-tester 因此每輪都
+回報「缺少可執行證據」並判 hard_block。
+
+實測影響：2026-08-17 的 CC-467 gate 連續 5 輪出現此 finding（第 3、4、8、11、
+12 輪）。每輪維護者只能在本機用 `PATH=<cache>/bin` 手動補跑 repo runner 當證據，
+但那不會改變 reviewer 自身環境，下一輪照樣復發。
+
+**Why**: 快取其實已存在（`~/.cache/pm-dispatch/tools/shellcheck/<ver>/<plat>/bin`），
+純粹是 lint 不去用它。`--check` 不 provision 是刻意的政策（避免 lint 期間隱式
+下載），所以修法不是「把 --check 改成安裝」，而要在「不觸發網路」與「能用已備妥
+的工具鏈」之間取捨。
+
+**Requirement**:
+1. 決定政策：(a) lint 在**不下載**的前提下發現並使用已快取的釘住二進位；或
+   (b) gate 對 reviewer sandbox 顯式帶入工具鏈 PATH（比照 `QA_RULES_DIR` 既有
+   作法）；或 (c) 維持現狀但讓失敗訊息可據以自助。擇一並記錄理由。
+2. 不得以放寬版本檢查來「解決」——釘住版本是刻意的可重現性契約。
+3. 回歸測試：模擬 PATH 上為錯誤版本、快取中有正確版本，斷言選定政策的行為。
+
+**Cross-link**: [[CC-541]]（qa-tester sandbox 可見性）同屬 reviewer 環境可見性線。
+
+---
+
+## CC-550 — live 共用狀態指紋守衛是假陽性製造機 🔵 active
+
+**Problem**: 多個測試套件用「跑完比對 live 共用狀態的指紋」當作『本套件沒有污染
+真實資料』的證據。這個 oracle 從構造上就無法區分「本套件某個 case 寫了那裡」與
+「外部行程寫了那裡」，而那些目標**恰好都會被日常操作寫入**：
+
+- `tests/shell/test-pmctl-context.sh` 的 `case_context_no_live_db_mutation`
+  指紋 `.pm-dispatch/ctx/context.db`——但 `pmctl context query` 本身就會改
+  mtime，而 UserPromptSubmit 的 auto-context hook 每次提示都會呼叫它。
+- `tests/shell/test-pmctl-memory.sh` 曾有兩個同型 case（doctor／stats），指紋
+  canonical memory dir——而注入 hook 每輪對話都寫 usage sidecar。
+
+實測：2026-08-17 一次 gate preflight（約 41 分鐘）中，context 守衛失敗，訊息宣稱
+「a case operated on $REPO_ROOT」，但實際變更者是同一台機器上互動 session 的
+auto-context hook。preflight 因此 `unclassified-nonzero`，整輪 gate 在 reviewer
+派工前中止（非授權 INCOMPLETE）。守衛跑得越久，被外部寫入命中的機率越高。
+
+**Why**: 會因為 diff 以外的原因變紅的阻擋型測試就是假陽性製造機，違反
+[[cc544-retry-once-reverted]] 確立的「flaky 不得 block」紅線；而且它的失敗訊息
+斷言了一個它無法支持的結論，會把調查引向錯誤方向。守衛想保護的性質本身是對的
+（case 不得對 live 目標下手），只是 oracle 選錯了。
+
+**Requirement**:
+1. 以確定性 oracle 取代指紋比對：斷言每次受測呼叫解析到的目標位於 fixture 根下，
+   而非 live 目標；並保留 fixture 層級的唯讀證明。
+2. 移除會因外部寫入而變紅的 live 指紋斷言，不得只是放寬容忍度。
+3. 失敗訊息只陳述可由證據支持的結論。
+
+**Cross-link**: [[CC-467]] 已按此形狀修好 memory 的兩例（`test-pmctl-memory.sh`
+的 `case_memory_commands_resolve_only_fixture_dirs` + fixture 層唯讀 case），
+本票把同一修法套用到 context 套件並清查其餘同型守衛。
+
+---
+
+## CC-549 — Gate reviewer-protocol 診斷可修正性 🔵 active
+
+**Problem**: reviewer 送出不合契約的 `test_gaps` 時，gate 只回報
+`invalid test-gap matrix contract`——涵蓋約 10 條約束的單一字串。reviewer 因此
+不知道自己違反哪一條，唯一一次 corrective retry 往往重犯同類錯誤，整輪 gate
+（約 20 分鐘、4–5 個 reviewer dispatch）就此作廢。實測三筆真實失敗全部是同一個
+根因：把**兄弟 enum** 的值放進 `coverage_dimensions`（`integration`／`contract`
+是 `missing_layer` 的合法值、`operational` 亦然）。第二個缺陷更隱蔽：
+`pr-gate.sh` 以**整串相等**比對 retryable reason 清單，而 verifier 對
+`invalid finding contract` 這類 reason 早已附加 `": <明細>"`——**越是可修正的
+診斷，越不會被重試**。
+
+**Why**: 這不是排版問題而是可修正性問題。retry 機制存在的前提是「reviewer 拿到
+足夠資訊就能自我修正」；不點名違規值等於讓 retry 淪為抽籤。第二個缺陷則讓既有的
+精確診斷（`blocking_severity_violation` 早就會點名 id 與值）反而喪失重試機會，
+與該診斷的設計意圖相反。
+
+**Requirement**:
+1. test-gap 契約失敗時，回報違規 row 的 id、欄位、實際值與允許集合；若該值屬於
+   兄弟 enum，明確指出（`missing_layer` vs `coverage_dimensions`）。沿用
+   `blocking_severity_violation` 既有的精確診斷模式，不另立風格。
+2. retryable 分類改為比對 reason stem（`"<stem>:"` 前綴），使帶明細的 reason
+   維持可重試；冒號讓前綴不致誤配其他 reason。
+3. 回歸測試以 mutation 驗證：還原前綴比對必須使重試測試失敗。
+
+**Cross-link**: 與 [[CC-545]]（單次修正性重派）同屬 reviewer-protocol 可恢復性
+線；本票補的是「重派時給得出可修正資訊」這一半。
+
+---
+
+## CC-548 — context.db FTS5 對 CJK 查詢無索引無排序 🔵 active
+
+**Problem**: [[CC-465]] 修好了注入排序與 prompt/reuse-scan 的 CJK 抽詞，但沒有動
+FTS5 索引層。`context.db` 的 FTS5 表使用 unicode61 tokenizer，對整段中文只會產生
+單一 token，因此中文查詢在 FTS5 上永遠 miss，實務上只靠 LIKE substring fallback
+硬撐——沒有索引（全表掃描）也沒有 ranking（`bm25()` 無從施力）。維護者工作語言為
+中文，代表 `pmctl context query` 的中文查詢品質與延遲都停留在 fallback 水準。
+
+**Why**: 這是 [[CC-465]] Requirement 3 明文分離出來的關注點——該票原文即載明 FTS5
+tokenizer 行為「視為與共用 lib 分離的關注點，允許各自的修復時程與驗收」，因為修法
+與共用抽詞 lib 完全不同：不是改 bash 抽詞，而是換 FTS5 tokenizer 並重建索引。候選解
+是 sqlite ≥3.34 的 `tokenize='trigram'`（CJK substring 可走索引），但它帶來 sqlite
+版本下限與既有 `context.db` 的 rebuild／遷移成本，兩者都必須先量測才知道是否值得。
+不預設要做——先 spike，再決定。
+
+**Requirement**:
+1. Spike：確認 `tokenize='trigram'` 所需的 sqlite 版本下限，以及該下限對
+   [[docs/platform-support.md]] 宣稱的支援平台是否可接受（含無 trigram 時的降級路徑）。
+2. Spike：量測既有 `context.db` 重建索引的成本與相容性影響（schema 版本、遷移是否
+   可省略而直接重建、重建期間的查詢行為）。
+3. Spike 產出 `docs/spikes/CC-548.md` 的 GREEN/AMBER/RED 判定；只有判定為值得做時
+   才開實作切片，不因票已存在自動實作。
+
+**Cross-link**: [[CC-465]]（本票承接其 Requirement 3 殘留）、[[CC-340]]（deferred；
+embeddings/semantic backend——本票是索引層 tokenizer 修正，不是其替代）。
+
+---
+
 ## CC-467 — `pmctl memory stats`：注入效益可視化 🔵 active
 
 **Main 進度（2026-08-10，pr:#469）**: usage sidecar 寫入基礎已從單一
 TSV read-modify-write 升級為 SQLite primary（WAL／`BEGIN IMMEDIATE`／atomic
-UPSERT）加 TSV compatibility fallback，並保留舊 TSV 一次性匯入。這只完成
-可靠的既有原料層；`pmctl memory stats` reader、`--json` 與 episode 填寫率
-仍未實作，本票維持 active。
+UPSERT）加 TSV compatibility fallback，並保留舊 TSV 一次性匯入。這完成了
+可靠的既有原料層。
+
+**Main 進度（2026-08-17）**: Requirement 1／2／3 已實作於 `feat/CC-467`
+（尚未開 PR，故本票維持 🔵 active，待 PR 合併後改 `✅ done` 並補 `**See**`）。
+`pmctl memory stats` reader 已上線：卡片總數與注入預算使用、`card_hits`
+逐卡命中次數與最後命中日（`--hit-limit` 有界）、`last_hit_buckets` 沿用
+`memory_age_bucket` 的實際天數邊界、`never_hit_cards`、episode 填寫率，
+外加 `concentration`（`hit_coverage_pct`／`top5_share_pct`）。`--json`
+帶 `schema_version: 1`。未新增任何寫入面，全部聚合既有資料。
+壞資料一律不得偽裝成「沒有活動」：sidecar 讀不到報 `usage_store: error`、
+episodes 解析失敗計入 `episodes_malformed`／`episodes_status`、
+tab-delimited sidecar 無法表示的路徑列為 `unmeasurable_cards`。
+**剩餘 follow-up（不屬本票）**：sidecar 改用無損編碼以支援任意 POSIX
+路徑（屬寫入面變更，違反本票 Requirement 3，需另立票）。
 
 **Problem**: 記憶注入每 prompt 默默執行，維護者無法回答「有記憶跟沒記憶差在哪」：沒有指標顯示注入了多少 bytes、哪些卡常被命中、哪些卡從未命中、episodes 骨架的語意摘要填寫率（Stop hook 只寫空骨架、`/mem-log` 靠人跑；填寫率低則 `/mem-distill` 上游是乾的，且此事目前完全不可見）。
 

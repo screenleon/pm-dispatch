@@ -61,6 +61,18 @@ find_memory_dir() {
 }
 
 # ---------------------------------------------------------------------------
+# Injection budget — the caps guard-inject-memory.sh enforces per prompt.
+# They live here rather than in the hook so `pmctl memory stats` reports the
+# budget the hook actually applies instead of a second copy that can drift.
+# Deliberately plain constants, not env-overridable: the hook path must stay
+# identical across hosts, and an ambient override would leak into fixtures.
+# ---------------------------------------------------------------------------
+# shellcheck disable=SC2034  # read by guard-inject-memory.sh and pmctl memory stats after sourcing this lib
+MEMORY_MAX_INJECT_ENTRIES=20
+# shellcheck disable=SC2034  # read by guard-inject-memory.sh and pmctl memory stats after sourcing this lib
+MEMORY_MAX_INJECT_BYTES=3000
+
+# ---------------------------------------------------------------------------
 # Usage-based injection ranking (frecency) — sidecar telemetry plane.
 #
 # MEMORY.md injection ranks normal (non-pinned) cards by a usage signal so the
@@ -117,6 +129,69 @@ memory_usage_read() {
     return 0
   fi
   [[ -f "$store" ]] && cat "$store"
+}
+
+# Parsed usage sidecar, keyed by card_relpath. Output globals rather than
+# caller-named arrays: a nameref parameter (`local -n`) would be this repo's
+# only bash-4.3 dependency, and it would sit in a shared library on the prompt
+# hook's hot path. Every caller reads exactly one sidecar per process, so one
+# shared result pair costs nothing and keeps the floor at bash 4.0.
+declare -A MEMORY_USAGE_ACC=()
+declare -A MEMORY_USAGE_LAST=()
+
+# Set to 1 when the sidecar exists but could not be read (corrupt/locked/denied
+# store). Callers must distinguish that from an absent sidecar: both yield zero
+# rows, but only one of them means "no activity".
+MEMORY_USAGE_READ_FAILED=0
+
+# Parse the usage sidecar into MEMORY_USAGE_ACC / MEMORY_USAGE_LAST. Every
+# reader needs the same parse (skip comments, coerce non-integers to 0) and the
+# same tolerance for an absent store, so the loop lives here rather than being
+# copied into each caller. Returns 0 when the store was absent or read cleanly,
+# 1 when a present store failed to read.
+#   memory_usage_load "$store"
+# shellcheck disable=SC2034  # MEMORY_USAGE_* are this function's output globals, read by its callers
+memory_usage_load() {
+  local store="$1" rel acc last legacy
+  MEMORY_USAGE_ACC=()
+  MEMORY_USAGE_LAST=()
+  MEMORY_USAGE_READ_FAILED=0
+
+  # An absent store is a valid empty result; a present but unreadable one is not.
+  local present=0
+  if [[ "$store" == *.sqlite3 ]]; then
+    legacy="${store%.sqlite3}.tsv"
+    [[ -f "$store" || -f "$legacy" ]] && present=1
+  else
+    [[ -f "$store" ]] && present=1
+  fi
+  (( present )) || return 0
+
+  local rows read_rc=0
+  rows="$(memory_usage_read "$store")" || read_rc=$?
+  if (( read_rc != 0 )); then
+    MEMORY_USAGE_READ_FAILED=1
+    return 1
+  fi
+
+  # Bound the digit width, not just the character class. Readers feed these
+  # straight into shell arithmetic, and bash silently WRAPS past 2^63 rather
+  # than failing — a corrupt counter would otherwise turn into a negative
+  # total in a report used for retention decisions. A value this wide cannot
+  # come from the writer, so treat it as corruption and degrade the read.
+  local degraded=0
+  while IFS=$'\t' read -r rel acc last; do
+    [[ -z "$rel" || "$rel" == \#* ]] && continue
+    if [[ ! "$acc"  =~ ^[0-9]{1,18}$ ]]; then acc=0;  degraded=1; fi
+    if [[ ! "$last" =~ ^[0-9]{1,18}$ ]]; then last=0; degraded=1; fi
+    MEMORY_USAGE_ACC["$rel"]="$acc"
+    MEMORY_USAGE_LAST["$rel"]="$last"
+  done <<<"$rows"
+  if (( degraded )); then
+    MEMORY_USAGE_READ_FAILED=1
+    return 1
+  fi
+  return 0
 }
 
 _memory_usage_sql_quote() {

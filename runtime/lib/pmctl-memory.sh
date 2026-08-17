@@ -363,13 +363,129 @@ pmctl_memory_append_episode() {
   fi
 }
 
+# Escape a string for use inside a hand-built JSON string literal. JSON forbids
+# every unescaped control character, not just newline and carriage return, so a
+# path containing a tab (legal on POSIX filesystems) would otherwise emit a
+# document no parser accepts. Characters with a short escape get one; the rest
+# of the C0 range goes out as \u00XX.
+#
+# C1 controls are escaped too. JSON does not require it, but this output is
+# routinely read straight in a terminal, where a raw 0x9B is CSI — and a raw C1
+# byte is not valid UTF-8 either, so passing it through would emit a document
+# that is neither safe nor well-formed. As in _mem_human_safe, the scan decodes
+# UTF-8 rather than working bytewise: 0x80-0x9F is also the continuation-byte
+# range, so blanket byte escaping would corrupt every CJK card name.
 _mem_json_esc() {
-  local s="$1"
-  s="${s//\\/\\\\}"
-  s="${s//\"/\\\"}"
-  s="${s//$'\n'/\\n}"
-  s="${s//$'\r'/\\r}"
-  printf '%s' "$s"
+  LC_ALL=C awk '
+    function esc(b) { printf "\\u%04x", b }
+    # A newline is legal in a POSIX path, and awk consumes it as the record
+    # separator. Re-emit it in escaped form between records, or "a<NL>b" would
+    # be rendered as "ab" and silently attribute data to the wrong object.
+    NR > 1 { printf "\\n" }
+    {
+      n = length($0)
+      for (i = 1; i <= n; i++) {
+        c = substr($0, i, 1)
+        b = ord[c]
+        if (c == "\\") { printf "\\\\"; continue }
+        if (c == "\"") { printf "\\\""; continue }
+        if (b == 0x08) { printf "\\b"; continue }
+        if (b == 0x09) { printf "\\t"; continue }
+        if (b == 0x0a) { printf "\\n"; continue }
+        if (b == 0x0c) { printf "\\f"; continue }
+        if (b == 0x0d) { printf "\\r"; continue }
+        if (b < 0x20 || b == 0x7f) { esc(b); continue }
+        if (b < 0x80) { printf "%c", b; continue }
+        len = (b >= 0xf0 && b <= 0xf4) ? 4 : \
+              (b >= 0xe0 && b <= 0xef) ? 3 : \
+              (b >= 0xc2 && b <= 0xdf) ? 2 : 0
+        if (len == 0) { esc(b); continue }          # stray continuation / invalid lead
+        # Constrain the SECOND byte per lead so non-shortest forms, UTF-8-encoded
+        # surrogates, and scalars above U+10FFFF are rejected rather than emitted
+        # raw. Accepting "any lead plus continuation bytes" would let an illegal
+        # sequence through in a document that claims to be JSON.
+        lo = 0x80; hi = 0xbf
+        if (b == 0xe0) lo = 0xa0
+        else if (b == 0xed) hi = 0x9f
+        else if (b == 0xf0) lo = 0x90
+        else if (b == 0xf4) hi = 0x8f
+        ok = (i + len - 1 <= n)
+        if (ok) {
+          for (j = 1; j < len; j++) {
+            cc = ord[substr($0, i + j, 1)]
+            if (j == 1) { if (cc < lo || cc > hi) { ok = 0; break } }
+            else if (cc < 0x80 || cc > 0xbf) { ok = 0; break }
+          }
+        }
+        if (!ok) { esc(b); continue }
+        # 0xC2 0x80-0x9F decodes to exactly the C1 range.
+        if (len == 2 && b == 0xc2) { esc(ord[substr($0, i + 1, 1)]); i++; continue }
+        printf "%s", substr($0, i, len)
+        i += len - 1
+      }
+    }
+    BEGIN { for (k = 0; k < 256; k++) ord[sprintf("%c", k)] = k }
+  ' <<<"$1"
+}
+
+# Render a memory-derived string safely for a terminal. Card paths and the
+# resolved memory dir reach human output verbatim, and anyone who can add a
+# MEMORY.md index entry (or name a directory) could otherwise embed ESC/OSC
+# sequences that the reader's terminal executes on display. JSON mode keeps the
+# raw value in its escaped form; only this presentation path is neutralized.
+#
+# C1 controls (U+0080-U+009F) matter as much as C0: a raw 0x9B is CSI on an
+# 8-bit-capable emulator. They cannot be escaped bytewise, though — 0x80-0x9F is
+# also the UTF-8 continuation-byte range, so blanket byte escaping would mangle
+# every CJK card name in this repo's own memory. The scan therefore decodes
+# UTF-8: valid multi-byte sequences pass through intact, while C0/DEL, the
+# UTF-8 encoding of C1 (0xC2 0x80-0x9F), and stray bytes that form no valid
+# sequence are rendered as inert \xNN text.
+_mem_human_safe() {
+  LC_ALL=C awk '
+    function esc(b) { printf "\\x%02x", b }
+    # See _mem_json_esc: awk eats the newline record separator, so re-emit it
+    # escaped rather than concatenating two distinct path segments.
+    NR > 1 { printf "\\x0a" }
+    {
+      n = length($0)
+      for (i = 1; i <= n; i++) {
+        b = ord[substr($0, i, 1)]
+        if (b < 0x20 || b == 0x7f) { esc(b); continue }
+        if (b < 0x80) { printf "%c", b; continue }
+        # Determine the expected length of a UTF-8 sequence from its lead byte.
+        len = (b >= 0xf0 && b <= 0xf4) ? 4 : \
+              (b >= 0xe0 && b <= 0xef) ? 3 : \
+              (b >= 0xc2 && b <= 0xdf) ? 2 : 0
+        if (len == 0) { esc(b); continue }          # stray continuation / invalid lead
+        # Constrain the SECOND byte per lead so non-shortest forms, UTF-8-encoded
+        # surrogates, and scalars above U+10FFFF are rejected rather than emitted
+        # raw. Accepting "any lead plus continuation bytes" would let an illegal
+        # sequence through in a document that claims to be JSON.
+        lo = 0x80; hi = 0xbf
+        if (b == 0xe0) lo = 0xa0
+        else if (b == 0xed) hi = 0x9f
+        else if (b == 0xf0) lo = 0x90
+        else if (b == 0xf4) hi = 0x8f
+        ok = (i + len - 1 <= n)
+        if (ok) {
+          for (j = 1; j < len; j++) {
+            c = ord[substr($0, i + j, 1)]
+            if (j == 1) { if (c < lo || c > hi) { ok = 0; break } }
+            else if (c < 0x80 || c > 0xbf) { ok = 0; break }
+          }
+        }
+        if (!ok) { esc(b); continue }
+        # 0xC2 0x80-0x9F is exactly the C1 range: escape it rather than emit it.
+        if (len == 2 && b == 0xc2) {
+          esc(b); esc(ord[substr($0, i + 1, 1)]); i++; continue
+        }
+        printf "%s", substr($0, i, len)
+        i += len - 1
+      }
+    }
+    BEGIN { for (k = 0; k < 256; k++) ord[sprintf("%c", k)] = k }
+  ' <<<"$1"
 }
 
 # Portable byte size of a single file (0 if absent).
@@ -675,6 +791,21 @@ _mem_doctor_emit_json() {
   printf '%s\n' "$out"
 }
 
+# Build the card_hits array of {card, access_count, last_access_day} objects
+# from the caller's selected rows (already ordered most-hit first).
+_mem_stats_hit_rows_json() {
+  local first=1 out="[" row count rel last
+  for row in ${hit_listed[@]+"${hit_listed[@]}"}; do
+    IFS=$'\t' read -r count rel last <<<"$row"
+    [[ "$first" -eq 1 ]] || out+=","
+    out+="{\"card\":\"$(_mem_json_esc "$rel")\",\"access_count\":$count"
+    out+=",\"last_access_day\":${last:-0}}"
+    first=0
+  done
+  out+="]"
+  printf '%s' "$out"
+}
+
 # Build a JSON array of strings from the positional args.
 _mem_json_str_array() {
   local first=1 item out="["
@@ -723,7 +854,7 @@ _mem_json_missing_array() {
 
 # Emit the label-aligned human report. Reads doctor locals from caller's scope.
 _mem_doctor_emit_human() {
-  printf 'memory_dir:      %s\n' "$mem_dir"
+  printf 'memory_dir:      %s\n' "$(_mem_human_safe "$mem_dir")"
   printf 'entry_count:     %s\n' "$entry_count"
   printf 'memory_bytes:    %s\n' "$memory_bytes"
   printf 'episodes_bytes:  %s\n' "$episodes_bytes"
@@ -737,7 +868,8 @@ _mem_doctor_emit_human() {
     printf 'stale_repo_refs:\n'
     local i
     for ((i = 0; i < ${#stale_refs[@]}; i++)); do
-      printf '  - %s: %s\n' "${stale_cards[$i]}" "${stale_refs[$i]}"
+      printf '  - %s: %s\n' "$(_mem_human_safe "${stale_cards[$i]}")" \
+        "$(_mem_human_safe "${stale_refs[$i]}")"
     done
   fi
   if [[ "${#missing_field_cards[@]}" -eq 0 ]]; then
@@ -746,7 +878,8 @@ _mem_doctor_emit_human() {
     printf 'cards_missing_fields:\n'
     local j
     for ((j = 0; j < ${#missing_field_cards[@]}; j++)); do
-      printf '  - %s: %s\n' "${missing_field_cards[$j]}" "${missing_field_lists[$j]}"
+      printf '  - %s: %s\n' "$(_mem_human_safe "${missing_field_cards[$j]}")" \
+        "${missing_field_lists[$j]}"
     done
   fi
   printf 'issues_count:    %s\n' "$issues_count"
@@ -761,8 +894,464 @@ _mem_doctor_human_list() {
   printf '%s:\n' "$label"
   local item
   for item in "$@"; do
-    printf '  - %s\n' "$item"
+    printf '  - %s\n' "$(_mem_human_safe "$item")"
   done
+}
+
+# ── Injection-benefit stats (read-only aggregator) ────────────────────────────
+#
+# `pmctl memory stats` answers "what does having memory actually buy me" from
+# data that already exists: the MEMORY.md index, the usage sidecar written by
+# guard-inject-memory.sh, and episodes.jsonl. It opens no new write surface —
+# every number here is derived from files other commands already maintain.
+#
+# The concentration block is the load-bearing part. Raw hit counts look healthy
+# when every card is hit on every prompt, which is exactly the failure mode of a
+# ranking signal with no discrimination: injection silently degrades into "emit
+# everything that fits". hit_coverage_pct near 100 with a flat top5_share_pct is
+# that failure, not health.
+
+# Largest value bash arithmetic represents; past it, addition wraps silently
+# rather than failing, so aggregates must be checked before each step.
+MEMORY_STATS_INT_MAX=9223372036854775807
+
+_mem_stats_usage() {
+  cat <<'EOF'
+Usage: pmctl memory stats [--json] [--repo-root <path>] [--never-hit-limit <n>]
+
+Read-only report on memory-injection benefit: index size against the injection
+budget, per-card hit counts with last-hit recency, concentration, never-hit
+cards, and the episode summary fill rate.
+
+Options:
+  --json                 Emit a single JSON object (schema_version: 1)
+  --repo-root PATH       Repo root used to locate the memory dir
+                         (default: $REPO_ROOT or current directory)
+  --never-hit-limit N    Cap the listed never-hit cards at N (0 = no cap,
+                         default 20). Counts are never capped.
+  --hit-limit N          Cap the listed per-card hit rows at N, most-hit first
+                         (0 = no cap, default 20). Counts are never capped.
+  --help                 Show this help
+
+Exit codes: 0 report emitted, 1 canonical memory selection invalid, 2 usage error.
+EOF
+}
+
+# Summarize episodes.jsonl. Prints "<total>\t<with_summary>\t<malformed>\t<status>".
+# status is none (no file), ok, or error (the file exists but could not be read).
+# Malformed rows are counted rather than silently dropped: this report is used
+# for retention decisions, so "corrupt data" must never look like "no history".
+_mem_stats_episode_fill() {
+  local episodes="$1" out=""
+  # Always newline-terminated: the caller reads this with `read`, which reports
+  # failure on an unterminated final line and would abort under `set -e`.
+  if [[ ! -f "$episodes" ]]; then printf '0\t0\t0\tnone\n'; return 0; fi
+  out="$(jq -rRs '
+    [ split("\n")[] | select((gsub("\\s"; "")) != "") ] as $lines
+    | [ $lines[] | (try fromjson catch null) ] as $parsed
+    | [ $parsed[] | select(. != null) ] as $ok
+    | [ ($ok | length),
+        ([ $ok[] | (.summary // "") | select((gsub("\\s"; "")) != "") ] | length),
+        ([ $parsed[] | select(. == null) ] | length) ]
+    | @tsv
+  ' "$episodes" 2>/dev/null)" || { printf '0\t0\t0\terror\n'; return 0; }
+  [[ -n "$out" ]] || { printf '0\t0\t0\terror\n'; return 0; }
+  printf '%s\tok\n' "$out"
+}
+
+# Map a memory_age_bucket weight to its reporting-bucket index. The weights are
+# that function's contract; keeping the mapping here means the day boundaries
+# stay defined in exactly one place (lib/memory.sh) and the report always shows
+# the same recency tiers the ranking weights by.
+_mem_stats_age_bucket_index() {
+  case "$1" in
+    100) printf '0' ;;
+    70)  printf '1' ;;
+    50)  printf '2' ;;
+    30)  printf '3' ;;
+    *)   printf '4' ;;
+  esac
+}
+
+# Integer percent of numerator/denominator, 0 when the denominator is 0.
+#
+# The obvious `num * 100 / den` overflows once num passes INT_MAX/100 — which
+# the saturating aggregate guards make reachable, and it wraps to a plausible
+# small number rather than failing. A capped top-five total near 5e18 reported
+# 0% instead of ~54%. Halving both terms preserves the ratio and converges in a
+# handful of steps, so the multiply always runs in range.
+_mem_stats_pct() {
+  local num="$1" den="$2"
+  (( den > 0 )) || { printf '0'; return 0; }
+  while (( num > MEMORY_STATS_INT_MAX / 100 )); do
+    num=$(( num / 2 ))
+    den=$(( den / 2 ))
+    (( den > 0 )) || { printf '0'; return 0; }
+  done
+  printf '%d' $(( num * 100 / den ))
+}
+
+pmctl_memory_stats() {
+  local json=0
+  local repo_root="${REPO_ROOT:-$PWD}"
+  local never_hit_limit=20
+  local hit_limit=20
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json) json=1; shift ;;
+      # An option-like operand is a missing value, not a path: `--repo-root
+      # --json` must be a usage error rather than a request to stat a
+      # repository literally named "--json".
+      --repo-root)
+        if [[ -z "${2:-}" || "${2}" == --* ]]; then
+          printf 'pmctl memory stats: --repo-root requires a value\n' >&2
+          return 2
+        fi
+        repo_root="$2"; shift 2 ;;
+      --never-hit-limit)
+        if [[ -z "${2:-}" || "${2}" == --* ]]; then
+          printf 'pmctl memory stats: --never-hit-limit requires a value\n' >&2
+          return 2
+        fi
+        # Bound the digit count as well as the character class: a syntactically
+        # numeric value wider than a shell integer would otherwise reach the
+        # arithmetic conversion and fail with a raw bash error instead of this
+        # command's documented usage-error contract.
+        if [[ ! "$2" =~ ^[0-9]{1,18}$ ]]; then
+          printf 'pmctl memory stats: --never-hit-limit must be a non-negative integer of at most 18 digits\n' >&2
+          return 2
+        fi
+        never_hit_limit="$((10#$2))"; shift 2 ;;
+      --hit-limit)
+        if [[ -z "${2:-}" || "${2}" == --* ]]; then
+          printf 'pmctl memory stats: --hit-limit requires a value\n' >&2
+          return 2
+        fi
+        if [[ ! "$2" =~ ^[0-9]{1,18}$ ]]; then
+          printf 'pmctl memory stats: --hit-limit must be a non-negative integer of at most 18 digits\n' >&2
+          return 2
+        fi
+        hit_limit="$((10#$2))"; shift 2 ;;
+      --help|-h) _mem_stats_usage; return 0 ;;
+      *)
+        printf 'pmctl memory stats: unknown argument: %s\n' "$1" >&2
+        return 2 ;;
+    esac
+  done
+
+  local mem_dir="" resolution="" resolution_rc=0 resolution_reason="" resolution_source="none"
+  resolution="$(pmctl_memory_resolve --repo-root "$repo_root" --allow-non-git --json)" || resolution_rc=$?
+  if [[ "$resolution_rc" -eq 0 ]]; then
+    mem_dir="$(jq -r '.memory_dir // empty' <<<"$resolution")"
+  elif [[ "$resolution_rc" -eq 3 ]]; then
+    resolution_reason="$(jq -r '.reason // "invalid explicit canonical memory configuration"' <<<"$resolution")"
+    resolution_source="$(jq -r '.resolution_source // "none"' <<<"$resolution")"
+    if [[ "$json" -eq 1 ]]; then
+      jq -cn --arg source "$resolution_source" --arg reason "$resolution_reason" \
+        '{schema_version:1,memory_dir:"",resolution_issues:[{source:$source,reason:$reason}]}'
+    else
+      printf 'memory_dir:            (invalid explicit configuration)\n'
+      printf 'resolution_issues:\n  - %s: %s\n' "$resolution_source" "$resolution_reason"
+    fi
+    return 1
+  elif [[ "$resolution_rc" -eq 2 ]]; then
+    printf 'pmctl memory stats: unable to resolve repository root\n' >&2
+    return 2
+  fi
+
+  local index_entry_count=0 card_count=0 index_inject_bytes=0
+  local unparsed_index_entries=0
+  local -a card_rels=()
+  local usage_store='none'
+  local cards_with_hits=0 total_access=0 top5_access=0
+  local -a never_hit=()
+  local -a unmeasurable=()
+  local -a access_counts=()
+  local -a hit_rows=()
+  local -a age_bucket_labels=(recent_0_4 recent_5_14 recent_15_31 recent_32_90 older_90_plus)
+  local -a age_bucket_counts=(0 0 0 0 0)
+  local episodes_total=0 episodes_with_summary=0 shard_count=0
+  local episodes_malformed=0 episodes_status='none'
+  local hit_coverage_pct=0 top5_share_pct=0 episode_fill_rate_pct=0
+
+  # No memory dir → nothing to aggregate; emit an empty, well-formed report.
+  if [[ -n "$mem_dir" && -d "$mem_dir" ]]; then
+    local index="$mem_dir/MEMORY.md" episodes="$mem_dir/episodes.jsonl"
+
+    # ── index: card count and what a full, unbudgeted injection would cost ────
+    # Measured exactly the way guard-inject-memory.sh measures its own budget
+    # (${#line} under the ambient locale), so the two numbers are comparable.
+    # Two index lines may link the same card file. Injection ranks per line, so
+    # index_entry_count stays per line, but every usage number below is keyed by
+    # card_relpath (the sidecar's key) and must therefore count each card once —
+    # otherwise a duplicated link inflates both coverage and total_access.
+    if [[ -f "$index" ]]; then
+      local line rel link_re='^\- \[([^]]*)\]\(([^)]*\.md)\)'
+      local -A seen_rel=()
+      while IFS= read -r line; do
+        [[ "$line" =~ ^-\ \[ ]] || continue
+        index_entry_count=$((index_entry_count + 1))
+        index_inject_bytes=$(( index_inject_bytes + ${#line} + 1 ))
+        rel=""
+        [[ "$line" =~ $link_re ]] && rel="${BASH_REMATCH[2]}"
+        # An entry with no parseable .md link has no sidecar key and is not a
+        # card. Counting it would put a non-card into card_count, inflate
+        # cards_never_hit, and depress hit_coverage_pct — a documented
+        # per-card metric quietly measuring something else. Report the count
+        # separately so the entry stays visible without polluting the ratio.
+        if [[ -z "$rel" ]]; then
+          unparsed_index_entries=$((unparsed_index_entries + 1))
+          continue
+        fi
+        [[ -n "${seen_rel["$rel"]:-}" ]] && continue
+        seen_rel["$rel"]=1
+        card_rels+=("$rel")
+        card_count=$((card_count + 1))
+      done < "$index"
+    fi
+
+    # ── usage sidecar: hit counts and last-hit recency, read-only ────────────
+    local store today_day
+    store="$(memory_usage_sidecar_path "$mem_dir")"
+    if [[ "$store" == *.sqlite3 && -f "$store" ]]; then
+      usage_store='sqlite3'
+    elif [[ -f "${store%.sqlite3}.tsv" ]]; then
+      usage_store='tsv'
+    fi
+    today_day=$(( $(date +%s) / 86400 ))
+
+    # A present-but-unreadable sidecar must not masquerade as "no activity":
+    # both produce zero rows, but only one of them is a fact about usage.
+    if ! memory_usage_load "$store"; then
+      usage_store='error'
+    fi
+
+    # Only index-referenced cards count: a sidecar row for a deleted card is
+    # not evidence that memory helped, and counting it would inflate coverage.
+    local rel a bucket_idx
+    # `${arr[@]+"${arr[@]}"}` reads as unquoted at a glance but is not: the
+    # alternate value is `"${arr[@]}"`, so elements keep spaces and tabs. The
+    # form exists because a bare `"${arr[@]}"` on an empty array errors under
+    # `set -u` before bash 4.4, and this file must run on the 4.2 floor.
+    # case_memory_stats_space_bearing_card_path pins the behavior.
+    for rel in ${card_rels[@]+"${card_rels[@]}"}; do
+      # The sidecar is tab-delimited and its writer refuses a relpath holding a
+      # tab or newline, so such a card can never accrue usage. Reporting it as
+      # never-hit would assert an absence of use this telemetry never measured;
+      # report it as unmeasurable instead.
+      if [[ -n "$rel" && ( "$rel" == *$'\t'* || "$rel" == *$'\n'* ) ]]; then
+        unmeasurable+=("$rel")
+        continue
+      fi
+      a=0
+      [[ -n "$rel" ]] && a="${MEMORY_USAGE_ACC["$rel"]:-0}"
+      if (( a > 0 )); then
+        cards_with_hits=$((cards_with_hits + 1))
+        # Bounding each counter to 18 digits does not bound their SUM: ten such
+        # rows exceed 2^63 and bash wraps silently. The per-row guard alone
+        # would still let this report publish a negative total, which is
+        # exactly the false retention signal it claims not to produce.
+        if (( a > MEMORY_STATS_INT_MAX - total_access )); then
+          usage_store='error'
+          total_access="$MEMORY_STATS_INT_MAX"
+        else
+          total_access=$((total_access + a))
+        fi
+        access_counts+=("$a")
+        # Requirement 1 asks for each card's hit count, not just aggregates:
+        # a maintainer must be able to see WHICH card is repeatedly selected.
+        hit_rows+=("$(printf '%d\t%s\t%s' "$a" "$rel" "${MEMORY_USAGE_LAST["$rel"]:-0}")")
+        # Bucket by memory_age_bucket's own weight rather than re-deriving its
+        # day boundaries here, so the report cannot drift from the recency
+        # weighting that frecency ranking actually applies.
+        bucket_idx="$(_mem_stats_age_bucket_index \
+          "$(memory_age_bucket "$today_day" "${MEMORY_USAGE_LAST["$rel"]:-0}")")"
+        age_bucket_counts[bucket_idx]=$(( age_bucket_counts[bucket_idx] + 1 ))
+      else
+        never_hit+=("${rel:-<unlinked index entry>}")
+      fi
+    done
+
+    # ── concentration ────────────────────────────────────────────────────────
+    # top5_share_pct near 5*100/cards_with_hits means every hit card carries the
+    # same weight — i.e. the ranking signal is not separating anything.
+    if [[ "${#access_counts[@]}" -gt 0 ]]; then
+      local sorted n=0 v
+      sorted="$(printf '%s\n' "${access_counts[@]}" | sort -rn)"
+      while IFS= read -r v; do
+        (( n < 5 )) || break
+        if (( v > MEMORY_STATS_INT_MAX - top5_access )); then
+          usage_store='error'
+          top5_access="$MEMORY_STATS_INT_MAX"
+        else
+          top5_access=$(( top5_access + v ))
+        fi
+        n=$((n + 1))
+      done <<<"$sorted"
+    fi
+    hit_coverage_pct="$(_mem_stats_pct "$cards_with_hits" "$card_count")"
+    top5_share_pct="$(_mem_stats_pct "$top5_access" "$total_access")"
+
+    # ── episodes ─────────────────────────────────────────────────────────────
+    IFS=$'\t' read -r episodes_total episodes_with_summary episodes_malformed episodes_status \
+      < <(_mem_stats_episode_fill "$episodes") || true
+    [[ "$episodes_total"        =~ ^[0-9]+$ ]] || episodes_total=0
+    [[ "$episodes_with_summary" =~ ^[0-9]+$ ]] || episodes_with_summary=0
+    [[ "$episodes_malformed"    =~ ^[0-9]+$ ]] || episodes_malformed=0
+    case "$episodes_status" in none|ok|error) ;; *) episodes_status='error' ;; esac
+    episode_fill_rate_pct="$(_mem_stats_pct "$episodes_with_summary" "$episodes_total")"
+
+    local f
+    for f in "$mem_dir"/episodes.????-??.jsonl; do
+      [[ -e "$f" ]] && shard_count=$((shard_count + 1))
+    done
+  fi
+
+  local never_hit_count="${#never_hit[@]}"
+  local -a never_hit_listed=()
+  if [[ "$never_hit_count" -gt 0 ]]; then
+    if (( never_hit_limit == 0 || never_hit_count <= never_hit_limit )); then
+      never_hit_listed=("${never_hit[@]}")
+    else
+      never_hit_listed=("${never_hit[@]:0:never_hit_limit}")
+    fi
+  fi
+  local never_hit_truncated=false
+  (( ${#never_hit_listed[@]} < never_hit_count )) && never_hit_truncated=true
+
+  # Per-card hit rows, most-hit first. Sort the count field numerically rather
+  # than lexically on a fixed-width prefix: any padding width is a silent
+  # ordering trap once a counter exceeds it.
+  local -a hit_listed=()
+  if [[ "${#hit_rows[@]}" -gt 0 ]]; then
+    local _row
+    while IFS= read -r _row; do
+      (( hit_limit == 0 || ${#hit_listed[@]} < hit_limit )) || break
+      hit_listed+=("$_row")
+    done < <(printf '%s\n' "${hit_rows[@]}" | LC_ALL=C sort -t$'\t' -k1,1nr -k2,2)
+  fi
+  local hit_truncated=false
+  (( ${#hit_listed[@]} < ${#hit_rows[@]} )) && hit_truncated=true
+
+  if [[ "$json" -eq 1 ]]; then
+    _mem_stats_emit_json
+  else
+    _mem_stats_emit_human
+  fi
+  return 0
+}
+
+# Emit the frozen JSON object. Reads the stats locals from its caller's scope.
+_mem_stats_emit_json() {
+  local out="{\"schema_version\":1"
+  out+=",\"memory_dir\":\"$(_mem_json_esc "$mem_dir")\""
+  out+=",\"index_entry_count\":$index_entry_count"
+  out+=",\"unparsed_index_entries\":$unparsed_index_entries"
+  out+=",\"card_count\":$card_count"
+  out+=",\"index_inject_bytes\":$index_inject_bytes"
+  out+=",\"inject_budget_entries\":$MEMORY_MAX_INJECT_ENTRIES"
+  out+=",\"inject_budget_bytes\":$MEMORY_MAX_INJECT_BYTES"
+  out+=",\"usage_store\":\"$usage_store\""
+  out+=",\"cards_with_hits\":$cards_with_hits"
+  out+=",\"cards_never_hit\":$never_hit_count"
+  out+=",\"total_access\":$total_access"
+  out+=",\"concentration\":{\"hit_coverage_pct\":$hit_coverage_pct,\"top5_access\":$top5_access,\"top5_share_pct\":$top5_share_pct}"
+  out+=",\"last_hit_buckets\":{"
+  local i first=1
+  for ((i = 0; i < ${#age_bucket_labels[@]}; i++)); do
+    [[ "$first" -eq 1 ]] || out+=","
+    out+="\"${age_bucket_labels[$i]}\":${age_bucket_counts[$i]}"
+    first=0
+  done
+  out+="}"
+  out+=",\"unmeasurable_cards\":$(_mem_json_str_array ${unmeasurable[@]+"${unmeasurable[@]}"})"
+  out+=",\"card_hits\":$(_mem_stats_hit_rows_json)"
+  out+=",\"card_hits_truncated\":$hit_truncated"
+  out+=",\"never_hit_cards\":$(_mem_json_str_array ${never_hit_listed[@]+"${never_hit_listed[@]}"})"
+  out+=",\"never_hit_cards_truncated\":$never_hit_truncated"
+  out+=",\"episodes_total\":$episodes_total"
+  out+=",\"episodes_with_summary\":$episodes_with_summary"
+  out+=",\"episode_fill_rate_pct\":$episode_fill_rate_pct"
+  out+=",\"episodes_malformed\":$episodes_malformed"
+  out+=",\"episodes_status\":\"$episodes_status\""
+  out+=",\"shard_count\":$shard_count}"
+  printf '%s\n' "$out"
+}
+
+# Emit the label-aligned human report. Reads stats locals from caller's scope.
+_mem_stats_emit_human() {
+  if [[ -z "$mem_dir" || ! -d "$mem_dir" ]]; then
+    printf 'memory_dir:            (none found)\n'
+    printf 'card_count:            0\n'
+    return 0
+  fi
+  printf 'memory_dir:            %s\n' "$(_mem_human_safe "$mem_dir")"
+  printf 'index_entry_count:     %s\n' "$index_entry_count"
+  [[ "$unparsed_index_entries" -gt 0 ]] && \
+    printf 'unparsed_index_entries: %s (no parseable .md link — not counted as cards)\n' \
+      "$unparsed_index_entries"
+  printf 'card_count:            %s\n' "$card_count"
+  printf 'index_inject_bytes:    %s (budget %s bytes / %s entries per prompt)\n' \
+    "$index_inject_bytes" "$MEMORY_MAX_INJECT_BYTES" "$MEMORY_MAX_INJECT_ENTRIES"
+  if [[ "$usage_store" == 'error' ]]; then
+    printf 'usage_store:           error (sidecar present but unreadable — hit counts below are NOT evidence of no activity)\n'
+  else
+    printf 'usage_store:           %s\n' "$usage_store"
+  fi
+  printf 'cards_with_hits:       %s\n' "$cards_with_hits"
+  printf 'cards_never_hit:       %s\n' "$never_hit_count"
+  printf 'total_access:          %s\n' "$total_access"
+  printf 'hit_coverage_pct:      %s%%\n' "$hit_coverage_pct"
+  printf 'top5_share_pct:        %s%% (%s of %s accesses)\n' \
+    "$top5_share_pct" "$top5_access" "$total_access"
+  printf 'last_hit_buckets:\n'
+  local i
+  for ((i = 0; i < ${#age_bucket_labels[@]}; i++)); do
+    printf '  - %-14s %s\n' "${age_bucket_labels[$i]}:" "${age_bucket_counts[$i]}"
+  done
+  if [[ "${#hit_rows[@]}" -eq 0 ]]; then
+    printf 'card_hits:             (none)\n'
+  else
+    printf 'card_hits (most hit first):\n'
+    local row count rel last
+    for row in ${hit_listed[@]+"${hit_listed[@]}"}; do
+      IFS=$'\t' read -r count rel last <<<"$row"
+      printf '  - %-6s %s (last hit day %s)\n' \
+        "$count" "$(_mem_human_safe "$rel")" "${last:-0}"
+    done
+    [[ "$hit_truncated" == true ]] && \
+      printf '  (%s more — raise --hit-limit to list them)\n' \
+        "$(( ${#hit_rows[@]} - ${#hit_listed[@]} ))"
+  fi
+  if [[ "${#unmeasurable[@]}" -gt 0 ]]; then
+    printf 'unmeasurable_cards:    (usage cannot be recorded for these paths)\n'
+    local u
+    for u in "${unmeasurable[@]}"; do
+      printf '  - %s\n' "$(_mem_human_safe "$u")"
+    done
+  fi
+  if [[ "$never_hit_count" -eq 0 ]]; then
+    printf 'never_hit_cards:       (none)\n'
+  else
+    printf 'never_hit_cards:\n'
+    local item
+    for item in ${never_hit_listed[@]+"${never_hit_listed[@]}"}; do
+      printf '  - %s\n' "$(_mem_human_safe "$item")"
+    done
+    [[ "$never_hit_truncated" == true ]] && \
+      printf '  (%s more — raise --never-hit-limit to list them)\n' \
+        "$(( never_hit_count - ${#never_hit_listed[@]} ))"
+  fi
+  printf 'episode_fill_rate_pct: %s%% (%s of %s episodes carry a summary)\n' \
+    "$episode_fill_rate_pct" "$episodes_with_summary" "$episodes_total"
+  if [[ "$episodes_status" == error ]]; then
+    printf 'episodes_status:       error (episodes.jsonl present but unreadable — counts above are NOT evidence of no history)\n'
+  elif [[ "$episodes_malformed" -gt 0 ]]; then
+    printf 'episodes_status:       ok (%s malformed row(s) skipped — not counted as episodes)\n' \
+      "$episodes_malformed"
+  fi
+  printf 'shard_count:           %s\n' "$shard_count"
 }
 
 # ── Episode shard + summary ───────────────────────────────────────────────────
@@ -891,6 +1480,12 @@ pmctl_memory_rebuild_summary() {
       n = split(summary, lines, "\\\\n")
       first_line = lines[1]
       gsub(/^[[:space:]]+|[[:space:]]+$/, "", first_line)
+
+      # Test emptiness AFTER trimming: a whitespace-only summary is an unfilled
+      # skeleton, not a logged episode. Checking before the trim would emit an
+      # empty bullet here while `pmctl memory stats` counted the same entry as
+      # unfilled — one concept, two answers.
+      if (first_line == "") next
 
       # Store: group[ym] += "- DATE: SUMMARY\n"; count[ym]++
       groups[ym] = groups[ym] "- " date ": " first_line "\n"
