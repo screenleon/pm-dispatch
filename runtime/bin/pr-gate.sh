@@ -3832,13 +3832,14 @@ SBRIEF_P2
   _SYNTHESIS_COMPLETE=false
   for _synthesis_attempt in 1 2; do
     if [[ "$_synthesis_attempt" -eq 2 ]]; then
-      cat >> "$SYNTHESIS_BRIEF" <<'SYNTHESIS_RETRY_EOF'
-
-correction_retry: |
-  The first synthesis attempt failed a transport, malformed-output, schema, or
-  parity check. Rebuild the complete staging result from the same embedded,
-  immutable reviewer_result_v1 documents. Do not omit any test_gap_matrix row.
-SYNTHESIS_RETRY_EOF
+      # The retry is the ONLY correction opportunity: exhausting it voids the
+      # whole round, including every reviewer session already paid for. A retry
+      # that is not told what failed is a blind re-roll of the same prompt, so
+      # it reproduces the same defect and the round is lost to no new
+      # information. Name the specific rejected check instead. `%s` is a
+      # verifier-produced reason string, never caller input.
+      printf '\ncorrection_retry: |\n  The first synthesis attempt was REJECTED for exactly this reason:\n\n    %s\n\n  Fix that specific defect. Rebuild the complete staging result from the same\n  embedded, immutable reviewer_result_v1 documents -- do not omit any\n  test_gap_matrix row, and do not change any other section to compensate.\n' \
+        "$_synthesis_reason" >> "$SYNTHESIS_BRIEF"
     fi
     say '  [synthesis attempt %d] running PM consolidation...\n' "$_synthesis_attempt"
     SYNTHESIS_DISPATCH_CMD="$(gate_dispatch_command "$EXECUTOR" "$SYNTHESIS_BRIEF" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT" "$DISPATCH_ISOLATION" "$DISPATCH_EFFORT")" || exit 2

@@ -149,6 +149,45 @@ FAKEGATE
   chmod +x "$fixture/runtime/bin/pr-gate.sh"
 }
 
+# Install a fake pr-gate.sh that fails its own protocol validation: it exits 1
+# and prints `failure-result:` (the post-mortem label) rather than `result:`
+# (the verified-publication label), pointing at a retained artifact that still
+# carries `Final: GO` in its body -- exactly what a rejected synthesis leaves
+# behind. The distinction between the two labels is what tells the supervisor
+# whether pr-gate stands behind the artifact.
+_mk_fake_gate_failure_result() {
+  local fixture="$1"
+  mkdir -p "$fixture/runtime/bin"
+  cat > "$fixture/runtime/bin/pr-gate.sh" <<'FAKEGATE'
+#!/usr/bin/env bash
+rd=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --run-dir) rd="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+mkdir -p "$rd"
+cat > "$rd/result.md" <<'RESULT'
+---
+gate_result_version: pr_gate_result_v1
+final: GO
+tier: express
+mode: sequential
+most_severe: approve
+---
+
+# PR-Gate Result
+
+## Gate Conclusion
+Final: GO
+RESULT
+printf 'failure-result: %s\n' "$rd/result.md"
+exit 1
+FAKEGATE
+  chmod +x "$fixture/runtime/bin/pr-gate.sh"
+}
+
 # Install a fake pr-gate.sh that exits 0 (GO) and prints a \`result:\` line,
 # but the file it points at is structurally invalid (no Final: line) -- the
 # gate_result_verify rejection path, distinct from the missing-result path
@@ -856,6 +895,52 @@ case_wait_fails_on_corrupt_result() {
   fi
 }
 
+case_wait_reports_failure_result_as_failed_not_verdict() {
+  # Behavior: a pr-gate protocol failure that retains a post-mortem artifact is
+  # reported as `failed` (exit 2), never as a NO-GO verdict, and the artifact's
+  # own `Final:` line is not echoed as if it were the outcome.
+  #
+  # Steps:
+  # 1. Install a pr-gate that exits 1 and prints `failure-result:` (not
+  #    `result:`) pointing at a retained artifact whose body says `Final: GO` --
+  #    the exact shape a rejected synthesis leaves behind.
+  # 2. Launch detached and wait.
+  # 3. Assert the sentinel state is `failed`/2 and that no `Final: GO` line is
+  #    presented to the caller.
+  #
+  # The supervisor's "never encode an infrastructure failure as a verdict"
+  # guard used to key off an EMPTY result path, so a retained failure artifact
+  # satisfied it by being non-empty and exit 1 became NO-GO. A reader then sees
+  # `state: NO-GO` beside the document's own `Final: GO` and takes the
+  # friendlier one -- a protocol failure reported as a reviewed verdict.
+  local name="gate-lifecycle/gate wait reports failure-result as failed, not a NO-GO verdict"
+  should_run "$name" || return 0
+
+  local fixture="$tmp_root/c10c/fixture" work="$tmp_root/c10c/work"
+  mkdir -p "$work"
+  _mk_fixture_repo "$fixture"
+  _mk_fake_gate_failure_result "$fixture"
+
+  local run_wrapper="$tmp_root/c10c/run" wait_wrapper="$tmp_root/c10c/wait"
+  _run_gate_wrapper "$fixture" "$run_wrapper"
+  _wait_wrapper "$fixture" "$wait_wrapper"
+
+  local gate_id
+  gate_id="$("$run_wrapper" --cd "$work" --lifecycle detached)"
+
+  local out code
+  set +e; out="$("$wait_wrapper" "$gate_id" --cd "$work" --timeout "$_WAIT_OK" 2>&1)"; code=$?; set -e
+
+  if [[ "$code" -eq 2 ]] \
+      && [[ "$out" == *"state: failed"* ]] \
+      && [[ "$out" != *"state: NO-GO"* ]] \
+      && [[ "$out" != *"Final: GO"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
 # ---- 10b: gate wait rejects a --cd whose partition doesn't own the result ----
 case_wait_fails_on_cd_partition_mismatch() {
   # CC-423 pr-gate finding (architecture-reviewer, medium): --cd previously
@@ -959,6 +1044,7 @@ case_foreground_unchanged
 case_detached_requires_state_paths
 case_wait_fails_on_missing_result
 case_wait_fails_on_corrupt_result
+case_wait_reports_failure_result_as_failed_not_verdict
 case_wait_fails_on_cd_partition_mismatch
 case_wait_usage_errors
 

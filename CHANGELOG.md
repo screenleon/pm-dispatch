@@ -10,6 +10,37 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **A gate protocol failure is no longer reported as a review verdict, and its
+  one correction retry is no longer blind (CC-553).** `pr-gate.sh` marks a
+  publishable artifact with `result:` and a post-mortem with `failure-result:`,
+  but `gate-supervisor.sh` matched either label and kept only the path. Its
+  "never encode an infrastructure failure as a verdict" guard keyed off an
+  *empty* path, so a protocol failure that retained an inspectable artifact
+  satisfied the guard by being non-empty, and exit 1 became `NO-GO`. Because a
+  rejected synthesis still contains its own `Final: GO` line, `pmctl gate wait`
+  then printed `state: NO-GO` directly above `Final: GO` — an unreviewed
+  infrastructure failure presenting as a reviewed verdict, and the friendlier
+  line is the one a reader takes. The label is now load-bearing: only `result:`
+  means pr-gate stands behind the artifact; `failure-result:` resolves to
+  `failed` (exit 2) regardless of the exit code. This is the same
+  `infra_error` vs `fail` distinction the QA rules require of test runners,
+  applied to the gate itself.
+
+  The synthesis retry brief was a fixed heredoc naming four possible causes
+  ("transport, malformed-output, schema, or parity") while `$_synthesis_reason`
+  was computed and never passed in, so the single correction attempt re-rolled
+  the same prompt and reproduced the same defect — losing the whole round,
+  every reviewer session included. The brief now carries the actual rejected
+  check.
+
+  Parity reasons in `gate-result-verify.sh` now name the delta instead of
+  restating the check: `findings union parity mismatch` and its inventory
+  sibling report `missing=[...] unexpected=[...]`, and distinguish a wrong id
+  set from matching ids with differing field values — two defects with
+  different fixes. `invalid disagreement references` likewise names which of
+  its constraints failed and on which entry. CC-553's remaining scope (auditing
+  the other multi-constraint reason strings) is unchanged.
+
 - **Lint resolves the pinned ShellCheck from the tool cache instead of
   requiring it on `PATH` (CC-551).** `lint-shellcheck.sh` validated only that
   the ambient `PATH` already carried the pinned version, so a gate reviewer or

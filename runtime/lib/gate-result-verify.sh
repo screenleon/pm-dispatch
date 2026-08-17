@@ -746,6 +746,19 @@ gate_synthesis_protocol_verify() {
         (.summary | nonempty) and
         (.finding_ids | type == "array" and length > 0 and
           length == (unique | length) and all(.[]; finding_id));
+      # A parity reason names WHICH ids differ, and separates "wrong id set"
+      # from "right ids, wrong field values" -- two defects with different
+      # fixes. Synthesis gets exactly one correction retry; a reason it cannot
+      # act on spends that retry reproducing the same output. Single-line by
+      # contract: the reason is embedded in the retry brief YAML block.
+      def id_delta($want; $got; $same_set_hint):
+        (($want - $got) | unique) as $missing |
+        (($got - $want) | unique) as $unexpected |
+        if ($missing | length) == 0 and ($unexpected | length) == 0
+        then ": id sets match, so a field value differs -- " + $same_set_hint
+        else ": missing=[" + ($missing | join(",")) +
+             "] unexpected=[" + ($unexpected | join(",")) + "]"
+        end;
       def disagreement:
         only_keys(["id","summary","finding_ids"]) and
         (.id | type == "string" and test("^D-[0-9]{3,}$")) and
@@ -894,12 +907,18 @@ gate_synthesis_protocol_verify() {
       then "remediation confirmation set mismatch"
       elif
         ($s.reviewer_finding_inventory | sort_by(.id)) != $expected_inventory
-      then "reviewer finding inventory parity mismatch"
+      then "reviewer finding inventory parity mismatch" +
+        id_delta(($expected_inventory | map(.id));
+                 ($s.reviewer_finding_inventory | map(.id));
+                 "every inventory entry must copy each reviewer finding field verbatim")
       elif
         ($s.findings_union |
           map(del(.root_cause_group_id,.disposition)) | sort_by(.id)) !=
           $expected_union
-      then "findings union parity mismatch"
+      then "findings union parity mismatch" +
+        id_delta(($expected_union | map(.id));
+                 ($s.findings_union | map(.id));
+                 "every union entry must copy each reviewer finding field verbatim and add only root_cause_group_id and disposition")
       elif
         (all($s.root_cause_groups[]; root_group) | not) or
         (($s.root_cause_groups | map(.id)) |
@@ -920,7 +939,20 @@ gate_synthesis_protocol_verify() {
         ([$s.disagreements[].finding_ids[] as $finding_id |
           ($expected_ids | index($finding_id)) != null
         ] | all | not)
-      then "invalid disagreement references"
+      then "invalid disagreement references: " +
+        (if (all($s.disagreements[]; disagreement) | not)
+         then "entry " +
+           (([$s.disagreements[] | select(disagreement | not) | .id? // "<no id>"]
+             | join(",")) ) +
+           " fails the entry contract (keys exactly id/summary/finding_ids; id matches ^D-[0-9]{3,}$; summary non-empty; finding_ids is an array of >=2 unique known finding ids)"
+         elif (($s.disagreements | map(.id)) | length != (unique | length))
+         then "duplicate disagreement id: [" +
+           (($s.disagreements | map(.id) | group_by(.) | map(select(length > 1) | .[0]))
+             | join(",")) + "]"
+         else "finding_ids cite ids that are not in the reviewer findings: [" +
+           (((([$s.disagreements[].finding_ids[]] | unique) - $expected_ids)) | join(",")) +
+           "]"
+         end)
       elif
         ($s.uncertainties | type) != "object" or
         ($s.uncertainties |
