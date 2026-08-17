@@ -30,12 +30,11 @@ git -C "$REPO_ROOT" ls-files -z --cached --others --exclude-standard \
 export PM_RELEASE_VERIFY_CONTEXT_REPO="$CONTEXT_FIXTURE_REPO"
 trap 'rm -rf "$CONTEXT_FIXTURE_REPO"' EXIT
 
-# The developer's live repo context DB — the file the redirect above exists to
-# keep untouched. test_context_smoke_targets_fixture_repo proves the redirect
-# worked from evidence this suite owns: the fixture DB. A fingerprint of the live
-# DB cannot distinguish this suite's writes from any other process's, and the
-# auto-context hook writes it on every prompt.
-LIVE_DB="$REPO_ROOT/.pm-dispatch/ctx/context.db"
+# test_context_smoke_targets_fixture_repo proves the redirect above worked from
+# evidence this suite owns: the fixture repo's own DB. It deliberately does not
+# fingerprint the developer's live context DB — that cannot distinguish this
+# suite's writes from any other process's, and the auto-context hook writes it on
+# every prompt.
 
 PASSED=0; FAILED=0
 
@@ -482,7 +481,7 @@ test_context_smoke_targets_fixture_repo() {
     return
   fi
   if [[ ! -s "$CONTEXT_FIXTURE_REPO/.pm-dispatch/ctx/context.db" ]]; then
-    fail "$name" "Phase 3 built no DB under the fixture repo ($CONTEXT_FIXTURE_REPO) — the smoke target was not redirected away from $LIVE_DB"
+    fail "$name" "Phase 3 built no DB under the fixture repo ($CONTEXT_FIXTURE_REPO) — the smoke target was not redirected away from $REPO_ROOT"
     return
   fi
   pass "$name"

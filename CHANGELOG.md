@@ -33,8 +33,11 @@ Versions follow [Semantic Versioning](https://semver.org/).
   "a case operated on `$REPO_ROOT`", a conclusion its evidence could not
   support, and the round aborted before any reviewer was dispatched. Each guard
   now asserts the deterministic property upstream of any write: that the call
-  under test *resolves* to its fixture, never the live target. Failure messages
-  state only what the evidence supports.
+  under test *resolves* to its fixture, never the live target. The context suite
+  additionally routes every call through a wrapper that refuses — at the call
+  site, naming the offending argument — any invocation targeting the live repo
+  root, so the suite-wide coverage the fingerprint provided is kept without its
+  attribution problem. Failure messages state only what the evidence supports.
 
 - **Gate reviewer-protocol failures are correctable on their retry (CC-549).**
   An invalid `test_gaps` row was reported as a bare

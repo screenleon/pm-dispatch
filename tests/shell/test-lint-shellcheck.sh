@@ -30,6 +30,20 @@ fixture_repo() {
   printf '%s\n' "$root"
 }
 
+# The asset platform key for this host, or empty where no pinned asset is
+# published — cases that need a cache path or an asset row skip on empty.
+# Mirrors detect_platform in tools/lint/bootstrap-shellcheck.sh; kept here so a
+# test never sources the script it is verifying.
+fixture_platform() {
+  case "$(uname -s):$(uname -m)" in
+    Linux:x86_64) printf 'linux.x86_64\n' ;;
+    Linux:aarch64|Linux:arm64) printf 'linux.aarch64\n' ;;
+    Darwin:x86_64) printf 'darwin.x86_64\n' ;;
+    Darwin:arm64|Darwin:aarch64) printf 'darwin.aarch64\n' ;;
+    *) printf '\n' ;;
+  esac
+}
+
 expect_fail() {
   local name="$1" root="$2" needle="$3" output status=0
   output="$(bash "$root/tools/lint/lint-shellcheck.sh" --repo "$root" 2>&1)" || status=$?
@@ -206,6 +220,27 @@ test_wrong_shellcheck_version_fails_closed() {
   fi
 }
 
+# Behavior: --check and --resolve cannot be combined, so neither contract can be
+# selected by accident.
+# Steps: Arrange a fixture; Act by invoking bootstrap with both flags; Assert
+# exit 2, the mutual-exclusion diagnostic, and that no bin directory was printed.
+test_check_and_resolve_are_mutually_exclusive() {
+  local name="lint-shellcheck/check-and-resolve-mutually-exclusive" root out err status=0
+  should_run "$name" || return 0
+  root="$(fixture_repo check-resolve)"
+  out="$root/both.out"
+  err="$root/both.err"
+  bash "$root/tools/lint/bootstrap-shellcheck.sh" --repo "$root" --check --resolve \
+    > "$out" 2> "$err" || status=$?
+  if [[ "$status" -eq 2 \
+      && "$(cat "$err")" == *"--check and --resolve are mutually exclusive"* \
+      && ! -s "$out" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status stdout=$(cat "$out") stderr=$(cat "$err")"
+  fi
+}
+
 # Behavior: when PATH holds a non-pinned ShellCheck but the tool cache already
 # holds the pinned one, lint scans with the cached binary instead of stopping.
 # Steps: Arrange a 0.8.0 PATH stub and a cache containing a pinned stub, both
@@ -216,13 +251,8 @@ test_cached_pin_used_when_path_version_wrong() {
   local cache_bin path_calls cache_calls output status=0
   should_run "$name" || return 0
   root="$(fixture_repo cached-pin)"
-  case "$(uname -s):$(uname -m)" in
-    Linux:x86_64) platform=linux.x86_64 ;;
-    Linux:aarch64|Linux:arm64) platform=linux.aarch64 ;;
-    Darwin:x86_64) platform=darwin.x86_64 ;;
-    Darwin:arm64|Darwin:aarch64) platform=darwin.aarch64 ;;
-    *) pass "$name"; return ;;
-  esac
+  platform="$(fixture_platform)"
+  [[ -n "$platform" ]] || { pass "$name"; return; }
   # Each stub logs to its own file, so the assertion below can tell which
   # binary actually performed the scan.
   path_calls="$root/path-calls.log"
@@ -303,19 +333,9 @@ test_bootstrap_verifies_asset_checksum() {
   root="$(fixture_repo bootstrap-checksum)"
   payload="$root/payload/shellcheck-v0.11.0"
   archive="$root/shellcheck-v0.11.0.test.tar.gz"
-  case "$(uname -s):$(uname -m)" in
-    Linux:x86_64) platform=linux.x86_64 ;;
-    Linux:aarch64|Linux:arm64) platform=linux.aarch64 ;;
-    Darwin:x86_64) platform=darwin.x86_64 ;;
-    Darwin:arm64|Darwin:aarch64) platform=darwin.aarch64 ;;
-    *) pass "$name"; return ;;
-  esac
-  mkdir -p "$payload"
-  cat > "$payload/shellcheck" <<'STUB'
-#!/usr/bin/env bash
-printf 'ShellCheck\nversion: 0.11.0\n'
-STUB
-  chmod +x "$payload/shellcheck"
+  platform="$(fixture_platform)"
+  [[ -n "$platform" ]] || { pass "$name"; return; }
+  write_shellcheck_stub "$payload/shellcheck" 0.11.0
   tar -czf "$archive" -C "$root/payload" shellcheck-v0.11.0
   if command -v sha256sum >/dev/null 2>&1; then
     sha="$(sha256sum "$archive" | awk '{ print $1 }')"
@@ -405,6 +425,7 @@ test_ignore_contract_fails_closed
 test_suppression_is_code_scoped
 test_ci_local_entrypoint_parity
 test_wrong_shellcheck_version_fails_closed
+test_check_and_resolve_are_mutually_exclusive
 test_cached_pin_used_when_path_version_wrong
 test_matching_shellcheck_version_scans
 test_version_pin_shape_fails_closed

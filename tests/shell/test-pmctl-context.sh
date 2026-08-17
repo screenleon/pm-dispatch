@@ -35,11 +35,51 @@ export PM_DISPATCH_STATE_ROOT="$tmp_root/suite-state"
 # The developer's live repo context DB. Every context case must operate on an
 # isolated fixture under $tmp_root, never $REPO_ROOT: indexing/querying the real
 # repo root rebuilds this DB and, under parallel runs, causes sqlite-busy and
-# FTS-rebuild flakiness. case_context_commands_resolve_only_fixture_roots proves
-# that isolation by asserting where each entrypoint RESOLVES, which is a property
-# of this suite alone — a fingerprint of this file would instead change whenever
-# any other process on the machine touched it.
+# FTS-rebuild flakiness.
+#
+# Two suite-owned guards keep that true, neither of which reads the live DB —
+# reading it would report on every process on this machine, not on this suite:
+#
+#   1. Per call: $PMCTL is a wrapper that refuses any context invocation naming
+#      the live repo root, so a redirected call fails at the call site with the
+#      offending argument, not later as an unattributed diff.
+#   2. Per entrypoint: case_context_commands_resolve_only_fixture_roots asserts
+#      every context subcommand the CLI publishes resolves inside the fixture.
+#
+# Residual, stated rather than papered over: a future no-argument call made from
+# a CWD outside any git worktree still falls back to $REPO_ROOT inside the CLI.
+# Catching that at the wrapper would mean reimplementing the CLI's repo-root
+# resolution rules here, so the suite asserts the two conditions it can own
+# exactly instead of approximating the third.
 LIVE_DB="$REPO_ROOT/.pm-dispatch/ctx/context.db"
+REAL_PMCTL="$PMCTL"
+
+# The wrapper: refuse to run a context subcommand whose arguments name the live
+# repo root, and record it for the aggregate case at the end of the run.
+CTX_GUARD_LOG="$tmp_root/live-target-violations.log"
+: > "$CTX_GUARD_LOG"
+mkdir -p "$tmp_root/bin"
+cat > "$tmp_root/bin/pmctl" <<GUARD
+#!/usr/bin/env bash
+set -uo pipefail
+# PM_CTX_GUARD_LOG lets the guard's own self-test collect its deliberate
+# violation somewhere else, so it never contaminates the suite-wide log.
+_log="\${PM_CTX_GUARD_LOG:-$CTX_GUARD_LOG}"
+if [[ "\${1:-}" == context ]]; then
+  for _arg in "\$@"; do
+    if [[ "\$_arg" == "$REPO_ROOT" || "\$_arg" == "$REPO_ROOT"/* ]]; then
+      printf 'test-pmctl-context: refusing a context call targeting the live repo root: %s\n' \\
+        "\$_arg" >&2
+      printf '%s\t%s\n' "\$_arg" "\$*" >> "\$_log"
+      exit 99
+    fi
+  done
+fi
+exec "$REAL_PMCTL" "\$@"
+GUARD
+chmod +x "$tmp_root/bin/pmctl"
+PMCTL="$tmp_root/bin/pmctl"
+SUITE_FILE="$SCRIPT_DIR/$(basename "${BASH_SOURCE[0]}")"
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -1568,6 +1608,91 @@ case_context_commands_resolve_only_fixture_roots() {
   # can alias it.
   if [[ "$LIVE_DB" == "$tmp_root"/* ]]; then
     fail "$name" "live repo DB resolves inside tmp_root: $LIVE_DB"
+    return 0
+  fi
+  pass "$name"
+}
+
+# Behavior: every context subcommand the CLI publishes is exercised by this
+# suite, so a newly added one cannot arrive without isolation coverage.
+# Steps: read the subcommand list out of the CLI's own help; require a call site
+# for each in this file.
+case_context_every_subcommand_is_exercised() {
+  local name="pmctl context suite: every published subcommand has a call site here"
+  should_run "$name" || return 0
+
+  # Pairs with the $PMCTL wrapper: the wrapper proves no call in this suite
+  # targets the live repo root, and this proves the wrapper is actually in front
+  # of the whole published surface rather than the part that existed when it was
+  # written. Deriving from the CLI means the list cannot silently go stale.
+  local subcommands uncovered=""
+  subcommands="$("$REAL_PMCTL" help context 2>/dev/null \
+    | awk '/^Commands:/ { in_cmds = 1; next }
+           in_cmds && /^[[:space:]]+[a-z]/ { print $1; next }
+           in_cmds && !/^[[:space:]]/ { exit }')"
+  if [[ -z "$subcommands" ]]; then
+    fail "$name" "could not read the context subcommand list from the CLI"
+    return 0
+  fi
+
+  local sub
+  while IFS= read -r sub; do
+    [[ -n "$sub" ]] || continue
+    grep -q "\"\$PMCTL\" context $sub" "$SUITE_FILE" || uncovered+="$sub "
+  done <<< "$subcommands"
+
+  if [[ -n "$uncovered" ]]; then
+    fail "$name" "published context subcommands with no call site in this suite: $uncovered"
+    return 0
+  fi
+  pass "$name"
+}
+
+# Behavior: the suite's $PMCTL wrapper refuses a context call that names the live
+# repo root, rather than letting it reach the CLI.
+# Steps: invoke the wrapper against $REPO_ROOT; assert the refusal exit code, the
+# offending argument in the diagnostic, and that the call was recorded.
+case_context_live_target_guard_trips() {
+  local name="pmctl context suite: the live-target guard refuses a call naming the live repo root"
+  should_run "$name" || return 0
+
+  # Without this, the guard could silently stop guarding — every other case
+  # passes a fixture path, so nothing else would notice.
+  local err own_log status=0
+  err="$tmp_root/live-target-guard.err"
+  own_log="$tmp_root/live-target-guard.log"
+  : > "$own_log"
+  PM_CTX_GUARD_LOG="$own_log" "$PMCTL" context status --json "$REPO_ROOT" \
+    > /dev/null 2> "$err" || status=$?
+
+  if [[ "$status" -ne 99 ]]; then
+    fail "$name" "guard let a live-repo-root call through (exit $status)"
+    return 0
+  fi
+  if ! grep -qF "$REPO_ROOT" "$err"; then
+    fail "$name" "refusal did not name the offending argument: $(<"$err")"
+    return 0
+  fi
+  if [[ "$(wc -l < "$own_log")" -ne 1 ]]; then
+    fail "$name" "refusal was not recorded: $(<"$own_log")"
+    return 0
+  fi
+  pass "$name"
+}
+
+# Behavior: no context call made anywhere in this run named the live repo root.
+# Steps: read the guard's violation log, written only by this suite's own
+# wrapper; require it to be empty.
+case_context_no_call_targeted_the_live_repo() {
+  local name="pmctl context suite: no case targeted the live repo root"
+  should_run "$name" || return 0
+
+  # Run last: this is the cumulative view of every case above. The log is
+  # written by this suite's wrapper and nothing else, so unlike the live-DB
+  # fingerprint it replaces, a non-empty log can only mean one of THESE calls
+  # did it — and the entry names which.
+  if [[ -s "$CTX_GUARD_LOG" ]]; then
+    fail "$name" "context calls targeted the live repo root: $(<"$CTX_GUARD_LOG")"
     return 0
   fi
   pass "$name"
@@ -3549,5 +3674,8 @@ case_context_prompt_scan_secret_never_persisted
 case_context_prompt_scan_emits_event
 case_context_fts5_availability_is_cached
 case_context_commands_resolve_only_fixture_roots
+case_context_every_subcommand_is_exercised
+case_context_live_target_guard_trips
+case_context_no_call_targeted_the_live_repo
 
 th_summary

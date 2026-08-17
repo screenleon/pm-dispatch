@@ -480,10 +480,22 @@ auto-context hook。preflight 因此 `unclassified-nonzero`，整輪 gate 在 re
    的正面證據（本套件擁有的證據），不再讀 live DB。
 
 `tests/lib/live-db-guard.sh` 隨之刪除——它剩餘的唯二消費者是驗證該守衛自身的兩個
-自我測試，屬循環驗證。`LIVE_DB` 路徑在兩個套件內保留為區域常數，僅供失敗訊息與
-別名檢查使用。所有失敗訊息只陳述證據支持得住的結論（「解析到 X，期望 Y」），不再
-宣稱「某個 case 動了 $REPO_ROOT」。mutation 驗證：讓 `_ctx_db_path` 忽略傳入的
-repo root 會使 (1) 失敗。
+自我測試，屬循環驗證。所有失敗訊息只陳述證據支持得住的結論（「解析到 X，期望 Y」），
+不再宣稱「某個 case 動了 $REPO_ROOT」。
+
+**Gate round 1 補強（risk-reviewer-F001，advise）**：上述 (1) 只覆蓋兩個唯讀入口，
+失去了舊守衛「整個套件任一 case」的覆蓋面。改以**套件自有的呼叫接縫**補回：
+`$PMCTL` 在 context 套件內改指向一支 wrapper，任何 context 呼叫只要引數指名 live
+repo root 就地拒絕（exit 99）並記錄；最後一個 case 斷言該紀錄為空。這份 log 只由
+本套件的 wrapper 寫入，因此非空只可能是「這些呼叫其中之一」，與被取代的指紋守衛
+相反。另加 surface ratchet：由 CLI 自己的 `help context` 導出已發佈的 subcommand
+清單，要求每個都在本套件有呼叫點，新增 subcommand 不會無聲地缺少隔離覆蓋。
+mutation 驗證：把任一 mutating 呼叫改指 `$REPO_ROOT`，呼叫點與彙總 case 各報一次
+失敗，且 live DB 全程未被寫入。
+
+**明載殘餘**：未來若有「無引數且 CWD 不在任何 git worktree 內」的呼叫，CLI 內部
+仍會 fallback 到 `$REPO_ROOT`。要在 wrapper 攔下這種形狀，等同在測試裡重寫 CLI 的
+repo-root 解析規則；本票選擇精確斷言能擁有的兩個條件，而不是近似第三個。
 
 **Cross-link**: [[CC-467]] 已按此形狀修好 memory 的兩例（`test-pmctl-memory.sh`
 的 `case_memory_commands_resolve_only_fixture_dirs` + fixture 層唯讀 case），
