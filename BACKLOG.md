@@ -65,6 +65,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-543 | ✅ done | Full test runner Phase 0 fail-fast structural precheck；`--collect-all` 保留 release 全證據路徑 | ops/test | 2026-08-04 | pr:#465 | P2 | hygiene |
 | CC-545 | ✅ done | Reviewer evidence-reference-contract INCOMPLETE 的單次修正性重派：僅限該單一違規類別，附具體錯誤引用重跑違規 reviewer，不必整輪 gate（30-40 分鐘）重來 | ops/gate | 2026-08-06 | pr:#465 | P2 | hygiene |
 | CC-546 | ⏸ deferred | standalone Gate distribution／copy parity follow-up：獨立定義 bundle schema、generation、installed parity 與 support boundary；不回併 Linux/WSL2 canonical module extraction | arch/gate | 2026-08-14 | — | P2 | reuse-debt |
+| CC-554 | 🔵 active | 永久 regression test 缺少准入門檻：`/ship` 規範「修完每個 finding」但不規範修法形式，reviewer 每提一個邊界就永久長一個阻擋 case，case 又需要 meta-test 保護；QA 規則加六條准入條件＋五條替代路徑，ship.md 加對應例外（明確不設輪數上限，見 [[CC-544]]） | ops/gate | 2026-08-17 | — | P1 | hygiene |
 | CC-553 | 🔵 active | Gate synthesis 協定失敗不可修正且被當成 review 判決：supervisor 分不出 `result:`／`failure-result:` 而把協定失敗記成 NO-GO（被否決的檔案仍寫 `Final: GO`）、retry brief 從不帶入失敗原因故重試等同盲擲、parity reason 不說 id 差集；原 `invalid disagreement references` 是單一裸字串，涵蓋 6 條獨立約束（`only_keys`／`D-NNN` id 形狀／非空 summary／`finding_ids` 長度 ≥2／不重複／每個 id 須存在於 findings_union），synthesis 無從自我修正，唯一一次重試重犯同錯即整輪作廢；[[CC-549]] 已對 test-gap 契約做過同一修法（2026-08-17 CC-551 round 7、2026-08-18 qa-rules #8 兩次實測） | ops/gate | 2026-08-17 | — | P1 | hygiene |
 | CC-552 | 🔵 active | `test_default_worker_cap` 以 `sleep 0.1` 製造 worker 重疊窗口來驗證併發上限，違反 QA 規則的「不得以 sleep 同步」；主機負載會改變觀測到的重疊數，與 worker-cap 正確性無關（2026-08-17 CC-551 gate round 4 qa-tester，pre-existing） | ops/test | 2026-08-17 | — | P3 | hygiene |
 | CC-551 | ✅ closed 2026-08-17 | Gate/QA sandbox 取不到釘住的 ShellCheck：lint 改為離線解析（PATH 相符則用之，否則用已快取的釘住二進位），不再要求釘住版本已在 PATH | ops/test | 2026-08-17 | — | P2 | hygiene |
@@ -388,6 +389,46 @@ lib 分離的關注點，允許各自的修復時程與驗收」轉由 [[CC-548]
 4. 既有英文行為不變；回歸測試涵蓋純英文、中英混合、純中文三類輸入，並驗證兩個呼叫端遷移至共用 lib 後行為一致。
 
 **Cross-link**: [[CC-340]]（deferred；本票是非 embedding 的分詞修正，非其替代）。**工作序列**：本票是 CC-465 → CC-467 → CC-468 → CC-466 序列化工作串的起點——CJK 抽詞先修好，統計可視化與 brief 約束萃取才有可信賴的中文訊號可用。
+
+---
+
+## CC-554 — 永久 regression test 的准入門檻（Batch 0） 🔵 active
+
+**Problem**: `/ship` 要求「high／medium／low、hard gate／advisory 全部修完」，
+但沒有規範**修法的形式**。實務上 reviewer 每提出一個新邊界，最省事的收斂方式就是
+永久新增一個阻擋性 case——即使該 case 鎖定的是私有 helper、source 文字、或專案
+根本不支援的輸入。[[CC-467]]（#486）是實例：12 輪 gate、33+ 個 memory stats case，
+其中數個永久測試的實際目的已從「防止使用者 regression」漂移成「防止 reviewer 再次
+提出同一問題」。長出來的 case 又需要 meta-test 保護，於是測試系統本身成為第二套產品。
+
+**Why**: 這是「為了測試而策」的**流入端**。存量清理（harness skip 語意、exit-code
+oracle、memory stats 合併）若在准入門檻之前做，下一個 PR 會原樣長回來。門檻是純規則
+變更，零程式碼、不需 gate、不需 full suite，是投報比最高的第一步。
+
+**Requirement**:
+1. QA 規則 checkout（`QA_RULES_DIR` 的 Tier 1 entry）新增永久 regression test 的
+   六條准入條件與五條替代收斂路徑（修程式不加測試／併入既有參數化案例／移到 extended
+   suite／另立 ticket／以證據拒絕不成立的 finding）。
+2. `commands/ship.md` 的 NO-GO 收斂段落加入對應例外：**finding 一律要處理，但修法
+   形式是判斷**；不符准入條件時改走替代路徑並在 PR body 記錄理由。不得被讀成放寬
+   gate——未處理的 finding 仍是 NO-GO。
+3. 規則須對「替換掉的 QA 規則 repo」保持健壯：`agents/qa-tester.md` 明載 rules dir
+   可替換，故 ship.md 需自帶摘要，不得硬相依於參考實作的節號。
+
+**驗收方式**: 本票的效果不由「規則寫進去了」判定，而由後續 PR 的兩個數字判定——
+**A** = 該 PR 新增的永久阻擋 case 數；**B** = 因未過准入條件而走替代路徑的 finding 數
+（Step 2.5 要求在 PR body 記錄，故資料由規則自身產生，不需額外工具）。
+觀察 2–3 個 PR 後判讀：B 恆為 0 表示閘門未咬合、只是裝飾，應回頭修規則而非繼續往下
+做後續批次；A 下降且 gate 輪數未上升表示有效；A 下降但輪數上升表示過頭，reviewer 在
+同一點反覆爭論，應放寬准入。
+
+**Non-goals**: 不設 `max_full_review_rounds` 輪數上限——與 `commands/ship.md`
+「round count 不是停止條件」直接衝突，且 [[CC-544]] 已證明放寬 gate 收斂條件會被
+qa-tester／risk-reviewer 連擋並全數 revert。減量要從 finding 端做，不是從輪數端。
+
+**Cross-link**: [[CC-467]]（觸發實例）、[[CC-544]]（輪數上限的反證）、
+[[CC-537]]（suite manifest，維持 someday）。後續批次見 memory
+`test-governance-batches-plan`。
 
 ---
 

@@ -8,6 +8,24 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **`/ship` now governs the *form* of a finding's remedy, not just that it is
+  fixed (CC-554).** Every finding is still addressed — an unaddressed finding
+  remains a NO-GO — but when the proposed remedy is a *new permanent blocking
+  test*, it must first clear the admission criteria in the configured QA rules
+  checkout (`QA_RULES_DIR`'s Tier 1 entry). A case that pins a private helper
+  or source literal, covers input outside the project's declared support range,
+  duplicates an existing broader scenario, or survives mutation of the code it
+  claims to guard is closed instead by a recorded alternative: fix without a
+  permanent test, fold into an existing parameterized case, move to an extended
+  suite, open a follow-up ticket, or reject the finding with evidence. The
+  chosen alternative and its reason go in the PR body. `commands/ship.md`
+  carries a self-contained summary so a substituted rules directory that
+  defines no such criteria still gets the policy. Round count is deliberately
+  left alone as a stopping condition — reducing test growth is done at the
+  finding end, not by capping gate rounds.
+
 ### Fixed
 
 - **A gate protocol failure is no longer reported as a review verdict, and its

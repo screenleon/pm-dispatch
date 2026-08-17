@@ -177,6 +177,29 @@ generic as `baseline` or maintainer as `preferred`; both are accepted here.
   it returns — high, medium, and low, hard gate and advisory alike, not only
   the blocking ones.
 
+  **The finding is always addressed; the *form* of the fix is a judgment.**
+  When a finding's remedy would be a **new permanent blocking test**, first
+  check it against the permanent-regression-test admission criteria in the
+  configured QA rules checkout (`QA_RULES_DIR`; `TEST-ORACLES.md` §4.1 in the
+  reference `qa-testing-rules`). Apply the summary below when the configured
+  rules directory defines no such criteria — a substituted rules repo need not
+  carry them. A case that pins a private helper or source literal rather than an
+  observable contract, follows an unsupported input past the boundary rejection
+  that already covers it, duplicates coverage whose assertions would already
+  fail on the defect, or survives mutation of the code it claims to guard, is
+  closed by one of the recorded alternatives instead: fix the code with no
+  permanent test, fold it into an existing parameterized case, move it to an
+  extended suite, open a follow-up ticket, or reject the finding with evidence
+  that its premise does not hold.
+
+  Whichever alternative is chosen, **state it and the reason in the PR body**.
+  This is not a licence to skip findings or to argue with a blocker: an
+  unaddressed finding is still a NO-GO, and "this would add a test" is never a
+  reason to leave a defect unfixed. It exists because a permanent blocking
+  case added only so a reviewer stops re-raising a point is a durable cost
+  paid for a transient benefit — the suite grows one case per review round
+  while the risk it covers does not.
+
   Before re-running the gate, classify the remediation:
 
   - **Re-run the refactor/reuse audit** when the fix changes a shared helper or
