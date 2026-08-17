@@ -40,40 +40,55 @@ export PM_DISPATCH_STATE_ROOT="$tmp_root/suite-state"
 # Two suite-owned guards keep that true, neither of which reads the live DB —
 # reading it would report on every process on this machine, not on this suite:
 #
-#   1. Per call: $PMCTL is a wrapper that refuses any context invocation naming
-#      the live repo root, so a redirected call fails at the call site with the
-#      offending argument, not later as an unattributed diff.
+#   1. Per call: $PMCTL is a wrapper that refuses any context invocation which
+#      has not been placed inside the fixture tree, so an unisolated call fails
+#      at its own call site, not later as an unattributed diff.
 #   2. Per entrypoint: case_context_commands_resolve_only_fixture_roots asserts
 #      every context subcommand the CLI publishes resolves inside the fixture.
 #
-# Residual, stated rather than papered over: a future no-argument call made from
-# a CWD outside any git worktree still falls back to $REPO_ROOT inside the CLI.
-# Catching that at the wrapper would mean reimplementing the CLI's repo-root
-# resolution rules here, so the suite asserts the two conditions it can own
-# exactly instead of approximating the third.
+# The wrapper checks a SUFFICIENT PRECONDITION for isolation, deliberately not a
+# copy of the CLI's repo-root resolution rules: a call is isolated if it names a
+# path under $tmp_root, or runs from a CWD inside a git worktree under $tmp_root.
+# Every other shape — an explicit live root, a bare call from the repo, a bare
+# call from a directory in no worktree at all (which falls back to $REPO_ROOT
+# inside the CLI) — is refused rather than predicted. Cases that must escape it,
+# such as invalid-argument paths that never reach resolution, set
+# PM_CTX_GUARD_ALLOW_NON_FIXTURE=1 so each exception is visible and reviewable.
 LIVE_DB="$REPO_ROOT/.pm-dispatch/ctx/context.db"
 REAL_PMCTL="$PMCTL"
 
-# The wrapper: refuse to run a context subcommand whose arguments name the live
-# repo root, and record it for the aggregate case at the end of the run.
 CTX_GUARD_LOG="$tmp_root/live-target-violations.log"
 : > "$CTX_GUARD_LOG"
 mkdir -p "$tmp_root/bin"
 cat > "$tmp_root/bin/pmctl" <<GUARD
 #!/usr/bin/env bash
 set -uo pipefail
-# PM_CTX_GUARD_LOG lets the guard's own self-test collect its deliberate
-# violation somewhere else, so it never contaminates the suite-wide log.
+# PM_CTX_GUARD_LOG lets the guard's own self-tests collect their deliberate
+# violations somewhere else, so they never contaminate the suite-wide log.
 _log="\${PM_CTX_GUARD_LOG:-$CTX_GUARD_LOG}"
-if [[ "\${1:-}" == context ]]; then
+_refuse() {
+  printf 'test-pmctl-context: refusing an unisolated context call (%s): %s\n' \\
+    "\$1" "\$*" >&2
+  printf '%s\t%s\n' "\$1" "\${*:2}" >> "\$_log"
+  exit 99
+}
+if [[ "\${1:-}" == context && "\${PM_CTX_GUARD_ALLOW_NON_FIXTURE:-0}" != 1 ]]; then
+  _fixture_arg=0
   for _arg in "\$@"; do
     if [[ "\$_arg" == "$REPO_ROOT" || "\$_arg" == "$REPO_ROOT"/* ]]; then
-      printf 'test-pmctl-context: refusing a context call targeting the live repo root: %s\n' \\
-        "\$_arg" >&2
-      printf '%s\t%s\n' "\$_arg" "\$*" >> "\$_log"
-      exit 99
+      _refuse "names the live repo root" "\$@"
     fi
+    [[ "\$_arg" == "$tmp_root"/* ]] && _fixture_arg=1
   done
+  if [[ "\$_fixture_arg" -eq 0 ]]; then
+    # No fixture path given, so the CLI will resolve from the CWD. That is safe
+    # only when the CWD sits in a worktree under \$tmp_root; with no worktree at
+    # all the CLI falls back to the live repo root.
+    _top="\$(git rev-parse --show-toplevel 2>/dev/null || true)"
+    if [[ -z "\$_top" || "\$_top" != "$tmp_root"/* ]]; then
+      _refuse "no fixture path and CWD resolves outside the fixture root (\${_top:-no worktree})" "\$@"
+    fi
+  fi
 fi
 exec "$REAL_PMCTL" "\$@"
 GUARD
@@ -853,7 +868,10 @@ case_context_pack_task_id_without_value() {
   should_run "$name" || return 0
   local out err status=0
   out="$tmp_root/pack-tiwv.out"; err="$tmp_root/pack-tiwv.err"
-    "$PMCTL" context pack --task-id > "$out" 2> "$err" || status=$?
+    # Argument validation rejects this before any repo root is resolved, so the
+    # isolation guard has nothing to protect here.
+    PM_CTX_GUARD_ALLOW_NON_FIXTURE=1 \
+      "$PMCTL" context pack --task-id > "$out" 2> "$err" || status=$?
   if [[ "$status" -ne 2 ]]; then
     fail "$name" "expected exit 2 for --task-id without value; got $status err=$(<"$err")"; return 0
   fi
@@ -870,7 +888,9 @@ case_context_pack_query_without_value() {
   should_run "$name" || return 0
   local out err status=0
   out="$tmp_root/pack-qwv.out"; err="$tmp_root/pack-qwv.err"
-    "$PMCTL" context pack --task-id TASK-1 --query > "$out" 2> "$err" || status=$?
+    # Argument validation rejects this before any repo root is resolved.
+    PM_CTX_GUARD_ALLOW_NON_FIXTURE=1 \
+      "$PMCTL" context pack --task-id TASK-1 --query > "$out" 2> "$err" || status=$?
   if [[ "$status" -ne 2 ]]; then
     fail "$name" "expected exit 2 for --query without value; got $status err=$(<"$err")"; return 0
   fi
@@ -1680,11 +1700,49 @@ case_context_live_target_guard_trips() {
   pass "$name"
 }
 
-# Behavior: no context call made anywhere in this run named the live repo root.
-# Steps: read the guard's violation log, written only by this suite's own
-# wrapper; require it to be empty.
+# Behavior: the guard also refuses the shape that names no target at all — a
+# bare context call from a directory in no git worktree, which the CLI would
+# resolve to the live repo root.
+# Steps: run a no-argument context call from a non-git directory under tmp_root;
+# assert the refusal exit code and that the diagnostic names the reason.
+case_context_live_target_guard_refuses_bare_call_outside_worktree() {
+  local name="pmctl context suite: the live-target guard refuses a bare call from outside any worktree"
+  should_run "$name" || return 0
+
+  # This is the shape the argument check alone cannot see: nothing in the argv
+  # mentions the live root, yet the CLI's own fallback lands there. The guard
+  # asserts a sufficient precondition for isolation instead of predicting that
+  # fallback, so it refuses rather than reasoning about where the call would go
+  # — and it does so without reading or writing the live DB.
+  local nogit="$tmp_root/guard-nogit" err own_log status=0
+  mkdir -p "$nogit"
+  err="$tmp_root/guard-nogit.err"
+  own_log="$tmp_root/guard-nogit.log"
+  : > "$own_log"
+  ( cd "$nogit" && PM_CTX_GUARD_LOG="$own_log" "$PMCTL" context status --json \
+      > /dev/null 2> "$err" ) || status=$?
+
+  if [[ "$status" -ne 99 ]]; then
+    fail "$name" "guard let a bare non-worktree call through (exit $status)"
+    return 0
+  fi
+  if ! grep -q 'no fixture path' "$err"; then
+    fail "$name" "refusal did not name the reason: $(<"$err")"
+    return 0
+  fi
+  if [[ "$(wc -l < "$own_log")" -ne 1 ]]; then
+    fail "$name" "refusal was not recorded: $(<"$own_log")"
+    return 0
+  fi
+  pass "$name"
+}
+
+# Behavior: no context call made anywhere in this run fell outside the fixture
+# tree, in any of the shapes that would reach the live repo root.
+# Steps: read the guard's refusal log, written only by this suite's own wrapper;
+# require it to be empty.
 case_context_no_call_targeted_the_live_repo() {
-  local name="pmctl context suite: no case targeted the live repo root"
+  local name="pmctl context suite: every case ran isolated from the live repo"
   should_run "$name" || return 0
 
   # Run last: this is the cumulative view of every case above. The log is
@@ -1692,7 +1750,7 @@ case_context_no_call_targeted_the_live_repo() {
   # fingerprint it replaces, a non-empty log can only mean one of THESE calls
   # did it — and the entry names which.
   if [[ -s "$CTX_GUARD_LOG" ]]; then
-    fail "$name" "context calls targeted the live repo root: $(<"$CTX_GUARD_LOG")"
+    fail "$name" "unisolated context calls were refused during this run: $(<"$CTX_GUARD_LOG")"
     return 0
   fi
   pass "$name"
@@ -1953,7 +2011,11 @@ case_context_pack_nondir_repo_path() {
   should_run "$name" || return 0
   local out err status=0
   out="$tmp_root/pack-ndr.out"; err="$tmp_root/pack-ndr.err"
-    "$PMCTL" context pack "/nonexistent/path/xyz" --task-id TASK-1 --query foo > "$out" 2> "$err" || status=$?
+    # The point of this case is a positional path that is deliberately not a
+    # directory, so it cannot be a fixture path.
+    PM_CTX_GUARD_ALLOW_NON_FIXTURE=1 \
+      "$PMCTL" context pack "/nonexistent/path/xyz" --task-id TASK-1 --query foo \
+        > "$out" 2> "$err" || status=$?
   if assert_exit "$name" "$status" 2; then pass "$name"; fi
 }
 
@@ -3676,6 +3738,7 @@ case_context_fts5_availability_is_cached
 case_context_commands_resolve_only_fixture_roots
 case_context_every_subcommand_is_exercised
 case_context_live_target_guard_trips
+case_context_live_target_guard_refuses_bare_call_outside_worktree
 case_context_no_call_targeted_the_live_repo
 
 th_summary

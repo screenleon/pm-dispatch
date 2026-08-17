@@ -65,6 +65,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-543 | ✅ done | Full test runner Phase 0 fail-fast structural precheck；`--collect-all` 保留 release 全證據路徑 | ops/test | 2026-08-04 | pr:#465 | P2 | hygiene |
 | CC-545 | ✅ done | Reviewer evidence-reference-contract INCOMPLETE 的單次修正性重派：僅限該單一違規類別，附具體錯誤引用重跑違規 reviewer，不必整輪 gate（30-40 分鐘）重來 | ops/gate | 2026-08-06 | pr:#465 | P2 | hygiene |
 | CC-546 | ⏸ deferred | standalone Gate distribution／copy parity follow-up：獨立定義 bundle schema、generation、installed parity 與 support boundary；不回併 Linux/WSL2 canonical module extraction | arch/gate | 2026-08-14 | — | P2 | reuse-debt |
+| CC-552 | 🔵 active | `test_default_worker_cap` 以 `sleep 0.1` 製造 worker 重疊窗口來驗證併發上限，違反 QA 規則的「不得以 sleep 同步」；主機負載會改變觀測到的重疊數，與 worker-cap 正確性無關（2026-08-17 CC-551 gate round 4 qa-tester，pre-existing） | ops/test | 2026-08-17 | — | P3 | hygiene |
 | CC-551 | ✅ closed 2026-08-17 | Gate/QA sandbox 取不到釘住的 ShellCheck：lint 改為離線解析（PATH 相符則用之，否則用已快取的釘住二進位），不再要求釘住版本已在 PATH | ops/test | 2026-08-17 | — | P2 | hygiene |
 | CC-550 | ✅ closed 2026-08-17 | 測試套件的「live 共用狀態未變動」指紋守衛是假陽性製造機：無法區分「本套件寫的」與「外部行程寫的」，已全數改為確定性 resolution oracle | ops/test | 2026-08-17 | — | P2 | hygiene |
 | CC-549 | ✅ closed 2026-08-17 | Gate reviewer-protocol 診斷可修正性：test-gap 契約錯誤點名違規欄位／值／允許集合，且 retryable 分類改比對 reason stem（帶明細的 reason 先前一律被判為不可重試） | ops/gate | 2026-08-17 | pr:#486 | P2 | hygiene |
@@ -389,6 +390,30 @@ lib 分離的關注點，允許各自的修復時程與驗收」轉由 [[CC-548]
 
 ---
 
+## CC-552 — worker-cap 測試以 sleep 製造重疊窗口 🔵 active
+
+**Problem**: `tests/shell/test-lint-shellcheck.sh` 的 `test_default_worker_cap`
+用 ShellCheck stub 內的 `sleep 0.1` 撐開一個時間窗，好讓兩個 worker 的
+start/end 事件重疊，再以事件序列推算最大併發數。負載高或被搶佔的主機上，觀測到
+的重疊數會與 worker-cap 的正確性脫鉤——上限仍是 2，但可能只觀測到 1（現行斷言
+`max_active >= 1` 因此會放過），或在極端情況下產生誤判。
+
+**Why**: 這是 QA 規則明文禁止的 sleep 同步。之所以不併入 [[CC-551]]：該票是
+pre-existing 缺陷、與 ShellCheck 解析改動無關，且改法本身有風險——把 sleep 換成
+檔案式 barrier 時，若併發上限實際為 1，barrier 會等到 timeout 才失敗，正是
+[[CC-543]] 記錄過的 FIFO handshake hang 形狀。要在不引入 hang 的前提下取得確定性
+重疊證明，需要獨立設計而非順手替換。
+
+**Requirement**:
+1. 以確定性的 fixture barrier 或事件協定取代 sleep，證明「同時有兩個 worker」與
+   「沒有第三個」，不依賴經過時間。
+2. barrier 不得在上限實際為 1 時退化成無界等待；失敗必須是有界且訊息明確。
+3. 僅限本測試，不改 `lint-shellcheck.sh` 的併發實作。
+
+**Cross-link**: [[CC-551]]（發現時點）、[[CC-543]]（bounded handshake 的既有教訓）。
+
+---
+
 ## CC-551 — Gate/QA sandbox 取不到釘住的 ShellCheck ✅ 2026-08-17
 
 **Problem**: `tools/lint/lint-shellcheck.sh` 以 `bootstrap-shellcheck.sh --check`
@@ -498,9 +523,15 @@ repo root 就地拒絕（exit 99）並記錄；最後一個 case 斷言該紀錄
 mutation 驗證：把任一 mutating 呼叫改指 `$REPO_ROOT`，呼叫點與彙總 case 各報一次
 失敗，且 live DB 全程未被寫入。
 
-**明載殘餘**：未來若有「無引數且 CWD 不在任何 git worktree 內」的呼叫，CLI 內部
-仍會 fallback 到 `$REPO_ROOT`。要在 wrapper 攔下這種形狀，等同在測試裡重寫 CLI 的
-repo-root 解析規則；本票選擇精確斷言能擁有的兩個條件，而不是近似第三個。
+**Gate round 4 補強（critic-F001，advise）**：上述 wrapper 原本只檢查引數，
+攔不到「無引數且 CWD 不在任何 git worktree 內」——這種形狀 argv 完全沒提到 live
+root，CLI 卻會 fallback 到 `$REPO_ROOT`。改為檢查**隔離的充分前提**而非複製 CLI
+的解析規則：呼叫必須指名 `$tmp_root` 底下的路徑，或從 `$tmp_root` 底下的 git
+worktree 執行；其餘形狀一律拒絕，不去預測它會解析到哪。必須豁免的 3 個 case
+（引數驗證在解析前就退出、故意傳不存在路徑）以
+`PM_CTX_GUARD_ALLOW_NON_FIXTURE=1` 逐點標註理由，例外因此可見可審。
+mutation 驗證：新增一支非 worktree 的無引數呼叫會確定性失敗，且全程未讀寫
+live DB。
 
 **Cross-link**: [[CC-467]] 已按此形狀修好 memory 的兩例（`test-pmctl-memory.sh`
 的 `case_memory_commands_resolve_only_fixture_dirs` + fixture 層唯讀 case），
