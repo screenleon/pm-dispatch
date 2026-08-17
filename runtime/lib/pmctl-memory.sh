@@ -911,6 +911,10 @@ _mem_doctor_human_list() {
 # everything that fits". hit_coverage_pct near 100 with a flat top5_share_pct is
 # that failure, not health.
 
+# Largest value bash arithmetic represents; past it, addition wraps silently
+# rather than failing, so aggregates must be checked before each step.
+MEMORY_STATS_INT_MAX=9223372036854775807
+
 _mem_stats_usage() {
   cat <<'EOF'
 Usage: pmctl memory stats [--json] [--repo-root <path>] [--never-hit-limit <n>]
@@ -1115,6 +1119,11 @@ pmctl_memory_stats() {
     # Only index-referenced cards count: a sidecar row for a deleted card is
     # not evidence that memory helped, and counting it would inflate coverage.
     local rel a bucket_idx
+    # `${arr[@]+"${arr[@]}"}` reads as unquoted at a glance but is not: the
+    # alternate value is `"${arr[@]}"`, so elements keep spaces and tabs. The
+    # form exists because a bare `"${arr[@]}"` on an empty array errors under
+    # `set -u` before bash 4.4, and this file must run on the 4.2 floor.
+    # case_memory_stats_space_bearing_card_path pins the behavior.
     for rel in ${card_rels[@]+"${card_rels[@]}"}; do
       # The sidecar is tab-delimited and its writer refuses a relpath holding a
       # tab or newline, so such a card can never accrue usage. Reporting it as
@@ -1128,7 +1137,16 @@ pmctl_memory_stats() {
       [[ -n "$rel" ]] && a="${MEMORY_USAGE_ACC["$rel"]:-0}"
       if (( a > 0 )); then
         cards_with_hits=$((cards_with_hits + 1))
-        total_access=$((total_access + a))
+        # Bounding each counter to 18 digits does not bound their SUM: ten such
+        # rows exceed 2^63 and bash wraps silently. The per-row guard alone
+        # would still let this report publish a negative total, which is
+        # exactly the false retention signal it claims not to produce.
+        if (( a > MEMORY_STATS_INT_MAX - total_access )); then
+          usage_store='error'
+          total_access="$MEMORY_STATS_INT_MAX"
+        else
+          total_access=$((total_access + a))
+        fi
         access_counts+=("$a")
         # Requirement 1 asks for each card's hit count, not just aggregates:
         # a maintainer must be able to see WHICH card is repeatedly selected.
@@ -1152,7 +1170,12 @@ pmctl_memory_stats() {
       sorted="$(printf '%s\n' "${access_counts[@]}" | sort -rn)"
       while IFS= read -r v; do
         (( n < 5 )) || break
-        top5_access=$(( top5_access + v ))
+        if (( v > MEMORY_STATS_INT_MAX - top5_access )); then
+          usage_store='error'
+          top5_access="$MEMORY_STATS_INT_MAX"
+        else
+          top5_access=$(( top5_access + v ))
+        fi
         n=$((n + 1))
       done <<<"$sorted"
     fi

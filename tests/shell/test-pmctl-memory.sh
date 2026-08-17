@@ -2362,6 +2362,89 @@ case_memory_stats_json_escapes_c1_controls() {
   pass "$name"
 }
 
+# Behavior: many individually-valid counters cannot sum past the integer range into a negative total.
+# Steps: seed ten cards each near 10^18; run stats --json; assert a non-negative total, degraded usage_store, and sane percentages.
+case_memory_stats_aggregate_overflow_degrades() {
+  local name="pmctl memory stats: an aggregate that would exceed the integer range degrades, never wraps"
+  should_run "$name" || return 0
+
+  # Bounding each counter to 18 digits does not bound their sum. Ten such rows
+  # exceed 2^63 and bash wraps silently, so the per-row guard alone would still
+  # let this report publish a negative total as retention evidence.
+  local cfg="$tmp_root/st-aggovf-cfg" repo="$tmp_root/st-aggovf-repo" mdir
+  mdir="$(make_stats_fixture "$cfg" "$repo" 10)"
+  mkdir -p "$mdir/.pm-dispatch"
+  local today i; today=$(( $(date +%s) / 86400 ))
+  {
+    printf '# total_events=0\n'
+    for (( i = 1; i <= 10; i++ )); do
+      printf 'card%d.md\t999999999999999999\t%d\n' "$i" "$today"
+    done
+  } > "$mdir/.pm-dispatch/inject-usage.tsv"
+
+  local out="$tmp_root/st-aggovf.json" status=0
+  run_stats_json "$out" "$cfg" "$repo" || status=$?
+  if ! assert_exit "$name" "$status" 0; then return 0; fi
+  assert_jq "$name" "$out" '.total_access >= 0' || return 0
+  assert_jq "$name" "$out" '.concentration.top5_access >= 0' || return 0
+  # A wrapped total makes the derived percentages nonsense too.
+  assert_jq "$name" "$out" '.concentration.top5_share_pct >= 0 and .concentration.top5_share_pct <= 100' || return 0
+  assert_jq "$name" "$out" '.concentration.hit_coverage_pct >= 0 and .concentration.hit_coverage_pct <= 100' || return 0
+  # The report must say the telemetry is untrustworthy rather than look healthy.
+  assert_jq "$name" "$out" '.usage_store == "error"' || return 0
+  pass "$name"
+}
+
+# Behavior: a card path containing spaces stays one card through aggregation and both renderers.
+# Steps: index two space-bearing cards and one plain card, record usage on one; run stats --json and human; assert counts, the hit row, and the never-hit list.
+case_memory_stats_space_bearing_card_path() {
+  local name="pmctl memory stats: a space-bearing card path is one card in aggregation and rendering"
+  should_run "$name" || return 0
+
+  # Reviewers have twice read `${arr[@]+"${arr[@]}"}` as an unquoted expansion
+  # that would split such a path into several fictitious cards. The alternate
+  # value is quoted and elements survive intact; pin that here so the question
+  # is answerable by a test rather than by re-reading the idiom.
+  local cfg="$tmp_root/st-space-cfg" repo="$tmp_root/st-space-repo" mdir
+  mkdir -p "$repo"
+  mdir="$(make_fixture_memory "$cfg" "$repo")"
+  write_compliant_card "$mdir/project memory.md" "pm"
+  write_compliant_card "$mdir/two words.md" "tw"
+  write_compliant_card "$mdir/plain.md" "plain"
+  {
+    printf -- '- [A](project memory.md) — hook\n'
+    printf -- '- [B](two words.md) — hook\n'
+    printf -- '- [C](plain.md) — hook\n'
+  } > "$mdir/MEMORY.md"
+
+  local sidecar today
+  sidecar="$(memory_usage_sidecar_path "$mdir")"
+  today=$(( $(date +%s) / 86400 ))
+  memory_usage_commit "$sidecar" 100000 "$today" "project memory.md" >/dev/null
+
+  local out="$tmp_root/st-space.json" status=0
+  run_stats_json "$out" "$cfg" "$repo" || status=$?
+  if ! assert_exit "$name" "$status" 0; then return 0; fi
+  # Splitting on whitespace would report 5 cards here, not 3.
+  assert_jq "$name" "$out" '.card_count == 3' || return 0
+  assert_jq "$name" "$out" '.cards_with_hits == 1 and .total_access == 1' || return 0
+  assert_jq "$name" "$out" '.card_hits[0].card == "project memory.md"' || return 0
+  assert_jq "$name" "$out" '(.never_hit_cards | sort) == ["plain.md","two words.md"]' || return 0
+
+  # Both renderers consume the same arrays; the human path must agree.
+  local hout="$tmp_root/st-space.txt"
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory stats --repo-root "$repo" > "$hout" 2>/dev/null || true
+  if ! grep -qE '^  - 1 +project memory\.md' "$hout"; then
+    fail "$name" "human hit row lost the space-bearing path: $(cat "$hout")"
+    return 0
+  fi
+  if ! grep -qx '  - two words.md' "$hout"; then
+    fail "$name" "human never-hit row lost the space-bearing path: $(cat "$hout")"
+    return 0
+  fi
+  pass "$name"
+}
+
 # Behavior: an index entry with no parseable .md link is reported separately, not counted as a card.
 # Steps: index one valid card plus a malformed and a non-.md entry; run stats --json; assert card_count, coverage, and the separate unparsed count.
 case_memory_stats_unparsed_index_entries_excluded() {
@@ -3224,6 +3307,8 @@ case_memory_stats_hit_rows_sort_numerically
 case_memory_stats_json_escapes_c1_controls
 case_memory_stats_unrecordable_card_is_not_never_hit
 case_memory_stats_unparsed_index_entries_excluded
+case_memory_stats_aggregate_overflow_degrades
+case_memory_stats_space_bearing_card_path
 case_memory_stats_malformed_episodes_are_not_zero_history
 case_memory_stats_age_buckets_match_frecency_boundaries
 
