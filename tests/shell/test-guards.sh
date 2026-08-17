@@ -2333,6 +2333,45 @@ inject_hook_frecency_ranks_accessed_above_cold() {
   rm -rf "$dir"
 }
 
+inject_hook_huge_access_count_does_not_invert_ranking() {
+  # A very large access_count must not wrap the frecency product negative.
+  # `_acc * _bucket` overflows for counters around 5e17 and the clamp cannot
+  # catch a negative, so the most-used card would sort BELOW a never-used one —
+  # silently inverting the ranking this signal exists to provide.
+  local name="inject-hook/huge-access-count-does-not-invert-ranking" dir cwd mem status pos_a pos_b output encoded today
+  should_run "$name" || return 0
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  encoded="$(inject_encoded_path "$cwd")"
+  mem="$dir/projects/$encoded/memory"
+  mkdir -p "$mem/.pm-dispatch"
+  # Index order puts the cold card first, so only ranking can reorder them.
+  printf '# test\n- [b](b.md) — beta\n- [a](a.md) — alpha\n' > "$mem/MEMORY.md"
+  printf -- '---\npriority: normal\ntopics:\n  - alpha\n---\nA\n' > "$mem/a.md"
+  printf -- '---\npriority: normal\ntopics:\n  - beta\n---\nB\n' > "$mem/b.md"
+  today=$(( $(date +%s) / 86400 ))
+  # 5e17 * bucket 100 wraps negative in 64-bit arithmetic.
+  {
+    printf '# total_events=0\n'
+    printf 'a.md\t500000000000000000\t%d\n' "$today"
+  } > "$mem/.pm-dispatch/inject-usage.tsv"
+
+  output=$(printf '{"cwd":"%s","prompt":"zzz"}' "$cwd" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
+  status=$?
+  pos_a=$(printf '%s\n' "$output" | grep -n '\[a\]' | cut -d: -f1 | head -1 || printf '0')
+  pos_b=$(printf '%s\n' "$output" | grep -n '\[b\]' | cut -d: -f1 | head -1 || printf '0')
+  if [[ "$status" == "0" && -n "$pos_a" && -n "$pos_b" && "$pos_a" -lt "$pos_b" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s pos_a=%s pos_b=%s output=%q\n' "$name" "$status" "$pos_a" "$pos_b" "$output"
+  fi
+  rm -rf "$dir"
+}
+
 inject_hook_keyword_tier_dominates_frecency() {
   # A card the current prompt's keywords hit outranks a high-frecency card that
   # the prompt does NOT hit (layered: keyword tier first, frecency within tier).
@@ -3362,6 +3401,7 @@ inject_hook_default_home_fallback
 inject_hook_status_active_no_longer_pins
 inject_hook_keyword_hit_records_access
 inject_hook_frecency_ranks_accessed_above_cold
+inject_hook_huge_access_count_does_not_invert_ranking
 inject_hook_keyword_tier_dominates_frecency
 inject_hook_sidecar_write_failure_is_best_effort
 inject_hook_malformed_sidecar_degrades_to_zero

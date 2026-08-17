@@ -143,8 +143,17 @@ for _line in "${index_lines[@]}"; do
       _acc="${MEMORY_USAGE_ACC["$card_rel"]:-0}"
       if (( _acc > 0 )); then
         _bucket=$(memory_age_bucket "$today_day" "${MEMORY_USAGE_LAST["$card_rel"]:-0}")
-        frecency=$(( _acc * _bucket ))
-        (( frecency >= MEMORY_KEYWORD_WEIGHT )) && frecency=$(( MEMORY_KEYWORD_WEIGHT - 1 ))
+        # The product is clamped below the keyword weight anyway, so never
+        # evaluate it once it must exceed that ceiling: `_acc * _bucket`
+        # overflows for large counters and can wrap NEGATIVE, which the clamp
+        # cannot catch — a hit card would then sort below every non-hit card,
+        # silently inverting the ranking this signal exists to provide.
+        if (( _acc > (MEMORY_KEYWORD_WEIGHT - 1) / _bucket )); then
+          frecency=$(( MEMORY_KEYWORD_WEIGHT - 1 ))
+        else
+          frecency=$(( _acc * _bucket ))
+          (( frecency >= MEMORY_KEYWORD_WEIGHT )) && frecency=$(( MEMORY_KEYWORD_WEIGHT - 1 ))
+        fi
       fi
     fi
     composite=$(( score * MEMORY_KEYWORD_WEIGHT + frecency ))
