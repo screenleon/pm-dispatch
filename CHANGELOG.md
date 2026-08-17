@@ -24,6 +24,14 @@ Versions follow [Semantic Versioning](https://semver.org/).
   and the version check itself is unchanged — `--check` keeps its existing
   meaning for release verification.
 
+  Because that makes the cache an execution source these tools choose rather
+  than one the operator picked, a cached binary is now authenticated by content:
+  `tools/lint/shellcheck-assets.tsv` records a `binary_sha256` per platform,
+  derived from the release archive whose checksum the same row already pinned,
+  and resolution rejects a mismatch before the binary is ever run. A version
+  string a binary prints about itself cannot establish what it is. The same
+  digest is checked when installing and when reusing an existing cache entry.
+
 - **Test guards no longer fail on other processes' writes to live shared state
   (CC-550).** Three suites proved "this run did not touch live state" by
   fingerprinting a shared file before and after. That oracle cannot distinguish

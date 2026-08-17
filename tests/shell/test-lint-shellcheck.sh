@@ -44,6 +44,27 @@ fixture_platform() {
   esac
 }
 
+# Point a fixture's asset manifest at $2 as the trusted binary for $3 (platform),
+# so a stub standing in for the pinned release can pass digest verification.
+# $4 overrides the archive URL/sha columns when a case does not exercise install.
+write_fixture_manifest() {
+  local root="$1" binary="$2" platform="$3" url="${4:-file:///nonexistent.tar.gz}"
+  local archive_sha="${5:-$(printf '%064d' 0)}" digest
+  digest="$(sha256_of "$binary")"
+  {
+    printf 'version\tplatform\turl\tsha256\tbinary_sha256\n'
+    printf '0.11.0\t%s\t%s\t%s\t%s\n' "$platform" "$url" "$archive_sha" "$digest"
+  } > "$root/tools/lint/shellcheck-assets.tsv"
+}
+
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{ print $1 }'
+  else
+    shasum -a 256 "$1" | awk '{ print $1 }'
+  fi
+}
+
 expect_fail() {
   local name="$1" root="$2" needle="$3" output status=0
   output="$(bash "$root/tools/lint/lint-shellcheck.sh" --repo "$root" 2>&1)" || status=$?
@@ -260,6 +281,9 @@ test_cached_pin_used_when_path_version_wrong() {
   cache_bin="$root/cache/shellcheck/0.11.0/$platform/bin/shellcheck"
   write_shellcheck_stub "$root/bin/shellcheck" 0.8.0 "$path_calls"
   write_shellcheck_stub "$cache_bin" 0.11.0 "$cache_calls"
+  # The cache is authenticated by content, so the fixture must declare this stub
+  # as its trusted binary — the same requirement a real cached release meets.
+  write_fixture_manifest "$root" "$cache_bin" "$platform"
   : > "$path_calls"
   : > "$cache_calls"
 
@@ -272,6 +296,78 @@ test_cached_pin_used_when_path_version_wrong() {
     pass "$name"
   else
     fail "$name" "status=$status cache_lints=$cache_lints path_lints=$path_lints output=$output"
+  fi
+}
+
+# Behavior: a cached binary that reports the pinned version but does not match
+# the repository's trusted digest is never executed for linting.
+# Steps: Arrange a cache stub whose --version says 0.11.0 while the manifest
+# records a different digest; Act by running the linter; Assert exit 2, a digest
+# diagnostic, and that the stub was never asked to lint.
+test_tampered_cache_binary_is_rejected() {
+  local name="lint-shellcheck/tampered-cache-binary-rejected" root platform
+  local cache_bin cache_calls output status=0 lint_calls
+  should_run "$name" || return 0
+  root="$(fixture_repo tampered-cache)"
+  platform="$(fixture_platform)"
+  [[ -n "$platform" ]] || { pass "$name"; return; }
+  cache_bin="$root/cache/shellcheck/0.11.0/$platform/bin/shellcheck"
+  cache_calls="$root/cache-calls.log"
+  # Record the digest of the legitimate binary, then swap in an impostor that
+  # still self-reports the pinned version — the exact shape a version probe
+  # alone cannot catch.
+  write_shellcheck_stub "$cache_bin" 0.11.0 "$cache_calls"
+  write_fixture_manifest "$root" "$cache_bin" "$platform"
+  write_shellcheck_stub "$cache_bin" 0.11.0 "$cache_calls"
+  printf '# tampered\n' >> "$cache_bin"
+  write_shellcheck_stub "$root/bin/shellcheck" 0.8.0
+  : > "$cache_calls"
+
+  output="$(env -u HOME XDG_CACHE_HOME="$root/xdg" PM_DISPATCH_TOOL_CACHE="$root/cache" \
+    PATH="$root/bin:$PATH" \
+    bash "$root/tools/lint/lint-shellcheck.sh" --repo "$root" 2>&1)" || status=$?
+  lint_calls="$(grep -c '^lint$' "$cache_calls" || true)"
+  if [[ "$status" -eq 2 \
+      && "$output" == *"does not match the trusted digest"* \
+      && "$lint_calls" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status lint_calls=$lint_calls output=$output"
+  fi
+}
+
+# Behavior: a relative tool cache resolves against the caller's directory and
+# still works once lint changes into the repository to scan.
+# Steps: Arrange a cached pinned stub and a relative PM_DISPATCH_TOOL_CACHE; Act
+# by running the linter from a different CWD with an explicit --repo; Assert the
+# scan completes using the cached binary.
+test_relative_cache_survives_repo_chdir() {
+  local name="lint-shellcheck/relative-cache-survives-chdir" root platform
+  local cache_bin cache_calls output status=0 lint_calls
+  should_run "$name" || return 0
+  root="$(fixture_repo relative-cache)"
+  platform="$(fixture_platform)"
+  [[ -n "$platform" ]] || { pass "$name"; return; }
+  # The cache lives under the CALLER's directory, not the repository — otherwise
+  # a relative path would resolve correctly by coincidence once lint chdirs, and
+  # this case would prove nothing.
+  local caller="$root/caller"
+  mkdir -p "$caller"
+  cache_bin="$caller/cache/shellcheck/0.11.0/$platform/bin/shellcheck"
+  cache_calls="$root/cache-calls.log"
+  write_shellcheck_stub "$cache_bin" 0.11.0 "$cache_calls"
+  write_fixture_manifest "$root" "$cache_bin" "$platform"
+  write_shellcheck_stub "$root/bin/shellcheck" 0.8.0
+  : > "$cache_calls"
+
+  output="$(cd "$caller" && env -u HOME XDG_CACHE_HOME="$root/xdg" \
+    PM_DISPATCH_TOOL_CACHE=cache PATH="$root/bin:$PATH" \
+    bash "$root/tools/lint/lint-shellcheck.sh" --repo "$root" 2>&1)" || status=$?
+  lint_calls="$(grep -c '^lint$' "$cache_calls" || true)"
+  if [[ "$status" -eq 0 && "$lint_calls" -ge 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status lint_calls=$lint_calls output=$output"
   fi
 }
 
@@ -342,8 +438,8 @@ test_bootstrap_verifies_asset_checksum() {
   else
     sha="$(shasum -a 256 "$archive" | awk '{ print $1 }')"
   fi
-  printf 'version\tplatform\turl\tsha256\n0.11.0\t%s\tfile://%s\t%s\n' \
-    "$platform" "$archive" "$sha" > "$root/tools/lint/shellcheck-assets.tsv"
+  write_fixture_manifest "$root" "$payload/shellcheck" "$platform" \
+    "file://$archive" "$sha"
   bin_dir="$(env -u HOME XDG_CACHE_HOME="$root/xdg-cache" \
     PM_DISPATCH_TOOL_CACHE="$root/cache-good" \
     bash "$root/tools/lint/bootstrap-shellcheck.sh" --repo "$root")" || status=$?
@@ -427,6 +523,8 @@ test_ci_local_entrypoint_parity
 test_wrong_shellcheck_version_fails_closed
 test_check_and_resolve_are_mutually_exclusive
 test_cached_pin_used_when_path_version_wrong
+test_tampered_cache_binary_is_rejected
+test_relative_cache_survives_repo_chdir
 test_matching_shellcheck_version_scans
 test_version_pin_shape_fails_closed
 test_bootstrap_verifies_asset_checksum

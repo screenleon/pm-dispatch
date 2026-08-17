@@ -90,7 +90,10 @@ whose version matches the pin, and otherwise falls back to the cached one — so
 subprocess with an ambient `shellcheck` (a gate reviewer sandbox, for one) still
 scans with the pin. Resolution stays offline — when neither source can supply
 the pin, lint fails before scanning and names both probes rather than
-downloading. Set
+downloading. A cached binary must also match the `binary_sha256` recorded in
+`tools/lint/shellcheck-assets.tsv`: the cache is a directory these tools manage
+rather than one you chose, so it is authenticated by content before it is run.
+Set
 `PM_DISPATCH_TOOL_CACHE` when the default `$XDG_CACHE_HOME/pm-dispatch/tools`
 (or `$HOME/.cache/pm-dispatch/tools`) is not suitable.
 

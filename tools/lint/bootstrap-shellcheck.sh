@@ -97,6 +97,59 @@ check_binary() {
   fi
 }
 
+# Validated for every mode, not just install: --resolve authenticates a cached
+# binary against this manifest before handing it to a caller that will run it.
+[[ -f "$assets_file" ]] || {
+  printf 'bootstrap-shellcheck: missing asset manifest: %s\n' "$assets_file" >&2
+  exit 2
+}
+[[ "$(head -n 1 "$assets_file")" == $'version\tplatform\turl\tsha256\tbinary_sha256' ]] || {
+  printf 'bootstrap-shellcheck: invalid asset manifest header\n' >&2
+  exit 2
+}
+
+sha256_file() {
+  local file="$1"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$file" | awk '{ print $1 }'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$file" | awk '{ print $1 }'
+  else
+    printf 'bootstrap-shellcheck: sha256sum or shasum is required\n' >&2
+    return 2
+  fi
+}
+
+# The repository-trusted digest of the extracted binary for this platform, from
+# the checked-in asset manifest. Each value was derived from the release archive
+# whose sha256 the same row pins, so it carries that row's trust.
+asset_binary_sha256() {
+  local platform="$1"
+  awk -F '\t' -v v="$expected_version" -v p="$platform" \
+    '$1 == v && $2 == p { print $5; exit }' "$assets_file"
+}
+
+# Executing a binary is the point of no return, so identity is established
+# before that, by content — a version string the binary prints about itself
+# cannot establish it.
+verify_binary_digest() {
+  local binary="$1" platform="$2" expected actual
+  expected="$(asset_binary_sha256 "$platform")"
+  if [[ ! "$expected" =~ ^[0-9a-f]{64}$ ]]; then
+    printf 'bootstrap-shellcheck: no trusted binary digest recorded for %s %s\n' \
+      "$expected_version" "$platform" >&2
+    return 2
+  fi
+  actual="$(sha256_file "$binary")" || return 2
+  if [[ "$actual" != "$expected" ]]; then
+    printf 'bootstrap-shellcheck: cached ShellCheck does not match the trusted digest\n' >&2
+    printf 'bootstrap-shellcheck:   binary:   %s\n' "$binary" >&2
+    printf 'bootstrap-shellcheck:   expected: %s\n' "$expected" >&2
+    printf 'bootstrap-shellcheck:   actual:   %s\n' "$actual" >&2
+    return 2
+  fi
+}
+
 detect_platform() {
   case "$(uname -s):$(uname -m)" in
     Linux:x86_64) printf 'linux.x86_64\n' ;;
@@ -139,16 +192,34 @@ if [[ "$resolve_only" -eq 1 ]]; then
     path_diagnostic="${path_diagnostic#bootstrap-shellcheck: }"
   fi
 
+  # The cache is a directory this tool manages, not one the user picked, and it
+  # becomes an execution source the moment lint uses it. So unlike PATH — where
+  # the operator chose the binary — a cached binary must match the digest the
+  # repository records before it is offered to a caller that will run it. A
+  # tampered binary can print any version it likes.
   resolve_cache_dir="$(cached_bin_dir)"
-  if [[ -n "$resolve_cache_dir" && -x "$resolve_cache_dir/shellcheck" ]] \
-      && check_binary "$resolve_cache_dir/shellcheck" 2>/dev/null; then
-    printf '%s\n' "$resolve_cache_dir"
-    exit 0
+  resolve_cache_diagnostic=""
+  if [[ -n "$resolve_cache_dir" && -x "$resolve_cache_dir/shellcheck" ]]; then
+    if resolve_cache_diagnostic="$( { check_binary "$resolve_cache_dir/shellcheck" \
+          && verify_binary_digest "$resolve_cache_dir/shellcheck" \
+               "$(detect_platform)"; } 2>&1 )"; then
+      # Absolute, because callers run the returned binary from their own CWD —
+      # lint chdirs to the repository root before every scan.
+      resolved_dir="$(cd "$resolve_cache_dir" && pwd)" || {
+        printf 'bootstrap-shellcheck: cannot resolve the cache directory %s\n' \
+          "$resolve_cache_dir" >&2
+        exit 2
+      }
+      printf '%s\n' "$resolved_dir"
+      exit 0
+    fi
   fi
 
   printf 'bootstrap-shellcheck: no ShellCheck %s available\n' "$expected_version" >&2
   printf 'bootstrap-shellcheck: PATH: %s\n' "$path_diagnostic" >&2
-  if [[ -n "$resolve_cache_dir" ]]; then
+  if [[ -n "$resolve_cache_diagnostic" ]]; then
+    printf '%s\n' "$resolve_cache_diagnostic" >&2
+  elif [[ -n "$resolve_cache_dir" ]]; then
     printf 'bootstrap-shellcheck: cache: no pinned binary at %s/shellcheck\n' \
       "$resolve_cache_dir" >&2
   else
@@ -175,15 +246,6 @@ if [[ "$check_only" -eq 1 ]]; then
   exit $?
 fi
 
-[[ -f "$assets_file" ]] || {
-  printf 'bootstrap-shellcheck: missing asset manifest: %s\n' "$assets_file" >&2
-  exit 2
-}
-[[ "$(head -n 1 "$assets_file")" == $'version\tplatform\turl\tsha256' ]] || {
-  printf 'bootstrap-shellcheck: invalid asset manifest header\n' >&2
-  exit 2
-}
-
 platform="$(detect_platform)" || {
   printf 'bootstrap-shellcheck: unsupported platform: %s %s\n' "$(uname -s)" "$(uname -m)" >&2
   exit 2
@@ -191,8 +253,9 @@ platform="$(detect_platform)" || {
 
 asset_url=""
 asset_sha256=""
+asset_binary_sha256=""
 asset_matches=0
-while IFS=$'\t' read -r version asset_platform url sha256 extra; do
+while IFS=$'\t' read -r version asset_platform url sha256 binary_sha256 extra; do
   [[ "$version" != version ]] || continue
   if [[ "$version" == "$expected_version" && "$asset_platform" == "$platform" ]]; then
     [[ -z "${extra:-}" ]] || {
@@ -201,11 +264,13 @@ while IFS=$'\t' read -r version asset_platform url sha256 extra; do
     }
     asset_url="$url"
     asset_sha256="$sha256"
+    asset_binary_sha256="$binary_sha256"
     asset_matches=$((asset_matches + 1))
   fi
 done < "$assets_file"
 if [[ "$asset_matches" -ne 1 || -z "$asset_url" \
-    || ! "$asset_sha256" =~ ^[0-9a-f]{64}$ ]]; then
+    || ! "$asset_sha256" =~ ^[0-9a-f]{64}$ \
+    || ! "${asset_binary_sha256:-}" =~ ^[0-9a-f]{64}$ ]]; then
   printf 'bootstrap-shellcheck: expected exactly one valid asset for %s %s\n' \
     "$expected_version" "$platform" >&2
   exit 2
@@ -215,7 +280,8 @@ fi
 # cannot drift apart.
 target_dir="$(cached_bin_dir)"
 target_bin="$target_dir/shellcheck"
-if [[ -x "$target_bin" ]] && check_binary "$target_bin" 2>/dev/null; then
+if [[ -x "$target_bin" ]] && check_binary "$target_bin" 2>/dev/null \
+    && verify_binary_digest "$target_bin" "$platform" 2>/dev/null; then
   printf '%s\n' "$target_dir"
   exit 0
 fi
@@ -226,18 +292,6 @@ for required_tool in curl tar; do
     exit 2
   }
 done
-
-sha256_file() {
-  local file="$1"
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$file" | awk '{ print $1 }'
-  elif command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 "$file" | awk '{ print $1 }'
-  else
-    printf 'bootstrap-shellcheck: sha256sum or shasum is required\n' >&2
-    return 2
-  fi
-}
 
 mkdir -p "$cache_root"
 tmp_dir="$(mktemp -d "$cache_root/.shellcheck-${expected_version}.XXXXXX")"
@@ -263,6 +317,9 @@ extracted_bin="$extract_dir/shellcheck-v${expected_version}/shellcheck"
   exit 2
 }
 chmod +x "$extracted_bin"
+# Digest first: this establishes what the file IS before it is run to ask what
+# it says it is, and it is the same check --resolve applies to the cache later.
+verify_binary_digest "$extracted_bin" "$platform"
 check_binary "$extracted_bin"
 
 mkdir -p "$target_dir"

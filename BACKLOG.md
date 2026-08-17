@@ -457,6 +457,23 @@ Phase 0 結構性 precheck，**行為性 suite 一個都沒跑到**。qa-tester 
 支必須為零次）；兩處皆無時斷言 exit 2 並點名快取探測路徑。mutation 驗證：拿掉
 快取探測會使前者失敗。
 
+**Gate round 5 補強（security-reviewer-F001，soft_block）**：快取原本只以二進位
+**自報的版本字串**驗證身分——被替換的二進位只要印出 `version: 0.11.0` 就會被
+lint 執行。這是本次變更引入的新執行來源（PATH 是操作者自己選的，快取則是本工具
+管理、且現在會被隱式採用），所以必須以 repo 可信資料驗證。`shellcheck-assets.tsv`
+新增 `binary_sha256` 欄，四個平台的值皆由該列已受信任的 archive sha256 下載、
+驗證、解壓後推導而得。`--resolve` 的快取分支、install 的既存快取快路徑、以及
+解壓後的二進位，全部先比對 digest 再執行。PATH 分支維持原樣（操作者自選、且為
+既有行為），此點於程式碼註解明載。
+mutation 驗證：拿掉 digest 檢查後，自報版本正確的假二進位會被實際執行 3 次去
+lint——正是 finding 描述的失效模式。
+
+**Gate round 5 補強（critic-F001，advise）**：`--resolve` 原本原樣回傳快取路徑，
+但 lint 每次掃描前會 `cd` 到 repo root，因此相對的 `PM_DISPATCH_TOOL_CACHE`
+在 caller CWD ≠ `--repo` 時會解析失敗。改為回傳絕對路徑。首版回歸測試因 caller
+CWD 恰好等於 `--repo` 而空轉（mutation 未失敗），已改為把快取放在獨立的 caller
+目錄下才真正覆蓋此路徑。
+
 **Cross-link**: [[CC-541]]（qa-tester sandbox 可見性）同屬 reviewer 環境可見性線。
 
 **See**: CHANGELOG.md [Unreleased]、[[CC-541]]
