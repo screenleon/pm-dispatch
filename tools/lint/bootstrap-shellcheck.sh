@@ -7,9 +7,10 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/../.." && pwd)"
 cache_root="${PM_DISPATCH_TOOL_CACHE:-}"
 check_only=0
+resolve_only=0
 
 usage() {
-  printf 'usage: %s [--repo <path>] [--cache-dir <path>] [--check]\n' "$0"
+  printf 'usage: %s [--repo <path>] [--cache-dir <path>] [--check|--resolve]\n' "$0"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -26,6 +27,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --check)
       check_only=1
+      shift
+      ;;
+    --resolve)
+      resolve_only=1
       shift
       ;;
     -h|--help)
@@ -45,10 +50,15 @@ if [[ -z "$cache_root" ]]; then
     cache_root="$XDG_CACHE_HOME/pm-dispatch/tools"
   elif [[ -n "${HOME:-}" ]]; then
     cache_root="$HOME/.cache/pm-dispatch/tools"
-  elif [[ "$check_only" -ne 1 ]]; then
+  elif [[ "$check_only" -ne 1 && "$resolve_only" -ne 1 ]]; then
     printf 'bootstrap-shellcheck: HOME, XDG_CACHE_HOME, --cache-dir, or PM_DISPATCH_TOOL_CACHE is required\n' >&2
     exit 2
   fi
+fi
+
+if [[ "$check_only" -eq 1 && "$resolve_only" -eq 1 ]]; then
+  printf 'bootstrap-shellcheck: --check and --resolve are mutually exclusive\n' >&2
+  exit 2
 fi
 
 pin_file="$repo_root/.shellcheck-version"
@@ -87,6 +97,69 @@ check_binary() {
   fi
 }
 
+detect_platform() {
+  case "$(uname -s):$(uname -m)" in
+    Linux:x86_64) printf 'linux.x86_64\n' ;;
+    Linux:aarch64|Linux:arm64) printf 'linux.aarch64\n' ;;
+    Darwin:x86_64) printf 'darwin.x86_64\n' ;;
+    Darwin:arm64|Darwin:aarch64) printf 'darwin.aarch64\n' ;;
+    *) return 1 ;;
+  esac
+}
+
+# Directory holding the pinned binary for this platform, or empty when the
+# platform has no published asset. Says nothing about whether it exists.
+cached_bin_dir() {
+  local platform
+  [[ -n "$cache_root" ]] || return 0
+  platform="$(detect_platform)" || return 0
+  printf '%s/shellcheck/%s/%s/bin\n' "$cache_root" "$expected_version" "$platform"
+}
+
+# --resolve: report a bin directory holding the pinned ShellCheck, WITHOUT
+# touching the network. Callers that need a working toolchain use this instead
+# of requiring the pin to already sit on PATH: a gate reviewer or CI sandbox
+# inherits a PATH nobody in this repo controls, but it does reach the cache a
+# previous bootstrap already populated. Downloading here is deliberately still
+# off the table — lint must not become an implicit installer.
+if [[ "$resolve_only" -eq 1 ]]; then
+  path_diagnostic='ShellCheck is not on PATH'
+  shellcheck_path="$(command -v shellcheck || true)"
+  if [[ -n "$shellcheck_path" ]]; then
+    if check_binary "$shellcheck_path" 2>/dev/null; then
+      resolved_dir="$(cd "$(dirname "$shellcheck_path")" && pwd)" || {
+        printf 'bootstrap-shellcheck: cannot resolve the directory of %s\n' \
+          "$shellcheck_path" >&2
+        exit 2
+      }
+      printf '%s\n' "$resolved_dir"
+      exit 0
+    fi
+    path_diagnostic="$(check_binary "$shellcheck_path" 2>&1 >/dev/null || true)"
+    path_diagnostic="${path_diagnostic#bootstrap-shellcheck: }"
+  fi
+
+  resolve_cache_dir="$(cached_bin_dir)"
+  if [[ -n "$resolve_cache_dir" && -x "$resolve_cache_dir/shellcheck" ]] \
+      && check_binary "$resolve_cache_dir/shellcheck" 2>/dev/null; then
+    printf '%s\n' "$resolve_cache_dir"
+    exit 0
+  fi
+
+  printf 'bootstrap-shellcheck: no ShellCheck %s available\n' "$expected_version" >&2
+  printf 'bootstrap-shellcheck: PATH: %s\n' "$path_diagnostic" >&2
+  if [[ -n "$resolve_cache_dir" ]]; then
+    printf 'bootstrap-shellcheck: cache: no pinned binary at %s/shellcheck\n' \
+      "$resolve_cache_dir" >&2
+  else
+    printf 'bootstrap-shellcheck: cache: no cache root for this platform\n' >&2
+  fi
+  printf '%s\n' \
+    'bootstrap-shellcheck: populate the cache with:' \
+    '  bash tools/lint/bootstrap-shellcheck.sh' >&2
+  exit 2
+fi
+
 if [[ "$check_only" -eq 1 ]]; then
   shellcheck_path="$(command -v shellcheck || true)"
   [[ -n "$shellcheck_path" ]] || {
@@ -111,16 +184,10 @@ fi
   exit 2
 }
 
-case "$(uname -s):$(uname -m)" in
-  Linux:x86_64) platform=linux.x86_64 ;;
-  Linux:aarch64|Linux:arm64) platform=linux.aarch64 ;;
-  Darwin:x86_64) platform=darwin.x86_64 ;;
-  Darwin:arm64|Darwin:aarch64) platform=darwin.aarch64 ;;
-  *)
-    printf 'bootstrap-shellcheck: unsupported platform: %s %s\n' "$(uname -s)" "$(uname -m)" >&2
-    exit 2
-    ;;
-esac
+platform="$(detect_platform)" || {
+  printf 'bootstrap-shellcheck: unsupported platform: %s %s\n' "$(uname -s)" "$(uname -m)" >&2
+  exit 2
+}
 
 asset_url=""
 asset_sha256=""
@@ -144,7 +211,9 @@ if [[ "$asset_matches" -ne 1 || -z "$asset_url" \
   exit 2
 fi
 
-target_dir="$cache_root/shellcheck/$expected_version/$platform/bin"
+# Same helper --resolve probes, so the install target and the offline lookup
+# cannot drift apart.
+target_dir="$(cached_bin_dir)"
 target_bin="$target_dir/shellcheck"
 if [[ -x "$target_bin" ]] && check_binary "$target_bin" 2>/dev/null; then
   printf '%s\n' "$target_dir"

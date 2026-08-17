@@ -162,30 +162,86 @@ test_ci_local_entrypoint_parity() {
   fi
 }
 
-# Behavior: lint fails before scanning when PATH resolves a ShellCheck version
-# different from the repository pin, and reports both versions.
-# Steps: Arrange a fixture with a 0.10.0 ShellCheck stub; Act by running the
-# linter; Assert exit 2 and an expected-0.11.0/actual-0.10.0 diagnostic.
+# Write a ShellCheck stub at $1 reporting version $2. Each invocation appends
+# `version` or `lint` to the log at $3 (default: discarded), so a test can tell
+# which binary ran and what it was asked to do.
+write_shellcheck_stub() {
+  local path="$1" version="$2" calls="${3:-/dev/null}"
+  mkdir -p "$(dirname "$path")"
+  cat > "$path" <<STUB
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "\${1:-}" == --version ]]; then
+  printf 'version\n' >> '$calls'
+  printf 'ShellCheck\nversion: $version\n'
+  exit 0
+fi
+printf 'lint\n' >> '$calls'
+STUB
+  chmod +x "$path"
+}
+
+# Behavior: lint fails before scanning when neither PATH nor the tool cache can
+# supply the pinned ShellCheck, and names both probes plus the fix.
+# Steps: Arrange a 0.10.0 PATH stub and an empty tool cache; Act by running the
+# linter; Assert exit 2, the expected/actual versions, the exact cache path
+# probed, and the bootstrap command that populates it.
 test_wrong_shellcheck_version_fails_closed() {
   local name="lint-shellcheck/wrong-version-fails-closed" root output status=0
   should_run "$name" || return 0
   root="$(fixture_repo wrong-version)"
-  mkdir -p "$root/bin"
-  cat > "$root/bin/shellcheck" <<'STUB'
-#!/usr/bin/env bash
-if [[ "${1:-}" == --version ]]; then
-  printf 'ShellCheck\nversion: 0.10.0\n'
-  exit 0
-fi
-exit 0
-STUB
-  chmod +x "$root/bin/shellcheck"
-  output="$(PATH="$root/bin:$PATH" \
+  write_shellcheck_stub "$root/bin/shellcheck" 0.10.0
+  # An empty cache: this case is about having no usable binary anywhere. The
+  # maintainer's real cache would otherwise rescue the run and this assertion
+  # would silently stop testing the failure it names.
+  output="$(PATH="$root/bin:$PATH" PM_DISPATCH_TOOL_CACHE="$root/empty-cache" \
     bash "$root/tools/lint/lint-shellcheck.sh" --repo "$root" 2>&1)" || status=$?
-  if [[ "$status" -eq 2 && "$output" == *"expected 0.11.0, got 0.10.0"* ]]; then
+  if [[ "$status" -eq 2 \
+      && "$output" == *"expected 0.11.0, got 0.10.0"* \
+      && "$output" == *"$root/empty-cache/shellcheck/0.11.0/"*"/bin/shellcheck"* \
+      && "$output" == *"bootstrap-shellcheck.sh"* ]]; then
     pass "$name"
   else
     fail "$name" "status=$status output=$output"
+  fi
+}
+
+# Behavior: when PATH holds a non-pinned ShellCheck but the tool cache already
+# holds the pinned one, lint scans with the cached binary instead of stopping.
+# Steps: Arrange a 0.8.0 PATH stub and a cache containing a pinned stub, both
+# instrumented; Act by running the linter; Assert exit 0, that the cached binary
+# performed the lint invocations, and that the PATH binary linted nothing.
+test_cached_pin_used_when_path_version_wrong() {
+  local name="lint-shellcheck/cached-pin-used-when-path-wrong" root platform
+  local cache_bin path_calls cache_calls output status=0
+  should_run "$name" || return 0
+  root="$(fixture_repo cached-pin)"
+  case "$(uname -s):$(uname -m)" in
+    Linux:x86_64) platform=linux.x86_64 ;;
+    Linux:aarch64|Linux:arm64) platform=linux.aarch64 ;;
+    Darwin:x86_64) platform=darwin.x86_64 ;;
+    Darwin:arm64|Darwin:aarch64) platform=darwin.aarch64 ;;
+    *) pass "$name"; return ;;
+  esac
+  # Each stub logs to its own file, so the assertion below can tell which
+  # binary actually performed the scan.
+  path_calls="$root/path-calls.log"
+  cache_calls="$root/cache-calls.log"
+  cache_bin="$root/cache/shellcheck/0.11.0/$platform/bin/shellcheck"
+  write_shellcheck_stub "$root/bin/shellcheck" 0.8.0 "$path_calls"
+  write_shellcheck_stub "$cache_bin" 0.11.0 "$cache_calls"
+  : > "$path_calls"
+  : > "$cache_calls"
+
+  output="$(PATH="$root/bin:$PATH" PM_DISPATCH_TOOL_CACHE="$root/cache" \
+    bash "$root/tools/lint/lint-shellcheck.sh" --repo "$root" 2>&1)" || status=$?
+  local cache_lints path_lints
+  cache_lints="$(grep -c '^lint$' "$cache_calls" || true)"
+  path_lints="$(grep -c '^lint$' "$path_calls" || true)"
+  if [[ "$status" -eq 0 && "$cache_lints" -ge 1 && "$path_lints" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status cache_lints=$cache_lints path_lints=$path_lints output=$output"
   fi
 }
 
@@ -199,19 +255,9 @@ test_matching_shellcheck_version_scans() {
   should_run "$name" || return 0
   root="$(fixture_repo matching-version)"
   calls="$root/calls.log"
-  mkdir -p "$root/bin"
-  cat > "$root/bin/shellcheck" <<'STUB'
-#!/usr/bin/env bash
-set -euo pipefail
-if [[ "${1:-}" == --version ]]; then
-  printf 'version\n' >> "${SHELLCHECK_CALLS:?}"
-  printf 'ShellCheck\nversion: 0.11.0\n'
-  exit 0
-fi
-printf 'lint\n' >> "${SHELLCHECK_CALLS:?}"
-STUB
-  chmod +x "$root/bin/shellcheck"
-  output="$(PATH="$root/bin:$PATH" SHELLCHECK_CALLS="$calls" \
+  write_shellcheck_stub "$root/bin/shellcheck" 0.11.0 "$calls"
+  : > "$calls"
+  output="$(PATH="$root/bin:$PATH" \
     bash "$root/tools/lint/lint-shellcheck.sh" --repo "$root" 2>&1)" || status=$?
   version_calls="$(grep -c '^version$' "$calls" || true)"
   lint_calls="$(grep -c '^lint$' "$calls" || true)"
@@ -359,6 +405,7 @@ test_ignore_contract_fails_closed
 test_suppression_is_code_scoped
 test_ci_local_entrypoint_parity
 test_wrong_shellcheck_version_fails_closed
+test_cached_pin_used_when_path_version_wrong
 test_matching_shellcheck_version_scans
 test_version_pin_shape_fails_closed
 test_bootstrap_verifies_asset_checksum

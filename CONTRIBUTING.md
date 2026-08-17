@@ -69,12 +69,13 @@ If this repository adds changes to the dispatch pipeline, update this schema fir
 
 ### Maintainer development dependencies
 
-Running lint or the authoritative full suite requires **ShellCheck** on `PATH`.
-It is a maintainer/fork development dependency only: ordinary users who install
-and use pm-dispatch tools do not need ShellCheck. The repository pins the exact
-version in `.shellcheck-version`; do not rely on a platform package or runner
-image choosing a compatible version. Install the checksum-verified pinned binary
-into the tool cache and prepend it for the current shell:
+Running lint or the authoritative full suite requires the pinned **ShellCheck**
+in the tool cache. It is a maintainer/fork development dependency only: ordinary
+users who install and use pm-dispatch tools do not need ShellCheck. The
+repository pins the exact version in `.shellcheck-version`; do not rely on a
+platform package or runner image choosing a compatible version. Install the
+checksum-verified pinned binary into the tool cache and prepend it for the
+current shell:
 
 ```bash
 shellcheck_bin_dir="$(bash tools/lint/bootstrap-shellcheck.sh)" &&
@@ -82,10 +83,13 @@ shellcheck_bin_dir="$(bash tools/lint/bootstrap-shellcheck.sh)" &&
 bash tools/lint/bootstrap-shellcheck.sh --check
 ```
 
-Both local lint and CI fail before scanning when the resolved version differs
-from the repository pin. Set `PM_DISPATCH_TOOL_CACHE` when the default
-`$XDG_CACHE_HOME/pm-dispatch/tools` (or `$HOME/.cache/pm-dispatch/tools`)
-is not suitable.
+Prepending it is a convenience, not a requirement: lint resolves the pinned
+binary from the cache when `PATH` carries a different version, so a subprocess
+with an ambient `shellcheck` (a gate reviewer sandbox, for one) still scans with
+the pin. Resolution stays offline — once the cache is empty, lint fails before
+scanning and names both probes rather than downloading. Set
+`PM_DISPATCH_TOOL_CACHE` when the default `$XDG_CACHE_HOME/pm-dispatch/tools`
+(or `$HOME/.cache/pm-dispatch/tools`) is not suitable.
 
 During implementation and gate-fix iteration, run only the affected suites:
 

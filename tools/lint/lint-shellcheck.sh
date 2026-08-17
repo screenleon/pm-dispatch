@@ -109,7 +109,13 @@ if [[ "$list_only" -eq 1 ]]; then
   exit 0
 fi
 
-bash "$bootstrap" --repo "$repo_root" --check || exit $?
+# Resolve the pinned binary rather than requiring it on the ambient search path.
+# A gate reviewer or CI sandbox inherits a search path this repo does not
+# control, and a system ShellCheck there used to stop the whole test run at this
+# structural precheck — before a single behavioral suite ran. Resolution stays
+# offline: it uses an already-populated cache, never downloads.
+shellcheck_bin_dir="$(bash "$bootstrap" --repo "$repo_root" --resolve)" || exit $?
+shellcheck_bin="$shellcheck_bin_dir/shellcheck"
 
 jobs="${PM_DISPATCH_SHELLCHECK_JOBS:-2}"
 [[ "$jobs" =~ ^[1-8]$ ]] || {
@@ -122,9 +128,9 @@ shellcheck_file() {
   relative="${file#"$repo_root"/}"
   codes="${ignored[$relative]:-}"
   if [[ -n "$codes" ]]; then
-    (cd "$repo_root" && shellcheck --severity=style --exclude="$codes" "$file")
+    (cd "$repo_root" && "$shellcheck_bin" --severity=style --exclude="$codes" "$file")
   else
-    (cd "$repo_root" && shellcheck --severity=style "$file")
+    (cd "$repo_root" && "$shellcheck_bin" --severity=style "$file")
   fi
 }
 

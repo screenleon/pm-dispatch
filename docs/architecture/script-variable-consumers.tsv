@@ -330,7 +330,6 @@ REPO_ROOT	REPO_ROOT	runtime/lib/pmctl-adapter.sh	production
 REPO_ROOT	REPO_ROOT	runtime/lib/pmctl-context.sh	production
 REPO_ROOT	REPO_ROOT	runtime/lib/pmctl-memory.sh	production
 REPO_ROOT	REPO_ROOT	tests/bin/run-tests.sh	production
-REPO_ROOT	REPO_ROOT	tests/lib/live-db-guard.sh	production
 REPO_ROOT	REPO_ROOT	tools/generate/gate-structural-validator.sh	production
 REPO_ROOT	REPO_ROOT	tools/lint/check-docs-freshness.sh	production
 REPO_ROOT	REPO_ROOT	tools/skills/skill-refine.sh	production

@@ -32,15 +32,14 @@ fi
 # root override this locally.
 export PM_DISPATCH_STATE_ROOT="$tmp_root/suite-state"
 
-# Snapshot the developer's live repo context DB up-front so a dedicated guard
-# case can prove the suite never indexes/queries/scans the real repo root (which
-# would write or rebuild this DB and, under parallel runs, cause sqlite-busy /
-# FTS-rebuild flakiness). Every context case must operate on an isolated fixture
-# under $tmp_root, never $REPO_ROOT.
-# shellcheck source=tests/lib/live-db-guard.sh
-# shellcheck disable=SC1091
-. "$SCRIPT_DIR/../lib/live-db-guard.sh"
-LIVE_DB_BASELINE="$(_live_db_fingerprint)"
+# The developer's live repo context DB. Every context case must operate on an
+# isolated fixture under $tmp_root, never $REPO_ROOT: indexing/querying the real
+# repo root rebuilds this DB and, under parallel runs, causes sqlite-busy and
+# FTS-rebuild flakiness. case_context_commands_resolve_only_fixture_roots proves
+# that isolation by asserting where each entrypoint RESOLVES, which is a property
+# of this suite alone — a fingerprint of this file would instead change whenever
+# any other process on the machine touched it.
+LIVE_DB="$REPO_ROOT/.pm-dispatch/ctx/context.db"
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -163,7 +162,7 @@ case_context_index_missing_repo() {
   # CLI always sets REPO_ROOT; test the function directly with REPO_ROOT unset.
   # Must also run from a CWD outside any git worktree — otherwise the
   # git-toplevel default would resolve to this repo's own toplevel and this
-  # case would start indexing the LIVE repo DB (see LIVE_DB_BASELINE guard).
+  # case would start indexing the LIVE repo DB (see $LIVE_DB).
   local nogit_dir="$tmp_root/idx-mr-nogit"
   mkdir -p "$nogit_dir"
   ( cd "$nogit_dir" && env -u REPO_ROOT bash -c \
@@ -1527,74 +1526,51 @@ case_context_reuse_scan_on_real_repo() {
   fi
 }
 
-case_context_no_live_db_mutation() {
-  local name="pmctl context suite: never creates or mutates the live repo context DB"
-  # Regression guard: the suite must operate only on isolated $tmp_root fixtures.
-  # Compares the live repo DB fingerprint against the baseline captured before any
-  # case ran; any change means a case indexed/queried/scanned $REPO_ROOT directly.
+# Behavior: every context entrypoint this suite drives resolves its DB inside the
+# fixture root it was pointed at, never the live repo DB.
+# Steps: resolve status for an explicit fixture arg and for a no-arg call from a
+# fixture CWD; assert both report a db_path under that fixture; assert the live
+# DB is not reachable from tmp_root.
+case_context_commands_resolve_only_fixture_roots() {
+  local name="pmctl context suite: fixture invocations resolve inside tmp_root, never the live repo DB"
   should_run "$name" || return 0
 
-  local now
-  now="$(_live_db_fingerprint)"
-  if [[ "$now" == "$LIVE_DB_BASELINE" ]]; then
-    pass "$name"
-  else
-    fail "$name" "live repo DB changed during suite (a case operated on \$REPO_ROOT): baseline=$LIVE_DB_BASELINE now=$now"
+  # This replaces a fingerprint comparison of the live repo DB taken across the
+  # whole suite run. That oracle could not tell "a case here wrote the live DB"
+  # from "another process did" — and the auto-context hook queries it on every
+  # prompt, so the guard went red for writes this suite never made, and its
+  # failure message asserted a conclusion the evidence could not support. The
+  # property worth guarding is upstream of any write: a fixture invocation must
+  # not RESOLVE the live DB in the first place. status is read-only and reports
+  # the resolution it would use, so it can assert that without indexing anything.
+  local fix_repo="$tmp_root/resolve-fixture-repo"
+  make_fixture_repo "$fix_repo"
+  git_init_commit_fixture "$fix_repo"
+
+  local out db
+  out="$tmp_root/resolve-fixture-explicit.json"
+  "$PMCTL" context status --json "$fix_repo" > "$out" 2>/dev/null || true
+  db="$(jq -r '.db_path // empty' "$out" 2>/dev/null || printf '')"
+  if [[ "$db" != "$fix_repo/.pm-dispatch/ctx/context.db" ]]; then
+    fail "$name" "explicit-arg status resolved [$db], expected the fixture DB under $fix_repo"
+    return 0
   fi
-}
 
-case_live_db_guard_detects_metadata_only_touch() {
-  local name="pmctl context suite: live-db-guard fingerprint changes on a metadata-only touch of identical content"
-  # Regression: a content-only fingerprint would miss a write that restores the
-  # exact same bytes (or any metadata-only touch) — still a live-DB mutation
-  # the guard must catch. Exercises the real _live_db_fingerprint function
-  # against a scratch file (never the real live DB) by temporarily pointing
-  # LIVE_DB at it.
-  should_run "$name" || return 0
-
-  local scratch="$tmp_root/live-db-guard-scratch.db"
-  printf 'unchanged-bytes' > "$scratch"
-  local saved_live_db="$LIVE_DB"
-  LIVE_DB="$scratch"
-  local before after
-  before="$(_live_db_fingerprint)"
-  touch -d '@1700000000' "$scratch"
-  after="$(_live_db_fingerprint)"
-  LIVE_DB="$saved_live_db"
-
-  if [[ "$before" != "$after" ]]; then
-    pass "$name"
-  else
-    fail "$name" "fingerprint unchanged after metadata-only touch (before=$before after=$after) — guard would miss a restore-identical-bytes mutation"
+  out="$tmp_root/resolve-fixture-cwd.json"
+  ( cd "$fix_repo" && "$PMCTL" context status --json > "$out" 2>/dev/null ) || true
+  db="$(jq -r '.db_path // empty' "$out" 2>/dev/null || printf '')"
+  if [[ "$db" != "$fix_repo/.pm-dispatch/ctx/context.db" ]]; then
+    fail "$name" "no-arg status from the fixture CWD resolved [$db], expected the fixture DB"
+    return 0
   fi
-}
 
-case_live_db_guard_detects_same_second_touch() {
-  local name="pmctl context suite: live-db-guard fingerprint changes on a same-second identical-content rewrite"
-  # Regression: whole-second mtime alone would miss a rewrite that restores
-  # identical bytes within the same wall-clock second as the baseline — only
-  # nanosecond-precision mtime (or a content change) can distinguish it. Sets
-  # two timestamps that share the same integer second but differ in the
-  # nanosecond component, so a whole-second-only fingerprint would wrongly
-  # report no change.
-  should_run "$name" || return 0
-
-  local scratch="$tmp_root/live-db-guard-scratch-same-second.db"
-  printf 'unchanged-bytes' > "$scratch"
-  local saved_live_db="$LIVE_DB"
-  LIVE_DB="$scratch"
-  touch -d '2024-01-01 00:00:00.100000000' "$scratch"
-  local before after
-  before="$(_live_db_fingerprint)"
-  touch -d '2024-01-01 00:00:00.900000000' "$scratch"
-  after="$(_live_db_fingerprint)"
-  LIVE_DB="$saved_live_db"
-
-  if [[ "$before" != "$after" ]]; then
-    pass "$name"
-  else
-    fail "$name" "fingerprint unchanged after a same-second nanosecond-distinct touch (before=$before after=$after) — guard is only whole-second precise and would miss a same-second restore-identical-bytes mutation"
+  # And the live DB must be outside tmp_root by construction, so no fixture path
+  # can alias it.
+  if [[ "$LIVE_DB" == "$tmp_root"/* ]]; then
+    fail "$name" "live repo DB resolves inside tmp_root: $LIVE_DB"
+    return 0
   fi
+  pass "$name"
 }
 
 case_context_reuse_scan_hit_cap() {
@@ -2939,21 +2915,32 @@ case_context_default_repo_root_pm_dispatch_tree_unchanged() {
   fi
 }
 
+# Behavior: a no-arg index/query from an external repo writes that repo's DB and
+# resolves nothing to pm-dispatch's own.
+# Steps: index and query with no path argument from an external fixture CWD;
+# assert the fixture DB was created and that the resolved DB is not the live one.
 case_context_no_arg_cross_repo_never_touches_pm_dispatch_db() {
-  local name="pmctl context index/query: no-arg invocation from an external repo never creates or mutates pm-dispatch's own context.db"
+  local name="pmctl context index/query: no-arg invocation from an external repo resolves that repo, never pm-dispatch's own context.db"
   should_run "$name" || return 0
   local ext_repo="$tmp_root/defroot-cross-repo"
   make_fixture_repo "$ext_repo"
   git_init_commit_fixture "$ext_repo"
-  local before after
-  before="$(_live_db_fingerprint)"
   ( cd "$ext_repo" && "$PMCTL" context index --source repo > /dev/null 2>&1 )
   ( cd "$ext_repo" && "$PMCTL" context query --source repo my_func_alpha > /dev/null 2>&1 )
-  after="$(_live_db_fingerprint)"
-  if [[ "$before" == "$after" ]]; then
+
+  # Where the write landed, not whether an unrelated file happened to change:
+  # a fingerprint of the live DB would also go red for another process's write.
+  local ext_db="$ext_repo/.pm-dispatch/ctx/context.db" resolved
+  if [[ ! -s "$ext_db" ]]; then
+    fail "$name" "no-arg index did not create the external repo's DB at $ext_db"
+    return 0
+  fi
+  resolved="$(cd "$ext_repo" && "$PMCTL" context status --json 2>/dev/null \
+    | jq -r '.db_path // empty' 2>/dev/null || printf '')"
+  if [[ "$resolved" == "$ext_db" ]]; then
     pass "$name"
   else
-    fail "$name" "pm-dispatch's own context.db changed after cross-repo no-arg calls: before=$before after=$after"
+    fail "$name" "no-arg call from $ext_repo resolved [$resolved], expected [$ext_db]"
   fi
 }
 
@@ -3561,8 +3548,6 @@ case_context_prompt_scan_no_sqlite_graceful
 case_context_prompt_scan_secret_never_persisted
 case_context_prompt_scan_emits_event
 case_context_fts5_availability_is_cached
-case_context_no_live_db_mutation
-case_live_db_guard_detects_metadata_only_touch
-case_live_db_guard_detects_same_second_touch
+case_context_commands_resolve_only_fixture_roots
 
 th_summary

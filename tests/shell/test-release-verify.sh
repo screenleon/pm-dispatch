@@ -30,12 +30,12 @@ git -C "$REPO_ROOT" ls-files -z --cached --others --exclude-standard \
 export PM_RELEASE_VERIFY_CONTEXT_REPO="$CONTEXT_FIXTURE_REPO"
 trap 'rm -rf "$CONTEXT_FIXTURE_REPO"' EXIT
 
-# Guard: prove the fixture redirect above actually works, by fingerprinting
-# the live DB before any RV invocation and re-checking it at the end of the run.
-# shellcheck source=tests/lib/live-db-guard.sh
-# shellcheck disable=SC1091
-. "$SCRIPT_DIR/../lib/live-db-guard.sh"
-LIVE_DB_BASELINE="$(_live_db_fingerprint)"
+# The developer's live repo context DB — the file the redirect above exists to
+# keep untouched. test_context_smoke_targets_fixture_repo proves the redirect
+# worked from evidence this suite owns: the fixture DB. A fingerprint of the live
+# DB cannot distinguish this suite's writes from any other process's, and the
+# auto-context hook writes it on every prompt.
+LIVE_DB="$REPO_ROOT/.pm-dispatch/ctx/context.db"
 
 PASSED=0; FAILED=0
 
@@ -471,13 +471,21 @@ test_phase3c_pre_release_audit() {
 # directly. Run this last so it observes the cumulative effect of the whole
 # suite, not just one call.
 
-test_live_db_untouched() {
-  local after; after="$(_live_db_fingerprint)"
-  if [[ "$after" == "$LIVE_DB_BASELINE" ]]; then
-    pass "live-context-db-untouched"
-  else
-    fail "live-context-db-untouched" "developer's live context.db changed (before: $LIVE_DB_BASELINE, after: $after) — a Phase 3 call leaked to REPO_ROOT instead of the fixture"
+test_context_smoke_targets_fixture_repo() {
+  local name="context-smoke-targets-fixture-repo"
+  # Phase 3 indexes CONTEXT_SMOKE_REPO. If the redirect failed, that work landed
+  # in REPO_ROOT and the fixture DB was never built — so the fixture's own DB is
+  # positive, self-owned evidence that the redirect held. Reading the live DB
+  # instead would report on every process on this machine, not on this suite.
+  if [[ "$CONTEXT_FIXTURE_REPO" == "$REPO_ROOT" ]]; then
+    fail "$name" "fixture repo is REPO_ROOT — the redirect is not isolating anything"
+    return
   fi
+  if [[ ! -s "$CONTEXT_FIXTURE_REPO/.pm-dispatch/ctx/context.db" ]]; then
+    fail "$name" "Phase 3 built no DB under the fixture repo ($CONTEXT_FIXTURE_REPO) — the smoke target was not redirected away from $LIVE_DB"
+    return
+  fi
+  pass "$name"
 }
 
 # ── Run ───────────────────────────────────────────────────────────────────────
@@ -515,7 +523,7 @@ test_phase3c_memory_doctor
 test_phase3c_artifacts_list
 test_phase3c_pre_release_audit
 test_native_windows_refused
-test_live_db_untouched
+test_context_smoke_targets_fixture_repo
 
 printf '\n%d passed, %d failed\n' "$PASSED" "$FAILED"
 [[ "$FAILED" -eq 0 ]]

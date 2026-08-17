@@ -65,9 +65,9 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-543 | ✅ done | Full test runner Phase 0 fail-fast structural precheck；`--collect-all` 保留 release 全證據路徑 | ops/test | 2026-08-04 | pr:#465 | P2 | hygiene |
 | CC-545 | ✅ done | Reviewer evidence-reference-contract INCOMPLETE 的單次修正性重派：僅限該單一違規類別，附具體錯誤引用重跑違規 reviewer，不必整輪 gate（30-40 分鐘）重來 | ops/gate | 2026-08-06 | pr:#465 | P2 | hygiene |
 | CC-546 | ⏸ deferred | standalone Gate distribution／copy parity follow-up：獨立定義 bundle schema、generation、installed parity 與 support boundary；不回併 Linux/WSL2 canonical module extraction | arch/gate | 2026-08-14 | — | P2 | reuse-debt |
-| CC-551 | 🔵 active | Gate/QA sandbox 取不到釘住的 ShellCheck：`lint-shellcheck.sh` 只 `bootstrap --check`（要求已在 PATH）而不使用已快取的釘住版本，導致 reviewer 的 focused run 卡在結構性 lint、行為性 suite 從未執行；已連續阻擋 5 輪 gate | ops/test | 2026-08-17 | — | P2 | hygiene |
-| CC-550 | 🔵 active | 測試套件的「live 共用狀態未變動」指紋守衛是假陽性製造機：無法區分「本套件寫的」與「外部行程寫的」，改為確定性 oracle（斷言每次呼叫解析到 fixture 而非 live 目標）；已觀察 3 例（memory doctor／memory stats／context DB） | ops/test | 2026-08-17 | — | P2 | hygiene |
-| CC-549 | 🔵 active | Gate reviewer-protocol 診斷可修正性：test-gap 契約錯誤點名違規欄位／值／允許集合，且 retryable 分類改比對 reason stem（帶明細的 reason 先前一律被判為不可重試） | ops/gate | 2026-08-17 | — | P2 | hygiene |
+| CC-551 | ✅ closed 2026-08-17 | Gate/QA sandbox 取不到釘住的 ShellCheck：lint 改為離線解析（PATH 相符則用之，否則用已快取的釘住二進位），不再要求釘住版本已在 PATH | ops/test | 2026-08-17 | — | P2 | hygiene |
+| CC-550 | ✅ closed 2026-08-17 | 測試套件的「live 共用狀態未變動」指紋守衛是假陽性製造機：無法區分「本套件寫的」與「外部行程寫的」，已全數改為確定性 resolution oracle | ops/test | 2026-08-17 | — | P2 | hygiene |
+| CC-549 | ✅ closed 2026-08-17 | Gate reviewer-protocol 診斷可修正性：test-gap 契約錯誤點名違規欄位／值／允許集合，且 retryable 分類改比對 reason stem（帶明細的 reason 先前一律被判為不可重試） | ops/gate | 2026-08-17 | pr:#486 | P2 | hygiene |
 | CC-548 | 🔵 active | context.db FTS5 對 CJK 查詢無索引無排序（[[CC-465]] Requirement 3 殘留）：先 spike 驗 `tokenize='trigram'` 的 sqlite 版本下限與 index rebuild 成本，再決定是否實作 | memory | 2026-08-16 | — | P2 | retrieval |
 | CC-465 | ✅ done | memory/context 關鍵詞管線 CJK 支援：抽出共用零依賴斷詞 lib，取代兩處各自 ASCII-only 抽詞；FTS5 tokenizer 殘留另立 [[CC-548]]；工作序列起點（465→467→468→466） | memory | 2026-07-07 | pr:#485 | P2 | retrieval |
 | CC-466 | ⏸ deferred | 記憶卡片生命週期閉環：expires_at 執行 + 關窗式 supersede + usage sidecar 休眠偵測 + doctor→distill 接線；僅在 CC-467 證明 stale/dormant card 已形成實際問題時啟動 | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
@@ -389,7 +389,7 @@ lib 分離的關注點，允許各自的修復時程與驗收」轉由 [[CC-548]
 
 ---
 
-## CC-551 — Gate/QA sandbox 取不到釘住的 ShellCheck 🔵 active
+## CC-551 — Gate/QA sandbox 取不到釘住的 ShellCheck ✅ 2026-08-17
 
 **Problem**: `tools/lint/lint-shellcheck.sh` 以 `bootstrap-shellcheck.sh --check`
 驗證版本——該模式**只檢查 PATH 上的 shellcheck 是否等於釘住版本，不使用也不
@@ -414,11 +414,31 @@ Phase 0 結構性 precheck，**行為性 suite 一個都沒跑到**。qa-tester 
 2. 不得以放寬版本檢查來「解決」——釘住版本是刻意的可重現性契約。
 3. 回歸測試：模擬 PATH 上為錯誤版本、快取中有正確版本，斷言選定政策的行為。
 
+**Outcome**: 採 Requirement 1 的 (a)。`bootstrap-shellcheck.sh` 新增 `--resolve`：
+先看 PATH（版本相符即用），否則查 `<cache>/shellcheck/<ver>/<platform>/bin` 的
+已快取二進位；兩者皆無才 exit 2，並同時點名 PATH 上的實際版本、探測過的快取
+路徑與補齊快取的指令。`lint-shellcheck.sh` 改以解析出的絕對路徑呼叫 ShellCheck，
+不再要求釘住版本已在 PATH。
+
+選 (a) 而非 (b) 的理由：(b) 只修好 gate 一條路徑，任何其他 subprocess（ship、
+本機、CI 以外的呼叫者）仍會復發；(a) 修在共用解析點，所有消費者一次受惠。
+`--resolve` 一律不下載——快取空的時候仍 fail closed，lint 不會變成隱式安裝器；
+釘住版本檢查一步都沒有放寬。`--check`（PATH 必須相符）語意不變，release-verify
+仍用它斷言操作者環境。安裝路徑與 `--resolve` 共用同一個 `cached_bin_dir` 助手，
+探測位置與安裝位置不可能漂移。
+
+回歸測試（`tests/shell/test-lint-shellcheck.sh`）：PATH 為 0.8.0、快取有 0.11.0
+時，斷言 lint 成功且**由快取的二進位執行掃描**（兩支 stub 各自記錄呼叫，PATH 那
+支必須為零次）；兩處皆無時斷言 exit 2 並點名快取探測路徑。mutation 驗證：拿掉
+快取探測會使前者失敗。
+
 **Cross-link**: [[CC-541]]（qa-tester sandbox 可見性）同屬 reviewer 環境可見性線。
+
+**See**: CHANGELOG.md [Unreleased]、[[CC-541]]
 
 ---
 
-## CC-550 — live 共用狀態指紋守衛是假陽性製造機 🔵 active
+## CC-550 — live 共用狀態指紋守衛是假陽性製造機 ✅ 2026-08-17
 
 **Problem**: 多個測試套件用「跑完比對 live 共用狀態的指紋」當作『本套件沒有污染
 真實資料』的證據。這個 oracle 從構造上就無法區分「本套件某個 case 寫了那裡」與
@@ -446,13 +466,34 @@ auto-context hook。preflight 因此 `unclassified-nonzero`，整輪 gate 在 re
 2. 移除會因外部寫入而變紅的 live 指紋斷言，不得只是放寬容忍度。
 3. 失敗訊息只陳述可由證據支持的結論。
 
+**Outcome**: 清查後全 repo 共三處 live 指紋斷言，全部改為確定性 oracle：
+
+1. `test-pmctl-context.sh` 的 suite 級守衛 → `case_context_commands_resolve_
+   only_fixture_roots`：以唯讀的 `pmctl context status --json` 斷言 explicit-arg
+   與 no-arg-from-CWD 兩種入口解析出的 `db_path` 都在 fixture 根下，並斷言 live DB
+   不在 `tmp_root` 之下（構造上無法別名）。
+2. 同檔的 `case_context_no_arg_cross_repo_never_touches_pm_dispatch_db` → 改斷言
+   「寫入落在外部 fixture repo 的 DB」＋「解析結果等於該 fixture DB」，不再比對
+   pm-dispatch 自身 DB 的指紋。
+3. `test-release-verify.sh` 的 `test_live_db_untouched` → `test_context_smoke_
+   targets_fixture_repo`：以 fixture repo 自己的 DB 是否被建立作為 redirect 生效
+   的正面證據（本套件擁有的證據），不再讀 live DB。
+
+`tests/lib/live-db-guard.sh` 隨之刪除——它剩餘的唯二消費者是驗證該守衛自身的兩個
+自我測試，屬循環驗證。`LIVE_DB` 路徑在兩個套件內保留為區域常數，僅供失敗訊息與
+別名檢查使用。所有失敗訊息只陳述證據支持得住的結論（「解析到 X，期望 Y」），不再
+宣稱「某個 case 動了 $REPO_ROOT」。mutation 驗證：讓 `_ctx_db_path` 忽略傳入的
+repo root 會使 (1) 失敗。
+
 **Cross-link**: [[CC-467]] 已按此形狀修好 memory 的兩例（`test-pmctl-memory.sh`
 的 `case_memory_commands_resolve_only_fixture_dirs` + fixture 層唯讀 case），
 本票把同一修法套用到 context 套件並清查其餘同型守衛。
 
+**See**: CHANGELOG.md [Unreleased]、[[CC-467]]、[[CC-544]]
+
 ---
 
-## CC-549 — Gate reviewer-protocol 診斷可修正性 🔵 active
+## CC-549 — Gate reviewer-protocol 診斷可修正性 ✅ 2026-08-17
 
 **Problem**: reviewer 送出不合契約的 `test_gaps` 時，gate 只回報
 `invalid test-gap matrix contract`——涵蓋約 10 條約束的單一字串。reviewer 因此
@@ -477,8 +518,18 @@ auto-context hook。preflight 因此 `unclassified-nonzero`，整輪 gate 在 re
    維持可重試；冒號讓前綴不致誤配其他 reason。
 3. 回歸測試以 mutation 驗證：還原前綴比對必須使重試測試失敗。
 
+**Outcome**: 兩個缺陷都已隨 pr:#486 進 main（`3831a2b`，實作 commit `e87f136`）。
+`gate-result-verify.sh` 的 test-gap 契約失敗現在點名 row id、欄位、實際值與允許
+集合，並在值來自兄弟 enum 時明說是哪一組混淆；沿用 `blocking_severity_violation`
+既有的精確診斷風格。`pr-gate.sh` 的 retryable 分類改比對 reason stem 前綴
+（`"<stem>:"`），帶明細的 reason 不再一律落為不可重試。以三份真實 reviewer
+artifact 重放驗證，且 mutation 驗證：還原整串相等比對會使重試測試失敗。
+（本票的狀態翻正延後到本次 gate-friction 批次一併處理。）
+
 **Cross-link**: 與 [[CC-545]]（單次修正性重派）同屬 reviewer-protocol 可恢復性
 線；本票補的是「重派時給得出可修正資訊」這一半。
+
+**See**: pr:#486、CHANGELOG.md [Unreleased]、[[CC-545]]
 
 ---
 
