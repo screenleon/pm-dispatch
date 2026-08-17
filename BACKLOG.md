@@ -65,6 +65,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-543 | ✅ done | Full test runner Phase 0 fail-fast structural precheck；`--collect-all` 保留 release 全證據路徑 | ops/test | 2026-08-04 | pr:#465 | P2 | hygiene |
 | CC-545 | ✅ done | Reviewer evidence-reference-contract INCOMPLETE 的單次修正性重派：僅限該單一違規類別，附具體錯誤引用重跑違規 reviewer，不必整輪 gate（30-40 分鐘）重來 | ops/gate | 2026-08-06 | pr:#465 | P2 | hygiene |
 | CC-546 | ⏸ deferred | standalone Gate distribution／copy parity follow-up：獨立定義 bundle schema、generation、installed parity 與 support boundary；不回併 Linux/WSL2 canonical module extraction | arch/gate | 2026-08-14 | — | P2 | reuse-debt |
+| CC-553 | 🔵 active | Gate synthesis 的 `invalid disagreement references` 是單一裸字串，涵蓋 6 條獨立約束（`only_keys`／`D-NNN` id 形狀／非空 summary／`finding_ids` 長度 ≥2／不重複／每個 id 須存在於 findings_union），synthesis 無從自我修正，唯一一次重試重犯同錯即整輪作廢；[[CC-549]] 已對 test-gap 契約做過同一修法（2026-08-17 CC-551 gate round 7 實測） | ops/gate | 2026-08-17 | — | P2 | hygiene |
 | CC-552 | 🔵 active | `test_default_worker_cap` 以 `sleep 0.1` 製造 worker 重疊窗口來驗證併發上限，違反 QA 規則的「不得以 sleep 同步」；主機負載會改變觀測到的重疊數，與 worker-cap 正確性無關（2026-08-17 CC-551 gate round 4 qa-tester，pre-existing） | ops/test | 2026-08-17 | — | P3 | hygiene |
 | CC-551 | ✅ closed 2026-08-17 | Gate/QA sandbox 取不到釘住的 ShellCheck：lint 改為離線解析（PATH 相符則用之，否則用已快取的釘住二進位），不再要求釘住版本已在 PATH | ops/test | 2026-08-17 | — | P2 | hygiene |
 | CC-550 | ✅ closed 2026-08-17 | 測試套件的「live 共用狀態未變動」指紋守衛是假陽性製造機：無法區分「本套件寫的」與「外部行程寫的」，已全數改為確定性 resolution oracle | ops/test | 2026-08-17 | — | P2 | hygiene |
@@ -390,6 +391,36 @@ lib 分離的關注點，允許各自的修復時程與驗收」轉由 [[CC-548]
 
 ---
 
+## CC-553 — synthesis disagreement 契約失敗不可修正 🔵 active
+
+**Problem**: `gate-result-verify.sh` 的 disagreement 檢查把 6 條獨立約束——
+`only_keys(["id","summary","finding_ids"])`、id 須符合 `^D-[0-9]{3,}$`、summary
+非空、`finding_ids` 長度 ≥2、元素不重複、每個 id 都必須存在於 `findings_union`
+——全部收斂成一個回報字串 `invalid disagreement references`。synthesis 因此不知道
+自己違反哪一條，`pr-gate.sh` 僅有的一次修正性重試往往重犯同類錯誤。
+
+實測（2026-08-17，CC-551 gate round 7）：5 個 reviewer 全數 pass／approve、
+文件本身寫 `Final: GO`、preflight 全套 pass，卻因 synthesis 連續兩次寫出不合契約的
+disagreements 而被判 non-authorizing INCOMPLETE，整輪（約 35 分鐘、5 個 reviewer
+dispatch＋2 次 synthesis）作廢。**NO-GO 與 review 結果無關**。
+
+**Why**: 與 [[CC-549]] 同一根因與同一修法——retry 機制的前提是「拿到足夠資訊就能
+自我修正」，不點名違規處等於讓 retry 淪為抽籤。`length >= 2` 這條尤其容易誤觸：
+只有單一 reviewer 提出歧見時，自然會寫出 1 個元素的 `finding_ids`，而診斷不會告訴
+它「disagreement 依定義需要至少兩筆對立的 finding」。
+
+**Requirement**:
+1. disagreement 契約失敗時點名違規 row 的 id、違反的具體約束、實際值與期望；
+   沿用 [[CC-549]] 已落地的精確診斷模式，不另立風格。
+2. 一併盤點 `gate-result-verify.sh` 內其餘同型的「多約束共用單一 reason 字串」
+   分支（`root-cause grouping parity mismatch`、`uncertainties`／`cautions` 等），
+   決定哪些需要同等精度；不需要一次全改，但要留下判斷紀錄。
+3. 回歸測試以 mutation 驗證：以真實失敗樣本重放，斷言訊息點名違規約束。
+
+**Cross-link**: [[CC-549]]（test-gap 契約的同一修法）、[[CC-545]]（單次修正性重派）。
+
+---
+
 ## CC-552 — worker-cap 測試以 sleep 製造重疊窗口 🔵 active
 
 **Problem**: `tests/shell/test-lint-shellcheck.sh` 的 `test_default_worker_cap`
@@ -570,6 +601,15 @@ live DB。
 seam：非 `$tmp_root` 底下的目標一律拒絕並記入同一份 log。mutation 驗證（即
 reviewer 指定的情境）：把 direct prompt-scan 的 repo 引數改成 live root，彙總
 case 確定性失敗並點名該目標，全程未讀寫 live DB。
+
+**Gate round 7 補強（critic-F001，advise）**：兩個 seam 原本都用**字串前綴**判斷
+包含關係，於是 `$tmp_root/../..`（字面在 fixture 內、實際在外）與 fixture 內指向
+外部的 symlink 都會被放行。改為先 canonicalize（`realpath -m`，含尚未存在的路徑）
+再判斷，新增 traversal 與 symlink escape 的回歸測試各一。過程中另修掉自己引入的
+一個弱化：起初把所有非旗標引數都當路徑解析，導致 `--source memory` 的旗標值
+`memory` 相對 CWD 解析成 repo 的 `memory/` 目錄而誤判（11 個 case 假陽性），且
+查詢字串會被當成 fixture 路徑而**跳過**非 worktree 檢查；最終收斂為只檢查絕對
+路徑，相對引數一律落到較嚴格的 CWD 分支（fail-closed 方向）。
 
 **Cross-link**: [[CC-467]] 已按此形狀修好 memory 的兩例（`test-pmctl-memory.sh`
 的 `case_memory_commands_resolve_only_fixture_dirs` + fixture 層唯讀 case），

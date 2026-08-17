@@ -59,9 +59,37 @@ export PM_DISPATCH_STATE_ROOT="$tmp_root/suite-state"
 LIVE_DB="$REPO_ROOT/.pm-dispatch/ctx/context.db"
 REAL_PMCTL="$PMCTL"
 
+# Containment is decided on resolved paths, never on the string as written:
+# "$tmp_root/../.." is lexically inside the fixture root and actually outside it,
+# and a symlink planted in a fixture can point anywhere. Both seams below use
+# this. Paths that do not exist yet still resolve (-m), because a call may name
+# a directory it is about to create.
+ctx_canonical_path() {
+  if command -v realpath >/dev/null 2>&1; then
+    realpath -m -- "$1" 2>/dev/null && return 0
+  fi
+  # Fallback: resolve the deepest existing ancestor, then re-attach the rest.
+  local path="$1" tail_part="" head_part="$1"
+  while [[ ! -e "$head_part" && "$head_part" == */* ]]; do
+    tail_part="/${head_part##*/}$tail_part"
+    head_part="${head_part%/*}"
+    [[ -n "$head_part" ]] || head_part=/
+  done
+  if [[ -d "$head_part" ]]; then
+    printf '%s%s\n' "$(cd "$head_part" && pwd -P)" "$tail_part"
+  else
+    printf '%s\n' "$path"
+  fi
+}
+
+CTX_FIXTURE_ROOT="$(ctx_canonical_path "$tmp_root")"
+CTX_LIVE_ROOT="$(ctx_canonical_path "$REPO_ROOT")"
+
 CTX_GUARD_LOG="$tmp_root/live-target-violations.log"
 : > "$CTX_GUARD_LOG"
 mkdir -p "$tmp_root/bin"
+fixture_root_canon="$CTX_FIXTURE_ROOT"
+live_root_canon="$CTX_LIVE_ROOT"
 cat > "$tmp_root/bin/pmctl" <<GUARD
 #!/usr/bin/env bash
 set -uo pipefail
@@ -74,20 +102,38 @@ _refuse() {
   printf '%s\t%s\n' "\$1" "\${*:2}" >> "\$_log"
   exit 99
 }
+# Containment is decided on RESOLVED paths: "$tmp_root/../.." is lexically
+# inside the fixture root and actually outside it, and a symlink in a fixture
+# can point anywhere.
+_canon() {
+  realpath -m -- "\$1" 2>/dev/null || printf '%s\n' "\$1"
+}
 if [[ "\${1:-}" == context && "\${PM_CTX_GUARD_ALLOW_NON_FIXTURE:-0}" != 1 ]]; then
   _fixture_arg=0
   for _arg in "\$@"; do
-    if [[ "\$_arg" == "$REPO_ROOT" || "\$_arg" == "$REPO_ROOT"/* ]]; then
-      _refuse "names the live repo root" "\$@"
+    # Only path-shaped arguments are examined. A bare query term like "alpha"
+    # would otherwise canonicalize against the CWD and count as a fixture path,
+    # which would skip the CWD check below — the opposite of guarding.
+    case "\$_arg" in -*) continue ;; esac
+    # ABSOLUTE paths only. Telling a repo argument from a flag value needs the
+    # CLI's own parser; testing a relative argument for directory-ness resolves
+    # it against the CWD, which made "--source memory" look like the repo's
+    # memory/ directory. Anything relative simply does not count as a fixture
+    # path, which sends the call to the stricter CWD check below.
+    [[ "\$_arg" == /* ]] || continue
+    _resolved="\$(_canon "\$_arg")"
+    if [[ "\$_resolved" == "$live_root_canon" || "\$_resolved" == "$live_root_canon"/* ]]; then
+      _refuse "resolves to the live repo root (\$_arg -> \$_resolved)" "\$@"
     fi
-    [[ "\$_arg" == "$tmp_root"/* ]] && _fixture_arg=1
+    [[ "\$_resolved" == "$fixture_root_canon"/* ]] && _fixture_arg=1
   done
   if [[ "\$_fixture_arg" -eq 0 ]]; then
     # No fixture path given, so the CLI will resolve from the CWD. That is safe
-    # only when the CWD sits in a worktree under \$tmp_root; with no worktree at
-    # all the CLI falls back to the live repo root.
+    # only when the CWD sits in a worktree under the fixture root; with no
+    # worktree at all the CLI falls back to the live repo root.
     _top="\$(git rev-parse --show-toplevel 2>/dev/null || true)"
-    if [[ -z "\$_top" || "\$_top" != "$tmp_root"/* ]]; then
+    [[ -n "\$_top" ]] && _top="\$(_canon "\$_top")"
+    if [[ -z "\$_top" || "\$_top" != "$fixture_root_canon"/* ]]; then
       _refuse "no fixture path and CWD resolves outside the fixture root (\${_top:-no worktree})" "\$@"
     fi
   fi
@@ -102,11 +148,13 @@ PMCTL="$tmp_root/bin/pmctl"
 # so they get the same guarantee through this seam instead: echo the target, or
 # refuse and record it exactly as the wrapper would.
 ctx_fixture_target() {
-  local target="$1"
-  if [[ "$target" != "$tmp_root"/* ]]; then
-    printf 'test-pmctl-context: refusing a direct context call on a non-fixture target: %s\n' \
-      "$target" >&2
-    printf 'direct call target outside the fixture root\t%s\n' "$target" >> "$CTX_GUARD_LOG"
+  local target="$1" resolved
+  resolved="$(ctx_canonical_path "$target")"
+  if [[ "$resolved" != "$CTX_FIXTURE_ROOT"/* ]]; then
+    printf 'test-pmctl-context: refusing a direct context call on a non-fixture target: %s (resolves to %s)\n' \
+      "$target" "$resolved" >&2
+    printf 'direct call target outside the fixture root\t%s -> %s\n' \
+      "$target" "$resolved" >> "$CTX_GUARD_LOG"
     return 1
   fi
   printf '%s\n' "$target"
@@ -1751,6 +1799,45 @@ case_context_live_target_guard_refuses_bare_call_outside_worktree() {
     fail "$name" "refusal was not recorded: $(<"$own_log")"
     return 0
   fi
+  pass "$name"
+}
+
+# Behavior: both guard seams decide containment on the resolved path, so a target
+# that is only lexically inside the fixture root is still refused.
+# Steps: run the CLI seam with a traversal path and the direct seam with a
+# fixture symlink pointing at the live repo; assert both refuse and record.
+case_context_guard_rejects_traversal_and_symlink_escape() {
+  local name="pmctl context suite: guards resolve targets before deciding containment"
+  should_run "$name" || return 0
+
+  # "$tmp_root/../.." passes a string-prefix test and lands outside the fixture
+  # tree; a symlink planted inside a fixture does the same with no traversal in
+  # the string at all. Neither may reach the CLI.
+  local own_log err status=0
+  own_log="$tmp_root/escape-guard.log"
+  err="$tmp_root/escape-guard.err"
+  : > "$own_log"
+  PM_CTX_GUARD_LOG="$own_log" "$PMCTL" context status --json "$tmp_root/../.." \
+    > /dev/null 2> "$err" || status=$?
+  if [[ "$status" -ne 99 ]]; then
+    fail "$name" "CLI seam accepted a traversal path (exit $status)"
+    return 0
+  fi
+
+  local link="$tmp_root/escape-link"
+  ln -sfn "$REPO_ROOT" "$link"
+  status=0
+  ctx_fixture_target "$link" > /dev/null 2>> "$err" || status=$?
+  if [[ "$status" -eq 0 ]]; then
+    fail "$name" "direct seam accepted a fixture symlink resolving to the live repo"
+    return 0
+  fi
+  # That refusal lands in the suite-wide log by design; this case owns it.
+  if ! grep -q 'escape-link' "$CTX_GUARD_LOG"; then
+    fail "$name" "symlink refusal was not recorded: $(<"$CTX_GUARD_LOG")"
+    return 0
+  fi
+  : > "$CTX_GUARD_LOG"
   pass "$name"
 }
 
@@ -3756,6 +3843,7 @@ case_context_commands_resolve_only_fixture_roots
 case_context_every_subcommand_is_exercised
 case_context_live_target_guard_trips
 case_context_live_target_guard_refuses_bare_call_outside_worktree
+case_context_guard_rejects_traversal_and_symlink_escape
 case_context_no_call_targeted_the_live_repo
 
 th_summary
