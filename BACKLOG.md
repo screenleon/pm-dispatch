@@ -468,6 +468,20 @@ lint 執行。這是本次變更引入的新執行來源（PATH 是操作者自�
 mutation 驗證：拿掉 digest 檢查後，自報版本正確的假二進位會被實際執行 3 次去
 lint——正是 finding 描述的失效模式。
 
+**Gate round 6 補強（security-reviewer-F001，hard_block）**：上一輪的順序寫反了
+——`check_binary`（會**執行**該二進位跑 `--version`）排在 `verify_binary_digest`
+之前，等於先把控制權交給未經驗證的二進位、再回頭問它是不是對的。兩條快取路徑
+（`--resolve` 與 install 的 reuse 快路徑）都改為 digest 先行、版本探測後行。
+回歸測試改為斷言被篡改的 stub **一次都沒被執行**（log 完全為空，`--version`
+也算執行），並涵蓋 installer reuse 路徑。mutation 驗證：把順序換回去，測試會印出
+`tampered binary was executed before authentication: version`。
+
+**Gate round 6 補強（qa-tester-F001，hard_block）**：解壓後二進位的 digest 檢查
+沒有測試——archive checksum 正確、`binary_sha256` 卻不符的形狀（供應端或鏡像送出
+校驗碼正確但內容不同的封存）未被覆蓋。新增 `test_bootstrap_rejects_wrong_binary_
+digest`，斷言 exit 2、digest 診斷、且**沒有任何二進位被裝進快取**。mutation
+驗證：拿掉該行檢查，測試失敗並印出被安裝的路徑。
+
 **Gate round 5 補強（critic-F001，advise）**：`--resolve` 原本原樣回傳快取路徑，
 但 lint 每次掃描前會 `cd` 到 repo root，因此相對的 `PM_DISPATCH_TOOL_CACHE`
 在 caller CWD ≠ `--repo` 時會解析失敗。改為回傳絕對路徑。首版回歸測試因 caller
@@ -549,6 +563,13 @@ worktree 執行；其餘形狀一律拒絕，不去預測它會解析到哪。�
 `PM_CTX_GUARD_ALLOW_NON_FIXTURE=1` 逐點標註理由，例外因此可見可審。
 mutation 驗證：新增一支非 worktree 的無引數呼叫會確定性失敗，且全程未讀寫
 live DB。
+
+**Gate round 6 補強（critic-F001，advise）**：少數 case 直接 source context lib
+呼叫其函式，不經過 `$PMCTL`，因此不受 wrapper 保護，彙總斷言的宣稱比實際強制的
+範圍大。這些 case 的目標都是以引數傳入，故改走同一規則的 `ctx_fixture_target`
+seam：非 `$tmp_root` 底下的目標一律拒絕並記入同一份 log。mutation 驗證（即
+reviewer 指定的情境）：把 direct prompt-scan 的 repo 引數改成 live root，彙總
+case 確定性失敗並點名該目標，全程未讀寫 live DB。
 
 **Cross-link**: [[CC-467]] 已按此形狀修好 memory 的兩例（`test-pmctl-memory.sh`
 的 `case_memory_commands_resolve_only_fixture_dirs` + fixture 層唯讀 case），

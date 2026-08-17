@@ -42,7 +42,9 @@ export PM_DISPATCH_STATE_ROOT="$tmp_root/suite-state"
 #
 #   1. Per call: $PMCTL is a wrapper that refuses any context invocation which
 #      has not been placed inside the fixture tree, so an unisolated call fails
-#      at its own call site, not later as an unattributed diff.
+#      at its own call site, not later as an unattributed diff. Cases that source
+#      the library and call its functions directly bypass that wrapper, so they
+#      pass their target through ctx_fixture_target, which enforces the same rule.
 #   2. Per entrypoint: case_context_commands_resolve_only_fixture_roots asserts
 #      every context subcommand the CLI publishes resolves inside the fixture.
 #
@@ -94,6 +96,21 @@ exec "$REAL_PMCTL" "\$@"
 GUARD
 chmod +x "$tmp_root/bin/pmctl"
 PMCTL="$tmp_root/bin/pmctl"
+
+# A few cases source the context library and call its functions directly, which
+# does not go through the wrapper above. They pass their target as an argument,
+# so they get the same guarantee through this seam instead: echo the target, or
+# refuse and record it exactly as the wrapper would.
+ctx_fixture_target() {
+  local target="$1"
+  if [[ "$target" != "$tmp_root"/* ]]; then
+    printf 'test-pmctl-context: refusing a direct context call on a non-fixture target: %s\n' \
+      "$target" >&2
+    printf 'direct call target outside the fixture root\t%s\n' "$target" >> "$CTX_GUARD_LOG"
+    return 1
+  fi
+  printf '%s\n' "$target"
+}
 SUITE_FILE="$SCRIPT_DIR/$(basename "${BASH_SOURCE[0]}")"
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -1145,7 +1162,7 @@ case_context_query_no_db_sqlite_missing() {
     _ctx_sqlite3_check() { return 1; }
     _ctx_emit_usage_event() { :; }
     pmctl_context_query "$2" "alpha"
-  ' bash "$REPO_ROOT/runtime" "$nodb_repo" > "$out" 2> "$err" || status=$?
+  ' bash "$REPO_ROOT/runtime" "$(ctx_fixture_target "$nodb_repo")" > "$out" 2> "$err" || status=$?
   if [[ "$status" -ne 0 ]]; then
     fail "$name" "expected exit 0 (graceful empty); got $status err=$(<"$err")"; return 0
   fi
@@ -2528,7 +2545,7 @@ case_context_workflow_refresh_opt_out_reports_skipped() {
   printf '# workflow skip\n\ncc484workflowskipmarker\n' > "$fix_repo/docs/workflow-skip.md"
   before="$(stat -c '%Y:%s' "$fix_repo/.pm-dispatch/ctx/context.db" 2>/dev/null || stat -f '%m:%z' "$fix_repo/.pm-dispatch/ctx/context.db")"
   out="$(PM_DISPATCH_CONTEXT_AUTOREFRESH=0 bash -c \
-    '. "$1"; pmctl_context_workflow_refresh "$2" --json' bash "$REPO_ROOT/runtime/lib/pmctl-context.sh" "$fix_repo" 2>/dev/null)" || {
+    '. "$1"; pmctl_context_workflow_refresh "$2" --json' bash "$REPO_ROOT/runtime/lib/pmctl-context.sh" "$(ctx_fixture_target "$fix_repo")" 2>/dev/null)" || {
       fail "$name" "workflow refresh invocation failed"; return 0;
     }
   after="$(stat -c '%Y:%s' "$fix_repo/.pm-dispatch/ctx/context.db" 2>/dev/null || stat -f '%m:%z' "$fix_repo/.pm-dispatch/ctx/context.db")"
@@ -2550,7 +2567,7 @@ case_context_workflow_refresh_sqlite_unavailable() {
   before="$(stat -c '%Y:%s' "$fix_repo/.pm-dispatch/ctx/context.db" 2>/dev/null || stat -f '%m:%z' "$fix_repo/.pm-dispatch/ctx/context.db")"
   out="$(bash -c \
     '. "$1"; _ctx_sqlite3_check() { return 1; }; pmctl_context_workflow_refresh "$2" --json' \
-    bash "$REPO_ROOT/runtime/lib/pmctl-context.sh" "$fix_repo" 2>/dev/null)" || {
+    bash "$REPO_ROOT/runtime/lib/pmctl-context.sh" "$(ctx_fixture_target "$fix_repo")" 2>/dev/null)" || {
       fail "$name" "workflow refresh invocation failed"; return 0;
     }
   after="$(stat -c '%Y:%s' "$fix_repo/.pm-dispatch/ctx/context.db" 2>/dev/null || stat -f '%m:%z' "$fix_repo/.pm-dispatch/ctx/context.db")"
@@ -3439,7 +3456,7 @@ case_context_prompt_scan_no_sqlite_graceful() {
     _ctx_sqlite3_check() { return 1; }
     _ctx_emit_usage_event() { printf "%s\t%s\t%s\n" "$1" "$3" "${4:-}" >> "$EMIT_FILE"; }
     pmctl_context_prompt_scan "$2" "alpha knowledge question"
-  ' bash "$REPO_ROOT/runtime" "$fix_repo" > "$out" 2> "$err" || status=$?
+  ' bash "$REPO_ROOT/runtime" "$(ctx_fixture_target "$fix_repo")" > "$out" 2> "$err" || status=$?
   if [[ "$status" -ne 0 ]]; then
     fail "$name" "expected exit 0 (graceful empty); got $status err=$(<"$err")"; return 0
   fi
@@ -3600,7 +3617,7 @@ case_context_fts5_availability_is_cached() {
     # bypassed, the second call re-probes through THIS broken stub.
     sqlite3() { return 1; }
     if _ctx_fts5_available "$db"; then echo "second=available"; else echo "second=unavailable"; fi
-  ' bash "$REPO_ROOT/runtime" "$db" > "$out" 2> "$err" || status=$?
+  ' bash "$REPO_ROOT/runtime" "$(ctx_fixture_target "$db")" > "$out" 2> "$err" || status=$?
   if [[ "$status" -ne 0 ]]; then
     fail "$name" "exit $status err=$(<"$err")"; return 0
   fi

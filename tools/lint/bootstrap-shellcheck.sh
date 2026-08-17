@@ -200,9 +200,13 @@ if [[ "$resolve_only" -eq 1 ]]; then
   resolve_cache_dir="$(cached_bin_dir)"
   resolve_cache_diagnostic=""
   if [[ -n "$resolve_cache_dir" && -x "$resolve_cache_dir/shellcheck" ]]; then
-    if resolve_cache_diagnostic="$( { check_binary "$resolve_cache_dir/shellcheck" \
-          && verify_binary_digest "$resolve_cache_dir/shellcheck" \
-               "$(detect_platform)"; } 2>&1 )"; then
+    # Digest BEFORE the version probe: check_binary runs the candidate, and
+    # running it is the thing digest verification exists to gate. Probing first
+    # would hand control to an unauthenticated binary and only then ask whether
+    # it was the right one.
+    if resolve_cache_diagnostic="$( { verify_binary_digest \
+            "$resolve_cache_dir/shellcheck" "$(detect_platform)" \
+          && check_binary "$resolve_cache_dir/shellcheck"; } 2>&1 )"; then
       # Absolute, because callers run the returned binary from their own CWD —
       # lint chdirs to the repository root before every scan.
       resolved_dir="$(cd "$resolve_cache_dir" && pwd)" || {
@@ -280,8 +284,9 @@ fi
 # cannot drift apart.
 target_dir="$(cached_bin_dir)"
 target_bin="$target_dir/shellcheck"
-if [[ -x "$target_bin" ]] && check_binary "$target_bin" 2>/dev/null \
-    && verify_binary_digest "$target_bin" "$platform" 2>/dev/null; then
+# Same order as --resolve: authenticate the cached file, then run it.
+if [[ -x "$target_bin" ]] && verify_binary_digest "$target_bin" "$platform" 2>/dev/null \
+    && check_binary "$target_bin" 2>/dev/null; then
   printf '%s\n' "$target_dir"
   exit 0
 fi

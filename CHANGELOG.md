@@ -30,7 +30,9 @@ Versions follow [Semantic Versioning](https://semver.org/).
   derived from the release archive whose checksum the same row already pinned,
   and resolution rejects a mismatch before the binary is ever run. A version
   string a binary prints about itself cannot establish what it is. The same
-  digest is checked when installing and when reusing an existing cache entry.
+  digest is checked when installing, when reusing an existing cache entry, and
+  on the freshly extracted binary — in every case *before* the version probe,
+  since running the candidate is exactly what the digest exists to gate.
 
 - **Test guards no longer fail on other processes' writes to live shared state
   (CC-550).** Three suites proved "this run did not touch live state" by

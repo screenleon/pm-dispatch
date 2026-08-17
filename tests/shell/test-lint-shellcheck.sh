@@ -299,14 +299,14 @@ test_cached_pin_used_when_path_version_wrong() {
   fi
 }
 
-# Behavior: a cached binary that reports the pinned version but does not match
-# the repository's trusted digest is never executed for linting.
+# Behavior: a cached binary that does not match the repository's trusted digest
+# is never executed at all — not to lint, and not even to ask its version.
 # Steps: Arrange a cache stub whose --version says 0.11.0 while the manifest
-# records a different digest; Act by running the linter; Assert exit 2, a digest
-# diagnostic, and that the stub was never asked to lint.
+# records a different digest; Act by running the linter and the installer reuse
+# path; Assert exit 2, a digest diagnostic, and zero invocations of the stub.
 test_tampered_cache_binary_is_rejected() {
   local name="lint-shellcheck/tampered-cache-binary-rejected" root platform
-  local cache_bin cache_calls output status=0 lint_calls
+  local cache_bin cache_calls output status=0
   should_run "$name" || return 0
   root="$(fixture_repo tampered-cache)"
   platform="$(fixture_platform)"
@@ -326,14 +326,71 @@ test_tampered_cache_binary_is_rejected() {
   output="$(env -u HOME XDG_CACHE_HOME="$root/xdg" PM_DISPATCH_TOOL_CACHE="$root/cache" \
     PATH="$root/bin:$PATH" \
     bash "$root/tools/lint/lint-shellcheck.sh" --repo "$root" 2>&1)" || status=$?
-  lint_calls="$(grep -c '^lint$' "$cache_calls" || true)"
-  if [[ "$status" -eq 2 \
-      && "$output" == *"does not match the trusted digest"* \
-      && "$lint_calls" -eq 0 ]]; then
-    pass "$name"
-  else
-    fail "$name" "status=$status lint_calls=$lint_calls output=$output"
+  # Any line at all means the impostor ran: the version probe is an execution
+  # too, and it is the one an attacker reaches first.
+  if [[ "$status" -ne 2 || "$output" != *"does not match the trusted digest"* ]]; then
+    fail "$name" "lint accepted the tampered cache: status=$status output=$output"
+    return
   fi
+  if [[ -s "$cache_calls" ]]; then
+    fail "$name" "tampered binary was executed before authentication: $(<"$cache_calls")"
+    return
+  fi
+
+  # The installer's reuse-an-existing-cache fast path must hold the same order.
+  status=0
+  output="$(env -u HOME XDG_CACHE_HOME="$root/xdg" PM_DISPATCH_TOOL_CACHE="$root/cache" \
+    PATH="$root/bin:$PATH" \
+    bash "$root/tools/lint/bootstrap-shellcheck.sh" --repo "$root" 2>&1)" || status=$?
+  if [[ -s "$cache_calls" ]]; then
+    fail "$name" "installer reuse path executed the tampered binary: $(<"$cache_calls")"
+    return
+  fi
+  if [[ "$status" -eq 0 ]]; then
+    fail "$name" "installer reuse path accepted the tampered cache: $output"
+    return
+  fi
+  pass "$name"
+}
+
+# Behavior: an archive whose checksum matches but whose extracted binary does not
+# match the manifest digest is rejected before that binary is run or published.
+# Steps: Arrange a valid local archive with a deliberately wrong binary_sha256;
+# Act by bootstrapping it; Assert exit 2, the digest diagnostic, and no binary
+# installed into the cache.
+test_bootstrap_rejects_wrong_binary_digest() {
+  local name="lint-shellcheck/bootstrap-rejects-wrong-binary-digest" root payload archive
+  local platform sha output status=0
+  should_run "$name" || return 0
+  root="$(fixture_repo bad-binary-digest)"
+  platform="$(fixture_platform)"
+  [[ -n "$platform" ]] || { pass "$name"; return; }
+  payload="$root/payload/shellcheck-v0.11.0"
+  archive="$root/shellcheck-v0.11.0.test.tar.gz"
+  write_shellcheck_stub "$payload/shellcheck" 0.11.0
+  tar -czf "$archive" -C "$root/payload" shellcheck-v0.11.0
+  sha="$(sha256_of "$archive")"
+  # Archive checksum honest, binary digest wrong: the shape where a supplier or
+  # a mirror ships a correctly-checksummed archive with different contents than
+  # the one this repository reviewed.
+  printf 'version\tplatform\turl\tsha256\tbinary_sha256\n' \
+    > "$root/tools/lint/shellcheck-assets.tsv"
+  printf '0.11.0\t%s\tfile://%s\t%s\t%s\n' \
+    "$platform" "$archive" "$sha" "$(printf 'a%.0s' {1..64})" \
+    >> "$root/tools/lint/shellcheck-assets.tsv"
+
+  output="$(env -u HOME XDG_CACHE_HOME="$root/xdg" \
+    PM_DISPATCH_TOOL_CACHE="$root/cache" \
+    bash "$root/tools/lint/bootstrap-shellcheck.sh" --repo "$root" 2>&1)" || status=$?
+  if [[ "$status" -ne 2 || "$output" != *"does not match the trusted digest"* ]]; then
+    fail "$name" "wrong binary digest accepted: status=$status output=$output"
+    return
+  fi
+  if [[ -e "$root/cache/shellcheck/0.11.0/$platform/bin/shellcheck" ]]; then
+    fail "$name" "a rejected binary was published into the cache"
+    return
+  fi
+  pass "$name"
 }
 
 # Behavior: a relative tool cache resolves against the caller's directory and
@@ -524,6 +581,7 @@ test_wrong_shellcheck_version_fails_closed
 test_check_and_resolve_are_mutually_exclusive
 test_cached_pin_used_when_path_version_wrong
 test_tampered_cache_binary_is_rejected
+test_bootstrap_rejects_wrong_binary_digest
 test_relative_cache_survives_repo_chdir
 test_matching_shellcheck_version_scans
 test_version_pin_shape_fails_closed
