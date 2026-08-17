@@ -148,7 +148,13 @@ if [[ "\${1:-}" == context && "\${PM_CTX_GUARD_ALLOW_NON_FIXTURE:-0}" != 1 ]]; t
     if [[ "\$_resolved" == "$live_root_canon" || "\$_resolved" == "$live_root_canon"/* ]]; then
       _refuse "resolves to the live repo root (\$_arg -> \$_resolved)" "\$@"
     fi
-    [[ "\$_resolved" == "$fixture_root_canon"/* ]] && _fixture_arg=1
+    # Fixture status requires a DIRECTORY, because that is the CLI's own test
+    # for "is this positional the repo root": a -d test. An absolute path under
+    # the fixture root that is not a directory is not consumed as the repo root
+    # at all — it slides down to the query position and resolution falls back to
+    # the CWD, i.e. this repository. Granting fixture status for it would skip
+    # the CWD check below on exactly the call that needs it.
+    [[ -d "\$_arg" && "\$_resolved" == "$fixture_root_canon"/* ]] && _fixture_arg=1
   done
   if [[ "\$_fixture_arg" -eq 0 ]]; then
     # No fixture path given, so the CLI will resolve from the CWD. That is safe
@@ -1904,6 +1910,38 @@ case_context_guard_fails_closed_without_realpath() {
   # also shows it was never reached.
   if [[ "$(wc -l < "$own_log")" -ne 2 ]]; then
     fail "$name" "expected two recorded refusals, got: $(<"$own_log")"
+    return 0
+  fi
+  pass "$name"
+}
+
+# Behavior: an absolute fixture-contained path that is not a directory does not
+# earn fixture status, because the CLI would not accept it as a repo root.
+# Steps: from a CWD outside the fixture tree, run query with an absolute
+# non-directory under tmp_root; assert the wrapper refuses before pmctl runs.
+case_context_guard_refuses_non_directory_fixture_path() {
+  local name="pmctl context suite: an absolute non-directory fixture path does not grant fixture status"
+  should_run "$name" || return 0
+
+  # The CLI consumes the first positional as the repo root only when it is a
+  # directory (`-d "$1"`). A file slides down to the query position and the repo
+  # root falls back to the CWD's worktree — this repository, when a case runs
+  # from here. Treating "absolute and under tmp_root" as isolated would wave
+  # through precisely that call.
+  local not_a_dir="$tmp_root/not-a-repo-dir" own_log err status=0
+  printf 'x\n' > "$not_a_dir"
+  own_log="$tmp_root/non-directory-guard.log"
+  err="$tmp_root/non-directory-guard.err"
+  : > "$own_log"
+
+  ( cd "$REPO_ROOT" && PM_CTX_GUARD_LOG="$own_log" \
+      "$PMCTL" context query "$not_a_dir" someterm > /dev/null 2> "$err" ) || status=$?
+  if [[ "$status" -ne 99 ]]; then
+    fail "$name" "wrapper allowed a non-directory fixture path (exit $status): $(<"$err")"
+    return 0
+  fi
+  if ! grep -q 'no fixture path' "$err"; then
+    fail "$name" "refusal did not name the reason: $(<"$err")"
     return 0
   fi
   pass "$name"
@@ -3913,6 +3951,7 @@ case_context_live_target_guard_trips
 case_context_live_target_guard_refuses_bare_call_outside_worktree
 case_context_guard_rejects_traversal_and_symlink_escape
 case_context_guard_fails_closed_without_realpath
+case_context_guard_refuses_non_directory_fixture_path
 case_context_no_call_targeted_the_live_repo
 
 th_summary

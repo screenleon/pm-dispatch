@@ -626,6 +626,19 @@ case 確定性失敗並點名該目標，全程未讀寫 live DB。
 擔心的「彙總斷言仍然變綠」。`ctx_fixture_target` 改為同樣尊重 `PM_CTX_GUARD_LOG`
 重導，自我測試不再碰共用 log；重跑 mutation 後彙總 case 確實一起失敗。
 
+**Gate round 9 補強（critic-F001，soft_block）**：wrapper 判定「有 fixture 引數」
+時只看絕對路徑與前綴，沒看是不是**目錄**。CLI 自己的判準是 `-d "$1"`——非目錄的
+第一個位置引數根本不會被當成 repo root，而是滑到 query 位置，repo root 因此落回
+CWD 的 worktree（從本 repo 執行時即 live repo）。於是「絕對且在 tmp_root 下的
+非目錄路徑」會取得 fixture 身分並**跳過** CWD 檢查，正好放行需要被擋的那一種呼叫。
+修法是照抄 CLI 自己的 predicate（絕對 **且** 為目錄），非啟發式。新增從 live repo
+CWD 發起、帶絕對非目錄 fixture 路徑的回歸；mutation 驗證：拿掉 `-d` 該測試失敗。
+
+**過程紀錄（值得留存的教訓）**：本票驗證此 finding 時，維護者先跑了一次手動實測，
+看到 `# no hits for: <path>` 就判定「CLI 有吃下該路徑、沒有 fallback」——**讀錯了**：
+那行印的是查詢詞而非 repo root，該次實測其實正是漏洞的重現。結論以讀原始碼的
+`-d "$1"` 分支為準，不以 stdout 的表面訊息為準。
+
 **Cross-link**: [[CC-467]] 已按此形狀修好 memory 的兩例（`test-pmctl-memory.sh`
 的 `case_memory_commands_resolve_only_fixture_dirs` + fixture 層唯讀 case），
 本票把同一修法套用到 context 套件並清查其餘同型守衛。
