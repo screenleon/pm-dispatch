@@ -65,7 +65,9 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-543 | ✅ done | Full test runner Phase 0 fail-fast structural precheck；`--collect-all` 保留 release 全證據路徑 | ops/test | 2026-08-04 | pr:#465 | P2 | hygiene |
 | CC-545 | ✅ done | Reviewer evidence-reference-contract INCOMPLETE 的單次修正性重派：僅限該單一違規類別，附具體錯誤引用重跑違規 reviewer，不必整輪 gate（30-40 分鐘）重來 | ops/gate | 2026-08-06 | pr:#465 | P2 | hygiene |
 | CC-546 | ⏸ deferred | standalone Gate distribution／copy parity follow-up：獨立定義 bundle schema、generation、installed parity 與 support boundary；不回併 Linux/WSL2 canonical module extraction | arch/gate | 2026-08-14 | — | P2 | reuse-debt |
-| CC-555 | 🔵 active | `--mode sequential` 沒有 synthesis 修正重試（重試迴圈只存在於 parallel 分支），artifact 一次寫壞即整輪作廢——省額度的模式同時是唯一沒有安全網的模式；實測 codex 被 gate-result 的 code fence 絆倒 `apply_patch`，白費一個 session（2026-08-18 CC-554 gate） | ops/gate | 2026-08-18 | — | P2 | hygiene |
+| CC-557 | 🔵 active | `scope-manifest/large-expansion-uses-file-input` 在正常 4-way 並行下耗用 120s watchdog 的 84-86%（實測 101s／103s，單獨跑 57s），gate preflight 的額外開銷即可推過；耗時穩定＝預算相對工作量設錯，非 flake；依 §7「pass/fail 取決於主機負載＝缺陷」 | ops/test | 2026-08-19 | — | P2 | hygiene |
+| CC-556 | 🔵 active | `pmctl gate wait` 把**存活中**的 supervisor 報成 `died without terminal evidence`（exit 3）：`supervisor.identity` 記錄的是 setsid **前**的 pgid，`verify_identity` 拿它比對 setsid 後的值必然不符；任何超過 wait 預算的 gate 都會遇到，且會誘導操作者重派、丟棄進行中的工作 | ops/gate | 2026-08-19 | — | P2 | hygiene |
+| CC-555 | ✅ closed 2026-08-19 | `--mode sequential` 沒有 synthesis 修正重試（重試迴圈只存在於 parallel 分支），artifact 一次寫壞即整輪作廢——省額度的模式同時是唯一沒有安全網的模式；實測 codex 被 gate-result 的 code fence 絆倒 `apply_patch`，白費一個 session（2026-08-18 CC-554 gate） | ops/gate | 2026-08-18 | — | P2 | hygiene |
 | CC-554 | 🔵 active | 永久 regression test 缺少准入門檻：`/ship` 規範「修完每個 finding」但不規範修法形式，reviewer 每提一個邊界就永久長一個阻擋 case，case 又需要 meta-test 保護；QA 規則加六條准入條件＋五條替代路徑，ship.md 加對應例外（明確不設輪數上限，見 [[CC-544]]） | ops/gate | 2026-08-17 | — | P1 | hygiene |
 | CC-553 | 🔵 active | Gate synthesis 協定失敗不可修正且被當成 review 判決：supervisor 分不出 `result:`／`failure-result:` 而把協定失敗記成 NO-GO（被否決的檔案仍寫 `Final: GO`）、retry brief 從不帶入失敗原因故重試等同盲擲、parity reason 不說 id 差集；原 `invalid disagreement references` 是單一裸字串，涵蓋 6 條獨立約束（`only_keys`／`D-NNN` id 形狀／非空 summary／`finding_ids` 長度 ≥2／不重複／每個 id 須存在於 findings_union），synthesis 無從自我修正，唯一一次重試重犯同錯即整輪作廢；[[CC-549]] 已對 test-gap 契約做過同一修法（2026-08-17 CC-551 round 7、2026-08-18 qa-rules #8 兩次實測） | ops/gate | 2026-08-17 | — | P1 | hygiene |
 | CC-552 | 🔵 active | `test_default_worker_cap` 以 `sleep 0.1` 製造 worker 重疊窗口來驗證併發上限，違反 QA 規則的「不得以 sleep 同步」；主機負載會改變觀測到的重疊數，與 worker-cap 正確性無關（2026-08-17 CC-551 gate round 4 qa-tester，pre-existing） | ops/test | 2026-08-17 | — | P3 | hygiene |
@@ -393,7 +395,81 @@ lib 分離的關注點，允許各自的修復時程與驗收」轉由 [[CC-548]
 
 ---
 
-## CC-555 — sequential 模式沒有 synthesis 修正重試 🔵 active
+## CC-557 — pr-gate large-expansion case 的 watchdog 預算不足 🔵 active
+
+**Problem**: `tests/shell/test-pr-gate.sh` 的
+`scope-manifest/large-expansion-uses-file-input` 在 runner 正常並行度（nproc 上限 4）下
+耗時 **101s／103s**，watchdog 為 **120s**——只剩 17-19 秒餘裕。單獨執行僅 57s。
+
+**實測（2026-08-18）**：CC-553 的 gate preflight（12 個 suite，4 個 pr-gate shard 幾乎
+同時開跑）該 case **exit 124 逾時**，reviewer 一個都沒跑就整輪 NO-GO；同日的
+authoritative full suite（100 個 suite、預設設定）卻**通過**（shard-4 1384s）。差別在
+競爭剖面，不在工作量。
+
+**Why**: 兩次量測 101/103s 高度一致 → 工作量確定，**預算相對工作量設錯**，不是隨機性。
+依 qa-testing-rules §7「pass/fail 取決於主機負載 ＝ flaky ＝ 缺陷」，且該節明文
+「不得用增加 timeout 來修」——所以放寬預算只能是暫時措施，必須追根因。已排除與 CC-553
+改動的關聯（main 基準 57.275s vs 改動後 57.224s）。
+
+**Requirement**:
+1. **先 profile 那 101 秒的組成再決定修法**，不得憑猜測。若瓶頸在受測的 scope-expansion
+   production 程式本身，縮小 fixture 無效，應重新評估預算本來就該多大。
+2. 檢視斷言 `entries == 512` 是否過度規格化（[[ANTI-PATTERNS]] #2）：真正的契約是
+   「展開大到必須走 file input」，由 `expansion_bytes > 131072` 與「stderr 無
+   `Argument list too long`」表達；`512` 只是達到該體積的一種手段。若放寬，或可用更少
+   檔案／更長符號名達到同體積，減少 git 與檔案系統工作。
+3. 修法落地前，暫時措施是在 `--test-cmd` 前置
+   `PM_DISPATCH_TEST_PR_GATE_CASE_TIMEOUT_SECS=300`（operator 側旋鈕，會進 preflight
+   command digest，可稽核）——**是暫時措施，不是修好了**。
+
+**Cross-link**: [[CC-552]]（`test_default_worker_cap` 以 sleep 製造重疊窗口）——同屬時序敏感測試。
+
+---
+
+## CC-556 — gate wait 把存活中的 supervisor 報成已死 🔵 active
+
+**Problem**: `pmctl gate wait` 在等待預算耗盡後，若 `detached_launch_verify_identity`
+判定身分不符，會印
+`indeterminate: <gate_id> reached readiness but its supervisor died without terminal evidence (exit=3)`。
+**該訊息可能完全錯誤**：supervisor 仍在正常執行。
+
+**實測（2026-08-18，`gate-20260817-221804-e2dafd`）**：wait 逾時後宣稱 supervisor 已死，
+但 `ps` 顯示 PID 2001417 存活逾 20 分鐘、preflight 的 12 個 suite 正在跑，該 gate 最終
+正常完成。逐欄比對：
+
+| 欄位 | identity 檔 | 實際行程 |
+|---|---|---|
+| pid | 2001417 | 2001417 ✅ |
+| starttime | 11833276 | 11833276 ✅ |
+| boot_id | 3f505f56… | 3f505f56… ✅ |
+| **pgid** | **1995131**（launcher，已消失） | **2001417**（setsid 後自成 leader）❌ |
+
+**Why**: `runtime/lib/pmctl-gate.sh:523` 由 **launcher** 在
+`detached_launch_under_setsid` fork 後、剛讀到 PID 時即快照 identity——該瞬間子行程尚未
+完成 `setsid`，`/proc/<pid>/stat` 的 pgrp 仍是 launcher 的 process group，此值註定過期
+卻不再修正（532-533 行僅在檔案不存在時補抓）。identity 檔記錄 `state=D`（早期 exec）佐證
+此為 race。同檔 535 行的 readiness 驗證**刻意只比對 pid+starttime、避開 pgid**，可見該
+路徑已知此時 pgid 不可信。
+
+「died」分支僅在 wait 預算耗盡後才執行，多數 gate 在 1200s 內返回，故長期未被發現。
+
+**Impact**: 操作者見「supervisor died」的自然反應是重派，等於丟棄一個健康執行中、且會完成
+的 gate 並重付成本。屬「基礎設施狀態被誤報成確定結論」同族（見 [[CC-553]]）。
+
+**Requirement**:
+1. identity 必須在 setsid 完成後才具權威性。優先方向：由 supervisor 自身在 `_write_ready`
+   時寫入（該處已 setsid 完成、且它最清楚自己的身分）；替代方向：launcher 於 readiness
+   確認後重抓一次，或 `verify_identity` 對 pgid 採「等於自身 pid 亦視為相符」的容忍。
+2. 訊息不得在未經證實時斷言「died」；無法區分「已死」與「仍在執行」時應如實回報為
+   不確定，並指出可自行驗證的方式。
+3. 回歸測試以 mutation 驗證：還原快照時機即重現誤報。
+
+**Cross-link**: [[CC-499]]（detached run reconciliation）、[[CC-509]]（launch liveness
+fail-loud）——相關但不同：本票是**存活誤判為死亡**，非啟動期死亡偵測。
+
+---
+
+## CC-555 — sequential 模式沒有 synthesis 修正重試 ✅ 2026-08-19
 
 **Problem**: `runtime/bin/pr-gate.sh` 的 `for _synthesis_attempt in 1 2` 修正重試迴圈
 位於 parallel 分支（3845 行附近），`SEQUENTIAL` 分支（2832–3107）完全沒有對應機制：
@@ -419,6 +495,15 @@ sections were written, but their required order is incorrect」，最終
 4. 回歸測試以 mutation 驗證：移除重試即重現整輪作廢。
 
 **Cross-link**: [[CC-553]]（reason 可行動化與信任邊界）、[[CC-549]]（診斷精確化的同一修法）。
+
+**Outcome**: 交付於 #490（main `9724a8d`）。sequential 取得對稱的單次重試並帶入實際被拒
+原因；重試前清空 `OUTPUT_FILE`（brief 為 create-then-append，對半成品續寫會複合缺陷）；
+`stale subject binding` 不重試。同 PR 修掉一個鏡像迴歸：pr-gate 的 EXIT trap 在**任何**
+非零退出寫 `failure-result:`，而 NO-GO 即 exit 1，導致已發布的判決被降級成基礎設施失敗。
+四個新測試皆以 mutation 驗證。**重試路徑尚未在真實 gate 觸發**（第 2、3 輪 executor 均
+一次寫成），僅單元測試證明其行為。
+
+**See**: CHANGELOG.md [Unreleased]、[[CC-553]]
 
 ---
 
