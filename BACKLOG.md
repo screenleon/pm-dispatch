@@ -51,7 +51,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-529 | 🔵 active | publish assurance observability：在 ship 成功輸出、PR body 與 finish marker 保留 embedded policy 與 baseline/preferred satisfaction | release/gate | 2026-07-30 | feedback:2026-07-30 | P2 | hygiene |
 | CC-530 | ✅ closed 2026-08-12 | source-safe runtime library contract + centralized domain identifier policy | arch/reuse | 2026-07-30 | pr:#473 | P1 | hygiene |
 | CC-531 | ✅ closed 2026-08-11 | Adapter manifest contract closure：dispatch entrypoint 成為唯一 runtime authority | arch/schema | 2026-07-30 | feedback:2026-08-11 | P1 | design |
-| CC-532 | 🔵 active | Gate canonical modules + generated standalone distribution + parity fixtures | arch/gate | 2026-07-30 | feedback:2026-07-30 | P1 | reuse-debt |
+| CC-532 | 🔵 active | Gate canonical modules for Linux/WSL2 developer path；standalone distribution 與 generated/dist parity defer to a later slice | arch/gate | 2026-07-30 | feedback:2026-07-30 | P1 | reuse-debt |
 | CC-533 | 🔵 active | schema-derived Gate structural validator，手寫 verifier 只保留跨 artifact semantics | schema/gate | 2026-07-30 | feedback:2026-07-30 | P1 | design |
 | CC-534 | 🟢 someday | `commands.tsv` 驅動 CLI routing、safe handler dispatch 與 lazy module loading | arch/DX | 2026-07-30 | feedback:2026-07-30 | P2 | design |
 | CC-535 | 🟢 someday | detached-launch 上的 supervised-run primitive + versioned JSON run-spec | arch/ops | 2026-07-30 | feedback:2026-07-30 | P2 | design |
@@ -2883,6 +2883,21 @@ developer/repo-layout path。Standalone distribution、跨平台 copy fallback �
 generated bundle parity 不列入本階段驗收；保留既有相容性行為的歷史測試，但不再
 擴大其 implementation surface。相容性 distribution 另立後續 slice，避免與
 canonical module extraction 同時增加兩條 authoring/runtime authority。
+
+**Combined scope decision (2026-08-18)**: 本票仍以 CC-515 evidence foundation
+之上的 canonical-source／structural-validation 為主，但明確納入 Gate-owned
+remediation-closure producer、closure schema 與 Ship publish-consumer wiring，
+作為 CC-517 remediation closure／CC-511 Phase B 的共同 contract foundation。
+CC-532 負責 canonical module ownership；CC-517 保留 remediation ledger、
+primary-review 與 targeted confirmation semantics；CC-511 Phase B 保留
+publish applicability 與 final-tree authorization。這個決定 supersede 先前把
+closure producer/consumer 視為本票 non-goal 的文字，但不宣稱整個 maintainer
+lifecycle 已完成。
+
+Rollout 以既有 Gate/Ship path、schema validation、immutable publication、paired
+producer/consumer tests 與 full preflight evidence 收斂；不新增 gate kind 或
+workflow engine。Generated standalone distribution、generated/dist parity 與
+後續跨邊界 structural cleanup 仍維持 deferred，另立 slice 才能重新開啟。
 
 **Requirement**:
 

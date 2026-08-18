@@ -234,8 +234,11 @@ artifact with the `publish` consumer and still enforces branch, HEAD, dirty
 tree, canonical dispatch, scope, and authoritative full-suite boundaries. If
 no `--gate-result` is supplied, finish produces a fresh preferred maintainer
 Gate. Never pass a targeted result as standalone publication authorization:
-until the structured remediation-closure path is available, a remediated tree
-must either receive a fresh current-tree initial Gate or stop before publish.
+the targeted run must produce and verify its structured remediation closure,
+and `ship finish` must consume that closure together with the current-tree
+subject and authoritative full-suite evidence. If the closure is missing,
+stale, or cannot be verified, the tree must receive a fresh current-tree
+initial Gate or stop before publish.
 
 If the full suite finds a diff-caused failure, fix it, rerun affected tests,
 apply the same refactor/reuse recheck threshold, and return to the targeted

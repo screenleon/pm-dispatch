@@ -5,7 +5,9 @@ trap '' PIPE
 GATE_CANCELLED=false
 GATE_ACTIVE_PREFLIGHT_PID=""
 GATE_ACTIVE_PREFLIGHT_PGID=""
+GATE_ACTIVE_DISPATCH_PID=""
 GATE_REVIEWER_OVERRIDE_SNAPSHOT=""
+GATE_SEQUENTIAL_REVIEWER_SNAPSHOT=""
 
 gate_cleanup_reviewer_override_snapshot() {
   local snapshot="${GATE_REVIEWER_OVERRIDE_SNAPSHOT:-}"
@@ -14,12 +16,20 @@ gate_cleanup_reviewer_override_snapshot() {
   GATE_REVIEWER_OVERRIDE_SNAPSHOT=""
 }
 
+gate_cleanup_sequential_reviewer_snapshot() {
+  local snapshot="${GATE_SEQUENTIAL_REVIEWER_SNAPSHOT:-}"
+  [[ -n "$snapshot" ]] || return 0
+  rm -f -- "$snapshot" 2>/dev/null || true
+  GATE_SEQUENTIAL_REVIEWER_SNAPSHOT=""
+}
+
 # The full gate cleanup is installed only after result/brief paths exist.  This
 # early trap covers the reviewer-override snapshot created before that point;
 # gate_exit_cleanup() calls the same helper after it replaces this trap.
 gate_early_exit_cleanup() {
   local gate_status=$?
   gate_cleanup_reviewer_override_snapshot
+  gate_cleanup_sequential_reviewer_snapshot
   return "$gate_status"
 }
 trap gate_early_exit_cleanup EXIT
@@ -38,10 +48,25 @@ gate_stop_active_preflight() {
   GATE_ACTIVE_PREFLIGHT_PGID=""
 }
 
+gate_stop_active_dispatch() {
+  local pid="${GATE_ACTIVE_DISPATCH_PID:-}"
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 0
+
+  # A sequential dispatch is hosted by a foreground wait in the gate shell.
+  # Stop the complete child tree before the cancellation trap exits; otherwise
+  # bash can defer the trap while an executor grandchild (for example a test
+  # sleep stub) remains alive.
+  _kill_process_tree "$pid" TERM || true
+  wait "$pid" 2>/dev/null || true
+  GATE_ACTIVE_DISPATCH_PID=""
+}
+
 gate_cancel_signal() {
   GATE_CANCELLED=true
   gate_stop_active_preflight
+  gate_stop_active_dispatch
   gate_cleanup_reviewer_override_snapshot
+  gate_cleanup_sequential_reviewer_snapshot
   exit 130
 }
 trap gate_cancel_signal TERM INT
@@ -494,6 +519,16 @@ GATE_RESULT_VERIFY_PATH="$PR_GATE_LIB_DIR/gate-result-verify.sh"
 # shellcheck disable=SC1090  # path is derived from the classified topology
 . "$GATE_RESULT_VERIFY_PATH"
 
+# Closure publication is a write-side concern of the Gate entrypoint. Keep it
+# explicitly composed here after the broadly reused result verifier so the
+# latter cannot gain publication helpers as an incidental dependency.
+GATE_CLOSURE_MODULE="$PR_GATE_LIB_DIR/gate-closure.sh"
+[[ -r "$GATE_CLOSURE_MODULE" ]] || _gate_lib_unavailable "$GATE_CLOSURE_MODULE"
+# shellcheck source=runtime/lib/gate-closure.sh
+# shellcheck disable=SC1090  # path is derived from the classified topology
+. "$GATE_CLOSURE_MODULE"
+unset GATE_CLOSURE_MODULE
+
 # CC-532: assurance path validation and machine sidecar publication have one
 # canonical source owner; the entrypoint only composes the module and invokes it.
 GATE_ASSURANCE_MODULE="$PR_GATE_LIB_DIR/gate-assurance.sh"
@@ -592,6 +627,8 @@ case "$PASS_REQUIRES_INITIAL" in
 esac
 
 INITIAL_RESULT_RESOLVED=""
+INITIAL_RESULT_SHA256=""
+INITIAL_ASSURANCE_SHA256=""
 if [[ -n "$INITIAL_RESULT_INPUT" ]]; then
   _initial_result_candidate="$INITIAL_RESULT_INPUT"
   [[ "$_initial_result_candidate" == /* ]] \
@@ -607,11 +644,21 @@ if [[ -n "$INITIAL_RESULT_INPUT" ]]; then
     exit 2
   }
   INITIAL_RESULT_RESOLVED="$_initial_result_parent/$(basename "$_initial_result_candidate")"
-  if ! gate_result_verify "$INITIAL_RESULT_RESOLVED" "" "targeted initial result"; then
-    printf 'Error: --initial-result is not a structurally valid gate result: %s\n' \
-      "$INITIAL_RESULT_INPUT" >&2
+  if ! gate_initial_result_verify "$INITIAL_RESULT_RESOLVED" "targeted initial result"; then
     exit 2
   fi
+  INITIAL_RESULT_SHA256="$(_gate_result_sha256_file "$INITIAL_RESULT_RESOLVED")" || exit 2
+  if [[ -z "${GATE_RESULT_ASSURANCE_FILE:-}" || ! -s "$GATE_RESULT_ASSURANCE_FILE" ]]; then
+    printf 'Error: targeted pass requires the accepted initial assurance sidecar to remain readable: %s\n' \
+      "$INITIAL_RESULT_RESOLVED" >&2
+    exit 2
+  fi
+  INITIAL_ASSURANCE_SHA256="$(_gate_result_sha256_file "$GATE_RESULT_ASSURANCE_FILE")" || exit 2
+  # This value is consumed by the sourced assurance publisher; export it so
+  # The linter and copy-mode source boundaries both treat the handoff as
+  # intentional.
+  export INITIAL_RESULT_SHA256
+  export INITIAL_ASSURANCE_SHA256
   # The initial result proves this is a remediation pass, but it never
   # authorizes reuse of an earlier gate's tier or conclusion. This invocation
   # resolves rigor from its own immutable subject and current policy.
@@ -981,6 +1028,19 @@ gate_dispatch_command() {
   else
     dispatch_via_at "$PR_GATE_EXECUTOR_ROOT" "$@"
   fi
+}
+
+# Execute a generated dispatch command from a background child while preserving
+# the adapter's exact exit status. Bash's `set -e` changes a non-zero status
+# from an asynchronous `eval` (notably timeout 124) to 1 before the parent can
+# wait for it. Disable errexit only in this short-lived child, capture the
+# command status, and return it unchanged to the tracked parent operation.
+gate_run_dispatch_command() {
+  local dispatch_cmd="$1" dispatch_exit
+  set +e
+  eval "$dispatch_cmd"
+  dispatch_exit=$?
+  return "$dispatch_exit"
 }
 
 # Every supported executor now dispatches an INDEPENDENT subprocess (codex `codex
@@ -1744,6 +1804,7 @@ relocate_gate_artifacts() {
 gate_exit_cleanup() {
   local _gate_exit_status=$?
   gate_cleanup_reviewer_override_snapshot
+  gate_cleanup_sequential_reviewer_snapshot
   # CC-522 Slice B: a killed reviewer cannot be trusted to write a final
   # result. Preserve the host-owned QA checkpoint/log pointer as an explicit
   # non-authorizing partial artifact before any run-dir relocation.
@@ -2049,6 +2110,40 @@ GATE_BINDING_SUBJECT_FINGERPRINT="$(
   jq -r '.tree_fingerprint' <<<"$GATE_SUBJECT_INITIAL"
 )"
 
+# A targeted pass may reuse only a baseline from this repository and a
+# compatible line of history.  The assurance sidecar is the authoritative
+# source for the prior repository/base/head coordinates; checking them before
+# reviewer dispatch prevents an unrelated result from becoming the primary
+# remediation ledger.
+if [[ "$PASS_KIND_RESOLVED" == targeted ]]; then
+  _initial_repository_key="$(jq -r \
+    '.subject.repository.key // .subject.repository_key // empty' \
+    "$GATE_RESULT_ASSURANCE_FILE")"
+  _initial_base_commit="$(jq -r \
+    '.subject.base.commit // .subject.base_commit // empty' \
+    "$GATE_RESULT_ASSURANCE_FILE")"
+  _initial_head_commit="$(jq -r \
+    '.subject.head.commit // .subject.head_commit // empty' \
+    "$GATE_RESULT_ASSURANCE_FILE")"
+  if [[ -z "$_initial_repository_key" || "$_initial_repository_key" != "$GATE_SUBJECT_REPOSITORY_KEY" ]]; then
+    printf 'Error: targeted --initial-result belongs to a different repository identity; remediation baseline rejected\n' >&2
+    exit 2
+  fi
+  if [[ -z "$_initial_base_commit" || "$_initial_base_commit" != "$(jq -r '.base.commit' <<<"$GATE_SUBJECT_INITIAL")" ]]; then
+    if ! git -C "$WORK_DIR" merge-base --is-ancestor \
+        "$_initial_base_commit" "$GATE_BINDING_BASE_COMMIT" >/dev/null 2>&1; then
+      printf 'Error: targeted --initial-result has an incompatible base lineage; remediation baseline rejected\n' >&2
+      exit 2
+    fi
+  fi
+  if [[ -z "$_initial_head_commit" ]] || ! git -C "$WORK_DIR" merge-base --is-ancestor \
+      "$_initial_head_commit" "$GATE_BINDING_HEAD_COMMIT" >/dev/null 2>&1; then
+    printf 'Error: targeted --initial-result has an incompatible head lineage; remediation baseline rejected\n' >&2
+    exit 2
+  fi
+  unset _initial_repository_key _initial_base_commit _initial_head_commit
+fi
+
 # ── Immutable declared review scope ──────────────────────────────────────────
 # Build one machine-owned manifest before any reviewer dispatch. The artifact
 # is read-only reviewer context; its digest, not prompt prose, proves that
@@ -2304,7 +2399,9 @@ printf -v REVIEWER_PROTOCOL_INSTRUCTIONS \
   '    coverage_dimensions (happy|boundary|negative|regression|concurrency|security|' \
   '    migration|rollback), missing_layer, scenario, oracle, failure_signal, and' \
   '    suggested_command. coverage_dimensions permits only those eight enum tokens;' \
-  '    contract is a missing_layer value, never a coverage_dimensions value.' \
+  '    integration is NOT a coverage_dimensions token; integration belongs only in' \
+  '    missing_layer. contract is always non-empty explanatory contract prose; never' \
+  '    emit the literal "none" for contract, even when status=no_gap.' \
   '    A gap uses missing_layer=unit|integration|contract|e2e|' \
   '    manual|operational and non-empty scenario/oracle/failure_signal/command.' \
   '    Sufficient coverage uses no_gap, missing_layer=none, null scenario/oracle/' \
@@ -2992,13 +3089,20 @@ BRIEF_EOF
   # nonzero before writing the result, killing the gate before its integrity
   # checks could fire. Parallel reviewers already redirect to a log.
   #
+  # Host the initial sequential dispatch under the same tracked background
+  # lifecycle as corrective synthesis. This lets TERM interrupt the wait,
+  # terminate the executor tree, and reap it before the gate exits instead of
+  # leaving GATE_ACTIVE_DISPATCH_PID empty during the initial pass.
   # Capture the exit code instead of letting `set -e` abort here: a sequential
   # session that times out partway through (e.g. qa-tester stuck running a
   # long test suite) must not discard whatever earlier reviewers already
   # wrote to ${OUTPUT_FILE} per the brief's per-reviewer append instruction
   # (task step 4 above) -- see the partial-result branch below.
   SEQ_DISPATCH_EXIT=0
-  eval "$DISPATCH_CMD" >&2 || SEQ_DISPATCH_EXIT=$?
+  gate_run_dispatch_command "$DISPATCH_CMD" >&2 &
+  GATE_ACTIVE_DISPATCH_PID=$!
+  wait "$GATE_ACTIVE_DISPATCH_PID" || SEQ_DISPATCH_EXIT=$?
+  GATE_ACTIVE_DISPATCH_PID=""
 
   if [[ "$SEQ_DISPATCH_EXIT" -ne 0 ]]; then
     if [[ "$SEQ_DISPATCH_EXIT" -eq 124 ]]; then
@@ -3030,13 +3134,130 @@ BRIEF_EOF
   # Validate single-session output via the shared contract (must exist, be
   # non-empty, carry exactly one Final: GO|NO-GO line that agrees with the
   # frontmatter final: field). Same checks the parallel synthesis route and
-  # `pmctl gate verify` enforce.
+  # `pmctl gate verify` enforce. Reviewer protocol failures remain terminal;
+  # only synthesis failures are recoverable here, because the reviewer blocks
+  # are already the immutable input that the corrective synthesis pass should
+  # preserve.
   gate_reviewer_protocol_verify \
     "$OUTPUT_FILE" "$REVIEWERS" "$SCOPE_MANIFEST_DIGEST" \
     "$SCOPE_MANIFEST_PATH" true || exit 1
-  gate_synthesis_protocol_verify \
-    "$OUTPUT_FILE" "$REVIEWERS" "$SKIPPED_WORDS" \
-    "$SCOPE_MANIFEST_DIGEST" true || exit 1
+
+  # Reviewer evidence is the immutable input to sequential synthesis recovery.
+  # Keep a byte-for-byte host snapshot before any synthesis reset so a
+  # corrective executor cannot silently rewrite a valid reviewer block while
+  # still producing protocol-valid JSON.
+  _gate_sequential_reviewer_evidence_snapshot() {
+    local artifact="$1" snapshot="$2"
+    awk '
+      $0 == "```reviewer_result_v1" {
+        if (inside) exit 2
+        inside=1
+        seen=1
+        print
+        next
+      }
+      inside {
+        print
+        if ($0 == "```") inside=0
+        next
+      }
+      END {
+        if (inside || !seen) exit 2
+      }
+    ' "$artifact" > "$snapshot"
+  }
+
+  _gate_sequential_reviewer_evidence_matches() {
+    local artifact="$1" snapshot="$2" current
+    current="$(mktemp "${TMPDIR:-/tmp}/pr-gate-sequential-reviewers.XXXXXX")" || return 1
+    if ! _gate_sequential_reviewer_evidence_snapshot "$artifact" "$current"; then
+      rm -f -- "$current"
+      return 1
+    fi
+    local rc=0
+    if ! cmp -s "$snapshot" "$current"; then
+      rc=1
+    fi
+    rm -f -- "$current"
+    return "$rc"
+  }
+
+  GATE_SEQUENTIAL_REVIEWER_SNAPSHOT="$(mktemp "${TMPDIR:-/tmp}/pr-gate-sequential-reviewers.XXXXXX")" || exit 1
+  _gate_sequential_reviewer_evidence_snapshot \
+    "$OUTPUT_FILE" "$GATE_SEQUENTIAL_REVIEWER_SNAPSHOT" || {
+      printf 'Error: unable to snapshot sequential reviewer evidence before synthesis recovery\n' >&2
+      exit 1
+    }
+  _gate_sequential_synthesis_reset() {
+    local artifact="$1" snapshot="${GATE_SEQUENTIAL_REVIEWER_SNAPSHOT:-}" reset_tmp
+    [[ -s "$snapshot" ]] || return 1
+    reset_tmp="$(mktemp "${artifact}.synthesis-reset.XXXXXX")" || return 1
+    # The failed executor authored the whole artifact, including free-form
+    # prose. Reusing that prose as corrective-executor input would let an
+    # artifact author smuggle instructions across the retry boundary. Rebuild
+    # the file exclusively from the host snapshot of protocol-validated
+    # reviewer blocks; the corrective executor may append fresh synthesis only.
+    cat -- "$snapshot" > "$reset_tmp" || {
+      rm -f -- "$reset_tmp"
+      return 1
+    }
+    mv -- "$reset_tmp" "$artifact"
+  }
+
+  _SEQ_SYNTHESIS_ATTEMPT=1
+  while ! gate_synthesis_protocol_verify \
+      "$OUTPUT_FILE" "$REVIEWERS" "$SKIPPED_WORDS" \
+      "$SCOPE_MANIFEST_DIGEST" true; do
+    if [[ "$_SEQ_SYNTHESIS_ATTEMPT" -ge 2 ]]; then
+      printf 'Error: sequential synthesis recovery exhausted after %s\n' \
+        "${GATE_SYNTHESIS_PROTOCOL_ERROR:-synthesis protocol failure}" >&2
+      exit 1
+    fi
+
+    say '  [sequential synthesis] protocol failed (%s); retrying once with a corrective note.\n' \
+      "${GATE_SYNTHESIS_PROTOCOL_ERROR:-synthesis protocol failure}"
+    # A corrective executor may append a second synthesis block instead of
+    # repairing the invalid one. Remove all prior synthesis material at the
+    # host boundary so the retry has exactly one clean slot to populate while
+    # reviewer_result_v1 blocks remain byte-for-byte immutable.
+    _gate_sequential_synthesis_reset "$OUTPUT_FILE" || {
+      printf 'Error: unable to reset invalid sequential synthesis material\n' >&2
+      exit 1
+    }
+    cat >> "$BRIEF_FILE" <<SEQUENTIAL_SYNTHESIS_RETRY_EOF
+
+correction_retry: |
+  The first sequential synthesis attempt failed the host machine-validated
+  synthesis contract. The host has replaced the prior artifact with a
+  sanitized snapshot containing only protocol-validated reviewer blocks.
+  Re-read ${OUTPUT_FILE} before editing it. Preserve every existing reviewer
+  block byte-for-byte. Add exactly one synthesis_result_v1 block and every
+  required human section, then verify the result file before finishing.
+  If using apply_patch, use a valid unified patch with an explicit @@ hunk;
+  never submit raw context lines as a patch. Do not remove reviewer findings
+  or test-gap rows.
+SEQUENTIAL_SYNTHESIS_RETRY_EOF
+    _SEQ_SYNTHESIS_ATTEMPT=2
+    _SEQ_RETRY_DISPATCH_CMD="$(gate_dispatch_command "$EXECUTOR" "$BRIEF_FILE" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT" "$DISPATCH_ISOLATION" "$DISPATCH_EFFORT")" || exit 2
+    _SEQ_RETRY_EXIT=0
+    gate_run_dispatch_command "$_SEQ_RETRY_DISPATCH_CMD" >&2 &
+    GATE_ACTIVE_DISPATCH_PID=$!
+    wait "$GATE_ACTIVE_DISPATCH_PID" || _SEQ_RETRY_EXIT=$?
+    GATE_ACTIVE_DISPATCH_PID=""
+    if [[ "$_SEQ_RETRY_EXIT" -ne 0 ]]; then
+      printf 'Error: sequential synthesis retry failed (exit %d)\n' \
+        "$_SEQ_RETRY_EXIT" >&2
+      exit 1
+    fi
+    gate_reviewer_protocol_verify \
+      "$OUTPUT_FILE" "$REVIEWERS" "$SCOPE_MANIFEST_DIGEST" \
+      "$SCOPE_MANIFEST_PATH" true || exit 1
+    if ! _gate_sequential_reviewer_evidence_matches \
+        "$OUTPUT_FILE" "$GATE_SEQUENTIAL_REVIEWER_SNAPSHOT"; then
+      printf 'Error: sequential synthesis retry changed reviewer evidence; reviewer blocks must remain byte-identical\n' >&2
+      exit 1
+    fi
+  done
   SEQ_PROTOCOL_FINAL="$(
     _gate_reviewer_protocol_final_extract "$OUTPUT_FILE"
   )" || exit 1
@@ -3173,7 +3394,7 @@ acceptance:
 RBRIEF_EOF
 
     REVIEWER_DISPATCH_CMD="$(gate_dispatch_command "$EXECUTOR" "$REVIEWER_BRIEF" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT" "$DISPATCH_ISOLATION" "$DISPATCH_EFFORT")" || exit 2
-    eval "$REVIEWER_DISPATCH_CMD" > "$DISPATCH_LOG" 2>&1 &
+    gate_run_dispatch_command "$REVIEWER_DISPATCH_CMD" > "$DISPATCH_LOG" 2>&1 &
     DISPATCH_PIDS+=($!)
     say '  [parallel] launched %s (pid %d)\n' "$r" "$!"
   done
@@ -3455,7 +3676,7 @@ acceptance:
 RETRY_RBRIEF_EOF
 
           _RETRY_DISPATCH_CMD="$(gate_dispatch_command "$EXECUTOR" "$_RETRY_BRIEF" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT" "$DISPATCH_ISOLATION" "$DISPATCH_EFFORT")" || exit 2
-          eval "$_RETRY_DISPATCH_CMD" > "$_RETRY_LOG" 2>&1 &
+          gate_run_dispatch_command "$_RETRY_DISPATCH_CMD" > "$_RETRY_LOG" 2>&1 &
           _RETRY_PIDS+=($!)
           _RETRY_NAMES+=("$r")
           _RETRY_OUTPUT_FILES+=("$_RETRY_OUTPUT")
@@ -3793,7 +4014,7 @@ SYNTHESIS_RETRY_EOF
     fi
     say '  [synthesis attempt %d] running PM consolidation...\n' "$_synthesis_attempt"
     SYNTHESIS_DISPATCH_CMD="$(gate_dispatch_command "$EXECUTOR" "$SYNTHESIS_BRIEF" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT" "$DISPATCH_ISOLATION" "$DISPATCH_EFFORT")" || exit 2
-    eval "$SYNTHESIS_DISPATCH_CMD" >&2 &
+    gate_run_dispatch_command "$SYNTHESIS_DISPATCH_CMD" >&2 &
     _SYNTHESIS_PID=$!
     _GATE_SYNTHESIS_WATCHDOG_TIMEOUT="${_PM_DISPATCH_GATE_SYNTHESIS_WATCHDOG_TIMEOUT:-$((TIMEOUT + 60))}"
     (
@@ -3952,10 +4173,36 @@ gate_apply_preflight_pass_tag() {
   }
 }
 
+# Append the human-facing review-scope contract after executor output has been
+# verified.  The assurance sidecar carries the machine coordinates, but the
+# Markdown result must remain self-describing when it is read or excerpted on
+# its own.  Keeping this rewrite shell-owned prevents an executor from making
+# a targeted confirmation look like a comprehensive review.
+gate_append_machine_scope_contract() {
+  local result_file="$1" pass_label
+  if [[ "$PASS_KIND_RESOLVED" == targeted ]]; then
+    pass_label='remediation-delta (targeted confirmation; not comprehensive review)'
+  else
+    pass_label='comprehensive review'
+  fi
+  {
+    printf '\n## Gate Review Scope\n\n'
+    printf '%s\n' "- Pass scope: $pass_label"
+    printf '%s\n' "- Selected reviewer coverage: ${COVERAGE_SELECTED_DISPLAY:-none}"
+    printf '%s\n' "- Not reviewed: ${COVERAGE_SKIPPED_DISPLAY:-none}"
+  } >> "$result_file"
+  gate_result_verify "$result_file" "" "machine scope contract" || {
+    printf 'Error: internal -- gate scope contract append produced an invalid result\n' >&2
+    return 1
+  }
+}
+
 if [[ "$PREFLIGHT_STATUS" == "pass" ]]; then
   verify_preflight_artifacts_current || exit 1
   gate_apply_preflight_pass_tag "$OUTPUT_FILE"
 fi
+
+gate_append_machine_scope_contract "$OUTPUT_FILE" || exit 1
 
 # ── Override provenance (audit record) ─────────────────────────────────────────
 # When accepted-risk overrides were injected, the gate result must say so: which
@@ -4029,7 +4276,31 @@ fi
 # v3, while pre-dispatch fail-fast routes without reviewer protocol remain v2.
 # The shared verifier then checks result/pointer/envelope
 # parity before publication or relocation.
-gate_finalize_assurance "$OUTPUT_FILE" "$ASSURANCE_FILE" || exit 2
+# A targeted pass is the Gate-owned remediation evidence producer.  This hook
+# runs inside assurance finalization before its protected attestation is built;
+# generic initial Gates leave it undefined and therefore publish no closure.
+gate_assurance_post_publish_hook() {
+  [[ "$PASS_KIND_RESOLVED" == targeted ]] || return 0
+  local targeted_closure_file
+  targeted_closure_file="$(dirname "$2")/$(basename "$1" .md).remediation-closure.json"
+  gate_remediation_closure_publish "$1" "$2" "$targeted_closure_file" >/dev/null || {
+    printf 'Error: unable to publish targeted remediation closure evidence: %s\n' \
+      "$targeted_closure_file" >&2
+    return 1
+  }
+  gate_remediation_closure_bind_assurance "$1" "$2" "$targeted_closure_file" || {
+    printf 'Error: unable to bind targeted remediation closure evidence: %s\n' \
+      "$targeted_closure_file" >&2
+    return 1
+  }
+}
+
+if [[ "$PASS_KIND_RESOLVED" == targeted ]]; then
+  gate_finalize_assurance "$OUTPUT_FILE" "$ASSURANCE_FILE" \
+    gate_assurance_post_publish_hook || exit 2
+else
+  gate_finalize_assurance "$OUTPUT_FILE" "$ASSURANCE_FILE" || exit 2
+fi
 
 # ── Finalize QA evidence before relocation ──────────────────────────────────
 # The EXIT trap also finalizes QA evidence, but a successful run relocates its

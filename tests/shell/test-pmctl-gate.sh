@@ -134,9 +134,18 @@ _mk_gate_cli_fixture() {
   local fixture="$1"
   mkdir -p "$fixture/runtime/bin"
   pmctl_fixture_copy_spine "$REPO_ROOT" "$fixture"
-  for _lib in pmctl-gate gate-digest gate-result-verify state-paths portable detached-launch; do
+  # gate-result-verify now loads the canonical structural validator and
+  # remediation-closure verifier at source time.  Keep this real-cli fixture
+  # self-contained so the routing test reaches detached launch instead of
+  # exiting while sourcing an omitted dependency.
+  for _lib in pmctl-gate gate-digest gate-result-verify gate-closure gate-closure-verify \
+    gate-structural-verify state-paths portable detached-launch; do
     cp "$REPO_ROOT/runtime/lib/$_lib.sh" "$fixture/runtime/lib/$_lib.sh"
   done
+  cp "$REPO_ROOT/runtime/lib/gate-structural-validator.jq" \
+    "$fixture/runtime/lib/gate-structural-validator.jq"
+  cp "$REPO_ROOT/runtime/lib/gate-structural-schemas.json" \
+    "$fixture/runtime/lib/gate-structural-schemas.json"
   cp "$REPO_ROOT/runtime/bin/gate-supervisor.sh" "$fixture/runtime/bin/gate-supervisor.sh"
   chmod +x "$fixture/runtime/bin/gate-supervisor.sh"
 }
@@ -1225,9 +1234,110 @@ enforcement|policy_enforcement_failed|generic
 independence|review_independence_unverified|generic
 dispatch|review_dispatch_evidence_incomplete|generic
 scope|scope_manifest_unavailable|generic
-targeted|comprehensive_review_required|publish
+targeted|remediation_closure_unavailable|publish
 CASES
   pass "$name"
+}
+
+# Behavior: the publish consumer refuses a targeted result until Gate has
+# linked and verified the remediation closure that ship finish must consume.
+# Steps: create an otherwise valid current v3 result, change its pass kind to
+# targeted while leaving closure evidence unavailable, and assert the policy
+# axis fails closed with the dedicated closure reason.
+case_verify_v3_targeted_publish_requires_closure() {
+  local name="gate/verify: targeted publish requires remediation closure"
+  should_run "$name" || return 0
+  local result sidecar out code
+  result="$(_gate_verify_result_path v3-targeted-closure-required)"
+  sidecar="${result}.assurance.json"
+  _mk_gate_result_v3_verified "$result" "$_GATE_VERIFY_REPO"
+  jq --arg initial "$result" '
+    .coordinates.pass.requested = "targeted" |
+    .coordinates.pass.resolved = "targeted" |
+    .coordinates.pass.scope = "remediation-delta" |
+    .coordinates.pass.initial_result = $initial |
+    .policy.request.pass_kind = "targeted"
+  ' "$sidecar" > "${sidecar}.tmp"
+  mv "${sidecar}.tmp" "$sidecar"
+  _refresh_gate_result_v3_attestation "$result"
+  set +e
+  out="$(_run_canonical_gate_verify "$result" --consumer publish --json 2>&1)"
+  code=$?
+  set -e
+  if [[ "$code" -eq 1 ]] && jq -e '
+      .axes.artifact_valid.status == "pass" and
+      .axes.subject_current.status == "pass" and
+      .axes.policy_applicable.status == "fail" and
+      (.axes.policy_applicable.reason_codes |
+        index("remediation_closure_unavailable")) != null
+    ' <<<"$out" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+# Behavior: a verified v3 targeted artifact becomes publish evidence only when
+# its closure is present, while the same artifact is never reusable as the
+# immutable --initial-result baseline.
+case_verify_v3_targeted_publish_with_closure_and_baseline_boundary() {
+  local name="gate/verify: targeted closure passes publish and rejects recursive baseline"
+  should_run "$name" || return 0
+  local result sidecar closure out code initial_out initial_code initial_sha initial_assurance_sha initial
+  result="$(_gate_verify_result_path v3-targeted-closure-valid)"
+  sidecar="${result}.assurance.json"
+  initial="$(dirname "$result")/initial.md"
+  _mk_gate_result_v3_verified "$initial" "$_GATE_VERIFY_REPO"
+  _mk_gate_result_v3_verified "$result" "$_GATE_VERIFY_REPO"
+  initial_sha="$(sha256sum "$initial" | awk '{print $1}')"
+  initial_assurance_sha="$(sha256sum "$initial.assurance.json" | awk '{print $1}')"
+  jq --arg initial "$initial" --arg initial_sha "$initial_sha" \
+    --arg initial_assurance_sha "$initial_assurance_sha" '
+    .coordinates.pass.requested = "targeted" |
+    .coordinates.pass.resolved = "targeted" |
+    .coordinates.pass.scope = "remediation-delta" |
+    .coordinates.pass.initial_result = $initial |
+    .coordinates.pass.initial_result_sha256 = $initial_sha |
+    .coordinates.pass.initial_assurance_sha256 = $initial_assurance_sha |
+    .policy.request.pass_kind = "targeted"
+  ' "$sidecar" > "${sidecar}.tmp"
+  mv "${sidecar}.tmp" "$sidecar"
+  _refresh_gate_result_v3_attestation "$result"
+  # The producer and consumer use the same canonical closure builder.
+  . "$REPO_ROOT/runtime/lib/gate-closure.sh"
+  closure="${result%.md}.remediation-closure.json"
+  gate_remediation_closure_publish "$result" "$sidecar" "$closure" >/dev/null
+  jq --arg artifact "$(basename "$closure")" \
+    --arg sha256 "$(sha256sum "$closure" | awk '{print $1}')" \
+    --arg subject "$(jq -r '.subject.tree_fingerprint' "$sidecar")" \
+    '.evidence.closure = {
+      status:"verified",artifact:$artifact,sha256:$sha256,
+      subject_fingerprint:$subject
+    }' "$sidecar" > "${sidecar}.tmp"
+  mv "${sidecar}.tmp" "$sidecar"
+  _refresh_gate_result_v3_attestation "$result"
+
+  set +e
+  out="$(_run_canonical_gate_verify "$result" --consumer publish --json 2>&1)"
+  code=$?
+  initial_out="$(_run_canonical_gate_verify "$result" --consumer generic --json 2>&1)"
+  initial_code=$?
+  set -e
+  if [[ "$code" -eq 0 ]] && jq -e '
+      .axes.artifact_valid.status == "pass" and
+      .axes.subject_current.status == "pass" and
+      .axes.policy_applicable.status == "pass" and
+      (.axes.policy_applicable.reason_codes | index("comprehensive_review_required") | not)
+    ' <<<"$out" >/dev/null; then
+    # The direct helper must still reject the recursive targeted baseline.
+    if set +e; gate_initial_result_verify "$result" >/dev/null 2>&1; initial_code=$?; set -e; [[ "$initial_code" -ne 0 ]]; then
+      pass "$name"
+    else
+      fail "$name" "targeted artifact was accepted as --initial-result"
+    fi
+  else
+    fail "$name" "code=$code out=$out initial=$initial_out"
+  fi
 }
 
 # Behavior: consumer policies form a directional compatibility relation:
@@ -2982,6 +3092,8 @@ case_verify_v2_canonical_authorization
 case_verify_v3_three_axes_current
 case_verify_v3_producer_drift_reason_codes
 case_verify_v3_policy_reason_codes
+case_verify_v3_targeted_publish_requires_closure
+case_verify_v3_targeted_publish_with_closure_and_baseline_boundary
 case_verify_v3_policy_compatibility_matrix
 case_verify_v3_unknown_policy_consumer_fails_closed
 case_verify_v3_generic_is_publish_baseline

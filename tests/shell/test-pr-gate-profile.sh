@@ -600,6 +600,53 @@ test_canonical_domain_functions_have_single_source_owner() {
   pass "$name"
 }
 
+# Behavior: generic assurance remains independent of the ship-owned closure
+# publisher while targeted Gate composition passes its producer extension
+# explicitly.
+# Steps:
+#   1. Source assurance in isolation and assert no closure publisher is loaded.
+#   2. Check the finalizer and entrypoint for the explicit callback boundary.
+#   3. Use this profile assertion as the oracle for the composition contract.
+test_gate_assurance_does_not_load_ship_closure_dependency() {
+  local name="gate-assurance-does-not-load-ship-closure-dependency"
+  local module="$REPO_ROOT/runtime/lib/gate-assurance.sh"
+  local entrypoint="$REPO_ROOT/runtime/bin/pr-gate.sh" out
+  out="$(bash -c '
+    set -euo pipefail
+    . "$1"
+    if declare -F gate_remediation_closure_publish >/dev/null; then
+      exit 1
+    fi
+    printf "assurance-is-independent\n"
+  ' bash "$module")" || {
+    fail "$name" "assurance unexpectedly depends on the ship closure publisher"
+    return
+  }
+  if [[ "$out" != assurance-is-independent ]]; then
+    fail "$name" "unexpected standalone composition output: $out"
+    return
+  fi
+  if grep -Eq '^gate_remediation_closure_publish[[:space:]]' \
+      "$REPO_ROOT/runtime/bin/pr-gate.sh" "$REPO_ROOT/runtime/lib/gate-assurance.sh"; then
+    fail "$name" "generic Gate assurance still owns closure publication"
+    return
+  fi
+  if grep -Fq 'declare -F gate_assurance_post_publish_hook' "$module"; then
+    fail "$name" "assurance still discovers an ambient post-publication callback"
+    return
+  fi
+  if ! grep -Eq 'local result_file=.*post_publish_hook=' "$module"; then
+    fail "$name" "assurance finalizer does not expose an explicit callback parameter"
+    return
+  fi
+  if ! grep -Fq "gate_finalize_assurance \"\$OUTPUT_FILE\" \"\$ASSURANCE_FILE\" \\" \
+      "$entrypoint"; then
+    fail "$name" "targeted entrypoint does not pass the producer callback explicitly"
+    return
+  fi
+  pass "$name"
+}
+
 run_case() {
   local name="$1" fn="$2"
   should_run "$name" || return 0
@@ -632,5 +679,6 @@ run_case "commands-pr-gate-md-uses-detached-lifecycle" test_commands_pr_gate_md_
 run_case "commands-pr-gate-md-no-shell-var-reuse-across-bash-calls" test_commands_pr_gate_md_does_not_reuse_shell_var_across_bash_calls
 run_case "commands-pr-gate-md-wait-block-self-resolves-pmctl" test_commands_pr_gate_md_wait_block_self_resolves_pmctl
 run_case "canonical-domain-functions-have-single-source-owner" test_canonical_domain_functions_have_single_source_owner
+run_case "gate-assurance-does-not-load-ship-closure-dependency" test_gate_assurance_does_not_load_ship_closure_dependency
 
 th_summary

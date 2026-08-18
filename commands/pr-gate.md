@@ -61,8 +61,10 @@ never expands a selected reviewer list, and risk-derived required reviewers
 remain mandatory unless a scope-bound policy override approves their omission.
 An initial result is remediation context only: a targeted pass always resolves
 its tier from the current subject and policy, not from the prior artifact.
-The result sidecar and reviewer briefs show both tier and coverage selection
-bases, plus shorthand provenance.
+The published Markdown result is machine-labeled with its pass scope and exact
+selected reviewer coverage, so a targeted result remains distinguishable when
+read without its sidecar. The result sidecar and reviewer briefs also show
+both tier and coverage selection bases, plus shorthand provenance.
 
 Before dispatch, the gate writes one immutable-subject-bound
 `gate_scope_manifest_v1` containing changed/renamed/untracked paths, hunk

@@ -167,8 +167,19 @@ Gate correctness 與 release evidence 仍必須先在 v0.11.0 關閉。
 | 票 | 摘要 | 狀態 |
 |----|------|------|
 | CC-525 | 修正 verifier fallback provenance 並鎖定唯一 generator；generator identity、marker、provenance 與 body parity 已有 fail-closed ratchet | ✅ closed 2026-08-13 |
-| CC-532 | 拆出 canonical Gate modules，release 時產生 standalone dist 並驗 canonical/dist parity | 🔵 |
+| CC-532 | Linux/WSL2 canonical Gate modules + immutable remediation-closure producer/consumer foundation for CC-517/CC-511 Phase B；standalone distribution 與 generated/dist parity defer to a later slice | 🔵 |
 | CC-533 | schema-derived structural validator；手寫 verifier 只保留跨 artifact 語意 | 🔵 |
+
+> **Scope ownership (2026-08-18, supersedes the earlier exclusion)**：CC-532/CC-533
+> 仍以 Linux/WSL2 repo-layout 的 canonical source 與 structural validation 為主，
+> 並明確納入 Gate-owned remediation-closure producer、closure schema 與 Ship
+> publish-consumer wiring，作為 CC-517 remediation closure／CC-511 Phase B 的
+> shared contract foundation。CC-517 仍擁有 remediation ledger、primary review
+> 與 targeted confirmation；CC-511 Phase B 仍擁有 publish applicability 與
+> final-tree authorization；本階段不宣稱完整 maintainer lifecycle 已完成。
+> Rollout/ parity 由 schema、immutable publication、Gate/Ship paired tests 與
+> full preflight evidence 鎖定；standalone distribution、generated/dist parity
+> 與後續跨邊界 structural cleanup 仍 deferred，另立 slice 才能重新開啟。
 
 ### 計畫外同期 correctness hardening（已合併 main）
 

@@ -25,6 +25,10 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 th_init "$@"
 
 CORE_DIR="$REPO_ROOT/core"
+# shellcheck source=runtime/lib/gate-structural-verify.sh disable=SC1091
+. "$REPO_ROOT/runtime/lib/gate-structural-verify.sh"
+# shellcheck source=runtime/lib/gate-closure.sh disable=SC1091
+. "$REPO_ROOT/runtime/lib/gate-closure.sh"
 
 # ---------- helpers ----------
 
@@ -1782,6 +1786,666 @@ _gate_synthesis_result_valid_instance() {
   '
 }
 
+_gate_remediation_closure_valid_instance() {
+  jq -n '
+    {
+      kind:"remediation_closure_v1",
+      schema_version:1,
+      state:"closed",
+      scope_manifest_sha256:("a" * 64),
+      primary:{
+        gate_result:{
+          artifact:"primary-result.md",
+          sha256:("b" * 64),
+          subject_fingerprint:("d" * 64)
+        },
+        verdict:"NO-GO",
+        status:"verified",
+        subject:{
+          repository_key:("c" * 64),
+          base_commit:("1" * 40),
+          head_commit:("2" * 40),
+          tree_fingerprint:("d" * 64),
+          subject_kind:"committed_head"
+        }
+      },
+      final_subject:{
+        repository_key:("c" * 64),
+        base_commit:("1" * 40),
+        head_commit:("2" * 40),
+        tree_fingerprint:("d" * 64),
+        subject_kind:"committed_head"
+      },
+      findings:[{
+        finding_id:"critic-F001",
+        origin:"diff_caused",
+        disposition:"closed",
+        classification:"local",
+        changed_paths:["runtime/lib/gate-closure.sh"],
+        evidence_refs:[{path:"runtime/lib/gate-closure.sh",line:1,symbol:null}],
+        affected_test_ids:["closure-schema"],
+        verification_status:"pass"
+      }],
+      changed_files:["runtime/lib/gate-closure.sh"],
+      affected_tests:[{
+        id:"closure-schema",
+        kind:"focused",
+        command:"bash tests/shell/test-core-schemas.sh",
+        status:"pass",
+        subject_fingerprint:("d" * 64),
+        artifact:null,
+        artifact_sha256:null
+      },{
+        id:"closure-full",
+        kind:"full",
+        command:"bash tests/bin/run-all-tests.sh",
+        status:"pass",
+        subject_fingerprint:("d" * 64),
+        artifact:"latest-full.json",
+        artifact_sha256:("e" * 64)
+      }],
+      targeted_confirmation:{
+        status:"not_required",
+        reviewers:[],
+        delta_only:true,
+        evidence:null
+      },
+      unresolved_counts:{total:0,blocking:0,advisory:0},
+      final_assessment:{
+        remediation_status:"closed",
+        affected_tests_status:"pass",
+        full_suite_status:"pass",
+        subject_fingerprint:("d" * 64),
+        publish_authorized:true
+      }
+    }
+  '
+}
+
+# Behavior: a canonical closed remediation closure remains structurally valid.
+# Steps: generate the representative closed artifact, validate it with the
+# canonical JSON schema, and report a failure if the contract rejects it.
+case_gate_remediation_closure_valid_instance() {
+  local name="remediation-closure: canonical closed artifact validates"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/gate-remediation-closure.schema.json" tmpf
+  tmpf="$(mktemp /tmp/gate-remediation-closure-valid-XXXXXX.json)"
+  _gate_remediation_closure_valid_instance > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name" "schema rejected a canonical remediation closure"
+  fi
+  rm -f "$tmpf"
+}
+
+# Behavior: cross-field finding classification remains owned by the runtime
+# verifier while the structural schema accepts the historical combination.
+# Steps: change a valid finding disposition to tracked, validate structurally,
+# and assert the schema accepts the row for runtime-level checking.
+case_gate_remediation_closure_invalid_finding_rejected() {
+  local name="remediation-closure: cross-field finding rules stay runtime-owned"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/gate-remediation-closure.schema.json" tmpf
+  tmpf="$(mktemp /tmp/gate-remediation-closure-invalid-XXXXXX.json)"
+  _gate_remediation_closure_valid_instance |
+    jq '.findings[0].disposition = "tracked"' > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    # The cross-field rule is intentionally runtime-owned; the structural
+    # schema still accepts the enum combination for historical inspection.
+    pass "$name"
+  else
+    fail "$name" "schema rejected a structurally valid finding row"
+  fi
+  rm -f "$tmpf"
+}
+
+# Behavior: the runtime verifier rejects a closure whose finding disposition
+# violates the closed-state classification contract.
+# Steps: verify a canonical closure, mutate its disposition, and assert the
+# mutated artifact fails runtime verification.
+case_gate_remediation_closure_runtime_claims() {
+  local name="remediation-closure: runtime verifier enforces finding classification"
+  should_run "$name" || return 0
+  local valid invalid
+  valid="$(mktemp /tmp/gate-remediation-closure-runtime-XXXXXX.json)"
+  invalid="${valid}.invalid"
+  _gate_remediation_closure_valid_instance > "$valid"
+  _gate_remediation_closure_valid_instance |
+    jq '.findings[0].disposition = "tracked"' > "$invalid"
+  if ! gate_remediation_closure_verify "$valid" \
+      "$(printf 'd%.0s' {1..64})" "$(printf 'a%.0s' {1..64})"; then
+    fail "$name" "canonical closure was rejected"
+    rm -f "$valid" "$invalid"
+    return
+  fi
+  if gate_remediation_closure_verify "$invalid" \
+      "$(printf 'd%.0s' {1..64})" "$(printf 'a%.0s' {1..64})" >/dev/null 2>&1; then
+    fail "$name" "invalid finding classification was accepted"
+  else
+    pass "$name"
+  fi
+  rm -f "$valid" "$invalid"
+}
+
+# Behavior: the broadly reused result verifier loads only the closure
+# read-side contract and does not initialize publication helpers.
+# Steps: create a canonical closure, source gate-result-verify.sh in a fresh
+# shell, require publication to be absent, and validate the closure through
+# the narrow verifier interface.
+case_gate_result_verifier_uses_read_side_closure_module() {
+  local name="gate-result-verify: closure read-side dependency is narrow"
+  local valid
+  should_run "$name" || return 0
+  valid="$(mktemp /tmp/gate-result-verify-closure-XXXXXX.json)"
+  _gate_remediation_closure_valid_instance > "$valid"
+  if REPO_ROOT="$REPO_ROOT" VALID_CLOSURE="$valid" bash -c '
+      set -euo pipefail
+      . "$REPO_ROOT/runtime/lib/gate-result-verify.sh"
+      declare -F gate_remediation_closure_publish >/dev/null 2>&1 && exit 10
+      gate_remediation_closure_verify "$VALID_CLOSURE" \
+        "$(printf "%064d" 0 | tr 0 d)" "$(printf "%064d" 0 | tr 0 a)"
+    ' >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name" "result verifier imported publication helpers or rejected the canonical closure"
+  fi
+  rm -f "$valid"
+}
+
+# Behavior: every remediation finding evidence reference has a usable line or
+# symbol locator before closure publication can be considered authoritative.
+# Steps: replace a valid locator with null values and assert both schema and
+# runtime verification reject the locator-free evidence reference.
+case_gate_remediation_closure_evidence_locator_required() {
+  local name="remediation-closure: evidence reference requires a usable locator"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/gate-remediation-closure.schema.json"
+  local valid invalid
+  valid="$(mktemp /tmp/gate-remediation-closure-locator-XXXXXX.json)"
+  invalid="${valid}.invalid"
+  _gate_remediation_closure_valid_instance > "$valid"
+  _gate_remediation_closure_valid_instance |
+    jq '.findings[0].evidence_refs = [{path:"runtime/lib/gate-closure.sh",line:null,symbol:null}]' > "$invalid"
+  if jsonschema -i "$invalid" "$schema_file" >/dev/null 2>&1; then
+    fail "$name" "schema accepted a locator-free evidence reference"
+    rm -f "$valid" "$invalid"
+    return
+  fi
+  if gate_remediation_closure_verify "$invalid" \
+      "$(printf 'd%.0s' {1..64})" "$(printf 'a%.0s' {1..64})" >/dev/null 2>&1; then
+    fail "$name" "runtime verifier accepted a locator-free evidence reference"
+  else
+    pass "$name"
+  fi
+  rm -f "$valid" "$invalid"
+}
+
+# Behavior: immutable no-replace publication remains self-documenting for
+# regression maintenance.
+# Steps: prepare a valid closure destination, publish it twice, and verify the
+# second identical artifact is reused while a changed artifact is rejected.
+case_gate_remediation_closure_publish_is_no_replace() {
+  local name="remediation-closure: existing artifact is immutable and preserved"
+  should_run "$name" || return 0
+  local dir result assurance scope closure subject scope_sha before after
+  dir="$(mktemp -d /tmp/gate-remediation-closure-publish-XXXXXX)"
+  result="$dir/result.md"
+  assurance="$result.assurance.json"
+  scope="$dir/scope.json"
+  closure="$dir/closure.json"
+  subject="$(printf 'd%.0s' {1..64})"
+  scope_sha="$(printf 'a%.0s' {1..64})"
+
+  printf 'Final: GO\n' > "$result"
+  jq -n --arg subject "$subject" --arg scope_sha "$scope_sha" '{
+    subject:{
+      repository_key:("c" * 64),
+      base_commit:("1" * 40),
+      head_commit:("2" * 40),
+      tree_fingerprint:$subject,
+      subject_kind:"committed_head"
+    },
+    evidence:{scope_manifest:{artifact:"scope.json",sha256:$scope_sha}}
+  }' > "$assurance"
+  jq -n '{
+    changes:{changed_paths:["runtime/lib/gate-closure.sh"],renamed_paths:[],untracked_paths:[]},
+    diff:{binary_or_special_paths:[]}
+  }' > "$scope"
+
+  if ! gate_remediation_closure_publish "$result" "$assurance" "$closure" >/dev/null; then
+    fail "$name" "initial closure publication failed"
+    rm -rf "$dir"
+    return
+  fi
+  before="$(gate_digest_file "$closure")"
+  if ! gate_remediation_closure_publish "$result" "$assurance" "$closure" >/dev/null; then
+    fail "$name" "identical closure retry was not safely reusable"
+    rm -rf "$dir"
+    return
+  fi
+  after="$(gate_digest_file "$closure")"
+  if [[ "$before" != "$after" ]] || ! jq -e '.kind == "remediation_closure_v1"' "$closure" >/dev/null 2>&1; then
+    fail "$name" "existing closure bytes were not preserved"
+  elif printf 'Final: NO-GO\n' > "$result" && gate_remediation_closure_publish "$result" "$assurance" "$closure" >/dev/null 2>&1; then
+    fail "$name" "different closure content was accepted for replacement"
+  else
+    pass "$name"
+  fi
+  rm -rf "$dir"
+}
+
+# Behavior: closure publication never attributes an unchanged source to an
+# unrelated changed path.
+# Steps:
+#   1. Prepare a GO result whose synthesis finding cites an indexed but
+#      unchanged source while the scope manifest contains a different path.
+#   2. Publish the remediation closure.
+#   3. Verify the finding is split with an empty changed_paths set and cannot
+#      authorize publication through a fabricated manifest path.
+case_gate_remediation_closure_does_not_invent_changed_path() {
+  local name="remediation-closure: unchanged source is not misattributed"
+  should_run "$name" || return 0
+  local dir result assurance scope closure subject scope_sha
+  dir="$(mktemp -d /tmp/gate-remediation-closure-attribution-XXXXXX)"
+  result="$dir/result.md"
+  assurance="$result.assurance.json"
+  scope="$dir/scope.json"
+  closure="$dir/closure.json"
+  subject="$(printf 'd%.0s' {1..64})"
+  scope_sha="$(printf 'a%.0s' {1..64})"
+
+  printf 'Final: GO\n\n```synthesis_result_v1\n' > "$result"
+  _gate_synthesis_result_valid_instance |
+    jq '.findings_union[0].origin = "diff_caused" |
+      .findings_union[0].severity = "high" |
+      .findings_union[0].hard_gate_class = "soft_block" |
+      .findings_union[0].source = {path:"src/example.sh",line:1,symbol:null}' \
+    >> "$result"
+  printf '```\n' >> "$result"
+  jq -n --arg subject "$subject" --arg scope_sha "$scope_sha" '{
+    subject:{
+      repository_key:("c" * 64),
+      base_commit:("1" * 40),
+      head_commit:("2" * 40),
+      tree_fingerprint:$subject,
+      subject_kind:"committed_head"
+    },
+    evidence:{scope_manifest:{artifact:"scope.json",sha256:$scope_sha}}
+  }' > "$assurance"
+  jq -n '{
+    changes:{changed_paths:["runtime/lib/gate-closure.sh"],renamed_paths:[],untracked_paths:[]},
+    diff:{binary_or_special_paths:[]}
+  }' > "$scope"
+
+  if ! gate_remediation_closure_publish "$result" "$assurance" "$closure" >/dev/null 2>&1; then
+    fail "$name" "closure publication rejected a split attribution case"
+    rm -rf "$dir"
+    return
+  fi
+  if jq -e '
+      .state == "split" and
+      .final_assessment.publish_authorized == false and
+      .findings[0].changed_paths == [] and
+      .findings[0].disposition == "split" and
+      .findings[0].classification == "stop_split" and
+      (.changed_files | index("runtime/lib/gate-closure.sh")) != null
+    ' "$closure" >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name" "closure invented a changed path or remained authorizing"
+  fi
+  rm -rf "$dir"
+}
+
+_gate_closure_write_publish_fixture() {
+  local dir="$1" subject scope_sha
+  subject="$(printf 'd%.0s' {1..64})"
+  scope_sha="$(printf 'a%.0s' {1..64})"
+  printf 'Final: GO\n' > "$dir/result.md"
+  jq -n --arg subject "$subject" --arg scope_sha "$scope_sha" '{
+    subject:{
+      repository_key:("c" * 64),
+      base_commit:("1" * 40),
+      head_commit:("2" * 40),
+      tree_fingerprint:$subject,
+      subject_kind:"committed_head"
+    },
+    evidence:{scope_manifest:{artifact:"scope.json",sha256:$scope_sha}}
+  }' > "$dir/result.md.assurance.json"
+  jq -n '{
+    changes:{changed_paths:["runtime/lib/gate-closure.sh"],renamed_paths:[],untracked_paths:[]},
+    diff:{binary_or_special_paths:[]}
+  }' > "$dir/scope.json"
+}
+
+# Behavior: immutable closure publication rejects every unsafe pre-existing
+# destination type and leaves linked sentinels untouched.
+# Steps: seed symlink, directory, and hardlink destinations, invoke the
+# publisher, and assert each operation fails without changing its target.
+_case_gate_remediation_closure_publish_rejects_unsafe_destination() {
+  local name="$1" kind="$2"
+  should_run "$name" || return 0
+  local dir closure sentinel
+  dir="$(mktemp -d /tmp/gate-remediation-closure-unsafe-XXXXXX)"
+  _gate_closure_write_publish_fixture "$dir"
+  closure="$dir/$kind-closure.json"
+  sentinel="$dir/$kind-sentinel"
+  printf 'sentinel\n' > "$sentinel"
+  case "$kind" in
+    symlink) ln -s "$sentinel" "$closure" ;;
+    directory) mkdir "$closure" ;;
+    hardlink) ln "$sentinel" "$closure" ;;
+  esac
+  if gate_remediation_closure_publish "$dir/result.md" \
+      "$dir/result.md.assurance.json" "$closure" >/dev/null 2>&1; then
+    fail "$name" "$kind destination was accepted"
+    rm -rf "$dir"
+    return
+  fi
+  if [[ "$kind" != directory ]] && [[ "$(cat "$sentinel")" != "sentinel" ]]; then
+    fail "$name" "$kind sentinel was modified"
+    rm -rf "$dir"
+    return
+  fi
+  pass "$name"
+  rm -rf "$dir"
+}
+
+case_gate_remediation_closure_publish_rejects_symlink_destination() {
+  _case_gate_remediation_closure_publish_rejects_unsafe_destination \
+    "remediation-closure: symlink destination is rejected" symlink
+}
+
+case_gate_remediation_closure_publish_rejects_directory_destination() {
+  _case_gate_remediation_closure_publish_rejects_unsafe_destination \
+    "remediation-closure: directory destination is rejected" directory
+}
+
+case_gate_remediation_closure_publish_rejects_hardlink_destination() {
+  _case_gate_remediation_closure_publish_rejects_unsafe_destination \
+    "remediation-closure: hardlink destination is rejected" hardlink
+}
+
+# Behavior: closure publication refuses a destination below a symlinked
+# ancestor before creating any temporary file in the redirected directory.
+# Steps: point a closure parent at an external temporary directory, invoke the
+# publisher, and assert neither the final artifact nor its temporary sibling
+# appears at the symlink target.
+case_gate_remediation_closure_publish_rejects_symlinked_ancestor() {
+  local name="remediation-closure: symlinked ancestor is rejected"
+  should_run "$name" || return 0
+  local dir target root closure
+  dir="$(mktemp -d /tmp/gate-remediation-closure-ancestor-XXXXXX)"
+  target="$dir/redirect-target"
+  root="$dir/trusted-root"
+  mkdir "$target" "$root"
+  ln -s "$target" "$root/redirect"
+  _gate_closure_write_publish_fixture "$dir"
+  closure="$root/redirect/closure.json"
+  if gate_remediation_closure_publish "$dir/result.md" \
+      "$dir/result.md.assurance.json" "$closure" >/dev/null 2>&1; then
+    fail "$name" "symlinked ancestor was accepted"
+  elif [[ -e "$target/closure.json" ]] || compgen -G "$target/closure.json.tmp.*" >/dev/null; then
+    fail "$name" "redirect target received a closure artifact or temporary file"
+  else
+    pass "$name"
+  fi
+  rm -rf "$dir"
+}
+
+# Behavior: the lexical fallback protects the same write boundary when
+# realpath(1) is unavailable. The fallback is deliberately forced with a
+# failing shim so this does not accidentally exercise the normal branch.
+case_gate_remediation_closure_publish_rejects_symlinked_ancestor_without_realpath() {
+  local name="remediation-closure: fallback rejects symlinked ancestor"
+  should_run "$name" || return 0
+  local dir target root fakebin closure
+  dir="$(mktemp -d /tmp/gate-remediation-closure-fallback-XXXXXX)"
+  target="$dir/redirect-target"
+  root="$dir/trusted-root"
+  fakebin="$dir/fakebin"
+  mkdir -p "$target" "$root" "$fakebin"
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$fakebin/realpath"
+  chmod +x "$fakebin/realpath"
+  ln -s "$target" "$root/redirect"
+  _gate_closure_write_publish_fixture "$dir"
+  closure="$root/redirect/closure.json"
+  if PATH="$fakebin:$PATH" gate_remediation_closure_publish \
+      "$dir/result.md" "$dir/result.md.assurance.json" "$closure" \
+      >/dev/null 2>&1; then
+    fail "$name" "realpath-unavailable fallback accepted a symlinked ancestor"
+  elif [[ -e "$target/closure.json" ]] ||
+      compgen -G "$target/closure.json.tmp.*" >/dev/null; then
+    fail "$name" "fallback wrote closure output below the redirected target"
+  else
+    pass "$name"
+  fi
+  rm -rf "$dir"
+}
+
+# Behavior: a concurrent pathname replacement after validation cannot redirect
+# the publication away from the already pinned directory inode.
+case_gate_remediation_closure_publish_survives_directory_swap() {
+  local name="remediation-closure: pinned parent survives directory swap"
+  should_run "$name" || return 0
+  local dir original attacker root closure
+  dir="$(mktemp -d /tmp/gate-remediation-closure-swap-XXXXXX)"
+  original="$dir/original"
+  attacker="$dir/attacker"
+  root="$dir/root"
+  mkdir -p "$original" "$attacker" "$root"
+  _gate_closure_write_publish_fixture "$dir"
+  mv "$original" "$root/target"
+  closure="$root/target/closure.json"
+  # shellcheck disable=SC2329  # invoked indirectly by the publisher test seam
+  gate_closure_test_after_parent_pin() {
+    mv "$root/target" "$root/original-pinned"
+    ln -s "$attacker" "$root/target"
+  }
+  if gate_remediation_closure_publish "$dir/result.md" \
+      "$dir/result.md.assurance.json" "$closure" >/dev/null 2>&1 &&
+      [[ -s "$root/original-pinned/closure.json" ]] &&
+      [[ ! -e "$attacker/closure.json" ]] &&
+      ! compgen -G "$attacker/closure.json.tmp.*" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "directory swap redirected closure output"
+  fi
+  unset -f gate_closure_test_after_parent_pin
+  rm -rf "$dir"
+}
+
+# Behavior: the reusable assurance binder validates closure claims before it
+# can replace the assurance sidecar.
+# Steps: publish a valid closure, then submit malformed and scope-mismatched
+# replacements; each call must fail and preserve the prior assurance bytes.
+case_gate_remediation_closure_bind_rejects_invalid_input() {
+  local name="remediation-closure: binder rejects invalid closure claims"
+  should_run "$name" || return 0
+  local dir closure assurance before malformed mismatched
+  dir="$(mktemp -d /tmp/gate-remediation-closure-bind-invalid-XXXXXX)"
+  _gate_closure_write_publish_fixture "$dir"
+  closure="$dir/closure.json"
+  assurance="$dir/result.md.assurance.json"
+  if ! gate_remediation_closure_publish "$dir/result.md" "$assurance" \
+      "$closure" >/dev/null 2>&1; then
+    fail "$name" "valid closure fixture could not be published"
+    rm -rf "$dir"
+    return
+  fi
+  if ! gate_remediation_closure_bind_assurance "$dir/result.md" "$assurance" \
+      "$closure" >/dev/null 2>&1; then
+    fail "$name" "valid closure fixture could not be bound"
+    rm -rf "$dir"
+    return
+  fi
+  before="$(gate_digest_file "$assurance")"
+
+  malformed="$dir/malformed.json"
+  printf '{}\n' > "$malformed"
+  if gate_remediation_closure_bind_assurance "$dir/result.md" "$assurance" \
+      "$malformed" >/dev/null 2>&1 ||
+      [[ "$(gate_digest_file "$assurance")" != "$before" ]]; then
+    fail "$name" "malformed closure changed the assurance sidecar"
+    rm -rf "$dir"
+    return
+  fi
+
+  mismatched="$dir/mismatched.json"
+  jq '.scope_manifest_sha256 = ("b" * 64)' "$closure" > "$mismatched"
+  if gate_remediation_closure_bind_assurance "$dir/result.md" "$assurance" \
+      "$mismatched" >/dev/null 2>&1 ||
+      [[ "$(gate_digest_file "$assurance")" != "$before" ]]; then
+    fail "$name" "scope-mismatched closure changed the assurance sidecar"
+    rm -rf "$dir"
+    return
+  fi
+  pass "$name"
+  rm -rf "$dir"
+}
+
+# Behavior: assurance binding remains confined to the directory inode pinned
+# before a concurrent pathname replacement.
+# Steps: invoke the binder's deterministic post-pin seam, rename the trusted
+# parent, replace its pathname with an attacker symlink, and assert only the
+# original pinned directory receives the verified assurance update.
+case_gate_remediation_closure_bind_assurance_survives_directory_swap() {
+  local name="remediation-closure: assurance binder survives directory swap"
+  should_run "$name" || return 0
+  local dir root target attacker closure
+  dir="$(mktemp -d /tmp/gate-remediation-closure-bind-swap-XXXXXX)"
+  root="$dir/root"
+  target="$root/target"
+  attacker="$root/attacker"
+  mkdir -p "$target" "$attacker"
+  _gate_closure_write_publish_fixture "$target"
+  closure="$target/closure.json"
+  if ! gate_remediation_closure_publish "$target/result.md" \
+      "$target/result.md.assurance.json" "$closure" >/dev/null 2>&1; then
+    fail "$name" "valid closure fixture could not be published"
+    rm -rf "$dir"
+    return
+  fi
+  # shellcheck disable=SC2329  # invoked indirectly by the binder test seam
+  gate_closure_test_after_assurance_parent_pin() {
+    mv "$target" "$root/original-pinned"
+    ln -s "$attacker" "$target"
+  }
+  if gate_remediation_closure_bind_assurance \
+      "$target/result.md" "$target/result.md.assurance.json" "$closure" \
+      >/dev/null 2>&1 &&
+      jq -e '.evidence.closure.status == "verified"' \
+        "$root/original-pinned/result.md.assurance.json" >/dev/null 2>&1 &&
+      [[ ! -e "$attacker/result.md.assurance.json" ]] &&
+      ! compgen -G "$attacker/*.closure-tmp.*" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "assurance binding escaped the pinned directory inode"
+  fi
+  unset -f gate_closure_test_after_assurance_parent_pin
+  rm -rf "$dir"
+}
+
+# Behavior: targeted closure primary evidence is always the subject-bound v3
+# initial result, never the current result fallback.
+# Steps: publish a targeted closure with distinct initial/current verdicts and
+# assert the initial artifact is recorded as primary; reject a v2 sidecar.
+case_gate_remediation_closure_targeted_uses_v3_primary() {
+  local name="remediation-closure: targeted primary is v3 initial result"
+  should_run "$name" || return 0
+  local dir subject scope_sha initial current assurance closure initial_assurance_sha
+  dir="$(mktemp -d /tmp/gate-remediation-closure-targeted-XXXXXX)"
+  subject="$(printf 'd%.0s' {1..64})"
+  scope_sha="$(printf 'a%.0s' {1..64})"
+  initial="$dir/initial.md"
+  current="$dir/current.md"
+  assurance="$current.assurance.json"
+  closure="$dir/closure.json"
+  printf 'Final: NO-GO\n' > "$initial"
+  {
+    printf '\n```synthesis_result_v1\n'
+    _gate_synthesis_result_valid_instance |
+      jq '.findings_union[0].origin = "diff_caused" |
+        .findings_union[0].severity = "high" |
+        .findings_union[0].hard_gate_class = "soft_block" |
+        .findings_union[0].source = {path:"runtime/lib/gate-closure.sh",line:202,symbol:"gate_remediation_closure_publish"}'
+    printf '```\n'
+  } >> "$initial"
+  printf 'Final: GO\n' > "$current"
+  jq -n --arg subject "$subject" --arg scope_sha "$scope_sha" --arg initial "$initial" '{
+    kind:"gate_assurance_v3",schema_version:3,
+    subject:{repository_key:("c" * 64),base_commit:("1" * 40),head_commit:("2" * 40),tree_fingerprint:$subject,subject_kind:"committed_head"},
+    coordinates:{pass:{resolved:"initial",initial_result:null}},
+    evidence:{scope_manifest:{artifact:"scope.json",sha256:$scope_sha}}
+  }' > "$initial.assurance.json"
+  initial_assurance_sha="$(sha256sum "$initial.assurance.json" | awk '{print $1}')"
+  jq -n --arg subject "$subject" --arg scope_sha "$scope_sha" --arg initial "$initial" \
+    --arg initial_sha "$(sha256sum "$initial" | awk "{print \$1}")" \
+    --arg initial_assurance_sha "$initial_assurance_sha" '{
+    kind:"gate_assurance_v3",schema_version:3,
+    subject:{repository_key:("c" * 64),base_commit:("1" * 40),head_commit:("2" * 40),tree_fingerprint:$subject,subject_kind:"committed_head"},
+    coordinates:{pass:{resolved:"targeted",initial_result:$initial,initial_result_sha256:$initial_sha,initial_assurance_sha256:$initial_assurance_sha}},
+    evidence:{scope_manifest:{artifact:"scope.json",sha256:$scope_sha}}
+  }' > "$assurance"
+  jq -n '{changes:{changed_paths:["runtime/lib/gate-closure.sh"],renamed_paths:[],untracked_paths:[]},diff:{binary_or_special_paths:[]}}' > "$dir/scope.json"
+  if ! gate_remediation_closure_publish "$current" "$assurance" "$closure" >/dev/null 2>&1; then
+    fail "$name" "valid v3 targeted publication failed"
+    rm -rf "$dir"
+    return
+  fi
+  if ! gate_remediation_closure_bind_assurance "$current" "$assurance" "$closure" >/dev/null 2>&1; then
+    fail "$name" "targeted closure could not be bound to assurance"
+    rm -rf "$dir"
+    return
+  fi
+  if [[ "$(jq -r '.evidence.closure.status' "$assurance")" != verified ]]; then
+    fail "$name" "targeted assurance did not retain the bound closure"
+    rm -rf "$dir"
+    return
+  fi
+  if ! jq -e '
+      .primary.gate_result.artifact == "initial.md" and
+      .primary.verdict == "NO-GO" and
+      .state == "closed" and
+      (.findings | any(.finding_id == "critic-F001" and .disposition == "closed"))
+    ' \
+      "$closure" >/dev/null 2>&1; then
+    fail "$name" "closure did not retain and reconcile the v3 primary finding ledger"
+    rm -rf "$dir"
+    return
+  fi
+  cp -- "$initial" "$initial.snapshot"
+  printf 'tampered-after-acceptance\n' >> "$initial"
+  if gate_remediation_closure_publish "$current" "$assurance" "$dir/tampered-closure.json" \
+      >/dev/null 2>&1; then
+    mv -- "$initial.snapshot" "$initial"
+    fail "$name" "replacement initial result was accepted despite digest binding"
+    rm -rf "$dir"
+    return
+  fi
+  mv -- "$initial.snapshot" "$initial"
+  cp -- "$initial.assurance.json" "$initial.assurance.json.snapshot"
+  printf 'tampered-sidecar-after-acceptance\n' >> "$initial.assurance.json"
+  if gate_remediation_closure_publish "$current" "$assurance" "$dir/tampered-sidecar-closure.json" \
+      >/dev/null 2>&1; then
+    mv -- "$initial.assurance.json.snapshot" "$initial.assurance.json"
+    fail "$name" "replacement initial assurance sidecar was accepted despite digest binding"
+    rm -rf "$dir"
+    return
+  fi
+  mv -- "$initial.assurance.json.snapshot" "$initial.assurance.json"
+  jq '.kind = "gate_assurance_v2" | .schema_version = 2' \
+    "$initial.assurance.json" > "$initial.assurance.json.tmp"
+  mv -- "$initial.assurance.json.tmp" "$initial.assurance.json"
+  if gate_remediation_closure_publish "$current" "$assurance" "$dir/v2-closure.json" >/dev/null 2>&1; then
+    fail "$name" "v2 initial sidecar was accepted"
+  else
+    pass "$name"
+  fi
+  rm -rf "$dir"
+}
+
 # Behavior: a complete synthesis parity document must satisfy its JSON schema.
 # Steps:
 #   1. Generate the canonical synthesis fixture.
@@ -1968,6 +2632,62 @@ case_gate_policy_override_mode_key_rejected() {
   rm -f "$tmpf"
 }
 
+case_gate_structural_generated_bundle_current() {
+  local name="Gate structural schema bundle is fresh"
+  should_run "$name" || return 0
+  if "$REPO_ROOT/tools/generate/gate-structural-validator.sh" --check; then
+    pass "$name"
+  else
+    fail "$name" "generated bundle is stale"
+  fi
+}
+
+case_gate_structural_valid_instances() {
+  local name="schema-derived Gate validator accepts canonical instances"
+  local tmpf
+  should_run "$name" || return 0
+  tmpf="$(mktemp "${TMPDIR:-/tmp}/gate-structural-valid.XXXXXX")"
+  local ok=true schema instance
+  for schema in gate-scope-manifest gate-assurance gate-verification \
+      gate-reviewer-result gate-synthesis-result gate-policy-override \
+      gate-remediation-closure; do
+    case "$schema" in
+      gate-scope-manifest) instance="$(_gate_scope_manifest_valid_instance)" ;;
+      gate-assurance) instance="$(_gate_assurance_valid_instance)" ;;
+      gate-verification) instance="$(_gate_verification_valid_instance)" ;;
+      gate-reviewer-result) instance="$(_gate_reviewer_result_valid_instance)" ;;
+      gate-synthesis-result) instance="$(_gate_synthesis_result_valid_instance)" ;;
+      gate-policy-override) instance="$(_gate_policy_override_valid_instance)" ;;
+      gate-remediation-closure) instance="$(_gate_remediation_closure_valid_instance)" ;;
+    esac
+    printf '%s\n' "$instance" > "$tmpf"
+    if ! gate_structural_schema_verify "$schema" "$tmpf" "$name ($schema)"; then
+      ok=false
+    fi
+  done
+  _gate_assurance_v3_valid_instance > "$tmpf"
+  if ! gate_structural_schema_verify gate-assurance "$tmpf" \
+      "$name (gate-assurance v3)"; then
+    ok=false
+  fi
+  rm -f -- "$tmpf"
+  if [[ "$ok" == true ]]; then pass "$name"; else fail "$name" "canonical instance rejected"; fi
+}
+
+case_gate_structural_rejects_extra_key() {
+  local name="schema-derived Gate validator rejects extra keys" tmpf
+  should_run "$name" || return 0
+  tmpf="$(mktemp "${TMPDIR:-/tmp}/gate-structural-invalid.XXXXXX")"
+  _gate_policy_override_valid_instance | jq '.unexpected = true' > "$tmpf"
+  if gate_structural_schema_verify gate-policy-override "$tmpf" "$name"; then
+    rm -f -- "$tmpf"
+    fail "$name" "extra key was accepted"
+  else
+    rm -f -- "$tmpf"
+    pass "$name"
+  fi
+}
+
 case_context_pack_v1_still_valid
 case_context_pack_v2_new_fields_valid
 case_context_pack_memory_source_domain_valid
@@ -2007,6 +2727,22 @@ case_gate_reviewer_result_malformed_test_gap_rejected
 case_gate_synthesis_result_valid_instance
 case_gate_synthesis_result_missing_verification_rejected
 case_gate_synthesis_result_closed_seed_rejected
+case_gate_remediation_closure_valid_instance
+case_gate_remediation_closure_invalid_finding_rejected
+case_gate_remediation_closure_runtime_claims
+case_gate_result_verifier_uses_read_side_closure_module
+case_gate_remediation_closure_evidence_locator_required
+case_gate_remediation_closure_publish_is_no_replace
+case_gate_remediation_closure_does_not_invent_changed_path
+case_gate_remediation_closure_publish_rejects_symlink_destination
+case_gate_remediation_closure_publish_rejects_directory_destination
+case_gate_remediation_closure_publish_rejects_hardlink_destination
+case_gate_remediation_closure_publish_rejects_symlinked_ancestor
+case_gate_remediation_closure_publish_rejects_symlinked_ancestor_without_realpath
+case_gate_remediation_closure_publish_survives_directory_swap
+case_gate_remediation_closure_bind_rejects_invalid_input
+case_gate_remediation_closure_bind_assurance_survives_directory_swap
+case_gate_remediation_closure_targeted_uses_v3_primary
 case_gate_synthesis_result_invalid_verification_plan_rejected
 case_gate_synthesis_result_contradictory_no_gap_rejected
 case_gate_synthesis_result_incomplete_gap_rejected
@@ -2014,5 +2750,8 @@ case_gate_policy_override_valid_instance
 case_gate_policy_override_non_user_approver_rejected
 case_gate_policy_override_extra_key_rejected
 case_gate_policy_override_mode_key_rejected
+case_gate_structural_generated_bundle_current
+case_gate_structural_valid_instances
+case_gate_structural_rejects_extra_key
 
 th_summary

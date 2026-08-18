@@ -248,7 +248,10 @@ case_detached_launch_fails_loud_on_early_supervisor_death() {
   _run_gate_wrapper "$fixture" "$run_wrapper"
 
   local out code
-  set +e; out="$(PM_GATE_READY_TIMEOUT=1 "$run_wrapper" --cd "$work" --lifecycle detached 2>&1)"; code=$?; set -e
+  # Keep the readiness evidence window long enough for a loaded host to start
+  # the deliberately dying supervisor. The terminal-before-ready assertion
+  # should test lifecycle classification, not scheduler latency.
+  set +e; out="$(PM_GATE_READY_TIMEOUT=5 "$run_wrapper" --cd "$work" --lifecycle detached 2>&1)"; code=$?; set -e
   if [[ "$code" -eq 2 ]] && [[ "$out" == *"exited before readiness"* ]] && [[ "$out" == *"--lifecycle foreground"* ]]; then
     pass "$name"
   else

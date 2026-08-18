@@ -38,6 +38,13 @@ CLAUDE_HOME	CLAUDE_HOME	runtime/lib/portable.sh	production
 CLAUDE_HOME	CLAUDE_HOME	uninstall.sh	production
 CODEX_DISPATCH_TIMEOUT	CODEX_DISPATCH_TIMEOUT	adapters/codex/dispatch.sh	production
 CODEX_DISPATCH_TIMEOUT	CODEX_DISPATCH_TIMEOUT	runtime/lib/pmctl-dispatch.sh	production
+CODEX_GATE_CAPTURE_*	CODEX_GATE_CAPTURE_BRIEF	tests/shell/test-pr-gate.sh	test
+CODEX_GATE_CAPTURE_*	CODEX_GATE_CAPTURE_DISPATCH_ARGS	tests/shell/test-pr-gate.sh	test
+CODEX_GATE_CAPTURE_*	CODEX_GATE_CAPTURE_QA_RULES_DIR	tests/shell/test-pr-gate.sh	test
+CODEX_GATE_CAPTURE_*	CODEX_GATE_CAPTURE_REVIEWER_BRIEF	tests/shell/test-pr-gate.sh	test
+CODEX_GATE_CAPTURE_*	CODEX_GATE_CAPTURE_REVIEWER_DEFS	tests/shell/test-pr-gate.sh	test
+CODEX_GATE_CAPTURE_*	CODEX_GATE_CAPTURE_REVIEWER_FILTER	tests/shell/test-pr-gate.sh	test
+CODEX_GATE_CAPTURE_*	CODEX_GATE_CAPTURE_SCOPE_DIR	tests/shell/test-pr-gate.sh	test
 CODEX_GATE_STUB_*	CODEX_GATE_STUB_	tests/shell/test-pr-gate.sh	test
 CODEX_GATE_STUB_*	CODEX_GATE_STUB_ASSURANCE_FRONTMATTER	tests/shell/test-pr-gate.sh	test
 CODEX_GATE_STUB_*	CODEX_GATE_STUB_BOLD_FINAL	tests/shell/test-pr-gate.sh	test
@@ -52,6 +59,7 @@ CODEX_GATE_STUB_*	CODEX_GATE_STUB_FAIL_REVIEWER	tests/shell/test-pr-gate.sh	test
 CODEX_GATE_STUB_*	CODEX_GATE_STUB_FRONTMATTER_FINAL	tests/shell/test-pr-gate.sh	test
 CODEX_GATE_STUB_*	CODEX_GATE_STUB_FRONTMATTER_OPENING	tests/shell/test-pr-gate.sh	test
 CODEX_GATE_STUB_*	CODEX_GATE_STUB_HEADER_ONLY_VERDICT	tests/shell/test-pr-gate.sh	test
+CODEX_GATE_STUB_*	CODEX_GATE_STUB_HOSTILE_SIDE_EFFECT_MARKER	tests/shell/test-pr-gate.sh	test
 CODEX_GATE_STUB_*	CODEX_GATE_STUB_INJECT_FILE	tests/shell/test-pr-gate.sh	test
 CODEX_GATE_STUB_*	CODEX_GATE_STUB_MODE	tests/lib/test-pr-gate-fixture.sh	test
 CODEX_GATE_STUB_*	CODEX_GATE_STUB_MODE	tests/shell/test-pr-gate.sh	test
@@ -61,6 +69,13 @@ CODEX_GATE_STUB_*	CODEX_GATE_STUB_PROTOCOL_MUTATION	tests/shell/test-pr-gate.sh	
 CODEX_GATE_STUB_*	CODEX_GATE_STUB_PROTOCOL_MUTATION_ONLY_FIRST	tests/shell/test-pr-gate.sh	test
 CODEX_GATE_STUB_*	CODEX_GATE_STUB_QA_ABORT_AFTER_CHECKPOINT	tests/shell/test-pr-gate.sh	test
 CODEX_GATE_STUB_*	CODEX_GATE_STUB_RESULT_VERSION	tests/shell/test-pr-gate.sh	test
+CODEX_GATE_STUB_*	CODEX_GATE_STUB_SEQUENTIAL_REVIEWER_MUTATE_ON_RETRY	tests/shell/test-pr-gate.sh	test
+CODEX_GATE_STUB_*	CODEX_GATE_STUB_SEQUENTIAL_RETRY_HANG	tests/shell/test-pr-gate.sh	test
+CODEX_GATE_STUB_*	CODEX_GATE_STUB_SEQUENTIAL_RETRY_READY_FIFO	tests/shell/test-pr-gate.sh	test
+CODEX_GATE_STUB_*	CODEX_GATE_STUB_SEQUENTIAL_RETRY_REJECT_HOSTILE_INPUT	tests/shell/test-pr-gate.sh	test
+CODEX_GATE_STUB_*	CODEX_GATE_STUB_SEQUENTIAL_SYNTHESIS_DUPLICATE	tests/shell/test-pr-gate.sh	test
+CODEX_GATE_STUB_*	CODEX_GATE_STUB_SEQUENTIAL_SYNTHESIS_RETRY	tests/shell/test-pr-gate.sh	test
+CODEX_GATE_STUB_*	CODEX_GATE_STUB_SEQUENTIAL_SYNTHESIS_RETRY_ALWAYS	tests/shell/test-pr-gate.sh	test
 CODEX_GATE_STUB_*	CODEX_GATE_STUB_SYNTHESIS_EXTRA_FINAL	tests/shell/test-pr-gate.sh	test
 CODEX_GATE_STUB_*	CODEX_GATE_STUB_SYNTHESIS_FINAL	tests/shell/test-pr-gate.sh	test
 CODEX_GATE_STUB_*	CODEX_GATE_STUB_SYNTHESIS_INJECT_FILE	tests/shell/test-pr-gate.sh	test
@@ -159,6 +174,7 @@ PATH	PATH	runtime/bin/pr-gate.sh	production
 PATH	PATH	runtime/lib/allowlist.sh	production
 PATH	PATH	runtime/lib/artifact-paths.sh	production
 PATH	PATH	runtime/lib/executor-router.sh	production
+PATH	PATH	runtime/lib/gate-closure.sh	production
 PATH	PATH	runtime/lib/guard-framework.sh	production
 PATH	PATH	runtime/lib/pmctl-context.sh	production
 PATH	PATH	runtime/lib/pmctl-decision.sh	production
@@ -331,6 +347,7 @@ REPO_ROOT	REPO_ROOT	runtime/lib/pmctl-context.sh	production
 REPO_ROOT	REPO_ROOT	runtime/lib/pmctl-memory.sh	production
 REPO_ROOT	REPO_ROOT	tests/bin/run-tests.sh	production
 REPO_ROOT	REPO_ROOT	tests/lib/live-db-guard.sh	production
+REPO_ROOT	REPO_ROOT	tools/generate/gate-structural-validator.sh	production
 REPO_ROOT	REPO_ROOT	tools/lint/check-docs-freshness.sh	production
 REPO_ROOT	REPO_ROOT	tools/skills/skill-refine.sh	production
 REPO_ROOT	REPO_ROOT	uninstall.sh	production
@@ -362,6 +379,7 @@ SCRIPT_DIR	SCRIPT_DIR	runtime/bin/dispatch-post-verify.sh	production
 SCRIPT_DIR	SCRIPT_DIR	runtime/bin/doctor.sh	production
 SCRIPT_DIR	SCRIPT_DIR	tests/bin/run-all-tests.sh	production
 SCRIPT_DIR	SCRIPT_DIR	tests/bin/run-tests.sh	production
+SCRIPT_DIR	SCRIPT_DIR	tools/generate/gate-structural-validator.sh	production
 SCRIPT_DIR	SCRIPT_DIR	tools/lint/check-docs-freshness.sh	production
 SCRIPT_DIR	SCRIPT_DIR	tools/skills/skill-refine.sh	production
 TEST_GUARDS_*	TEST_GUARDS_CHILD_DEADLINE	tests/shell/test-guards.sh	test
@@ -379,9 +397,11 @@ TMPDIR	TMPDIR	hosts/codex/bin/continue-dispatch.sh	production
 TMPDIR	TMPDIR	hosts/opencode/bin/install.sh	production
 TMPDIR	TMPDIR	ops/release/upgrade-smoke-v0.8-v0.9.sh	production
 TMPDIR	TMPDIR	runtime/bin/pr-gate.sh	production
+TMPDIR	TMPDIR	runtime/lib/gate-closure.sh	production
 TMPDIR	TMPDIR	runtime/lib/gate-policy.sh	production
 TMPDIR	TMPDIR	runtime/lib/gate-result-verify.sh	production
 TMPDIR	TMPDIR	runtime/lib/gate-scope.sh	production
+TMPDIR	TMPDIR	runtime/lib/gate-structural-verify.sh	production
 TMPDIR	TMPDIR	runtime/lib/handover-validate.sh	production
 TMPDIR	TMPDIR	runtime/lib/install-receipt.sh	production
 TMPDIR	TMPDIR	runtime/lib/memory.sh	production
@@ -390,6 +410,7 @@ TMPDIR	TMPDIR	runtime/lib/pmctl-gate.sh	production
 TMPDIR	TMPDIR	runtime/lib/pmctl-pm.sh	production
 TMPDIR	TMPDIR	runtime/lib/portable.sh	production
 TMPDIR	TMPDIR	tools/eval/gate-test-gap-live-eval.sh	production
+TMPDIR	TMPDIR	tools/generate/gate-structural-validator.sh	production
 XAI_API_KEY	XAI_API_KEY	hosts/grok/lib/doctor.sh	production
 XAI_API_KEY	XAI_API_KEY	runtime/bin/doctor.sh	production
 XDG_CACHE_HOME	XDG_CACHE_HOME	tools/lint/bootstrap-shellcheck.sh	production

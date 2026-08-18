@@ -236,7 +236,15 @@
             "requested": { "enum": ["initial", "targeted"] },
             "resolved": { "enum": ["initial", "targeted"] },
             "scope": { "enum": ["comprehensive", "remediation-delta"] },
-            "initial_result": { "type": ["string", "null"] }
+            "initial_result": { "type": ["string", "null"] },
+            "initial_result_sha256": {
+              "type": ["string", "null"],
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "initial_assurance_sha256": {
+              "type": ["string", "null"],
+              "pattern": "^[a-f0-9]{64}$"
+            }
           },
           "additionalProperties": false
         },
@@ -293,7 +301,7 @@
             "properties": {
               "role": { "enum": ["combined", "reviewer", "synthesis", "preflight"] },
               "reviewer": { "type": ["string", "null"] },
-              "status": { "enum": ["passed", "failed", "skipped"] },
+              "status": { "enum": ["passed", "failed", "skipped", "incomplete"] },
               "run_id": { "type": ["string", "null"] },
               "evidence_status": { "enum": ["verified", "unavailable", "unverified"] }
             },
@@ -495,7 +503,18 @@
               ],
               "properties": {
                 "status": { "const": "linked" },
-                "outcome": { "enum": ["pass", "fail"] },
+                "outcome": {
+                  "enum": [
+                    "pass",
+                    "fail",
+                    "test-fail",
+                    "timeout",
+                    "environment-error",
+                    "stale",
+                    "invalid-evidence",
+                    "unclassified-nonzero"
+                  ]
+                },
                 "artifact": {
                   "type": "string",
                   "pattern": "^preflight-evidence-[0-9]{8}-[0-9]{6}\\.json$"

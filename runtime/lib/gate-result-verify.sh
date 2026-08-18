@@ -35,6 +35,16 @@ if ! declare -F pm_identifier_run_ere_pattern >/dev/null 2>&1; then
   # shellcheck disable=SC1091
   . "${BASH_SOURCE[0]%/*}/identifier-policy.sh"
 fi
+if ! declare -F gate_structural_schema_verify >/dev/null 2>&1; then
+  # shellcheck source=runtime/lib/gate-structural-verify.sh
+  # shellcheck disable=SC1091
+  . "${BASH_SOURCE[0]%/*}/gate-structural-verify.sh"
+fi
+if ! declare -F gate_remediation_closure_verify >/dev/null 2>&1; then
+  # shellcheck source=runtime/lib/gate-closure-verify.sh
+  # shellcheck disable=SC1091
+  . "${BASH_SOURCE[0]%/*}/gate-closure-verify.sh"
+fi
 
 gate_result_verdict_verify() {
   local result_file=${1-} expected_final=${2-} route_label=${3-gate}
@@ -470,6 +480,12 @@ gate_reviewer_protocol_verify() {
       rm -rf -- "$tmp_dir"
       return 1
     fi
+    if ! gate_structural_schema_verify gate-reviewer-result "$document" \
+        "reviewer protocol ($reviewer)"; then
+      GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR="schema structural contract failed"
+      rm -rf -- "$tmp_dir"
+      return 1
+    fi
     # CC-541: detect (from the already-parsed structured document, not a
     # later markdown re-scan) a qa-tester block/block-soft finding whose
     # own text cites the rules source as missing, while this orchestrator
@@ -529,7 +545,7 @@ _gate_synthesis_protocol_documents() {
 gate_synthesis_protocol_verify() {
   local artifact=${1-} selected=${2-} skipped=${3-} scope_sha=${4-}
   local require_test_gaps=${5-false}
-  local tmp_dir synthesis_documents reviewer_documents synthesis_count validation
+  local tmp_dir synthesis_documents synthesis_document reviewer_documents synthesis_count validation
   local heading heading_count
   GATE_SYNTHESIS_PROTOCOL_ERROR=""
   [[ $# -ge 4 && $# -le 5 && -s "$artifact" && -n "$selected" \
@@ -563,6 +579,12 @@ gate_synthesis_protocol_verify() {
     rm -rf -- "$tmp_dir"
     return 1
   fi
+  synthesis_document="$tmp_dir/synthesis.json"
+  jq -s '.[0]' "$synthesis_documents" > "$synthesis_document" || {
+    GATE_SYNTHESIS_PROTOCOL_ERROR="invalid synthesis JSON"
+    rm -rf -- "$tmp_dir"
+    return 1
+  }
   if ! _gate_reviewer_protocol_documents "$artifact" \
       > "$reviewer_documents" \
       || ! jq -s -e 'length > 0' "$reviewer_documents" >/dev/null 2>&1; then
@@ -854,6 +876,12 @@ gate_synthesis_protocol_verify() {
     GATE_SYNTHESIS_PROTOCOL_ERROR="$validation"
     printf 'Error: synthesis protocol INCOMPLETE: %s in %s\n' \
       "$validation" "$artifact" >&2
+    rm -rf -- "$tmp_dir"
+    return 1
+  fi
+  if ! gate_structural_schema_verify gate-synthesis-result "$synthesis_document" \
+      "synthesis protocol"; then
+    GATE_SYNTHESIS_PROTOCOL_ERROR="schema structural contract failed"
     rm -rf -- "$tmp_dir"
     return 1
   fi
@@ -1151,6 +1179,12 @@ gate_scope_manifest_verify() {
       "$manifest_file" >&2
     return 1
   }
+  if ! gate_structural_schema_verify gate-scope-manifest "$manifest_file" \
+      "gate scope manifest"; then
+    printf 'Error: gate scope manifest failed structural/claim verification: %s\n' \
+      "$manifest_file" >&2
+    return 1
+  fi
   expected_digest="$(jq -r '.content.digest // empty' "$manifest_file" 2>/dev/null)"
   actual_digest="$(jq -cS 'del(.content.digest)' "$manifest_file" 2>/dev/null \
     | _gate_result_sha256_stream)" || return $?
@@ -1502,6 +1536,12 @@ _gate_assurance_linked_evidence_verify() {
           "$artifact_path" >&2
         return 1
       fi
+    elif [[ "$label" == closure ]]; then
+      if ! gate_remediation_closure_verify "$artifact_path" \
+          "$linked_subject" \
+          "$(jq -r '.evidence.scope_manifest.sha256 // empty' "$assurance_file")"; then
+        return 1
+      fi
     fi
   done < <(
     jq -r '
@@ -1584,10 +1624,27 @@ gate_policy_applicability_assess() {
         then "scope_manifest_unavailable" else empty end,
       if $authorization_status != "verified"
         then $authorization_reason else empty end,
-      if ($consumer == "maintainer" or $consumer == "publish") and
-         ($a.coordinates.pass.resolved != "initial" or
-          $a.coordinates.pass.scope != "comprehensive")
+      if $consumer == "maintainer" then
+        if ($a.coordinates.pass.resolved != "initial" or
+            $a.coordinates.pass.scope != "comprehensive")
         then "comprehensive_review_required" else empty end
+      elif $consumer == "publish" and
+           $a.coordinates.pass.resolved == "initial" then
+        if $a.coordinates.pass.scope != "comprehensive"
+        then "comprehensive_review_required" else empty end
+      elif $consumer == "publish" and
+           $a.coordinates.pass.resolved == "targeted" then empty
+      elif $consumer == "publish" then
+        "comprehensive_review_required"
+      else empty end,
+      # A targeted result is remediation evidence only when the Gate
+      # producer has published the subject-bound closure that ship finish is
+      # required to consume. Keep this in the publish policy axis so callers
+      # cannot treat a valid result/sidecar pair as standalone authorization.
+      if $consumer == "publish" and
+         $a.coordinates.pass.resolved == "targeted" and
+         $a.evidence.closure.status != "verified"
+        then "remediation_closure_unavailable" else empty end
     ] | unique) as $reasons |
     {
       status:(if ($reasons | length) == 0 then "pass" else "fail" end),
@@ -1636,6 +1693,12 @@ gate_assurance_verify() {
     GATE_ASSURANCE_BOUND=false
     export GATE_ASSURANCE_BOUND
     return 0
+  fi
+  if ! gate_structural_schema_verify gate-assurance "$assurance_file" \
+      "gate assurance"; then
+    printf 'Error: gate assurance failed structural/claim verification: %s\n' \
+      "$assurance_file" >&2
+    return 1
   fi
   result_sha="$(_gate_result_sha256_file "$result_file")" || return $?
   jq -e --arg final "$body_final" --arg result_sha "$result_sha" \
@@ -1738,7 +1801,8 @@ gate_assurance_verify() {
     (.coordinates | only_keys(["tier","mode","pass","coverage","independence"])) and
     (.coordinates.tier | only_keys(["requested","resolved","evidence_floor","selection_basis"])) and
     (.coordinates.mode | only_keys(["requested","resolved","topology","synthesis"])) and
-    (.coordinates.pass | only_keys(["requested","resolved","scope","initial_result"])) and
+    (.coordinates.pass | only_keys(["requested","resolved","scope","initial_result",
+      "initial_result_sha256","initial_assurance_sha256"])) and
     (.coordinates.coverage |
       only_keys(["requested","selected","skipped","vocabulary","selection_basis"])) and
     (.coordinates.independence |
@@ -2177,6 +2241,52 @@ gate_result_verify() {
       return 1
       ;;
   esac
+}
+
+# gate_initial_result_verify <result_file> [route_label]
+#
+# A targeted pass consumes the initial gate as an authorization baseline, not
+# merely as a structurally readable Markdown result. Legacy v1 results are
+# intentionally still valid evidence for ordinary verification, but they are
+# not eligible as targeted-pass inputs because they predate machine-owned
+# assurance finalization (and failure-results commonly have exactly this
+# shape).
+gate_initial_result_verify() {
+  local result_file=${1-} route_label=${2-targeted initial result}
+  local assurance_kind
+  [[ $# -ge 1 && $# -le 2 ]] || {
+    printf 'gate-result-verify: gate_initial_result_verify expects <result_file> [route_label]\n' >&2
+    return 2
+  }
+
+  # Do not let a previous verification in the same shell make a legacy or
+  # failed result appear assured when gate_result_verify returns structurally
+  # valid for pr_gate_result_v1.
+  GATE_RESULT_ASSURANCE=unavailable
+  unset GATE_RESULT_ASSURANCE_FILE
+  export GATE_RESULT_ASSURANCE
+
+  gate_result_verify "$result_file" "" "$route_label" || return $?
+  if [[ "${GATE_RESULT_ASSURANCE:-unavailable}" != verified ]]; then
+    printf 'Error: targeted pass requires the initial immutable assurance sidecar; supplied --initial-result is a failure-result or predates assurance finalization: %s\n' \
+      "$result_file" >&2
+    return 1
+  fi
+  assurance_kind="$(jq -r '.kind // empty' "${GATE_RESULT_ASSURANCE_FILE:-}" 2>/dev/null)"
+  if [[ "$assurance_kind" != gate_assurance_v3 ]]; then
+    printf 'Error: targeted pass requires a subject-bound v3 immutable assurance sidecar; supplied --initial-result uses %s and is not an authorization baseline: %s\n' \
+      "${assurance_kind:-unknown assurance}" "$result_file" >&2
+    return 1
+  fi
+  if ! jq -e '
+      .coordinates.pass.resolved == "initial" and
+      .coordinates.pass.scope == "comprehensive" and
+      .coordinates.pass.initial_result == null
+    ' "${GATE_RESULT_ASSURANCE_FILE:-}" >/dev/null 2>&1; then
+    printf 'Error: targeted pass requires --initial-result to reference an initial comprehensive review, not another targeted remediation: %s\n' \
+      "$result_file" >&2
+    return 1
+  fi
 }
 
 # These functions are a sourced-library API, not a `bash -c` API. Exporting

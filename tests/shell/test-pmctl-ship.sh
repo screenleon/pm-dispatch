@@ -186,7 +186,35 @@ pmctl_gate_verify() {\
   jq -n '"'"'{kind:"gate_verification_v1",verdict:"GO",axes:{artifact_valid:{status:"pass",reason_codes:[]},subject_current:{status:"pass",reason_codes:[]},policy_applicable:{status:"pass",reason_codes:[]}}}'"'"'\
 }\
 ' "$path/cli/pmctl"
+  # These CLI fixtures replace the external Gate path, so replace its closure
+  # publisher too. The real publisher is covered by pr-gate integration tests.
+  printf '%s\n' \
+    'gate_remediation_closure_publish() {' \
+    "  printf \"%s\\n\" \"{}\" > \"\$3\"" \
+    "  printf \"%s\\n\" \"\$3\"" \
+    '}' >> "$path/runtime/lib/pmctl-ship.sh"
   chmod +x "$path/cli/pmctl"
+}
+
+# Behavior: the real cli/pmctl loader exposes the canonical write-side
+# closure publisher to ship finish. This checks the loader itself, not the
+# fixture's publisher replacement.
+case_cli_loader_includes_closure_publisher() {
+  local name="ship CLI: canonical closure publisher is loaded"
+  should_run "$name" || return 0
+  local fixture="$tmp_root/ship-cli-closure-loader" marker
+  marker="$tmp_root/ship-cli-closure-loader.marker"
+  make_cli_fixture_with_fake_gate "$fixture"
+  # shellcheck disable=SC2016  # the copied loader must retain this runtime expansion
+  printf '\nprintf "loaded\\n" > "${PMCTL_CLOSURE_LOAD_MARKER:?}"\n' \
+    >> "$fixture/runtime/lib/gate-closure.sh"
+  PMCTL_CLOSURE_LOAD_MARKER="$marker" \
+    "$fixture/cli/pmctl" backlog lint >/dev/null 2>&1 || true
+  if [[ -s "$marker" ]]; then
+    pass "$name"
+  else
+    fail "$name" "cli/pmctl did not load runtime/lib/gate-closure.sh"
+  fi
 }
 
 # run_finish_with_fake_gate <work_dir> <ticket_id> <verdict> [extra_args...]
@@ -204,6 +232,7 @@ run_finish_with_fake_gate() {
     artifact_status="${PM_TEST_GATE_ARTIFACT_STATUS:-pass}"
     subject_status="${PM_TEST_GATE_SUBJECT_STATUS:-pass}"
     policy_status="${PM_TEST_GATE_POLICY_STATUS:-pass}"
+    assurance_file="${PM_TEST_GATE_ASSURANCE_FILE:-}"
     pmctl_gate_run() {
       if [[ -n "${PM_TEST_GATE_RUN_MARKER:-}" ]]; then
         : > "$PM_TEST_GATE_RUN_MARKER"
@@ -223,9 +252,11 @@ run_finish_with_fake_gate() {
         --arg artifact_status "$artifact_status" \
         --arg subject_status "$subject_status" \
         --arg policy_status "$policy_status" \
+        --arg assurance_file "$assurance_file" \
         '"'"'{
           kind:"gate_verification_v1",
           verdict:$verdict,
+          assurance:{file:(if $assurance_file == "" then null else $assurance_file end)},
           axes:{
             artifact_valid:{
               status:$artifact_status,
@@ -244,9 +275,73 @@ run_finish_with_fake_gate() {
       [[ "$verdict" == "GO" && "$artifact_status" == "pass" \
         && "$subject_status" == "pass" && "$policy_status" == "pass" ]]
     }
+    if [[ "${PM_TEST_REAL_CLOSURE:-}" == 1 ]]; then
+      . "$repo_root/runtime/lib/gate-closure.sh"
+    else
+      gate_remediation_closure_publish() {
+        printf "%s\\n" "{}" > "$3"
+        printf "%s\\n" "$3"
+      }
+    fi
     . "$repo_root/runtime/lib/pmctl-ship.sh"
     pmctl_ship_finish "$repo_root" "$work_dir" "$ticket_id" "$@"
   ' _ "$REPO_ROOT" "$work_dir" "$ticket_id" "$verdict" "$@"
+}
+
+# make_real_ship_closure_evidence <work_dir> <subject_fingerprint>
+# Creates a committed, current-subject Gate result/assurance/scope bundle and
+# an authoritative full-suite result. The real closure publisher consumes these
+# artifacts, so ship-finish integration tests exercise the same producer path
+# used after a formal Gate rather than a publisher stub.
+make_real_ship_closure_evidence() {
+  local work_dir="$1" subject_fingerprint="$2"
+  local evidence_dir="$work_dir/evidence" scope_file result_file assurance_file
+  local full_file scope_sha
+  scope_file="$evidence_dir/gate-scope.json"
+  result_file="$evidence_dir/gate.md"
+  assurance_file="$result_file.assurance.json"
+  full_file="$evidence_dir/full-result.json"
+  mkdir -p "$evidence_dir"
+  jq -n --arg subject "$subject_fingerprint" ' {
+    kind:"gate_scope_manifest_v1", schema_version:1, status:"complete",
+    subject:{repository_key:("b" * 64),base_commit:("c" * 40),
+      head_commit:("d" * 40),tree_fingerprint:$subject,subject_kind:"committed_head"},
+    selection:{diff_kind:"committed",base_ref:"main",head_ref:"HEAD",include_untracked:false},
+    changes:{changed_paths:["README.md"],renamed_paths:[],untracked_paths:[]},
+    diff:{binary_or_special_paths:[]},paired_tests:[],sensitive_signals:[],
+    flags:{},expansion:{},truncation:{},content:{}
+  }' > "$scope_file"
+  scope_sha="$(sha256sum "$scope_file" | awk '{print $1}')"
+  cat > "$result_file" <<'RESULT_EOF'
+---
+gate_result_version: pr_gate_result_v5
+final: GO
+tier: full
+mode: parallel
+most_severe: approve
+---
+
+# PR-Gate Result — ship closure integration fixture
+
+## Gate Conclusion
+Final: GO
+RESULT_EOF
+  jq -n --arg subject "$subject_fingerprint" --arg scope_sha "$scope_sha" ' {
+    kind:"gate_assurance_v3", schema_version:3, result:{final:"GO"},
+    bindings:{result_sha256:"",repo_identity:("b" * 64),
+      base_commit:("c" * 40),head_commit:("d" * 40),subject_fingerprint:$subject},
+    coordinates:{pass:{requested:"initial",resolved:"initial",scope:"comprehensive",initial_result:null}},
+    subject:{repository_key:("b" * 64),base_commit:("c" * 40),
+      head_commit:("d" * 40),tree_fingerprint:$subject,subject_kind:"committed_head"},
+    evidence:{scope_manifest:{status:"verified",artifact:"gate-scope.json",
+      sha256:$scope_sha,subject_fingerprint:$subject}}
+  }' > "$assurance_file"
+  jq -n --arg subject "$subject_fingerprint" ' {
+    kind:"pm_test_result_v2", contract:"full", authoritative:true, status:"pass",
+    aggregate:{status:"pass"}, exit_code:0, tree_fingerprint:$subject
+  }' > "$full_file"
+  git -C "$work_dir" add evidence
+  git -C "$work_dir" commit -q -m 'add ship closure evidence fixture'
 }
 
 # run_finish_with_no_result_line <work_dir> <ticket_id>
@@ -1618,6 +1713,77 @@ case_finish_valid_supplied_full_result_publishes() {
   fi
 }
 
+# Behavior: ship finish uses the real immutable closure publisher and refuses
+# full-suite evidence whose subject does not match the Gate assurance subject.
+# Steps: run one clean valid bundle through finish and inspect the published
+# closure, then run a committed mismatch bundle and require refusal before push.
+case_finish_real_closure_binds_full_suite_subject_before_push() {
+  local name="ship finish: real closure binds full-suite subject before push"
+  should_run "$name" || return 0
+  local subject
+  subject="$(printf 'a%.0s' {1..64})"
+  local work out err status=0 closure pushed
+  work="$tmp_root/work-finish-real-closure-valid"
+  make_work_repo "$work" "CC-9001"
+  checkout_ticket_branch "$work" "CC-9001"
+  make_real_ship_closure_evidence "$work" "$subject"
+  add_bare_origin "$work"
+  local gh_bin="$tmp_root/fake-gh-real-closure-valid-bin"
+  install_fake_gh "$gh_bin" "https://example.invalid/pr/real-closure"
+  out="$tmp_root/out-finish-real-closure-valid"
+  err="$tmp_root/err-finish-real-closure-valid"
+  PM_TEST_REAL_CLOSURE=1 \
+    PM_TEST_GATE_ASSURANCE_FILE="$work/evidence/gate.md.assurance.json" \
+    PATH="$gh_bin:$PATH" \
+    run_finish_with_fake_gate "$work" "CC-9001" "GO" \
+      --gate-result "$work/evidence/gate.md" \
+      --full-result "$work/evidence/full-result.json" > "$out" 2> "$err" || status=$?
+  pushed=0
+  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
+  closure="$(find "$work/.pm-dispatch/test-results" -type f \
+    -name 'ship-remediation-closure-*.json' -print -quit 2>/dev/null || true)"
+  if [[ "$status" -ne 0 || "$pushed" -ne 1 || ! -s "$closure" ]] \
+      || ! jq -e --arg subject "$subject" '
+        .kind == "remediation_closure_v1" and .state == "closed" and
+        .final_assessment.full_suite_status == "pass" and
+        .final_assessment.publish_authorized == true and
+        .final_assessment.subject_fingerprint == $subject and
+        (.affected_tests | map(.id) | index("full-suite")) != null
+      ' "$closure" >/dev/null 2>&1; then
+    fail "$name" "valid real closure did not authorize publish; status=$status pushed=$pushed closure=${closure:-missing} stderr=$(cat "$err")"
+    return
+  fi
+
+  local mismatch_work mismatch_out mismatch_err mismatch_status=0 mismatch_pushed=0
+  mismatch_work="$tmp_root/work-finish-real-closure-mismatch"
+  make_work_repo "$mismatch_work" "CC-9001"
+  checkout_ticket_branch "$mismatch_work" "CC-9001"
+  make_real_ship_closure_evidence "$mismatch_work" "$subject"
+  jq '.tree_fingerprint = ("f" * 64)' \
+    "$mismatch_work/evidence/full-result.json" > "$mismatch_work/evidence/full-result.tmp"
+  mv "$mismatch_work/evidence/full-result.tmp" "$mismatch_work/evidence/full-result.json"
+  git -C "$mismatch_work" add evidence/full-result.json
+  git -C "$mismatch_work" commit -q -m 'introduce mismatched full-suite subject fixture'
+  add_bare_origin "$mismatch_work"
+  local mismatch_gh_bin="$tmp_root/fake-gh-real-closure-mismatch-bin"
+  install_fake_gh "$mismatch_gh_bin" "https://example.invalid/pr/real-closure-mismatch"
+  mismatch_out="$tmp_root/out-finish-real-closure-mismatch"
+  mismatch_err="$tmp_root/err-finish-real-closure-mismatch"
+  PM_TEST_REAL_CLOSURE=1 \
+    PM_TEST_GATE_ASSURANCE_FILE="$mismatch_work/evidence/gate.md.assurance.json" \
+    PATH="$mismatch_gh_bin:$PATH" \
+    run_finish_with_fake_gate "$mismatch_work" "CC-9001" "GO" \
+      --gate-result "$mismatch_work/evidence/gate.md" \
+      --full-result "$mismatch_work/evidence/full-result.json" > "$mismatch_out" 2> "$mismatch_err" || mismatch_status=$?
+  git -C "$mismatch_work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && mismatch_pushed=1
+  if [[ "$mismatch_status" -eq 1 && "$mismatch_pushed" -eq 0 ]] \
+      && grep -q "not an authoritative pass for the Gate subject" "$mismatch_err"; then
+    pass "$name"
+  else
+    fail "$name" "mismatched full-suite evidence was not rejected before push; status=$mismatch_status pushed=$mismatch_pushed stderr=$(cat "$mismatch_err")"
+  fi
+}
+
 case_finish_cli_forwards_full_result_option() {
   # Behavior: the public CLI recognizes --full-result rather than rejecting it as an unknown finish option.
   # Steps: invoke the real CLI with a missing option value and require the finish-specific argument diagnostic.
@@ -2302,6 +2468,7 @@ case_finish_invalid_supplied_full_result_refuses_publish
 case_finish_failed_full_suite_refuses_publish
 case_finish_post_suite_head_drift_refuses_publish
 case_finish_valid_supplied_full_result_publishes
+case_finish_real_closure_binds_full_suite_subject_before_push
 case_finish_cli_forwards_full_result_option
 case_finish_cli_forwards_gate_result_option
 case_finish_cli_valid_gate_result_publishes
@@ -2332,6 +2499,7 @@ case_run_flag_auto_pack_reaches_dispatch
 case_run_flag_from_sets_worktree_base
 case_run_dispatches_and_tracks
 case_run_brief_preserves_ship_contract
+case_cli_loader_includes_closure_publisher
 case_run_restores_gc_auto_previously_set
 case_run_restores_gc_auto_previously_unset
 case_status_never_reports_go_from_free_text_without_marker

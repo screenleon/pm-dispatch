@@ -4,6 +4,10 @@
 # The entrypoint supplies the resolved subject, policy, scope, dispatch, and
 # artifact globals; this module owns all assurance-path validation and machine
 # sidecar/attestation publication behavior.
+#
+# gate_finalize_assurance accepts one optional producer callback name as its
+# third argument. The caller must pass that name explicitly; the generic
+# finalizer never discovers producer behavior from the ambient shell namespace.
 
 _gate_assurance_destination_check() {
   local path="$1" nlink
@@ -33,7 +37,7 @@ _gate_assurance_destination_check() {
   fi
 }
 gate_finalize_assurance() {
-  local result_file="$1" assurance_file="$2"
+  local result_file="$1" assurance_file="$2" post_publish_hook="${3:-}"
   local final requested_json outcomes_json independence_status implementation_isolated
   local per_reviewer_independent expected_count capture_count assurance_tmp result_tmp
   local result_sha assurance_sha subject_sha attestation_tmp run_ids_json attestation_pointer
@@ -267,6 +271,8 @@ gate_finalize_assurance() {
     --arg topology "$MODE_TOPOLOGY" --arg synthesis "$MODE_SYNTHESIS" \
     --arg pass_requested "$PASS_KIND_REQUESTED" --arg pass_resolved "$PASS_KIND_RESOLVED" \
     --arg pass_scope "$PASS_SCOPE" --arg initial_result "$INITIAL_RESULT_RESOLVED" \
+    --arg initial_result_sha "$INITIAL_RESULT_SHA256" \
+    --arg initial_assurance_sha "$INITIAL_ASSURANCE_SHA256" \
     --arg pass_syntax "$PASS_SYNTAX_SOURCE" --arg coverage_syntax "$COVERAGE_SYNTAX_SOURCE" \
     --arg selected "$REVIEWERS" --arg skipped "$SKIPPED_WORDS" \
     --arg coverage_selection_basis "$COVERAGE_SELECTION_BASIS" \
@@ -299,7 +305,9 @@ gate_finalize_assurance() {
           mode:{requested:$mode_requested,resolved:$mode_resolved,
             topology:$topology,synthesis:$synthesis},
           pass:{requested:$pass_requested,resolved:$pass_resolved,scope:$pass_scope,
-            initial_result:(if $initial_result == "" then null else $initial_result end)},
+            initial_result:(if $initial_result == "" then null else $initial_result end),
+            initial_result_sha256:(if $initial_result_sha == "" then null else $initial_result_sha end),
+            initial_assurance_sha256:(if $initial_assurance_sha == "" then null else $initial_assurance_sha end)},
           coverage:{
             requested:$requested,
             selected:($selected | split(" ") | map(select(length > 0))),
@@ -344,6 +352,25 @@ gate_finalize_assurance() {
     return 1
   }
   gate_result_verify "$result_file" "" "machine assurance finalization" || return $?
+
+  # A producer may need one explicit post-publication step (for example, a
+  # targeted Gate binding its remediation closure) before the protected
+  # attestation is created. Generic assurance remains side-effect free because
+  # it supplies no callback name at all.
+  if [[ -n "$post_publish_hook" ]]; then
+    [[ "$post_publish_hook" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || {
+      printf 'Error: invalid assurance post-publication callback name: %s\n' \
+        "$post_publish_hook" >&2
+      return 1
+    }
+    declare -F "$post_publish_hook" >/dev/null 2>&1 || {
+      printf 'Error: assurance post-publication callback is not defined: %s\n' \
+        "$post_publish_hook" >&2
+      return 1
+    }
+    "$post_publish_hook" "$result_file" "$assurance_file" || return 1
+    gate_result_verify "$result_file" "" "post-assurance producer hook" || return $?
+  fi
 
   if [[ "$independence_status" == verified ]]; then
     assurance_sha="$(_gate_result_sha256_file "$assurance_file")" || return $?

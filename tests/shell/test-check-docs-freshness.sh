@@ -71,6 +71,55 @@ DOC
   pass "$name"
 }
 
+run_test_u4_cc532_scope_boundary() {
+  # Verifies that the CC-532 milestone, backlog, and decision contracts retain
+  # the same Linux/WSL2 boundary and explicitly authorize the closure handoff.
+  #
+  # Steps:
+  #   1. Read the CC-532 summary, scope section, and superseding decision.
+  #   2. Compare repo-layout, ownership, rollout, and deferred-distribution markers.
+  #   3. Fail if the records disagree about closure producer/consumer ownership.
+  local name="u4-cc532-scope-boundary-is-consistent"
+  local milestone backlog_scope decision
+  milestone="$(awk -F'|' '/^[[:space:]]*\|[[:space:]]*CC-532[[:space:]]*\|/ {
+    gsub(/^[[:space:]]+|[[:space:]]+$/, "", $3)
+    print $3
+    exit
+  }' "$REPO_ROOT/MILESTONES.md")"
+  backlog_scope="$(awk '
+    /^## CC-532([[:space:]]|$)/ { in_scope=1; next }
+    in_scope && /^## / { exit }
+    in_scope { print }
+  ' "$REPO_ROOT/BACKLOG.md")"
+  decision="$(awk '
+    /^## 2026-08-18: cc-532-supersedes-closure-scope-exclusion/ { in_scope=1 }
+    in_scope && /^## / && !/2026-08-18: cc-532-supersedes-closure-scope-exclusion/ { exit }
+    in_scope { print }
+  ' "$REPO_ROOT/DECISIONS.md")"
+  if [[ "$milestone" == *"Linux/WSL2"* &&
+        "$milestone" == *"standalone distribution"* &&
+        "$milestone" == *"defer"* &&
+        "$milestone" == *"closure"* &&
+        "$milestone" == *"CC-517"* &&
+        "$milestone" == *"CC-511 Phase B"* &&
+        "$backlog_scope" == *"Linux/WSL2"* &&
+        "$backlog_scope" == *"Standalone distribution"* &&
+        "$backlog_scope" == *"deferred"* &&
+        "$backlog_scope" == *"CC-517"* &&
+        "$backlog_scope" == *"CC-511 Phase B"* &&
+        "$backlog_scope" == *"producer"* &&
+        "$backlog_scope" == *"consumer"* &&
+        "$decision" == *"Supersede"* &&
+        "$decision" == *"CC-517"* &&
+        "$decision" == *"CC-511 Phase B"* &&
+        "$decision" == *"Rollout"* &&
+        "$decision" == *"Parity evidence"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "CC-532 milestone/backlog scope boundary drifted"
+  fi
+}
+
 run_test_u1_readme_stale() {
   # Verifies that check-docs-freshness.sh exits 2 and shows [FAIL] when
   # README.md declares an older version than the latest git tag.
@@ -834,6 +883,7 @@ run_case() {
 }
 
 run_case "u1-readme-tag-semver-order" run_test_u1_readme_tag_semver_order
+run_case "u4-cc532-scope-boundary-is-consistent" run_test_u4_cc532_scope_boundary
 run_case "u1-readme-clean-exit-0" run_test_u1_readme_clean
 run_case "u1-readme-stale-exit-2" run_test_u1_readme_stale
 run_case "u1-readme-absent-exit-1" run_test_u1_readme_absent

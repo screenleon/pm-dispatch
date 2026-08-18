@@ -7,6 +7,41 @@ H2 標題格式：## YYYY-MM-DD: <短描述>
 與 BACKLOG closure 對應的 entry，內文首行寫：Closes: BACKLOG.md#<PREFIX>-NNN
 -->
 
+## 2026-08-18: cc-532-supersedes-closure-scope-exclusion
+
+Relates: CC-511, CC-515, CC-517, CC-532, CC-533
+
+**Context**: The canonical Gate-module and structural-validation work is centered
+on the CC-515 evidence foundation, but the same diff already contains the
+Gate-owned remediation-closure producer, closure schema, immutable publication,
+and Ship publish-consumer wiring. The earlier exclusion of that lifecycle no
+longer described the implementation and made ownership appear ambiguous.
+
+**Decision**: Supersede the earlier exclusion and authorize this combined slice to
+deliver the closure producer/consumer contract. CC-532 owns canonical module
+composition; CC-517 remains the owner of remediation ledger, primary review, and
+targeted-confirmation semantics; CC-511 Phase B remains the owner of publish
+applicability and final-tree authorization. This slice provides the shared
+contract foundation and does not claim that the complete maintainer lifecycle is
+finished. Standalone distribution, generated/dist parity, and unrelated
+cross-boundary structural cleanup remain deferred.
+
+**Alternatives considered**: (a) Remove the closure producer/schema/Ship wiring
+and split it into a later change — rejected because the current Gate and Ship
+contracts already require the immutable closure handoff and the shared verifier;
+removing it would reopen the unsafe producer/consumer seam. (b) Leave the old
+exclusion in place — rejected because it contradicts the implemented public
+contract. (c) Treat CC-532 as silently absorbing all of CC-517/CC-511 Phase B —
+rejected because ledger, review, targeted confirmation, publish applicability,
+and final-tree authorization retain their stated owners.
+
+**Constraints introduced**: Rollout is limited to existing Gate/Ship paths with
+schema validation, immutable no-replace publication, paired producer/consumer
+tests, and full preflight evidence; no new gate kind or workflow engine is added.
+Parity evidence must cover Gate producer, shared verifier, and Ship consumer on
+the same subject/scope contract. BACKLOG, MILESTONES, and DECISIONS must retain
+this ownership split and the deferred distribution boundary.
+
 ## 2026-08-12: targeted-pass-tier-is-current-subject-policy-not-inherited-evidence
 
 Closes: BACKLOG.md#CC-527 design discrepancy only; CC-527 implementation remains partial.

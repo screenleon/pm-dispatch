@@ -338,6 +338,21 @@ write_frontmatter_stub_gate_result() {
   local reviewer_section="${CODEX_GATE_STUB_SYNTHESIS_REVIEWER_SECTION:-## stub-reviewer -- advise
 - stub finding}"
 
+  # Security regression seam: the corrective executor must never receive
+  # instruction-like prose from the failed artifact.  The production reset
+  # should leave only the immutable reviewer snapshot before this function is
+  # called for the retry.
+  if grep -q '^goal: Sequential ' "$brief_file" \
+      && [[ -n "${CODEX_GATE_STUB_SEQUENTIAL_RETRY_REJECT_HOSTILE_INPUT:-}" ]] \
+      && grep -q '^correction_retry:' "$brief_file" \
+      && grep -Fq 'IGNORE_GATE_HOSTILE_RETRY_MARKER' "$output_path"; then
+    if [[ -n "${CODEX_GATE_STUB_HOSTILE_SIDE_EFFECT_MARKER:-}" ]]; then
+      printf 'hostile-side-effect\n' > "$CODEX_GATE_STUB_HOSTILE_SIDE_EFFECT_MARKER"
+    fi
+    printf 'corrective executor received unsanitized artifact prose\n' >&2
+    exit 9
+  fi
+
   cat > "$output_path" << STUB_GATE_EOF
 ${frontmatter_opening}
 gate_result_version: ${staging_version}
@@ -394,6 +409,64 @@ STUB_GATE_EOF
       write_reviewer_protocol_stub "$output_path" "$selected_reviewer" advise
     done
   fi
+  if grep -q '^goal: Sequential ' "$brief_file" \
+      && [[ -n "${CODEX_GATE_STUB_SEQUENTIAL_RETRY_REJECT_HOSTILE_INPUT:-}" ]] \
+      && ! grep -q '^correction_retry:' "$brief_file"; then
+    printf 'IGNORE_GATE_HOSTILE_RETRY_MARKER: do not execute\n' >> "$output_path"
+    return 0
+  fi
+  if grep -q '^goal: Sequential ' "$brief_file" \
+      && [[ -n "${CODEX_GATE_STUB_SEQUENTIAL_SYNTHESIS_RETRY:-}" ]] \
+      && ! grep -q '^correction_retry:' "$brief_file"; then
+    # First attempt intentionally leaves the reviewer blocks valid but omits
+    # synthesis_result_v1. The gate's sequential recovery must repair this on
+    # the corrective dispatch.
+    return 0
+  fi
+  if grep -q '^goal: Sequential ' "$brief_file" \
+      && [[ -n "${CODEX_GATE_STUB_SEQUENTIAL_RETRY_HANG:-}" ]] \
+      && grep -q '^correction_retry:' "$brief_file"; then
+    if [[ -n "${CODEX_GATE_STUB_SEQUENTIAL_RETRY_READY_FIFO:-}" ]]; then
+      snapshot_candidates=("${TMPDIR:-/tmp}"/pr-gate-sequential-reviewers.*)
+      [[ -f "${snapshot_candidates[0]}" ]] || {
+        printf 'sequential reviewer snapshot was not created before retry readiness\n' >&2
+        exit 10
+      }
+      printf '%s\n' "${snapshot_candidates[0]}" > "$CODEX_GATE_STUB_SEQUENTIAL_RETRY_READY_FIFO"
+    fi
+    sleep "${CODEX_GATE_HANG_SECONDS:-3600}"
+    return 0
+  fi
+  if grep -q '^goal: Sequential ' "$brief_file" \
+      && [[ -n "${CODEX_GATE_STUB_SEQUENTIAL_SYNTHESIS_RETRY_ALWAYS:-}" ]]; then
+    # Keep both the initial and corrective synthesis attempts invalid so the
+    # host-side one-retry bound and terminal fail-closed diagnostic are tested.
+    return 0
+  fi
+  if grep -q '^goal: Sequential ' "$brief_file" \
+      && [[ -n "${CODEX_GATE_STUB_SEQUENTIAL_SYNTHESIS_DUPLICATE:-}" ]] \
+      && ! grep -q '^correction_retry:' "$brief_file"; then
+    # First attempt intentionally leaves two synthesis blocks. The host-side
+    # recovery must remove both before the corrective dispatch appends one.
+    pr_gate_fixture_write_synthesis_protocol "$brief_file" "$output_path"
+    pr_gate_fixture_write_synthesis_protocol "$brief_file" "$output_path"
+    return 0
+  fi
+  if grep -q '^goal: Sequential ' "$brief_file" \
+      && [[ -n "${CODEX_GATE_STUB_SEQUENTIAL_REVIEWER_MUTATE_ON_RETRY:-}" ]] \
+      && grep -q '^correction_retry:' "$brief_file"; then
+    # Keep the replacement reviewer_result_v1 JSON protocol-valid while
+    # changing its evidence. The host must reject this byte-level mutation.
+    mutation_tmp="$(mktemp "${TMPDIR:-/tmp}/gate-fixture-reviewer-mutation.XXXXXX")"
+    awk '
+      !changed && /"rationale":"/ {
+        sub(/"rationale":"[^"]*"/, "\"rationale\":\"mutated reviewer evidence\"")
+        changed=1
+      }
+      { print }
+    ' "$output_path" > "$mutation_tmp"
+    mv -- "$mutation_tmp" "$output_path"
+  fi
   pr_gate_fixture_write_synthesis_protocol "$brief_file" "$output_path"
 }
 
@@ -425,6 +498,9 @@ case "$effective_mode" in
     # The sleep duration is overridable so a leak-regression test can use a unique
     # value as a process marker and assert the watchdog reaped this child (not just
     # the dispatch.sh wrapper) after a timeout.
+    if [[ -n "${CODEX_GATE_HANG_READY_FIFO:-}" && "$brief_file" != *-synthesis.md ]]; then
+      printf 'executor-ready\n' > "$CODEX_GATE_HANG_READY_FIFO"
+    fi
     sleep "${CODEX_GATE_HANG_SECONDS:-3600}"
     exit 0
     ;;
@@ -833,10 +909,14 @@ Verdict: block. Tier 1 rules source unreadable.' \
 }
 
 write_valid_initial_gate_result() {
-  local path="$1" final="${2:-NO-GO}"
+  local path="$1" final="${2:-NO-GO}" assurance_version="${3:-3}"
+  local sidecar result_sha path_name fixture_repo fixture_remote fixture_repo_key
+  local fixture_common fixture_common_key fixture_remote_key fixture_base fixture_head
+  path_name="$(basename "$path")"
   cat > "$path" << INITIAL_GATE_EOF
 ---
-gate_result_version: pr_gate_result_v1
+gate_result_version: pr_gate_result_v2
+gate_assurance: ${path_name}.assurance.json
 final: ${final}
 tier: standard
 mode: sequential
@@ -854,6 +934,485 @@ escalation:
 ## Gate Conclusion
 Final: ${final}
 INITIAL_GATE_EOF
+  result_sha="$(sha256sum "$path" | awk '{print $1}')"
+  sidecar="$(dirname "$path")/$(basename "$path").assurance.json"
+  jq -n \
+    --arg final "$final" \
+    --arg result_sha "$result_sha" \
+    '{
+      kind:"gate_assurance_v2",
+      schema_version:2,
+      result:{final:$final},
+      bindings:{
+        result_sha256:$result_sha,
+        repo_root:"/tmp/fixture-repo",
+        repo_identity:("b" * 64),
+        base_commit:("c" * 40),
+        head_commit:("d" * 40),
+        subject_fingerprint:("e" * 64)
+      },
+      coordinates:{
+        tier:{requested:"auto",resolved:"standard",evidence_floor:"reviewer-verdicts"},
+        mode:{requested:"default",resolved:"sequential",topology:"combined-session",synthesis:"inline"},
+        pass:{requested:"initial",resolved:"initial",scope:"comprehensive",initial_result:null},
+        coverage:{requested:null,selected:["critic"],skipped:[],vocabulary:["critic"]},
+        independence:{implementation_context_isolated:null,reviewer_topology:"combined-session",
+          per_reviewer_independent:null,evidence_status:"unavailable"}
+      },
+      dispatch:{outcomes:[{role:"combined",reviewer:null,status:"passed",
+        run_id:null,evidence_status:"unavailable"}]},
+      provenance:{producer:"pr-gate.sh",policy_source:"canonical",attestation:null}
+    }' > "$sidecar"
+  if [[ "$assurance_version" == 3 ]]; then
+    jq '
+      .kind = "gate_assurance_v3" |
+      .schema_version = 3 |
+      .coordinates.tier.selection_basis = "policy" |
+      .coordinates.coverage.selection_basis = "policy-default" |
+      .subject = {
+        kind:"gate_subject_v1", schema_version:1,
+        repository:{key:("b" * 64),git_common_dir_identity:("1" * 64),remote_identity:null},
+        observed:{root:"/tmp/fixture-repo",git_common_dir:"/tmp/fixture-repo/.git"},
+        base:{ref:"main",commit:("c" * 40)},
+        head:{ref:"HEAD",commit:("d" * 40)},
+        tree_fingerprint:("e" * 64),subject_kind:"committed_head",
+        dirty_policy:"require_clean",
+        created_at:"2026-07-28T00:00:00Z",finished_at:"2026-07-28T00:01:00Z",
+        observed_at_finish:{repository_key:("b" * 64),base_commit:("c" * 40),
+          head_commit:("d" * 40),tree_fingerprint:("e" * 64)}
+      } |
+      .bindings.repo_root = .subject.observed.root |
+      .bindings.repo_identity = .subject.repository.key |
+      .bindings.base_commit = .subject.base.commit |
+      .bindings.head_commit = .subject.head.commit |
+      .bindings.subject_fingerprint = .subject.tree_fingerprint |
+      .evidence = {
+        preflight:{status:"not_run",outcome:null,artifact:null,sha256:null,subject_fingerprint:null},
+        scope_manifest:{status:"unavailable",artifact:null,sha256:null,subject_fingerprint:null},
+        closure:{status:"unavailable",artifact:null,sha256:null,subject_fingerprint:null}
+      }
+    ' "$sidecar" > "${sidecar}.tmp" && mv -- "${sidecar}.tmp" "$sidecar"
+
+    # Bind the reusable fixture to the repository created by the test case so
+    # production targeted-lineage checks exercise a valid same-repository
+    # baseline. Dedicated negative cases can overwrite these coordinates after
+    # this helper returns.
+    fixture_repo="$(dirname "$path")/repo"
+    if [[ -d "$fixture_repo/.git" ]]; then
+      fixture_common="$(cd "$fixture_repo" && git rev-parse --git-common-dir)"
+      [[ "$fixture_common" == /* ]] || fixture_common="$fixture_repo/$fixture_common"
+      fixture_common="$(cd "$(dirname "$fixture_common")" && pwd -P)/$(basename "$fixture_common")"
+      fixture_common_key="$(printf '%s' "$fixture_common" | sha256sum | awk '{print $1}')"
+      fixture_remote="$(git -C "$fixture_repo" config --get remote.origin.url 2>/dev/null || true)"
+      fixture_remote_key=""
+      [[ -z "$fixture_remote" ]] || \
+        fixture_remote_key="$(printf '%s' "$fixture_remote" | sha256sum | awk '{print $1}')"
+      fixture_repo_key="$(printf 'common:%s\nremote:%s\n' \
+        "$fixture_common_key" "${fixture_remote_key:-absent}" | sha256sum | awk '{print $1}')"
+      fixture_base="$(git -C "$fixture_repo" rev-parse 'main^{commit}' 2>/dev/null || true)"
+      fixture_head="$(git -C "$fixture_repo" rev-parse HEAD 2>/dev/null || true)"
+      if [[ "$fixture_repo_key" =~ ^[a-f0-9]{64}$ \
+          && "$fixture_base" =~ ^[a-f0-9]{40}$ \
+          && "$fixture_head" =~ ^[a-f0-9]{40}$ ]]; then
+        jq --arg repo_key "$fixture_repo_key" --arg root "$fixture_repo" \
+          --arg base "$fixture_base" --arg head "$fixture_head" '
+          .subject.repository.key = $repo_key |
+          .subject.observed.root = $root |
+          .subject.observed.git_common_dir = ($root + "/.git") |
+          .subject.base.commit = $base |
+          .subject.head.commit = $head |
+          .subject.observed_at_finish.repository_key = $repo_key |
+          .subject.observed_at_finish.base_commit = $base |
+          .subject.observed_at_finish.head_commit = $head |
+          .bindings.repo_root = $root |
+          .bindings.repo_identity = $repo_key |
+          .bindings.base_commit = $base |
+          .bindings.head_commit = $head
+        ' "$sidecar" > "${sidecar}.tmp" && mv -- "${sidecar}.tmp" "$sidecar"
+      fi
+    fi
+  fi
+}
+
+# Behavior: a targeted pass rejects a legacy failure-result before reviewer
+# dispatch. A structurally valid pr_gate_result_v1 is still ordinary evidence,
+# but it is not an authorization baseline because assurance finalization never
+# completed.
+# Steps:
+#   1. Prepare a v1 failure-result without an assurance sidecar.
+#   2. Trigger a targeted pass using that result as --initial-result.
+#   3. Verify fail-fast exit 2, the sidecar diagnostic, and no dispatch.
+test_targeted_rejects_unassured_initial_result_before_dispatch() {
+  local name="targeted-rejects-unassured-initial-result-before-dispatch"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" initial="$dir/initial.md"
+  local brief="$dir/brief.md" code
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic
+  create_repo "$repo" docs
+  write_valid_initial_gate_result "$initial" NO-GO 2
+  sed -i 's/^gate_result_version: pr_gate_result_v2$/gate_result_version: pr_gate_result_v1/' \
+    "$initial"
+  rm -f "${initial}.assurance.json"
+
+  set +e
+  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" \
+    --base main --pass targeted --reviewers critic --initial-result "$initial"
+  code=$?
+  set -e
+  [[ "$code" -eq 2 ]] || {
+    fail "$name" "exit $code, expected 2: $(cat "$err")"
+    return
+  }
+  assert_file_contains "$name" "$err" "initial immutable assurance sidecar" || return
+  assert_file_contains "$name" "$err" "failure-result or predates assurance finalization" || return
+  assert_not_contains "$name" "$out" "DISPATCH_STUB:" || return
+  assert_not_contains "$name" "$err" "DISPATCH_STUB:" || return
+  [[ ! -e "$brief" ]] || {
+    fail "$name" "rejected initial result still produced a reviewer brief"
+    return
+  }
+  pass "$name"
+}
+
+# Behavior: a structurally self-consistent v2 result/sidecar is still not a
+# targeted authorization baseline. Targeted remediation requires the v3
+# subject-bound assurance contract so a copied pair cannot self-authorize.
+# Steps:
+#   1. Prepare a valid v2 result and assurance sidecar.
+#   2. Trigger a targeted pass using the v2 pair as --initial-result.
+#   3. Verify fail-fast exit 2, the v3 diagnostic, and no dispatch.
+test_targeted_rejects_v2_assurance_baseline_before_dispatch() {
+  local name="targeted-rejects-v2-assurance-baseline-before-dispatch"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" initial="$dir/initial.md"
+  local brief="$dir/brief.md" code
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic
+  create_repo "$repo" docs
+  write_valid_initial_gate_result "$initial" NO-GO 2
+
+  set +e
+  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" \
+    --base main --pass targeted --reviewers critic --initial-result "$initial"
+  code=$?
+  set -e
+  [[ "$code" -eq 2 ]] || {
+    fail "$name" "exit $code, expected 2: $(cat "$err")"
+    return
+  }
+  assert_file_contains "$name" "$err" "subject-bound v3 immutable assurance sidecar" || return
+  assert_not_contains "$name" "$out" "DISPATCH_STUB:" || return
+  assert_not_contains "$name" "$err" "DISPATCH_STUB:" || return
+  [[ ! -e "$brief" ]] || {
+    fail "$name" "rejected v2 baseline still produced a reviewer brief"
+    return
+  }
+  pass "$name"
+}
+
+# Behavior: a sequential session that completes reviewer protocol but omits
+# synthesis_result_v1 gets exactly one corrective synthesis dispatch and then
+# succeeds when the corrected artifact satisfies the shared contract.
+test_sequential_synthesis_protocol_retry_recovers() {
+  local name="sequential-synthesis-protocol-retry-recovers"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" result="$dir/result.md" tmpdir="$dir/tmp" code
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester
+  create_repo "$repo" docs
+
+  set +e
+  mkdir -p "$tmpdir"
+  CODEX_GATE_STUB_SEQUENTIAL_SYNTHESIS_RETRY=1 TMPDIR="$tmpdir" \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester --mode sequential \
+      --output "$result"
+  code=$?
+  set -e
+  [[ "$code" -eq 0 ]] || {
+    fail "$name" "exit $code, expected 0: $(cat "$err")"
+    return
+  }
+  assert_file_contains "$name" "$out" "sequential synthesis" || return
+  [[ "$(rg -c '^```synthesis_result_v1$' "$result")" -eq 1 ]] || {
+    fail "$name" "corrective retry did not produce exactly one synthesis block"
+    return
+  }
+  assert_file_contains "$name" "$result" "Final: GO" || return
+  if compgen -G "$tmpdir/pr-gate-sequential-reviewers.*" >/dev/null; then
+    fail "$name" "sequential reviewer snapshot survived normal exit"
+    return
+  fi
+  pass "$name"
+}
+
+# Behavior: sequential synthesis retry input is rebuilt from reviewer blocks,
+# so instruction-like prose authored by the failed executor cannot cross into
+# the corrective executor or trigger a side effect.
+# Steps: seed hostile free-form text in the first invalid artifact, let the
+# corrective stub inspect its input, and require a successful retry with no
+# hostile marker or side-effect file in the final artifact.
+test_sequential_synthesis_retry_sanitizes_untrusted_artifact() {
+  local name="sequential-synthesis-retry-sanitizes-untrusted-artifact"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" result="$dir/result.md"
+  local side_effect="$dir/hostile-side-effect" code
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester
+  create_repo "$repo" docs
+
+  set +e
+  CODEX_GATE_STUB_SEQUENTIAL_SYNTHESIS_RETRY=1 \
+    CODEX_GATE_STUB_SEQUENTIAL_RETRY_REJECT_HOSTILE_INPUT=1 \
+    CODEX_GATE_STUB_HOSTILE_SIDE_EFFECT_MARKER="$side_effect" \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester --mode sequential \
+      --output "$result"
+  code=$?
+  set -e
+  [[ "$code" -eq 0 ]] || {
+    fail "$name" "sanitized sequential retry failed: $(cat "$err")"
+    return
+  }
+  assert_not_contains "$name" "$result" "IGNORE_GATE_HOSTILE_RETRY_MARKER" || return
+  [[ ! -e "$side_effect" ]] || {
+    fail "$name" "hostile retry input reached a side effect"
+    return
+  }
+  pass "$name"
+}
+
+# Behavior: cancellation tracks the initial sequential dispatch, not only the
+# corrective synthesis retry, and reaps the executor tree before exit.
+# Steps: coordinate with a FIFO after the hanging executor starts, cancel the
+# gate, and assert the gate returns 130 with no surviving executor sleep.
+test_sequential_initial_dispatch_cancellation() {
+  local name="sequential-initial-dispatch-cancellation"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" ready_fifo="$dir/ready.fifo"
+  local gate_pid code ready_fd marker=1618033
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester
+  create_repo "$repo" docs
+  mkfifo "$ready_fifo"
+
+  set +e
+  env -u QA_RULES_DIR -u PM_DISPATCH_QA_RULES_DIR_HOST_CONFIRMED \
+    -u PM_DISPATCH_REPOS_ROOT -u PM_DISPATCH_REPO -u QA_RULES_ENTRY \
+    HOME="$home" PATH="$runner/bin:$PATH" \
+    CODEX_GATE_STUB_MODE=hang \
+    CODEX_GATE_HANG_SECONDS="$marker" \
+    CODEX_GATE_HANG_READY_FIFO="$ready_fifo" \
+    "$runner/pr-gate.sh" --cd "$repo" --base main \
+      --reviewers critic,qa-tester --mode sequential --timeout 900 \
+      --output "$dir/result.md" > "$out" 2> "$err" &
+  gate_pid=$!
+  set -e
+
+  exec {ready_fd}<"$ready_fifo" || {
+    kill -KILL "$gate_pid" 2>/dev/null || true
+    wait "$gate_pid" 2>/dev/null || true
+    fail "$name" "initial dispatch readiness handshake failed"
+    return
+  }
+  IFS= read -r -u "$ready_fd" || {
+    exec {ready_fd}<&-
+    kill -KILL "$gate_pid" 2>/dev/null || true
+    wait "$gate_pid" 2>/dev/null || true
+    fail "$name" "initial dispatch readiness handshake failed"
+    return
+  }
+  exec {ready_fd}<&-
+  kill -TERM "$gate_pid" 2>/dev/null || true
+  set +e
+  wait "$gate_pid"
+  code=$?
+  set -e
+  [[ "$code" -eq 130 ]] || {
+    fail "$name" "cancelled gate exit $code, expected 130: $(cat "$err")"
+    return
+  }
+  assert_no_process_matching "$name" "sleep $marker" || return
+  pass "$name"
+}
+
+# Behavior: cancellation removes the immutable sequential reviewer snapshot
+# after the corrective dispatch is interrupted, just like normal exit.
+# Steps: make the corrective dispatch hang after snapshot creation, send TERM
+# to the gate, and assert the captured temporary path is gone.
+test_sequential_reviewer_snapshot_cleanup_on_cancellation() {
+  local name="sequential-reviewer-snapshot-cleanup-on-cancellation"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" ready_fifo="$dir/ready.fifo" tmpdir="$dir/tmp"
+  local gate_pid code snapshot_path ready_fd
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester
+  create_repo "$repo" docs
+  mkdir -p "$tmpdir"
+  mkfifo "$ready_fifo"
+
+  set +e
+  env -u QA_RULES_DIR -u PM_DISPATCH_QA_RULES_DIR_HOST_CONFIRMED \
+    -u PM_DISPATCH_REPOS_ROOT -u PM_DISPATCH_REPO -u QA_RULES_ENTRY \
+    HOME="$home" PATH="$runner/bin:$PATH" \
+    CODEX_GATE_STUB_SEQUENTIAL_SYNTHESIS_RETRY=1 \
+    CODEX_GATE_STUB_SEQUENTIAL_RETRY_HANG=1 \
+    CODEX_GATE_STUB_SEQUENTIAL_RETRY_READY_FIFO="$ready_fifo" \
+    TMPDIR="$tmpdir" \
+    CODEX_GATE_HANG_SECONDS=3600 \
+    "$runner/pr-gate.sh" --cd "$repo" --base main \
+      --reviewers critic,qa-tester --mode sequential --timeout 900 \
+      --output "$dir/result.md" > "$out" 2> "$err" &
+  gate_pid=$!
+  set -e
+
+  exec {ready_fd}<"$ready_fifo" || {
+    kill -KILL "$gate_pid" 2>/dev/null || true
+    wait "$gate_pid" 2>/dev/null || true
+    fail "$name" "sequential snapshot readiness handshake failed"
+    return
+  }
+  IFS= read -r -u "$ready_fd" snapshot_path || {
+    exec {ready_fd}<&-
+    kill -KILL "$gate_pid" 2>/dev/null || true
+    wait "$gate_pid" 2>/dev/null || true
+    fail "$name" "sequential snapshot readiness handshake failed"
+    return
+  }
+  exec {ready_fd}<&-
+  kill -TERM "$gate_pid" 2>/dev/null || true
+  set +e
+  wait "$gate_pid"
+  code=$?
+  set -e
+  [[ "$code" -eq 130 ]] || {
+    fail "$name" "cancelled gate exit $code, expected 130: $(cat "$err")"
+    return
+  }
+  [[ ! -e "$snapshot_path" ]] || {
+    fail "$name" "sequential reviewer snapshot survived cancellation"
+    return
+  }
+  pass "$name"
+}
+
+# Behavior: a malformed retry source with duplicate synthesis blocks is reset
+# before corrective dispatch, so the final artifact still has one block.
+test_sequential_duplicate_synthesis_protocol_retry_recovers() {
+  local name="sequential-duplicate-synthesis-protocol-retry-recovers"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" result="$dir/result.md" code
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester
+  create_repo "$repo" docs
+
+  set +e
+  CODEX_GATE_STUB_SEQUENTIAL_SYNTHESIS_DUPLICATE=1 \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester --mode sequential \
+      --output "$result"
+  code=$?
+  set -e
+  [[ "$code" -eq 0 ]] || {
+    fail "$name" "exit $code, expected 0: $(cat "$err")"
+    return
+  }
+  assert_file_contains "$name" "$out" "sequential synthesis" || return
+  [[ "$(rg -c '^```synthesis_result_v1$' "$result")" -eq 1 ]] || {
+    fail "$name" "host reset did not reduce duplicate synthesis blocks to one"
+    return
+  }
+  assert_file_contains "$name" "$result" "Final: GO" || return
+  pass "$name"
+}
+
+# Behavior: a synthesis retry that rewrites an otherwise valid reviewer block
+# is rejected even when the replacement remains protocol-valid JSON.
+test_sequential_synthesis_retry_rejects_reviewer_mutation() {
+  local name="sequential-synthesis-retry-rejects-reviewer-mutation"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" result="$dir/result.md" code
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester
+  create_repo "$repo" docs
+
+  set +e
+  CODEX_GATE_STUB_SEQUENTIAL_SYNTHESIS_RETRY=1 \
+    CODEX_GATE_STUB_SEQUENTIAL_REVIEWER_MUTATE_ON_RETRY=1 \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester --mode sequential \
+      --output "$result"
+  code=$?
+  set -e
+  [[ "$code" -ne 0 ]] || {
+    fail "$name" "mutated reviewer evidence was accepted"
+    return
+  }
+  assert_file_contains "$name" "$err" \
+    "sequential synthesis retry changed reviewer evidence" || return
+  pass "$name"
+}
+
+# Behavior: sequential synthesis recovery fails closed after its single
+# corrective attempt remains protocol-invalid.
+# Steps: make both synthesis attempts omit the required synthesis block and
+# assert the gate reports exhaustion without accepting a partial result.
+test_sequential_synthesis_protocol_retry_exhausts() {
+  local name="sequential-synthesis-protocol-retry-exhausts"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" result="$dir/result.md" code
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester
+  create_repo "$repo" docs
+
+  set +e
+  CODEX_GATE_STUB_SEQUENTIAL_SYNTHESIS_RETRY_ALWAYS=1 \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester --mode sequential \
+      --output "$result"
+  code=$?
+  set -e
+  [[ "$code" -ne 0 ]] || {
+    fail "$name" "persistently invalid sequential synthesis unexpectedly passed"
+    return
+  }
+  assert_file_contains "$name" "$err" \
+    "sequential synthesis recovery exhausted" || return
+  assert_file_contains "$name" "$err" \
+    "synthesis protocol INCOMPLETE" || return
+  [[ "$(rg -c '^```synthesis_result_v1$' "$result" 2>/dev/null || true)" -eq 0 ]] || {
+    fail "$name" "invalid synthesis artifact was published"
+    return
+  }
+  pass "$name"
 }
 
 # Behavior: the bounded copy-mode policy snapshot is byte-for-byte equivalent
@@ -4700,6 +5259,8 @@ test_gate_result_frontmatter_and_escalation() {
     .evidence.scope_manifest.subject_fingerprint ==
       .subject.tree_fingerprint and
     .evidence.closure.status == "unavailable" and
+    .evidence.closure.artifact == null and
+    .evidence.closure.sha256 == null and
     .coordinates.mode.resolved == "sequential" and
     .coordinates.independence.evidence_status == "unavailable" and
     .coordinates.independence.per_reviewer_independent == null and
@@ -4711,6 +5272,10 @@ test_gate_result_frontmatter_and_escalation() {
     fail "$name" "copy-mode sequential envelope did not degrade truthfully"
     return
   }
+  if ! grep -Fq 'Pass scope: comprehensive review' "$result"; then
+    fail "$name" "generic result is missing the machine-owned scope contract"
+    return
+  fi
   if ! printf '%s\n' "$frontmatter" | grep -Eq '^final: (GO|NO-GO)$'; then
     fail "$name" "missing frontmatter final in GO|NO-GO form"
     return
@@ -6158,6 +6723,15 @@ test_scope_manifest_truncation_requires_explicit_acceptance() {
 run_test test_gate_assurance_policy_snapshot_matches_sources
 run_test test_gate_policy_sources_control_default_coverage
 run_test test_gate_assurance_policy_snapshot_is_copy_mode_fallback
+run_test test_targeted_rejects_unassured_initial_result_before_dispatch
+run_test test_targeted_rejects_v2_assurance_baseline_before_dispatch
+run_test test_sequential_synthesis_protocol_retry_recovers
+run_test test_sequential_synthesis_retry_sanitizes_untrusted_artifact
+run_test test_sequential_initial_dispatch_cancellation
+run_test test_sequential_reviewer_snapshot_cleanup_on_cancellation
+run_test test_sequential_duplicate_synthesis_protocol_retry_recovers
+run_test test_sequential_synthesis_retry_rejects_reviewer_mutation
+run_test test_sequential_synthesis_protocol_retry_exhausts
 run_test test_dormant_policy_signal_with_unknown_reviewer_fails_before_dispatch
 run_test test_duplicate_policy_signal_id_fails_before_dispatch
 run_test test_maintainer_initial_policy_sets_coverage_and_auto_mode
@@ -7049,9 +7623,11 @@ test_canonical_targeted_coordinates_and_mixed_compatibility() {
     .coordinates.pass.initial_result == null and
     .coordinates.tier.selection_basis == "policy" and
     .coordinates.coverage.selection_basis == "policy-default" and
-    .provenance.coordinate_syntax == {pass:"explicit",coverage:"default"}
+    .provenance.coordinate_syntax == {pass:"explicit",coverage:"default"} and
+    .evidence.closure.status == "unavailable" and
+    .evidence.closure.artifact == null
   ' "${result_path}.assurance.json" >/dev/null || {
-    fail "$name" "explicit initial invocation lost canonical pass provenance"
+    fail "$name" "generic assurance unexpectedly acquired producer closure behavior"
     return
   }
 
@@ -7173,6 +7749,26 @@ test_targeted_pass_references_initial_result() {
     fail "$name" "targeted assurance envelope lost its initial reference or coverage"
     return
   }
+  if ! grep -Fq 'Pass scope: remediation-delta (targeted confirmation; not comprehensive review)' \
+      "$result_path" \
+      || ! grep -Fq 'Selected reviewer coverage: critic' "$result_path"; then
+    fail "$name" "targeted result is missing its machine-owned scope or reviewer coverage contract"
+    return
+  fi
+  local closure_artifact
+  closure_artifact="$(jq -r '.evidence.closure.artifact // empty' \
+    "${result_path}.assurance.json")"
+  if [[ "$(jq -r '.evidence.closure.status' "${result_path}.assurance.json")" != verified \
+      || -z "$closure_artifact" \
+      || ! -s "$(dirname "$result_path")/$closure_artifact" ]]; then
+    fail "$name" "targeted Gate did not publish and bind its remediation closure"
+    return
+  fi
+  if [[ "$(find "$(dirname "$result_path")" -maxdepth 1 -type f \
+      -name '*.remediation-closure.json' -print | wc -l | tr -d ' ')" -ne 1 ]]; then
+    fail "$name" "targeted composition did not publish exactly one closure artifact"
+    return
+  fi
   pass "$name"
 }
 
@@ -7239,7 +7835,7 @@ test_targeted_auto_mode_initializes_brief_coordinates() {
 
   set +e
   CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" \
-    --base main --targeted critic --initial-result "$initial"
+    --base main --tier full --targeted critic --initial-result "$initial"
   local code=$?
   set -e
 
@@ -7252,6 +7848,12 @@ test_targeted_auto_mode_initializes_brief_coordinates() {
   assert_file_contains "$name" "$brief" "mode.selection_source: policy" || return
   assert_file_contains "$name" "$brief" "mode.recommendation_overridden: false" || return
   assert_file_contains "$name" "$brief" "pass.resolved: targeted" || return
+  local result_path
+  result_path="$(awk -F'result: ' '/^result: /{path=$2} END{print path}' "$out")"
+  assert_file_contains "$name" "$result_path" \
+    "Pass scope: remediation-delta (targeted confirmation; not comprehensive review)" || return
+  assert_file_contains "$name" "$result_path" \
+    "Selected reviewer coverage: critic" || return
   assert_not_contains "$name" "$err" "unbound variable" || return
   pass "$name"
 }
@@ -7279,6 +7881,119 @@ test_targeted_requires_initial_result() {
   fi
   assert_file_contains "$name" "$err" "--pass targeted requires --initial-result <path>" || return
   assert_not_contains "$name" "$out" "DISPATCH_STUB" || return
+  pass "$name"
+}
+
+# Behavior: a structurally valid v3 initial result from another repository is
+# rejected before a targeted reviewer can run.
+# Steps: bind the fixture baseline to a different repository identity, invoke a
+# targeted pass, and assert the lineage guard refuses dispatch.
+test_targeted_rejects_cross_repository_initial_result() {
+  local name="targeted-rejects-cross-repository-initial-result"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" initial="$dir/initial.md" code
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  write_valid_initial_gate_result "$initial"
+  jq '.subject.repository.key = ("f" * 64) |
+      .subject.observed_at_finish.repository_key = ("f" * 64) |
+      .bindings.repo_identity = ("f" * 64)' \
+    "${initial}.assurance.json" > "${initial}.assurance.json.tmp" \
+    && mv -- "${initial}.assurance.json.tmp" "${initial}.assurance.json"
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main \
+    --pass targeted --reviewers critic --initial-result "$initial"
+  code=$?
+  set -e
+  if [[ "$code" -ne 2 ]]; then
+    fail "$name" "exit $code, expected 2"
+    return
+  fi
+  assert_file_contains "$name" "$err" "different repository identity" || return
+  assert_not_contains "$name" "$out" "DISPATCH_STUB" || return
+  pass "$name"
+}
+
+# Behavior: a targeted pass rejects a same-repository baseline whose base is
+# not an ancestor of the current base before any reviewer dispatch.
+# Steps: create a valid v3 baseline, replace only its bound base with a valid
+# commit from a divergent history, and assert the precise fail-fast result.
+test_targeted_rejects_incompatible_base_lineage_before_dispatch() {
+  local name="targeted-rejects-incompatible-base-lineage-before-dispatch"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" initial="$dir/initial.md" code divergent
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  write_valid_initial_gate_result "$initial"
+  divergent="$(git -C "$repo" commit-tree \
+    "$(git -C "$repo" rev-parse 'HEAD^{tree}')" < /dev/null)"
+  jq --arg commit "$divergent" '
+      .subject.base.commit = $commit |
+      .subject.observed_at_finish.base_commit = $commit |
+      .bindings.base_commit = $commit
+    ' "${initial}.assurance.json" > "${initial}.assurance.json.tmp" \
+    && mv -- "${initial}.assurance.json.tmp" "${initial}.assurance.json"
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main \
+    --pass targeted --reviewers critic --initial-result "$initial"
+  code=$?
+  set -e
+  if [[ "$code" -ne 2 ]]; then
+    fail "$name" "exit $code, expected 2"
+    return
+  fi
+  assert_file_contains "$name" "$err" "incompatible base lineage" || return
+  assert_not_contains "$name" "$out" "DISPATCH_STUB:" || return
+  assert_not_contains "$name" "$err" "DISPATCH_STUB:" || return
+  pass "$name"
+}
+
+# Behavior: a targeted pass rejects a same-repository baseline whose head is
+# not an ancestor of the current head before any reviewer dispatch.
+# Steps: create a valid v3 baseline, replace only its bound head with a valid
+# commit from a divergent history, and assert the precise fail-fast result.
+test_targeted_rejects_incompatible_head_lineage_before_dispatch() {
+  local name="targeted-rejects-incompatible-head-lineage-before-dispatch"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" initial="$dir/initial.md" code divergent
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  write_valid_initial_gate_result "$initial"
+  divergent="$(git -C "$repo" commit-tree \
+    "$(git -C "$repo" rev-parse 'HEAD^{tree}')" < /dev/null)"
+  jq --arg commit "$divergent" '
+      .subject.head.commit = $commit |
+      .subject.observed_at_finish.head_commit = $commit |
+      .bindings.head_commit = $commit
+    ' "${initial}.assurance.json" > "${initial}.assurance.json.tmp" \
+    && mv -- "${initial}.assurance.json.tmp" "${initial}.assurance.json"
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main \
+    --pass targeted --reviewers critic --initial-result "$initial"
+  code=$?
+  set -e
+  if [[ "$code" -ne 2 ]]; then
+    fail "$name" "exit $code, expected 2"
+    return
+  fi
+  assert_file_contains "$name" "$err" "incompatible head lineage" || return
+  assert_not_contains "$name" "$out" "DISPATCH_STUB:" || return
+  assert_not_contains "$name" "$err" "DISPATCH_STUB:" || return
   pass "$name"
 }
 
@@ -8182,6 +8897,9 @@ run_test test_help_output_is_bounded_and_current
 run_test test_unknown_arg_message
 run_test test_canonical_targeted_coordinates_and_mixed_compatibility
 run_test test_targeted_pass_references_initial_result
+run_test test_targeted_rejects_cross_repository_initial_result
+run_test test_targeted_rejects_incompatible_base_lineage_before_dispatch
+run_test test_targeted_rejects_incompatible_head_lineage_before_dispatch
 run_test test_targeted_resolves_current_policy_without_reusing_initial_tier
 run_test test_targeted_auto_mode_initializes_brief_coordinates
 run_test test_targeted_requires_initial_result
