@@ -149,6 +149,45 @@ FAKEGATE
   chmod +x "$fixture/runtime/bin/pr-gate.sh"
 }
 
+# Install a fake pr-gate.sh shaped like a real NO-GO: it publishes a verified
+# `result:` handoff and THEN exits 1, the way pr-gate's own exit trap sees a
+# non-zero status for a legitimate verdict. A guard that keys only off "exit
+# code is non-zero" would overwrite the verified handoff with
+# `failure-result:` and report the review outcome as an infrastructure failure.
+_mk_fake_gate_nogo_after_publish() {
+  local fixture="$1"
+  mkdir -p "$fixture/runtime/bin"
+  cat > "$fixture/runtime/bin/pr-gate.sh" <<'FAKEGATE'
+#!/usr/bin/env bash
+rd=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --run-dir) rd="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+mkdir -p "$rd"
+cat > "$rd/result.md" <<'RESULT'
+---
+gate_result_version: pr_gate_result_v1
+final: NO-GO
+tier: express
+mode: sequential
+most_severe: block
+---
+
+# PR-Gate Result
+
+## Gate Conclusion
+Final: NO-GO
+RESULT
+printf 'result: %s\n' "$rd/result.md" > "$rd/pr-gate.handoff"
+printf 'result: %s\n' "$rd/result.md"
+exit 1
+FAKEGATE
+  chmod +x "$fixture/runtime/bin/pr-gate.sh"
+}
+
 # Install a fake pr-gate.sh whose producer-owned handoff file CONTRADICTS its
 # log output: the log carries only `result:`, the handoff says
 # `failure-result:`. Whichever the supervisor believes is directly observable
@@ -1020,6 +1059,47 @@ case_wait_reports_failure_result_as_failed_not_verdict() {
   fi
 }
 
+case_wait_reports_nogo_when_verdict_published_before_nonzero_exit() {
+  # Behavior: a NO-GO verdict stays a verdict. Publishing a verified `result:`
+  # and then exiting 1 is what every NO-GO looks like, and must resolve to
+  # NO-GO/exit 1 -- not to the `failed`/exit 2 an unverified handoff produces.
+  #
+  # Steps:
+  # 1. Install a pr-gate that writes a `result:` handoff, then exits 1.
+  # 2. Launch detached and wait.
+  # 3. Assert NO-GO/exit 1 and that the verdict line is surfaced.
+  #
+  # This is the mirror of the defect this ticket fixes: guarding only against
+  # "protocol failure dressed as a verdict" while leaving "verdict dressed as
+  # a protocol failure" is the same error with the operands swapped.
+  local name="gate-lifecycle/gate wait reports NO-GO when the verdict was published before a non-zero exit"
+  should_run "$name" || return 0
+
+  local fixture="$tmp_root/c10f/fixture" work="$tmp_root/c10f/work"
+  mkdir -p "$work"
+  _mk_fixture_repo "$fixture"
+  _mk_fake_gate_nogo_after_publish "$fixture"
+
+  local run_wrapper="$tmp_root/c10f/run" wait_wrapper="$tmp_root/c10f/wait"
+  _run_gate_wrapper "$fixture" "$run_wrapper"
+  _wait_wrapper "$fixture" "$wait_wrapper"
+
+  local gate_id
+  gate_id="$("$run_wrapper" --cd "$work" --lifecycle detached)"
+
+  local out code
+  set +e; out="$("$wait_wrapper" "$gate_id" --cd "$work" --timeout "$_WAIT_OK" 2>&1)"; code=$?; set -e
+
+  if [[ "$code" -eq 1 ]] \
+      && [[ "$out" == *"state: NO-GO"* ]] \
+      && [[ "$out" == *"Final: NO-GO"* ]] \
+      && [[ "$out" != *"state: failed"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
 case_wait_prefers_producer_handoff_over_log() {
   # Behavior: the run dir's pr-gate.handoff is authoritative for the verdict
   # classification; the combined log is only a fallback.
@@ -1209,6 +1289,7 @@ case_wait_fails_on_corrupt_result
 case_wait_reports_failure_result_as_failed_not_verdict
 case_wait_ignores_child_result_line_before_failure_handoff
 case_wait_prefers_producer_handoff_over_log
+case_wait_reports_nogo_when_verdict_published_before_nonzero_exit
 case_wait_fails_on_cd_partition_mismatch
 case_wait_usage_errors
 

@@ -1630,9 +1630,17 @@ _ARTIFACT_ROOT="${GATE_RUN_DIR_OVERRIDE:-$WORK_DIR}"
 # that classification off a shared channel. Detached runs supply --run-dir;
 # foreground/legacy runs have no supervisor and skip it.
 GATE_HANDOFF_FILE="${GATE_RUN_DIR_OVERRIDE:+$GATE_RUN_DIR_OVERRIDE/pr-gate.handoff}"
+GATE_HANDOFF_PUBLISHED=""
 _gate_write_handoff() {
   [[ -n "${GATE_HANDOFF_FILE:-}" ]] || return 0
+  # A published `result:` is terminal. The EXIT trap fires its
+  # `failure-result:` branch on ANY non-zero exit -- and a NO-GO verdict IS
+  # exit 1 -- so without this guard a legitimate review outcome would overwrite
+  # its own verified handoff and be reported as an infrastructure failure. That
+  # is this ticket's defect with the operands swapped.
+  [[ "$1" != failure-result || -z "$GATE_HANDOFF_PUBLISHED" ]] || return 0
   printf '%s: %s\n' "$1" "$2" > "$GATE_HANDOFF_FILE" 2>/dev/null || true
+  GATE_HANDOFF_PUBLISHED="$1"
 }
 BRIEF_DIR="$_ARTIFACT_ROOT/.gate-briefs"
 mkdir -p "$BRIEF_DIR"
@@ -1790,7 +1798,13 @@ gate_exit_cleanup() {
   # Preserve the post-mortem artifact path even when protocol validation fails
   # before the normal `result:` handoff. Detached gate wait can then surface a
   # failed, inspectable artifact instead of leaving callers with only an exit 2.
-  if [[ "$_gate_exit_status" -ne 0 && -n "${OUTPUT_FILE:-}" && -e "${OUTPUT_FILE:-}" ]]; then
+  # `-n "$GATE_HANDOFF_PUBLISHED"` means a verified `result:` was already
+  # published, so this non-zero exit is a verdict (NO-GO is exit 1), not a
+  # failure to produce one. The log fallback takes the LAST match, so emitting
+  # the line here would mislead a copy-mode supervisor exactly as the handoff
+  # file would.
+  if [[ "$_gate_exit_status" -ne 0 && -z "${GATE_HANDOFF_PUBLISHED:-}" \
+      && -n "${OUTPUT_FILE:-}" && -e "${OUTPUT_FILE:-}" ]]; then
     printf 'failure-result: %s\n' "$OUTPUT_FILE"
     _gate_write_handoff failure-result "$OUTPUT_FILE"
   fi
@@ -3048,6 +3062,31 @@ BRIEF_EOF
   # long test suite) must not discard whatever earlier reviewers already
   # wrote to ${OUTPUT_FILE} per the brief's per-reviewer append instruction
   # (task step 4 above) -- see the partial-result branch below.
+  # Sequential authoring is one shot at a document the executor builds
+  # incrementally, so a malformed or mis-ordered result used to void the whole
+  # round with no correction opportunity -- the parallel route's synthesis
+  # retry lives in its own branch and never covered this one. Give the same
+  # single retry, told exactly what was rejected.
+  _SEQ_PROTOCOL_COMPLETE=false
+  _seq_reason=""
+  for _seq_attempt in 1 2; do
+  if [[ "$_seq_attempt" -eq 2 ]]; then
+    # The brief has the executor CREATE the file on the first reviewer and
+    # APPEND for the rest, so a retry must start from an empty document:
+    # appending to a rejected, half-ordered one compounds the defect the
+    # retry exists to fix.
+    : > "$OUTPUT_FILE"
+    # Same trust boundary as the parallel retry: the reason quotes ids read
+    # from the rejected artifact, so flatten newlines and bound the length
+    # before it becomes a YAML block scalar in a privileged brief.
+    _seq_reason_line="${_seq_reason//$'\n'/ }"
+    _seq_reason_line="${_seq_reason_line//$'\r'/ }"
+    [[ "${#_seq_reason_line}" -le 800 ]] \
+      || _seq_reason_line="${_seq_reason_line:0:800}~"
+    printf '\ncorrection_retry: |\n  The first attempt was REJECTED for exactly this reason:\n\n    %s\n\n  %s has been emptied. Rebuild it completely, in the required section\n  order, from the same reviewer evidence -- fix that specific defect and do\n  not change any other section to compensate.\n' \
+      "$_seq_reason_line" "$OUTPUT_FILE" >> "$BRIEF_FILE"
+    say '  [sequential] retrying once after %s.\n' "$_seq_reason"
+  fi
   SEQ_DISPATCH_EXIT=0
   eval "$DISPATCH_CMD" >&2 || SEQ_DISPATCH_EXIT=$?
 
@@ -3082,12 +3121,43 @@ BRIEF_EOF
   # non-empty, carry exactly one Final: GO|NO-GO line that agrees with the
   # frontmatter final: field). Same checks the parallel synthesis route and
   # `pmctl gate verify` enforce.
-  gate_reviewer_protocol_verify \
-    "$OUTPUT_FILE" "$REVIEWERS" "$SCOPE_MANIFEST_DIGEST" \
-    "$SCOPE_MANIFEST_PATH" true || exit 1
-  gate_verify_synthesis_protocol \
-    "$OUTPUT_FILE" "$REVIEWERS" "$SKIPPED_WORDS" \
-    "$SCOPE_MANIFEST_DIGEST" true || exit 1
+  _seq_reason=""
+  if ! gate_reviewer_protocol_verify \
+      "$OUTPUT_FILE" "$REVIEWERS" "$SCOPE_MANIFEST_DIGEST" \
+      "$SCOPE_MANIFEST_PATH" true; then
+    _seq_reason="invalid reviewer protocol"
+  elif ! gate_verify_synthesis_protocol \
+      "$OUTPUT_FILE" "$REVIEWERS" "$SKIPPED_WORDS" \
+      "$SCOPE_MANIFEST_DIGEST" true; then
+    _seq_reason="${GATE_SYNTHESIS_PROTOCOL_ERROR:-synthesis parity failure}"
+  else
+    _SEQ_PROTOCOL_COMPLETE=true
+  fi
+
+  if [[ "$_SEQ_PROTOCOL_COMPLETE" == true ]]; then
+    _gate_protocol_attempt_record sequential "" "$_seq_attempt" \
+      accepted ok "$OUTPUT_FILE" || exit 2
+    break
+  fi
+  # A stale subject cannot be repaired by re-authoring: the evidence no longer
+  # describes this tree, so retrying would only produce a second stale result.
+  if [[ "$_seq_reason" == "stale subject binding" ]]; then
+    _gate_protocol_attempt_record sequential "" "$_seq_attempt" stale \
+      "$_seq_reason" "$OUTPUT_FILE" || exit 2
+    printf 'Error: sequential subject is stale; refusing protocol retry\n' >&2
+    exit 1
+  fi
+  if [[ "$_seq_attempt" -eq 1 ]]; then
+    _gate_protocol_attempt_record sequential "" 1 retryable-failure \
+      "$_seq_reason" "$OUTPUT_FILE" || exit 2
+  else
+    _gate_protocol_attempt_record sequential "" 2 exhausted \
+      "$_seq_reason" "$OUTPUT_FILE" || exit 2
+    printf 'Error: sequential recovery exhausted after %s\n' "$_seq_reason" >&2
+    exit 1
+  fi
+  done
+
   SEQ_PROTOCOL_FINAL="$(
     _gate_reviewer_protocol_final_extract "$OUTPUT_FILE"
   )" || exit 1

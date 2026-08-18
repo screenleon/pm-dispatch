@@ -137,7 +137,8 @@ if [[ -n "${CODEX_GATE_CAPTURE_SCOPE_DIR:-}" ]]; then
     > "$CODEX_GATE_CAPTURE_SCOPE_DIR/$capture_name"
 fi
 
-if [[ -n "${CODEX_GATE_CAPTURE_SYNTHESIS_BRIEF_DIR:-}" && "$brief_file" == *-synthesis.md ]]; then
+if [[ -n "${CODEX_GATE_CAPTURE_SYNTHESIS_BRIEF_DIR:-}" ]] \
+    && { [[ "$brief_file" == *-synthesis.md ]] || [[ -n "${CODEX_GATE_CAPTURE_SEQUENTIAL_BRIEF:-}" ]]; }; then
   # Briefs are deleted by cleanup_briefs on exit, so the only place the retry
   # brief can be observed is here, at the executor boundary that actually
   # received it. Number by arrival so attempt 2 is addressable.
@@ -11465,6 +11466,166 @@ test_parallel_synthesis_retry_brief_bounds_long_reason() {
   pass "$name"
 }
 
+# Behavior: a stale subject binding is NOT retried in sequential mode.
+# Steps: bind the synthesis to a different scope digest, then assert the gate
+# refuses the retry and says so.
+# Re-authoring cannot make new evidence describe an older tree, so a second
+# attempt would only produce a second stale result -- spending the one
+# correction opportunity on an outcome that cannot change.
+test_sequential_protocol_refuses_stale_subject_retry() {
+  local name="sequential-protocol/stale-subject-is-not-retried"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home="$TMP_ROOT/$name/home"
+  local repo="$TMP_ROOT/$name/repo" runner="$TMP_ROOT/$name/runner"
+  local out="$TMP_ROOT/$name/out" err="$TMP_ROOT/$name/err" code=0
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester
+  create_repo "$repo" docs
+  set +e
+  CODEX_GATE_STUB_SYNTHESIS_PROTOCOL_MUTATION=wrong-subject \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester --mode sequential
+  code=$?
+  set -e
+  [[ "$code" -ne 0 ]] || { fail "$name" "stale subject unexpectedly accepted"; return; }
+  assert_file_contains "$name" "$err" \
+    "sequential subject is stale; refusing protocol retry" || return
+  assert_not_contains "$name" "$out" "[sequential] retrying once after" || return
+  pass "$name"
+}
+
+# Behavior: an over-long sequential rejection reason reaches the retry brief
+# bounded and on one line.
+# Steps: drive a rejection whose reason enumerates twenty malformed entries,
+# capture the second sequential brief, assert the reason line is bounded.
+# The reason quotes ids from the rejected artifact and becomes a YAML block
+# scalar in a privileged brief, so an unbounded or multi-line value would both
+# inflate the brief and risk terminating the block early.
+test_sequential_retry_brief_bounds_long_reason() {
+  local name="sequential-protocol/retry-brief-bounds-long-reason"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home="$TMP_ROOT/$name/home"
+  local repo="$TMP_ROOT/$name/repo" runner="$TMP_ROOT/$name/runner"
+  local out="$TMP_ROOT/$name/out" err="$TMP_ROOT/$name/err" code=0
+  local briefs="$TMP_ROOT/$name/briefs" reason_line reason_len
+  mkdir -p "$dir" "$briefs"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester
+  create_repo "$repo" docs
+  set +e
+  CODEX_GATE_STUB_SYNTHESIS_PROTOCOL_MUTATION=bloat-reason \
+    CODEX_GATE_STUB_SYNTHESIS_PROTOCOL_MUTATION_ONLY_FIRST=1 \
+    CODEX_GATE_CAPTURE_SYNTHESIS_BRIEF_DIR="$briefs" \
+    CODEX_GATE_CAPTURE_SEQUENTIAL_BRIEF=1 \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester --mode sequential
+  code=$?
+  set -e
+  [[ "$code" -eq 0 ]] || { fail "$name" "sequential did not recover: code=$code"; return; }
+  [[ -f "$briefs/synthesis-2.md" ]] || { fail "$name" "second sequential brief not captured"; return; }
+  reason_line="$(grep -m1 'invalid disagreement references' "$briefs/synthesis-2.md")" || reason_line=""
+  [[ -n "$reason_line" ]] || { fail "$name" "retry brief carried no reason"; return; }
+  reason_len="${#reason_line}"
+  if [[ "$reason_len" -gt 820 ]]; then
+    fail "$name" "reason line was not bounded: len=$reason_len"
+    return
+  fi
+  if [[ "$reason_len" -lt 200 ]]; then
+    fail "$name" "reason line too short to have exercised the bound: len=$reason_len"
+    return
+  fi
+  pass "$name"
+}
+
+# Behavior: a NO-GO verdict leaves the producer-owned handoff saying `result:`.
+# Steps:
+# 1. Run a real gate under --run-dir with reviewers that block.
+# 2. Assert the gate exits 1 (verdict, not failure).
+# 3. Assert pr-gate.handoff records `result:`, not `failure-result:`.
+# pr-gate's exit trap fires its failure branch on ANY non-zero status, and a
+# NO-GO IS exit 1. Once the handoff label became authoritative for the
+# supervisor's classification, an unguarded trap would overwrite a verified
+# verdict and report the review outcome as an infrastructure failure -- this
+# ticket's own defect with the operands swapped. Observed live before the fix.
+test_handoff_records_result_for_nogo_verdict() {
+  local name="handoff/nogo-verdict-keeps-result-label"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home="$TMP_ROOT/$name/home"
+  local repo="$TMP_ROOT/$name/repo" runner="$TMP_ROOT/$name/runner"
+  local out="$TMP_ROOT/$name/out" err="$TMP_ROOT/$name/err"
+  local rundir="$TMP_ROOT/$name/rundir" code=0
+  mkdir -p "$dir" "$rundir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester
+  create_repo "$repo" docs
+  set +e
+  CODEX_GATE_STUB_VERDICT=block CODEX_GATE_STUB_SYNTHESIS_FINAL=NO-GO \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester --mode parallel \
+      --run-dir "$rundir"
+  code=$?
+  set -e
+  [[ "$code" -eq 1 ]] || {
+    fail "$name" "expected NO-GO exit 1, got $code: $(tail -n 5 "$err" 2>/dev/null)"
+    return
+  }
+  [[ -f "$rundir/pr-gate.handoff" ]] || {
+    fail "$name" "no handoff file written under --run-dir"
+    return
+  }
+  assert_file_contains "$name" "$rundir/pr-gate.handoff" "result: " || return
+  assert_not_contains "$name" "$rundir/pr-gate.handoff" "failure-result:" || return
+  assert_not_contains "$name" "$out" "failure-result:" || return
+  pass "$name"
+}
+
+# Behavior: a sequential round whose artifact fails protocol validation gets the
+# same single correction retry the parallel route has, told what was rejected,
+# and recovers instead of voiding the round.
+# Steps:
+# 1. Mutate the first sequential attempt so its result fails parity.
+# 2. Assert the gate still succeeds and recorded a retryable attempt 1 plus an
+#    accepted attempt 2.
+# Sequential is the mode chosen when session budget is tight; it was also the
+# only mode with no recovery at all, so one mis-authored document cost the
+# whole round -- reviewers included.
+test_sequential_protocol_recovers_on_retry() {
+  local name="sequential-protocol/recovers-on-retry"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home="$TMP_ROOT/$name/home"
+  local repo="$TMP_ROOT/$name/repo" runner="$TMP_ROOT/$name/runner"
+  local out="$TMP_ROOT/$name/out" err="$TMP_ROOT/$name/err" code=0 attempts
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester
+  create_repo "$repo" docs
+  set +e
+  CODEX_GATE_STUB_SYNTHESIS_PROTOCOL_MUTATION=drop-test-gap-row \
+    CODEX_GATE_STUB_SYNTHESIS_PROTOCOL_MUTATION_ONLY_FIRST=1 \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester --mode sequential
+  code=$?
+  set -e
+  [[ "$code" -eq 0 ]] || {
+    fail "$name" "sequential did not recover: code=$code $(tail -n 5 "$err" 2>/dev/null)"
+    return
+  }
+  assert_file_contains "$name" "$out" "[sequential] retrying once after" || return
+  attempts="$(find "$repo/.gate-results" -maxdepth 1 \
+    -name 'gate-protocol-attempts-*.jsonl' -type f | head -n 1)"
+  if [[ -z "$attempts" ]] || ! jq -s -e '
+      any(.[]; .role == "sequential" and .attempt == 1 and
+        .outcome == "retryable-failure") and
+      any(.[]; .role == "sequential" and .attempt == 2 and
+        .outcome == "accepted")
+    ' "$attempts" >/dev/null; then
+    fail "$name" "sequential recovery attempts were not recorded"
+    return
+  fi
+  pass "$name"
+}
+
 # Behavior: synthesis recovery is bounded to one retry.
 # Steps: drop a test-gap row on both attempts and assert exhaustion fails closed.
 test_parallel_synthesis_test_gap_parity_retry_exhausts() {
@@ -12093,6 +12254,10 @@ run_test test_synthesis_protocol_diagnostics_name_the_defect
 run_test test_synthesis_protocol_diagnostics_neutralize_injected_ids
 run_test test_parallel_synthesis_retry_brief_carries_reason
 run_test test_parallel_synthesis_retry_brief_bounds_long_reason
+run_test test_sequential_protocol_recovers_on_retry
+run_test test_sequential_protocol_refuses_stale_subject_retry
+run_test test_sequential_retry_brief_bounds_long_reason
+run_test test_handoff_records_result_for_nogo_verdict
 run_test test_targeted_synthesis_requires_initial_confirmation_set
 run_test test_targeted_gate_rejects_missing_initial_confirmation
 run_test test_gate_test_gap_live_eval_reports_observation_only

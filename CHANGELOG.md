@@ -8,7 +8,51 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **`/ship` now governs the *form* of a finding's remedy, not just that it is
+  fixed (CC-554).** Every finding is still addressed — an unaddressed finding
+  remains a NO-GO — but when the proposed remedy is a *new permanent blocking
+  test*, it must first clear the admission criteria in the configured QA rules
+  checkout (`QA_RULES_DIR`'s Tier 1 entry). A case that pins a private helper
+  or source literal, covers input outside the project's declared support range,
+  duplicates an existing broader scenario, or survives mutation of the code it
+  claims to guard is closed instead by a recorded alternative: fix without a
+  permanent test, fold into an existing parameterized case, move to an extended
+  suite, open a follow-up ticket, or reject the finding with evidence. The
+  chosen alternative and its reason go in the PR body. `commands/ship.md`
+  carries a self-contained summary so a substituted rules directory that
+  defines no such criteria still gets the policy. Round count is deliberately
+  left alone as a stopping condition — reducing test growth is done at the
+  finding end, not by capping gate rounds.
+
 ### Fixed
+
+- **A NO-GO verdict is no longer downgraded to an infrastructure failure
+  (CC-555).** pr-gate's exit trap emits its `failure-result:` branch on any
+  non-zero status, and a NO-GO verdict *is* exit 1. That was harmless while the
+  supervisor read the first matching log line; once the label became
+  authoritative for the verdict classification, the trap overwrote a verified
+  `result:` handoff and reported a completed review as `failed`. Both emitters
+  are now guarded — the handoff file and its stdout twin, since the log
+  fallback reads the last match and fixing one end alone would leave the other
+  lying. This is the defect this ticket exists to fix with its operands
+  swapped, and it was observed live on the first real NO-GO to run under the
+  new code.
+
+- **`--mode sequential` gets the same single correction retry as the parallel
+  route (CC-555).** The retry loop lived only in the parallel branch, so a
+  sequential round whose result failed protocol validation was voided outright
+  — reviewers included. That made the mode chosen when session budget is tight
+  the only mode with no safety net. Observed when a combined session spent five
+  minutes losing a fight with `apply_patch` over the fenced
+  `reviewer_result_v1` blocks in the gate result, wrote the reviewer sections
+  out of order, and produced no synthesis block. The retry carries the actual
+  rejected reason under the same single-line/800-char boundary CC-553
+  established, and empties `OUTPUT_FILE` first: the brief has the executor
+  create-then-append, so re-authoring over a half-ordered document would
+  compound the defect. A stale subject binding still refuses the retry — new
+  evidence cannot describe an older tree.
 
 - **A gate protocol failure is no longer reported as a review verdict, and its
   one correction retry is no longer blind (CC-553).** `pr-gate.sh` marks a
