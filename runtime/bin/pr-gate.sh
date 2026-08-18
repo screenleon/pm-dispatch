@@ -1630,9 +1630,17 @@ _ARTIFACT_ROOT="${GATE_RUN_DIR_OVERRIDE:-$WORK_DIR}"
 # that classification off a shared channel. Detached runs supply --run-dir;
 # foreground/legacy runs have no supervisor and skip it.
 GATE_HANDOFF_FILE="${GATE_RUN_DIR_OVERRIDE:+$GATE_RUN_DIR_OVERRIDE/pr-gate.handoff}"
+GATE_HANDOFF_PUBLISHED=""
 _gate_write_handoff() {
   [[ -n "${GATE_HANDOFF_FILE:-}" ]] || return 0
+  # A published `result:` is terminal. The EXIT trap fires its
+  # `failure-result:` branch on ANY non-zero exit -- and a NO-GO verdict IS
+  # exit 1 -- so without this guard a legitimate review outcome would overwrite
+  # its own verified handoff and be reported as an infrastructure failure. That
+  # is this ticket's defect with the operands swapped.
+  [[ "$1" != failure-result || -z "$GATE_HANDOFF_PUBLISHED" ]] || return 0
   printf '%s: %s\n' "$1" "$2" > "$GATE_HANDOFF_FILE" 2>/dev/null || true
+  GATE_HANDOFF_PUBLISHED="$1"
 }
 BRIEF_DIR="$_ARTIFACT_ROOT/.gate-briefs"
 mkdir -p "$BRIEF_DIR"
@@ -1790,7 +1798,13 @@ gate_exit_cleanup() {
   # Preserve the post-mortem artifact path even when protocol validation fails
   # before the normal `result:` handoff. Detached gate wait can then surface a
   # failed, inspectable artifact instead of leaving callers with only an exit 2.
-  if [[ "$_gate_exit_status" -ne 0 && -n "${OUTPUT_FILE:-}" && -e "${OUTPUT_FILE:-}" ]]; then
+  # `-n "$GATE_HANDOFF_PUBLISHED"` means a verified `result:` was already
+  # published, so this non-zero exit is a verdict (NO-GO is exit 1), not a
+  # failure to produce one. The log fallback takes the LAST match, so emitting
+  # the line here would mislead a copy-mode supervisor exactly as the handoff
+  # file would.
+  if [[ "$_gate_exit_status" -ne 0 && -z "${GATE_HANDOFF_PUBLISHED:-}" \
+      && -n "${OUTPUT_FILE:-}" && -e "${OUTPUT_FILE:-}" ]]; then
     printf 'failure-result: %s\n' "$OUTPUT_FILE"
     _gate_write_handoff failure-result "$OUTPUT_FILE"
   fi

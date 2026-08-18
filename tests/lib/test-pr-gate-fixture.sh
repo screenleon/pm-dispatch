@@ -319,6 +319,14 @@ pr_gate_fixture_write_synthesis_protocol() {
             "$synthesis_document" > "$mutated_document"
           mv -- "$mutated_document" "$synthesis_document"
           ;;
+        wrong-subject)
+          # Binds the synthesis to a different scope digest, which the verifier
+          # reports as `stale subject binding` -- the one rejection re-authoring
+          # cannot repair.
+          jq '.scope_manifest_sha256 = ("b" * 64)' \
+            "$synthesis_document" > "$mutated_document"
+          mv -- "$mutated_document" "$synthesis_document"
+          ;;
         bloat-reason)
           # Many malformed disagreement entries: each contributes its own
           # named defect to the reason, pushing it past the retry brief's

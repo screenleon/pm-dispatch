@@ -28,6 +28,18 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **A NO-GO verdict is no longer downgraded to an infrastructure failure
+  (CC-555).** pr-gate's exit trap emits its `failure-result:` branch on any
+  non-zero status, and a NO-GO verdict *is* exit 1. That was harmless while the
+  supervisor read the first matching log line; once the label became
+  authoritative for the verdict classification, the trap overwrote a verified
+  `result:` handoff and reported a completed review as `failed`. Both emitters
+  are now guarded — the handoff file and its stdout twin, since the log
+  fallback reads the last match and fixing one end alone would leave the other
+  lying. This is the defect this ticket exists to fix with its operands
+  swapped, and it was observed live on the first real NO-GO to run under the
+  new code.
+
 - **`--mode sequential` gets the same single correction retry as the parallel
   route (CC-555).** The retry loop lived only in the parallel branch, so a
   sequential round whose result failed protocol validation was voided outright
