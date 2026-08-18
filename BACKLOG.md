@@ -65,6 +65,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-543 | ✅ done | Full test runner Phase 0 fail-fast structural precheck；`--collect-all` 保留 release 全證據路徑 | ops/test | 2026-08-04 | pr:#465 | P2 | hygiene |
 | CC-545 | ✅ done | Reviewer evidence-reference-contract INCOMPLETE 的單次修正性重派：僅限該單一違規類別，附具體錯誤引用重跑違規 reviewer，不必整輪 gate（30-40 分鐘）重來 | ops/gate | 2026-08-06 | pr:#465 | P2 | hygiene |
 | CC-546 | ⏸ deferred | standalone Gate distribution／copy parity follow-up：獨立定義 bundle schema、generation、installed parity 與 support boundary；不回併 Linux/WSL2 canonical module extraction | arch/gate | 2026-08-14 | — | P2 | reuse-debt |
+| CC-555 | 🔵 active | `--mode sequential` 沒有 synthesis 修正重試（重試迴圈只存在於 parallel 分支），artifact 一次寫壞即整輪作廢——省額度的模式同時是唯一沒有安全網的模式；實測 codex 被 gate-result 的 code fence 絆倒 `apply_patch`，白費一個 session（2026-08-18 CC-554 gate） | ops/gate | 2026-08-18 | — | P2 | hygiene |
 | CC-554 | 🔵 active | 永久 regression test 缺少准入門檻：`/ship` 規範「修完每個 finding」但不規範修法形式，reviewer 每提一個邊界就永久長一個阻擋 case，case 又需要 meta-test 保護；QA 規則加六條准入條件＋五條替代路徑，ship.md 加對應例外（明確不設輪數上限，見 [[CC-544]]） | ops/gate | 2026-08-17 | — | P1 | hygiene |
 | CC-553 | 🔵 active | Gate synthesis 協定失敗不可修正且被當成 review 判決：supervisor 分不出 `result:`／`failure-result:` 而把協定失敗記成 NO-GO（被否決的檔案仍寫 `Final: GO`）、retry brief 從不帶入失敗原因故重試等同盲擲、parity reason 不說 id 差集；原 `invalid disagreement references` 是單一裸字串，涵蓋 6 條獨立約束（`only_keys`／`D-NNN` id 形狀／非空 summary／`finding_ids` 長度 ≥2／不重複／每個 id 須存在於 findings_union），synthesis 無從自我修正，唯一一次重試重犯同錯即整輪作廢；[[CC-549]] 已對 test-gap 契約做過同一修法（2026-08-17 CC-551 round 7、2026-08-18 qa-rules #8 兩次實測） | ops/gate | 2026-08-17 | — | P1 | hygiene |
 | CC-552 | 🔵 active | `test_default_worker_cap` 以 `sleep 0.1` 製造 worker 重疊窗口來驗證併發上限，違反 QA 規則的「不得以 sleep 同步」；主機負載會改變觀測到的重疊數，與 worker-cap 正確性無關（2026-08-17 CC-551 gate round 4 qa-tester，pre-existing） | ops/test | 2026-08-17 | — | P3 | hygiene |
@@ -389,6 +390,35 @@ lib 分離的關注點，允許各自的修復時程與驗收」轉由 [[CC-548]
 4. 既有英文行為不變；回歸測試涵蓋純英文、中英混合、純中文三類輸入，並驗證兩個呼叫端遷移至共用 lib 後行為一致。
 
 **Cross-link**: [[CC-340]]（deferred；本票是非 embedding 的分詞修正，非其替代）。**工作序列**：本票是 CC-465 → CC-467 → CC-468 → CC-466 序列化工作串的起點——CJK 抽詞先修好，統計可視化與 brief 約束萃取才有可信賴的中文訊號可用。
+
+---
+
+## CC-555 — sequential 模式沒有 synthesis 修正重試 🔵 active
+
+**Problem**: `runtime/bin/pr-gate.sh` 的 `for _synthesis_attempt in 1 2` 修正重試迴圈
+位於 parallel 分支（3845 行附近），`SEQUENTIAL` 分支（2832–3107）完全沒有對應機制：
+protocol 驗證失敗一律 `|| exit 1`，整輪作廢。
+
+**實測（2026-08-18，CC-554 的 gate `gate-20260818-071711-e90c1e`）**：preflight 通過、
+合併 reviewer session 啟動後，codex 花五分鐘與 `apply_patch` 搏鬥
+（`invalid hunk at line 11, '```' is not a valid hunk header`——gate result 內含
+```` ```reviewer_result_v1 ```` 區塊，反引號與 hunk 解析衝突），自述「staged reviewer
+sections were written, but their required order is incorrect」，最終
+`expected one synthesis_result_v1 block, found 0`。**沒有第二次機會，一個 session 白費。**
+
+**Why**: sequential 是額度吃緊時才選的模式，卻同時是唯一沒有安全網的模式——這個組合
+最糟：最需要省的時候，失敗成本最高。同日稍早 CC-553 的 sequential gate 用同樣格式一次
+成功，可見這是 authoring 的機率性失敗而非結構性不可能，正是重試能救的那一類。
+
+**Requirement**:
+1. sequential 取得與 parallel 相同的單次修正重試，並帶入實際被拒原因（沿用 [[CC-553]]
+   已落地的 reason 傳遞與 800 字元／單行邊界，不另立風格）。
+2. 重試前必須清空 `OUTPUT_FILE`：brief 要求 executor「第一個 reviewer 建立、其餘附加」，
+   對一份順序已錯的半成品續寫只會複合缺陷。
+3. `stale subject binding` 不重試——證據已不描述當前 tree，重寫只會產生第二份過期結果。
+4. 回歸測試以 mutation 驗證：移除重試即重現整輪作廢。
+
+**Cross-link**: [[CC-553]]（reason 可行動化與信任邊界）、[[CC-549]]（診斷精確化的同一修法）。
 
 ---
 

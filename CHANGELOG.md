@@ -28,6 +28,20 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **`--mode sequential` gets the same single correction retry as the parallel
+  route (CC-555).** The retry loop lived only in the parallel branch, so a
+  sequential round whose result failed protocol validation was voided outright
+  — reviewers included. That made the mode chosen when session budget is tight
+  the only mode with no safety net. Observed when a combined session spent five
+  minutes losing a fight with `apply_patch` over the fenced
+  `reviewer_result_v1` blocks in the gate result, wrote the reviewer sections
+  out of order, and produced no synthesis block. The retry carries the actual
+  rejected reason under the same single-line/800-char boundary CC-553
+  established, and empties `OUTPUT_FILE` first: the brief has the executor
+  create-then-append, so re-authoring over a half-ordered document would
+  compound the defect. A stale subject binding still refuses the retry — new
+  evidence cannot describe an older tree.
+
 - **A gate protocol failure is no longer reported as a review verdict, and its
   one correction retry is no longer blind (CC-553).** `pr-gate.sh` marks a
   publishable artifact with `result:` and a post-mortem with `failure-result:`,

@@ -11465,6 +11465,52 @@ test_parallel_synthesis_retry_brief_bounds_long_reason() {
   pass "$name"
 }
 
+# Behavior: a sequential round whose artifact fails protocol validation gets the
+# same single correction retry the parallel route has, told what was rejected,
+# and recovers instead of voiding the round.
+# Steps:
+# 1. Mutate the first sequential attempt so its result fails parity.
+# 2. Assert the gate still succeeds and recorded a retryable attempt 1 plus an
+#    accepted attempt 2.
+# Sequential is the mode chosen when session budget is tight; it was also the
+# only mode with no recovery at all, so one mis-authored document cost the
+# whole round -- reviewers included.
+test_sequential_protocol_recovers_on_retry() {
+  local name="sequential-protocol/recovers-on-retry"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home="$TMP_ROOT/$name/home"
+  local repo="$TMP_ROOT/$name/repo" runner="$TMP_ROOT/$name/runner"
+  local out="$TMP_ROOT/$name/out" err="$TMP_ROOT/$name/err" code=0 attempts
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester
+  create_repo "$repo" docs
+  set +e
+  CODEX_GATE_STUB_SYNTHESIS_PROTOCOL_MUTATION=drop-test-gap-row \
+    CODEX_GATE_STUB_SYNTHESIS_PROTOCOL_MUTATION_ONLY_FIRST=1 \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester --mode sequential
+  code=$?
+  set -e
+  [[ "$code" -eq 0 ]] || {
+    fail "$name" "sequential did not recover: code=$code $(tail -n 5 "$err" 2>/dev/null)"
+    return
+  }
+  assert_file_contains "$name" "$out" "[sequential] retrying once after" || return
+  attempts="$(find "$repo/.gate-results" -maxdepth 1 \
+    -name 'gate-protocol-attempts-*.jsonl' -type f | head -n 1)"
+  if [[ -z "$attempts" ]] || ! jq -s -e '
+      any(.[]; .role == "sequential" and .attempt == 1 and
+        .outcome == "retryable-failure") and
+      any(.[]; .role == "sequential" and .attempt == 2 and
+        .outcome == "accepted")
+    ' "$attempts" >/dev/null; then
+    fail "$name" "sequential recovery attempts were not recorded"
+    return
+  fi
+  pass "$name"
+}
+
 # Behavior: synthesis recovery is bounded to one retry.
 # Steps: drop a test-gap row on both attempts and assert exhaustion fails closed.
 test_parallel_synthesis_test_gap_parity_retry_exhausts() {
@@ -12093,6 +12139,7 @@ run_test test_synthesis_protocol_diagnostics_name_the_defect
 run_test test_synthesis_protocol_diagnostics_neutralize_injected_ids
 run_test test_parallel_synthesis_retry_brief_carries_reason
 run_test test_parallel_synthesis_retry_brief_bounds_long_reason
+run_test test_sequential_protocol_recovers_on_retry
 run_test test_targeted_synthesis_requires_initial_confirmation_set
 run_test test_targeted_gate_rejects_missing_initial_confirmation
 run_test test_gate_test_gap_live_eval_reports_observation_only
