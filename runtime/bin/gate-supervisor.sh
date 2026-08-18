@@ -167,14 +167,41 @@ _rc=0
 # pr-gate.sh prints `result: <path>` for publishable outcomes and
 # `failure-result: <path>` for protocol failures; extract either for the
 # sentinel so `pmctl gate wait` can surface an inspectable artifact without
-# re-deriving OUTPUT_FILE naming.
-_result_file="$(grep -m1 -E '^(result|failure-result): ' "$_log" 2>/dev/null | sed -E 's/^[^:]+: //')" || _result_file=""
+# re-deriving OUTPUT_FILE naming. Which label produced the path is load-bearing
+# and must be preserved: only `result:` means "pr-gate verified this artifact".
+# Prefer the handoff file pr-gate writes into the run dir it was given: only
+# pr-gate writes there, so the label cannot be supplied by a child dispatch
+# session whose output also lands in the combined log. Fall back to the log for
+# a copy-mode or older pr-gate that does not write one -- and then take the
+# LAST match, not the first: pr-gate emits its handoff from the EXIT trap,
+# after every child has finished, so a `result:`-prefixed line printed earlier
+# by a synthesis session cannot outrank it.
+_result_line=""
+if [[ -n "${run_dir:-}" && -r "${run_dir%/}/pr-gate.handoff" ]]; then
+  _result_line="$(grep -m1 -E '^(result|failure-result): ' "${run_dir%/}/pr-gate.handoff" 2>/dev/null)" || _result_line=""
+fi
+if [[ -z "$_result_line" ]]; then
+  _result_line="$(grep -E '^(result|failure-result): ' "$_log" 2>/dev/null | tail -n 1)" || _result_line=""
+fi
+_result_file=""
+_result_verified=false
+case "$_result_line" in
+  'result: '*)         _result_file="${_result_line#*: }"; _result_verified=true ;;
+  'failure-result: '*) _result_file="${_result_line#*: }" ;;
+esac
 
 _terminal_rc="$_rc"
-if [[ -z "$_result_file" && ( "$_rc" -eq 0 || "$_rc" -eq 1 ) ]]; then
+if [[ "$_result_verified" != true && ( "$_rc" -eq 0 || "$_rc" -eq 1 ) ]]; then
   # Exit 0/1 is only a GO/NO-GO verdict after pr-gate publishes the verified
   # `result:` handoff. Without it, finalization or result publication failed;
   # never encode that infrastructure failure as a verdict in the sentinel.
+  #
+  # A `failure-result:` path is a post-mortem artifact, not a verdict, so it
+  # must not satisfy this guard merely by being non-empty. A rejected synthesis
+  # is retained for inspection and can still contain its own `Final: GO` line;
+  # reporting that as NO-GO invites a reader to take the document's word over
+  # the gate's. Protocol failure is an infrastructure outcome (`failed`,
+  # exit 2), categorically distinct from a reviewer verdict.
   _state="failed"
   _terminal_rc=2
 else

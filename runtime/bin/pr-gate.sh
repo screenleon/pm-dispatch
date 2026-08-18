@@ -1623,6 +1623,17 @@ done
 # ── Prepare output paths ─────────────────────────────────────────────────────
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 _ARTIFACT_ROOT="${GATE_RUN_DIR_OVERRIDE:-$WORK_DIR}"
+# The supervisor must learn which handoff this run produced -- `result:`
+# (verified, publishable) or `failure-result:` (post-mortem, unverified) --
+# and its only other source is the combined log, which also carries child
+# dispatch output. Writing the handoff to a file only this process owns keeps
+# that classification off a shared channel. Detached runs supply --run-dir;
+# foreground/legacy runs have no supervisor and skip it.
+GATE_HANDOFF_FILE="${GATE_RUN_DIR_OVERRIDE:+$GATE_RUN_DIR_OVERRIDE/pr-gate.handoff}"
+_gate_write_handoff() {
+  [[ -n "${GATE_HANDOFF_FILE:-}" ]] || return 0
+  printf '%s: %s\n' "$1" "$2" > "$GATE_HANDOFF_FILE" 2>/dev/null || true
+}
 BRIEF_DIR="$_ARTIFACT_ROOT/.gate-briefs"
 mkdir -p "$BRIEF_DIR"
 GATE_ASSURANCE_CAPTURE_DIR="$(mktemp -d "/tmp/pm-gate-assurance-${TIMESTAMP}.XXXXXX")" || {
@@ -1781,6 +1792,7 @@ gate_exit_cleanup() {
   # failed, inspectable artifact instead of leaving callers with only an exit 2.
   if [[ "$_gate_exit_status" -ne 0 && -n "${OUTPUT_FILE:-}" && -e "${OUTPUT_FILE:-}" ]]; then
     printf 'failure-result: %s\n' "$OUTPUT_FILE"
+    _gate_write_handoff failure-result "$OUTPUT_FILE"
   fi
   cleanup_briefs
   return "$_gate_exit_status"
@@ -3832,13 +3844,25 @@ SBRIEF_P2
   _SYNTHESIS_COMPLETE=false
   for _synthesis_attempt in 1 2; do
     if [[ "$_synthesis_attempt" -eq 2 ]]; then
-      cat >> "$SYNTHESIS_BRIEF" <<'SYNTHESIS_RETRY_EOF'
-
-correction_retry: |
-  The first synthesis attempt failed a transport, malformed-output, schema, or
-  parity check. Rebuild the complete staging result from the same embedded,
-  immutable reviewer_result_v1 documents. Do not omit any test_gap_matrix row.
-SYNTHESIS_RETRY_EOF
+      # The retry is the ONLY correction opportunity: exhausting it voids the
+      # whole round, including every reviewer session already paid for. A retry
+      # that is not told what failed is a blind re-roll of the same prompt, so
+      # it reproduces the same defect and the round is lost to no new
+      # information. Name the specific rejected check instead.
+      #
+      # The reason is NOT trusted text. Its detail quotes ids read from the
+      # rejected artifact, so it crosses a trust boundary into a privileged
+      # agent brief. The verifier already reduces each quoted id to a bounded
+      # single-line token; this end flattens any residual newline as well, so a
+      # value can never terminate the YAML block scalar early and inject
+      # top-level keys into the brief. Both ends are required: neither alone
+      # survives a change to the other.
+      _synthesis_reason_line="${_synthesis_reason//$'\n'/ }"
+      _synthesis_reason_line="${_synthesis_reason_line//$'\r'/ }"
+      [[ "${#_synthesis_reason_line}" -le 800 ]] \
+        || _synthesis_reason_line="${_synthesis_reason_line:0:800}~"
+      printf '\ncorrection_retry: |\n  The first synthesis attempt was REJECTED for exactly this reason:\n\n    %s\n\n  Fix that specific defect. Rebuild the complete staging result from the same\n  embedded, immutable reviewer_result_v1 documents -- do not omit any\n  test_gap_matrix row, and do not change any other section to compensate.\n' \
+        "$_synthesis_reason_line" >> "$SYNTHESIS_BRIEF"
     fi
     say '  [synthesis attempt %d] running PM consolidation...\n' "$_synthesis_attempt"
     SYNTHESIS_DISPATCH_CMD="$(gate_dispatch_command "$EXECUTOR" "$SYNTHESIS_BRIEF" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT" "$DISPATCH_ISOLATION" "$DISPATCH_EFFORT")" || exit 2
@@ -4139,6 +4163,7 @@ relocate_gate_artifacts
 # in-process (gate_result_verify above). `pmctl gate verify "$OUTPUT_FILE"` re-runs
 # the same contract on demand for callers that want to re-confirm out of band.
 say '\nresult: %s\n' "$OUTPUT_FILE"
+_gate_write_handoff result "$OUTPUT_FILE"
 if [[ -n "${GATE_RUN_DIR_OVERRIDE:-}" ]]; then
   say 'run-dir: %s\n' "${GATE_RUN_DIR_OVERRIDE:-}"
 fi

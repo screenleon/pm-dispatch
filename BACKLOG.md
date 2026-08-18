@@ -65,7 +65,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-543 | ✅ done | Full test runner Phase 0 fail-fast structural precheck；`--collect-all` 保留 release 全證據路徑 | ops/test | 2026-08-04 | pr:#465 | P2 | hygiene |
 | CC-545 | ✅ done | Reviewer evidence-reference-contract INCOMPLETE 的單次修正性重派：僅限該單一違規類別，附具體錯誤引用重跑違規 reviewer，不必整輪 gate（30-40 分鐘）重來 | ops/gate | 2026-08-06 | pr:#465 | P2 | hygiene |
 | CC-546 | ⏸ deferred | standalone Gate distribution／copy parity follow-up：獨立定義 bundle schema、generation、installed parity 與 support boundary；不回併 Linux/WSL2 canonical module extraction | arch/gate | 2026-08-14 | — | P2 | reuse-debt |
-| CC-553 | 🔵 active | Gate synthesis 的 `invalid disagreement references` 是單一裸字串，涵蓋 6 條獨立約束（`only_keys`／`D-NNN` id 形狀／非空 summary／`finding_ids` 長度 ≥2／不重複／每個 id 須存在於 findings_union），synthesis 無從自我修正，唯一一次重試重犯同錯即整輪作廢；[[CC-549]] 已對 test-gap 契約做過同一修法（2026-08-17 CC-551 gate round 7 實測） | ops/gate | 2026-08-17 | — | P2 | hygiene |
+| CC-553 | 🔵 active | Gate synthesis 協定失敗不可修正且被當成 review 判決：supervisor 分不出 `result:`／`failure-result:` 而把協定失敗記成 NO-GO（被否決的檔案仍寫 `Final: GO`）、retry brief 從不帶入失敗原因故重試等同盲擲、parity reason 不說 id 差集；原 `invalid disagreement references` 是單一裸字串，涵蓋 6 條獨立約束（`only_keys`／`D-NNN` id 形狀／非空 summary／`finding_ids` 長度 ≥2／不重複／每個 id 須存在於 findings_union），synthesis 無從自我修正，唯一一次重試重犯同錯即整輪作廢；[[CC-549]] 已對 test-gap 契約做過同一修法（2026-08-17 CC-551 round 7、2026-08-18 qa-rules #8 兩次實測） | ops/gate | 2026-08-17 | — | P1 | hygiene |
 | CC-552 | 🔵 active | `test_default_worker_cap` 以 `sleep 0.1` 製造 worker 重疊窗口來驗證併發上限，違反 QA 規則的「不得以 sleep 同步」；主機負載會改變觀測到的重疊數，與 worker-cap 正確性無關（2026-08-17 CC-551 gate round 4 qa-tester，pre-existing） | ops/test | 2026-08-17 | — | P3 | hygiene |
 | CC-551 | ✅ closed 2026-08-17 | Gate/QA sandbox 取不到釘住的 ShellCheck：lint 改為離線解析（PATH 相符則用之，否則用已快取的釘住二進位），不再要求釘住版本已在 PATH | ops/test | 2026-08-17 | — | P2 | hygiene |
 | CC-550 | ✅ closed 2026-08-17 | 測試套件的「live 共用狀態未變動」指紋守衛是假陽性製造機：無法區分「本套件寫的」與「外部行程寫的」，已全數改為確定性 resolution oracle | ops/test | 2026-08-17 | — | P2 | hygiene |
@@ -391,7 +391,7 @@ lib 分離的關注點，允許各自的修復時程與驗收」轉由 [[CC-548]
 
 ---
 
-## CC-553 — synthesis disagreement 契約失敗不可修正 🔵 active
+## CC-553 — synthesis 協定失敗不可修正，且被當成 review 判決 🔵 active
 
 **Problem**: `gate-result-verify.sh` 的 disagreement 檢查把 6 條獨立約束——
 `only_keys(["id","summary","finding_ids"])`、id 須符合 `^D-[0-9]{3,}$`、summary
@@ -416,6 +416,32 @@ dispatch＋2 次 synthesis）作廢。**NO-GO 與 review 結果無關**。
    分支（`root-cause grouping parity mismatch`、`uncertainties`／`cautions` 等），
    決定哪些需要同等精度；不需要一次全改，但要留下判斷紀錄。
 3. 回歸測試以 mutation 驗證：以真實失敗樣本重放，斷言訊息點名違規約束。
+
+**第二次實測（2026-08-18，qa-testing-rules PR #8 的 targeted gate）**：範圍擴大為
+三個彼此獨立、互相放大的缺陷，根因同屬「協定失敗無法自我修正」：
+
+1. **`gate-supervisor.sh` 把協定失敗編碼成 NO-GO 判決。** pr-gate 以 `result:`
+   （已驗證、可發布）與 `failure-result:`（驗屍報告、未驗證）兩個 label 表達不同
+   語意，supervisor 卻以 `^(result|failure-result): ` 一併抓取後只保留路徑。其
+   「不得把基礎設施失敗編碼成判決」的守衛只在路徑為**空**時生效，於是保留了驗屍
+   報告的協定失敗（exit 1）反而被對映成 `NO-GO`。被否決的 synthesis 檔案本身仍寫
+   著 `Final: GO`，`gate wait` 又會照抄該行——讀者同時看到 `state: NO-GO` 與
+   `Final: GO`，極易取用後者。**這是 `infra_error` ≠ `fail` 的同構問題出現在 gate
+   自身**（規則面已由 qa-testing-rules `TEST-STRATEGY.md` §7.1 落地）。
+2. **retry brief 從不告知失敗原因。** `pr-gate.sh` 的 `correction_retry` 是固定
+   heredoc，只說「transport、malformed-output、schema 或 parity 其中之一」；
+   `$_synthesis_reason` 一直被計算卻從未傳入。唯一的修正機會因此是盲目重擲同一
+   prompt——這才是「重試重犯同錯」的真正機制，與模型能力無關。
+3. **parity 類 reason 不說差異。** `findings union parity mismatch` 未指出哪些
+   finding id 不一致；實測該次 `reviewer_finding_inventory` 有兩筆而
+   `findings_union` 為空陣列。
+
+**Requirement（追加）**:
+4. supervisor 必須保留 label 身分：唯有 `result:` 代表 pr-gate 背書；`failure-result:`
+   一律 `failed`／exit 2，不得產生 GO/NO-GO。
+5. retry brief 必須帶入該次實際 reason。
+6. parity 類 reason 須點名 id 差集，並區分「id 集合不符」與「id 相同但欄位值不符」
+   ——兩者修法不同。
 
 **Cross-link**: [[CC-549]]（test-gap 契約的同一修法）、[[CC-545]]（單次修正性重派）。
 

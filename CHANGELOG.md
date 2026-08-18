@@ -10,6 +10,61 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **A gate protocol failure is no longer reported as a review verdict, and its
+  one correction retry is no longer blind (CC-553).** `pr-gate.sh` marks a
+  publishable artifact with `result:` and a post-mortem with `failure-result:`,
+  but `gate-supervisor.sh` matched either label and kept only the path. Its
+  "never encode an infrastructure failure as a verdict" guard keyed off an
+  *empty* path, so a protocol failure that retained an inspectable artifact
+  satisfied the guard by being non-empty, and exit 1 became `NO-GO`. Because a
+  rejected synthesis still contains its own `Final: GO` line, `pmctl gate wait`
+  then printed `state: NO-GO` directly above `Final: GO` — an unreviewed
+  infrastructure failure presenting as a reviewed verdict, and the friendlier
+  line is the one a reader takes. The label is now load-bearing: only `result:`
+  means pr-gate stands behind the artifact; `failure-result:` resolves to
+  `failed` (exit 2) regardless of the exit code. This is the same
+  `infra_error` vs `fail` distinction the QA rules require of test runners,
+  applied to the gate itself.
+
+  The synthesis retry brief was a fixed heredoc naming four possible causes
+  ("transport, malformed-output, schema, or parity") while `$_synthesis_reason`
+  was computed and never passed in, so the single correction attempt re-rolled
+  the same prompt and reproduced the same defect — losing the whole round,
+  every reviewer session included. The brief now carries the actual rejected
+  check.
+
+  Parity reasons in `gate-result-verify.sh` now name the delta instead of
+  restating the check: `findings union parity mismatch` and its inventory
+  sibling report `missing=[...] unexpected=[...]`, and distinguish a wrong id
+  set from matching ids with differing field values — two defects with
+  different fixes. `invalid disagreement references` reports each
+  offending entry with the specific rule it broke and the observed value,
+  rather than one generic list of all six rules the entry contract bundles —
+  including why `finding_ids` needs two ids, the rule most often tripped
+  innocently when a single reviewer raises a lone objection. CC-553's remaining
+  scope (auditing the other multi-constraint reason strings) is unchanged.
+
+  The supervisor no longer learns which handoff a run produced by scanning the
+  combined log, which also carries the output of every dispatch session the
+  gate spawns. Once the `result:` / `failure-result:` label became load-bearing
+  for the verdict classification, a child session printing a `result:`-prefixed
+  line before pr-gate's own handoff could have restored exactly the defect
+  above. pr-gate now writes its handoff to `pr-gate.handoff` inside the
+  `--run-dir` it was given — a file only it writes — and the supervisor prefers
+  it, falling back to the log (last match, since the handoff is emitted from
+  the EXIT trap after every child finishes) only for a copy-mode or older
+  pr-gate that writes none.
+
+  Those diagnostics quote ids read from the **rejected** artifact, and the
+  disagreement branch by definition selects entries that failed the shape
+  contract — so a quoted id may be any JSON value, including a string
+  containing newlines. Since the reason then crosses into a privileged agent's
+  retry brief, it is now defended at both ends: the verifier reduces every
+  quoted id to a bounded, single-line, punctuation-free token, and pr-gate
+  flattens any residual newline before appending the YAML block scalar. Either
+  end alone would silently stop protecting the other if it changed, so both
+  are asserted.
+
 - **Lint resolves the pinned ShellCheck from the tool cache instead of
   requiring it on `PATH` (CC-551).** `lint-shellcheck.sh` validated only that
   the ambient `PATH` already carried the pinned version, so a gate reviewer or
