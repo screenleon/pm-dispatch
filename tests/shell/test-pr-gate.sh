@@ -11778,7 +11778,10 @@ union-missing-id	.findings_union |= map(select(.id != "critic-F001"))	missing=[c
 union-unexpected-id	.findings_union += [(.findings_union[0] | .id = "risk-reviewer-F009")]	unexpected=[risk-reviewer-F009]
 union-field-drift	.findings_union[0].affected_behavior = "drifted"	id sets match, so a field value differs
 inventory-missing-id	.reviewer_finding_inventory |= map(select(.id != "qa-tester-F001"))	missing=[qa-tester-F001]
-disagreement-malformed	.disagreements = [{"id":"BAD-1","summary":"s","finding_ids":["critic-F001","qa-tester-F001"]}]	entry BAD-1 fails the entry contract
+disagreement-bad-id	.disagreements = [{"id":"BAD-1","summary":"s","finding_ids":["critic-F001","qa-tester-F001"]}]	entry BAD-1: id=BAD-1 does not match
+disagreement-lone-finding	.disagreements = [{"id":"D-001","summary":"s","finding_ids":["critic-F001"]}]	finding_ids has 1 id(s)
+disagreement-empty-summary	.disagreements = [{"id":"D-001","summary":"","finding_ids":["critic-F001","qa-tester-F001"]}]	summary is empty
+disagreement-extra-key	.disagreements = [{"id":"D-001","summary":"s","finding_ids":["critic-F001","qa-tester-F001"],"extra":1}]	expected exactly id/summary/finding_ids
 disagreement-unknown-ref	.disagreements = [{"id":"D-001","summary":"s","finding_ids":["critic-F001","risk-reviewer-F404"]}]	not in the reviewer findings: [risk-reviewer-F404]
 DIAGNOSTICS
   [[ "$failures" -eq 0 ]] || return

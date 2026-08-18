@@ -772,6 +772,32 @@ gate_synthesis_protocol_verify() {
         else ": missing=[" + safe_join($missing) +
              "] unexpected=[" + safe_join($unexpected) + "]"
         end;
+      # Naming the offending entry is not enough: the entry contract bundles six
+      # independent rules, so "it fails the contract" still leaves the sole
+      # correction retry guessing which one. Report the first violated rule with
+      # the observed value. `finding_ids` length is the rule most often tripped
+      # innocently -- a single reviewer raising a lone objection naturally writes
+      # one id -- so it says why two are required rather than restating the bound.
+      def disagreement_defect:
+        if (type != "object")
+        then "entry is " + (type) + ", expected an object"
+        elif (only_keys(["id","summary","finding_ids"]) | not)
+        then "keys are [" + safe_join((keys_unsorted // [])) +
+             "], expected exactly id/summary/finding_ids"
+        elif (((.id | type) != "string") or ((.id | test("^D-[0-9]{3,}$")) | not))
+        then "id=" + (.id | safe_token) + " does not match ^D-[0-9]{3,}$"
+        elif ((.summary | nonempty) | not)
+        then "summary is empty"
+        elif ((.finding_ids | type) != "array")
+        then "finding_ids is " + (.finding_ids | type) + ", expected an array"
+        elif ((.finding_ids | length) < 2)
+        then "finding_ids has " + (.finding_ids | length | tostring) +
+             " id(s); a disagreement records two or more findings in conflict, so a lone objection is a finding, not a disagreement"
+        elif ((.finding_ids | length) != (.finding_ids | unique | length))
+        then "finding_ids repeats an id"
+        else "finding_ids contains a value that is not a known finding id: [" +
+             safe_join([.finding_ids[] | select(finding_id | not)]) + "]"
+        end;
       def disagreement:
         only_keys(["id","summary","finding_ids"]) and
         (.id | type == "string" and test("^D-[0-9]{3,}$")) and
@@ -954,9 +980,9 @@ gate_synthesis_protocol_verify() {
         ] | all | not)
       then "invalid disagreement references: " +
         (if (all($s.disagreements[]; disagreement) | not)
-         then "entry " +
-           safe_join([$s.disagreements[] | select(disagreement | not) | .id? // "no-id"]) +
-           " fails the entry contract (keys exactly id/summary/finding_ids; id matches ^D-[0-9]{3,}$; summary non-empty; finding_ids is an array of >=2 unique known finding ids)"
+         then ([$s.disagreements[] | select(disagreement | not) |
+             "entry " + ((.id? // "no-id") | safe_token) + ": " + disagreement_defect]
+           | join("; "))
          elif (($s.disagreements | map(.id)) | length != (unique | length))
          then "duplicate disagreement id: [" +
            safe_join(($s.disagreements | map(.id) | group_by(.) | map(select(length > 1) | .[0]))) +

@@ -37,9 +37,12 @@ Versions follow [Semantic Versioning](https://semver.org/).
   restating the check: `findings union parity mismatch` and its inventory
   sibling report `missing=[...] unexpected=[...]`, and distinguish a wrong id
   set from matching ids with differing field values — two defects with
-  different fixes. `invalid disagreement references` likewise names which of
-  its constraints failed and on which entry. CC-553's remaining scope (auditing
-  the other multi-constraint reason strings) is unchanged.
+  different fixes. `invalid disagreement references` reports each
+  offending entry with the specific rule it broke and the observed value,
+  rather than one generic list of all six rules the entry contract bundles —
+  including why `finding_ids` needs two ids, the rule most often tripped
+  innocently when a single reviewer raises a lone objection. CC-553's remaining
+  scope (auditing the other multi-constraint reason strings) is unchanged.
 
   Those diagnostics quote ids read from the **rejected** artifact, and the
   disagreement branch by definition selects entries that failed the shape
