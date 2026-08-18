@@ -746,6 +746,19 @@ gate_synthesis_protocol_verify() {
         (.summary | nonempty) and
         (.finding_ids | type == "array" and length > 0 and
           length == (unique | length) and all(.[]; finding_id));
+      # Every id quoted in a diagnostic comes from the REJECTED artifact, and a
+      # rejected artifact is precisely where malformed values live: the
+      # disagreement branch selects entries that FAILED the shape contract, so
+      # their .id may be any JSON value, including a string with newlines. The
+      # reason is then carried across a trust boundary into the next agent
+      # brief, so reduce each quoted value to a bounded, single-line,
+      # punctuation-free token before it can be embedded. Never echo an
+      # artifact field verbatim.
+      def safe_token:
+        (if type == "string" then . else tojson end)
+        | gsub("[^A-Za-z0-9._:-]"; "?")
+        | if length > 64 then .[0:64] + "~" else . end;
+      def safe_join($ids): ($ids | map(safe_token) | join(","));
       # A parity reason names WHICH ids differ, and separates "wrong id set"
       # from "right ids, wrong field values" -- two defects with different
       # fixes. Synthesis gets exactly one correction retry; a reason it cannot
@@ -756,8 +769,8 @@ gate_synthesis_protocol_verify() {
         (($got - $want) | unique) as $unexpected |
         if ($missing | length) == 0 and ($unexpected | length) == 0
         then ": id sets match, so a field value differs -- " + $same_set_hint
-        else ": missing=[" + ($missing | join(",")) +
-             "] unexpected=[" + ($unexpected | join(",")) + "]"
+        else ": missing=[" + safe_join($missing) +
+             "] unexpected=[" + safe_join($unexpected) + "]"
         end;
       def disagreement:
         only_keys(["id","summary","finding_ids"]) and
@@ -942,15 +955,14 @@ gate_synthesis_protocol_verify() {
       then "invalid disagreement references: " +
         (if (all($s.disagreements[]; disagreement) | not)
          then "entry " +
-           (([$s.disagreements[] | select(disagreement | not) | .id? // "<no id>"]
-             | join(",")) ) +
+           safe_join([$s.disagreements[] | select(disagreement | not) | .id? // "no-id"]) +
            " fails the entry contract (keys exactly id/summary/finding_ids; id matches ^D-[0-9]{3,}$; summary non-empty; finding_ids is an array of >=2 unique known finding ids)"
          elif (($s.disagreements | map(.id)) | length != (unique | length))
          then "duplicate disagreement id: [" +
-           (($s.disagreements | map(.id) | group_by(.) | map(select(length > 1) | .[0]))
-             | join(",")) + "]"
+           safe_join(($s.disagreements | map(.id) | group_by(.) | map(select(length > 1) | .[0]))) +
+           "]"
          else "finding_ids cite ids that are not in the reviewer findings: [" +
-           (((([$s.disagreements[].finding_ids[]] | unique) - $expected_ids)) | join(",")) +
+           safe_join((([$s.disagreements[].finding_ids[]] | unique) - $expected_ids)) +
            "]"
          end)
       elif

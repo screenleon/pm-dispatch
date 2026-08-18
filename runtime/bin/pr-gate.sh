@@ -3836,10 +3836,21 @@ SBRIEF_P2
       # whole round, including every reviewer session already paid for. A retry
       # that is not told what failed is a blind re-roll of the same prompt, so
       # it reproduces the same defect and the round is lost to no new
-      # information. Name the specific rejected check instead. `%s` is a
-      # verifier-produced reason string, never caller input.
+      # information. Name the specific rejected check instead.
+      #
+      # The reason is NOT trusted text. Its detail quotes ids read from the
+      # rejected artifact, so it crosses a trust boundary into a privileged
+      # agent brief. The verifier already reduces each quoted id to a bounded
+      # single-line token; this end flattens any residual newline as well, so a
+      # value can never terminate the YAML block scalar early and inject
+      # top-level keys into the brief. Both ends are required: neither alone
+      # survives a change to the other.
+      _synthesis_reason_line="${_synthesis_reason//$'\n'/ }"
+      _synthesis_reason_line="${_synthesis_reason_line//$'\r'/ }"
+      [[ "${#_synthesis_reason_line}" -le 800 ]] \
+        || _synthesis_reason_line="${_synthesis_reason_line:0:800}~"
       printf '\ncorrection_retry: |\n  The first synthesis attempt was REJECTED for exactly this reason:\n\n    %s\n\n  Fix that specific defect. Rebuild the complete staging result from the same\n  embedded, immutable reviewer_result_v1 documents -- do not omit any\n  test_gap_matrix row, and do not change any other section to compensate.\n' \
-        "$_synthesis_reason" >> "$SYNTHESIS_BRIEF"
+        "$_synthesis_reason_line" >> "$SYNTHESIS_BRIEF"
     fi
     say '  [synthesis attempt %d] running PM consolidation...\n' "$_synthesis_attempt"
     SYNTHESIS_DISPATCH_CMD="$(gate_dispatch_command "$EXECUTOR" "$SYNTHESIS_BRIEF" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT" "$DISPATCH_ISOLATION" "$DISPATCH_EFFORT")" || exit 2

@@ -41,6 +41,16 @@ Versions follow [Semantic Versioning](https://semver.org/).
   its constraints failed and on which entry. CC-553's remaining scope (auditing
   the other multi-constraint reason strings) is unchanged.
 
+  Those diagnostics quote ids read from the **rejected** artifact, and the
+  disagreement branch by definition selects entries that failed the shape
+  contract — so a quoted id may be any JSON value, including a string
+  containing newlines. Since the reason then crosses into a privileged agent's
+  retry brief, it is now defended at both ends: the verifier reduces every
+  quoted id to a bounded, single-line, punctuation-free token, and pr-gate
+  flattens any residual newline before appending the YAML block scalar. Either
+  end alone would silently stop protecting the other if it changed, so both
+  are asserted.
+
 - **Lint resolves the pinned ShellCheck from the tool cache instead of
   requiring it on `PATH` (CC-551).** `lint-shellcheck.sh` validated only that
   the ambient `PATH` already carried the pinned version, so a gate reviewer or
