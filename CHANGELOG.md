@@ -44,6 +44,17 @@ Versions follow [Semantic Versioning](https://semver.org/).
   innocently when a single reviewer raises a lone objection. CC-553's remaining
   scope (auditing the other multi-constraint reason strings) is unchanged.
 
+  The supervisor no longer learns which handoff a run produced by scanning the
+  combined log, which also carries the output of every dispatch session the
+  gate spawns. Once the `result:` / `failure-result:` label became load-bearing
+  for the verdict classification, a child session printing a `result:`-prefixed
+  line before pr-gate's own handoff could have restored exactly the defect
+  above. pr-gate now writes its handoff to `pr-gate.handoff` inside the
+  `--run-dir` it was given — a file only it writes — and the supervisor prefers
+  it, falling back to the log (last match, since the handoff is emitted from
+  the EXIT trap after every child finishes) only for a copy-mode or older
+  pr-gate that writes none.
+
   Those diagnostics quote ids read from the **rejected** artifact, and the
   disagreement branch by definition selects entries that failed the shape
   contract — so a quoted id may be any JSON value, including a string

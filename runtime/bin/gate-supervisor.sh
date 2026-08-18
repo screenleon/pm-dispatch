@@ -169,7 +169,20 @@ _rc=0
 # sentinel so `pmctl gate wait` can surface an inspectable artifact without
 # re-deriving OUTPUT_FILE naming. Which label produced the path is load-bearing
 # and must be preserved: only `result:` means "pr-gate verified this artifact".
-_result_line="$(grep -m1 -E '^(result|failure-result): ' "$_log" 2>/dev/null)" || _result_line=""
+# Prefer the handoff file pr-gate writes into the run dir it was given: only
+# pr-gate writes there, so the label cannot be supplied by a child dispatch
+# session whose output also lands in the combined log. Fall back to the log for
+# a copy-mode or older pr-gate that does not write one -- and then take the
+# LAST match, not the first: pr-gate emits its handoff from the EXIT trap,
+# after every child has finished, so a `result:`-prefixed line printed earlier
+# by a synthesis session cannot outrank it.
+_result_line=""
+if [[ -n "${run_dir:-}" && -r "${run_dir%/}/pr-gate.handoff" ]]; then
+  _result_line="$(grep -m1 -E '^(result|failure-result): ' "${run_dir%/}/pr-gate.handoff" 2>/dev/null)" || _result_line=""
+fi
+if [[ -z "$_result_line" ]]; then
+  _result_line="$(grep -E '^(result|failure-result): ' "$_log" 2>/dev/null | tail -n 1)" || _result_line=""
+fi
 _result_file=""
 _result_verified=false
 case "$_result_line" in

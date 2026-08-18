@@ -1623,6 +1623,17 @@ done
 # ── Prepare output paths ─────────────────────────────────────────────────────
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 _ARTIFACT_ROOT="${GATE_RUN_DIR_OVERRIDE:-$WORK_DIR}"
+# The supervisor must learn which handoff this run produced -- `result:`
+# (verified, publishable) or `failure-result:` (post-mortem, unverified) --
+# and its only other source is the combined log, which also carries child
+# dispatch output. Writing the handoff to a file only this process owns keeps
+# that classification off a shared channel. Detached runs supply --run-dir;
+# foreground/legacy runs have no supervisor and skip it.
+GATE_HANDOFF_FILE="${GATE_RUN_DIR_OVERRIDE:+$GATE_RUN_DIR_OVERRIDE/pr-gate.handoff}"
+_gate_write_handoff() {
+  [[ -n "${GATE_HANDOFF_FILE:-}" ]] || return 0
+  printf '%s: %s\n' "$1" "$2" > "$GATE_HANDOFF_FILE" 2>/dev/null || true
+}
 BRIEF_DIR="$_ARTIFACT_ROOT/.gate-briefs"
 mkdir -p "$BRIEF_DIR"
 GATE_ASSURANCE_CAPTURE_DIR="$(mktemp -d "/tmp/pm-gate-assurance-${TIMESTAMP}.XXXXXX")" || {
@@ -1781,6 +1792,7 @@ gate_exit_cleanup() {
   # failed, inspectable artifact instead of leaving callers with only an exit 2.
   if [[ "$_gate_exit_status" -ne 0 && -n "${OUTPUT_FILE:-}" && -e "${OUTPUT_FILE:-}" ]]; then
     printf 'failure-result: %s\n' "$OUTPUT_FILE"
+    _gate_write_handoff failure-result "$OUTPUT_FILE"
   fi
   cleanup_briefs
   return "$_gate_exit_status"
@@ -4151,6 +4163,7 @@ relocate_gate_artifacts
 # in-process (gate_result_verify above). `pmctl gate verify "$OUTPUT_FILE"` re-runs
 # the same contract on demand for callers that want to re-confirm out of band.
 say '\nresult: %s\n' "$OUTPUT_FILE"
+_gate_write_handoff result "$OUTPUT_FILE"
 if [[ -n "${GATE_RUN_DIR_OVERRIDE:-}" ]]; then
   say 'run-dir: %s\n' "${GATE_RUN_DIR_OVERRIDE:-}"
 fi

@@ -11415,6 +11415,56 @@ test_parallel_synthesis_retry_brief_carries_reason() {
   pass "$name"
 }
 
+# Behavior: an over-long verifier reason reaches the retry brief bounded and on
+# a single line, so it cannot inflate the brief or break its YAML block.
+# Steps:
+# 1. Mutate the first synthesis so its rejection reason enumerates 20
+#    malformed disagreement entries -- well over 800 characters before
+#    truncation.
+# 2. Capture the second synthesis brief at the executor boundary.
+# 3. Assert the reason line is present, bounded, and single-line.
+# The 800-character bound is the last safeguard at the dispatch boundary; an
+# omitted or off-by-one bound would only show up as an unexpectedly large
+# privileged brief, which nothing else observes.
+test_parallel_synthesis_retry_brief_bounds_long_reason() {
+  local name="synthesis-protocol/retry-brief-bounds-long-reason"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home="$TMP_ROOT/$name/home"
+  local repo="$TMP_ROOT/$name/repo" runner="$TMP_ROOT/$name/runner"
+  local out="$TMP_ROOT/$name/out" err="$TMP_ROOT/$name/err" code=0
+  local briefs="$TMP_ROOT/$name/briefs" reason_line reason_len
+  mkdir -p "$dir" "$briefs"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester
+  create_repo "$repo" docs
+  set +e
+  CODEX_GATE_STUB_SYNTHESIS_PROTOCOL_MUTATION=bloat-reason \
+    CODEX_GATE_STUB_SYNTHESIS_PROTOCOL_MUTATION_ONLY_FIRST=1 \
+    CODEX_GATE_CAPTURE_SYNTHESIS_BRIEF_DIR="$briefs" \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester --mode parallel
+  code=$?
+  set -e
+  [[ "$code" -eq 0 ]] || { fail "$name" "synthesis did not recover: code=$code"; return; }
+  [[ -f "$briefs/synthesis-2.md" ]] || { fail "$name" "second synthesis brief not captured"; return; }
+  reason_line="$(grep -m1 'invalid disagreement references' "$briefs/synthesis-2.md")" || reason_line=""
+  [[ -n "$reason_line" ]] || {
+    fail "$name" "retry brief carried no parity reason"
+    return
+  }
+  # Leading indentation is part of the rendered YAML scalar, not the reason.
+  reason_len="${#reason_line}"
+  if [[ "$reason_len" -gt 820 ]]; then
+    fail "$name" "reason line was not bounded: len=$reason_len"
+    return
+  fi
+  if [[ "$reason_len" -lt 200 ]]; then
+    fail "$name" "reason line is too short to have exercised the bound: len=$reason_len"
+    return
+  fi
+  pass "$name"
+}
+
 # Behavior: synthesis recovery is bounded to one retry.
 # Steps: drop a test-gap row on both attempts and assert exhaustion fails closed.
 test_parallel_synthesis_test_gap_parity_retry_exhausts() {
@@ -12042,6 +12092,7 @@ run_test test_synthesis_protocol_rejects_silent_drop_and_malformed_seed
 run_test test_synthesis_protocol_diagnostics_name_the_defect
 run_test test_synthesis_protocol_diagnostics_neutralize_injected_ids
 run_test test_parallel_synthesis_retry_brief_carries_reason
+run_test test_parallel_synthesis_retry_brief_bounds_long_reason
 run_test test_targeted_synthesis_requires_initial_confirmation_set
 run_test test_targeted_gate_rejects_missing_initial_confirmation
 run_test test_gate_test_gap_live_eval_reports_observation_only

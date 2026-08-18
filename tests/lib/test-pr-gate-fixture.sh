@@ -319,6 +319,18 @@ pr_gate_fixture_write_synthesis_protocol() {
             "$synthesis_document" > "$mutated_document"
           mv -- "$mutated_document" "$synthesis_document"
           ;;
+        bloat-reason)
+          # Many malformed disagreement entries: each contributes its own
+          # named defect to the reason, pushing it past the retry brief's
+          # 800-character bound. Independent of whether this fixture's run
+          # produced any findings, so it works on a clean gate too.
+          jq '.disagreements = ([range(0;20)] | map(. as $i
+                | {id: ("NOT-A-DISAGREEMENT-ID-" + ($i | tostring)),
+                   summary: "s",
+                   finding_ids: ["critic-F001","qa-tester-F001"]}))' \
+            "$synthesis_document" > "$mutated_document"
+          mv -- "$mutated_document" "$synthesis_document"
+          ;;
         malformed-json)
           printf '{"kind":\n' > "$synthesis_document"
           rm -f -- "$mutated_document"
