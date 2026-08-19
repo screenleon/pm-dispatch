@@ -1809,11 +1809,23 @@
         "additionalProperties": false,
         "anyOf": [
           {
+            "properties": {
+              "line": {
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
             "required": [
               "line"
             ]
           },
           {
+            "properties": {
+              "symbol": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
             "required": [
               "symbol"
             ]

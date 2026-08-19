@@ -181,6 +181,47 @@ case_schema_version_const() {
   fi
 }
 
+case_anyof_required_narrows_nullable() {
+  # "At least one of these keys must carry a value" is routinely written as
+  # anyOf over bare `required`. That is only correct while the named properties
+  # are non-nullable: `required` asserts the key EXISTS, not that it holds a
+  # value, so an explicit null satisfies every branch and the constraint
+  # silently permits an object with no usable content (CC-558 found exactly
+  # this in gate-remediation-closure's evidenceRef, the lone holdout among four
+  # sibling definitions). A branch must therefore also narrow the type it
+  # requires. Flags only the nullable case; bare `required` over a
+  # non-nullable property is sound.
+  local file="$1"
+  local name
+  name="anyOf-required: $(basename "$file") narrows every nullable at-least-one branch"
+  should_run "$name" || return 0
+  local violations
+  violations="$(jq -c '
+    [ paths(objects) as $p
+      | getpath($p) as $node
+      | select(($node.anyOf? | type) == "array" and ($node.properties? | type) == "object")
+      | select($node.anyOf | length > 1)
+      | select(all($node.anyOf[];
+          (type == "object") and ((.required? | type) == "array")
+          and ((.required | length) == 1)))
+      | $node.anyOf[]
+      | .required[0] as $key
+      # only a nullable target can be satisfied by an explicit null
+      | select(($node.properties[$key].type? // null)
+               | (type == "array") and (index("null") != null))
+      # violation when the branch does not narrow away from null
+      | select((.properties[$key].type? // null) as $bt
+               | ($bt == null) or ($bt == "null")
+                 or (($bt | type) == "array" and ($bt | index("null")) != null))
+      | (($p | join(".")) + "." + $key)
+    ] | unique' "$file" 2>/dev/null)" || violations='["<jq failed>"]'
+  if [[ "$violations" == "[]" ]]; then
+    pass "$name"
+  else
+    fail "$name" "bare required over nullable property: $violations"
+  fi
+}
+
 case_enum_sync() {
   # Verifies that enum values embedded inline in a JSON Schema stay in sync
   # with the authoritative policy YAML file (the human editing surface).
@@ -254,6 +295,11 @@ for f in "$CORE_DIR"/schema/*.schema.json; do
   if jq -e '.properties.schema_version' "$f" >/dev/null 2>&1; then
     case_schema_version_const "$f"
   fi
+done
+
+# 3b. anyOf-over-required must narrow when the required property is nullable
+for f in "$CORE_DIR"/schema/*.schema.json; do
+  case_anyof_required_narrows_nullable "$f"
 done
 
 # 4. Enum-sync: schema inline enums vs policy YAML source-of-truth
@@ -1972,6 +2018,41 @@ case_gate_remediation_closure_invalid_finding_rejected() {
   rm -f "$tmpf"
 }
 
+# An evidence ref exists to point a reader at the evidence. `anyOf` over bare
+# `required` only asks whether the KEY is present, so `line: null, symbol: null`
+# satisfied it while carrying no locator at all. The sibling evidenceRef/sourceRef
+# definitions in gate-reviewer-result and gate-synthesis-result already narrow the
+# type inside each anyOf branch; the closure schema was the lone holdout.
+case_gate_remediation_closure_null_locator_rejected() {
+  local name="remediation-closure: an evidence ref whose only locators are null is rejected"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/gate-remediation-closure.schema.json"
+  local nulled kept subject scope
+  nulled="$(mktemp /tmp/gate-remediation-closure-nulled-XXXXXX.json)"
+  kept="${nulled}.kept"
+  subject="$(printf 'd%.0s' {1..64})"
+  scope="$(printf 'a%.0s' {1..64})"
+  _gate_remediation_closure_valid_instance |
+    jq '.findings[0].evidence_refs[0] |= {path: .path, line: null, symbol: null}' > "$nulled"
+  # Positive control: one real locator is still accepted, so a mutation that
+  # rejects every evidence ref cannot pass this case.
+  _gate_remediation_closure_valid_instance |
+    jq '.findings[0].evidence_refs[0] |= {path: .path, line: 7, symbol: null}' > "$kept"
+
+  if jsonschema -i "$nulled" "$schema_file" >/dev/null 2>&1; then
+    fail "$name" "schema accepted an evidence ref with no usable locator"
+  elif ! jsonschema -i "$kept" "$schema_file" >/dev/null 2>&1; then
+    fail "$name" "schema rejected an evidence ref carrying a real line locator"
+  elif gate_remediation_closure_verify "$nulled" "$subject" "$scope" >/dev/null 2>&1; then
+    # The runtime verifier must actually consult the schema; asserting this
+    # here is what proves the fix reaches the path production code uses.
+    fail "$name" "runtime verifier accepted an evidence ref with no usable locator"
+  else
+    pass "$name"
+  fi
+  rm -f "$nulled" "$kept"
+}
+
 case_gate_remediation_closure_runtime_claims() {
   local name="remediation-closure: runtime verifier enforces finding classification"
   should_run "$name" || return 0
@@ -2328,6 +2409,7 @@ case_gate_synthesis_result_missing_verification_rejected
 case_gate_synthesis_result_closed_seed_rejected
 case_gate_remediation_closure_valid_instance
 case_gate_remediation_closure_invalid_finding_rejected
+case_gate_remediation_closure_null_locator_rejected
 case_gate_remediation_closure_runtime_claims
 case_gate_remediation_closure_publish_is_no_replace
 case_gate_publish_assessment_valid_instance

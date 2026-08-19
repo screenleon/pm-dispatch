@@ -65,6 +65,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-543 | ✅ done | Full test runner Phase 0 fail-fast structural precheck；`--collect-all` 保留 release 全證據路徑 | ops/test | 2026-08-04 | pr:#465 | P2 | hygiene |
 | CC-545 | ✅ done | Reviewer evidence-reference-contract INCOMPLETE 的單次修正性重派：僅限該單一違規類別，附具體錯誤引用重跑違規 reviewer，不必整輪 gate（30-40 分鐘）重來 | ops/gate | 2026-08-06 | pr:#465 | P2 | hygiene |
 | CC-546 | ⏸ deferred | standalone Gate distribution／copy parity follow-up：獨立定義 bundle schema、generation、installed parity 與 support boundary；不回併 Linux/WSL2 canonical module extraction | arch/gate | 2026-08-14 | — | P2 | reuse-debt |
+| CC-558 | ✅ closed 2026-08-19 | `gate-remediation-closure` 的 `evidenceRef` 用裸 `anyOf: [required line, required symbol]`，只檢查「鍵存在」，所以 `line: null, symbol: null` 是合法的——一個完全沒有定位器的 evidence ref 同時通過 schema 與 runtime claim 驗證；同 repo 另外三個同形定義（reviewer-result、synthesis-result 的 evidenceRef／sourceRef）都已在分支內收窄型別，本項是唯一漏網 | ops/gate | 2026-08-19 | — | P2 | hygiene |
 | CC-557 | 🔵 active | `scope-manifest/large-expansion-uses-file-input` 在正常 4-way 並行下耗用 120s watchdog 的 84-86%（實測 101s／103s，單獨跑 57s），gate preflight 的額外開銷即可推過；耗時穩定＝預算相對工作量設錯，非 flake；依 §7「pass/fail 取決於主機負載＝缺陷」 | ops/test | 2026-08-19 | — | P2 | hygiene |
 | CC-556 | ✅ closed 2026-08-19 | `pmctl gate wait` 把**存活中**的 supervisor 報成 `died without terminal evidence`（exit 3）：`supervisor.identity` 記錄的是 setsid **前**的 pgid，`verify_identity` 拿它比對 setsid 後的值必然不符；任何超過 wait 預算的 gate 都會遇到，且會誘導操作者重派、丟棄進行中的工作 | ops/gate | 2026-08-19 | — | P2 | hygiene |
 | CC-555 | ✅ closed 2026-08-19 | `--mode sequential` 沒有 synthesis 修正重試（重試迴圈只存在於 parallel 分支），artifact 一次寫壞即整輪作廢——省額度的模式同時是唯一沒有安全網的模式；實測 codex 被 gate-result 的 code fence 絆倒 `apply_patch`，白費一個 session（2026-08-18 CC-554 gate） | ops/gate | 2026-08-18 | — | P2 | hygiene |
@@ -392,6 +393,55 @@ lib 分離的關注點，允許各自的修復時程與驗收」轉由 [[CC-548]
 4. 既有英文行為不變；回歸測試涵蓋純英文、中英混合、純中文三類輸入，並驗證兩個呼叫端遷移至共用 lib 後行為一致。
 
 **Cross-link**: [[CC-340]]（deferred；本票是非 embedding 的分詞修正，非其替代）。**工作序列**：本票是 CC-465 → CC-467 → CC-468 → CC-466 序列化工作串的起點——CJK 抽詞先修好，統計可視化與 brief 約束萃取才有可信賴的中文訊號可用。
+
+---
+
+## CC-558 — closure evidence ref 允許「沒有定位器」 ✅ 2026-08-19
+
+**Problem**: `core/schema/gate-remediation-closure.schema.json` 的 `evidenceRef`
+以 `anyOf: [{required:["line"]}, {required:["symbol"]}]` 表達「至少要有一個定位器」。
+但 JSON Schema 的 `required` 只斷言**鍵存在**，不管值是什麼；而同一定義又允許
+`line: ["integer","null"]`、`symbol: ["string","null"]`。於是
+`{"path": "...", "line": null, "symbol": null}` 完全合法——一個宣稱指向證據、卻不指向
+任何地方的 evidence ref。
+
+**實測（2026-08-19，main `17c01e0`）**：以 `test-core-schemas.sh` 自己的 canonical
+instance 為底，把 `findings[0].evidence_refs[0]` 換成上述形狀後，
+`gate_structural_schema_verify` 與 `gate_remediation_closure_verify` **雙雙接受**。
+
+**Why**: evidence ref 的存在目的就是讓讀者能走到證據。少了定位器，它退化成一個路徑字串，
+卻仍然滿足「每個 finding 至少一筆 evidence」的計數檢查——用**數量**冒充**可追溯性**。
+這是 remediation closure 的可稽核性主張的直接漏洞。
+
+**不是類別問題，是離群值**：稽核全部 schema 後，另外三個同形定義
+（`gate-reviewer-result` 的 `evidenceRef`、`gate-synthesis-result` 的 `evidenceRef` 與
+`sourceRef`）**都已經在各自的 anyOf 分支內收窄型別**。只有 closure 這一個沒跟上。修法因此
+不是發明新寫法，而是把它拉回 sibling schema 既有的慣用法。
+
+**Requirement**:
+1. 在 schema 層修，不在 runtime 層補——schema 是宣告契約，修一次所有 consumer 都受惠。
+2. 回歸測試必須帶正向控制（`line: 7` 仍被接受），否則「全部拒絕」的壞修法也會讓測試變綠。
+3. 測試需同時斷言 runtime verifier 也拒絕，以證明修正真的走到 production 用的那條路徑。
+
+**Outcome**: 交付於 `fix/CC-558-closure-evidence-locator`。`anyOf` 兩個分支各自收窄
+（`line: integer/minimum 1`、`symbol: string/minLength 1`），`runtime/lib/gate-structural-schemas.json`
+由 `tools/generate/gate-structural-validator.sh` 重新產生。
+
+重構／重用審視另外加了一項**常設不變式**（沿用 `case_schema_version_const` 既有的
+「帶檔案參數、逐 schema 跑」寫法）：任何 `anyOf` 分支若以裸 `required` 指名一個 **nullable**
+屬性，就必須同時收窄型別。19 個 schema 現況全過，第 20 個不可能再犯同樣的錯。兩案以
+mutation 證明不重疊——還原 schema 收窄只有不變式點名位置；拿掉 runtime 的
+`gate_structural_schema_verify` 呼叫則只有 instance test 抓得到。
+
+**來源**: 從已關閉的 PR #488（`feat/cc-532-gate-canonical-modules`）打撈時發現——該分支的
+`gate-closure-verify.sh` 帶有等效的 runtime 層檢查。**打撈的其餘部分皆不採用**：closure
+verify 函式本身 main 已有且檢查更嚴（多了 `only_keys`、`targeted_confirmation.finding_ids`
+集合對照），`live-db-guard.sh` 則是 [[CC-550]] 刻意淘汰的 live-fingerprint 反模式。
+
+**Cross-link**: [[CC-517]]（structured remediation closure 的擁有者）、[[CC-550]]（打撈時
+被否決的那半）。
+
+**See**: CHANGELOG.md [Unreleased]
 
 ---
 
