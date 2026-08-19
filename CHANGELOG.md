@@ -28,6 +28,19 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **A remediation closure can no longer cite evidence it does not locate
+  (CC-558).** `gate-remediation-closure`'s `evidenceRef` expressed "at least one
+  locator" as `anyOf: [{required: [line]}, {required: [symbol]}]`. JSON Schema's
+  `required` asserts only that the key is *present*, and both properties are
+  nullable, so `{"path": ..., "line": null, "symbol": null}` validated — an
+  evidence ref pointing nowhere, which still satisfied the per-finding
+  "at least one evidence ref" count. Quantity was standing in for
+  traceability. Both anyOf branches now narrow the type they require, matching
+  what the sibling `gate-reviewer-result` and `gate-synthesis-result`
+  definitions already did; the closure schema was the only one that had not.
+  The runtime bundle is regenerated from the canonical schema, so the runtime
+  claim verifier rejects it too.
+
 - **`pmctl gate wait` no longer reports a running supervisor as dead
   (CC-556).** The supervisor's `supervisor.identity` record was captured by the
   *launcher*, in the window where `setsid` had not yet moved the child into its

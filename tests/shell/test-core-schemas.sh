@@ -1972,6 +1972,41 @@ case_gate_remediation_closure_invalid_finding_rejected() {
   rm -f "$tmpf"
 }
 
+# An evidence ref exists to point a reader at the evidence. `anyOf` over bare
+# `required` only asks whether the KEY is present, so `line: null, symbol: null`
+# satisfied it while carrying no locator at all. The sibling evidenceRef/sourceRef
+# definitions in gate-reviewer-result and gate-synthesis-result already narrow the
+# type inside each anyOf branch; the closure schema was the lone holdout.
+case_gate_remediation_closure_null_locator_rejected() {
+  local name="remediation-closure: an evidence ref whose only locators are null is rejected"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/gate-remediation-closure.schema.json"
+  local nulled kept subject scope
+  nulled="$(mktemp /tmp/gate-remediation-closure-nulled-XXXXXX.json)"
+  kept="${nulled}.kept"
+  subject="$(printf 'd%.0s' {1..64})"
+  scope="$(printf 'a%.0s' {1..64})"
+  _gate_remediation_closure_valid_instance |
+    jq '.findings[0].evidence_refs[0] |= {path: .path, line: null, symbol: null}' > "$nulled"
+  # Positive control: one real locator is still accepted, so a mutation that
+  # rejects every evidence ref cannot pass this case.
+  _gate_remediation_closure_valid_instance |
+    jq '.findings[0].evidence_refs[0] |= {path: .path, line: 7, symbol: null}' > "$kept"
+
+  if jsonschema -i "$nulled" "$schema_file" >/dev/null 2>&1; then
+    fail "$name" "schema accepted an evidence ref with no usable locator"
+  elif ! jsonschema -i "$kept" "$schema_file" >/dev/null 2>&1; then
+    fail "$name" "schema rejected an evidence ref carrying a real line locator"
+  elif gate_remediation_closure_verify "$nulled" "$subject" "$scope" >/dev/null 2>&1; then
+    # The runtime verifier must actually consult the schema; asserting this
+    # here is what proves the fix reaches the path production code uses.
+    fail "$name" "runtime verifier accepted an evidence ref with no usable locator"
+  else
+    pass "$name"
+  fi
+  rm -f "$nulled" "$kept"
+}
+
 case_gate_remediation_closure_runtime_claims() {
   local name="remediation-closure: runtime verifier enforces finding classification"
   should_run "$name" || return 0
@@ -2328,6 +2363,7 @@ case_gate_synthesis_result_missing_verification_rejected
 case_gate_synthesis_result_closed_seed_rejected
 case_gate_remediation_closure_valid_instance
 case_gate_remediation_closure_invalid_finding_rejected
+case_gate_remediation_closure_null_locator_rejected
 case_gate_remediation_closure_runtime_claims
 case_gate_remediation_closure_publish_is_no_replace
 case_gate_publish_assessment_valid_instance
