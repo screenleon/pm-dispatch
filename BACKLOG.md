@@ -37,7 +37,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-546 | ⏸ deferred | standalone Gate distribution／copy parity follow-up：獨立定義 bundle schema、generation、installed parity 與 support boundary；不回併 Linux/WSL2 canonical module extraction | arch/gate | 2026-08-14 | — | P2 | reuse-debt |
 | CC-559 | 🟢 someday | memory usage sidecar 是 tab-delimited，writer 拒收含 tab／newline 的 relpath，因此這類記憶卡**永遠無法累積使用紀錄**；`pmctl memory stats` 目前誠實地把它們列為 `unmeasurable_cards`（不謊稱 never-hit），但根因未解——需改用無損編碼。屬寫入面變更，故當初被 [[CC-467]] Requirement 3 明文排除 | ops/memory | 2026-08-19 | — | P3 | hygiene |
 | CC-562 | 🟢 someday | synthesis／reviewer 驗證器仍有多個「多約束共用單一 reason 字串」分支（`invalid coverage matrix`、`invalid finding inventory or union`、`duplicate finding ID collision`、`selected/not-reviewed dimensions mismatch`），單次修正重試收到後無法行動；[[CC-553]] Req 2 判定需同等精度但屬不同 helper 形狀（逐項指出違規條目，非集合差集），故分票 | ops/gate | 2026-08-19 | — | P3 | hygiene |
-| CC-561 | 🔵 active | 斷言「預設值」的測試在**繼承來的**環境下執行受測主體，任何 operator override 都會靜默改變它量到的東西：`jobs-default-caps-high-nproc` 有 stub `nproc` 回 32 卻沒控制能覆蓋上限的 `PM_DISPATCH_TEST_MAX_JOBS`。現行防線是一行手寫 `unset`（只列 2 個名字），**永遠落後一次事故**——此類已咬第三次 | ops/test | 2026-08-19 | — | P2 | hygiene |
+| CC-561 | ✅ closed 2026-08-20 | 斷言「預設值」的測試在**繼承來的**環境下執行受測主體，任何 operator override 都會靜默改變它量到的東西：`jobs-default-caps-high-nproc` 有 stub `nproc` 回 32 卻沒控制能覆蓋上限的 `PM_DISPATCH_TEST_MAX_JOBS`。現行防線是一行手寫 `unset`（只列 2 個名字），**永遠落後一次事故**——此類已咬第三次 | ops/test | 2026-08-19 | — | P2 | hygiene |
 | CC-560 | 🟢 someday | `_gate_scope_reference_index_collect` 每筆 reference 都以 `jq -nc` 建一個 JSON 物件（實測 4.9s×2），與 [[CC-557]] 已修掉的 `_gate_scope_expansion_append` 是同一類寫法；CC-557 未一併處理是因預算餘裕已足，非因不成立 | ops/gate | 2026-08-19 | — | P3 | hygiene |
 | CC-557 | ✅ closed 2026-08-19 | `scope-manifest/large-expansion-uses-file-input` 在正常 4-way 並行下耗用 120s watchdog 的 84-86%（實測 101s／103s，單獨跑 57s），gate preflight 的額外開銷即可推過；耗時穩定＝預算相對工作量設錯，非 flake；依 §7「pass/fail 取決於主機負載＝缺陷」 | ops/test | 2026-08-19 | — | P2 | hygiene |
 | CC-554 | 🔵 active | 永久 regression test 缺少准入門檻：`/ship` 規範「修完每個 finding」但不規範修法形式，reviewer 每提一個邊界就永久長一個阻擋 case，case 又需要 meta-test 保護；QA 規則加六條准入條件＋五條替代路徑，ship.md 加對應例外（明確不設輪數上限，見 [[CC-544]]） | ops/gate | 2026-08-17 | — | P1 | hygiene |
@@ -296,11 +296,17 @@ relpath（`runtime/lib/pmctl-memory.sh` 內 `unmeasurable_cards` 分支的註解
 3. 驗證併入既有 table-driven case `synthesis-protocol/diagnostics-name-the-defect`，逐列 mutation
    驗證，不新增獨立 case。
 
-**Cross-link**: [[CC-553]]（Req 2 的判斷來源）、[[CC-549]]（reviewer 端同一修法）。
+**實戰佐證（2026-08-20）**：[[CC-561]] 的 targeted 重新 gate 因
+`remediation confirmation set mismatch` 連續兩次 synthesis 失敗、recovery 用盡而整輪作廢
+（`gate-20260819-181456-91ce0d`）。該 reason 屬本票類別——只說「不符」，不說少了或多了哪些
+confirmation，因此重試無從行動。**這是本票從「理論上該修」變成「已知成本」的第一筆實測。**
+
+**Cross-link**: [[CC-553]]（Req 2 的判斷來源）、[[CC-549]]（reviewer 端同一修法）、
+[[CC-561]]（實戰佐證來源）。
 
 ---
 
-## CC-561 — 斷言預設值的測試繼承環境，override 會靜默改變量測對象 🔵 active
+## CC-561 — 斷言預設值的測試繼承環境，override 會靜默改變量測對象 ✅ 2026-08-20
 
 **Problem**: `tests/shell/test-run-all-tests.sh` 的 `jobs-default-caps-high-nproc`
 刻意 stub `nproc` 回傳 32，用以證明「預設並行上限是 4」。但它**沒有控制
@@ -340,6 +346,56 @@ relpath（`runtime/lib/pmctl-memory.sh` 內 `unmeasurable_cards` 分支的註解
 subprocess headroom for their own children」屬實），本票不動它。
 
 **Cross-link**: [[CC-552]]（時序敏感測試）、[[CC-554]]（測試准入門檻，同屬測試治理線）。
+
+**Outcome（2026-08-20）**
+
+**規劃期推翻了兩個直覺設計**，兩者都會做出看似正確但無效的修正：
+
+1. **「放進 `th_init` 就好」——錯。** `test-run-all-tests.sh`（正是出缺陷的那個）與其餘 8 個
+   自足套件**根本不呼叫 `th_init`**，放那裡修不到實際缺陷。故 harness 與自足套件兩邊都要接。
+2. **「把產品匯出的環境變數全部清掉」——錯，且會弄壞東西。** `PM_DISPATCH_TEST_COMMAND_IDENTITY`
+   由 pr-gate 匯出、由 `tests/lib/test-result.sh` 消費，**那是契約不是洩漏**；清掉會斷開 preflight
+   證據綁定。同理 `PM_DISPATCH_TEST_PR_GATE_CASE_TIMEOUT_SECS` 是套件**自己**的 operator 旋鈕
+   （[[CC-557]] 記載），清掉等於廢掉那個旋鈕。
+
+真正的區分是**「受測主體的旋鈕」vs「套件自己的旋鈕／呼叫方契約」**，而**既有 inventory 無法
+表達這個差別**——`input_class` 分不出（兩者同屬 `test-config`），`test_isolation` 是自由文字。
+因此 Requirement 2 照字面做不到，改為**替 inventory 增設第 9 欄 `fixture_scrub`（yes/no）**：
+在自由文字欄裡約定格式，正是本票要終結的「宣告了但無法機器判讀」。
+
+交付：
+- inventory 新增 `fixture_scrub` 欄並補齊 4 個缺漏宣告；lint 同步驗欄位值（非 yes/no 即失敗）。
+- 新模組 `tests/lib/test-env-isolation.sh` 由該欄推導清除集合，**雙重 fail-closed**：inventory
+  讀不到、或宣告集合為空，一律非零退出——靜默 no-op 正是本缺陷的成因。pattern 列（`PREFIX_*`）
+  展開比對實際已設變數，避免「清了個字面星號」而回報成功。
+- 接線：`th_init`（84 個套件）＋ `test-run-all-tests.sh`／`test-run-tests.sh`（自足）。
+  手寫的 `unset` 兩名清單被模組呼叫取代，符合 Requirement 5。
+- **驗收即缺陷本身**：帶 `PM_DISPATCH_TEST_MAX_JOBS=8` 跑 `test-run-all-tests.sh`，先前回報
+  「5th suite started; default exceeded high-nproc safety cap of 4」的 case 現在通過（45/45）。
+- Ratchet 四案落在 `test-test-harness.sh`（測 harness 本身的既有家），各自 mutation 驗證且
+  **只打掛自己那一案**：移除 `th_init` 的清除 → 5 個變數存活被點名；改成 fail-open → 只有
+  unreadable 那案失敗；移除 declared-count 守衛 → 只有 empty-declaration 那案失敗；停用 pattern 展開 → 只有 pattern 那案失敗並點名存活的變數。
+
+**兩輪 gate 各抓到一個我自己的疏漏，兩個都是真的。**
+
+第二輪另指出 **wildcard `fixture_scrub` 展開路徑無直接覆蓋**——我寫了 `PREFIX_*` 展開卻沒測；
+不測的話，把展開停用會退化成「unset 一個字面星號」，清不到任何東西**卻回報成功**，正是本票要
+根除的假隔離。已補第四案，並反向斷言不得過度清除（不共用前綴者必須存活）。
+
+**第一輪 gate NO-GO（qa-tester hard block），是我自己的疏漏。** 模組有**兩個** fail-closed
+守衛，我只測了「inventory 讀不到」，漏了「可讀但零筆 `fixture_scrub=yes`」——沒有直接回歸的話，
+拿掉 declared-count 守衛會**靜默恢復假隔離而所有既有測試仍綠**。已補第三案，並依 reviewer 寫的
+`verification_expectation` 逐字 mutation 驗證。
+
+**覆蓋完整性**：9 個不呼叫 `th_init` 的套件全數交代——4 個 pr-gate shard 以 `exec` 委派給
+有 `th_init` 的 `test-pr-gate.sh`、2 個 runner 套件已明確接線、3 個 e2e／release 完全未引用
+清除集合內任何變數。
+
+**未納入清除集合（判斷紀錄）**：`QA_RULES_DIR` 是 gate 真正需要的外部設定，不是測試旋鈕；
+`test-pr-gate.sh:701` 已用 `env -u QA_RULES_DIR ...` 在**啟動點**建構子行程環境，那是該情境的
+正解（套件自己也需要該值時，清整個套件行程是錯的）。兩種模式並存且各有適用。
+
+**See**: CHANGELOG.md [Unreleased]
 
 ---
 

@@ -28,6 +28,25 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **A test that asserts a default no longer measures the caller's environment
+  (CC-561).** `jobs-default-caps-high-nproc` stubs `nproc` to 32 to prove the
+  parallel cap is 4, but did not control `PM_DISPATCH_TEST_MAX_JOBS` — the knob
+  that overrides that cap — so running the suite with it set reported
+  "default exceeded high-nproc safety cap of 4" about a subject that was never
+  at its default. Third occurrence of the class; the standing defence was a
+  hand-written `unset` of two names that only grew after someone was bitten.
+  The cleared set now comes from the canonical variable inventory, which gains
+  a `fixture_scrub` column because the distinction the fix needs — a knob
+  belonging to the *subject a test launches* versus one belonging to the suite
+  itself or to its caller — was not expressible before. `input_class` cannot
+  separate them and the existing isolation column is free text, so the
+  requirement was written down in a form nothing could enforce. Scrubbing is
+  applied at `th_init` and by the nine self-contained suites that do not call
+  it, and fails closed if the inventory is unreadable or declares nothing.
+  `PM_DISPATCH_TEST_COMMAND_IDENTITY` is deliberately preserved: pr-gate
+  exports it and the suite result writer consumes it, so it is a contract
+  rather than a leak.
+
 - **A synthesis parity rejection now names which entries differ (CC-553).**
   Nine parity checks guard the synthesis artifact, and seven of them returned
   only the name of the check — including `test-gap matrix parity mismatch`,

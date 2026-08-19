@@ -20,7 +20,19 @@
 # declaration, never split across the `{`. See tests/lib/test-guard-
 # framework.sh or tests/shell/test-pr-gate.sh for worked examples.
 
+# Fixture inputs are cleared before a suite does anything else. A suite that
+# asserts a default must not measure whatever the caller happened to export;
+# see tests/lib/test-env-isolation.sh for why the set is inventory-driven.
+# The nine self-contained suites that do not call th_init source the module
+# directly.
+if ! declare -F test_env_scrub_fixture_inputs >/dev/null 2>&1; then
+  # shellcheck source=tests/lib/test-env-isolation.sh
+  # shellcheck disable=SC1091 # CI runs shellcheck without -x; the source= hint above names the file.
+  . "${BASH_SOURCE[0]%/*}/test-env-isolation.sh"
+fi
+
 th_init() {
+  test_env_scrub_fixture_inputs "$(cd "${BASH_SOURCE[0]%/*}/../.." && pwd)" || return 1
   FILTER=""
   SHARD_INDEX=0
   SHARD_TOTAL=0

@@ -5,11 +5,16 @@ export LC_ALL=C.UTF-8
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-# This script launches fixture copies of the aggregate runner. A caller such as
-# pr-gate may provide an outer result sink, but fixtures must never overwrite
-# that caller's evidence. Cases that exercise result artifacts set their own
-# isolated paths explicitly.
-unset PM_TEST_SUITE_RESULTS_FILE PM_DISPATCH_PREFLIGHT_TEST_RESULT
+# This script launches fixture copies of the aggregate runner, so every input
+# that configures that runner must be cleared first: an inherited value makes a
+# case measure the caller's environment instead of the default it asserts, and
+# the failure then names a default the subject was never at. The set is read
+# from the canonical inventory's fixture_scrub column -- a list maintained here
+# would only grow after the next incident.
+# shellcheck source=tests/lib/test-env-isolation.sh
+# shellcheck disable=SC1091 # CI runs shellcheck without -x; the source= hint above names the file.
+. "$REPO_ROOT/tests/lib/test-env-isolation.sh"
+test_env_scrub_fixture_inputs "$REPO_ROOT"
 
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
