@@ -28,6 +28,23 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **A synthesis parity rejection now names which entries differ (CC-553).**
+  Nine parity checks guard the synthesis artifact, and seven of them returned
+  only the name of the check — including `test-gap matrix parity mismatch`,
+  which cost a whole gate round on 2026-08-07. Synthesis gets exactly one
+  correction retry and the rejection reason is the only information it
+  receives, so a reason it cannot act on spends that retry reproducing the same
+  output. The `id_delta` helper already existed for precisely this, and the
+  comment above it already stated the rule; it was simply applied at two of the
+  nine sites. All seven now carry the delta, using a composite key where
+  identity is not a bare id (`reviewer:surface` for coverage and uncertain
+  cells, `finding_id` for the remediation seed). Two checks that bundled
+  several independent rules behind one string — root-cause grouping and
+  uncertainties — now say which rule failed before giving the delta, following
+  the shape the disagreement check already used. Reason strings keep their
+  existing prefixes and only gain detail, so callers matching on them are
+  unaffected.
+
 - **Gate scope expansion no longer spawns two processes per candidate
   (CC-557).** Building the scope manifest ran one `jq` to test each expansion
   candidate against the changed-path set and another to build its JSON object,

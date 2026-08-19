@@ -917,7 +917,10 @@ gate_synthesis_protocol_verify() {
       then "invalid coverage matrix"
       elif
         ($s.coverage_matrix | sort_by(.reviewer,.surface)) != $expected_coverage
-      then "coverage matrix parity mismatch"
+      then "coverage matrix parity mismatch" +
+        id_delta(($expected_coverage | map(.reviewer + ":" + .surface));
+                 ($s.coverage_matrix | map(.reviewer + ":" + .surface));
+                 "every cell must copy the status, evidence_refs and reason of that reviewer verbatim")
       elif
         (all($s.reviewer_finding_inventory[]; finding_inventory) | not) or
         (all($s.findings_union[]; finding_union) | not)
@@ -970,7 +973,24 @@ gate_synthesis_protocol_verify() {
             .id == $finding.root_cause_group_id and
             ((.finding_ids | index($finding.id)) != null))
         ] | all | not)
-      then "root-cause grouping parity mismatch"
+      then "root-cause grouping parity mismatch" +
+        ([$s.root_cause_groups[].finding_ids[]] as $grouped |
+         if (($s.root_cause_groups | map(.id)) | length != (unique | length))
+         then ": duplicate root-cause group id: [" +
+           safe_join(($s.root_cause_groups | map(.id) | group_by(.) |
+             map(select(length > 1) | .[0]))) + "]"
+         elif (($grouped | length) != ($grouped | unique | length))
+         then ": a finding is grouped more than once: [" +
+           safe_join(($grouped | group_by(.) | map(select(length > 1) | .[0]))) + "]"
+         elif (($grouped | sort) != $expected_ids)
+         then id_delta($expected_ids; ($grouped | unique);
+                "every reviewer finding must appear in exactly one group")
+         else ": findings whose root_cause_group_id names no group holding them: [" +
+           safe_join([$s.findings_union[] | . as $f |
+             select(any($s.root_cause_groups[];
+               .id == $f.root_cause_group_id and
+               ((.finding_ids | index($f.id)) != null)) | not) | .id]) + "]"
+         end)
       elif
         (all($s.disagreements[]; disagreement) | not) or
         (($s.disagreements | map(.id)) |
@@ -1002,16 +1022,52 @@ gate_synthesis_protocol_verify() {
         ($s.uncertainties.finding_ids | sort) != $expected_uncertain_ids or
         ($s.uncertainties.coverage_cells |
           sort_by(.reviewer,.surface)) != $expected_uncertain_coverage
-      then "malformed uncertainties contract or parity mismatch"
+      then "malformed uncertainties contract or parity mismatch" +
+        (if ($s.uncertainties | type) != "object"
+         then ": uncertainties is " + ($s.uncertainties | type) + ", expected an object"
+         elif ($s.uncertainties | only_keys(["finding_ids","coverage_cells"]) | not)
+         then ": keys are [" + safe_join(($s.uncertainties | keys_unsorted)) +
+           "], expected exactly finding_ids/coverage_cells"
+         elif ($s.uncertainties.finding_ids | type) != "array"
+         then ": finding_ids is " + ($s.uncertainties.finding_ids | type) + ", expected an array"
+         elif ($s.uncertainties.coverage_cells | type) != "array"
+         then ": coverage_cells is " + ($s.uncertainties.coverage_cells | type) + ", expected an array"
+         elif (all($s.uncertainties.finding_ids[]; finding_id) | not)
+         then ": finding_ids holds a value that is not a finding id"
+         elif (all($s.uncertainties.coverage_cells[]; uncertain_cell) | not)
+         then ": a coverage_cells entry does not match the uncertain-cell shape"
+         elif ($s.uncertainties.finding_ids | sort) != $expected_uncertain_ids
+         then " (finding_ids)" +
+           id_delta($expected_uncertain_ids; $s.uncertainties.finding_ids;
+             "copy every uncertain finding id the reviewers declared")
+         else " (coverage_cells)" +
+           id_delta(($expected_uncertain_coverage | map(.reviewer + ":" + .surface));
+                    ($s.uncertainties.coverage_cells | map(.reviewer + ":" + .surface));
+                    "copy the reviewer/surface pair of each uncertain cell verbatim")
+         end)
       elif
         (all($s.cautions[]; finding_id) | not) or
         ($s.cautions | sort) != $expected_cautions
-      then "caution parity mismatch"
+      then "caution parity mismatch" +
+        (if (all($s.cautions[]; finding_id) | not)
+         then ": cautions holds a value that is not a finding id"
+         else id_delta($expected_cautions; $s.cautions;
+                "copy every reviewer caution finding id verbatim")
+         end)
       elif
         (($s.test_gap_matrix // []) | type) != "array" or
         (all(($s.test_gap_matrix // [])[]; test_gap) | not) or
         (($s.test_gap_matrix // []) | sort_by(.id)) != $expected_test_gaps
-      then "test-gap matrix parity mismatch"
+      then "test-gap matrix parity mismatch" +
+        (if (($s.test_gap_matrix // []) | type) != "array"
+         then ": test_gap_matrix is " + (($s.test_gap_matrix // []) | type) +
+           ", expected an array"
+         elif (all(($s.test_gap_matrix // [])[]; test_gap) | not)
+         then ": a row does not match the test-gap row shape"
+         else id_delta(($expected_test_gaps | map(.id));
+                (($s.test_gap_matrix // []) | map(.id));
+                "copy every reviewer test_gaps row verbatim, field by field")
+         end)
       elif $require_test_gaps and
         ((($s.operational_cautions // null) | string_array | not) or
          (($s.user_cautions // null) | string_array | not) or
@@ -1024,7 +1080,9 @@ gate_synthesis_protocol_verify() {
       then "invalid cautions or verification plan"
       elif $require_test_gaps and
         (($s.verification_plan.focused | sort) != $expected_focused)
-      then "focused verification parity mismatch"
+      then "focused verification parity mismatch" +
+        id_delta($expected_focused; $s.verification_plan.focused;
+          "copy every reviewer focused verification entry verbatim")
       elif
         ($s.remediation_seed |
           only_keys(["kind","schema_version","state",
@@ -1045,7 +1103,10 @@ gate_synthesis_protocol_verify() {
             disposition,
             verification_expectation
           }) | sort_by(.finding_id))
-      then "remediation seed parity mismatch"
+      then "remediation seed parity mismatch" +
+        id_delta(($s.findings_union | map(.id));
+                 ($s.remediation_seed.entries | map(.finding_id));
+                 "each seed entry copies reviewer/root_cause_group_id/disposition/verification_expectation from its union finding")
       else "ok"
       end
     '

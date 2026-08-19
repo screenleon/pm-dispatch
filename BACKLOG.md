@@ -36,11 +36,12 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-540 | 🟢 someday | `pmctl state prune`：刪除前先抽取+驗證 gate/dispatch run 摘要，避免歷史分析資料隨磁碟空間一起消失 | ops/gate | 2026-07-31 | — | P2 | hygiene |
 | CC-546 | ⏸ deferred | standalone Gate distribution／copy parity follow-up：獨立定義 bundle schema、generation、installed parity 與 support boundary；不回併 Linux/WSL2 canonical module extraction | arch/gate | 2026-08-14 | — | P2 | reuse-debt |
 | CC-559 | 🟢 someday | memory usage sidecar 是 tab-delimited，writer 拒收含 tab／newline 的 relpath，因此這類記憶卡**永遠無法累積使用紀錄**；`pmctl memory stats` 目前誠實地把它們列為 `unmeasurable_cards`（不謊稱 never-hit），但根因未解——需改用無損編碼。屬寫入面變更，故當初被 [[CC-467]] Requirement 3 明文排除 | ops/memory | 2026-08-19 | — | P3 | hygiene |
+| CC-562 | 🟢 someday | synthesis／reviewer 驗證器仍有多個「多約束共用單一 reason 字串」分支（`invalid coverage matrix`、`invalid finding inventory or union`、`duplicate finding ID collision`、`selected/not-reviewed dimensions mismatch`），單次修正重試收到後無法行動；[[CC-553]] Req 2 判定需同等精度但屬不同 helper 形狀（逐項指出違規條目，非集合差集），故分票 | ops/gate | 2026-08-19 | — | P3 | hygiene |
 | CC-561 | 🔵 active | 斷言「預設值」的測試在**繼承來的**環境下執行受測主體，任何 operator override 都會靜默改變它量到的東西：`jobs-default-caps-high-nproc` 有 stub `nproc` 回 32 卻沒控制能覆蓋上限的 `PM_DISPATCH_TEST_MAX_JOBS`。現行防線是一行手寫 `unset`（只列 2 個名字），**永遠落後一次事故**——此類已咬第三次 | ops/test | 2026-08-19 | — | P2 | hygiene |
 | CC-560 | 🟢 someday | `_gate_scope_reference_index_collect` 每筆 reference 都以 `jq -nc` 建一個 JSON 物件（實測 4.9s×2），與 [[CC-557]] 已修掉的 `_gate_scope_expansion_append` 是同一類寫法；CC-557 未一併處理是因預算餘裕已足，非因不成立 | ops/gate | 2026-08-19 | — | P3 | hygiene |
 | CC-557 | ✅ closed 2026-08-19 | `scope-manifest/large-expansion-uses-file-input` 在正常 4-way 並行下耗用 120s watchdog 的 84-86%（實測 101s／103s，單獨跑 57s），gate preflight 的額外開銷即可推過；耗時穩定＝預算相對工作量設錯，非 flake；依 §7「pass/fail 取決於主機負載＝缺陷」 | ops/test | 2026-08-19 | — | P2 | hygiene |
 | CC-554 | 🔵 active | 永久 regression test 缺少准入門檻：`/ship` 規範「修完每個 finding」但不規範修法形式，reviewer 每提一個邊界就永久長一個阻擋 case，case 又需要 meta-test 保護；QA 規則加六條准入條件＋五條替代路徑，ship.md 加對應例外（明確不設輪數上限，見 [[CC-544]]） | ops/gate | 2026-08-17 | — | P1 | hygiene |
-| CC-553 | 🔵 active | Gate synthesis 協定失敗不可修正且被當成 review 判決：supervisor 分不出 `result:`／`failure-result:` 而把協定失敗記成 NO-GO（被否決的檔案仍寫 `Final: GO`）、retry brief 從不帶入失敗原因故重試等同盲擲、parity reason 不說 id 差集；原 `invalid disagreement references` 是單一裸字串，涵蓋 6 條獨立約束（`only_keys`／`D-NNN` id 形狀／非空 summary／`finding_ids` 長度 ≥2／不重複／每個 id 須存在於 findings_union），synthesis 無從自我修正，唯一一次重試重犯同錯即整輪作廢；[[CC-549]] 已對 test-gap 契約做過同一修法（2026-08-17 CC-551 round 7、2026-08-18 qa-rules #8 兩次實測） | ops/gate | 2026-08-17 | — | P1 | hygiene |
+| CC-553 | ✅ closed 2026-08-19 | Gate synthesis 協定失敗不可修正且被當成 review 判決：supervisor 分不出 `result:`／`failure-result:` 而把協定失敗記成 NO-GO（被否決的檔案仍寫 `Final: GO`）、retry brief 從不帶入失敗原因故重試等同盲擲、parity reason 不說 id 差集；原 `invalid disagreement references` 是單一裸字串，涵蓋 6 條獨立約束（`only_keys`／`D-NNN` id 形狀／非空 summary／`finding_ids` 長度 ≥2／不重複／每個 id 須存在於 findings_union），synthesis 無從自我修正，唯一一次重試重犯同錯即整輪作廢；[[CC-549]] 已對 test-gap 契約做過同一修法（2026-08-17 CC-551 round 7、2026-08-18 qa-rules #8 兩次實測） | ops/gate | 2026-08-17 | — | P1 | hygiene |
 | CC-552 | 🔵 active | `test_default_worker_cap` 以 `sleep 0.1` 製造 worker 重疊窗口來驗證併發上限，違反 QA 規則的「不得以 sleep 同步」；主機負載會改變觀測到的重疊數，與 worker-cap 正確性無關（2026-08-17 CC-551 gate round 4 qa-tester，pre-existing） | ops/test | 2026-08-17 | — | P3 | hygiene |
 | CC-548 | 🔵 active | context.db FTS5 對 CJK 查詢無索引無排序（[[CC-465]] Requirement 3 殘留）：先 spike 驗 `tokenize='trigram'` 的 sqlite 版本下限與 index rebuild 成本，再決定是否實作 | memory | 2026-08-16 | — | P2 | retrieval |
 | CC-466 | ⏸ deferred | 記憶卡片生命週期閉環：expires_at 執行 + 關窗式 supersede + usage sidecar 休眠偵測 + doctor→distill 接線；僅在 CC-467 證明 stale/dormant card 已形成實際問題時啟動 | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
@@ -274,6 +275,31 @@ relpath（`runtime/lib/pmctl-memory.sh` 內 `unmeasurable_cards` 分支的註解
 
 ---
 
+## CC-562 — 多約束共用單一 reason 字串的其餘分支 🟢 someday
+
+**Problem**: `runtime/lib/gate-result-verify.sh` 仍有數個分支把多條獨立規則折進同一個 reason
+字串：`invalid coverage matrix`、`invalid finding inventory or union`、
+`duplicate finding ID collision`、`selected/not-reviewed dimensions mismatch` 等。單次修正重試
+只收到這個字串，因此無法知道是哪一條規則、哪一個條目出錯。
+
+**Why**: 與 [[CC-553]] Req 6 同一問題，但**需要不同形狀的 helper**——parity 類用的是集合差集
+（`id_delta`），這一類要的是「逐項指出違規條目與它違反的規則」，即同檔 `disagreement_defect`
+的樣式。CC-553 因此判定分票而非硬併。
+
+**明確不做**: `invalid top-level contract` 與 `invalid synthesis JSON document` 不需同等精度
+——兩者代表產出物整體損毀，重試需要的是 schema 而非某個 id。此判斷已記於 [[CC-553]]。
+
+**Requirement**:
+1. 沿用 `disagreement_defect` 既有樣式，逐項指出違規條目與違反的規則，不另立風格。
+2. 引用被拒產出物中的值時一律經 `safe_token`／`safe_join`（該值來自不可信來源且會被帶進下一個
+   privileged brief）。
+3. 驗證併入既有 table-driven case `synthesis-protocol/diagnostics-name-the-defect`，逐列 mutation
+   驗證，不新增獨立 case。
+
+**Cross-link**: [[CC-553]]（Req 2 的判斷來源）、[[CC-549]]（reviewer 端同一修法）。
+
+---
+
 ## CC-561 — 斷言預設值的測試繼承環境，override 會靜默改變量測對象 🔵 active
 
 **Problem**: `tests/shell/test-run-all-tests.sh` 的 `jobs-default-caps-high-nproc`
@@ -441,7 +467,7 @@ qa-tester／risk-reviewer 連擋並全數 revert。減量要從 finding 端做�
 
 ---
 
-## CC-553 — synthesis 協定失敗不可修正，且被當成 review 判決 🔵 active
+## CC-553 — synthesis 協定失敗不可修正，且被當成 review 判決 ✅ 2026-08-19
 
 **Problem**: `gate-result-verify.sh` 的 disagreement 檢查把 6 條獨立約束——
 `only_keys(["id","summary","finding_ids"])`、id 須符合 `^D-[0-9]{3,}$`、summary
@@ -494,6 +520,42 @@ dispatch＋2 次 synthesis）作廢。**NO-GO 與 review 結果無關**。
    ——兩者修法不同。
 
 **Cross-link**: [[CC-549]]（test-gap 契約的同一修法）、[[CC-545]]（單次修正性重派）。
+
+**Outcome（Req 2＋Req 6，2026-08-19）**: Req 1／4／5 已於 #489 交付；本次補完 Req 2 與 Req 6，
+全票收斂。
+
+**Req 6 — 9 個 parity 理由中 7 個是裸字串。** 稽核結果：`reviewer finding inventory` 與
+`findings union` 兩個已用 `id_delta`，其餘 7 個
+（`coverage matrix`／`root-cause grouping`／`uncertainties`／`caution`／`test-gap matrix`／
+`focused verification`／`remediation seed`）只回傳檢查名稱。**其中 `test-gap matrix` 正是
+2026-08-07 實際害掉一整輪 gate 的那個。**
+
+關鍵在於這不是缺機制而是缺套用：`id_delta` helper 早就存在，且其上方註解本身就是 Req 6 的
+原則——「A parity reason names WHICH ids differ, and separates 'wrong id set' from 'right ids,
+wrong field values'」。**helper 為此而寫，卻只有 2/9 在用。** 而 [[CC-555]] 的 synthesis 重試
+會把 reason 原封不動放進 brief，其註解明言「a retry that is not told what failed is a blind
+re-roll」——對這 7 類，重試正是它自己禁止的盲目重擲。
+
+修法：7 處全部套用既有 helper。身分非 `.id` 者以複合鍵表達（coverage／uncertain cell 用
+`reviewer:surface`、seed 用 `finding_id`）；`root-cause grouping` 與 `uncertainties` 因捆綁多條
+獨立規則，改為先分辨規則再給差集，沿用同檔 `disagreement_defect` 的既有樣式。**理由字串維持
+既有前綴、僅附加細節**——測試以子字串斷言，改名會破壞契約，而 Req 6 要的是點名差集不是改名。
+
+**Req 2 — 其餘同型分支的判斷紀錄**：`invalid coverage matrix`、
+`invalid finding inventory or union`、`duplicate finding ID collision`、
+`selected/not-reviewed dimensions mismatch` 等「多約束共用單一字串」仍為裸字串。**本票不改**，
+理由是它們需要的是「逐項指出違規條目與違反的規則」（`disagreement_defect` 那種形狀），與
+parity 的集合差集是不同的 helper 形狀，屬另一件事 → 已立 [[CC-562]]。
+`invalid top-level contract` 與 `invalid synthesis JSON document` 判定**不需同等精度**：兩者
+代表產出物整體損毀，重試需要的是 schema 而非某個 id。
+
+驗證：既有 table-driven case `synthesis-protocol/diagnostics-name-the-defect` **擴充 7 列**
+（零新增永久測試，符合 [[CC-554]] 准入門檻偏好的「併入既有參數化 case」）；另補一個可選欄位
+攜帶 `require_test_gaps`——`focused verification` 分支受政策門控，不帶該旗標時**分支根本不會
+執行**，mutation 會「通過」而被誤讀為契約不成立。逐列 mutation 驗證：還原 7 處修改後，7 列
+各自失敗並點名它失去的那項細節。
+
+**See**: CHANGELOG.md [Unreleased]
 
 ---
 
