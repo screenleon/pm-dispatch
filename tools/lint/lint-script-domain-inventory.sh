@@ -31,7 +31,7 @@ done
 [[ "$failures" -eq 0 ]] || exit 1
 
 expected_path_header=$'current_path\tartifact_kind\towner_domain\tproposed_target\tdisposition\tstability'
-expected_variable_header=$'name_or_pattern\towner_domain\tinput_class\tdefault_source\tprecedence\tpropagation\trisk_or_side_effect\ttest_isolation'
+expected_variable_header=$'name_or_pattern\towner_domain\tinput_class\tdefault_source\tprecedence\tpropagation\trisk_or_side_effect\ttest_isolation\tfixture_scrub'
 expected_consumer_header=$'declared_name_or_pattern\tactual_name\tconsumer_path\treference_scope'
 expected_reference_allowlist_header=$'historical_path\tconsumer_path\treason'
 [[ "$(head -n1 "$inventory")" == "$expected_path_header" ]] || fail "path inventory header mismatch"
@@ -230,10 +230,14 @@ variable_errors="$(awk -F '\t' '
     class["secret-passthrough"]
   }
   NR == 1 { next }
-  NF != 8 { print "line " NR " has " NF " fields"; next }
+  NF != 9 { print "line " NR " has " NF " fields"; next }
   $1 !~ /^_?[A-Z][A-Z0-9_]*\*?$/ { print "line " NR " invalid variable name or pattern: " $1 }
   !($3 in class) { print "line " NR " unknown input class: " $3 }
   $3 == "secret-passthrough" && $4 != "none" { print "line " NR " secret must not declare a default: " $1 }
+  # fixture_scrub is read by tests/lib/test-env-isolation.sh to build the set a
+  # fixture must not inherit. A free-text value would make the scrub silently
+  # incomplete, which is the failure this column exists to prevent.
+  $9 != "yes" && $9 != "no" { print "line " NR " fixture_scrub must be yes or no: " $9 }
 ' "$variables")"
 [[ -z "$variable_errors" ]] || fail "invalid variable inventory rows:\n$variable_errors"
 

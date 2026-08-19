@@ -5,6 +5,12 @@ export LC_ALL=C.UTF-8
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+# This suite launches fixture copies of the iteration runner; see
+# tests/lib/test-env-isolation.sh for why the cleared set is inventory-driven.
+# shellcheck source=tests/lib/test-env-isolation.sh
+# shellcheck disable=SC1091 # CI runs shellcheck without -x; the source= hint above names the file.
+. "$REPO_ROOT/tests/lib/test-env-isolation.sh"
+test_env_scrub_fixture_inputs "$REPO_ROOT"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 

@@ -157,6 +157,72 @@ case_harness_summary_no_match_filter() {
   fi
 }
 
+# Behavior: every variable the canonical inventory marks fixture_scrub=yes is
+# cleared from a suite's environment, no matter what the caller exported.
+# Steps: export each declared name in a child shell, source the harness, and
+# assert none survived.
+# A test that asserts a DEFAULT measures the caller's environment unless this
+# holds, and the resulting failure names a default the subject was never at --
+# the CC-561 failure this isolation exists to end.
+case_fixture_inputs_are_cleared() {
+  local name="fixture-inputs-are-cleared"
+  local repo_root names probe survivors n
+  local -a env_args=()
+  repo_root="$(cd "$SCRIPT_DIR/../.." && pwd)"
+  # shellcheck source=tests/lib/test-env-isolation.sh
+  # shellcheck disable=SC1091 # CI runs shellcheck without -x; the source= hint above names the file.
+  . "$repo_root/tests/lib/test-env-isolation.sh"
+  names="$(test_env_fixture_input_names "$repo_root")"
+  if [[ -z "$names" ]]; then
+    fail_case "$name" "inventory declares no fixture_scrub entries to prove"
+    return
+  fi
+  while IFS= read -r n; do
+    [[ -n "$n" && "$n" != *'*' ]] || continue
+    env_args+=("$n=leaked-from-caller")
+  done <<< "$names"
+
+  # The probe re-derives the names from the same inventory rather than being
+  # handed a list, so a scrub that silently covers fewer names than the
+  # inventory declares is still caught.
+  probe="$TMP_ROOT/fixture-scrub-probe.sh"
+  cat > "$probe" <<PROBE
+#!/usr/bin/env bash
+set -uo pipefail
+. "$repo_root/tests/lib/test-harness.sh"
+th_init
+while IFS= read -r probe_name; do
+  [[ -n "\$probe_name" && "\$probe_name" != *'*' ]] || continue
+  [[ -n "\${!probe_name:-}" ]] && printf '%s\n' "\$probe_name"
+done < <(test_env_fixture_input_names "$repo_root")
+exit 0
+PROBE
+
+  survivors="$(env "${env_args[@]}" bash "$probe" 2>/dev/null)"
+  if [[ -z "$survivors" ]]; then
+    pass_case "$name"
+  else
+    fail_case "$name" "survived the scrub: $(printf '%s' "$survivors" | tr '\n' ' ')"
+  fi
+}
+
+# Behavior: the isolation module fails closed when it cannot read the canonical
+# inventory, instead of reporting isolation it never applied.
+# Steps: point it at a missing repo root and assert a non-zero exit.
+# A silent no-op here would recreate the original defect while looking healthy.
+case_fixture_isolation_fails_closed() {
+  local name="fixture-isolation-fails-closed"
+  local repo_root rc=0
+  repo_root="$(cd "$SCRIPT_DIR/../.." && pwd)"
+  bash -c ". '$repo_root/tests/lib/test-env-isolation.sh'; test_env_scrub_fixture_inputs '$TMP_ROOT/definitely-not-a-repo'" \
+    >/dev/null 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    pass_case "$name"
+  else
+    fail_case "$name" "unreadable inventory was reported as isolated"
+  fi
+}
+
 case_harness_preset_colon_flat() {
   local name="preset-colon-flat"
   local expected_out expected_err
@@ -484,6 +550,8 @@ case_assert_file_matches_pass
 case_assert_file_matches_fail
 case_assert_string_contains_pass
 case_assert_string_contains_fail
+case_fixture_inputs_are_cleared
+case_fixture_isolation_fails_closed
 
 printf '%s passed, %s failed\n' "$PASS_COUNT" "$FAIL_COUNT"
 if [[ "$FAIL_COUNT" -gt 0 ]]; then
