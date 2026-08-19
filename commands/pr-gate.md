@@ -357,9 +357,10 @@ detached; note the `gate_id` before the interrupt (or recover it via
 `pmctl gate wait <gate_id> --cd "<work_dir>"` in a new session -- a fresh
 `/pr-gate` invocation starts a NEW gate and does NOT reattach to the
 interrupted one.
-(gate wait exit 3 means the private sentinel key is unavailable —
+(gate wait exit 3 means the outcome is unresolved, not that the gate failed —
 check `pmctl artifacts show <gate_id> --cd "<work_dir>"` for the durable result
-file in that case).
+file, and read the message: it distinguishes a supervisor the kernel no longer
+reports from one whose identity merely could not be re-verified.)
 Completed private sentinel evidence is retained for seven days by default so a
 later wait can re-verify it. When a new detached gate starts, only an expired
 key plus its matching regular terminal sentinel is reclaimed; fresh evidence,
@@ -399,9 +400,15 @@ When the `pmctl gate wait` background Bash completion notification arrives:
    harness renders it as a failed command, but it is NOT an execution
    error), 124 = wait timed out (gate may still be
    running detached -- retry `pmctl gate wait <gate_id> --cd "<work_dir>"` once with
-   the same `gate_id` before treating it as stuck), 3 = indeterminate (sentinel
-   unavailable after runtime/session cleanup; use `pmctl artifacts show <gate_id> --cd "<work_dir>"`
-   to locate the durable result instead), other non-zero = gate failed (surface a
+   the same `gate_id` before treating it as stuck), 3 = indeterminate — the
+   outcome is unresolved, which is not the same as failed. Read which case the
+   message names: a sentinel that went missing after runtime/session cleanup, a
+   supervisor the kernel no longer reports, or a supervisor identity that could
+   not be re-verified. Only the first two say anything about the gate having
+   ended; on the third, run the `ps` command the message prints and re-attach
+   with a longer `--timeout` — re-dispatching there discards a gate that is
+   still running. Use `pmctl artifacts show <gate_id> --cd "<work_dir>"` to
+   locate the durable result in every case, other non-zero = gate failed (surface a
    brief failure summary: exit code + last ~20 lines of the supervisor log at
    `pmctl artifacts show <gate_id> --cd "<work_dir>"`).
 4. Read `result_file` directly (both executor routes write it in-process). To

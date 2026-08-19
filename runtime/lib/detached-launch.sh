@@ -248,6 +248,26 @@ detached_launch_capture_identity() {
     "$pid" "$state" "$pgrp" "$starttime" "$comm" "$isolated" "$boot_id"
 }
 
+# Publish a captured identity record to <path>.
+#
+# Only the identified process itself can produce an authoritative record: a
+# launcher can observe a child that setsid has not yet moved into its own
+# process group, so the pgid it reads is the launcher's own and is stale the
+# moment setsid takes effect. A process calling this on itself after setsid
+# has no such window.
+#
+# The record is the multi-line output of detached_launch_capture_identity; it
+# is split back into key=value pairs and installed through the same atomic
+# temp-then-rename publication detached_launch_write_sentinel uses, so a
+# concurrent reader never loads a partially written identity.
+detached_launch_publish_identity_record() {
+  local path="${1:?identity path required}" record="${2:?identity record required}"
+  local -a pairs=()
+  mapfile -t pairs <<<"$record"
+  (( ${#pairs[@]} > 0 )) || return 1
+  detached_launch_write_sentinel "$path" "${pairs[@]}"
+}
+
 # Load identity file written by detached_launch_capture_identity (key=value).
 # Sets DL_ID_PID DL_ID_PGID DL_ID_STARTTIME DL_ID_COMM DL_ID_ISOLATED DL_ID_BOOT_ID.
 # Returns 1 if incomplete.

@@ -414,6 +414,25 @@ pmctl_gate_run() {
   return "$_gate_rc"
 }
 
+# Resolve which supervisor identity record to trust.
+#
+# <authoritative> is written by the supervisor itself after setsid, so its pgid
+# is the process's real process group. <provisional> is the launcher's snapshot,
+# taken while the child may still be in its exec window and therefore still
+# reporting the launcher's process group; it exists only to detect a supervisor
+# that dies before it ever publishes readiness. Prefer the authoritative record
+# whenever it exists. Returns 1 when neither is present.
+_pmctl_gate_supervisor_identity_path() {
+  local authoritative="${1:?authoritative identity path required}"
+  local provisional="${2:?provisional identity path required}"
+  if [[ -f "$authoritative" ]]; then
+    printf '%s\n' "$authoritative"
+    return 0
+  fi
+  [[ -f "$provisional" ]] || return 1
+  printf '%s\n' "$provisional"
+}
+
 # Detached lifecycle launcher for `pmctl gate run --lifecycle detached`,
 # mirroring pmctl_dispatch_run_detached: generate a gate_id, compute its run
 # dir the SAME way `pmctl gate wait <gate_id>` will independently recompute it
@@ -493,7 +512,14 @@ pmctl_gate_run_detached() {
   }
 
   local supervisor_log="$gate_run_dir/supervisor.log" supervisor_pid_file="$gate_run_dir/supervisor.pid"
+  # Two identity records, one writer each. The supervisor publishes
+  # supervisor.identity itself once setsid has taken effect (see
+  # runtime/bin/gate-supervisor.sh `_write_ready`); the launcher can only
+  # snapshot the child while it is still in its exec window, so its own
+  # observation goes to a separate provisional path and never overwrites the
+  # authoritative one.
   local supervisor_identity="$gate_run_dir/supervisor.identity"
+  local supervisor_identity_launch="$gate_run_dir/supervisor.identity.launch"
   local ready_sentinel terminal_sentinel
   ready_sentinel="$(detached_launch_private_sentinel_path "pm-gate-dispatch" "pm-gate-ready" "$gate_id" "$_nonce")"
   terminal_sentinel="$(detached_launch_private_sentinel_path "pm-gate-dispatch" "pm-gate" "$gate_id" "$_nonce")"
@@ -520,19 +546,21 @@ pmctl_gate_run_detached() {
   # its first /proc snapshot. Capture identity eagerly when possible, but do
   # not reject that already-complete, authenticated lifecycle solely because
   # the supervisor has exited in the intervening scheduling window.
-  detached_launch_capture_identity "$_sup_pid" "$_isolated" >"$supervisor_identity" 2>/dev/null || true
+  detached_launch_capture_identity "$_sup_pid" "$_isolated" >"$supervisor_identity_launch" 2>/dev/null || true
 
-  local _ready_start _ready_state _ready_pid _ready_starttime _ready_rc
+  local _ready_start _ready_state _ready_pid _ready_starttime _ready_rc _ready_identity
   _ready_start=$SECONDS
   while true; do
     if [[ -f "$ready_sentinel" ]]; then
       _ready_state="$(grep -m1 '^state=' "$ready_sentinel" 2>/dev/null | cut -d= -f2-)" || _ready_state=""
       _ready_pid="$(grep -m1 '^pid=' "$ready_sentinel" 2>/dev/null | cut -d= -f2-)" || _ready_pid=""
       _ready_starttime="$(grep -m1 '^starttime=' "$ready_sentinel" 2>/dev/null | cut -d= -f2-)" || _ready_starttime=""
-      if [[ ! -f "$supervisor_identity" ]]; then
-        detached_launch_capture_identity "$_sup_pid" "$_isolated" >"$supervisor_identity" 2>/dev/null || true
+      if [[ ! -f "$supervisor_identity" && ! -f "$supervisor_identity_launch" ]]; then
+        detached_launch_capture_identity "$_sup_pid" "$_isolated" >"$supervisor_identity_launch" 2>/dev/null || true
       fi
-      if detached_launch_load_identity_file "$supervisor_identity" \
+      _ready_identity="$(_pmctl_gate_supervisor_identity_path "$supervisor_identity" "$supervisor_identity_launch")" || _ready_identity=""
+      if [[ -n "$_ready_identity" ]] \
+        && detached_launch_load_identity_file "$_ready_identity" \
         && [[ "$_ready_state" == "ready" && "$_ready_pid" == "$DL_ID_PID" && "$_ready_starttime" == "$DL_ID_STARTTIME" ]]; then
         # A very fast gate can already be terminal by the time the launcher
         # observes readiness. Its captured PID/starttime still proves the
@@ -561,8 +589,9 @@ pmctl_gate_run_detached() {
         "$gate_id" "$supervisor_log" >&2
       return 2
     fi
-    if [[ -f "$supervisor_identity" ]] \
-      && detached_launch_verify_identity "$_sup_pid" "$supervisor_identity"; then
+    _ready_identity="$(_pmctl_gate_supervisor_identity_path "$supervisor_identity" "$supervisor_identity_launch")" || _ready_identity=""
+    if [[ -n "$_ready_identity" ]] \
+      && detached_launch_verify_identity "$_sup_pid" "$_ready_identity"; then
       _ready_rc=0
     else
       # The child can publish ready + terminal after the parent's first
@@ -816,10 +845,11 @@ pmctl_gate_wait() {
   fi
   printf 'pmctl gate wait: timed out after %ss waiting for %s in %s\n' "$timeout" "$gate_id" "$work_dir" >&2
   # A timeout is only meaningful after authenticated startup evidence.  Without
-  # it the supervisor never became ready; with it but a dead recorded identity,
-  # it died after launch.  Keep those failures distinct from a live gate that
-  # merely exceeded the caller's wait budget.
-  local _wait_run_dir _wait_identity _wait_liveness
+  # it the supervisor never became ready.  With it, the recorded identity says
+  # which of the remaining cases applies — still running, provably gone, or
+  # unresolvable — and each is reported as itself rather than folded into the
+  # others.
+  local _wait_run_dir _wait_identity _wait_verify_rc
   if [[ ! -f "$_ready_sentinel" ]]; then
     printf 'pmctl gate wait: indeterminate: %s never reached supervisor readiness; detached launch did not start a waitable gate (exit=3)\n' "$gate_id" >&2
     return 3
@@ -829,15 +859,32 @@ pmctl_gate_wait() {
     _wait_run_dir="$(cd "$work_dir" 2>/dev/null && sw_project_run_dir "$gate_id" 2>/dev/null)" || _wait_run_dir=""
     _wait_identity="${_wait_run_dir:+$_wait_run_dir/supervisor.identity}"
     if [[ -n "$_wait_identity" && -f "$_wait_identity" ]]; then
-      if detached_launch_load_identity_file "$_wait_identity" && detached_launch_verify_identity "$DL_ID_PID" "$_wait_identity"; then
-        _wait_liveness="alive"
+      # Three outcomes, not two, classified exactly as
+      # _pmctl_dispatch_reconcile_one already classifies the same identity
+      # verification: alive, provably gone, or an identity mismatch that proves
+      # neither. The vocabulary is deliberately shared -- the same recorded
+      # evidence should not acquire a second name here. Reporting the mismatch
+      # case as a death is what invites the one recovery action that destroys
+      # work: re-dispatching a gate that is still running.
+      _wait_verify_rc=0
+      if detached_launch_load_identity_file "$_wait_identity"; then
+        detached_launch_verify_identity "$DL_ID_PID" "$_wait_identity" || _wait_verify_rc=$?
       else
-        _wait_liveness="dead"
+        _wait_verify_rc=2
       fi
-      if [[ "$_wait_liveness" == "dead" ]]; then
-        printf 'pmctl gate wait: indeterminate: %s reached readiness but its supervisor died without terminal evidence (exit=3)\n' "$gate_id" >&2
-        return 3
-      fi
+      case "$_wait_verify_rc" in
+        0) : ;; # Alive: fall through to the ordinary still-running timeout report.
+        1)
+          printf 'pmctl gate wait: indeterminate: %s reached readiness but its supervisor (pid=%s) no longer exists and left no terminal evidence (exit=3)\n' \
+            "$gate_id" "$DL_ID_PID" >&2
+          return 3
+          ;;
+        *)
+          printf 'pmctl gate wait: indeterminate: %s reached readiness but its recorded supervisor (pid=%s) shows an identity mismatch (possible PID reuse); that proves neither death nor liveness, so it is not evidence that the gate died. Confirm with: ps -o pid,pgid,lstart,args -p %s -- and re-attach with a longer --timeout rather than re-dispatching, which would discard a still-running gate (exit=3)\n' \
+            "$gate_id" "$DL_ID_PID" "$DL_ID_PID" >&2
+          return 3
+          ;;
+      esac
     fi
   fi
   # shellcheck disable=SC2016  # literal markdown backticks in the format string, not a command substitution

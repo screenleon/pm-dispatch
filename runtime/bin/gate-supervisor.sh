@@ -81,10 +81,20 @@ _write_ready() {
   local _ready_path _identity _pid _starttime
   pm_identifier_gate_is_valid "$gate_id" || return 1
   [[ -n "$_sentinel_nonce" ]] || return 1
-  _identity="$(detached_launch_capture_identity "$$" 1 2>/dev/null)" || return 1
+  # No isolated= override: by this point setsid has taken effect, so whether
+  # this process leads its own group is an observable fact rather than
+  # something the launcher has to assert on our behalf. Reading it here also
+  # keeps the record honest when setsid was unavailable and the launcher fell
+  # back to nohup+disown, where the supervisor shares the caller's group.
+  _identity="$(detached_launch_capture_identity "$$" 2>/dev/null)" || return 1
   _pid="$(printf '%s\n' "$_identity" | grep -m1 '^pid=' | cut -d= -f2-)" || return 1
   _starttime="$(printf '%s\n' "$_identity" | grep -m1 '^starttime=' | cut -d= -f2-)" || return 1
   [[ "$_pid" == "$$" && -n "$_starttime" ]] || return 1
+  # Publish the authoritative identity before readiness, never after: a waiter
+  # that has seen the ready sentinel then always finds a post-setsid record to
+  # re-verify against, instead of the launcher's exec-window snapshot whose
+  # pgid can never match this process again.
+  detached_launch_publish_identity_record "$run_dir/supervisor.identity" "$_identity" || return 1
   _ready_path="$(detached_launch_private_sentinel_path "pm-gate-dispatch" "pm-gate-ready" "$gate_id" "$_sentinel_nonce")"
   detached_launch_write_sentinel "$_ready_path" "state=ready" "pid=$_pid" "starttime=$_starttime"
 }
