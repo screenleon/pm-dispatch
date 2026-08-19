@@ -36,7 +36,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-540 | 🟢 someday | `pmctl state prune`：刪除前先抽取+驗證 gate/dispatch run 摘要，避免歷史分析資料隨磁碟空間一起消失 | ops/gate | 2026-07-31 | — | P2 | hygiene |
 | CC-546 | ⏸ deferred | standalone Gate distribution／copy parity follow-up：獨立定義 bundle schema、generation、installed parity 與 support boundary；不回併 Linux/WSL2 canonical module extraction | arch/gate | 2026-08-14 | — | P2 | reuse-debt |
 | CC-559 | 🟢 someday | memory usage sidecar 是 tab-delimited，writer 拒收含 tab／newline 的 relpath，因此這類記憶卡**永遠無法累積使用紀錄**；`pmctl memory stats` 目前誠實地把它們列為 `unmeasurable_cards`（不謊稱 never-hit），但根因未解——需改用無損編碼。屬寫入面變更，故當初被 [[CC-467]] Requirement 3 明文排除 | ops/memory | 2026-08-19 | — | P3 | hygiene |
-| CC-557 | 🔵 active | `scope-manifest/large-expansion-uses-file-input` 在正常 4-way 並行下耗用 120s watchdog 的 84-86%（實測 101s／103s，單獨跑 57s），gate preflight 的額外開銷即可推過；耗時穩定＝預算相對工作量設錯，非 flake；依 §7「pass/fail 取決於主機負載＝缺陷」 | ops/test | 2026-08-19 | — | P2 | hygiene |
+| CC-560 | 🟢 someday | `_gate_scope_reference_index_collect` 每筆 reference 都以 `jq -nc` 建一個 JSON 物件（實測 4.9s×2），與 [[CC-557]] 已修掉的 `_gate_scope_expansion_append` 是同一類寫法；CC-557 未一併處理是因預算餘裕已足，非因不成立 | ops/gate | 2026-08-19 | — | P3 | hygiene |
+| CC-557 | ✅ closed 2026-08-19 | `scope-manifest/large-expansion-uses-file-input` 在正常 4-way 並行下耗用 120s watchdog 的 84-86%（實測 101s／103s，單獨跑 57s），gate preflight 的額外開銷即可推過；耗時穩定＝預算相對工作量設錯，非 flake；依 §7「pass/fail 取決於主機負載＝缺陷」 | ops/test | 2026-08-19 | — | P2 | hygiene |
 | CC-554 | 🔵 active | 永久 regression test 缺少准入門檻：`/ship` 規範「修完每個 finding」但不規範修法形式，reviewer 每提一個邊界就永久長一個阻擋 case，case 又需要 meta-test 保護；QA 規則加六條准入條件＋五條替代路徑，ship.md 加對應例外（明確不設輪數上限，見 [[CC-544]]） | ops/gate | 2026-08-17 | — | P1 | hygiene |
 | CC-553 | 🔵 active | Gate synthesis 協定失敗不可修正且被當成 review 判決：supervisor 分不出 `result:`／`failure-result:` 而把協定失敗記成 NO-GO（被否決的檔案仍寫 `Final: GO`）、retry brief 從不帶入失敗原因故重試等同盲擲、parity reason 不說 id 差集；原 `invalid disagreement references` 是單一裸字串，涵蓋 6 條獨立約束（`only_keys`／`D-NNN` id 形狀／非空 summary／`finding_ids` 長度 ≥2／不重複／每個 id 須存在於 findings_union），synthesis 無從自我修正，唯一一次重試重犯同錯即整輪作廢；[[CC-549]] 已對 test-gap 契約做過同一修法（2026-08-17 CC-551 round 7、2026-08-18 qa-rules #8 兩次實測） | ops/gate | 2026-08-17 | — | P1 | hygiene |
 | CC-552 | 🔵 active | `test_default_worker_cap` 以 `sleep 0.1` 製造 worker 重疊窗口來驗證併發上限，違反 QA 規則的「不得以 sleep 同步」；主機負載會改變觀測到的重疊數，與 worker-cap 正確性無關（2026-08-17 CC-551 gate round 4 qa-tester，pre-existing） | ops/test | 2026-08-17 | — | P3 | hygiene |
@@ -272,7 +273,26 @@ relpath（`runtime/lib/pmctl-memory.sh` 內 `unmeasurable_cards` 分支的註解
 
 ---
 
-## CC-557 — pr-gate large-expansion case 的 watchdog 預算不足 🔵 active
+## CC-560 — reference index 仍是每筆一個 jq process 🟢 someday
+
+**Problem**: `_gate_scope_reference_index_collect` 對每一筆 reference 都執行一次
+`jq -nc` 建立 JSON 物件並附加到檔案。[[CC-557]] 的 profile 實測該函式耗時 4.9s（一次 gate 內
+呼叫兩次），是修掉 expansion collector 之後 scope manifest 建構的最大剩餘成本。
+
+**Why**: 與 [[CC-557]] 修掉的 `_gate_scope_expansion_append` 是**同一類寫法**——per-record
+process spawn。CC-557 之所以沒有一併處理，是因為修完 expansion 之後預算餘裕已從 84-86%
+降到約 21%，繼續優化沒有立即效益；**不是因為這個問題不成立**。
+
+**Requirement**:
+1. 沿用 [[CC-557]] 已驗證的做法：append NUL 分隔欄位，由既有的收尾 jq pass 一次解碼。
+   NUL 安全性是結構性的（bash 字串不可能含 NUL），不依賴跳脫。
+2. 修改前後以 jq wrapper 計數與階段計時佐證，不憑猜測。
+
+**Cross-link**: [[CC-557]]（同類寫法的第一次修正，含 profiling 方法）。
+
+---
+
+## CC-557 — pr-gate large-expansion case 的 watchdog 預算不足 ✅ 2026-08-19
 
 **Problem**: `tests/shell/test-pr-gate.sh` 的
 `scope-manifest/large-expansion-uses-file-input` 在 runner 正常並行度（nproc 上限 4）下
@@ -300,6 +320,40 @@ authoritative full suite（100 個 suite、預設設定）卻**通過**（shard-
    command digest，可稽核）——**是暫時措施，不是修好了**。
 
 **Cross-link**: [[CC-552]]（`test_default_worker_cap` 以 sleep 製造重疊窗口）——同屬時序敏感測試。
+
+**Profile 結果（Requirement 1，2026-08-19）**：以階段計時實測，**不是預算設錯，是 production
+程式慢**。
+
+| 階段 | 耗時 |
+|---|---|
+| runner／agents／64 個 caller 檔／git add／兩次 commit | **0.27s** |
+| `run_gate` | **36.88s** |
+| 斷言 | 0.09s |
+
+再往 gate 內部切：`_gate_scope_expansions_collect` **23.2s**、
+`_gate_scope_reference_index_collect` 4.9s，其餘全部 < 0.2s。以 jq wrapper 計數確認根因是
+**每筆 expansion candidate 會 spawn 兩個 jq process**——512 次 changed-paths 成員測試
+（`jq -e 'index($path)'`）加 512 次物件建構（`_gate_scope_expansion_append` 的 `jq -nc`），
+合計 1024 個 process。
+
+**Requirement 2 的答案：不放寬。** `512` 就是 `GATE_SCOPE_MAX_EXPANSION_ENTRIES`，該斷言
+配合 `truncation.occurred == false` 表達的是「有界展開被填滿到宣告上限而未被窄化」，是契約
+邊界不是體積手段。且 profile 已證明 fixture 只佔 0.27s，縮小它省不到東西。寫死字面值亦屬
+正確——改為引用常數會讓測試對常數本身的變動失明。
+
+**Outcome**: 修的是 production 程式，不是 timeout。成員測試改為呼叫開頭一次性建立的
+associative set（沿用同函式既有的 `query_seen` 慣用法）；物件建構改為 append 六個 NUL 分隔
+欄位、由**既有的**收尾 jq pass 一次解碼，未新增任何 process。NUL 作為分隔符是**可證明安全**
+而非靠跳脫：bash 字串本身不可能含 NUL 位元組，故任何欄位值都無法偽造邊界。
+
+實測 jq process 1352 → **327**，case 單獨執行 37s → **14s**。以本票記錄的競爭係數
+（101/57 ≈ 1.8×）推算約 25s／120s ＝ **21% 預算**（原為 84-86%）。scope manifest 每次真實
+gate 都會建，故此修正同時縮短所有 gate 的執行時間，不只是這個 case。
+
+**殘留（已知、未做）**：`_gate_scope_reference_index_collect` 仍是每筆一個 `jq -nc`（同一
+類寫法，實測 4.9s×2）。本票未動，理由是預算餘裕已足；見 [[CC-560]]。
+
+**See**: CHANGELOG.md [Unreleased]
 
 ---
 

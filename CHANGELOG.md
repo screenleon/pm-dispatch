@@ -28,6 +28,25 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Gate scope expansion no longer spawns two processes per candidate
+  (CC-557).** Building the scope manifest ran one `jq` to test each expansion
+  candidate against the changed-path set and another to build its JSON object,
+  so a bounded 512-entry expansion cost 1024 processes. Profiling a case that
+  reaches that bound put `_gate_scope_expansions_collect` at 23.2s of a 37s
+  total, with fixture setup at 0.27s — the cost was in the production code, not
+  in the test. Membership is now answered from a set resolved once per call, and
+  entries are appended as NUL-separated fields that the collector's existing
+  final `jq` pass decodes in one go, adding no new process. NUL is safe as the
+  separator by construction rather than by escaping: a bash string cannot
+  contain a NUL byte, so no field value can forge a record boundary. Measured
+  1352 → 327 `jq` invocations and 37s → 14s on that case. Every gate builds a
+  scope manifest, so real runs benefit too, but in proportion to how many
+  expansion candidates the change produces — a typical diff yields far fewer
+  than this case's deliberate 512, so the aggregate suite time moves only a few
+  percent. The concentrated win is what matters here: the case that sat at
+  84-86% of its per-case watchdog now sits at 32% under the same full-suite
+  contention.
+
 - **A remediation closure can no longer cite evidence it does not locate
   (CC-558).** `gate-remediation-closure`'s `evidenceRef` expressed "at least one
   locator" as `anyOf: [{required: [line]}, {required: [symbol]}]`. JSON Schema's
