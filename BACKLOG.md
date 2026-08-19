@@ -366,9 +366,14 @@ subprocess headroom for their own children」屬實），本票不動它。
   手寫的 `unset` 兩名清單被模組呼叫取代，符合 Requirement 5。
 - **驗收即缺陷本身**：帶 `PM_DISPATCH_TEST_MAX_JOBS=8` 跑 `test-run-all-tests.sh`，先前回報
   「5th suite started; default exceeded high-nproc safety cap of 4」的 case 現在通過（45/45）。
-- Ratchet 兩案落在 `test-test-harness.sh`（測 harness 本身的既有家），各自 mutation 驗證且
+- Ratchet 三案落在 `test-test-harness.sh`（測 harness 本身的既有家），各自 mutation 驗證且
   **只打掛自己那一案**：移除 `th_init` 的清除 → 5 個變數存活被點名；改成 fail-open → 只有
-  fail-closed 那案失敗。
+  unreadable 那案失敗；移除 declared-count 守衛 → 只有 empty-declaration 那案失敗。
+
+**第一輪 gate NO-GO（qa-tester hard block），是我自己的疏漏。** 模組有**兩個** fail-closed
+守衛，我只測了「inventory 讀不到」，漏了「可讀但零筆 `fixture_scrub=yes`」——沒有直接回歸的話，
+拿掉 declared-count 守衛會**靜默恢復假隔離而所有既有測試仍綠**。已補第三案，並依 reviewer 寫的
+`verification_expectation` 逐字 mutation 驗證。
 
 **覆蓋完整性**：9 個不呼叫 `th_init` 的套件全數交代——4 個 pr-gate shard 以 `exec` 委派給
 有 `th_init` 的 `test-pr-gate.sh`、2 個 runner 套件已明確接線、3 個 e2e／release 完全未引用

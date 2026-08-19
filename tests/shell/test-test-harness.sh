@@ -206,6 +206,36 @@ PROBE
   fi
 }
 
+# Behavior: the isolation module fails closed when the inventory is readable but
+# declares nothing to scrub, instead of reporting isolation over an empty set.
+# Steps: build an isolated inventory whose every row sets fixture_scrub=no, run
+# the scrub against it, and assert a non-zero exit naming the empty declaration.
+# This is the second of the module's two fail-closed guards. The unreadable-file
+# guard below covers the other; without this one, deleting the declared-count
+# check would restore false isolation while every existing test stayed green.
+case_fixture_isolation_rejects_empty_declaration() {
+  local name="fixture-isolation-rejects-empty-declaration"
+  local repo_root fake_root inventory rc=0 err
+  repo_root="$(cd "$SCRIPT_DIR/../.." && pwd)"
+  fake_root="$TMP_ROOT/empty-declaration-repo"
+  inventory="$fake_root/docs/architecture/script-variable-inventory.tsv"
+  mkdir -p "$(dirname "$inventory")"
+  {
+    head -n 1 "$repo_root/docs/architecture/script-variable-inventory.tsv"
+    printf 'PM_EXAMPLE_ONLY	test-harness	test-config	unset	explicit env only	none	none	none	no
+'
+  } > "$inventory"
+
+  err="$(bash -c ". '$repo_root/tests/lib/test-env-isolation.sh'; test_env_scrub_fixture_inputs '$fake_root'" 2>&1)" || rc=$?
+  if [[ "$rc" -eq 0 ]]; then
+    fail_case "$name" "an inventory with no fixture_scrub=yes rows was reported as isolated"
+  elif [[ "$err" != *"declares no fixture_scrub entries"* ]]; then
+    fail_case "$name" "exit was non-zero but the diagnostic did not name the empty declaration: $err"
+  else
+    pass_case "$name"
+  fi
+}
+
 # Behavior: the isolation module fails closed when it cannot read the canonical
 # inventory, instead of reporting isolation it never applied.
 # Steps: point it at a missing repo root and assert a non-zero exit.
@@ -551,6 +581,7 @@ case_assert_file_matches_fail
 case_assert_string_contains_pass
 case_assert_string_contains_fail
 case_fixture_inputs_are_cleared
+case_fixture_isolation_rejects_empty_declaration
 case_fixture_isolation_fails_closed
 
 printf '%s passed, %s failed\n' "$PASS_COUNT" "$FAIL_COUNT"
