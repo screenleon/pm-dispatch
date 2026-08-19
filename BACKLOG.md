@@ -425,8 +425,13 @@ instance 為底，把 `findings[0].evidence_refs[0]` 換成上述形狀後，
 
 **Outcome**: 交付於 `fix/CC-558-closure-evidence-locator`。`anyOf` 兩個分支各自收窄
 （`line: integer/minimum 1`、`symbol: string/minLength 1`），`runtime/lib/gate-structural-schemas.json`
-由 `tools/generate/gate-structural-validator.sh` 重新產生。單一新測試以 mutation 驗證：
-還原 schema 收窄即重現接受。
+由 `tools/generate/gate-structural-validator.sh` 重新產生。
+
+重構／重用審視另外加了一項**常設不變式**（沿用 `case_schema_version_const` 既有的
+「帶檔案參數、逐 schema 跑」寫法）：任何 `anyOf` 分支若以裸 `required` 指名一個 **nullable**
+屬性，就必須同時收窄型別。19 個 schema 現況全過，第 20 個不可能再犯同樣的錯。兩案以
+mutation 證明不重疊——還原 schema 收窄只有不變式點名位置；拿掉 runtime 的
+`gate_structural_schema_verify` 呼叫則只有 instance test 抓得到。
 
 **來源**: 從已關閉的 PR #488（`feat/cc-532-gate-canonical-modules`）打撈時發現——該分支的
 `gate-closure-verify.sh` 帶有等效的 runtime 層檢查。**打撈的其餘部分皆不採用**：closure

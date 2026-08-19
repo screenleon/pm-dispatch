@@ -39,7 +39,11 @@ Versions follow [Semantic Versioning](https://semver.org/).
   what the sibling `gate-reviewer-result` and `gate-synthesis-result`
   definitions already did; the closure schema was the only one that had not.
   The runtime bundle is regenerated from the canonical schema, so the runtime
-  claim verifier rejects it too.
+  claim verifier rejects it too. A standing per-schema invariant now rejects the
+  idiom itself: `anyOf` over a bare `required` naming a *nullable* property
+  cannot express "at least one", so every such branch must narrow the type it
+  requires. All 19 schemas pass it today, and a twentieth cannot reintroduce the
+  trap.
 
 - **`pmctl gate wait` no longer reports a running supervisor as dead
   (CC-556).** The supervisor's `supervisor.identity` record was captured by the
