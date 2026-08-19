@@ -475,12 +475,13 @@ _gate_scope_expansion_append() {
       return 0
       ;;
   esac
-  jq -nc --arg path "$path" --arg reason "$reason" --arg source "$source" \
-    --arg evidence "$evidence" --arg kind "$limit_kind" \
-    --argjson maximum "$maximum" '{
-      path:$path,reason:$reason,source:$source,evidence:$evidence,
-      limit:{kind:$kind,maximum:$maximum}
-    }' >> "$output"
+  # Six NUL-separated fields, decoded in one pass by the caller. A bounded run
+  # appends 512 of these, and building each object with its own jq process cost
+  # more than the search that found them. NUL is safe as the separator by
+  # construction, not by escaping: a bash string cannot contain a NUL byte, so
+  # no field value can forge a boundary.
+  printf '%s\0%s\0%s\0%s\0%s\0%s\0' \
+    "$path" "$reason" "$source" "$evidence" "$limit_kind" "$maximum" >> "$output"
 }
 
 _gate_scope_expansions_collect() {
@@ -497,6 +498,11 @@ _gate_scope_expansions_collect() {
   local omitted_contract_consumers=0 omitted_entries=0
   local -a symbols=() shell_consumers=()
   local -A query_seen=()
+  # Membership in the changed set is asked once per expansion candidate, and a
+  # bounded run reaches 512 of them. Answering each with its own jq process cost
+  # more than every other collector in this file combined. The set is small and
+  # fixed for the whole call, so resolve it once here and answer from memory.
+  local -A changed_seen=()
   candidates="$(mktemp "${TMPDIR:-/tmp}/gate-scope-expansions.XXXXXX")" || return 2
   sources="$(mktemp "${TMPDIR:-/tmp}/gate-scope-sources.XXXXXX")" || {
     rm -f -- "$candidates"
@@ -506,6 +512,9 @@ _gate_scope_expansions_collect() {
   : > "$sources"
 
   while IFS= read -r -d '' source; do
+    # Record membership before the existence filter: a deleted path is still a
+    # changed path, and the jq predicate this replaces tested the whole array.
+    [[ -z "$source" ]] || changed_seen["$source"]=1
     _gate_scope_path_exists "$source" || continue
     case "$source" in
       *.sh|*.bash|*.go|*.py|*.js|*.jsx|*.ts|*.tsx|*.java|*.kt|*.rs)
@@ -547,8 +556,7 @@ _gate_scope_expansions_collect() {
       candidate="${candidate#./}"
       [[ "$candidate" != "$source" ]] || continue
       if _gate_scope_path_exists "$candidate" \
-          && ! jq -e --arg path "$candidate" 'index($path) != null' \
-            <<<"$changed_paths_json" >/dev/null; then
+          && [[ -z "${changed_seen[$candidate]:-}" ]]; then
         _gate_scope_expansion_append "$candidates" "$candidate" \
           same-stem-peer "$source" peer-convention per-source 1 || return 2
       fi
@@ -561,8 +569,7 @@ _gate_scope_expansions_collect() {
         [[ "$match" != "$source" ]] || continue
         [[ -z "${query_seen[$match]:-}" ]] || continue
         query_seen["$match"]=1
-        jq -e --arg path "$match" 'index($path) != null' \
-          <<<"$changed_paths_json" >/dev/null && continue
+        [[ -z "${changed_seen[$match]:-}" ]] || continue
         if [[ "$source_is_shell" == true ]] \
             && _gate_scope_symbol_path_compatible "$source" "$match"; then
           shell_consumers+=("$match")
@@ -620,8 +627,7 @@ _gate_scope_expansions_collect() {
           [[ "$match" != "$source" ]] || continue
           [[ -z "${query_seen[$match]:-}" ]] || continue
           query_seen["$match"]=1
-          jq -e --arg path "$match" 'index($path) != null' \
-            <<<"$changed_paths_json" >/dev/null && continue
+          [[ -z "${changed_seen[$match]:-}" ]] || continue
           eligible_count=$((eligible_count + 1))
           if [[ "$eligible_count" -le "$match_limit" ]]; then
             _gate_scope_expansion_append "$candidates" "$match" \
@@ -635,15 +641,27 @@ _gate_scope_expansions_collect() {
     done
   done < "$sources"
 
-  jq -s 'unique_by([.path,.reason,.source,.evidence]) |
-    sort_by(.path,.reason,.source,.evidence)' "$candidates" |
-    jq --argjson limit "$expansion_limit" '.[:$limit]' > "$output" || {
+  # Decode the NUL-separated records _gate_scope_expansion_append wrote, then
+  # dedupe and order exactly as before. The record shape is fixed at six fields,
+  # so the stream is regrouped positionally.
+  local _decode_records
+  # shellcheck disable=SC2016 # $i and $limit are jq variables, bound by jq itself.
+  _decode_records='
+    split("\u0000")
+    | if (length > 0 and .[-1] == "") then .[:-1] else . end
+    | [ range(0; (length / 6) | floor) as $i
+        | .[$i * 6 : $i * 6 + 6]
+        | {path: .[0], reason: .[1], source: .[2], evidence: .[3],
+           limit: {kind: .[4], maximum: (.[5] | tonumber)}} ]
+    | unique_by([.path,.reason,.source,.evidence])
+    | sort_by(.path,.reason,.source,.evidence)'
+  jq -Rs --argjson limit "$expansion_limit" \
+    "$_decode_records | .[:\$limit]" "$candidates" > "$output" || {
       rm -f -- "$candidates" "$sources"
       return 2
     }
   local total_entries
-  total_entries="$(jq -s 'unique_by([.path,.reason,.source,.evidence]) | length' \
-    "$candidates")" || {
+  total_entries="$(jq -Rs "$_decode_records | length" "$candidates")" || {
       rm -f -- "$candidates" "$sources"
       return 2
     }
