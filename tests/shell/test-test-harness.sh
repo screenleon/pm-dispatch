@@ -206,6 +206,49 @@ PROBE
   fi
 }
 
+# Behavior: a pattern row clears every currently-set variable sharing its
+# prefix, not just a name spelled with a literal asterisk.
+# Steps: declare a PREFIX_* row in an isolated inventory, export two matching
+# variables plus one that only looks similar, and assert exactly the two are
+# cleared.
+# Unsetting the literal name would clear nothing and still report success, so
+# without this the pattern form is isolation that silently does not happen.
+case_fixture_isolation_expands_pattern_rows() {
+  local name="fixture-isolation-expands-pattern-rows"
+  local repo_root fake_root inventory probe survivors
+  repo_root="$(cd "$SCRIPT_DIR/../.." && pwd)"
+  fake_root="$TMP_ROOT/pattern-row-repo"
+  inventory="$fake_root/docs/architecture/script-variable-inventory.tsv"
+  mkdir -p "$(dirname "$inventory")"
+  {
+    head -n 1 "$repo_root/docs/architecture/script-variable-inventory.tsv"
+    printf 'PM_PATTERN_PROBE_*	test-harness	test-injection	unset	explicit env only	none	none	clear after each case	yes
+'
+  } > "$inventory"
+
+  probe="$TMP_ROOT/pattern-probe.sh"
+  cat > "$probe" <<PROBE
+#!/usr/bin/env bash
+set -uo pipefail
+. "$repo_root/tests/lib/test-env-isolation.sh"
+test_env_scrub_fixture_inputs "$fake_root" || exit 1
+for probe_name in PM_PATTERN_PROBE_ONE PM_PATTERN_PROBE_TWO PM_PATTERN_OTHER; do
+  [[ -n "\${!probe_name:-}" ]] && printf '%s\n' "\$probe_name"
+done
+exit 0
+PROBE
+
+  survivors="$(env PM_PATTERN_PROBE_ONE=leaked PM_PATTERN_PROBE_TWO=leaked \
+    PM_PATTERN_OTHER=kept bash "$probe" 2>/dev/null)"
+  # PM_PATTERN_OTHER shares no prefix with the declared row, so a scrub that
+  # cleared it would be over-broad -- the assertion pins both directions.
+  if [[ "$survivors" == "PM_PATTERN_OTHER" ]]; then
+    pass_case "$name"
+  else
+    fail_case "$name" "expected only PM_PATTERN_OTHER to survive, got: $(printf '%s' "$survivors" | tr '\n' ' ')"
+  fi
+}
+
 # Behavior: the isolation module fails closed when the inventory is readable but
 # declares nothing to scrub, instead of reporting isolation over an empty set.
 # Steps: build an isolated inventory whose every row sets fixture_scrub=no, run
@@ -581,6 +624,7 @@ case_assert_file_matches_fail
 case_assert_string_contains_pass
 case_assert_string_contains_fail
 case_fixture_inputs_are_cleared
+case_fixture_isolation_expands_pattern_rows
 case_fixture_isolation_rejects_empty_declaration
 case_fixture_isolation_fails_closed
 

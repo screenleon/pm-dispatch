@@ -296,7 +296,13 @@ relpath（`runtime/lib/pmctl-memory.sh` 內 `unmeasurable_cards` 分支的註解
 3. 驗證併入既有 table-driven case `synthesis-protocol/diagnostics-name-the-defect`，逐列 mutation
    驗證，不新增獨立 case。
 
-**Cross-link**: [[CC-553]]（Req 2 的判斷來源）、[[CC-549]]（reviewer 端同一修法）。
+**實戰佐證（2026-08-20）**：[[CC-561]] 的 targeted 重新 gate 因
+`remediation confirmation set mismatch` 連續兩次 synthesis 失敗、recovery 用盡而整輪作廢
+（`gate-20260819-181456-91ce0d`）。該 reason 屬本票類別——只說「不符」，不說少了或多了哪些
+confirmation，因此重試無從行動。**這是本票從「理論上該修」變成「已知成本」的第一筆實測。**
+
+**Cross-link**: [[CC-553]]（Req 2 的判斷來源）、[[CC-549]]（reviewer 端同一修法）、
+[[CC-561]]（實戰佐證來源）。
 
 ---
 
@@ -366,9 +372,15 @@ subprocess headroom for their own children」屬實），本票不動它。
   手寫的 `unset` 兩名清單被模組呼叫取代，符合 Requirement 5。
 - **驗收即缺陷本身**：帶 `PM_DISPATCH_TEST_MAX_JOBS=8` 跑 `test-run-all-tests.sh`，先前回報
   「5th suite started; default exceeded high-nproc safety cap of 4」的 case 現在通過（45/45）。
-- Ratchet 三案落在 `test-test-harness.sh`（測 harness 本身的既有家），各自 mutation 驗證且
+- Ratchet 四案落在 `test-test-harness.sh`（測 harness 本身的既有家），各自 mutation 驗證且
   **只打掛自己那一案**：移除 `th_init` 的清除 → 5 個變數存活被點名；改成 fail-open → 只有
-  unreadable 那案失敗；移除 declared-count 守衛 → 只有 empty-declaration 那案失敗。
+  unreadable 那案失敗；移除 declared-count 守衛 → 只有 empty-declaration 那案失敗；停用 pattern 展開 → 只有 pattern 那案失敗並點名存活的變數。
+
+**兩輪 gate 各抓到一個我自己的疏漏，兩個都是真的。**
+
+第二輪另指出 **wildcard `fixture_scrub` 展開路徑無直接覆蓋**——我寫了 `PREFIX_*` 展開卻沒測；
+不測的話，把展開停用會退化成「unset 一個字面星號」，清不到任何東西**卻回報成功**，正是本票要
+根除的假隔離。已補第四案，並反向斷言不得過度清除（不共用前綴者必須存活）。
 
 **第一輪 gate NO-GO（qa-tester hard block），是我自己的疏漏。** 模組有**兩個** fail-closed
 守衛，我只測了「inventory 讀不到」，漏了「可讀但零筆 `fixture_scrub=yes`」——沒有直接回歸的話，
