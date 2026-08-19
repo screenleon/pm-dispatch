@@ -11963,7 +11963,12 @@ test_synthesis_protocol_diagnostics_name_the_defect() {
   . "$REPO_ROOT/runtime/lib/gate-result-verify.sh"
   # Tab-separated: jq filters contain `|`, so a pipe delimiter would truncate
   # them mid-expression and silently mutate nothing.
-  while IFS=$'\t' read -r mutation filter expected; do
+  # Optional 4th column carries require_test_gaps: a few branches are reachable
+  # only under the policy that demands test gaps, and defaulting it to false
+  # would leave those branches silently unexercised -- the mutation would pass
+  # and read as "the contract does not hold" rather than "the branch never ran".
+  local require_gaps
+  while IFS=$'\t' read -r mutation filter expected require_gaps; do
     [[ -n "$mutation" ]] || continue
     artifact="$dir/${mutation}.md"
     _write_synthesis_protocol_test_artifact "$artifact"
@@ -11971,7 +11976,7 @@ test_synthesis_protocol_diagnostics_name_the_defect() {
     set +e
     gate_synthesis_protocol_verify \
       "$artifact" "critic qa-tester architecture-reviewer" \
-      "security-reviewer risk-reviewer" "$scope_sha" \
+      "security-reviewer risk-reviewer" "$scope_sha" "${require_gaps:-false}" \
       >"$dir/${mutation}.out" 2>"$dir/${mutation}.err"
     code=$?
     set -e
@@ -11994,6 +11999,13 @@ disagreement-lone-finding	.disagreements = [{"id":"D-001","summary":"s","finding
 disagreement-empty-summary	.disagreements = [{"id":"D-001","summary":"","finding_ids":["critic-F001","qa-tester-F001"]}]	summary is empty
 disagreement-extra-key	.disagreements = [{"id":"D-001","summary":"s","finding_ids":["critic-F001","qa-tester-F001"],"extra":1}]	expected exactly id/summary/finding_ids
 disagreement-unknown-ref	.disagreements = [{"id":"D-001","summary":"s","finding_ids":["critic-F001","risk-reviewer-F404"]}]	not in the reviewer findings: [risk-reviewer-F404]
+coverage-cell-missing	.coverage_matrix |= map(select(.surface != "release"))	critic:release
+root-cause-duplicate-group	.root_cause_groups += [.root_cause_groups[0]]	duplicate root-cause group id
+uncertainty-unexpected-id	.uncertainties.finding_ids += ["risk-reviewer-F009"]	(finding_ids): missing=[] unexpected=[risk-reviewer-F009]
+caution-unexpected-id	.cautions += ["risk-reviewer-F009"]	unexpected=[risk-reviewer-F009]
+test-gap-missing-row	.test_gap_matrix |= map(select(.id != "critic-TG001"))	missing=[critic-TG001]
+focused-unexpected-entry	.verification_plan.focused += ["fabricated-focused-entry"]	unexpected=[fabricated-focused-entry]	true
+seed-missing-entry	.remediation_seed.entries |= map(select(.finding_id != "critic-F001"))	missing=[critic-F001]
 DIAGNOSTICS
   [[ "$failures" -eq 0 ]] || return
   pass "$name"
