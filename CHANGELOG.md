@@ -28,6 +28,24 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **`pmctl gate wait` no longer reports a running supervisor as dead
+  (CC-556).** The supervisor's `supervisor.identity` record was captured by the
+  *launcher*, in the window where `setsid` had not yet moved the child into its
+  own process group — so the recorded pgid was the launcher's and could never
+  match the supervisor again. Any gate that outlived the caller's wait budget
+  therefore failed identity re-verification and was announced as
+  `supervisor died without terminal evidence` (exit 3), whose natural remedy —
+  re-dispatch — discards a healthy in-flight gate and pays for the whole round
+  twice. The supervisor now publishes its own identity at readiness, after
+  `setsid` has taken effect, so the pgid is self-observed rather than inferred;
+  the launcher's provisional snapshot moves to a separate path with a single
+  writer each, and is only consulted while the authoritative record does not
+  yet exist. `gate wait` also stops collapsing two different answers into one:
+  a process the kernel no longer reports is stated as gone, while an identity
+  that merely fails to re-verify is reported as unresolved, names the recorded
+  pid, and points at the `ps` command that settles it — rather than asserting a
+  death it cannot prove.
+
 - **A NO-GO verdict is no longer downgraded to an infrastructure failure
   (CC-555).** pr-gate's exit trap emits its `failure-result:` branch on any
   non-zero status, and a NO-GO verdict *is* exit 1. That was harmless while the

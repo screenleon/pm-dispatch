@@ -833,7 +833,7 @@ case_wait_indeterminate_when_ready_supervisor_died() {
   local out code
   set +e; out="$("$wait_wrapper" "$gate_id" --cd "$work" --timeout 1 2>&1)"; code=$?; set -e
   rm -f "$XDG_RUNTIME_DIR/pm-gate-dispatch/$gate_id"
-  if [[ "$code" -eq 3 ]] && [[ "$out" == *"died without terminal evidence"* ]]; then pass "$name"; else fail "$name" "code=$code out=$out"; fi
+  if [[ "$code" -eq 3 ]] && [[ "$out" == *"no longer exists and left no terminal evidence"* ]]; then pass "$name"; else fail "$name" "code=$code out=$out"; fi
 }
 
 # ---- 6: gate wait times out (exit 124) when supervisor never completes -------
@@ -878,6 +878,119 @@ case_wait_times_out() {
   rm -f "$started_fifo" "$release_fifo"
 
   if [[ "$code" -eq 124 ]] && [[ "$out" == *"timed out"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+# ---- 6b/6c: supervisor identity authority and honest liveness reporting -----
+# The launcher can only snapshot the supervisor while setsid is still taking
+# effect, so an identity it writes records the LAUNCHER's process group and can
+# never match the running supervisor again. Every gate that outlives the
+# caller's wait budget then fails re-verification, and calling that a death
+# pushes the operator toward the one recovery action that destroys work.
+
+# Start a detached gate whose fake pr-gate blocks until released, and block
+# until it has actually started. Sets _BLOCKED_GATE_ID / _BLOCKED_RUN_DIR /
+# _BLOCKED_RELEASE_FIFO / _BLOCKED_STARTED_FIFO. Returns 1 if it never started.
+_start_blocked_detached_gate() {
+  local fixture="$1" work="$2" run_wrapper="$3" _started_dummy
+  _BLOCKED_STARTED_FIFO="$(mktemp -u)"; _BLOCKED_RELEASE_FIFO="$(mktemp -u)"
+  mkfifo "$_BLOCKED_STARTED_FIFO" "$_BLOCKED_RELEASE_FIFO"
+  _mk_fake_gate_blocking "$fixture" "$_BLOCKED_STARTED_FIFO" "$_BLOCKED_RELEASE_FIFO"
+  _run_gate_wrapper "$fixture" "$run_wrapper"
+  _BLOCKED_GATE_ID="$("$run_wrapper" --cd "$work" --lifecycle detached)"
+  # Same FIFO handshake the wait-timeout case uses (QA red line: no sleep-based
+  # synchronization) -- proves the supervisor is genuinely running before any
+  # assertion about its liveness.
+  read -r -t 10 _started_dummy < "$_BLOCKED_STARTED_FIFO" || return 1
+  _BLOCKED_RUN_DIR="$(PM_DISPATCH_STATE_ROOT="$PM_DISPATCH_STATE_ROOT" bash -c '. "$1/runtime/lib/state-paths.sh"; cd "$2"; sw_project_run_dir "$3"' _ "$fixture" "$work" "$_BLOCKED_GATE_ID")"
+  return 0
+}
+
+_release_blocked_detached_gate() {
+  { exec 9<>"$_BLOCKED_RELEASE_FIFO" && printf 'go\n' >&9 && exec 9>&-; } 2>/dev/null || true
+  rm -f "$_BLOCKED_STARTED_FIFO" "$_BLOCKED_RELEASE_FIFO"
+}
+
+case_supervisor_publishes_own_post_setsid_identity() {
+  local name="gate-lifecycle/supervisor publishes its own post-setsid identity"
+  should_run "$name" || return 0
+
+  local fixture="$tmp_root/c6b/fixture" work="$tmp_root/c6b/work"
+  mkdir -p "$work"
+  _mk_fixture_repo "$fixture"
+  if ! _start_blocked_detached_gate "$fixture" "$work" "$tmp_root/c6b/run"; then
+    fail "$name" "fake pr-gate.sh never signaled started_fifo within 10s"
+    _release_blocked_detached_gate
+    return
+  fi
+
+  local id_pid="" id_pgid="" launcher_pgid verify_rc=99
+  # An absent or unloadable record is itself the failure this case reports, so
+  # read it defensively: passing an empty pid into verify would abort the whole
+  # suite instead of failing this one assertion.
+  if detached_launch_load_identity_file "$_BLOCKED_RUN_DIR/supervisor.identity"; then
+    id_pid="$DL_ID_PID"; id_pgid="$DL_ID_PGID"
+    verify_rc=0
+    detached_launch_verify_identity "$id_pid" "$_BLOCKED_RUN_DIR/supervisor.identity" || verify_rc=$?
+  fi
+  launcher_pgid="$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')"
+
+  _release_blocked_detached_gate
+
+  # pid == pgid is exactly what setsid produces and what no pre-setsid snapshot
+  # could have recorded; pinning it against the launcher's own group is what
+  # distinguishes an authoritative record from a stale one. Re-verification of
+  # the still-running supervisor must therefore succeed (rc 0).
+  if [[ -n "$id_pid" ]] && [[ "$id_pgid" == "$id_pid" ]] \
+    && [[ -n "$launcher_pgid" && "$id_pgid" != "$launcher_pgid" ]] && [[ "$verify_rc" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "pid=$id_pid pgid=$id_pgid launcher_pgid=$launcher_pgid verify_rc=$verify_rc"
+  fi
+}
+
+case_wait_does_not_report_unverifiable_identity_as_death() {
+  local name="gate-lifecycle/gate wait reports an unverifiable supervisor identity as unresolved, not a death"
+  should_run "$name" || return 0
+
+  local fixture="$tmp_root/c6c/fixture" work="$tmp_root/c6c/work"
+  mkdir -p "$work"
+  _mk_fixture_repo "$fixture"
+  if ! _start_blocked_detached_gate "$fixture" "$work" "$tmp_root/c6c/run"; then
+    fail "$name" "fake pr-gate.sh never signaled started_fifo within 10s"
+    _release_blocked_detached_gate
+    return
+  fi
+
+  local wait_wrapper="$tmp_root/c6c/wait" launcher_pgid
+  _wait_wrapper "$fixture" "$wait_wrapper"
+  launcher_pgid="$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')"
+  # Mutation: restore the pre-fix record by putting the launcher's process
+  # group back into the identity file, leaving pid/starttime untouched. This is
+  # byte-for-byte what a launcher-timed snapshot produced, so the wait below
+  # runs against the exact condition that generated the false death report --
+  # while the supervisor is provably still running.
+  if [[ ! -f "$_BLOCKED_RUN_DIR/supervisor.identity" ]]; then
+    fail "$name" "supervisor published no identity record to mutate"
+    _release_blocked_detached_gate
+    return
+  fi
+  sed -i "s/^pgid=.*/pgid=$launcher_pgid/" "$_BLOCKED_RUN_DIR/supervisor.identity"
+
+  local out code
+  set +e; out="$("$wait_wrapper" "$_BLOCKED_GATE_ID" --cd "$work" --timeout 1 2>&1)"; code=$?; set -e
+
+  _release_blocked_detached_gate
+
+  # Match the assertive death claims specifically: the honest message is
+  # allowed to say "not evidence that the gate died", so a bare "died"
+  # substring would reject the very wording this case exists to require.
+  if [[ "$code" -eq 3 ]] && [[ "$out" == *"identity mismatch (possible PID reuse)"* ]] \
+    && [[ "$out" == *"not evidence that the gate died"* ]] \
+    && [[ "$out" != *"supervisor died"* ]] && [[ "$out" != *"no longer exists"* ]]; then
     pass "$name"
   else
     fail "$name" "code=$code out=$out"
@@ -1282,6 +1395,8 @@ case_prune_terminal_evidence_preserves_non_expired_candidates
 case_wait_indeterminate_when_no_readiness_evidence
 case_wait_indeterminate_when_ready_supervisor_died
 case_wait_times_out
+case_supervisor_publishes_own_post_setsid_identity
+case_wait_does_not_report_unverifiable_identity_as_death
 case_foreground_unchanged
 case_detached_requires_state_paths
 case_wait_fails_on_missing_result

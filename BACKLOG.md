@@ -66,7 +66,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-545 | ✅ done | Reviewer evidence-reference-contract INCOMPLETE 的單次修正性重派：僅限該單一違規類別，附具體錯誤引用重跑違規 reviewer，不必整輪 gate（30-40 分鐘）重來 | ops/gate | 2026-08-06 | pr:#465 | P2 | hygiene |
 | CC-546 | ⏸ deferred | standalone Gate distribution／copy parity follow-up：獨立定義 bundle schema、generation、installed parity 與 support boundary；不回併 Linux/WSL2 canonical module extraction | arch/gate | 2026-08-14 | — | P2 | reuse-debt |
 | CC-557 | 🔵 active | `scope-manifest/large-expansion-uses-file-input` 在正常 4-way 並行下耗用 120s watchdog 的 84-86%（實測 101s／103s，單獨跑 57s），gate preflight 的額外開銷即可推過；耗時穩定＝預算相對工作量設錯，非 flake；依 §7「pass/fail 取決於主機負載＝缺陷」 | ops/test | 2026-08-19 | — | P2 | hygiene |
-| CC-556 | 🔵 active | `pmctl gate wait` 把**存活中**的 supervisor 報成 `died without terminal evidence`（exit 3）：`supervisor.identity` 記錄的是 setsid **前**的 pgid，`verify_identity` 拿它比對 setsid 後的值必然不符；任何超過 wait 預算的 gate 都會遇到，且會誘導操作者重派、丟棄進行中的工作 | ops/gate | 2026-08-19 | — | P2 | hygiene |
+| CC-556 | ✅ closed 2026-08-19 | `pmctl gate wait` 把**存活中**的 supervisor 報成 `died without terminal evidence`（exit 3）：`supervisor.identity` 記錄的是 setsid **前**的 pgid，`verify_identity` 拿它比對 setsid 後的值必然不符；任何超過 wait 預算的 gate 都會遇到，且會誘導操作者重派、丟棄進行中的工作 | ops/gate | 2026-08-19 | — | P2 | hygiene |
 | CC-555 | ✅ closed 2026-08-19 | `--mode sequential` 沒有 synthesis 修正重試（重試迴圈只存在於 parallel 分支），artifact 一次寫壞即整輪作廢——省額度的模式同時是唯一沒有安全網的模式；實測 codex 被 gate-result 的 code fence 絆倒 `apply_patch`，白費一個 session（2026-08-18 CC-554 gate） | ops/gate | 2026-08-18 | — | P2 | hygiene |
 | CC-554 | 🔵 active | 永久 regression test 缺少准入門檻：`/ship` 規範「修完每個 finding」但不規範修法形式，reviewer 每提一個邊界就永久長一個阻擋 case，case 又需要 meta-test 保護；QA 規則加六條准入條件＋五條替代路徑，ship.md 加對應例外（明確不設輪數上限，見 [[CC-544]]） | ops/gate | 2026-08-17 | — | P1 | hygiene |
 | CC-553 | 🔵 active | Gate synthesis 協定失敗不可修正且被當成 review 判決：supervisor 分不出 `result:`／`failure-result:` 而把協定失敗記成 NO-GO（被否決的檔案仍寫 `Final: GO`）、retry brief 從不帶入失敗原因故重試等同盲擲、parity reason 不說 id 差集；原 `invalid disagreement references` 是單一裸字串，涵蓋 6 條獨立約束（`only_keys`／`D-NNN` id 形狀／非空 summary／`finding_ids` 長度 ≥2／不重複／每個 id 須存在於 findings_union），synthesis 無從自我修正，唯一一次重試重犯同錯即整輪作廢；[[CC-549]] 已對 test-gap 契約做過同一修法（2026-08-17 CC-551 round 7、2026-08-18 qa-rules #8 兩次實測） | ops/gate | 2026-08-17 | — | P1 | hygiene |
@@ -426,7 +426,7 @@ authoritative full suite（100 個 suite、預設設定）卻**通過**（shard-
 
 ---
 
-## CC-556 — gate wait 把存活中的 supervisor 報成已死 🔵 active
+## CC-556 — gate wait 把存活中的 supervisor 報成已死 ✅ 2026-08-19
 
 **Problem**: `pmctl gate wait` 在等待預算耗盡後，若 `detached_launch_verify_identity`
 判定身分不符，會印
@@ -466,6 +466,21 @@ authoritative full suite（100 個 suite、預設設定）卻**通過**（shard-
 
 **Cross-link**: [[CC-499]]（detached run reconciliation）、[[CC-509]]（launch liveness
 fail-loud）——相關但不同：本票是**存活誤判為死亡**，非啟動期死亡偵測。
+
+**Outcome**: 交付於 `feat/CC-556-gate-wait-identity`。identity 改由 supervisor 自己在
+`_write_ready` 發布（此時 setsid 已生效，pgid 是自身觀測而非 launcher 推論），並在 ready
+sentinel **之前**寫入——任何看得到 readiness 的 waiter 必定找得到權威記錄。launcher 的
+暫時性快照改寫到 `supervisor.identity.launch`，兩份記錄各自單一寫入者，消除覆寫競態；權威
+記錄不存在時才回退。`gate wait` 不再把兩種答案壓成一種：kernel 已查無此行程才敘述為已結束
+（exit 3），身分無法再驗證則如實回報為未定，點名 pid 並給出可自行驗證的 `ps` 指令。順帶
+修正 supervisor 先前硬寫 `isolated=1`——在 setsid 不可用的 nohup 回退路徑上該值是錯的。
+兩個新測試以 mutation 驗證：移除 identity 發布即重現空記錄，把 pgid 改回 launcher 的
+process group 即重現誤報條件（而輸出不再宣稱死亡）。
+
+**Note**: `pmctl-dispatch.sh` 的 launcher 快照有同源弱點，但已有 `sleep` 重試與
+「pgid 等於 caller 則改寫 isolated=0」的防護，本票未動——見 [[CC-499]]。
+
+**See**: CHANGELOG.md [Unreleased]、[[CC-553]]
 
 ---
 
