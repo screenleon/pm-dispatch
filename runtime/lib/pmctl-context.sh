@@ -394,13 +394,17 @@ _ctx_classify_domain() {
 # routinely: at a 20-line window the 95th-percentile body is ~1.2K against a 2K
 # cap (99.3% of content retained), while a 40-line window puts the 95th
 # percentile above the cap and loses content on more than one window in twenty.
-_CTX_CHUNK_BODY_CAP="${_CTX_CHUNK_BODY_CAP:-2000}"
+# Deliberately plain constants, not env-overridable, for the reason lib/memory.sh
+# states about its own budgets: an ambient override leaks into fixtures. Here it
+# also matters for safety -- the extractor version is written into SQL, and an
+# environment-supplied value would be attacker-controlled SQL text.
+_CTX_CHUNK_BODY_CAP=2000
 
 # Bumping this forces every indexed file to be re-extracted: a chunker change
 # alters what "already indexed" means, and without it existing databases keep
 # serving chunks the current extractor would never produce -- a stale index that
 # looks healthy. Bump on any change to the chunkers or to the cap/window above.
-_CTX_EXTRACTOR_VERSION="${_CTX_EXTRACTOR_VERSION:-2}"
+_CTX_EXTRACTOR_VERSION=2
 
 # Emit one chunk row, splitting a body longer than the cap across rows instead
 # of letting it overflow. An over-cap body reaches _ctx_sql_str, which truncates

@@ -3580,6 +3580,35 @@ case_context_index_reaches_deep_file_content() {
 # file would be missing from the index while indexing still reported success.
 # Steps: write one line far longer than the cap with a marker at its end; index;
 # require the marker to be retrievable.
+# Behavior: the environment cannot supply the extractor version. It is written
+# into SQL, so an environment-controlled value would be attacker-controlled SQL
+# text; the constant is deliberately not overridable, as lib/memory.sh does for
+# its own budgets.
+# Steps: index with an injection payload in the environment; require the stored
+# version to be the constant and the tables to be intact.
+case_context_index_ignores_environment_extractor_version() {
+  local name="pmctl context index: the environment cannot supply the extractor version"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-env-extractor"
+  make_fixture_repo "$fix_repo"
+
+  local err="$tmp_root/env-extractor.err"
+  _CTX_EXTRACTOR_VERSION='9); DROP TABLE files;--' \
+    "$PMCTL" context index "$fix_repo" > /dev/null 2> "$err" \
+    || { fail "$name" "index failed: $(<"$err")"; return 0; }
+
+  local db="$fix_repo/.pm-dispatch/ctx/context.db"
+  local stored files_rows
+  stored="$(sqlite3 "$db" "SELECT extractor_version FROM index_meta WHERE id = 1;" 2>&1)"
+  files_rows="$(sqlite3 "$db" "SELECT count(*) FROM files;" 2>&1)"
+  if [[ "$stored" =~ ^[0-9]+$ && "$files_rows" =~ ^[0-9]+$ && "$files_rows" -gt 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "environment reached the database: stored=$stored files=$files_rows"
+  fi
+}
+
 case_context_index_splits_an_over_cap_line() {
   local name="pmctl context index: a line longer than the body cap keeps its tail searchable"
   should_run "$name" || return 0
@@ -3664,9 +3693,14 @@ case_context_index_extractor_version_forces_reextract() {
     fail "$name" "unchanged tree should skip, got: $(<"$out")"; return 0
   fi
 
-  # Different extractor: nothing may be trusted, mtimes notwithstanding.
+  # A database built by a different extractor, which is what a user pulling new
+  # code actually has. Rewriting the stored version is the faithful way to stage
+  # it: the constant is not env-overridable, deliberately.
+  local db="$fix_repo/.pm-dispatch/ctx/context.db"
+  sqlite3 "$db" "UPDATE index_meta SET extractor_version = extractor_version - 1 WHERE id = 1;" \
+    || { fail "$name" "setup: could not age the stored extractor version"; return 0; }
   status=0
-  _CTX_EXTRACTOR_VERSION=99999 "$PMCTL" context index "$fix_repo" > "$out" 2> "$err" || status=$?
+  "$PMCTL" context index "$fix_repo" > "$out" 2> "$err" || status=$?
   if [[ "$status" -eq 0 ]] && grep -qE 'context index: [1-9][0-9]* indexed' "$out"; then
     pass "$name"
   else
@@ -4035,6 +4069,7 @@ case_context_prompt_scan_no_db
 case_context_prompt_scan_knowledge_domain_only
 case_context_prompt_scan_dedup_and_hit_cap
 case_context_index_reaches_deep_file_content
+case_context_index_ignores_environment_extractor_version
 case_context_index_splits_an_over_cap_line
 case_context_index_detects_mtime_preserving_edit
 case_context_index_extractor_version_forces_reextract
