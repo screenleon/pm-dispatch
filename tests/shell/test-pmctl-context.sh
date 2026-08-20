@@ -3587,8 +3587,13 @@ case_context_index_reaches_deep_file_content() {
 # Steps: index with an injection payload in the environment; require the stored
 # version to be the constant and the tables to be intact.
 # Behavior: content carrying single quotes survives indexing intact -- the
-# character that ends a SQL string literal must be doubled, in symbol names and
-# in chunk bodies alike, and the escaped value must reach the caller.
+# character that ends a SQL string literal must be doubled wherever quoted text
+# can reach SQL, and the escaped value must reach the caller.
+#
+# Which symbol fields can carry one is not obvious: every extractor branch
+# captures a name as [[:alnum:]_]*, so a name never can, and kinds are literals.
+# The signature is the raw source line, so it can -- which is why the fixture
+# includes a def whose default argument holds an apostrophe.
 # Steps: index a file whose function name and body both carry apostrophes;
 # require the index to be populated and the exact text to be queryable.
 #
@@ -3611,6 +3616,13 @@ fn_with_quote() {
 }
 SH
 
+  # The signature stored for this def is the whole source line, apostrophe and
+  # all, so it exercises the symbol-side escape call.
+  cat > "$fix_repo/scripts/quoted.py" <<'PY_FIX'
+def zzq_quoted_sig(arg="it's a default"):
+    return arg
+PY_FIX
+
   local err="$tmp_root/quoted.err"
   "$PMCTL" context index "$fix_repo" > /dev/null 2> "$err" \
     || { fail "$name" "index failed on quoted content: $(<"$err")"; return 0; }
@@ -3623,14 +3635,16 @@ SH
   single="$(sqlite3 "$db" "SELECT count(*) FROM file_chunks WHERE text LIKE '%zzq_it''s_a_quoted_heading%';" 2>&1)"
   # Content that already carried doubled quotes must not be altered either.
   doubled="$(sqlite3 "$db" "SELECT count(*) FROM file_chunks WHERE text LIKE '%doubled%';" 2>&1)"
+  local sig
+  sig="$(sqlite3 "$db" "SELECT count(*) FROM symbols WHERE name = 'zzq_quoted_sig' AND signature LIKE '%it''s a default%';" 2>&1)"
   local out="$tmp_root/quoted.out" status=0
   "$PMCTL" context query "$fix_repo" zzq_it > "$out" 2>/dev/null || status=$?
 
   if [[ "$chunks" =~ ^[0-9]+$ && "$chunks" -gt 0 && "$single" == "1" && "$doubled" == "1" \
-     && "$status" -eq 0 ]] && grep -q 'scripts/quoted.sh' "$out"; then
+     && "$sig" == "1" && "$status" -eq 0 ]] && grep -q 'scripts/quoted.sh' "$out"; then
     pass "$name"
   else
-    fail "$name" "quoted content did not round-trip: chunks=$chunks single=$single doubled=$doubled query_status=$status"
+    fail "$name" "quoted content did not round-trip: chunks=$chunks single=$single doubled=$doubled signature=$sig query_status=$status"
   fi
 }
 
