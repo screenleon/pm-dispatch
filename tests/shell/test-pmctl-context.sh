@@ -3586,6 +3586,68 @@ case_context_index_reaches_deep_file_content() {
 # its own budgets.
 # Steps: index with an injection payload in the environment; require the stored
 # version to be the constant and the tables to be intact.
+# Behavior: content carrying single quotes survives indexing intact -- the
+# character that ends a SQL string literal must be doubled wherever quoted text
+# can reach SQL, and the escaped value must reach the caller.
+#
+# Which symbol fields can carry one is not obvious: every extractor branch
+# captures a name as [[:alnum:]_]*, so a name never can, and kinds are literals.
+# The signature is the raw source line, so it can -- which is why the fixture
+# includes a def whose default argument holds an apostrophe.
+# Steps: index a file whose function name and body both carry apostrophes;
+# require the index to be populated and the exact text to be queryable.
+#
+# Broad coverage does fail on both mutations here (dropping the doubling fails
+# 50 cases, assigning to the wrong destination fails 63), so this case is not
+# what makes the behavior safe. It is admitted for locality: those failures
+# prove something broke without naming what, and this one names it.
+case_context_index_preserves_quoted_content() {
+  local name="pmctl context index: content carrying single quotes round-trips intact"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-quoted"
+  mkdir -p "$fix_repo/scripts"
+  cat > "$fix_repo/scripts/quoted.sh" <<'SH'
+#!/usr/bin/env bash
+# zzq_it's_a_quoted_heading with O'Brien and ''doubled''
+fn_with_quote() {
+  printf 'zzq_body_it'"'"'s_here
+'
+}
+SH
+
+  # The signature stored for this def is the whole source line, apostrophe and
+  # all, so it exercises the symbol-side escape call.
+  cat > "$fix_repo/scripts/quoted.py" <<'PY_FIX'
+def zzq_quoted_sig(arg="it's a default"):
+    return arg
+PY_FIX
+
+  local err="$tmp_root/quoted.err"
+  "$PMCTL" context index "$fix_repo" > /dev/null 2> "$err" \
+    || { fail "$name" "index failed on quoted content: $(<"$err")"; return 0; }
+
+  local db="$fix_repo/.pm-dispatch/ctx/context.db"
+  local chunks single doubled
+  chunks="$(sqlite3 "$db" "SELECT count(*) FROM file_chunks;" 2>&1)"
+  # An apostrophe must land as one character: doubling is how it survives the
+  # SQL literal, not how it should be stored.
+  single="$(sqlite3 "$db" "SELECT count(*) FROM file_chunks WHERE text LIKE '%zzq_it''s_a_quoted_heading%';" 2>&1)"
+  # Content that already carried doubled quotes must not be altered either.
+  doubled="$(sqlite3 "$db" "SELECT count(*) FROM file_chunks WHERE text LIKE '%doubled%';" 2>&1)"
+  local sig
+  sig="$(sqlite3 "$db" "SELECT count(*) FROM symbols WHERE name = 'zzq_quoted_sig' AND signature LIKE '%it''s a default%';" 2>&1)"
+  local out="$tmp_root/quoted.out" status=0
+  "$PMCTL" context query "$fix_repo" zzq_it > "$out" 2>/dev/null || status=$?
+
+  if [[ "$chunks" =~ ^[0-9]+$ && "$chunks" -gt 0 && "$single" == "1" && "$doubled" == "1" \
+     && "$sig" == "1" && "$status" -eq 0 ]] && grep -q 'scripts/quoted.sh' "$out"; then
+    pass "$name"
+  else
+    fail "$name" "quoted content did not round-trip: chunks=$chunks single=$single doubled=$doubled signature=$sig query_status=$status"
+  fi
+}
+
 case_context_index_ignores_environment_extractor_version() {
   local name="pmctl context index: the environment cannot supply the extractor version"
   should_run "$name" || return 0
@@ -4069,6 +4131,7 @@ case_context_prompt_scan_no_db
 case_context_prompt_scan_knowledge_domain_only
 case_context_prompt_scan_dedup_and_hit_cap
 case_context_index_reaches_deep_file_content
+case_context_index_preserves_quoted_content
 case_context_index_ignores_environment_extractor_version
 case_context_index_splits_an_over_cap_line
 case_context_index_detects_mtime_preserving_edit
