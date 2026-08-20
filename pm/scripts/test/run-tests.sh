@@ -174,6 +174,7 @@ run_validate_case "validate good-deferred-someday" 0 "" "$fixtures/good-deferred
 run_validate_case "validate good-archive-stub" 0 "" "$fixtures/good-archive-stub/BACKLOG.md"
 run_validate_case "validate good-partial" 0 "" "$fixtures/good-partial/BACKLOG.md"
 run_validate_case "validate bad-partial-date" 1 "E-DATE-FORMAT" "$fixtures/bad-partial-date/BACKLOG.md"
+run_validate_case "validate bad-partial-date-stale" 1 "E-PARTIAL-DATE-STALE" "$fixtures/bad-partial-date-stale/BACKLOG.md"
 run_validate_case "validate good-superseded" 0 "" "$fixtures/good-superseded/BACKLOG.md"
 run_validate_case "validate bad-superseded-date" 1 "E-DATE-FORMAT" "$fixtures/bad-superseded-date/BACKLOG.md"
 run_validate_case "validate bad-changelog-drift partial-row" 1 "E-CHANGELOG-DRIFT" "$fixtures/bad-changelog-drift-partial/BACKLOG.md"
