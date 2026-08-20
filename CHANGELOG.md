@@ -38,6 +38,22 @@ Versions follow [Semantic Versioning](https://semver.org/).
   from active to partial: its main body shipped, contrary to an earlier reading
   of this ticket taken from a phrase search rather than the implementation.
 
+- **The publish authorization route now names what actually authorized the
+  publish (CC-511 Phase B).** It was derived from whether a targeted
+  confirmation ran; the route it labels is defined by whether the primary
+  review examined the final tree, which the closure records directly as
+  `primary.subject` versus `final_subject`. Those answer different questions
+  and the closure schema lets them disagree — a remediation closed entirely
+  locally needs no targeted confirmation while leaving the primary review bound
+  to a pre-remediation tree, which the old derivation labelled a `final_tree_review`
+  that never happened. A four-row matrix now covers both routes across both
+  confirmation states; `final_tree_review` had previously only ever appeared as
+  fixture input, never as an asserted build output.
+- **`pmctl ship finish --help` keeps naming `--gate-result` and `--full-result`
+  (CC-529).** The parser's mutual-exclusion behavior already had an oracle; the
+  public option list had none, and the existing discovery test only asserts that
+  a `Main options:` section exists, not what any command puts in it.
+
 ### Fixed
 
 - **A test that asserts a default no longer measures the caller's environment

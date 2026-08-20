@@ -106,12 +106,21 @@ gate_publish_assessment_build() {
   assurance_sha="$(gate_digest_file "$assurance_file")" || return 1
   closure_sha="$(gate_digest_file "$closure_file")" || return 1
   full_sha="$(gate_digest_file "$full_result")" || return 1
-  targeted_status="$(jq -r '.targeted_confirmation.status' "$closure_file")"
-  if [[ "$targeted_status" == pass ]]; then
-    route=primary_review_closure
-  else
-    route=final_tree_review
-  fi
+  # The route names which authorization the publish rests on, so it is read from
+  # the subject the primary review actually examined -- not from whether a
+  # targeted confirmation ran. Those two answer different questions, and the
+  # closure schema lets them disagree: a remediation closed entirely locally
+  # needs no targeted confirmation while still leaving the primary review bound
+  # to a pre-remediation tree. Deriving the label from the confirmation would
+  # then claim a final-tree review that never happened. The distinct default on
+  # the final side keeps a closure that records neither subject off the
+  # final-tree route, which is never claimed without positive evidence.
+  IFS=$'\t' read -r targeted_status route < <(jq -r '
+    [ .targeted_confirmation.status,
+      (if (.primary.subject.tree_fingerprint // "") ==
+          (.final_subject.tree_fingerprint // "-")
+       then "final_tree_review" else "primary_review_closure" end)
+    ] | @tsv' "$closure_file")
 
   assessment_tmp="$(mktemp "${output}.tmp.XXXXXX")" || return 1
   if ! jq -n \

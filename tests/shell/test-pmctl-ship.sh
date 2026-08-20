@@ -505,9 +505,13 @@ case_publish_assessment_binds_closure_and_full_suite() {
   fi
 }
 
+# $2 (optional) is the tree fingerprint the primary review examined; when given,
+# the closure carries a `.primary` block, which is what separates the two
+# authorization routes. $3 (optional) overrides the targeted-confirmation status.
 publish_assessment_fixture() {
   local dir="$1" gate="$1/gate.json" assurance="$1/assurance.json"
   local gate_result="$1/gate-result.md" closure="$1/closure.json" full="$1/full.json"
+  local primary_fp="${2:-}" targeted="${3:-pass}"
   mkdir -p "$dir"
   printf 'gate result\n' > "$gate_result"
   jq -n --arg assurance "$assurance" --arg result "$gate_result" '
@@ -518,7 +522,13 @@ publish_assessment_fixture() {
        policy_applicable:{status:"pass",reason_codes:[],consumer:"embedded",required_policy:"generic",preferred_policy:"generic",embedded_policy:"generic",policy_satisfaction:"preferred"}}}
   ' > "$gate"
   jq -n '{evidence:{scope_manifest:{sha256:("c"*64)}}}' > "$assurance"
-  jq -n '{kind:"remediation_closure_v1",schema_version:1,state:"closed",final_assessment:{publish_authorized:true,subject_fingerprint:("b"*64)},final_subject:{tree_fingerprint:("b"*64)},targeted_confirmation:{status:"pass"}}' > "$closure"
+  jq -n --arg primary "$primary_fp" --arg targeted "$targeted" '
+    {kind:"remediation_closure_v1",schema_version:1,state:"closed",
+     final_assessment:{publish_authorized:true,subject_fingerprint:("b"*64)},
+     final_subject:{tree_fingerprint:("b"*64)},
+     targeted_confirmation:{status:$targeted}}
+    + (if $primary == "" then {} else {primary:{subject:{tree_fingerprint:$primary}}} end)
+  ' > "$closure"
   jq -n '{kind:"pm_test_result_v2",contract:"full",authoritative:true,status:"pass",aggregate:{status:"pass"},exit_code:0,tree_fingerprint:("b"*64)}' > "$full"
 }
 
@@ -534,6 +544,46 @@ run_real_publish_assessment_build() {
     . "$repo_root/runtime/lib/gate-publish.sh"
     gate_publish_assessment_build "$dir/assessment.json" "$dir/gate.json" "$dir/closure.json" "$dir/full.json" CC-511
   ' _ "$REPO_ROOT" "$dir"
+}
+
+# Behavior: the authorization route names which review authorized the publish,
+# read from the subject the primary review examined rather than from whether a
+# targeted confirmation ran. The two answer different questions and the closure
+# schema lets them disagree.
+# Steps: 1) Build a real assessment for each (primary subject, targeted status)
+# combination; 2) assert the route each one records.
+case_publish_assessment_route_follows_reviewed_subject() {
+  local name="ship publish assessment: route follows the subject the primary review examined"
+  should_run "$name" || return 0
+  local final_fp same_fp other_fp row primary targeted expected actual dir n=0 bad=""
+  final_fp="$(printf 'b%.0s' {1..64})"
+  same_fp="$final_fp"
+  other_fp="$(printf 'd%.0s' {1..64})"
+
+  # primary-subject | targeted-confirmation | expected route
+  #
+  # Row 3 is the case a confirmation-derived label gets wrong: remediation that
+  # closed entirely locally needs no targeted confirmation, yet the primary
+  # review remains bound to the pre-remediation tree.
+  for row in \
+    "$same_fp|not_required|final_tree_review" \
+    "$same_fp|pass|final_tree_review" \
+    "$other_fp|not_required|primary_review_closure" \
+    "$other_fp|pass|primary_review_closure"; do
+    primary="${row%%|*}"; targeted="${row#*|}"; expected="${targeted#*|}"; targeted="${targeted%%|*}"
+    n=$((n + 1))
+    dir="$tmp_root/publish-route-matrix/$n"
+    publish_assessment_fixture "$dir" "$primary" "$targeted"
+    if ! run_real_publish_assessment_build "$dir" >/dev/null 2>"$dir/err"; then
+      bad+=" row$n:build-failed($(tr -d '\n' < "$dir/err"))"
+      continue
+    fi
+    actual="$(jq -r '.authorization.route' "$dir/assessment.json")"
+    [[ "$actual" == "$expected" ]] || \
+      bad+=" row$n:primary=${primary:0:1}*,targeted=$targeted expected=$expected actual=$actual"
+  done
+
+  if [[ -z "$bad" ]]; then pass "$name"; else fail "$name" "route mismatches:$bad"; fi
 }
 
 run_real_publish_assessment_verify() {
@@ -2267,6 +2317,28 @@ case_finish_gate_result_rejects_reviewers() {
   fi
 }
 
+# Behavior: the public help for ship finish keeps naming the artifact-reuse
+# options, so an operator can discover them without reading the parser.
+# Steps: read `ship finish --help` and require both artifact flags in it.
+# The parser's own behavior stays covered by the mutual-exclusion case above;
+# this is the discoverability half, which no assertion held.
+case_finish_help_names_artifact_options() {
+  local name="ship finish: help names the artifact-reuse options"
+  should_run "$name" || return 0
+  local out status=0 missing=""
+  out="$tmp_root/out-finish-help"
+  "$PMCTL" ship finish --help > "$out" 2>&1 || status=$?
+  local flag
+  for flag in --gate-result --full-result; do
+    grep -q -- "$flag" "$out" || missing+=" $flag"
+  done
+  if [[ "$status" -eq 0 && -z "$missing" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status missing:$missing help=$(cat "$out")"
+  fi
+}
+
 case_finish_go_dirty_tree_refuses_push() {
   local name="ship finish: GO with an uncommitted (dirty) tree refuses to push -- committed-diff guard"
   should_run "$name" || return 0
@@ -3478,6 +3550,7 @@ case_finish_missing_supplied_gate_result_reports_artifact_path
 case_finish_stale_supplied_gate_result_refuses_publish
 case_finish_invalid_supplied_gate_result_refuses_publish
 case_finish_gate_result_rejects_reviewers
+case_finish_help_names_artifact_options
 case_finish_go_dirty_tree_refuses_push
 case_finish_go_head_moved_refuses_push
 case_finish_supplied_gate_result_head_moved_refuses_push
@@ -3495,6 +3568,7 @@ case_finish_cli_valid_gate_result_publishes
 case_finish_cli_valid_full_result_publishes
 case_ship_subject_fingerprint_requires_canonical_helper
 case_publish_assessment_binds_closure_and_full_suite
+case_publish_assessment_route_follows_reviewed_subject
 case_publish_assessment_rejects_existing_destination
 case_publish_assessment_and_closure_are_concurrent_no_replace
 case_publish_assessment_verify_rejects_malformed_artifacts
