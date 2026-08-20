@@ -7,6 +7,44 @@ H2 標題格式：## YYYY-MM-DD: <短描述>
 與 BACKLOG closure 對應的 entry，內文首行寫：Closes: BACKLOG.md#<PREFIX>-NNN
 -->
 
+## 2026-08-20: current-tree-evidence-is-a-standing-invariant
+
+Relates: CC-511, CC-532
+
+**Context**: v0.11.0 的 P0 表把「accepted planning tree 產生 authoritative
+zero-skip PASS」列為一個待辦工作項，狀態自 2026-08-14 起維持 `required`，其間
+main 已合併 14 個 PR。查證後發現它不可能被標成完成：full-suite artifact 綁定
+source-tree fingerprint，任何 merge 都讓它失效，所以這一列必然永久開啟。
+同一份 P0 表也因此無法反映其餘各列的真實狀態——planning record 自身變成
+「永遠有東西沒做完」的雜訊來源。
+
+**Decision**: current-tree authoritative evidence 是**常設不變式**，不是 milestone
+工作項。它的 owner 是 [[CC-511]] Phase A：所有官方 publish path 在任何 push／PR
+mutation 前必須取得 current tree 的 authoritative full-suite PASS，由既有 canonical
+verifier 判定，缺失／partial／skip／drift 一律 fail closed。P0 表該列據此結案，
+不再重複追蹤；milestone 只追蹤會收斂的工作項。
+
+**Alternatives considered**: (a) 每次 release 前重跑並重新標記——拒絕，那只是把
+永久開啟改成週期性作假，且沒有任何 consumer 讀那一列。(b) 讓該列改記錄「最近一次
+通過的 fingerprint」——拒絕，會產生第二份與 artifact 競爭的 authority，而 artifact
+已是唯一可被 verifier 重播的來源。
+
+**Constraints introduced**: milestone 表只登載會到達終態的工作項；持續成立的性質
+一律指向強制它的 runtime gate，並在該處留下可重播證據。
+
+planning record 與實際交付的落差**目前沒有機械偵測，且不應倉促補上**。本次曾實作
+一條 `E-PARTIAL-DATE-STALE`（partial row 的日期不得早於 body 內最新日期），但它
+假設該欄位是「最後更新日」；`pm/schema.md` §狀態列表明訂它是**首批交付日期**，兩者
+語意相反。依錯誤讀法還改動了兩列真實資料（其中 CC-511 原本完全正確）。該檢查已於
+同一個 PR 內撤除。
+
+教訓：**為規範欄位加不變式之前，先確認該欄位在 schema 裡的語意，而不是從當前資料
+的樣態反推**。它通過了五位 reviewer 的 gate 與 zero-skip 全套，因為沒有任何測試
+驗證該欄位的 schema 語意——「測試全綠」證明不了不變式的前提成立。
+
+真正要偵測的訊號（PR 已 merge 而票未更新）所需資訊在 git side，不在文件內部一致性
+的能力範圍；若要做，須另立票並以 git 資料為來源。
+
 ## 2026-08-14: p1-delivery-closure-execution-order
 
 Relates: CC-527, CC-517, CC-511, CC-529, CC-505

@@ -29,6 +29,15 @@ Versions follow [Semantic Versioning](https://semver.org/).
   left alone as a stopping condition — reducing test growth is done at the
   finding end, not by capping gate rounds.
 
+- **v0.11.0 P0/P1 planning records reconciled against what actually shipped.**
+  CC-517 and CC-529 recorded no delivering PR at all despite #483 and #484;
+  CC-511 and CC-527 carried status dates older than their own bodies. The P0
+  "current-tree full suite" row is closed as absorbed by CC-511 Phase A rather
+  than tracked as work — it is an invariant that decays on every merge, so it
+  could never reach a terminal state (see DECISIONS 2026-08-20). CC-517 moves
+  from active to partial: its main body shipped, contrary to an earlier reading
+  of this ticket taken from a phrase search rather than the implementation.
+
 ### Fixed
 
 - **A test that asserts a default no longer measures the caller's environment
