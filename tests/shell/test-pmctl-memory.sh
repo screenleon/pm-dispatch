@@ -3037,6 +3037,29 @@ case_memory_resolve_allows_generic_non_git() {
   fi
 }
 
+# Behavior: --skeleton is retired and rejected as an unknown argument, writing
+# no episode. Its dedicated regression (case_memory_append_episode_concurrent_
+# skeleton_dedupe) was removed with the flag; this proves the retirement
+# itself rather than leaving only its absence to speak for it — a parser
+# change that silently restored or mishandled --skeleton would otherwise ship
+# with every existing case still green.
+# Steps: invoke append-episode with --skeleton; assert exit 2, the unknown-
+# argument message, and no episodes.jsonl created.
+case_memory_append_episode_skeleton_flag_rejected() {
+  local name="pmctl memory append-episode: --skeleton is rejected, no episode written"
+  should_run "$name" || return 0
+  local repo="$tmp_root/append-skeleton-rejected-repo" mdir="$tmp_root/append-skeleton-rejected-memory" out status=0
+  mkdir -p "$repo" "$mdir"
+  git -C "$repo" init -q
+  out="$(PM_MEMORY_DIR="$mdir" "$PMCTL" memory append-episode --repo-root "$repo" --host claude \
+    --session-id retired-skeleton --summary "" --skeleton 2>&1)" || status=$?
+  if [[ "$status" -eq 2 && "$out" == *"unknown argument: --skeleton"* && ! -e "$mdir/episodes.jsonl" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out episodes=$([[ -e "$mdir/episodes.jsonl" ]] && echo present || echo absent)"
+  fi
+}
+
 # Behavior: canonical writes refuse an episodes.jsonl symlink even when its target is writable.
 # Steps: point episodes.jsonl at an external file and assert the command fails without changing it.
 case_memory_append_episode_refuses_symlink() {
@@ -3261,6 +3284,7 @@ case_memory_append_episode_cross_host_contract
 case_memory_append_episode_requires_host
 case_memory_append_episode_invalid_explicit_no_fallback
 case_memory_append_episode_query_round_trip
+case_memory_append_episode_skeleton_flag_rejected
 case_memory_append_episode_refuses_symlink
 case_memory_append_episode_symlink_swap_race
 case_memory_append_episode_refuses_symlink_lock_dir
