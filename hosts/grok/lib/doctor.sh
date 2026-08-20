@@ -62,9 +62,6 @@ _doctor_host_grok_unguarded() {
   emit_capability host.grok.file-guard ok grok file_guard \
     none none none evolving assumed \
     "Grok file guard not evaluated (closure-of-all-paths not claimed)"
-  emit_capability host.grok.session-lifecycle ok grok session_lifecycle \
-    none none none evolving assumed \
-    "Grok session lifecycle hooks not wired in MVP"
   emit_capability host.grok.statusline ok grok statusline \
     none none none evolving assumed \
     "Grok statusline not evaluated"

@@ -10,6 +10,35 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **The memory injection budget is now measured in actual UTF-8 bytes, not
+  characters.** `pmctl memory stats` and the `UserPromptSubmit` injection hook
+  both used bash's `${#line}`, which counts characters under a UTF-8 locale — a
+  CJK character is 3 bytes but counted as 1, so a CJK-heavy `MEMORY.md` index
+  undercounted its real injection cost by roughly a quarter against
+  `MEMORY_MAX_INJECT_BYTES`, a budget whose name and purpose are both
+  byte-based. Both call sites now share `memory_byte_len_var` (`lib/memory.sh`),
+  a no-fork helper (temporarily switches to the C locale, where `${#s}` counts
+  bytes) so the fix does not add a subprocess to a per-line hot path. The
+  `/memory-compress` skill's authoring rule changes from "≤ 150 characters" to
+  "≤ 150 UTF-8 bytes" to match what is actually enforced.
+- **The Stop-hook episode skeleton writer is retired**, along with the
+  `session_lifecycle` host-contract capability it was the sole implementation
+  of (`docs/host-contract.md`'s capability enum drops from five entries to
+  four; `hosts/claude/host.yaml`, `hosts/codex/host.yaml`,
+  `hosts/opencode/host.yaml`, and `hosts/grok/host.yaml` all lose their
+  `session_lifecycle` declaration). The card that introduced it named its own
+  exit condition — a trial period ending in the writer being dropped if
+  episode fill rate stayed low — and two audits two months apart (12%, then
+  8%, declining rather than stable) confirmed it. `/mem-log` is now the sole
+  episode writer; every episode it appends already carries a real summary, so
+  `episode_fill_rate_pct` and `pmctl memory rebuild-summary`'s emptiness rule
+  are kept only for `episodes.jsonl` history that predates the retirement.
+  `pmctl memory append-episode`'s `--skeleton` mode and its session-id dedupe
+  are removed as dead code with the writer gone. `install-guards.sh` /
+  `hosts/codex/bin/install.sh` no longer register the hook and now prune it
+  from an existing install; `runtime/hooks/guard-session-summary.sh` itself is
+  deleted.
+
 - **`/ship` now governs the *form* of a finding's remedy, not just that it is
   fixed (CC-554).** Every finding is still addressed — an unaddressed finding
   remains a NO-GO — but when the proposed remedy is a *new permanent blocking

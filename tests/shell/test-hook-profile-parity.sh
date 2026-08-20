@@ -70,14 +70,15 @@ _install_full_guards() {
 # Steps:
 #   1. Parse the hooks=() array in lib/doctor-host-claude.sh via POSIX awk + grep.
 #   2. Count extracted guard-*.sh basenames.
-#   3. Assert count >= 5.
+#   3. Assert count >= 4 (session_lifecycle retired: guard-pm-write, log-usage,
+#      guard-inject-memory, save-rate-limits remain the minimal managed set).
 should_run "doctor-hook-list-nonempty"
 {
   count=$( (_doctor_hooks) | wc -l | tr -d ' ')
-  if [[ "$count" -ge 5 ]]; then
+  if [[ "$count" -ge 4 ]]; then
     pass "doctor-hook-list-nonempty" "found $count hooks in doctor-host-claude.sh"
   else
-    fail "doctor-hook-list-nonempty" "expected >=5 hooks in doctor-host-claude.sh, got $count"
+    fail "doctor-hook-list-nonempty" "expected >=4 hooks in doctor-host-claude.sh, got $count"
   fi
 }
 
@@ -85,14 +86,14 @@ should_run "doctor-hook-list-nonempty"
 # Steps:
 #   1. Parse *_cmd= lines referencing scripts/guard-*.sh in install-guards.sh.
 #   2. Count extracted guard-*.sh basenames.
-#   3. Assert count >= 5.
+#   3. Assert count >= 4 (session_lifecycle retired; see doctor-hook-list-nonempty).
 should_run "install-guards-hook-list-nonempty"
 {
   count=$( (_install_hooks) | wc -l | tr -d ' ')
-  if [[ "$count" -ge 5 ]]; then
+  if [[ "$count" -ge 4 ]]; then
     pass "install-guards-hook-list-nonempty" "found $count hooks in install-guards.sh"
   else
-    fail "install-guards-hook-list-nonempty" "expected >=5 hooks in install-guards.sh, got $count"
+    fail "install-guards-hook-list-nonempty" "expected >=4 hooks in install-guards.sh, got $count"
   fi
 }
 

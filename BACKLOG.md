@@ -478,7 +478,7 @@ embeddings/semantic backend——本票是索引層 tokenizer 修正，不是其
 **Requirement**：比照 [[CC-436]]/[[CC-448]] 階段 1 的唯讀 probe 模式——不落地 `hosts/antigravity/host.yaml`，只實測：
 1. command 載入能力（能否載入 pm-dispatch 的 `/pm` 這類 slash command，或有無等價機制）。
 2. hook/plugin 機制（能否在 Bash/檔案寫入時觸發 `pmctl guard check`）。
-3. 五個 capability enum（`command_guard`/`file_guard`/`session_lifecycle`/`pm_command_interface`/`statusline`）的 provider/confidence 判定。
+3. 四個 capability enum（`command_guard`/`file_guard`/`pm_command_interface`/`statusline`）的 provider/confidence 判定（`session_lifecycle` 已於 2026-08-21 隨 Stop-hook 空殼寫入者一併退役，不再是 host-contract 的一部分）。
 
 結論寫 `docs/spikes/CC-472.md`。
 

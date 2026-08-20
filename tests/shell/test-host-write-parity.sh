@@ -81,7 +81,6 @@ make_relocated_codex_fixture() {
   cp "$REPO_ROOT/hosts/codex/hooks/command-guard.sh" "$root/hosts/codex/hooks/command-guard.sh"
   cp "$REPO_ROOT/scripts/hook-codex-command-guard.sh" "$root/scripts/hook-codex-command-guard.sh"
   cp "$REPO_ROOT/runtime/hooks/guard-inject-memory.sh" "$root/runtime/hooks/guard-inject-memory.sh"
-  cp "$REPO_ROOT/runtime/hooks/guard-session-summary.sh" "$root/runtime/hooks/guard-session-summary.sh"
 }
 
 test_claude_surface_byte_compatible_with_optional_hosts() {

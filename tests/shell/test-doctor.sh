@@ -98,8 +98,7 @@ write_minimal_settings() {
     ],
     "PostToolUse": [],
     "Stop": [
-      {"hooks": [{"type": "command", "command": "${REPO_ROOT}/hosts/claude/hooks/log-usage.sh"}]},
-      {"hooks": [{"type": "command", "command": "${REPO_ROOT}/runtime/hooks/guard-session-summary.sh --host claude"}]}
+      {"hooks": [{"type": "command", "command": "${REPO_ROOT}/hosts/claude/hooks/log-usage.sh"}]}
     ],
     "UserPromptSubmit": [
       {"hooks": [{"type": "command", "command": "${REPO_ROOT}/runtime/hooks/guard-inject-memory.sh"}]},
@@ -176,8 +175,7 @@ write_full_settings() {
     ],
     "PostToolUse": [],
     "Stop": [
-      {"hooks": [{"type": "command", "command": "${REPO_ROOT}/hosts/claude/hooks/log-usage.sh"}]},
-      {"hooks": [{"type": "command", "command": "${REPO_ROOT}/runtime/hooks/guard-session-summary.sh --host claude"}]}
+      {"hooks": [{"type": "command", "command": "${REPO_ROOT}/hosts/claude/hooks/log-usage.sh"}]}
     ],
     "UserPromptSubmit": [
       {"hooks": [{"type": "command", "command": "${REPO_ROOT}/runtime/hooks/guard-inject-memory.sh"}]},
@@ -472,7 +470,6 @@ case_doctor_grok_host_config_and_capabilities() {
      && "$out_present" == *"batch PM via pmctl pm prepare/run --host grok"* \
      && "$out_present" == *"Grok command guard not wired"* \
      && "$out_present" == *"Grok file guard not evaluated"* \
-     && "$out_present" == *"Grok session lifecycle hooks not wired"* \
      && "$out_present" == *"Grok statusline not evaluated"* \
      && "$out_present" == *"grok available on PATH"* ]]; then
     pass "$name"
@@ -2028,13 +2025,13 @@ case_doctor_claude_manifest_consistency_drift_fails() {
   # Steps:
   #   1. Copy scripts/, adapters/, and hosts/ into a writable fake_repo (doctor
   #      reads hosts/claude/host.yaml relative to --repo, not its own location).
-  #   2. Mutate the copied hosts/claude/host.yaml: change session_lifecycle's
+  #   2. Mutate the copied hosts/claude/host.yaml: change statusline's
   #      declared provider from host_hook to host_policy (still a valid enum
   #      value, so this exercises the consistency check specifically, not the
   #      schema validator).
-  #   3. Full healthy env (session-summary Stop hook wired) + --repo fake_repo.
+  #   3. Full healthy env (save-rate-limits.sh statusline hook wired) + --repo fake_repo.
   #   4. Assert exit 1, [FAIL], and the specific drift message naming
-  #      session_lifecycle/provider/host_policy.
+  #      statusline/provider/host_policy.
   local name="doctor-claude-manifest-consistency-drift-fails"
   should_run "$name" || return 0
   if ! command -v jq >/dev/null 2>&1; then
@@ -2046,7 +2043,7 @@ case_doctor_claude_manifest_consistency_drift_fails() {
   mkdir -p "$fake_repo"
   cp -r "$REPO_ROOT/runtime" "$REPO_ROOT/ops" "$REPO_ROOT/adapters" "$REPO_ROOT/hosts" "$fake_repo/"
   sed -i.bak \
-    '/capability: session_lifecycle/,/capability: pm_command_interface/ s/provider: host_hook/provider: host_policy/' \
+    '/capability: statusline/,/^permissions_surface:/ s/provider: host_hook/provider: host_policy/' \
     "$fake_repo/hosts/claude/host.yaml"
   rm -f "$fake_repo/hosts/claude/host.yaml.bak"
 
@@ -2059,7 +2056,7 @@ case_doctor_claude_manifest_consistency_drift_fails() {
     bash "$DOCTOR" --no-color --repo "$fake_repo" 2>&1)" || status=$?
 
   if [[ "$status" -eq 1 && "$out" == *"[FAIL]"* \
-    && "$out" == *"session_lifecycle: wired but manifest declares provider 'host_policy'"* ]]; then
+    && "$out" == *"statusline: wired but manifest declares provider 'host_policy'"* ]]; then
     pass "$name"
   else
     fail "$name" "status=$status out=$out"
@@ -2445,9 +2442,9 @@ case_doctor_claude_config_dir() {
   local config_dir="$tmp_root/config-dir-valid"
   mkdir -p "$home_bare"
   mkdir -p "$config_dir/.pm-dispatch"
-  printf '{\n  "hooks": {\n    "PreToolUse": [\n      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "%s/runtime/hooks/guard-pm-write.sh"}]},\n      {"matcher": "Bash",       "hooks": [{"type": "command", "command": "%s/adapters/codex/bash-guard.sh"}]}\n    ],\n    "PostToolUse": [],\n    "Stop": [\n      {"hooks": [{"type": "command", "command": "%s/scripts/guard-log-claude-usage.sh"}]},\n      {"hooks": [{"type": "command", "command": "%s/runtime/hooks/guard-session-summary.sh --host claude"}]}\n    ],\n    "UserPromptSubmit": [\n      {"hooks": [{"type": "command", "command": "%s/runtime/hooks/guard-inject-memory.sh"}]},\n      {"hooks": [{"type": "command", "command": "%s/hosts/claude/hooks/inject-context.sh", "timeout": 150}]}\n    ]\n  },\n  "statusLine": {"command": "%s/scripts/guard-save-rate-limits.sh"}\n}\n' \
+  printf '{\n  "hooks": {\n    "PreToolUse": [\n      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "%s/runtime/hooks/guard-pm-write.sh"}]},\n      {"matcher": "Bash",       "hooks": [{"type": "command", "command": "%s/adapters/codex/bash-guard.sh"}]}\n    ],\n    "PostToolUse": [],\n    "Stop": [\n      {"hooks": [{"type": "command", "command": "%s/scripts/guard-log-claude-usage.sh"}]}\n    ],\n    "UserPromptSubmit": [\n      {"hooks": [{"type": "command", "command": "%s/runtime/hooks/guard-inject-memory.sh"}]},\n      {"hooks": [{"type": "command", "command": "%s/hosts/claude/hooks/inject-context.sh", "timeout": 150}]}\n    ]\n  },\n  "statusLine": {"command": "%s/scripts/guard-save-rate-limits.sh"}\n}\n' \
     "$REPO_ROOT" "$REPO_ROOT" \
-    "$REPO_ROOT" "$REPO_ROOT" "$REPO_ROOT" "$REPO_ROOT" "$REPO_ROOT" > "$config_dir/settings.json"
+    "$REPO_ROOT" "$REPO_ROOT" "$REPO_ROOT" "$REPO_ROOT" > "$config_dir/settings.json"
   # Add abs-path allowlist entries for all dispatch scripts directly into config_dir.
   local _allow_json _f
   _allow_json="$(

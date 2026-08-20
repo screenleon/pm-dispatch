@@ -87,9 +87,14 @@ instructions_file="$(host_manifest_expand_path "$REPO_ROOT" codex "$instructions
 hook_cmd="$(codex_host_command_guard_path "$REPO_ROOT")"
 legacy_hook_cmd="$(codex_host_command_guard_legacy_path "$REPO_ROOT")"
 memory_hook_cmd="$REPO_ROOT/runtime/hooks/guard-inject-memory.sh"
-session_hook_cmd="$REPO_ROOT/runtime/hooks/guard-session-summary.sh"
 legacy_memory_hook_cmd="$REPO_ROOT/scripts/guard-inject-memory.sh"
-legacy_session_hook_cmd="$REPO_ROOT/scripts/guard-session-summary.sh --host codex"
+# session_lifecycle is retired (the Stop skeleton writer stayed empty). This
+# path string is kept only so the jq transform below can still prune a
+# previously wired session hook from an existing hooks.json — no new
+# registration is written. The scripts/-prefixed pre-rename form is not
+# tracked here: session_lifecycle was only ever wired at the current
+# runtime/hooks/ path, so there is no pre-rename install to migrate away from.
+session_hook_cmd="$REPO_ROOT/runtime/hooks/guard-session-summary.sh"
 memory_update_module="$(host_manifest_scalar "$manifest" memory_update_module)"
 if [[ -z "$memory_update_module" || "$memory_update_module" == "null" ]]; then
   echo "install-guards-codex: hosts/codex/host.yaml has no memory_update_module" >&2
@@ -97,7 +102,7 @@ if [[ -z "$memory_update_module" || "$memory_update_module" == "null" ]]; then
 fi
 memory_update_cmd="$REPO_ROOT/$memory_update_module"
 
-if [[ ! -x "$hook_cmd" || ! -x "$memory_hook_cmd" || ! -x "$session_hook_cmd" || ! -x "$memory_update_cmd" ]]; then
+if [[ ! -x "$hook_cmd" || ! -x "$memory_hook_cmd" || ! -x "$memory_update_cmd" ]]; then
   echo "install-guards-codex: managed hook missing or not executable" >&2
   exit 2
 fi
@@ -112,7 +117,6 @@ legacy_hook_cmd_q="$(printf '%q' "$legacy_hook_cmd")"
 memory_hook_cmd_q="$(printf '%q' "$memory_hook_cmd")"
 session_hook_cmd_q="$(printf '%q' "$session_hook_cmd") --host codex"
 legacy_memory_hook_cmd_q="$(printf '%q' "$legacy_memory_hook_cmd")"
-legacy_session_hook_cmd_q="$(printf '%q' "$REPO_ROOT/scripts/guard-session-summary.sh") --host codex"
 memory_update_cmd_q="$(printf '%q' "$memory_update_cmd")"
 
 tmp_new="$(mktemp)"
@@ -167,7 +171,6 @@ while IFS= read -r previous_command; do
     */runtime/hooks/guard-inject-memory.sh) previous_root="${previous_word%/runtime/hooks/guard-inject-memory.sh}" ;;
     */scripts/guard-inject-memory.sh) previous_root="${previous_word%/scripts/guard-inject-memory.sh}" ;;
     */runtime/hooks/guard-session-summary.sh) previous_root="${previous_word%/runtime/hooks/guard-session-summary.sh}" ;;
-    */scripts/guard-session-summary.sh) previous_root="${previous_word%/scripts/guard-session-summary.sh}" ;;
     *) continue ;;
   esac
   if [[ "$previous_root" != "$REPO_ROOT" && -f "$previous_root/install.sh" \
@@ -182,14 +185,12 @@ previous_legacy_hook_cmd_q=""
 previous_memory_hook_cmd_q=""
 previous_legacy_memory_hook_cmd_q=""
 previous_session_hook_cmd_q=""
-previous_legacy_session_hook_cmd_q=""
 if [[ -n "$previous_repo_root" ]]; then
   previous_hook_cmd_q="$(printf '%q' "$previous_repo_root/hosts/codex/hooks/command-guard.sh")"
   previous_legacy_hook_cmd_q="$(printf '%q' "$previous_repo_root/scripts/hook-codex-command-guard.sh")"
   previous_memory_hook_cmd_q="$(printf '%q' "$previous_repo_root/runtime/hooks/guard-inject-memory.sh")"
   previous_legacy_memory_hook_cmd_q="$(printf '%q' "$previous_repo_root/scripts/guard-inject-memory.sh")"
   previous_session_hook_cmd_q="$(printf '%q' "$previous_repo_root/runtime/hooks/guard-session-summary.sh") --host codex"
-  previous_legacy_session_hook_cmd_q="$(printf '%q' "$previous_repo_root/scripts/guard-session-summary.sh") --host codex"
 fi
 
 # Merge idempotently: only append the managed hook entry if no existing
@@ -197,10 +198,9 @@ fi
 jq --arg cmd "$hook_cmd_q" --arg legacy_cmd "$legacy_hook_cmd" --arg legacy_cmd_q "$legacy_hook_cmd_q" \
   --arg memory_cmd "$memory_hook_cmd_q" --arg session_cmd "$session_hook_cmd_q" \
   --arg legacy_memory_cmd "$legacy_memory_hook_cmd" --arg legacy_memory_cmd_q "$legacy_memory_hook_cmd_q" \
-  --arg legacy_session_cmd "$legacy_session_hook_cmd" --arg legacy_session_cmd_q "$legacy_session_hook_cmd_q" \
   --arg previous_hook_cmd_q "$previous_hook_cmd_q" --arg previous_legacy_hook_cmd_q "$previous_legacy_hook_cmd_q" \
   --arg previous_memory_hook_cmd_q "$previous_memory_hook_cmd_q" --arg previous_legacy_memory_hook_cmd_q "$previous_legacy_memory_hook_cmd_q" \
-  --arg previous_session_hook_cmd_q "$previous_session_hook_cmd_q" --arg previous_legacy_session_hook_cmd_q "$previous_legacy_session_hook_cmd_q" '
+  --arg previous_session_hook_cmd_q "$previous_session_hook_cmd_q" '
   def managed_guard:
     . == $cmd or . == $legacy_cmd or . == $legacy_cmd_q or
     ($previous_hook_cmd_q != "" and
@@ -210,9 +210,8 @@ jq --arg cmd "$hook_cmd_q" --arg legacy_cmd "$legacy_hook_cmd" --arg legacy_cmd_
     ($previous_memory_hook_cmd_q != "" and
       (. == $previous_memory_hook_cmd_q or . == $previous_legacy_memory_hook_cmd_q));
   def managed_session:
-    . == $session_cmd or . == $legacy_session_cmd or . == $legacy_session_cmd_q or
-    ($previous_session_hook_cmd_q != "" and
-      (. == $previous_session_hook_cmd_q or . == $previous_legacy_session_hook_cmd_q));
+    . == $session_cmd or
+    ($previous_session_hook_cmd_q != "" and . == $previous_session_hook_cmd_q);
   .hooks = (.hooks // {}) |
   .hooks.PreToolUse = (.hooks.PreToolUse // []) |
   .hooks.UserPromptSubmit = (.hooks.UserPromptSubmit // []) |
@@ -238,9 +237,7 @@ jq --arg cmd "$hook_cmd_q" --arg legacy_cmd "$legacy_hook_cmd" --arg legacy_cmd_
   ([.hooks.PreToolUse[]? | select(.matcher == "Bash") | .hooks[]?.command] | index($cmd)) as $already |
   (if $already != null then . else .hooks.PreToolUse += [{"matcher": "Bash", "hooks": [{"type": "command", "command": $cmd}]}] end) |
   ([.hooks.UserPromptSubmit[]? | .hooks[]?.command] | index($memory_cmd)) as $memory_already |
-  (if $memory_already != null then . else .hooks.UserPromptSubmit += [{"hooks": [{"type": "command", "command": $memory_cmd}]}] end) |
-  ([.hooks.Stop[]? | .hooks[]?.command] | index($session_cmd)) as $session_already |
-  if $session_already != null then . else .hooks.Stop += [{"hooks": [{"type": "command", "command": $session_cmd}]}] end
+  if $memory_already != null then . else .hooks.UserPromptSubmit += [{"hooks": [{"type": "command", "command": $memory_cmd}]}] end
 ' "$tmp_current" > "$tmp_new"
 
 if [[ -f "$instructions_file" ]]; then

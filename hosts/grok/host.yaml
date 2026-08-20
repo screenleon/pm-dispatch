@@ -35,13 +35,6 @@ guard_bindings:
     coverage: none
     stability: evolving
     confidence: assumed
-  - capability: session_lifecycle
-    binding_form: none
-    provider: none
-    enforcement: none
-    coverage: none
-    stability: evolving
-    confidence: assumed
   # Batch PM interface via pmctl pm prepare/run --host grok (no interactive
   # Agent/AskUserQuestion loop claimed).
   - capability: pm_command_interface

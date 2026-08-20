@@ -260,16 +260,16 @@ test_install_guards_codex_wires_hook() {
       "$codex_home/hooks.json" >/dev/null 2>&1 \
     && jq -e '.hooks.UserPromptSubmit[] | .hooks[] | select(.command | endswith("guard-inject-memory.sh"))' \
       "$codex_home/hooks.json" >/dev/null 2>&1 \
-    && jq -e '.hooks.Stop[] | .hooks[] | select(.command | endswith("guard-session-summary.sh --host codex"))' \
-      "$codex_home/hooks.json" >/dev/null 2>&1 \
     && grep -Fq 'pm-dispatch:codex-memory-contract:start' "$codex_home/AGENTS.md" \
     && grep -Fq 'pm-dispatch detached execution continuation' "$codex_home/AGENTS.md" \
     && grep -Fq "$REPO_ROOT/hosts/codex/bin/wait-dispatch.sh" "$codex_home/AGENTS.md" \
     && grep -Fq "$REPO_ROOT/hosts/codex/bin/continue-dispatch.sh" "$codex_home/AGENTS.md" \
-    && grep -Fq '**Default for Codex CLI:**' "$codex_home/AGENTS.md"; then
+    && grep -Fq '**Default for Codex CLI:**' "$codex_home/AGENTS.md" \
+    && ! jq -e '.hooks.Stop[]? | .hooks[]? | select(.command | endswith("guard-session-summary.sh --host codex"))' \
+      "$codex_home/hooks.json" >/dev/null 2>&1; then
     pass "$name"
   else
-    fail "$name" "expected command, prompt, Stop, and AGENTS memory wiring"
+    fail "$name" "expected command, prompt, and AGENTS memory wiring; session_lifecycle is retired and must not be wired"
   fi
 }
 
@@ -309,9 +309,9 @@ test_install_guards_codex_idempotent() {
   [[ "$before" == "$after" ]] \
     && [[ "$(jq '.hooks.PreToolUse | length' "$codex_home/hooks.json")" == "1" ]] \
     && [[ "$(jq '.hooks.UserPromptSubmit | length' "$codex_home/hooks.json")" == "1" ]] \
-    && [[ "$(jq '.hooks.Stop | length' "$codex_home/hooks.json")" == "1" ]] \
+    && [[ "$(jq '.hooks.Stop | length' "$codex_home/hooks.json")" == "0" ]] \
     && [[ "$(grep -Fc 'pm-dispatch:codex-memory-contract:start' "$codex_home/AGENTS.md")" == "1" ]] \
-    && pass "$name" || fail "$name" "re-running should not duplicate the managed hook entry"
+    && pass "$name" || fail "$name" "re-running should not duplicate the managed hook entry, and session_lifecycle must stay unwired"
 }
 
 # Behavior: reinstall upgrades this checkout's pre-migration command hook in place.
@@ -343,10 +343,18 @@ test_install_guards_codex_refreshes_legacy_hook_path() {
   fi
 }
 
-# Behavior: reinstall migrates this checkout's retired memory/session hook
-# commands without retaining duplicate old and new entries.
-# Steps: seed raw and shell-escaped legacy commands plus foreign lookalikes,
-# run the installer, then assert one canonical entry and no owned legacy entry.
+# Behavior: reinstall migrates this checkout's retired legacy memory hook path
+# without retaining a duplicate old entry, and prunes the current-path session
+# hook outright (session_lifecycle is retired — pruned, never re-added). The
+# scripts/-prefixed pre-rename session path is left alone: it is not tracked
+# for pruning because session_lifecycle was only ever wired at the current
+# runtime/hooks/ path (hosts/codex/bin/install.sh itself post-dates the
+# scripts/ -> runtime/hooks rename), so a hooks.json claiming that ancestry is
+# not a real prior install state, just an untouched foreign-looking entry.
+# Steps: seed raw legacy commands plus foreign lookalikes, run the installer,
+# then assert the memory hook migrated, the current-path session hook is gone,
+# the pre-rename session entry is left untouched, and foreign entries are
+# untouched.
 test_install_guards_codex_refreshes_legacy_memory_session_hooks() {
   local name="install-guards-codex-refreshes-legacy-memory-session-hooks"
   should_run "$name" || return 0
@@ -380,19 +388,21 @@ test_install_guards_codex_refreshes_legacy_memory_session_hooks() {
       --arg new_memory "$new_memory" --arg new_session "$new_session" \
       --arg foreign_memory "$foreign_memory" --arg foreign_session "$foreign_session" '
       ([.hooks.UserPromptSubmit[]?.hooks[]?.command | select(. == $old_memory)] | length) == 0 and
-      ([.hooks.Stop[]?.hooks[]?.command | select(. == $old_session)] | length) == 0 and
+      ([.hooks.Stop[]?.hooks[]?.command | select(. == $old_session)] | length) == 1 and
       ([.hooks.UserPromptSubmit[]?.hooks[]?.command | select(. == $new_memory)] | length) == 1 and
-      ([.hooks.Stop[]?.hooks[]?.command | select(. == $new_session)] | length) == 1 and
+      ([.hooks.Stop[]?.hooks[]?.command | select(. == $new_session)] | length) == 0 and
       ([.hooks.UserPromptSubmit[]?.hooks[]?.command | select(. == $foreign_memory)] | length) == 1 and
       ([.hooks.Stop[]?.hooks[]?.command | select(. == $foreign_session)] | length) == 1
     ' "$codex_home/hooks.json" >/dev/null; then
     pass "$name"
   else
-    fail "$name" "reinstall did not precisely migrate retired memory/session commands"
+    fail "$name" "reinstall did not migrate the memory hook and prune the retired session hook"
   fi
 }
 
-# Behavior: managed hooks from a previous checkout refresh to the candidate checkout.
+# Behavior: managed hooks from a previous checkout refresh to the candidate
+# checkout. The old-root session hook is retired: pruned outright rather than
+# refreshed to the candidate root, same as any other retired command.
 # Steps: seed old-root canonical/legacy commands plus a foreign hook, install, and compare paths.
 test_install_guards_codex_refreshes_other_checkout_paths() {
   local name="install-guards-codex-refreshes-other-checkout-paths"
@@ -414,13 +424,13 @@ test_install_guards_codex_refreshes_other_checkout_paths() {
       .foreignMarker == "keep-byte-for-byte" and
       any(.hooks.PreToolUse[]?.hooks[]?; .command == ($root+"/hosts/codex/hooks/command-guard.sh")) and
       any(.hooks.UserPromptSubmit[]?.hooks[]?; .command == ($root+"/runtime/hooks/guard-inject-memory.sh")) and
-      any(.hooks.Stop[]?.hooks[]?; .command == ($root+"/runtime/hooks/guard-session-summary.sh --host codex")) and
+      ([.hooks.Stop[]?.hooks[]?.command] | length) == 0 and
       any(.hooks.PreToolUse[]?.hooks[]?; .command == "/foreign/hook.sh") and
       ([.. | strings | select(startswith($old))] | length) == 0
     ' "$home/hooks.json" >/dev/null 2>&1; then
     pass "$name"
   else
-    fail "$name" "managed old-checkout targets were not refreshed or foreign content changed"
+    fail "$name" "managed old-checkout targets were not refreshed, retired session hook not pruned, or foreign content changed"
   fi
 }
 
@@ -454,13 +464,13 @@ test_install_guards_codex_refreshes_shell_escaped_spaced_checkout_paths() {
   if jq -e --arg root "$REPO_ROOT" --arg old "$old_root" --arg foreign "$foreign" '
       any(.hooks.PreToolUse[]?.hooks[]?; .command == ($root+"/hosts/codex/hooks/command-guard.sh")) and
       any(.hooks.UserPromptSubmit[]?.hooks[]?; .command == ($root+"/runtime/hooks/guard-inject-memory.sh")) and
-      any(.hooks.Stop[]?.hooks[]?; .command == ($root+"/runtime/hooks/guard-session-summary.sh --host codex")) and
+      ([.hooks.Stop[]?.hooks[]?.command] | length) == 0 and
       any(.hooks.PreToolUse[]?.hooks[]?; .command == $foreign) and
       ([.. | strings | select(contains($old))] | length) == 0
     ' "$home/hooks.json" >/dev/null 2>&1; then
     pass "$name"
   else
-    fail "$name" "shell-escaped old-checkout targets were not refreshed or foreign content changed"
+    fail "$name" "shell-escaped old-checkout targets were not refreshed, retired session hook not pruned, or foreign content changed"
   fi
 }
 

@@ -51,7 +51,7 @@ For each index entry of the form `- [Title](file.md) — hook text`, read the li
 
 Apply these rules to produce a new index:
 
-**Shorten hook text**: Rewrite each `— hook text` to be ≤ 15 words and ≤ 150 characters. Preserve the essential rule or fact. Remove filler phrases like "memory about", "information regarding", "note that".
+**Shorten hook text**: Rewrite each `— hook text` to be ≤ 15 words and ≤ 150 **UTF-8 bytes** — not characters. The injection budget this bounds (`MEMORY_MAX_INJECT_BYTES` in `runtime/lib/memory.sh`) is a byte cap, and a CJK character is 3 bytes against 1 for ASCII: a hook written mostly in CJK sits at roughly 50 characters for the same 150-byte budget an ASCII hook fills at 150 characters. Check with `printf '%s' "$hook" | wc -c` (or a language runtime's byte-length function) rather than eyeballing character count — a hook that "looks short" in CJK can still be well over budget. Preserve the essential rule or fact. Remove filler phrases like "memory about", "information regarding", "note that".
 
 **Merge overlapping entries**: If two or more entries cover the same topic (e.g., multiple `feedback` entries about the same workflow tool), merge them into one entry pointing to the most comprehensive file. The merged hook text combines the key rules from both.
 
@@ -69,11 +69,12 @@ Apply these rules to produce a new index:
 Display the new MEMORY.md content in full, followed by:
 ```
 ---
-Before: <N_before> entries, <L_before> lines
-After:  <N_after> entries, <L_after> lines
+Before: <N_before> entries, <B_before> injection bytes (pmctl memory stats index_inject_bytes)
+After:  <N_after> entries, <B_after> injection bytes
 Merged: <list of merged pairs, or "none">
 Flagged stale: <list of stale entries, or "none">
 ```
+Get `<B_before>` from `pmctl memory stats` before editing. For `<B_after>`, run `pmctl memory stats` again against the compressed file (a temp copy is fine for a `--dry-run`) rather than estimating — it is the same byte-accounting the injection hook uses, so an estimate would not tell the user what would actually change.
 
 If `$ARGUMENTS` contains `--dry-run`, **stop here**. Do not write any files.
 

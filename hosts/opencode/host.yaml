@@ -39,13 +39,6 @@ guard_bindings:
     coverage: none
     stability: evolving
     confidence: probed
-  - capability: session_lifecycle
-    binding_form: none
-    provider: none
-    enforcement: none
-    coverage: none
-    stability: evolving
-    confidence: assumed
   - capability: pm_command_interface
     binding_form: config-fragment
     provider: host_native

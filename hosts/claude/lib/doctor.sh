@@ -92,8 +92,7 @@ _doctor_host_claude_hook_present() {
         (($path | split("/") | last) == $basename and ($path | split("/") | .[-2]) == "hooks" and ($path | split("/") | .[-3]) == "runtime") or
         (($path | split("/") | last) == $basename and ($path | split("/") | .[-2]) == "hooks" and ($path | split("/") | .[-3]) == "claude" and ($path | split("/") | .[-4]) == "hosts") or
         ($basename == "log-usage.sh" and ($path | split("/") | last) == "guard-log-claude-usage.sh" and ($path | split("/") | .[-2]) == "scripts")
-      ) and
-      (if $basename == "guard-session-summary.sh" then ($ncmd | endswith("guard-session-summary.sh --host claude")) else true end);
+      );
     ([
       ((.hooks // {}).PreToolUse[]? | (.hooks // [])[]? | select(managed_hook)),
       ((.hooks // {}).PostToolUse[]? | (.hooks // [])[]? | select(managed_hook)),
@@ -178,7 +177,6 @@ _doctor_host_claude_stale_hook_commands() {
             (($ncmd | split("/") | last) | IN(
               "guard-pm-write.sh",
               "guard-log-claude-usage.sh",
-              "guard-session-summary.sh",
               "guard-inject-memory.sh",
               "inject-context.sh",
               "guard-save-rate-limits.sh"
@@ -230,7 +228,7 @@ _doctor_host_claude_broken_hook_targets() {
             (($path | split("/") | .[-2]) == "scripts" and
               (($path | split("/") | last) | IN(
                 "guard-pm-write.sh", "guard-log-claude-usage.sh",
-                "guard-session-summary.sh", "guard-inject-memory.sh",
+                "guard-inject-memory.sh",
                 "inject-context.sh", "guard-save-rate-limits.sh"
               ))) or
             (($path | split("/") | .[-2]) == "hooks" and
@@ -264,7 +262,6 @@ _doctor_host_claude_check_hooks() {
   local -a hooks=(
     guard-pm-write.sh
     log-usage.sh
-    guard-session-summary.sh
     guard-inject-memory.sh
     inject-context.sh
     save-rate-limits.sh
@@ -485,18 +482,6 @@ _doctor_host_claude_probe() {
         _PROBE_MESSAGE="write guard not wired"
       fi
       ;;
-    session_lifecycle)
-      if _doctor_host_claude_hook_present guard-session-summary.sh "$settings"; then
-        _PROBE_WIRED=1; _PROBE_PROVIDER=host_hook; _PROBE_ENFORCEMENT=advisory; _PROBE_COVERAGE=full
-        _PROBE_STABILITY=stable; _PROBE_CONFIDENCE=probed; _PROBE_STATUS=ok
-        _PROBE_MESSAGE="session summary wired (Stop hook)"
-      else
-        _PROBE_WIRED=0; _PROBE_PROVIDER=none; _PROBE_ENFORCEMENT=none; _PROBE_COVERAGE=none
-        _PROBE_STABILITY=stable; _PROBE_CONFIDENCE=probed; _PROBE_STATUS=warn
-        _PROBE_MESSAGE="session summary not wired"
-        _PROBE_FIX="bash '${REPO_ROOT}/install.sh'"
-      fi
-      ;;
     statusline)
       if _doctor_host_claude_hook_present save-rate-limits.sh "$settings"; then
         _PROBE_WIRED=1; _PROBE_PROVIDER=host_hook; _PROBE_ENFORCEMENT=advisory; _PROBE_COVERAGE=full
@@ -538,11 +523,10 @@ _doctor_host_claude_capabilities() {
   fi
 
   local cap slug
-  for cap in command_guard file_guard session_lifecycle pm_command_interface statusline; do
+  for cap in command_guard file_guard pm_command_interface statusline; do
     case "$cap" in
       command_guard)        slug=host.claude.command-guard ;;
       file_guard)            slug=host.claude.file-guard ;;
-      session_lifecycle)     slug=host.claude.session-lifecycle ;;
       pm_command_interface)  slug=host.claude.command-interface ;;
       statusline)            slug=host.claude.statusline ;;
     esac
@@ -605,7 +589,7 @@ _doctor_host_claude_check_manifest_consistency() {
   local -a drift=()
   local cap field declared probed
 
-  for cap in command_guard file_guard session_lifecycle pm_command_interface statusline; do
+  for cap in command_guard file_guard pm_command_interface statusline; do
     _doctor_host_claude_probe "$cap" "$settings"
     [[ "$_PROBE_WIRED" -eq 1 ]] || continue
     for field in provider enforcement coverage stability confidence; do

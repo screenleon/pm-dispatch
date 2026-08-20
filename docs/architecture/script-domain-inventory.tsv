@@ -17,7 +17,6 @@ scripts/guard-pm-bash.sh	executable	shared-runtime	runtime/hooks/guard-pm-bash.s
 scripts/guard-pm-write.sh	executable	shared-runtime	runtime/hooks/guard-pm-write.sh	move-then-remove	internal
 scripts/guard-reviewer-write.sh	executable	shared-runtime	runtime/hooks/guard-reviewer-write.sh	move-then-remove	internal
 scripts/guard-save-rate-limits.sh	executable	host-claude	hosts/claude/hooks/save-rate-limits.sh	move-with-shim	compatibility
-scripts/guard-session-summary.sh	executable	shared-runtime	runtime/hooks/guard-session-summary.sh	move-then-remove	internal
 scripts/hook-codex-command-guard.sh	executable	host-codex	hosts/codex/hooks/command-guard.sh	move-with-shim	compatibility
 scripts/install-guards-codex.sh	executable	host-codex	hosts/codex/bin/install.sh	move-with-shim	compatibility
 scripts/install-guards.sh	executable	host-claude	hosts/claude/bin/install-guards.sh	move-with-shim	compatibility

@@ -58,7 +58,7 @@ _doctor_host_codex_broken_hook_targets() {
         | select(
             (($path | split("/") | last) | IN(
               "command-guard.sh", "hook-codex-command-guard.sh",
-              "guard-inject-memory.sh", "guard-session-summary.sh"
+              "guard-inject-memory.sh"
             )) and
             (($path | split("/") | .[-2]) | IN("hooks", "scripts"))
           )
@@ -103,23 +103,11 @@ _doctor_host_codex_hooks() {
     else
       emit_check host.codex.memory-injection ok "canonical UserPromptSubmit memory injection not wired (opt-in host wiring)"
     fi
-    if _doctor_host_codex_hook_present "$codex_home/hooks.json" session_lifecycle; then
-      emit_capability host.codex.session-lifecycle ok codex session_lifecycle \
-        host_hook none partial evolving probed \
-        "canonical Stop session writer wired with host=codex"
-    else
-      emit_capability host.codex.session-lifecycle ok codex session_lifecycle \
-        none none none evolving probed \
-        "canonical Stop session writer not wired (opt-in host wiring)"
-    fi
   else
     emit_capability host.codex.hooks ok codex command_guard \
       none none none evolving probed \
       "codex hook surface not wired (no $codex_home/hooks.json; opt-in via install.sh --enable-codex-command-guard)"
     emit_check host.codex.memory-injection ok "canonical UserPromptSubmit memory injection not wired (no hooks.json)"
-    emit_capability host.codex.session-lifecycle ok codex session_lifecycle \
-      none none none evolving probed \
-      "canonical Stop session writer not wired (no hooks.json)"
   fi
 }
 
@@ -134,11 +122,6 @@ _doctor_host_codex_hook_present() {
       event="PreToolUse"; matcher="Bash" ;;
     memory_injection)
       command="$REPO_ROOT/runtime/hooks/guard-inject-memory.sh"; event="UserPromptSubmit" ;;
-    session_lifecycle)
-      command="$REPO_ROOT/runtime/hooks/guard-session-summary.sh --host codex"
-      command_q="$(printf '%q' "$REPO_ROOT/runtime/hooks/guard-session-summary.sh") --host codex"
-      event="Stop"
-      ;;
     *) return 1 ;;
   esac
   [[ -n "${command_q:-}" ]] || command_q="$(printf '%q' "$command")"
@@ -167,8 +150,7 @@ _doctor_host_codex_target_installed() {
     [[ -f "$expanded" ]] || return 1
     command -v jq >/dev/null 2>&1 || return 1
     _doctor_host_codex_hook_present "$expanded" command_guard \
-      && _doctor_host_codex_hook_present "$expanded" memory_injection \
-      && _doctor_host_codex_hook_present "$expanded" session_lifecycle
+      && _doctor_host_codex_hook_present "$expanded" memory_injection
     return $?
   fi
   if [[ "$fmt" == "codex-agents-md" ]]; then

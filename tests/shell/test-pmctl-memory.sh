@@ -1830,6 +1830,36 @@ make_stats_fixture() {
   printf '%s' "$mdir"
 }
 
+# Behavior: index_inject_bytes reports actual UTF-8 bytes, not characters. A
+# CJK character is 3 bytes; under character counting a CJK-heavy index would
+# report roughly a third of its real injection cost.
+# Steps: build a fixture whose one index line is a known CJK string of exact,
+# precomputed byte length; assert index_inject_bytes matches the byte count
+# (preamble + this line + trailing newline), not the (much smaller) character count.
+case_memory_stats_index_inject_bytes_counts_utf8_not_chars() {
+  local name="pmctl memory stats: index_inject_bytes counts UTF-8 bytes, not characters"
+  should_run "$name" || return 0
+
+  local cfg="$tmp_root/st-cjk-cfg" repo="$tmp_root/st-cjk-repo" mdir out="$tmp_root/st-cjk.json" status=0
+  mkdir -p "$repo"
+  mdir="$(make_fixture_memory "$cfg" "$repo")"
+  write_compliant_card "$mdir/cjk-card.md" "cjk-card"
+  # 10 CJK characters (3 bytes each = 30 bytes) inside an otherwise-ASCII line.
+  # Character count of the whole line is 34; byte count is 34 - 10 + 30 = 54.
+  local line='- [CJK](cjk-card.md) — ????????????'
+  # Populate with a real CJK codepoint via printf %b to keep this file's own
+  # source bytes ASCII-only; \u3042 is U+3042 HIRAGANA LETTER A (3 bytes in UTF-8).
+  line="$(printf -- '- [CJK](cjk-card.md) — %b' '\xe3\x81\x82\xe3\x81\x82\xe3\x81\x82\xe3\x81\x82\xe3\x81\x82\xe3\x81\x82\xe3\x81\x82\xe3\x81\x82\xe3\x81\x82\xe3\x81\x82')"
+  printf '%s\n' "$line" > "$mdir/MEMORY.md"
+  local line_bytes
+  line_bytes=$(printf '%s' "$line" | wc -c)
+
+  run_stats_json "$out" "$cfg" "$repo" || status=$?
+  if ! assert_exit "$name" "$status" 0; then return 0; fi
+  assert_jq "$name" "$out" ".index_inject_bytes == $(( line_bytes + 1 ))" || return 0
+  pass "$name"
+}
+
 # Behavior: with no usage sidecar every indexed card reports as never-hit and the report still succeeds.
 # Steps: build a 3-card fixture with no sidecar; run stats --json; assert counts, usage_store none, and zero-denominator percentages.
 case_memory_stats_no_usage_all_never_hit() {
@@ -3007,27 +3037,6 @@ case_memory_resolve_allows_generic_non_git() {
   fi
 }
 
-# Behavior: skeleton dedupe is performed inside the canonical append lock.
-# Steps: launch concurrent Stop-style writes for one session and assert one JSONL record.
-case_memory_append_episode_concurrent_skeleton_dedupe() {
-  local name="pmctl memory append-episode: concurrent skeleton writes deduplicate"
-  should_run "$name" || return 0
-  local repo="$tmp_root/append-skeleton-repo" mdir="$tmp_root/append-skeleton-memory" i failed=0
-  mkdir -p "$repo" "$mdir"
-  git -C "$repo" init -q
-  for i in 1 2 3 4 5 6; do
-    PM_MEMORY_DIR="$mdir" "$PMCTL" memory append-episode --repo-root "$repo" --host claude \
-      --session-id shared-stop-session --summary "" --skeleton >/dev/null 2>&1 &
-  done
-  wait || failed=1
-  if [[ "$failed" -eq 0 && "$(wc -l < "$mdir/episodes.jsonl" | tr -d ' ')" == "1" ]] \
-    && jq -e -s 'length == 1 and .[0].session_id == "shared-stop-session" and .[0].summary == ""' "$mdir/episodes.jsonl" >/dev/null; then
-    pass "$name"
-  else
-    fail "$name" "failed=$failed episodes=$(cat "$mdir/episodes.jsonl" 2>/dev/null || true)"
-  fi
-}
-
 # Behavior: canonical writes refuse an episodes.jsonl symlink even when its target is writable.
 # Steps: point episodes.jsonl at an external file and assert the command fails without changing it.
 case_memory_append_episode_refuses_symlink() {
@@ -3069,7 +3078,7 @@ case_memory_append_episode_symlink_swap_race() {
     fi
     command mv "$@"
   }
-  _pmctl_memory_append_episode_inner "$episodes" "$json_line" summary race "$append_dir" || status=$?
+  _pmctl_memory_append_episode_inner "$episodes" "$json_line" "$append_dir" || status=$?
   unset -f mv
   if [[ "$status" -eq 0 && "$swapped" -eq 1 && ! -L "$episodes" ]] \
     && [[ "$(<"$target")" == "sentinel" ]] \
@@ -3252,7 +3261,6 @@ case_memory_append_episode_cross_host_contract
 case_memory_append_episode_requires_host
 case_memory_append_episode_invalid_explicit_no_fallback
 case_memory_append_episode_query_round_trip
-case_memory_append_episode_concurrent_skeleton_dedupe
 case_memory_append_episode_refuses_symlink
 case_memory_append_episode_symlink_swap_race
 case_memory_append_episode_refuses_symlink_lock_dir
@@ -3314,6 +3322,7 @@ case_memory_rebuild_summary_skips_empty_summary
 case_memory_rebuild_summary_deterministic
 case_memory_doctor_ignores_episodes_summary
 case_memory_doctor_shard_count
+case_memory_stats_index_inject_bytes_counts_utf8_not_chars
 case_memory_stats_no_usage_all_never_hit
 case_memory_stats_usage_hits_and_concentration
 case_memory_stats_duplicate_index_link_counted_once

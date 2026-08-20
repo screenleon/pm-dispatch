@@ -1877,7 +1877,7 @@ test_install_hooks_windows_profile_full_downgrades_to_minimal() {
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_TRACE" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hosts/claude/hooks/log-usage.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "guard-session-summary.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "guard-session-summary.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
   pass "$name"
@@ -1917,7 +1917,7 @@ test_install_hooks_windows_profile_minimal_silent() {
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_TRACE" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hosts/claude/hooks/log-usage.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "guard-session-summary.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "guard-session-summary.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "guard-executor-write.sh" || return
   pass "$name"
@@ -2281,7 +2281,7 @@ JSON
   assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "guard-pm-write.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hosts/claude/hooks/log-usage.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "guard-session-summary.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "guard-session-summary.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "guard-inject-memory.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "inject-context.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hosts/claude/hooks/save-rate-limits.sh" || return
@@ -2326,7 +2326,7 @@ JSON
 
   # Each managed hook basename must appear exactly once (no duplicates)
   local settings="$home/.claude/settings.json"
-  for hook in guard-pm-write.sh log-usage.sh guard-session-summary.sh \
+  for hook in guard-pm-write.sh log-usage.sh \
               guard-inject-memory.sh inject-context.sh save-rate-limits.sh; do
     local count
     count=$(grep -o "$hook" "$settings" | wc -l | tr -d ' ')
@@ -2439,7 +2439,7 @@ JSON
   local settings="$home/.claude/settings.json"
 
   # All managed hook basenames must be gone after uninstall
-  for hook in guard-pm-write.sh log-usage.sh guard-session-summary.sh \
+  for hook in guard-pm-write.sh log-usage.sh \
               guard-inject-memory.sh inject-context.sh save-rate-limits.sh; do
     if grep -q "$hook" "$settings"; then
       fail "$name" "$hook still present in settings.json after uninstall of stale paths"
@@ -2819,104 +2819,6 @@ test_statusline_uninstall_restores() {
     fail "$name" "statusline-chain.conf should be deleted"
     return
   fi
-  pass "$name"
-}
-
-test_session_stop_install_wires_hook() {
-  # Verifies install-guards.sh wires guard-session-summary.sh into the Stop event.
-  # Steps:
-  #   1. Create a sandbox settings.json with no hooks
-  #   2. Run install-guards.sh
-  #   3. Assert Stop exists and contains the session summary hook path
-  local name="session-stop-install-wires-hook"
-  should_run "$name" || return 0
-  local home="$tmp_root/$name"
-  local session
-  session="$(_ti_hook_cmd_path "$REPO_ROOT/runtime/hooks/guard-session-summary.sh") --host claude"
-  mkdir -p "$home/.claude"
-  printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
-
-  HOME="$home" bash "$REPO_ROOT/scripts/install-guards.sh" > /dev/null
-
-  assert_file_contains "$name" "$home/.claude/settings.json" "$session" || return
-  if ! jq -e --arg session "$session" \
-    '.hooks.Stop[]? | (.hooks // [])[]? | select(.command == $session)' \
-    "$home/.claude/settings.json" >/dev/null; then
-    fail "$name" "Stop session-summary hook command not found"
-    return
-  fi
-  pass "$name"
-}
-
-test_session_stop_uninstall_removes_hook() {
-  # Verifies uninstall-guards.sh removes the managed session-summary Stop hook.
-  # Steps:
-  #   1. Create a sandbox settings.json, run install-guards.sh
-  #   2. Run uninstall-guards.sh
-  #   3. Assert guard-session-summary.sh is gone from settings.json
-  local name="session-stop-uninstall-removes-hook"
-  should_run "$name" || return 0
-  local home="$tmp_root/$name"
-  local session
-  session="$(_ti_hook_cmd_path "$REPO_ROOT/runtime/hooks/guard-session-summary.sh") --host claude"
-  mkdir -p "$home/.claude"
-  printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
-
-  HOME="$home" bash "$REPO_ROOT/scripts/install-guards.sh" > /dev/null
-  HOME="$home" bash "$REPO_ROOT/scripts/uninstall-guards.sh" > /dev/null
-
-  assert_not_contains "$name" "$home/.claude/settings.json" "guard-session-summary.sh" || return
-  pass "$name"
-}
-
-test_session_stop_install_idempotent() {
-  # Verifies repeated install-guards.sh runs do not duplicate the session-summary hook.
-  # Steps:
-  #   1. Create a sandbox settings.json with no hooks
-  #   2. Run install-guards.sh twice
-  #   3. Assert exactly one guard-session-summary.sh command is present
-  local name="session-stop-install-idempotent"
-  should_run "$name" || return 0
-  local home="$tmp_root/$name"
-  local session
-  session="$(_ti_hook_cmd_path "$REPO_ROOT/runtime/hooks/guard-session-summary.sh") --host claude"
-  local count
-  mkdir -p "$home/.claude"
-  printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
-
-  HOME="$home" bash "$REPO_ROOT/scripts/install-guards.sh" > /dev/null
-  HOME="$home" bash "$REPO_ROOT/scripts/install-guards.sh" > /dev/null
-
-  count="$(jq --arg session "$session" \
-    '[.hooks.Stop[]? | (.hooks // [])[]? | select(.command == $session)] | length' \
-    "$home/.claude/settings.json")"
-  if [[ "$count" != "1" ]]; then
-    fail "$name" "expected one Stop session-summary hook, got $count"
-    return
-  fi
-  pass "$name"
-}
-
-test_session_stop_uninstall_preserves_stop() {
-  # Verifies uninstall-guards.sh removes only the managed session-summary hook,
-  # leaving unrelated Stop hooks intact.
-  # Steps:
-  #   1. Create settings.json with an unrelated Stop hook
-  #   2. Run install-guards.sh, then uninstall-guards.sh
-  #   3. Assert the unrelated hook remains and guard-session-summary.sh is gone
-  local name="session-stop-uninstall-preserves-stop"
-  should_run "$name" || return 0
-  local home="$tmp_root/$name"
-  local unrelated="/home/testuser/project/custom-stop-hook.sh"
-  mkdir -p "$home/.claude"
-  printf '{"permissions":{},"hooks":{"Stop":[{"hooks":[{"type":"command","command":"%s"}]}]}}\n' \
-    "$unrelated" > "$home/.claude/settings.json"
-
-  HOME="$home" bash "$REPO_ROOT/scripts/install-guards.sh" > /dev/null
-  HOME="$home" bash "$REPO_ROOT/scripts/uninstall-guards.sh" > /dev/null
-
-  assert_file_contains "$name" "$home/.claude/settings.json" "$unrelated" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "guard-session-summary.sh" || return
   pass "$name"
 }
 
@@ -3309,10 +3211,6 @@ test_userpromptsubmit_install_migrates_retired_context_hook
 test_userpromptsubmit_uninstall_preserves_unrelated
 test_stop_hook_migration
 test_stop_hook_preservation
-test_session_stop_install_wires_hook
-test_session_stop_uninstall_removes_hook
-test_session_stop_install_idempotent
-test_session_stop_uninstall_preserves_stop
 test_statusline_install_chains_previous
 test_statusline_install_preserves_existing_chain
 test_statusline_install_chains_previous_with_args
