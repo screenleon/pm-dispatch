@@ -513,6 +513,27 @@ oracle、memory stats 合併）若在准入門檻之前做，下一個 PR 會原
 做後續批次；A 下降且 gate 輪數未上升表示有效；A 下降但輪數上升表示過頭，reviewer 在
 同一點反覆爭論，應放寬准入。
 
+**Update 2026-08-20（第一次讀數；票維持 active）**: 規則自 pr:#490 生效後的
+證據窗共 8 個 merged PR。其中 3 個是 docs/chore 未跑 gate；4 個 gate 一輪 GO、
+零 finding 零 advisory，因此沒有任何 finding 的補救形式是新增永久測試；只有一個
+PR 產生了合格實例——它跑了 3 輪，reviewer 提出 2 個 finding，兩者的補救都是新增
+永久阻擋 case，兩個 case 都通過准入條件（各自 mutation 驗證且只失敗自己那一案）。
+
+讀數：合格實例 2 個，A（因 finding 新增的永久阻擋 case）= 2，B（走替代路徑）= 0。
+
+**判定：不能套用「B 恆為 0 ⇒ 閘門未咬合」**。此窗的 B=0 是正確結果而非裝飾——
+兩個實例本來就該被 admit。真正暴露的是**驗收指標本身不可證偽**：原規則只在
+「選擇替代路徑」時要求留記錄，admit 時不留任何痕跡，因此 B=0 同時相容於三種
+情形（未曾查閱／查閱後 admit／沒有合格 finding），單看 B 永遠分不出來。
+
+**處置**: `commands/ship.md` 改為兩條分支都必須記錄——admit 時載明所依據的准入
+條件，否則載明所走的替代路徑與理由；並補上該段落的契約斷言（原段落自 pr:#490
+起完全沒有測試覆蓋，是它能在 8 個 PR 內漂成不可量測的原因）。A/B 自下一個窗起
+才具判別力，故本票不結案，重新起算觀察窗；下次讀數改看「合格實例數 / admit 數 /
+alternative 數」三欄，缺記錄本身即為協定失敗而非歧義。參考 QA 規則 repo 的
+reviewer-side duty 已要求提出者載明符合哪些條件，author side 先前沒有對稱義務，
+該對稱化屬該 repo 的獨立變更，不在本票 scope。
+
 **Non-goals**: 不設 `max_full_review_rounds` 輪數上限——與 `commands/ship.md`
 「round count 不是停止條件」直接衝突，且 [[CC-544]] 已證明放寬 gate 收斂條件會被
 qa-tester／risk-reviewer 連擋並全數 revert。減量要從 finding 端做，不是從輪數端。
