@@ -30,10 +30,20 @@ verifier 判定，缺失／partial／skip／drift 一律 fail closed。P0 表該
 已是唯一可被 verifier 重播的來源。
 
 **Constraints introduced**: milestone 表只登載會到達終態的工作項；持續成立的性質
-一律指向強制它的 runtime gate，並在該處留下可重播證據。planning record 與實際交付
-的落差改由 `E-PARTIAL-DATE-STALE` 機械偵測——partial row 的日期不得早於其 body 內
-出現的最新日期；此規則只涵蓋 doc 內部一致性，「PR 已 merge 但票完全沒更新」需要
-git 側資料，不在 validator 能力範圍。
+一律指向強制它的 runtime gate，並在該處留下可重播證據。
+
+planning record 與實際交付的落差**目前沒有機械偵測，且不應倉促補上**。本次曾實作
+一條 `E-PARTIAL-DATE-STALE`（partial row 的日期不得早於 body 內最新日期），但它
+假設該欄位是「最後更新日」；`pm/schema.md` §狀態列表明訂它是**首批交付日期**，兩者
+語意相反。依錯誤讀法還改動了兩列真實資料（其中 CC-511 原本完全正確）。該檢查已於
+同一個 PR 內撤除。
+
+教訓：**為規範欄位加不變式之前，先確認該欄位在 schema 裡的語意，而不是從當前資料
+的樣態反推**。它通過了五位 reviewer 的 gate 與 zero-skip 全套，因為沒有任何測試
+驗證該欄位的 schema 語意——「測試全綠」證明不了不變式的前提成立。
+
+真正要偵測的訊號（PR 已 merge 而票未更新）所需資訊在 git side，不在文件內部一致性
+的能力範圍；若要做，須另立票並以 git 資料為來源。
 
 ## 2026-08-14: p1-delivery-closure-execution-order
 

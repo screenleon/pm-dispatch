@@ -18,12 +18,12 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-494 | 🟢 someday | design: executor 局部設計裁量權 envelope——在 dispatch brief / executor contract 定義「可自行處理的局部設計」與「必須 halt 回報 PM」的邊界（例如新增 schema 欄位 `design_latitude`/`architectural_conflicts`）；三方 multi-model synthesis 2:1 分歧（codex/fable 認為現行邊界過度僵硬需要新機制，opencode 認為現行 `isolation_level`/executor 欄位已足夠彈性），本票僅追蹤決策、不預設結論（2026-07-15） | schema/process | 2026-07-15 | feedback:2026-07-15 | P3 | design |
 | CC-505 | 🔵 active | context plane lexical 檢索補完（Ph1 engine+統一排序+fixtures；Ph2 agent 契約+shadow 儀器化；evidence-gated 收緊 → [[CC-506]]）（2026-07-20 四方 synthesis；CC-346/347 前置） | memory/DX | 2026-07-20 | — | P2 | retrieval |
 | CC-506 | ⏸ deferred | retrieval evidence-gated 收緊：shadow 評測（coverage@5、critical miss、read reduction、outcome parity）達標後才收緊 broad-Read 指引並重評 [[CC-340]] resume 條件；前置 = [[CC-505]] Ph2 shipped + ≥20 真實任務證據 | memory/DX | 2026-07-20 | — | P3 | retrieval |
-| CC-511 | ⚠️ partial 2026-08-15 | ship publish authorization：Phase A current-tree authoritative full-suite 與 CC-515 shared verifier foundation 已交付；Phase B review-closure evidence 仍待 CC-517 | release/gate | 2026-07-23 | pr:#446, pr:#484 | P1 | design |
+| CC-511 | ⚠️ partial 2026-07-24 | ship publish authorization：Phase A current-tree authoritative full-suite 與 CC-515 shared verifier foundation 已交付；Phase B review-closure evidence 仍待 CC-517 | release/gate | 2026-07-23 | pr:#446, pr:#484 | P1 | design |
 | CC-514 | 🔵 active | orthogonal delivery assurance map、machine-derived tables 與 feature/docs/high-risk recipes | docs/process | 2026-07-23 | — | P2 | design |
 | CC-516 | ⏸ deferred | evidence-gated thin delivery wrapper 評估；只組合既有 primitives，不建立 workflow engine/FSM | ux/process | 2026-07-23 | — | P3 | spike |
-| CC-517 | 🔵 active | maintainer `/ship`：primary review、structured remediation closure 與 conditional targeted confirmation | process/gate | 2026-07-23 | pr:#483 | P1 | design |
+| CC-517 | ⚠️ partial 2026-08-15 | maintainer `/ship`：primary review、structured remediation closure 與 conditional targeted confirmation | process/gate | 2026-07-23 | pr:#483 | P1 | design |
 | CC-524 | 🔵 active | `pmctl artifacts show` 顯示 canonical absolute run root 並提供穩定 machine-readable locator | ux/ops | 2026-07-27 | feedback:2026-07-27 | P2 | hygiene |
-| CC-527 | ⚠️ partial 2026-08-14 | targeted gate CLI 拆分 pass、reviewer coverage 與 tier；tier 由 current subject/policy 解析，initial result 僅為 remediation context | ux/gate | 2026-07-28 | pr:#472, pr:#476, pr:#482 | P2 | design |
+| CC-527 | ⚠️ partial 2026-08-12 | targeted gate CLI 拆分 pass、reviewer coverage 與 tier；tier 由 current subject/policy 解析，initial result 僅為 remediation context | ux/gate | 2026-07-28 | pr:#472, pr:#476, pr:#482 | P2 | design |
 | CC-529 | ⚠️ partial 2026-08-15 | publish assurance observability：以 gate_publish_assessment_v1 將 ship stdout、PR body 與 finish marker 綁到同一份 verified assessment；仍需完成完整 producer/consumer dogfood | release/gate | 2026-07-30 | feedback:2026-07-30, pr:#484 | P2 | hygiene |
 | CC-532 | ⚠️ partial 2026-08-14 | Linux/WSL2 repo-layout canonical Gate modules 已完成；standalone distribution／copy parity 已移出本票，待 P0 current-tree evidence 後關閉 | arch/gate | 2026-07-30 | feedback:2026-07-30 | P1 | reuse-debt |
 | CC-533 | ⚠️ partial 2026-08-14 | PR #480 已交付 schema-derived structural validation foundation；handwritten structural cleanup、version dispatch separation 與 legacy/current verifier split 仍待 schema 穩定後收尾 | schema/gate | 2026-07-30 | pr:#480 | P1 | design |
@@ -1875,7 +1875,7 @@ gate/test schema。若需求實際是 multi-run parent control，回到 [[CC-508
 
 ---
 
-## CC-517 — maintainer `/ship` primary review + remediation closure 🔵 active
+## CC-517 — maintainer `/ship` primary review + remediation closure ⚠️ partial 2026-08-15
 
 **Problem**: pm-dispatch maintainer `/ship` 目前把 gate remediation 設計成
 repeat-until-GO loop；每輪只揭露少量新問題時，流程會反覆支付完整 LLM review 成本，
@@ -1927,12 +1927,23 @@ PASS，PR handoff 不會把 initial verdict 錯綁到 remediation 後的 tree。
 不必要 re-gate、該確認卻跳過、重啟 full discovery、漏 ledger finding、未授權
 hard-gate disposition、scope-expanding remediation 與 false final-GO claim。
 
-**Update 2026-08-15（pr:#483；票維持 active）**: #483 交付 Requirement 2 的
+**Update 2026-08-15（pr:#483；狀態改為 partial）**: #483 交付 Requirement 2 的
 `remediation_closure_v1` evidence artifact——shared runtime 產出、schema 與 verifier
 接線（closure evidence、subject binding、affected-test evidence、assurance linkage），
-並以 atomic no-replace 發布防止後續 producer 覆寫既有 closure。**其餘 requirement 未
-因此成立**：Req 1 的「只跑一次 comprehensive gate」與 Req 5 的 `publish_authorized`
-在 main 均查無對應實作。#483 的 PR body 未標記任何 ticket，是本票 Refs 一度空白的原因。
+並以 atomic no-replace 發布防止後續 producer 覆寫既有 closure。#483 的 PR body 未標記
+任何 ticket，是本票 Refs 一度空白的原因。
+
+主體視為已 ship，故依 schema 由 active 轉為 partial（日期為首批交付日）。逐項查證
+（2026-08-20）：Req 1 單次 comprehensive gate 見 `commands/ship.md`（initial-result
+即 comprehensive initial review，remediation 走 `--pass targeted --reviewers`）；
+Req 3 的 local／targeted_confirmation／stop_split 三分類見
+`core/schema/gate-remediation-closure.schema.json`；Req 4 見
+`gate_remediation_closure_verify`；Req 5 的 `publish_authorized` 由
+`runtime/lib/gate-closure.sh` 計算、`runtime/lib/gate-publish.sh` 消費。
+**殘留範圍未逐項稽核**：本次只確認各 requirement 都有對應實作，尚未依 Done-when
+驗證行為（不必要 re-gate、該確認卻跳過、重啟 full discovery、漏 ledger finding、
+未授權 hard-gate disposition、scope-expanding remediation、false final-GO claim
+是否都被測試涵蓋）。收尾前須補這一步。
 
 **Non-goals**: 不把此偏好存成 memory-only instruction；不修改 generic gate 的公共
 自由度；不保證 LLM 一輪能發現所有可能問題；不新增 workflow engine、FSM 或背景

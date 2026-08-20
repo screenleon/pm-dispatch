@@ -72,7 +72,7 @@ Gate correctness 與 release evidence 仍必須先在 v0.11.0 關閉。
 |----|------|------|
 | CC-532 scope reconciliation | Linux/WSL2 repo-layout canonical modules 視為本票 scope；standalone distribution／copy parity 移至 CC-546 | ⚠️ partial（2026-08-20 查證：`pr-gate.sh` 6,500→4,247 行，policy／subject／scope／assurance 已成模組，但 options 與 reviewer-contract 仍是空殼——33 個 option 分支留在 composition root，`gate-options.sh` 僅 2 個 setter。Requirement 1 尚未達成，不是 closure pending） |
 | CC-533 foundation boundary | PR #480 保留為 schema-derived foundation；handwritten structural cleanup 與 version split 維持 partial，不擴大成 Gate workflow 重構 | ⚠️ partial（票面殘留工作明訂待 CC-517／CC-511 Phase B 穩定後才動，狀態正確） |
-| Planning records | BACKLOG、MILESTONES、DECISIONS 使用同一份 scope/status | ✅ 2026-08-20（pr:#500 對齊 CC-511／CC-517／CC-527／CC-529 的實際交付；並以 `E-PARTIAL-DATE-STALE` 讓「body 記了新交付而 index 沒跟上」成為可機械偵測的失敗） |
+| Planning records | BACKLOG、MILESTONES、DECISIONS 使用同一份 scope/status | ✅ 2026-08-20（pr:#500 對齊 CC-511／CC-517／CC-527／CC-529 的實際交付。此類漂移**目前無機械偵測**：缺的資訊在 git side（PR 已 merge 而票未更新），文件內部一致性檢查涵蓋不到——見同日 DECISIONS） |
 | Current-tree full suite | 由 [[CC-511]] Phase A 吸收為 publish 前的常設不變式 | ✅ 2026-08-20（見同日 DECISIONS：這是每次 merge 就失效的不變式，不是可標記完成的工作項；publish path 已強制 current-tree authoritative PASS） |
 | CC-546 | standalone distribution／installed copy bundle／canonical-dist parity 的獨立 deferred follow-up | ⏸ deferred |
 

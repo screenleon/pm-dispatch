@@ -167,18 +167,6 @@ function parse_refs(id, refs, raw, n, i, tok, p) {
   }
 }
 
-# The date on a partial row says when that scope was last reconciled. The body is
-# where later deliveries get written up, so a body date newer than the one on the
-# row is the signature of work that landed without the row following it.
-function note_body_date(id, line, rest, d) {
-  rest = line
-  while (match(rest, /[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/)) {
-    d = substr(rest, RSTART, RLENGTH)
-    if (d > body_max_date[id]) body_max_date[id] = d
-    rest = substr(rest, RSTART + RLENGTH)
-  }
-}
-
 function note_outcome_date(id, line, s, d) {
   if (line ~ /^\*\*Outcome\*\*: [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]([ \t]|$)/) {
     d = line
@@ -238,7 +226,6 @@ function parse_status(id, status, d) {
     sub(/^⚠️ partial /, "", d)
     row_kind[id] = "active"
     if (!valid_date(d)) emit("E-DATE-FORMAT", id " invalid partial date: " d)
-    else row_partial_date[id] = d
     return
   }
   if (status ~ /^✅ closed /) {
@@ -353,7 +340,6 @@ FILENAME == backlog_file {
   line = $0
   parse_index_row(line)
   note_body_id(line)
-  if (current_id != "") note_body_date(current_id, line)
   if (current_id != "" && line ~ /^\*\*Tags\*\*:/) parse_tags(current_id, line)
   if (current_id != "" && line ~ /^\*\*See\*\*:/) body_see[current_id] = 1
   if (current_id != "" && line ~ /^\*\*Outcome\*\*:/) note_outcome_date(current_id, line)
@@ -377,9 +363,6 @@ END {
     if (!(id in body_seen)) emit("E-INDEX-MISMATCH", id " present in index but missing from body")
     if ((row_kind[id] == "closed" || row_kind[id] == "dropped" || body_stub[id]) && !body_see[id]) {
       emit("E-CLOSURE-NO-SEE", id " closed/dropped stub missing See")
-    }
-    if ((id in row_partial_date) && body_max_date[id] > row_partial_date[id]) {
-      emit("E-PARTIAL-DATE-STALE", id " index=" row_partial_date[id] " body=" body_max_date[id])
     }
     if (row_kind[id] == "closed" || row_kind[id] == "dropped") {
       body_done_date = "missing"
