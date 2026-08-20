@@ -20,7 +20,10 @@ Versions follow [Semantic Versioning](https://semver.org/).
   claims to guard is closed instead by a recorded alternative: fix without a
   permanent test, fold into an existing parameterized case, move to an extended
   suite, open a follow-up ticket, or reject the finding with evidence. The
-  chosen alternative and its reason go in the PR body. `commands/ship.md`
+  PR body records the decision **either way** — the criteria an admitted case
+  meets, or the alternative taken and why — because a silent admission and a
+  criterion never consulted otherwise leave the same record, which makes the
+  count of alternatives taken meaningless on its own. `commands/ship.md`
   carries a self-contained summary so a substituted rules directory that
   defines no such criteria still gets the policy. Round count is deliberately
   left alone as a stopping condition — reducing test growth is done at the

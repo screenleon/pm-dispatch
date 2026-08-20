@@ -192,7 +192,14 @@ generic as `baseline` or maintainer as `preferred`; both are accepted here.
   extended suite, open a follow-up ticket, or reject the finding with evidence
   that its premise does not hold.
 
-  Whichever alternative is chosen, **state it and the reason in the PR body**.
+  **Record the decision in the PR body either way** — one line per finding
+  whose remedy was a new permanent blocking test. When the case is admitted,
+  name the criteria it meets; when it is not, name the alternative taken and
+  why. A silent admission and a criterion never consulted leave the same
+  record, so an admission that goes unrecorded cannot be told apart from the
+  check never happening, and the count of alternatives taken stops meaning
+  anything on its own.
+
   This is not a licence to skip findings or to argue with a blocker: an
   unaddressed finding is still a NO-GO, and "this would add a test" is never a
   reason to leave a defect unfixed. It exists because a permanent blocking
