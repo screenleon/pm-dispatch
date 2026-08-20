@@ -1768,6 +1768,16 @@ authorization 通過時才可進入 publish route。三個 ship output surface �
 assessment；真實 producer/consumer dogfood 與完整 final-tree/primary-closure
 矩陣仍需完成後才能收斂本票。
 
+**Update 2026-08-20（Phase B route correctness）**: authorization route 先前由
+`targeted_confirmation.status` 這個 proxy 推導，但 Requirement 4 對 final-tree review
+的定義是「gate subject 與 current tree 匹配」——那是 closure 裡 `primary.subject`
+與 `final_subject` 的比較，兩者回答的是不同問題，且 schema 允許它們不一致。改由該
+比較推導後，新增四列矩陣（primary subject 同/異 × targeted pass/not_required）作為
+第一份真正區分兩條 route 的覆蓋；先前 `final_tree_review` 只以 fixture 輸入出現過，
+從未被斷言為 builder 的產出。mutation 顯示舊推導在兩列出錯，其中一列會**宣稱
+final-tree review 但該 tree 從未被審過**。dogfood（真實 producer/consumer 端到端）
+仍未完成，票維持 partial。
+
 **Done-when**: 任一官方 ship publish path 都只能在（1）current tree authoritative
 full-suite PASS 有效；（2）review authorization 對目前 delivery policy 有效；
 （3）branch、HEAD、tree 與 evidence subject 匹配後 push／開 PR。Phase A 可先獨立
@@ -2143,6 +2153,13 @@ preferred。CLI usage 雖已列出 `--gate-result`，也缺少回歸測試防止
 **Update 2026-08-15（pr:#484）**: #484 交付共用的 verified publish assessment，
 使 stdout、PR body 與 finish marker 得以來自同一份已驗證 assessment（Requirement 2 的
 單一來源前提）。本票其餘 requirement 的驗收未因此成立，狀態維持 partial。
+
+**Update 2026-08-20（Requirement 5 後半）**: parser 的 mutual-exclusion 行為早有
+獨立 oracle，但 Requirement 5 另一半「help／usage 必須列出 `--gate-result`、
+`--full-result`」沒有任何斷言——公開 help 的選項清單由 `cli/commands.tsv` 提供，
+既有 discovery 測試只斷言 `Main options:` 這個區段標題存在，不檢查任何指令的實際
+選項。已補上該迴歸（mutation 驗證：從 tsv 移除兩個旗標即失敗）。其餘 requirement
+的驗收未變，票維持 partial。
 
 **Done-when**: 任一成功 ship publication 都能只靠 stdout、PR body 或 finish
 marker 回答 embedded producer policy 與 publish satisfaction，三者與 shared
