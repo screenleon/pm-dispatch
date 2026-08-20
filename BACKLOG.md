@@ -37,12 +37,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-546 | ⏸ deferred | standalone Gate distribution／copy parity follow-up：獨立定義 bundle schema、generation、installed parity 與 support boundary；不回併 Linux/WSL2 canonical module extraction | arch/gate | 2026-08-14 | — | P2 | reuse-debt |
 | CC-559 | 🟢 someday | memory usage sidecar 是 tab-delimited，writer 拒收含 tab／newline 的 relpath，因此這類記憶卡**永遠無法累積使用紀錄**；`pmctl memory stats` 目前誠實地把它們列為 `unmeasurable_cards`（不謊稱 never-hit），但根因未解——需改用無損編碼。屬寫入面變更，故當初被 [[CC-467]] Requirement 3 明文排除 | ops/memory | 2026-08-19 | — | P3 | hygiene |
 | CC-562 | 🟢 someday | synthesis／reviewer 驗證器仍有多個「多約束共用單一 reason 字串」分支（`invalid coverage matrix`、`invalid finding inventory or union`、`duplicate finding ID collision`、`selected/not-reviewed dimensions mismatch`），單次修正重試收到後無法行動；[[CC-553]] Req 2 判定需同等精度但屬不同 helper 形狀（逐項指出違規條目，非集合差集），故分票 | ops/gate | 2026-08-19 | — | P3 | hygiene |
-| CC-563 | 🟢 someday | context index 全量重建 1m23s：profile 顯示 chunking 僅 7%、FTS 0.4%，其餘約 60% 在 `_ctx_generate_file_sql` 的既有成本（symbol 抽取＋per-chunk SQL escaping），被 [[CC-505]] Ph1 的 2.6× chunk 數放大；與 [[CC-560]] 同形（既有 per-item 成本被放大），須先 profile 再改 | ops/DX | 2026-08-20 | pr:#502 | P3 | hygiene |
-| CC-561 | ✅ closed 2026-08-20 | 斷言「預設值」的測試在**繼承來的**環境下執行受測主體，任何 operator override 都會靜默改變它量到的東西：`jobs-default-caps-high-nproc` 有 stub `nproc` 回 32 卻沒控制能覆蓋上限的 `PM_DISPATCH_TEST_MAX_JOBS`。現行防線是一行手寫 `unset`（只列 2 個名字），**永遠落後一次事故**——此類已咬第三次 | ops/test | 2026-08-19 | — | P2 | hygiene |
 | CC-560 | 🟢 someday | `_gate_scope_reference_index_collect` 每筆 reference 都以 `jq -nc` 建一個 JSON 物件（實測 4.9s×2），與 [[CC-557]] 已修掉的 `_gate_scope_expansion_append` 是同一類寫法；CC-557 未一併處理是因預算餘裕已足，非因不成立 | ops/gate | 2026-08-19 | — | P3 | hygiene |
-| CC-557 | ✅ closed 2026-08-19 | `scope-manifest/large-expansion-uses-file-input` 在正常 4-way 並行下耗用 120s watchdog 的 84-86%（實測 101s／103s，單獨跑 57s），gate preflight 的額外開銷即可推過；耗時穩定＝預算相對工作量設錯，非 flake；依 §7「pass/fail 取決於主機負載＝缺陷」 | ops/test | 2026-08-19 | — | P2 | hygiene |
 | CC-554 | 🔵 active | 永久 regression test 缺少准入門檻：`/ship` 規範「修完每個 finding」但不規範修法形式，reviewer 每提一個邊界就永久長一個阻擋 case，case 又需要 meta-test 保護；QA 規則加六條准入條件＋五條替代路徑，ship.md 加對應例外（明確不設輪數上限，見 [[CC-544]]） | ops/gate | 2026-08-17 | — | P1 | hygiene |
-| CC-553 | ✅ closed 2026-08-19 | Gate synthesis 協定失敗不可修正且被當成 review 判決：supervisor 分不出 `result:`／`failure-result:` 而把協定失敗記成 NO-GO（被否決的檔案仍寫 `Final: GO`）、retry brief 從不帶入失敗原因故重試等同盲擲、parity reason 不說 id 差集；原 `invalid disagreement references` 是單一裸字串，涵蓋 6 條獨立約束（`only_keys`／`D-NNN` id 形狀／非空 summary／`finding_ids` 長度 ≥2／不重複／每個 id 須存在於 findings_union），synthesis 無從自我修正，唯一一次重試重犯同錯即整輪作廢；[[CC-549]] 已對 test-gap 契約做過同一修法（2026-08-17 CC-551 round 7、2026-08-18 qa-rules #8 兩次實測） | ops/gate | 2026-08-17 | — | P1 | hygiene |
 | CC-552 | 🔵 active | `test_default_worker_cap` 以 `sleep 0.1` 製造 worker 重疊窗口來驗證併發上限，違反 QA 規則的「不得以 sleep 同步」；主機負載會改變觀測到的重疊數，與 worker-cap 正確性無關（2026-08-17 CC-551 gate round 4 qa-tester，pre-existing） | ops/test | 2026-08-17 | — | P3 | hygiene |
 | CC-548 | 🔵 active | context.db FTS5 對 CJK 查詢無索引無排序（[[CC-465]] Requirement 3 殘留）：先 spike 驗 `tokenize='trigram'` 的 sqlite 版本下限與 index rebuild 成本，再決定是否實作 | memory | 2026-08-16 | — | P2 | retrieval |
 | CC-466 | ⏸ deferred | 記憶卡片生命週期閉環：expires_at 執行 + 關窗式 supersede + usage sidecar 休眠偵測 + doctor→distill 接線；僅在 CC-467 證明 stale/dormant card 已形成實際問題時啟動 | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
@@ -276,34 +272,6 @@ relpath（`runtime/lib/pmctl-memory.sh` 內 `unmeasurable_cards` 分支的註解
 
 ---
 
-## CC-563 — context index 全量重建成本 🟢 someday
-
-**Problem**: [[CC-505]] Phase 1 第一片把程式檔從「一個 chunk 存檔首 200 字元」改成
-窗口化 bounded bodies，chunk 數 5,027→13,041（2.6×），全 repo 全量重建實測 **1m23s**
-（移除無人消費的 per-chunk hashing 子行程後，已從 2m40s 降下來）。重建只在 extractor
-版本變更時發生，但它落在 gate 執行內。
-
-**Why**: profile 已完成且**推翻了直覺**——bash 逐行 chunking 只佔 7%（300 檔 2.8s，
-外推全 repo ≈10s），FTS5 重建 0.6s（0.4%）。剩餘約 60% 在 `_ctx_generate_file_sql`
-的既有成本：symbol 抽取與每個 chunk 的 `_ctx_sql_str` escaping（2000 字元字串上的
-bash 參數展開，13,041 次）。這是**既有成本被 chunk 數放大**，與 [[CC-560]] 同形，
-不是本次新增的缺陷。
-
-**Requirement**:
-1. 先 profile 區分 symbol 抽取與 SQL escaping 各自佔比，**不得憑直覺優化**——本票的
-   前身已有兩次直覺被 profile 推翻的紀錄。
-2. 依 profile 結果處理；若主因是 per-chunk bash 字串展開，考慮批次化或改由 sqlite3
-   參數綁定承擔 escaping。
-3. 不得為了降低重建成本而縮小 chunk 覆蓋——量測顯示更大窗口會讓 cap 變成常態截斷
-   （40 行時 p95=2358 超過 2000 cap），等於退回本片要修的缺陷。
-
-**Non-goals**: 不改 chunker 的覆蓋語意；不引入外部索引工具。
-
-**Cross-link**: [[CC-505]]（來源）、[[CC-560]]（同形殘留）、[[CC-557]]（profile 推翻
-票面預期的先例）。
-
----
-
 ## CC-562 — 多約束共用單一 reason 字串的其餘分支 🟢 someday
 
 **Problem**: `runtime/lib/gate-result-verify.sh` 仍有數個分支把多條獨立規則折進同一個 reason
@@ -335,99 +303,6 @@ confirmation，因此重試無從行動。**這是本票從「理論上該修」
 
 ---
 
-## CC-561 — 斷言預設值的測試繼承環境，override 會靜默改變量測對象 ✅ 2026-08-20
-
-**Problem**: `tests/shell/test-run-all-tests.sh` 的 `jobs-default-caps-high-nproc`
-刻意 stub `nproc` 回傳 32，用以證明「預設並行上限是 4」。但它**沒有控制
-`PM_DISPATCH_TEST_MAX_JOBS`**——而那正是覆蓋該上限的旋鈕。於是這個 case 量的不是預設值，
-是「呼叫者當下的環境」。
-
-**實測（2026-08-19）**：以 `PM_DISPATCH_TEST_MAX_JOBS=8` 跑全套（一次並行度實驗），該 case
-回報 `5th suite started; default exceeded high-nproc safety cap of 4`。**受測主體從來不在預設
-狀態**，訊息卻宣稱預設被違反。同輪的 `test-pmctl-gate` 亦因競爭失敗；以預設值重跑即 100/100
-通過，證實兩者皆為環境產物而非迴歸。
-
-**Why 這是類別不是個案（第三次）**: 先前已咬過 `QA_RULES_DIR` 與
-`PM_DISPATCH_TEST_SUITE_RETRY_ON_FAIL`。現行防線是 `test-run-all-tests.sh:12` 的一行
-`unset PM_TEST_SUITE_RESULTS_FILE PM_DISPATCH_PREFLIGHT_TEST_RESULT`——一份**只在有人被咬
-之後才成長**的手寫清單，因此永遠落後一次事故。
-
-**關鍵不對稱：正確的東西已經存在，只是沒有被執行。**
-`docs/architecture/script-variable-inventory.tsv` 已有 `test_isolation` 欄，且
-`PM_DISPATCH_TEST_MAX_JOBS` 已登記為 `test-config` / `bounded fixture value`——**隔離需求早
-就宣告了，但沒有任何機制在 fixture 邊界執行它**。同時 inventory 並不完整：四個已知肇事者中
-`QA_RULES_DIR`、`PM_DISPATCH_TEST_SUITE_RETRY_ON_FAIL`、`PM_DISPATCH_PREFLIGHT_TEST_RESULT`
-皆未登記（`test-config` 類目前僅 3 個變數）。兩半都壞：宣告未被執行，且宣告本身有缺漏。
-
-**Requirement**:
-1. fixture 環境必須是**建構**出來的而非繼承來的：由 harness 啟動受測主體的那個接縫統一清除
-   產品／測試 env，而不是每個測試各自記得 unset。
-2. 清除範圍由既有正規 inventory 驅動，**不得新增第二份手工清單**。
-3. 補齊 inventory 對「僅出現於測試」之變數的覆蓋（lint 已掃 `tests/`，缺的是登記）。
-4. Ratchet + mutation 驗證：設定對應 override 後，斷言預設值的測試**不得改變判決**（要嘛免疫，
-   要嘛明確失敗並指出環境污染，而非默默量錯對象）。
-5. **明確不接受**「在第 12 行加上第三個名字」這種補法——那正是本票要終結的模式。
-
-**Non-goals（附實測佐證，避免重複探索）**: 不重新設計 runner 的並行上限。2026-08-19 實測
-8 jobs vs 預設 4 jobs：牆鐘 43.5 → 34.6 分（−20%），但**總 CPU 9585s → 14678s（+53%）**且
-2 個套件失敗。各套件自身會 spawn 數百子行程，故機器實際超訂遠高於 job 數，CPU 時間隨並行度
-膨脹。上限 4 有實測依據（runner 註解所述「leaving enough CPU, file descriptors, and
-subprocess headroom for their own children」屬實），本票不動它。
-
-**Cross-link**: [[CC-552]]（時序敏感測試）、[[CC-554]]（測試准入門檻，同屬測試治理線）。
-
-**Outcome（2026-08-20）**
-
-**規劃期推翻了兩個直覺設計**，兩者都會做出看似正確但無效的修正：
-
-1. **「放進 `th_init` 就好」——錯。** `test-run-all-tests.sh`（正是出缺陷的那個）與其餘 8 個
-   自足套件**根本不呼叫 `th_init`**，放那裡修不到實際缺陷。故 harness 與自足套件兩邊都要接。
-2. **「把產品匯出的環境變數全部清掉」——錯，且會弄壞東西。** `PM_DISPATCH_TEST_COMMAND_IDENTITY`
-   由 pr-gate 匯出、由 `tests/lib/test-result.sh` 消費，**那是契約不是洩漏**；清掉會斷開 preflight
-   證據綁定。同理 `PM_DISPATCH_TEST_PR_GATE_CASE_TIMEOUT_SECS` 是套件**自己**的 operator 旋鈕
-   （[[CC-557]] 記載），清掉等於廢掉那個旋鈕。
-
-真正的區分是**「受測主體的旋鈕」vs「套件自己的旋鈕／呼叫方契約」**，而**既有 inventory 無法
-表達這個差別**——`input_class` 分不出（兩者同屬 `test-config`），`test_isolation` 是自由文字。
-因此 Requirement 2 照字面做不到，改為**替 inventory 增設第 9 欄 `fixture_scrub`（yes/no）**：
-在自由文字欄裡約定格式，正是本票要終結的「宣告了但無法機器判讀」。
-
-交付：
-- inventory 新增 `fixture_scrub` 欄並補齊 4 個缺漏宣告；lint 同步驗欄位值（非 yes/no 即失敗）。
-- 新模組 `tests/lib/test-env-isolation.sh` 由該欄推導清除集合，**雙重 fail-closed**：inventory
-  讀不到、或宣告集合為空，一律非零退出——靜默 no-op 正是本缺陷的成因。pattern 列（`PREFIX_*`）
-  展開比對實際已設變數，避免「清了個字面星號」而回報成功。
-- 接線：`th_init`（84 個套件）＋ `test-run-all-tests.sh`／`test-run-tests.sh`（自足）。
-  手寫的 `unset` 兩名清單被模組呼叫取代，符合 Requirement 5。
-- **驗收即缺陷本身**：帶 `PM_DISPATCH_TEST_MAX_JOBS=8` 跑 `test-run-all-tests.sh`，先前回報
-  「5th suite started; default exceeded high-nproc safety cap of 4」的 case 現在通過（45/45）。
-- Ratchet 四案落在 `test-test-harness.sh`（測 harness 本身的既有家），各自 mutation 驗證且
-  **只打掛自己那一案**：移除 `th_init` 的清除 → 5 個變數存活被點名；改成 fail-open → 只有
-  unreadable 那案失敗；移除 declared-count 守衛 → 只有 empty-declaration 那案失敗；停用 pattern 展開 → 只有 pattern 那案失敗並點名存活的變數。
-
-**兩輪 gate 各抓到一個我自己的疏漏，兩個都是真的。**
-
-第二輪另指出 **wildcard `fixture_scrub` 展開路徑無直接覆蓋**——我寫了 `PREFIX_*` 展開卻沒測；
-不測的話，把展開停用會退化成「unset 一個字面星號」，清不到任何東西**卻回報成功**，正是本票要
-根除的假隔離。已補第四案，並反向斷言不得過度清除（不共用前綴者必須存活）。
-
-**第一輪 gate NO-GO（qa-tester hard block），是我自己的疏漏。** 模組有**兩個** fail-closed
-守衛，我只測了「inventory 讀不到」，漏了「可讀但零筆 `fixture_scrub=yes`」——沒有直接回歸的話，
-拿掉 declared-count 守衛會**靜默恢復假隔離而所有既有測試仍綠**。已補第三案，並依 reviewer 寫的
-`verification_expectation` 逐字 mutation 驗證。
-
-**覆蓋完整性**：9 個不呼叫 `th_init` 的套件全數交代——4 個 pr-gate shard 以 `exec` 委派給
-有 `th_init` 的 `test-pr-gate.sh`、2 個 runner 套件已明確接線、3 個 e2e／release 完全未引用
-清除集合內任何變數。
-
-**未納入清除集合（判斷紀錄）**：`QA_RULES_DIR` 是 gate 真正需要的外部設定，不是測試旋鈕；
-`test-pr-gate.sh:701` 已用 `env -u QA_RULES_DIR ...` 在**啟動點**建構子行程環境，那是該情境的
-正解（套件自己也需要該值時，清整個套件行程是錯的）。兩種模式並存且各有適用。
-
-**See**: CHANGELOG.md [Unreleased]
-
----
-
 ## CC-560 — reference index 仍是每筆一個 jq process 🟢 someday
 
 **Problem**: `_gate_scope_reference_index_collect` 對每一筆 reference 都執行一次
@@ -444,71 +319,6 @@ process spawn。CC-557 之所以沒有一併處理，是因為修完 expansion �
 2. 修改前後以 jq wrapper 計數與階段計時佐證，不憑猜測。
 
 **Cross-link**: [[CC-557]]（同類寫法的第一次修正，含 profiling 方法）。
-
----
-
-## CC-557 — pr-gate large-expansion case 的 watchdog 預算不足 ✅ 2026-08-19
-
-**Problem**: `tests/shell/test-pr-gate.sh` 的
-`scope-manifest/large-expansion-uses-file-input` 在 runner 正常並行度（nproc 上限 4）下
-耗時 **101s／103s**，watchdog 為 **120s**——只剩 17-19 秒餘裕。單獨執行僅 57s。
-
-**實測（2026-08-18）**：CC-553 的 gate preflight（12 個 suite，4 個 pr-gate shard 幾乎
-同時開跑）該 case **exit 124 逾時**，reviewer 一個都沒跑就整輪 NO-GO；同日的
-authoritative full suite（100 個 suite、預設設定）卻**通過**（shard-4 1384s）。差別在
-競爭剖面，不在工作量。
-
-**Why**: 兩次量測 101/103s 高度一致 → 工作量確定，**預算相對工作量設錯**，不是隨機性。
-依 qa-testing-rules §7「pass/fail 取決於主機負載 ＝ flaky ＝ 缺陷」，且該節明文
-「不得用增加 timeout 來修」——所以放寬預算只能是暫時措施，必須追根因。已排除與 CC-553
-改動的關聯（main 基準 57.275s vs 改動後 57.224s）。
-
-**Requirement**:
-1. **先 profile 那 101 秒的組成再決定修法**，不得憑猜測。若瓶頸在受測的 scope-expansion
-   production 程式本身，縮小 fixture 無效，應重新評估預算本來就該多大。
-2. 檢視斷言 `entries == 512` 是否過度規格化（[[ANTI-PATTERNS]] #2）：真正的契約是
-   「展開大到必須走 file input」，由 `expansion_bytes > 131072` 與「stderr 無
-   `Argument list too long`」表達；`512` 只是達到該體積的一種手段。若放寬，或可用更少
-   檔案／更長符號名達到同體積，減少 git 與檔案系統工作。
-3. 修法落地前，暫時措施是在 `--test-cmd` 前置
-   `PM_DISPATCH_TEST_PR_GATE_CASE_TIMEOUT_SECS=300`（operator 側旋鈕，會進 preflight
-   command digest，可稽核）——**是暫時措施，不是修好了**。
-
-**Cross-link**: [[CC-552]]（`test_default_worker_cap` 以 sleep 製造重疊窗口）——同屬時序敏感測試。
-
-**Profile 結果（Requirement 1，2026-08-19）**：以階段計時實測，**不是預算設錯，是 production
-程式慢**。
-
-| 階段 | 耗時 |
-|---|---|
-| runner／agents／64 個 caller 檔／git add／兩次 commit | **0.27s** |
-| `run_gate` | **36.88s** |
-| 斷言 | 0.09s |
-
-再往 gate 內部切：`_gate_scope_expansions_collect` **23.2s**、
-`_gate_scope_reference_index_collect` 4.9s，其餘全部 < 0.2s。以 jq wrapper 計數確認根因是
-**每筆 expansion candidate 會 spawn 兩個 jq process**——512 次 changed-paths 成員測試
-（`jq -e 'index($path)'`）加 512 次物件建構（`_gate_scope_expansion_append` 的 `jq -nc`），
-合計 1024 個 process。
-
-**Requirement 2 的答案：不放寬。** `512` 就是 `GATE_SCOPE_MAX_EXPANSION_ENTRIES`，該斷言
-配合 `truncation.occurred == false` 表達的是「有界展開被填滿到宣告上限而未被窄化」，是契約
-邊界不是體積手段。且 profile 已證明 fixture 只佔 0.27s，縮小它省不到東西。寫死字面值亦屬
-正確——改為引用常數會讓測試對常數本身的變動失明。
-
-**Outcome**: 修的是 production 程式，不是 timeout。成員測試改為呼叫開頭一次性建立的
-associative set（沿用同函式既有的 `query_seen` 慣用法）；物件建構改為 append 六個 NUL 分隔
-欄位、由**既有的**收尾 jq pass 一次解碼，未新增任何 process。NUL 作為分隔符是**可證明安全**
-而非靠跳脫：bash 字串本身不可能含 NUL 位元組，故任何欄位值都無法偽造邊界。
-
-實測 jq process 1352 → **327**，case 單獨執行 37s → **14s**。以本票記錄的競爭係數
-（101/57 ≈ 1.8×）推算約 25s／120s ＝ **21% 預算**（原為 84-86%）。scope manifest 每次真實
-gate 都會建，故此修正同時縮短所有 gate 的執行時間，不只是這個 case。
-
-**殘留（已知、未做）**：`_gate_scope_reference_index_collect` 仍是每筆一個 `jq -nc`（同一
-類寫法，實測 4.9s×2）。本票未動，理由是預算餘裕已足；見 [[CC-560]]。
-
-**See**: CHANGELOG.md [Unreleased]
 
 ---
 
@@ -570,98 +380,6 @@ qa-tester／risk-reviewer 連擋並全數 revert。減量要從 finding 端做�
 **Cross-link**: [[CC-467]]（觸發實例）、[[CC-544]]（輪數上限的反證）、
 [[CC-537]]（suite manifest，維持 someday）。後續批次見 memory
 `test-governance-batches-plan`。
-
----
-
-## CC-553 — synthesis 協定失敗不可修正，且被當成 review 判決 ✅ 2026-08-19
-
-**Problem**: `gate-result-verify.sh` 的 disagreement 檢查把 6 條獨立約束——
-`only_keys(["id","summary","finding_ids"])`、id 須符合 `^D-[0-9]{3,}$`、summary
-非空、`finding_ids` 長度 ≥2、元素不重複、每個 id 都必須存在於 `findings_union`
-——全部收斂成一個回報字串 `invalid disagreement references`。synthesis 因此不知道
-自己違反哪一條，`pr-gate.sh` 僅有的一次修正性重試往往重犯同類錯誤。
-
-實測（2026-08-17，CC-551 gate round 7）：5 個 reviewer 全數 pass／approve、
-文件本身寫 `Final: GO`、preflight 全套 pass，卻因 synthesis 連續兩次寫出不合契約的
-disagreements 而被判 non-authorizing INCOMPLETE，整輪（約 35 分鐘、5 個 reviewer
-dispatch＋2 次 synthesis）作廢。**NO-GO 與 review 結果無關**。
-
-**Why**: 與 [[CC-549]] 同一根因與同一修法——retry 機制的前提是「拿到足夠資訊就能
-自我修正」，不點名違規處等於讓 retry 淪為抽籤。`length >= 2` 這條尤其容易誤觸：
-只有單一 reviewer 提出歧見時，自然會寫出 1 個元素的 `finding_ids`，而診斷不會告訴
-它「disagreement 依定義需要至少兩筆對立的 finding」。
-
-**Requirement**:
-1. disagreement 契約失敗時點名違規 row 的 id、違反的具體約束、實際值與期望；
-   沿用 [[CC-549]] 已落地的精確診斷模式，不另立風格。
-2. 一併盤點 `gate-result-verify.sh` 內其餘同型的「多約束共用單一 reason 字串」
-   分支（`root-cause grouping parity mismatch`、`uncertainties`／`cautions` 等），
-   決定哪些需要同等精度；不需要一次全改，但要留下判斷紀錄。
-3. 回歸測試以 mutation 驗證：以真實失敗樣本重放，斷言訊息點名違規約束。
-
-**第二次實測（2026-08-18，qa-testing-rules PR #8 的 targeted gate）**：範圍擴大為
-三個彼此獨立、互相放大的缺陷，根因同屬「協定失敗無法自我修正」：
-
-1. **`gate-supervisor.sh` 把協定失敗編碼成 NO-GO 判決。** pr-gate 以 `result:`
-   （已驗證、可發布）與 `failure-result:`（驗屍報告、未驗證）兩個 label 表達不同
-   語意，supervisor 卻以 `^(result|failure-result): ` 一併抓取後只保留路徑。其
-   「不得把基礎設施失敗編碼成判決」的守衛只在路徑為**空**時生效，於是保留了驗屍
-   報告的協定失敗（exit 1）反而被對映成 `NO-GO`。被否決的 synthesis 檔案本身仍寫
-   著 `Final: GO`，`gate wait` 又會照抄該行——讀者同時看到 `state: NO-GO` 與
-   `Final: GO`，極易取用後者。**這是 `infra_error` ≠ `fail` 的同構問題出現在 gate
-   自身**（規則面已由 qa-testing-rules `TEST-STRATEGY.md` §7.1 落地）。
-2. **retry brief 從不告知失敗原因。** `pr-gate.sh` 的 `correction_retry` 是固定
-   heredoc，只說「transport、malformed-output、schema 或 parity 其中之一」；
-   `$_synthesis_reason` 一直被計算卻從未傳入。唯一的修正機會因此是盲目重擲同一
-   prompt——這才是「重試重犯同錯」的真正機制，與模型能力無關。
-3. **parity 類 reason 不說差異。** `findings union parity mismatch` 未指出哪些
-   finding id 不一致；實測該次 `reviewer_finding_inventory` 有兩筆而
-   `findings_union` 為空陣列。
-
-**Requirement（追加）**:
-4. supervisor 必須保留 label 身分：唯有 `result:` 代表 pr-gate 背書；`failure-result:`
-   一律 `failed`／exit 2，不得產生 GO/NO-GO。
-5. retry brief 必須帶入該次實際 reason。
-6. parity 類 reason 須點名 id 差集，並區分「id 集合不符」與「id 相同但欄位值不符」
-   ——兩者修法不同。
-
-**Cross-link**: [[CC-549]]（test-gap 契約的同一修法）、[[CC-545]]（單次修正性重派）。
-
-**Outcome（Req 2＋Req 6，2026-08-19）**: Req 1／4／5 已於 #489 交付；本次補完 Req 2 與 Req 6，
-全票收斂。
-
-**Req 6 — 9 個 parity 理由中 7 個是裸字串。** 稽核結果：`reviewer finding inventory` 與
-`findings union` 兩個已用 `id_delta`，其餘 7 個
-（`coverage matrix`／`root-cause grouping`／`uncertainties`／`caution`／`test-gap matrix`／
-`focused verification`／`remediation seed`）只回傳檢查名稱。**其中 `test-gap matrix` 正是
-2026-08-07 實際害掉一整輪 gate 的那個。**
-
-關鍵在於這不是缺機制而是缺套用：`id_delta` helper 早就存在，且其上方註解本身就是 Req 6 的
-原則——「A parity reason names WHICH ids differ, and separates 'wrong id set' from 'right ids,
-wrong field values'」。**helper 為此而寫，卻只有 2/9 在用。** 而 [[CC-555]] 的 synthesis 重試
-會把 reason 原封不動放進 brief，其註解明言「a retry that is not told what failed is a blind
-re-roll」——對這 7 類，重試正是它自己禁止的盲目重擲。
-
-修法：7 處全部套用既有 helper。身分非 `.id` 者以複合鍵表達（coverage／uncertain cell 用
-`reviewer:surface`、seed 用 `finding_id`）；`root-cause grouping` 與 `uncertainties` 因捆綁多條
-獨立規則，改為先分辨規則再給差集，沿用同檔 `disagreement_defect` 的既有樣式。**理由字串維持
-既有前綴、僅附加細節**——測試以子字串斷言，改名會破壞契約，而 Req 6 要的是點名差集不是改名。
-
-**Req 2 — 其餘同型分支的判斷紀錄**：`invalid coverage matrix`、
-`invalid finding inventory or union`、`duplicate finding ID collision`、
-`selected/not-reviewed dimensions mismatch` 等「多約束共用單一字串」仍為裸字串。**本票不改**，
-理由是它們需要的是「逐項指出違規條目與違反的規則」（`disagreement_defect` 那種形狀），與
-parity 的集合差集是不同的 helper 形狀，屬另一件事 → 已立 [[CC-562]]。
-`invalid top-level contract` 與 `invalid synthesis JSON document` 判定**不需同等精度**：兩者
-代表產出物整體損毀，重試需要的是 schema 而非某個 id。
-
-驗證：既有 table-driven case `synthesis-protocol/diagnostics-name-the-defect` **擴充 7 列**
-（零新增永久測試，符合 [[CC-554]] 准入門檻偏好的「併入既有參數化 case」）；另補一個可選欄位
-攜帶 `require_test_gaps`——`focused verification` 分支受政策門控，不帶該旗標時**分支根本不會
-執行**，mutation 會「通過」而被誤讀為契約不成立。逐列 mutation 驗證：還原 7 處修改後，7 列
-各自失敗並點名它失去的那項細節。
-
-**See**: CHANGELOG.md [Unreleased]
 
 ---
 

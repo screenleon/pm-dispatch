@@ -74,6 +74,14 @@ Versions follow [Semantic Versioning](https://semver.org/).
   reader anywhere in the repository, and computing it measured at over 40% of
   index time.
 
+- **Context index rebuild is 51% faster (CC-563).** Escaping a value for SQL was
+  called through command substitution, which forks a subshell every time — twice
+  per chunk and three times per symbol, roughly 26,000 forks on a full rebuild.
+  The escaping rule is unchanged; hot paths now assign through `printf -v`
+  instead. Full rebuild 1m23s → 40.5s, and 2m40s → 40.5s counting the per-chunk
+  hashing removed alongside it. Profiling contradicted the ticket's own guess:
+  symbol extraction and escaping together were 7%, not the 60% it assumed.
+
 ### Fixed
 
 - **A test that asserts a default no longer measures the caller's environment

@@ -339,8 +339,20 @@ _ctx_now_epoch() {
 # so it can never silently truncate a body the chunker considered whole: two
 # independent literals that must agree are one edit away from disagreeing.
 _ctx_sql_str() {
-  local s="${1:0:${_CTX_CHUNK_BODY_CAP:-2000}}"
-  printf '%s' "${s//\'/\'\'}"
+  local __ctx_sql_out
+  _ctx_sql_str_var __ctx_sql_out "$1"
+  printf '%s' "$__ctx_sql_out"
+}
+
+# Same escaping, assigned into a caller-named variable instead of returned on
+# stdout. Command substitution forks a subshell for every call, which the
+# per-symbol and per-chunk paths pay thousands of times on a full index -- the
+# same per-item subprocess shape that dominated gate scope expansion. Callers on
+# those paths use this form; the stdout form above stays for one-off uses.
+_ctx_sql_str_var() {
+  local __ctx_sql_dest="$1"
+  local __ctx_sql_val="${2:0:${_CTX_CHUNK_BODY_CAP:-2000}}"
+  printf -v "$__ctx_sql_dest" '%s' "${__ctx_sql_val//\'/\'\'}"
 }
 
 # ── context_hit_v1 YAML emitter ───────────────────────────────────────────────
@@ -533,9 +545,9 @@ _ctx_generate_file_sql() {
   local sym_name sym_kind sym_line sym_sig en ek esig
   while IFS=$'\t' read -r sym_name sym_kind sym_line sym_sig; do
     [[ -n "$sym_name" ]] || continue
-    en="$(_ctx_sql_str "$sym_name")"
-    ek="$(_ctx_sql_str "$sym_kind")"
-    esig="$(_ctx_sql_str "${sym_sig:-}")"
+    _ctx_sql_str_var en "$sym_name"
+    _ctx_sql_str_var ek "$sym_kind"
+    _ctx_sql_str_var esig "${sym_sig:-}"
     printf "INSERT INTO symbols(file_id,name,kind,language,line_start,line_end,signature,backend,confidence)\n"
     printf "  VALUES((SELECT id FROM files WHERE path='%s'),'%s','%s','%s',%s,%s,'%s','regex',0.8);\n" \
       "$ep" "$en" "$ek" "$lang" "$sym_line" "$sym_line" "$esig"
@@ -550,8 +562,8 @@ _ctx_generate_file_sql() {
     rest="${rest#*"$tab"}"
     ch_end="${rest%%"$tab"*}"
     ch_lead="${rest#*"$tab"}"
-    eh="$(_ctx_sql_str "$ch_heading")"
-    el="$(_ctx_sql_str "$ch_lead")"
+    _ctx_sql_str_var eh "$ch_heading"
+    _ctx_sql_str_var el "$ch_lead"
     # No chunk-level digest is computed: nothing in the repository reads
     # file_chunks.sha1, and change detection is decided by files.sha1 above.
     # Computing it cost one hashing subprocess per chunk -- measurably a
