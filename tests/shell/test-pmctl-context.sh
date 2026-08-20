@@ -521,47 +521,6 @@ case_context_update_traversal_rejected() {
   pass "$name"
 }
 
-case_context_index_mtime_only_contract() {
-  local name="pmctl context index: mtime-only skip contract (preserved mtime skips re-index)"
-  # Behavior: second index run skips a file whose content changed but mtime was restored.
-  # Steps: index fixture; modify a file and restore its mtime; re-index; assert 0 indexed.
-  # Contract: mtime-only skip is explicit — sha1 stored but not used for change detection.
-  should_run "$name" || return 0
-
-  local fix_repo="$tmp_root/fix-repo-mtime"
-  make_fixture_repo "$fix_repo"
-
-  # Initial index
-  local out1 err1 status=0
-  out1="$tmp_root/mtime-idx1.out"; err1="$tmp_root/mtime-idx1.err"
-    "$PMCTL" context index "$fix_repo" > "$out1" 2> "$err1" || status=$?
-  if [[ "$status" -ne 0 ]]; then
-    fail "$name" "initial index failed: $(<"$err1")"; return 0
-  fi
-
-  # Modify content of one file but restore its original mtime
-  local target="$fix_repo/main.py"
-  local orig_mtime
-  orig_mtime="$(stat -c '%Y' "$target" 2>/dev/null || stat -f '%m' "$target" 2>/dev/null || printf '0')"
-  printf '\n# modified\n' >> "$target"
-  touch -d "@$orig_mtime" "$target" 2>/dev/null || true  # restore mtime
-
-  # Second index — file should be skipped (mtime unchanged)
-  local out2 err2
-  out2="$tmp_root/mtime-idx2.out"; err2="$tmp_root/mtime-idx2.err"
-  status=0
-    "$PMCTL" context index "$fix_repo" > "$out2" 2> "$err2" || status=$?
-  if [[ "$status" -ne 0 ]]; then
-    fail "$name" "second index failed: $(<"$err2")"; return 0
-  fi
-
-  # All files should be skipped (mtime-only semantics: content change not detected)
-  if grep -qE '^context index: 0 indexed, [1-9][0-9]* skipped' "$out2"; then
-    pass "$name"
-  else
-    fail "$name" "mtime-only contract violated; expected 0 indexed; got: $(<"$out2")"
-  fi
-}
 
 case_context_index_markdown_no_symbols() {
   local name="pmctl context index: Markdown headings are not indexed as symbols"
@@ -3579,6 +3538,110 @@ case_context_prompt_scan_dedup_and_hit_cap() {
   pass "$name"
 }
 
+# Behavior: chunking indexes a file's own content, not just its first 200
+# characters, so a symbol body far below the header is retrievable. Previously
+# every non-markdown file became a single chunk holding the file's opening
+# characters, which put function bodies outside the index entirely.
+# Steps: build a shell file with a unique marker past line 100; index; query it.
+case_context_index_reaches_deep_file_content() {
+  local name="pmctl context index: content deep inside a file is retrievable"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-deep-body"
+  mkdir -p "$fix_repo/scripts"
+  {
+    printf '#!/usr/bin/env bash\n'
+    local i
+    for ((i = 1; i <= 120; i++)); do printf '# filler line %s\n' "$i"; done
+    printf 'deep_fn() {\n  printf %s\n}\n' "'zzq_deep_body_marker'"
+  } > "$fix_repo/scripts/deep.sh"
+
+  local err="$tmp_root/deep-index.err"
+  "$PMCTL" context index "$fix_repo" > /dev/null 2> "$err" \
+    || { fail "$name" "setup: index failed: $(<"$err")"; return 0; }
+
+  local out="$tmp_root/deep-query.out" status=0
+  "$PMCTL" context query "$fix_repo" zzq_deep_body_marker > "$out" 2> "$err" || status=$?
+  if [[ "$status" -eq 0 ]] && grep -q 'scripts/deep.sh' "$out"; then
+    pass "$name"
+  else
+    fail "$name" "deep body not retrievable: status=$status out=$(<"$out") err=$(<"$err")"
+  fi
+}
+
+# Behavior: an edit that preserves mtime still re-indexes, because the stored
+# sha1 -- not mtime -- decides whether content changed. An mtime fast path that
+# is also the final answer leaves the index silently serving deleted content.
+# Steps: index; rewrite a marker while restoring the original mtime; re-index;
+# require the old marker gone and the new one found.
+case_context_index_detects_mtime_preserving_edit() {
+  local name="pmctl context index: an mtime-preserving edit is still re-indexed"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-mtime-edit"
+  mkdir -p "$fix_repo/scripts"
+  printf '#!/usr/bin/env bash\nfn() { printf %s\n}\n' "'zzq_before_marker'" \
+    > "$fix_repo/scripts/edit.sh"
+
+  local err="$tmp_root/mtime-index.err"
+  "$PMCTL" context index "$fix_repo" > /dev/null 2> "$err" \
+    || { fail "$name" "setup: first index failed: $(<"$err")"; return 0; }
+
+  local old_mtime
+  old_mtime="$(stat -c %Y "$fix_repo/scripts/edit.sh" 2>/dev/null)" \
+    || { fail "$name" "setup: stat unavailable"; return 0; }
+  printf '#!/usr/bin/env bash\nfn() { printf %s\n}\n' "'zzq_after_marker'" \
+    > "$fix_repo/scripts/edit.sh"
+  touch -d "@$old_mtime" "$fix_repo/scripts/edit.sh"
+  [[ "$(stat -c %Y "$fix_repo/scripts/edit.sh")" == "$old_mtime" ]] \
+    || { fail "$name" "setup: mtime was not preserved"; return 0; }
+
+  "$PMCTL" context index "$fix_repo" > /dev/null 2> "$err" \
+    || { fail "$name" "re-index failed: $(<"$err")"; return 0; }
+
+  local before="$tmp_root/mtime-before.out" after="$tmp_root/mtime-after.out"
+  "$PMCTL" context query "$fix_repo" zzq_before_marker > "$before" 2>/dev/null || true
+  "$PMCTL" context query "$fix_repo" zzq_after_marker > "$after" 2>/dev/null || true
+  if ! grep -q 'scripts/edit.sh' "$before" && grep -q 'scripts/edit.sh' "$after"; then
+    pass "$name"
+  else
+    fail "$name" "stale index after mtime-preserving edit: before=$(<"$before") after=$(<"$after")"
+  fi
+}
+
+# Behavior: a database built by a different extractor is re-extracted rather
+# than served. Without this the chunker can change while every file still looks
+# up to date, leaving an index that disagrees with its extractor and reports
+# success either way.
+# Steps: index; bump the extractor version and re-index with every mtime
+# unchanged; require the files to be re-indexed rather than skipped.
+case_context_index_extractor_version_forces_reextract() {
+  local name="pmctl context index: an extractor version change forces re-extraction"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-extractor-version"
+  make_fixture_repo "$fix_repo"
+
+  local err="$tmp_root/extractor-index.err" out="$tmp_root/extractor.out" status=0
+  "$PMCTL" context index "$fix_repo" > /dev/null 2> "$err" \
+    || { fail "$name" "setup: first index failed: $(<"$err")"; return 0; }
+
+  # Same extractor: everything is skipped.
+  "$PMCTL" context index "$fix_repo" > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]] || grep -qE 'context index: [1-9][0-9]* indexed' "$out"; then
+    fail "$name" "unchanged tree should skip, got: $(<"$out")"; return 0
+  fi
+
+  # Different extractor: nothing may be trusted, mtimes notwithstanding.
+  status=0
+  _CTX_EXTRACTOR_VERSION=99999 "$PMCTL" context index "$fix_repo" > "$out" 2> "$err" || status=$?
+  if [[ "$status" -eq 0 ]] && grep -qE 'context index: [1-9][0-9]* indexed' "$out"; then
+    pass "$name"
+  else
+    fail "$name" "extractor bump did not re-extract: status=$status out=$(<"$out") err=$(<"$err")"
+  fi
+}
+
 case_context_prompt_scan_term_cap_longest_first() {
   local name="pmctl context prompt-scan: term cap keeps longest terms first"
   # Behavior: terms are ranked longest-first and capped at
@@ -3836,7 +3899,6 @@ case_context_update_specific_path
 case_context_update_no_path_full_scan
 case_context_update_absolute_path_rejected
 case_context_update_traversal_rejected
-case_context_index_mtime_only_contract
 case_context_index_markdown_no_symbols
 case_context_query_missing_query
 case_context_query_unknown_flag
@@ -3940,6 +4002,9 @@ case_context_prompt_scan_unknown_flag
 case_context_prompt_scan_no_db
 case_context_prompt_scan_knowledge_domain_only
 case_context_prompt_scan_dedup_and_hit_cap
+case_context_index_reaches_deep_file_content
+case_context_index_detects_mtime_preserving_edit
+case_context_index_extractor_version_forces_reextract
 case_context_prompt_scan_term_cap_longest_first
 case_context_prompt_scan_no_sqlite_graceful
 case_context_prompt_scan_secret_never_persisted

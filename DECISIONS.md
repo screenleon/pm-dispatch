@@ -7,6 +7,31 @@ H2 標題格式：## YYYY-MM-DD: <短描述>
 與 BACKLOG closure 對應的 entry，內文首行寫：Closes: BACKLOG.md#<PREFIX>-NNN
 -->
 
+## 2026-08-20: index-freshness-is-decided-by-content-not-mtime
+
+Relates: CC-505, CC-563
+
+**Context**: context index 的增量契約原本明文是「mtime-only skip」——`files.sha1`
+只存不用於變更偵測，保留 mtime 的編輯不會觸發重新索引。這是**刻意的、有文件也有
+測試的**行為（`case_context_index_mtime_only_contract` 就是它的記錄）。實務上它讓
+索引可以在完全不報錯的情況下持續回答已被刪除的內容，而失效的表徵與正常運作
+完全相同。[[CC-505]] Req 6 要求改由 sha1 決定。
+
+**Decision**: mtime 降為快篩，**`files.sha1` 才是變更偵測的判準**。同時新增
+`index_meta(schema_version, extractor_version, built_at)`：extractor 版本與 DB 記錄
+不符時強制全量重新抽取，因為 chunker 變更會使「已索引」的意義改變，而既有 DB 會
+繼續供應當前 extractor 永遠不會產生的 chunk。舊契約的測試案例隨之退役——它記錄的
+是不再成立的契約，不是仍需保護的行為。
+
+**Alternatives considered**: (a) 只在 size 也改變時才驗 sha1——拒絕，同時保留 mtime
+與 size 的編輯仍會漏，而那正是最難察覺的一類。(b) 維持 mtime-only 並以文件警告——
+拒絕，該契約已經有文件，文件沒有阻止它成為缺陷。
+
+**Constraints introduced**: 每次索引對候選檔案計算 sha1（本 repo 實測 1114 檔約
+0.6s，增量執行 6.3→9.3s）。任何改動 chunker、窗口大小或 body cap 的變更**必須**同時
+bump `_CTX_EXTRACTOR_VERSION`，否則既有 DB 會靜默沿用舊格式。全量重建成本另見
+[[CC-563]]；不得為降低該成本而縮小 chunk 覆蓋。
+
 ## 2026-08-20: current-tree-evidence-is-a-standing-invariant
 
 Relates: CC-511, CC-532
