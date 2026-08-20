@@ -57,8 +57,10 @@ Versions follow [Semantic Versioning](https://semver.org/).
 - **The context index now holds a file's actual content (CC-505 Phase 1).**
   Every non-markdown file — shell included — was stored as a single chunk
   holding the first 200 characters, so function bodies were not in the index at
-  all; they are now windowed with bounded bodies, and a long markdown section is
-  split rather than truncated. Window size and cap were chosen from measured
+  all; they are now windowed with bounded bodies. Content past the cap is split
+  across chunks rather than truncated — for a long markdown section and equally
+  for a single physical line longer than the cap, whose tail would otherwise be
+  dropped by the SQL escaper while indexing reported success. Window size and cap were chosen from measured
   body lengths so the cap guards outliers instead of truncating routinely.
   Measured cost on this repository: chunks 5,027 → 13,041, database 5.5 → 32.6
   MB, full rebuild 1m23s (tracked for follow-up), incremental run 6.3 → 9.3s.

@@ -402,6 +402,22 @@ _CTX_CHUNK_BODY_CAP="${_CTX_CHUNK_BODY_CAP:-2000}"
 # looks healthy. Bump on any change to the chunkers or to the cap/window above.
 _CTX_EXTRACTOR_VERSION="${_CTX_EXTRACTOR_VERSION:-2}"
 
+# Emit one chunk row, splitting a body longer than the cap across rows instead
+# of letting it overflow. An over-cap body reaches _ctx_sql_str, which truncates
+# to the same bound and drops the excess without a word -- so a single physical
+# line longer than the cap (a minified bundle, a generated data file) would lose
+# its tail from the index while everything reported success. Split rows repeat
+# the line span they came from, which is truthful: the content really is there.
+_ctx_chunk_emit() {
+  local heading="$1" start="$2" end="$3" body="$4"
+  while [[ "${#body}" -gt "$_CTX_CHUNK_BODY_CAP" ]]; do
+    printf '%s\t%s\t%s\t%s\n' "$heading" "$start" "$end" "${body:0:$_CTX_CHUNK_BODY_CAP}"
+    body="${body:$_CTX_CHUNK_BODY_CAP}"
+  done
+  [[ -n "$body" ]] && printf '%s\t%s\t%s\t%s\n' "$heading" "$start" "$end" "$body"
+  return 0
+}
+
 _ctx_chunk_markdown() {
   local abs_path="$1"
   local line lineno=1 in_fence=0 saw_heading=0
@@ -409,7 +425,7 @@ _ctx_chunk_markdown() {
 
   # Emit the accumulated chunk and start a continuation at the given line.
   _ctx_chunk_md_flush() {
-    printf '%s\t%s\t%s\t%s\n' "$cur_heading" "$cur_start" "$1" "$cur_body"
+    _ctx_chunk_emit "$cur_heading" "$cur_start" "$1" "$cur_body"
     cur_body=""
     cur_start=$(( $1 + 1 ))
   }
@@ -457,7 +473,7 @@ _ctx_chunk_window() {
 
     if [[ $((lineno - win_start + 1)) -ge "$window_size" \
        || "${#win_body}" -ge "$_CTX_CHUNK_BODY_CAP" || "$lineno" -ge "$total" ]]; then
-      printf '%s\t%s\t%s\t%s\n' "" "$win_start" "$lineno" "$win_body"
+      _ctx_chunk_emit "" "$win_start" "$lineno" "$win_body"
       win_start=$((lineno + 1))
       win_body=""
     fi
@@ -465,7 +481,7 @@ _ctx_chunk_window() {
   done < "$abs_path"
 
   [[ -n "$win_body" ]] && \
-    printf '%s\t%s\t%s\t%s\n' "" "$win_start" "$((lineno - 1))" "$win_body"
+    _ctx_chunk_emit "" "$win_start" "$((lineno - 1))" "$win_body"
   return 0
 }
 

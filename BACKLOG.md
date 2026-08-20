@@ -2560,8 +2560,9 @@ launch 早期死亡會留下 0-byte 空殼 gate 結果），摘要邏輯必須�
 
 **Update 2026-08-20（Phase 1 第一片：Req 1 + Req 6）**: chunk 改存 bounded full
 bodies；程式語言檔案先前被壓成**一個 chunk、只存檔首 200 字元**，函式本體完全不在
-索引裡，現改為窗口化。長 markdown section 依 Req 7 的「長 section 分段」**分段而非
-截斷**。新增 `index_meta(schema_version, extractor_version, built_at)`，extractor 版本
+索引裡，現改為窗口化。超過 cap 的內容一律**分段而非截斷**——長 markdown section 依 Req 7
+如此，單一實體行超過 cap 者亦然（否則尾端會被 SQL escaper 靜默丟棄，而索引仍回報
+成功；此缺陷由首輪 gate 的 qa-tester／critic 各自獨立指出）。新增 `index_meta(schema_version, extractor_version, built_at)`，extractor 版本
 變更強制全量重新抽取；freshness 以 mtime 快篩後由 `files.sha1` 決定，mtime 不變的
 編輯不再靜默 stale。
 

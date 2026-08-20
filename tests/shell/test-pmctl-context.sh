@@ -3574,6 +3574,38 @@ case_context_index_reaches_deep_file_content() {
 # is also the final answer leaves the index silently serving deleted content.
 # Steps: index; rewrite a marker while restoring the original mtime; re-index;
 # require the old marker gone and the new one found.
+# Behavior: a single physical line longer than the chunk body cap keeps its tail
+# searchable. An over-cap body reaches the SQL escaper, which truncates to the
+# same bound silently, so without splitting the end of a minified or generated
+# file would be missing from the index while indexing still reported success.
+# Steps: write one line far longer than the cap with a marker at its end; index;
+# require the marker to be retrievable.
+case_context_index_splits_an_over_cap_line() {
+  local name="pmctl context index: a line longer than the body cap keeps its tail searchable"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-long-line"
+  mkdir -p "$fix_repo/scripts"
+  # Padding alone exceeds the cap several times over, so the marker sits well
+  # past the point where a truncating writer would stop.
+  local pad
+  pad="$(head -c 9000 /dev/zero | tr '\0' 'x')"
+  printf '#!/usr/bin/env bash\n# %s zzq_tail_after_cap_marker\n' "$pad" \
+    > "$fix_repo/scripts/longline.sh"
+
+  local err="$tmp_root/longline.err"
+  "$PMCTL" context index "$fix_repo" > /dev/null 2> "$err" \
+    || { fail "$name" "setup: index failed: $(<"$err")"; return 0; }
+
+  local out="$tmp_root/longline.out" status=0
+  "$PMCTL" context query "$fix_repo" zzq_tail_after_cap_marker > "$out" 2> "$err" || status=$?
+  if [[ "$status" -eq 0 ]] && grep -q 'scripts/longline.sh' "$out"; then
+    pass "$name"
+  else
+    fail "$name" "tail past the cap was dropped: status=$status out=$(<"$out") err=$(<"$err")"
+  fi
+}
+
 case_context_index_detects_mtime_preserving_edit() {
   local name="pmctl context index: an mtime-preserving edit is still re-indexed"
   should_run "$name" || return 0
@@ -4003,6 +4035,7 @@ case_context_prompt_scan_no_db
 case_context_prompt_scan_knowledge_domain_only
 case_context_prompt_scan_dedup_and_hit_cap
 case_context_index_reaches_deep_file_content
+case_context_index_splits_an_over_cap_line
 case_context_index_detects_mtime_preserving_edit
 case_context_index_extractor_version_forces_reextract
 case_context_prompt_scan_term_cap_longest_first
