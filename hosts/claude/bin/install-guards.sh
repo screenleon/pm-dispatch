@@ -7,7 +7,6 @@
 #   - matcher "Edit|Write" → runtime/hooks/guard-pm-write.sh
 #   - matcher "Bash"       → adapters/<name>/bash-guard.sh  (manifest-derived; needs_bash_guard=true)
 #   - Stop                 → hosts/claude/hooks/log-usage.sh
-#   - Stop                 → runtime/hooks/guard-session-summary.sh
 #   - UserPromptSubmit     → runtime/hooks/guard-inject-memory.sh
 #   - UserPromptSubmit     → hosts/claude/hooks/inject-context.sh
 #   - StatusLine           → hosts/claude/hooks/save-rate-limits.sh (chains previous if present)
@@ -34,8 +33,7 @@
 #   otherwise                     → profile=minimal
 # Minimal profile skips registering adapter bash guards (adapters/<name>/bash-guard.sh
 # derived from adapter manifests with needs_bash_guard=true). Other hooks
-# (pm-write-guard, session-summary, inject-memory, save-rate-limits) stay wired in
-# both profiles.
+# (pm-write-guard, inject-memory, save-rate-limits) stay wired in both profiles.
 
 set -euo pipefail
 
@@ -157,7 +155,6 @@ pm_cmd="$repo_root/runtime/hooks/guard-pm-write.sh"
 stop_cmd="$repo_root/hosts/claude/hooks/log-usage.sh"
 old_stop_cmd="$repo_root/hooks/guard-log-claude-usage.sh"
 legacy_stop_cmd="$repo_root/scripts/guard-log-claude-usage.sh"
-session_path="$repo_root/runtime/hooks/guard-session-summary.sh"
 inject_cmd="$repo_root/runtime/hooks/guard-inject-memory.sh"
 ctx_inject_cmd="$repo_root/hosts/claude/hooks/inject-context.sh"
 statusline_cmd="$repo_root/hosts/claude/hooks/save-rate-limits.sh"
@@ -217,11 +214,10 @@ write_statusline_chain() {
   mv "$chain_tmp" "$statusline_chain_conf"
 }
 
-if [ ! -x "$pm_cmd" ] || [ ! -x "$stop_cmd" ] || [ ! -x "$session_path" ] || [ ! -x "$inject_cmd" ] || [ ! -x "$ctx_inject_cmd" ] || [ ! -x "$statusline_cmd" ]; then
+if [ ! -x "$pm_cmd" ] || [ ! -x "$stop_cmd" ] || [ ! -x "$inject_cmd" ] || [ ! -x "$ctx_inject_cmd" ] || [ ! -x "$statusline_cmd" ]; then
   echo "install-guards: hook scripts missing or not executable" >&2
   echo "  $pm_cmd" >&2
   echo "  $stop_cmd" >&2
-  echo "  $session_path" >&2
   echo "  $inject_cmd" >&2
   echo "  $ctx_inject_cmd" >&2
   echo "  $statusline_cmd" >&2
@@ -268,7 +264,6 @@ fi
 pm_cmd_q="$(printf '%q' "$pm_cmd")"
 stop_cmd_q="$(printf '%q' "$stop_cmd")"
 legacy_stop_cmd_q="$(printf '%q' "$legacy_stop_cmd")"
-session_cmd_q="$(printf '%q' "$session_path") --host claude"
 inject_cmd_q="$(printf '%q' "$inject_cmd")"
 ctx_inject_cmd_q="$(printf '%q' "$ctx_inject_cmd")"
 statusline_cmd_q="$(printf '%q' "$statusline_cmd")"
@@ -287,7 +282,6 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
   --arg old_stop "$old_stop_cmd" \
   --arg legacy_stop "$legacy_stop_cmd" \
   --arg legacy_stop_q "$legacy_stop_cmd_q" \
-  --arg session "$session_cmd_q" \
   --arg inject "$inject_cmd_q" \
   --arg ctx_inject "$ctx_inject_cmd_q" \
   --argjson ctx_inject_timeout "$CLAUDE_PROMPT_CONTEXT_HOOK_TIMEOUT" \
@@ -309,6 +303,10 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
   def retired_context_hook:
     (.command | split("/")) as $parts |
     ($parts[-1] == ("guard-inject-" + "context.sh") and
+     $parts[-2] == "hooks" and $parts[-3] == "runtime");
+  def retired_session_hook:
+    (.command | without_host_arg | split("/")) as $parts |
+    ($parts[-1] == ("guard-session-" + "summary.sh") and
      $parts[-2] == "hooks" and $parts[-3] == "runtime");
 
   # Ensure .hooks.PreToolUse exists as an array.
@@ -345,13 +343,19 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
   ) |
   .hooks.PreToolUse |= map(select((.hooks | length) > 0)) |
 
-  # Prune pre-rename hook-* Stop entries superseded by guard-*.
+  # Prune pre-rename hook-* Stop entries superseded by guard-*, and the retired
+  # runtime/hooks/guard-session-summary.sh Stop writer: the skeleton episodes
+  # it wrote sat empty (12%, then 8% filled after two months), and its
+  # session_lifecycle capability is retired from the host contract.
   .hooks.Stop |= map(
     .hooks |= map(select(
       ( ((.command | split("/") | last) == ("hook-log-claude-" + "usage.sh")) or
         ((.command | split("/") | last) == ("hook-session-" + "summary.sh")) )
       and ((.command | split("/") | .[-2]) == "scripts") | not
     ))
+  ) |
+  .hooks.Stop |= map(
+    .hooks |= map(select(retired_session_hook | not))
   ) |
   .hooks.Stop |= map(select((.hooks | length) > 0)) |
 
@@ -397,7 +401,6 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
       .command == $stop or .command == $legacy_stop or .command == $legacy_stop_q or
       (((.command | split("/") | last) == ($legacy_stop | split("/") | last)) and ((.command | split("/") | .[-2]) == "scripts"))
     ) ] | length ) as $stop_present |
-  ( [ .hooks.Stop[]? | (.hooks // [])[]? | select(managed_shared(.command; $session)) ] | length ) as $session_present |
   ( [ .hooks.UserPromptSubmit[]? | (.hooks // [])[]? | select(managed_shared(.command; $inject)) ] | length ) as $inject_present |
   ( [ .hooks.UserPromptSubmit[]? | (.hooks // [])[]? | select(managed_shared(.command; $ctx_inject)) ] | length ) as $ctx_inject_present |
 
@@ -425,7 +428,6 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
     .hooks |= map(
       if   (.command == $legacy_stop or .command == $legacy_stop_q or .command == $stop
             or (((.command | split("/") | last) == ($legacy_stop | split("/") | last)) and ((.command | split("/") | .[-2]) == "scripts"))) then .command = $stop
-      elif managed_shared(.command; $session) then .command = $session
       else . end
     )
   ) |
@@ -481,10 +483,6 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
   ) |
   ( if $stop_present == 0 then
       .hooks.Stop += [{"hooks": [{"type": "command", "command": $stop}]}]
-    else . end
-  ) |
-  ( if $session_present == 0 then
-      .hooks.Stop += [{"hooks": [{"type": "command", "command": $session}]}]
     else . end
   ) |
   ( if $inject_present == 0 then

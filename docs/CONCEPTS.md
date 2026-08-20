@@ -148,8 +148,7 @@ This three-way write path is on purpose: not every fact wants the same author.
 ### Where to look
 
 - `MEMORY.md` — the index for the current session
-- `commands/mem-recall.md` / `mem-log.md` / `mem-distill.md` / `mem-search.md` — the four memory skills
-- `runtime/hooks/guard-session-summary.sh` — the SessionStop hook that writes episodes
+- `commands/mem-recall.md` / `mem-log.md` / `mem-distill.md` / `mem-search.md` — the four memory skills; `/mem-log` is the sole episode writer
 
 ---
 

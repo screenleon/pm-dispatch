@@ -131,7 +131,7 @@ declared and probed layers stay mechanically comparable:
 
 | Field | Enum | Meaning |
 |---|---|---|
-| `capability` | `command_guard`, `file_guard`, `session_lifecycle`, `pm_command_interface`, `statusline` | The semantic capability being declared. |
+| `capability` | `command_guard`, `file_guard`, `pm_command_interface`, `statusline` | The semantic capability being declared. |
 | `binding_form` | `hook-script`, `config-fragment`, `none` | What artifact realizes the binding: an executable hook script wired into the host's hook surface, or a fragment merged into the host's declarative config. Never assume a guard binding is a script — opencode's is config. `none` means the capability has no host-installed artifact; it is legal for `provider: none` and for `provider: cli_wrapper`, where a pmctl command supplies the batch-only interface. An evaluated-but-unsupported capability may instead keep its anticipated form (e.g. `hook-script`) to record what the binding would be once its gaps close. |
 | `provider` | `host_hook`, `host_policy`, `host_native`, `cli_wrapper`, `doc_instruction`, `none` | Mechanism class providing the capability. |
 | `enforcement` | `blocking`, `approval`, `advisory`, `none` | What a violation does. |
@@ -274,15 +274,8 @@ guard_bindings:
     coverage: none                    # all-deny hangs headless runs (unverified root cause)
     stability: evolving
     confidence: probed
-  # Full enumeration: session lifecycle and statusline have not been evaluated
-  # on this host — none tuple with confidence assumed, not omission.
-  - capability: session_lifecycle
-    binding_form: none
-    provider: none
-    enforcement: none
-    coverage: none
-    stability: evolving
-    confidence: assumed
+  # Full enumeration: statusline has not been evaluated on this host — none
+  # tuple with confidence assumed, not omission.
   - capability: pm_command_interface
     binding_form: config-fragment
     provider: host_native

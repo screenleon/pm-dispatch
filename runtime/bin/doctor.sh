@@ -468,7 +468,6 @@ check_scripts_executable() {
     runtime/hooks/guard-pm-write.sh
     runtime/hooks/guard-reviewer-write.sh
     hosts/claude/hooks/log-usage.sh
-    runtime/hooks/guard-session-summary.sh
     runtime/hooks/guard-inject-memory.sh
     runtime/lib/prompt-context.sh
     hosts/claude/hooks/inject-context.sh

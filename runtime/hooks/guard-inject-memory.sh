@@ -215,21 +215,30 @@ tier1_count="${#tier1_lines[@]}"
 remaining_slots=$((MAX_INJECT_ENTRIES - tier1_count))
 [[ "$remaining_slots" -lt 0 ]] && remaining_slots=0
 
-# Compute bytes already used by preamble + tier1 (tier1 is never byte-capped)
+# Compute bytes already used by preamble + tier1 (tier1 is never byte-capped).
+# Actual UTF-8 bytes (memory_byte_len_var), not characters: a CJK-heavy index
+# undercounts by roughly a quarter under ${#line}, against a budget whose name
+# and purpose are both byte-based.
 preamble_line1='=== auto-memory: MEMORY.md index ==='
 preamble_line2="Provider: pmctl | authority: canonical | project_key: ${memory_project_key} | resolution: ${memory_resolution_source}"
 preamble_line3="Memory dir: ${memory_dir} | ${total_count} cards total | native memory: auxiliary/unknown"
 preamble_line4='Use /mem-search <topic> for full retrieval'
-bytes_used=$(( ${#preamble_line1} + 1 + ${#preamble_line2} + 1 + ${#preamble_line3} + 1 + ${#preamble_line4} + 1 ))
+_pbytes=0
+memory_byte_len_var _pbytes "$preamble_line1"; bytes_used=$(( _pbytes + 1 ))
+memory_byte_len_var _pbytes "$preamble_line2"; bytes_used=$(( bytes_used + _pbytes + 1 ))
+memory_byte_len_var _pbytes "$preamble_line3"; bytes_used=$(( bytes_used + _pbytes + 1 ))
+memory_byte_len_var _pbytes "$preamble_line4"; bytes_used=$(( bytes_used + _pbytes + 1 ))
 for _line in "${tier1_lines[@]+"${tier1_lines[@]}"}"; do
-  bytes_used=$(( bytes_used + ${#_line} + 1 ))
+  memory_byte_len_var _lbytes "$_line"
+  bytes_used=$(( bytes_used + _lbytes + 1 ))
 done
 
 # Select tier2 entries within entry and byte budgets
 selected_tier2=()
 for _line in "${sorted_tier2[@]+"${sorted_tier2[@]}"}"; do
   [[ "${#selected_tier2[@]}" -ge "$remaining_slots" ]] && break
-  _lbytes=$(( ${#_line} + 1 ))
+  memory_byte_len_var _lbytes "$_line"
+  _lbytes=$(( _lbytes + 1 ))
   [[ $(( bytes_used + _lbytes )) -gt "$MAX_INJECT_BYTES" ]] && break
   selected_tier2+=("$_line")
   bytes_used=$(( bytes_used + _lbytes ))

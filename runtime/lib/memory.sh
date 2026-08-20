@@ -72,6 +72,22 @@ MEMORY_MAX_INJECT_ENTRIES=20
 # shellcheck disable=SC2034  # read by guard-inject-memory.sh and pmctl memory stats after sourcing this lib
 MEMORY_MAX_INJECT_BYTES=3000
 
+# Assigns the UTF-8 byte length of $2 into the caller-named variable $1.
+# bash's ${#s} counts characters under a UTF-8 locale, not bytes; under the C
+# locale each byte is one "character", so switching LC_ALL for the duration of
+# the builtin gives an accurate byte count without forking a subprocess. A
+# CJK-heavy index undercounts its real injection cost by roughly a quarter
+# under the character form, against a budget whose name (MEMORY_MAX_INJECT_BYTES)
+# and purpose (bounding what actually goes in the prompt) are both byte-based.
+memory_byte_len_var() {
+  local __dest="$1" __val="$2"
+  local __save_set=0 __save=""
+  if [[ "${LC_ALL+_}" == "_" ]]; then __save_set=1; __save="$LC_ALL"; fi
+  LC_ALL=C
+  printf -v "$__dest" '%s' "${#__val}"
+  if [[ "$__save_set" -eq 1 ]]; then LC_ALL="$__save"; else unset LC_ALL; fi
+}
+
 # ---------------------------------------------------------------------------
 # Usage-based injection ranking (frecency) — sidecar telemetry plane.
 #
@@ -386,9 +402,8 @@ memory_usage_commit() {
 }
 
 # ---------------------------------------------------------------------------
-# ISO8601 timestamp normalization — shared by guard-inject-memory.sh and
-# guard-session-summary.sh episode-age checks (both compute "hours since last
-# episode" from a stored `date` field).
+# ISO8601 timestamp normalization for guard-inject-memory.sh's episode-age
+# check (computes "hours since last episode" from a stored `date` field).
 # ---------------------------------------------------------------------------
 
 # Normalize an episode `date` field (bare "...Z", fractional seconds, and/or a

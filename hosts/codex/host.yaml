@@ -97,16 +97,6 @@ guard_bindings:
     coverage: none
     stability: evolving
     confidence: probed
-  # Stop payload carries cwd + session_id and the installed adapter passes an
-  # explicit Codex writer provenance into the shared canonical session writer.
-  # Only Stop is bound (SessionStart remains unused), hence partial coverage.
-  - capability: session_lifecycle
-    binding_form: hook-script
-    provider: host_hook
-    enforcement: none
-    coverage: partial
-    stability: evolving
-    confidence: probed
   # Codex lacks Claude's interactive Agent/AskUserQuestion loop. It instead
   # uses pmctl pm: one fully specified request/brief in, one batch result out.
   # That supports PM orchestration without claiming interactive parity.

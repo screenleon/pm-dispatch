@@ -29,8 +29,6 @@ RL_HOOK="$REPO_ROOT/hosts/claude/hooks/save-rate-limits.sh"
 MEM_HOOK_REAL="$REPO_ROOT/runtime/hooks/guard-inject-memory.sh"
 export MEM_HOOK_REAL
 CTX_HOOK="$REPO_ROOT/hosts/claude/hooks/inject-context.sh"
-SESSION_HOOK="$REPO_ROOT/runtime/hooks/guard-session-summary.sh"
-session_hook_claude() { "$SESSION_HOOK" --host claude "$@"; }
 
 # shellcheck source=tests/lib/test-harness.sh
 . "$SCRIPT_DIR/../lib/test-harness.sh"
@@ -2218,6 +2216,57 @@ inject_hook_byte_cap_truncates_before_entry_cap() {
   rm -rf "$dir"
 }
 
+# Behavior: the byte budget is measured in actual UTF-8 bytes, not characters.
+# A CJK character is 3 bytes; ${#line} under a UTF-8 locale would count it as 1,
+# undercounting a CJK-heavy index's real injection cost by roughly two-thirds.
+# Steps:
+#   1. Create MEMORY.md with 10 tier2 entries whose combined CHARACTER length
+#      (2620) sits comfortably under MAX_INJECT_BYTES=3000, but whose combined
+#      BYTE length (7620, each entry ~262 chars / 762 bytes of CJK padding) is
+#      well over it.
+#   2. Run the hook.
+#   3. Assert entry 001 present, entry 010 absent, and an omission notice
+#      appears — proving the cap is enforced in bytes. Under character-based
+#      counting this case would inject all 10 entries with no omission, the
+#      same way it would have before this fix.
+inject_hook_byte_cap_counts_utf8_bytes_not_characters() {
+  local name="inject-hook/byte-cap-counts-utf8-bytes-not-characters" dir cwd payload output status omission_line pad
+  should_run "$name" || return 0
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  pad="$(python3 -c "print('あ' * 250)" 2>/dev/null || true)"
+  if [[ -z "$pad" ]]; then
+    fail "$name" "setup: python3 unavailable to build CJK fixture padding"
+    rm -rf "$dir"
+    return 0
+  fi
+  {
+    printf '# title\n'
+    for i in $(seq 1 10); do
+      printf -- '- entry %03d %s\n' "$i" "$pad"
+    done
+  } > "$dir/cjk-lines-memory.md"
+  write_inject_memory "$dir" "$cwd" "$(cat "$dir/cjk-lines-memory.md")"
+  payload="{\"cwd\":\"$cwd\"}"
+  output=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
+  status=$?
+  omission_line="$(printf '%s\n' "$output" | grep 'entries omitted' || true)"
+  if [[ "$status" == "0" \
+      && "$output" == *"entry 001"* \
+      && "$output" != *"entry 010"* \
+      && -n "$omission_line" \
+      && "$omission_line" == *"entries omitted"* ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s omission=%q output_tail=%q\n' "$name" "$status" "$omission_line" "${output: -80}"
+  fi
+  rm -rf "$dir"
+}
+
 inject_hook_status_active_no_longer_pins() {
   # CC-427 core fix: status: active must NOT force tier1 (always-inject). With
   # 25 normal cards all status: active, the budget (20) must still truncate,
@@ -3085,11 +3134,11 @@ security_guards_shell_options_symmetric() {
 }
 
 memory_iso8601_normalize_formats() {
-  # Unit: memory_iso8601_normalize (shared ISO8601 helper extracted from
-  # guard-inject-memory.sh and guard-session-summary.sh) must
-  # produce byte-identical output for every date-field shape the two hooks
-  # were observed to receive: bare Z, fractional seconds, +/-HH:MM offset
-  # with and without fractional seconds, and a naive (no Z, no offset) stamp.
+  # Unit: memory_iso8601_normalize (shared ISO8601 helper used by
+  # guard-inject-memory.sh) must produce byte-identical output for every
+  # date-field shape it was observed to receive: bare Z, fractional seconds,
+  # +/-HH:MM offset with and without fractional seconds, and a naive (no Z,
+  # no offset) stamp.
   local name="memory-lib/iso8601-normalize-formats" got want
   should_run "$name" || return 0
   got="$(
@@ -3397,6 +3446,7 @@ inject_hook_three_char_english_does_not_promote
 inject_hook_former_stopword_still_ranks
 inject_hook_cjk_prompt_ranks_matching_card
 inject_hook_byte_cap_truncates_before_entry_cap
+inject_hook_byte_cap_counts_utf8_bytes_not_characters
 inject_hook_default_home_fallback
 inject_hook_status_active_no_longer_pins
 inject_hook_keyword_hit_records_access
@@ -4153,379 +4203,6 @@ ctx_inject_hook_malformed_payload
 ctx_inject_hook_empty_stdin
 
 # =============================================================================
-# guard-session-summary
-# =============================================================================
-
-echo
-$LIST || echo "== guard-session-summary =="
-
-session_hook_happy_path() {
-  # Verifies a new session_id appends a metadata entry to episodes.jsonl.
-  # Steps:
-  #   1. Create a project memory dir with no episodes.jsonl
-  #   2. Run session hook with a valid payload (cwd + session_id)
-  #   3. Assert exit 0 and episodes.jsonl has one line with correct session_id
-  local name="session-hook/happy-path"
-  should_run "$name" || return 0
-  local dir cwd payload status episodes entry
-  dir="$(mktemp -d)"
-  cwd="$dir/workspace"
-  mkdir -p "$cwd"
-  write_inject_memory "$dir" "$cwd" $'- alpha\n'
-  payload="{\"cwd\":\"$cwd\",\"session_id\":\"sess-001\"}"
-  printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" session_hook_claude 2>/dev/null
-  status=$?
-  episodes="$dir/projects/$(inject_encoded_path "$cwd")/memory/episodes.jsonl"
-  entry="$(cat "$episodes" 2>/dev/null || true)"
-  if [[ "$status" == "0" && "$entry" == *'"session_id":"sess-001"'* && "$entry" == *'"summary":""'* ]]; then
-    PASS=$((PASS+1))
-    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
-  else
-    FAIL=$((FAIL+1))
-    FAILED_CASES+=("$name")
-    printf '  FAIL  %s — exit=%s entry=%q\n' "$name" "$status" "$entry"
-  fi
-  rm -rf "$dir"
-}
-
-session_hook_codex_host_provenance() {
-  # Verifies the shared Stop writer records explicit Codex provenance without
-  # relying on a CLI-specific default in the shared writer.
-  # Steps:
-  #   1. Create an isolated canonical memory fixture
-  #   2. Invoke the Stop hook with --host codex and a stable session id
-  #   3. Assert the skeleton is canonical, deduplicated, and writer_host=codex
-  local name="session-hook/codex-host-provenance"
-  should_run "$name" || return 0
-  local dir cwd payload episodes entry line_count
-  dir="$(mktemp -d)"
-  cwd="$dir/workspace"
-  mkdir -p "$cwd"
-  write_inject_memory "$dir" "$cwd" $'- alpha\n'
-  payload="{\"cwd\":\"$cwd\",\"session_id\":\"codex-session-001\"}"
-  printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$SESSION_HOOK" --host codex 2>/dev/null
-  printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$SESSION_HOOK" --host codex 2>/dev/null
-  episodes="$dir/projects/$(inject_encoded_path "$cwd")/memory/episodes.jsonl"
-  entry="$(cat "$episodes" 2>/dev/null || true)"
-  line_count="$(wc -l < "$episodes" 2>/dev/null || echo 0)"
-  if [[ "$line_count" -eq 1 && "$entry" == *'"session_id":"codex-session-001"'* \
-      && "$entry" == *'"writer_host":"codex"'* ]]; then
-    PASS=$((PASS+1))
-    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
-  else
-    FAIL=$((FAIL+1))
-    FAILED_CASES+=("$name")
-    printf '  FAIL  %s — lines=%s entry=%q\n' "$name" "$line_count" "$entry"
-  fi
-  rm -rf "$dir"
-}
-
-session_hook_requires_explicit_host() {
-  local name="session-hook/requires-explicit-host"
-  should_run "$name" || return 0
-  local output status=0
-  output="$(printf '{}' | "$SESSION_HOOK" 2>&1)" || status=$?
-  if [[ "$status" -eq 2 && "$output" == *"--host is required"* ]]; then
-    PASS=$((PASS+1))
-    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
-  else
-    FAIL=$((FAIL+1)); FAILED_CASES+=("$name")
-    printf '  FAIL  %s — exit=%s output=%q\n' "$name" "$status" "$output"
-  fi
-}
-
-session_hook_duplicate_no_summary() {
-  # Verifies same session_id with empty summary is NOT appended again.
-  # Steps:
-  #   1. Pre-populate episodes.jsonl with a skeleton entry for session-abc
-  #   2. Run session hook with the same session_id
-  #   3. Assert episodes.jsonl still has exactly 1 line (no duplicate)
-  local name="session-hook/duplicate-no-summary"
-  should_run "$name" || return 0
-  local dir cwd payload status line_count encoded
-  dir="$(mktemp -d)"
-  cwd="$dir/workspace"
-  mkdir -p "$cwd"
-  write_inject_memory "$dir" "$cwd" $'- alpha\n'
-  encoded="$(inject_encoded_path "$cwd")"
-  printf '{"date":"2026-01-01T00:00:00+00:00","cwd":"%s","session_id":"session-abc","summary":""}\n' "$cwd" \
-    > "$dir/projects/$encoded/memory/episodes.jsonl"
-  payload="{\"cwd\":\"$cwd\",\"session_id\":\"session-abc\"}"
-  printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" session_hook_claude 2>/dev/null
-  status=$?
-  line_count=$(wc -l < "$dir/projects/$encoded/memory/episodes.jsonl")
-  if [[ "$status" == "0" && "$line_count" -eq 1 ]]; then
-    PASS=$((PASS+1))
-    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
-  else
-    FAIL=$((FAIL+1))
-    FAILED_CASES+=("$name")
-    printf '  FAIL  %s — exit=%s lines=%s\n' "$name" "$status" "$line_count"
-  fi
-  rm -rf "$dir"
-}
-
-session_hook_duplicate_has_summary() {
-  # Verifies same session_id with non-empty summary is NOT appended again.
-  # Steps:
-  #   1. Pre-populate episodes.jsonl with a full entry for session-abc
-  #   2. Run session hook with the same session_id
-  #   3. Assert episodes.jsonl still has exactly 1 line
-  local name="session-hook/duplicate-has-summary"
-  should_run "$name" || return 0
-  local dir cwd payload status line_count encoded
-  dir="$(mktemp -d)"
-  cwd="$dir/workspace"
-  mkdir -p "$cwd"
-  write_inject_memory "$dir" "$cwd" $'- alpha\n'
-  encoded="$(inject_encoded_path "$cwd")"
-  printf '{"date":"2026-01-01T00:00:00+00:00","cwd":"%s","session_id":"session-abc","summary":"Done work."}\n' "$cwd" \
-    > "$dir/projects/$encoded/memory/episodes.jsonl"
-  payload="{\"cwd\":\"$cwd\",\"session_id\":\"session-abc\"}"
-  printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" session_hook_claude 2>/dev/null
-  status=$?
-  line_count=$(wc -l < "$dir/projects/$encoded/memory/episodes.jsonl")
-  if [[ "$status" == "0" && "$line_count" -eq 1 ]]; then
-    PASS=$((PASS+1))
-    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
-  else
-    FAIL=$((FAIL+1))
-    FAILED_CASES+=("$name")
-    printf '  FAIL  %s — exit=%s lines=%s\n' "$name" "$status" "$line_count"
-  fi
-  rm -rf "$dir"
-}
-
-session_hook_new_session_appends() {
-  # Verifies a new session_id appends to an existing episodes.jsonl.
-  # Steps:
-  #   1. Pre-populate episodes.jsonl with one completed entry
-  #   2. Run hook with a DIFFERENT session_id
-  #   3. Assert episodes.jsonl now has 2 lines
-  local name="session-hook/new-session-appends"
-  should_run "$name" || return 0
-  local dir cwd payload status line_count encoded
-  dir="$(mktemp -d)"
-  cwd="$dir/workspace"
-  mkdir -p "$cwd"
-  write_inject_memory "$dir" "$cwd" $'- alpha\n'
-  encoded="$(inject_encoded_path "$cwd")"
-  printf '{"date":"2026-01-01T00:00:00+00:00","cwd":"%s","session_id":"old-sess","summary":"Old work."}\n' "$cwd" \
-    > "$dir/projects/$encoded/memory/episodes.jsonl"
-  payload="{\"cwd\":\"$cwd\",\"session_id\":\"new-sess\"}"
-  printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" session_hook_claude 2>/dev/null
-  status=$?
-  line_count=$(wc -l < "$dir/projects/$encoded/memory/episodes.jsonl")
-  if [[ "$status" == "0" && "$line_count" -eq 2 ]]; then
-    PASS=$((PASS+1))
-    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
-  else
-    FAIL=$((FAIL+1))
-    FAILED_CASES+=("$name")
-    printf '  FAIL  %s — exit=%s lines=%s\n' "$name" "$status" "$line_count"
-  fi
-  rm -rf "$dir"
-}
-
-session_hook_no_memory_dir() {
-  # Verifies exit 0 with no output when no matching project memory dir exists.
-  # Steps:
-  #   1. Create a config dir with no projects
-  #   2. Run hook with a cwd that has no ancestor memory dir
-  #   3. Assert exit 0 and no episodes.jsonl created
-  local name="session-hook/no-memory-dir"
-  should_run "$name" || return 0
-  local dir cwd payload output status
-  dir="$(mktemp -d)"
-  cwd="$dir/workspace"
-  mkdir -p "$cwd"
-  payload="{\"cwd\":\"$cwd\",\"session_id\":\"s1\"}"
-  output=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" session_hook_claude 2>/dev/null)
-  status=$?
-  if [[ "$status" == "0" && -z "$output" ]]; then
-    PASS=$((PASS+1))
-    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
-  else
-    FAIL=$((FAIL+1))
-    FAILED_CASES+=("$name")
-    printf '  FAIL  %s — exit=%s output=%q\n' "$name" "$status" "$output"
-  fi
-  rm -rf "$dir"
-}
-
-session_hook_invalid_explicit_no_legacy_write() {
-  # Verifies Stop metadata cannot fall through from invalid explicit memory to legacy memory.
-  # Steps:
-  #   1. Create a legacy project memory fixture and select a missing PM_MEMORY_DIR
-  #   2. Run the Stop hook with a stable session id
-  #   3. Assert the best-effort hook exits cleanly without writing either target
-  local name="session-hook/invalid-explicit-no-legacy-write"
-  should_run "$name" || return 0
-  local dir cwd episodes output status=0
-  dir="$(mktemp -d)"
-  cwd="$dir/workspace"
-  mkdir -p "$cwd"
-  write_inject_memory "$dir" "$cwd" $'- alpha\n'
-  episodes="$dir/projects/$(inject_encoded_path "$cwd")/memory/episodes.jsonl"
-  output="$(printf '%s' "{\"cwd\":\"$cwd\",\"session_id\":\"invalid-explicit\"}" | \
-    PM_MEMORY_DIR="$dir/missing-memory" CLAUDE_CONFIG_DIR="$dir" session_hook_claude 2>/dev/null)" || status=$?
-  if [[ "$status" -eq 0 && -z "$output" && ! -e "$episodes" ]]; then
-    PASS=$((PASS+1))
-    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
-  else
-    FAIL=$((FAIL+1)); FAILED_CASES+=("$name")
-    printf '  FAIL  %s — exit=%s output=%q episodes=%s\n' "$name" "$status" "$output" "$([[ -e "$episodes" ]] && echo yes || echo no)"
-  fi
-  rm -rf "$dir"
-}
-
-session_hook_malformed_payload() {
-  # Verifies exit 0 with no output when payload is not valid JSON.
-  # Steps:
-  #   1. Send non-JSON string to session hook stdin
-  #   2. Assert exit 0 and empty stdout
-  local name="session-hook/malformed-payload"
-  should_run "$name" || return 0
-  local output status
-  output=$(printf 'not json' | session_hook_claude 2>/dev/null)
-  status=$?
-  if [[ "$status" == "0" && -z "$output" ]]; then
-    PASS=$((PASS+1))
-    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
-  else
-    FAIL=$((FAIL+1))
-    FAILED_CASES+=("$name")
-    printf '  FAIL  %s — exit=%s output=%q\n' "$name" "$status" "$output"
-  fi
-}
-
-session_hook_empty_stdin() {
-  # Verifies the session hook exits 0 silently when stdin is empty.
-  # Steps:
-  #   1. Pipe an empty string to the session hook
-  #   2. Assert exit 0 and no output produced
-  local name="session-hook/empty-stdin"
-  should_run "$name" || return 0
-  local output status
-  output=$(printf '' | session_hook_claude 2>/dev/null)
-  status=$?
-  if [[ "$status" == "0" && -z "$output" ]]; then
-    PASS=$((PASS+1))
-    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
-  else
-    FAIL=$((FAIL+1))
-    FAILED_CASES+=("$name")
-    printf '  FAIL  %s — exit=%s output=%q\n' "$name" "$status" "$output"
-  fi
-}
-
-session_hook_missing_session_id() {
-  # Verifies the Stop hook exits 0 and writes nothing when session_id is absent.
-  # Without a stable session_id the hook cannot deduplicate, so it must skip.
-  # Steps:
-  #   1. Create project memory dir with no episodes.jsonl
-  #   2. Run hook with payload that omits the session_id key entirely
-  #   3. Assert exit 0 and no episodes.jsonl created
-  local name="session-hook/missing-session-id"
-  should_run "$name" || return 0
-  local dir cwd episodes status
-  dir="$(mktemp -d)"
-  cwd="$dir/workspace"
-  mkdir -p "$cwd"
-  write_inject_memory "$dir" "$cwd" $'- alpha\n'
-  episodes="$dir/projects/$(inject_encoded_path "$cwd")/memory/episodes.jsonl"
-  printf '%s' "{\"cwd\":\"$cwd\"}" | CLAUDE_CONFIG_DIR="$dir" session_hook_claude 2>/dev/null
-  status=$?
-  if [[ "$status" == "0" && ! -f "$episodes" ]]; then
-    PASS=$((PASS+1))
-    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
-  else
-    FAIL=$((FAIL+1))
-    FAILED_CASES+=("$name")
-    local lines=0; [[ -f "$episodes" ]] && lines=$(wc -l < "$episodes")
-    printf '  FAIL  %s — exit=%s episodes_exists=%s lines=%s\n' "$name" "$status" "$([[ -f "$episodes" ]] && echo yes || echo no)" "$lines"
-  fi
-  rm -rf "$dir"
-}
-
-session_hook_non_string_session_id() {
-  # Verifies the Stop hook exits 0 and writes nothing when session_id is a
-  # non-string JSON value (e.g., integer). Non-string ids are normalized to ""
-  # and must be treated as absent (no write).
-  # Steps:
-  #   1. Create project memory dir with no episodes.jsonl
-  #   2. Run hook with payload where session_id is an integer (42)
-  #   3. Assert exit 0 and no episodes.jsonl created
-  local name="session-hook/non-string-session-id"
-  should_run "$name" || return 0
-  local dir cwd episodes status
-  dir="$(mktemp -d)"
-  cwd="$dir/workspace"
-  mkdir -p "$cwd"
-  write_inject_memory "$dir" "$cwd" $'- alpha\n'
-  episodes="$dir/projects/$(inject_encoded_path "$cwd")/memory/episodes.jsonl"
-  printf '%s' "{\"cwd\":\"$cwd\",\"session_id\":42}" | CLAUDE_CONFIG_DIR="$dir" session_hook_claude 2>/dev/null
-  status=$?
-  if [[ "$status" == "0" && ! -f "$episodes" ]]; then
-    PASS=$((PASS+1))
-    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
-  else
-    FAIL=$((FAIL+1))
-    FAILED_CASES+=("$name")
-    local lines=0; [[ -f "$episodes" ]] && lines=$(wc -l < "$episodes")
-    printf '  FAIL  %s — exit=%s episodes_exists=%s lines=%s\n' "$name" "$status" "$([[ -f "$episodes" ]] && echo yes || echo no)" "$lines"
-  fi
-  rm -rf "$dir"
-}
-
-session_hook_happy_path
-session_hook_codex_host_provenance
-session_hook_requires_explicit_host
-session_hook_duplicate_no_summary
-session_hook_duplicate_has_summary
-session_hook_new_session_appends
-session_hook_no_memory_dir
-session_hook_invalid_explicit_no_legacy_write
-session_hook_malformed_payload
-session_hook_empty_stdin
-session_hook_missing_session_id
-session_hook_non_string_session_id
-
-session_hook_routing_dir_isolation() {
-  # Verifies session hook writes episodes.jsonl to project memory (CLAUDE_CONFIG_DIR)
-  # and NOT to CLAUDE_ROUTING_LOG_DIR, which is installer/migrator-only behavior.
-  # Steps:
-  #   1. Create project memory dir
-  #   2. Create a separate empty routing dir
-  #   3. Run hook with both CLAUDE_CONFIG_DIR and CLAUDE_ROUTING_LOG_DIR set
-  #   4. Assert exit 0, episodes.jsonl created in project memory dir, NOT in routing dir
-  local name="session-hook/routing-dir-isolation"
-  should_run "$name" || return 0
-  local dir routing_dir cwd payload status project_has_ep routing_has_ep
-  dir="$(mktemp -d)"
-  routing_dir="$(mktemp -d)"
-  cwd="$dir/workspace"
-  mkdir -p "$cwd"
-  write_inject_memory "$dir" "$cwd" $'- alpha\n'
-  payload="{\"cwd\":\"$cwd\",\"session_id\":\"isolation-test\"}"
-  printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" CLAUDE_ROUTING_LOG_DIR="$routing_dir" session_hook_claude 2>/dev/null
-  status=$?
-  project_has_ep=false; routing_has_ep=false
-  [[ -f "$dir/projects/$(inject_encoded_path "$cwd")/memory/episodes.jsonl" ]] && project_has_ep=true
-  [[ -f "$routing_dir/episodes.jsonl" ]] && routing_has_ep=true
-  rm -rf "$dir" "$routing_dir"
-  if [[ "$status" == "0" && "$project_has_ep" == "true" && "$routing_has_ep" == "false" ]]; then
-    PASS=$((PASS+1))
-    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
-  else
-    FAIL=$((FAIL+1))
-    FAILED_CASES+=("$name")
-    printf '  FAIL  %s — exit=%s project_ep=%s routing_ep=%s\n' "$name" "$status" "$project_has_ep" "$routing_has_ep"
-  fi
-}
-session_hook_routing_dir_isolation
-
-# =============================================================================
 # command validators — /mem-recall injection format
 # =============================================================================
 $LIST || echo "== mem-recall format validator =="
@@ -4576,159 +4253,6 @@ mem_recall_format_validator() {
     printf '  FAIL  %s — output=%q\n' "$name" "$result"
   fi
 }
-
-mem_recall_format_validator
-
-# =============================================================================
-# cross-command: /mem-log (session_id="") + Stop hook interaction
-# =============================================================================
-$LIST || echo "== cross-command: mem-log + session-stop =="
-
-session_stop_skips_after_recent_memlog_empty_session_id() {
-  # Verifies Stop hook does NOT append a skeleton when /mem-log already wrote
-  # a full summary entry with session_id="" for the same cwd within the 4-hour
-  # session window. The recent /mem-log entry represents the current session.
-  # Steps:
-  #   1. Create project memory dir and write a /mem-log entry (1h ago, session_id="")
-  #      with a non-empty summary for the workspace cwd
-  #   2. Run Stop hook with a real session_id for the same cwd
-  #   3. Assert exit 0 and episodes.jsonl still has exactly 1 line (no skeleton appended)
-  local name="cross-cmd/stop-skips-after-recent-memlog-empty-session-id"
-  should_run "$name" || return 0
-  local dir cwd episodes payload status line_count recent_iso
-  dir="$(mktemp -d)"
-  cwd="$dir/workspace"
-  mkdir -p "$cwd"
-  write_inject_memory "$dir" "$cwd" $'- alpha\n'
-  episodes="$dir/projects/$(inject_encoded_path "$cwd")/memory/episodes.jsonl"
-  # Recent /mem-log entry (1 hour ago) with empty session_id
-  recent_iso=$(jq -rn 'now - 3600 | strftime("%Y-%m-%dT%H:%M:%S") | . + "+00:00"')
-  printf '{"date":"%s","cwd":"%s","session_id":"","summary":"Fixed the widget bug."}\n' \
-    "$recent_iso" "$cwd" > "$episodes"
-
-  payload="{\"cwd\":\"$cwd\",\"session_id\":\"real-session-id-123\"}"
-  printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" session_hook_claude 2>/dev/null
-  status=$?
-  line_count=$(wc -l < "$episodes" 2>/dev/null || echo 0)
-  rm -rf "$dir"
-
-  if [[ "$status" == "0" && "$line_count" == "1" ]]; then
-    PASS=$((PASS+1))
-    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
-  else
-    FAIL=$((FAIL+1))
-    FAILED_CASES+=("$name")
-    printf '  FAIL  %s — exit=%s lines=%s (expected 1)\n' "$name" "$status" "$line_count"
-  fi
-}
-
-session_stop_appends_after_old_memlog_empty_session_id() {
-  # Verifies Stop hook DOES append a new skeleton when the last session_id=""
-  # entry is older than the 4-hour session window. An old /mem-log entry from
-  # a previous day must not permanently suppress future Stop-hook recording.
-  # Steps:
-  #   1. Create project memory dir and write a /mem-log entry (10h ago, session_id="")
-  #      with a non-empty summary — outside the 4-hour session window
-  #   2. Run Stop hook with a new real session_id for the same cwd
-  #   3. Assert exit 0 and episodes.jsonl now has 2 lines (new skeleton appended)
-  local name="cross-cmd/stop-appends-after-old-memlog-empty-session-id"
-  should_run "$name" || return 0
-  local dir cwd episodes payload status line_count old_iso
-  dir="$(mktemp -d)"
-  cwd="$dir/workspace"
-  mkdir -p "$cwd"
-  write_inject_memory "$dir" "$cwd" $'- alpha\n'
-  episodes="$dir/projects/$(inject_encoded_path "$cwd")/memory/episodes.jsonl"
-  # Old /mem-log entry (10 hours ago) with empty session_id
-  old_iso=$(jq -rn 'now - 36000 | strftime("%Y-%m-%dT%H:%M:%S") | . + "+00:00"')
-  printf '{"date":"%s","cwd":"%s","session_id":"","summary":"Old session summary."}\n' \
-    "$old_iso" "$cwd" > "$episodes"
-
-  payload="{\"cwd\":\"$cwd\",\"session_id\":\"new-real-session\"}"
-  printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" session_hook_claude 2>/dev/null
-  status=$?
-  line_count=$(wc -l < "$episodes" 2>/dev/null || echo 0)
-  rm -rf "$dir"
-
-  if [[ "$status" == "0" && "$line_count" == "2" ]]; then
-    PASS=$((PASS+1))
-    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
-  else
-    FAIL=$((FAIL+1))
-    FAILED_CASES+=("$name")
-    printf '  FAIL  %s — exit=%s lines=%s (expected 2)\n' "$name" "$status" "$line_count"
-  fi
-}
-
-session_stop_skips_after_recent_memlog_empty_session_id
-session_stop_appends_after_old_memlog_empty_session_id
-
-cross_cmd_stop_skips_recent_fractional_iso() {
-  # Verifies Stop hook skips when the most recent session_id="" entry has a
-  # Python-style fractional ISO timestamp within the 4-hour session window.
-  # Steps:
-  #   1. Create episodes.jsonl with session_id="" entry dated now, fractional-offset format
-  #   2. Run session stop hook with a real session_id
-  #   3. Assert exit 0 and episodes.jsonl still has exactly 1 line (not appended)
-  local name="cross-cmd/stop-skips-recent-fractional-iso"
-  should_run "$name" || return 0
-  local dir cwd episodes payload status line_count recent_iso
-  dir="$(mktemp -d)"
-  cwd="$dir/workspace"
-  mkdir -p "$cwd"
-  write_inject_memory "$dir" "$cwd" $'- alpha\n'
-  episodes="$dir/projects/$(inject_encoded_path "$cwd")/memory/episodes.jsonl"
-  recent_iso="$(date -u +%Y-%m-%dT%H:%M:%S).123456+00:00"
-  printf '{"date":"%s","cwd":"%s","session_id":"","summary":"Recent fractional entry."}\n' \
-    "$recent_iso" "$cwd" > "$episodes"
-  payload="{\"cwd\":\"$cwd\",\"session_id\":\"real-session-frac\"}"
-  printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" session_hook_claude 2>/dev/null
-  status=$?
-  line_count=$(wc -l < "$episodes" 2>/dev/null || echo 0)
-  rm -rf "$dir"
-  if [[ "$status" == "0" && "$line_count" == "1" ]]; then
-    PASS=$((PASS+1))
-    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
-  else
-    FAIL=$((FAIL+1))
-    FAILED_CASES+=("$name")
-    printf '  FAIL  %s — exit=%s lines=%s (expected 1)\n' "$name" "$status" "$line_count"
-  fi
-}
-
-cross_cmd_stop_appends_old_fractional_iso() {
-  # Verifies Stop hook appends when the most recent session_id="" entry has a
-  # Python-style fractional ISO timestamp outside the 4-hour session window.
-  # Steps:
-  #   1. Create episodes.jsonl with session_id="" entry dated 2020-01-01, fractional-offset format
-  #   2. Run session stop hook with a new real session_id
-  #   3. Assert exit 0 and episodes.jsonl has exactly 2 lines (new entry appended)
-  local name="cross-cmd/stop-appends-old-fractional-iso"
-  should_run "$name" || return 0
-  local dir cwd episodes payload status line_count
-  dir="$(mktemp -d)"
-  cwd="$dir/workspace"
-  mkdir -p "$cwd"
-  write_inject_memory "$dir" "$cwd" $'- alpha\n'
-  episodes="$dir/projects/$(inject_encoded_path "$cwd")/memory/episodes.jsonl"
-  printf '{"date":"2020-01-01T00:00:00.123456+00:00","cwd":"%s","session_id":"","summary":"Old fractional entry."}\n' \
-    "$cwd" > "$episodes"
-  payload="{\"cwd\":\"$cwd\",\"session_id\":\"new-real-session-frac\"}"
-  printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" session_hook_claude 2>/dev/null
-  status=$?
-  line_count=$(wc -l < "$episodes" 2>/dev/null || echo 0)
-  rm -rf "$dir"
-  if [[ "$status" == "0" && "$line_count" == "2" ]]; then
-    PASS=$((PASS+1))
-    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
-  else
-    FAIL=$((FAIL+1))
-    FAILED_CASES+=("$name")
-    printf '  FAIL  %s — exit=%s lines=%s (expected 2)\n' "$name" "$status" "$line_count"
-  fi
-}
-cross_cmd_stop_skips_recent_fractional_iso
-cross_cmd_stop_appends_old_fractional_iso
 
 # =============================================================================
 # guard-pm-bash.sh (pm/pre-bash policy, codex-host command_guard)

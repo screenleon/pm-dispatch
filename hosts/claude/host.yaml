@@ -109,16 +109,6 @@ guard_bindings:
     coverage: none
     stability: evolving
     confidence: probed
-  # Session lifecycle: guard-session-summary.sh --host claude wired on Stop,
-  # writing a session summary — probed end-to-end (fires on every session
-  # stop), advisory only (does not block anything).
-  - capability: session_lifecycle
-    binding_form: hook-script
-    provider: host_hook
-    enforcement: advisory
-    coverage: full
-    stability: stable
-    confidence: probed
   # PM command interface: commands/pm.md is installed (symlink-tree) and
   # loaded natively by Claude Code's own command mechanism — no hook or JSON
   # config fragment is involved, which is a genuine schema v1 expressivity

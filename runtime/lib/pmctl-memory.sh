@@ -209,7 +209,6 @@ _pmctl_memory_append_episode_usage() {
   cat <<'EOF'
 Usage: pmctl memory append-episode --repo-root <path> --host <name> --summary <text>
        [--session-id <id>] [--date <ISO8601>]
-       [--skeleton]
        [--allow-non-git] [--json]
 
 Append one JSONL episode through the strict canonical resolver. An invalid
@@ -234,7 +233,7 @@ _pmctl_memory_secure_append_dir() {
 }
 
 _pmctl_memory_append_episode_inner() {
-  local episodes_file="$1" json_line="$2" mode="$3" session_id="$4" append_dir="$5"
+  local episodes_file="$1" json_line="$2" append_dir="$3"
   local snapshot tmp
   snapshot="$(mktemp "$append_dir/episodes.snapshot.XXXXXX")" || return 1
   tmp="$(mktemp "$append_dir/episodes.new.XXXXXX")" || { rm -f -- "$snapshot"; return 1; }
@@ -259,13 +258,6 @@ _pmctl_memory_append_episode_inner() {
     cat -- "$snapshot" > "$tmp" || { rm -f -- "$snapshot" "$tmp"; return 1; }
   fi
 
-  if [[ "$mode" == "skeleton" ]] \
-    && jq -eRs --arg sid "$session_id" \
-      'split("\n") | map(select(length>0) | try fromjson catch empty) | any(.session_id == $sid)' \
-      "$tmp" >/dev/null 2>&1; then
-    rm -f -- "$snapshot" "$tmp"
-    return 0
-  fi
   printf '%s\n' "$json_line" >> "$tmp" || { rm -f -- "$snapshot" "$tmp"; return 1; }
 
   # Never reopen episodes_file for writing. rename(2) replaces a raced symlink
@@ -280,7 +272,7 @@ _pmctl_memory_append_episode_inner() {
 # path, so reads and writes cannot drift to different host-owned directories.
 pmctl_memory_append_episode() {
   local repo_root="$PWD" summary="" session_id="" episode_date="" host=""
-  local mode="summary" allow_non_git=0 json=0
+  local allow_non_git=0 json=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --repo-root)
@@ -300,7 +292,6 @@ pmctl_memory_append_episode() {
         pmctl_host_is_valid "$2" || { printf 'pmctl memory append-episode: --host must be claude, codex, opencode, grok, or generic\n' >&2; return 2; }
         host="$2"
         shift 2 ;;
-      --skeleton) mode="skeleton"; shift ;;
       --allow-non-git) allow_non_git=1; shift ;;
       --json) json=1; shift ;;
       -h|--help) _pmctl_memory_append_episode_usage; return 0 ;;
@@ -313,7 +304,7 @@ pmctl_memory_append_episode() {
     return 2
   }
 
-  [[ "$mode" == "skeleton" && -n "$session_id" ]] || [[ -n "${summary//[[:space:]]/}" ]] || {
+  [[ -n "${summary//[[:space:]]/}" ]] || {
     printf 'pmctl memory append-episode: --summary must not be empty\n' >&2
     return 2
   }
@@ -349,7 +340,7 @@ pmctl_memory_append_episode() {
   local append_dir="$memory_dir/.pm-dispatch"
   _pmctl_memory_secure_append_dir "$append_dir" || return 1
   serialize_with_lock "$append_dir/episodes" \
-    _pmctl_memory_append_episode_inner "$episodes_file" "$json_line" "$mode" "$session_id" "$append_dir" || return 1
+    _pmctl_memory_append_episode_inner "$episodes_file" "$json_line" "$append_dir" || return 1
 
   if [[ "$json" -eq 1 ]]; then
     jq -cn --arg provider pmctl --arg authority canonical \
@@ -1081,7 +1072,8 @@ pmctl_memory_stats() {
 
     # ── index: card count and what a full, unbudgeted injection would cost ────
     # Measured exactly the way guard-inject-memory.sh measures its own budget
-    # (${#line} under the ambient locale), so the two numbers are comparable.
+    # (memory_byte_len_var, actual UTF-8 bytes), so the two numbers are
+    # comparable and both match what MEMORY_MAX_INJECT_BYTES actually bounds.
     # Two index lines may link the same card file. Injection ranks per line, so
     # index_entry_count stays per line, but every usage number below is keyed by
     # card_relpath (the sidecar's key) and must therefore count each card once —
@@ -1092,7 +1084,9 @@ pmctl_memory_stats() {
       while IFS= read -r line; do
         [[ "$line" =~ ^-\ \[ ]] || continue
         index_entry_count=$((index_entry_count + 1))
-        index_inject_bytes=$(( index_inject_bytes + ${#line} + 1 ))
+        local _line_bytes
+        memory_byte_len_var _line_bytes "$line"
+        index_inject_bytes=$(( index_inject_bytes + _line_bytes + 1 ))
         rel=""
         [[ "$line" =~ $link_re ]] && rel="${BASH_REMATCH[2]}"
         # An entry with no parseable .md link has no sidecar key and is not a

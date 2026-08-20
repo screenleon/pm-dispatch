@@ -201,10 +201,13 @@ evidence that the cards went unused — silently collapsing the second into
 "no activity" would invite exactly the wrong retention decision.
 
 `episode_fill_rate_pct` counts only episodes whose `summary` has
-non-whitespace content. The Stop hook writes empty skeletons and `/mem-log`
-fills them in by hand, so a low fill rate means `/mem-distill`'s upstream is
-dry — a fact that was previously invisible. `pmctl memory rebuild-summary`
-applies the same emptiness rule, so one concept does not get two answers.
+non-whitespace content. A Stop hook previously wrote empty skeletons for
+`/mem-log` to fill in by hand; it is retired (fill rate stayed at 8-12% for
+over two months, the trial period the card that added it named), so
+`/mem-log` is now the only writer and every episode it appends already has a
+summary. The metric and `pmctl memory rebuild-summary`'s emptiness rule are
+kept for episodes.jsonl history that still holds skeletons from before the
+retirement.
 
 Rows that fail to parse are reported as `episodes_malformed` rather than
 discarded, and `episodes_status: error` marks an episodes file that exists but
@@ -347,13 +350,13 @@ canonical `episodes.jsonl`. It refuses invalid explicit paths, unwritable
 directories, and symlink episode targets; it never accepts a caller-guessed
 memory directory. `--host` is required and has no default: it records the
 adapter that actually initiated the event, while project identity alone selects
-the canonical destination. `/mem-log` and each host's Stop adapter both use this
-API; skeleton session-id dedupe happens inside the same append lock.
+the canonical destination. `/mem-log` is the sole writer — the Stop-hook
+skeleton writer and its `--skeleton` session-id dedupe mode are retired.
 
 | Host | Deterministic read entry | Canonical write entry | Native memory |
 | --- | --- | --- | --- |
 | Claude | `/pm` calls `pm prepare --host claude`; `UserPromptSubmit` runs `guard-inject-memory.sh` | `pmctl memory append-episode --host claude` | auxiliary; `unknown` unless separately observed |
-| Codex | `UserPromptSubmit` runs `guard-inject-memory.sh`; batch PM uses `--host codex` | `codex-memory-update.sh` routes explicit requests to `pmctl memory append-episode --host codex`; `Stop` writes a canonical skeleton | auxiliary; `unknown` unless separately observed |
+| Codex | `UserPromptSubmit` runs `guard-inject-memory.sh`; batch PM uses `--host codex` | `codex-memory-update.sh` routes explicit requests to `pmctl memory append-episode --host codex` | auxiliary; `unknown` unless separately observed |
 | OpenCode | `/pm` calls the installed `pm_prepare` tool with `--host opencode` | `pmctl memory append-episode --host opencode` | auxiliary; `unknown` unless separately observed |
 | Generic/no hook | `pmctl pm prepare --host generic` | `pmctl memory append-episode --host generic` | auxiliary; `unknown` |
 
