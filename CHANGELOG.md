@@ -113,6 +113,21 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **The targeted-gate CLI's fail-closed validation matrix now has deterministic
+  fixtures (CC-527).** `--pass initial` combined with `--initial-result`,
+  conflicting `--pass`/`--targeted` pass-kind spellings, `--reviewers`/
+  `--targeted` naming different coverage sets, a duplicate reviewer in a
+  `--reviewers`/`--targeted` list, and an empty or malformed reviewer list
+  were all already rejected before dispatch by existing `pr-gate.sh` /
+  `gate-options.sh` / `gate-policy.sh` checks, but none of the five had a
+  regression test. Auditing the ticket's remaining requirements also found
+  its "stale/legacy initial-result consumer parity" and "publish/closure
+  consumption" gap had already been closed by CC-517's PR #483/#484
+  (`gate-closure.sh`'s targeted-closure sidecar/ledger enforcement), and its
+  "tier inheritance" validation requirement is moot after PR #476 removed
+  tier inheritance entirely — both reconciled back into the ticket record.
+  No production code changed; this closes CC-527.
+
 - **A test that asserts a default no longer measures the caller's environment
   (CC-561).** `jobs-default-caps-high-nproc` stubs `nproc` to 32 to prove the
   parallel cap is 4, but did not control `PM_DISPATCH_TEST_MAX_JOBS` — the knob

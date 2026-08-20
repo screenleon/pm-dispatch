@@ -7581,6 +7581,154 @@ test_targeted_sidecar_cannot_overwrite_initial_result() {
   pass "$name"
 }
 
+# Behavior: --initial-result is only meaningful for a targeted pass; supplying
+# it alongside an explicit initial pass fails before dispatch.
+# Steps: run --pass initial with --initial-result set and assert exit 2, the
+# explicit rejection message, and no dispatch marker.
+test_initial_pass_rejects_initial_result() {
+  local name="initial-pass-rejects-initial-result"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" initial="$dir/initial.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_repo "$repo" docs
+  write_valid_initial_gate_result "$initial"
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main \
+    --pass initial --initial-result "$initial"
+  local code=$?
+  set -e
+  if [[ "$code" -ne 2 ]]; then
+    fail "$name" "exit $code, expected 2"
+    return
+  fi
+  assert_file_contains "$name" "$err" "--initial-result is only valid with --pass targeted" || return
+  assert_not_contains "$name" "$out" "DISPATCH_STUB" || return
+  pass "$name"
+}
+
+# Behavior: --pass and --targeted are two spellings of the same pass-kind
+# coordinate; requesting different kinds through each fails before dispatch.
+# Steps: run --pass initial together with --targeted (which implies
+# pass=targeted) and assert exit 2 with the conflicting-options message.
+test_conflicting_pass_options_are_rejected() {
+  local name="conflicting-pass-options-are-rejected"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" initial="$dir/initial.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_repo "$repo" docs
+  write_valid_initial_gate_result "$initial"
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main \
+    --pass initial --targeted critic --initial-result "$initial"
+  local code=$?
+  set -e
+  if [[ "$code" -ne 2 ]]; then
+    fail "$name" "exit $code, expected 2"
+    return
+  fi
+  assert_file_contains "$name" "$err" "conflicting gate pass options" || return
+  assert_not_contains "$name" "$out" "DISPATCH_STUB" || return
+  pass "$name"
+}
+
+# Behavior: --reviewers (canonical) and --targeted (compatibility shorthand)
+# must name the same coverage set when both are supplied; different sets fail
+# before dispatch rather than silently picking one.
+# Steps: run with disjoint --reviewers/--targeted lists and assert exit 2 with
+# the mismatch message.
+test_reviewers_and_targeted_mismatch_rejected() {
+  local name="reviewers-and-targeted-mismatch-rejected"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" initial="$dir/initial.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_repo "$repo" docs
+  write_valid_initial_gate_result "$initial"
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main \
+    --reviewers critic --targeted qa-tester --initial-result "$initial"
+  local code=$?
+  set -e
+  if [[ "$code" -ne 2 ]]; then
+    fail "$name" "exit $code, expected 2"
+    return
+  fi
+  assert_file_contains "$name" "$err" "--reviewers and --targeted request different reviewer coverage" || return
+  assert_not_contains "$name" "$out" "DISPATCH_STUB" || return
+  pass "$name"
+}
+
+# Behavior: a reviewer list that names the same reviewer twice is malformed
+# coverage input and must fail before dispatch, not silently dedupe.
+# Steps: run --pass targeted --reviewers critic,critic and assert exit 2 with
+# the duplicate-reviewer message.
+test_duplicate_reviewer_in_list_rejected() {
+  local name="duplicate-reviewer-in-list-rejected"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" initial="$dir/initial.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_repo "$repo" docs
+  write_valid_initial_gate_result "$initial"
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main \
+    --pass targeted --reviewers critic,critic --initial-result "$initial"
+  local code=$?
+  set -e
+  if [[ "$code" -ne 2 ]]; then
+    fail "$name" "exit $code, expected 2"
+    return
+  fi
+  assert_file_contains "$name" "$err" "--reviewers contains duplicate reviewer: critic" || return
+  assert_not_contains "$name" "$out" "DISPATCH_STUB" || return
+  pass "$name"
+}
+
+# Behavior: a malformed reviewer list (leading comma, no reviewer names) is
+# rejected before dispatch rather than resolving to an empty or partial
+# coverage set. (A bare empty string is caught earlier by --reviewers' own
+# arg-presence check; this exercises gate-policy's list-shape validation.)
+# Steps: run --pass targeted --reviewers "," and assert exit 2 with the
+# non-empty-comma-separated-list message.
+test_empty_reviewer_list_rejected() {
+  local name="empty-reviewer-list-rejected"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" initial="$dir/initial.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_repo "$repo" docs
+  write_valid_initial_gate_result "$initial"
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main \
+    --pass targeted --reviewers "," --initial-result "$initial"
+  local code=$?
+  set -e
+  if [[ "$code" -ne 2 ]]; then
+    fail "$name" "exit $code, expected 2"
+    return
+  fi
+  assert_file_contains "$name" "$err" "--reviewers requires a non-empty comma-separated reviewer list" || return
+  assert_not_contains "$name" "$out" "DISPATCH_STUB" || return
+  pass "$name"
+}
+
 # Behavior: a pre-existing symlink, non-regular file, or hardlink at the
 # deterministic assurance destination is rejected before reviewer dispatch.
 # Steps: prepare each unsafe destination type, run with an explicit output, and
@@ -8424,6 +8572,11 @@ run_test test_repo_layout_targeted_coordinates_match_copy_mode_contract
 run_test test_targeted_requires_initial_result
 run_test test_targeted_output_cannot_overwrite_initial_result
 run_test test_targeted_sidecar_cannot_overwrite_initial_result
+run_test test_initial_pass_rejects_initial_result
+run_test test_conflicting_pass_options_are_rejected
+run_test test_reviewers_and_targeted_mismatch_rejected
+run_test test_duplicate_reviewer_in_list_rejected
+run_test test_empty_reviewer_list_rejected
 run_test test_assurance_unsafe_destinations_rejected
 run_test test_conflicting_mode_options_are_rejected
 run_test test_equivalent_mode_spellings_are_accepted

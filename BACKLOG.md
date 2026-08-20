@@ -23,7 +23,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-516 | ⏸ deferred | evidence-gated thin delivery wrapper 評估；只組合既有 primitives，不建立 workflow engine/FSM | ux/process | 2026-07-23 | — | P3 | spike |
 | CC-517 | ⚠️ partial 2026-08-15 | maintainer `/ship`：primary review、structured remediation closure 與 conditional targeted confirmation | process/gate | 2026-07-23 | pr:#483 | P1 | design |
 | CC-524 | 🔵 active | `pmctl artifacts show` 顯示 canonical absolute run root 並提供穩定 machine-readable locator | ux/ops | 2026-07-27 | feedback:2026-07-27 | P2 | hygiene |
-| CC-527 | ⚠️ partial 2026-08-12 | targeted gate CLI 拆分 pass、reviewer coverage 與 tier；tier 由 current subject/policy 解析，initial result 僅為 remediation context | ux/gate | 2026-07-28 | pr:#472, pr:#476, pr:#482 | P2 | design |
+| CC-527 | ✅ done | targeted gate CLI 拆分 pass、reviewer coverage 與 tier；tier 由 current subject/policy 解析，initial result 僅為 remediation context | ux/gate | 2026-07-28 | pr:#472, pr:#476, pr:#482, pr:TBD | P2 | design |
 | CC-529 | ⚠️ partial 2026-08-15 | publish assurance observability：以 gate_publish_assessment_v1 將 ship stdout、PR body 與 finish marker 綁到同一份 verified assessment；仍需完成完整 producer/consumer dogfood | release/gate | 2026-07-30 | feedback:2026-07-30, pr:#484 | P2 | hygiene |
 | CC-532 | ⚠️ partial 2026-08-14 | Linux/WSL2 repo-layout canonical Gate modules 已完成；standalone distribution／copy parity 已移出本票，待 P0 current-tree evidence 後關閉 | arch/gate | 2026-07-30 | feedback:2026-07-30 | P1 | reuse-debt |
 | CC-533 | ⚠️ partial 2026-08-14 | PR #480 已交付 schema-derived structural validation foundation；handwritten structural cleanup、version dispatch separation 與 legacy/current verifier split 仍待 schema 穩定後收尾 | schema/gate | 2026-07-30 | pr:#480 | P1 | design |
@@ -1765,7 +1765,7 @@ freshness／applicability verifier 正交。P2。
 
 ---
 
-## CC-527 — targeted gate CLI coordinate separation 與 truthful labeling ⚠️ partial 2026-08-12
+## CC-527 — targeted gate CLI coordinate separation 與 truthful labeling ✅ 2026-08-21
 
 **Framing**: 本票只收斂既有 gate assurance coordinates 的 CLI 表達與 human
 label，不新增 gate kind、review workflow、tier 或 reviewer。[[CC-512]] 已確立
@@ -1853,6 +1853,24 @@ inheritance 依賴 [[CC-515]]；maintainer consumer 接線由 [[CC-517]] 使用�
 可先交付 syntax/parity，再於 applicability verifier 完成後接 inheritance。
 
 **Cross-link**: [[CC-512]]、[[CC-513]]、[[CC-514]]、[[CC-515]]、[[CC-517]]。
+
+**Closure 2026-08-21 (pr:TBD)**: 查證現況後確認 Requirement 1–7 已全數滿足。
+Requirement 6/7 票面標記為「仍留在後續 slice」的 stale／legacy initial-result
+consumer parity 與 publish/closure consumption，實際已由 [[CC-517]] PR #483／#484
+（2026-08-15）交付：`runtime/lib/gate-closure.sh` 對 targeted closure 強制要求
+initial result 的 immutable `*.assurance.json` sidecar 與 synthesis ledger，
+subject/scope provenance 不符或 sidecar 缺失即 fail closed（見
+`tests/shell/test-pmctl-ship.sh` `case_targeted_closure_rejects_legacy_initial_without_immutable_evidence`、
+`case_targeted_closure_rejects_initial_subject_mismatch`、
+`case_targeted_closure_requires_initial_finding_ledger`），只是當時未回連本票。
+Requirement 4 的「tier inheritance 不可驗證」子項在 PR #476 決策後已不適用——
+tier 一律從 current policy 重新解析，沒有可驗證的繼承路徑。本 slice 只補上
+Requirement 4/7 CLI 層剩餘的 fail-closed fixture 缺口（`--pass initial` 誤帶
+`--initial-result`、`--pass`/`--targeted` 互相衝突、`--reviewers`/`--targeted`
+coverage 不一致、重複 reviewer、空／畸形 reviewer list），未變更任何 production
+code。
+
+**See**: pr:TBD
 
 ---
 
