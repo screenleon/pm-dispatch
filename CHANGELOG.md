@@ -54,6 +54,26 @@ Versions follow [Semantic Versioning](https://semver.org/).
   public option list had none, and the existing discovery test only asserts that
   a `Main options:` section exists, not what any command puts in it.
 
+- **The context index now holds a file's actual content (CC-505 Phase 1).**
+  Every non-markdown file — shell included — was stored as a single chunk
+  holding the first 200 characters, so function bodies were not in the index at
+  all; they are now windowed with bounded bodies. Content past the cap is split
+  across chunks rather than truncated — for a long markdown section and equally
+  for a single physical line longer than the cap, whose tail would otherwise be
+  dropped by the SQL escaper while indexing reported success. Window size and cap were chosen from measured
+  body lengths so the cap guards outliers instead of truncating routinely.
+  Measured cost on this repository: chunks 5,027 → 13,041, database 5.5 → 32.6
+  MB, full rebuild 1m23s (tracked for follow-up), incremental run 6.3 → 9.3s.
+- **An edit that preserves mtime no longer leaves the index silently stale
+  (CC-505).** mtime is now a fast path and `files.sha1` decides. A new
+  `index_meta` table records the extractor version, and a change to it forces
+  re-extraction — without that, a chunker change leaves existing databases
+  serving chunks the current extractor would never produce while every file
+  still looks up to date.
+- **Removed a hashing subprocess per indexed chunk.** `file_chunks.sha1` has no
+  reader anywhere in the repository, and computing it measured at over 40% of
+  index time.
+
 ### Fixed
 
 - **A test that asserts a default no longer measures the caller's environment

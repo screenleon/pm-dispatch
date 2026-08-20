@@ -37,6 +37,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-546 | ⏸ deferred | standalone Gate distribution／copy parity follow-up：獨立定義 bundle schema、generation、installed parity 與 support boundary；不回併 Linux/WSL2 canonical module extraction | arch/gate | 2026-08-14 | — | P2 | reuse-debt |
 | CC-559 | 🟢 someday | memory usage sidecar 是 tab-delimited，writer 拒收含 tab／newline 的 relpath，因此這類記憶卡**永遠無法累積使用紀錄**；`pmctl memory stats` 目前誠實地把它們列為 `unmeasurable_cards`（不謊稱 never-hit），但根因未解——需改用無損編碼。屬寫入面變更，故當初被 [[CC-467]] Requirement 3 明文排除 | ops/memory | 2026-08-19 | — | P3 | hygiene |
 | CC-562 | 🟢 someday | synthesis／reviewer 驗證器仍有多個「多約束共用單一 reason 字串」分支（`invalid coverage matrix`、`invalid finding inventory or union`、`duplicate finding ID collision`、`selected/not-reviewed dimensions mismatch`），單次修正重試收到後無法行動；[[CC-553]] Req 2 判定需同等精度但屬不同 helper 形狀（逐項指出違規條目，非集合差集），故分票 | ops/gate | 2026-08-19 | — | P3 | hygiene |
+| CC-563 | 🟢 someday | context index 全量重建 1m23s：profile 顯示 chunking 僅 7%、FTS 0.4%，其餘約 60% 在 `_ctx_generate_file_sql` 的既有成本（symbol 抽取＋per-chunk SQL escaping），被 [[CC-505]] Ph1 的 2.6× chunk 數放大；與 [[CC-560]] 同形（既有 per-item 成本被放大），須先 profile 再改 | ops/DX | 2026-08-20 | pr:#502 | P3 | hygiene |
 | CC-561 | ✅ closed 2026-08-20 | 斷言「預設值」的測試在**繼承來的**環境下執行受測主體，任何 operator override 都會靜默改變它量到的東西：`jobs-default-caps-high-nproc` 有 stub `nproc` 回 32 卻沒控制能覆蓋上限的 `PM_DISPATCH_TEST_MAX_JOBS`。現行防線是一行手寫 `unset`（只列 2 個名字），**永遠落後一次事故**——此類已咬第三次 | ops/test | 2026-08-19 | — | P2 | hygiene |
 | CC-560 | 🟢 someday | `_gate_scope_reference_index_collect` 每筆 reference 都以 `jq -nc` 建一個 JSON 物件（實測 4.9s×2），與 [[CC-557]] 已修掉的 `_gate_scope_expansion_append` 是同一類寫法；CC-557 未一併處理是因預算餘裕已足，非因不成立 | ops/gate | 2026-08-19 | — | P3 | hygiene |
 | CC-557 | ✅ closed 2026-08-19 | `scope-manifest/large-expansion-uses-file-input` 在正常 4-way 並行下耗用 120s watchdog 的 84-86%（實測 101s／103s，單獨跑 57s），gate preflight 的額外開銷即可推過；耗時穩定＝預算相對工作量設錯，非 flake；依 §7「pass/fail 取決於主機負載＝缺陷」 | ops/test | 2026-08-19 | — | P2 | hygiene |
@@ -272,6 +273,34 @@ relpath（`runtime/lib/pmctl-memory.sh` 內 `unmeasurable_cards` 分支的註解
 
 **Cross-link**: [[CC-467]]（本 follow-up 的來源票）、[[CC-466]]（生命週期判斷建立在遙測
 可信度之上）。
+
+---
+
+## CC-563 — context index 全量重建成本 🟢 someday
+
+**Problem**: [[CC-505]] Phase 1 第一片把程式檔從「一個 chunk 存檔首 200 字元」改成
+窗口化 bounded bodies，chunk 數 5,027→13,041（2.6×），全 repo 全量重建實測 **1m23s**
+（移除無人消費的 per-chunk hashing 子行程後，已從 2m40s 降下來）。重建只在 extractor
+版本變更時發生，但它落在 gate 執行內。
+
+**Why**: profile 已完成且**推翻了直覺**——bash 逐行 chunking 只佔 7%（300 檔 2.8s，
+外推全 repo ≈10s），FTS5 重建 0.6s（0.4%）。剩餘約 60% 在 `_ctx_generate_file_sql`
+的既有成本：symbol 抽取與每個 chunk 的 `_ctx_sql_str` escaping（2000 字元字串上的
+bash 參數展開，13,041 次）。這是**既有成本被 chunk 數放大**，與 [[CC-560]] 同形，
+不是本次新增的缺陷。
+
+**Requirement**:
+1. 先 profile 區分 symbol 抽取與 SQL escaping 各自佔比，**不得憑直覺優化**——本票的
+   前身已有兩次直覺被 profile 推翻的紀錄。
+2. 依 profile 結果處理；若主因是 per-chunk bash 字串展開，考慮批次化或改由 sqlite3
+   參數綁定承擔 escaping。
+3. 不得為了降低重建成本而縮小 chunk 覆蓋——量測顯示更大窗口會讓 cap 變成常態截斷
+   （40 行時 p95=2358 超過 2000 cap），等於退回本片要修的缺陷。
+
+**Non-goals**: 不改 chunker 的覆蓋語意；不引入外部索引工具。
+
+**Cross-link**: [[CC-505]]（來源）、[[CC-560]]（同形殘留）、[[CC-557]]（profile 推翻
+票面預期的先例）。
 
 ---
 
@@ -2528,6 +2557,26 @@ launch 早期死亡會留下 0-byte 空殼 gate 結果），摘要邏輯必須�
 5. `context pack` 增加全域 item + byte budget（跨 query terms），超額截斷須在輸出中揭露。
 6. freshness：mtime 快篩後以 `files.sha1` 驗證可疑案例；新增 `index_meta(schema_version, extractor_version, built_at)`，extractor 版本變更強制目標重建。
 7. deterministic retrieval fixture corpus：覆蓋 exact symbol、heading、段落深處、同詞多義、path boost、trust weighting、長 section 分段、mtime-preserving edit、extractor-version rebuild。每個 fixture 宣告 expected top-K refs；exact-symbol expected ref 必須 top-1，其餘 expected refs 必須位於 bounded top-K。
+
+**Update 2026-08-20（Phase 1 第一片：Req 1 + Req 6）**: chunk 改存 bounded full
+bodies；程式語言檔案先前被壓成**一個 chunk、只存檔首 200 字元**，函式本體完全不在
+索引裡，現改為窗口化。超過 cap 的內容一律**分段而非截斷**——長 markdown section 依 Req 7
+如此，單一實體行超過 cap 者亦然（否則尾端會被 SQL escaper 靜默丟棄，而索引仍回報
+成功；此缺陷由首輪 gate 的 qa-tester／critic 各自獨立指出）。新增 `index_meta(schema_version, extractor_version, built_at)`，extractor 版本
+變更強制全量重新抽取；freshness 以 mtime 快篩後由 `files.sha1` 決定，mtime 不變的
+編輯不再靜默 stale。
+
+**參數有量測依據**（本 repo 實測）：窗口 20 行＋cap 2000 → 保留率 99.3%、p95=1232
+遠低於 cap；40 行時 p95=2358 **超過** cap，會讓 cap 從離群值防護退化成常態截斷。
+
+**已量測的成本**：chunk 5,027→13,041（2.6×）、DB 5.5→32.6 MB（6×）、增量執行
+6.3→9.3s（+48%，sha1 驗證）、全量重建 1m23s。重建成本經 profile 後確認主因是既有
+的 `_ctx_generate_file_sql` 被 chunk 數放大，另立 [[CC-563]]；順帶移除了
+`file_chunks.sha1` 的 per-chunk hashing 子行程（全 repo 查證無任何 reader，實測佔
+索引時間逾四成）。
+
+**未動**：Req 2/3/4（bm25 排序與四 consumer 共用 ranking path）、Req 5（pack budget）、
+Phase 2 全部。票維持 active。
 
 **Requirement — Phase 2（agent 契約 + shadow 儀器化；小 PR，跟在 Phase 1 後）**:
 8. Agent-facing injection 明確採用 **index-first, source-verified** 契約：retrieval hit 是導航與 scope-narrowing evidence，不是原始來源替代品；factual conclusion、code edit、gate/security/release 判斷前必須 targeted-read 命中的 bounded span；zero-hit、stale/unknown freshness、truncated 或 ambiguous 結果必須 fallback 至 targeted Grep/Read；no hit 不得解讀為不存在。本階段只改導引措辭，**不收緊**任何現有 fallback 行為。
