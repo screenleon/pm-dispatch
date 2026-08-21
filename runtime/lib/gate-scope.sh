@@ -762,20 +762,32 @@ _gate_scope_reference_index_collect() {
       rm -f -- "$paths_file" "$content_file" "$sorted_file"
       return 2
     }
-    jq -nc --arg path "$path" --arg snapshot "$snapshot" \
-      --argjson line_count "$line_count" --arg sha256 "$digest" '{
-        path:$path,
-        snapshot:$snapshot,
-        line_count:$line_count,
-        sha256:$sha256
-      }' >> "$output" || {
-        rm -f -- "$paths_file" "$content_file" "$sorted_file"
-        return 2
-      }
+    # Four NUL-separated fields, decoded in one pass below. A bounded run can
+    # reach hundreds of references, and building each object with its own jq
+    # process cost more than the content read that produced it (CC-557 found
+    # the same anti-pattern in the sibling expansion collector; NUL is safe as
+    # the separator by construction, not by escaping, since a bash string
+    # cannot contain a NUL byte).
+    printf '%s\0%s\0%s\0%s\0' "$path" "$snapshot" "$line_count" "$digest" \
+      >> "$output"
   done
   exec {reference_fd}<&-
 
-  jq -s 'unique_by(.path) | sort_by(.path)' "$output" > "$sorted_file" || {
+  # Decode the NUL-separated records above, then dedupe and order exactly as
+  # before. The record shape is fixed at four fields, so the stream is
+  # regrouped positionally.
+  local _decode_records
+  # shellcheck disable=SC2016 # $i is a jq variable, bound by jq itself.
+  _decode_records='
+    split("\u0000")
+    | if (length > 0 and .[-1] == "") then .[:-1] else . end
+    | [ range(0; (length / 4) | floor) as $i
+        | .[$i * 4 : $i * 4 + 4]
+        | {path: .[0], snapshot: .[1], line_count: (.[2] | tonumber),
+           sha256: .[3]} ]
+    | unique_by(.path)
+    | sort_by(.path)'
+  jq -Rs "$_decode_records" "$output" > "$sorted_file" || {
     rm -f -- "$paths_file" "$content_file" "$sorted_file"
     return 2
   }
