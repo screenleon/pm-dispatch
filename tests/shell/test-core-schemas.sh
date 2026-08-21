@@ -877,6 +877,86 @@ case_context_pack_v3_invalid_score_components_rejected() {
   rm -f "$tmpf"
 }
 
+# 8. context-pack schema v4 contract tests (CC-505 Req 5: truncation disclosure)
+# qa-tester-F001: no executable schema-contract coverage previously asserted
+# that a v4 pack MUST carry a valid `truncation` object, that omitting it is
+# rejected, or that older-version packs stay valid without one.
+
+case_context_pack_v4_with_truncation_valid() {
+  local name="context-pack.schema.json: v4 pack with a complete truncation object validates"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/context-pack.schema.json"
+  local tmpf; tmpf="$(mktemp /tmp/ctx-pack-v4-XXXXXX.json)"
+  printf '{"schema_version":4,"task_id":"CC-505","built_ts":"2026-01-01T00:00:00Z","sources":[{"name":"builtin-index","version":"1"}],"files":[],"truncation":{"applied":false,"reason":"none","budget":{"max_items":200,"max_bytes":200000},"total_before":0,"kept":0,"dropped":0}}' > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name" "a complete v4 pack with truncation should validate"
+  fi
+  rm -f "$tmpf"
+}
+
+case_context_pack_v4_missing_truncation_rejected() {
+  local name="context-pack.schema.json: v4 pack missing truncation is rejected"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/context-pack.schema.json"
+  local tmpf; tmpf="$(mktemp /tmp/ctx-pack-v4-notrunc-XXXXXX.json)"
+  printf '{"schema_version":4,"task_id":"CC-505","built_ts":"2026-01-01T00:00:00Z","sources":[{"name":"builtin-index","version":"1"}],"files":[]}' > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    fail "$name" "a v4 pack without truncation should be rejected"
+  else
+    pass "$name"
+  fi
+  rm -f "$tmpf"
+}
+
+case_context_pack_v4_truncation_missing_field_rejected() {
+  local name="context-pack.schema.json: v4 truncation object missing a required field is rejected"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/context-pack.schema.json"
+  local tmpf; tmpf="$(mktemp /tmp/ctx-pack-v4-badtrunc-XXXXXX.json)"
+  # Omits "dropped", which the schema requires inside truncation.
+  printf '{"schema_version":4,"task_id":"CC-505","built_ts":"2026-01-01T00:00:00Z","sources":[{"name":"builtin-index","version":"1"}],"files":[],"truncation":{"applied":false,"reason":"none","budget":{"max_items":200,"max_bytes":200000},"total_before":0,"kept":0}}' > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    fail "$name" "truncation missing a required field (dropped) should be rejected"
+  else
+    pass "$name"
+  fi
+  rm -f "$tmpf"
+}
+
+case_context_pack_v4_truncation_invalid_reason_rejected() {
+  local name="context-pack.schema.json: v4 truncation with an unknown reason value is rejected"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/context-pack.schema.json"
+  local tmpf; tmpf="$(mktemp /tmp/ctx-pack-v4-badreason-XXXXXX.json)"
+  printf '{"schema_version":4,"task_id":"CC-505","built_ts":"2026-01-01T00:00:00Z","sources":[{"name":"builtin-index","version":"1"}],"files":[],"truncation":{"applied":false,"reason":"unexpected_reason","budget":{"max_items":200,"max_bytes":200000},"total_before":0,"kept":0,"dropped":0}}' > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    fail "$name" "an unknown truncation.reason value should be rejected"
+  else
+    pass "$name"
+  fi
+  rm -f "$tmpf"
+}
+
+case_context_pack_v1_v3_still_valid_without_truncation() {
+  local name="context-pack.schema.json: v1-v3 packs remain valid without a truncation object"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/context-pack.schema.json"
+  local v
+  for v in 1 2 3; do
+    local tmpf; tmpf="$(mktemp /tmp/ctx-pack-compat-XXXXXX.json)"
+    _ctx_pack_base "$v" > "$tmpf"
+    if ! jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+      fail "$name" "schema_version $v pack without truncation should still validate"
+      rm -f "$tmpf"
+      return 0
+    fi
+    rm -f "$tmpf"
+  done
+  pass "$name"
+}
+
 case_preflight_basic_evidence_needs_no_git_provenance() {
   # Verifies the portable basic-result contract stays usable by an ordinary
   # command producer with no repository, base, head, or planner metadata.
@@ -2534,6 +2614,11 @@ case_context_pack_v3_invalid_match_kind_rejected
 case_context_pack_v3_invalid_line_span_rejected
 case_context_pack_v3_invalid_ranking_score_rejected
 case_context_pack_v3_invalid_score_components_rejected
+case_context_pack_v4_with_truncation_valid
+case_context_pack_v4_missing_truncation_rejected
+case_context_pack_v4_truncation_missing_field_rejected
+case_context_pack_v4_truncation_invalid_reason_rejected
+case_context_pack_v1_v3_still_valid_without_truncation
 case_preflight_basic_evidence_needs_no_git_provenance
 case_preflight_reusable_evidence_requires_fingerprint
 case_preflight_legacy_status_without_outcome_accepted

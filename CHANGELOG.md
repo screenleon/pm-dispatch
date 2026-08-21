@@ -245,6 +245,20 @@ Versions follow [Semantic Versioning](https://semver.org/).
   40 query terms and 60 candidate symbols forced through heavy
   `--max-bytes` trimming, asserting bounded completion time.
 
+- **`context-pack.schema.json`'s v4 `truncation` contract now has
+  executable schema-level tests, and `pmctl_context_pack`'s header comment
+  is current (CC-505 Phase 1, Req 5 sixth follow-up).** A sixth pr-gate
+  round (qa-tester, critic) found: (1) the v4 `truncation` requirement
+  (added several follow-ups ago) had shell-level behavioral coverage in
+  `test-pmctl-context.sh` but no schema-contract coverage in
+  `test-core-schemas.sh` — added 5 cases (complete v4 validates, v4
+  missing `truncation` rejected, `truncation` missing a required field
+  rejected, an invalid `reason` value rejected, v1-v3 packs remain valid
+  without `truncation`); (2) `pmctl_context_pack`'s header comment still
+  said "schema v2" and listed only `--source`, several Req 2-5 iterations
+  out of date — updated to describe schema v4, the ranking fields, and
+  `--max-items`/`--max-bytes`.
+
 ### Fixed
 
 - **`ship finish`'s closure producer and its consumer are now proven to

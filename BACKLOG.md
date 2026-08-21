@@ -2477,6 +2477,18 @@ symbol、`--max-bytes 4000` 強制大量裁切，斷言在合理時間內完成�
 非嚴格效能測試，只防止災難性劣化）且輸出仍在 byte cap 內。
 `tests/shell/test-pmctl-context.sh` 160 案全過。
 
+**pr-gate 第六輪（targeted，同 5 reviewer）NO-GO（1 block + 1 advise，其餘
+3 方 approve/pass）**：qa-tester 指出 schema v4 的 `truncation` 契約（Req 5
+新增）從未有過可執行的 schema-level accept/reject 測試——`test-pmctl-context.sh`
+只驗證了 shell 產生端的行為，`test-core-schemas.sh`（schema 契約測試的正確
+歸屬位置）完全沒有針對 v4 `truncation` 的案例。critic 指出 `pmctl_context_pack`
+上方的函式頭註解仍寫著「schema v2」且只列了 `--source`，Req 2-5 疊代下來已
+與實作嚴重脫節。修正：函式頭註解更新為 v4，列出 ranking 欄位與
+`--max-items`／`--max-bytes`；`test-core-schemas.sh` 新增 5 案：完整 v4
+truncation 驗證通過、v4 缺 truncation 拒絕、truncation 缺必要欄位拒絕、
+`reason` 非法值拒絕、v1-v3 pack 不需要 truncation 仍驗證通過（相容性回歸）。
+`tests/shell/test-core-schemas.sh` 160 案全過。
+
 **Phase 1（Req 1-7）至此全數
 交付。Phase 2（Req 8-10，agent 契約 + shadow telemetry）仍未開始，票維持
 active。**（agent 契約 + shadow 儀器化；小 PR，跟在 Phase 1 後）**:

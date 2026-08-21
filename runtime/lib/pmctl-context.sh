@@ -1817,13 +1817,18 @@ _ctx_pack_memory_tsv() {
 
 # ── pmctl_context_pack ────────────────────────────────────────────────────────
 #
-# Assembles multiple index queries into a JSON context-pack (schema v2).
+# Assembles multiple index queries into a JSON context-pack (schema v4).
 # Symbol-name hits (why_relevant starts "symbol:") go into symbols[];
 # chunk/FTS hits go into files[]; memory-plane hits go into memories[]
-# (pointer-only). Refs are deduplicated across all queries.
+# (pointer-only). Refs are deduplicated across all queries. Every item
+# carries rank/match_kind/bounded span/ranking_score/score_components
+# (CC-505 Req 2-4). Output is bounded by a global item + byte budget
+# across every --query term, always disclosed via a `truncation` object
+# (CC-505 Req 5) -- see --max-items/--max-bytes below.
 # --source repo|memory|all selects the plane(s); default repo (memories[] = []).
 #
-# CLI: pmctl context pack [<repo_root>] --task-id <id> [--query <term>] ... [--source repo|memory|all]
+# CLI: pmctl context pack [<repo_root>] --task-id <id> [--query <term>] ...
+#        [--source repo|memory|all] [--max-items <n>] [--max-bytes <n>]
 
 pmctl_context_pack() {
   local repo_root=""
