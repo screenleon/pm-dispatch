@@ -184,6 +184,20 @@ Versions follow [Semantic Versioning](https://semver.org/).
   direct test; added valid- and invalid-override cases plus the
   impossible-cap case.
 
+- **`pmctl context pack`'s no-index and sqlite-unavailable graceful-empty
+  branches now also honor `--max-bytes`, and digit-count inputs are bounded
+  (CC-505 Phase 1, Req 5 second follow-up).** A second pr-gate round (critic
+  and architecture-reviewer independently) found both graceful-empty
+  branches built and printed their own JSON envelope directly, bypassing
+  `_ctx_apply_pack_budget` entirely — an impossible `--max-bytes` cap on
+  those paths silently emitted an over-budget envelope instead of failing
+  closed. Fixed by routing both branches through the same budget function.
+  risk-reviewer also flagged that the `^[1-9][0-9]*$` validation had no
+  upper bound and could overflow Bash's signed 64-bit arithmetic on an
+  extreme input; bounded to 15 digits (both the CLI flags and the env var
+  defaults). qa-tester flagged several new test commands that didn't check
+  their own exit status before consuming output; all now do.
+
 ### Fixed
 
 - **`ship finish`'s closure producer and its consumer are now proven to

@@ -1843,16 +1843,16 @@ pmctl_context_pack() {
         shift
         ;;
       --max-items)
-        if [[ $# -lt 2 || ! "$2" =~ ^[1-9][0-9]*$ ]]; then
-          printf 'pmctl context pack: --max-items requires a positive integer\n' >&2
+        if [[ $# -lt 2 || ! "$2" =~ ^[1-9][0-9]{0,14}$ ]]; then
+          printf 'pmctl context pack: --max-items requires a positive integer (up to 15 digits)\n' >&2
           return 2
         fi
         max_items="$2"
         shift 2
         ;;
       --max-bytes)
-        if [[ $# -lt 2 || ! "$2" =~ ^[1-9][0-9]*$ ]]; then
-          printf 'pmctl context pack: --max-bytes requires a positive integer\n' >&2
+        if [[ $# -lt 2 || ! "$2" =~ ^[1-9][0-9]{0,14}$ ]]; then
+          printf 'pmctl context pack: --max-bytes requires a positive integer (up to 15 digits)\n' >&2
           return 2
         fi
         max_bytes="$2"
@@ -1876,12 +1876,16 @@ pmctl_context_pack() {
   # The env-var defaults above are not re-validated -- an ambient override
   # must not silently degrade this budget's shape. Fail closed instead of
   # feeding a malformed value into the jq/arithmetic below.
-  if [[ ! "$max_items" =~ ^[1-9][0-9]*$ ]]; then
-    printf 'pmctl context pack: PM_DISPATCH_CONTEXT_PACK_MAX_ITEMS must be a positive integer (got: %s)\n' "$max_items" >&2
+  # Bound the digit count (not just "positive integer") to a width that
+  # never overflows Bash's signed 64-bit arithmetic used later in this
+  # function's comparisons and loops (risk-reviewer-F001: an unbounded
+  # digit string can wrap negative and produce misleading budget behavior).
+  if [[ ! "$max_items" =~ ^[1-9][0-9]{0,14}$ ]]; then
+    printf 'pmctl context pack: PM_DISPATCH_CONTEXT_PACK_MAX_ITEMS must be a positive integer up to 15 digits (got: %s)\n' "$max_items" >&2
     return 2
   fi
-  if [[ ! "$max_bytes" =~ ^[1-9][0-9]*$ ]]; then
-    printf 'pmctl context pack: PM_DISPATCH_CONTEXT_PACK_MAX_BYTES must be a positive integer (got: %s)\n' "$max_bytes" >&2
+  if [[ ! "$max_bytes" =~ ^[1-9][0-9]{0,14}$ ]]; then
+    printf 'pmctl context pack: PM_DISPATCH_CONTEXT_PACK_MAX_BYTES must be a positive integer up to 15 digits (got: %s)\n' "$max_bytes" >&2
     return 2
   fi
 
@@ -1914,13 +1918,17 @@ pmctl_context_pack() {
     _ctx_ensure_fresh "$repo_root" || true
   fi
 
-  # Pure-repo source with no index keeps its exact legacy empty-pack output.
+  # Pure-repo source with no index keeps its legacy empty-pack shape, but
+  # still routes through _ctx_apply_pack_budget -- the ONE place --max-bytes
+  # is enforced/disclosed (critic-F001/architecture-reviewer-F001: an
+  # impossible cap must fail closed here too, not just on the indexed path).
   if [[ "$source" == "repo" && ! -f "$db" ]]; then
-    local ts
+    local ts empty_pack
     ts="$(_ctx_now_iso8601)"
-    printf '{"schema_version":4,"task_id":%s,"built_ts":%s,"sources":[{"name":"builtin-index","version":"1"}],"files":[],"symbols":[],"memories":[],"risks":[],"truncation":{"applied":false,"reason":"none","budget":{"max_items":%s,"max_bytes":%s},"total_before":0,"kept":0,"dropped":0}}\n' \
-      "$(_ctx_json_str "$task_id")" "$(_ctx_json_str "$ts")" "$max_items" "$max_bytes"
-    return 0
+    empty_pack="$(printf '{"schema_version":4,"task_id":%s,"built_ts":%s,"sources":[{"name":"builtin-index","version":"1"}],"files":[],"symbols":[],"memories":[],"risks":[]}' \
+      "$(_ctx_json_str "$task_id")" "$(_ctx_json_str "$ts")")"
+    _ctx_apply_pack_budget "$empty_pack" "$max_items" "$max_bytes"
+    return $?
   fi
 
   if ! _ctx_sqlite3_check; then
@@ -1929,11 +1937,12 @@ pmctl_context_pack() {
       printf 'pmctl context pack: sqlite3 not found on PATH\n' >&2
       return 1
     fi
-    local ts
+    local ts empty_pack
     ts="$(_ctx_now_iso8601)"
-    printf '{"schema_version":4,"task_id":%s,"built_ts":%s,"sources":[{"name":"builtin-index","version":"1"}],"files":[],"symbols":[],"memories":[],"risks":[],"truncation":{"applied":false,"reason":"none","budget":{"max_items":%s,"max_bytes":%s},"total_before":0,"kept":0,"dropped":0}}\n' \
-      "$(_ctx_json_str "$task_id")" "$(_ctx_json_str "$ts")" "$max_items" "$max_bytes"
-    return 0
+    empty_pack="$(printf '{"schema_version":4,"task_id":%s,"built_ts":%s,"sources":[{"name":"builtin-index","version":"1"}],"files":[],"symbols":[],"memories":[],"risks":[]}' \
+      "$(_ctx_json_str "$task_id")" "$(_ctx_json_str "$ts")")"
+    _ctx_apply_pack_budget "$empty_pack" "$max_items" "$max_bytes"
+    return $?
   fi
 
   local sym_tsv files_tsv mem_tsv repo_tsv repo_ranked sym_ranked files_ranked mem_ranked

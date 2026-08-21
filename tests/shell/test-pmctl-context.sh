@@ -4383,7 +4383,12 @@ case_context_pack_max_bytes_enforces_byte_cap() {
   # achievable, predictable target to shrink toward.
   local one_item_out one_item_bytes
   one_item_out="$tmp_root/pack-budget-bytes-one-item.out"
-  "$PMCTL" context pack "$fix_repo" --task-id TASK-1 --query alpha --max-items 1 > "$one_item_out" 2>/dev/null
+  local one_item_err="$tmp_root/pack-budget-bytes-one-item.err" one_item_status=0
+  "$PMCTL" context pack "$fix_repo" --task-id TASK-1 --query alpha --max-items 1 \
+    > "$one_item_out" 2> "$one_item_err" || one_item_status=$?
+  if [[ "$one_item_status" -ne 0 ]]; then
+    fail "$name" "setup: baseline --max-items 1 pack exited $one_item_status: $(<"$one_item_err")"; return 0
+  fi
   one_item_bytes="$(wc -c < "$one_item_out" | tr -d ' ')"
 
   out="$tmp_root/pack-budget-bytes.out"; err="$tmp_root/pack-budget-bytes.err"
@@ -4492,7 +4497,12 @@ case_context_pack_env_max_bytes_valid_override_applies() {
 
   local one_item_out one_item_bytes
   one_item_out="$tmp_root/pack-env-bytes-one-item.out"
-  "$PMCTL" context pack "$fix_repo" --task-id TASK-1 --query alpha --max-items 1 > "$one_item_out" 2>/dev/null
+  local one_item_err="$tmp_root/pack-env-bytes-one-item.err" one_item_status=0
+  "$PMCTL" context pack "$fix_repo" --task-id TASK-1 --query alpha --max-items 1 \
+    > "$one_item_out" 2> "$one_item_err" || one_item_status=$?
+  if [[ "$one_item_status" -ne 0 ]]; then
+    fail "$name" "setup: baseline --max-items 1 pack exited $one_item_status: $(<"$one_item_err")"; return 0
+  fi
   one_item_bytes="$(wc -c < "$one_item_out" | tr -d ' ')"
   local tight_cap=$(( one_item_bytes + 20 ))
 
@@ -4567,6 +4577,84 @@ case_context_pack_empty_index_discloses_untruncated_budget() {
   pass "$name"
 }
 
+# Behavior (CC-505 Req 5 follow-up): the no-index graceful-empty branch must
+# ALSO fail closed on an impossible --max-bytes cap -- not just the indexed
+# path -- since it is a distinct early return that builds its own envelope
+# (critic-F001/architecture-reviewer-F001: this branch used to bypass
+# _ctx_apply_pack_budget entirely and could emit an over-budget envelope).
+case_context_pack_no_index_impossible_byte_cap_rejected() {
+  local name="pmctl context pack: no-index empty pack also fails closed on an impossible --max-bytes"
+  should_run "$name" || return 0
+  local nodb_repo="$tmp_root/nodb-repo-pack-budget-impossible"
+  mkdir -p "$nodb_repo"
+  local out err status=0
+  out="$tmp_root/pack-budget-nodb-impossible.out"; err="$tmp_root/pack-budget-nodb-impossible.err"
+  PM_DISPATCH_CONTEXT_AUTOBUILD=0 \
+    "$PMCTL" context pack "$nodb_repo" --task-id TASK-1 --query foo --max-bytes 1 \
+    > "$out" 2> "$err" || status=$?
+  if assert_exit "$name" "$status" 2; then
+    if [[ -s "$out" ]]; then
+      fail "$name" "expected no pack output on fail-closed rejection: $(<"$out")"
+      return 0
+    fi
+    pass "$name"
+  fi
+}
+
+# Behavior (CC-505 Req 5 follow-up, risk-reviewer-F001): a digit string one
+# past the 15-digit width this validator accepts must be rejected
+# deterministically rather than risk overflowing the Bash signed-64-bit
+# arithmetic later comparisons use.
+case_context_pack_max_items_overflow_boundary_rejected() {
+  local name="pmctl context pack: --max-items rejects a value past the supported digit width"
+  should_run "$name" || return 0
+  local fix_repo="$tmp_root/fix-repo-pack-overflow-items"
+  make_fixture_repo "$fix_repo"
+  local out err status=0
+  out="$tmp_root/pack-overflow-items.out"; err="$tmp_root/pack-overflow-items.err"
+  "$PMCTL" context pack "$fix_repo" --task-id TASK-1 --query alpha --max-items 1000000000000000 \
+    > "$out" 2> "$err" || status=$?
+  if assert_exit "$name" "$status" 2; then pass "$name"; fi
+}
+
+case_context_pack_max_bytes_overflow_boundary_rejected() {
+  local name="pmctl context pack: --max-bytes rejects a value past the supported digit width"
+  should_run "$name" || return 0
+  local fix_repo="$tmp_root/fix-repo-pack-overflow-bytes"
+  make_fixture_repo "$fix_repo"
+  local out err status=0
+  out="$tmp_root/pack-overflow-bytes.out"; err="$tmp_root/pack-overflow-bytes.err"
+  "$PMCTL" context pack "$fix_repo" --task-id TASK-1 --query alpha --max-bytes 1000000000000000 \
+    > "$out" 2> "$err" || status=$?
+  if assert_exit "$name" "$status" 2; then pass "$name"; fi
+}
+
+case_context_pack_env_max_items_overflow_boundary_rejected() {
+  local name="pmctl context pack: PM_DISPATCH_CONTEXT_PACK_MAX_ITEMS overflow-boundary env value is rejected"
+  should_run "$name" || return 0
+  local fix_repo="$tmp_root/fix-repo-pack-overflow-env-items"
+  make_fixture_repo "$fix_repo"
+  local out err status=0
+  out="$tmp_root/pack-overflow-env-items.out"; err="$tmp_root/pack-overflow-env-items.err"
+  PM_DISPATCH_CONTEXT_PACK_MAX_ITEMS=1000000000000000 \
+    "$PMCTL" context pack "$fix_repo" --task-id TASK-1 --query alpha \
+    > "$out" 2> "$err" || status=$?
+  if assert_exit "$name" "$status" 2; then pass "$name"; fi
+}
+
+case_context_pack_env_max_bytes_overflow_boundary_rejected() {
+  local name="pmctl context pack: PM_DISPATCH_CONTEXT_PACK_MAX_BYTES overflow-boundary env value is rejected"
+  should_run "$name" || return 0
+  local fix_repo="$tmp_root/fix-repo-pack-overflow-env-bytes"
+  make_fixture_repo "$fix_repo"
+  local out err status=0
+  out="$tmp_root/pack-overflow-env-bytes.out"; err="$tmp_root/pack-overflow-env-bytes.err"
+  PM_DISPATCH_CONTEXT_PACK_MAX_BYTES=1000000000000000 \
+    "$PMCTL" context pack "$fix_repo" --task-id TASK-1 --query alpha \
+    > "$out" 2> "$err" || status=$?
+  if assert_exit "$name" "$status" 2; then pass "$name"; fi
+}
+
 # Behavior (CC-505 Req 7): a deterministic fixture corpus locking in every
 # ranking/chunking guarantee Req 1-4 established, each fixture declaring its
 # own expected top-K ref and each built to fail under the pre-CC-505
@@ -4594,7 +4682,13 @@ case_context_retrieval_fixture_corpus() {
     local safe_desc out refs
     safe_desc="$(printf '%s' "$desc" | tr -c 'a-zA-Z0-9' '_')"
     out="$tmp_root/corpus-${safe_desc}.out"
-    "$PMCTL" context query "$fix_repo" --source repo "$query" > "$out" 2>/dev/null
+    local corpus_err="$tmp_root/corpus-${safe_desc}.err" corpus_status=0
+    "$PMCTL" context query "$fix_repo" --source repo "$query" > "$out" 2> "$corpus_err" || corpus_status=$?
+    if [[ "$corpus_status" -ne 0 ]]; then
+      fail "$name" "[$desc] context query exited $corpus_status: $(<"$corpus_err")"
+      failures=$((failures + 1))
+      continue
+    fi
     refs="$(awk -F': ' '/^- ref:/{print $2}' "$out" | head -n "$top_k")"
     if ! printf '%s\n' "$refs" | grep -qF "$expected"; then
       fail "$name" "[$desc] expected ref containing '$expected' within top-$top_k for query '$query'; got: $refs"
@@ -4613,7 +4707,13 @@ CORPUS
   # must rank first (top-1), not just appear somewhere in the results.
   local domain_out first_domain
   domain_out="$tmp_root/corpus-domain_boost.out"
-  "$PMCTL" context query "$fix_repo" --source repo domain_boost_marker_xray > "$domain_out" 2>/dev/null
+  local domain_err="$tmp_root/corpus-domain_boost.err" domain_status=0
+  "$PMCTL" context query "$fix_repo" --source repo domain_boost_marker_xray \
+    > "$domain_out" 2> "$domain_err" || domain_status=$?
+  if [[ "$domain_status" -ne 0 ]]; then
+    fail "$name" "[path-domain-boost] context query exited $domain_status: $(<"$domain_err")"
+    failures=$((failures + 1))
+  fi
   first_domain="$(awk -F': ' '/^  source_domain:/{print $2; exit}' "$domain_out")"
   if [[ "$first_domain" != "knowledge" ]]; then
     fail "$name" "[path-domain-boost] expected the knowledge-domain hit to rank first; got source_domain=$first_domain: $(<"$domain_out")"
@@ -4653,8 +4753,12 @@ MD
 
   local out
   out="$tmp_root/corpus-trust.out"
+  local trust_err="$tmp_root/corpus-trust.err" trust_status=0
   CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" context query "$repo" --source memory trustweight_shared_marker \
-    > "$out" 2>/dev/null
+    > "$out" 2> "$trust_err" || trust_status=$?
+  if [[ "$trust_status" -ne 0 ]]; then
+    fail "$name" "context query exited $trust_status: $(<"$trust_err")"; return 0
+  fi
   local first_ref
   first_ref="$(awk -F': ' '/^- ref:/{print $2; exit}' "$out")"
   if [[ "$first_ref" != feedback_trust_corpus.md:* ]]; then
@@ -4939,12 +5043,17 @@ case_context_pack_default_budget_does_not_truncate
 case_context_pack_max_items_enforces_global_cap
 case_context_pack_max_bytes_enforces_byte_cap
 case_context_pack_impossible_byte_cap_rejected
+case_context_pack_no_index_impossible_byte_cap_rejected
 case_context_pack_invalid_max_items_rejected
 case_context_pack_invalid_max_bytes_rejected
+case_context_pack_max_items_overflow_boundary_rejected
+case_context_pack_max_bytes_overflow_boundary_rejected
 case_context_pack_env_max_items_valid_override_applies
 case_context_pack_env_max_bytes_valid_override_applies
 case_context_pack_env_max_items_invalid_rejected
 case_context_pack_env_max_bytes_invalid_rejected
+case_context_pack_env_max_items_overflow_boundary_rejected
+case_context_pack_env_max_bytes_overflow_boundary_rejected
 case_context_pack_empty_index_discloses_untruncated_budget
 case_context_retrieval_fixture_corpus
 case_context_retrieval_fixture_corpus_trust_weighting

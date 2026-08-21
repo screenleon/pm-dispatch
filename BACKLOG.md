@@ -2411,6 +2411,23 @@ episode 共用同一詞）證明 trust 真的影響排序，不只是標籤正�
 （合法覆寫各一、非法覆寫各一）＋一案覆蓋「不可能的 cap」fail-closed 路徑。
 `tests/shell/test-pmctl-context.sh` 149 案全過。
 
+**pr-gate 第二輪（targeted，同 5 reviewer）NO-GO（1 block + 2 block-soft，
+security-reviewer 轉 approve、risk-reviewer 轉 advise）**：critic 與
+architecture-reviewer 各自獨立指出同一根因——no-index（無資料庫）與
+sqlite-unavailable 兩條 graceful-empty 分支自己組裝並直接印出 JSON，完全
+繞過唯一的 budget 執行點 `_ctx_apply_pack_budget`，導致 `--max-bytes` 設
+得極小時這兩條分支仍會 exit 0 並吐出超額的空 envelope。修正：兩條分支都
+改組出不含 `truncation` 的裸 pack，交給 `_ctx_apply_pack_budget` 統一組裝
+／量測／fail-closed，不再各自維護第二套序列化樣板。qa-tester 另指出新增
+的多筆 PMCTL 呼叫（baseline pack、corpus 迴圈 query、domain-boost query、
+trust-weighting query）沒有顯式檢查 exit status，命令失敗會被當成空輸出
+吞掉而非回報成 command failure——全部補上 exit code 檢查。risk-reviewer
+指出 `^[1-9][0-9]*$` 對位數沒有上界，過大的值在後續 bash 算術比較可能溢位
+產生誤導行為——收斂為 15 位數上限（遠低於 signed 64-bit 範圍），CLI flag
+與環境變數兩種輸入路徑都收斂到同一位數上限。新增回歸測試：no-index 分支
+的 impossible-cap fail-closed 案、CLI／環境變數各兩案的 overflow-boundary
+拒絕案。`tests/shell/test-pmctl-context.sh` 154 案全過。
+
 **Phase 1（Req 1-7）至此全數
 交付。Phase 2（Req 8-10，agent 契約 + shadow telemetry）仍未開始，票維持
 active。**（agent 契約 + shadow 儀器化；小 PR，跟在 Phase 1 後）**:
