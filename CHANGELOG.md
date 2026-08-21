@@ -218,6 +218,19 @@ Versions follow [Semantic Versioning](https://semver.org/).
   means unbounded intermediate work regardless of output size — added
   `PM_DISPATCH_CONTEXT_PACK_MAX_TERMS` (default 50), fail-closed above it.
 
+- **`pmctl context pack`'s `sources[]` reconciliation is now symmetric
+  across both producers (CC-505 Phase 1, Req 5 fourth follow-up).** A
+  fourth pr-gate round (qa-tester, critic) found: (1) the new
+  `PM_DISPATCH_CONTEXT_PACK_MAX_TERMS` env var validated the "too many
+  terms" path but had no direct test for an invalid value (e.g. `0`) on
+  the guard itself — added; (2) the prior round's `sources[]` fix only
+  handled the memory-index direction (dropped when no memory item
+  survives) — the inverse (builtin-index staying listed after every
+  files[]/symbols[] item is truncated away) was still unaddressed.
+  Generalized `_ctx_pack_with_truncation` to check both producers'
+  surviving item counts symmetrically, with a matching regression test for
+  a memory-only surviving pack.
+
 ### Fixed
 
 - **`ship finish`'s closure producer and its consumer are now proven to

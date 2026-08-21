@@ -1459,15 +1459,21 @@ _ctx_pack_with_truncation() {
     --argjson total "$total" --argjson kept "$kept" --argjson dropped "$((total - kept))" \
     '
     # sources[] must reflect what actually survived truncation, not what
-    # the pre-truncation set contained -- a cap that drops every memory
-    # item must also drop the memory-index provenance entry
-    # (architecture-reviewer-F001), otherwise sources[] over-claims a
-    # producer no surviving item attributes to. Bind the root memories
-    # count BEFORE mapping over sources[] -- inside map/select, "." is
-    # each source element, not the pack root, so ".memories" there would
-    # silently resolve to null/0 and drop memory-index unconditionally.
+    # the pre-truncation set contained -- a cap that drops every item a
+    # producer attributes must also drop that producer'"'"'s provenance
+    # entry (architecture-reviewer-F001 for memory-index, critic-F001 for
+    # the same over-claim in the inverse direction: builtin-index staying
+    # listed after every files[]/symbols[] item is truncated away).
+    # Bind the root counts BEFORE mapping over sources[] -- inside
+    # map/select, "." is each source element, not the pack root, so
+    # ".memories"/".files" there would silently resolve to null/0 and drop
+    # every entry unconditionally regardless of what actually survived.
     (.memories | length) as $mem_kept
-    | .sources = (.sources | map(select(.name != "memory-index" or $mem_kept > 0)))
+    | ((.files | length) + (.symbols | length)) as $builtin_kept
+    | .sources = (.sources | map(select(
+        (.name == "memory-index" and $mem_kept == 0) or (.name == "builtin-index" and $builtin_kept == 0)
+        | not
+      )))
     | . + {truncation:{applied:$applied,reason:$reason,budget:{max_items:$max_items,max_bytes:$max_bytes},total_before:$total,kept:$kept,dropped:$dropped}}
     ' \
     <<<"$bounded"

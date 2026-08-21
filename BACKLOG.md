@@ -2452,6 +2452,18 @@ fixed-point 收斂手法定位「輸出剛好等於某個 cap 值」，避免任
 上限拒絕案、`sources[]` 對齊存活 memory 項目案。`tests/shell/test-pmctl-context.sh`
 157 案全過。
 
+**pr-gate 第四輪（targeted，同 5 reviewer）NO-GO（1 block + 1 advise，
+收斂近完成：architecture-reviewer／security-reviewer／risk-reviewer 三方
+approve）**：qa-tester 指出新增的 `PM_DISPATCH_CONTEXT_PACK_MAX_TERMS` 只驗證
+了「term 太多」的路徑，其環境變數本身的非法值（如 0）沒有直接的 fail-closed
+回歸測試——補上一案。critic 指出前一輪只修了 memory-only pack 殘留
+`memory-index` 的方向，同一問題的反方向（builtin-only pack 殘留
+`memory-index`／memory-only pack 殘留 `builtin-index`）仍未處理——把
+`_ctx_pack_with_truncation` 的 `sources[]` 調解邏輯推廣為同時檢查
+`files+symbols` 與 `memories` 兩邊存活數量，兩個 producer 對稱處理，並新增
+對稱的回歸測試（memory-only 不殘留 builtin-index）。`tests/shell/test-pmctl-context.sh`
+159 案全過。
+
 **Phase 1（Req 1-7）至此全數
 交付。Phase 2（Req 8-10，agent 契約 + shadow telemetry）仍未開始，票維持
 active。**（agent 契約 + shadow 儀器化；小 PR，跟在 Phase 1 後）**:

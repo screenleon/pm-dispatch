@@ -4691,6 +4691,28 @@ case_context_pack_max_terms_rejects_excess() {
   fi
 }
 
+# Behavior (CC-505 Req 5 follow-up, qa-tester-F001): the term-count guard's
+# own env-var input must be validated fail-closed too, distinct from the
+# "too many terms" case above -- this locks the malformed-value branch.
+case_context_pack_invalid_max_terms_rejected() {
+  local name="pmctl context pack: invalid PM_DISPATCH_CONTEXT_PACK_MAX_TERMS is rejected fail-closed"
+  should_run "$name" || return 0
+  local fix_repo="$tmp_root/fix-repo-pack-invalid-max-terms"
+  make_fixture_repo "$fix_repo"
+  local out err status=0
+  out="$tmp_root/pack-invalid-max-terms.out"; err="$tmp_root/pack-invalid-max-terms.err"
+  PM_DISPATCH_CONTEXT_PACK_MAX_TERMS=0 \
+    "$PMCTL" context pack "$fix_repo" --task-id TASK-1 --query alpha \
+    > "$out" 2> "$err" || status=$?
+  if assert_exit "$name" "$status" 2; then
+    if [[ -s "$out" ]]; then
+      fail "$name" "expected no pack output on fail-closed rejection: $(<"$out")"
+      return 0
+    fi
+    pass "$name"
+  fi
+}
+
 # Behavior (CC-505 Req 5 follow-up, architecture-reviewer-F001): sources[]
 # must reflect what actually survived truncation, not the pre-truncation
 # set -- a cap that drops every memory item must also drop the
@@ -4735,6 +4757,56 @@ MD
   fi
   if ! jq -e '(.sources | map(.name) | index("memory-index")) == null' "$out" > /dev/null 2>"$err"; then
     fail "$name" "expected sources[] to drop memory-index once no memory item survives: $(<"$out")"
+    return 0
+  fi
+  pass "$name"
+}
+
+# Behavior (CC-505 Req 5 follow-up, critic-F001): the inverse direction of
+# the same over-claim -- a memory-only surviving pack must NOT still
+# advertise builtin-index in sources[] once every files[]/symbols[] item
+# has been truncated away.
+case_context_pack_truncation_reconciles_builtin_sources_provenance() {
+  local name="pmctl context pack: truncation drops builtin-index provenance when no repo item survives"
+  should_run "$name" || return 0
+
+  local repo="$tmp_root/pack-sources-builtin-repo" cfg="$tmp_root/pack-sources-builtin-cfg"
+  make_fixture_repo "$repo"
+  local mdir; mdir="$cfg/projects/$(mem_encode_path "$repo")/memory"
+  mkdir -p "$mdir"
+  cat > "$mdir/MEMORY.md" <<'MD'
+# Memory Index
+- [builtin sources provenance card](feedback_builtin_sources_provenance.md) — builtin sources provenance fixture
+MD
+  cat > "$mdir/feedback_builtin_sources_provenance.md" <<'MD'
+---
+name: builtin-sources-provenance-card
+---
+alpha appears once in this high-trust memory card, curated deliberately.
+MD
+
+  local err status=0 out
+  "$PMCTL" context index "$repo" > /dev/null 2> "$tmp_root/index-builtin-sources.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-builtin-sources.err")"; return 0; }
+
+  out="$tmp_root/pack-builtin-sources.out"; err="$tmp_root/pack-builtin-sources.err"
+  # --source memory means only memories[] is ever populated -- files[]/
+  # symbols[] are empty from the start, not truncated down to empty, but
+  # the assertion is the same: sources[] must not advertise a producer
+  # with zero surviving attributed items.
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" context pack "$repo" --task-id TASK-1 --query alpha \
+    --source memory \
+    > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "pack exited $status: $(<"$err")"; return 0
+  fi
+  if ! jq -e '(.memories | length) > 0 and (.files | length) == 0 and (.symbols | length) == 0' \
+      "$out" > /dev/null 2>"$err"; then
+    fail "$name" "expected a memory-only surviving set: $(<"$out")"
+    return 0
+  fi
+  if ! jq -e '(.sources | map(.name) | index("builtin-index")) == null' "$out" > /dev/null 2>"$err"; then
+    fail "$name" "expected sources[] to drop builtin-index once no repo item survives: $(<"$out")"
     return 0
   fi
   pass "$name"
@@ -5213,7 +5285,9 @@ case_context_pack_invalid_max_bytes_rejected
 case_context_pack_max_items_overflow_boundary_rejected
 case_context_pack_max_bytes_overflow_boundary_rejected
 case_context_pack_max_terms_rejects_excess
+case_context_pack_invalid_max_terms_rejected
 case_context_pack_truncation_reconciles_sources_provenance
+case_context_pack_truncation_reconciles_builtin_sources_provenance
 case_context_pack_env_max_items_valid_override_applies
 case_context_pack_env_max_bytes_valid_override_applies
 case_context_pack_env_max_items_invalid_rejected
