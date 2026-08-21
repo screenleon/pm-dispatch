@@ -9,7 +9,7 @@ Claude Code gives you a chat interface plus four extensibility surfaces:
 | Surface | What it is | Where it lives |
 |---|---|---|
 | **Hooks** | Shell commands the harness runs around every tool call | `settings.json` + `scripts/guard-*.sh` |
-| **Slash commands** | User-invokable prompts (a.k.a. "skills") | `commands/*.md` |
+| **Slash commands** | User-invokable prompts, triggered by typing `/foo` | `commands/*.md` |
 | **Subagents** | Specialised Claude sessions with their own tools and prompts | `agents/*.md` |
 | **Memory** | Files Claude reads at session start and writes to over time | `~/.claude/projects/<id>/memory/` |
 
@@ -51,7 +51,7 @@ The trade-off is that hooks are shell, not English. They are harder to write and
 
 ---
 
-## Concept 2 — Slash commands (skills)
+## Concept 2 — Slash commands
 
 ### The Claude Code primitive
 
@@ -76,9 +76,12 @@ If you find yourself typing the same multi-line instruction twice, that's a cand
 
 Slash commands also become an artifact you can review. A reusable workflow that lives only in your head will drift; a slash command that lives in a markdown file gets `git log`, gets reviewed, and gets refined.
 
+A slash command is not the same thing as a **skill** (`skills/*/SKILL.md`) — a skill is a separate Claude Code primitive that Claude picks up on its own by relevance, without the user typing anything. `docs/skill-command-harness-policy.md` covers the full decision tree for which of prompt / skill / command / harness a piece of new behavior belongs in.
+
 ### Where to look
 
 - `commands/*.md` — every slash command shipped here
+- `skills/*/SKILL.md` — the separate skill primitive (see the policy doc above for the distinction)
 - `tools/skills/skill-refine.sh` — example of a script that supports a slash command (`/skill-refine`)
 
 ---
@@ -177,6 +180,7 @@ Every step uses one of the four concepts. None of them is "magic" — each is a 
 - **Set up the repo on your machine** → `docs/GETTING_STARTED.md`
 - **Understand the dispatch flow used by `/pm` and `/pr-gate`** → `docs/dispatch-brief.md`
 - **Query the repo index before writing a brief** → `docs/context-retrieval.md`
+- **Decide whether new behavior should be a prompt, a skill, a command, or harness-level** → `docs/skill-command-harness-policy.md`
 - **Add a new slash command** → look at any existing `commands/*.md` and `tests/shell/test-guards.sh`
 - **Write a new hook** → read `runtime/hooks/guard-pm-write.sh` as a reference and add a test in `tests/shell/test-guards.sh`
 - **Add a memory card** → see `~/.claude/projects/<id>/memory/MEMORY.md` for the index format; cards have YAML frontmatter (`name:` / `description:` / `metadata.type:`) and live next to the index

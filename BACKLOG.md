@@ -14,7 +14,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-462 | 🟢 someday | e2e 可拋棄資源紀律：前綴命名 + registry JSON + result artifact；掛在 CC-449 e2e 新 phase 之後，與 CC-447 live smoke 共用同一 registry（2026-07-07 openyida 跨專案分析） | ops/test | 2026-07-07 | — | P3 | — |
 | CC-463 | 🟢 someday | `pmctl batch` 泛用批次執行原語；依賴 CC-460（合法性驗證來源）；新注入面須過 security-reviewer（2026-07-07 openyida 跨專案分析） | arch/process | 2026-07-07 | — | P3 | design |
 | CC-464 | 🟢 someday | `pmctl ticket draft --from <notes>`：隨手筆記→結構化 backlog 票草稿；依賴 CC-286（prefix-generic next-id，⏸ deferred 尚未排程）；review-first 邊界獨立設計，CC-054 僅供鬆散參照非直接前例（2026-07-07 openyida 跨專案分析） | ux/process | 2026-07-07 | — | P3 | — |
-| CC-493 | 🟢 someday | Prompt→Skill→Command→Harness 升級規則文件化：可測試的分類判準（何時停在 prompt、何時升為 skill、何時做成 command、何時需要 harness-level hook/guard/state），並盤點 `commands/`／`skills/`／`agents/` 現況對照分類（2026-07-15 CC-489 三方 multi-model synthesis） | process/docs | 2026-07-15 | feedback:2026-07-15 | P2 | design |
+| CC-493 | ✅ done | Prompt→Skill→Command→Harness 升級規則文件化：可測試的分類判準（何時停在 prompt、何時升為 skill、何時做成 command、何時需要 harness-level hook/guard/state），並盤點 `commands/`／`skills/`／`agents/` 現況對照分類（2026-07-15 CC-489 三方 multi-model synthesis） | process/docs | 2026-07-15 | pr:TBD | P2 | design |
 | CC-494 | 🟢 someday | design: executor 局部設計裁量權 envelope——在 dispatch brief / executor contract 定義「可自行處理的局部設計」與「必須 halt 回報 PM」的邊界（例如新增 schema 欄位 `design_latitude`/`architectural_conflicts`）；三方 multi-model synthesis 2:1 分歧（codex/fable 認為現行邊界過度僵硬需要新機制，opencode 認為現行 `isolation_level`/executor 欄位已足夠彈性），本票僅追蹤決策、不預設結論（2026-07-15） | schema/process | 2026-07-15 | feedback:2026-07-15 | P3 | design |
 | CC-505 | 🔵 active | context plane lexical 檢索補完（Ph1 engine+統一排序+fixtures；Ph2 agent 契約+shadow 儀器化；evidence-gated 收緊 → [[CC-506]]）（2026-07-20 四方 synthesis；CC-346/347 前置） | memory/DX | 2026-07-20 | — | P2 | retrieval |
 | CC-506 | ⏸ deferred | retrieval evidence-gated 收緊：shadow 評測（coverage@5、critical miss、read reduction、outcome parity）達標後才收緊 broad-Read 指引並重評 [[CC-340]] resume 條件；前置 = [[CC-505]] Ph2 shipped + ≥20 真實任務證據 | memory/DX | 2026-07-20 | — | P3 | retrieval |
@@ -633,7 +633,9 @@ embeddings/semantic backend——本票是索引層 tokenizer 修正，不是其
 **Problem**: debug 工作流目前無標準化流程，每次偵錯方式不一致，容易遺漏根本原因分析。
 **Why**: 結構化偵錯步驟（reproduce → isolate → hypothesize → verify → fix → regression test）有助於複雜 bug 分析；同時是驗證「skill = 可替換工作方法、非 workflow engine」定位的第一個實例。
 **Requirement**: `skills/systematic-debugging/SKILL.md`，提供結構化偵錯步驟；不執行 state transition、不繞過 guard。
-**Sequencing**: 待 [[CC-493]] 升級規則票定案分類判準後再落地，避免格式先於規則。
+**Sequencing**: [[CC-493]] 已定案（`docs/skill-command-harness-policy.md`）。本票符合
+Tier 2（跨 session 重複、可中斷恢復、無權限邊界）判準，落地目標維持
+`skills/systematic-debugging/SKILL.md`，可排入實作。
 
 ## CC-018 — Codex quota 自動追蹤 + rate-limit 路徑統一（吸收 CC-269）
 
@@ -658,7 +660,10 @@ embeddings/semantic backend——本票是索引層 tokenizer 修正，不是其
 3. 若同樣序列在不同 session 出現 ≥ N 次（預設 3）且總長度 ≥ 5 步，產出草稿 `commands/<draft-name>.md` 並回報出處 episodes。
 4. 預設 `--dry-run` 只印名稱與草稿 outline，user 確認後再寫檔。
 **Note**: 依賴 **CC-027** 與 **CC-025**。順序：CC-027 訊號層落地 → CC-025 驗證單一 skill 改進迴路 → CC-026 才有足夠資料做序列聚類。
-**Resume trigger（2026-07-15 三方 multi-model synthesis）**: codex/opencode 分析一致認為此票是 skill 平台化早熟的具體例子（自動偵測+產生 skill 草稿=雛形 marketplace）。除依賴 CC-027/CC-025 外，另需 [[CC-493]] 升級規則票定案，且草稿產物目標應是 `skills/<name>/SKILL.md` 而非 `commands/<draft-name>.md`。
+**Resume trigger（2026-07-15 三方 multi-model synthesis）**: codex/opencode 分析一致認為此票是 skill 平台化早熟的具體例子（自動偵測+產生 skill 草稿=雛形 marketplace）。除依賴 CC-027/CC-025 外，[[CC-493]] 已定案（`docs/skill-command-harness-policy.md`）——草稿產物目標維持
+`skills/<name>/SKILL.md` 而非 `commands/<draft-name>.md`；上方 Requirement 1/3 描述的
+`commands/skill-distill.md` slash-command 介面本身仍成立（`/foo` 觸發＝Tier 3），
+只有它產出的草稿檔案位置需照此調整。
 **Source**: 2026-05-15 對話討論 Hermes Agent self-improvement loop 與 pm-dispatch 的 gap 分析。
 
 ## CC-032 — `[[feedback_*]]` cross-link 公開化（dead-link 防護）
@@ -754,7 +759,10 @@ someday → active，P3 → P2。
 2. Keep the default behavior review-first: emit the diff for user or main-thread approval rather than directly rewriting skill files.
 3. Include Claude-assisted refinement guidance in `commands/skill-refine.md`, with clear dry-run and apply boundaries.
 4. Add contract tests for diff-generation behavior and no-direct-write safety.
-**Resume trigger (2026-07-15 三方 multi-model synthesis)**: 同 CC-026，屬 skill 平台化早熟範疇；待 [[CC-493]] 升級規則票定案後再評估是否需要，且落地目標應是 `skills/` 而非 `commands/skill-refine.md`。
+**Resume trigger (2026-07-15 三方 multi-model synthesis)**: 同 CC-026，屬 skill 平台化早熟範疇。[[CC-493]] 已定案（`docs/skill-command-harness-policy.md`）：`skill-refine` 的
+互動介面（`/skill-refine`）本身維持 command（Tier 3，`/foo` 觸發），但本票的 diff
+generation 邏輯應輸出／操作 `skills/<name>/SKILL.md`，而非把邏輯本身寫成新的
+`commands/skill-refine.md` 內容——是否需要仍待實際排入時評估，非本票定案範圍。
 **Source**: PR #67 CC-025 M1 implementation and 2026-05-18 CC-025b closure decision in `feat/cc039-cc025b-v2`.
 
 ## CC-063 — [P2] Trace / token / gate metrics dashboard
@@ -1459,7 +1467,7 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 **Priority**: P3（someday，條件觸發）。
 **Cross-link**: [[CC-433]]、[[CC-434]]。
 
-## CC-493 — Prompt→Skill→Command→Harness 升級規則文件化 🟢 someday
+## CC-493 — Prompt→Skill→Command→Harness 升級規則文件化 ✅ 2026-08-22
 
 **Problem**: 使用者一篇論述主張 pm-dispatch 已從「加幾個 skills」演化為專用 coding-agent 控制平面，三層疊加：原生 harness → pm-dispatch 控制面 → 可替換 skills。經 codex/opencode/project-pm(fable) 三個獨立 executor 各自分析同一份論述並比對 repo 現況後一致指出：這個三層定位大致成立，但「什麼時候該用哪一層」目前完全沒有文件化的判準——`commands/` 下混雜了 workflow entrypoint（`pm.md`/`pr-gate.md`/`ship.md`）與純方法性內容（`using-git-worktrees.md`/`research.md`/`pre-impl.md`），`docs/CONCEPTS.md` 甚至把 slash command 直接稱為「skills」，而 `skills/` 目錄本身只有 2 個真正的 `SKILL.md`。
 
@@ -1486,6 +1494,28 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 **Source**: 2026-07-15 使用者提供「harness/skill/pm-dispatch 三層定位」論述，經 `pmctl dispatch run --adapter codex`、`--adapter opencode` 與 `project-pm`(model: fable) 三方獨立分析收斂。
 
 **Cross-link**: [[CC-015]]、[[CC-026]]、[[CC-054]]、[[CC-357]]、[[CC-393]]、[[CC-489]]。
+
+**Closure 2026-08-22 (pr:TBD)**: 新增 `docs/skill-command-harness-policy.md`，落地
+Requirement 1 的四級判準（含「指令預算」小節置頂）、Requirement 5 的三條外部依據
+（degrees-of-freedom、progressive disclosure、IFScale 指令密度衰減，皆附引用）。
+Requirement 2 盤點結果：`commands/`（15 個檔案）全數符合 Tier 3（皆需 `/foo` 觸發
+或參數解析，含票面點名的「純方法性」`pre-impl.md`／`research.md`／
+`using-git-worktrees.md`——澄清 Tier 2/3 真正判準是「是否需要使用者主動輸入 /foo」
+而非「工作流 vs 方法」，三者皆需要）、`skills/`（2 個檔案）全數符合 Tier 2 契約；
+**建議遷移清單為空**——歷史的 command/skill 混淆是命名問題，不是位置問題。
+Requirement 3：`docs/CONCEPTS.md` Concept 2 標題與 TL;DR 表格移除「(a.k.a. skills)」
+用詞，新增一段區分 slash command 與獨立的 skill primitive 並連結新判準文件。
+Requirement 4：CC-015／CC-026／CC-054 的 Sequencing／Resume trigger 註記已更新為
+「判準已定案」，維持原訂 `skills/` 落地目標不變（CC-026／CC-054 的 slash-command
+互動介面本身仍正確維持 Tier 3，只有其產出物位置需照此判準）。
+
+重新量測「現況合格」的引用數字：票面原引「281 行」（2026-07-15 量測，來自
+`agents/project-pm.md`）已過時——現況（2026-08-22）最大 prompt 資產是
+`commands/pr-gate.md` 482 行（command，非 skill，不受 500 行 skill-body 門檻約束），
+兩個 SKILL.md 分別為 59／76 行，皆遠低於門檻；政策文件已改引正確數字並註記
+「不要在此日期後直接沿用本文數字，需重新查證」。
+
+**See**: pr:TBD
 
 ## CC-494 — design: executor 局部設計裁量權 envelope 🟢 someday
 
