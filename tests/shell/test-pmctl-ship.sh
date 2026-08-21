@@ -438,7 +438,14 @@ run_finish_with_real_publish_assessment() {
       jq -n --arg subject "$subject" '\''{kind:"pm_test_result_v2",contract:"full",authoritative:true,status:"pass",aggregate:{status:"pass"},exit_code:0,tree_fingerprint:$subject}'\'' > "$full"
       PMCTL_SHIP_FULL_RESULT_FILE="$full"
     }
-    gate_remediation_closure_verify() { return 0; }
+    # real-closure mode leaves the real gate_remediation_closure_verify (sourced
+    # transitively via gate-publish.sh above) live, so this harness proves the
+    # closure producer and its consumer inside gate_publish_assessment_build
+    # actually interoperate on a real subject -- every other mode still stubs
+    # it, since they exercise unrelated seams (policy/route/surface parity).
+    if [[ "$mode" != real-closure ]]; then
+      gate_remediation_closure_verify() { return 0; }
+    fi
     gate_policy_applicability_assess() {
       local embedded=maintainer preferred=maintainer satisfaction=preferred
       if [[ "$mode" == generic ]]; then
@@ -1204,6 +1211,115 @@ case_finish_real_targeted_publish_assessment_path() {
     pass "$name/invalid-closure"
   else
     fail "$name/invalid-closure" "expected refusal before push: status=$status pushed=$pushed stdout=$(cat "$out") stderr=$(cat "$err")"
+  fi
+}
+
+# Behavior (CC-511 Phase B dogfood): every other case in this file that drives
+# `pmctl ship finish` stubs gate_remediation_closure_verify to `return 0` --
+# including "real-closure" mode's own retry test -- so the closure this test
+# suite's real gate_remediation_closure_publish produces has never been
+# consumed by the real gate_remediation_closure_verify inside a live finish
+# run. This case removes that stub for real-closure mode and asserts the
+# producer and consumer genuinely interoperate end to end.
+# Steps: 1) Run finish with mode=real-closure and the verify stub absent;
+# 2) assert the run succeeds, pushes, and the finish marker's publish
+# assessment references a closure that independently re-verifies.
+case_finish_real_closure_verify_accepts_producer_output() {
+  local name="ship finish: real closure producer output survives the real closure verifier"
+  should_run "$name" || return 0
+  local work gh_bin body out err status=0 pushed=0
+  work="$tmp_root/work-real-closure-verify"
+  make_work_repo "$work" "CC-9001"
+  checkout_ticket_branch "$work" "CC-9001"
+  add_bare_origin "$work"
+  gh_bin="$tmp_root/fake-gh-real-closure-verify"
+  install_fake_gh_capture_body "$gh_bin" "https://example.invalid/pr/real-closure-verify"
+  body="$tmp_root/real-closure-verify-body"
+  out="$tmp_root/out-real-closure-verify"; err="$tmp_root/err-real-closure-verify"
+  export GH_PR_URL="https://example.invalid/pr/real-closure-verify" GH_PR_BODY_FILE="$body"
+  PATH="$gh_bin:$PATH" run_finish_with_real_publish_assessment \
+    "$work" "CC-9001" real-closure "$body" > "$out" 2> "$err" || status=$?
+  unset GH_PR_URL GH_PR_BODY_FILE
+  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
+  local closure_path closure_reverify_status=1
+  closure_path="$(jq -r '.remediation_closure // empty' "$work/.pm-dispatch-ship-finish.json" 2>/dev/null || true)"
+  if [[ -n "$closure_path" && -f "$closure_path" ]]; then
+    local subject_fp scope_sha
+    subject_fp="$(jq -r '.subject.tree_fingerprint // empty' "$work/.pm-dispatch-ship-finish.json" 2>/dev/null || true)"
+    scope_sha="$(jq -r '.scope_manifest_sha256 // empty' "$closure_path")"
+    if bash -c '
+        . "$1/runtime/lib/gate-closure.sh"
+        gate_remediation_closure_verify "$2" "$3" "$4"
+      ' _ "$REPO_ROOT" "$closure_path" "$subject_fp" "$scope_sha"; then
+      closure_reverify_status=0
+    fi
+  fi
+  if [[ "$status" -eq 0 && "$pushed" -eq 1 && "$closure_reverify_status" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected real producer/consumer success: status=$status pushed=$pushed reverify=$closure_reverify_status stdout=$(cat "$out") stderr=$(cat "$err")"
+  fi
+}
+
+# Behavior (CC-511 Phase B dogfood): the consumer-side check inside
+# gate_publish_assessment_build must genuinely call gate_remediation_closure_verify
+# rather than a shortcut -- a closure mutated after real publication (an
+# unresolved_counts total that no longer matches its own blocking+advisory
+# breakdown) must be rejected before the assessment builds, and the failure
+# must trace through gate-publish.sh's own closure-rejection message.
+# Steps: 1) Build a real closure with the real producer; 2) mutate one
+# invariant field on the copy handed to the builder; 3) assert
+# gate_publish_assessment_build fails with the closure-specific reason.
+case_publish_assessment_rejects_closure_mutated_after_real_publish() {
+  local name="ship publish assessment: real verify rejects a closure mutated after real publication"
+  should_run "$name" || return 0
+  local dir="$tmp_root/real-closure-mutation-reject"
+  mkdir -p "$dir"
+  local out="$dir/out" err="$dir/err" status=0
+  set +e
+  bash -c '
+      set -euo pipefail
+      repo_root="$1"; dir="$2"
+      . "$repo_root/runtime/lib/gate-closure.sh"
+      . "$repo_root/runtime/lib/gate-publish.sh"
+      head="1111111111111111111111111111111111111111"
+      subject="$(printf "d%.0s" {1..64})"
+      result_file="$dir/gate-result.md"
+      assurance_file="$dir/gate-assurance.json"
+      scope_file="$dir/scope-manifest.json"
+      closure_file="$dir/closure.json"
+      mutated_closure="$dir/closure-mutated.json"
+      full_result="$dir/full-result.json"
+      gate_report="$dir/gate-verification.json"
+      printf "Final: GO\n" > "$result_file"
+      jq -n '"'"'{changes:{changed_paths:[],renamed_paths:[],untracked_paths:[]},diff:{binary_or_special_paths:[]}}'"'"' > "$scope_file"
+      jq -n --arg subject "$subject" --arg head "$head" '"'"'
+        {subject:{repository_key:("a"*64),base_commit:("1"*40),head_commit:$head,tree_fingerprint:$subject,subject_kind:"committed_head"},
+         evidence:{scope_manifest:{artifact:"scope-manifest.json",sha256:("c"*64)}}}'"'"' > "$assurance_file"
+      scope_sha_actual="$(sha256sum "$scope_file" | awk "{print \$1}")"
+      jq --arg sha "$scope_sha_actual" ".evidence.scope_manifest.sha256 = \$sha" "$assurance_file" > "$assurance_file.tmp"
+      mv "$assurance_file.tmp" "$assurance_file"
+      gate_remediation_closure_publish "$result_file" "$assurance_file" "$closure_file"
+      jq ".unresolved_counts.total = 5" "$closure_file" > "$mutated_closure"
+      jq -n --arg result "$result_file" --arg assurance "$assurance_file" --arg subject "$subject" --arg head "$head" '"'"'
+        {kind:"gate_verification_v1",schema_version:1,result_file:$result,verdict:"GO",
+         assurance:{status:"verified",kind:"gate_assurance_v3",file:$assurance},consumer:"embedded",
+         axes:{artifact_valid:{status:"pass",reason_codes:[]},
+           subject_current:{status:"pass",reason_codes:[],current:{repository_key:("a"*64),base_commit:("1"*40),head_commit:$head,tree_fingerprint:$subject,observed_root:"/tmp/repo"}},
+           policy_applicable:{status:"pass",reason_codes:[],consumer:"embedded",required_policy:"generic",preferred_policy:"generic",embedded_policy:"generic",policy_satisfaction:"preferred"}}}'"'"' > "$gate_report"
+      jq -n --arg subject "$subject" '"'"'{kind:"pm_test_result_v2",contract:"full",authoritative:true,status:"pass",aggregate:{status:"pass"},exit_code:0,tree_fingerprint:$subject}'"'"' > "$full_result"
+      gate_policy_applicability_assess() {
+        jq -n '"'"'{status:"pass",reason_codes:[],embedded_policy:"generic",required_policy:"generic",preferred_policy:"generic",policy_satisfaction:"preferred"}'"'"'
+      }
+      gate_publish_assessment_build "$dir/assessment.json" "$gate_report" "$mutated_closure" "$full_result" CC-511
+    ' _ "$REPO_ROOT" "$dir" > "$out" 2> "$err"
+  status=$?
+  set -e
+  if [[ "$status" -ne 0 ]] \
+      && grep -qF 'remediation closure is not valid for the current Gate subject' "$err"; then
+    pass "$name"
+  else
+    fail "$name" "expected the real verify to reject the mutated closure: status=$status stdout=$(cat "$out") stderr=$(cat "$err")"
   fi
 }
 
@@ -3582,6 +3698,8 @@ case_publish_assessment_rejects_invalid_or_mismatched_evidence
 case_publish_assessment_rejects_post_build_source_mutation
 case_finish_real_publish_assessment_surfaces
 case_finish_real_targeted_publish_assessment_path
+case_finish_real_closure_verify_accepts_producer_output
+case_publish_assessment_rejects_closure_mutated_after_real_publish
 case_finish_post_assessment_drift_refuses_publish
 case_finish_assessment_replacement_after_verification_refuses_publish
 case_finish_pushes_only_assessed_head_when_branch_advances_at_push
