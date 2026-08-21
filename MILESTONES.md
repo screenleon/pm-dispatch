@@ -85,9 +85,13 @@ Gate correctness 與 release evidence 仍必須先在 v0.11.0 關閉。
 
 實作順序固定如下，後一片不得在前一片 contract 未穩定前啟動：
 
-> 交付進度（2026-08-20 查證）：切片 1 已由 pr:#482 交付首片、切片 2 已由 pr:#483
-> 交付 closure artifact、切片 3 已由 pr:#484 交付 shared publish assessment；三張票
-> 均**未因此結案**，各自殘留見 BACKLOG。切片 4（CC-505）尚未啟動。
+> 交付進度（2026-08-21 查證）：切片 1（CC-527）已由 pr:#482/#505 全數收斂，
+> ✅ done。切片 2（CC-517）已由 pr:#483/#506 全數收斂，✅ done。切片 3
+> （CC-511 Phase B + CC-529）已由 pr:#484/#507 全數收斂，✅ done。切片 4
+> （CC-505）Phase 1（Req 1-7：chunk/freshness、統一排序、pack budget、fixture
+> corpus）已由 pr:#502/#503/#508/#509 全數交付；**Phase 2（Req 8-10：agent
+> 契約 + shadow telemetry）尚未開始**，CC-505 票仍 🔵 active，P1 順序尚未
+> 完全收尾。
 
 1. **CC-527 parity closure（active first slice）**：完成 truthful coordinate
    label 與 copy-mode／repo-layout、sequential／parallel meaning-parity fixtures；

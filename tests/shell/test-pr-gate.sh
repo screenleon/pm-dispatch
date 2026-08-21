@@ -6100,6 +6100,61 @@ test_scope_manifest_large_expansion_uses_file_input() {
   pass "$name"
 }
 
+# Behavior: _gate_scope_reference_index_collect's NUL-record decode path
+# (CC-560) reproduces the exact per-path object contract the per-record jq
+# constructor it replaced produced -- path/snapshot/line_count/sha256 -- one
+# entry per path, duplicates collapsed, sorted lexically by path.
+# Steps: call the collector directly (no full gate dispatch) against a plain
+# working-tree fixture with three files and a duplicate path in the changed
+# set, then assert the decoded output against independently computed digests.
+test_scope_reference_index_collector_direct_decode() {
+  local name="scope-collector/reference-index-direct-decode"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" work expansion_file output
+  local alpha_digest beta_digest gamma_digest expected code
+  mkdir -p "$dir"
+  work="$dir/work"
+  mkdir -p "$work"
+  printf 'alpha line one\nalpha line two\n' > "$work/alpha.txt"
+  printf 'beta line one\n' > "$work/beta.txt"
+  printf 'gamma line one\ngamma line two\ngamma line three\n' > "$work/gamma.txt"
+  expansion_file="$dir/expansion.json"
+  echo '[]' > "$expansion_file"
+  output="$dir/output.json"
+
+  # shellcheck disable=SC2034 # read by _gate_scope_reference_index_collect via dynamic scope, not directly in this function
+  local WORK_DIR="$work" POLICY_DIFF_KIND="working-tree"
+  # shellcheck disable=SC2034 # read by _gate_scope_path_exists via dynamic scope, not directly in this function
+  local GATE_BINDING_BASE_COMMIT="HEAD" GATE_BINDING_HEAD_COMMIT="HEAD"
+  # shellcheck source=runtime/lib/gate-scope.sh
+  . "$REPO_ROOT/runtime/lib/gate-scope.sh"
+  set +e
+  _gate_scope_reference_index_collect \
+    '["gamma.txt","alpha.txt","alpha.txt","beta.txt"]' '[]' '[]' '{}' \
+    "$expansion_file" "$output"
+  code=$?
+  set -e
+  [[ "$code" -eq 0 ]] || {
+    fail "$name" "collector exited $code, expected 0"
+    return
+  }
+
+  alpha_digest="$(printf 'alpha line one\nalpha line two\n' | sha256sum | awk '{print $1}')"
+  beta_digest="$(printf 'beta line one\n' | sha256sum | awk '{print $1}')"
+  gamma_digest="$(printf 'gamma line one\ngamma line two\ngamma line three\n' | sha256sum | awk '{print $1}')"
+  expected="$(jq -nc \
+    --arg a "$alpha_digest" --arg b "$beta_digest" --arg g "$gamma_digest" '[
+      {path:"alpha.txt",snapshot:"subject",line_count:2,sha256:$a},
+      {path:"beta.txt",snapshot:"subject",line_count:1,sha256:$b},
+      {path:"gamma.txt",snapshot:"subject",line_count:3,sha256:$g}
+    ]')"
+  if [[ "$(jq -cS . "$output")" != "$(jq -cS . <<<"$expected")" ]]; then
+    fail "$name" "decoded output mismatch: got $(jq -c . "$output"), expected $expected"
+    return
+  fi
+  pass "$name"
+}
+
 create_scope_truncation_repo() {
   local repo="$1"
   git init -q -b main "$repo"
@@ -6252,6 +6307,7 @@ run_test test_scope_manifest_contract_bundle_uses_bounded_consumer_summary
 run_test test_scope_manifest_contract_bundle_overflow_is_truthful_truncation
 run_test test_scope_manifest_semantic_search_overflow_fails_closed
 run_test test_scope_manifest_large_expansion_uses_file_input
+run_test test_scope_reference_index_collector_direct_decode
 run_test test_scope_manifest_truncation_requires_explicit_acceptance
 run_test test_parallel_launches_per_reviewer
 run_test test_parallel_timeout_kills_hanging_reviewer

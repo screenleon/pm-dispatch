@@ -18,12 +18,12 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-494 | 🟢 someday | design: executor 局部設計裁量權 envelope——在 dispatch brief / executor contract 定義「可自行處理的局部設計」與「必須 halt 回報 PM」的邊界（例如新增 schema 欄位 `design_latitude`/`architectural_conflicts`）；三方 multi-model synthesis 2:1 分歧（codex/fable 認為現行邊界過度僵硬需要新機制，opencode 認為現行 `isolation_level`/executor 欄位已足夠彈性），本票僅追蹤決策、不預設結論（2026-07-15） | schema/process | 2026-07-15 | feedback:2026-07-15 | P3 | design |
 | CC-505 | 🔵 active | context plane lexical 檢索補完（Ph1 engine+統一排序+fixtures；Ph2 agent 契約+shadow 儀器化；evidence-gated 收緊 → [[CC-506]]）（2026-07-20 四方 synthesis；CC-346/347 前置） | memory/DX | 2026-07-20 | — | P2 | retrieval |
 | CC-506 | ⏸ deferred | retrieval evidence-gated 收緊：shadow 評測（coverage@5、critical miss、read reduction、outcome parity）達標後才收緊 broad-Read 指引並重評 [[CC-340]] resume 條件；前置 = [[CC-505]] Ph2 shipped + ≥20 真實任務證據 | memory/DX | 2026-07-20 | — | P3 | retrieval |
-| CC-511 | ✅ done | ship publish authorization：Phase A current-tree authoritative full-suite 與 CC-515 shared verifier foundation 已交付；Phase B review-closure evidence 已由 CC-517 收斂 | release/gate | 2026-07-23 | pr:#446, pr:#484, pr:TBD | P1 | design |
+| CC-511 | ✅ done | ship publish authorization：Phase A current-tree authoritative full-suite 與 CC-515 shared verifier foundation 已交付；Phase B review-closure evidence 已由 CC-517 收斂 | release/gate | 2026-07-23 | pr:#446, pr:#484, pr:#507 | P1 | design |
 | CC-514 | 🔵 active | orthogonal delivery assurance map、machine-derived tables 與 feature/docs/high-risk recipes | docs/process | 2026-07-23 | — | P2 | design |
 | CC-516 | ⏸ deferred | evidence-gated thin delivery wrapper 評估；只組合既有 primitives，不建立 workflow engine/FSM | ux/process | 2026-07-23 | — | P3 | spike |
-| CC-517 | ✅ done | maintainer `/ship`：primary review、structured remediation closure 與 conditional targeted confirmation | process/gate | 2026-07-23 | pr:#483, pr:TBD | P1 | design |
+| CC-517 | ✅ done | maintainer `/ship`：primary review、structured remediation closure 與 conditional targeted confirmation | process/gate | 2026-07-23 | pr:#483, pr:#506 | P1 | design |
 | CC-524 | 🔵 active | `pmctl artifacts show` 顯示 canonical absolute run root 並提供穩定 machine-readable locator | ux/ops | 2026-07-27 | feedback:2026-07-27 | P2 | hygiene |
-| CC-527 | ✅ done | targeted gate CLI 拆分 pass、reviewer coverage 與 tier；tier 由 current subject/policy 解析，initial result 僅為 remediation context | ux/gate | 2026-07-28 | pr:#472, pr:#476, pr:#482, pr:TBD | P2 | design |
+| CC-527 | ✅ done | targeted gate CLI 拆分 pass、reviewer coverage 與 tier；tier 由 current subject/policy 解析，initial result 僅為 remediation context | ux/gate | 2026-07-28 | pr:#472, pr:#476, pr:#482, pr:#505 | P2 | design |
 | CC-529 | ⚠️ partial 2026-08-15 | publish assurance observability：以 gate_publish_assessment_v1 將 ship stdout、PR body 與 finish marker 綁到同一份 verified assessment；仍需完成完整 producer/consumer dogfood | release/gate | 2026-07-30 | feedback:2026-07-30, pr:#484 | P2 | hygiene |
 | CC-532 | ⚠️ partial 2026-08-14 | Linux/WSL2 repo-layout canonical Gate modules 已完成；standalone distribution／copy parity 已移出本票，待 P0 current-tree evidence 後關閉 | arch/gate | 2026-07-30 | feedback:2026-07-30 | P1 | reuse-debt |
 | CC-533 | ⚠️ partial 2026-08-14 | PR #480 已交付 schema-derived structural validation foundation；handwritten structural cleanup、version dispatch separation 與 legacy/current verifier split 仍待 schema 穩定後收尾 | schema/gate | 2026-07-30 | pr:#480 | P1 | design |
@@ -327,7 +327,7 @@ table-driven，新增 coverage-cell／inventory／union 三個注入案例；
 
 ---
 
-## CC-560 — reference index 仍是每筆一個 jq process 🟢 someday
+## CC-560 — reference index 仍是每筆一個 jq process ✅ 2026-08-21
 
 **Problem**: `_gate_scope_reference_index_collect` 對每一筆 reference 都執行一次
 `jq -nc` 建立 JSON 物件並附加到檔案。[[CC-557]] 的 profile 實測該函式耗時 4.9s（一次 gate 內
@@ -343,6 +343,30 @@ process spawn。CC-557 之所以沒有一併處理，是因為修完 expansion �
 2. 修改前後以 jq wrapper 計數與階段計時佐證，不憑猜測。
 
 **Cross-link**: [[CC-557]]（同類寫法的第一次修正，含 profiling 方法）。
+
+**Closure 2026-08-21 (pr:TBD)**：沿用 [[CC-557]] 已驗證的做法，`_gate_scope_reference_index_collect`
+逐筆 `jq -nc` 建物件改為 4 個 NUL 分隔欄位（path/snapshot/line_count/sha256）
+append，迴圈結束後由唯一一個 `jq -Rs` pass 解碼＋`unique_by(.path)`＋
+`sort_by(.path)`，輸出 shape 與排序邏輯不變。
+
+**Profiling 佐證（合成 fixture，300 個 reference path，PATH shim 計數 jq 呼叫）**：
+修正前 302 次 jq 呼叫／約 10-12s；修正後 2 次 jq 呼叫／約 2.5s。修正前後輸出
+（`jq -S` 正規化後）逐位元組相同，確認純效能修正、無行為變更。
+
+**pr-gate 第一輪（express，sequential，critic/qa-tester）NO-GO（1 block + 1 advise）**：
+qa-tester 與 critic 各自獨立指出同一根因——既有 `scope-manifest` 整合測試只驗證
+「聚合套件綠燈」，沒有針對這個新的 NUL positional decoder 本身的直接 fault-sensitive
+regression（欄位順序、去重、排序若壞掉，聚合測試不保證會抓到）。修正：新增
+`scope-collector/reference-index-direct-decode`——不經過完整 gate dispatch，直接
+`source` `runtime/lib/gate-scope.sh` 呼叫 `_gate_scope_reference_index_collect`，
+輸入含一個重複路徑，斷言輸出與獨立算出的 sha256 digest 逐位元組相符；已驗證此測試
+具 fault-sensitivity（暫時把 decode 的 NUL 分隔符改壞會讓測試失敗）。
+
+`tests/shell/test-pr-gate.sh --filter scope-` 14 案全過（含
+`large-expansion-uses-file-input`、既有斷言 `reference_index.entries` 的
+`complete-and-shared-parallel` 案，與新增的 direct-decode 案）。
+
+**See**: pr:TBD
 
 ---
 
