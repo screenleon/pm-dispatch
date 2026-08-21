@@ -4017,6 +4017,106 @@ case_context_fts5_availability_is_cached() {
   pass "$name"
 }
 
+# Behavior (CC-505 Req 2/3 gate finding qa-tester-F001): _ctx_rank_hits is the
+# ONE shared sort+truncate path every consumer (query/pack/reuse-scan/
+# prompt-scan) calls. A comparator, tie-break, rank-numbering, or limit
+# regression here would silently return the wrong top-K to all four consumers
+# while every schema-shape/presence assertion elsewhere stays green -- this
+# case is white-box and asserts the actual ordering/values directly.
+# Steps: source the lib; feed _ctx_rank_hits a synthetic 9-column TSV with
+# out-of-order and tied scores; assert descending score order, ref-ascending
+# tie-break, 1-based sequential rank, and correct truncation at a limit.
+case_context_rank_hits_orders_and_truncates() {
+  local name="pmctl context: _ctx_rank_hits sorts by score, tie-breaks by ref, numbers rank, and truncates"
+  should_run "$name" || return 0
+
+  local input out err status=0
+  input="$tmp_root/rank-hits-input.tsv"
+  out="$tmp_root/rank-hits.out"; err="$tmp_root/rank-hits.err"
+  # ref, domain, why, conf, trust, match_kind, line_end, ranking_score, score_components
+  {
+    printf 'z.md:1\trepo\tw\t0.7\tmedium\tlike_fallback\t1\t100\tc1\n'
+    printf 'a.md:1\trepo\tw\t0.7\tmedium\tlike_fallback\t1\t500\tc2\n'
+    printf 'b.md:1\trepo\tw\t0.7\tmedium\tlike_fallback\t1\t500\tc3\n'
+    printf 'c.md:1\trepo\tw\t0.85\thigh\tsymbol_exact\t1\t1000\tc4\n'
+  } > "$input"
+
+  bash -c '
+    set -euo pipefail
+    # shellcheck source=runtime/lib/pmctl-context.sh
+    . "$1/lib/pmctl-context.sh"
+    _ctx_rank_hits "$2" "$3"
+  ' bash "$REPO_ROOT/runtime" "$input" 2 > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "exit $status err=$(<"$err")"; return 0
+  fi
+  # Expect exactly 2 rows (limit=2): rank 1 = c.md (score 1000, highest),
+  # rank 2 = a.md (score 500, tie-broken ahead of b.md by ref ascending).
+  local expected actual
+  expected="1	c.md:1	repo	w	0.85	high	symbol_exact	1	1000	c4
+2	a.md:1	repo	w	0.7	medium	like_fallback	1	500	c2"
+  actual="$(cat "$out")"
+  if [[ "$actual" != "$expected" ]]; then
+    fail "$name" "ranked output mismatch:
+--- expected ---
+$expected
+--- actual ---
+$actual"
+    return 0
+  fi
+  pass "$name"
+}
+
+# Behavior (CC-505 Req 2/3 gate finding qa-tester-F002): the schema_version 3
+# ranking fields must actually hold valid values on real pack output, not
+# just be present as unchecked keys. Presence-only checks (has("rank") etc.)
+# would not catch an omitted, mis-typed, or invalid-enum value reaching the
+# consumer.
+# Steps: index a fixture repo (multiple match_kinds: exact symbol + fts5
+# text); run pack; assert every files[]/symbols[] item has rank >= 1,
+# match_kind in the declared enum, integer line_start/line_end,
+# integer ranking_score, and a non-empty score_components string; also
+# assert items[].rank is a contiguous 1..N sequence within each array
+# (confirms _ctx_rank_hits numbered the SAME array pack actually emitted,
+# not a stale or differently-ordered set).
+case_context_pack_ranking_fields_are_valid() {
+  local name="pmctl context pack: schema_version 3 ranking fields hold valid values, not just present keys"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-pack-ranking"
+  make_fixture_repo "$fix_repo"
+
+  local out err status=0
+  "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-rank-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-rank-setup.err")"; return 0; }
+
+  out="$tmp_root/pack-ranking.out"; err="$tmp_root/pack-ranking.err"
+  "$PMCTL" context pack "$fix_repo" --task-id TASK-1 --query my_func_alpha --query alpha \
+    > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "pack exited $status: $(<"$err")"; return 0
+  fi
+
+  if ! jq -e '
+    def valid_items:
+      (. | length) == 0 or (
+        all(.[]; (.rank | type == "number" and . >= 1)) and
+        all(.[]; .match_kind | IN("symbol_exact","symbol_partial","fts5_content","like_fallback")) and
+        all(.[]; (.line_start == null) or (.line_start | type == "number")) and
+        all(.[]; (.line_end == null) or (.line_end | type == "number")) and
+        all(.[]; .ranking_score | type == "number") and
+        all(.[]; (.score_components | type == "string") and (.score_components | length) > 0) and
+        ([.[].rank] | sort) == ([range(1; (length + 1))])
+      );
+    (.files | valid_items) and (.symbols | valid_items) and
+    ((.files | length) + (.symbols | length)) >= 1
+  ' "$out" > /dev/null 2>"$err"; then
+    fail "$name" "ranking field validation failed: $(<"$err") output: $(<"$out")"
+    return 0
+  fi
+  pass "$name"
+}
+
 # ── Run all cases ──────────────────────────────────────────────────────────────
 
 case_context_index_missing_repo
@@ -4141,6 +4241,8 @@ case_context_prompt_scan_no_sqlite_graceful
 case_context_prompt_scan_secret_never_persisted
 case_context_prompt_scan_emits_event
 case_context_fts5_availability_is_cached
+case_context_rank_hits_orders_and_truncates
+case_context_pack_ranking_fields_are_valid
 case_context_commands_resolve_only_fixture_roots
 case_context_every_subcommand_is_exercised
 case_context_live_target_guard_trips

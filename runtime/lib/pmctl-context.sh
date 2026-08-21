@@ -608,15 +608,19 @@ _ctx_fts_rebuild() {
   local db="$1"
   _ctx_fts5_available "$db" || return 0
 
+  # line_end is UNINDEXED (not searched, just carried) so a query can report
+  # each hit's real bounded span instead of faking line_end=line_start (the
+  # pack/query contract advertises line_start/line_end as the actual chunk or
+  # symbol extent -- CC-505 Req 3 gate finding critic-F001).
   sqlite3 "$db" >/dev/null <<'SQLFTS'
 PRAGMA busy_timeout=5000;
 DROP TABLE IF EXISTS content_fts;
-CREATE VIRTUAL TABLE content_fts USING fts5(ref, text);
-INSERT INTO content_fts(ref, text)
-  SELECT f.path || ':' || s.line_start, s.name
+CREATE VIRTUAL TABLE content_fts USING fts5(ref, text, line_end UNINDEXED);
+INSERT INTO content_fts(ref, text, line_end)
+  SELECT f.path || ':' || s.line_start, s.name, s.line_end
   FROM symbols s JOIN files f ON s.file_id = f.id;
-INSERT INTO content_fts(ref, text)
-  SELECT f.path || ':' || fc.line_start, TRIM(COALESCE(fc.heading, '') || ' ' || COALESCE(fc.text, ''))
+INSERT INTO content_fts(ref, text, line_end)
+  SELECT f.path || ':' || fc.line_start, TRIM(COALESCE(fc.heading, '') || ' ' || COALESCE(fc.text, '')), fc.line_end
   FROM file_chunks fc JOIN files f ON fc.file_id = f.id
   WHERE TRIM(COALESCE(fc.heading, '') || ' ' || COALESCE(fc.text, '')) != '';
 SQLFTS
@@ -1298,14 +1302,21 @@ _ctx_query_hits_raw() {
     fts_tmpf="$(mktemp /tmp/ctx-XXXXXX.sql)"
     # bm25() is smaller-is-better (best matches are most negative); scale and
     # negate entirely in SQL so bash only ever adds pre-computed integers.
-    printf "SELECT ref, replace(replace(text, char(10), ' '), char(13), ' '), CAST(ROUND(-bm25(content_fts)*100) AS INTEGER) FROM content_fts WHERE content_fts MATCH '\"%s\"' ORDER BY bm25(content_fts) LIMIT 20;\n" \
+    printf "SELECT ref, replace(replace(text, char(10), ' '), char(13), ' '), CAST(ROUND(-bm25(content_fts)*100) AS INTEGER), line_end FROM content_fts WHERE content_fts MATCH '\"%s\"' ORDER BY bm25(content_fts) LIMIT 20;\n" \
       "$fts_query" > "$fts_tmpf"
-    while IFS=$'\t' read -r ref text bm25_scaled; do
+    while IFS=$'\t' read -r ref text bm25_scaled fts_line_end_col; do
       [[ -n "$ref" ]] || continue
       local fts_path fts_domain fts_trust fts_line_start fts_line_end score components
       fts_path="${ref%:*}"
       fts_line_start="${ref##*:}"
-      fts_line_end="$fts_line_start"
+      # The rebuilt content_fts table carries the real chunk/symbol line_end
+      # (see _ctx_fts_rebuild); fall back to line_start only if it is somehow
+      # absent, rather than silently claiming a one-line span.
+      if [[ "$fts_line_end_col" =~ ^[0-9]+$ ]]; then
+        fts_line_end="$fts_line_end_col"
+      else
+        fts_line_end="$fts_line_start"
+      fi
       if [[ -n "$domain_label" ]]; then
         fts_domain="$domain_label"; fts_trust="$(_ctx_memory_trust "$fts_path")"
       else
