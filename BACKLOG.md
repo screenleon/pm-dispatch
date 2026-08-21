@@ -21,7 +21,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-511 | ⚠️ partial 2026-07-24 | ship publish authorization：Phase A current-tree authoritative full-suite 與 CC-515 shared verifier foundation 已交付；Phase B review-closure evidence 仍待 CC-517 | release/gate | 2026-07-23 | pr:#446, pr:#484 | P1 | design |
 | CC-514 | 🔵 active | orthogonal delivery assurance map、machine-derived tables 與 feature/docs/high-risk recipes | docs/process | 2026-07-23 | — | P2 | design |
 | CC-516 | ⏸ deferred | evidence-gated thin delivery wrapper 評估；只組合既有 primitives，不建立 workflow engine/FSM | ux/process | 2026-07-23 | — | P3 | spike |
-| CC-517 | ⚠️ partial 2026-08-15 | maintainer `/ship`：primary review、structured remediation closure 與 conditional targeted confirmation | process/gate | 2026-07-23 | pr:#483 | P1 | design |
+| CC-517 | ✅ done | maintainer `/ship`：primary review、structured remediation closure 與 conditional targeted confirmation | process/gate | 2026-07-23 | pr:#483, pr:TBD | P1 | design |
 | CC-524 | 🔵 active | `pmctl artifacts show` 顯示 canonical absolute run root 並提供穩定 machine-readable locator | ux/ops | 2026-07-27 | feedback:2026-07-27 | P2 | hygiene |
 | CC-527 | ✅ done | targeted gate CLI 拆分 pass、reviewer coverage 與 tier；tier 由 current subject/policy 解析，initial result 僅為 remediation context | ux/gate | 2026-07-28 | pr:#472, pr:#476, pr:#482, pr:TBD | P2 | design |
 | CC-529 | ⚠️ partial 2026-08-15 | publish assurance observability：以 gate_publish_assessment_v1 將 ship stdout、PR body 與 finish marker 綁到同一份 verified assessment；仍需完成完整 producer/consumer dogfood | release/gate | 2026-07-30 | feedback:2026-07-30, pr:#484 | P2 | hygiene |
@@ -1632,7 +1632,7 @@ gate/test schema。若需求實際是 multi-run parent control，回到 [[CC-508
 
 ---
 
-## CC-517 — maintainer `/ship` primary review + remediation closure ⚠️ partial 2026-08-15
+## CC-517 — maintainer `/ship` primary review + remediation closure ✅ 2026-08-21
 
 **Problem**: pm-dispatch maintainer `/ship` 目前把 gate remediation 設計成
 repeat-until-GO loop；每輪只揭露少量新問題時，流程會反覆支付完整 LLM review 成本，
@@ -1710,6 +1710,25 @@ orchestrator。
 P1，排入 v0.11.0 delivery assurance correctness。
 
 **Cross-link**: [[CC-485]]、[[CC-511]]、[[CC-514]]。
+
+**Closure 2026-08-21 (pr:TBD)**: 補上 2026-08-20 稽核筆記標記的殘留缺口。
+`gate_remediation_closure_verify`（`runtime/lib/gate-closure.sh:420-524`）原本
+只有一個 mutation test（`disposition="tracked"`）覆蓋，不足以證明約 15 條件
+`and`-chain 裡每一條都真的有作用。把
+`tests/shell/test-core-schemas.sh` 的
+`case_gate_remediation_closure_runtime_claims` 擴成 table-driven，一個 Done-when
+失敗模式配一個 mutation：unnecessary re-gate（accept baseline）、skipped
+required confirmation、restarted full discovery（`delta_only=false`）、
+unauthorized hard-gate disposition（`classification="stop_split"` 但非
+split state）、scope-expanding remediation（finding `changed_paths` 超出
+`changed_files`）、false final-GO claim（`publish_authorized=true` 但
+`full_suite_status="not_run"`）。「漏 ledger finding」已由 synthesis 層
+`test-pr-gate.sh` 的 `seed-missing-entry` mutation 覆蓋，不重複做。六個
+mutation 全部針對現有 `gate-closure.sh` 跑出預期方向，未發現任何漏洞，
+**未變更任何 production code**——Requirement 1–6 原本就已正確落實，這次只是
+把缺的證據補齊。
+
+**See**: pr:TBD
 
 ---
 

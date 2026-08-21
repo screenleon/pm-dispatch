@@ -2053,28 +2053,56 @@ case_gate_remediation_closure_null_locator_rejected() {
   rm -f "$nulled" "$kept"
 }
 
+# Behavior: gate_remediation_closure_verify's deterministic claim chain must
+# independently catch each Done-when failure mode CC-517 names, not just the
+# one disposition mutation the prior version of this test exercised -- a
+# single passing mutation cannot prove every clause in the ~15-condition
+# jq chain is load-bearing (a short-circuited or vacuous clause elsewhere
+# would not surface).
+# Steps: mutate the canonical closure fixture one Done-when failure mode at a
+# time and assert gate_remediation_closure_verify's accept/reject direction
+# for each; the "missing ledger finding" failure mode is exercised at the
+# synthesis layer (test-pr-gate.sh's seed-missing-entry mutation) and is not
+# duplicated here.
 case_gate_remediation_closure_runtime_claims() {
-  local name="remediation-closure: runtime verifier enforces finding classification"
+  local name="remediation-closure: runtime verifier enforces each Done-when failure mode"
   should_run "$name" || return 0
-  local valid invalid
-  valid="$(mktemp /tmp/gate-remediation-closure-runtime-XXXXXX.json)"
-  invalid="${valid}.invalid"
-  _gate_remediation_closure_valid_instance > "$valid"
-  _gate_remediation_closure_valid_instance |
-    jq '.findings[0].disposition = "tracked"' > "$invalid"
-  if ! gate_remediation_closure_verify "$valid" \
-      "$(printf 'd%.0s' {1..64})" "$(printf 'a%.0s' {1..64})"; then
-    fail "$name" "canonical closure was rejected"
-    rm -f "$valid" "$invalid"
-    return
-  fi
-  if gate_remediation_closure_verify "$invalid" \
-      "$(printf 'd%.0s' {1..64})" "$(printf 'a%.0s' {1..64})" >/dev/null 2>&1; then
-    fail "$name" "invalid finding classification was accepted"
-  else
-    pass "$name"
-  fi
-  rm -f "$valid" "$invalid"
+  local subject scope failures=0
+  subject="$(printf 'd%.0s' {1..64})"
+  scope="$(printf 'a%.0s' {1..64})"
+
+  local mutation filter expect artifact
+  while IFS=$'\t' read -r mutation filter expect; do
+    [[ -n "$mutation" ]] || continue
+    artifact="$(mktemp "/tmp/gate-remediation-closure-${mutation}-XXXXXX.json")"
+    if [[ "$filter" == "-" ]]; then
+      _gate_remediation_closure_valid_instance > "$artifact"
+    else
+      _gate_remediation_closure_valid_instance | jq "$filter" > "$artifact"
+    fi
+    if gate_remediation_closure_verify "$artifact" "$subject" "$scope" >/dev/null 2>&1; then
+      if [[ "$expect" == reject ]]; then
+        fail "$name" "mutation $mutation: expected rejection but was accepted"
+        failures=$((failures + 1))
+      fi
+    else
+      if [[ "$expect" == accept ]]; then
+        fail "$name" "mutation $mutation: expected acceptance but was rejected"
+        failures=$((failures + 1))
+      fi
+    fi
+    rm -f "$artifact"
+  done <<'MUTATIONS'
+canonical-no-forced-confirmation	-	accept
+invalid-disposition-classification	.findings[0].disposition = "tracked"	reject
+skipped-required-confirmation	.findings[0].classification = "targeted_confirmation"	reject
+restarted-full-discovery	.targeted_confirmation.delta_only = false	reject
+unauthorized-hard-gate-disposition	.findings[0].classification = "stop_split"	reject
+scope-expanding-remediation	.findings[0].changed_paths += ["unrelated/outside-scope.sh"]	reject
+false-final-go-claim	.final_assessment.full_suite_status = "not_run"	reject
+MUTATIONS
+  [[ "$failures" -eq 0 ]] || return
+  pass "$name"
 }
 
 case_gate_remediation_closure_publish_is_no_replace() {
