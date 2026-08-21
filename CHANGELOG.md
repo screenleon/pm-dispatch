@@ -113,6 +113,20 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **The remediation-closure verifier's Done-when failure modes now each have
+  a dedicated mutation test (CC-517).** `gate_remediation_closure_verify`
+  (`runtime/lib/gate-closure.sh`) is a ~15-condition jq predicate, but only
+  one mutation (a disposition change) exercised it — not enough to prove
+  every clause is load-bearing, since an accidentally short-circuited or
+  vacuous clause elsewhere in the chain wouldn't surface. Expanded the test
+  into a table covering 6 of the ticket's 7 named failure modes (unnecessary
+  re-gate, skipped required confirmation, restarted full discovery,
+  unauthorized hard-gate disposition, scope-expanding remediation, false
+  final-GO claim; the 7th, missing ledger finding, is already covered at the
+  synthesis layer). All 6 mutations passed against the existing verifier
+  unmodified — Requirements 1-6 were already correctly implemented, only the
+  test evidence was missing. No production code changed; this closes CC-517.
+
 - **The targeted-gate CLI's fail-closed validation matrix now has deterministic
   fixtures (CC-527).** `--pass initial` combined with `--initial-result`,
   conflicting `--pass`/`--targeted` pass-kind spellings, `--reviewers`/
