@@ -956,7 +956,7 @@ case_context_pack_query_without_value() {
 case_context_pack_no_db() {
   local name="pmctl context pack: exits 0 with empty JSON when index DB not found"
   # Behavior: with autobuild disabled, missing DB must still return graceful empty
-  # JSON (schema_version 2, empty files/symbols arrays) rather than exiting 1.
+  # JSON (schema_version 3, empty files/symbols arrays) rather than exiting 1.
   # Steps: call pack on a repo with no prior index run and autobuild disabled; assert exit 0 and valid empty JSON.
   should_run "$name" || return 0
   local out err status=0
@@ -969,9 +969,9 @@ case_context_pack_no_db() {
   if [[ "$status" -ne 0 ]]; then
     fail "$name" "expected exit 0 (graceful empty); got $status err=$(<"$err")"; return 0
   fi
-  if ! jq -e '.schema_version == 2 and (.files | length) == 0 and (.symbols | length) == 0' \
+  if ! jq -e '.schema_version == 3 and (.files | length) == 0 and (.symbols | length) == 0' \
       "$out" > /dev/null 2>&1; then
-    fail "$name" "expected empty schema_version-2 JSON; got: $(<"$out")"; return 0
+    fail "$name" "expected empty schema_version-3 JSON; got: $(<"$out")"; return 0
   fi
   if [[ -e "$nodb_repo/.pm-dispatch/ctx/context.db" ]]; then
     fail "$name" "autobuild disabled but context.db was created"; return 0
@@ -993,8 +993,8 @@ case_context_pack_unknown_flag() {
 }
 
 case_context_pack_valid_json() {
-  local name="pmctl context pack: valid call produces schema_version 2 JSON with correct fields"
-  # Behavior: context pack must emit schema_version 2 JSON with task_id, sources, and at least one hit.
+  local name="pmctl context pack: valid call produces schema_version 3 JSON with correct fields"
+  # Behavior: context pack must emit schema_version 3 JSON with task_id, sources, and at least one hit.
   # Steps: index a fixture repo; run pack with one --query; validate JSON fields via jq.
   should_run "$name" || return 0
 
@@ -1014,7 +1014,7 @@ case_context_pack_valid_json() {
   fi
 
   if ! jq -e '
-    .schema_version == 2 and
+    .schema_version == 3 and
     .task_id == "TASK-1" and
     (.sources | length) > 0 and
     .sources[0].name == "builtin-index" and
@@ -2189,7 +2189,7 @@ case_context_pack_nondir_repo_path() {
 }
 
 case_context_pack_schema_contract() {
-  local name="pmctl context pack: emitted pack has all required schema_version 2 fields"
+  local name="pmctl context pack: emitted pack has all required schema_version 3 fields"
   # Behavior: context pack must always include schema_version, task_id, built_ts, sources, files, symbols, memories, risks.
   # Steps: index fixture repo; run pack; validate all top-level required fields are present.
   should_run "$name" || return 0
@@ -2213,7 +2213,7 @@ case_context_pack_schema_contract() {
     has("schema_version") and has("task_id") and has("built_ts") and
     has("sources") and has("files") and has("symbols") and
     has("memories") and has("risks") and
-    .schema_version == 2
+    .schema_version == 3
   ' "$out" > /dev/null 2>"$err"; then
     fail "$name" "schema contract failed: $(<"$err") output: $(<"$out")"
     return 0
@@ -3770,6 +3770,64 @@ case_context_index_extractor_version_forces_reextract() {
   fi
 }
 
+# Behavior (CC-505 gate findings critic-F001 / risk-reviewer-F001): an index
+# built by a PRE-line_end extractor version has a legacy 2-column content_fts
+# table (ref, text). Querying it must transparently migrate content_fts (via
+# the existing extractor-version-forces-reextract path, since _CTX_EXTRACTOR_
+# VERSION was bumped for this change) rather than fail with "no such column:
+# line_end", and the migrated query must still return correct hits.
+# Steps: index a fixture repo; downgrade its stored extractor_version and
+# rebuild content_fts in the pre-change 2-column shape (simulating an index
+# built before this change); run `context query`; assert exit 0, a real hit,
+# and that content_fts now has a line_end column.
+case_context_query_migrates_legacy_two_column_fts() {
+  local name="pmctl context query: transparently migrates a legacy 2-column content_fts table"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-legacy-fts"
+  make_fixture_repo "$fix_repo"
+
+  local err="$tmp_root/legacy-fts.err"
+  "$PMCTL" context index "$fix_repo" > /dev/null 2> "$err" \
+    || { fail "$name" "setup: initial index failed: $(<"$err")"; return 0; }
+
+  local db="$fix_repo/.pm-dispatch/ctx/context.db"
+  # Downgrade the stored extractor version AND rebuild content_fts in the
+  # legacy 2-column shape, faithfully staging what a real pre-upgrade index
+  # looks like (not just an aged version stamp).
+  sqlite3 "$db" <<'SQL' || { fail "$name" "setup: could not stage a legacy-shape index"; return 0; }
+UPDATE index_meta SET extractor_version = extractor_version - 1 WHERE id = 1;
+DROP TABLE IF EXISTS content_fts;
+CREATE VIRTUAL TABLE content_fts USING fts5(ref, text);
+INSERT INTO content_fts(ref, text)
+  SELECT f.path || ':' || s.line_start, s.name
+  FROM symbols s JOIN files f ON s.file_id = f.id;
+INSERT INTO content_fts(ref, text)
+  SELECT f.path || ':' || fc.line_start, TRIM(COALESCE(fc.heading, '') || ' ' || COALESCE(fc.text, ''))
+  FROM file_chunks fc JOIN files f ON fc.file_id = f.id
+  WHERE TRIM(COALESCE(fc.heading, '') || ' ' || COALESCE(fc.text, '')) != '';
+SQL
+
+  local out status=0
+  out="$tmp_root/legacy-fts-query.out"
+  "$PMCTL" context query "$fix_repo" --source repo alpha > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "query against a legacy-shape index exited $status (expected transparent migration): $(<"$err")"
+    return 0
+  fi
+  if ! grep -q '^- ref:' "$out"; then
+    fail "$name" "expected at least one real hit after migration; got: $(<"$out")"
+    return 0
+  fi
+  local fts_cols
+  fts_cols="$(sqlite3 "$db" "PRAGMA table_info(content_fts);" 2>/dev/null | grep -c 'line_end' || true)"
+  if [[ "$fts_cols" -lt 1 ]]; then
+    fail "$name" "content_fts was not migrated to include line_end after the query's auto-refresh"
+    return 0
+  fi
+  pass "$name"
+}
+
 case_context_prompt_scan_term_cap_longest_first() {
   local name="pmctl context prompt-scan: term cap keeps longest terms first"
   # Behavior: terms are ranked longest-first and capped at
@@ -4017,6 +4075,260 @@ case_context_fts5_availability_is_cached() {
   pass "$name"
 }
 
+# Behavior (CC-505 Req 2/3 gate finding qa-tester-F001): _ctx_rank_hits is the
+# ONE shared sort+truncate path every consumer (query/pack/reuse-scan/
+# prompt-scan) calls. A comparator, tie-break, rank-numbering, or limit
+# regression here would silently return the wrong top-K to all four consumers
+# while every schema-shape/presence assertion elsewhere stays green -- this
+# case is white-box and asserts the actual ordering/values directly.
+# Steps: source the lib; feed _ctx_rank_hits a synthetic 9-column TSV with
+# out-of-order and tied scores; assert descending score order, ref-ascending
+# tie-break, 1-based sequential rank, and correct truncation at a limit.
+case_context_rank_hits_orders_and_truncates() {
+  local name="pmctl context: _ctx_rank_hits sorts by score, tie-breaks by ref, numbers rank, and truncates"
+  should_run "$name" || return 0
+
+  local input out err status=0
+  input="$tmp_root/rank-hits-input.tsv"
+  out="$tmp_root/rank-hits.out"; err="$tmp_root/rank-hits.err"
+  # ref, domain, why, conf, trust, match_kind, line_end, ranking_score, score_components
+  {
+    printf 'z.md:1\trepo\tw\t0.7\tmedium\tlike_fallback\t1\t100\tc1\n'
+    printf 'a.md:1\trepo\tw\t0.7\tmedium\tlike_fallback\t1\t500\tc2\n'
+    printf 'b.md:1\trepo\tw\t0.7\tmedium\tlike_fallback\t1\t500\tc3\n'
+    printf 'c.md:1\trepo\tw\t0.85\thigh\tsymbol_exact\t1\t1000\tc4\n'
+  } > "$input"
+
+  bash -c '
+    set -euo pipefail
+    # shellcheck source=runtime/lib/pmctl-context.sh
+    . "$1/lib/pmctl-context.sh"
+    _ctx_rank_hits "$2" "$3"
+  ' bash "$REPO_ROOT/runtime" "$input" 2 > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "exit $status err=$(<"$err")"; return 0
+  fi
+  # Expect exactly 2 rows (limit=2): rank 1 = c.md (score 1000, highest),
+  # rank 2 = a.md (score 500, tie-broken ahead of b.md by ref ascending).
+  local expected actual
+  expected="1	c.md:1	repo	w	0.85	high	symbol_exact	1	1000	c4
+2	a.md:1	repo	w	0.7	medium	like_fallback	1	500	c2"
+  actual="$(cat "$out")"
+  if [[ "$actual" != "$expected" ]]; then
+    fail "$name" "ranked output mismatch:
+--- expected ---
+$expected
+--- actual ---
+$actual"
+    return 0
+  fi
+  pass "$name"
+}
+
+# Behavior (CC-505 Req 2/3 gate finding qa-tester-F002): the schema_version 3
+# ranking fields must actually hold valid values on real pack output, not
+# just be present as unchecked keys. Presence-only checks (has("rank") etc.)
+# would not catch an omitted, mis-typed, or invalid-enum value reaching the
+# consumer.
+# Steps: index a fixture repo (multiple match_kinds: exact symbol + fts5
+# text); run pack; assert every files[]/symbols[] item has rank >= 1,
+# match_kind in the declared enum, integer line_start/line_end,
+# integer ranking_score, and a non-empty score_components string; also
+# assert items[].rank is a contiguous 1..N sequence within each array
+# (confirms _ctx_rank_hits numbered the SAME array pack actually emitted,
+# not a stale or differently-ordered set).
+case_context_pack_ranking_fields_are_valid() {
+  local name="pmctl context pack: schema_version 3 ranking fields hold valid values, not just present keys"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-pack-ranking"
+  make_fixture_repo "$fix_repo"
+
+  local out err status=0
+  "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-rank-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-rank-setup.err")"; return 0; }
+
+  out="$tmp_root/pack-ranking.out"; err="$tmp_root/pack-ranking.err"
+  "$PMCTL" context pack "$fix_repo" --task-id TASK-1 --query my_func_alpha --query alpha \
+    > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "pack exited $status: $(<"$err")"; return 0
+  fi
+
+  # Two --query terms deliberately overlap (my_func_alpha is exact-symbol
+  # AND substring-matches "alpha"'s fts5/partial hits) so this also covers
+  # critic-F001: no ref may appear twice across symbols[]+files[] combined --
+  # accumulating candidates from both terms, and from both match-kind
+  # families, must dedup to each ref's single highest-scoring occurrence,
+  # not just "first term/kind wins". rank comes from ranking the merged
+  # repo set once before the symbols/files split, so ranks need not be a
+  # contiguous 1..N run within either array alone -- only unique and >=1.
+  if ! jq -e '
+    def valid_items:
+      (. | length) == 0 or (
+        all(.[]; (.rank | type == "number" and . >= 1)) and
+        all(.[]; .match_kind | IN("symbol_exact","symbol_partial","fts5_content","like_fallback")) and
+        all(.[]; (.line_start == null) or (.line_start | type == "number")) and
+        all(.[]; (.line_end == null) or (.line_end | type == "number")) and
+        all(.[]; .ranking_score | type == "number") and
+        all(.[]; (.score_components | type == "string") and (.score_components | length) > 0) and
+        (([.[].rank] | unique | length) == length)
+      );
+    (.files | valid_items) and (.symbols | valid_items) and
+    ((.files | length) + (.symbols | length)) >= 1 and
+    (((.files + .symbols) | map(.ref) | unique | length) == ((.files + .symbols) | length))
+  ' "$out" > /dev/null 2>"$err"; then
+    fail "$name" "ranking field validation failed: $(<"$err") output: $(<"$out")"
+    return 0
+  fi
+  pass "$name"
+}
+
+# Behavior (CC-505 Req 2/3 gate finding qa-tester-F001): `pmctl context query`
+# must return CLI hits in real ranking-tier order (symbol match before fts5
+# text match), not insertion/query order, and that order must be stable
+# across repeated runs against an unchanged index.
+# Steps: index a fixture repo; query a term that matches both a symbol name
+# (partial) and multiple markdown bodies (fts5); assert the symbol hit ranks
+# first and precedes every fts5 hit; assert a second run produces identical
+# output.
+case_context_query_cli_orders_by_rank_tier() {
+  local name="pmctl context query: CLI output orders symbol hits ahead of fts5 hits and is stable across runs"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-query-rank"
+  make_fixture_repo "$fix_repo"
+
+  local out1 out2 err status=0
+  "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-query-rank.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-query-rank.err")"; return 0; }
+
+  out1="$tmp_root/query-rank-1.out"; err="$tmp_root/query-rank.err"
+  "$PMCTL" context query "$fix_repo" --source repo alpha > "$out1" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "query exited $status: $(<"$err")"; return 0
+  fi
+  local first_match_kind first_ref
+  first_match_kind="$(awk -F': ' '/^  match_kind:/{print $2; exit}' "$out1")"
+  first_ref="$(awk -F': ' '/^- ref:/{print $2; exit}' "$out1")"
+  if [[ "$first_match_kind" != symbol_* ]]; then
+    fail "$name" "expected the top hit to be a symbol match, got match_kind=$first_match_kind ref=$first_ref: $(<"$out1")"
+    return 0
+  fi
+  if ! grep -q 'match_kind: fts5_content' "$out1"; then
+    fail "$name" "expected at least one fts5_content hit alongside the symbol hit: $(<"$out1")"
+    return 0
+  fi
+  # rank is assigned in strict descending-score order (_ctx_rank_hits), so
+  # asserting the top (first-emitted) hit is a symbol match already proves
+  # no fts5_content hit outranks it -- rank 1 is always the highest score.
+
+  out2="$tmp_root/query-rank-2.out"
+  "$PMCTL" context query "$fix_repo" --source repo alpha > "$out2" 2>> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "second query exited $status: $(<"$err")"; return 0
+  fi
+  if [[ "$(cat "$out1")" != "$(cat "$out2")" ]]; then
+    fail "$name" "ranking order was not stable across two runs against an unchanged index"
+    return 0
+  fi
+  pass "$name"
+}
+
+# Behavior (CC-505 Req 2/3 gate finding qa-tester-F001): `pmctl context
+# reuse-scan`'s top hit (rank 1) must be its highest-scoring real candidate
+# (a symbol match), not whichever hit happened to be inserted first, and the
+# capped list must still be internally rank-ordered.
+# Steps: index a fixture repo; reuse-scan a description containing a term
+# that symbol-matches and fts5-matches; assert hit #1 is a symbol match and
+# the emitted ranks are 1..N in order.
+case_context_reuse_scan_cli_top_hit_is_highest_ranked() {
+  local name="pmctl context reuse-scan: CLI top hit is the highest-ranked real candidate"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-reuse-rank"
+  make_fixture_repo "$fix_repo"
+
+  local out err status=0
+  "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-reuse-rank.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-reuse-rank.err")"; return 0; }
+
+  out="$tmp_root/reuse-rank.out"; err="$tmp_root/reuse-rank.err"
+  "$PMCTL" context reuse-scan "$fix_repo" "alpha implementation" > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "reuse-scan exited $status: $(<"$err")"; return 0
+  fi
+  local first_match_kind ranks_in_order
+  first_match_kind="$(awk -F': ' '/^      match_kind:/{print $2; exit}' "$out")"
+  if [[ "$first_match_kind" != symbol_* ]]; then
+    fail "$name" "expected top hit to be a symbol match, got match_kind=$first_match_kind: $(<"$out")"
+    return 0
+  fi
+  ranks_in_order="$(awk -F': ' '/^      rank:/{print $2}' "$out" | tr '\n' ',' )"
+  if [[ "$ranks_in_order" != "1,"* ]]; then
+    fail "$name" "expected ranks to start at 1 in emission order, got: $ranks_in_order"
+    return 0
+  fi
+  pass "$name"
+}
+
+# Behavior (CC-505 Req 2/3 gate finding qa-tester-F002): `pmctl context
+# prompt-scan`'s knowledge_hits: output must go through the same shared
+# ranking + dedup path as the other three consumers, not its own leftover
+# insertion-order concatenation, and must be stable across repeated runs.
+# prompt-scan's own minimal YAML (ref + why_relevant only, by design, for
+# compact prompt injection) does not expose match_kind/rank, and its
+# knowledge-domain restriction means the fixture repo has no eligible SYMBOL
+# hit (no code symbols live under BACKLOG.md/docs/*) -- so unlike the
+# query/reuse-scan cases, this asserts what IS observable and meaningful
+# here: two overlapping terms (mirroring critic-F001's exact scenario)
+# produce a deduplicated, capped, ORDER-STABLE ref list.
+# Steps: index a fixture repo; prompt-scan a prompt whose terms both match
+# the same knowledge-domain docs; assert unique refs, a <=5 cap, and that a
+# second run against the unchanged index reproduces the identical output.
+case_context_prompt_scan_cli_orders_and_dedups() {
+  local name="pmctl context prompt-scan: CLI output is deduplicated, capped, and stable across runs"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-pscan-rank"
+  make_fixture_repo "$fix_repo"
+
+  local out1 out2 err status=0
+  "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-pscan-rank.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-pscan-rank.err")"; return 0; }
+
+  out1="$tmp_root/pscan-rank-1.out"; err="$tmp_root/pscan-rank.err"
+  "$PMCTL" context prompt-scan "$fix_repo" "alpha architecture note" > "$out1" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "prompt-scan exited $status: $(<"$err")"; return 0
+  fi
+  local refs ref_count unique_count
+  refs="$(awk -F': ' '/^  - ref:/{print $2}' "$out1")"
+  ref_count="$(printf '%s\n' "$refs" | grep -c .)"
+  unique_count="$(printf '%s\n' "$refs" | sort -u | grep -c .)"
+  if [[ "$ref_count" -eq 0 ]]; then
+    fail "$name" "expected at least one hit: $(<"$out1")"; return 0
+  fi
+  if [[ "$ref_count" -gt 5 ]]; then
+    fail "$name" "expected at most 5 hits, got $ref_count: $(<"$out1")"; return 0
+  fi
+  if [[ "$unique_count" -ne "$ref_count" ]]; then
+    fail "$name" "expected every ref to be unique (dedup across terms), got $ref_count refs / $unique_count unique: $(<"$out1")"
+    return 0
+  fi
+
+  out2="$tmp_root/pscan-rank-2.out"
+  "$PMCTL" context prompt-scan "$fix_repo" "alpha architecture note" > "$out2" 2>> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "second prompt-scan exited $status: $(<"$err")"; return 0
+  fi
+  if [[ "$(cat "$out1")" != "$(cat "$out2")" ]]; then
+    fail "$name" "prompt-scan output was not stable across two runs against an unchanged index"
+    return 0
+  fi
+  pass "$name"
+}
+
 # ── Run all cases ──────────────────────────────────────────────────────────────
 
 case_context_index_missing_repo
@@ -4141,6 +4453,12 @@ case_context_prompt_scan_no_sqlite_graceful
 case_context_prompt_scan_secret_never_persisted
 case_context_prompt_scan_emits_event
 case_context_fts5_availability_is_cached
+case_context_rank_hits_orders_and_truncates
+case_context_pack_ranking_fields_are_valid
+case_context_query_cli_orders_by_rank_tier
+case_context_reuse_scan_cli_top_hit_is_highest_ranked
+case_context_prompt_scan_cli_orders_and_dedups
+case_context_query_migrates_legacy_two_column_fts
 case_context_commands_resolve_only_fixture_roots
 case_context_every_subcommand_is_exercised
 case_context_live_target_guard_trips

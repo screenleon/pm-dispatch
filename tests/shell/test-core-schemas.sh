@@ -751,6 +751,132 @@ case_context_pack_invalid_trust_level_rejected() {
   rm -f "$tmpf"
 }
 
+# _ctx_pack_v3_item <overrides-jq-filter>
+# Builds a canonical, fully-populated schema_version 3 files[] item and
+# applies an optional jq filter to mutate it, so each new v3 test only states
+# what it changes.
+_ctx_pack_v3_item() {
+  local filter="${1:-.}"
+  jq -c "$filter" <<'JSON'
+{"ref":"src/foo.sh:10","source":"builtin-index","confidence":0.85,"source_domain":"repo","why_relevant":"symbol: foo (function)","trust_level":"high","rank":1,"match_kind":"symbol_exact","line_start":10,"line_end":12,"ranking_score":1002000,"score_components":"base:1000000,trust:2000,domain:0"}
+JSON
+}
+
+case_context_pack_v3_valid_item_validates() {
+  local name="context-pack.schema.json: v3 item with all six CC-505 ranking fields validates"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/context-pack.schema.json"
+  local tmpf item; tmpf="$(mktemp /tmp/ctx-pack-v3-XXXXXX.json)"
+  item="$(_ctx_pack_v3_item)"
+  printf '{"schema_version":3,"task_id":"CC-505","built_ts":"2026-01-01T00:00:00Z","sources":[{"name":"builtin-index","version":"1"}],"files":[%s]}' "$item" > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name" "a fully-populated v3 item should validate"
+  fi
+  rm -f "$tmpf"
+}
+
+# Behavior (CC-505 gate finding qa-tester-F001): schema_version 3 packs are
+# a downstream compatibility boundary; each ranking-field constraint family
+# must be directly exercised with a representative invalid value, not just
+# asserted present.
+case_context_pack_v3_missing_ranking_field_rejected() {
+  local name="context-pack.schema.json: v3 item missing a required ranking field is rejected"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/context-pack.schema.json"
+  local field failures=0
+  for field in rank match_kind line_start line_end ranking_score score_components; do
+    local tmpf item; tmpf="$(mktemp /tmp/ctx-pack-v3-missing-XXXXXX.json)"
+    item="$(_ctx_pack_v3_item "del(.${field})")"
+    printf '{"schema_version":3,"task_id":"CC-505","built_ts":"2026-01-01T00:00:00Z","sources":[{"name":"builtin-index","version":"1"}],"files":[%s]}' "$item" > "$tmpf"
+    if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+      fail "$name" "v3 item missing '$field' should be rejected"
+      failures=$((failures + 1))
+    fi
+    rm -f "$tmpf"
+  done
+  [[ "$failures" -eq 0 ]] && pass "$name"
+}
+
+case_context_pack_v3_invalid_rank_rejected() {
+  local name="context-pack.schema.json: v3 item with rank < 1 is rejected"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/context-pack.schema.json"
+  local tmpf item; tmpf="$(mktemp /tmp/ctx-pack-v3-rank-XXXXXX.json)"
+  item="$(_ctx_pack_v3_item '.rank = 0')"
+  printf '{"schema_version":3,"task_id":"CC-505","built_ts":"2026-01-01T00:00:00Z","sources":[{"name":"builtin-index","version":"1"}],"files":[%s]}' "$item" > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    fail "$name" "rank=0 should be rejected (rank is 1-based)"
+  else
+    pass "$name"
+  fi
+  rm -f "$tmpf"
+}
+
+case_context_pack_v3_invalid_match_kind_rejected() {
+  local name="context-pack.schema.json: v3 item with an unknown match_kind is rejected"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/context-pack.schema.json"
+  local tmpf item; tmpf="$(mktemp /tmp/ctx-pack-v3-mk-XXXXXX.json)"
+  item="$(_ctx_pack_v3_item '.match_kind = "regex_guess"')"
+  printf '{"schema_version":3,"task_id":"CC-505","built_ts":"2026-01-01T00:00:00Z","sources":[{"name":"builtin-index","version":"1"}],"files":[%s]}' "$item" > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    fail "$name" "match_kind='regex_guess' is not in the declared enum and should be rejected"
+  else
+    pass "$name"
+  fi
+  rm -f "$tmpf"
+}
+
+case_context_pack_v3_invalid_line_span_rejected() {
+  local name="context-pack.schema.json: v3 item with a non-integer line_start/line_end is rejected"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/context-pack.schema.json"
+  local field failures=0
+  for field in line_start line_end; do
+    local tmpf item; tmpf="$(mktemp /tmp/ctx-pack-v3-line-XXXXXX.json)"
+    item="$(_ctx_pack_v3_item ".${field} = \"ten\"")"
+    printf '{"schema_version":3,"task_id":"CC-505","built_ts":"2026-01-01T00:00:00Z","sources":[{"name":"builtin-index","version":"1"}],"files":[%s]}' "$item" > "$tmpf"
+    if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+      fail "$name" "$field='ten' (a string, not integer|null) should be rejected"
+      failures=$((failures + 1))
+    fi
+    rm -f "$tmpf"
+  done
+  [[ "$failures" -eq 0 ]] && pass "$name"
+}
+
+case_context_pack_v3_invalid_ranking_score_rejected() {
+  local name="context-pack.schema.json: v3 item with a non-numeric ranking_score is rejected"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/context-pack.schema.json"
+  local tmpf item; tmpf="$(mktemp /tmp/ctx-pack-v3-score-XXXXXX.json)"
+  item="$(_ctx_pack_v3_item '.ranking_score = "high"')"
+  printf '{"schema_version":3,"task_id":"CC-505","built_ts":"2026-01-01T00:00:00Z","sources":[{"name":"builtin-index","version":"1"}],"files":[%s]}' "$item" > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    fail "$name" "ranking_score='high' (a string, not integer) should be rejected"
+  else
+    pass "$name"
+  fi
+  rm -f "$tmpf"
+}
+
+case_context_pack_v3_invalid_score_components_rejected() {
+  local name="context-pack.schema.json: v3 item with a non-string score_components is rejected"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/context-pack.schema.json"
+  local tmpf item; tmpf="$(mktemp /tmp/ctx-pack-v3-components-XXXXXX.json)"
+  item="$(_ctx_pack_v3_item '.score_components = 12345')"
+  printf '{"schema_version":3,"task_id":"CC-505","built_ts":"2026-01-01T00:00:00Z","sources":[{"name":"builtin-index","version":"1"}],"files":[%s]}' "$item" > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    fail "$name" "score_components=12345 (a number, not string) should be rejected"
+  else
+    pass "$name"
+  fi
+  rm -f "$tmpf"
+}
+
 case_preflight_basic_evidence_needs_no_git_provenance() {
   # Verifies the portable basic-result contract stays usable by an ordinary
   # command producer with no repository, base, head, or planner metadata.
@@ -2401,6 +2527,13 @@ case_context_pack_v2_new_fields_valid
 case_context_pack_memory_source_domain_valid
 case_context_pack_invalid_source_domain_rejected
 case_context_pack_invalid_trust_level_rejected
+case_context_pack_v3_valid_item_validates
+case_context_pack_v3_missing_ranking_field_rejected
+case_context_pack_v3_invalid_rank_rejected
+case_context_pack_v3_invalid_match_kind_rejected
+case_context_pack_v3_invalid_line_span_rejected
+case_context_pack_v3_invalid_ranking_score_rejected
+case_context_pack_v3_invalid_score_components_rejected
 case_preflight_basic_evidence_needs_no_git_provenance
 case_preflight_reusable_evidence_requires_fingerprint
 case_preflight_legacy_status_without_outcome_accepted

@@ -363,6 +363,7 @@ _ctx_sql_str_var() {
 
 _ctx_emit_hit() {
   local ref="$1" source_domain="$2" why_relevant="$3" confidence="$4" trust_level="$5"
+  local rank="${6:-}" match_kind="${7:-}" line_end="${8:-}" ranking_score="${9:-}" score_components="${10:-}"
   local safe_why="${why_relevant//$'\n'/ }"
   safe_why="${safe_why//$'\r'/ }"
   safe_why="${safe_why//\'/\'\'}"
@@ -377,6 +378,25 @@ _ctx_emit_hit() {
   printf    "  why_relevant: '%s'\n" "$safe_why"
   printf    '  confidence: %s\n'     "$confidence"
   printf    '  trust_level: %s\n'    "$trust_level"
+  # CC-505 Req 2-4: ranking_score/match_kind are additive fields distinct
+  # from `confidence` above -- lexical relevance, not correctness confidence.
+  # Optional: a caller that has not gone through _ctx_rank_hits (none should)
+  # simply omits them.
+  if [[ -n "$rank" ]]; then
+    # line_start is derived from ref (path:line_start), same as
+    # _ctx_tsv_to_json_array's pack projection -- gate finding
+    # architecture-reviewer-F001: query's YAML previously emitted line_end
+    # alone, forcing a caller to parse ref itself to recover the other half
+    # of the same bounded-span contract the schema and pack both expose.
+    local line_start="${ref##*:}"
+    [[ "$line_start" =~ ^[0-9]+$ ]] || line_start=""
+    printf '  rank: %s\n'             "$rank"
+    printf '  match_kind: %s\n'       "$match_kind"
+    printf '  line_start: %s\n'       "${line_start:-null}"
+    printf '  line_end: %s\n'         "$line_end"
+    printf '  ranking_score: %s\n'    "$ranking_score"
+    printf "  score_components: '%s'\n" "$score_components"
+  fi
 }
 
 # ── Domain classification (path-based, no DB column) ─────────────────────────
@@ -416,7 +436,15 @@ _CTX_CHUNK_BODY_CAP=2000
 # alters what "already indexed" means, and without it existing databases keep
 # serving chunks the current extractor would never produce -- a stale index that
 # looks healthy. Bump on any change to the chunkers or to the cap/window above.
-_CTX_EXTRACTOR_VERSION=2
+# Also covers the content_fts DDL itself (CC-505 gate findings critic-F001 /
+# risk-reviewer-F001): _ctx_index_tree's _force_reextract check (below) is
+# what makes _ctx_fts_rebuild run unconditionally on a version mismatch, so
+# adding line_end to content_fts's schema is exactly the class of change this
+# constant exists to force-migrate -- an index built before this change would
+# otherwise keep its old 2-column content_fts table forever (no query ever
+# rebuilds it on its own), and the new SELECT ... line_end FROM content_fts
+# would fail against it with "no such column".
+_CTX_EXTRACTOR_VERSION=3
 
 # Emit one chunk row, splitting a body longer than the cap across rows instead
 # of letting it overflow. An over-cap body reaches _ctx_sql_str, which truncates
@@ -596,15 +624,19 @@ _ctx_fts_rebuild() {
   local db="$1"
   _ctx_fts5_available "$db" || return 0
 
+  # line_end is UNINDEXED (not searched, just carried) so a query can report
+  # each hit's real bounded span instead of faking line_end=line_start (the
+  # pack/query contract advertises line_start/line_end as the actual chunk or
+  # symbol extent -- CC-505 Req 3 gate finding critic-F001).
   sqlite3 "$db" >/dev/null <<'SQLFTS'
 PRAGMA busy_timeout=5000;
 DROP TABLE IF EXISTS content_fts;
-CREATE VIRTUAL TABLE content_fts USING fts5(ref, text);
-INSERT INTO content_fts(ref, text)
-  SELECT f.path || ':' || s.line_start, s.name
+CREATE VIRTUAL TABLE content_fts USING fts5(ref, text, line_end UNINDEXED);
+INSERT INTO content_fts(ref, text, line_end)
+  SELECT f.path || ':' || s.line_start, s.name, s.line_end
   FROM symbols s JOIN files f ON s.file_id = f.id;
-INSERT INTO content_fts(ref, text)
-  SELECT f.path || ':' || fc.line_start, TRIM(COALESCE(fc.heading, '') || ' ' || COALESCE(fc.text, ''))
+INSERT INTO content_fts(ref, text, line_end)
+  SELECT f.path || ':' || fc.line_start, TRIM(COALESCE(fc.heading, '') || ' ' || COALESCE(fc.text, '')), fc.line_end
   FROM file_chunks fc JOIN files f ON fc.file_id = f.id
   WHERE TRIM(COALESCE(fc.heading, '') || ' ' || COALESCE(fc.text, '')) != '';
 SQLFTS
@@ -1191,6 +1223,39 @@ _ctx_extract_terms() {
 #                   to this label and trust is derived via _ctx_memory_trust; the
 #                   knowledge/repo path classifier and domain filter are bypassed
 #                   (the memory plane has no knowledge/repo subclasses).
+# Ranking tier bases (large, well-separated integers so a trust/domain boost
+# can only reorder hits WITHIN a match_kind tier, never across tiers -- an
+# exact symbol match must always outrank a text match regardless of boosts).
+# All arithmetic here is bash integer math or done inside the SQL SELECT
+# itself; no per-row subprocess (awk/bc) is spawned -- this repo's indexer
+# has repeatedly hit the same per-item-subprocess cost shape (CC-563 et al).
+_CTX_RANK_BASE_SYMBOL_EXACT=1000000
+_CTX_RANK_BASE_SYMBOL_PARTIAL=500000
+_CTX_RANK_BASE_FTS5=100000
+_CTX_RANK_BASE_LIKE_FALLBACK=10000
+
+# _ctx_compose_score <tier_base> <trust> <domain> [bm25_scaled]
+# The one place tier base + trust/domain boosts (+ an optional bm25 term for
+# the FTS5 branch) are combined into a final ranking_score and its
+# human-readable score_components breakdown. Prints "<score>\t<components>".
+_ctx_compose_score() {
+  local base="$1" trust="$2" domain="$3" bm25_scaled="${4:-}"
+  local tb=0 db_boost=0 score components
+  case "$trust" in
+    high) tb=2000 ;;
+    medium) tb=1000 ;;
+  esac
+  [[ "$domain" == knowledge ]] && db_boost=500
+  if [[ -n "$bm25_scaled" ]]; then
+    score=$(( base + bm25_scaled + tb + db_boost ))
+    components="base:${base},bm25:${bm25_scaled},trust:${tb},domain:${db_boost}"
+  else
+    score=$(( base + tb + db_boost ))
+    components="base:${base},trust:${tb},domain:${db_boost}"
+  fi
+  printf '%s\t%s\n' "$score" "$components"
+}
+
 _ctx_query_hits_raw() {
   local repo_root="$1" query="$2" domain="${3:-}" db_override="${4:-}" domain_label="${5:-}"
   local db eq domain_sql=""
@@ -1211,20 +1276,32 @@ _ctx_query_hits_raw() {
       ;;
   esac
 
-  while IFS=$'\t' read -r path name kind line_start; do
+  # Symbol match: exact (case-insensitive name equality) vs partial (LIKE).
+  # match_kind and the tier base are computed in SQL so the exact/partial
+  # split costs nothing extra per row.
+  while IFS=$'\t' read -r path name kind line_start line_end match_kind; do
     [[ -n "$path" ]] || continue
-    local hit_domain hit_trust
+    local hit_domain hit_trust score components tier_base
     if [[ -n "$domain_label" ]]; then
       hit_domain="$domain_label"; hit_trust="$(_ctx_memory_trust "$path")"
     else
       hit_domain="$(_ctx_classify_domain "$path")"; hit_trust="high"
     fi
-    printf '%s\t%s\t%s\t%s\t%s\n' \
-      "$path:$line_start" "$hit_domain" "symbol: $name ($kind)" "0.85" "$hit_trust"
+    if [[ "$match_kind" == symbol_exact ]]; then
+      tier_base="$_CTX_RANK_BASE_SYMBOL_EXACT"
+    else
+      tier_base="$_CTX_RANK_BASE_SYMBOL_PARTIAL"
+    fi
+    IFS=$'\t' read -r score components < <(_ctx_compose_score "$tier_base" "$hit_trust" "$hit_domain")
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "$path:$line_start" "$hit_domain" "symbol: $name ($kind)" "0.85" "$hit_trust" \
+      "$match_kind" "${line_end:-$line_start}" "$score" "$components"
   done < <(sqlite3 -separator $'\t' "$db" \
-    "SELECT f.path, s.name, s.kind, s.line_start
+    "SELECT f.path, s.name, s.kind, s.line_start, s.line_end,
+       (CASE WHEN lower(s.name) = lower('${eq}') THEN 'symbol_exact' ELSE 'symbol_partial' END)
      FROM symbols s JOIN files f ON s.file_id=f.id
      WHERE s.name LIKE '%${eq}%'${domain_sql}
+     ORDER BY (lower(s.name) = lower('${eq}')) DESC, f.path, s.line_start
      LIMIT 20;" 2>/dev/null | tr -d '\r' || true)
 
   local use_fts5=0
@@ -1239,12 +1316,23 @@ _ctx_query_hits_raw() {
     fts_query="${query//\"/\"\"}"
     fts_query="$(_ctx_sql_str "$fts_query")"
     fts_tmpf="$(mktemp /tmp/ctx-XXXXXX.sql)"
-    printf "SELECT ref, replace(replace(text, char(10), ' '), char(13), ' ') FROM content_fts WHERE content_fts MATCH '\"%s\"' LIMIT 20;\n" \
+    # bm25() is smaller-is-better (best matches are most negative); scale and
+    # negate entirely in SQL so bash only ever adds pre-computed integers.
+    printf "SELECT ref, replace(replace(text, char(10), ' '), char(13), ' '), CAST(ROUND(-bm25(content_fts)*100) AS INTEGER), line_end FROM content_fts WHERE content_fts MATCH '\"%s\"' ORDER BY bm25(content_fts) LIMIT 20;\n" \
       "$fts_query" > "$fts_tmpf"
-    while IFS=$'\t' read -r ref text; do
+    while IFS=$'\t' read -r ref text bm25_scaled fts_line_end_col; do
       [[ -n "$ref" ]] || continue
-      local fts_path fts_domain fts_trust
+      local fts_path fts_domain fts_trust fts_line_start fts_line_end score components
       fts_path="${ref%:*}"
+      fts_line_start="${ref##*:}"
+      # The rebuilt content_fts table carries the real chunk/symbol line_end
+      # (see _ctx_fts_rebuild); fall back to line_start only if it is somehow
+      # absent, rather than silently claiming a one-line span.
+      if [[ "$fts_line_end_col" =~ ^[0-9]+$ ]]; then
+        fts_line_end="$fts_line_end_col"
+      else
+        fts_line_end="$fts_line_start"
+      fi
       if [[ -n "$domain_label" ]]; then
         fts_domain="$domain_label"; fts_trust="$(_ctx_memory_trust "$fts_path")"
       else
@@ -1253,56 +1341,122 @@ _ctx_query_hits_raw() {
       if [[ -n "$domain" && "$fts_domain" != "$domain" ]]; then
         continue
       fi
+      [[ "$bm25_scaled" =~ ^-?[0-9]+$ ]] || bm25_scaled=0
+      IFS=$'\t' read -r score components < <(_ctx_compose_score "$_CTX_RANK_BASE_FTS5" "$fts_trust" "$fts_domain" "$bm25_scaled")
       local snippet
       snippet="${text:0:80}"
       snippet="${snippet//$'\t'/ }"
-      printf '%s\t%s\t%s\t%s\t%s\n' \
-        "$ref" "$fts_domain" "fts5 match: $snippet" "0.75" "$fts_trust"
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$ref" "$fts_domain" "fts5 match: $snippet" "0.75" "$fts_trust" \
+        "fts5_content" "$fts_line_end" "$score" "$components"
     done < <(sqlite3 -separator $'\t' "$db" < "$fts_tmpf" 2>/dev/null | tr -d '\r' || true)
     rm -f "$fts_tmpf"
   else
-    while IFS=$'\t' read -r path line_start; do
+    # No relevance signal is computable without FTS5; ORDER BY here (and the
+    # uniform tier-base score, tie-broken on ref by the shared ranker) is
+    # what makes this path's ordering deterministic run-to-run, per Req 2 --
+    # it is not, and does not claim to be, relevance-ranked.
+    while IFS=$'\t' read -r path line_start line_end; do
       [[ -n "$path" ]] || continue
-      local hit_domain hit_trust
+      local hit_domain hit_trust score components
       if [[ -n "$domain_label" ]]; then
         hit_domain="$domain_label"; hit_trust="$(_ctx_memory_trust "$path")"
       else
         hit_domain="$(_ctx_classify_domain "$path")"; hit_trust="medium"
       fi
-      printf '%s\t%s\t%s\t%s\t%s\n' \
-        "$path:$line_start" "$hit_domain" "text match in chunk" "0.7" "$hit_trust"
+      IFS=$'\t' read -r score components < <(_ctx_compose_score "$_CTX_RANK_BASE_LIKE_FALLBACK" "$hit_trust" "$hit_domain")
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$path:$line_start" "$hit_domain" "text match in chunk" "0.7" "$hit_trust" \
+        "like_fallback" "${line_end:-$line_start}" "$score" "$components"
     done < <(sqlite3 -separator $'\t' "$db" \
-      "SELECT f.path, fc.line_start
+      "SELECT f.path, fc.line_start, fc.line_end
        FROM file_chunks fc JOIN files f ON fc.file_id=f.id
        WHERE (fc.text LIKE '%${eq}%' OR fc.heading LIKE '%${eq}%')${domain_sql}
+       ORDER BY f.path, fc.line_start
        LIMIT 20;" 2>/dev/null | tr -d '\r' || true)
   fi
 }
 
+# _ctx_rank_hits <9-col-raw-tsv> [limit] [dedup_by_ref]
+# THE single ranking + truncation path (CC-505 Req 3): every consumer
+# (query/pack/reuse-scan/prompt-scan) must merge its candidate hits into one
+# TSV file (ref, domain, why, conf, trust, match_kind, line_end,
+# ranking_score, score_components) and call this function rather than
+# re-sorting or re-truncating by its own heuristic. Sorts by ranking_score
+# descending, ties broken by ref ascending for full run-to-run determinism,
+# assigns a 1-based rank, and truncates to <limit> (0 or omitted = no
+# truncation). Output is 10 columns: rank, then the 9 input columns in order.
+#
+# dedup_by_ref (0/1, default 0): when a multi-term caller (pack/reuse-scan/
+# prompt-scan) has accumulated candidates from several --query terms into one
+# input file, the SAME ref can appear more than once with different scores
+# (e.g. a weak fts5 match from one term, a symbol_exact match from another).
+# With dedup_by_ref=1, only the highest-scoring occurrence of each ref
+# survives -- safe to do AFTER sorting (the first occurrence of a ref in
+# score-descending order is its best one), never before, which is exactly
+# the gate finding this fixes (critic-F001): eager dedup during accumulation
+# discarded a later, better-scoring candidate before ranking ever saw it.
+# pmctl_context_query passes dedup_by_ref=0 (default) because it
+# deliberately keeps both a symbol hit and a text hit for the same ref from
+# a single query -- see its own comment.
+_ctx_rank_hits() {
+  local input="$1" limit="${2:-0}" dedup_by_ref="${3:-0}"
+  [[ -s "$input" ]] || return 0
+  local rank=0 seen_refs=$'\x02'
+  while IFS=$'\t' read -r ref rdomain why conf trust match_kind line_end score components; do
+    [[ -n "$ref" ]] || continue
+    if [[ "$dedup_by_ref" == 1 ]]; then
+      [[ "$seen_refs" == *$'\x02'"$ref"$'\x02'* ]] && continue
+      seen_refs+="$ref"$'\x02'
+    fi
+    rank=$((rank + 1))
+    if [[ "$limit" -gt 0 && "$rank" -gt "$limit" ]]; then
+      break
+    fi
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "$rank" "$ref" "$rdomain" "$why" "$conf" "$trust" "$match_kind" "$line_end" "$score" "$components"
+  done < <(sort -t $'\t' -k8,8gr -k1,1 "$input")
+}
+
 # ── Per-term query parser ──────────────────────────────────────────────────────
-# Uses _ctx_query_hits_raw for structured TSV input; deduplicates by ref
-# (appending to seen_file) and routes hits:
-#   why starts with "symbol:" → sym_tsv
-#   all others                → files_tsv
+# Uses _ctx_query_hits_raw for structured TSV input and routes hits by
+# match_kind:
+#   symbol_exact / symbol_partial → sym_tsv
+#   fts5_content / like_fallback  → files_tsv
+# Each output row carries the full 9-column raw shape (ref, domain, why,
+# conf, trust, match_kind, line_end, ranking_score, score_components).
+#
+# Deliberately does NOT deduplicate by ref here (gate finding critic-F001,
+# CC-505): a multi-term caller accumulates candidates from several --query
+# terms into the same sym_tsv/files_tsv, and the same ref can legitimately
+# get a weak match from one term and a strong one from another. Deduping
+# eagerly during accumulation -- by first-seen, not best-scored -- silently
+# discarded a later, better-scoring candidate before _ctx_rank_hits ever saw
+# it. Callers that want deduplication ask _ctx_rank_hits for it (dedup_by_ref
+# arg), which is safe only AFTER sorting by score.
 
 _ctx_parse_query_tsv() {
-  local repo_root="$1" term="$2" seen_file="$3" sym_tsv="$4" files_tsv="$5"
-  local domain="${6:-}"
-  while IFS=$'\t' read -r ref hit_domain why conf trust; do
+  local repo_root="$1" term="$2" sym_tsv="$3" files_tsv="$4"
+  local domain="${5:-}"
+  while IFS=$'\t' read -r ref hit_domain why conf trust match_kind line_end score components; do
     [[ -n "$ref" ]] || continue
-    grep -qxF "$ref" "$seen_file" 2>/dev/null && continue
-    printf '%s\n' "$ref" >> "$seen_file"
-    if [[ "$why" == "symbol:"* ]]; then
-      printf '%s\t%s\t%s\t%s\t%s\n' "$ref" "$hit_domain" "$why" "$conf" "$trust" >> "$sym_tsv"
+    if [[ "$match_kind" == symbol_* ]]; then
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$ref" "$hit_domain" "$why" "$conf" "$trust" "$match_kind" "$line_end" "$score" "$components" >> "$sym_tsv"
     else
-      printf '%s\t%s\t%s\t%s\t%s\n' "$ref" "$hit_domain" "$why" "$conf" "$trust" >> "$files_tsv"
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$ref" "$hit_domain" "$why" "$conf" "$trust" "$match_kind" "$line_end" "$score" "$components" >> "$files_tsv"
     fi
   done < <(_ctx_query_hits_raw "$repo_root" "$term" "$domain" 2>/dev/null)
 }
 
 # ── TSV-to-JSON array assembler ────────────────────────────────────────────────
-# Reads ref<TAB>domain<TAB>why<TAB>conf<TAB>trust rows and emits a JSON array
-# of context_hit_v1 objects. Missing or empty file → "[]".
+# Reads a _ctx_rank_hits-ranked TSV (rank, ref, domain, why, conf, trust,
+# match_kind, line_end, ranking_score, score_components) and emits a JSON
+# array of context_hit_v1 objects, additively carrying the CC-505 Req 2-4
+# ranking fields alongside the pre-existing, schema-required `confidence`
+# field (whose value and meaning are unchanged by this ranking work -- see
+# design constraint 2). Missing or empty file → "[]".
 
 _ctx_tsv_to_json_array() {
   local tsv_file="$1"
@@ -1312,19 +1466,26 @@ _ctx_tsv_to_json_array() {
   fi
   local first=1
   printf '['
-  while IFS=$'\t' read -r ref domain why conf trust; do
+  while IFS=$'\t' read -r rank ref domain why conf trust match_kind line_end score components; do
     [[ "$first" -eq 0 ]] && printf ','
     first=0
     # Source attribution tracks the plane (CC-403): memory items are
     # `memory-index`, repo items stay `builtin-index`.
-    local src="builtin-index"
+    local src="builtin-index" line_start="${ref##*:}"
     [[ "$domain" == "memory" ]] && src="memory-index"
-    printf '{"ref":%s,"source":%s,"confidence":%s,"source_domain":%s,"why_relevant":%s,"trust_level":%s}' \
+    [[ "$line_start" =~ ^[0-9]+$ ]] || line_start=null
+    printf '{"ref":%s,"source":%s,"confidence":%s,"source_domain":%s,"why_relevant":%s,"trust_level":%s,"rank":%s,"match_kind":%s,"line_start":%s,"line_end":%s,"ranking_score":%s,"score_components":%s}' \
       "$(_ctx_json_str "$ref")" \
       "$(_ctx_json_str "$src")" "$conf" \
       "$(_ctx_json_str "$domain")" \
       "$(_ctx_json_str "$why")" \
-      "$(_ctx_json_str "$trust")"
+      "$(_ctx_json_str "$trust")" \
+      "$rank" \
+      "$(_ctx_json_str "$match_kind")" \
+      "$line_start" \
+      "${line_end:-null}" \
+      "$score" \
+      "$(_ctx_json_str "$components")"
   done < "$tsv_file"
   printf ']'
 }
@@ -1480,14 +1641,29 @@ pmctl_context_query() {
     return 0
   fi
 
+  # CC-505 Req 2/3: collect the raw candidate set into one file and rank it
+  # through the single shared path (_ctx_rank_hits) instead of emitting hits
+  # in whatever order _ctx_query_sources_raw's plane fan-out happened to
+  # produce them. No dedup here (unchanged from before this ranking work) --
+  # a ref can legitimately appear twice, once as a symbol hit and once as a
+  # text hit.
+  local raw_tsv ranked_tsv
+  raw_tsv="$(mktemp /tmp/ctx-query-raw-XXXXXX)"
+  ranked_tsv="$(mktemp /tmp/ctx-query-ranked-XXXXXX)"
+  # shellcheck disable=SC2064
+  trap "rm -f '$raw_tsv' '$ranked_tsv'" EXIT
+  _ctx_query_sources_raw "$repo_root" "$query" "$domain" "$source" 2>/dev/null > "$raw_tsv"
+  _ctx_rank_hits "$raw_tsv" 0 > "$ranked_tsv"
+
   local hits=0 first=1
-  while IFS=$'\t' read -r ref hit_domain why conf trust; do
+  while IFS=$'\t' read -r rank ref hit_domain why conf trust match_kind line_end score components; do
     [[ -n "$ref" ]] || continue
     [[ "$first" -eq 0 ]] && printf '\n'
     first=0
-    _ctx_emit_hit "$ref" "$hit_domain" "$why" "$conf" "$trust"
+    _ctx_emit_hit "$ref" "$hit_domain" "$why" "$conf" "$trust" \
+      "$rank" "$match_kind" "$line_end" "$score" "$components"
     hits=$((hits + 1))
-  done < <(_ctx_query_sources_raw "$repo_root" "$query" "$domain" "$source" 2>/dev/null)
+  done < "$ranked_tsv"
 
   if [[ "$hits" -eq 0 ]]; then
     printf '# no hits for: %s\n' "$query"
@@ -1497,16 +1673,17 @@ pmctl_context_query() {
 }
 
 # ── Memory-plane pack accumulator (pointer-only) ──────────────────────────────
-# Appends memory hits to mem_tsv, deduped via seen_file. PRIVACY (load-bearing):
-# pointer-only — the matched card body / snippet is NEVER copied into the pack
-# (which is repo-bound and may be archived). Only the ref + trust tier travel.
+# Appends memory hits to mem_tsv. PRIVACY (load-bearing): pointer-only — the
+# matched card body / snippet is NEVER copied into the pack (which is
+# repo-bound and may be archived). Only the ref + trust tier travel.
+# Does not dedup by ref here -- see _ctx_parse_query_tsv's comment
+# (critic-F001): dedup happens post-sort in _ctx_rank_hits, not here.
 _ctx_pack_memory_tsv() {
-  local repo_root="$1" memory_db="$2" term="$3" seen_file="$4" mem_tsv="$5"
-  while IFS=$'\t' read -r ref hit_domain why conf trust; do
+  local repo_root="$1" memory_db="$2" term="$3" mem_tsv="$4"
+  while IFS=$'\t' read -r ref hit_domain why conf trust match_kind line_end score components; do
     [[ -n "$ref" ]] || continue
-    grep -qxF "$ref" "$seen_file" 2>/dev/null && continue
-    printf '%s\n' "$ref" >> "$seen_file"
-    printf '%s\t%s\t%s\t%s\t%s\n' "$ref" "memory" "memory match" "$conf" "$trust" >> "$mem_tsv"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "$ref" "memory" "memory match" "$conf" "$trust" "$match_kind" "$line_end" "$score" "$components" >> "$mem_tsv"
   done < <(_ctx_query_hits_raw "$repo_root" "$term" "" "$memory_db" "memory" 2>/dev/null)
 }
 
@@ -1609,7 +1786,7 @@ pmctl_context_pack() {
   if [[ "$source" == "repo" && ! -f "$db" ]]; then
     local ts
     ts="$(_ctx_now_iso8601)"
-    printf '{"schema_version":2,"task_id":%s,"built_ts":%s,"sources":[{"name":"builtin-index","version":"1"}],"files":[],"symbols":[],"memories":[],"risks":[]}\n' \
+    printf '{"schema_version":3,"task_id":%s,"built_ts":%s,"sources":[{"name":"builtin-index","version":"1"}],"files":[],"symbols":[],"memories":[],"risks":[]}\n' \
       "$(_ctx_json_str "$task_id")" "$(_ctx_json_str "$ts")"
     return 0
   fi
@@ -1622,23 +1799,27 @@ pmctl_context_pack() {
     fi
     local ts
     ts="$(_ctx_now_iso8601)"
-    printf '{"schema_version":2,"task_id":%s,"built_ts":%s,"sources":[{"name":"builtin-index","version":"1"}],"files":[],"symbols":[],"memories":[],"risks":[]}\n' \
+    printf '{"schema_version":3,"task_id":%s,"built_ts":%s,"sources":[{"name":"builtin-index","version":"1"}],"files":[],"symbols":[],"memories":[],"risks":[]}\n' \
       "$(_ctx_json_str "$task_id")" "$(_ctx_json_str "$ts")"
     return 0
   fi
 
-  local seen_file sym_tsv files_tsv mem_tsv
-  seen_file="$(mktemp /tmp/ctx-pack-seen-XXXXXX)"
+  local sym_tsv files_tsv mem_tsv repo_tsv repo_ranked sym_ranked files_ranked mem_ranked
   sym_tsv="$(mktemp /tmp/ctx-pack-sym-XXXXXX)"
   files_tsv="$(mktemp /tmp/ctx-pack-files-XXXXXX)"
   mem_tsv="$(mktemp /tmp/ctx-pack-mem-XXXXXX)"
+  repo_tsv="$(mktemp /tmp/ctx-pack-repo-XXXXXX)"
+  repo_ranked="$(mktemp /tmp/ctx-pack-repo-ranked-XXXXXX)"
+  sym_ranked="$(mktemp /tmp/ctx-pack-sym-ranked-XXXXXX)"
+  files_ranked="$(mktemp /tmp/ctx-pack-files-ranked-XXXXXX)"
+  mem_ranked="$(mktemp /tmp/ctx-pack-mem-ranked-XXXXXX)"
   # shellcheck disable=SC2064
-  trap "rm -f '$seen_file' '$sym_tsv' '$files_tsv' '$mem_tsv'" EXIT
+  trap "rm -f '$sym_tsv' '$files_tsv' '$mem_tsv' '$repo_tsv' '$repo_ranked' '$sym_ranked' '$files_ranked' '$mem_ranked'" EXIT
 
   if [[ "$source" == "repo" || "$source" == "all" ]]; then
     if [[ -f "$db" ]]; then
       for term in "${terms[@]}"; do
-        _ctx_parse_query_tsv "$repo_root" "$term" "$seen_file" "$sym_tsv" "$files_tsv"
+        _ctx_parse_query_tsv "$repo_root" "$term" "$sym_tsv" "$files_tsv"
       done
     fi
   fi
@@ -1651,17 +1832,37 @@ pmctl_context_pack() {
       mdb="$(_ctx_memory_db_path "$mdir")"
       if [[ -f "$mdb" ]]; then
         for term in "${terms[@]}"; do
-          _ctx_pack_memory_tsv "$repo_root" "$mdb" "$term" "$seen_file" "$mem_tsv"
+          _ctx_pack_memory_tsv "$repo_root" "$mdb" "$term" "$mem_tsv"
         done
       fi
     fi
   fi
 
+  # CC-505 Req 3: rank each accumulated set through the shared path before
+  # converting to JSON, so item order reflects ranking_score rather than
+  # per-term insertion order. dedup_by_ref=1: each set was accumulated
+  # across every --query term, so the same ref can appear more than once;
+  # keep only its highest-scoring occurrence (critic-F001). No truncation
+  # here (item/byte budget is CC-505 Req 5, not this slice).
+  #
+  # symbols[] and files[] must dedup by ref against EACH OTHER too: the same
+  # "path:line" ref can score as a symbol_exact/partial hit AND a fts5_content
+  # hit (content_fts indexes symbol names alongside chunk text), and a caller
+  # must never see the same ref counted in both arrays. Rank the merged repo
+  # set once (so the winner is whichever match_kind actually scored higher),
+  # then split by each surviving row's own match_kind -- never rank the two
+  # arrays independently, which would let the same ref win a slot in both.
+  cat "$sym_tsv" "$files_tsv" > "$repo_tsv"
+  _ctx_rank_hits "$repo_tsv" 0 1 > "$repo_ranked"
+  awk -F'\t' '$7 ~ /^symbol_/' "$repo_ranked" > "$sym_ranked"
+  awk -F'\t' '$7 !~ /^symbol_/' "$repo_ranked" > "$files_ranked"
+  _ctx_rank_hits "$mem_tsv" 0 1 > "$mem_ranked"
+
   local ts sym_arr files_arr mem_arr sources_arr
   ts="$(_ctx_now_iso8601)"
-  sym_arr="$(_ctx_tsv_to_json_array "$sym_tsv")"
-  files_arr="$(_ctx_tsv_to_json_array "$files_tsv")"
-  mem_arr="$(_ctx_tsv_to_json_array "$mem_tsv")"
+  sym_arr="$(_ctx_tsv_to_json_array "$sym_ranked")"
+  files_arr="$(_ctx_tsv_to_json_array "$files_ranked")"
+  mem_arr="$(_ctx_tsv_to_json_array "$mem_ranked")"
 
   # sources[] registers every producer cited by an item's `source` field. Add the
   # memory-index producer only when the pack actually carries memory hits, so the
@@ -1671,7 +1872,7 @@ pmctl_context_pack() {
     sources_arr='[{"name":"builtin-index","version":"1"},{"name":"memory-index","version":"1"}]'
   fi
 
-  printf '{"schema_version":2,"task_id":%s,"built_ts":%s,"sources":%s,"files":%s,"symbols":%s,"memories":%s,"risks":[]}\n' \
+  printf '{"schema_version":3,"task_id":%s,"built_ts":%s,"sources":%s,"files":%s,"symbols":%s,"memories":%s,"risks":[]}\n' \
     "$(_ctx_json_str "$task_id")" "$(_ctx_json_str "$ts")" "$sources_arr" "$files_arr" "$sym_arr" "$mem_arr"
 }
 
@@ -1752,18 +1953,24 @@ pmctl_context_reuse_scan() {
     terms_yaml="[$_t]"
   fi
 
-  local seen_file sym_tsv files_tsv hits_tsv
-  seen_file="$(mktemp /tmp/ctx-reuse-seen-XXXXXX)"
+  local sym_tsv files_tsv hits_tsv ranked_tsv
   sym_tsv="$(mktemp /tmp/ctx-reuse-sym-XXXXXX)"
   files_tsv="$(mktemp /tmp/ctx-reuse-files-XXXXXX)"
   hits_tsv="$(mktemp /tmp/ctx-reuse-hits-XXXXXX)"
+  ranked_tsv="$(mktemp /tmp/ctx-reuse-ranked-XXXXXX)"
   # shellcheck disable=SC2064
-  trap "rm -f '$seen_file' '$sym_tsv' '$files_tsv' '$hits_tsv'" EXIT
+  trap "rm -f '$sym_tsv' '$files_tsv' '$hits_tsv' '$ranked_tsv'" EXIT
 
   for term in "${terms[@]}"; do
-    _ctx_parse_query_tsv "$repo_root" "$term" "$seen_file" "$sym_tsv" "$files_tsv"
+    _ctx_parse_query_tsv "$repo_root" "$term" "$sym_tsv" "$files_tsv"
   done
   cat "$sym_tsv" "$files_tsv" > "$hits_tsv"
+  # CC-505 Req 2/3: the merged candidate set is ranked by ranking_score
+  # through the one shared path and truncated there -- this used to be
+  # "symbol hits first, then text hits, take the first 5", which reflected
+  # insertion order, not relevance. dedup_by_ref=1: accumulated across every
+  # term, so keep only each ref's highest-scoring occurrence (critic-F001).
+  _ctx_rank_hits "$hits_tsv" 5 1 > "$ranked_tsv"
 
   printf 'reuse_candidates:\n'
   printf '  queried_at: %s\n' "$(_ctx_now_iso8601)"
@@ -1776,9 +1983,8 @@ pmctl_context_reuse_scan() {
     printf '  hits: []\n'
   else
     printf '  hits:\n'
-    local first_hit=1 emitted=0
-    while IFS=$'\t' read -r ref domain why conf trust; do
-      [[ "$emitted" -ge 5 ]] && break
+    local first_hit=1
+    while IFS=$'\t' read -r rank ref domain why conf trust match_kind line_end score components; do
       [[ "$first_hit" -eq 0 ]] && printf '\n'
       first_hit=0
       local safe_why="${why//$'\n'/ }"
@@ -1789,8 +1995,10 @@ pmctl_context_reuse_scan() {
       printf "      why_relevant: '%s'\n"   "$safe_why"
       printf '      confidence: %s\n'       "$conf"
       printf '      trust_level: %s\n'      "$trust"
-      emitted=$((emitted + 1))
-    done < "$hits_tsv"
+      printf '      rank: %s\n'             "$rank"
+      printf '      match_kind: %s\n'       "$match_kind"
+      printf '      ranking_score: %s\n'    "$score"
+    done < "$ranked_tsv"
   fi
 
   local reported_hits="$total_hits"
@@ -1887,18 +2095,22 @@ pmctl_context_prompt_scan() {
     return 0
   fi
 
-  local seen_file sym_tsv files_tsv hits_tsv
-  seen_file="$(mktemp /tmp/ctx-prompt-seen-XXXXXX)"
+  local sym_tsv files_tsv hits_tsv ranked_tsv
   sym_tsv="$(mktemp /tmp/ctx-prompt-sym-XXXXXX)"
   files_tsv="$(mktemp /tmp/ctx-prompt-files-XXXXXX)"
   hits_tsv="$(mktemp /tmp/ctx-prompt-hits-XXXXXX)"
+  ranked_tsv="$(mktemp /tmp/ctx-prompt-ranked-XXXXXX)"
   # shellcheck disable=SC2064
-  trap "rm -f '$seen_file' '$sym_tsv' '$files_tsv' '$hits_tsv'" EXIT
+  trap "rm -f '$sym_tsv' '$files_tsv' '$hits_tsv' '$ranked_tsv'" EXIT
 
   for term in "${terms[@]+"${terms[@]}"}"; do
-    _ctx_parse_query_tsv "$repo_root" "$term" "$seen_file" "$sym_tsv" "$files_tsv" "knowledge"
+    _ctx_parse_query_tsv "$repo_root" "$term" "$sym_tsv" "$files_tsv" "knowledge"
   done
   cat "$files_tsv" "$sym_tsv" > "$hits_tsv"
+  # CC-505 Req 2/3: same shared ranking path as query/pack/reuse-scan --
+  # previously "text hits first, then symbol hits, take the first 5".
+  # dedup_by_ref=1: accumulated across every term (critic-F001).
+  _ctx_rank_hits "$hits_tsv" 5 1 > "$ranked_tsv"
 
   local total_hits=0
   [[ -s "$hits_tsv" ]] && total_hits="$(wc -l < "$hits_tsv" | tr -d ' ')"
@@ -1907,15 +2119,12 @@ pmctl_context_prompt_scan() {
     printf 'knowledge_hits: []\n'
   else
     printf 'knowledge_hits:\n'
-    local emitted=0
-    while IFS=$'\t' read -r ref _domain why _conf _trust; do
-      [[ "$emitted" -ge 5 ]] && break
+    while IFS=$'\t' read -r _rank ref _domain why _conf _trust _match_kind _line_end _score _components; do
       local safe_why="${why//$'\n'/ }"
       safe_why="${safe_why//\'/\'\'}"
       printf '  - ref: %s\n'            "$ref"
       printf "    why_relevant: '%s'\n" "$safe_why"
-      emitted=$((emitted + 1))
-    done < "$hits_tsv"
+    done < "$ranked_tsv"
   fi
 
   local reported_hits="$total_hits"
