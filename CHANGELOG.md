@@ -135,6 +135,41 @@ Versions follow [Semantic Versioning](https://semver.org/).
   `context-pack.schema.json` schema_version 2→3. Req 5 (pack byte/item
   budget) and Req 7 (fixture corpus) remain open; CC-505 stays active.
 
+- **`pmctl context pack` now has a global item/byte budget, disclosed in
+  its own output (CC-505 Phase 1, Req 5).** Previously unbounded: a
+  multi-term query could grow the pack without limit. New `--max-items`
+  and `--max-bytes` flags (defaults 200 / 200000, overridable via
+  `PM_DISPATCH_CONTEXT_PACK_MAX_ITEMS`/`_MAX_BYTES`) merge `files`/
+  `symbols`/`memories` into one globally-ranked set (their `ranking_score`
+  values share one scale) and keep only the highest-ranked survivors —
+  never a per-array or per-term cap, which would let each array/term claim
+  its own share instead of a true global ceiling. Every pack response now
+  carries a `truncation` object (`applied`/`reason`/`budget`/
+  `total_before`/`kept`/`dropped`), present and honest even when nothing
+  was dropped, so a caller never has to infer budget status from array
+  lengths. `context-pack.schema.json` schema_version 3→4 (`truncation`
+  required for v4). The first implementation measured the byte budget
+  before attaching the `truncation` object itself, so a pack that "just
+  fit" pre-disclosure could still exceed `--max-bytes` once disclosed —
+  this project's own new regression test caught it before merge; fixed by
+  measuring the fully-assembled candidate (items + disclosure) on every
+  truncation iteration.
+
+- **CC-505 Phase 1 (Req 7): a deterministic retrieval fixture corpus.**
+  Locks in every ranking/chunking guarantee Req 1-4 established with
+  fixtures deliberately built to fail under the pre-CC-505 behavior each
+  one regression-locks: exact-symbol top-1, heading match, content buried
+  past the old 200-character truncation point, same-word polysemy (an
+  exact symbol beats a plain-prose mention of the same token),
+  knowledge-domain boost (ranks ahead of an identical repo-domain hit),
+  long-section chunking (a marker on a section's last line, retrievable
+  only because Req 1 windows long sections instead of truncating them),
+  and memory-plane trust weighting (a high-trust card outranks a
+  medium-trust episode sharing the same term, not just carrying a
+  different `trust_level` label). **CC-505 Phase 1 (Requirements 1-7) is
+  now fully delivered; Phase 2 (Req 8-10, agent contract + shadow
+  telemetry) has not started — CC-505 stays active.**
+
 ### Fixed
 
 - **`ship finish`'s closure producer and its consumer are now proven to

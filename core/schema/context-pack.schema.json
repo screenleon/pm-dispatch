@@ -5,8 +5,8 @@
   "required": ["schema_version", "task_id", "built_ts", "sources", "files"],
   "properties": {
     "schema_version": {
-      "enum": [1, 2, 3],
-      "description": "1 = original; 2 = adds context_hit_v1 optional fields (source_domain, why_relevant, trust_level, refs); 3 = adds the CC-505 lexical ranking fields (rank, match_kind, line_start, line_end, ranking_score, score_components). All versions are valid; a v1/v2 pack that omits the newer fields continues to validate."
+      "enum": [1, 2, 3, 4],
+      "description": "1 = original; 2 = adds context_hit_v1 optional fields (source_domain, why_relevant, trust_level, refs); 3 = adds the CC-505 lexical ranking fields (rank, match_kind, line_start, line_end, ranking_score, score_components); 4 = adds the CC-505 Req 5 top-level `truncation` disclosure for the global item/byte budget. All versions are valid; a pack that omits fields newer than its own version continues to validate."
     },
     "task_id": {
       "type": "string",
@@ -39,12 +39,32 @@
     "files":    { "type": "array", "items": { "$ref": "#/$defs/item" } },
     "symbols":  { "type": "array", "items": { "$ref": "#/$defs/item" } },
     "memories": { "type": "array", "items": { "$ref": "#/$defs/item" } },
-    "risks":    { "type": "array", "items": { "$ref": "#/$defs/item" } }
+    "risks":    { "type": "array", "items": { "$ref": "#/$defs/item" } },
+    "truncation": {
+      "type": "object",
+      "description": "CC-505 Req 5: discloses whether the global item/byte budget dropped anything, so a caller never has to infer budget status by diffing array lengths against what it asked for.",
+      "required": ["applied", "reason", "budget", "total_before", "kept", "dropped"],
+      "properties": {
+        "applied": { "type": "boolean" },
+        "reason": { "type": "string", "enum": ["none", "item_budget", "byte_budget"] },
+        "budget": {
+          "type": "object",
+          "required": ["max_items", "max_bytes"],
+          "properties": {
+            "max_items": { "type": "integer", "minimum": 1 },
+            "max_bytes": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "total_before": { "type": "integer", "minimum": 0 },
+        "kept": { "type": "integer", "minimum": 0 },
+        "dropped": { "type": "integer", "minimum": 0 }
+      }
+    }
   },
   "allOf": [
     {
       "if": {
-        "properties": { "schema_version": { "const": 3 } },
+        "properties": { "schema_version": { "minimum": 3 } },
         "required": ["schema_version"]
       },
       "then": {
@@ -53,6 +73,15 @@
           "symbols":  { "items": { "$ref": "#/$defs/item_v3" } },
           "memories": { "items": { "$ref": "#/$defs/item_v3" } }
         }
+      }
+    },
+    {
+      "if": {
+        "properties": { "schema_version": { "const": 4 } },
+        "required": ["schema_version"]
+      },
+      "then": {
+        "required": ["truncation"]
       }
     }
   ],

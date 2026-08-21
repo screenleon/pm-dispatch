@@ -2354,7 +2354,7 @@ bodies；程式語言檔案先前被壓成**一個 chunk、只存檔首 200 字�
 索引時間逾四成）。
 
 **未動**：Req 2/3/4（bm25 排序與四 consumer 共用 ranking path）、Req 5（pack budget）、
-Phase 2 全部。票維持 active。
+Phase 2 全部。票維持 active。（此段為 2026-08-20 當時狀態，Req 2-7 已於後續兩次更新完成，見下。）
 
 **Update 2026-08-21（Phase 1 第二片：Req 2/3/4）**：所有排序運算集中到唯一入口
 `_ctx_query_hits_raw`——FTS5 路徑改用 `bm25()`（SQL 內直接算，不額外 spawn awk/bc
@@ -2374,7 +2374,31 @@ relevance-ranked，只是 run-to-run 一致）。新增 `_ctx_rank_hits` 作為�
 schema_version 斷言隨版次更新，非行為回歸）。**殘留**：Req 5（pack 全域 item/byte
 budget）、Req 7（deterministic fixture corpus）、Phase 2 全部。票維持 active。
 
-**Requirement — Phase 2（agent 契約 + shadow 儀器化；小 PR，跟在 Phase 1 後）**:
+**Update 2026-08-21（Phase 1 第三片：Req 5 + Req 7，Phase 1 全數交付）**：
+`pmctl context pack` 新增 `--max-items`／`--max-bytes`（預設 200 items／200000
+bytes，可由 `PM_DISPATCH_CONTEXT_PACK_MAX_ITEMS`／`PM_DISPATCH_CONTEXT_PACK_MAX_BYTES`
+覆寫）。新增 `_ctx_apply_pack_budget`：先跨 `files`／`symbols`／`memories` 三陣列
+合併排序（`ranking_score` 同一量尺可比），依全域最高分保留至 `--max-items`；仍超過
+`--max-bytes` 則逐一丟棄目前最低分存活項並重新序列化（沿用 `pmctl_pm_bound_memory_pack`
+既有的「整筆刪除＋重新序列化，不直接切 JSON 字串」寫法），直到符合或歸零。任何
+pack 輸出都附加 `truncation`（`applied`／`reason`／`budget`／`total_before`／
+`kept`／`dropped`），即使沒有截斷也明確揭露，呼叫端不必用陣列長度反推。首版有真
+bug：byte 迴圈量測的是加上 `truncation` 物件*之前*的 bytes，導致最終輸出（含
+`truncation` 本身）仍可能超出 `--max-bytes`——由本票自己新增的迴歸測試
+（`--max-bytes` 強制截斷案）當場抓到，修正為每次迭代都量測「item 陣列＋
+truncation 物件」組裝後的最終大小。`context-pack.schema.json` schema_version
+3→4，`truncation` 為 v4 必填（沿用既有 `if schema_version==N then required` 樣式）。
+
+Req 7 新增 `make_retrieval_corpus_repo` 宣告式 fixture corpus，涵蓋 exact
+symbol（top-1）、heading match、深段落內容（越過舊 200 字元截斷點）、同詞多義
+（exact symbol 勝過純文字提及）、path/domain boost（knowledge domain 命中排在
+repo domain 之前）、long section 分段（35 行 section 尾端 marker 仍可檢索，證明
+Req 1 窗口化生效）；另外 trust weighting 用獨立 memory fixture（card vs
+episode 共用同一詞）證明 trust 真的影響排序，不只是標籤正確。
+
+`tests/shell/test-pmctl-context.sh` 144 案全過。**Phase 1（Req 1-7）至此全數
+交付。Phase 2（Req 8-10，agent 契約 + shadow telemetry）仍未開始，票維持
+active。**（agent 契約 + shadow 儀器化；小 PR，跟在 Phase 1 後）**:
 8. Agent-facing injection 明確採用 **index-first, source-verified** 契約：retrieval hit 是導航與 scope-narrowing evidence，不是原始來源替代品；factual conclusion、code edit、gate/security/release 判斷前必須 targeted-read 命中的 bounded span；zero-hit、stale/unknown freshness、truncated 或 ambiguous 結果必須 fallback 至 targeted Grep/Read；no hit 不得解讀為不存在。本階段只改導引措辭，**不收緊**任何現有 fallback 行為。
 9. shadow telemetry：在既有 context.* 事件上記錄 top-K refs、pack bytes、full-file baseline bytes、truncation/freshness，以及 Agent 後續實際 source-read bytes 與最終修改／引用檔案是否在 top-K——供 [[CC-506]] 評測消費。覆蓋面必須含工作流路徑（dispatch auto-pack、ship、gate memory context），不得只儀器化互動式 `context query`。
 10. `context_savings` 遙測命名為 `compression_ratio_vs_full_file_baseline`（注入 bytes vs 全檔 baseline bytes）；沒有 observed read-reduction 證據時不得宣稱實際節省倍數；不得引用外部專案的節省倍數宣稱。餵 [[CC-467]]／[[CC-358]] 的 evidence 線。

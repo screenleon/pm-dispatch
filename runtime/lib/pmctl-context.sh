@@ -1418,6 +1418,88 @@ _ctx_rank_hits() {
   done < <(sort -t $'\t' -k8,8gr -k1,1 "$input")
 }
 
+# _ctx_pack_top_n <pack-json> <n>
+# Keeps the <n> globally highest-ranking items across files[]+symbols[]+
+# memories[] combined (their ranking_score values share one scale, since
+# every array was ranked through _ctx_rank_hits), tie-broken by ref, and
+# drops the rest -- each item's origin array is preserved. Used by
+# _ctx_apply_pack_budget for CC-505 Req 5's global item/byte budget; never
+# call directly, since it does not compute or attach the `truncation`
+# disclosure field.
+_ctx_pack_top_n() {
+  local pack="$1" n="$2"
+  jq -c --argjson n "$n" '
+    . as $pack
+    | ([$pack.files[]?    | . + {_arr:"files"}]
+       + [$pack.symbols[]?  | . + {_arr:"symbols"}]
+       + [$pack.memories[]? | . + {_arr:"memories"}]) as $all
+    | ($all | sort_by(-(.ranking_score // 0), .ref)) as $sorted
+    | ($sorted[:$n]) as $kept
+    | ($pack
+        | .files    = [$kept[] | select(._arr=="files")    | del(._arr)]
+        | .symbols  = [$kept[] | select(._arr=="symbols")  | del(._arr)]
+        | .memories = [$kept[] | select(._arr=="memories") | del(._arr)])
+  ' <<<"$pack"
+}
+
+# _ctx_pack_with_truncation <original-pack-json> <total_before> <n>
+#   <max_items> <max_bytes> <applied> <reason>
+# Builds the fully-assembled candidate pack (top-<n> items across all
+# arrays PLUS the truncation disclosure object) so its caller can measure
+# the real final byte size, not just the bare item-bounded pack -- the
+# truncation object's own bytes must count toward the budget it describes.
+_ctx_pack_with_truncation() {
+  local pack="$1" total="$2" n="$3" max_items="$4" max_bytes="$5" applied="$6" reason="$7"
+  local bounded kept
+  bounded="$(_ctx_pack_top_n "$pack" "$n")"
+  kept="$(jq '(.files|length)+(.symbols|length)+(.memories|length)' <<<"$bounded")"
+  jq -c \
+    --argjson applied "$applied" --arg reason "$reason" \
+    --argjson max_items "$max_items" --argjson max_bytes "$max_bytes" \
+    --argjson total "$total" --argjson kept "$kept" --argjson dropped "$((total - kept))" \
+    '. + {truncation:{applied:$applied,reason:$reason,budget:{max_items:$max_items,max_bytes:$max_bytes},total_before:$total,kept:$kept,dropped:$dropped}}' \
+    <<<"$bounded"
+}
+
+# _ctx_apply_pack_budget <pack-json-without-truncation> <max_items> <max_bytes>
+# CC-505 Req 5: the ONE place the global item + byte budget is enforced and
+# disclosed. Applies the item cap first (drop lowest-ranked overall down to
+# max_items), then iteratively drops the next-lowest-ranked survivor while
+# the serialized pack exceeds max_bytes (same "remove whole entries and
+# re-serialize, never raw-slice JSON" approach pmctl_pm_bound_memory_pack
+# already established for its own downstream memory-only budget). Always
+# attaches a `truncation` object -- disclosed even when nothing was
+# dropped, so a caller never has to infer budget status from array lengths.
+# The byte check measures the FINAL output including the truncation object
+# itself (via _ctx_pack_with_truncation), not just the bounded item arrays
+# -- a pack that "just barely fits" before that object is attached could
+# otherwise still exceed max_bytes once it is, silently violating the very
+# budget being enforced.
+_ctx_apply_pack_budget() {
+  local pack="$1" max_items="$2" max_bytes="$3"
+  local total keep_n final bytes applied=false reason=none
+
+  total="$(jq '(.files|length)+(.symbols|length)+(.memories|length)' <<<"$pack")"
+  keep_n="$total"
+  if (( total > max_items )); then
+    keep_n="$max_items"
+    applied=true
+    reason=item_budget
+  fi
+
+  final="$(_ctx_pack_with_truncation "$pack" "$total" "$keep_n" "$max_items" "$max_bytes" "$applied" "$reason")"
+  bytes="$(printf '%s' "$final" | wc -c | tr -d '[:space:]')"
+  while (( bytes > max_bytes && keep_n > 0 )); do
+    keep_n=$((keep_n - 1))
+    applied=true
+    reason=byte_budget
+    final="$(_ctx_pack_with_truncation "$pack" "$total" "$keep_n" "$max_items" "$max_bytes" "$applied" "$reason")"
+    bytes="$(printf '%s' "$final" | wc -c | tr -d '[:space:]')"
+  done
+
+  printf '%s\n' "$final"
+}
+
 # ── Per-term query parser ──────────────────────────────────────────────────────
 # Uses _ctx_query_hits_raw for structured TSV input and routes hits by
 # match_kind:
@@ -1702,6 +1784,15 @@ pmctl_context_pack() {
   local task_id=""
   local source="repo"
   local terms=()
+  # CC-505 Req 5: a global item + byte budget across every --query term,
+  # with truncation disclosed in the pack's own output (never a silent
+  # shrink a caller has to notice by diffing byte counts). Defaults are a
+  # generous safety ceiling, not a tight practical limit -- callers that
+  # want a tighter budget for their own use (e.g. pmctl-pm.sh's 6000-byte
+  # memory-context cap) still apply that themselves; this is the ceiling
+  # that stops an unbounded multi-term query from growing without limit.
+  local max_items="${PM_DISPATCH_CONTEXT_PACK_MAX_ITEMS:-200}"
+  local max_bytes="${PM_DISPATCH_CONTEXT_PACK_MAX_BYTES:-200000}"
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -1737,6 +1828,22 @@ pmctl_context_pack() {
         source="${1#--source=}"
         shift
         ;;
+      --max-items)
+        if [[ $# -lt 2 || ! "$2" =~ ^[1-9][0-9]*$ ]]; then
+          printf 'pmctl context pack: --max-items requires a positive integer\n' >&2
+          return 2
+        fi
+        max_items="$2"
+        shift 2
+        ;;
+      --max-bytes)
+        if [[ $# -lt 2 || ! "$2" =~ ^[1-9][0-9]*$ ]]; then
+          printf 'pmctl context pack: --max-bytes requires a positive integer\n' >&2
+          return 2
+        fi
+        max_bytes="$2"
+        shift 2
+        ;;
       -*)
         printf 'pmctl context pack: unknown flag %s\n' "$1" >&2
         return 2
@@ -1752,6 +1859,17 @@ pmctl_context_pack() {
         ;;
     esac
   done
+  # The env-var defaults above are not re-validated -- an ambient override
+  # must not silently degrade this budget's shape. Fail closed instead of
+  # feeding a malformed value into the jq/arithmetic below.
+  if [[ ! "$max_items" =~ ^[1-9][0-9]*$ ]]; then
+    printf 'pmctl context pack: PM_DISPATCH_CONTEXT_PACK_MAX_ITEMS must be a positive integer (got: %s)\n' "$max_items" >&2
+    return 2
+  fi
+  if [[ ! "$max_bytes" =~ ^[1-9][0-9]*$ ]]; then
+    printf 'pmctl context pack: PM_DISPATCH_CONTEXT_PACK_MAX_BYTES must be a positive integer (got: %s)\n' "$max_bytes" >&2
+    return 2
+  fi
 
   if [[ -z "$repo_root" ]]; then
     repo_root="$(_ctx_default_repo_root)" || repo_root=""
@@ -1786,8 +1904,8 @@ pmctl_context_pack() {
   if [[ "$source" == "repo" && ! -f "$db" ]]; then
     local ts
     ts="$(_ctx_now_iso8601)"
-    printf '{"schema_version":3,"task_id":%s,"built_ts":%s,"sources":[{"name":"builtin-index","version":"1"}],"files":[],"symbols":[],"memories":[],"risks":[]}\n' \
-      "$(_ctx_json_str "$task_id")" "$(_ctx_json_str "$ts")"
+    printf '{"schema_version":4,"task_id":%s,"built_ts":%s,"sources":[{"name":"builtin-index","version":"1"}],"files":[],"symbols":[],"memories":[],"risks":[],"truncation":{"applied":false,"reason":"none","budget":{"max_items":%s,"max_bytes":%s},"total_before":0,"kept":0,"dropped":0}}\n' \
+      "$(_ctx_json_str "$task_id")" "$(_ctx_json_str "$ts")" "$max_items" "$max_bytes"
     return 0
   fi
 
@@ -1799,8 +1917,8 @@ pmctl_context_pack() {
     fi
     local ts
     ts="$(_ctx_now_iso8601)"
-    printf '{"schema_version":3,"task_id":%s,"built_ts":%s,"sources":[{"name":"builtin-index","version":"1"}],"files":[],"symbols":[],"memories":[],"risks":[]}\n' \
-      "$(_ctx_json_str "$task_id")" "$(_ctx_json_str "$ts")"
+    printf '{"schema_version":4,"task_id":%s,"built_ts":%s,"sources":[{"name":"builtin-index","version":"1"}],"files":[],"symbols":[],"memories":[],"risks":[],"truncation":{"applied":false,"reason":"none","budget":{"max_items":%s,"max_bytes":%s},"total_before":0,"kept":0,"dropped":0}}\n' \
+      "$(_ctx_json_str "$task_id")" "$(_ctx_json_str "$ts")" "$max_items" "$max_bytes"
     return 0
   fi
 
@@ -1872,8 +1990,15 @@ pmctl_context_pack() {
     sources_arr='[{"name":"builtin-index","version":"1"},{"name":"memory-index","version":"1"}]'
   fi
 
-  printf '{"schema_version":3,"task_id":%s,"built_ts":%s,"sources":%s,"files":%s,"symbols":%s,"memories":%s,"risks":[]}\n' \
-    "$(_ctx_json_str "$task_id")" "$(_ctx_json_str "$ts")" "$sources_arr" "$files_arr" "$sym_arr" "$mem_arr"
+  local pack
+  pack="$(printf '{"schema_version":4,"task_id":%s,"built_ts":%s,"sources":%s,"files":%s,"symbols":%s,"memories":%s,"risks":[]}' \
+    "$(_ctx_json_str "$task_id")" "$(_ctx_json_str "$ts")" "$sources_arr" "$files_arr" "$sym_arr" "$mem_arr")"
+  # CC-505 Req 5: global item + byte budget across every --query term,
+  # applied once at the very end so it sees the fully merged, deduped,
+  # ranked result -- never per-term or per-array, which would let each
+  # term/array claim its own share of the budget instead of a true global
+  # ceiling.
+  _ctx_apply_pack_budget "$pack" "$max_items" "$max_bytes"
 }
 
 # ── pmctl_context_reuse_scan ──────────────────────────────────────────────────
