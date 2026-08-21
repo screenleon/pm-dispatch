@@ -113,6 +113,23 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **`ship finish`'s closure producer and its consumer are now proven to
+  interoperate for real, not just independently unit-tested (CC-511 Phase
+  B).** Every `pmctl ship finish` integration test in
+  `tests/shell/test-pmctl-ship.sh` — including the `real-closure` mode meant
+  to exercise the real closure producer — unconditionally stubbed
+  `gate_remediation_closure_verify` (the consumer `gate_publish_assessment_build`
+  calls internally) to `return 0`. So the producer
+  (`gate_remediation_closure_publish`) and the real consumer had each been
+  driven for real independently, but never together in one unstubbed
+  end-to-end run. Added a case that removes the stub for `real-closure` mode
+  and independently re-verifies the resulting closure, plus a negative case
+  that mutates a real closure's `unresolved_counts` invariant and asserts the
+  real verify rejects it via `gate-publish.sh`'s own error path (not a
+  shortcut). Both pass against the existing code unmodified — the
+  final-tree/primary-closure route matrix was already covered by PR #501; no
+  production code changed. This closes CC-511.
+
 - **The remediation-closure verifier's Done-when failure modes now each have
   a dedicated mutation test (CC-517).** `gate_remediation_closure_verify`
   (`runtime/lib/gate-closure.sh`) is a ~15-condition jq predicate, but only

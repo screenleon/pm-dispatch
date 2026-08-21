@@ -18,7 +18,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-494 | 🟢 someday | design: executor 局部設計裁量權 envelope——在 dispatch brief / executor contract 定義「可自行處理的局部設計」與「必須 halt 回報 PM」的邊界（例如新增 schema 欄位 `design_latitude`/`architectural_conflicts`）；三方 multi-model synthesis 2:1 分歧（codex/fable 認為現行邊界過度僵硬需要新機制，opencode 認為現行 `isolation_level`/executor 欄位已足夠彈性），本票僅追蹤決策、不預設結論（2026-07-15） | schema/process | 2026-07-15 | feedback:2026-07-15 | P3 | design |
 | CC-505 | 🔵 active | context plane lexical 檢索補完（Ph1 engine+統一排序+fixtures；Ph2 agent 契約+shadow 儀器化；evidence-gated 收緊 → [[CC-506]]）（2026-07-20 四方 synthesis；CC-346/347 前置） | memory/DX | 2026-07-20 | — | P2 | retrieval |
 | CC-506 | ⏸ deferred | retrieval evidence-gated 收緊：shadow 評測（coverage@5、critical miss、read reduction、outcome parity）達標後才收緊 broad-Read 指引並重評 [[CC-340]] resume 條件；前置 = [[CC-505]] Ph2 shipped + ≥20 真實任務證據 | memory/DX | 2026-07-20 | — | P3 | retrieval |
-| CC-511 | ⚠️ partial 2026-07-24 | ship publish authorization：Phase A current-tree authoritative full-suite 與 CC-515 shared verifier foundation 已交付；Phase B review-closure evidence 仍待 CC-517 | release/gate | 2026-07-23 | pr:#446, pr:#484 | P1 | design |
+| CC-511 | ✅ done | ship publish authorization：Phase A current-tree authoritative full-suite 與 CC-515 shared verifier foundation 已交付；Phase B review-closure evidence 已由 CC-517 收斂 | release/gate | 2026-07-23 | pr:#446, pr:#484, pr:TBD | P1 | design |
 | CC-514 | 🔵 active | orthogonal delivery assurance map、machine-derived tables 與 feature/docs/high-risk recipes | docs/process | 2026-07-23 | — | P2 | design |
 | CC-516 | ⏸ deferred | evidence-gated thin delivery wrapper 評估；只組合既有 primitives，不建立 workflow engine/FSM | ux/process | 2026-07-23 | — | P3 | spike |
 | CC-517 | ✅ done | maintainer `/ship`：primary review、structured remediation closure 與 conditional targeted confirmation | process/gate | 2026-07-23 | pr:#483, pr:TBD | P1 | design |
@@ -1462,7 +1462,7 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 
 **Cross-link**: [[CC-489]]、`docs/dispatch-brief.md`、`docs/executor-contract.md`。
 
-## CC-511 — ship publish authorization：current-tree full suite + review closure ⚠️ partial 2026-08-15
+## CC-511 — ship publish authorization：current-tree full suite + review closure ✅ 2026-08-21
 
 **Problem**: `pmctl ship finish` 目前在 gate GO、HEAD 未移動且 tree clean 後直接
 push／開 PR，沒有驗證 current tree 的 authoritative full suite。另一方面，
@@ -1538,6 +1538,29 @@ authorization。
 [[CC-515]] verifier dependency 已滿足，剩餘依賴為 [[CC-517]]。
 
 **Cross-link**: [[CC-512]]、[[CC-513]]、`docs/test-runner-contract.md`。
+
+**Closure 2026-08-21 (pr:TBD)**: [[CC-517]] 已於本日收斂，Phase B 解封。
+`/pre-impl` 查證確認 final-tree／primary-closure route matrix 已由 PR #501 的
+四列覆蓋交付（`case_publish_assessment_route_follows_reviewed_subject`）；真正
+未完成的是「producer/consumer dogfood」——`tests/shell/test-pmctl-ship.sh` 裡
+每一個驅動 `pmctl ship finish` 的既有測試（含先前的 `real-closure` 模式本身）
+都無條件把 `gate_remediation_closure_verify` stub 成 `return 0`，所以 closure
+producer（`gate_remediation_closure_publish`）與其在
+`gate_publish_assessment_build` 內部呼叫的 consumer（真正的
+`gate_remediation_closure_verify`）從未在一次真實 `ship finish` 呼叫鏈中同時
+以未 stub 的狀態互相驗證過。新增 `case_finish_real_closure_verify_accepts_producer_output`
+（`real-closure` 模式下移除該 stub，跑完整 finish 後對輸出的 closure 獨立重新
+verify）與 `case_publish_assessment_rejects_closure_mutated_after_real_publish`
+（用真實 producer 產出 closure 後竄改一個不變式欄位，斷言真實 verify 透過
+`gate-publish.sh` 自己的錯誤訊息拒絕，而非走 shortcut）。兩案皆通過，且沿用
+現有 fixture 通過真實 verify——**未變更任何 production code**，Requirement 1–6
+與 route matrix 原本就已正確落實。`gate_policy_applicability_assess` 在同一組
+測試裡仍是全面 stub，但它已在 `test-pmctl-gate.sh`（約 11 案）獨立驗證過，且
+不在本票 Requirement 4/5 明列的 producer/consumer 缺口範圍內，故不視為本次
+closure 的漏項；若未來有證據顯示這一軸也需要同等的 unstubbed dogfood，另開票
+處理。
+
+**See**: pr:TBD
 
 ---
 
