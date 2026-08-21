@@ -301,6 +301,96 @@ MD
   printf '%s' "$mdir"
 }
 
+# CC-505 Req 7: a deterministic retrieval fixture corpus. Each scenario below
+# carries a unique, otherwise-unused marker token so its query cannot
+# accidentally match unrelated fixture content, and each is deliberately
+# built to fail under the PRE-CC-505 behavior it regression-locks:
+#   exact symbol       -> would previously tie with any partial/text match
+#   heading             -> would previously not rank above unrelated hits
+#   deep-in-paragraph   -> would be invisible under the old 200-char truncation
+#   same-word polysemy  -> would previously not distinguish symbol vs prose
+#   path/domain boost   -> would previously have no domain weighting at all
+#   long-section chunk  -> would be invisible without Req 1's windowed chunking
+make_retrieval_corpus_repo() {
+  local dir="$1"
+  mkdir -p "$dir/src" "$dir/docs"
+
+  # 1. Exact symbol: a uniquely-named function; querying its exact name must
+  # rank it top-1 (match_kind=symbol_exact outranks every other tier).
+  cat > "$dir/src/exact.sh" <<'SH'
+#!/usr/bin/env bash
+unique_exact_symbol_target() {
+  printf 'target\n'
+}
+SH
+
+  # 2. Heading match: a distinctive multi-word heading with no repeated
+  # terms in the surrounding prose.
+  cat > "$dir/docs/heading.md" <<'MD'
+# Heading Fixture
+
+## Distinctive Heading Marker Zulu
+
+Some unrelated prose here that does not repeat the heading words.
+MD
+
+  # 3. Deep-in-paragraph: a unique marker placed after ~2800 characters of
+  # filler, well past the pre-CC-505 200-character truncation point.
+  local deep_body i
+  deep_body=""
+  for i in $(seq 1 40); do
+    deep_body="${deep_body}filler sentence number $i to push content deep into the section. "
+  done
+  {
+    printf '# Deep Fixture\n\n## Deep Section\n\n'
+    printf '%s\n' "$deep_body"
+    printf 'deepburied_unique_marker_quebec appears only here, well past 200 characters.\n'
+  } > "$dir/docs/deep.md"
+
+  # 4. Same-word polysemy: the same token is both an exact symbol name and a
+  # plain-prose mention elsewhere; the exact-symbol form must still win.
+  cat > "$dir/src/polysemy.sh" <<'SH'
+#!/usr/bin/env bash
+polysemy_common_term() {
+  printf 'symbol form\n'
+}
+SH
+  cat > "$dir/docs/polysemy_prose.md" <<'MD'
+# Polysemy Prose
+
+The term polysemy_common_term also shows up here in plain prose, not as a
+symbol definition, to test that the exact-symbol form still ranks above a
+generic textual mention of the same token.
+MD
+
+  # 5. Path/domain boost: the identical marker term in a knowledge-domain
+  # file (BACKLOG.md) and a plain repo-domain file; the knowledge hit must
+  # rank first.
+  cat > "$dir/BACKLOG.md" <<'MD'
+# Backlog
+
+## Marker Section
+
+domain_boost_marker_xray appears in this knowledge-domain file.
+MD
+  cat > "$dir/src/plain_note.txt" <<'TXT'
+domain_boost_marker_xray also appears in this plain repo-domain file.
+TXT
+
+  # 6. Long section split across multiple chunks (window=20 lines): a
+  # unique marker on the LAST line of a 35-line section is retrievable only
+  # if the section was windowed into multiple chunks rather than truncated
+  # to its first window.
+  {
+    printf '# Long Section Fixture\n\n## Long Section\n\n'
+    local j
+    for j in $(seq 1 35); do
+      printf 'filler line number %d in a long section.\n' "$j"
+    done
+    printf 'longsection_tail_marker_yankee is the very last line.\n'
+  } > "$dir/docs/long_section.md"
+}
+
 # ── Test cases ─────────────────────────────────────────────────────────────────
 
 case_context_index_missing_repo() {
@@ -956,7 +1046,7 @@ case_context_pack_query_without_value() {
 case_context_pack_no_db() {
   local name="pmctl context pack: exits 0 with empty JSON when index DB not found"
   # Behavior: with autobuild disabled, missing DB must still return graceful empty
-  # JSON (schema_version 3, empty files/symbols arrays) rather than exiting 1.
+  # JSON (schema_version 4, empty files/symbols arrays) rather than exiting 1.
   # Steps: call pack on a repo with no prior index run and autobuild disabled; assert exit 0 and valid empty JSON.
   should_run "$name" || return 0
   local out err status=0
@@ -969,9 +1059,9 @@ case_context_pack_no_db() {
   if [[ "$status" -ne 0 ]]; then
     fail "$name" "expected exit 0 (graceful empty); got $status err=$(<"$err")"; return 0
   fi
-  if ! jq -e '.schema_version == 3 and (.files | length) == 0 and (.symbols | length) == 0' \
+  if ! jq -e '.schema_version == 4 and (.files | length) == 0 and (.symbols | length) == 0' \
       "$out" > /dev/null 2>&1; then
-    fail "$name" "expected empty schema_version-3 JSON; got: $(<"$out")"; return 0
+    fail "$name" "expected empty schema_version-4 JSON; got: $(<"$out")"; return 0
   fi
   if [[ -e "$nodb_repo/.pm-dispatch/ctx/context.db" ]]; then
     fail "$name" "autobuild disabled but context.db was created"; return 0
@@ -993,8 +1083,8 @@ case_context_pack_unknown_flag() {
 }
 
 case_context_pack_valid_json() {
-  local name="pmctl context pack: valid call produces schema_version 3 JSON with correct fields"
-  # Behavior: context pack must emit schema_version 3 JSON with task_id, sources, and at least one hit.
+  local name="pmctl context pack: valid call produces schema_version 4 JSON with correct fields"
+  # Behavior: context pack must emit schema_version 4 JSON with task_id, sources, and at least one hit.
   # Steps: index a fixture repo; run pack with one --query; validate JSON fields via jq.
   should_run "$name" || return 0
 
@@ -1014,7 +1104,7 @@ case_context_pack_valid_json() {
   fi
 
   if ! jq -e '
-    .schema_version == 3 and
+    .schema_version == 4 and
     .task_id == "TASK-1" and
     (.sources | length) > 0 and
     .sources[0].name == "builtin-index" and
@@ -2189,7 +2279,7 @@ case_context_pack_nondir_repo_path() {
 }
 
 case_context_pack_schema_contract() {
-  local name="pmctl context pack: emitted pack has all required schema_version 3 fields"
+  local name="pmctl context pack: emitted pack has all required schema_version 4 fields"
   # Behavior: context pack must always include schema_version, task_id, built_ts, sources, files, symbols, memories, risks.
   # Steps: index fixture repo; run pack; validate all top-level required fields are present.
   should_run "$name" || return 0
@@ -2212,8 +2302,8 @@ case_context_pack_schema_contract() {
   if ! jq -e '
     has("schema_version") and has("task_id") and has("built_ts") and
     has("sources") and has("files") and has("symbols") and
-    has("memories") and has("risks") and
-    .schema_version == 3
+    has("memories") and has("risks") and has("truncation") and
+    .schema_version == 4
   ' "$out" > /dev/null 2>"$err"; then
     fail "$name" "schema contract failed: $(<"$err") output: $(<"$out")"
     return 0
@@ -4184,6 +4274,794 @@ case_context_pack_ranking_fields_are_valid() {
   pass "$name"
 }
 
+# Behavior (CC-505 Req 5): with no explicit budget flags, a normal-sized
+# result stays entirely within the generous default ceiling and discloses
+# truncation.applied=false -- the budget must not shrink ordinary output.
+# Steps: index a fixture repo; pack a term with a handful of hits; assert
+# the pack's `truncation` object reports applied=false and kept==total_before.
+case_context_pack_default_budget_does_not_truncate() {
+  local name="pmctl context pack: default budget does not truncate an ordinary result"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-pack-budget-default"
+  make_fixture_repo "$fix_repo"
+
+  local out err status=0
+  "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-budget-default.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-budget-default.err")"; return 0; }
+
+  out="$tmp_root/pack-budget-default.out"; err="$tmp_root/pack-budget-default.err"
+  "$PMCTL" context pack "$fix_repo" --task-id TASK-1 --query alpha > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "pack exited $status: $(<"$err")"; return 0
+  fi
+  if ! jq -e '
+    .truncation.applied == false and
+    .truncation.reason == "none" and
+    .truncation.kept == .truncation.total_before and
+    .truncation.dropped == 0
+  ' "$out" > /dev/null 2>"$err"; then
+    fail "$name" "expected an untruncated disclosure for an ordinary result: $(<"$err") output: $(<"$out")"
+    return 0
+  fi
+  pass "$name"
+}
+
+# Behavior (CC-505 Req 5): --max-items enforces a GLOBAL cap across
+# files[]+symbols[]+memories[] combined (not per-array), keeps the
+# highest-ranked survivors, and discloses the truncation.
+# Steps: index a fixture repo; pack a term with more than 1 hit using
+# --max-items 1; assert exactly 1 item survives across all arrays combined,
+# and truncation discloses applied=true/reason=item_budget/dropped>0.
+case_context_pack_max_items_enforces_global_cap() {
+  local name="pmctl context pack: --max-items enforces a global cap across all arrays"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-pack-budget-items"
+  make_fixture_repo "$fix_repo"
+
+  local out err status=0
+  "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-budget-items.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-budget-items.err")"; return 0; }
+
+  out="$tmp_root/pack-budget-items.out"; err="$tmp_root/pack-budget-items.err"
+  "$PMCTL" context pack "$fix_repo" --task-id TASK-1 --query alpha --max-items 1 \
+    > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "pack exited $status: $(<"$err")"; return 0
+  fi
+  if ! jq -e '
+    ((.files | length) + (.symbols | length) + (.memories | length)) == 1 and
+    .truncation.applied == true and
+    .truncation.reason == "item_budget" and
+    .truncation.budget.max_items == 1 and
+    .truncation.kept == 1 and
+    .truncation.dropped == (.truncation.total_before - 1) and
+    .truncation.total_before > 1
+  ' "$out" > /dev/null 2>"$err"; then
+    fail "$name" "--max-items 1 did not enforce a global 1-item cap: $(<"$err") output: $(<"$out")"
+    return 0
+  fi
+  # The one survivor must be the globally highest-ranked candidate: the
+  # exact-symbol hit for my_func_alpha (tier base outranks every fts5 hit
+  # regardless of bm25), same guarantee case_context_query_cli_orders_by_
+  # rank_tier already locks for the query path.
+  if ! jq -e '
+    (.files + .symbols + .memories)[0].match_kind | IN("symbol_exact", "symbol_partial")
+  ' "$out" > /dev/null 2>"$err"; then
+    fail "$name" "the single surviving item should be the highest-ranked (symbol) hit: $(<"$out")"
+    return 0
+  fi
+  pass "$name"
+}
+
+# Behavior (CC-505 Req 5): --max-bytes truncates further than --max-items
+# alone would, by dropping the lowest-ranked surviving items until the
+# serialized pack fits, and discloses reason=byte_budget.
+# Steps: pack a term with several hits using a --max-bytes tight enough to
+# force dropping items even though --max-items would allow more; assert
+# the disclosed reason is byte_budget and the pack byte size is <= the cap.
+case_context_pack_max_bytes_enforces_byte_cap() {
+  local name="pmctl context pack: --max-bytes drops lowest-ranked items until the pack fits"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-pack-budget-bytes"
+  make_fixture_repo "$fix_repo"
+
+  local out err status=0
+  "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-budget-bytes.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-budget-bytes.err")"; return 0; }
+
+  # An arbitrarily tight cap (e.g. half the natural size) can land BELOW the
+  # pack skeleton''s own minimum floor (schema fields + the truncation object
+  # itself), at which point 0 items survive and the output legitimately
+  # cannot shrink further -- that is correct degenerate behavior, not a bug,
+  # but it makes ">0 items survived, still under budget" untestable with an
+  # arbitrary cap. Instead, learn the real byte cost of keeping exactly 1
+  # item (via --max-items 1) and set the cap just above that floor, so the
+  # byte budget alone (no --max-items) is guaranteed to have exactly one
+  # achievable, predictable target to shrink toward.
+  local one_item_out one_item_bytes
+  one_item_out="$tmp_root/pack-budget-bytes-one-item.out"
+  local one_item_err="$tmp_root/pack-budget-bytes-one-item.err" one_item_status=0
+  "$PMCTL" context pack "$fix_repo" --task-id TASK-1 --query alpha --max-items 1 \
+    > "$one_item_out" 2> "$one_item_err" || one_item_status=$?
+  if [[ "$one_item_status" -ne 0 ]]; then
+    fail "$name" "setup: baseline --max-items 1 pack exited $one_item_status: $(<"$one_item_err")"; return 0
+  fi
+  one_item_bytes="$(wc -c < "$one_item_out" | tr -d ' ')"
+
+  out="$tmp_root/pack-budget-bytes.out"; err="$tmp_root/pack-budget-bytes.err"
+  local tight_cap=$(( one_item_bytes + 20 ))
+  "$PMCTL" context pack "$fix_repo" --task-id TASK-1 --query alpha --max-bytes "$tight_cap" \
+    > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "pack exited $status: $(<"$err")"; return 0
+  fi
+  local actual_bytes
+  actual_bytes="$(wc -c < "$out" | tr -d ' ')"
+  if (( actual_bytes > tight_cap )); then
+    fail "$name" "pack ($actual_bytes bytes) exceeds --max-bytes $tight_cap: $(<"$out")"
+    return 0
+  fi
+  if ! jq -e '.truncation.applied == true and .truncation.reason == "byte_budget" and .truncation.dropped > 0 and .truncation.kept >= 1' \
+      "$out" > /dev/null 2>"$err"; then
+    fail "$name" "expected a byte_budget truncation disclosure with at least one surviving item: $(<"$err") output: $(<"$out")"
+    return 0
+  fi
+  pass "$name"
+}
+
+# Behavior (CC-505 Req 5 follow-up, risk-reviewer-F001): a large multi-term
+# candidate set combined with a tight --max-bytes used to re-sort and
+# re-serialize the ENTIRE candidate pool once PER DROPPED ITEM
+# (_ctx_pack_with_truncation -> _ctx_pack_top_n on the full unbounded
+# input), which is quadratic work and excessive subprocess launches for a
+# permitted multi-query invocation. Fixed by pre-slicing the candidate set
+# to at most max_items ONCE before the byte-budget loop. This regression
+# test forces heavy trimming over a wide, many-term/many-hit candidate set
+# and asserts it completes within a generous bound instead of degrading
+# catastrophically.
+case_context_pack_large_candidate_byte_budget_bounded_work() {
+  local name="pmctl context pack: large multi-term candidate set with tight --max-bytes stays bounded"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-pack-large-candidate"
+  mkdir -p "$fix_repo/scripts/lib"
+  local i lib="$fix_repo/scripts/lib/loadtest.sh"
+  {
+    printf '#!/usr/bin/env bash\n'
+    for ((i = 0; i < 60; i++)); do
+      printf 'loadtest_func_%d() {\n  printf "loadtest hit %d\\n"\n}\n' "$i" "$i"
+    done
+  } > "$lib"
+
+  local err status=0
+  "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-large-candidate.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-large-candidate.err")"; return 0; }
+
+  local -a args=("$fix_repo" --task-id TASK-1 --max-items 200 --max-bytes 4000)
+  for ((i = 0; i < 40; i++)); do
+    args+=(--query "loadtest_func_$i")
+  done
+
+  local out start_ts end_ts elapsed
+  out="$tmp_root/pack-large-candidate.out"; err="$tmp_root/pack-large-candidate.err"
+  start_ts="$(date +%s)"
+  "$PMCTL" context pack "${args[@]}" > "$out" 2> "$err" || status=$?
+  end_ts="$(date +%s)"
+  elapsed=$((end_ts - start_ts))
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "pack exited $status: $(<"$err")"; return 0
+  fi
+  if (( elapsed > 30 )); then
+    fail "$name" "large-candidate byte-budget trimming took ${elapsed}s, expected a bounded completion time"
+    return 0
+  fi
+  if ! jq -e '.truncation.reason == "byte_budget" and .truncation.dropped > 0' "$out" > /dev/null 2>"$err"; then
+    fail "$name" "expected substantial byte-budget trimming to have occurred: $(<"$err") output head: $(head -c 500 "$out")"
+    return 0
+  fi
+  local actual_bytes
+  actual_bytes="$(wc -c < "$out" | tr -d ' ')"
+  if (( actual_bytes > 4000 )); then
+    fail "$name" "pack ($actual_bytes bytes) exceeds --max-bytes 4000"
+    return 0
+  fi
+  pass "$name"
+}
+
+# Behavior (CC-505 Req 5 follow-up, qa-tester-F001): the byte-budget
+# comparison is `>`, not `>=` -- a pack that fits EXACTLY at --max-bytes
+# must be accepted as-is (kept==1), and a cap one byte below that exact
+# size must legitimately drop to 0 items (not silently over- or
+# under-truncate at the boundary).
+case_context_pack_max_bytes_exact_boundary_accepted() {
+  local name="pmctl context pack: --max-bytes at the exact one-item pack size keeps that item"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-pack-budget-exact-boundary"
+  make_fixture_repo "$fix_repo"
+  local err="$tmp_root/pack-exact-boundary-jq.err" status=0
+  "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-exact-boundary.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-exact-boundary.err")"; return 0; }
+
+  # The `truncation.budget.max_bytes` field itself renders the requested
+  # cap, so its digit width feeds back into the pack's own byte size --
+  # probing with one --max-bytes value and then asserting an EXACT byte
+  # match at a DIFFERENT --max-bytes value is not self-consistent (a
+  # 200000-vs-623 digit-width difference alone moves the output by a few
+  # bytes with no truncation involved). Converge on a self-consistent
+  # fixed point instead: request a pack capped at guess bytes, see how many
+  # bytes it actually took, and re-probe with that value until they agree.
+  local one_item_out one_item_bytes one_item_err one_item_status=0 guess=999999 i
+  one_item_out="$tmp_root/pack-exact-boundary-one-item.out"
+  one_item_err="$tmp_root/pack-exact-boundary-one-item.err"
+  for ((i = 0; i < 5; i++)); do
+    one_item_status=0
+    "$PMCTL" context pack "$fix_repo" --task-id TASK-1 --query alpha --max-items 1 --max-bytes "$guess" \
+      > "$one_item_out" 2> "$one_item_err" || one_item_status=$?
+    if [[ "$one_item_status" -ne 0 ]]; then
+      fail "$name" "setup: baseline --max-items 1 --max-bytes $guess pack exited $one_item_status: $(<"$one_item_err")"; return 0
+    fi
+    one_item_bytes="$(wc -c < "$one_item_out" | tr -d ' ')"
+    [[ "$one_item_bytes" == "$guess" ]] && break
+    guess="$one_item_bytes"
+  done
+  if [[ "$one_item_bytes" != "$guess" ]]; then
+    fail "$name" "setup: --max-bytes probe did not converge to a fixed point (last: $one_item_bytes vs $guess)"
+    return 0
+  fi
+
+  local exact_out exact_err exact_status=0
+  exact_out="$tmp_root/pack-exact-boundary-exact.out"; exact_err="$tmp_root/pack-exact-boundary-exact.err"
+  "$PMCTL" context pack "$fix_repo" --task-id TASK-1 --query alpha --max-items 1 --max-bytes "$one_item_bytes" \
+    > "$exact_out" 2> "$exact_err" || exact_status=$?
+  if [[ "$exact_status" -ne 0 ]]; then
+    fail "$name" "pack exited $exact_status at the exact byte boundary: $(<"$exact_err")"; return 0
+  fi
+  local exact_bytes
+  exact_bytes="$(wc -c < "$exact_out" | tr -d ' ')"
+  if [[ "$exact_bytes" -ne "$one_item_bytes" ]]; then
+    fail "$name" "expected exact-boundary output to be unchanged ($one_item_bytes bytes), got $exact_bytes"
+    return 0
+  fi
+  # reason is "item_budget" (not "byte_budget") here: --max-items 1 is what
+  # constrains this pack to a single item in the first place; the point of
+  # this assertion is that the BYTE cap, sized to fit exactly, does not
+  # ALSO drop that one surviving item.
+  if ! jq -e '.truncation.kept == 1 and .truncation.reason == "item_budget"' "$exact_out" > /dev/null 2>"$err"; then
+    fail "$name" "expected the item to survive exactly at the boundary, not be dropped: $(<"$exact_out")"
+    return 0
+  fi
+
+  local below_out below_err below_status=0
+  below_out="$tmp_root/pack-exact-boundary-below.out"; below_err="$tmp_root/pack-exact-boundary-below.err"
+  "$PMCTL" context pack "$fix_repo" --task-id TASK-1 --query alpha --max-items 1 --max-bytes "$((one_item_bytes - 1))" \
+    > "$below_out" 2> "$below_err" || below_status=$?
+  if [[ "$below_status" -ne 0 ]]; then
+    fail "$name" "pack exited $below_status one byte below the boundary: $(<"$below_err")"; return 0
+  fi
+  local below_bytes
+  below_bytes="$(wc -c < "$below_out" | tr -d ' ')"
+  if (( below_bytes > one_item_bytes - 1 )); then
+    fail "$name" "one-byte-below cap ($((one_item_bytes - 1))) was not honored: got $below_bytes bytes"
+    return 0
+  fi
+  if ! jq -e '.truncation.kept == 0 and .truncation.reason == "byte_budget"' "$below_out" > /dev/null 2>"$err"; then
+    fail "$name" "expected the single item to be dropped one byte below its exact size: $(<"$below_out")"
+    return 0
+  fi
+  pass "$name"
+}
+
+case_context_pack_impossible_byte_cap_rejected() {
+  local name="pmctl context pack: --max-bytes below the empty envelope floor fails closed"
+  should_run "$name" || return 0
+  local fix_repo="$tmp_root/fix-repo-pack-budget-impossible"
+  make_fixture_repo "$fix_repo"
+  local out err status=0
+  "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-impossible.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-impossible.err")"; return 0; }
+  out="$tmp_root/pack-impossible.out"; err="$tmp_root/pack-impossible.err"
+  "$PMCTL" context pack "$fix_repo" --task-id TASK-1 --query alpha --max-bytes 1 \
+    > "$out" 2> "$err" || status=$?
+  if assert_exit "$name" "$status" 2; then
+    if [[ -s "$out" ]]; then
+      fail "$name" "expected no pack output on fail-closed rejection: $(<"$out")"
+      return 0
+    fi
+    pass "$name"
+  fi
+}
+
+case_context_pack_invalid_max_items_rejected() {
+  local name="pmctl context pack: --max-items rejects a non-positive-integer value"
+  should_run "$name" || return 0
+  local fix_repo="$tmp_root/fix-repo-pack-budget-invalid"
+  make_fixture_repo "$fix_repo"
+  local out err status=0
+  out="$tmp_root/pack-budget-invalid-items.out"; err="$tmp_root/pack-budget-invalid-items.err"
+  "$PMCTL" context pack "$fix_repo" --task-id TASK-1 --query alpha --max-items 0 \
+    > "$out" 2> "$err" || status=$?
+  if assert_exit "$name" "$status" 2; then pass "$name"; fi
+}
+
+case_context_pack_invalid_max_bytes_rejected() {
+  local name="pmctl context pack: --max-bytes rejects a non-positive-integer value"
+  should_run "$name" || return 0
+  local fix_repo="$tmp_root/fix-repo-pack-budget-invalid2"
+  make_fixture_repo "$fix_repo"
+  local out err status=0
+  out="$tmp_root/pack-budget-invalid-bytes.out"; err="$tmp_root/pack-budget-invalid-bytes.err"
+  "$PMCTL" context pack "$fix_repo" --task-id TASK-1 --query alpha --max-bytes not-a-number \
+    > "$out" 2> "$err" || status=$?
+  if assert_exit "$name" "$status" 2; then pass "$name"; fi
+}
+
+# Behavior (CC-505 Req 5): PM_DISPATCH_CONTEXT_PACK_MAX_ITEMS/_MAX_BYTES set
+# the defaults when no --max-items/--max-bytes flag is given, exercising the
+# same fail-closed validation path as the flags themselves (qa-tester-F002).
+case_context_pack_env_max_items_valid_override_applies() {
+  local name="pmctl context pack: PM_DISPATCH_CONTEXT_PACK_MAX_ITEMS overrides the default cap"
+  should_run "$name" || return 0
+  local fix_repo="$tmp_root/fix-repo-pack-budget-env-items"
+  make_fixture_repo "$fix_repo"
+  local out err status=0
+  "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-env-items.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-env-items.err")"; return 0; }
+  out="$tmp_root/pack-env-items.out"; err="$tmp_root/pack-env-items.err"
+  PM_DISPATCH_CONTEXT_PACK_MAX_ITEMS=1 \
+    "$PMCTL" context pack "$fix_repo" --task-id TASK-1 --query alpha \
+    > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "pack exited $status: $(<"$err")"; return 0
+  fi
+  if ! jq -e '
+    ((.files | length) + (.symbols | length) + (.memories | length)) == 1 and
+    .truncation.applied == true and
+    .truncation.reason == "item_budget" and
+    .truncation.budget.max_items == 1
+  ' "$out" > /dev/null 2>"$err"; then
+    fail "$name" "env override did not apply a 1-item cap: $(<"$err") output: $(<"$out")"
+    return 0
+  fi
+  pass "$name"
+}
+
+case_context_pack_env_max_bytes_valid_override_applies() {
+  local name="pmctl context pack: PM_DISPATCH_CONTEXT_PACK_MAX_BYTES overrides the default cap"
+  should_run "$name" || return 0
+  local fix_repo="$tmp_root/fix-repo-pack-budget-env-bytes"
+  make_fixture_repo "$fix_repo"
+  local out err status=0
+  "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-env-bytes.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-env-bytes.err")"; return 0; }
+
+  local one_item_out one_item_bytes
+  one_item_out="$tmp_root/pack-env-bytes-one-item.out"
+  local one_item_err="$tmp_root/pack-env-bytes-one-item.err" one_item_status=0
+  "$PMCTL" context pack "$fix_repo" --task-id TASK-1 --query alpha --max-items 1 \
+    > "$one_item_out" 2> "$one_item_err" || one_item_status=$?
+  if [[ "$one_item_status" -ne 0 ]]; then
+    fail "$name" "setup: baseline --max-items 1 pack exited $one_item_status: $(<"$one_item_err")"; return 0
+  fi
+  one_item_bytes="$(wc -c < "$one_item_out" | tr -d ' ')"
+  local tight_cap=$(( one_item_bytes + 20 ))
+
+  out="$tmp_root/pack-env-bytes.out"; err="$tmp_root/pack-env-bytes.err"
+  PM_DISPATCH_CONTEXT_PACK_MAX_BYTES="$tight_cap" \
+    "$PMCTL" context pack "$fix_repo" --task-id TASK-1 --query alpha \
+    > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "pack exited $status: $(<"$err")"; return 0
+  fi
+  local actual_bytes
+  actual_bytes="$(wc -c < "$out" | tr -d ' ')"
+  if (( actual_bytes > tight_cap )); then
+    fail "$name" "pack ($actual_bytes bytes) exceeds env PM_DISPATCH_CONTEXT_PACK_MAX_BYTES=$tight_cap: $(<"$out")"
+    return 0
+  fi
+  if ! jq -e '.truncation.applied == true and .truncation.reason == "byte_budget" and .truncation.budget.max_bytes == '"$tight_cap"'' \
+      "$out" > /dev/null 2>"$err"; then
+    fail "$name" "expected a byte_budget truncation disclosure honoring the env cap: $(<"$err") output: $(<"$out")"
+    return 0
+  fi
+  pass "$name"
+}
+
+case_context_pack_env_max_items_invalid_rejected() {
+  local name="pmctl context pack: invalid PM_DISPATCH_CONTEXT_PACK_MAX_ITEMS is rejected fail-closed"
+  should_run "$name" || return 0
+  local fix_repo="$tmp_root/fix-repo-pack-budget-env-invalid-items"
+  make_fixture_repo "$fix_repo"
+  local out err status=0
+  out="$tmp_root/pack-env-invalid-items.out"; err="$tmp_root/pack-env-invalid-items.err"
+  PM_DISPATCH_CONTEXT_PACK_MAX_ITEMS=0 \
+    "$PMCTL" context pack "$fix_repo" --task-id TASK-1 --query alpha \
+    > "$out" 2> "$err" || status=$?
+  if assert_exit "$name" "$status" 2; then pass "$name"; fi
+}
+
+case_context_pack_env_max_bytes_invalid_rejected() {
+  local name="pmctl context pack: invalid PM_DISPATCH_CONTEXT_PACK_MAX_BYTES is rejected fail-closed"
+  should_run "$name" || return 0
+  local fix_repo="$tmp_root/fix-repo-pack-budget-env-invalid-bytes"
+  make_fixture_repo "$fix_repo"
+  local out err status=0
+  out="$tmp_root/pack-env-invalid-bytes.out"; err="$tmp_root/pack-env-invalid-bytes.err"
+  PM_DISPATCH_CONTEXT_PACK_MAX_BYTES=not-a-number \
+    "$PMCTL" context pack "$fix_repo" --task-id TASK-1 --query alpha \
+    > "$out" 2> "$err" || status=$?
+  if assert_exit "$name" "$status" 2; then pass "$name"; fi
+}
+
+# Behavior (CC-505 Req 5): an empty-index pack (no db yet) still emits a
+# well-formed truncation disclosure, not an omitted field a v4 consumer
+# would have to special-case.
+case_context_pack_empty_index_discloses_untruncated_budget() {
+  local name="pmctl context pack: empty-index pack still discloses an untruncated budget"
+  should_run "$name" || return 0
+  local nodb_repo="$tmp_root/nodb-repo-pack-budget"
+  mkdir -p "$nodb_repo"
+  local out err status=0
+  out="$tmp_root/pack-budget-nodb.out"; err="$tmp_root/pack-budget-nodb.err"
+  PM_DISPATCH_CONTEXT_AUTOBUILD=0 \
+    "$PMCTL" context pack "$nodb_repo" --task-id TASK-1 --query foo \
+    > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "expected exit 0 (graceful empty); got $status err=$(<"$err")"; return 0
+  fi
+  if ! jq -e '.truncation.applied == false and .truncation.total_before == 0 and .truncation.kept == 0' \
+      "$out" > /dev/null 2>"$err"; then
+    fail "$name" "expected an untruncated empty-index disclosure: $(<"$err") output: $(<"$out")"
+    return 0
+  fi
+  pass "$name"
+}
+
+# Behavior (CC-505 Req 5 follow-up, risk-reviewer-F001): every --query term
+# accumulates its own raw hits BEFORE the final item/byte budget is ever
+# applied, so the term count itself must be bounded -- fail closed above
+# PM_DISPATCH_CONTEXT_PACK_MAX_TERMS rather than let an extreme invocation
+# do unbounded intermediate work regardless of how small the eventual
+# output is capped.
+case_context_pack_max_terms_rejects_excess() {
+  local name="pmctl context pack: too many --query terms is rejected before any accumulation"
+  should_run "$name" || return 0
+  local fix_repo="$tmp_root/fix-repo-pack-max-terms"
+  make_fixture_repo "$fix_repo"
+  local out err status=0
+  out="$tmp_root/pack-max-terms.out"; err="$tmp_root/pack-max-terms.err"
+  local -a args=("$fix_repo" --task-id TASK-1)
+  local i
+  for ((i = 0; i < 3; i++)); do
+    args+=(--query "term-$i")
+  done
+  PM_DISPATCH_CONTEXT_PACK_MAX_TERMS=2 \
+    "$PMCTL" context pack "${args[@]}" \
+    > "$out" 2> "$err" || status=$?
+  if assert_exit "$name" "$status" 2; then
+    if [[ -s "$out" ]]; then
+      fail "$name" "expected no pack output when the term cap is exceeded: $(<"$out")"
+      return 0
+    fi
+    pass "$name"
+  fi
+}
+
+# Behavior (CC-505 Req 5 follow-up, qa-tester-F001): the term-count guard's
+# own env-var input must be validated fail-closed too, distinct from the
+# "too many terms" case above -- this locks the malformed-value branch.
+case_context_pack_invalid_max_terms_rejected() {
+  local name="pmctl context pack: invalid PM_DISPATCH_CONTEXT_PACK_MAX_TERMS is rejected fail-closed"
+  should_run "$name" || return 0
+  local fix_repo="$tmp_root/fix-repo-pack-invalid-max-terms"
+  make_fixture_repo "$fix_repo"
+  local out err status=0
+  out="$tmp_root/pack-invalid-max-terms.out"; err="$tmp_root/pack-invalid-max-terms.err"
+  PM_DISPATCH_CONTEXT_PACK_MAX_TERMS=0 \
+    "$PMCTL" context pack "$fix_repo" --task-id TASK-1 --query alpha \
+    > "$out" 2> "$err" || status=$?
+  if assert_exit "$name" "$status" 2; then
+    if [[ -s "$out" ]]; then
+      fail "$name" "expected no pack output on fail-closed rejection: $(<"$out")"
+      return 0
+    fi
+    pass "$name"
+  fi
+}
+
+# Behavior (CC-505 Req 5 follow-up, architecture-reviewer-F001): sources[]
+# must reflect what actually survived truncation, not the pre-truncation
+# set -- a cap that drops every memory item must also drop the
+# memory-index provenance entry, otherwise a caller sees an attributed
+# producer with zero surviving items.
+case_context_pack_truncation_reconciles_sources_provenance() {
+  local name="pmctl context pack: truncation drops memory-index provenance when no memory item survives"
+  should_run "$name" || return 0
+
+  local repo="$tmp_root/pack-sources-repo" cfg="$tmp_root/pack-sources-cfg"
+  make_fixture_repo "$repo"
+  local mdir; mdir="$cfg/projects/$(mem_encode_path "$repo")/memory"
+  mkdir -p "$mdir"
+  cat > "$mdir/MEMORY.md" <<'MD'
+# Memory Index
+- [sources provenance card](feedback_sources_provenance.md) — sources provenance fixture
+MD
+  cat > "$mdir/feedback_sources_provenance.md" <<'MD'
+---
+name: sources-provenance-card
+---
+alpha appears once in this low-priority memory card.
+MD
+
+  local err status=0 out
+  "$PMCTL" context index "$repo" > /dev/null 2> "$tmp_root/index-sources.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-sources.err")"; return 0; }
+
+  out="$tmp_root/pack-sources.out"; err="$tmp_root/pack-sources.err"
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" context pack "$repo" --task-id TASK-1 --query alpha \
+    --source all --max-items 1 \
+    > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "pack exited $status: $(<"$err")"; return 0
+  fi
+  # The repo-domain exact-symbol hit for alpha outranks the plain-prose
+  # memory mention, so --max-items 1 keeps the repo item and drops the
+  # memory item entirely.
+  if ! jq -e '(.memories | length) == 0' "$out" > /dev/null 2>"$err"; then
+    fail "$name" "expected the single surviving item to be the repo hit, not the memory hit: $(<"$out")"
+    return 0
+  fi
+  if ! jq -e '(.sources | map(.name) | index("memory-index")) == null' "$out" > /dev/null 2>"$err"; then
+    fail "$name" "expected sources[] to drop memory-index once no memory item survives: $(<"$out")"
+    return 0
+  fi
+  pass "$name"
+}
+
+# Behavior (CC-505 Req 5 follow-up, critic-F001): the inverse direction of
+# the same over-claim -- a memory-only surviving pack must NOT still
+# advertise builtin-index in sources[] once every files[]/symbols[] item
+# has been truncated away.
+case_context_pack_truncation_reconciles_builtin_sources_provenance() {
+  local name="pmctl context pack: truncation drops builtin-index provenance when no repo item survives"
+  should_run "$name" || return 0
+
+  local repo="$tmp_root/pack-sources-builtin-repo" cfg="$tmp_root/pack-sources-builtin-cfg"
+  make_fixture_repo "$repo"
+  local mdir; mdir="$cfg/projects/$(mem_encode_path "$repo")/memory"
+  mkdir -p "$mdir"
+  cat > "$mdir/MEMORY.md" <<'MD'
+# Memory Index
+- [builtin sources provenance card](feedback_builtin_sources_provenance.md) — builtin sources provenance fixture
+MD
+  cat > "$mdir/feedback_builtin_sources_provenance.md" <<'MD'
+---
+name: builtin-sources-provenance-card
+---
+alpha appears once in this high-trust memory card, curated deliberately.
+MD
+
+  local err status=0 out
+  "$PMCTL" context index "$repo" > /dev/null 2> "$tmp_root/index-builtin-sources.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-builtin-sources.err")"; return 0; }
+
+  out="$tmp_root/pack-builtin-sources.out"; err="$tmp_root/pack-builtin-sources.err"
+  # --source memory means only memories[] is ever populated -- files[]/
+  # symbols[] are empty from the start, not truncated down to empty, but
+  # the assertion is the same: sources[] must not advertise a producer
+  # with zero surviving attributed items.
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" context pack "$repo" --task-id TASK-1 --query alpha \
+    --source memory \
+    > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "pack exited $status: $(<"$err")"; return 0
+  fi
+  if ! jq -e '(.memories | length) > 0 and (.files | length) == 0 and (.symbols | length) == 0' \
+      "$out" > /dev/null 2>"$err"; then
+    fail "$name" "expected a memory-only surviving set: $(<"$out")"
+    return 0
+  fi
+  if ! jq -e '(.sources | map(.name) | index("builtin-index")) == null' "$out" > /dev/null 2>"$err"; then
+    fail "$name" "expected sources[] to drop builtin-index once no repo item survives: $(<"$out")"
+    return 0
+  fi
+  pass "$name"
+}
+
+# Behavior (CC-505 Req 5 follow-up): the no-index graceful-empty branch must
+# ALSO fail closed on an impossible --max-bytes cap -- not just the indexed
+# path -- since it is a distinct early return that builds its own envelope
+# (critic-F001/architecture-reviewer-F001: this branch used to bypass
+# _ctx_apply_pack_budget entirely and could emit an over-budget envelope).
+case_context_pack_no_index_impossible_byte_cap_rejected() {
+  local name="pmctl context pack: no-index empty pack also fails closed on an impossible --max-bytes"
+  should_run "$name" || return 0
+  local nodb_repo="$tmp_root/nodb-repo-pack-budget-impossible"
+  mkdir -p "$nodb_repo"
+  local out err status=0
+  out="$tmp_root/pack-budget-nodb-impossible.out"; err="$tmp_root/pack-budget-nodb-impossible.err"
+  PM_DISPATCH_CONTEXT_AUTOBUILD=0 \
+    "$PMCTL" context pack "$nodb_repo" --task-id TASK-1 --query foo --max-bytes 1 \
+    > "$out" 2> "$err" || status=$?
+  if assert_exit "$name" "$status" 2; then
+    if [[ -s "$out" ]]; then
+      fail "$name" "expected no pack output on fail-closed rejection: $(<"$out")"
+      return 0
+    fi
+    pass "$name"
+  fi
+}
+
+# Behavior (CC-505 Req 5 follow-up, risk-reviewer-F001): a digit string one
+# past the 15-digit width this validator accepts must be rejected
+# deterministically rather than risk overflowing the Bash signed-64-bit
+# arithmetic later comparisons use.
+case_context_pack_max_items_overflow_boundary_rejected() {
+  local name="pmctl context pack: --max-items rejects a value past the supported digit width"
+  should_run "$name" || return 0
+  local fix_repo="$tmp_root/fix-repo-pack-overflow-items"
+  make_fixture_repo "$fix_repo"
+  local out err status=0
+  out="$tmp_root/pack-overflow-items.out"; err="$tmp_root/pack-overflow-items.err"
+  "$PMCTL" context pack "$fix_repo" --task-id TASK-1 --query alpha --max-items 1000000000000000 \
+    > "$out" 2> "$err" || status=$?
+  if assert_exit "$name" "$status" 2; then pass "$name"; fi
+}
+
+case_context_pack_max_bytes_overflow_boundary_rejected() {
+  local name="pmctl context pack: --max-bytes rejects a value past the supported digit width"
+  should_run "$name" || return 0
+  local fix_repo="$tmp_root/fix-repo-pack-overflow-bytes"
+  make_fixture_repo "$fix_repo"
+  local out err status=0
+  out="$tmp_root/pack-overflow-bytes.out"; err="$tmp_root/pack-overflow-bytes.err"
+  "$PMCTL" context pack "$fix_repo" --task-id TASK-1 --query alpha --max-bytes 1000000000000000 \
+    > "$out" 2> "$err" || status=$?
+  if assert_exit "$name" "$status" 2; then pass "$name"; fi
+}
+
+case_context_pack_env_max_items_overflow_boundary_rejected() {
+  local name="pmctl context pack: PM_DISPATCH_CONTEXT_PACK_MAX_ITEMS overflow-boundary env value is rejected"
+  should_run "$name" || return 0
+  local fix_repo="$tmp_root/fix-repo-pack-overflow-env-items"
+  make_fixture_repo "$fix_repo"
+  local out err status=0
+  out="$tmp_root/pack-overflow-env-items.out"; err="$tmp_root/pack-overflow-env-items.err"
+  PM_DISPATCH_CONTEXT_PACK_MAX_ITEMS=1000000000000000 \
+    "$PMCTL" context pack "$fix_repo" --task-id TASK-1 --query alpha \
+    > "$out" 2> "$err" || status=$?
+  if assert_exit "$name" "$status" 2; then pass "$name"; fi
+}
+
+case_context_pack_env_max_bytes_overflow_boundary_rejected() {
+  local name="pmctl context pack: PM_DISPATCH_CONTEXT_PACK_MAX_BYTES overflow-boundary env value is rejected"
+  should_run "$name" || return 0
+  local fix_repo="$tmp_root/fix-repo-pack-overflow-env-bytes"
+  make_fixture_repo "$fix_repo"
+  local out err status=0
+  out="$tmp_root/pack-overflow-env-bytes.out"; err="$tmp_root/pack-overflow-env-bytes.err"
+  PM_DISPATCH_CONTEXT_PACK_MAX_BYTES=1000000000000000 \
+    "$PMCTL" context pack "$fix_repo" --task-id TASK-1 --query alpha \
+    > "$out" 2> "$err" || status=$?
+  if assert_exit "$name" "$status" 2; then pass "$name"; fi
+}
+
+# Behavior (CC-505 Req 7): a deterministic fixture corpus locking in every
+# ranking/chunking guarantee Req 1-4 established, each fixture declaring its
+# own expected top-K ref and each built to fail under the pre-CC-505
+# behavior it regression-locks (see make_retrieval_corpus_repo's header
+# comment for which specific bug each scenario would previously expose).
+# Steps: index a purpose-built corpus repo; run one `context query` per
+# scenario; assert the declared expected ref is within the declared top-K
+# window (top-1 for the exact-symbol and polysemy cases, since those
+# specifically assert ranking ORDER between competing candidates, not just
+# presence).
+case_context_retrieval_fixture_corpus() {
+  local name="pmctl context: deterministic retrieval fixture corpus (CC-505 Req 7)"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-retrieval-corpus"
+  make_retrieval_corpus_repo "$fix_repo"
+
+  "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-corpus.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-corpus.err")"; return 0; }
+
+  local failures=0
+  local query expected top_k desc
+  while IFS=$'\t' read -r query expected top_k desc; do
+    [[ -n "$query" ]] || continue
+    local safe_desc out refs
+    safe_desc="$(printf '%s' "$desc" | tr -c 'a-zA-Z0-9' '_')"
+    out="$tmp_root/corpus-${safe_desc}.out"
+    local corpus_err="$tmp_root/corpus-${safe_desc}.err" corpus_status=0
+    "$PMCTL" context query "$fix_repo" --source repo "$query" > "$out" 2> "$corpus_err" || corpus_status=$?
+    if [[ "$corpus_status" -ne 0 ]]; then
+      fail "$name" "[$desc] context query exited $corpus_status: $(<"$corpus_err")"
+      failures=$((failures + 1))
+      continue
+    fi
+    refs="$(awk -F': ' '/^- ref:/{print $2}' "$out" | head -n "$top_k")"
+    if ! printf '%s\n' "$refs" | grep -qF "$expected"; then
+      fail "$name" "[$desc] expected ref containing '$expected' within top-$top_k for query '$query'; got: $refs"
+      failures=$((failures + 1))
+    fi
+  done <<'CORPUS'
+unique_exact_symbol_target	src/exact.sh	1	exact-symbol-top1
+Distinctive Heading Marker Zulu	docs/heading.md	3	heading-match
+deepburied_unique_marker_quebec	docs/deep.md	3	deep-in-paragraph
+polysemy_common_term	src/polysemy.sh	1	polysemy-exact-symbol-wins
+longsection_tail_marker_yankee	docs/long_section.md	3	long-section-tail-chunked
+CORPUS
+
+  # Path/domain boost: the identical marker term appears in both a
+  # knowledge-domain file and a plain repo-domain file; the knowledge hit
+  # must rank first (top-1), not just appear somewhere in the results.
+  local domain_out first_domain
+  domain_out="$tmp_root/corpus-domain_boost.out"
+  local domain_err="$tmp_root/corpus-domain_boost.err" domain_status=0
+  "$PMCTL" context query "$fix_repo" --source repo domain_boost_marker_xray \
+    > "$domain_out" 2> "$domain_err" || domain_status=$?
+  if [[ "$domain_status" -ne 0 ]]; then
+    fail "$name" "[path-domain-boost] context query exited $domain_status: $(<"$domain_err")"
+    failures=$((failures + 1))
+  fi
+  first_domain="$(awk -F': ' '/^  source_domain:/{print $2; exit}' "$domain_out")"
+  if [[ "$first_domain" != "knowledge" ]]; then
+    fail "$name" "[path-domain-boost] expected the knowledge-domain hit to rank first; got source_domain=$first_domain: $(<"$domain_out")"
+    failures=$((failures + 1))
+  fi
+
+  [[ "$failures" -eq 0 ]] && pass "$name"
+}
+
+# Behavior (CC-505 Req 7): trust weighting -- a curated memory card
+# (trust=high) and an episode (trust=medium) containing the SAME marker
+# term must rank the card first, not just carry different trust_level
+# labels (case_context_query_source_memory_trust_tiers already locks the
+# label assignment; this locks that the label actually affects rank).
+# Steps: build a memory dir with a card and an episode sharing one marker
+# term; query --source memory; assert the card ranks ahead of the episode.
+case_context_retrieval_fixture_corpus_trust_weighting() {
+  local name="pmctl context: retrieval fixture corpus -- trust weighting affects rank (CC-505 Req 7)"
+  should_run "$name" || return 0
+
+  local repo="$tmp_root/corpus-trust-repo" cfg="$tmp_root/corpus-trust-cfg"
+  mkdir -p "$repo"
+  local mdir; mdir="$cfg/projects/$(mem_encode_path "$repo")/memory"
+  mkdir -p "$mdir"
+  cat > "$mdir/MEMORY.md" <<'MD'
+# Memory Index
+- [trust corpus card](feedback_trust_corpus.md) — trust weighting fixture
+MD
+  cat > "$mdir/feedback_trust_corpus.md" <<'MD'
+---
+name: trust-corpus-card
+---
+trustweight_shared_marker appears in this curated card body.
+MD
+  printf '{"ts":"2026-08-21","summary":"trustweight_shared_marker also appears in this episode"}\n' \
+    > "$mdir/episodes.jsonl"
+
+  local out
+  out="$tmp_root/corpus-trust.out"
+  local trust_err="$tmp_root/corpus-trust.err" trust_status=0
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" context query "$repo" --source memory trustweight_shared_marker \
+    > "$out" 2> "$trust_err" || trust_status=$?
+  if [[ "$trust_status" -ne 0 ]]; then
+    fail "$name" "context query exited $trust_status: $(<"$trust_err")"; return 0
+  fi
+  local first_ref
+  first_ref="$(awk -F': ' '/^- ref:/{print $2; exit}' "$out")"
+  if [[ "$first_ref" != feedback_trust_corpus.md:* ]]; then
+    fail "$name" "expected the high-trust card to rank first over the medium-trust episode; got first ref=$first_ref: $(<"$out")"
+    return 0
+  fi
+  pass "$name"
+}
+
 # Behavior (CC-505 Req 2/3 gate finding qa-tester-F001): `pmctl context query`
 # must return CLI hits in real ranking-tier order (symbol match before fts5
 # text match), not insertion/query order, and that order must be stable
@@ -4455,6 +5333,30 @@ case_context_prompt_scan_emits_event
 case_context_fts5_availability_is_cached
 case_context_rank_hits_orders_and_truncates
 case_context_pack_ranking_fields_are_valid
+case_context_pack_default_budget_does_not_truncate
+case_context_pack_max_items_enforces_global_cap
+case_context_pack_max_bytes_enforces_byte_cap
+case_context_pack_large_candidate_byte_budget_bounded_work
+case_context_pack_max_bytes_exact_boundary_accepted
+case_context_pack_impossible_byte_cap_rejected
+case_context_pack_no_index_impossible_byte_cap_rejected
+case_context_pack_invalid_max_items_rejected
+case_context_pack_invalid_max_bytes_rejected
+case_context_pack_max_items_overflow_boundary_rejected
+case_context_pack_max_bytes_overflow_boundary_rejected
+case_context_pack_max_terms_rejects_excess
+case_context_pack_invalid_max_terms_rejected
+case_context_pack_truncation_reconciles_sources_provenance
+case_context_pack_truncation_reconciles_builtin_sources_provenance
+case_context_pack_env_max_items_valid_override_applies
+case_context_pack_env_max_bytes_valid_override_applies
+case_context_pack_env_max_items_invalid_rejected
+case_context_pack_env_max_bytes_invalid_rejected
+case_context_pack_env_max_items_overflow_boundary_rejected
+case_context_pack_env_max_bytes_overflow_boundary_rejected
+case_context_pack_empty_index_discloses_untruncated_budget
+case_context_retrieval_fixture_corpus
+case_context_retrieval_fixture_corpus_trust_weighting
 case_context_query_cli_orders_by_rank_tier
 case_context_reuse_scan_cli_top_hit_is_highest_ranked
 case_context_prompt_scan_cli_orders_and_dedups

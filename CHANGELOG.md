@@ -135,6 +135,130 @@ Versions follow [Semantic Versioning](https://semver.org/).
   `context-pack.schema.json` schema_version 2→3. Req 5 (pack byte/item
   budget) and Req 7 (fixture corpus) remain open; CC-505 stays active.
 
+- **`pmctl context pack` now has a global item/byte budget, disclosed in
+  its own output (CC-505 Phase 1, Req 5).** Previously unbounded: a
+  multi-term query could grow the pack without limit. New `--max-items`
+  and `--max-bytes` flags (defaults 200 / 200000, overridable via
+  `PM_DISPATCH_CONTEXT_PACK_MAX_ITEMS`/`_MAX_BYTES`) merge `files`/
+  `symbols`/`memories` into one globally-ranked set (their `ranking_score`
+  values share one scale) and keep only the highest-ranked survivors —
+  never a per-array or per-term cap, which would let each array/term claim
+  its own share instead of a true global ceiling. Every pack response now
+  carries a `truncation` object (`applied`/`reason`/`budget`/
+  `total_before`/`kept`/`dropped`), present and honest even when nothing
+  was dropped, so a caller never has to infer budget status from array
+  lengths. `context-pack.schema.json` schema_version 3→4 (`truncation`
+  required for v4). The first implementation measured the byte budget
+  before attaching the `truncation` object itself, so a pack that "just
+  fit" pre-disclosure could still exceed `--max-bytes` once disclosed —
+  this project's own new regression test caught it before merge; fixed by
+  measuring the fully-assembled candidate (items + disclosure) on every
+  truncation iteration.
+
+- **CC-505 Phase 1 (Req 7): a deterministic retrieval fixture corpus.**
+  Locks in every ranking/chunking guarantee Req 1-4 established with
+  fixtures deliberately built to fail under the pre-CC-505 behavior each
+  one regression-locks: exact-symbol top-1, heading match, content buried
+  past the old 200-character truncation point, same-word polysemy (an
+  exact symbol beats a plain-prose mention of the same token),
+  knowledge-domain boost (ranks ahead of an identical repo-domain hit),
+  long-section chunking (a marker on a section's last line, retrievable
+  only because Req 1 windows long sections instead of truncating them),
+  and memory-plane trust weighting (a high-trust card outranks a
+  medium-trust episode sharing the same term, not just carrying a
+  different `trust_level` label). **CC-505 Phase 1 (Requirements 1-7) is
+  now fully delivered; Phase 2 (Req 8-10, agent contract + shadow
+  telemetry) has not started — CC-505 stays active.**
+
+- **`pmctl context pack`'s byte budget now measures its exact emitted form
+  and fails closed on an impossible cap (CC-505 Phase 1, Req 5 follow-up).**
+  A pr-gate round (critic, qa-tester, and risk-reviewer independently) found
+  the byte check measured `$final` without its trailing newline while the
+  function actually emits `$final\n` — an off-by-one that could let a pack
+  exceed `--max-bytes` at exact boundaries. Fixed by measuring the exact
+  emitted bytes on every iteration. Also added an explicit fail-closed
+  rejection (exit 2) when even the 0-item envelope (truncation object plus
+  newline) cannot fit under `--max-bytes`, instead of silently emitting an
+  over-budget result. qa-tester also flagged that
+  `PM_DISPATCH_CONTEXT_PACK_MAX_ITEMS`/`_MAX_BYTES` env var overrides had no
+  direct test; added valid- and invalid-override cases plus the
+  impossible-cap case.
+
+- **`pmctl context pack`'s no-index and sqlite-unavailable graceful-empty
+  branches now also honor `--max-bytes`, and digit-count inputs are bounded
+  (CC-505 Phase 1, Req 5 second follow-up).** A second pr-gate round (critic
+  and architecture-reviewer independently) found both graceful-empty
+  branches built and printed their own JSON envelope directly, bypassing
+  `_ctx_apply_pack_budget` entirely — an impossible `--max-bytes` cap on
+  those paths silently emitted an over-budget envelope instead of failing
+  closed. Fixed by routing both branches through the same budget function.
+  risk-reviewer also flagged that the `^[1-9][0-9]*$` validation had no
+  upper bound and could overflow Bash's signed 64-bit arithmetic on an
+  extreme input; bounded to 15 digits (both the CLI flags and the env var
+  defaults). qa-tester flagged several new test commands that didn't check
+  their own exit status before consuming output; all now do.
+
+- **`pmctl context pack` bounds `--query` term count, reconciles `sources[]`
+  after truncation, and locks the exact byte-boundary case (CC-505 Phase 1,
+  Req 5 third follow-up).** A third pr-gate round (qa-tester, critic,
+  architecture-reviewer, risk-reviewer) converged on: (1) no test locked
+  the exact-fit/one-byte-below boundary of the `>`-not-`>=` byte
+  comparison — added, using a fixed-point convergence probe since the
+  `truncation.budget.max_bytes` field's own digit width feeds back into
+  the pack's byte size; (2) the two new env vars weren't registered in
+  `docs/architecture/script-variable-consumers.tsv`/
+  `script-variable-inventory.tsv` — added; (3) `sources[]` could still list
+  `memory-index` after truncation dropped every surviving memory item —
+  fixed by reconciling `sources[]` against the post-truncation `.memories`
+  array (a first attempt filtered inside `map(select(...))`, where `.` is
+  each array element rather than the pack root, silently zeroing the
+  count and always dropping the entry — fixed by binding the root count
+  before the map); (4) every `--query` term accumulates its own raw hits
+  before the final budget is ever applied, so an unbounded term count
+  means unbounded intermediate work regardless of output size — added
+  `PM_DISPATCH_CONTEXT_PACK_MAX_TERMS` (default 50), fail-closed above it.
+
+- **`pmctl context pack`'s `sources[]` reconciliation is now symmetric
+  across both producers (CC-505 Phase 1, Req 5 fourth follow-up).** A
+  fourth pr-gate round (qa-tester, critic) found: (1) the new
+  `PM_DISPATCH_CONTEXT_PACK_MAX_TERMS` env var validated the "too many
+  terms" path but had no direct test for an invalid value (e.g. `0`) on
+  the guard itself — added; (2) the prior round's `sources[]` fix only
+  handled the memory-index direction (dropped when no memory item
+  survives) — the inverse (builtin-index staying listed after every
+  files[]/symbols[] item is truncated away) was still unaddressed.
+  Generalized `_ctx_pack_with_truncation` to check both producers'
+  surviving item counts symmetrically, with a matching regression test for
+  a memory-only surviving pack.
+
+- **`pmctl context pack`'s byte-budget trimming no longer re-sorts the
+  entire candidate set on every dropped item (CC-505 Phase 1, Req 5 fifth
+  follow-up).** A fifth pr-gate round (risk-reviewer) found
+  `_ctx_apply_pack_budget`'s byte-budget loop called
+  `_ctx_pack_with_truncation` — which internally re-sorts and
+  re-serializes its ENTIRE input via `_ctx_pack_top_n` — once per dropped
+  item, making a large multi-term candidate set combined with a tight
+  `--max-bytes` quadratic work with excessive subprocess launches. Fixed
+  by pre-slicing the candidate set to at most `max_items` ONCE before the
+  loop, turning "re-sort the full set per drop" into "sort once, then
+  cheap re-slices of an already-small set." Added a regression test with
+  40 query terms and 60 candidate symbols forced through heavy
+  `--max-bytes` trimming, asserting bounded completion time.
+
+- **`context-pack.schema.json`'s v4 `truncation` contract now has
+  executable schema-level tests, and `pmctl_context_pack`'s header comment
+  is current (CC-505 Phase 1, Req 5 sixth follow-up).** A sixth pr-gate
+  round (qa-tester, critic) found: (1) the v4 `truncation` requirement
+  (added several follow-ups ago) had shell-level behavioral coverage in
+  `test-pmctl-context.sh` but no schema-contract coverage in
+  `test-core-schemas.sh` — added 5 cases (complete v4 validates, v4
+  missing `truncation` rejected, `truncation` missing a required field
+  rejected, an invalid `reason` value rejected, v1-v3 packs remain valid
+  without `truncation`); (2) `pmctl_context_pack`'s header comment still
+  said "schema v2" and listed only `--source`, several Req 2-5 iterations
+  out of date — updated to describe schema v4, the ranking fields, and
+  `--max-items`/`--max-bytes`.
+
 ### Fixed
 
 - **`ship finish`'s closure producer and its consumer are now proven to

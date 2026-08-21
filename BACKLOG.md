@@ -2354,7 +2354,7 @@ bodies；程式語言檔案先前被壓成**一個 chunk、只存檔首 200 字�
 索引時間逾四成）。
 
 **未動**：Req 2/3/4（bm25 排序與四 consumer 共用 ranking path）、Req 5（pack budget）、
-Phase 2 全部。票維持 active。
+Phase 2 全部。票維持 active。（此段為 2026-08-20 當時狀態，Req 2-7 已於後續兩次更新完成，見下。）
 
 **Update 2026-08-21（Phase 1 第二片：Req 2/3/4）**：所有排序運算集中到唯一入口
 `_ctx_query_hits_raw`——FTS5 路徑改用 `bm25()`（SQL 內直接算，不額外 spawn awk/bc
@@ -2374,7 +2374,124 @@ relevance-ranked，只是 run-to-run 一致）。新增 `_ctx_rank_hits` 作為�
 schema_version 斷言隨版次更新，非行為回歸）。**殘留**：Req 5（pack 全域 item/byte
 budget）、Req 7（deterministic fixture corpus）、Phase 2 全部。票維持 active。
 
-**Requirement — Phase 2（agent 契約 + shadow 儀器化；小 PR，跟在 Phase 1 後）**:
+**Update 2026-08-21（Phase 1 第三片：Req 5 + Req 7，Phase 1 全數交付）**：
+`pmctl context pack` 新增 `--max-items`／`--max-bytes`（預設 200 items／200000
+bytes，可由 `PM_DISPATCH_CONTEXT_PACK_MAX_ITEMS`／`PM_DISPATCH_CONTEXT_PACK_MAX_BYTES`
+覆寫）。新增 `_ctx_apply_pack_budget`：先跨 `files`／`symbols`／`memories` 三陣列
+合併排序（`ranking_score` 同一量尺可比），依全域最高分保留至 `--max-items`；仍超過
+`--max-bytes` 則逐一丟棄目前最低分存活項並重新序列化（沿用 `pmctl_pm_bound_memory_pack`
+既有的「整筆刪除＋重新序列化，不直接切 JSON 字串」寫法），直到符合或歸零。任何
+pack 輸出都附加 `truncation`（`applied`／`reason`／`budget`／`total_before`／
+`kept`／`dropped`），即使沒有截斷也明確揭露，呼叫端不必用陣列長度反推。首版有真
+bug：byte 迴圈量測的是加上 `truncation` 物件*之前*的 bytes，導致最終輸出（含
+`truncation` 本身）仍可能超出 `--max-bytes`——由本票自己新增的迴歸測試
+（`--max-bytes` 強制截斷案）當場抓到，修正為每次迭代都量測「item 陣列＋
+truncation 物件」組裝後的最終大小。`context-pack.schema.json` schema_version
+3→4，`truncation` 為 v4 必填（沿用既有 `if schema_version==N then required` 樣式）。
+
+Req 7 新增 `make_retrieval_corpus_repo` 宣告式 fixture corpus，涵蓋 exact
+symbol（top-1）、heading match、深段落內容（越過舊 200 字元截斷點）、同詞多義
+（exact symbol 勝過純文字提及）、path/domain boost（knowledge domain 命中排在
+repo domain 之前）、long section 分段（35 行 section 尾端 marker 仍可檢索，證明
+Req 1 窗口化生效）；另外 trust weighting 用獨立 memory fixture（card vs
+episode 共用同一詞）證明 trust 真的影響排序，不只是標籤正確。
+
+`tests/shell/test-pmctl-context.sh` 144 案全過。
+
+**pr-gate 第一輪（parallel，5 reviewer）NO-GO**：critic／qa-tester／risk-reviewer
+三方各自獨立指出同一根因——`_ctx_apply_pack_budget` 量測 bytes 用
+`printf '%s' "$final" \| wc -c`（不含換行），但函式實際輸出用
+`printf '%s\n' "$final"`（含換行），在邊界值上會少算一 byte、讓超出
+`--max-bytes` 的結果放行；且無「不可能的 cap」明確處理——若連 0-item 信封
+（`truncation` 物件＋換行）都超過 `--max-bytes`，原本會靜默吐出超額結果。
+修正：量測改成與實際輸出完全一致的形式；並新增 fail-closed 檢查，0-item
+信封仍超額時回傳 exit 2 並印出可操作的 stderr 訊息，不再靜默違反自己宣告
+的 budget。qa-tester 另指出 `PM_DISPATCH_CONTEXT_PACK_MAX_ITEMS`／
+`PM_DISPATCH_CONTEXT_PACK_MAX_BYTES` 環境變數覆寫無對應測試，補上四案
+（合法覆寫各一、非法覆寫各一）＋一案覆蓋「不可能的 cap」fail-closed 路徑。
+`tests/shell/test-pmctl-context.sh` 149 案全過。
+
+**pr-gate 第二輪（targeted，同 5 reviewer）NO-GO（1 block + 2 block-soft，
+security-reviewer 轉 approve、risk-reviewer 轉 advise）**：critic 與
+architecture-reviewer 各自獨立指出同一根因——no-index（無資料庫）與
+sqlite-unavailable 兩條 graceful-empty 分支自己組裝並直接印出 JSON，完全
+繞過唯一的 budget 執行點 `_ctx_apply_pack_budget`，導致 `--max-bytes` 設
+得極小時這兩條分支仍會 exit 0 並吐出超額的空 envelope。修正：兩條分支都
+改組出不含 `truncation` 的裸 pack，交給 `_ctx_apply_pack_budget` 統一組裝
+／量測／fail-closed，不再各自維護第二套序列化樣板。qa-tester 另指出新增
+的多筆 PMCTL 呼叫（baseline pack、corpus 迴圈 query、domain-boost query、
+trust-weighting query）沒有顯式檢查 exit status，命令失敗會被當成空輸出
+吞掉而非回報成 command failure——全部補上 exit code 檢查。risk-reviewer
+指出 `^[1-9][0-9]*$` 對位數沒有上界，過大的值在後續 bash 算術比較可能溢位
+產生誤導行為——收斂為 15 位數上限（遠低於 signed 64-bit 範圍），CLI flag
+與環境變數兩種輸入路徑都收斂到同一位數上限。新增回歸測試：no-index 分支
+的 impossible-cap fail-closed 案、CLI／環境變數各兩案的 overflow-boundary
+拒絕案。`tests/shell/test-pmctl-context.sh` 154 案全過。
+
+**pr-gate 第三輪（targeted，同 5 reviewer）NO-GO（1 block + 3 advise，收斂中）**：
+qa-tester 指出缺一個「恰好貼齊 `--max-bytes` 上限」與「上限少一 byte」的邊界測試——
+byte 比較是 `>` 不是 `>=`，需要測試鎖住這個等式邊界本身，而非只驗證「有沒有超
+過」。critic 指出新增的兩個環境變數（`PM_DISPATCH_CONTEXT_PACK_MAX_ITEMS`／
+`_MAX_BYTES`）沒有登記進 `docs/architecture/script-variable-consumers.tsv`／
+`script-variable-inventory.tsv`（既有的 ratchet 清單）。architecture-reviewer
+指出 `sources[]` 在 truncation 把所有 memory 項目都丟掉後，仍會殘留
+`memory-index` 這個 provenance 項目，變成「宣稱有 producer 但沒有任何存活項目
+歸屬於它」。risk-reviewer 指出所有 `--query` term 在最終 budget 套用之前就已經
+各自累積 hits，沒有對 term 數量本身設界，極端呼叫（大量 `--query`）會在輸出
+再小也逃不掉的前提下先耗盡中間工作量。
+
+修正：新增 `PM_DISPATCH_CONTEXT_PACK_MAX_TERMS`（預設 50）在任何累積開始前
+fail-closed 拒絕過多 term；`_ctx_pack_with_truncation` 內 `sources[]` 改為依
+truncation 後實際存活的 `.memories` 長度重新過濾（過程中抓到一個 jq context bug：
+`map(select(...))` 內 `.` 是陣列元素本身而非 pack root，第一版寫法讓
+`.memories` 一律解析成 null，反而無條件丟棄 memory-index——用 `as $mem_kept`
+在 map 之前綁定 root 值才修正）；兩個既有環境變數與新增的 `_MAX_TERMS` 都登記進
+兩份 inventory tsv。新增 4 案：恰好貼齊 byte 上限與少一 byte 各一案（沿用
+fixed-point 收斂手法定位「輸出剛好等於某個 cap 值」，避免任意挑一個 cap 導致
+`truncation.budget.max_bytes` 本身的位數寬度反過來污染大小比較）、term 數量
+上限拒絕案、`sources[]` 對齊存活 memory 項目案。`tests/shell/test-pmctl-context.sh`
+157 案全過。
+
+**pr-gate 第四輪（targeted，同 5 reviewer）NO-GO（1 block + 1 advise，
+收斂近完成：architecture-reviewer／security-reviewer／risk-reviewer 三方
+approve）**：qa-tester 指出新增的 `PM_DISPATCH_CONTEXT_PACK_MAX_TERMS` 只驗證
+了「term 太多」的路徑，其環境變數本身的非法值（如 0）沒有直接的 fail-closed
+回歸測試——補上一案。critic 指出前一輪只修了 memory-only pack 殘留
+`memory-index` 的方向，同一問題的反方向（builtin-only pack 殘留
+`memory-index`／memory-only pack 殘留 `builtin-index`）仍未處理——把
+`_ctx_pack_with_truncation` 的 `sources[]` 調解邏輯推廣為同時檢查
+`files+symbols` 與 `memories` 兩邊存活數量，兩個 producer 對稱處理，並新增
+對稱的回歸測試（memory-only 不殘留 builtin-index）。`tests/shell/test-pmctl-context.sh`
+159 案全過。
+
+**pr-gate 第五輪（targeted，同 5 reviewer）NO-GO（1 block-soft，其餘 4 方
+approve/pass，僅存效能疑慮）**：risk-reviewer 指出 `_ctx_apply_pack_budget`
+的 byte-budget 迴圈每丟棄一筆項目就呼叫 `_ctx_pack_with_truncation`，而後者
+內部的 `_ctx_pack_top_n` 會對**整個**候選集合重新排序＋重新序列化——對多
+term、多 hit 的合法輸入配上偏緊的 `--max-bytes`，這是 O(丟棄次數 × 候選總數)
+的二次方工作量與大量 subprocess 啟動。修正：在迴圈開始前，先把候選集合
+**一次性**裁到最多 `keep_n`（≤ `max_items`）筆，之後每次 byte-budget 迭代都
+只對這個已經很小的裁切後集合重新排序，把「每丟一筆重排全集合」降為「排序
+一次＋後續都是小集合上的廉價重排」。新增回歸測試：40 個 term、60 個候選
+symbol、`--max-bytes 4000` 強制大量裁切，斷言在合理時間內完成（30 秒上限，
+非嚴格效能測試，只防止災難性劣化）且輸出仍在 byte cap 內。
+`tests/shell/test-pmctl-context.sh` 160 案全過。
+
+**pr-gate 第六輪（targeted，同 5 reviewer）NO-GO（1 block + 1 advise，其餘
+3 方 approve/pass）**：qa-tester 指出 schema v4 的 `truncation` 契約（Req 5
+新增）從未有過可執行的 schema-level accept/reject 測試——`test-pmctl-context.sh`
+只驗證了 shell 產生端的行為，`test-core-schemas.sh`（schema 契約測試的正確
+歸屬位置）完全沒有針對 v4 `truncation` 的案例。critic 指出 `pmctl_context_pack`
+上方的函式頭註解仍寫著「schema v2」且只列了 `--source`，Req 2-5 疊代下來已
+與實作嚴重脫節。修正：函式頭註解更新為 v4，列出 ranking 欄位與
+`--max-items`／`--max-bytes`；`test-core-schemas.sh` 新增 5 案：完整 v4
+truncation 驗證通過、v4 缺 truncation 拒絕、truncation 缺必要欄位拒絕、
+`reason` 非法值拒絕、v1-v3 pack 不需要 truncation 仍驗證通過（相容性回歸）。
+`tests/shell/test-core-schemas.sh` 160 案全過。
+
+**Phase 1（Req 1-7）至此全數
+交付。Phase 2（Req 8-10，agent 契約 + shadow telemetry）仍未開始，票維持
+active。**（agent 契約 + shadow 儀器化；小 PR，跟在 Phase 1 後）**:
 8. Agent-facing injection 明確採用 **index-first, source-verified** 契約：retrieval hit 是導航與 scope-narrowing evidence，不是原始來源替代品；factual conclusion、code edit、gate/security/release 判斷前必須 targeted-read 命中的 bounded span；zero-hit、stale/unknown freshness、truncated 或 ambiguous 結果必須 fallback 至 targeted Grep/Read；no hit 不得解讀為不存在。本階段只改導引措辭，**不收緊**任何現有 fallback 行為。
 9. shadow telemetry：在既有 context.* 事件上記錄 top-K refs、pack bytes、full-file baseline bytes、truncation/freshness，以及 Agent 後續實際 source-read bytes 與最終修改／引用檔案是否在 top-K——供 [[CC-506]] 評測消費。覆蓋面必須含工作流路徑（dispatch auto-pack、ship、gate memory context），不得只儀器化互動式 `context query`。
 10. `context_savings` 遙測命名為 `compression_ratio_vs_full_file_baseline`（注入 bytes vs 全檔 baseline bytes）；沒有 observed read-reduction 證據時不得宣稱實際節省倍數；不得引用外部專案的節省倍數宣稱。餵 [[CC-467]]／[[CC-358]] 的 evidence 線。
