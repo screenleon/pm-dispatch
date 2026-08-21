@@ -36,7 +36,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-540 | 🟢 someday | `pmctl state prune`：刪除前先抽取+驗證 gate/dispatch run 摘要，避免歷史分析資料隨磁碟空間一起消失 | ops/gate | 2026-07-31 | — | P2 | hygiene |
 | CC-546 | ⏸ deferred | standalone Gate distribution／copy parity follow-up：獨立定義 bundle schema、generation、installed parity 與 support boundary；不回併 Linux/WSL2 canonical module extraction | arch/gate | 2026-08-14 | — | P2 | reuse-debt |
 | CC-559 | 🟢 someday | memory usage sidecar 是 tab-delimited，writer 拒收含 tab／newline 的 relpath，因此這類記憶卡**永遠無法累積使用紀錄**；`pmctl memory stats` 目前誠實地把它們列為 `unmeasurable_cards`（不謊稱 never-hit），但根因未解——需改用無損編碼。屬寫入面變更，故當初被 [[CC-467]] Requirement 3 明文排除 | ops/memory | 2026-08-19 | — | P3 | hygiene |
-| CC-562 | 🟢 someday | synthesis／reviewer 驗證器仍有多個「多約束共用單一 reason 字串」分支（`invalid coverage matrix`、`invalid finding inventory or union`、`duplicate finding ID collision`、`selected/not-reviewed dimensions mismatch`），單次修正重試收到後無法行動；[[CC-553]] Req 2 判定需同等精度但屬不同 helper 形狀（逐項指出違規條目，非集合差集），故分票 | ops/gate | 2026-08-19 | — | P3 | hygiene |
+| CC-562 | ✅ done | synthesis／reviewer 驗證器仍有多個「多約束共用單一 reason 字串」分支（`invalid coverage matrix`、`invalid finding inventory or union`、`duplicate finding ID collision`、`selected/not-reviewed dimensions mismatch`），單次修正重試收到後無法行動；[[CC-553]] Req 2 判定需同等精度但屬不同 helper 形狀（逐項指出違規條目，非集合差集），故分票 | ops/gate | 2026-08-19 | pr:TBD | P3 | hygiene |
 | CC-560 | 🟢 someday | `_gate_scope_reference_index_collect` 每筆 reference 都以 `jq -nc` 建一個 JSON 物件（實測 4.9s×2），與 [[CC-557]] 已修掉的 `_gate_scope_expansion_append` 是同一類寫法；CC-557 未一併處理是因預算餘裕已足，非因不成立 | ops/gate | 2026-08-19 | — | P3 | hygiene |
 | CC-554 | 🔵 active | 永久 regression test 缺少准入門檻：`/ship` 規範「修完每個 finding」但不規範修法形式，reviewer 每提一個邊界就永久長一個阻擋 case，case 又需要 meta-test 保護；QA 規則加六條准入條件＋五條替代路徑，ship.md 加對應例外（明確不設輪數上限，見 [[CC-544]]） | ops/gate | 2026-08-17 | — | P1 | hygiene |
 | CC-552 | 🔵 active | `test_default_worker_cap` 以 `sleep 0.1` 製造 worker 重疊窗口來驗證併發上限，違反 QA 規則的「不得以 sleep 同步」；主機負載會改變觀測到的重疊數，與 worker-cap 正確性無關（2026-08-17 CC-551 gate round 4 qa-tester，pre-existing） | ops/test | 2026-08-17 | — | P3 | hygiene |
@@ -272,7 +272,7 @@ relpath（`runtime/lib/pmctl-memory.sh` 內 `unmeasurable_cards` 分支的註解
 
 ---
 
-## CC-562 — 多約束共用單一 reason 字串的其餘分支 🟢 someday
+## CC-562 — 多約束共用單一 reason 字串的其餘分支 ✅ 2026-08-21
 
 **Problem**: `runtime/lib/gate-result-verify.sh` 仍有數個分支把多條獨立規則折進同一個 reason
 字串：`invalid coverage matrix`、`invalid finding inventory or union`、
@@ -300,6 +300,30 @@ confirmation，因此重試無從行動。**這是本票從「理論上該修」
 
 **Cross-link**: [[CC-553]]（Req 2 的判斷來源）、[[CC-549]]（reviewer 端同一修法）、
 [[CC-561]]（實戰佐證來源）。
+
+**Closure 2026-08-21 (pr:TBD)**: 沿用 `disagreement_defect` 樣式，為
+`runtime/lib/gate-result-verify.sh` 新增 `coverage_cell_defect`、
+`finding_inventory_defect`、`finding_union_defect` 三個逐項指出違規條目與規則的
+helper，並套用到四個分支：`invalid coverage matrix`（逐格指出 reviewer/surface
+與違反的欄位規則）、`invalid finding inventory or union`（逐條列出 inventory／
+union 條目與規則）、`duplicate finding ID collision`（分別列出 inventory／union
+各自的重複 id）、`selected/not-reviewed dimensions mismatch`（用既有 `id_delta`
+指出 selected_reviewers／not_reviewed_dimensions 何者、缺什麼、多什麼）。所有
+引用值一律經 `safe_token`／`safe_join`。驗證併入既有
+`synthesis-protocol/diagnostics-name-the-defect` table-driven case（未新增獨立
+case），窮舉 `coverage_cell_defect`（7 條）、`finding_inventory_defect`（8 條）、
+`finding_union_defect`（15 條）每一個判斷分支各自的 mutation 與預期診斷文字，
+外加 `not_reviewed_dimensions` 本身的 mismatch（而不只 `selected_reviewers`）。
+兩輪 pr-gate（parallel, codex）NO-GO 後收斂：第一輪 qa-tester block-soft／
+critic／security-reviewer advise 指出新分支只測一條規則、`not_reviewed_dimensions`
+分支缺失、且未比照既有 `diagnostics-neutralize-injected-ids` 驗證新分支注入
+安全；第二輪 qa-tester block／critic block-soft 指出 inventory／union 仍有未
+覆蓋的分支。修正：table 補齊至 50 個 mutation 列，並把注入安全測試改成
+table-driven，新增 coverage-cell／inventory／union 三個注入案例；
+`synthesis-protocol/*` 全套 20 case 綠燈。`invalid top-level contract`／
+`invalid synthesis JSON document` 依票面「明確不做」維持未變動。
+
+**See**: pr:TBD
 
 ---
 
