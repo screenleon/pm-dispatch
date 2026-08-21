@@ -772,6 +772,91 @@ gate_synthesis_protocol_verify() {
         else ": missing=[" + safe_join($missing) +
              "] unexpected=[" + safe_join($unexpected) + "]"
         end;
+      # Same rationale as disagreement_defect below: naming the array a shape
+      # check failed in is not enough when the entry contract bundles several
+      # independent rules -- report the first violated rule with the observed
+      # value so the sole correction retry knows which field to fix.
+      def coverage_cell_defect:
+        if (type != "object")
+        then "entry is " + (type) + ", expected an object"
+        elif (only_keys(["reviewer","surface","status","evidence_refs","reason"]) | not)
+        then "keys are [" + safe_join((keys_unsorted // [])) +
+          "], expected exactly reviewer/surface/status/evidence_refs/reason"
+        elif ((.reviewer | reviewer) | not)
+        then "reviewer=" + (.reviewer | safe_token) + " is not a known reviewer"
+        elif ((.surface | surface) | not)
+        then "surface=" + (.surface | safe_token) + " is not a known surface"
+        elif ((.status | IN("examined","not_applicable","uncertain")) | not)
+        then "status=" + (.status | safe_token) +
+          " is not one of examined/not_applicable/uncertain"
+        elif (((.evidence_refs | type) != "array") or
+              ((.evidence_refs | all(.[]; reference)) | not))
+        then "evidence_refs is not an array of valid references"
+        else "reason is empty"
+        end;
+      def finding_inventory_defect:
+        if (type != "object")
+        then "entry is " + (type) + ", expected an object"
+        elif (only_keys(["id","reviewer","severity","hard_gate_class","origin",
+              "verification_expectation"]) | not)
+        then "keys are [" + safe_join((keys_unsorted // [])) +
+          "], expected exactly id/reviewer/severity/hard_gate_class/origin/verification_expectation"
+        elif ((.id | finding_id) | not)
+        then "id=" + (.id | safe_token) + " does not match a known finding id shape"
+        elif ((.reviewer | reviewer) | not)
+        then "reviewer=" + (.reviewer | safe_token) + " is not a known reviewer"
+        elif ((.severity | IN("critical","high","medium","low")) | not)
+        then "severity=" + (.severity | safe_token) +
+          " is not one of critical/high/medium/low"
+        elif ((.hard_gate_class | IN("none","soft_block","hard_block")) | not)
+        then "hard_gate_class=" + (.hard_gate_class | safe_token) +
+          " is not one of none/soft_block/hard_block"
+        elif ((.origin | IN("diff_caused","pre_existing","uncertain","caution")) | not)
+        then "origin=" + (.origin | safe_token) +
+          " is not one of diff_caused/pre_existing/uncertain/caution"
+        else "verification_expectation is empty"
+        end;
+      def finding_union_defect:
+        if (type != "object")
+        then "entry is " + (type) + ", expected an object"
+        elif (only_keys(["id","reviewer","severity","hard_gate_class","origin",
+              "source","affected_behavior","why_it_matters","failure_mode",
+              "minimum_fix_boundary","verification_expectation",
+              "root_cause_group_id","disposition"]) | not)
+        then "keys are [" + safe_join((keys_unsorted // [])) +
+          "], expected exactly id/reviewer/severity/hard_gate_class/origin/source/" +
+          "affected_behavior/why_it_matters/failure_mode/minimum_fix_boundary/" +
+          "verification_expectation/root_cause_group_id/disposition"
+        elif ((.id | finding_id) | not)
+        then "id=" + (.id | safe_token) + " does not match a known finding id shape"
+        elif ((.reviewer | reviewer) | not)
+        then "reviewer=" + (.reviewer | safe_token) + " is not a known reviewer"
+        elif ((.severity | IN("critical","high","medium","low")) | not)
+        then "severity=" + (.severity | safe_token) +
+          " is not one of critical/high/medium/low"
+        elif ((.hard_gate_class | IN("none","soft_block","hard_block")) | not)
+        then "hard_gate_class=" + (.hard_gate_class | safe_token) +
+          " is not one of none/soft_block/hard_block"
+        elif ((.origin | IN("diff_caused","pre_existing","uncertain","caution")) | not)
+        then "origin=" + (.origin | safe_token) +
+          " is not one of diff_caused/pre_existing/uncertain/caution"
+        elif ((.source | reference) | not)
+        then "source is not a valid reference"
+        elif ((.affected_behavior | nonempty) | not)
+        then "affected_behavior is empty"
+        elif ((.why_it_matters | nonempty) | not)
+        then "why_it_matters is empty"
+        elif ((.failure_mode | nonempty) | not)
+        then "failure_mode is empty"
+        elif ((.minimum_fix_boundary | nonempty) | not)
+        then "minimum_fix_boundary is empty"
+        elif ((.verification_expectation | nonempty) | not)
+        then "verification_expectation is empty"
+        elif ((.root_cause_group_id | type == "string" and test("^RCG-[0-9]{3,}$")) | not)
+        then "root_cause_group_id=" + (.root_cause_group_id | safe_token) +
+          " does not match ^RCG-[0-9]{3,}$"
+        else "disposition=" + (.disposition | safe_token) + ", expected pending"
+        end;
       # Naming the offending entry is not enough: the entry contract bundles six
       # independent rules, so "it fails the contract" still leaves the sole
       # correction retry guessing which one. Report the first violated rule with
@@ -911,10 +996,23 @@ gate_synthesis_protocol_verify() {
       elif
         $s.selected_reviewers != $selected_reviewers or
         $s.not_reviewed_dimensions != $skipped_reviewers
-      then "selected/not-reviewed dimensions mismatch"
+      then "selected/not-reviewed dimensions mismatch" +
+        (if $s.selected_reviewers != $selected_reviewers
+         then " (selected_reviewers)" +
+           id_delta($selected_reviewers; $s.selected_reviewers;
+             "selected_reviewers must copy the resolved list verbatim")
+         else " (not_reviewed_dimensions)" +
+           id_delta($skipped_reviewers; $s.not_reviewed_dimensions;
+             "not_reviewed_dimensions must copy the skipped list verbatim")
+         end)
       elif
         (all($s.coverage_matrix[]; coverage_cell) | not)
-      then "invalid coverage matrix"
+      then "invalid coverage matrix: " +
+        ([$s.coverage_matrix[] | select(coverage_cell | not) |
+            "entry " + ((.reviewer? // "no-reviewer") | safe_token) + "/" +
+              ((.surface? // "no-surface") | safe_token) + ": " +
+              coverage_cell_defect]
+          | join("; "))
       elif
         ($s.coverage_matrix | sort_by(.reviewer,.surface)) != $expected_coverage
       then "coverage matrix parity mismatch" +
@@ -924,13 +1022,35 @@ gate_synthesis_protocol_verify() {
       elif
         (all($s.reviewer_finding_inventory[]; finding_inventory) | not) or
         (all($s.findings_union[]; finding_union) | not)
-      then "invalid finding inventory or union"
+      then "invalid finding inventory or union: " +
+        (([$s.reviewer_finding_inventory[] | select(finding_inventory | not) |
+             "inventory entry " + ((.id? // "no-id") | safe_token) + ": " +
+               finding_inventory_defect] +
+          [$s.findings_union[] | select(finding_union | not) |
+             "union entry " + ((.id? // "no-id") | safe_token) + ": " +
+               finding_union_defect])
+         | join("; "))
       elif
         (($s.reviewer_finding_inventory | map(.id)) |
           length != (unique | length)) or
         (($s.findings_union | map(.id)) |
           length != (unique | length))
-      then "duplicate finding ID collision"
+      then "duplicate finding ID collision: " +
+        (([if (($s.reviewer_finding_inventory | map(.id)) |
+                length != (unique | length))
+           then "inventory duplicate id: [" +
+             safe_join(($s.reviewer_finding_inventory | map(.id) |
+               group_by(.) | map(select(length > 1) | .[0]))) + "]"
+           else empty
+           end] +
+          [if (($s.findings_union | map(.id)) |
+                length != (unique | length))
+           then "union duplicate id: [" +
+             safe_join(($s.findings_union | map(.id) |
+               group_by(.) | map(select(length > 1) | .[0]))) + "]"
+           else empty
+           end])
+         | join("; "))
       elif
         (all($s.remediation_confirmations[];
           (type == "object" and
