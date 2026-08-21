@@ -4412,6 +4412,65 @@ case_context_pack_max_bytes_enforces_byte_cap() {
   pass "$name"
 }
 
+# Behavior (CC-505 Req 5 follow-up, risk-reviewer-F001): a large multi-term
+# candidate set combined with a tight --max-bytes used to re-sort and
+# re-serialize the ENTIRE candidate pool once PER DROPPED ITEM
+# (_ctx_pack_with_truncation -> _ctx_pack_top_n on the full unbounded
+# input), which is quadratic work and excessive subprocess launches for a
+# permitted multi-query invocation. Fixed by pre-slicing the candidate set
+# to at most max_items ONCE before the byte-budget loop. This regression
+# test forces heavy trimming over a wide, many-term/many-hit candidate set
+# and asserts it completes within a generous bound instead of degrading
+# catastrophically.
+case_context_pack_large_candidate_byte_budget_bounded_work() {
+  local name="pmctl context pack: large multi-term candidate set with tight --max-bytes stays bounded"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-pack-large-candidate"
+  mkdir -p "$fix_repo/scripts/lib"
+  local i lib="$fix_repo/scripts/lib/loadtest.sh"
+  {
+    printf '#!/usr/bin/env bash\n'
+    for ((i = 0; i < 60; i++)); do
+      printf 'loadtest_func_%d() {\n  printf "loadtest hit %d\\n"\n}\n' "$i" "$i"
+    done
+  } > "$lib"
+
+  local err status=0
+  "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-large-candidate.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-large-candidate.err")"; return 0; }
+
+  local -a args=("$fix_repo" --task-id TASK-1 --max-items 200 --max-bytes 4000)
+  for ((i = 0; i < 40; i++)); do
+    args+=(--query "loadtest_func_$i")
+  done
+
+  local out start_ts end_ts elapsed
+  out="$tmp_root/pack-large-candidate.out"; err="$tmp_root/pack-large-candidate.err"
+  start_ts="$(date +%s)"
+  "$PMCTL" context pack "${args[@]}" > "$out" 2> "$err" || status=$?
+  end_ts="$(date +%s)"
+  elapsed=$((end_ts - start_ts))
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "pack exited $status: $(<"$err")"; return 0
+  fi
+  if (( elapsed > 30 )); then
+    fail "$name" "large-candidate byte-budget trimming took ${elapsed}s, expected a bounded completion time"
+    return 0
+  fi
+  if ! jq -e '.truncation.reason == "byte_budget" and .truncation.dropped > 0' "$out" > /dev/null 2>"$err"; then
+    fail "$name" "expected substantial byte-budget trimming to have occurred: $(<"$err") output head: $(head -c 500 "$out")"
+    return 0
+  fi
+  local actual_bytes
+  actual_bytes="$(wc -c < "$out" | tr -d ' ')"
+  if (( actual_bytes > 4000 )); then
+    fail "$name" "pack ($actual_bytes bytes) exceeds --max-bytes 4000"
+    return 0
+  fi
+  pass "$name"
+}
+
 # Behavior (CC-505 Req 5 follow-up, qa-tester-F001): the byte-budget
 # comparison is `>`, not `>=` -- a pack that fits EXACTLY at --max-bytes
 # must be accepted as-is (kept==1), and a cap one byte below that exact
@@ -5277,6 +5336,7 @@ case_context_pack_ranking_fields_are_valid
 case_context_pack_default_budget_does_not_truncate
 case_context_pack_max_items_enforces_global_cap
 case_context_pack_max_bytes_enforces_byte_cap
+case_context_pack_large_candidate_byte_budget_bounded_work
 case_context_pack_max_bytes_exact_boundary_accepted
 case_context_pack_impossible_byte_cap_rejected
 case_context_pack_no_index_impossible_byte_cap_rejected

@@ -2464,6 +2464,19 @@ approve）**：qa-tester 指出新增的 `PM_DISPATCH_CONTEXT_PACK_MAX_TERMS` �
 對稱的回歸測試（memory-only 不殘留 builtin-index）。`tests/shell/test-pmctl-context.sh`
 159 案全過。
 
+**pr-gate 第五輪（targeted，同 5 reviewer）NO-GO（1 block-soft，其餘 4 方
+approve/pass，僅存效能疑慮）**：risk-reviewer 指出 `_ctx_apply_pack_budget`
+的 byte-budget 迴圈每丟棄一筆項目就呼叫 `_ctx_pack_with_truncation`，而後者
+內部的 `_ctx_pack_top_n` 會對**整個**候選集合重新排序＋重新序列化——對多
+term、多 hit 的合法輸入配上偏緊的 `--max-bytes`，這是 O(丟棄次數 × 候選總數)
+的二次方工作量與大量 subprocess 啟動。修正：在迴圈開始前，先把候選集合
+**一次性**裁到最多 `keep_n`（≤ `max_items`）筆，之後每次 byte-budget 迭代都
+只對這個已經很小的裁切後集合重新排序，把「每丟一筆重排全集合」降為「排序
+一次＋後續都是小集合上的廉價重排」。新增回歸測試：40 個 term、60 個候選
+symbol、`--max-bytes 4000` 強制大量裁切，斷言在合理時間內完成（30 秒上限，
+非嚴格效能測試，只防止災難性劣化）且輸出仍在 byte cap 內。
+`tests/shell/test-pmctl-context.sh` 160 案全過。
+
 **Phase 1（Req 1-7）至此全數
 交付。Phase 2（Req 8-10，agent 契約 + shadow telemetry）仍未開始，票維持
 active。**（agent 契約 + shadow 儀器化；小 PR，跟在 Phase 1 後）**:

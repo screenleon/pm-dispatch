@@ -231,6 +231,20 @@ Versions follow [Semantic Versioning](https://semver.org/).
   surviving item counts symmetrically, with a matching regression test for
   a memory-only surviving pack.
 
+- **`pmctl context pack`'s byte-budget trimming no longer re-sorts the
+  entire candidate set on every dropped item (CC-505 Phase 1, Req 5 fifth
+  follow-up).** A fifth pr-gate round (risk-reviewer) found
+  `_ctx_apply_pack_budget`'s byte-budget loop called
+  `_ctx_pack_with_truncation` — which internally re-sorts and
+  re-serializes its ENTIRE input via `_ctx_pack_top_n` — once per dropped
+  item, making a large multi-term candidate set combined with a tight
+  `--max-bytes` quadratic work with excessive subprocess launches. Fixed
+  by pre-slicing the candidate set to at most `max_items` ONCE before the
+  loop, turning "re-sort the full set per drop" into "sort once, then
+  cheap re-slices of an already-small set." Added a regression test with
+  40 query terms and 60 candidate symbols forced through heavy
+  `--max-bytes` trimming, asserting bounded completion time.
+
 ### Fixed
 
 - **`ship finish`'s closure producer and its consumer are now proven to

@@ -1495,7 +1495,7 @@ _ctx_pack_with_truncation() {
 # budget being enforced.
 _ctx_apply_pack_budget() {
   local pack="$1" max_items="$2" max_bytes="$3"
-  local total keep_n final bytes applied=false reason=none
+  local total keep_n final bytes applied=false reason=none capped_pack
 
   total="$(jq '(.files|length)+(.symbols|length)+(.memories|length)' <<<"$pack")"
   keep_n="$total"
@@ -1505,17 +1505,31 @@ _ctx_apply_pack_budget() {
     reason=item_budget
   fi
 
+  # Bound the candidate set ONCE, up front, to at most keep_n (<= max_items)
+  # items -- nothing beyond the top-ranked keep_n can ever survive the byte
+  # loop below regardless of how many terms/hits fed into $pack, so there is
+  # no reason to keep re-sorting/re-serializing the FULL (potentially much
+  # larger, multi-query) candidate set on every byte-budget iteration.
+  # risk-reviewer-F001: the previous form called _ctx_pack_with_truncation
+  # (which re-sorts and re-serializes the entire input pack via
+  # _ctx_pack_top_n) once PER DROPPED ITEM, so a large multi-query candidate
+  # set combined with a tight byte cap was quadratic work and repeated
+  # subprocess launches. Pre-slicing to keep_n turns that into one sort over
+  # at most max_items items, then only cheap re-slices of that already-small
+  # set for each further byte-budget drop.
+  capped_pack="$(_ctx_pack_top_n "$pack" "$keep_n")"
+
   # Measure the EXACT bytes this function emits -- printf '%s\n' below adds a
   # trailing newline, so the check here must include it too. Measuring the
   # bare $final (no newline) undercounts by one byte and can let an
   # over-budget pack through at an exact boundary.
-  final="$(_ctx_pack_with_truncation "$pack" "$total" "$keep_n" "$max_items" "$max_bytes" "$applied" "$reason")"
+  final="$(_ctx_pack_with_truncation "$capped_pack" "$total" "$keep_n" "$max_items" "$max_bytes" "$applied" "$reason")"
   bytes="$(printf '%s\n' "$final" | wc -c | tr -d '[:space:]')"
   while (( bytes > max_bytes && keep_n > 0 )); do
     keep_n=$((keep_n - 1))
     applied=true
     reason=byte_budget
-    final="$(_ctx_pack_with_truncation "$pack" "$total" "$keep_n" "$max_items" "$max_bytes" "$applied" "$reason")"
+    final="$(_ctx_pack_with_truncation "$capped_pack" "$total" "$keep_n" "$max_items" "$max_bytes" "$applied" "$reason")"
     bytes="$(printf '%s\n' "$final" | wc -c | tr -d '[:space:]')"
   done
 
