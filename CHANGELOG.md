@@ -170,6 +170,20 @@ Versions follow [Semantic Versioning](https://semver.org/).
   now fully delivered; Phase 2 (Req 8-10, agent contract + shadow
   telemetry) has not started — CC-505 stays active.**
 
+- **`pmctl context pack`'s byte budget now measures its exact emitted form
+  and fails closed on an impossible cap (CC-505 Phase 1, Req 5 follow-up).**
+  A pr-gate round (critic, qa-tester, and risk-reviewer independently) found
+  the byte check measured `$final` without its trailing newline while the
+  function actually emits `$final\n` — an off-by-one that could let a pack
+  exceed `--max-bytes` at exact boundaries. Fixed by measuring the exact
+  emitted bytes on every iteration. Also added an explicit fail-closed
+  rejection (exit 2) when even the 0-item envelope (truncation object plus
+  newline) cannot fit under `--max-bytes`, instead of silently emitting an
+  over-budget result. qa-tester also flagged that
+  `PM_DISPATCH_CONTEXT_PACK_MAX_ITEMS`/`_MAX_BYTES` env var overrides had no
+  direct test; added valid- and invalid-override cases plus the
+  impossible-cap case.
+
 ### Fixed
 
 - **`ship finish`'s closure producer and its consumer are now proven to

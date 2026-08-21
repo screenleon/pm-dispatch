@@ -4407,6 +4407,26 @@ case_context_pack_max_bytes_enforces_byte_cap() {
   pass "$name"
 }
 
+case_context_pack_impossible_byte_cap_rejected() {
+  local name="pmctl context pack: --max-bytes below the empty envelope floor fails closed"
+  should_run "$name" || return 0
+  local fix_repo="$tmp_root/fix-repo-pack-budget-impossible"
+  make_fixture_repo "$fix_repo"
+  local out err status=0
+  "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-impossible.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-impossible.err")"; return 0; }
+  out="$tmp_root/pack-impossible.out"; err="$tmp_root/pack-impossible.err"
+  "$PMCTL" context pack "$fix_repo" --task-id TASK-1 --query alpha --max-bytes 1 \
+    > "$out" 2> "$err" || status=$?
+  if assert_exit "$name" "$status" 2; then
+    if [[ -s "$out" ]]; then
+      fail "$name" "expected no pack output on fail-closed rejection: $(<"$out")"
+      return 0
+    fi
+    pass "$name"
+  fi
+}
+
 case_context_pack_invalid_max_items_rejected() {
   local name="pmctl context pack: --max-items rejects a non-positive-integer value"
   should_run "$name" || return 0
@@ -4427,6 +4447,98 @@ case_context_pack_invalid_max_bytes_rejected() {
   local out err status=0
   out="$tmp_root/pack-budget-invalid-bytes.out"; err="$tmp_root/pack-budget-invalid-bytes.err"
   "$PMCTL" context pack "$fix_repo" --task-id TASK-1 --query alpha --max-bytes not-a-number \
+    > "$out" 2> "$err" || status=$?
+  if assert_exit "$name" "$status" 2; then pass "$name"; fi
+}
+
+# Behavior (CC-505 Req 5): PM_DISPATCH_CONTEXT_PACK_MAX_ITEMS/_MAX_BYTES set
+# the defaults when no --max-items/--max-bytes flag is given, exercising the
+# same fail-closed validation path as the flags themselves (qa-tester-F002).
+case_context_pack_env_max_items_valid_override_applies() {
+  local name="pmctl context pack: PM_DISPATCH_CONTEXT_PACK_MAX_ITEMS overrides the default cap"
+  should_run "$name" || return 0
+  local fix_repo="$tmp_root/fix-repo-pack-budget-env-items"
+  make_fixture_repo "$fix_repo"
+  local out err status=0
+  "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-env-items.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-env-items.err")"; return 0; }
+  out="$tmp_root/pack-env-items.out"; err="$tmp_root/pack-env-items.err"
+  PM_DISPATCH_CONTEXT_PACK_MAX_ITEMS=1 \
+    "$PMCTL" context pack "$fix_repo" --task-id TASK-1 --query alpha \
+    > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "pack exited $status: $(<"$err")"; return 0
+  fi
+  if ! jq -e '
+    ((.files | length) + (.symbols | length) + (.memories | length)) == 1 and
+    .truncation.applied == true and
+    .truncation.reason == "item_budget" and
+    .truncation.budget.max_items == 1
+  ' "$out" > /dev/null 2>"$err"; then
+    fail "$name" "env override did not apply a 1-item cap: $(<"$err") output: $(<"$out")"
+    return 0
+  fi
+  pass "$name"
+}
+
+case_context_pack_env_max_bytes_valid_override_applies() {
+  local name="pmctl context pack: PM_DISPATCH_CONTEXT_PACK_MAX_BYTES overrides the default cap"
+  should_run "$name" || return 0
+  local fix_repo="$tmp_root/fix-repo-pack-budget-env-bytes"
+  make_fixture_repo "$fix_repo"
+  local out err status=0
+  "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-env-bytes.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-env-bytes.err")"; return 0; }
+
+  local one_item_out one_item_bytes
+  one_item_out="$tmp_root/pack-env-bytes-one-item.out"
+  "$PMCTL" context pack "$fix_repo" --task-id TASK-1 --query alpha --max-items 1 > "$one_item_out" 2>/dev/null
+  one_item_bytes="$(wc -c < "$one_item_out" | tr -d ' ')"
+  local tight_cap=$(( one_item_bytes + 20 ))
+
+  out="$tmp_root/pack-env-bytes.out"; err="$tmp_root/pack-env-bytes.err"
+  PM_DISPATCH_CONTEXT_PACK_MAX_BYTES="$tight_cap" \
+    "$PMCTL" context pack "$fix_repo" --task-id TASK-1 --query alpha \
+    > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "pack exited $status: $(<"$err")"; return 0
+  fi
+  local actual_bytes
+  actual_bytes="$(wc -c < "$out" | tr -d ' ')"
+  if (( actual_bytes > tight_cap )); then
+    fail "$name" "pack ($actual_bytes bytes) exceeds env PM_DISPATCH_CONTEXT_PACK_MAX_BYTES=$tight_cap: $(<"$out")"
+    return 0
+  fi
+  if ! jq -e '.truncation.applied == true and .truncation.reason == "byte_budget" and .truncation.budget.max_bytes == '"$tight_cap"'' \
+      "$out" > /dev/null 2>"$err"; then
+    fail "$name" "expected a byte_budget truncation disclosure honoring the env cap: $(<"$err") output: $(<"$out")"
+    return 0
+  fi
+  pass "$name"
+}
+
+case_context_pack_env_max_items_invalid_rejected() {
+  local name="pmctl context pack: invalid PM_DISPATCH_CONTEXT_PACK_MAX_ITEMS is rejected fail-closed"
+  should_run "$name" || return 0
+  local fix_repo="$tmp_root/fix-repo-pack-budget-env-invalid-items"
+  make_fixture_repo "$fix_repo"
+  local out err status=0
+  out="$tmp_root/pack-env-invalid-items.out"; err="$tmp_root/pack-env-invalid-items.err"
+  PM_DISPATCH_CONTEXT_PACK_MAX_ITEMS=0 \
+    "$PMCTL" context pack "$fix_repo" --task-id TASK-1 --query alpha \
+    > "$out" 2> "$err" || status=$?
+  if assert_exit "$name" "$status" 2; then pass "$name"; fi
+}
+
+case_context_pack_env_max_bytes_invalid_rejected() {
+  local name="pmctl context pack: invalid PM_DISPATCH_CONTEXT_PACK_MAX_BYTES is rejected fail-closed"
+  should_run "$name" || return 0
+  local fix_repo="$tmp_root/fix-repo-pack-budget-env-invalid-bytes"
+  make_fixture_repo "$fix_repo"
+  local out err status=0
+  out="$tmp_root/pack-env-invalid-bytes.out"; err="$tmp_root/pack-env-invalid-bytes.err"
+  PM_DISPATCH_CONTEXT_PACK_MAX_BYTES=not-a-number \
+    "$PMCTL" context pack "$fix_repo" --task-id TASK-1 --query alpha \
     > "$out" 2> "$err" || status=$?
   if assert_exit "$name" "$status" 2; then pass "$name"; fi
 }
@@ -4826,8 +4938,13 @@ case_context_pack_ranking_fields_are_valid
 case_context_pack_default_budget_does_not_truncate
 case_context_pack_max_items_enforces_global_cap
 case_context_pack_max_bytes_enforces_byte_cap
+case_context_pack_impossible_byte_cap_rejected
 case_context_pack_invalid_max_items_rejected
 case_context_pack_invalid_max_bytes_rejected
+case_context_pack_env_max_items_valid_override_applies
+case_context_pack_env_max_bytes_valid_override_applies
+case_context_pack_env_max_items_invalid_rejected
+case_context_pack_env_max_bytes_invalid_rejected
 case_context_pack_empty_index_discloses_untruncated_budget
 case_context_retrieval_fixture_corpus
 case_context_retrieval_fixture_corpus_trust_weighting

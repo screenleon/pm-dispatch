@@ -2396,7 +2396,22 @@ repo domain 之前）、long section 分段（35 行 section 尾端 marker 仍�
 Req 1 窗口化生效）；另外 trust weighting 用獨立 memory fixture（card vs
 episode 共用同一詞）證明 trust 真的影響排序，不只是標籤正確。
 
-`tests/shell/test-pmctl-context.sh` 144 案全過。**Phase 1（Req 1-7）至此全數
+`tests/shell/test-pmctl-context.sh` 144 案全過。
+
+**pr-gate 第一輪（parallel，5 reviewer）NO-GO**：critic／qa-tester／risk-reviewer
+三方各自獨立指出同一根因——`_ctx_apply_pack_budget` 量測 bytes 用
+`printf '%s' "$final" \| wc -c`（不含換行），但函式實際輸出用
+`printf '%s\n' "$final"`（含換行），在邊界值上會少算一 byte、讓超出
+`--max-bytes` 的結果放行；且無「不可能的 cap」明確處理——若連 0-item 信封
+（`truncation` 物件＋換行）都超過 `--max-bytes`，原本會靜默吐出超額結果。
+修正：量測改成與實際輸出完全一致的形式；並新增 fail-closed 檢查，0-item
+信封仍超額時回傳 exit 2 並印出可操作的 stderr 訊息，不再靜默違反自己宣告
+的 budget。qa-tester 另指出 `PM_DISPATCH_CONTEXT_PACK_MAX_ITEMS`／
+`PM_DISPATCH_CONTEXT_PACK_MAX_BYTES` 環境變數覆寫無對應測試，補上四案
+（合法覆寫各一、非法覆寫各一）＋一案覆蓋「不可能的 cap」fail-closed 路徑。
+`tests/shell/test-pmctl-context.sh` 149 案全過。
+
+**Phase 1（Req 1-7）至此全數
 交付。Phase 2（Req 8-10，agent 契約 + shadow telemetry）仍未開始，票維持
 active。**（agent 契約 + shadow 儀器化；小 PR，跟在 Phase 1 後）**:
 8. Agent-facing injection 明確採用 **index-first, source-verified** 契約：retrieval hit 是導航與 scope-narrowing evidence，不是原始來源替代品；factual conclusion、code edit、gate/security/release 判斷前必須 targeted-read 命中的 bounded span；zero-hit、stale/unknown freshness、truncated 或 ambiguous 結果必須 fallback 至 targeted Grep/Read；no hit 不得解讀為不存在。本階段只改導引措辭，**不收緊**任何現有 fallback 行為。

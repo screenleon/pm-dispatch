@@ -1487,15 +1487,29 @@ _ctx_apply_pack_budget() {
     reason=item_budget
   fi
 
+  # Measure the EXACT bytes this function emits -- printf '%s\n' below adds a
+  # trailing newline, so the check here must include it too. Measuring the
+  # bare $final (no newline) undercounts by one byte and can let an
+  # over-budget pack through at an exact boundary.
   final="$(_ctx_pack_with_truncation "$pack" "$total" "$keep_n" "$max_items" "$max_bytes" "$applied" "$reason")"
-  bytes="$(printf '%s' "$final" | wc -c | tr -d '[:space:]')"
+  bytes="$(printf '%s\n' "$final" | wc -c | tr -d '[:space:]')"
   while (( bytes > max_bytes && keep_n > 0 )); do
     keep_n=$((keep_n - 1))
     applied=true
     reason=byte_budget
     final="$(_ctx_pack_with_truncation "$pack" "$total" "$keep_n" "$max_items" "$max_bytes" "$applied" "$reason")"
-    bytes="$(printf '%s' "$final" | wc -c | tr -d '[:space:]')"
+    bytes="$(printf '%s\n' "$final" | wc -c | tr -d '[:space:]')"
   done
+
+  # Impossible cap: even the 0-item envelope (truncation object + newline)
+  # cannot fit under max_bytes. Silently emitting an over-budget result would
+  # violate the very budget this function exists to enforce -- fail closed
+  # instead so a caller can raise max_bytes rather than trust a broken disclosure.
+  if (( bytes > max_bytes )); then
+    printf 'pmctl context pack: max_bytes=%s is too small to fit even an empty pack (%s bytes required)\n' \
+      "$max_bytes" "$bytes" >&2
+    return 2
+  fi
 
   printf '%s\n' "$final"
 }
