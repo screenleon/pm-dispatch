@@ -436,7 +436,15 @@ _CTX_CHUNK_BODY_CAP=2000
 # alters what "already indexed" means, and without it existing databases keep
 # serving chunks the current extractor would never produce -- a stale index that
 # looks healthy. Bump on any change to the chunkers or to the cap/window above.
-_CTX_EXTRACTOR_VERSION=2
+# Also covers the content_fts DDL itself (CC-505 gate findings critic-F001 /
+# risk-reviewer-F001): _ctx_index_tree's _force_reextract check (below) is
+# what makes _ctx_fts_rebuild run unconditionally on a version mismatch, so
+# adding line_end to content_fts's schema is exactly the class of change this
+# constant exists to force-migrate -- an index built before this change would
+# otherwise keep its old 2-column content_fts table forever (no query ever
+# rebuilds it on its own), and the new SELECT ... line_end FROM content_fts
+# would fail against it with "no such column".
+_CTX_EXTRACTOR_VERSION=3
 
 # Emit one chunk row, splitting a body longer than the cap across rows instead
 # of letting it overflow. An over-cap body reaches _ctx_sql_str, which truncates

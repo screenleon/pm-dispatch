@@ -3770,6 +3770,64 @@ case_context_index_extractor_version_forces_reextract() {
   fi
 }
 
+# Behavior (CC-505 gate findings critic-F001 / risk-reviewer-F001): an index
+# built by a PRE-line_end extractor version has a legacy 2-column content_fts
+# table (ref, text). Querying it must transparently migrate content_fts (via
+# the existing extractor-version-forces-reextract path, since _CTX_EXTRACTOR_
+# VERSION was bumped for this change) rather than fail with "no such column:
+# line_end", and the migrated query must still return correct hits.
+# Steps: index a fixture repo; downgrade its stored extractor_version and
+# rebuild content_fts in the pre-change 2-column shape (simulating an index
+# built before this change); run `context query`; assert exit 0, a real hit,
+# and that content_fts now has a line_end column.
+case_context_query_migrates_legacy_two_column_fts() {
+  local name="pmctl context query: transparently migrates a legacy 2-column content_fts table"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-legacy-fts"
+  make_fixture_repo "$fix_repo"
+
+  local err="$tmp_root/legacy-fts.err"
+  "$PMCTL" context index "$fix_repo" > /dev/null 2> "$err" \
+    || { fail "$name" "setup: initial index failed: $(<"$err")"; return 0; }
+
+  local db="$fix_repo/.pm-dispatch/ctx/context.db"
+  # Downgrade the stored extractor version AND rebuild content_fts in the
+  # legacy 2-column shape, faithfully staging what a real pre-upgrade index
+  # looks like (not just an aged version stamp).
+  sqlite3 "$db" <<'SQL' || { fail "$name" "setup: could not stage a legacy-shape index"; return 0; }
+UPDATE index_meta SET extractor_version = extractor_version - 1 WHERE id = 1;
+DROP TABLE IF EXISTS content_fts;
+CREATE VIRTUAL TABLE content_fts USING fts5(ref, text);
+INSERT INTO content_fts(ref, text)
+  SELECT f.path || ':' || s.line_start, s.name
+  FROM symbols s JOIN files f ON s.file_id = f.id;
+INSERT INTO content_fts(ref, text)
+  SELECT f.path || ':' || fc.line_start, TRIM(COALESCE(fc.heading, '') || ' ' || COALESCE(fc.text, ''))
+  FROM file_chunks fc JOIN files f ON fc.file_id = f.id
+  WHERE TRIM(COALESCE(fc.heading, '') || ' ' || COALESCE(fc.text, '')) != '';
+SQL
+
+  local out status=0
+  out="$tmp_root/legacy-fts-query.out"
+  "$PMCTL" context query "$fix_repo" --source repo alpha > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "query against a legacy-shape index exited $status (expected transparent migration): $(<"$err")"
+    return 0
+  fi
+  if ! grep -q '^- ref:' "$out"; then
+    fail "$name" "expected at least one real hit after migration; got: $(<"$out")"
+    return 0
+  fi
+  local fts_cols
+  fts_cols="$(sqlite3 "$db" "PRAGMA table_info(content_fts);" 2>/dev/null | grep -c 'line_end' || true)"
+  if [[ "$fts_cols" -lt 1 ]]; then
+    fail "$name" "content_fts was not migrated to include line_end after the query's auto-refresh"
+    return 0
+  fi
+  pass "$name"
+}
+
 case_context_prompt_scan_term_cap_longest_first() {
   local name="pmctl context prompt-scan: term cap keeps longest terms first"
   # Behavior: terms are ranked longest-first and capped at
@@ -4214,6 +4272,63 @@ case_context_reuse_scan_cli_top_hit_is_highest_ranked() {
   pass "$name"
 }
 
+# Behavior (CC-505 Req 2/3 gate finding qa-tester-F002): `pmctl context
+# prompt-scan`'s knowledge_hits: output must go through the same shared
+# ranking + dedup path as the other three consumers, not its own leftover
+# insertion-order concatenation, and must be stable across repeated runs.
+# prompt-scan's own minimal YAML (ref + why_relevant only, by design, for
+# compact prompt injection) does not expose match_kind/rank, and its
+# knowledge-domain restriction means the fixture repo has no eligible SYMBOL
+# hit (no code symbols live under BACKLOG.md/docs/*) -- so unlike the
+# query/reuse-scan cases, this asserts what IS observable and meaningful
+# here: two overlapping terms (mirroring critic-F001's exact scenario)
+# produce a deduplicated, capped, ORDER-STABLE ref list.
+# Steps: index a fixture repo; prompt-scan a prompt whose terms both match
+# the same knowledge-domain docs; assert unique refs, a <=5 cap, and that a
+# second run against the unchanged index reproduces the identical output.
+case_context_prompt_scan_cli_orders_and_dedups() {
+  local name="pmctl context prompt-scan: CLI output is deduplicated, capped, and stable across runs"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-pscan-rank"
+  make_fixture_repo "$fix_repo"
+
+  local out1 out2 err status=0
+  "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-pscan-rank.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-pscan-rank.err")"; return 0; }
+
+  out1="$tmp_root/pscan-rank-1.out"; err="$tmp_root/pscan-rank.err"
+  "$PMCTL" context prompt-scan "$fix_repo" "alpha architecture note" > "$out1" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "prompt-scan exited $status: $(<"$err")"; return 0
+  fi
+  local refs ref_count unique_count
+  refs="$(awk -F': ' '/^  - ref:/{print $2}' "$out1")"
+  ref_count="$(printf '%s\n' "$refs" | grep -c .)"
+  unique_count="$(printf '%s\n' "$refs" | sort -u | grep -c .)"
+  if [[ "$ref_count" -eq 0 ]]; then
+    fail "$name" "expected at least one hit: $(<"$out1")"; return 0
+  fi
+  if [[ "$ref_count" -gt 5 ]]; then
+    fail "$name" "expected at most 5 hits, got $ref_count: $(<"$out1")"; return 0
+  fi
+  if [[ "$unique_count" -ne "$ref_count" ]]; then
+    fail "$name" "expected every ref to be unique (dedup across terms), got $ref_count refs / $unique_count unique: $(<"$out1")"
+    return 0
+  fi
+
+  out2="$tmp_root/pscan-rank-2.out"
+  "$PMCTL" context prompt-scan "$fix_repo" "alpha architecture note" > "$out2" 2>> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "second prompt-scan exited $status: $(<"$err")"; return 0
+  fi
+  if [[ "$(cat "$out1")" != "$(cat "$out2")" ]]; then
+    fail "$name" "prompt-scan output was not stable across two runs against an unchanged index"
+    return 0
+  fi
+  pass "$name"
+}
+
 # ── Run all cases ──────────────────────────────────────────────────────────────
 
 case_context_index_missing_repo
@@ -4342,6 +4457,8 @@ case_context_rank_hits_orders_and_truncates
 case_context_pack_ranking_fields_are_valid
 case_context_query_cli_orders_by_rank_tier
 case_context_reuse_scan_cli_top_hit_is_highest_ranked
+case_context_prompt_scan_cli_orders_and_dedups
+case_context_query_migrates_legacy_two_column_fts
 case_context_commands_resolve_only_fixture_roots
 case_context_every_subcommand_is_exercised
 case_context_live_target_guard_trips

@@ -41,7 +41,29 @@
     "memories": { "type": "array", "items": { "$ref": "#/$defs/item" } },
     "risks":    { "type": "array", "items": { "$ref": "#/$defs/item" } }
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "schema_version": { "const": 3 } },
+        "required": ["schema_version"]
+      },
+      "then": {
+        "properties": {
+          "files":    { "items": { "$ref": "#/$defs/item_v3" } },
+          "symbols":  { "items": { "$ref": "#/$defs/item_v3" } },
+          "memories": { "items": { "$ref": "#/$defs/item_v3" } }
+        }
+      }
+    }
+  ],
   "$defs": {
+    "item_v3": {
+      "description": "A schema_version 3 pack's producer (pmctl-context.sh) always sets all six CC-505 ranking fields together -- this lets a downstream validator distinguish a complete v3 ranked hit from an older-shape item structurally, rather than trusting the current shell producer alone (architecture-reviewer-F001). Not applied to risks[], which CC-347 leaves permanently empty.",
+      "allOf": [
+        { "$ref": "#/$defs/item" },
+        { "required": ["rank", "match_kind", "line_start", "line_end", "ranking_score", "score_components"] }
+      ]
+    },
     "item": {
       "type": "object",
       "required": ["ref", "source", "confidence"],
