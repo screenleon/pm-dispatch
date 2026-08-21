@@ -5,8 +5,8 @@
   "required": ["schema_version", "task_id", "built_ts", "sources", "files"],
   "properties": {
     "schema_version": {
-      "enum": [1, 2],
-      "description": "1 = original; 2 = adds context_hit_v1 optional fields (source_domain, why_relevant, trust_level, refs). Both versions are valid; v1 packs that omit new fields continue to validate."
+      "enum": [1, 2, 3],
+      "description": "1 = original; 2 = adds context_hit_v1 optional fields (source_domain, why_relevant, trust_level, refs); 3 = adds the CC-505 lexical ranking fields (rank, match_kind, line_start, line_end, ranking_score, score_components). All versions are valid; a v1/v2 pack that omits the newer fields continues to validate."
     },
     "task_id": {
       "type": "string",
@@ -80,6 +80,32 @@
           "type": "array",
           "items": { "type": "string" },
           "description": "Additional cross-references (e.g. related symbols, prior decisions)."
+        },
+        "rank": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "1-based position after CC-505's shared lexical ranking pass. Distinct from `confidence` — this is a relevance ordering, not a correctness signal."
+        },
+        "match_kind": {
+          "type": "string",
+          "enum": ["symbol_exact", "symbol_partial", "fts5_content", "like_fallback"],
+          "description": "Which retrieval path produced this item. like_fallback is deterministically ordered but is NOT relevance-ranked (no FTS5 available)."
+        },
+        "line_start": {
+          "type": ["integer", "null"],
+          "description": "First line of the matched span, when the ref encodes one (path:line refs)."
+        },
+        "line_end": {
+          "type": ["integer", "null"],
+          "description": "Last line of the matched span (bounded chunk/symbol extent)."
+        },
+        "ranking_score": {
+          "type": "integer",
+          "description": "Lexical ranking score (bm25-derived for fts5_content, tier base + boosts otherwise). Higher is more relevant WITHIN a match_kind tier. Not a correctness or confidence signal — see `confidence` for that."
+        },
+        "score_components": {
+          "type": "string",
+          "description": "Human-readable breakdown of ranking_score's inputs (e.g. base/bm25/trust/domain contributions), for debugging and audit — not machine-parsed."
         }
       }
     }

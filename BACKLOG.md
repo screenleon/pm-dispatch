@@ -2356,6 +2356,24 @@ bodies；程式語言檔案先前被壓成**一個 chunk、只存檔首 200 字�
 **未動**：Req 2/3/4（bm25 排序與四 consumer 共用 ranking path）、Req 5（pack budget）、
 Phase 2 全部。票維持 active。
 
+**Update 2026-08-21（Phase 1 第二片：Req 2/3/4）**：所有排序運算集中到唯一入口
+`_ctx_query_hits_raw`——FTS5 路徑改用 `bm25()`（SQL 內直接算，不額外 spawn awk/bc
+per row，見 `_ctx_compose_score` 註解引用的 CC-563 教訓）疊加 trust／domain 加權；
+LIKE fallback 路徑改為 `ORDER BY path, line_start` 確定性排序（誠實聲明：非
+relevance-ranked，只是 run-to-run 一致）。新增 `_ctx_rank_hits` 作為唯一排序＋截斷
+入口，四個 consumer（`query`／`pack`／`reuse-scan`／`prompt-scan`）全部改呼叫它，
+不再各自用「symbol hits 先、text hits 後、取前五」這種插入順序當排序（`reuse-scan`
+原本 `cat sym_tsv files_tsv | head -5`、`prompt-scan` 原本 `cat files_tsv sym_tsv`
+兩者順序還互相顛倒，證明先前完全是插入順序副作用而非設計）。三個工作流入口
+（`pmctl-dispatch.sh` auto-pack、`pmctl-pm.sh`、`gate-memory-context.sh`）
+呼叫點本身**未變更**——它們消費同一批共用函式，自動繼承新排序，驗證了 ratchet
+條款成立。每個 hit 新增 `rank`／`match_kind`／`line_start`／`line_end`／
+`ranking_score`／`score_components` 欄位，附加在既有 schema-required 的
+`confidence` 之外（未改名、未改值，兩者語意刻意分離）；`context-pack.schema.json`
+`schema_version` 2→3。`tests/shell/test-pmctl-context.sh` 130 案全過（3 案因
+schema_version 斷言隨版次更新，非行為回歸）。**殘留**：Req 5（pack 全域 item/byte
+budget）、Req 7（deterministic fixture corpus）、Phase 2 全部。票維持 active。
+
 **Requirement — Phase 2（agent 契約 + shadow 儀器化；小 PR，跟在 Phase 1 後）**:
 8. Agent-facing injection 明確採用 **index-first, source-verified** 契約：retrieval hit 是導航與 scope-narrowing evidence，不是原始來源替代品；factual conclusion、code edit、gate/security/release 判斷前必須 targeted-read 命中的 bounded span；zero-hit、stale/unknown freshness、truncated 或 ambiguous 結果必須 fallback 至 targeted Grep/Read；no hit 不得解讀為不存在。本階段只改導引措辭，**不收緊**任何現有 fallback 行為。
 9. shadow telemetry：在既有 context.* 事件上記錄 top-K refs、pack bytes、full-file baseline bytes、truncation/freshness，以及 Agent 後續實際 source-read bytes 與最終修改／引用檔案是否在 top-K——供 [[CC-506]] 評測消費。覆蓋面必須含工作流路徑（dispatch auto-pack、ship、gate memory context），不得只儀器化互動式 `context query`。

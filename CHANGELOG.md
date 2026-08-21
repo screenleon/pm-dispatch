@@ -111,6 +111,30 @@ Versions follow [Semantic Versioning](https://semver.org/).
   hashing removed alongside it. Profiling contradicted the ticket's own guess:
   symbol extraction and escaping together were 7%, not the 60% it assumed.
 
+- **Context-plane retrieval is now actually ranked, not just filtered
+  (CC-505 Phase 1, Req 2-4).** Every hit used to get a hardcoded score by
+  match type (0.85 symbol / 0.75 fts5 / 0.7 text), and `reuse-scan` /
+  `prompt-scan` concatenated symbol hits before text hits (or the reverse —
+  the two disagreed) and took the first 5 by position, not relevance. All
+  ranking now happens once, in `_ctx_query_hits_raw`: the FTS5 path orders by
+  `bm25()` computed in SQL (no per-row subprocess), the LIKE fallback is
+  deterministically ordered (`ORDER BY path, line_start` — explicitly not
+  relevance-ranked, since no signal is available without FTS5), and a small
+  trust/domain boost applies within each match-kind tier without ever
+  crossing tiers (an exact symbol match always outranks a text match). A new
+  `_ctx_rank_hits` is the single sort+truncate path all four consumers
+  (`query`/`pack`/`reuse-scan`/`prompt-scan`) call — none re-sorts or
+  re-truncates on its own. The three workflow entry points that consume
+  these functions (`pmctl-dispatch.sh` auto-pack, `pmctl-pm.sh`,
+  `gate-memory-context.sh`) needed no call-site changes, confirming they
+  already inherit ranking through the shared path rather than bypassing it.
+  Hits gain `rank`, `match_kind`, `line_start`/`line_end`, `ranking_score`,
+  and `score_components` fields, additive alongside the existing
+  schema-required `confidence` field (unchanged in meaning — ranking
+  relevance and correctness confidence stay distinct signals);
+  `context-pack.schema.json` schema_version 2→3. Req 5 (pack byte/item
+  budget) and Req 7 (fixture corpus) remain open; CC-505 stays active.
+
 ### Fixed
 
 - **`ship finish`'s closure producer and its consumer are now proven to

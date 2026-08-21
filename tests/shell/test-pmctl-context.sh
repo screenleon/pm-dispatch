@@ -956,7 +956,7 @@ case_context_pack_query_without_value() {
 case_context_pack_no_db() {
   local name="pmctl context pack: exits 0 with empty JSON when index DB not found"
   # Behavior: with autobuild disabled, missing DB must still return graceful empty
-  # JSON (schema_version 2, empty files/symbols arrays) rather than exiting 1.
+  # JSON (schema_version 3, empty files/symbols arrays) rather than exiting 1.
   # Steps: call pack on a repo with no prior index run and autobuild disabled; assert exit 0 and valid empty JSON.
   should_run "$name" || return 0
   local out err status=0
@@ -969,9 +969,9 @@ case_context_pack_no_db() {
   if [[ "$status" -ne 0 ]]; then
     fail "$name" "expected exit 0 (graceful empty); got $status err=$(<"$err")"; return 0
   fi
-  if ! jq -e '.schema_version == 2 and (.files | length) == 0 and (.symbols | length) == 0' \
+  if ! jq -e '.schema_version == 3 and (.files | length) == 0 and (.symbols | length) == 0' \
       "$out" > /dev/null 2>&1; then
-    fail "$name" "expected empty schema_version-2 JSON; got: $(<"$out")"; return 0
+    fail "$name" "expected empty schema_version-3 JSON; got: $(<"$out")"; return 0
   fi
   if [[ -e "$nodb_repo/.pm-dispatch/ctx/context.db" ]]; then
     fail "$name" "autobuild disabled but context.db was created"; return 0
@@ -993,8 +993,8 @@ case_context_pack_unknown_flag() {
 }
 
 case_context_pack_valid_json() {
-  local name="pmctl context pack: valid call produces schema_version 2 JSON with correct fields"
-  # Behavior: context pack must emit schema_version 2 JSON with task_id, sources, and at least one hit.
+  local name="pmctl context pack: valid call produces schema_version 3 JSON with correct fields"
+  # Behavior: context pack must emit schema_version 3 JSON with task_id, sources, and at least one hit.
   # Steps: index a fixture repo; run pack with one --query; validate JSON fields via jq.
   should_run "$name" || return 0
 
@@ -1014,7 +1014,7 @@ case_context_pack_valid_json() {
   fi
 
   if ! jq -e '
-    .schema_version == 2 and
+    .schema_version == 3 and
     .task_id == "TASK-1" and
     (.sources | length) > 0 and
     .sources[0].name == "builtin-index" and
@@ -2189,7 +2189,7 @@ case_context_pack_nondir_repo_path() {
 }
 
 case_context_pack_schema_contract() {
-  local name="pmctl context pack: emitted pack has all required schema_version 2 fields"
+  local name="pmctl context pack: emitted pack has all required schema_version 3 fields"
   # Behavior: context pack must always include schema_version, task_id, built_ts, sources, files, symbols, memories, risks.
   # Steps: index fixture repo; run pack; validate all top-level required fields are present.
   should_run "$name" || return 0
@@ -2213,7 +2213,7 @@ case_context_pack_schema_contract() {
     has("schema_version") and has("task_id") and has("built_ts") and
     has("sources") and has("files") and has("symbols") and
     has("memories") and has("risks") and
-    .schema_version == 2
+    .schema_version == 3
   ' "$out" > /dev/null 2>"$err"; then
     fail "$name" "schema contract failed: $(<"$err") output: $(<"$out")"
     return 0
