@@ -4097,6 +4097,14 @@ case_context_pack_ranking_fields_are_valid() {
     fail "$name" "pack exited $status: $(<"$err")"; return 0
   fi
 
+  # Two --query terms deliberately overlap (my_func_alpha is exact-symbol
+  # AND substring-matches "alpha"'s fts5/partial hits) so this also covers
+  # critic-F001: no ref may appear twice across symbols[]+files[] combined --
+  # accumulating candidates from both terms, and from both match-kind
+  # families, must dedup to each ref's single highest-scoring occurrence,
+  # not just "first term/kind wins". rank comes from ranking the merged
+  # repo set once before the symbols/files split, so ranks need not be a
+  # contiguous 1..N run within either array alone -- only unique and >=1.
   if ! jq -e '
     def valid_items:
       (. | length) == 0 or (
@@ -4106,12 +4114,101 @@ case_context_pack_ranking_fields_are_valid() {
         all(.[]; (.line_end == null) or (.line_end | type == "number")) and
         all(.[]; .ranking_score | type == "number") and
         all(.[]; (.score_components | type == "string") and (.score_components | length) > 0) and
-        ([.[].rank] | sort) == ([range(1; (length + 1))])
+        (([.[].rank] | unique | length) == length)
       );
     (.files | valid_items) and (.symbols | valid_items) and
-    ((.files | length) + (.symbols | length)) >= 1
+    ((.files | length) + (.symbols | length)) >= 1 and
+    (((.files + .symbols) | map(.ref) | unique | length) == ((.files + .symbols) | length))
   ' "$out" > /dev/null 2>"$err"; then
     fail "$name" "ranking field validation failed: $(<"$err") output: $(<"$out")"
+    return 0
+  fi
+  pass "$name"
+}
+
+# Behavior (CC-505 Req 2/3 gate finding qa-tester-F001): `pmctl context query`
+# must return CLI hits in real ranking-tier order (symbol match before fts5
+# text match), not insertion/query order, and that order must be stable
+# across repeated runs against an unchanged index.
+# Steps: index a fixture repo; query a term that matches both a symbol name
+# (partial) and multiple markdown bodies (fts5); assert the symbol hit ranks
+# first and precedes every fts5 hit; assert a second run produces identical
+# output.
+case_context_query_cli_orders_by_rank_tier() {
+  local name="pmctl context query: CLI output orders symbol hits ahead of fts5 hits and is stable across runs"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-query-rank"
+  make_fixture_repo "$fix_repo"
+
+  local out1 out2 err status=0
+  "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-query-rank.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-query-rank.err")"; return 0; }
+
+  out1="$tmp_root/query-rank-1.out"; err="$tmp_root/query-rank.err"
+  "$PMCTL" context query "$fix_repo" --source repo alpha > "$out1" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "query exited $status: $(<"$err")"; return 0
+  fi
+  local first_match_kind first_ref
+  first_match_kind="$(awk -F': ' '/^  match_kind:/{print $2; exit}' "$out1")"
+  first_ref="$(awk -F': ' '/^- ref:/{print $2; exit}' "$out1")"
+  if [[ "$first_match_kind" != symbol_* ]]; then
+    fail "$name" "expected the top hit to be a symbol match, got match_kind=$first_match_kind ref=$first_ref: $(<"$out1")"
+    return 0
+  fi
+  if ! grep -q 'match_kind: fts5_content' "$out1"; then
+    fail "$name" "expected at least one fts5_content hit alongside the symbol hit: $(<"$out1")"
+    return 0
+  fi
+  # rank is assigned in strict descending-score order (_ctx_rank_hits), so
+  # asserting the top (first-emitted) hit is a symbol match already proves
+  # no fts5_content hit outranks it -- rank 1 is always the highest score.
+
+  out2="$tmp_root/query-rank-2.out"
+  "$PMCTL" context query "$fix_repo" --source repo alpha > "$out2" 2>> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "second query exited $status: $(<"$err")"; return 0
+  fi
+  if [[ "$(cat "$out1")" != "$(cat "$out2")" ]]; then
+    fail "$name" "ranking order was not stable across two runs against an unchanged index"
+    return 0
+  fi
+  pass "$name"
+}
+
+# Behavior (CC-505 Req 2/3 gate finding qa-tester-F001): `pmctl context
+# reuse-scan`'s top hit (rank 1) must be its highest-scoring real candidate
+# (a symbol match), not whichever hit happened to be inserted first, and the
+# capped list must still be internally rank-ordered.
+# Steps: index a fixture repo; reuse-scan a description containing a term
+# that symbol-matches and fts5-matches; assert hit #1 is a symbol match and
+# the emitted ranks are 1..N in order.
+case_context_reuse_scan_cli_top_hit_is_highest_ranked() {
+  local name="pmctl context reuse-scan: CLI top hit is the highest-ranked real candidate"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-reuse-rank"
+  make_fixture_repo "$fix_repo"
+
+  local out err status=0
+  "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-reuse-rank.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-reuse-rank.err")"; return 0; }
+
+  out="$tmp_root/reuse-rank.out"; err="$tmp_root/reuse-rank.err"
+  "$PMCTL" context reuse-scan "$fix_repo" "alpha implementation" > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "reuse-scan exited $status: $(<"$err")"; return 0
+  fi
+  local first_match_kind ranks_in_order
+  first_match_kind="$(awk -F': ' '/^      match_kind:/{print $2; exit}' "$out")"
+  if [[ "$first_match_kind" != symbol_* ]]; then
+    fail "$name" "expected top hit to be a symbol match, got match_kind=$first_match_kind: $(<"$out")"
+    return 0
+  fi
+  ranks_in_order="$(awk -F': ' '/^      rank:/{print $2}' "$out" | tr '\n' ',' )"
+  if [[ "$ranks_in_order" != "1,"* ]]; then
+    fail "$name" "expected ranks to start at 1 in emission order, got: $ranks_in_order"
     return 0
   fi
   pass "$name"
@@ -4243,6 +4340,8 @@ case_context_prompt_scan_emits_event
 case_context_fts5_availability_is_cached
 case_context_rank_hits_orders_and_truncates
 case_context_pack_ranking_fields_are_valid
+case_context_query_cli_orders_by_rank_tier
+case_context_reuse_scan_cli_top_hit_is_highest_ranked
 case_context_commands_resolve_only_fixture_roots
 case_context_every_subcommand_is_exercised
 case_context_live_target_guard_trips
