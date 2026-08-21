@@ -36,8 +36,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-540 | 🟢 someday | `pmctl state prune`：刪除前先抽取+驗證 gate/dispatch run 摘要，避免歷史分析資料隨磁碟空間一起消失 | ops/gate | 2026-07-31 | — | P2 | hygiene |
 | CC-546 | ⏸ deferred | standalone Gate distribution／copy parity follow-up：獨立定義 bundle schema、generation、installed parity 與 support boundary；不回併 Linux/WSL2 canonical module extraction | arch/gate | 2026-08-14 | — | P2 | reuse-debt |
 | CC-559 | 🟢 someday | memory usage sidecar 是 tab-delimited，writer 拒收含 tab／newline 的 relpath，因此這類記憶卡**永遠無法累積使用紀錄**；`pmctl memory stats` 目前誠實地把它們列為 `unmeasurable_cards`（不謊稱 never-hit），但根因未解——需改用無損編碼。屬寫入面變更，故當初被 [[CC-467]] Requirement 3 明文排除 | ops/memory | 2026-08-19 | — | P3 | hygiene |
-| CC-562 | ✅ done | synthesis／reviewer 驗證器仍有多個「多約束共用單一 reason 字串」分支（`invalid coverage matrix`、`invalid finding inventory or union`、`duplicate finding ID collision`、`selected/not-reviewed dimensions mismatch`），單次修正重試收到後無法行動；[[CC-553]] Req 2 判定需同等精度但屬不同 helper 形狀（逐項指出違規條目，非集合差集），故分票 | ops/gate | 2026-08-19 | pr:TBD | P3 | hygiene |
-| CC-560 | 🟢 someday | `_gate_scope_reference_index_collect` 每筆 reference 都以 `jq -nc` 建一個 JSON 物件（實測 4.9s×2），與 [[CC-557]] 已修掉的 `_gate_scope_expansion_append` 是同一類寫法；CC-557 未一併處理是因預算餘裕已足，非因不成立 | ops/gate | 2026-08-19 | — | P3 | hygiene |
+| CC-562 | ✅ done | synthesis／reviewer 驗證器仍有多個「多約束共用單一 reason 字串」分支（`invalid coverage matrix`、`invalid finding inventory or union`、`duplicate finding ID collision`、`selected/not-reviewed dimensions mismatch`），單次修正重試收到後無法行動；[[CC-553]] Req 2 判定需同等精度但屬不同 helper 形狀（逐項指出違規條目，非集合差集），故分票 | ops/gate | 2026-08-19 | pr:#510 | P3 | hygiene |
+| CC-560 | ✅ done | `_gate_scope_reference_index_collect` 每筆 reference 都以 `jq -nc` 建一個 JSON 物件（實測 4.9s×2），與 [[CC-557]] 已修掉的 `_gate_scope_expansion_append` 是同一類寫法；CC-557 未一併處理是因預算餘裕已足，非因不成立 | ops/gate | 2026-08-19 | pr:#511 | P3 | hygiene |
 | CC-554 | 🔵 active | 永久 regression test 缺少准入門檻：`/ship` 規範「修完每個 finding」但不規範修法形式，reviewer 每提一個邊界就永久長一個阻擋 case，case 又需要 meta-test 保護；QA 規則加六條准入條件＋五條替代路徑，ship.md 加對應例外（明確不設輪數上限，見 [[CC-544]]） | ops/gate | 2026-08-17 | — | P1 | hygiene |
 | CC-552 | 🔵 active | `test_default_worker_cap` 以 `sleep 0.1` 製造 worker 重疊窗口來驗證併發上限，違反 QA 規則的「不得以 sleep 同步」；主機負載會改變觀測到的重疊數，與 worker-cap 正確性無關（2026-08-17 CC-551 gate round 4 qa-tester，pre-existing） | ops/test | 2026-08-17 | — | P3 | hygiene |
 | CC-548 | 🔵 active | context.db FTS5 對 CJK 查詢無索引無排序（[[CC-465]] Requirement 3 殘留）：先 spike 驗 `tokenize='trigram'` 的 sqlite 版本下限與 index rebuild 成本，再決定是否實作 | memory | 2026-08-16 | — | P2 | retrieval |
@@ -301,7 +301,7 @@ confirmation，因此重試無從行動。**這是本票從「理論上該修」
 **Cross-link**: [[CC-553]]（Req 2 的判斷來源）、[[CC-549]]（reviewer 端同一修法）、
 [[CC-561]]（實戰佐證來源）。
 
-**Closure 2026-08-21 (pr:TBD)**: 沿用 `disagreement_defect` 樣式，為
+**Closure 2026-08-21 (pr:#510)**: 沿用 `disagreement_defect` 樣式，為
 `runtime/lib/gate-result-verify.sh` 新增 `coverage_cell_defect`、
 `finding_inventory_defect`、`finding_union_defect` 三個逐項指出違規條目與規則的
 helper，並套用到四個分支：`invalid coverage matrix`（逐格指出 reviewer/surface
@@ -323,7 +323,7 @@ table-driven，新增 coverage-cell／inventory／union 三個注入案例；
 `synthesis-protocol/*` 全套 20 case 綠燈。`invalid top-level contract`／
 `invalid synthesis JSON document` 依票面「明確不做」維持未變動。
 
-**See**: pr:TBD
+**See**: pr:#510
 
 ---
 
@@ -344,7 +344,7 @@ process spawn。CC-557 之所以沒有一併處理，是因為修完 expansion �
 
 **Cross-link**: [[CC-557]]（同類寫法的第一次修正，含 profiling 方法）。
 
-**Closure 2026-08-21 (pr:TBD)**：沿用 [[CC-557]] 已驗證的做法，`_gate_scope_reference_index_collect`
+**Closure 2026-08-21 (pr:#511)**：沿用 [[CC-557]] 已驗證的做法，`_gate_scope_reference_index_collect`
 逐筆 `jq -nc` 建物件改為 4 個 NUL 分隔欄位（path/snapshot/line_count/sha256）
 append，迴圈結束後由唯一一個 `jq -Rs` pass 解碼＋`unique_by(.path)`＋
 `sort_by(.path)`，輸出 shape 與排序邏輯不變。
@@ -366,7 +366,7 @@ regression（欄位順序、去重、排序若壞掉，聚合測試不保證會�
 `large-expansion-uses-file-input`、既有斷言 `reference_index.entries` 的
 `complete-and-shared-parallel` 案，與新增的 direct-decode 案）。
 
-**See**: pr:TBD
+**See**: pr:#511
 
 ---
 
@@ -1587,7 +1587,7 @@ authorization。
 
 **Cross-link**: [[CC-512]]、[[CC-513]]、`docs/test-runner-contract.md`。
 
-**Closure 2026-08-21 (pr:TBD)**: [[CC-517]] 已於本日收斂，Phase B 解封。
+**Closure 2026-08-21 (pr:#507)**: [[CC-517]] 已於本日收斂，Phase B 解封。
 `/pre-impl` 查證確認 final-tree／primary-closure route matrix 已由 PR #501 的
 四列覆蓋交付（`case_publish_assessment_route_follows_reviewed_subject`）；真正
 未完成的是「producer/consumer dogfood」——`tests/shell/test-pmctl-ship.sh` 裡
@@ -1608,7 +1608,7 @@ verify）與 `case_publish_assessment_rejects_closure_mutated_after_real_publish
 closure 的漏項；若未來有證據顯示這一軸也需要同等的 unstubbed dogfood，另開票
 處理。
 
-**See**: pr:TBD
+**See**: pr:#507
 
 ---
 
@@ -1782,7 +1782,7 @@ P1，排入 v0.11.0 delivery assurance correctness。
 
 **Cross-link**: [[CC-485]]、[[CC-511]]、[[CC-514]]。
 
-**Closure 2026-08-21 (pr:TBD)**: 補上 2026-08-20 稽核筆記標記的殘留缺口。
+**Closure 2026-08-21 (pr:#506)**: 補上 2026-08-20 稽核筆記標記的殘留缺口。
 `gate_remediation_closure_verify`（`runtime/lib/gate-closure.sh:420-524`）原本
 只有一個 mutation test（`disposition="tracked"`）覆蓋，不足以證明約 15 條件
 `and`-chain 裡每一條都真的有作用。把
@@ -1799,7 +1799,7 @@ mutation 全部針對現有 `gate-closure.sh` 跑出預期方向，未發現任�
 **未變更任何 production code**——Requirement 1–6 原本就已正確落實，這次只是
 把缺的證據補齊。
 
-**See**: pr:TBD
+**See**: pr:#506
 
 ---
 
@@ -1944,7 +1944,7 @@ inheritance 依賴 [[CC-515]]；maintainer consumer 接線由 [[CC-517]] 使用�
 
 **Cross-link**: [[CC-512]]、[[CC-513]]、[[CC-514]]、[[CC-515]]、[[CC-517]]。
 
-**Closure 2026-08-21 (pr:TBD)**: 查證現況後確認 Requirement 1–7 已全數滿足。
+**Closure 2026-08-21 (pr:#505)**: 查證現況後確認 Requirement 1–7 已全數滿足。
 Requirement 6/7 票面標記為「仍留在後續 slice」的 stale／legacy initial-result
 consumer parity 與 publish/closure consumption，實際已由 [[CC-517]] PR #483／#484
 （2026-08-15）交付：`runtime/lib/gate-closure.sh` 對 targeted closure 強制要求
@@ -1960,7 +1960,7 @@ Requirement 4/7 CLI 層剩餘的 fail-closed fixture 缺口（`--pass initial` �
 coverage 不一致、重複 reviewer、空／畸形 reviewer list），未變更任何 production
 code。
 
-**See**: pr:TBD
+**See**: pr:#505
 
 ---
 
