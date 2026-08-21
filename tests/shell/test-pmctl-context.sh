@@ -4412,6 +4412,90 @@ case_context_pack_max_bytes_enforces_byte_cap() {
   pass "$name"
 }
 
+# Behavior (CC-505 Req 5 follow-up, qa-tester-F001): the byte-budget
+# comparison is `>`, not `>=` -- a pack that fits EXACTLY at --max-bytes
+# must be accepted as-is (kept==1), and a cap one byte below that exact
+# size must legitimately drop to 0 items (not silently over- or
+# under-truncate at the boundary).
+case_context_pack_max_bytes_exact_boundary_accepted() {
+  local name="pmctl context pack: --max-bytes at the exact one-item pack size keeps that item"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-pack-budget-exact-boundary"
+  make_fixture_repo "$fix_repo"
+  local err="$tmp_root/pack-exact-boundary-jq.err" status=0
+  "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-exact-boundary.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-exact-boundary.err")"; return 0; }
+
+  # The `truncation.budget.max_bytes` field itself renders the requested
+  # cap, so its digit width feeds back into the pack's own byte size --
+  # probing with one --max-bytes value and then asserting an EXACT byte
+  # match at a DIFFERENT --max-bytes value is not self-consistent (a
+  # 200000-vs-623 digit-width difference alone moves the output by a few
+  # bytes with no truncation involved). Converge on a self-consistent
+  # fixed point instead: request a pack capped at guess bytes, see how many
+  # bytes it actually took, and re-probe with that value until they agree.
+  local one_item_out one_item_bytes one_item_err one_item_status=0 guess=999999 i
+  one_item_out="$tmp_root/pack-exact-boundary-one-item.out"
+  one_item_err="$tmp_root/pack-exact-boundary-one-item.err"
+  for ((i = 0; i < 5; i++)); do
+    one_item_status=0
+    "$PMCTL" context pack "$fix_repo" --task-id TASK-1 --query alpha --max-items 1 --max-bytes "$guess" \
+      > "$one_item_out" 2> "$one_item_err" || one_item_status=$?
+    if [[ "$one_item_status" -ne 0 ]]; then
+      fail "$name" "setup: baseline --max-items 1 --max-bytes $guess pack exited $one_item_status: $(<"$one_item_err")"; return 0
+    fi
+    one_item_bytes="$(wc -c < "$one_item_out" | tr -d ' ')"
+    [[ "$one_item_bytes" == "$guess" ]] && break
+    guess="$one_item_bytes"
+  done
+  if [[ "$one_item_bytes" != "$guess" ]]; then
+    fail "$name" "setup: --max-bytes probe did not converge to a fixed point (last: $one_item_bytes vs $guess)"
+    return 0
+  fi
+
+  local exact_out exact_err exact_status=0
+  exact_out="$tmp_root/pack-exact-boundary-exact.out"; exact_err="$tmp_root/pack-exact-boundary-exact.err"
+  "$PMCTL" context pack "$fix_repo" --task-id TASK-1 --query alpha --max-items 1 --max-bytes "$one_item_bytes" \
+    > "$exact_out" 2> "$exact_err" || exact_status=$?
+  if [[ "$exact_status" -ne 0 ]]; then
+    fail "$name" "pack exited $exact_status at the exact byte boundary: $(<"$exact_err")"; return 0
+  fi
+  local exact_bytes
+  exact_bytes="$(wc -c < "$exact_out" | tr -d ' ')"
+  if [[ "$exact_bytes" -ne "$one_item_bytes" ]]; then
+    fail "$name" "expected exact-boundary output to be unchanged ($one_item_bytes bytes), got $exact_bytes"
+    return 0
+  fi
+  # reason is "item_budget" (not "byte_budget") here: --max-items 1 is what
+  # constrains this pack to a single item in the first place; the point of
+  # this assertion is that the BYTE cap, sized to fit exactly, does not
+  # ALSO drop that one surviving item.
+  if ! jq -e '.truncation.kept == 1 and .truncation.reason == "item_budget"' "$exact_out" > /dev/null 2>"$err"; then
+    fail "$name" "expected the item to survive exactly at the boundary, not be dropped: $(<"$exact_out")"
+    return 0
+  fi
+
+  local below_out below_err below_status=0
+  below_out="$tmp_root/pack-exact-boundary-below.out"; below_err="$tmp_root/pack-exact-boundary-below.err"
+  "$PMCTL" context pack "$fix_repo" --task-id TASK-1 --query alpha --max-items 1 --max-bytes "$((one_item_bytes - 1))" \
+    > "$below_out" 2> "$below_err" || below_status=$?
+  if [[ "$below_status" -ne 0 ]]; then
+    fail "$name" "pack exited $below_status one byte below the boundary: $(<"$below_err")"; return 0
+  fi
+  local below_bytes
+  below_bytes="$(wc -c < "$below_out" | tr -d ' ')"
+  if (( below_bytes > one_item_bytes - 1 )); then
+    fail "$name" "one-byte-below cap ($((one_item_bytes - 1))) was not honored: got $below_bytes bytes"
+    return 0
+  fi
+  if ! jq -e '.truncation.kept == 0 and .truncation.reason == "byte_budget"' "$below_out" > /dev/null 2>"$err"; then
+    fail "$name" "expected the single item to be dropped one byte below its exact size: $(<"$below_out")"
+    return 0
+  fi
+  pass "$name"
+}
+
 case_context_pack_impossible_byte_cap_rejected() {
   local name="pmctl context pack: --max-bytes below the empty envelope floor fails closed"
   should_run "$name" || return 0
@@ -4572,6 +4656,85 @@ case_context_pack_empty_index_discloses_untruncated_budget() {
   if ! jq -e '.truncation.applied == false and .truncation.total_before == 0 and .truncation.kept == 0' \
       "$out" > /dev/null 2>"$err"; then
     fail "$name" "expected an untruncated empty-index disclosure: $(<"$err") output: $(<"$out")"
+    return 0
+  fi
+  pass "$name"
+}
+
+# Behavior (CC-505 Req 5 follow-up, risk-reviewer-F001): every --query term
+# accumulates its own raw hits BEFORE the final item/byte budget is ever
+# applied, so the term count itself must be bounded -- fail closed above
+# PM_DISPATCH_CONTEXT_PACK_MAX_TERMS rather than let an extreme invocation
+# do unbounded intermediate work regardless of how small the eventual
+# output is capped.
+case_context_pack_max_terms_rejects_excess() {
+  local name="pmctl context pack: too many --query terms is rejected before any accumulation"
+  should_run "$name" || return 0
+  local fix_repo="$tmp_root/fix-repo-pack-max-terms"
+  make_fixture_repo "$fix_repo"
+  local out err status=0
+  out="$tmp_root/pack-max-terms.out"; err="$tmp_root/pack-max-terms.err"
+  local -a args=("$fix_repo" --task-id TASK-1)
+  local i
+  for ((i = 0; i < 3; i++)); do
+    args+=(--query "term-$i")
+  done
+  PM_DISPATCH_CONTEXT_PACK_MAX_TERMS=2 \
+    "$PMCTL" context pack "${args[@]}" \
+    > "$out" 2> "$err" || status=$?
+  if assert_exit "$name" "$status" 2; then
+    if [[ -s "$out" ]]; then
+      fail "$name" "expected no pack output when the term cap is exceeded: $(<"$out")"
+      return 0
+    fi
+    pass "$name"
+  fi
+}
+
+# Behavior (CC-505 Req 5 follow-up, architecture-reviewer-F001): sources[]
+# must reflect what actually survived truncation, not the pre-truncation
+# set -- a cap that drops every memory item must also drop the
+# memory-index provenance entry, otherwise a caller sees an attributed
+# producer with zero surviving items.
+case_context_pack_truncation_reconciles_sources_provenance() {
+  local name="pmctl context pack: truncation drops memory-index provenance when no memory item survives"
+  should_run "$name" || return 0
+
+  local repo="$tmp_root/pack-sources-repo" cfg="$tmp_root/pack-sources-cfg"
+  make_fixture_repo "$repo"
+  local mdir; mdir="$cfg/projects/$(mem_encode_path "$repo")/memory"
+  mkdir -p "$mdir"
+  cat > "$mdir/MEMORY.md" <<'MD'
+# Memory Index
+- [sources provenance card](feedback_sources_provenance.md) — sources provenance fixture
+MD
+  cat > "$mdir/feedback_sources_provenance.md" <<'MD'
+---
+name: sources-provenance-card
+---
+alpha appears once in this low-priority memory card.
+MD
+
+  local err status=0 out
+  "$PMCTL" context index "$repo" > /dev/null 2> "$tmp_root/index-sources.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-sources.err")"; return 0; }
+
+  out="$tmp_root/pack-sources.out"; err="$tmp_root/pack-sources.err"
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" context pack "$repo" --task-id TASK-1 --query alpha \
+    --source all --max-items 1 \
+    > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "pack exited $status: $(<"$err")"; return 0
+  fi
+  # The repo-domain exact-symbol hit for alpha outranks the plain-prose
+  # memory mention, so --max-items 1 keeps the repo item and drops the
+  # memory item entirely.
+  if ! jq -e '(.memories | length) == 0' "$out" > /dev/null 2>"$err"; then
+    fail "$name" "expected the single surviving item to be the repo hit, not the memory hit: $(<"$out")"
+    return 0
+  fi
+  if ! jq -e '(.sources | map(.name) | index("memory-index")) == null' "$out" > /dev/null 2>"$err"; then
+    fail "$name" "expected sources[] to drop memory-index once no memory item survives: $(<"$out")"
     return 0
   fi
   pass "$name"
@@ -5042,12 +5205,15 @@ case_context_pack_ranking_fields_are_valid
 case_context_pack_default_budget_does_not_truncate
 case_context_pack_max_items_enforces_global_cap
 case_context_pack_max_bytes_enforces_byte_cap
+case_context_pack_max_bytes_exact_boundary_accepted
 case_context_pack_impossible_byte_cap_rejected
 case_context_pack_no_index_impossible_byte_cap_rejected
 case_context_pack_invalid_max_items_rejected
 case_context_pack_invalid_max_bytes_rejected
 case_context_pack_max_items_overflow_boundary_rejected
 case_context_pack_max_bytes_overflow_boundary_rejected
+case_context_pack_max_terms_rejects_excess
+case_context_pack_truncation_reconciles_sources_provenance
 case_context_pack_env_max_items_valid_override_applies
 case_context_pack_env_max_bytes_valid_override_applies
 case_context_pack_env_max_items_invalid_rejected

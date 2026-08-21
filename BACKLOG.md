@@ -2428,6 +2428,30 @@ trust-weighting query）沒有顯式檢查 exit status，命令失敗會被當�
 的 impossible-cap fail-closed 案、CLI／環境變數各兩案的 overflow-boundary
 拒絕案。`tests/shell/test-pmctl-context.sh` 154 案全過。
 
+**pr-gate 第三輪（targeted，同 5 reviewer）NO-GO（1 block + 3 advise，收斂中）**：
+qa-tester 指出缺一個「恰好貼齊 `--max-bytes` 上限」與「上限少一 byte」的邊界測試——
+byte 比較是 `>` 不是 `>=`，需要測試鎖住這個等式邊界本身，而非只驗證「有沒有超
+過」。critic 指出新增的兩個環境變數（`PM_DISPATCH_CONTEXT_PACK_MAX_ITEMS`／
+`_MAX_BYTES`）沒有登記進 `docs/architecture/script-variable-consumers.tsv`／
+`script-variable-inventory.tsv`（既有的 ratchet 清單）。architecture-reviewer
+指出 `sources[]` 在 truncation 把所有 memory 項目都丟掉後，仍會殘留
+`memory-index` 這個 provenance 項目，變成「宣稱有 producer 但沒有任何存活項目
+歸屬於它」。risk-reviewer 指出所有 `--query` term 在最終 budget 套用之前就已經
+各自累積 hits，沒有對 term 數量本身設界，極端呼叫（大量 `--query`）會在輸出
+再小也逃不掉的前提下先耗盡中間工作量。
+
+修正：新增 `PM_DISPATCH_CONTEXT_PACK_MAX_TERMS`（預設 50）在任何累積開始前
+fail-closed 拒絕過多 term；`_ctx_pack_with_truncation` 內 `sources[]` 改為依
+truncation 後實際存活的 `.memories` 長度重新過濾（過程中抓到一個 jq context bug：
+`map(select(...))` 內 `.` 是陣列元素本身而非 pack root，第一版寫法讓
+`.memories` 一律解析成 null，反而無條件丟棄 memory-index——用 `as $mem_kept`
+在 map 之前綁定 root 值才修正）；兩個既有環境變數與新增的 `_MAX_TERMS` 都登記進
+兩份 inventory tsv。新增 4 案：恰好貼齊 byte 上限與少一 byte 各一案（沿用
+fixed-point 收斂手法定位「輸出剛好等於某個 cap 值」，避免任意挑一個 cap 導致
+`truncation.budget.max_bytes` 本身的位數寬度反過來污染大小比較）、term 數量
+上限拒絕案、`sources[]` 對齊存活 memory 項目案。`tests/shell/test-pmctl-context.sh`
+157 案全過。
+
 **Phase 1（Req 1-7）至此全數
 交付。Phase 2（Req 8-10，agent 契約 + shadow telemetry）仍未開始，票維持
 active。**（agent 契約 + shadow 儀器化；小 PR，跟在 Phase 1 後）**:

@@ -198,6 +198,26 @@ Versions follow [Semantic Versioning](https://semver.org/).
   defaults). qa-tester flagged several new test commands that didn't check
   their own exit status before consuming output; all now do.
 
+- **`pmctl context pack` bounds `--query` term count, reconciles `sources[]`
+  after truncation, and locks the exact byte-boundary case (CC-505 Phase 1,
+  Req 5 third follow-up).** A third pr-gate round (qa-tester, critic,
+  architecture-reviewer, risk-reviewer) converged on: (1) no test locked
+  the exact-fit/one-byte-below boundary of the `>`-not-`>=` byte
+  comparison — added, using a fixed-point convergence probe since the
+  `truncation.budget.max_bytes` field's own digit width feeds back into
+  the pack's byte size; (2) the two new env vars weren't registered in
+  `docs/architecture/script-variable-consumers.tsv`/
+  `script-variable-inventory.tsv` — added; (3) `sources[]` could still list
+  `memory-index` after truncation dropped every surviving memory item —
+  fixed by reconciling `sources[]` against the post-truncation `.memories`
+  array (a first attempt filtered inside `map(select(...))`, where `.` is
+  each array element rather than the pack root, silently zeroing the
+  count and always dropping the entry — fixed by binding the root count
+  before the map); (4) every `--query` term accumulates its own raw hits
+  before the final budget is ever applied, so an unbounded term count
+  means unbounded intermediate work regardless of output size — added
+  `PM_DISPATCH_CONTEXT_PACK_MAX_TERMS` (default 50), fail-closed above it.
+
 ### Fixed
 
 - **`ship finish`'s closure producer and its consumer are now proven to

@@ -1457,7 +1457,19 @@ _ctx_pack_with_truncation() {
     --argjson applied "$applied" --arg reason "$reason" \
     --argjson max_items "$max_items" --argjson max_bytes "$max_bytes" \
     --argjson total "$total" --argjson kept "$kept" --argjson dropped "$((total - kept))" \
-    '. + {truncation:{applied:$applied,reason:$reason,budget:{max_items:$max_items,max_bytes:$max_bytes},total_before:$total,kept:$kept,dropped:$dropped}}' \
+    '
+    # sources[] must reflect what actually survived truncation, not what
+    # the pre-truncation set contained -- a cap that drops every memory
+    # item must also drop the memory-index provenance entry
+    # (architecture-reviewer-F001), otherwise sources[] over-claims a
+    # producer no surviving item attributes to. Bind the root memories
+    # count BEFORE mapping over sources[] -- inside map/select, "." is
+    # each source element, not the pack root, so ".memories" there would
+    # silently resolve to null/0 and drop memory-index unconditionally.
+    (.memories | length) as $mem_kept
+    | .sources = (.sources | map(select(.name != "memory-index" or $mem_kept > 0)))
+    | . + {truncation:{applied:$applied,reason:$reason,budget:{max_items:$max_items,max_bytes:$max_bytes},total_before:$total,kept:$kept,dropped:$dropped}}
+    ' \
     <<<"$bounded"
 }
 
@@ -1902,6 +1914,21 @@ pmctl_context_pack() {
   fi
   if [[ ${#terms[@]} -eq 0 ]]; then
     printf 'pmctl context pack: at least one --query is required\n' >&2
+    return 2
+  fi
+  # Every --query term accumulates its own raw hits BEFORE the final
+  # item/byte budget is ever applied (risk-reviewer-F001: unbounded terms
+  # means unbounded intermediate work regardless of how small the eventual
+  # output is capped). Cap the term count itself, fail-closed above it,
+  # mirroring the existing PM_DISPATCH_PROMPT_SCAN_MAX_TERMS precedent.
+  local max_terms="${PM_DISPATCH_CONTEXT_PACK_MAX_TERMS:-50}"
+  if [[ ! "$max_terms" =~ ^[1-9][0-9]{0,4}$ ]]; then
+    printf 'pmctl context pack: PM_DISPATCH_CONTEXT_PACK_MAX_TERMS must be a positive integer (got: %s)\n' "$max_terms" >&2
+    return 2
+  fi
+  if [[ ${#terms[@]} -gt "$max_terms" ]]; then
+    printf 'pmctl context pack: too many --query terms (%d), max is %d (PM_DISPATCH_CONTEXT_PACK_MAX_TERMS)\n' \
+      "${#terms[@]}" "$max_terms" >&2
     return 2
   fi
   case "$source" in
