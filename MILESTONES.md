@@ -70,7 +70,7 @@ Gate correctness 與 release evidence 仍必須先在 v0.11.0 關閉。
 
 | P0 work item | Required outcome | 狀態 |
 |----|------|------|
-| CC-532 scope reconciliation | Linux/WSL2 repo-layout canonical modules 視為本票 scope；standalone distribution／copy parity 移至 CC-546 | ⚠️ partial（2026-08-20 查證：`pr-gate.sh` 6,500→4,247 行，policy／subject／scope／assurance 已成模組，但 options 與 reviewer-contract 仍是空殼——33 個 option 分支留在 composition root，`gate-options.sh` 僅 2 個 setter。Requirement 1 尚未達成，不是 closure pending） |
+| CC-532 scope reconciliation | Linux/WSL2 repo-layout canonical modules 視為本票 scope；standalone distribution／copy parity 移至 CC-546 | ✅ 2026-08-22（Slice 2b：options parse 與 reviewer-override loader 遷出 composition root；Req 1 達成。standalone 仍在 CC-546） |
 | CC-533 foundation boundary | PR #480 保留為 schema-derived foundation；handwritten structural cleanup 與 version split 維持 partial，不擴大成 Gate workflow 重構 | ⚠️ partial（票面殘留工作明訂待 CC-517／CC-511 Phase B 穩定後才動，狀態正確） |
 | Planning records | BACKLOG、MILESTONES、DECISIONS 使用同一份 scope/status | ✅ 2026-08-20（pr:#500 對齊 CC-511／CC-517／CC-527／CC-529 的實際交付。此類漂移**目前無機械偵測**：缺的資訊在 git side（PR 已 merge 而票未更新），文件內部一致性檢查涵蓋不到——見同日 DECISIONS） |
 | Current-tree full suite | 由 [[CC-511]] Phase A 吸收為 publish 前的常設不變式 | ✅ 2026-08-20（見同日 DECISIONS：這是每次 merge 就失效的不變式，不是可標記完成的工作項；publish path 已強制 current-tree authoritative PASS） |
@@ -212,7 +212,7 @@ P1 的每張實作 PR 都應綁定 deterministic contract tests；任何 reviewe
 | 票 | 摘要 | 狀態 |
 |----|------|------|
 | CC-525 | 修正 verifier fallback provenance 並鎖定唯一 generator；generator identity、marker、provenance 與 body parity 已有 fail-closed ratchet | ✅ closed 2026-08-13 |
-| CC-532 | Linux/WSL2 repo-layout canonical Gate modules；P0 current-tree evidence 後 closure，standalone distribution 移至 CC-546 | ⚠️ partial |
+| CC-532 | Linux/WSL2 repo-layout canonical Gate modules；options／reviewer-contract 已有單一 owner；standalone distribution 在 CC-546 | ✅ 2026-08-22 |
 | CC-533 | PR #480 schema-derived structural validation foundation；handwritten structural cleanup 與 version dispatch separation 待 delivery schema 穩定後收尾 | ⚠️ partial |
 
 ### 計畫外同期 correctness hardening（已合併 main）

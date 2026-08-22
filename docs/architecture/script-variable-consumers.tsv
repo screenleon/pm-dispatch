@@ -95,6 +95,7 @@ DRY_RUN	DRY_RUN	ops/setup/setup-project.sh	production
 DRY_RUN	DRY_RUN	runtime/lib/portable.sh	production
 DRY_RUN	DRY_RUN	uninstall.sh	production
 GATE_RUN_DIR_OVERRIDE	GATE_RUN_DIR_OVERRIDE	runtime/bin/pr-gate.sh	production
+GATE_RUN_DIR_OVERRIDE	GATE_RUN_DIR_OVERRIDE	runtime/lib/gate-options.sh	production
 GROK_API_KEY	GROK_API_KEY	hosts/grok/lib/doctor.sh	production
 GROK_API_KEY	GROK_API_KEY	runtime/bin/doctor.sh	production
 GROK_DISPATCH_TIMEOUT	GROK_DISPATCH_TIMEOUT	adapters/grok/dispatch.sh	production
@@ -141,6 +142,7 @@ OPENCODE_DISPATCH_TIMEOUT	OPENCODE_DISPATCH_TIMEOUT	adapters/opencode/dispatch.s
 OSTYPE	OSTYPE	runtime/bin/doctor.sh	production
 OSTYPE	OSTYPE	runtime/lib/portable.sh	production
 OUTPUT_OVERRIDE	OUTPUT_OVERRIDE	runtime/bin/pr-gate.sh	production
+OUTPUT_OVERRIDE	OUTPUT_OVERRIDE	runtime/lib/gate-options.sh	production
 PATH	PATH	cli/pmctl	production
 PATH	PATH	hosts/claude/bin/install-guards.sh	production
 PATH	PATH	hosts/claude/bin/uninstall-guards.sh	production
@@ -398,6 +400,7 @@ TMPDIR	TMPDIR	runtime/bin/pr-gate.sh	production
 TMPDIR	TMPDIR	runtime/lib/gate-closure.sh	production
 TMPDIR	TMPDIR	runtime/lib/gate-policy.sh	production
 TMPDIR	TMPDIR	runtime/lib/gate-result-verify.sh	production
+TMPDIR	TMPDIR	runtime/lib/gate-reviewer-contract.sh	production
 TMPDIR	TMPDIR	runtime/lib/gate-scope.sh	production
 TMPDIR	TMPDIR	runtime/lib/gate-structural-verify.sh	production
 TMPDIR	TMPDIR	runtime/lib/gate-subject.sh	production
