@@ -2507,6 +2507,36 @@ risk-reviewer 指出同一個根因（RCG-002）：`serialize_with_lock` 逾時�
 
 `tests/shell/test-pmctl-artifacts.sh` 35 案全過（33 案＋本輪 2 案）。
 
+**pr-gate 第四輪（full tier，parallel，5 reviewer）NO-GO（1 block + 1
+block，architecture-reviewer advisory，risk-reviewer／security-reviewer
+approve）**：critic 指出 `_pmctl_artifacts_run_summary_lookup` 只檢查
+`run_id` 相符與 `summarized_at` 非 null，沒有比照 append 時的同一套結構性
+契約重新驗證——若有一筆不是經本票驗證流程寫入的既存紀錄（人工編輯、舊
+schema、意外損毀）恰好符合這兩個條件，仍會被信任為「已驗證」並據此讓
+grace 期滿後直接刪除，等於繞過整張票要建立的耐久性保證。qa-tester 指出
+鎖逾時測試用固定 `sleep 0.3` 讓 lock holder 有機會先搶到鎖，屬非決定性
+時序假設，且從未斷言 lock holder 子行程自己的 exit code。
+
+修正：
+1. `_pmctl_artifacts_run_summary_lookup` 的 jq 查詢加上與
+   `_pmctl_artifacts_run_summary_append_verified` 相同的結構檢查
+   （`kind`／`status` 非 null，且 `status=="complete" and kind=="gate"` 時
+   `gate.final` 非 null）；不符合的既存紀錄視為「尚未有效摘要」，強制
+   重新走一次 summarize＋append＋verify，而非直接信任。
+2. 鎖逾時測試改為：lock holder 在 `flock -x` 真正取得鎖之後才寫入一個
+   marker 檔，測試端改成有界輪詢（最多 5 秒）等 marker 出現，取代固定
+   `sleep`；並個別 `wait` lock holder 子行程、斷言其 exit code 為 0。
+3. 新增一案：既存摘要缺 `status` 欄位（模擬損毀／異質寫入）即使
+   `summarized_at` 已遠超 grace 天數，仍不得被信任為已驗證，run 目錄本輪
+   不刪除，改為寫入一筆新的、結構完整的摘要。
+
+architecture-reviewer 另提一則 advisory（非本輪必修）：`gc` 直接呼叫
+`gate-result-verify.sh` 的 `_gate_result_frontmatter_value`（模組間耦合到
+一個非公開匯出的 helper），建議未來若有第二個消費端再抽成正式共用邊界；
+本票僅一個消費端，暫不動架構。
+
+`tests/shell/test-pmctl-artifacts.sh` 36 案全過（35 案＋本輪 1 案）。
+
 **See**: pr:TBD
 
 ---

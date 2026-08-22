@@ -645,31 +645,49 @@ case_gc_lock_timeout_reports_failure_and_retains_run() {
   printf 'a\n' > "$rd_old/a.footer"
   touch -t "$(date -d '40 days ago' +%Y%m%d%H%M 2>/dev/null || date -v-40d +%Y%m%d%H%M)" "$rd_old" 2>/dev/null || true
 
-  local runs_dir summary_file
+  local runs_dir summary_file holder_acquired
   runs_dir="$(dirname "$rd_old")"
   summary_file="$(dirname "$runs_dir")/runs-summary.jsonl"
   mkdir -p "$(dirname "$summary_file")"
+  holder_acquired="$tmp_root/gc-lock-timeout.acquired"
+  rm -f "$holder_acquired"
 
   # Hold the exact lockfile serialize_with_lock will try to acquire
   # (<runs-summary.jsonl>.lock), from an independent process, well past the
-  # short timeout gc is given below.
+  # short timeout gc is given below. The holder writes a marker file only
+  # after flock actually grants the lock, so the poll loop below waits on a
+  # real signal instead of a fixed sleep guessing how long acquisition takes
+  # -- a plain `sleep N` before launching gc would be nondeterministic under
+  # load (qa-tester's finding).
   (
     exec 9>"${summary_file}.lock"
     flock -x 9
+    : > "$holder_acquired"
     sleep 5
   ) &
   local holder_pid=$!
-  sleep 0.3
+  local waited=0
+  while [[ ! -e "$holder_acquired" ]]; do
+    sleep 0.05
+    waited=$((waited + 1))
+    if [[ "$waited" -ge 100 ]]; then
+      fail "$name" "lock holder never signaled acquisition within 5s"
+      wait "$holder_pid" 2>/dev/null || true
+      return
+    fi
+  done
 
   out="$tmp_root/gc-lock-timeout.out"; err="$tmp_root/gc-lock-timeout.err"
   PM_DISPATCH_STATE_ROOT="$store" PM_DISPATCH_LOCK_TIMEOUT_SECS=1 "$PMCTL" artifacts gc \
     --keep-last 1 --grace-days 0 --cd "$work" > "$out" 2> "$err" || status=$?
-  wait "$holder_pid" 2>/dev/null || true
+  local holder_status=0
+  wait "$holder_pid" || holder_status=$?
 
-  if [[ "$status" -ne 0 && -d "$rd_old" ]] && grep -q 'lock acquisition' "$err" && grep -q 'run-locked' "$err"; then
+  if [[ "$status" -ne 0 && "$holder_status" -eq 0 && -d "$rd_old" ]] \
+      && grep -q 'lock acquisition' "$err" && grep -q 'run-locked' "$err"; then
     pass "$name"
   else
-    fail "$name" "status=$status rd_old_exists=$(test -d "$rd_old" && echo y||echo n) out=$(<"$out") err=$(<"$err")"
+    fail "$name" "status=$status holder_status=$holder_status rd_old_exists=$(test -d "$rd_old" && echo y||echo n) out=$(<"$out") err=$(<"$err")"
   fi
 }
 
@@ -759,6 +777,61 @@ case_gc_deletes_once_grace_elapses() {
     pass "$name"
   else
     fail "$name" "status=$status rd_old_exists=$(test -d "$rd_old" && echo y||echo n) summary_line_count=$summary_line_count out=$(<"$out") err=$(<"$err")"
+  fi
+}
+
+case_gc_incomplete_preexisting_summary_forces_resummarize() {
+  # behavior (CC-540, critic-F001): a pre-existing summary line that matches
+  # the run_id and has a non-null summarized_at, but fails the same
+  # structural contract append-verification enforces, must not be trusted as
+  # proof of durability -- lookup must reject it and force a fresh
+  # summarize-and-verify, even though its (old) timestamp alone would
+  # otherwise already be past the grace period
+  # Steps: pre-seed a summary line for the run with an old summarized_at but
+  #        missing the required "status" field (simulating corruption, a
+  #        foreign write, or an older/incompatible schema); gc; assert the
+  #        run is NOT deleted this round (a fresh valid summary was just
+  #        written instead, whose own grace period has not elapsed) and a
+  #        second, structurally valid line now exists for the same run_id
+  local name="pmctl artifacts gc: an incomplete pre-existing summary does not satisfy lookup"
+  should_run "$name" || return 0
+  local store work out err status=0
+  store="$tmp_root/state-gc-incomplete-preexisting"
+  work="$tmp_root/work-gc-incomplete-preexisting"
+  make_work_repo "$work"
+
+  local rd_keep rd_old
+  rd_keep="$(run_dir_for "$store" "$work" run-keep)"
+  rd_old="$(run_dir_for "$store" "$work" run-old)"
+  mkdir -p "$rd_keep" "$rd_old"
+  printf 'k\n' > "$rd_keep/k.footer"
+  printf 'a\n' > "$rd_old/a.footer"
+  touch -t "$(date -d '40 days ago' +%Y%m%d%H%M 2>/dev/null || date -v-40d +%Y%m%d%H%M)" "$rd_old" 2>/dev/null || true
+
+  local runs_dir summary_file old_epoch
+  runs_dir="$(dirname "$rd_old")"
+  summary_file="$(dirname "$runs_dir")/runs-summary.jsonl"
+  old_epoch=$(( $(date +%s) - 10 * 86400 ))
+  # Deliberately missing "status" -- would satisfy the old (pre-fix) lookup
+  # (run_id matches, summarized_at is non-null) but must fail the
+  # structural-contract check now applied at lookup time too.
+  jq -nc --argjson t "$old_epoch" '{run_id:"run-old", summarized_at:$t, kind:"dispatch"}' \
+    > "$summary_file"
+
+  out="$tmp_root/gc-incomplete-preexisting.out"; err="$tmp_root/gc-incomplete-preexisting.err"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" artifacts gc \
+    --keep-last 1 --grace-days 3 --cd "$work" > "$out" 2> "$err" || status=$?
+
+  local valid_line_count
+  valid_line_count="$(jq -c --arg run_id run-old '
+      select(.run_id == $run_id and .status != null)
+    ' "$summary_file" 2>/dev/null | wc -l | tr -d ' ')"
+  : "${valid_line_count:=0}"
+
+  if [[ "$status" -eq 0 && -d "$rd_old" && "$valid_line_count" -eq 1 && ! -s "$err" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status rd_old_exists=$(test -d "$rd_old" && echo y||echo n) valid_line_count=$valid_line_count summary=$(<"$summary_file") out=$(<"$out") err=$(<"$err")"
   fi
 }
 
@@ -1210,6 +1283,7 @@ case_gc_append_failure_retains_run_no_false_success
 case_gc_lock_timeout_reports_failure_and_retains_run
 case_gc_summarizes_before_grace_defers_deletion
 case_gc_deletes_once_grace_elapses
+case_gc_incomplete_preexisting_summary_forces_resummarize
 case_gc_incomplete_source_not_treated_as_failure
 case_gc_missing_tier_not_treated_as_failure
 case_gc_duration_uses_real_mtimes_not_run_id

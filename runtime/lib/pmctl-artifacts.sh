@@ -416,8 +416,22 @@ _pmctl_artifacts_run_summarize_json() {
 _pmctl_artifacts_run_summary_lookup() {
   local summary_file="${1:-}" run_id="${2:-}"
   [[ -f "$summary_file" ]] || return 0
+  # Apply the same structural contract _pmctl_artifacts_run_summary_append_verified
+  # enforces at write time, again here at read time. Append-verification only
+  # guards records THIS code path wrote; it says nothing about a line that
+  # reached the file some other way (a manual edit, a future/older schema
+  # version, on-disk corruption). Trusting "a matching run_id with a non-null
+  # summarized_at exists" without re-checking that record's own validity
+  # would let deletion proceed on a record that never actually met the
+  # durability bar -- critic's finding. A record failing this check is
+  # treated as "not yet validly summarized," forcing a fresh
+  # summarize-and-verify for that run rather than trusting it.
   jq -r --arg run_id "$run_id" '
-    select(.run_id == $run_id and .summarized_at != null) | .summarized_at
+    select(.run_id == $run_id and .summarized_at != null and
+      .kind != null and .status != null and
+      (if .status == "complete" and .kind == "gate"
+       then .gate.final != null
+       else true end)) | .summarized_at
   ' "$summary_file" 2>/dev/null | tail -n 1
 }
 
