@@ -33,7 +33,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-537 | 🟢 someday | suite metadata 與 changed-path impact mapping 資料化；full suite 維持 authoritative | ops/test | 2026-07-30 | feedback:2026-07-30 | P2 | hygiene |
 | CC-538 | 🟢 someday | Host resolver／doctor 共用 primitives，Host policy 繼續由各 Host 擁有 | arch/ops | 2026-07-30 | feedback:2026-07-30 | P2 | reuse-debt |
 | CC-539 | 🟢 someday | state `layout.yaml` build-time authority + generated runtime constants | arch/schema | 2026-07-30 | feedback:2026-07-30 | P2 | design |
-| CC-540 | 🟢 someday | `pmctl state prune`：刪除前先抽取+驗證 gate/dispatch run 摘要，避免歷史分析資料隨磁碟空間一起消失 | ops/gate | 2026-07-31 | — | P2 | hygiene |
+| CC-540 | ✅ done | `pmctl state prune`：刪除前先抽取+驗證 gate/dispatch run 摘要，避免歷史分析資料隨磁碟空間一起消失 | ops/gate | 2026-07-31 | pr:#515 | P2 | hygiene |
 | CC-546 | ⏸ deferred | standalone Gate distribution／copy parity follow-up：獨立定義 bundle schema、generation、installed parity 與 support boundary；不回併 Linux/WSL2 canonical module extraction | arch/gate | 2026-08-14 | — | P2 | reuse-debt |
 | CC-559 | 🟢 someday | memory usage sidecar 是 tab-delimited，writer 拒收含 tab／newline 的 relpath，因此這類記憶卡**永遠無法累積使用紀錄**；`pmctl memory stats` 目前誠實地把它們列為 `unmeasurable_cards`（不謊稱 never-hit），但根因未解——需改用無損編碼。屬寫入面變更，故當初被 [[CC-467]] Requirement 3 明文排除 | ops/memory | 2026-08-19 | — | P3 | hygiene |
 | CC-562 | ✅ done | synthesis／reviewer 驗證器仍有多個「多約束共用單一 reason 字串」分支（`invalid coverage matrix`、`invalid finding inventory or union`、`duplicate finding ID collision`、`selected/not-reviewed dimensions mismatch`），單次修正重試收到後無法行動；[[CC-553]] Req 2 判定需同等精度但屬不同 helper 形狀（逐項指出違規條目，非集合差集），故分票 | ops/gate | 2026-08-19 | pr:#510 | P3 | hygiene |
@@ -2339,7 +2339,7 @@ constants，再由parity tests反向比對。文件宣稱與實際runtime author
 
 ---
 
-## CC-540 — `pmctl state prune`：刪除前摘要抽取＋驗證，避免歷史分析資料隨磁碟空間消失 🟢 someday
+## CC-540 — `pmctl state prune`：刪除前摘要抽取＋驗證，避免歷史分析資料隨磁碟空間消失 ✅ 2026-08-22
 
 **Problem**: `~/.local/share/pm-dispatch/state/projects/<hash>/runs/` 每次
 `gate run`／dispatch 都留下一個完整目錄（`.gate-results`、`.agent-trace`、
@@ -2391,6 +2391,210 @@ launch 早期死亡會留下 0-byte 空殼 gate 結果），摘要邏輯必須�
 **Source**: 2026-07-31 主線程對 615 筆 gate 執行紀錄的一次性分析（NO-GO 率
 57%、qa-tester 為最大 blocker），發現 runs/ 目錄無 retention 且分析價值
 未被保留；使用者要求 prune 時一併產出摘要。
+
+**Closure 2026-08-22**：查證後發現 `pmctl artifacts gc` 已是本票 Requirement 1 所指的
+「等效子指令」——它已對 `state/projects/<hash>/runs/` 做 keep-last／max-age-days
+retention，只是刪除前完全沒有摘要步驟。選擇擴充既有 `pmctl_artifacts_gc`
+而非另立 `pmctl state prune`，避免兩套並存的刪除機制互相打架。
+
+新增：`_pmctl_artifacts_run_summarize_json`（kind=gate/dispatch、
+status=complete/incomplete_source、以目錄內檔案實際 mtime 極差計算的 duration——
+批次一次 `stat -c %Y ... +`，不逐檔案 spawn，避免重演 CC-557/CC-560 的
+per-item subprocess 教訓；gate 分支重用既有 `_gate_result_frontmatter_value`
+解析 final/tier/most_severe，findings-by-severity 抓不到可解析的
+`reviewer_result_v1` JSON block 時明確回報 `"unavailable"` 字串而非 0，避免
+誤讀成「沒有 finding」）與
+`_pmctl_artifacts_run_summary_append_verified`（append 後讀回驗證，
+`status=complete` 的 gate 摘要只要求 `final` 非 null——tier／most_severe
+在較舊 schema 版本可能本來就沒有，強制要求會誤判誠實的舊資料為抽取失敗、
+永久卡住無法瘦身；驗證失敗即回滾剛寫入的那行並記錄到
+`prune-skipped.log`，來源 run 目錄維持不刪）。新增 `--grace-days`（預設 3，
+`PM_DISPATCH_GC_GRACE_DAYS` 可覆寫）：已摘要的 run 至少經過寬限期才會物理
+刪除；既有 `runs-summary.jsonl` 的 `summarized_at` 一次性讀入關聯陣列比對，
+不逐筆查詢。`--dry-run` 會預覽即將產出的摘要內容與寬限期倒數，不寫入摘要
+檔或刪除任何檔案。
+
+`tests/shell/test-pmctl-artifacts.sh` 新增 8 案：summarize-then-defer、
+grace-period 期滿後刪除、incomplete_source 不當作驗證失敗、tier 欄位缺失
+不當作驗證失敗、duration 取真實 mtime 而非 run id、findings-by-severity 分桶、
+findings-by-severity 在無可解析區塊時回報 unavailable、驗證失敗時回滾＋記錄。
+既有 19 案兩案（`--dry-run`／`--keep-last`）因新的預設 grace-period 行為改為
+顯式帶 `--grace-days 0`，並順手修掉其中一案既有的 `grep -c ... \|\| printf`
+慣用語 bug（no-match 時會把 grep 自己印的 "0" 與 fallback 的 "0" 併成
+"0\n0"，撞壞 `-eq` 比較，過去被舊行為的固定 2 個 match 蓋過去而沒發作）。
+
+**pr-gate 第一輪（full tier，parallel，5 reviewer）NO-GO（2 hard_block + 1
+soft_block + 1 advise）**：risk-reviewer 指出 `_pmctl_artifacts_run_summary_append_verified`
+的驗證只檢查「讀回的最後一行看起來合法」，沒檢查那行是不是**這筆 run** 自己寫的——
+若 append 本身失敗（或被併發寫入插隊），`tail -1` 可能讀到別筆早已合法寫入的紀錄，
+誤判為驗證通過而放行刪除，形成 fail-open。architecture-reviewer 獨立指出更根本的
+併發問題：`already_summarized_at` 是每次 `gc` 呼叫各自載入一次的快照，兩個併發
+`gc` process 可能都以為某 run 尚未摘要，各自 append 或各自誤判對方的合法行為
+「驗證失敗」而回滾。qa-tester 指出兩個新 operator 契約完全沒有整合測試：
+`PM_DISPATCH_GC_GRACE_DAYS` 環境變數單獨生效與「flag 優先於環境變數」的優先序，
+以及正 grace 值下 `--dry-run` 真的只預覽、不寫入不刪除。critic（advisory）指出
+`PM_DISPATCH_GC_GRACE_DAYS` 沒登記進 `docs/architecture/script-variable-consumers.tsv`。
+
+修正：
+1. 驗證改為 `jq -e --arg run_id ... '.run_id == $run_id and ...'`——讀回的那行必須
+   真的是這筆 run 自己的紀錄，不能只是「看起來合法的某一行」；同時檢查 append 本身
+   的 exit code。
+2. 新增 `_pmctl_artifacts_run_summary_prune_line`（依內容精確比對移除，取代原本
+   位置式的 `sed -i '$d'`——併發下「最後一行」不保證是自己剛寫的那行）。
+3. 把「查詢是否已摘要→摘要→append+驗證→grace 判斷→刪除」整個決策抽成
+   `_pmctl_artifacts_gc_process_run`，透過既有的 `serialize_with_lock`
+   （`runtime/lib/portable.sh`，本 repo既有的 flock／mkdir-lock 共用原語，非
+   新建鎖機制）以 `runs-summary.jsonl` 路徑為 lockbase、每個 project 序列化；
+   查詢改成鎖內即時查（新增 `_pmctl_artifacts_run_summary_lookup`），不再依賴
+   呼叫前的批次快照。犧牲了原本「一次載入全部 summarized_at」的效能優化，但
+   額外 jq 呼叫數與「符合刪除資格的 run 數」成正比（通常個位數），不是
+   CC-557/CC-560 修的「每個候選都一次」那種與**全部 run 數**成正比的形狀。
+4. `docs/architecture/script-variable-consumers.tsv` 與
+   `script-variable-inventory.tsv` 都補上 `PM_DISPATCH_GC_GRACE_DAYS` 列。
+5. 新增 5 案：`PM_DISPATCH_GC_GRACE_DAYS` 單獨生效、flag 覆蓋環境變數、
+   正 grace 值下 `--dry-run` 兩則預覽且不落地任何檔案、兩個 `gc` process
+   併發跑同一個 run 只留一筆摘要記錄且無 `prune-skipped.log`、summary 檔
+   設唯讀強制 append 失敗時該 run 仍保留且被記錄（不誤判為成功）。
+
+`tests/shell/test-pmctl-artifacts.sh` 32 案全過（原 27 案＋本輪 5 案）。
+
+**pr-gate 第二輪（full tier，parallel，5 reviewer）NO-GO（1 block + 1
+block-soft，risk-reviewer／architecture-reviewer／security-reviewer 三方
+approve）**：critic 指出 `PM_DISPATCH_GC_GRACE_DAYS` 環境變數本身沒有數值驗證——
+非數字值會直接進 `grace_seconds=$(( grace_days * 86400 ))` 算術上下文，行為
+未定義，可能悄悄瓦解寬限期這道安全窗。qa-tester 指出併發測試把兩個子行程的
+exit code 都用 `wait ... || true` 吞掉，若其中一個 process 真的失敗，測試仍可能
+巧合通過。
+
+修正：
+1. 在 `grace_seconds` 算術式前加驗證（比照既有 `--grace-days` flag 的同一條
+   regex），非數字直接 `return 2` 並印出可操作訊息；驗證點刻意放在
+   `--all-repos` 已提前 return 之後，不讓一個與該路徑無關的壞環境變數擋住
+   `--all-repos` 清理。
+2. 併發測試改成分別 `wait "$pid1"`／`wait "$pid2"` 各自取得 exit code 並
+   斷言兩者皆為 0。
+3. 新增一案：`PM_DISPATCH_GC_GRACE_DAYS` 設非數字時 exit 非 0、印出包含
+   變數名的訊息、run 目錄與 `runs-summary.jsonl` 完全不受影響。
+
+`tests/shell/test-pmctl-artifacts.sh` 33 案全過（32 案＋本輪 1 案）。
+
+**pr-gate 第三輪（full tier，parallel，5 reviewer）NO-GO（1 block，
+architecture-reviewer／risk-reviewer 為同一根因 RCG-002 各自 advise，
+critic／security-reviewer approve）**：qa-tester 指出只驗證了
+`PM_DISPATCH_GC_GRACE_DAYS` 環境變數路徑，`--grace-days` **flag** 本身帶非數字值
+從未被直接測過（雖然 flag 解析的驗證邏輯本來就存在）。architecture-reviewer 與
+risk-reviewer 指出同一個根因（RCG-002）：`serialize_with_lock` 逾時或失敗時，
+迴圈把「沒有 RESULT 輸出」與「這個 run 沒事可做」混為一談，`gc` 仍回報乾淨的
+成功摘要，讓鎖失敗的 run 悄悄跳過處理卻看起來正常結束。
+
+修正：
+1. 新增 `--grace-days not-a-number` 的直接整合測試（flag 路徑，區別於既有的
+   環境變數路徑測試）。
+2. 迴圈改為明確接住 `serialize_with_lock` 自身的 exit code；逾時或缺少
+   `RESULT` 行時印出具名診斷（哪個 run、哪個 exit code）並累計失敗數，整個
+   `gc` 呼叫結尾若有任何鎖失敗則 `return 2`，不再悄悄併入「0 個變動」的
+   成功摘要。
+3. 新增鎖逾時整合測試：外部 process 先用 `flock` 佔住
+   `runs-summary.jsonl.lock`，以短 `PM_DISPATCH_LOCK_TIMEOUT_SECS` 跑 `gc`，
+   斷言 exit 非 0、來源 run 目錄保留、stderr 具名指出是哪個 run。**這個測試
+   當場抓到我自己引入的第二個真 bug**：`outcome_line="$(... | grep ... | tail -n 1)"`
+   在鎖逾時、`$raw` 為空的情況下，`grep` 找不到匹配會回傳 exit 1；
+   `runtime/lib/pmctl-artifacts.sh` 被 `cli/pmctl` 以 `set -euo pipefail`
+   來源，`pipefail` 下這個沒接 `|| true` 的指令替換賦值本身就會直接觸發
+   errexit，讓上面第 2 點的 `return 2` 邏輯完全成為永遠執行不到的死碼——不是
+   測試邏輯的疏漏，是實作本身的疏漏，測試寫對了才抓到。修法：該賦值句尾
+   加 `|| true`。
+
+`tests/shell/test-pmctl-artifacts.sh` 35 案全過（33 案＋本輪 2 案）。
+
+**pr-gate 第四輪（full tier，parallel，5 reviewer）NO-GO（1 block + 1
+block，architecture-reviewer advisory，risk-reviewer／security-reviewer
+approve）**：critic 指出 `_pmctl_artifacts_run_summary_lookup` 只檢查
+`run_id` 相符與 `summarized_at` 非 null，沒有比照 append 時的同一套結構性
+契約重新驗證——若有一筆不是經本票驗證流程寫入的既存紀錄（人工編輯、舊
+schema、意外損毀）恰好符合這兩個條件，仍會被信任為「已驗證」並據此讓
+grace 期滿後直接刪除，等於繞過整張票要建立的耐久性保證。qa-tester 指出
+鎖逾時測試用固定 `sleep 0.3` 讓 lock holder 有機會先搶到鎖，屬非決定性
+時序假設，且從未斷言 lock holder 子行程自己的 exit code。
+
+修正：
+1. `_pmctl_artifacts_run_summary_lookup` 的 jq 查詢加上與
+   `_pmctl_artifacts_run_summary_append_verified` 相同的結構檢查
+   （`kind`／`status` 非 null，且 `status=="complete" and kind=="gate"` 時
+   `gate.final` 非 null）；不符合的既存紀錄視為「尚未有效摘要」，強制
+   重新走一次 summarize＋append＋verify，而非直接信任。
+2. 鎖逾時測試改為：lock holder 在 `flock -x` 真正取得鎖之後才寫入一個
+   marker 檔，測試端改成有界輪詢（最多 5 秒）等 marker 出現，取代固定
+   `sleep`；並個別 `wait` lock holder 子行程、斷言其 exit code 為 0。
+3. 新增一案：既存摘要缺 `status` 欄位（模擬損毀／異質寫入）即使
+   `summarized_at` 已遠超 grace 天數，仍不得被信任為已驗證，run 目錄本輪
+   不刪除，改為寫入一筆新的、結構完整的摘要。
+
+architecture-reviewer 另提一則 advisory（非本輪必修）：`gc` 直接呼叫
+`gate-result-verify.sh` 的 `_gate_result_frontmatter_value`（模組間耦合到
+一個非公開匯出的 helper），建議未來若有第二個消費端再抽成正式共用邊界；
+本票僅一個消費端，暫不動架構。
+
+`tests/shell/test-pmctl-artifacts.sh` 36 案全過（35 案＋本輪 1 案）。
+
+**pr-gate 第五輪（full tier，parallel，5 reviewer）NO-GO（1 block，
+critic／qa-tester／architecture-reviewer／security-reviewer 四方
+approve）**：risk-reviewer 指出唯一剩下的真缺口——append+讀回驗證只證明
+寫入到了 OS page cache，不是持久化儲存；在 `--grace-days 0` 下驗證通過後
+立刻 `rm -rf`，若驗證通過與實際刪除之間發生斷電／crash，可能造成「摘要
+沒真的落盤、來源 run 目錄已經沒了」的雙重遺失——正是本票從一開始要防的
+那種不可逆遺失。
+
+修正：驗證通過後、回傳「可安全刪除」之前，對 summary 檔呼叫
+`sync -- "$file"`（GNU coreutils sync 支援對單一檔案 sync，早於本票決定
+Linux/WSL2-only 核心開發期即可依賴）。`sync` 失敗視同驗證失敗——不刪除
+line（資料本身可能沒問題，只是沒法確認落盤），run 目錄本輪不刪除、記錄到
+`prune-skipped.log`；成功則放行。新增一案：stub `sync` 讓其固定失敗，
+斷言 run 目錄保留、`prune-skipped.log` 具名，且 summary line 本身仍在
+（fsync 失敗不等於資料無效，只是持久性未確認——比照既有的
+append-failure 測試慣例，不斷言整體 exit code，因為這屬於既有的
+「單一 run 驗證失敗被妥善記錄並保留」類別，不同於會強制整體 nonzero
+exit 的鎖失敗類別）。
+
+architecture-reviewer 的 advisory（模組邊界耦合）維持上一輪判斷，非本輪
+必修，暫不動架構。
+
+`tests/shell/test-pmctl-artifacts.sh` 37 案全過（36 案＋本輪 1 案）。
+
+**pr-gate 第六輪（full tier，sequential，5 reviewer——依使用者新指示改預設
+序列，見下方説明）NO-GO（2 hard_block + 1 soft_block，critic-F001／
+qa-tester-F001／risk-reviewer-F001 三方鎖定同一根因，architecture-reviewer／
+security-reviewer approve）**：三方都指出第五輪 fsync 修法留下的真缺口——
+`sync` 失敗時只記錄到 `prune-skipped.log`，**卻沒把剛 append 的那行摘要
+從 `runs-summary.jsonl` 撤回**。那一行在結構上跟正常驗證通過的紀錄完全
+一樣（`run_id`／`summarized_at`／`kind`／`status`／`gate.final` 都非
+null），所以下一次 `gc` 呼叫的 `_pmctl_artifacts_run_summary_lookup` 會把
+它當成「已驗證」直接信任，讓 grace 期滿後的刪除建立在一筆從未成功落盤
+確認過的紀錄上——等於本票從一開始要防的「驗證機制本身有 bug 導致誤刪」
+情境，只是換了個觸發路徑。上一輪（第五輪）Closure 段落中「fsync 失敗
+run 目錄保留、summary line 本身仍在」的描述本身沒錯（那是舊行為的忠實
+記錄），但那個「仍在」正是本輪三方鎖定的根因，隨本輪修法作廢。
+
+修正：`sync` 失敗分支比照既有「驗證失敗」分支的做法，在記錄
+`prune-skipped.log` 之前先呼叫 `_pmctl_artifacts_run_summary_prune_line`
+把剛 append 的那行精確移除。這樣任何一次 gc 呼叫只要無法確認落盤，就
+不會留下任何看起來合法的紀錄——下一次 gc（不論 sync 這次是否恢復正常）
+都必須從頭重新 summarize＋append＋sync，不可能繞過重新驗證直接刪除。
+
+新增迴歸測試 `case_gc_retry_after_fsync_failure_resummarizes_before_deleting`：
+第一次呼叫 stub `sync` 固定失敗（斷言 run 目錄保留、摘要行已被撤回，非
+本輪新增而是修正既有 `case_gc_summary_fsync_failure_retains_run` 的斷言
+方向），第二次呼叫恢復正常 `sync`，斷言 run 目錄最終被刪除且
+`runs-summary.jsonl` 中該 run_id 恰好一行——證明刪除建立在第二次呼叫
+自己全新、成功落盤確認的紀錄上，而不是復活第一次那筆未確認的紀錄。
+
+`tests/shell/test-pmctl-artifacts.sh` 38 案全過（37 案＋本輪 1 案）。
+
+**pr-gate 序列化說明**：本輪起使用者要求後續 pr-gate 一律預設走
+`--mode sequential`，若判斷需要 parallel 須先徵求使用者同意；已寫入
+repo 外部個人 memory（非本 repo 檔案）。
+
+**See**: pr:#515
 
 ---
 
