@@ -619,6 +619,61 @@ case_gc_append_failure_retains_run_no_false_success() {
   fi
 }
 
+case_gc_summary_fsync_failure_retains_run() {
+  # behavior (CC-540, risk-reviewer-F001): an in-process read-back only
+  # proves a write reached the OS page cache, not persistent storage -- a
+  # crash between a "verified" append and an immediate (--grace-days 0)
+  # rm -rf could lose the sole summary while the source run is already gone.
+  # If fsync-ing the summary file fails, the run must stay retained (never
+  # deleted on an unconfirmed-durable summary), matching how every other
+  # verification-failure path in this file behaves: the failing run is
+  # logged and kept, while gc's overall run still completes (other runs may
+  # have processed fine) -- this is not the separate lock-failure path,
+  # which does force a nonzero exit.
+  # Steps: stub `sync` on PATH to always fail; one eligible run with
+  #        --grace-days 0; assert the run is retained, prune-skipped.log
+  #        names it, and the summary line itself is still present (the data
+  #        was not pruned -- only durability was unconfirmed, not validity)
+  local name="pmctl artifacts gc: a summary fsync failure retains the run instead of deleting it"
+  should_run "$name" || return 0
+  local store work bin out err status=0
+  store="$tmp_root/state-gc-fsync-failure"
+  work="$tmp_root/work-gc-fsync-failure"
+  bin="$tmp_root/bin-fsync-failure"
+  make_work_repo "$work"
+  mkdir -p "$bin"
+  cat > "$bin/sync" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+  chmod +x "$bin/sync"
+
+  local rd_keep rd_old
+  rd_keep="$(run_dir_for "$store" "$work" run-keep)"
+  rd_old="$(run_dir_for "$store" "$work" run-old)"
+  mkdir -p "$rd_keep" "$rd_old"
+  printf 'k\n' > "$rd_keep/k.footer"
+  printf 'a\n' > "$rd_old/a.footer"
+  touch -t "$(date -d '40 days ago' +%Y%m%d%H%M 2>/dev/null || date -v-40d +%Y%m%d%H%M)" "$rd_old" 2>/dev/null || true
+
+  out="$tmp_root/gc-fsync-failure.out"; err="$tmp_root/gc-fsync-failure.err"
+  PATH="$bin:$PATH" PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" artifacts gc \
+    --keep-last 1 --grace-days 0 --cd "$work" > "$out" 2> "$err" || status=$?
+
+  local runs_dir summary_file skip_log
+  runs_dir="$(dirname "$rd_old")"
+  summary_file="$(dirname "$runs_dir")/runs-summary.jsonl"
+  skip_log="$(dirname "$summary_file")/prune-skipped.log"
+
+  if [[ -d "$rd_old" && -e "$skip_log" ]] \
+      && grep -q 'run-old' "$skip_log" \
+      && grep -q '"run_id":"run-old"' "$summary_file"; then
+    pass "$name"
+  else
+    fail "$name" "status=$status rd_old_exists=$(test -d "$rd_old" && echo y||echo n) skip_log=$(cat "$skip_log" 2>/dev/null) summary=$(<"$summary_file")"
+  fi
+}
+
 case_gc_lock_timeout_reports_failure_and_retains_run() {
   # behavior (CC-540, architecture-reviewer-F001/risk-reviewer-F001, RCG-002):
   # a summary-lock acquisition timeout must be a machine-detectable failure
@@ -1280,6 +1335,7 @@ case_gc_grace_days_flag_rejects_non_numeric
 case_gc_dry_run_positive_grace_previews_without_mutation
 case_gc_concurrent_invocations_produce_one_summary_line
 case_gc_append_failure_retains_run_no_false_success
+case_gc_summary_fsync_failure_retains_run
 case_gc_lock_timeout_reports_failure_and_retains_run
 case_gc_summarizes_before_grace_defers_deletion
 case_gc_deletes_once_grace_elapses

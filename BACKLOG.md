@@ -2537,6 +2537,30 @@ architecture-reviewer 另提一則 advisory（非本輪必修）：`gc` 直接�
 
 `tests/shell/test-pmctl-artifacts.sh` 36 案全過（35 案＋本輪 1 案）。
 
+**pr-gate 第五輪（full tier，parallel，5 reviewer）NO-GO（1 block，
+critic／qa-tester／architecture-reviewer／security-reviewer 四方
+approve）**：risk-reviewer 指出唯一剩下的真缺口——append+讀回驗證只證明
+寫入到了 OS page cache，不是持久化儲存；在 `--grace-days 0` 下驗證通過後
+立刻 `rm -rf`，若驗證通過與實際刪除之間發生斷電／crash，可能造成「摘要
+沒真的落盤、來源 run 目錄已經沒了」的雙重遺失——正是本票從一開始要防的
+那種不可逆遺失。
+
+修正：驗證通過後、回傳「可安全刪除」之前，對 summary 檔呼叫
+`sync -- "$file"`（GNU coreutils sync 支援對單一檔案 sync，早於本票決定
+Linux/WSL2-only 核心開發期即可依賴）。`sync` 失敗視同驗證失敗——不刪除
+line（資料本身可能沒問題，只是沒法確認落盤），run 目錄本輪不刪除、記錄到
+`prune-skipped.log`；成功則放行。新增一案：stub `sync` 讓其固定失敗，
+斷言 run 目錄保留、`prune-skipped.log` 具名，且 summary line 本身仍在
+（fsync 失敗不等於資料無效，只是持久性未確認——比照既有的
+append-failure 測試慣例，不斷言整體 exit code，因為這屬於既有的
+「單一 run 驗證失敗被妥善記錄並保留」類別，不同於會強制整體 nonzero
+exit 的鎖失敗類別）。
+
+architecture-reviewer 的 advisory（模組邊界耦合）維持上一輪判斷，非本輪
+必修，暫不動架構。
+
+`tests/shell/test-pmctl-artifacts.sh` 37 案全過（36 案＋本輪 1 案）。
+
 **See**: pr:TBD
 
 ---

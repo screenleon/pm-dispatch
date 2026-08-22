@@ -474,7 +474,21 @@ _pmctl_artifacts_run_summary_append_verified() {
        then .gate.final != null
        else true end)
     ' >/dev/null 2>&1; then
-    return 0
+    # An in-process read-back only proves the write reached the OS page
+    # cache, not persistent storage -- a crash between here and the caller's
+    # subsequent rm -rf (immediate under --grace-days 0) could lose the
+    # summary while the source run directory is already gone, the exact
+    # unrecoverable case this whole ticket exists to prevent (risk-reviewer's
+    # finding). fsync the summary file before telling the caller this run is
+    # safe to delete; a sync failure is treated the same as a verification
+    # failure -- retain the run rather than claim a durability guarantee we
+    # could not confirm.
+    if sync -- "$summary_file" 2>/dev/null; then
+      return 0
+    fi
+    printf '%s\trun=%s\tsummary fsync failed, durability unconfirmed, run directory retained\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$run_id" >> "$skip_log"
+    return 1
   fi
   # Do not blindly delete "the last line" here: if a concurrent writer's
   # append landed after ours, the last line may not be ours to remove.
