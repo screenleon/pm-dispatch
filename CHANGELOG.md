@@ -10,6 +10,15 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **Gate CLI parsing and reviewer-override loading now have canonical
+  module owners (CC-532 Slice 2b).** `runtime/lib/gate-options.sh` owns
+  option defaults, the flag `case`, and `--cd` identity checks;
+  `runtime/lib/gate-reviewer-contract.sh` owns `gate_load_reviewer_override`
+  and fingerprints snapshot bytes with `gate_digest_file`. `pr-gate.sh`
+  remains the composition root (~4,247 → ~3,911 lines). The ownership
+  ratchet now fails if option flag arms or the override loader reappear in
+  the entrypoint. Standalone/copy distribution stays on CC-546.
+
 - **The memory injection budget is now measured in actual UTF-8 bytes, not
   characters.** `pmctl memory stats` and the `UserPromptSubmit` injection hook
   both used bash's `${#line}`, which counts characters under a UTF-8 locale — a

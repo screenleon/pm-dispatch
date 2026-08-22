@@ -25,7 +25,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-524 | 🔵 active | `pmctl artifacts show` 顯示 canonical absolute run root 並提供穩定 machine-readable locator | ux/ops | 2026-07-27 | feedback:2026-07-27 | P2 | hygiene |
 | CC-527 | ✅ done | targeted gate CLI 拆分 pass、reviewer coverage 與 tier；tier 由 current subject/policy 解析，initial result 僅為 remediation context | ux/gate | 2026-07-28 | pr:#472, pr:#476, pr:#482, pr:#505 | P2 | design |
 | CC-529 | ⚠️ partial 2026-08-15 | publish assurance observability：以 gate_publish_assessment_v1 將 ship stdout、PR body 與 finish marker 綁到同一份 verified assessment；仍需完成完整 producer/consumer dogfood | release/gate | 2026-07-30 | feedback:2026-07-30, pr:#484 | P2 | hygiene |
-| CC-532 | ⚠️ partial 2026-08-14 | Linux/WSL2 repo-layout canonical Gate modules 已完成；standalone distribution／copy parity 已移出本票，待 P0 current-tree evidence 後關閉 | arch/gate | 2026-07-30 | feedback:2026-07-30 | P1 | reuse-debt |
+| CC-532 | ✅ done | Linux/WSL2 repo-layout canonical Gate modules：options／policy／subject／scope／reviewer-contract／assurance 均有單一 source owner；standalone／copy parity 在 [[CC-546]] | arch/gate | 2026-07-30 | feedback:2026-07-30 | P1 | reuse-debt |
 | CC-533 | ⚠️ partial 2026-08-14 | PR #480 已交付 schema-derived structural validation foundation；handwritten structural cleanup、version dispatch separation 與 legacy/current verifier split 仍待 schema 穩定後收尾 | schema/gate | 2026-07-30 | pr:#480 | P1 | design |
 | CC-534 | 🟢 someday | `commands.tsv` 驅動 CLI routing、safe handler dispatch 與 lazy module loading | arch/DX | 2026-07-30 | feedback:2026-07-30 | P2 | design |
 | CC-535 | 🟢 someday | detached-launch 上的 supervised-run primitive + versioned JSON run-spec | arch/ops | 2026-07-30 | feedback:2026-07-30 | P2 | design |
@@ -2070,7 +2070,7 @@ assurance observability。
 
 ---
 
-## CC-532 — Gate canonical modules for the Linux/WSL2 developer path ⚠️ partial 2026-08-14
+## CC-532 — Gate canonical modules for the Linux/WSL2 developer path ✅ 2026-08-22
 
 **Problem**: `runtime/bin/pr-gate.sh` 同時承擔 option parsing、policy、subject、
 scope、reviewer contract、synthesis、assurance、publication 與 copy-mode fallback，
@@ -2115,22 +2115,26 @@ bundle 在載入點 fail closed。requirement 2 的 verifier fallback 部分就�
 搬移；bounded policy snapshot 不受影響，對 installed copy 仍是 load-bearing
 （install 不複製 `core/policy/gate-*.tsv`）。
 
-**Slice 2（已完成，2026-08-14）**：options、policy、subject、scope、reviewer
-contract 已搬移至 source-safe canonical modules；`runtime/bin/pr-gate.sh` 僅保留
-Linux/WSL2 repo-layout composition/bootstrap 與必要的共用摘要責任。新增 malformed
-subject fail-closed tests、canonical ownership regression check，並以 affected
-runner 與正式 PR gate 驗證通過。Generated distribution/copy parity 已明確 deferred，
-不在本階段 scope。
+**Slice 2a（已完成，2026-08-14）**：policy、subject、scope、assurance 搬至
+source-safe canonical modules。當時票面把 options 與 reviewer-contract 一併記成
+已搬，但 `gate-options.sh` 只剩兩個 setter、`gate-reviewer-contract.sh` 幾乎是空殼，
+33 個 option 分支與 override loader 仍在 `pr-gate.sh`。2026-08-20 查證確認
+Requirement 1 尚未達成。
 
-**P0 closure boundary（2026-08-14）**：本票的 Linux/WSL2 repo-layout implementation
-scope 已完成；尚未宣稱 terminal closure，直到 accepted planning tree 有一份
-authoritative zero-skip full-suite PASS，且其 source-tree fingerprint 與該 tree
-一致。Standalone distribution、copy-mode bundle schema、generated distribution
-與 canonical/dist parity 移至 [[CC-546]]，不得回併本票。
+**Slice 2b（已完成，2026-08-22）**：`gate_options_init`／`gate_options_parse`／
+`gate_options_require_workdir` 成為 CLI flag 單一 owner；`gate_load_reviewer_override`
+搬入 `gate-reviewer-contract.sh`，digest 走既有 `gate_digest_file`。composition root
+只呼叫這些函式；snapshot unlink 仍留在 entrypoint EXIT trap。ownership ratchet 改為
+檢查 option flag arms 與 loader 定義位置，並加直接 parser 案例，避免再把空殼模組
+記成完成。`pr-gate.sh` 約 4,247 → 3,911 行。Generated distribution／copy parity
+維持 deferred，見 [[CC-546]]。
 
-**Closure evidence required**：P0 closure PR 必須同步更新 BACKLOG、MILESTONES、
-DECISIONS 的 scope/status，並附 current-tree full-suite verifier 可接受的 artifact
-locator；舊 tree 的 full-suite artifact 不能作為本票 closure evidence。
+**Closure（2026-08-22）**：Requirement 1 的六個 named domain 現在各有單一 source
+owner，Linux/WSL2 repo-layout 不再把 option 解析或 override loader 放在 composition
+root。current-tree full-suite 依 2026-08-20 決策是 publish 常設不變式，不是本票
+closure 條件。Standalone distribution 不得回併本票。
+
+**See**: DECISIONS.md 2026-08-22
 
 ---
 

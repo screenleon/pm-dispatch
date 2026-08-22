@@ -597,6 +597,90 @@ test_canonical_domain_functions_have_single_source_owner() {
     fail "$name" 'entrypoint does not resolve layout through the canonical module'
     return
   fi
+  # Slice 2 remaining work: option flag arms and the override loader must not
+  # live in the composition root even when the named functions already have a
+  # single owner. Help comments on the entrypoint may mention the flags.
+  if grep -Eq -- '^[[:space:]]*--cd\)' "$entrypoint"; then
+    fail "$name" 'entrypoint still owns CLI option flag arms'
+    return
+  fi
+  if ! grep -Eq -- '^[[:space:]]*--cd\)' "$REPO_ROOT/runtime/lib/gate-options.sh"; then
+    fail "$name" 'gate-options.sh does not own the --cd flag arm'
+    return
+  fi
+  if ! grep -Eq -- '^gate_options_parse[[:space:]]+' "$entrypoint"; then
+    fail "$name" 'entrypoint does not parse options through the canonical module'
+    return
+  fi
+  if grep -Eq -- '^gate_load_reviewer_override[[:space:]]*\(\)' "$entrypoint"; then
+    fail "$name" 'entrypoint still defines gate_load_reviewer_override'
+    return
+  fi
+  if ! grep -Eq -- '^gate_load_reviewer_override[[:space:]]*\(\)' \
+      "$REPO_ROOT/runtime/lib/gate-reviewer-contract.sh"; then
+    fail "$name" 'gate-reviewer-contract.sh does not own gate_load_reviewer_override'
+    return
+  fi
+  pass "$name"
+}
+
+# Behavior: the option module parses CLI flags without loading the gate body.
+# Steps: source only gate-options.sh, parse a real --cd/--tier/--mode set, then
+# reject an unknown flag with the same stderr contract as the entrypoint.
+test_canonical_option_parser_owns_cli_flags() {
+  local name="canonical-option-parser-owns-cli-flags"
+  local work="$TMP_ROOT/$name/work" out err code
+  mkdir -p "$work"
+  out="$(
+    bash -c '
+      set -euo pipefail
+      # shellcheck source=runtime/lib/gate-options.sh
+      . "$1"
+      gate_options_init
+      gate_options_parse --cd "$2" --tier express --mode parallel --parallel
+      gate_options_require_workdir
+      printf "WORK_DIR=%s\n" "$WORK_DIR"
+      printf "TIER_REQUESTED=%s\n" "$TIER_REQUESTED"
+      printf "MODE_REQUESTED=%s\n" "$MODE_REQUESTED"
+    ' _ "$REPO_ROOT/runtime/lib/gate-options.sh" "$work"
+  )" || {
+    fail "$name" "canonical option parser rejected a valid flag set"
+    return
+  }
+  [[ "$out" == *"WORK_DIR=$(cd "$work" && pwd -P)"* ]] || {
+    fail "$name" "parser did not canonicalize --cd: $out"
+    return
+  }
+  [[ "$out" == *"TIER_REQUESTED=express"* ]] || {
+    fail "$name" "parser did not record --tier: $out"
+    return
+  }
+  [[ "$out" == *"MODE_REQUESTED=parallel"* ]] || {
+    fail "$name" "parser did not record last compatible mode spelling: $out"
+    return
+  }
+  err="$TMP_ROOT/$name/err"
+  set +e
+  bash -c '
+    set -euo pipefail
+    . "$1"
+    gate_options_init
+    gate_options_parse --cd "$2" --bogus-flag
+  ' _ "$REPO_ROOT/runtime/lib/gate-options.sh" "$work" >/dev/null 2>"$err"
+  code=$?
+  set -e
+  if [[ "$code" -ne 2 ]]; then
+    fail "$name" "unknown flag exit $code, expected 2"
+    return
+  fi
+  if ! grep -Fq 'Unknown arg: --bogus-flag' "$err"; then
+    fail "$name" "missing unknown-arg diagnostic: $(cat "$err")"
+    return
+  fi
+  if ! grep -Fq 'Accepted:' "$err"; then
+    fail "$name" "missing accepted-flags list: $(cat "$err")"
+    return
+  fi
   pass "$name"
 }
 
@@ -632,5 +716,6 @@ run_case "commands-pr-gate-md-uses-detached-lifecycle" test_commands_pr_gate_md_
 run_case "commands-pr-gate-md-no-shell-var-reuse-across-bash-calls" test_commands_pr_gate_md_does_not_reuse_shell_var_across_bash_calls
 run_case "commands-pr-gate-md-wait-block-self-resolves-pmctl" test_commands_pr_gate_md_wait_block_self_resolves_pmctl
 run_case "canonical-domain-functions-have-single-source-owner" test_canonical_domain_functions_have_single_source_owner
+run_case "canonical-option-parser-owns-cli-flags" test_canonical_option_parser_owns_cli_flags
 
 th_summary

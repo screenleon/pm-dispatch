@@ -7,6 +7,35 @@ H2 標題格式：## YYYY-MM-DD: <短描述>
 與 BACKLOG closure 對應的 entry，內文首行寫：Closes: BACKLOG.md#<PREFIX>-NNN
 -->
 
+## 2026-08-22: cc-532-options-and-reviewer-contract-are-canonical-owners
+
+Closes: BACKLOG.md#CC-532
+
+**Context**: PR #479 抽出 policy／subject／scope／assurance 之後，票面把 Slice 2
+記成 options 與 reviewer-contract 也已搬移。2026-08-20 查證發現那是空殼：
+`pr-gate.sh` 仍持有 33 個 option 分支，`gate-options.sh` 只有兩個 setter，
+override loader 仍在 composition root。Requirement 1 因此尚未達成；standalone
+distribution 已在同日決策移到 CC-546，不構成本票剩餘工作。
+
+**Decision**: Linux/WSL2 repo-layout 的 CLI option 解析與 `--cd` 身分檢查由
+`runtime/lib/gate-options.sh` 單一擁有；reviewer override 的 check/use loader
+由 `runtime/lib/gate-reviewer-contract.sh` 單一擁有，並重用 `gate_digest_file`
+而不是 result-verify 的 wrapper。`runtime/bin/pr-gate.sh` 只做 bootstrap、呼叫
+與 snapshot EXIT cleanup。ownership 測試必須檢查 flag arms 與 loader 定義位置，
+不能只比對函式名稱是否重複。CC-532 在此關閉；standalone／copy parity 維持
+CC-546。
+
+**Alternatives considered**: (a) 連 policy-dependent coordinate binding 一起搬進
+options 模組——拒絕，那會讓尚未載入的 policy helpers 變成 parse 期依賴。
+(b) 把 snapshot cleanup 也搬進 reviewer-contract——拒絕，EXIT trap 必須在
+bootstrap 前就能點名一個已定義的 helper，composition root 保留 unlink。
+(c) 保持空殼並等 CC-546——拒絕，Req 1 的 developer-path owner 與 distribution
+bundle 是不同 authority。
+
+**Constraints introduced**: 新增 Gate CLI flag 只能加在 `gate-options.sh`；
+override loader 的行為變更只能發生在 `gate-reviewer-contract.sh`。entrypoint
+不得再長 `case` flag arms。不得把 CC-546 的 bundle／copy parity 回併本票。
+
 ## 2026-08-20: index-freshness-is-decided-by-content-not-mtime
 
 Relates: CC-505, CC-563
