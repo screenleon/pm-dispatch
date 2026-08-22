@@ -8,7 +8,22 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **`systematic-debugging` skill (CC-015).** A thin, evidence-led method for
+  reproducing, isolating, hypothesizing, verifying, fixing, and
+  regression-testing defects.
+
 ### Changed
+
+- **Gate synthesis restores copied reviewer fields before parity checks.**
+  `coverage_matrix`, `reviewer_finding_inventory`, `test_gap_matrix`, union
+  copy-fields, caution/uncertainty lists, and `verification_plan.focused` are
+  rebuilt from the embedded `reviewer_result_v1` documents so an LLM
+  paraphrasing a coverage `reason` (for example Unicode em dash vs ASCII `--`)
+  cannot consume the single correction retry. Remaining synthesis-owned
+  grouping/disagreement defects still fail closed, and a coverage parity miss
+  now names the first drifted cell and field.
 
 - **Gate CLI parsing and reviewer-override loading now have canonical
   module owners (CC-532 Slice 2b).** `runtime/lib/gate-options.sh` owns

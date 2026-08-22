@@ -79,10 +79,11 @@ the parts stay small enough to matter:
 (Source: same best-practices page as above.)
 
 **Current state (2026-08-22, re-measured — do not read this doc's numbers as
-current after this date without re-checking):** both shipped skills are
+current after this date without re-checking):** all three current skills are
 comfortably under the body limit — `skills/dispatch-brief/SKILL.md` is 59
-lines, `skills/pr-gate-review/SKILL.md` is 76. The single largest prompt
-asset in the repo today is `commands/pr-gate.md` at 482 lines — a *command*,
+lines, `skills/pr-gate-review/SKILL.md` is 76, and
+`skills/systematic-debugging/SKILL.md` is 53. The single largest prompt asset
+in the repo today is `commands/pr-gate.md` at 482 lines — a *command*,
 not a skill, so the 500-line skill-body ceiling doesn't formally bind it,
 but it is close enough to that ceiling that any further growth there should
 prompt a split rather than an extension. **This section records the current
@@ -122,6 +123,7 @@ tiers above and calls out the handful that are worth watching.
 | File | Note |
 |---|---|
 | `dispatch-brief/SKILL.md`, `pr-gate-review/SKILL.md` | Both match the Tier 2 contract exactly: picked up by relevance, not by name; point at authoritative sources rather than restating them; well under the size ceiling. |
+| `systematic-debugging/SKILL.md` | A Tier 2 method pointer for bug, regression, and failing-test work: picked up by relevance, carries no state transition or guard bypass, and directs verification through existing tests and git evidence. |
 
 ### `agents/` (not covered by this tier system — separate primitive)
 

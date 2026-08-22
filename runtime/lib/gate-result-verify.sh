@@ -612,16 +612,207 @@ _gate_synthesis_protocol_documents() {
   ' "$artifact"
 }
 
+# Replace the single synthesis_result_v1 JSON body in <artifact> with <json_file>.
+# The opening/closing fences stay in place so human sections after the block
+# are preserved. Fails closed if the fence pair cannot be located.
+_gate_synthesis_replace_json_block() {
+  local artifact=${1-} json_file=${2-} rewritten start_line end_line
+  [[ $# -eq 2 && -s "$artifact" && -s "$json_file" ]] || return 2
+  start_line="$(awk '$0 == "```synthesis_result_v1" { print NR; exit }' "$artifact")"
+  end_line="$(awk -v start="$start_line" \
+    'NR > start && $0 == "```" { print NR; exit }' "$artifact")"
+  [[ "$start_line" =~ ^[1-9][0-9]*$ && "$end_line" =~ ^[1-9][0-9]*$ ]] || return 2
+  [[ "$end_line" -gt "$start_line" ]] || return 2
+  rewritten="$(mktemp "${TMPDIR:-/tmp}/gate-synthesis-rewritten.XXXXXX")" || return 2
+  {
+    sed -n "1,${start_line}p" "$artifact"
+    cat "$json_file"
+    sed -n "${end_line},\$p" "$artifact"
+  } > "$rewritten" || {
+    rm -f -- "$rewritten"
+    return 2
+  }
+  mv -- "$rewritten" "$artifact"
+}
+
+# Overwrite synthesis fields that are mechanical copies of reviewer_result_v1
+# documents. Typography/paraphrase in those fields is not a synthesis judgment
+# and must not consume the single correction retry. Grouping, disagreement,
+# confirmation, and subject-binding fields stay with synthesis.
+#
+# Call this on the live gate-run artifact BEFORE first protocol verify and
+# attestation. Do not call it from later `pmctl gate verify`: rewriting a
+# published result would invalidate the protected attestation digest.
+#
+# Returns 0 when restore is applied or safely skipped (invalid JSON is left
+# for the verifier). Returns 2 only on I/O failure.
+gate_synthesis_restore_copy_fields() {
+  local artifact=${1-} selected=${2-} skipped=${3-}
+  local tmp_dir synthesis_documents reviewer_documents synthesis_document
+  [[ $# -eq 3 && -s "$artifact" && -n "$selected" ]] || return 2
+  tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/gate-synthesis-restore.XXXXXX")" \
+    || return 2
+  synthesis_documents="$tmp_dir/synthesis.jsonl"
+  reviewer_documents="$tmp_dir/reviewers.jsonl"
+  synthesis_document="$tmp_dir/synthesis.json"
+  if ! _gate_synthesis_protocol_documents "$artifact" \
+      > "$synthesis_documents" \
+      || ! jq -s -e 'length == 1' "$synthesis_documents" >/dev/null 2>&1; then
+    rm -rf -- "$tmp_dir"
+    return 0
+  fi
+  jq -s '.[0]' "$synthesis_documents" > "$synthesis_document" || {
+    rm -rf -- "$tmp_dir"
+    return 0
+  }
+  if ! _gate_reviewer_protocol_documents "$artifact" \
+      > "$reviewer_documents" \
+      || ! jq -s -e 'length > 0' "$reviewer_documents" >/dev/null 2>&1; then
+    rm -rf -- "$tmp_dir"
+    return 0
+  fi
+  _gate_synthesis_restore_copy_fields_into \
+    "$artifact" "$synthesis_document" "$reviewer_documents" \
+    "$selected" "$skipped"
+  local rc=$?
+  rm -rf -- "$tmp_dir"
+  return "$rc"
+}
+
+_gate_synthesis_restore_copy_fields_into() {
+  local artifact=${1-} synthesis_document=${2-} reviewer_documents=${3-}
+  local selected=${4-} skipped=${5-} healed
+  [[ $# -eq 5 && -s "$artifact" && -s "$synthesis_document" \
+      && -s "$reviewer_documents" ]] || return 2
+  jq -e 'type == "object"' "$synthesis_document" >/dev/null 2>&1 || return 0
+  healed="$(mktemp "${TMPDIR:-/tmp}/gate-synthesis-healed.XXXXXX")" || return 2
+  if ! jq --arg selected "$selected" --arg skipped "$skipped" \
+      --slurpfile reviewers "$reviewer_documents" '
+      def nonempty_words($raw):
+        $raw | split(" ") | map(select(length > 0));
+      def findings:
+        [$reviewers[] | (.findings // [])[]];
+      def finding_by_id($id):
+        findings | map(select(.id == $id)) | .[0];
+      def coverage_cells:
+        [$reviewers[] as $rev |
+          ($rev.coverage // [])[] |
+          {
+            reviewer:$rev.reviewer,
+            surface,
+            status,
+            evidence_refs,
+            reason
+          }]
+        | sort_by(.reviewer, .surface);
+      def inventory:
+        findings
+        | sort_by(.id)
+        | map({
+            id,
+            reviewer,
+            severity,
+            hard_gate_class,
+            origin,
+            verification_expectation
+          });
+      def gaps:
+        [$reviewers[] | (.test_gaps // [])[]] | sort_by(.id);
+      def uncertain_ids:
+        findings | map(select(.origin == "uncertain") | .id) | sort;
+      def uncertain_cells:
+        [$reviewers[] as $rev |
+          ($rev.coverage // [])[] |
+          select(.status == "uncertain") |
+          {reviewer:$rev.reviewer, surface, reason}]
+        | sort_by(.reviewer, .surface);
+      def caution_ids:
+        findings | map(select(.origin == "caution") | .id);
+      .coverage_matrix = coverage_cells
+      | .reviewer_finding_inventory = inventory
+      | .cautions = caution_ids
+      | .selected_reviewers = nonempty_words($selected)
+      | .not_reviewed_dimensions = nonempty_words($skipped)
+      | if (gaps | length) > 0 then
+          .test_gap_matrix = gaps
+          | if (.verification_plan | type) == "object" then
+              .verification_plan.focused =
+                (gaps | map(select(.status == "gap") | .suggested_command)
+                  | unique | sort)
+            else .
+            end
+        else .
+        end
+      | if (.findings_union | type) == "array" then
+          .findings_union |= map(
+            . as $union |
+            finding_by_id($union.id) as $src |
+            if $src == null then $union
+            else {
+              id:$src.id,
+              reviewer:$src.reviewer,
+              severity:$src.severity,
+              hard_gate_class:$src.hard_gate_class,
+              origin:$src.origin,
+              source:$src.source,
+              affected_behavior:$src.affected_behavior,
+              why_it_matters:$src.why_it_matters,
+              failure_mode:$src.failure_mode,
+              minimum_fix_boundary:$src.minimum_fix_boundary,
+              verification_expectation:$src.verification_expectation,
+              root_cause_group_id:$union.root_cause_group_id,
+              disposition:"pending"
+            }
+            end)
+        else .
+        end
+      | if (.uncertainties | type) == "array" then .
+        else
+          .uncertainties = {
+            finding_ids:uncertain_ids,
+            coverage_cells:uncertain_cells
+          }
+        end
+      | if ((.remediation_seed | type) == "object") and
+            ((.remediation_seed.entries | type) == "array") then
+          .remediation_seed.entries |= map(
+            finding_by_id(.finding_id) as $src |
+            if $src == null then .
+            else {
+              finding_id:$src.id,
+              reviewer:$src.reviewer,
+              root_cause_group_id,
+              disposition:"pending",
+              verification_expectation:$src.verification_expectation
+            }
+            end)
+        else .
+        end
+    ' "$synthesis_document" > "$healed"; then
+    rm -f -- "$healed"
+    return 0
+  fi
+  if cmp -s "$synthesis_document" "$healed"; then
+    rm -f -- "$healed"
+    return 0
+  fi
+  if ! _gate_synthesis_replace_json_block "$artifact" "$healed"; then
+    rm -f -- "$healed"
+    return 2
+  fi
+  mv -- "$healed" "$synthesis_document"
+}
+
 # gate_synthesis_protocol_verify <artifact> <selected-reviewers>
 #                                <skipped-reviewers> <scope-sha256>
 #                                [require-test-gaps] [initial-finding-ids-json]
 #
-# Validates the synthesis-owned JSON shape and then derives the authoritative
-# finding inventory, coverage matrix, uncertainties, cautions, and remediation
-# entries from the original reviewer_result_v1 documents. Root-cause grouping
-# and disagreement prose remain synthesis judgments, but every referenced ID
-# must belong to that immutable inventory and every finding must be grouped
-# exactly once.
+# Validates the synthesis-owned JSON shape against the original
+# reviewer_result_v1 documents. Copied coverage/inventory fields should already
+# have been restored by gate_synthesis_restore_copy_fields on the live gate
+# path. Root-cause grouping and disagreement prose remain synthesis judgments,
+# but every referenced ID must belong to that immutable inventory and every
+# finding must be grouped exactly once.
 gate_synthesis_protocol_verify() {
   local artifact=${1-} selected=${2-} skipped=${3-} scope_sha=${4-}
   local require_test_gaps=${5-false}
@@ -772,6 +963,21 @@ gate_synthesis_protocol_verify() {
         else ": missing=[" + safe_join($missing) +
              "] unexpected=[" + safe_join($unexpected) + "]"
         end;
+      def coverage_index($rows):
+        [$rows[] | {key:(.reviewer + ":" + .surface), value:.}] | from_entries;
+      def first_coverage_field_diff($want; $got):
+        coverage_index($want) as $w |
+        coverage_index($got) as $g |
+        ([
+          ($w | keys_unsorted[]) as $k |
+          select(($g | has($k)) and $w[$k] != $g[$k]) |
+          $k + (
+            if $w[$k].status != $g[$k].status then ".status"
+            elif $w[$k].evidence_refs != $g[$k].evidence_refs then ".evidence_refs"
+            else ".reason"
+            end
+          )
+        ] | .[0]) // "unknown field";
       # Same rationale as disagreement_defect below: naming the array a shape
       # check failed in is not enough when the entry contract bundles several
       # independent rules -- report the first violated rule with the observed
@@ -1018,7 +1224,8 @@ gate_synthesis_protocol_verify() {
       then "coverage matrix parity mismatch" +
         id_delta(($expected_coverage | map(.reviewer + ":" + .surface));
                  ($s.coverage_matrix | map(.reviewer + ":" + .surface));
-                 "every cell must copy the status, evidence_refs and reason of that reviewer verbatim")
+                 "first drifted cell: " +
+                   first_coverage_field_diff($expected_coverage; $s.coverage_matrix))
       elif
         (all($s.reviewer_finding_inventory[]; finding_inventory) | not) or
         (all($s.findings_union[]; finding_union) | not)

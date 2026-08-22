@@ -340,10 +340,11 @@ invalid layer as JSON, top-level/binding, coverage, finding,
 evidence-reference, or verdict so a format error is not misdiagnosed as missing
 coverage.
 
-Completed reviewer routes also carry one `gate_synthesis_result_v1`. Its
-reviewer-by-surface matrix and stable-ID inventory are copied from the raw
-reviewer documents, and its findings union preserves every source field and
-verification expectation. Root-cause groups may consolidate presentation, but
+Completed reviewer routes also carry one `gate_synthesis_result_v1`. The
+gate shell restores its reviewer-by-surface matrix, stable-ID inventory, and
+other copied reviewer fields from the raw reviewer documents before parity
+checks, so an LLM retyping those arrays cannot fail the round on typography.
+The findings union preserves every source field and verification expectation. Root-cause groups may consolidate presentation, but
 they partition immutable finding IDs rather than replacing them.
 Disagreements remain explicit; uncertainties and cautions are derived from the
 original coverage statuses and finding origins. The nested

@@ -319,6 +319,11 @@ pr_gate_fixture_write_synthesis_protocol() {
             "$synthesis_document" > "$mutated_document"
           mv -- "$mutated_document" "$synthesis_document"
           ;;
+        malformed-seed)
+          jq '.remediation_seed.state = "closed"' \
+            "$synthesis_document" > "$mutated_document"
+          mv -- "$mutated_document" "$synthesis_document"
+          ;;
         wrong-subject)
           # Binds the synthesis to a different scope digest, which the verifier
           # reports as `stale subject binding` -- the one rejection re-authoring

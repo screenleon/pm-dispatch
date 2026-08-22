@@ -57,8 +57,10 @@ matched signals, resolved coordinates, linked evidence, and any scope-bound
 user override.
 
 Treat `gate_synthesis_result_v1` as a parity-preserving view of the raw
-reviewer documents. Its coverage matrix, finding inventory, findings union,
-uncertainties, cautions, and pending remediation seed are machine-checked.
+reviewer documents. Copied coverage/inventory/test-gap fields are restored
+from those documents before the check; grouping and disagreements remain
+synthesis judgments. The remaining union, uncertainty, caution, and seed
+fields are machine-checked.
 Root-cause groups organize findings without replacing stable IDs. A synthesis
 protocol `INCOMPLETE` is not reviewer NO-GO and cannot authorize publication,
 even when every reviewer verdict says approve.
