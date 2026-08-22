@@ -2339,7 +2339,7 @@ constants，再由parity tests反向比對。文件宣稱與實際runtime author
 
 ---
 
-## CC-540 — `pmctl state prune`：刪除前摘要抽取＋驗證，避免歷史分析資料隨磁碟空間消失 🟢 someday
+## CC-540 — `pmctl state prune`：刪除前摘要抽取＋驗證，避免歷史分析資料隨磁碟空間消失 ✅ 2026-08-22
 
 **Problem**: `~/.local/share/pm-dispatch/state/projects/<hash>/runs/` 每次
 `gate run`／dispatch 都留下一個完整目錄（`.gate-results`、`.agent-trace`、
@@ -2391,6 +2391,40 @@ launch 早期死亡會留下 0-byte 空殼 gate 結果），摘要邏輯必須�
 **Source**: 2026-07-31 主線程對 615 筆 gate 執行紀錄的一次性分析（NO-GO 率
 57%、qa-tester 為最大 blocker），發現 runs/ 目錄無 retention 且分析價值
 未被保留；使用者要求 prune 時一併產出摘要。
+
+**Closure 2026-08-22**：查證後發現 `pmctl artifacts gc` 已是本票 Requirement 1 所指的
+「等效子指令」——它已對 `state/projects/<hash>/runs/` 做 keep-last／max-age-days
+retention，只是刪除前完全沒有摘要步驟。選擇擴充既有 `pmctl_artifacts_gc`
+而非另立 `pmctl state prune`，避免兩套並存的刪除機制互相打架。
+
+新增：`_pmctl_artifacts_run_summarize_json`（kind=gate/dispatch、
+status=complete/incomplete_source、以目錄內檔案實際 mtime 極差計算的 duration——
+批次一次 `stat -c %Y ... +`，不逐檔案 spawn，避免重演 CC-557/CC-560 的
+per-item subprocess 教訓；gate 分支重用既有 `_gate_result_frontmatter_value`
+解析 final/tier/most_severe，findings-by-severity 抓不到可解析的
+`reviewer_result_v1` JSON block 時明確回報 `"unavailable"` 字串而非 0，避免
+誤讀成「沒有 finding」）與
+`_pmctl_artifacts_run_summary_append_verified`（append 後讀回驗證，
+`status=complete` 的 gate 摘要只要求 `final` 非 null——tier／most_severe
+在較舊 schema 版本可能本來就沒有，強制要求會誤判誠實的舊資料為抽取失敗、
+永久卡住無法瘦身；驗證失敗即回滾剛寫入的那行並記錄到
+`prune-skipped.log`，來源 run 目錄維持不刪）。新增 `--grace-days`（預設 3，
+`PM_DISPATCH_GC_GRACE_DAYS` 可覆寫）：已摘要的 run 至少經過寬限期才會物理
+刪除；既有 `runs-summary.jsonl` 的 `summarized_at` 一次性讀入關聯陣列比對，
+不逐筆查詢。`--dry-run` 會預覽即將產出的摘要內容與寬限期倒數，不寫入摘要
+檔或刪除任何檔案。
+
+`tests/shell/test-pmctl-artifacts.sh` 新增 8 案：summarize-then-defer、
+grace-period 期滿後刪除、incomplete_source 不當作驗證失敗、tier 欄位缺失
+不當作驗證失敗、duration 取真實 mtime 而非 run id、findings-by-severity 分桶、
+findings-by-severity 在無可解析區塊時回報 unavailable、驗證失敗時回滾＋記錄。
+既有 19 案兩案（`--dry-run`／`--keep-last`）因新的預設 grace-period 行為改為
+顯式帶 `--grace-days 0`，並順手修掉其中一案既有的 `grep -c ... \|\| printf`
+慣用語 bug（no-match 時會把 grep 自己印的 "0" 與 fallback 的 "0" 併成
+"0\n0"，撞壞 `-eq` 比較，過去被舊行為的固定 2 個 match 蓋過去而沒發作）。
+`tests/shell/test-pmctl-artifacts.sh` 27 案全過。
+
+**See**: pr:TBD
 
 ---
 

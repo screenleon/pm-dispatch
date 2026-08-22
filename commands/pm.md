@@ -102,15 +102,16 @@ For PR-gate flows, use `/pr-gate` instead — that skill handles reviewer orches
 Run artifacts accumulate in the out-of-repo state store (`~/.local/share/pm-dispatch/state/projects/<key>/runs/`). Use `pmctl artifacts gc` to reclaim space:
 
 ```bash
-pmctl artifacts gc [--dry-run] [--keep-last N] [--max-age-days D] [--cd <work_dir>]
+pmctl artifacts gc [--dry-run] [--keep-last N] [--max-age-days D] [--grace-days D] [--cd <work_dir>]
 pmctl artifacts gc --all-repos [--repos-root <dir>] [--dry-run]
 pmctl artifacts migrate [--cd <work_dir>]
 ```
 
-- `--dry-run`: list what would be deleted without removing anything.
+- `--dry-run`: list what would be summarized/deleted/deferred without writing or removing anything.
 - `--keep-last N` (default 10): always retain the N newest runs per partition.
 - `--max-age-days D` (default 30): delete runs older than D days (0 disables the age filter — only keep-last applies).
-- `--all-repos`: scan `PM_DISPATCH_REPOS_ROOT` (or the parent of `PM_DISPATCH_REPO`) for immediate child repos; `--repos-root <dir>` overrides both. It removes in-repo remnant directories (`.agent-trace`, `.gate-briefs`, `.gate-results`) and never touches `.pm-dispatch/`. **Run only when no dispatch or gate is active** — an in-progress run may still be writing to its in-repo artifact directory.
+- `--grace-days D` (default 3): a run eligible for deletion is first summarized (gate verdict/tier/reviewer findings by severity, actual mtime-derived duration) into a permanent `runs-summary.jsonl` sibling of `runs/` (never deleted by gc); physical deletion only happens once that summary has existed for at least `D` days, so a summarizer bug is discoverable — and the source still present to re-summarize — before data is lost. A summary that fails its own read-back verification blocks deletion of that run and is recorded to `prune-skipped.log` instead.
+- `--all-repos`: scan `PM_DISPATCH_REPOS_ROOT` (or the parent of `PM_DISPATCH_REPO`) for immediate child repos; `--repos-root <dir>` overrides both. It removes in-repo remnant directories (`.agent-trace`, `.gate-briefs`, `.gate-results`) and never touches `.pm-dispatch/`. **Run only when no dispatch or gate is active** — an in-progress run may still be writing to its in-repo artifact directory. This path has no summarize-first step — it only ever clears remnant leaves of runs already migrated out-of-repo.
 - `pmctl artifacts migrate --cd <work_dir>`: copy any remaining in-repo artifact leaves into the out-of-repo partition (idempotent; originals preserved for manual removal after verification).
 
-Overridable via env: `PM_DISPATCH_REPOS_ROOT`, `PM_DISPATCH_GC_KEEP_LAST`, `PM_DISPATCH_GC_MAX_AGE_DAYS`. Flag values always win over env.
+Overridable via env: `PM_DISPATCH_REPOS_ROOT`, `PM_DISPATCH_GC_KEEP_LAST`, `PM_DISPATCH_GC_MAX_AGE_DAYS`, `PM_DISPATCH_GC_GRACE_DAYS`. Flag values always win over env.

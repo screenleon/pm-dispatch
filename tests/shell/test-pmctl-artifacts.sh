@@ -15,6 +15,8 @@ th_init "$@"
 
 # shellcheck source=runtime/lib/state-paths.sh
 . "$REPO_ROOT/runtime/lib/state-paths.sh"
+# shellcheck source=runtime/lib/pmctl-artifacts.sh
+. "$REPO_ROOT/runtime/lib/pmctl-artifacts.sh"
 
 make_work_repo() {
   local path="$1"
@@ -35,6 +37,29 @@ write_run_file() {
   file="$rd/$rel"
   mkdir -p "$(dirname "$file")"
   printf '%s' "$body" > "$file"
+}
+
+# Minimal gate result fixture: frontmatter (final/tier/most_severe/reviewers)
+# plus one reviewer_result_v1 fenced block per reviewer with findings.
+# reviewers_block is pre-formatted "  name: verdict" lines (frontmatter body);
+# findings_blocks is zero or more full fenced ```reviewer_result_v1 ...``` sections.
+write_gate_result() {
+  local store="$1" work="$2" run_id="$3" final="$4" tier="$5" most_severe="$6"
+  local reviewers_block="$7" findings_blocks="$8"
+  local rd file
+  rd="$(run_dir_for "$store" "$work" "$run_id")"
+  file="$rd/.gate-results/gate-${run_id#*-}.md"
+  mkdir -p "$(dirname "$file")"
+  {
+    printf -- '---\n'
+    printf 'final: %s\n' "$final"
+    [[ -z "$tier" ]] || printf 'tier: %s\n' "$tier"
+    [[ -z "$most_severe" ]] || printf 'most_severe: %s\n' "$most_severe"
+    printf 'reviewers:\n%s\n' "$reviewers_block"
+    printf -- '---\n\n'
+    [[ -z "$findings_blocks" ]] || printf '%s\n' "$findings_blocks"
+  } > "$file"
+  printf '%s' "$file"
 }
 
 install_jq_stub() {
@@ -223,10 +248,15 @@ case_gc_dry_run() {
 
   out="$tmp_root/gc-dry.out"; err="$tmp_root/gc-dry.err"
   PM_DISPATCH_STATE_ROOT="$store" PM_DISPATCH_GC_KEEP_LAST=1 "$PMCTL" artifacts gc \
-    --dry-run --keep-last 1 --cd "$work" > "$out" 2> "$err" || status=$?
+    --dry-run --keep-last 1 --grace-days 0 --cd "$work" > "$out" 2> "$err" || status=$?
 
   local out_content; out_content="$(<"$out")"
-  local would_delete_count; would_delete_count="$(grep -c 'would delete:' "$out" 2>/dev/null || printf '0')"
+  # grep -c always prints a count (including "0") but exits 1 on no match, so
+  # the `|| printf` idiom this used to use would append a second "0" from the
+  # fallback on top of grep's own stdout -- fixed here rather than papering
+  # over it, since it silently produced a two-line "0\n0" that broke -eq.
+  local would_delete_count; would_delete_count="$(grep -c 'would delete:' "$out" 2>/dev/null)"
+  : "${would_delete_count:=0}"
   # Check: 2 "would delete" lines, final summary says "would delete 2", dirs still exist
   if [[ "$status" -eq 0 && "$would_delete_count" -eq 2 &&
         "$out_content" == *"would delete 2 runs"* &&
@@ -263,7 +293,7 @@ case_gc_keep_last() {
 
   out="$tmp_root/gc-keep.out"; err="$tmp_root/gc-keep.err"
   PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" artifacts gc \
-    --keep-last 1 --max-age-days 30 --cd "$work" > "$out" 2> "$err" || status=$?
+    --keep-last 1 --max-age-days 30 --grace-days 0 --cd "$work" > "$out" 2> "$err" || status=$?
 
   # rd3 (newest) should survive; rd1 and rd2 should be deleted
   if [[ "$status" -eq 0 && -d "$rd3" && ! -d "$rd1" && ! -d "$rd2" && ! -s "$err" ]]; then
@@ -302,6 +332,289 @@ case_gc_max_age_zero() {
     pass "$name"
   else
     fail "$name" "status=$status out=$(<"$out") err=$(<"$err")"
+  fi
+}
+
+case_gc_summarizes_before_grace_defers_deletion() {
+  # behavior (CC-540): an eligible-for-deletion gate run is summarized into
+  # runs-summary.jsonl (surviving prune) before deletion, but physical
+  # deletion is deferred until --grace-days has elapsed since summarization
+  # Steps: one old gate run past keep-last with a valid result; gc with
+  #        default grace (3 days); assert summary written with real fields,
+  #        run dir still exists, no prune-skipped.log
+  local name="pmctl artifacts gc: summarizes before deleting, defers past grace period"
+  should_run "$name" || return 0
+  local store work out err status=0
+  store="$tmp_root/state-gc-summarize"
+  work="$tmp_root/work-gc-summarize"
+  make_work_repo "$work"
+
+  local rd_keep rd_old gate_file
+  rd_keep="$(run_dir_for "$store" "$work" run-keep)"
+  mkdir -p "$rd_keep"
+  printf 'k\n' > "$rd_keep/k.footer"
+  gate_file="$(write_gate_result "$store" "$work" gate-old GO full block \
+    $'  critic: advise' \
+    $'```reviewer_result_v1\n{"reviewer":"critic","findings":[{"severity":"low"}]}\n```')"
+  local rd_old; rd_old="$(dirname "$(dirname "$gate_file")")"
+  printf 'x\n' > "$rd_old/x.footer"
+  touch -t "$(date -d '40 days ago' +%Y%m%d%H%M 2>/dev/null || date -v-40d +%Y%m%d%H%M)" "$rd_old" 2>/dev/null || true
+
+  out="$tmp_root/gc-summarize.out"; err="$tmp_root/gc-summarize.err"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" artifacts gc \
+    --keep-last 1 --cd "$work" > "$out" 2> "$err" || status=$?
+
+  local summary_file skip_log summary_line
+  summary_file="$(dirname "$rd_old")/../runs-summary.jsonl"
+  summary_file="$(cd "$(dirname "$summary_file")" && pwd)/runs-summary.jsonl"
+  skip_log="$(dirname "$summary_file")/prune-skipped.log"
+  summary_line="$(grep '"run_id":"gate-old"' "$summary_file" 2>/dev/null || true)"
+
+  if [[ "$status" -eq 0 && -d "$rd_old" && -n "$summary_line" && ! -e "$skip_log" ]] \
+      && printf '%s' "$summary_line" | jq -e '
+        .kind == "gate" and .status == "complete" and
+        .gate.final == "GO" and .gate.tier == "full" and .gate.most_severe == "block"
+      ' >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name" "status=$status rd_old_exists=$(test -d "$rd_old" && echo y||echo n) summary_line=$summary_line out=$(<"$out")"
+  fi
+}
+
+case_gc_deletes_once_grace_elapses() {
+  # behavior (CC-540): a run already summarized long enough ago (past grace)
+  # is physically deleted on the next gc invocation, without re-summarizing
+  # Steps: pre-seed runs-summary.jsonl with an old summarized_at for the run;
+  #        gc; assert the run dir is deleted and no duplicate summary line
+  local name="pmctl artifacts gc: deletes a run once its summary has existed past --grace-days"
+  should_run "$name" || return 0
+  local store work out err status=0
+  store="$tmp_root/state-gc-grace-elapsed"
+  work="$tmp_root/work-gc-grace-elapsed"
+  make_work_repo "$work"
+
+  local rd_keep rd_old
+  rd_keep="$(run_dir_for "$store" "$work" run-keep)"
+  rd_old="$(run_dir_for "$store" "$work" run-old)"
+  mkdir -p "$rd_keep" "$rd_old"
+  printf 'k\n' > "$rd_keep/k.footer"
+  printf 'a\n' > "$rd_old/a.footer"
+  touch -t "$(date -d '40 days ago' +%Y%m%d%H%M 2>/dev/null || date -v-40d +%Y%m%d%H%M)" "$rd_old" 2>/dev/null || true
+
+  local runs_dir summary_file old_epoch
+  runs_dir="$(dirname "$rd_old")"
+  summary_file="$(dirname "$runs_dir")/runs-summary.jsonl"
+  old_epoch=$(( $(date +%s) - 10 * 86400 ))
+  jq -nc --argjson t "$old_epoch" \
+    '{run_id:"run-old", summarized_at:$t, kind:"dispatch", status:"complete", duration_seconds:1, gate:null}' \
+    > "$summary_file"
+
+  out="$tmp_root/gc-grace-elapsed.out"; err="$tmp_root/gc-grace-elapsed.err"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" artifacts gc \
+    --keep-last 1 --grace-days 3 --cd "$work" > "$out" 2> "$err" || status=$?
+
+  local summary_line_count
+  summary_line_count="$(grep -c '"run_id":"run-old"' "$summary_file" 2>/dev/null)"
+  : "${summary_line_count:=0}"
+
+  if [[ "$status" -eq 0 && ! -d "$rd_old" && -d "$rd_keep" && "$summary_line_count" -eq 1 && ! -s "$err" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status rd_old_exists=$(test -d "$rd_old" && echo y||echo n) summary_line_count=$summary_line_count out=$(<"$out") err=$(<"$err")"
+  fi
+}
+
+case_gc_incomplete_source_not_treated_as_failure() {
+  # behavior (CC-540): an empty/malformed gate result summarizes with an
+  # explicit incomplete_source status -- not a verification failure, and not
+  # silently treated as a passing gate. The run still prunes normally.
+  # Steps: gate run whose .gate-results/*.md is 0 bytes (e.g. CC-509 pre-fix
+  #        detached-launch early death); gc --grace-days 0; assert summary
+  #        marks incomplete_source, no prune-skipped.log, run dir deleted
+  local name="pmctl artifacts gc: empty gate result summarizes as incomplete_source, not a failure"
+  should_run "$name" || return 0
+  local store work out err status=0
+  store="$tmp_root/state-gc-incomplete"
+  work="$tmp_root/work-gc-incomplete"
+  make_work_repo "$work"
+
+  local rd_keep rd_old
+  rd_keep="$(run_dir_for "$store" "$work" run-keep)"
+  rd_old="$(run_dir_for "$store" "$work" gate-empty)"
+  mkdir -p "$rd_keep" "$rd_old/.gate-results"
+  printf 'k\n' > "$rd_keep/k.footer"
+  : > "$rd_old/.gate-results/gate-empty.md"
+  touch -t "$(date -d '40 days ago' +%Y%m%d%H%M 2>/dev/null || date -v-40d +%Y%m%d%H%M)" "$rd_old" 2>/dev/null || true
+
+  out="$tmp_root/gc-incomplete.out"; err="$tmp_root/gc-incomplete.err"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" artifacts gc \
+    --keep-last 1 --grace-days 0 --cd "$work" > "$out" 2> "$err" || status=$?
+
+  local runs_dir summary_file skip_log summary_line
+  runs_dir="$(dirname "$rd_old")"
+  summary_file="$(dirname "$runs_dir")/runs-summary.jsonl"
+  skip_log="$(dirname "$runs_dir")/prune-skipped.log"
+  summary_line="$(grep '"run_id":"gate-empty"' "$summary_file" 2>/dev/null || true)"
+
+  if [[ "$status" -eq 0 && ! -d "$rd_old" && ! -e "$skip_log" && -n "$summary_line" ]] \
+      && printf '%s' "$summary_line" | jq -e '.kind == "gate" and .status == "incomplete_source" and .gate == null' \
+        >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name" "status=$status rd_old_exists=$(test -d "$rd_old" && echo y||echo n) summary_line=$summary_line out=$(<"$out") err=$(<"$err")"
+  fi
+}
+
+case_gc_missing_tier_not_treated_as_failure() {
+  # behavior (CC-540): a legacy gate result with `final:` but no `tier:` line
+  # (older schema, per docs/skill-command-harness-policy.md-adjacent schema
+  # drift already seen in CC-562) still summarizes as status=complete --
+  # only .gate.final is required, tier/most_severe may be honestly null
+  # Steps: gate run whose frontmatter omits tier/most_severe entirely;
+  #        gc --grace-days 0; assert no prune-skipped.log, run dir deleted
+  local name="pmctl artifacts gc: gate result missing tier/most_severe is not a verification failure"
+  should_run "$name" || return 0
+  local store work out err status=0
+  store="$tmp_root/state-gc-no-tier"
+  work="$tmp_root/work-gc-no-tier"
+  make_work_repo "$work"
+
+  local rd_keep gate_file rd_old
+  rd_keep="$(run_dir_for "$store" "$work" run-keep)"
+  mkdir -p "$rd_keep"
+  printf 'k\n' > "$rd_keep/k.footer"
+  gate_file="$(write_gate_result "$store" "$work" gate-notier GO "" "" $'  critic: approve' "")"
+  rd_old="$(dirname "$(dirname "$gate_file")")"
+  printf 'x\n' > "$rd_old/x.footer"
+  touch -t "$(date -d '40 days ago' +%Y%m%d%H%M 2>/dev/null || date -v-40d +%Y%m%d%H%M)" "$rd_old" 2>/dev/null || true
+
+  out="$tmp_root/gc-no-tier.out"; err="$tmp_root/gc-no-tier.err"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" artifacts gc \
+    --keep-last 1 --grace-days 0 --cd "$work" > "$out" 2> "$err" || status=$?
+
+  local runs_dir summary_file skip_log summary_line
+  runs_dir="$(dirname "$rd_old")"
+  summary_file="$(dirname "$runs_dir")/runs-summary.jsonl"
+  skip_log="$(dirname "$runs_dir")/prune-skipped.log"
+  summary_line="$(grep '"run_id":"gate-notier"' "$summary_file" 2>/dev/null || true)"
+
+  if [[ "$status" -eq 0 && ! -d "$rd_old" && ! -e "$skip_log" && -n "$summary_line" ]] \
+      && printf '%s' "$summary_line" | jq -e '.gate.final == "GO" and .gate.tier == null' >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name" "status=$status rd_old_exists=$(test -d "$rd_old" && echo y||echo n) summary_line=$summary_line out=$(<"$out") err=$(<"$err")"
+  fi
+}
+
+case_gc_duration_uses_real_mtimes_not_run_id() {
+  # behavior (CC-540): duration is the spread between the earliest and latest
+  # *file mtime* inside the run dir, never anything parsed from the run id --
+  # run/gate id timestamps are known to drift from actual file mtimes
+  # Steps: run_id embeds a misleading date; two files touched with a known,
+  #        controlled real mtime gap; assert the computed duration matches
+  #        the real gap exactly, not zero and not derived from the run id
+  local name="_pmctl_artifacts_run_duration_seconds: uses real file mtime spread, not the run id"
+  should_run "$name" || return 0
+  local dir="$tmp_root/duration-real-mtime"
+  mkdir -p "$dir"
+  printf 'start\n' > "$dir/a.jsonl"
+  touch -t "$(date -d '2000-01-01 00:00:00' +%Y%m%d%H%M.%S 2>/dev/null || date -v1y -v1m -v1d +%Y%m%d%H%M.%S)" \
+    "$dir/a.jsonl" 2>/dev/null || touch -t 200001010000 "$dir/a.jsonl"
+  printf 'end\n' > "$dir/b.footer"
+  touch -t "$(date -d '2000-01-01 00:08:20' +%Y%m%d%H%M.%S 2>/dev/null)" "$dir/b.footer" 2>/dev/null \
+    || touch -t 200001010008 "$dir/b.footer"
+
+  local got
+  got="$(_pmctl_artifacts_run_duration_seconds "$dir")"
+  # 500 seconds (8m20s) apart, regardless of the "run id" this dir is never
+  # named after -- the point of the case is that no run-id string is consulted.
+  if [[ "$got" -eq 500 ]]; then
+    pass "$name"
+  else
+    fail "$name" "got=$got, expected 500"
+  fi
+}
+
+case_gc_findings_by_severity_buckets_per_reviewer() {
+  # behavior (CC-540): finding counts are bucketed by severity per reviewer
+  # from embedded reviewer_result_v1 JSON blocks, not kept as full text
+  # Steps: two reviewer blocks (one with two same-severity findings, one
+  #        skipped/absent entirely); assert the bucketed counts match
+  local name="_pmctl_artifacts_gate_findings_by_severity: buckets counts per reviewer"
+  should_run "$name" || return 0
+  local dir="$tmp_root/findings-severity"
+  mkdir -p "$dir"
+  local gate_file="$dir/gate-x.md"
+  {
+    printf -- '---\nfinal: NO-GO\ntier: standard\nmost_severe: high\nreviewers:\n  critic: block\n  qa-tester: skipped\n---\n\n'
+    printf '```reviewer_result_v1\n'
+    printf '{"reviewer":"critic","findings":[{"severity":"high"},{"severity":"high"},{"severity":"low"}]}\n'
+    printf '```\n'
+  } > "$gate_file"
+
+  local got
+  got="$(_pmctl_artifacts_gate_findings_by_severity "$gate_file")"
+  if printf '%s' "$got" | jq -e '
+      (map(select(.reviewer == "critic")) | first | .counts.high) == 2 and
+      (map(select(.reviewer == "critic")) | first | .counts.low) == 1
+    ' >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name" "got=$got"
+  fi
+}
+
+case_gc_findings_by_severity_unavailable_when_unparseable() {
+  # behavior (CC-540): a gate result with no reviewer_result_v1 block at all
+  # (older schema versions, e.g. gate_result_version v1 seen in this repo's
+  # own history) degrades to the string "unavailable", never to zero/empty --
+  # zero would misread as "no findings" instead of "could not extract"
+  local name="_pmctl_artifacts_gate_findings_by_severity: reports unavailable, not zero, when no block is parseable"
+  should_run "$name" || return 0
+  local dir="$tmp_root/findings-unavailable"
+  mkdir -p "$dir"
+  local gate_file="$dir/gate-y.md"
+  printf -- '---\nfinal: GO\ntier: standard\nreviewers:\n  critic: approve\n---\n\nNo embedded JSON block here.\n' \
+    > "$gate_file"
+
+  local got
+  got="$(_pmctl_artifacts_gate_findings_by_severity "$gate_file")"
+  if [[ "$got" == '"unavailable"' ]]; then
+    pass "$name"
+  else
+    fail "$name" "got=$got, expected the literal JSON string \"unavailable\""
+  fi
+}
+
+case_gc_verification_failure_retains_summary_and_logs() {
+  # behavior (CC-540): a summary line that fails its own read-back
+  # verification is rolled back out of runs-summary.jsonl (never left half
+  # -written) and recorded to prune-skipped.log -- the caller must not treat
+  # the run as summarized, so its deletion stays blocked
+  # Steps: call the append-verify helper directly with a summary claiming
+  #        status=complete/kind=gate but gate.final=null; assert it returns
+  #        non-zero, the line never lands in the summary file, and
+  #        prune-skipped.log names the run
+  local name="_pmctl_artifacts_run_summary_append_verified: rolls back and logs a failed verification"
+  should_run "$name" || return 0
+  local dir="$tmp_root/verify-failure"
+  mkdir -p "$dir"
+  local summary_file="$dir/runs-summary.jsonl" skip_log="$dir/prune-skipped.log"
+  printf '%s\n' '{"run_id":"pre-existing","summarized_at":1,"kind":"dispatch","status":"complete","duration_seconds":1,"gate":null}' \
+    > "$summary_file"
+  local bad_summary='{"run_id":"gate-bad","summarized_at":123,"kind":"gate","status":"complete","duration_seconds":1,"gate":{"final":null,"tier":"standard","most_severe":"high","reviewers":{},"findings_by_severity":"unavailable"}}'
+
+  local rc=0
+  _pmctl_artifacts_run_summary_append_verified "$bad_summary" "$summary_file" "$skip_log" "gate-bad" || rc=$?
+
+  local line_count
+  line_count="$(wc -l < "$summary_file" | tr -d ' ')"
+  if [[ "$rc" -ne 0 && "$line_count" -eq 1 ]] \
+      && ! grep -q '"run_id":"gate-bad"' "$summary_file" \
+      && grep -q 'gate-bad' "$skip_log" 2>/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc line_count=$line_count summary=$(<"$summary_file") skip_log=$(cat "$skip_log" 2>/dev/null)"
   fi
 }
 
@@ -549,6 +862,14 @@ case_codex_watch_auto_discover
 case_gc_dry_run
 case_gc_keep_last
 case_gc_max_age_zero
+case_gc_summarizes_before_grace_defers_deletion
+case_gc_deletes_once_grace_elapses
+case_gc_incomplete_source_not_treated_as_failure
+case_gc_missing_tier_not_treated_as_failure
+case_gc_duration_uses_real_mtimes_not_run_id
+case_gc_findings_by_severity_buckets_per_reviewer
+case_gc_findings_by_severity_unavailable_when_unparseable
+case_gc_verification_failure_retains_summary_and_logs
 case_gc_safety_rejects_pm_dispatch
 case_gc_all_repos_removes_inrepo
 case_gc_all_repos_dry_run
