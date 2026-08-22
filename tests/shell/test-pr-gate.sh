@@ -11542,6 +11542,132 @@ test_reviewer_protocol_rejects_malformed_and_truncated_artifacts() {
   pass "$name"
 }
 
+_write_single_reviewer_protocol_artifact() {
+  local artifact="$1" reviewer="$2" verdict="${3:-approve}"
+  local brief="${1}.brief" scope_sha
+  scope_sha="$(printf 'a%.0s' {1..64})"
+  printf 'artifact_sha256: %s\nartifact: %s\n' \
+    "$scope_sha" "${artifact}.scope.json" > "$brief"
+  : > "$artifact"
+  pr_gate_fixture_write_reviewer_protocol \
+    "$brief" "$artifact" "$reviewer" "$verdict"
+}
+
+_rewrite_reviewer_protocol_json() {
+  local artifact="$1" filter="$2"
+  local original mutated rewritten start_line end_line
+  original="$(mktemp "${TMPDIR:-/tmp}/reviewer-original.XXXXXX")"
+  mutated="$(mktemp "${TMPDIR:-/tmp}/reviewer-mutated.XXXXXX")"
+  rewritten="$(mktemp "${TMPDIR:-/tmp}/reviewer-artifact.XXXXXX")"
+  awk '
+    $0 == "```reviewer_result_v1" { inside=1; next }
+    inside && $0 == "```" { exit }
+    inside { print }
+  ' "$artifact" > "$original"
+  jq "$filter" "$original" > "$mutated"
+  start_line="$(awk '$0 == "```reviewer_result_v1" { print NR; exit }' "$artifact")"
+  end_line="$(awk -v start="$start_line" \
+    'NR > start && $0 == "```" { print NR; exit }' "$artifact")"
+  {
+    sed -n "1,${start_line}p" "$artifact"
+    cat "$mutated"
+    sed -n "${end_line},\$p" "$artifact"
+  } > "$rewritten"
+  mv "$rewritten" "$artifact"
+  rm -f -- "$original" "$mutated"
+}
+
+# Behavior: a syntactically valid reviewer document whose test-gap contract
+# field is null is rejected as a named test-gap contract defect, not as
+# invalid JSON. The previous catch-all turned this exact LLM mistake into an
+# un-actionable retry.
+# Steps: write a valid critic approve artifact, null out test_gaps[0].contract,
+# and assert the verifier names the field.
+test_reviewer_protocol_null_contract_is_named_not_invalid_json() {
+  local name="reviewer-protocol/null-contract-named-not-invalid-json"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" artifact scope_sha code
+  mkdir -p "$dir"
+  artifact="$dir/critic.md"
+  scope_sha="$(printf 'a%.0s' {1..64})"
+  # shellcheck source=runtime/lib/gate-result-verify.sh
+  . "$REPO_ROOT/runtime/lib/gate-result-verify.sh"
+  _write_single_reviewer_protocol_artifact "$artifact" critic approve
+  _rewrite_reviewer_protocol_json "$artifact" '.test_gaps[0].contract = null'
+  set +e
+  gate_reviewer_protocol_verify "$artifact" critic "$scope_sha" "" true \
+    >"$dir/out" 2>"$dir/err"
+  code=$?
+  set -e
+  [[ "$code" -ne 0 ]] || {
+    fail "$name" "null contract unexpectedly passed"
+    return
+  }
+  assert_file_contains "$name" "$dir/err" "invalid test-gap matrix contract" || return
+  assert_file_contains "$name" "$dir/err" "critic-TG001" || return
+  assert_file_contains "$name" "$dir/err" "contract=" || return
+  assert_not_contains "$name" "$dir/err" "invalid JSON document" || return
+  pass "$name"
+}
+
+# Behavior: empty existing_evidence on a test-gap row is filled from the
+# paired finding's source before the contract check, so a copy-from-sibling
+# omission does not fail the round.
+# Steps: write a blocking critic artifact (finding + matching gap), empty
+# existing_evidence, and assert verification passes.
+test_reviewer_protocol_heals_empty_existing_evidence_from_finding_source() {
+  local name="reviewer-protocol/heals-empty-existing-evidence"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" artifact scope_sha code
+  mkdir -p "$dir"
+  artifact="$dir/critic.md"
+  scope_sha="$(printf 'a%.0s' {1..64})"
+  # shellcheck source=runtime/lib/gate-result-verify.sh
+  . "$REPO_ROOT/runtime/lib/gate-result-verify.sh"
+  _write_single_reviewer_protocol_artifact "$artifact" critic block
+  _rewrite_reviewer_protocol_json "$artifact" '.test_gaps[0].existing_evidence = []'
+  set +e
+  gate_reviewer_protocol_verify "$artifact" critic "$scope_sha" "" true \
+    >"$dir/out" 2>"$dir/err"
+  code=$?
+  set -e
+  [[ "$code" -eq 0 ]] || {
+    fail "$name" "empty existing_evidence was not healed: $(tr -d '\n' < "$dir/err" | tail -c 240)"
+    return
+  }
+  pass "$name"
+}
+
+# Behavior: a finding without a matching status=gap test_gaps row names the
+# finding id so the single reviewer retry can add that row.
+# Steps: write a blocking critic artifact, retarget the gap's affected_behavior,
+# and assert the diagnostic lists critic-F001.
+test_reviewer_protocol_names_unpaired_finding_ids() {
+  local name="reviewer-protocol/names-unpaired-finding-ids"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" artifact scope_sha code
+  mkdir -p "$dir"
+  artifact="$dir/critic.md"
+  scope_sha="$(printf 'a%.0s' {1..64})"
+  # shellcheck source=runtime/lib/gate-result-verify.sh
+  . "$REPO_ROOT/runtime/lib/gate-result-verify.sh"
+  _write_single_reviewer_protocol_artifact "$artifact" critic block
+  _rewrite_reviewer_protocol_json "$artifact" \
+    '.test_gaps[0].affected_behavior = "Unrelated fixture behavior."'
+  set +e
+  gate_reviewer_protocol_verify "$artifact" critic "$scope_sha" "" true \
+    >"$dir/out" 2>"$dir/err"
+  code=$?
+  set -e
+  [[ "$code" -ne 0 ]] || {
+    fail "$name" "unpaired finding unexpectedly passed"
+    return
+  }
+  assert_file_contains "$name" "$dir/err" "finding lacks actionable test-gap row" || return
+  assert_file_contains "$name" "$dir/err" "critic-F001" || return
+  pass "$name"
+}
+
 # Behavior: dropping a copied test-gap row is restored from reviewer documents
 # on the first synthesis attempt, so the gate does not spend its correction
 # retry on typography/copy drift.
@@ -12548,6 +12674,9 @@ run_test test_parallel_reviewer_test_gap_diagnostic_names_offending_value
 run_test test_parallel_reviewer_detailed_reason_is_retryable
 run_test test_parallel_reviewer_wrong_subject_is_stale_without_retry
 run_test test_reviewer_protocol_rejects_malformed_and_truncated_artifacts
+run_test test_reviewer_protocol_null_contract_is_named_not_invalid_json
+run_test test_reviewer_protocol_heals_empty_existing_evidence_from_finding_source
+run_test test_reviewer_protocol_names_unpaired_finding_ids
 run_test test_parallel_synthesis_test_gap_copy_is_restored_without_retry
 run_test test_parallel_synthesis_owned_defect_retry_exhausts
 run_test test_parallel_reviewer_transport_failure_recovers_once

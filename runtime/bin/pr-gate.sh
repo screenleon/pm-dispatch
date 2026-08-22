@@ -3096,6 +3096,7 @@ RBRIEF_EOF
       "invalid evidence reference contract"
       "transport failure"
       "invalid JSON document"
+      "reviewer protocol filter failed"
       "malformed reviewer result fence"
       "truncated reviewer result"
       "missing reviewer result"
@@ -3138,7 +3139,13 @@ RBRIEF_EOF
         _RETRY_NAMES=()
         _RETRY_OUTPUT_FILES=()
         _RETRY_POST_WAIT_HASHES=()
-        for r in "${PROTOCOL_INVALID_OUTPUTS[@]}"; do
+        for _retry_i in "${!PROTOCOL_INVALID_OUTPUTS[@]}"; do
+          r="${PROTOCOL_INVALID_OUTPUTS[$_retry_i]}"
+          _retry_reason="${PROTOCOL_INVALID_REASONS[$_retry_i]:-${GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR:-schema failure}}"
+          _retry_reason_line="${_retry_reason//$'\n'/ }"
+          _retry_reason_line="${_retry_reason_line//$'\r'/ }"
+          [[ "${#_retry_reason_line}" -le 800 ]] \
+            || _retry_reason_line="${_retry_reason_line:0:800}~"
           # Find this reviewer's already-failed output file to extract its
           # specific bad citation(s); best-effort only -- an extraction
           # failure still retries, just with the generic reminder alone.
@@ -3181,14 +3188,20 @@ goal: You are acting as the ${r} reviewer. This is a corrective retry of a
   changed files, and write your structured findings to ${_RETRY_OUTPUT}.
 
 correction: |
-  Your previous submission for this diff failed the mandatory reviewer
-  protocol (${GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR:-schema failure}). Re-emit
-  the complete result from the same immutable subject. In particular, every
-  coverage evidence_refs[], test_gaps[].existing_evidence[], and finding
-  source must cite a path that is EXACTLY one of the declared scope-manifest
-  reference-index paths below (not merely a real file on disk -- an in-scope
-  or adjacent-but-undeclared file is still a protocol failure), and any line
-  number must not exceed that path's recorded line count.
+  Your previous submission for this diff failed this exact protocol check:
+
+    ${_retry_reason_line}
+
+  Re-emit the complete result from the same immutable subject. If the
+  diagnostic names a test_gaps row, fix that row's named field (contract must
+  be a non-empty string; existing_evidence must be a non-empty array of
+  in-index refs; a status=gap finding needs a matching status=gap test_gaps
+  row with the same affected_behavior). Every coverage evidence_refs[],
+  test_gaps[].existing_evidence[], and finding source must cite a path that
+  is EXACTLY one of the declared scope-manifest reference-index paths below
+  (not merely a real file on disk -- an in-scope or adjacent-but-undeclared
+  file is still a protocol failure), and any line number must not exceed that
+  path's recorded line count.
 ${_retry_bad_citations:+  Specifically rejected citation(s) from your previous submission:
 $_retry_bad_citations
 }

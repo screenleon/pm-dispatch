@@ -16,6 +16,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **Reviewer protocol names test-gap field defects instead of calling valid
+  JSON "invalid JSON document."** A null `contract` or unpaired finding now
+  names the row/id; empty `existing_evidence` is filled from a finding with
+  the same `affected_behavior` when that finding already declared a `source`.
+  Corrective retry briefs receive that reviewer's exact protocol reason, not
+  the last failed reviewer's leftover error string.
+
 - **Gate synthesis restores copied reviewer fields before parity checks.**
   `coverage_matrix`, `reviewer_finding_inventory`, `test_gap_matrix`, union
   copy-fields, caution/uncertainty lists, and `verification_plan.focused` are

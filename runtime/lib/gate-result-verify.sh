@@ -160,11 +160,55 @@ _gate_reviewer_protocol_document_verify() {
   local document="$1" expected_reviewer="$2" expected_scope_sha="$3"
   local reference_index_json="${4:-null}"
   local require_test_gaps="${5:-false}"
-  local surfaces_json validation
+  local surfaces_json validation parse_err healed jq_rc
   GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR=""
   surfaces_json="$(_gate_reviewer_protocol_surfaces | jq -Rsc '
     split("\n") | map(select(length > 0))
   ')" || return 2
+  parse_err="$(mktemp "${TMPDIR:-/tmp}/gate-reviewer-json-parse.XXXXXX")" \
+    || return 2
+  if ! jq -e 'type == "object"' "$document" >/dev/null 2>"$parse_err"; then
+    GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR="invalid JSON document"
+    if [[ -s "$parse_err" ]]; then
+      GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR="invalid JSON document: $(
+        tr -cd 'A-Za-z0-9._: -' < "$parse_err" | tr -s '[:space:]' ' ' | head -c 160
+      )"
+    fi
+    rm -f -- "$parse_err"
+    return 1
+  fi
+  rm -f -- "$parse_err"
+  # Fill empty test-gap existing_evidence from a finding with the same
+  # affected_behavior. That is a copy from an already-declared source, not a
+  # new citation. Do not invent contract/status/scenario values.
+  healed="$(mktemp "${TMPDIR:-/tmp}/gate-reviewer-healed.XXXXXX")" || return 2
+  if jq '
+      . as $doc |
+      if (.test_gaps | type) != "array" then .
+      else
+        .test_gaps |= map(
+          . as $row |
+          if (($row.existing_evidence | type) != "array" or
+              ($row.existing_evidence | length) == 0) and
+             (($row.affected_behavior | type) == "string")
+          then
+            ([($doc.findings // [])[]
+              | select(.affected_behavior == $row.affected_behavior)
+              | .source
+              | select(type == "object")] | .[0]) as $src |
+            if $src == null then $row
+            else $row + {existing_evidence: [$src]}
+            end
+          else $row
+          end)
+      end
+    ' "$document" > "$healed"; then
+    mv -- "$healed" "$document"
+    healed=""
+  else
+    rm -f -- "$healed"
+    healed=""
+  fi
   validation="$(jq -r \
     --arg reviewer "$expected_reviewer" \
     --arg scope_sha "$expected_scope_sha" \
@@ -273,6 +317,18 @@ _gate_reviewer_protocol_document_verify() {
             .affected_behavior == $finding.affected_behavior)] | all
       else ($require_test_gaps | not)
       end;
+    def unpaired_finding_ids:
+      . as $document |
+      if (($document.findings | type) != "array") or
+         (($document.test_gaps | type) != "array")
+      then []
+      else
+        [$document.findings[] | . as $finding |
+          select([$document.test_gaps[] |
+            select(.status == "gap" and
+              .affected_behavior == $finding.affected_behavior)] |
+            length == 0) | .id]
+      end;
     def findings_array:
       if (.findings | type) == "array" then .findings else [] end;
     def blocking_severity_violation:
@@ -322,6 +378,10 @@ _gate_reviewer_protocol_document_verify() {
             elif (($row.status | IN("gap","no_gap")) | not)
             then "status=" + ($row.status | display) +
                  " must be one of: gap, no_gap"
+            elif (($row.contract | type) != "string" or
+                  ($row.contract | length) == 0)
+            then "contract=" + ($row.contract | display) +
+                 " must be a non-empty string"
             elif (($row.coverage_dimensions | type) != "array" or
                   ($row.coverage_dimensions | length) == 0)
             then "coverage_dimensions must be a non-empty array"
@@ -381,6 +441,7 @@ _gate_reviewer_protocol_document_verify() {
       all(.coverage[].evidence_refs[]; bound_evidence_ref) and
       all(.findings[].source; bound_evidence_ref) and
       all((.test_gaps // [])[].existing_evidence[]; bound_evidence_ref);
+    try (
     if (envelope_contract | not)
     then "invalid top-level or binding contract"
     elif .scope_manifest_sha256 != $scope_sha
@@ -409,17 +470,29 @@ _gate_reviewer_protocol_document_verify() {
         ": " + $invalid.reason
       end)
     elif (finding_test_gap_contract | not)
-    then "finding lacks actionable test-gap row"
+    then "finding lacks actionable test-gap row" +
+      (if (unpaired_finding_ids | length) == 0
+       then ""
+       else ": " + (unpaired_finding_ids | join(", "))
+       end)
     elif $references != null and (evidence_reference_contract | not)
     then "invalid evidence reference contract"
     elif (verdict_contract | not)
     then "invalid verdict contract"
     else "ok"
     end
-  ' "$document" 2>/dev/null)" || {
-    GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR="invalid JSON document"
+    ) catch (
+      "reviewer protocol filter failed: " +
+      ((. | tostring)
+        | gsub("[^A-Za-z0-9._: -]"; "?")
+        | if length > 160 then .[0:160] + "~" else . end)
+    )
+  ' "$document" 2>/dev/null)"
+  jq_rc=$?
+  if [[ "$jq_rc" -ne 0 ]]; then
+    GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR="reviewer protocol filter failed"
     return 1
-  }
+  fi
   if [[ "$validation" != ok ]]; then
     GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR="$validation"
     return 1
