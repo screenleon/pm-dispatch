@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
 
+if ! declare -F serialize_with_lock >/dev/null 2>&1; then
+  # shellcheck source=runtime/lib/portable.sh
+  # shellcheck disable=SC1091
+  . "${BASH_SOURCE[0]%/*}/portable.sh" 2>/dev/null || true
+fi
+
 pmctl_artifacts_usage() {
   printf 'usage: pmctl artifacts list [--cd <work_dir>]\n' >&2
   printf '       pmctl artifacts show <run_id> [--cd <work_dir>]\n' >&2
@@ -402,20 +408,53 @@ _pmctl_artifacts_run_summarize_json() {
 # verification rolls the append back (so the summary file never carries a
 # line that didn't pass its own check) and records why to prune-skipped.log
 # -- the source run directory is left untouched either way.
+# Looks up the most recent summarized_at for one run_id. Called fresh inside
+# the per-project lock at decision time (see pmctl_artifacts_gc), never from
+# a snapshot taken before the lock was acquired -- a snapshot loaded once per
+# gc invocation is exactly the stale state a concurrent second gc process
+# could act on (architecture-reviewer's finding).
+_pmctl_artifacts_run_summary_lookup() {
+  local summary_file="${1:-}" run_id="${2:-}"
+  [[ -f "$summary_file" ]] || return 0
+  jq -r --arg run_id "$run_id" '
+    select(.run_id == $run_id and .summarized_at != null) | .summarized_at
+  ' "$summary_file" 2>/dev/null | tail -n 1
+}
+
+# Removes one line by exact content match rather than by position (`sed -i
+# '$d'`). A rollback must never assume "the last line" is the one this call
+# appended -- a concurrent writer holding a different lock generation could
+# have appended after it, and deleting positionally would destroy that
+# writer's valid record instead of the failed one.
+_pmctl_artifacts_run_summary_prune_line() {
+  local summary_file="${1:-}" line_to_remove="${2:-}"
+  [[ -f "$summary_file" ]] || return 0
+  local tmp
+  tmp="$(mktemp "${summary_file}.XXXXXX")" || return 1
+  grep -vF -- "$line_to_remove" "$summary_file" > "$tmp" 2>/dev/null || true
+  mv -- "$tmp" "$summary_file"
+}
+
 _pmctl_artifacts_run_summary_append_verified() {
   local summary_json="${1:-}" summary_file="${2:-}" skip_log="${3:-}" run_id="${4:-}"
-  printf '%s\n' "$summary_json" >> "$summary_file"
+  local append_status=0
+  printf '%s\n' "$summary_json" >> "$summary_file" || append_status=$?
   local last_line
   last_line="$(tail -n 1 "$summary_file")"
-  # Only .gate.final is required when status=complete: tier/most_severe are
-  # legitimately absent on older gate_result_version schemas, so requiring
-  # them here would misclassify honest historical data as an extraction
-  # failure and block those runs from ever being pruned. final is the one
-  # field status=complete is actually defined by (see
-  # _pmctl_artifacts_run_summarize_json), so requiring it here is the same
-  # check restated, not a stricter one.
-  if printf '%s' "$last_line" | jq -e '
-      (.run_id != null) and (.summarized_at != null) and
+  # Require the read-back last line to actually be THIS run's record, not
+  # merely well-formed -- an append that silently fails partway (or a
+  # concurrent writer's append landing in between) would otherwise let
+  # tail -n 1 read a prior, unrelated valid line and report false success,
+  # which is exactly the fail-open path risk-reviewer flagged: the retained
+  # summary is the only permanent record once the source run is deleted, so
+  # "some valid-looking line exists" is not the same claim as "this run's
+  # line was durably written." Only .gate.final is required when
+  # status=complete: tier/most_severe are legitimately absent on older
+  # gate_result_version schemas, so requiring them here would misclassify
+  # honest historical data as an extraction failure and block those runs
+  # from ever being pruned.
+  if [[ "$append_status" -eq 0 ]] && printf '%s' "$last_line" | jq -e --arg run_id "$run_id" '
+      (.run_id == $run_id) and (.summarized_at != null) and
       (.kind != null) and (.status != null) and
       (if .status == "complete" and .kind == "gate"
        then .gate.final != null
@@ -423,10 +462,76 @@ _pmctl_artifacts_run_summary_append_verified() {
     ' >/dev/null 2>&1; then
     return 0
   fi
-  sed -i '$d' "$summary_file"
+  # Do not blindly delete "the last line" here: if a concurrent writer's
+  # append landed after ours, the last line may not be ours to remove.
+  # _pmctl_artifacts_run_summary_prune_line strips by exact JSON match
+  # instead of by position.
+  _pmctl_artifacts_run_summary_prune_line "$summary_file" "$summary_json"
   printf '%s\trun=%s\tverification failed, run directory retained: %s\n' \
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$run_id" "$last_line" >> "$skip_log"
   return 1
+}
+
+# Runs the full summarize/append-verify/grace/delete decision for one run
+# under the caller's per-project lock (see serialize_with_lock in
+# pmctl_artifacts_gc). Prints human-readable progress lines to stdout as it
+# goes, then exactly one final line "RESULT<TAB>{deleted|would-delete|
+# deferred|would-defer|skipped}<TAB>{bytes|0}" that the caller parses to
+# update its counters -- this call runs in serialize_with_lock's subshell, so
+# shell variables/arrays cannot cross back to the caller; stdout is the only
+# channel.
+_pmctl_artifacts_gc_process_run() {
+  local run_dir="${1:-}" run_id="${2:-}" now_epoch="${3:-}" grace_seconds="${4:-}"
+  local runs_summary_file="${5:-}" prune_skipped_log="${6:-}" dry_run="${7:-}"
+  local run_size summarized_at summary_json remaining_seconds
+
+  run_size="$(_pmctl_artifacts_dir_size "$run_dir")"
+  # Fresh lookup, taken only after the lock is held -- never a value carried
+  # in from before acquiring it.
+  summarized_at="$(_pmctl_artifacts_run_summary_lookup "$runs_summary_file" "$run_id")"
+
+  if [[ "$dry_run" -eq 1 ]]; then
+    if [[ -z "$summarized_at" ]]; then
+      summary_json="$(_pmctl_artifacts_run_summarize_json "$run_dir" "$run_id" "$now_epoch")"
+      printf 'would summarize: %s  %s\n' "$run_id" "$summary_json"
+      summarized_at="$now_epoch"
+    fi
+    remaining_seconds=$(( grace_seconds - (now_epoch - summarized_at) ))
+    if (( remaining_seconds <= 0 )); then
+      printf 'would delete: %s  (%s bytes)\n' "$run_id" "$run_size"
+      printf 'RESULT\twould-delete\t%s\n' "$run_size"
+    else
+      printf 'would defer: %s  (grace period, %ds remaining)\n' "$run_id" "$remaining_seconds"
+      printf 'RESULT\twould-defer\t0\n'
+    fi
+    return 0
+  fi
+
+  if [[ -z "$summarized_at" ]]; then
+    summary_json="$(_pmctl_artifacts_run_summarize_json "$run_dir" "$run_id" "$now_epoch")"
+    if ! _pmctl_artifacts_run_summary_append_verified \
+        "$summary_json" "$runs_summary_file" "$prune_skipped_log" "$run_id"; then
+      printf 'skipped (summary verification failed, see prune-skipped.log): %s\n' "$run_id"
+      printf 'RESULT\tskipped\t0\n'
+      return 0
+    fi
+    summarized_at="$now_epoch"
+  fi
+
+  remaining_seconds=$(( grace_seconds - (now_epoch - summarized_at) ))
+  if (( remaining_seconds > 0 )); then
+    printf 'summarized, deletion deferred (%ds remaining): %s\n' "$remaining_seconds" "$run_id"
+    printf 'RESULT\tdeferred\t0\n'
+    return 0
+  fi
+
+  if _pmctl_artifacts_safe_rm_check "$run_dir"; then
+    printf 'deleted: %s  (%s bytes)\n' "$run_id" "$run_size"
+    rm -rf "$run_dir"
+    printf 'RESULT\tdeleted\t%s\n' "$run_size"
+  else
+    printf 'RESULT\tskipped\t0\n'
+  fi
 }
 
 pmctl_artifacts_gc() {
@@ -588,22 +693,8 @@ pmctl_artifacts_gc() {
     fi
   fi
 
-  # Load existing summarized_at timestamps in one pass -- looking each
-  # candidate up with its own jq call would repeat the same per-item
-  # subprocess cost this repo has already paid for and fixed twice
-  # (CC-557/CC-560).
-  declare -A already_summarized_at=()
-  if [[ -f "$runs_summary_file" ]]; then
-    local rid sat
-    while IFS=$'\t' read -r rid sat; do
-      [[ -n "$rid" ]] || continue
-      already_summarized_at["$rid"]="$sat"
-    done < <(jq -r 'select(.run_id != null and .summarized_at != null) | [.run_id, .summarized_at] | @tsv' \
-      "$runs_summary_file" 2>/dev/null)
-  fi
-
-  local rank=0 deleted=0 freed=0 pending=0 run_id run_size run_mtime age_seconds
-  local summarized_at summary_json remaining_seconds
+  local rank=0 deleted=0 freed=0 pending=0 run_id run_mtime age_seconds
+  local raw outcome_line outcome_kind outcome_size
   while IFS=$'\t' read -r run_mtime run_dir; do
     (( rank++ )) || true
     run_id="$(basename "$run_dir")"
@@ -621,50 +712,27 @@ pmctl_artifacts_gc() {
       fi
     fi
 
-    run_size="$(_pmctl_artifacts_dir_size "$run_dir")"
-    summarized_at="${already_summarized_at[$run_id]:-}"
-
-    if [[ "$dry_run" -eq 1 ]]; then
-      if [[ -z "$summarized_at" ]]; then
-        summary_json="$(_pmctl_artifacts_run_summarize_json "$run_dir" "$run_id" "$now_epoch")"
-        printf 'would summarize: %s  %s\n' "$run_id" "$summary_json"
-        summarized_at="$now_epoch"
-      fi
-      remaining_seconds=$(( grace_seconds - (now_epoch - summarized_at) ))
-      if (( remaining_seconds <= 0 )); then
-        printf 'would delete: %s  (%s bytes)\n' "$run_id" "$run_size"
-        (( deleted++ )) || true
-      else
-        printf 'would defer: %s  (grace period, %ds remaining)\n' "$run_id" "$remaining_seconds"
-        (( pending++ )) || true
-      fi
-      continue
-    fi
-
-    if [[ -z "$summarized_at" ]]; then
-      summary_json="$(_pmctl_artifacts_run_summarize_json "$run_dir" "$run_id" "$now_epoch")"
-      if ! _pmctl_artifacts_run_summary_append_verified \
-          "$summary_json" "$runs_summary_file" "$prune_skipped_log" "$run_id"; then
-        printf 'skipped (summary verification failed, see prune-skipped.log): %s\n' "$run_id"
-        continue
-      fi
-      summarized_at="$now_epoch"
-      already_summarized_at["$run_id"]="$summarized_at"
-    fi
-
-    remaining_seconds=$(( grace_seconds - (now_epoch - summarized_at) ))
-    if (( remaining_seconds > 0 )); then
-      printf 'summarized, deletion deferred (%ds remaining): %s\n' "$remaining_seconds" "$run_id"
-      (( pending++ )) || true
-      continue
-    fi
-
-    if _pmctl_artifacts_safe_rm_check "$run_dir"; then
-      printf 'deleted: %s  (%s bytes)\n' "$run_id" "$run_size"
-      rm -rf "$run_dir"
-      (( deleted++ )) || true
-      (( freed += run_size )) || true
-    fi
+    # The entire summarize/append/verify/grace/delete decision for this run
+    # happens atomically under one per-project lock so a concurrent second
+    # gc invocation cannot act on a stale "is this summarized yet" snapshot
+    # (architecture-reviewer's finding) -- the lookup inside
+    # _pmctl_artifacts_gc_process_run is always fresh, taken after the lock
+    # is held, never before. All human-readable progress lines the wrapped
+    # call prints are passed straight through; the final RESULT-prefixed
+    # line is this call's only structured output, parsed below.
+    raw="$(serialize_with_lock "$runs_summary_file" _pmctl_artifacts_gc_process_run \
+      "$run_dir" "$run_id" "$now_epoch" "$grace_seconds" \
+      "$runs_summary_file" "$prune_skipped_log" "$dry_run")" || true
+    printf '%s\n' "$raw" | grep -v $'^RESULT\t' || true
+    outcome_line="$(printf '%s\n' "$raw" | grep $'^RESULT\t' | tail -n 1)"
+    outcome_kind="$(printf '%s' "$outcome_line" | cut -f2)"
+    outcome_size="$(printf '%s' "$outcome_line" | cut -f3)"
+    case "$outcome_kind" in
+      deleted) (( deleted++ )) || true; (( freed += outcome_size )) || true ;;
+      would-delete) (( deleted++ )) || true ;;
+      deferred|would-defer) (( pending++ )) || true ;;
+      *) : ;;
+    esac
   done <<< "$sorted_runs"
 
   if [[ "$dry_run" -eq 1 ]]; then

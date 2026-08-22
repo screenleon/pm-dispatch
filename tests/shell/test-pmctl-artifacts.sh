@@ -335,6 +335,206 @@ case_gc_max_age_zero() {
   fi
 }
 
+case_gc_grace_days_env_only_selects_grace_period() {
+  # behavior (CC-540, qa-tester-F001): PM_DISPATCH_GC_GRACE_DAYS alone (no
+  # --grace-days flag) selects the grace period
+  # Steps: env-only grace=0 with one eligible old run; assert immediate
+  #        deletion, proving the environment path alone is load-bearing
+  local name="pmctl artifacts gc: PM_DISPATCH_GC_GRACE_DAYS alone selects the grace period"
+  should_run "$name" || return 0
+  local store work out err status=0
+  store="$tmp_root/state-gc-grace-env-only"
+  work="$tmp_root/work-gc-grace-env-only"
+  make_work_repo "$work"
+
+  local rd_keep rd_old
+  rd_keep="$(run_dir_for "$store" "$work" run-keep)"
+  rd_old="$(run_dir_for "$store" "$work" run-old)"
+  mkdir -p "$rd_keep" "$rd_old"
+  printf 'k\n' > "$rd_keep/k.footer"
+  printf 'a\n' > "$rd_old/a.footer"
+  touch -t "$(date -d '40 days ago' +%Y%m%d%H%M 2>/dev/null || date -v-40d +%Y%m%d%H%M)" "$rd_old" 2>/dev/null || true
+
+  out="$tmp_root/gc-grace-env-only.out"; err="$tmp_root/gc-grace-env-only.err"
+  PM_DISPATCH_STATE_ROOT="$store" PM_DISPATCH_GC_GRACE_DAYS=0 "$PMCTL" artifacts gc \
+    --keep-last 1 --cd "$work" > "$out" 2> "$err" || status=$?
+
+  if [[ "$status" -eq 0 && ! -d "$rd_old" && -d "$rd_keep" && ! -s "$err" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status rd_old_exists=$(test -d "$rd_old" && echo y||echo n) out=$(<"$out") err=$(<"$err")"
+  fi
+}
+
+case_gc_grace_days_flag_overrides_env() {
+  # behavior (CC-540, qa-tester-F001): an explicit --grace-days flag wins
+  # over a conflicting PM_DISPATCH_GC_GRACE_DAYS
+  # Steps: env sets grace=0 (would delete immediately), flag sets grace=3;
+  #        assert the run is deferred, not deleted -- the flag governed
+  local name="pmctl artifacts gc: --grace-days flag overrides a conflicting PM_DISPATCH_GC_GRACE_DAYS"
+  should_run "$name" || return 0
+  local store work out err status=0
+  store="$tmp_root/state-gc-grace-flag-wins"
+  work="$tmp_root/work-gc-grace-flag-wins"
+  make_work_repo "$work"
+
+  local rd_keep rd_old
+  rd_keep="$(run_dir_for "$store" "$work" run-keep)"
+  rd_old="$(run_dir_for "$store" "$work" run-old)"
+  mkdir -p "$rd_keep" "$rd_old"
+  printf 'k\n' > "$rd_keep/k.footer"
+  printf 'a\n' > "$rd_old/a.footer"
+  touch -t "$(date -d '40 days ago' +%Y%m%d%H%M 2>/dev/null || date -v-40d +%Y%m%d%H%M)" "$rd_old" 2>/dev/null || true
+
+  out="$tmp_root/gc-grace-flag-wins.out"; err="$tmp_root/gc-grace-flag-wins.err"
+  PM_DISPATCH_STATE_ROOT="$store" PM_DISPATCH_GC_GRACE_DAYS=0 "$PMCTL" artifacts gc \
+    --keep-last 1 --grace-days 3 --cd "$work" > "$out" 2> "$err" || status=$?
+
+  if [[ "$status" -eq 0 && -d "$rd_old" && -d "$rd_keep" && ! -s "$err" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status rd_old_exists=$(test -d "$rd_old" && echo y||echo n) out=$(<"$out") err=$(<"$err")"
+  fi
+}
+
+case_gc_dry_run_positive_grace_previews_without_mutation() {
+  # behavior (CC-540, qa-tester-F002): --dry-run under a positive (non-zero)
+  # grace period previews both the summarize and the defer decision without
+  # ever persisting runs-summary.jsonl or touching the run directory
+  # Steps: one eligible, not-yet-summarized run; gc --dry-run with the
+  #        default grace (3 days); assert both preview lines appear and
+  #        nothing was written or deleted
+  local name="pmctl artifacts gc: --dry-run under positive grace previews without persisting or deleting"
+  should_run "$name" || return 0
+  local store work out err status=0
+  store="$tmp_root/state-gc-dry-positive-grace"
+  work="$tmp_root/work-gc-dry-positive-grace"
+  make_work_repo "$work"
+
+  local rd_keep rd_old
+  rd_keep="$(run_dir_for "$store" "$work" run-keep)"
+  rd_old="$(run_dir_for "$store" "$work" run-old)"
+  mkdir -p "$rd_keep" "$rd_old"
+  printf 'k\n' > "$rd_keep/k.footer"
+  printf 'a\n' > "$rd_old/a.footer"
+  touch -t "$(date -d '40 days ago' +%Y%m%d%H%M 2>/dev/null || date -v-40d +%Y%m%d%H%M)" "$rd_old" 2>/dev/null || true
+
+  out="$tmp_root/gc-dry-positive-grace.out"; err="$tmp_root/gc-dry-positive-grace.err"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" artifacts gc \
+    --dry-run --keep-last 1 --cd "$work" > "$out" 2> "$err" || status=$?
+
+  local summary_file
+  summary_file="$(dirname "$rd_old")/../runs-summary.jsonl"
+  summary_file="$(cd "$(dirname "$summary_file")" && pwd)/runs-summary.jsonl"
+
+  if [[ "$status" -eq 0 && -d "$rd_old" && ! -e "$summary_file" && ! -s "$err" ]] \
+      && grep -q '^would summarize: run-old' "$out" \
+      && grep -q '^would defer: run-old' "$out"; then
+    pass "$name"
+  else
+    fail "$name" "status=$status rd_old_exists=$(test -d "$rd_old" && echo y||echo n) summary_exists=$(test -e "$summary_file" && echo y||echo n) out=$(<"$out") err=$(<"$err")"
+  fi
+}
+
+case_gc_concurrent_invocations_produce_one_summary_line() {
+  # behavior (CC-540, architecture-reviewer-F001): two gc invocations racing
+  # on the same partition serialize per-project instead of each acting on a
+  # stale "already summarized?" snapshot -- the shared runs-summary.jsonl
+  # ends up with exactly one record for the run, never a duplicate or a
+  # cross-rolled-back line
+  # Steps: launch two `pmctl artifacts gc --grace-days 0` invocations against
+  #        the same store/work back to back (no delay) for one eligible run;
+  #        wait for both; assert exactly one summary line for that run_id
+  #        and no prune-skipped.log
+  local name="pmctl artifacts gc: two concurrent invocations produce exactly one summary line"
+  should_run "$name" || return 0
+  local store work out1 err1 out2 err2
+  store="$tmp_root/state-gc-concurrent"
+  work="$tmp_root/work-gc-concurrent"
+  make_work_repo "$work"
+
+  local rd_keep rd_old
+  rd_keep="$(run_dir_for "$store" "$work" run-keep)"
+  rd_old="$(run_dir_for "$store" "$work" run-race)"
+  mkdir -p "$rd_keep" "$rd_old"
+  printf 'k\n' > "$rd_keep/k.footer"
+  printf 'a\n' > "$rd_old/a.footer"
+  touch -t "$(date -d '40 days ago' +%Y%m%d%H%M 2>/dev/null || date -v-40d +%Y%m%d%H%M)" "$rd_old" 2>/dev/null || true
+
+  out1="$tmp_root/gc-race-1.out"; err1="$tmp_root/gc-race-1.err"
+  out2="$tmp_root/gc-race-2.out"; err2="$tmp_root/gc-race-2.err"
+  (PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" artifacts gc --keep-last 1 --grace-days 0 --cd "$work" \
+    > "$out1" 2> "$err1") &
+  local pid1=$!
+  (PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" artifacts gc --keep-last 1 --grace-days 0 --cd "$work" \
+    > "$out2" 2> "$err2") &
+  local pid2=$!
+  wait "$pid1" "$pid2" 2>/dev/null || true
+
+  local summary_file skip_log line_count
+  summary_file="$(dirname "$rd_old")/../runs-summary.jsonl"
+  summary_file="$(cd "$(dirname "$summary_file")" && pwd)/runs-summary.jsonl"
+  skip_log="$(dirname "$summary_file")/prune-skipped.log"
+  line_count="$(grep -c '"run_id":"run-race"' "$summary_file" 2>/dev/null)"
+  : "${line_count:=0}"
+
+  if [[ ! -d "$rd_old" && "$line_count" -eq 1 && ! -e "$skip_log" ]]; then
+    pass "$name"
+  else
+    fail "$name" "rd_old_exists=$(test -d "$rd_old" && echo y||echo n) line_count=$line_count out1=$(<"$out1") out2=$(<"$out2")"
+  fi
+}
+
+case_gc_append_failure_retains_run_no_false_success() {
+  # behavior (CC-540, risk-reviewer-F001): if the summary append itself
+  # fails (e.g. the summary file is not writable), gc must not mistake a
+  # prior, unrelated valid line for this run's proof of durability -- the
+  # candidate run must be retained and the failure recorded, never silently
+  # treated as summarized-and-safe-to-delete
+  # Steps: pre-seed one valid summary line for a different run_id; make the
+  #        summary file read-only so the next append fails; run gc on a
+  #        second, unrelated eligible run; assert it is retained, its
+  #        run_id never appears in the (unchanged) summary file, and
+  #        prune-skipped.log names it
+  local name="pmctl artifacts gc: a failed append retains the run and does not report false success"
+  should_run "$name" || return 0
+  local store work out err status=0
+  store="$tmp_root/state-gc-append-failure"
+  work="$tmp_root/work-gc-append-failure"
+  make_work_repo "$work"
+
+  local rd_keep rd_old
+  rd_keep="$(run_dir_for "$store" "$work" run-keep)"
+  rd_old="$(run_dir_for "$store" "$work" run-blocked)"
+  mkdir -p "$rd_keep" "$rd_old"
+  printf 'k\n' > "$rd_keep/k.footer"
+  printf 'a\n' > "$rd_old/a.footer"
+  touch -t "$(date -d '40 days ago' +%Y%m%d%H%M 2>/dev/null || date -v-40d +%Y%m%d%H%M)" "$rd_old" 2>/dev/null || true
+
+  local runs_dir summary_file
+  runs_dir="$(dirname "$rd_old")"
+  summary_file="$(dirname "$runs_dir")/runs-summary.jsonl"
+  jq -nc '{run_id:"run-preexisting", summarized_at:1, kind:"dispatch", status:"complete", duration_seconds:1, gate:null}' \
+    > "$summary_file"
+  chmod 444 "$summary_file"
+
+  out="$tmp_root/gc-append-failure.out"; err="$tmp_root/gc-append-failure.err"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" artifacts gc \
+    --keep-last 1 --grace-days 0 --cd "$work" > "$out" 2> "$err" || status=$?
+  chmod 644 "$summary_file"
+
+  local skip_log
+  skip_log="$(dirname "$summary_file")/prune-skipped.log"
+
+  if [[ -d "$rd_old" && -e "$skip_log" ]] \
+      && grep -q 'run-blocked' "$skip_log" \
+      && ! grep -q '"run_id":"run-blocked"' "$summary_file"; then
+    pass "$name"
+  else
+    fail "$name" "status=$status rd_old_exists=$(test -d "$rd_old" && echo y||echo n) skip_log_exists=$(test -e "$skip_log" && echo y||echo n) summary=$(<"$summary_file") skip_log_content=$(cat "$skip_log" 2>/dev/null)"
+  fi
+}
+
 case_gc_summarizes_before_grace_defers_deletion() {
   # behavior (CC-540): an eligible-for-deletion gate run is summarized into
   # runs-summary.jsonl (surviving prune) before deletion, but physical
@@ -862,6 +1062,11 @@ case_codex_watch_auto_discover
 case_gc_dry_run
 case_gc_keep_last
 case_gc_max_age_zero
+case_gc_grace_days_env_only_selects_grace_period
+case_gc_grace_days_flag_overrides_env
+case_gc_dry_run_positive_grace_previews_without_mutation
+case_gc_concurrent_invocations_produce_one_summary_line
+case_gc_append_failure_retains_run_no_false_success
 case_gc_summarizes_before_grace_defers_deletion
 case_gc_deletes_once_grace_elapses
 case_gc_incomplete_source_not_treated_as_failure

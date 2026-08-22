@@ -2422,7 +2422,41 @@ findings-by-severity 在無可解析區塊時回報 unavailable、驗證失敗�
 顯式帶 `--grace-days 0`，並順手修掉其中一案既有的 `grep -c ... \|\| printf`
 慣用語 bug（no-match 時會把 grep 自己印的 "0" 與 fallback 的 "0" 併成
 "0\n0"，撞壞 `-eq` 比較，過去被舊行為的固定 2 個 match 蓋過去而沒發作）。
-`tests/shell/test-pmctl-artifacts.sh` 27 案全過。
+
+**pr-gate 第一輪（full tier，parallel，5 reviewer）NO-GO（2 hard_block + 1
+soft_block + 1 advise）**：risk-reviewer 指出 `_pmctl_artifacts_run_summary_append_verified`
+的驗證只檢查「讀回的最後一行看起來合法」，沒檢查那行是不是**這筆 run** 自己寫的——
+若 append 本身失敗（或被併發寫入插隊），`tail -1` 可能讀到別筆早已合法寫入的紀錄，
+誤判為驗證通過而放行刪除，形成 fail-open。architecture-reviewer 獨立指出更根本的
+併發問題：`already_summarized_at` 是每次 `gc` 呼叫各自載入一次的快照，兩個併發
+`gc` process 可能都以為某 run 尚未摘要，各自 append 或各自誤判對方的合法行為
+「驗證失敗」而回滾。qa-tester 指出兩個新 operator 契約完全沒有整合測試：
+`PM_DISPATCH_GC_GRACE_DAYS` 環境變數單獨生效與「flag 優先於環境變數」的優先序，
+以及正 grace 值下 `--dry-run` 真的只預覽、不寫入不刪除。critic（advisory）指出
+`PM_DISPATCH_GC_GRACE_DAYS` 沒登記進 `docs/architecture/script-variable-consumers.tsv`。
+
+修正：
+1. 驗證改為 `jq -e --arg run_id ... '.run_id == $run_id and ...'`——讀回的那行必須
+   真的是這筆 run 自己的紀錄，不能只是「看起來合法的某一行」；同時檢查 append 本身
+   的 exit code。
+2. 新增 `_pmctl_artifacts_run_summary_prune_line`（依內容精確比對移除，取代原本
+   位置式的 `sed -i '$d'`——併發下「最後一行」不保證是自己剛寫的那行）。
+3. 把「查詢是否已摘要→摘要→append+驗證→grace 判斷→刪除」整個決策抽成
+   `_pmctl_artifacts_gc_process_run`，透過既有的 `serialize_with_lock`
+   （`runtime/lib/portable.sh`，本 repo既有的 flock／mkdir-lock 共用原語，非
+   新建鎖機制）以 `runs-summary.jsonl` 路徑為 lockbase、每個 project 序列化；
+   查詢改成鎖內即時查（新增 `_pmctl_artifacts_run_summary_lookup`），不再依賴
+   呼叫前的批次快照。犧牲了原本「一次載入全部 summarized_at」的效能優化，但
+   額外 jq 呼叫數與「符合刪除資格的 run 數」成正比（通常個位數），不是
+   CC-557/CC-560 修的「每個候選都一次」那種與**全部 run 數**成正比的形狀。
+4. `docs/architecture/script-variable-consumers.tsv` 與
+   `script-variable-inventory.tsv` 都補上 `PM_DISPATCH_GC_GRACE_DAYS` 列。
+5. 新增 5 案：`PM_DISPATCH_GC_GRACE_DAYS` 單獨生效、flag 覆蓋環境變數、
+   正 grace 值下 `--dry-run` 兩則預覽且不落地任何檔案、兩個 `gc` process
+   併發跑同一個 run 只留一筆摘要記錄且無 `prune-skipped.log`、summary 檔
+   設唯讀強制 append 失敗時該 run 仍保留且被記錄（不誤判為成功）。
+
+`tests/shell/test-pmctl-artifacts.sh` 32 案全過（原 27 案＋本輪 5 案）。
 
 **See**: pr:TBD
 
