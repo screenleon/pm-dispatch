@@ -674,6 +674,18 @@ pmctl_artifacts_gc() {
   local now_epoch
   now_epoch="$(date +%s 2>/dev/null || printf '0')"
   local max_age_seconds=$(( max_age_days * 86400 ))
+  # A non-numeric PM_DISPATCH_GC_GRACE_DAYS reaching the arithmetic context
+  # below would fail evaluation (or coerce unpredictably) rather than being
+  # rejected -- validate it here the same way an explicit --grace-days flag
+  # value already is, so a malformed override cannot silently collapse the
+  # retention safety window this variable exists to provide. Deferred to
+  # this point (not alongside the other GC_* defaults) so --all-repos, which
+  # never consumes grace_days, is not blocked by an unrelated bad override.
+  if ! [[ "$grace_days" =~ ^[0-9]+$ ]]; then
+    printf 'pmctl artifacts gc: PM_DISPATCH_GC_GRACE_DAYS must be an integer >= 0: %s\n' \
+      "$grace_days" >&2
+    return 2
+  fi
   local grace_seconds=$(( grace_days * 86400 ))
 
   # Every run directory is summarized (gate verdict, tier, reviewer findings

@@ -397,6 +397,45 @@ case_gc_grace_days_flag_overrides_env() {
   fi
 }
 
+case_gc_grace_days_env_rejects_non_numeric() {
+  # behavior (CC-540, critic-F001): a non-numeric PM_DISPATCH_GC_GRACE_DAYS
+  # is rejected up front, the same way an explicit --grace-days flag value
+  # already is -- it must not reach the grace_seconds arithmetic context and
+  # must not silently collapse the retention safety window
+  # Steps: env sets an invalid grace value with one otherwise-eligible run;
+  #        assert nonzero exit, a diagnostic, and no mutation at all (run
+  #        dir intact, no runs-summary.jsonl written)
+  local name="pmctl artifacts gc: rejects a non-numeric PM_DISPATCH_GC_GRACE_DAYS"
+  should_run "$name" || return 0
+  local store work out err status=0
+  store="$tmp_root/state-gc-grace-invalid"
+  work="$tmp_root/work-gc-grace-invalid"
+  make_work_repo "$work"
+
+  local rd_keep rd_old
+  rd_keep="$(run_dir_for "$store" "$work" run-keep)"
+  rd_old="$(run_dir_for "$store" "$work" run-old)"
+  mkdir -p "$rd_keep" "$rd_old"
+  printf 'k\n' > "$rd_keep/k.footer"
+  printf 'a\n' > "$rd_old/a.footer"
+  touch -t "$(date -d '40 days ago' +%Y%m%d%H%M 2>/dev/null || date -v-40d +%Y%m%d%H%M)" "$rd_old" 2>/dev/null || true
+
+  out="$tmp_root/gc-grace-invalid.out"; err="$tmp_root/gc-grace-invalid.err"
+  PM_DISPATCH_STATE_ROOT="$store" PM_DISPATCH_GC_GRACE_DAYS=not-a-number "$PMCTL" artifacts gc \
+    --keep-last 1 --cd "$work" > "$out" 2> "$err" || status=$?
+
+  local summary_file
+  summary_file="$(dirname "$rd_old")/../runs-summary.jsonl"
+  summary_file="$(cd "$(dirname "$summary_file")" && pwd)/runs-summary.jsonl"
+
+  if [[ "$status" -ne 0 && -d "$rd_old" && ! -e "$summary_file" ]] \
+      && grep -q 'PM_DISPATCH_GC_GRACE_DAYS' "$err"; then
+    pass "$name"
+  else
+    fail "$name" "status=$status rd_old_exists=$(test -d "$rd_old" && echo y||echo n) summary_exists=$(test -e "$summary_file" && echo y||echo n) err=$(<"$err")"
+  fi
+}
+
 case_gc_dry_run_positive_grace_previews_without_mutation() {
   # behavior (CC-540, qa-tester-F002): --dry-run under a positive (non-zero)
   # grace period previews both the summarize and the defer decision without
@@ -463,13 +502,20 @@ case_gc_concurrent_invocations_produce_one_summary_line() {
 
   out1="$tmp_root/gc-race-1.out"; err1="$tmp_root/gc-race-1.err"
   out2="$tmp_root/gc-race-2.out"; err2="$tmp_root/gc-race-2.err"
+  local status1=0 status2=0
   (PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" artifacts gc --keep-last 1 --grace-days 0 --cd "$work" \
     > "$out1" 2> "$err1") &
   local pid1=$!
   (PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" artifacts gc --keep-last 1 --grace-days 0 --cd "$work" \
     > "$out2" 2> "$err2") &
   local pid2=$!
-  wait "$pid1" "$pid2" 2>/dev/null || true
+  # Capture each child's own exit status explicitly -- `wait` on multiple
+  # pids reports only the last one waited on unless each is waited on
+  # individually, and swallowing them (as `|| true` alone would) could mask
+  # one invocation genuinely failing while still leaving the shared-state
+  # assertions below looking correct by coincidence.
+  wait "$pid1" || status1=$?
+  wait "$pid2" || status2=$?
 
   local summary_file skip_log line_count
   summary_file="$(dirname "$rd_old")/../runs-summary.jsonl"
@@ -478,10 +524,10 @@ case_gc_concurrent_invocations_produce_one_summary_line() {
   line_count="$(grep -c '"run_id":"run-race"' "$summary_file" 2>/dev/null)"
   : "${line_count:=0}"
 
-  if [[ ! -d "$rd_old" && "$line_count" -eq 1 && ! -e "$skip_log" ]]; then
+  if [[ "$status1" -eq 0 && "$status2" -eq 0 && ! -d "$rd_old" && "$line_count" -eq 1 && ! -e "$skip_log" ]]; then
     pass "$name"
   else
-    fail "$name" "rd_old_exists=$(test -d "$rd_old" && echo y||echo n) line_count=$line_count out1=$(<"$out1") out2=$(<"$out2")"
+    fail "$name" "status1=$status1 status2=$status2 rd_old_exists=$(test -d "$rd_old" && echo y||echo n) line_count=$line_count out1=$(<"$out1") out2=$(<"$out2") err1=$(<"$err1") err2=$(<"$err2")"
   fi
 }
 
@@ -1064,6 +1110,7 @@ case_gc_keep_last
 case_gc_max_age_zero
 case_gc_grace_days_env_only_selects_grace_period
 case_gc_grace_days_flag_overrides_env
+case_gc_grace_days_env_rejects_non_numeric
 case_gc_dry_run_positive_grace_previews_without_mutation
 case_gc_concurrent_invocations_produce_one_summary_line
 case_gc_append_failure_retains_run_no_false_success

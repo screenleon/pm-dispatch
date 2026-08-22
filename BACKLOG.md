@@ -2458,6 +2458,26 @@ soft_block + 1 advise）**：risk-reviewer 指出 `_pmctl_artifacts_run_summary_
 
 `tests/shell/test-pmctl-artifacts.sh` 32 案全過（原 27 案＋本輪 5 案）。
 
+**pr-gate 第二輪（full tier，parallel，5 reviewer）NO-GO（1 block + 1
+block-soft，risk-reviewer／architecture-reviewer／security-reviewer 三方
+approve）**：critic 指出 `PM_DISPATCH_GC_GRACE_DAYS` 環境變數本身沒有數值驗證——
+非數字值會直接進 `grace_seconds=$(( grace_days * 86400 ))` 算術上下文，行為
+未定義，可能悄悄瓦解寬限期這道安全窗。qa-tester 指出併發測試把兩個子行程的
+exit code 都用 `wait ... || true` 吞掉，若其中一個 process 真的失敗，測試仍可能
+巧合通過。
+
+修正：
+1. 在 `grace_seconds` 算術式前加驗證（比照既有 `--grace-days` flag 的同一條
+   regex），非數字直接 `return 2` 並印出可操作訊息；驗證點刻意放在
+   `--all-repos` 已提前 return 之後，不讓一個與該路徑無關的壞環境變數擋住
+   `--all-repos` 清理。
+2. 併發測試改成分別 `wait "$pid1"`／`wait "$pid2"` 各自取得 exit code 並
+   斷言兩者皆為 0。
+3. 新增一案：`PM_DISPATCH_GC_GRACE_DAYS` 設非數字時 exit 非 0、印出包含
+   變數名的訊息、run 目錄與 `runs-summary.jsonl` 完全不受影響。
+
+`tests/shell/test-pmctl-artifacts.sh` 33 案全過（32 案＋本輪 1 案）。
+
 **See**: pr:TBD
 
 ---
