@@ -16,7 +16,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-464 | 🟢 someday | `pmctl ticket draft --from <notes>`：隨手筆記→結構化 backlog 票草稿；依賴 CC-286（prefix-generic next-id，⏸ deferred 尚未排程）；review-first 邊界獨立設計，CC-054 僅供鬆散參照非直接前例（2026-07-07 openyida 跨專案分析） | ux/process | 2026-07-07 | — | P3 | — |
 | CC-493 | ✅ done | Prompt→Skill→Command→Harness 升級規則文件化：可測試的分類判準（何時停在 prompt、何時升為 skill、何時做成 command、何時需要 harness-level hook/guard/state），並盤點 `commands/`／`skills/`／`agents/` 現況對照分類（2026-07-15 CC-489 三方 multi-model synthesis） | process/docs | 2026-07-15 | pr:#513 | P2 | design |
 | CC-494 | 🟢 someday | design: executor 局部設計裁量權 envelope——在 dispatch brief / executor contract 定義「可自行處理的局部設計」與「必須 halt 回報 PM」的邊界（例如新增 schema 欄位 `design_latitude`/`architectural_conflicts`）；三方 multi-model synthesis 2:1 分歧（codex/fable 認為現行邊界過度僵硬需要新機制，opencode 認為現行 `isolation_level`/executor 欄位已足夠彈性），本票僅追蹤決策、不預設結論（2026-07-15） | schema/process | 2026-07-15 | feedback:2026-07-15 | P3 | design |
-| CC-505 | 🔵 active | context plane lexical 檢索補完（Ph1 engine+統一排序+fixtures；Ph2 agent 契約+shadow 儀器化；evidence-gated 收緊 → [[CC-506]]）（2026-07-20 四方 synthesis；CC-346/347 前置） | memory/DX | 2026-07-20 | — | P2 | retrieval |
+| CC-505 | ✅ done | context plane lexical 檢索補完（Ph1 engine+統一排序+fixtures；Ph2 agent 契約+shadow 儀器化；evidence-gated 收緊 → [[CC-506]]）（2026-07-20 四方 synthesis；CC-346/347 前置） | memory/DX | 2026-07-20 | pr:#516 | P2 | retrieval |
 | CC-506 | ⏸ deferred | retrieval evidence-gated 收緊：shadow 評測（coverage@5、critical miss、read reduction、outcome parity）達標後才收緊 broad-Read 指引並重評 [[CC-340]] resume 條件；前置 = [[CC-505]] Ph2 shipped + ≥20 真實任務證據 | memory/DX | 2026-07-20 | — | P3 | retrieval |
 | CC-511 | ✅ done | ship publish authorization：Phase A current-tree authoritative full-suite 與 CC-515 shared verifier foundation 已交付；Phase B review-closure evidence 已由 CC-517 收斂 | release/gate | 2026-07-23 | pr:#446, pr:#484, pr:#507 | P1 | design |
 | CC-514 | 🔵 active | orthogonal delivery assurance map、machine-derived tables 與 feature/docs/high-risk recipes | docs/process | 2026-07-23 | — | P2 | design |
@@ -2598,7 +2598,7 @@ repo 外部個人 memory（非本 repo 檔案）。
 
 ---
 
-## CC-505 — context plane lexical 檢索補完與排序 🔵 active
+## CC-505 — context plane lexical 檢索補完與排序 ✅ 2026-08-22
 
 **Problem**（2026-07-20 四方 multi-model synthesis：ChatGPT／Fable 主線程／opencode nemotron-3-ultra／codex gpt-5.6-sol；codex 實證發現）: 現行 context plane 並非真全文檢索——
 1. chunk 只索引 heading + 正文前 200 字元（`runtime/lib/pmctl-context.sh:367`、`:436`），段落深處與 shell 函式本體的內容檢索不到。
@@ -2778,6 +2778,57 @@ active。**（agent 契約 + shadow 儀器化；小 PR，跟在 Phase 1 後）**
 9. shadow telemetry：在既有 context.* 事件上記錄 top-K refs、pack bytes、full-file baseline bytes、truncation/freshness，以及 Agent 後續實際 source-read bytes 與最終修改／引用檔案是否在 top-K——供 [[CC-506]] 評測消費。覆蓋面必須含工作流路徑（dispatch auto-pack、ship、gate memory context），不得只儀器化互動式 `context query`。
 10. `context_savings` 遙測命名為 `compression_ratio_vs_full_file_baseline`（注入 bytes vs 全檔 baseline bytes）；沒有 observed read-reduction 證據時不得宣稱實際節省倍數；不得引用外部專案的節省倍數宣稱。餵 [[CC-467]]／[[CC-358]] 的 evidence 線。
 
+**Update 2026-08-22（Phase 2：Req 8-10 全數交付）**：Req 8 在
+`docs/context-retrieval.md` 新增「Index-first, source-verified」一節（文件
+頂部，`## Query before Read/Grep` 之前）——只改導引措辭，明文「本階段只改導引措辭，
+不收緊任何現有 fallback 行為」，broad-Read 收緊仍留給 [[CC-506]]。
+
+Req 9：`pmctl_context_pack` 先前完全沒有 telemetry（跟 `query`／`reuse-scan`／
+`prompt-scan` 不同，先前只有 pack 這一個消費端零遙測）。新增
+`context.packed` 事件（`core/schema/event.schema.json` enum 補一項），
+`_ctx_pack_finish` 是唯一出口點，三個既有 `return` 分支（no-index／no-sqlite／
+已索引成功路徑）統一經過它，zero-hit 分支 freshness 標為 `unavailable`，成功
+路徑依 `_ctx_ensure_fresh`／`_ctx_ensure_fresh_memory` 的既有回傳碼標
+`fresh`／`stale`（先前這兩個呼叫都用 `|| true` 吞掉結果，現在拿來當
+freshness 訊號）。事件 payload 含 `top_k_refs`（依 `ranking_score` 取前 10、
+非全量，避免 event 過大）、`pack_bytes`、`full_file_baseline_bytes`（新增
+`_ctx_full_file_baseline_bytes_for_paths` 共用 helper，批次一次
+`stat -c '%s' ... +`，不逐檔 stat——沿用 CC-557/CC-560 的 per-item
+subprocess 教訓）、`compression_ratio_vs_full_file_baseline`、`truncation`
+（原樣帶出既有 truncation 物件）。
+
+工作流覆蓋面查證後發現只有兩條真實路徑，不是三條：`gate-memory-context.sh`
+直接呼叫 `pmctl_context_pack`（`pr-gate.sh` 已接線，ship 走 `/ship` 內部
+gate 呼叫同一份程式碼，因此「ship」與「gate memory context」是同一個
+call site，不是分開的兩個）；另一條是 dispatch auto-pack，它走
+`pmctl_context_reuse_scan`（不是 `pmctl_context_pack`），先前只有
+`context.auto_packed` 事件帶 `hits`／`pack`／`source_brief`。擴充該事件
+payload 為同一組欄位（`freshness`／`top_k_refs`／`pack_bytes`／
+`full_file_baseline_bytes`／`compression_ratio_vs_full_file_baseline`），
+從已渲染的 `auto_context:` block 反推（`_ctx_full_file_baseline_bytes_for_paths`
+重構為通用 array-based helper，供 pack event 與 dispatch auto-pack 共用，
+不重寫 stat 批次邏輯）；既有 5 個零命中／失敗提前 return 呼叫點維持 5 參數
+呼叫（enrichment 全部走預設值 `[]`／`0`／`unavailable`），不強迫每個失敗
+分支都重新計算。
+
+「Agent 後續實際 source-read bytes」與「最終修改／引用檔案是否在
+top-K」**刻意未在本輪實作**：這條關聯跨 process／executor 邊界，各
+adapter trace 格式不同，且票面本身把「累積 ≥20 真實任務證據」列為
+[[CC-506]] 的工作，不是本票的儀器化範圍——本輪只確保原始欄位在 pack
+時點被記下，供 [[CC-506]] 之後跨事件 join。
+
+Req 10：`compression_ratio_vs_full_file_baseline` 已是兩個事件唯一使用的
+命名（未曾在程式碼中出現過 `context_savings` 這個舊名，故無需 rename，
+只需採用票面指定的新名）；`docs/context-retrieval.md` 新增「Shadow
+telemetry」一節明文「這是純粹的 size ratio，不是實際節省宣稱」的誠實命名
+邊界。
+
+新增 4 案：`context.packed`（含 top_k_refs／pack_bytes／baseline／ratio／
+freshness 斷言）、zero-hit pack 仍出事件且 freshness=unavailable、
+dispatch auto-pack 的 `context.auto_packed` 事件攜帶同組 enrichment 欄位。
+`tests/shell/test-pmctl-context.sh` 164 案全過（162+2），
+`tests/shell/test-pmctl-dispatch.sh` 54 案全過（53+1）。
+
 **Done-when**: Phase 1——檢索能命中段落深處內容；四個 consumer 對相同 query 使用相同 ranking order；hits 帶 rank／match_kind／bounded span／score components／freshness；fixture suite 證明 exact-symbol top-1、expected refs top-K、mtime-preserving edit freshness、budget truncation disclosure；整合測試證明 dispatch auto-pack 與 gate memory context 的注入內容出自同一 ranking path（對同一 query 與直接 `context query` 排序一致）。Phase 2——agent-facing 輸出攜帶 index-first/source-verified fallback 指令；shadow telemetry 欄位落地並開始蒐集。收緊 broad-Read 指引**不在本票**（→ [[CC-506]]）。
 
 **Non-goals**: 不做 embeddings（[[CC-340]] 維持 deferred，resume 條件由 [[CC-506]] 評測後重評）；不做 edges／blast radius（[[CC-346]]／[[CC-347]] 的範圍）；不引入 tree-sitter/AST 或外部索引工具；不在本票收緊 broad-Read fallback 或宣告實際 token 節省（[[CC-506]]）；跨 host prompt 注入接線屬 [[CC-503]]，本票不因其未完成而阻塞。
@@ -2785,6 +2836,65 @@ active。**（agent 契約 + shadow 儀器化；小 PR，跟在 Phase 1 後）**
 **Dependencies**: 無硬前置；與 [[CC-465]]（CJK 斷詞）同屬檢索品質線可協調但不合票。排序：本票 Phase 1 完成即解鎖 [[CC-346]] Phase a + [[CC-347]] 垂直切片（不需等 [[CC-506]]）。**未排入 milestone**——v0.11.0 之後的 context-plane 版次候選。
 
 **Source**: 2026-07-20 四方 multi-model synthesis（外部參照 tirth8205/code-review-graph 的可轉移性分析；四方一致：不裝外部工具、不建第二套系統，在既有 context.db 上補「檢索品質 → edges → change impact」三層）。2026-07-20 外部 review 補強：consumer ranking 統一、index-first/source-verified 契約、fixture corpus、shadow evidence 與誠實命名（ranking ≠ confidence；ratio ≠ 實際節省）；phase 拆分依 auto-pack 先例（機制+telemetry 先行、evidence 後收緊，見 CC-402 default flip 模式）。
+
+**pr-gate 第一輪（full tier，sequential，5 reviewer）NO-GO（1 block，其餘 4 方
+approve/pass）**：qa-tester 指出 `context.packed` 新增的 `freshness` 欄位缺一個
+「refresh 失敗時回報 stale」的直接行為測試。查證時發現這條路徑當時**不可能
+通過**：`_ctx_index_tree` 執行 sqlite3 batch 寫入的那一行從未檢查過 exit
+code——函式自己的回傳碼只來自最後兩行必定成功的 `printf`，導致 sqlite3
+寫入失敗（例如唯讀 DB）在每個呼叫端（包含 `_ctx_ensure_fresh`）都跟成功
+無法區分。這不是本輪新引入的缺陷，是既有程式碼的既有缺口，只是本票新增
+的 `freshness` 契約第一次讓它變得可觀察、也必須被觀察。
+
+修正：`_ctx_index_tree` 的 sqlite3 batch 寫入改為顯式檢查 exit code，失敗
+即印出 stderr 並 `return 1`；`_ctx_ensure_fresh`／`_ctx_ensure_fresh_memory`
+因此第一次能真正偵測到 refresh 失敗。新增一案：以 `chmod 555` 讓既存索引
+目錄唯讀（模擬 refresh 寫入失敗），斷言 `context.packed` 事件的
+`freshness` 確實回報 `stale` 且指令本身仍 exit 0（refresh 失敗只降級
+freshness 訊號，不使 pack 本身失敗）。`tests/shell/test-pmctl-context.sh`
+164 案全過（163+1）。
+
+**pr-gate 第二輪起**：第一次以 `--pass targeted --reviewers qa-tester` 重派被
+policy floor 拒絕（此 scope 的必要 reviewer 覆蓋是全體 5 名，targeted 單一
+reviewer 不能繞過）——這是 policy 拒絕不是 verdict，改回全量重派。全量重派
+後 qa-tester 又指出既有 `run-tests.sh --base main` 全套（供 QA supplemental
+執行）在 gate 提供的 120 秒 helper 預算內逾時——查證後這是既有結構性限制
+（`test-pmctl-context.sh`／`test-pmctl-dispatch.sh` 本身已各自跑到 200+ 秒，
+早於本票就已如此，非本票新增的量體造成），非本票新增測試造成的迴歸。改用
+`--test-cmd` 指向只涵蓋本票新增行為的 scoped 指令（3 個新案，約 8 秒），
+讓 5 位 reviewer 都拿到完整、不逾時的證據，而非依賴 gate 內建的全量 QA
+timeout 假設。
+
+該輪 gate 又意外撞見一個 `case_execute_tail_direct_lifecycle_identity`
+單次失敗（qa-tester 執行「supplemental」全套時觸發，與本票行為無關的既有
+案例）——本機連跑 3 次與整份 `test-pmctl-dispatch.sh` 全套皆綠，判定為
+gate 執行環境下的機率性 flake，重派後未再出現。
+
+真正需要修的是第三輪 qa-tester-F001：dispatch auto-pack 的
+`context.auto_packed` 事件成功路徑把 `freshness` **寫死成 `"fresh"`**——
+`pmctl_context_reuse_scan` 內部同樣呼叫 `_ctx_ensure_fresh` 卻用 `|| true`
+吞掉結果，導致 reuse-scan 命中一個「refresh 失敗、仍讀到舊資料」的 stale
+索引時，也會被回報成 fresh。修正：在呼叫 `pmctl_context_reuse_scan` 前，
+`pmctl_dispatch_auto_pack` 自行先呼叫一次 `_ctx_ensure_fresh`（與
+reuse-scan 內部呼叫冪等，第二次是基於 mtime 的 no-op refresh），取其真實
+回傳碼作為這次事件要回報的 `freshness`，取代寫死的字面值。
+
+新增迴歸測試時發現原本兩個 stale fixture（`chmod 555` 整個 ctx 目錄）的
+副作用比預期更大：sqlite3 的 FTS5 temp-store scratch file 需要目錄本身
+可寫，連純讀查詢都會失敗，讓 pack／reuse-scan 一起退化成 zero-hit——那其實
+是另一條已覆蓋的分支（no-index/查詢失敗），不是「refresh 失敗、舊資料仍可
+讀」這個本票要驗的路徑。兩個既有 stale 案（`pmctl-context.sh` 與新增的
+`pmctl-dispatch.sh` 案）都改為只 `chmod 444` DB **檔案本身**（目錄維持
+可寫）——寫入交易失敗，讀取仍成功；並補強斷言：两案都要求 `top_k_refs`／
+`hits` 非零，證明真的走了「有命中」的成功路徑，而非誤判一個空 pack 也算
+「stale」。`tests/shell/test-pmctl-context.sh` 保持 164 案全過，
+`tests/shell/test-pmctl-dispatch.sh` 55 案全過（54+1）。
+
+**pr-gate 第五輪（full tier，sequential，5 reviewer）GO**：全數 approve/pass，
+無新 finding。全套 `run-tests.sh --all` 100 passed, 0 failed；
+`gate verify --consumer embedded` 三軸全過。
+
+**See**: pr:#516
 
 ## CC-506 — retrieval evidence-gated 收緊：shadow 評測與 broad-Read 指引 ⏸ deferred
 

@@ -352,6 +352,14 @@ pmctl_dispatch_reuse_yaml_to_auto_context() {
 
 pmctl_dispatch_emit_auto_packed_event() {
   local repo_root="${1:-}" run_id="${2:-}" hits="${3:-0}" pack="${4:-}" source_brief="${5:-}"
+  # CC-505 Req 9: dispatch auto-pack is one of the three named workflow
+  # telemetry paths (the other two -- gate memory context and ship's
+  # internal gate -- both route through pmctl_context_pack's own
+  # context.packed event). These trailing args are optional so every
+  # existing early-return call site (which only ever had 5 args, for the
+  # zero-hit/failure cases) keeps working unchanged -- a failed/empty
+  # auto-pack still emits an event, just with a null/empty enrichment.
+  local top_k_refs_json="${6:-[]}" pack_bytes="${7:-0}" baseline_bytes="${8:-0}" freshness="${9:-unavailable}"
   local ts evt_id event_json append_err append_status=0
 
   pmctl_dispatch_ensure_state_writer "$repo_root" || {
@@ -359,6 +367,9 @@ pmctl_dispatch_emit_auto_packed_event() {
     return 0
   }
   [[ "$hits" =~ ^[0-9]+$ ]] || hits=0
+  [[ "$pack_bytes" =~ ^[0-9]+$ ]] || pack_bytes=0
+  [[ "$baseline_bytes" =~ ^[0-9]+$ ]] || baseline_bytes=0
+  [[ -n "$top_k_refs_json" ]] || top_k_refs_json="[]"
   ts="$(pmctl_dispatch_utc_ts)"
   evt_id="evt-$(pmctl_dispatch_stamp)-$(pmctl_dispatch_hex6)"
   if [[ "$evt_id" == "evt--" || "$evt_id" == *"-" ]]; then
@@ -372,10 +383,18 @@ pmctl_dispatch_emit_auto_packed_event() {
     --arg run_id "$run_id" \
     --arg pack "$pack" \
     --arg source_brief "$source_brief" \
+    --arg freshness "$freshness" \
     --argjson hits "$hits" \
+    --argjson pack_bytes "$pack_bytes" \
+    --argjson baseline_bytes "$baseline_bytes" \
+    --argjson top_k_refs "$top_k_refs_json" \
     '{schema_version:1,id:$id,ts:$ts,kind:$kind,
       subject_type:"context",subject_id:$run_id,actor:"pmctl",
-      payload:{run_id:$run_id,hits:$hits,pack:$pack,source_brief:$source_brief}}' 2>/dev/null)"; then
+      payload:{run_id:$run_id,hits:$hits,pack:$pack,source_brief:$source_brief,
+        freshness:$freshness,top_k_refs:$top_k_refs,
+        pack_bytes:$pack_bytes,full_file_baseline_bytes:$baseline_bytes,
+        compression_ratio_vs_full_file_baseline:
+          (if $baseline_bytes > 0 then ($pack_bytes / $baseline_bytes) else null end)}}' 2>/dev/null)"; then
     printf 'pmctl dispatch run: warning: context.auto_packed telemetry not recorded (jq failed)\n' >&2
     return 0
   fi
@@ -430,6 +449,17 @@ pmctl_dispatch_auto_pack() {
     return 0
   fi
 
+  # CC-505 Req 9 (qa-tester-F001): pmctl_context_reuse_scan calls
+  # _ctx_ensure_fresh internally but swallows its result (`|| true`), so a
+  # reuse-scan that succeeds against a STALE index (refresh failed, hits
+  # still came from the old data) is indistinguishable from a genuinely
+  # fresh one from this function's perspective. Call _ctx_ensure_fresh
+  # directly here first -- idempotent with reuse-scan's own internal call
+  # (mtime-based, a no-op refresh the second time) -- and use ITS result as
+  # the freshness this event reports, rather than hard-coding "fresh".
+  local auto_freshness="fresh"
+  _ctx_ensure_fresh "$ctx_root" || auto_freshness="stale"
+
   reuse_err="$(mktemp)" || {
     printf 'pmctl dispatch run: warning: auto-pack skipped: mktemp failed\n' >&2
     pmctl_dispatch_emit_auto_packed_event "$repo_root" "$run_id" 0 "" "$brief_file"
@@ -460,6 +490,27 @@ pmctl_dispatch_auto_pack() {
     pmctl_dispatch_emit_auto_packed_event "$repo_root" "$run_id" 0 "" "$brief_file"
     return 0
   fi
+
+  # CC-505 Req 9: derive the same shadow-telemetry enrichment pmctl_context_pack's
+  # own context.packed event carries, but from the rendered auto_context: block
+  # (this workflow path uses reuse-scan, not pmctl_context_pack) -- MUST run
+  # before block_file is deleted below.
+  local top_k_refs_json="[]" auto_pack_bytes=0 auto_baseline_bytes=0
+  local -a auto_refs=() auto_paths=()
+  while IFS= read -r auto_ref; do
+    [[ -n "$auto_ref" ]] || continue
+    auto_refs+=("$auto_ref")
+    auto_paths+=("${auto_ref%:*}")
+  done < <(awk '/^  - ref:/{sub(/^  - ref:[[:space:]]*/, ""); print}' "$block_file" 2>/dev/null)
+  if [[ "${#auto_refs[@]}" -gt 0 ]]; then
+    top_k_refs_json="$(printf '%s\n' "${auto_refs[@]}" \
+      | jq -R -s 'split("\n") | map(select(. != "")) | map({ref: .})' 2>/dev/null)"
+    [[ -n "$top_k_refs_json" ]] || top_k_refs_json="[]"
+    auto_baseline_bytes="$(_ctx_full_file_baseline_bytes_for_paths "$ctx_root" "${auto_paths[@]}")"
+    [[ "$auto_baseline_bytes" =~ ^[0-9]+$ ]] || auto_baseline_bytes=0
+  fi
+  auto_pack_bytes="$(wc -c < "$block_file" 2>/dev/null | tr -d '[:space:]')"
+  [[ "$auto_pack_bytes" =~ ^[0-9]+$ ]] || auto_pack_bytes=0
 
   pack_dir="$ctx_root/.pm-dispatch/ctx/packs"
   pack_path="$pack_dir/$run_id.md"
@@ -494,7 +545,8 @@ pmctl_dispatch_auto_pack() {
   fi
 
   PMCTL_DISPATCH_AUTO_PACK_PATH="$pack_path"
-  pmctl_dispatch_emit_auto_packed_event "$repo_root" "$run_id" "$block_hits" "$pack_path" "$brief_file"
+  pmctl_dispatch_emit_auto_packed_event "$repo_root" "$run_id" "$block_hits" "$pack_path" "$brief_file" \
+    "$top_k_refs_json" "$auto_pack_bytes" "$auto_baseline_bytes" "$auto_freshness"
   return 0
 }
 

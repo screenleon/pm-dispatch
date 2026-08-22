@@ -1360,6 +1360,111 @@ EOF
   rm -rf "$work" "$state_root"; rm -f "$stderr" "$original_part" "$cmd_brief" 2>/dev/null || true
 }
 
+case_auto_pack_hits_event_carries_shadow_telemetry() {
+  # CC-505 Req 9: dispatch auto-pack is a named workflow telemetry path, and
+  # its context.auto_packed event must carry the same shadow-telemetry shape
+  # pmctl_context_pack's own context.packed event carries: top_k_refs (one
+  # entry per emitted ref), pack_bytes (>0, real block size), and
+  # full_file_baseline_bytes (>0, since the referenced file exists on disk)
+  # with a derived compression_ratio_vs_full_file_baseline.
+  local name="dispatch/--auto-pack hits event carries top_k_refs/pack_bytes/full_file_baseline_bytes"
+  should_run "$name" || return 0
+  local work brief state_root stderr evt code
+  work="$(mktemp -d)"; git init -q "$work"
+  mkdir -p "$work/src"
+  cat > "$work/src/alpha.sh" <<'EOF'
+#!/usr/bin/env bash
+alpha_beta_dispatch_helper() {
+  printf 'alpha beta dispatch helper\n'
+}
+EOF
+  "$PMCTL" context index "$work" >/dev/null 2>/dev/null
+  brief="$(_mk_guard_brief "$work")"
+  state_root="$(mktemp -d)"
+  stderr="$(mktemp)"
+  set +e
+  PM_DISPATCH_STATE_ROOT="$state_root" \
+    "$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$work" --brief-file "$brief" --auto-pack --print-cmd \
+    >/dev/null 2>"$stderr"; code=$?
+  set -e
+  evt="$(PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" trace tail --kind context.auto_packed --all --json 2>/dev/null | tail -1)"
+
+  local hits freshness top_k_len pack_bytes baseline_bytes ratio
+  hits="$(printf '%s\n' "$evt" | jq -r '.payload.hits // -1' 2>/dev/null || printf '-1')"
+  freshness="$(printf '%s\n' "$evt" | jq -r '.payload.freshness // "MISSING"' 2>/dev/null)"
+  top_k_len="$(printf '%s\n' "$evt" | jq -r '.payload.top_k_refs | length' 2>/dev/null || printf '-1')"
+  pack_bytes="$(printf '%s\n' "$evt" | jq -r '.payload.pack_bytes // -1' 2>/dev/null || printf '-1')"
+  baseline_bytes="$(printf '%s\n' "$evt" | jq -r '.payload.full_file_baseline_bytes // -1' 2>/dev/null || printf '-1')"
+  ratio="$(printf '%s\n' "$evt" | jq -r '.payload.compression_ratio_vs_full_file_baseline // "MISSING"' 2>/dev/null)"
+
+  if [[ "$code" -eq 0 && "$hits" -ge 1 \
+      && "$freshness" == "fresh" \
+      && "$top_k_len" == "$hits" \
+      && "$pack_bytes" -gt 0 \
+      && "$baseline_bytes" -gt 0 \
+      && "$ratio" != "MISSING" && "$ratio" != "null" ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code hits=$hits freshness=$freshness top_k_len=$top_k_len pack_bytes=$pack_bytes baseline_bytes=$baseline_bytes ratio=$ratio evt=$evt"
+  fi
+  rm -rf "$work" "$state_root"; rm -f "$stderr" 2>/dev/null || true
+}
+
+case_auto_pack_stale_freshness_on_refresh_failure() {
+  # CC-505 Req 9 (qa-tester-F001): pmctl_context_reuse_scan calls
+  # _ctx_ensure_fresh internally but swallows the result, so a reuse-scan
+  # that returns hits from a STALE index (refresh failed, but the old data
+  # is still readable) must not be reported as context.auto_packed
+  # freshness=fresh. Force the refresh attempt to fail by making the
+  # already-built context.db file read-only, then assert the emitted event's
+  # freshness is stale (not hard-coded fresh) while the dispatch itself
+  # still succeeds -- a refresh failure degrades the freshness signal, it
+  # does not fail auto-pack or the dispatch.
+  local name="dispatch/--auto-pack reports freshness=stale when the index refresh fails"
+  should_run "$name" || return 0
+  local work brief state_root stderr evt code
+  work="$(mktemp -d)"; git init -q "$work"
+  mkdir -p "$work/src"
+  cat > "$work/src/alpha.sh" <<'EOF'
+#!/usr/bin/env bash
+alpha_beta_dispatch_helper() {
+  printf 'alpha beta dispatch helper\n'
+}
+EOF
+  "$PMCTL" context index "$work" >/dev/null 2>/dev/null
+  # Chmod only the DB file (not the directory): a read-only directory blocks
+  # sqlite3's temp-store scratch files even for a plain SELECT, degrading
+  # reuse-scan itself to zero hits (a different, already-covered code path).
+  # A read-only DB FILE with a writable directory blocks the write/reconcile
+  # transaction while leaving reads against the existing data intact --
+  # exactly "refresh failed, stale data still readable."
+  chmod 444 "$work/.pm-dispatch/ctx/context.db"
+  brief="$(_mk_guard_brief "$work")"
+  state_root="$(mktemp -d)"
+  stderr="$(mktemp)"
+  set +e
+  PM_DISPATCH_STATE_ROOT="$state_root" \
+    "$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$work" --brief-file "$brief" --auto-pack --print-cmd \
+    >/dev/null 2>"$stderr"; code=$?
+  set -e
+  chmod 644 "$work/.pm-dispatch/ctx/context.db"
+  evt="$(PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" trace tail --kind context.auto_packed --all --json 2>/dev/null | tail -1)"
+
+  local freshness hits
+  freshness="$(printf '%s\n' "$evt" | jq -r '.payload.freshness // "MISSING"' 2>/dev/null)"
+  hits="$(printf '%s\n' "$evt" | jq -r '.payload.hits // -1' 2>/dev/null || printf '-1')"
+
+  # hits must be >=1 to prove this exercised the success/enrichment path
+  # this finding is about -- the zero-hit early-return path already
+  # hard-codes freshness=unavailable and is covered by a separate case.
+  if [[ "$code" -eq 0 && "$freshness" == "stale" && "$hits" -ge 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code freshness=$freshness hits=$hits evt=$evt"
+  fi
+  rm -rf "$work" "$state_root"; rm -f "$stderr" 2>/dev/null || true
+}
+
 case_auto_pack_foreground_records_executed_snapshot() {
   # CC-402 / QA: a NON-dry-run foreground auto-pack run. The brief recorded in
   # runs.jsonl must be the SAME augmented effective brief the adapter executed —
@@ -1723,6 +1828,8 @@ case_auto_pack_zero_hits_event_original_brief
 case_auto_pack_garbage_work_dir_fails_loud_no_mkdir
 case_auto_pack_nonexistent_absolute_work_dir_fails_loud
 case_auto_pack_hits_creates_pack_and_forwards_copy
+case_auto_pack_hits_event_carries_shadow_telemetry
+case_auto_pack_stale_freshness_on_refresh_failure
 case_auto_pack_foreground_records_executed_snapshot
 case_dispatch_cd_canonicalized_for_pack_path
 case_auto_pack_subdir_cd_roots_context_at_git_top
