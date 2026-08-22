@@ -1546,6 +1546,157 @@ _ctx_apply_pack_budget() {
   printf '%s\n' "$final"
 }
 
+# CC-505 Req 9/10: full_file_baseline_bytes is the denominator for
+# compression_ratio_vs_full_file_baseline -- the size of the full files a
+# set of refs point at, had the caller Read them whole instead of relying on
+# a bounded excerpt. Batches a single `stat -c '%s' ... +` over the caller's
+# already-deduped path set (never one stat per ref -- the per-item
+# subprocess shape already cost two prior tickets, CC-557/CC-560) and
+# silently skips a ref whose file no longer exists (deleted/renamed since
+# indexing) rather than failing over one stale ref. Takes plain repo-relative
+# or absolute paths, not refs (no trailing ":line") -- callers with
+# "path:line" refs strip the suffix before calling. Shared by
+# _ctx_pack_full_file_baseline_bytes (pack event) and dispatch's
+# context.auto_packed event, which has its own ref list shape (a rendered
+# auto_context: block, not a pack JSON document).
+_ctx_full_file_baseline_bytes_for_paths() {
+  local repo_root="$1"
+  shift
+  local -a paths=("$@")
+
+  if [[ "${#paths[@]}" -eq 0 ]]; then
+    printf '0'
+    return 0
+  fi
+
+  local -a abs_paths=()
+  local p abs
+  for p in "${paths[@]}"; do
+    if [[ "$p" == /* ]]; then
+      abs="$p"
+    else
+      abs="$repo_root/$p"
+    fi
+    [[ -f "$abs" ]] && abs_paths+=("$abs")
+  done
+
+  if [[ "${#abs_paths[@]}" -eq 0 ]]; then
+    printf '0'
+    return 0
+  fi
+
+  stat -c '%s' "${abs_paths[@]}" 2>/dev/null | awk '{s+=$1} END{print s+0}'
+}
+
+_ctx_pack_full_file_baseline_bytes() {
+  local repo_root="$1" final_pack="$2"
+  local -a paths=()
+  local rel
+  while IFS= read -r rel; do
+    [[ -n "$rel" ]] || continue
+    paths+=("$rel")
+  done < <(jq -r '
+    [(.files[]?.ref), (.symbols[]?.ref), (.memories[]?.ref)]
+    | map(select(. != null) | sub(":[0-9]+(-[0-9]+)?$"; ""))
+    | unique[]
+  ' <<<"$final_pack" 2>/dev/null)
+
+  _ctx_full_file_baseline_bytes_for_paths "$repo_root" "${paths[@]}"
+}
+
+# CC-505 Req 9: shadow telemetry for one pack -- top-K refs, pack bytes,
+# full-file baseline bytes, truncation, and index freshness, recorded at
+# pack time so CC-506's evaluation phase can later join them against what
+# an agent actually read/modified. This is deliberately the ONLY place a
+# pack event is built (mirrors _ctx_emit_usage_event's own single-entry-point
+# shape) -- every _ctx_pack_finish exit point calls it, including the
+# zero-hit/no-index paths (a zero-hit pack is exactly as interesting to
+# CC-506 as a populated one, matching the context.queried zero-hit
+# precedent already established for the other context.* events). This
+# ticket does NOT attempt to capture what the agent subsequently actually
+# read/modified -- that correlation crosses process/executor boundaries in
+# a way that varies per adapter, and is explicitly CC-506's job to build
+# once ≥20 real-task records exist to evaluate against.
+_ctx_emit_pack_event() {
+  local repo_root="$1" task_id="$2" source="$3" freshness="$4" final_pack="$5"
+  if ! declare -F events_append >/dev/null 2>&1 \
+     || ! declare -F state_store_init >/dev/null 2>&1; then
+    _ctx_emit_warn "context.packed" "state-writer not loaded"; return 0
+  fi
+
+  local pmctl_root ts stamp hex6 evt_id event_json
+  pmctl_root="$(cd "$_CTX_LIB_DIR/../.." && pwd)"
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date +%Y-%m-%dT%H:%M:%SZ)"
+  stamp="$(date -u +%Y%m%dT%H%M%SZ 2>/dev/null || date +%Y%m%dT%H%M%SZ)"
+  hex6="$(dd if=/dev/urandom bs=3 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n')"
+  hex6="${hex6:0:6}"
+  if [[ -z "$hex6" ]]; then
+    _ctx_emit_warn "context.packed" "could not generate event id (urandom unavailable)"; return 0
+  fi
+  evt_id="evt-${stamp}-${hex6}"
+
+  local pack_bytes baseline_bytes
+  pack_bytes="$(printf '%s\n' "$final_pack" | wc -c | tr -d '[:space:]')"
+  baseline_bytes="$(_ctx_pack_full_file_baseline_bytes "$repo_root" "$final_pack")"
+  [[ "$baseline_bytes" =~ ^[0-9]+$ ]] || baseline_bytes=0
+
+  if ! event_json="$(jq -cn \
+    --arg id "$evt_id" --arg ts "$ts" --arg kind "context.packed" \
+    --arg task_id "$task_id" --arg source "$source" --arg freshness "$freshness" \
+    --argjson pack_bytes "$pack_bytes" --argjson baseline_bytes "$baseline_bytes" \
+    --argjson pack "$final_pack" '
+    ($pack.truncation // {}) as $trunc
+    | ([$pack.files[]?, $pack.symbols[]?, $pack.memories[]?]
+        | sort_by(-(.ranking_score // 0))
+        | .[:10]
+        | map({ref, source, match_kind, ranking_score})) as $top_k
+    | {
+        schema_version:1, id:$id, ts:$ts, kind:$kind,
+        subject_type:"context", subject_id:("ctx-"+$id), actor:"pmctl",
+        payload:{
+          task_id:$task_id, source:$source, freshness:$freshness,
+          hits_total_before:($trunc.total_before // 0),
+          hits_kept:($trunc.kept // 0),
+          top_k_refs:$top_k,
+          pack_bytes:$pack_bytes,
+          full_file_baseline_bytes:$baseline_bytes,
+          compression_ratio_vs_full_file_baseline:
+            (if $baseline_bytes > 0 then ($pack_bytes / $baseline_bytes) else null end),
+          truncation:$trunc
+        }
+      }
+    ' 2>/dev/null)"; then
+    _ctx_emit_warn "context.packed" "jq failed to build event json"; return 0
+  fi
+
+  local append_err append_status=0
+  append_err="$(_SW_REPO_ROOT="$pmctl_root" events_append "$event_json" 2>&1)" || append_status=$?
+  if [[ "$append_status" -ne 0 ]]; then
+    _ctx_emit_warn "context.packed" "events_append exited $append_status: ${append_err:-no detail}"
+  fi
+  return 0
+}
+
+# CC-505 Req 9: the ONE place every pmctl_context_pack exit point routes
+# through -- so the no-index, no-sqlite, and fully-indexed paths all emit
+# their context.packed event and return the pack the same way, rather than
+# three call sites each remembering to wire telemetry in separately.
+_ctx_pack_finish() {
+  local repo_root="$1" task_id="$2" source="$3" freshness="$4"
+  local pack="$5" max_items="$6" max_bytes="$7"
+  local final rc=0
+  final="$(_ctx_apply_pack_budget "$pack" "$max_items" "$max_bytes")" || rc=$?
+  # rc==2 is the fail-closed "impossible cap" path: _ctx_apply_pack_budget
+  # already printed its error to stderr and emitted no stdout at all -- only
+  # print/telemetry on the success path, so this wrapper does not turn that
+  # clean failure into a spurious blank stdout line.
+  if [[ "$rc" -eq 0 ]]; then
+    _ctx_emit_pack_event "$repo_root" "$task_id" "$source" "$freshness" "$final"
+    printf '%s\n' "$final"
+  fi
+  return "$rc"
+}
+
 # ── Per-term query parser ──────────────────────────────────────────────────────
 # Uses _ctx_query_hits_raw for structured TSV input and routes hits by
 # match_kind:
@@ -1844,6 +1995,13 @@ pmctl_context_pack() {
   # that stops an unbounded multi-term query from growing without limit.
   local max_items="${PM_DISPATCH_CONTEXT_PACK_MAX_ITEMS:-200}"
   local max_bytes="${PM_DISPATCH_CONTEXT_PACK_MAX_BYTES:-200000}"
+  # CC-505 Req 9: shadow telemetry needs to know whether the index this pack
+  # drew from was actually current at pack time, not just "an index existed".
+  # _ctx_ensure_fresh/_ctx_ensure_fresh_memory return failure when autobuild/
+  # autorefresh is disabled or the refresh attempt itself failed -- that is
+  # exactly the "stale" case a telemetry consumer needs to discount, so
+  # capture it here instead of continuing to discard it with `|| true`.
+  local freshness="fresh"
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -1967,7 +2125,7 @@ pmctl_context_pack() {
   local db
   db="$(_ctx_db_path "$repo_root")"
   if [[ "$source" == "repo" || "$source" == "all" ]]; then
-    _ctx_ensure_fresh "$repo_root" || true
+    _ctx_ensure_fresh "$repo_root" || freshness="stale"
   fi
 
   # Pure-repo source with no index keeps its legacy empty-pack shape, but
@@ -1979,7 +2137,7 @@ pmctl_context_pack() {
     ts="$(_ctx_now_iso8601)"
     empty_pack="$(printf '{"schema_version":4,"task_id":%s,"built_ts":%s,"sources":[{"name":"builtin-index","version":"1"}],"files":[],"symbols":[],"memories":[],"risks":[]}' \
       "$(_ctx_json_str "$task_id")" "$(_ctx_json_str "$ts")")"
-    _ctx_apply_pack_budget "$empty_pack" "$max_items" "$max_bytes"
+    _ctx_pack_finish "$repo_root" "$task_id" "$source" "unavailable" "$empty_pack" "$max_items" "$max_bytes"
     return $?
   fi
 
@@ -1993,7 +2151,7 @@ pmctl_context_pack() {
     ts="$(_ctx_now_iso8601)"
     empty_pack="$(printf '{"schema_version":4,"task_id":%s,"built_ts":%s,"sources":[{"name":"builtin-index","version":"1"}],"files":[],"symbols":[],"memories":[],"risks":[]}' \
       "$(_ctx_json_str "$task_id")" "$(_ctx_json_str "$ts")")"
-    _ctx_apply_pack_budget "$empty_pack" "$max_items" "$max_bytes"
+    _ctx_pack_finish "$repo_root" "$task_id" "$source" "unavailable" "$empty_pack" "$max_items" "$max_bytes"
     return $?
   fi
 
@@ -2021,7 +2179,7 @@ pmctl_context_pack() {
     local mdir mdb
     mdir="$(_ctx_resolve_memory_dir "$repo_root")" || mdir=""
     if [[ -n "$mdir" ]]; then
-      _ctx_ensure_fresh_memory "$mdir" || true
+      _ctx_ensure_fresh_memory "$mdir" || freshness="stale"
       mdb="$(_ctx_memory_db_path "$mdir")"
       if [[ -f "$mdb" ]]; then
         for term in "${terms[@]}"; do
@@ -2072,8 +2230,9 @@ pmctl_context_pack() {
   # applied once at the very end so it sees the fully merged, deduped,
   # ranked result -- never per-term or per-array, which would let each
   # term/array claim its own share of the budget instead of a true global
-  # ceiling.
-  _ctx_apply_pack_budget "$pack" "$max_items" "$max_bytes"
+  # ceiling. CC-505 Req 9: _ctx_pack_finish also emits this pack's shadow
+  # telemetry event once the budget is applied.
+  _ctx_pack_finish "$repo_root" "$task_id" "$source" "$freshness" "$pack" "$max_items" "$max_bytes"
 }
 
 # ── pmctl_context_reuse_scan ──────────────────────────────────────────────────

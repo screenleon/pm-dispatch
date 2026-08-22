@@ -2148,6 +2148,133 @@ case_context_query_emits_event() {
   pass "$name"
 }
 
+case_context_pack_emits_event() {
+  local name="pmctl context pack: emits context.packed event with top_k_refs, byte accounting and freshness"
+  # Behavior (CC-505 Req 9): a successful pack must emit a context.packed
+  # event carrying top_k_refs, pack_bytes, full_file_baseline_bytes,
+  # compression_ratio_vs_full_file_baseline, truncation, and freshness --
+  # this is the ONLY telemetry call site pmctl_context_pack has (unlike
+  # query/reuse-scan/prompt-scan, pack previously emitted nothing at all).
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-pack-evt"
+  make_fixture_repo "$fix_repo"
+
+  local state_root="$tmp_root/state-pack-evt"
+  mkdir -p "$state_root"
+  PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup-pack.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup-pack.err")"; return 0; }
+
+  local out err status=0
+  out="$tmp_root/pack-evt.out"; err="$tmp_root/pack-evt.err"
+  PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" context pack "$fix_repo" \
+    --task-id pack-evt-task --query "alpha" > "$out" 2> "$err" || status=$?
+
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "context pack exited $status: $(<"$err")"; return 0
+  fi
+  if grep -q 'telemetry not recorded' "$err" 2>/dev/null; then
+    fail "$name" "context pack reported a telemetry emit failure: $(<"$err")"; return 0
+  fi
+
+  local trace_out trace_status=0
+  trace_out="$tmp_root/pack-trace.out"
+  PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" trace tail --kind context.packed --all --json \
+    > "$trace_out" 2>"$tmp_root/pack-trace.err" || trace_status=$?
+  if [[ "$trace_status" -ne 0 ]]; then
+    fail "$name" "pmctl trace exited $trace_status: $(<"$tmp_root/pack-trace.err")"; return 0
+  fi
+
+  local our_event
+  our_event="$(jq -c 'select(.payload.task_id == "pack-evt-task")' "$trace_out" 2>/dev/null | tail -1)"
+  if [[ -z "$our_event" ]]; then
+    fail "$name" "no context.packed event with payload.task_id=pack-evt-task found in trace"; return 0
+  fi
+
+  local kind subject_type freshness pack_bytes baseline_bytes top_k_len ratio
+  kind="$(jq -r '.kind' <<<"$our_event")"
+  subject_type="$(jq -r '.subject_type' <<<"$our_event")"
+  freshness="$(jq -r '.payload.freshness' <<<"$our_event")"
+  pack_bytes="$(jq -r '.payload.pack_bytes' <<<"$our_event")"
+  baseline_bytes="$(jq -r '.payload.full_file_baseline_bytes' <<<"$our_event")"
+  top_k_len="$(jq -r '.payload.top_k_refs | length' <<<"$our_event")"
+  ratio="$(jq -r '.payload.compression_ratio_vs_full_file_baseline' <<<"$our_event")"
+
+  if [[ "$kind" != "context.packed" ]]; then
+    fail "$name" "event kind: expected context.packed, got: $kind"; return 0
+  fi
+  if [[ "$subject_type" != "context" ]]; then
+    fail "$name" "event subject_type: expected context, got: $subject_type"; return 0
+  fi
+  if [[ "$freshness" != "fresh" ]]; then
+    fail "$name" "event payload.freshness: expected fresh (index was just built), got: $freshness"; return 0
+  fi
+  if ! [[ "$pack_bytes" =~ ^[0-9]+$ ]] || [[ "$pack_bytes" -le 0 ]]; then
+    fail "$name" "event payload.pack_bytes: expected positive integer, got: $pack_bytes"; return 0
+  fi
+  if ! [[ "$baseline_bytes" =~ ^[0-9]+$ ]] || [[ "$baseline_bytes" -le 0 ]]; then
+    fail "$name" "event payload.full_file_baseline_bytes: expected positive integer (fixture files exist on disk), got: $baseline_bytes"; return 0
+  fi
+  if ! [[ "$top_k_len" =~ ^[0-9]+$ ]] || [[ "$top_k_len" -le 0 ]]; then
+    fail "$name" "event payload.top_k_refs: expected at least one ref, got length $top_k_len"; return 0
+  fi
+  if [[ "$top_k_len" -gt 10 ]]; then
+    fail "$name" "event payload.top_k_refs: expected at most 10 (telemetry cap), got length $top_k_len"; return 0
+  fi
+  if ! [[ "$ratio" =~ ^[0-9]+\.?[0-9]*$ ]]; then
+    fail "$name" "event payload.compression_ratio_vs_full_file_baseline: expected a number, got: $ratio"; return 0
+  fi
+  pass "$name"
+}
+
+case_context_pack_zero_hit_still_emits_event() {
+  local name="pmctl context pack: a zero-hit pack (no index) still emits context.packed with freshness=unavailable"
+  # Behavior (CC-505 Req 9): mirrors the existing context.queried zero-hit
+  # precedent -- a pack with nothing to say is exactly as interesting to
+  # CC-506's evaluation as a populated one, and must not be silently skipped.
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-pack-zero-evt"
+  mkdir -p "$fix_repo"
+  ( cd "$fix_repo" && git init -q && git config user.email t@t.example && git config user.name t \
+    && printf 'placeholder\n' > f.txt && git add f.txt && git commit -q -m init )
+
+  local state_root="$tmp_root/state-pack-zero-evt"
+  mkdir -p "$state_root"
+
+  local out err status=0
+  out="$tmp_root/pack-zero-evt.out"; err="$tmp_root/pack-zero-evt.err"
+  PM_DISPATCH_CONTEXT_AUTOBUILD=0 PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" context pack "$fix_repo" \
+    --task-id pack-zero-evt-task --query "alpha" > "$out" 2> "$err" || status=$?
+
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "context pack exited $status: $(<"$err")"; return 0
+  fi
+
+  local trace_out trace_status=0
+  trace_out="$tmp_root/pack-zero-trace.out"
+  PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" trace tail --kind context.packed --all --json \
+    > "$trace_out" 2>"$tmp_root/pack-zero-trace.err" || trace_status=$?
+  if [[ "$trace_status" -ne 0 ]]; then
+    fail "$name" "pmctl trace exited $trace_status: $(<"$tmp_root/pack-zero-trace.err")"; return 0
+  fi
+
+  local our_event freshness top_k_len
+  our_event="$(jq -c 'select(.payload.task_id == "pack-zero-evt-task")' "$trace_out" 2>/dev/null | tail -1)"
+  if [[ -z "$our_event" ]]; then
+    fail "$name" "no context.packed event with payload.task_id=pack-zero-evt-task found in trace"; return 0
+  fi
+  freshness="$(jq -r '.payload.freshness' <<<"$our_event")"
+  top_k_len="$(jq -r '.payload.top_k_refs | length' <<<"$our_event")"
+  if [[ "$freshness" != "unavailable" ]]; then
+    fail "$name" "event payload.freshness: expected unavailable (no index, autobuild disabled), got: $freshness"; return 0
+  fi
+  if [[ "$top_k_len" -ne 0 ]]; then
+    fail "$name" "event payload.top_k_refs: expected empty for a zero-hit pack, got length $top_k_len"; return 0
+  fi
+  pass "$name"
+}
+
 case_context_reuse_scan_emits_event() {
   local name="pmctl context reuse-scan: emits context.reuse_scanned event readable via pmctl trace"
   # Behavior: after a successful reuse-scan, pmctl trace tail --kind context.reuse_scanned must return >= 1 event.
@@ -5271,6 +5398,8 @@ case_context_reuse_scan_dedup
 case_context_reuse_scan_on_real_repo
 case_context_reuse_scan_hit_cap
 case_context_query_emits_event
+case_context_pack_emits_event
+case_context_pack_zero_hit_still_emits_event
 case_context_reuse_scan_emits_event
 case_context_index_gitignore_new
 case_context_index_gitignore_idempotent_exact

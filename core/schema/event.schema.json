@@ -38,6 +38,7 @@
         "context.reuse_scanned",
         "context.auto_packed",
         "context.prompt_scanned",
+        "context.packed",
         "task.lifecycle.warn"
       ]
     },

@@ -1,5 +1,22 @@
 # Context retrieval
 
+## Index-first, source-verified
+
+A retrieval hit (from `query`, `pack`, `reuse-scan`, or the prompt auto-scan)
+is **navigation and scope-narrowing evidence** — a pointer telling you where
+to look, never a substitute for the original source. Before a factual
+conclusion, a code edit, or a gate/security/release judgment, do a targeted
+Read of the bounded span the hit names; do not act on the hit's `why_relevant`
+summary alone. A **zero-hit** result, a hit whose `freshness` is stale or
+unknown, a **truncated** pack, or an ambiguous multi-candidate result must
+fall back to targeted Grep/Read over the surrounding area — a zero hit means
+"the index didn't surface it," never "it doesn't exist." This is a wording
+discipline only: it does not tighten, and must not be read as tightening, any
+existing fallback behavior (broad-Read fallback stays exactly as permissive as
+it already is; retrieval evidence graduating to a hard requirement in place of
+that fallback is a separate, evidence-gated decision — see
+[[CC-506]] — not something this note authorizes on its own).
+
 ## Query before Read/Grep/full-file open
 
 For knowledge-doc lookups, retrieval comes first. Run the context query before
@@ -84,7 +101,8 @@ For a targeted multi-term query (when key symbol names are already known), use
 including calls that find no hits and calls against a repo with no index yet
 (emitted with `hits: 0`).  These are readable via
 `pmctl trace tail --kind context.reuse_scanned` (or `--kind context.queried`).
-`pmctl context pack` does not emit usage events.
+`pmctl context pack` emits a `context.packed` shadow-telemetry event after
+every call — see [Shadow telemetry](#shadow-telemetry) below.
 
 ## Prompt auto-scan (deterministic retrieval at prompt time)
 
@@ -200,8 +218,37 @@ including zero-hit and fail-open cases. Inspect it with:
 
     pmctl trace tail --kind context.auto_packed
 
-Use `--json` to read the payload fields: `run_id`, `hits`, `pack`, and
-`source_brief`.
+Use `--json` to read the payload fields: `run_id`, `hits`, `pack`,
+`source_brief`, and the same shadow-telemetry fields `pmctl context pack`'s
+`context.packed` event carries (`freshness`, `top_k_refs`, `pack_bytes`,
+`full_file_baseline_bytes`, `compression_ratio_vs_full_file_baseline`) — see
+[Shadow telemetry](#shadow-telemetry) below. A zero-hit or fail-open auto-pack
+still emits the event, with an empty `top_k_refs` and `0`/`null` for the byte
+fields.
+
+## Shadow telemetry
+
+`context.packed` (emitted by `pmctl context pack`) and `context.auto_packed`
+(emitted by dispatch auto-pack) carry a shared set of fields recorded at pack
+time, so retrieval effectiveness can later be evaluated against what actually
+happened downstream:
+
+| Field | Meaning |
+|---|---|
+| `freshness` | `fresh` / `stale` / `unavailable` — whether the index this pack drew from was current at pack time (`stale` means an autorefresh was attempted and failed or was disabled; `unavailable` means no index existed at all). |
+| `top_k_refs` | Up to the top 10 surviving refs by `ranking_score`, each with enough identity (`ref`, `source`/`match_kind`, `ranking_score`) to later check whether a task's actually-modified files overlapped with what was surfaced. |
+| `pack_bytes` | The final serialized size of what was actually injected (the pack JSON, or the `auto_context:` block for dispatch auto-pack). |
+| `full_file_baseline_bytes` | The combined size of the full files those refs point at, had the caller Read them whole instead. |
+| `compression_ratio_vs_full_file_baseline` | `pack_bytes / full_file_baseline_bytes` (null when the baseline is 0). This is a **size ratio only** — it is not a claim about actual token or read-time savings. Do not report it, or cite an external project's ratio, as an observed savings multiplier without real read-reduction evidence; that evidence-gated evaluation (required-anchor coverage, critical-miss rate, read reduction, outcome parity across real tasks) is [[CC-506]]'s job, not this field's. |
+| `truncation` | The pack's own truncation disclosure object (`applied`/`reason`/`budget`/`total_before`/`kept`/`dropped`), carried verbatim. |
+
+Both events are readable via `pmctl trace tail --kind context.packed` /
+`--kind context.auto_packed --json`. Deliberately **not** captured here: what
+an agent subsequently actually read, or whether its final edits landed inside
+`top_k_refs` — correlating this event against later actions crosses
+process/executor boundaries in a way that varies per adapter, and is
+[[CC-506]]'s evaluation phase to build once enough real-task records
+accumulate, not something this instrumentation attempts on its own.
 
 ## Context DB location
 
