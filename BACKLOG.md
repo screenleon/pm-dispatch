@@ -2561,6 +2561,39 @@ architecture-reviewer 的 advisory（模組邊界耦合）維持上一輪判斷�
 
 `tests/shell/test-pmctl-artifacts.sh` 37 案全過（36 案＋本輪 1 案）。
 
+**pr-gate 第六輪（full tier，sequential，5 reviewer——依使用者新指示改預設
+序列，見下方説明）NO-GO（2 hard_block + 1 soft_block，critic-F001／
+qa-tester-F001／risk-reviewer-F001 三方鎖定同一根因，architecture-reviewer／
+security-reviewer approve）**：三方都指出第五輪 fsync 修法留下的真缺口——
+`sync` 失敗時只記錄到 `prune-skipped.log`，**卻沒把剛 append 的那行摘要
+從 `runs-summary.jsonl` 撤回**。那一行在結構上跟正常驗證通過的紀錄完全
+一樣（`run_id`／`summarized_at`／`kind`／`status`／`gate.final` 都非
+null），所以下一次 `gc` 呼叫的 `_pmctl_artifacts_run_summary_lookup` 會把
+它當成「已驗證」直接信任，讓 grace 期滿後的刪除建立在一筆從未成功落盤
+確認過的紀錄上——等於本票從一開始要防的「驗證機制本身有 bug 導致誤刪」
+情境，只是換了個觸發路徑。上一輪（第五輪）Closure 段落中「fsync 失敗
+run 目錄保留、summary line 本身仍在」的描述本身沒錯（那是舊行為的忠實
+記錄），但那個「仍在」正是本輪三方鎖定的根因，隨本輪修法作廢。
+
+修正：`sync` 失敗分支比照既有「驗證失敗」分支的做法，在記錄
+`prune-skipped.log` 之前先呼叫 `_pmctl_artifacts_run_summary_prune_line`
+把剛 append 的那行精確移除。這樣任何一次 gc 呼叫只要無法確認落盤，就
+不會留下任何看起來合法的紀錄——下一次 gc（不論 sync 這次是否恢復正常）
+都必須從頭重新 summarize＋append＋sync，不可能繞過重新驗證直接刪除。
+
+新增迴歸測試 `case_gc_retry_after_fsync_failure_resummarizes_before_deleting`：
+第一次呼叫 stub `sync` 固定失敗（斷言 run 目錄保留、摘要行已被撤回，非
+本輪新增而是修正既有 `case_gc_summary_fsync_failure_retains_run` 的斷言
+方向），第二次呼叫恢復正常 `sync`，斷言 run 目錄最終被刪除且
+`runs-summary.jsonl` 中該 run_id 恰好一行——證明刪除建立在第二次呼叫
+自己全新、成功落盤確認的紀錄上，而不是復活第一次那筆未確認的紀錄。
+
+`tests/shell/test-pmctl-artifacts.sh` 38 案全過（37 案＋本輪 1 案）。
+
+**pr-gate 序列化說明**：本輪起使用者要求後續 pr-gate 一律預設走
+`--mode sequential`，若判斷需要 parallel 須先徵求使用者同意；已寫入
+repo 外部個人 memory（非本 repo 檔案）。
+
 **See**: pr:TBD
 
 ---

@@ -632,8 +632,11 @@ case_gc_summary_fsync_failure_retains_run() {
   # which does force a nonzero exit.
   # Steps: stub `sync` on PATH to always fail; one eligible run with
   #        --grace-days 0; assert the run is retained, prune-skipped.log
-  #        names it, and the summary line itself is still present (the data
-  #        was not pruned -- only durability was unconfirmed, not validity)
+  #        names it, and the summary line itself was pruned back out (an
+  #        unsynced record must not linger as something a later gc could
+  #        mistake for a durably-confirmed summary -- see
+  #        case_gc_retry_after_fsync_failure_resummarizes_before_deleting for
+  #        the follow-up invocation this enables).
   local name="pmctl artifacts gc: a summary fsync failure retains the run instead of deleting it"
   should_run "$name" || return 0
   local store work bin out err status=0
@@ -667,10 +670,75 @@ EOF
 
   if [[ -d "$rd_old" && -e "$skip_log" ]] \
       && grep -q 'run-old' "$skip_log" \
-      && grep -q '"run_id":"run-old"' "$summary_file"; then
+      && ! grep -q '"run_id":"run-old"' "$summary_file"; then
     pass "$name"
   else
     fail "$name" "status=$status rd_old_exists=$(test -d "$rd_old" && echo y||echo n) skip_log=$(cat "$skip_log" 2>/dev/null) summary=$(<"$summary_file")"
+  fi
+}
+
+case_gc_retry_after_fsync_failure_resummarizes_before_deleting() {
+  # behavior (CC-540, critic-F001/qa-tester-F001/risk-reviewer-F001): a
+  # summary that previously failed fsync must never be trusted by a LATER gc
+  # invocation as authorization to delete. Prove this end-to-end across two
+  # separate invocations rather than just inspecting one call's output:
+  #   1st gc (sync forced to fail): run retained, unsynced line pruned back
+  #      out (asserted by case_gc_summary_fsync_failure_retains_run above).
+  #   2nd gc (sync working normally): must re-summarize from scratch and
+  #      re-verify durability before it may delete -- it must NOT delete
+  #      merely because a record for this run_id existed at some point.
+  # Oracle: after the 2nd invocation the run is gone, and the summary file
+  # contains exactly one line for this run_id (the 2nd invocation's own
+  # fresh, successfully-synced record) -- proving deletion rode on a new
+  # durability confirmation, not a resurrected unsynced one.
+  local name="pmctl artifacts gc: a rerun after fsync failure re-summarizes and re-verifies before it may delete"
+  should_run "$name" || return 0
+  local store work bin out err status=0
+  store="$tmp_root/state-gc-fsync-retry"
+  work="$tmp_root/work-gc-fsync-retry"
+  bin="$tmp_root/bin-fsync-retry"
+  make_work_repo "$work"
+  mkdir -p "$bin"
+  cat > "$bin/sync" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+  chmod +x "$bin/sync"
+
+  local rd_keep rd_old
+  rd_keep="$(run_dir_for "$store" "$work" run-keep)"
+  rd_old="$(run_dir_for "$store" "$work" run-retry)"
+  mkdir -p "$rd_keep" "$rd_old"
+  printf 'k\n' > "$rd_keep/k.footer"
+  printf 'a\n' > "$rd_old/a.footer"
+  touch -t "$(date -d '40 days ago' +%Y%m%d%H%M 2>/dev/null || date -v-40d +%Y%m%d%H%M)" "$rd_old" 2>/dev/null || true
+
+  out="$tmp_root/gc-fsync-retry-1.out"; err="$tmp_root/gc-fsync-retry-1.err"
+  PATH="$bin:$PATH" PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" artifacts gc \
+    --keep-last 1 --grace-days 0 --cd "$work" > "$out" 2> "$err" || status=$?
+
+  local runs_dir summary_file
+  runs_dir="$(dirname "$rd_old")"
+  summary_file="$(dirname "$runs_dir")/runs-summary.jsonl"
+
+  if [[ ! -d "$rd_old" ]]; then
+    fail "$name" "run was deleted on the FIRST (sync-failing) invocation; the fsync guard did not retain it"
+    return 0
+  fi
+
+  status=0
+  out="$tmp_root/gc-fsync-retry-2.out"; err="$tmp_root/gc-fsync-retry-2.err"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" artifacts gc \
+    --keep-last 1 --grace-days 0 --cd "$work" > "$out" 2> "$err" || status=$?
+
+  local run_line_count
+  run_line_count="$(grep -c '"run_id":"run-retry"' "$summary_file" 2>/dev/null || true)"
+  : "${run_line_count:=0}"
+
+  if [[ ! -d "$rd_old" && "$run_line_count" -eq 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status rd_old_exists=$(test -d "$rd_old" && echo y||echo n) run_line_count=$run_line_count summary=$(<"$summary_file")"
   fi
 }
 
@@ -1336,6 +1404,7 @@ case_gc_dry_run_positive_grace_previews_without_mutation
 case_gc_concurrent_invocations_produce_one_summary_line
 case_gc_append_failure_retains_run_no_false_success
 case_gc_summary_fsync_failure_retains_run
+case_gc_retry_after_fsync_failure_resummarizes_before_deleting
 case_gc_lock_timeout_reports_failure_and_retains_run
 case_gc_summarizes_before_grace_defers_deletion
 case_gc_deletes_once_grace_elapses

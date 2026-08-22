@@ -486,6 +486,14 @@ _pmctl_artifacts_run_summary_append_verified() {
     if sync -- "$summary_file" 2>/dev/null; then
       return 0
     fi
+    # A sync failure must not leave the unsynced line behind: it structurally
+    # matches everything _pmctl_artifacts_run_summary_lookup checks (run_id,
+    # summarized_at, kind, status, gate.final), so a later gc invocation would
+    # trust it as validly summarized and proceed straight to deletion without
+    # ever re-confirming durability -- the retry path critic/qa-tester/
+    # risk-reviewer all flagged. Pruning it forces the next gc run to
+    # re-summarize and re-attempt sync from scratch.
+    _pmctl_artifacts_run_summary_prune_line "$summary_file" "$summary_json"
     printf '%s\trun=%s\tsummary fsync failed, durability unconfirmed, run directory retained\n' \
       "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$run_id" >> "$skip_log"
     return 1
