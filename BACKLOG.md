@@ -2854,6 +2854,42 @@ code——函式自己的回傳碼只來自最後兩行必定成功的 `printf`�
 freshness 訊號，不使 pack 本身失敗）。`tests/shell/test-pmctl-context.sh`
 164 案全過（163+1）。
 
+**pr-gate 第二輪起**：第一次以 `--pass targeted --reviewers qa-tester` 重派被
+policy floor 拒絕（此 scope 的必要 reviewer 覆蓋是全體 5 名，targeted 單一
+reviewer 不能繞過）——這是 policy 拒絕不是 verdict，改回全量重派。全量重派
+後 qa-tester 又指出既有 `run-tests.sh --base main` 全套（供 QA supplemental
+執行）在 gate 提供的 120 秒 helper 預算內逾時——查證後這是既有結構性限制
+（`test-pmctl-context.sh`／`test-pmctl-dispatch.sh` 本身已各自跑到 200+ 秒，
+早於本票就已如此，非本票新增的量體造成），非本票新增測試造成的迴歸。改用
+`--test-cmd` 指向只涵蓋本票新增行為的 scoped 指令（3 個新案，約 8 秒），
+讓 5 位 reviewer 都拿到完整、不逾時的證據，而非依賴 gate 內建的全量 QA
+timeout 假設。
+
+該輪 gate 又意外撞見一個 `case_execute_tail_direct_lifecycle_identity`
+單次失敗（qa-tester 執行「supplemental」全套時觸發，與本票行為無關的既有
+案例）——本機連跑 3 次與整份 `test-pmctl-dispatch.sh` 全套皆綠，判定為
+gate 執行環境下的機率性 flake，重派後未再出現。
+
+真正需要修的是第三輪 qa-tester-F001：dispatch auto-pack 的
+`context.auto_packed` 事件成功路徑把 `freshness` **寫死成 `"fresh"`**——
+`pmctl_context_reuse_scan` 內部同樣呼叫 `_ctx_ensure_fresh` 卻用 `|| true`
+吞掉結果，導致 reuse-scan 命中一個「refresh 失敗、仍讀到舊資料」的 stale
+索引時，也會被回報成 fresh。修正：在呼叫 `pmctl_context_reuse_scan` 前，
+`pmctl_dispatch_auto_pack` 自行先呼叫一次 `_ctx_ensure_fresh`（與
+reuse-scan 內部呼叫冪等，第二次是基於 mtime 的 no-op refresh），取其真實
+回傳碼作為這次事件要回報的 `freshness`，取代寫死的字面值。
+
+新增迴歸測試時發現原本兩個 stale fixture（`chmod 555` 整個 ctx 目錄）的
+副作用比預期更大：sqlite3 的 FTS5 temp-store scratch file 需要目錄本身
+可寫，連純讀查詢都會失敗，讓 pack／reuse-scan 一起退化成 zero-hit——那其實
+是另一條已覆蓋的分支（no-index/查詢失敗），不是「refresh 失敗、舊資料仍可
+讀」這個本票要驗的路徑。兩個既有 stale 案（`pmctl-context.sh` 與新增的
+`pmctl-dispatch.sh` 案）都改為只 `chmod 444` DB **檔案本身**（目錄維持
+可寫）——寫入交易失敗，讀取仍成功；並補強斷言：两案都要求 `top_k_refs`／
+`hits` 非零，證明真的走了「有命中」的成功路徑，而非誤判一個空 pack 也算
+「stale」。`tests/shell/test-pmctl-context.sh` 保持 164 案全過，
+`tests/shell/test-pmctl-dispatch.sh` 55 案全過（54+1）。
+
 **See**: pr:TBD
 
 ## CC-506 — retrieval evidence-gated 收緊：shadow 評測與 broad-Read 指引 ⏸ deferred

@@ -449,6 +449,17 @@ pmctl_dispatch_auto_pack() {
     return 0
   fi
 
+  # CC-505 Req 9 (qa-tester-F001): pmctl_context_reuse_scan calls
+  # _ctx_ensure_fresh internally but swallows its result (`|| true`), so a
+  # reuse-scan that succeeds against a STALE index (refresh failed, hits
+  # still came from the old data) is indistinguishable from a genuinely
+  # fresh one from this function's perspective. Call _ctx_ensure_fresh
+  # directly here first -- idempotent with reuse-scan's own internal call
+  # (mtime-based, a no-op refresh the second time) -- and use ITS result as
+  # the freshness this event reports, rather than hard-coding "fresh".
+  local auto_freshness="fresh"
+  _ctx_ensure_fresh "$ctx_root" || auto_freshness="stale"
+
   reuse_err="$(mktemp)" || {
     printf 'pmctl dispatch run: warning: auto-pack skipped: mktemp failed\n' >&2
     pmctl_dispatch_emit_auto_packed_event "$repo_root" "$run_id" 0 "" "$brief_file"
@@ -535,7 +546,7 @@ pmctl_dispatch_auto_pack() {
 
   PMCTL_DISPATCH_AUTO_PACK_PATH="$pack_path"
   pmctl_dispatch_emit_auto_packed_event "$repo_root" "$run_id" "$block_hits" "$pack_path" "$brief_file" \
-    "$top_k_refs_json" "$auto_pack_bytes" "$auto_baseline_bytes" "fresh"
+    "$top_k_refs_json" "$auto_pack_bytes" "$auto_baseline_bytes" "$auto_freshness"
   return 0
 }
 
