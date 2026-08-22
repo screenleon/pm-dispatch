@@ -2275,6 +2275,58 @@ case_context_pack_zero_hit_still_emits_event() {
   pass "$name"
 }
 
+case_context_pack_stale_freshness_on_refresh_failure() {
+  local name="pmctl context pack: context.packed reports freshness=stale when refresh fails on an existing index"
+  # Behavior (CC-505 Req 9, qa-tester-F001): freshness must distinguish a
+  # genuinely refreshed index from one whose refresh attempt failed. Build an
+  # index successfully, then make the ctx directory unwritable so
+  # _ctx_index_tree's sqlite3 batch write fails on the SECOND (refresh) call
+  # -- this only produces an observable failure because _ctx_index_tree now
+  # checks that write's exit status (previously unchecked: the function's own
+  # exit code came only from its trailing printf lines, so a failed sqlite3
+  # write was indistinguishable from success at every caller, including
+  # _ctx_ensure_fresh).
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-pack-stale-evt"
+  make_fixture_repo "$fix_repo"
+
+  local state_root="$tmp_root/state-pack-stale-evt"
+  mkdir -p "$state_root"
+  PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup-stale.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup-stale.err")"; return 0; }
+
+  chmod 555 "$fix_repo/.pm-dispatch/ctx"
+  local out err status=0
+  out="$tmp_root/pack-stale-evt.out"; err="$tmp_root/pack-stale-evt.err"
+  PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" context pack "$fix_repo" \
+    --task-id pack-stale-evt-task --query "alpha" > "$out" 2> "$err" || status=$?
+  chmod 755 "$fix_repo/.pm-dispatch/ctx"
+
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "context pack exited $status (expected 0 -- a refresh failure degrades freshness, it does not fail the pack): $(<"$err")"; return 0
+  fi
+
+  local trace_out trace_status=0
+  trace_out="$tmp_root/pack-stale-trace.out"
+  PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" trace tail --kind context.packed --all --json \
+    > "$trace_out" 2>"$tmp_root/pack-stale-trace.err" || trace_status=$?
+  if [[ "$trace_status" -ne 0 ]]; then
+    fail "$name" "pmctl trace exited $trace_status: $(<"$tmp_root/pack-stale-trace.err")"; return 0
+  fi
+
+  local our_event freshness
+  our_event="$(jq -c 'select(.payload.task_id == "pack-stale-evt-task")' "$trace_out" 2>/dev/null | tail -1)"
+  if [[ -z "$our_event" ]]; then
+    fail "$name" "no context.packed event with payload.task_id=pack-stale-evt-task found in trace"; return 0
+  fi
+  freshness="$(jq -r '.payload.freshness' <<<"$our_event")"
+  if [[ "$freshness" != "stale" ]]; then
+    fail "$name" "event payload.freshness: expected stale (refresh attempted and failed), got: $freshness"; return 0
+  fi
+  pass "$name"
+}
+
 case_context_reuse_scan_emits_event() {
   local name="pmctl context reuse-scan: emits context.reuse_scanned event readable via pmctl trace"
   # Behavior: after a successful reuse-scan, pmctl trace tail --kind context.reuse_scanned must return >= 1 event.
@@ -5400,6 +5452,7 @@ case_context_reuse_scan_hit_cap
 case_context_query_emits_event
 case_context_pack_emits_event
 case_context_pack_zero_hit_still_emits_event
+case_context_pack_stale_freshness_on_refresh_failure
 case_context_reuse_scan_emits_event
 case_context_index_gitignore_new
 case_context_index_gitignore_idempotent_exact

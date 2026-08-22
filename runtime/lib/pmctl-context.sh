@@ -772,7 +772,17 @@ _ctx_index_tree() {
   } >> "$batch_sql"
 
   # Always execute: even if nothing was indexed, reconciliation must run.
-  sqlite3 "$db" < "$batch_sql" >/dev/null
+  # CC-505 Req 9: this exit code was previously never checked at all -- the
+  # function's own exit status came only from the trailing printf lines
+  # below, which always succeed. That made a genuine write failure (e.g. a
+  # read-only DB file/dir) indistinguishable from success at every caller,
+  # including _ctx_ensure_fresh, whose return code the new context.packed
+  # freshness field now depends on being trustworthy.
+  if ! sqlite3 "$db" < "$batch_sql" >/dev/null; then
+    printf 'pmctl context index: sqlite3 batch write failed for %s\n' "$db" >&2
+    rm -f "$batch_sql"
+    return 1
+  fi
   rm -f "$batch_sql"
 
   # Rebuilding FTS5 is the dominant cost on large repos. An unchanged mtime

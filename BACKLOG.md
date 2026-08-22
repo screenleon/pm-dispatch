@@ -2837,6 +2837,23 @@ dispatch auto-pack 的 `context.auto_packed` 事件攜帶同組 enrichment 欄�
 
 **Source**: 2026-07-20 四方 multi-model synthesis（外部參照 tirth8205/code-review-graph 的可轉移性分析；四方一致：不裝外部工具、不建第二套系統，在既有 context.db 上補「檢索品質 → edges → change impact」三層）。2026-07-20 外部 review 補強：consumer ranking 統一、index-first/source-verified 契約、fixture corpus、shadow evidence 與誠實命名（ranking ≠ confidence；ratio ≠ 實際節省）；phase 拆分依 auto-pack 先例（機制+telemetry 先行、evidence 後收緊，見 CC-402 default flip 模式）。
 
+**pr-gate 第一輪（full tier，sequential，5 reviewer）NO-GO（1 block，其餘 4 方
+approve/pass）**：qa-tester 指出 `context.packed` 新增的 `freshness` 欄位缺一個
+「refresh 失敗時回報 stale」的直接行為測試。查證時發現這條路徑當時**不可能
+通過**：`_ctx_index_tree` 執行 sqlite3 batch 寫入的那一行從未檢查過 exit
+code——函式自己的回傳碼只來自最後兩行必定成功的 `printf`，導致 sqlite3
+寫入失敗（例如唯讀 DB）在每個呼叫端（包含 `_ctx_ensure_fresh`）都跟成功
+無法區分。這不是本輪新引入的缺陷，是既有程式碼的既有缺口，只是本票新增
+的 `freshness` 契約第一次讓它變得可觀察、也必須被觀察。
+
+修正：`_ctx_index_tree` 的 sqlite3 batch 寫入改為顯式檢查 exit code，失敗
+即印出 stderr 並 `return 1`；`_ctx_ensure_fresh`／`_ctx_ensure_fresh_memory`
+因此第一次能真正偵測到 refresh 失敗。新增一案：以 `chmod 555` 讓既存索引
+目錄唯讀（模擬 refresh 寫入失敗），斷言 `context.packed` 事件的
+`freshness` 確實回報 `stale` 且指令本身仍 exit 0（refresh 失敗只降級
+freshness 訊號，不使 pack 本身失敗）。`tests/shell/test-pmctl-context.sh`
+164 案全過（163+1）。
+
 **See**: pr:TBD
 
 ## CC-506 — retrieval evidence-gated 收緊：shadow 評測與 broad-Read 指引 ⏸ deferred
