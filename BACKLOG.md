@@ -2478,6 +2478,35 @@ exit code 都用 `wait ... || true` 吞掉，若其中一個 process 真的失�
 
 `tests/shell/test-pmctl-artifacts.sh` 33 案全過（32 案＋本輪 1 案）。
 
+**pr-gate 第三輪（full tier，parallel，5 reviewer）NO-GO（1 block，
+architecture-reviewer／risk-reviewer 為同一根因 RCG-002 各自 advise，
+critic／security-reviewer approve）**：qa-tester 指出只驗證了
+`PM_DISPATCH_GC_GRACE_DAYS` 環境變數路徑，`--grace-days` **flag** 本身帶非數字值
+從未被直接測過（雖然 flag 解析的驗證邏輯本來就存在）。architecture-reviewer 與
+risk-reviewer 指出同一個根因（RCG-002）：`serialize_with_lock` 逾時或失敗時，
+迴圈把「沒有 RESULT 輸出」與「這個 run 沒事可做」混為一談，`gc` 仍回報乾淨的
+成功摘要，讓鎖失敗的 run 悄悄跳過處理卻看起來正常結束。
+
+修正：
+1. 新增 `--grace-days not-a-number` 的直接整合測試（flag 路徑，區別於既有的
+   環境變數路徑測試）。
+2. 迴圈改為明確接住 `serialize_with_lock` 自身的 exit code；逾時或缺少
+   `RESULT` 行時印出具名診斷（哪個 run、哪個 exit code）並累計失敗數，整個
+   `gc` 呼叫結尾若有任何鎖失敗則 `return 2`，不再悄悄併入「0 個變動」的
+   成功摘要。
+3. 新增鎖逾時整合測試：外部 process 先用 `flock` 佔住
+   `runs-summary.jsonl.lock`，以短 `PM_DISPATCH_LOCK_TIMEOUT_SECS` 跑 `gc`，
+   斷言 exit 非 0、來源 run 目錄保留、stderr 具名指出是哪個 run。**這個測試
+   當場抓到我自己引入的第二個真 bug**：`outcome_line="$(... | grep ... | tail -n 1)"`
+   在鎖逾時、`$raw` 為空的情況下，`grep` 找不到匹配會回傳 exit 1；
+   `runtime/lib/pmctl-artifacts.sh` 被 `cli/pmctl` 以 `set -euo pipefail`
+   來源，`pipefail` 下這個沒接 `|| true` 的指令替換賦值本身就會直接觸發
+   errexit，讓上面第 2 點的 `return 2` 邏輯完全成為永遠執行不到的死碼——不是
+   測試邏輯的疏漏，是實作本身的疏漏，測試寫對了才抓到。修法：該賦值句尾
+   加 `|| true`。
+
+`tests/shell/test-pmctl-artifacts.sh` 35 案全過（33 案＋本輪 2 案）。
+
 **See**: pr:TBD
 
 ---

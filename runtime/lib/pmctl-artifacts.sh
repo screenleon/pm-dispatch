@@ -705,8 +705,9 @@ pmctl_artifacts_gc() {
     fi
   fi
 
-  local rank=0 deleted=0 freed=0 pending=0 run_id run_mtime age_seconds
-  local raw outcome_line outcome_kind outcome_size
+  local rank=0 deleted=0 freed=0 pending=0 lock_failures=0
+  local run_id run_mtime age_seconds
+  local raw lock_status outcome_line outcome_kind outcome_size
   while IFS=$'\t' read -r run_mtime run_dir; do
     (( rank++ )) || true
     run_id="$(basename "$run_dir")"
@@ -732,11 +733,32 @@ pmctl_artifacts_gc() {
     # is held, never before. All human-readable progress lines the wrapped
     # call prints are passed straight through; the final RESULT-prefixed
     # line is this call's only structured output, parsed below.
+    lock_status=0
     raw="$(serialize_with_lock "$runs_summary_file" _pmctl_artifacts_gc_process_run \
       "$run_dir" "$run_id" "$now_epoch" "$grace_seconds" \
-      "$runs_summary_file" "$prune_skipped_log" "$dry_run")" || true
+      "$runs_summary_file" "$prune_skipped_log" "$dry_run")" || lock_status=$?
     printf '%s\n' "$raw" | grep -v $'^RESULT\t' || true
-    outcome_line="$(printf '%s\n' "$raw" | grep $'^RESULT\t' | tail -n 1)"
+    # A lock timeout leaves $raw empty, so grep here legitimately finds no
+    # match -- under `set -o pipefail` (this module is sourced by cli/pmctl,
+    # which runs under `set -euo pipefail`) that makes the pipeline exit
+    # nonzero, and without `|| true` this bare assignment would itself abort
+    # the whole script via errexit before the lock-failure handling below
+    # ever runs, well before its own `return 2` could ever fire.
+    outcome_line="$(printf '%s\n' "$raw" | grep $'^RESULT\t' | tail -n 1 || true)"
+    # A lock-acquisition failure (timeout, or the wrapped call erroring
+    # before it could print its RESULT line) must not read as an ordinary
+    # "nothing to do" outcome -- architecture-reviewer/risk-reviewer both
+    # flagged that treating absent serialized output as zero-length success
+    # lets an eligible run silently go unprocessed while gc still reports a
+    # clean run. Surface it as a per-run error and make the whole invocation
+    # exit nonzero so automation can detect it instead of trusting a summary
+    # count that may have skipped runs.
+    if [[ "$lock_status" -ne 0 || -z "$outcome_line" ]]; then
+      printf 'pmctl artifacts gc: lock acquisition or processing failed for %s (exit %s); run left untouched\n' \
+        "$run_id" "$lock_status" >&2
+      (( lock_failures++ )) || true
+      continue
+    fi
     outcome_kind="$(printf '%s' "$outcome_line" | cut -f2)"
     outcome_size="$(printf '%s' "$outcome_line" | cut -f3)"
     case "$outcome_kind" in
@@ -751,6 +773,11 @@ pmctl_artifacts_gc() {
     printf 'gc: dry-run, would delete %d runs, %d deferred by grace period\n' "$deleted" "$pending"
   else
     printf 'gc: deleted %d runs, freed %d bytes, %d deferred by grace period\n' "$deleted" "$freed" "$pending"
+  fi
+  if (( lock_failures > 0 )); then
+    printf 'gc: %d run(s) could not be processed due to lock acquisition failure -- see stderr above\n' \
+      "$lock_failures" >&2
+    return 2
   fi
 }
 

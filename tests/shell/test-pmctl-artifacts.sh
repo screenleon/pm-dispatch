@@ -436,6 +436,44 @@ case_gc_grace_days_env_rejects_non_numeric() {
   fi
 }
 
+case_gc_grace_days_flag_rejects_non_numeric() {
+  # behavior (CC-540, qa-tester-F001): an explicit --grace-days flag with a
+  # non-numeric value is rejected by the flag parser itself, not only the
+  # environment path -- this is the flag-parsing branch, distinct from
+  # case_gc_grace_days_env_rejects_non_numeric which covers the env-only path
+  # Steps: one eligible run; gc --grace-days not-a-number; assert nonzero
+  #        exit, a --grace-days-specific diagnostic, and no mutation
+  local name="pmctl artifacts gc: rejects a non-numeric --grace-days flag value"
+  should_run "$name" || return 0
+  local store work out err status=0
+  store="$tmp_root/state-gc-grace-flag-invalid"
+  work="$tmp_root/work-gc-grace-flag-invalid"
+  make_work_repo "$work"
+
+  local rd_keep rd_old
+  rd_keep="$(run_dir_for "$store" "$work" run-keep)"
+  rd_old="$(run_dir_for "$store" "$work" run-old)"
+  mkdir -p "$rd_keep" "$rd_old"
+  printf 'k\n' > "$rd_keep/k.footer"
+  printf 'a\n' > "$rd_old/a.footer"
+  touch -t "$(date -d '40 days ago' +%Y%m%d%H%M 2>/dev/null || date -v-40d +%Y%m%d%H%M)" "$rd_old" 2>/dev/null || true
+
+  out="$tmp_root/gc-grace-flag-invalid.out"; err="$tmp_root/gc-grace-flag-invalid.err"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" artifacts gc \
+    --keep-last 1 --grace-days not-a-number --cd "$work" > "$out" 2> "$err" || status=$?
+
+  local summary_file
+  summary_file="$(dirname "$rd_old")/../runs-summary.jsonl"
+  summary_file="$(cd "$(dirname "$summary_file")" && pwd)/runs-summary.jsonl"
+
+  if [[ "$status" -ne 0 && -d "$rd_old" && ! -e "$summary_file" ]] \
+      && grep -q -- '--grace-days requires an integer' "$err"; then
+    pass "$name"
+  else
+    fail "$name" "status=$status rd_old_exists=$(test -d "$rd_old" && echo y||echo n) summary_exists=$(test -e "$summary_file" && echo y||echo n) err=$(<"$err")"
+  fi
+}
+
 case_gc_dry_run_positive_grace_previews_without_mutation() {
   # behavior (CC-540, qa-tester-F002): --dry-run under a positive (non-zero)
   # grace period previews both the summarize and the defer decision without
@@ -578,6 +616,60 @@ case_gc_append_failure_retains_run_no_false_success() {
     pass "$name"
   else
     fail "$name" "status=$status rd_old_exists=$(test -d "$rd_old" && echo y||echo n) skip_log_exists=$(test -e "$skip_log" && echo y||echo n) summary=$(<"$summary_file") skip_log_content=$(cat "$skip_log" 2>/dev/null)"
+  fi
+}
+
+case_gc_lock_timeout_reports_failure_and_retains_run() {
+  # behavior (CC-540, architecture-reviewer-F001/risk-reviewer-F001, RCG-002):
+  # a summary-lock acquisition timeout must be a machine-detectable failure
+  # (nonzero exit, a stderr diagnostic naming the run) -- treating absent
+  # serialized output as an ordinary zero-touched-runs success would let an
+  # eligible run silently go unprocessed while gc still reports a clean run
+  # Steps: hold the same per-project lockfile serialize_with_lock uses, from
+  #        an independent process, for longer than a short
+  #        PM_DISPATCH_LOCK_TIMEOUT_SECS; run gc against one eligible run;
+  #        assert nonzero exit, the run retained, and a lock-failure
+  #        diagnostic on stderr naming it
+  local name="pmctl artifacts gc: a lock-acquisition timeout is a reported failure, not silent success"
+  should_run "$name" || return 0
+  local store work out err status=0
+  store="$tmp_root/state-gc-lock-timeout"
+  work="$tmp_root/work-gc-lock-timeout"
+  make_work_repo "$work"
+
+  local rd_keep rd_old
+  rd_keep="$(run_dir_for "$store" "$work" run-keep)"
+  rd_old="$(run_dir_for "$store" "$work" run-locked)"
+  mkdir -p "$rd_keep" "$rd_old"
+  printf 'k\n' > "$rd_keep/k.footer"
+  printf 'a\n' > "$rd_old/a.footer"
+  touch -t "$(date -d '40 days ago' +%Y%m%d%H%M 2>/dev/null || date -v-40d +%Y%m%d%H%M)" "$rd_old" 2>/dev/null || true
+
+  local runs_dir summary_file
+  runs_dir="$(dirname "$rd_old")"
+  summary_file="$(dirname "$runs_dir")/runs-summary.jsonl"
+  mkdir -p "$(dirname "$summary_file")"
+
+  # Hold the exact lockfile serialize_with_lock will try to acquire
+  # (<runs-summary.jsonl>.lock), from an independent process, well past the
+  # short timeout gc is given below.
+  (
+    exec 9>"${summary_file}.lock"
+    flock -x 9
+    sleep 5
+  ) &
+  local holder_pid=$!
+  sleep 0.3
+
+  out="$tmp_root/gc-lock-timeout.out"; err="$tmp_root/gc-lock-timeout.err"
+  PM_DISPATCH_STATE_ROOT="$store" PM_DISPATCH_LOCK_TIMEOUT_SECS=1 "$PMCTL" artifacts gc \
+    --keep-last 1 --grace-days 0 --cd "$work" > "$out" 2> "$err" || status=$?
+  wait "$holder_pid" 2>/dev/null || true
+
+  if [[ "$status" -ne 0 && -d "$rd_old" ]] && grep -q 'lock acquisition' "$err" && grep -q 'run-locked' "$err"; then
+    pass "$name"
+  else
+    fail "$name" "status=$status rd_old_exists=$(test -d "$rd_old" && echo y||echo n) out=$(<"$out") err=$(<"$err")"
   fi
 }
 
@@ -1111,9 +1203,11 @@ case_gc_max_age_zero
 case_gc_grace_days_env_only_selects_grace_period
 case_gc_grace_days_flag_overrides_env
 case_gc_grace_days_env_rejects_non_numeric
+case_gc_grace_days_flag_rejects_non_numeric
 case_gc_dry_run_positive_grace_previews_without_mutation
 case_gc_concurrent_invocations_produce_one_summary_line
 case_gc_append_failure_retains_run_no_false_success
+case_gc_lock_timeout_reports_failure_and_retains_run
 case_gc_summarizes_before_grace_defers_deletion
 case_gc_deletes_once_grace_elapses
 case_gc_incomplete_source_not_treated_as_failure
