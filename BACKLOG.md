@@ -35,7 +35,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-539 | 🟢 someday | state `layout.yaml` build-time authority + generated runtime constants | arch/schema | 2026-07-30 | feedback:2026-07-30 | P2 | design |
 | CC-540 | ✅ done | `pmctl state prune`：刪除前先抽取+驗證 gate/dispatch run 摘要，避免歷史分析資料隨磁碟空間一起消失 | ops/gate | 2026-07-31 | pr:#515 | P2 | hygiene |
 | CC-546 | ⏸ deferred | standalone Gate distribution／copy parity follow-up：獨立定義 bundle schema、generation、installed parity 與 support boundary；不回併 Linux/WSL2 canonical module extraction | arch/gate | 2026-08-14 | — | P2 | reuse-debt |
-| CC-559 | 🟢 someday | memory usage sidecar 是 tab-delimited，writer 拒收含 tab／newline 的 relpath，因此這類記憶卡**永遠無法累積使用紀錄**；`pmctl memory stats` 目前誠實地把它們列為 `unmeasurable_cards`（不謊稱 never-hit），但根因未解——需改用無損編碼。屬寫入面變更，故當初被 [[CC-467]] Requirement 3 明文排除 | ops/memory | 2026-08-19 | — | P3 | hygiene |
+| CC-559 | ✅ closed 2026-08-23 | **[memory usage sidecar 無法記錄含 tab／newline／backslash 的卡片路徑]** SQLite／TSV 兩個後端在共用傳輸邊界統一 escape／unescape（雙射字元掃描，無 sentinel 碰撞風險）；`# schema=2` 一次性遷移標記避免既有原始資料被誤判；`unmeasurable_cards` 恆為空但誠實回報機制保留。See pr:#521. | ops/memory | 2026-08-19 | pr:#521 | P3 | hygiene |
 | CC-562 | ✅ done | synthesis／reviewer 驗證器仍有多個「多約束共用單一 reason 字串」分支（`invalid coverage matrix`、`invalid finding inventory or union`、`duplicate finding ID collision`、`selected/not-reviewed dimensions mismatch`），單次修正重試收到後無法行動；[[CC-553]] Req 2 判定需同等精度但屬不同 helper 形狀（逐項指出違規條目，非集合差集），故分票 | ops/gate | 2026-08-19 | pr:#510 | P3 | hygiene |
 | CC-560 | ✅ done | `_gate_scope_reference_index_collect` 每筆 reference 都以 `jq -nc` 建一個 JSON 物件（實測 4.9s×2），與 [[CC-557]] 已修掉的 `_gate_scope_expansion_append` 是同一類寫法；CC-557 未一併處理是因預算餘裕已足，非因不成立 | ops/gate | 2026-08-19 | pr:#511 | P3 | hygiene |
 | CC-554 | 🔵 active | 永久 regression test 缺少准入門檻：`/ship` 規範「修完每個 finding」但不規範修法形式，reviewer 每提一個邊界就永久長一個阻擋 case，case 又需要 meta-test 保護；QA 規則加六條准入條件＋五條替代路徑，ship.md 加對應例外（明確不設輪數上限，見 [[CC-544]]） | ops/gate | 2026-08-17 | — | P1 | hygiene |
@@ -245,7 +245,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `ops/backlog/archive-cl
 
 ---
 
-## CC-559 — memory usage sidecar 無法記錄含 tab／newline 的卡片路徑 🟢 someday
+## CC-559 — memory usage sidecar 無法記錄含 tab／newline 的卡片路徑 ✅ 2026-08-23
 
 **Problem**: usage sidecar 是 tab-delimited 格式，其 writer 拒收含 tab 或 newline 的
 relpath（`runtime/lib/pmctl-memory.sh` 內 `unmeasurable_cards` 分支的註解載明此約束）。
@@ -270,6 +270,19 @@ relpath（`runtime/lib/pmctl-memory.sh` 內 `unmeasurable_cards` 分支的註解
 
 **Cross-link**: [[CC-467]]（本 follow-up 的來源票）、[[CC-466]]（生命週期判斷建立在遙測
 可信度之上）。
+
+**Closure 2026-08-23 (pr:#521)**：SQLite 與 TSV 兩個後端在共用的 tab-分隔傳輸邊界統一
+escape／unescape；unescape 改用左至右字元掃描（無 sentinel byte），避免與真實 0x01
+位元組碰撞。兩個後端各自補上 `# schema=2` 一次性遷移標記，讓既有（CC-559 之前寫入、
+從未轉譯過）的原始資料不會在升級後被誤判成含逃逸序列——SQLite 端在 `card_relpath`
+維持原始／canonical 儲存、只在 `SELECT` 進入共用邊界時轉譯；TSV 純檔案端因為本身就是
+文字格式、沒有欄位邊界，仍需標記判別已轉譯／未轉譯兩種既有格式。三輪 pr-gate（parallel,
+codex）後收斂：第一輪抓到 sentinel 碰撞與 SQLite 遷移缺口；第二輪抓到 TSV 端同款遷移
+缺口未修，以及 3 個測試在 sqlite3 缺席時靜默宣稱通過；修正後第三輪 GO。新增 4 個回歸
+測試（SOH 往返／不碰撞、SQLite 與 TSV 各自的 pre-fix 資料存活驗證）。`unmeasurable_cards`
+機制保留但目前恆為空，符合 Requirement 3。
+
+**See**: pr:#521
 
 ---
 

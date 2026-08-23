@@ -22,6 +22,7 @@ This repository is designed for a single maintainer working on their own adaptat
 - [Context retrieval](docs/context-retrieval.md) — repo index + prior-art scan before dispatching
 - [Task lifecycle](docs/pmctl-task.md) — `pmctl task` subcommands (claim/dispatch/status/review)
 - [Review model](docs/review-model.md) — four-layer rigor model (pre-impl → pr-gate → machine verify)
+- [Delivery assurance map](docs/delivery-assurance-map.md) — orthogonal assurance dimensions and composable delivery recipes
 - [Gate structural validation](docs/gate-structural-validation.md) — schema-derived Gate artifact validation and generated bundle contract
 - [pr-gate handover schema](docs/pr-gate-handover-schema.md) — deprecated `pr-gate-handover_v1` block format
 
