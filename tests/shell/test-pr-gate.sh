@@ -12386,11 +12386,10 @@ test_synthesis_protocol_restores_copied_reviewer_fields() {
       ' "$artifact" | jq -r '.coverage_matrix[0].reason')"
     _rewrite_synthesis_protocol_json "$artifact" "$filter"
     set +e
-    gate_synthesis_restore_copy_fields \
+    if gate_synthesis_restore_copy_fields \
       "$artifact" "critic qa-tester architecture-reviewer" \
       "security-reviewer risk-reviewer" \
-      >"$dir/${mutation}.out" 2>"$dir/${mutation}.err"
-    if [[ $? -eq 0 ]]; then
+      >"$dir/${mutation}.out" 2>"$dir/${mutation}.err"; then
       gate_synthesis_protocol_verify \
         "$artifact" "critic qa-tester architecture-reviewer" \
         "security-reviewer risk-reviewer" "$scope_sha" \
