@@ -102,7 +102,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-446 | 🔵 active | public contract candidate：stable/experimental CLI + schema、authority 分類、SemVer/deprecation 與 CC-296 清掃（v0.12.0；非 v1 RC） | process/DX | 2026-07-04 | — | P2 | design |
 | CC-447 | 🔵 active | onboarding 三 smoke：offline clean install + N-1 upgrade（v0.11.0）+ live dogfood（readiness review 後再排） | docs/ops | 2026-07-04 | — | P2 | — |
 | CC-472 | 🟢 someday | spike: antigravity（`agy` CLI）host 唯讀 probe——比照 CC-436/CC-448 階段 1 模式，實測 command 載入能力 + hook/plugin 機制 + 五個 capability enum 的 provider/confidence 判定，不落地 `hosts/antigravity/host.yaml`；排在 CC-445 通用 install/uninstall dispatcher 之後、與 CC-448 opencode 同批或緊接其後評估（N=3 驗證點） | arch/install | 2026-07-08 | — | P3 | spike |
-| CC-566 | 🔵 active | `guard-inject-memory.sh` 依 host 給獨立注入預算：實測確認 Claude 端有原生 `claudeMd` 全量 MEMORY.md 載入（無上限，session 一次）與 hook 每輪裁切注入雙重疊加；Codex 無對應原生全量安全網，不能單純調降全域常數（2026-08-23 token-cost 分析） | memory/DX | 2026-08-23 | — | P2 | hygiene |
+| CC-566 | 🔵 active | `guard-inject-memory.sh` 依 host 給獨立注入預算：實測確認 Claude 端有原生 `claudeMd` 全量 MEMORY.md 載入（無上限，session 一次）與 hook 每輪裁切注入雙重疊加；Codex 無對應原生全量安全網，不能單純調降全域常數（2026-08-23 token-cost 分析） | memory/DX | 2026-08-23 | pr:#519 | P2 | hygiene |
 
 ---
 
