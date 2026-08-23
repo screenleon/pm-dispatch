@@ -19,18 +19,25 @@ Versions follow [Semantic Versioning](https://semver.org/).
 - **Reviewer protocol names test-gap field defects instead of calling valid
   JSON "invalid JSON document."** A null `contract` or unpaired finding now
   names the row/id; empty `existing_evidence` is filled from a finding with
-  the same `affected_behavior` when that finding already declared a `source`.
-  Corrective retry briefs receive that reviewer's exact protocol reason, not
-  the last failed reviewer's leftover error string.
+  the same `affected_behavior` when that finding already declared a `source`,
+  and that heal is written back into the reviewer markdown so synthesis
+  restore copies the filled row. A jq exception after the object-type check
+  is named `reviewer protocol filter failed`. Corrective retry briefs receive
+  that reviewer's exact protocol reason, not the last failed reviewer's
+  leftover error string.
 
 - **Gate synthesis restores copied reviewer fields before parity checks.**
   `coverage_matrix`, `reviewer_finding_inventory`, `test_gap_matrix`, union
   copy-fields, caution/uncertainty lists, and `verification_plan.focused` are
   rebuilt from the embedded `reviewer_result_v1` documents so an LLM
   paraphrasing a coverage `reason` (for example Unicode em dash vs ASCII `--`)
-  cannot consume the single correction retry. Remaining synthesis-owned
-  grouping/disagreement defects still fail closed, and a coverage parity miss
-  now names the first drifted cell and field.
+  cannot consume the single correction retry. Empty gap `existing_evidence` is
+  filled from the matching finding source during restore as well. A restore
+  that changes content logs the updated field names; a no-op is silent.
+  Restore runs only on the live gate path and refuses an artifact whose
+  sibling assurance sidecar already records a protected attestation pointer.
+  Remaining synthesis-owned grouping/disagreement defects still fail closed,
+  and a coverage parity miss now names the first drifted cell and field.
 
 - **Gate CLI parsing and reviewer-override loading now have canonical
   module owners (CC-532 Slice 2b).** `runtime/lib/gate-options.sh` owns

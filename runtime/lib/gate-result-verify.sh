@@ -156,33 +156,18 @@ _gate_reviewer_protocol_reference_index_json() {
   }
 }
 
-_gate_reviewer_protocol_document_verify() {
-  local document="$1" expected_reviewer="$2" expected_scope_sha="$3"
-  local reference_index_json="${4:-null}"
-  local require_test_gaps="${5:-false}"
-  local surfaces_json validation parse_err healed jq_rc
-  GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR=""
-  surfaces_json="$(_gate_reviewer_protocol_surfaces | jq -Rsc '
-    split("\n") | map(select(length > 0))
-  ')" || return 2
-  parse_err="$(mktemp "${TMPDIR:-/tmp}/gate-reviewer-json-parse.XXXXXX")" \
-    || return 2
-  if ! jq -e 'type == "object"' "$document" >/dev/null 2>"$parse_err"; then
-    GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR="invalid JSON document"
-    if [[ -s "$parse_err" ]]; then
-      GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR="invalid JSON document: $(
-        tr -cd 'A-Za-z0-9._: -' < "$parse_err" | tr -s '[:space:]' ' ' | head -c 160
-      )"
-    fi
-    rm -f -- "$parse_err"
-    return 1
-  fi
-  rm -f -- "$parse_err"
-  # Fill empty test-gap existing_evidence from a finding with the same
-  # affected_behavior. That is a copy from an already-declared source, not a
-  # new citation. Do not invent contract/status/scenario values.
+# Fill empty test-gap existing_evidence from a finding with the same
+# affected_behavior. That is a copy from an already-declared source, not a
+# new citation. Do not invent contract/status/scenario values.
+#
+# Returns 0 on success (changed or already complete) and 2 on I/O failure.
+# The caller persists a semantic change into the reviewer markdown so later
+# synthesis restore copies the healed row rather than the empty one.
+_gate_reviewer_heal_empty_existing_evidence() {
+  local document=${1-} healed
+  [[ $# -eq 1 && -s "$document" ]] || return 2
   healed="$(mktemp "${TMPDIR:-/tmp}/gate-reviewer-healed.XXXXXX")" || return 2
-  if jq '
+  if ! jq '
       . as $doc |
       if (.test_gaps | type) != "array" then .
       else
@@ -203,11 +188,68 @@ _gate_reviewer_protocol_document_verify() {
           end)
       end
     ' "$document" > "$healed"; then
-    mv -- "$healed" "$document"
-    healed=""
-  else
     rm -f -- "$healed"
-    healed=""
+    return 0
+  fi
+  if jq -n -e --slurpfile before "$document" --slurpfile after "$healed" \
+      '$before[0] == $after[0]' >/dev/null 2>&1; then
+    rm -f -- "$healed"
+    return 0
+  fi
+  mv -- "$healed" "$document"
+}
+
+# Replace the Nth reviewer_result_v1 JSON body in <artifact> with <json_file>.
+# Opening/closing fences stay in place. Fails closed if that fence pair cannot
+# be located. Occurrence is 1-based in document order.
+_gate_reviewer_replace_json_block() {
+  local artifact=${1-} json_file=${2-} occurrence=${3-}
+  local rewritten start_line end_line
+  [[ $# -eq 3 && -s "$artifact" && -s "$json_file" \
+      && "$occurrence" =~ ^[1-9][0-9]*$ ]] || return 2
+  start_line="$(awk -v n="$occurrence" '
+    $0 == "```reviewer_result_v1" { c++; if (c == n) { print NR; exit } }
+  ' "$artifact")"
+  end_line="$(awk -v start="$start_line" \
+    'NR > start && $0 == "```" { print NR; exit }' "$artifact")"
+  [[ "$start_line" =~ ^[1-9][0-9]*$ && "$end_line" =~ ^[1-9][0-9]*$ ]] || return 2
+  [[ "$end_line" -gt "$start_line" ]] || return 2
+  rewritten="$(mktemp "${TMPDIR:-/tmp}/gate-reviewer-rewritten.XXXXXX")" || return 2
+  {
+    sed -n "1,${start_line}p" "$artifact"
+    cat "$json_file"
+    sed -n "${end_line},\$p" "$artifact"
+  } > "$rewritten" || {
+    rm -f -- "$rewritten"
+    return 2
+  }
+  mv -- "$rewritten" "$artifact"
+}
+
+_gate_reviewer_protocol_document_verify() {
+  local document="$1" expected_reviewer="$2" expected_scope_sha="$3"
+  local reference_index_json="${4:-null}"
+  local require_test_gaps="${5:-false}"
+  local surfaces_json validation parse_err jq_rc
+  GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR=""
+  surfaces_json="$(_gate_reviewer_protocol_surfaces | jq -Rsc '
+    split("\n") | map(select(length > 0))
+  ')" || return 2
+  parse_err="$(mktemp "${TMPDIR:-/tmp}/gate-reviewer-json-parse.XXXXXX")" \
+    || return 2
+  if ! jq -e 'type == "object"' "$document" >/dev/null 2>"$parse_err"; then
+    GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR="invalid JSON document"
+    if [[ -s "$parse_err" ]]; then
+      GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR="invalid JSON document: $(
+        tr -cd 'A-Za-z0-9._: -' < "$parse_err" | tr -s '[:space:]' ' ' | head -c 160
+      )"
+    fi
+    rm -f -- "$parse_err"
+    return 1
+  fi
+  rm -f -- "$parse_err"
+  if ! _gate_reviewer_heal_empty_existing_evidence "$document"; then
+    return 2
   fi
   validation="$(jq -r \
     --arg reviewer "$expected_reviewer" \
@@ -554,7 +596,7 @@ gate_reviewer_protocol_verify() {
   local artifact=${1-} selected=${2-} scope_sha=${3-} scope_manifest=${4-}
   local require_test_gaps=${5-false}
   local tmp_dir line block="" in_block=false count=0 reviewer expected document
-  local seen=" " reference_index_json=null
+  local seen=" " reference_index_json=null extracted i
   GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR=""
   [[ $# -ge 3 && $# -le 5 && -s "$artifact" && -n "$selected" \
       && "$scope_sha" =~ ^[a-f0-9]{64}$ ]] || {
@@ -585,6 +627,10 @@ gate_reviewer_protocol_verify() {
     if [[ "$in_block" == true && "$line" == '```' ]]; then
       count=$((count + 1))
       printf '%s\n' "$block" > "$tmp_dir/$count.json"
+      cp -- "$tmp_dir/$count.json" "$tmp_dir/${count}.extracted" || {
+        rm -rf -- "$tmp_dir"
+        return 2
+      }
       in_block=false
       block=""
       continue
@@ -607,7 +653,8 @@ gate_reviewer_protocol_verify() {
     rm -rf -- "$tmp_dir"
     return 1
   fi
-  for document in "$tmp_dir"/*.json; do
+  for ((i = 1; i <= count; i++)); do
+    document="$tmp_dir/$i.json"
     reviewer="$(jq -r '.reviewer // empty' "$document" 2>/dev/null)" || {
       GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR="invalid JSON document"
       printf 'Error: reviewer protocol INCOMPLETE: invalid JSON document in %s\n' \
@@ -637,6 +684,19 @@ gate_reviewer_protocol_verify() {
       GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR="schema structural contract failed"
       rm -rf -- "$tmp_dir"
       return 1
+    fi
+    # Persist a semantic heal into the on-disk markdown. Synthesis restore
+    # copies test_gaps from that markdown, not from this tmp file.
+    extracted="$tmp_dir/${i}.extracted"
+    if ! jq -n -e --slurpfile before "$extracted" --slurpfile after "$document" \
+        '$before[0] == $after[0]' >/dev/null 2>&1; then
+      if ! _gate_reviewer_replace_json_block "$artifact" "$document" "$i"; then
+        GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR="failed to persist healed reviewer document"
+        printf 'Error: reviewer protocol INCOMPLETE: failed to persist healed reviewer document for %s in %s\n' \
+          "$reviewer" "$artifact" >&2
+        rm -rf -- "$tmp_dir"
+        return 2
+      fi
     fi
     # CC-541: detect (from the already-parsed structured document, not a
     # later markdown re-scan) a qa-tester block/block-soft finding whose
@@ -708,6 +768,55 @@ _gate_synthesis_replace_json_block() {
   mv -- "$rewritten" "$artifact"
 }
 
+# True when <artifact> frontmatter points at a sibling assurance sidecar whose
+# provenance.attestation is a non-empty filename. Used to refuse restore after
+# publication. A missing sidecar or a null pointer is treated as in-flight.
+_gate_synthesis_artifact_has_protected_attestation() {
+  local artifact=${1-} pointer sidecar attestation
+  [[ $# -eq 1 && -s "$artifact" ]] || return 1
+  pointer="$(awk '
+    /^---$/ {
+      if (fence == 0) { fence=1; next }
+      if (fence == 1) exit
+    }
+    fence == 1 && $1 == "gate_assurance:" { print $2; exit }
+  ' "$artifact")"
+  [[ -n "$pointer" ]] || return 1
+  # Refuse path-shaped pointers the same way verify does: they are not a
+  # same-directory sidecar name and must not be followed for a rewrite.
+  if [[ "$pointer" == */* || "$pointer" == .* ]]; then
+    return 0
+  fi
+  sidecar="$(dirname -- "$artifact")/$pointer"
+  [[ -s "$sidecar" ]] || return 1
+  attestation="$(jq -r '.provenance.attestation // empty' "$sidecar" 2>/dev/null)" \
+    || return 1
+  [[ -n "$attestation" ]]
+}
+
+# One-line stderr diagnostic of which copy-fields restore changed. Silent on
+# no-op. Values are neutralized so they cannot break a later YAML brief.
+_gate_synthesis_restore_copy_fields_log() {
+  local before=${1-} after=${2-} summary
+  [[ $# -eq 2 && -s "$before" && -s "$after" ]] || return 0
+  summary="$(jq -n -r --slurpfile before "$before" --slurpfile after "$after" '
+    def one_line:
+      tostring
+      | gsub("[^A-Za-z0-9._:,=+-]"; "?")
+      | if length > 240 then .[0:240] + "~" else . end;
+    ($before[0] // {}) as $b | ($after[0] // {}) as $a |
+    [
+      "coverage_matrix","reviewer_finding_inventory","test_gap_matrix",
+      "findings_union","cautions","uncertainties","selected_reviewers",
+      "not_reviewed_dimensions","verification_plan"
+    ]
+    | map(select($b[.] != $a[.]))
+    | if length == 0 then "copied fields" else join(",") end
+    | one_line
+  ' 2>/dev/null)" || summary="copied fields"
+  printf 'gate synthesis restore: updated %s\n' "$summary" >&2
+}
+
 # Overwrite synthesis fields that are mechanical copies of reviewer_result_v1
 # documents. Typography/paraphrase in those fields is not a synthesis judgment
 # and must not consume the single correction retry. Grouping, disagreement,
@@ -718,11 +827,19 @@ _gate_synthesis_replace_json_block() {
 # published result would invalidate the protected attestation digest.
 #
 # Returns 0 when restore is applied or safely skipped (invalid JSON is left
-# for the verifier). Returns 2 only on I/O failure.
+# for the verifier). Returns 2 on I/O failure or when the artifact already
+# carries a protected attestation pointer -- rewriting a published result
+# would invalidate that digest. Callers on verify/publish paths must not
+# invoke this function.
 gate_synthesis_restore_copy_fields() {
   local artifact=${1-} selected=${2-} skipped=${3-}
   local tmp_dir synthesis_documents reviewer_documents synthesis_document
   [[ $# -eq 3 && -s "$artifact" && -n "$selected" ]] || return 2
+  if _gate_synthesis_artifact_has_protected_attestation "$artifact"; then
+    printf 'Error: synthesis copy-field restore refused on attested artifact: %s\n' \
+      "$artifact" >&2
+    return 2
+  fi
   tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/gate-synthesis-restore.XXXXXX")" \
     || return 2
   synthesis_documents="$tmp_dir/synthesis.jsonl"
@@ -789,8 +906,30 @@ _gate_synthesis_restore_copy_fields_into() {
             origin,
             verification_expectation
           });
+      # Keep in sync with _gate_reviewer_heal_empty_existing_evidence: empty
+      # existing_evidence is filled from a same-behavior finding source so
+      # restore does not copy a still-empty row if persist was skipped.
+      def heal_test_gaps($findings):
+        map(
+          . as $row |
+          if (($row.existing_evidence | type) != "array" or
+              ($row.existing_evidence | length) == 0) and
+             (($row.affected_behavior | type) == "string")
+          then
+            ([($findings // [])[]
+              | select(.affected_behavior == $row.affected_behavior)
+              | .source
+              | select(type == "object")] | .[0]) as $src |
+            if $src == null then $row
+            else $row + {existing_evidence: [$src]}
+            end
+          else $row
+          end
+        );
       def gaps:
-        [$reviewers[] | (.test_gaps // [])[]] | sort_by(.id);
+        [$reviewers[] | . as $rev |
+          ((($rev.test_gaps // []) | heal_test_gaps($rev.findings))[])]
+        | sort_by(.id);
       def uncertain_ids:
         findings | map(select(.origin == "uncertain") | .id) | sort;
       def uncertain_cells:
@@ -865,10 +1004,12 @@ _gate_synthesis_restore_copy_fields_into() {
     rm -f -- "$healed"
     return 0
   fi
-  if cmp -s "$synthesis_document" "$healed"; then
+  if jq -n -e --slurpfile before "$synthesis_document" --slurpfile after "$healed" \
+      '$before[0] == $after[0]' >/dev/null 2>&1; then
     rm -f -- "$healed"
     return 0
   fi
+  _gate_synthesis_restore_copy_fields_log "$synthesis_document" "$healed"
   if ! _gate_synthesis_replace_json_block "$artifact" "$healed"; then
     rm -f -- "$healed"
     return 2

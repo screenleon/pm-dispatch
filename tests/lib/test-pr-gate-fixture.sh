@@ -14,7 +14,25 @@ create_agents() {
 
 pr_gate_fixture_write_reviewer_protocol() {
   local brief_file="$1" output_path="$2" reviewer="$3" verdict="$4"
-  local mutation="${5:-${CODEX_GATE_STUB_PROTOCOL_MUTATION:-none}}"
+  local mutation="${5:-}" pair by_reviewer
+  if [[ -z "$mutation" ]]; then
+    mutation="${CODEX_GATE_STUB_PROTOCOL_MUTATION:-none}"
+    # Per-reviewer mutations, comma-separated reviewer=mutation pairs. A
+    # matching pair overrides the global mutation so concurrent retries can
+    # carry distinct protocol reasons.
+    by_reviewer="${CODEX_GATE_STUB_PROTOCOL_MUTATION_BY_REVIEWER:-}"
+    while [[ -n "$by_reviewer" ]]; do
+      pair="${by_reviewer%%,*}"
+      if [[ "$by_reviewer" == *","* ]]; then
+        by_reviewer="${by_reviewer#*,}"
+      else
+        by_reviewer=""
+      fi
+      [[ "$pair" == "$reviewer="* ]] || continue
+      mutation="${pair#"$reviewer"=}"
+      break
+    done
+  fi
   local scope_sha scope_path evidence_path hard_gate_class findings_json
   scope_sha="$(awk '$1 == "artifact_sha256:" { print $2; exit }' "$brief_file")"
   scope_path="$(awk '$1 == "artifact:" { print $2; exit }' "$brief_file")"

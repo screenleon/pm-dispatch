@@ -179,6 +179,11 @@ if [[ -n "${CODEX_GATE_CAPTURE_REVIEWER_BRIEF:-}" && "$brief_file" != *-synthesi
   fi
 fi
 
+if [[ -n "${CODEX_GATE_CAPTURE_REVIEWER_BRIEF_DIR:-}" && "$brief_file" != *-synthesis.md ]]; then
+  mkdir -p "$CODEX_GATE_CAPTURE_REVIEWER_BRIEF_DIR"
+  cp "$brief_file" "$CODEX_GATE_CAPTURE_REVIEWER_BRIEF_DIR/$(basename "$brief_file")"
+fi
+
 if [[ -n "${CODEX_GATE_REVIEWER_DEFS_MARKER:-}" && "$brief_file" != *-synthesis.md ]]; then
   work_dir=$(awk '$1 == "working_dir:" {print $2; exit}' "$brief_file")
   defs=0
@@ -523,6 +528,7 @@ PARTIAL_EOF
         if [[ -n "${CODEX_GATE_STUB_PROTOCOL_MUTATION_ONLY_FIRST:-}" \
               && "$brief_file" == *-retry1-*.md ]]; then
           CODEX_GATE_STUB_PROTOCOL_MUTATION=none
+          CODEX_GATE_STUB_PROTOCOL_MUTATION_BY_REVIEWER=""
         fi
         write_reviewer_protocol_stub \
           "$output_path" "$reviewer_name" "$stub_verdict"
@@ -11618,7 +11624,7 @@ test_reviewer_protocol_null_contract_is_named_not_invalid_json() {
 test_reviewer_protocol_heals_empty_existing_evidence_from_finding_source() {
   local name="reviewer-protocol/heals-empty-existing-evidence"
   should_run "$name" || return 0
-  local dir="$TMP_ROOT/$name" artifact scope_sha code
+  local dir="$TMP_ROOT/$name" artifact scope_sha code evidence_len
   mkdir -p "$dir"
   artifact="$dir/critic.md"
   scope_sha="$(printf 'a%.0s' {1..64})"
@@ -11635,6 +11641,89 @@ test_reviewer_protocol_heals_empty_existing_evidence_from_finding_source() {
     fail "$name" "empty existing_evidence was not healed: $(tr -d '\n' < "$dir/err" | tail -c 240)"
     return
   }
+  evidence_len="$(awk '
+      $0 == "```reviewer_result_v1" { inside=1; next }
+      inside && $0 == "```" { exit }
+      inside { print }
+    ' "$artifact" | jq '.test_gaps[0].existing_evidence | length')"
+  [[ "$evidence_len" -gt 0 ]] || {
+    fail "$name" "heal was not persisted into the reviewer markdown"
+    return
+  }
+  pass "$name"
+}
+
+# Behavior: a document that is a JSON object but throws inside the contract
+# filter is reported as "reviewer protocol filter failed", not as invalid JSON
+# and not as a named field contract. The try/catch exists for that class of
+# jq exception after the object-type gate has already passed.
+# Steps: write a valid critic artifact, set test_gaps[0].id to a number so
+# jq `test()` throws, and assert the catch-path reason.
+test_reviewer_protocol_filter_failure_is_named() {
+  local name="reviewer-protocol/filter-failure-is-named"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" artifact scope_sha code
+  mkdir -p "$dir"
+  artifact="$dir/critic.md"
+  scope_sha="$(printf 'a%.0s' {1..64})"
+  # shellcheck source=runtime/lib/gate-result-verify.sh
+  . "$REPO_ROOT/runtime/lib/gate-result-verify.sh"
+  _write_single_reviewer_protocol_artifact "$artifact" critic approve
+  _rewrite_reviewer_protocol_json "$artifact" '.test_gaps[0].id = 1'
+  set +e
+  gate_reviewer_protocol_verify "$artifact" critic "$scope_sha" "" true \
+    >"$dir/out" 2>"$dir/err"
+  code=$?
+  set -e
+  [[ "$code" -ne 0 ]] || {
+    fail "$name" "throwing filter unexpectedly passed"
+    return
+  }
+  assert_file_contains "$name" "$dir/err" "reviewer protocol filter failed" || return
+  assert_not_contains "$name" "$dir/err" "invalid JSON document" || return
+  pass "$name"
+}
+
+# Behavior: two reviewers that fail distinct protocol contracts each receive a
+# retry brief containing only that reviewer's reason. A shared leftover error
+# string would send the wrong correction to both.
+# Steps: mutate critic to an out-of-scope citation and qa-tester to a sibling
+# enum in coverage_dimensions; capture per-reviewer retry briefs; assert each
+# brief names its own defect and not the other reviewer's.
+test_parallel_reviewer_retry_briefs_are_reason_isolated() {
+  local name="reviewer-protocol/retry-briefs-are-reason-isolated"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home="$TMP_ROOT/$name/home"
+  local repo="$TMP_ROOT/$name/repo" runner="$TMP_ROOT/$name/runner"
+  local out="$TMP_ROOT/$name/out" err="$TMP_ROOT/$name/err" code=0
+  local briefs="$TMP_ROOT/$name/briefs"
+  local critic_retry qa_retry
+  mkdir -p "$dir" "$briefs"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester
+  create_repo "$repo" docs
+  set +e
+  CODEX_GATE_STUB_PROTOCOL_MUTATION_BY_REVIEWER='critic=out-of-scope-reference,qa-tester=sibling-enum-test-gap' \
+    CODEX_GATE_STUB_PROTOCOL_MUTATION_ONLY_FIRST=1 \
+    CODEX_GATE_CAPTURE_REVIEWER_BRIEF_DIR="$briefs" \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester --mode parallel
+  code=$?
+  set -e
+  [[ "$code" -eq 0 ]] || {
+    fail "$name" "gate did not recover distinct reviewer mutations: code=$code $(tail -n 8 "$err" 2>/dev/null)"
+    return
+  }
+  critic_retry="$(find "$briefs" -maxdepth 1 -name '*-retry1-critic.md' -type f | head -n 1)"
+  qa_retry="$(find "$briefs" -maxdepth 1 -name '*-retry1-qa-tester.md' -type f | head -n 1)"
+  [[ -n "$critic_retry" && -n "$qa_retry" ]] || {
+    fail "$name" "retry briefs were not captured: $(find "$briefs" -maxdepth 1 -printf '%P ' 2>/dev/null)"
+    return
+  }
+  assert_file_contains "$name" "$critic_retry" "invalid evidence reference contract" || return
+  assert_not_contains "$name" "$critic_retry" "coverage_dimensions contains integration" || return
+  assert_file_contains "$name" "$qa_retry" "coverage_dimensions contains integration" || return
+  assert_not_contains "$name" "$qa_retry" "invalid evidence reference contract" || return
   pass "$name"
 }
 
@@ -12344,6 +12433,166 @@ RESTORES
   pass "$name"
 }
 
+# Behavior: empty existing_evidence healed during reviewer verify is written
+# back into the markdown and then copied into test_gap_matrix, so the
+# verify → restore → synthesis pipeline does not re-fail minItems on the
+# still-empty row.
+# Steps: empty critic's gap evidence and the matching synthesis matrix row,
+# run reviewer verify, restore, then synthesis verify; assert the on-disk
+# reviewer row and restored matrix both carry the finding source.
+test_synthesis_protocol_restore_uses_persisted_healed_evidence() {
+  local name="synthesis-protocol/restore-uses-persisted-healed-evidence"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" artifact scope_sha code evidence_len restored
+  mkdir -p "$dir"
+  artifact="$dir/result.md"
+  scope_sha="$(printf 'a%.0s' {1..64})"
+  # shellcheck source=runtime/lib/gate-result-verify.sh
+  . "$REPO_ROOT/runtime/lib/gate-result-verify.sh"
+  _write_synthesis_protocol_test_artifact "$artifact"
+  _rewrite_reviewer_protocol_json "$artifact" '.test_gaps[0].existing_evidence = []'
+  _rewrite_synthesis_protocol_json "$artifact" '
+    .test_gap_matrix |= map(
+      if .id == "critic-TG001" then .existing_evidence = [] else . end)'
+  set +e
+  gate_reviewer_protocol_verify \
+    "$artifact" "critic qa-tester architecture-reviewer" "$scope_sha" "" true \
+    >"$dir/verify.out" 2>"$dir/verify.err"
+  code=$?
+  set -e
+  [[ "$code" -eq 0 ]] || {
+    fail "$name" "reviewer verify did not heal: $(tr -d '\n' < "$dir/verify.err" | tail -c 240)"
+    return
+  }
+  evidence_len="$(awk '
+      $0 == "```reviewer_result_v1" { inside=1; next }
+      inside && $0 == "```" { exit }
+      inside { print }
+    ' "$artifact" | jq '.test_gaps[0].existing_evidence | length')"
+  [[ "$evidence_len" -gt 0 ]] || {
+    fail "$name" "healed existing_evidence was not persisted into reviewer markdown"
+    return
+  }
+  set +e
+  gate_synthesis_restore_copy_fields \
+    "$artifact" "critic qa-tester architecture-reviewer" \
+    "security-reviewer risk-reviewer" \
+    >"$dir/restore.out" 2>"$dir/restore.err"
+  code=$?
+  set -e
+  [[ "$code" -eq 0 ]] || {
+    fail "$name" "restore failed: $(tr -d '\n' < "$dir/restore.err" | tail -c 240)"
+    return
+  }
+  restored="$(awk '
+      $0 == "```synthesis_result_v1" { inside=1; next }
+      inside && $0 == "```" { exit }
+      inside { print }
+    ' "$artifact" | jq -r '
+      [.test_gap_matrix[] | select(.id == "critic-TG001")
+        | .existing_evidence | length] | first')"
+  [[ "$restored" -gt 0 ]] || {
+    fail "$name" "restore copied still-empty existing_evidence into test_gap_matrix"
+    return
+  }
+  set +e
+  gate_synthesis_protocol_verify \
+    "$artifact" "critic qa-tester architecture-reviewer" \
+    "security-reviewer risk-reviewer" "$scope_sha" true \
+    >"$dir/synth.out" 2>"$dir/synth.err"
+  code=$?
+  set -e
+  [[ "$code" -eq 0 ]] || {
+    fail "$name" "synthesis verify failed after persist+restore: $(tr -d '\n' < "$dir/synth.err" | tail -c 240)"
+    return
+  }
+  pass "$name"
+}
+
+# Behavior: restore names the copy-fields it changed and stays silent when the
+# synthesis document already matches the reviewer documents.
+# Steps: drift a coverage reason, restore, assert stderr names coverage_matrix;
+# restore again and assert no diagnostic.
+test_synthesis_protocol_restore_logs_changed_fields() {
+  local name="synthesis-protocol/restore-logs-changed-fields"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" artifact
+  mkdir -p "$dir"
+  artifact="$dir/result.md"
+  # shellcheck source=runtime/lib/gate-result-verify.sh
+  . "$REPO_ROOT/runtime/lib/gate-result-verify.sh"
+  _write_synthesis_protocol_test_artifact "$artifact"
+  _rewrite_synthesis_protocol_json "$artifact" \
+    '.coverage_matrix[0].reason = "Changed by synthesis -- not the original."'
+  set +e
+  gate_synthesis_restore_copy_fields \
+    "$artifact" "critic qa-tester architecture-reviewer" \
+    "security-reviewer risk-reviewer" \
+    >"$dir/first.out" 2>"$dir/first.err"
+  set -e
+  assert_file_contains "$name" "$dir/first.err" \
+    "gate synthesis restore: updated" || return
+  assert_file_contains "$name" "$dir/first.err" "coverage_matrix" || return
+  set +e
+  gate_synthesis_restore_copy_fields \
+    "$artifact" "critic qa-tester architecture-reviewer" \
+    "security-reviewer risk-reviewer" \
+    >"$dir/second.out" 2>"$dir/second.err"
+  set -e
+  if [[ -s "$dir/second.err" ]] && grep -q 'gate synthesis restore: updated' "$dir/second.err"; then
+    fail "$name" "no-op restore still logged a change: $(tr -d '\n' < "$dir/second.err" | tail -c 240)"
+    return
+  fi
+  pass "$name"
+}
+
+# Behavior: restore refuses to rewrite an artifact whose sibling assurance
+# sidecar already records a protected attestation pointer, and the verify
+# / publish modules never call restore.
+# Steps: write a synthesis artifact with gate_assurance pointing at a sidecar
+# that names an attestation file; restore must fail closed. Grep pmctl-gate
+# and gate-publish for the restore function name.
+test_synthesis_protocol_restore_refuses_attested_artifact() {
+  local name="synthesis-protocol/restore-refuses-attested-artifact"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" artifact sidecar code
+  mkdir -p "$dir"
+  artifact="$dir/result.md"
+  sidecar="$dir/result.md.assurance.json"
+  # shellcheck source=runtime/lib/gate-result-verify.sh
+  . "$REPO_ROOT/runtime/lib/gate-result-verify.sh"
+  _write_synthesis_protocol_test_artifact "$artifact"
+  {
+    printf '%s\n' '---' 'gate_result_version: pr_gate_result_v5' \
+      'gate_assurance: result.md.assurance.json' '---'
+    cat "$artifact"
+  } > "$dir/attested.md"
+  mv -- "$dir/attested.md" "$artifact"
+  jq -n '{
+    provenance:{attestation:"gate-assurance-20260101-000000.attestation.json"}
+  }' > "$sidecar"
+  set +e
+  gate_synthesis_restore_copy_fields \
+    "$artifact" "critic qa-tester architecture-reviewer" \
+    "security-reviewer risk-reviewer" \
+    >"$dir/out" 2>"$dir/err"
+  code=$?
+  set -e
+  [[ "$code" -eq 2 ]] || {
+    fail "$name" "restore did not refuse attested artifact: code=$code $(tr -d '\n' < "$dir/err" | tail -c 240)"
+    return
+  }
+  assert_file_contains "$name" "$dir/err" \
+    "restore refused on attested artifact" || return
+  if grep -n 'gate_synthesis_restore_copy_fields' \
+      "$REPO_ROOT/runtime/lib/pmctl-gate.sh" \
+      "$REPO_ROOT/runtime/lib/gate-publish.sh" >/dev/null 2>&1; then
+    fail "$name" "verify/publish path calls synthesis copy-field restore"
+    return
+  fi
+  pass "$name"
+}
+
 # Behavior: each synthesis parity/disagreement rejection names the concrete
 # defect -- which ids differ, or which constraint an entry violated -- because
 # that string is the ONLY information the single correction retry receives.
@@ -12676,6 +12925,8 @@ run_test test_parallel_reviewer_wrong_subject_is_stale_without_retry
 run_test test_reviewer_protocol_rejects_malformed_and_truncated_artifacts
 run_test test_reviewer_protocol_null_contract_is_named_not_invalid_json
 run_test test_reviewer_protocol_heals_empty_existing_evidence_from_finding_source
+run_test test_reviewer_protocol_filter_failure_is_named
+run_test test_parallel_reviewer_retry_briefs_are_reason_isolated
 run_test test_reviewer_protocol_names_unpaired_finding_ids
 run_test test_parallel_synthesis_test_gap_copy_is_restored_without_retry
 run_test test_parallel_synthesis_owned_defect_retry_exhausts
@@ -12685,6 +12936,9 @@ run_test test_reviewer_protocol_duplicate_heading_uses_json_verdict
 run_test test_reviewer_protocol_blocker_completes_remaining_surfaces
 run_test test_synthesis_protocol_preserves_grouping_disagreement_and_lower_severity
 run_test test_synthesis_protocol_restores_copied_reviewer_fields
+run_test test_synthesis_protocol_restore_uses_persisted_healed_evidence
+run_test test_synthesis_protocol_restore_logs_changed_fields
+run_test test_synthesis_protocol_restore_refuses_attested_artifact
 run_test test_synthesis_protocol_rejects_silent_drop_and_malformed_seed
 run_test test_synthesis_protocol_diagnostics_name_the_defect
 run_test test_synthesis_protocol_diagnostics_neutralize_injected_ids
