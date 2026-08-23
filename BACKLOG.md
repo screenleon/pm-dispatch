@@ -19,7 +19,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-505 | ✅ done | context plane lexical 檢索補完（Ph1 engine+統一排序+fixtures；Ph2 agent 契約+shadow 儀器化；evidence-gated 收緊 → [[CC-506]]）（2026-07-20 四方 synthesis；CC-346/347 前置） | memory/DX | 2026-07-20 | pr:#516 | P2 | retrieval |
 | CC-506 | ⏸ deferred | retrieval evidence-gated 收緊：shadow 評測（coverage@5、critical miss、read reduction、outcome parity）達標後才收緊 broad-Read 指引並重評 [[CC-340]] resume 條件；前置 = [[CC-505]] Ph2 shipped + ≥20 真實任務證據 | memory/DX | 2026-07-20 | — | P3 | retrieval |
 | CC-511 | ✅ done | ship publish authorization：Phase A current-tree authoritative full-suite 與 CC-515 shared verifier foundation 已交付；Phase B review-closure evidence 已由 CC-517 收斂 | release/gate | 2026-07-23 | pr:#446, pr:#484, pr:#507 | P1 | design |
-| CC-514 | 🔵 active | orthogonal delivery assurance map、machine-derived tables 與 feature/docs/high-risk recipes | docs/process | 2026-07-23 | — | P2 | design |
+| CC-514 | ⚠️ partial 2026-08-24 | orthogonal delivery assurance map、machine-derived tables 與 feature/docs/high-risk recipes；Req 1-4/6/7 內容已交付，Req 5 cross-document lint 與 Req 6 drift ratchet 仍待 `/pre-impl` | docs/process | 2026-07-23 | pr:#522 | P2 | design |
 | CC-516 | ⏸ deferred | evidence-gated thin delivery wrapper 評估；只組合既有 primitives，不建立 workflow engine/FSM | ux/process | 2026-07-23 | — | P3 | spike |
 | CC-517 | ✅ done | maintainer `/ship`：primary review、structured remediation closure 與 conditional targeted confirmation | process/gate | 2026-07-23 | pr:#483, pr:#506 | P1 | design |
 | CC-524 | 🔵 active | `pmctl artifacts show` 顯示 canonical absolute run root 並提供穩定 machine-readable locator | ux/ops | 2026-07-27 | feedback:2026-07-27 | P2 | hygiene |
@@ -35,7 +35,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-539 | 🟢 someday | state `layout.yaml` build-time authority + generated runtime constants | arch/schema | 2026-07-30 | feedback:2026-07-30 | P2 | design |
 | CC-540 | ✅ done | `pmctl state prune`：刪除前先抽取+驗證 gate/dispatch run 摘要，避免歷史分析資料隨磁碟空間一起消失 | ops/gate | 2026-07-31 | pr:#515 | P2 | hygiene |
 | CC-546 | ⏸ deferred | standalone Gate distribution／copy parity follow-up：獨立定義 bundle schema、generation、installed parity 與 support boundary；不回併 Linux/WSL2 canonical module extraction | arch/gate | 2026-08-14 | — | P2 | reuse-debt |
-| CC-559 | 🟢 someday | memory usage sidecar 是 tab-delimited，writer 拒收含 tab／newline 的 relpath，因此這類記憶卡**永遠無法累積使用紀錄**；`pmctl memory stats` 目前誠實地把它們列為 `unmeasurable_cards`（不謊稱 never-hit），但根因未解——需改用無損編碼。屬寫入面變更，故當初被 [[CC-467]] Requirement 3 明文排除 | ops/memory | 2026-08-19 | — | P3 | hygiene |
+| CC-559 | ✅ closed 2026-08-23 | **[memory usage sidecar 無法記錄含 tab／newline／backslash 的卡片路徑]** SQLite／TSV 兩個後端在共用傳輸邊界統一 escape／unescape（雙射字元掃描，無 sentinel 碰撞風險）；`# schema=2` 一次性遷移標記避免既有原始資料被誤判；`unmeasurable_cards` 恆為空但誠實回報機制保留。See pr:#521. | ops/memory | 2026-08-19 | pr:#521 | P3 | hygiene |
 | CC-562 | ✅ done | synthesis／reviewer 驗證器仍有多個「多約束共用單一 reason 字串」分支（`invalid coverage matrix`、`invalid finding inventory or union`、`duplicate finding ID collision`、`selected/not-reviewed dimensions mismatch`），單次修正重試收到後無法行動；[[CC-553]] Req 2 判定需同等精度但屬不同 helper 形狀（逐項指出違規條目，非集合差集），故分票 | ops/gate | 2026-08-19 | pr:#510 | P3 | hygiene |
 | CC-560 | ✅ done | `_gate_scope_reference_index_collect` 每筆 reference 都以 `jq -nc` 建一個 JSON 物件（實測 4.9s×2），與 [[CC-557]] 已修掉的 `_gate_scope_expansion_append` 是同一類寫法；CC-557 未一併處理是因預算餘裕已足，非因不成立 | ops/gate | 2026-08-19 | pr:#511 | P3 | hygiene |
 | CC-554 | 🔵 active | 永久 regression test 缺少准入門檻：`/ship` 規範「修完每個 finding」但不規範修法形式，reviewer 每提一個邊界就永久長一個阻擋 case，case 又需要 meta-test 保護；QA 規則加六條准入條件＋五條替代路徑，ship.md 加對應例外（明確不設輪數上限，見 [[CC-544]]） | ops/gate | 2026-08-17 | — | P1 | hygiene |
@@ -245,7 +245,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `ops/backlog/archive-cl
 
 ---
 
-## CC-559 — memory usage sidecar 無法記錄含 tab／newline 的卡片路徑 🟢 someday
+## CC-559 — memory usage sidecar 無法記錄含 tab／newline 的卡片路徑 ✅ 2026-08-23
 
 **Problem**: usage sidecar 是 tab-delimited 格式，其 writer 拒收含 tab 或 newline 的
 relpath（`runtime/lib/pmctl-memory.sh` 內 `unmeasurable_cards` 分支的註解載明此約束）。
@@ -270,6 +270,19 @@ relpath（`runtime/lib/pmctl-memory.sh` 內 `unmeasurable_cards` 分支的註解
 
 **Cross-link**: [[CC-467]]（本 follow-up 的來源票）、[[CC-466]]（生命週期判斷建立在遙測
 可信度之上）。
+
+**Closure 2026-08-23 (pr:#521)**：SQLite 與 TSV 兩個後端在共用的 tab-分隔傳輸邊界統一
+escape／unescape；unescape 改用左至右字元掃描（無 sentinel byte），避免與真實 0x01
+位元組碰撞。兩個後端各自補上 `# schema=2` 一次性遷移標記，讓既有（CC-559 之前寫入、
+從未轉譯過）的原始資料不會在升級後被誤判成含逃逸序列——SQLite 端在 `card_relpath`
+維持原始／canonical 儲存、只在 `SELECT` 進入共用邊界時轉譯；TSV 純檔案端因為本身就是
+文字格式、沒有欄位邊界，仍需標記判別已轉譯／未轉譯兩種既有格式。三輪 pr-gate（parallel,
+codex）後收斂：第一輪抓到 sentinel 碰撞與 SQLite 遷移缺口；第二輪抓到 TSV 端同款遷移
+缺口未修，以及 3 個測試在 sqlite3 缺席時靜默宣稱通過；修正後第三輪 GO。新增 4 個回歸
+測試（SOH 往返／不碰撞、SQLite 與 TSV 各自的 pre-fix 資料存活驗證）。`unmeasurable_cards`
+機制保留但目前恆為空，符合 Requirement 3。
+
+**See**: pr:#521
 
 ---
 
@@ -1648,7 +1661,7 @@ closure 的漏項；若未來有證據顯示這一軸也需要同等的 unstubbe
 
 ---
 
-## CC-514 — orthogonal delivery assurance map 與 recipes 🔵 active
+## CC-514 — orthogonal delivery assurance map 與 recipes ⚠️ partial 2026-08-24
 
 **Problem**: repo 已有 retrieve/spec、affected tests、refactor/reuse audit、
 independent gate、full suite、publish 等成熟 primitives，但資訊散在 README、
@@ -1666,10 +1679,10 @@ dimensions 都已完成；docs-only、一般功能、高風險／manual UI chang
    `pass|fail|not_run|not_applicable|stale|incomplete` 的誠實聲明。
 2. 提供至少 docs-only、一般 functional change、高風險／含 manual verification
    三條短 recipe。pm-dispatch maintainer recipe 依 [[CC-517]] 維持
-   focused tests→audit→一次 primary comprehensive gate→一次完整 remediation→
-   deterministic closure→post-fix affected tests/audit→full→publish；只有
-   security/risk、public contract 或跨邊界 remediation 才用既有 `--reviewers`
-   做一次 targeted confirmation，不回到 repeat-until-GO loop。generic `pmctl gate`
+   focused tests→audit→一次 primary comprehensive gate→targeted remediation
+   rounds→deterministic closure→post-fix affected tests/audit→full→publish；
+   輪數本身不是停止訊號（`commands/ship.md` 已有單一 gate 收斂 7 輪的實例），
+   只有 ticket 前提證偽或 Rule A 三振無進展才停。generic `pmctl gate`
    使用者仍可自行選擇其他 re-gate policy。manual evidence 只使用 bounded
    checklist／artifact reference，不建立新 runner。
 3. recipe 明列兩個軸而非模糊寫「full gate」；例如 routine feature 可是
@@ -1690,6 +1703,21 @@ dimensions 都已完成；docs-only、一般功能、高風險／manual UI chang
 7. 明文記錄現階段不新增 `/deliver`、workflow profile、persistent workflow state、
    preset DSL 或 FSM；若短 recipe 的真實使用證據顯示需要 wrapper，再由
    [[CC-516]] 評估。
+
+**Delivered content（PR #522）**：`docs/delivery-assurance-map.md` 落地，涵蓋
+Req 1（10 個正交維度表）、Req 2/3（三條 recipe，各自獨立標 tier/mode）、Req 4
+（README／`docs/CONCEPTS.md`／`docs/review-model.md`／`docs/test-runner-contract.md`
+／`commands/ship.md`／`pr-gate-review` skill 互相連結，`/ship` 明文標註為
+maintainer-recommended path 而非唯一合法路徑）、Req 6 的 provenance 標頭與 Req 7
+的 scope boundary 聲明。Req 5 的六張 policy 來源表已用 `<!-- GENERATED -->`
+標記包起來，但文件本身明講「目前沒有機制驗證這些標記與來源同步」——這是內容落地，
+不是本票 terminal closure。
+
+**Remaining boundary**：Req 5 的跨文件 lint（驗證 generated marker 與
+`core/policy/*` 同步）與 Req 6 的 drift ratchet 機制尚未實作；marker 語法、
+diff/normalization 演算法與 CI 接線都還沒定案，需要先跑一輪
+`/pre-impl "cross-document lint enforcing tier/mode/reviewer-policy generated
+markers against core/policy/* sources"` 再開實作票，不得跳過設計直接動手。
 
 **Done-when**: 一位未讀原始 agents/scripts 的 maintainer 能從 README 找到正確
 recipe，並準確判斷每個 assurance dimension 是 pass、未跑、不可用或 stale；跨文件

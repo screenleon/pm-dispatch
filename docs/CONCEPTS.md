@@ -185,5 +185,6 @@ Every step uses one of the four concepts. None of them is "magic" — each is a 
 - **Write a new hook** → read `runtime/hooks/guard-pm-write.sh` as a reference and add a test in `tests/shell/test-guards.sh`
 - **Add a memory card** → see `~/.claude/projects/<id>/memory/MEMORY.md` for the index format; cards have YAML frontmatter (`name:` / `description:` / `metadata.type:`) and live next to the index
 - **Platform support** → `docs/platform-support.md`
+- **See the delivery assurance dimensions and composable recipes** → `docs/delivery-assurance-map.md`
 
 If you find a concept missing here or a section that confused you, that's a documentation bug — please open an issue.

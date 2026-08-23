@@ -9,6 +9,8 @@ open PR. This is the main-thread's own default operating discipline made
 runnable as one command, not a new background/unattended supervisor — the
 session stays open and you stay reachable the whole time.
 
+`/ship` is this repository's maintainer-recommended path, not its sole legal workflow; `pmctl gate`, the test runner, and `ship finish` are composable primitives. See [the delivery assurance map](../docs/delivery-assurance-map.md) for the full dimension map and alternative recipes.
+
 **Scope**: one ticket per invocation, named in `$ARGUMENTS`. Do not scan
 `BACKLOG.md` for other candidates or batch multiple tickets in one run.
 

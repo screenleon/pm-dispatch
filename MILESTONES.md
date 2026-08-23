@@ -37,7 +37,7 @@ Gate correctness 與 release evidence 仍必須先在 v0.11.0 關閉。
 |----|------|------|
 | CC-032 | feedback cross-link glossary 公開化，清除 public dead/private-only link | 🔵 |
 | CC-033 | README/onboarding public posture、history audit 處置、repo collaboration surface | 🔵（history audit ✅ 2026-07-18；其餘未啟動） |
-| CC-514 | orthogonal assurance map、machine-derived tier/mode/policy tables 與 docs-only／functional／high-risk recipes；draft 可先行，runtime-aligned finalization 後公開 | 🔵 |
+| CC-514 | orthogonal assurance map、machine-derived tier/mode/policy tables 與 docs-only／functional／high-risk recipes；draft 可先行，runtime-aligned finalization 後公開 | ⚠️ partial（`docs/delivery-assurance-map.md` 內容已由 pr:#522 交付；Req 5 跨文件 lint 與 Req 6 drift ratchet 待 `/pre-impl` 後另立實作票） |
 
 ### Phase 2 — contract candidate
 
@@ -189,9 +189,9 @@ P1 的每張實作 PR 都應綁定 deterministic contract tests；任何 reviewe
 | 票 | 摘要 | 狀態 |
 |----|------|------|
 | CC-528 | publish policy compatibility：generic current-tree initial GO 為 baseline、maintainer 為 preferred；ship 可驗證明確 supplied result | ✅ pr:#457 |
-| CC-529 | publish assurance observability：ship stdout、PR body、finish marker 保留 producer policy 與 baseline/preferred satisfaction | ⚠️ partial 2026-08-15 |
-| CC-517 | `/ship` primary review→local/targeted/split remediation closure→final affected/full tests；不虛稱 final-tree GO | 🔵 |
-| CC-511 Phase B | final-tree review或 primary-review closure authorization + current-tree full PASS → publish | ⚠️ partial 2026-08-15 |
+| CC-529 | publish assurance observability：ship stdout、PR body、finish marker 保留 producer policy 與 baseline/preferred satisfaction | ✅ pr:#484/#507 |
+| CC-517 | `/ship` primary review→local/targeted/split remediation closure→final affected/full tests；不虛稱 final-tree GO | ✅ pr:#483/#506 |
+| CC-511 Phase B | final-tree review或 primary-review closure authorization + current-tree full PASS → publish | ✅ pr:#484/#507 |
 
 ### Phase 10 — runtime foundation + Adapter authority（新增）
 

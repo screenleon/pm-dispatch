@@ -10,9 +10,10 @@ A **thin pointer skill** — the gate is implemented by `runtime/bin/pr-gate.sh`
 
 ## When to use
 
-You have a committed change on a branch and are about to open a PR. Run the gate
-first; do not open a PR on an un-gated change (per the project PR workflow:
-implement → pr-gate → fix NO-GO → push → PR).
+You have a committed change on a branch and are about to open a PR. For this
+repository's maintainer-recommended PR route, run the gate first (implement →
+pr-gate → fix NO-GO → push → PR); other workflows may compose their assurance
+evidence differently.
 
 ## How to run
 

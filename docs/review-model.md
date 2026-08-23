@@ -488,3 +488,4 @@ In all other cases, the four-layer model gives a faster signal with less noise.
 - [docs/CONCEPTS.md](CONCEPTS.md) — the four Claude Code extensibility surfaces (hooks / slash commands / subagents / memory) that implement this model
 - [docs/dispatch-brief.md](dispatch-brief.md) — the brief schema, including `self_verify`, `acceptance`, `conceptual_map`, and `architecture_impact` fields
 - [docs/pr-gate-handover-schema.md](pr-gate-handover-schema.md) — the handover protocol that enforces Layer 2 isolation
+- [docs/delivery-assurance-map.md](delivery-assurance-map.md) — the assurance dimensions, evidence chains, and composable delivery recipes

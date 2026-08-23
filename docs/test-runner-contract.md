@@ -3,6 +3,8 @@
 pm-dispatch has two deliberately different test entry points. They solve
 different problems and neither silently substitutes for the other.
 
+For the full assurance picture, including dimensions beyond test coverage, see [the delivery assurance map](delivery-assurance-map.md).
+
 ## Iteration runner
 
 `tests/bin/run-tests.sh` plans direct-impact suites from changed paths and invokes
