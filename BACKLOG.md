@@ -102,7 +102,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-446 | 🔵 active | public contract candidate：stable/experimental CLI + schema、authority 分類、SemVer/deprecation 與 CC-296 清掃（v0.12.0；非 v1 RC） | process/DX | 2026-07-04 | — | P2 | design |
 | CC-447 | 🔵 active | onboarding 三 smoke：offline clean install + N-1 upgrade（v0.11.0）+ live dogfood（readiness review 後再排） | docs/ops | 2026-07-04 | — | P2 | — |
 | CC-472 | 🟢 someday | spike: antigravity（`agy` CLI）host 唯讀 probe——比照 CC-436/CC-448 階段 1 模式，實測 command 載入能力 + hook/plugin 機制 + 五個 capability enum 的 provider/confidence 判定，不落地 `hosts/antigravity/host.yaml`；排在 CC-445 通用 install/uninstall dispatcher 之後、與 CC-448 opencode 同批或緊接其後評估（N=3 驗證點） | arch/install | 2026-07-08 | — | P3 | spike |
-| CC-566 | 🔵 active | `guard-inject-memory.sh` 依 host 給獨立注入預算：實測確認 Claude 端有原生 `claudeMd` 全量 MEMORY.md 載入（無上限，session 一次）與 hook 每輪裁切注入雙重疊加；Codex 無對應原生全量安全網，不能單純調降全域常數（2026-08-23 token-cost 分析） | memory/DX | 2026-08-23 | pr:#519 | P2 | hygiene |
+| CC-566 | ✅ done | `guard-inject-memory.sh` 依 host 給獨立注入預算：實測確認 Claude 端有原生 `claudeMd` 全量 MEMORY.md 載入（無上限，session 一次）與 hook 每輪裁切注入雙重疊加；Codex 無對應原生全量安全網，不能單純調降全域常數（2026-08-23 token-cost 分析） | memory/DX | 2026-08-23 | pr:#519 | P2 | hygiene |
 
 ---
 
@@ -2918,7 +2918,7 @@ reuse-scan 內部呼叫冪等，第二次是基於 mtime 的 no-op refresh），
 
 **Dependencies**: 前置 = [[CC-505]] Phase 2 shipped + 日曆時間蒐證（≥20 真實任務）。P3，未排入 milestone。模式沿用 auto-pack 先例：機制+telemetry 先行、evidence 後收緊。
 
-## CC-566 — `guard-inject-memory.sh` 依 host 給獨立注入預算，消除 Claude 端全量重複注入的浪費 🔵 active
+## CC-566 — `guard-inject-memory.sh` 依 host 給獨立注入預算，消除 Claude 端全量重複注入的浪費 ✅ 2026-08-23
 
 **Problem**: 2026-08-23 直接比對一次真實 Claude Code session 的注入內容與本 repo 的
 `MEMORY.md`（`wc -c` = 14,055 bytes，與 session 開場那個 `claudeMd`-labeled context
@@ -2971,4 +2971,20 @@ host 各自的 install/uninstall 測試全過。
 **Dependencies**: 沿用 [[memory-system.md]] Per-prompt token cost 與 Native
 memory 表格的實測數據；避開 [[env-var-ambient-leak-into-fixtures]] 的教訓；
 與 [[CC-467]]（injection ranking 鑑別力）正交，不重疊。P2。
+
+**Shipped**：`guard-inject-memory.sh` 新增 `--host <name>`（以既有
+`pmctl_host_is_valid` 驗證、無效值 fail-open 退回共用預算，不擋 prompt）；
+`hosts/claude/bin/install-guards.sh` 把 Claude 的 wired command 改成帶
+`--host claude`，選用 `MEMORY_CLAUDE_MAX_INJECT_ENTRIES=10` /
+`MEMORY_CLAUDE_MAX_INJECT_BYTES=1500`；Codex wiring 完全不動。pr-gate（sequential,
+codex executor）第一輪 NO-GO（qa-tester：既有升級路徑回歸測試不夠精確），修正
+並以「先讓測試失敗、再讓它通過」驗證鑑別力後，targeted re-gate（qa-tester +
+escalation 要求的 architecture-reviewer + security-reviewer）GO。單次
+reuse/simplify 確認額外補上 `hosts/claude/lib/doctor.sh` 一個真缺口（過期 hook
+偵測沒同步處理新的 `--host` 尾巴）。全套 `run-tests.sh --all` 100 passed, 0
+failed。已 merge 並在本機重跑 `install.sh` 生效（`~/.claude/settings.json`
+UserPromptSubmit 已帶 `--host claude`，`doctor.sh --profile full` 回報
+`5 hooks present`）。
+
+**See**: pr:#519
 
