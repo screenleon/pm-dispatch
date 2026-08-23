@@ -37,7 +37,7 @@ Gate correctness 與 release evidence 仍必須先在 v0.11.0 關閉。
 |----|------|------|
 | CC-032 | feedback cross-link glossary 公開化，清除 public dead/private-only link | 🔵 |
 | CC-033 | README/onboarding public posture、history audit 處置、repo collaboration surface | 🔵（history audit ✅ 2026-07-18；其餘未啟動） |
-| CC-514 | orthogonal assurance map、machine-derived tier/mode/policy tables 與 docs-only／functional／high-risk recipes；draft 可先行，runtime-aligned finalization 後公開 | 🔵 |
+| CC-514 | orthogonal assurance map、machine-derived tier/mode/policy tables 與 docs-only／functional／high-risk recipes；draft 可先行，runtime-aligned finalization 後公開 | ⚠️ partial（`docs/delivery-assurance-map.md` 內容已由 pr:#522 交付；Req 5 跨文件 lint 與 Req 6 drift ratchet 待 `/pre-impl` 後另立實作票） |
 
 ### Phase 2 — contract candidate
 

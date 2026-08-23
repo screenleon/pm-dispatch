@@ -19,7 +19,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-505 | ✅ done | context plane lexical 檢索補完（Ph1 engine+統一排序+fixtures；Ph2 agent 契約+shadow 儀器化；evidence-gated 收緊 → [[CC-506]]）（2026-07-20 四方 synthesis；CC-346/347 前置） | memory/DX | 2026-07-20 | pr:#516 | P2 | retrieval |
 | CC-506 | ⏸ deferred | retrieval evidence-gated 收緊：shadow 評測（coverage@5、critical miss、read reduction、outcome parity）達標後才收緊 broad-Read 指引並重評 [[CC-340]] resume 條件；前置 = [[CC-505]] Ph2 shipped + ≥20 真實任務證據 | memory/DX | 2026-07-20 | — | P3 | retrieval |
 | CC-511 | ✅ done | ship publish authorization：Phase A current-tree authoritative full-suite 與 CC-515 shared verifier foundation 已交付；Phase B review-closure evidence 已由 CC-517 收斂 | release/gate | 2026-07-23 | pr:#446, pr:#484, pr:#507 | P1 | design |
-| CC-514 | 🔵 active | orthogonal delivery assurance map、machine-derived tables 與 feature/docs/high-risk recipes | docs/process | 2026-07-23 | — | P2 | design |
+| CC-514 | ⚠️ partial 2026-08-24 | orthogonal delivery assurance map、machine-derived tables 與 feature/docs/high-risk recipes；Req 1-4/6/7 內容已交付，Req 5 cross-document lint 與 Req 6 drift ratchet 仍待 `/pre-impl` | docs/process | 2026-07-23 | pr:#522 | P2 | design |
 | CC-516 | ⏸ deferred | evidence-gated thin delivery wrapper 評估；只組合既有 primitives，不建立 workflow engine/FSM | ux/process | 2026-07-23 | — | P3 | spike |
 | CC-517 | ✅ done | maintainer `/ship`：primary review、structured remediation closure 與 conditional targeted confirmation | process/gate | 2026-07-23 | pr:#483, pr:#506 | P1 | design |
 | CC-524 | 🔵 active | `pmctl artifacts show` 顯示 canonical absolute run root 並提供穩定 machine-readable locator | ux/ops | 2026-07-27 | feedback:2026-07-27 | P2 | hygiene |
@@ -1661,7 +1661,7 @@ closure 的漏項；若未來有證據顯示這一軸也需要同等的 unstubbe
 
 ---
 
-## CC-514 — orthogonal delivery assurance map 與 recipes 🔵 active
+## CC-514 — orthogonal delivery assurance map 與 recipes ⚠️ partial 2026-08-24
 
 **Problem**: repo 已有 retrieve/spec、affected tests、refactor/reuse audit、
 independent gate、full suite、publish 等成熟 primitives，但資訊散在 README、
@@ -1679,10 +1679,10 @@ dimensions 都已完成；docs-only、一般功能、高風險／manual UI chang
    `pass|fail|not_run|not_applicable|stale|incomplete` 的誠實聲明。
 2. 提供至少 docs-only、一般 functional change、高風險／含 manual verification
    三條短 recipe。pm-dispatch maintainer recipe 依 [[CC-517]] 維持
-   focused tests→audit→一次 primary comprehensive gate→一次完整 remediation→
-   deterministic closure→post-fix affected tests/audit→full→publish；只有
-   security/risk、public contract 或跨邊界 remediation 才用既有 `--reviewers`
-   做一次 targeted confirmation，不回到 repeat-until-GO loop。generic `pmctl gate`
+   focused tests→audit→一次 primary comprehensive gate→targeted remediation
+   rounds→deterministic closure→post-fix affected tests/audit→full→publish；
+   輪數本身不是停止訊號（`commands/ship.md` 已有單一 gate 收斂 7 輪的實例），
+   只有 ticket 前提證偽或 Rule A 三振無進展才停。generic `pmctl gate`
    使用者仍可自行選擇其他 re-gate policy。manual evidence 只使用 bounded
    checklist／artifact reference，不建立新 runner。
 3. recipe 明列兩個軸而非模糊寫「full gate」；例如 routine feature 可是
@@ -1703,6 +1703,21 @@ dimensions 都已完成；docs-only、一般功能、高風險／manual UI chang
 7. 明文記錄現階段不新增 `/deliver`、workflow profile、persistent workflow state、
    preset DSL 或 FSM；若短 recipe 的真實使用證據顯示需要 wrapper，再由
    [[CC-516]] 評估。
+
+**Delivered content（PR #522）**：`docs/delivery-assurance-map.md` 落地，涵蓋
+Req 1（10 個正交維度表）、Req 2/3（三條 recipe，各自獨立標 tier/mode）、Req 4
+（README／`docs/CONCEPTS.md`／`docs/review-model.md`／`docs/test-runner-contract.md`
+／`commands/ship.md`／`pr-gate-review` skill 互相連結，`/ship` 明文標註為
+maintainer-recommended path 而非唯一合法路徑）、Req 6 的 provenance 標頭與 Req 7
+的 scope boundary 聲明。Req 5 的六張 policy 來源表已用 `<!-- GENERATED -->`
+標記包起來，但文件本身明講「目前沒有機制驗證這些標記與來源同步」——這是內容落地，
+不是本票 terminal closure。
+
+**Remaining boundary**：Req 5 的跨文件 lint（驗證 generated marker 與
+`core/policy/*` 同步）與 Req 6 的 drift ratchet 機制尚未實作；marker 語法、
+diff/normalization 演算法與 CI 接線都還沒定案，需要先跑一輪
+`/pre-impl "cross-document lint enforcing tier/mode/reviewer-policy generated
+markers against core/policy/* sources"` 再開實作票，不得跳過設計直接動手。
 
 **Done-when**: 一位未讀原始 agents/scripts 的 maintainer 能從 README 找到正確
 recipe，並準確判斷每個 assurance dimension 是 pass、未跑、不可用或 stale；跨文件
