@@ -265,6 +265,14 @@ pm_cmd_q="$(printf '%q' "$pm_cmd")"
 stop_cmd_q="$(printf '%q' "$stop_cmd")"
 legacy_stop_cmd_q="$(printf '%q' "$legacy_stop_cmd")"
 inject_cmd_q="$(printf '%q' "$inject_cmd")"
+# Wired command carries an explicit `--host claude` so guard-inject-memory.sh
+# applies the Claude-only smaller injection budget (see MEMORY_CLAUDE_MAX_INJECT_*
+# in runtime/lib/memory.sh / CC-566). $inject_cmd_q itself (no suffix) stays the
+# executable-check path above; only the wired form gets the argument appended.
+# managed_shared() below already strips this suffix via without_host_arg before
+# comparing, so a pre-CC-566 install (bare path, no --host) is still recognized
+# as managed and gets refreshed to the suffixed form on the next install run.
+inject_wired_cmd_q="$inject_cmd_q --host claude"
 ctx_inject_cmd_q="$(printf '%q' "$ctx_inject_cmd")"
 statusline_cmd_q="$(printf '%q' "$statusline_cmd")"
 legacy_statusline_cmd_q="$(printf '%q' "$legacy_statusline_cmd")"
@@ -282,7 +290,7 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
   --arg old_stop "$old_stop_cmd" \
   --arg legacy_stop "$legacy_stop_cmd" \
   --arg legacy_stop_q "$legacy_stop_cmd_q" \
-  --arg inject "$inject_cmd_q" \
+  --arg inject "$inject_wired_cmd_q" \
   --arg ctx_inject "$ctx_inject_cmd_q" \
   --argjson ctx_inject_timeout "$CLAUDE_PROMPT_CONTEXT_HOOK_TIMEOUT" \
   --arg statusline "$statusline_cmd_q" \

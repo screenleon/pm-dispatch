@@ -170,11 +170,20 @@ _doctor_host_claude_stale_hook_commands() {
     | map(select(
         (.command? // "") as $cmd |
         ($cmd | normalize_path) as $ncmd |
-        ($ncmd | length) > 0 and
+        # Strip a trailing `--host <name>` before classifying by basename —
+        # guard-inject-memory.sh is wired with this suffix on Claude (CC-566)
+        # and without it the last "/"-segment would be
+        # "guard-inject-memory.sh --host claude", which never matches the
+        # bare-basename IN() lists below, silently dropping a genuinely stale
+        # (different-checkout) memory hook from this report. Mirrors the same
+        # stripping already applied in _doctor_host_claude_hook_present and
+        # _doctor_host_claude_broken_hook_targets in this file.
+        ($ncmd | sub(" --host (claude|codex|opencode|grok|generic)$"; "")) as $path |
+        ($path | length) > 0 and
         (
           (
-            ($ncmd | split("/") | .[-2]) == "scripts" and
-            (($ncmd | split("/") | last) | IN(
+            ($path | split("/") | .[-2]) == "scripts" and
+            (($path | split("/") | last) | IN(
               "guard-pm-write.sh",
               "guard-log-claude-usage.sh",
               "guard-inject-memory.sh",
@@ -183,17 +192,17 @@ _doctor_host_claude_stale_hook_commands() {
             ))
           ) or
           (
-            ($ncmd | split("/") | .[-2]) == "hooks" and
-            ($ncmd | split("/") | .[-3]) == "claude" and
-            ($ncmd | split("/") | .[-4]) == "hosts" and
-            (($ncmd | split("/") | last) | IN("log-usage.sh", "save-rate-limits.sh"))
+            ($path | split("/") | .[-2]) == "hooks" and
+            ($path | split("/") | .[-3]) == "claude" and
+            ($path | split("/") | .[-4]) == "hosts" and
+            (($path | split("/") | last) | IN("log-usage.sh", "save-rate-limits.sh"))
           ) or
           (
-            ($ncmd | split("/") | last) == "bash-guard.sh" and
-            ($ncmd | split("/") | .[-3]) == "adapters"
+            ($path | split("/") | last) == "bash-guard.sh" and
+            ($path | split("/") | .[-3]) == "adapters"
           )
         ) and
-        ($ncmd | startswith(($repo_root | normalize_path) + "/") | not)
+        ($path | startswith(($repo_root | normalize_path) + "/") | not)
       ) | .command)
     | unique[]
   ' "$settings" 2>/dev/null

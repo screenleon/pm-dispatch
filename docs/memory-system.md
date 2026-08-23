@@ -166,10 +166,10 @@ emitted, `1` canonical memory selection invalid, `2` usage error — an unhealth
 *number* is never an error exit, because this is a report, not a gate.
 
 `index_inject_bytes` is measured exactly the way `guard-inject-memory.sh`
-measures its own budget (`${#line}` under the ambient locale), so the two are
-directly comparable. Note that this is a character count, not a byte count, for
-non-ASCII index text — the number tracks what the hook enforces rather than
-what the name literally promises.
+measures its own budget (`memory_byte_len_var`, actual UTF-8 bytes), so the two
+numbers are directly comparable and both match what `MEMORY_MAX_INJECT_BYTES`
+actually bounds — including CJK-heavy lines, which `${#line}` would have
+undercounted.
 
 `card_hits` is the per-card answer to "which card is repeatedly selected":
 `{card, access_count, last_access_day}` rows ordered most-hit first, bounded by
@@ -224,6 +224,68 @@ decodes UTF-8 rather than escaping bytes, so C1 controls (including the raw
 card names pass through intact. `--json` applies the same decoding, emitting
 C1 as `\u00XX`: JSON does not require escaping C1, but this output is read
 straight in a terminal, and a raw C1 byte is not valid UTF-8 either.
+
+## Per-prompt token cost
+
+This is the number readers actually want before turning the hook on or off:
+what does `guard-inject-memory.sh` cost per turn, and what does it buy back.
+
+**It runs every turn, not once per session.** `MEMORY.md` is not a one-time
+system-prompt load — the hook is wired to `UserPromptSubmit`, so it re-reads
+the index, re-ranks it against the *current* prompt's keywords, and re-injects
+a block on every single user message. A 30-turn session pays this cost 30
+times, not once.
+
+**Per-injection size is capped, but the cap is generous relative to a typical
+turn.** `MEMORY_MAX_INJECT_BYTES=3000` plus a ~250-byte preamble and an
+optional one-line episode reminder — call it ~3300 bytes worst case. For this
+repo's own memory store (mixed English/Mandarin, see `pmctl memory stats`
+above), that lands around **900–1300 tokens** per prompt at full budget, and
+commonly less: the byte cap, not the 20-entry cap, is usually what truncates
+first when hook text runs long, so a real injection often lands closer to
+15-18 entries and 600–900 tokens. There is no per-prompt way to see this
+number directly in-session; run `pmctl memory stats` to see what the *whole*
+index would cost against the same budget arithmetic.
+
+**It does not benefit from prompt caching.** The block is re-ranked by
+keyword hits against each new prompt (see the composite score in
+`guard-inject-memory.sh`), so its content is very likely to differ turn to
+turn. It doesn't invalidate the cached prefix from earlier turns — hooks
+append to the new turn, they don't rewrite history — but the injected content
+itself is paid for fresh, uncached, on every single turn where the hook fires.
+
+**What this buys back:**
+- Continuity that survives context compaction and new sessions without the
+  user re-stating standing preferences, project facts, or prior corrections.
+- Structural enforcement instead of prose. CLAUDE.md-style "never do X" rules
+  hit ~70% compliance in public research; a hook that mechanically injects the
+  card every time closes that gap for anything actually indexed.
+- Usage-weighted ranking (frecency + keyword hits) means the cards that keep
+  mattering surface first as the store grows, rather than an unranked dump.
+
+**What it costs beyond the raw tokens:**
+- The tax is flat per turn regardless of whether the current prompt needs any
+  memory at all — a one-line "yes, ship it" pays the same preamble-plus-budget
+  cost as a prompt that actually needs recalled context.
+- At scale the budget silently degrades: this repo's store has 86 cards behind
+  a 20-entry/3000-byte window, so most cards are invisible on any given prompt
+  unless a keyword hits them (`pmctl memory stats` reports the omitted count
+  every run — 62–70 cards omitted here is typical, not an anomaly).
+- Unlike the context-retrieval hook (`PM_DISPATCH_DISABLE_PROMPT_CONTEXT=1`,
+  see [context-retrieval.md](context-retrieval.md#prompt-auto-scan-deterministic-retrieval-at-prompt-time)),
+  there is no env-var kill switch for this hook — turning it off means
+  removing `guard-inject-memory.sh` from `~/.claude/settings.json`, which also
+  turns off frecency tracking (the sidecar only accrues hits when the hook
+  runs).
+
+**Levers, cheapest first:**
+- Lower `MEMORY_MAX_INJECT_ENTRIES` / `MEMORY_MAX_INJECT_BYTES` (`lib/memory.sh`)
+  if the per-turn tax matters more than breadth.
+- Run `/memory-compress` periodically — it shrinks index *entries* (the hook
+  text), which is the part charged every turn, without touching card detail.
+- Keep `priority: always` reserved for genuinely session-invariant facts: tier1
+  cards bypass the byte budget entirely, so an over-pinned index inflates the
+  floor cost of every single prompt regardless of relevance.
 
 ## Bootstrap-empty pattern for fork users
 
@@ -355,10 +417,59 @@ skeleton writer and its `--skeleton` session-id dedupe mode are retired.
 
 | Host | Deterministic read entry | Canonical write entry | Native memory |
 | --- | --- | --- | --- |
-| Claude | `/pm` calls `pm prepare --host claude`; `UserPromptSubmit` runs `guard-inject-memory.sh` | `pmctl memory append-episode --host claude` | auxiliary; `unknown` unless separately observed |
-| Codex | `UserPromptSubmit` runs `guard-inject-memory.sh`; batch PM uses `--host codex` | `codex-memory-update.sh` routes explicit requests to `pmctl memory append-episode --host codex` | auxiliary; `unknown` unless separately observed |
-| OpenCode | `/pm` calls the installed `pm_prepare` tool with `--host opencode` | `pmctl memory append-episode --host opencode` | auxiliary; `unknown` unless separately observed |
+| Claude | `/pm` calls `pm prepare --host claude`; `UserPromptSubmit` runs `guard-inject-memory.sh` | `pmctl memory append-episode --host claude` | **auxiliary; CONFIRMED double-injected (2026-08-23)** — Claude Code's own project-memory feature loads the entirety of `MEMORY.md` once at session start (a `claudeMd`-labeled context block, unbounded — no relation to `MEMORY_MAX_INJECT_BYTES`), separately from `guard-inject-memory.sh`'s own per-turn budgeted injection. Observed on this repo's own store: ~14KB / ~86 entries loaded natively once (≈5,500–6,500 tokens), on top of the hook's ~600–1,300 tokens *every* turn. See [Per-prompt token cost](#per-prompt-token-cost) and the "Double-injection on Claude" note below. |
+| Codex | `UserPromptSubmit` runs `guard-inject-memory.sh`; batch PM uses `--host codex` | `codex-memory-update.sh` routes explicit requests to `pmctl memory append-episode --host codex` | **auxiliary; CONFIRMED not duplicated (2026-08-23)** — Codex's native `AGENTS.md` install target (`hosts/codex/host.yaml`) is real, but the marker-delimited block `codex_memory_contract_append` writes (`hosts/codex/lib/memory-contract.sh`) is fixed procedural text (~20 lines / ~300 tokens: "write memory via pmctl, never under `.codex/memories`"), not the `MEMORY.md` index content. Codex also has its own native memory store (`.codex/memories`), but the contract text explicitly redirects the model away from ever writing there, so it stays empty and never becomes a second copy of canonical memory. Codex's *only* per-turn memory content comes from the same `guard-inject-memory.sh` budget as everyone else. |
+| Grok | `pmctl pm prepare --host grok` only (explicit call; MVP) | `pmctl memory append-episode --host grok` | **repo side confirmed clean; host side unverified** — `hosts/grok/host.yaml` declares `hook_surface: {}`: no `UserPromptSubmit` wiring ships at all in this MVP, so pm-dispatch cannot cause a double-injection here today. Whether the Grok Build TUI itself has its own passive project-memory auto-load (independent of this repo) has not been observed — verifying requires running `grok` against a populated memory dir and inspecting its own verbose/debug session log, which is outside what this repo's code can confirm. |
+| OpenCode | `/pm` calls the installed `pm_prepare` tool with `--host opencode` | `pmctl memory append-episode --host opencode` | **repo side confirmed clean; host side unverified** — same `hook_surface: {}` situation as Grok: no automatic hook, memory only flows through an explicit `/pm` call. OpenCode's own native memory behavior (if any) is unobserved for the same reason as Grok. |
 | Generic/no hook | `pmctl pm prepare --host generic` | `pmctl memory append-episode --host generic` | auxiliary; `unknown` |
+
+### Double-injection on Claude
+
+Confirmed 2026-08-23 by direct inspection of a live Claude Code session's
+injected context against this repo's own `MEMORY.md` (14,055 bytes / 86
+entries, `wc -c` on the canonical file matched the size of the natively
+loaded block exactly). Two independent, non-coordinating mechanisms both put
+`MEMORY.md` content into context:
+
+1. **Claude Code's native project-memory load** — a `claudeMd`-labeled
+   context block containing the *entire* `MEMORY.md`, unbounded, injected
+   once (observed at the first turn after `/clear`). This is a Claude Code
+   product feature, not a `pmctl`/repo mechanism — pm-dispatch cannot
+   configure, cap, or disable it, and its behavior is not covered by any
+   test in this repo.
+2. **`guard-inject-memory.sh`** — the canonical, tested, host-neutral hook
+   documented throughout this file, budgeted to `MEMORY_MAX_INJECT_BYTES`
+   (3000) / `MEMORY_MAX_INJECT_ENTRIES` (20), re-ranked and re-injected on
+   *every* `UserPromptSubmit`.
+
+These are not simply redundant: (1) is a black box this repo does not
+control or test — the canonical-memory design principle throughout this file
+("never fall through to native or legacy memory") already treats any
+host-native memory as untrusted, so (2) remains necessary as the only
+guaranteed, tested delivery path regardless of what Claude Code's native
+feature does or stops doing. The actual waste is that `MEMORY_MAX_INJECT_BYTES`
+was sized without accounting for (1) already having delivered a full copy
+once per session on Claude specifically — Codex has no equivalent native
+full-load (see the Codex row above), so the same constant is correctly sized
+there. **[[CC-566]] shipped this fix**: `guard-inject-memory.sh` now accepts
+an explicit, non-ambient `--host <name>` argument — the same
+`claude|codex|opencode|grok|generic` shape `install-guards.sh`/`doctor.sh`
+already recognized and stripped before comparison (`without_host_arg`),
+scaffolding that predated this fix and was never previously exercised.
+`hosts/claude/bin/install-guards.sh` wires the hook with `--host claude`,
+which selects `MEMORY_CLAUDE_MAX_INJECT_ENTRIES` (10) /
+`MEMORY_CLAUDE_MAX_INJECT_BYTES` (1500) instead of the shared
+`MEMORY_MAX_INJECT_ENTRIES` (20) / `MEMORY_MAX_INJECT_BYTES` (3000) — roughly
+halving the per-turn hook cost on Claude. Codex's wiring
+(`hosts/codex/bin/install.sh`) is untouched: no `--host` argument, so it keeps
+the full shared budget, since it has no equivalent native full-load safety
+net. The argument is deliberately a CLI flag baked into the wired command
+string, never an env var — `MEMORY_MAX_INJECT_BYTES` is deliberately not
+env-overridable per the comment in `lib/memory.sh`, to avoid the ambient-leak
+class of bug from [[env-var-ambient-leak-into-fixtures]]. A pre-CC-566 install
+(bare path, no `--host`) self-heals on the next `install-guards.sh` run:
+`managed_shared()`'s existing `without_host_arg` stripping still recognizes it
+as the managed hook and rewrites it to the suffixed form.
 
 ## Practical conventions
 

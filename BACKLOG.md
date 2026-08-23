@@ -102,6 +102,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-446 | 🔵 active | public contract candidate：stable/experimental CLI + schema、authority 分類、SemVer/deprecation 與 CC-296 清掃（v0.12.0；非 v1 RC） | process/DX | 2026-07-04 | — | P2 | design |
 | CC-447 | 🔵 active | onboarding 三 smoke：offline clean install + N-1 upgrade（v0.11.0）+ live dogfood（readiness review 後再排） | docs/ops | 2026-07-04 | — | P2 | — |
 | CC-472 | 🟢 someday | spike: antigravity（`agy` CLI）host 唯讀 probe——比照 CC-436/CC-448 階段 1 模式，實測 command 載入能力 + hook/plugin 機制 + 五個 capability enum 的 provider/confidence 判定，不落地 `hosts/antigravity/host.yaml`；排在 CC-445 通用 install/uninstall dispatcher 之後、與 CC-448 opencode 同批或緊接其後評估（N=3 驗證點） | arch/install | 2026-07-08 | — | P3 | spike |
+| CC-566 | 🔵 active | `guard-inject-memory.sh` 依 host 給獨立注入預算：實測確認 Claude 端有原生 `claudeMd` 全量 MEMORY.md 載入（無上限，session 一次）與 hook 每輪裁切注入雙重疊加；Codex 無對應原生全量安全網，不能單純調降全域常數（2026-08-23 token-cost 分析） | memory/DX | 2026-08-23 | — | P2 | hygiene |
 
 ---
 
@@ -2916,4 +2917,58 @@ reuse-scan 內部呼叫冪等，第二次是基於 mtime 的 no-op refresh），
 **Non-goals**: 不新增索引技術；不做 embeddings 實作（僅重評 resume 條件）。
 
 **Dependencies**: 前置 = [[CC-505]] Phase 2 shipped + 日曆時間蒐證（≥20 真實任務）。P3，未排入 milestone。模式沿用 auto-pack 先例：機制+telemetry 先行、evidence 後收緊。
+
+## CC-566 — `guard-inject-memory.sh` 依 host 給獨立注入預算，消除 Claude 端全量重複注入的浪費 🔵 active
+
+**Problem**: 2026-08-23 直接比對一次真實 Claude Code session 的注入內容與本 repo 的
+`MEMORY.md`（`wc -c` = 14,055 bytes，與 session 開場那個 `claudeMd`-labeled context
+block 大小吻合）已實測確認：Claude Code 自身的原生 project-memory 功能會在
+session 開場把整份 `MEMORY.md`（86 筆、完全不受 `MEMORY_MAX_INJECT_BYTES` 節制）
+當作 context 完整載入一次（≈5,500–6,500 tokens），與 `guard-inject-memory.sh`
+每輪重排、每輪重新注入的裁切版（600–1,300 tokens/輪，budget 3000
+bytes/20 筆）完全獨立、互不知情。`lib/memory.sh` 裡這兩個常數，是在假設
+hook 是使用者唯一記憶管道的前提下訂的，並未把 Claude 端已有一份無上限全量
+副本墊底這件事算進去。但同一組常數同時被 Codex 使用，而 Codex **沒有**
+對應的原生全量安全網——已用程式碼確認：`hosts/codex/lib/memory-contract.sh`
+的 `codex_memory_contract_append` 寫進 `AGENTS.md` 的 marker 區塊只是約
+20 行固定操作指令，不含 `MEMORY.md` 的實際內容——所以不能單純調降全域常數，
+那會犧牲 Codex 的召回完整度去換 Claude 的省錢。詳細分析與量測方法見
+[[memory-system.md]] 的 “Per-prompt token cost” 與 “Double-injection on
+Claude” 兩節。
+
+**Requirement**:
+1. 給 `guard-inject-memory.sh` 一個顯式、非環境變數的 per-host 預算入口——例如
+   由各 host 的 install-guards 腳本在 wiring 時，以 CLI 參數（而非 ambient env
+   var）傳入。`lib/memory.sh` 現有註解已明確排除 env override，理由是避免
+   [[env-var-ambient-leak-into-fixtures]] 那類問題重演，本票必須沿用同一原則。
+2. `hosts/claude/bin/install-guards.sh` 寫入的 hook command 帶一個較低的
+   Claude 專屬預算（初始提案：1500 bytes / 10 筆，實際數字待 Requirement 3
+   的量測結果決定，不預先鎖死）；`hosts/codex/bin/install.sh` 維持現行
+   3000 bytes / 20 筆，不變。
+3. 動手改動前先量測：用 `pmctl memory stats` 對照「原生全量清單」與「hook
+   命中清單」的重疊率，確認調降 Claude 預算後被裁掉的卡片，是否本來就已經被
+   原生全量涵蓋過——避免「兩邊剛好都裁到同一批冷門卡、實際上仍然漏掉某類
+   卡片」的誤判。
+4. `hosts/claude/lib/doctor.sh`、`hosts/codex/lib/doctor.sh` 與兩邊的
+   `uninstall.sh` 既有的 command-string 精確比對邏輯，要同步更新成能辨識帶
+   host 參數的 command——不能因為 command 多了參數就誤判成「未受管理的第三方
+   hook」而重複寫入、或誤判成「找不到已裝 hook」而無法解除安裝。
+5. regression fixtures 覆蓋：全新安裝取得 host 專屬預算、既有安裝升級後舊
+   command 被正確替換、doctor 在兩個 host 上都回報一致的 `memory-injection:
+   ok`、以及 Codex 預算與行為不受影響的對照組。
+
+**Done-when**: Claude 端每輪 hook 注入 tokens 可觀察地下降，同時 `pmctl memory
+stats` 回報的 Codex 端 `hit_coverage_pct`／`top5_share_pct` 不劣化；兩個 host 的
+`doctor.sh` 都回報 `memory-injection: ok`；`tests/shell/test-guards.sh` 與兩個
+host 各自的 install/uninstall 測試全過。
+
+**Non-goals**: 不嘗試偵測、關閉、或以任何方式介入 Claude Code 自己的原生
+`claudeMd` 全量載入——那是黑盒產品行為，不在本 repo 控制範圍內；不改變
+「canonical memory 是唯一可信來源、host 原生記憶永遠是 auxiliary」這條既有
+設計原則；不處理 Grok／OpenCode——兩者目前連 `UserPromptSubmit` hook 都未掛
+（`host.yaml` 宣告 `hook_surface: {}`），不受本票描述的雙重注入問題影響。
+
+**Dependencies**: 沿用 [[memory-system.md]] Per-prompt token cost 與 Native
+memory 表格的實測數據；避開 [[env-var-ambient-leak-into-fixtures]] 的教訓；
+與 [[CC-467]]（injection ranking 鑑別力）正交，不重疊。P2。
 
