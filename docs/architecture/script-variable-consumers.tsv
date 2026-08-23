@@ -58,6 +58,8 @@ CODEX_GATE_STUB_*	CODEX_GATE_STUB_MODE	tests/shell/test-pr-gate.sh	test
 CODEX_GATE_STUB_*	CODEX_GATE_STUB_MULTIPLE_VERDICTS	tests/shell/test-pr-gate.sh	test
 CODEX_GATE_STUB_*	CODEX_GATE_STUB_PROTOCOL_MUTATION	tests/lib/test-pr-gate-fixture.sh	test
 CODEX_GATE_STUB_*	CODEX_GATE_STUB_PROTOCOL_MUTATION	tests/shell/test-pr-gate.sh	test
+CODEX_GATE_STUB_*	CODEX_GATE_STUB_PROTOCOL_MUTATION_BY_REVIEWER	tests/lib/test-pr-gate-fixture.sh	test
+CODEX_GATE_STUB_*	CODEX_GATE_STUB_PROTOCOL_MUTATION_BY_REVIEWER	tests/shell/test-pr-gate.sh	test
 CODEX_GATE_STUB_*	CODEX_GATE_STUB_PROTOCOL_MUTATION_ONLY_FIRST	tests/shell/test-pr-gate.sh	test
 CODEX_GATE_STUB_*	CODEX_GATE_STUB_QA_ABORT_AFTER_CHECKPOINT	tests/shell/test-pr-gate.sh	test
 CODEX_GATE_STUB_*	CODEX_GATE_STUB_RESULT_VERSION	tests/shell/test-pr-gate.sh	test

@@ -23,3 +23,4 @@ agent:security-reviewer	manual-only	reason: security review is an explicit revie
 agent:spike	manual-only	reason: exploratory agent work requires maintainer direction
 skill:dispatch-brief	opt-in	reason: dispatch brief validation covers this invoked skill surface
 skill:pr-gate-review	opt-in	reason: gate review profile tests cover this invoked skill surface
+skill:systematic-debugging	manual-only	reason: structured debugging method is operator-applied and has no machine lifecycle

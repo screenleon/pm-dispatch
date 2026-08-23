@@ -2078,10 +2078,12 @@ printf -v SYNTHESIS_PROTOCOL_INSTRUCTIONS \
   "    scope_manifest_sha256=${SCOPE_MANIFEST_DIGEST}." \
   "  - selected_reviewers is exactly ${SYNTHESIS_SELECTED_JSON} in that order." \
   "  - not_reviewed_dimensions is exactly ${SYNTHESIS_SKIPPED_JSON} in that order." \
-  '  - coverage_matrix copies every reviewer coverage cell without changing reviewer,' \
-  '    surface, status, evidence_refs, or reason.' \
-  '  - reviewer_finding_inventory copies every stable ID, reviewer, severity,' \
-  '    hard_gate_class, origin, and verification_expectation.' \
+  '  - coverage_matrix, reviewer_finding_inventory, and test_gap_matrix are' \
+  '    restored by the gate shell from the embedded reviewer_result_v1 documents.' \
+  '    Emit the keys, but do not retype those arrays: typography or paraphrase in' \
+  '    a copied reason is not a synthesis judgment and is overwritten.' \
+  '  - reviewer_finding_inventory still lists every stable ID; the shell replaces' \
+  '    the copied fields from the reviewer documents.' \
   '  - findings_union preserves every original finding field and adds only' \
   '    root_cause_group_id=RCG-NNN plus disposition=pending. Never drop a lower' \
   '    severity, caution, uncertainty, disagreement input, or test expectation.' \
@@ -2794,6 +2796,9 @@ BRIEF_EOF
       "$OUTPUT_FILE" "$REVIEWERS" "$SCOPE_MANIFEST_DIGEST" \
       "$SCOPE_MANIFEST_PATH" true; then
     _seq_reason="invalid reviewer protocol"
+  elif ! gate_synthesis_restore_copy_fields \
+      "$OUTPUT_FILE" "$REVIEWERS" "$SKIPPED_WORDS"; then
+    _seq_reason="failed to restore synthesis copy fields"
   elif ! gate_verify_synthesis_protocol \
       "$OUTPUT_FILE" "$REVIEWERS" "$SKIPPED_WORDS" \
       "$SCOPE_MANIFEST_DIGEST" true; then
@@ -3091,6 +3096,7 @@ RBRIEF_EOF
       "invalid evidence reference contract"
       "transport failure"
       "invalid JSON document"
+      "reviewer protocol filter failed"
       "malformed reviewer result fence"
       "truncated reviewer result"
       "missing reviewer result"
@@ -3133,7 +3139,13 @@ RBRIEF_EOF
         _RETRY_NAMES=()
         _RETRY_OUTPUT_FILES=()
         _RETRY_POST_WAIT_HASHES=()
-        for r in "${PROTOCOL_INVALID_OUTPUTS[@]}"; do
+        for _retry_i in "${!PROTOCOL_INVALID_OUTPUTS[@]}"; do
+          r="${PROTOCOL_INVALID_OUTPUTS[$_retry_i]}"
+          _retry_reason="${PROTOCOL_INVALID_REASONS[$_retry_i]:-${GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR:-schema failure}}"
+          _retry_reason_line="${_retry_reason//$'\n'/ }"
+          _retry_reason_line="${_retry_reason_line//$'\r'/ }"
+          [[ "${#_retry_reason_line}" -le 800 ]] \
+            || _retry_reason_line="${_retry_reason_line:0:800}~"
           # Find this reviewer's already-failed output file to extract its
           # specific bad citation(s); best-effort only -- an extraction
           # failure still retries, just with the generic reminder alone.
@@ -3176,14 +3188,20 @@ goal: You are acting as the ${r} reviewer. This is a corrective retry of a
   changed files, and write your structured findings to ${_RETRY_OUTPUT}.
 
 correction: |
-  Your previous submission for this diff failed the mandatory reviewer
-  protocol (${GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR:-schema failure}). Re-emit
-  the complete result from the same immutable subject. In particular, every
-  coverage evidence_refs[], test_gaps[].existing_evidence[], and finding
-  source must cite a path that is EXACTLY one of the declared scope-manifest
-  reference-index paths below (not merely a real file on disk -- an in-scope
-  or adjacent-but-undeclared file is still a protocol failure), and any line
-  number must not exceed that path's recorded line count.
+  Your previous submission for this diff failed this exact protocol check:
+
+    ${_retry_reason_line}
+
+  Re-emit the complete result from the same immutable subject. If the
+  diagnostic names a test_gaps row, fix that row's named field (contract must
+  be a non-empty string; existing_evidence must be a non-empty array of
+  in-index refs; a status=gap finding needs a matching status=gap test_gaps
+  row with the same affected_behavior). Every coverage evidence_refs[],
+  test_gaps[].existing_evidence[], and finding source must cite a path that
+  is EXACTLY one of the declared scope-manifest reference-index paths below
+  (not merely a real file on disk -- an in-scope or adjacent-but-undeclared
+  file is still a protocol failure), and any line number must not exceed that
+  path's recorded line count.
 ${_retry_bad_citations:+  Specifically rejected citation(s) from your previous submission:
 $_retry_bad_citations
 }
@@ -3599,7 +3617,7 @@ SBRIEF_P2
       _synthesis_reason_line="${_synthesis_reason_line//$'\r'/ }"
       [[ "${#_synthesis_reason_line}" -le 800 ]] \
         || _synthesis_reason_line="${_synthesis_reason_line:0:800}~"
-      printf '\ncorrection_retry: |\n  The first synthesis attempt was REJECTED for exactly this reason:\n\n    %s\n\n  Fix that specific defect. Rebuild the complete staging result from the same\n  embedded, immutable reviewer_result_v1 documents -- do not omit any\n  test_gap_matrix row, and do not change any other section to compensate.\n' \
+      printf '\ncorrection_retry: |\n  The first synthesis attempt was REJECTED for exactly this reason:\n\n    %s\n\n  Fix that specific defect. Copied coverage/inventory/test-gap fields are\n  restored by the shell from the embedded reviewer_result_v1 documents; do not\n  retype them. Rebuild grouping, disagreement, confirmation, and seed fields\n  from those same documents -- do not change any other section to compensate.\n' \
         "$_synthesis_reason_line" >> "$SYNTHESIS_BRIEF"
     fi
     say '  [synthesis attempt %d] running PM consolidation...\n' "$_synthesis_attempt"
@@ -3659,7 +3677,10 @@ SBRIEF_P2
       gate_reviewer_protocol_verify \
         "$OUTPUT_FILE" "$REVIEWERS" "$SCOPE_MANIFEST_DIGEST" \
         "$SCOPE_MANIFEST_PATH" true || exit 1
-      if gate_verify_synthesis_protocol \
+      if ! gate_synthesis_restore_copy_fields \
+          "$OUTPUT_FILE" "$REVIEWERS" "$SKIPPED_WORDS"; then
+        _synthesis_reason="failed to restore synthesis copy fields"
+      elif gate_verify_synthesis_protocol \
           "$OUTPUT_FILE" "$REVIEWERS" "$SKIPPED_WORDS" \
           "$SCOPE_MANIFEST_DIGEST" true; then
         _SYNTHESIS_COMPLETE=true

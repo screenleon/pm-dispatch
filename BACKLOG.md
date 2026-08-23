@@ -45,7 +45,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-468 | ⏸ deferred | dispatch brief 帶 memory 約束與信任邊界；完成 CC-465→CC-467 後，僅在 usage evidence 證明有價值時啟動 | ops/memory | 2026-07-07 | — | P2 | retrieval |
 | CC-011 | 🟢 someday | sync-memory.sh + install 選項：symlink memory 到雲端資料夾實現跨裝置共用 | ux/memory | 2026-05-14 | — | — | — |
 | CC-012 | 🟢 someday | SessionStart hook：session 啟動時 pull 最新 memory（git/rsync）確保跨裝置同步 | ux/memory | 2026-05-14 | — | — | — |
-| CC-015 | 🟢 someday | `systematic-debugging` skill：結構化偵錯工作流；作為升級規則(CC-493)定案後的首個試點 skill，落地於 `skills/systematic-debugging/SKILL.md` 而非 slash command | ux | 2026-05-14 | — | P3 | — |
+| CC-015 | 🔵 active | `systematic-debugging` skill：結構化偵錯工作流；作為升級規則(CC-493)定案後的首個試點 skill，落地於 `skills/systematic-debugging/SKILL.md` 而非 slash command | ux | 2026-05-14 | — | P3 | — |
 | CC-018 | 🟢 someday | Codex quota 自動追蹤 + rate-limit 路徑統一（吸收 CC-269）：寫到 `~/.local/share/pm-dispatch/state/rate-limits.json`；解析 API response headers；token-usage.sh 加 Codex pool 顯示 | ux/token | 2026-05-14 | — | P3 | — |
 | CC-023 | ⏸ deferred | `coupling-reviewer`：PR gate 加入語言感知耦合分析（dependency-cruiser/gocyclo/coca） | ops/gate | 2026-05-14 | — | — | — |
 | CC-026 | 🟢 someday | `/skill-distill`：偵測重複工作流，產出草稿 skill .md | ux/memory | 2026-05-15 | — | P3 | — |
@@ -629,6 +629,7 @@ embeddings/semantic backend——本票是索引層 tokenizer 修正，不是其
 
 ## CC-015 — `systematic-debugging` skill
 
+**Status note (2026-08-22)**: The skill is landing in this change.
 **Status note (2026-07-15 CC-489 三方 multi-model synthesis）**: 重新定位為 harness/skill 分類下第一個高命中率試點 skill；不再落地為 slash command，改落地於 `skills/systematic-debugging/SKILL.md`（progressive disclosure，thin pointer 風格，比照現有 `skills/dispatch-brief`、`skills/pr-gate-review`）。
 **Problem**: debug 工作流目前無標準化流程，每次偵錯方式不一致，容易遺漏根本原因分析。
 **Why**: 結構化偵錯步驟（reproduce → isolate → hypothesize → verify → fix → regression test）有助於複雜 bug 分析；同時是驗證「skill = 可替換工作方法、非 workflow engine」定位的第一個實例。
