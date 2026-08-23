@@ -82,6 +82,14 @@ _ti_hook_cmd_path() {
   fi
 }
 
+# The full command install-guards.sh wires for the memory-injection hook on
+# Claude (CC-566: `--host claude` selects the smaller Claude-only budget).
+# Single source for the three fixtures that assert against this exact string,
+# so a future path or suffix change only needs updating here.
+_ti_claude_inject_hook_cmd() {
+  printf '%s --host claude' "$(_ti_hook_cmd_path "$REPO_ROOT/runtime/hooks/guard-inject-memory.sh")"
+}
+
 # CC-102 introduced install-guards.sh profile auto-detection via
 # `command -v codex`. Tests in this file written before that change
 # expect "full" profile (all six hooks wired). On CI runners codex is
@@ -2283,6 +2291,18 @@ JSON
   assert_file_contains "$name" "$home/.claude/settings.json" "hosts/claude/hooks/log-usage.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "guard-session-summary.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "guard-inject-memory.sh" || return
+  # CC-566 (gate finding qa-tester-F001): the bare pre-existing memory hook
+  # command seeded above must be rewritten to the exact `--host claude` form,
+  # not left as the stale bare command or duplicated alongside it.
+  local _cc566_inject_expect _cc566_mem_hooks
+  _cc566_inject_expect="$(_ti_claude_inject_hook_cmd)"
+  _cc566_mem_hooks="$(jq -c '[.hooks.UserPromptSubmit[]? | (.hooks // [])[]? | select((.command | type) == "string" and (.command | test("guard-inject-memory\\.sh")))]' "$home/.claude/settings.json" 2>/dev/null)"
+  if ! jq -e --arg inject "$_cc566_inject_expect" \
+    '(length == 1) and (.[0].command == $inject)' \
+    <<<"$_cc566_mem_hooks" >/dev/null; then
+    fail "$name" "expected exactly one memory hook rewritten to '$_cc566_inject_expect', got: $_cc566_mem_hooks"
+    return
+  fi
   assert_file_contains "$name" "$home/.claude/settings.json" "inject-context.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hosts/claude/hooks/save-rate-limits.sh" || return
   pass "$name"
@@ -2471,8 +2491,11 @@ test_userpromptsubmit_install_wires_hook() {
   should_run "$name" || return 0
   local home="$tmp_root/$name"
   # install-guards writes the native path form (C:/... on Windows); match it.
+  # The wired command also carries an explicit `--host claude` (CC-566: gives
+  # guard-inject-memory.sh a smaller per-turn budget on Claude, which already
+  # gets an unbounded native full-file load once per session).
   local inject ctx_inject
-  inject="$(_ti_hook_cmd_path "$REPO_ROOT/runtime/hooks/guard-inject-memory.sh")"
+  inject="$(_ti_claude_inject_hook_cmd)"
   ctx_inject="$(_ti_hook_cmd_path "$REPO_ROOT/hosts/claude/hooks/inject-context.sh")"
   mkdir -p "$home/.claude"
   printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
@@ -2531,7 +2554,8 @@ test_userpromptsubmit_install_idempotent() {
   should_run "$name" || return 0
   local home="$tmp_root/$name"
   local inject ctx_inject
-  inject="$(_ti_hook_cmd_path "$REPO_ROOT/runtime/hooks/guard-inject-memory.sh")"
+  # CC-566: wired command carries an explicit `--host claude` budget selector.
+  inject="$(_ti_claude_inject_hook_cmd)"
   ctx_inject="$(_ti_hook_cmd_path "$REPO_ROOT/hosts/claude/hooks/inject-context.sh")"
   local count
   mkdir -p "$home/.claude"

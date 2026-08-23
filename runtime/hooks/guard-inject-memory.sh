@@ -11,10 +11,40 @@ if ! declare -F retrieval_extract_terms >/dev/null 2>&1; then
   . "$(dirname "$0")/../lib/retrieval-terms.sh"
 fi
 
+# Optional `--host <name>` selects a per-host budget override (see
+# MEMORY_CLAUDE_MAX_INJECT_* in lib/memory.sh for why Claude gets a smaller
+# one). Wired explicitly by each host's install-guards script as a literal
+# CLI argument — never read from an env var, so a caller's ambient
+# environment cannot silently change what a fixture or another host observes.
+# install-guards.sh only ever wires the `--host <name>` (space) form, so that
+# is the only form parsed here; it must stay in sync with the
+# `without_host_arg` stripping regex install-guards.sh/doctor.sh apply when
+# comparing wired commands. `pmctl_host_is_valid` (lib/identifier-policy.sh,
+# already sourced transitively via lib/pmctl-memory.sh -> lib/host-names.sh)
+# is the same canonical claude|codex|opencode|grok|generic validator those
+# call sites are built from — an unrecognized value fails closed here too,
+# instead of silently falling through to the shared default budget.
+HOOK_HOST=""
+if [[ "${1:-}" == "--host" ]]; then
+  HOOK_HOST="${2:-}"
+  # This hook is a best-effort UserPromptSubmit adapter: a malformed wiring
+  # argument must degrade to the shared default budget, not block the
+  # prompt, so this fails open (warn + reset) rather than exiting nonzero.
+  if ! pmctl_host_is_valid "$HOOK_HOST"; then
+    printf 'guard-inject-memory: invalid --host value %s; using shared default budget\n' "$HOOK_HOST" >&2
+    HOOK_HOST=""
+  fi
+fi
+
 # Injection budget caps come from lib/memory.sh so `pmctl memory stats` reports
-# the same numbers this hook enforces.
+# the same numbers this hook enforces by default (the Claude override below is
+# a hook-only narrowing, not reflected in that report — see CC-566).
 MAX_INJECT_ENTRIES="$MEMORY_MAX_INJECT_ENTRIES"
 MAX_INJECT_BYTES="$MEMORY_MAX_INJECT_BYTES"
+if [[ "$HOOK_HOST" == "claude" ]]; then
+  MAX_INJECT_ENTRIES="$MEMORY_CLAUDE_MAX_INJECT_ENTRIES"
+  MAX_INJECT_BYTES="$MEMORY_CLAUDE_MAX_INJECT_BYTES"
+fi
 
 # Usage-based ranking knobs (integer-only; see lib/memory.sh).
 # Decay threshold: global keyword-hit events before W-TinyLFU halving.

@@ -72,6 +72,21 @@ MEMORY_MAX_INJECT_ENTRIES=20
 # shellcheck disable=SC2034  # read by guard-inject-memory.sh and pmctl memory stats after sourcing this lib
 MEMORY_MAX_INJECT_BYTES=3000
 
+# Claude-only override: Claude Code's own native project-memory feature loads
+# the entirety of MEMORY.md once per session already (unbounded, outside this
+# repo's control — see docs/memory-system.md "Double-injection on Claude" /
+# [[CC-566]]), so the per-turn hook budget can run smaller there without
+# losing recall. Codex has no equivalent native full-load safety net, so it
+# keeps the shared MEMORY_MAX_INJECT_* constants above. guard-inject-memory.sh
+# applies these only when invoked with the explicit `--host claude` argument
+# that install-guards.sh wires into settings.json — never via an env var, for
+# the same ambient-leak reason the constants above are plain (see
+# [[env-var-ambient-leak-into-fixtures]]).
+# shellcheck disable=SC2034  # read by guard-inject-memory.sh after sourcing this lib
+MEMORY_CLAUDE_MAX_INJECT_ENTRIES=10
+# shellcheck disable=SC2034  # read by guard-inject-memory.sh after sourcing this lib
+MEMORY_CLAUDE_MAX_INJECT_BYTES=1500
+
 # Assigns the UTF-8 byte length of $2 into the caller-named variable $1.
 # bash's ${#s} counts characters under a UTF-8 locale, not bytes; under the C
 # locale each byte is one "character", so switching LC_ALL for the duration of

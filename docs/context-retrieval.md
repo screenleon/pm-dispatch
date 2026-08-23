@@ -142,6 +142,15 @@ Set `PM_DISPATCH_DISABLE_PROMPT_CONTEXT=1` to disable the scan entirely. Use
 this whenever the live context DB must not be touched — for example while the
 full test suite is running against the pm-dispatch repo itself.
 
+**Token cost**: capped at 5 deduped hits (`_ctx_rank_hits ... 5`), each a
+`ref:` + one-line `why_relevant:`, so a hit injection runs roughly 100–400
+tokens — an order smaller than the memory-index hook's per-turn budget (see
+[memory-system.md](memory-system.md#per-prompt-token-cost)). Zero hits stay
+fully silent (no block at all, not even an empty one), so most turns on a
+small or unindexed prompt (`< 12` chars) cost nothing here. Unlike the memory
+hook, this one also has a real env-var off switch and never re-ranks against
+usage history, so its per-turn cost is deterministic from the prompt alone.
+
 The same optional repo-context refresh is used at pmctl-owned workflow
 boundaries: `pmctl pm prepare` reports it as `repo_context`, and `pmctl gate
 run` refreshes the effective `--cd` repository before dispatch. Missing

@@ -181,7 +181,7 @@ cat > "$MEM_HOOK" <<'EOF'
 #!/usr/bin/env bash
 set -uo pipefail
 target="${TEST_GUARDS_MEMORY_HOOK_TARGET:-$MEM_HOOK_REAL}"
-timeout --kill-after=5s "${TEST_GUARDS_MEMORY_HOOK_TIMEOUT:-30}s" "$target"
+timeout --kill-after=5s "${TEST_GUARDS_MEMORY_HOOK_TIMEOUT:-30}s" "$target" "$@"
 rc=$?
 if [[ "$rc" -eq 124 ]]; then
   msg="TIMEOUT guard-inject-memory case=${TEST_GUARDS_CURRENT_CASE:-unknown} timeout=${TEST_GUARDS_MEMORY_HOOK_TIMEOUT:-30}s"
@@ -1887,6 +1887,59 @@ inject_hook_threshold_below_emits_no_directive() {
   rm -rf "$dir"
 }
 
+inject_hook_host_claude_uses_smaller_budget() {
+  # Verifies CC-566: `--host claude` selects the smaller Claude-only entry
+  # budget (MEMORY_CLAUDE_MAX_INJECT_ENTRIES=10 vs. the shared default 20).
+  # Claude already gets an unbounded native full-file MEMORY.md load once per
+  # session (see docs/memory-system.md "Double-injection on Claude"), so its
+  # hook budget can run smaller without losing recall; Codex and other hosts
+  # invoke the hook with no --host argument and keep the shared default.
+  # Steps:
+  #   1. Create a project MEMORY.md with 15 plain index lines (under the
+  #      shared default budget of 20, over the Claude budget of 10)
+  #   2. Run the hook with no --host arg: assert all 15 present, no omission
+  #   3. Run the hook with --host claude: assert only the first 10 present
+  #      (line 011 absent) and an omission notice of exactly 5
+  local name="inject-hook/host-claude-smaller-budget" dir cwd payload output status i
+  should_run "$name" || return 0
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  {
+    printf '# title\n'
+    for i in $(seq 1 15); do
+      printf -- '- memory index line %03d\n' "$i"
+    done
+  } > "$dir/memory15.md"
+  write_inject_memory "$dir" "$cwd" "$(cat "$dir/memory15.md")"
+  payload="{\"cwd\":\"$cwd\"}"
+
+  output=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
+  status=$?
+  if [[ "$status" != "0" || "$output" != *"memory index line 015"* || "$output" == *"entries omitted"* ]]; then
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — no-host leg: exit=%s output_tail=%q\n' "$name" "$status" "${output: -160}"
+    rm -rf "$dir"
+    return
+  fi
+
+  output=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" --host claude 2>/dev/null)
+  status=$?
+  if [[ "$status" == "0" \
+      && "$output" == *"memory index line 010"* \
+      && "$output" != *"memory index line 011"* \
+      && "$output" == *"5 entries omitted"* ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — --host claude leg: exit=%s output_tail=%q\n' "$name" "$status" "${output: -160}"
+  fi
+  rm -rf "$dir"
+}
+
 inject_hook_threshold_at_boundary_emits_directive() {
   # Verifies budget boundary: exactly 20 entries → all injected, no omission notice;
   # exactly 21 entries → 20 injected + omission notice of 1.
@@ -3438,6 +3491,7 @@ inject_hook_empty_stdin
 inject_hook_missing_cwd
 inject_hook_non_string_cwd
 inject_hook_threshold_below_emits_no_directive
+inject_hook_host_claude_uses_smaller_budget
 inject_hook_threshold_at_boundary_emits_directive
 inject_hook_threshold_shows_directive
 inject_hook_always_priority_bypasses_budget
