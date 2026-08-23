@@ -782,12 +782,26 @@ _mem_doctor_emit_json() {
   printf '%s\n' "$out"
 }
 
+# Parse one `hit_rows` record (`count\tescaped_rel\tlast`, the sort-stable
+# text form both hit-row consumers below share) into caller-named variables,
+# unescaping the relpath back to its real form. Single shared parse point so
+# a third consumer doesn't repeat the split+unescape sequence a third time.
+#   _mem_stats_parse_hit_row "$row" count_var rel_var last_var
+_mem_stats_parse_hit_row() {
+  local __row="$1" __count_var="$2" __rel_var="$3" __last_var="$4"
+  local __count __rel __last
+  IFS=$'\t' read -r __count __rel __last <<<"$__row"
+  _memory_usage_tsv_unescape "$__rel_var" "$__rel"
+  printf -v "$__count_var" '%s' "$__count"
+  printf -v "$__last_var" '%s' "$__last"
+}
+
 # Build the card_hits array of {card, access_count, last_access_day} objects
 # from the caller's selected rows (already ordered most-hit first).
 _mem_stats_hit_rows_json() {
   local first=1 out="[" row count rel last
   for row in ${hit_listed[@]+"${hit_listed[@]}"}; do
-    IFS=$'\t' read -r count rel last <<<"$row"
+    _mem_stats_parse_hit_row "$row" count rel last
     [[ "$first" -eq 1 ]] || out+=","
     out+="{\"card\":\"$(_mem_json_esc "$rel")\",\"access_count\":$count"
     out+=",\"last_access_day\":${last:-0}}"
@@ -1130,16 +1144,20 @@ pmctl_memory_stats() {
     # `set -u` before bash 4.4, and this file must run on the 4.2 floor.
     # case_memory_stats_space_bearing_card_path pins the behavior.
     for rel in ${card_rels[@]+"${card_rels[@]}"}; do
-      # The sidecar is tab-delimited and its writer refuses a relpath holding a
-      # tab or newline, so such a card can never accrue usage. Reporting it as
-      # never-hit would assert an absence of use this telemetry never measured;
-      # report it as unmeasurable instead.
-      if [[ -n "$rel" && ( "$rel" == *$'\t'* || "$rel" == *$'\n'* ) ]]; then
-        unmeasurable+=("$rel")
-        continue
-      fi
       a=0
       [[ -n "$rel" ]] && a="${MEMORY_USAGE_ACC["$rel"]:-0}"
+      # `unmeasurable` (declared above, reported below) is the honest-reporting
+      # fallback CC-559 Requirement 3 requires: a card whose relpath the
+      # sidecar cannot represent must never be reported as never-hit, since
+      # "never hit" is an assertion about usage this telemetry never measured.
+      # The usage sidecar now losslessly escapes every byte class (tab,
+      # newline, backslash), so no rel reaching this loop can be
+      # unrepresentable any more — sniffing for tab/newline here would
+      # misclassify a genuinely never-hit tab/newline card as unmeasurable
+      # instead of never_hit. No condition currently populates `unmeasurable`;
+      # it stays declared and reported as an empty array so a future
+      # genuinely-unrepresentable input class has a landing spot without
+      # reintroducing a stale byte-class special case.
       if (( a > 0 )); then
         cards_with_hits=$((cards_with_hits + 1))
         # Bounding each counter to 18 digits does not bound their SUM: ten such
@@ -1155,7 +1173,9 @@ pmctl_memory_stats() {
         access_counts+=("$a")
         # Requirement 1 asks for each card's hit count, not just aggregates:
         # a maintainer must be able to see WHICH card is repeatedly selected.
-        hit_rows+=("$(printf '%d\t%s\t%s' "$a" "$rel" "${MEMORY_USAGE_LAST["$rel"]:-0}")")
+        local escaped_rel
+        _memory_usage_tsv_escape escaped_rel "$rel"
+        hit_rows+=("$(printf '%d\t%s\t%s' "$a" "$escaped_rel" "${MEMORY_USAGE_LAST["$rel"]:-0}")")
         # Bucket by memory_age_bucket's own weight rather than re-deriving its
         # day boundaries here, so the report cannot drift from the recency
         # weighting that frecency ranking actually applies.
@@ -1310,7 +1330,7 @@ _mem_stats_emit_human() {
     printf 'card_hits (most hit first):\n'
     local row count rel last
     for row in ${hit_listed[@]+"${hit_listed[@]}"}; do
-      IFS=$'\t' read -r count rel last <<<"$row"
+      _mem_stats_parse_hit_row "$row" count rel last
       printf '  - %-6s %s (last hit day %s)\n' \
         "$count" "$(_mem_human_safe "$rel")" "${last:-0}"
     done

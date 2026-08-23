@@ -75,7 +75,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-216 | ⏸ deferred | MCP server（DEFERRED no milestone，2026-06-18 user 拍板；待 executor 抽象 + retrieval/memory 基底穩定後再評估） | arch/portability | 2026-05-21 | — | — | design |
 | CC-227 | ⏸ deferred | **[refactor: extract yaml-frontmatter lib + shared validation helpers]** 把 `check_frontmatter()` 與 shared helpers（dq-escape/adjacent-quote/empty-entry，原 CC-226 範圍）一起搬到 `tools/lint/lib/yaml-frontmatter.sh`；`lint-frontmatter.sh` 成薄 CLI 包裝；`doctor.sh` 可 source lib 取代 fork subprocess。CC-226 已合併入本票。 | arch/reuse | 2026-05-22 | pr:#119 | P3 | oss |
 | CC-236 | 🟢 someday | **[pmctl report — away-from-keyboard state roll-up]** A `pmctl report` rolling up state since last invocation (open tasks, blockers, last gate verdict, recent runs). Deprioritized 2026-05-22: the maintainer does not run agents unattended, so a "morning report" time-gap framing has low current need; on-demand status is already part of the `pmctl` surface (CC-215). Revisit if the workflow ever includes overnight / away dispatch. | ux | 2026-05-22 | — | — | design |
-| CC-244 | 🟢 someday | **[Typed artifact pipeline — spike → brief → handover schema]** Define `spike_v1` schema mirroring existing `dispatch_handover_v1`: frontmatter (`spike_id`, `status`, `decisions_resolved`, `branch_base`, `ticket_ids_consumed`, `project_tooling`) + named sections (`scope`, `findings`, `constraints`, `decisions`, `phase3_handover`). Add `tools/spikes/spike-validate.sh` (mirror `handover-validate.sh`) + `tools/spikes/gen-brief-from-spike.sh` (mechanical brief extraction). Reduces main-thread courier cost, makes spike→brief authoring mechanical, gives invariant checkpoints (`decisions_resolved=true` ⇒ no re-asking Q1/Q2). Defer until 3+ spike docs exist and the brief-extraction pattern repeats; only one spike (CC-060) today, so schema would be premature overhead. CC-243 field names chosen to align with this future schema (no re-wash needed at upgrade time). | arch | 2026-05-23 | — | — | design |
+| CC-244 | ✅ closed 2026-08-23 | **[Typed artifact pipeline — spike → brief → handover schema]** Spike concluded **Reject**: sampled spike docs don't fit the proposed `spike_v1` five-part schema, the courier-cost premise is unverified, and the candidate tooling (`spike-validate.sh`/`gen-brief-from-spike.sh`) is premature. See `docs/spikes/CC-244.md`. | arch | 2026-05-23 | — | — | spike |
 | CC-253 | 🟢 someday | **[CC-209 Phase 2: codegraph benchmark on representative target codebase]** Phase 1 (PR #151) verdict AMBER — codegraph install ✓ license MIT ✓ API ✓, but pm-dispatch (bash/markdown) isn't a valid test target (`62 unsupported language`). Phase 2 re-scope: user picks a TS/JS/Python/Go target codebase at brief time, index it via codegraph, run 3 representative queries against rg/git baseline, measure token + latency delta. Output: append `## Phase 2` section to `docs/spikes/cc209-codegraph-phase1.md` OR new sibling doc. Verdict per original CC-209 ticket: adopt / defer / reject for context-pack source (CC-232 / CC-237). | ops/token | 2026-05-24 | pr:TBD | P3 | spike |
 | CC-259 | 🟢 someday | **[yaml.sh lib extraction]** Extract `_yaml_get` bash/awk helper and `case_yaml_parse` structural validator from `tests/shell/test-core-schemas.sh` into `tests/lib/yaml.sh` for reuse across test scripts; add independent test file `tests/shell/test-yaml-lib.sh` and wire into `run-all-tests.sh` + CI. Currently only used in `test-core-schemas.sh`; extraction deferred from CC-229 M1 PR to reduce gate surface. Trigger: second consumer in a new test script. | ops/test | 2026-05-25 | pr:TBD | P3 | — |
 | CC-270 | ⏸ deferred | **[test: concurrent pmctl adapter generate guard]** Two simultaneous `pmctl adapter generate <same-name>` runs can race: the precheck+mkdir+trap sequence is not atomic. Blast radius: one run may delete another's partial output; reproducible by deleting `adapters/<name>` and rerunning. Deferred — single-developer workflow makes this low-probability; fix with atomic mkdir using `mkdir` exit-code guard when needed. | test/ops | 2026-05-28 | — | P3 | — |
@@ -952,11 +952,13 @@ format differences only.
 
 **Cross-link**: CC-230 (state store), CC-211 (epic); AI Night Shift mapping — docs/architecture/v0.3.0-synthesis.md §5.3.
 
-## CC-244 — Typed artifact pipeline: spike → brief → handover schema（someday）
+## CC-244 — Typed artifact pipeline: spike → brief → handover schema（spike）✅ 2026-08-23
 
-**Premise**: spike documents today (we have one: `docs/spikes/CC-060.md`) are free-form prose. The brief-authoring step extracts decisions + handover fields from prose, which (a) costs PM tokens re-reading the spike, (b) loses invariant checkpoints (no `decisions_resolved=true` flag, so the next agent might re-ask resolved questions), (c) makes main thread inline the whole spike when courier-ing between agents.
+**Problem**: spike documents today are free-form prose (`docs/spikes/README.md`'s `Problem`/`Angles`/`Findings`/`Recommendation` skeleton, not a machine-parseable schema). The brief-authoring step extracts decisions + handover fields from that prose, which (a) costs PM tokens re-reading the spike, (b) loses invariant checkpoints (no `decisions_resolved=true` flag, so the next agent might re-ask resolved questions), (c) makes main thread inline the whole spike when courier-ing between agents. Whether a typed `spike_v1` schema (frontmatter + named sections, mirroring `dispatch_handover_v1`) is worth the authoring/validator overhead — versus a lighter mechanical extraction that doesn't require a new schema — is not yet decided.
 
-**Design sketch**: define `spike_v1` schema mirroring the existing `dispatch_handover_v1`:
+**Why**: originally deferred to someday because only one spike doc existed (CC-060) and schema leverage scales with N. As of 2026-08-23, `docs/spikes/` holds 28 result files, all sharing the same de-facto structure (per `docs/spikes/README.md`) — the trigger condition ("3+ spike docs exist and the brief-extraction pattern repeats") is met. Before writing an implementation brief, the spike must confirm the schema shape actually reduces courier cost across real spikes, not just in the single-example design sketch below.
+
+**Design sketch (input to the spike, not a committed decision)**: define `spike_v1` schema mirroring the existing `dispatch_handover_v1`:
 
 ```yaml
 ---
@@ -967,25 +969,27 @@ branch_base: origin/main@f905db7
 ticket_ids_consumed: [CC-242]
 project_tooling: {makefile: false, backlog_render_target: false}
 ---
-## scope
-## findings
-## constraints
-## decisions
-## phase3_handover     # bridges directly to dispatch_handover_v1
+### scope
+### findings
+### constraints
+### decisions
+### phase3_handover     # bridges directly to dispatch_handover_v1
 ```
 
-Add `tools/spikes/spike-validate.sh` (mirror `handover-validate.sh`) + `tools/spikes/gen-brief-from-spike.sh` (mechanical extraction).
+Candidate follow-on tooling: `tools/spikes/spike-validate.sh` (mirror `handover-validate.sh`) + `tools/spikes/gen-brief-from-spike.sh` (mechanical extraction).
 
-**Why deferred to someday, not active**: only one spike exists today (CC-060). Schema's leverage scales with N — for N=1 it's pure overhead. Defer until 3+ spike docs accumulate and the brief-extraction pattern repeats verbatim, indicating real automation value. CC-243's schema-key naming was chosen now so that upgrade to CC-244 doesn't re-wash field names.
+**External reference (2026-07-07 openyida 跨專案分析)**: openyida 的 "generate-page" 產出物 manifest 模式（生成物本身攜帶 manifest 描述其結構，供後續 AI 編輯安全定位）是本票 `spike_v1`/`dispatch_handover_v1` schema 化構想的外部佐證之一。
 
-**External reference (2026-07-07 openyida 跨專案分析)**: openyida 的 "generate-page" 產出物 manifest 模式（生成物本身攜帶 manifest 描述其結構，供後續 AI 編輯安全定位）是本票 `spike_v1`/`dispatch_handover_v1` schema 化構想的外部佐證之一——不改變本票的觸發條件（仍待 3+ spike 文件與 brief-extraction pattern 重複出現）。
+**Requirement**:
+- Investigation scope:
+  1. Retrofit-fit check — sample several of the 28 existing `docs/spikes/*.md` files against the design-sketch schema: does their actual content map cleanly onto `scope`/`findings`/`constraints`/`decisions`/`phase3_handover`, or does real spike content resist that shape?
+  2. Courier-cost claim — is main-thread token/re-read cost from prose spikes actually measurable/significant, or was the original premise (b)/(c) more assumption than measured?
+  3. Frontmatter vs. sidecar — should structured fields live as spike-file YAML frontmatter (like this sketch) or a separate JSON sidecar per spike, and how does `decisions_resolved=true` avoid re-asking resolved questions in practice (what reads that field, and when)?
+  4. Validator/tooling scope — is a dedicated `spike-validate.sh` + `gen-brief-from-spike.sh` pair justified now, or does the same leverage come from a lighter convention (e.g. a required frontmatter block checked by existing lint) without new scripts?
+- Done-when: the spike states an adopt/defer/reject verdict on introducing `spike_v1`, and if adopt, commits the schema shape (frontmatter vs sidecar), the field list, and which of the two candidate tools (if any) are in scope for the follow-up implementation ticket.
+- Result log: docs/spikes/CC-244.md — **Reject**. 0/6+ sampled spike docs (not an exhaustive review of all 28) map onto the sketch's five-part schema (phased spikes actively resist it; the shape already in de-facto use is `docs/spikes/README.md`'s own six-part skeleton); the courier-cost premise (b)/(c) is unverified — no consumption script exists, lazy-read discipline already predates this ticket, no incident of re-asked resolved questions found; `decisions_resolved` has zero producer/consumer anywhere in the repo; `spike-validate.sh`/`gen-brief-from-spike.sh` are premature (no `spike_v1` corpus to validate/extract from, and `handover-validate.sh`'s complexity precedent doesn't transfer — no shell-injection surface). No follow-up ticket opened; re-open only on a measured courier-cost incident.
 
-**Trigger conditions to promote from someday → active**:
-- 3+ spike documents under `docs/spikes/` with similar phase-1/phase-2/phase-3 structure
-- Two consecutive brief-authoring rounds where PM essentially copy-pastes the same fields out of spike prose
-- Or: an automation use case (e.g. CI-side spike-stage tracking) that requires structured spike state
-
-**See**: CC-243 (snapshot fields already aligned).
+**See**: `docs/spikes/CC-244.md` (Reject verdict), CC-243 (snapshot fields already aligned).
 
 ## CC-253 — CC-209 Phase 2: codegraph benchmark on representative target codebase（active）
 

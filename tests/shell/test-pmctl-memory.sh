@@ -2121,8 +2121,8 @@ case_memory_stats_invalid_config_selection_fails_closed() {
   pass "$name"
 }
 
-# Behavior: a tab in an indexed card path still yields parseable, value-preserving JSON.
-# Steps: index a card whose filename contains a tab; run stats --json; assert jq parses it and the name round-trips exactly.
+# Behavior: a tab in an indexed card path remains valid JSON and can accrue usage.
+# Steps: index and record a card whose filename contains a tab; run stats --json; assert jq parses it and the name round-trips exactly.
 case_memory_stats_json_escapes_control_characters() {
   local name="pmctl memory stats: a tab in an indexed path stays valid, value-preserving JSON"
   should_run "$name" || return 0
@@ -2136,6 +2136,11 @@ case_memory_stats_json_escapes_control_characters() {
   write_compliant_card "$mdir/$tabbed" "tabbed"
   printf -- '- [Tabbed](%s) — hook\n' "$tabbed" > "$mdir/MEMORY.md"
 
+  local sidecar today
+  sidecar="$(memory_usage_sidecar_path "$mdir")"
+  today=$(( $(date +%s) / 86400 ))
+  memory_usage_commit "$sidecar" 100000 "$today" "$tabbed" >/dev/null
+
   local out="$tmp_root/st-ctl.json" status=0
   run_stats_json "$out" "$cfg" "$repo" || status=$?
   if ! assert_exit "$name" "$status" 0; then return 0; fi
@@ -2146,9 +2151,9 @@ case_memory_stats_json_escapes_control_characters() {
     fi
     # Escaping must not corrupt the value — it round-trips to the exact name.
     # jq reads \t in this filter as a real tab, so this compares against the
-    # literal filename, not against its escaped spelling. A tab-bearing path is
-    # reported as unmeasurable (its usage cannot be recorded), not never-hit.
-    assert_jq "$name" "$out" '.unmeasurable_cards[0] == "ta\tbbed.md"' || return 0
+    # literal filename, not against its escaped spelling.
+    assert_jq "$name" "$out" '.cards_with_hits == 1 and .total_access == 1 and .unmeasurable_cards == []' || return 0
+    assert_jq "$name" "$out" '.card_hits[0].card == "ta\tbbed.md"' || return 0
   fi
   pass "$name"
 }
@@ -2547,15 +2552,12 @@ case_memory_stats_unparsed_index_entries_excluded() {
   pass "$name"
 }
 
-# Behavior: a card path the tab-delimited sidecar cannot represent reports as unmeasurable rather than never-hit.
-# Steps: index one tab-bearing card and one plain card; run stats --json; assert the tab card appears only under unmeasurable_cards.
+# Behavior: a tab-bearing card path accrues usage just like a plain path.
+# Steps: index one tab-bearing card and one plain card, record the tab card, and assert it is a measured hit.
 case_memory_stats_unrecordable_card_is_not_never_hit() {
-  local name="pmctl memory stats: a tab-bearing card path is unmeasurable, not never-hit"
+  local name="pmctl memory stats: a tab-bearing card path is measured, not unmeasurable"
   should_run "$name" || return 0
 
-  # The sidecar is tab-delimited and memory_usage_commit refuses such a relpath,
-  # so its usage can never be recorded. Calling it "never hit" would assert an
-  # absence of use that this telemetry never measured.
   local cfg="$tmp_root/st-unmeas-cfg" repo="$tmp_root/st-unmeas-repo" mdir
   mkdir -p "$repo"
   mdir="$(make_fixture_memory "$cfg" "$repo")"
@@ -2567,14 +2569,261 @@ case_memory_stats_unrecordable_card_is_not_never_hit() {
     printf -- '- [Plain](plain.md) — hook\n'
   } > "$mdir/MEMORY.md"
 
+  local sidecar today
+  sidecar="$(memory_usage_sidecar_path "$mdir")"
+  today=$(( $(date +%s) / 86400 ))
+  memory_usage_commit "$sidecar" 100000 "$today" "$tabbed" >/dev/null
+
   local out="$tmp_root/st-unmeas.json" status=0
   run_stats_json "$out" "$cfg" "$repo" || status=$?
   if ! assert_exit "$name" "$status" 0; then return 0; fi
-  assert_jq "$name" "$out" '(.unmeasurable_cards | length) == 1' || return 0
-  assert_jq "$name" "$out" '.unmeasurable_cards[0] == "ta\tb.md"' || return 0
-  # It must NOT be double-counted as a never-hit card.
-  assert_jq "$name" "$out" '[.never_hit_cards[] | select(test("\t"))] | length == 0' || return 0
+  assert_jq "$name" "$out" '.cards_with_hits == 1 and .total_access == 1' || return 0
+  assert_jq "$name" "$out" '.unmeasurable_cards == []' || return 0
+  assert_jq "$name" "$out" '.card_hits[0].card == "ta\tb.md"' || return 0
   assert_jq "$name" "$out" '.never_hit_cards == ["plain.md"]' || return 0
+  pass "$name"
+}
+
+# Behavior: the sidecar transport encodes every relpath byte that conflicts
+# with its TSV field separators, while leaving ordinary paths untouched.
+case_memory_usage_tsv_escapers_round_trip() {
+  local name="memory usage sidecar: TSV escapers round-trip POSIX relpaths"
+  should_run "$name" || return 0
+
+  local plain='plain/cjk-記憶.md' slash='back\\slash.md' tab=$'ta\tb.md'
+  local newline=$'new\nline.md' combined=$'甲\\\t乙\n丙.md' value escaped unescaped
+  # A literal ASCII SOH (0x01) is a legal POSIX filename byte. An unescape
+  # implementation that uses SOH as an internal placeholder to protect a
+  # restored backslash from the later \t/\n substitutions is not bijective
+  # for this byte — pins that a real SOH round-trips, alone and directly
+  # adjacent to a backslash (the exact collision shape such a scheme misses).
+  local soh=$'so\x01h.md' soh_backslash=$'x\\\x01y.md'
+  for value in "$plain" "$slash" "$tab" "$newline" "$combined" "$soh" "$soh_backslash"; do
+    _memory_usage_tsv_escape escaped "$value"
+    _memory_usage_tsv_unescape unescaped "$escaped"
+    if [[ "$unescaped" != "$value" ]]; then
+      fail "$name" "round-trip changed relpath"
+      return 0
+    fi
+  done
+  # A SOH-bearing path and a distinct backslash-bearing path must never
+  # decode to the same key (the exact aliasing a placeholder-byte scheme
+  # risks): escape both, then confirm their escaped forms — and therefore
+  # their sidecar storage keys — stay distinct.
+  local soh_escaped backslash_escaped
+  _memory_usage_tsv_escape soh_escaped "$soh"
+  _memory_usage_tsv_escape backslash_escaped $'so\\th.md'
+  if [[ "$soh_escaped" == "$backslash_escaped" ]]; then
+    fail "$name" "a SOH-bearing path aliased with a distinct backslash-bearing path"
+    return 0
+  fi
+  local noop
+  _memory_usage_tsv_escape noop 'ordinary/path.md'
+  if [[ "$noop" != 'ordinary/path.md' ]]; then
+    fail "$name" "escape changed a separator-free path"
+    return 0
+  fi
+  pass "$name"
+}
+
+# Behavior: the TSV fallback stores escaped relpaths but exposes real paths to callers.
+case_memory_usage_tsv_tab_and_newline_round_trip() {
+  local name="memory usage sidecar: TSV round-trips tab and newline relpaths"
+  should_run "$name" || return 0
+
+  local sidecar="$tmp_root/usage-tsv/.pm-dispatch/inject-usage.tsv" today
+  local tab=$'ta\tb.md' newline=$'new\nline.md'
+  today=$(( $(date +%s) / 86400 ))
+  memory_usage_commit "$sidecar" 100000 "$today" "$tab" "$tab" "$newline" || { fail "$name" "TSV commit failed"; return 0; }
+  memory_usage_load "$sidecar" || { fail "$name" "TSV load failed"; return 0; }
+  if [[ "${MEMORY_USAGE_ACC["$tab"]:-0}" != 2 || "${MEMORY_USAGE_ACC["$newline"]:-0}" != 1 ]]; then
+    fail "$name" "TSV usage was not keyed by the real relpath"
+    return 0
+  fi
+  pass "$name"
+}
+
+# Behavior: SQLite uses the same escaped transport when its rows are read through memory_usage_load.
+case_memory_usage_sqlite_tab_and_newline_round_trip() {
+  local name="memory usage sidecar: SQLite round-trips tab and newline relpaths"
+  should_run "$name" || return 0
+  command -v sqlite3 >/dev/null 2>&1 || { fail "$name" "sqlite3 is required to execute this case's SQLite-backed assertions; a missing dependency must not be reported as a silent pass"; return 0; }
+
+  local sidecar="$tmp_root/usage-sqlite/.pm-dispatch/inject-usage.sqlite3" today
+  local tab=$'ta\tb.md' newline=$'new\nline.md'
+  today=$(( $(date +%s) / 86400 ))
+  memory_usage_commit "$sidecar" 100000 "$today" "$tab" "$tab" "$newline" || { fail "$name" "SQLite commit failed"; return 0; }
+  memory_usage_load "$sidecar" || { fail "$name" "SQLite load failed"; return 0; }
+  if [[ "${MEMORY_USAGE_ACC["$tab"]:-0}" != 2 || "${MEMORY_USAGE_ACC["$newline"]:-0}" != 1 ]]; then
+    fail "$name" "SQLite usage was not keyed by the real relpath"
+    return 0
+  fi
+  pass "$name"
+}
+
+# Behavior: old plain TSV history survives the one-time SQLite import unchanged.
+case_memory_usage_sqlite_imports_legacy_tsv_history() {
+  local name="memory usage sidecar: SQLite legacy TSV import preserves counts"
+  should_run "$name" || return 0
+  command -v sqlite3 >/dev/null 2>&1 || { fail "$name" "sqlite3 is required to execute this case's SQLite-backed assertions; a missing dependency must not be reported as a silent pass"; return 0; }
+
+  local base sqlite today
+  base="$tmp_root/usage-legacy/.pm-dispatch/inject-usage"
+  sqlite="$base.sqlite3"
+  today=$(( $(date +%s) / 86400 ))
+  mkdir -p "${base%/*}"
+  # A raw backslash (unlike tab/newline) was never rejected by the old
+  # pre-CC-559 guard, so a genuinely pre-fix legacy .tsv row can carry one
+  # unescaped — this exercises that the legacy-import loop unescapes a row
+  # read from the (always-escaped) .tsv file back to the same raw/canonical
+  # form card_relpath stores everywhere else, not just a byte class that
+  # needed no encoding either way.
+  printf '# total_events=7\nplain.md\t4\t%d\ndir\\back.md\t2\t%d\n' "$today" "$today" > "$base.tsv"
+  memory_usage_commit "$sqlite" 100000 "$today" new.md || { fail "$name" "SQLite import commit failed"; return 0; }
+  memory_usage_load "$sqlite" || { fail "$name" "SQLite import load failed"; return 0; }
+  if [[ "${MEMORY_USAGE_ACC[plain.md]:-0}" != 4 || "${MEMORY_USAGE_ACC[new.md]:-0}" != 1 ]]; then
+    fail "$name" "legacy count was not preserved"
+    return 0
+  fi
+  # An array subscript's $'...' ANSI-C quoting is not reliably equivalent to
+  # the same literal routed through a variable first (bash double-processes
+  # the backslash inline), so build the lookup key in a variable rather than
+  # writing $'dir\\back.md' directly inside the subscript.
+  local backslash_rel=$'dir\\back.md'
+  if [[ "${MEMORY_USAGE_ACC[$backslash_rel]:-0}" != 2 ]]; then
+    fail "$name" "legacy row with a raw backslash relpath was not preserved (card_relpath is stored raw/canonical everywhere; escaping happens only at the read/emit boundary)"
+    return 0
+  fi
+  pass "$name"
+}
+
+# Behavior: a pre-CC-559 SQLite row whose raw card_relpath already contains a
+# literal backslash-plus-t/n byte sequence (never escaped by the old code,
+# since SQLite itself had no tab/newline-safety guard) must not be
+# reinterpreted as an escaped tab/newline on first read after upgrade.
+# card_relpath is stored raw/canonical (memory_usage_read's SELECT escapes
+# only at the read boundary), so no migration step is needed — this pins
+# that guarantee directly against a hand-seeded pre-fix row.
+case_memory_usage_sqlite_prefix_row_survives_upgrade() {
+  local name="memory usage sidecar: pre-fix SQLite row with raw backslash-t is not corrupted"
+  should_run "$name" || return 0
+  command -v sqlite3 >/dev/null 2>&1 || { fail "$name" "sqlite3 is required to execute this case's SQLite-backed assertions; a missing dependency must not be reported as a silent pass"; return 0; }
+
+  local base sqlite today
+  base="$tmp_root/usage-prefix/.pm-dispatch/inject-usage"
+  sqlite="$base.sqlite3"
+  today=$(( $(date +%s) / 86400 ))
+  mkdir -p "${base%/*}"
+
+  # Seed the table directly with SQL, bypassing every escape/unescape helper
+  # entirely — this is what a genuinely pre-CC-559 row looks like: raw text,
+  # never escaped, because the old code never escaped anything for SQLite.
+  sqlite3 "$sqlite" <<'SQL'
+CREATE TABLE metadata (key TEXT PRIMARY KEY, value INTEGER NOT NULL);
+CREATE TABLE card_usage (card_relpath TEXT PRIMARY KEY, access_count INTEGER NOT NULL CHECK(access_count >= 0), last_access_day INTEGER NOT NULL);
+INSERT INTO metadata(key,value) VALUES('schema_version',1);
+INSERT INTO metadata(key,value) VALUES('total_events',3);
+INSERT INTO metadata(key,value) VALUES('legacy_imported',1);
+INSERT INTO card_usage(card_relpath,access_count,last_access_day) VALUES('dir\t.md',3,20000);
+SQL
+
+  memory_usage_commit "$sqlite" 100000 "$today" new.md || { fail "$name" "commit failed"; return 0; }
+  memory_usage_load "$sqlite" || { fail "$name" "load failed"; return 0; }
+
+  # Build the lookup key via a variable (not inline $'...') per the
+  # array-subscript quoting gotcha noted above.
+  local prefix_rel=$'dir\\t.md'
+  if [[ "${MEMORY_USAGE_ACC[$prefix_rel]:-0}" != 3 ]]; then
+    fail "$name" "pre-fix row's literal backslash-t path was reinterpreted as an escaped tab (or its count was lost)"
+    return 0
+  fi
+  # A tab-bearing key must NOT also exist — that would mean the raw
+  # backslash-t sequence got misdecoded into an actual tab byte, splitting
+  # this one card's history into two keys.
+  local tab_rel=$'dir\t.md'
+  if [[ -n "${MEMORY_USAGE_ACC[$tab_rel]+set}" ]]; then
+    fail "$name" "pre-fix row was split: a spurious tab-bearing key now also exists"
+    return 0
+  fi
+  if [[ "${MEMORY_USAGE_ACC[new.md]:-0}" != 1 ]]; then
+    fail "$name" "new hit recorded alongside the pre-fix row was not preserved"
+    return 0
+  fi
+  pass "$name"
+}
+
+# Behavior: a genuinely pre-CC-559 .tsv store (no ` schema=2` header marker,
+# raw unescaped rows — the format every sidecar had before this ticket) must
+# not have its literal backslash-t/backslash-n paths corrupted by load, by a
+# TSV-backend read-modify-write cycle, or by SQLite import — pins critic-F001
+# directly: this is a flat text file with no column boundaries of its own, so
+# it cannot simply be "stored raw and escaped only at emission" the way
+# SQLite is; the header marker discriminates already-escaped rows from
+# genuinely pre-fix raw ones.
+case_memory_usage_tsv_prefix_store_survives_upgrade() {
+  local name="memory usage sidecar: pre-fix TSV store with raw backslash-t/n is not corrupted"
+  should_run "$name" || return 0
+
+  local base
+  base="$tmp_root/usage-tsv-prefix/.pm-dispatch/inject-usage.tsv"
+  mkdir -p "${base%/*}"
+  # No ` schema=2` marker: this is what every .tsv sidecar looked like before
+  # this ticket. Two distinct pre-fix paths, each containing a literal
+  # backslash immediately followed by t or n — the exact two-byte sequences
+  # an unconditional unescape would misread as an escaped tab/newline.
+  printf '# total_events=9\ndir\\t.md\t5\t20000\nother\\n.md\t4\t20001\n' > "$base"
+
+  memory_usage_load "$base" || { fail "$name" "load of a pre-fix store failed"; return 0; }
+  local t_rel=$'dir\\t.md' n_rel=$'other\\n.md'
+  if [[ "${MEMORY_USAGE_ACC[$t_rel]:-0}" != 5 || "${MEMORY_USAGE_ACC[$n_rel]:-0}" != 4 ]]; then
+    fail "$name" "load reinterpreted a pre-fix literal backslash-t/n path as an escaped control byte"
+    return 0
+  fi
+  local real_tab=$'dir\t.md' real_newline=$'other\n.md'
+  if [[ -n "${MEMORY_USAGE_ACC[$real_tab]+set}" || -n "${MEMORY_USAGE_ACC[$real_newline]+set}" ]]; then
+    fail "$name" "load split a pre-fix row into a spurious tab/newline-bearing key"
+    return 0
+  fi
+
+  local today=$(( $(date +%s) / 86400 ))
+  memory_usage_commit "$base" 100000 "$today" new.md || { fail "$name" "commit on a pre-fix store failed"; return 0; }
+  memory_usage_load "$base" || { fail "$name" "load after commit failed"; return 0; }
+  if [[ "${MEMORY_USAGE_ACC[$t_rel]:-0}" != 5 || "${MEMORY_USAGE_ACC[$n_rel]:-0}" != 4 || "${MEMORY_USAGE_ACC[new.md]:-0}" != 1 ]]; then
+    fail "$name" "a TSV-backend read-modify-write cycle corrupted or dropped a pre-fix row"
+    return 0
+  fi
+  if ! LC_ALL=C grep -qFx '# schema=2' "$base"; then
+    fail "$name" "commit did not persist the schema=2 marker; the store would be misread as raw again next time"
+    return 0
+  fi
+  pass "$name"
+}
+
+# Behavior: a full stats report recognizes a path containing every encoded byte class.
+case_memory_stats_combined_control_path_is_measured() {
+  local name="pmctl memory stats: tab and backslash path is measured"
+  should_run "$name" || return 0
+
+  # No newline here: a raw newline inside a MEMORY.md link destination would
+  # split it across physical lines, which is an index-authoring format
+  # question, not a sidecar-encoding one — out of scope for CC-559. Newline
+  # round-tripping through the sidecar itself is covered directly by
+  # case_memory_usage_tsv_escapers_round_trip and the SQLite/TSV sidecar
+  # round-trip cases below.
+  local cfg="$tmp_root/st-combined-cfg" repo="$tmp_root/st-combined-repo" mdir rel out status=0
+  mkdir -p "$repo"
+  mdir="$(make_fixture_memory "$cfg" "$repo")"
+  rel=$'dir\\tab\tline記憶.md'
+  write_compliant_card "$mdir/$rel" "combined"
+  printf -- '- [Combined](%s) — hook\n' "$rel" > "$mdir/MEMORY.md"
+  local sidecar today
+  sidecar="$(memory_usage_sidecar_path "$mdir")"
+  today=$(( $(date +%s) / 86400 ))
+  memory_usage_commit "$sidecar" 100000 "$today" "$rel" >/dev/null
+  out="$tmp_root/st-combined.json"
+  run_stats_json "$out" "$cfg" "$repo" || status=$?
+  if ! assert_exit "$name" "$status" 0; then return 0; fi
+  assert_jq "$name" "$out" '.cards_with_hits == 1 and .total_access == 1 and .unmeasurable_cards == []' || return 0
   pass "$name"
 }
 
@@ -3374,6 +3623,13 @@ case_memory_stats_hit_limit_boundaries
 case_memory_stats_hit_rows_sort_numerically
 case_memory_stats_json_escapes_c1_controls
 case_memory_stats_unrecordable_card_is_not_never_hit
+case_memory_usage_tsv_escapers_round_trip
+case_memory_usage_tsv_tab_and_newline_round_trip
+case_memory_usage_sqlite_tab_and_newline_round_trip
+case_memory_usage_sqlite_imports_legacy_tsv_history
+case_memory_usage_sqlite_prefix_row_survives_upgrade
+case_memory_usage_tsv_prefix_store_survives_upgrade
+case_memory_stats_combined_control_path_is_measured
 case_memory_stats_unparsed_index_entries_excluded
 case_memory_stats_aggregate_overflow_degrades
 case_memory_stats_pct_survives_saturated_aggregates

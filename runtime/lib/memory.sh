@@ -150,16 +150,45 @@ memory_usage_read() {
       total="$(sqlite3 -cmd '.timeout 10000' "$store" \
         "SELECT value FROM metadata WHERE key='total_events';" 2>/dev/null || true)"
       printf '# total_events=%s\n' "${total:-0}"
+      # card_relpath is stored raw/canonical (see _memory_usage_commit_sqlite);
+      # escape it here, at the query that crosses into the shared
+      # tab-separated boundary, so every row — regardless of which code
+      # version inserted it — gets the same escaping with no migration step.
       sqlite3 -cmd '.timeout 10000' -separator $'\t' "$store" \
-        'SELECT card_relpath, access_count, last_access_day FROM card_usage ORDER BY card_relpath;' \
+        "SELECT REPLACE(REPLACE(REPLACE(card_relpath, '\\', '\\\\'), CHAR(9), '\\t'), CHAR(10), '\\n'), access_count, last_access_day FROM card_usage ORDER BY card_relpath;" \
         2>/dev/null || return 1
       return 0
     fi
     legacy="${store%.sqlite3}.tsv"
-    [[ -f "$legacy" ]] && cat "$legacy"
+    [[ -f "$legacy" ]] && _memory_usage_tsv_read_file "$legacy"
     return 0
   fi
-  [[ -f "$store" ]] && cat "$store"
+  [[ -f "$store" ]] && _memory_usage_tsv_read_file "$store"
+}
+
+# Emit a .tsv store's rows in the always-escaped shape memory_usage_load
+# expects. A post-CC-559 file already holds escaped rows (a `# schema=2`
+# comment line, written by memory_usage_commit's TSV backend) and is emitted
+# unchanged; a pre-fix file has no marker and its rows are raw as-is (the old
+# guard made that safe: it never permitted a real tab/newline in rel), so
+# each rel is escaped on the way out instead. Idempotent to repeat on every
+# read of a not-yet-migrated file until the next commit persists the marker.
+_memory_usage_tsv_read_file() {
+  local file="$1" escaped_rows=0 line rel rest escaped_rel
+  # The marker is one of a handful of leading comment lines (order-
+  # independent), so check the whole file for it before emitting — the
+  # store is small (the guard hook's own usage sidecar), so this is cheap.
+  LC_ALL=C grep -qFx '# schema=2' "$file" 2>/dev/null && escaped_rows=1
+  while IFS= read -r line; do
+    if (( escaped_rows )) || [[ "$line" == \#* || "$line" != *$'\t'* ]]; then
+      printf '%s\n' "$line"
+      continue
+    fi
+    rel="${line%%$'\t'*}"
+    rest="${line#*$'\t'}"
+    _memory_usage_tsv_escape escaped_rel "$rel"
+    printf '%s\t%s\n' "$escaped_rel" "$rest"
+  done < "$file"
 }
 
 # Parsed usage sidecar, keyed by card_relpath. Output globals rather than
@@ -213,6 +242,7 @@ memory_usage_load() {
   local degraded=0
   while IFS=$'\t' read -r rel acc last; do
     [[ -z "$rel" || "$rel" == \#* ]] && continue
+    _memory_usage_tsv_unescape rel "$rel"
     if [[ ! "$acc"  =~ ^[0-9]{1,18}$ ]]; then acc=0;  degraded=1; fi
     if [[ ! "$last" =~ ^[0-9]{1,18}$ ]]; then last=0; degraded=1; fi
     MEMORY_USAGE_ACC["$rel"]="$acc"
@@ -229,6 +259,50 @@ _memory_usage_sql_quote() {
   local value="$1"
   value="${value//\'/\'\'}"
   printf "'%s'" "$value"
+}
+
+# The SQLite reader and the TSV fallback both cross the same tab-separated
+# three-field boundary before memory_usage_load parses them. Encode only the
+# relpath field at that boundary so arbitrary POSIX relpaths remain lossless.
+# Caller-named-variable output (matching memory_byte_len_var) rather than a
+# `$(...)` return: this runs per sidecar row on the guard hook's hot path,
+# and a command substitution would fork a subshell per call.
+_memory_usage_tsv_escape() {
+  local __dest="$1" v="$2"
+  v="${v//\\/\\\\}"
+  v="${v//$'\t'/\\t}"
+  v="${v//$'\n'/\\n}"
+  printf -v "$__dest" '%s' "$v"
+}
+
+# A global-substitution unescape (replace `\\`, then `\t`, then `\n`) needs an
+# intermediate placeholder byte to keep a restored literal backslash from
+# being re-matched by the later substitutions — but POSIX relpaths may
+# legally contain any byte, including whatever placeholder gets picked, which
+# makes that approach not actually bijective (a real occurrence of the
+# placeholder byte aliases with the internal marker). Scan left to right
+# instead: escape() only ever emits `\\`, `\t`, or `\n` as two-character
+# units and passes every other byte through unmodified, so a backslash in
+# valid escaped input is always immediately followed by one of `\`, `t`, `n`
+# — no lookahead ambiguity, no placeholder, no byte this can misinterpret.
+_memory_usage_tsv_unescape() {
+  local __dest="$1" s="$2" out="" i=0 len=${#2} c nc
+  while (( i < len )); do
+    c="${s:i:1}"
+    if [[ "$c" == $'\\' ]]; then
+      nc="${s:i+1:1}"
+      case "$nc" in
+        $'\\') out+=$'\\'; i=$((i + 2)) ;;
+        t)     out+=$'\t'; i=$((i + 2)) ;;
+        n)     out+=$'\n'; i=$((i + 2)) ;;
+        *)     out+="$c"; i=$((i + 1)) ;;
+      esac
+    else
+      out+="$c"
+      i=$((i + 1))
+    fi
+  done
+  printf -v "$__dest" '%s' "$out"
 }
 
 # Retry only SQLite's lock-contention class.  Schema, permission, I/O, and
@@ -274,6 +348,7 @@ _memory_usage_commit_sqlite() {
       "INSERT OR IGNORE INTO metadata(key,value) VALUES('schema_version',1);" \
       "INSERT OR IGNORE INTO metadata(key,value) VALUES('total_events',0);"
     if [[ -f "$legacy" ]]; then
+      local legacy_escaped_rows=0
       while IFS=$'\t' read -r rel acc last; do
         [[ -z "$rel" ]] && continue
         if [[ "$rel" == '# total_events='* ]]; then
@@ -281,9 +356,22 @@ _memory_usage_commit_sqlite() {
           [[ "$total_events" =~ ^[0-9]+$ ]] || total_events=0
           continue
         fi
-        [[ "$rel" == \#* || "$rel" == *$'\n'* || "$rel" == *$'\t'* ]] && continue
+        if [[ "$rel" == '# schema=2' ]]; then
+          legacy_escaped_rows=1
+          continue
+        fi
+        [[ "$rel" == \#* ]] && continue
         [[ "$acc" =~ ^[0-9]+$ ]] || acc=0
         [[ "$last" =~ ^[0-9]+$ ]] || last=0
+        # card_relpath is stored raw/canonical in SQLite (memory_usage_read's
+        # SELECT escapes on the way out — see above), so no SQLite row ever
+        # needs a migration step regardless of which code version wrote it.
+        # $legacy only holds escaped rows once its own header carries a
+        # `# schema=2` line (memory_usage_commit's TSV-backend writer
+        # marker) — a genuinely pre-fix file has none and its rows are
+        # already raw, same discriminator as memory_usage_commit's own TSV
+        # read loop above.
+        (( legacy_escaped_rows )) && _memory_usage_tsv_unescape rel "$rel"
         quoted="$(_memory_usage_sql_quote "$rel")"
         printf "INSERT INTO card_usage(card_relpath,access_count,last_access_day) SELECT %s,%s,%s WHERE NOT EXISTS (SELECT 1 FROM metadata WHERE key='legacy_imported') ON CONFLICT(card_relpath) DO NOTHING;\n" "$quoted" "$acc" "$last"
       done < "$legacy"
@@ -291,7 +379,9 @@ _memory_usage_commit_sqlite() {
       printf "INSERT OR IGNORE INTO metadata(key,value) VALUES('legacy_imported',1);\n"
     fi
     for rel in "$@"; do
-      [[ -n "$rel" && "$rel" != *$'\n'* && "$rel" != *$'\t'* ]] || continue
+      [[ -n "$rel" ]] || continue
+      # $@ here are real, unescaped card relpaths straight from the caller —
+      # store them raw/canonical, matching card_relpath's storage invariant.
       quoted="$(_memory_usage_sql_quote "$rel")"
       printf "INSERT INTO card_usage(card_relpath,access_count,last_access_day) VALUES(%s,1,%s) ON CONFLICT(card_relpath) DO UPDATE SET access_count=access_count+1,last_access_day=excluded.last_access_day;\n" "$quoted" "$today"
       printf "UPDATE metadata SET value=value+1 WHERE key='total_events';\n"
@@ -375,6 +465,18 @@ memory_usage_commit() {
 
   local -A ACC=() LAST=()
   if [[ -f "$sidecar" ]]; then
+    # A flat TSV file has no column boundaries of its own — unlike SQLite,
+    # it must always hold escaped text to stay parseable, so a genuinely
+    # pre-CC-559 file (raw, unescaped; the old guard made that safe because
+    # it never permitted a real tab/newline in rel) cannot simply be
+    # unescaped blindly: a literal `\t`/`\n` two-byte sequence already
+    # sitting in a pre-fix path would be misread as an escaped control byte.
+    # A `# schema=2` comment line (present only once this function has
+    # rewritten the file) discriminates the two cases: with the
+    # marker, prior rows are already escaped, so unescape as normal; without
+    # it, prior rows are raw as-is and must NOT be unescaped. Either way this
+    # function always writes the marker below, so the migration is one-time.
+    local escaped_rows=0
     while IFS=$'\t' read -r rel acc last; do
       [[ -z "$rel" ]] && continue
       if [[ "$rel" == '# total_events='* ]]; then
@@ -382,7 +484,12 @@ memory_usage_commit() {
         [[ "$total_events" =~ ^[0-9]+$ ]] || total_events=0
         continue
       fi
+      if [[ "$rel" == '# schema=2' ]]; then
+        escaped_rows=1
+        continue
+      fi
       [[ "$rel" == \#* ]] && continue
+      (( escaped_rows )) && _memory_usage_tsv_unescape rel "$rel"
       [[ "$acc"  =~ ^[0-9]+$ ]] || acc=0
       [[ "$last" =~ ^[0-9]+$ ]] || last=0
       ACC["$rel"]="$acc"
@@ -408,8 +515,16 @@ memory_usage_commit() {
   tmp="$(mktemp "${sidecar}.XXXXXX")" || return 1
   {
     printf '# total_events=%d\n' "$total_events"
+    # A separate comment line (not appended to total_events=) so any
+    # consumer that naively splits that line on `=` still sees exactly the
+    # numeric value it always has. Marks every row below as escaped text, so
+    # the next read (this function or memory_usage_load) knows to unescape
+    # them — see the read loops.
+    printf '# schema=2\n'
+    local escaped_rel
     for rel in "${!ACC[@]}"; do
-      printf '%s\t%d\t%d\n' "$rel" "${ACC["$rel"]}" "${LAST["$rel"]:-0}"
+      _memory_usage_tsv_escape escaped_rel "$rel"
+      printf '%s\t%d\t%d\n' "$escaped_rel" "${ACC["$rel"]}" "${LAST["$rel"]:-0}"
     done
   } > "$tmp" || { rm -f "$tmp"; return 1; }
   mv -f "$tmp" "$sidecar" || { rm -f "$tmp"; return 1; }
