@@ -34,6 +34,21 @@ Versions follow [Semantic Versioning](https://semver.org/).
   schema entirely) is now its own function, `_gate_assurance_verify_legacy_v1`.
   Reviewer-result/synthesis-result/scope-manifest have similar duplication
   and are intentionally deferred to a future slice.
+- **`gate_scope_manifest_verify` structural cleanup (CC-533).** Same treatment
+  as `gate_assurance_verify` above, applied to `core/schema/gate-scope-manifest.schema.json`
+  — which turned out to encode more cross-field correlations via `allOf`/`if`/`then`
+  than the assurance schema does, so more of the handwritten duplication was
+  confirmed safely removable. Also fixes a residual duplication the first pass
+  missed: `gate-assurance.schema.json`'s nested `gateSubject` definition already
+  encodes `subject_kind`<->`dirty_policy` via `allOf`/`if`/`then`, but that
+  check survived in the handwritten verifier because the first audit only
+  checked the schema's top-level `allOf`, not `allOf` nested inside
+  `definitions`. Both artifact types' fixture builders are shared with
+  `test-core-schemas.sh` via `tests/lib/gate-*-fixtures.sh`.
+  Reviewer-result/synthesis-result are re-scoped: their apparent duplication
+  is deliberate design (field-level diagnostic messages for the reviewer
+  retry loop), so the same blind-removal treatment does not apply — they need
+  a different approach that preserves diagnostic quality, left to a future slice.
 - **Reviewer protocol names test-gap field defects instead of calling valid
   JSON "invalid JSON document."** A null `contract` or unpaired finding now
   names the row/id; empty `existing_evidence` is filled from a finding with

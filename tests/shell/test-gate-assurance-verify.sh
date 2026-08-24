@@ -174,6 +174,20 @@ case_invalid_pattern_rejected() {
   if [[ "$rc" -ne 0 ]]; then pass "$name"; else fail "$name" "rc=$rc (expected rejection)"; fi
 }
 
+case_subject_kind_dirty_policy_mismatch_rejected() {
+  # Altitude review caught this as a residual duplication the first CC-533
+  # pass missed: gate-assurance.schema.json's gateSubject definition already
+  # encodes subject_kind<->dirty_policy via allOf/if/then, so this is
+  # structural (gate_structural_schema_verify), not a surviving cross-field
+  # handwritten check -- confirmed empirically before removing the duplicate.
+  local name="gate_assurance_verify: subject_kind/dirty_policy mismatch is rejected (structural, schema allOf)"
+  should_run "$name" || return 0
+  local RESULT ASSURANCE rc=0
+  _read_pair "$(_mk_valid_pair "$tmp_root/dirty-policy-mismatch" '.subject.dirty_policy = "include_working_tree"')"
+  gate_assurance_verify "$RESULT" "$ASSURANCE" GO >/dev/null 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 ]]; then pass "$name"; else fail "$name" "rc=$rc (expected rejection)"; fi
+}
+
 # --- Cross-field / external violations: caught by the surviving handwritten
 # checks, since plain JSON Schema cannot express these. Proves the trim kept
 # what it must keep. ---
@@ -242,6 +256,7 @@ case_missing_required_key_rejected
 case_additional_property_rejected
 case_invalid_enum_rejected
 case_invalid_pattern_rejected
+case_subject_kind_dirty_policy_mismatch_rejected
 case_bindings_subject_repo_root_mismatch_rejected
 case_result_sha_mismatch_rejected
 case_tier_mismatch_with_markdown_rejected

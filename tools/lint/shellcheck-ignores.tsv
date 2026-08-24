@@ -38,6 +38,7 @@ tests/shell/test-doctor.sh	SC1091,SC2034,SC2154	pre-existing-shellcheck-debt
 tests/shell/test-e2e.sh	SC1091,SC2329	pre-existing-shellcheck-debt
 tests/shell/test-executor-router.sh	SC1091,SC2015,SC2154	pre-existing-shellcheck-debt
 tests/shell/test-gate-assurance-verify.sh	SC1091,SC2154	test-harness-sourced-globals
+tests/shell/test-gate-scope-manifest-verify.sh	SC1091,SC2154	test-harness-sourced-globals
 tests/shell/test-gate-lifecycle.sh	SC1091,SC2154,SC2329	pre-existing-shellcheck-debt
 tests/shell/test-grok-dispatch.sh	SC1091,SC2002,SC2015,SC2016	pre-existing-shellcheck-debt
 tests/shell/test-guard-framework.sh	SC1091,SC2016,SC2030,SC2031,SC2034,SC2123,SC2154,SC2317,SC2329	pre-existing-shellcheck-debt
