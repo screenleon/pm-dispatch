@@ -1103,6 +1103,51 @@ gate_synthesis_protocol_verify() {
     return 1
   fi
 
+  # Schema-derived structural pass for the two array-item shapes plain JSON
+  # Schema fully covers (core/schema/gate-synthesis-result.schema.json's
+  # coverageCell/findingInventoryEntry definitions are 1:1 with the deleted
+  # hand-written coverage_cell/finding_inventory predicates, confirmed by
+  # direct comparison). Everything else in this function -- parity against
+  # the reviewer-document-derived expected values, disagreement/finding-union
+  # diagnostics, duplicate-id detection, injection-safe id quoting -- is a
+  # cross-document derivation or a precisely-tested diagnostic (see
+  # test_synthesis_protocol_diagnostics_name_the_defect) that plain JSON
+  # Schema cannot express or that would lose retry-loop UX if replaced, so it
+  # stays hand-written below. Only a coverage_matrix/reviewer_finding_inventory
+  # -scoped violation is intercepted here; anything else falls through so the
+  # hand-written chain still owns it (e.g. a findings_union shape defect keeps
+  # using finding_union_defect's precisely-tested message).
+  local schema_line schema_rc schema_path
+  schema_line="$(gate_structural_schema_first_error \
+    gate-synthesis-result "$synthesis_document")"
+  schema_rc=$?
+  if [[ "$schema_rc" -eq 2 ]]; then
+    GATE_SYNTHESIS_PROTOCOL_ERROR="synthesis protocol filter failed"
+    printf 'Error: synthesis protocol INCOMPLETE: synthesis protocol filter failed in %s\n' \
+      "$artifact" >&2
+    rm -rf -- "$tmp_dir"
+    return 1
+  fi
+  if [[ "$schema_rc" -eq 1 ]]; then
+    schema_path="${schema_line%%: *}"
+    case "$schema_path" in
+      '$.coverage_matrix'*)
+        GATE_SYNTHESIS_PROTOCOL_ERROR="invalid coverage matrix: $schema_line"
+        printf 'Error: synthesis protocol INCOMPLETE: %s in %s\n' \
+          "$GATE_SYNTHESIS_PROTOCOL_ERROR" "$artifact" >&2
+        rm -rf -- "$tmp_dir"
+        return 1
+        ;;
+      '$.reviewer_finding_inventory'*)
+        GATE_SYNTHESIS_PROTOCOL_ERROR="invalid finding inventory or union: $schema_line"
+        printf 'Error: synthesis protocol INCOMPLETE: %s in %s\n' \
+          "$GATE_SYNTHESIS_PROTOCOL_ERROR" "$artifact" >&2
+        rm -rf -- "$tmp_dir"
+        return 1
+        ;;
+    esac
+  fi
+
   validation="$(
     jq -nr \
       --arg selected "$selected" --arg skipped "$skipped" \
@@ -1129,20 +1174,6 @@ gate_synthesis_protocol_verify() {
         (.path | nonempty) and
         ((.line | type == "number" and . >= 1 and floor == .) or
          (.symbol | nonempty));
-      def coverage_cell:
-        only_keys(["reviewer","surface","status","evidence_refs","reason"]) and
-        (.reviewer | reviewer) and (.surface | surface) and
-        (.status | IN("examined","not_applicable","uncertain")) and
-        (.evidence_refs | type == "array" and all(.[]; reference)) and
-        (.reason | nonempty);
-      def finding_inventory:
-        only_keys(["id","reviewer","severity","hard_gate_class","origin",
-          "verification_expectation"]) and
-        (.id | finding_id) and (.reviewer | reviewer) and
-        (.severity | IN("critical","high","medium","low")) and
-        (.hard_gate_class | IN("none","soft_block","hard_block")) and
-        (.origin | IN("diff_caused","pre_existing","uncertain","caution")) and
-        (.verification_expectation | nonempty);
       def finding_union:
         only_keys(["id","reviewer","severity","hard_gate_class","origin",
           "source","affected_behavior","why_it_matters","failure_mode",
@@ -1206,50 +1237,6 @@ gate_synthesis_protocol_verify() {
             end
           )
         ] | .[0]) // "unknown field";
-      # Same rationale as disagreement_defect below: naming the array a shape
-      # check failed in is not enough when the entry contract bundles several
-      # independent rules -- report the first violated rule with the observed
-      # value so the sole correction retry knows which field to fix.
-      def coverage_cell_defect:
-        if (type != "object")
-        then "entry is " + (type) + ", expected an object"
-        elif (only_keys(["reviewer","surface","status","evidence_refs","reason"]) | not)
-        then "keys are [" + safe_join((keys_unsorted // [])) +
-          "], expected exactly reviewer/surface/status/evidence_refs/reason"
-        elif ((.reviewer | reviewer) | not)
-        then "reviewer=" + (.reviewer | safe_token) + " is not a known reviewer"
-        elif ((.surface | surface) | not)
-        then "surface=" + (.surface | safe_token) + " is not a known surface"
-        elif ((.status | IN("examined","not_applicable","uncertain")) | not)
-        then "status=" + (.status | safe_token) +
-          " is not one of examined/not_applicable/uncertain"
-        elif (((.evidence_refs | type) != "array") or
-              ((.evidence_refs | all(.[]; reference)) | not))
-        then "evidence_refs is not an array of valid references"
-        else "reason is empty"
-        end;
-      def finding_inventory_defect:
-        if (type != "object")
-        then "entry is " + (type) + ", expected an object"
-        elif (only_keys(["id","reviewer","severity","hard_gate_class","origin",
-              "verification_expectation"]) | not)
-        then "keys are [" + safe_join((keys_unsorted // [])) +
-          "], expected exactly id/reviewer/severity/hard_gate_class/origin/verification_expectation"
-        elif ((.id | finding_id) | not)
-        then "id=" + (.id | safe_token) + " does not match a known finding id shape"
-        elif ((.reviewer | reviewer) | not)
-        then "reviewer=" + (.reviewer | safe_token) + " is not a known reviewer"
-        elif ((.severity | IN("critical","high","medium","low")) | not)
-        then "severity=" + (.severity | safe_token) +
-          " is not one of critical/high/medium/low"
-        elif ((.hard_gate_class | IN("none","soft_block","hard_block")) | not)
-        then "hard_gate_class=" + (.hard_gate_class | safe_token) +
-          " is not one of none/soft_block/hard_block"
-        elif ((.origin | IN("diff_caused","pre_existing","uncertain","caution")) | not)
-        then "origin=" + (.origin | safe_token) +
-          " is not one of diff_caused/pre_existing/uncertain/caution"
-        else "verification_expectation is empty"
-        end;
       def finding_union_defect:
         if (type != "object")
         then "entry is " + (type) + ", expected an object"
@@ -1440,14 +1427,6 @@ gate_synthesis_protocol_verify() {
              "not_reviewed_dimensions must copy the skipped list verbatim")
          end)
       elif
-        (all($s.coverage_matrix[]; coverage_cell) | not)
-      then "invalid coverage matrix: " +
-        ([$s.coverage_matrix[] | select(coverage_cell | not) |
-            "entry " + ((.reviewer? // "no-reviewer") | safe_token) + "/" +
-              ((.surface? // "no-surface") | safe_token) + ": " +
-              coverage_cell_defect]
-          | join("; "))
-      elif
         ($s.coverage_matrix | sort_by(.reviewer,.surface)) != $expected_coverage
       then "coverage matrix parity mismatch" +
         id_delta(($expected_coverage | map(.reviewer + ":" + .surface));
@@ -1455,15 +1434,11 @@ gate_synthesis_protocol_verify() {
                  "first drifted cell: " +
                    first_coverage_field_diff($expected_coverage; $s.coverage_matrix))
       elif
-        (all($s.reviewer_finding_inventory[]; finding_inventory) | not) or
         (all($s.findings_union[]; finding_union) | not)
       then "invalid finding inventory or union: " +
-        (([$s.reviewer_finding_inventory[] | select(finding_inventory | not) |
-             "inventory entry " + ((.id? // "no-id") | safe_token) + ": " +
-               finding_inventory_defect] +
-          [$s.findings_union[] | select(finding_union | not) |
-             "union entry " + ((.id? // "no-id") | safe_token) + ": " +
-               finding_union_defect])
+        ([$s.findings_union[] | select(finding_union | not) |
+            "union entry " + ((.id? // "no-id") | safe_token) + ": " +
+              finding_union_defect]
          | join("; "))
       elif
         (($s.reviewer_finding_inventory | map(.id)) |

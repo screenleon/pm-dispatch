@@ -12592,6 +12592,47 @@ test_synthesis_protocol_restore_refuses_attested_artifact() {
   pass "$name"
 }
 
+# Behavior: synthesis copy-array shape violations are diagnosed by the
+# schema-derived validator before the parity jq checks run.
+# Steps: mutate one coverage-cell enum and one finding-inventory enum in an
+# otherwise valid synthesis artifact, run the verifier directly, and assert
+# each error identifies the schema-owned array rather than a later parity
+# failure.
+test_synthesis_protocol_uses_schema_first_for_copy_array_shapes() {
+  local name="synthesis-protocol/schema-first-copy-array-shapes"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" artifact scope_sha mutation filter expected code
+  local failures=0
+  mkdir -p "$dir"
+  scope_sha="$(printf 'a%.0s' {1..64})"
+  # shellcheck source=runtime/lib/gate-result-verify.sh
+  . "$REPO_ROOT/runtime/lib/gate-result-verify.sh"
+  while IFS=$'\t' read -r mutation filter expected; do
+    artifact="$dir/${mutation}.md"
+    _write_synthesis_protocol_test_artifact "$artifact"
+    _rewrite_synthesis_protocol_json "$artifact" "$filter"
+    set +e
+    gate_synthesis_protocol_verify \
+      "$artifact" "critic qa-tester architecture-reviewer" \
+      "security-reviewer risk-reviewer" "$scope_sha" \
+      >"$dir/${mutation}.out" 2>"$dir/${mutation}.err"
+    code=$?
+    set -e
+    if [[ "$code" -eq 0 ]]; then
+      fail "$name" "schema mutation unexpectedly passed: $mutation"
+      failures=$((failures + 1))
+    elif ! grep -qF -- "$expected" "$dir/${mutation}.err"; then
+      fail "$name" "schema mutation lacked schema-first diagnostic: $mutation -- got: $(tr -d '\n' < "$dir/${mutation}.err" | tail -c 320)"
+      failures=$((failures + 1))
+    fi
+  done <<'SCHEMA_FIRST'
+coverage-status	.coverage_matrix[0].status = "invalid-status"	invalid coverage matrix: $.coverage_matrix
+inventory-severity	.reviewer_finding_inventory[0].severity = "invalid-severity"	invalid finding inventory or union: $.reviewer_finding_inventory
+SCHEMA_FIRST
+  [[ "$failures" -eq 0 ]] || return
+  pass "$name"
+}
+
 # Behavior: each synthesis parity/disagreement rejection names the concrete
 # defect -- which ids differ, or which constraint an entry violated -- because
 # that string is the ONLY information the single correction retry receives.
@@ -12938,6 +12979,7 @@ run_test test_synthesis_protocol_restores_copied_reviewer_fields
 run_test test_synthesis_protocol_restore_uses_persisted_healed_evidence
 run_test test_synthesis_protocol_restore_logs_changed_fields
 run_test test_synthesis_protocol_restore_refuses_attested_artifact
+run_test test_synthesis_protocol_uses_schema_first_for_copy_array_shapes
 run_test test_synthesis_protocol_rejects_silent_drop_and_malformed_seed
 run_test test_synthesis_protocol_diagnostics_name_the_defect
 run_test test_synthesis_protocol_diagnostics_neutralize_injected_ids
