@@ -411,6 +411,13 @@ jobs:
       - name: gate_assurance_verify regression suite
         run: bash tests/shell/test-gate-assurance-verify.sh
 
+  test-gate-scope-manifest-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: gate_scope_manifest_verify regression suite
+        run: bash tests/shell/test-gate-scope-manifest-verify.sh
+
   test-pmctl-gate:
     runs-on: ubuntu-latest
     steps:

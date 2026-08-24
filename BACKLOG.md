@@ -26,7 +26,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-527 | ✅ done | targeted gate CLI 拆分 pass、reviewer coverage 與 tier；tier 由 current subject/policy 解析，initial result 僅為 remediation context | ux/gate | 2026-07-28 | pr:#472, pr:#476, pr:#482, pr:#505 | P2 | design |
 | CC-529 | ⚠️ partial 2026-08-15 | publish assurance observability：以 gate_publish_assessment_v1 將 ship stdout、PR body 與 finish marker 綁到同一份 verified assessment；仍需完成完整 producer/consumer dogfood | release/gate | 2026-07-30 | feedback:2026-07-30, pr:#484 | P2 | hygiene |
 | CC-532 | ✅ done | Linux/WSL2 repo-layout canonical Gate modules：options／policy／subject／scope／reviewer-contract／assurance 均有單一 source owner；standalone／copy parity 在 [[CC-546]] | arch/gate | 2026-07-30 | feedback:2026-07-30 | P1 | reuse-debt |
-| CC-533 | ⚠️ partial 2026-08-24 | `gate_assurance_verify` 的 structural cleanup／version dispatch 分離已由 #524 交付；reviewer-result／synthesis-result／scope-manifest 三個 artifact 的同類 only_keys 重複仍待後續 slice | schema/gate | 2026-07-30 | pr:#480, pr:#524 | P1 | design |
+| CC-533 | ⚠️ partial 2026-08-24 | `gate_assurance_verify`（#524）與 `gate_scope_manifest_verify`（本輪）structural cleanup 已交付；reviewer-result／synthesis-result 兩個 artifact 的重複刻意保留（承載 reviewer 重試迴圈的欄位級診斷訊息），需要不同處理方式 | schema/gate | 2026-07-30 | pr:#480, pr:#524, pr:#TBD | P1 | design |
 | CC-534 | 🟢 someday | `commands.tsv` 驅動 CLI routing、safe handler dispatch 與 lazy module loading | arch/DX | 2026-07-30 | feedback:2026-07-30 | P2 | design |
 | CC-535 | 🟢 someday | detached-launch 上的 supervised-run primitive + versioned JSON run-spec | arch/ops | 2026-07-30 | feedback:2026-07-30 | P2 | design |
 | CC-536 | 🟢 someday | 擴充 Adapter SDK 的 shared lifecycle／manifest／trace contract，保留 executor-native behavior | arch/reuse | 2026-07-30 | feedback:2026-07-30 | P2 | reuse-debt |
@@ -2231,11 +2231,32 @@ version dispatch separation 與 legacy/current verifier 分層。不得把這些
    （13 案例）鎖定行為；fixture 與 `test-core-schemas.sh` 共用同一份
    `tests/lib/gate-assurance-fixtures.sh`，避免兩處各自維護一份「合法 assurance
    長什麼樣」而悄悄漂移。
-3. **範圍邊界**：reviewer-result（`gate_reviewer_result_v1`）、synthesis-result
-   （`gate_synthesis_result_v1`）、scope-manifest（`gate_scope_manifest_v1`）三個
-   artifact type 有類似規模的 only_keys 重複（起始掃描時已確認存在，行號約在
-   `gate-result-verify.sh:260-345`／`1100+`／`1861+`），本輪**刻意不動**——延續票面
-   「不得提前擴成 Gate workflow 重構」的邊界，留給下一個 slice。
+3. **範圍邊界（原始判斷，已於下方更新）**：reviewer-result／synthesis-result／
+   scope-manifest 三個 artifact type 有類似規模的 only_keys 重複，本輪刻意不動。
+
+**Update 2026-08-24（同日續，pr:#TBD）：`gate_scope_manifest_verify` 完成，並修正
+第一輪遺漏**：
+1. `core/schema/gate-scope-manifest.schema.json`（942 行）比 gate-assurance 的
+   schema 更完整——用 `allOf`/`if`/`then` 編碼了 gate-assurance schema 沒有的多個
+   跨欄位關聯（`subject_kind`↔`diff_kind`、`status`↔`truncation` 形狀、依 `status`
+   決定的 `old_path`/`new_path`/`similarity` 形狀），所以這次可安全移除的範圍比
+   assurance verifier 那輪更大。同樣逐條比對 schema＋fault-injection 驗證後執行；
+   新增 `tests/shell/test-gate-scope-manifest-verify.sh`（10 案例），fixture 抽到
+   `tests/lib/gate-scope-manifest-fixtures.sh` 與 `test-core-schemas.sh` 共用。
+2. **修正殘留**：`/simplify` 的 altitude review 抓到第一輪（#524）遺漏——
+   `gate-assurance.schema.json` 的 `gateSubject` definition 其實也用 `allOf`/`if`/
+   `then` 編碼了 `subject_kind`↔`dirty_policy` 關聯，但 #524 的稽核只查了頂層
+   `allOf`，沒查 definitions 內部巢狀的 `allOf`，導致這條 handwritten 判斷被誤留。
+   本輪已用同樣的 fault-injection 方法確認、移除，並補上回歸測試。**教訓**：
+   稽核 JSON Schema 覆蓋範圍時，`allOf`/`if`/`then` 可能巢狀在 `definitions`
+   內部，只查頂層會漏判。
+3. **reviewer-result／synthesis-result 改判**：深入檢視後發現兩者的「重複」並非
+   意外——是刻意設計，用來在 reviewer 重試迴圈裡給出精準到欄位層級的錯誤訊息（見
+   `gate-result-verify.sh` 裡明確的設計註解："a reviewer told only 'invalid
+   test-gap matrix contract' cannot tell which of ~10 constraints it broke"）。
+   直接比照 assurance/scope-manifest 的做法會犧牲這個診斷品質，因此**不适用同一種
+   刪除法**，需要另外設計「先過 schema、再跑僅存的語意/診斷邏輯」的排序與拆分方式，
+   保留欄位級診斷訊息。留給下一個 slice，範圍與風險都明顯更高。
 
 ---
 
