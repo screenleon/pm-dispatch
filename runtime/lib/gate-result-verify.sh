@@ -2340,6 +2340,26 @@ gate_policy_applicability_assess() {
 # copy guarded by test_inline_fallback_matches_lib.
 #
 # gate_assurance_verify <result_file> <assurance_file> <body_final>
+# CC-533 Req 3: legacy gate_assurance_v1 claim verification, isolated from the
+# current (v2/v3) verifier below. v1 predates the schema-derived structural
+# validator entirely (no gate-assurance.schema.json coverage), so this stays
+# a small self-contained handwritten check rather than a version branch
+# threaded through the current verifier's logic.
+_gate_assurance_verify_legacy_v1() {
+  local assurance_file="$1" body_final="$2" markdown_tier="$3" markdown_mode="$4"
+  jq -e --arg final "$body_final" --arg markdown_tier "$markdown_tier" \
+    --arg markdown_mode "$markdown_mode" '
+      .kind == "gate_assurance_v1" and .schema_version == 1 and
+      .result.final == $final and
+      .coordinates.tier.resolved == $markdown_tier and
+      .coordinates.mode.resolved == $markdown_mode
+    ' "$assurance_file" >/dev/null || {
+    printf 'Error: legacy gate assurance sidecar failed claim verification: %s\n' \
+      "$assurance_file" >&2
+    return 1
+  }
+}
+
 gate_assurance_verify() {
   local result_file="$1" assurance_file="$2" body_final="$3"
   local markdown_tier markdown_mode result_sha assurance_kind
@@ -2355,17 +2375,8 @@ gate_assurance_verify() {
   markdown_mode="$(_gate_result_frontmatter_value "$result_file" mode)"
   assurance_kind="$(jq -r '.kind // empty' "$assurance_file" 2>/dev/null)"
   if [[ "$assurance_kind" == gate_assurance_v1 ]]; then
-    jq -e --arg final "$body_final" --arg markdown_tier "$markdown_tier" \
-      --arg markdown_mode "$markdown_mode" '
-        .kind == "gate_assurance_v1" and .schema_version == 1 and
-        .result.final == $final and
-        .coordinates.tier.resolved == $markdown_tier and
-        .coordinates.mode.resolved == $markdown_mode
-      ' "$assurance_file" >/dev/null || {
-      printf 'Error: legacy gate assurance sidecar failed claim verification: %s\n' \
-        "$assurance_file" >&2
-      return 1
-    }
+    _gate_assurance_verify_legacy_v1 \
+      "$assurance_file" "$body_final" "$markdown_tier" "$markdown_mode" || return $?
     GATE_ASSURANCE_BOUND=false
     export GATE_ASSURANCE_BOUND
     return 0
@@ -2377,138 +2388,40 @@ gate_assurance_verify() {
     return 1
   fi
   result_sha="$(_gate_result_sha256_file "$result_file")" || return $?
+  # CC-533 Req 2: single-field shape checks (only_keys/type/enum/pattern/const)
+  # already declared in core/schema/gate-assurance.schema.json are NOT
+  # repeated here — gate_structural_schema_verify above already proved them.
+  # Everything remaining below is either a same-document cross-field
+  # consistency rule (plain JSON Schema has no `$data`-style "field A must
+  # equal field B" construct, so these cannot be schema-derived) or a
+  # comparison against something outside this document (the result markdown's
+  # frontmatter/body, a freshly computed file digest, or the shared
+  # identifier-policy run-id pattern). Do not add a check here that a schema
+  # property/pattern/enum/const addition could express instead.
   jq -e --arg final "$body_final" --arg result_sha "$result_sha" \
     --arg markdown_tier "$markdown_tier" \
     --arg markdown_mode "$markdown_mode" \
     --arg run_id_pattern "$(pm_identifier_run_ere_pattern)" '
-    def only_keys($allowed):
-      type == "object" and ((keys_unsorted - $allowed) | length) == 0;
     def strings_unique:
       type == "array" and all(.[]; type == "string" and length > 0) and
       (length == (unique | length));
     def same_set($a; $b): ($a | sort) == ($b | sort);
-    only_keys(["kind","schema_version","result","bindings","subject","evidence",
-      "coordinates","policy","dispatch","provenance"]) and
-    (.result | only_keys(["final"])) and
-    (.bindings | only_keys(["result_sha256","repo_root","repo_identity",
-      "base_commit","head_commit","subject_fingerprint"])) and
     (if .kind == "gate_assurance_v3" then
-      (.subject |
-        only_keys(["kind","schema_version","repository","observed","base","head",
-          "tree_fingerprint","subject_kind","dirty_policy","created_at",
-          "finished_at","observed_at_finish"])) and
-      .subject.kind == "gate_subject_v1" and .subject.schema_version == 1 and
-      (.subject.repository |
-        only_keys(["key","git_common_dir_identity","remote_identity"])) and
-      (.subject.repository.key | test("^[a-f0-9]{64}$")) and
-      (.subject.repository.git_common_dir_identity | test("^[a-f0-9]{64}$")) and
-      (.subject.repository.remote_identity == null or
-        (.subject.repository.remote_identity | test("^[a-f0-9]{64}$"))) and
-      (.subject.observed | only_keys(["root","git_common_dir"])) and
-      (.subject.observed.root | type == "string" and startswith("/")) and
-      (.subject.observed.git_common_dir | type == "string" and startswith("/")) and
-      (.subject.base | only_keys(["ref","commit"])) and
-      (.subject.base.ref | type == "string" and length > 0) and
-      (.subject.base.commit | test("^[a-f0-9]{40}$")) and
-      (.subject.head | only_keys(["ref","commit"])) and
-      (.subject.head.ref | type == "string" and length > 0) and
-      (.subject.head.commit | test("^[a-f0-9]{40}$")) and
-      (.subject.tree_fingerprint | test("^[a-f0-9]{64}$")) and
-      (.subject.subject_kind | IN("committed_head","working_tree","fixed_ref")) and
-      (.subject.dirty_policy |
-        IN("require_clean","include_working_tree","ignore_working_tree")) and
       ((.subject.subject_kind == "committed_head" and
           .subject.dirty_policy == "require_clean") or
        (.subject.subject_kind == "working_tree" and
           .subject.dirty_policy == "include_working_tree") or
        (.subject.subject_kind == "fixed_ref" and
           .subject.dirty_policy == "ignore_working_tree")) and
-      (.subject.created_at |
-        test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")) and
-      (.subject.finished_at |
-        test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")) and
-      (.subject.observed_at_finish |
-        only_keys(["repository_key","base_commit","head_commit",
-          "tree_fingerprint"])) and
-      (.subject.observed_at_finish.repository_key | test("^[a-f0-9]{64}$")) and
-      (.subject.observed_at_finish.base_commit | test("^[a-f0-9]{40}$")) and
-      (.subject.observed_at_finish.head_commit | test("^[a-f0-9]{40}$")) and
-      (.subject.observed_at_finish.tree_fingerprint | test("^[a-f0-9]{64}$")) and
-      (.evidence | only_keys(["preflight","scope_manifest","closure"])) and
-      (.evidence.preflight |
-        only_keys(["status","outcome","artifact","sha256",
-          "subject_fingerprint"])) and
-      (.evidence.preflight.status | IN("not_run","linked")) and
-      (if .evidence.preflight.status == "linked" then
-          (.evidence.preflight.outcome |
-            IN("pass","fail","test-fail","timeout","environment-error","stale",
-              "invalid-evidence","unclassified-nonzero")) and
-        (.evidence.preflight.artifact |
-          type == "string" and
-          test("^preflight-evidence-[0-9]{8}-[0-9]{6}\\.json$")) and
-        (.evidence.preflight.sha256 | test("^[a-f0-9]{64}$")) and
-        (.evidence.preflight.subject_fingerprint | test("^[a-f0-9]{64}$"))
-       else
-        .evidence.preflight.outcome == null and
-        .evidence.preflight.artifact == null and
-        .evidence.preflight.sha256 == null and
-        .evidence.preflight.subject_fingerprint == null
-       end) and
-      (all([.evidence.scope_manifest,.evidence.closure][];
-        only_keys(["status","artifact","sha256","subject_fingerprint"]) and
-        (.status | IN("unavailable","verified")) and
-        (if .status == "verified" then
-          (.artifact |
-            type == "string" and length > 0 and (contains("/") | not)) and
-          (.sha256 | test("^[a-f0-9]{64}$")) and
-          (.subject_fingerprint | test("^[a-f0-9]{64}$"))
-         else
-          .artifact == null and .sha256 == null and .subject_fingerprint == null
-         end))) and
       .bindings.repo_root == .subject.observed.root and
       .bindings.repo_identity == .subject.repository.key and
       .bindings.base_commit == .subject.base.commit and
       .bindings.head_commit == .subject.head.commit and
       .bindings.subject_fingerprint == .subject.tree_fingerprint and
       .subject.created_at <= .subject.finished_at
-     else
-      (has("subject") | not) and (has("evidence") | not)
-     end) and
-    (.coordinates | only_keys(["tier","mode","pass","coverage","independence"])) and
-    (.coordinates.tier | only_keys(["requested","resolved","evidence_floor","selection_basis"])) and
-    (.coordinates.mode | only_keys(["requested","resolved","topology","synthesis"])) and
-    (.coordinates.pass | only_keys(["requested","resolved","scope","initial_result"])) and
-    (.coordinates.coverage |
-      only_keys(["requested","selected","skipped","vocabulary","selection_basis"])) and
-    (.coordinates.independence |
-      only_keys(["implementation_context_isolated","reviewer_topology",
-        "per_reviewer_independent","evidence_status"])) and
+     else true end) and
     (if has("policy") then
-      (.policy |
-        only_keys(["kind","schema_version","consumer_policy","policy_source",
-          "scope_fingerprint","request","classification","resolution",
-          "matched_signals","resolved","enforcement","override",
-          "reviewer_override"])) and
-      (.policy.request |
-        only_keys(["tier","mode","pass_kind","reviewers"])) and
-      (.policy.classification |
-        only_keys(["architecture_impact","line_changes",
-          "binary_or_unknown_count","layer_roots"])) and
-      (.policy.resolution |
-        only_keys(["minimum_tier","required_reviewers","recommended_mode",
-          "mode_selection_source","mode_recommendation_overridden",
-          "downgrade_requested","downgrade_allowed"])) and
-      (.policy.resolved | only_keys(["tier","mode","reviewers"])) and
-      (.policy.enforcement | only_keys(["status","violations"])) and
-      (.policy.override |
-        only_keys(["status","source","sha256","reason","approver"])) and
-      (.policy.reviewer_override |
-        only_keys(["status","source","sha256"])) and
-      .policy.kind == "gate_policy_resolution_v1" and
-      .policy.schema_version == 1 and
-      (.policy.consumer_policy | IN("generic","maintainer")) and
       .policy.policy_source == .provenance.policy_source and
-      (.policy.scope_fingerprint | test("^[a-f0-9]{64}$")) and
       .policy.request.tier == .coordinates.tier.requested and
       .policy.request.mode == .coordinates.mode.requested and
       .policy.request.pass_kind == .coordinates.pass.resolved and
@@ -2516,25 +2429,13 @@ gate_assurance_verify() {
         .coordinates.coverage.requested == null) or
        (same_set(.policy.request.reviewers;
          .coordinates.coverage.requested))) and
-      (.policy.classification.architecture_impact |
-        IN("unknown","none","minor","major")) and
-      (.policy.classification.line_changes |
-        type == "number" and . >= 0 and floor == .) and
-      (.policy.classification.binary_or_unknown_count |
-        type == "number" and . >= 0 and floor == .) and
       (.policy.classification.layer_roots | strings_unique) and
-      (.policy.resolution.minimum_tier |
-        IN("express","standard","full")) and
       (.policy.resolution.required_reviewers | strings_unique) and
       (.policy as $policy |
         all($policy.resolution.required_reviewers[];
           . as $reviewer |
           ($policy.resolved.reviewers | index($reviewer)) != null or
             $policy.resolution.downgrade_allowed)) and
-      (.policy.resolution.recommended_mode |
-        IN("sequential","parallel")) and
-      (.policy.resolution.mode_selection_source | IN("user","policy")) and
-      (.policy.resolution.mode_recommendation_overridden | type == "boolean") and
       (if .policy.request.mode == "default"
        then
          .policy.resolution.mode_selection_source == "policy" and
@@ -2546,42 +2447,23 @@ gate_assurance_verify() {
          .policy.resolution.mode_recommendation_overridden ==
            (.policy.request.mode != .policy.resolution.recommended_mode)
        end) and
-      (.policy.resolution.downgrade_requested | type == "boolean") and
-      (.policy.resolution.downgrade_allowed | type == "boolean") and
-      (.policy.matched_signals | type == "array" and length > 0) and
       ([.policy.matched_signals[].id] | strings_unique) and
       (all(.policy.matched_signals[];
-        only_keys(["id","source","matches","minimum_tier",
-          "required_reviewers","recommended_mode"]) and
-        (.id | type == "string" and length > 0) and
-        (.source |
-          IN("consumer-policy","classification","path-regex","brief-value")) and
-        (.matches | strings_unique and length > 0) and
-        (.minimum_tier | IN("express","standard","full")) and
-        (.required_reviewers | strings_unique) and
-        (.recommended_mode | IN("sequential","parallel")))) and
+        (.matches | strings_unique) and
+        (.required_reviewers | strings_unique))) and
       .policy.resolved.tier == .coordinates.tier.resolved and
       .policy.resolved.mode == .coordinates.mode.resolved and
       same_set(.policy.resolved.reviewers;
         .coordinates.coverage.selected) and
-      .policy.enforcement.status == "pass" and
-      (.policy.enforcement.violations | type == "array") and
       (all(.policy.enforcement.violations[];
-        only_keys(["coordinate","requested","required"]) and
         (.coordinate | IN("tier","coverage")))) and
-      (.policy.override.status |
-        IN("not_provided","not_needed","applied","scope_mismatch",
-          "allowance_mismatch")) and
       (if .policy.resolution.downgrade_requested
        then
          .policy.resolution.downgrade_allowed == true and
          .policy.override.status == "applied" and
          (.policy.override.source |
            type == "string" and startswith("/")) and
-         (.policy.override.sha256 | test("^[a-f0-9]{64}$")) and
          (.policy.override.reason | type == "string" and length > 0) and
-         (.policy.override.approver |
-           only_keys(["kind","identity","approval_ref"])) and
          .policy.override.approver.kind == "user" and
          (.policy.override.approver.identity |
            type == "string" and length > 0) and
@@ -2592,53 +2474,24 @@ gate_assurance_verify() {
          (.policy.override.status |
            IN("not_provided","not_needed"))
        end) and
-      (.policy.reviewer_override.status |
-        IN("not_provided","provided")) and
       (if .policy.reviewer_override.status == "provided"
        then
          (.policy.reviewer_override.source |
-           type == "string" and startswith("/")) and
-         (.policy.reviewer_override.sha256 | test("^[a-f0-9]{64}$"))
+           type == "string" and startswith("/"))
        else
          .policy.reviewer_override.source == null and
          .policy.reviewer_override.sha256 == null
        end)
     else true end) and
-    (.dispatch | only_keys(["outcomes"])) and
-    (all(.dispatch.outcomes[];
-      only_keys(["role","reviewer","status","run_id","evidence_status"]))) and
-    (.provenance |
-      only_keys(["producer","policy_source","attestation","coordinate_syntax"])) and
-    (if .provenance.coordinate_syntax? == null then true else
-      (.provenance.coordinate_syntax | only_keys(["pass","coverage"])) and
-      (.provenance.coordinate_syntax.pass |
-        IN("default","explicit","targeted-shorthand","mixed")) and
-      (.provenance.coordinate_syntax.coverage |
-        IN("default","explicit","targeted-shorthand","mixed"))
-     end) and
-    ((.kind == "gate_assurance_v2" and .schema_version == 2) or
-      (.kind == "gate_assurance_v3" and .schema_version == 3)) and
     .result.final == $final and
     .bindings.result_sha256 == $result_sha and
-    (.bindings.repo_root | type == "string" and startswith("/")) and
-    (.bindings.repo_identity | test("^[a-f0-9]{64}$")) and
-    (.bindings.base_commit | test("^[a-f0-9]{40}$")) and
-    (.bindings.head_commit | test("^[a-f0-9]{40}$")) and
-    (.bindings.subject_fingerprint | test("^[a-f0-9]{64}$")) and
     .coordinates.tier.resolved == $markdown_tier and
     .coordinates.mode.resolved == $markdown_mode and
-    .provenance.producer == "pr-gate.sh" and
-    (.provenance.policy_source |
-      IN("canonical","generated-snapshot","mixed")) and
-    (.coordinates.tier.evidence_floor | type == "string" and length > 0) and
     (if .kind == "gate_assurance_v3" then
        # Historical v3 artifacts predate selection_basis. They remain readable
        # only when both additions are absent; a partial claim is always invalid.
        (if ((.coordinates.tier | has("selection_basis")) and
             (.coordinates.coverage | has("selection_basis"))) then
-          (.coordinates.tier.selection_basis | IN("policy","explicit")) and
-          (.coordinates.coverage.selection_basis |
-            IN("policy-default","explicit","targeted-shorthand","mixed")) and
           (.coordinates.tier.selection_basis ==
             (if .coordinates.tier.requested == "auto" then "policy" else "explicit" end)) and
           (.coordinates.coverage.selection_basis ==
@@ -2655,11 +2508,7 @@ gate_assurance_verify() {
        ((.coordinates.coverage | has("selection_basis")) | not)
      end) and
     (.coordinates.tier.requested == "auto" or
-      (.coordinates.tier.requested == .coordinates.tier.resolved and
-       (.coordinates.tier.requested | IN("express","standard","full")))) and
-    (.coordinates.tier.resolved | IN("express","standard","full")) and
-    (.coordinates.mode.requested | IN("default","sequential","parallel")) and
-    (.coordinates.mode.resolved | IN("sequential","parallel")) and
+      .coordinates.tier.requested == .coordinates.tier.resolved) and
     (.coordinates.mode.requested == "default" or
       .coordinates.mode.requested == .coordinates.mode.resolved) and
     ((.coordinates.mode.resolved == "sequential" and
@@ -2668,8 +2517,6 @@ gate_assurance_verify() {
      (.coordinates.mode.resolved == "parallel" and
        .coordinates.mode.topology == "per-reviewer-sessions" and
        .coordinates.mode.synthesis == "separate-session")) and
-    (.coordinates.pass.requested | IN("initial","targeted")) and
-    (.coordinates.pass.resolved | IN("initial","targeted")) and
     .coordinates.pass.requested == .coordinates.pass.resolved and
     ((.coordinates.pass.resolved == "initial" and
        .coordinates.pass.scope == "comprehensive" and
@@ -2687,15 +2534,11 @@ gate_assurance_verify() {
       ((.coordinates.coverage.requested | strings_unique) and
        same_set(.coordinates.coverage.requested;
          .coordinates.coverage.selected))) and
-    (.dispatch.outcomes | type == "array") and
     (all(.dispatch.outcomes[];
-      (.role | IN("combined","reviewer","synthesis","preflight")) and
       (if .role == "reviewer"
        then (.reviewer | type == "string" and length > 0)
        else .reviewer == null
        end) and
-      (.status | IN("passed","failed","incomplete","skipped")) and
-      (.evidence_status | IN("verified","unavailable","unverified")) and
       (.run_id == null or
         (.run_id | type == "string" and test($run_id_pattern))))) and
     (if .coordinates.mode.resolved == "parallel" and
@@ -2719,8 +2562,6 @@ gate_assurance_verify() {
        (.dispatch.outcomes[0].status == "failed" or
         .dispatch.outcomes[0].status == "incomplete")
      end) and
-    (.coordinates.independence.evidence_status |
-      IN("verified","unavailable","unverified")) and
     (if .coordinates.independence.evidence_status == "verified"
      then (.provenance.attestation |
        type == "string" and

@@ -22,6 +22,18 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **`gate_assurance_verify` structural cleanup (CC-533).** ~230 lines of
+  handwritten `only_keys`/type/enum/pattern/const checks duplicating
+  `core/schema/gate-assurance.schema.json` are removed from the v2/v3 branch,
+  leaving only same-document cross-field consistency and comparisons against
+  external context (result markdown frontmatter, a computed file digest, the
+  shared identifier-policy run-id pattern) that plain JSON Schema cannot
+  express. Every removal was verified by fault-injection (temporarily
+  deleting the line and confirming the corresponding test failed) rather than
+  by inspection alone. The legacy `gate_assurance_v1` branch (predates the
+  schema entirely) is now its own function, `_gate_assurance_verify_legacy_v1`.
+  Reviewer-result/synthesis-result/scope-manifest have similar duplication
+  and are intentionally deferred to a future slice.
 - **Reviewer protocol names test-gap field defects instead of calling valid
   JSON "invalid JSON document."** A null `contract` or unpaired finding now
   names the row/id; empty `existing_evidence` is filled from a finding with

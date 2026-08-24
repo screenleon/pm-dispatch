@@ -404,6 +404,13 @@ jobs:
       - name: pmctl run-stats regression suite
         run: bash tests/shell/test-pmctl-run-stats.sh
 
+  test-gate-assurance-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: gate_assurance_verify regression suite
+        run: bash tests/shell/test-gate-assurance-verify.sh
+
   test-pmctl-gate:
     runs-on: ubuntu-latest
     steps:
