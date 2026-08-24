@@ -26,7 +26,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-527 | ✅ done | targeted gate CLI 拆分 pass、reviewer coverage 與 tier；tier 由 current subject/policy 解析，initial result 僅為 remediation context | ux/gate | 2026-07-28 | pr:#472, pr:#476, pr:#482, pr:#505 | P2 | design |
 | CC-529 | ⚠️ partial 2026-08-15 | publish assurance observability：以 gate_publish_assessment_v1 將 ship stdout、PR body 與 finish marker 綁到同一份 verified assessment；仍需完成完整 producer/consumer dogfood | release/gate | 2026-07-30 | feedback:2026-07-30, pr:#484 | P2 | hygiene |
 | CC-532 | ✅ done | Linux/WSL2 repo-layout canonical Gate modules：options／policy／subject／scope／reviewer-contract／assurance 均有單一 source owner；standalone／copy parity 在 [[CC-546]] | arch/gate | 2026-07-30 | feedback:2026-07-30 | P1 | reuse-debt |
-| CC-533 | ⚠️ partial 2026-08-24 | assurance／scope-manifest／reviewer-result 三型已交付；synthesis-result 改寫（同一模式）待下一輪，pr:#TBD | schema/gate | 2026-07-30 | pr:#480, pr:#524, pr:#525, pr:#526, pr:#TBD | P1 | design |
+| CC-533 | ⚠️ partial 2026-08-24 | assurance／scope-manifest／reviewer-result 三型已交付；synthesis-result 改寫（同一模式）待下一輪，pr:#527 | schema/gate | 2026-07-30 | pr:#480, pr:#524, pr:#525, pr:#526, pr:#527 | P1 | design |
 | CC-534 | 🟢 someday | `commands.tsv` 驅動 CLI routing、safe handler dispatch 與 lazy module loading | arch/DX | 2026-07-30 | feedback:2026-07-30 | P2 | design |
 | CC-535 | 🟢 someday | detached-launch 上的 supervised-run primitive + versioned JSON run-spec | arch/ops | 2026-07-30 | feedback:2026-07-30 | P2 | design |
 | CC-536 | 🟢 someday | 擴充 Adapter SDK 的 shared lifecycle／manifest／trace contract，保留 executor-native behavior | arch/reuse | 2026-07-30 | feedback:2026-07-30 | P2 | reuse-debt |
@@ -2285,7 +2285,7 @@ version dispatch separation 與 legacy/current verifier 分層。不得把這些
    `gate_synthesis_protocol_verify` 本身的改寫（先跑 schema、刪除多餘手刻邏輯、保留
    唯一 domain hint 與所有跨物件／外部比對）留給下一個 slice。
 
-**Update 2026-08-24（同日續，pr:#TBD）：`_gate_reviewer_protocol_document_verify` 改寫，
+**Update 2026-08-24（同日續，pr:#527）：`_gate_reviewer_protocol_document_verify` 改寫，
 先跑 `/pre-impl`**：深入盤點後發現原始 pre-impl 對「domain hint 只有一處」的判斷過於
 樂觀——實測至少三處手刻診斷（blocking_severity_violation／blocking_origin_violation／
 test_gap_violation 的逐行 ID 命名＋sibling-enum 提示）都在既有測試裡被明確斷言精確文字，
