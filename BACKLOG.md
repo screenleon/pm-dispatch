@@ -26,7 +26,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-527 | ✅ done | targeted gate CLI 拆分 pass、reviewer coverage 與 tier；tier 由 current subject/policy 解析，initial result 僅為 remediation context | ux/gate | 2026-07-28 | pr:#472, pr:#476, pr:#482, pr:#505 | P2 | design |
 | CC-529 | ⚠️ partial 2026-08-15 | publish assurance observability：以 gate_publish_assessment_v1 將 ship stdout、PR body 與 finish marker 綁到同一份 verified assessment；仍需完成完整 producer/consumer dogfood | release/gate | 2026-07-30 | feedback:2026-07-30, pr:#484 | P2 | hygiene |
 | CC-532 | ✅ done | Linux/WSL2 repo-layout canonical Gate modules：options／policy／subject／scope／reviewer-contract／assurance 均有單一 source owner；standalone／copy parity 在 [[CC-546]] | arch/gate | 2026-07-30 | feedback:2026-07-30 | P1 | reuse-debt |
-| CC-533 | ⚠️ partial 2026-08-24 | assurance／scope-manifest structural cleanup 已交付；共用 schema 解譯器加值回報＋reviewer-result schema 補強（本輪，pr:#TBD）為下一步「保留診斷品質」的 reviewer/synthesis-result 改寫鋪路，尚未動手改寫兩支函式本身 | schema/gate | 2026-07-30 | pr:#480, pr:#524, pr:#525, pr:#TBD | P1 | design |
+| CC-533 | ⚠️ partial 2026-08-24 | assurance／scope-manifest structural cleanup 已交付；共用 schema 解譯器加值回報＋reviewer-result schema 補強（本輪，pr:#526）為下一步「保留診斷品質」的 reviewer/synthesis-result 改寫鋪路，尚未動手改寫兩支函式本身 | schema/gate | 2026-07-30 | pr:#480, pr:#524, pr:#525, pr:#526 | P1 | design |
 | CC-534 | 🟢 someday | `commands.tsv` 驅動 CLI routing、safe handler dispatch 與 lazy module loading | arch/DX | 2026-07-30 | feedback:2026-07-30 | P2 | design |
 | CC-535 | 🟢 someday | detached-launch 上的 supervised-run primitive + versioned JSON run-spec | arch/ops | 2026-07-30 | feedback:2026-07-30 | P2 | design |
 | CC-536 | 🟢 someday | 擴充 Adapter SDK 的 shared lifecycle／manifest／trace contract，保留 executor-native behavior | arch/reuse | 2026-07-30 | feedback:2026-07-30 | P2 | reuse-debt |
@@ -2258,7 +2258,7 @@ version dispatch separation 與 legacy/current verifier 分層。不得把這些
    刪除法**，需要另外設計「先過 schema、再跑僅存的語意/診斷邏輯」的排序與拆分方式，
    保留欄位級診斷訊息。留給下一個 slice，範圍與風險都明顯更高。
 
-**Update 2026-08-24（同日續，pr:#TBD）：reviewer-result／synthesis-result 改寫的前置
+**Update 2026-08-24（同日續，pr:#526）：reviewer-result／synthesis-result 改寫的前置
 基礎建設**：深入盤點兩支函式約 1500 行診斷訊息語料後，確認只有一處（`test_gap_violation`
 裡 `coverage_dimensions`／`missing_layer` 的相鄰 enum 混淆提示）是 schema 無法表達的
 真正 domain hint，其餘都可由 schema 表達，只是目前是手刻訊息而非泛型解譯器產生。本輪
