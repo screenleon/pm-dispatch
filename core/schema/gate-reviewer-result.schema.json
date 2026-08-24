@@ -254,6 +254,33 @@
           }
         }
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "verdict": {
+            "enum": ["approve", "advise"]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "findings": {
+            "not": {
+              "contains": {
+                "properties": {
+                  "hard_gate_class": {
+                    "enum": ["soft_block", "hard_block"]
+                  }
+                },
+                "required": [
+                  "hard_gate_class"
+                ]
+              }
+            }
+          }
+        }
+      }
     }
   ],
   "additionalProperties": false,
