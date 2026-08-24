@@ -26,7 +26,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-527 | ✅ done | targeted gate CLI 拆分 pass、reviewer coverage 與 tier；tier 由 current subject/policy 解析，initial result 僅為 remediation context | ux/gate | 2026-07-28 | pr:#472, pr:#476, pr:#482, pr:#505 | P2 | design |
 | CC-529 | ⚠️ partial 2026-08-15 | publish assurance observability：以 gate_publish_assessment_v1 將 ship stdout、PR body 與 finish marker 綁到同一份 verified assessment；仍需完成完整 producer/consumer dogfood | release/gate | 2026-07-30 | feedback:2026-07-30, pr:#484 | P2 | hygiene |
 | CC-532 | ✅ done | Linux/WSL2 repo-layout canonical Gate modules：options／policy／subject／scope／reviewer-contract／assurance 均有單一 source owner；standalone／copy parity 在 [[CC-546]] | arch/gate | 2026-07-30 | feedback:2026-07-30 | P1 | reuse-debt |
-| CC-533 | ⚠️ partial 2026-08-24 | `gate_assurance_verify` 的 structural cleanup／version dispatch 分離已交付（PR TBD）；reviewer-result／synthesis-result／scope-manifest 三個 artifact 的同類 only_keys 重複仍待後續 slice | schema/gate | 2026-07-30 | pr:#480 | P1 | design |
+| CC-533 | ⚠️ partial 2026-08-24 | `gate_assurance_verify` 的 structural cleanup／version dispatch 分離已由 #524 交付；reviewer-result／synthesis-result／scope-manifest 三個 artifact 的同類 only_keys 重複仍待後續 slice | schema/gate | 2026-07-30 | pr:#480, pr:#524 | P1 | design |
 | CC-534 | 🟢 someday | `commands.tsv` 驅動 CLI routing、safe handler dispatch 與 lazy module loading | arch/DX | 2026-07-30 | feedback:2026-07-30 | P2 | design |
 | CC-535 | 🟢 someday | detached-launch 上的 supervised-run primitive + versioned JSON run-spec | arch/ops | 2026-07-30 | feedback:2026-07-30 | P2 | design |
 | CC-536 | 🟢 someday | 擴充 Adapter SDK 的 shared lifecycle／manifest／trace contract，保留 executor-native behavior | arch/reuse | 2026-07-30 | feedback:2026-07-30 | P2 | reuse-debt |
@@ -2216,7 +2216,7 @@ consumer contract 穩定後，另以 behavior-preserving slice 完成 structural
 version dispatch separation 與 legacy/current verifier 分層。不得把這些剩餘工作提前
 擴成 Gate workflow 重構。
 
-**Update 2026-08-24（前置條件已解除，完成 assurance verifier 這一個 slice）**：
+**Update 2026-08-24（前置條件已解除，完成 assurance verifier 這一個 slice，pr:#524）**：
 [[CC-517]]／[[CC-511]] Phase B 已於 #517 交付並穩定，本次針對 `gate_assurance_verify`
 （`runtime/lib/gate-result-verify.sh`）完成 Req 2/3：
 1. Req 3：`gate_assurance_v1`（無 schema 覆蓋的 legacy 分支）抽成獨立
