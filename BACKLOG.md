@@ -26,7 +26,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-527 | ✅ done | targeted gate CLI 拆分 pass、reviewer coverage 與 tier；tier 由 current subject/policy 解析，initial result 僅為 remediation context | ux/gate | 2026-07-28 | pr:#472, pr:#476, pr:#482, pr:#505 | P2 | design |
 | CC-529 | ⚠️ partial 2026-08-15 | publish assurance observability：以 gate_publish_assessment_v1 將 ship stdout、PR body 與 finish marker 綁到同一份 verified assessment；仍需完成完整 producer/consumer dogfood | release/gate | 2026-07-30 | feedback:2026-07-30, pr:#484 | P2 | hygiene |
 | CC-532 | ✅ done | Linux/WSL2 repo-layout canonical Gate modules：options／policy／subject／scope／reviewer-contract／assurance 均有單一 source owner；standalone／copy parity 在 [[CC-546]] | arch/gate | 2026-07-30 | feedback:2026-07-30 | P1 | reuse-debt |
-| CC-533 | ⚠️ partial 2026-08-14 | PR #480 已交付 schema-derived structural validation foundation；handwritten structural cleanup、version dispatch separation 與 legacy/current verifier split 仍待 schema 穩定後收尾 | schema/gate | 2026-07-30 | pr:#480 | P1 | design |
+| CC-533 | ⚠️ partial 2026-08-24 | `gate_assurance_verify` 的 structural cleanup／version dispatch 分離已交付（PR TBD）；reviewer-result／synthesis-result／scope-manifest 三個 artifact 的同類 only_keys 重複仍待後續 slice | schema/gate | 2026-07-30 | pr:#480 | P1 | design |
 | CC-534 | 🟢 someday | `commands.tsv` 驅動 CLI routing、safe handler dispatch 與 lazy module loading | arch/DX | 2026-07-30 | feedback:2026-07-30 | P2 | design |
 | CC-535 | 🟢 someday | detached-launch 上的 supervised-run primitive + versioned JSON run-spec | arch/ops | 2026-07-30 | feedback:2026-07-30 | P2 | design |
 | CC-536 | 🟢 someday | 擴充 Adapter SDK 的 shared lifecycle／manifest／trace contract，保留 executor-native behavior | arch/reuse | 2026-07-30 | feedback:2026-07-30 | P2 | reuse-debt |
@@ -2179,7 +2179,7 @@ closure 條件。Standalone distribution 不得回併本票。
 
 ---
 
-## CC-533 — schema-derived Gate structural validator ⚠️ partial 2026-08-14
+## CC-533 — schema-derived Gate structural validator ⚠️ partial 2026-08-24
 
 **Problem**: Gate JSON Schema 已定義 required fields、exact keys、enum、patterns、
 conditions 與 finding shape，shared jq verifier 又手寫同一份 structural model。
@@ -2215,6 +2215,27 @@ branches；需待 [[CC-517]] 的 remediation closure schema 與 [[CC-511]] Phase
 consumer contract 穩定後，另以 behavior-preserving slice 完成 structural cleanup、
 version dispatch separation 與 legacy/current verifier 分層。不得把這些剩餘工作提前
 擴成 Gate workflow 重構。
+
+**Update 2026-08-24（前置條件已解除，完成 assurance verifier 這一個 slice）**：
+[[CC-517]]／[[CC-511]] Phase B 已於 #517 交付並穩定，本次針對 `gate_assurance_verify`
+（`runtime/lib/gate-result-verify.sh`）完成 Req 2/3：
+1. Req 3：`gate_assurance_v1`（無 schema 覆蓋的 legacy 分支）抽成獨立
+   `_gate_assurance_verify_legacy_v1`，不再與 v2/v3 current 邏輯混在同一函式。
+2. Req 2：v2/v3 分支裡約 230 行 only_keys／type／enum／pattern／const 手寫檢查
+   （已逐一比對 `core/schema/gate-assurance.schema.json` 確認完全重複）全數移除，
+   只留下 plain JSON Schema 無法表達的部分——同文件跨欄位一致性（例如
+   `.bindings.repo_root == .subject.observed.root`）與外部比對（result markdown
+   frontmatter、當場算出的檔案 digest、identifier-policy 的 run_id regex）。
+   每一類刪除都用 fault-injection 驗證過（暫時砍掉某行、確認對應測試真的變紅、
+   還原），而非單憑肉眼比對 schema 判斷安全。新增 `tests/shell/test-gate-assurance-verify.sh`
+   （13 案例）鎖定行為；fixture 與 `test-core-schemas.sh` 共用同一份
+   `tests/lib/gate-assurance-fixtures.sh`，避免兩處各自維護一份「合法 assurance
+   長什麼樣」而悄悄漂移。
+3. **範圍邊界**：reviewer-result（`gate_reviewer_result_v1`）、synthesis-result
+   （`gate_synthesis_result_v1`）、scope-manifest（`gate_scope_manifest_v1`）三個
+   artifact type 有類似規模的 only_keys 重複（起始掃描時已確認存在，行號約在
+   `gate-result-verify.sh:260-345`／`1100+`／`1861+`），本輪**刻意不動**——延續票面
+   「不得提前擴成 Gate workflow 重構」的邊界，留給下一個 slice。
 
 ---
 
