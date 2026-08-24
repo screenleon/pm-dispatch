@@ -202,6 +202,7 @@ covering check has passed this cycle.
 | reviewer fan-out / pr-gate | §1 Phase 2 (`test-pr-gate*`) + §2c (real) |
 | commands / skills frontmatter | §1 Phase 2 (`lint-agents`, `lint-frontmatter`, `test-commands*`) |
 | state store / schemas | §1 Phase 2 (`test-state-store*`, `test-core-schemas`) |
+| `pmctl run-stats` per-adapter outcome distribution | §1 Phase 2 (`test-pmctl-run-stats`) |
 
 - [ ] Every row above is covered by a passing check this cycle.
 
@@ -221,6 +222,11 @@ covering check has passed this cycle.
 
 ## 5. Tag & publish
 
+- [ ] (v1.0.0 only, CC-358) `pmctl run-stats` was run at least once against real
+      dispatch/gate history during the RC period, and any systematic failure
+      pattern it surfaces (`failed`/`nonzero_exit`/`missing_terminal` clustered
+      on one adapter) has a stated explanation, not just "no recent crashes."
+      Attach the `--json` report to the v1.0.0 release notes as evidence.
 - [ ] `CHANGELOG.md` finalized (version + date).
 - [ ] Commit the version bump + changelog.
 - [ ] `git tag -a vX.Y.Z -m "vX.Y.Z"` and `git push origin vX.Y.Z`.

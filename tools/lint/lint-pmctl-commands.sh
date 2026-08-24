@@ -55,6 +55,8 @@ awk '
     if (route == "pm/*") next
     if (route == "ship/*") { print "ship"; next }
     if (route == "commands/--json") { print "commands"; next }
+    if (route == "run-stats/") { print "run-stats"; next }
+    if (route == "run-stats/-*") { print "run-stats"; next }
     gsub(/\//, " ", route)
     print route
   }

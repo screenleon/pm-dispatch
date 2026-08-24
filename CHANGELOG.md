@@ -10,6 +10,12 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`pmctl run-stats` (CC-358).** Per-adapter success/failure/fallback
+  distribution read from `events.jsonl`, archive-inclusive by default
+  (`--since <date|datetime>`, `--json`). Also adds a `fallback_used` event
+  signal: the opencode adapter's model-fallback chain now reports through
+  its footer into `events.jsonl` so fallback frequency is queryable, not
+  just inferred.
 - **`systematic-debugging` skill (CC-015).** A thin, evidence-led method for
   reproducing, isolating, hypothesizing, verifying, fixing, and
   regression-testing defects.

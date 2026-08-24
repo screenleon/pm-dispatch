@@ -150,6 +150,7 @@ pmctl_dispatch_write_event() {
   local state="${5:-}" exit_code="${6:-0}" adapter="${7:-}" note="${8:-}"
   local operation_id="${9:-}"
   local from_state="${10:-}"
+  local fallback_used="${11:-}"
   local ts evt_id event_json rc=0
 
   pmctl_dispatch_ensure_state_writer "$repo_root" || return $?
@@ -168,8 +169,9 @@ pmctl_dispatch_write_event() {
     --arg adapter "$adapter" \
     --arg note "$note" \
     --arg operation_id "$operation_id" \
+    --arg fallback_used "$fallback_used" \
     --argjson exit_code "$exit_code" \
-    '{schema_version:1,id:$id,ts:$ts,kind:$kind,subject_type:"run",subject_id:$subject_id,actor:$actor,payload:({run_id:$run_id,state:$state,from_state:$from_state,to_state:$state,exit_code:$exit_code,adapter:$adapter} + (if $note == "" then {} else {note:$note} end))} + (if $operation_id == "" then {} else {operation_id:$operation_id} end)'
+    '{schema_version:1,id:$id,ts:$ts,kind:$kind,subject_type:"run",subject_id:$subject_id,actor:$actor,payload:({run_id:$run_id,state:$state,from_state:$from_state,to_state:$state,exit_code:$exit_code,adapter:$adapter} + (if $note == "" then {} else {note:$note} end) + (if $fallback_used == "true" then {fallback_used:true} else {} end))} + (if $operation_id == "" then {} else {operation_id:$operation_id} end)'
   )" || return $?
   _SW_REPO_ROOT="$work_dir" events_append "$event_json" || rc=$?
   if [[ "$rc" -ne 0 ]]; then
@@ -205,6 +207,7 @@ pmctl_dispatch_write_transition() {
   local state="${5:-}" exit_code="${6:-0}" model="${7:-}" brief_file="${8:-}"
   local trace_path="${9:-}" created_ts="${10:-}"
   local from_state="${11:-}"
+  local fallback_used="${12:-}"
   local event_kind note="" op_id
 
   pmctl_dispatch_ensure_state_writer "$repo_root" || return $?
@@ -236,7 +239,7 @@ pmctl_dispatch_write_transition() {
   pmctl_dispatch_write_run "$repo_root" "$adapter" "$state" "$exit_code" "$model" \
     "$brief_file" "$work_dir" "$trace_path" "$run_id" "$created_ts" "$op_id" || return $?
   pmctl_dispatch_write_event "$repo_root" "$work_dir" "$event_kind" "$run_id" \
-    "$state" "$exit_code" "$adapter" "$note" "$op_id" "$from_state" || return $?
+    "$state" "$exit_code" "$adapter" "$note" "$op_id" "$from_state" "$fallback_used" || return $?
 }
 
 pmctl_dispatch_write_record_soft() {
@@ -846,11 +849,12 @@ pmctl_dispatch_execute_tail() {
   # "stderr: <path>"). Empty strings make post-verify fall back to latest.*.
   # "model:  <value>" overrides the pmctl-extracted model with the adapter's
   # effective model.
-  local _run_last="" _run_trace="" _run_stderr="" _run_model=""
+  local _run_last="" _run_trace="" _run_stderr="" _run_model="" _run_fallback=""
   _run_last="$(grep -m1 '^last:' "$_footer_path" | sed 's/^last:[[:space:]]*//;s/[[:space:]]*$//' 2>/dev/null)" || true
   _run_trace="$(grep -m1 '^trace:' "$_footer_path" | sed 's/^trace:[[:space:]]*//;s/[[:space:]]*$//' 2>/dev/null)" || true
   _run_stderr="$(grep -m1 '^stderr:' "$_footer_path" | sed 's/^stderr:[[:space:]]*//;s/[[:space:]]*$//' 2>/dev/null)" || true
   _run_model="$(grep -m1 '^model:' "$_footer_path" | sed 's/^model:[[:space:]]*//;s/[[:space:]]*$//' 2>/dev/null)" || true
+  _run_fallback="$(grep -m1 '^fallback:' "$_footer_path" | sed 's/^fallback:[[:space:]]*//;s/[[:space:]]*$//' 2>/dev/null)" || true
   [[ -n "$_run_model" ]] && _dispatch_model="$_run_model"
 
   # Dry-run (--print-cmd): the adapter printed its command and wrote no trace;
@@ -860,7 +864,7 @@ pmctl_dispatch_execute_tail() {
   fi
 
   pmctl_dispatch_write_transition "$repo_root" "$work_dir" "$adapter" "$_dispatch_run_id" \
-    "verifying" "$exit_code" "$_dispatch_model" "$brief_file" "${_run_last:-}" "$_dispatch_created_ts" "dispatched" || return $?
+    "verifying" "$exit_code" "$_dispatch_model" "$brief_file" "${_run_last:-}" "$_dispatch_created_ts" "dispatched" "$_run_fallback" || return $?
 
   # A failed adapter run short-circuits: propagate its exit verbatim. The
   # adapter already wrote forensic trace/stderr for post-mortem.
@@ -872,7 +876,7 @@ pmctl_dispatch_execute_tail() {
       return 130
     fi
     pmctl_dispatch_write_transition "$repo_root" "$work_dir" "$adapter" "$_dispatch_run_id" \
-      "failed" "$exit_code" "$_dispatch_model" "$brief_file" "${_run_last:-}" "$_dispatch_created_ts" "verifying" || return $?
+      "failed" "$exit_code" "$_dispatch_model" "$brief_file" "${_run_last:-}" "$_dispatch_created_ts" "verifying" "$_run_fallback" || return $?
     pmctl_dispatch_write_record_soft "$_dispatch_run_id" "$adapter" "$_dispatch_model" "$brief_file" \
       "$work_dir" "$exit_code" "failed" "adapter exited before post-verify (exit $exit_code)" \
       "${_run_last:-}" "${_run_trace:-}" "${_run_stderr:-}" "$_dispatch_created_ts" "$(pmctl_dispatch_utc_ts)"
@@ -909,7 +913,7 @@ pmctl_dispatch_execute_tail() {
       return 130
     fi
     pmctl_dispatch_write_transition "$repo_root" "$work_dir" "$adapter" "$_dispatch_run_id" \
-      "failed" 1 "$_dispatch_model" "$brief_file" "${_run_last:-}" "$_dispatch_created_ts" "verifying" || return $?
+      "failed" 1 "$_dispatch_model" "$brief_file" "${_run_last:-}" "$_dispatch_created_ts" "verifying" "$_run_fallback" || return $?
     pmctl_dispatch_write_record_soft "$_dispatch_run_id" "$adapter" "$_dispatch_model" "$brief_file" \
       "$work_dir" 1 "failed" "$_pv_out" "${_run_last:-}" "${_run_trace:-}" "${_run_stderr:-}" \
       "$_dispatch_created_ts" "$(pmctl_dispatch_utc_ts)"
@@ -923,7 +927,7 @@ pmctl_dispatch_execute_tail() {
     return 130
   fi
   pmctl_dispatch_write_transition "$repo_root" "$work_dir" "$adapter" "$_dispatch_run_id" \
-    "ok" "$exit_code" "$_dispatch_model" "$brief_file" "${_run_last:-}" "$_dispatch_created_ts" "verifying" || return $?
+    "ok" "$exit_code" "$_dispatch_model" "$brief_file" "${_run_last:-}" "$_dispatch_created_ts" "verifying" "$_run_fallback" || return $?
   pmctl_dispatch_write_record_soft "$_dispatch_run_id" "$adapter" "$_dispatch_model" "$brief_file" \
     "$work_dir" "$exit_code" "ok" "$_pv_out" "${_run_last:-}" "${_run_trace:-}" "${_run_stderr:-}" \
     "$_dispatch_created_ts" "$(pmctl_dispatch_utc_ts)"

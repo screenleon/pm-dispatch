@@ -186,6 +186,7 @@ router and [`cli/commands.tsv`](cli/commands.tsv).
 - `ship cancel` — Cancel a ship parent operation and only its recorded child runs. [experimental; JSON: false; mutating: true]
 - `ship reconcile` — Reconcile a ship operation from trusted child terminal claims. [experimental; JSON: false; mutating: true]
 - `trace tail` — Read normalized project events. [experimental; JSON: true; mutating: false]
+- `run-stats` — Per-adapter run outcome distribution from events.jsonl. [experimental; JSON: true; mutating: false]
 - `task list` — List tasks. [experimental; JSON: true; mutating: false]
 - `task show` — Show one task. [experimental; JSON: true; mutating: false]
 - `task create` — Create a task. [experimental; JSON: false; mutating: true]

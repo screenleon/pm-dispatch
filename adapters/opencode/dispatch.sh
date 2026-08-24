@@ -427,6 +427,11 @@ dc_refresh_latest_pointers "opencode" "$TRACE_DIR" "$TS"
   fi
 } | tee -a "$STDERR_LOG" >&2
 
-dc_print_footer "$TRACE" "$LAST" "$STDERR_LOG" "$EXIT" "${USED_MODEL:-<none>}"
+# fallback_used: true once the loop moved past the first model in the chain,
+# whether or not a later attempt ultimately succeeded (total-failure case
+# includes it too — every model beyond the first was a fallback attempt).
+_fallback_used="false"
+[[ "$_attempt" -gt 1 ]] && _fallback_used="true"
+dc_print_footer "$TRACE" "$LAST" "$STDERR_LOG" "$EXIT" "${USED_MODEL:-<none>}" "$_fallback_used"
 
 exit $EXIT

@@ -50,7 +50,7 @@ if [[ $# -eq 3 && ( "$3" == "-h" || "$3" == "--help" ) ]]; then
   exit $?
 fi
 
-for _lib in identifier-policy runner-kind adapter-manifest repo-layout detached-launch pmctl-policy pmctl-fs pmctl-adapter pmctl-backlog pmctl-guard executor-router pmctl-dispatch pmctl-operation pmctl-trace pmctl-task pmctl-decision gate-result-verify gate-publish pmctl-gate pmctl-safe pmctl-validate pmctl-context pmctl-memory pmctl-artifacts pmctl-pre-release pmctl-worktree pmctl-ship-parallel pmctl-ship pmctl-state pmctl-pm; do
+for _lib in identifier-policy runner-kind adapter-manifest repo-layout detached-launch pmctl-policy pmctl-fs pmctl-adapter pmctl-backlog pmctl-guard executor-router pmctl-dispatch pmctl-operation pmctl-trace pmctl-run-stats pmctl-task pmctl-decision gate-result-verify gate-publish pmctl-gate pmctl-safe pmctl-validate pmctl-context pmctl-memory pmctl-artifacts pmctl-pre-release pmctl-worktree pmctl-ship-parallel pmctl-ship pmctl-state pmctl-pm; do
   # shellcheck source=/dev/null
   [[ -r "$REPO_ROOT/runtime/lib/$_lib.sh" ]] && . "$REPO_ROOT/runtime/lib/$_lib.sh"
 done
@@ -59,6 +59,19 @@ unset _lib
 pmctl_die() {
   printf 'pmctl: %s\n' "$*" >&2
   exit 2
+}
+
+# run-stats has no sub-word (it's flag-first: `pmctl run-stats --since ...`),
+# so the generic cmd/sub shift below consumes the first flag (or nothing) into
+# $sub. Both the `run-stats/)` and `run-stats/-*)` case arms below call this
+# shared helper so the availability check isn't duplicated; they stay as two
+# case arms (not one `|`-joined pattern) because tools/lint/lint-pmctl-commands.sh
+# derives the CLI's command registry from one router route per case-arm line.
+_pmctl_dispatch_run_stats() {
+  if ! declare -F pmctl_run_stats >/dev/null; then
+    pmctl_die "run-stats unavailable"
+  fi
+  pmctl_run_stats "$REPO_ROOT" "$@"
 }
 
 cmd="${1:-}"
@@ -294,6 +307,12 @@ case "$cmd/$sub" in
       pmctl_die "trace tail unavailable"
     fi
     pmctl_trace_tail "$REPO_ROOT" "$@"
+    ;;
+  run-stats/)
+    _pmctl_dispatch_run_stats
+    ;;
+  run-stats/-*)
+    _pmctl_dispatch_run_stats "$sub" "$@"
     ;;
   task/list)
     if ! declare -F pmctl_task_list >/dev/null; then

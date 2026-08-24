@@ -27,6 +27,7 @@ ship list	List and refresh completed parallel ship runs.	pmctl ship list [--cd <
 ship cancel	Cancel a ship parent operation and only its recorded child runs.	pmctl ship cancel <operation-id> --cd <dir> [--grace <seconds>]	experimental	false	true	--cd, --grace	pmctl ship cancel op-20260724T000000Z-abcdef --cd .
 ship reconcile	Reconcile a ship operation from trusted child terminal claims.	pmctl ship reconcile <operation-id> --cd <dir>	experimental	false	true	--cd	pmctl ship reconcile op-20260724T000000Z-abcdef --cd .
 trace tail	Read normalized project events.	pmctl trace tail [filters]	experimental	true	false	--kind, --task, --subject, --since, --until, --limit, --all, --json	pmctl trace tail --task CC-NNN --json
+run-stats	Per-adapter run outcome distribution from events.jsonl.	pmctl run-stats [--since <date>] [--by-adapter] [--json]	experimental	true	false	--since, --by-adapter, --json	pmctl run-stats --since 2026-08-01 --json
 task list	List tasks.	pmctl task list [--state <state>] [--json]	experimental	true	false	--state, --json	pmctl task list --state active --json
 task show	Show one task.	pmctl task show <id> [--json]	experimental	true	false	--json	pmctl task show CC-NNN --json
 task create	Create a task.	pmctl task create <id> --title <title> [options]	experimental	false	true	--title, --priority, --epic, --area, --backlog-ref, --behavioral-units, --size-tier	pmctl task create CC-NNN --title "Example"

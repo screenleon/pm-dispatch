@@ -1783,6 +1783,62 @@ case_fsm_valid_verifying_to_failed() {
   if [[ "$rc" -eq 0 ]]; then pass "$name"; else fail "$name" "rc=$rc"; fi
 }
 
+case_fallback_used_persists_on_verifying_and_terminal_events() {
+  # CC-358 qa-tester-F001: proves the fallback_used footer signal (opencode's
+  # model fallback_chain, threaded through dc_print_footer -> the
+  # pmctl_dispatch_write_transition/write_event fallback_used parameter)
+  # actually lands in the events.jsonl payload it is supposed to produce, on
+  # both the verifying event and the terminal (ok) event -- not just that
+  # pmctl-run-stats.sh can parse a hand-constructed fixture event.
+  #
+  # Steps:
+  #   1. Write a verifying transition with fallback_used="true".
+  #   2. Write the terminal ok transition, also with fallback_used="true".
+  #   3. Assert both the run.verifying and run.completed events in
+  #      events.jsonl carry payload.fallback_used == true.
+  #   4. Fault-sensitivity: a sibling run with fallback_used omitted must NOT
+  #      have the field at all (proves the test would fail if the argument
+  #      were dropped, not just if it were mis-set).
+  local name="FSM: fallback_used footer signal persists on verifying and terminal events"
+  should_run "$name" || return 0
+  local store work events_file rc=0
+  store="$tmp_root/fallback-persist-store"
+  work="$tmp_root/fallback-persist-work"
+  mkdir -p "$work"; git -C "$work" init -q
+  for _t in "pending::" "dispatched::pending" "verifying::dispatched"; do
+    _state="${_t%%::*}"; _from="${_t##*::}"
+    PM_DISPATCH_STATE_ROOT="$store" \
+      pmctl_dispatch_write_transition "$REPO_ROOT" "$work" "opencode" \
+      "run-20260101T000000Z-111111" "$_state" 0 "default" "/tmp/brief.md" "" "2026-01-01T00:00:00Z" "$_from" "true" \
+      >/dev/null 2>&1 || rc=$?
+  done
+  PM_DISPATCH_STATE_ROOT="$store" \
+    pmctl_dispatch_write_transition "$REPO_ROOT" "$work" "opencode" \
+    "run-20260101T000000Z-111111" "ok" 0 "default" "/tmp/brief.md" "" "2026-01-01T00:00:00Z" "verifying" "true" \
+    >/dev/null 2>&1 || rc=$?
+  # Sibling run with no fallback: proves the field is added only when true,
+  # not always present with some default value.
+  PM_DISPATCH_STATE_ROOT="$store" \
+    pmctl_dispatch_write_transition "$REPO_ROOT" "$work" "opencode" \
+    "run-20260101T000000Z-222222" "pending" 0 "default" "/tmp/brief.md" "" "2026-01-01T00:00:00Z" "" \
+    >/dev/null 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 ]]; then fail "$name" "transition writes rc=$rc"; return; fi
+  events_file="$(find "$store" -name events.jsonl -type f 2>/dev/null | head -1 || true)"
+  if [[ -z "$events_file" || ! -s "$events_file" ]]; then
+    fail "$name" "no events.jsonl written under $store"
+    return
+  fi
+  local verifying_fb ok_fb no_fallback_present
+  verifying_fb="$(jq -r 'select(.kind=="run.verifying" and .payload.run_id=="run-20260101T000000Z-111111") | .payload.fallback_used' "$events_file")"
+  ok_fb="$(jq -r 'select(.kind=="run.completed" and .payload.run_id=="run-20260101T000000Z-111111") | .payload.fallback_used' "$events_file")"
+  no_fallback_present="$(jq -r 'select(.payload.run_id=="run-20260101T000000Z-222222") | has("payload") and (.payload | has("fallback_used"))' "$events_file")"
+  if [[ "$verifying_fb" == "true" && "$ok_fb" == "true" && "$no_fallback_present" == "false" ]]; then
+    pass "$name"
+  else
+    fail "$name" "verifying_fb=$verifying_fb ok_fb=$ok_fb no_fallback_present=$no_fallback_present"
+  fi
+}
+
 case_fsm_invalid_ok_to_dispatched() {
   # Verifies that pmctl_dispatch_write_transition rejects a backward FSM edge.
   #
@@ -2122,6 +2178,7 @@ case_fsm_valid_pending_to_dispatched
 case_fsm_valid_verifying_to_ok
 case_fsm_valid_verifying_to_partial
 case_fsm_valid_verifying_to_failed
+case_fallback_used_persists_on_verifying_and_terminal_events
 case_fsm_invalid_ok_to_dispatched
 case_fsm_invalid_verifying_to_pending
 case_project_key_shasum_fallback

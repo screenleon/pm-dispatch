@@ -397,6 +397,13 @@ jobs:
       - name: pmctl trace tail regression suite
         run: bash tests/shell/test-pmctl-trace.sh
 
+  test-pmctl-run-stats:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: pmctl run-stats regression suite
+        run: bash tests/shell/test-pmctl-run-stats.sh
+
   test-pmctl-gate:
     runs-on: ubuntu-latest
     steps:
