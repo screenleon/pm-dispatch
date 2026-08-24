@@ -49,6 +49,23 @@ Versions follow [Semantic Versioning](https://semver.org/).
   is deliberate design (field-level diagnostic messages for the reviewer
   retry loop), so the same blind-removal treatment does not apply — they need
   a different approach that preserves diagnostic quality, left to a future slice.
+- **Shared schema interpreter now reports observed values (CC-533).**
+  `gate-structural-validator.jq`'s issue objects carry the offending `value`
+  alongside `path`/`message`, and `runtime/lib/gate-structural-verify.sh` gains
+  `gate_structural_schema_first_error`, formatting the first violation as one
+  diagnostic line (`path: message (got: value)`). This is groundwork for a
+  future slice that rewrites `_gate_reviewer_protocol_document_verify`/
+  `gate_synthesis_protocol_verify` to call schema validation first and drop
+  their now-schema-representable hand-rolled diagnostic messages, keeping only
+  the one genuine domain hint (`test_gap_violation`'s
+  `coverage_dimensions`/`missing_layer` note) and every cross-object/external
+  check. Also adds a `gate-reviewer-result.schema.json` rule forbidding a
+  `soft_block`/`hard_block` finding when `verdict` is `approve`/`advise` — not
+  a live bug fix, since `gate-result-verify.sh`'s handwritten `verdict_contract`
+  already enforces this today, but a schema self-sufficiency gap the rewrite
+  needs before it can drop that handwritten check. Reviewer-result's fixture
+  builder is now shared between `test-core-schemas.sh` and the new
+  `tests/shell/test-gate-structural-verify.sh` via `tests/lib/gate-reviewer-result-fixtures.sh`.
 - **Reviewer protocol names test-gap field defects instead of calling valid
   JSON "invalid JSON document."** A null `contract` or unpaired finding now
   names the row/id; empty `existing_evidence` is filled from a finding with

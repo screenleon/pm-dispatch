@@ -109,6 +109,7 @@ SUITE_NAMES=(
   test-pmctl-decision
   test-gate-assurance-verify
   test-gate-scope-manifest-verify
+  test-gate-structural-verify
   test-pmctl-gate
   test-pmctl-safe
   test-pmctl-validate
@@ -238,6 +239,7 @@ suite_path() {
     test-pmctl-decision) printf 'tests/shell/test-pmctl-decision.sh\n' ;;
     test-gate-assurance-verify) printf 'tests/shell/test-gate-assurance-verify.sh\n' ;;
     test-gate-scope-manifest-verify) printf 'tests/shell/test-gate-scope-manifest-verify.sh\n' ;;
+    test-gate-structural-verify) printf 'tests/shell/test-gate-structural-verify.sh\n' ;;
     test-pmctl-gate) printf 'tests/shell/test-pmctl-gate.sh\n' ;;
     test-pmctl-safe) printf 'tests/shell/test-pmctl-safe.sh\n' ;;
     test-pmctl-validate) printf 'tests/shell/test-pmctl-validate.sh\n' ;;

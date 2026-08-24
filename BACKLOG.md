@@ -26,7 +26,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-527 | ✅ done | targeted gate CLI 拆分 pass、reviewer coverage 與 tier；tier 由 current subject/policy 解析，initial result 僅為 remediation context | ux/gate | 2026-07-28 | pr:#472, pr:#476, pr:#482, pr:#505 | P2 | design |
 | CC-529 | ⚠️ partial 2026-08-15 | publish assurance observability：以 gate_publish_assessment_v1 將 ship stdout、PR body 與 finish marker 綁到同一份 verified assessment；仍需完成完整 producer/consumer dogfood | release/gate | 2026-07-30 | feedback:2026-07-30, pr:#484 | P2 | hygiene |
 | CC-532 | ✅ done | Linux/WSL2 repo-layout canonical Gate modules：options／policy／subject／scope／reviewer-contract／assurance 均有單一 source owner；standalone／copy parity 在 [[CC-546]] | arch/gate | 2026-07-30 | feedback:2026-07-30 | P1 | reuse-debt |
-| CC-533 | ⚠️ partial 2026-08-24 | `gate_assurance_verify`（#524）與 `gate_scope_manifest_verify`（本輪）structural cleanup 已交付；reviewer-result／synthesis-result 兩個 artifact 的重複刻意保留（承載 reviewer 重試迴圈的欄位級診斷訊息），需要不同處理方式 | schema/gate | 2026-07-30 | pr:#480, pr:#524, pr:#525 | P1 | design |
+| CC-533 | ⚠️ partial 2026-08-24 | assurance／scope-manifest structural cleanup 已交付；共用 schema 解譯器加值回報＋reviewer-result schema 補強（本輪，pr:#526）為下一步「保留診斷品質」的 reviewer/synthesis-result 改寫鋪路，尚未動手改寫兩支函式本身 | schema/gate | 2026-07-30 | pr:#480, pr:#524, pr:#525, pr:#526 | P1 | design |
 | CC-534 | 🟢 someday | `commands.tsv` 驅動 CLI routing、safe handler dispatch 與 lazy module loading | arch/DX | 2026-07-30 | feedback:2026-07-30 | P2 | design |
 | CC-535 | 🟢 someday | detached-launch 上的 supervised-run primitive + versioned JSON run-spec | arch/ops | 2026-07-30 | feedback:2026-07-30 | P2 | design |
 | CC-536 | 🟢 someday | 擴充 Adapter SDK 的 shared lifecycle／manifest／trace contract，保留 executor-native behavior | arch/reuse | 2026-07-30 | feedback:2026-07-30 | P2 | reuse-debt |
@@ -2257,6 +2257,33 @@ version dispatch separation 與 legacy/current verifier 分層。不得把這些
    直接比照 assurance/scope-manifest 的做法會犧牲這個診斷品質，因此**不适用同一種
    刪除法**，需要另外設計「先過 schema、再跑僅存的語意/診斷邏輯」的排序與拆分方式，
    保留欄位級診斷訊息。留給下一個 slice，範圍與風險都明顯更高。
+
+**Update 2026-08-24（同日續，pr:#526）：reviewer-result／synthesis-result 改寫的前置
+基礎建設**：深入盤點兩支函式約 1500 行診斷訊息語料後，確認只有一處（`test_gap_violation`
+裡 `coverage_dimensions`／`missing_layer` 的相鄰 enum 混淆提示）是 schema 無法表達的
+真正 domain hint，其餘都可由 schema 表達，只是目前是手刻訊息而非泛型解譯器產生。本輪
+完成「積極版」的地基，尚未動手改寫兩支函式：
+1. `runtime/lib/gate-structural-validator.jq` 的 issue 物件新增 `value`（觀察到的值），
+   `runtime/lib/gate-structural-verify.sh` 新增 `gate_structural_schema_first_error`，
+   把第一個違規格式化成單行「path: message (got: value)」診斷，品質可直接比對到與手刻
+   訊息相當或更好（例："$.status: value is outside enum [...] (got: "bogus-status")"）。
+   這是之後讓 reviewer-result／synthesis-result 先過 schema、再跑僅存語意邏輯時，用來
+   取代手刻「X is not one of A/B/C」訊息的單一權威來源。
+2. `core/schema/gate-reviewer-result.schema.json` 新增 `verdict` 為 `approve`／`advise`
+   時禁止帶 `soft_block`／`hard_block` finding 的 `allOf` 規則。**修正框架**：這不是修
+   live runtime bug——`gate-result-verify.sh` 現有的手刻 `verdict_contract` 今天已經
+   透過其 else 分支（`all(.findings[]; .hard_gate_class == "none")`）強制此規則。此變更
+   是補齊 schema 自身的完整性，讓之後的改寫能安全刪掉這條手刻檢查、改用
+   `gate_structural_schema_first_error`，不是獨立的 bug fix。（`/simplify` altitude
+   review 抓到我最初的錯誤描述，已當場修正。）
+3. `tests/lib/gate-reviewer-result-fixtures.sh`：從 `test-core-schemas.sh` 抽出既有的
+   `_gate_reviewer_result_valid_instance` 共用，避免新測試檔另建第二份「合法 reviewer
+   result 長什麼樣」而漂移（reuse-agent 發現，已修正）。新增
+   `tests/shell/test-gate-structural-verify.sh`（10 案例）鎖定上述兩項行為。
+4. 全套測試 104/104、pr-gate sequential GO（全體 reviewer approve）驗證通過。
+   **仍未開始**：`_gate_reviewer_protocol_document_verify` 與
+   `gate_synthesis_protocol_verify` 本身的改寫（先跑 schema、刪除多餘手刻邏輯、保留
+   唯一 domain hint 與所有跨物件／外部比對）留給下一個 slice。
 
 ---
 
