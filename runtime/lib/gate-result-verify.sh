@@ -230,11 +230,8 @@ _gate_reviewer_protocol_document_verify() {
   local document="$1" expected_reviewer="$2" expected_scope_sha="$3"
   local reference_index_json="${4:-null}"
   local require_test_gaps="${5:-false}"
-  local surfaces_json validation parse_err jq_rc
+  local validation parse_err jq_rc
   GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR=""
-  surfaces_json="$(_gate_reviewer_protocol_surfaces | jq -Rsc '
-    split("\n") | map(select(length > 0))
-  ')" || return 2
   parse_err="$(mktemp "${TMPDIR:-/tmp}/gate-reviewer-json-parse.XXXXXX")" \
     || return 2
   if ! jq -e 'type == "object"' "$document" >/dev/null 2>"$parse_err"; then
@@ -251,16 +248,134 @@ _gate_reviewer_protocol_document_verify() {
   if ! _gate_reviewer_heal_empty_existing_evidence "$document"; then
     return 2
   fi
+  # External context plain JSON Schema cannot express: the document's
+  # reviewer/scope-subject binding must equal a caller-supplied expected
+  # value, not just satisfy a shape. (Today's only caller derives
+  # expected_reviewer from this same document's .reviewer field, making that
+  # specific comparison a no-op in practice, but the parameter exists for a
+  # future caller that supplies a genuinely external expectation.)
+  local reviewer_actual scope_actual
+  reviewer_actual="$(jq -r '.reviewer // empty' "$document" 2>/dev/null)"
+  if [[ "$reviewer_actual" != "$expected_reviewer" ]]; then
+    GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR="invalid top-level or binding contract"
+    return 1
+  fi
+  scope_actual="$(jq -r '.scope_manifest_sha256 // empty' "$document" 2>/dev/null)"
+  if [[ "$scope_actual" != "$expected_scope_sha" ]]; then
+    GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR="stale subject binding"
+    return 1
+  fi
+  # Shared by both hand-written jq passes below (they run as separate
+  # processes, split around the schema call in between, so each must define
+  # its own copy rather than sharing a single jq program).
+  local jq_display_def='
+    def display:
+      if . == null
+      then "<missing>"
+      else (tostring | tojson | .[1:-1])
+      end;
+  '
+  # Field-level diagnostics kept hand-written even though the underlying rule
+  # (findings[].hard_gate_class <-> severity/origin) is also schema-encoded:
+  # naming the exact offending finding id and phrasing the fix is retry-loop
+  # UX that a generic schema message cannot produce. Run before the schema
+  # pass below so these get first refusal on this specific pattern.
+  validation="$(jq -r "$jq_display_def"'
+    def findings_array:
+      if (.findings | type) == "array" then .findings else [] end;
+    def duplicate_finding_id:
+      (.findings | type) == "array" and
+      (([.findings[].id] | length) != ([.findings[].id] | unique | length));
+    def blocking_severity_violation:
+      [findings_array[] |
+        select(
+          (.hard_gate_class | IN("soft_block","hard_block")) and
+          ((.severity | IN("critical","high")) | not)
+        )
+      ] | first;
+    def blocking_origin_violation:
+      [findings_array[] |
+        select(
+          (.hard_gate_class | IN("soft_block","hard_block")) and
+          ((.origin | IN("diff_caused","uncertain")) | not)
+        )
+      ] | first;
+    try (
+    if duplicate_finding_id
+    then "invalid finding contract"
+    elif (blocking_severity_violation != null)
+    then (blocking_severity_violation as $invalid |
+      "invalid finding contract: " + ($invalid.id | display) +
+      " hard_gate_class=" + ($invalid.hard_gate_class | display) +
+      " requires severity=critical|high (got " +
+      ($invalid.severity | display) + ")")
+    elif (blocking_origin_violation != null)
+    then (blocking_origin_violation as $invalid |
+      "invalid finding contract: " + ($invalid.id | display) +
+      " hard_gate_class=" + ($invalid.hard_gate_class | display) +
+      " requires origin=diff_caused|uncertain (got " +
+      ($invalid.origin | display) + ")")
+    else "ok"
+    end
+    ) catch (
+      "reviewer protocol filter failed: " +
+      ((. | tostring)
+        | gsub("[^A-Za-z0-9._: -]"; "?")
+        | if length > 160 then .[0:160] + "~" else . end)
+    )
+  ' "$document" 2>/dev/null)"
+  jq_rc=$?
+  if [[ "$jq_rc" -ne 0 ]]; then
+    GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR="reviewer protocol filter failed"
+    return 1
+  fi
+  if [[ "$validation" != ok ]]; then
+    GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR="$validation"
+    return 1
+  fi
+  # Schema-derived structural pass: envelope shape (only_keys/kind/
+  # schema_version/coverage_claim), coverage array shape (11 declared
+  # surfaces + per-entry shape), remaining finding shape (abbreviated ids,
+  # bad evidence paths, etc. -- anything not already ruled out above), and
+  # verdict shape/correlation. All fully declared in
+  # core/schema/gate-reviewer-result.schema.json; see
+  # runtime/lib/gate-structural-verify.sh for the generic interpreter this
+  # calls. A test_gaps-scoped violation is deferred to the hand-written
+  # test-gap diagnostics below, which name the offending row and, for the one
+  # schema-inexpressible case, the coverage_dimensions/missing_layer
+  # sibling-enum confusion.
+  local schema_line schema_rc schema_path
+  schema_line="$(gate_structural_schema_first_error \
+    gate-reviewer-result "$document")"
+  schema_rc=$?
+  if [[ "$schema_rc" -eq 2 ]]; then
+    GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR="reviewer protocol filter failed"
+    return 1
+  fi
+  if [[ "$schema_rc" -eq 1 ]]; then
+    schema_path="${schema_line%%: *}"
+    if [[ "$schema_path" != '$.test_gaps'* ]]; then
+      case "$schema_path" in
+        '$.coverage'*) GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR="invalid coverage contract" ;;
+        '$.findings'*) GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR="invalid finding contract" ;;
+        '$.verdict'*|'$.rationale'*) GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR="invalid verdict contract" ;;
+        *) GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR="invalid top-level or binding contract" ;;
+      esac
+      return 1
+    fi
+  fi
+  # Remaining hand-written checks: test-gap row diagnostics (schema cannot
+  # name the offending row's id or the sibling-enum hint), finding/test-gap
+  # pairing, and evidence-reference binding against the immutable scope
+  # manifest -- all external-context or cross-array derivations plain JSON
+  # Schema cannot express.
   validation="$(jq -r \
     --arg reviewer "$expected_reviewer" \
-    --arg scope_sha "$expected_scope_sha" \
     --argjson require_test_gaps "$require_test_gaps" \
-    --argjson surfaces "$surfaces_json" \
-    --argjson references "$reference_index_json" '
+    --argjson references "$reference_index_json" \
+    "$jq_display_def"'
     def only_keys($allowed):
       type == "object" and ((keys_unsorted - $allowed) | length) == 0;
-    def exact_keys($required):
-      type == "object" and ((keys_unsorted | sort) == ($required | sort));
     def nonempty: type == "string" and length > 0;
     def relative_path:
       nonempty and (startswith("/") | not) and
@@ -271,40 +386,6 @@ _gate_reviewer_protocol_document_verify() {
       (.line == null or (.line | type == "number" and . >= 1 and floor == .)) and
       (.symbol == null or (.symbol | nonempty)) and
       (.line != null or .symbol != null);
-    def coverage_entry:
-      only_keys(["surface","status","evidence_refs","reason"]) and
-      (.surface | IN($surfaces[])) and
-      (.status | IN("examined","not_applicable","uncertain")) and
-      (.reason | nonempty) and
-      (.evidence_refs | type == "array" and all(.[]; evidence_ref)) and
-      (if .status == "examined"
-       then (.evidence_refs | length) > 0
-       else true
-       end);
-    def finding:
-      only_keys(["id","reviewer","severity","hard_gate_class","origin","source",
-        "affected_behavior","why_it_matters","failure_mode",
-        "minimum_fix_boundary","verification_expectation"]) and
-      .reviewer == $reviewer and
-      (.id | test("^" + $reviewer + "-F[0-9]{3}$")) and
-      (.severity | IN("critical","high","medium","low")) and
-      (.hard_gate_class | IN("none","soft_block","hard_block")) and
-      (.origin | IN("diff_caused","pre_existing","uncertain","caution")) and
-      (.source | evidence_ref) and
-      (.affected_behavior | nonempty) and
-      (.why_it_matters | nonempty) and
-      (.failure_mode | nonempty) and
-      (.minimum_fix_boundary | nonempty) and
-      (.verification_expectation | nonempty) and
-      (if .hard_gate_class == "none"
-       then true
-       else (.severity | IN("critical","high")) and
-         (.origin | IN("diff_caused","uncertain"))
-       end) and
-      (if (.origin | IN("pre_existing","caution"))
-       then .hard_gate_class == "none"
-       else true
-       end);
     def test_gap:
       only_keys(["id","reviewer","status","affected_behavior","contract",
         "existing_evidence","coverage_dimensions","missing_layer","scenario",
@@ -328,21 +409,6 @@ _gate_reviewer_protocol_document_verify() {
          .oracle == null and .failure_signal == null and
          .suggested_command == null
        end);
-    def envelope_contract:
-      only_keys(["kind","schema_version","reviewer","scope_manifest_sha256",
-        "coverage_claim","coverage","findings","test_gaps","verdict","rationale"]) and
-      ((keys_unsorted | length) == 9 or
-        (has("test_gaps") and (keys_unsorted | length) == 10)) and
-      .kind == "gate_reviewer_result_v1" and .schema_version == 1 and
-      .reviewer == $reviewer and
-      .coverage_claim == "declared-scope-checklist-not-review-completeness";
-    def coverage_contract:
-      .coverage | type == "array" and length == ($surfaces | length) and
-        all(.[]; coverage_entry) and
-        ([.[].surface] | sort) == ($surfaces | sort);
-    def finding_contract:
-      .findings | type == "array" and all(.[]; finding) and
-        ([.[].id] | length) == ([.[].id] | unique | length);
     def test_gap_contract:
       if has("test_gaps")
       then .test_gaps | type == "array" and length > 0 and
@@ -370,27 +436,6 @@ _gate_reviewer_protocol_document_verify() {
             select(.status == "gap" and
               .affected_behavior == $finding.affected_behavior)] |
             length == 0) | .id]
-      end;
-    def findings_array:
-      if (.findings | type) == "array" then .findings else [] end;
-    def blocking_severity_violation:
-      [findings_array[] |
-        select(
-          (.hard_gate_class | IN("soft_block","hard_block")) and
-          ((.severity | IN("critical","high")) | not)
-        )
-      ] | first;
-    def blocking_origin_violation:
-      [findings_array[] |
-        select(
-          (.hard_gate_class | IN("soft_block","hard_block")) and
-          ((.origin | IN("diff_caused","uncertain")) | not)
-        )
-      ] | first;
-    def display:
-      if . == null
-      then "<missing>"
-      else (tostring | tojson | .[1:-1])
       end;
     # Name the exact test-gap row and constraint that failed, the way
     # blocking_severity_violation already does for findings. A reviewer told
@@ -465,15 +510,6 @@ _gate_reviewer_protocol_document_verify() {
             end) as $reason |
         {id: $row.id, reason: $reason}
       ] | first;
-    def verdict_contract:
-      (.verdict | IN("approve","advise","block-soft","block")) and
-        (.rationale | nonempty) and
-      (if .verdict == "block-soft"
-       then any(.findings[]; .hard_gate_class == "soft_block")
-       elif .verdict == "block"
-       then any(.findings[]; .hard_gate_class == "hard_block")
-       else all(.findings[]; .hard_gate_class == "none")
-       end);
     def bound_evidence_ref:
       .path as $path |
       ($references | map(select(.path == $path)) | first) as $entry |
@@ -484,27 +520,7 @@ _gate_reviewer_protocol_document_verify() {
       all(.findings[].source; bound_evidence_ref) and
       all((.test_gaps // [])[].existing_evidence[]; bound_evidence_ref);
     try (
-    if (envelope_contract | not)
-    then "invalid top-level or binding contract"
-    elif .scope_manifest_sha256 != $scope_sha
-    then "stale subject binding"
-    elif (coverage_contract | not)
-    then "invalid coverage contract"
-    elif (blocking_severity_violation != null)
-    then (blocking_severity_violation as $invalid |
-      "invalid finding contract: " + ($invalid.id | display) +
-      " hard_gate_class=" + ($invalid.hard_gate_class | display) +
-      " requires severity=critical|high (got " +
-      ($invalid.severity | display) + ")")
-    elif (blocking_origin_violation != null)
-    then (blocking_origin_violation as $invalid |
-      "invalid finding contract: " + ($invalid.id | display) +
-      " hard_gate_class=" + ($invalid.hard_gate_class | display) +
-      " requires origin=diff_caused|uncertain (got " +
-      ($invalid.origin | display) + ")")
-    elif (finding_contract | not)
-    then "invalid finding contract"
-    elif (test_gap_contract | not)
+    if (test_gap_contract | not)
     then (test_gap_violation as $invalid |
       if $invalid == null
       then "invalid test-gap matrix contract"
@@ -519,8 +535,6 @@ _gate_reviewer_protocol_document_verify() {
        end)
     elif $references != null and (evidence_reference_contract | not)
     then "invalid evidence reference contract"
-    elif (verdict_contract | not)
-    then "invalid verdict contract"
     else "ok"
     end
     ) catch (

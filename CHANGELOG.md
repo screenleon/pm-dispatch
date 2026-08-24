@@ -66,6 +66,24 @@ Versions follow [Semantic Versioning](https://semver.org/).
   needs before it can drop that handwritten check. Reviewer-result's fixture
   builder is now shared between `test-core-schemas.sh` and the new
   `tests/shell/test-gate-structural-verify.sh` via `tests/lib/gate-reviewer-result-fixtures.sh`.
+- **`_gate_reviewer_protocol_document_verify` structural cleanup (CC-533).**
+  Now calls `gate_structural_schema_first_error` for envelope shape, coverage
+  array shape (11 declared surfaces + per-entry shape), generic finding
+  shape, and verdict shape/correlation — all fully declared in
+  `core/schema/gate-reviewer-result.schema.json`. Kept hand-written (found to
+  be more load-bearing than the earlier groundwork slice estimated): external
+  binding checks (expected reviewer/scope digest), duplicate-id detection,
+  finding/test-gap pairing, evidence-reference binding, and — unlike the
+  assurance/scope-manifest cleanups — the blocking-class correlation and
+  test-gap row diagnostics (`blocking_severity_violation`,
+  `blocking_origin_violation`, `test_gap_violation`), because these name the
+  exact offending finding/test-gap row for the reviewer retry loop and at
+  least three existing tests assert their precise wording. These hand-written
+  checks now run *before* the schema call so they get first refusal on their
+  specific pattern; a `test_gaps`-scoped schema violation is deferred to the
+  hand-written test-gap diagnostics that follow. Verified against the full
+  `tests/shell/test-pr-gate.sh` suite (285/285, including 8 reviewer-protocol
+  cases asserting exact diagnostic text) with no message-format regressions.
 - **Reviewer protocol names test-gap field defects instead of calling valid
   JSON "invalid JSON document."** A null `contract` or unpaired finding now
   names the row/id; empty `existing_evidence` is filled from a finding with
