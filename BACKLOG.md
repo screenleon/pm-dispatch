@@ -26,7 +26,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-527 | ✅ done | targeted gate CLI 拆分 pass、reviewer coverage 與 tier；tier 由 current subject/policy 解析，initial result 僅為 remediation context | ux/gate | 2026-07-28 | pr:#472, pr:#476, pr:#482, pr:#505 | P2 | design |
 | CC-529 | ⚠️ partial 2026-08-15 | publish assurance observability：以 gate_publish_assessment_v1 將 ship stdout、PR body 與 finish marker 綁到同一份 verified assessment；仍需完成完整 producer/consumer dogfood | release/gate | 2026-07-30 | feedback:2026-07-30, pr:#484 | P2 | hygiene |
 | CC-532 | ✅ done | Linux/WSL2 repo-layout canonical Gate modules：options／policy／subject／scope／reviewer-contract／assurance 均有單一 source owner；standalone／copy parity 在 [[CC-546]] | arch/gate | 2026-07-30 | feedback:2026-07-30 | P1 | reuse-debt |
-| CC-533 | ⚠️ partial 2026-08-24 | assurance／scope-manifest structural cleanup 已交付；共用 schema 解譯器加值回報＋reviewer-result schema 補強（本輪，pr:#526）為下一步「保留診斷品質」的 reviewer/synthesis-result 改寫鋪路，尚未動手改寫兩支函式本身 | schema/gate | 2026-07-30 | pr:#480, pr:#524, pr:#525, pr:#526 | P1 | design |
+| CC-533 | ⚠️ partial 2026-08-24 | assurance／scope-manifest／reviewer-result 三型已交付；synthesis-result 改寫（同一模式）待下一輪，pr:#TBD | schema/gate | 2026-07-30 | pr:#480, pr:#524, pr:#525, pr:#526, pr:#TBD | P1 | design |
 | CC-534 | 🟢 someday | `commands.tsv` 驅動 CLI routing、safe handler dispatch 與 lazy module loading | arch/DX | 2026-07-30 | feedback:2026-07-30 | P2 | design |
 | CC-535 | 🟢 someday | detached-launch 上的 supervised-run primitive + versioned JSON run-spec | arch/ops | 2026-07-30 | feedback:2026-07-30 | P2 | design |
 | CC-536 | 🟢 someday | 擴充 Adapter SDK 的 shared lifecycle／manifest／trace contract，保留 executor-native behavior | arch/reuse | 2026-07-30 | feedback:2026-07-30 | P2 | reuse-debt |
@@ -2284,6 +2284,36 @@ version dispatch separation 與 legacy/current verifier 分層。不得把這些
    **仍未開始**：`_gate_reviewer_protocol_document_verify` 與
    `gate_synthesis_protocol_verify` 本身的改寫（先跑 schema、刪除多餘手刻邏輯、保留
    唯一 domain hint 與所有跨物件／外部比對）留給下一個 slice。
+
+**Update 2026-08-24（同日續，pr:#TBD）：`_gate_reviewer_protocol_document_verify` 改寫，
+先跑 `/pre-impl`**：深入盤點後發現原始 pre-impl 對「domain hint 只有一處」的判斷過於
+樂觀——實測至少三處手刻診斷（blocking_severity_violation／blocking_origin_violation／
+test_gap_violation 的逐行 ID 命名＋sibling-enum 提示）都在既有測試裡被明確斷言精確文字，
+刪除會真的降低 reviewer 重試迴圈的可用性，因此全數保留，未刪除：
+1. 改用 `gate_structural_schema_first_error` 涵蓋 envelope 形狀（only_keys／kind／
+   schema_version／coverage_claim）、coverage 陣列形狀（11 個宣告 surface＋逐項形狀）、
+   finding 泛用形狀（縮寫 ID、不合法 evidence path 等未被下方手刻檢查攔下的情況）、
+   verdict 形狀／相關性——全部已在 `core/schema/gate-reviewer-result.schema.json` 宣告。
+2. 手刻檢查的執行順序刻意調整：`blocking_severity_violation`／`blocking_origin_violation`／
+   `test_gap_contract`（逐行 ID 命名＋唯一 domain hint）必須搶在 schema 泛用訊息之前跑，
+   否則 schema 會先攔截同一違規、產生較不具體的通用訊息；schema 呼叫本身用
+   `case "$schema_path" in '$.test_gaps'*) ...` 判斷是否要讓路給手刻的 test-gap 診斷。
+   這個排序耦合是 `/simplify` altitude review 明確點出的風險（未來若 schema 新增一條
+   correlation，手刻檢查若沒同步搶跑，會悄悄退化成泛用訊息而非崩潰，只有斷言精確文字
+   的測試抓得到），已記錄但未在本輪解決（需要 `gate_structural_schema_first_error`
+   支援排除／優先序參數才能根治，屬於共用模組的後續強化，不在本票範圍）。
+3. `/simplify` 四項平行 review 一致抓到 `display()` jq helper 在兩個獨立 jq 呼叫裡各自
+   重複定義一份，已改用 bash 變數 `jq_display_def` 單一來源、兩處字串接合共用；並移除一段
+   可證明不會觸發的「schema／手刻邏輯不一致」safety-net 防禦碼（`test_gap_contract` 依設計
+   是 schema 對 test_gaps 規則的完整超集，該分支邏輯上不可達）。
+4. `runtime/bin/pr-gate.sh` 的 `_GATE_RETRYABLE_PROTOCOL_REASONS` 陣列比對的是本函式回傳
+   的 reason STEM 字串——重寫後仍回傳同一組五個分類字串（不變），未改動 pr-gate.sh。三處
+   各自維護同一組字串（bash case、jq 訊息、pr-gate.sh 陣列）是既有模式，非本輪引入，altitude
+   review 建議未來收斂成單一來源，列為 someday 而非本票範圍。
+5. 驗證：`tests/shell/test-pr-gate.sh` 全套 285/285（含 8 個斷言精確診斷文字的
+   reviewer-protocol 案例、synthesis-protocol 案例）、`lint-scripts.sh`／`lint-shellcheck.sh`
+   全綠、pr-gate sequential 首輪即 GO。**仍未開始**：`gate_synthesis_protocol_verify`
+   同模式改寫，留給下一個 slice。
 
 ---
 
