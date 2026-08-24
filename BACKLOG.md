@@ -26,7 +26,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-527 | ✅ done | targeted gate CLI 拆分 pass、reviewer coverage 與 tier；tier 由 current subject/policy 解析，initial result 僅為 remediation context | ux/gate | 2026-07-28 | pr:#472, pr:#476, pr:#482, pr:#505 | P2 | design |
 | CC-529 | ⚠️ partial 2026-08-15 | publish assurance observability：以 gate_publish_assessment_v1 將 ship stdout、PR body 與 finish marker 綁到同一份 verified assessment；仍需完成完整 producer/consumer dogfood | release/gate | 2026-07-30 | feedback:2026-07-30, pr:#484 | P2 | hygiene |
 | CC-532 | ✅ done | Linux/WSL2 repo-layout canonical Gate modules：options／policy／subject／scope／reviewer-contract／assurance 均有單一 source owner；standalone／copy parity 在 [[CC-546]] | arch/gate | 2026-07-30 | feedback:2026-07-30 | P1 | reuse-debt |
-| CC-533 | ⚠️ partial 2026-08-24 | `gate_assurance_verify`（#524）與 `gate_scope_manifest_verify`（本輪）structural cleanup 已交付；reviewer-result／synthesis-result 兩個 artifact 的重複刻意保留（承載 reviewer 重試迴圈的欄位級診斷訊息），需要不同處理方式 | schema/gate | 2026-07-30 | pr:#480, pr:#524, pr:#TBD | P1 | design |
+| CC-533 | ⚠️ partial 2026-08-24 | `gate_assurance_verify`（#524）與 `gate_scope_manifest_verify`（本輪）structural cleanup 已交付；reviewer-result／synthesis-result 兩個 artifact 的重複刻意保留（承載 reviewer 重試迴圈的欄位級診斷訊息），需要不同處理方式 | schema/gate | 2026-07-30 | pr:#480, pr:#524, pr:#525 | P1 | design |
 | CC-534 | 🟢 someday | `commands.tsv` 驅動 CLI routing、safe handler dispatch 與 lazy module loading | arch/DX | 2026-07-30 | feedback:2026-07-30 | P2 | design |
 | CC-535 | 🟢 someday | detached-launch 上的 supervised-run primitive + versioned JSON run-spec | arch/ops | 2026-07-30 | feedback:2026-07-30 | P2 | design |
 | CC-536 | 🟢 someday | 擴充 Adapter SDK 的 shared lifecycle／manifest／trace contract，保留 executor-native behavior | arch/reuse | 2026-07-30 | feedback:2026-07-30 | P2 | reuse-debt |
@@ -2234,7 +2234,7 @@ version dispatch separation 與 legacy/current verifier 分層。不得把這些
 3. **範圍邊界（原始判斷，已於下方更新）**：reviewer-result／synthesis-result／
    scope-manifest 三個 artifact type 有類似規模的 only_keys 重複，本輪刻意不動。
 
-**Update 2026-08-24（同日續，pr:#TBD）：`gate_scope_manifest_verify` 完成，並修正
+**Update 2026-08-24（同日續，pr:#525）：`gate_scope_manifest_verify` 完成，並修正
 第一輪遺漏**：
 1. `core/schema/gate-scope-manifest.schema.json`（942 行）比 gate-assurance 的
    schema 更完整——用 `allOf`/`if`/`then` 編碼了 gate-assurance schema 沒有的多個
