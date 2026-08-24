@@ -100,17 +100,21 @@ dc_refresh_latest_pointers() {
   ln -sfn "$prefix-$ts.stderr" "$trace_dir/latest.stderr" 2>/dev/null || true
 }
 
-# dc_print_footer <trace> <last> <stderr_log> <exit_code> <model>
+# dc_print_footer <trace> <last> <stderr_log> <exit_code> <model> [fallback_used]
 # Prints the standard executor footer block and cats <last> when non-empty.
+# fallback_used is optional (only opencode's model fallback_chain sets it);
+# the "fallback:" line is omitted entirely when empty, so pmctl-dispatch.sh's
+# footer grep sees nothing to parse for adapters without a fallback concept.
 # Does NOT call exit — callers must exit themselves.
 dc_print_footer() {
-  local trace="$1" last="$2" stderr_log="$3" exit_code="$4" model="$5"
+  local trace="$1" last="$2" stderr_log="$3" exit_code="$4" model="$5" fallback_used="${6:-}"
   echo "---"
   echo "trace:  $trace"
   echo "last:   $last"
   echo "stderr: $stderr_log"
   echo "exit:   $exit_code"
   echo "model:  $model"
+  [[ -n "$fallback_used" ]] && echo "fallback: $fallback_used"
   echo "---"
   if [[ -s "$last" ]]; then
     echo "=== final message ==="

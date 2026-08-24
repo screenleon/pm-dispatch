@@ -104,6 +104,7 @@ SUITE_NAMES=(
   test-state-layout-parity
   test-state-store-rotation
   test-pmctl-trace
+  test-pmctl-run-stats
   test-pmctl-task
   test-pmctl-decision
   test-pmctl-gate
@@ -230,6 +231,7 @@ suite_path() {
     test-state-layout-parity) printf 'tests/shell/test-state-layout-parity.sh\n' ;;
     test-state-store-rotation) printf 'tests/shell/test-state-store-rotation.sh\n' ;;
     test-pmctl-trace) printf 'tests/shell/test-pmctl-trace.sh\n' ;;
+    test-pmctl-run-stats) printf 'tests/shell/test-pmctl-run-stats.sh\n' ;;
     test-pmctl-task) printf 'tests/shell/test-pmctl-task.sh\n' ;;
     test-pmctl-decision) printf 'tests/shell/test-pmctl-decision.sh\n' ;;
     test-pmctl-gate) printf 'tests/shell/test-pmctl-gate.sh\n' ;;

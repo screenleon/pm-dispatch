@@ -577,6 +577,48 @@ case_pmctl_route() {
   rm -rf "$store" "$bindir" "$work"; rm -f "$bf"
 }
 
+# CC-358 qa-tester-F001 (2nd pass): proves a REAL opencode adapter fallback --
+# not a hand-built events.jsonl fixture, and not just a direct
+# pmctl_dispatch_write_transition call -- actually persists fallback_used
+# through the full pipeline (adapter footer -> pmctl dispatch run's footer
+# parse -> write_transition/write_event) AND that pmctl run-stats counts it.
+# Behavior: session.error on attempt 1 (opencode's real fallback_chain) makes
+# the adapter footer report fallback: true; pmctl dispatch run threads that
+# into events.jsonl's payload.fallback_used, and pmctl run-stats aggregates
+# it into fallback_used=1 for the opencode adapter.
+case_pmctl_route_fallback_persisted_and_counted() {
+  local name="pmctl-route/opencode fallback_used persists through dispatch and is counted by run-stats"
+  should_run "$name" || return 0
+  local store bindir work bf counter events_file run_id dispatch_rc=0
+  store="$(mktemp -d)"; bindir="$(mktemp -d)"; work="$(mktemp -d)"
+  bf="$(mktemp /tmp/brief-oc-fallback-XXXXXX.md)"
+  counter="$(mktemp)"
+  git -C "$work" init -q
+  printf 'schema_version: 1\nworking_dir: %s\ngoal: pmctl opencode fallback persistence test\nfiles:\n  - read: %s/README\nacceptance:\n  - dispatch exits 0\n' \
+    "$work" "$work" > "$bf"
+  _fake_opencode_fallback "$bindir" "$counter" "fallback success"
+  PM_DISPATCH_STATE_ROOT="$store" PATH="$bindir:$PATH" \
+    "$PMCTL" dispatch run --lifecycle foreground --adapter opencode \
+    --cd "$work" --brief-file "$bf" >/dev/null 2>&1 || dispatch_rc=$?
+  events_file="$(find "$store" -name events.jsonl -type f 2>/dev/null | head -1 || true)"
+  local terminal_fb run_stats_out run_stats_fb
+  terminal_fb="$(jq -r 'select(.kind=="run.completed") | .payload.fallback_used' "$events_file" 2>/dev/null | tail -1)"
+  run_id="$(jq -r 'select(.kind=="run.completed") | .payload.run_id' "$events_file" 2>/dev/null | tail -1)"
+  # run-stats (like trace tail) resolves its project partition from the
+  # invoking repo's identity, not from a --cd flag -- pass _SW_REPO_ROOT so it
+  # inspects the SAME isolated $work project the dispatch above wrote to,
+  # rather than pm-dispatch's own repo (which would see zero matching runs).
+  run_stats_out="$(PM_DISPATCH_STATE_ROOT="$store" _SW_REPO_ROOT="$work" "$PMCTL" run-stats --json 2>/dev/null)"
+  run_stats_fb="$(printf '%s' "$run_stats_out" | jq -r '.adapters.opencode.fallback_used // 0' 2>/dev/null)"
+  if [[ "$dispatch_rc" -eq 0 ]] \
+     && [[ "$terminal_fb" == "true" && -n "$run_id" && "$run_stats_fb" == "1" ]]; then
+    pass "$name"
+  else
+    fail "$name" "dispatch_rc=$dispatch_rc terminal_fb=$terminal_fb run_id=$run_id run_stats_fb=$run_stats_fb events=$events_file"
+  fi
+  rm -rf "$store" "$bindir" "$work"; rm -f "$bf" "$counter"
+}
+
 # Behavior: After a successful dispatch, latest.last and latest.jsonl symlinks are created.
 # Steps:
 #   1. Install fake opencode that succeeds.
@@ -619,6 +661,7 @@ case_nonzero_exit_fallback
 case_missing_terminal_fallback
 case_all_attempts_failed
 case_pmctl_route
+case_pmctl_route_fallback_persisted_and_counted
 case_timeout_zero_no_limit
 case_timeout_too_low_rejected
 case_legacy_flags_warn
