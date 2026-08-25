@@ -13,6 +13,12 @@ PMCTL="$REPO_ROOT/cli/pmctl"
 # shellcheck source=runtime/lib/memory.sh
 # shellcheck disable=SC1091
 . "$REPO_ROOT/runtime/lib/memory.sh"
+# shellcheck source=runtime/lib/portable.sh
+# shellcheck disable=SC1091
+. "$REPO_ROOT/runtime/lib/portable.sh"
+# shellcheck source=runtime/lib/pmctl-memory.sh
+# shellcheck disable=SC1091
+. "$REPO_ROOT/runtime/lib/pmctl-memory.sh"
 # shellcheck source=tests/lib/test-memory-config-fixtures.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/../lib/test-memory-config-fixtures.sh"
@@ -3167,6 +3173,351 @@ case_memory_stats_age_buckets_match_frecency_boundaries() {
   pass "$name"
 }
 
+# ── CC-567: selected→applied→outcome funnel ─────────────────────────────────
+
+# Behavior: memory_applied_record/memory_applied_load round-trip losslessly,
+# reusing the CC-559 TSV escaper — a relpath/task/run containing a literal tab
+# must survive unescaped on read.
+# Steps: record two rows (one with an embedded tab in the relpath) into an
+# isolated sidecar; load it back; assert both rows match exactly.
+case_memory_applied_record_and_load_round_trip() {
+  local name="memory_applied_record/load: round-trip preserves tab-bearing fields"
+  should_run "$name" || return 0
+
+  local sidecar="$tmp_root/applied-rt/.pm-dispatch/applied-usage.tsv"
+  memory_applied_record "$sidecar" 'card1.md' 'CC-999' 'run-aaa'
+  memory_applied_record "$sidecar" $'weird\ttab-card.md' 'CC-999' 'run-bbb'
+
+  memory_applied_load "$sidecar"
+  if [[ "${#MEMORY_APPLIED_CARD[@]}" -ne 2 ]]; then
+    fail "$name" "expected 2 rows, got ${#MEMORY_APPLIED_CARD[@]}"
+    return 0
+  fi
+  if [[ "${MEMORY_APPLIED_CARD[0]}" != 'card1.md' || "${MEMORY_APPLIED_RUN[0]}" != 'run-aaa' ]]; then
+    fail "$name" "row0 mismatch: card=${MEMORY_APPLIED_CARD[0]} run=${MEMORY_APPLIED_RUN[0]}"
+    return 0
+  fi
+  if [[ "${MEMORY_APPLIED_CARD[1]}" != $'weird\ttab-card.md' || "${MEMORY_APPLIED_RUN[1]}" != 'run-bbb' ]]; then
+    fail "$name" "row1 mismatch (tab not preserved): card=$(printf '%q' "${MEMORY_APPLIED_CARD[1]}")"
+    return 0
+  fi
+  [[ "$MEMORY_APPLIED_READ_FAILED" -eq 0 ]] || { fail "$name" "unexpected read failure"; return 0; }
+  pass "$name"
+}
+
+# Behavior: an absent sidecar loads as zero rows without signaling failure —
+# "no applied records yet" must not look like "corrupt sidecar".
+case_memory_applied_load_absent_sidecar_is_not_failure() {
+  local name="memory_applied_load: absent sidecar is empty, not a read failure"
+  should_run "$name" || return 0
+
+  memory_applied_load "$tmp_root/applied-absent/.pm-dispatch/applied-usage.tsv"
+  if [[ "${#MEMORY_APPLIED_CARD[@]}" -eq 0 && "$MEMORY_APPLIED_READ_FAILED" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "rows=${#MEMORY_APPLIED_CARD[@]} read_failed=$MEMORY_APPLIED_READ_FAILED"
+  fi
+}
+
+# Behavior: memory_applied_scan_brief records an applied event only for a
+# selected card (usage sidecar hit) whose basename actually appears in the
+# brief's content — the automatic, no-active-call design CC-567 settled on.
+# Steps: build a memory fixture with one card hit today; write a brief whose
+# context: mentions that card's basename; scan; assert the applied sidecar
+# gained exactly one matching row.
+case_memory_applied_scan_brief_records_matching_card() {
+  local name="memory_applied_scan_brief: records a card mentioned in the brief"
+  should_run "$name" || return 0
+
+  local cfg="$tmp_root/st-scan-hit-cfg" repo="$tmp_root/st-scan-hit-repo" mdir
+  mdir="$(make_stats_fixture "$cfg" "$repo" 1)"
+  git -C "$repo" init -q >/dev/null 2>&1 || true
+  local today; today=$(( $(date +%s) / 86400 ))
+  mkdir -p "$mdir/.pm-dispatch"
+  printf 'card1.md\t1\t%d\n' "$today" > "$mdir/.pm-dispatch/inject-usage.tsv"
+
+  local brief="$tmp_root/st-scan-hit-brief.md"
+  cat > "$brief" <<'EOF'
+schema_version: 1
+working_dir: /tmp
+goal: exercise CC-567 applied scan
+files:
+  - read: /tmp/README
+context: |
+  Reuses guidance from card1 about the topic at hand.
+acceptance:
+  - dispatch exits 0
+EOF
+
+  CLAUDE_CONFIG_DIR="$cfg" memory_applied_scan_brief "$repo" "$brief" 'run-scan-1' 'CC-999'
+
+  local applied="$mdir/.pm-dispatch/applied-usage.tsv"
+  if [[ ! -f "$applied" ]]; then
+    fail "$name" "no applied sidecar written"
+    return 0
+  fi
+  if grep -Fq $'\trun-scan-1\tcard1.md' "$applied"; then
+    pass "$name"
+  else
+    fail "$name" "applied sidecar missing expected row: $(cat "$applied")"
+  fi
+}
+
+# Behavior: the same scan does NOT record a selected card whose basename never
+# appears in the brief — no false positives from an unrelated dispatch.
+case_memory_applied_scan_brief_skips_unmentioned_card() {
+  local name="memory_applied_scan_brief: does not record a card absent from the brief"
+  should_run "$name" || return 0
+
+  local cfg="$tmp_root/st-scan-miss-cfg" repo="$tmp_root/st-scan-miss-repo" mdir
+  mdir="$(make_stats_fixture "$cfg" "$repo" 1)"
+  git -C "$repo" init -q >/dev/null 2>&1 || true
+  local today; today=$(( $(date +%s) / 86400 ))
+  mkdir -p "$mdir/.pm-dispatch"
+  printf 'card1.md\t1\t%d\n' "$today" > "$mdir/.pm-dispatch/inject-usage.tsv"
+
+  local brief="$tmp_root/st-scan-miss-brief.md"
+  cat > "$brief" <<'EOF'
+schema_version: 1
+working_dir: /tmp
+goal: exercise CC-567 applied scan, unrelated content
+files:
+  - read: /tmp/README
+context: |
+  Nothing here references any memory card at all.
+acceptance:
+  - dispatch exits 0
+EOF
+
+  CLAUDE_CONFIG_DIR="$cfg" memory_applied_scan_brief "$repo" "$brief" 'run-scan-2' 'CC-999'
+
+  local applied="$mdir/.pm-dispatch/applied-usage.tsv"
+  if [[ ! -f "$applied" ]]; then
+    pass "$name"
+  else
+    fail "$name" "applied sidecar unexpectedly written: $(cat "$applied")"
+  fi
+}
+
+# Behavior: memory_applied_scan_brief never fails or throws on a missing brief
+# file, an unresolvable repo root, or a repo with no memory dir at all — it is
+# telemetry, and telemetry failing must never surface to the caller.
+case_memory_applied_scan_brief_never_blocks() {
+  local name="memory_applied_scan_brief: absent brief / unresolvable repo never errors"
+  should_run "$name" || return 0
+
+  local status=0
+  memory_applied_scan_brief "$tmp_root/does-not-exist-repo" "$tmp_root/does-not-exist-brief.md" 'run-x' 'CC-999' \
+    || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "expected 0, got $status for a missing brief/repo"
+    return 0
+  fi
+  pass "$name"
+}
+
+# Behavior: _pmctl_memory_outcome_for_run reads a run's own terminal state
+# file — the same file pmctl_dispatch_status already reads — and reports
+# completed/failed/unknown without any new instrumentation.
+# Steps: build an isolated state root with one completed and one failed run
+# terminal record; query both plus a nonexistent run id.
+case_memory_outcome_for_run_reads_terminal_state() {
+  local name="_pmctl_memory_outcome_for_run: reads positive/negative/unknown from terminal state"
+  should_run "$name" || return 0
+
+  # final_state is written by _pmctl_dispatch_try_terminal_claim as one of
+  # ok|failed|partial|cancelled — "completed" is never a real value, so the
+  # fixture below uses the real vocabulary this function actually reuses via
+  # _pmctl_dispatch_read_terminal_claim.
+  local repo="$tmp_root/st-outcome-repo" state_root="$tmp_root/st-outcome-state"
+  mkdir -p "$repo"; git -C "$repo" init -q
+  local proj_dir
+  proj_dir="$(cd "$repo" && PM_DISPATCH_STATE_ROOT="$state_root" _SW_REPO_ROOT="$repo" _sw_project_dir)"
+  mkdir -p "${proj_dir}runs/run-ok/.agent-trace" "${proj_dir}runs/run-bad/.agent-trace"
+  printf 'final_state=ok\n' > "${proj_dir}runs/run-ok/.agent-trace/run-ok.terminal"
+  printf 'final_state=failed\n' > "${proj_dir}runs/run-bad/.agent-trace/run-bad.terminal"
+
+  local out_ok out_bad out_missing
+  out_ok="$(PM_DISPATCH_STATE_ROOT="$state_root" _pmctl_memory_outcome_for_run "$repo" 'run-ok')"
+  out_bad="$(PM_DISPATCH_STATE_ROOT="$state_root" _pmctl_memory_outcome_for_run "$repo" 'run-bad')"
+  out_missing="$(PM_DISPATCH_STATE_ROOT="$state_root" _pmctl_memory_outcome_for_run "$repo" 'run-nope')"
+
+  if [[ "$out_ok" == 'positive' && "$out_bad" == 'negative' && "$out_missing" == 'unknown' ]]; then
+    pass "$name"
+  else
+    fail "$name" "ok=$out_ok bad=$out_bad missing=$out_missing"
+  fi
+}
+
+# Behavior: with no applied sidecar and no selected cards at all, the funnel
+# reports honest "no data yet" (null), not a fabricated 0% — CC-567 design
+# constraint 7.
+case_memory_stats_applied_funnel_zero_signal_is_null_not_zero() {
+  local name="pmctl memory stats: zero selected cards -> funnel pct is null, not 0"
+  should_run "$name" || return 0
+
+  local cfg="$tmp_root/st-appl-zero-cfg" repo="$tmp_root/st-appl-zero-repo" out="$tmp_root/st-appl-zero.json" status=0
+  make_stats_fixture "$cfg" "$repo" 2 >/dev/null
+  run_stats_json "$out" "$cfg" "$repo" || status=$?
+  if ! assert_exit "$name" "$status" 0; then return 0; fi
+  assert_jq "$name" "$out" '.applied_store == "none"' || return 0
+  assert_jq "$name" "$out" '.applied_records_total == 0 and .applied_cards == 0' || return 0
+  assert_jq "$name" "$out" '.selected_to_applied_pct == null' || return 0
+  assert_jq "$name" "$out" '.outcome_known_total == 0 and .outcome_positive_total == 0' || return 0
+  assert_jq "$name" "$out" '.applied_to_outcome_positive_pct == null' || return 0
+  pass "$name"
+}
+
+# Behavior: once cards ARE selected but none has been applied yet, 0% is the
+# honest, real conversion rate (a genuine measurement, not "no data") — the
+# distinction this ticket draws between an empty denominator and a zero
+# numerator.
+case_memory_stats_applied_funnel_zero_applied_is_real_zero_pct() {
+  local name="pmctl memory stats: selected>0, applied=0 -> real 0%, not null"
+  should_run "$name" || return 0
+
+  local cfg="$tmp_root/st-appl-realz-cfg" repo="$tmp_root/st-appl-realz-repo" mdir out="$tmp_root/st-appl-realz.json" status=0
+  mdir="$(make_stats_fixture "$cfg" "$repo" 2)"
+  local today; today=$(( $(date +%s) / 86400 ))
+  mkdir -p "$mdir/.pm-dispatch"
+  printf 'card1.md\t1\t%d\n' "$today" > "$mdir/.pm-dispatch/inject-usage.tsv"
+
+  run_stats_json "$out" "$cfg" "$repo" || status=$?
+  if ! assert_exit "$name" "$status" 0; then return 0; fi
+  assert_jq "$name" "$out" '.applied_store == "none"' || return 0
+  assert_jq "$name" "$out" '.selected_to_applied_pct == 0' || return 0
+  pass "$name"
+}
+
+# Behavior: with a real applied record joined to a known-completed run, the
+# funnel reports non-null counts and percentages end to end.
+# Steps: seed a selected card, an applied record pointing at a run whose
+# terminal state is "completed", then assert every funnel field.
+case_memory_stats_applied_outcome_funnel_with_data() {
+  local name="pmctl memory stats: applied+outcome funnel reports real data end to end"
+  should_run "$name" || return 0
+
+  local cfg="$tmp_root/st-appl-data-cfg" repo="$tmp_root/st-appl-data-repo" mdir out="$tmp_root/st-appl-data.json" status=0
+  mdir="$(make_stats_fixture "$cfg" "$repo" 2)"
+  git -C "$repo" init -q >/dev/null 2>&1 || true
+  local today; today=$(( $(date +%s) / 86400 ))
+  mkdir -p "$mdir/.pm-dispatch"
+  printf 'card1.md\t1\t%d\n' "$today" > "$mdir/.pm-dispatch/inject-usage.tsv"
+
+  local applied_sidecar="$mdir/.pm-dispatch/applied-usage.tsv"
+  memory_applied_record "$applied_sidecar" 'card1.md' 'CC-999' 'run-funnel-1'
+
+  local state_root="$tmp_root/st-appl-data-state" proj_dir
+  proj_dir="$(cd "$repo" && PM_DISPATCH_STATE_ROOT="$state_root" _SW_REPO_ROOT="$repo" _sw_project_dir)"
+  mkdir -p "${proj_dir}runs/run-funnel-1/.agent-trace"
+  # ok, not "completed" — the real final_state vocabulary written by
+  # _pmctl_dispatch_try_terminal_claim (ok|failed|partial|cancelled).
+  printf 'final_state=ok\n' > "${proj_dir}runs/run-funnel-1/.agent-trace/run-funnel-1.terminal"
+
+  status=0
+  PM_DISPATCH_STATE_ROOT="$state_root" run_stats_json "$out" "$cfg" "$repo" || status=$?
+  if ! assert_exit "$name" "$status" 0; then return 0; fi
+  assert_jq "$name" "$out" '.applied_store == "tsv"' || return 0
+  assert_jq "$name" "$out" '.applied_records_total == 1 and .applied_cards == 1' || return 0
+  assert_jq "$name" "$out" '.selected_to_applied_pct == 100' || return 0
+  assert_jq "$name" "$out" '.outcome_known_total == 1 and .outcome_positive_total == 1' || return 0
+  assert_jq "$name" "$out" '.applied_to_outcome_positive_pct == 100' || return 0
+  pass "$name"
+}
+
+# Behavior: `pmctl dispatch run` fires the applied scan AUTOMATICALLY — the
+# central CC-567 acceptance criterion. No new command is called; a real
+# dispatch (here, --print-cmd dry-run, which still runs brief-validate and
+# every step up to the actual executor invocation) must leave a matching
+# applied record behind on its own when the brief mentions a selected card,
+# and must leave none when it does not.
+# Steps: seed one selected card; dispatch a brief that mentions it and a
+# second brief that does not; assert the sidecar gained exactly one row, for
+# the first dispatch only.
+case_dispatch_run_applied_scan_fires_automatically() {
+  local name="pmctl dispatch run: CC-567 applied scan fires without any active call"
+  should_run "$name" || return 0
+
+  local cfg="$tmp_root/st-e2e-cfg" repo="$tmp_root/st-e2e-repo" mdir
+  mdir="$(make_stats_fixture "$cfg" "$repo" 1)"
+  git -C "$repo" init -q
+  local today; today=$(( $(date +%s) / 86400 ))
+  mkdir -p "$mdir/.pm-dispatch"
+  printf 'card1.md\t1\t%d\n' "$today" > "$mdir/.pm-dispatch/inject-usage.tsv"
+
+  local hit_brief="/tmp/brief-cc567-e2e-hit-$$.md"
+  cat > "$hit_brief" <<EOF
+schema_version: 1
+working_dir: $repo
+task_id: CC-567
+goal: exercise CC-567 dispatch-triggered applied scan (hit)
+files:
+  - read: $repo/README
+context: |
+  Reuses guidance from card1 for this task.
+acceptance:
+  - dispatch exits 0
+EOF
+  local miss_brief="/tmp/brief-cc567-e2e-miss-$$.md"
+  cat > "$miss_brief" <<EOF
+schema_version: 1
+working_dir: $repo
+goal: exercise CC-567 dispatch-triggered applied scan (miss)
+files:
+  - read: $repo/README
+context: |
+  Nothing here references any memory card.
+acceptance:
+  - dispatch exits 0
+EOF
+
+  local state_root="$tmp_root/st-e2e-state" code=0
+  set +e
+  CLAUDE_CONFIG_DIR="$cfg" PM_DISPATCH_STATE_ROOT="$state_root" \
+    "$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$repo" \
+    --brief-file "$hit_brief" --no-auto-pack --print-cmd >/dev/null 2>/dev/null
+  code=$?
+  set -e
+  rm -f "$hit_brief"
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "hit dispatch exited $code"
+    return 0
+  fi
+
+  local applied="$mdir/.pm-dispatch/applied-usage.tsv"
+  if [[ ! -f "$applied" ]] || ! grep -Fq $'\tcard1.md' "$applied"; then
+    fail "$name" "expected applied record after hit dispatch; sidecar: $(cat "$applied" 2>/dev/null || echo '<absent>')"
+    return 0
+  fi
+  # task_id must be extracted from the brief's task_id: field (sw_extract_task_id),
+  # not left empty — a prior version of this hook dropped the 4th argument entirely.
+  if ! grep -Fq $'\tCC-567\t' "$applied"; then
+    fail "$name" "expected applied record to carry task_id CC-567 extracted from the brief; sidecar: $(cat "$applied")"
+    return 0
+  fi
+  if [[ "$(wc -l < "$applied")" -ne 1 ]]; then
+    fail "$name" "expected exactly 1 applied record after one hit dispatch, found $(wc -l < "$applied")"
+    return 0
+  fi
+
+  set +e
+  CLAUDE_CONFIG_DIR="$cfg" PM_DISPATCH_STATE_ROOT="$state_root" \
+    "$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$repo" \
+    --brief-file "$miss_brief" --no-auto-pack --print-cmd >/dev/null 2>/dev/null
+  code=$?
+  set -e
+  rm -f "$miss_brief"
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "miss dispatch exited $code"
+    return 0
+  fi
+  if [[ "$(wc -l < "$applied")" -ne 1 ]]; then
+    fail "$name" "miss dispatch should not add a new applied record; found $(wc -l < "$applied") total"
+    return 0
+  fi
+  pass "$name"
+}
+
 # Behavior: running stats writes nothing to the memory dir and accrues no synthetic access.
 # Steps: seed one access, fingerprint the memory dir, run stats --json, re-fingerprint; assert identical trees and an unchanged total_access.
 case_memory_stats_is_read_only() {
@@ -3636,5 +3987,15 @@ case_memory_stats_pct_survives_saturated_aggregates
 case_memory_stats_space_bearing_card_path
 case_memory_stats_malformed_episodes_are_not_zero_history
 case_memory_stats_age_buckets_match_frecency_boundaries
+case_memory_applied_record_and_load_round_trip
+case_memory_applied_load_absent_sidecar_is_not_failure
+case_memory_applied_scan_brief_records_matching_card
+case_memory_applied_scan_brief_skips_unmentioned_card
+case_memory_applied_scan_brief_never_blocks
+case_memory_outcome_for_run_reads_terminal_state
+case_memory_stats_applied_funnel_zero_signal_is_null_not_zero
+case_memory_stats_applied_funnel_zero_applied_is_real_zero_pct
+case_memory_stats_applied_outcome_funnel_with_data
+case_dispatch_run_applied_scan_fires_automatically
 
 th_summary

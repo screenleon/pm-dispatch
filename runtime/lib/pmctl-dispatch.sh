@@ -2169,6 +2169,22 @@ pmctl_dispatch_run() {
   local _effective_brief="${PMCTL_DISPATCH_AUTO_PACK_PATH:-$brief_file}"
   pmctl_dispatch_validate_brief "$repo_root" "$_effective_brief" || return 2
 
+  # 3f-bis. Applied-usage tracking (CC-567): best-effort, non-blocking scan of
+  # the just-validated effective brief for memory cards the usage sidecar has
+  # ever recorded a hit for. Purely additive telemetry — must never affect
+  # this function's exit status. See runtime/lib/memory-applied.sh.
+  # Uses work_dir (the --cd target repo), NOT repo_root (pmctl's own install
+  # root) — memory resolution is keyed off the target repo, same as
+  # pmctl_dispatch_status / pmctl_dispatch_auto_pack's pack logic.
+  if declare -F memory_applied_scan_brief >/dev/null 2>&1; then
+    local _applied_task_id=""
+    if declare -F sw_extract_task_id >/dev/null 2>&1; then
+      _applied_task_id="$(sw_extract_task_id "$_effective_brief" "" 2>/dev/null || true)"
+      [[ "$_applied_task_id" == "UNKN-0" ]] && _applied_task_id=""
+    fi
+    memory_applied_scan_brief "$work_dir" "$_effective_brief" "$_dispatch_run_id" "$_applied_task_id" 2>/dev/null || true
+  fi
+
   # 3g. Foreground: land the effective brief at the guardable /tmp/brief-<run_id>.md
   # path and guard THAT too, so a SINGLE brief is guarded == validated == executed ==
   # post-verified == recorded — matching the detached supervisor, which re-guards its
