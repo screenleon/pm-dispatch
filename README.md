@@ -1,7 +1,7 @@
 # pm-dispatch
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Version](https://img.shields.io/badge/version-v0.10.0-blue.svg)](https://github.com/screenleon/pm-dispatch/releases/tag/v0.10.0)
 
-A local-first control plane for planning, dispatching, verifying, and shipping work across AI coding agents. pm-dispatch runs Claude, Codex, OpenCode, and Grok behind one host-independent runtime — shared policy, state, and evidence — instead of four incompatible tool-specific workflows.
+A local-first control plane for planning, dispatching, verifying, and shipping work across AI coding agents. pm-dispatch runs Claude, Codex, and OpenCode behind one host-independent runtime — shared policy, state, and evidence — instead of three incompatible tool-specific workflows, plus Grok as a dispatched executor (its own PM-host role is an early, batch-only MVP with no guard wiring yet).
 
 ```
                     pm-dispatch
@@ -15,8 +15,8 @@ A local-first control plane for planning, dispatching, verifying, and shipping w
             ┌────────────┴────────────┐
           Hosts                  Executors
             │                         │
-  Claude / Codex / OpenCode /   Codex / Claude /
-         Grok                   OpenCode / Grok
+  Claude / Codex / OpenCode    Codex / Claude /
+     (+ Grok, MVP)             OpenCode / Grok
 ```
 
 This repository is designed for a single maintainer working on their own adaptation. It is source-available for reading and forking, while remaining explicitly private-maintainer scoped for this operational track.

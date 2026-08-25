@@ -2,6 +2,8 @@
 
 This document explains the four Claude Code extensibility primitives that `pm-dispatch` builds on. If you've used Claude Code conversationally but never written a hook or an agent, this is the right place to start.
 
+These four primitives are Claude Code's own — pm-dispatch's actual runtime is host-independent (it also runs under Codex, OpenCode, and Grok; see [`docs/host-contract.md`](host-contract.md) and [`docs/executor-contract.md`](executor-contract.md)). Reading this document first still makes sense: Claude Code is where the concepts are easiest to see concretely, and the host abstraction generalizes the same shape rather than replacing it.
+
 ## TL;DR
 
 Claude Code gives you a chat interface plus four extensibility surfaces:
