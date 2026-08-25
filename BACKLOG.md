@@ -103,7 +103,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-447 | 🔵 active | onboarding 三 smoke：offline clean install + N-1 upgrade（v0.11.0）+ live dogfood（readiness review 後再排） | docs/ops | 2026-07-04 | — | P2 | — |
 | CC-472 | 🟢 someday | spike: antigravity（`agy` CLI）host 唯讀 probe——比照 CC-436/CC-448 階段 1 模式，實測 command 載入能力 + hook/plugin 機制 + 五個 capability enum 的 provider/confidence 判定，不落地 `hosts/antigravity/host.yaml`；排在 CC-445 通用 install/uninstall dispatcher 之後、與 CC-448 opencode 同批或緊接其後評估（N=3 驗證點） | arch/install | 2026-07-08 | — | P3 | spike |
 | CC-566 | ✅ done | `guard-inject-memory.sh` 依 host 給獨立注入預算：實測確認 Claude 端有原生 `claudeMd` 全量 MEMORY.md 載入（無上限，session 一次）與 hook 每輪裁切注入雙重疊加；Codex 無對應原生全量安全網，不能單純調降全域常數（2026-08-23 token-cost 分析） | memory/DX | 2026-08-23 | pr:#519 | P2 | hygiene |
-| CC-567 | 🔵 active | memory `selected`→`applied`→`outcome` 追蹤：擴充 `pmctl memory stats` 既有 matched/injected 遙測，補上「PM 是否判為相關」「是否真的影響 brief/執行」「是否真有幫助」三段缺口（2026-08-25 memory 架構設計討論；本題優先序高於分類法，見 [[CC-570]]） | memory/DX | 2026-08-25 | — | P1 | retrieval |
+| CC-567 | ✅ done | memory `selected`→`applied`→`outcome` 追蹤：擴充 `pmctl memory stats` 既有 matched/injected 遙測，補上「PM 是否判為相關」「是否真的影響 brief/執行」「是否真有幫助」三段缺口（2026-08-25 memory 架構設計討論；本題優先序高於分類法，見 [[CC-570]]） | memory/DX | 2026-08-25 | pr:#532 | P1 | retrieval |
 | CC-568 | 🟢 someday | `/mem-distill` Case→Strategy 機械式提升：對 `episodes.jsonl` 既有結構化欄位做 count/cluster 門檻判定，取代逐次主觀「感覺像 pattern」的判斷；依賴 [[CC-567]] 的 outcome 證據決定是否值得做（2026-08-25 memory 架構設計討論） | memory/DX | 2026-08-25 | — | P2 | retrieval |
 | CC-569 | 🟢 someday | `pmctl task` / `context pack` 擴充 working-memory 敘事欄位（`selected_memories`／`rejected_paths`／`blockers`／`next_action`）：延伸既有 schema，不新建第二個「現在在幹嘛」真相來源；依賴 [[CC-567]] 證明有價值後再排（2026-08-25 memory 架構設計討論） | memory/DX | 2026-08-25 | — | P2 | design |
 | CC-570 | 🟢 someday | Fact/Case/Strategy `memory_function`／`memory_subtype` metadata 分類法：先蒐集 [[CC-567]] 的 applied/outcome 證據，再決定值不值得建分類機制——不憑直覺先建立稅務式標籤（2026-08-25 memory 架構設計討論；外部文章優先序建議相反，本 repo 刻意反過來） | memory/DX | 2026-08-25 | — | P3 | retrieval |
@@ -3131,7 +3131,7 @@ UserPromptSubmit 已帶 `--host claude`，`doctor.sh --profile full` 回報
 **See**: pr:#519
 
 ---
-## CC-567 — memory `selected`→`applied`→`outcome` 追蹤：擴充既有 matched/injected 遙測 🔵 active
+## CC-567 — memory `selected`→`applied`→`outcome` 追蹤：擴充既有 matched/injected 遙測
 
 **Problem**: `pmctl memory stats`（見 `docs/memory-system.md` §Injection benefit）已經追蹤
 `matched`（MEMORY.md 索引命中）與 `injected`（`guard-inject-memory.sh` usage sidecar 記錄的
@@ -3171,6 +3171,18 @@ metadata（[[CC-570]]）。
 
 **Dependencies**: 前置 = 無（在既有 `pmctl memory stats`／usage sidecar／trace event
 基礎上擴充）。本票是 [[CC-568]]／[[CC-569]]／[[CC-570]] 的證據前置依賴。
+
+**Update 2026-08-25（done）**: PR #532 合併（squash → main `b4027b9`）。三項 Requirement
+全數達成：`selected` 沿用既有 usage sidecar `access_count > 0`，無新埋點；`applied`
+為 dispatch 時自動掃描 brief 內容比對已選中卡片，掛在 `pmctl_dispatch_run` 的
+brief-validate 之後，刻意不做主動呼叫式記錄（見 Why this first 一段的
+`episode_fill_rate_pct` 前車之鑑）；`outcome` 為唯讀 join 既有 terminal-state
+reader。新檔 `runtime/lib/memory-applied.sh`。經 7 輪 pr-gate 收斂：round 4 抓到
+IFS tab-collapse 真資料損壞 bug，round 5-6 抓到 symlink race TOCTOU 與 hard-link
+swap 兩個真資安漏洞，皆已補迴歸測試修復。5 位 reviewer（critic/qa-tester/
+architecture-reviewer/security-reviewer/risk-reviewer）全數 approve，
+`tests/bin/run-all-tests.sh` 104 passed 0 failed。CC-568/569/570 現在可以用本票
+產出的真實 selected/applied/outcome 數字決定優先序，而非憑直覺。
 
 ---
 
