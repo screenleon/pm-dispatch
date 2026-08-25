@@ -26,7 +26,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-527 | ✅ done | targeted gate CLI 拆分 pass、reviewer coverage 與 tier；tier 由 current subject/policy 解析，initial result 僅為 remediation context | ux/gate | 2026-07-28 | pr:#472, pr:#476, pr:#482, pr:#505 | P2 | design |
 | CC-529 | ⚠️ partial 2026-08-15 | publish assurance observability：以 gate_publish_assessment_v1 將 ship stdout、PR body 與 finish marker 綁到同一份 verified assessment；仍需完成完整 producer/consumer dogfood | release/gate | 2026-07-30 | feedback:2026-07-30, pr:#484 | P2 | hygiene |
 | CC-532 | ✅ done | Linux/WSL2 repo-layout canonical Gate modules：options／policy／subject／scope／reviewer-contract／assurance 均有單一 source owner；standalone／copy parity 在 [[CC-546]] | arch/gate | 2026-07-30 | feedback:2026-07-30 | P1 | reuse-debt |
-| CC-533 | ⚠️ partial 2026-08-24 | assurance／scope-manifest／reviewer-result 三型已交付；synthesis-result 改寫（同一模式）待下一輪，pr:#527 | schema/gate | 2026-07-30 | pr:#480, pr:#524, pr:#525, pr:#526, pr:#527 | P1 | design |
+| CC-533 | ✅ done | schema-derived Gate structural validator：assurance／scope-manifest／reviewer-result／synthesis-result 四型全數完成 schema-first 重寫 | schema/gate | 2026-07-30 | pr:#480, pr:#524, pr:#525, pr:#526, pr:#527, pr:#528 | P1 | design |
 | CC-534 | 🟢 someday | `commands.tsv` 驅動 CLI routing、safe handler dispatch 與 lazy module loading | arch/DX | 2026-07-30 | feedback:2026-07-30 | P2 | design |
 | CC-535 | 🟢 someday | detached-launch 上的 supervised-run primitive + versioned JSON run-spec | arch/ops | 2026-07-30 | feedback:2026-07-30 | P2 | design |
 | CC-536 | 🟢 someday | 擴充 Adapter SDK 的 shared lifecycle／manifest／trace contract，保留 executor-native behavior | arch/reuse | 2026-07-30 | feedback:2026-07-30 | P2 | reuse-debt |
@@ -2183,7 +2183,7 @@ closure 條件。Standalone distribution 不得回併本票。
 
 ---
 
-## CC-533 — schema-derived Gate structural validator ⚠️ partial 2026-08-24
+## CC-533 — schema-derived Gate structural validator
 
 **Problem**: Gate JSON Schema 已定義 required fields、exact keys、enum、patterns、
 conditions 與 finding shape，shared jq verifier 又手寫同一份 structural model。
@@ -2318,6 +2318,19 @@ test_gap_violation 的逐行 ID 命名＋sibling-enum 提示）都在既有測�
    reviewer-protocol 案例、synthesis-protocol 案例）、`lint-scripts.sh`／`lint-shellcheck.sh`
    全綠、pr-gate sequential 首輪即 GO。**仍未開始**：`gate_synthesis_protocol_verify`
    同模式改寫，留給下一個 slice。
+
+**Update 2026-08-25（done，pr:#528）**：`gate_synthesis_protocol_verify` 完成同模式
+改寫，四個 artifact type（assurance／scope-manifest／reviewer-result／synthesis-result）
+全數收斂為 schema-first。`coverage_matrix`／`reviewer_finding_inventory` 兩個陣列項目
+形狀改走 `gate_structural_schema_first_error` 共用解譯器；跨文件 parity（與原始 reviewer
+document 逐欄位比對）、`findings_union`／`disagreements` 診斷、重複 id 偵測、injection-safe
+id quoting 維持手寫——理由同前幾輪已定案的判斷：這些是跨物件推導或精準斷言文字的診斷
+訊息，schema 無法表達或改寫會犧牲 retry-loop 可用性。新增 schema-owned enum violation
+的回歸測試。pr-gate sequential 首輪 GO（critic／qa-tester／architecture-reviewer／
+security-reviewer 全數 approve）。本票（含 #480/#524/#525/#526/#527/#528 六個 PR）全部
+Requirement 皆已交付，狀態改為 done。狀態旗標本次補記——實際交付日為 2026-08-24（pr:#528
+merge 時間），修正時才發現漏更新，與 [[CC-567]] 同一種模式：合併後
+務必立刻回頭改票面狀態，否則下一次規劃會誤判成尚有剩餘工作。
 
 ---
 
