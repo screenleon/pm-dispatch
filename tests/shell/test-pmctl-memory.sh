@@ -13,6 +13,12 @@ PMCTL="$REPO_ROOT/cli/pmctl"
 # shellcheck source=runtime/lib/memory.sh
 # shellcheck disable=SC1091
 . "$REPO_ROOT/runtime/lib/memory.sh"
+# shellcheck source=runtime/lib/portable.sh
+# shellcheck disable=SC1091
+. "$REPO_ROOT/runtime/lib/portable.sh"
+# shellcheck source=runtime/lib/pmctl-memory.sh
+# shellcheck disable=SC1091
+. "$REPO_ROOT/runtime/lib/pmctl-memory.sh"
 # shellcheck source=tests/lib/test-memory-config-fixtures.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/../lib/test-memory-config-fixtures.sh"
@@ -82,15 +88,22 @@ run_doctor_json() {
   return "$status"
 }
 
+# qa-tester-F001 round 6 (gate-20260825-154322-d2ff91): assert_jq used to
+# return success (skip, not fail) when jq was absent, so a broken JSON funnel
+# field could ship green on a jq-less host -- the missing parser converted a
+# behavioral check into an unverified pass. jq is a required test dependency
+# for this suite: fail loudly before any case runs rather than silently
+# downgrade every jq-backed assertion in it.
+if ! command -v jq >/dev/null 2>&1; then
+  echo "FATAL: jq is required to run $(basename "${BASH_SOURCE[0]}") -- funnel JSON assertions depend on it" >&2
+  exit 1
+fi
+_HAVE_JQ=1  # guaranteed by the fatal check above; kept for pre-existing call sites
+
 # Parser-backed JSON assertion (spike a3 requires jq -e, not substring matching).
 # Returns 0 when the jq filter is truthy; calls fail() and returns 1 otherwise.
-_HAVE_JQ=0
-command -v jq >/dev/null 2>&1 && _HAVE_JQ=1
 assert_jq() {
   local name="$1" file="$2" filter="$3"
-  if [[ "$_HAVE_JQ" -ne 1 ]]; then
-    return 0  # jq absent: skip parser-backed check, substring asserts still run
-  fi
   if jq -e "$filter" "$file" >/dev/null 2>&1; then
     return 0
   fi
@@ -3167,6 +3180,794 @@ case_memory_stats_age_buckets_match_frecency_boundaries() {
   pass "$name"
 }
 
+# ── CC-567: selected→applied→outcome funnel ─────────────────────────────────
+
+# Behavior: memory_applied_record/memory_applied_load round-trip losslessly,
+# reusing the CC-559 TSV escaper — a relpath/task/run containing a literal tab
+# must survive unescaped on read.
+# Steps: record two rows (one with an embedded tab in the relpath) into an
+# isolated sidecar; load it back; assert both rows match exactly.
+case_memory_applied_record_and_load_round_trip() {
+  local name="memory_applied_record/load: round-trip preserves tab-bearing fields"
+  should_run "$name" || return 0
+
+  local sidecar="$tmp_root/applied-rt/.pm-dispatch/applied-usage.tsv"
+  memory_applied_record "$sidecar" 'card1.md' 'CC-999' 'run-aaa'
+  memory_applied_record "$sidecar" $'weird\ttab-card.md' 'CC-999' 'run-bbb'
+
+  memory_applied_load "$sidecar"
+  if [[ "${#MEMORY_APPLIED_CARD[@]}" -ne 2 ]]; then
+    fail "$name" "expected 2 rows, got ${#MEMORY_APPLIED_CARD[@]}"
+    return 0
+  fi
+  if [[ "${MEMORY_APPLIED_CARD[0]}" != 'card1.md' || "${MEMORY_APPLIED_RUN[0]}" != 'run-aaa' ]]; then
+    fail "$name" "row0 mismatch: card=${MEMORY_APPLIED_CARD[0]} run=${MEMORY_APPLIED_RUN[0]}"
+    return 0
+  fi
+  if [[ "${MEMORY_APPLIED_CARD[1]}" != $'weird\ttab-card.md' || "${MEMORY_APPLIED_RUN[1]}" != 'run-bbb' ]]; then
+    fail "$name" "row1 mismatch (tab not preserved): card=$(printf '%q' "${MEMORY_APPLIED_CARD[1]}")"
+    return 0
+  fi
+  [[ "$MEMORY_APPLIED_READ_FAILED" -eq 0 ]] || { fail "$name" "unexpected read failure"; return 0; }
+  pass "$name"
+}
+
+# Behavior (critic-F001, gate-20260825-150734-c20c52): a row with a
+# legitimately empty task_id (task_id="" is valid — see sw_extract_task_id's
+# UNKN-0 -> "" mapping at the pmctl_dispatch_run call site) must round-trip
+# correctly, not be treated as corrupt. This is a real parser bug, not just
+# a missing-field edge case: `IFS=$'\t' read ... <<<"$line"` collapses
+# consecutive tab delimiters (tab is one of POSIX's "IFS white space"
+# characters), which silently shifted run/card left by one position and lost
+# card entirely whenever task was empty — this test seeds exactly that shape
+# and asserts run/card land correctly, not merely that the row isn't flagged
+# as failed.
+case_memory_applied_record_and_load_empty_task_round_trips() {
+  local name="memory_applied_record/load: empty task_id round-trips without shifting run/card"
+  should_run "$name" || return 0
+
+  local sidecar="$tmp_root/applied-empty-task/.pm-dispatch/applied-usage.tsv"
+  memory_applied_record "$sidecar" 'card1.md' '' 'run-empty-task-1'
+  memory_applied_record "$sidecar" 'card2.md' 'CC-999' 'run-with-task-1'
+
+  memory_applied_load "$sidecar"
+  if [[ "$MEMORY_APPLIED_READ_FAILED" -ne 0 ]]; then
+    fail "$name" "empty-task row incorrectly flagged as corrupt"
+    return 0
+  fi
+  if [[ "${#MEMORY_APPLIED_CARD[@]}" -ne 2 ]]; then
+    fail "$name" "expected 2 rows, got ${#MEMORY_APPLIED_CARD[@]}"
+    return 0
+  fi
+  if [[ "${MEMORY_APPLIED_TASK[0]}" != '' || "${MEMORY_APPLIED_RUN[0]}" != 'run-empty-task-1' \
+      || "${MEMORY_APPLIED_CARD[0]}" != 'card1.md' ]]; then
+    fail "$name" "row0 (empty task) fields shifted: task=[${MEMORY_APPLIED_TASK[0]}] run=[${MEMORY_APPLIED_RUN[0]}] card=[${MEMORY_APPLIED_CARD[0]}]"
+    return 0
+  fi
+  if [[ "${MEMORY_APPLIED_TASK[1]}" != 'CC-999' || "${MEMORY_APPLIED_RUN[1]}" != 'run-with-task-1' \
+      || "${MEMORY_APPLIED_CARD[1]}" != 'card2.md' ]]; then
+    fail "$name" "row1 (non-empty task) fields corrupted by the prior row's parse: task=[${MEMORY_APPLIED_TASK[1]}] run=[${MEMORY_APPLIED_RUN[1]}] card=[${MEMORY_APPLIED_CARD[1]}]"
+    return 0
+  fi
+  pass "$name"
+}
+
+# Behavior: an absent sidecar loads as zero rows without signaling failure —
+# "no applied records yet" must not look like "corrupt sidecar".
+case_memory_applied_load_absent_sidecar_is_not_failure() {
+  local name="memory_applied_load: absent sidecar is empty, not a read failure"
+  should_run "$name" || return 0
+
+  memory_applied_load "$tmp_root/applied-absent/.pm-dispatch/applied-usage.tsv"
+  if [[ "${#MEMORY_APPLIED_CARD[@]}" -eq 0 && "$MEMORY_APPLIED_READ_FAILED" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "rows=${#MEMORY_APPLIED_CARD[@]} read_failed=$MEMORY_APPLIED_READ_FAILED"
+  fi
+}
+
+# Behavior: memory_applied_scan_brief records an applied event only for a
+# selected card (usage sidecar hit) whose basename actually appears in the
+# brief's content — the automatic, no-active-call design CC-567 settled on.
+# Steps: build a memory fixture with one card hit today; write a brief whose
+# context: mentions that card's basename; scan; assert the applied sidecar
+# gained exactly one matching row.
+case_memory_applied_scan_brief_records_matching_card() {
+  local name="memory_applied_scan_brief: records a card mentioned in the brief"
+  should_run "$name" || return 0
+
+  local cfg="$tmp_root/st-scan-hit-cfg" repo="$tmp_root/st-scan-hit-repo" mdir
+  mdir="$(make_stats_fixture "$cfg" "$repo" 1)"
+  git -C "$repo" init -q
+  local today; today=$(( $(date +%s) / 86400 ))
+  mkdir -p "$mdir/.pm-dispatch"
+  printf 'card1.md\t1\t%d\n' "$today" > "$mdir/.pm-dispatch/inject-usage.tsv"
+
+  local brief="$tmp_root/st-scan-hit-brief.md"
+  cat > "$brief" <<'EOF'
+schema_version: 1
+working_dir: /tmp
+goal: exercise CC-567 applied scan
+files:
+  - read: /tmp/README
+context: |
+  Reuses guidance from card1 about the topic at hand.
+acceptance:
+  - dispatch exits 0
+EOF
+
+  CLAUDE_CONFIG_DIR="$cfg" memory_applied_scan_brief "$repo" "$brief" 'run-scan-1' 'CC-999'
+
+  local applied="$mdir/.pm-dispatch/applied-usage.tsv"
+  if [[ ! -f "$applied" ]]; then
+    fail "$name" "no applied sidecar written"
+    return 0
+  fi
+  if grep -Fq $'\trun-scan-1\tcard1.md' "$applied"; then
+    pass "$name"
+  else
+    fail "$name" "applied sidecar missing expected row: $(cat "$applied")"
+  fi
+}
+
+# Behavior: the same scan does NOT record a selected card whose basename never
+# appears in the brief — no false positives from an unrelated dispatch.
+case_memory_applied_scan_brief_skips_unmentioned_card() {
+  local name="memory_applied_scan_brief: does not record a card absent from the brief"
+  should_run "$name" || return 0
+
+  local cfg="$tmp_root/st-scan-miss-cfg" repo="$tmp_root/st-scan-miss-repo" mdir
+  mdir="$(make_stats_fixture "$cfg" "$repo" 1)"
+  git -C "$repo" init -q
+  local today; today=$(( $(date +%s) / 86400 ))
+  mkdir -p "$mdir/.pm-dispatch"
+  printf 'card1.md\t1\t%d\n' "$today" > "$mdir/.pm-dispatch/inject-usage.tsv"
+
+  local brief="$tmp_root/st-scan-miss-brief.md"
+  cat > "$brief" <<'EOF'
+schema_version: 1
+working_dir: /tmp
+goal: exercise CC-567 applied scan, unrelated content
+files:
+  - read: /tmp/README
+context: |
+  Nothing here references any memory card at all.
+acceptance:
+  - dispatch exits 0
+EOF
+
+  CLAUDE_CONFIG_DIR="$cfg" memory_applied_scan_brief "$repo" "$brief" 'run-scan-2' 'CC-999'
+
+  local applied="$mdir/.pm-dispatch/applied-usage.tsv"
+  if [[ ! -f "$applied" ]]; then
+    pass "$name"
+  else
+    fail "$name" "applied sidecar unexpectedly written: $(cat "$applied")"
+  fi
+}
+
+# Behavior (qa-tester-F002, gate-20260825-144944-3df84e): a brief mentioning
+# MULTIPLE selected cards must record a match for every one of them. This is
+# an isolated regression for the batch path (single locked
+# _memory_applied_append_lines call over the whole matched_lines array),
+# introduced during the reuse/simplify pass to replace a grep-per-card /
+# lock-per-match loop — the single-match tests above pass through that same
+# code path with matched_lines length 1 and would not catch a batching bug
+# (e.g. only the first or last match landing, or the loop building
+# matched_lines correctly but the batch writer dropping entries).
+case_memory_applied_scan_brief_records_every_matched_card() {
+  local name="memory_applied_scan_brief: records every card matched, not just one"
+  should_run "$name" || return 0
+
+  local cfg="$tmp_root/st-scan-multi-cfg" repo="$tmp_root/st-scan-multi-repo" mdir
+  mdir="$(make_stats_fixture "$cfg" "$repo" 3)"
+  git -C "$repo" init -q
+  local today; today=$(( $(date +%s) / 86400 ))
+  mkdir -p "$mdir/.pm-dispatch"
+  {
+    printf 'card1.md\t1\t%d\n' "$today"
+    printf 'card2.md\t1\t%d\n' "$today"
+    printf 'card3.md\t1\t%d\n' "$today"
+  } > "$mdir/.pm-dispatch/inject-usage.tsv"
+
+  local brief="$tmp_root/st-scan-multi-brief.md"
+  cat > "$brief" <<'EOF'
+schema_version: 1
+working_dir: /tmp
+goal: exercise CC-567 applied scan, multiple matches in one brief
+files:
+  - read: /tmp/README
+context: |
+  Reuses guidance from card1 and card3 for this task, but not the third
+  indexed card.
+acceptance:
+  - dispatch exits 0
+EOF
+
+  CLAUDE_CONFIG_DIR="$cfg" memory_applied_scan_brief "$repo" "$brief" 'run-scan-multi' 'CC-999'
+
+  local applied="$mdir/.pm-dispatch/applied-usage.tsv"
+  if [[ ! -f "$applied" ]]; then
+    fail "$name" "no applied sidecar written for a brief matching two cards"
+    return 0
+  fi
+  local line_count
+  line_count="$(wc -l < "$applied")"
+  if [[ "$line_count" -ne 2 ]]; then
+    fail "$name" "expected exactly 2 applied records (card1, card3), got $line_count: $(cat "$applied")"
+    return 0
+  fi
+  if ! grep -Fq $'\tcard1.md' "$applied"; then
+    fail "$name" "missing applied record for card1.md: $(cat "$applied")"
+    return 0
+  fi
+  if ! grep -Fq $'\tcard3.md' "$applied"; then
+    fail "$name" "missing applied record for card3.md (batch write may have dropped an entry): $(cat "$applied")"
+    return 0
+  fi
+  if grep -Fq $'\tcard2.md' "$applied"; then
+    fail "$name" "unexpected applied record for card2.md, which the brief never mentions: $(cat "$applied")"
+    return 0
+  fi
+  pass "$name"
+}
+
+# Behavior: memory_applied_scan_brief never fails or throws on a missing brief
+# file, an unresolvable repo root, or a repo with no memory dir at all — it is
+# telemetry, and telemetry failing must never surface to the caller.
+case_memory_applied_scan_brief_never_blocks() {
+  local name="memory_applied_scan_brief: absent brief / unresolvable repo never errors"
+  should_run "$name" || return 0
+
+  local status=0
+  memory_applied_scan_brief "$tmp_root/does-not-exist-repo" "$tmp_root/does-not-exist-brief.md" 'run-x' 'CC-999' \
+    || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "expected 0, got $status for a missing brief/repo"
+    return 0
+  fi
+  pass "$name"
+}
+
+# Behavior (security-reviewer-F001, gate-20260825-150734-c20c52): the
+# automatic applied-usage write must fail closed — never following — when
+# either the .pm-dispatch parent directory or the applied-usage.tsv file
+# itself is a symlink to a sentinel target outside the memory dir. This
+# write is automatic (no user confirmation, fires on every dispatch), so a
+# local attacker able to plant a symlink under the memory dir must not be
+# able to redirect it onto an arbitrary writable file.
+# Steps: for each of (symlinked .pm-dispatch dir, symlinked applied-usage.tsv
+# file), plant a sentinel file/dir OUTSIDE the memory tree, symlink the
+# managed path to it, run memory_applied_scan_brief with a brief that
+# matches a selected card, and assert the sentinel is byte-for-byte
+# unchanged (the write was refused, not silently redirected).
+case_memory_applied_scan_brief_refuses_symlinked_targets() {
+  local name="memory_applied_scan_brief: refuses symlinked .pm-dispatch dir or applied-usage.tsv target"
+  should_run "$name" || return 0
+
+  local brief_content='schema_version: 1
+working_dir: /tmp
+goal: exercise CC-567 applied scan symlink guard
+files:
+  - read: /tmp/README
+context: |
+  Reuses guidance from card1 for this task.
+acceptance:
+  - dispatch exits 0
+'
+
+  # --- Case 1: .pm-dispatch itself is a symlink to a sentinel directory ---
+  local cfg="$tmp_root/st-scan-symlink-dir-cfg" repo="$tmp_root/st-scan-symlink-dir-repo" mdir
+  mdir="$(make_stats_fixture "$cfg" "$repo" 1)"
+  git -C "$repo" init -q
+  local today; today=$(( $(date +%s) / 86400 ))
+  local sentinel_dir="$tmp_root/st-scan-symlink-dir-sentinel"
+  mkdir -p "$sentinel_dir"
+  printf 'do-not-touch\n' > "$sentinel_dir/canary.txt"
+  ln -s "$sentinel_dir" "$mdir/.pm-dispatch"
+  # Seed a hit via the (now symlinked) usage sidecar path so the card is
+  # "selected" — writing this fixture also proves the scan's READ of the
+  # usage sidecar still works through the symlinked dir; only the write of
+  # applied-usage.tsv into it must be refused.
+  printf 'card1.md\t1\t%d\n' "$today" > "$sentinel_dir/inject-usage.tsv"
+
+  local brief_dir1="$tmp_root/st-scan-symlink-dir-brief.md"
+  printf '%s' "$brief_content" > "$brief_dir1"
+  CLAUDE_CONFIG_DIR="$cfg" memory_applied_scan_brief "$repo" "$brief_dir1" 'run-symlink-dir-1' 'CC-999'
+
+  if [[ -e "$sentinel_dir/applied-usage.tsv" ]]; then
+    fail "$name" "wrote applied-usage.tsv through a symlinked .pm-dispatch directory: $(cat "$sentinel_dir/applied-usage.tsv")"
+    return 0
+  fi
+  if [[ "$(cat "$sentinel_dir/canary.txt")" != 'do-not-touch' ]]; then
+    fail "$name" "sentinel canary.txt was modified via symlinked .pm-dispatch directory"
+    return 0
+  fi
+
+  # --- Case 2: applied-usage.tsv itself is a symlink to a sentinel file ---
+  local cfg2="$tmp_root/st-scan-symlink-file-cfg" repo2="$tmp_root/st-scan-symlink-file-repo" mdir2
+  mdir2="$(make_stats_fixture "$cfg2" "$repo2" 1)"
+  git -C "$repo2" init -q
+  mkdir -p "$mdir2/.pm-dispatch"
+  printf 'card1.md\t1\t%d\n' "$today" > "$mdir2/.pm-dispatch/inject-usage.tsv"
+  local sentinel_file="$tmp_root/st-scan-symlink-file-sentinel.txt"
+  printf 'do-not-touch\n' > "$sentinel_file"
+  ln -s "$sentinel_file" "$mdir2/.pm-dispatch/applied-usage.tsv"
+
+  local brief_file2="$tmp_root/st-scan-symlink-file-brief.md"
+  printf '%s' "$brief_content" > "$brief_file2"
+  CLAUDE_CONFIG_DIR="$cfg2" memory_applied_scan_brief "$repo2" "$brief_file2" 'run-symlink-file-1' 'CC-999'
+
+  if [[ "$(cat "$sentinel_file")" != 'do-not-touch' ]]; then
+    fail "$name" "wrote through a symlinked applied-usage.tsv into $sentinel_file: $(cat "$sentinel_file")"
+    return 0
+  fi
+  # The symlink itself must still be exactly what was planted — untouched,
+  # not replaced with a regular file (which would also "solve" the canary
+  # check above while still following the symlink on the write).
+  if [[ ! -L "$mdir2/.pm-dispatch/applied-usage.tsv" ]]; then
+    fail "$name" "applied-usage.tsv symlink was replaced rather than left in place and refused"
+    return 0
+  fi
+
+  pass "$name"
+}
+
+# Behavior: security-reviewer-F001 round 5 (gate-20260825-152508-5d7c30) --
+# memory_applied_write_guard alone is check-then-write and cannot close the
+# window between its check and the caller's later open. Simulate an attacker
+# winning that exact race deterministically: let the real guard pass its
+# check against the still-genuine sidecar, then swap the path to a symlink
+# at a sentinel before the guard returns success -- reproducing "swapped
+# immediately before the final open" without relying on real thread timing.
+# memory_applied_open_verified's post-open /proc/self/fd identity check must
+# still refuse the write. Covers both serialize_with_lock backends: flock
+# and (FAKE_FLOCK_MISSING=1) the mkdir-lock fallback.
+case_memory_applied_record_refuses_race_swap_before_open() {
+  local name="memory_applied_record: refuses a sidecar swapped to a symlink between the write-guard check and the final open (flock and mkdir-lock paths)"
+  should_run "$name" || return 0
+
+  local mode
+  for mode in flock mkdir; do
+    local base="$tmp_root/st-race-swap-$mode"
+    mkdir -p "$base"
+    local sidecar="$base/applied-usage.tsv"
+    : > "$sidecar"
+    local sentinel="$base/sentinel.txt"
+    printf 'do-not-touch\n' > "$sentinel"
+    local result_file="$base/result"
+    rm -f "$result_file"
+
+    (
+      eval "$(declare -f memory_applied_write_guard | sed '1s/^memory_applied_write_guard/__race_real_write_guard/')"
+      # shellcheck disable=SC2329  # invoked indirectly by memory_applied_record via the sourced module.
+      memory_applied_write_guard() {
+        __race_real_write_guard "$@" || return 1
+        rm -f "$1"
+        ln -s "$sentinel" "$1"
+        return 0
+      }
+      # shellcheck disable=SC2030,SC2031  # deliberately subshell-local; only this call needs the fallback path.
+      [[ "$mode" == mkdir ]] && export FAKE_FLOCK_MISSING=1
+      memory_applied_record "$sidecar" 'card1.md' 'CC-999' 'run-race-1'
+      printf 'rc=%s\n' "$?" > "$result_file"
+    )
+
+    if [[ ! -f "$result_file" ]]; then
+      fail "$name" "[$mode] race-swap subshell did not complete"
+      return 0
+    fi
+    if [[ "$(cat "$sentinel")" != 'do-not-touch' ]]; then
+      fail "$name" "[$mode] wrote through the raced symlink into sentinel: $(cat "$sentinel")"
+      return 0
+    fi
+    if [[ ! -L "$sidecar" ]]; then
+      fail "$name" "[$mode] raced symlink at sidecar path was replaced rather than left in place and refused"
+      return 0
+    fi
+  done
+
+  pass "$name"
+}
+
+# Behavior: security-reviewer-F001 round 6 (gate-20260825-154322-d2ff91) --
+# round 5's identity check alone let two concrete cases through:
+# (1) a symlink whose target does NOT exist: `exec {fd}>>` follows it and
+# CREATES that target via O_CREAT, a side effect the post-open identity
+# check cannot undo. (2) a hard link swapped onto the sidecar path pointing
+# at an existing sentinel: dev:inode identity matches (same inode) and it
+# is not a symlink, so round 5's checks passed it through. Both are planted
+# deterministically (no timing dependency needed: noclobber's exclusive
+# open is enforced atomically by open(2) against the path's own lstat, so a
+# pre-planted dangling symlink is refused exactly the same as one planted
+# mid-race). Covers both serialize_with_lock backends.
+case_memory_applied_record_refuses_dangling_symlink_and_hardlink() {
+  local name="memory_applied_record: refuses a dangling-symlink target (no creation) and a hard-linked sentinel (flock and mkdir-lock paths)"
+  should_run "$name" || return 0
+
+  local mode
+  for mode in flock mkdir; do
+    local base="$tmp_root/st-dangling-hardlink-$mode"
+    mkdir -p "$base"
+
+    # Case A: sidecar path is a symlink to a target that does not exist yet.
+    local dangling_target="$base/dangling-target"
+    local sidecar_a="$base/applied-usage-a.tsv"
+    ln -s "$dangling_target" "$sidecar_a"
+    (
+      # shellcheck disable=SC2030,SC2031  # deliberately subshell-local; only this call needs the fallback path.
+      [[ "$mode" == mkdir ]] && export FAKE_FLOCK_MISSING=1
+      memory_applied_record "$sidecar_a" 'card1.md' 'CC-999' 'run-dangling-1'
+    )
+    if [[ -e "$dangling_target" ]]; then
+      fail "$name" "[$mode] dangling-symlink target was created: $dangling_target"
+      return 0
+    fi
+    if [[ ! -L "$sidecar_a" ]]; then
+      fail "$name" "[$mode] dangling symlink at sidecar path was replaced rather than left in place and refused"
+      return 0
+    fi
+
+    # Case B: sidecar path is a hard link to an existing sentinel file.
+    local sentinel="$base/sentinel.txt"
+    printf 'do-not-touch\n' > "$sentinel"
+    local sidecar_b="$base/applied-usage-b.tsv"
+    ln "$sentinel" "$sidecar_b"
+    (
+      # shellcheck disable=SC2030,SC2031  # deliberately subshell-local; only this call needs the fallback path.
+      [[ "$mode" == mkdir ]] && export FAKE_FLOCK_MISSING=1
+      memory_applied_record "$sidecar_b" 'card1.md' 'CC-999' 'run-hardlink-1'
+    )
+    if [[ "$(cat "$sentinel")" != 'do-not-touch' ]]; then
+      fail "$name" "[$mode] wrote through a hard-linked sidecar into sentinel: $(cat "$sentinel")"
+      return 0
+    fi
+  done
+
+  pass "$name"
+}
+
+# Behavior: _pmctl_memory_outcome_for_run reads a run's own terminal state
+# file — the same file pmctl_dispatch_status already reads — and reports
+# completed/failed/unknown without any new instrumentation.
+# Steps: build an isolated state root with one completed and one failed run
+# terminal record; query both plus a nonexistent run id.
+case_memory_outcome_for_run_reads_terminal_state() {
+  local name="_pmctl_memory_outcome_for_run: reads positive/negative/unknown from terminal state"
+  should_run "$name" || return 0
+
+  # final_state is written by _pmctl_dispatch_try_terminal_claim as one of
+  # ok|failed|partial|cancelled — "completed" is never a real value, so the
+  # fixture below uses the real vocabulary this function actually reuses via
+  # _pmctl_dispatch_read_terminal_claim.
+  local repo="$tmp_root/st-outcome-repo" state_root="$tmp_root/st-outcome-state"
+  mkdir -p "$repo"; git -C "$repo" init -q
+  local proj_dir
+  proj_dir="$(cd "$repo" && PM_DISPATCH_STATE_ROOT="$state_root" _SW_REPO_ROOT="$repo" _sw_project_dir)"
+  mkdir -p "${proj_dir}runs/run-ok-1/.agent-trace" "${proj_dir}runs/run-bad-1/.agent-trace"
+  printf 'final_state=ok\n' > "${proj_dir}runs/run-ok-1/.agent-trace/run-ok-1.terminal"
+  printf 'final_state=failed\n' > "${proj_dir}runs/run-bad-1/.agent-trace/run-bad-1.terminal"
+
+  local out_ok out_bad out_missing
+  out_ok="$(PM_DISPATCH_STATE_ROOT="$state_root" _pmctl_memory_outcome_for_run "$repo" 'run-ok-1')"
+  out_bad="$(PM_DISPATCH_STATE_ROOT="$state_root" _pmctl_memory_outcome_for_run "$repo" 'run-bad-1')"
+  out_missing="$(PM_DISPATCH_STATE_ROOT="$state_root" _pmctl_memory_outcome_for_run "$repo" 'run-nope-1')"
+
+  if [[ "$out_ok" == 'positive' && "$out_bad" == 'negative' && "$out_missing" == 'unknown' ]]; then
+    pass "$name"
+  else
+    fail "$name" "ok=$out_ok bad=$out_bad missing=$out_missing"
+  fi
+}
+
+# Behavior (security-reviewer-F001, gate-20260825-144944-3df84e): a
+# traversal-shaped run_id read from the applied sidecar (a file this
+# function must not trust blindly) must be rejected by explicit local
+# validation before it ever reaches a filesystem-path-constructing reader —
+# not merely happen to fail several calls deep inside a reused dependency.
+# Plant a REAL file at the traversal target's resolved location and prove
+# it is never read: a "did the traversal even work" test alone couldn't
+# distinguish "rejected by validation" from "rejected because the target
+# happened not to exist".
+case_memory_outcome_for_run_rejects_traversal_run_id() {
+  local name="_pmctl_memory_outcome_for_run: traversal-shaped run_id -> unknown, terminal reader never invoked"
+  should_run "$name" || return 0
+
+  local repo="$tmp_root/st-outcome-trav-repo" state_root="$tmp_root/st-outcome-trav-state"
+  mkdir -p "$repo"; git -C "$repo" init -q
+  local proj_dir
+  proj_dir="$(cd "$repo" && PM_DISPATCH_STATE_ROOT="$state_root" _SW_REPO_ROOT="$repo" _sw_project_dir)"
+  # A real, readable terminal file OUTSIDE the trusted runs/ tree, at the
+  # location "../../../etc/passwd"-style traversal from a run_id would
+  # resolve to relative to proj_dir/runs/<run_id>/.agent-trace/. If
+  # validation is bypassed, this file being present (and completed) would
+  # make the finding's "invoked outside the trusted run artifact" failure
+  # mode observable as a false "positive" outcome instead of "unknown".
+  local outside_dir="${proj_dir%/runs/}"
+  mkdir -p "$outside_dir/planted/.agent-trace"
+  printf 'final_state=ok\n' > "$outside_dir/planted/.agent-trace/planted.terminal"
+
+  local out
+  out="$(PM_DISPATCH_STATE_ROOT="$state_root" _pmctl_memory_outcome_for_run "$repo" '../../planted')"
+  if [[ "$out" != 'unknown' ]]; then
+    fail "$name" "traversal-shaped run_id was not rejected: got '$out' (expected unknown)"
+    return 0
+  fi
+  # Also cover a run_id missing the canonical run-<seg>-<seg> shape
+  # entirely (not just a traversal payload) — the same validator must
+  # reject it before any lookup.
+  out="$(PM_DISPATCH_STATE_ROOT="$state_root" _pmctl_memory_outcome_for_run "$repo" 'not-a-run-id')"
+  if [[ "$out" != 'unknown' ]]; then
+    fail "$name" "non-canonical run_id was not rejected: got '$out' (expected unknown)"
+    return 0
+  fi
+  pass "$name"
+}
+
+# Behavior: with no applied sidecar and no selected cards at all, the funnel
+# reports honest "no data yet" (null), not a fabricated 0% — CC-567 design
+# constraint 7.
+case_memory_stats_applied_funnel_zero_signal_is_null_not_zero() {
+  local name="pmctl memory stats: zero selected cards -> funnel pct is null, not 0"
+  should_run "$name" || return 0
+
+  local cfg="$tmp_root/st-appl-zero-cfg" repo="$tmp_root/st-appl-zero-repo" out="$tmp_root/st-appl-zero.json" status=0
+  make_stats_fixture "$cfg" "$repo" 2 >/dev/null
+  run_stats_json "$out" "$cfg" "$repo" || status=$?
+  if ! assert_exit "$name" "$status" 0; then return 0; fi
+  assert_jq "$name" "$out" '.applied_store == "none"' || return 0
+  assert_jq "$name" "$out" '.applied_records_total == 0 and .applied_cards == 0' || return 0
+  assert_jq "$name" "$out" '.selected_to_applied_pct == null' || return 0
+  assert_jq "$name" "$out" '.outcome_known_total == 0 and .outcome_positive_total == 0' || return 0
+  assert_jq "$name" "$out" '.applied_to_outcome_positive_pct == null' || return 0
+  pass "$name"
+}
+
+# Behavior: once cards ARE selected but none has been applied yet, 0% is the
+# honest, real conversion rate (a genuine measurement, not "no data") — the
+# distinction this ticket draws between an empty denominator and a zero
+# numerator.
+case_memory_stats_applied_funnel_zero_applied_is_real_zero_pct() {
+  local name="pmctl memory stats: selected>0, applied=0 -> real 0%, not null"
+  should_run "$name" || return 0
+
+  local cfg="$tmp_root/st-appl-realz-cfg" repo="$tmp_root/st-appl-realz-repo" mdir out="$tmp_root/st-appl-realz.json" status=0
+  mdir="$(make_stats_fixture "$cfg" "$repo" 2)"
+  local today; today=$(( $(date +%s) / 86400 ))
+  mkdir -p "$mdir/.pm-dispatch"
+  printf 'card1.md\t1\t%d\n' "$today" > "$mdir/.pm-dispatch/inject-usage.tsv"
+
+  run_stats_json "$out" "$cfg" "$repo" || status=$?
+  if ! assert_exit "$name" "$status" 0; then return 0; fi
+  assert_jq "$name" "$out" '.applied_store == "none"' || return 0
+  assert_jq "$name" "$out" '.selected_to_applied_pct == 0' || return 0
+  pass "$name"
+}
+
+# Behavior: with a real applied record joined to a known-completed run, the
+# funnel reports non-null counts and percentages end to end.
+# Steps: seed a selected card, an applied record pointing at a run whose
+# terminal state is "completed", then assert every funnel field.
+case_memory_stats_applied_outcome_funnel_with_data() {
+  local name="pmctl memory stats: applied+outcome funnel reports real data end to end"
+  should_run "$name" || return 0
+
+  local cfg="$tmp_root/st-appl-data-cfg" repo="$tmp_root/st-appl-data-repo" mdir out="$tmp_root/st-appl-data.json" status=0
+  mdir="$(make_stats_fixture "$cfg" "$repo" 2)"
+  git -C "$repo" init -q
+  local today; today=$(( $(date +%s) / 86400 ))
+  mkdir -p "$mdir/.pm-dispatch"
+  printf 'card1.md\t1\t%d\n' "$today" > "$mdir/.pm-dispatch/inject-usage.tsv"
+
+  local applied_sidecar="$mdir/.pm-dispatch/applied-usage.tsv"
+  memory_applied_record "$applied_sidecar" 'card1.md' 'CC-999' 'run-funnel-1'
+
+  local state_root="$tmp_root/st-appl-data-state" proj_dir
+  proj_dir="$(cd "$repo" && PM_DISPATCH_STATE_ROOT="$state_root" _SW_REPO_ROOT="$repo" _sw_project_dir)"
+  mkdir -p "${proj_dir}runs/run-funnel-1/.agent-trace"
+  # ok, not "completed" — the real final_state vocabulary written by
+  # _pmctl_dispatch_try_terminal_claim (ok|failed|partial|cancelled).
+  printf 'final_state=ok\n' > "${proj_dir}runs/run-funnel-1/.agent-trace/run-funnel-1.terminal"
+
+  status=0
+  PM_DISPATCH_STATE_ROOT="$state_root" run_stats_json "$out" "$cfg" "$repo" || status=$?
+  if ! assert_exit "$name" "$status" 0; then return 0; fi
+  assert_jq "$name" "$out" '.applied_store == "tsv"' || return 0
+  assert_jq "$name" "$out" '.applied_records_total == 1 and .applied_cards == 1' || return 0
+  assert_jq "$name" "$out" '.selected_to_applied_pct == 100' || return 0
+  assert_jq "$name" "$out" '.outcome_known_total == 1 and .outcome_positive_total == 1' || return 0
+  assert_jq "$name" "$out" '.applied_to_outcome_positive_pct == 100' || return 0
+  pass "$name"
+}
+
+# Behavior (risk-reviewer-F001, gate-20260825-142309-df046c): a malformed
+# applied-sidecar row must surface as applied_store="error", not be silently
+# skipped while the rest of the row set is reported as clean telemetry.
+# memory_applied_load only returned non-zero on a whole-file read failure —
+# a per-row degrade (MEMORY_APPLIED_READ_FAILED=1) was never checked by the
+# caller, so a corrupted row's presence was invisible to pmctl memory stats.
+case_memory_stats_malformed_applied_row_is_error_not_silent() {
+  local name="pmctl memory stats: malformed applied-sidecar row -> applied_store=error, not silently skipped"
+  should_run "$name" || return 0
+
+  local cfg="$tmp_root/st-appl-malformed-cfg" repo="$tmp_root/st-appl-malformed-repo" mdir out="$tmp_root/st-appl-malformed.json" status=0
+  mdir="$(make_stats_fixture "$cfg" "$repo" 1)"
+  local today; today=$(( $(date +%s) / 86400 ))
+  mkdir -p "$mdir/.pm-dispatch"
+  printf 'card1.md\t1\t%d\n' "$today" > "$mdir/.pm-dispatch/inject-usage.tsv"
+
+  # A well-formed row followed by one with a corrupted (non-numeric) day
+  # field — memory_applied_load must degrade this file, not just this row.
+  {
+    printf '%s\tCC-999\trun-ok\tcard1.md\n' "$today"
+    printf 'NOT-A-DAY\tCC-999\trun-bad\tcard1.md\n'
+  } > "$mdir/.pm-dispatch/applied-usage.tsv"
+
+  run_stats_json "$out" "$cfg" "$repo" || status=$?
+  if ! assert_exit "$name" "$status" 0; then return 0; fi
+  assert_jq "$name" "$out" '.applied_store == "error"' || return 0
+  pass "$name"
+}
+
+# Behavior (critic-F001, gate-20260825-144944-3df84e): a row truncated before
+# its run/card fields (e.g. an interrupted append — only "day" or
+# "day\ttask" present) must be treated as corrupt, not accepted as a valid
+# record with empty run/card. `read`'s own backfill-missing-trailing-vars-
+# as-empty behavior made this indistinguishable from a legitimately empty
+# task_id field before this fix — a day-only or day+task-only line still
+# passed the sole day-format check and silently incremented
+# applied_records_total/outcome lookups with an empty run_id.
+case_memory_stats_truncated_applied_row_is_error_not_valid() {
+  local name="pmctl memory stats: applied row truncated before run/card -> error, not a valid record"
+  should_run "$name" || return 0
+
+  local cfg="$tmp_root/st-appl-trunc-cfg" repo="$tmp_root/st-appl-trunc-repo" mdir out="$tmp_root/st-appl-trunc.json" status=0
+  mdir="$(make_stats_fixture "$cfg" "$repo" 1)"
+  local today; today=$(( $(date +%s) / 86400 ))
+  mkdir -p "$mdir/.pm-dispatch"
+  printf 'card1.md\t1\t%d\n' "$today" > "$mdir/.pm-dispatch/inject-usage.tsv"
+
+  # Two truncated rows: day-only, and day+task-only. Neither has the run/card
+  # fields a real memory_applied_record write always includes.
+  {
+    printf '%s\n' "$today"
+    printf '%s\tCC-999\n' "$today"
+  } > "$mdir/.pm-dispatch/applied-usage.tsv"
+
+  run_stats_json "$out" "$cfg" "$repo" || status=$?
+  if ! assert_exit "$name" "$status" 0; then return 0; fi
+  assert_jq "$name" "$out" '.applied_store == "error"' || return 0
+  assert_jq "$name" "$out" '.applied_records_total == 0' || return 0
+  assert_jq "$name" "$out" '.outcome_known_total == 0' || return 0
+  pass "$name"
+}
+
+# Behavior (risk-reviewer-F002, gate-20260825-142309-df046c): selected_to_
+# applied_pct must never exceed 100%. A historical applied row for a card
+# that is no longer in the current selected cohort (not index-referenced,
+# or index-referenced but never hit) must not inflate the applied-cards
+# numerator past the current cards_with_hits denominator.
+case_memory_stats_applied_cohort_bounded_by_selected_cohort() {
+  local name="pmctl memory stats: applied cards outside the current selected cohort don't push conversion past 100%"
+  should_run "$name" || return 0
+
+  local cfg="$tmp_root/st-appl-cohort-cfg" repo="$tmp_root/st-appl-cohort-repo" mdir out="$tmp_root/st-appl-cohort.json" status=0
+  # Only ONE card is indexed/selected (card1); card-retired.md below has an
+  # applied-sidecar row but is neither indexed nor ever hit.
+  mdir="$(make_stats_fixture "$cfg" "$repo" 1)"
+  local today; today=$(( $(date +%s) / 86400 ))
+  mkdir -p "$mdir/.pm-dispatch"
+  printf 'card1.md\t1\t%d\n' "$today" > "$mdir/.pm-dispatch/inject-usage.tsv"
+
+  local applied_sidecar="$mdir/.pm-dispatch/applied-usage.tsv"
+  memory_applied_record "$applied_sidecar" 'card1.md' 'CC-999' 'run-a'
+  memory_applied_record "$applied_sidecar" 'card-retired.md' 'CC-999' 'run-b'
+
+  run_stats_json "$out" "$cfg" "$repo" || status=$?
+  if ! assert_exit "$name" "$status" 0; then return 0; fi
+  # cards_with_hits is 1 (only card1); applied_cards must be bounded to that
+  # same cohort (card-retired.md excluded), so the pct stays a real 100%,
+  # never the impossible 200% two applied cards over one selected card would
+  # otherwise produce.
+  assert_jq "$name" "$out" '.cards_with_hits == 1' || return 0
+  assert_jq "$name" "$out" '.applied_cards == 1' || return 0
+  assert_jq "$name" "$out" '.selected_to_applied_pct == 100' || return 0
+  pass "$name"
+}
+
+# Behavior: `pmctl dispatch run` fires the applied scan AUTOMATICALLY — the
+# central CC-567 acceptance criterion. No new command is called; a real
+# dispatch (here, --print-cmd dry-run, which still runs brief-validate and
+# every step up to the actual executor invocation) must leave a matching
+# applied record behind on its own when the brief mentions a selected card,
+# and must leave none when it does not.
+# Steps: seed one selected card; dispatch a brief that mentions it and a
+# second brief that does not; assert the sidecar gained exactly one row, for
+# the first dispatch only.
+case_dispatch_run_applied_scan_fires_automatically() {
+  local name="pmctl dispatch run: CC-567 applied scan fires without any active call"
+  should_run "$name" || return 0
+
+  local cfg="$tmp_root/st-e2e-cfg" repo="$tmp_root/st-e2e-repo" mdir
+  mdir="$(make_stats_fixture "$cfg" "$repo" 1)"
+  git -C "$repo" init -q
+  local today; today=$(( $(date +%s) / 86400 ))
+  mkdir -p "$mdir/.pm-dispatch"
+  printf 'card1.md\t1\t%d\n' "$today" > "$mdir/.pm-dispatch/inject-usage.tsv"
+
+  local hit_brief="/tmp/brief-cc567-e2e-hit-$$.md"
+  cat > "$hit_brief" <<EOF
+schema_version: 1
+working_dir: $repo
+task_id: CC-567
+goal: exercise CC-567 dispatch-triggered applied scan (hit)
+files:
+  - read: $repo/README
+context: |
+  Reuses guidance from card1 for this task.
+acceptance:
+  - dispatch exits 0
+EOF
+  local miss_brief="/tmp/brief-cc567-e2e-miss-$$.md"
+  cat > "$miss_brief" <<EOF
+schema_version: 1
+working_dir: $repo
+goal: exercise CC-567 dispatch-triggered applied scan (miss)
+files:
+  - read: $repo/README
+context: |
+  Nothing here references any memory card.
+acceptance:
+  - dispatch exits 0
+EOF
+
+  local state_root="$tmp_root/st-e2e-state" code=0
+  set +e
+  CLAUDE_CONFIG_DIR="$cfg" PM_DISPATCH_STATE_ROOT="$state_root" \
+    "$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$repo" \
+    --brief-file "$hit_brief" --no-auto-pack --print-cmd >/dev/null 2>/dev/null
+  code=$?
+  set -e
+  rm -f "$hit_brief"
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "hit dispatch exited $code"
+    return 0
+  fi
+
+  local applied="$mdir/.pm-dispatch/applied-usage.tsv"
+  if [[ ! -f "$applied" ]] || ! grep -Fq $'\tcard1.md' "$applied"; then
+    fail "$name" "expected applied record after hit dispatch; sidecar: $(cat "$applied" 2>/dev/null || echo '<absent>')"
+    return 0
+  fi
+  # task_id must be extracted from the brief's task_id: field (sw_extract_task_id),
+  # not left empty — a prior version of this hook dropped the 4th argument entirely.
+  if ! grep -Fq $'\tCC-567\t' "$applied"; then
+    fail "$name" "expected applied record to carry task_id CC-567 extracted from the brief; sidecar: $(cat "$applied")"
+    return 0
+  fi
+  if [[ "$(wc -l < "$applied")" -ne 1 ]]; then
+    fail "$name" "expected exactly 1 applied record after one hit dispatch, found $(wc -l < "$applied")"
+    return 0
+  fi
+
+  set +e
+  CLAUDE_CONFIG_DIR="$cfg" PM_DISPATCH_STATE_ROOT="$state_root" \
+    "$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$repo" \
+    --brief-file "$miss_brief" --no-auto-pack --print-cmd >/dev/null 2>/dev/null
+  code=$?
+  set -e
+  rm -f "$miss_brief"
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "miss dispatch exited $code"
+    return 0
+  fi
+  if [[ "$(wc -l < "$applied")" -ne 1 ]]; then
+    fail "$name" "miss dispatch should not add a new applied record; found $(wc -l < "$applied") total"
+    return 0
+  fi
+  pass "$name"
+}
+
 # Behavior: running stats writes nothing to the memory dir and accrues no synthetic access.
 # Steps: seed one access, fingerprint the memory dir, run stats --json, re-fingerprint; assert identical trees and an unchanged total_access.
 case_memory_stats_is_read_only() {
@@ -3636,5 +4437,24 @@ case_memory_stats_pct_survives_saturated_aggregates
 case_memory_stats_space_bearing_card_path
 case_memory_stats_malformed_episodes_are_not_zero_history
 case_memory_stats_age_buckets_match_frecency_boundaries
+case_memory_applied_record_and_load_round_trip
+case_memory_applied_record_and_load_empty_task_round_trips
+case_memory_applied_load_absent_sidecar_is_not_failure
+case_memory_applied_scan_brief_records_matching_card
+case_memory_applied_scan_brief_skips_unmentioned_card
+case_memory_applied_scan_brief_records_every_matched_card
+case_memory_applied_scan_brief_never_blocks
+case_memory_applied_scan_brief_refuses_symlinked_targets
+case_memory_applied_record_refuses_race_swap_before_open
+case_memory_applied_record_refuses_dangling_symlink_and_hardlink
+case_memory_outcome_for_run_reads_terminal_state
+case_memory_outcome_for_run_rejects_traversal_run_id
+case_memory_stats_applied_funnel_zero_signal_is_null_not_zero
+case_memory_stats_applied_funnel_zero_applied_is_real_zero_pct
+case_memory_stats_applied_outcome_funnel_with_data
+case_memory_stats_malformed_applied_row_is_error_not_silent
+case_memory_stats_truncated_applied_row_is_error_not_valid
+case_memory_stats_applied_cohort_bounded_by_selected_cohort
+case_dispatch_run_applied_scan_fires_automatically
 
 th_summary

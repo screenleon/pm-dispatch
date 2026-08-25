@@ -14,6 +14,10 @@
 # shellcheck disable=SC1091
 . "${BASH_SOURCE[0]%/*}/memory.sh"
 
+# shellcheck source=runtime/lib/memory-applied.sh
+# shellcheck disable=SC1091
+. "${BASH_SOURCE[0]%/*}/memory-applied.sh"
+
 # shellcheck source=runtime/lib/host-names.sh
 # shellcheck disable=SC1091
 . "${BASH_SOURCE[0]%/*}/host-names.sh"
@@ -996,6 +1000,73 @@ _mem_stats_pct() {
   printf '%d' $(( num * 100 / den ))
 }
 
+# Print one funnel percentage line in human mode: either "N% (num of den
+# <detail>)" when a percentage was computed, or "(<no_data_msg>)" when the
+# CC-567 funnel left it empty (an honest zero-denominator "no data yet", not
+# a fabricated 0% — see the callers' comments). Shared by both funnel lines
+# in _mem_stats_emit_human so the two blocks cannot drift out of shape.
+_mem_stats_emit_pct_line() {
+  local label="$1" pct="$2" num="$3" den="$4" detail="$5" no_data_msg="$6"
+  if [[ -n "$pct" ]]; then
+    printf '%s: %s%% (%s of %s %s)\n' "$label" "$pct" "$num" "$den" "$detail"
+  else
+    printf '%s: (%s)\n' "$label" "$no_data_msg"
+  fi
+}
+
+# _pmctl_memory_outcome_for_run <repo_root> <run_id>
+# Cheap outcome proxy for CC-567: reads the run's own terminal claim via the
+# EXISTING reader (_pmctl_dispatch_read_terminal_claim, pmctl-dispatch.sh) —
+# the same one pmctl dispatch cancel/wait/status use — rather than
+# re-deriving the .agent-trace/<run_id>.terminal path and re-parsing
+# final_state= by hand. That reader's writer (_pmctl_dispatch_try_terminal_
+# claim) validates final_state against exactly ok|failed|partial|cancelled;
+# "completed" is never a real value, so this function maps ok -> positive and
+# failed/partial/cancelled -> negative rather than testing for "completed".
+# Prints "positive", "negative", or "unknown" (no terminal record found yet,
+# pmctl-dispatch.sh unavailable, or bad input) and always returns 0.
+#
+# Isolated on purpose (CC-567 design constraint 3): the ticket names this a
+# cheap proxy, not a final answer — a future ticket may want to join against
+# pr-gate GO/NO-GO instead. Swapping that in only requires changing this one
+# function; the sidecar schema and every caller stay the same.
+_pmctl_memory_outcome_for_run() {
+  local repo_root="$1" run_id="$2"
+  [[ -n "$repo_root" && -n "$run_id" ]] || { printf 'unknown\n'; return 0; }
+  if ! declare -F _pmctl_dispatch_read_terminal_claim >/dev/null 2>&1; then
+    # pmctl-dispatch.sh lives beside this file in pm-dispatch's OWN install
+    # tree — resolve via BASH_SOURCE, not $repo_root (that's the caller's
+    # TARGET repo, per pmctl_memory_stats's --repo-root; the two are
+    # different trees whenever this runs against a repo other than
+    # pm-dispatch itself). Also brings in identifier-policy.sh (sourced by
+    # pmctl-dispatch.sh), which the validation below depends on.
+    # shellcheck disable=SC1091
+    . "${BASH_SOURCE[0]%/*}/pmctl-dispatch.sh" 2>/dev/null || { printf 'unknown\n'; return 0; }
+  fi
+  # security-reviewer-F001: run_id comes from the applied-usage sidecar — a
+  # file this process itself writes, but one whose content this function
+  # must not trust blindly, since a downstream validator changing shape
+  # would otherwise be the only thing standing between sidecar content and
+  # a filesystem-path lookup. Validate explicitly and locally against the
+  # canonical run-id shape (matches _dispatch_run_id's own generator in
+  # pmctl-dispatch.sh) rather than relying on validation several calls deep
+  # inside a reused dependency. Fail closed (treat as unknown) if the
+  # validator itself is unavailable — never skip validation silently.
+  if ! declare -F pm_identifier_run_is_valid >/dev/null 2>&1; then
+    # shellcheck disable=SC1091
+    . "${BASH_SOURCE[0]%/*}/identifier-policy.sh" 2>/dev/null || { printf 'unknown\n'; return 0; }
+  fi
+  declare -F pm_identifier_run_is_valid >/dev/null 2>&1 || { printf 'unknown\n'; return 0; }
+  pm_identifier_run_is_valid "$run_id" || { printf 'unknown\n'; return 0; }
+  _pmctl_dispatch_read_terminal_claim "$repo_root" "$run_id" 2>/dev/null || { printf 'unknown\n'; return 0; }
+  case "${PMCTL_TERMINAL_STATE:-}" in
+    ok) printf 'positive\n' ;;
+    failed|partial|cancelled) printf 'negative\n' ;;
+    *) printf 'unknown\n' ;;
+  esac
+  return 0
+}
+
 pmctl_memory_stats() {
   local json=0
   local repo_root="${REPO_ROOT:-$PWD}"
@@ -1079,6 +1150,14 @@ pmctl_memory_stats() {
   local episodes_total=0 episodes_with_summary=0 shard_count=0
   local episodes_malformed=0 episodes_status='none'
   local hit_coverage_pct=0 top5_share_pct=0 episode_fill_rate_pct=0
+  # ── CC-567 applied/outcome funnel ──────────────────────────────────────
+  # selected_to_applied_pct / applied_to_outcome_positive_pct stay empty
+  # (not "0") on a zero denominator: an honest "no data yet", not a
+  # fabricated 0% conversion rate (CC-567 design constraint 7).
+  local applied_store='none' applied_records_total=0 applied_cards=0
+  local selected_to_applied_pct=''
+  local outcome_known_total=0 outcome_positive_total=0
+  local applied_to_outcome_positive_pct=''
 
   # No memory dir → nothing to aggregate; emit an empty, well-formed report.
   if [[ -n "$mem_dir" && -d "$mem_dir" ]]; then
@@ -1207,6 +1286,55 @@ pmctl_memory_stats() {
     hit_coverage_pct="$(_mem_stats_pct "$cards_with_hits" "$card_count")"
     top5_share_pct="$(_mem_stats_pct "$top5_access" "$total_access")"
 
+    # ── CC-567 applied/outcome funnel, read-only ──────────────────────────────
+    # "selected" is not tracked separately here — it is cards_with_hits, just
+    # computed above. applied/outcome are joined from the applied sidecar
+    # (written by memory_applied_scan_brief during dispatch) and each
+    # referenced run's own terminal state (_pmctl_memory_outcome_for_run).
+    local applied_sidecar
+    applied_sidecar="$(memory_applied_sidecar_path "$mem_dir")"
+    if [[ -f "$applied_sidecar" ]]; then
+      applied_store='tsv'
+      # Risk-reviewer-F001: memory_applied_load's return code alone misses a
+      # malformed row it degraded-but-continued past (it only returns
+      # non-zero on a hard whole-file read failure). Check
+      # MEMORY_APPLIED_READ_FAILED too, matching how usage_store/
+      # episodes_status already distinguish "no activity" from "unreadable".
+      if ! memory_applied_load "$applied_sidecar" || [[ "$MEMORY_APPLIED_READ_FAILED" -eq 1 ]]; then
+        applied_store='error'
+      fi
+      local -A _applied_cards_seen=()
+      local _ai _card_r _run_r _outcome
+      for ((_ai = 0; _ai < ${#MEMORY_APPLIED_CARD[@]}; _ai++)); do
+        applied_records_total=$((applied_records_total + 1))
+        _card_r="${MEMORY_APPLIED_CARD[$_ai]}"
+        _run_r="${MEMORY_APPLIED_RUN[$_ai]}"
+        # Risk-reviewer-F002: only count a card into the applied-cards
+        # cohort when it's ALSO in the current selected cohort
+        # (MEMORY_USAGE_ACC > 0, the same set cards_with_hits counts). A
+        # historical applied row for a card no longer index-referenced (or
+        # never hit) must not inflate the numerator past the denominator —
+        # selected_to_applied_pct would otherwise be able to exceed 100%.
+        if [[ -n "$_card_r" && "${MEMORY_USAGE_ACC[$_card_r]:-0}" -gt 0 ]]; then
+          _applied_cards_seen["$_card_r"]=1
+        fi
+        [[ -n "$_run_r" ]] || continue
+        _outcome="$(_pmctl_memory_outcome_for_run "$repo_root" "$_run_r")"
+        case "$_outcome" in
+          positive|negative)
+            outcome_known_total=$((outcome_known_total + 1))
+            [[ "$_outcome" == positive ]] && \
+              outcome_positive_total=$((outcome_positive_total + 1))
+            ;;
+        esac
+      done
+      applied_cards="${#_applied_cards_seen[@]}"
+    fi
+    (( cards_with_hits > 0 )) && \
+      selected_to_applied_pct="$(_mem_stats_pct "$applied_cards" "$cards_with_hits")"
+    (( outcome_known_total > 0 )) && \
+      applied_to_outcome_positive_pct="$(_mem_stats_pct "$outcome_positive_total" "$outcome_known_total")"
+
     # ── episodes ─────────────────────────────────────────────────────────────
     IFS=$'\t' read -r episodes_total episodes_with_summary episodes_malformed episodes_status \
       < <(_mem_stats_episode_fill "$episodes") || true
@@ -1289,7 +1417,14 @@ _mem_stats_emit_json() {
   out+=",\"episode_fill_rate_pct\":$episode_fill_rate_pct"
   out+=",\"episodes_malformed\":$episodes_malformed"
   out+=",\"episodes_status\":\"$episodes_status\""
-  out+=",\"shard_count\":$shard_count}"
+  out+=",\"shard_count\":$shard_count"
+  out+=",\"applied_store\":\"$applied_store\""
+  out+=",\"applied_records_total\":$applied_records_total"
+  out+=",\"applied_cards\":$applied_cards"
+  out+=",\"selected_to_applied_pct\":${selected_to_applied_pct:-null}"
+  out+=",\"outcome_known_total\":$outcome_known_total"
+  out+=",\"outcome_positive_total\":$outcome_positive_total"
+  out+=",\"applied_to_outcome_positive_pct\":${applied_to_outcome_positive_pct:-null}}"
   printf '%s\n' "$out"
 }
 
@@ -1366,6 +1501,21 @@ _mem_stats_emit_human() {
       "$episodes_malformed"
   fi
   printf 'shard_count:           %s\n' "$shard_count"
+  if [[ "$applied_store" == 'error' ]]; then
+    printf 'applied_store:         error (sidecar present but unreadable — applied counts below are NOT evidence of no usage)\n'
+  else
+    printf 'applied_store:         %s\n' "$applied_store"
+  fi
+  printf 'applied_records_total: %s\n' "$applied_records_total"
+  printf 'applied_cards:         %s\n' "$applied_cards"
+  _mem_stats_emit_pct_line 'selected_to_applied_pct' "$selected_to_applied_pct" \
+    "$applied_cards" "$cards_with_hits" 'selected cards later applied' \
+    'no data yet — no cards selected'
+  printf 'outcome_known_total:   %s\n' "$outcome_known_total"
+  printf 'outcome_positive_total: %s\n' "$outcome_positive_total"
+  _mem_stats_emit_pct_line 'applied_to_outcome_positive_pct' "$applied_to_outcome_positive_pct" \
+    "$outcome_positive_total" "$outcome_known_total" 'applied records resolved to a known run outcome' \
+    'no data yet — no applied record resolved to a known run outcome'
 }
 
 # ── Episode shard + summary ───────────────────────────────────────────────────
