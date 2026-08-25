@@ -3540,12 +3540,14 @@ case_memory_applied_record_refuses_race_swap_before_open() {
 
     (
       eval "$(declare -f memory_applied_write_guard | sed '1s/^memory_applied_write_guard/__race_real_write_guard/')"
+      # shellcheck disable=SC2329  # invoked indirectly by memory_applied_record via the sourced module.
       memory_applied_write_guard() {
         __race_real_write_guard "$@" || return 1
         rm -f "$1"
         ln -s "$sentinel" "$1"
         return 0
       }
+      # shellcheck disable=SC2030,SC2031  # deliberately subshell-local; only this call needs the fallback path.
       [[ "$mode" == mkdir ]] && export FAKE_FLOCK_MISSING=1
       memory_applied_record "$sidecar" 'card1.md' 'CC-999' 'run-race-1'
       printf 'rc=%s\n' "$?" > "$result_file"
@@ -3593,6 +3595,7 @@ case_memory_applied_record_refuses_dangling_symlink_and_hardlink() {
     local sidecar_a="$base/applied-usage-a.tsv"
     ln -s "$dangling_target" "$sidecar_a"
     (
+      # shellcheck disable=SC2030,SC2031  # deliberately subshell-local; only this call needs the fallback path.
       [[ "$mode" == mkdir ]] && export FAKE_FLOCK_MISSING=1
       memory_applied_record "$sidecar_a" 'card1.md' 'CC-999' 'run-dangling-1'
     )
@@ -3611,6 +3614,7 @@ case_memory_applied_record_refuses_dangling_symlink_and_hardlink() {
     local sidecar_b="$base/applied-usage-b.tsv"
     ln "$sentinel" "$sidecar_b"
     (
+      # shellcheck disable=SC2030,SC2031  # deliberately subshell-local; only this call needs the fallback path.
       [[ "$mode" == mkdir ]] && export FAKE_FLOCK_MISSING=1
       memory_applied_record "$sidecar_b" 'card1.md' 'CC-999' 'run-hardlink-1'
     )

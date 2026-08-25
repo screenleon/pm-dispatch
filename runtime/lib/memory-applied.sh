@@ -220,6 +220,7 @@ memory_applied_load() {
   [[ -f "$sidecar" ]] || return 0
 
   local line rest day task_esc run_esc card_esc task_unesc run_unesc card_unesc tabs_only
+  # shellcheck disable=SC2034  # MEMORY_APPLIED_READ_FAILED is read by pmctl-memory.sh after sourcing this lib
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue
     # critic-F001: `read -r day task run card` alone can't tell a truncated
