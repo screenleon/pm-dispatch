@@ -1868,6 +1868,51 @@ test_install_hooks_gate_perms_uninstall_removes() {
   pass "$name"
 }
 
+test_install_hooks_gate_perms_uninstall_copy_mode_fallback() {
+  # qa-tester-F001 (gate-20260825-090542-11ce35): hosts/claude/lib/permission-policy.sh
+  # is optionally sourced by uninstall-guards.sh, falling back to an inline glob
+  # list when the file is absent (copy-mode checkouts). That fallback branch had
+  # no direct regression test. Build a mock checkout missing the lib file and
+  # prove uninstall still removes every managed Edit/Write permission (all three
+  # globs, both spellings) via the fallback, while unrelated entries survive.
+  local name="install-guards-gate-perms-uninstall-copy-mode-fallback"
+  should_run "$name" || return 0
+  local mock_repo="$tmp_root/$name-repo"
+  local home="$tmp_root/$name-home"
+  local settings="$home/.claude/settings.json"
+  local ws="$tmp_root/$name-ws"
+  mkdir -p "$home/.claude" "$ws" "$mock_repo"
+  cp -R "$REPO_ROOT/agents" "$REPO_ROOT/adapters" "$REPO_ROOT/cli" \
+    "$REPO_ROOT/commands" "$REPO_ROOT/core" "$REPO_ROOT/hosts" \
+    "$REPO_ROOT/ops" "$REPO_ROOT/pm" "$REPO_ROOT/runtime" \
+    "$REPO_ROOT/scripts" "$REPO_ROOT/share" "$REPO_ROOT/skills" \
+    "$mock_repo/"
+  rm "$mock_repo/hosts/claude/lib/permission-policy.sh"
+
+  local gate_glob="${ws}/**/.gate-results/**"
+  printf '{"hooks":{},"permissions":{"allow":["Bash(git log:*)","Edit(/tmp/*)","Edit(%s)","Write(%s)","Edit(/tmp/brief-*)","Write(/tmp/brief-*)","Edit(/tmp/handover-*)","Write(/tmp/handover-*)"]}}\n' \
+    "$gate_glob" "$gate_glob" > "$settings"
+
+  HOME="$home" CLAUDE_HOME="$home/.claude" PM_DISPATCH_GATE_WORKSPACE="$ws" \
+    bash "$mock_repo/scripts/uninstall-guards.sh" >/dev/null 2>&1
+
+  for entry in "Edit(${gate_glob})" "Write(${gate_glob})" \
+      "Edit(/tmp/brief-*)" "Write(/tmp/brief-*)" \
+      "Edit(/tmp/handover-*)" "Write(/tmp/handover-*)"; do
+    if jq -e --arg e "$entry" '(.permissions.allow // [] | index($e)) != null' "$settings" >/dev/null; then
+      fail "$name" "helper-absent fallback left entry behind: $entry"
+      return
+    fi
+  done
+  for pre_entry in "Bash(git log:*)" "Edit(/tmp/*)"; do
+    if ! jq -e --arg e "$pre_entry" '(.permissions.allow // [] | index($e)) != null' "$settings" >/dev/null; then
+      fail "$name" "unrelated permissions.allow entry was incorrectly removed: $pre_entry"
+      return
+    fi
+  done
+  pass "$name"
+}
+
 test_install_hooks_windows_profile_full_downgrades_to_minimal() {
   # Proves PM_DISPATCH_PLATFORM=windows and --profile full downgrades to minimal.
   # Codex hooks are not wired; base managed hooks still are. The expected warning
@@ -3239,6 +3284,7 @@ test_install_hooks_gate_perms_home_fallback
 test_install_hooks_gate_perms_git_failure_fallback
 test_install_hooks_gate_perms_normal_git_parent
 test_install_hooks_gate_perms_uninstall_removes
+test_install_hooks_gate_perms_uninstall_copy_mode_fallback
 test_hooks_install_uninstall_lifecycle
 test_uninstall_hooks_removes_unlisted_hooks
 test_install_hooks_prunes_retired_hooks
