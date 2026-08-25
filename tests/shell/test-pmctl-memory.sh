@@ -3506,6 +3506,61 @@ acceptance:
   pass "$name"
 }
 
+# Behavior: security-reviewer-F001 round 5 (gate-20260825-152508-5d7c30) --
+# memory_applied_write_guard alone is check-then-write and cannot close the
+# window between its check and the caller's later open. Simulate an attacker
+# winning that exact race deterministically: let the real guard pass its
+# check against the still-genuine sidecar, then swap the path to a symlink
+# at a sentinel before the guard returns success -- reproducing "swapped
+# immediately before the final open" without relying on real thread timing.
+# memory_applied_open_verified's post-open /proc/self/fd identity check must
+# still refuse the write. Covers both serialize_with_lock backends: flock
+# and (FAKE_FLOCK_MISSING=1) the mkdir-lock fallback.
+case_memory_applied_record_refuses_race_swap_before_open() {
+  local name="memory_applied_record: refuses a sidecar swapped to a symlink between the write-guard check and the final open (flock and mkdir-lock paths)"
+  should_run "$name" || return 0
+
+  local mode
+  for mode in flock mkdir; do
+    local base="$tmp_root/st-race-swap-$mode"
+    mkdir -p "$base"
+    local sidecar="$base/applied-usage.tsv"
+    : > "$sidecar"
+    local sentinel="$base/sentinel.txt"
+    printf 'do-not-touch\n' > "$sentinel"
+    local result_file="$base/result"
+    rm -f "$result_file"
+
+    (
+      eval "$(declare -f memory_applied_write_guard | sed '1s/^memory_applied_write_guard/__race_real_write_guard/')"
+      memory_applied_write_guard() {
+        __race_real_write_guard "$@" || return 1
+        rm -f "$1"
+        ln -s "$sentinel" "$1"
+        return 0
+      }
+      [[ "$mode" == mkdir ]] && export FAKE_FLOCK_MISSING=1
+      memory_applied_record "$sidecar" 'card1.md' 'CC-999' 'run-race-1'
+      printf 'rc=%s\n' "$?" > "$result_file"
+    )
+
+    if [[ ! -f "$result_file" ]]; then
+      fail "$name" "[$mode] race-swap subshell did not complete"
+      return 0
+    fi
+    if [[ "$(cat "$sentinel")" != 'do-not-touch' ]]; then
+      fail "$name" "[$mode] wrote through the raced symlink into sentinel: $(cat "$sentinel")"
+      return 0
+    fi
+    if [[ ! -L "$sidecar" ]]; then
+      fail "$name" "[$mode] raced symlink at sidecar path was replaced rather than left in place and refused"
+      return 0
+    fi
+  done
+
+  pass "$name"
+}
+
 # Behavior: _pmctl_memory_outcome_for_run reads a run's own terminal state
 # file — the same file pmctl_dispatch_status already reads — and reports
 # completed/failed/unknown without any new instrumentation.
@@ -4324,6 +4379,7 @@ case_memory_applied_scan_brief_skips_unmentioned_card
 case_memory_applied_scan_brief_records_every_matched_card
 case_memory_applied_scan_brief_never_blocks
 case_memory_applied_scan_brief_refuses_symlinked_targets
+case_memory_applied_record_refuses_race_swap_before_open
 case_memory_outcome_for_run_reads_terminal_state
 case_memory_outcome_for_run_rejects_traversal_run_id
 case_memory_stats_applied_funnel_zero_signal_is_null_not_zero

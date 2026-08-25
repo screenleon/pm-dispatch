@@ -75,11 +75,55 @@ memory_applied_write_guard() {
   return 0
 }
 
+# security-reviewer-F001 round 5 (gate-20260825-152508-5d7c30):
+# memory_applied_write_guard alone checks-then-writes — a symlink swapped in
+# between that check and the later mkdir/open/append (racing the guard) is
+# followed by the append exactly as if the guard had never run. This closes
+# that window: open the target for append FIRST, then verify the identity of
+# WHAT WAS ACTUALLY OPENED (via /proc/self/fd, which is fixed at open time
+# and cannot be raced) against a fresh lstat of the path. A swap racing the
+# guard, or racing this very open, is caught here because it can only ever
+# make the two diverge, never coincidentally agree — either the fd followed
+# an attacker symlink (mismatched identity vs. a later swapped-back decoy)
+# or it opened the real file (identities match, and $sidecar is still not a
+# symlink). Linux/WSL2 only (uses /proc/self/fd) — this repo's supported
+# platform scope (no macOS/BSD fallback needed).
+#   memory_applied_open_verified <sidecar> <fd_var_name>
+# Sets the named variable to an open fd number on success (caller must close
+# it); returns 1 and leaves nothing open on any failure or detected race.
+memory_applied_open_verified() {
+  local sidecar="$1" __ov_out_var="$2"
+  # __ov_fd, not a bare "fd": a caller may (and does — see
+  # _memory_applied_append_line/_lines below) legitimately pass "fd" as its
+  # own output-parameter name. `printf -v` resolves to the NEAREST scope
+  # holding that name, which is this function's own local if this function
+  # also happened to declare a plain `fd` — silently writing back to
+  # ourselves instead of the caller, leaving the caller's variable unset.
+  # The double-underscore prefix keeps this function's internals from ever
+  # colliding with a caller's chosen name.
+  local dir __ov_fd __ov_opened_id __ov_expect_id
+  dir="$(dirname "$sidecar")"
+  [[ -d "$dir" && ! -L "$dir" ]] || return 1
+  exec {__ov_fd}>>"$sidecar" || return 1
+  # -L: /proc/self/fd/N is a "magic symlink" — plain `stat` (no -L) stats
+  # the procfs entry itself (its own dev/inode inside the proc pseudo-fs),
+  # not the file it points to, so device numbers never match without -L.
+  __ov_opened_id="$(stat -L -c '%d:%i' "/proc/self/fd/$__ov_fd" 2>/dev/null)"
+  __ov_expect_id="$(stat -c '%d:%i' -- "$sidecar" 2>/dev/null)"
+  if [[ -z "$__ov_opened_id" || "$__ov_opened_id" != "$__ov_expect_id" || -L "$sidecar" ]]; then
+    exec {__ov_fd}>&- 2>/dev/null || true
+    return 1
+  fi
+  printf -v "$__ov_out_var" '%s' "$__ov_fd"
+  return 0
+}
+
 # Append one applied record: append-only, best-effort. mkdir -p + lock via
-# serialize_with_lock when available, else a plain append (whole-line writes
-# from a low-frequency caller make unlocked interleaving an acceptable worst
-# case). Every error path returns 0 — the dispatch pipeline calling this must
-# never be blocked or failed by a telemetry write failing.
+# serialize_with_lock when available, else an unlocked verified-open append
+# (whole-line writes from a low-frequency caller make unlocked interleaving
+# an acceptable worst case). Every error path returns 0 — the dispatch
+# pipeline calling this must never be blocked or failed by a telemetry
+# write failing.
 #   memory_applied_record <sidecar> <card_relpath> <task_id> <run_id>
 memory_applied_record() {
   local sidecar="$1" card_relpath="$2" task_id="$3" run_id="$4"
@@ -102,21 +146,29 @@ memory_applied_record() {
 }
 
 # Inner function run under serialize_with_lock's subshell (or called
-# directly when flock/mkdir-lock is unavailable). Not part of the public API.
+# directly when flock/mkdir-lock is unavailable). Not part of the public
+# API. The lock (or its absence) only serializes CONCURRENT dispatches
+# against each other; it does not by itself defend against a symlink swap,
+# which is why the append itself goes through memory_applied_open_verified
+# rather than a plain `>> "$sidecar"` redirection.
 _memory_applied_append_line() {
-  local sidecar="$1" line="$2"
-  printf '%s\n' "$line" >> "$sidecar"
+  local sidecar="$1" line="$2" fd
+  memory_applied_open_verified "$sidecar" fd || return 1
+  printf '%s\n' "$line" >&"$fd"
+  exec {fd}>&- 2>/dev/null || true
 }
 
-# Batch form: append every already-formatted "day\ttask\trun\trel" line under
-# ONE lock acquisition, for memory_applied_scan_brief's multi-match case.
-# Not part of the public API.
+# Batch form: append every already-formatted "day\ttask\trun\trel" line
+# through ONE verified-open descriptor, for memory_applied_scan_brief's
+# multi-match case. Not part of the public API.
 _memory_applied_append_lines() {
   local sidecar="$1"; shift
-  local line
+  local line fd
+  memory_applied_open_verified "$sidecar" fd || return 1
   for line in "$@"; do
-    printf '%s\n' "$line"
-  done >> "$sidecar"
+    printf '%s\n' "$line" >&"$fd"
+  done
+  exec {fd}>&- 2>/dev/null || true
 }
 
 # Load the applied sidecar into MEMORY_APPLIED_DAY/TASK/RUN/CARD. Absent file
