@@ -8,7 +8,7 @@ fi
 
 pmctl_artifacts_usage() {
   printf 'usage: pmctl artifacts list [--cd <work_dir>]\n' >&2
-  printf '       pmctl artifacts show <run_id> [--cd <work_dir>]\n' >&2
+  printf '       pmctl artifacts show <run_id> [--cd <work_dir>] [--json]\n' >&2
   printf '       pmctl artifacts gc [--dry-run] [--keep-last N] [--max-age-days D]\n' >&2
   printf '                          [--grace-days D] [--cd <work_dir>] [--all-repos]\n' >&2
   printf '                          [--repos-root <dir>]\n' >&2
@@ -152,7 +152,8 @@ pmctl_artifacts_list() {
 pmctl_artifacts_show() {
   local repo_root="${1:-}" run_id="${2:-}" work_dir="${3:-}"
   shift 3 || true
-  local run_dir file rel size tmp_file
+  local run_dir file rel size tmp_file arg json=0
+  local -a positional=()
 
   if [[ -z "$work_dir" ]]; then
     work_dir="$repo_root"
@@ -163,13 +164,25 @@ pmctl_artifacts_show() {
   if [[ "${_PMCTL_ARTIFACTS_PARSE_HELP:-0}" -eq 1 ]]; then
     return 0
   fi
-  if [[ "${#_PMCTL_ARTIFACTS_ARGS[@]}" -gt 0 ]]; then
+  for arg in "${_PMCTL_ARTIFACTS_ARGS[@]}"; do
+    if [[ "$arg" == "--json" ]]; then
+      json=1
+    else
+      positional+=("$arg")
+    fi
+  done
+  if [[ "${#positional[@]}" -gt 0 ]]; then
     if [[ -n "$run_id" ]]; then
-      printf 'pmctl artifacts show: unexpected argument: %s\n' "${_PMCTL_ARTIFACTS_ARGS[0]}" >&2
+      printf 'pmctl artifacts show: unexpected argument: %s\n' "${positional[0]}" >&2
       pmctl_artifacts_usage
       return 2
     fi
-    run_id="${_PMCTL_ARTIFACTS_ARGS[0]}"
+    run_id="${positional[0]}"
+  fi
+  if [[ "${#positional[@]}" -gt 1 ]]; then
+    printf 'pmctl artifacts show: unexpected argument: %s\n' "${positional[1]}" >&2
+    pmctl_artifacts_usage
+    return 2
   fi
   work_dir="$_PMCTL_ARTIFACTS_WORK_DIR"
   if [[ -z "$run_id" ]]; then
@@ -189,6 +202,25 @@ pmctl_artifacts_show() {
     return 1
   fi
 
+  # CC-524: the canonical absolute run root, verified to still land inside
+  # the resolved project's runs/ containment (see sw_run_dir_symlink_free
+  # in state-paths.sh for why this is a direct lstat check rather than a
+  # canonicalize-and-compare -- the latter is tautologically fooled by a
+  # swapped runs/ directory, confirmed by direct reproduction during
+  # implementation).
+  local run_dir_canonical
+  if ! sw_run_dir_symlink_free "$run_dir"; then
+    printf 'pmctl artifacts show: run dir for %s is reached through an unexpected symlink\n' \
+      "$run_id" >&2
+    printf 'pmctl artifacts show: run pmctl artifacts list --cd %q to see available runs\n' "$work_dir" >&2
+    return 1
+  fi
+  run_dir_canonical="$(realpath_m "$run_dir" 2>/dev/null || printf '%s' "$run_dir")"
+  if [[ -z "$run_dir_canonical" ]]; then
+    printf 'pmctl artifacts show: could not resolve a canonical path for %s\n' "$run_id" >&2
+    return 2
+  fi
+
   tmp_file="$(mktemp "${TMPDIR:-/tmp}/pmctl-artifacts-show.XXXXXX")" || return 2
   while IFS= read -r file; do
     [[ -f "$file" ]] || continue
@@ -196,11 +228,44 @@ pmctl_artifacts_show() {
     size="$(pmctl_artifacts_file_size "$file")"
     printf '%s\t%s\n' "$size" "$rel" >> "$tmp_file"
   done < <(find "$run_dir" -type f | sort)
-  if [[ ! -s "$tmp_file" ]]; then
+
+  if [[ "$json" -eq 1 ]]; then
+    # repo_root is only needed for --json, so it's resolved here rather than
+    # unconditionally above -- the common plain-text call shouldn't pay for a
+    # git fork and a path resolution whose result it never reads.
+    local repo_root_canonical
+    repo_root_canonical="$(git -C "$work_dir" rev-parse --show-toplevel 2>/dev/null || true)"
+    if [[ -z "$repo_root_canonical" ]]; then
+      repo_root_canonical="$work_dir"
+    fi
+    repo_root_canonical="$(realpath_m "$repo_root_canonical" 2>/dev/null || printf '%s' "$repo_root_canonical")"
+    # --rawfile + jq's own string parsing does the TSV->JSON escaping, rather
+    # than hand-building JSON string literals in shell/awk (a filename with a
+    # quote or backslash would otherwise produce invalid JSON). Split on the
+    # FIRST tab only: size is always numeric and always first, so everything
+    # after it -- including any embedded tab in a pathological relative
+    # path -- belongs to relative_path.
+    jq -n --arg run_id "$run_id" --arg repo_root "$repo_root_canonical" \
+      --arg run_root "$run_dir_canonical" --rawfile tsv "$tmp_file" '
+      {
+        schema_version: 1,
+        run_id: $run_id,
+        repo_root: $repo_root,
+        run_root: $run_root,
+        files: (
+          $tsv | rtrimstr("\n") | split("\n") | map(select(length > 0)) |
+          map(split("\t")) |
+          map({size_bytes: (.[0] | tonumber), relative_path: (.[1:] | join("\t"))})
+        )
+      }'
     rm -f "$tmp_file"
     return 0
   fi
-  cat "$tmp_file"
+
+  printf 'run root: %s\n' "$run_dir_canonical"
+  if [[ -s "$tmp_file" ]]; then
+    cat "$tmp_file"
+  fi
   rm -f "$tmp_file"
 }
 
