@@ -75,22 +75,37 @@ memory_applied_write_guard() {
   return 0
 }
 
-# security-reviewer-F001 round 5 (gate-20260825-152508-5d7c30):
-# memory_applied_write_guard alone checks-then-writes — a symlink swapped in
-# between that check and the later mkdir/open/append (racing the guard) is
-# followed by the append exactly as if the guard had never run. This closes
-# that window: open the target for append FIRST, then verify the identity of
-# WHAT WAS ACTUALLY OPENED (via /proc/self/fd, which is fixed at open time
-# and cannot be raced) against a fresh lstat of the path. A swap racing the
-# guard, or racing this very open, is caught here because it can only ever
-# make the two diverge, never coincidentally agree — either the fd followed
-# an attacker symlink (mismatched identity vs. a later swapped-back decoy)
-# or it opened the real file (identities match, and $sidecar is still not a
-# symlink). Linux/WSL2 only (uses /proc/self/fd) — this repo's supported
-# platform scope (no macOS/BSD fallback needed).
+# security-reviewer-F001 round 5 (gate-20260825-152508-5d7c30) closed the
+# identity-mismatch race for an already-existing sidecar; round 6
+# (gate-20260825-154322-d2ff91) found two more concrete gaps in that fix:
+#
+#   1. A symlink pointing at a NONEXISTENT target: `exec {fd}>>` follows a
+#      symlink and creates its target with O_CREAT regardless of whether the
+#      target previously existed, so the round-5 fix still let a dangling
+#      symlink cause an attacker-chosen file to be CREATED before the
+#      post-open identity check ever ran (the check refuses the *write*, but
+#      the creation side effect already happened). Bash has no O_NOFOLLOW
+#      open primitive (see gate_load_reviewer_override in
+#      gate-reviewer-contract.sh for the same documented constraint), but
+#      `noclobber` (`set -C`) IS enforced atomically by the open(2) syscall
+#      itself (O_EXCL-equivalent) against the path's own lstat, not its
+#      dereferenced target — so it refuses to open through ANY existing
+#      filesystem entry at that path, symlink or not, dangling or not,
+#      regardless of exactly when the entry was planted relative to this
+#      call. Used here whenever the sidecar has no dereferenced entry yet
+#      (`-e` false: either truly absent, or a dangling symlink).
+#   2. A hard link swapped onto the sidecar path pointing at an EXISTING
+#      sentinel: dev:inode identity matches (a hard link IS the same inode),
+#      and it is not a symlink, so round 5's checks passed it through. Closed
+#      by rejecting unless the just-opened descriptor's link count is
+#      exactly 1 — a hard-linked file always has nlink >= 2.
+#
+# Linux/WSL2 only (uses /proc/self/fd) — this repo's supported platform scope
+# (no macOS/BSD fallback needed).
 #   memory_applied_open_verified <sidecar> <fd_var_name>
 # Sets the named variable to an open fd number on success (caller must close
-# it); returns 1 and leaves nothing open on any failure or detected race.
+# it); returns 1 and leaves nothing open (and nothing created) on any failure
+# or detected race.
 memory_applied_open_verified() {
   local sidecar="$1" __ov_out_var="$2"
   # __ov_fd, not a bare "fd": a caller may (and does — see
@@ -101,16 +116,35 @@ memory_applied_open_verified() {
   # ourselves instead of the caller, leaving the caller's variable unset.
   # The double-underscore prefix keeps this function's internals from ever
   # colliding with a caller's chosen name.
-  local dir __ov_fd __ov_opened_id __ov_expect_id
+  local dir __ov_fd __ov_opened_id __ov_expect_id __ov_nlink
+  local __ov_had_noclobber __ov_open_rc
   dir="$(dirname "$sidecar")"
   [[ -d "$dir" && ! -L "$dir" ]] || return 1
-  exec {__ov_fd}>>"$sidecar" || return 1
+
+  case $- in *C*) __ov_had_noclobber=1 ;; *) __ov_had_noclobber=0 ;; esac
+  if [[ -e "$sidecar" ]]; then
+    exec {__ov_fd}>>"$sidecar" || return 1
+  else
+    # -e is false both when nothing at all is there and when a dangling
+    # symlink is there (it dereferences). Either way, noclobber's exclusive
+    # open refuses if the path names ANY existing entry (its check is on the
+    # path's own lstat) -- so a dangling symlink planted here, at any point
+    # up to and including the instant of this open, is refused without ever
+    # creating its target.
+    set -C
+    exec {__ov_fd}>"$sidecar"
+    __ov_open_rc=$?
+    [[ "$__ov_had_noclobber" == 1 ]] || set +C
+    [[ "$__ov_open_rc" -eq 0 ]] || return 1
+  fi
   # -L: /proc/self/fd/N is a "magic symlink" — plain `stat` (no -L) stats
   # the procfs entry itself (its own dev/inode inside the proc pseudo-fs),
   # not the file it points to, so device numbers never match without -L.
   __ov_opened_id="$(stat -L -c '%d:%i' "/proc/self/fd/$__ov_fd" 2>/dev/null)"
   __ov_expect_id="$(stat -c '%d:%i' -- "$sidecar" 2>/dev/null)"
-  if [[ -z "$__ov_opened_id" || "$__ov_opened_id" != "$__ov_expect_id" || -L "$sidecar" ]]; then
+  __ov_nlink="$(stat -L -c '%h' "/proc/self/fd/$__ov_fd" 2>/dev/null)"
+  if [[ -z "$__ov_opened_id" || "$__ov_opened_id" != "$__ov_expect_id" \
+        || -L "$sidecar" || "$__ov_nlink" != "1" ]]; then
     exec {__ov_fd}>&- 2>/dev/null || true
     return 1
   fi

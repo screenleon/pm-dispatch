@@ -88,15 +88,22 @@ run_doctor_json() {
   return "$status"
 }
 
+# qa-tester-F001 round 6 (gate-20260825-154322-d2ff91): assert_jq used to
+# return success (skip, not fail) when jq was absent, so a broken JSON funnel
+# field could ship green on a jq-less host -- the missing parser converted a
+# behavioral check into an unverified pass. jq is a required test dependency
+# for this suite: fail loudly before any case runs rather than silently
+# downgrade every jq-backed assertion in it.
+if ! command -v jq >/dev/null 2>&1; then
+  echo "FATAL: jq is required to run $(basename "${BASH_SOURCE[0]}") -- funnel JSON assertions depend on it" >&2
+  exit 1
+fi
+_HAVE_JQ=1  # guaranteed by the fatal check above; kept for pre-existing call sites
+
 # Parser-backed JSON assertion (spike a3 requires jq -e, not substring matching).
 # Returns 0 when the jq filter is truthy; calls fail() and returns 1 otherwise.
-_HAVE_JQ=0
-command -v jq >/dev/null 2>&1 && _HAVE_JQ=1
 assert_jq() {
   local name="$1" file="$2" filter="$3"
-  if [[ "$_HAVE_JQ" -ne 1 ]]; then
-    return 0  # jq absent: skip parser-backed check, substring asserts still run
-  fi
   if jq -e "$filter" "$file" >/dev/null 2>&1; then
     return 0
   fi
@@ -3561,6 +3568,61 @@ case_memory_applied_record_refuses_race_swap_before_open() {
   pass "$name"
 }
 
+# Behavior: security-reviewer-F001 round 6 (gate-20260825-154322-d2ff91) --
+# round 5's identity check alone let two concrete cases through:
+# (1) a symlink whose target does NOT exist: `exec {fd}>>` follows it and
+# CREATES that target via O_CREAT, a side effect the post-open identity
+# check cannot undo. (2) a hard link swapped onto the sidecar path pointing
+# at an existing sentinel: dev:inode identity matches (same inode) and it
+# is not a symlink, so round 5's checks passed it through. Both are planted
+# deterministically (no timing dependency needed: noclobber's exclusive
+# open is enforced atomically by open(2) against the path's own lstat, so a
+# pre-planted dangling symlink is refused exactly the same as one planted
+# mid-race). Covers both serialize_with_lock backends.
+case_memory_applied_record_refuses_dangling_symlink_and_hardlink() {
+  local name="memory_applied_record: refuses a dangling-symlink target (no creation) and a hard-linked sentinel (flock and mkdir-lock paths)"
+  should_run "$name" || return 0
+
+  local mode
+  for mode in flock mkdir; do
+    local base="$tmp_root/st-dangling-hardlink-$mode"
+    mkdir -p "$base"
+
+    # Case A: sidecar path is a symlink to a target that does not exist yet.
+    local dangling_target="$base/dangling-target"
+    local sidecar_a="$base/applied-usage-a.tsv"
+    ln -s "$dangling_target" "$sidecar_a"
+    (
+      [[ "$mode" == mkdir ]] && export FAKE_FLOCK_MISSING=1
+      memory_applied_record "$sidecar_a" 'card1.md' 'CC-999' 'run-dangling-1'
+    )
+    if [[ -e "$dangling_target" ]]; then
+      fail "$name" "[$mode] dangling-symlink target was created: $dangling_target"
+      return 0
+    fi
+    if [[ ! -L "$sidecar_a" ]]; then
+      fail "$name" "[$mode] dangling symlink at sidecar path was replaced rather than left in place and refused"
+      return 0
+    fi
+
+    # Case B: sidecar path is a hard link to an existing sentinel file.
+    local sentinel="$base/sentinel.txt"
+    printf 'do-not-touch\n' > "$sentinel"
+    local sidecar_b="$base/applied-usage-b.tsv"
+    ln "$sentinel" "$sidecar_b"
+    (
+      [[ "$mode" == mkdir ]] && export FAKE_FLOCK_MISSING=1
+      memory_applied_record "$sidecar_b" 'card1.md' 'CC-999' 'run-hardlink-1'
+    )
+    if [[ "$(cat "$sentinel")" != 'do-not-touch' ]]; then
+      fail "$name" "[$mode] wrote through a hard-linked sidecar into sentinel: $(cat "$sentinel")"
+      return 0
+    fi
+  done
+
+  pass "$name"
+}
+
 # Behavior: _pmctl_memory_outcome_for_run reads a run's own terminal state
 # file — the same file pmctl_dispatch_status already reads — and reports
 # completed/failed/unknown without any new instrumentation.
@@ -4380,6 +4442,7 @@ case_memory_applied_scan_brief_records_every_matched_card
 case_memory_applied_scan_brief_never_blocks
 case_memory_applied_scan_brief_refuses_symlinked_targets
 case_memory_applied_record_refuses_race_swap_before_open
+case_memory_applied_record_refuses_dangling_symlink_and_hardlink
 case_memory_outcome_for_run_reads_terminal_state
 case_memory_outcome_for_run_rejects_traversal_run_id
 case_memory_stats_applied_funnel_zero_signal_is_null_not_zero
