@@ -1592,7 +1592,8 @@ test_install_hooks_gate_perms_fresh() {
     bash "$REPO_ROOT/scripts/install-guards.sh" >/dev/null 2>&1
 
   local edit_entry="Edit(${ws}/**/.gate-results/**)"
-  for entry in "$edit_entry" "Bash(pmctl guard check:*)" \
+  for entry in "$edit_entry" "Edit(/tmp/brief-*)" "Edit(/tmp/handover-*)" \
+      "Bash(pmctl guard check:*)" \
       "Bash($home/.local/bin/pmctl guard check:*)" \
       "Bash(~/.local/bin/pmctl guard check:*)" "Bash(mkdir -p:*)"; do
     if ! jq -e --arg e "$entry" '(.permissions.allow // [] | index($e)) != null' "$settings" >/dev/null; then
@@ -1620,7 +1621,8 @@ test_install_hooks_gate_perms_idempotent() {
 
   local edit_entry="Edit(${ws}/**/.gate-results/**)"
   local count
-  for entry in "$edit_entry" "Bash(pmctl guard check:*)" \
+  for entry in "$edit_entry" "Edit(/tmp/brief-*)" "Edit(/tmp/handover-*)" \
+      "Bash(pmctl guard check:*)" \
       "Bash($home/.local/bin/pmctl guard check:*)" \
       "Bash(~/.local/bin/pmctl guard check:*)" "Bash(mkdir -p:*)"; do
     count="$(jq -r --arg e "$entry" '[.permissions.allow[]? | select(. == $e)] | length' "$settings")"
@@ -1633,32 +1635,44 @@ test_install_hooks_gate_perms_idempotent() {
 }
 
 test_install_hooks_gate_perms_migrates_legacy_write() {
-  # Verifies an upgrade replaces the historical managed Write spelling with
-  # Edit while leaving non-managed /tmp permissions untouched.
+  # Verifies an upgrade replaces the historical managed Write spellings
+  # (gate-results, /tmp/brief-*, /tmp/handover-*) with Edit while leaving
+  # non-managed /tmp permissions untouched.
   # Steps:
-  #   1. Seed legacy Write(.gate-results), Edit(/tmp/*), and Write(/tmp/*)
+  #   1. Seed legacy Write(.gate-results), Write(/tmp/brief-*),
+  #      Write(/tmp/handover-*), Edit(/tmp/*), and Write(/tmp/*)
   #   2. Run install-guards.sh once
-  #   3. Assert only the managed gate permission is migrated
+  #   3. Assert only the three managed permissions are migrated
   local name="install-guards-gate-perms-migrates-legacy-write"
   should_run "$name" || return 0
   local home="$tmp_root/$name" settings="$tmp_root/$name/.claude/settings.json"
   local ws="$tmp_root/$name-ws"
   mkdir -p "$home/.claude" "$ws"
-  jq -n --arg legacy "Write(${ws}/**/.gate-results/**)" '{
-    hooks:{}, permissions:{allow:[$legacy,"Edit(/tmp/*)","Write(/tmp/*)"]}
+  jq -n --arg legacy "Write(${ws}/**/.gate-results/**)" \
+      --arg legacy_brief "Write(/tmp/brief-*)" \
+      --arg legacy_handover "Write(/tmp/handover-*)" '{
+    hooks:{}, permissions:{allow:[$legacy,$legacy_brief,$legacy_handover,"Edit(/tmp/*)","Write(/tmp/*)"]}
   }' > "$settings"
 
   HOME="$home" CLAUDE_HOME="$home/.claude" PM_DISPATCH_GATE_WORKSPACE="$ws" \
     bash "$REPO_ROOT/scripts/install-guards.sh" >/dev/null 2>&1
 
   if ! jq -e --arg edit "Edit(${ws}/**/.gate-results/**)" \
-      --arg legacy "Write(${ws}/**/.gate-results/**)" '
+      --arg legacy "Write(${ws}/**/.gate-results/**)" \
+      --arg edit_brief "Edit(/tmp/brief-*)" \
+      --arg legacy_brief "Write(/tmp/brief-*)" \
+      --arg edit_handover "Edit(/tmp/handover-*)" \
+      --arg legacy_handover "Write(/tmp/handover-*)" '
     (.permissions.allow | index($edit)) != null and
     (.permissions.allow | index($legacy)) == null and
+    (.permissions.allow | index($edit_brief)) != null and
+    (.permissions.allow | index($legacy_brief)) == null and
+    (.permissions.allow | index($edit_handover)) != null and
+    (.permissions.allow | index($legacy_handover)) == null and
     (.permissions.allow | index("Edit(/tmp/*)")) != null and
     (.permissions.allow | index("Write(/tmp/*)")) != null
   ' "$settings" >/dev/null; then
-    fail "$name" "managed gate permission was not migrated without touching /tmp entries"
+    fail "$name" "managed permissions were not migrated without touching unrelated /tmp entries"
     return
   fi
   pass "$name"
@@ -1820,17 +1834,23 @@ test_install_hooks_gate_perms_uninstall_removes() {
     fail "$name" "install did not add Edit entry; cannot test lifecycle"
     return
   fi
-  # Simulate an older install artifact coexisting with the current spelling;
-  # uninstall must recognize and remove both.
+  # Simulate older install artifacts coexisting with the current spelling for
+  # all three managed globs (gate-results, /tmp/brief-*, /tmp/handover-*);
+  # uninstall must recognize and remove every legacy Write(...) spelling.
   jq --arg legacy "Write(${ws}/**/.gate-results/**)" \
-    '.permissions.allow += [$legacy]' "$settings" > "$settings.tmp"
+     --arg legacy_brief "Write(/tmp/brief-*)" \
+     --arg legacy_handover "Write(/tmp/handover-*)" \
+    '.permissions.allow += [$legacy, $legacy_brief, $legacy_handover]' "$settings" > "$settings.tmp"
   mv "$settings.tmp" "$settings"
 
   # Uninstall
   HOME="$home" CLAUDE_HOME="$home/.claude" PM_DISPATCH_GATE_WORKSPACE="$ws" \
     bash "$REPO_ROOT/scripts/uninstall-guards.sh" >/dev/null 2>&1
 
-  for entry in "$edit_entry" "Write(${ws}/**/.gate-results/**)" "Bash(pmctl guard check:*)" \
+  for entry in "$edit_entry" "Write(${ws}/**/.gate-results/**)" \
+      "Edit(/tmp/brief-*)" "Edit(/tmp/handover-*)" \
+      "Write(/tmp/brief-*)" "Write(/tmp/handover-*)" \
+      "Bash(pmctl guard check:*)" \
       "Bash($home/.local/bin/pmctl guard check:*)" \
       "Bash(~/.local/bin/pmctl guard check:*)" "Bash(mkdir -p:*)"; do
     if jq -e --arg e "$entry" '(.permissions.allow // [] | index($e)) != null' "$settings" >/dev/null; then
@@ -1838,15 +1858,58 @@ test_install_hooks_gate_perms_uninstall_removes() {
       return
     fi
   done
-  # Unrelated entry must survive
-  if ! jq -e --arg e "Bash(git log:*)" '(.permissions.allow // [] | index($e)) != null' "$settings" >/dev/null; then
-    fail "$name" "unrelated permissions.allow entry was incorrectly removed"
-    return
-  fi
-  if ! jq -e --arg e "Edit(/tmp/*)" '(.permissions.allow // [] | index($e)) != null' "$settings" >/dev/null; then
-    fail "$name" "non-managed /tmp permission was incorrectly removed"
-    return
-  fi
+  # Unrelated entries (including the unrelated /tmp permission) must survive
+  for pre_entry in "Bash(git log:*)" "Edit(/tmp/*)"; do
+    if ! jq -e --arg e "$pre_entry" '(.permissions.allow // [] | index($e)) != null' "$settings" >/dev/null; then
+      fail "$name" "unrelated permissions.allow entry was incorrectly removed: $pre_entry"
+      return
+    fi
+  done
+  pass "$name"
+}
+
+test_install_hooks_gate_perms_uninstall_copy_mode_fallback() {
+  # qa-tester-F001 (gate-20260825-090542-11ce35): hosts/claude/lib/permission-policy.sh
+  # is optionally sourced by uninstall-guards.sh, falling back to an inline glob
+  # list when the file is absent (copy-mode checkouts). That fallback branch had
+  # no direct regression test. Build a mock checkout missing the lib file and
+  # prove uninstall still removes every managed Edit/Write permission (all three
+  # globs, both spellings) via the fallback, while unrelated entries survive.
+  local name="install-guards-gate-perms-uninstall-copy-mode-fallback"
+  should_run "$name" || return 0
+  local mock_repo="$tmp_root/$name-repo"
+  local home="$tmp_root/$name-home"
+  local settings="$home/.claude/settings.json"
+  local ws="$tmp_root/$name-ws"
+  mkdir -p "$home/.claude" "$ws" "$mock_repo"
+  cp -R "$REPO_ROOT/agents" "$REPO_ROOT/adapters" "$REPO_ROOT/cli" \
+    "$REPO_ROOT/commands" "$REPO_ROOT/core" "$REPO_ROOT/hosts" \
+    "$REPO_ROOT/ops" "$REPO_ROOT/pm" "$REPO_ROOT/runtime" \
+    "$REPO_ROOT/scripts" "$REPO_ROOT/share" "$REPO_ROOT/skills" \
+    "$mock_repo/"
+  rm "$mock_repo/hosts/claude/lib/permission-policy.sh"
+
+  local gate_glob="${ws}/**/.gate-results/**"
+  printf '{"hooks":{},"permissions":{"allow":["Bash(git log:*)","Edit(/tmp/*)","Edit(%s)","Write(%s)","Edit(/tmp/brief-*)","Write(/tmp/brief-*)","Edit(/tmp/handover-*)","Write(/tmp/handover-*)"]}}\n' \
+    "$gate_glob" "$gate_glob" > "$settings"
+
+  HOME="$home" CLAUDE_HOME="$home/.claude" PM_DISPATCH_GATE_WORKSPACE="$ws" \
+    bash "$mock_repo/scripts/uninstall-guards.sh" >/dev/null 2>&1
+
+  for entry in "Edit(${gate_glob})" "Write(${gate_glob})" \
+      "Edit(/tmp/brief-*)" "Write(/tmp/brief-*)" \
+      "Edit(/tmp/handover-*)" "Write(/tmp/handover-*)"; do
+    if jq -e --arg e "$entry" '(.permissions.allow // [] | index($e)) != null' "$settings" >/dev/null; then
+      fail "$name" "helper-absent fallback left entry behind: $entry"
+      return
+    fi
+  done
+  for pre_entry in "Bash(git log:*)" "Edit(/tmp/*)"; do
+    if ! jq -e --arg e "$pre_entry" '(.permissions.allow // [] | index($e)) != null' "$settings" >/dev/null; then
+      fail "$name" "unrelated permissions.allow entry was incorrectly removed: $pre_entry"
+      return
+    fi
+  done
   pass "$name"
 }
 
@@ -3221,6 +3284,7 @@ test_install_hooks_gate_perms_home_fallback
 test_install_hooks_gate_perms_git_failure_fallback
 test_install_hooks_gate_perms_normal_git_parent
 test_install_hooks_gate_perms_uninstall_removes
+test_install_hooks_gate_perms_uninstall_copy_mode_fallback
 test_hooks_install_uninstall_lifecycle
 test_uninstall_hooks_removes_unlisted_hooks
 test_install_hooks_prunes_retired_hooks

@@ -127,6 +127,8 @@ settings="$CLAUDE_HOME/settings.json"
 . "$repo_root/runtime/lib/memory-dir.sh"
 # shellcheck source=runtime/lib/gate-workspace.sh
 . "$repo_root/runtime/lib/gate-workspace.sh"
+# shellcheck source=hosts/claude/lib/permission-policy.sh
+. "$repo_root/hosts/claude/lib/permission-policy.sh"
 
 if ! command -v jq >/dev/null 2>&1; then
   cat >&2 <<EOF
@@ -509,10 +511,12 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
 
 # --- Permissions merge for reviewer subagents ---
 # Reviewer subagents spawned by pr-gate need Edit(.gate-results) and Bash(pmctl guard check)
-# to write results and run guard checks. Workspace root detection is shared with
-# uninstall-guards.sh via runtime/lib/gate-workspace.sh.
+# to write results and run guard checks. Workspace root detection is shared
+# with uninstall-guards.sh via runtime/lib/gate-workspace.sh; the full set of
+# managed permission globs is shared via hosts/claude/lib/permission-policy.sh.
 _workspace_root="$(gate_workspace_root "$repo_root" "$HOME")"
 _gate_glob="${_workspace_root}/**/.gate-results/**"
+_managed_globs_json="$(managed_permission_globs "$_gate_glob" | jq -Rn '[inputs]')"
 
 # pmctl is installed as a symlink under the bin dir; an in-session reviewer
 # subagent whose PATH lacks that dir invokes pmctl by absolute path. Allow the
@@ -527,8 +531,7 @@ _pmctl_guard_tilde=""
 _tmp_perms="$(mktemp)"
 trap 'rm -f "$tmp_new" "$_tmp_perms"' EXIT
 if ! jq \
-  --arg edit_perm "Edit(${_gate_glob})" \
-  --arg legacy_write_perm "Write(${_gate_glob})" \
+  --argjson globs "$_managed_globs_json" \
   --arg bash_guard "Bash(pmctl guard check:*)" \
   --arg bash_guard_abs "$_pmctl_guard_abs" \
   --arg bash_guard_tilde "$_pmctl_guard_tilde" \
@@ -536,10 +539,13 @@ if ! jq \
   '
   .permissions //= {} |
   .permissions.allow //= [] |
-  # Claude settings accepts Edit path permissions. Remove the legacy Write
-  # spelling during upgrade instead of preserving an invalid managed entry.
-  .permissions.allow |= map(select(. != $legacy_write_perm)) |
-  ([$edit_perm, $bash_guard, $bash_guard_abs, $bash_guard_tilde, $bash_mkdir]
+  # Claude settings accepts Edit path permissions, not Write path permissions
+  # (a Write(<path>) rule never matches a file-permission check). Remove each
+  # managed legacy Write spelling during upgrade instead of preserving an
+  # invalid entry.
+  ($globs | map("Write(\(.))")) as $legacy |
+  .permissions.allow |= map(select(. as $p | ($legacy | index($p)) == null)) |
+  (($globs | map("Edit(\(.))")) + [$bash_guard, $bash_guard_abs, $bash_guard_tilde, $bash_mkdir]
     | map(select(. != ""))) as $required |
   .permissions.allow |= (
     . as $existing |
@@ -554,7 +560,7 @@ trap 'rm -f "$tmp_new"' EXIT
 
 echo "install-guards: profile=$PROFILE"
 echo "install-guards: platform=$PLATFORM"
-echo "install-guards: gate-results glob: $_gate_glob"
+echo "install-guards: managed permission globs: $(echo "$_managed_globs_json" | jq -r 'join(", ")')"
 
 if cmp -s "$settings" "$tmp_new"; then
   echo "install-guards: already wired, nothing to do (profile=$PROFILE)"
