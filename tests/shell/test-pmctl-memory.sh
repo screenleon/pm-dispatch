@@ -3205,6 +3205,46 @@ case_memory_applied_record_and_load_round_trip() {
   pass "$name"
 }
 
+# Behavior (critic-F001, gate-20260825-150734-c20c52): a row with a
+# legitimately empty task_id (task_id="" is valid — see sw_extract_task_id's
+# UNKN-0 -> "" mapping at the pmctl_dispatch_run call site) must round-trip
+# correctly, not be treated as corrupt. This is a real parser bug, not just
+# a missing-field edge case: `IFS=$'\t' read ... <<<"$line"` collapses
+# consecutive tab delimiters (tab is one of POSIX's "IFS white space"
+# characters), which silently shifted run/card left by one position and lost
+# card entirely whenever task was empty — this test seeds exactly that shape
+# and asserts run/card land correctly, not merely that the row isn't flagged
+# as failed.
+case_memory_applied_record_and_load_empty_task_round_trips() {
+  local name="memory_applied_record/load: empty task_id round-trips without shifting run/card"
+  should_run "$name" || return 0
+
+  local sidecar="$tmp_root/applied-empty-task/.pm-dispatch/applied-usage.tsv"
+  memory_applied_record "$sidecar" 'card1.md' '' 'run-empty-task-1'
+  memory_applied_record "$sidecar" 'card2.md' 'CC-999' 'run-with-task-1'
+
+  memory_applied_load "$sidecar"
+  if [[ "$MEMORY_APPLIED_READ_FAILED" -ne 0 ]]; then
+    fail "$name" "empty-task row incorrectly flagged as corrupt"
+    return 0
+  fi
+  if [[ "${#MEMORY_APPLIED_CARD[@]}" -ne 2 ]]; then
+    fail "$name" "expected 2 rows, got ${#MEMORY_APPLIED_CARD[@]}"
+    return 0
+  fi
+  if [[ "${MEMORY_APPLIED_TASK[0]}" != '' || "${MEMORY_APPLIED_RUN[0]}" != 'run-empty-task-1' \
+      || "${MEMORY_APPLIED_CARD[0]}" != 'card1.md' ]]; then
+    fail "$name" "row0 (empty task) fields shifted: task=[${MEMORY_APPLIED_TASK[0]}] run=[${MEMORY_APPLIED_RUN[0]}] card=[${MEMORY_APPLIED_CARD[0]}]"
+    return 0
+  fi
+  if [[ "${MEMORY_APPLIED_TASK[1]}" != 'CC-999' || "${MEMORY_APPLIED_RUN[1]}" != 'run-with-task-1' \
+      || "${MEMORY_APPLIED_CARD[1]}" != 'card2.md' ]]; then
+    fail "$name" "row1 (non-empty task) fields corrupted by the prior row's parse: task=[${MEMORY_APPLIED_TASK[1]}] run=[${MEMORY_APPLIED_RUN[1]}] card=[${MEMORY_APPLIED_CARD[1]}]"
+    return 0
+  fi
+  pass "$name"
+}
+
 # Behavior: an absent sidecar loads as zero rows without signaling failure —
 # "no applied records yet" must not look like "corrupt sidecar".
 case_memory_applied_load_absent_sidecar_is_not_failure() {
@@ -3379,6 +3419,90 @@ case_memory_applied_scan_brief_never_blocks() {
     fail "$name" "expected 0, got $status for a missing brief/repo"
     return 0
   fi
+  pass "$name"
+}
+
+# Behavior (security-reviewer-F001, gate-20260825-150734-c20c52): the
+# automatic applied-usage write must fail closed — never following — when
+# either the .pm-dispatch parent directory or the applied-usage.tsv file
+# itself is a symlink to a sentinel target outside the memory dir. This
+# write is automatic (no user confirmation, fires on every dispatch), so a
+# local attacker able to plant a symlink under the memory dir must not be
+# able to redirect it onto an arbitrary writable file.
+# Steps: for each of (symlinked .pm-dispatch dir, symlinked applied-usage.tsv
+# file), plant a sentinel file/dir OUTSIDE the memory tree, symlink the
+# managed path to it, run memory_applied_scan_brief with a brief that
+# matches a selected card, and assert the sentinel is byte-for-byte
+# unchanged (the write was refused, not silently redirected).
+case_memory_applied_scan_brief_refuses_symlinked_targets() {
+  local name="memory_applied_scan_brief: refuses symlinked .pm-dispatch dir or applied-usage.tsv target"
+  should_run "$name" || return 0
+
+  local brief_content='schema_version: 1
+working_dir: /tmp
+goal: exercise CC-567 applied scan symlink guard
+files:
+  - read: /tmp/README
+context: |
+  Reuses guidance from card1 for this task.
+acceptance:
+  - dispatch exits 0
+'
+
+  # --- Case 1: .pm-dispatch itself is a symlink to a sentinel directory ---
+  local cfg="$tmp_root/st-scan-symlink-dir-cfg" repo="$tmp_root/st-scan-symlink-dir-repo" mdir
+  mdir="$(make_stats_fixture "$cfg" "$repo" 1)"
+  git -C "$repo" init -q
+  local today; today=$(( $(date +%s) / 86400 ))
+  local sentinel_dir="$tmp_root/st-scan-symlink-dir-sentinel"
+  mkdir -p "$sentinel_dir"
+  printf 'do-not-touch\n' > "$sentinel_dir/canary.txt"
+  ln -s "$sentinel_dir" "$mdir/.pm-dispatch"
+  # Seed a hit via the (now symlinked) usage sidecar path so the card is
+  # "selected" — writing this fixture also proves the scan's READ of the
+  # usage sidecar still works through the symlinked dir; only the write of
+  # applied-usage.tsv into it must be refused.
+  printf 'card1.md\t1\t%d\n' "$today" > "$sentinel_dir/inject-usage.tsv"
+
+  local brief_dir1="$tmp_root/st-scan-symlink-dir-brief.md"
+  printf '%s' "$brief_content" > "$brief_dir1"
+  CLAUDE_CONFIG_DIR="$cfg" memory_applied_scan_brief "$repo" "$brief_dir1" 'run-symlink-dir-1' 'CC-999'
+
+  if [[ -e "$sentinel_dir/applied-usage.tsv" ]]; then
+    fail "$name" "wrote applied-usage.tsv through a symlinked .pm-dispatch directory: $(cat "$sentinel_dir/applied-usage.tsv")"
+    return 0
+  fi
+  if [[ "$(cat "$sentinel_dir/canary.txt")" != 'do-not-touch' ]]; then
+    fail "$name" "sentinel canary.txt was modified via symlinked .pm-dispatch directory"
+    return 0
+  fi
+
+  # --- Case 2: applied-usage.tsv itself is a symlink to a sentinel file ---
+  local cfg2="$tmp_root/st-scan-symlink-file-cfg" repo2="$tmp_root/st-scan-symlink-file-repo" mdir2
+  mdir2="$(make_stats_fixture "$cfg2" "$repo2" 1)"
+  git -C "$repo2" init -q
+  mkdir -p "$mdir2/.pm-dispatch"
+  printf 'card1.md\t1\t%d\n' "$today" > "$mdir2/.pm-dispatch/inject-usage.tsv"
+  local sentinel_file="$tmp_root/st-scan-symlink-file-sentinel.txt"
+  printf 'do-not-touch\n' > "$sentinel_file"
+  ln -s "$sentinel_file" "$mdir2/.pm-dispatch/applied-usage.tsv"
+
+  local brief_file2="$tmp_root/st-scan-symlink-file-brief.md"
+  printf '%s' "$brief_content" > "$brief_file2"
+  CLAUDE_CONFIG_DIR="$cfg2" memory_applied_scan_brief "$repo2" "$brief_file2" 'run-symlink-file-1' 'CC-999'
+
+  if [[ "$(cat "$sentinel_file")" != 'do-not-touch' ]]; then
+    fail "$name" "wrote through a symlinked applied-usage.tsv into $sentinel_file: $(cat "$sentinel_file")"
+    return 0
+  fi
+  # The symlink itself must still be exactly what was planted — untouched,
+  # not replaced with a regular file (which would also "solve" the canary
+  # check above while still following the symlink on the write).
+  if [[ ! -L "$mdir2/.pm-dispatch/applied-usage.tsv" ]]; then
+    fail "$name" "applied-usage.tsv symlink was replaced rather than left in place and refused"
+    return 0
+  fi
+
   pass "$name"
 }
 
@@ -4193,11 +4317,13 @@ case_memory_stats_space_bearing_card_path
 case_memory_stats_malformed_episodes_are_not_zero_history
 case_memory_stats_age_buckets_match_frecency_boundaries
 case_memory_applied_record_and_load_round_trip
+case_memory_applied_record_and_load_empty_task_round_trips
 case_memory_applied_load_absent_sidecar_is_not_failure
 case_memory_applied_scan_brief_records_matching_card
 case_memory_applied_scan_brief_skips_unmentioned_card
 case_memory_applied_scan_brief_records_every_matched_card
 case_memory_applied_scan_brief_never_blocks
+case_memory_applied_scan_brief_refuses_symlinked_targets
 case_memory_outcome_for_run_reads_terminal_state
 case_memory_outcome_for_run_rejects_traversal_run_id
 case_memory_stats_applied_funnel_zero_signal_is_null_not_zero

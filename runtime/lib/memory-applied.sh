@@ -49,6 +49,32 @@ declare -a MEMORY_APPLIED_CARD=()
 # sidecar/empty file: both yield zero rows, but only one means "no activity".
 MEMORY_APPLIED_READ_FAILED=0
 
+# security-reviewer-F001 (gate-20260825-150734-c20c52): refuse a symlinked
+# .pm-dispatch parent directory or a symlinked/hardlinked applied-usage.tsv
+# target BEFORE either write site below ever mkdir's or opens it. This write
+# is automatic (fires on every `pmctl dispatch run`, no user confirmation),
+# so a local attacker able to plant a symlink under the memory dir must not
+# be able to redirect it onto an arbitrary attacker-chosen writable file.
+# Modeled on pmctl-memory-config.sh's _pm_memory_config_write_guard — same
+# threat shape, same accepted limitation: this is a check-then-write guard,
+# not a claim of atomicity against a concurrent attacker who swaps the
+# target between this check and the mkdir/append that follows it.
+#   memory_applied_write_guard <sidecar>
+memory_applied_write_guard() {
+  local sidecar="$1" dir nlink
+  [[ -n "$sidecar" ]] || return 1
+  dir="$(dirname "$sidecar")"
+  if [[ -L "$dir" || ( -e "$dir" && ! -d "$dir" ) ]]; then
+    return 1
+  fi
+  if [[ -e "$sidecar" ]]; then
+    [[ -f "$sidecar" && ! -L "$sidecar" ]] || return 1
+    nlink="$(stat -c '%h' "$sidecar" 2>/dev/null || stat -f '%l' "$sidecar" 2>/dev/null || printf '1')"
+    [[ "$nlink" == "1" ]] || return 1
+  fi
+  return 0
+}
+
 # Append one applied record: append-only, best-effort. mkdir -p + lock via
 # serialize_with_lock when available, else a plain append (whole-line writes
 # from a low-frequency caller make unlocked interleaving an acceptable worst
@@ -58,6 +84,7 @@ MEMORY_APPLIED_READ_FAILED=0
 memory_applied_record() {
   local sidecar="$1" card_relpath="$2" task_id="$3" run_id="$4"
   [[ -n "$sidecar" && -n "$card_relpath" ]] || return 0
+  memory_applied_write_guard "$sidecar" || return 0
   local day dir escaped_rel escaped_task escaped_run line
   day="$(( $(date +%s) / 86400 ))"
   dir="$(dirname "$sidecar")"
@@ -106,7 +133,7 @@ memory_applied_load() {
   MEMORY_APPLIED_READ_FAILED=0
   [[ -f "$sidecar" ]] || return 0
 
-  local line day task_esc run_esc card_esc task_unesc run_unesc card_unesc tabs_only
+  local line rest day task_esc run_esc card_esc task_unesc run_unesc card_unesc tabs_only
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue
     # critic-F001: `read -r day task run card` alone can't tell a truncated
@@ -122,7 +149,21 @@ memory_applied_load() {
       MEMORY_APPLIED_READ_FAILED=1
       continue
     fi
-    IFS=$'\t' read -r day task_esc run_esc card_esc <<<"$line"
+    # security-reviewer round 3 / critic-F001 round 4: do NOT use
+    # `IFS=$'\t' read ... <<<"$line"` here. Tab is one of POSIX's three "IFS
+    # white space" characters, so bash collapses consecutive tab delimiters
+    # and drops the resulting empty field regardless of what IFS is set to
+    # — a row with a legitimately empty task_id (`day\t\trun\tcard`) would
+    # silently shift task_esc/run_esc/card_esc left by one position,
+    # corrupting run_esc and losing card_esc entirely, not just "losing"
+    # the empty task field. Substring stripping has no such collapsing
+    # behavior, so it is the only correct way to split on tab here.
+    day="${line%%$'\t'*}"
+    rest="${line#*$'\t'}"
+    task_esc="${rest%%$'\t'*}"
+    rest="${rest#*$'\t'}"
+    run_esc="${rest%%$'\t'*}"
+    card_esc="${rest#*$'\t'}"
     if [[ ! "$day" =~ ^[0-9]{1,10}$ ]]; then
       MEMORY_APPLIED_READ_FAILED=1
       continue
@@ -201,6 +242,7 @@ memory_applied_scan_brief() {
 
   # One locked append for every match this scan found, instead of one
   # lock+open+write cycle per matched card.
+  memory_applied_write_guard "$applied_sidecar" || return 0
   local dir; dir="$(dirname "$applied_sidecar")"
   mkdir -p "$dir" 2>/dev/null || return 0
   if declare -F serialize_with_lock >/dev/null 2>&1; then
