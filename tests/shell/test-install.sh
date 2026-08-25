@@ -1592,7 +1592,8 @@ test_install_hooks_gate_perms_fresh() {
     bash "$REPO_ROOT/scripts/install-guards.sh" >/dev/null 2>&1
 
   local edit_entry="Edit(${ws}/**/.gate-results/**)"
-  for entry in "$edit_entry" "Bash(pmctl guard check:*)" \
+  for entry in "$edit_entry" "Edit(/tmp/brief-*)" "Edit(/tmp/handover-*)" \
+      "Bash(pmctl guard check:*)" \
       "Bash($home/.local/bin/pmctl guard check:*)" \
       "Bash(~/.local/bin/pmctl guard check:*)" "Bash(mkdir -p:*)"; do
     if ! jq -e --arg e "$entry" '(.permissions.allow // [] | index($e)) != null' "$settings" >/dev/null; then
@@ -1620,7 +1621,8 @@ test_install_hooks_gate_perms_idempotent() {
 
   local edit_entry="Edit(${ws}/**/.gate-results/**)"
   local count
-  for entry in "$edit_entry" "Bash(pmctl guard check:*)" \
+  for entry in "$edit_entry" "Edit(/tmp/brief-*)" "Edit(/tmp/handover-*)" \
+      "Bash(pmctl guard check:*)" \
       "Bash($home/.local/bin/pmctl guard check:*)" \
       "Bash(~/.local/bin/pmctl guard check:*)" "Bash(mkdir -p:*)"; do
     count="$(jq -r --arg e "$entry" '[.permissions.allow[]? | select(. == $e)] | length' "$settings")"
@@ -1633,32 +1635,44 @@ test_install_hooks_gate_perms_idempotent() {
 }
 
 test_install_hooks_gate_perms_migrates_legacy_write() {
-  # Verifies an upgrade replaces the historical managed Write spelling with
-  # Edit while leaving non-managed /tmp permissions untouched.
+  # Verifies an upgrade replaces the historical managed Write spellings
+  # (gate-results, /tmp/brief-*, /tmp/handover-*) with Edit while leaving
+  # non-managed /tmp permissions untouched.
   # Steps:
-  #   1. Seed legacy Write(.gate-results), Edit(/tmp/*), and Write(/tmp/*)
+  #   1. Seed legacy Write(.gate-results), Write(/tmp/brief-*),
+  #      Write(/tmp/handover-*), Edit(/tmp/*), and Write(/tmp/*)
   #   2. Run install-guards.sh once
-  #   3. Assert only the managed gate permission is migrated
+  #   3. Assert only the three managed permissions are migrated
   local name="install-guards-gate-perms-migrates-legacy-write"
   should_run "$name" || return 0
   local home="$tmp_root/$name" settings="$tmp_root/$name/.claude/settings.json"
   local ws="$tmp_root/$name-ws"
   mkdir -p "$home/.claude" "$ws"
-  jq -n --arg legacy "Write(${ws}/**/.gate-results/**)" '{
-    hooks:{}, permissions:{allow:[$legacy,"Edit(/tmp/*)","Write(/tmp/*)"]}
+  jq -n --arg legacy "Write(${ws}/**/.gate-results/**)" \
+      --arg legacy_brief "Write(/tmp/brief-*)" \
+      --arg legacy_handover "Write(/tmp/handover-*)" '{
+    hooks:{}, permissions:{allow:[$legacy,$legacy_brief,$legacy_handover,"Edit(/tmp/*)","Write(/tmp/*)"]}
   }' > "$settings"
 
   HOME="$home" CLAUDE_HOME="$home/.claude" PM_DISPATCH_GATE_WORKSPACE="$ws" \
     bash "$REPO_ROOT/scripts/install-guards.sh" >/dev/null 2>&1
 
   if ! jq -e --arg edit "Edit(${ws}/**/.gate-results/**)" \
-      --arg legacy "Write(${ws}/**/.gate-results/**)" '
+      --arg legacy "Write(${ws}/**/.gate-results/**)" \
+      --arg edit_brief "Edit(/tmp/brief-*)" \
+      --arg legacy_brief "Write(/tmp/brief-*)" \
+      --arg edit_handover "Edit(/tmp/handover-*)" \
+      --arg legacy_handover "Write(/tmp/handover-*)" '
     (.permissions.allow | index($edit)) != null and
     (.permissions.allow | index($legacy)) == null and
+    (.permissions.allow | index($edit_brief)) != null and
+    (.permissions.allow | index($legacy_brief)) == null and
+    (.permissions.allow | index($edit_handover)) != null and
+    (.permissions.allow | index($legacy_handover)) == null and
     (.permissions.allow | index("Edit(/tmp/*)")) != null and
     (.permissions.allow | index("Write(/tmp/*)")) != null
   ' "$settings" >/dev/null; then
-    fail "$name" "managed gate permission was not migrated without touching /tmp entries"
+    fail "$name" "managed permissions were not migrated without touching unrelated /tmp entries"
     return
   fi
   pass "$name"
@@ -1830,7 +1844,9 @@ test_install_hooks_gate_perms_uninstall_removes() {
   HOME="$home" CLAUDE_HOME="$home/.claude" PM_DISPATCH_GATE_WORKSPACE="$ws" \
     bash "$REPO_ROOT/scripts/uninstall-guards.sh" >/dev/null 2>&1
 
-  for entry in "$edit_entry" "Write(${ws}/**/.gate-results/**)" "Bash(pmctl guard check:*)" \
+  for entry in "$edit_entry" "Write(${ws}/**/.gate-results/**)" \
+      "Edit(/tmp/brief-*)" "Edit(/tmp/handover-*)" \
+      "Bash(pmctl guard check:*)" \
       "Bash($home/.local/bin/pmctl guard check:*)" \
       "Bash(~/.local/bin/pmctl guard check:*)" "Bash(mkdir -p:*)"; do
     if jq -e --arg e "$entry" '(.permissions.allow // [] | index($e)) != null' "$settings" >/dev/null; then
