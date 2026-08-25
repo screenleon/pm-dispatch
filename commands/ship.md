@@ -183,9 +183,31 @@ generic as `baseline` or maintainer as `preferred`; both are accepted here.
   When a finding's remedy would be a **new permanent blocking test**, first
   check it against the permanent-regression-test admission criteria in the
   configured QA rules checkout (`QA_RULES_DIR`; `TEST-ORACLES.md` §4.1 in the
-  reference `qa-testing-rules`). Apply the summary below when the configured
-  rules directory defines no such criteria — a substituted rules repo need not
-  carry them. A case that pins a private helper or source literal rather than an
+  reference `qa-testing-rules`). **The criteria and alternatives are also
+  summarized here so this command remains usable when the configured rules
+  directory is substituted or the reference implementation's section numbers
+  change.**
+
+  **Admission criteria (all six must hold):**
+  1. Pins a **stable, externally observable contract** with independent evidence — not a private helper, internal call order, or exact wording.
+  2. Exercises **supported behavior**, or the **documented boundary rejection** for unsupported input. Test each documented rejection once; do not add progressively farther-out inputs asserting the same rejection.
+  3. The risk has a **plausible occurrence rate or high impact** — "constructible" is not "plausible". If you cannot judge this from the code and stated scope, raise the finding as advisory and say what evidence you lack.
+  4. Does not **freeze an implementation shape** — no source grep, no source-literal assertion.
+  5. **Maintenance burden** (flakiness risk, update frequency, debugging cost) is proportional to the risk covered.
+  6. Not a **proxy test** asserting an internal property to infer an external contract — the assertion must directly observe the contract it claims to guard.
+
+  **When a criterion fails, do not add it to the blocking suite. Resolve the
+  underlying finding another way, and record which alternative was taken:**
+  - Fix the code and add **no** permanent test (record reasoning in PR; for a confirmed defect, the reproducing test proved the fix and was not retained).
+  - **Fold** it into an existing parameterized case or broader existing scenario.
+  - Move it to an **extended suite** that runs only when the relevant module changes.
+  - Open a **follow-up ticket** instead of blocking this change.
+  - **Reject the finding with evidence** when its premise does not hold. A finding is a hypothesis, not an order; disproving it is a complete response.
+
+  None of these waive a confirmed defect. They decide whether a permanent
+  blocking test is the right artifact, not whether the bug is fixed.
+
+  A case that pins a private helper or source literal rather than an
   observable contract, follows an unsupported input past the boundary rejection
   that already covers it, duplicates coverage whose assertions would already
   fail on the defect, or survives mutation of the code it claims to guard, is
