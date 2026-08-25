@@ -3425,6 +3425,68 @@ case_memory_stats_applied_outcome_funnel_with_data() {
   pass "$name"
 }
 
+# Behavior (risk-reviewer-F001, gate-20260825-142309-df046c): a malformed
+# applied-sidecar row must surface as applied_store="error", not be silently
+# skipped while the rest of the row set is reported as clean telemetry.
+# memory_applied_load only returned non-zero on a whole-file read failure —
+# a per-row degrade (MEMORY_APPLIED_READ_FAILED=1) was never checked by the
+# caller, so a corrupted row's presence was invisible to pmctl memory stats.
+case_memory_stats_malformed_applied_row_is_error_not_silent() {
+  local name="pmctl memory stats: malformed applied-sidecar row -> applied_store=error, not silently skipped"
+  should_run "$name" || return 0
+
+  local cfg="$tmp_root/st-appl-malformed-cfg" repo="$tmp_root/st-appl-malformed-repo" mdir out="$tmp_root/st-appl-malformed.json" status=0
+  mdir="$(make_stats_fixture "$cfg" "$repo" 1)"
+  local today; today=$(( $(date +%s) / 86400 ))
+  mkdir -p "$mdir/.pm-dispatch"
+  printf 'card1.md\t1\t%d\n' "$today" > "$mdir/.pm-dispatch/inject-usage.tsv"
+
+  # A well-formed row followed by one with a corrupted (non-numeric) day
+  # field — memory_applied_load must degrade this file, not just this row.
+  {
+    printf '%s\tCC-999\trun-ok\tcard1.md\n' "$today"
+    printf 'NOT-A-DAY\tCC-999\trun-bad\tcard1.md\n'
+  } > "$mdir/.pm-dispatch/applied-usage.tsv"
+
+  run_stats_json "$out" "$cfg" "$repo" || status=$?
+  if ! assert_exit "$name" "$status" 0; then return 0; fi
+  assert_jq "$name" "$out" '.applied_store == "error"' || return 0
+  pass "$name"
+}
+
+# Behavior (risk-reviewer-F002, gate-20260825-142309-df046c): selected_to_
+# applied_pct must never exceed 100%. A historical applied row for a card
+# that is no longer in the current selected cohort (not index-referenced,
+# or index-referenced but never hit) must not inflate the applied-cards
+# numerator past the current cards_with_hits denominator.
+case_memory_stats_applied_cohort_bounded_by_selected_cohort() {
+  local name="pmctl memory stats: applied cards outside the current selected cohort don't push conversion past 100%"
+  should_run "$name" || return 0
+
+  local cfg="$tmp_root/st-appl-cohort-cfg" repo="$tmp_root/st-appl-cohort-repo" mdir out="$tmp_root/st-appl-cohort.json" status=0
+  # Only ONE card is indexed/selected (card1); card-retired.md below has an
+  # applied-sidecar row but is neither indexed nor ever hit.
+  mdir="$(make_stats_fixture "$cfg" "$repo" 1)"
+  local today; today=$(( $(date +%s) / 86400 ))
+  mkdir -p "$mdir/.pm-dispatch"
+  printf 'card1.md\t1\t%d\n' "$today" > "$mdir/.pm-dispatch/inject-usage.tsv"
+
+  local applied_sidecar="$mdir/.pm-dispatch/applied-usage.tsv"
+  memory_applied_record "$applied_sidecar" 'card1.md' 'CC-999' 'run-a'
+  memory_applied_record "$applied_sidecar" 'card-retired.md' 'CC-999' 'run-b'
+
+  run_stats_json "$out" "$cfg" "$repo" || status=$?
+  if ! assert_exit "$name" "$status" 0; then return 0; fi
+  # cards_with_hits is 1 (only card1); applied_cards must be bounded to that
+  # same cohort (card-retired.md excluded), so the pct stays a real 100%,
+  # never the impossible 200% two applied cards over one selected card would
+  # otherwise produce.
+  assert_jq "$name" "$out" '.cards_with_hits == 1' || return 0
+  assert_jq "$name" "$out" '.applied_cards == 1' || return 0
+  assert_jq "$name" "$out" '.selected_to_applied_pct == 100' || return 0
+  pass "$name"
+}
+
 # Behavior: `pmctl dispatch run` fires the applied scan AUTOMATICALLY — the
 # central CC-567 acceptance criterion. No new command is called; a real
 # dispatch (here, --print-cmd dry-run, which still runs brief-validate and
@@ -3996,6 +4058,8 @@ case_memory_outcome_for_run_reads_terminal_state
 case_memory_stats_applied_funnel_zero_signal_is_null_not_zero
 case_memory_stats_applied_funnel_zero_applied_is_real_zero_pct
 case_memory_stats_applied_outcome_funnel_with_data
+case_memory_stats_malformed_applied_row_is_error_not_silent
+case_memory_stats_applied_cohort_bounded_by_selected_cohort
 case_dispatch_run_applied_scan_fires_automatically
 
 th_summary

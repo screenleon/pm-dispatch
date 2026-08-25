@@ -1279,7 +1279,12 @@ pmctl_memory_stats() {
     applied_sidecar="$(memory_applied_sidecar_path "$mem_dir")"
     if [[ -f "$applied_sidecar" ]]; then
       applied_store='tsv'
-      if ! memory_applied_load "$applied_sidecar"; then
+      # Risk-reviewer-F001: memory_applied_load's return code alone misses a
+      # malformed row it degraded-but-continued past (it only returns
+      # non-zero on a hard whole-file read failure). Check
+      # MEMORY_APPLIED_READ_FAILED too, matching how usage_store/
+      # episodes_status already distinguish "no activity" from "unreadable".
+      if ! memory_applied_load "$applied_sidecar" || [[ "$MEMORY_APPLIED_READ_FAILED" -eq 1 ]]; then
         applied_store='error'
       fi
       local -A _applied_cards_seen=()
@@ -1288,7 +1293,15 @@ pmctl_memory_stats() {
         applied_records_total=$((applied_records_total + 1))
         _card_r="${MEMORY_APPLIED_CARD[$_ai]}"
         _run_r="${MEMORY_APPLIED_RUN[$_ai]}"
-        [[ -n "$_card_r" ]] && _applied_cards_seen["$_card_r"]=1
+        # Risk-reviewer-F002: only count a card into the applied-cards
+        # cohort when it's ALSO in the current selected cohort
+        # (MEMORY_USAGE_ACC > 0, the same set cards_with_hits counts). A
+        # historical applied row for a card no longer index-referenced (or
+        # never hit) must not inflate the numerator past the denominator —
+        # selected_to_applied_pct would otherwise be able to exceed 100%.
+        if [[ -n "$_card_r" && "${MEMORY_USAGE_ACC[$_card_r]:-0}" -gt 0 ]]; then
+          _applied_cards_seen["$_card_r"]=1
+        fi
         [[ -n "$_run_r" ]] || continue
         _outcome="$(_pmctl_memory_outcome_for_run "$repo_root" "$_run_r")"
         case "$_outcome" in
