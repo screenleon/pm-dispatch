@@ -1,6 +1,6 @@
 # Memory system
 
-For personal forks, memory is the persistence layer that lets PM and Codex sessions keep continuity across time without overloading token budgets.
+Memory is the persistence layer that lets sessions across every host (Claude, Codex, OpenCode, and Grok — see the host-comparison table below) keep continuity over time via one canonical, `pmctl`-owned memory directory, without overloading token budgets.
 
 See [`CONCEPTS.md`](CONCEPTS.md) for the full conceptual framing.
 
