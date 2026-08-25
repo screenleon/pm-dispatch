@@ -41,6 +41,8 @@ repo_root="$REPO_ROOT"
 REPO_ROOT="$repo_root"
 # shellcheck disable=SC1091
 [[ -f "$repo_root/runtime/lib/gate-workspace.sh" ]] && . "$repo_root/runtime/lib/gate-workspace.sh"
+# shellcheck disable=SC1091
+[[ -f "$repo_root/hosts/claude/lib/permission-policy.sh" ]] && . "$repo_root/hosts/claude/lib/permission-policy.sh"
 if [[ -f "$repo_root/runtime/lib/allowlist.sh" ]]; then
   # shellcheck disable=SC1091
   . "$repo_root/runtime/lib/allowlist.sh"
@@ -83,9 +85,11 @@ _chain_target=""
 [[ -f "$statusline_chain_conf" ]] && _chain_target=$(head -1 "$statusline_chain_conf")
 
 # Compute the reviewer Edit glob to include in managed removal.
-# gate_workspace_root/managed_permission_globs are sourced from
-# runtime/lib/gate-workspace.sh; fall back to inline detection if the lib is
-# absent (copy-mode installs).
+# gate_workspace_root is sourced from runtime/lib/gate-workspace.sh (shared
+# cross-host workspace detection); managed_permission_globs is sourced from
+# hosts/claude/lib/permission-policy.sh (Claude-owned permission policy).
+# Both fall back to inline detection if their lib is absent (copy-mode
+# installs).
 if command -v gate_workspace_root >/dev/null 2>&1; then
   _gate_ws="$(gate_workspace_root "$repo_root" "$HOME")"
 else

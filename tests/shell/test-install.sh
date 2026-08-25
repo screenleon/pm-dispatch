@@ -1834,10 +1834,13 @@ test_install_hooks_gate_perms_uninstall_removes() {
     fail "$name" "install did not add Edit entry; cannot test lifecycle"
     return
   fi
-  # Simulate an older install artifact coexisting with the current spelling;
-  # uninstall must recognize and remove both.
+  # Simulate older install artifacts coexisting with the current spelling for
+  # all three managed globs (gate-results, /tmp/brief-*, /tmp/handover-*);
+  # uninstall must recognize and remove every legacy Write(...) spelling.
   jq --arg legacy "Write(${ws}/**/.gate-results/**)" \
-    '.permissions.allow += [$legacy]' "$settings" > "$settings.tmp"
+     --arg legacy_brief "Write(/tmp/brief-*)" \
+     --arg legacy_handover "Write(/tmp/handover-*)" \
+    '.permissions.allow += [$legacy, $legacy_brief, $legacy_handover]' "$settings" > "$settings.tmp"
   mv "$settings.tmp" "$settings"
 
   # Uninstall
@@ -1846,6 +1849,7 @@ test_install_hooks_gate_perms_uninstall_removes() {
 
   for entry in "$edit_entry" "Write(${ws}/**/.gate-results/**)" \
       "Edit(/tmp/brief-*)" "Edit(/tmp/handover-*)" \
+      "Write(/tmp/brief-*)" "Write(/tmp/handover-*)" \
       "Bash(pmctl guard check:*)" \
       "Bash($home/.local/bin/pmctl guard check:*)" \
       "Bash(~/.local/bin/pmctl guard check:*)" "Bash(mkdir -p:*)"; do
@@ -1854,15 +1858,13 @@ test_install_hooks_gate_perms_uninstall_removes() {
       return
     fi
   done
-  # Unrelated entry must survive
-  if ! jq -e --arg e "Bash(git log:*)" '(.permissions.allow // [] | index($e)) != null' "$settings" >/dev/null; then
-    fail "$name" "unrelated permissions.allow entry was incorrectly removed"
-    return
-  fi
-  if ! jq -e --arg e "Edit(/tmp/*)" '(.permissions.allow // [] | index($e)) != null' "$settings" >/dev/null; then
-    fail "$name" "non-managed /tmp permission was incorrectly removed"
-    return
-  fi
+  # Unrelated entries (including the unrelated /tmp permission) must survive
+  for pre_entry in "Bash(git log:*)" "Edit(/tmp/*)"; do
+    if ! jq -e --arg e "$pre_entry" '(.permissions.allow // [] | index($e)) != null' "$settings" >/dev/null; then
+      fail "$name" "unrelated permissions.allow entry was incorrectly removed: $pre_entry"
+      return
+    fi
+  done
   pass "$name"
 }
 

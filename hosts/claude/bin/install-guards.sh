@@ -127,6 +127,8 @@ settings="$CLAUDE_HOME/settings.json"
 . "$repo_root/runtime/lib/memory-dir.sh"
 # shellcheck source=runtime/lib/gate-workspace.sh
 . "$repo_root/runtime/lib/gate-workspace.sh"
+# shellcheck source=hosts/claude/lib/permission-policy.sh
+. "$repo_root/hosts/claude/lib/permission-policy.sh"
 
 if ! command -v jq >/dev/null 2>&1; then
   cat >&2 <<EOF
@@ -509,9 +511,9 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
 
 # --- Permissions merge for reviewer subagents ---
 # Reviewer subagents spawned by pr-gate need Edit(.gate-results) and Bash(pmctl guard check)
-# to write results and run guard checks. Workspace root detection and the full
-# set of managed permission globs are shared with uninstall-guards.sh via
-# runtime/lib/gate-workspace.sh.
+# to write results and run guard checks. Workspace root detection is shared
+# with uninstall-guards.sh via runtime/lib/gate-workspace.sh; the full set of
+# managed permission globs is shared via hosts/claude/lib/permission-policy.sh.
 _workspace_root="$(gate_workspace_root "$repo_root" "$HOME")"
 _gate_glob="${_workspace_root}/**/.gate-results/**"
 _managed_globs_json="$(managed_permission_globs "$_gate_glob" | jq -Rn '[inputs]')"
