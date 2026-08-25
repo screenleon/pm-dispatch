@@ -103,6 +103,10 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-447 | 🔵 active | onboarding 三 smoke：offline clean install + N-1 upgrade（v0.11.0）+ live dogfood（readiness review 後再排） | docs/ops | 2026-07-04 | — | P2 | — |
 | CC-472 | 🟢 someday | spike: antigravity（`agy` CLI）host 唯讀 probe——比照 CC-436/CC-448 階段 1 模式，實測 command 載入能力 + hook/plugin 機制 + 五個 capability enum 的 provider/confidence 判定，不落地 `hosts/antigravity/host.yaml`；排在 CC-445 通用 install/uninstall dispatcher 之後、與 CC-448 opencode 同批或緊接其後評估（N=3 驗證點） | arch/install | 2026-07-08 | — | P3 | spike |
 | CC-566 | ✅ done | `guard-inject-memory.sh` 依 host 給獨立注入預算：實測確認 Claude 端有原生 `claudeMd` 全量 MEMORY.md 載入（無上限，session 一次）與 hook 每輪裁切注入雙重疊加；Codex 無對應原生全量安全網，不能單純調降全域常數（2026-08-23 token-cost 分析） | memory/DX | 2026-08-23 | pr:#519 | P2 | hygiene |
+| CC-567 | 🔵 active | memory `selected`→`applied`→`outcome` 追蹤：擴充 `pmctl memory stats` 既有 matched/injected 遙測，補上「PM 是否判為相關」「是否真的影響 brief/執行」「是否真有幫助」三段缺口（2026-08-25 memory 架構設計討論；本題優先序高於分類法，見 [[CC-570]]） | memory/DX | 2026-08-25 | — | P1 | retrieval |
+| CC-568 | 🟢 someday | `/mem-distill` Case→Strategy 機械式提升：對 `episodes.jsonl` 既有結構化欄位做 count/cluster 門檻判定，取代逐次主觀「感覺像 pattern」的判斷；依賴 [[CC-567]] 的 outcome 證據決定是否值得做（2026-08-25 memory 架構設計討論） | memory/DX | 2026-08-25 | — | P2 | retrieval |
+| CC-569 | 🟢 someday | `pmctl task` / `context pack` 擴充 working-memory 敘事欄位（`selected_memories`／`rejected_paths`／`blockers`／`next_action`）：延伸既有 schema，不新建第二個「現在在幹嘛」真相來源；依賴 [[CC-567]] 證明有價值後再排（2026-08-25 memory 架構設計討論） | memory/DX | 2026-08-25 | — | P2 | design |
+| CC-570 | 🟢 someday | Fact/Case/Strategy `memory_function`／`memory_subtype` metadata 分類法：先蒐集 [[CC-567]] 的 applied/outcome 證據，再決定值不值得建分類機制——不憑直覺先建立稅務式標籤（2026-08-25 memory 架構設計討論；外部文章優先序建議相反，本 repo 刻意反過來） | memory/DX | 2026-08-25 | — | P3 | retrieval |
 
 ---
 
@@ -3126,3 +3130,156 @@ UserPromptSubmit 已帶 `--host claude`，`doctor.sh --profile full` 回報
 
 **See**: pr:#519
 
+---
+## CC-567 — memory `selected`→`applied`→`outcome` 追蹤：擴充既有 matched/injected 遙測 🔵 active
+
+**Problem**: `pmctl memory stats`（見 `docs/memory-system.md` §Injection benefit）已經追蹤
+`matched`（MEMORY.md 索引命中）與 `injected`（`guard-inject-memory.sh` usage sidecar 記錄的
+實際注入次數），並用 `concentration` 區塊（`hit_coverage_pct`／`top5_share_pct`）專門偵測
+「每張卡都被注入、排序失去鑑別力」這種退化。但整條鏈路在「注入」這一步就停了——沒有任何
+地方記錄 PM 是否真的判斷這張卡與當前任務相關（`selected`）、萃取結果是否真的改變了 brief
+或執行計畫（`applied`）、以及套用後是否真的有幫助（`outcome`）。目前的信號只能回答
+「卡片有沒有被排進去」，回答不了「排進去之後有沒有用」，這是一個確認存在的真缺口。
+
+**Why this first（優先序理由）**: 這是四張票裡故意排第一順位、且與外部文章建議順序相反的
+一張。原因：(a) 成本低——`pmctl memory stats` 已經算出 matched/injected 的底層數字，本票只是
+在既有管線上加一行 selected/applied/outcome 的紀錄與彙總，不是新建系統；(b) 它是後面所有票
+（CC-568 Case→Strategy 提升、CC-569 working-memory schema 欄位、CC-570 分類法 metadata）
+是否值得動手的證據來源。沒有 applied/outcome 資料，CC-568/569/570 的優先序判斷只能憑直覺，
+而本 repo 過去已多次因為「憑感覺建機制」而蓋出沒人用的東西（見 `docs/memory-system.md`
+`episode_fill_rate_pct` 一段：先前的空骨架欄位兩個月填充率只有 8-12%）。先蒐一週的
+applied/outcome 資料，再決定 CC-568/569/570 裡哪些真值得做。
+
+**Requirement**:
+1. 在 PM 判斷一張候選卡片與當前任務相關並決定引用（`selected`）、以及該卡片內容真的
+   進入 brief 的 `constraints:`／`context:` 或改變了執行決策（`applied`）的時間點，各記一筆
+   可歸因到卡片路徑與任務／run 識別碼的事件——沿用既有 trace event 慣例
+   （`context.packed`／`context.auto_packed` 的 shape 可作參考起點，不代表必須共用同一
+   event kind）。
+2. `outcome` 訊號至少涵蓋一個廉價、可自動判定的代理指標（例如：套用該卡片約束的 dispatch
+   run 最終 gate 是否 GO、是否需要額外 fix round）；不要求人工標註每筆 outcome，人工標註
+   可作為選用補充但不能是唯一路徑。
+3. `pmctl memory stats` 新增彙總欄位呈現 selected/applied/outcome 三段的漏斗（例如
+   selected→applied 轉換率、applied→outcome 為正的比例），沿用既有欄位的 read-only、
+   零寫入 surface 慣例；`concentration` 既有邏輯不變、不重算。
+4. 零信號時不得偽造成功；沿用現有 `usage_store: error` / `episodes_status: error` 的
+   誠實回報慣例——量不到就回報「量不到」，不要塞入預設值稀釋統計。
+
+**Non-goals**: 不在本票內建立 Case→Strategy 提升機制（[[CC-568]]）；不新建
+working-memory schema 欄位（[[CC-569]]）；不建立 Fact/Case/Strategy 分類法
+metadata（[[CC-570]]）。
+
+**Dependencies**: 前置 = 無（在既有 `pmctl memory stats`／usage sidecar／trace event
+基礎上擴充）。本票是 [[CC-568]]／[[CC-569]]／[[CC-570]] 的證據前置依賴。
+
+---
+
+## CC-568 — `/mem-distill` Case→Strategy 機械式提升：`episodes.jsonl` count/cluster 門檻 🟢 someday
+
+**Problem**: `episodes.jsonl` 是既有的 episodic／raw-history 層（`/mem-log` 逐 session
+append 的結構化摘要，已在 `pmctl memory stats` 中有 `episodes_total`／
+`episode_fill_rate_pct` 等欄位），語意上已經接近文章分類法裡的「Case」，只是沒有被
+明確標記成 Case。`/mem-distill`（`commands/mem-distill.md`）現況是把近期 `/mem-log`
+session 與 `run.failed`／`guard.denied`／`task.blocked` 事件轉成 MEMORY 索引異動提案，
+但「什麼樣的重複情況足以從單次 Case 提升成一張 Strategy 卡」目前沒有明確規則——實務上
+是助理每次執行 `/mem-distill` 時憑印象判斷「這個好像出現過兩三次、感覺像個 pattern」。
+
+**Why this shape（反模式說明，來自既有設計討論結論，勿重新開放）**:
+1. **不建立獨立 Case 卡片層**。Case 應該留在 `episodes.jsonl` 的結構化欄位內
+   （problem／resolution／evidence），不要變成每次失敗都新開一張
+   `memory_subtype: case` 卡片——那會重新引入卡片稀釋問題，正是 `pmctl memory stats`
+   的 `concentration`（`top5_share_pct`／`cards_never_hit`）指標存在的目的。只有真正
+   晉升為 Strategy 的內容才落地成卡片。
+2. **不加主觀的「感覺像 pattern」提升步驟**。`/mem-distill` 的 Case→Strategy 判斷必須
+   基於對 `episodes.jsonl` 既有結構化欄位做機械式 count／cluster（例如同一
+   topic／keyword 群集達到數字門檻），不是助理每次執行時的臨場判斷。門檻數字與
+   clustering 依據（哪個既有欄位、如何正規化比對）由實作前的 `/pre-impl` 或本票的
+   spike 階段定案，不在本票 Problem 敘述中預設鎖死。
+
+**Requirement**:
+1. 設計並實作對 `episodes.jsonl` 既有欄位的機械式 clustering／counting 規則
+   （例如以既有 topic 或關鍵詞欄位分群，達到可設定的最小重複次數才視為候選 Strategy）。
+2. `/mem-distill` 的提案輸出區分「本次仍留在 episode 層的 Case」與「已達門檻、建議升級
+   為 Strategy 卡片草稿的候選」，維持既有的「產出提案、不直接寫入」的 dry-run 慣例
+   （見 `commands/mem-distill.md` `--dry-run` 現況）。
+3. 補齊：門檻邊界測試（剛好達標／差一次未達標）、跨 session 群集正確歸併、既有
+   `episodes_malformed` 資料不得污染 clustering 結果。
+
+**Non-goals**: 不建立獨立 Case 卡片 tier；不移除既有的人工確認寫入步驟；不預設具體門檻
+數字（交由實作階段依真實資料定案）。
+
+**Dependencies**: 前置 = [[CC-567]] 的 applied/outcome 證據——只有先看到哪些 Case 真的
+被反覆套用且有正面 outcome，才知道 clustering 門檻設在哪裡才有意義，不要在沒有證據時
+先建機制。與 [[CC-570]] 的分類法 metadata 正交但相關：本票只做 Case→Strategy 的
+「何時該升級」判斷，不涉及 Fact/Case/Strategy 的顯式標記欄位。
+
+---
+
+## CC-569 — `pmctl task` / `context pack` 擴充 working-memory 敘事欄位 🟢 someday
+
+**Problem**: 外部文章的「Working Memory」概念（目前在做什麼、已篩選哪些記憶、拒絕了哪些
+路徑、卡在哪、下一步是什麼）在本 repo 已經有兩個既有的骨架承載者：`pmctl task` 的完整
+生命週期狀態（`docs/pmctl-task.md` — create/claim/dispatch/status/review，`task.schema.json`
+`additionalProperties: false`）與 `pmctl context pack` 的 task-scoped 組裝輸出（含
+`memories[]` 陣列與 `context.packed` 遙測——`docs/context-retrieval.md` §Dispatch
+auto-pack／§Shadow telemetry）。但兩者目前都不承載文章要的敘事欄位：
+`selected_memories`（這次真的選了哪些記憶）、`rejected_paths`（考慮過但放棄的路徑）、
+`blockers`（卡住原因）、`next_action`（下一步）。
+
+**Why this shape（反模式說明，來自既有設計討論結論，勿重新開放）**: **不新建一個
+`working_set.yaml` 或任何新檔案格式**來承載這些欄位。理由：`pmctl task` 已經是
+「現在在幹嘛」的權威狀態來源（含 concurrency/rollback 保證，見
+`docs/pmctl-task.md` §Concurrency and rollback），`context pack` 已經是任務範圍
+retrieval 組裝的權威輸出。如果另開一個新的「working memory」檔案，它會與 `pmctl task`
+狀態各自演化、彼此漂移，變成第二個難以同步的真相來源——這正是外部文章的建議裡我們刻意
+不採用的部分。應該做的是把缺的欄位加進**既有** schema。
+
+**Requirement**:
+1. 盤點 `core/schema/task.schema.json` 現有欄位（`state`／`dispatched_to`／
+   `brief_file`／`review_result`／`review_note`），評估 `blockers`／`next_action`
+   適合加在 task schema 的哪個生命週期階段（例如 `status`/`review` 寫入時機），
+   `additionalProperties: false` 的既有嚴格性必須保留，新欄位需顯式加入 schema。
+2. 評估 `selected_memories`／`rejected_paths` 更貼近 `context pack` 輸出（本來就有
+   `memories[]` 與 shadow telemetry 的 `top_k_refs`），還是貼近 task 狀態——由實作前
+   `/pre-impl` 定案歸屬，不在本票預先鎖死。若可行，優先考慮直接擴充
+   `context.packed`／`context.auto_packed` 既有 event payload，而非另開新 event kind。
+3. 新欄位一律可選（optional），零填寫時不得破壞既有 `pmctl task`／`pmctl context pack`
+   消費端；沿用既有的 fail-open／零信號誠實回報慣例。
+
+**Non-goals**: 不建立新檔案格式或新的狀態儲存位置；不取代 `pmctl task` 既有的
+state machine；不在本票內做 Case→Strategy 或 Fact/Case/Strategy 分類。
+
+**Dependencies**: 前置 = [[CC-567]] 證明 applied/outcome 訊號有實際價值後再排入
+——如果證據顯示 PM 選記憶的行為本來就穩定或影響有限，這些敘事欄位的邊際價值需要重新評估。
+架構影響：本票涉及 `core/schema/` 既有 schema 擴充，實作前應先跑 `/pre-impl`。
+
+---
+
+## CC-570 — Fact/Case/Strategy `memory_function`／`memory_subtype` metadata 分類法 🟢 someday
+
+**Problem**: 外部文章提出的三層分類（Factual／Experiential／Working Memory，
+Experiential 再分 Case→Strategy→Skill）目前在本 repo 只有 Factual 的部分已經對應
+（既有 4 層卡片 tier：`feedback_*`／`project_*`／`reference_*`／`user_*`，見
+`docs/memory-system.md` §Four card tiers）。若要把 Case／Strategy／Skill 顯式標記為
+卡片 metadata（例如新增 `memory_function`／`memory_subtype` frontmatter 欄位），
+需要先確認這樣的分類機制真的有實際用途，而不是為了對齊一篇外部文章的分類法本身。
+
+**Why deferred（刻意反轉文章建議的優先序）**: 外部文章建議先做分類/標記（Fact vs Case
+vs Strategy metadata tagging），再做行為追蹤。本 repo 討論結論刻意相反：分類法本身不
+產生行為改變，只有 applied/outcome 資料能告訴我們卡片稀釋、排序失效、或 Case 升級延遲
+這些問題實際發生在哪裡。在沒有 [[CC-567]] 的一週份 applied/outcome 證據之前先建分類
+machinery，是憑一篇文章的直覺蓋機制，屬於本 repo 已經吃過虧的模式（`episode_fill_rate_pct`
+記載過先前的空骨架欄位案例）。
+
+**Requirement（僅在啟動時展開，本票現況只記錄意圖）**:
+1. 啟動門檻：[[CC-567]] 已交付並累積至少一段觀察窗（比照 CC-566／CC-467 先例的
+   evidence-gated 啟動模式）之後，才重新評估本票是否值得做。
+2. 若啟動，範圍應限定在為既有 4 層卡片 tier 疊加語意標記，不新建第 5 層卡片體系。
+
+**Non-goals**: 不在證據到位前實作；不建立與既有 4 層 tier 平行的新分類體系；不吸收
+[[CC-568]]（Case→Strategy 提升邏輯）或 [[CC-569]]（working-memory schema 欄位）的範圍
+——三者關注點不同，合併會讓單票驗收條件模糊。
+
+**Dependencies**: 前置 = [[CC-567]] shipped + 觀察窗證據。P3，不預設排入 milestone。
+
+---
