@@ -106,10 +106,31 @@ memory_applied_load() {
   MEMORY_APPLIED_READ_FAILED=0
   [[ -f "$sidecar" ]] || return 0
 
-  local day task_esc run_esc card_esc task_unesc run_unesc card_unesc
-  while IFS=$'\t' read -r day task_esc run_esc card_esc; do
-    [[ -z "$day" ]] && continue
+  local line day task_esc run_esc card_esc task_unesc run_unesc card_unesc tabs_only
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    # critic-F001: `read -r day task run card` alone can't tell a truncated
+    # row (e.g. an interrupted append leaving only "day" or "day\ttask") from
+    # a complete row whose task field is legitimately empty (task_id="" is a
+    # valid value — see memory_applied_record) — `read` silently backfills
+    # missing trailing variables as empty strings either way. Count tabs in
+    # the raw line first: a complete row has exactly 3 (4 fields). Pure bash
+    # (no awk/grep fork) since this runs once per row on every `pmctl memory
+    # stats` call.
+    tabs_only="${line//[^$'\t']/}"
+    if [[ "${#tabs_only}" -ne 3 ]]; then
+      MEMORY_APPLIED_READ_FAILED=1
+      continue
+    fi
+    IFS=$'\t' read -r day task_esc run_esc card_esc <<<"$line"
     if [[ ! "$day" =~ ^[0-9]{1,10}$ ]]; then
+      MEMORY_APPLIED_READ_FAILED=1
+      continue
+    fi
+    # run/card are never legitimately empty (memory_applied_record refuses to
+    # write a row without both); an empty one here means a corrupted field,
+    # not a valid row with an empty value in it.
+    if [[ -z "$run_esc" || -z "$card_esc" ]]; then
       MEMORY_APPLIED_READ_FAILED=1
       continue
     fi

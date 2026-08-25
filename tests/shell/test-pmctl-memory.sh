@@ -3231,7 +3231,7 @@ case_memory_applied_scan_brief_records_matching_card() {
 
   local cfg="$tmp_root/st-scan-hit-cfg" repo="$tmp_root/st-scan-hit-repo" mdir
   mdir="$(make_stats_fixture "$cfg" "$repo" 1)"
-  git -C "$repo" init -q >/dev/null 2>&1 || true
+  git -C "$repo" init -q
   local today; today=$(( $(date +%s) / 86400 ))
   mkdir -p "$mdir/.pm-dispatch"
   printf 'card1.md\t1\t%d\n' "$today" > "$mdir/.pm-dispatch/inject-usage.tsv"
@@ -3271,7 +3271,7 @@ case_memory_applied_scan_brief_skips_unmentioned_card() {
 
   local cfg="$tmp_root/st-scan-miss-cfg" repo="$tmp_root/st-scan-miss-repo" mdir
   mdir="$(make_stats_fixture "$cfg" "$repo" 1)"
-  git -C "$repo" init -q >/dev/null 2>&1 || true
+  git -C "$repo" init -q
   local today; today=$(( $(date +%s) / 86400 ))
   mkdir -p "$mdir/.pm-dispatch"
   printf 'card1.md\t1\t%d\n' "$today" > "$mdir/.pm-dispatch/inject-usage.tsv"
@@ -3297,6 +3297,72 @@ EOF
   else
     fail "$name" "applied sidecar unexpectedly written: $(cat "$applied")"
   fi
+}
+
+# Behavior (qa-tester-F002, gate-20260825-144944-3df84e): a brief mentioning
+# MULTIPLE selected cards must record a match for every one of them. This is
+# an isolated regression for the batch path (single locked
+# _memory_applied_append_lines call over the whole matched_lines array),
+# introduced during the reuse/simplify pass to replace a grep-per-card /
+# lock-per-match loop — the single-match tests above pass through that same
+# code path with matched_lines length 1 and would not catch a batching bug
+# (e.g. only the first or last match landing, or the loop building
+# matched_lines correctly but the batch writer dropping entries).
+case_memory_applied_scan_brief_records_every_matched_card() {
+  local name="memory_applied_scan_brief: records every card matched, not just one"
+  should_run "$name" || return 0
+
+  local cfg="$tmp_root/st-scan-multi-cfg" repo="$tmp_root/st-scan-multi-repo" mdir
+  mdir="$(make_stats_fixture "$cfg" "$repo" 3)"
+  git -C "$repo" init -q
+  local today; today=$(( $(date +%s) / 86400 ))
+  mkdir -p "$mdir/.pm-dispatch"
+  {
+    printf 'card1.md\t1\t%d\n' "$today"
+    printf 'card2.md\t1\t%d\n' "$today"
+    printf 'card3.md\t1\t%d\n' "$today"
+  } > "$mdir/.pm-dispatch/inject-usage.tsv"
+
+  local brief="$tmp_root/st-scan-multi-brief.md"
+  cat > "$brief" <<'EOF'
+schema_version: 1
+working_dir: /tmp
+goal: exercise CC-567 applied scan, multiple matches in one brief
+files:
+  - read: /tmp/README
+context: |
+  Reuses guidance from card1 and card3 for this task, but not the third
+  indexed card.
+acceptance:
+  - dispatch exits 0
+EOF
+
+  CLAUDE_CONFIG_DIR="$cfg" memory_applied_scan_brief "$repo" "$brief" 'run-scan-multi' 'CC-999'
+
+  local applied="$mdir/.pm-dispatch/applied-usage.tsv"
+  if [[ ! -f "$applied" ]]; then
+    fail "$name" "no applied sidecar written for a brief matching two cards"
+    return 0
+  fi
+  local line_count
+  line_count="$(wc -l < "$applied")"
+  if [[ "$line_count" -ne 2 ]]; then
+    fail "$name" "expected exactly 2 applied records (card1, card3), got $line_count: $(cat "$applied")"
+    return 0
+  fi
+  if ! grep -Fq $'\tcard1.md' "$applied"; then
+    fail "$name" "missing applied record for card1.md: $(cat "$applied")"
+    return 0
+  fi
+  if ! grep -Fq $'\tcard3.md' "$applied"; then
+    fail "$name" "missing applied record for card3.md (batch write may have dropped an entry): $(cat "$applied")"
+    return 0
+  fi
+  if grep -Fq $'\tcard2.md' "$applied"; then
+    fail "$name" "unexpected applied record for card2.md, which the brief never mentions: $(cat "$applied")"
+    return 0
+  fi
+  pass "$name"
 }
 
 # Behavior: memory_applied_scan_brief never fails or throws on a missing brief
@@ -3333,20 +3399,64 @@ case_memory_outcome_for_run_reads_terminal_state() {
   mkdir -p "$repo"; git -C "$repo" init -q
   local proj_dir
   proj_dir="$(cd "$repo" && PM_DISPATCH_STATE_ROOT="$state_root" _SW_REPO_ROOT="$repo" _sw_project_dir)"
-  mkdir -p "${proj_dir}runs/run-ok/.agent-trace" "${proj_dir}runs/run-bad/.agent-trace"
-  printf 'final_state=ok\n' > "${proj_dir}runs/run-ok/.agent-trace/run-ok.terminal"
-  printf 'final_state=failed\n' > "${proj_dir}runs/run-bad/.agent-trace/run-bad.terminal"
+  mkdir -p "${proj_dir}runs/run-ok-1/.agent-trace" "${proj_dir}runs/run-bad-1/.agent-trace"
+  printf 'final_state=ok\n' > "${proj_dir}runs/run-ok-1/.agent-trace/run-ok-1.terminal"
+  printf 'final_state=failed\n' > "${proj_dir}runs/run-bad-1/.agent-trace/run-bad-1.terminal"
 
   local out_ok out_bad out_missing
-  out_ok="$(PM_DISPATCH_STATE_ROOT="$state_root" _pmctl_memory_outcome_for_run "$repo" 'run-ok')"
-  out_bad="$(PM_DISPATCH_STATE_ROOT="$state_root" _pmctl_memory_outcome_for_run "$repo" 'run-bad')"
-  out_missing="$(PM_DISPATCH_STATE_ROOT="$state_root" _pmctl_memory_outcome_for_run "$repo" 'run-nope')"
+  out_ok="$(PM_DISPATCH_STATE_ROOT="$state_root" _pmctl_memory_outcome_for_run "$repo" 'run-ok-1')"
+  out_bad="$(PM_DISPATCH_STATE_ROOT="$state_root" _pmctl_memory_outcome_for_run "$repo" 'run-bad-1')"
+  out_missing="$(PM_DISPATCH_STATE_ROOT="$state_root" _pmctl_memory_outcome_for_run "$repo" 'run-nope-1')"
 
   if [[ "$out_ok" == 'positive' && "$out_bad" == 'negative' && "$out_missing" == 'unknown' ]]; then
     pass "$name"
   else
     fail "$name" "ok=$out_ok bad=$out_bad missing=$out_missing"
   fi
+}
+
+# Behavior (security-reviewer-F001, gate-20260825-144944-3df84e): a
+# traversal-shaped run_id read from the applied sidecar (a file this
+# function must not trust blindly) must be rejected by explicit local
+# validation before it ever reaches a filesystem-path-constructing reader —
+# not merely happen to fail several calls deep inside a reused dependency.
+# Plant a REAL file at the traversal target's resolved location and prove
+# it is never read: a "did the traversal even work" test alone couldn't
+# distinguish "rejected by validation" from "rejected because the target
+# happened not to exist".
+case_memory_outcome_for_run_rejects_traversal_run_id() {
+  local name="_pmctl_memory_outcome_for_run: traversal-shaped run_id -> unknown, terminal reader never invoked"
+  should_run "$name" || return 0
+
+  local repo="$tmp_root/st-outcome-trav-repo" state_root="$tmp_root/st-outcome-trav-state"
+  mkdir -p "$repo"; git -C "$repo" init -q
+  local proj_dir
+  proj_dir="$(cd "$repo" && PM_DISPATCH_STATE_ROOT="$state_root" _SW_REPO_ROOT="$repo" _sw_project_dir)"
+  # A real, readable terminal file OUTSIDE the trusted runs/ tree, at the
+  # location "../../../etc/passwd"-style traversal from a run_id would
+  # resolve to relative to proj_dir/runs/<run_id>/.agent-trace/. If
+  # validation is bypassed, this file being present (and completed) would
+  # make the finding's "invoked outside the trusted run artifact" failure
+  # mode observable as a false "positive" outcome instead of "unknown".
+  local outside_dir="${proj_dir%/runs/}"
+  mkdir -p "$outside_dir/planted/.agent-trace"
+  printf 'final_state=ok\n' > "$outside_dir/planted/.agent-trace/planted.terminal"
+
+  local out
+  out="$(PM_DISPATCH_STATE_ROOT="$state_root" _pmctl_memory_outcome_for_run "$repo" '../../planted')"
+  if [[ "$out" != 'unknown' ]]; then
+    fail "$name" "traversal-shaped run_id was not rejected: got '$out' (expected unknown)"
+    return 0
+  fi
+  # Also cover a run_id missing the canonical run-<seg>-<seg> shape
+  # entirely (not just a traversal payload) — the same validator must
+  # reject it before any lookup.
+  out="$(PM_DISPATCH_STATE_ROOT="$state_root" _pmctl_memory_outcome_for_run "$repo" 'not-a-run-id')"
+  if [[ "$out" != 'unknown' ]]; then
+    fail "$name" "non-canonical run_id was not rejected: got '$out' (expected unknown)"
+    return 0
+  fi
+  pass "$name"
 }
 
 # Behavior: with no applied sidecar and no selected cards at all, the funnel
@@ -3399,7 +3509,7 @@ case_memory_stats_applied_outcome_funnel_with_data() {
 
   local cfg="$tmp_root/st-appl-data-cfg" repo="$tmp_root/st-appl-data-repo" mdir out="$tmp_root/st-appl-data.json" status=0
   mdir="$(make_stats_fixture "$cfg" "$repo" 2)"
-  git -C "$repo" init -q >/dev/null 2>&1 || true
+  git -C "$repo" init -q
   local today; today=$(( $(date +%s) / 86400 ))
   mkdir -p "$mdir/.pm-dispatch"
   printf 'card1.md\t1\t%d\n' "$today" > "$mdir/.pm-dispatch/inject-usage.tsv"
@@ -3451,6 +3561,39 @@ case_memory_stats_malformed_applied_row_is_error_not_silent() {
   run_stats_json "$out" "$cfg" "$repo" || status=$?
   if ! assert_exit "$name" "$status" 0; then return 0; fi
   assert_jq "$name" "$out" '.applied_store == "error"' || return 0
+  pass "$name"
+}
+
+# Behavior (critic-F001, gate-20260825-144944-3df84e): a row truncated before
+# its run/card fields (e.g. an interrupted append — only "day" or
+# "day\ttask" present) must be treated as corrupt, not accepted as a valid
+# record with empty run/card. `read`'s own backfill-missing-trailing-vars-
+# as-empty behavior made this indistinguishable from a legitimately empty
+# task_id field before this fix — a day-only or day+task-only line still
+# passed the sole day-format check and silently incremented
+# applied_records_total/outcome lookups with an empty run_id.
+case_memory_stats_truncated_applied_row_is_error_not_valid() {
+  local name="pmctl memory stats: applied row truncated before run/card -> error, not a valid record"
+  should_run "$name" || return 0
+
+  local cfg="$tmp_root/st-appl-trunc-cfg" repo="$tmp_root/st-appl-trunc-repo" mdir out="$tmp_root/st-appl-trunc.json" status=0
+  mdir="$(make_stats_fixture "$cfg" "$repo" 1)"
+  local today; today=$(( $(date +%s) / 86400 ))
+  mkdir -p "$mdir/.pm-dispatch"
+  printf 'card1.md\t1\t%d\n' "$today" > "$mdir/.pm-dispatch/inject-usage.tsv"
+
+  # Two truncated rows: day-only, and day+task-only. Neither has the run/card
+  # fields a real memory_applied_record write always includes.
+  {
+    printf '%s\n' "$today"
+    printf '%s\tCC-999\n' "$today"
+  } > "$mdir/.pm-dispatch/applied-usage.tsv"
+
+  run_stats_json "$out" "$cfg" "$repo" || status=$?
+  if ! assert_exit "$name" "$status" 0; then return 0; fi
+  assert_jq "$name" "$out" '.applied_store == "error"' || return 0
+  assert_jq "$name" "$out" '.applied_records_total == 0' || return 0
+  assert_jq "$name" "$out" '.outcome_known_total == 0' || return 0
   pass "$name"
 }
 
@@ -4053,12 +4196,15 @@ case_memory_applied_record_and_load_round_trip
 case_memory_applied_load_absent_sidecar_is_not_failure
 case_memory_applied_scan_brief_records_matching_card
 case_memory_applied_scan_brief_skips_unmentioned_card
+case_memory_applied_scan_brief_records_every_matched_card
 case_memory_applied_scan_brief_never_blocks
 case_memory_outcome_for_run_reads_terminal_state
+case_memory_outcome_for_run_rejects_traversal_run_id
 case_memory_stats_applied_funnel_zero_signal_is_null_not_zero
 case_memory_stats_applied_funnel_zero_applied_is_real_zero_pct
 case_memory_stats_applied_outcome_funnel_with_data
 case_memory_stats_malformed_applied_row_is_error_not_silent
+case_memory_stats_truncated_applied_row_is_error_not_valid
 case_memory_stats_applied_cohort_bounded_by_selected_cohort
 case_dispatch_run_applied_scan_fires_automatically
 

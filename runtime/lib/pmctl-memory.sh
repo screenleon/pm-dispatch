@@ -1038,10 +1038,26 @@ _pmctl_memory_outcome_for_run() {
     # tree — resolve via BASH_SOURCE, not $repo_root (that's the caller's
     # TARGET repo, per pmctl_memory_stats's --repo-root; the two are
     # different trees whenever this runs against a repo other than
-    # pm-dispatch itself).
+    # pm-dispatch itself). Also brings in identifier-policy.sh (sourced by
+    # pmctl-dispatch.sh), which the validation below depends on.
     # shellcheck disable=SC1091
     . "${BASH_SOURCE[0]%/*}/pmctl-dispatch.sh" 2>/dev/null || { printf 'unknown\n'; return 0; }
   fi
+  # security-reviewer-F001: run_id comes from the applied-usage sidecar — a
+  # file this process itself writes, but one whose content this function
+  # must not trust blindly, since a downstream validator changing shape
+  # would otherwise be the only thing standing between sidecar content and
+  # a filesystem-path lookup. Validate explicitly and locally against the
+  # canonical run-id shape (matches _dispatch_run_id's own generator in
+  # pmctl-dispatch.sh) rather than relying on validation several calls deep
+  # inside a reused dependency. Fail closed (treat as unknown) if the
+  # validator itself is unavailable — never skip validation silently.
+  if ! declare -F pm_identifier_run_is_valid >/dev/null 2>&1; then
+    # shellcheck disable=SC1091
+    . "${BASH_SOURCE[0]%/*}/identifier-policy.sh" 2>/dev/null || { printf 'unknown\n'; return 0; }
+  fi
+  declare -F pm_identifier_run_is_valid >/dev/null 2>&1 || { printf 'unknown\n'; return 0; }
+  pm_identifier_run_is_valid "$run_id" || { printf 'unknown\n'; return 0; }
   _pmctl_dispatch_read_terminal_claim "$repo_root" "$run_id" 2>/dev/null || { printf 'unknown\n'; return 0; }
   case "${PMCTL_TERMINAL_STATE:-}" in
     ok) printf 'positive\n' ;;
