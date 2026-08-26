@@ -177,10 +177,16 @@ test_unmatched_marker_fails_loudly() {
   local name="check-policy-doc-sync/unmatched-marker-fails-loudly" root output status
   should_run "$name" || return 0
   root="$(fixture_repo unmatched-marker)"
-  # Delete the first END marker line outright, leaving its BEGIN unclosed.
+  # Delete the LAST END marker line, leaving its BEGIN unclosed at EOF with
+  # no following BEGIN -- deleting the first END instead would leave that
+  # BEGIN open when the fixture's second BEGIN is reached, which is the
+  # (also rejected, separately tested) nested-marker case, not this one.
   awk '
-    /<!-- END GENERATED -->/ && !done { done = 1; next }
-    { print }
+    /<!-- END GENERATED -->/ { last_end = NR }
+    { lines[NR] = $0 }
+    END {
+      for (i = 1; i <= NR; i++) if (i != last_end) print lines[i]
+    }
   ' "$root/docs/map.md" > "$root/docs/map.md.new"
   mv "$root/docs/map.md.new" "$root/docs/map.md"
   assert_drift "$name" "$root" "unmatched BEGIN/END GENERATED marker pair"
@@ -194,6 +200,55 @@ test_stray_end_marker_fails_loudly() {
   root="$(fixture_repo stray-end-marker)"
   printf '\n<!-- END GENERATED -->\n' >> "$root/docs/map.md"
   assert_drift "$name" "$root" "unmatched BEGIN/END GENERATED marker pair"
+}
+
+# Behavior: a BEGIN GENERATED marker opened while a block is already open
+# fails loudly instead of silently overwriting the outer block's own
+# source/start and leaving it unverified (a gate reviewer's concrete
+# concern: a false pass here defeats the whole drift-detection property).
+test_nested_marker_fails_loudly() {
+  local name="check-policy-doc-sync/nested-marker-fails-loudly" root output status
+  should_run "$name" || return 0
+  root="$(fixture_repo nested-marker)"
+  cat > "$root/docs/map.md" <<'DOC'
+# Map
+
+<!-- BEGIN GENERATED: core/policy/gate-tiers.tsv -->
+| tier | default_reviewers |
+|---|---|
+<!-- BEGIN GENERATED: core/policy/reviewer-policy.yaml -->
+| express | critic,qa-tester |
+| standard | critic,qa-tester,architecture-reviewer |
+<!-- END GENERATED -->
+<!-- END GENERATED -->
+DOC
+  assert_drift "$name" "$root" "nested BEGIN GENERATED markers are not supported"
+}
+
+# Behavior: a symlinked source path is refused outright rather than
+# followed -- the marker's source text is attacker-controlled (it comes
+# from whatever a PR writes inside the doc), so it must not be trusted to
+# stay inside the repository.
+test_symlinked_source_refused() {
+  local name="check-policy-doc-sync/symlinked-source-refused" root output status
+  should_run "$name" || return 0
+  root="$(fixture_repo symlinked-source)"
+  printf 'outside content\n' > "$tmp_root/outside-target.tsv"
+  rm -f "$root/core/policy/gate-tiers.tsv"
+  ln -s "$tmp_root/outside-target.tsv" "$root/core/policy/gate-tiers.tsv"
+  assert_drift "$name" "$root" "is a symlink, refusing to follow: core/policy/gate-tiers.tsv"
+}
+
+# Behavior: a GENERATED block containing a non-table line (injected prose or
+# markup alongside otherwise-correct table rows) fails loudly instead of
+# silently passing because the table rows it did check happened to match.
+test_stray_non_table_content_fails_loudly() {
+  local name="check-policy-doc-sync/stray-non-table-content-fails-loudly" root output status
+  should_run "$name" || return 0
+  root="$(fixture_repo stray-non-table-content)"
+  sed -i.bak '/^| express | critic,qa-tester |$/a\
+Injected prose that is not a table row.' "$root/docs/map.md"
+  assert_drift "$name" "$root" "contains non-table content"
 }
 
 # Behavior: a GENERATED block naming a source type with no registered
@@ -265,6 +320,9 @@ test_yaml_verdict_list_mutation_detected
 test_missing_source_fails_loudly
 test_unmatched_marker_fails_loudly
 test_stray_end_marker_fails_loudly
+test_nested_marker_fails_loudly
+test_symlinked_source_refused
+test_stray_non_table_content_fails_loudly
 test_unsupported_source_type_fails_loudly
 test_new_block_in_new_file_discovered_without_checker_change
 test_new_block_in_untracked_file_discovered

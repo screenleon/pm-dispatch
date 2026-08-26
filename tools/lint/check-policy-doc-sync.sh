@@ -158,9 +158,14 @@ while IFS= read -r doc; do
   # content can be re-extracted with sed rather than threaded through awk's
   # own buffer. Unbalanced-marker detection rides along in the same pass
   # (an "open" counter that must return to zero) instead of re-scanning the
-  # file a second time just to recount the same two patterns.
+  # file a second time just to recount the same two patterns. A BEGIN seen
+  # while a block is already open is rejected outright (a nested BEGIN would
+  # otherwise overwrite the outer block's own source/start, silently
+  # dropping it from verification -- a real false-pass a gate reviewer
+  # caught, not a hypothetical).
   scan="$(awk '
     /^<!-- BEGIN GENERATED: .* -->$/ {
+      if (open > 0) { nested = 1 }
       source = $0
       sub(/^<!-- BEGIN GENERATED: /, "", source)
       sub(/ -->$/, "", source)
@@ -173,10 +178,18 @@ while IFS= read -r doc; do
       open--
       next
     }
-    END { if (open != 0) print "UNBALANCED" }
+    END {
+      if (nested) print "NESTED"
+      else if (open != 0) print "UNBALANCED"
+    }
   ' "$doc_path")"
   [[ -n "$scan" ]] || continue
 
+  if [[ "$scan" == *$'\n'NESTED || "$scan" == NESTED ]]; then
+    fail "$doc: nested BEGIN GENERATED markers are not supported"
+    failures=$((failures + 1))
+    continue
+  fi
   if [[ "$scan" == *$'\n'UNBALANCED || "$scan" == UNBALANCED ]]; then
     fail "$doc: unmatched BEGIN/END GENERATED marker pair"
     failures=$((failures + 1))
@@ -188,12 +201,45 @@ while IFS= read -r doc; do
   while IFS=$'\t' read -r source start end; do
     blocks_checked=$((blocks_checked + 1))
     source_path="$repo_root/$source"
-    if [[ ! -f "$source_path" ]]; then
+    if [[ ! -e "$source_path" ]]; then
       fail "$doc: GENERATED block references missing source: $source"
       failures=$((failures + 1))
       continue
     fi
+    # A marker's source path is attacker-controlled content (it comes from
+    # whatever text a PR writes inside the doc), so it must not be trusted
+    # to stay inside the repository. Reject a symlinked source outright, and
+    # reject any path whose fully resolved form does not land exactly where
+    # the literal, unresolved concatenation says it should -- that catches
+    # both a symlink further down the path and a "../" traversal in one
+    # check, before anything reads or prints the target's content.
+    if [[ -L "$source_path" ]]; then
+      fail "$doc: GENERATED block source is a symlink, refusing to follow: $source"
+      failures=$((failures + 1))
+      continue
+    fi
+    resolved_source_path="$(realpath -- "$source_path" 2>/dev/null || true)"
+    if [[ -z "$resolved_source_path" || "$resolved_source_path" != "$repo_root/$source" ]]; then
+      fail "$doc: GENERATED block source escapes the repository: $source"
+      failures=$((failures + 1))
+      continue
+    fi
+    if [[ ! -f "$source_path" ]]; then
+      fail "$doc: GENERATED block references a non-regular-file source: $source"
+      failures=$((failures + 1))
+      continue
+    fi
     block_content="$(sed -n "$((start + 1)),$((end - 1))p" "$doc_path")"
+    # Any non-blank line that is not part of a "|"-delimited table row is
+    # content the block should not contain -- a byte-for-byte generated
+    # block has nothing else inside its markers. Rejecting this here means
+    # injected prose or markup can't sneak in "underneath" whatever table
+    # rows do compare correctly.
+    if printf '%s\n' "$block_content" | grep -qvE '^[[:space:]]*(\||$)'; then
+      fail "$doc: GENERATED block for $source contains non-table content"
+      failures=$((failures + 1))
+      continue
+    fi
     case "$source" in
       *.tsv)
         compare_tsv_block "$doc" "$source_path" "$block_content" || failures=$((failures + 1))
