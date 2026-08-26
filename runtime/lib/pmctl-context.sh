@@ -602,20 +602,53 @@ _ctx_generate_file_sql() {
   done < <(_ctx_chunk_file "$abs_path" "$lang")
 }
 
+# CC-571: shared atomic-script executor for this file's two DROP/CREATE/
+# INSERT-style rebuild scripts (_ctx_index_file, _ctx_fts_rebuild). Runs the
+# caller-supplied SQL (via stdin, which the caller wraps in its own
+# BEGIN IMMEDIATE/COMMIT) through `sqlite3 -bail`.
+#
+# `-bail` is not optional decoration: confirmed by direct reproduction, the
+# sqlite3 CLI's default behavior on a mid-script SQL error is to print the
+# error and keep executing subsequent statements (it does NOT stop) -- so a
+# bare BEGIN...COMMIT without -bail still reaches and executes COMMIT after
+# silently skipping the failed statement, committing a half-built table.
+# With -bail, an error aborts the script immediately, the transaction is
+# left open, and the sqlite3 process exiting closes the connection, which
+# triggers an automatic ROLLBACK -- prior committed state is left fully
+# intact. This mirrors the `-bail`-based atomic-script pattern already
+# established in memory.sh's memory_usage_commit (~line 404) for the same
+# reason; that instance also captures stderr and retries on a lock error,
+# which neither caller here currently needs (both run at most once per
+# `context index`/`context update` invocation, not under contention).
+#
+# Returns sqlite3's exit code. Callers MUST check it -- this function does
+# not decide whether a failure here is fatal to the caller; that differs
+# per call site (see CC-571 Requirement 2).
+_ctx_sqlite_exec_atomic() {
+  local db="$1"
+  sqlite3 -bail "$db" >/dev/null
+}
+
 # ── Single-file index (used by pmctl_context_update) ──────────────────────────
 
 _ctx_index_file() {
   local db="$1" abs_path="$2" rel_path="$3"
-  local tmpf
+  local tmpf rc
   tmpf="$(mktemp /tmp/ctx-XXXXXX.sql)"
   {
     printf 'PRAGMA busy_timeout=5000;\n'
-    printf 'BEGIN;\n'
+    printf 'BEGIN IMMEDIATE;\n'
     _ctx_generate_file_sql "$abs_path" "$rel_path"
     printf 'COMMIT;\n'
   } > "$tmpf"
-  sqlite3 "$db" < "$tmpf" >/dev/null
+  _ctx_sqlite_exec_atomic "$db" < "$tmpf"
+  rc=$?
   rm -f "$tmpf"
+  # rc must be captured before `rm` -- rm's own exit status would otherwise
+  # become this function's return value regardless of whether sqlite3
+  # actually succeeded (confirmed by direct reproduction: the original
+  # `sqlite3 ... ; rm -f "$tmpf"` shape always returned 0).
+  return "$rc"
 }
 
 # ── FTS5 index rebuild ─────────────────────────────────────────────────────────
@@ -628,8 +661,9 @@ _ctx_fts_rebuild() {
   # each hit's real bounded span instead of faking line_end=line_start (the
   # pack/query contract advertises line_start/line_end as the actual chunk or
   # symbol extent -- CC-505 Req 3 gate finding critic-F001).
-  sqlite3 "$db" >/dev/null <<'SQLFTS'
+  _ctx_sqlite_exec_atomic "$db" <<'SQLFTS'
 PRAGMA busy_timeout=5000;
+BEGIN IMMEDIATE;
 DROP TABLE IF EXISTS content_fts;
 CREATE VIRTUAL TABLE content_fts USING fts5(ref, text, line_end UNINDEXED);
 INSERT INTO content_fts(ref, text, line_end)
@@ -639,6 +673,7 @@ INSERT INTO content_fts(ref, text, line_end)
   SELECT f.path || ':' || fc.line_start, TRIM(COALESCE(fc.heading, '') || ' ' || COALESCE(fc.text, '')), fc.line_end
   FROM file_chunks fc JOIN files f ON fc.file_id = f.id
   WHERE TRIM(COALESCE(fc.heading, '') || ' ' || COALESCE(fc.text, '')) != '';
+COMMIT;
 SQLFTS
 }
 
@@ -790,12 +825,38 @@ _ctx_index_tree() {
   # Rebuild only for changed files or a path-count change (pure deletions).
   local _fts_present
   _fts_present="$(sqlite3 "$db" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='content_fts';" 2>/dev/null || printf '0')"
+  # CC-571: FTS rebuild is a best-effort acceleration layer, not the only
+  # query path (LIKE fallback remains available), so a failed rebuild does
+  # not fail the overall index -- but neither the stderr diagnostic NOR the
+  # final stdout summary may read as an unqualified success (gate finding
+  # critic-F001, round 1: printing the diagnostic on stderr while stdout
+  # still said a bare "N indexed, M skipped" is a contradictory summary --
+  # a caller that only looks at stdout, or at exit code 0, saw only
+  # success). The previous content_fts (rolled back to, not left
+  # half-built -- see _ctx_fts_rebuild) is now stale relative to the
+  # indexed content above.
+  local _fts_rebuild_note=""
   if (( indexed > 0 || found != ${#_ctx_db_mtimes[@]} )) || [[ "$_fts_present" != "1" ]] \
      || [[ "$_force_reextract" -eq 1 ]]; then
-    _ctx_fts_rebuild "$db"
+    if ! _ctx_fts_rebuild "$db"; then
+      # CC-571 gate finding critic-F001 (round 2, gate-20260826-021038-ac0bc2):
+      # when content_fts did not exist before this attempt (first-time
+      # build), a failed rebuild's rollback leaves NO FTS table at all --
+      # "existing (now stale) FTS index retained" would be false in that
+      # case, since there is no existing index to retain. _fts_present was
+      # captured before the rebuild attempt, so it still reflects the
+      # pre-rebuild state here.
+      if [[ "$_fts_present" == "1" ]]; then
+        printf 'pmctl context index: FTS index rebuild failed; existing (now stale) FTS index retained, LIKE fallback still available\n' >&2
+      else
+        printf 'pmctl context index: FTS index rebuild failed; no FTS index available, LIKE fallback only\n' >&2
+      fi
+      _fts_rebuild_note=' (FTS index degraded: rebuild failed, stale index retained)'
+      [[ "$_fts_present" == "1" ]] || _fts_rebuild_note=' (FTS index degraded: rebuild failed, no FTS index available)'
+    fi
   fi
 
-  printf 'context index: %d indexed, %d skipped\n' "$indexed" "$skipped"
+  printf 'context index: %d indexed, %d skipped%s\n' "$indexed" "$skipped" "$_fts_rebuild_note"
   printf 'db: %s\n' "$db"
 }
 
@@ -1122,9 +1183,33 @@ pmctl_context_update() {
       return 1
     fi
     local rel_path="${real_path#"$canon_root/"}"
-    _ctx_index_file "$db" "$real_path" "$rel_path"
-    _ctx_fts_rebuild "$db"
-    printf 'context update: re-indexed %s\n' "$rel_path"
+    # CC-571: unlike the FTS rebuild below, a failed _ctx_index_file is
+    # fatal to this command -- it writes the primary files/symbols/
+    # file_chunks data, not a best-effort acceleration layer, so a rollback
+    # here means the file's content is genuinely not reflected. Reporting
+    # "re-indexed" anyway would be a false claim, not a degraded state.
+    if ! _ctx_index_file "$db" "$real_path" "$rel_path"; then
+      printf 'pmctl context update: failed to index %s; index not updated for this file\n' "$rel_path" >&2
+      return 1
+    fi
+    # CC-571: see the matching comment in pmctl_context_index -- neither the
+    # stderr diagnostic nor the final stdout summary may read as an
+    # unqualified success when the FTS rebuild fails (gate finding
+    # critic-F001, round 1), and the message must not claim a stale index
+    # is "retained" when no content_fts existed before this attempt
+    # (gate finding critic-F001, round 2).
+    local _fts_rebuild_note="" _fts_present_before_update
+    _fts_present_before_update="$(sqlite3 "$db" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='content_fts';" 2>/dev/null || printf '0')"
+    if ! _ctx_fts_rebuild "$db"; then
+      if [[ "$_fts_present_before_update" == "1" ]]; then
+        printf 'pmctl context update: FTS index rebuild failed; existing (now stale) FTS index retained, LIKE fallback still available\n' >&2
+        _fts_rebuild_note=' (FTS index degraded: rebuild failed, stale index retained)'
+      else
+        printf 'pmctl context update: FTS index rebuild failed; no FTS index available, LIKE fallback only\n' >&2
+        _fts_rebuild_note=' (FTS index degraded: rebuild failed, no FTS index available)'
+      fi
+    fi
+    printf 'context update: re-indexed %s%s\n' "$rel_path" "$_fts_rebuild_note"
   else
     # No path given: full incremental scan (same as index with mtime check)
     pmctl_context_index "$repo_root"

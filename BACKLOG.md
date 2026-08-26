@@ -107,6 +107,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-568 | 🟢 someday | `/mem-distill` Case→Strategy 機械式提升：對 `episodes.jsonl` 既有結構化欄位做 count/cluster 門檻判定，取代逐次主觀「感覺像 pattern」的判斷；依賴 [[CC-567]] 的 outcome 證據決定是否值得做（2026-08-25 memory 架構設計討論） | memory/DX | 2026-08-25 | — | P2 | retrieval |
 | CC-569 | 🟢 someday | `pmctl task` / `context pack` 擴充 working-memory 敘事欄位（`selected_memories`／`rejected_paths`／`blockers`／`next_action`）：延伸既有 schema，不新建第二個「現在在幹嘛」真相來源；依賴 [[CC-567]] 證明有價值後再排（2026-08-25 memory 架構設計討論） | memory/DX | 2026-08-25 | — | P2 | design |
 | CC-570 | 🟢 someday | Fact/Case/Strategy `memory_function`／`memory_subtype` metadata 分類法：先蒐集 [[CC-567]] 的 applied/outcome 證據，再決定值不值得建分類機制——不憑直覺先建立稅務式標籤（2026-08-25 memory 架構設計討論；外部文章優先序建議相反，本 repo 刻意反過來） | memory/DX | 2026-08-25 | — | P3 | retrieval |
+| CC-571 | 🔵 active | `_ctx_fts_rebuild`／`_ctx_index_file` 共用的 sqlite atomic-script 缺口：DROP+CREATE+INSERT 未加 `-bail`（實測 sqlite3 CLI 預設不會在錯誤時中止，單靠 BEGIN/COMMIT 不足）、呼叫端不檢查回傳值、`_ctx_index_file` 還有第三個獨立 bug（`rm -f` 蓋掉 sqlite3 真實 exit code）；`/simplify` altitude review 抓到手足函式同缺陷，範圍已擴大涵蓋兩者（[[CC-548]] spike 的 Open risks 側面發現，非本票 tokenizer 範圍） | memory/ops | 2026-08-26 | — | P2 | hygiene |
 
 ---
 
@@ -3331,5 +3332,65 @@ machinery，是憑一篇文章的直覺蓋機制，屬於本 repo 已經吃過�
 ——三者關注點不同，合併會讓單票驗收條件模糊。
 
 **Dependencies**: 前置 = [[CC-567]] shipped + 觀察窗證據。P3，不預設排入 milestone。
+
+---
+
+## CC-571 — sqlite atomic-script 缺口：`_ctx_fts_rebuild`／`_ctx_index_file` 🔵 active
+
+**Problem**: `runtime/lib/pmctl-context.sh` 的 `_ctx_fts_rebuild()` 對
+`content_fts` 做 `DROP TABLE` → `CREATE VIRTUAL TABLE` → 兩個 `INSERT ... SELECT`，
+整段用 heredoc 餵給 `sqlite3 "$db" >/dev/null`，沒有 `BEGIN`/`COMMIT`。兩個呼叫端
+（`pmctl_context_index` 約 line 795、`pmctl_context_update` 約 line 1126）都是裸呼叫
+`_ctx_fts_rebuild "$db"`，不檢查回傳值，之後照樣印「context index/update」成功訊息。
+
+**Why**: 直接實測證實這不是理論風險。用一個蓄意中途出錯的重建腳本測試：
+1. 不加 `-bail`：sqlite3 CLI 預設遇到錯誤只印訊息、**不中止**，照樣跑到 `COMMIT`
+   （若有包 transaction 也一樣會提交半成功的內容）；exit code 雖然是 1，但呼叫端
+   從不檢查。
+2. 加 `-bail` 後才會在第一個錯誤處真正中止，交易維持未提交，行程結束時連線關閉
+   觸發自動 rollback，舊的 `content_fts` 完整保留（已用最小 repro 驗證）。
+
+三個問題疊在一起：(a) 沒有 atomicity——失敗可能留下半建或整個消失的表；(b) 沒有
+`-bail`，單靠 `BEGIN`/`COMMIT` 不足以達成 (a) 的保護；(c) 呼叫端不檢查回傳值，
+即使 (a)(b) 都修好，使用者也不會知道索引其實是舊的（rollback 後）卻顯示重建成功。
+本票是 [[CC-548]] spike 過程中在 Open risks 側面發現的既有缺口，與該票的 tokenizer
+判斷（AMBER，暫緩）完全無關；使用者已明確要求只處理這個 bug，不連動 trigram 切換。
+
+**Requirement**:
+1. `_ctx_fts_rebuild` 的 DROP/CREATE/INSERT 序列包進單一交易（`BEGIN
+   IMMEDIATE`…`COMMIT`），並對 `sqlite3` 呼叫加 `-bail`（或等效機制），確保任何一步
+   出錯都會在該步中止、交易不提交，使既有 `content_fts` 保持完整可查詢，而不是
+   半建或消失。
+2. `_ctx_fts_rebuild` 的失敗必須讓呼叫端可辨——回傳非零，且兩個呼叫端
+   （`pmctl_context_index`／`pmctl_context_update`）改為檢查其回傳值：失敗時不得
+   印「成功」字樣的訊息，改為誠實回報「FTS 索引重建失敗，仍使用既有索引」一類的
+   降級狀態（比照本 repo既有 `usage_store: error`／`resolution_issues` 誠實回報慣例，
+   不阻斷整體 index/update 流程——FTS 只是加速層，非唯一查詢路徑，LIKE fallback
+   仍可用）。
+3. Regression fixtures：模擬重建腳本中途失敗（例如注入一個會觸發 SQL 錯誤的條件），
+   斷言 (a) 舊 `content_fts` 內容不變、(b) `_ctx_fts_rebuild` 回傳非零、(c) 呼叫端
+   印出的訊息誠實反映失敗、不宣稱成功。
+
+**Non-goals**: 不改 FTS5 tokenizer（unicode61 維持不變，[[CC-548]] 已判 AMBER 暫緩）；
+不新增 schema 欄位或 `index_meta` 版本追蹤；不處理 query-during-rebuild 的
+讀者可見性問題本身（rollback 後舊表持續可查詢，交易保護已隱含解決多數場景）。
+
+**Update 2026-08-26（範圍擴大，實作中）**：`/simplify` 的 altitude review 在同一輪
+reuse/簡化確認裡抓到手足函式同缺陷——`_ctx_index_file()`（`pmctl_context_update`
+另一個呼叫路徑，寫的是 files／symbols／file_chunks 主索引資料，非 FTS 加速層）用
+`BEGIN;`…`COMMIT;` 但同樣沒加 `-bail`；直接測試還額外找到第三個獨立 bug：其函式
+本體最後一行是 `sqlite3 ...; rm -f "$tmpf"`，函式回傳值變成 `rm` 的 exit code（幾乎
+恆為 0），完全蓋掉 sqlite3 真正的失敗狀態，即使先前已加 `-bail` 也測不出來。範圍
+擴大為：兩個函式共用同一個新抽出的 `_ctx_sqlite_exec_atomic` helper（單一
+`-bail` 呼叫來源，同時解決 reuse review 指出的「兩處各自重新推導同一手法」）；
+`_ctx_index_file` 明確 `return "$rc"`（在 `rm` 之前先擷取），且其唯一呼叫端
+（`pmctl_context_update`）失敗時視為**致命**（不同於 FTS——這是主索引資料而非
+best-effort 加速層，宣稱「re-indexed」等於說謊）。新增對應 regression fixtures
+（`_ctx_index_file` 回傳碼、`pmctl_context_update` 失敗時不宣稱成功）。使用者已
+確認此擴大屬於「同一個 bug」範圍內的自然延伸，非另開新工。
+
+**Cross-link**: [[CC-548]]（spike 中發現本缺口，Open risks 段落）。也可見
+`runtime/lib/memory.sh` 的 `memory_usage_commit`（既有的 `-bail` atomic-script
+先例，本票的 helper 命名與理由都直接引用它，而非各自重新推導）。
 
 ---
