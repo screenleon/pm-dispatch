@@ -4539,8 +4539,12 @@ case_context_index_reports_fts_rebuild_failure_honestly() {
     fail "$name" "expected an honest FTS-rebuild-failure message on stderr; got: $(<"$err")"
     return 0
   fi
-  if ! grep -q '^context index: ' "$out"; then
-    fail "$name" "expected the normal 'context index: N indexed, M skipped' summary line to still print; got: $(<"$out")"
+  # gate finding critic-F001 (round 1): printing the diagnostic on stderr
+  # while stdout still read as an unqualified "N indexed, M skipped" is a
+  # contradictory summary for any caller that only looks at stdout / exit
+  # code. The final summary line itself must carry the degradation.
+  if ! grep -qE '^context index: .*degraded' "$out"; then
+    fail "$name" "expected the summary line itself to disclose FTS degradation; got: $(<"$out")"
     return 0
   fi
   pass "$name"
@@ -4583,8 +4587,10 @@ case_context_update_reports_fts_rebuild_failure_honestly() {
     fail "$name" "expected an honest FTS-rebuild-failure message on stderr; got: $(<"$err")"
     return 0
   fi
-  if ! grep -q '^context update: re-indexed' "$out"; then
-    fail "$name" "expected the normal 'context update: re-indexed ...' line to still print; got: $(<"$out")"
+  # gate finding critic-F001 (round 1): same contradictory-summary concern
+  # as the index-path test above.
+  if ! grep -qE '^context update: re-indexed .*degraded' "$out"; then
+    fail "$name" "expected the summary line itself to disclose FTS degradation; got: $(<"$out")"
     return 0
   fi
   pass "$name"

@@ -825,19 +825,26 @@ _ctx_index_tree() {
   # Rebuild only for changed files or a path-count change (pure deletions).
   local _fts_present
   _fts_present="$(sqlite3 "$db" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='content_fts';" 2>/dev/null || printf '0')"
+  # CC-571: FTS rebuild is a best-effort acceleration layer, not the only
+  # query path (LIKE fallback remains available), so a failed rebuild does
+  # not fail the overall index -- but neither the stderr diagnostic NOR the
+  # final stdout summary may read as an unqualified success (gate finding
+  # critic-F001, round 1: printing the diagnostic on stderr while stdout
+  # still said a bare "N indexed, M skipped" is a contradictory summary --
+  # a caller that only looks at stdout, or at exit code 0, saw only
+  # success). The previous content_fts (rolled back to, not left
+  # half-built -- see _ctx_fts_rebuild) is now stale relative to the
+  # indexed content above.
+  local _fts_rebuild_note=""
   if (( indexed > 0 || found != ${#_ctx_db_mtimes[@]} )) || [[ "$_fts_present" != "1" ]] \
      || [[ "$_force_reextract" -eq 1 ]]; then
-    # CC-571: FTS rebuild is a best-effort acceleration layer, not the only
-    # query path (LIKE fallback remains available), so a failed rebuild
-    # does not fail the overall index -- but it must not be reported as
-    # success: the previous content_fts (rolled back to, not left
-    # half-built -- see _ctx_fts_rebuild) is now stale relative to the
-    # indexed content above.
-    _ctx_fts_rebuild "$db" \
-      || printf 'pmctl context index: FTS index rebuild failed; existing (now stale) FTS index retained, LIKE fallback still available\n' >&2
+    if ! _ctx_fts_rebuild "$db"; then
+      printf 'pmctl context index: FTS index rebuild failed; existing (now stale) FTS index retained, LIKE fallback still available\n' >&2
+      _fts_rebuild_note=' (FTS index degraded: rebuild failed, stale index retained)'
+    fi
   fi
 
-  printf 'context index: %d indexed, %d skipped\n' "$indexed" "$skipped"
+  printf 'context index: %d indexed, %d skipped%s\n' "$indexed" "$skipped" "$_fts_rebuild_note"
   printf 'db: %s\n' "$db"
 }
 
@@ -1173,12 +1180,16 @@ pmctl_context_update() {
       printf 'pmctl context update: failed to index %s; index not updated for this file\n' "$rel_path" >&2
       return 1
     fi
-    # CC-571: see the matching comment in pmctl_context_index -- a failed
-    # rebuild must not be reported as success.
+    # CC-571: see the matching comment in pmctl_context_index -- neither the
+    # stderr diagnostic nor the final stdout summary may read as an
+    # unqualified success when the FTS rebuild fails (gate finding
+    # critic-F001, round 1).
+    local _fts_rebuild_note=""
     if ! _ctx_fts_rebuild "$db"; then
       printf 'pmctl context update: FTS index rebuild failed; existing (now stale) FTS index retained, LIKE fallback still available\n' >&2
+      _fts_rebuild_note=' (FTS index degraded: rebuild failed, stale index retained)'
     fi
-    printf 'context update: re-indexed %s\n' "$rel_path"
+    printf 'context update: re-indexed %s%s\n' "$rel_path" "$_fts_rebuild_note"
   else
     # No path given: full incremental scan (same as index with mtime check)
     pmctl_context_index "$repo_root"
