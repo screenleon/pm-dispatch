@@ -533,38 +533,97 @@ test_worker_override_ceiling() {
 }
 
 # Behavior: the local linter does not turn host CPU count into unbounded parallelism.
-# Steps: use an instrumented ShellCheck stub; assert the default never exceeds two workers.
+# Steps: use an instrumented ShellCheck stub whose invocations register at a
+# shared counter (guarded by the repo's own serialize_with_lock, so this stays
+# on the same portable-locking primitive production code already depends on)
+# and block on a blocking FIFO read -- never a sleep loop -- until a second
+# concurrent worker signals release. This makes the two-way overlap a
+# deterministic property of the barrier protocol rather than a hope that a
+# fixed sleep window lines up with host scheduling. If the real cap ever
+# collapses to one, no second worker ever arrives to signal release, so the
+# lone worker's bounded FIFO read times out and fails with a clear message
+# instead of hanging.
 test_default_worker_cap() {
-  local name="lint-shellcheck/default-worker-cap" root events output status=0 max_active
+  local name="lint-shellcheck/default-worker-cap" root events barrier output status=0 max_active
   should_run "$name" || return 0
   root="$(fixture_repo worker-cap)"
   events="$root/events.log"
-  mkdir -p "$root/bin"
-  for n in 1 2 3 4; do
+  barrier="$root/barrier"
+  mkdir -p "$root/bin" "$barrier"
+  printf '0' > "$barrier/count"
+  mkfifo "$barrier/release.fifo"
+  mkfifo "$barrier/ack.fifo"
+  # The barrier pairs workers strictly by arrival order, so the fixture's
+  # total shell-file count (these five plus the three fixture_repo already
+  # creates) must be even -- an odd file out would have no partner to
+  # release it.
+  for n in 1 2 3 4 5; do
     printf '#!/usr/bin/env bash\nset -euo pipefail\n' > "$root/tests/worker-$n.sh"
   done
-  cat > "$root/bin/shellcheck" <<'STUB'
+  cat > "$root/bin/shellcheck" <<STUB
 #!/usr/bin/env bash
 set -euo pipefail
-if [[ "${1:-}" == --version ]]; then
+if [[ "\${1:-}" == --version ]]; then
   printf 'ShellCheck\nversion: 0.11.0\n'
   exit 0
 fi
-events="${SHELLCHECK_EVENTS:?}"
-printf 'start %s\n' "$$" >> "$events"
-sleep 0.1
-printf 'end %s\n' "$$" >> "$events"
+# shellcheck source=/dev/null
+. "$REPO_ROOT/runtime/lib/portable.sh"
+events="\${SHELLCHECK_EVENTS:?}"
+barrier="\${SHELLCHECK_BARRIER_DIR:?}"
+counter="\$barrier/count"
+mine="\$barrier/count.\$\$"
+
+register_arrival() {
+  local count
+  count=\$(<"\$counter")
+  count=\$((count + 1))
+  printf '%s' "\$count" > "\$counter"
+  printf 'active %s\n' "\$count" >> "\$events"
+  printf '%s' "\$count" > "\$mine"
+}
+serialize_with_lock "\$barrier/lock" register_arrival
+count="\$(<"\$mine")"
+rm -f "\$mine"
+
+exec {relfd}<>"\$barrier/release.fifo" {ackfd}<>"\$barrier/ack.fifo"
+if [[ "\$count" -eq 1 ]]; then
+  if ! read -r -t 5 -u "\$relfd" _; then
+    printf 'shellcheck-stub: timed out waiting for a second concurrent worker\n' >&2
+    exit 1
+  fi
+  printf '\n' >&"\$ackfd"
+else
+  printf '\n' >&"\$relfd"
+  # Wait for the released worker's own ack before either side deregisters --
+  # without this, the releaser can decrement and exit before the released
+  # worker's read has actually returned, closing the overlap window before a
+  # genuinely-concurrent third worker (were the cap to regress) has a chance
+  # to register while both are still counted active.
+  if ! read -r -t 5 -u "\$ackfd" _; then
+    printf 'shellcheck-stub: timed out waiting for released worker ack\n' >&2
+    exit 1
+  fi
+fi
+
+deregister() {
+  local count
+  count=\$(<"\$counter")
+  count=\$((count - 1))
+  printf '%s' "\$count" > "\$counter"
+}
+serialize_with_lock "\$barrier/lock" deregister
 STUB
   chmod +x "$root/bin/shellcheck"
   # Assert the built-in default, not an override inherited from the caller.
   output="$(env -u PM_DISPATCH_SHELLCHECK_JOBS PATH="$root/bin:$PATH" SHELLCHECK_EVENTS="$events" \
+    SHELLCHECK_BARRIER_DIR="$barrier" \
     bash "$root/tools/lint/lint-shellcheck.sh" --repo "$root" 2>&1)" || status=$?
   max_active="$(awk '
-    $1 == "start" { active++; if (active > max) max = active }
-    $1 == "end" { active-- }
+    $1 == "active" && $2 > max { max = $2 }
     END { print max + 0 }
   ' "$events")"
-  if [[ "$status" -eq 0 && "$max_active" -le 2 && "$max_active" -ge 1 ]]; then
+  if [[ "$status" -eq 0 && "$max_active" -eq 2 ]]; then
     pass "$name"
   else
     fail "$name" "status=$status max_active=$max_active output=$output"
