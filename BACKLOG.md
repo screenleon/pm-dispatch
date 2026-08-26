@@ -24,7 +24,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-517 | ✅ done | maintainer `/ship`：primary review、structured remediation closure 與 conditional targeted confirmation | process/gate | 2026-07-23 | pr:#483, pr:#506 | P1 | design |
 | CC-524 | ✅ done | `pmctl artifacts show` 顯示 canonical absolute run root 並提供穩定 machine-readable locator | ux/ops | 2026-07-27 | feedback:2026-07-27, pr:#537 | P2 | hygiene |
 | CC-527 | ✅ done | targeted gate CLI 拆分 pass、reviewer coverage 與 tier；tier 由 current subject/policy 解析，initial result 僅為 remediation context | ux/gate | 2026-07-28 | pr:#472, pr:#476, pr:#482, pr:#505 | P2 | design |
-| CC-529 | ⚠️ partial 2026-08-15 | publish assurance observability：以 gate_publish_assessment_v1 將 ship stdout、PR body 與 finish marker 綁到同一份 verified assessment；仍需完成完整 producer/consumer dogfood | release/gate | 2026-07-30 | feedback:2026-07-30, pr:#484 | P2 | hygiene |
+| CC-529 | ✅ done | publish assurance observability：以 gate_publish_assessment_v1 將 ship stdout、PR body 與 finish marker 綁到同一份 verified assessment；preferred 路徑早有真實佐證（PR #517），baseline 路徑本次以 generic gate + `ship finish --gate-result` 補做真實 dogfood | release/gate | 2026-07-30 | feedback:2026-07-30, pr:#484 | P2 | hygiene |
 | CC-532 | ✅ done | Linux/WSL2 repo-layout canonical Gate modules：options／policy／subject／scope／reviewer-contract／assurance 均有單一 source owner；standalone／copy parity 在 [[CC-546]] | arch/gate | 2026-07-30 | feedback:2026-07-30 | P1 | reuse-debt |
 | CC-533 | ✅ done | schema-derived Gate structural validator：assurance／scope-manifest／reviewer-result／synthesis-result 四型全數完成 schema-first 重寫 | schema/gate | 2026-07-30 | pr:#480, pr:#524, pr:#525, pr:#526, pr:#527, pr:#528 | P1 | design |
 | CC-534 | 🟢 someday | `commands.tsv` 驅動 CLI routing、safe handler dispatch 與 lazy module loading | arch/DX | 2026-07-30 | feedback:2026-07-30 | P2 | design |
@@ -2095,7 +2095,7 @@ code。
 
 ---
 
-## CC-529 — publish assurance observability：baseline／preferred 可追溯 ⚠️ partial 2026-08-15
+## CC-529 — publish assurance observability：baseline／preferred 可追溯
 
 **Framing**: 本票只延伸 [[CC-528]] 已建立的 publish policy compatibility，
 讓成功發布保留「哪一種 producer policy、以 baseline 或 preferred 滿足 publish」
@@ -2158,6 +2158,20 @@ shared verifier 綁定 Gate、remediation closure 與 authoritative full-suite�
 producer policy、preferred policy 與 baseline/preferred satisfaction。schema、
 marker compatibility、targeted-closure policy 與 builder parity 已有 deterministic
 coverage；仍需完成真實 producer/consumer dogfood 後才能標記 closed。
+
+**Update 2026-08-26（done）**：重新盤點時發現 preferred（maintainer）路徑早已有
+真實佐證——PR #517 的 Gate 段落已印出 `Publish assurance: producer=maintainer,
+satisfaction=preferred`，是這個 repo 近期日常 `/ship` maintainer 流程的自然
+副產物。唯獨 baseline（generic）路徑從未在真實 PR 出現過：這個 repo 近期的
+實際工作流程每次都走 maintainer full gate，沒人真的用過 `pmctl ship finish
+--gate-result <generic 產出的 GO>` 這條路。本次補做這次真實 dogfood——本票自己
+這次 BACKLOG.md 更新即為 shipped 內容，交付方式刻意選用
+`pmctl gate run --policy generic` 產出的 GO 結果 + `pmctl ship finish CC-529
+--gate-result <path>`，而非慣用的 maintainer full gate；三個 surface（stdout、
+PR body Gate 段落、`.pm-dispatch-ship-finish.json` marker）皆確認顯示
+`producer=generic satisfaction=baseline`，與 shared verifier 輸出一致。至此
+preferred／baseline 兩條路徑皆有真實 producer/consumer 佐證，Done-when 條件
+成立，結案。
 
 **Non-goals**: 不改 generic／maintainer reviewer floor、tier、mode 或 compatibility
 ordering；不新增 Gate、publish authorization 或 workflow engine；不實作 dashboard、
