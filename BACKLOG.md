@@ -3429,15 +3429,11 @@ reviewer 重試一樣改路徑），只能改成每次重試前把該路徑**整
 逼 patch 工具只能選擇 `Add File`。
 
 **Requirement**:
-1. sequential synthesis 重試（line ~2748）改用 `rm -f "$OUTPUT_FILE"` 取代
-   `: > "$OUTPUT_FILE"`；retry brief 文字同步更新（不再說「已清空」，改說「已移除」）。
-2. parallel synthesis 重試（line ~3600 附近迴圈）在附加 `correction_retry:` 之後、
-   重新 dispatch 之前，新增 `rm -f "$OUTPUT_FILE"`。
-3. Regression fixtures 涵蓋兩條路徑：以既有的 `CODEX_GATE_STUB_SYNTHESIS_PROTOCOL_MUTATION`
-   測試 harness 驗證重試發生時 `$OUTPUT_FILE` 在第二次 dispatch **開始前**確實不存在
-   （而非僅清空），且既有 13 個 synthesis-protocol 測試全數維持綠燈（stub 的
-   fallback 讀取路徑 `document_source="$brief_file"` 本就存在，理論上不受影響，
-   需要實測驗證）。
+1. 兩條 synthesis 重試路徑（sequential／parallel）在重新 dispatch 前，都必須讓
+   `$OUTPUT_FILE` 這個路徑真正不存在（而非僅清空內容），逼 patch 工具走
+   `Add File` 而非 `Update File`。
+2. Regression fixtures 驗證重試發生時 `$OUTPUT_FILE` 在第二次 dispatch **開始前**
+   確實不存在，且既有 synthesis-protocol 測試全數維持綠燈。
 
 **Non-goals**: 不改變 synthesis 重試次數（維持 1 次，不重新開放 CC-544 已被否決的
 「重試把失敗變成通過」爭議——本票的重試機制本來就誠實回報協定失敗，不受影響）；
@@ -3446,18 +3442,9 @@ codex 自己的 apply_patch 工具實作（不在本 repo 控制範圍）。
 
 **Cross-link**: [[CC-571]]（gate saga 實測發現本問題的來源）。
 
-**Update 2026-08-26（done）**：兩處 synthesis 重試皆改用新抽出的共用
-`gate_clear_retry_target()`（放在 `gate_dispatch_command` 旁邊，`/simplify` 三個
-角度的 review 都指向同一個修法：抽共用 helper，消除重複的 `rm -f` 與重複的說明
-文字）。新增測試專用 capture hook（`CODEX_GATE_CAPTURE_OUTPUT_EXISTS_DIR`），
-在每次 synthesis dispatch 開始的瞬間記錄 `$OUTPUT_FILE` 是否存在；兩個對應
-regression test（sequential／parallel 各一，共用同一參數化 helper）斷言第一次
-dispatch 看到「存在」、重試時看到「不存在」。pr-gate 首輪即 GO（四位 reviewer
-全數 approve，沒有觸發 synthesis retry，尚未在真實情境驗證修復——但 mechanism
-本身已用直接 trace 比對過往失敗 log 的根因，且迴歸測試已白箱驗證行為正確）。
-過程中一度讓 `tests/bin/run-all-tests.sh` 在 phase 0 卡住、99 個套件被跳過——
-原因是兩個新測試函式沒有各自的 `# Behavior:` docstring（`lint-test-docstrings`
-要求每個 `test_*` 函式正上方都要有，不能只寫在共用 helper 上），已補上。
-`tests/bin/run-all-tests.sh` 104 passed 0 failed。
+**Update 2026-08-26（done，pr:#541）**：兩條路徑都已修好，新增迴歸測試直接斷言
+重試發生時該路徑真的不存在（而非僅清空）。pr-gate 首輪 GO（未在該次 gate run
+自身觸發 synthesis retry，修復是靠直接比對過往失敗 log 的根因＋白箱迴歸測試
+驗證，非現場實戰）。`tests/bin/run-all-tests.sh` 104 passed 0 failed。
 
 ---

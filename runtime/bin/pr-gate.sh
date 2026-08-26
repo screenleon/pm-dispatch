@@ -804,19 +804,14 @@ gate_dispatch_command() {
   fi
 }
 
-# CC-572: clear a fixed result path before a corrective retry re-dispatches
-# to it. Shared by the sequential and parallel synthesis retry loops (each
-# retries once, to the SAME $OUTPUT_FILE path, unlike the reviewer-protocol
-# retry which always writes to a brand-new path).
-#
-# Removing the path (not truncating it) matters: observed in production,
-# an executor's patch tool can choose an "Update File" operation (which
-# locates existing content to edit) against a path that still EXISTS on
-# disk, even truncated to 0 bytes -- and that operation then fails
-# ("Failed to find expected lines", "invalid patch: multiple operations
-# target <file>") because there is no content to locate. Only removing the
-# path forces an unambiguous "Add File" the same way a brand-new path
-# would, matching the reviewer-retry shape's already-reliable behavior.
+# CC-572: removing the path (not truncating it) matters -- observed in
+# production, an executor's patch tool can choose an "Update File"
+# operation (which locates existing content to edit) against a path that
+# still EXISTS on disk, even truncated to 0 bytes -- and that operation
+# then fails ("Failed to find expected lines", "invalid patch: multiple
+# operations target <file>") because there is no content to locate. Only
+# removing the path forces an unambiguous "Add File", matching the
+# reviewer-retry path's already-reliable brand-new-filename behavior.
 gate_clear_retry_target() {
   rm -f "$1"
 }
