@@ -4547,6 +4547,26 @@ case_context_index_reports_fts_rebuild_failure_honestly() {
     fail "$name" "expected the summary line itself to disclose FTS degradation; got: $(<"$out")"
     return 0
   fi
+  # gate finding critic-F001 (round 2, gate-20260826-021038-ac0bc2): this is
+  # a fresh fixture repo with no prior content_fts, so the rollback after
+  # this failed rebuild leaves NO FTS table at all -- "existing (now stale)
+  # FTS index retained" would be false here, since there is no existing
+  # index to retain. Both messages must say no index is available instead.
+  if grep -qi 'existing.*retained' "$err" || grep -qi 'stale index retained' "$out"; then
+    fail "$name" "first-time build failure wrongly claimed a stale index is 'retained' when none ever existed. err=$(<"$err") out=$(<"$out")"
+    return 0
+  fi
+  if ! grep -q 'no FTS index available' "$err"; then
+    fail "$name" "expected the first-time-build failure message to say no FTS index is available; got: $(<"$err")"
+    return 0
+  fi
+  local db_after="$fix_repo/.pm-dispatch/ctx/context.db"
+  local fts_after
+  fts_after="$(sqlite3 "$db_after" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='content_fts';" 2>/dev/null)"
+  if [[ "$fts_after" != "0" ]]; then
+    fail "$name" "expected content_fts to be absent after a failed first-time rebuild; sqlite_master reports $fts_after"
+    return 0
+  fi
   pass "$name"
 }
 

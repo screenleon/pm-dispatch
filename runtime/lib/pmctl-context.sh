@@ -839,8 +839,20 @@ _ctx_index_tree() {
   if (( indexed > 0 || found != ${#_ctx_db_mtimes[@]} )) || [[ "$_fts_present" != "1" ]] \
      || [[ "$_force_reextract" -eq 1 ]]; then
     if ! _ctx_fts_rebuild "$db"; then
-      printf 'pmctl context index: FTS index rebuild failed; existing (now stale) FTS index retained, LIKE fallback still available\n' >&2
+      # CC-571 gate finding critic-F001 (round 2, gate-20260826-021038-ac0bc2):
+      # when content_fts did not exist before this attempt (first-time
+      # build), a failed rebuild's rollback leaves NO FTS table at all --
+      # "existing (now stale) FTS index retained" would be false in that
+      # case, since there is no existing index to retain. _fts_present was
+      # captured before the rebuild attempt, so it still reflects the
+      # pre-rebuild state here.
+      if [[ "$_fts_present" == "1" ]]; then
+        printf 'pmctl context index: FTS index rebuild failed; existing (now stale) FTS index retained, LIKE fallback still available\n' >&2
+      else
+        printf 'pmctl context index: FTS index rebuild failed; no FTS index available, LIKE fallback only\n' >&2
+      fi
       _fts_rebuild_note=' (FTS index degraded: rebuild failed, stale index retained)'
+      [[ "$_fts_present" == "1" ]] || _fts_rebuild_note=' (FTS index degraded: rebuild failed, no FTS index available)'
     fi
   fi
 
@@ -1183,11 +1195,19 @@ pmctl_context_update() {
     # CC-571: see the matching comment in pmctl_context_index -- neither the
     # stderr diagnostic nor the final stdout summary may read as an
     # unqualified success when the FTS rebuild fails (gate finding
-    # critic-F001, round 1).
-    local _fts_rebuild_note=""
+    # critic-F001, round 1), and the message must not claim a stale index
+    # is "retained" when no content_fts existed before this attempt
+    # (gate finding critic-F001, round 2).
+    local _fts_rebuild_note="" _fts_present_before_update
+    _fts_present_before_update="$(sqlite3 "$db" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='content_fts';" 2>/dev/null || printf '0')"
     if ! _ctx_fts_rebuild "$db"; then
-      printf 'pmctl context update: FTS index rebuild failed; existing (now stale) FTS index retained, LIKE fallback still available\n' >&2
-      _fts_rebuild_note=' (FTS index degraded: rebuild failed, stale index retained)'
+      if [[ "$_fts_present_before_update" == "1" ]]; then
+        printf 'pmctl context update: FTS index rebuild failed; existing (now stale) FTS index retained, LIKE fallback still available\n' >&2
+        _fts_rebuild_note=' (FTS index degraded: rebuild failed, stale index retained)'
+      else
+        printf 'pmctl context update: FTS index rebuild failed; no FTS index available, LIKE fallback only\n' >&2
+        _fts_rebuild_note=' (FTS index degraded: rebuild failed, no FTS index available)'
+      fi
     fi
     printf 'context update: re-indexed %s%s\n' "$rel_path" "$_fts_rebuild_note"
   else
