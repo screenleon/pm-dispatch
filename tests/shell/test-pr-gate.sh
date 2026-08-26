@@ -120,6 +120,27 @@ done
 reviewer_name="$(awk '$1 == "Reviewer:" { print $2; exit }' "$brief_file")"
 : "${reviewer_name:=stub-reviewer}"
 
+# CC-572: record whether the synthesis/sequential result path exists on disk
+# at the very start of THIS dispatch (before this stub or anything else in
+# this invocation touches it) -- the property a synthesis retry must uphold
+# is that the path is gone (not just empty) before the retry's own write
+# begins. Must run before any other block below that might create the file.
+if [[ -n "${CODEX_GATE_CAPTURE_OUTPUT_EXISTS_DIR:-}" ]] \
+    && { [[ "$brief_file" == *-synthesis.md ]] || grep -q '^goal: Sequential ' "$brief_file"; }; then
+  _cc572_output_path=$(grep -o '\- new:.*' "$brief_file" | head -1 | awk '{print $NF}')
+  mkdir -p "$CODEX_GATE_CAPTURE_OUTPUT_EXISTS_DIR"
+  # Each gate run's synthesis dispatches at most twice (initial + one
+  # retry), so a fixed first/second pair of files is simpler than a
+  # counted/globbed sequence for a caller that only ever expects two checks.
+  _cc572_state="exists"
+  [[ -n "$_cc572_output_path" && -e "$_cc572_output_path" ]] || _cc572_state="absent"
+  if [[ ! -e "$CODEX_GATE_CAPTURE_OUTPUT_EXISTS_DIR/first" ]]; then
+    printf '%s\n' "$_cc572_state" > "$CODEX_GATE_CAPTURE_OUTPUT_EXISTS_DIR/first"
+  else
+    printf '%s\n' "$_cc572_state" > "$CODEX_GATE_CAPTURE_OUTPUT_EXISTS_DIR/second"
+  fi
+fi
+
 # CC-541: capture whatever QA_RULES_DIR value (if any) this dispatch inherited,
 # so tests can assert pr-gate.sh's host-side resolution reached the reviewer
 # subprocess env without needing a real codex model to interpret it.
@@ -11887,6 +11908,63 @@ test_parallel_synthesis_retry_brief_bounds_long_reason() {
   pass "$name"
 }
 
+# Behavior (CC-572): a synthesis retry (either mode) must remove
+# $OUTPUT_FILE before re-dispatching, not just leave the first attempt's
+# content sitting on disk. Observed in production: an executor's patch tool
+# can choose an "Update File" operation against a path that still exists
+# (even truncated to empty), and that operation then fails outright because
+# there is no matching content to locate -- a hard tool failure unrelated to
+# the actual synthesis content. Only full removal forces an unambiguous
+# "Add File" the same way a brand-new path would.
+# Steps: force a first-attempt synthesis failure (existing malformed-seed
+# mutation); the CC-572 capture hook in the stub records, at the very start
+# of EACH synthesis dispatch (before the stub or anything else writes to the
+# path), whether $OUTPUT_FILE existed at that instant. Assert the first
+# check says "exists" (the reviewer-append step already wrote content before
+# synthesis attempt 1 runs) and the second (retry) check says "absent".
+# Shared by both modes because the property under test -- and the fixture
+# setup to exercise it -- is identical; only --mode differs. Sequential and
+# parallel dispatch through separately-authored retry loops in
+# runtime/bin/pr-gate.sh (the sequential one used to truncate the file
+# rather than remove it), so both are exercised as their own named result.
+_test_synthesis_retry_removes_output_file_before_redispatch() {
+  local mode="$1" test_prefix="$2"
+  local name="${test_prefix}/retry-removes-output-file-before-redispatch"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home="$TMP_ROOT/$name/home"
+  local repo="$TMP_ROOT/$name/repo" runner="$TMP_ROOT/$name/runner"
+  local out="$TMP_ROOT/$name/out" err="$TMP_ROOT/$name/err" code=0
+  local checks="$TMP_ROOT/$name/checks"
+  mkdir -p "$dir" "$checks"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester
+  create_repo "$repo" docs
+  set +e
+  CODEX_GATE_STUB_SYNTHESIS_PROTOCOL_MUTATION=malformed-seed \
+    CODEX_GATE_STUB_SYNTHESIS_PROTOCOL_MUTATION_ONLY_FIRST=1 \
+    CODEX_GATE_CAPTURE_OUTPUT_EXISTS_DIR="$checks" \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester --mode "$mode"
+  code=$?
+  set -e
+  [[ "$code" -eq 0 ]] || { fail "$name" "did not recover: code=$code $(tail -n 5 "$err" 2>/dev/null)"; return; }
+  [[ -f "$checks/second" ]] || {
+    fail "$name" "second dispatch's existence check was not captured: $(find "$checks" -maxdepth 1 -printf '%P ' 2>/dev/null)"
+    return
+  }
+  assert_file_contains "$name" "$checks/first" "exists" || return
+  assert_file_contains "$name" "$checks/second" "absent" || return
+  pass "$name"
+}
+
+test_parallel_synthesis_retry_removes_output_file_before_redispatch() {
+  _test_synthesis_retry_removes_output_file_before_redispatch parallel synthesis-protocol
+}
+
+test_sequential_synthesis_retry_removes_output_file_before_redispatch() {
+  _test_synthesis_retry_removes_output_file_before_redispatch sequential sequential-protocol
+}
+
 # Behavior: a stale subject binding is NOT retried in sequential mode.
 # Steps: bind the synthesis to a different scope digest, then assert the gate
 # refuses the retry and says so.
@@ -12985,6 +13063,8 @@ run_test test_synthesis_protocol_diagnostics_name_the_defect
 run_test test_synthesis_protocol_diagnostics_neutralize_injected_ids
 run_test test_parallel_synthesis_retry_brief_carries_reason
 run_test test_parallel_synthesis_retry_brief_bounds_long_reason
+run_test test_parallel_synthesis_retry_removes_output_file_before_redispatch
+run_test test_sequential_synthesis_retry_removes_output_file_before_redispatch
 run_test test_sequential_protocol_recovers_on_retry
 run_test test_sequential_protocol_refuses_stale_subject_retry
 run_test test_sequential_retry_brief_bounds_long_reason

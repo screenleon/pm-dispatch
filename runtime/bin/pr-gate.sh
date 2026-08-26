@@ -804,6 +804,23 @@ gate_dispatch_command() {
   fi
 }
 
+# CC-572: clear a fixed result path before a corrective retry re-dispatches
+# to it. Shared by the sequential and parallel synthesis retry loops (each
+# retries once, to the SAME $OUTPUT_FILE path, unlike the reviewer-protocol
+# retry which always writes to a brand-new path).
+#
+# Removing the path (not truncating it) matters: observed in production,
+# an executor's patch tool can choose an "Update File" operation (which
+# locates existing content to edit) against a path that still EXISTS on
+# disk, even truncated to 0 bytes -- and that operation then fails
+# ("Failed to find expected lines", "invalid patch: multiple operations
+# target <file>") because there is no content to locate. Only removing the
+# path forces an unambiguous "Add File" the same way a brand-new path
+# would, matching the reviewer-retry shape's already-reliable behavior.
+gate_clear_retry_target() {
+  rm -f "$1"
+}
+
 # Every supported executor now dispatches an INDEPENDENT subprocess (codex `codex
 # exec`, claude headless `claude --print`) and writes the result in-process, which
 # the gate then integrity-checks. This flag is the seam where a future
@@ -2742,10 +2759,11 @@ BRIEF_EOF
   for _seq_attempt in 1 2; do
   if [[ "$_seq_attempt" -eq 2 ]]; then
     # The brief has the executor CREATE the file on the first reviewer and
-    # APPEND for the rest, so a retry must start from an empty document:
+    # APPEND for the rest, so a retry must start from a clean slate:
     # appending to a rejected, half-ordered one compounds the defect the
-    # retry exists to fix.
-    : > "$OUTPUT_FILE"
+    # retry exists to fix. See gate_clear_retry_target for why this removes
+    # the path rather than truncating it (CC-572).
+    gate_clear_retry_target "$OUTPUT_FILE"
     # Same trust boundary as the parallel retry: the reason quotes ids read
     # from the rejected artifact, so flatten newlines and bound the length
     # before it becomes a YAML block scalar in a privileged brief.
@@ -2753,7 +2771,7 @@ BRIEF_EOF
     _seq_reason_line="${_seq_reason_line//$'\r'/ }"
     [[ "${#_seq_reason_line}" -le 800 ]] \
       || _seq_reason_line="${_seq_reason_line:0:800}~"
-    printf '\ncorrection_retry: |\n  The first attempt was REJECTED for exactly this reason:\n\n    %s\n\n  %s has been emptied. Rebuild it completely, in the required section\n  order, from the same reviewer evidence -- fix that specific defect and do\n  not change any other section to compensate.\n' \
+    printf '\ncorrection_retry: |\n  The first attempt was REJECTED for exactly this reason:\n\n    %s\n\n  %s has been removed. Rebuild it completely from scratch, in the\n  required section order, from the same reviewer evidence -- fix that\n  specific defect and do not change any other section to compensate.\n' \
       "$_seq_reason_line" "$OUTPUT_FILE" >> "$BRIEF_FILE"
     say '  [sequential] retrying once after %s.\n' "$_seq_reason"
   fi
@@ -3619,6 +3637,15 @@ SBRIEF_P2
         || _synthesis_reason_line="${_synthesis_reason_line:0:800}~"
       printf '\ncorrection_retry: |\n  The first synthesis attempt was REJECTED for exactly this reason:\n\n    %s\n\n  Fix that specific defect. Copied coverage/inventory/test-gap fields are\n  restored by the shell from the embedded reviewer_result_v1 documents; do not\n  retype them. Rebuild grouping, disagreement, confirmation, and seed fields\n  from those same documents -- do not change any other section to compensate.\n' \
         "$_synthesis_reason_line" >> "$SYNTHESIS_BRIEF"
+      # Unlike the reviewer-protocol retry above (which writes to a
+      # brand-new path, e.g. reviewer-<name>-<ts>-retry1.md), the synthesis
+      # retry re-dispatches to the SAME fixed $OUTPUT_FILE path. See
+      # gate_clear_retry_target for why this removes the path rather than
+      # leaving attempt 1's content in place (CC-572). The brief already
+      # tells the model to rebuild every field fresh from the embedded
+      # reviewer context, so nothing here depends on attempt 1's on-disk
+      # content surviving into attempt 2.
+      gate_clear_retry_target "$OUTPUT_FILE"
     fi
     say '  [synthesis attempt %d] running PM consolidation...\n' "$_synthesis_attempt"
     SYNTHESIS_DISPATCH_CMD="$(gate_dispatch_command "$EXECUTOR" "$SYNTHESIS_BRIEF" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT" "$DISPATCH_ISOLATION" "$DISPATCH_EFFORT")" || exit 2

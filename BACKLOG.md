@@ -108,6 +108,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-569 | 🟢 someday | `pmctl task` / `context pack` 擴充 working-memory 敘事欄位（`selected_memories`／`rejected_paths`／`blockers`／`next_action`）：延伸既有 schema，不新建第二個「現在在幹嘛」真相來源；依賴 [[CC-567]] 證明有價值後再排（2026-08-25 memory 架構設計討論） | memory/DX | 2026-08-25 | — | P2 | design |
 | CC-570 | 🟢 someday | Fact/Case/Strategy `memory_function`／`memory_subtype` metadata 分類法：先蒐集 [[CC-567]] 的 applied/outcome 證據，再決定值不值得建分類機制——不憑直覺先建立稅務式標籤（2026-08-25 memory 架構設計討論；外部文章優先序建議相反，本 repo 刻意反過來） | memory/DX | 2026-08-25 | — | P3 | retrieval |
 | CC-571 | ✅ done | `_ctx_fts_rebuild`／`_ctx_index_file` 共用的 sqlite atomic-script 缺口：DROP+CREATE+INSERT 未加 `-bail`（實測 sqlite3 CLI 預設不會在錯誤時中止，單靠 BEGIN/COMMIT 不足）、呼叫端不檢查回傳值、`_ctx_index_file` 還有第三個獨立 bug（`rm -f` 蓋掉 sqlite3 真實 exit code）；`/simplify` altitude review 抓到手足函式同缺陷，範圍已擴大涵蓋兩者（[[CC-548]] spike 的 Open risks 側面發現，非本票 tokenizer 範圍） | memory/ops | 2026-08-26 | pr:#539 | P2 | hygiene |
+| CC-572 | 🔵 active | pr-gate synthesis retry（sequential／parallel 兩條路徑）留下已存在但 0 bytes 的 `$OUTPUT_FILE`，executor 的 patch 工具仍可能選擇 Update File 而非 Add File 語意，對空內容找不到 context line 而崩潰（`apply_patch verification failed`）；CC-571 gate saga 連續四輪協定失敗實測發現（2026-08-26） | gate/ops | 2026-08-26 | — | P2 | hygiene |
 
 ---
 
@@ -3405,5 +3406,46 @@ round 1 critic-F001——stderr 有印降級訊息，但 stdout 的成功摘要�
 104 passed 0 failed。狀態旗標本次於 main 更新後立即補記——同一 session 已因此類
 漏更新撞過三次（CC-567／CC-533／CC-015），這次差點又漏，補上教訓：**合併前**就該
 在 PR 裡帶上狀態翻轉，合併後才想起來永遠比合併前想起來更容易忘記。
+
+---
+
+## CC-572 — pr-gate synthesis 重試留下空但存在的 result 檔案，patch 工具語意混淆 🔵 active
+
+**Problem**: CC-571 的 pr-gate saga 連續遇到 4 輪協定失敗，其中兩類錯誤反覆出現：
+`apply_patch verification failed: invalid patch: multiple operations target <file>`
+與 `Failed to find expected lines in <file>: ...`。追查後發現：sequential 模式的
+synthesis 重試（`runtime/bin/pr-gate.sh` 約 line 2748）在重試前用 `: > "$OUTPUT_FILE"`
+把結果檔案**清空但保留路徑存在**；parallel 模式的 synthesis 重試（約 line 3600 附近的
+迴圈）則完全沒有清空或移除，重試時 `$OUTPUT_FILE` 仍是第一次嘗試的完整內容。兩者都
+讓 executor 的 patch 工具面對一個「路徑存在」的檔案，可能因此選擇 `Update File`
+（需要定位既有內容做編輯）而非 `Add File`（單純新建）語意——對 0 bytes 或即將整份
+重寫的檔案，`Update File` 語意本質上找不到可定位的 context line，因而崩潰。
+
+**Why**: reviewer-protocol 的重試路徑（同檔案內，寫到全新的
+`reviewer-<name>-<ts>-retry1.md` 路徑）從未出現過這個問題——因為那個路徑保證是全新
+的，patch 工具沒有選錯語意的空間。Synthesis 的兩條重試路徑都固定用同一個
+`$OUTPUT_FILE`（這個路徑本身是使用者看得到的 canonical gate 結果路徑，不能像
+reviewer 重試一樣改路徑），只能改成每次重試前把該路徑**整個移除**（而非清空），
+逼 patch 工具只能選擇 `Add File`。
+
+**Requirement**:
+1. sequential synthesis 重試（line ~2748）改用 `rm -f "$OUTPUT_FILE"` 取代
+   `: > "$OUTPUT_FILE"`；retry brief 文字同步更新（不再說「已清空」，改說「已移除」）。
+2. parallel synthesis 重試（line ~3600 附近迴圈）在附加 `correction_retry:` 之後、
+   重新 dispatch 之前，新增 `rm -f "$OUTPUT_FILE"`。
+3. Regression fixtures 涵蓋兩條路徑：以既有的 `CODEX_GATE_STUB_SYNTHESIS_PROTOCOL_MUTATION`
+   測試 harness 驗證重試發生時 `$OUTPUT_FILE` 在第二次 dispatch **開始前**確實不存在
+   （而非僅清空），且既有 13 個 synthesis-protocol 測試全數維持綠燈（stub 的
+   fallback 讀取路徑 `document_source="$brief_file"` 本就存在，理論上不受影響，
+   需要實測驗證）。
+
+**Non-goals**: 不改變 synthesis 重試次數（維持 1 次，不重新開放 CC-544 已被否決的
+「重試把失敗變成通過」爭議——本票的重試機制本來就誠實回報協定失敗，不受影響）；
+不修改 reviewer-protocol 既有的重試機制（已經是正確模式，不需要改）；不嘗試修正
+codex 自己的 apply_patch 工具實作（不在本 repo 控制範圍）。
+
+**Cross-link**: [[CC-571]]（gate saga 實測發現本問題的來源）。
+
+**Update 2026-08-26（實作中）**：兩處已改為 `rm -f`，並更新對應說明文字。
 
 ---
