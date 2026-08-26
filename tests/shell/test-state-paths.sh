@@ -119,6 +119,76 @@ case_run_dir_legacy_leaf_compatibility() {
   fi
 }
 
+# ---- sw_run_dir_symlink_free (CC-524) ----
+case_run_dir_symlink_free_accepts_real_dirs() {
+  # Behavior: an ordinary run dir (both it and its runs/ parent are real
+  # directories, not symlinks) passes the predicate.
+  local name="run-dir-symlink-free/ordinary real run dir passes"
+  should_run "$name" || return 0
+  local root run_dir
+  root="$(mktemp -d)"
+  run_dir="$root/projects/key/runs/run-1"
+  mkdir -p "$run_dir"
+  if sw_run_dir_symlink_free "$run_dir"; then
+    pass "$name"
+  else
+    fail "$name" "predicate rejected an ordinary real directory"
+  fi
+  rm -rf "$root"
+}
+
+case_run_dir_symlink_free_rejects_symlinked_leaf() {
+  # Behavior: the run_id leaf itself being a symlink (even to a real,
+  # existing directory) is rejected.
+  local name="run-dir-symlink-free/rejects a symlinked run_id leaf"
+  should_run "$name" || return 0
+  local root real_target run_dir
+  root="$(mktemp -d)"
+  real_target="$root/elsewhere"
+  mkdir -p "$root/projects/key/runs" "$real_target"
+  run_dir="$root/projects/key/runs/run-1"
+  ln -s "$real_target" "$run_dir"
+  if ! sw_run_dir_symlink_free "$run_dir"; then
+    pass "$name"
+  else
+    fail "$name" "predicate accepted a symlinked run_id leaf"
+  fi
+  rm -rf "$root"
+}
+
+case_run_dir_symlink_free_rejects_symlinked_runs_parent() {
+  # Behavior: the runs/ directory itself being a symlink is rejected, even
+  # though the run_id leaf path underneath it looks completely ordinary --
+  # this is the exact swap that a canonicalize-and-compare check cannot
+  # detect (see the predicate's own comment for why), reproduced directly
+  # here rather than only through pmctl artifacts show's integration test.
+  local name="run-dir-symlink-free/rejects a symlinked runs/ parent"
+  should_run "$name" || return 0
+  local root outside run_dir runs_dir
+  root="$(mktemp -d)"
+  outside="$(mktemp -d)"
+  mkdir -p "$root/projects/key" "$outside/run-1"
+  runs_dir="$root/projects/key/runs"
+  ln -s "$outside" "$runs_dir"
+  run_dir="$runs_dir/run-1"
+  if ! sw_run_dir_symlink_free "$run_dir"; then
+    pass "$name"
+  else
+    fail "$name" "predicate accepted a symlinked runs/ parent"
+  fi
+  rm -rf "$root" "$outside"
+}
+
+case_run_dir_symlink_free_rejects_empty_input() {
+  local name="run-dir-symlink-free/rejects empty run_dir argument"
+  should_run "$name" || return 0
+  if ! sw_run_dir_symlink_free ""; then
+    pass "$name"
+  else
+    fail "$name" "predicate accepted an empty argument"
+  fi
+}
+
 # ---- 8: resolve-trace-dir precedence: explicit override wins ----
 case_trace_flag_wins() {
   # Behavior: a non-empty override (the --trace-dir value) beats env and legacy.
@@ -196,6 +266,10 @@ case_store_root_home
 case_run_dir_composition
 case_run_dir_rejections
 case_run_dir_legacy_leaf_compatibility
+case_run_dir_symlink_free_accepts_real_dirs
+case_run_dir_symlink_free_rejects_symlinked_leaf
+case_run_dir_symlink_free_rejects_symlinked_runs_parent
+case_run_dir_symlink_free_rejects_empty_input
 case_trace_flag_wins
 case_trace_env_wins
 case_trace_legacy_default

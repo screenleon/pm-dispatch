@@ -18,6 +18,16 @@ th_init "$@"
 # shellcheck source=runtime/lib/pmctl-artifacts.sh
 . "$REPO_ROOT/runtime/lib/pmctl-artifacts.sh"
 
+# CC-524's --json contract is asserted with jq -e below (a missing jq must
+# fail the check, not silently no-op it -- see the qa-tester-F001 lesson from
+# CC-567's gate saga, gate-20260825-154322-d2ff91: a test helper that treats
+# a missing parser as a passing assertion turns a real JSON-shape check into
+# an unverified pass).
+if ! command -v jq >/dev/null 2>&1; then
+  echo "FATAL: jq is required to run $(basename "${BASH_SOURCE[0]}") -- CC-524 JSON contract assertions depend on it" >&2
+  exit 1
+fi
+
 make_work_repo() {
   local path="$1"
   mkdir -p "$path"
@@ -1386,10 +1396,192 @@ case_inrepo_notice_emitted() {
   fi
 }
 
+
+# Behavior: CC-524 -- success prints "run root: <canonical-absolute-path>"
+# before any file rows, and that path is the real, existing run directory.
+case_artifacts_show_prints_run_root() {
+  local name="pmctl artifacts show: prints canonical run root before file rows"
+  should_run "$name" || return 0
+  local store work out err status=0 run_dir first_line
+  store="$tmp_root/state-root"
+  work="$tmp_root/work-root"
+  make_work_repo "$work"
+  write_run_file "$store" "$work" run-root ".gate-results/x.md" "abc"
+  run_dir="$(run_dir_for "$store" "$work" run-root)"
+  out="$tmp_root/root.out"; err="$tmp_root/root.err"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" artifacts show run-root --cd "$work" > "$out" 2> "$err" || status=$?
+  first_line="$(sed -n '1p' "$out")"
+  if [[ "$status" -eq 0 && "$first_line" == "run root: $run_dir" ]] &&
+     [[ -d "${first_line#run root: }" ]] &&
+     grep -Fq $'3\t.gate-results/x.md' "$out" && [[ ! -s "$err" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$(<"$out") err=$(<"$err") expected_dir=$run_dir"
+  fi
+}
+
+# Behavior: an empty run directory (no files) still prints the run root line
+# -- the Requirement text says this explicitly ("即使 run directory 為空也必須印
+# root"), and it is also the one case where the old code's early "return 0
+# before printing anything" branch could have silently swallowed the new line.
+case_artifacts_show_run_root_on_empty_run() {
+  local name="pmctl artifacts show: prints run root even for an empty run directory"
+  should_run "$name" || return 0
+  local store work out err status=0 run_dir
+  store="$tmp_root/state-empty-root"
+  work="$tmp_root/work-empty-root"
+  make_work_repo "$work"
+  run_dir="$(run_dir_for "$store" "$work" run-empty-root)"
+  mkdir -p "$run_dir"
+  out="$tmp_root/empty-root.out"; err="$tmp_root/empty-root.err"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" artifacts show run-empty-root --cd "$work" > "$out" 2> "$err" || status=$?
+  if [[ "$status" -eq 0 && "$(<"$out")" == "run root: $run_dir" && ! -s "$err" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$(<"$out") err=$(<"$err")"
+  fi
+}
+
+# Behavior: --json emits the stable locator contract (schema_version, run_id,
+# repo_root, run_root, files[]) and its run_root matches the human label
+# exactly (Requirement 2: "human label 與 JSON field 的 root 必須完全一致").
+case_artifacts_show_json_contract() {
+  local name="pmctl artifacts show --json: locator contract with human-matching run_root"
+  should_run "$name" || return 0
+  local store work out human_out err status=0 run_dir
+  store="$tmp_root/state-json"
+  work="$tmp_root/work-json"
+  make_work_repo "$work"
+  write_run_file "$store" "$work" run-json ".gate-results/x.md" "abc"
+  write_run_file "$store" "$work" run-json ".agent-trace/latest.jsonl" $'ab\n'
+  run_dir="$(run_dir_for "$store" "$work" run-json)"
+  out="$tmp_root/json.out"; err="$tmp_root/json.err"
+  human_out="$tmp_root/json-human.out"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" artifacts show run-json --cd "$work" --json > "$out" 2> "$err" || status=$?
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" artifacts show run-json --cd "$work" > "$human_out" 2>/dev/null
+  local human_root json_root
+  human_root="$(sed -n '1p' "$human_out")"
+  human_root="${human_root#run root: }"
+  json_root="$(jq -r '.run_root' "$out" 2>/dev/null)"
+  if [[ "$status" -eq 0 ]] &&
+     jq -e '.schema_version == 1
+            and .run_id == "run-json"
+            and (.repo_root | type == "string" and startswith("/"))
+            and (.run_root | type == "string" and startswith("/"))
+            and (.files | type == "array" and length == 2)
+            and (.files | map(.relative_path) | sort ==
+                 [".agent-trace/latest.jsonl", ".gate-results/x.md"])
+            and (.files[] | .size_bytes | type == "number")' "$out" >/dev/null 2>&1 &&
+     [[ "$json_root" == "$run_dir" && "$human_root" == "$json_root" ]] && [[ ! -s "$err" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$(<"$out") err=$(<"$err") human_root=$human_root json_root=$json_root"
+  fi
+}
+
+# Behavior: a symlinked PM_DISPATCH_STATE_ROOT is legitimate configuration --
+# the reported run_root must be the REAL physical path (resolved through the
+# symlink), not the symlink's own lexical path, so a copy-pasted path always
+# points at a real, existing directory regardless of how the state root is
+# configured.
+case_artifacts_show_resolves_symlinked_state_root() {
+  local name="pmctl artifacts show: symlinked state root resolves to the real physical run root"
+  should_run "$name" || return 0
+  local real_store store work out err status=0 run_dir_lexical run_dir_real
+  real_store="$tmp_root/real-store-target"
+  store="$tmp_root/state-link-parent/state-link"
+  mkdir -p "$real_store" "$tmp_root/state-link-parent"
+  ln -s "$real_store" "$store"
+  work="$tmp_root/work-symlinked-store"
+  make_work_repo "$work"
+  run_dir_lexical="$(run_dir_for "$store" "$work" run-symlinked-store)"
+  mkdir -p "$run_dir_lexical"
+  printf 'x' > "$run_dir_lexical/f.txt"
+  run_dir_real="$(cd "$run_dir_lexical" && pwd -P)"
+  out="$tmp_root/symlinked-store.out"; err="$tmp_root/symlinked-store.err"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" artifacts show run-symlinked-store --cd "$work" > "$out" 2> "$err" || status=$?
+  if [[ "$status" -eq 0 && "$(sed -n '1p' "$out")" == "run root: $run_dir_real" &&
+        "$run_dir_real" != "$run_dir_lexical" && ! -s "$err" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$(<"$out") err=$(<"$err") run_dir_real=$run_dir_real run_dir_lexical=$run_dir_lexical"
+  fi
+}
+
+# Behavior: security-relevant containment check -- if the project's runs/
+# directory itself has been replaced with a symlink pointing outside the
+# project partition (runs/ and the run_id leaf are pm-dispatch-owned
+# structure that should never themselves be symlinks, unlike the state root
+# above them, which legitimately can be), refuse with a non-zero exit and a
+# copyable recovery hint instead of reporting the foreign target as a
+# success locator. This is a reproduction of a real gap found during manual
+# testing: an earlier canonical-parent-equality containment check was
+# tautologically true even after this exact swap, because canonicalizing a
+# path that already traverses the swapped symlink just follows it.
+case_artifacts_show_rejects_symlinked_runs_dir() {
+  local name="pmctl artifacts show: refuses a runs/ directory swapped to an outside symlink"
+  should_run "$name" || return 0
+  local store work outside out err status=0 run_dir runs_dir
+  store="$tmp_root/state-escape"
+  work="$tmp_root/work-escape"
+  outside="$tmp_root/outside-escape"
+  make_work_repo "$work"
+  run_dir="$(run_dir_for "$store" "$work" run-escape)"
+  runs_dir="$(dirname "$run_dir")"
+  mkdir -p "$(dirname "$runs_dir")" "$outside/run-escape"
+  printf 'do-not-leak\n' > "$outside/run-escape/leak.txt"
+  ln -s "$outside" "$runs_dir"
+  out="$tmp_root/escape.out"; err="$tmp_root/escape.err"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" artifacts show run-escape --cd "$work" > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 && ! -s "$out" ]] &&
+     ! grep -Fq 'run root:' "$out" 2>/dev/null &&
+     grep -Fq 'unexpected symlink' "$err" &&
+     grep -Fq 'pmctl artifacts list' "$err"; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$(<"$out") err=$(<"$err")"
+  fi
+}
+
+# Behavior: a relative --cd invoked from a git subdirectory still produces
+# absolute repo_root/run_root values in --json (Requirement mentions relative
+# --cd and git subdirectory explicitly as configurations that must not
+# produce a lexical-only locator).
+case_artifacts_show_relative_cd_from_subdirectory() {
+  local name="pmctl artifacts show: relative --cd from a git subdirectory yields absolute JSON paths"
+  should_run "$name" || return 0
+  local store work out err status=0 run_dir
+  store="$tmp_root/state-relcd"
+  work="$tmp_root/work-relcd"
+  make_work_repo "$work"
+  mkdir -p "$work/sub/dir"
+  run_dir="$(run_dir_for "$store" "$work" run-relcd)"
+  mkdir -p "$run_dir"
+  printf 'x' > "$run_dir/f.txt"
+  out="$tmp_root/relcd.out"; err="$tmp_root/relcd.err"
+  (
+    cd "$work/sub/dir" &&
+    PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" artifacts show run-relcd --cd ../.. --json
+  ) > "$out" 2> "$err" || status=$?
+  if [[ "$status" -eq 0 ]] &&
+     jq -e '(.repo_root | startswith("/")) and (.run_root | startswith("/"))' "$out" >/dev/null 2>&1 &&
+     [[ "$(jq -r '.run_root' "$out")" == "$run_dir" ]] && [[ ! -s "$err" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$(<"$out") err=$(<"$err")"
+  fi
+}
+
 case_artifacts_list_newest_first
 case_artifacts_list_empty
 case_artifacts_show_files
 case_artifacts_show_missing
+case_artifacts_show_prints_run_root
+case_artifacts_show_run_root_on_empty_run
+case_artifacts_show_json_contract
+case_artifacts_show_resolves_symlinked_state_root
+case_artifacts_show_rejects_symlinked_runs_dir
+case_artifacts_show_relative_cd_from_subdirectory
 case_codex_watch_trace_flag
 case_codex_watch_run_flag
 case_codex_watch_auto_discover

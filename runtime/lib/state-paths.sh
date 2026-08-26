@@ -205,6 +205,44 @@ sw_project_run_dir() {
   printf '%s/projects/%s/runs/%s\n' "$(_sw_store_root)" "$(_sw_project_key)" "$run_id"
 }
 
+# sw_run_dir_symlink_free <run_dir>
+# Pure predicate (no printing, no resolution): true (0) unless <run_dir>
+# itself or its immediate parent -- the project's runs/ directory -- is
+# ITSELF a symlink. Callers holding a lexical path from sw_project_run_dir
+# call this before trusting it as a locator, a delete target, or a write
+# destination; they own their own error message and exit code, since that
+# differs by caller (a rejected symlink is a recoverable "run not found"
+# for `show`, for instance, distinct from an invalid run_id shape).
+#
+# Why this check, not a canonicalize-and-compare: the state root above
+# runs/ (PM_DISPATCH_STATE_ROOT, or an XDG_DATA_HOME-backed store) is
+# legitimate user configuration and MAY be a symlink -- resolving through it
+# is correct behavior, not a defect. But runs/ and the run_id leaf
+# underneath it are pm-dispatch-owned structure that should never
+# themselves be symlinks. Canonicalizing the full path and comparing it
+# against a canonicalization of its own lexical parent cannot tell these
+# two cases apart: canonicalizing a path that already traverses a swapped
+# runs/ symlink just faithfully follows it, so a "canonical parent ==
+# canonical runs dir" check is tautologically true even after runs/ itself
+# has been replaced with a symlink pointing entirely outside the project
+# partition. Only a direct lstat check on the specific pm-dispatch-owned
+# components catches that swap.
+#
+# CC-524 needed this for `pmctl artifacts show`'s locator contract; it is
+# placed here (not pmctl-artifacts.sh-local) because every other consumer
+# of sw_project_run_dir's lexical output has the same unguarded exposure --
+# gc and migrate mutate/delete based on that path, which is a materially
+# higher-severity version of the same gap `show` has when merely
+# displaying it. Wiring gc/migrate through this guard is left to a future
+# ticket (CC-524's own Non-goals exclude touching GC); this predicate
+# exists so that work does not have to re-derive or relocate the check.
+sw_run_dir_symlink_free() {
+  local run_dir="${1:-}" runs_dir
+  [[ -n "$run_dir" ]] || return 1
+  runs_dir="$(dirname "$run_dir")"
+  [[ ! -L "$run_dir" && ! -L "$runs_dir" ]]
+}
+
 # sw_resolve_trace_dir <override> <legacy_default> [work_dir]
 # Single source of truth for the dispatch/gate trace-output location and its
 # precedence — shared by every adapter and by post-verify so the rule is

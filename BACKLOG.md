@@ -22,7 +22,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-514 | ⚠️ partial 2026-08-24 | orthogonal delivery assurance map、machine-derived tables 與 feature/docs/high-risk recipes；Req 1-4/6/7 內容已交付，Req 5 cross-document lint 與 Req 6 drift ratchet 仍待 `/pre-impl` | docs/process | 2026-07-23 | pr:#522 | P2 | design |
 | CC-516 | ⏸ deferred | evidence-gated thin delivery wrapper 評估；只組合既有 primitives，不建立 workflow engine/FSM | ux/process | 2026-07-23 | — | P3 | spike |
 | CC-517 | ✅ done | maintainer `/ship`：primary review、structured remediation closure 與 conditional targeted confirmation | process/gate | 2026-07-23 | pr:#483, pr:#506 | P1 | design |
-| CC-524 | 🔵 active | `pmctl artifacts show` 顯示 canonical absolute run root 並提供穩定 machine-readable locator | ux/ops | 2026-07-27 | feedback:2026-07-27 | P2 | hygiene |
+| CC-524 | ✅ done | `pmctl artifacts show` 顯示 canonical absolute run root 並提供穩定 machine-readable locator | ux/ops | 2026-07-27 | feedback:2026-07-27, pr:#537 | P2 | hygiene |
 | CC-527 | ✅ done | targeted gate CLI 拆分 pass、reviewer coverage 與 tier；tier 由 current subject/policy 解析，initial result 僅為 remediation context | ux/gate | 2026-07-28 | pr:#472, pr:#476, pr:#482, pr:#505 | P2 | design |
 | CC-529 | ⚠️ partial 2026-08-15 | publish assurance observability：以 gate_publish_assessment_v1 將 ship stdout、PR body 與 finish marker 綁到同一份 verified assessment；仍需完成完整 producer/consumer dogfood | release/gate | 2026-07-30 | feedback:2026-07-30, pr:#484 | P2 | hygiene |
 | CC-532 | ✅ done | Linux/WSL2 repo-layout canonical Gate modules：options／policy／subject／scope／reviewer-contract／assurance 均有單一 source owner；standalone／copy parity 在 [[CC-546]] | arch/gate | 2026-07-30 | feedback:2026-07-30 | P1 | reuse-debt |
@@ -1884,7 +1884,7 @@ mutation 全部針對現有 `gate-closure.sh` 跑出預期方向，未發現任�
 
 ---
 
-## CC-524 — artifacts show canonical absolute run root 🔵 active
+## CC-524 — artifacts show canonical absolute run root
 
 **Framing**: 本票補齊 [[CC-418]] observer／discoverability 已交付後暴露的 locator
 缺口，不搬動 artifact、不改 state partition layout，也不把 `artifacts show`
@@ -1933,6 +1933,25 @@ state store、搜尋 target repo 或解析錯誤訊息。
 **Dependencies**: 延伸 [[CC-418]] 已建立的 artifacts observer 與
 `state-paths.sh` canonical partition seam；與 [[CC-515]] artifact
 freshness／applicability verifier 正交。P2。
+
+**Update 2026-08-26（done，pr:#537）**：五項 Requirement 全數交付。成功輸出在
+任何 file rows 前印 `run root: <canonical-absolute-path>`（含空 run 目錄情境）；
+新增 `--json` 回傳 `{schema_version,run_id,repo_root,run_root,files:
+[{relative_path,size_bytes}]}`，human 與 JSON 的 root 值完全一致；canonicalization
+重用既有 `realpath_m`（`portable.sh`），未新造第二套解析邏輯。containment 檢查
+過程中實測發現一個真的安全漏洞：把 canonical run_dir 的父目錄與 canonical
+runs_dir 做字串相等比對，在 `runs/` 本身被換成指向外部的 symlink 時是恆真的
+（兩邊都會忠實跟隨同一個被置換的 symlink），會讓外部檔案內容被當成合法
+"run root:" 成功輸出印出——已改用直接 lstat 檢查（`runs/` 目錄與 run_id leaf
+本身皆不得是 symlink），新增共用 predicate `sw_run_dir_symlink_free`（放在
+`state-paths.sh`、`sw_project_run_dir` 旁邊，因為 `gc`／`migrate` 共用同一條
+未防護的路徑、風險比唯讀的 `show`更高，留給未來票接上，不在本票 Non-goals
+範圍內擴大）。regression fixtures 涵蓋 symlinked state root（合法情境，需正確
+解析成真實路徑）、containment escape（需拒絕）、relative `--cd`、git
+subdirectory、空 run 目錄。pr-gate 首輪 GO（tier standard，critic／qa-tester／
+architecture-reviewer／security-reviewer 全數審查，兩個 advisory-only 發現
+不擋 merge：換行字元檔名邊界情境與既有的 same-host TOCTOU，皆記錄不修，理由
+見 PR）；`tests/bin/run-all-tests.sh` 104 passed 0 failed。
 
 ---
 
