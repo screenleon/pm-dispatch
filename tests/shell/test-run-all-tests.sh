@@ -78,6 +78,7 @@ SUITE_NAMES=(
   test-handover-validate
   test-dispatch-post-verify
   test-check-docs-freshness
+  test-check-policy-doc-sync
   test-skill-refine
   test-pr-gate-profile
   test-run-all-tests
@@ -203,6 +204,7 @@ suite_path() {
     test-runtime-lib-coverage) printf 'tests/shell/test-runtime-lib-coverage.sh\n' ;;
     test-test-harness) printf 'tests/shell/test-test-harness.sh\n' ;;
     test-check-docs-freshness) printf 'tests/shell/test-check-docs-freshness.sh\n' ;;
+    test-check-policy-doc-sync) printf 'tests/shell/test-check-policy-doc-sync.sh\n' ;;
     test-commands) printf 'tests/shell/test-commands.sh\n' ;;
     test-commands-runner) printf 'tests/shell/test-commands-runner.sh\n' ;;
     test-dispatch-handover) printf 'tests/shell/test-dispatch-handover.sh\n' ;;

@@ -1,6 +1,6 @@
 # Delivery assurance map
 
-> Provenance (2026-08-24): this content reflects the shipped state of CC-511 Phase B, CC-517, CC-520-522, CC-527, and CC-529; it is the runtime-aligned finalization content pass, and the drift-ratchet mechanism from Requirement 6 is not yet implemented.
+> Provenance (2026-08-27): this content reflects the shipped state of CC-511 Phase B, CC-517, CC-520-522, CC-527, and CC-529, plus the drift-ratchet lint added afterward (`tools/lint/check-policy-doc-sync.sh`).
 
 Delivery assurance is a set of orthogonal coordinates and evidence chains, not one linear mandatory workflow or a synonym for a command exiting zero. A result can be sound on one dimension while another is `not_run`, `stale`, or `incomplete`.
 
@@ -25,7 +25,7 @@ Manual evidence is deliberately bounded: put a checklist result in the PR and re
 
 ## Policy reference values
 
-No automated lint currently verifies that these markers stay in sync with their source files — that enforcement is a tracked follow-up, not yet built.
+`tools/lint/check-policy-doc-sync.sh` verifies every marked block below still matches its named source file, byte-for-byte; a new marked block anywhere in a tracked doc is picked up automatically, with no separate registration step.
 
 <!-- BEGIN GENERATED: core/policy/gate-tiers.tsv -->
 | tier | default_reviewers | evidence_floor |

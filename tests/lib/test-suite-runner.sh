@@ -74,6 +74,7 @@ SUITE_NAMES=(
   test-handover-validate
   test-dispatch-post-verify
   test-check-docs-freshness
+  test-check-policy-doc-sync
   test-skill-refine
   test-pr-gate-profile
   test-run-all-tests
@@ -181,6 +182,7 @@ declare -A SUITE_PATHS=(
   [test-handover-validate]="tests/shell/test-handover-validate.sh"
   [test-dispatch-post-verify]="tests/shell/test-dispatch-post-verify.sh"
   [test-check-docs-freshness]="tests/shell/test-check-docs-freshness.sh"
+  [test-check-policy-doc-sync]="tests/shell/test-check-policy-doc-sync.sh"
   [test-skill-refine]="tests/shell/test-skill-refine.sh"
   [test-pr-gate-profile]="tests/shell/test-pr-gate-profile.sh"
   [test-run-all-tests]="tests/shell/test-run-all-tests.sh"
