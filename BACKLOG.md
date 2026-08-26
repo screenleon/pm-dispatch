@@ -107,7 +107,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-568 | 🟢 someday | `/mem-distill` Case→Strategy 機械式提升：對 `episodes.jsonl` 既有結構化欄位做 count/cluster 門檻判定，取代逐次主觀「感覺像 pattern」的判斷；依賴 [[CC-567]] 的 outcome 證據決定是否值得做（2026-08-25 memory 架構設計討論） | memory/DX | 2026-08-25 | — | P2 | retrieval |
 | CC-569 | 🟢 someday | `pmctl task` / `context pack` 擴充 working-memory 敘事欄位（`selected_memories`／`rejected_paths`／`blockers`／`next_action`）：延伸既有 schema，不新建第二個「現在在幹嘛」真相來源；依賴 [[CC-567]] 證明有價值後再排（2026-08-25 memory 架構設計討論） | memory/DX | 2026-08-25 | — | P2 | design |
 | CC-570 | 🟢 someday | Fact/Case/Strategy `memory_function`／`memory_subtype` metadata 分類法：先蒐集 [[CC-567]] 的 applied/outcome 證據，再決定值不值得建分類機制——不憑直覺先建立稅務式標籤（2026-08-25 memory 架構設計討論；外部文章優先序建議相反，本 repo 刻意反過來） | memory/DX | 2026-08-25 | — | P3 | retrieval |
-| CC-571 | 🔵 active | `_ctx_fts_rebuild`／`_ctx_index_file` 共用的 sqlite atomic-script 缺口：DROP+CREATE+INSERT 未加 `-bail`（實測 sqlite3 CLI 預設不會在錯誤時中止，單靠 BEGIN/COMMIT 不足）、呼叫端不檢查回傳值、`_ctx_index_file` 還有第三個獨立 bug（`rm -f` 蓋掉 sqlite3 真實 exit code）；`/simplify` altitude review 抓到手足函式同缺陷，範圍已擴大涵蓋兩者（[[CC-548]] spike 的 Open risks 側面發現，非本票 tokenizer 範圍） | memory/ops | 2026-08-26 | — | P2 | hygiene |
+| CC-571 | ✅ done | `_ctx_fts_rebuild`／`_ctx_index_file` 共用的 sqlite atomic-script 缺口：DROP+CREATE+INSERT 未加 `-bail`（實測 sqlite3 CLI 預設不會在錯誤時中止，單靠 BEGIN/COMMIT 不足）、呼叫端不檢查回傳值、`_ctx_index_file` 還有第三個獨立 bug（`rm -f` 蓋掉 sqlite3 真實 exit code）；`/simplify` altitude review 抓到手足函式同缺陷，範圍已擴大涵蓋兩者（[[CC-548]] spike 的 Open risks 側面發現，非本票 tokenizer 範圍） | memory/ops | 2026-08-26 | pr:#539 | P2 | hygiene |
 
 ---
 
@@ -3335,7 +3335,7 @@ machinery，是憑一篇文章的直覺蓋機制，屬於本 repo 已經吃過�
 
 ---
 
-## CC-571 — sqlite atomic-script 缺口：`_ctx_fts_rebuild`／`_ctx_index_file` 🔵 active
+## CC-571 — sqlite atomic-script 缺口：`_ctx_fts_rebuild`／`_ctx_index_file`
 
 **Problem**: `runtime/lib/pmctl-context.sh` 的 `_ctx_fts_rebuild()` 對
 `content_fts` 做 `DROP TABLE` → `CREATE VIRTUAL TABLE` → 兩個 `INSERT ... SELECT`，
@@ -3392,5 +3392,18 @@ best-effort 加速層，宣稱「re-indexed」等於說謊）。新增對應 reg
 **Cross-link**: [[CC-548]]（spike 中發現本缺口，Open risks 段落）。也可見
 `runtime/lib/memory.sh` 的 `memory_usage_commit`（既有的 `-bail` atomic-script
 先例，本票的 helper 命名與理由都直接引用它，而非各自重新推導）。
+
+**Update 2026-08-26（done，pr:#539）**：pr-gate 5 輪後 GO（critic／qa-tester／
+architecture-reviewer／security-reviewer 全數 approve）。前兩輪是真實發現並已修正：
+round 1 critic-F001——stderr 有印降級訊息，但 stdout 的成功摘要行本身仍是無條件
+「N indexed, M skipped」，對只看 stdout／exit code 的呼叫端是矛盾摘要，改成把降級
+狀態直接併入 stdout 摘要行本身；round 2 critic-F001——首次建置索引失敗時（rebuild
+前 `content_fts` 根本不存在），訊息卻說「現有索引維持」，改為依 rebuild 前是否已有
+`content_fts` 分支措辭。中間另有 3 輪是 gate 執行環境本身的 synthesis 協定不穩定
+（`apply_patch` 在同一份 result 檔案上多次操作互相衝突、`findings_union`/
+`disagreement` 結構不一致），與程式碼無關，重跑收斂。`tests/bin/run-all-tests.sh`
+104 passed 0 failed。狀態旗標本次於 main 更新後立即補記——同一 session 已因此類
+漏更新撞過三次（CC-567／CC-533／CC-015），這次差點又漏，補上教訓：**合併前**就該
+在 PR 裡帶上狀態翻轉，合併後才想起來永遠比合併前想起來更容易忘記。
 
 ---
