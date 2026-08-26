@@ -315,12 +315,23 @@ gh pr create --title "<type>(<ticket-id>): <short summary>" --body "$(cat <<'EOF
 - Rounds: <N>
 - Final verdict: GO
 - Result file: <path from the last /pr-gate relay>
+- Permanent test admissions: <one line per finding whose remedy was assessed against Step 2.5 — admitted lines name the criteria met, alternative lines name the alternative taken and why; `none` ONLY when no finding this round needed the assessment at all>
 - Full suite: <passed count and authoritative result artifact>
 
 Ticket: <ticket-id>
 EOF
 )"
 ```
+
+**The "Permanent test admissions" line is not optional filler** — Step 2.5
+required this record at the point each finding was remediated, and this
+template field exists so composing the PR body forces a check for it: a
+gate round with no finding whose remedy could have been a new permanent
+test gets `none`; every other round gets one line per such finding, whether
+it was admitted or resolved by a recorded alternative — `none` never stands
+in for an alternative-path finding's own record, and the citation is carried
+over from Step 2.5, not re-derived or skipped because that paragraph is
+several screens back by now.
 
 Do not merge. GO is not merge authorization — merge only when the user
 explicitly says so.
