@@ -552,6 +552,7 @@ test_default_worker_cap() {
   mkdir -p "$root/bin" "$barrier"
   printf '0' > "$barrier/count"
   mkfifo "$barrier/release.fifo"
+  mkfifo "$barrier/ack.fifo"
   # The barrier pairs workers strictly by arrival order, so the fixture's
   # total shell-file count (these five plus the three fixture_repo already
   # creates) must be even -- an odd file out would have no partner to
@@ -585,14 +586,24 @@ serialize_with_lock "\$barrier/lock" register_arrival
 count="\$(<"\$mine")"
 rm -f "\$mine"
 
-exec {relfd}<>"\$barrier/release.fifo"
+exec {relfd}<>"\$barrier/release.fifo" {ackfd}<>"\$barrier/ack.fifo"
 if [[ "\$count" -eq 1 ]]; then
   if ! read -r -t 5 -u "\$relfd" _; then
     printf 'shellcheck-stub: timed out waiting for a second concurrent worker\n' >&2
     exit 1
   fi
+  printf '\n' >&"\$ackfd"
 else
   printf '\n' >&"\$relfd"
+  # Wait for the released worker's own ack before either side deregisters --
+  # without this, the releaser can decrement and exit before the released
+  # worker's read has actually returned, closing the overlap window before a
+  # genuinely-concurrent third worker (were the cap to regress) has a chance
+  # to register while both are still counted active.
+  if ! read -r -t 5 -u "\$ackfd" _; then
+    printf 'shellcheck-stub: timed out waiting for released worker ack\n' >&2
+    exit 1
+  fi
 fi
 
 deregister() {

@@ -482,7 +482,13 @@ production 本來就在用的可攜式鎖，而非另外重造一個）原子遞
 一起往下跑；全程沒有任何 `sleep`。斷言也從 `max_active >= 1` 收緊為
 `max_active == 2`（原本的門檻對「有沒有真的重疊」其實是無鑑別力的）。若上限
 真的退化成 1，第二個 worker 永遠不會出現，逾時後乾脆失敗且訊息明確，而非無界
-等待。範圍如票面 Requirement 3 所限，未動 `lint-shellcheck.sh` 本身的併發實作。
+等待。gate 第二輪 qa-tester 進一步指出：release 的一方寫完信號就立刻繼續走向
+deregister，並未等對方真的醒來，若上限退化成 3，前兩個 worker 有機會在第三個
+worker 搶到鎖之前就雙雙 deregister，讓事件記錄看起來仍是 2；修法是加第二個
+FIFO 做 ack 交握——release 方在放行後阻塞讀 ack，等對方真的從 barrier 醒來並
+回覆才繼續，兩邊因此保證同時退場，不會有一方搶先鬆手。已用 `jobs` 改 3 的
+mutation 直接驗證：max_active 從 2 變成可觀測到 6，測試如預期紅燈。範圍如票面
+Requirement 3 所限，未動 `lint-shellcheck.sh` 本身的併發實作。
 
 ---
 
