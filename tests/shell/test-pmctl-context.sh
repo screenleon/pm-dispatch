@@ -4354,6 +4354,242 @@ case_context_fts5_availability_is_cached() {
   pass "$name"
 }
 
+# Behavior (CC-571): _ctx_fts_rebuild wraps its DROP+CREATE+INSERT sequence
+# in BEGIN IMMEDIATE/COMMIT and invokes sqlite3 with -bail. Without -bail,
+# direct reproduction during implementation showed the sqlite3 CLI's default
+# behavior on a mid-script SQL error is to print the error and KEEP
+# executing subsequent statements -- it does not stop -- so a bare
+# BEGIN...COMMIT alone would still reach and execute COMMIT after silently
+# skipping the failed statement, committing a half-built content_fts. With
+# -bail, an error aborts before COMMIT, leaving the transaction open; the
+# sqlite3 process exiting then closes the connection, which triggers an
+# automatic ROLLBACK, leaving the previous content_fts fully intact.
+# Steps: index a real fixture repo (creates a real content_fts with real
+# rows); drop the `files` table `_ctx_fts_rebuild`'s INSERT...JOIN depends on
+# to force a genuine SQL failure mid-rebuild; call `_ctx_fts_rebuild` again
+# directly; assert it returns non-zero AND the old content_fts row is still
+# present and queryable (not half-built, not dropped-and-not-recreated).
+case_ctx_fts_rebuild_rollback_preserves_old_index_on_failure() {
+  local name="pmctl context: _ctx_fts_rebuild rolls back on failure, preserving the previous index"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-fts-rollback"
+  make_fixture_repo "$fix_repo"
+  local err="$tmp_root/fts-rollback-setup.err"
+  "$PMCTL" context index "$fix_repo" > /dev/null 2> "$err" \
+    || { fail "$name" "setup: initial index failed: $(<"$err")"; return 0; }
+
+  local db="$fix_repo/.pm-dispatch/ctx/context.db"
+  local before_rows
+  before_rows="$(sqlite3 "$db" "SELECT count(*) FROM content_fts;" 2>/dev/null)"
+  if [[ -z "$before_rows" || "$before_rows" -eq 0 ]]; then
+    fail "$name" "setup: expected a populated content_fts after initial index, got $before_rows rows"
+    return 0
+  fi
+
+  # Force a genuine mid-rebuild SQL failure: the rebuild's own INSERT...JOIN
+  # against `files` can no longer resolve once that table is gone.
+  sqlite3 "$db" "DROP TABLE files;" 2>/dev/null \
+    || { fail "$name" "setup: could not drop files table"; return 0; }
+
+  local out
+  out="$tmp_root/fts-rollback.out"
+  bash -c '
+    set -uo pipefail
+    # shellcheck source=runtime/lib/pmctl-context.sh
+    . "$1/lib/pmctl-context.sh"
+    _ctx_fts_rebuild "$2"
+    echo "rc=$?"
+  ' bash "$REPO_ROOT/runtime" "$(ctx_fixture_target "$db")" > "$out" 2>>"$err" || true
+
+  local rc
+  rc="$(grep '^rc=' "$out" | cut -d= -f2)"
+  if [[ "$rc" -eq 0 ]]; then
+    fail "$name" "_ctx_fts_rebuild reported success (rc=0) despite the forced SQL failure"
+    return 0
+  fi
+
+  local after_rows
+  after_rows="$(sqlite3 "$db" "SELECT count(*) FROM content_fts;" 2>/dev/null)"
+  if [[ "$after_rows" != "$before_rows" ]]; then
+    fail "$name" "content_fts row count changed after a failed rebuild: before=$before_rows after=$after_rows (expected unchanged -- rollback should have preserved it)"
+    return 0
+  fi
+  pass "$name"
+}
+
+# Behavior (CC-571): _ctx_index_file's own return code must reflect whether
+# its sqlite3 write actually succeeded, not the unconditional `rm -f` cleanup
+# that used to be the function's last statement (confirmed by direct
+# reproduction during implementation: `sqlite3 <fails>; rm -f "$tmpf"` as a
+# function body always returns 0, the exit status of `rm`, regardless of
+# whether sqlite3 succeeded). Steps: index a real fixture repo; drop the
+# `symbols` table so _ctx_generate_file_sql's own INSERT statements fail;
+# call _ctx_index_file directly (white-box); assert it returns non-zero.
+case_ctx_index_file_return_code_reflects_sqlite_failure() {
+  local name="pmctl context: _ctx_index_file's return code reflects the actual sqlite3 result, not rm's"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-index-file-rc"
+  make_fixture_repo "$fix_repo"
+  local err="$tmp_root/index-file-rc-setup.err"
+  "$PMCTL" context index "$fix_repo" > /dev/null 2> "$err" \
+    || { fail "$name" "setup: initial index failed: $(<"$err")"; return 0; }
+
+  local db="$fix_repo/.pm-dispatch/ctx/context.db"
+  local target="$fix_repo/scripts/lib/mymodule.sh"
+  sqlite3 "$db" "DROP TABLE symbols;" 2>/dev/null \
+    || { fail "$name" "setup: could not drop symbols table"; return 0; }
+
+  local out
+  out="$tmp_root/index-file-rc.out"
+  bash -c '
+    set -uo pipefail
+    # shellcheck source=runtime/lib/pmctl-context.sh
+    . "$1/lib/pmctl-context.sh"
+    _ctx_index_file "$2" "$3" "scripts/lib/mymodule.sh"
+    echo "rc=$?"
+  ' bash "$REPO_ROOT/runtime" "$(ctx_fixture_target "$db")" "$(ctx_fixture_target "$target")" \
+    > "$out" 2>>"$err" || true
+
+  local rc
+  rc="$(grep '^rc=' "$out" | cut -d= -f2)"
+  if [[ "$rc" -eq 0 ]]; then
+    fail "$name" "_ctx_index_file reported success (rc=0) despite the forced sqlite3 failure"
+    return 0
+  fi
+  pass "$name"
+}
+
+# Behavior (CC-571): unlike a failed FTS rebuild (best-effort, non-fatal),
+# a failed _ctx_index_file writes the primary files/symbols/file_chunks
+# data -- pmctl_context_update must treat it as fatal and must NOT print
+# "context update: re-indexed <path>" when the file's content was not
+# actually reflected in the index.
+case_context_update_fails_honestly_when_index_file_fails() {
+  local name="pmctl context update: fails (does not claim re-indexed) when _ctx_index_file fails"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-update-index-file-fail"
+  make_fixture_repo "$fix_repo"
+  local err="$tmp_root/update-index-file-fail-setup.err"
+  "$PMCTL" context index "$fix_repo" > /dev/null 2> "$err" \
+    || { fail "$name" "setup: initial index failed: $(<"$err")"; return 0; }
+
+  local target="$fix_repo/scripts/lib/mymodule.sh"
+  local out status=0
+  out="$tmp_root/update-index-file-fail.out"
+  bash -c '
+    set -uo pipefail
+    # shellcheck source=runtime/lib/pmctl-context.sh
+    . "$1/lib/pmctl-context.sh"
+    _ctx_index_file() { return 1; }
+    pmctl_context_update "$2" "$3"
+  ' bash "$REPO_ROOT/runtime" "$(ctx_fixture_target "$fix_repo")" "$(ctx_fixture_target "$target")" \
+    > "$out" 2> "$err" || status=$?
+
+  if [[ "$status" -eq 0 ]]; then
+    fail "$name" "pmctl_context_update exited 0 despite a failed _ctx_index_file; expected non-zero. out=$(<"$out")"
+    return 0
+  fi
+  if grep -q '^context update: re-indexed' "$out"; then
+    fail "$name" "claimed 're-indexed' success despite a failed _ctx_index_file: $(<"$out")"
+    return 0
+  fi
+  if ! grep -q 'failed to index' "$err"; then
+    fail "$name" "expected an honest failure message on stderr; got: $(<"$err")"
+    return 0
+  fi
+  pass "$name"
+}
+
+# Behavior (CC-571): pmctl_context_index must not report a bare "context
+# index: N indexed, M skipped" success line when the FTS rebuild it
+# triggered actually failed -- the previous behavior silently ignored
+# _ctx_fts_rebuild's return value entirely. Overall indexing must still
+# succeed (FTS is a best-effort acceleration layer; LIKE fallback remains
+# available), but stderr must honestly say the FTS index is now stale.
+# Steps: shadow _ctx_fts_rebuild to always fail (white-box, matching this
+# file's existing sqlite3-shadowing pattern); run pmctl_context_index on a
+# fresh fixture repo (which will trigger an FTS rebuild since content_fts
+# does not exist yet); assert exit 0 (non-fatal) and the honest stderr
+# message.
+case_context_index_reports_fts_rebuild_failure_honestly() {
+  local name="pmctl context index: reports (not silently absorbs) an FTS rebuild failure"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-fts-index-honest"
+  make_fixture_repo "$fix_repo"
+
+  local out err status=0
+  out="$tmp_root/fts-index-honest.out"; err="$tmp_root/fts-index-honest.err"
+  bash -c '
+    set -uo pipefail
+    # shellcheck source=runtime/lib/pmctl-context.sh
+    . "$1/lib/pmctl-context.sh"
+    _ctx_fts_rebuild() { return 1; }
+    pmctl_context_index "$2"
+  ' bash "$REPO_ROOT/runtime" "$(ctx_fixture_target "$fix_repo")" > "$out" 2> "$err" || status=$?
+
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "pmctl_context_index exited $status; expected 0 (FTS failure must be non-fatal). err=$(<"$err")"
+    return 0
+  fi
+  if ! grep -q 'FTS index rebuild failed' "$err"; then
+    fail "$name" "expected an honest FTS-rebuild-failure message on stderr; got: $(<"$err")"
+    return 0
+  fi
+  if ! grep -q '^context index: ' "$out"; then
+    fail "$name" "expected the normal 'context index: N indexed, M skipped' summary line to still print; got: $(<"$out")"
+    return 0
+  fi
+  pass "$name"
+}
+
+# Behavior (CC-571): same honest-reporting contract as
+# case_context_index_reports_fts_rebuild_failure_honestly, but for
+# pmctl_context_update's independent call site -- both call sites had the
+# identical unchecked-return-value gap before this fix, and CC-521's own
+# lesson (grep every consumer, not just one) applies here.
+case_context_update_reports_fts_rebuild_failure_honestly() {
+  local name="pmctl context update: reports (not silently absorbs) an FTS rebuild failure"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-fts-update-honest"
+  make_fixture_repo "$fix_repo"
+  local err="$tmp_root/fts-update-honest-setup.err"
+  "$PMCTL" context index "$fix_repo" > /dev/null 2> "$err" \
+    || { fail "$name" "setup: initial index failed: $(<"$err")"; return 0; }
+
+  local target="$fix_repo/scripts/lib/mymodule.sh"
+  printf '\n# touched for CC-571 update-path test\n' >> "$target"
+
+  local out status=0
+  out="$tmp_root/fts-update-honest.out"
+  bash -c '
+    set -uo pipefail
+    # shellcheck source=runtime/lib/pmctl-context.sh
+    . "$1/lib/pmctl-context.sh"
+    _ctx_fts_rebuild() { return 1; }
+    pmctl_context_update "$2" "$3"
+  ' bash "$REPO_ROOT/runtime" "$(ctx_fixture_target "$fix_repo")" "$(ctx_fixture_target "$target")" \
+    > "$out" 2> "$err" || status=$?
+
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "pmctl_context_update exited $status; expected 0 (FTS failure must be non-fatal). err=$(<"$err")"
+    return 0
+  fi
+  if ! grep -q 'FTS index rebuild failed' "$err"; then
+    fail "$name" "expected an honest FTS-rebuild-failure message on stderr; got: $(<"$err")"
+    return 0
+  fi
+  if ! grep -q '^context update: re-indexed' "$out"; then
+    fail "$name" "expected the normal 'context update: re-indexed ...' line to still print; got: $(<"$out")"
+    return 0
+  fi
+  pass "$name"
+}
+
 # Behavior (CC-505 Req 2/3 gate finding qa-tester-F001): _ctx_rank_hits is the
 # ONE shared sort+truncate path every consumer (query/pack/reuse-scan/
 # prompt-scan) calls. A comparator, tie-break, rank-numbering, or limit
@@ -5523,6 +5759,11 @@ case_context_prompt_scan_no_sqlite_graceful
 case_context_prompt_scan_secret_never_persisted
 case_context_prompt_scan_emits_event
 case_context_fts5_availability_is_cached
+case_ctx_fts_rebuild_rollback_preserves_old_index_on_failure
+case_ctx_index_file_return_code_reflects_sqlite_failure
+case_context_update_fails_honestly_when_index_file_fails
+case_context_index_reports_fts_rebuild_failure_honestly
+case_context_update_reports_fts_rebuild_failure_honestly
 case_context_rank_hits_orders_and_truncates
 case_context_pack_ranking_fields_are_valid
 case_context_pack_default_budget_does_not_truncate
