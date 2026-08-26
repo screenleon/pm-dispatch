@@ -473,15 +473,16 @@ pre-existing 缺陷、與 ShellCheck 解析改動無關，且改法本身有風�
 
 **Cross-link**: [[CC-551]]（發現時點）、[[CC-543]]（bounded handshake 的既有教訓）。
 
-**Update 2026-08-26（done，pr:#pending）**: stub `shellcheck` 改用檔案式 barrier
-（flock 序列化的計數器 + release sentinel），每個 worker 在起跑時先原子遞增計
-數並記錄觀測值，計數達 2 才建立 release、所有等待者才一起放行；斷言改為
-`max_active == 2`（原本的 `>= 1` 對「有沒有真的重疊」是無鑑別力的）。等待
-release 設 5 秒有界逾時，失敗訊息明確——若上限真的退化成 1，逾時後乾脆失敗而
-非無界等待，避開 [[CC-543]] 記錄過的 FIFO handshake hang 形狀（本設計不用
-FIFO，全程只靠一般檔案 + `flock`，因此不會撞上「parent 需在 fork 前對 FIFO 持
-有 O_RDWR」那個坑）。範圍如票面 Requirement 3 所限，未動
-`lint-shellcheck.sh` 本身的併發實作。
+**Update 2026-08-26（done，pr:#pending）**: stub `shellcheck` 改用事件式
+barrier：每個 worker 起跑時先透過既有的 `serialize_with_lock`（沿用
+production 本來就在用的可攜式鎖，而非另外重造一個）原子遞增計數並記錄觀測值；
+第一個抵達的 worker 對一個雙向開啟（`<>`，避免只用唯讀/唯寫端造成 open()
+本身卡住——這正是 [[CC-543]] 記錄過的 FIFO handshake hang 形狀）的 FIFO 做
+有界（5 秒逾時）阻塞式 `read`，第二個抵達的 worker 寫入一行將其釋放，兩者才
+一起往下跑；全程沒有任何 `sleep`。斷言也從 `max_active >= 1` 收緊為
+`max_active == 2`（原本的門檻對「有沒有真的重疊」其實是無鑑別力的）。若上限
+真的退化成 1，第二個 worker 永遠不會出現，逾時後乾脆失敗且訊息明確，而非無界
+等待。範圍如票面 Requirement 3 所限，未動 `lint-shellcheck.sh` 本身的併發實作。
 
 ---
 

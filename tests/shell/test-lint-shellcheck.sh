@@ -533,13 +533,16 @@ test_worker_override_ceiling() {
 }
 
 # Behavior: the local linter does not turn host CPU count into unbounded parallelism.
-# Steps: use an instrumented ShellCheck stub whose invocations hold at a shared
-# file-based barrier until exactly two are concurrently registered, then all
-# release together. This makes the two-way overlap a deterministic property of
-# the barrier protocol rather than a hope that a fixed sleep window lines up
-# with host scheduling. If the real cap ever collapses to one, no second
-# worker ever registers, so the lone worker waits at the barrier until a
-# bounded deadline expires and fails with a clear message instead of hanging.
+# Steps: use an instrumented ShellCheck stub whose invocations register at a
+# shared counter (guarded by the repo's own serialize_with_lock, so this stays
+# on the same portable-locking primitive production code already depends on)
+# and block on a blocking FIFO read -- never a sleep loop -- until a second
+# concurrent worker signals release. This makes the two-way overlap a
+# deterministic property of the barrier protocol rather than a hope that a
+# fixed sleep window lines up with host scheduling. If the real cap ever
+# collapses to one, no second worker ever arrives to signal release, so the
+# lone worker's bounded FIFO read times out and fails with a clear message
+# instead of hanging.
 test_default_worker_cap() {
   local name="lint-shellcheck/default-worker-cap" root events barrier output status=0 max_active
   should_run "$name" || return 0
@@ -548,46 +551,57 @@ test_default_worker_cap() {
   barrier="$root/barrier"
   mkdir -p "$root/bin" "$barrier"
   printf '0' > "$barrier/count"
-  for n in 1 2 3 4; do
+  mkfifo "$barrier/release.fifo"
+  # The barrier pairs workers strictly by arrival order, so the fixture's
+  # total shell-file count (these five plus the three fixture_repo already
+  # creates) must be even -- an odd file out would have no partner to
+  # release it.
+  for n in 1 2 3 4 5; do
     printf '#!/usr/bin/env bash\nset -euo pipefail\n' > "$root/tests/worker-$n.sh"
   done
-  cat > "$root/bin/shellcheck" <<'STUB'
+  cat > "$root/bin/shellcheck" <<STUB
 #!/usr/bin/env bash
 set -euo pipefail
-if [[ "${1:-}" == --version ]]; then
+if [[ "\${1:-}" == --version ]]; then
   printf 'ShellCheck\nversion: 0.11.0\n'
   exit 0
 fi
-events="${SHELLCHECK_EVENTS:?}"
-barrier="${SHELLCHECK_BARRIER_DIR:?}"
-lock="$barrier/lock"
-counter="$barrier/count"
-release="$barrier/release"
+# shellcheck source=/dev/null
+. "$REPO_ROOT/runtime/lib/portable.sh"
+events="\${SHELLCHECK_EVENTS:?}"
+barrier="\${SHELLCHECK_BARRIER_DIR:?}"
+counter="\$barrier/count"
+mine="\$barrier/count.\$\$"
 
-exec {lockfd}>"$lock"
-flock "$lockfd"
-count=$(<"$counter")
-count=$((count + 1))
-printf '%s' "$count" > "$counter"
-printf 'active %s\n' "$count" >> "$events"
-[[ "$count" -lt 2 ]] || : > "$release"
-flock -u "$lockfd"
+register_arrival() {
+  local count
+  count=\$(<"\$counter")
+  count=\$((count + 1))
+  printf '%s' "\$count" > "\$counter"
+  printf 'active %s\n' "\$count" >> "\$events"
+  printf '%s' "\$count" > "\$mine"
+}
+serialize_with_lock "\$barrier/lock" register_arrival
+count="\$(<"\$mine")"
+rm -f "\$mine"
 
-deadline=$((SECONDS + 5))
-until [[ -e "$release" ]]; do
-  if [[ "$SECONDS" -ge "$deadline" ]]; then
+exec {relfd}<>"\$barrier/release.fifo"
+if [[ "\$count" -eq 1 ]]; then
+  if ! read -r -t 5 -u "\$relfd" _; then
     printf 'shellcheck-stub: timed out waiting for a second concurrent worker\n' >&2
     exit 1
   fi
-  sleep 0.02
-done
+else
+  printf '\n' >&"\$relfd"
+fi
 
-exec {lockfd}>"$lock"
-flock "$lockfd"
-count=$(<"$counter")
-count=$((count - 1))
-printf '%s' "$count" > "$counter"
-flock -u "$lockfd"
+deregister() {
+  local count
+  count=\$(<"\$counter")
+  count=\$((count - 1))
+  printf '%s' "\$count" > "\$counter"
+}
+serialize_with_lock "\$barrier/lock" deregister
 STUB
   chmod +x "$root/bin/shellcheck"
   # Assert the built-in default, not an override inherited from the caller.
