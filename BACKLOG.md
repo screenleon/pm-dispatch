@@ -40,7 +40,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-560 | ✅ done | `_gate_scope_reference_index_collect` 每筆 reference 都以 `jq -nc` 建一個 JSON 物件（實測 4.9s×2），與 [[CC-557]] 已修掉的 `_gate_scope_expansion_append` 是同一類寫法；CC-557 未一併處理是因預算餘裕已足，非因不成立 | ops/gate | 2026-08-19 | pr:#511 | P3 | hygiene |
 | CC-554 | 🔵 active | 永久 regression test 缺少准入門檻：`/ship` 規範「修完每個 finding」但不規範修法形式，reviewer 每提一個邊界就永久長一個阻擋 case，case 又需要 meta-test 保護；QA 規則加六條准入條件＋五條替代路徑，ship.md 加對應例外（明確不設輪數上限，見 [[CC-544]]） | ops/gate | 2026-08-17 | — | P1 | hygiene |
 | CC-552 | 🔵 active | `test_default_worker_cap` 以 `sleep 0.1` 製造 worker 重疊窗口來驗證併發上限，違反 QA 規則的「不得以 sleep 同步」；主機負載會改變觀測到的重疊數，與 worker-cap 正確性無關（2026-08-17 CC-551 gate round 4 qa-tester，pre-existing） | ops/test | 2026-08-17 | — | P3 | hygiene |
-| CC-548 | 🔵 active | context.db FTS5 對 CJK 查詢無索引無排序（[[CC-465]] Requirement 3 殘留）：先 spike 驗 `tokenize='trigram'` 的 sqlite 版本下限與 index rebuild 成本，再決定是否實作 | memory | 2026-08-16 | — | P2 | retrieval |
+| CC-548 | ✅ closed 2026-08-26 | **[context.db FTS5 對 CJK 查詢無索引無排序]** Spike 判定 **AMBER — defer，暫不實作**：無 sqlite 版本下限硬衝突，rebuild 遷移成本為零，但實測 trigram rebuild 慢 ~4.9x、索引大 +32.6%，而品質增益在本 repo 實際語料上僅小幅（68 筆抽樣命中中多 1 筆），且原票「unicode61 無 ranking」前提經量測不成立。See `docs/spikes/CC-548.md`. | memory | 2026-08-16 | — | P2 | retrieval |
 | CC-466 | ⏸ deferred | 記憶卡片生命週期閉環：expires_at 執行 + 關窗式 supersede + usage sidecar 休眠偵測 + doctor→distill 接線；僅在 CC-467 證明 stale/dormant card 已形成實際問題時啟動 | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-468 | ⏸ deferred | dispatch brief 帶 memory 約束與信任邊界；完成 CC-465→CC-467 後，僅在 usage evidence 證明有價值時啟動 | ops/memory | 2026-07-07 | — | P2 | retrieval |
 | CC-011 | 🟢 someday | sync-memory.sh + install 選項：symlink memory 到雲端資料夾實現跨裝置共用 | ux/memory | 2026-05-14 | — | — | — |
@@ -475,7 +475,7 @@ pre-existing 缺陷、與 ShellCheck 解析改動無關，且改法本身有風�
 
 ---
 
-## CC-548 — context.db FTS5 對 CJK 查詢無索引無排序 🔵 active
+## CC-548 — context.db FTS5 對 CJK 查詢無索引無排序（spike）✅ 2026-08-26
 
 **Problem**: [[CC-465]] 修好了注入排序與 prompt/reuse-scan 的 CJK 抽詞，但沒有動
 FTS5 索引層。`context.db` 的 FTS5 表使用 unicode61 tokenizer，對整段中文只會產生
@@ -497,9 +497,21 @@ tokenizer 行為「視為與共用 lib 分離的關注點，允許各自的修�
    可省略而直接重建、重建期間的查詢行為）。
 3. Spike 產出 `docs/spikes/CC-548.md` 的 GREEN/AMBER/RED 判定；只有判定為值得做時
    才開實作切片，不因票已存在自動實作。
+- Result log: docs/spikes/CC-548.md — **AMBER，defer**。sqlite trigram 版本下限
+  （3.34.0）對 `docs/platform-support.md` 宣稱的支援平台無硬衝突（該文件未釘選
+  sqlite 最低版本），且 `_ctx_fts5_available()` 既有 probe/fallback idiom 可廉價
+  延伸出三層降級路徑；`_ctx_fts_rebuild()` 本就每次全量 DROP+recreate，切換
+  tokenizer 遷移成本為零。但在本 repo 真實語料（64MB、19806 筆 content_fts）實測：
+  rebuild 慢 ~4.9x（0.87s→4.24s）、索引檔大 +32.6%，查詢期間可能撞見表格不存在
+  的既有 race window 也隨之等比放大（仍為既有缺口，非本票新增）。品質面：5 個真實
+  中文詞抽樣（~68 筆命中）僅 1 筆因 unicode61 把連續中文段落當成單一不可分 token
+  而漏收；`bm25()` 在 unicode61 下已有非退化排序——原票「無 ranking」前提經量測不
+  成立。效益真實但目前偏小、成本非零，故未達開實作切片門檻；不因票已存在自動實作。
 
 **Cross-link**: [[CC-465]]（本票承接其 Requirement 3 殘留）、[[CC-340]]（deferred；
 embeddings/semantic backend——本票是索引層 tokenizer 修正，不是其替代）。
+
+**See**: `docs/spikes/CC-548.md`（AMBER, defer）。
 
 ---
 
