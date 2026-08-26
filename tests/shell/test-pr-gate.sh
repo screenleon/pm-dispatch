@@ -120,24 +120,24 @@ done
 reviewer_name="$(awk '$1 == "Reviewer:" { print $2; exit }' "$brief_file")"
 : "${reviewer_name:=stub-reviewer}"
 
-# CC-572: record whether the synthesis/sequential result path exists on disk
-# at the very start of THIS dispatch (before this stub or anything else in
-# this invocation touches it) -- the property a synthesis retry must uphold
-# is that the path is gone (not just empty) before the retry's own write
+# Record whether the synthesis/sequential result path exists on disk at the
+# very start of THIS dispatch (before this stub or anything else in this
+# invocation touches it) -- the property a synthesis retry must uphold is
+# that the path is gone (not just empty) before the retry's own write
 # begins. Must run before any other block below that might create the file.
 if [[ -n "${CODEX_GATE_CAPTURE_OUTPUT_EXISTS_DIR:-}" ]] \
     && { [[ "$brief_file" == *-synthesis.md ]] || grep -q '^goal: Sequential ' "$brief_file"; }; then
-  _cc572_output_path=$(grep -o '\- new:.*' "$brief_file" | head -1 | awk '{print $NF}')
+  _output_exists_path=$(grep -o '\- new:.*' "$brief_file" | head -1 | awk '{print $NF}')
   mkdir -p "$CODEX_GATE_CAPTURE_OUTPUT_EXISTS_DIR"
   # Each gate run's synthesis dispatches at most twice (initial + one
   # retry), so a fixed first/second pair of files is simpler than a
   # counted/globbed sequence for a caller that only ever expects two checks.
-  _cc572_state="exists"
-  [[ -n "$_cc572_output_path" && -e "$_cc572_output_path" ]] || _cc572_state="absent"
+  _output_exists_state="exists"
+  [[ -n "$_output_exists_path" && -e "$_output_exists_path" ]] || _output_exists_state="absent"
   if [[ ! -e "$CODEX_GATE_CAPTURE_OUTPUT_EXISTS_DIR/first" ]]; then
-    printf '%s\n' "$_cc572_state" > "$CODEX_GATE_CAPTURE_OUTPUT_EXISTS_DIR/first"
+    printf '%s\n' "$_output_exists_state" > "$CODEX_GATE_CAPTURE_OUTPUT_EXISTS_DIR/first"
   else
-    printf '%s\n' "$_cc572_state" > "$CODEX_GATE_CAPTURE_OUTPUT_EXISTS_DIR/second"
+    printf '%s\n' "$_output_exists_state" > "$CODEX_GATE_CAPTURE_OUTPUT_EXISTS_DIR/second"
   fi
 fi
 
@@ -11908,17 +11908,17 @@ test_parallel_synthesis_retry_brief_bounds_long_reason() {
   pass "$name"
 }
 
-# Behavior (CC-572): a synthesis retry (either mode) must remove
-# $OUTPUT_FILE before re-dispatching, not just leave the first attempt's
-# content sitting on disk. Observed in production: an executor's patch tool
-# can choose an "Update File" operation against a path that still exists
-# (even truncated to empty), and that operation then fails outright because
-# there is no matching content to locate -- a hard tool failure unrelated to
-# the actual synthesis content. Only full removal forces an unambiguous
+# Behavior: a synthesis retry (either mode) must remove $OUTPUT_FILE before
+# re-dispatching, not just leave the first attempt's content sitting on
+# disk. Observed in production: an executor's patch tool can choose an
+# "Update File" operation against a path that still exists (even truncated
+# to empty), and that operation then fails outright because there is no
+# matching content to locate -- a hard tool failure unrelated to the
+# actual synthesis content. Only full removal forces an unambiguous
 # "Add File" the same way a brand-new path would.
 # Steps: force a first-attempt synthesis failure (existing malformed-seed
-# mutation); the CC-572 capture hook in the stub records, at the very start
-# of EACH synthesis dispatch (before the stub or anything else writes to the
+# mutation); the capture hook in the stub records, at the very start of
+# EACH synthesis dispatch (before the stub or anything else writes to the
 # path), whether $OUTPUT_FILE existed at that instant. Assert the first
 # check says "exists" (the reviewer-append step already wrote content before
 # synthesis attempt 1 runs) and the second (retry) check says "absent".
@@ -11957,12 +11957,12 @@ _test_synthesis_retry_removes_output_file_before_redispatch() {
   pass "$name"
 }
 
-# Behavior: parallel-mode wrapper for the shared CC-572 check above.
+# Behavior: parallel-mode wrapper for the shared check above.
 test_parallel_synthesis_retry_removes_output_file_before_redispatch() {
   _test_synthesis_retry_removes_output_file_before_redispatch parallel synthesis-protocol
 }
 
-# Behavior: sequential-mode wrapper for the shared CC-572 check above.
+# Behavior: sequential-mode wrapper for the shared check above.
 test_sequential_synthesis_retry_removes_output_file_before_redispatch() {
   _test_synthesis_retry_removes_output_file_before_redispatch sequential sequential-protocol
 }

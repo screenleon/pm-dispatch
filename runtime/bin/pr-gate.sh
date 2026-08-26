@@ -804,14 +804,14 @@ gate_dispatch_command() {
   fi
 }
 
-# CC-572: removing the path (not truncating it) matters -- observed in
-# production, an executor's patch tool can choose an "Update File"
-# operation (which locates existing content to edit) against a path that
-# still EXISTS on disk, even truncated to 0 bytes -- and that operation
-# then fails ("Failed to find expected lines", "invalid patch: multiple
-# operations target <file>") because there is no content to locate. Only
-# removing the path forces an unambiguous "Add File", matching the
-# reviewer-retry path's already-reliable brand-new-filename behavior.
+# Removing the path (not truncating it) matters -- observed in production,
+# an executor's patch tool can choose an "Update File" operation (which
+# locates existing content to edit) against a path that still EXISTS on
+# disk, even truncated to 0 bytes -- and that operation then fails
+# ("Failed to find expected lines", "invalid patch: multiple operations
+# target <file>") because there is no content to locate. Only removing the
+# path forces an unambiguous "Add File", matching the reviewer-retry path's
+# already-reliable brand-new-filename behavior.
 gate_clear_retry_target() {
   rm -f "$1"
 }
@@ -2757,7 +2757,7 @@ BRIEF_EOF
     # APPEND for the rest, so a retry must start from a clean slate:
     # appending to a rejected, half-ordered one compounds the defect the
     # retry exists to fix. See gate_clear_retry_target for why this removes
-    # the path rather than truncating it (CC-572).
+    # the path rather than truncating it.
     gate_clear_retry_target "$OUTPUT_FILE"
     # Same trust boundary as the parallel retry: the reason quotes ids read
     # from the rejected artifact, so flatten newlines and bound the length
@@ -3636,7 +3636,7 @@ SBRIEF_P2
       # brand-new path, e.g. reviewer-<name>-<ts>-retry1.md), the synthesis
       # retry re-dispatches to the SAME fixed $OUTPUT_FILE path. See
       # gate_clear_retry_target for why this removes the path rather than
-      # leaving attempt 1's content in place (CC-572). The brief already
+      # leaving attempt 1's content in place. The brief already
       # tells the model to rebuild every field fresh from the embedded
       # reviewer context, so nothing here depends on attempt 1's on-disk
       # content surviving into attempt 2.
