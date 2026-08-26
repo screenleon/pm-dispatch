@@ -11957,10 +11957,12 @@ _test_synthesis_retry_removes_output_file_before_redispatch() {
   pass "$name"
 }
 
+# Behavior: parallel-mode wrapper for the shared CC-572 check above.
 test_parallel_synthesis_retry_removes_output_file_before_redispatch() {
   _test_synthesis_retry_removes_output_file_before_redispatch parallel synthesis-protocol
 }
 
+# Behavior: sequential-mode wrapper for the shared CC-572 check above.
 test_sequential_synthesis_retry_removes_output_file_before_redispatch() {
   _test_synthesis_retry_removes_output_file_before_redispatch sequential sequential-protocol
 }
