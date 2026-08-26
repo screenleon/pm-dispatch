@@ -39,7 +39,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-562 | ✅ done | synthesis／reviewer 驗證器仍有多個「多約束共用單一 reason 字串」分支（`invalid coverage matrix`、`invalid finding inventory or union`、`duplicate finding ID collision`、`selected/not-reviewed dimensions mismatch`），單次修正重試收到後無法行動；[[CC-553]] Req 2 判定需同等精度但屬不同 helper 形狀（逐項指出違規條目，非集合差集），故分票 | ops/gate | 2026-08-19 | pr:#510 | P3 | hygiene |
 | CC-560 | ✅ done | `_gate_scope_reference_index_collect` 每筆 reference 都以 `jq -nc` 建一個 JSON 物件（實測 4.9s×2），與 [[CC-557]] 已修掉的 `_gate_scope_expansion_append` 是同一類寫法；CC-557 未一併處理是因預算餘裕已足，非因不成立 | ops/gate | 2026-08-19 | pr:#511 | P3 | hygiene |
 | CC-554 | 🔵 active | 永久 regression test 缺少准入門檻：`/ship` 規範「修完每個 finding」但不規範修法形式，reviewer 每提一個邊界就永久長一個阻擋 case，case 又需要 meta-test 保護；QA 規則加六條准入條件＋五條替代路徑，ship.md 加對應例外（明確不設輪數上限，見 [[CC-544]]） | ops/gate | 2026-08-17 | — | P1 | hygiene |
-| CC-552 | 🔵 active | `test_default_worker_cap` 以 `sleep 0.1` 製造 worker 重疊窗口來驗證併發上限，違反 QA 規則的「不得以 sleep 同步」；主機負載會改變觀測到的重疊數，與 worker-cap 正確性無關（2026-08-17 CC-551 gate round 4 qa-tester，pre-existing） | ops/test | 2026-08-17 | — | P3 | hygiene |
+| CC-552 | ✅ done | `test_default_worker_cap` 以 `sleep 0.1` 製造 worker 重疊窗口來驗證併發上限，違反 QA 規則的「不得以 sleep 同步」；主機負載會改變觀測到的重疊數，與 worker-cap 正確性無關（2026-08-17 CC-551 gate round 4 qa-tester，pre-existing） | ops/test | 2026-08-17 | — | P3 | hygiene |
 | CC-548 | ✅ closed 2026-08-26 | **[context.db FTS5 對 CJK 查詢無索引無排序]** Spike 判定 **AMBER — defer，暫不實作**：無 sqlite 版本下限硬衝突，rebuild 遷移成本為零，但實測 trigram rebuild 慢 ~4.9x、索引大 +32.6%，而品質增益在本 repo 實際語料上僅小幅（68 筆抽樣命中中多 1 筆），且原票「unicode61 無 ranking」前提經量測不成立。See `docs/spikes/CC-548.md`. | memory | 2026-08-16 | — | P2 | retrieval |
 | CC-466 | ⏸ deferred | 記憶卡片生命週期閉環：expires_at 執行 + 關窗式 supersede + usage sidecar 休眠偵測 + doctor→distill 接線；僅在 CC-467 證明 stale/dormant card 已形成實際問題時啟動 | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-468 | ⏸ deferred | dispatch brief 帶 memory 約束與信任邊界；完成 CC-465→CC-467 後，僅在 usage evidence 證明有價值時啟動 | ops/memory | 2026-07-07 | — | P2 | retrieval |
@@ -451,7 +451,7 @@ qa-tester／risk-reviewer 連擋並全數 revert。減量要從 finding 端做�
 
 ---
 
-## CC-552 — worker-cap 測試以 sleep 製造重疊窗口 🔵 active
+## CC-552 — worker-cap 測試以 sleep 製造重疊窗口
 
 **Problem**: `tests/shell/test-lint-shellcheck.sh` 的 `test_default_worker_cap`
 用 ShellCheck stub 內的 `sleep 0.1` 撐開一個時間窗，好讓兩個 worker 的
@@ -472,6 +472,16 @@ pre-existing 缺陷、與 ShellCheck 解析改動無關，且改法本身有風�
 3. 僅限本測試，不改 `lint-shellcheck.sh` 的併發實作。
 
 **Cross-link**: [[CC-551]]（發現時點）、[[CC-543]]（bounded handshake 的既有教訓）。
+
+**Update 2026-08-26（done，pr:#pending）**: stub `shellcheck` 改用檔案式 barrier
+（flock 序列化的計數器 + release sentinel），每個 worker 在起跑時先原子遞增計
+數並記錄觀測值，計數達 2 才建立 release、所有等待者才一起放行；斷言改為
+`max_active == 2`（原本的 `>= 1` 對「有沒有真的重疊」是無鑑別力的）。等待
+release 設 5 秒有界逾時，失敗訊息明確——若上限真的退化成 1，逾時後乾脆失敗而
+非無界等待，避開 [[CC-543]] 記錄過的 FIFO handshake hang 形狀（本設計不用
+FIFO，全程只靠一般檔案 + `flock`，因此不會撞上「parent 需在 fork 前對 FIFO 持
+有 O_RDWR」那個坑）。範圍如票面 Requirement 3 所限，未動
+`lint-shellcheck.sh` 本身的併發實作。
 
 ---
 

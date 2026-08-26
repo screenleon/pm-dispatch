@@ -533,13 +533,21 @@ test_worker_override_ceiling() {
 }
 
 # Behavior: the local linter does not turn host CPU count into unbounded parallelism.
-# Steps: use an instrumented ShellCheck stub; assert the default never exceeds two workers.
+# Steps: use an instrumented ShellCheck stub whose invocations hold at a shared
+# file-based barrier until exactly two are concurrently registered, then all
+# release together. This makes the two-way overlap a deterministic property of
+# the barrier protocol rather than a hope that a fixed sleep window lines up
+# with host scheduling. If the real cap ever collapses to one, no second
+# worker ever registers, so the lone worker waits at the barrier until a
+# bounded deadline expires and fails with a clear message instead of hanging.
 test_default_worker_cap() {
-  local name="lint-shellcheck/default-worker-cap" root events output status=0 max_active
+  local name="lint-shellcheck/default-worker-cap" root events barrier output status=0 max_active
   should_run "$name" || return 0
   root="$(fixture_repo worker-cap)"
   events="$root/events.log"
-  mkdir -p "$root/bin"
+  barrier="$root/barrier"
+  mkdir -p "$root/bin" "$barrier"
+  printf '0' > "$barrier/count"
   for n in 1 2 3 4; do
     printf '#!/usr/bin/env bash\nset -euo pipefail\n' > "$root/tests/worker-$n.sh"
   done
@@ -551,20 +559,46 @@ if [[ "${1:-}" == --version ]]; then
   exit 0
 fi
 events="${SHELLCHECK_EVENTS:?}"
-printf 'start %s\n' "$$" >> "$events"
-sleep 0.1
-printf 'end %s\n' "$$" >> "$events"
+barrier="${SHELLCHECK_BARRIER_DIR:?}"
+lock="$barrier/lock"
+counter="$barrier/count"
+release="$barrier/release"
+
+exec {lockfd}>"$lock"
+flock "$lockfd"
+count=$(<"$counter")
+count=$((count + 1))
+printf '%s' "$count" > "$counter"
+printf 'active %s\n' "$count" >> "$events"
+[[ "$count" -lt 2 ]] || : > "$release"
+flock -u "$lockfd"
+
+deadline=$((SECONDS + 5))
+until [[ -e "$release" ]]; do
+  if [[ "$SECONDS" -ge "$deadline" ]]; then
+    printf 'shellcheck-stub: timed out waiting for a second concurrent worker\n' >&2
+    exit 1
+  fi
+  sleep 0.02
+done
+
+exec {lockfd}>"$lock"
+flock "$lockfd"
+count=$(<"$counter")
+count=$((count - 1))
+printf '%s' "$count" > "$counter"
+flock -u "$lockfd"
 STUB
   chmod +x "$root/bin/shellcheck"
   # Assert the built-in default, not an override inherited from the caller.
   output="$(env -u PM_DISPATCH_SHELLCHECK_JOBS PATH="$root/bin:$PATH" SHELLCHECK_EVENTS="$events" \
+    SHELLCHECK_BARRIER_DIR="$barrier" \
     bash "$root/tools/lint/lint-shellcheck.sh" --repo "$root" 2>&1)" || status=$?
   max_active="$(awk '
-    $1 == "start" { active++; if (active > max) max = active }
-    $1 == "end" { active-- }
+    $1 == "active" && $2 > max { max = $2 }
     END { print max + 0 }
   ' "$events")"
-  if [[ "$status" -eq 0 && "$max_active" -le 2 && "$max_active" -ge 1 ]]; then
+  if [[ "$status" -eq 0 && "$max_active" -eq 2 ]]; then
     pass "$name"
   else
     fail "$name" "status=$status max_active=$max_active output=$output"
