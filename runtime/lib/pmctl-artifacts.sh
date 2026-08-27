@@ -6,6 +6,12 @@ if ! declare -F serialize_with_lock >/dev/null 2>&1; then
   . "${BASH_SOURCE[0]%/*}/portable.sh" 2>/dev/null || true
 fi
 
+if ! declare -F gate_result_locate_file >/dev/null 2>&1; then
+  # shellcheck source=runtime/lib/gate-result-read.sh
+  # shellcheck disable=SC1091
+  . "${BASH_SOURCE[0]%/*}/gate-result-read.sh" 2>/dev/null || true
+fi
+
 pmctl_artifacts_usage() {
   printf 'usage: pmctl artifacts list [--cd <work_dir>]\n' >&2
   printf '       pmctl artifacts show <run_id> [--cd <work_dir>] [--json]\n' >&2
@@ -365,54 +371,13 @@ _pmctl_artifacts_run_duration_seconds() {
   fi
 }
 
-_pmctl_artifacts_gate_result_file() {
-  local run_dir="${1:-}"
-  find "$run_dir/.gate-results" -maxdepth 1 -name 'gate-*.md' -type f 2>/dev/null | sort | tail -1
-}
-
-# Prints "reviewer: verdict" lines from the frontmatter `reviewers:` block.
-# Reuses the fenced-frontmatter convention gate-result-verify.sh already
-# parses with _gate_result_frontmatter_value; this walks the one nested map
-# that helper doesn't cover.
-_pmctl_artifacts_gate_reviewers_lines() {
-  local gate_file="${1:-}"
-  awk '
-    BEGIN { s = 0; in_reviewers = 0 }
-    /^---$/ { if (s == 0) { s = 1; next } else if (s == 1) { exit } }
-    s && /^reviewers:/ { in_reviewers = 1; next }
-    s && in_reviewers && /^[a-zA-Z_]/ { in_reviewers = 0 }
-    s && in_reviewers && /^[[:space:]]+[a-zA-Z0-9_-]+:/ {
-      line = $0
-      sub(/^[[:space:]]+/, "", line)
-      print line
-    }
-  ' "$gate_file"
-}
-
-# Best-effort finding-count-by-severity, grouped by reviewer. Degrades to the
-# JSON string "unavailable" (never to an empty/zero result, which would read
-# as "no findings" instead of "could not extract") when no reviewer_result_v1
-# block is present or a block fails to parse -- schema has drifted across
-# gate_result_version v1-v5 and old runs may not have parseable blocks.
-_pmctl_artifacts_gate_findings_by_severity() {
-  local gate_file="${1:-}" blocks
-  blocks="$(awk '
-    /^```reviewer_result_v1$/ { grab = 1; next }
-    grab && /^```$/ { grab = 0; next }
-    grab { print }
-  ' "$gate_file")"
-  if [[ -z "$blocks" ]]; then
-    printf '"unavailable"'
-    return 0
-  fi
-  if ! printf '%s' "$blocks" | jq -s -c '
-      [ .[] | {reviewer, findings: (.findings // [])} ]
-      | map({reviewer, counts: ((.findings | group_by(.severity)
-          | map({(.[0].severity): length}) | add) // {})})
-    ' 2>/dev/null; then
-    printf '"unavailable"'
-  fi
-}
+# The gate-result extraction helpers below are the canonical implementations in
+# runtime/lib/gate-result-read.sh (sourced at the top of this file). These
+# `_pmctl_artifacts_*` names are kept as thin aliases so existing call sites in
+# this file stay put while pmctl-gate-stats.sh shares the same parser.
+_pmctl_artifacts_gate_result_file() { gate_result_locate_file "$@"; }
+_pmctl_artifacts_gate_reviewers_lines() { gate_result_reviewer_lines "$@"; }
+_pmctl_artifacts_gate_findings_by_severity() { gate_result_findings_by_severity "$@"; }
 
 # Extracts one run's summary as a single JSON line. Never touches the run
 # directory itself -- pure read, safe to call from --dry-run.

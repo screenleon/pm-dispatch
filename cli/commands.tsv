@@ -44,6 +44,7 @@ gate verify	Assess artifact validity, subject freshness, and consumer applicabil
 gate wait	Wait for a detached gate run.	pmctl gate wait <gate-id> [options]	experimental	false	true	--cd, --timeout	pmctl gate wait gate-123 --cd .
 gate cancel	Stop the verified gate producer process tree, then cancel only its recorded child runs; partial termination stays indeterminate.	pmctl gate cancel <operation-id> --cd <dir> [--grace <seconds>]	experimental	false	true	--cd, --grace	pmctl gate cancel op-20260724T000000Z-abcdef --cd .
 gate reconcile	Reconcile a gate operation from trusted child terminal claims.	pmctl gate reconcile <operation-id> --cd <dir>	experimental	false	true	--cd	pmctl gate reconcile op-20260724T000000Z-abcdef --cd .
+gate stats	Aggregate operational cost of past PR-gate runs from on-disk artifacts.	pmctl gate stats [--since <date>] [--json] [--cd <dir>]	experimental	true	false	--since, --json, --cd	pmctl gate stats --since 2026-08-01 --json
 context index	Build the repository context index.	pmctl context index [<repo-root>] [--source <repo|memory>]	experimental	false	true	--source	pmctl context index . --source repo
 context update	Update the repository context index.	pmctl context update [<repo-root>] [<path>]	experimental	false	true	none	pmctl context update . README.md
 context status	Show context index status.	pmctl context status [<repo-root>] [--json]	experimental	true	false	--json	pmctl context status . --json
