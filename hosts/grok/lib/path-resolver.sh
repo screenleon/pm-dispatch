@@ -3,18 +3,7 @@
 # environment rules into the shared manifest reader.
 
 grok_host_config_root() {
-  local root="${GROK_HOME:-}"
-
-  if [[ -z "$root" ]]; then
-    if [[ -n "${HOME:-}" ]]; then
-      root="$HOME/.grok"
-    else
-      printf 'grok path resolver: HOME is required when GROK_HOME is unset or empty\n' >&2
-      return 2
-    fi
-  fi
-
-  printf '%s\n' "$root"
+  host_simple_config_root grok GROK_HOME .grok
 }
 
 grok_host_resolve_path() {

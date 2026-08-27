@@ -739,6 +739,7 @@ test_hooks_failure_preserves_manifest() {
   cp "$REPO_ROOT/runtime/lib/portable.sh" "$mock_repo/runtime/lib/portable.sh"
   cp "$REPO_ROOT/runtime/lib/install-receipt.sh" "$mock_repo/runtime/lib/install-receipt.sh"
   cp "$REPO_ROOT/runtime/lib/host-manifest.sh" "$mock_repo/runtime/lib/host-manifest.sh"
+  cp "$REPO_ROOT/runtime/lib/host-resolver.sh" "$mock_repo/runtime/lib/host-resolver.sh"
   cp "$REPO_ROOT/runtime/lib/host-write.sh" "$mock_repo/runtime/lib/host-write.sh"
   cp "$REPO_ROOT/hosts/claude/lib/path-resolver.sh" "$mock_repo/hosts/claude/lib/path-resolver.sh"
   printf 'install_module: hosts/claude/bin/install-guards.sh\nuninstall_module: hosts/claude/bin/uninstall-guards.sh\n' \

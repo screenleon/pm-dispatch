@@ -31,7 +31,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-535 | 🟢 someday | detached-launch 上的 supervised-run primitive + versioned JSON run-spec | arch/ops | 2026-07-30 | feedback:2026-07-30 | P2 | design |
 | CC-536 | 🟢 someday | 擴充 Adapter SDK 的 shared lifecycle／manifest／trace contract，保留 executor-native behavior | arch/reuse | 2026-07-30 | feedback:2026-07-30 | P2 | reuse-debt |
 | CC-537 | 🟢 someday | suite metadata 與 changed-path impact mapping 資料化；full suite 維持 authoritative | ops/test | 2026-07-30 | feedback:2026-07-30 | P2 | hygiene |
-| CC-538 | 🟢 someday | Host resolver／doctor 共用 primitives，Host policy 繼續由各 Host 擁有 | arch/ops | 2026-07-30 | feedback:2026-07-30 | P2 | reuse-debt |
+| CC-538 | ✅ done | Host resolver／doctor 共用 primitives，Host policy 繼續由各 Host 擁有 | arch/ops | 2026-07-30 | feedback:2026-07-30, pr:#TBD | P2 | reuse-debt |
 | CC-539 | 🟢 someday | state `layout.yaml` build-time authority + generated runtime constants | arch/schema | 2026-07-30 | feedback:2026-07-30 | P2 | design |
 | CC-540 | ✅ done | `pmctl state prune`：刪除前先抽取+驗證 gate/dispatch run 摘要，避免歷史分析資料隨磁碟空間一起消失 | ops/gate | 2026-07-31 | pr:#515 | P2 | hygiene |
 | CC-546 | ⏸ deferred | standalone Gate distribution／copy parity follow-up：獨立定義 bundle schema、generation、installed parity 與 support boundary；不回併 Linux/WSL2 canonical module extraction | arch/gate | 2026-08-14 | — | P2 | reuse-debt |
@@ -2564,7 +2564,26 @@ planner又以另一個大型 `case` 維護 path→suite mapping。Lint可以比�
 
 ---
 
-## CC-538 — Host resolver／doctor shared primitives 🟢 someday
+## CC-538 — Host resolver／doctor shared primitives ✅ 2026-08-27
+
+**See**: pr:#TBD
+
+**Closure (2026-08-27)**: `runtime/lib/host-resolver.sh` holds the parameterised
+`host_simple_config_root <label> <env> <subdir>` extracted from the byte-identical
+codex/grok/opencode `*_host_config_root` bodies (3 consumers); Claude keeps its
+own canonical/legacy dual-var resolver (Req 1). `runtime/lib/host-doctor-primitives.sh`
+holds the shared jq path-normalize / `--host` strip fragments (4 / 3 consumers) and
+`host_doctor_filter_non_executable` (2 consumers); the 1-consumer variant
+`normalize_path` in `hosts/claude/lib/doctor.sh` stays local per Req 4.
+`host_manifest_target_path` in `host-manifest.sh` replaces the "scan
+install_targets, match, expand" loop opencode ×3 + grok ×1 each re-implemented.
+No host-name `case` enters shared code (Req 3); each host keeps its labels,
+env-var names, defaults, allow-lists and messages. New
+`tests/shell/test-host-resolver.sh` covers simple-resolver parity, a structural
+no-host-switch guard, Claude conflict semantics, and concurrent-failure
+diagnostic isolation (Req 4). Gate: full-tier GO round 3 (round 1 NO-GO on a
+shared-`/tmp` stderr path in the new suite; fixed with per-call `mktemp` + a
+concurrency regression case).
 
 **Problem**: Codex、OpenCode與Grok的root resolver幾乎使用相同演算法，只差env、
 default subdirectory與label；doctor modules也重複path normalization、command

@@ -88,6 +88,7 @@ SUITE_NAMES=(
   test-reasoning-effort
   test-core-schemas
   test-host-manifest
+  test-host-resolver
   test-host-write-codex
   test-codex-dispatch-continuation
   test-host-write-opencode
@@ -196,6 +197,7 @@ declare -A SUITE_PATHS=(
   [test-reasoning-effort]="tests/shell/test-reasoning-effort.sh"
   [test-core-schemas]="tests/shell/test-core-schemas.sh"
   [test-host-manifest]="tests/shell/test-host-manifest.sh"
+  [test-host-resolver]="tests/shell/test-host-resolver.sh"
   [test-host-write-codex]="tests/shell/test-host-write-codex.sh"
   [test-codex-dispatch-continuation]="tests/shell/test-codex-dispatch-continuation.sh"
   [test-host-write-opencode]="tests/shell/test-host-write-opencode.sh"

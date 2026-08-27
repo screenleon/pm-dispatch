@@ -15,14 +15,7 @@
 # state, not an install defect.
 
 _doctor_host_grok_config_path() {
-  local manifest="$REPO_ROOT/hosts/grok/host.yaml"
-  local id path fmt _managed
-  while IFS=$'\t' read -r id path fmt _managed; do
-    [[ "$id" == "config" && "$fmt" == "grok-config-toml" ]] || continue
-    host_manifest_expand_path "$REPO_ROOT" grok "$path"
-    return 0
-  done < <(host_manifest_install_targets "$manifest")
-  return 1
+  host_manifest_target_path "$REPO_ROOT" grok config grok-config-toml
 }
 
 _doctor_host_grok_binary() {

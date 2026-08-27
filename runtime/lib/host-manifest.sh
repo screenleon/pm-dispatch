@@ -20,6 +20,16 @@
 #                                             -> expands one validated leading token
 #   host_manifest_expand_path <repo_root> <host> <path_template>
 #                                             -> delegates expansion to the host-owned resolver
+#   host_manifest_target_path <repo_root> <host> <id> [format] [managed]
+#                                             -> expands the install_target matching id (and
+#                                                optional format/managed); returns 1 if none match
+
+# The simple-shape config-root resolver shared by the host-owned path modules
+# (codex/grok/opencode). Sourced here so every consumer of this reader gets it
+# transitively; the resolver never branches on a host name.
+# shellcheck source=runtime/lib/host-resolver.sh
+# shellcheck disable=SC1091
+. "${BASH_SOURCE[0]%/*}/host-resolver.sh"
 
 host_manifest_names() {
   local repo_root="$1" dir name
@@ -111,6 +121,25 @@ host_manifest_install_targets() {
   ' "$file"
 }
 
+# Find one install_target by id (and optionally format and managed flag) and
+# return its expanded path. Host modules keep ownership of WHICH id/format they
+# care about; this centralizes the identical "scan install_targets, match, expand"
+# loop the host doctor modules each re-implement. Returns 1 when no row matches.
+host_manifest_target_path() {
+  local repo_root="$1" host="$2" want_id="$3" want_fmt="${4:-}" want_managed="${5:-}"
+  local manifest id path fmt managed
+  manifest="$(host_manifest_file "$repo_root" "$host")"
+  [[ -f "$manifest" ]] || return 1
+  while IFS=$'\t' read -r id path fmt managed; do
+    [[ "$id" == "$want_id" ]] || continue
+    [[ -z "$want_fmt" || "$fmt" == "$want_fmt" ]] || continue
+    [[ -z "$want_managed" || "$managed" == "$want_managed" ]] || continue
+    host_manifest_expand_path "$repo_root" "$host" "$path"
+    return $?
+  done < <(host_manifest_install_targets "$manifest")
+  return 1
+}
+
 # Expand only a leading manifest token. Host modules retain ownership of the
 # environment/default/alias rules that produce <root>; this helper centralizes
 # the identical, security-sensitive prefix substitution without naming a host
@@ -142,7 +171,7 @@ host_manifest_expand_path() {
     printf 'host manifest: unsafe path_resolver_function for %s: %s\n' "$host" "$resolver" >&2
     return 2
   }
-  # shellcheck disable=SC1090
+  # shellcheck disable=SC1090,SC1091
   . "$module_path"
   declare -F "$resolver" >/dev/null 2>&1 || {
     printf 'host manifest: path resolver function for %s is not defined: %s\n' "$host" "$resolver" >&2

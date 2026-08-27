@@ -110,9 +110,6 @@ HOME	HOME	hosts/claude/hooks/save-rate-limits.sh	production
 HOME	HOME	hosts/claude/lib/doctor.sh	production
 HOME	HOME	hosts/claude/lib/path-resolver.sh	production
 HOME	HOME	hosts/codex/lib/doctor.sh	production
-HOME	HOME	hosts/codex/lib/path-resolver.sh	production
-HOME	HOME	hosts/grok/lib/path-resolver.sh	production
-HOME	HOME	hosts/opencode/lib/path-resolver.sh	production
 HOME	HOME	install.sh	production
 HOME	HOME	ops/release/upgrade-smoke-v0.8-v0.9.sh	production
 HOME	HOME	ops/usage/log-usage.sh	production
@@ -122,6 +119,7 @@ HOME	HOME	runtime/bin/doctor.sh	production
 HOME	HOME	runtime/lib/allowlist.sh	production
 HOME	HOME	runtime/lib/gate-workspace.sh	production
 HOME	HOME	runtime/lib/guard-log.sh	production
+HOME	HOME	runtime/lib/host-resolver.sh	production
 HOME	HOME	runtime/lib/install-receipt.sh	production
 HOME	HOME	runtime/lib/memory-dir.sh	production
 HOME	HOME	runtime/lib/memory.sh	production

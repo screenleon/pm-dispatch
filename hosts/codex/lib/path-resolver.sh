@@ -3,18 +3,7 @@
 # environment rules into the shared manifest reader.
 
 codex_host_config_root() {
-  local root="${CODEX_HOME:-}"
-
-  if [[ -z "$root" ]]; then
-    if [[ -n "${HOME:-}" ]]; then
-      root="$HOME/.codex"
-    else
-      printf 'codex path resolver: HOME is required when CODEX_HOME is unset or empty\n' >&2
-      return 2
-    fi
-  fi
-
-  printf '%s\n' "$root"
+  host_simple_config_root codex CODEX_HOME .codex
 }
 
 codex_host_resolve_path() {
