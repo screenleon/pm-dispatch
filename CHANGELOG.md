@@ -19,6 +19,12 @@ Versions follow [Semantic Versioning](https://semver.org/).
 - **`systematic-debugging` skill (CC-015).** A thin, evidence-led method for
   reproducing, isolating, hypothesizing, verifying, fixing, and
   regression-testing defects.
+- **`check-planning-status-consistency` lint.** `BACKLOG.md`'s index is now the
+  single authority for ticket status; the checker fails CI when a `MILESTONES.md`
+  live status cell disagrees with it (a ticket closed in BACKLOG but still shown
+  `partial`/`active` in a milestone table, or the reverse). Frozen delivery-history
+  rows and `✅ slice …` umbrella tracking are exempt. Reconciled the four rows
+  (CC-358/CC-514/CC-527/CC-533) that had already drifted.
 
 ### Changed
 

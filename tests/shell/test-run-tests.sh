@@ -39,7 +39,7 @@ make_fixture() {
   cat > "$repo/tests/lib/test-suite-runner.sh" <<'RUNNER'
 #!/usr/bin/env bash
 set -euo pipefail
-suites=(lint-agents lint-scripts lint-script-domain-inventory lint-portable-repo-paths test-lint-shellcheck test-script-domain-inventory test-lint-portable-repo-paths test-lint-frontmatter test-commands test-check-docs-freshness test-guards test-migrate test-portable test-install test-uninstall test-doctor test-hook-profile-parity test-pmctl-dispatch test-pmctl-context test-pmctl-memory test-pmctl-gate test-pmctl-adapter-generate test-executor-router test-runner-kind test-release-verify test-dispatch-lifecycle test-runtime-lib-coverage test-e2e-script test-pr-gate-shard-1 test-pr-gate-shard-2 test-pr-gate-shard-3 test-pr-gate-shard-4 test-pr-gate-profile test-pmctl-operation test-host-manifest test-host-write-codex test-codex-dispatch-continuation test-host-write-parity test-core-schemas test-layer-boundaries test-pm-scripts test-run-tests test-setup-project test-state-store test-state-layout-parity)
+suites=(lint-agents lint-scripts lint-script-domain-inventory lint-portable-repo-paths test-lint-shellcheck test-script-domain-inventory test-lint-portable-repo-paths test-lint-frontmatter test-commands test-check-docs-freshness test-guards test-migrate test-portable test-install test-uninstall test-doctor test-hook-profile-parity test-pmctl-dispatch test-pmctl-context test-pmctl-memory test-pmctl-gate test-pmctl-adapter-generate test-executor-router test-runner-kind test-release-verify test-dispatch-lifecycle test-runtime-lib-coverage test-e2e-script test-pr-gate-shard-1 test-pr-gate-shard-2 test-pr-gate-shard-3 test-pr-gate-shard-4 test-pr-gate-profile test-pmctl-operation test-host-manifest test-host-write-codex test-codex-dispatch-continuation test-host-write-parity test-core-schemas test-layer-boundaries test-pm-scripts test-run-tests test-setup-project test-state-store test-state-layout-parity test-check-planning-status-consistency test-schema-task-mirrors-backlog test-pmctl-backlog test-archive-closed-backlog)
 for arg in "$@"; do
   if [[ "$arg" == --list ]]; then printf '%s\n' "${suites[@]}"; exit 0; fi
 done
@@ -321,6 +321,28 @@ case_docs_mapping_list_only() {
   else
     fail "$name" "status=$status out=$out executed=$([[ -e "$args" ]] && echo yes || echo no)"
   fi
+}
+
+# Behavior: a change to any planning document (BACKLOG.md / MILESTONES.md), and a
+# change to the checker script itself, each select test-check-planning-status-consistency
+# exactly once. Steps: list the plan for each path and assert the selection.
+case_planning_docs_map_to_status_consistency_suite() {
+  local name=planning-docs-map-to-status-consistency-suite repo status out p n
+  repo="$(make_fixture "$name")"
+  for p in BACKLOG.md MILESTONES.md tools/lint/check-planning-status-consistency.sh; do
+    status=0
+    out="$(RUN_TESTS_ARGS_LOG="$TMP_ROOT/$name.args" \
+      "$repo/tests/bin/run-tests.sh" --path "$p" --list 2>&1)" || status=$?
+    if [[ "$status" -ne 0 ]]; then
+      fail "$name" "planner exited $status for --path $p: $out"; return
+    fi
+    n=$(printf '%s\n' "$out" | grep -cx 'test-check-planning-status-consistency')
+    if [[ "$n" != "1" ]]; then
+      fail "$name" "--path $p listed test-check-planning-status-consistency $n times (want 1): $out"
+      return
+    fi
+  done
+  pass "$name"
 }
 
 case_operational_docs_map_to_stale_reference_lint() {
@@ -687,6 +709,7 @@ case_executor_router_mapping_covers_gate_deployments
 case_state_writer_mapping_runs_operation_parity
 case_state_layout_mapping_runs_parity
 case_docs_mapping_list_only
+case_planning_docs_map_to_status_consistency_suite
 case_operational_docs_map_to_stale_reference_lint
 case_gitignore_maps_to_setup_project
 case_agent_mapping_uses_registered_frontmatter_suite
