@@ -334,6 +334,20 @@ jobs:
       - name: check-docs-freshness regression suite
         run: bash tests/shell/test-check-docs-freshness.sh
 
+  lint-policy-doc-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Validate GENERATED policy tables against their core/policy sources
+        run: bash tools/lint/check-policy-doc-sync.sh
+
+  test-check-policy-doc-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: check-policy-doc-sync regression suite
+        run: bash tests/shell/test-check-policy-doc-sync.sh
+
   test-schema-task-mirrors-backlog:
     runs-on: ubuntu-latest
     steps:

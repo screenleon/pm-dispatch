@@ -19,7 +19,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-505 | ✅ done | context plane lexical 檢索補完（Ph1 engine+統一排序+fixtures；Ph2 agent 契約+shadow 儀器化；evidence-gated 收緊 → [[CC-506]]）（2026-07-20 四方 synthesis；CC-346/347 前置） | memory/DX | 2026-07-20 | pr:#516 | P2 | retrieval |
 | CC-506 | ⏸ deferred | retrieval evidence-gated 收緊：shadow 評測（coverage@5、critical miss、read reduction、outcome parity）達標後才收緊 broad-Read 指引並重評 [[CC-340]] resume 條件；前置 = [[CC-505]] Ph2 shipped + ≥20 真實任務證據 | memory/DX | 2026-07-20 | — | P3 | retrieval |
 | CC-511 | ✅ done | ship publish authorization：Phase A current-tree authoritative full-suite 與 CC-515 shared verifier foundation 已交付；Phase B review-closure evidence 已由 CC-517 收斂 | release/gate | 2026-07-23 | pr:#446, pr:#484, pr:#507 | P1 | design |
-| CC-514 | ⚠️ partial 2026-08-24 | orthogonal delivery assurance map、machine-derived tables 與 feature/docs/high-risk recipes；Req 1-4/6/7 內容已交付，Req 5 cross-document lint 與 Req 6 drift ratchet 仍待 `/pre-impl` | docs/process | 2026-07-23 | pr:#522 | P2 | design |
+| CC-514 | ✅ done | orthogonal delivery assurance map、machine-derived tables 與 feature/docs/high-risk recipes；Req 5 cross-document lint 與 Req 6 drift ratchet 收斂成同一個動態發現機制（`tools/lint/check-policy-doc-sync.sh`），Req 1-4/7 已於 pr:#522 交付 | docs/process | 2026-07-23 | pr:#522 | P2 | design |
 | CC-516 | ⏸ deferred | evidence-gated thin delivery wrapper 評估；只組合既有 primitives，不建立 workflow engine/FSM | ux/process | 2026-07-23 | — | P3 | spike |
 | CC-517 | ✅ done | maintainer `/ship`：primary review、structured remediation closure 與 conditional targeted confirmation | process/gate | 2026-07-23 | pr:#483, pr:#506 | P1 | design |
 | CC-524 | ✅ done | `pmctl artifacts show` 顯示 canonical absolute run root 並提供穩定 machine-readable locator | ux/ops | 2026-07-27 | feedback:2026-07-27, pr:#537 | P2 | hygiene |
@@ -1732,7 +1732,7 @@ closure 的漏項；若未來有證據顯示這一軸也需要同等的 unstubbe
 
 ---
 
-## CC-514 — orthogonal delivery assurance map 與 recipes ⚠️ partial 2026-08-24
+## CC-514 — orthogonal delivery assurance map 與 recipes
 
 **Problem**: repo 已有 retrieve/spec、affected tests、refactor/reuse audit、
 independent gate、full suite、publish 等成熟 primitives，但資訊散在 README、
@@ -1794,12 +1794,26 @@ markers against core/policy/* sources"` 再開實作票，不得跳過設計直�
 recipe，並準確判斷每個 assurance dimension 是 pass、未跑、不可用或 stale；跨文件
 lint 阻止 tier/mode/full-suite 順序重新漂移。
 
-**Dependencies**: draft skeleton 可先行；runtime-aligned finalization 等
-[[CC-511]] Phase B、[[CC-517]]、[[CC-520]]～[[CC-522]]、[[CC-527]]、
-[[CC-529]]～[[CC-533]]。排入 v0.12.0 public surface，避免文件先承諾尚未落地的
-行為。
-
-**Cross-link**: [[CC-493]]、`commands/ship.md`、`docs/review-model.md`。
+**Update 2026-08-27（Req 5/6 done）**：先跑 `/pre-impl` 定案設計——調查發現
+`runtime/lib/gate-policy.sh` 早有同名 `BEGIN/END GENERATED` 標記把同一批 TSV
+內嵌成 heredoc 供 standalone/copy 模式用，且 `tests/shell/test-pr-gate.sh` 已有
+「逐一 heredoc byte-for-byte 比對來源 TSV」的先例；決定把 Req 5（cross-document
+lint）與 Req 6（drift ratchet）收斂成同一個機制而非兩個產出物——新增
+`tools/lint/check-policy-doc-sync.sh`，動態掃描所有 doc（含未 `git add` 的檔案）
+找 `<!-- BEGIN GENERATED: <source> -->` 標記，逐一比對來源；「動態發現、不硬編碼
+清單」本身就是 ratchet：新文件新增第 7 個區塊不必回頭改檢查器就會被涵蓋，已用
+fixture 實測驗證。5 個 TSV 用通用比對（整行字串比對，不切 cell——`gate-policy-
+signals.tsv` 的正則欄位含未跳脫的 `|`，切 cell 會誤判成多一欄，因此改成從來源
+TSV 重建期望的整行文字直接比對）；`reviewer-policy.yaml` 是唯一特例（`reviewers:`
+map + `verdicts:` list 巢狀結構），寫專用比對而非硬做通用 YAML renderer——這是
+與使用者確認過的刻意範圍收斂，之後真的出現第二個 YAML 來源再重新設計。掛進
+`.github/workflows/lint.yml`（兩個新 job：直接對真實 repo 跑 + 迴歸測試）與
+`tests/lib/test-suite-runner.sh`/`tests/shell/test-run-all-tests.sh` 兩處登記
+（依既有「Suite registry mirror」慣例）。單次重構重用確認抓到並修正：YAML 比對
+原本兩趟重讀來源檔案且沿用切 cell 策略，改成單趟讀取＋整行字串比對，與 TSV 比對
+統一策略；doc 檔案的 marker 掃描原本兩趟 awk（找區塊＋算開合平衡），合併成一趟；
+`git ls-files` 原本漏掉尚未 `git add` 的新文件，改用 `--cached --others
+--exclude-standard`，並補上對應 regression case。
 
 ---
 
