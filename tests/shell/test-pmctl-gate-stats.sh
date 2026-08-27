@@ -325,8 +325,39 @@ case_since_filters_by_run_id_date_for_frozen() {
   if [[ "$status" -eq 0 ]] \
     && [[ "$(jq -r '.totals.gates' "$out")" == 2 ]] \
     && [[ "$(jq -r '._meta.since' "$out")" == "2026-08-01" ]] \
+    && [[ "$(jq -r '._meta.since_cutoff' "$out")" == "day granularity" ]] \
     && [[ "$(jq -r '.by_verdict.GO' "$out")" == 1 ]] \
     && [[ "$(jq -r '.by_verdict."NO-GO"' "$out")" == 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$(<"$out") err=$(<"$err")"
+  fi
+}
+
+case_since_time_aware_for_live_rows() {
+  local name="pmctl gate stats: a Z-suffixed --since excludes an earlier same-UTC-day live run"
+  should_run "$name" || return 0
+  local store proj out err status=0
+  store="$tmp_root/sincetime-store"
+  proj="$(gs_project_dir "$store")"
+  # Two live runs on the SAME day, on opposite sides of a 12:00Z cutoff.
+  gs_make_gate_run "$proj" gate-20260810-000000-early GO full sequential "critic=approve" \
+    2026-08-10T09:00:00Z 2026-08-10T09:05:00Z tt1
+  gs_make_gate_run "$proj" gate-20260810-000001-late  NO-GO full sequential "critic=block" \
+    2026-08-10T15:00:00Z 2026-08-10T15:10:00Z tt2
+  # A frozen row on the same day with no created_at -> kept at day granularity
+  # (a sub-day bound cannot place it, so it must not be silently dropped).
+  jq -cn '{run_id:"gate-20260810-000002-frozen",kind:"gate",status:"complete",duration_seconds:100,
+           gate:{final:"GO",tier:"full",reviewers:{critic:"approve"},findings_by_severity:"unavailable"}}' \
+    > "$proj/runs-summary.jsonl"
+  out="$tmp_root/sincetime.out"; err="$tmp_root/sincetime.err"
+  gs_run "$store" "$out" "$err" --since 2026-08-10T12:00:00Z --json || status=$?
+  if [[ "$status" -eq 0 ]] \
+    && [[ "$(jq -r '._meta.scan.live' "$out")" == 1 ]] \
+    && [[ "$(jq -r '._meta.scan.frozen' "$out")" == 1 ]] \
+    && [[ "$(jq -r '.by_verdict."NO-GO" // 0' "$out")" == 1 ]] \
+    && [[ "$(jq -r '.by_verdict.GO // 0' "$out")" == 1 ]] \
+    && [[ "$(jq -r '._meta.since_cutoff' "$out")" == *"time-aware"* ]]; then
     pass "$name"
   else
     fail "$name" "status=$status out=$(<"$out") err=$(<"$err")"
@@ -490,6 +521,7 @@ case_wall_time_from_assurance_and_mtime
 case_by_reviewer_merges_verdicts_and_findings
 case_protocol_failures_tally
 case_since_filters_by_run_id_date_for_frozen
+case_since_time_aware_for_live_rows
 case_text_and_json_agree
 case_read_only_no_state_writes
 case_empty_partition_is_zeroed_report

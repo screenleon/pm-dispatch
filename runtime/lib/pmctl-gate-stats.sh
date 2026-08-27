@@ -211,23 +211,36 @@ pmctl_gate_stats_aggregate_program() {
           max_seconds: $s[$n - 1]
         } end;
 
-    # --since cutoff, applied before any counting. A row's day is its assurance
-    # created_at when present, else the date embedded in the gate run id
-    # (gate-YYYYmmdd-...). A row whose day cannot be derived is kept.
-    def row_day:
-      if .created_at != null then (.created_at[0:10])
+    # --since cutoff, applied before any counting. When a row carries a full
+    # assurance created_at, the cutoff is time-aware: the row is kept iff
+    # created_at >= the supplied bound (plain lexicographic compare -- both are
+    # Z-normalised ISO-8601, and a date-only bound like "2026-08-10" correctly
+    # sorts before every timestamp on that day). Rows with no timestamp (frozen
+    # runs-summary rows; live runs whose assurance sidecar lacks the field)
+    # fall back to the date embedded in the gate run id (gate-YYYYmmdd-...) and
+    # are compared at day granularity only -- a sub-day bound cannot tell
+    # whether such a row is before or after it, so it is kept rather than
+    # silently dropped. A row whose date cannot be derived at all is kept.
+    def keep_row($since):
+      if $since == "" then true
+      elif .created_at != null then (.created_at >= $since)
       else (.run_id | ltrimstr("gate-")) as $r
-        | if ($r[0:8] | test("^[0-9]{8}$")) then "\($r[0:4])-\($r[4:6])-\($r[6:8])" else null end
+        | if ($r[0:8] | test("^[0-9]{8}$"))
+          then ("\($r[0:4])-\($r[4:6])-\($r[6:8])") >= ($since[0:10])
+          else true end
       end;
 
-    ( . | map(select(
-        $since == "" or (row_day as $d | $d == null or $d >= ($since[0:10]))
-      )) ) as $rows
+    ( . | map(select(keep_row($since))) ) as $rows
     | ($rows | map(select(.status == "complete"))) as $ok
     | {
         _meta: {
           schema_version: $schema_version,
           since: (if $since == "" then null else $since end),
+          since_cutoff: (
+            if $since == "" then null
+            elif ($since | test("T")) then
+              "time-aware for rows with an assurance created_at; rows without one (frozen summary rows, live runs missing the field) are filtered at day granularity"
+            else "day granularity" end),
           scan: {
             frozen: ($rows | map(select(.source == "frozen")) | length),
             live: ($rows | map(select(.source == "live")) | length),
