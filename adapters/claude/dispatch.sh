@@ -54,18 +54,14 @@ if ! [[ "${BASH_SOURCE[0]}" =~ /claude-dispatch\.[A-Za-z0-9]{6}/claude-dispatch\
     [[ "$__claude_dispatch_real" == /* ]] || __claude_dispatch_real="$__claude_dispatch_link_dir/$__claude_dispatch_real"
   done
   __claude_dispatch_source_repo="$(cd -P -- "$(dirname "$__claude_dispatch_real")/../.." && pwd)"
-  __claude_dispatch_isolation_source="$__claude_dispatch_source_repo/adapters/claude/isolation-map.yaml"
-  __claude_dispatch_alias_source="$__claude_dispatch_source_repo/share/claude-model-aliases.tsv"
-  __claude_dispatch_usage_log_source="$__claude_dispatch_source_repo/ops/usage/log-usage.sh"
   cp -- "${BASH_SOURCE[0]}" "$__claude_dispatch_snapshot"
-  [[ -r "$__claude_dispatch_usage_log_source" ]] && cp -- "$__claude_dispatch_usage_log_source" "$__claude_dispatch_snapshot_dir/log-usage.sh" || true
-  if [[ -r "$__claude_dispatch_isolation_source" ]]; then
-    mkdir -p -- "$__claude_dispatch_snapshot_dir/adapters/claude"
-    cp -- "$__claude_dispatch_isolation_source" "$__claude_dispatch_snapshot_dir/adapters/claude/isolation-map.yaml"
-  fi
-  [[ -r "$__claude_dispatch_alias_source" ]] && cp -- "$__claude_dispatch_alias_source" "$__claude_dispatch_snapshot_dir/claude-model-aliases.tsv" || true
   # shellcheck disable=SC1091
   . "$__claude_dispatch_source_repo/runtime/lib/dispatch-common.sh"
+  # Per-adapter non-lib snapshot assets: <src rel repo> <dst rel snapshot>.
+  dc_snapshot_copy_extras "$__claude_dispatch_snapshot_dir" "$__claude_dispatch_source_repo" \
+    ops/usage/log-usage.sh             log-usage.sh \
+    adapters/claude/isolation-map.yaml adapters/claude/isolation-map.yaml \
+    share/claude-model-aliases.tsv     claude-model-aliases.tsv
   dc_snapshot_copy_libs "$__claude_dispatch_snapshot_dir" "$__claude_dispatch_source_repo"
   chmod +x -- "$__claude_dispatch_snapshot"
   exec "$__claude_dispatch_snapshot" "$@"
@@ -101,8 +97,9 @@ PERMISSION_MODE="acceptEdits"   # default = workspace-write equivalent
 
 # Model alias resolution — share/claude-model-aliases.tsv (3-column: alias, wire_id, effort).
 # Snapshot copies the tsv alongside this script; fall back to repo-source paths.
-PM_CLAUDE_ALIAS_FILE="$SCRIPT_DIR/claude-model-aliases.tsv"
-[[ -f "$PM_CLAUDE_ALIAS_FILE" ]] || PM_CLAUDE_ALIAS_FILE="$SCRIPT_DIR/../../share/claude-model-aliases.tsv"
+dc_resolve_sibling_file PM_CLAUDE_ALIAS_FILE \
+  "$SCRIPT_DIR/claude-model-aliases.tsv" \
+  "$SCRIPT_DIR/../../share/claude-model-aliases.tsv" || true
 
 _resolve_claude_model_alias() {
   local query_model="$1"
@@ -119,13 +116,14 @@ _resolve_claude_model_alias() {
 # Snapshot executions read the copied adapter file; fall back to repo-source paths.
 _resolve_permission_mode() {
   local level="$1"
-  local map="$SCRIPT_DIR/adapters/claude/isolation-map.yaml"
-  [[ -f "$map" ]] || map="$SCRIPT_DIR/../adapters/claude/isolation-map.yaml"
-  [[ -f "$map" ]] || map="$SCRIPT_DIR/isolation-map.yaml"
-  if [[ ! -f "$map" ]]; then
-    printf 'claude-dispatch: error: adapters/claude/isolation-map.yaml not found (expected at %s)\n' "$map" >&2
-    return 1
-  fi
+  local map
+  dc_resolve_sibling_file map \
+    "$SCRIPT_DIR/adapters/claude/isolation-map.yaml" \
+    "$SCRIPT_DIR/../adapters/claude/isolation-map.yaml" \
+    "$SCRIPT_DIR/isolation-map.yaml" || {
+      printf 'claude-dispatch: error: adapters/claude/isolation-map.yaml not found (expected at %s)\n' "$map" >&2
+      return 1
+    }
   local _mode="" _in=0 _line _cur
   while IFS= read -r _line || [[ -n "$_line" ]]; do
     _line="${_line%$'\r'}"
@@ -151,23 +149,28 @@ _resolve_permission_mode() {
 tr_resolve_timeout "" "CLAUDE_DISPATCH_TIMEOUT" "PM_CFG_TIMEOUT" "1200"
 TIMEOUT="$TR_RESOLVED_TIMEOUT"
 
+# Shared flags via dc_parse_common_flags; --effort (claude-native) and the
+# codex-only no-op flags come back in DC_RESIDUAL_ARGS for the tail loop.
+dc_parse_common_flags "$@" || exit 2
+WORK_DIR="$DC_WORK_DIR"
+MODEL="$DC_MODEL"
+ISOLATION="$DC_ISOLATION"
+BRIEF_FILE="$DC_BRIEF_FILE"
+TRACE_DIR_OVERRIDE="$DC_TRACE_DIR_OVERRIDE"
+PRINT_CMD="$DC_PRINT_CMD"
+[[ -n "$DC_TIMEOUT" ]] && TIMEOUT="$DC_TIMEOUT"
+if [[ "$DC_HELP" -eq 1 ]]; then
+  sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'
+  exit 0
+fi
+set -- ${DC_RESIDUAL_ARGS[@]+"${DC_RESIDUAL_ARGS[@]}"}
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --cd) WORK_DIR="$2"; shift 2;;
-    --model) MODEL="$2"; shift 2;;
     --effort) EFFORT="$2"; shift 2;;
-    --isolation) ISOLATION="$2"; shift 2;;
-    --timeout) TIMEOUT="$2"; shift 2;;
-    --print-cmd) PRINT_CMD=1; shift;;
-    --brief-file) BRIEF_FILE="$2"; shift 2;;
-    --trace-dir) TRACE_DIR_OVERRIDE="$2"; shift 2;;
     # Codex-only flags accepted as no-ops (claude has no equivalents).
     --sandbox) shift 2;;
     --approval) shift 2;;
     --skip-git-check) shift;;
-    -h|--help)
-      sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'
-      exit 0;;
     *) echo "Unknown arg: $1" >&2; exit 2;;
   esac
 done
@@ -209,7 +212,7 @@ RESOLVED_EFFORT="$RE_RESOLVED_EFFORT"
 
 MODEL_DISPLAY="$MODEL"; [[ -z "$MODEL_DISPLAY" ]] && MODEL_DISPLAY="<default>"
 
-TS=$(date +%Y%m%d-%H%M%S)-$$
+dc_run_timestamp; TS="$DC_TS"
 LAST="/dev/null"
 STDERR_LOG="/dev/null"
 TRACE="<print-only>"

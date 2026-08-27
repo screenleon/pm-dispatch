@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2034  # DC_* output globals are read by the sourcing adapter after each call
 # dispatch-common.sh — shared init helpers for adapter dispatch.sh scripts.
 # Sourced by adapters; do NOT set -euo pipefail here (callers carry their own flags).
 
@@ -43,6 +44,94 @@ dc_snapshot_copy_libs() {
   done < <(dc_snapshot_lib_names)
 }
 
+# dc_snapshot_copy_extras <snapshot_dir> <repo_root> <src_rel> <dst_rel> [<src_rel> <dst_rel> ...]
+# Copy the per-adapter non-lib snapshot assets (model-alias tsv, isolation map,
+# log-usage.sh, adapter.yaml) declared by the caller. Each pair is a repo-root-
+# relative source and a snapshot-dir-relative destination. A source that is not
+# readable is skipped silently (matches the historical `|| true` behavior); the
+# destination's parent dir is created as needed. The list stays per-adapter data
+# passed in by the caller so this shared helper never names an adapter.
+dc_snapshot_copy_extras() {
+  local snapshot_dir="$1" repo_root="$2"
+  shift 2
+  local src dst
+  while [[ $# -ge 2 ]]; do
+    src="$1" dst="$2"; shift 2
+    [[ -r "$repo_root/$src" ]] || continue
+    mkdir -p -- "$snapshot_dir/$(dirname -- "$dst")"
+    cp -- "$repo_root/$src" "$snapshot_dir/$dst" || true
+  done
+}
+
+# dc_run_timestamp
+# Sets DC_TS to the canonical per-run trace timestamp: YYYYMMDD-HHMMSS-<pid>.
+# One definition instead of four identical `TS=$(date +%Y%m%d-%H%M%S)-$$` copies.
+dc_run_timestamp() {
+  DC_TS="$(date +%Y%m%d-%H%M%S)-$$"
+}
+
+# dc_resolve_sibling_file <destvar> <candidate> [<candidate> ...]
+# Set <destvar> to the first candidate that exists as a regular file; return 0.
+# If none exist, set <destvar> to the LAST candidate (its expected location) and
+# return 1 — quietly, with no output. The caller decides whether "missing" is an
+# error and prints its own adapter-labelled diagnostic (isolation map: required;
+# model-alias tsv: optional, its resolver handles absence). Replaces the
+# per-adapter 3-line `[[ -f ]] ||` walk. printf -v avoids a subshell so the
+# caller's `set -e` stays intact.
+dc_resolve_sibling_file() {
+  local destvar="$1"
+  shift
+  local cand last=""
+  for cand in "$@"; do
+    last="$cand"
+    if [[ -f "$cand" ]]; then
+      printf -v "$destvar" '%s' "$cand"
+      return 0
+    fi
+  done
+  printf -v "$destvar" '%s' "$last"
+  return 1
+}
+
+# dc_parse_common_flags "$@"
+# Parse the flag set every adapter shares and hand the rest back untouched.
+# Sets: DC_WORK_DIR DC_MODEL DC_ISOLATION DC_BRIEF_FILE DC_TRACE_DIR_OVERRIDE
+#       (value or ""), DC_PRINT_CMD DC_HELP (1/0), DC_TIMEOUT (value or ""),
+#       and the DC_RESIDUAL_ARGS array (every token not consumed here, in order,
+#       including `--` and everything after it — codex's inline `-- <brief>` and
+#       each adapter's native flags live there).
+# Returns 2 when a recognised value-flag is missing its value.
+dc_parse_common_flags() {
+  DC_WORK_DIR="" DC_MODEL="" DC_ISOLATION="" DC_BRIEF_FILE="" DC_TRACE_DIR_OVERRIDE=""
+  DC_TIMEOUT="" DC_PRINT_CMD=0 DC_HELP=0
+  DC_RESIDUAL_ARGS=()
+  local flag
+  while [[ $# -gt 0 ]]; do
+    flag="$1"
+    case "$flag" in
+      --cd|--model|--isolation|--timeout|--brief-file|--trace-dir)
+        if [[ $# -lt 2 ]]; then
+          printf 'dispatch: %s requires a value\n' "$flag" >&2
+          return 2
+        fi
+        case "$flag" in
+          --cd)         DC_WORK_DIR="$2";;
+          --model)      DC_MODEL="$2";;
+          --isolation)  DC_ISOLATION="$2";;
+          --timeout)    DC_TIMEOUT="$2";;
+          --brief-file) DC_BRIEF_FILE="$2";;
+          --trace-dir)  DC_TRACE_DIR_OVERRIDE="$2";;
+        esac
+        shift 2;;
+      --print-cmd) DC_PRINT_CMD=1; shift;;
+      -h|--help)   DC_HELP=1; break;;
+      --)          DC_RESIDUAL_ARGS+=("$@"); break;;
+      *)           DC_RESIDUAL_ARGS+=("$1"); shift;;
+    esac
+  done
+  return 0
+}
+
 # dc_validate_args <work_dir> <brief_file> <print_cmd> <timeout>
 # Validates common dispatch args. Sets DC_BRIEF to the brief contents on success.
 # Returns 2 on validation failure (caller should `|| exit 2`).
@@ -82,11 +171,8 @@ dc_setup_trace_dir() {
   fi
   DC_TRACE_DIR="$(sw_resolve_trace_dir "$override" "$work_dir/.agent-trace")" || return 2
   mkdir -p "$DC_TRACE_DIR"
-  # shellcheck disable=SC2034
   DC_TRACE="$DC_TRACE_DIR/$prefix-$ts.jsonl"
-  # shellcheck disable=SC2034
   DC_LAST="$DC_TRACE_DIR/$prefix-$ts.last"
-  # shellcheck disable=SC2034
   DC_STDERR_LOG="$DC_TRACE_DIR/$prefix-$ts.stderr"
   return 0
 }

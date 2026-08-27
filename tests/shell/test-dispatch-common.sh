@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Unit tests for runtime/lib/dispatch-common.sh — shared adapter dispatch helpers.
 # Covers: dc_validate_args, dc_setup_trace_dir, dc_refresh_latest_pointers,
-#         dc_print_footer, dc_snapshot_copy_libs.
+#         dc_print_footer, dc_snapshot_copy_libs, dc_snapshot_copy_extras,
+#         dc_run_timestamp, dc_resolve_sibling_file, dc_parse_common_flags.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -369,6 +370,139 @@ case_snapshot_copy_libs_creates_lib_dir() {
   fi
 }
 
+# ── dc_snapshot_copy_extras ───────────────────────────────────────────────────
+
+case_snapshot_copy_extras_copies_present_makes_parents() {
+  local name="dc_snapshot_copy_extras/copies present pairs and mkdir -p the parent"
+  should_run "$name" || return 0
+  local repo="$tmp_root/extras_repo" snap="$tmp_root/extras_snap"
+  mkdir -p "$repo/share" "$repo/adapters/x" "$snap"
+  printf 'A\n' > "$repo/share/a.tsv"
+  printf 'B\n' > "$repo/adapters/x/isolation-map.yaml"
+  dc_snapshot_copy_extras "$snap" "$repo" \
+    share/a.tsv                    a.tsv \
+    adapters/x/isolation-map.yaml  adapters/x/isolation-map.yaml
+  if [[ "$(cat "$snap/a.tsv")" == "A" \
+     && "$(cat "$snap/adapters/x/isolation-map.yaml")" == "B" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected both assets copied into the snapshot with parents created"
+  fi
+}
+
+case_snapshot_copy_extras_skips_absent_silently() {
+  local name="dc_snapshot_copy_extras/absent source is skipped without error"
+  should_run "$name" || return 0
+  local repo="$tmp_root/extras_repo2" snap="$tmp_root/extras_snap2" rc=0
+  mkdir -p "$repo" "$snap"
+  dc_snapshot_copy_extras "$snap" "$repo" nope/missing.tsv missing.tsv 2>/dev/null || rc=$?
+  if [[ "$rc" -eq 0 && ! -e "$snap/missing.tsv" ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc; an unreadable source must be skipped, not fail"
+  fi
+}
+
+# ── dc_run_timestamp ──────────────────────────────────────────────────────────
+
+case_run_timestamp_shape() {
+  local name="dc_run_timestamp/sets DC_TS to YYYYMMDD-HHMMSS-<pid>"; should_run "$name" || return 0
+  DC_TS=""
+  dc_run_timestamp
+  if [[ "$DC_TS" =~ ^[0-9]{8}-[0-9]{6}-[0-9]+$ ]]; then
+    pass "$name"
+  else
+    fail "$name" "DC_TS=[$DC_TS] does not match the trace timestamp shape"
+  fi
+}
+
+# ── dc_resolve_sibling_file ───────────────────────────────────────────────────
+
+case_resolve_sibling_first_existing() {
+  local name="dc_resolve_sibling_file/picks the first existing candidate"; should_run "$name" || return 0
+  local d="$tmp_root/rsf1"; mkdir -p "$d"; : > "$d/second"
+  local got=""
+  dc_resolve_sibling_file got "$d/first" "$d/second" "$d/third"
+  if [[ "$got" == "$d/second" ]]; then pass "$name"; else fail "$name" "got=[$got]"; fi
+}
+
+case_resolve_sibling_none_sets_last_returns_1() {
+  local name="dc_resolve_sibling_file/none exist → last candidate, return 1, no output"; should_run "$name" || return 0
+  local d="$tmp_root/rsf2"; mkdir -p "$d"
+  local got="" rc=0 errfile="$tmp_root/rsf2.err"
+  # Call directly (not in $()) so printf -v reaches this scope, like the adapters.
+  dc_resolve_sibling_file got "$d/a" "$d/b" "$d/c" 2>"$errfile" || rc=$?
+  if [[ "$rc" -eq 1 && "$got" == "$d/c" && ! -s "$errfile" ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc got=[$got] err=[$(cat "$errfile" 2>/dev/null)]"
+  fi
+}
+
+# ── dc_parse_common_flags ─────────────────────────────────────────────────────
+
+case_parse_common_flags_shared_set() {
+  local name="dc_parse_common_flags/sets each shared flag and clears the rest"; should_run "$name" || return 0
+  dc_parse_common_flags --cd /w --model m1 --isolation read-only --timeout 42 \
+    --brief-file /b.md --trace-dir /t --print-cmd
+  if [[ "$DC_WORK_DIR" == /w && "$DC_MODEL" == m1 && "$DC_ISOLATION" == read-only \
+     && "$DC_TIMEOUT" == 42 && "$DC_BRIEF_FILE" == /b.md && "$DC_TRACE_DIR_OVERRIDE" == /t \
+     && "$DC_PRINT_CMD" -eq 1 && "$DC_HELP" -eq 0 && "${#DC_RESIDUAL_ARGS[@]}" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "work=$DC_WORK_DIR model=$DC_MODEL iso=$DC_ISOLATION to=$DC_TIMEOUT bf=$DC_BRIEF_FILE td=$DC_TRACE_DIR_OVERRIDE pc=$DC_PRINT_CMD help=$DC_HELP residual=${DC_RESIDUAL_ARGS[*]:-}"
+  fi
+}
+
+case_parse_common_flags_residual_preserves_order() {
+  local name="dc_parse_common_flags/unrecognised tokens go to DC_RESIDUAL_ARGS in order, no error"; should_run "$name" || return 0
+  local rc=0
+  dc_parse_common_flags --effort high --cd /w --sandbox ro --skip-git-check || rc=$?
+  if [[ "$rc" -eq 0 && "$DC_WORK_DIR" == /w \
+     && "${DC_RESIDUAL_ARGS[*]}" == "--effort high --sandbox ro --skip-git-check" ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc work=$DC_WORK_DIR residual=[${DC_RESIDUAL_ARGS[*]:-}]"
+  fi
+}
+
+case_parse_common_flags_double_dash_kept_for_tail() {
+  local name="dc_parse_common_flags/-- and everything after it stays in DC_RESIDUAL_ARGS"; should_run "$name" || return 0
+  dc_parse_common_flags --cd /w -- an inline brief here
+  if [[ "${DC_RESIDUAL_ARGS[*]}" == "-- an inline brief here" ]]; then
+    pass "$name"
+  else
+    fail "$name" "residual=[${DC_RESIDUAL_ARGS[*]:-}]"
+  fi
+}
+
+case_parse_common_flags_help_stops() {
+  local name="dc_parse_common_flags/-h sets DC_HELP and stops consuming"; should_run "$name" || return 0
+  dc_parse_common_flags --cd /w -h --model ignored
+  if [[ "$DC_HELP" -eq 1 && "$DC_WORK_DIR" == /w ]]; then pass "$name"; else fail "$name" "help=$DC_HELP work=$DC_WORK_DIR"; fi
+}
+
+case_parse_common_flags_missing_value_fails() {
+  local name="dc_parse_common_flags/value-flag missing its value returns 2"; should_run "$name" || return 0
+  local rc=0
+  dc_parse_common_flags --model 2>/dev/null || rc=$?
+  if [[ "$rc" -eq 2 ]]; then pass "$name"; else fail "$name" "rc=$rc (expected 2)"; fi
+}
+
+# ── Structural: shared lib stays adapter-agnostic ─────────────────────────────
+
+case_dispatch_common_no_adapter_name_in_code() {
+  local name="dispatch-common.sh/no adapter name branches in code"; should_run "$name" || return 0
+  # Strip comments, then look for an adapter literal or a per-adapter case.
+  local code
+  code="$(grep -vE '^\s*#' "$REPO_ROOT/runtime/lib/dispatch-common.sh")"
+  if grep -qE '\b(codex|claude|opencode|grok)\b' <<<"$code"; then
+    fail "$name" "dispatch-common.sh names an adapter in code; the per-adapter data must be passed in by the caller"
+  else
+    pass "$name"
+  fi
+}
+
 # ── Run ───────────────────────────────────────────────────────────────────────
 
 case_validate_missing_workdir
@@ -395,5 +529,17 @@ case_snapshot_copy_libs_copies_dispatch_common
 case_snapshot_copy_libs_copies_all_core_libs
 case_installed_adapter_inventory_extends_snapshot_once
 case_snapshot_copy_libs_creates_lib_dir
+
+case_snapshot_copy_extras_copies_present_makes_parents
+case_snapshot_copy_extras_skips_absent_silently
+case_run_timestamp_shape
+case_resolve_sibling_first_existing
+case_resolve_sibling_none_sets_last_returns_1
+case_parse_common_flags_shared_set
+case_parse_common_flags_residual_preserves_order
+case_parse_common_flags_double_dash_kept_for_tail
+case_parse_common_flags_help_stops
+case_parse_common_flags_missing_value_fails
+case_dispatch_common_no_adapter_name_in_code
 
 th_summary

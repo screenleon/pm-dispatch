@@ -57,18 +57,14 @@ if ! [[ "${BASH_SOURCE[0]}" =~ /grok-dispatch\.[A-Za-z0-9]{6}/grok-dispatch\.sh$
     [[ "$__grok_dispatch_real" == /* ]] || __grok_dispatch_real="$__grok_dispatch_link_dir/$__grok_dispatch_real"
   done
   __grok_dispatch_source_repo="$(cd -P -- "$(dirname "$__grok_dispatch_real")/../.." && pwd)"
-  __grok_dispatch_isolation_source="$__grok_dispatch_source_repo/adapters/grok/isolation-map.yaml"
-  __grok_dispatch_alias_source="$__grok_dispatch_source_repo/share/grok-model-aliases.tsv"
-  __grok_dispatch_usage_log_source="$__grok_dispatch_source_repo/ops/usage/log-usage.sh"
   cp -- "${BASH_SOURCE[0]}" "$__grok_dispatch_snapshot"
-  [[ -r "$__grok_dispatch_usage_log_source" ]] && cp -- "$__grok_dispatch_usage_log_source" "$__grok_dispatch_snapshot_dir/log-usage.sh" || true
-  if [[ -r "$__grok_dispatch_isolation_source" ]]; then
-    mkdir -p -- "$__grok_dispatch_snapshot_dir/adapters/grok"
-    cp -- "$__grok_dispatch_isolation_source" "$__grok_dispatch_snapshot_dir/adapters/grok/isolation-map.yaml"
-  fi
-  [[ -r "$__grok_dispatch_alias_source" ]] && cp -- "$__grok_dispatch_alias_source" "$__grok_dispatch_snapshot_dir/grok-model-aliases.tsv" || true
   # shellcheck disable=SC1091
   . "$__grok_dispatch_source_repo/runtime/lib/dispatch-common.sh"
+  # Per-adapter non-lib snapshot assets: <src rel repo> <dst rel snapshot>.
+  dc_snapshot_copy_extras "$__grok_dispatch_snapshot_dir" "$__grok_dispatch_source_repo" \
+    ops/usage/log-usage.sh           log-usage.sh \
+    adapters/grok/isolation-map.yaml adapters/grok/isolation-map.yaml \
+    share/grok-model-aliases.tsv     grok-model-aliases.tsv
   dc_snapshot_copy_libs "$__grok_dispatch_snapshot_dir" "$__grok_dispatch_source_repo"
   chmod +x -- "$__grok_dispatch_snapshot"
   exec "$__grok_dispatch_snapshot" "$@"
@@ -104,8 +100,9 @@ PERMISSION_MODE="acceptEdits"   # default = workspace-write permission mode
 . "$SCRIPT_DIR/lib/dispatch-common.sh"
 
 # Model alias resolution — share/grok-model-aliases.tsv (3-column).
-PM_GROK_ALIAS_FILE="$SCRIPT_DIR/grok-model-aliases.tsv"
-[[ -f "$PM_GROK_ALIAS_FILE" ]] || PM_GROK_ALIAS_FILE="$SCRIPT_DIR/../../share/grok-model-aliases.tsv"
+dc_resolve_sibling_file PM_GROK_ALIAS_FILE \
+  "$SCRIPT_DIR/grok-model-aliases.tsv" \
+  "$SCRIPT_DIR/../../share/grok-model-aliases.tsv" || true
 
 _resolve_grok_model_alias() {
   local query_model="$1"
@@ -122,13 +119,14 @@ _resolve_grok_model_alias() {
 # Sets SANDBOX and PERMISSION_MODE on success; returns 1 on unknown level.
 _resolve_isolation() {
   local level="$1"
-  local map="$SCRIPT_DIR/adapters/grok/isolation-map.yaml"
-  [[ -f "$map" ]] || map="$SCRIPT_DIR/../adapters/grok/isolation-map.yaml"
-  [[ -f "$map" ]] || map="$SCRIPT_DIR/isolation-map.yaml"
-  if [[ ! -f "$map" ]]; then
-    printf 'grok-dispatch: error: adapters/grok/isolation-map.yaml not found (expected at %s)\n' "$map" >&2
-    return 1
-  fi
+  local map
+  dc_resolve_sibling_file map \
+    "$SCRIPT_DIR/adapters/grok/isolation-map.yaml" \
+    "$SCRIPT_DIR/../adapters/grok/isolation-map.yaml" \
+    "$SCRIPT_DIR/isolation-map.yaml" || {
+      printf 'grok-dispatch: error: adapters/grok/isolation-map.yaml not found (expected at %s)\n' "$map" >&2
+      return 1
+    }
   local _sandbox="" _mode="" _in=0 _line _cur
   while IFS= read -r _line || [[ -n "$_line" ]]; do
     _line="${_line%$'\r'}"
@@ -161,25 +159,28 @@ _resolve_isolation() {
 tr_resolve_timeout "" "GROK_DISPATCH_TIMEOUT" "PM_CFG_TIMEOUT" "1200"
 TIMEOUT="$TR_RESOLVED_TIMEOUT"
 
+dc_parse_common_flags "$@" || exit 2
+WORK_DIR="$DC_WORK_DIR"
+MODEL="$DC_MODEL"
+ISOLATION="$DC_ISOLATION"
+BRIEF_FILE="$DC_BRIEF_FILE"
+TRACE_DIR_OVERRIDE="$DC_TRACE_DIR_OVERRIDE"
+PRINT_CMD="$DC_PRINT_CMD"
+[[ -n "$DC_TIMEOUT" ]] && TIMEOUT="$DC_TIMEOUT"
+if [[ "$DC_HELP" -eq 1 ]]; then
+  sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'
+  exit 0
+fi
+set -- ${DC_RESIDUAL_ARGS[@]+"${DC_RESIDUAL_ARGS[@]}"}
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --cd) WORK_DIR="$2"; shift 2;;
-    --model) MODEL="$2"; shift 2;;
     --effort) EFFORT="$2"; shift 2;;
-    --isolation) ISOLATION="$2"; shift 2;;
-    --timeout) TIMEOUT="$2"; shift 2;;
-    --print-cmd) PRINT_CMD=1; shift;;
-    --brief-file) BRIEF_FILE="$2"; shift 2;;
-    --trace-dir) TRACE_DIR_OVERRIDE="$2"; shift 2;;
     # Codex-only flags accepted as no-ops. Grok-native --sandbox is driven
     # exclusively by the isolation map so a raw codex-forwarded --sandbox
     # never double-binds.
     --sandbox) shift 2;;
     --approval) shift 2;;
     --skip-git-check) shift;;
-    -h|--help)
-      sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'
-      exit 0;;
     *) echo "Unknown arg: $1" >&2; exit 2;;
   esac
 done
@@ -213,7 +214,7 @@ RESOLVED_EFFORT="$RE_RESOLVED_EFFORT"
 
 MODEL_DISPLAY="$MODEL"; [[ -z "$MODEL_DISPLAY" ]] && MODEL_DISPLAY="<default>"
 
-TS=$(date +%Y%m%d-%H%M%S)-$$
+dc_run_timestamp; TS="$DC_TS"
 LAST="/dev/null"
 STDERR_LOG="/dev/null"
 TRACE="<print-only>"

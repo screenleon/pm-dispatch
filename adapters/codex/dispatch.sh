@@ -75,18 +75,14 @@ if ! [[ "${BASH_SOURCE[0]}" =~ /codex-dispatch\.[A-Za-z0-9]{6}/codex-dispatch\.s
     [[ "$__codex_dispatch_real" == /* ]] || __codex_dispatch_real="$__codex_dispatch_link_dir/$__codex_dispatch_real"
   done
   __codex_dispatch_source_repo="$(cd -P -- "$(dirname "$__codex_dispatch_real")/../.." && pwd)"
-  __codex_dispatch_alias_source="$__codex_dispatch_source_repo/share/codex-model-aliases.tsv"
-  __codex_dispatch_isolation_source="$__codex_dispatch_source_repo/adapters/codex/isolation-map.yaml"
-  __codex_dispatch_usage_log_source="$__codex_dispatch_source_repo/ops/usage/log-usage.sh"
   cp -- "${BASH_SOURCE[0]}" "$__codex_dispatch_snapshot"
-  [[ -r "$__codex_dispatch_usage_log_source" ]] && cp -- "$__codex_dispatch_usage_log_source" "$__codex_dispatch_snapshot_dir/log-usage.sh" || true
-  [[ -r "$__codex_dispatch_alias_source" ]] && cp -- "$__codex_dispatch_alias_source" "$__codex_dispatch_snapshot_dir/codex-model-aliases.tsv" || true
-  if [[ -r "$__codex_dispatch_isolation_source" ]]; then
-    mkdir -p -- "$__codex_dispatch_snapshot_dir/adapters/codex"
-    cp -- "$__codex_dispatch_isolation_source" "$__codex_dispatch_snapshot_dir/adapters/codex/isolation-map.yaml"
-  fi
   # shellcheck disable=SC1091
   . "$__codex_dispatch_source_repo/runtime/lib/dispatch-common.sh"
+  # Per-adapter non-lib snapshot assets: <src rel repo> <dst rel snapshot>.
+  dc_snapshot_copy_extras "$__codex_dispatch_snapshot_dir" "$__codex_dispatch_source_repo" \
+    ops/usage/log-usage.sh            log-usage.sh \
+    share/codex-model-aliases.tsv     codex-model-aliases.tsv \
+    adapters/codex/isolation-map.yaml adapters/codex/isolation-map.yaml
   dc_snapshot_copy_libs "$__codex_dispatch_snapshot_dir" "$__codex_dispatch_source_repo"
   chmod +x -- "$__codex_dispatch_snapshot"
   exec "$__codex_dispatch_snapshot" "$@"
@@ -103,12 +99,7 @@ ISOLATION=""   # isolation_level from brief; expanded to --sandbox + -c flags
 APPROVAL="never"
 SKIP_GIT_CHECK=0
 SCRIPT_DIR="$(cd -P -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PM_DISPATCH_ALIAS_FILE="${SCRIPT_DIR}/codex-model-aliases.tsv"
-# Fallbacks, in order: snapshot-flat (`../share`, the installed-helper layout)
-# then repo-source layout from adapters/codex/ (`../../share`). The latter keeps
-# alias resolution working if the self-snapshot bootstrap is ever bypassed.
-[[ -f "$PM_DISPATCH_ALIAS_FILE" ]] || PM_DISPATCH_ALIAS_FILE="${SCRIPT_DIR}/../share/codex-model-aliases.tsv"
-[[ -f "$PM_DISPATCH_ALIAS_FILE" ]] || PM_DISPATCH_ALIAS_FILE="${SCRIPT_DIR}/../../share/codex-model-aliases.tsv"
+PM_DISPATCH_ALIAS_FILE=""   # resolved after dispatch-common.sh is sourced (see below)
 TIMEOUT=""
 BRIEF=""
 BRIEF_FILE=""
@@ -136,6 +127,14 @@ DEFAULT_DISPATCH_MODEL="default"
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/lib/dispatch-common.sh"
 
+# Model-alias tsv location. Candidates, in order: snapshot-flat (alongside this
+# script), installed-helper layout (`../share`), repo-source layout
+# (`../../share`). A missing tsv is tolerated — _resolve_model_alias handles it.
+dc_resolve_sibling_file PM_DISPATCH_ALIAS_FILE \
+  "${SCRIPT_DIR}/codex-model-aliases.tsv" \
+  "${SCRIPT_DIR}/../share/codex-model-aliases.tsv" \
+  "${SCRIPT_DIR}/../../share/codex-model-aliases.tsv" || true
+
 _resolve_model_alias() {
   local query_model="$1"
   ma_resolve_alias_strict "$PM_DISPATCH_ALIAS_FILE" "$query_model" "codex-dispatch" || return 1
@@ -149,23 +148,30 @@ _resolve_model_alias() {
 tr_resolve_timeout "" "CODEX_DISPATCH_TIMEOUT" "PM_CFG_TIMEOUT" "1200"
 TIMEOUT="$TR_RESOLVED_TIMEOUT"
 
+# Shared flags (--cd/--model/--isolation/--timeout/--print-cmd/--brief-file/
+# --trace-dir/-h) are parsed by dc_parse_common_flags; everything else — the
+# codex-native flags and the inline `-- <brief>` form — comes back in
+# DC_RESIDUAL_ARGS for the tail loop below.
+dc_parse_common_flags "$@" || exit 2
+WORK_DIR="$DC_WORK_DIR"
+MODEL="$DC_MODEL"
+ISOLATION="$DC_ISOLATION"
+BRIEF_FILE="$DC_BRIEF_FILE"
+TRACE_DIR_OVERRIDE="$DC_TRACE_DIR_OVERRIDE"
+PRINT_CMD="$DC_PRINT_CMD"
+[[ -n "$DC_TIMEOUT" ]] && TIMEOUT="$DC_TIMEOUT"
+if [[ "$DC_HELP" -eq 1 ]]; then
+  sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'
+  exit 0
+fi
+set -- ${DC_RESIDUAL_ARGS[@]+"${DC_RESIDUAL_ARGS[@]}"}
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --cd) WORK_DIR="$2"; shift 2;;
-    --model) MODEL="$2"; shift 2;;
     --effort) EFFORT="$2"; shift 2;;
     --sandbox) SANDBOX="$2"; shift 2;;
-    --isolation) ISOLATION="$2"; shift 2;;
     --approval) APPROVAL="$2"; shift 2;;
     --skip-git-check) SKIP_GIT_CHECK=1; shift;;
-    --timeout) TIMEOUT="$2"; shift 2;;
-    --print-cmd) PRINT_CMD=1; shift;;
-    --brief-file) BRIEF_FILE="$2"; shift 2;;
-    --trace-dir) TRACE_DIR_OVERRIDE="$2"; shift 2;;
     --) shift; BRIEF="$*"; BRIEF_FROM_ARGV=1; break;;
-    -h|--help)
-      sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'
-      exit 0;;
     *) echo "Unknown arg: $1" >&2; exit 2;;
   esac
 done
@@ -220,7 +226,7 @@ elif [[ "$MODEL_ALIAS_MATCH" -eq 1 ]]; then
   MODEL_DISPLAY="$MODEL → $MODEL_RESOLVED (effort=$MODEL_RESOLVED_EFFORT)"
 fi
 
-TS=$(date +%Y%m%d-%H%M%S)-$$
+dc_run_timestamp; TS="$DC_TS"
 LAST="/dev/null"
 STDERR_LOG="/dev/null"
 TRACE="<print-only>"
@@ -240,14 +246,14 @@ fi
 # and CONFIG_OVERRIDES. Snapshot executions read the copied adapter file.
 CONFIG_OVERRIDES=()
 if [[ -n "$ISOLATION" ]]; then
-  _ADAPTER_FILE="$SCRIPT_DIR/adapters/codex/isolation-map.yaml"
   # Snapshot-flat layout first, then repo-source layout from adapters/codex/.
-  [[ -f "$_ADAPTER_FILE" ]] || _ADAPTER_FILE="$SCRIPT_DIR/../adapters/codex/isolation-map.yaml"
-  [[ -f "$_ADAPTER_FILE" ]] || _ADAPTER_FILE="$SCRIPT_DIR/isolation-map.yaml"
-  if [[ ! -f "$_ADAPTER_FILE" ]]; then
-    printf 'codex-dispatch: error: adapters/codex/isolation-map.yaml not found (expected at %s)\n' "$_ADAPTER_FILE" >&2
-    exit 2
-  fi
+  dc_resolve_sibling_file _ADAPTER_FILE \
+    "$SCRIPT_DIR/adapters/codex/isolation-map.yaml" \
+    "$SCRIPT_DIR/../adapters/codex/isolation-map.yaml" \
+    "$SCRIPT_DIR/isolation-map.yaml" || {
+      printf 'codex-dispatch: error: adapters/codex/isolation-map.yaml not found (expected at %s)\n' "$_ADAPTER_FILE" >&2
+      exit 2
+    }
   # Parse the sandbox value for the requested isolation level.
   # YAML structure: mappings:\n  <level>:\n    sandbox: <value>
   _ISO_SANDBOX=""

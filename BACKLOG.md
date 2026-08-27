@@ -29,7 +29,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-533 | ✅ done | schema-derived Gate structural validator：assurance／scope-manifest／reviewer-result／synthesis-result 四型全數完成 schema-first 重寫 | schema/gate | 2026-07-30 | pr:#480, pr:#524, pr:#525, pr:#526, pr:#527, pr:#528 | P1 | design |
 | CC-534 | 🟢 someday | `commands.tsv` 驅動 CLI routing、safe handler dispatch 與 lazy module loading | arch/DX | 2026-07-30 | feedback:2026-07-30 | P2 | design |
 | CC-535 | 🟢 someday | detached-launch 上的 supervised-run primitive + versioned JSON run-spec | arch/ops | 2026-07-30 | feedback:2026-07-30 | P2 | design |
-| CC-536 | 🟢 someday | 擴充 Adapter SDK 的 shared lifecycle／manifest／trace contract，保留 executor-native behavior | arch/reuse | 2026-07-30 | feedback:2026-07-30 | P2 | reuse-debt |
+| CC-536 | ✅ done | 擴充 Adapter SDK 的 shared lifecycle／manifest／trace contract，保留 executor-native behavior | arch/reuse | 2026-07-30 | feedback:2026-07-30, pr:#549 | P2 | reuse-debt |
 | CC-537 | 🟢 someday | suite metadata 與 changed-path impact mapping 資料化；full suite 維持 authoritative | ops/test | 2026-07-30 | feedback:2026-07-30 | P2 | hygiene |
 | CC-538 | ✅ done | Host resolver／doctor 共用 primitives，Host policy 繼續由各 Host 擁有 | arch/ops | 2026-07-30 | feedback:2026-07-30, pr:#548 | P2 | reuse-debt |
 | CC-539 | 🟢 someday | state `layout.yaml` build-time authority + generated runtime constants | arch/schema | 2026-07-30 | feedback:2026-07-30 | P2 | design |
@@ -2515,7 +2515,22 @@ control plane，而不演變成 generic workflow engine。
 
 ---
 
-## CC-536 — Adapter SDK lifecycle／manifest／trace expansion 🟢 someday
+## CC-536 — Adapter SDK lifecycle／manifest／trace expansion ✅ 2026-08-27
+
+**See**: pr:#549
+
+**Closure (2026-08-27)**: `runtime/lib/dispatch-common.sh` 加 4 個原語，取代 4 個
+adapter 各自的複製：`dc_run_timestamp`（`TS=$(date …)-$$` ×4 → 1）、
+`dc_resolve_sibling_file`（isolation-map／alias-tsv 的 3 段 fallback walk，×8 站點，
+安靜回傳、caller 自己出錯誤訊息）、`dc_snapshot_copy_extras`（snapshot 額外檔清單
+改成 `<src> <dst>` 參數對，非硬寫 cp 序列——D1 選 (c)：bash array 傳參、lib 內零
+adapter 名）、`dc_parse_common_flags`（共同 7 旗標，未認得的 token 回 `DC_RESIDUAL_ARGS`
+給各 adapter native tail——D3）。D2：一次做完含 snapshot bootstrap。isolation schema
+翻譯、model 解析、CMD 組裝、run、banner、token log 全留 per-adapter；`adapter-manifest.sh`
+（CC-531）與 CC-530 source-safety 契約未動。4 個 adapter 的 `--print-cmd` 對 `origin/main`
+逐位元組相同。`test-dispatch-common.sh` 加每原語單測 + no-adapter-name 結構守衛；4 個
+adapter 套件各加 parser-handoff 回歸（shared×native 交錯、缺值→exit 2）。Gate：full-tier
+GO round 2（round 1 NO-GO：只有 codex 有新 parser 覆蓋，claude/grok/opencode 缺）。
 
 **Problem**: `dispatch-common.sh` 已共用 snapshot、basic validation、trace 與 footer，
 但 Claude、Codex、OpenCode、Grok 仍重複 self-snapshot/re-exec、common option

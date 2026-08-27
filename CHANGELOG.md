@@ -22,6 +22,22 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **Adapter SDK lifecycle/transport primitives (CC-536).** Continues CC-422's
+  `dispatch-common.sh` extraction. Four more primitives replace copies carried
+  by every adapter (codex/claude/opencode/grok): `dc_run_timestamp` (one
+  `YYYYMMDD-HHMMSS-<pid>` definition instead of four), `dc_resolve_sibling_file`
+  (the isolation-map / model-alias-tsv 3-path fallback walk, ×8 sites),
+  `dc_snapshot_copy_extras` (the per-adapter snapshot asset list, now a
+  data-driven `<src> <dst>` argument list rather than a hand-rolled `cp`
+  sequence), and `dc_parse_common_flags` (the shared `--cd/--model/--isolation/
+  --timeout/--print-cmd/--brief-file/--trace-dir/-h` flag set, handing every
+  unrecognised token back in `DC_RESIDUAL_ARGS` for each adapter's native tail).
+  No adapter-name branching enters the shared lib; isolation-schema translation,
+  model resolution, CMD construction, run invocation, banners and token logging
+  stay per-adapter. Every adapter's `--print-cmd` output is byte-identical to
+  before. `test-dispatch-common.sh` gains unit coverage for each primitive plus
+  a no-adapter-name structural guard; the four adapter suites gain parser-handoff
+  regression cases.
 - **Host resolver / doctor shared primitives (CC-538).** The byte-identical
   `codex`/`grok`/`opencode` `*_host_config_root` bodies collapse to one
   parameterised `host_simple_config_root <label> <env> <subdir>` in the new
