@@ -37,7 +37,7 @@ Gate correctness 與 release evidence 仍必須先在 v0.11.0 關閉。
 |----|------|------|
 | CC-032 | feedback cross-link glossary 公開化，清除 public dead/private-only link | 🔵 |
 | CC-033 | README/onboarding public posture、history audit 處置、repo collaboration surface | 🔵（history audit ✅ 2026-07-18；其餘未啟動） |
-| CC-514 | orthogonal assurance map、machine-derived tier/mode/policy tables 與 docs-only／functional／high-risk recipes；draft 可先行，runtime-aligned finalization 後公開 | ⚠️ partial（`docs/delivery-assurance-map.md` 內容已由 pr:#522 交付；Req 5 跨文件 lint 與 Req 6 drift ratchet 待 `/pre-impl` 後另立實作票） |
+| CC-514 | orthogonal assurance map、machine-derived tier/mode/policy tables 與 docs-only／functional／high-risk recipes；Req 5/6 收斂成 `check-policy-doc-sync.sh` 動態發現機制 | ✅ pr:#522/#545 |
 
 ### Phase 2 — contract candidate
 
@@ -138,7 +138,7 @@ P1 的每張實作 PR 都應綁定 deterministic contract tests；任何 reviewe
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-358 | per-adapter outcome/failure/fallback run stats，供 release/readiness 報告引用 | 🔵 |
+| CC-358 | per-adapter outcome/failure/fallback run stats，供 release/readiness 報告引用 | ✅ pr:#523 |
 
 ### Release qualification — v0.11.0 freeze 後
 
@@ -205,7 +205,7 @@ P1 的每張實作 PR 都應綁定 deterministic contract tests；任何 reviewe
 | 票 | 摘要 | 狀態 |
 |----|------|------|
 | CC-526 | reviewer override symlink／replacement trust-boundary hardening | ✅ pr:#475 |
-| CC-527 | targeted pass、reviewer coverage 與 tier 的 CLI coordinate 分離；tier 由 current subject/policy 解析，仍待 complete parity closure | ⚠️ partial (pr:#472, #476) |
+| CC-527 | targeted pass、reviewer coverage 與 tier 的 CLI coordinate 分離；tier 由 current subject/policy 解析 | ✅ pr:#472/#476/#482/#505 |
 
 ### Phase 12 — Gate canonical source + schema foundation（新增）
 
@@ -213,7 +213,7 @@ P1 的每張實作 PR 都應綁定 deterministic contract tests；任何 reviewe
 |----|------|------|
 | CC-525 | 修正 verifier fallback provenance 並鎖定唯一 generator；generator identity、marker、provenance 與 body parity 已有 fail-closed ratchet | ✅ closed 2026-08-13 |
 | CC-532 | Linux/WSL2 repo-layout canonical Gate modules；options／reviewer-contract 已有單一 owner；standalone distribution 在 CC-546 | ✅ 2026-08-22 |
-| CC-533 | PR #480 schema-derived structural validation foundation；handwritten structural cleanup 與 version dispatch separation 待 delivery schema 穩定後收尾 | ⚠️ partial |
+| CC-533 | schema-derived Gate structural validator：assurance／scope-manifest／reviewer-result／synthesis-result 四型全數 schema-first 重寫 | ✅ pr:#480/#524-528 |
 
 ### 計畫外同期 correctness hardening（已合併 main）
 

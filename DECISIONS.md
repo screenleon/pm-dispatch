@@ -7,6 +7,51 @@ H2 標題格式：## YYYY-MM-DD: <短描述>
 與 BACKLOG closure 對應的 entry，內文首行寫：Closes: BACKLOG.md#<PREFIX>-NNN
 -->
 
+## 2026-08-28: backlog-is-the-single-status-authority
+
+### Context
+
+Ticket status lived in two places that drifted: `BACKLOG.md`'s index and the
+per-milestone status tables in `MILESTONES.md`. A PR closes a ticket in the
+BACKLOG index, but the MILESTONES cell keeps saying `⚠️ partial` / `🔵` for
+weeks (CC-514, CC-358, CC-527, CC-533 were all `✅ done` in BACKLOG while
+MILESTONES still showed partial/active on 2026-08-28). The recurring fix —
+"remember to update MILESTONES too" — is a process reminder that this session
+alone missed twice.
+
+### Decision
+
+`BACKLOG.md`'s index is the **single authority** for whether a ticket is done.
+`MILESTONES.md` keeps ordering, purpose, scope, and frozen delivery history;
+its live status cells must not contradict the BACKLOG index.
+`tools/lint/check-planning-status-consistency.sh` enforces this: for every
+MILESTONES row whose `CC-NNN` still appears in the BACKLOG index, the row's
+done-ness must match BACKLOG. The BACKLOG side follows `pm/schema.md`'s status
+vocabulary — terminal (`✅ done` / `✅ closed` / `🚫 dropped` / `🟢 superseded`)
+maps to "done", non-terminal (`🔵 active` / `⏸` or `🟡 deferred` / `🟢 someday`)
+to "open"; an unrecognised token on either side fails closed.
+Rows for tickets no longer in the index are delivery history and are skipped;
+`✅ slice ...` is explicit slice-level tracking under an open umbrella and is
+not a completion claim.
+
+### Alternatives considered
+
+- **Project the MILESTONES status column from BACKLOG at render time** — needs a
+  generator + a GENERATED-block convention in MILESTONES; heavier than a lint
+  and MILESTONES cells legitimately carry more scope prose than a bare marker.
+- **Another `commands/ship.md` step ("update MILESTONES before merge")** —
+  rejected: a prose reminder is exactly the mechanism that already failed.
+- **Make MILESTONES authoritative and derive BACKLOG** — rejected: BACKLOG is
+  where day-to-day ticket work records status; MILESTONES is edited rarely.
+
+### Constraints introduced
+
+- Closing a ticket in the BACKLOG index without reconciling its live MILESTONES
+  row (if any) now fails `check-planning-status-consistency` in CI.
+- A new MILESTONES ticket row must use a status marker the checker recognises
+  (`✅…` / `🚫 dropped…` / `🔵` / `⚠️ partial…` / `⏸ deferred…` / `🟡…` /
+  `✅ slice…`).
+
 ## 2026-08-22: cc-532-options-and-reviewer-contract-are-canonical-owners
 
 Closes: BACKLOG.md#CC-532

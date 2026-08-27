@@ -368,7 +368,10 @@ map_path() {
     pm/*)
       add_suite test-pm-scripts; behavioral=1 ;;
     BACKLOG.md|BACKLOG-ARCHIVE.md|MILESTONES.md)
-      add_suite test-schema-task-mirrors-backlog; add_suite test-pmctl-backlog; add_suite test-archive-closed-backlog; behavioral=1 ;;
+      add_suite test-schema-task-mirrors-backlog; add_suite test-pmctl-backlog; add_suite test-archive-closed-backlog
+      add_suite test-check-planning-status-consistency; behavioral=1 ;;
+    tools/lint/check-planning-status-consistency.sh)
+      add_suite test-check-planning-status-consistency; behavioral=1 ;;
     README.md|CHANGELOG.md|docs/*)
       add_suite test-check-docs-freshness; behavioral=1 ;;
     .github/*)

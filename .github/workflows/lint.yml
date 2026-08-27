@@ -355,6 +355,20 @@ jobs:
       - name: check-policy-doc-sync regression suite
         run: bash tests/shell/test-check-policy-doc-sync.sh
 
+  lint-planning-status-consistency:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: MILESTONES.md status cells agree with the BACKLOG.md authority
+        run: bash tools/lint/check-planning-status-consistency.sh
+
+  test-check-planning-status-consistency:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: check-planning-status-consistency regression suite
+        run: bash tests/shell/test-check-planning-status-consistency.sh
+
   test-schema-task-mirrors-backlog:
     runs-on: ubuntu-latest
     steps:
