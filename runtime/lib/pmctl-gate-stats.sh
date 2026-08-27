@@ -77,13 +77,19 @@ pmctl_gate_stats_live_row_program() {
               else .stop = true end) | .m)
        end) as $reviewers
     # reviewer_result_v1 fenced blocks -> findings grouped by severity.
+    # All-or-nothing on parse failure: if any block has no closing fence or is
+    # not valid JSON, the whole result degrades to the string "unavailable"
+    # rather than a partial tally that reads as complete. This matches
+    # gate_result_findings_by_severity (jq -s, which fails the whole slurp on
+    # one bad block); the inline form here must not silently skip a bad block.
     | ([ $lines | to_entries[] | select(.value == "```reviewer_result_v1") | .key ]) as $rstarts
     | ([ $rstarts[] as $s
          | ($lines[($s + 1):] | index("```")) as $rel
-         | if $rel then ($lines[($s + 1):($s + 1 + $rel)] | join("\n") | (fromjson? // empty)) else empty end
-       ]) as $rblocks
-    | (if ($rblocks | length) == 0 then "unavailable"
-       else [ $rblocks[] | {reviewer, counts: (((.findings // []) | group_by(.severity)
+         | if $rel then ($lines[($s + 1):($s + 1 + $rel)] | join("\n")) else null end
+       ]) as $rtexts
+    | (if ($rtexts | length) == 0 then "unavailable"
+       elif ($rtexts | any(. == null or (try (fromjson | false) catch true))) then "unavailable"
+       else [ $rtexts[] | fromjson | {reviewer, counts: (((.findings // []) | group_by(.severity)
               | map({(.[0].severity): length}) | add) // {})} ]
        end) as $findings
     | ($assurance | (fromjson? // null)) as $a

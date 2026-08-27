@@ -23,13 +23,16 @@ gs_project_dir() {
 }
 
 # gs_make_gate_run <proj_dir> <run_id> <final> <tier> <mode> <reviewers-csv> \
-#                  [created_at] [finished_at] [base_commit] [findings-json] [protocol-lines]
+#                  [created_at] [finished_at] [base_commit] [findings-json] [protocol-lines] [malformed]
 # reviewers-csv: "critic=approve,qa-tester=block"
 # findings-json: a reviewer_result_v1 findings array literal, or "" for none
 # protocol-lines: "accepted|ok;retryable-failure|invalid reviewer protocol" or ""
+# malformed: "1" appends one extra reviewer_result_v1 block whose body is not
+#            valid JSON (to exercise the degraded-data contract)
 gs_make_gate_run() {
   local proj_dir="$1" run_id="$2" final="$3" tier="$4" mode="$5" reviewers="$6"
   local created="${7:-}" finished="${8:-}" base="${9:-}" findings="${10:-}" protocol="${11:-}"
+  local malformed="${12:-}"
   local dir="$proj_dir/runs/$run_id/.gate-results"
   mkdir -p "$dir"
   local ts="${run_id#gate-}"; ts="${ts%%-*}"
@@ -60,6 +63,13 @@ gs_make_gate_run() {
         jq -cn --arg r "$k" --argjson f "$findings" '{kind:"gate_reviewer_result_v1",reviewer:$r,verdict:"block",findings:$f}'
         printf '```\n\n'
       done
+    fi
+    if [[ "$malformed" == 1 ]]; then
+      # \140 is an octal backtick -- keeps a code-fence literal out of the
+      # source so shellcheck does not read it as a command substitution.
+      local fence
+      fence="$(printf '\140\140\140')"
+      printf '## broken\n%sreviewer_result_v1\n{ this is not json\n%s\n\n' "$fence" "$fence"
     fi
   } > "$md"
 
@@ -277,6 +287,34 @@ case_by_reviewer_merges_verdicts_and_findings() {
     pass "$name"
   else
     fail "$name" "status=$status out=$(<"$out") err=$(<"$err")"
+  fi
+}
+
+case_malformed_reviewer_block_forces_unavailable() {
+  local name="pmctl gate stats: a mixed valid/malformed reviewer block set degrades to unavailable, not partial counts"
+  should_run "$name" || return 0
+  local store proj out err status=0
+  store="$tmp_root/malformed-store"
+  proj="$(gs_project_dir "$store")"
+  # One valid reviewer block with real findings, plus one malformed block.
+  gs_make_gate_run "$proj" gate-20260810-000450-mf NO-GO full sequential "qa-tester=block" \
+    2026-08-10T00:00:00Z 2026-08-10T00:10:00Z mf \
+    '[{"id":"qa-F1","severity":"high"},{"id":"qa-F2","severity":"high"}]' "" 1
+  # A clean run so by_reviewer is otherwise populated.
+  gs_make_gate_run "$proj" gate-20260810-000451-ok GO full sequential "qa-tester=pass" \
+    2026-08-10T01:00:00Z 2026-08-10T01:05:00Z ok2
+  out="$tmp_root/malformed.out"; err="$tmp_root/malformed.err"
+  gs_run "$store" "$out" "$err" --json || status=$?
+  # The malformed run must contribute NO finding counts (degraded to
+  # unavailable), so qa-tester.findings stays absent/empty despite the valid
+  # block in the same artifact naming two high findings.
+  if [[ "$status" -eq 0 ]] \
+    && [[ "$(jq -r '.totals.gates' "$out")" == 2 ]] \
+    && [[ "$(jq -r '.by_reviewer."qa-tester".findings // {} | length' "$out")" == 0 ]] \
+    && [[ "$(jq -r '.by_reviewer."qa-tester".verdicts.block' "$out")" == 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status by_reviewer=$(jq -c '.by_reviewer' "$out") err=$(<"$err")"
   fi
 }
 
@@ -519,6 +557,7 @@ case_dual_scan_dedup
 case_round_clusters_heuristic
 case_wall_time_from_assurance_and_mtime
 case_by_reviewer_merges_verdicts_and_findings
+case_malformed_reviewer_block_forces_unavailable
 case_protocol_failures_tally
 case_since_filters_by_run_id_date_for_frozen
 case_since_time_aware_for_live_rows
