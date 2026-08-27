@@ -229,6 +229,40 @@ case_codex_flags_noop() {
   rm -rf "$work"; rm -f "$brief"
 }
 
+# ---- 14b: dc_parse_common_flags handoff — native flag before/among shared flags ----
+case_parser_handoff_interleaved_native() {
+  local name="args/shared and native flags interleaved survive the parser handoff"; should_run "$name" || return 0
+  local work brief out code
+  work="$(mktemp -d)"; git init -q "$work"; brief="$(_mk_brief "$work")"
+  set +e
+  # --effort (claude-native, in DC_RESIDUAL_ARGS) sits before and between shared flags.
+  out="$("$DISPATCH" --effort high --cd "$work" --sandbox ro --brief-file "$brief" --isolation read-only --print-cmd 2>/dev/null)"; code=$?
+  set -e
+  if [[ "$code" -eq 0 && "$out" == *"--effort high"* && "$out" == *"--permission-mode default"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+  rm -rf "$work"; rm -f "$brief"
+}
+
+# ---- 14c: dc_parse_common_flags — missing value for a shared flag exits 2 ----
+case_parser_missing_shared_value_exits_2() {
+  local name="args/missing value for a shared flag exits 2 with the common diagnostic"; should_run "$name" || return 0
+  local work err code
+  work="$(mktemp -d)"; git init -q "$work"
+  err="$(mktemp)"
+  set +e
+  "$DISPATCH" --cd "$work" --model >/dev/null 2>"$err"; code=$?
+  set -e
+  if [[ "$code" -eq 2 ]] && grep -q 'requires a value' "$err"; then
+    pass "$name"
+  else
+    fail "$name" "code=$code err=$(cat "$err")"
+  fi
+  rm -rf "$work"; rm -f "$err"
+}
+
 case_help
 case_reexec
 case_snapshot_structural
@@ -583,6 +617,8 @@ FAKEOF
 }
 
 case_codex_flags_noop
+case_parser_handoff_interleaved_native
+case_parser_missing_shared_value_exits_2
 case_config_timeout_env_overrides
 case_state_store_no_direct_run_row_claude
 case_latest_symlink_failure_tolerated

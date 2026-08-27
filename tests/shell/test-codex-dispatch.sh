@@ -788,21 +788,20 @@ case_alias_source_malformed_exits_nonzero() {
   should_run "$name" || return 0
   _work="$(mktemp -d)"; git init -q "$_work"
   _brief="$(mktemp --suffix=.md)"; printf 'goal: alias malformed test\n' > "$_brief"
-  _alias_file="$(mktemp)"
-  printf 'bad-alias\tgpt-5.3\n' > "$_alias_file"
+  _alias_file=""  # not used post-CC-536; the tsv lives at the snapshot-flat candidate
   # Build a fake repo tree so the bootstrap can resolve source_repo and copy the lib.
   _tmproot="$(mktemp -d)"
-  mkdir -p "$_tmproot/adapters/codex" "$_tmproot/runtime/lib"
+  mkdir -p "$_tmproot/adapters/codex" "$_tmproot/runtime/lib" "$_tmproot/share"
   cp "$REPO_ROOT/runtime/lib/model-aliases.sh" "$_tmproot/runtime/lib/"
   cp "$REPO_ROOT/runtime/lib/reasoning-effort.sh" "$_tmproot/runtime/lib/"
   cp "$REPO_ROOT/runtime/lib/timeout-resolve.sh" "$_tmproot/runtime/lib/"
   cp "$REPO_ROOT/runtime/lib/dispatch-common.sh" "$_tmproot/runtime/lib/"
   _dispatch="$_tmproot/adapters/codex/dispatch.sh"
-  sed \
-    -e "s|^PM_DISPATCH_ALIAS_FILE=.*|PM_DISPATCH_ALIAS_FILE=\"$_alias_file\"|g" \
-    -e 's|^\[\[ -f "$PM_DISPATCH_ALIAS_FILE" \]\].*|: # forced PM_DISPATCH_ALIAS_FILE for test|g' \
-    "$DISPATCH" > "$_dispatch"
+  cp "$DISPATCH" "$_dispatch"
   chmod +x "$_dispatch"
+  # The malformed tsv lives at share/; dc_snapshot_copy_extras copies it to the
+  # snapshot-flat candidate, which dc_resolve_sibling_file then picks first.
+  printf 'bad-alias\tgpt-5.3\n' > "$_tmproot/share/codex-model-aliases.tsv"
   set +e
   _out="$(bash "$_dispatch" --cd "$_work" --brief-file "$_brief" --model codex-spark --print-cmd 2>&1)"
   _exit=$?

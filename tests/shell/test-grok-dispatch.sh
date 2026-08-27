@@ -233,6 +233,38 @@ case_codex_flags_noop() {
   rm -rf "$work"; rm -f "$brief"
 }
 
+case_parser_handoff_interleaved_native() {
+  local name="args/shared and native flags interleaved survive the parser handoff"; should_run "$name" || return 0
+  local work brief out code
+  work="$(mktemp -d)"; git init -q "$work"; brief="$(_mk_brief "$work")"
+  set +e
+  # --effort (grok-native, lands in DC_RESIDUAL_ARGS) sits before and among shared flags.
+  out="$("$DISPATCH" --effort high --cd "$work" --sandbox ro --brief-file "$brief" --isolation read-only --print-cmd 2>/dev/null)"; code=$?
+  set -e
+  if [[ "$code" -eq 0 && "$out" == *"--reasoning-effort high"* && "$out" == *"--sandbox read-only"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+  rm -rf "$work"; rm -f "$brief"
+}
+
+case_parser_missing_shared_value_exits_2() {
+  local name="args/missing value for a shared flag exits 2 with the common diagnostic"; should_run "$name" || return 0
+  local work err code
+  work="$(mktemp -d)"; git init -q "$work"
+  err="$(mktemp)"
+  set +e
+  "$DISPATCH" --cd "$work" --model >/dev/null 2>"$err"; code=$?
+  set -e
+  if [[ "$code" -eq 2 ]] && grep -q 'requires a value' "$err"; then
+    pass "$name"
+  else
+    fail "$name" "code=$code err=$(cat "$err")"
+  fi
+  rm -rf "$work"; rm -f "$err"
+}
+
 case_model_alias_light() {
   local name="alias/light resolves with low effort"; should_run "$name" || return 0
   local work brief out
@@ -370,6 +402,8 @@ case_error_event
 case_exit_propagated
 case_usage_log
 case_codex_flags_noop
+case_parser_handoff_interleaved_native
+case_parser_missing_shared_value_exits_2
 case_model_alias_light
 case_footer
 case_handover_executor_grok

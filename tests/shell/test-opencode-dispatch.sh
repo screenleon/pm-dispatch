@@ -470,6 +470,40 @@ case_effort_flag_noop_warns() {
   rm -rf "$work"; rm -f "$bf"
 }
 
+case_parser_handoff_interleaved_native() {
+  local name="args/shared and native flags interleaved survive the parser handoff"; should_run "$name" || return 0
+  local work bf out code
+  work="$(mktemp -d)"; bf="$(_mk_brief)"
+  set +e
+  # --sandbox (opencode-unsupported, lands in DC_RESIDUAL_ARGS) sits before and
+  # among the shared flags; the warn loop must still fire and the run must build.
+  out="$("$DISPATCH" --sandbox ro --cd "$work" --brief-file "$bf" --model opencode/nemotron-3-ultra-free --print-cmd 2>&1)"; code=$?
+  set -e
+  if [[ "$code" -eq 0 ]] && grep -qi 'warning' <<<"$out" \
+     && grep -q 'MODELS_TO_TRY=opencode/nemotron-3-ultra-free' <<<"$out"; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+  rm -rf "$work"; rm -f "$bf"
+}
+
+case_parser_missing_shared_value_exits_2() {
+  local name="args/missing value for a shared flag exits 2 with the common diagnostic"; should_run "$name" || return 0
+  local work err code
+  work="$(mktemp -d)"
+  err="$(mktemp)"
+  set +e
+  "$DISPATCH" --cd "$work" --model >/dev/null 2>"$err"; code=$?
+  set -e
+  if [[ "$code" -eq 2 ]] && grep -q 'requires a value' "$err"; then
+    pass "$name"
+  else
+    fail "$name" "code=$code err=$(cat "$err")"
+  fi
+  rm -rf "$work"; rm -f "$err"
+}
+
 # Behavior: Non-zero exit on attempt 1 causes fallback to attempt 2 which succeeds.
 # Steps:
 #   1. Install fake opencode: attempt 1 exits 1 (no JSONL), attempt 2 emits text + step_finish.
@@ -666,6 +700,8 @@ case_timeout_zero_no_limit
 case_timeout_too_low_rejected
 case_legacy_flags_warn
 case_effort_flag_noop_warns
+case_parser_handoff_interleaved_native
+case_parser_missing_shared_value_exits_2
 case_latest_symlinks_created
 
 # ---- trace-dir/--trace-dir routes trace out of repo ----

@@ -46,21 +46,14 @@ if ! [[ "${BASH_SOURCE[0]}" =~ /opencode-dispatch\.[A-Za-z0-9]{6}/opencode-dispa
     [[ "$__oc_dispatch_real" == /* ]] || __oc_dispatch_real="$__oc_dispatch_link_dir/$__oc_dispatch_real"
   done
   __oc_dispatch_source_repo="$(cd -P -- "$(dirname "$__oc_dispatch_real")/../.." && pwd)"
-  __oc_dispatch_alias_source="$__oc_dispatch_source_repo/share/opencode-model-aliases.tsv"
-  __oc_dispatch_isolation_source="$__oc_dispatch_source_repo/adapters/opencode/isolation-map.yaml"
-  __oc_dispatch_adapter_source="$__oc_dispatch_source_repo/adapters/opencode/adapter.yaml"
   cp -- "${BASH_SOURCE[0]}" "$__oc_dispatch_snapshot"
-  [[ -r "$__oc_dispatch_alias_source" ]] && cp -- "$__oc_dispatch_alias_source" "$__oc_dispatch_snapshot_dir/opencode-model-aliases.tsv" || true
-  if [[ -r "$__oc_dispatch_isolation_source" ]]; then
-    mkdir -p -- "$__oc_dispatch_snapshot_dir/adapters/opencode"
-    cp -- "$__oc_dispatch_isolation_source" "$__oc_dispatch_snapshot_dir/adapters/opencode/isolation-map.yaml"
-  fi
-  if [[ -r "$__oc_dispatch_adapter_source" ]]; then
-    mkdir -p -- "$__oc_dispatch_snapshot_dir/adapters/opencode"
-    cp -- "$__oc_dispatch_adapter_source" "$__oc_dispatch_snapshot_dir/adapters/opencode/adapter.yaml"
-  fi
   # shellcheck disable=SC1091
   . "$__oc_dispatch_source_repo/runtime/lib/dispatch-common.sh"
+  # Per-adapter non-lib snapshot assets: <src rel repo> <dst rel snapshot>.
+  dc_snapshot_copy_extras "$__oc_dispatch_snapshot_dir" "$__oc_dispatch_source_repo" \
+    share/opencode-model-aliases.tsv     opencode-model-aliases.tsv \
+    adapters/opencode/isolation-map.yaml adapters/opencode/isolation-map.yaml \
+    adapters/opencode/adapter.yaml       adapters/opencode/adapter.yaml
   dc_snapshot_copy_libs "$__oc_dispatch_snapshot_dir" "$__oc_dispatch_source_repo"
   chmod +x -- "$__oc_dispatch_snapshot"
   exec "$__oc_dispatch_snapshot" "$@"
@@ -90,8 +83,9 @@ NATIVE_FLAGS=()
 . "$SCRIPT_DIR/lib/dispatch-common.sh"
 
 # ── Model alias resolution ────────────────────────────────────────────────────
-PM_OC_ALIAS_FILE="$SCRIPT_DIR/opencode-model-aliases.tsv"
-[[ -f "$PM_OC_ALIAS_FILE" ]] || PM_OC_ALIAS_FILE="$SCRIPT_DIR/../../share/opencode-model-aliases.tsv"
+dc_resolve_sibling_file PM_OC_ALIAS_FILE \
+  "$SCRIPT_DIR/opencode-model-aliases.tsv" \
+  "$SCRIPT_DIR/../../share/opencode-model-aliases.tsv" || true
 
 _resolve_oc_model_alias() {
   local query_model="$1"
@@ -129,20 +123,22 @@ _read_fallback_chain() {
   done < "$file"
 }
 
-_ADAPTER_YAML="$SCRIPT_DIR/adapters/opencode/adapter.yaml"
-[[ -f "$_ADAPTER_YAML" ]] || _ADAPTER_YAML="$SCRIPT_DIR/adapter.yaml"
+dc_resolve_sibling_file _ADAPTER_YAML \
+  "$SCRIPT_DIR/adapters/opencode/adapter.yaml" \
+  "$SCRIPT_DIR/adapter.yaml" || true
 _read_fallback_chain "$_ADAPTER_YAML"
 
 # ── Isolation-level → native_flags ───────────────────────────────────────────
 _resolve_isolation() {
   local level="$1"
-  local map="$SCRIPT_DIR/adapters/opencode/isolation-map.yaml"
-  [[ -f "$map" ]] || map="$SCRIPT_DIR/../adapters/opencode/isolation-map.yaml"
-  [[ -f "$map" ]] || map="$SCRIPT_DIR/isolation-map.yaml"
-  if [[ ! -f "$map" ]]; then
-    printf 'opencode-dispatch: error: adapters/opencode/isolation-map.yaml not found\n' >&2
-    return 1
-  fi
+  local map
+  dc_resolve_sibling_file map \
+    "$SCRIPT_DIR/adapters/opencode/isolation-map.yaml" \
+    "$SCRIPT_DIR/../adapters/opencode/isolation-map.yaml" \
+    "$SCRIPT_DIR/isolation-map.yaml" || {
+      printf 'opencode-dispatch: error: adapters/opencode/isolation-map.yaml not found\n' >&2
+      return 1
+    }
   local _in=0 _found=0 _line _cur
   NATIVE_FLAGS=()
   while IFS= read -r _line || [[ -n "$_line" ]]; do
@@ -180,23 +176,28 @@ tr_resolve_timeout "" "OPENCODE_DISPATCH_TIMEOUT" "PM_CFG_TIMEOUT" "1200"
 TIMEOUT="$TR_RESOLVED_TIMEOUT"
 
 # ── Argument parsing ──────────────────────────────────────────────────────────
+# Shared flags via dc_parse_common_flags; the unsupported codex/claude flags come
+# back in DC_RESIDUAL_ARGS so the warn loop below still notices them.
+dc_parse_common_flags "$@" || exit 2
+WORK_DIR="$DC_WORK_DIR"
+MODEL="$DC_MODEL"
+ISOLATION="$DC_ISOLATION"
+BRIEF_FILE="$DC_BRIEF_FILE"
+TRACE_DIR_OVERRIDE="$DC_TRACE_DIR_OVERRIDE"
+PRINT_CMD="$DC_PRINT_CMD"
+[[ -n "$DC_TIMEOUT" ]] && TIMEOUT="$DC_TIMEOUT"
+if [[ "$DC_HELP" -eq 1 ]]; then
+  sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'
+  exit 0
+fi
+set -- ${DC_RESIDUAL_ARGS[@]+"${DC_RESIDUAL_ARGS[@]}"}
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --cd)        WORK_DIR="$2"; shift 2;;
-    --model)     MODEL="$2"; shift 2;;
-    --isolation) ISOLATION="$2"; shift 2;;
-    --timeout)   TIMEOUT="$2"; shift 2;;
-    --print-cmd) PRINT_CMD=1; shift;;
-    --brief-file) BRIEF_FILE="$2"; shift 2;;
-    --trace-dir) TRACE_DIR_OVERRIDE="$2"; shift 2;;
     # Codex/claude-only flags: accepted but not supported; warn so callers notice.
     --sandbox|--approval|--effort)
       printf 'opencode-dispatch: warning: %s is not supported by the opencode adapter and will be ignored\n' "$1" >&2
       shift 2;;
     --skip-git-check) shift;;
-    -h|--help)
-      sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'
-      exit 0;;
     *) echo "Unknown arg: $1" >&2; exit 2;;
   esac
 done
@@ -231,7 +232,7 @@ fi
 MODEL_DISPLAY="${MODELS_TO_TRY[0]}"
 [[ ${#MODELS_TO_TRY[@]} -gt 1 ]] && MODEL_DISPLAY="${MODELS_TO_TRY[*]} (fallback chain)"
 
-TS=$(date +%Y%m%d-%H%M%S)-$$
+dc_run_timestamp; TS="$DC_TS"
 LAST="/dev/null"
 STDERR_LOG="/dev/null"
 TRACE="<print-only>"
