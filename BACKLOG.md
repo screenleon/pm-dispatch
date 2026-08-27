@@ -110,7 +110,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-571 | ✅ done | `_ctx_fts_rebuild`／`_ctx_index_file` 共用的 sqlite atomic-script 缺口：DROP+CREATE+INSERT 未加 `-bail`（實測 sqlite3 CLI 預設不會在錯誤時中止，單靠 BEGIN/COMMIT 不足）、呼叫端不檢查回傳值、`_ctx_index_file` 還有第三個獨立 bug（`rm -f` 蓋掉 sqlite3 真實 exit code）；`/simplify` altitude review 抓到手足函式同缺陷，範圍已擴大涵蓋兩者（[[CC-548]] spike 的 Open risks 側面發現，非本票 tokenizer 範圍） | memory/ops | 2026-08-26 | pr:#539 | P2 | hygiene |
 | CC-572 | ✅ done | pr-gate synthesis retry（sequential／parallel 兩條路徑）留下已存在但 0 bytes 的 `$OUTPUT_FILE`，executor 的 patch 工具仍可能選擇 Update File 而非 Add File 語意，對空內容找不到 context line 而崩潰（`apply_patch verification failed`）；CC-571 gate saga 連續四輪協定失敗實測發現（2026-08-26） | gate/ops | 2026-08-26 | pr:#541 | P2 | hygiene |
 | CC-573 | ✅ done | `pmctl run-stats` 每個事件行 fork 一個 jq（`pmctl_run_stats_extract_line`），與 [[CC-364]] 修掉前的 `trace tail` 同形狀。實測 jq 呼叫 N+2、~34ms/event，真實 6642 行 `events.jsonl` 時 `run-stats --json` 前景 2 分鐘 timeout。改為單次 `jq -R` 串流 over 串接的 archive+active：jq 呼叫 102/302/902 → 2/2/2、牆鐘 3-30s → 0.19s 打平、輸出對 origin/main 逐位元組相同。archive+active 串接 idiom 與 `pmctl-trace.sh` 重複 ~12 行，兩 consumer 下不抽、file header 記錄理由 | ops | 2026-08-27 | pr:#547 | P2 | hygiene |
-| CC-574 | 🔵 active | `tests/shell/test-run-all-tests.sh` 手抄一份 `SUITE_NAMES`（~106 筆）與 `suite_path()` case（~106 筆），與權威的 `tests/lib/test-suite-runner.sh` `SUITE_NAMES`／`SUITE_PATHS` 平行維護——新套件要同時改兩處，漏改則 `known-suite-count` 紅（[[suite-registry-mirror]]；本 session CC-538／CC-536 各踩一次）。改為 meta-test 開場 awk-parse 權威 registry 推導出自己的 list，移除鏡像；lint.yml 的 per-suite job 由 `lint-test-suite-registry.sh` 交叉檢查、非靜默漂移鏡像，不在本票範圍 | ops/test | 2026-08-28 | pr:#550 | P3 | hygiene |
+| CC-574 | ✅ done | `tests/shell/test-run-all-tests.sh` 手抄一份 `SUITE_NAMES`（~106 筆）與 `suite_path()` case（~106 筆），與權威的 `tests/lib/test-suite-runner.sh` `SUITE_NAMES`／`SUITE_PATHS` 平行維護——新套件要同時改兩處，漏改則 `known-suite-count` 紅（[[suite-registry-mirror]]；本 session CC-538／CC-536 各踩一次）。改為 meta-test 開場 awk-parse 權威 registry 推導出自己的 list，移除鏡像；lint.yml 的 per-suite job 由 `lint-test-suite-registry.sh` 交叉檢查、非靜默漂移鏡像，不在本票範圍 | ops/test | 2026-08-28 | pr:#550 | P3 | hygiene |
 
 ---
 
@@ -3646,7 +3646,25 @@ consumer 不同，gzip 不可用的訊號也分歧（trace tail `read_archives=0
 
 ---
 
-## CC-574 — test-run-all-tests.sh 的 suite registry 鏡像去重 🔵 active
+## CC-574 — test-run-all-tests.sh 的 suite registry 鏡像去重 ✅ 2026-08-28
+
+**See**: pr:#550
+
+**Closure (2026-08-28)**: `test-run-all-tests.sh` 開場 `_load_suite_registry()`
+awk-parse `test-suite-runner.sh` 的 `SUITE_NAMES` + `declare -A SUITE_PATHS`
+兩個 block，填 `SUITE_NAMES` 陣列 + `SUITE_PATH_MAP`；`suite_path()` 變 map
+lookup；parse 空 → 硬失敗指名格式變更。手抄的 ~106 筆字面 + ~106 分支 case
+移除，淨 −28 行。因為 parsed path 會被接到 fixture repo root 再寫入，
+`_suite_path_is_safe()` 對絕對／`..`／非白名單 root（`tests/`｜`tools/`｜
+`pm/scripts/`）值 fail-closed 不寫檔，`write_suite_stub` 再驗 canonical
+containment。3 條迴歸：`registry-derived-from-runner`（derive 逐行等於
+`test-suite-runner.sh --list` + 每個 map value 安全且存在）、
+`registry-derived-rejects-extra-nonexistent-mapping`、
+`registry-parse-rejects-unsafe-paths`（traversal／絕對／錯 root 各一個
+mutation-sensitive）。Gate：standard-tier GO round 3（round 1 parser
+path-injection 面、round 2 每 rejection 類要獨立 mutation-sensitive case +
+迭代 map 而非只有 names）。`lint-test-suite-registry.sh` 與 `lint.yml`
+未動（Non-goals）。
 
 **Problem**: 加一個測試套件要動三處：`tests/lib/test-suite-runner.sh` 的
 `SUITE_NAMES` + `declare -A SUITE_PATHS`（權威），`tests/shell/test-run-all-tests.sh`
