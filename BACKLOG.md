@@ -29,7 +29,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-533 | ✅ done | schema-derived Gate structural validator：assurance／scope-manifest／reviewer-result／synthesis-result 四型全數完成 schema-first 重寫 | schema/gate | 2026-07-30 | pr:#480, pr:#524, pr:#525, pr:#526, pr:#527, pr:#528 | P1 | design |
 | CC-534 | 🟢 someday | `commands.tsv` 驅動 CLI routing、safe handler dispatch 與 lazy module loading | arch/DX | 2026-07-30 | feedback:2026-07-30 | P2 | design |
 | CC-535 | 🟢 someday | detached-launch 上的 supervised-run primitive + versioned JSON run-spec | arch/ops | 2026-07-30 | feedback:2026-07-30 | P2 | design |
-| CC-536 | ✅ done | 擴充 Adapter SDK 的 shared lifecycle／manifest／trace contract，保留 executor-native behavior | arch/reuse | 2026-07-30 | feedback:2026-07-30, pr:#TBD | P2 | reuse-debt |
+| CC-536 | ✅ done | 擴充 Adapter SDK 的 shared lifecycle／manifest／trace contract，保留 executor-native behavior | arch/reuse | 2026-07-30 | feedback:2026-07-30, pr:#549 | P2 | reuse-debt |
 | CC-537 | 🟢 someday | suite metadata 與 changed-path impact mapping 資料化；full suite 維持 authoritative | ops/test | 2026-07-30 | feedback:2026-07-30 | P2 | hygiene |
 | CC-538 | ✅ done | Host resolver／doctor 共用 primitives，Host policy 繼續由各 Host 擁有 | arch/ops | 2026-07-30 | feedback:2026-07-30, pr:#548 | P2 | reuse-debt |
 | CC-539 | 🟢 someday | state `layout.yaml` build-time authority + generated runtime constants | arch/schema | 2026-07-30 | feedback:2026-07-30 | P2 | design |
@@ -2517,7 +2517,7 @@ control plane，而不演變成 generic workflow engine。
 
 ## CC-536 — Adapter SDK lifecycle／manifest／trace expansion ✅ 2026-08-27
 
-**See**: pr:#TBD
+**See**: pr:#549
 
 **Closure (2026-08-27)**: `runtime/lib/dispatch-common.sh` 加 4 個原語，取代 4 個
 adapter 各自的複製：`dc_run_timestamp`（`TS=$(date …)-$$` ×4 → 1）、
