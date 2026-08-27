@@ -109,6 +109,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-570 | 🟢 someday | Fact/Case/Strategy `memory_function`／`memory_subtype` metadata 分類法：先蒐集 [[CC-567]] 的 applied/outcome 證據，再決定值不值得建分類機制——不憑直覺先建立稅務式標籤（2026-08-25 memory 架構設計討論；外部文章優先序建議相反，本 repo 刻意反過來） | memory/DX | 2026-08-25 | — | P3 | retrieval |
 | CC-571 | ✅ done | `_ctx_fts_rebuild`／`_ctx_index_file` 共用的 sqlite atomic-script 缺口：DROP+CREATE+INSERT 未加 `-bail`（實測 sqlite3 CLI 預設不會在錯誤時中止，單靠 BEGIN/COMMIT 不足）、呼叫端不檢查回傳值、`_ctx_index_file` 還有第三個獨立 bug（`rm -f` 蓋掉 sqlite3 真實 exit code）；`/simplify` altitude review 抓到手足函式同缺陷，範圍已擴大涵蓋兩者（[[CC-548]] spike 的 Open risks 側面發現，非本票 tokenizer 範圍） | memory/ops | 2026-08-26 | pr:#539 | P2 | hygiene |
 | CC-572 | ✅ done | pr-gate synthesis retry（sequential／parallel 兩條路徑）留下已存在但 0 bytes 的 `$OUTPUT_FILE`，executor 的 patch 工具仍可能選擇 Update File 而非 Add File 語意，對空內容找不到 context line 而崩潰（`apply_patch verification failed`）；CC-571 gate saga 連續四輪協定失敗實測發現（2026-08-26） | gate/ops | 2026-08-26 | pr:#541 | P2 | hygiene |
+| CC-573 | 🔵 active | `pmctl run-stats` 每個事件行 fork 一個 jq（`pmctl_run_stats_extract_line`），與 [[CC-364]] 修掉前的 `trace tail` 同形狀。實測：合成資料 jq 呼叫數 = N+2、牆鐘 ~34ms/event（100→3.0s、300→8.8s、900→30.2s）；真實 `events.jsonl` 6642 行時 `run-stats --json` 前景 2 分鐘 timeout（外推 ~225s）。這是 release/readiness 證據工具，現在在真實 state store 上跑不完。修法沿用 [[CC-364]]：單次 `jq -R` 串流 over 串接的 archive+active，emit 分隔欄位、迴圈結束後一次 decode；預期 N+2 → ~2 次 jq。順帶評估 archive+active 串接掃描是否值得抽成 trace/run-stats 共用 primitive（jq 程式不同，串接那段可共用） | ops | 2026-08-27 | — | P2 | hygiene |
 
 ---
 
@@ -3532,5 +3533,56 @@ codex 自己的 apply_patch 工具實作（不在本 repo 控制範圍）。
 重試發生時該路徑真的不存在（而非僅清空）。pr-gate 首輪 GO（未在該次 gate run
 自身觸發 synthesis retry，修復是靠直接比對過往失敗 log 的根因＋白箱迴歸測試
 驗證，非現場實戰）。`tests/bin/run-all-tests.sh` 104 passed 0 failed。
+
+---
+
+## CC-573 — `pmctl run-stats` 每事件行 fork 一個 jq
+
+**Problem**: `pmctl_run_stats_extract_line`（`runtime/lib/pmctl-run-stats.sh`）對
+`events.jsonl` 的**每一行**執行一次 `jq -r`（過濾 `kind` 是否 `^run\.`、抽出 7 個
+TSV 欄位）。掃描迴圈本身是純 bash（`mapfile -d $'\t'` + assoc array），沒有額外
+fork，但 jq 是逐行 spawn。與 [[CC-364]] 修掉前的 `pmctl trace tail` 是**同一個
+per-item subprocess 形狀**（見 [[per-item-subprocess-class]]）。
+
+**Profile（2026-08-27，PATH jq wrapper 計數 + 牆鐘）**:
+
+| N events | jq 呼叫數 | 牆鐘 |
+|---:|---:|---:|
+| 100 | 102 | 3.0s |
+| 300 | 302 | 8.8s |
+| 900 | 902 | 30.2s |
+
+jq 呼叫 = N + 2（每事件一個 + 固定 2 個 setup/teardown）；牆鐘線性、
+斜率約 **34ms/event**（WSL2 上 jq fork 主導）。真實 state store 的
+`events.jsonl` = 6642 行時，`pmctl run-stats --json` 前景執行 **2 分鐘 timeout
+（SIGTERM）**，外推約 225s。run-stats 是 v1.0 readiness 證據工具
+（[[CC-358]] DoD），現在在真實資料上跑不完。
+
+**Why now**: [[CC-364]] 剛把 `trace tail` 的同款問題修好，pattern 新鮮；
+`events.jsonl` 的 archive+active 串接掃描現在有第二個 consumer。
+
+**Requirement**:
+1. 掃描階段改為**單次 `jq -R` 串流** over 串接的 archive+active 事件流：
+   逐行 `try fromjson catch null`，非物件或非 `run.*` 者輸出 skip 標記，
+   `run.*` 者輸出分隔欄位（沿用既有 7 欄：ts/kind/run_id/adapter/note/
+   exit_code/fallback_used），迴圈結束後**一次** decode 進 assoc array。
+   分隔符用 NUL 或 tab，比照 [[CC-364]] / CC-557 / CC-560 已驗證做法。
+2. `--since` 過濾維持字典序 ISO-8601 比對語意；malformed row 容忍與
+   `episodes_malformed` 式的計數維持既有誠實回報慣例。
+3. Archive-inclusive 掃描（`read_archives`）、gzip 不可用時的 active-only
+   fallback、`_meta` 回報，全部維持。
+4. 新增 fault-sensitive perf 迴歸：PATH jq shim 計數，斷言小分區與大分區
+   的 jq 呼叫數相等（O(1) in event count），比照 [[CC-364]] 的
+   `case_trace_tail_single_jq_pass`。
+5. 修正前後輸出以 `jq -S` 正規化後逐位元組比對，確認純效能修正、無行為變更。
+6. 評估 `trace tail` 與 `run-stats` 的「archive 檔案發現 + 串接 + gzip fallback」
+   是否值得抽成共用 primitive（兩者 jq 程式不同，只有串流串接那段可共用）；
+   若第二個 consumer 不足以支撐抽象就記錄理由、不強抽。
+
+**Non-goals**: 不改 run-stats 的輸出 schema 或 CLI 介面；不改 `--since` 驗證；
+不動 [[CC-358]] 的 `fallback_used` event 訊號本身。
+
+**Cross-link**: [[CC-364]]（同形狀的第一次修正，含 profiling 方法與 oracle 測試
+技巧）、[[per-item-subprocess-class]]。
 
 ---
