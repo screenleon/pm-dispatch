@@ -23,114 +23,78 @@ PASS=0
 FAIL=0
 FAILED_CASES=()
 
-SUITE_NAMES=(
-  lint-agents
-  lint-scripts
-  lint-script-domain-inventory
-  lint-portable-repo-paths
-  lint-pmctl-commands
-  lint-test-docstrings
-  lint-test-suite-registry
-  lint-surface-coverage
-  test-guards
-  test-guard-framework
-  test-migrate
-  test-migrate-to-events
-  test-install
-  test-uninstall
-  test-usage-weekly
-  test-usage-tracker
-  test-pm-scripts
-  test-codex-dispatch
-  test-pmctl-dispatch
-  test-pmctl-pm
-  test-dispatch-record
-  test-dispatch-lifecycle
-  test-dispatch-cancel
-  test-pmctl-operation
-  test-dispatch-reconcile
-  test-gate-lifecycle
-  test-claude-dispatch
-  test-opencode-dispatch
-  test-grok-dispatch
-  test-layer-boundaries
-  test-executor-router
-  test-runner-kind
-  test-pmctl-adapter-generate
-  test-pr-gate-shard-1
-  test-pr-gate-shard-2
-  test-pr-gate-shard-3
-  test-pr-gate-shard-4
-  test-setup-project
-  test-patch-gitignore
-  test-portable
-  test-doctor
-  test-hook-profile-parity
-  test-lint-frontmatter
-  test-lint-test-docstrings
-  test-lint-test-suite-registry
-  test-lint-surface-coverage
-  test-runtime-lib-coverage
-  test-test-harness
-  test-commands
-  test-commands-runner
-  test-dispatch-handover
-  test-handover-validate
-  test-dispatch-post-verify
-  test-check-docs-freshness
-  test-check-policy-doc-sync
-  test-skill-refine
-  test-pr-gate-profile
-  test-run-all-tests
-  test-run-tests
-  test-timeout-resolve
-  test-dispatch-common
-  test-detached-launch
-  test-lint-model-aliases
-  test-model-aliases
-  test-lint-portable-repo-paths
-  test-reasoning-effort
-  test-core-schemas
-  test-host-manifest
-  test-host-resolver
-  test-host-write-codex
-  test-codex-dispatch-continuation
-  test-host-write-opencode
-  test-host-write-parity
-  test-pm-prep-snapshot
-  test-schema-task-mirrors-backlog
-  test-state-store
-  test-state-status
-  test-state-paths
-  test-pmctl-artifacts
-  test-state-layout-parity
-  test-state-store-rotation
-  test-pmctl-trace
-  test-pmctl-run-stats
-  test-pmctl-task
-  test-pmctl-decision
-  test-gate-assurance-verify
-  test-gate-scope-manifest-verify
-  test-gate-structural-verify
-  test-pmctl-gate
-  test-pmctl-safe
-  test-pmctl-validate
-  test-brief-validate
-  test-archive-closed-backlog
-  test-lint-shellcheck
-  test-script-domain-inventory
-  test-pmctl-context
-  test-pmctl-memory
-  test-pmctl-backlog
-  test-pmctl-guard
-  test-pmctl-ship
-  test-pmctl-worktree
-  test-pmctl-discovery
-  test-pre-release
-  test-release-verify
-  test-upgrade-smoke
-  test-e2e-script
-)
+# The authoritative suite registry is tests/lib/test-suite-runner.sh
+# (SUITE_NAMES + declare -A SUITE_PATHS). This meta-test derives its own copy by
+# parsing that file, so a new suite is registered in exactly one place. A
+# hand-kept mirror here only drifted and turned "you forgot to update the mirror"
+# into an opaque known-suite-count mismatch (CC-574; suite-registry-mirror memory).
+_SUITE_RUNNER="$REPO_ROOT/tests/lib/test-suite-runner.sh"
+
+# Established roots the authoritative SUITE_PATHS registry uses (tests/shell,
+# tools/lint, pm/scripts/test). A registry path outside these — or any absolute
+# or `..`-bearing value — is rejected: these paths are concatenated onto a
+# fixture repo root and then written (mkdir/redirect/chmod), so a hostile value
+# in a checked-out registry must never reach the filesystem (gate
+# security-reviewer-F001).
+_SUITE_PATH_ROOTS=(tests/ tools/ pm/scripts/)
+
+# _suite_path_is_safe <path> — true only for a repo-relative, traversal-free
+# `.sh` under one of _SUITE_PATH_ROOTS.
+_suite_path_is_safe() {
+  local p="$1" root ok=1
+  [[ "$p" == *.sh ]] || return 1
+  [[ "$p" != /* && "$p" != *//* ]] || return 1
+  [[ "$p" != ".." && "$p" != "../"* && "$p" != *"/../"* && "$p" != *"/.." ]] || return 1
+  [[ "$p" =~ ^[A-Za-z0-9._/-]+$ ]] || return 1
+  for root in "${_SUITE_PATH_ROOTS[@]}"; do
+    [[ "$p" == "$root"* ]] && { ok=0; break; }
+  done
+  return "$ok"
+}
+
+# _load_suite_registry <runner_path> — populate SUITE_NAMES (ordered) and
+# SUITE_PATH_MAP (name->path) by parsing the runner's SUITE_NAMES=(...) and
+# `declare -A SUITE_PATHS=(...)` blocks. Exits 1 with a specific diagnostic when
+# the parse yields nothing (format drift) or when any parsed path fails
+# _suite_path_is_safe. Callers run this at top level; tests call it in a subshell.
+_load_suite_registry() {
+  local runner="$1" _n _p
+  mapfile -t SUITE_NAMES < <(
+    awk '/^SUITE_NAMES=\(/ { inside = 1; next }
+         inside && /^\)/ { exit }
+         inside { gsub(/^[[:space:]]+|[[:space:]]+$/, ""); if ($0 != "") print }' "$runner"
+  )
+  SUITE_PATH_MAP=()
+  while IFS=$'\t' read -r _n _p; do
+    [[ -n "$_n" && -n "$_p" ]] || continue
+    if ! _suite_path_is_safe "$_p"; then
+      printf 'test-run-all-tests: unsafe suite path in registry %s: [%s]=%q (must be a traversal-free tests/ or tools/ script)\n' \
+        "$runner" "$_n" "$_p" >&2
+      exit 1
+    fi
+    SUITE_PATH_MAP["$_n"]="$_p"
+  done < <(
+    awk '/^declare -A SUITE_PATHS=\(/ { inside = 1; next }
+         inside && /^\)/ { exit }
+         inside {
+           line = $0
+           gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+           if (line ~ /^\[[^]]+\]="[^"]+"$/) {
+             name = line; sub(/^\[/, "", name); sub(/\].*/, "", name)
+             path = line; sub(/^.*="/, "", path); sub(/"$/, "", path)
+             print name "\t" path
+           }
+         }' "$runner"
+  )
+  if [[ "${#SUITE_NAMES[@]}" -eq 0 || "${#SUITE_PATH_MAP[@]}" -eq 0 ]]; then
+    printf 'test-run-all-tests: could not parse the suite registry from %s -- its SUITE_NAMES=(...) / declare -A SUITE_PATHS=(...) format changed\n' "$runner" >&2
+    exit 1
+  fi
+}
+
+declare -a SUITE_NAMES=()
+declare -A SUITE_PATH_MAP=()
+_load_suite_registry "$_SUITE_RUNNER"
 SUITE_TOTAL=${#SUITE_NAMES[@]}
 SUITE_MINUS_ONE=$((SUITE_TOTAL - 1))
 
@@ -155,115 +119,10 @@ assert_contains() {
 }
 
 suite_path() {
-  case "$1" in
-    lint-agents) printf 'tools/lint/lint-agents.sh\n' ;;
-    lint-scripts) printf 'tools/lint/lint-scripts.sh\n' ;;
-    lint-script-domain-inventory) printf 'tools/lint/lint-script-domain-inventory.sh\n' ;;
-    lint-portable-repo-paths) printf 'tools/lint/lint-portable-repo-paths.sh\n' ;;
-    lint-pmctl-commands) printf 'tools/lint/lint-pmctl-commands.sh\n' ;;
-    lint-test-docstrings) printf 'tools/lint/lint-test-docstrings.sh\n' ;;
-    lint-test-suite-registry) printf 'tools/lint/lint-test-suite-registry.sh\n' ;;
-    lint-surface-coverage) printf 'tools/lint/lint-surface-coverage.sh\n' ;;
-    test-guards) printf 'tests/shell/test-guards.sh\n' ;;
-    test-guard-framework) printf 'tests/shell/test-guard-framework.sh\n' ;;
-    test-migrate) printf 'tests/shell/test-migrate-routing-log.sh\n' ;;
-    test-migrate-to-events) printf 'tests/shell/test-migrate-routing-to-events.sh\n' ;;
-    test-install) printf 'tests/shell/test-install.sh\n' ;;
-    test-uninstall) printf 'tests/shell/test-uninstall.sh\n' ;;
-    test-usage-weekly) printf 'tests/shell/test-usage-weekly.sh\n' ;;
-    test-usage-tracker) printf 'tests/shell/test-usage-tracker.sh\n' ;;
-    test-pm-scripts) printf 'pm/scripts/test/run-tests.sh\n' ;;
-    test-codex-dispatch) printf 'tests/shell/test-codex-dispatch.sh\n' ;;
-    test-pmctl-dispatch) printf 'tests/shell/test-pmctl-dispatch.sh\n' ;;
-    test-pmctl-pm) printf 'tests/shell/test-pmctl-pm.sh\n' ;;
-    test-dispatch-record) printf 'tests/shell/test-dispatch-record.sh\n' ;;
-    test-dispatch-lifecycle) printf 'tests/shell/test-dispatch-lifecycle.sh\n' ;;
-    test-dispatch-cancel) printf 'tests/shell/test-dispatch-cancel.sh\n' ;;
-    test-pmctl-operation) printf 'tests/shell/test-pmctl-operation.sh\n' ;;
-    test-dispatch-reconcile) printf 'tests/shell/test-dispatch-reconcile.sh\n' ;;
-    test-gate-lifecycle) printf 'tests/shell/test-gate-lifecycle.sh\n' ;;
-    test-claude-dispatch) printf 'tests/shell/test-claude-dispatch.sh\n' ;;
-    test-opencode-dispatch) printf 'tests/shell/test-opencode-dispatch.sh\n' ;;
-    test-grok-dispatch) printf 'tests/shell/test-grok-dispatch.sh\n' ;;
-    test-layer-boundaries) printf 'tests/shell/test-layer-boundaries.sh\n' ;;
-    test-executor-router) printf 'tests/shell/test-executor-router.sh\n' ;;
-    test-runner-kind) printf 'tests/shell/test-runner-kind.sh\n' ;;
-    test-pmctl-adapter-generate) printf 'tests/shell/test-pmctl-adapter-generate.sh\n' ;;
-    test-pr-gate-shard-1) printf 'tests/shell/test-pr-gate-shard-1.sh\n' ;;
-    test-pr-gate-shard-2) printf 'tests/shell/test-pr-gate-shard-2.sh\n' ;;
-    test-pr-gate-shard-3) printf 'tests/shell/test-pr-gate-shard-3.sh\n' ;;
-    test-pr-gate-shard-4) printf 'tests/shell/test-pr-gate-shard-4.sh\n' ;;
-    test-setup-project) printf 'tests/shell/test-setup-project.sh\n' ;;
-    test-patch-gitignore) printf 'tests/shell/test-patch-gitignore.sh\n' ;;
-    test-portable) printf 'tests/shell/test-portable.sh\n' ;;
-    test-doctor) printf 'tests/shell/test-doctor.sh\n' ;;
-    test-hook-profile-parity) printf 'tests/shell/test-hook-profile-parity.sh\n' ;;
-    test-lint-frontmatter) printf 'tests/shell/test-lint-frontmatter.sh\n' ;;
-    test-lint-test-docstrings) printf 'tests/shell/test-lint-test-docstrings.sh\n' ;;
-    test-lint-test-suite-registry) printf 'tests/shell/test-lint-test-suite-registry.sh\n' ;;
-    test-lint-surface-coverage) printf 'tests/shell/test-lint-surface-coverage.sh\n' ;;
-    test-runtime-lib-coverage) printf 'tests/shell/test-runtime-lib-coverage.sh\n' ;;
-    test-test-harness) printf 'tests/shell/test-test-harness.sh\n' ;;
-    test-check-docs-freshness) printf 'tests/shell/test-check-docs-freshness.sh\n' ;;
-    test-check-policy-doc-sync) printf 'tests/shell/test-check-policy-doc-sync.sh\n' ;;
-    test-commands) printf 'tests/shell/test-commands.sh\n' ;;
-    test-commands-runner) printf 'tests/shell/test-commands-runner.sh\n' ;;
-    test-dispatch-handover) printf 'tests/shell/test-dispatch-handover.sh\n' ;;
-    test-handover-validate) printf 'tests/shell/test-handover-validate.sh\n' ;;
-    test-dispatch-post-verify) printf 'tests/shell/test-dispatch-post-verify.sh\n' ;;
-    test-skill-refine) printf 'tests/shell/test-skill-refine.sh\n' ;;
-    test-pr-gate-profile) printf 'tests/shell/test-pr-gate-profile.sh\n' ;;
-    test-run-all-tests) printf 'tests/shell/test-run-all-tests.sh\n' ;;
-    test-run-tests) printf 'tests/shell/test-run-tests.sh\n' ;;
-    test-timeout-resolve) printf 'tests/shell/test-timeout-resolve.sh\n' ;;
-    test-dispatch-common) printf 'tests/shell/test-dispatch-common.sh\n' ;;
-    test-detached-launch) printf 'tests/shell/test-detached-launch.sh\n' ;;
-    test-lint-model-aliases) printf 'tests/shell/test-lint-model-aliases.sh\n' ;;
-    test-model-aliases) printf 'tests/shell/test-model-aliases.sh\n' ;;
-    test-lint-portable-repo-paths) printf 'tests/shell/test-lint-portable-repo-paths.sh\n' ;;
-    test-reasoning-effort) printf 'tests/shell/test-reasoning-effort.sh\n' ;;
-    test-host-manifest)   printf 'tests/shell/test-host-manifest.sh\n' ;;
-    test-host-resolver)   printf 'tests/shell/test-host-resolver.sh\n' ;;
-    test-host-write-codex) printf 'tests/shell/test-host-write-codex.sh\n' ;;
-    test-codex-dispatch-continuation) printf 'tests/shell/test-codex-dispatch-continuation.sh\n' ;;
-    test-host-write-opencode) printf 'tests/shell/test-host-write-opencode.sh\n' ;;
-    test-host-write-parity) printf 'tests/shell/test-host-write-parity.sh\n' ;;
-    test-core-schemas) printf 'tests/shell/test-core-schemas.sh\n' ;;
-    test-pm-prep-snapshot) printf 'tests/shell/test-pm-prep-snapshot.sh\n' ;;
-    test-schema-task-mirrors-backlog) printf 'tests/shell/test-schema-task-mirrors-backlog.sh\n' ;;
-    test-state-store) printf 'tests/shell/test-state-store.sh\n' ;;
-    test-state-status) printf 'tests/shell/test-state-status.sh\n' ;;
-    test-state-paths) printf 'tests/shell/test-state-paths.sh\n' ;;
-    test-pmctl-artifacts) printf 'tests/shell/test-pmctl-artifacts.sh\n' ;;
-    test-state-layout-parity) printf 'tests/shell/test-state-layout-parity.sh\n' ;;
-    test-state-store-rotation) printf 'tests/shell/test-state-store-rotation.sh\n' ;;
-    test-pmctl-trace) printf 'tests/shell/test-pmctl-trace.sh\n' ;;
-    test-pmctl-run-stats) printf 'tests/shell/test-pmctl-run-stats.sh\n' ;;
-    test-pmctl-task) printf 'tests/shell/test-pmctl-task.sh\n' ;;
-    test-pmctl-decision) printf 'tests/shell/test-pmctl-decision.sh\n' ;;
-    test-gate-assurance-verify) printf 'tests/shell/test-gate-assurance-verify.sh\n' ;;
-    test-gate-scope-manifest-verify) printf 'tests/shell/test-gate-scope-manifest-verify.sh\n' ;;
-    test-gate-structural-verify) printf 'tests/shell/test-gate-structural-verify.sh\n' ;;
-    test-pmctl-gate) printf 'tests/shell/test-pmctl-gate.sh\n' ;;
-    test-pmctl-safe) printf 'tests/shell/test-pmctl-safe.sh\n' ;;
-    test-pmctl-validate) printf 'tests/shell/test-pmctl-validate.sh\n' ;;
-    test-brief-validate) printf 'tests/shell/test-brief-validate.sh\n' ;;
-    test-archive-closed-backlog) printf 'tests/shell/test-archive-closed-backlog.sh\n' ;;
-    test-lint-shellcheck) printf 'tests/shell/test-lint-shellcheck.sh\n' ;;
-    test-script-domain-inventory) printf 'tests/shell/test-script-domain-inventory.sh\n' ;;
-    test-pmctl-context)  printf 'tests/shell/test-pmctl-context.sh\n' ;;
-    test-pmctl-memory)   printf 'tests/shell/test-pmctl-memory.sh\n' ;;
-    test-pmctl-backlog)   printf 'tests/shell/test-pmctl-backlog.sh\n' ;;
-    test-pmctl-guard)     printf 'tests/shell/test-pmctl-guard.sh\n' ;;
-    test-pmctl-ship)      printf 'tests/shell/test-pmctl-ship.sh\n' ;;
-    test-pmctl-worktree)  printf 'tests/shell/test-pmctl-worktree.sh\n' ;;
-    test-pmctl-discovery) printf 'tests/shell/test-pmctl-discovery.sh\n' ;;
-    test-pre-release)     printf 'tests/shell/test-pre-release.sh\n' ;;
-    test-release-verify)  printf 'tests/shell/test-release-verify.sh\n' ;;
-    test-upgrade-smoke)   printf 'tests/shell/test-upgrade-smoke.sh\n' ;;
-    test-e2e-script)      printf 'tests/shell/test-e2e-script.sh\n' ;;
-    *) return 1 ;;
-  esac
+  # Lookup against the map parsed from the authoritative runner registry (CC-574).
+  local p="${SUITE_PATH_MAP[$1]:-}"
+  [[ -n "$p" ]] || return 1
+  printf '%s\n' "$p"
 }
 
 make_fixture_repo() {
@@ -283,9 +142,18 @@ make_fixture_repo() {
 
 write_suite_stub() {
   local repo="$1" name="$2" status="$3"
-  local path
-  path="$repo/$(suite_path "$name")"
-  mkdir -p "$(dirname "$path")"
+  local rel path parent
+  rel="$(suite_path "$name")" || { printf 'write_suite_stub: no path for %s\n' "$name" >&2; return 1; }
+  # Registry paths are already validated by _suite_path_is_safe at load; re-check
+  # canonical containment here before any write, so a future loosening upstream
+  # still cannot make this helper escape the fixture repo (gate security-reviewer-F001).
+  _suite_path_is_safe "$rel" || { printf 'write_suite_stub: unsafe path for %s: %s\n' "$name" "$rel" >&2; return 1; }
+  path="$repo/$rel"
+  parent="$(cd "$repo" && mkdir -p "$(dirname "$rel")" && cd "$(dirname "$rel")" && pwd -P)"
+  case "$parent/" in
+    "$(cd "$repo" && pwd -P)"/*) ;;
+    *) printf 'write_suite_stub: %s escapes fixture root %s\n' "$path" "$repo" >&2; return 1 ;;
+  esac
   printf '#!/bin/sh\nexit %s\n' "$status" > "$path"
   chmod +x "$path"
 }
@@ -438,6 +306,111 @@ test_known_suite_count() {
   else
     fail_case "$name" "status=$status SUITE_TOTAL=$SUITE_TOTAL listed=$actual_count expected=$expected_count out=$out"
   fi
+}
+
+test_registry_derived_from_runner() {
+  local name="registry-derived-from-runner"
+  # Behavior (CC-574): this meta-test's SUITE_NAMES / suite_path are parsed from
+  # the authoritative tests/lib/test-suite-runner.sh, not a hand-kept mirror.
+  # Steps: (1) the derived ordered list must equal the runner's own --list output
+  # line for line; (2) every derived name must suite_path() to a traversal-free
+  # tests/ or tools/ script that exists.
+  local runner_list derived bad="" name_i
+  runner_list="$(bash "$REPO_ROOT/tests/lib/test-suite-runner.sh" --list 2>/dev/null)"
+  derived="$(printf '%s\n' "${SUITE_NAMES[@]}")"
+  if [[ "$derived" != "$runner_list" ]]; then
+    fail_case "$name" "derived SUITE_NAMES differs from test-suite-runner.sh --list: $(diff <(printf '%s\n' "$derived") <(printf '%s\n' "$runner_list") | tr '\n' '|')"
+    return
+  fi
+  # Every derived NAME must resolve via suite_path()...
+  for name_i in "${SUITE_NAMES[@]}"; do
+    suite_path "$name_i" >/dev/null || { bad="$name_i (no path)"; break; }
+  done
+  # ...and every parsed PATH (iterating the map, per CC-574 Req 3 — not just the
+  # names) must be traversal-free under a known root and exist on disk.
+  if [[ -z "$bad" ]]; then
+    local map_name mp
+    for map_name in "${!SUITE_PATH_MAP[@]}"; do
+      mp="${SUITE_PATH_MAP[$map_name]}"
+      _suite_path_is_safe "$mp" || { bad="[$map_name]=$mp (not a traversal-free tests/|tools/|pm/scripts/ path)"; break; }
+      [[ -f "$REPO_ROOT/$mp" ]] || { bad="[$map_name]=$mp (file absent)"; break; }
+    done
+  fi
+  if [[ -n "$bad" ]]; then
+    fail_case "$name" "registry path check failed for $bad"
+  else
+    pass_case "$name"
+  fi
+}
+
+test_registry_derived_rejects_extra_nonexistent_mapping() {
+  local name="registry-derived-rejects-extra-nonexistent-mapping"
+  # Behavior (CC-574 Req 3 / gate critic-F001): the every-parsed-path existence
+  # check iterates SUITE_PATH_MAP, so a safe-shaped but nonexistent entry that is
+  # absent from SUITE_NAMES is still caught.
+  local bad_runner rc=0 err
+  bad_runner="$TMP_ROOT/$name-runner.sh"
+  cat > "$bad_runner" <<'EOF'
+SUITE_NAMES=(
+  lint-agents
+)
+declare -A SUITE_PATHS=(
+  [lint-agents]="tools/lint/lint-agents.sh"
+  [ghost]="tests/shell/test-does-not-exist-ghost.sh"
+)
+EOF
+  err="$TMP_ROOT/$name.err"
+  ( SUITE_NAMES=(); declare -A SUITE_PATH_MAP=(); _load_suite_registry "$bad_runner"
+    for _mp in "${SUITE_PATH_MAP[@]}"; do
+      [[ -f "$REPO_ROOT/$_mp" ]] || { printf 'absent: %s\n' "$_mp" >&2; exit 3; }
+    done ) 2>"$err" || rc=$?
+  if [[ "$rc" -eq 3 ]] && grep -q 'absent: tests/shell/test-does-not-exist-ghost.sh' "$err"; then
+    pass_case "$name"
+  else
+    fail_case "$name" "rc=$rc err=$(cat "$err")"
+  fi
+}
+
+test_registry_parse_rejects_unsafe_paths() {
+  local name="registry-parse-rejects-unsafe-paths"
+  # Behavior (CC-574 / gate security-reviewer-F001 + qa-tester-F001): each unsafe
+  # class the parser guards against — traversal, absolute, and a value outside
+  # the three approved roots — is exercised separately so a later regression that
+  # weakens ONE check still fails a test. Every case: _load_suite_registry exits
+  # non-zero with the unsafe-path diagnostic and writes nothing outside its fixture.
+  local outside="$TMP_ROOT/$name-OUTSIDE.sh"
+  # class -> the SUITE_PATHS value for [test-evil]
+  local -a classes=(
+    "traversal|../../../../../../../../../..${outside}"
+    "absolute|${outside}"
+    "wrong-root|runtime/lib/test-run-all-tests.sh"
+  )
+  local spec cls val bad_runner err rc all_ok=1
+  for spec in "${classes[@]}"; do
+    cls="${spec%%|*}"; val="${spec#*|}"
+    bad_runner="$TMP_ROOT/$name-$cls-runner.sh"
+    err="$TMP_ROOT/$name-$cls.err"
+    cat > "$bad_runner" <<EOF
+SUITE_NAMES=(
+  test-ok
+  test-evil
+)
+declare -A SUITE_PATHS=(
+  [test-ok]="tests/shell/test-ok.sh"
+  [test-evil]="${val}"
+)
+EOF
+    rc=0
+    # subshell isolates the helper's exit 1; || rc=$? keeps set -e from aborting.
+    ( SUITE_NAMES=(); declare -A SUITE_PATH_MAP=(); _load_suite_registry "$bad_runner" ) 2>"$err" || rc=$?
+    if [[ "$rc" -ne 0 ]] && grep -q 'unsafe suite path' "$err" && [[ ! -e "$outside" ]]; then
+      continue
+    fi
+    all_ok=0
+    fail_case "$name" "$cls not rejected: rc=$rc outside_created=$([[ -e "$outside" ]] && echo yes || echo no) err=$(cat "$err")"
+    break
+  done
+  [[ "$all_ok" -eq 1 ]] && pass_case "$name"
 }
 
 test_suite_filter_list() {
@@ -1467,6 +1440,9 @@ test_formerly_exclusive_suites_now_run_concurrently() {
 
 test_list
 test_known_suite_count
+test_registry_derived_from_runner
+test_registry_derived_rejects_extra_nonexistent_mapping
+test_registry_parse_rejects_unsafe_paths
 test_suite_filter_list
 test_suite_filter_runs_only_selected
 test_suite_filter_rejects_unknown
