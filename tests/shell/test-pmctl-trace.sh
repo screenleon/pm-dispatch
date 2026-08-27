@@ -325,6 +325,60 @@ case_trace_large_partition_streaming() {
   fi
 }
 
+# Behavior: the CC-364 performance contract holds -- `trace tail` invokes jq a
+# fixed number of times for a whole event partition, not once per event, so a
+# future return to per-event jq spawning is caught even though output stays
+# byte-identical.
+# Steps: shim a counting `jq` wrapper onto PATH (it tallies invocations then
+# exec's the real jq), run `trace tail --all --json` once over a 20-event
+# partition and once over a 200-event partition, and assert the invocation
+# tally is identical for both (O(1) in event count) and non-zero. A per-event
+# implementation would make the 200-event tally ~10x the 20-event one.
+case_trace_tail_single_jq_pass() {
+  local name="pmctl trace tail: jq invocation count is O(1) in event count"
+  should_run "$name" || return 0
+  local store proj shimdir real_jq tally small large status=0
+  real_jq="$(type -P jq)"
+  store="$tmp_root/jqcount-store"
+  proj="$(trace_project_dir "$store")"
+  shimdir="$tmp_root/jqcount-shim"
+  tally="$tmp_root/jqcount.tally"
+  mkdir -p "$shimdir"
+  {
+    printf '%s\n' '#!/usr/bin/env bash'
+    printf 'printf x >> %q\n' "$tally"
+    printf 'exec %q "$@"\n' "$real_jq"
+  } > "$shimdir/jq"
+  chmod +x "$shimdir/jq"
+
+  gen_events() {
+    awk -v n="$1" 'BEGIN {
+      for (i = 1; i <= n; i++) {
+        printf "{\"schema_version\":1,\"id\":\"evt-%04d\",\"ts\":\"2026-06-06T00:%02d:00Z\",\"kind\":\"run.completed\",\"subject_type\":\"run\",\"subject_id\":\"RUN-%d\",\"actor\":\"pmctl\",\"payload\":{}}\n", i, i % 60, i
+      }
+    }'
+  }
+
+  gen_events 20 > "$proj/events.jsonl"
+  : > "$tally"
+  PATH="$shimdir:$PATH" PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" trace tail --all --json \
+    > "$tmp_root/jqcount-small.out" 2>/dev/null || status=$?
+  small="$(wc -c < "$tally" | tr -d ' ')"
+
+  gen_events 200 > "$proj/events.jsonl"
+  : > "$tally"
+  PATH="$shimdir:$PATH" PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" trace tail --all --json \
+    > "$tmp_root/jqcount-large.out" 2>/dev/null || status=$?
+  large="$(wc -c < "$tally" | tr -d ' ')"
+
+  if [[ "$status" -eq 0 && "$small" -gt 0 && "$small" == "$large" &&
+        "$(line_count "$tmp_root/jqcount-large.out")" == "200" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status small=$small large=$large large_lines=$(line_count "$tmp_root/jqcount-large.out")"
+  fi
+}
+
 case_trace_empty_missing_store() {
   local name="pmctl trace tail: missing store exits 0 with empty stdout"
   should_run "$name" || return 0
@@ -368,6 +422,7 @@ case_trace_equal_ts_append_order
 case_trace_corrupt_row_tolerance
 case_trace_active_archive_merge
 case_trace_large_partition_streaming
+case_trace_tail_single_jq_pass
 case_trace_empty_missing_store
 case_trace_unknown_flag_usage
 
