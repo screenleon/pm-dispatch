@@ -2,36 +2,15 @@
 # Sourceable OpenCode-host doctor module discovered from the host manifest.
 
 _doctor_host_opencode_config_path() {
-  local manifest="$REPO_ROOT/hosts/opencode/host.yaml"
-  local id path fmt managed
-  while IFS=$'\t' read -r id path fmt managed; do
-    [[ "$id" == "config" && "$fmt" == "opencode-config-json" && "$managed" == "true" ]] || continue
-    host_manifest_expand_path "$REPO_ROOT" opencode "$path"
-    return 0
-  done < <(host_manifest_install_targets "$manifest")
-  return 1
+  host_manifest_target_path "$REPO_ROOT" opencode config opencode-config-json true
 }
 
 _doctor_host_opencode_commands_path() {
-  local manifest="$REPO_ROOT/hosts/opencode/host.yaml"
-  local id path fmt managed
-  while IFS=$'\t' read -r id path fmt managed; do
-    [[ "$id" == "commands" && "$fmt" == "copy-tree" && "$managed" == "true" ]] || continue
-    host_manifest_expand_path "$REPO_ROOT" opencode "$path"
-    return 0
-  done < <(host_manifest_install_targets "$manifest")
-  return 1
+  host_manifest_target_path "$REPO_ROOT" opencode commands copy-tree true
 }
 
 _doctor_host_opencode_tools_path() {
-  local manifest="$REPO_ROOT/hosts/opencode/host.yaml"
-  local id path fmt managed
-  while IFS=$'\t' read -r id path fmt managed; do
-    [[ "$id" == "tools" && "$fmt" == "copy-tree" && "$managed" == "true" ]] || continue
-    host_manifest_expand_path "$REPO_ROOT" opencode "$path"
-    return 0
-  done < <(host_manifest_install_targets "$manifest")
-  return 1
+  host_manifest_target_path "$REPO_ROOT" opencode tools copy-tree true
 }
 
 _doctor_host_opencode_pm_command() {

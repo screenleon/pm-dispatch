@@ -193,6 +193,13 @@ jobs:
       - name: doctor.sh regression suite
         run: ./tests/shell/test-doctor.sh
 
+  test-host-resolver:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: shared host config-root resolver conformance suite
+        run: bash tests/shell/test-host-resolver.sh
+
   test-hook-profile-parity:
     runs-on: ubuntu-latest
     steps:

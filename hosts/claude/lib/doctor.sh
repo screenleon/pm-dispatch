@@ -72,21 +72,12 @@ _doctor_host_claude_check_settings_file() {
 
 _doctor_host_claude_hook_present() {
   local basename="$1" settings="$2"
-  jq -e --arg basename "$basename" '
-    # install-guards.sh shell-escapes managed command paths (printf %q), so a repo
-    # under a path with a space stores a backslash-escaped command. Strip those
-    # shell-escape backslashes (a backslash before any non-alphanumeric char)
-    # BEFORE the Windows backslash->slash conversion, which only applies to native
-    # path separators (a backslash before a component name, i.e. alphanumeric).
-    def normalize_path:
-      gsub("\\\\(?<c>[^A-Za-z0-9])"; .c)
-      | if test("^[A-Za-z]:[/\\\\]") then
-          "/" + (.[0:1] | ascii_downcase) + "/" + (.[3:] | gsub("\\\\"; "/"))
-        else gsub("\\\\"; "/") end;
+  jq -e --arg basename "$basename" "
+    $HOST_DOCTOR_JQ_NORMALIZE_PATH"'
     def managed_hook:
       (.command? // "") as $cmd |
       ($cmd | normalize_path) as $ncmd |
-      ($ncmd | sub(" --host (claude|codex|opencode|grok|generic)$"; "")) as $path |
+      ($ncmd | '"$HOST_DOCTOR_JQ_STRIP_HOST_SUFFIX"') as $path |
       (
         (($path | split("/") | last) == $basename and ($path | split("/") | .[-2]) == "scripts") or
         (($path | split("/") | last) == $basename and ($path | split("/") | .[-2]) == "hooks" and ($path | split("/") | .[-3]) == "runtime") or
@@ -129,12 +120,8 @@ _doctor_host_claude_context_timeout_ok() {
 
 _doctor_host_claude_adapter_bg_present() {
   local adapter_name="$1" settings="$2"
-  jq -e --arg adapter_name "$adapter_name" '
-    def normalize_path:
-      gsub("\\\\(?<c>[^A-Za-z0-9])"; .c)
-      | if test("^[A-Za-z]:[/\\\\]") then
-          "/" + (.[0:1] | ascii_downcase) + "/" + (.[3:] | gsub("\\\\"; "/"))
-        else gsub("\\\\"; "/") end;
+  jq -e --arg adapter_name "$adapter_name" "
+    $HOST_DOCTOR_JQ_NORMALIZE_PATH"'
     def managed_bg_hook:
       (.command? // "") as $cmd |
       ($cmd | normalize_path) as $ncmd |
@@ -150,11 +137,10 @@ _doctor_host_claude_adapter_bg_present() {
 _doctor_host_claude_stale_hook_commands() {
   local settings="$1" repo_root="$2"
   jq -r --arg repo_root "$repo_root" '
-    # Normalize Windows drive paths (C:/...) to POSIX form (/c/...) so that
-    # comparisons work regardless of which format the shell or installer used.
-    # First strip printf %q shell-escape backslashes (a backslash before any
-    # non-alphanumeric char) so an escaped command path written for a spaced repo
-    # root compares equal to the raw repo root.
+    # Deliberately a LOCAL variant of normalize_path: unlike the shared
+    # $HOST_DOCTOR_JQ_NORMALIZE_PATH, a non-drive path is left untouched
+    # (`else . end`) because this digest comparison must not rewrite `\` in a
+    # value that is already POSIX. Single consumer — not extracted (CC-538 Req 4).
     def normalize_path:
       gsub("\\\\(?<c>[^A-Za-z0-9])"; .c)
       | if test("^[A-Za-z]:[/\\\\]") then
@@ -171,14 +157,13 @@ _doctor_host_claude_stale_hook_commands() {
         (.command? // "") as $cmd |
         ($cmd | normalize_path) as $ncmd |
         # Strip a trailing `--host <name>` before classifying by basename —
-        # guard-inject-memory.sh is wired with this suffix on Claude (CC-566)
-        # and without it the last "/"-segment would be
-        # "guard-inject-memory.sh --host claude", which never matches the
-        # bare-basename IN() lists below, silently dropping a genuinely stale
-        # (different-checkout) memory hook from this report. Mirrors the same
-        # stripping already applied in _doctor_host_claude_hook_present and
-        # _doctor_host_claude_broken_hook_targets in this file.
-        ($ncmd | sub(" --host (claude|codex|opencode|grok|generic)$"; "")) as $path |
+        # guard-inject-memory.sh is wired with this suffix on Claude and without
+        # it the last "/"-segment would be "guard-inject-memory.sh --host claude",
+        # which never matches the bare-basename IN() lists below, silently
+        # dropping a genuinely stale (different-checkout) memory hook from this
+        # report. Same shared fragment as _doctor_host_claude_hook_present and
+        # _doctor_host_claude_broken_hook_targets.
+        ($ncmd | '"$HOST_DOCTOR_JQ_STRIP_HOST_SUFFIX"') as $path |
         ($path | length) > 0 and
         (
           (
@@ -213,15 +198,9 @@ _doctor_host_claude_stale_hook_commands() {
 # the repo": user-maintained hooks stored in the checkout are not pm-dispatch
 # install targets and must not make doctor fail.
 _doctor_host_claude_broken_hook_targets() {
-  local settings="$1" repo_root="$2" command_path
-  while IFS= read -r command_path; do
-    [[ -n "$command_path" && ! -x "$command_path" ]] && printf '%s\n' "$command_path"
-  done < <(jq -r --arg repo_root "$repo_root" '
-    def normalize_path:
-      gsub("\\\\(?<c>[^A-Za-z0-9])"; .c)
-      | if test("^[A-Za-z]:[/\\\\]") then
-          "/" + (.[0:1] | ascii_downcase) + "/" + (.[3:] | gsub("\\\\"; "/"))
-        else gsub("\\\\"; "/") end;
+  local settings="$1" repo_root="$2"
+  host_doctor_filter_non_executable < <(jq -r --arg repo_root "$repo_root" "
+    $HOST_DOCTOR_JQ_NORMALIZE_PATH"'
     [
       ((.hooks // {}) | .PreToolUse[]? | (.hooks // [])[]?),
       ((.hooks // {}) | .PostToolUse[]? | (.hooks // [])[]?),
@@ -231,7 +210,7 @@ _doctor_host_claude_broken_hook_targets() {
     ]
     | map(
         (.command? // "" | normalize_path
-          | sub(" --host (claude|codex|opencode|grok|generic)$"; "")) as $path
+          | '"$HOST_DOCTOR_JQ_STRIP_HOST_SUFFIX"') as $path
         | select($path | startswith(($repo_root | normalize_path) + "/"))
         | select(
             (($path | split("/") | .[-2]) == "scripts" and

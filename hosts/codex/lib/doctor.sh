@@ -37,15 +37,11 @@
 # _doctor_host_codex_manifest_parity's determination (the two probes must
 # never disagree about the same underlying fact).
 _doctor_host_codex_broken_hook_targets() {
-  local hooks_file="$1" command_path
-  while IFS= read -r command_path; do
-    [[ -n "$command_path" && ! -x "$command_path" ]] && printf '%s\n' "$command_path"
-  done < <(jq -r --arg repo_root "$REPO_ROOT" '
-    def normalize_path:
-      gsub("\\\\(?<c>[^A-Za-z0-9])"; .c)
-      | if test("^[A-Za-z]:[/\\\\]") then
-          "/" + (.[0:1] | ascii_downcase) + "/" + (.[3:] | gsub("\\\\"; "/"))
-        else gsub("\\\\"; "/") end;
+  local hooks_file="$1"
+  # normalize_path shared; the --host strip stays codex-narrow on purpose (a
+  # codex hooks.json only ever carries `--host codex`).
+  host_doctor_filter_non_executable < <(jq -r --arg repo_root "$REPO_ROOT" "
+    $HOST_DOCTOR_JQ_NORMALIZE_PATH"'
     [
       ((.hooks // {}) | .PreToolUse[]? | (.hooks // [])[]?),
       ((.hooks // {}) | .UserPromptSubmit[]? | (.hooks // [])[]?),

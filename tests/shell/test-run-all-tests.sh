@@ -92,6 +92,7 @@ SUITE_NAMES=(
   test-reasoning-effort
   test-core-schemas
   test-host-manifest
+  test-host-resolver
   test-host-write-codex
   test-codex-dispatch-continuation
   test-host-write-opencode
@@ -222,6 +223,7 @@ suite_path() {
     test-lint-portable-repo-paths) printf 'tests/shell/test-lint-portable-repo-paths.sh\n' ;;
     test-reasoning-effort) printf 'tests/shell/test-reasoning-effort.sh\n' ;;
     test-host-manifest)   printf 'tests/shell/test-host-manifest.sh\n' ;;
+    test-host-resolver)   printf 'tests/shell/test-host-resolver.sh\n' ;;
     test-host-write-codex) printf 'tests/shell/test-host-write-codex.sh\n' ;;
     test-codex-dispatch-continuation) printf 'tests/shell/test-codex-dispatch-continuation.sh\n' ;;
     test-host-write-opencode) printf 'tests/shell/test-host-write-opencode.sh\n' ;;

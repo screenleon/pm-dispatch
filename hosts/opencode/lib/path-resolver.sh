@@ -3,18 +3,7 @@
 # environment rules into the shared manifest reader.
 
 opencode_host_config_root() {
-  local root="${XDG_CONFIG_HOME:-}"
-
-  if [[ -z "$root" ]]; then
-    if [[ -n "${HOME:-}" ]]; then
-      root="$HOME/.config"
-    else
-      printf 'opencode path resolver: HOME is required when XDG_CONFIG_HOME is unset or empty\n' >&2
-      return 2
-    fi
-  fi
-
-  printf '%s\n' "$root"
+  host_simple_config_root opencode XDG_CONFIG_HOME .config
 }
 
 opencode_host_resolve_path() {

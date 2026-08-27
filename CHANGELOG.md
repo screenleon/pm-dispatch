@@ -22,6 +22,19 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **Host resolver / doctor shared primitives (CC-538).** The byte-identical
+  `codex`/`grok`/`opencode` `*_host_config_root` bodies collapse to one
+  parameterised `host_simple_config_root <label> <env> <subdir>` in the new
+  `runtime/lib/host-resolver.sh`; Claude keeps its own canonical/legacy
+  dual-variable resolver. The per-host doctor modules stop re-implementing three
+  mechanical helpers: the jq path-normalize / `--host` strip fragments move to
+  `runtime/lib/host-doctor-primitives.sh` as shared constants, and the
+  "scan install_targets, match id/format/managed, expand" loop becomes
+  `host_manifest_target_path` in `host-manifest.sh`. No host-name branching
+  enters shared code; each host still owns its labels, env-var names, defaults,
+  allow-lists, and fix messages. New `tests/shell/test-host-resolver.sh`
+  conformance suite (simple-resolver parity, no-host-switch structural guard,
+  Claude conflict semantics, concurrent-failure diagnostic isolation).
 - **`gate_assurance_verify` structural cleanup (CC-533).** ~230 lines of
   handwritten `only_keys`/type/enum/pattern/const checks duplicating
   `core/schema/gate-assurance.schema.json` are removed from the v2/v3 branch,

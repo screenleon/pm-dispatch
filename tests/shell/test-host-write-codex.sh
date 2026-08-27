@@ -566,6 +566,7 @@ test_install_guards_codex_missing_manifest_target_errors() {
   printf 'schema_version: 1\nhost_name: codex\ninstall_targets:\n  - id: config\n    path: "$CODEX_HOME/config.toml"\n    format: codex-config-toml\n    managed: false\n' \
     > "$mock_repo/hosts/codex/host.yaml"
   cp "$REPO_ROOT/runtime/lib/host-manifest.sh" "$mock_repo/runtime/lib/host-manifest.sh"
+  cp "$REPO_ROOT/runtime/lib/host-resolver.sh" "$mock_repo/runtime/lib/host-resolver.sh"
   cp "$REPO_ROOT/hosts/codex/bin/install.sh" "$mock_repo/scripts/install-guards-codex.sh"
   cp "$REPO_ROOT/hosts/codex/hooks/command-guard.sh" "$mock_repo/scripts/hook-codex-command-guard.sh"
   local rc=0

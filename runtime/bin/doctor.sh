@@ -93,6 +93,11 @@ else
   _HOST_MANIFEST_AVAILABLE=0
 fi
 
+if [[ -f "$DOCTOR_LIB_DIR/host-doctor-primitives.sh" ]]; then
+  # shellcheck source=runtime/lib/host-doctor-primitives.sh
+  . "$DOCTOR_LIB_DIR/host-doctor-primitives.sh"
+fi
+
 if [[ "$_PORTABLE_AVAILABLE" -eq 1 \
    && -f "$DOCTOR_LIB_DIR/state-paths.sh" \
    && -f "$DOCTOR_LIB_DIR/detached-launch.sh" \
