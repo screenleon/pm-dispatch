@@ -358,7 +358,120 @@ case_run_stats_scans_rotated_archive() {
   fi
 }
 
+# Behavior: run-stats scans events.jsonl in a single jq pass -- jq is invoked
+# a fixed number of times for a whole partition, not once per event -- so a
+# future return to per-event jq spawning is caught even though the aggregate
+# report stays byte-identical.
+# Steps: shim a counting `jq` wrapper onto PATH (it tallies invocations then
+# exec's the real jq), run `run-stats --json` once over a 20-run partition and
+# once over a 200-run partition, and assert the invocation tally is identical
+# for both (O(1) in event count), non-zero, and that both reports aggregate
+# the expected total. A per-event implementation would make the 200-run tally
+# ~10x the 20-run one.
+case_run_stats_single_jq_pass() {
+  local name="pmctl run-stats: jq invocation count is O(1) in event count"
+  should_run "$name" || return 0
+  local store proj shimdir real_jq tally small large status=0
+  real_jq="$(type -P jq)"
+  store="$tmp_root/jqcount-store"
+  proj="$(run_stats_project_dir "$store")"
+  shimdir="$tmp_root/rs-jqcount-shim"
+  tally="$tmp_root/rs-jqcount.tally"
+  mkdir -p "$shimdir"
+  {
+    printf '%s\n' '#!/usr/bin/env bash'
+    printf 'printf x >> %q\n' "$tally"
+    printf 'exec %q "$@"\n' "$real_jq"
+  } > "$shimdir/jq"
+  chmod +x "$shimdir/jq"
+
+  gen_runs() {
+    awk -v n="$1" 'BEGIN {
+      for (i = 1; i <= n; i++) {
+        printf "{\"schema_version\":1,\"id\":\"e%06d\",\"ts\":\"2026-06-06T00:%02d:00Z\",\"kind\":\"run.completed\",\"subject_type\":\"run\",\"subject_id\":\"R%d\",\"actor\":\"pmctl\",\"payload\":{\"run_id\":\"R%d\",\"adapter\":\"codex\",\"exit_code\":0}}\n", i, i % 60, i, i
+      }
+    }'
+  }
+
+  gen_runs 20 > "$proj/events.jsonl"
+  : > "$tally"
+  PATH="$shimdir:$PATH" PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" run-stats --json \
+    > "$tmp_root/rs-jqcount-small.out" 2>/dev/null || status=$?
+  small="$(wc -c < "$tally" | tr -d ' ')"
+
+  gen_runs 200 > "$proj/events.jsonl"
+  : > "$tally"
+  PATH="$shimdir:$PATH" PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" run-stats --json \
+    > "$tmp_root/rs-jqcount-large.out" 2>/dev/null || status=$?
+  large="$(wc -c < "$tally" | tr -d ' ')"
+
+  if [[ "$status" -eq 0 && "$small" -gt 0 && "$small" == "$large" &&
+        "$(jq -r '.adapters.codex.total' "$tmp_root/rs-jqcount-large.out")" == "200" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status small=$small large=$large total=$(jq -r '.adapters.codex.total' "$tmp_root/rs-jqcount-large.out" 2>/dev/null)"
+  fi
+}
+
+# Behavior: the streaming scan produces a byte-identical normalized JSON
+# report to the pre-refactor per-line implementation across a heterogeneous
+# partition -- valid terminal rows, a post-verify "partial", a nonzero exit,
+# a cancelled run, a run with only a non-terminal event, a fallback_used
+# run, a run older than --since, two malformed lines, a non-run event, and a
+# run whose only event is in a rotated archive, spanning three adapters.
+# Steps: build that fixture, run `run-stats --since 2026-06-01 --json`, and
+# assert `jq -S` of the output equals the golden JSON captured from the
+# origin/main implementation (CC-364 method: freeze the prior behavior as a
+# fixture rather than re-run two implementations).
+case_run_stats_streaming_matches_reference() {
+  local name="pmctl run-stats: streaming report matches the pre-refactor golden"
+  should_run "$name" || return 0
+  local store proj out err status=0 expected got
+  store="$tmp_root/golden-store"
+  proj="$(run_stats_project_dir "$store")"
+  mkdir -p "$proj/archive"
+  run_event_json arc1 2026-06-06T00:01:00Z run.completed R-ARC codex ok \
+    | gzip -c > "$proj/archive/events-202606.jsonl.gz"
+  {
+    run_event_json a1 2026-06-06T00:05:00Z run.completed R-OK      codex    ok
+    run_event_json a2 2026-06-06T00:06:00Z run.completed R-PARTIAL codex    ok partial
+    run_event_json a3 2026-06-06T00:07:00Z run.failed    R-FAIL    codex    failed "" 3
+    run_event_json a4 2026-06-06T00:08:00Z run.cancelled R-CANC    opencode cancelled
+    run_event_json a5 2026-06-06T00:09:00Z run.pending   R-MISSING opencode pending
+    run_event_json a6 2026-06-06T00:10:00Z run.completed R-FB      grok     ok "" 0 true
+    run_event_json a7 2026-05-01T00:00:00Z run.completed R-OLD     codex    ok
+    printf '%s\n' '{"id":"broken",'
+    printf '%s\n' 'totally not json'
+    run_event_json g1 2026-06-06T00:11:00Z gate.completed G-1      codex    ok
+  } > "$proj/events.jsonl"
+
+  expected="$(jq -S . <<'GOLDEN'
+{
+  "_meta": { "schema_version": 1, "archive_scanned": true,
+    "note": "active events.jsonl plus 1 rotated archive(s) were scanned" },
+  "adapters": {
+    "codex":    { "total": 4, "ok": 2, "failed": 1, "cancelled": 0, "post_verify_fail": 1, "nonzero_exit": 1, "missing_terminal": 0, "fallback_used": 0 },
+    "opencode": { "total": 2, "ok": 0, "failed": 0, "cancelled": 1, "post_verify_fail": 0, "nonzero_exit": 0, "missing_terminal": 1, "fallback_used": 0 },
+    "grok":     { "total": 1, "ok": 1, "failed": 0, "cancelled": 0, "post_verify_fail": 0, "nonzero_exit": 0, "missing_terminal": 0, "fallback_used": 1 }
+  }
+}
+GOLDEN
+)"
+
+  out="$tmp_root/golden.out"
+  err="$tmp_root/golden.err"
+  run_stats "$store" "$out" "$err" --since 2026-06-01 --json || status=$?
+  got="$(jq -S . "$out" 2>/dev/null)"
+  if [[ "$status" -eq 0 && "$got" == "$expected" && ! -s "$err" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status err=$(<"$err") diff=$(diff <(printf '%s\n' "$expected") <(printf '%s\n' "$got"))"
+  fi
+}
+
 case_run_stats_basic_aggregation
+case_run_stats_single_jq_pass
+case_run_stats_streaming_matches_reference
 case_run_stats_missing_terminal
 case_run_stats_post_verify_fail_note
 case_run_stats_fallback_used

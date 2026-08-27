@@ -2,16 +2,23 @@
 # pmctl run-stats — per-adapter success/failure/fallback analysis over
 # events.jsonl (CC-358). Read-only consumer: never calls events_append or any
 # state-writer write helper. Uses the same ISO-8601 lexicographic string
-# comparison and archive-inclusive scan model as pmctl trace tail
-# (runtime/lib/pmctl-trace.sh) rather than inventing a second parser for the
-# same file format. (trace tail itself now does a single streaming jq pass;
-# this reader still extracts per line — a standalone follow-up, not CC-364.)
+# comparison, archive-inclusive scan model, and single streaming jq pass as
+# pmctl trace tail (runtime/lib/pmctl-trace.sh) rather than inventing a second
+# parser for the same file format.
+#
+# The archive-glob + gzip-check + concat-then-one-jq-pass idiom is duplicated
+# between this file and pmctl-trace.sh (~12 lines each). Extraction into a
+# shared events-scan primitive was considered and deferred: the two jq
+# programs and output consumers differ, and the gzip-unavailable signalling
+# diverges (trace tail: read_archives=0; run-stats: archive_scanned=false +
+# `_meta`). At two consumers the shared seam isn't clearly worth the callback
+# indirection; revisit if a third consumer appears.
 #
 # Archive-inclusive by default, matching pmctl trace tail's read_archives=1:
 # rotated archive/events-*.jsonl.gz files are scanned alongside the active
 # events.jsonl so a --since window reaching past rotation still counts every
 # matching run. Falls back to active-file-only (and says so in `_meta`) only
-# when gzip is unavailable, same fallback pmctl_trace_tail uses.
+# when gzip is unavailable, same fallback pmctl trace tail uses.
 
 pmctl_run_stats_usage() {
   printf 'usage: pmctl run-stats [--since <ISO8601-or-date>] [--by-adapter] [--json]\n' >&2
@@ -31,80 +38,68 @@ pmctl_run_stats_ensure_state_writer() {
   . "$repo_root/runtime/lib/state-writer.sh"
 }
 
-# Emits one TSV row per run.* event whose kind matches ^run\. — ts, kind,
-# run_id, adapter, note, exit_code, fallback_used(true/false) — or nothing
-# when the line isn't a matching run event. One jq invocation per line.
-pmctl_run_stats_extract_line() {
-  local line="${1:-}"
-  printf '%s\n' "$line" | jq -r '
-    if (.kind? // "" | test("^run\\.")) then
-      [
-        (.ts // ""),
-        (.kind // ""),
-        (.payload.run_id // .subject_id // ""),
-        (.payload.adapter // ""),
-        (.payload.note // ""),
-        (.payload.exit_code // 0),
-        ((.payload.fallback_used // false) | tostring)
-      ] | @tsv
-    else
-      empty
-    end
-  ' 2>/dev/null
+# Single streaming jq program over the concatenated archive+active event
+# stream (raw input, one JSON object per line). Replaces the former per-line
+# jq spawn: it runs once for the whole partition regardless of event count.
+# Emits one TSV row per run.* event that passes the --since bound -- ts,
+# kind, run_id, adapter, note, exit_code, fallback_used(true/false) -- and
+# nothing for non-run, filtered-out, malformed, or non-object lines
+# (run-stats has never counted malformed rows; that silent skip is kept).
+# The --since predicate matches the former shell check exactly: an event is
+# dropped only when a bound is set AND its ts is non-empty AND ts < bound,
+# so an empty ts is always kept.
+pmctl_run_stats_filter_program() {
+  cat <<'JQ'
+    (try fromjson catch null) as $o
+    | if ($o | type) != "object" then empty
+      elif (($o.kind // "") | test("^run\\.")) | not then empty
+      else
+        ($o.ts // "") as $ts
+        | if ($since != "" and $ts != "" and $ts < $since) then empty
+          else
+            [ $ts,
+              ($o.kind // ""),
+              ($o.payload.run_id // $o.subject_id // ""),
+              ($o.payload.adapter // ""),
+              ($o.payload.note // ""),
+              ($o.payload.exit_code // 0),
+              (($o.payload.fallback_used // false) | tostring)
+            ] | @tsv
+          end
+      end
+JQ
 }
 
-# Processes one raw events.jsonl(.gz) line, updating the caller's _rs_* assoc
-# arrays and consulting the caller's $since -- relies on bash dynamic scoping
-# (this is only ever called from within pmctl_run_stats, so those `local`
-# arrays are visible here without being passed explicitly).
-pmctl_run_stats_process_line() {
-  local line="${1:-}" ts kind run_id adapter note exit_code fallback
-  [[ -n "$line" ]] || return 0
-  local fields
-  fields="$(pmctl_run_stats_extract_line "$line")" || return 0
-  [[ -n "$fields" ]] || return 0
-  # NOT `IFS=$'\t' read -r ... <<<`: bash's word-splitting treats tab as
-  # "IFS whitespace" and collapses runs of it / trims it at the edges even
-  # when IFS is set to tab alone, silently eating the empty `note` field
-  # and shifting every field after it. `mapfile -d` splits on the literal
-  # byte with no such collapsing.
+# Consumes the concatenated event stream on stdin (one jq pass, wired in by
+# the caller), folding every emitted TSV row into the caller's _rs_* assoc
+# arrays. Relies on bash dynamic scoping -- only ever called from within
+# pmctl_run_stats, so the _rs_* arrays are visible here -- and on a redirect
+# rather than a pipe at the call site so those arrays survive the loop.
+pmctl_run_stats_scan_stream() {
+  local _rs_rec kind run_id adapter note exit_code fallback
   local -a _rs_f=()
-  mapfile -d $'\t' -t _rs_f <<< "$fields"
-  ts="${_rs_f[0]:-}"; kind="${_rs_f[1]:-}"; run_id="${_rs_f[2]:-}"
-  adapter="${_rs_f[3]:-}"; note="${_rs_f[4]:-}"; exit_code="${_rs_f[5]:-}"
-  fallback="${_rs_f[6]:-}"; fallback="${fallback%$'\n'}"
-  [[ -n "$run_id" ]] || return 0
-  if [[ -n "$since" && -n "$ts" && "$ts" < "$since" ]]; then
-    return 0
-  fi
-  _rs_seen["$run_id"]=1
-  [[ -n "$adapter" ]] && _rs_adapter["$run_id"]="$adapter"
-  [[ "$fallback" == "true" ]] && _rs_fallback["$run_id"]=1
-  case "$kind" in
-    run.completed|run.failed|run.cancelled)
-      _rs_terminal_kind["$run_id"]="$kind"
-      _rs_terminal_note["$run_id"]="$note"
-      _rs_terminal_exit["$run_id"]="$exit_code"
-      ;;
-  esac
-}
-
-# Redirect (not a pipe) so the loop runs in the current shell and the
-# caller's _rs_* associative arrays survive past it.
-pmctl_run_stats_scan_path() {
-  local path="${1:-}" line
-  [[ -f "$path" ]] || return 0
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    pmctl_run_stats_process_line "$line"
-  done < "$path"
-}
-
-pmctl_run_stats_scan_gzip_path() {
-  local path="${1:-}" line
-  [[ -f "$path" ]] || return 0
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    pmctl_run_stats_process_line "$line"
-  done < <(gzip -dc "$path" 2>/dev/null)
+  while IFS= read -r _rs_rec; do
+    # NOT `IFS=$'\t' read -r ... <<<`: bash's word-splitting treats tab as
+    # "IFS whitespace" and collapses runs of it / trims it at the edges even
+    # when IFS is set to tab alone, silently eating the empty `note` field
+    # and shifting every field after it. `mapfile -d` splits on the literal
+    # byte with no such collapsing.
+    mapfile -d $'\t' -t _rs_f <<< "$_rs_rec"
+    kind="${_rs_f[1]:-}"; run_id="${_rs_f[2]:-}"
+    adapter="${_rs_f[3]:-}"; note="${_rs_f[4]:-}"; exit_code="${_rs_f[5]:-}"
+    fallback="${_rs_f[6]:-}"; fallback="${fallback%$'\n'}"
+    [[ -n "$run_id" ]] || continue
+    _rs_seen["$run_id"]=1
+    [[ -n "$adapter" ]] && _rs_adapter["$run_id"]="$adapter"
+    [[ "$fallback" == "true" ]] && _rs_fallback["$run_id"]=1
+    case "$kind" in
+      run.completed|run.failed|run.cancelled)
+        _rs_terminal_kind["$run_id"]="$kind"
+        _rs_terminal_note["$run_id"]="$note"
+        _rs_terminal_exit["$run_id"]="$exit_code"
+        ;;
+    esac
+  done
 }
 
 pmctl_run_stats() {
@@ -185,6 +180,7 @@ pmctl_run_stats() {
   declare -A _rs_terminal_exit=() _rs_fallback=() _rs_seen=()
 
   local -a _rs_archives=()
+  local _rs_archive_path _rs_program
   if [[ -d "$archive_dir" ]]; then
     while IFS= read -r -d '' _rs_archive_path; do
       _rs_archives+=("$_rs_archive_path")
@@ -198,13 +194,21 @@ pmctl_run_stats() {
     archive_scanned=false
   fi
 
-  if [[ "$archive_scanned" == true ]]; then
-    for _rs_archive_path in "${_rs_archives[@]}"; do
-      pmctl_run_stats_scan_gzip_path "$_rs_archive_path"
-    done
-    unset _rs_archive_path
-  fi
-  pmctl_run_stats_scan_path "$events_file"
+  # One jq pass over the whole partition: archives first (in the same
+  # filename-sorted order find/sort produced), then the active file. A
+  # redirect (not a pipe) keeps pmctl_run_stats_scan_stream in this shell so
+  # its _rs_* writes survive.
+  _rs_program="$(pmctl_run_stats_filter_program)"
+  pmctl_run_stats_scan_stream < <(
+    {
+      if [[ "$archive_scanned" == true ]]; then
+        for _rs_archive_path in "${_rs_archives[@]}"; do
+          [[ -f "$_rs_archive_path" ]] && gzip -dc "$_rs_archive_path" 2>/dev/null
+        done
+      fi
+      [[ -f "$events_file" ]] && cat "$events_file"
+    } | jq -R -r --arg since "$since" "$_rs_program"
+  )
 
   local tmp_dir agg_file
   tmp_dir="$(mktemp -d)" || return 2
