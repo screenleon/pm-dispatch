@@ -280,6 +280,48 @@ case_trace_active_archive_merge() {
   fi
 }
 
+case_trace_large_partition_streaming() {
+  local name="pmctl trace tail: large archive+active partition stays ordered in one pass"
+  should_run "$name" || return 0
+  local store proj out err status=0 count ordered malformed
+  if ! command -v gzip >/dev/null 2>&1; then
+    pass "$name"
+    return 0
+  fi
+  store="$tmp_root/large-store"
+  proj="$(trace_project_dir "$store")"
+  # 120 archived + 120 active events, disjoint timestamp bands so a correct
+  # merge must order across both sources; two malformed rows exercise the
+  # streaming skip path at a scale well above the other cases. Fixtures are
+  # built in one awk pass, not per-event jq spawns (per-item-subprocess-class).
+  large_events() {
+    local band="$1" prefix="$2" n="$3"
+    awk -v band="$band" -v prefix="$prefix" -v n="$n" 'BEGIN {
+      for (i = 1; i <= n; i++) {
+        printf "{\"schema_version\":1,\"id\":\"%s-%03d\",\"ts\":\"2026-06-06T%s:%02d:00Z\",\"kind\":\"run.completed\",\"subject_type\":\"run\",\"subject_id\":\"%s-%d\",\"actor\":\"pmctl\",\"payload\":{}}\n", prefix, i, band, i % 60, prefix, i
+      }
+    }'
+  }
+  large_events 01 evt-large-a 120 | gzip -c > "$proj/archive/events-202606a.jsonl.gz"
+  {
+    printf '%s\n' '{"id":'
+    large_events 02 evt-large-b 120
+    printf '%s\n' 'not json at all'
+  } > "$proj/events.jsonl"
+  out="$tmp_root/large.out"
+  err="$tmp_root/large.err"
+  run_trace "$store" "$out" "$err" --all --json || status=$?
+  count="$(line_count "$out")"
+  # timestamps must be non-decreasing across the merged stream
+  ordered="$(jq -r '.ts' "$out" | LC_ALL=C sort -c 2>&1 && echo OK)"
+  malformed="$(grep -c 'trace: skipped 2 malformed row(s)' "$err" || true)"
+  if [[ "$status" -eq 0 && "$count" == "240" && "$ordered" == "OK" && "$malformed" == "1" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status count=$count ordered=$ordered malformed=$malformed err=$(<"$err")"
+  fi
+}
+
 case_trace_empty_missing_store() {
   local name="pmctl trace tail: missing store exits 0 with empty stdout"
   should_run "$name" || return 0
@@ -322,6 +364,7 @@ case_trace_human_format
 case_trace_equal_ts_append_order
 case_trace_corrupt_row_tolerance
 case_trace_active_archive_merge
+case_trace_large_partition_streaming
 case_trace_empty_missing_store
 case_trace_unknown_flag_usage
 

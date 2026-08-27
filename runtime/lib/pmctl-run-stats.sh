@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # pmctl run-stats — per-adapter success/failure/fallback analysis over
 # events.jsonl (CC-358). Read-only consumer: never calls events_append or any
-# state-writer write helper. Reuses the same per-line jq-extraction + ISO-8601
-# string comparison approach as pmctl_trace_tail (runtime/lib/pmctl-trace.sh)
-# rather than inventing a second parser for the same file format.
+# state-writer write helper. Uses the same ISO-8601 lexicographic string
+# comparison and archive-inclusive scan model as pmctl trace tail
+# (runtime/lib/pmctl-trace.sh) rather than inventing a second parser for the
+# same file format. (trace tail itself now does a single streaming jq pass;
+# this reader still extracts per line — a standalone follow-up, not CC-364.)
 #
-# Archive-inclusive by default, matching pmctl_trace_tail's read_archives=1:
+# Archive-inclusive by default, matching pmctl trace tail's read_archives=1:
 # rotated archive/events-*.jsonl.gz files are scanned alongside the active
 # events.jsonl so a --since window reaching past rotation still counts every
 # matching run. Falls back to active-file-only (and says so in `_meta`) only
@@ -31,8 +33,7 @@ pmctl_run_stats_ensure_state_writer() {
 
 # Emits one TSV row per run.* event whose kind matches ^run\. — ts, kind,
 # run_id, adapter, note, exit_code, fallback_used(true/false) — or nothing
-# when the line isn't a matching run event. One jq invocation per line (same
-# per-event subprocess cost as pmctl_trace_scan_line).
+# when the line isn't a matching run event. One jq invocation per line.
 pmctl_run_stats_extract_line() {
   local line="${1:-}"
   printf '%s\n' "$line" | jq -r '
