@@ -211,6 +211,101 @@ case_dual_scan_dedup() {
   fi
 }
 
+case_corrupt_frozen_summary_flags_incomplete() {
+  local name="pmctl gate stats: a malformed runs-summary.jsonl line is counted, flagged incomplete, and does not drop later rows"
+  should_run "$name" || return 0
+  local store proj out err status=0
+  store="$tmp_root/corruptfrozen-store"
+  proj="$(gs_project_dir "$store")"
+  # valid gate row, then a malformed line, then another valid gate row.
+  {
+    jq -cn '{run_id:"gate-20260809-100000-a",kind:"gate",status:"complete",duration_seconds:100,
+             gate:{final:"GO",tier:"full",most_severe:"approve",reviewers:{critic:"approve"},findings_by_severity:"unavailable"}}'
+    printf '{ this line is not valid json\n'
+    jq -cn '{run_id:"gate-20260809-110000-b",kind:"gate",status:"complete",duration_seconds:200,
+             gate:{final:"NO-GO",tier:"full",most_severe:"block",reviewers:{critic:"block"},findings_by_severity:"unavailable"}}'
+  } > "$proj/runs-summary.jsonl"
+  out="$tmp_root/corruptfrozen.out"; err="$tmp_root/corruptfrozen.err"
+  gs_run "$store" "$out" "$err" --json || status=$?
+  if [[ "$status" -eq 0 ]] \
+    && [[ "$(jq -r '._meta.scan.frozen_summary' "$out")" == "incomplete" ]] \
+    && [[ "$(jq -r '._meta.scan.frozen_parse_errors' "$out")" == 1 ]] \
+    && [[ "$(jq -r '._meta.scan.frozen' "$out")" == 2 ]] \
+    && [[ "$(jq -r '.by_verdict.GO // 0' "$out")" == 1 ]] \
+    && [[ "$(jq -r '.by_verdict."NO-GO" // 0' "$out")" == 1 ]] \
+    && grep -q 'incomplete' "$err"; then
+    pass "$name"
+  else
+    fail "$name" "status=$status meta=$(jq -c '._meta.scan' "$out") err=$(<"$err")"
+  fi
+}
+
+case_unparseable_live_artifact_is_counted_not_dropped() {
+  local name="pmctl gate stats: a live gate run with an unreadable result artifact is counted as a parse error and flagged"
+  should_run "$name" || return 0
+  local store proj out err status=0
+  store="$tmp_root/liveerr-store"
+  proj="$(gs_project_dir "$store")"
+  gs_make_gate_run "$proj" gate-20260810-000800-ok  GO full sequential "critic=approve" 2026-08-10T00:00:00Z 2026-08-10T00:05:00Z le1
+  gs_make_gate_run "$proj" gate-20260810-000801-bad GO full sequential "critic=approve" 2026-08-10T01:00:00Z 2026-08-10T01:05:00Z le2
+  # make the second run's result artifact unreadable -> jq --rawfile fails
+  chmod 000 "$proj/runs/gate-20260810-000801-bad/.gate-results/"*.md
+  out="$tmp_root/liveerr.out"; err="$tmp_root/liveerr.err"
+  gs_run "$store" "$out" "$err" --json || status=$?
+  chmod 644 "$proj/runs/gate-20260810-000801-bad/.gate-results/"*.md 2>/dev/null || true
+  if [[ "$status" -eq 0 ]] \
+    && [[ "$(jq -r '._meta.scan.live' "$out")" == 1 ]] \
+    && [[ "$(jq -r '._meta.scan.live_scan' "$out")" == "incomplete" ]] \
+    && [[ "$(jq -r '._meta.scan.live_parse_errors' "$out")" == 1 ]] \
+    && grep -q 'incomplete' "$err"; then
+    pass "$name"
+  else
+    fail "$name" "status=$status meta=$(jq -c '._meta.scan' "$out") err=$(<"$err")"
+  fi
+}
+
+case_non_iso_assurance_timestamps_keep_the_row() {
+  local name="pmctl gate stats: a non-ISO assurance created_at drops only the duration, the run still counts"
+  should_run "$name" || return 0
+  local store proj out err status=0
+  store="$tmp_root/badts-store"
+  proj="$(gs_project_dir "$store")"
+  gs_make_gate_run "$proj" gate-20260810-000900-bt NO-GO full sequential "critic=block" \
+    "not-a-timestamp" "also-not" bt1
+  out="$tmp_root/badts.out"; err="$tmp_root/badts.err"
+  gs_run "$store" "$out" "$err" --json || status=$?
+  if [[ "$status" -eq 0 ]] \
+    && [[ "$(jq -r '._meta.scan.live' "$out")" == 1 ]] \
+    && [[ "$(jq -r '._meta.scan.live_scan' "$out")" == "ok" ]] \
+    && [[ "$(jq -r '.by_verdict."NO-GO"' "$out")" == 1 ]] \
+    && [[ "$(jq -r '.wall_time.count' "$out")" == 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status meta=$(jq -c '._meta.scan' "$out") wt=$(jq -c '.wall_time' "$out") err=$(<"$err")"
+  fi
+}
+
+case_frozen_summary_ok_when_clean() {
+  local name="pmctl gate stats: frozen_summary is ok and error count 0 for a clean runs-summary.jsonl"
+  should_run "$name" || return 0
+  local store proj out err status=0
+  store="$tmp_root/cleanfrozen-store"
+  proj="$(gs_project_dir "$store")"
+  jq -cn '{run_id:"gate-20260809-100000-c",kind:"gate",status:"complete",duration_seconds:100,
+           gate:{final:"GO",tier:"full",reviewers:{critic:"approve"},findings_by_severity:"unavailable"}}' \
+    > "$proj/runs-summary.jsonl"
+  out="$tmp_root/cleanfrozen.out"; err="$tmp_root/cleanfrozen.err"
+  gs_run "$store" "$out" "$err" --json || status=$?
+  if [[ "$status" -eq 0 ]] \
+    && [[ "$(jq -r '._meta.scan.frozen_summary' "$out")" == "ok" ]] \
+    && [[ "$(jq -r '._meta.scan.frozen_parse_errors' "$out")" == 0 ]] \
+    && [[ ! -s "$err" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status meta=$(jq -c '._meta.scan' "$out") err=$(<"$err")"
+  fi
+}
+
 case_round_clusters_heuristic() {
   local name="pmctl gate stats: round_clusters group by base commit, count to first GO, carry caveat"
   should_run "$name" || return 0
@@ -554,6 +649,10 @@ case_json_envelope_shape
 case_verdict_and_tier_counts
 case_incomplete_source_not_dropped
 case_dual_scan_dedup
+case_corrupt_frozen_summary_flags_incomplete
+case_unparseable_live_artifact_is_counted_not_dropped
+case_non_iso_assurance_timestamps_keep_the_row
+case_frozen_summary_ok_when_clean
 case_round_clusters_heuristic
 case_wall_time_from_assurance_and_mtime
 case_by_reviewer_merges_verdicts_and_findings

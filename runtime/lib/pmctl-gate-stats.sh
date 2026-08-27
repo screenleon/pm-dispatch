@@ -95,10 +95,13 @@ pmctl_gate_stats_live_row_program() {
     | ($assurance | (fromjson? // null)) as $a
     | ($a.subject.created_at // null) as $created
     | ($a.subject.finished_at // null) as $finished
-    | (if ($created != null and $finished != null)
-       then (($finished | fromdateiso8601) - ($created | fromdateiso8601))
-            | (if . >= 0 then . else null end)
-       else null end) as $dur_iso
+    # A non-ISO created_at/finished_at must not abort the row -- fall through to
+    # the mtime span and still count the run's verdict/tier/etc.
+    | ((try ($created | fromdateiso8601) catch null) as $c
+       | (try ($finished | fromdateiso8601) catch null) as $f
+       | if ($c != null and $f != null)
+         then ($f - $c | if . >= 0 then . else null end)
+         else null end) as $dur_iso
     | (if $dur_iso != null then $dur_iso
        elif ($mtime_dur | type) == "number" and $mtime_dur > 0 then $mtime_dur
        else null end) as $duration
@@ -159,39 +162,54 @@ pmctl_gate_stats_live_row() {
     [[ "$d" =~ ^[0-9]+$ ]] && mtime_dur="$d"
   fi
 
-  jq -cn \
+  # return 1 = no gate result file here (not a gate run; skip silently)
+  # return 2 = had a gate result file but building the row failed (surface it as
+  #            a live parse error rather than a silent omission)
+  local row
+  row="$(jq -cn \
     --arg run_id "$run_id" \
     --rawfile md "$gate_file" \
     --rawfile assurance <([[ -s "$assurance_file" ]] && cat "$assurance_file" || printf 'null') \
     --rawfile protocol <([[ -n "$protocol_file" && -s "$protocol_file" ]] && cat "$protocol_file" || printf '') \
     --argjson mtime_dur "$mtime_dur" \
-    "$(pmctl_gate_stats_live_row_program)"
+    "$(pmctl_gate_stats_live_row_program)" 2>/dev/null)" || return 2
+  [[ -n "$row" ]] || return 2
+  printf '%s\n' "$row"
 }
 
-# Normalise one runs-summary.jsonl gate row (already summarised) into the same
-# gate_stat_row shape. Frozen rows lack mode / protocol / base commit / created
-# time, so those fields are null and the row cannot join a round cluster.
+# Normalise runs-summary.jsonl into gate_stat_row objects. Read line-by-line as
+# raw text with a per-line `try fromjson` so one corrupt line does not abort
+# the scan and drop every row after it (a streaming `jq -c` over the file would
+# emit rows up to the bad line, then exit non-zero -- a silent partial history).
+# A malformed line is emitted as {"__parse_error": true}; the caller counts
+# those, strips them, and marks the report's frozen history incomplete.
+# Frozen rows lack mode / protocol / base commit / created time, so those
+# fields are null and the row cannot join a round cluster.
 pmctl_gate_stats_frozen_row() {
-  jq -c '
-    select((.kind // "") == "gate")
-    | {
-        run_id: (.run_id // ""),
+  jq -R -c '
+    select(length > 0)
+    | (try fromjson catch null) as $o
+    | if $o == null then {"__parse_error": true}
+      elif (($o.kind) // "") != "gate" then empty
+      else {
+        run_id: ($o.run_id // ""),
         source: "frozen",
-        final: (.gate.final // null),
-        status: (if (.gate.final // "") == "" then "incomplete_source" else "complete" end),
-        tier: (.gate.tier // null),
+        final: ($o.gate.final // null),
+        status: (if ($o.gate.final // "") == "" then "incomplete_source" else "complete" end),
+        tier: ($o.gate.tier // null),
         mode: null,
-        most_severe: (.gate.most_severe // null),
-        duration_seconds: (.duration_seconds // null),
-        reviewers: (.gate.reviewers // {}),
+        most_severe: ($o.gate.most_severe // null),
+        duration_seconds: ($o.duration_seconds // null),
+        reviewers: ($o.gate.reviewers // {}),
         findings_by_severity: (
-          if (.gate.findings_by_severity | type) == "array"
-          then .gate.findings_by_severity else "unavailable" end),
+          if ($o.gate.findings_by_severity | type) == "array"
+          then $o.gate.findings_by_severity else "unavailable" end),
         protocol: {},
         repo_key: null,
         base_commit: null,
         created_at: null
       }
+      end
   '
 }
 
@@ -250,7 +268,11 @@ pmctl_gate_stats_aggregate_program() {
           scan: {
             frozen: ($rows | map(select(.source == "frozen")) | length),
             live: ($rows | map(select(.source == "live")) | length),
-            incomplete_source: ($rows | map(select(.status == "incomplete_source")) | length)
+            incomplete_source: ($rows | map(select(.status == "incomplete_source")) | length),
+            frozen_summary: (if $frozen_parse_errors > 0 then "incomplete" else "ok" end),
+            frozen_parse_errors: $frozen_parse_errors,
+            live_scan: (if $live_parse_errors > 0 then "incomplete" else "ok" end),
+            live_parse_errors: $live_parse_errors
           },
           derivability: {
             wall_time: "exact-or-mtime-span",
@@ -316,6 +338,12 @@ pmctl_gate_stats_render_text() {
       else ($s / 60 | floor) as $m
         | (if $m >= 60 then "\($m / 60 | floor)h\($m % 60)m" else "\($m)m\($s % 60)s" end) end;
     "gate stats — since \(._meta.since // "all")  (frozen: \(._meta.scan.frozen), live: \(._meta.scan.live), incomplete: \(._meta.scan.incomplete_source))",
+    (if ._meta.scan.frozen_summary == "incomplete"
+     then "  ⚠ frozen history INCOMPLETE — runs-summary.jsonl had \(._meta.scan.frozen_parse_errors) malformed line(s)"
+     else empty end),
+    (if ._meta.scan.live_scan == "incomplete"
+     then "  ⚠ live scan INCOMPLETE — \(._meta.scan.live_parse_errors) gate run(s) had an unparseable result artifact"
+     else empty end),
     "",
     "verdicts   " + ([.by_verdict | to_entries[] | "\(.key) \(.value)"] | join("   ")),
     "tiers      " + ([.by_tier | to_entries[] | "\(.key) \(.value)"] | join("   ")),
@@ -437,11 +465,21 @@ pmctl_gate_stats() {
   : > "$frozen_file"
 
   # --- frozen rows (runs-summary.jsonl; may not exist) ---
-  # One jq pass normalises every gate row; the --since cutoff is applied later
-  # in the aggregate program uniformly with the live rows.
+  # The --since cutoff is applied later in the aggregate program uniformly with
+  # the live rows. A malformed line does not abort the scan; it is counted and
+  # surfaces as an explicit "incomplete" frozen-history state (never a silent
+  # partial aggregate).
   declare -A _gs_frozen_ids=()
+  local frozen_parse_errors=0
   if [[ -n "$summary_file" && -s "$summary_file" ]]; then
-    pmctl_gate_stats_frozen_row < "$summary_file" > "$frozen_file" 2>/dev/null || true
+    pmctl_gate_stats_frozen_row < "$summary_file" > "$frozen_file.raw" 2>/dev/null || true
+    frozen_parse_errors="$(grep -c '"__parse_error":true' "$frozen_file.raw" 2>/dev/null || true)"
+    [[ "$frozen_parse_errors" =~ ^[0-9]+$ ]] || frozen_parse_errors=0
+    grep -v '"__parse_error":true' "$frozen_file.raw" > "$frozen_file" 2>/dev/null || true
+    if [[ "$frozen_parse_errors" -gt 0 ]]; then
+      printf 'pmctl gate stats: %s has %s malformed line(s); frozen history in this report is incomplete\n' \
+        "${summary_file##*/}" "$frozen_parse_errors" >&2
+    fi
     if [[ -s "$frozen_file" ]]; then
       cat "$frozen_file" >> "$rows_file"
       local rid
@@ -454,23 +492,40 @@ pmctl_gate_stats() {
   # --- live rows (run dirs not already summarised) ---
   # The unit is the gate run dir (tens to low hundreds); a couple of jq calls
   # per dir is acceptable for an on-demand report. --since is not filtered here
-  # -- the aggregate program does it for frozen and live alike.
+  # -- the aggregate program does it for frozen and live alike. A run dir that
+  # has a gate result file but fails to parse is counted as a live parse error
+  # and surfaced, never silently dropped; a dir with no gate result file at all
+  # is not a gate run and is skipped.
+  local live_parse_errors=0
   if [[ -d "$runs_dir" ]]; then
-    local d run_id live_row
+    local d run_id live_row live_rc
     for d in "$runs_dir"/gate-*/; do
       [[ -d "$d" ]] || continue
       run_id="$(basename "$d")"
       [[ -n "${_gs_frozen_ids[$run_id]:-}" ]] && continue
-      live_row="$(pmctl_gate_stats_live_row "${d%/}" "$run_id" 2>/dev/null)" || continue
-      [[ -n "$live_row" ]] || continue
-      printf '%s\n' "$live_row" >> "$rows_file"
+      # `|| live_rc=$?` not `; live_rc=$?` -- pmctl_gate_stats_live_row returns
+      # non-zero for the common "not a gate run dir" case, which would abort the
+      # loop under set -e if the assignment stood alone.
+      live_rc=0
+      live_row="$(pmctl_gate_stats_live_row "${d%/}" "$run_id" 2>/dev/null)" || live_rc=$?
+      if [[ "$live_rc" -eq 0 && -n "$live_row" ]]; then
+        printf '%s\n' "$live_row" >> "$rows_file"
+      elif [[ "$live_rc" -eq 2 ]]; then
+        live_parse_errors=$((live_parse_errors + 1))
+      fi
     done
+  fi
+  if [[ "$live_parse_errors" -gt 0 ]]; then
+    printf 'pmctl gate stats: %s live gate run(s) had an unparseable result artifact; those are excluded and this report is incomplete\n' \
+      "$live_parse_errors" >&2
   fi
 
   local envelope
   envelope="$(jq -s \
     --argjson schema_version "$PMCTL_GATE_STATS_SCHEMA_VERSION" \
     --arg since "$since" \
+    --argjson frozen_parse_errors "$frozen_parse_errors" \
+    --argjson live_parse_errors "$live_parse_errors" \
     "$(pmctl_gate_stats_aggregate_program)" "$rows_file")" || {
     rm -rf "$tmp_dir"
     printf 'pmctl gate stats: aggregation failed\n' >&2
