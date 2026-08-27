@@ -109,7 +109,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-570 | 🟢 someday | Fact/Case/Strategy `memory_function`／`memory_subtype` metadata 分類法：先蒐集 [[CC-567]] 的 applied/outcome 證據，再決定值不值得建分類機制——不憑直覺先建立稅務式標籤（2026-08-25 memory 架構設計討論；外部文章優先序建議相反，本 repo 刻意反過來） | memory/DX | 2026-08-25 | — | P3 | retrieval |
 | CC-571 | ✅ done | `_ctx_fts_rebuild`／`_ctx_index_file` 共用的 sqlite atomic-script 缺口：DROP+CREATE+INSERT 未加 `-bail`（實測 sqlite3 CLI 預設不會在錯誤時中止，單靠 BEGIN/COMMIT 不足）、呼叫端不檢查回傳值、`_ctx_index_file` 還有第三個獨立 bug（`rm -f` 蓋掉 sqlite3 真實 exit code）；`/simplify` altitude review 抓到手足函式同缺陷，範圍已擴大涵蓋兩者（[[CC-548]] spike 的 Open risks 側面發現，非本票 tokenizer 範圍） | memory/ops | 2026-08-26 | pr:#539 | P2 | hygiene |
 | CC-572 | ✅ done | pr-gate synthesis retry（sequential／parallel 兩條路徑）留下已存在但 0 bytes 的 `$OUTPUT_FILE`，executor 的 patch 工具仍可能選擇 Update File 而非 Add File 語意，對空內容找不到 context line 而崩潰（`apply_patch verification failed`）；CC-571 gate saga 連續四輪協定失敗實測發現（2026-08-26） | gate/ops | 2026-08-26 | pr:#541 | P2 | hygiene |
-| CC-573 | 🔵 active | `pmctl run-stats` 每個事件行 fork 一個 jq（`pmctl_run_stats_extract_line`），與 [[CC-364]] 修掉前的 `trace tail` 同形狀。實測：合成資料 jq 呼叫數 = N+2、牆鐘 ~34ms/event（100→3.0s、300→8.8s、900→30.2s）；真實 `events.jsonl` 6642 行時 `run-stats --json` 前景 2 分鐘 timeout（外推 ~225s）。這是 release/readiness 證據工具，現在在真實 state store 上跑不完。修法沿用 [[CC-364]]：單次 `jq -R` 串流 over 串接的 archive+active，emit 分隔欄位、迴圈結束後一次 decode；預期 N+2 → ~2 次 jq。順帶評估 archive+active 串接掃描是否值得抽成 trace/run-stats 共用 primitive（jq 程式不同，串接那段可共用） | ops | 2026-08-27 | — | P2 | hygiene |
+| CC-573 | ✅ done | `pmctl run-stats` 每個事件行 fork 一個 jq（`pmctl_run_stats_extract_line`），與 [[CC-364]] 修掉前的 `trace tail` 同形狀。實測 jq 呼叫 N+2、~34ms/event，真實 6642 行 `events.jsonl` 時 `run-stats --json` 前景 2 分鐘 timeout。改為單次 `jq -R` 串流 over 串接的 archive+active：jq 呼叫 102/302/902 → 2/2/2、牆鐘 3-30s → 0.19s 打平、輸出對 origin/main 逐位元組相同。archive+active 串接 idiom 與 `pmctl-trace.sh` 重複 ~12 行，兩 consumer 下不抽、file header 記錄理由 | ops | 2026-08-27 | pr:#547 | P2 | hygiene |
 
 ---
 
@@ -3536,7 +3536,9 @@ codex 自己的 apply_patch 工具實作（不在本 repo 控制範圍）。
 
 ---
 
-## CC-573 — `pmctl run-stats` 每事件行 fork 一個 jq
+## CC-573 — `pmctl run-stats` 每事件行 fork 一個 jq ✅ 2026-08-27
+
+**See**: pr:#547
 
 **Problem**: `pmctl_run_stats_extract_line`（`runtime/lib/pmctl-run-stats.sh`）對
 `events.jsonl` 的**每一行**執行一次 `jq -r`（過濾 `kind` 是否 `^run\.`、抽出 7 個
@@ -3584,5 +3586,27 @@ jq 呼叫 = N + 2（每事件一個 + 固定 2 個 setup/teardown）；牆鐘線
 
 **Cross-link**: [[CC-364]]（同形狀的第一次修正，含 profiling 方法與 oracle 測試
 技巧）、[[per-item-subprocess-class]]。
+
+**Closure 2026-08-27 (pr:#547)**: 掃描階段改為單次 `jq -R` 串流 over 串接的
+archive+active 事件流。新 helper `pmctl_run_stats_filter_program`（heredoc jq
+程式，逐行 `try fromjson catch null`、非物件／非 `run.*`／被 `--since` 濾掉者輸出
+`empty`、其餘輸出 7 欄 `@tsv`）＋ `pmctl_run_stats_scan_stream`（stdin 讀 TSV、
+`mapfile -d $'\t'` 折進 `_rs_*`），取代 `extract_line`／`process_line`／
+`scan_path`／`scan_gzip_path`。`--since` 謂詞下推進 jq，語意與原 shell 檢查完全
+相同（僅在有界且 ts 非空且 ts < 界時丟棄）。
+
+**Perf 佐證**：合成資料 jq 呼叫 102/302/902 → **2/2/2**，牆鐘 3.0–30.2s →
+**0.19s 打平**。異質 fixture（正常 terminal／partial／nonzero exit／cancelled／
+missing-terminal／fallback／pre-`--since`／2 個 malformed 行／非 run 事件／
+archive-only run；3 adapter）輸出對 `origin/main` 逐位元組相同（`jq -S` 正規化，
+JSON 與 human 皆是）。新增 `case_run_stats_single_jq_pass`（jq shim 計數 20 vs
+200 run 相等）與 `case_run_stats_streaming_matches_reference`（golden 比對）。
+`test-pmctl-run-stats.sh` 17 passed，全套 105 passed 0 failed 0 skipped。
+
+**Req 6（共用 primitive）**：archive-glob + gzip-check + concat-then-one-jq-pass
+的 ~12 行 idiom 現與 `pmctl-trace.sh` 重複。評估後**不抽**：兩者 jq 程式與輸出
+consumer 不同，gzip 不可用的訊號也分歧（trace tail `read_archives=0`；run-stats
+`archive_scanned=false` + `_meta`）；兩 consumer 下 callback 間接層不划算。理由寫進
+`pmctl-run-stats.sh` file header，待第三個 consumer 出現再議。未立 follow-up 票。
 
 ---
