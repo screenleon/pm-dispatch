@@ -92,7 +92,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-357 | 🟢 someday | **[skill as contract: machine-readable schema for skills]** 現有 skills/ 都是純 markdown prose（SKILL.md），沒有機器可讀的 input schema、output contract、tool_constraints、completion_condition。這使得 skill 無法被驗證、無法被工具自動發現、也無法像 dispatch_handover_v1 那樣由 validator 強制執行契約。本票引入 skill schema（YAML frontmatter 或 JSON sidecar），使 skill 具備：明確的輸入型別、輸出格式、允許/禁止工具清單、完成條件——平行於 brief-validate.sh 對 brief 的驗證角色。 | arch/DX | 2026-06-10 | — | — | design |
 | CC-358 | ✅ done | runner telemetry：`pmctl run-stats` per-adapter 成功率/失敗模式/fallback 分析（v1.0 readiness 證據；v0.11.0） | ops/memory | 2026-06-10 | — | P2 | design |
 | CC-359 | 🟢 someday | concept: backlog-driven batch dispatch with worktree isolation（PM manages `git worktree` lifecycle；executor-agnostic；human-in-the-loop merge；PR-only output） | arch/ops | 2026-06-11 | — | — | design |
-| CC-364 | ⏸ deferred | **[perf: `pmctl trace tail --all` per-event jq spawn]** `pmctl trace tail --kind <k> --all --json` is O(n) with a high per-event constant — ~20s for 338 events (~60ms/event), consistent with spawning a jq/subprocess per event rather than one streaming pass. Surfaced while diagnosing #270 context-telemetry test flakiness; the tests no longer depend on it (telemetry now honors `PM_DISPATCH_STATE_ROOT`, so the suite isolates state). Standalone reader-perf follow-up. **See**: pr:#270 | ops | 2026-06-12 | pr:#270 | P3 | hygiene |
+| CC-364 | ✅ done | **[perf: `pmctl trace tail --all` per-event jq spawn]** `trace tail` scan phase reworked from two jq spawns per event (plus one per row in the human emitter) to a single `jq -R` streaming pass over the concatenated archive+active stream; ~24s→0.2s for 400 events, jq invocation count now fixed regardless of event count. Behavior parity preserved (filters, inclusive time window, malformed tolerance, chronological merge, limit/--all, compact-JSON byte identity). **See**: pr:#270, pr:#546 | ops | 2026-06-12 | pr:#270, pr:#546 | P3 | hygiene |
 | CC-369 | ⏸ deferred | Windows state store 真實 ACL via icacls（parked: CC-370；border case relative to profile ACL protection） | ops/portability | 2026-06-13 | — | — | hygiene |
 | CC-370 | ⏸ deferred | **[native Windows support deferred to post-core platform phase]** 核心功能開發期間正式只支援 Linux + WSL2（WSL2 視為 Linux）；原生 Windows Git Bash 非官方支援，使用者走 WSL2。理由是專注：開發期同時扛多平台會排擠核心功能（CI 只測 Linux，每次碰 Windows 都要人工驗證 + gate churn，見 #272/#273）。已合併的 portability 程式碼保留（綠且成本低），但不再新增 Windows 分支，直到核心定型（v0.5.0+）後的專屬平台階段。Parks: CC-038, CC-104d/e/f/g/j/k/r/s, CC-369。**See**: DECISIONS.md 2026-06-13 defer-native-windows-support-during-core-dev | ops/portability | 2026-06-13 | — | — | design |
 | CC-377 | ⏸ deferred | adapter: Google Antigravity（`agy`）executor（DEFERRED：headless CLI 1.0.8 不成熟；resume: newer agy with `--output-format stream-json`；umbrella: CC-333） | arch/portability | 2026-06-13 | — | P2 | design |
@@ -1530,11 +1530,17 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 
 ---
 
-## CC-364 — perf: `pmctl trace tail --all` per-event jq spawn（deferred）
+## CC-364 — perf: `pmctl trace tail --all` per-event jq spawn ✅ 2026-08-27
 
-**See**: pr:#270
+**See**: pr:#270, pr:#546
 
 `pmctl trace tail --kind <kind> --all --json` is O(n) with a high per-event constant — measured ~20s for 338 events (~60ms/event), consistent with spawning a `jq` (or equivalent subprocess) per event rather than a single streaming pass. Discovered while diagnosing the #270 context-telemetry test flakiness: `context.queried` / `context.reuse_scanned` events accumulate in a partition, and the readback assertions called `trace tail --all`, so reads degraded as the partition grew. The tests were de-coupled from this — context telemetry now honors `PM_DISPATCH_STATE_ROOT`, so the suite isolates all state into a throwaway root — leaving this as a standalone reader-performance follow-up, not a blocker. Fix: rework `trace tail` filtering/serialization as a single `jq` pass (or a streaming reader) over `events.jsonl`.
+
+**Closure 2026-08-27 (pr:#546)**: scan phase is now one `jq -R` streaming pass over the concatenated `archive + active` stream — it classifies each line (malformed / filtered-out / kept) and emits kept rows as `<ts>\t<line_no>\t<compact-json>`, using jq's cumulative `input_line_number` as the global read-order tiebreaker for events sharing a timestamp. Both emit helpers stream through one jq via `cut -f3`. Five module-global `_PMCTL_TRACE_*` vars and three per-line scan helpers removed.
+
+**Perf evidence**: 400 events `--all --json` ~24s → 0.2s (~100x). New `case_trace_tail_single_jq_pass` shims a counting `jq` onto PATH and asserts the invocation tally is equal (and non-zero) for a 20-event and a 200-event run — O(1) in event count; a per-event regression would make the 200-event tally ~10x the 20-event one. Behavior parity (filters, inclusive lexicographic window, malformed tolerance + `skipped N` warning, archive/active merge, limit/`--all`, compact-JSON byte identity) covered by the existing `test-pmctl-trace.sh` cases (14 passed) plus the new `case_trace_large_partition_streaming`.
+
+**Not done here**: `pmctl-run-stats.sh` (CC-358) has the same archive+active scan shape with a per-line jq spawn; deliberately out of scope (different jq program + shell-side aggregation), left a pointer comment. No follow-up ticket filed yet.
 
 ## CC-435 — poll→通知機制 single-waiter guard：條件觸發，非既定後續票 🟢 someday
 

@@ -18,85 +18,67 @@ pmctl_trace_ensure_state_writer() {
   . "$repo_root/runtime/lib/state-writer.sh"
 }
 
-pmctl_trace_scan_line() {
-  local line="${1:-}" compact fields
-  local event_id ts kind subject_id
-
-  if ! compact="$(printf '%s\n' "$line" | jq -c 'if type == "object" then . else error("not object") end' 2>/dev/null)"; then
-    _PMCTL_TRACE_SKIPPED=$((_PMCTL_TRACE_SKIPPED + 1))
-    return 0
-  fi
-
-  # Only the fields used for filtering are extracted into shell vars; the
-  # emitters re-read subject_type / actor / operation_id from the JSON itself.
-  if ! fields="$(printf '%s\n' "$compact" | jq -r '[.id // "", .ts // "", .kind // "", .subject_id // ""] | @tsv' 2>/dev/null)"; then
-    _PMCTL_TRACE_SKIPPED=$((_PMCTL_TRACE_SKIPPED + 1))
-    return 0
-  fi
-  IFS=$'\t' read -r event_id ts kind subject_id <<< "$fields"
-
-  if [[ -n "${_PMCTL_TRACE_ID_FILTER:-}" && "$event_id" != "$_PMCTL_TRACE_ID_FILTER" ]]; then
-    return 0
-  fi
-  if [[ -n "${_PMCTL_TRACE_KIND_FILTER:-}" && "$kind" != "$_PMCTL_TRACE_KIND_FILTER" ]]; then
-    return 0
-  fi
-  if [[ -n "${_PMCTL_TRACE_SUBJECT_FILTER:-}" && "$subject_id" != "$_PMCTL_TRACE_SUBJECT_FILTER" ]]; then
-    return 0
-  fi
-  if [[ -n "${_PMCTL_TRACE_SINCE_FILTER:-}" && ( -z "$ts" || "$ts" < "$_PMCTL_TRACE_SINCE_FILTER" ) ]]; then
-    return 0
-  fi
-  if [[ -n "${_PMCTL_TRACE_UNTIL_FILTER:-}" && ( -z "$ts" || "$ts" > "$_PMCTL_TRACE_UNTIL_FILTER" ) ]]; then
-    return 0
-  fi
-
-  _PMCTL_TRACE_SEQ=$((_PMCTL_TRACE_SEQ + 1))
-  printf '%s\t%012d\t%s\n' "$ts" "$_PMCTL_TRACE_SEQ" "$compact" >> "$_PMCTL_TRACE_RECORDS"
+# Single streaming jq program over the concatenated archive+active event stream
+# (raw input, one JSON object per line). Replaces the former per-line pair of
+# jq spawns: this runs once for the whole partition regardless of event count.
+#
+# For every input line it prints exactly one control line to stdout:
+#   "M"                                  -> line is not a JSON object (skip + count)
+#   "E\t<ts>\t<line_no>\t<compact-json>" -> line matched all active filters
+#   (nothing)                            -> valid object that a filter excluded
+#
+# <line_no> is jq's cumulative input_line_number across the whole concatenated
+# stream, so it is a global monotonic read-order sequence: archives first (in
+# filename-sorted order), then the active file, each in line order. The caller
+# uses it as the stable-sort tiebreaker for events sharing a timestamp.
+#
+# Filters are passed as --arg strings; an empty string means "no constraint".
+# Timestamp comparisons are lexicographic on the ISO-8601 string, matching the
+# shell `<` / `>` semantics this previously used, and an empty ts is excluded
+# whenever a --since or --until bound is set.
+pmctl_trace_filter_program() {
+  cat <<'JQ'
+    (try fromjson catch null) as $o
+    | if ($o | type) != "object" then "M"
+      else
+        ($o.ts // "")         as $ts
+        | ($o.id // "")         as $id
+        | ($o.kind // "")       as $kind
+        | ($o.subject_id // "") as $sid
+        | if   ($idf    != "" and $id   != $idf)                 then empty
+          elif ($kindf  != "" and $kind != $kindf)               then empty
+          elif ($subjf  != "" and $sid  != $subjf)               then empty
+          elif ($sincef != "" and ($ts == "" or $ts < $sincef))  then empty
+          elif ($untilf != "" and ($ts == "" or $ts > $untilf))  then empty
+          else "E\t\($ts)\t\(input_line_number)\t\($o | tojson)"
+          end
+      end
+JQ
 }
 
-pmctl_trace_scan_path() {
-  local path="${1:-}" line
-
-  [[ -f "$path" ]] || return 0
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    pmctl_trace_scan_line "$line"
-  done < "$path"
-}
-
-pmctl_trace_scan_gzip_path() {
-  local path="${1:-}" line
-
-  [[ -f "$path" ]] || return 0
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    pmctl_trace_scan_line "$line"
-  done < <(gzip -dc "$path" 2>/dev/null)
-}
-
+# emit helpers consume the sorted "<ts>\t<seq>\t<compact-json>" record file.
+# The compact JSON is the third tab field and never contains a literal tab
+# (jq -c escapes tabs inside strings), so `cut -f3` recovers it exactly.
 pmctl_trace_emit_json() {
-  local path="${1:-}" ts seq json
+  local path="${1:-}"
 
-  while IFS=$'\t' read -r ts seq json; do
-    : "$ts" "$seq"
-    printf '%s\n' "$json"
-  done < "$path"
+  [[ -s "$path" ]] || return 0
+  cut -f3 "$path"
 }
 
 pmctl_trace_emit_human() {
-  local path="${1:-}" ts seq json
+  local path="${1:-}"
 
-  while IFS=$'\t' read -r ts seq json; do
-    : "$ts" "$seq"
-    printf '%s\n' "$json" | jq -r '
-      (.ts // "") as $ts |
-      (.kind // "") as $kind |
-      (.subject_type // "") as $subject_type |
-      (.subject_id // "") as $subject_id |
-      (if (.actor? == null or .actor == "") then "[no-actor]" else .actor end) as $actor |
-      (if (.operation_id? == null or .operation_id == "") then "" else " op=\(.operation_id)" end) as $op |
-      "\($ts)  \($kind)  \($subject_type)/\($subject_id)  \($actor)\($op)"
-    '
-  done < "$path"
+  [[ -s "$path" ]] || return 0
+  cut -f3 "$path" | jq -r '
+    (.ts // "") as $ts |
+    (.kind // "") as $kind |
+    (.subject_type // "") as $subject_type |
+    (.subject_id // "") as $subject_id |
+    (if (.actor? == null or .actor == "") then "[no-actor]" else .actor end) as $actor |
+    (if (.operation_id? == null or .operation_id == "") then "" else " op=\(.operation_id)" end) as $op |
+    "\($ts)  \($kind)  \($subject_type)/\($subject_id)  \($actor)\($op)"
+  '
 }
 
 pmctl_trace_tail() {
@@ -105,6 +87,7 @@ pmctl_trace_tail() {
   local limit=20 all=0 json=0
   local proj_dir active_file archive_dir read_archives=1
   local tmp_dir records sorted limited emit_file rc=0
+  local skipped=0 program out_line _pmctl_trace_archive
   local -a archives=()
 
   if [[ -z "$repo_root" ]]; then
@@ -225,30 +208,33 @@ pmctl_trace_tail() {
     return "$rc"
   fi
 
-  _PMCTL_TRACE_KIND_FILTER="$kind_filter"
-  _PMCTL_TRACE_SUBJECT_FILTER="$subject_filter"
-  _PMCTL_TRACE_ID_FILTER="$id_filter"
-  _PMCTL_TRACE_SINCE_FILTER="$since_filter"
-  _PMCTL_TRACE_UNTIL_FILTER="$until_filter"
-  _PMCTL_TRACE_RECORDS="$records"
-  _PMCTL_TRACE_SEQ=0
-  _PMCTL_TRACE_SKIPPED=0
+  program="$(pmctl_trace_filter_program)"
+  while IFS= read -r out_line; do
+    if [[ "$out_line" == "M" ]]; then
+      skipped=$((skipped + 1))
+    else
+      printf '%s\n' "${out_line#E$'\t'}" >> "$records"
+    fi
+  done < <(
+    {
+      if [[ "$read_archives" -eq 1 ]]; then
+        for _pmctl_trace_archive in "${archives[@]}"; do
+          [[ -f "$_pmctl_trace_archive" ]] && gzip -dc "$_pmctl_trace_archive" 2>/dev/null
+        done
+      fi
+      [[ -f "$active_file" ]] && cat "$active_file"
+    } | jq -R -r \
+      --arg idf "$id_filter" \
+      --arg kindf "$kind_filter" \
+      --arg subjf "$subject_filter" \
+      --arg sincef "$since_filter" \
+      --arg untilf "$until_filter" \
+      "$program"
+  )
 
-  if [[ "$read_archives" -eq 1 ]]; then
-    for _pmctl_trace_archive in "${archives[@]}"; do
-      pmctl_trace_scan_gzip_path "$_pmctl_trace_archive"
-    done
-    unset _pmctl_trace_archive
+  if [[ "$skipped" -gt 0 ]]; then
+    printf 'trace: skipped %s malformed row(s)\n' "$skipped" >&2
   fi
-  pmctl_trace_scan_path "$active_file"
-
-  if [[ "$_PMCTL_TRACE_SKIPPED" -gt 0 ]]; then
-    printf 'trace: skipped %s malformed row(s)\n' "$_PMCTL_TRACE_SKIPPED" >&2
-  fi
-
-  unset _PMCTL_TRACE_KIND_FILTER _PMCTL_TRACE_SUBJECT_FILTER _PMCTL_TRACE_ID_FILTER
-  unset _PMCTL_TRACE_SINCE_FILTER _PMCTL_TRACE_UNTIL_FILTER _PMCTL_TRACE_RECORDS
-  unset _PMCTL_TRACE_SEQ _PMCTL_TRACE_SKIPPED
 
   if [[ ! -s "$records" ]]; then
     rm -rf "$tmp_dir"
