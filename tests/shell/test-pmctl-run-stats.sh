@@ -413,8 +413,65 @@ case_run_stats_single_jq_pass() {
   fi
 }
 
+# Behavior: the streaming scan produces a byte-identical normalized JSON
+# report to the pre-refactor per-line implementation across a heterogeneous
+# partition -- valid terminal rows, a post-verify "partial", a nonzero exit,
+# a cancelled run, a run with only a non-terminal event, a fallback_used
+# run, a run older than --since, two malformed lines, a non-run event, and a
+# run whose only event is in a rotated archive, spanning three adapters.
+# Steps: build that fixture, run `run-stats --since 2026-06-01 --json`, and
+# assert `jq -S` of the output equals the golden JSON captured from the
+# origin/main implementation (CC-364 method: freeze the prior behavior as a
+# fixture rather than re-run two implementations).
+case_run_stats_streaming_matches_reference() {
+  local name="pmctl run-stats: streaming report matches the pre-refactor golden"
+  should_run "$name" || return 0
+  local store proj out err status=0 expected got
+  store="$tmp_root/golden-store"
+  proj="$(run_stats_project_dir "$store")"
+  mkdir -p "$proj/archive"
+  run_event_json arc1 2026-06-06T00:01:00Z run.completed R-ARC codex ok \
+    | gzip -c > "$proj/archive/events-202606.jsonl.gz"
+  {
+    run_event_json a1 2026-06-06T00:05:00Z run.completed R-OK      codex    ok
+    run_event_json a2 2026-06-06T00:06:00Z run.completed R-PARTIAL codex    ok partial
+    run_event_json a3 2026-06-06T00:07:00Z run.failed    R-FAIL    codex    failed "" 3
+    run_event_json a4 2026-06-06T00:08:00Z run.cancelled R-CANC    opencode cancelled
+    run_event_json a5 2026-06-06T00:09:00Z run.pending   R-MISSING opencode pending
+    run_event_json a6 2026-06-06T00:10:00Z run.completed R-FB      grok     ok "" 0 true
+    run_event_json a7 2026-05-01T00:00:00Z run.completed R-OLD     codex    ok
+    printf '%s\n' '{"id":"broken",'
+    printf '%s\n' 'totally not json'
+    run_event_json g1 2026-06-06T00:11:00Z gate.completed G-1      codex    ok
+  } > "$proj/events.jsonl"
+
+  expected="$(jq -S . <<'GOLDEN'
+{
+  "_meta": { "schema_version": 1, "archive_scanned": true,
+    "note": "active events.jsonl plus 1 rotated archive(s) were scanned" },
+  "adapters": {
+    "codex":    { "total": 4, "ok": 2, "failed": 1, "cancelled": 0, "post_verify_fail": 1, "nonzero_exit": 1, "missing_terminal": 0, "fallback_used": 0 },
+    "opencode": { "total": 2, "ok": 0, "failed": 0, "cancelled": 1, "post_verify_fail": 0, "nonzero_exit": 0, "missing_terminal": 1, "fallback_used": 0 },
+    "grok":     { "total": 1, "ok": 1, "failed": 0, "cancelled": 0, "post_verify_fail": 0, "nonzero_exit": 0, "missing_terminal": 0, "fallback_used": 1 }
+  }
+}
+GOLDEN
+)"
+
+  out="$tmp_root/golden.out"
+  err="$tmp_root/golden.err"
+  run_stats "$store" "$out" "$err" --since 2026-06-01 --json || status=$?
+  got="$(jq -S . "$out" 2>/dev/null)"
+  if [[ "$status" -eq 0 && "$got" == "$expected" && ! -s "$err" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status err=$(<"$err") diff=$(diff <(printf '%s\n' "$expected") <(printf '%s\n' "$got"))"
+  fi
+}
+
 case_run_stats_basic_aggregation
 case_run_stats_single_jq_pass
+case_run_stats_streaming_matches_reference
 case_run_stats_missing_terminal
 case_run_stats_post_verify_fail_note
 case_run_stats_fallback_used
