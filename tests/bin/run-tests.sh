@@ -245,9 +245,13 @@ map_path() {
       add_suite test-core-schemas; add_pr_gate_shards
       add_suite test-pmctl-gate; behavioral=1 ;;
     runtime/bin/pr-gate.sh)
-      add_pr_gate_shards; add_suite test-pr-gate-profile; behavioral=1 ;;
+      add_pr_gate_shards; add_suite test-pr-gate-profile
+      add_suite test-gate-protocol; behavioral=1 ;;
     runtime/lib/gate-assurance.sh|runtime/lib/gate-digest.sh|runtime/lib/gate-layout.sh|runtime/lib/gate-policy.sh|runtime/lib/gate-options.sh|runtime/lib/gate-reviewer-contract.sh|runtime/lib/gate-scope.sh|runtime/lib/gate-subject.sh)
       add_pr_gate_shards; add_suite test-pr-gate-profile; behavioral=1 ;;
+    runtime/lib/gate-protocol.sh)
+      add_suite test-gate-protocol; add_pr_gate_shards
+      add_suite test-pr-gate-profile; behavioral=1 ;;
     runtime/bin/dispatch-supervisor.sh)
       add_suite test-dispatch-lifecycle; behavioral=1 ;;
     runtime/lib/gate-result-verify.sh)

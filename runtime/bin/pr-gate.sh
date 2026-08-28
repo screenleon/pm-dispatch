@@ -324,6 +324,15 @@ GATE_ASSURANCE_MODULE="$PR_GATE_LIB_DIR/gate-assurance.sh"
 . "$GATE_ASSURANCE_MODULE"
 unset GATE_ASSURANCE_MODULE
 
+# Protocol-attempt recording + the sequential/synthesis single-retry outcome
+# state machine. The entrypoint composes it; the retry loops below invoke it.
+GATE_PROTOCOL_MODULE="$PR_GATE_LIB_DIR/gate-protocol.sh"
+[[ -r "$GATE_PROTOCOL_MODULE" ]] || _gate_lib_unavailable "$GATE_PROTOCOL_MODULE"
+# shellcheck source=runtime/lib/gate-protocol.sh
+# shellcheck disable=SC1090  # path is derived from the classified topology
+. "$GATE_PROTOCOL_MODULE"
+unset GATE_PROTOCOL_MODULE
+
 # CC-532: policy and reviewer contract modules share the same composition root.
 for _gate_contract_module in \
     "$PR_GATE_LIB_DIR/gate-policy.sh" \
@@ -1927,22 +1936,13 @@ qa_execution_finalize() {
     fi
   fi
 }
+# shellcheck disable=SC2034 # consumed by gate_protocol_attempt_record in runtime/lib/gate-protocol.sh
 PROTOCOL_RECOVERY_PATH="$WORK_DIR/.gate-results/gate-protocol-attempts-${TIMESTAMP}.jsonl"
-_gate_protocol_attempt_record() {
-  local role="$1" reviewer="$2" attempt="$3" outcome="$4" reason="$5" artifact="$6"
-  jq -nc \
-    --arg role "$role" --arg reviewer "$reviewer" --argjson attempt "$attempt" \
-    --arg outcome "$outcome" --arg reason "$reason" --arg artifact "$artifact" \
-    --arg scope_sha "$SCOPE_MANIFEST_DIGEST" \
-    --arg subject_fingerprint "$GATE_BINDING_SUBJECT_FINGERPRINT" '{
-      kind:"gate_protocol_attempt_v1",schema_version:1,
-      role:$role,
-      reviewer:(if $reviewer == "" then null else $reviewer end),
-      attempt:$attempt,outcome:$outcome,reason:$reason,artifact:$artifact,
-      scope_manifest_sha256:$scope_sha,
-      subject_fingerprint:$subject_fingerprint
-    }' >> "$PROTOCOL_RECOVERY_PATH"
-}
+# Canonical implementation lives in runtime/lib/gate-protocol.sh
+# (gate_protocol_attempt_record). This underscore name is kept as a thin alias
+# so the parallel-reviewer branch's call sites stay put; it will be retired
+# when that branch is folded into the shared outcome helper.
+_gate_protocol_attempt_record() { gate_protocol_attempt_record "$@"; }
 SCOPE_MANIFEST_CONTENT_DIGEST="$(jq -r '.content.digest' "$SCOPE_MANIFEST_PATH")"
 SCOPE_MANIFEST_STATUS="$(jq -r '.status' "$SCOPE_MANIFEST_PATH")"
 SCOPE_MANIFEST_EXPANSION_COUNT="$(jq -r '.expansion.entries | length' \
@@ -2820,28 +2820,14 @@ BRIEF_EOF
     _SEQ_PROTOCOL_COMPLETE=true
   fi
 
-  if [[ "$_SEQ_PROTOCOL_COMPLETE" == true ]]; then
-    _gate_protocol_attempt_record sequential "" "$_seq_attempt" \
-      accepted ok "$OUTPUT_FILE" || exit 2
-    break
-  fi
-  # A stale subject cannot be repaired by re-authoring: the evidence no longer
-  # describes this tree, so retrying would only produce a second stale result.
-  if [[ "$_seq_reason" == "stale subject binding" ]]; then
-    _gate_protocol_attempt_record sequential "" "$_seq_attempt" stale \
-      "$_seq_reason" "$OUTPUT_FILE" || exit 2
-    printf 'Error: sequential subject is stale; refusing protocol retry\n' >&2
-    exit 1
-  fi
-  if [[ "$_seq_attempt" -eq 1 ]]; then
-    _gate_protocol_attempt_record sequential "" 1 retryable-failure \
-      "$_seq_reason" "$OUTPUT_FILE" || exit 2
-  else
-    _gate_protocol_attempt_record sequential "" 2 exhausted \
-      "$_seq_reason" "$OUTPUT_FILE" || exit 2
-    printf 'Error: sequential recovery exhausted after %s\n' "$_seq_reason" >&2
-    exit 1
-  fi
+  _seq_action="$(gate_protocol_single_retry_outcome sequential "$_seq_attempt" \
+    "$_SEQ_PROTOCOL_COMPLETE" "$_seq_reason" "$OUTPUT_FILE")" || exit 2
+  case "$_seq_action" in
+    break) break ;;
+    retry) : ;;  # the "retrying once after ..." note prints at the top of iteration 2
+    abort) exit 1 ;;
+    *) printf 'Error: sequential retry outcome unrecognised: %s\n' "$_seq_action" >&2; exit 2 ;;
+  esac
   done
 
   SEQ_PROTOCOL_FINAL="$(
@@ -3711,27 +3697,14 @@ SBRIEF_P2
       fi
     fi
 
-    if [[ "$_SYNTHESIS_COMPLETE" == true ]]; then
-      _gate_protocol_attempt_record synthesis "" "$_synthesis_attempt" \
-        accepted ok "$OUTPUT_FILE" || exit 2
-      break
-    fi
-    if [[ "$_synthesis_reason" == "stale subject binding" ]]; then
-      _gate_protocol_attempt_record synthesis "" "$_synthesis_attempt" stale \
-        "$_synthesis_reason" "$OUTPUT_FILE" || exit 2
-      printf 'Error: synthesis subject is stale; refusing protocol retry\n' >&2
-      exit 1
-    fi
-    if [[ "$_synthesis_attempt" -eq 1 ]]; then
-      _gate_protocol_attempt_record synthesis "" 1 retryable-failure \
-        "$_synthesis_reason" "$OUTPUT_FILE" || exit 2
-      say '  [synthesis] retrying once after %s.\n' "$_synthesis_reason"
-    else
-      _gate_protocol_attempt_record synthesis "" 2 exhausted \
-        "$_synthesis_reason" "$OUTPUT_FILE" || exit 2
-      printf 'Error: synthesis recovery exhausted after %s\n' "$_synthesis_reason" >&2
-      exit 1
-    fi
+    _synthesis_action="$(gate_protocol_single_retry_outcome synthesis "$_synthesis_attempt" \
+      "$_SYNTHESIS_COMPLETE" "$_synthesis_reason" "$OUTPUT_FILE")" || exit 2
+    case "$_synthesis_action" in
+      break) break ;;
+      retry) say '  [synthesis] retrying once after %s.\n' "$_synthesis_reason" ;;
+      abort) exit 1 ;;
+      *) printf 'Error: synthesis retry outcome unrecognised: %s\n' "$_synthesis_action" >&2; exit 2 ;;
+    esac
   done
   # shellcheck disable=SC2034 # consumed by the canonical assurance module
   REVIEWER_PROTOCOL_COMPLETE=true
