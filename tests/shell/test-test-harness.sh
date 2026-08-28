@@ -192,6 +192,7 @@ case_harness_summary_counts_skips_exit_zero() {
   local name="test-harness-summary-skip-exit-0"
   local out="$TMP_ROOT/$name.out" rc
   (
+    unset PM_TEST_CASE_SKIPS_FILE
     th_init
     pass "ss-p"
     skip "ss-s" "dep absent"
@@ -213,6 +214,7 @@ case_harness_skip_does_not_mask_failure() {
   local name="test-harness-skip-plus-fail-exit-1"
   local out="$TMP_ROOT/$name.out" rc
   (
+    unset PM_TEST_CASE_SKIPS_FILE
     th_init
     skip "sf-s" "dep absent"
     fail "sf-f" "boom"
@@ -231,6 +233,7 @@ case_harness_filter_only_skip_is_not_no_match() {
   local name="test-harness-filter-only-skip"
   local out="$TMP_ROOT/$name.out" rc
   (
+    unset PM_TEST_CASE_SKIPS_FILE
     th_init --filter "keep"
     should_run "keepme" && skip "keepme" "dep absent"
     should_run "dropme" && pass "dropme"
