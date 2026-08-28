@@ -187,14 +187,15 @@ case_outcome_role_is_parametrised() {
   local name="gate_protocol_single_retry_outcome: role appears in both the record and the stderr diagnostic"
   should_run "$name" || return 0
   gp_reset outcome-role
-  local err="$tmp_root/role.err"
-  gate_protocol_single_retry_outcome synthesis 2 false "boom" /w/out.md 2>"$err" >/dev/null || true
-  if [[ "$(jq -r '.role' "$PROTOCOL_RECOVERY_PATH")" == synthesis ]] \
+  local err="$tmp_root/role.err" rc=0
+  gate_protocol_single_retry_outcome synthesis 2 false "boom" /w/out.md 2>"$err" >/dev/null || rc=$?
+  if [[ "$rc" -eq 0 ]] \
+    && [[ "$(jq -r '.role' "$PROTOCOL_RECOVERY_PATH")" == synthesis ]] \
     && grep -q 'synthesis recovery exhausted' "$err" \
     && ! grep -q 'sequential' "$err"; then
     pass "$name"
   else
-    fail "$name" "err=$(<"$err") rec=$(cat "$PROTOCOL_RECOVERY_PATH")"
+    fail "$name" "rc=$rc err=$(<"$err") rec=$(cat "$PROTOCOL_RECOVERY_PATH")"
   fi
 }
 
