@@ -7,6 +7,57 @@ H2 標題格式：## YYYY-MM-DD: <短描述>
 與 BACKLOG closure 對應的 entry，內文首行寫：Closes: BACKLOG.md#<PREFIX>-NNN
 -->
 
+## 2026-08-28: case-level-skip-disqualifies-authoritative-evidence
+
+### Context
+
+`tests/lib/test-harness.sh` had `pass`/`fail`/`should_run` but no `skip`. ~40
+sites across the suite corpus reported a dependency-blocked case with
+`pass "$name (X unavailable)"`, and one prints a bare `UNAVAILABLE:` line that
+counts as neither. So "N passed, 0 skipped" only ever meant "N scripts exited
+0" — the denominator for every test-tradeoff decision was fabricated. This is
+the stock side of test-governance (Batch 1); the admission gate (Batch 0 /
+CC-554) is already in place, so cleaning the stock will not immediately grow
+back.
+
+### Decision
+
+Add a case-level `skip <name> <reason>` primitive. A reasonless skip is
+recorded as a failure. A case skip does not change a suite's exit code (a skip
+is not a failure), but **any** case skip disqualifies a run from being
+authoritative: `pm_test_run_and_record` sets `authoritative: false` and
+`contract: "full-with-skips"` when a suite reports `case_skips > 0`, and
+`pm_test_verify_full_result` rejects such an artifact. The signal travels
+out-of-band from suite to runner via `PM_TEST_CASE_SKIPS_FILE` (same pattern
+as `PM_TEST_SUITE_RESULTS_FILE`); the runner records a per-suite `case_skips`
+field in the structured sink and an `aggregate.case_skipped` total.
+
+This is **same-direction** with the 2026-08-14 suite-level zero-skip clause,
+not a relaxation: that clause governs `--skip <suite>` requests; this adds a
+finer-grained disqualifier. Nothing that was authoritative before is
+authoritative now unless it also had zero case skips.
+
+### Alternatives considered
+
+- (a) A dedicated non-zero exit code for "passed with case skips" — rejected:
+  per-suite CI jobs run `bash tests/shell/foo.sh` directly and would turn red
+  for an optional-dependency skip, and skips are not failures.
+- (b) Case-classification metadata (`optional`/`required`/`platform`) so only
+  "required" skips disqualify — rejected: that is CC-537's suite manifest, a
+  second governance layer PM has parked. Every case skip disqualifies,
+  uniformly, with no metadata.
+- (c) Migrate all ~40 pass-as-skip sites in this change — rejected: a 15-suite
+  diff is the "test system as a second product" risk this batch exists to
+  contain. Six representative sites migrated; the rest are CC-575.
+
+### Constraints introduced
+
+`core/schema/test-result.schema.json` gains one optional `case_skips` on the
+suite-result item and one optional `case_skipped` on `aggregate` — no new
+object, no `schema_version` bump; artifacts without the fields still validate.
+Future test authors: a dependency-blocked case uses `skip`, never
+`pass "(unavailable)"`; the reason is mandatory.
+
 ## 2026-08-28: backlog-is-the-single-status-authority
 
 ### Context

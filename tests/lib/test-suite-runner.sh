@@ -304,12 +304,15 @@ if [[ -n "$SUITE_RESULTS_FILE" ]]; then
 fi
 
 record_suite_result() {
-  local name="$1" status="$2" exit_code="$3" duration="$4" reason="${5:-}"
+  local name="$1" status="$2" exit_code="$3" duration="$4" reason="${5:-}" case_skips="${6:-0}"
   [[ -n "$SUITE_RESULTS_TMP" ]] || return 0
+  [[ "$case_skips" =~ ^[0-9]+$ ]] || case_skips=0
   jq -nc --arg name "$name" --arg status "$status" --argjson exit_code "$exit_code" \
     --argjson duration_seconds "$duration" --arg reason "$reason" \
+    --argjson case_skips "$case_skips" \
     '{name:$name,status:$status,exit_code:$exit_code,duration_seconds:$duration_seconds}
-     + (if $reason == "" then {} else {reason:$reason} end)' >> "$SUITE_RESULTS_TMP"
+     + (if $reason == "" then {} else {reason:$reason} end)
+     + (if $case_skips == 0 then {} else {case_skips:$case_skips} end)' >> "$SUITE_RESULTS_TMP"
 }
 
 write_suite_results() {
@@ -438,6 +441,8 @@ fi
 passed=0
 failed=0
 skipped=0
+case_skipped=0
+LAST_SUITE_CASE_SKIPS=0
 FAILED_SUITE_NAMES=()
 declare -A SUITE_DURATIONS=()
 
@@ -483,12 +488,23 @@ run_suite() {
     return 1
   }
 
+  # Case-level skip count sink for THIS suite. Lives in the runner's TMPDIR,
+  # not suite_tmp, so it survives the suite subshell's EXIT cleanup below.
+  # th_summary in test-harness.sh appends the suite's SKIP count here.
+  local case_skips_file
+  case_skips_file="$(mktemp "${TMPDIR:-/tmp}/pm-caseskips-${name}.XXXXXX")" || {
+    printf 'run-all-tests: failed to create case-skip sink for %s\n' "$name" >&2
+    rm -rf "$suite_tmp"
+    return 1
+  }
+
   # A hung suite used to hold a parallel slot indefinitely while all of its
   # output stayed buffered. Keep the deadline per suite so one stalled child
   # cannot consume the gate's whole aggregate timeout.
   (
     trap 'rm -rf "$suite_tmp"' EXIT
     export TMPDIR="$suite_tmp"
+    export PM_TEST_CASE_SKIPS_FILE="$case_skips_file"
     suite_runtime="$suite_tmp/xdg-runtime"
     mkdir -p "$suite_runtime"
     chmod 700 "$suite_runtime"
@@ -513,6 +529,14 @@ run_suite() {
   if [[ "$rc" -eq 124 ]]; then
     printf 'TIMEOUT %s (%ss)\n' "$name" "$(suite_timeout_secs "$name")" >&2
   fi
+
+  # Sum whatever the suite (or a nested runner it launched) reported, then
+  # discard the sink. Read by _record_suite_outcome via this global.
+  LAST_SUITE_CASE_SKIPS=0
+  if [[ -s "$case_skips_file" ]]; then
+    LAST_SUITE_CASE_SKIPS="$(awk '{ s += $1 } END { print s + 0 }' "$case_skips_file")"
+  fi
+  rm -f "$case_skips_file"
   return "$rc"
 }
 
@@ -524,19 +548,31 @@ run_suite() {
 # duplicating the classification.
 _record_suite_outcome() {
   local name="$1" rc="$2" duration="$3"
+  # Case-level skips reported by the suite (set by run_suite for the sequential
+  # and phase-0 paths; recovered from a per-suite file by the parallel drain).
+  # Consume and reset so a later call that did not go through run_suite cannot
+  # inherit a stale value.
+  local case_skips="${LAST_SUITE_CASE_SKIPS:-0}"
+  LAST_SUITE_CASE_SKIPS=0
+  [[ "$case_skips" =~ ^[0-9]+$ ]] || case_skips=0
   SUITE_DURATIONS["$name"]="$duration"
   if [[ "$rc" -eq 0 ]]; then
     printf 'PASS %s\n' "$name"
-    record_suite_result "$name" pass 0 "$duration"
+    record_suite_result "$name" pass 0 "$duration" "" "$case_skips"
     passed=$((passed + 1))
+    if [[ "$case_skips" -gt 0 ]]; then
+      case_skipped=$((case_skipped + case_skips))
+      printf 'note: %s reported %s case-level skip(s)\n' "$name" "$case_skips"
+    fi
     return 0
   fi
   printf 'FAIL %s\n' "$name"
   if [[ "$rc" -eq 124 ]]; then
-    record_suite_result "$name" timeout "$rc" "$duration"
+    record_suite_result "$name" timeout "$rc" "$duration" "" "$case_skips"
   else
-    record_suite_result "$name" fail "$rc" "$duration"
+    record_suite_result "$name" fail "$rc" "$duration" "" "$case_skips"
   fi
+  [[ "$case_skips" -gt 0 ]] && case_skipped=$((case_skipped + case_skips))
   failed=$((failed + 1))
   FAILED_SUITE_NAMES+=("$name")
   return 1
@@ -560,6 +596,9 @@ _suite_skip_reason() {
 
 _finish_run() {
   printf '%s passed, %s failed, %s skipped\n' "$passed" "$failed" "$skipped"
+  if [[ "${case_skipped:-0}" -gt 0 ]]; then
+    printf '%s case-level skip(s) across the run — this run is NOT an authoritative full pass\n' "$case_skipped"
+  fi
   if [[ "${#SUITE_DURATIONS[@]}" -gt 0 ]]; then
     printf 'slowest suites:\n'
     declare -A _duration_reported=()
@@ -710,6 +749,7 @@ else
       set +e
       run_suite "$name" > "$d/out" 2>&1
       printf '%s\n' "$?" > "$d/rc"
+      printf '%s\n' "${LAST_SUITE_CASE_SKIPS:-0}" > "$d/caseskips"
     ) &
     _if_names+=("$name")
     _if_pids+=($!)
@@ -730,6 +770,7 @@ else
         finished="$SECONDS"
         # Print buffered suite output then its result line
         [[ -s "$d/out" ]] && cat "$d/out"
+        LAST_SUITE_CASE_SKIPS="$(cat "$d/caseskips" 2>/dev/null || printf '0')"
         _record_suite_outcome "$name" "$rc" "$((finished - started))" || true
       else
         local elapsed=$(( SECONDS - $(cat "$d/started" 2>/dev/null || printf '%s' "$SECONDS") ))

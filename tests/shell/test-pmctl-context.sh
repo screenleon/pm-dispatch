@@ -3048,7 +3048,7 @@ case_context_index_gitignore_hardlink() {
   # A hardlink shares the inode with $target; writing through .gitignore would
   # append into the out-of-tree file. Skip if the platform/FS can't hardlink.
   if ! ln "$target" "$fix_repo/.gitignore" 2>/dev/null; then
-    pass "$name (skipped: hardlink unsupported here)"; return 0
+    skip "$name" "platform/filesystem cannot create a hardlink (needed to prove .gitignore is not written through an inode alias)"; return 0
   fi
 
   local status=0
@@ -3391,14 +3391,14 @@ case_context_pack_source_all_populates_both() {
   CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" context index "$repo" >/dev/null 2>&1 || true
   local out="$tmp_root/mem-packall.out"
   CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" context pack "$repo" --task-id CC-403 --query my_func_alpha --query codex --source all > "$out" 2>/dev/null || true
-  if command -v jq >/dev/null 2>&1; then
-    if jq -e '(.symbols | length) >= 1 and (.memories | length) >= 1' "$out" >/dev/null 2>&1; then
-      pass "$name"
-    else
-      fail "$name" "expected both symbols and memories populated; got: $(<"$out")"
-    fi
+  if ! command -v jq >/dev/null 2>&1; then
+    skip "$name" "jq not on PATH (cannot inspect the pack JSON)"
+    return 0
+  fi
+  if jq -e '(.symbols | length) >= 1 and (.memories | length) >= 1' "$out" >/dev/null 2>&1; then
+    pass "$name"
   else
-    pass "$name (skipped: jq absent)"
+    fail "$name" "expected both symbols and memories populated; got: $(<"$out")"
   fi
 }
 

@@ -44,7 +44,11 @@
           "status": { "enum": ["pass", "fail", "timeout", "skip"] },
           "exit_code": { "type": "integer", "minimum": 0 },
           "duration_seconds": { "type": "integer", "minimum": 0 },
-          "reason": { "type": "string" }
+          "reason": { "type": "string" },
+          "case_skips": {
+            "description": "Number of individual test cases inside this suite that could not run their assertions and were recorded as skipped (missing optional dependency, unsupported filesystem feature). Any value > 0 makes the enclosing run non-authoritative. Absent means zero.",
+            "type": "integer", "minimum": 0
+          }
         },
         "additionalProperties": false
       }
@@ -57,7 +61,11 @@
         "passed": { "type": "integer", "minimum": 0 },
         "failed": { "type": "integer", "minimum": 0 },
         "timed_out": { "type": "integer", "minimum": 0 },
-        "skipped": { "type": "integer", "minimum": 0 }
+        "skipped": { "type": "integer", "minimum": 0 },
+        "case_skipped": {
+          "description": "Total case-level skips across all suites in the run. Optional for backward compatibility; absent means zero. Any value > 0 makes the run non-authoritative.",
+          "type": "integer", "minimum": 0
+        }
       },
       "additionalProperties": false
     }

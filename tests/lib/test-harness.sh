@@ -98,7 +98,9 @@ th_init() {
 
   PASS=0
   FAIL=0
+  SKIP=0
   FAILED_CASES=()
+  SKIPPED_CASES=()
   ALL_CASES=()
 }
 
@@ -170,22 +172,71 @@ fail() {
   fi
 }
 
+# skip <case-name> <reason>
+# Record a case that could NOT execute its assertions -- a missing optional
+# dependency, an unsupported filesystem feature -- as skipped, NOT passed.
+# A skip MUST state why; a reasonless skip is a silent pass in disguise and is
+# recorded as a failure instead. A skip does not change the suite's exit code
+# (it is not a failure); the non-authoritative signal it carries travels
+# out-of-band via PM_TEST_CASE_SKIPS_FILE, folded in by th_summary.
+skip() {
+  local name="$1" reason="${2:-}"
+  # Defensive: the module header notes some suites source it without th_init.
+  SKIP="${SKIP:-0}"
+  if [[ -z "$reason" ]]; then
+    # A reasonless skip is a test-authoring bug: record it as a failure (loud
+    # in the summary, non-zero suite exit) but return 0 like fail() does, so
+    # it does not abort the rest of the suite under `set -e`.
+    fail "$name" "skip: a skipped case must state a reason"
+    return 0
+  fi
+  case "$FORMAT" in
+    colon-flat|colon-mixed)
+      printf 'SKIP: %s (%s)\n' "$name" "$reason"
+      ;;
+    indent-2sp)
+      printf '  SKIP  %s (%s)\n' "$name" "$reason"
+      ;;
+    indent-1sp)
+      ${VERBOSE:+printf '  SKIP %s (%s)\n' "$name" "$reason"}
+      ;;
+    indent-2sp-quiet)
+      ${VERBOSE:+printf '  SKIP  %s (%s)\n' "$name" "$reason"}
+      ;;
+  esac
+  SKIP=$((SKIP + 1))
+  SKIPPED_CASES+=("$name: $reason")
+}
+
 th_summary() {
+  SKIP="${SKIP:-0}"
   if $LIST; then
     printf '%s\n' "${ALL_CASES[@]}"
     exit 0
   fi
 
-  if [[ -n "$FILTER" && $((PASS + FAIL)) -eq 0 ]]; then
+  if [[ -n "$FILTER" && $((PASS + FAIL + SKIP)) -eq 0 ]]; then
     printf 'no tests matched filter %s\n' "$FILTER" >&2
     exit 1
   fi
 
-  printf '%s passed, %s failed\n' "$PASS" "$FAIL"
+  printf '%s passed, %s failed, %s skipped\n' "$PASS" "$FAIL" "$SKIP"
   if [[ "${#FAILED_CASES[@]}" -gt 0 ]]; then
     printf 'failed cases:'
     printf ' %s' "${FAILED_CASES[@]}"
     printf '\n'
+  fi
+  if [[ "${#SKIPPED_CASES[@]}" -gt 0 ]]; then
+    printf 'skipped cases:\n'
+    printf '  %s\n' "${SKIPPED_CASES[@]}"
+  fi
+
+  # Hand the case-skip count to the suite runner out-of-band so it can fold it
+  # into the authoritative-evidence contract without parsing this stdout. The
+  # suite still exits 0 below when there are no failures -- a skip is not a
+  # failure.
+  if [[ "$SKIP" -gt 0 && -n "${PM_TEST_CASE_SKIPS_FILE:-}" ]]; then
+    printf '%s\n' "$SKIP" >> "$PM_TEST_CASE_SKIPS_FILE" 2>/dev/null || true
   fi
 
   if [[ "$FAIL" -gt 0 ]]; then

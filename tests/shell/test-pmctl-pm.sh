@@ -101,7 +101,7 @@ case_prepare_degrades_without_backlog() {
 case_prepare_repo_context_marker_round_trip() {
   local name="pmctl pm prepare: repo context marker round-trip uses canonical DB"
   should_run "$name" || return 0
-  command -v sqlite3 >/dev/null 2>&1 || { pass "$name (sqlite unavailable)"; return 0; }
+  command -v sqlite3 >/dev/null 2>&1 || { skip "$name" "sqlite3 not on PATH (canonical context DB assertions cannot run)"; return 0; }
   local work="$tmp_root/prepare-context-work" marker out snapshot query code=0
   mkdir -p "$work/docs"
   git -C "$work" init -q

@@ -245,7 +245,7 @@ case_state_store_init_symlink_leaf_rejected() {
   chmod 0755 "$target"
   ln -s "$target" "$link"
   if [[ ! -L "$link" ]]; then
-    pass "$name (skip: symlinks unavailable)"
+    skip "$name" "filesystem does not preserve symlinks (ln -s produced a non-symlink)"
     return 0
   fi
   before="$(_sw_path_mode_octal "$target")"
@@ -273,7 +273,7 @@ case_state_store_init_symlink_leaf_escape_hatch() {
   mkdir -p "$target"
   ln -s "$target" "$link"
   if [[ ! -L "$link" ]]; then
-    pass "$name (skip: symlinks unavailable)"
+    skip "$name" "filesystem does not preserve symlinks (ln -s produced a non-symlink)"
     return 0
   fi
   stderr_out="$(PM_DISPATCH_STATE_ROOT="$link" PM_DISPATCH_ALLOW_UNSAFE_STATE_ROOT=1 \
@@ -418,14 +418,14 @@ case_state_store_init_non_owner_rejected_when_simulatable() {
   local name="state_store_init: non-owned store root is rejected"
   should_run "$name" || return 0
   if [[ "$(id -u)" -ne 0 ]]; then
-    pass "$name (skip: ownership change requires root)"
+    skip "$name" "not running as root; cannot chown the store root away from the effective user"
     return 0
   fi
   local store rc=0 stderr_out
   store="$tmp_root/root-non-owner"
   mkdir -p "$store"
   if ! chown 65534:65534 "$store" 2>/dev/null; then
-    pass "$name (skip: could not assign alternate owner)"
+    skip "$name" "chown to an alternate uid failed in this environment"
     return 0
   fi
   stderr_out="$(PM_DISPATCH_STATE_ROOT="$store" _SW_ALLOW_GLOBAL_PARTITION=1 state_store_init 2>&1 >/dev/null)" || rc=$?
