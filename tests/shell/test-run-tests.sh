@@ -654,6 +654,23 @@ case_full_result_case_skips_is_not_authoritative() {
   fi
 }
 
+case_full_result_rejects_fractional_case_skips() {
+  # A structured sink whose case_skips is a non-integer must be rejected before
+  # any artifact is emitted -- never coerced to zero, which would let a bad
+  # sink produce an authoritative PASS despite a positive reported skip count.
+  local name=full-result-rejects-fractional-case-skips repo out status=0 artifact args
+  args="$TMP_ROOT/$name.args"
+  repo="$(make_fixture "$name")"
+  artifact="$repo/.pm-dispatch/test-results/full.json"
+  out=$(RUN_TESTS_ARGS_LOG="$args" RUN_TESTS_CASE_SKIPS=0.5 "$repo/tests/bin/run-tests.sh" --all --result-file "$artifact" 2>&1) || status=$?
+  if [[ "$status" -ne 0 && ! -s "$artifact" ]] \
+    && { [[ "$out" == *"non-integer case_skips"* ]] || [[ "$out" == *"invalid or incomplete structured suite results"* ]] || [[ "$out" == *"did not emit a valid"* ]]; }; then
+    pass "$name"
+  else
+    fail "$name" "status=$status artifact_exists=$([[ -s "$artifact" ]] && echo yes || echo no) out=$out"
+  fi
+}
+
 case_verify_full_rejects_collect_all() {
   local name=verify-full-rejects-collect-all repo out status=0 artifact
   repo="$(make_fixture "$name")"
@@ -774,6 +791,7 @@ case_selected_failure_propagates
 case_explicit_all_delegates_without_selector
 case_full_result_verifies_same_tree
 case_full_result_case_skips_is_not_authoritative
+case_full_result_rejects_fractional_case_skips
 case_verify_full_rejects_collect_all
 case_full_result_rejects_changed_tree
 case_tree_change_during_run_marks_stale

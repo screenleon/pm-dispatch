@@ -200,7 +200,7 @@ pm_test_run_and_record() {
           all(.[]; (.status == "pass" or .status == "fail" or .status == "timeout" or .status == "skip") and
                    (.exit_code | type == "number") and
                    (.duration_seconds | type == "number" and . >= 0) and
-                   ((.case_skips // 0) | type == "number" and . >= 0))
+                   ((.case_skips // 0) | type == "number" and . >= 0 and (floor == .)))
        then . else error("invalid or incomplete structured suite results") end
      ' "$suite_results_file" 2>/dev/null)"; then
     printf 'pm-test-result: suite runner did not emit a valid non-empty structured result sink\n' >&2
@@ -211,9 +211,17 @@ pm_test_run_and_record() {
 
   # Case-level skips (a case that could not run its assertions) disqualify a
   # run from being authoritative, the same direction as a requested suite skip.
+  # The per-suite structural check above already rejected any non-integer
+  # case_skips, so the sum is a non-negative integer; fail closed (never coerce
+  # to zero, which would let a bad sink emit an authoritative PASS) if it is
+  # somehow not.
   local case_skips_total
   case_skips_total="$(jq -r '[.[] | (.case_skips // 0)] | add // 0' <<<"$suite_results_json")"
-  [[ "$case_skips_total" =~ ^[0-9]+$ ]] || case_skips_total=0
+  if [[ ! "$case_skips_total" =~ ^[0-9]+$ ]]; then
+    printf 'pm-test-result: structured sink has a non-integer case_skips total (%s); refusing to emit evidence\n' \
+      "$case_skips_total" >&2
+    return 2
+  fi
 
   if [[ "$contract" == full && "$status" == pass && "$skips_json" == '[]' \
         && "$case_skips_total" -eq 0 ]]; then

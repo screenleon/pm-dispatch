@@ -278,6 +278,27 @@ case_harness_case_skips_file_gets_count() {
   fi
 }
 
+# Behavior: when PM_TEST_CASE_SKIPS_FILE is set but the append fails (unwritable
+# sink), a suite with a skip must exit non-zero and print a diagnostic -- a lost
+# count would let the runner emit a silently false authoritative PASS. When the
+# variable is unset there is no sink and no failure.
+case_harness_case_skips_write_failure_fails_suite() {
+  local name="test-harness-case-skips-write-failure-fails"
+  local out="$TMP_ROOT/$name.out" rc
+  (
+    export PM_TEST_CASE_SKIPS_FILE="$TMP_ROOT/$name/no-such-dir/sink"
+    th_init
+    skip "wf-a" "dep absent"
+    th_summary
+  ) > "$out" 2>&1 || rc=$?
+  rc=${rc:-0}
+  if [[ "$rc" -ne 0 ]] && grep -q 'could not record .* case skip' "$out"; then
+    pass_case "$name"
+  else
+    fail_case "$name" "rc=$rc out=$(cat "$out")"
+  fi
+}
+
 # Behavior: the sample sites migrated in this slice call skip(), not
 # pass-as-skip -- a regression that reverts one should fail here.
 case_harness_migrated_sample_sites_use_skip() {
@@ -746,6 +767,7 @@ case_harness_summary_counts_skips_exit_zero
 case_harness_skip_does_not_mask_failure
 case_harness_filter_only_skip_is_not_no_match
 case_harness_case_skips_file_gets_count
+case_harness_case_skips_write_failure_fails_suite
 case_harness_migrated_sample_sites_use_skip
 case_harness_preset_colon_flat
 case_harness_preset_colon_mixed

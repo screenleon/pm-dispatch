@@ -305,6 +305,10 @@ PM_MEMORY_DIR	PM_MEMORY_DIR	runtime/lib/memory.sh	production
 PM_MEMORY_DIR	PM_MEMORY_DIR	runtime/lib/pmctl-memory.sh	production
 PM_MEMORY_DIR	PM_MEMORY_DIR	tools/skills/skill-refine.sh	production
 PM_RELEASE_VERIFY_CONTEXT_REPO	PM_RELEASE_VERIFY_CONTEXT_REPO	ops/release/release-verify.sh	production
+PM_TEST_CASE_SKIPS_FILE	PM_TEST_CASE_SKIPS_FILE	tests/lib/test-harness.sh	test
+PM_TEST_CASE_SKIPS_FILE	PM_TEST_CASE_SKIPS_FILE	tests/lib/test-suite-runner.sh	test
+PM_TEST_CASE_SKIPS_FILE	PM_TEST_CASE_SKIPS_FILE	tests/shell/test-run-all-tests.sh	test
+PM_TEST_CASE_SKIPS_FILE	PM_TEST_CASE_SKIPS_FILE	tests/shell/test-test-harness.sh	test
 PM_TEST_SUITE_RESULTS_FILE	PM_TEST_SUITE_RESULTS_FILE	tests/lib/test-result.sh	test
 PM_TEST_SUITE_RESULTS_FILE	PM_TEST_SUITE_RESULTS_FILE	tests/lib/test-suite-runner.sh	test
 PM_TEST_SUITE_RESULTS_FILE	PM_TEST_SUITE_RESULTS_FILE	tests/shell/test-run-all-tests.sh	test
@@ -353,6 +357,7 @@ REPO_ROOT	REPO_ROOT	tools/skills/skill-refine.sh	production
 REPO_ROOT	REPO_ROOT	uninstall.sh	production
 REVIEWER_DEFINITION_DIR	REVIEWER_DEFINITION_DIR	runtime/bin/pr-gate.sh	production
 RUN_TESTS_*	RUN_TESTS_ARGS_LOG	tests/shell/test-run-tests.sh	test
+RUN_TESTS_*	RUN_TESTS_CASE_SKIPS	tests/shell/test-run-tests.sh	test
 RUN_TESTS_*	RUN_TESTS_INVALID_SINK	tests/shell/test-run-tests.sh	test
 RUN_TESTS_*	RUN_TESTS_MUTATE_PATH	tests/shell/test-run-tests.sh	test
 RUN_TESTS_*	RUN_TESTS_SKIP_SINK	tests/shell/test-run-tests.sh	test

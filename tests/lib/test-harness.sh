@@ -232,11 +232,19 @@ th_summary() {
   fi
 
   # Hand the case-skip count to the suite runner out-of-band so it can fold it
-  # into the authoritative-evidence contract without parsing this stdout. The
-  # suite still exits 0 below when there are no failures -- a skip is not a
-  # failure.
+  # into the authoritative-evidence contract without parsing this stdout. When
+  # PM_TEST_CASE_SKIPS_FILE is set we are inside a runner that depends on this
+  # signal to decide authoritative-ness, so a lost write (ENOSPC, unwritable
+  # sink) MUST fail the suite -- swallowing it would let a run with real case
+  # skips be emitted as an authoritative full PASS. When the variable is unset
+  # (a direct `bash tests/shell/foo.sh` run) there is no sink and no failure:
+  # such a run is not authoritative evidence anyway.
   if [[ "$SKIP" -gt 0 && -n "${PM_TEST_CASE_SKIPS_FILE:-}" ]]; then
-    printf '%s\n' "$SKIP" >> "$PM_TEST_CASE_SKIPS_FILE" 2>/dev/null || true
+    if ! printf '%s\n' "$SKIP" >> "$PM_TEST_CASE_SKIPS_FILE" 2>/dev/null; then
+      printf 'th_summary: FATAL: could not record %s case skip(s) to %s; failing the suite so the run is not treated as an authoritative full pass\n' \
+        "$SKIP" "$PM_TEST_CASE_SKIPS_FILE" >&2
+      exit 3
+    fi
   fi
 
   if [[ "$FAIL" -gt 0 ]]; then
