@@ -64,6 +64,7 @@ tests/shell/test-pmctl-artifacts.sh	SC1091,SC2154	pre-existing-shellcheck-debt
 tests/shell/test-pmctl-backlog.sh	SC1091,SC2154	pre-existing-shellcheck-debt
 tests/shell/test-pmctl-context.sh	SC2097,SC2098	pre-existing-shellcheck-debt
 tests/shell/test-pmctl-dispatch.sh	SC1007,SC1010,SC1091,SC2034,SC2154,SC2329	pre-existing-shellcheck-debt
+tests/shell/test-pmctl-gate-stats.sh	SC1091,SC2154	test-harness-sourced-globals
 tests/shell/test-pmctl-gate.sh	SC1091,SC2016,SC2154	pre-existing-shellcheck-debt
 tests/shell/test-pmctl-guard.sh	SC1091,SC2015,SC2154	pre-existing-shellcheck-debt
 tests/shell/test-pmctl-pm.sh	SC1091,SC2015,SC2154,SC2155,SC2317,SC2329	pre-existing-shellcheck-debt

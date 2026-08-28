@@ -219,6 +219,7 @@ router and [`cli/commands.tsv`](cli/commands.tsv).
 - `gate wait` — Wait for a detached gate run. [experimental; JSON: false; mutating: true]
 - `gate cancel` — Stop the verified gate producer process tree, then cancel only its recorded child runs; partial termination stays indeterminate. [experimental; JSON: false; mutating: true]
 - `gate reconcile` — Reconcile a gate operation from trusted child terminal claims. [experimental; JSON: false; mutating: true]
+- `gate stats` — Aggregate operational cost of past PR-gate runs from on-disk artifacts. [experimental; JSON: true; mutating: false]
 - `context index` — Build the repository context index. [experimental; JSON: false; mutating: true]
 - `context update` — Update the repository context index. [experimental; JSON: false; mutating: true]
 - `context status` — Show context index status. [experimental; JSON: true; mutating: false]
