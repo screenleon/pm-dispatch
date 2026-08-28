@@ -272,6 +272,10 @@ case_non_iso_assurance_timestamps_keep_the_row() {
   proj="$(gs_project_dir "$store")"
   gs_make_gate_run "$proj" gate-20260810-000900-bt NO-GO full sequential "critic=block" \
     "not-a-timestamp" "also-not" bt1
+  # Pin every file in the run dir to one mtime so the mtime-span fallback is a
+  # deterministic 0: without this a contended machine can space the fixture
+  # writes >=1s apart and the span becomes a phantom 1s duration.
+  find "$proj/runs/gate-20260810-000900-bt" -exec touch -d '2026-08-10T00:00:00Z' {} + 2>/dev/null || true
   out="$tmp_root/badts.out"; err="$tmp_root/badts.err"
   gs_run "$store" "$out" "$err" --json || status=$?
   if [[ "$status" -eq 0 ]] \
