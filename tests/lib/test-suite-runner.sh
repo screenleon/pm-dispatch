@@ -110,6 +110,7 @@ SUITE_NAMES=(
   test-gate-assurance-verify
   test-gate-scope-manifest-verify
   test-gate-structural-verify
+  test-gate-protocol
   test-pmctl-gate
   test-pmctl-safe
   test-pmctl-validate
@@ -221,6 +222,7 @@ declare -A SUITE_PATHS=(
   [test-gate-assurance-verify]="tests/shell/test-gate-assurance-verify.sh"
   [test-gate-scope-manifest-verify]="tests/shell/test-gate-scope-manifest-verify.sh"
   [test-gate-structural-verify]="tests/shell/test-gate-structural-verify.sh"
+  [test-gate-protocol]="tests/shell/test-gate-protocol.sh"
   [test-pmctl-gate]="tests/shell/test-pmctl-gate.sh"
   [test-pmctl-safe]="tests/shell/test-pmctl-safe.sh"
   [test-pmctl-validate]="tests/shell/test-pmctl-validate.sh"
