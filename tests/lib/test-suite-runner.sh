@@ -530,11 +530,30 @@ run_suite() {
     printf 'TIMEOUT %s (%ss)\n' "$name" "$(suite_timeout_secs "$name")" >&2
   fi
 
-  # Sum whatever the suite (or a nested runner it launched) reported, then
-  # discard the sink. Read by _record_suite_outcome via this global.
+  # Read the per-suite case-skip sink. th_summary only ever writes a single
+  # non-negative integer per suite, so a line that is not one means a
+  # corrupted or directly-tampered sink -- record the suite as failed rather
+  # than coercing the value away (which would erase a real skip and let a PASS
+  # artifact carry no case_skips). Read by _record_suite_outcome via the
+  # LAST_SUITE_CASE_SKIPS global.
   LAST_SUITE_CASE_SKIPS=0
   if [[ -s "$case_skips_file" ]]; then
-    LAST_SUITE_CASE_SKIPS="$(awk '{ s += $1 } END { print s + 0 }' "$case_skips_file")"
+    local _cs_line _cs_sum=0 _cs_bad=0
+    while IFS= read -r _cs_line || [[ -n "$_cs_line" ]]; do
+      [[ -z "$_cs_line" ]] && continue
+      if [[ "$_cs_line" =~ ^[0-9]+$ ]]; then
+        _cs_sum=$(( _cs_sum + _cs_line ))
+      else
+        _cs_bad=1
+      fi
+    done < "$case_skips_file"
+    if [[ "$_cs_bad" -eq 1 ]]; then
+      printf 'run-all-tests: %s produced a malformed case-skip sink; recording the suite as failed\n' "$name" >&2
+      [[ "$rc" -eq 0 ]] && rc=1
+      LAST_SUITE_CASE_SKIPS=0
+    else
+      LAST_SUITE_CASE_SKIPS="$_cs_sum"
+    fi
   fi
   rm -f "$case_skips_file"
   return "$rc"
