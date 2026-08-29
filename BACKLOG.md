@@ -38,7 +38,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-559 | ✅ closed 2026-08-23 | **[memory usage sidecar 無法記錄含 tab／newline／backslash 的卡片路徑]** SQLite／TSV 兩個後端在共用傳輸邊界統一 escape／unescape（雙射字元掃描，無 sentinel 碰撞風險）；`# schema=2` 一次性遷移標記避免既有原始資料被誤判；`unmeasurable_cards` 恆為空但誠實回報機制保留。See pr:#521. | ops/memory | 2026-08-19 | pr:#521 | P3 | hygiene |
 | CC-562 | ✅ done | synthesis／reviewer 驗證器仍有多個「多約束共用單一 reason 字串」分支（`invalid coverage matrix`、`invalid finding inventory or union`、`duplicate finding ID collision`、`selected/not-reviewed dimensions mismatch`），單次修正重試收到後無法行動；[[CC-553]] Req 2 判定需同等精度但屬不同 helper 形狀（逐項指出違規條目，非集合差集），故分票 | ops/gate | 2026-08-19 | pr:#510 | P3 | hygiene |
 | CC-560 | ✅ done | `_gate_scope_reference_index_collect` 每筆 reference 都以 `jq -nc` 建一個 JSON 物件（實測 4.9s×2），與 [[CC-557]] 已修掉的 `_gate_scope_expansion_append` 是同一類寫法；CC-557 未一併處理是因預算餘裕已足，非因不成立 | ops/gate | 2026-08-19 | pr:#511 | P3 | hygiene |
-| CC-554 | 🔵 active | 永久 regression test 缺少准入門檻：`/ship` 規範「修完每個 finding」但不規範修法形式，reviewer 每提一個邊界就永久長一個阻擋 case，case 又需要 meta-test 保護；QA 規則加六條准入條件＋五條替代路徑，ship.md 加對應例外（明確不設輪數上限，見 [[CC-544]]） | ops/gate | 2026-08-17 | — | P1 | hygiene |
+| CC-554 | ✅ done | 永久 regression test 缺少准入門檻：`/ship` 規範「修完每個 finding」但不規範修法形式，reviewer 每提一個邊界就永久長一個阻擋 case，case 又需要 meta-test 保護；QA 規則加六條准入條件＋五條替代路徑，ship.md 加對應例外（明確不設輪數上限，見 [[CC-544]]） | ops/gate | 2026-08-17 | pr:#490, pr:#530, pr:#544, pr:#555 | P1 | hygiene |
 | CC-552 | ✅ done | `test_default_worker_cap` 以 `sleep 0.1` 製造 worker 重疊窗口來驗證併發上限，違反 QA 規則的「不得以 sleep 同步」；主機負載會改變觀測到的重疊數，與 worker-cap 正確性無關（2026-08-17 CC-551 gate round 4 qa-tester，pre-existing） | ops/test | 2026-08-17 | — | P3 | hygiene |
 | CC-548 | ✅ closed 2026-08-26 | **[context.db FTS5 對 CJK 查詢無索引無排序]** Spike 判定 **AMBER — defer，暫不實作**：無 sqlite 版本下限硬衝突，rebuild 遷移成本為零，但實測 trigram rebuild 慢 ~4.9x、索引大 +32.6%，而品質增益在本 repo 實際語料上僅小幅（68 筆抽樣命中中多 1 筆），且原票「unicode61 無 ranking」前提經量測不成立。See `docs/spikes/CC-548.md`. | memory | 2026-08-16 | — | P2 | retrieval |
 | CC-466 | ⏸ deferred | 記憶卡片生命週期閉環：expires_at 執行 + 關窗式 supersede + usage sidecar 休眠偵測 + doctor→distill 接線；僅在 CC-467 證明 stale/dormant card 已形成實際問題時啟動 | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
@@ -393,7 +393,7 @@ regression（欄位順序、去重、排序若壞掉，聚合測試不保證會�
 
 ---
 
-## CC-554 — 永久 regression test 的准入門檻（Batch 0） 🔵 active
+## CC-554 — 永久 regression test 的准入門檻（Batch 0） ✅ 2026-08-29
 
 **Problem**: `/ship` 要求「high／medium／low、hard gate／advisory 全部修完」，
 但沒有規範**修法的形式**。實務上 reviewer 每提出一個新邊界，最省事的收斂方式就是
@@ -470,6 +470,27 @@ reviewer-side duty 已要求提出者載明符合哪些條件，author side 先�
 **Non-goals**: 不設 `max_full_review_rounds` 輪數上限——與 `commands/ship.md`
 「round count 不是停止條件」直接衝突，且 [[CC-544]] 已證明放寬 gate 收斂條件會被
 qa-tester／risk-reviewer 連擋並全數 revert。減量要從 finding 端做，不是從輪數端。
+
+**Update 2026-08-29（結案）**：第三次讀數確認 Step 4 樣板欄位仍未咬合——本週期
+又有三個 PR 漏填 `Permanent test admissions:` 行。處置已從「結構欄位」升級為
+**CI 機械強制**：`tools/lint/lint-permanent-test-admissions.sh`（pr:#555）在 PR body
+漏填／填 `none` 而既有測試檔在 base→HEAD 之間新增 `test_`/`case_` 函式身分時，
+直接讓 PR check 失敗。
+
+**結案理由**：三條原始 Requirement 早已交付——Req 1（QA 規則六條准入條件＋五條
+替代路徑）與 Req 2/3（ship.md 例外段落＋自帶摘要不硬相依參考實作）於 pr:#490／
+pr:#530 落地；其後三次觀察窗讀數各自出貨了對應補救（pr:#499 雙分支記錄、pr:#544
+Step 4 樣板欄位、pr:#555 CI enforcer）。本票的「觀察 N 個 PR 看是否復發」驗收條款
+在補救變成硬性 CI gate 後即失去意義——復發已被結構阻擋，不再是「觀察合規漂移」。
+任何「enforcer 是否校準過頭／不足」的疑慮屬另立窄票，不在本票 scope。A（因 finding
+新增的永久阻擋 case）在 [[lint-permanent-test-admissions-shipped]] 起可由 CI 直接量測。
+
+「測試**退場**機制」（既有測試何時該合併／刪除的對稱另一半，見 memory
+`next-phase-complexity-economics-direction`）是獨立概念，若要做另立票，不是本票續命理由。
+
+**See**: pr:#490（Req 1，准入條件）、pr:#530（Req 2/3，ship.md）、pr:#499／pr:#544／
+pr:#555（三次讀數的補救）、[[cc554-admission-template-slot-shipped]]、
+[[lint-permanent-test-admissions-shipped]]。
 
 **Cross-link**: [[CC-467]]（觸發實例）、[[CC-544]]（輪數上限的反證）、
 [[CC-537]]（suite manifest，維持 someday）。後續批次見 memory
