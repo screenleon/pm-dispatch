@@ -65,8 +65,10 @@ if [[ -n "${PM_TEST_SUITE_RESULTS_FILE:-}" && "${RUN_TESTS_SKIP_SINK:-0}" != "1"
   if [[ "${RUN_TESTS_INVALID_SINK:-0}" == "1" ]]; then
     printf '%s\n' '[{"name":"wrong-suite","status":"bogus","exit_code":0,"duration_seconds":"fast"}]' > "$PM_TEST_SUITE_RESULTS_FILE"
   else
-    jq -n --argjson names "$names_json" --argjson rc "$rc" '
+    jq -n --argjson names "$names_json" --argjson rc "$rc" \
+      --argjson case_skips "${RUN_TESTS_CASE_SKIPS:-0}" '
       [$names[] | {name:.,status:(if $rc == 0 then "pass" else "fail" end),exit_code:$rc,duration_seconds:0}]
+      | (if $case_skips > 0 then .[0].case_skips = $case_skips else . end)
     ' > "$PM_TEST_SUITE_RESULTS_FILE"
   fi
 fi
@@ -625,6 +627,50 @@ case_full_result_verifies_same_tree() {
   fi
 }
 
+case_full_result_case_skips_is_not_authoritative() {
+  # A --all run where any suite reported case-level skips must produce a
+  # full-with-skips, non-authoritative artifact, and --verify-full must reject
+  # it -- the same direction as a requested suite skip.
+  local name=full-result-case-skips-not-authoritative repo out status=0 artifact args
+  args="$TMP_ROOT/$name.args"
+  repo="$(make_fixture "$name")"
+  artifact="$repo/.pm-dispatch/test-results/full.json"
+  out=$(RUN_TESTS_ARGS_LOG="$args" RUN_TESTS_CASE_SKIPS=3 "$repo/tests/bin/run-tests.sh" --all --result-file "$artifact" 2>&1) || status=$?
+  if [[ "$status" -ne 0 || ! -s "$artifact" ]] ||
+     ! jq -e '
+       .contract == "full-with-skips" and .authoritative == false and
+       .aggregate.case_skipped == 3 and
+       ([.suite_results[] | (.case_skips // 0)] | add) == 3
+     ' "$artifact" >/dev/null; then
+    fail "$name" "artifact wrong: status=$status out=$out artifact=$(cat "$artifact" 2>/dev/null | jq -c '{contract,authoritative,cs:.aggregate.case_skipped}' 2>/dev/null)"
+    return
+  fi
+  status=0
+  out=$("$repo/tests/bin/run-tests.sh" --verify-full "$artifact" 2>&1) || status=$?
+  if [[ "$status" -ne 0 && "$out" == *"not an authoritative full PASS"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "verify should have rejected the case-skip artifact: status=$status out=$out"
+  fi
+}
+
+case_full_result_rejects_fractional_case_skips() {
+  # A structured sink whose case_skips is a non-integer must be rejected before
+  # any artifact is emitted -- never coerced to zero, which would let a bad
+  # sink produce an authoritative PASS despite a positive reported skip count.
+  local name=full-result-rejects-fractional-case-skips repo out status=0 artifact args
+  args="$TMP_ROOT/$name.args"
+  repo="$(make_fixture "$name")"
+  artifact="$repo/.pm-dispatch/test-results/full.json"
+  out=$(RUN_TESTS_ARGS_LOG="$args" RUN_TESTS_CASE_SKIPS=0.5 "$repo/tests/bin/run-tests.sh" --all --result-file "$artifact" 2>&1) || status=$?
+  if [[ "$status" -ne 0 && ! -s "$artifact" ]] \
+    && { [[ "$out" == *"non-integer case_skips"* ]] || [[ "$out" == *"invalid or incomplete structured suite results"* ]] || [[ "$out" == *"did not emit a valid"* ]]; }; then
+    pass "$name"
+  else
+    fail "$name" "status=$status artifact_exists=$([[ -s "$artifact" ]] && echo yes || echo no) out=$out"
+  fi
+}
+
 case_verify_full_rejects_collect_all() {
   local name=verify-full-rejects-collect-all repo out status=0 artifact
   repo="$(make_fixture "$name")"
@@ -744,6 +790,8 @@ case_unknown_path_fails_without_test_evidence
 case_selected_failure_propagates
 case_explicit_all_delegates_without_selector
 case_full_result_verifies_same_tree
+case_full_result_case_skips_is_not_authoritative
+case_full_result_rejects_fractional_case_skips
 case_verify_full_rejects_collect_all
 case_full_result_rejects_changed_tree
 case_tree_change_during_run_marks_stale

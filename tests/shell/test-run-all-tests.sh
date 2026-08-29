@@ -1010,6 +1010,72 @@ test_suite_result_artifact_records_ordered_outcomes() {
   fi
 }
 
+test_suite_result_case_skips_recorded_and_flagged() {
+  # Behavior: a suite that reports case-level skips via PM_TEST_CASE_SKIPS_FILE
+  # is still counted as passed, its per-suite result carries case_skips, and the
+  # runner prints that this run is not an authoritative full pass.
+  local name="suite-result-case-skips-recorded-and-flagged"
+  local repo="$TMP_ROOT/$name" path result out status=0 skip_stub
+  make_fixture_repo "$repo"
+  write_pass_stubs "$repo"
+  skip_stub="$repo/$(suite_path lint-agents)"
+  # Mimic what test-harness.sh's th_summary does for a suite with 2 case skips.
+  cat > "$skip_stub" <<'SKIPSTUB'
+#!/bin/sh
+printf '2\n' >> "$PM_TEST_CASE_SKIPS_FILE"
+exit 0
+SKIPSTUB
+  chmod +x "$skip_stub"
+  path="$(make_path_with_codex "$repo/bin")"
+  result="$TMP_ROOT/$name.json"
+  out=$(PATH="$path" PM_TEST_SUITE_RESULTS_FILE="$result" \
+    "$repo/tests/lib/test-suite-runner.sh" --suite lint-agents --suite lint-scripts --jobs 2 2>&1) || status=$?
+  if [[ "$status" -eq 0 ]] \
+     && [[ "$out" == *"case-level skip(s) across the run"* ]] \
+     && [[ "$out" == *"NOT an authoritative full pass"* ]] \
+     && jq -e '
+         [.[].name] == ["lint-agents","lint-scripts"] and
+         (.[] | select(.name == "lint-agents") | .status == "pass" and .case_skips == 2) and
+         (.[] | select(.name == "lint-scripts") | (.case_skips // 0) == 0)
+       ' "$result" >/dev/null 2>&1; then
+    pass_case "$name"
+  else
+    fail_case "$name" "status=$status out=$out result=$(cat "$result" 2>/dev/null)"
+  fi
+}
+
+test_suite_result_malformed_case_skip_sink_fails_suite() {
+  # Behavior: a per-suite case-skip sink that contains a fractional, negative,
+  # or non-numeric line is a corrupted/tampered sink -- the suite is recorded
+  # as failed (no PASS artifact with an erased skip), never coerced to zero.
+  local name="suite-result-malformed-case-skip-sink-fails-suite" bad
+  for bad in '0.5' '-3' 'abc'; do
+    local repo="$TMP_ROOT/$name-$bad" path result out status=0 skip_stub
+    make_fixture_repo "$repo"
+    write_pass_stubs "$repo"
+    skip_stub="$repo/$(suite_path lint-agents)"
+    cat > "$skip_stub" <<STUBEOF
+#!/bin/sh
+cat >> "\$PM_TEST_CASE_SKIPS_FILE" <<'SINKEOF'
+$bad
+SINKEOF
+exit 0
+STUBEOF
+    chmod +x "$skip_stub"
+    path="$(make_path_with_codex "$repo/bin")"
+    result="$TMP_ROOT/$name-$bad.json"
+    out=$(PATH="$path" PM_TEST_SUITE_RESULTS_FILE="$result" \
+      "$repo/tests/lib/test-suite-runner.sh" --suite lint-agents --jobs 1 2>&1) || status=$?
+    if [[ "$status" -eq 0 ]] \
+       || [[ "$out" != *"malformed case-skip sink"* ]] \
+       || ! jq -e 'length == 1 and .[0].name == "lint-agents" and .[0].status == "fail" and (.[0] | has("case_skips") | not)' "$result" >/dev/null 2>&1; then
+      fail_case "$name" "sink=$bad status=$status out=$out result=$(cat "$result" 2>/dev/null)"
+      return
+    fi
+  done
+  pass_case "$name"
+}
+
 test_suite_result_artifact_records_timeout() {
   # Behavior: a per-suite deadline is represented as timeout rather than a
   # generic failure in the machine-readable result artifact.
@@ -1474,6 +1540,8 @@ test_pr_gate_shard_default_timeout_is_2400
 test_install_default_timeout_is_1800
 test_pr_gate_shard_explicit_timeout_overrides
 test_suite_result_artifact_records_ordered_outcomes
+test_suite_result_case_skips_recorded_and_flagged
+test_suite_result_malformed_case_skip_sink_fails_suite
 test_suite_result_artifact_records_timeout
 test_result_sinks_do_not_leak_into_suites
 test_suite_ephemeral_environment_is_isolated

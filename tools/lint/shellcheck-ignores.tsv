@@ -84,7 +84,7 @@ tests/shell/test-skill-refine.sh	SC1091,SC2154	pre-existing-shellcheck-debt
 tests/shell/test-state-layout-parity.sh	SC1091,SC2016,SC2154	pre-existing-shellcheck-debt
 tests/shell/test-state-store-rotation.sh	SC1091,SC2154	pre-existing-shellcheck-debt
 tests/shell/test-state-store.sh	SC1091,SC2016,SC2032,SC2033,SC2034,SC2038,SC2317,SC2329	pre-existing-shellcheck-debt
-tests/shell/test-test-harness.sh	SC1091	pre-existing-shellcheck-debt
+tests/shell/test-test-harness.sh	SC1091,SC2016,SC2030,SC2031	harness-probe-subshells-and-literal-source-grep
 tests/shell/test-timeout-resolve.sh	SC1091	pre-existing-shellcheck-debt
 tests/shell/test-uninstall.sh	SC1091,SC2154	pre-existing-shellcheck-debt
 tests/shell/test-usage-tracker.sh	SC1091,SC2015,SC2154	pre-existing-shellcheck-debt

@@ -390,7 +390,7 @@ case_write_sentinel_atomic_visibility() {
 case_verify_identity_rejects_zombie() {
   local name="detached-launch/verify_identity rejects an unreaped zombie"
   should_run "$name" || return 0
-  command -v perl >/dev/null 2>&1 || { pass "$name"; return; }
+  command -v perl >/dev/null 2>&1 || { skip "$name" "perl not on PATH (needed to fork the zombie fixture)"; return; }
 
   local pid_fifo="$tmp_root/zombie.pid.fifo" identity="$tmp_root/zombie.identity" parent_pid child_pid rc=0
   mkfifo "$pid_fifo"; exec 6<>"$pid_fifo"

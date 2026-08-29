@@ -157,6 +157,170 @@ case_harness_summary_no_match_filter() {
   fi
 }
 
+# --- case-level skip() primitive (test-governance Batch 1) ------------------
+
+# Behavior: skip() with a reason increments SKIP (not PASS), records the reason,
+# and does not touch FAIL.
+case_harness_skip_counter() {
+  local name="test-harness-skip-counter"
+  th_init
+  pass "sc-p"
+  skip "sc-s" "dep absent"
+  if [[ "$PASS" -eq 1 && "$SKIP" -eq 1 && "$FAIL" -eq 0 \
+        && "${SKIPPED_CASES[0]:-}" == "sc-s: dep absent" ]]; then
+    pass_case "$name"
+  else
+    fail_case "$name" "PASS=$PASS SKIP=$SKIP FAIL=$FAIL skipped='${SKIPPED_CASES[0]:-}'"
+  fi
+}
+
+# Behavior: a reasonless skip is recorded as a failure, never a silent pass.
+case_harness_skip_without_reason_fails() {
+  local name="test-harness-skip-no-reason"
+  th_init
+  skip "sr-x" ""
+  if [[ "$SKIP" -eq 0 && "$FAIL" -eq 1 && "${FAILED_CASES[0]:-}" == "sr-x" ]]; then
+    pass_case "$name"
+  else
+    fail_case "$name" "SKIP=$SKIP FAIL=$FAIL failed='${FAILED_CASES[0]:-}'"
+  fi
+}
+
+# Behavior: th_summary reports "N passed, M failed, K skipped" and a skip alone
+# does not change the exit code (a skip is not a failure).
+case_harness_summary_counts_skips_exit_zero() {
+  local name="test-harness-summary-skip-exit-0"
+  local out="$TMP_ROOT/$name.out" rc
+  (
+    unset PM_TEST_CASE_SKIPS_FILE
+    th_init
+    pass "ss-p"
+    skip "ss-s" "dep absent"
+    th_summary
+  ) > "$out" 2>&1 || rc=$?
+  rc=${rc:-0}
+  if [[ "$rc" -eq 0 ]] \
+    && grep -qx '1 passed, 0 failed, 1 skipped' "$out" \
+    && grep -q 'skipped cases:' "$out" \
+    && grep -q '  ss-s: dep absent' "$out"; then
+    pass_case "$name"
+  else
+    fail_case "$name" "rc=$rc out=$(cat "$out")"
+  fi
+}
+
+# Behavior: a skip does not mask a real failure -- exit stays 1.
+case_harness_skip_does_not_mask_failure() {
+  local name="test-harness-skip-plus-fail-exit-1"
+  local out="$TMP_ROOT/$name.out" rc
+  (
+    unset PM_TEST_CASE_SKIPS_FILE
+    th_init
+    skip "sf-s" "dep absent"
+    fail "sf-f" "boom"
+    th_summary
+  ) > "$out" 2>&1 || rc=$?
+  rc=${rc:-0}
+  if [[ "$rc" -eq 1 ]] && grep -qx '0 passed, 1 failed, 1 skipped' "$out"; then
+    pass_case "$name"
+  else
+    fail_case "$name" "rc=$rc out=$(cat "$out")"
+  fi
+}
+
+# Behavior: a --filter that selects only a skipped case is not "no tests matched".
+case_harness_filter_only_skip_is_not_no_match() {
+  local name="test-harness-filter-only-skip"
+  local out="$TMP_ROOT/$name.out" rc
+  (
+    unset PM_TEST_CASE_SKIPS_FILE
+    th_init --filter "keep"
+    should_run "keepme" && skip "keepme" "dep absent"
+    should_run "dropme" && pass "dropme"
+    th_summary
+  ) > "$out" 2>&1 || rc=$?
+  rc=${rc:-0}
+  if [[ "$rc" -eq 0 ]] \
+    && grep -qx '0 passed, 0 failed, 1 skipped' "$out" \
+    && ! grep -q 'no tests matched filter' "$out"; then
+    pass_case "$name"
+  else
+    fail_case "$name" "rc=$rc out=$(cat "$out")"
+  fi
+}
+
+# Behavior: with PM_TEST_CASE_SKIPS_FILE set, th_summary appends the suite's
+# total skip count once; with it unset, skip() still works and the suite still
+# exits 0.
+case_harness_case_skips_file_gets_count() {
+  local name="test-harness-case-skips-file"
+  local csfile="$TMP_ROOT/$name.cs" unset_out="$TMP_ROOT/$name.unset" rc1 rc2
+  : > "$csfile"
+  (
+    export PM_TEST_CASE_SKIPS_FILE="$csfile"
+    th_init
+    pass "cf-p"
+    skip "cf-a" "dep1 absent"
+    skip "cf-b" "dep2 absent"
+    th_summary
+  ) >/dev/null 2>&1 || rc1=$?
+  rc1=${rc1:-0}
+  (
+    unset PM_TEST_CASE_SKIPS_FILE
+    th_init
+    skip "cf-c" "dep absent"
+    th_summary
+  ) > "$unset_out" 2>&1 || rc2=$?
+  rc2=${rc2:-0}
+  if [[ "$rc1" -eq 0 && "$rc2" -eq 0 ]] \
+    && [[ "$(cat "$csfile")" == "2" ]] \
+    && grep -qx '0 passed, 0 failed, 1 skipped' "$unset_out"; then
+    pass_case "$name"
+  else
+    fail_case "$name" "rc1=$rc1 rc2=$rc2 cs='$(cat "$csfile" 2>/dev/null)' unset_out=$(cat "$unset_out")"
+  fi
+}
+
+# Behavior: when PM_TEST_CASE_SKIPS_FILE is set but the append fails (unwritable
+# sink), a suite with a skip must exit non-zero and print a diagnostic -- a lost
+# count would let the runner emit a silently false authoritative PASS. When the
+# variable is unset there is no sink and no failure.
+case_harness_case_skips_write_failure_fails_suite() {
+  local name="test-harness-case-skips-write-failure-fails"
+  local out="$TMP_ROOT/$name.out" rc
+  (
+    export PM_TEST_CASE_SKIPS_FILE="$TMP_ROOT/$name/no-such-dir/sink"
+    th_init
+    skip "wf-a" "dep absent"
+    th_summary
+  ) > "$out" 2>&1 || rc=$?
+  rc=${rc:-0}
+  if [[ "$rc" -ne 0 ]] && grep -q 'could not record .* case skip' "$out"; then
+    pass_case "$name"
+  else
+    fail_case "$name" "rc=$rc out=$(cat "$out")"
+  fi
+}
+
+# Behavior: the sample sites migrated in this slice call skip(), not
+# pass-as-skip -- a regression that reverts one should fail here.
+case_harness_migrated_sample_sites_use_skip() {
+  local name="test-harness-migrated-sites-use-skip"
+  local root bad=0
+  root="$(cd "$SCRIPT_DIR/.." && pwd)"
+  grep -q 'skip "$name" "perl not on PATH' "$root/shell/test-detached-launch.sh" || bad=1
+  grep -q 'skip "$name" "sqlite3 not on PATH' "$root/shell/test-pmctl-pm.sh" || bad=1
+  grep -q 'skip "$name" "filesystem does not preserve symlinks' "$root/shell/test-state-store.sh" || bad=1
+  grep -q 'skip "$name" "platform/filesystem cannot create a hardlink' "$root/shell/test-pmctl-context.sh" || bad=1
+  grep -q 'skip "$name" "jq not on PATH (cannot inspect the pack JSON)' "$root/shell/test-pmctl-context.sh" || bad=1
+  grep -q 'skip "$name" "jq unavailable in the isolated PATH fixture' "$root/shell/test-doctor.sh" || bad=1
+  if [[ "$bad" -eq 0 ]]; then
+    pass_case "$name"
+  else
+    fail_case "$name" "a migrated skip() call site is missing or reverted to pass-as-skip"
+  fi
+}
+
 # Behavior: every variable the canonical inventory marks fixture_scrub=yes is
 # cleared from a suite's environment, no matter what the caller exported.
 # Steps: export each declared name in a child shell, source the harness, and
@@ -299,7 +463,7 @@ case_fixture_isolation_fails_closed() {
 case_harness_preset_colon_flat() {
   local name="preset-colon-flat"
   local expected_out expected_err
-  expected_out=$'PASS: foo\nFAIL: bar: detail\n1 passed, 1 failed\nfailed cases: bar'
+  expected_out=$'PASS: foo\nFAIL: bar: detail\n1 passed, 1 failed, 0 skipped\nfailed cases: bar'
   expected_err=''
   run_harness_probe "$name" 1 "$expected_out" "$expected_err" \
     "source '$SCRIPT_DIR/../lib/test-harness.sh'; th_init --format=colon-flat; pass 'foo'; fail 'bar' 'detail'; th_summary"
@@ -308,7 +472,7 @@ case_harness_preset_colon_flat() {
 case_harness_preset_colon_mixed() {
   local name="preset-colon-mixed"
   local expected_out expected_err
-  expected_out=$'PASS: foo\n  FAIL  bar\n        detail\n1 passed, 1 failed\nfailed cases: bar'
+  expected_out=$'PASS: foo\n  FAIL  bar\n        detail\n1 passed, 1 failed, 0 skipped\nfailed cases: bar'
   expected_err=''
   run_harness_probe "$name" 1 "$expected_out" "$expected_err" \
     "source '$SCRIPT_DIR/../lib/test-harness.sh'; th_init --format=colon-mixed; pass 'foo'; fail 'bar' 'detail'; th_summary"
@@ -317,9 +481,9 @@ case_harness_preset_colon_mixed() {
 case_harness_preset_indent_1sp() {
   local name="preset-indent-1sp-verbose"
   local expected_on expected_on_err expected_off expected_off_err
-  expected_off=$'  FAIL bar\n        detail\n0 passed, 1 failed\nfailed cases: bar'
+  expected_off=$'  FAIL bar\n        detail\n0 passed, 1 failed, 0 skipped\nfailed cases: bar'
   expected_off_err=''
-  expected_on=$'  PASS foo\n  FAIL bar\n        detail\n1 passed, 1 failed\nfailed cases: bar'
+  expected_on=$'  PASS foo\n  FAIL bar\n        detail\n1 passed, 1 failed, 0 skipped\nfailed cases: bar'
   expected_on_err=''
   run_harness_probe "${name}-off" 1 "$expected_off" "$expected_off_err" \
     "source '$SCRIPT_DIR/../lib/test-harness.sh'; th_init --format=indent-1sp; fail 'bar' 'detail'; th_summary"
@@ -330,7 +494,7 @@ case_harness_preset_indent_1sp() {
 case_harness_preset_indent_2sp() {
   local name="preset-indent-2sp"
   local expected_out expected_err
-  expected_out=$'  PASS  foo\n  FAIL  bar\n        detail\n1 passed, 1 failed\nfailed cases: bar'
+  expected_out=$'  PASS  foo\n  FAIL  bar\n        detail\n1 passed, 1 failed, 0 skipped\nfailed cases: bar'
   expected_err=''
   run_harness_probe "$name" 1 "$expected_out" "$expected_err" \
     "VERBOSE=1; source '$SCRIPT_DIR/../lib/test-harness.sh'; th_init --format=indent-2sp; pass 'foo'; fail 'bar' 'detail'; th_summary"
@@ -339,8 +503,8 @@ case_harness_preset_indent_2sp() {
 case_harness_preset_indent_2sp_quiet() {
   local name="preset-indent-2sp-quiet"
   local expected_on expected_off
-  expected_off=$'  FAIL  bar\ndetail\n1 passed, 1 failed\nfailed cases: bar'
-  expected_on=$'  PASS  foo\n  FAIL  bar\ndetail\n1 passed, 1 failed\nfailed cases: bar'
+  expected_off=$'  FAIL  bar\ndetail\n1 passed, 1 failed, 0 skipped\nfailed cases: bar'
+  expected_on=$'  PASS  foo\n  FAIL  bar\ndetail\n1 passed, 1 failed, 0 skipped\nfailed cases: bar'
   run_harness_probe "${name}-off" 1 "$expected_off" '' \
     "source '$SCRIPT_DIR/../lib/test-harness.sh'; th_init --format=indent-2sp-quiet; pass 'foo'; fail 'bar' 'detail'; th_summary"
   run_harness_probe "$name" 1 "$expected_on" '' \
@@ -409,7 +573,7 @@ case_harness_preset_unknown() {
 case_harness_fail_fast_on() {
   local name="fail-fast-on"
   local expected_out expected_err
-  expected_out=$'PASS: foo\nFAIL: fail-point: reason\n1 passed, 1 failed\nfailed cases: fail-point'
+  expected_out=$'PASS: foo\nFAIL: fail-point: reason\n1 passed, 1 failed, 0 skipped\nfailed cases: fail-point'
   expected_err=''
   run_harness_probe "$name" 1 "$expected_out" "$expected_err" \
     "source '$SCRIPT_DIR/../lib/test-harness.sh'; th_init --fail-fast; pass 'foo'; fail 'fail-point' 'reason'; pass 'after-sentinel'"
@@ -418,7 +582,7 @@ case_harness_fail_fast_on() {
 case_harness_fail_fast_off() {
   local name="fail-fast-off"
   local expected_out expected_err
-  expected_out=$'  FAIL  bad-one\n        one\n  FAIL  bad-two\n        two\n0 passed, 2 failed\nfailed cases: bad-one bad-two'
+  expected_out=$'  FAIL  bad-one\n        one\n  FAIL  bad-two\n        two\n0 passed, 2 failed, 0 skipped\nfailed cases: bad-one bad-two'
   expected_err=''
   run_harness_probe "$name" 1 "$expected_out" "$expected_err" \
     "source '$SCRIPT_DIR/../lib/test-harness.sh'; th_init --format=indent-2sp; fail 'bad-one' 'one'; fail 'bad-two' 'two'; th_summary"
@@ -427,7 +591,7 @@ case_harness_fail_fast_off() {
 case_harness_fail_fast_no_failures() {
   local name="fail-fast-no-failures"
   local expected_out expected_err
-  expected_out=$'PASS: happy\n1 passed, 0 failed'
+  expected_out=$'PASS: happy\n1 passed, 0 failed, 0 skipped'
   expected_err=''
   run_harness_probe "$name" 0 "$expected_out" "$expected_err" \
     "source '$SCRIPT_DIR/../lib/test-harness.sh'; th_init --fail-fast; pass 'happy'; th_summary"
@@ -436,7 +600,7 @@ case_harness_fail_fast_no_failures() {
 case_harness_fail_fast_and_format_orthogonal() {
   local name="fail-fast-orthogonal"
   local expected_out expected_err
-  expected_out=$'  FAIL  stop\n        reason\n0 passed, 1 failed\nfailed cases: stop'
+  expected_out=$'  FAIL  stop\n        reason\n0 passed, 1 failed, 0 skipped\nfailed cases: stop'
   expected_err=''
   run_harness_probe "$name" 1 "$expected_out" "$expected_err" \
     "source '$SCRIPT_DIR/../lib/test-harness.sh'; th_init --format=indent-2sp --fail-fast; fail 'stop' 'reason'"
@@ -445,7 +609,7 @@ case_harness_fail_fast_and_format_orthogonal() {
 case_assert_exit_pass() {
   local name="assert-exit-pass"
   local expected_out
-  expected_out=$'PASS: assert-exit-pass\n1 passed, 0 failed'
+  expected_out=$'PASS: assert-exit-pass\n1 passed, 0 failed, 0 skipped'
   run_harness_probe "$name" 0 "$expected_out" '' \
     "source '$SCRIPT_DIR/../lib/test-harness.sh'; th_init; assert_exit 'assert-exit-pass' 0 0 && pass 'assert-exit-pass'; th_summary"
 }
@@ -453,7 +617,7 @@ case_assert_exit_pass() {
 case_assert_exit_fail() {
   local name="assert-exit-fail"
   local expected_out
-  expected_out=$'FAIL: assert-exit-fail: assert_exit: actual and expected mismatch (name=assert-exit-fail actual=0 expected=1)\n0 passed, 1 failed\nfailed cases: assert-exit-fail'
+  expected_out=$'FAIL: assert-exit-fail: assert_exit: actual and expected mismatch (name=assert-exit-fail actual=0 expected=1)\n0 passed, 1 failed, 0 skipped\nfailed cases: assert-exit-fail'
   run_harness_probe "$name" 1 "$expected_out" '' \
     "source '$SCRIPT_DIR/../lib/test-harness.sh'; th_init; assert_exit 'assert-exit-fail' 0 1; th_summary"
 }
@@ -462,7 +626,7 @@ case_assert_file_contains_pass() {
   local name="assert-file-contains-pass"
   local tmp_file="$TMP_ROOT/$name.txt"
   local expected_out
-  expected_out=$'PASS: assert-file-contains-pass\n1 passed, 0 failed'
+  expected_out=$'PASS: assert-file-contains-pass\n1 passed, 0 failed, 0 skipped'
   run_harness_probe "$name" 0 "$expected_out" '' \
     "tmp_file='${tmp_file}'; source '$SCRIPT_DIR/../lib/test-harness.sh'; th_init; printf 'hello world' > \"$tmp_file\"; assert_file_contains 'assert-file-contains-pass' \"$tmp_file\" 'hello' && pass 'assert-file-contains-pass'; th_summary"
 }
@@ -473,7 +637,7 @@ case_assert_file_contains_fail() {
   local expected_out
   expected_out=$'FAIL: assert-file-contains-fail: assert_file_contains: file did not contain literal substring (name=assert-file-contains-fail file='
   expected_out+="$tmp_file"
-  expected_out=$expected_out$' needle=missing)\n0 passed, 1 failed\nfailed cases: assert-file-contains-fail'
+  expected_out=$expected_out$' needle=missing)\n0 passed, 1 failed, 0 skipped\nfailed cases: assert-file-contains-fail'
   run_harness_probe "$name" 1 "$expected_out" '' \
     "tmp_file='${tmp_file}'; source '$SCRIPT_DIR/../lib/test-harness.sh'; th_init; printf 'hello world' > \"$tmp_file\"; assert_file_contains 'assert-file-contains-fail' \"$tmp_file\" 'missing'; th_summary"
 }
@@ -482,7 +646,7 @@ case_assert_file_matches_pass() {
   local name="assert-file-matches-pass"
   local tmp_file="$TMP_ROOT/$name.txt"
   local expected_out
-  expected_out=$'PASS: assert-file-matches-pass\n1 passed, 0 failed'
+  expected_out=$'PASS: assert-file-matches-pass\n1 passed, 0 failed, 0 skipped'
   run_harness_probe "$name" 0 "$expected_out" '' \
     "tmp_file='${tmp_file}'; source '$SCRIPT_DIR/../lib/test-harness.sh'; th_init; printf 'abc123' > \"$tmp_file\"; assert_file_matches 'assert-file-matches-pass' \"$tmp_file\" '^[a-z]+[0-9]+$' && pass 'assert-file-matches-pass'; th_summary"
 }
@@ -493,7 +657,7 @@ case_assert_file_matches_fail() {
   local expected_out
   expected_out=$'FAIL: assert-file-matches-fail: assert_file_matches: file did not match regex (name=assert-file-matches-fail file='
   expected_out+="$tmp_file"
-  expected_out=$expected_out$' regex=^[0-9]+\x24)\n0 passed, 1 failed\nfailed cases: assert-file-matches-fail'
+  expected_out=$expected_out$' regex=^[0-9]+\x24)\n0 passed, 1 failed, 0 skipped\nfailed cases: assert-file-matches-fail'
   run_harness_probe "$name" 1 "$expected_out" '' \
     "tmp_file='${tmp_file}'; source '$SCRIPT_DIR/../lib/test-harness.sh'; th_init; printf 'abc123' > \"$tmp_file\"; assert_file_matches 'assert-file-matches-fail' \"$tmp_file\" '^[0-9]+$'; th_summary"
 }
@@ -501,7 +665,7 @@ case_assert_file_matches_fail() {
 case_assert_string_contains_pass() {
   local name="assert-string-contains-pass"
   local expected_out
-  expected_out=$'PASS: assert-string-contains-pass\n1 passed, 0 failed'
+  expected_out=$'PASS: assert-string-contains-pass\n1 passed, 0 failed, 0 skipped'
   run_harness_probe "$name" 0 "$expected_out" '' \
     "source '$SCRIPT_DIR/../lib/test-harness.sh'; th_init; assert_string_contains 'assert-string-contains-pass' 'the quick brown fox' 'quick' && pass 'assert-string-contains-pass'; th_summary"
 }
@@ -509,7 +673,7 @@ case_assert_string_contains_pass() {
 case_assert_string_contains_fail() {
   local name="assert-string-contains-fail"
   local expected_out
-  expected_out=$'FAIL: assert-string-contains-fail: assert_string_contains: string did not contain needle (name=assert-string-contains-fail haystack=the quick brown fox needle=slow)\n0 passed, 1 failed\nfailed cases: assert-string-contains-fail'
+  expected_out=$'FAIL: assert-string-contains-fail: assert_string_contains: string did not contain needle (name=assert-string-contains-fail haystack=the quick brown fox needle=slow)\n0 passed, 1 failed, 0 skipped\nfailed cases: assert-string-contains-fail'
   run_harness_probe "$name" 1 "$expected_out" '' \
     "source '$SCRIPT_DIR/../lib/test-harness.sh'; th_init; assert_string_contains 'assert-string-contains-fail' 'the quick brown fox' 'slow'; th_summary"
 }
@@ -600,6 +764,14 @@ case_harness_pass_fail_counters
 case_harness_summary_exit_code_zero
 case_harness_summary_exit_code_one
 case_harness_summary_no_match_filter
+case_harness_skip_counter
+case_harness_skip_without_reason_fails
+case_harness_summary_counts_skips_exit_zero
+case_harness_skip_does_not_mask_failure
+case_harness_filter_only_skip_is_not_no_match
+case_harness_case_skips_file_gets_count
+case_harness_case_skips_write_failure_fails_suite
+case_harness_migrated_sample_sites_use_skip
 case_harness_preset_colon_flat
 case_harness_preset_colon_mixed
 case_harness_preset_indent_1sp

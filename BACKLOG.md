@@ -111,6 +111,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-572 | ✅ done | pr-gate synthesis retry（sequential／parallel 兩條路徑）留下已存在但 0 bytes 的 `$OUTPUT_FILE`，executor 的 patch 工具仍可能選擇 Update File 而非 Add File 語意，對空內容找不到 context line 而崩潰（`apply_patch verification failed`）；CC-571 gate saga 連續四輪協定失敗實測發現（2026-08-26） | gate/ops | 2026-08-26 | pr:#541 | P2 | hygiene |
 | CC-573 | ✅ done | `pmctl run-stats` 每個事件行 fork 一個 jq（`pmctl_run_stats_extract_line`），與 [[CC-364]] 修掉前的 `trace tail` 同形狀。實測 jq 呼叫 N+2、~34ms/event，真實 6642 行 `events.jsonl` 時 `run-stats --json` 前景 2 分鐘 timeout。改為單次 `jq -R` 串流 over 串接的 archive+active：jq 呼叫 102/302/902 → 2/2/2、牆鐘 3-30s → 0.19s 打平、輸出對 origin/main 逐位元組相同。archive+active 串接 idiom 與 `pmctl-trace.sh` 重複 ~12 行，兩 consumer 下不抽、file header 記錄理由 | ops | 2026-08-27 | pr:#547 | P2 | hygiene |
 | CC-574 | ✅ done | `tests/shell/test-run-all-tests.sh` 手抄一份 `SUITE_NAMES`（~106 筆）與 `suite_path()` case（~106 筆），與權威的 `tests/lib/test-suite-runner.sh` `SUITE_NAMES`／`SUITE_PATHS` 平行維護——新套件要同時改兩處，漏改則 `known-suite-count` 紅（[[suite-registry-mirror]]；本 session CC-538／CC-536 各踩一次）。改為 meta-test 開場 awk-parse 權威 registry 推導出自己的 list，移除鏡像；lint.yml 的 per-suite job 由 `lint-test-suite-registry.sh` 交叉檢查、非靜默漂移鏡像，不在本票範圍 | ops/test | 2026-08-28 | pr:#550 | P3 | hygiene |
+| CC-575 | 🟢 someday | test-governance Batch 1 存量遷移：把其餘 ~35 處 `pass "$name (... unavailable ...)"`（多在 `test-doctor.sh` 的 jq guard、也有 `test-core-schemas`／`test-install`／`test-pmctl-memory`／`test-runtime-lib-coverage` 的 `UNAVAILABLE:` 裸行）改用 case-level `skip()`。primitive 與 authoritative gate 已於 pr:#<TBD> 落地並遷移 6 個代表站點；本票只做剩餘機械遷移，不再動 harness/runner/schema | ops/test | 2026-08-28 | — | P3 | hygiene |
 
 ---
 
@@ -3704,5 +3705,39 @@ awk parse `test-suite-runner.sh` 的兩個 block 做交叉驗證，證明該格�
 不做 [[CC-537]] 的資料化 suite manifest。
 
 **Cross-link**: [[suite-registry-mirror]]、[[CC-537]]（更大的資料化提案，park）。
+
+---
+
+## CC-575 — test-governance Batch 1 存量遷移：其餘 pass-as-skip 站點 🟢 someday
+
+**Problem**: `tests/lib/test-harness.sh` 的 case-level `skip()` primitive 與
+authoritative-evidence gate（`test-result.sh`：任何 case skip → `authoritative:
+false` + `contract: full-with-skips`）已落地，並遷移了 6 個代表站點（perl／
+sqlite3／symlink／hardlink／jq 各一）。但實際掃描發現 pass-as-skip 站點 **40+**
+（memory `test-governance-batches-plan` 寫的「8-9 處」嚴重過期）：`test-doctor.sh`
+一個檔就有 ~30 處 `pass "$name (jq not available - skip)"`，另有
+`test-core-schemas`／`test-install`／`test-pmctl-memory`／`test-runtime-lib-coverage`
+的變體與 `UNAVAILABLE:` 裸行。一次全遷是 15 個套件的大 diff，是本案要治的
+「測試系統變成第二套產品」風險。
+
+**Why**: primitive 已存在且有契約測試護住，剩下的是**純機械遷移**——
+`pass "$name (X unavailable)"` → `skip "$name" "<why X is needed>"`。低風險、
+可分批、不需再動 harness／runner／schema。做完後 `pmctl gate stats` 之類的
+authoritative 判定才真的看得到 skip 分母。
+
+**Requirement**:
+1. 把其餘 `pass "$name (... unavailable / not available / absent ...)"` 站點改用
+   `skip "$name" "<reason>"`，reason 說明缺的是什麼、為何該 case 需要它。
+2. `test-runtime-lib-coverage.sh` 的裸 `printf 'UNAVAILABLE: ...'` 行（既不 pass
+   也不 fail、對計數隱形）改成 `skip`。
+3. 不新增 harness／runner／schema 行為；不加 lint 禁止未來的 pass-as-skip（另議）。
+4. 每批遷移後跑受影響套件確認：依賴存在時走真斷言（零 skip、零迴歸），
+   依賴缺失時 `N passed, M failed, K skipped` 的 K 正確、套件仍 exit 0。
+
+**Non-goals**: 不做 suite manifest／`optional`/`required` case 分類（[[CC-537]]，
+park）；不加新 lint；不改 authoritative gate 條件（已是「任何 case skip → 非
+authoritative」）。
+
+**Cross-link**: `test-governance-batches-plan`（Batch 1 收尾）、[[CC-537]]。
 
 ---

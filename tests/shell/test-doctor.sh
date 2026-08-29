@@ -427,7 +427,7 @@ case_doctor_grok_missing_binary_warns() {
   for cmd in bash dirname pwd readlink uname jq sed grep awk tr; do
     link_cmd "$bin" "$cmd"
   done
-  [[ -x "$bin/jq" ]] || { pass "$name (jq not available - skip)"; return; }
+  [[ -x "$bin/jq" ]] || { skip "$name" "jq unavailable in the isolated PATH fixture (template for the remaining test-doctor.sh jq guards)"; return; }
   printf '#!/usr/bin/env bash\nexit 0\n' > "$bin/claude"
   printf '#!/usr/bin/env bash\nexit 0\n' > "$bin/codex"
   chmod +x "$bin/claude" "$bin/codex"

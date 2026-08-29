@@ -113,7 +113,8 @@ pm_test_write_result() {
      passed:([$results[]|select(.status=="pass")]|length),
      failed:([$results[]|select(.status=="fail")]|length),
      timed_out:([$results[]|select(.status=="timeout")]|length),
-     skipped:([$results[]|select(.status=="skip")]|length)}')" || return 2
+     skipped:([$results[]|select(.status=="skip")]|length),
+     case_skipped:([$results[]|(.case_skips // 0)]|add // 0)}')" || return 2
   command_identity="${PM_DISPATCH_TEST_COMMAND_IDENTITY:-}"
   if [[ -n "$command_identity" && ! "$command_identity" =~ ^sha256:[a-f0-9]{64}$ ]]; then
     printf 'pm-test-result: invalid PM_DISPATCH_TEST_COMMAND_IDENTITY\n' >&2
@@ -188,9 +189,6 @@ pm_test_run_and_record() {
   else
     status=fail
   fi
-  if [[ "$contract" == full && "$status" == pass && "$skips_json" == '[]' ]]; then
-    authoritative=true
-  fi
   # The structured sink is part of the authoritative evidence contract. jq
   # exits successfully with no output for an empty input file, so test size
   # explicitly and fail closed instead of fabricating per-suite PASS records.
@@ -201,7 +199,8 @@ pm_test_run_and_record() {
        if type == "array" and length > 0 and [.[].name] == $expected and
           all(.[]; (.status == "pass" or .status == "fail" or .status == "timeout" or .status == "skip") and
                    (.exit_code | type == "number") and
-                   (.duration_seconds | type == "number" and . >= 0))
+                   (.duration_seconds | type == "number" and . >= 0) and
+                   ((.case_skips // 0) | type == "number" and . >= 0 and (floor == .)))
        then . else error("invalid or incomplete structured suite results") end
      ' "$suite_results_file" 2>/dev/null)"; then
     printf 'pm-test-result: suite runner did not emit a valid non-empty structured result sink\n' >&2
@@ -209,7 +208,33 @@ pm_test_run_and_record() {
     return 2
   fi
   rm -f "$suite_results_file"
-  pm_test_write_result "$result_file" "$repo" "$contract" "$authoritative" "$status" \
+
+  # Case-level skips (a case that could not run its assertions) disqualify a
+  # run from being authoritative, the same direction as a requested suite skip.
+  # The per-suite structural check above already rejected any non-integer
+  # case_skips, so the sum is a non-negative integer; fail closed (never coerce
+  # to zero, which would let a bad sink emit an authoritative PASS) if it is
+  # somehow not.
+  local case_skips_total
+  case_skips_total="$(jq -r '[.[] | (.case_skips // 0)] | add // 0' <<<"$suite_results_json")"
+  if [[ ! "$case_skips_total" =~ ^[0-9]+$ ]]; then
+    printf 'pm-test-result: structured sink has a non-integer case_skips total (%s); refusing to emit evidence\n' \
+      "$case_skips_total" >&2
+    return 2
+  fi
+
+  if [[ "$contract" == full && "$status" == pass && "$skips_json" == '[]' \
+        && "$case_skips_total" -eq 0 ]]; then
+    authoritative=true
+  fi
+  local effective_contract="$contract"
+  if [[ "$contract" == full && "$case_skips_total" -gt 0 ]]; then
+    effective_contract="full-with-skips"
+    printf 'run-tests: %s case-level skip(s) recorded; this is a full-with-skips run, not an authoritative full pass\n' \
+      "$case_skips_total" >&2
+  fi
+
+  pm_test_write_result "$result_file" "$repo" "$effective_contract" "$authoritative" "$status" \
     "$rc" "$started" "$finished" "$before" "$after" "$contract_hash" "$selection_mode" \
     "$changed_json" "$suite_json" "$skips_json" "$suite_results_json" "$base_ref" || return 2
   [[ "$status" == stale ]] && printf 'run-tests: source tree changed while tests ran; result is stale\n' >&2
@@ -224,7 +249,9 @@ pm_test_verify_full_result() {
     .contract == "full" and .authoritative == true and
     .status == "pass" and .exit_code == 0 and
     (.requested_skips == []) and
-    (.suite_set | type == "array" and length > 0)
+    (.suite_set | type == "array" and length > 0) and
+    (all((.suite_results // [])[]; (.case_skips // 0) == 0)) and
+    ((.aggregate.case_skipped // 0) == 0)
   ' "$file" >/dev/null 2>&1 || {
     printf 'run-tests: artifact is not an authoritative full PASS: %s\n' "$file" >&2
     return 1
