@@ -510,6 +510,13 @@ jobs:
       - name: gate-options regression suite
         run: bash tests/shell/test-gate-options.sh
 
+  test-gate-policy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: gate-policy regression suite
+        run: bash tests/shell/test-gate-policy.sh
+
   test-pmctl-gate:
     runs-on: ubuntu-latest
     steps:

@@ -1047,66 +1047,6 @@ test_gate_assurance_policy_snapshot_is_copy_mode_fallback() {
   pass "$name"
 }
 
-# Behavior: every policy row is validated before dispatch, even when its signal
-# would not match the current diff.
-test_dormant_policy_signal_with_unknown_reviewer_fails_before_dispatch() {
-  local name="dormant-policy-signal-with-unknown-reviewer-fails-before-dispatch"
-  should_run "$name" || return 0
-  local dir="$TMP_ROOT/$name"
-  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
-  local out="$dir/out" err="$dir/err"
-  mkdir -p "$dir"
-  create_runner "$runner"
-  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
-  create_repo "$repo" docs
-  printf '%s\n' \
-    $'dormant-signal\tpath-regex\tnever-match-this-fixture\tstandard\tunknown-reviewer\tparallel' \
-    >> "$runner/core/policy/gate-policy-signals.tsv"
-
-  set +e
-  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
-  local code=$?
-  set -e
-  if [[ "$code" -ne 2 ]]; then
-    fail "$name" "exit $code, expected policy-source failure 2"
-    return
-  fi
-  assert_file_contains "$name" "$err" \
-    "signal dormant-signal names unknown reviewer unknown-reviewer" || return
-  assert_not_contains "$name" "$err" "DISPATCH_STUB" || return
-  pass "$name"
-}
-
-# Behavior: signal IDs form a closed unique inventory before any one signal is
-# matched or copied into an assurance artifact.
-test_duplicate_policy_signal_id_fails_before_dispatch() {
-  local name="duplicate-policy-signal-id-fails-before-dispatch"
-  should_run "$name" || return 0
-  local dir="$TMP_ROOT/$name"
-  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
-  local out="$dir/out" err="$dir/err"
-  mkdir -p "$dir"
-  create_runner "$runner"
-  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
-  create_repo "$repo" docs
-  printf '%s\n' \
-    $'docs-only\tpath-regex\tnever-match-this-fixture\texpress\tnone\tsequential' \
-    >> "$runner/core/policy/gate-policy-signals.tsv"
-
-  set +e
-  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
-  local code=$?
-  set -e
-  if [[ "$code" -ne 2 ]]; then
-    fail "$name" "exit $code, expected policy-source failure 2"
-    return
-  fi
-  assert_file_contains "$name" "$err" \
-    "invalid gate policy signals source" || return
-  assert_not_contains "$name" "$err" "DISPATCH_STUB" || return
-  pass "$name"
-}
-
 # Behavior: the maintainer initial-pass policy fixes reviewer coverage at all
 # five dimensions and supplies parallel as the auto-selected mode while leaving
 # an explicit user mode authoritative.
@@ -6257,8 +6197,6 @@ test_scope_manifest_truncation_requires_explicit_acceptance() {
 run_test test_gate_assurance_policy_snapshot_matches_sources
 run_test test_gate_policy_sources_control_default_coverage
 run_test test_gate_assurance_policy_snapshot_is_copy_mode_fallback
-run_test test_dormant_policy_signal_with_unknown_reviewer_fails_before_dispatch
-run_test test_duplicate_policy_signal_id_fails_before_dispatch
 run_test test_maintainer_initial_policy_sets_coverage_and_auto_mode
 run_test test_maintainer_targeted_policy_preserves_remediation_scope
 run_test test_input_execution_signal_auto_selects_parallel_but_respects_user_mode
@@ -7609,66 +7547,6 @@ test_targeted_sidecar_cannot_overwrite_initial_result() {
   pass "$name"
 }
 
-# Behavior: a reviewer list that names the same reviewer twice is malformed
-# coverage input and must fail before dispatch, not silently dedupe.
-# Steps: run --pass targeted --reviewers critic,critic and assert exit 2 with
-# the duplicate-reviewer message.
-test_duplicate_reviewer_in_list_rejected() {
-  local name="duplicate-reviewer-in-list-rejected"
-  should_run "$name" || return 0
-  local dir="$TMP_ROOT/$name"
-  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
-  local out="$dir/out" err="$dir/err" initial="$dir/initial.md"
-  mkdir -p "$dir"
-  create_runner "$runner"
-  create_repo "$repo" docs
-  write_valid_initial_gate_result "$initial"
-
-  set +e
-  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main \
-    --pass targeted --reviewers critic,critic --initial-result "$initial"
-  local code=$?
-  set -e
-  if [[ "$code" -ne 2 ]]; then
-    fail "$name" "exit $code, expected 2"
-    return
-  fi
-  assert_file_contains "$name" "$err" "--reviewers contains duplicate reviewer: critic" || return
-  assert_not_contains "$name" "$out" "DISPATCH_STUB" || return
-  pass "$name"
-}
-
-# Behavior: a malformed reviewer list (leading comma, no reviewer names) is
-# rejected before dispatch rather than resolving to an empty or partial
-# coverage set. (A bare empty string is caught earlier by --reviewers' own
-# arg-presence check; this exercises gate-policy's list-shape validation.)
-# Steps: run --pass targeted --reviewers "," and assert exit 2 with the
-# non-empty-comma-separated-list message.
-test_empty_reviewer_list_rejected() {
-  local name="empty-reviewer-list-rejected"
-  should_run "$name" || return 0
-  local dir="$TMP_ROOT/$name"
-  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
-  local out="$dir/out" err="$dir/err" initial="$dir/initial.md"
-  mkdir -p "$dir"
-  create_runner "$runner"
-  create_repo "$repo" docs
-  write_valid_initial_gate_result "$initial"
-
-  set +e
-  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main \
-    --pass targeted --reviewers "," --initial-result "$initial"
-  local code=$?
-  set -e
-  if [[ "$code" -ne 2 ]]; then
-    fail "$name" "exit $code, expected 2"
-    return
-  fi
-  assert_file_contains "$name" "$err" "--reviewers requires a non-empty comma-separated reviewer list" || return
-  assert_not_contains "$name" "$out" "DISPATCH_STUB" || return
-  pass "$name"
-}
-
 # Behavior: a pre-existing symlink, non-regular file, or hardlink at the
 # deterministic assurance destination is rejected before reviewer dispatch.
 # Steps: prepare each unsafe destination type, run with an explicit output, and
@@ -7789,6 +7667,53 @@ test_cli_reaches_extracted_cross_option_checks_before_dispatch() {
   fi
   assert_file_contains "$name" "$err" "--reviewers and --targeted request different reviewer coverage" || return
   assert_not_contains "$name" "$out" "DISPATCH_STUB" || return
+  pass "$name"
+}
+
+# Behavior: pr-gate reaches gate-policy.sh's reviewer-list and policy-source
+# validators *before* reviewer dispatch. Per-message coverage for each validator
+# lives in tests/shell/test-gate-policy.sh; this one compact case guards the
+# composition -- a future call-site or ordering regression in pr-gate.sh would
+# keep those unit tests green while an invalid reviewer set or policy table
+# reached dispatch (a security boundary: attacker-influenced reviewer/policy
+# selection must fail closed here).
+# Steps: run the real gate with (a) a bare-comma --reviewers list and (b) a
+# gate-policy-signals.tsv naming a reviewer outside the vocabulary; assert exit
+# 2 and that the dispatch stub was never invoked.
+test_pr_gate_enforces_policy_and_reviewer_validation_before_dispatch() {
+  local name="pr-gate-enforces-policy-and-reviewer-validation-before-dispatch"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" initial="$dir/initial.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  write_valid_initial_gate_result "$initial"
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main \
+    --pass targeted --reviewers "," --initial-result "$initial"
+  local code=$?
+  set -e
+  if [[ "$code" -ne 2 ]]; then
+    fail "$name" "reviewer-list: exit $code, expected 2"; return
+  fi
+  assert_file_contains "$name" "$err" "--reviewers requires a non-empty comma-separated reviewer list" || return
+  assert_not_contains "$name" "$out" "DISPATCH_STUB" || return
+
+  printf 'dormant-signal\tpath-regex\tnever-match-this-fixture\tstandard\tunknown-reviewer\tparallel\n' \
+    >> "$runner/core/policy/gate-policy-signals.tsv"
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  code=$?
+  set -e
+  if [[ "$code" -ne 2 ]]; then
+    fail "$name" "policy-source: exit $code, expected 2"; return
+  fi
+  assert_file_contains "$name" "$err" "signal dormant-signal names unknown reviewer unknown-reviewer" || return
+  assert_not_contains "$name" "$err" "DISPATCH_STUB" || return
   pass "$name"
 }
 
@@ -8554,11 +8479,10 @@ run_test test_targeted_coordinates_meaning_parity_across_modes
 run_test test_repo_layout_targeted_coordinates_match_copy_mode_contract
 run_test test_targeted_output_cannot_overwrite_initial_result
 run_test test_targeted_sidecar_cannot_overwrite_initial_result
-run_test test_duplicate_reviewer_in_list_rejected
-run_test test_empty_reviewer_list_rejected
 run_test test_assurance_unsafe_destinations_rejected
 run_test test_conflicting_mode_options_are_rejected
 run_test test_cli_reaches_extracted_cross_option_checks_before_dispatch
+run_test test_pr_gate_enforces_policy_and_reviewer_validation_before_dispatch
 run_test test_equivalent_mode_spellings_are_accepted
 run_test test_invalid_assurance_inputs_are_rejected
 run_test test_seq_brief_ascii_separator
