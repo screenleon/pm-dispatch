@@ -113,6 +113,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-574 | ✅ done | `tests/shell/test-run-all-tests.sh` 手抄一份 `SUITE_NAMES`（~106 筆）與 `suite_path()` case（~106 筆），與權威的 `tests/lib/test-suite-runner.sh` `SUITE_NAMES`／`SUITE_PATHS` 平行維護——新套件要同時改兩處，漏改則 `known-suite-count` 紅（[[suite-registry-mirror]]；本 session CC-538／CC-536 各踩一次）。改為 meta-test 開場 awk-parse 權威 registry 推導出自己的 list，移除鏡像；lint.yml 的 per-suite job 由 `lint-test-suite-registry.sh` 交叉檢查、非靜默漂移鏡像，不在本票範圍 | ops/test | 2026-08-28 | pr:#550 | P3 | hygiene |
 | CC-575 | 🟢 someday | test-governance Batch 1 存量遷移：把其餘 ~35 處 `pass "$name (... unavailable ...)"`（多在 `test-doctor.sh` 的 jq guard、也有 `test-core-schemas`／`test-install`／`test-pmctl-memory`／`test-runtime-lib-coverage` 的 `UNAVAILABLE:` 裸行）改用 case-level `skip()`。primitive 與 authoritative gate 已於 pr:#<TBD> 落地並遷移 6 個代表站點；本票只做剩餘機械遷移，不再動 harness/runner/schema | ops/test | 2026-08-28 | — | P3 | hygiene |
 | CC-576 | 🔵 active | 測試成本重新規劃（實測基線）：全套 10,764 CPU-s／110 suite，`test-pr-gate` 4 shard 佔 49.1%、top-10 佔 72%、其餘 85 個 suite 只佔 6.1%。成本不是「測試太多」也不是「斷言劣質」（290 case 只有 9 個純文字斷言），而是 243 個 case 每個都 spawn 一次真的 `pr-gate.sh`（uncontended 實測 mean 8.2s／p90 18s）。唯一會複利的槓桿是把行為從 integration 層（8.2s/case）搬到 unit 層（`test-gate-protocol` 實測 0.12s/case，68×），也就是續拆 `pr-gate.sh` 時**同時搬測試**；已辨識 57 個可搬 case（pre-dispatch policy 29 + brief-composition 28）。本票只定基線、判準與順序，不含實作 | ops/test | 2026-08-29 | — | P2 | design |
+| CC-577 | 🔵 active | 4 個「lint 規則穿測試外衣」的 case 退場：`test-pmctl-memory.sh` 的 `case_memory_shared_readers_avoid_bash_43_namerefs`（grep 3 個硬編檔禁 `local -n`）、`test-dispatch-common.sh` 的 `case_dispatch_common_no_adapter_name_in_code`（grep 禁 adapter 字面值）、`test-host-manifest.sh:596`（grep `doctor.sh` 格式字串）、`test-e2e-script.sh` 的 `test_phase_c_commits_context_ignore`（斷言腳本內文含某行而非跑它）。全語料掃描確認只有這 4 個是真 proxy（另 12 處讀 production 檔的斷言都合法）。搬進 `test-layer-boundaries.sh`（既有「掃 ROOT + fixture 種違規」模式、全套 1 秒）：規則從「查 3 個硬編檔」變「掃整棵樹」覆蓋變強；e2e 那個改真跑再驗檔。買到的是先例與覆蓋強度，不是時間（4 case 省不到 5s）。是 [[CC-576]] Req 2「測試層級判準」的示範案例 | ops/test | 2026-08-29 | — | P3 | hygiene |
 
 ---
 
@@ -3860,5 +3861,59 @@ ship.md／QA 規則且下一個 pr-gate 相關 PR 實際被它導引到 lib 層�
 0.8%）、memory `test-suite-duration-ceiling`（2026-08-20 的機械優化上限結論，本票
 以實測確認仍然成立）、`gate-protocol-lib-slice1-shipped`／`gate-protocol-lib-slice2-shipped`
 （68× 槓桿的既有示範）。
+
+---
+
+## CC-577 — lint-規則穿測試外衣的 case 退場（搬到 layer-boundaries） 🔵 active
+
+**Problem**: 全測試語料掃描後，唯一符合「proxy test 應退場」判準的是 4 個
+case——它們是 **lint 規則穿著測試的外衣**：只在有人跑那個 suite 時才檢查、只涵蓋
+硬編在 case 裡的那幾個檔、且沒有任何 lint 保證新增的檔案也遵守同一規則。
+
+| # | 位置 | 現在做什麼 | 問題 |
+|---|---|---|---|
+| 1 | `test-pmctl-memory.sh` `case_memory_shared_readers_avoid_bash_43_namerefs` | grep 3 個硬編檔禁 `local -n`（bash 4.3 nameref） | 規則對，但只查 3 個檔、埋在 85s 的 suite 裡 |
+| 2 | `test-dispatch-common.sh` `case_dispatch_common_no_adapter_name_in_code` | grep `dispatch-common.sh` 禁出現 `codex\|claude\|opencode\|grok` 字面值 | 規則對（shared lib 要 adapter-agnostic），但只查 1 個檔 |
+| 3 | `test-host-manifest.sh:596` | grep `doctor.sh` 找一段 `<provider> <enforcement> ...` 格式字串 | 鎖住 production 內文，非行為 |
+| 4 | `test-e2e-script.sh` `test_phase_c_commits_context_ignore` | 斷言 e2e 腳本的 **body** 含某行 `printf '.pm-dispatch/\n' > ...`，而不是跑它再看檔案 | 典型 source-shape proxy（`ANTI-PATTERNS.md` #18） |
+
+掃描同時確認：其餘 12 處「讀 production 檔的斷言」都**合法**（驗證安裝／產生出來的
+檔案指向正確路徑，不是 proxy），不在本票範圍。
+
+**Why**: 這 4 個 case 是 [[CC-576]] Req 2「新測試的層級判準」的現成示範案例——
+「這個行為是不是某個東西的結構規則？是則測在結構層。」退場的正確形式是**搬到對的
+層**，不是刪掉（規則本身 1 和 2 是真的要守）。
+
+**Requirement**:
+1. 把 #1、#2、#3 改寫成 `tests/shell/test-layer-boundaries.sh` 的規則函式，沿用該
+   檔既有模式：每條規則是一個掃 ROOT 印出違規行的函式，先斷言真實 repo 乾淨，再在
+   fixture 種一個違規證明規則會響。
+   - #1：掃整個 `runtime/lib` + `runtime/hooks`（凡是 prompt-hook 會 source 的路徑）
+     禁 `local -n` / `declare -n` / `typeset -n`，不再只查 3 個硬編檔。
+   - #2：掃 `runtime/lib/dispatch-common.sh`（未來若有其他宣稱 adapter-agnostic 的
+     shared lib 可加入清單）禁 adapter 字面值。
+   - #3：改成斷言 `doctor.sh` 的**行為**（跑它、看它印出的 tuple 標頭），或若確實只
+     需要格式一致性就併入既有的 doctor 輸出契約測試；不保留 source-grep 形式。
+2. #4 改成真的執行該 e2e 階段（或其最小切片）再斷言 `.gitignore` 檔案內容，移除
+   對腳本 body 的字串斷言。
+3. 從原 suite 移除這 4 個 case；跑 `test-layer-boundaries`、`test-pmctl-memory`、
+   `test-dispatch-common`、`test-host-manifest`、`test-e2e-script` 確認：新規則會抓到
+   種進 fixture 的違規、真實 repo 乾淨、被移除 case 的原 suite 仍全綠。
+
+**Non-goals**:
+- 不動 `test-pr-gate.sh` 的 9 個長診斷斷言——已逐一看過，多數是 gate 的**對外**
+  錯誤訊息（使用者會看到），不符合「鎖內部措辭」判準。
+- 不合併 4 個 adapter dispatch suite（codex/claude/grok/opencode）——雖有 ~16 個
+  同形 case，但這 4 個 suite 合計在全套 6.1% 桶裡，合併省不到時間、且會犧牲每個
+  adapter 獨立可讀的 fixture（[[CC-536]] 教訓）。
+- 不新增「禁止未來 proxy test」的 lint（另議；先看這次搬遷是否穩定）。
+
+**驗收方式**: 4 個 case 從原 suite 消失、對應規則在 `test-layer-boundaries.sh` 且
+其 fixture 違規測試會響；全套 case 數淨 −4，`test-layer-boundaries` 仍 <2s。
+
+**Cross-link**: [[CC-576]]（Req 2 的示範案例）、[[CC-554]]（准入門檻——管「該不該
+有」；本票管「該在哪一層」）、memory `test-governance-batches-plan`（Batch 2 曾點名
+#4 e2e proxy 與另一個 nameref proxy，本票是那個方向的最小落地）、`ANTI-PATTERNS.md`
+#18（source-shape proxy test）。
 
 ---
