@@ -231,6 +231,27 @@ generic as `baseline` or maintainer as `preferred`; both are accepted here.
   paid for a transient benefit — the suite grows one case per review round
   while the risk it covers does not.
 
+  **Once a case is admitted, choose its layer before writing it.** The
+  admission criteria decide *whether* the case should exist; this decides
+  *where*.
+
+  - Test at the **lowest layer that can directly observe the contract** — if a
+    library already exposes the behavior as a function, source it, call it, and
+    assert on its return value / stdout / the file it wrote.
+  - Only reach for a **whole-command end-to-end test** when the behavior
+    genuinely cannot be observed lower (it emerges from orchestration order,
+    process supervision, or cross-process handling) — and say in the PR *why*
+    the lower layer could not see it. A spawning end-to-end case can cost
+    orders of magnitude more than a library-level one; the fixture already
+    existing is not a reason to pick it.
+  - A **structural rule about the tree** ("no production code may use X", "this
+    shared module must not name a concrete peer") is neither — it belongs in a
+    boundary/enforcer test that scans the tree, not a per-case grep of the few
+    files one case happens to name.
+  - If the behavior *should* be a library function but is currently inline in
+    the command, that is a finding about the **code**, not a reason to pay the
+    expensive test shape forever — extract it, or open a ticket saying so.
+
   Before re-running the gate, classify the remediation:
 
   - **Re-run the refactor/reuse audit** when the fix changes a shared helper or
@@ -315,7 +336,7 @@ gh pr create --title "<type>(<ticket-id>): <short summary>" --body "$(cat <<'EOF
 - Rounds: <N>
 - Final verdict: GO
 - Result file: <path from the last /pr-gate relay>
-- Permanent test admissions: <one line per finding whose remedy was assessed against Step 2.5 — admitted lines name the criteria met, alternative lines name the alternative taken and why; `none` ONLY when no finding this round needed the assessment at all>
+- Permanent test admissions: <one line per finding whose remedy was assessed against Step 2.5 — admitted lines name the criteria met AND the layer chosen (library / end-to-end / boundary enforcer, with the reason when it is not the library layer), alternative lines name the alternative taken and why; `none` ONLY when no finding this round needed the assessment at all>
 - Full suite: <passed count and authoritative result artifact>
 
 Ticket: <ticket-id>

@@ -112,7 +112,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-573 | ✅ done | `pmctl run-stats` 每個事件行 fork 一個 jq（`pmctl_run_stats_extract_line`），與 [[CC-364]] 修掉前的 `trace tail` 同形狀。實測 jq 呼叫 N+2、~34ms/event，真實 6642 行 `events.jsonl` 時 `run-stats --json` 前景 2 分鐘 timeout。改為單次 `jq -R` 串流 over 串接的 archive+active：jq 呼叫 102/302/902 → 2/2/2、牆鐘 3-30s → 0.19s 打平、輸出對 origin/main 逐位元組相同。archive+active 串接 idiom 與 `pmctl-trace.sh` 重複 ~12 行，兩 consumer 下不抽、file header 記錄理由 | ops | 2026-08-27 | pr:#547 | P2 | hygiene |
 | CC-574 | ✅ done | `tests/shell/test-run-all-tests.sh` 手抄一份 `SUITE_NAMES`（~106 筆）與 `suite_path()` case（~106 筆），與權威的 `tests/lib/test-suite-runner.sh` `SUITE_NAMES`／`SUITE_PATHS` 平行維護——新套件要同時改兩處，漏改則 `known-suite-count` 紅（[[suite-registry-mirror]]；本 session CC-538／CC-536 各踩一次）。改為 meta-test 開場 awk-parse 權威 registry 推導出自己的 list，移除鏡像；lint.yml 的 per-suite job 由 `lint-test-suite-registry.sh` 交叉檢查、非靜默漂移鏡像，不在本票範圍 | ops/test | 2026-08-28 | pr:#550 | P3 | hygiene |
 | CC-575 | 🟢 someday | test-governance Batch 1 存量遷移：把其餘 ~35 處 `pass "$name (... unavailable ...)"`（多在 `test-doctor.sh` 的 jq guard、也有 `test-core-schemas`／`test-install`／`test-pmctl-memory`／`test-runtime-lib-coverage` 的 `UNAVAILABLE:` 裸行）改用 case-level `skip()`。primitive 與 authoritative gate 已於 pr:#<TBD> 落地並遷移 6 個代表站點；本票只做剩餘機械遷移，不再動 harness/runner/schema | ops/test | 2026-08-28 | — | P3 | hygiene |
-| CC-576 | 🔵 active | 測試成本重新規劃（實測基線）：全套 10,764 CPU-s／110 suite，`test-pr-gate` 4 shard 佔 49.1%、top-10 佔 72%、其餘 85 個 suite 只佔 6.1%。成本不是「測試太多」也不是「斷言劣質」（290 case 只有 9 個純文字斷言），而是 243 個 case 每個都 spawn 一次真的 `pr-gate.sh`（uncontended 實測 mean 8.2s／p90 18s）。唯一會複利的槓桿是把行為從 integration 層（8.2s/case）搬到 unit 層（`test-gate-protocol` 實測 0.12s/case，68×），也就是續拆 `pr-gate.sh` 時**同時搬測試**；已辨識 57 個可搬 case（pre-dispatch policy 29 + brief-composition 28）。本票只定基線、判準與順序，不含實作 | ops/test | 2026-08-29 | — | P2 | design |
+| CC-576 | ✅ done | 測試成本重新規劃（實測基線）：全套 10,764 CPU-s／110 suite，`test-pr-gate` 4 shard 佔 49.1%、top-10 佔 72%、其餘 85 個 suite 只佔 6.1%。成本不是「測試太多」也不是「斷言劣質」（290 case 只有 9 個純文字斷言），而是 243 個 case 每個都 spawn 一次真的 `pr-gate.sh`（uncontended 實測 mean 8.2s／p90 18s）。唯一會複利的槓桿是把行為從 integration 層（8.2s/case）搬到 unit 層（`test-gate-protocol` 實測 0.12s/case，68×），也就是續拆 `pr-gate.sh` 時**同時搬測試**；已辨識 57 個可搬 case（pre-dispatch policy 29 + brief-composition 28）。本票只定基線、判準與順序，不含實作 | ops/test | 2026-08-29 | pr:#560 | P2 | design |
 | CC-577 | ✅ done | lint 規則穿測試外衣的 case 退場（評估 4 個、搬 2 個、留 2 個）：`test-pmctl-memory.sh` 的 `case_memory_shared_readers_avoid_bash_43_namerefs`（grep 3 個硬編檔禁 `local -n`）、`test-dispatch-common.sh` 的 `case_dispatch_common_no_adapter_name_in_code`（grep 禁 adapter 字面值）、`test-host-manifest.sh:596`（grep `doctor.sh` 格式字串）、`test-e2e-script.sh` 的 `test_phase_c_commits_context_ignore`（斷言腳本內文含某行而非跑它）。全語料掃描確認只有這 4 個是真 proxy（另 12 處讀 production 檔的斷言都合法）。搬進 `test-layer-boundaries.sh`（既有「掃 ROOT + fixture 種違規」模式、全套 1 秒）：規則從「查 3 個硬編檔」變「掃整棵樹」覆蓋變強；e2e 那個改真跑再驗檔。買到的是先例與覆蓋強度，不是時間（4 case 省不到 5s）。是 [[CC-576]] Req 2「測試層級判準」的示範案例 | ops/test | 2026-08-29 | pr:#559 | P3 | hygiene |
 
 ---
@@ -3765,7 +3765,7 @@ authoritative」）。
 
 ---
 
-## CC-576 — 測試成本重新規劃：實測基線、判準與順序 🔵 active
+## CC-576 — 測試成本重新規劃：實測基線、判準與順序 ✅ 2026-08-29
 
 **Problem**: 維護者每次收工都跑 `tests/bin/run-tests.sh --all`（這是刻意的紅線：
 受影響測試已由 pr-gate 跑過，全套的作用是「確保整體沒問題」，不接受改用
@@ -3828,6 +3828,7 @@ D 類 186 個 case × 8.2s ≈ **25 CPU-min 是不可壓的**——那是真的�
 1. 把上述基線寫進可重跑的形式：一個唯讀腳本／文件，從既有 `--all` 的
    `test-result.json` 與 `test-pr-gate.sh` 的 `END pr-gate ... duration=` 行
    產出 A/B/D 三組數字，讓下次可比較而非重新人工量測。
+   **（2026-08-29 調整：降級成文件化程序，不寫成維護型腳本——見下方 Update。）**
 2. 訂**新測試的層級判準**（寫進 `commands/ship.md` 或 QA 規則）：新增 pr-gate
    相關驗證時，先問「這個行為是否為某個 `gate-*` lib 的純函式？」——是則測在 lib
    層（unit），否則才允許 spawn 整個 gate。這條是「阻斷 8.2s 層繼續長大」，與
@@ -3853,6 +3854,65 @@ D 類 186 個 case × 8.2s ≈ **25 CPU-min 是不可壓的**——那是真的�
 **驗收方式**: 基線腳本可重跑並產出與本票相同結構的數字；判準（Req 2）進入
 ship.md／QA 規則且下一個 pr-gate 相關 PR 實際被它導引到 lib 層；Req 3 的順序表
 存在且每一項標註其 B/C case 數。後續實作批次各自開票，引用本票的順序表。
+
+**Update 2026-08-29（規劃調整＋Req 2/3/4 交付，pr:#560）**
+
+規劃時查證出一個**改變前提的事實**：**16 個 `gate-*.sh` lib 早就抽好了**
+（共 6,712 行），但**只有 2 個有 unit suite**（`gate-protocol`、
+`gate-structural-verify`）。其餘 14 個——含 `gate-policy.sh`(818)、
+`gate-scope.sh`(1020)、`gate-assurance.sh`(420)、`gate-options.sh`(243)——的
+測試全部還留在 `test-pr-gate.sh`，每個 case spawn 一次整個 gate。實測
+`gate-policy.sh` / `gate-options.sh` **可獨立 source**，`_gate_policy_resolve`
+是 JSON 進 JSON 出的純函式。
+
+因此 Req 3 原本的框架（「續拆 `pr-gate.sh` 時**同時**搬測試」）對 B 類是錯的：
+**B 類不需要再抽任何東西**，lib 已就緒，缺的只是 unit suite。C 類才真的需要先
+抽（brief 是 `pr-gate.sh` 裡的 heredoc，沒有函式可測）。
+
+**Req 1 → 降級成文件化程序（不寫維護型腳本）**。理由：一個腳本＝新 tool ＋
+meta-test ＋ CI job ＋ registry 條目 ＋ 永久維護，而這組數字幾個月才看一次、
+只在測試結構大改時才有意義。「為了量測測試成本而蓋一套要維護的測試基建」正是
+本線在治的病。重跑程序（在 repo 根目錄）：
+
+```sh
+# A. 每個 suite 的 CPU 秒數與佔比（需先跑過一次 --all --result-file <json>）
+bash tests/bin/run-tests.sh --all --result-file /tmp/full.json   # ~30-45 分
+python3 -c "import json;d=json.load(open('/tmp/full.json'));r=sorted(((s['duration_seconds'],s['name']) for s in d['suite_results']),reverse=True);t=sum(x[0] for x in r);print(f'total {t}s / {len(r)} suites');[print(f'{v:6}s {v*100/t:5.1f}%  {n}') for v,n in r[:12]]"
+
+# B/D. test-pr-gate.sh 的每 case gate 執行成本（單獨跑一個 shard 避免競爭失真）
+bash tests/shell/test-pr-gate-shard-1.sh > /tmp/shard1.log 2>&1
+grep -oE 'duration=[0-9]+s' /tmp/shard1.log | tr -dc '0-9\n' | sort -n | \
+  awk '{a[NR]=$1;s+=$1} END{printf "n=%d sum=%ds mean=%.1fs p50=%s p90=%s max=%s\n",\
+       NR,s,s/NR,a[int(NR*.5)],a[int(NR*.9)],a[NR]}'
+
+# C. 可搬 case 分類（B=dispatch 前被拒 / C=只斷言 brief / D=需完整 pipeline）
+#    見本票「D. 唯一會複利的槓桿」表；分類規則＝case 內是否出現 run_gate、
+#    是否只斷言 "$brief"、名稱或斷言是否含 fails_before_dispatch 類記號。
+```
+
+**Req 2 ✅ 已交付**：`commands/ship.md` Step 3 在准入條件之後新增「Once a case
+is admitted, choose its layer before writing it」段落——lib 層 0.12s vs 端到端
+8.2s（~68×）、端到端要在 PR 說明為何 lib 層觀察不到、結構規則歸
+`test-layer-boundaries.sh`、「該是 lib 函式卻內聯在指令裡」是程式面 finding 而
+非付 8.2s 的理由。Step 4 樣板的 admissions 欄位同步要求記錄所選層級。
+示範案例：[[CC-577]]（pr:#559）。
+
+**Req 3 ✅ 已交付——改寫為「測試遷移順序表」**（非「拆分順序表」）：
+
+| # | 批次 | 目標 lib（現況） | case 數 | 需先抽取？ | 備註 |
+|---|---|---|---|---|---|
+| 1 | policy／validation 拒絕路徑 | `gate-policy.sh`(818)、`gate-options.sh`(243) — **已抽、可獨立 source** | **B 類 29** | ❌ 不需要 | `_gate_policy_resolve` 是 JSON→JSON 純函式；override/duplicate/dormant/invalid-consumer 等拒絕分支可直接 unit 測。**投報最高、風險最低，先做這批** |
+| 2 | scope manifest／adjacent-test 判定 | `gate-scope.sh`(1020) — 已抽 | B/C 混合，約 8–10 | ❌ 不需要 | `adjacent_*`（C 類 7 個）判定是路徑集合的純函式 |
+| 3 | brief composition | **無**——heredoc 內聯在 `pr-gate.sh` | **C 類 28** | ✅ 需要 | 要先抽出「組 brief 字串」的函式才有東西可 unit 測；抽取本身有風險，排在 1/2 之後 |
+| — | 端到端保留 | — | **D 類 186** | — | 真的需要 dispatch+verify pipeline，不搬 |
+
+每一批各自開票，**必須在同一個 PR 內把 case 從 `test-pr-gate.sh` 搬走**——只寫新
+unit suite 而不刪舊 case 等於兩邊都付錢，沒拿到槓桿。
+
+**Req 4 ✅ 已交付**（寫票時即完成，見上方 Requirement 4 的五條 ❌）。
+
+**See**: pr:#560（`commands/ship.md` Step 3 層級判準 + Step 4 樣板欄位；本票 body 的
+Req 1 文件化程序、Req 3 測試遷移順序表）、[[CC-577]] pr:#559（判準的示範案例）。
 
 **Cross-link**: [[CC-554]]（准入門檻，已結案——管「該不該有」；本票管「該測在哪
 一層」）、[[CC-537]]（suite manifest，維持 park）、[[CC-575]]（pass-as-skip 存量
