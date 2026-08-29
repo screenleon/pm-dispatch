@@ -401,25 +401,8 @@ if ! PASS_SCOPE="$(_gate_assurance_policy_lookup pass-kinds pass_kind "$PASS_KIN
     "$PASS_KIND_RESOLVED" >&2
   exit 2
 fi
-case "$PASS_REQUIRES_INITIAL" in
-  true)
-    if [[ -z "$INITIAL_RESULT_INPUT" ]]; then
-      printf 'Error: --pass targeted requires --initial-result <path>\n' >&2
-      exit 2
-    fi
-    ;;
-  false)
-    if [[ -n "$INITIAL_RESULT_INPUT" ]]; then
-      printf 'Error: --initial-result is only valid with --pass targeted\n' >&2
-      exit 2
-    fi
-    ;;
-  *)
-    printf 'Error: invalid requires_initial_result value for pass kind %s: %s\n' \
-      "$PASS_KIND_RESOLVED" "$PASS_REQUIRES_INITIAL" >&2
-    exit 2
-    ;;
-esac
+gate_options_require_initial_result \
+  "$PASS_REQUIRES_INITIAL" "$INITIAL_RESULT_INPUT" "$PASS_KIND_RESOLVED"
 
 INITIAL_RESULT_RESOLVED=""
 if [[ -n "$INITIAL_RESULT_INPUT" ]]; then
@@ -489,11 +472,7 @@ if [[ "$REVIEWERS_SHORTHAND_SEEN" == true ]]; then
     "$REVIEWERS_SHORTHAND_INPUT" "$ALL_REVIEWERS" "--targeted")" || exit 2
 fi
 if [[ "$REVIEWERS_EXPLICIT_SEEN" == true && "$REVIEWERS_SHORTHAND_SEEN" == true ]]; then
-  if [[ "$(printf '%s\n' $_explicit_reviewers | LC_ALL=C sort)" \
-      != "$(printf '%s\n' $_shorthand_reviewers | LC_ALL=C sort)" ]]; then
-    printf 'Error: --reviewers and --targeted request different reviewer coverage\n' >&2
-    exit 2
-  fi
+  gate_options_reviewer_coverage_agrees "$_explicit_reviewers" "$_shorthand_reviewers"
   REVIEWERS_OVERRIDE="$REVIEWERS_EXPLICIT_INPUT"
   REVIEWERS_OPTION_SOURCE="--reviewers/--targeted"
   COVERAGE_SYNTAX_SOURCE="mixed"
