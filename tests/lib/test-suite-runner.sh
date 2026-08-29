@@ -76,6 +76,7 @@ SUITE_NAMES=(
   test-check-docs-freshness
   test-check-policy-doc-sync
   test-check-planning-status-consistency
+  test-lint-permanent-test-admissions
   test-skill-refine
   test-pr-gate-profile
   test-run-all-tests
@@ -188,6 +189,7 @@ declare -A SUITE_PATHS=(
   [test-check-docs-freshness]="tests/shell/test-check-docs-freshness.sh"
   [test-check-policy-doc-sync]="tests/shell/test-check-policy-doc-sync.sh"
   [test-check-planning-status-consistency]="tests/shell/test-check-planning-status-consistency.sh"
+  [test-lint-permanent-test-admissions]="tests/shell/test-lint-permanent-test-admissions.sh"
   [test-skill-refine]="tests/shell/test-skill-refine.sh"
   [test-pr-gate-profile]="tests/shell/test-pr-gate-profile.sh"
   [test-run-all-tests]="tests/shell/test-run-all-tests.sh"

@@ -333,6 +333,14 @@ in for an alternative-path finding's own record, and the citation is carried
 over from Step 2.5, not re-derived or skipped because that paragraph is
 several screens back by now.
 
+This line is CI-enforced: `tools/lint/lint-permanent-test-admissions.sh`
+(the `lint-permanent-test-admissions` PR job) fails the PR when the body
+omits the line, or leaves it `none`, while the diff added a net-new
+`test_*()`/`case_*()` function to a test file that already existed on the
+base ref. It is a mechanical floor only — it does not read which criterion
+or alternative the line cites — so a line that merely says `none` to get
+past it still fails Step 2.5's intent.
+
 Do not merge. GO is not merge authorization — merge only when the user
 explicitly says so.
 

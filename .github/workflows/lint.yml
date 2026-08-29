@@ -369,6 +369,35 @@ jobs:
       - name: check-planning-status-consistency regression suite
         run: bash tests/shell/test-check-planning-status-consistency.sh
 
+  test-lint-permanent-test-admissions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: lint-permanent-test-admissions regression suite
+        run: bash tests/shell/test-lint-permanent-test-admissions.sh
+
+  lint-permanent-test-admissions:
+    # PR-only: needs the PR body and the base commit. On push to main there is
+    # neither, and the record was already enforced on the PR that introduced
+    # the change.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Enforce the Step 4 'Permanent test admissions:' record
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq '.body // ""' > pr-body.txt
+          ./tools/lint/lint-permanent-test-admissions.sh --pr-body pr-body.txt --base "$BASE_SHA"
+
   test-schema-task-mirrors-backlog:
     runs-on: ubuntu-latest
     steps:
