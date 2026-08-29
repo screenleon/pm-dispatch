@@ -1938,11 +1938,6 @@ qa_execution_finalize() {
 }
 # shellcheck disable=SC2034 # consumed by gate_protocol_attempt_record in runtime/lib/gate-protocol.sh
 PROTOCOL_RECOVERY_PATH="$WORK_DIR/.gate-results/gate-protocol-attempts-${TIMESTAMP}.jsonl"
-# Canonical implementation lives in runtime/lib/gate-protocol.sh
-# (gate_protocol_attempt_record). This underscore name is kept as a thin alias
-# so the parallel-reviewer branch's call sites stay put; it will be retired
-# when that branch is folded into the shared outcome helper.
-_gate_protocol_attempt_record() { gate_protocol_attempt_record "$@"; }
 SCOPE_MANIFEST_CONTENT_DIGEST="$(jq -r '.content.digest' "$SCOPE_MANIFEST_PATH")"
 SCOPE_MANIFEST_STATUS="$(jq -r '.status' "$SCOPE_MANIFEST_PATH")"
 SCOPE_MANIFEST_EXPANSION_COUNT="$(jq -r '.expansion.entries | length' \
@@ -3065,12 +3060,12 @@ RBRIEF_EOF
       if [[ " ${FAILED_REVIEWERS[*]:-} " == *" $r "* ]]; then
         PROTOCOL_INVALID_OUTPUTS+=("$r")
         PROTOCOL_INVALID_REASONS+=("transport failure")
-        _gate_protocol_attempt_record reviewer "$r" 1 retryable-failure \
+        gate_protocol_attempt_record reviewer "$r" 1 retryable-failure \
           "transport failure" "$rf" || exit 2
       elif [[ ! -s "$rf" ]]; then
         PROTOCOL_INVALID_OUTPUTS+=("$r")
         PROTOCOL_INVALID_REASONS+=("missing reviewer result")
-        _gate_protocol_attempt_record reviewer "$r" 1 retryable-failure \
+        gate_protocol_attempt_record reviewer "$r" 1 retryable-failure \
           "missing reviewer result" "$rf" || exit 2
       elif gate_reviewer_protocol_verify \
           "$rf" "$r" "$SCOPE_MANIFEST_DIGEST" "$SCOPE_MANIFEST_PATH" true \
@@ -3078,11 +3073,11 @@ RBRIEF_EOF
             _gate_reviewer_protocol_verdict_extract "$rf" "$r"
           )"; then
         REVIEWER_VERDICTS+=("$reviewer_verdict")
-        _gate_protocol_attempt_record reviewer "$r" 1 accepted ok "$rf" || exit 2
+        gate_protocol_attempt_record reviewer "$r" 1 accepted ok "$rf" || exit 2
       else
         PROTOCOL_INVALID_OUTPUTS+=("$r")
         PROTOCOL_INVALID_REASONS+=("${GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR:-<other>}")
-        _gate_protocol_attempt_record reviewer "$r" 1 retryable-failure \
+        gate_protocol_attempt_record reviewer "$r" 1 retryable-failure \
           "${GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR:-<other>}" "$rf" || exit 2
       fi
     done
@@ -3090,41 +3085,14 @@ RBRIEF_EOF
     # CC-521: retry exactly once for transport-shaped or machine-contract
     # failures. Never retry stale subject binding or analysis uncertainty: the
     # former invalidates the immutable review subject and the latter is valid
-    # review evidence that synthesis must preserve.
-    _GATE_RETRYABLE_PROTOCOL_REASONS=(
-      "invalid evidence reference contract"
-      "transport failure"
-      "invalid JSON document"
-      "reviewer protocol filter failed"
-      "malformed reviewer result fence"
-      "truncated reviewer result"
-      "missing reviewer result"
-      "invalid reviewer binding"
-      "missing selected reviewer"
-      "invalid top-level or binding contract"
-      "invalid coverage contract"
-      "invalid finding contract"
-      "invalid test-gap matrix contract"
-      "finding lacks actionable test-gap row"
-      "invalid verdict contract"
-    )
+    # review evidence that synthesis must preserve. The allowlist and its
+    # stem-match rule live in gate-protocol.sh (gate_protocol_reason_retryable)
+    # so the retry taxonomy has one home; the whole batch is eligible only if
+    # every failed reviewer's reason is individually retryable.
     if [[ "${#PROTOCOL_INVALID_OUTPUTS[@]}" -gt 0 ]]; then
       _RETRY_ELIGIBLE=true
       for _reason in "${PROTOCOL_INVALID_REASONS[@]}"; do
-        _reason_retryable=false
-        # Match the reason STEM, not the whole string. The verifier appends
-        # ": <detail>" to several of these so a reviewer learns which row and
-        # constraint it broke; exact equality silently declassified every such
-        # detailed reason as non-retryable, turning the most correctable
-        # failures into immediate INCOMPLETE. The colon makes the prefix
-        # unambiguous, so no unrelated reason can match by accident.
-        for _retryable in "${_GATE_RETRYABLE_PROTOCOL_REASONS[@]}"; do
-          if [[ "$_reason" == "$_retryable" || "$_reason" == "$_retryable:"* ]]; then
-            _reason_retryable=true
-            break
-          fi
-        done
-        [[ "$_reason_retryable" == true ]] || { _RETRY_ELIGIBLE=false; break; }
+        gate_protocol_reason_retryable "$_reason" || { _RETRY_ELIGIBLE=false; break; }
       done
       if [[ "$_RETRY_ELIGIBLE" == true ]]; then
         say '\n  %d reviewer(s) failed a retryable reviewer protocol contract; retrying once with a corrective note: %s\n' \
@@ -3322,7 +3290,7 @@ RETRY_RBRIEF_EOF
                "$rf" "$r" "$SCOPE_MANIFEST_DIGEST" "$SCOPE_MANIFEST_PATH" true \
              || ! reviewer_verdict="$(_gate_reviewer_protocol_verdict_extract "$rf" "$r")"; then
             PROTOCOL_INVALID_OUTPUTS+=("$r")
-            _gate_protocol_attempt_record reviewer "$r" 2 exhausted \
+            gate_protocol_attempt_record reviewer "$r" 2 exhausted \
               "${GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR:-transport or protocol failure}" "$rf" || exit 2
             printf 'Error: retry still failed for %s\n' "$r" >&2
             continue
@@ -3342,7 +3310,7 @@ RETRY_RBRIEF_EOF
             fi
           done
           say '  [retry] %s recovered on retry.\n' "$r"
-          _gate_protocol_attempt_record reviewer "$r" 2 recovered ok "$rf" || exit 2
+          gate_protocol_attempt_record reviewer "$r" 2 recovered ok "$rf" || exit 2
         done
       fi
     fi

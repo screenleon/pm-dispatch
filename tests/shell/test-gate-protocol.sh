@@ -88,6 +88,78 @@ case_record_unwritable_path_returns_nonzero() {
 }
 
 # ---------------------------------------------------------------------------
+# gate_protocol_reason_retryable  (parallel-reviewer batch-retry taxonomy)
+# ---------------------------------------------------------------------------
+
+case_reason_retryable_bare_stem_matches() {
+  local name="gate_protocol_reason_retryable: every allowlist stem is retryable"
+  should_run "$name" || return 0
+  local entry bad=""
+  for entry in "${GATE_PROTOCOL_RETRYABLE_REASONS[@]}"; do
+    gate_protocol_reason_retryable "$entry" || bad="$bad|$entry"
+  done
+  if [[ -z "$bad" ]]; then pass "$name"; else fail "$name" "not retryable: $bad"; fi
+}
+
+case_reason_retryable_stem_with_detail_suffix_matches() {
+  local name="gate_protocol_reason_retryable: '<stem>: <detail>' still matches the stem"
+  should_run "$name" || return 0
+  if gate_protocol_reason_retryable "invalid evidence reference contract: row 2 path not in index" \
+    && gate_protocol_reason_retryable "invalid finding contract: source missing"; then
+    pass "$name"
+  else
+    fail "$name" "colon-suffixed detailed reason was declassified as non-retryable"
+  fi
+}
+
+case_reason_retryable_rejects_never_retry_reasons() {
+  local name="gate_protocol_reason_retryable: stale subject / analysis uncertainty / unlisted -> not retryable"
+  should_run "$name" || return 0
+  local rc=0
+  gate_protocol_reason_retryable "stale subject binding" && rc=1
+  gate_protocol_reason_retryable "analysis uncertainty" && rc=1
+  gate_protocol_reason_retryable "some brand new reason" && rc=1
+  gate_protocol_reason_retryable "" && rc=1
+  if [[ "$rc" -eq 0 ]]; then pass "$name"; else fail "$name" "a never-retry reason matched"; fi
+}
+
+case_reason_retryable_is_colon_anchored_not_substring() {
+  local name="gate_protocol_reason_retryable: a stem followed by non-colon text does not match"
+  should_run "$name" || return 0
+  # 'transport failure extra' must NOT match 'transport failure' -- the guard is
+  # exact-or-colon-prefix, never a loose substring/prefix.
+  if gate_protocol_reason_retryable "transport failure extra"; then
+    fail "$name" "matched a non-colon extension of a stem"
+  else
+    pass "$name"
+  fi
+}
+
+case_reason_retryable_allowlist_is_exactly_the_known_set() {
+  local name="gate_protocol_reason_retryable: allowlist is exactly the 15 CC-521/CC-545 reasons"
+  should_run "$name" || return 0
+  local got expected
+  got="$(printf '%s\n' "${GATE_PROTOCOL_RETRYABLE_REASONS[@]}" | LC_ALL=C sort)"
+  expected="$(printf '%s\n' \
+    "finding lacks actionable test-gap row" \
+    "invalid JSON document" \
+    "invalid coverage contract" \
+    "invalid evidence reference contract" \
+    "invalid finding contract" \
+    "invalid reviewer binding" \
+    "invalid test-gap matrix contract" \
+    "invalid top-level or binding contract" \
+    "invalid verdict contract" \
+    "malformed reviewer result fence" \
+    "missing reviewer result" \
+    "missing selected reviewer" \
+    "reviewer protocol filter failed" \
+    "transport failure" \
+    "truncated reviewer result" | LC_ALL=C sort)"
+  if [[ "$got" == "$expected" ]]; then pass "$name"; else fail "$name" "got=$got"; fi
+}
+
+# ---------------------------------------------------------------------------
 # gate_protocol_single_retry_outcome
 # ---------------------------------------------------------------------------
 
@@ -220,6 +292,11 @@ case_record_emits_full_v1_line
 case_record_named_reviewer_is_string_empty_is_null
 case_record_append_not_overwrite
 case_record_unwritable_path_returns_nonzero
+case_reason_retryable_bare_stem_matches
+case_reason_retryable_stem_with_detail_suffix_matches
+case_reason_retryable_rejects_never_retry_reasons
+case_reason_retryable_is_colon_anchored_not_substring
+case_reason_retryable_allowlist_is_exactly_the_known_set
 case_outcome_complete_prints_break_records_accepted
 case_outcome_stale_attempt1_aborts
 case_outcome_stale_attempt2_also_aborts

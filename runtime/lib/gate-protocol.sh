@@ -11,13 +11,59 @@
 # and remain the caller's job. This module only records the attempt and maps
 # the caller's already-computed (complete, reason) pair to a control action.
 #
-# The parallel-reviewer batch-retry branch in pr-gate.sh is deliberately NOT
-# covered here: it has a different shape (per-reviewer recovery, its own
-# retryable-reason allowlist) and is a separate slice.
+# The parallel-reviewer batch-retry branch in pr-gate.sh keeps its own
+# orchestration (per-reviewer re-dispatch, watchdog, fold-back of recovered
+# reviewers), but its retryable-reason taxonomy lives here — see
+# GATE_PROTOCOL_RETRYABLE_REASONS / gate_protocol_reason_retryable — so the
+# question "which reviewer-protocol failures may be retried once" has a single
+# home rather than an inline array in the orchestrator.
+#
+# Note the two retry taxonomies are intentionally distinct, not merged:
+# gate_protocol_single_retry_outcome (sequential/synthesis) retries *any*
+# non-stale reason once; the parallel branch retries only the transport-shaped
+# and machine-contract reasons on the allowlist below.
 #
 # Required globals (set once during preflight, long before the first retry
 # loop runs): SCOPE_MANIFEST_DIGEST, GATE_BINDING_SUBJECT_FINGERPRINT,
 # PROTOCOL_RECOVERY_PATH.
+
+# CC-521/CC-545: the reviewer-protocol failures the parallel-reviewer branch
+# may retry exactly once with a corrective note. Everything not listed here —
+# stale subject binding, analysis uncertainty — is either unrepairable by
+# re-authoring or is valid review evidence synthesis must preserve, so it
+# stops as INCOMPLETE without a retry.
+GATE_PROTOCOL_RETRYABLE_REASONS=(
+  "invalid evidence reference contract"
+  "transport failure"
+  "invalid JSON document"
+  "reviewer protocol filter failed"
+  "malformed reviewer result fence"
+  "truncated reviewer result"
+  "missing reviewer result"
+  "invalid reviewer binding"
+  "missing selected reviewer"
+  "invalid top-level or binding contract"
+  "invalid coverage contract"
+  "invalid finding contract"
+  "invalid test-gap matrix contract"
+  "finding lacks actionable test-gap row"
+  "invalid verdict contract"
+)
+
+# gate_protocol_reason_retryable <reason>
+#   Exit 0 if <reason> is retryable, 1 otherwise. Matches the reason STEM: the
+#   verifier appends ": <detail>" to several reasons so a reviewer learns which
+#   row and constraint it broke, and exact equality would silently declassify
+#   every such detailed reason as non-retryable — turning the most correctable
+#   failures into immediate INCOMPLETE. The colon makes the prefix unambiguous,
+#   so no unrelated reason can match by accident.
+gate_protocol_reason_retryable() {
+  local reason="$1" entry
+  for entry in "${GATE_PROTOCOL_RETRYABLE_REASONS[@]}"; do
+    [[ "$reason" == "$entry" || "$reason" == "$entry:"* ]] && return 0
+  done
+  return 1
+}
 
 # gate_protocol_attempt_record <role> <reviewer> <attempt> <outcome> <reason> <artifact>
 #   Append one gate_protocol_attempt_v1 JSON line to $PROTOCOL_RECOVERY_PATH.
