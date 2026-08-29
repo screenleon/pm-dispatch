@@ -39,7 +39,7 @@ make_fixture() {
   cat > "$repo/tests/lib/test-suite-runner.sh" <<'RUNNER'
 #!/usr/bin/env bash
 set -euo pipefail
-suites=(lint-agents lint-scripts lint-script-domain-inventory lint-portable-repo-paths test-lint-shellcheck test-script-domain-inventory test-lint-portable-repo-paths test-lint-frontmatter test-commands test-check-docs-freshness test-guards test-migrate test-portable test-install test-uninstall test-doctor test-hook-profile-parity test-pmctl-dispatch test-pmctl-context test-pmctl-memory test-pmctl-gate test-pmctl-adapter-generate test-executor-router test-runner-kind test-release-verify test-dispatch-lifecycle test-runtime-lib-coverage test-e2e-script test-pr-gate-shard-1 test-pr-gate-shard-2 test-pr-gate-shard-3 test-pr-gate-shard-4 test-pr-gate-profile test-gate-protocol test-pmctl-operation test-host-manifest test-host-write-codex test-codex-dispatch-continuation test-host-write-parity test-core-schemas test-layer-boundaries test-pm-scripts test-run-tests test-setup-project test-state-store test-state-layout-parity test-check-planning-status-consistency test-lint-permanent-test-admissions test-schema-task-mirrors-backlog test-pmctl-backlog test-archive-closed-backlog)
+suites=(lint-agents lint-scripts lint-script-domain-inventory lint-portable-repo-paths test-lint-shellcheck test-script-domain-inventory test-lint-portable-repo-paths test-lint-frontmatter test-commands test-check-docs-freshness test-guards test-migrate test-portable test-install test-uninstall test-doctor test-hook-profile-parity test-pmctl-dispatch test-pmctl-context test-pmctl-memory test-pmctl-gate test-pmctl-adapter-generate test-executor-router test-runner-kind test-release-verify test-dispatch-lifecycle test-runtime-lib-coverage test-e2e-script test-pr-gate-shard-1 test-pr-gate-shard-2 test-pr-gate-shard-3 test-pr-gate-shard-4 test-pr-gate-profile test-gate-protocol test-gate-options test-pmctl-operation test-host-manifest test-host-write-codex test-codex-dispatch-continuation test-host-write-parity test-core-schemas test-layer-boundaries test-pm-scripts test-run-tests test-setup-project test-state-store test-state-layout-parity test-check-planning-status-consistency test-lint-permanent-test-admissions test-schema-task-mirrors-backlog test-pmctl-backlog test-archive-closed-backlog)
 for arg in "$@"; do
   if [[ "$arg" == --list ]]; then printf '%s\n' "${suites[@]}"; exit 0; fi
 done
@@ -553,6 +553,29 @@ case_gate_protocol_lib_maps_its_suite_and_shards() {
   fi
 }
 
+# Behavior: runtime/lib/gate-options.sh selects its own unit suite (plus the
+# pr-gate shards, since pr-gate.sh sources it); a pr-gate.sh change also pulls
+# in test-gate-options, since pr-gate.sh now calls its comparators.
+case_gate_options_lib_maps_its_suite() {
+  local name=gate-options-lib-maps-its-suite repo out status=0 args
+  args="$TMP_ROOT/$name.args"
+  repo="$(make_fixture "$name")"
+  out=$(RUN_TESTS_ARGS_LOG="$args" "$repo/tests/bin/run-tests.sh" \
+    --path runtime/lib/gate-options.sh --list 2>&1) || status=$?
+  if [[ "$status" -ne 0 || "$out" != *"test-gate-options"* \
+        || "$out" != *"test-pr-gate-shard-1"* || "$out" == *"coverage gaps"* ]]; then
+    fail "$name" "gate-options.sh path: status=$status out=$out"; return
+  fi
+  status=0
+  out=$(RUN_TESTS_ARGS_LOG="$args" "$repo/tests/bin/run-tests.sh" \
+    --path runtime/bin/pr-gate.sh --list 2>&1) || status=$?
+  if [[ "$status" -eq 0 && "$out" == *"test-gate-options"* && "$out" != *"coverage gaps"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "pr-gate.sh path: status=$status out=$out"
+  fi
+}
+
 case_gate_synthesis_schema_maps_protocol_verifiers() {
   local name=gate-synthesis-schema-maps-protocol-verifiers
   local repo out status=0 args
@@ -811,6 +834,7 @@ case_gate_assurance_policy_maps_gate_consumers
 case_gate_assurance_contract_maps_runtime_verifiers
 case_pr_gate_protocol_contract_maps_profile_and_verifiers
 case_gate_protocol_lib_maps_its_suite_and_shards
+case_gate_options_lib_maps_its_suite
 case_gate_synthesis_schema_maps_protocol_verifiers
 case_high_fanout_escalates_full
 case_repeated_high_fanout_escalation_succeeds

@@ -241,3 +241,50 @@ gate_options_require_workdir() {
     printf 'Error: --run-dir must be an absolute path: %s\n' "$GATE_RUN_DIR_OVERRIDE" >&2; exit 2
   fi
 }
+
+# gate_options_require_initial_result <requires_initial> <initial_result_input> <pass_kind_label>
+#   Cross-option check between --initial-result and the resolved pass kind. The
+#   caller passes the policy table's requires_initial_result value for the
+#   resolved pass kind (true|false); anything else is a policy-integrity error.
+#   Prints the canonical CLI message and exits 2 on a mismatch; returns 0 when
+#   --initial-result's presence matches what the pass kind requires. This is a
+#   pure comparator -- it reads no option globals, policy tables, or env; the
+#   caller computes both inputs.
+gate_options_require_initial_result() {
+  local requires_initial="$1" initial_result_input="$2" pass_kind_label="$3"
+  case "$requires_initial" in
+    true)
+      if [[ -z "$initial_result_input" ]]; then
+        printf 'Error: --pass targeted requires --initial-result <path>\n' >&2
+        exit 2
+      fi
+      ;;
+    false)
+      if [[ -n "$initial_result_input" ]]; then
+        printf 'Error: --initial-result is only valid with --pass targeted\n' >&2
+        exit 2
+      fi
+      ;;
+    *)
+      printf 'Error: invalid requires_initial_result value for pass kind %s: %s\n' \
+        "$pass_kind_label" "$requires_initial" >&2
+      exit 2
+      ;;
+  esac
+}
+
+# gate_options_reviewer_coverage_agrees <normalized_explicit> <normalized_shorthand>
+#   Both args are already vocabulary-normalized, space-separated reviewer lists
+#   (--reviewers and its --targeted compatibility spelling). Order-insensitive
+#   set compare; prints the canonical message and exits 2 when the sets differ,
+#   returns 0 when they agree. Pure comparator; the caller runs the
+#   normalization and the "both spellings seen" guard.
+gate_options_reviewer_coverage_agrees() {
+  local explicit="$1" shorthand="$2"
+  # shellcheck disable=SC2086  # deliberate word-split of the normalized space lists
+  if [[ "$(printf '%s\n' $explicit | LC_ALL=C sort)" \
+      != "$(printf '%s\n' $shorthand | LC_ALL=C sort)" ]]; then
+    printf 'Error: --reviewers and --targeted request different reviewer coverage\n' >&2
+    exit 2
+  fi
+}

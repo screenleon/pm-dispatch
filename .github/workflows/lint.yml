@@ -503,6 +503,13 @@ jobs:
       - name: gate-protocol regression suite
         run: bash tests/shell/test-gate-protocol.sh
 
+  test-gate-options:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: gate-options regression suite
+        run: bash tests/shell/test-gate-options.sh
+
   test-pmctl-gate:
     runs-on: ubuntu-latest
     steps:

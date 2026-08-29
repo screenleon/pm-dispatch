@@ -1883,34 +1883,6 @@ test_targeted_sensitive_signal_scope_bound_override_authorizes_omission() {
   pass "$name"
 }
 
-# Behavior: the public CLI rejects an unknown policy consumer before any
-# repository work or reviewer dispatch.
-test_invalid_policy_consumer_fails_before_dispatch() {
-  local name="invalid-policy-consumer-fails-before-dispatch"
-  should_run "$name" || return 0
-  local dir="$TMP_ROOT/$name"
-  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
-  local out="$dir/out" err="$dir/err"
-  mkdir -p "$dir"
-  create_runner "$runner"
-  create_agents "$home" critic qa-tester
-  create_repo "$repo" docs
-
-  set +e
-  run_gate "$home" "$runner" "$repo" "$out" "$err" \
-    --base main --policy bogus
-  local code=$?
-  set -e
-  if [[ "$code" -ne 2 ]]; then
-    fail "$name" "exit $code, expected CLI failure 2"
-    return
-  fi
-  assert_file_contains "$name" "$err" \
-    "Error: --policy must be generic or maintainer (got: bogus)" || return
-  assert_not_contains "$name" "$err" "DISPATCH_STUB" || return
-  pass "$name"
-}
-
 # Behavior: an empty policy-override file is rejected at the CLI trust
 # boundary before policy resolution or reviewer dispatch.
 test_empty_policy_override_fails_before_dispatch() {
@@ -6306,7 +6278,6 @@ run_test test_no_changed_files
 run_test test_reviewers_override_below_policy_floor_fails_closed
 run_test test_targeted_sensitive_signal_reviewer_requirement_fails_closed
 run_test test_targeted_sensitive_signal_scope_bound_override_authorizes_omission
-run_test test_invalid_policy_consumer_fails_before_dispatch
 run_test test_empty_policy_override_fails_before_dispatch
 run_test test_malformed_policy_override_contract_fails_before_dispatch
 run_test test_scope_bound_policy_override_authorizes_exact_coverage_downgrade
@@ -7573,32 +7544,6 @@ STUB_PMCTL_TARGETED
   pass "$name"
 }
 
-# Behavior: a targeted pass without an initial result fails before dispatch.
-# Steps: invoke --targeted critic without --initial-result and assert exit 2,
-# the explicit requirement error, and no dispatch marker.
-test_targeted_requires_initial_result() {
-  local name="targeted-requires-initial-result"
-  should_run "$name" || return 0
-  local dir="$TMP_ROOT/$name"
-  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
-  local out="$dir/out" err="$dir/err"
-  mkdir -p "$dir"
-  create_runner "$runner"
-  create_repo "$repo" docs
-
-  set +e
-  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --targeted critic
-  local code=$?
-  set -e
-  if [[ "$code" -ne 2 ]]; then
-    fail "$name" "exit $code, expected 2"
-    return
-  fi
-  assert_file_contains "$name" "$err" "--pass targeted requires --initial-result <path>" || return
-  assert_not_contains "$name" "$out" "DISPATCH_STUB" || return
-  pass "$name"
-}
-
 # Behavior: a targeted gate cannot reuse its referenced initial result as the
 # output destination, including a lexical alias of the same path.
 # Steps: pass the initial result back through --output using a ./ alias, assert
@@ -7660,94 +7605,6 @@ test_targeted_sidecar_cannot_overwrite_initial_result() {
     return
   }
   assert_file_contains "$name" "$err" "assurance sidecar must not overwrite" || return
-  assert_not_contains "$name" "$out" "DISPATCH_STUB" || return
-  pass "$name"
-}
-
-# Behavior: --initial-result is only meaningful for a targeted pass; supplying
-# it alongside an explicit initial pass fails before dispatch.
-# Steps: run --pass initial with --initial-result set and assert exit 2, the
-# explicit rejection message, and no dispatch marker.
-test_initial_pass_rejects_initial_result() {
-  local name="initial-pass-rejects-initial-result"
-  should_run "$name" || return 0
-  local dir="$TMP_ROOT/$name"
-  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
-  local out="$dir/out" err="$dir/err" initial="$dir/initial.md"
-  mkdir -p "$dir"
-  create_runner "$runner"
-  create_repo "$repo" docs
-  write_valid_initial_gate_result "$initial"
-
-  set +e
-  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main \
-    --pass initial --initial-result "$initial"
-  local code=$?
-  set -e
-  if [[ "$code" -ne 2 ]]; then
-    fail "$name" "exit $code, expected 2"
-    return
-  fi
-  assert_file_contains "$name" "$err" "--initial-result is only valid with --pass targeted" || return
-  assert_not_contains "$name" "$out" "DISPATCH_STUB" || return
-  pass "$name"
-}
-
-# Behavior: --pass and --targeted are two spellings of the same pass-kind
-# coordinate; requesting different kinds through each fails before dispatch.
-# Steps: run --pass initial together with --targeted (which implies
-# pass=targeted) and assert exit 2 with the conflicting-options message.
-test_conflicting_pass_options_are_rejected() {
-  local name="conflicting-pass-options-are-rejected"
-  should_run "$name" || return 0
-  local dir="$TMP_ROOT/$name"
-  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
-  local out="$dir/out" err="$dir/err" initial="$dir/initial.md"
-  mkdir -p "$dir"
-  create_runner "$runner"
-  create_repo "$repo" docs
-  write_valid_initial_gate_result "$initial"
-
-  set +e
-  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main \
-    --pass initial --targeted critic --initial-result "$initial"
-  local code=$?
-  set -e
-  if [[ "$code" -ne 2 ]]; then
-    fail "$name" "exit $code, expected 2"
-    return
-  fi
-  assert_file_contains "$name" "$err" "conflicting gate pass options" || return
-  assert_not_contains "$name" "$out" "DISPATCH_STUB" || return
-  pass "$name"
-}
-
-# Behavior: --reviewers (canonical) and --targeted (compatibility shorthand)
-# must name the same coverage set when both are supplied; different sets fail
-# before dispatch rather than silently picking one.
-# Steps: run with disjoint --reviewers/--targeted lists and assert exit 2 with
-# the mismatch message.
-test_reviewers_and_targeted_mismatch_rejected() {
-  local name="reviewers-and-targeted-mismatch-rejected"
-  should_run "$name" || return 0
-  local dir="$TMP_ROOT/$name"
-  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
-  local out="$dir/out" err="$dir/err" initial="$dir/initial.md"
-  mkdir -p "$dir"
-  create_runner "$runner"
-  create_repo "$repo" docs
-  write_valid_initial_gate_result "$initial"
-
-  set +e
-  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main \
-    --reviewers critic --targeted qa-tester --initial-result "$initial"
-  local code=$?
-  set -e
-  if [[ "$code" -ne 2 ]]; then
-    fail "$name" "exit $code, expected 2"
-    return
-  fi
-  assert_file_contains "$name" "$err" "--reviewers and --targeted request different reviewer coverage" || return
   assert_not_contains "$name" "$out" "DISPATCH_STUB" || return
   pass "$name"
 }
@@ -7888,6 +7745,49 @@ test_conflicting_mode_options_are_rejected() {
     return
   fi
   assert_file_contains "$name" "$err" "conflicting gate mode options" || return
+  assert_not_contains "$name" "$out" "DISPATCH_STUB" || return
+  pass "$name"
+}
+
+# Behavior: the two cross-option validations extracted into gate-options.sh
+# (gate_options_require_initial_result, gate_options_reviewer_coverage_agrees)
+# are still reached by the public CLI *before* any repository or dispatch work.
+# The per-outcome message coverage lives in tests/shell/test-gate-options.sh;
+# this one compact case guards the composition wiring the unit suite cannot
+# see -- a future ordering regression would keep those unit tests green while
+# an invalid invocation dispatched.
+# Steps: run the real gate with (a) --pass initial + --initial-result and
+# (b) --reviewers/--targeted naming disjoint sets; assert exit 2, the canonical
+# message, and that the dispatch stub was never invoked.
+test_cli_reaches_extracted_cross_option_checks_before_dispatch() {
+  local name="cli-reaches-extracted-cross-option-checks-before-dispatch"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" initial="$dir/initial.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_repo "$repo" docs
+  write_valid_initial_gate_result "$initial"
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main     --pass initial --initial-result "$initial"
+  local code=$?
+  set -e
+  if [[ "$code" -ne 2 ]]; then
+    fail "$name" "pass/result: exit $code, expected 2"; return
+  fi
+  assert_file_contains "$name" "$err" "--initial-result is only valid with --pass targeted" || return
+  assert_not_contains "$name" "$out" "DISPATCH_STUB" || return
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main     --pass targeted --reviewers critic --targeted qa-tester --initial-result "$initial"
+  code=$?
+  set -e
+  if [[ "$code" -ne 2 ]]; then
+    fail "$name" "reviewer coverage: exit $code, expected 2"; return
+  fi
+  assert_file_contains "$name" "$err" "--reviewers and --targeted request different reviewer coverage" || return
   assert_not_contains "$name" "$out" "DISPATCH_STUB" || return
   pass "$name"
 }
@@ -8652,16 +8552,13 @@ run_test test_targeted_auto_mode_initializes_brief_coordinates
 run_test test_targeted_full_tier_truthful_coordinate_label
 run_test test_targeted_coordinates_meaning_parity_across_modes
 run_test test_repo_layout_targeted_coordinates_match_copy_mode_contract
-run_test test_targeted_requires_initial_result
 run_test test_targeted_output_cannot_overwrite_initial_result
 run_test test_targeted_sidecar_cannot_overwrite_initial_result
-run_test test_initial_pass_rejects_initial_result
-run_test test_conflicting_pass_options_are_rejected
-run_test test_reviewers_and_targeted_mismatch_rejected
 run_test test_duplicate_reviewer_in_list_rejected
 run_test test_empty_reviewer_list_rejected
 run_test test_assurance_unsafe_destinations_rejected
 run_test test_conflicting_mode_options_are_rejected
+run_test test_cli_reaches_extracted_cross_option_checks_before_dispatch
 run_test test_equivalent_mode_spellings_are_accepted
 run_test test_invalid_assurance_inputs_are_rejected
 run_test test_seq_brief_ascii_separator
