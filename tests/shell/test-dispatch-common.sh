@@ -489,19 +489,9 @@ case_parse_common_flags_missing_value_fails() {
   if [[ "$rc" -eq 2 ]]; then pass "$name"; else fail "$name" "rc=$rc (expected 2)"; fi
 }
 
-# ── Structural: shared lib stays adapter-agnostic ─────────────────────────────
-
-case_dispatch_common_no_adapter_name_in_code() {
-  local name="dispatch-common.sh/no adapter name branches in code"; should_run "$name" || return 0
-  # Strip comments, then look for an adapter literal or a per-adapter case.
-  local code
-  code="$(grep -vE '^\s*#' "$REPO_ROOT/runtime/lib/dispatch-common.sh")"
-  if grep -qE '\b(codex|claude|opencode|grok)\b' <<<"$code"; then
-    fail "$name" "dispatch-common.sh names an adapter in code; the per-adapter data must be passed in by the caller"
-  else
-    pass "$name"
-  fi
-}
+# The "dispatch-common.sh stays adapter-agnostic" structural rule now lives in
+# tests/shell/test-layer-boundaries.sh (check_shared_lib_adapter_agnostic),
+# where it is a whole-tree enforcer rather than a single-file grep here.
 
 # ── Run ───────────────────────────────────────────────────────────────────────
 
@@ -540,6 +530,5 @@ case_parse_common_flags_residual_preserves_order
 case_parse_common_flags_double_dash_kept_for_tail
 case_parse_common_flags_help_stops
 case_parse_common_flags_missing_value_fails
-case_dispatch_common_no_adapter_name_in_code
 
 th_summary

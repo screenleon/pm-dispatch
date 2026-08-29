@@ -99,6 +99,50 @@ check_adapters_no_state_writes() {
   done < <(find "$root/adapters" -type f -name '*.sh' 2>/dev/null)
 }
 
+# L1: shared runtime libraries and the prompt hook must not declare bash-4.3
+# namerefs (`local -n` / `declare -n` / `typeset -n`). memory_usage_load once
+# took caller-named arrays this way, which would have been the repo's only 4.3
+# dependency — in a library the prompt hook sources. A whole-tree scan replaces
+# the old three-hardcoded-file pin so a new lib cannot reintroduce it unseen.
+#
+# Matches a declaration whose option sequence contains an `-n`-bearing flag,
+# including split options (`local -r -n ref`) and clusters (`local -An`); a
+# `declare -A` / `local -r` decl carries no `n` and does not match. Like the
+# adapter/state sibling rules this scans non-comment lines, so the spelling
+# inside a diagnostic string also trips it — intentional: a shared lib has no
+# reason to print `local -n` either. Comments are stripped first.
+check_shared_lib_no_namerefs() {
+  local root="$1" d f line
+  local decl='(local|declare|typeset)[[:space:]]+(-[A-Za-z]+[[:space:]]+)*-[A-Za-z]*n[A-Za-z]*([[:space:]]|=|$)'
+  for d in runtime/lib runtime/hooks; do
+    [[ -d "$root/$d" ]] || continue
+    while IFS= read -r f; do
+      if line="$(grep -vE '^[[:space:]]*#' "$f" | grep -nE "$decl")"; then
+        printf '%s: %s\n' "${f#"$root"/}" "$line"
+      fi
+    done < <(find "$root/$d" -type f -name '*.sh' 2>/dev/null)
+  done
+}
+
+# L2: shared libraries declared adapter-agnostic must not name a concrete
+# adapter anywhere in non-comment code — branches (`case … in codex)`), helper
+# names, OR string literals (`"dispatched via codex"`). A file on this list
+# receives its per-adapter data from the caller; naming an adapter in its own
+# body, even in a message, means it is not actually adapter-agnostic. Comments
+# are stripped first (they may describe the contract). Extend the contract by
+# adding a path to this array.
+ADAPTER_AGNOSTIC_LIBS=(runtime/lib/dispatch-common.sh)
+check_shared_lib_adapter_agnostic() {
+  local root="$1" rel f line
+  for rel in "${ADAPTER_AGNOSTIC_LIBS[@]}"; do
+    f="$root/$rel"
+    [[ -f "$f" ]] || continue
+    if line="$(grep -vE '^[[:space:]]*#' "$f" | grep -nE '\b(codex|claude|opencode|grok)\b')"; then
+      printf '%s: %s\n' "$rel" "$line"
+    fi
+  done
+}
+
 # S1: all production shell domains must route state-entity mutations through
 # runtime/lib/state-writer.sh. This is deliberately a content ratchet rather
 # than a path-only convention: a new direct redirect, jq redirect, mv/cp, or
@@ -209,6 +253,8 @@ ALL_CHECKS=(
   check_core_no_cli_field_keys
   check_adapters_no_shared_flow
   check_adapters_no_state_writes
+  check_shared_lib_no_namerefs
+  check_shared_lib_adapter_agnostic
   check_production_no_direct_state_writes
 )
 
@@ -450,6 +496,88 @@ if should_run "selftest/production_state_writer allows state readers"; then
   printf '#!/usr/bin/env bash\njq -c . "$operation_file"\n' \
     > "$FIX/runtime/lib/state-reader.sh"
   _expect_clean "$name" "$(check_production_no_direct_state_writes "$FIX")"
+  rm -rf "$FIX"
+fi
+
+if should_run "selftest/shared_lib_no_namerefs fires on a declare -n in runtime/lib"; then
+  name="selftest/shared_lib_no_namerefs fires on a declare -n in runtime/lib"
+  _fixture
+  printf '#!/usr/bin/env bash\nload_into() { local -n _ref="$1"; _ref=(a b); }\n' \
+    > "$FIX/runtime/lib/nameref-lib.sh"
+  _expect_fires "$name" "$(check_shared_lib_no_namerefs "$FIX")"
+  rm -rf "$FIX"
+fi
+
+if should_run "selftest/shared_lib_no_namerefs fires on a nameref in the prompt hook"; then
+  name="selftest/shared_lib_no_namerefs fires on a nameref in the prompt hook"
+  _fixture
+  mkdir -p "$FIX/runtime/hooks"
+  printf '#!/usr/bin/env bash\ndeclare -n target="$1"\n' \
+    > "$FIX/runtime/hooks/inject-demo.sh"
+  _expect_fires "$name" "$(check_shared_lib_no_namerefs "$FIX")"
+  rm -rf "$FIX"
+fi
+
+if should_run "selftest/shared_lib_no_namerefs fires on a split-option -r -n declaration"; then
+  # `local -r -n ref` is a valid nameref decl with the -n as a separate option;
+  # a first-cluster-only matcher would miss it and let a 4.3 dependency back in.
+  name="selftest/shared_lib_no_namerefs fires on a split-option -r -n declaration"
+  _fixture
+  printf '#!/usr/bin/env bash\nbind() { local -r -n ref="$1"; }\n' \
+    > "$FIX/runtime/lib/split-nameref.sh"
+  _expect_fires "$name" "$(check_shared_lib_no_namerefs "$FIX")"
+  rm -rf "$FIX"
+fi
+
+if should_run "selftest/shared_lib_no_namerefs does NOT fire on -A / -r / a comment"; then
+  # Guards against false positives: assoc/readonly decls carry no `n`, and a
+  # nameref mentioned only in a comment is not a declaration.
+  name="selftest/shared_lib_no_namerefs does NOT fire on -A / -r / a comment"
+  _fixture
+  printf '#!/usr/bin/env bash\nload() { local -A map; local -r pinned=1; }\n# history: dropped a local -n ref here\n' \
+    > "$FIX/runtime/lib/legal-decls.sh"
+  _expect_clean "$name" "$(check_shared_lib_no_namerefs "$FIX")"
+  rm -rf "$FIX"
+fi
+
+if should_run "selftest/shared_lib_no_namerefs also fires on the spelling inside a string"; then
+  # Documents the accepted match surface: non-comment occurrence, same as the
+  # adapter/state sibling rules. A shared lib printing `local -n` is still odd.
+  name="selftest/shared_lib_no_namerefs also fires on the spelling inside a string"
+  _fixture
+  printf '#!/usr/bin/env bash\nprintf "avoid: local -n ref\\n"\n' \
+    > "$FIX/runtime/lib/spelled-in-string.sh"
+  _expect_fires "$name" "$(check_shared_lib_no_namerefs "$FIX")"
+  rm -rf "$FIX"
+fi
+
+if should_run "selftest/shared_lib_adapter_agnostic fires on an adapter branch"; then
+  name="selftest/shared_lib_adapter_agnostic fires on an adapter branch"
+  _fixture
+  printf '#!/usr/bin/env bash\ncase "$adapter" in codex) x=1 ;; esac\n' \
+    > "$FIX/runtime/lib/dispatch-common.sh"
+  _expect_fires "$name" "$(check_shared_lib_adapter_agnostic "$FIX")"
+  rm -rf "$FIX"
+fi
+
+if should_run "selftest/shared_lib_adapter_agnostic fires on an adapter name in a string literal"; then
+  # Contract: an adapter-agnostic lib names no adapter in its own body at all,
+  # including in a message string — that is per-adapter knowledge the caller
+  # should supply. This documents the accepted match surface.
+  name="selftest/shared_lib_adapter_agnostic fires on an adapter name in a string literal"
+  _fixture
+  printf '#!/usr/bin/env bash\nprintf "dispatched via codex\\n"\n' \
+    > "$FIX/runtime/lib/dispatch-common.sh"
+  _expect_fires "$name" "$(check_shared_lib_adapter_agnostic "$FIX")"
+  rm -rf "$FIX"
+fi
+
+if should_run "selftest/shared_lib_adapter_agnostic ignores an adapter name in a comment"; then
+  name="selftest/shared_lib_adapter_agnostic ignores an adapter name in a comment"
+  _fixture
+  printf '#!/usr/bin/env bash\n# callers pass codex/claude/opencode/grok data in; this lib stays generic\nrun_with "$@"\n' \
+    > "$FIX/runtime/lib/dispatch-common.sh"
+  _expect_clean "$name" "$(check_shared_lib_adapter_agnostic "$FIX")"
   rm -rf "$FIX"
 fi
 

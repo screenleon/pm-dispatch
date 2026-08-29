@@ -113,7 +113,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-574 | ✅ done | `tests/shell/test-run-all-tests.sh` 手抄一份 `SUITE_NAMES`（~106 筆）與 `suite_path()` case（~106 筆），與權威的 `tests/lib/test-suite-runner.sh` `SUITE_NAMES`／`SUITE_PATHS` 平行維護——新套件要同時改兩處，漏改則 `known-suite-count` 紅（[[suite-registry-mirror]]；本 session CC-538／CC-536 各踩一次）。改為 meta-test 開場 awk-parse 權威 registry 推導出自己的 list，移除鏡像；lint.yml 的 per-suite job 由 `lint-test-suite-registry.sh` 交叉檢查、非靜默漂移鏡像，不在本票範圍 | ops/test | 2026-08-28 | pr:#550 | P3 | hygiene |
 | CC-575 | 🟢 someday | test-governance Batch 1 存量遷移：把其餘 ~35 處 `pass "$name (... unavailable ...)"`（多在 `test-doctor.sh` 的 jq guard、也有 `test-core-schemas`／`test-install`／`test-pmctl-memory`／`test-runtime-lib-coverage` 的 `UNAVAILABLE:` 裸行）改用 case-level `skip()`。primitive 與 authoritative gate 已於 pr:#<TBD> 落地並遷移 6 個代表站點；本票只做剩餘機械遷移，不再動 harness/runner/schema | ops/test | 2026-08-28 | — | P3 | hygiene |
 | CC-576 | 🔵 active | 測試成本重新規劃（實測基線）：全套 10,764 CPU-s／110 suite，`test-pr-gate` 4 shard 佔 49.1%、top-10 佔 72%、其餘 85 個 suite 只佔 6.1%。成本不是「測試太多」也不是「斷言劣質」（290 case 只有 9 個純文字斷言），而是 243 個 case 每個都 spawn 一次真的 `pr-gate.sh`（uncontended 實測 mean 8.2s／p90 18s）。唯一會複利的槓桿是把行為從 integration 層（8.2s/case）搬到 unit 層（`test-gate-protocol` 實測 0.12s/case，68×），也就是續拆 `pr-gate.sh` 時**同時搬測試**；已辨識 57 個可搬 case（pre-dispatch policy 29 + brief-composition 28）。本票只定基線、判準與順序，不含實作 | ops/test | 2026-08-29 | — | P2 | design |
-| CC-577 | 🔵 active | 4 個「lint 規則穿測試外衣」的 case 退場：`test-pmctl-memory.sh` 的 `case_memory_shared_readers_avoid_bash_43_namerefs`（grep 3 個硬編檔禁 `local -n`）、`test-dispatch-common.sh` 的 `case_dispatch_common_no_adapter_name_in_code`（grep 禁 adapter 字面值）、`test-host-manifest.sh:596`（grep `doctor.sh` 格式字串）、`test-e2e-script.sh` 的 `test_phase_c_commits_context_ignore`（斷言腳本內文含某行而非跑它）。全語料掃描確認只有這 4 個是真 proxy（另 12 處讀 production 檔的斷言都合法）。搬進 `test-layer-boundaries.sh`（既有「掃 ROOT + fixture 種違規」模式、全套 1 秒）：規則從「查 3 個硬編檔」變「掃整棵樹」覆蓋變強；e2e 那個改真跑再驗檔。買到的是先例與覆蓋強度，不是時間（4 case 省不到 5s）。是 [[CC-576]] Req 2「測試層級判準」的示範案例 | ops/test | 2026-08-29 | — | P3 | hygiene |
+| CC-577 | ✅ done | lint 規則穿測試外衣的 case 退場（評估 4 個、搬 2 個、留 2 個）：`test-pmctl-memory.sh` 的 `case_memory_shared_readers_avoid_bash_43_namerefs`（grep 3 個硬編檔禁 `local -n`）、`test-dispatch-common.sh` 的 `case_dispatch_common_no_adapter_name_in_code`（grep 禁 adapter 字面值）、`test-host-manifest.sh:596`（grep `doctor.sh` 格式字串）、`test-e2e-script.sh` 的 `test_phase_c_commits_context_ignore`（斷言腳本內文含某行而非跑它）。全語料掃描確認只有這 4 個是真 proxy（另 12 處讀 production 檔的斷言都合法）。搬進 `test-layer-boundaries.sh`（既有「掃 ROOT + fixture 種違規」模式、全套 1 秒）：規則從「查 3 個硬編檔」變「掃整棵樹」覆蓋變強；e2e 那個改真跑再驗檔。買到的是先例與覆蓋強度，不是時間（4 case 省不到 5s）。是 [[CC-576]] Req 2「測試層級判準」的示範案例 | ops/test | 2026-08-29 | pr:#559 | P3 | hygiene |
 
 ---
 
@@ -3864,7 +3864,7 @@ ship.md／QA 規則且下一個 pr-gate 相關 PR 實際被它導引到 lib 層�
 
 ---
 
-## CC-577 — lint-規則穿測試外衣的 case 退場（搬到 layer-boundaries） 🔵 active
+## CC-577 — lint-規則穿測試外衣的 case 退場（搬到 layer-boundaries） ✅ 2026-08-29
 
 **Problem**: 全測試語料掃描後，唯一符合「proxy test 應退場」判準的是 4 個
 case——它們是 **lint 規則穿著測試的外衣**：只在有人跑那個 suite 時才檢查、只涵蓋
@@ -3910,6 +3910,13 @@ case——它們是 **lint 規則穿著測試的外衣**：只在有人跑那個
 
 **驗收方式**: 4 個 case 從原 suite 消失、對應規則在 `test-layer-boundaries.sh` 且
 其 fixture 違規測試會響；全套 case 數淨 −4，`test-layer-boundaries` 仍 <2s。
+
+**Update 2026-08-29（已交付，pr:#559）**：實作時把 4 → **2 個真搬、2 個評估後留原地**。
+- **搬**：#1 nameref、#2 adapter 字面值 → `check_shared_lib_no_namerefs`（掃 `runtime/lib`+`runtime/hooks` 整棵樹）、`check_shared_lib_adapter_agnostic`（讀 `ADAPTER_AGNOSTIC_LIBS` 陣列，一行可擴充）。兩者進 `ALL_CHECKS`、帶 fires + 誤報守門 self-test。`test-layer-boundaries` 41 passed / <2s；`test-pmctl-memory` −1、`test-dispatch-common` −1。
+- **留**：#3 `test-host-manifest.sh:596` 是 doc↔code 一致性斷言，`test-layer-boundaries` 裝不下、強化成解析 `emit_capability` 對 P3 不成比例；#4 `test_phase_c_commits_context_ignore` 守的行為只有**未進自動化套件**的 `test-e2e.sh` 會跑，「真跑再驗檔」＝跑整個 live e2e，不可行，source-shape 是務實選擇。
+- **Gate 教訓**：round 1 NO-GO（qa hard block）——搬過來的 nameref regex 只檢查第一個 flag cluster，漏掉 split-option `local -r -n`（這個洞是從被刪的舊 case 繼承來的；搬成整棵樹 ratchet 是修它的時機）。round 2（sequential）GO。
+
+**See**: pr:#559（`check_shared_lib_no_namerefs` / `check_shared_lib_adapter_agnostic` 進 `test-layer-boundaries.sh`；`test-pmctl-memory` / `test-dispatch-common` 各刪 1 case）。
 
 **Cross-link**: [[CC-576]]（Req 2 的示範案例）、[[CC-554]]（准入門檻——管「該不該
 有」；本票管「該在哪一層」）、memory `test-governance-batches-plan`（Batch 2 曾點名

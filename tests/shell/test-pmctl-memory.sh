@@ -3045,27 +3045,9 @@ case_memory_escapers_preserve_embedded_newlines() {
   pass "$name"
 }
 
-# Behavior: the shared memory readers on the prompt hook's path declare no bash 4.3 namerefs.
-# Steps: scan memory.sh, pmctl-memory.sh, and guard-inject-memory.sh; grep for nameref declarations; fail naming the offending file if any is found.
-case_memory_shared_readers_avoid_bash_43_namerefs() {
-  local name="memory shared readers: no bash-4.3 namerefs in the hook's library path"
-  should_run "$name" || return 0
-
-  # memory_usage_load originally took caller-named arrays via `local -n`, which
-  # requires bash 4.3 and would have been this repo's only such dependency —
-  # in a shared library sourced by the prompt hook. Pin the decision so it
-  # cannot creep back in unnoticed.
-  local f
-  for f in "$REPO_ROOT/runtime/lib/memory.sh" \
-           "$REPO_ROOT/runtime/lib/pmctl-memory.sh" \
-           "$REPO_ROOT/runtime/hooks/guard-inject-memory.sh"; do
-    if grep -nE '(local|declare|typeset)[[:space:]]+(-[A-Za-z]*n[A-Za-z]*)[[:space:]]' "$f" >/dev/null 2>&1; then
-      fail "$name" "nameref declaration found in $f: $(grep -nE '(local|declare|typeset)[[:space:]]+-[A-Za-z]*n[A-Za-z]*[[:space:]]' "$f")"
-      return 0
-    fi
-  done
-  pass "$name"
-}
+# The "no bash-4.3 namerefs on the prompt hook's library path" structural rule
+# now lives in tests/shell/test-layer-boundaries.sh (check_shared_lib_no_namerefs),
+# where it scans all of runtime/lib + runtime/hooks instead of three named files.
 
 # Behavior: an option-like operand is treated as a missing value rather than a path.
 # Steps: run stats with --repo-root --json then --never-hit-limit --json; assert exit 2 and the requires-a-value diagnostic for each.
@@ -4411,7 +4393,6 @@ case_memory_stats_invalid_env_selection_fails_closed
 case_memory_stats_invalid_config_selection_fails_closed
 case_memory_stats_json_escapes_control_characters
 case_memory_stats_unreadable_sidecar_is_not_zero_activity
-case_memory_shared_readers_avoid_bash_43_namerefs
 case_memory_escapers_preserve_embedded_newlines
 case_memory_escapers_reject_illegal_utf8
 case_memory_stats_oversized_counter_degrades
