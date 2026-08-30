@@ -82,6 +82,24 @@ test_wikilink_inside_inline_code_passes() {
   want_pass "$name" "$root"
 }
 
+test_wikilink_inside_double_backtick_span_passes() {
+  local name="a [[slug]] inside a double-backtick inline span is ignored"
+  should_run "$name" || return 0
+  local root; root="$(fixture "$name")"
+  # shellcheck disable=SC2016  # literal backticks are markdown fixture content
+  printf '# B\n\nthe old ``[[suite-registry-mirror]]`` note was renamed.\n' > "$root/BACKLOG.md"
+  want_pass "$name" "$root"
+}
+
+test_double_backtick_span_with_inner_backtick_passes() {
+  local name="a double-backtick span containing a literal backtick still suppresses a [[slug]]"
+  should_run "$name" || return 0
+  local root; root="$(fixture "$name")"
+  # shellcheck disable=SC2016  # literal backticks are markdown fixture content
+  printf '# B\n\nsee ``a `x` and [[example]]`` in one span.\n' > "$root/BACKLOG.md"
+  want_pass "$name" "$root"
+}
+
 test_wikilink_inside_fenced_block_passes() {
   local name="a [[ ]] bash test inside a fenced block is ignored"
   should_run "$name" || return 0
@@ -132,6 +150,8 @@ test_bare_wikilink_in_docs_fails
 test_ticket_ref_passes
 test_markdown_link_passes
 test_wikilink_inside_inline_code_passes
+test_wikilink_inside_double_backtick_span_passes
+test_double_backtick_span_with_inner_backtick_passes
 test_wikilink_inside_fenced_block_passes
 test_indented_fence_is_recognised
 test_regex_class_inside_code_passes

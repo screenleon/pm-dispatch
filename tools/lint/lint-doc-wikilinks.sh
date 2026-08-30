@@ -50,9 +50,10 @@ for rel in "${files[@]}"; do
       in_fence=$((1 - in_fence)); continue
     fi
     [[ "$in_fence" -eq 1 ]] && continue
-    # drop inline `code spans` before scanning
+    # drop inline code spans before scanning -- double-backtick spans first
+    # (they may contain a literal single backtick), then single-backtick spans.
     # shellcheck disable=SC2016  # the backticks in the sed pattern are literal
-    stripped="$(printf '%s' "$line" | sed 's/`[^`]*`//g')"
+    stripped="$(printf '%s' "$line" | sed -E 's/``([^`]|`[^`])*``//g; s/`[^`]*`//g')"
     [[ "$stripped" == *'[['* ]] || continue
     while [[ "$stripped" =~ \[\[([^][]+)\]\] ]]; do
       target="${BASH_REMATCH[1]}"
