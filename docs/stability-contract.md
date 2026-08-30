@@ -81,18 +81,26 @@ the consumer; external tooling must not parse them.
 3. **Remove** in a later release; a Stable-CLI removal additionally requires a
    MAJOR bump.
 
-**Invariant:** every deprecation marker in the project names a removal or
-retirement version, or is a compat surface with a named owner and a drift check.
-Two enforcers keep this true:
+**Invariant:** every deprecation marker in the project either names a removal or
+retirement version, or is a governed compat surface. Two enforcers keep this
+true:
 
 - `tools/lint/lint-deprecation-sunset.sh` — scans the docs deprecation banners,
-  `core/schema/*.schema.json` `deprecated` keywords, and `cli/commands.tsv`
-  `stability = deprecated` rows; each must name a `vX.Y[.Z]` version or be listed
-  in `tools/lint/deprecation-sunset-allowlist.tsv` with a reason.
+  `core/schema/*.schema.json` `deprecated: true` keywords, and `cli/commands.tsv`
+  `stability = deprecated` rows. Each marker is checked on its own: it must name a
+  `vX.Y[.Z]` version, or its surface path must be listed in
+  `tools/lint/deprecation-sunset-allowlist.tsv` with a non-empty reason. The
+  allowlist is a **deliberately narrow, review-visible** exemption — one row per
+  surface, its reason a human call scrutinised in the PR that adds it, and the
+  lint rejects a row whose surface has no undated marker (the exemption would be
+  doing nothing). It is not a machine-validated owner/drift-check registry; a
+  surface that needs that stronger guarantee belongs under a ratchet like the
+  next bullet, not the allowlist.
 - `tools/lint/lint-script-domain-inventory.sh` — the CC-489 ratchet that owns the
   `scripts/*.sh` path shims (see *Retained compatibility* below): every shim has a
   declared owner, a canonical target, and an executable-target check in
-  `docs/architecture/script-domain-inventory.tsv`.
+  `docs/architecture/script-domain-inventory.tsv`. These shims are not in
+  `lint-deprecation-sunset.sh`'s scan and never appear in its allowlist.
 
 `tools/lint/lint-pmctl-commands.sh` additionally enforces the CLI-tier vocabulary
 and the stable-read `--json` rule.

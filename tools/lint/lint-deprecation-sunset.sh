@@ -19,8 +19,11 @@
 #   - a version token  v<major>.<minor>[.<patch>]  appears on the marker's own
 #     line (surfaces 1 and 3) or within three lines of it (surface 2), OR
 #   - the surface path is listed in tools/lint/deprecation-sunset-allowlist.tsv
-#     (path <TAB> reason) -- a whole-surface escape hatch for a compat surface
-#     deliberately retained with no planned removal date.
+#     (path <TAB> reason) -- a deliberately narrow, review-visible escape hatch
+#     for a compat surface retained with no planned removal date. The reason is
+#     a human call scrutinised in the PR that adds the row; this file is NOT a
+#     machine-validated owner/drift-check registry (a surface needing that
+#     belongs under a ratchet like lint-script-domain-inventory.sh).
 # An allowlist entry for a path whose every marker already names a version is
 # itself an error: the allowlist covers only the undated case.
 #
