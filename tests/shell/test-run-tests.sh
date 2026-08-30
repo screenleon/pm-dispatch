@@ -386,6 +386,23 @@ case_operational_docs_map_to_stale_reference_lint() {
   fi
 }
 
+# Behavior: every file that lint-doc-wikilinks.sh scans (README.md, BACKLOG.md,
+# a top-level docs/*.md) selects that lint during iteration planning.
+case_reader_docs_map_to_wikilink_lint() {
+  local name=reader-docs-map-to-wikilink-lint repo out status p
+  repo="$(make_fixture "$name")"
+  for p in README.md BACKLOG.md docs/dispatch-brief.md \
+           tools/lint/lint-doc-wikilinks.sh tests/shell/test-lint-doc-wikilinks.sh; do
+    status=0
+    out=$(RUN_TESTS_ARGS_LOG="$TMP_ROOT/$name.args" \
+      "$repo/tests/bin/run-tests.sh" --path "$p" --list 2>&1) || status=$?
+    if [[ "$status" -ne 0 || "$out" != *"lint-doc-wikilinks"* || "$out" == *"coverage gaps"* ]]; then
+      fail "$name" "--path $p: status=$status out=$out"; return
+    fi
+  done
+  pass "$name"
+}
+
 case_gitignore_maps_to_setup_project() {
   local name=gitignore-maps-to-setup-project repo out status=0 args
   args="$TMP_ROOT/$name.args"
@@ -869,6 +886,7 @@ case_docs_mapping_list_only
 case_planning_docs_map_to_status_consistency_suite
 case_admission_lint_paths_map_to_meta_suite
 case_operational_docs_map_to_stale_reference_lint
+case_reader_docs_map_to_wikilink_lint
 case_gitignore_maps_to_setup_project
 case_agent_mapping_uses_registered_frontmatter_suite
 case_command_mapping_uses_registered_frontmatter_suite
