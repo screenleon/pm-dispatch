@@ -49,7 +49,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-018 | 🟢 someday | Codex quota 自動追蹤 + rate-limit 路徑統一（吸收 CC-269）：寫到 `~/.local/share/pm-dispatch/state/rate-limits.json`；解析 API response headers；token-usage.sh 加 Codex pool 顯示 | ux/token | 2026-05-14 | — | P3 | — |
 | CC-023 | ⏸ deferred | `coupling-reviewer`：PR gate 加入語言感知耦合分析（dependency-cruiser/gocyclo/coca） | ops/gate | 2026-05-14 | — | — | — |
 | CC-026 | 🟢 someday | `/skill-distill`：偵測重複工作流，產出草稿 skill .md | ux/memory | 2026-05-15 | — | P3 | — |
-| CC-032 | 🔵 active | `[[feedback_*]]` cross-link 公開化：抽到 `docs/policies/` glossary 避免 dead link（v1.0 前置；v0.12.0 contract candidate） | process/DX | 2026-05-15 | — | P2 | — |
+| CC-032 | ✅ done | 私有 memory cross-link 公開化：使用者面向 doc 3 處 inline 展開、規劃紀錄 ~24 處 `[[slug]]` 改 backtick／正規 link、新 `lint-doc-wikilinks.sh` CI enforce（v0.12.0 contract candidate） | process/DX | 2026-05-15 | — | P2 | — |
 | CC-033 | 🔵 active | public posture reconciliation：README/協作表面 + **即刻** git history 損害盤點（audit 先行；其餘 v0.12.0） | process | 2026-05-15 | — | P2 | — |
 | CC-035 | 🟢 someday | install/uninstall-guards basename+scripts/ heuristic：未覆蓋另一工具也在 scripts/ 下同名 hook 的 collision edge case | ops | 2026-05-15 | pr:#53 | P3 | — |
 | CC-038 | ⏸ deferred | Windows/cross-platform 鎖機制：`flock` Linux-only，未來支援需替代方案（parked: CC-370） | ops/portability | 2026-05-15 | — | — | oss |
@@ -110,7 +110,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-571 | ✅ done | `_ctx_fts_rebuild`／`_ctx_index_file` 共用的 sqlite atomic-script 缺口：DROP+CREATE+INSERT 未加 `-bail`（實測 sqlite3 CLI 預設不會在錯誤時中止，單靠 BEGIN/COMMIT 不足）、呼叫端不檢查回傳值、`_ctx_index_file` 還有第三個獨立 bug（`rm -f` 蓋掉 sqlite3 真實 exit code）；`/simplify` altitude review 抓到手足函式同缺陷，範圍已擴大涵蓋兩者（[[CC-548]] spike 的 Open risks 側面發現，非本票 tokenizer 範圍） | memory/ops | 2026-08-26 | pr:#539 | P2 | hygiene |
 | CC-572 | ✅ done | pr-gate synthesis retry（sequential／parallel 兩條路徑）留下已存在但 0 bytes 的 `$OUTPUT_FILE`，executor 的 patch 工具仍可能選擇 Update File 而非 Add File 語意，對空內容找不到 context line 而崩潰（`apply_patch verification failed`）；CC-571 gate saga 連續四輪協定失敗實測發現（2026-08-26） | gate/ops | 2026-08-26 | pr:#541 | P2 | hygiene |
 | CC-573 | ✅ done | `pmctl run-stats` 每個事件行 fork 一個 jq（`pmctl_run_stats_extract_line`），與 [[CC-364]] 修掉前的 `trace tail` 同形狀。實測 jq 呼叫 N+2、~34ms/event，真實 6642 行 `events.jsonl` 時 `run-stats --json` 前景 2 分鐘 timeout。改為單次 `jq -R` 串流 over 串接的 archive+active：jq 呼叫 102/302/902 → 2/2/2、牆鐘 3-30s → 0.19s 打平、輸出對 origin/main 逐位元組相同。archive+active 串接 idiom 與 `pmctl-trace.sh` 重複 ~12 行，兩 consumer 下不抽、file header 記錄理由 | ops | 2026-08-27 | pr:#547 | P2 | hygiene |
-| CC-574 | ✅ done | `tests/shell/test-run-all-tests.sh` 手抄一份 `SUITE_NAMES`（~106 筆）與 `suite_path()` case（~106 筆），與權威的 `tests/lib/test-suite-runner.sh` `SUITE_NAMES`／`SUITE_PATHS` 平行維護——新套件要同時改兩處，漏改則 `known-suite-count` 紅（[[suite-registry-mirror]]；本 session CC-538／CC-536 各踩一次）。改為 meta-test 開場 awk-parse 權威 registry 推導出自己的 list，移除鏡像；lint.yml 的 per-suite job 由 `lint-test-suite-registry.sh` 交叉檢查、非靜默漂移鏡像，不在本票範圍 | ops/test | 2026-08-28 | pr:#550 | P3 | hygiene |
+| CC-574 | ✅ done | `tests/shell/test-run-all-tests.sh` 手抄一份 `SUITE_NAMES`（~106 筆）與 `suite_path()` case（~106 筆），與權威的 `tests/lib/test-suite-runner.sh` `SUITE_NAMES`／`SUITE_PATHS` 平行維護——新套件要同時改兩處，漏改則 `known-suite-count` 紅（`suite-registry-mirror`；本 session CC-538／CC-536 各踩一次）。改為 meta-test 開場 awk-parse 權威 registry 推導出自己的 list，移除鏡像；lint.yml 的 per-suite job 由 `lint-test-suite-registry.sh` 交叉檢查、非靜默漂移鏡像，不在本票範圍 | ops/test | 2026-08-28 | pr:#550 | P3 | hygiene |
 | CC-575 | 🟢 someday | test-governance Batch 1 存量遷移：把其餘 ~35 處 `pass "$name (... unavailable ...)"`（多在 `test-doctor.sh` 的 jq guard、也有 `test-core-schemas`／`test-install`／`test-pmctl-memory`／`test-runtime-lib-coverage` 的 `UNAVAILABLE:` 裸行）改用 case-level `skip()`。primitive 與 authoritative gate 已於 pr:#<TBD> 落地並遷移 6 個代表站點；本票只做剩餘機械遷移，不再動 harness/runner/schema | ops/test | 2026-08-28 | — | P3 | hygiene |
 | CC-576 | ✅ done | 測試成本重新規劃（實測基線）：全套 10,764 CPU-s／110 suite，`test-pr-gate` 4 shard 佔 49.1%、top-10 佔 72%、其餘 85 個 suite 只佔 6.1%。成本不是「測試太多」也不是「斷言劣質」（290 case 只有 9 個純文字斷言），而是 243 個 case 每個都 spawn 一次真的 `pr-gate.sh`（uncontended 實測 mean 8.2s／p90 18s）。唯一會複利的槓桿是把行為從 integration 層（8.2s/case）搬到 unit 層（`test-gate-protocol` 實測 0.12s/case，68×），也就是續拆 `pr-gate.sh` 時**同時搬測試**；已辨識 57 個可搬 case（pre-dispatch policy 29 + brief-composition 28）。本票只定基線、判準與順序，不含實作 | ops/test | 2026-08-29 | pr:#560 | P2 | design |
 | CC-577 | ✅ done | lint 規則穿測試外衣的 case 退場（評估 4 個、搬 2 個、留 2 個）：`test-pmctl-memory.sh` 的 `case_memory_shared_readers_avoid_bash_43_namerefs`（grep 3 個硬編檔禁 `local -n`）、`test-dispatch-common.sh` 的 `case_dispatch_common_no_adapter_name_in_code`（grep 禁 adapter 字面值）、`test-host-manifest.sh:596`（grep `doctor.sh` 格式字串）、`test-e2e-script.sh` 的 `test_phase_c_commits_context_ignore`（斷言腳本內文含某行而非跑它）。全語料掃描確認只有這 4 個是真 proxy（另 12 處讀 production 檔的斷言都合法）。搬進 `test-layer-boundaries.sh`（既有「掃 ROOT + fixture 種違規」模式、全套 1 秒）：規則從「查 3 個硬編檔」變「掃整棵樹」覆蓋變強；e2e 那個改真跑再驗檔。買到的是先例與覆蓋強度，不是時間（4 case 省不到 5s）。是 [[CC-576]] Req 2「測試層級判準」的示範案例 | ops/test | 2026-08-29 | pr:#559 | P3 | hygiene |
@@ -499,14 +499,14 @@ pr:#530 落地；其後三次觀察窗讀數各自出貨了對應補救（pr:#49
 Step 4 樣板欄位、pr:#555 CI enforcer）。本票的「觀察 N 個 PR 看是否復發」驗收條款
 在補救變成硬性 CI gate 後即失去意義——復發已被結構阻擋，不再是「觀察合規漂移」。
 任何「enforcer 是否校準過頭／不足」的疑慮屬另立窄票，不在本票 scope。A（因 finding
-新增的永久阻擋 case）在 [[lint-permanent-test-admissions-shipped]] 起可由 CI 直接量測。
+新增的永久阻擋 case）在 `lint-permanent-test-admissions-shipped` 起可由 CI 直接量測。
 
 「測試**退場**機制」（既有測試何時該合併／刪除的對稱另一半，見 memory
 `next-phase-complexity-economics-direction`）是獨立概念，若要做另立票，不是本票續命理由。
 
 **See**: pr:#490（Req 1，准入條件）、pr:#530（Req 2/3，ship.md）、pr:#499／pr:#544／
-pr:#555（三次讀數的補救）、[[cc554-admission-template-slot-shipped]]、
-[[lint-permanent-test-admissions-shipped]]。
+pr:#555（三次讀數的補救）、`cc554-admission-template-slot-shipped`、
+`lint-permanent-test-admissions-shipped`。
 
 **Cross-link**: [[CC-467]]（觸發實例）、[[CC-544]]（輪數上限的反證）、
 [[CC-537]]（suite manifest，維持 someday）。後續批次見 memory
@@ -572,7 +572,7 @@ tokenizer 行為「視為與共用 lib 分離的關注點，允許各自的修�
 
 **Requirement**:
 1. Spike：確認 `tokenize='trigram'` 所需的 sqlite 版本下限，以及該下限對
-   [[docs/platform-support.md]] 宣稱的支援平台是否可接受（含無 trigram 時的降級路徑）。
+   [docs/platform-support.md](docs/platform-support.md) 宣稱的支援平台是否可接受（含無 trigram 時的降級路徑）。
 2. Spike：量測既有 `context.db` 重建索引的成本與相容性影響（schema 版本、遷移是否
    可省略而直接重建、重建期間的查詢行為）。
 3. Spike 產出 `docs/spikes/CC-548.md` 的 GREEN/AMBER/RED 判定；只有判定為值得做時
@@ -785,18 +785,17 @@ fix → regression test）、明確聲明「不執行 state transition、不繞�
 只有它產出的草稿檔案位置需照此調整。
 **Source**: 2026-05-15 對話討論 Hermes Agent self-improvement loop 與 pm-dispatch 的 gap 分析。
 
-## CC-032 — `[[feedback_*]]` cross-link 公開化（dead-link 防護）
+## CC-032 — 私有 memory cross-link 公開化（dead-link 防護）✅ 2026-08-31
 
-**Problem**: BACKLOG.md（含本次 CC-025..CC-030 新條目）多處引用 `[[feedback_undocumented_harness_payload]]`、`[[feedback_known_bug_backlog]]`、`[[feedback_codex_routing]]`、`[[routing_log]]` 等 — 這些 memory 檔**不在 repo 內**（在 `~/.claude/projects/<proj>/memory/`，純本地）。轉公開後，外部讀者點不開、不知道內容、cross-link 形同 dead link。
-**Why**: 公開要兼容「沒有 user memory 的讀者」。兩條路：(a) 把這些 feedback rules 中真正屬於 repo 政策的部分抽到 `docs/policies/*.md` 並改 link 指向新位置；(b) 在每次第一次引用時 inline 引述兩三行。前者乾淨且可被 search engine 索引、後者侵入度低但容易過時。建議 (a)，配合 schema 規則：所有 BACKLOG 條目的 `[[name]]` 必須對應 `docs/policies/<name>.md` 存在。
-**Requirement**:
-1. 盤點所有 BACKLOG.md / docs/ 中 `[[feedback_*]]` 與 `[[*_log]]` 出現位置。
-2. 把屬於「repo 適用政策」（非個人偏好）的 rule 抽寫至 `docs/policies/<slug>.md`，每篇含：摘要、原因、實作守則、reference。
-3. 更新所有 `[[name]]` 改為 `[docs/policies/<slug>.md](docs/policies/<slug>.md)` 或 `[[<slug>]]`（若決定保留 wikilink 風格、配合 CC-030 validator 擴充驗證 link target 存在）。
-4. 個人偏好類 feedback memory（不適合公開）留 local memory 不對外。
-**Note**: 與 CC-030 schema validator 設計協同 — 可同 PR 加上「`[[name]]` link target 必須存在」的 validation。Blocks **CC-033**。
-**Update 2026-07-30**: 排入 v0.12.0 public contract candidate（尚非 v1.0 RC）。repo 已為 public，本票的 link-target validator 綠燈為未來 stable release 的 hard constraint。
-**Source**: 2026-05-15 對話 — 公開前置盤點 #3（Explore 未抓到的盲點）。
+**交付**：repo 文件裡指向本地 `~/.claude/.../memory/` 的 `[[slug]]` wikilink 對公開讀者是 dead link。實作時發現票的前提已過時——被引用的 `feedback_*` memory 檔多半在 2026-05-15 後的 memory 重組中已不存在（對維護者自己也早是 dead link），故不走原「抽到 `docs/policies/` glossary」路線。
+
+1. **使用者面向 doc（3 處，inline 展開）**：`docs/dispatch-brief.md` 的 `feedback_codex_dispatch_lifecycle_leak`／`feedback_codex_dispatch_foreground` 兩處（原文緊接的句子已把內容寫出，ref 是贅字）；`docs/memory-system.md` 的 `env-var-ambient-leak-into-fixtures` 一處。
+2. **規劃紀錄（BACKLOG／MILESTONES／DECISIONS，~24 處）**：指向 repo 檔的 `[[memory-system.md]]`／`[[docs/platform-support.md]]` 改成正規 `[text](path)` link；其餘 `[[memory-slug]]` 去掉 `[[ ]]` 改成 backtick 名稱（`` `suite-registry-mirror` `` 等）——移除 dead-link affordance、保留維護者可辨識的引用名。
+3. **`docs/spikes/`／`docs/audits/`／`docs/architecture/` 不動**——時點快照、不維護。
+4. **`tools/lint/lint-doc-wikilinks.sh`（新）**：掃 `BACKLOG.md`／`MILESTONES.md`／`DECISIONS.md`／`README.md`／`CONTRIBUTING.md`／`docs/*.md`（排除上述三個子目錄），跳過 fenced code 與 inline code span，任何非 `[[CC-NNN]]` 的 `[[...]]` → fail。CI enforce，防回歸。
+
+**Source**: 2026-05-15 對話 — 公開前置盤點 #3。CC-030（原「schema validator 協同」）與 CC-031 均已不在 backlog。
+**See**: `tools/lint/lint-doc-wikilinks.sh` + `tests/shell/test-lint-doc-wikilinks.sh`；`docs/dispatch-brief.md`、`docs/memory-system.md`、BACKLOG／MILESTONES／DECISIONS 的 `[[...]]` 清理。
 
 ## CC-033 — Public flip checklist 與後續觀察
 
@@ -864,10 +863,10 @@ someday → active，P3 → P2。
    - deep playbook（`rules/global` + `rules/domain` 或跨 repo playbook refs）：mechanical edit **最低 900s**；judgment-heavy（editorial / schema）1500s+
 2. brief context 加可選短路 clause 模板：`"Constraints captured in this brief; do NOT re-read AGENTS.md / rules/ / playbook docs"` — 對 self-contained brief + mechanical edit 直接砍 5–10 個 read 命令。需在 `docs/dispatch-brief.md` 給範例。
 3. （可選 / 第二階段）`adapters/codex/dispatch.sh` 啟動時偵測 `<working_dir>/rules/` 或 `<working_dir>/AGENTS.md` 存在且 `--timeout < 900` 時 emit stderr WARNING（不阻擋），surface author 設置錯誤於 SIGKILL 之前。
-4. 觀察 N≥2 次 cross-session 重現後，promote 為 `feedback_brief_timeout_playbook_depth` memory（[[known-bug backlog rule]] + [[Codex routing preferences]] 衍生）。
+4. 觀察 N≥2 次 cross-session 重現後，promote 為 `feedback_brief_timeout_playbook_depth` memory（`known-bug backlog rule` + `Codex routing preferences` 衍生）。
 **Source**: 2026-05-16 cross-session diagnostic — deep-playbook target repo dispatch exit 124 with 240s timeout, trace `.agent-trace/codex-20260516-193626-47431.jsonl`。
 **Note**: 立即 workaround 是 brief author 對 deep playbook repo 預設 timeout=1500s；本條 ticket 是把這條 workaround 升級為文件化規則 + 可選 wrapper-side warning。
-**Cross-link**: [[Codex routing preferences]] 路由表 / [[known-bug backlog rule]] 補登原則。
+**Cross-link**: `Codex routing preferences` 路由表 / `known-bug backlog rule` 補登原則。
 
 ## CC-054 — CC-025 M2 `/skill-refine` diff generation（deferred）
 
@@ -1126,12 +1125,12 @@ Candidate follow-on tooling: `tools/spikes/spike-validate.sh` (mirror `handover-
 **Acceptance**:
 - `docs/spikes/cc209-codegraph-phase2.md` (or appended `## Phase 2` to phase1 doc) exists with 3 query benchmarks + verdict.
 - Phase 2 brief commits to `test_target:` field per CC-255 template.
-- Main-thread validation section appended per `[[feedback_spike_validation_mandatory]]`.
+- Main-thread validation section appended per ``feedback_spike_validation_mandatory``.
 - BACKLOG CC-209 row flipped to `✅ closed` with final verdict after Phase 2 lands.
 
 **Priority**: P3 — feeds CC-232 / CC-237 design, not blocking other work.
 
-**Cross-link**: CC-209 (Phase 1 origin), `docs/spikes/cc209-codegraph-phase1.md`, CC-255 (template improvements this depends on), CC-232 (context-pack consumer), CC-237 (enricher consumer), `[[feedback_spike_validation_mandatory]]`.
+**Cross-link**: CC-209 (Phase 1 origin), `docs/spikes/cc209-codegraph-phase1.md`, CC-255 (template improvements this depends on), CC-232 (context-pack consumer), CC-237 (enricher consumer), ``feedback_spike_validation_mandatory``.
 
 ## CC-259 — yaml.sh lib extraction（someday）
 
@@ -3275,14 +3274,14 @@ hook 是使用者唯一記憶管道的前提下訂的，並未把 Claude 端已�
 的 `codex_memory_contract_append` 寫進 `AGENTS.md` 的 marker 區塊只是約
 20 行固定操作指令，不含 `MEMORY.md` 的實際內容——所以不能單純調降全域常數，
 那會犧牲 Codex 的召回完整度去換 Claude 的省錢。詳細分析與量測方法見
-[[memory-system.md]] 的 “Per-prompt token cost” 與 “Double-injection on
+[docs/memory-system.md](docs/memory-system.md) 的 “Per-prompt token cost” 與 “Double-injection on
 Claude” 兩節。
 
 **Requirement**:
 1. 給 `guard-inject-memory.sh` 一個顯式、非環境變數的 per-host 預算入口——例如
    由各 host 的 install-guards 腳本在 wiring 時，以 CLI 參數（而非 ambient env
    var）傳入。`lib/memory.sh` 現有註解已明確排除 env override，理由是避免
-   [[env-var-ambient-leak-into-fixtures]] 那類問題重演，本票必須沿用同一原則。
+   `env-var-ambient-leak-into-fixtures` 那類問題重演，本票必須沿用同一原則。
 2. `hosts/claude/bin/install-guards.sh` 寫入的 hook command 帶一個較低的
    Claude 專屬預算（初始提案：1500 bytes / 10 筆，實際數字待 Requirement 3
    的量測結果決定，不預先鎖死）；`hosts/codex/bin/install.sh` 維持現行
@@ -3310,8 +3309,8 @@ host 各自的 install/uninstall 測試全過。
 設計原則；不處理 Grok／OpenCode——兩者目前連 `UserPromptSubmit` hook 都未掛
 （`host.yaml` 宣告 `hook_surface: {}`），不受本票描述的雙重注入問題影響。
 
-**Dependencies**: 沿用 [[memory-system.md]] Per-prompt token cost 與 Native
-memory 表格的實測數據；避開 [[env-var-ambient-leak-into-fixtures]] 的教訓；
+**Dependencies**: 沿用 [docs/memory-system.md](docs/memory-system.md) Per-prompt token cost 與 Native
+memory 表格的實測數據；避開 `env-var-ambient-leak-into-fixtures` 的教訓；
 與 [[CC-467]]（injection ranking 鑑別力）正交，不重疊。P2。
 
 **Shipped**：`guard-inject-memory.sh` 新增 `--host <name>`（以既有
@@ -3617,7 +3616,7 @@ codex 自己的 apply_patch 工具實作（不在本 repo 控制範圍）。
 `events.jsonl` 的**每一行**執行一次 `jq -r`（過濾 `kind` 是否 `^run\.`、抽出 7 個
 TSV 欄位）。掃描迴圈本身是純 bash（`mapfile -d $'\t'` + assoc array），沒有額外
 fork，但 jq 是逐行 spawn。與 [[CC-364]] 修掉前的 `pmctl trace tail` 是**同一個
-per-item subprocess 形狀**（見 [[per-item-subprocess-class]]）。
+per-item subprocess 形狀**（見 `per-item-subprocess-class`）。
 
 **Profile（2026-08-27，PATH jq wrapper 計數 + 牆鐘）**:
 
@@ -3658,7 +3657,7 @@ jq 呼叫 = N + 2（每事件一個 + 固定 2 個 setup/teardown）；牆鐘線
 不動 [[CC-358]] 的 `fallback_used` event 訊號本身。
 
 **Cross-link**: [[CC-364]]（同形狀的第一次修正，含 profiling 方法與 oracle 測試
-技巧）、[[per-item-subprocess-class]]。
+技巧）、`per-item-subprocess-class`。
 
 **Closure 2026-08-27 (pr:#547)**: 掃描階段改為單次 `jq -R` 串流 over 串接的
 archive+active 事件流。新 helper `pmctl_run_stats_filter_program`（heredoc jq
@@ -3710,7 +3709,7 @@ path-injection 面、round 2 每 rejection 類要獨立 mutation-sensitive case 
 分支），以及 `.github/workflows/lint.yml` 的 per-suite job。前兩者是**靜默漂移鏡像**
 ——漏改 `test-run-all-tests.sh` 那份，`known-suite-count` 這個 meta-test 才會紅，
 訊息指向 count 不對而非「你少改一處」。本 session CC-538 與 CC-536 新增套件時各踩
-一次（見 [[suite-registry-mirror]]）。`tools/lint/lint-test-suite-registry.sh` 已用
+一次（見 `suite-registry-mirror`）。`tools/lint/lint-test-suite-registry.sh` 已用
 awk parse `test-suite-runner.sh` 的兩個 block 做交叉驗證，證明該格式可穩定解析。
 
 **Why now**: 同一個坑一個 session 內踩兩次。成比例的修法是**移除鏡像**（讓
@@ -3741,7 +3740,7 @@ awk parse `test-suite-runner.sh` 的兩個 block 做交叉驗證，證明該格�
 （per-suite job 由 `lint-test-suite-registry.sh` 交叉檢查，不是靜默漂移鏡像）；
 不做 [[CC-537]] 的資料化 suite manifest。
 
-**Cross-link**: [[suite-registry-mirror]]、[[CC-537]]（更大的資料化提案，park）。
+**Cross-link**: `suite-registry-mirror`、[[CC-537]]（更大的資料化提案，park）。
 
 ---
 

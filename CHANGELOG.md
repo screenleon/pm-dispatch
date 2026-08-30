@@ -10,6 +10,21 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`tools/lint/lint-doc-wikilinks.sh` — CC-032 closed.** Reader-facing docs
+  (`BACKLOG.md`, `MILESTONES.md`, `DECISIONS.md`, `README.md`, `CONTRIBUTING.md`,
+  top-level `docs/*.md`) may no longer contain a bare `[[slug]]` wikilink other
+  than a `[[CC-NNN]]` ticket reference: a `[[slug]]` pointed at the maintainer's
+  private `~/.claude/.../memory/` and was a dead link for anyone reading the
+  repo. The lint skips fenced code blocks and inline code spans (bash `[[ ]]`
+  tests, regex `[[:class:]]`, deliberate examples). `docs/spikes/`,
+  `docs/audits/`, and `docs/architecture/` are point-in-time records and are not
+  scanned. Existing offenders were cleaned: the three reader-facing occurrences
+  in `docs/dispatch-brief.md` / `docs/memory-system.md` were expanded inline;
+  the ~24 in planning records were converted to `[text](path.md)` links (for
+  repo files) or backtick-quoted names (for maintainer memory concepts). Many of
+  the referenced `feedback_*` memories no longer exist after a memory
+  reorganisation, so nothing was extracted to a `docs/policies/` glossary.
+
 - **`tools/lint/lint-deprecation-sunset.sh` — CC-446 closed (Slice C + Req 5b).**
   A lint that fails when a deprecation marker names no sunset version: it scans
   the docs `> **DEPRECATED`/`RETIRED` banners, `core/schema/*.schema.json`

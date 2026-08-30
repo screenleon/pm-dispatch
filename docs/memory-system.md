@@ -465,8 +465,9 @@ halving the per-turn hook cost on Claude. Codex's wiring
 the full shared budget, since it has no equivalent native full-load safety
 net. The argument is deliberately a CLI flag baked into the wired command
 string, never an env var — `MEMORY_MAX_INJECT_BYTES` is deliberately not
-env-overridable per the comment in `lib/memory.sh`, to avoid the ambient-leak
-class of bug from [[env-var-ambient-leak-into-fixtures]]. A pre-CC-566 install
+env-overridable per the comment in `lib/memory.sh`, to avoid an ambient-env-leak
+class of bug where an override read by production code also leaks into test
+fixtures and masks failures. A pre-CC-566 install
 (bare path, no `--host`) self-heals on the next `install-guards.sh` run:
 `managed_shared()`'s existing `without_host_arg` stripping still recognizes it
 as the managed hook and rewrites it to the suffixed form.
