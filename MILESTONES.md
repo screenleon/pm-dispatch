@@ -43,7 +43,7 @@ Gate correctness 與 release evidence 仍必須先在 v0.11.0 關閉。
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-446 | stable/experimental CLI + schema、SemVer/deprecation、deprecated surface 清掃；補上 authority 分類 | 🔵 |
+| CC-446 | stable/experimental CLI + schema、SemVer/deprecation、deprecated surface 清掃；authority 分類拆出 CC-578 | ✅ pr:#560/#564（+ Slice C／Req 5b；Req 6 → CC-578） |
 
 ### 待後續 / 明確排除
 

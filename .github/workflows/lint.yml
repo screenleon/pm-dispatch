@@ -117,6 +117,10 @@ jobs:
         run: bash tools/lint/lint-surface-coverage.sh
       - name: Surface coverage declaration regression suite
         run: bash tests/shell/test-lint-surface-coverage.sh
+      - name: Validate deprecation markers name a sunset version
+        run: bash tools/lint/lint-deprecation-sunset.sh
+      - name: Deprecation sunset lint regression suite
+        run: bash tests/shell/test-lint-deprecation-sunset.sh
       - name: Runtime library direct regression suite
         run: bash tests/shell/test-runtime-lib-coverage.sh
 
