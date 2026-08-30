@@ -2622,27 +2622,13 @@ _make_go_repo_with_test() {
   )
 }
 
-_make_ts_repo_with_test() {
-  # Helper: init a repo with src/format.ts + a test file; feature branch changes format.ts only.
-  # Args: repo-path  test-path  test-content
-  local repo="$1" test_path="$2" test_content="$3"
-  git init -q -b main "$repo"
-  (
-    cd "$repo"
-    git config user.email test@example.com
-    git config user.name 'Gate Test'
-    mkdir -p "$(dirname "$test_path")"
-    printf 'export function fmt(s: string) { return s; }\n' > src/format.ts
-    printf '%s\n' "$test_content" > "$test_path"
-    write_managed_gitignore
-    git add src/format.ts "$test_path" .gitignore
-    git commit -q -m initial
-    git checkout -q -b feature
-    printf 'export function fmt(s: string) { return s.trim(); }\n' > src/format.ts
-    git add src/format.ts
-    git commit -q -m "change format.ts only"
-  )
-}
+# The per-language "adjacent test file" permutations (__tests__/, sibling,
+# .test/.spec, .tsx, .py, .sh) now live in tests/shell/test-gate-scope.sh as
+# direct _gate_scope_paired_tests_collect unit tests -- they only ever observed
+# one detected pair in the composed brief and did not need a real gate. The two
+# cases kept here are the wiring guards: this one proves a detected pair reaches
+# the brief text and the stdout count, and test_adjacent_test_not_duplicated_
+# when_in_diff proves pr-gate.sh's manifest jq drops a test already in the diff.
 
 # Behavior: a *_test.go companion to a changed .go source file is
 # automatically included in the reviewer brief even when not in the diff.
@@ -2671,157 +2657,6 @@ test_adjacent_go_test_included() {
   fi
   assert_file_contains "$name" "$out" "adjacent test files added: 1" || return
   assert_file_contains "$name" "$brief" "app_test.go" || return
-  pass "$name"
-}
-
-# Behavior: a __tests__/<name>.test.ts file adjacent to a changed .ts source
-# file is included in the reviewer brief.
-# Steps: run the gate with --sequential on a repo whose diff touches only
-# src/format.ts with a sibling __tests__/format.test.ts, and assert stdout
-# counts one adjacent test file added and the brief contains
-# format.test.ts.
-test_adjacent_ts_test_in_tests_dir() {
-  local name="adjacent-ts-test-tests-dir"
-  should_run "$name" || return 0
-  local dir="$TMP_ROOT/$name"
-  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
-  local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
-  mkdir -p "$dir" "$dir/repo/src"
-  create_runner "$runner"
-  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
-  _make_ts_repo_with_test "$repo" "src/__tests__/format.test.ts" \
-    "import { fmt } from '../format'; test('fmt', () => {});"
-
-  set +e
-  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --sequential
-  local code=$?
-  set -e
-  if [[ "$code" -ne 0 ]]; then
-    fail "$name" "exit $code, expected 0"
-    return
-  fi
-  assert_file_contains "$name" "$out" "adjacent test files added: 1" || return
-  assert_file_contains "$name" "$brief" "format.test.ts" || return
-  pass "$name"
-}
-
-# Behavior: a __tests__/<name>.test.tsx file is recognised as an adjacent
-# test for a changed .ts source file.
-# Steps: run the gate with --sequential on a repo with a sibling
-# __tests__/format.test.tsx, and assert stdout counts one adjacent test
-# file added and the brief contains format.test.tsx.
-test_adjacent_ts_test_tsx_variant() {
-  local name="adjacent-ts-test-tsx-variant"
-  should_run "$name" || return 0
-  local dir="$TMP_ROOT/$name"
-  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
-  local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
-  mkdir -p "$dir"
-  create_runner "$runner"
-  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
-  _make_ts_repo_with_test "$repo" "src/__tests__/format.test.tsx" \
-    "import { fmt } from '../format'; test('fmt', () => {});"
-
-  set +e
-  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --sequential
-  local code=$?
-  set -e
-  if [[ "$code" -ne 0 ]]; then
-    fail "$name" "exit $code, expected 0"
-    return
-  fi
-  assert_file_contains "$name" "$out" "adjacent test files added: 1" || return
-  assert_file_contains "$name" "$brief" "format.test.tsx" || return
-  pass "$name"
-}
-
-# Behavior: a __tests__/<name>.spec.ts file is recognised as an adjacent
-# test for a changed .ts source file.
-# Steps: run the gate with --sequential on a repo with a sibling
-# __tests__/format.spec.ts, and assert stdout counts one adjacent test file
-# added and the brief contains format.spec.ts.
-test_adjacent_ts_spec_ts_variant() {
-  local name="adjacent-ts-spec-ts-variant"
-  should_run "$name" || return 0
-  local dir="$TMP_ROOT/$name"
-  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
-  local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
-  mkdir -p "$dir"
-  create_runner "$runner"
-  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
-  _make_ts_repo_with_test "$repo" "src/__tests__/format.spec.ts" \
-    "import { fmt } from '../format'; test('fmt', () => {});"
-
-  set +e
-  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --sequential
-  local code=$?
-  set -e
-  if [[ "$code" -ne 0 ]]; then
-    fail "$name" "exit $code, expected 0"
-    return
-  fi
-  assert_file_contains "$name" "$out" "adjacent test files added: 1" || return
-  assert_file_contains "$name" "$brief" "format.spec.ts" || return
-  pass "$name"
-}
-
-# Behavior: a sibling <name>.spec.tsx file (not in __tests__/) is
-# recognised as an adjacent test.
-# Steps: run the gate with --sequential on a repo with a sibling
-# format.spec.tsx, and assert stdout counts one adjacent test file added
-# and the brief contains format.spec.tsx.
-test_adjacent_ts_spec_tsx_variant() {
-  local name="adjacent-ts-spec-tsx-variant"
-  should_run "$name" || return 0
-  local dir="$TMP_ROOT/$name"
-  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
-  local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
-  mkdir -p "$dir"
-  create_runner "$runner"
-  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
-  _make_ts_repo_with_test "$repo" "src/format.spec.tsx" \
-    "import { fmt } from './format'; test('fmt', () => {});"
-
-  set +e
-  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --sequential
-  local code=$?
-  set -e
-  if [[ "$code" -ne 0 ]]; then
-    fail "$name" "exit $code, expected 0"
-    return
-  fi
-  assert_file_contains "$name" "$out" "adjacent test files added: 1" || return
-  assert_file_contains "$name" "$brief" "format.spec.tsx" || return
-  pass "$name"
-}
-
-# Behavior: a sibling <name>.test.ts file (not in __tests__/) is included
-# in the reviewer brief.
-# Steps: run the gate with --sequential on a repo with a sibling
-# format.test.ts, and assert stdout counts one adjacent test file added and
-# the brief contains format.test.ts.
-test_adjacent_ts_sibling_test() {
-  local name="adjacent-ts-sibling-test"
-  should_run "$name" || return 0
-  local dir="$TMP_ROOT/$name"
-  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
-  local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
-  mkdir -p "$dir"
-  create_runner "$runner"
-  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
-  _make_ts_repo_with_test "$repo" "src/format.test.ts" \
-    "import { fmt } from './format'; test('fmt', () => {});"
-
-  set +e
-  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --sequential
-  local code=$?
-  set -e
-  if [[ "$code" -ne 0 ]]; then
-    fail "$name" "exit $code, expected 0"
-    return
-  fi
-  assert_file_contains "$name" "$out" "adjacent test files added: 1" || return
-  assert_file_contains "$name" "$brief" "format.test.ts" || return
   pass "$name"
 }
 
@@ -6313,11 +6148,6 @@ run_test test_reviewer_cross_artifact_tamper_detected
 run_test test_base_detection_via_gh_pr_view
 run_test test_base_detection_gh_fallback
 run_test test_adjacent_go_test_included
-run_test test_adjacent_ts_test_in_tests_dir
-run_test test_adjacent_ts_test_tsx_variant
-run_test test_adjacent_ts_spec_ts_variant
-run_test test_adjacent_ts_spec_tsx_variant
-run_test test_adjacent_ts_sibling_test
 run_test test_adjacent_test_not_duplicated_when_in_diff
 
 # Behavior: the sequential review brief generated by pr-gate.sh includes
