@@ -109,6 +109,25 @@ test_wikilink_inside_fenced_block_passes() {
   want_pass "$name" "$root"
 }
 
+test_nested_shorter_fence_line_does_not_close_outer() {
+  local name="a 3-backtick line inside a 4-backtick fence does not expose later content"
+  should_run "$name" || return 0
+  local root; root="$(fixture "$name")"
+  # shellcheck disable=SC2016  # literal backticks are markdown fixture content
+  printf '# D\n\n````markdown\n```\nsome nested code\n```\nif [[ -d x ]] && [[example]]; then :; fi\n````\n' \
+    > "$root/docs/x.md"
+  want_pass "$name" "$root"
+}
+
+test_bare_shorter_fence_does_not_close_longer_opener() {
+  local name="a bare 3-backtick line does not close a 4-backtick fence"
+  should_run "$name" || return 0
+  local root; root="$(fixture "$name")"
+  # shellcheck disable=SC2016  # literal backticks are markdown fixture content
+  printf '# D\n\n````\n```\n[[still-code]]\n````\n' > "$root/docs/x.md"
+  want_pass "$name" "$root"
+}
+
 test_indented_fence_is_recognised() {
   local name="an indented triple-backtick fence still suppresses its contents"
   should_run "$name" || return 0
@@ -153,6 +172,8 @@ test_wikilink_inside_inline_code_passes
 test_wikilink_inside_double_backtick_span_passes
 test_double_backtick_span_with_inner_backtick_passes
 test_wikilink_inside_fenced_block_passes
+test_nested_shorter_fence_line_does_not_close_outer
+test_bare_shorter_fence_does_not_close_longer_opener
 test_indented_fence_is_recognised
 test_regex_class_inside_code_passes
 test_spikes_dir_is_not_scanned

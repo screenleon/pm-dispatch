@@ -41,13 +41,29 @@ for rel in "${files[@]}"; do
   [[ -f "$file" ]] || continue
   scanned=$((scanned + 1))
   in_fence=0
+  fence_ch=''
+  fence_len=0
   lineno=0
   while IFS= read -r line || [[ -n "$line" ]]; do
     lineno=$((lineno + 1))
-    # toggle on a fence marker line (any indentation), and skip the marker line
     trimmed="${line#"${line%%[![:space:]]*}"}"
-    if [[ "$trimmed" == '```'* || "$trimmed" == '~~~'* ]]; then
-      in_fence=$((1 - in_fence)); continue
+    # A fence marker line: 3+ of the same ` or ~ at the start. CommonMark closes
+    # a fence only with a *bare* run of the same char at least as long as the
+    # opener; anything else on the line (an info string, a shorter/other run) is
+    # literal code content.
+    if [[ "$trimmed" =~ ^(\`{3,}|~{3,}) ]]; then
+      marker="${BASH_REMATCH[1]}"
+      mch="${marker:0:1}"
+      mlen="${#marker}"
+      rest="${trimmed:mlen}"
+      if [[ "$in_fence" -eq 0 ]]; then
+        in_fence=1; fence_ch="$mch"; fence_len="$mlen"; continue
+      fi
+      # inside a fence: close only on a bare, same-char, long-enough run
+      if [[ "$mch" == "$fence_ch" && "$mlen" -ge "$fence_len" && "$rest" =~ ^[[:space:]]*$ ]]; then
+        in_fence=0; fence_ch=''; fence_len=0
+      fi
+      continue
     fi
     [[ "$in_fence" -eq 1 ]] && continue
     # drop inline code spans before scanning -- double-backtick spans first
