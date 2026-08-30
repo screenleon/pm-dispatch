@@ -81,9 +81,13 @@ the consumer; external tooling must not parse them.
 3. **Remove** in a later release; a Stable-CLI removal additionally requires a
    MAJOR bump.
 
-**Invariant:** the repository holds no surface marked deprecated without a named
-removal version. `tools/lint/lint-pmctl-commands.sh` is where CLI-tier drift is
-caught; the shim and doc surfaces are tracked by CC-446 until an enforcer lands.
+**Target invariant:** the repository holds no surface marked deprecated without a
+named removal version. This is not yet fully true — the `scripts/*.sh` shims (see
+*Pending* below) carry a `deprecated:` marker with no sunset version. That single
+known gap is owned by CC-446 Slice C, which assigns their removal version and
+adds an enforcer; until then the invariant is a target, not a checked fact.
+`tools/lint/lint-pmctl-commands.sh` already enforces the CLI-tier vocabulary and
+the stable-read `--json` rule, but does not yet check named-sunset coverage.
 
 ### Already retired
 

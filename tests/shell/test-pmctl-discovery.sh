@@ -162,8 +162,26 @@ case_parity_lint_rejects_stable_read_without_json() {
   # backlog view is experimental / json=false / mutating=false. Promoting it to
   # stable without structured output must be rejected (docs/stability-contract.md).
   sed -i 's/^\(backlog view\t[^\t]*\t[^\t]*\t\)experimental\tfalse\tfalse\t/\1stable\tfalse\tfalse\t/' "$fixture/cli/commands.tsv"
+  # shellcheck disable=SC2016  # Markdown backticks are literal fixture data.
+  sed -i 's/^\(- `backlog view` — .*\)\[experimental; JSON: false; mutating: false\]/\1[stable; JSON: false; mutating: false]/' "$fixture/README.md"
   run_capture "$out" "$err" "$LINT" --repo "$fixture" && status=$? || status=$?
   if [[ "$status" -ne 0 ]] && grep -Fq "must have json=true" "$err"; then pass "$name"; else fail "$name" "lint unexpectedly accepted a stable read command without json"; fi
+}
+
+case_parity_lint_accepts_stable_mutating_without_json() {
+  local name="pmctl discovery: parity lint accepts a stable mutating command without json"
+  should_run "$name" || return 0
+  local fixture="$tmp_root/stable-mutating" out="$tmp_root/stable-mutating.out" err="$tmp_root/stable-mutating.err" status=0
+  copy_parity_fixture "$fixture"
+  # dispatch run is experimental / json=false / mutating=true. The json=true
+  # requirement applies ONLY to non-mutating commands, so promoting a MUTATING
+  # command to stable without json must still pass. This fixture fails if the
+  # mutating=false guard in the rule is dropped or inverted.
+  sed -i 's/^\(dispatch run\t[^\t]*\t[^\t]*\t\)experimental\tfalse\ttrue\t/\1stable\tfalse\ttrue\t/' "$fixture/cli/commands.tsv"
+  # shellcheck disable=SC2016  # Markdown backticks are literal fixture data.
+  sed -i 's/^\(- `dispatch run` — .*\)\[experimental; JSON: false; mutating: true\]/\1[stable; JSON: false; mutating: true]/' "$fixture/README.md"
+  run_capture "$out" "$err" "$LINT" --repo "$fixture" && status=$? || status=$?
+  if [[ "$status" -eq 0 ]] && grep -Fq "OK" "$out"; then pass "$name"; else fail "$name" "lint rejected a stable mutating command without json (status=$status): $(<"$err")"; fi
 }
 
 case_root_help_variants
@@ -177,5 +195,6 @@ case_parity_lint_rejects_registry_only_command
 case_parity_lint_rejects_stale_readme
 case_parity_lint_rejects_incomplete_help_metadata
 case_parity_lint_rejects_stable_read_without_json
+case_parity_lint_accepts_stable_mutating_without_json
 
 th_summary
