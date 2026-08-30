@@ -10,6 +10,25 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`docs/stability-contract.md` + first CLI stability classification (CC-446).**
+  Defines the four stability layers (Stable CLI / Experimental CLI / Stable
+  schema / Internal schema), the SemVer breaking-change scope for each, and the
+  deprecation process (announce in CHANGELOG + mark source → retain ≥1 MINOR →
+  remove; Stable-CLI removal also needs a MAJOR bump). `cli/commands.tsv`'s
+  `stability` column is named the single machine-readable projection. First
+  classification pass is deliberately small: `commands` and `state status` are
+  now `stable` (both `--json`, non-mutating, unchanged signature, covered);
+  every other subcommand stays `experimental`. `tools/lint/lint-pmctl-commands.sh`
+  now rejects a `stable` non-mutating subcommand that lacks `json=true` (no
+  exclusion list). Root/area `pmctl` help no longer prints a blanket
+  `Stability: experimental`; it points to per-command tiers. The `stable` freeze
+  is on maintainer-exercised + suite-covered evidence, not clean-machine dogfood
+  (CC-447 is environment-blocked) — a wider stable surface waits on that.
+  Records that CC-296's named targets (`guard check --profile` alias,
+  `codex-dispatch.sh` shim) were already removed in v0.5.0 / v0.3.0. Reworded
+  the three remaining references to the `pr-gate-handover_v1` schema (README doc
+  index, `docs/review-model.md` ×2) to historical framing and named its v0.6.0
+  retirement in `docs/pr-gate-handover-schema.md`.
 - **`pmctl run-stats` (CC-358).** Per-adapter success/failure/fallback
   distribution read from `events.jsonl`, archive-inclusive by default
   (`--since <date|datetime>`, `--json`). Also adds a `fallback_used` event

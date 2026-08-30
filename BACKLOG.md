@@ -167,6 +167,17 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `ops/backlog/archive-cl
 **Done-when**：分級表覆蓋全部 pmctl 子指令與 schema 檔；CC-296 清掃完成；repo 內無「標 deprecated 但無移除計畫」的懸空表面；README 與分級文件互相一致。
 
 **Dependencies**：吸收 [[CC-296]] 執行。[[CC-451]]、[[CC-460]] command inventory、[[CC-498]] state compatibility 為事實前置。Cross-link [[CC-286]]、[[CC-357]]、[[CC-531]]～[[CC-539]]。v0.12.0 contract candidate；完成後才進行 v1.0 readiness review。
+
+**Progress (2026-08-30, re-scope against current repo)**：
+- **Problem 部分過期**：CC-296 的兩個具名目標早已移除——`pmctl guard check --profile` alias 於 v0.5.0（[[CC-291]] #205）、`scripts/codex-dispatch.sh` shim 於 v0.3.0 sunset。「執行 CC-296」如字面所寫是 no-op；Req 3 視為已完成。live 的 `install.sh --profile minimal|full` 是**現行功能**、與已移除的 alias 無關。
+- **剩餘 deprecated 表面是新一代**：`scripts/*.sh` = 19 個 [[CC-489]] 路徑遷移 shim；`docs/pr-gate-handover-schema.md`（v0.6.0 retired）。
+- **分類基礎設施已存在**：`cli/commands.tsv` 早有 8 欄含 `stability`／`json` 欄，`lint-pmctl-commands.sh` 驗 registry↔router↔README parity，`pmctl commands --json`（[[CC-460]]）已出貨。
+- **拆片**：
+  - **Slice B ✅（本次 PR）** = `docs/stability-contract.md`（四層詞彙 + SemVer 範圍 + deprecation 流程 + evidence 限制聲明）+ `cli/commands.tsv` 首輪分類（`commands`／`state status` → `stable`，其餘 `experimental`）+ lint 規則「stable 非 mutating ⇒ json=true」+ handover 文件三處引用改歷史語氣。Req 1（詞彙與 table 骨架）、Req 2、Req 4、Req 5a（lint 半）交付；`stable` 集合刻意極小。
+  - **Slice C** = `scripts/*.sh` shim keep-or-remove 決策 + 執行（依本次寫下的 deprecation 流程）+ 一個 `lint-deprecation-sunset` enforcer。
+  - **Slice D** = Req 5b（`core/state/layout.yaml` `threshold_days` 宣告未實作）+ Req 6（manifest/schema/registry authority 標記 + drift check）。
+- `stable` 凍結基礎明寫「maintainer-exercised + suite-covered evidence, not clean-machine dogfood」（[[CC-447]] environment-blocked）。票維持 active 直到 C、D 交付。
+
 **See**: DECISIONS.md 2026-07-04
 
 ## CC-447 — 乾淨機器 onboarding 雙 smoke（offline + live dogfood）🔵 active

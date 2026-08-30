@@ -45,7 +45,7 @@ The point is not to produce documentation — it is to catch a wrong direction b
 
 This isolation matters because context-window anchoring is real: a reviewer who watched the code being written will tend to evaluate the approach rather than the outcome. A reviewer who arrives at the finished diff cold asks "does this make sense in isolation?" — a harder and more valuable question.
 
-The isolation *from the dispatch session* is structural, not advisory: the review session is a separate process and cannot read the implementer's context. Per-reviewer independence — each reviewer also blind to the others — is provided by the parallel path; sequential mode trades that for a single combined review session. See [pr-gate-handover-schema.md](pr-gate-handover-schema.md) for the handover protocol.
+The isolation *from the dispatch session* is structural, not advisory: the review session is a separate process and cannot read the implementer's context. Per-reviewer independence — each reviewer also blind to the others — is provided by the parallel path; sequential mode trades that for a single combined review session. Each reviewer runs as an independent dispatch subprocess; see [executor-contract.md](executor-contract.md). (The earlier `pr-gate-handover_v1` fan-out route was retired in v0.6.0; [pr-gate-handover-schema.md](pr-gate-handover-schema.md) is kept for historical reference.)
 
 ### Layer 3 — Conceptual Map review
 
@@ -487,5 +487,5 @@ In all other cases, the four-layer model gives a faster signal with less noise.
 
 - [docs/CONCEPTS.md](CONCEPTS.md) — the four Claude Code extensibility surfaces (hooks / slash commands / subagents / memory) that implement this model
 - [docs/dispatch-brief.md](dispatch-brief.md) — the brief schema, including `self_verify`, `acceptance`, `conceptual_map`, and `architecture_impact` fields
-- [docs/pr-gate-handover-schema.md](pr-gate-handover-schema.md) — the handover protocol that enforces Layer 2 isolation
+- [docs/pr-gate-handover-schema.md](pr-gate-handover-schema.md) — the retired `pr-gate-handover_v1` fan-out route (historical; Layer 2 isolation is now the independent-subprocess dispatch in [executor-contract.md](executor-contract.md))
 - [docs/delivery-assurance-map.md](delivery-assurance-map.md) — the assurance dimensions, evidence chains, and composable delivery recipes

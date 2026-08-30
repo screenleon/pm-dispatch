@@ -40,7 +40,8 @@ This repository is designed for a single maintainer working on their own adaptat
 - [Review model](docs/review-model.md) — four-layer rigor model (pre-impl → pr-gate → machine verify)
 - [Delivery assurance map](docs/delivery-assurance-map.md) — orthogonal assurance dimensions and composable delivery recipes
 - [Gate structural validation](docs/gate-structural-validation.md) — schema-derived Gate artifact validation and generated bundle contract
-- [pr-gate handover schema](docs/pr-gate-handover-schema.md) — deprecated `pr-gate-handover_v1` block format
+- [Stability contract](docs/stability-contract.md) — CLI/schema stability tiers, SemVer scope, and the deprecation process
+- [pr-gate handover schema](docs/pr-gate-handover-schema.md) — the `pr-gate-handover_v1` block format, retired in v0.6.0 (kept for historical reference)
 
 ## Working language
 
@@ -188,7 +189,7 @@ router and [`cli/commands.tsv`](cli/commands.tsv).
 - `artifacts show` — Show one managed artifact. [experimental; JSON: false; mutating: false]
 - `artifacts gc` — Remove expired managed artifacts. [experimental; JSON: false; mutating: true]
 - `artifacts migrate` — Migrate legacy artifacts into managed storage. [experimental; JSON: false; mutating: true]
-- `state status` — Report state-store compatibility: layout version, entity schema versions, migration availability. [experimental; JSON: true; mutating: false]
+- `state status` — Report state-store compatibility: layout version, entity schema versions, migration availability. [stable; JSON: true; mutating: false]
 - `worktree create` — Create a managed ticket worktree. [experimental; JSON: false; mutating: true]
 - `worktree list` — List managed worktrees. [experimental; JSON: true; mutating: false]
 - `worktree remove` — Remove a managed worktree. [experimental; JSON: false; mutating: true]
@@ -238,7 +239,7 @@ router and [`cli/commands.tsv`](cli/commands.tsv).
 - `pre-release audit` — Audit a milestone before release. [experimental; JSON: false; mutating: false]
 - `pm prepare` — Prepare a bounded PM execution plan. [experimental; JSON: true; mutating: true]
 - `pm run` — Run a prepared PM batch. [experimental; JSON: true; mutating: true]
-- `commands` — List the canonical command registry. [experimental; JSON: true; mutating: false]
+- `commands` — List the canonical command registry. [stable; JSON: true; mutating: false]
 <!-- pmctl-command-index:end -->
 
 ## What's here

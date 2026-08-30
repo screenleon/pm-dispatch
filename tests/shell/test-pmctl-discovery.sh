@@ -39,7 +39,9 @@ case_root_help_variants() {
       run_capture "$out" "$err" "$PMCTL" "$args" || { fail "$name" "$args failed"; return; }
     fi
     assert_file_contains "$name" "$out" "pmctl commands --json" || return
-    assert_file_contains "$name" "$out" "Stability: experimental" || return
+    # Root help states per-command stability (individual tiers now vary; see
+    # cli/commands.tsv + docs/stability-contract.md), not a blanket tier.
+    assert_file_contains "$name" "$out" "Stability: per-command" || return
   done
   pass "$name"
 }
@@ -152,6 +154,18 @@ case_parity_lint_rejects_incomplete_help_metadata() {
   if [[ "$status" -ne 0 ]] && grep -Fq "malformed registry" "$err"; then pass "$name"; else fail "$name" "lint unexpectedly accepted incomplete metadata"; fi
 }
 
+case_parity_lint_rejects_stable_read_without_json() {
+  local name="pmctl discovery: parity lint rejects a stable non-mutating command lacking json"
+  should_run "$name" || return 0
+  local fixture="$tmp_root/stable-no-json" out="$tmp_root/stable-no-json.out" err="$tmp_root/stable-no-json.err" status=0
+  copy_parity_fixture "$fixture"
+  # backlog view is experimental / json=false / mutating=false. Promoting it to
+  # stable without structured output must be rejected (docs/stability-contract.md).
+  sed -i 's/^\(backlog view\t[^\t]*\t[^\t]*\t\)experimental\tfalse\tfalse\t/\1stable\tfalse\tfalse\t/' "$fixture/cli/commands.tsv"
+  run_capture "$out" "$err" "$LINT" --repo "$fixture" && status=$? || status=$?
+  if [[ "$status" -ne 0 ]] && grep -Fq "must have json=true" "$err"; then pass "$name"; else fail "$name" "lint unexpectedly accepted a stable read command without json"; fi
+}
+
 case_root_help_variants
 case_area_and_leaf_help
 case_help_has_no_home_side_effects
@@ -162,5 +176,6 @@ case_parity_lint_rejects_router_only_command
 case_parity_lint_rejects_registry_only_command
 case_parity_lint_rejects_stale_readme
 case_parity_lint_rejects_incomplete_help_metadata
+case_parity_lint_rejects_stable_read_without_json
 
 th_summary

@@ -22,7 +22,7 @@ Usage:
   pmctl help <area> [command]
   pmctl commands --json
 
-Stability: experimental
+Stability: per-command (see `pmctl commands --json` or docs/stability-contract.md)
 
 Command areas:
 EOF
@@ -50,7 +50,13 @@ pmctl_command_catalog_area_help() {
   fi
   printf '%s — pmctl command area\n\n' "$area"
   printf 'Usage:\n  pmctl %s <command> [options]\n\n' "$area"
-  printf 'Stability: experimental\n\nCommands:\n'
+  local _area_stability
+  _area_stability="$(awk -F '\t' -v area="$area" 'NR > 1 && $1 == area { print $4; exit }' "$PMCTL_COMMAND_REGISTRY")"
+  if [[ -n "$_area_stability" ]]; then
+    printf 'Stability: %s\n\nCommands:\n' "$_area_stability"
+  else
+    printf 'Stability: per-command (see pmctl commands --json)\n\nCommands:\n'
+  fi
   awk -F '\t' -v area="$area" 'NR > 1 {
     split($1, p, " ")
     if (p[1] != area) next
