@@ -137,6 +137,24 @@ test_schema_deprecated_with_version_passes() {
   want_pass "$name" "$root"
 }
 
+test_schema_mixed_dated_and_undated_fails() {
+  local name="a dated deprecated field does not mask an undated sibling in the same schema"
+  should_run "$name" || return 0
+  local root; root="$(fixture "$name")"
+  printf '{\n  "properties": {\n    "a": { "deprecated": true, "description": "removed in v9.9.0" },\n    "b": { "deprecated": true }\n  }\n}\n' \
+    > "$root/core/schema/mixed.schema.json"
+  want_fail "$name" "$root" "core/schema/mixed.schema.json"
+}
+
+test_schema_deprecated_false_is_not_a_marker() {
+  local name="a schema with only \"deprecated\": false and no version passes"
+  should_run "$name" || return 0
+  local root; root="$(fixture "$name")"
+  printf '{\n  "properties": {\n    "a": { "deprecated": false }\n  }\n}\n' \
+    > "$root/core/schema/notdep.schema.json"
+  want_pass "$name" "$root"
+}
+
 # --- surface 3: cli/commands.tsv ----------------------------------------------
 test_commands_deprecated_without_version_fails() {
   local name="a stability=deprecated command row with no version fails"
@@ -154,6 +172,17 @@ test_commands_deprecated_with_version_passes() {
   printf 'old cmd\tOld command; removed in v9.9.0.\tpmctl old cmd\tdeprecated\tfalse\tfalse\tnone\tpmctl old cmd\n' \
     >> "$root/cli/commands.tsv"
   want_pass "$name" "$root"
+}
+
+test_commands_mixed_dated_and_undated_fails() {
+  local name="a dated deprecated command row does not mask an undated one"
+  should_run "$name" || return 0
+  local root; root="$(fixture "$name")"
+  printf 'old one\tGone; removed in v9.9.0.\tpmctl old one\tdeprecated\tfalse\tfalse\tnone\tpmctl old one\n' \
+    >> "$root/cli/commands.tsv"
+  printf 'old two\tAlso gone.\tpmctl old two\tdeprecated\tfalse\tfalse\tnone\tpmctl old two\n' \
+    >> "$root/cli/commands.tsv"
+  want_fail "$name" "$root" "'old two' is stability=deprecated with no version"
 }
 
 # --- usage ---------------------------------------------------------------
@@ -176,8 +205,11 @@ test_malformed_allowlist_row_fails
 test_missing_allowlist_file_fails
 test_schema_deprecated_without_version_fails
 test_schema_deprecated_with_version_passes
+test_schema_mixed_dated_and_undated_fails
+test_schema_deprecated_false_is_not_a_marker
 test_commands_deprecated_without_version_fails
 test_commands_deprecated_with_version_passes
+test_commands_mixed_dated_and_undated_fails
 test_bad_flag_is_usage_error
 
 th_summary

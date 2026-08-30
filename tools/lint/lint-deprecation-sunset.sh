@@ -9,18 +9,20 @@
 #   1. docs/*.md and docs/architecture/*.md
 #        blockquote banner lines beginning  "> **DEPRECATED"  or  "> **RETIRED"
 #   2. core/schema/*.schema.json
-#        any  "deprecated": true  (JSON Schema keyword)
+#        every  "deprecated": true  keyword ("deprecated": false and a prose
+#        "deprecated" mention are not markers)
 #   3. cli/commands.tsv
-#        rows whose stability column is  "deprecated"
+#        every row whose stability column is  "deprecated"
 #
-# A marker is SATISFIED when either:
+# Each marker is checked INDEPENDENTLY -- a dated marker elsewhere in the same
+# file does not satisfy an undated sibling. A marker is SATISFIED when either:
 #   - a version token  v<major>.<minor>[.<patch>]  appears on the marker's own
-#     line (surface 1 and 3) or within three lines of it (surface 2), OR
+#     line (surfaces 1 and 3) or within three lines of it (surface 2), OR
 #   - the surface path is listed in tools/lint/deprecation-sunset-allowlist.tsv
-#     (path <TAB> reason) -- for a compat surface deliberately retained with no
-#     planned removal date.
-# An allowlist entry for a path whose marker already names a version is itself
-# an error: the allowlist covers only the undated case.
+#     (path <TAB> reason) -- a whole-surface escape hatch for a compat surface
+#     deliberately retained with no planned removal date.
+# An allowlist entry for a path whose every marker already names a version is
+# itself an error: the allowlist covers only the undated case.
 #
 # NOT in the scanned set: the scripts/*.sh path shims. They are governed by
 # docs/architecture/script-domain-inventory.tsv + lint-script-domain-inventory.sh
@@ -78,29 +80,35 @@ while IFS= read -r hit; do
   fi
 done < <(grep -rnE '^> \*\*(DEPRECATED|RETIRED)' "$repo_root/docs" --include='*.md' 2>/dev/null || true)
 
-# --- surface 2: JSON Schema deprecated keyword -------------------------------
+# --- surface 2: JSON Schema deprecated keyword ------------------------------
+# Each  "deprecated": true  occurrence is checked on its own: a version token
+# must appear within three lines of THAT line (a dated sibling elsewhere in the
+# file does not satisfy it). "deprecated": false and a "deprecated" substring
+# inside prose are not markers.
 while IFS= read -r file; do
   [[ -n "$file" ]] || continue
   rel="${file#"$repo_root"/}"
-  note_marker "$rel"
-  # version token within three lines of any "deprecated" occurrence
-  if grep -nE '"deprecated"' "$file" | while IFS=: read -r ln _; do
-       sed -n "${ln},$((ln + 3))p" "$file" | grep -Eq "$version_re" && { echo hit; break; }
-     done | grep -q hit; then
-    note_versioned "$rel"
-  elif [[ -z "${allow_reason[$rel]:-}" ]]; then
-    fail "schema marks a field deprecated with no version within 3 lines and is not allowlisted: $rel"
-  fi
-done < <(grep -rlE '"deprecated"' "$repo_root/core/schema" --include='*.schema.json' 2>/dev/null || true)
+  while IFS=: read -r ln _; do
+    [[ -n "$ln" ]] || continue
+    note_marker "$rel"
+    if sed -n "${ln},$((ln + 3))p" "$file" | grep -Eq "$version_re"; then
+      note_versioned "$rel"
+    elif [[ -z "${allow_reason[$rel]:-}" ]]; then
+      fail "schema marks a field deprecated with no version within 3 lines and is not allowlisted: $rel:$ln"
+    fi
+  done < <(grep -nE '"deprecated"[[:space:]]*:[[:space:]]*true' "$file" || true)
+done < <(grep -rlE '"deprecated"[[:space:]]*:[[:space:]]*true' "$repo_root/core/schema" --include='*.schema.json' 2>/dev/null || true)
 
 # --- surface 3: cli/commands.tsv stability=deprecated ------------------------
+# Each deprecated row is checked on its own row text.
 commands_tsv="$repo_root/cli/commands.tsv"
 if [[ -f "$commands_tsv" ]]; then
   rel="cli/commands.tsv"
-  while IFS=$'\t' read -r path _summary _usage stability _rest; do
+  while IFS= read -r row; do
+    IFS=$'\t' read -r path summary usage stability _rest <<< "$row"
     [[ "$stability" == "deprecated" ]] || continue
     note_marker "$rel"
-    if grep -F "	deprecated	" "$commands_tsv" | grep -Eq "$version_re"; then
+    if [[ "$path $summary $usage" =~ $version_re ]]; then
       note_versioned "$rel"
     elif [[ -z "${allow_reason[$rel]:-}" ]]; then
       fail "cli/commands.tsv row '$path' is stability=deprecated with no version and is not allowlisted"
