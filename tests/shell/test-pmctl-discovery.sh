@@ -82,11 +82,20 @@ case_commands_json_contract() {
   should_run "$name" || return 0
   local out="$tmp_root/commands.json" err="$tmp_root/commands.err"
   run_capture "$out" "$err" "$PMCTL" commands --json || { fail "$name" "commands failed"; return; }
-  if jq -e --argjson count "$(( $(wc -l < "$REPO_ROOT/cli/commands.tsv") - 1 ))" \
-    '.commands | length == $count and all(.[]; (.path|type)=="string" and (.json|type)=="boolean" and (.mutating|type)=="boolean")' "$out" >/dev/null; then
+  # `commands` is itself a Stable CLI surface (docs/stability-contract.md), so
+  # the emitted `stability` value is a contract, not just its type. Lock the two
+  # rows promoted to `stable`: this assertion fails if the emitter reports the
+  # wrong tier (e.g. `experimental` for every row) even though the shape is valid.
+  if jq -e --argjson count "$(( $(wc -l < "$REPO_ROOT/cli/commands.tsv") - 1 ))" '
+      .commands as $c
+      | ($c | length == $count)
+      and ($c | all(.[]; (.path|type)=="string" and (.stability|type)=="string" and (.json|type)=="boolean" and (.mutating|type)=="boolean"))
+      and (($c | map(select(.path == "commands"))[0]) as $r | $r != null and $r.stability == "stable" and $r.json == true and $r.mutating == false)
+      and (($c | map(select(.path == "state status"))[0]) as $r | $r != null and $r.stability == "stable" and $r.json == true and $r.mutating == false)
+    ' "$out" >/dev/null; then
     pass "$name"
   else
-    fail "$name" "invalid commands JSON"
+    fail "$name" "invalid commands JSON (shape or promoted-tier values): $(<"$out")"
   fi
 }
 
