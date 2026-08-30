@@ -99,7 +99,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-390 | ⏸ deferred | codex dispatch trace-capture 強化（FD inheritance cold-start flake；fail-closed safe；resume: stable repro；umbrella: CC-333） | arch/portability | 2026-06-15 | — | P3 | design |
 | CC-393 | 🟢 someday | design: portable-skill-substrate — CLI-agnostic skill 控制層（design seed after v0.6.0 N≥2；3 control skills + Portable Skill v0 frontmatter；umbrella: CC-333） | arch | 2026-06-16 | — | — | design |
 | CC-435 | 🟢 someday | **[poll→通知機制 single-waiter guard：條件觸發，非既定後續票]** 只有在真正出現多個 waiter 需要同時等待同一個 run_id/gate_id 的場景時才拿出來討論；候選設計見 `docs/spikes/CC-433.md` Open risks（方案 A：`flock` 搶鎖+敗者退回輪詢；方案 B：per-waiter 專屬 fifo+supervisor 廣播）。CC-434 完成後重新盤點成本效益：輪詢 vs blocking read 在單一 waiter/數分鐘等待場景下資源消耗差距趨近於零，延遲改善（≤2s→近乎即時）對人在等 gate 結果無感，而兩個方案都要在安全敏感的 supervisor 檔案引入新 race condition，投資報酬率目前不足，故不排入既定實作，僅記錄設計供未來觸發條件成立時起步。 | arch/gate | 2026-07-02 | — | P3 | design |
-| CC-446 | 🔵 active | public contract candidate：stable/experimental CLI + schema、authority 分類、SemVer/deprecation 與 CC-296 清掃（v0.12.0；非 v1 RC） | process/DX | 2026-07-04 | — | P2 | design |
+| CC-446 | ✅ done | public contract candidate：stable/experimental CLI + schema、SemVer/deprecation 政策；Slice B `docs/stability-contract.md` + 首輪 CLI 分類（#564），Slice C `lint-deprecation-sunset` + `threshold_days` 移除，CC-296 兩個具名目標早於 v0.5.0／v0.3.0 移除。Req 6（config-surface authority 標記，~44 檔）拆出 [[CC-578]] | process/DX | 2026-07-04 | pr:#560, pr:#564 | P2 | design |
 | CC-447 | 🔵 active | onboarding 三 smoke：offline clean install + N-1 upgrade（v0.11.0）+ live dogfood（readiness review 後再排） | docs/ops | 2026-07-04 | — | P2 | — |
 | CC-472 | 🟢 someday | spike: antigravity（`agy` CLI）host 唯讀 probe——比照 CC-436/CC-448 階段 1 模式，實測 command 載入能力 + hook/plugin 機制 + 五個 capability enum 的 provider/confidence 判定，不落地 `hosts/antigravity/host.yaml`；排在 CC-445 通用 install/uninstall dispatcher 之後、與 CC-448 opencode 同批或緊接其後評估（N=3 驗證點） | arch/install | 2026-07-08 | — | P3 | spike |
 | CC-566 | ✅ done | `guard-inject-memory.sh` 依 host 給獨立注入預算：實測確認 Claude 端有原生 `claudeMd` 全量 MEMORY.md 載入（無上限，session 一次）與 hook 每輪裁切注入雙重疊加；Codex 無對應原生全量安全網，不能單純調降全域常數（2026-08-23 token-cost 分析） | memory/DX | 2026-08-23 | pr:#519 | P2 | hygiene |
@@ -114,6 +114,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-575 | 🟢 someday | test-governance Batch 1 存量遷移：把其餘 ~35 處 `pass "$name (... unavailable ...)"`（多在 `test-doctor.sh` 的 jq guard、也有 `test-core-schemas`／`test-install`／`test-pmctl-memory`／`test-runtime-lib-coverage` 的 `UNAVAILABLE:` 裸行）改用 case-level `skip()`。primitive 與 authoritative gate 已於 pr:#<TBD> 落地並遷移 6 個代表站點；本票只做剩餘機械遷移，不再動 harness/runner/schema | ops/test | 2026-08-28 | — | P3 | hygiene |
 | CC-576 | ✅ done | 測試成本重新規劃（實測基線）：全套 10,764 CPU-s／110 suite，`test-pr-gate` 4 shard 佔 49.1%、top-10 佔 72%、其餘 85 個 suite 只佔 6.1%。成本不是「測試太多」也不是「斷言劣質」（290 case 只有 9 個純文字斷言），而是 243 個 case 每個都 spawn 一次真的 `pr-gate.sh`（uncontended 實測 mean 8.2s／p90 18s）。唯一會複利的槓桿是把行為從 integration 層（8.2s/case）搬到 unit 層（`test-gate-protocol` 實測 0.12s/case，68×），也就是續拆 `pr-gate.sh` 時**同時搬測試**；已辨識 57 個可搬 case（pre-dispatch policy 29 + brief-composition 28）。本票只定基線、判準與順序，不含實作 | ops/test | 2026-08-29 | pr:#560 | P2 | design |
 | CC-577 | ✅ done | lint 規則穿測試外衣的 case 退場（評估 4 個、搬 2 個、留 2 個）：`test-pmctl-memory.sh` 的 `case_memory_shared_readers_avoid_bash_43_namerefs`（grep 3 個硬編檔禁 `local -n`）、`test-dispatch-common.sh` 的 `case_dispatch_common_no_adapter_name_in_code`（grep 禁 adapter 字面值）、`test-host-manifest.sh:596`（grep `doctor.sh` 格式字串）、`test-e2e-script.sh` 的 `test_phase_c_commits_context_ignore`（斷言腳本內文含某行而非跑它）。全語料掃描確認只有這 4 個是真 proxy（另 12 處讀 production 檔的斷言都合法）。搬進 `test-layer-boundaries.sh`（既有「掃 ROOT + fixture 種違規」模式、全套 1 秒）：規則從「查 3 個硬編檔」變「掃整棵樹」覆蓋變強；e2e 那個改真跑再驗檔。買到的是先例與覆蓋強度，不是時間（4 case 省不到 5s）。是 [[CC-576]] Req 2「測試層級判準」的示範案例 | ops/test | 2026-08-29 | pr:#559 | P3 | hygiene |
+| CC-578 | 🟢 someday | config-surface authority 標記（[[CC-446]] Req 6 拆出）：每份 manifest／schema／registry／policy／layout spec（~44 檔：19 `core/schema/*.json` + 20 `*.yaml` + 5 `core/policy/*.tsv`）標記為 `runtime authority`／`build-time authority`／`parity/documentation spec`；runtime／build-time authority 必須有單一 consumer/generator 路徑與 drift check，不得一面宣稱 source of truth 一面維護等價手寫實作。多為逐檔判斷、多數需新增 drift 測試，是獨立多 PR 工程；與 [[CC-451]] 同批評估（runtime 從不驗證的 schema 不列 stable） | process/DX | 2026-08-30 | — | P2 | design |
 
 ---
 
@@ -143,7 +144,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `ops/backlog/archive-cl
 
 <!-- archived stubs — full text in BACKLOG-ARCHIVE.md -->
 
-## CC-446 — v1.0 契約凍結：stable/experimental 分級 + SemVer/deprecation 政策 🔵 active
+## CC-446 — v1.0 契約凍結：stable/experimental 分級 + SemVer/deprecation 政策 ✅ 2026-08-30
 
 **Problem**：目前沒有任何文件回答「pmctl 哪些子指令是 stable、哪些是 experimental」；machine 契約（dispatch brief schema、`adapter.yaml`、`host.yaml`（[[CC-438]] 後）、run-spec、`ship-lanes.jsonl`、`.dispatch-results/`、gate result 格式）沒有版本化與相容承諾；[[CC-296]] deprecation sunset（`--profile` alias、`codex-dispatch.sh` shim）從 v0.5.0 排程至今漂了兩版未執行；`docs/pr-gate-handover-schema.md` 標 deprecated 卻仍列在 README 目錄。ship/worktree 系列（[[CC-443]]）剛落地，schema 仍在熱變動期。
 
@@ -174,11 +175,13 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `ops/backlog/archive-cl
 - **分類基礎設施已存在**：`cli/commands.tsv` 早有 8 欄含 `stability`／`json` 欄，`lint-pmctl-commands.sh` 驗 registry↔router↔README parity，`pmctl commands --json`（[[CC-460]]）已出貨。
 - **拆片**：
   - **Slice B ✅（本次 PR）** = `docs/stability-contract.md`（四層詞彙 + SemVer 範圍 + deprecation 流程 + evidence 限制聲明）+ `cli/commands.tsv` 首輪分類（`commands`／`state status` → `stable`，其餘 `experimental`）+ lint 規則「stable 非 mutating ⇒ json=true」+ handover 文件三處引用改歷史語氣。Req 1（詞彙與 table 骨架）、Req 2、Req 4、Req 5a（lint 半）交付；`stable` 集合刻意極小。
-  - **Slice C** = `scripts/*.sh` shim keep-or-remove 決策 + 執行（依本次寫下的 deprecation 流程）+ 一個 `lint-deprecation-sunset` enforcer。
-  - **Slice D** = Req 5b（`core/state/layout.yaml` `threshold_days` 宣告未實作）+ Req 6（manifest/schema/registry authority 標記 + drift check）。
-- `stable` 凍結基礎明寫「maintainer-exercised + suite-covered evidence, not clean-machine dogfood」（[[CC-447]] environment-blocked）。票維持 active 直到 C、D 交付。
+  - **Slice C ✅** = `tools/lint/lint-deprecation-sunset.sh`（掃 docs deprecation banner／`core/schema` `deprecated` keyword／`cli/commands.tsv` `stability=deprecated`，每個要具名 `vX.Y[.Z]` 或進 `deprecation-sunset-allowlist.tsv`）+ 把 `stability-contract.md` 的「target invariant」改成真 invariant（雙 enforcer：新 lint + `lint-script-domain-inventory.sh` 對 `scripts/*.sh` 的既有守門）。**shim 決策 = KEEP**：19 個 `scripts/*.sh` 是 [[CC-489]] ratchet 的受治理層（有 owner + drift check + reference allowlist），不是懸空表面；移除＝改動 CC-489 ratchet，投報比低（complexity economics），列 [[CC-578]] 不做的清單外的獨立選項。
+  - **Slice D**：Req 5b ✅（`core/state/layout.yaml` 移除兩個宣告未實作的 `threshold_days: 90`）；**Req 6（authority 標記，~44 檔）拆出 [[CC-578]]**——逐檔判斷 + 多數需新增 drift 測試，是獨立多 PR 工程，不擋 stability contract 的價值。
+- `stable` 凍結基礎明寫「maintainer-exercised + suite-covered evidence, not clean-machine dogfood」（[[CC-447]] environment-blocked）。
 
-**See**: DECISIONS.md 2026-07-04
+**結案 2026-08-30**：Slice B（#564）+ Slice C + Req 5b 交付；CC-296 清掃早於 v0.5.0／v0.3.0 完成；Req 6 拆 [[CC-578]]。stability contract 詞彙、SemVer 範圍、deprecation 流程與其 CI enforcer 皆落地。
+
+**See**: DECISIONS.md 2026-07-04；pr:#560（判準+順序）、pr:#564（Slice B）
 
 ## CC-447 — 乾淨機器 onboarding 雙 smoke（offline + live dogfood）🔵 active
 
@@ -3993,5 +3996,47 @@ case——它們是 **lint 規則穿著測試的外衣**：只在有人跑那個
 有」；本票管「該在哪一層」）、memory `test-governance-batches-plan`（Batch 2 曾點名
 #4 e2e proxy 與另一個 nameref proxy，本票是那個方向的最小落地）、`ANTI-PATTERNS.md`
 #18（source-shape proxy test）。
+
+## CC-578 — config-surface authority 標記 + drift check（CC-446 Req 6 拆出）🟢 someday
+
+**Problem**：`docs/stability-contract.md`（[[CC-446]]）定義了「Stable schema／Internal
+schema」兩層，但 repo 內 ~44 份規格檔——19 個 `core/schema/*.schema.json`、20 個
+`*.yaml`（`hosts/*/host.yaml`、`adapters/*/adapter.yaml`、`adapters/*/isolation-map.yaml`、
+`core/policy/*.yaml`、`core/state/layout.yaml`）、5 個 `core/policy/*.tsv`——沒有逐檔
+宣告自己是 **runtime authority**（執行期真的讀它並據以行動）、**build-time authority**
+（產生器的來源，例如 adapter-generate 讀 manifest）、還是 **parity/documentation
+spec**（描述行為但執行期不讀，靠平行測試維持一致）。少了這個分類，重構時無法判斷
+「改這份檔會不會靜默改變執行行為」，也無法保證每份 runtime authority 檔都真有單一
+consumer + drift check（而不是一面宣稱 source of truth、一面維護等價手寫實作）。
+
+**Why**：[[CC-446]] Req 6 原文。與 [[CC-451]] 同批評估——runtime 從不驗證的 schema
+不應列 stable。此工作獨立於 stability contract 的核心價值（詞彙、SemVer、deprecation
+流程已於 CC-446 落地），且逐檔判斷 + 多數需新增 drift 測試，是多 PR 工程，故拆為
+獨立票而非拖住 CC-446。
+
+**Requirement**：
+1. 每份規格檔頂端（或一份中央 registry TSV）標記 `runtime-authority` /
+   `build-time-authority` / `parity-spec` 三選一，附一行 rationale 與 consumer 路徑。
+2. 每個 `runtime-authority` / `build-time-authority` 檔必須指到單一 consumer/generator
+   函式，且有一個 drift check（parity 測試或 schema 驗證）確保手寫實作不漂移；缺者
+   逐一補測試或降級為 `parity-spec`。
+3. 既有 precedent 沿用：`core/state/layout.yaml` 已寫「Canonical shell definition:
+   runtime/lib/state-compat.sh」、`docs/host-contract.md` 已有 authority 用語、
+   `lint-script-domain-inventory.sh` 是同形狀的 ratchet——本票是把這個模式推廣到
+   全部規格檔，不是發明新機制。
+4. 一個 lint（或擴充既有 registry lint）強制「每份規格檔都有 authority 標記」且
+   「runtime/build-time authority 檔在 registry 有 consumer + drift-check 欄位」。
+
+**Done-when**：全部 ~44 份規格檔有 authority 標記；每個 runtime/build-time authority
+檔有具名 consumer + drift check；一個 lint 機械強制此契約；`docs/stability-contract.md`
+的「Stable schema／Internal schema」層可直接引用這份分類。
+
+**Non-goals**：不改任何規格檔的內容或執行行為；不合併／拆分現有 schema；不做
+`core/schema` 的 `$id`／`$ref` 重整（另議）。
+
+**Dependencies**：[[CC-446]]（詞彙前置，已 done）、[[CC-451]]（同批評估 runtime 不驗證
+的 schema）。
+
+**See**: [[CC-446]] Req 6；DECISIONS.md 2026-07-04
 
 ---

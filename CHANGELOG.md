@@ -10,6 +10,24 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`tools/lint/lint-deprecation-sunset.sh` — CC-446 closed (Slice C + Req 5b).**
+  A lint that fails when a deprecation marker names no sunset version: it scans
+  the docs `> **DEPRECATED`/`RETIRED` banners, `core/schema/*.schema.json`
+  `deprecated` keywords, and `cli/commands.tsv` `stability = deprecated` rows,
+  and requires each to carry a `vX.Y[.Z]` version or a row in
+  `tools/lint/deprecation-sunset-allowlist.tsv` (path + reason). This turns
+  `docs/stability-contract.md`'s "no deprecated surface without a named removal
+  version" from a target into a checked fact — the invariant is now stated
+  flatly and backed by two enforcers (this lint plus `lint-script-domain-inventory.sh`,
+  which owns the `scripts/*.sh` path shims via the CC-489 ratchet). The 19
+  `scripts/*.sh` shims are **kept**: they are a governed compat surface (owner +
+  drift check + reference allowlist), not a loose end, so removing them would be
+  a change to the CC-489 ratchet, not cleanup. Also removes the two
+  unimplemented `threshold_days: 90` fields from `core/state/layout.yaml` (per
+  CC-451 — the runtime never read them; rotation is `threshold_bytes` only).
+  CC-446's remaining Req 6 (authority tagging of ~44 config/schema/manifest spec
+  files + per-file drift checks) spins out to CC-578.
+
 - **`docs/stability-contract.md` + first CLI stability classification (CC-446).**
   Defines the four stability layers (Stable CLI / Experimental CLI / Stable
   schema / Internal schema), the SemVer breaking-change scope for each, and the

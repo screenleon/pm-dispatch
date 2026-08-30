@@ -51,7 +51,6 @@ project_partition:
       lock: runs.lock
       rotation:
         threshold_bytes: 52428800   # 50 MB (overridable via PM_DISPATCH_ROTATE_MAX_BYTES)
-        threshold_days: 90          # not yet enforced; rotation triggers on threshold_bytes only
         # $NNNN is a monotonic per-month segment suffix that avoids same-month collisions.
         archive_path: archive/runs-$YYYYMM-$NNNN.jsonl.gz
 
@@ -66,7 +65,6 @@ project_partition:
       lock: events.lock
       rotation:
         threshold_bytes: 52428800   # overridable via PM_DISPATCH_ROTATE_MAX_BYTES
-        threshold_days: 90          # not yet enforced; rotation triggers on threshold_bytes only
         # $NNNN is a monotonic per-month segment suffix that avoids same-month collisions.
         archive_path: archive/events-$YYYYMM-$NNNN.jsonl.gz
 

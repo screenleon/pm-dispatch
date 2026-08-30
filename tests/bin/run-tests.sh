@@ -220,7 +220,12 @@ map_path() {
     tools/lint/lint-portable-repo-paths.sh|tests/shell/test-lint-portable-repo-paths.sh|runtime/lib/repo-layout.sh)
       add_suite lint-portable-repo-paths; add_suite test-lint-portable-repo-paths; behavioral=1 ;;
     tools/lint/lint-pmctl-commands.sh|tests/shell/test-pmctl-discovery.sh|cli/commands.tsv|runtime/lib/pmctl-command-catalog.sh)
-      add_suite lint-pmctl-commands; add_suite test-pmctl-discovery; behavioral=1 ;;
+      add_suite lint-pmctl-commands; add_suite test-pmctl-discovery
+      add_suite lint-deprecation-sunset; behavioral=1 ;;
+    tools/lint/lint-deprecation-sunset.sh|tools/lint/deprecation-sunset-allowlist.tsv|tests/shell/test-lint-deprecation-sunset.sh)
+      add_suite lint-deprecation-sunset; add_suite test-lint-deprecation-sunset; behavioral=1 ;;
+    docs/stability-contract.md|docs/pr-gate-handover-schema.md)
+      add_suite lint-deprecation-sunset; behavioral=1 ;;
     tests/bin/run-tests.sh)
       add_suite test-run-tests; behavioral=1 ;;
     tests/lib/test-result.sh|core/schema/test-result.schema.json)

@@ -74,20 +74,28 @@ the consumer; external tooling must not parse them.
 ## Deprecation process
 
 1. **Announce** in `CHANGELOG.md` under the release that introduces the
-   replacement, and mark the surface at its source (a banner in the doc, a
-   `deprecated: use <x>` line in the shim, `stability = deprecated` in
-   `cli/commands.tsv`).
+   replacement, and mark the surface at its source (a `> **DEPRECATED`/`RETIRED`
+   banner in the doc, a `deprecated: use <x>` line in the shim, `stability =
+   deprecated` in `cli/commands.tsv`).
 2. **Retain** for at least one MINOR version after the announcement.
 3. **Remove** in a later release; a Stable-CLI removal additionally requires a
    MAJOR bump.
 
-**Target invariant:** the repository holds no surface marked deprecated without a
-named removal version. This is not yet fully true — the `scripts/*.sh` shims (see
-*Pending* below) carry a `deprecated:` marker with no sunset version. That single
-known gap is owned by CC-446 Slice C, which assigns their removal version and
-adds an enforcer; until then the invariant is a target, not a checked fact.
-`tools/lint/lint-pmctl-commands.sh` already enforces the CLI-tier vocabulary and
-the stable-read `--json` rule, but does not yet check named-sunset coverage.
+**Invariant:** every deprecation marker in the project names a removal or
+retirement version, or is a compat surface with a named owner and a drift check.
+Two enforcers keep this true:
+
+- `tools/lint/lint-deprecation-sunset.sh` — scans the docs deprecation banners,
+  `core/schema/*.schema.json` `deprecated` keywords, and `cli/commands.tsv`
+  `stability = deprecated` rows; each must name a `vX.Y[.Z]` version or be listed
+  in `tools/lint/deprecation-sunset-allowlist.tsv` with a reason.
+- `tools/lint/lint-script-domain-inventory.sh` — the CC-489 ratchet that owns the
+  `scripts/*.sh` path shims (see *Retained compatibility* below): every shim has a
+  declared owner, a canonical target, and an executable-target check in
+  `docs/architecture/script-domain-inventory.tsv`.
+
+`tools/lint/lint-pmctl-commands.sh` additionally enforces the CLI-tier vocabulary
+and the stable-read `--json` rule.
 
 ### Already retired
 
@@ -103,12 +111,20 @@ the stable-read `--json` rule, but does not yet check named-sunset coverage.
   > the removed `guard check` alias above. It scopes which adapter hook set is
   > wired and is not deprecated.
 
-### Pending
+### Retained compatibility
 
 - `scripts/*.sh` (19 path-relocation shims from CC-489) — each prints
-  `deprecated: use <new-path>` and re-execs the canonical script. Kept as an
-  Internal-schema compatibility surface; a named sunset version is set by the
-  CC-446 follow-up that also decides removal vs. formal support.
+  `deprecated: use <new-path>` to stderr and re-execs the canonical script under
+  `runtime/`, `ops/`, `hosts/`, `tools/`, or `tests/bin/`. These are an
+  Internal-schema compat surface **deliberately retained with no dated sunset**:
+  they are pure path aliases with zero behaviour, and they are governed —
+  `docs/architecture/script-domain-inventory.tsv` records every shim's owner and
+  canonical target, and `tools/lint/lint-script-domain-inventory.sh` fails if a
+  shim is missing, non-executable, or points at the wrong target. Because they
+  have an owner and a drift check they satisfy the invariant without a version;
+  they are not scanned by `lint-deprecation-sunset.sh`. A future PR may still
+  retire the `move-with-shim` tier, but that is a change to the CC-489 ratchet,
+  not a loose end.
 
 ## Stable-CLI entries (v0 classification)
 
@@ -138,4 +154,6 @@ emit structured output stays `experimental` until it can.
 - `docs/executor-contract.md` — the PM→executor handoff (current Layer-2
   isolation; supersedes the retired handover route)
 - `cli/commands.tsv` — the machine-readable CLI tier projection
-- `BACKLOG.md` CC-446 — the re-scope and the follow-up slices
+- `tools/lint/lint-deprecation-sunset.sh` + `tools/lint/deprecation-sunset-allowlist.tsv` — the sunset-version enforcer
+- `docs/architecture/script-domain-inventory.tsv` — owns the `scripts/*.sh` path shims (CC-489 ratchet)
+- `BACKLOG.md` CC-446 — the re-scope; CC-578 — the spun-out authority-tagging work
