@@ -42,6 +42,12 @@ status_json() {
 # Steps: create a store with VERSION=1; run state status --json; assert exit 0
 #        and every contract key (root, versions, project key, entities,
 #        writable, safe_root, migration) via one jq -e predicate.
+#
+# `pmctl state status` is a Stable CLI surface (cli/commands.tsv,
+# docs/stability-contract.md): removing or renaming any top-level `--json` key,
+# or changing the success exit code, is a breaking change. This case is the
+# regression lock for that promise on the happy path; case_future_version_fail_closed
+# locks the incompatible-store exit-3 path.
 case_compatible_store_json_contract() {
   local name="compatible store: exit 0 + full JSON key contract"
   local store out rc=0
@@ -49,7 +55,13 @@ case_compatible_store_json_contract() {
   out="$(status_json "$store")" || rc=$?
   if [[ "$rc" -ne 0 ]]; then fail "$name" "exit $rc"; return; fi
   if jq -e '
+      (keys | sort) == ([
+        "current_layout_version","entity_schema_versions","migration","project_key",
+        "safe_root","safe_root_reasons","store_layout_version","store_root",
+        "store_state","supported_layout_versions","writable"
+      ] | sort) and
       .store_root and
+      (.project_key | type == "string") and
       .store_state == "compatible" and
       .store_layout_version == 1 and
       (.supported_layout_versions | index(1) != null) and
@@ -57,6 +69,7 @@ case_compatible_store_json_contract() {
       (.entity_schema_versions | has("run") and has("event") and has("task") and has("review") and has("decision") and has("operation") and has("context-pack")) and
       (.writable | type == "boolean") and
       (.safe_root | type == "boolean") and
+      (.safe_root_reasons | type == "array") and
       (.migration | has("available") and has("from") and has("to") and has("reason"))
     ' <<< "$out" >/dev/null; then
     pass "$name"

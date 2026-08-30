@@ -117,10 +117,10 @@ signature has been unchanged for a release cycle, it has automated regression
 coverage, and its output is either a machine contract (`--json`) or has no
 structured-output obligation (a mutating action whose result is an exit code).
 
-| Subcommand | Why stable |
-|---|---|
-| `commands` | the discovery primitive every other tool reads; trivial, `--json`, non-mutating |
-| `state status` | the state-store compatibility report (CC-498), designed as a stable contract; `--json`, non-mutating |
+| Subcommand | Why stable | Contract regression lock |
+|---|---|---|
+| `commands` | the discovery primitive every other tool reads; trivial, `--json`, non-mutating | `tests/shell/test-pmctl-discovery.sh` → `case_commands_json_contract` |
+| `state status` | the state-store compatibility report (CC-498), designed as a stable contract; `--json`, non-mutating | `tests/shell/test-state-status.sh` → `case_compatible_store_json_contract` (happy-path `--json` key set + exit 0), `case_future_version_fail_closed` (exit 3) |
 
 **Stable candidates, not yet promoted:** `dispatch run` / `dispatch wait`
 (dispatch lifecycle — promote after a rc cycle with no signature change),
