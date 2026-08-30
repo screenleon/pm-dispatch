@@ -39,7 +39,9 @@ case_root_help_variants() {
       run_capture "$out" "$err" "$PMCTL" "$args" || { fail "$name" "$args failed"; return; }
     fi
     assert_file_contains "$name" "$out" "pmctl commands --json" || return
-    assert_file_contains "$name" "$out" "Stability: experimental" || return
+    # Root help states per-command stability (individual tiers now vary; see
+    # cli/commands.tsv + docs/stability-contract.md), not a blanket tier.
+    assert_file_contains "$name" "$out" "Stability: per-command" || return
   done
   pass "$name"
 }
@@ -80,11 +82,20 @@ case_commands_json_contract() {
   should_run "$name" || return 0
   local out="$tmp_root/commands.json" err="$tmp_root/commands.err"
   run_capture "$out" "$err" "$PMCTL" commands --json || { fail "$name" "commands failed"; return; }
-  if jq -e --argjson count "$(( $(wc -l < "$REPO_ROOT/cli/commands.tsv") - 1 ))" \
-    '.commands | length == $count and all(.[]; (.path|type)=="string" and (.json|type)=="boolean" and (.mutating|type)=="boolean")' "$out" >/dev/null; then
+  # `commands` is itself a Stable CLI surface (docs/stability-contract.md), so
+  # the emitted `stability` value is a contract, not just its type. Lock the two
+  # rows promoted to `stable`: this assertion fails if the emitter reports the
+  # wrong tier (e.g. `experimental` for every row) even though the shape is valid.
+  if jq -e --argjson count "$(( $(wc -l < "$REPO_ROOT/cli/commands.tsv") - 1 ))" '
+      .commands as $c
+      | ($c | length == $count)
+      and ($c | all(.[]; (.path|type)=="string" and (.stability|type)=="string" and (.json|type)=="boolean" and (.mutating|type)=="boolean"))
+      and (($c | map(select(.path == "commands"))[0]) as $r | $r != null and $r.stability == "stable" and $r.json == true and $r.mutating == false)
+      and (($c | map(select(.path == "state status"))[0]) as $r | $r != null and $r.stability == "stable" and $r.json == true and $r.mutating == false)
+    ' "$out" >/dev/null; then
     pass "$name"
   else
-    fail "$name" "invalid commands JSON"
+    fail "$name" "invalid commands JSON (shape or promoted-tier values): $(<"$out")"
   fi
 }
 
@@ -152,6 +163,36 @@ case_parity_lint_rejects_incomplete_help_metadata() {
   if [[ "$status" -ne 0 ]] && grep -Fq "malformed registry" "$err"; then pass "$name"; else fail "$name" "lint unexpectedly accepted incomplete metadata"; fi
 }
 
+case_parity_lint_rejects_stable_read_without_json() {
+  local name="pmctl discovery: parity lint rejects a stable non-mutating command lacking json"
+  should_run "$name" || return 0
+  local fixture="$tmp_root/stable-no-json" out="$tmp_root/stable-no-json.out" err="$tmp_root/stable-no-json.err" status=0
+  copy_parity_fixture "$fixture"
+  # backlog view is experimental / json=false / mutating=false. Promoting it to
+  # stable without structured output must be rejected (docs/stability-contract.md).
+  sed -i 's/^\(backlog view\t[^\t]*\t[^\t]*\t\)experimental\tfalse\tfalse\t/\1stable\tfalse\tfalse\t/' "$fixture/cli/commands.tsv"
+  # shellcheck disable=SC2016  # Markdown backticks are literal fixture data.
+  sed -i 's/^\(- `backlog view` — .*\)\[experimental; JSON: false; mutating: false\]/\1[stable; JSON: false; mutating: false]/' "$fixture/README.md"
+  run_capture "$out" "$err" "$LINT" --repo "$fixture" && status=$? || status=$?
+  if [[ "$status" -ne 0 ]] && grep -Fq "must have json=true" "$err"; then pass "$name"; else fail "$name" "lint unexpectedly accepted a stable read command without json"; fi
+}
+
+case_parity_lint_accepts_stable_mutating_without_json() {
+  local name="pmctl discovery: parity lint accepts a stable mutating command without json"
+  should_run "$name" || return 0
+  local fixture="$tmp_root/stable-mutating" out="$tmp_root/stable-mutating.out" err="$tmp_root/stable-mutating.err" status=0
+  copy_parity_fixture "$fixture"
+  # dispatch run is experimental / json=false / mutating=true. The json=true
+  # requirement applies ONLY to non-mutating commands, so promoting a MUTATING
+  # command to stable without json must still pass. This fixture fails if the
+  # mutating=false guard in the rule is dropped or inverted.
+  sed -i 's/^\(dispatch run\t[^\t]*\t[^\t]*\t\)experimental\tfalse\ttrue\t/\1stable\tfalse\ttrue\t/' "$fixture/cli/commands.tsv"
+  # shellcheck disable=SC2016  # Markdown backticks are literal fixture data.
+  sed -i 's/^\(- `dispatch run` — .*\)\[experimental; JSON: false; mutating: true\]/\1[stable; JSON: false; mutating: true]/' "$fixture/README.md"
+  run_capture "$out" "$err" "$LINT" --repo "$fixture" && status=$? || status=$?
+  if [[ "$status" -eq 0 ]] && grep -Fq "OK" "$out"; then pass "$name"; else fail "$name" "lint rejected a stable mutating command without json (status=$status): $(<"$err")"; fi
+}
+
 case_root_help_variants
 case_area_and_leaf_help
 case_help_has_no_home_side_effects
@@ -162,5 +203,7 @@ case_parity_lint_rejects_router_only_command
 case_parity_lint_rejects_registry_only_command
 case_parity_lint_rejects_stale_readme
 case_parity_lint_rejects_incomplete_help_metadata
+case_parity_lint_rejects_stable_read_without_json
+case_parity_lint_accepts_stable_mutating_without_json
 
 th_summary

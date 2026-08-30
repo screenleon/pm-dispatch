@@ -38,6 +38,11 @@ registry_errors="$(awk -F '\t' '
   $4 !~ /^(stable|experimental|deprecated)$/ { print "line " NR ": invalid stability " $4 }
   $5 !~ /^(true|false)$/ { print "line " NR ": invalid json flag " $5 }
   $6 !~ /^(true|false)$/ { print "line " NR ": invalid mutating flag " $6 }
+  # A stable read (non-mutating) command must expose a machine contract:
+  # its result has to be structured (json=true). No exclusion list -- a stable
+  # read command that cannot emit --json stays experimental until it can.
+  # See docs/stability-contract.md.
+  $4 == "stable" && $6 == "false" && $5 != "true" { print "line " NR ": stable non-mutating command " $1 " must have json=true (see docs/stability-contract.md)" }
   $8 !~ /^pmctl / { print "line " NR ": example must start with pmctl" }
 ' "$registry")"
 [[ -z "$registry_errors" ]] || fail "malformed registry:\n$registry_errors"

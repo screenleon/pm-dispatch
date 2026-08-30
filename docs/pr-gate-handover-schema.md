@@ -1,11 +1,15 @@
 # pr-gate-handover_v1 schema
 
-> **DEPRECATED.** `pmctl gate run --executor claude` no longer emits this
-> block. The claude executor now dispatches an independent headless `claude --print`
-> subprocess (`adapters/claude/dispatch.sh`) and writes the result in-process,
-> symmetric to codex — there is no handover/fan-out. `runtime/bin/pr-gate.sh` no longer
-> produces a `pr-gate-handover_v1` block for any executor. This document is retained
-> for historical reference only; the schema below describes the retired behavior.
+> **RETIRED in v0.6.0 (CC-383).** `pmctl gate run --executor claude` no longer
+> emits this block. The claude executor now dispatches an independent headless
+> `claude --print` subprocess (`adapters/claude/dispatch.sh`) and writes the result
+> in-process, symmetric to codex — there is no handover/fan-out. `runtime/bin/pr-gate.sh`
+> no longer produces a `pr-gate-handover_v1` block for any executor, and no code
+> path reads one. This document is retained for historical reference only; the
+> schema below describes the retired behavior. For the current Layer-2 isolation
+> mechanism see [executor-contract.md](executor-contract.md). Per
+> [stability-contract.md](stability-contract.md) this is an Internal-schema
+> surface with no compatibility promise.
 
 This schema was used by `runtime/bin/pr-gate.sh` when the selected executor was
 `claude`, before this route was retired. It is intentionally separate from `dispatch_handover_v1`.
