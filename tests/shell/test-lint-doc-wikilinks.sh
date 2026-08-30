@@ -100,6 +100,15 @@ test_double_backtick_span_with_inner_backtick_passes() {
   want_pass "$name" "$root"
 }
 
+test_wikilink_inside_triple_backtick_span_passes() {
+  local name="a [[slug]] inside a triple-backtick inline span is ignored"
+  should_run "$name" || return 0
+  local root; root="$(fixture "$name")"
+  # shellcheck disable=SC2016  # literal backticks are markdown fixture content
+  printf '# B\n\nthe token ```[[example]]``` is code, not a link.\n' > "$root/BACKLOG.md"
+  want_pass "$name" "$root"
+}
+
 test_wikilink_inside_fenced_block_passes() {
   local name="a [[ ]] bash test inside a fenced block is ignored"
   should_run "$name" || return 0
@@ -171,6 +180,7 @@ test_markdown_link_passes
 test_wikilink_inside_inline_code_passes
 test_wikilink_inside_double_backtick_span_passes
 test_double_backtick_span_with_inner_backtick_passes
+test_wikilink_inside_triple_backtick_span_passes
 test_wikilink_inside_fenced_block_passes
 test_nested_shorter_fence_line_does_not_close_outer
 test_bare_shorter_fence_does_not_close_longer_opener
