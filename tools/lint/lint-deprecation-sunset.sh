@@ -61,11 +61,12 @@ while IFS=$'\t' read -r path reason extra || [[ -n "$path" ]]; do
   allow_order+=("$path")
 done < "$allowlist"
 
-# markers[<path>]=1 for every scanned path that carries a deprecation marker;
-# versioned[<path>]=1 when at least one of its markers names a version.
-declare -A markers=() versioned=()
+# markers[<path>]=1  -- the path carries at least one deprecation marker.
+# undated[<path>]=1  -- at least one of its markers names no version (so an
+#                       allowlist entry for the path is doing real work).
+declare -A markers=() undated=()
 note_marker() { markers[$1]=1; }
-note_versioned() { versioned[$1]=1; }
+note_undated() { undated[$1]=1; }
 
 # --- surface 1: docs banners ---------------------------------------------------
 while IFS= read -r hit; do
@@ -73,10 +74,10 @@ while IFS= read -r hit; do
   file="${hit%%:*}"; rest="${hit#*:}"; lineno="${rest%%:*}"; text="${rest#*:}"
   rel="${file#"$repo_root"/}"
   note_marker "$rel"
-  if [[ "$text" =~ $version_re ]]; then
-    note_versioned "$rel"
-  elif [[ -z "${allow_reason[$rel]:-}" ]]; then
-    fail "deprecation banner names no removal version and is not allowlisted: $rel:$lineno"
+  if [[ ! "$text" =~ $version_re ]]; then
+    note_undated "$rel"
+    [[ -n "${allow_reason[$rel]:-}" ]] || \
+      fail "deprecation banner names no removal version and is not allowlisted: $rel:$lineno"
   fi
 done < <(grep -rnE '^> \*\*(DEPRECATED|RETIRED)' "$repo_root/docs" --include='*.md' 2>/dev/null || true)
 
@@ -91,10 +92,10 @@ while IFS= read -r file; do
   while IFS=: read -r ln _; do
     [[ -n "$ln" ]] || continue
     note_marker "$rel"
-    if sed -n "${ln},$((ln + 3))p" "$file" | grep -Eq "$version_re"; then
-      note_versioned "$rel"
-    elif [[ -z "${allow_reason[$rel]:-}" ]]; then
-      fail "schema marks a field deprecated with no version within 3 lines and is not allowlisted: $rel:$ln"
+    if ! sed -n "${ln},$((ln + 3))p" "$file" | grep -Eq "$version_re"; then
+      note_undated "$rel"
+      [[ -n "${allow_reason[$rel]:-}" ]] || \
+        fail "schema marks a field deprecated with no version within 3 lines and is not allowlisted: $rel:$ln"
     fi
   done < <(grep -nE '"deprecated"[[:space:]]*:[[:space:]]*true' "$file" || true)
 done < <(grep -rlE '"deprecated"[[:space:]]*:[[:space:]]*true' "$repo_root/core/schema" --include='*.schema.json' 2>/dev/null || true)
@@ -108,10 +109,10 @@ if [[ -f "$commands_tsv" ]]; then
     IFS=$'\t' read -r path summary usage stability _rest <<< "$row"
     [[ "$stability" == "deprecated" ]] || continue
     note_marker "$rel"
-    if [[ "$path $summary $usage" =~ $version_re ]]; then
-      note_versioned "$rel"
-    elif [[ -z "${allow_reason[$rel]:-}" ]]; then
-      fail "cli/commands.tsv row '$path' is stability=deprecated with no version and is not allowlisted"
+    if [[ ! "$path $summary $usage" =~ $version_re ]]; then
+      note_undated "$rel"
+      [[ -n "${allow_reason[$rel]:-}" ]] || \
+        fail "cli/commands.tsv row '$path' is stability=deprecated with no version and is not allowlisted"
     fi
   done < <(tail -n +2 "$commands_tsv")
 fi
@@ -120,8 +121,8 @@ fi
 for path in "${allow_order[@]}"; do
   if [[ -z "${markers[$path]:-}" ]]; then
     fail "allowlist entry names no deprecated surface: $path"
-  elif [[ -n "${versioned[$path]:-}" ]]; then
-    fail "allowlist entry is unnecessary (surface already names a version): $path"
+  elif [[ -z "${undated[$path]:-}" ]]; then
+    fail "allowlist entry is unnecessary (every marker on the surface names a version): $path"
   fi
 done
 

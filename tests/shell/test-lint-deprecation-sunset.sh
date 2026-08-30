@@ -92,6 +92,50 @@ test_allowlist_for_versioned_surface_fails() {
   want_fail "$name" "$root" "unnecessary"
 }
 
+test_mixed_allowlisted_docs_surface_passes() {
+  local name="an allowlisted docs surface with one dated + one undated banner passes"
+  should_run "$name" || return 0
+  local root; root="$(fixture "$name")"
+  printf '# X\n\n> **RETIRED.** removed in v9.9.0.\n\n## more\n\n> **DEPRECATED.** kept for compat.\n' \
+    > "$root/docs/mixed.md"
+  printf 'docs/mixed.md\tundated marker deliberately retained\n' \
+    >> "$root/tools/lint/deprecation-sunset-allowlist.tsv"
+  want_pass "$name" "$root"
+}
+
+test_mixed_allowlisted_docs_surface_without_row_fails() {
+  local name="the same mixed docs surface without its allowlist row fails on the undated banner"
+  should_run "$name" || return 0
+  local root; root="$(fixture "$name")"
+  printf '# X\n\n> **RETIRED.** removed in v9.9.0.\n\n## more\n\n> **DEPRECATED.** kept for compat.\n' \
+    > "$root/docs/mixed.md"
+  want_fail "$name" "$root" "docs/mixed.md"
+}
+
+test_mixed_allowlisted_schema_surface_passes() {
+  local name="an allowlisted schema with one dated + one undated deprecated field passes"
+  should_run "$name" || return 0
+  local root; root="$(fixture "$name")"
+  printf '{\n  "properties": {\n    "a": { "deprecated": true, "description": "removed in v9.9.0" },\n    "b": { "deprecated": true }\n  }\n}\n' \
+    > "$root/core/schema/mixed.schema.json"
+  printf 'core/schema/mixed.schema.json\tundated field deliberately retained\n' \
+    >> "$root/tools/lint/deprecation-sunset-allowlist.tsv"
+  want_pass "$name" "$root"
+}
+
+test_mixed_allowlisted_commands_surface_passes() {
+  local name="an allowlisted commands.tsv with one dated + one undated deprecated row passes"
+  should_run "$name" || return 0
+  local root; root="$(fixture "$name")"
+  printf 'old one\tGone; removed in v9.9.0.\tpmctl old one\tdeprecated\tfalse\tfalse\tnone\tpmctl old one\n' \
+    >> "$root/cli/commands.tsv"
+  printf 'old two\tAlso gone.\tpmctl old two\tdeprecated\tfalse\tfalse\tnone\tpmctl old two\n' \
+    >> "$root/cli/commands.tsv"
+  printf 'cli/commands.tsv\tundated deprecated row deliberately retained\n' \
+    >> "$root/tools/lint/deprecation-sunset-allowlist.tsv"
+  want_pass "$name" "$root"
+}
+
 test_allowlist_for_unmarked_surface_fails() {
   local name="an allowlist entry for a file with no marker is rejected"
   should_run "$name" || return 0
@@ -200,6 +244,10 @@ test_versioned_banner_passes
 test_retired_banner_needs_version_too
 test_allowlisted_unversioned_banner_passes
 test_allowlist_for_versioned_surface_fails
+test_mixed_allowlisted_docs_surface_passes
+test_mixed_allowlisted_docs_surface_without_row_fails
+test_mixed_allowlisted_schema_surface_passes
+test_mixed_allowlisted_commands_surface_passes
 test_allowlist_for_unmarked_surface_fails
 test_malformed_allowlist_row_fails
 test_missing_allowlist_file_fails
