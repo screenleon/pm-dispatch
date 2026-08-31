@@ -129,6 +129,8 @@ jobs:
         run: bash tools/lint/lint-readme-surface-lists.sh
       - name: README surface list lint regression suite
         run: bash tests/shell/test-lint-readme-surface-lists.sh
+      - name: Gate subprocess census regression suite
+        run: bash tests/shell/test-gate-subprocess-census.sh
       - name: Runtime library direct regression suite
         run: bash tests/shell/test-runtime-lib-coverage.sh
 

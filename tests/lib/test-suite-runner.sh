@@ -83,6 +83,7 @@ SUITE_NAMES=(
   test-lint-deprecation-sunset
   test-lint-doc-wikilinks
   test-lint-readme-surface-lists
+  test-gate-subprocess-census
   test-skill-refine
   test-pr-gate-profile
   test-run-all-tests
@@ -205,6 +206,7 @@ declare -A SUITE_PATHS=(
   [test-lint-deprecation-sunset]="tests/shell/test-lint-deprecation-sunset.sh"
   [test-lint-doc-wikilinks]="tests/shell/test-lint-doc-wikilinks.sh"
   [test-lint-readme-surface-lists]="tests/shell/test-lint-readme-surface-lists.sh"
+  [test-gate-subprocess-census]="tests/shell/test-gate-subprocess-census.sh"
   [test-skill-refine]="tests/shell/test-skill-refine.sh"
   [test-pr-gate-profile]="tests/shell/test-pr-gate-profile.sh"
   [test-run-all-tests]="tests/shell/test-run-all-tests.sh"

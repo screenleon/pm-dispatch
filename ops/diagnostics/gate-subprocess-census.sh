@@ -40,13 +40,17 @@ case_filter="tier-detection"
 mode="time"
 deadline=900
 out_dir=""
+suite="tests/shell/test-pr-gate.sh"
 
 usage() {
-  printf 'usage: %s [--case <filter>] [--mode time|exec|bash] [--timeout <seconds>] [--out <dir>]\n' "$0" >&2
+  printf 'usage: %s [--suite <path>] [--case <filter>] [--mode time|exec|bash] [--timeout <seconds>] [--out <dir>]\n' "$0" >&2
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --suite)
+      [[ $# -ge 2 && -n "$2" ]] || { usage; exit 2; }
+      suite="$2"; shift 2 ;;
     --case)
       [[ $# -ge 2 && -n "$2" ]] || { usage; exit 2; }
       case_filter="$2"; shift 2 ;;
@@ -65,30 +69,54 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# Resolve the subject before doing any setup, so a typo fails immediately
+# rather than after a lock and a temporary tree have been created.
+case "$suite" in
+  /*) suite_path="$suite" ;;
+  *)  suite_path="$repo_root/$suite" ;;
+esac
+if [[ ! -r "$suite_path" ]]; then
+  printf 'gate-subprocess-census: subject suite is not readable: %s\n' "$suite_path" >&2
+  exit 2
+fi
+
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/gate-census.XXXXXX")"
-guard_file="${TMPDIR:-/tmp}/gate-subprocess-census.pgid"
+lock_file="${TMPDIR:-/tmp}/gate-subprocess-census.lock"
 census_log="$work_dir/census.log"
 suite_log="$work_dir/suite.out"
 bin_dir="$work_dir/bin"
 mkdir -p "$bin_dir"
 
-# Refuse to run while an earlier census's process group is still alive; its
-# children would append to a live log and inflate this run's numbers.
-if [[ -r "$guard_file" ]]; then
-  prior="$(cat "$guard_file")"
-  if [[ "$prior" =~ ^[0-9]+$ ]] && kill -0 -- "-$prior" 2>/dev/null; then
-    printf 'gate-subprocess-census: a census (pgid %s) is still running; wait for it or kill -- -%s\n' \
-      "$prior" "$prior" >&2
-    rm -rf -- "$work_dir"
-    exit 1
-  fi
+# Refuse to run while another census holds the lock: two overlapping censuses
+# fork into each other's measurements and each one's cleanup can tear down the
+# other's subject. A pid file read-then-written is not enough -- two launches
+# can both observe it absent -- so ownership is an flock held on a descriptor
+# for the whole run and released by the kernel when this process exits.
+if ! command -v flock >/dev/null 2>&1; then
+  printf 'gate-subprocess-census: flock is required to guarantee single-census exclusion\n' >&2
+  rm -rf -- "$work_dir"
+  exit 1
+fi
+exec 8>>"$lock_file"
+if ! flock -n 8; then
+  printf 'gate-subprocess-census: another census holds %s; wait for it to finish\n' \
+    "$lock_file" >&2
+  rm -rf -- "$work_dir"
+  exit 1
 fi
 
 subject_pgid=""
 # shellcheck disable=SC2329  # invoked indirectly by the EXIT/INT/TERM trap below.
 cleanup() {
-  [[ -n "$subject_pgid" ]] && kill -9 -- "-$subject_pgid" 2>/dev/null
-  rm -f -- "$guard_file"
+  # Killing an already-reaped group fails, and an `&&` list ending in that
+  # failure would abort this function under `set -e` before `return 0` -- which
+  # replaces the script's real exit status with 1 even on a clean measurement.
+  if [[ -n "$subject_pgid" ]]; then
+    kill -9 -- "-$subject_pgid" 2>/dev/null || true
+  fi
+  # The lock is released when fd 8 closes at exit; dropping it here as well
+  # would open a window where a second census starts before the subject's
+  # process group has been reaped.
   return 0
 }
 trap cleanup EXIT INT TERM
@@ -167,9 +195,10 @@ fi
 : > "$census_log"
 cd "$repo_root"
 setsid env PATH="$bin_dir:$PATH" \
-  bash tests/shell/test-pr-gate.sh --filter "$case_filter" > "$suite_log" 2>&1 &
+  bash "$suite_path" --filter "$case_filter" > "$suite_log" 2>&1 &
 subject_pgid=$!
-printf '%s\n' "$subject_pgid" > "$guard_file"
+# Record the owning group in the locked file so a blocked launch can name it.
+printf '%s\n' "$subject_pgid" >&8
 
 waited=0
 while (( waited < deadline )); do
@@ -189,7 +218,7 @@ fi
 
 # A subject that failed under instrumentation measured something other than the
 # behaviour under test, so say so rather than presenting the numbers as clean.
-printf 'subject: tests/shell/test-pr-gate.sh --filter %s\n' "$case_filter"
+printf 'subject: %s --filter %s\n' "$suite" "$case_filter"
 printf 'subject outcome: '
 if [[ "$subject_rc" -eq 0 ]]; then
   printf 'passed (numbers describe a run that behaved normally)\n'

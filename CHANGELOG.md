@@ -26,8 +26,14 @@ Versions follow [Semantic Versioning](https://semver.org/).
   invocations per gate at ~39 ms of interpreter start-up each**, dominated by
   repeated single-field reads of the same document. Baseline and the discarded
   measurement approaches are recorded in
-  `docs/audits/CC-579-gate-subprocess-baseline.md`. No product behaviour
-  changes in this slice.
+  `docs/audits/CC-579-gate-subprocess-baseline.md`. Single-census exclusion is
+  an `flock` held for the whole run rather than a pid file that is read and then
+  written, since two launches can both observe such a file absent. `--suite`
+  selects the subject, which lets `tests/shell/test-gate-subprocess-census.sh`
+  assert the reported counts against synthetic subjects whose subprocess
+  behaviour is known exactly — verifying the tool against the real gate would be
+  circular, because the real counts are what it exists to discover. No product
+  behaviour changes in this slice.
 - **`tools/lint/lint-readme-surface-lists.sh` + README public-posture
   reconciliation (CC-033 slice).** `README.md`'s posture sentence now matches
   `CONTRIBUTING.md` — a publicly readable personal distribution, not a public

@@ -4063,6 +4063,10 @@ time 的 **88%**，其餘 awk/git/grep/cat/sha256sum/mktemp/sed 加起來只有 
    （`time`／`exec`／`bash` 三模式，PATH wrapper 保持 argv／stdio／exit code 不變，
    subject 在自己的 session 執行並整組收掉，另一個 census 還活著時拒絕啟動）+
    `docs/audits/CC-579-gate-subprocess-baseline.md`。零 production 改動。
+   單一 census 互斥用整輪持有的 `flock`（pid 檔的「先讀再寫」擋不住兩個同時啟動都看到檔案
+   不存在）；`--suite` 讓受測對象可指定，`tests/shell/test-gate-subprocess-census.sh`
+   因此能拿子行程行為已知的合成 subject 驗證回報數字——拿真 gate 驗會是循環論證，
+   因為真實呼叫數正是這個工具要發現的東西。
 2. **Slice 1**：收斂 jq 呼叫點。主要形狀是對同一份文件反覆做單欄位讀取
    （`jq -r length`／`jq -r .reviewer`／`jq -r .status`／`jq -r .kind`／
    `jq -r .scope_manifest_sha256`），每次付一次完整直譯器啟動。改成一次讀完呼叫端需要的

@@ -39,7 +39,7 @@ make_fixture() {
   cat > "$repo/tests/lib/test-suite-runner.sh" <<'RUNNER'
 #!/usr/bin/env bash
 set -euo pipefail
-suites=(lint-agents lint-scripts lint-script-domain-inventory lint-deprecation-sunset lint-doc-wikilinks lint-readme-surface-lists lint-portable-repo-paths test-lint-shellcheck test-script-domain-inventory test-lint-portable-repo-paths test-lint-frontmatter test-commands test-check-docs-freshness test-guards test-migrate test-portable test-install test-uninstall test-doctor test-hook-profile-parity test-pmctl-dispatch test-pmctl-context test-pmctl-memory test-pmctl-gate test-pmctl-adapter-generate test-executor-router test-runner-kind test-release-verify test-dispatch-lifecycle test-runtime-lib-coverage test-e2e-script test-pr-gate-shard-1 test-pr-gate-shard-2 test-pr-gate-shard-3 test-pr-gate-shard-4 test-pr-gate-profile test-gate-protocol test-gate-options test-gate-policy test-gate-scope test-pmctl-operation test-host-manifest test-host-write-codex test-codex-dispatch-continuation test-host-write-parity test-core-schemas test-layer-boundaries test-pm-scripts test-run-tests test-setup-project test-state-store test-state-layout-parity test-check-planning-status-consistency test-lint-permanent-test-admissions test-lint-deprecation-sunset test-lint-doc-wikilinks test-lint-readme-surface-lists test-schema-task-mirrors-backlog test-pmctl-backlog test-archive-closed-backlog)
+suites=(lint-agents lint-scripts lint-script-domain-inventory lint-deprecation-sunset lint-doc-wikilinks lint-readme-surface-lists lint-portable-repo-paths test-lint-shellcheck test-script-domain-inventory test-lint-portable-repo-paths test-lint-frontmatter test-commands test-check-docs-freshness test-guards test-migrate test-portable test-install test-uninstall test-doctor test-hook-profile-parity test-pmctl-dispatch test-pmctl-context test-pmctl-memory test-pmctl-gate test-pmctl-adapter-generate test-executor-router test-runner-kind test-release-verify test-dispatch-lifecycle test-runtime-lib-coverage test-e2e-script test-pr-gate-shard-1 test-pr-gate-shard-2 test-pr-gate-shard-3 test-pr-gate-shard-4 test-pr-gate-profile test-gate-protocol test-gate-options test-gate-policy test-gate-scope test-pmctl-operation test-host-manifest test-host-write-codex test-codex-dispatch-continuation test-host-write-parity test-core-schemas test-layer-boundaries test-pm-scripts test-run-tests test-setup-project test-state-store test-state-layout-parity test-check-planning-status-consistency test-lint-permanent-test-admissions test-lint-deprecation-sunset test-lint-doc-wikilinks test-lint-readme-surface-lists test-gate-subprocess-census test-schema-task-mirrors-backlog test-pmctl-backlog test-archive-closed-backlog)
 for arg in "$@"; do
   if [[ "$arg" == --list ]]; then printf '%s\n' "${suites[@]}"; exit 0; fi
 done
@@ -415,6 +415,24 @@ case_readme_surface_paths_map_to_lint() {
     out=$(RUN_TESTS_ARGS_LOG="$TMP_ROOT/$name.args" \
       "$repo/tests/bin/run-tests.sh" --path "$p" --list 2>&1) || status=$?
     if [[ "$status" -ne 0 || "$out" != *"lint-readme-surface-lists"* || "$out" == *"coverage gaps"* ]]; then
+      fail "$name" "--path $p: status=$status out=$out"; return
+    fi
+  done
+  pass "$name"
+}
+
+# Behavior: the census diagnostic and its regression suite both select
+# test-gate-subprocess-census during iteration planning, so a change to the
+# measurement tool cannot land without its own coverage running.
+case_census_paths_map_to_census_suite() {
+  local name=census-paths-map-to-census-suite repo out status p
+  repo="$(make_fixture "$name")"
+  for p in ops/diagnostics/gate-subprocess-census.sh \
+           tests/shell/test-gate-subprocess-census.sh; do
+    status=0
+    out=$(RUN_TESTS_ARGS_LOG="$TMP_ROOT/$name.args" \
+      "$repo/tests/bin/run-tests.sh" --path "$p" --list 2>&1) || status=$?
+    if [[ "$status" -ne 0 || "$out" != *"test-gate-subprocess-census"* || "$out" == *"coverage gaps"* ]]; then
       fail "$name" "--path $p: status=$status out=$out"; return
     fi
   done
@@ -906,6 +924,7 @@ case_admission_lint_paths_map_to_meta_suite
 case_operational_docs_map_to_stale_reference_lint
 case_reader_docs_map_to_wikilink_lint
 case_readme_surface_paths_map_to_lint
+case_census_paths_map_to_census_suite
 case_gitignore_maps_to_setup_project
 case_agent_mapping_uses_registered_frontmatter_suite
 case_command_mapping_uses_registered_frontmatter_suite

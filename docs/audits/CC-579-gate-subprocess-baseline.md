@@ -37,8 +37,15 @@ They are recorded here so the next person does not repeat them:
 | Attempt | What went wrong |
 |---|---|
 | Count forks, conclude from the count | ~950 forks per gate is only ~1.4 s of fork overhead — 10% of the run. Counting calls answers the wrong question; the cost is time *inside* the children. |
-| Read totals from a shared log while an earlier census was still alive | An interrupted census keeps forking into the same log. This produced an apparent 200,000-call "grep storm" that does not exist. The tool now runs its subject in its own session, tears down the whole process group, and refuses to start while another census is alive. |
+| Read totals from a shared log while an earlier census was still alive | An interrupted census keeps forking into the same log. This produced an apparent 200,000-call "grep storm" that does not exist. The tool now runs its subject in its own session, tears down the whole process group, and holds an `flock` for the duration — a pid file that is read and then written is not enough, because two launches can both observe it absent. |
 | Treat a failing instrumented run as a valid measurement | An instrumented run that exits non-zero measured something other than the behaviour under test. The tool now prints the subject's outcome first and labels the numbers unusable when it failed. |
+
+The census takes `--suite <path>`, so it can profile any suite — and so its own
+regression tests (`tests/shell/test-gate-subprocess-census.sh`) can point it at
+synthetic subjects whose subprocess behaviour is known exactly, and assert the
+reported counts against them. Verifying a measurement tool against the real gate
+would be both slow and circular: the real call counts are what it is meant to
+discover.
 
 Durations of an instrumented run are inflated by the wrapper forks (14 s → ~22 s
 for this subject). Read per-binary totals from `--mode time`; never read wall
