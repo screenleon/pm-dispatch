@@ -114,6 +114,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-575 | 🟢 someday | test-governance Batch 1 存量遷移：把其餘 ~35 處 `pass "$name (... unavailable ...)"`（多在 `test-doctor.sh` 的 jq guard、也有 `test-core-schemas`／`test-install`／`test-pmctl-memory`／`test-runtime-lib-coverage` 的 `UNAVAILABLE:` 裸行）改用 case-level `skip()`。primitive 與 authoritative gate 已於 pr:#<TBD> 落地並遷移 6 個代表站點；本票只做剩餘機械遷移，不再動 harness/runner/schema | ops/test | 2026-08-28 | — | P3 | hygiene |
 | CC-576 | ✅ done | 測試成本重新規劃（實測基線）：全套 10,764 CPU-s／110 suite，`test-pr-gate` 4 shard 佔 49.1%、top-10 佔 72%、其餘 85 個 suite 只佔 6.1%。成本不是「測試太多」也不是「斷言劣質」（290 case 只有 9 個純文字斷言），而是 243 個 case 每個都 spawn 一次真的 `pr-gate.sh`（uncontended 實測 mean 8.2s／p90 18s）。唯一會複利的槓桿是把行為從 integration 層（8.2s/case）搬到 unit 層（`test-gate-protocol` 實測 0.12s/case，68×），也就是續拆 `pr-gate.sh` 時**同時搬測試**；已辨識 57 個可搬 case（pre-dispatch policy 29 + brief-composition 28）。本票只定基線、判準與順序，不含實作 | ops/test | 2026-08-29 | pr:#560 | P2 | design |
 | CC-577 | ✅ done | lint 規則穿測試外衣的 case 退場（評估 4 個、搬 2 個、留 2 個）：`test-pmctl-memory.sh` 的 `case_memory_shared_readers_avoid_bash_43_namerefs`（grep 3 個硬編檔禁 `local -n`）、`test-dispatch-common.sh` 的 `case_dispatch_common_no_adapter_name_in_code`（grep 禁 adapter 字面值）、`test-host-manifest.sh:596`（grep `doctor.sh` 格式字串）、`test-e2e-script.sh` 的 `test_phase_c_commits_context_ignore`（斷言腳本內文含某行而非跑它）。全語料掃描確認只有這 4 個是真 proxy（另 12 處讀 production 檔的斷言都合法）。搬進 `test-layer-boundaries.sh`（既有「掃 ROOT + fixture 種違規」模式、全套 1 秒）：規則從「查 3 個硬編檔」變「掃整棵樹」覆蓋變強；e2e 那個改真跑再驗檔。買到的是先例與覆蓋強度，不是時間（4 case 省不到 5s）。是 [[CC-576]] Req 2「測試層級判準」的示範案例 | ops/test | 2026-08-29 | pr:#559 | P3 | hygiene |
+| CC-579 | 🔵 active | pr-gate 執行成本：一次 gate 執行 14s 全是 shell 自身工作（stub reviewer 不做模型工作），其中 **jq 佔 child time 88%**——每次 gate ~368 次 jq 呼叫 × ~39ms 啟動成本 ≈ 14s。`test-pr-gate` 家族＝全套 10,707 CPU-s 的 **49%**，且每次真 gate 也付同一筆。Slice 0（本 PR）：`ops/diagnostics/gate-subprocess-census.sh` 三模式量測工具 + `docs/audits/CC-579-gate-subprocess-baseline.md` 基線，不改任何 production 行為。後續 slice：收斂 jq 呼叫點（[[CC-364]]／[[CC-573]] 既有單次串流 pass 模式）、再重測並行度上限 | ops/gate | 2026-08-31 | — | P1 | design |
 | CC-578 | 🟢 someday | config-surface authority 標記（[[CC-446]] Req 6 拆出）：每份 manifest／schema／registry／policy／layout spec（~44 檔：19 `core/schema/*.json` + 20 `*.yaml` + 5 `core/policy/*.tsv`）標記為 `runtime authority`／`build-time authority`／`parity/documentation spec`；runtime／build-time authority 必須有單一 consumer/generator 路徑與 drift check，不得一面宣稱 source of truth 一面維護等價手寫實作。多為逐檔判斷、多數需新增 drift 測試，是獨立多 PR 工程；與 [[CC-451]] 同批評估（runtime 從不驗證的 schema 不列 stable） | process/DX | 2026-08-30 | — | P2 | design |
 
 ---
@@ -4040,5 +4041,48 @@ consumer + drift check（而不是一面宣稱 source of truth、一面維護等
 的 schema）。
 
 **See**: [[CC-446]] Req 6；DECISIONS.md 2026-07-04
+
+## CC-579 — pr-gate 執行成本：jq 呼叫密度 🔵 active
+
+**Problem**：一次 `pr-gate.sh` 執行要 **14 秒**，而測試裡的 reviewer 是立即回覆的 stub
+——完全沒有模型工作，那 14 秒全部是 gate 自己的 shell 工作。實測（2026-08-31，
+`ops/diagnostics/gate-subprocess-census.sh --mode time`）：一次 gate 呼叫約 **368 次 jq**，
+每次約 **39ms**（jq 直譯器啟動成本，不是 filter 慢），合計就是那 14 秒；jq 佔全部 child
+time 的 **88%**，其餘 awk/git/grep/cat/sha256sum/mktemp/sed 加起來只有 12%。
+
+**Why**：這筆成本付兩次。(a) **測試**：`test-pr-gate` 家族＝全套 10,707 CPU-s 的 **49%**，
+`tests/shell/test-pr-gate.sh` 呼叫 gate 254 次；全套牆鐘已達 50 分 28 秒，而 4 workers 下
+理論下限就是 10,707/4 ≈ 44.6 分——排程優化最多只能省 6 分鐘，唯一的槓桿是降低 CPU 總量。
+(b) **production**：每次真 gate 也付同一筆 shell 開銷。
+
+提高並行度不是解法且已被實測否決（[[CC-561]] non-goal：8 jobs 牆鐘 −20% 但 CPU +53%
+且 2 個套件失敗）。
+
+**Requirement**：
+1. **Slice 0（本 PR，已完成）**：可信量測方法 + 基線。`ops/diagnostics/gate-subprocess-census.sh`
+   （`time`／`exec`／`bash` 三模式，PATH wrapper 保持 argv／stdio／exit code 不變，
+   subject 在自己的 session 執行並整組收掉，另一個 census 還活著時拒絕啟動）+
+   `docs/audits/CC-579-gate-subprocess-baseline.md`。零 production 改動。
+2. **Slice 1**：收斂 jq 呼叫點。主要形狀是對同一份文件反覆做單欄位讀取
+   （`jq -r length`／`jq -r .reviewer`／`jq -r .status`／`jq -r .kind`／
+   `jq -r .scope_manifest_sha256`），每次付一次完整直譯器啟動。改成一次讀完呼叫端需要的
+   欄位，即 [[CC-364]]／[[CC-573]] 已用過兩次的單次串流 pass。驗收 oracle＝重跑 census
+   並證明 jq 呼叫數下降。
+3. **Slice 2**：Slice 1 之後 CPU 總量下降，重測 [[CC-561]] 的並行度上限實驗。
+
+**Non-goals**：不動 `PM_DISPATCH_TEST_MAX_JOBS` 預設值（要等 Slice 1 之後再測）；不放棄
+開 PR 前跑全套；Slice 0 不改任何 production 行為。
+
+**Risks**：`pr-gate.sh` 是 repo 內最安全敏感的腳本。[[CC-573]] 記載過單次 jq 優化很容易
+靜默丟掉「壞資料要大聲失敗」的契約（`--since` 只比日期／`fromjson?` 靜默跳過／`|| true`
+吞錯）——每個合併點都要個別確認失敗隔離語意沒被弱化。
+
+**次要目標（非 Slice 1）**：`gate-result-verify.sh` 佔 bash 端已執行簡單指令的 64%，
+集中在 `gate-result-verify.sh:628-652` 對 result artifact 的逐行迴圈，且該迴圈以
+`block="${block}...${line}"` 累加、對 block 大小是二次方。bash 端整體不是主成本，故列為
+次要。
+
+**See**: `docs/audits/CC-579-gate-subprocess-baseline.md`；[[CC-576]]（測試成本基線）、
+[[CC-561]]（並行度實測）、[[CC-364]]／[[CC-573]]（單次串流 jq pass 前例）
 
 ---
