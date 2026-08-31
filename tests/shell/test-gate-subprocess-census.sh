@@ -189,6 +189,33 @@ test_bash_mode_counts_invocations_not_mentions() {
   else fail "$name" "expected exactly 2 invocations attributed, got ${attributed:-0} :: $out"; fi
 }
 
+test_bash_mode_attributes_calls_made_in_subshells() {
+  local name="bash mode attributes calls traced from a subshell, not just top level"
+  should_run "$name" || return 0
+  local gate suite out attributed
+  gate="$tmp_root/subshell-runner/pr-gate.sh"
+  mkdir -p "$tmp_root/subshell-runner"
+  # bash marks nested xtrace frames with a deeper run of '+', so a prefix
+  # pattern anchored on a single '+' folds every subshell call into the
+  # previous record. That silently drops most real call sites and, worse,
+  # attributes their text to whichever line happened to come before.
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'jq -n 1 >/dev/null\n'
+    # shellcheck disable=SC2016  # these expansions belong to the fake gate's source.
+    printf 'v="$(jq -n 2)"\n'
+    printf '( jq -n 3 >/dev/null )\n'
+    # shellcheck disable=SC2016
+    printf 'printf "%%s" "$v" >/dev/null\n'
+  } > "$gate"
+  chmod +x "$gate"
+  suite="$(fake_suite subshell-driver "bash '$gate'; exit 0")"
+  out="$(bash "$CENSUS" --suite "$suite" --case any --timeout 30 --mode bash 2>&1)"
+  attributed="$(awk '/TOTAL attributed/ { print $1 }' <<< "$out")"
+  if [[ "${attributed:-0}" -eq 3 ]]; then pass "$name"
+  else fail "$name" "expected all 3 invocations attributed, got ${attributed:-0} :: $out"; fi
+}
+
 test_attribute_selects_the_binary() {
   local name="--attribute counts the named binary instead of jq"
   should_run "$name" || return 0
@@ -377,6 +404,7 @@ test_time_mode_reports_a_passing_subject_as_usable
 test_exec_mode_clusters_flags_without_program_spill
 test_bash_mode_traces_the_gate_not_the_suite_driver
 test_bash_mode_counts_invocations_not_mentions
+test_bash_mode_attributes_calls_made_in_subshells
 test_attribute_selects_the_binary
 test_attribute_outside_bash_mode_is_rejected
 test_default_attribute_does_not_trip_the_mode_guard

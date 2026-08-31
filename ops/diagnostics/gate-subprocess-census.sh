@@ -277,27 +277,46 @@ case "$mode" in
   bash)
     printf 'traced simple commands: %s\n\n' "$(wc -l < "$census_log")"
     printf '=== bash work by source file ===\n'
-    { grep -oE '^\+[a-zA-Z0-9._-]+\.sh:' "$census_log" || true; } \
+    { grep -oE '^\++[a-zA-Z0-9._-]+\.sh:' "$census_log" || true; } | tr -d '+' | sed 's/^/+/' \
       | sort | uniq -c | sort -rn | head -12
     printf '\n=== hottest source:line ===\n'
-    { grep -oE '^\+[a-zA-Z0-9._-]+\.sh:[0-9]+' "$census_log" || true; } \
+    { grep -oE '^\++[a-zA-Z0-9._-]+\.sh:[0-9]+' "$census_log" || true; } | tr -d '+' | sed 's/^/+/' \
       | sort | uniq -c | sort -rn | head -15
-    printf '\n=== %s invocations per source:line (lower bound) ===\n' "$attribute"
-    # xtrace prints a multi-line command across several lines and puts the
-    # +file:line: prefix on only one of them, so matching the binary on the
-    # prefix line alone misses every multi-line call -- which is most of the
-    # interesting ones. Rebuild each traced command from its prefix line to the
-    # next before deciding whether it invoked the binary. This still
-    # under-counts (a call reached only through an untraced child is invisible),
-    # so treat it as a ranking, not a total: `--mode exec` owns the exact count.
+    printf '\n=== %s invocations per source:line ===\n' "$attribute"
+    # Three details decide whether this total is trustworthy, and getting any
+    # of them wrong produced a plausible-looking but wrong ranking during
+    # CC-579:
+    #   - bash marks nested xtrace frames with a deeper run of '+', so a
+    #     pattern anchored on a single '+' folds every subshell call into the
+    #     previous record;
+    #   - a command spans several output lines, so each record runs from its
+    #     prefix to the next;
+    #   - the binary counts only as the command word of its record, since
+    #     xtrace prints every simple command separately -- accepting the name
+    #     anywhere promotes argument mentions into call sites that do not exist.
+    # With all three, this total reconciles exactly with `--mode exec`.
     awk -v want="$attribute" '
-      function flush() {
-        if (site != "" && rec ~ ("(^|[ |(`$=])" want "[ ]")) count[site]++
+      # xtrace prints every simple command as its own record, so a real
+      # invocation is always the command word of its record. Requiring that --
+      # rather than accepting the name anywhere in the text -- keeps an
+      # argument mention (`printf "run jq now"`, `command -v jq`) from being
+      # promoted into a call site that does not exist. Leading VAR=value
+      # assignments are part of the command, not the command word.
+      function plusses(l,   n) { n = 0; while (substr(l, n + 1, 1) == "+") n++; return n }
+      function flush(   cmd) {
+        if (site == "") return
+        cmd = rec
+        sub(/^\++[a-zA-Z0-9._-]+\.sh:[0-9]+: /, "", cmd)
+        # sub() returns 0 when there is nothing after the assignment to strip,
+        # which ends the loop; testing the pattern alone would spin forever on a
+        # record that is nothing but an assignment (`local jq_display_def=`).
+        while (cmd ~ /^[A-Za-z_][A-Za-z0-9_]*=/ && sub(/^[^ ]+ +/, "", cmd)) { }
+        if (cmd ~ ("^(|[^ ]*/)" want "( |$)")) count[site]++
       }
-      /^\+[a-zA-Z0-9._-]+\.sh:[0-9]+:/ {
+      /^\++[a-zA-Z0-9._-]+\.sh:[0-9]+:/ {
         flush()
-        match($0, /^\+[a-zA-Z0-9._-]+\.sh:[0-9]+/)
-        site = substr($0, RSTART + 1, RLENGTH - 1)
+        match($0, /^\++[a-zA-Z0-9._-]+\.sh:[0-9]+/)
+        site = substr($0, RSTART + plusses($0), RLENGTH - plusses($0) + 1)
         rec = $0
         next
       }

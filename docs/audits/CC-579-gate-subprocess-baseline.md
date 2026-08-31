@@ -116,43 +116,60 @@ though the output stays byte-identical.
 
 ## Slice 1 Task 0 — per-call-site attribution (2026-08-31)
 
-`--mode bash --attribute jq` now reports jq invocations per `source:line`.
-Against the same subject, 511 of the 729 invocations `pr-gate.sh` owns are
-attributed (70%); the remainder are reached through paths xtrace does not
-cover, so the table is a **ranking, not a total** — `--mode exec` remains the
-authority on the exact count.
+`--mode bash --attribute jq` reports jq invocations per `source:line`. Its total
+reconciles **exactly** with `--mode exec` (729 = 729 on the same subject), so
+this is a complete attribution, not a sample.
 
-Two attribution mistakes were made and fixed while producing it, both of which
-would have aimed the optimisation at call sites that do not exist:
+Getting there took three corrections, each of which produced a
+plausible-looking but wrong ranking:
 
-- Matching the binary name anywhere in the traced command counts `jq_rc=0`,
-  `local jq_display_def=`, and `command -v jq` as invocations. The matcher
-  requires the name to appear as a command word.
-- Reading only the line carrying the `+file:line:` prefix is not enough on its
-  own; each traced command is reconstructed to its next prefix before being
-  classified.
+- **Nested frames.** bash marks a subshell's xtrace with a deeper run of `+`.
+  A pattern anchored on a single `+` folds every subshell call into the
+  preceding record — this alone hid most call sites and misattributed their
+  text to whichever line came before. This was the big one: 145 attributed
+  before the fix, 729 after.
+- **Multi-line commands.** A traced command spans several output lines, so each
+  record must run from its prefix to the next.
+- **Command word, not mention.** The binary counts only as the command word of
+  its record. Accepting the name anywhere counts `jq_rc=0`,
+  `local jq_display_def=`, and `command -v jq` as invocations — inventing call
+  sites that do not exist.
 
-Ranked sites, per gate run (halve the two-run figures the tool prints):
+### Where the jq calls actually are
 
-| calls/run | site | what it does |
+Per file, over two gate runs (halve for one run):
+
+| calls | file |
+|---|---|
+| 310 | `gate-result-verify.sh` |
+| 134 | `gate-policy.sh` |
+| 120 | `gate-structural-verify.sh` |
+| 58 | `pr-gate.sh` |
+| 40 | `gate-scope.sh` |
+| 32 | `gate-closure.sh` |
+| 60 | everything else combined |
+
+Hottest individual sites (two runs):
+
+| calls | site | what it is |
 |---|---|---|
-| 18 | `gate-structural-verify.sh:37` | schema validation pass |
-| 9 each, 10 sites | `gate-result-verify.sh:190,194,237,257,259,277,347,355,671,705` | the per-reviewer-document chain |
-| 3–4 each | `gate-result-verify.sh:620,741,759,1091,1098,1120,1131` | fence extraction and synthesis restore |
+| 60 | `gate-structural-verify.sh:22` | `jq -e 'has($name)'` — **an existence probe for the schema name** |
+| 60 | `gate-structural-verify.sh:27` | the schema validation pass itself |
+| 32 | `gate-policy.sh:586` | policy signal evaluation |
+| 24 | `gate-result-verify.sh:2056` | — |
+| 22 | `gate-policy.sh:234` | — |
+| 18 each | `gate-result-verify.sh:194,237,258,263,326,546,672,705` | the per-reviewer-document chain |
 
-**The concentration is one chain, not one line.** `_gate_reviewer_protocol_document_verify`
-and `_gate_reviewer_heal_empty_existing_evidence` are invoked ~9 times per gate,
-and each invocation opens jq about ten times **against the same document**: a
-heal pass, a second pass whose only job is to ask whether the heal changed
-anything, a `type == "object"` parse check, single-field reads of `.reviewer`
-and `.scope_manifest_sha256`, two hand-written validation passes, and a schema
-pass. That is ~90 invocations per gate from one chain, plus 18 from schema
-validation — together roughly 29% of all jq in the run.
+**The single clearest target is the `has($name)` probe.** Every schema
+validation opens jq once only to ask whether the schema name exists in the
+bundle, then opens it again to validate. The validating pass already receives
+`--arg name` and can report an unknown schema itself, so the probe is 30
+invocations per gate — about 8% of all jq — for a question the next call
+already answers. The 2026-08-20 read-only analysis independently listed this
+same probe among its low-risk removals.
 
-The source already records the shape as a known compromise: *"Shared by both
-hand-written jq passes below (they run as separate processes, split around the
-schema call in between, so each must define its own copy rather than sharing a
-single jq program)."*
+The per-reviewer-document chain remains a target but is second, not first: its
+sites are 9 per gate each rather than 30.
 
 ## Not established here
 
