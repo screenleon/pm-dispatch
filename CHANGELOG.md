@@ -21,6 +21,14 @@ Versions follow [Semantic Versioning](https://semver.org/).
   ranking rather than a total, and says so. Findings are recorded in
   `docs/audits/CC-579-gate-subprocess-baseline.md`: ~29% of a gate's jq comes
   from one chain that opens jq ten times against the same reviewer document.
+- **Fixed: the census lock leaked into the subject's process tree.** The
+  descriptor holding the single-census `flock` was inherited by every child,
+  including the subject group. When a census was killed hard enough that its
+  cleanup never ran, a surviving subject process kept the lock held and every
+  later census was refused — which presents as an unrelated environment
+  problem rather than as this bug. Children now close that descriptor.
+  `--attribute` is also refused outside `--mode bash` instead of being
+  silently ignored.
 - **`ops/diagnostics/gate-subprocess-census.sh` + pr-gate cost baseline
   (CC-579 Slice 0).** A gate run against a stub reviewer does no model work, so
   its full 14 s is the gate's own shell work — and the `test-pr-gate` family is

@@ -205,6 +205,25 @@ test_attribute_selects_the_binary() {
   else fail "$name" "expected 2 awk attributed, got ${attributed:-0} :: $out"; fi
 }
 
+test_attribute_outside_bash_mode_is_rejected() {
+  local name="--attribute is refused outside bash mode rather than silently ignored"
+  should_run "$name" || return 0
+  local out rc=0
+  out="$(bash "$CENSUS" --mode time --attribute awk 2>&1)" || rc=$?
+  if [[ "$rc" -eq 2 && "$out" == *"--mode bash only"* ]]; then pass "$name"
+  else fail "$name" "expected exit 2 naming the mode restriction, got rc=$rc :: $out"; fi
+}
+
+test_default_attribute_does_not_trip_the_mode_guard() {
+  local name="the default attribute leaves time mode usable"
+  should_run "$name" || return 0
+  local suite
+  suite="$(fake_suite attr-default 'jq -n 1 >/dev/null; exit 0')"
+  run_census "$suite" --mode time
+  if [[ "$CENSUS_RC" -eq 0 ]]; then pass "$name"
+  else fail "$name" "expected exit 0, got $CENSUS_RC :: $CENSUS_OUT"; fi
+}
+
 test_bad_attribute_value_is_usage_error() {
   local name="a malformed --attribute value exits 2"
   should_run "$name" || return 0
@@ -277,6 +296,31 @@ test_second_census_is_refused_while_the_lock_is_held() {
   else fail "$name" "expected refusal, got rc=$rc :: $out"; fi
 }
 
+test_hard_killed_census_does_not_strand_the_lock() {
+  local name="a hard-killed census leaves no child holding the lock"
+  should_run "$name" || return 0
+  local suite pid
+  # SIGKILL means the EXIT trap never runs and the subject group is never torn
+  # down, so whatever still holds the lock descriptor keeps it. Children
+  # inherit that descriptor unless it is closed for them, and a surviving
+  # `sleep` from the wait loop is enough to refuse every later census -- which
+  # presents as an unrelated environment problem rather than as this bug.
+  suite="$(fake_suite lock-strand 'sleep 25')"
+  bash "$CENSUS" --suite "$suite" --case any --timeout 60 --mode time >/dev/null 2>&1 &
+  pid=$!
+  sleep 3
+  kill -9 "$pid" 2>/dev/null
+  sleep 2
+  local acquired=1
+  exec 7>>"${TMPDIR:-/tmp}/gate-subprocess-census.lock"
+  flock -n 7 || acquired=0
+  exec 7>&-
+  # Clean up the subject group the killed census never got to reap.
+  pkill -9 -f 'lock-strand.sh' 2>/dev/null
+  if [[ "$acquired" -eq 1 ]]; then pass "$name"
+  else fail "$name" "a child of the killed census is still holding the lock"; fi
+}
+
 test_lock_is_released_after_a_run() {
   local name="the lock is free again once a census completes successfully"
   should_run "$name" || return 0
@@ -334,11 +378,14 @@ test_exec_mode_clusters_flags_without_program_spill
 test_bash_mode_traces_the_gate_not_the_suite_driver
 test_bash_mode_counts_invocations_not_mentions
 test_attribute_selects_the_binary
+test_attribute_outside_bash_mode_is_rejected
+test_default_attribute_does_not_trip_the_mode_guard
 test_bad_attribute_value_is_usage_error
 test_failed_subject_is_labelled_unusable_and_exits_nonzero
 test_timed_out_subject_is_labelled_unusable
 test_timed_out_subject_process_group_is_torn_down
 test_second_census_is_refused_while_the_lock_is_held
+test_hard_killed_census_does_not_strand_the_lock
 test_lock_is_released_after_a_run
 test_out_dir_receives_the_raw_log
 test_unreadable_flags_reported_subject_command

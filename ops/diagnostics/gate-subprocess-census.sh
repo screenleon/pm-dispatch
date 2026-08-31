@@ -44,6 +44,7 @@ deadline=900
 out_dir=""
 suite="tests/shell/test-pr-gate.sh"
 attribute="jq"
+attribute_explicit=0
 
 usage() {
   printf 'usage: %s [--suite <path>] [--case <filter>] [--mode time|exec|bash] [--attribute <binary>] [--timeout <seconds>] [--out <dir>]\n' "$0" >&2
@@ -59,7 +60,7 @@ while [[ $# -gt 0 ]]; do
       case_filter="$2"; shift 2 ;;
     --attribute)
       [[ $# -ge 2 && "$2" =~ ^[a-zA-Z0-9_-]+$ ]] || { usage; exit 2; }
-      attribute="$2"; shift 2 ;;
+      attribute="$2"; attribute_explicit=1; shift 2 ;;
     --mode)
       [[ $# -ge 2 ]] || { usage; exit 2; }
       case "$2" in time|exec|bash) mode="$2" ;; *) usage; exit 2 ;; esac
@@ -74,6 +75,15 @@ while [[ $# -gt 0 ]]; do
     *) usage; exit 2 ;;
   esac
 done
+
+# --attribute only shapes the bash-mode table. Accepting it silently elsewhere
+# would report a number the caller did not ask for, which is the failure this
+# whole ticket exists to avoid.
+if [[ "$attribute_explicit" -eq 1 && "$mode" != bash ]]; then
+  printf 'gate-subprocess-census: --attribute applies to --mode bash only (got --mode %s)\n' \
+    "$mode" >&2
+  exit 2
+fi
 
 # Resolve the subject before doing any setup, so a typo fails immediately
 # rather than after a lock and a temporary tree have been created.
@@ -103,6 +113,10 @@ if ! command -v flock >/dev/null 2>&1; then
   rm -rf -- "$work_dir"
   exit 1
 fi
+# Every child inherits this descriptor, so the subject tree and even the wait
+# loop's sleep would each hold the lock: one leaked grandchild then keeps it
+# held long after this process is gone, and every later census is refused. Each
+# child we spawn therefore closes fd 8 explicitly.
 exec 8>>"$lock_file"
 if ! flock -n 8; then
   printf 'gate-subprocess-census: another census holds %s; wait for it to finish\n' \
@@ -201,7 +215,7 @@ fi
 : > "$census_log"
 cd "$repo_root"
 setsid env PATH="$bin_dir:$PATH" \
-  bash "$suite_path" --filter "$case_filter" > "$suite_log" 2>&1 &
+  bash "$suite_path" --filter "$case_filter" > "$suite_log" 2>&1 8>&- &
 subject_pgid=$!
 # Record the owning group in the locked file so a blocked launch can name it.
 printf '%s\n' "$subject_pgid" >&8
@@ -209,7 +223,7 @@ printf '%s\n' "$subject_pgid" >&8
 waited=0
 while (( waited < deadline )); do
   kill -0 "$subject_pgid" 2>/dev/null || break
-  sleep 1
+  sleep 1 8>&-
   waited=$((waited + 1))
 done
 
