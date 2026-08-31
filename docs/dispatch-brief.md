@@ -632,7 +632,7 @@ Quoting and command-shape rules:
 - Validate metadata first with `runtime/lib/handover-validate.sh`; never insert raw metadata into the Bash command.
 - Use `handover_safe_argv` output for every metadata-derived argv value.
 - Single physical line, with no `\` continuation.
-- No `cd <dir> && ...` compounds; this avoids the stale agent-context lifecycle leak described in `[[feedback_codex_dispatch_lifecycle_leak]]`.
+- No `cd <dir> && ...` compounds; a `cd`-prefixed compound can leave the dispatched agent resolving later paths against the pre-`cd` directory (a stale agent-context lifecycle leak). Pass the working directory as `--cd` instead.
 - No inline `-- <brief>` form; always dispatch a file-backed brief.
 - Use `run_in_background: true` on the main-thread Bash call so the main thread can continue and receive the completion notification later.
 
@@ -661,7 +661,7 @@ Worktree: <git status/diff summary>
 Dispatch stderr: <none | concise warning summary>
 ```
 
-If the completion notification does not arrive within `<timeout>+30s`, run the diagnostic checklist from `[[feedback_codex_dispatch_foreground]]`: check for a live `codex-dispatch` process, inspect `.agent-trace/latest.*` mtimes, and decide whether the task is still running or orphaned before retrying. If the direct Bash route exits 124, retry exactly once with the same brief and flags after the diagnostic check; do not retry other non-zero exits without main-thread review.
+If the completion notification does not arrive within `<timeout>+30s`, run this diagnostic checklist: check for a live `codex-dispatch` process, inspect `.agent-trace/latest.*` mtimes, and decide whether the task is still running or orphaned before retrying. If the direct Bash route exits 124, retry exactly once with the same brief and flags after the diagnostic check; do not retry other non-zero exits without main-thread review.
 
 ### No Agent executor fallback
 

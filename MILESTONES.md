@@ -35,7 +35,7 @@ Gate correctness 與 release evidence 仍必須先在 v0.11.0 關閉。
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-032 | feedback cross-link glossary 公開化，清除 public dead/private-only link | 🔵 |
+| CC-032 | 私有 memory cross-link 公開化：使用者面向 doc inline 展開、規劃紀錄 `[[slug]]` 改 backtick／正規 link、`lint-doc-wikilinks.sh` CI enforce | ✅ 2026-08-31 |
 | CC-033 | README/onboarding public posture、history audit 處置、repo collaboration surface | 🔵（history audit ✅ 2026-07-18；其餘未啟動） |
 | CC-514 | orthogonal assurance map、machine-derived tier/mode/policy tables 與 docs-only／functional／high-risk recipes；Req 5/6 收斂成 `check-policy-doc-sync.sh` 動態發現機制 | ✅ pr:#522/#545 |
 
@@ -515,7 +515,7 @@ P1 的每張實作 PR 都應綁定 deterministic contract tests；任何 reviewe
 
 **主題**：讓「找既有資料」這件事真的**優先走內建 `pmctl context`**，並把 memory 變成可被檢索的 source——分兩層：行為層（context-first 紀律，在單一 chokepoint 強制）+ 能力層（memory 成為 `pmctl context` 的 source、收斂單一檢索入口、治理 memory 自身的 inject bloat 與 staleness）。
 
-> **設計依據**：2026-06-18 memory + `pmctl context` 統整（opus 獨立分析 + codex 獨立第二意見 + 外部 chatgpt/gemini/grok 研究對照）。核心洞察兩層：(1) **能力缺口**——`pmctl context` 的 index 只掃 repo 內檔，memory（repo 外 `~/.claude/projects/<id>/memory/`）**完全搜不到**，故對「決策/規則/偏好」這類最常找的特定資料，「優先用 pmctl context」物理上不可能；(2) **行為缺口**——即使能力補上，prompt 裡的「reflex」會在壓力下退化成 grep，必須在**單一 chokepoint 強制**（[[feedback_cut_capability_close_all_paths]]）。
+> **設計依據**：2026-06-18 memory + `pmctl context` 統整（opus 獨立分析 + codex 獨立第二意見 + 外部 chatgpt/gemini/grok 研究對照）。核心洞察兩層：(1) **能力缺口**——`pmctl context` 的 index 只掃 repo 內檔，memory（repo 外 `~/.claude/projects/<id>/memory/`）**完全搜不到**，故對「決策/規則/偏好」這類最常找的特定資料，「優先用 pmctl context」物理上不可能；(2) **行為缺口**——即使能力補上，prompt 裡的「reflex」會在壓力下退化成 grep，必須在**單一 chokepoint 強制**（`feedback_cut_capability_close_all_paths`）。
 
 ### Phase 1 — retrieval-first context discipline（P2；行為層，可先行）
 
@@ -598,7 +598,7 @@ P1 的每張實作 PR 都應綁定 deterministic contract tests；任何 reviewe
 
 > **設計依據（本 session 2026-06-13/14 分析）**：dispatch 接縫（`pmctl dispatch run --adapter <name>`）其實已乾淨——上層只認 adapter 名字，輸出契約是 `.agent-trace/latest.last`。殘留耦合集中在一個**隱藏屬性**：adapter 的 **runner-kind**（`cli-subprocess` thin-dispatch/hook-gated vs `host-native` self-exec/harness-gated），目前被隱式寫死三遍（`executor-router.sh` case ／哪些 hook 檔存在＋settings 接線 ／每個 guard 的 threat-model）。v0.6.0 = 把 runner-kind 宣告一次在 `adapter.yaml`，router / guard / install 全部由它衍生。
 
-> **Scope 取捨**：依本 repo「thin vertical slice、≤1 PR/feature」慣例分階段，每階段可獨立 ship。Phase 2/3 動 allowlist 與 guard 安全邊界，**硬 gate**（security-reviewer + risk-reviewer，不可 PM 自我 override，見 [[gate-clear-all-on-block]]）。**保守退路**：若 Phase 1+2（manifest + router）落地後評估 guard 收口風險過高，Phase 3 可單獨延 v0.7.0，但 manifest 欄位（CC-372）會懸空一版——故預設走完整版。
+> **Scope 取捨**：依本 repo「thin vertical slice、≤1 PR/feature」慣例分階段，每階段可獨立 ship。Phase 2/3 動 allowlist 與 guard 安全邊界，**硬 gate**（security-reviewer + risk-reviewer，不可 PM 自我 override，見 `gate-clear-all-on-block`）。**保守退路**：若 Phase 1+2（manifest + router）落地後評估 guard 收口風險過高，Phase 3 可單獨延 v0.7.0，但 manifest 欄位（CC-372）會懸空一版——故預設走完整版。
 
 ### Phase 1 — manifest runner-kind 地基（P2；純加法，先行）
 

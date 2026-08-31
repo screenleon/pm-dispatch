@@ -121,6 +121,10 @@ jobs:
         run: bash tools/lint/lint-deprecation-sunset.sh
       - name: Deprecation sunset lint regression suite
         run: bash tests/shell/test-lint-deprecation-sunset.sh
+      - name: Forbid bare wikilinks in reader-facing docs
+        run: bash tools/lint/lint-doc-wikilinks.sh
+      - name: Doc wikilink lint regression suite
+        run: bash tests/shell/test-lint-doc-wikilinks.sh
       - name: Runtime library direct regression suite
         run: bash tests/shell/test-runtime-lib-coverage.sh
 

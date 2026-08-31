@@ -226,6 +226,10 @@ map_path() {
       add_suite lint-deprecation-sunset; add_suite test-lint-deprecation-sunset; behavioral=1 ;;
     docs/stability-contract.md|docs/pr-gate-handover-schema.md)
       add_suite lint-deprecation-sunset; behavioral=1 ;;
+    tools/lint/lint-doc-wikilinks.sh|tests/shell/test-lint-doc-wikilinks.sh)
+      add_suite lint-doc-wikilinks; add_suite test-lint-doc-wikilinks; behavioral=1 ;;
+    BACKLOG.md|MILESTONES.md|DECISIONS.md|README.md|CONTRIBUTING.md|docs/*.md)
+      add_suite lint-doc-wikilinks; behavioral=1 ;;
     tests/bin/run-tests.sh)
       add_suite test-run-tests; behavioral=1 ;;
     tests/lib/test-result.sh|core/schema/test-result.schema.json)
