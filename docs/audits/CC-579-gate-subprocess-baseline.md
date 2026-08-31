@@ -114,6 +114,46 @@ already used in `tests/shell/test-pmctl-trace.sh`
 flat in input size, so a later return to per-item spawning fails a test even
 though the output stays byte-identical.
 
+## Slice 1 Task 0 — per-call-site attribution (2026-08-31)
+
+`--mode bash --attribute jq` now reports jq invocations per `source:line`.
+Against the same subject, 511 of the 729 invocations `pr-gate.sh` owns are
+attributed (70%); the remainder are reached through paths xtrace does not
+cover, so the table is a **ranking, not a total** — `--mode exec` remains the
+authority on the exact count.
+
+Two attribution mistakes were made and fixed while producing it, both of which
+would have aimed the optimisation at call sites that do not exist:
+
+- Matching the binary name anywhere in the traced command counts `jq_rc=0`,
+  `local jq_display_def=`, and `command -v jq` as invocations. The matcher
+  requires the name to appear as a command word.
+- Reading only the line carrying the `+file:line:` prefix is not enough on its
+  own; each traced command is reconstructed to its next prefix before being
+  classified.
+
+Ranked sites, per gate run (halve the two-run figures the tool prints):
+
+| calls/run | site | what it does |
+|---|---|---|
+| 18 | `gate-structural-verify.sh:37` | schema validation pass |
+| 9 each, 10 sites | `gate-result-verify.sh:190,194,237,257,259,277,347,355,671,705` | the per-reviewer-document chain |
+| 3–4 each | `gate-result-verify.sh:620,741,759,1091,1098,1120,1131` | fence extraction and synthesis restore |
+
+**The concentration is one chain, not one line.** `_gate_reviewer_protocol_document_verify`
+and `_gate_reviewer_heal_empty_existing_evidence` are invoked ~9 times per gate,
+and each invocation opens jq about ten times **against the same document**: a
+heal pass, a second pass whose only job is to ask whether the heal changed
+anything, a `type == "object"` parse check, single-field reads of `.reviewer`
+and `.scope_manifest_sha256`, two hand-written validation passes, and a schema
+pass. That is ~90 invocations per gate from one chain, plus 18 from schema
+validation — together roughly 29% of all jq in the run.
+
+The source already records the shape as a known compromise: *"Shared by both
+hand-written jq passes below (they run as separate processes, split around the
+schema call in between, so each must define its own copy rather than sharing a
+single jq program)."*
+
 ## Not established here
 
 - Which specific call sites are safe to batch. `runtime/lib/gate-result-verify.sh`

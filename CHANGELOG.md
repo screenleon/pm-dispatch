@@ -10,6 +10,17 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Per-call-site jq attribution in the census (CC-579 Slice 1 Task 0).**
+  `--mode bash` gains `--attribute <binary>` (default `jq`) and reports
+  invocations per `source:line`, so an optimisation slice can be aimed at real
+  call sites instead of guessed ones. Attribution counts a binary only where it
+  appears as a command word — matching the name anywhere counts `jq_rc=0`,
+  `local jq_display_def=`, and `command -v jq` as invocations — and classifies
+  each traced command as a whole rather than only the line carrying the xtrace
+  prefix. It attributes 70% of the invocations `--mode exec` counts, so it is a
+  ranking rather than a total, and says so. Findings are recorded in
+  `docs/audits/CC-579-gate-subprocess-baseline.md`: ~29% of a gate's jq comes
+  from one chain that opens jq ten times against the same reviewer document.
 - **`ops/diagnostics/gate-subprocess-census.sh` + pr-gate cost baseline
   (CC-579 Slice 0).** A gate run against a stub reviewer does no model work, so
   its full 14 s is the gate's own shell work — and the `test-pr-gate` family is

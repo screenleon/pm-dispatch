@@ -159,6 +159,61 @@ test_bash_mode_traces_the_gate_not_the_suite_driver() {
   else fail "$name" "expected gate traced and driver untraced, got traced=$traced driver=$driver_lines :: $out"; fi
 }
 
+test_bash_mode_counts_invocations_not_mentions() {
+  local name="bash mode counts jq invocations, not variables that merely contain 'jq'"
+  should_run "$name" || return 0
+  local gate suite out
+  gate="$tmp_root/mentions-runner/pr-gate.sh"
+  mkdir -p "$tmp_root/mentions-runner"
+  # Exactly two real invocations, surrounded by the shapes the real gate is
+  # full of: a `jq_rc` status variable, a `jq_display_def` program held in a
+  # variable, and an availability probe. A matcher that looks for the word
+  # anywhere would report five and send an optimisation slice at call sites
+  # that do not exist.
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'jq_rc=0\n'
+    printf 'jq_display_def="def display: .;"\n'
+    printf 'command -v jq >/dev/null\n'
+    printf 'jq -n 1 >/dev/null\n'
+    printf 'jq_rc=$?\n'
+    printf 'jq -n "\n'
+    printf 'if 1 == 1 then 1 else 2 end" >/dev/null\n'
+  } > "$gate"
+  chmod +x "$gate"
+  suite="$(fake_suite mentions-driver "bash '$gate'; exit 0")"
+  out="$(bash "$CENSUS" --suite "$suite" --case any --timeout 30 --mode bash 2>&1)"
+  local attributed
+  attributed="$(awk '/TOTAL attributed/ { print $1 }' <<< "$out")"
+  if [[ "${attributed:-0}" -eq 2 ]]; then pass "$name"
+  else fail "$name" "expected exactly 2 invocations attributed, got ${attributed:-0} :: $out"; fi
+}
+
+test_attribute_selects_the_binary() {
+  local name="--attribute counts the named binary instead of jq"
+  should_run "$name" || return 0
+  local gate suite out attributed
+  gate="$tmp_root/attr-runner/pr-gate.sh"
+  mkdir -p "$tmp_root/attr-runner"
+  printf '#!/usr/bin/env bash\njq -n 1 >/dev/null\nawk "BEGIN{}" </dev/null\nawk "BEGIN{}" </dev/null\n' > "$gate"
+  chmod +x "$gate"
+  suite="$(fake_suite attr-driver "bash '$gate'; exit 0")"
+  out="$(bash "$CENSUS" --suite "$suite" --case any --timeout 30 --mode bash --attribute awk 2>&1)"
+  attributed="$(awk '/TOTAL attributed/ { print $1 }' <<< "$out")"
+  if [[ "$out" == *"awk invocations per source:line"* && "${attributed:-0}" -eq 2 ]]; then
+    pass "$name"
+  else fail "$name" "expected 2 awk attributed, got ${attributed:-0} :: $out"; fi
+}
+
+test_bad_attribute_value_is_usage_error() {
+  local name="a malformed --attribute value exits 2"
+  should_run "$name" || return 0
+  local out rc=0
+  out="$(bash "$CENSUS" --attribute 'jq; rm -rf /' 2>&1)" || rc=$?
+  if [[ "$rc" -eq 2 ]]; then pass "$name"
+  else fail "$name" "expected exit 2, got $rc :: $out"; fi
+}
+
 # ------------------------------------------------------------- subject outcomes
 
 test_failed_subject_is_labelled_unusable_and_exits_nonzero() {
@@ -277,6 +332,9 @@ test_time_mode_counts_every_call_of_a_known_subject
 test_time_mode_reports_a_passing_subject_as_usable
 test_exec_mode_clusters_flags_without_program_spill
 test_bash_mode_traces_the_gate_not_the_suite_driver
+test_bash_mode_counts_invocations_not_mentions
+test_attribute_selects_the_binary
+test_bad_attribute_value_is_usage_error
 test_failed_subject_is_labelled_unusable_and_exits_nonzero
 test_timed_out_subject_is_labelled_unusable
 test_timed_out_subject_process_group_is_torn_down

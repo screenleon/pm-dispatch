@@ -12,8 +12,10 @@
 #   time  (default)  per-binary call count, total seconds, mean milliseconds
 #   exec             per-binary counts plus the leading argv of each call, so
 #                    calls can be clustered back to their call sites
-#   bash             executed-simple-command counts per source:line, for the
-#                    work that never leaves bash
+#   bash             executed-simple-command counts per source:line, plus a
+#                    per-source:line attribution of one binary's invocations
+#                    (--attribute, default jq), for finding which call sites to
+#                    collapse
 #
 # Measurement fidelity
 # --------------------
@@ -41,9 +43,10 @@ mode="time"
 deadline=900
 out_dir=""
 suite="tests/shell/test-pr-gate.sh"
+attribute="jq"
 
 usage() {
-  printf 'usage: %s [--suite <path>] [--case <filter>] [--mode time|exec|bash] [--timeout <seconds>] [--out <dir>]\n' "$0" >&2
+  printf 'usage: %s [--suite <path>] [--case <filter>] [--mode time|exec|bash] [--attribute <binary>] [--timeout <seconds>] [--out <dir>]\n' "$0" >&2
 }
 
 while [[ $# -gt 0 ]]; do
@@ -54,6 +57,9 @@ while [[ $# -gt 0 ]]; do
     --case)
       [[ $# -ge 2 && -n "$2" ]] || { usage; exit 2; }
       case_filter="$2"; shift 2 ;;
+    --attribute)
+      [[ $# -ge 2 && "$2" =~ ^[a-zA-Z0-9_-]+$ ]] || { usage; exit 2; }
+      attribute="$2"; shift 2 ;;
     --mode)
       [[ $# -ge 2 ]] || { usage; exit 2; }
       case "$2" in time|exec|bash) mode="$2" ;; *) usage; exit 2 ;; esac
@@ -262,6 +268,33 @@ case "$mode" in
     printf '\n=== hottest source:line ===\n'
     { grep -oE '^\+[a-zA-Z0-9._-]+\.sh:[0-9]+' "$census_log" || true; } \
       | sort | uniq -c | sort -rn | head -15
+    printf '\n=== %s invocations per source:line (lower bound) ===\n' "$attribute"
+    # xtrace prints a multi-line command across several lines and puts the
+    # +file:line: prefix on only one of them, so matching the binary on the
+    # prefix line alone misses every multi-line call -- which is most of the
+    # interesting ones. Rebuild each traced command from its prefix line to the
+    # next before deciding whether it invoked the binary. This still
+    # under-counts (a call reached only through an untraced child is invisible),
+    # so treat it as a ranking, not a total: `--mode exec` owns the exact count.
+    awk -v want="$attribute" '
+      function flush() {
+        if (site != "" && rec ~ ("(^|[ |(`$=])" want "[ ]")) count[site]++
+      }
+      /^\+[a-zA-Z0-9._-]+\.sh:[0-9]+:/ {
+        flush()
+        match($0, /^\+[a-zA-Z0-9._-]+\.sh:[0-9]+/)
+        site = substr($0, RSTART + 1, RLENGTH - 1)
+        rec = $0
+        next
+      }
+      { rec = rec " " $0 }
+      END {
+        flush()
+        total = 0
+        for (s in count) total += count[s]
+        for (s in count) printf "%6d  %s\n", count[s], s
+        printf "%6d  TOTAL attributed\n", total
+      }' "$census_log" | sort -rn | head -22
     ;;
 esac
 
