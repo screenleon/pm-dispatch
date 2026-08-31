@@ -30,10 +30,12 @@ _gate_structural_schema_errors() {
     --slurpfile schemas "$_gate_structural_verify_bundle" \
     --slurpfile instance "$instance_file" \
     -f "$_gate_structural_verify_filter")" || rc=$?
-  # 9 is the validator's unknown-schema signal; it has already written the
-  # diagnostic to stderr. Any other non-zero status is a jq or asset failure.
-  # Both are execution failures, and neither may be mistaken for a validation
-  # verdict, so nothing is printed on stdout for either.
+  # Deliberately not branching on the status. The validator exits 9 for an
+  # unknown schema and jq exits with its own codes for anything else, but both
+  # are execution failures with the same obligation: say nothing on stdout, so
+  # no caller can read a validation verdict out of a run that never judged the
+  # instance. The 9 is a distinct, greppable value for a human reading stderr,
+  # not a value this code depends on.
   [[ "$rc" -eq 0 ]] || return 2
   printf '%s\n' "$issues"
 }
