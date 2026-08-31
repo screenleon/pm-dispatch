@@ -230,6 +230,8 @@ map_path() {
       add_suite lint-doc-wikilinks; add_suite test-lint-doc-wikilinks; behavioral=1 ;;
     tools/lint/lint-readme-surface-lists.sh|tests/shell/test-lint-readme-surface-lists.sh)
       add_suite lint-readme-surface-lists; add_suite test-lint-readme-surface-lists; behavioral=1 ;;
+    ops/diagnostics/gate-subprocess-census.sh|tests/shell/test-gate-subprocess-census.sh)
+      add_suite test-gate-subprocess-census; behavioral=1 ;;
     commands/*.md|agents/*.md|skills/*/SKILL.md)
       add_suite lint-readme-surface-lists; behavioral=1 ;;
     README.md)
