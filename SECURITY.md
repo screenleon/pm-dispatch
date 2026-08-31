@@ -64,14 +64,19 @@ repository:
 - Secret scanning push protection (`secret_scanning_push_protection`)
 - Dependabot security updates (`dependabot_security_updates`)
 
-Enabling them is a maintainer repo-settings action, not a code change. The
-equivalent API call:
+Enabling them is a maintainer repo-settings action, not a code change (Settings →
+Code security and analysis, or the equivalent API call below):
 
 ```bash
-gh api -X PATCH repos/screenleon/pm-dispatch \
-  -f security_and_analysis.secret_scanning.status=enabled \
-  -f security_and_analysis.secret_scanning_push_protection.status=enabled \
-  -f security_and_analysis.dependabot_security_updates.status=enabled
+gh api -X PATCH repos/screenleon/pm-dispatch --input - <<'JSON'
+{
+  "security_and_analysis": {
+    "secret_scanning": { "status": "enabled" },
+    "secret_scanning_push_protection": { "status": "enabled" },
+    "dependabot_security_updates": { "status": "enabled" }
+  }
+}
+JSON
 ```
 
 Until enabled, contributors and forks should assume no automated secret-leak

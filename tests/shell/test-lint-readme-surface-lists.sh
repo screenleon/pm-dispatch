@@ -90,6 +90,30 @@ test_stale_command_bullet_fails() {
   want_fail "$name" "$root" "lists 'ghost' but no such command exists"
 }
 
+test_duplicate_command_bullet_fails() {
+  local name="a command listed twice under README Commands is a finding"
+  should_run "$name" || return 0
+  local root; root="$(fixture "$name")"
+  sed -i 's#- \*\*/two\*\* — d.#- **/two** — d.\n- **/two** — again.#' "$root/README.md"
+  want_fail "$name" "$root" "lists 'two' more than once (one bullet per command)"
+}
+
+test_duplicate_agent_bullet_fails() {
+  local name="an agent listed twice under README Agents is a finding"
+  should_run "$name" || return 0
+  local root; root="$(fixture "$name")"
+  sed -i 's#- \*\*critic\*\* — b.#- **critic** — b.\n- **critic** — again.#' "$root/README.md"
+  want_fail "$name" "$root" "lists 'critic' more than once (one bullet per agent)"
+}
+
+test_duplicate_skill_bullet_fails() {
+  local name="a skill listed twice under README Skills is a finding"
+  should_run "$name" || return 0
+  local root; root="$(fixture "$name")"
+  sed -i 's#- \*\*beta\*\* — f.#- **beta** — f.\n- **beta** — again.#' "$root/README.md"
+  want_fail "$name" "$root" "lists 'beta' more than once (one bullet per skill)"
+}
+
 test_missing_agent_fails() {
   local name="an agent file with no README bullet is a finding"
   should_run "$name" || return 0
@@ -135,6 +159,9 @@ test_real_repo_passes
 test_balanced_fixture_passes
 test_command_on_disk_missing_from_readme_fails
 test_stale_command_bullet_fails
+test_duplicate_command_bullet_fails
+test_duplicate_agent_bullet_fails
+test_duplicate_skill_bullet_fails
 test_missing_agent_fails
 test_missing_skill_fails
 test_absent_section_heading_is_a_hard_finding

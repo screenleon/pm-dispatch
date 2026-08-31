@@ -403,6 +403,24 @@ case_reader_docs_map_to_wikilink_lint() {
   pass "$name"
 }
 
+# Behavior: every path lint-readme-surface-lists.sh cares about (README.md, any
+# commands/agents/skills source file, and the lint's own two files) selects
+# lint-readme-surface-lists during iteration planning, with no coverage gap.
+case_readme_surface_paths_map_to_lint() {
+  local name=readme-surface-paths-map-to-lint repo out status p
+  repo="$(make_fixture "$name")"
+  for p in README.md commands/pm.md agents/critic.md skills/dispatch-brief/SKILL.md \
+           tools/lint/lint-readme-surface-lists.sh tests/shell/test-lint-readme-surface-lists.sh; do
+    status=0
+    out=$(RUN_TESTS_ARGS_LOG="$TMP_ROOT/$name.args" \
+      "$repo/tests/bin/run-tests.sh" --path "$p" --list 2>&1) || status=$?
+    if [[ "$status" -ne 0 || "$out" != *"lint-readme-surface-lists"* || "$out" == *"coverage gaps"* ]]; then
+      fail "$name" "--path $p: status=$status out=$out"; return
+    fi
+  done
+  pass "$name"
+}
+
 case_gitignore_maps_to_setup_project() {
   local name=gitignore-maps-to-setup-project repo out status=0 args
   args="$TMP_ROOT/$name.args"
@@ -887,6 +905,7 @@ case_planning_docs_map_to_status_consistency_suite
 case_admission_lint_paths_map_to_meta_suite
 case_operational_docs_map_to_stale_reference_lint
 case_reader_docs_map_to_wikilink_lint
+case_readme_surface_paths_map_to_lint
 case_gitignore_maps_to_setup_project
 case_agent_mapping_uses_registered_frontmatter_suite
 case_command_mapping_uses_registered_frontmatter_suite

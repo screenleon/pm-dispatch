@@ -289,7 +289,6 @@ PHASE0_SUITE_NAMES=(
   test-lint-surface-coverage
   test-lint-deprecation-sunset
   test-lint-doc-wikilinks
-  test-lint-readme-surface-lists
   test-lint-model-aliases
   test-lint-portable-repo-paths
   test-lint-shellcheck

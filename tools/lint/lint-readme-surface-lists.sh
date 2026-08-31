@@ -30,7 +30,9 @@ fail() { printf 'lint-readme-surface-lists: %s\n' "$*" >&2; failures=$((failures
 
 [[ -f "$readme" ]] || { fail "missing README.md"; exit 1; }
 
-# bullets_in_section <heading> -> the bullet names under "### <heading>", sorted.
+# bullets_in_section <heading> -> the bullet names under "### <heading>", in
+# document order, NOT de-duplicated (one entry per surface is part of the
+# contract, so a repeated bullet must be visible to the caller).
 bullets_in_section() {
   awk -v want="### $1" '
     $0 == want { inside = 1; next }
@@ -41,7 +43,7 @@ bullets_in_section() {
       sub(/\*\*.*$/, "", line)
       print line
     }
-  ' "$readme" | LC_ALL=C sort -u
+  ' "$readme"
 }
 
 section_present() {
@@ -50,12 +52,19 @@ section_present() {
 
 # compare <label> <heading> <newline-separated inventory>
 compare() {
-  local label="$1" heading="$2" inventory="$3" listed missing extra
+  local label="$1" heading="$2" inventory="$3"
+  local listed_raw dupes listed missing extra d m e
   if ! section_present "$heading"; then
     fail "README.md has no '### $heading' section"
     return
   fi
-  listed="$(bullets_in_section "$heading")"
+  listed_raw="$(bullets_in_section "$heading")"
+  dupes="$(printf '%s\n' "$listed_raw" | grep -v '^$' | LC_ALL=C sort | uniq -d)"
+  while IFS= read -r d; do
+    [[ -n "$d" ]] || continue
+    fail "README '### $heading' lists '$d' more than once (one bullet per $label)"
+  done <<< "$dupes"
+  listed="$(printf '%s\n' "$listed_raw" | LC_ALL=C sort -u)"
   missing="$(comm -23 <(printf '%s\n' "$inventory" | LC_ALL=C sort -u) <(printf '%s\n' "$listed"))"
   extra="$(comm -13 <(printf '%s\n' "$inventory" | LC_ALL=C sort -u) <(printf '%s\n' "$listed"))"
   while IFS= read -r m; do
