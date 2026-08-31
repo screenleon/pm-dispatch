@@ -190,7 +190,13 @@ test_timed_out_subject_process_group_is_torn_down() {
   # The child outlives the parent unless the whole group is killed; it writes
   # the marker only if it is still running well after the census returned.
   suite="$(fake_suite subject-spawns "( sleep 4; : > '$marker' ) & sleep 30")"
-  bash "$CENSUS" --suite "$suite" --case any --timeout 1 --mode time >/dev/null 2>&1 || true
+  local rc=0
+  bash "$CENSUS" --suite "$suite" --case any --timeout 1 --mode time >/dev/null 2>&1 || rc=$?
+  # A timed-out subject must report unusable; anything else means this case
+  # exercised a different path than the teardown it claims to cover.
+  if [[ "$rc" -eq 0 ]]; then
+    fail "$name" "expected the timed-out census to exit non-zero, got 0"; return
+  fi
   sleep 6
   if [[ ! -e "$marker" ]]; then pass "$name"
   else fail "$name" "orphan survived the census teardown ($marker exists)"; fi
@@ -217,18 +223,25 @@ test_second_census_is_refused_while_the_lock_is_held() {
 }
 
 test_lock_is_released_after_a_run() {
-  local name="the lock is free again once a census returns"
+  local name="the lock is free again once a census completes successfully"
   should_run "$name" || return 0
   local suite
-  suite="$(fake_suite lock-release 'exit 0')"
-  bash "$CENSUS" --suite "$suite" --case any --timeout 10 >/dev/null 2>&1 || true
+  suite="$(fake_suite lock-release 'jq -n 1 >/dev/null; exit 0')"
+  # Suppressing the census's status here would let this case pass on a census
+  # that crashed before it ever took the lock -- which proves nothing about
+  # release. Require the run to have succeeded first.
+  run_census "$suite" --mode time
+  if [[ "$CENSUS_RC" -ne 0 ]]; then
+    fail "$name" "census did not complete, so release proves nothing: rc=$CENSUS_RC :: $CENSUS_OUT"
+    return
+  fi
   exec 7>>"${TMPDIR:-/tmp}/gate-subprocess-census.lock"
   if flock -n 7; then
     exec 7>&-
     pass "$name"
   else
     exec 7>&-
-    fail "$name" "lock still held after the census exited"
+    fail "$name" "lock still held after a completed census exited"
   fi
 }
 
