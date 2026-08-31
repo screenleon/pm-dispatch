@@ -159,6 +159,107 @@ test_bash_mode_traces_the_gate_not_the_suite_driver() {
   else fail "$name" "expected gate traced and driver untraced, got traced=$traced driver=$driver_lines :: $out"; fi
 }
 
+test_bash_mode_counts_invocations_not_mentions() {
+  local name="bash mode counts jq invocations, not variables that merely contain 'jq'"
+  should_run "$name" || return 0
+  local gate suite out
+  gate="$tmp_root/mentions-runner/pr-gate.sh"
+  mkdir -p "$tmp_root/mentions-runner"
+  # Exactly two real invocations, surrounded by the shapes the real gate is
+  # full of: a `jq_rc` status variable, a `jq_display_def` program held in a
+  # variable, and an availability probe. A matcher that looks for the word
+  # anywhere would report five and send an optimisation slice at call sites
+  # that do not exist.
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'jq_rc=0\n'
+    printf 'jq_display_def="def display: .;"\n'
+    printf 'command -v jq >/dev/null\n'
+    printf 'jq -n 1 >/dev/null\n'
+    printf 'jq_rc=$?\n'
+    printf 'jq -n "\n'
+    printf 'if 1 == 1 then 1 else 2 end" >/dev/null\n'
+  } > "$gate"
+  chmod +x "$gate"
+  suite="$(fake_suite mentions-driver "bash '$gate'; exit 0")"
+  out="$(bash "$CENSUS" --suite "$suite" --case any --timeout 30 --mode bash 2>&1)"
+  local attributed
+  attributed="$(awk '/TOTAL attributed/ { print $1 }' <<< "$out")"
+  if [[ "${attributed:-0}" -eq 2 ]]; then pass "$name"
+  else fail "$name" "expected exactly 2 invocations attributed, got ${attributed:-0} :: $out"; fi
+}
+
+test_bash_mode_attributes_calls_made_in_subshells() {
+  local name="bash mode attributes calls traced from a subshell, not just top level"
+  should_run "$name" || return 0
+  local gate suite out attributed
+  gate="$tmp_root/subshell-runner/pr-gate.sh"
+  mkdir -p "$tmp_root/subshell-runner"
+  # bash marks nested xtrace frames with a deeper run of '+', so a prefix
+  # pattern anchored on a single '+' folds every subshell call into the
+  # previous record. That silently drops most real call sites and, worse,
+  # attributes their text to whichever line happened to come before.
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'jq -n 1 >/dev/null\n'
+    # shellcheck disable=SC2016  # these expansions belong to the fake gate's source.
+    printf 'v="$(jq -n 2)"\n'
+    printf '( jq -n 3 >/dev/null )\n'
+    # shellcheck disable=SC2016
+    printf 'printf "%%s" "$v" >/dev/null\n'
+  } > "$gate"
+  chmod +x "$gate"
+  suite="$(fake_suite subshell-driver "bash '$gate'; exit 0")"
+  out="$(bash "$CENSUS" --suite "$suite" --case any --timeout 30 --mode bash 2>&1)"
+  attributed="$(awk '/TOTAL attributed/ { print $1 }' <<< "$out")"
+  if [[ "${attributed:-0}" -eq 3 ]]; then pass "$name"
+  else fail "$name" "expected all 3 invocations attributed, got ${attributed:-0} :: $out"; fi
+}
+
+test_attribute_selects_the_binary() {
+  local name="--attribute counts the named binary instead of jq"
+  should_run "$name" || return 0
+  local gate suite out attributed
+  gate="$tmp_root/attr-runner/pr-gate.sh"
+  mkdir -p "$tmp_root/attr-runner"
+  printf '#!/usr/bin/env bash\njq -n 1 >/dev/null\nawk "BEGIN{}" </dev/null\nawk "BEGIN{}" </dev/null\n' > "$gate"
+  chmod +x "$gate"
+  suite="$(fake_suite attr-driver "bash '$gate'; exit 0")"
+  out="$(bash "$CENSUS" --suite "$suite" --case any --timeout 30 --mode bash --attribute awk 2>&1)"
+  attributed="$(awk '/TOTAL attributed/ { print $1 }' <<< "$out")"
+  if [[ "$out" == *"awk invocations per source:line"* && "${attributed:-0}" -eq 2 ]]; then
+    pass "$name"
+  else fail "$name" "expected 2 awk attributed, got ${attributed:-0} :: $out"; fi
+}
+
+test_attribute_outside_bash_mode_is_rejected() {
+  local name="--attribute is refused outside bash mode rather than silently ignored"
+  should_run "$name" || return 0
+  local out rc=0
+  out="$(bash "$CENSUS" --mode time --attribute awk 2>&1)" || rc=$?
+  if [[ "$rc" -eq 2 && "$out" == *"--mode bash only"* ]]; then pass "$name"
+  else fail "$name" "expected exit 2 naming the mode restriction, got rc=$rc :: $out"; fi
+}
+
+test_default_attribute_does_not_trip_the_mode_guard() {
+  local name="the default attribute leaves time mode usable"
+  should_run "$name" || return 0
+  local suite
+  suite="$(fake_suite attr-default 'jq -n 1 >/dev/null; exit 0')"
+  run_census "$suite" --mode time
+  if [[ "$CENSUS_RC" -eq 0 ]]; then pass "$name"
+  else fail "$name" "expected exit 0, got $CENSUS_RC :: $CENSUS_OUT"; fi
+}
+
+test_bad_attribute_value_is_usage_error() {
+  local name="a malformed --attribute value exits 2"
+  should_run "$name" || return 0
+  local out rc=0
+  out="$(bash "$CENSUS" --attribute 'jq; rm -rf /' 2>&1)" || rc=$?
+  if [[ "$rc" -eq 2 ]]; then pass "$name"
+  else fail "$name" "expected exit 2, got $rc :: $out"; fi
+}
+
 # ------------------------------------------------------------- subject outcomes
 
 test_failed_subject_is_labelled_unusable_and_exits_nonzero() {
@@ -222,6 +323,31 @@ test_second_census_is_refused_while_the_lock_is_held() {
   else fail "$name" "expected refusal, got rc=$rc :: $out"; fi
 }
 
+test_hard_killed_census_does_not_strand_the_lock() {
+  local name="a hard-killed census leaves no child holding the lock"
+  should_run "$name" || return 0
+  local suite pid
+  # SIGKILL means the EXIT trap never runs and the subject group is never torn
+  # down, so whatever still holds the lock descriptor keeps it. Children
+  # inherit that descriptor unless it is closed for them, and a surviving
+  # `sleep` from the wait loop is enough to refuse every later census -- which
+  # presents as an unrelated environment problem rather than as this bug.
+  suite="$(fake_suite lock-strand 'sleep 25')"
+  bash "$CENSUS" --suite "$suite" --case any --timeout 60 --mode time >/dev/null 2>&1 &
+  pid=$!
+  sleep 3
+  kill -9 "$pid" 2>/dev/null
+  sleep 2
+  local acquired=1
+  exec 7>>"${TMPDIR:-/tmp}/gate-subprocess-census.lock"
+  flock -n 7 || acquired=0
+  exec 7>&-
+  # Clean up the subject group the killed census never got to reap.
+  pkill -9 -f 'lock-strand.sh' 2>/dev/null
+  if [[ "$acquired" -eq 1 ]]; then pass "$name"
+  else fail "$name" "a child of the killed census is still holding the lock"; fi
+}
+
 test_lock_is_released_after_a_run() {
   local name="the lock is free again once a census completes successfully"
   should_run "$name" || return 0
@@ -277,10 +403,17 @@ test_time_mode_counts_every_call_of_a_known_subject
 test_time_mode_reports_a_passing_subject_as_usable
 test_exec_mode_clusters_flags_without_program_spill
 test_bash_mode_traces_the_gate_not_the_suite_driver
+test_bash_mode_counts_invocations_not_mentions
+test_bash_mode_attributes_calls_made_in_subshells
+test_attribute_selects_the_binary
+test_attribute_outside_bash_mode_is_rejected
+test_default_attribute_does_not_trip_the_mode_guard
+test_bad_attribute_value_is_usage_error
 test_failed_subject_is_labelled_unusable_and_exits_nonzero
 test_timed_out_subject_is_labelled_unusable
 test_timed_out_subject_process_group_is_torn_down
 test_second_census_is_refused_while_the_lock_is_held
+test_hard_killed_census_does_not_strand_the_lock
 test_lock_is_released_after_a_run
 test_out_dir_receives_the_raw_log
 test_unreadable_flags_reported_subject_command

@@ -114,6 +114,63 @@ already used in `tests/shell/test-pmctl-trace.sh`
 flat in input size, so a later return to per-item spawning fails a test even
 though the output stays byte-identical.
 
+## Slice 1 Task 0 — per-call-site attribution (2026-08-31)
+
+`--mode bash --attribute jq` reports jq invocations per `source:line`. Its total
+reconciles **exactly** with `--mode exec` (729 = 729 on the same subject), so
+this is a complete attribution, not a sample.
+
+Getting there took three corrections, each of which produced a
+plausible-looking but wrong ranking:
+
+- **Nested frames.** bash marks a subshell's xtrace with a deeper run of `+`.
+  A pattern anchored on a single `+` folds every subshell call into the
+  preceding record — this alone hid most call sites and misattributed their
+  text to whichever line came before. This was the big one: 145 attributed
+  before the fix, 729 after.
+- **Multi-line commands.** A traced command spans several output lines, so each
+  record must run from its prefix to the next.
+- **Command word, not mention.** The binary counts only as the command word of
+  its record. Accepting the name anywhere counts `jq_rc=0`,
+  `local jq_display_def=`, and `command -v jq` as invocations — inventing call
+  sites that do not exist.
+
+### Where the jq calls actually are
+
+Per file, over two gate runs (halve for one run):
+
+| calls | file |
+|---|---|
+| 310 | `gate-result-verify.sh` |
+| 134 | `gate-policy.sh` |
+| 120 | `gate-structural-verify.sh` |
+| 58 | `pr-gate.sh` |
+| 40 | `gate-scope.sh` |
+| 32 | `gate-closure.sh` |
+| 60 | everything else combined |
+
+Hottest individual sites (two runs):
+
+| calls | site | what it is |
+|---|---|---|
+| 60 | `gate-structural-verify.sh:22` | `jq -e 'has($name)'` — **an existence probe for the schema name** |
+| 60 | `gate-structural-verify.sh:27` | the schema validation pass itself |
+| 32 | `gate-policy.sh:586` | policy signal evaluation |
+| 24 | `gate-result-verify.sh:2056` | — |
+| 22 | `gate-policy.sh:234` | — |
+| 18 each | `gate-result-verify.sh:194,237,258,263,326,546,672,705` | the per-reviewer-document chain |
+
+**The single clearest target is the `has($name)` probe.** Every schema
+validation opens jq once only to ask whether the schema name exists in the
+bundle, then opens it again to validate. The validating pass already receives
+`--arg name` and can report an unknown schema itself, so the probe is 30
+invocations per gate — about 8% of all jq — for a question the next call
+already answers. The 2026-08-20 read-only analysis independently listed this
+same probe among its low-risk removals.
+
+The per-reviewer-document chain remains a target but is second, not first: its
+sites are 9 per gate each rather than 30.
+
 ## Not established here
 
 - Which specific call sites are safe to batch. `runtime/lib/gate-result-verify.sh`

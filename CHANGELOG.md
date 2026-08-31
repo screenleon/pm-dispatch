@@ -10,6 +10,29 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Per-call-site jq attribution in the census (CC-579 Slice 1 Task 0).**
+  `--mode bash` gains `--attribute <binary>` (default `jq`) and reports
+  invocations per `source:line`, so an optimisation slice can be aimed at real
+  call sites instead of guessed ones. Attribution counts a binary only where it
+  appears as a command word — matching the name anywhere counts `jq_rc=0`,
+  `local jq_display_def=`, and `command -v jq` as invocations — and classifies
+  each traced command as a whole rather than only the line carrying the xtrace
+  prefix, and follows nested xtrace frames (bash marks a subshell with a deeper
+  run of `+`, and anchoring on a single one folds every subshell call into the
+  preceding record). With all three, the total reconciles exactly with
+  `--mode exec`. Findings are recorded in
+  `docs/audits/CC-579-gate-subprocess-baseline.md`: the largest single target is
+  `gate-structural-verify.sh:22`, a `jq -e 'has($name)'` existence probe run
+  before every schema validation — 30 invocations per gate for a question the
+  validating pass already answers.
+- **Fixed: the census lock leaked into the subject's process tree.** The
+  descriptor holding the single-census `flock` was inherited by every child,
+  including the subject group. When a census was killed hard enough that its
+  cleanup never ran, a surviving subject process kept the lock held and every
+  later census was refused — which presents as an unrelated environment
+  problem rather than as this bug. Children now close that descriptor.
+  `--attribute` is also refused outside `--mode bash` instead of being
+  silently ignored.
 - **`ops/diagnostics/gate-subprocess-census.sh` + pr-gate cost baseline
   (CC-579 Slice 0).** A gate run against a stub reviewer does no model work, so
   its full 14 s is the gate's own shell work — and the `test-pr-gate` family is

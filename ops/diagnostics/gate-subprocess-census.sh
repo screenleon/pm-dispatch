@@ -12,8 +12,10 @@
 #   time  (default)  per-binary call count, total seconds, mean milliseconds
 #   exec             per-binary counts plus the leading argv of each call, so
 #                    calls can be clustered back to their call sites
-#   bash             executed-simple-command counts per source:line, for the
-#                    work that never leaves bash
+#   bash             executed-simple-command counts per source:line, plus a
+#                    per-source:line attribution of one binary's invocations
+#                    (--attribute, default jq), for finding which call sites to
+#                    collapse
 #
 # Measurement fidelity
 # --------------------
@@ -41,9 +43,11 @@ mode="time"
 deadline=900
 out_dir=""
 suite="tests/shell/test-pr-gate.sh"
+attribute="jq"
+attribute_explicit=0
 
 usage() {
-  printf 'usage: %s [--suite <path>] [--case <filter>] [--mode time|exec|bash] [--timeout <seconds>] [--out <dir>]\n' "$0" >&2
+  printf 'usage: %s [--suite <path>] [--case <filter>] [--mode time|exec|bash] [--attribute <binary>] [--timeout <seconds>] [--out <dir>]\n' "$0" >&2
 }
 
 while [[ $# -gt 0 ]]; do
@@ -54,6 +58,9 @@ while [[ $# -gt 0 ]]; do
     --case)
       [[ $# -ge 2 && -n "$2" ]] || { usage; exit 2; }
       case_filter="$2"; shift 2 ;;
+    --attribute)
+      [[ $# -ge 2 && "$2" =~ ^[a-zA-Z0-9_-]+$ ]] || { usage; exit 2; }
+      attribute="$2"; attribute_explicit=1; shift 2 ;;
     --mode)
       [[ $# -ge 2 ]] || { usage; exit 2; }
       case "$2" in time|exec|bash) mode="$2" ;; *) usage; exit 2 ;; esac
@@ -68,6 +75,15 @@ while [[ $# -gt 0 ]]; do
     *) usage; exit 2 ;;
   esac
 done
+
+# --attribute only shapes the bash-mode table. Accepting it silently elsewhere
+# would report a number the caller did not ask for, which is the failure this
+# whole ticket exists to avoid.
+if [[ "$attribute_explicit" -eq 1 && "$mode" != bash ]]; then
+  printf 'gate-subprocess-census: --attribute applies to --mode bash only (got --mode %s)\n' \
+    "$mode" >&2
+  exit 2
+fi
 
 # Resolve the subject before doing any setup, so a typo fails immediately
 # rather than after a lock and a temporary tree have been created.
@@ -97,6 +113,10 @@ if ! command -v flock >/dev/null 2>&1; then
   rm -rf -- "$work_dir"
   exit 1
 fi
+# Every child inherits this descriptor, so the subject tree and even the wait
+# loop's sleep would each hold the lock: one leaked grandchild then keeps it
+# held long after this process is gone, and every later census is refused. Each
+# child we spawn therefore closes fd 8 explicitly.
 exec 8>>"$lock_file"
 if ! flock -n 8; then
   printf 'gate-subprocess-census: another census holds %s; wait for it to finish\n' \
@@ -195,7 +215,7 @@ fi
 : > "$census_log"
 cd "$repo_root"
 setsid env PATH="$bin_dir:$PATH" \
-  bash "$suite_path" --filter "$case_filter" > "$suite_log" 2>&1 &
+  bash "$suite_path" --filter "$case_filter" > "$suite_log" 2>&1 8>&- &
 subject_pgid=$!
 # Record the owning group in the locked file so a blocked launch can name it.
 printf '%s\n' "$subject_pgid" >&8
@@ -203,7 +223,7 @@ printf '%s\n' "$subject_pgid" >&8
 waited=0
 while (( waited < deadline )); do
   kill -0 "$subject_pgid" 2>/dev/null || break
-  sleep 1
+  sleep 1 8>&-
   waited=$((waited + 1))
 done
 
@@ -257,11 +277,57 @@ case "$mode" in
   bash)
     printf 'traced simple commands: %s\n\n' "$(wc -l < "$census_log")"
     printf '=== bash work by source file ===\n'
-    { grep -oE '^\+[a-zA-Z0-9._-]+\.sh:' "$census_log" || true; } \
+    { grep -oE '^\++[a-zA-Z0-9._-]+\.sh:' "$census_log" || true; } | tr -d '+' | sed 's/^/+/' \
       | sort | uniq -c | sort -rn | head -12
     printf '\n=== hottest source:line ===\n'
-    { grep -oE '^\+[a-zA-Z0-9._-]+\.sh:[0-9]+' "$census_log" || true; } \
+    { grep -oE '^\++[a-zA-Z0-9._-]+\.sh:[0-9]+' "$census_log" || true; } | tr -d '+' | sed 's/^/+/' \
       | sort | uniq -c | sort -rn | head -15
+    printf '\n=== %s invocations per source:line ===\n' "$attribute"
+    # Three details decide whether this total is trustworthy, and getting any
+    # of them wrong produced a plausible-looking but wrong ranking during
+    # CC-579:
+    #   - bash marks nested xtrace frames with a deeper run of '+', so a
+    #     pattern anchored on a single '+' folds every subshell call into the
+    #     previous record;
+    #   - a command spans several output lines, so each record runs from its
+    #     prefix to the next;
+    #   - the binary counts only as the command word of its record, since
+    #     xtrace prints every simple command separately -- accepting the name
+    #     anywhere promotes argument mentions into call sites that do not exist.
+    # With all three, this total reconciles exactly with `--mode exec`.
+    awk -v want="$attribute" '
+      # xtrace prints every simple command as its own record, so a real
+      # invocation is always the command word of its record. Requiring that --
+      # rather than accepting the name anywhere in the text -- keeps an
+      # argument mention (`printf "run jq now"`, `command -v jq`) from being
+      # promoted into a call site that does not exist. Leading VAR=value
+      # assignments are part of the command, not the command word.
+      function plusses(l,   n) { n = 0; while (substr(l, n + 1, 1) == "+") n++; return n }
+      function flush(   cmd) {
+        if (site == "") return
+        cmd = rec
+        sub(/^\++[a-zA-Z0-9._-]+\.sh:[0-9]+: /, "", cmd)
+        # sub() returns 0 when there is nothing after the assignment to strip,
+        # which ends the loop; testing the pattern alone would spin forever on a
+        # record that is nothing but an assignment (`local jq_display_def=`).
+        while (cmd ~ /^[A-Za-z_][A-Za-z0-9_]*=/ && sub(/^[^ ]+ +/, "", cmd)) { }
+        if (cmd ~ ("^(|[^ ]*/)" want "( |$)")) count[site]++
+      }
+      /^\++[a-zA-Z0-9._-]+\.sh:[0-9]+:/ {
+        flush()
+        match($0, /^\++[a-zA-Z0-9._-]+\.sh:[0-9]+/)
+        site = substr($0, RSTART + plusses($0), RLENGTH - plusses($0) + 1)
+        rec = $0
+        next
+      }
+      { rec = rec " " $0 }
+      END {
+        flush()
+        total = 0
+        for (s in count) total += count[s]
+        for (s in count) printf "%6d  %s\n", count[s], s
+        printf "%6d  TOTAL attributed\n", total
+      }' "$census_log" | sort -rn | head -22
     ;;
 esac
 
