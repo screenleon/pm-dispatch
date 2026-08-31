@@ -8,6 +8,27 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Schema validation no longer probes the bundle before validating (CC-579
+  Slice 1).** `_gate_structural_schema_errors` ran two jq processes for one
+  question: a `jq -e 'has($name)'` existence probe, then the validating pass
+  that already receives `--arg name`. Gate runs validate about thirty times, so
+  the probe alone was roughly 8% of a gate's jq start-up cost. The interpreter
+  now reports an unknown schema itself (message on stderr, exit 9) and the
+  wrapper maps that to the same execution failure as before. Measured with
+  `ops/diagnostics/gate-subprocess-census.sh --mode time`: **736 → 676 jq
+  invocations** across the two-gate subject, exactly the 30-per-gate the probe
+  accounted for.
+
+  The distinction this preserves is the reason the probe existed: an unknown
+  schema name is an *execution* failure, not a validation verdict. Without the
+  explicit signal it would fall through to the interpreter and surface as
+  `invalid schema node` — blaming a caller's valid instance for a wrong schema
+  name. Three cases now assert that message and status across
+  `gate_structural_schema_verify`, `_first_error`, and `_verify_json`, and a
+  counting-shim case locks the collapse at one jq per validation.
+
 ### Added
 
 - **Per-call-site jq attribution in the census (CC-579 Slice 1 Task 0).**

@@ -4067,7 +4067,13 @@ time 的 **88%**，其餘 awk/git/grep/cat/sha256sum/mktemp/sed 加起來只有 
    不存在）；`--suite` 讓受測對象可指定，`tests/shell/test-gate-subprocess-census.sh`
    因此能拿子行程行為已知的合成 subject 驗證回報數字——拿真 gate 驗會是循環論證，
    因為真實呼叫數正是這個工具要發現的東西。
-2. **Slice 1**：收斂 jq 呼叫點。主要形狀是對同一份文件反覆做單欄位讀取
+2. **Slice 1 第一刀（已完成）**：`gate-structural-verify.sh` 的 `jq -e 'has($name)'` 存在性探測
+   併入 validator 本身（unknown schema 由 `.jq` 以 exit 9 回報，wrapper 映成同樣的 execution
+   failure）。census 實測 **736 → 676 次 jq**（每 gate −30，即該探測的全部）。保留的關鍵區別：
+   unknown schema 是**執行失敗**不是驗證判決——若讓它落進 validator 會變成 `invalid schema node`，
+   等於拿錯誤的 schema 名去指責呼叫端正確的 instance。三個函式各補契約 case + 一個
+   counting-shim 鎖住「每次驗證只開一個 jq」。
+3. **Slice 1 續**：收斂其餘 jq 呼叫點。主要形狀是對同一份文件反覆做單欄位讀取
    （`jq -r length`／`jq -r .reviewer`／`jq -r .status`／`jq -r .kind`／
    `jq -r .scope_manifest_sha256`），每次付一次完整直譯器啟動。改成一次讀完呼叫端需要的
    欄位，即 [[CC-364]]／[[CC-573]] 已用過兩次的單次串流 pass。驗收 oracle＝重跑 census

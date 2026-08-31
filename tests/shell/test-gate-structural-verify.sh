@@ -108,11 +108,90 @@ case_first_error_missing_required_omits_value_suffix() {
 case_first_error_unknown_schema_name_exits_2() {
   local name="gate_structural_schema_first_error: unknown schema name exits 2"
   should_run "$name" || return 0
-  local tmpf rc=0
+  local tmpf err rc=0
   tmpf="$tmp_root/whatever.json"
+  err="$tmp_root/unknown-first.err"
   _gate_scope_manifest_valid_instance > "$tmpf"
-  gate_structural_schema_first_error no-such-schema "$tmpf" >/dev/null 2>/dev/null || rc=$?
-  if [[ "$rc" -eq 2 ]]; then pass "$name"; else fail "$name" "rc=$rc"; fi
+  gate_structural_schema_first_error no-such-schema "$tmpf" >/dev/null 2>"$err" || rc=$?
+  # The message matters as much as the status: an unknown schema must stay an
+  # execution failure. If it fell through to the validator it would surface as
+  # "invalid schema node" -- a *validation* verdict against a caller's
+  # instance, blaming valid input for a wrong schema name.
+  if [[ "$rc" -eq 2 ]] && grep -Fq 'unknown schema: no-such-schema' "$err" \
+     && ! grep -Fq 'invalid schema node' "$err"; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc err=$(<"$err")"
+  fi
+}
+
+case_verify_unknown_schema_name_is_execution_failure() {
+  local name="gate_structural_schema_verify: unknown schema name is an execution failure"
+  should_run "$name" || return 0
+  local tmpf out err rc=0
+  tmpf="$tmp_root/unknown-verify.json"
+  out="$tmp_root/unknown-verify.out"
+  err="$tmp_root/unknown-verify.err"
+  _gate_scope_manifest_valid_instance > "$tmpf"
+  gate_structural_schema_verify no-such-schema "$tmpf" >"$out" 2>"$err" || rc=$?
+  # "could not execute" is the caller-visible distinction from a schema
+  # violation, and stdout must stay empty so no caller can read a verdict out
+  # of a run that never validated anything.
+  if [[ "$rc" -ne 0 ]] && grep -Fq 'unknown schema: no-such-schema' "$err" \
+     && grep -Fq 'could not execute' "$err" \
+     && ! grep -Fq 'failed schema-derived structural validation' "$err" \
+     && [[ ! -s "$out" ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc out=$(<"$out") err=$(<"$err")"
+  fi
+}
+
+case_verify_json_unknown_schema_name_is_execution_failure() {
+  local name="gate_structural_schema_verify_json: unknown schema name is an execution failure"
+  should_run "$name" || return 0
+  local err rc=0
+  err="$tmp_root/unknown-json.err"
+  gate_structural_schema_verify_json no-such-schema '{"a":1}' 2>"$err" || rc=$?
+  if [[ "$rc" -ne 0 ]] && grep -Fq 'unknown schema: no-such-schema' "$err"; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc err=$(<"$err")"
+  fi
+}
+
+case_schema_validation_spawns_one_jq_per_call() {
+  local name="schema validation spawns exactly one jq per validation"
+  should_run "$name" || return 0
+  local shimdir tally tmpf real_jq count rc=0
+  real_jq="$(type -P jq)"
+  shimdir="$tmp_root/jqcount-shim"
+  tally="$tmp_root/jqcount.tally"
+  mkdir -p "$shimdir"
+  {
+    printf '%s\n' '#!/usr/bin/env bash'
+    printf 'printf x >> %q\n' "$tally"
+    printf 'exec %q "$@"\n' "$real_jq"
+  } > "$shimdir/jq"
+  chmod +x "$shimdir/jq"
+  tmpf="$tmp_root/onepass.json"
+  _gate_scope_manifest_valid_instance > "$tmpf"
+  : > "$tally"
+  # Five validations of a valid instance: the issue-printing jq only runs when
+  # there are issues, so a clean run should be one process each. This locks the
+  # CC-579 collapse -- a reinstated `has($name)` probe, or any other per-call
+  # helper process, doubles the count while the output stays identical.
+  local remaining=5
+  while (( remaining-- > 0 )); do
+    PATH="$shimdir:$PATH" gate_structural_schema_verify gate-scope-manifest "$tmpf" \
+      >/dev/null 2>&1 || rc=$?
+  done
+  count="$(wc -c < "$tally" | tr -d ' ')"
+  if [[ "$rc" -eq 0 && "$count" -eq 5 ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc expected 5 jq invocations, got $count"
+  fi
 }
 
 # --- gate-reviewer-result.schema.json: verdict/findings correlation ---
@@ -175,6 +254,9 @@ case_first_error_valid_instance_no_output
 case_first_error_includes_path_message_and_value
 case_first_error_missing_required_omits_value_suffix
 case_first_error_unknown_schema_name_exits_2
+case_verify_unknown_schema_name_is_execution_failure
+case_verify_json_unknown_schema_name_is_execution_failure
+case_schema_validation_spawns_one_jq_per_call
 case_verdict_approve_with_no_blocking_findings_passes
 case_verdict_approve_with_hard_block_finding_rejected
 case_verdict_advise_with_soft_block_finding_rejected
