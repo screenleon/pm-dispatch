@@ -71,7 +71,7 @@ into an issue, PR, or audit report.
 | Large blobs | No historical blob exceeded 1 MiB. | No artifact purge required. |
 | Maintainer-local paths | 2,147 revision/path matches across 16 historical paths; the baseline tree retains eight files. Current matches are historical spike/backlog evidence plus one synthetic install fixture, not credentials. | Do not rewrite public history: that would be disruptive without removing an active secret. Retain provenance; public-copy cleanup may replace non-load-bearing examples during CC-033's v0.14.0 slice. |
 | Commit email | All 493 commits use one personal Gmail author address. | Treat as public identity metadata, not a credential. The maintainer should decide before the next commit whether to switch future commits to the GitHub no-reply address; rewriting published history is not justified by this audit alone. |
-| GitHub secret scanning | Repository visibility is public, but the alerts endpoint reports that secret scanning is disabled. | Add enablement/verification to the v0.14.0 GitHub-settings checklist. Until then, this local audit is point-in-time evidence, not continuous protection. |
+| GitHub secret scanning | Repository visibility is public, but the alerts endpoint reports that secret scanning, push protection, and Dependabot security updates are all disabled (re-confirmed 2026-08-31). | Tracked as a known gap in [`SECURITY.md`](../../SECURITY.md#repository-security-posture), which records the exact `gh api` enable command. Enablement is a maintainer console/API action on the v0.12.0 GitHub-settings checklist; until then this local audit is point-in-time evidence, not continuous protection. |
 
 ## Residual risk
 

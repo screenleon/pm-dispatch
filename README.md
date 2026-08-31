@@ -19,7 +19,7 @@ A local-first control plane for planning, dispatching, verifying, and shipping w
      (+ Grok, MVP)             OpenCode / Grok
 ```
 
-This repository is designed for a single maintainer working on their own adaptation. It is source-available for reading and forking, while remaining explicitly private-maintainer scoped for this operational track.
+This repository is a single maintainer's own Claude Code configuration, published as a **publicly readable personal distribution** — source-available to read, fork, and adapt to your own workflow. It is **not a public support contract**: external pull requests are not accepted, and issues are welcome as signal but have no SLA. See [CONTRIBUTING.md](CONTRIBUTING.md) for the full policy.
 
 ## Documentation
 
@@ -62,6 +62,7 @@ Cross-repository operations use `${PM_DISPATCH_REPOS_ROOT}` when set, otherwise 
 ```
 agents/      → ~/.claude/agents/    subagents callable via the Agent tool
 commands/    → ~/.claude/commands/  /slash commands
+skills/      → ~/.claude/skills/    reusable skill playbooks loaded on demand
 runtime/                            shared CLI, hooks, state, memory, context, and gate runtime
 hosts/<host>/                      host-owned install, doctor, hooks, and configuration adapters
 adapters/<name>/                   executor-specific dispatch and model policy
@@ -71,7 +72,6 @@ ops/                               maintainer setup, release, diagnostics, backl
 scripts/                           compatibility shims only; no canonical implementation
              → ~/.claude/scripts/   selected stable helper names are installed by install.sh
 pm/          → ~/.claude/.pm/       cross-repo PM schema, scripts, templates
-settings/                           settings fragments to merge into ~/.claude/settings.json by hand
 docs/                               guides, schemas, and policy documents
 ```
 
@@ -260,12 +260,38 @@ Executors (codex, claude, opencode, grok) are **not** subagents — the main thr
 - **risk-reviewer** — Blast radius, reversibility, migration safety, fail mode, observability. Distinct from security.
 - **qa-tester** — Owns the testing phase. Loads `${QA_RULES_DIR}/${QA_RULES_ENTRY:-AGENT.md}` as Tier 1 source of truth for test categories, layer choice, and anti-patterns. Red-line violations are blocking. Any QA rules directory with a Tier 1 entry point works; set `QA_RULES_DIR` and optionally `QA_RULES_ENTRY` to use your own.
 
+**Planning (planner only — cannot spawn subagents)**
+- **spike** — Reads a BACKLOG spike ticket, plans 2–3 investigation angles for the main thread to fan out, then synthesizes the findings into a committed `docs/spikes/<id>.md` decision file.
+
 > **Project ID** in memory paths is derived from the sanitized absolute path of your working directory. Run `ls ~/.claude/projects/` to find the directory name on your machine.
 
 ### Commands
 
-- **/pm `<request>`** — Routes a free-form request to the `project-pm` agent.
-- **/pr-gate `[context]`** — Explicitly runs the full review pipeline before opening a PR.
+Slash commands installed into `~/.claude/commands/`. One line per file; see each `commands/<name>.md` for the full flow.
+
+- **/pm** — Route a request to the `project-pm` agent.
+- **/pr-gate** — Run the tiered pre-PR review pipeline on the current branch.
+- **/pre-impl** — Pre-implementation design review: define boundaries, dependencies, and change seams before writing any code.
+- **/ship** — Take one explicit backlog ticket from implementation through pr-gate to an open PR, without stopping for step-by-step confirmation.
+- **/spike** — Run a spike investigation: plan angles, fan out one agent per angle, synthesize a committed `docs/spikes/<id>.md` decision file.
+- **/discover** — Divergent-mode opportunity scan: reads backlog + decisions + milestones and outputs a ranked leverage list for milestone planning.
+- **/research** — Grounded external research: anchor on internal memory/decisions, ask a directioning question, fetch external methods, then filter them against internal constraints into a feasibility list.
+- **/pre-release** — Pre-release audit for a milestone: Layer 1 structural checks, Layer 2 semantic diff coverage, Layer 3 blind-spot declaration.
+- **/skill-refine** — Refine a named skill using the M1 feedback signal bundler.
+- **/using-git-worktrees** — Use a dedicated git worktree per ticket/branch for parallel development, isolating uncommitted changes and build artifacts.
+- **/mem-recall** — Inject recent session episodes into context for continuity across sessions.
+- **/mem-log** — Record a semantic summary of the current session to `episodes.jsonl`.
+- **/mem-search** — Search across all memory files using keyword + semantic understanding.
+- **/mem-distill** — Synthesize recent episodes and run anomalies into `MEMORY.md` updates (add/modify/remove entries).
+- **/memory-compress** — Compress `MEMORY.md` index entries to reduce inject token usage.
+
+### Skills
+
+Skill playbooks in `skills/<name>/SKILL.md`, loaded on demand.
+
+- **dispatch-brief** — Authoring the dispatch brief / handover block when delegating an implementation task to an executor: brief structure, file-list and lazy-read discipline, model-alias selection, the `dispatch_handover_v1` contract.
+- **pr-gate-review** — Running the tiered pre-PR review pipeline before opening a PR: tier/mode selection, the GO / NO-GO contract, and how to clear findings.
+- **systematic-debugging** — A repeatable path from reproduction through a verified fix: follow existing test and git evidence rather than guessing, then add a focused regression test.
 
 ### Model tier policy
 

@@ -30,6 +30,7 @@ SUITE_NAMES=(
   lint-surface-coverage
   lint-deprecation-sunset
   lint-doc-wikilinks
+  lint-readme-surface-lists
   test-guards
   test-guard-framework
   test-migrate
@@ -81,6 +82,7 @@ SUITE_NAMES=(
   test-lint-permanent-test-admissions
   test-lint-deprecation-sunset
   test-lint-doc-wikilinks
+  test-lint-readme-surface-lists
   test-skill-refine
   test-pr-gate-profile
   test-run-all-tests
@@ -150,6 +152,7 @@ declare -A SUITE_PATHS=(
   [lint-surface-coverage]="tools/lint/lint-surface-coverage.sh"
   [lint-deprecation-sunset]="tools/lint/lint-deprecation-sunset.sh"
   [lint-doc-wikilinks]="tools/lint/lint-doc-wikilinks.sh"
+  [lint-readme-surface-lists]="tools/lint/lint-readme-surface-lists.sh"
   [test-guards]="tests/shell/test-guards.sh"
   [test-guard-framework]="tests/shell/test-guard-framework.sh"
   [test-migrate]="tests/shell/test-migrate-routing-log.sh"
@@ -201,6 +204,7 @@ declare -A SUITE_PATHS=(
   [test-lint-permanent-test-admissions]="tests/shell/test-lint-permanent-test-admissions.sh"
   [test-lint-deprecation-sunset]="tests/shell/test-lint-deprecation-sunset.sh"
   [test-lint-doc-wikilinks]="tests/shell/test-lint-doc-wikilinks.sh"
+  [test-lint-readme-surface-lists]="tests/shell/test-lint-readme-surface-lists.sh"
   [test-skill-refine]="tests/shell/test-skill-refine.sh"
   [test-pr-gate-profile]="tests/shell/test-pr-gate-profile.sh"
   [test-run-all-tests]="tests/shell/test-run-all-tests.sh"
@@ -278,6 +282,7 @@ PHASE0_SUITE_NAMES=(
   lint-surface-coverage
   lint-deprecation-sunset
   lint-doc-wikilinks
+  lint-readme-surface-lists
   test-lint-frontmatter
   test-lint-test-docstrings
   test-lint-test-suite-registry
