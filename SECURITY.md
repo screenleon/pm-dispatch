@@ -51,6 +51,32 @@ programme; credit in the changelog or release notes is offered instead.
 
 If the 90-day window cannot be met, the reporter will be notified in advance.
 
+## Repository security posture
+
+The 2026-07-18 git-history audit ([`docs/audits/CC-033-git-history-audit.md`](docs/audits/CC-033-git-history-audit.md))
+scanned all reachable commits and found no credential, private key, or stray
+runtime artifact requiring rotation or history rewrite.
+
+**Known gap — GitHub Advanced Security features are currently disabled** for this
+repository:
+
+- Secret scanning (`secret_scanning`)
+- Secret scanning push protection (`secret_scanning_push_protection`)
+- Dependabot security updates (`dependabot_security_updates`)
+
+Enabling them is a maintainer repo-settings action, not a code change. The
+equivalent API call:
+
+```bash
+gh api -X PATCH repos/screenleon/pm-dispatch \
+  -f security_and_analysis.secret_scanning.status=enabled \
+  -f security_and_analysis.secret_scanning_push_protection.status=enabled \
+  -f security_and_analysis.dependabot_security_updates.status=enabled
+```
+
+Until enabled, contributors and forks should assume no automated secret-leak
+guardrail on pushes to this repository.
+
 ## Scope
 
 **In scope**:

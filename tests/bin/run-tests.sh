@@ -228,7 +228,13 @@ map_path() {
       add_suite lint-deprecation-sunset; behavioral=1 ;;
     tools/lint/lint-doc-wikilinks.sh|tests/shell/test-lint-doc-wikilinks.sh)
       add_suite lint-doc-wikilinks; add_suite test-lint-doc-wikilinks; behavioral=1 ;;
-    BACKLOG.md|MILESTONES.md|DECISIONS.md|README.md|CONTRIBUTING.md|docs/*.md)
+    tools/lint/lint-readme-surface-lists.sh|tests/shell/test-lint-readme-surface-lists.sh)
+      add_suite lint-readme-surface-lists; add_suite test-lint-readme-surface-lists; behavioral=1 ;;
+    commands/*.md|agents/*.md|skills/*/SKILL.md)
+      add_suite lint-readme-surface-lists; behavioral=1 ;;
+    README.md)
+      add_suite lint-doc-wikilinks; add_suite lint-readme-surface-lists; behavioral=1 ;;
+    BACKLOG.md|MILESTONES.md|DECISIONS.md|CONTRIBUTING.md|docs/*.md)
       add_suite lint-doc-wikilinks; behavioral=1 ;;
     tests/bin/run-tests.sh)
       add_suite test-run-tests; behavioral=1 ;;

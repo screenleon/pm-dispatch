@@ -10,6 +10,24 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`tools/lint/lint-readme-surface-lists.sh` + README public-posture
+  reconciliation (CC-033 slice).** `README.md`'s posture sentence now matches
+  `CONTRIBUTING.md` — a publicly readable personal distribution, not a public
+  support contract (external PRs not accepted, issues have no SLA). The stale
+  §Commands (2 of 14), §Agents (missing `spike`), and absent §Skills lists were
+  rebuilt from the `commands/` / `agents/` / `skills/` directories, one line per
+  entry derived from each file's `description:` frontmatter. The §Layout block
+  drops the non-existent `settings/` entry and adds `skills/`. The new lint
+  asserts set-equality between each of those three README sections and its
+  directory (skipping group headers, failing loudly on a missing section
+  heading), so the lists cannot silently drift again. `SECURITY.md` gains a
+  "Repository security posture" section recording that GitHub secret scanning,
+  push protection, and Dependabot security updates are currently disabled, with
+  the exact `gh api` enable command — enabling them is a maintainer console
+  action, not a code change. CC-033 stays active; Issues/Discussions/labels/
+  CITATION.cff and the secret-scanning enablement remain on the v0.12.0
+  GitHub-settings checklist.
+
 - **`tools/lint/lint-doc-wikilinks.sh` — CC-032 closed.** Reader-facing docs
   (`BACKLOG.md`, `MILESTONES.md`, `DECISIONS.md`, `README.md`, `CONTRIBUTING.md`,
   top-level `docs/*.md`) may no longer contain a bare `[[slug]]` wikilink other

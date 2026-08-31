@@ -125,6 +125,10 @@ jobs:
         run: bash tools/lint/lint-doc-wikilinks.sh
       - name: Doc wikilink lint regression suite
         run: bash tests/shell/test-lint-doc-wikilinks.sh
+      - name: README surface lists match the repo
+        run: bash tools/lint/lint-readme-surface-lists.sh
+      - name: README surface list lint regression suite
+        run: bash tests/shell/test-lint-readme-surface-lists.sh
       - name: Runtime library direct regression suite
         run: bash tests/shell/test-runtime-lib-coverage.sh
 
