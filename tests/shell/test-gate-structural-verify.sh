@@ -150,13 +150,59 @@ case_verify_unknown_schema_name_is_execution_failure() {
 case_verify_json_unknown_schema_name_is_execution_failure() {
   local name="gate_structural_schema_verify_json: unknown schema name is an execution failure"
   should_run "$name" || return 0
-  local err rc=0
+  local out err rc=0
+  out="$tmp_root/unknown-json.out"
   err="$tmp_root/unknown-json.err"
-  gate_structural_schema_verify_json no-such-schema '{"a":1}' 2>"$err" || rc=$?
-  if [[ "$rc" -ne 0 ]] && grep -Fq 'unknown schema: no-such-schema' "$err"; then
+  gate_structural_schema_verify_json no-such-schema '{"a":1}' >"$out" 2>"$err" || rc=$?
+  # Same full contract the file-taking entry points are held to: status,
+  # diagnostic, no validation verdict, and no stdout a caller could misread.
+  if [[ "$rc" -ne 0 ]] && grep -Fq 'unknown schema: no-such-schema' "$err" \
+     && grep -Fq 'could not execute' "$err" \
+     && ! grep -Fq 'failed schema-derived structural validation' "$err" \
+     && [[ ! -s "$out" ]]; then
     pass "$name"
   else
-    fail "$name" "rc=$rc err=$(<"$err")"
+    fail "$name" "rc=$rc out=$(<"$out") err=$(<"$err")"
+  fi
+}
+
+case_unreadable_instance_is_execution_failure_not_a_verdict() {
+  local name="gate_structural_schema_verify: a jq failure other than unknown-schema is an execution failure"
+  should_run "$name" || return 0
+  local tmpf out err rc=0
+  tmpf="$tmp_root/malformed-instance.json"
+  out="$tmp_root/malformed.out"
+  err="$tmp_root/malformed.err"
+  # Non-empty so the argument guard passes, but not parseable, so jq fails with
+  # a status that is not the interpreter's unknown-schema signal. That branch
+  # must land in the same execution-failure classification: a caller must never
+  # read "this instance violates the schema" out of a run where the validator
+  # never got to judge the instance at all.
+  printf '{oops\n' > "$tmpf"
+  gate_structural_schema_verify gate-scope-manifest "$tmpf" >"$out" 2>"$err" || rc=$?
+  if [[ "$rc" -ne 0 ]] && grep -Fq 'could not execute' "$err" \
+     && ! grep -Fq 'failed schema-derived structural validation' "$err" \
+     && ! grep -Fq 'unknown schema' "$err" \
+     && [[ ! -s "$out" ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc out=$(<"$out") err=$(<"$err")"
+  fi
+}
+
+case_malformed_instance_first_error_reports_execution_failure() {
+  local name="gate_structural_schema_first_error: a jq failure other than unknown-schema exits 2"
+  should_run "$name" || return 0
+  local tmpf out rc=0
+  tmpf="$tmp_root/malformed-first.json"
+  out="$tmp_root/malformed-first.out"
+  printf '{oops\n' > "$tmpf"
+  gate_structural_schema_first_error gate-scope-manifest "$tmpf" >"$out" 2>/dev/null || rc=$?
+  # 2 is "could not execute"; 1 would claim a violation was found and printed.
+  if [[ "$rc" -eq 2 && ! -s "$out" ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc out=$(<"$out")"
   fi
 }
 
@@ -256,6 +302,8 @@ case_first_error_missing_required_omits_value_suffix
 case_first_error_unknown_schema_name_exits_2
 case_verify_unknown_schema_name_is_execution_failure
 case_verify_json_unknown_schema_name_is_execution_failure
+case_unreadable_instance_is_execution_failure_not_a_verdict
+case_malformed_instance_first_error_reports_execution_failure
 case_schema_validation_spawns_one_jq_per_call
 case_verdict_approve_with_no_blocking_findings_passes
 case_verdict_approve_with_hard_block_finding_rejected

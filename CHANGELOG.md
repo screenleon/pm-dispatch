@@ -27,7 +27,10 @@ Versions follow [Semantic Versioning](https://semver.org/).
   `invalid schema node` — blaming a caller's valid instance for a wrong schema
   name. Three cases now assert that message and status across
   `gate_structural_schema_verify`, `_first_error`, and `_verify_json`, and a
-  counting-shim case locks the collapse at one jq per validation.
+  counting-shim case locks the collapse at one jq per validation, and two
+  further cases pin the other execution-failure branch — a jq failure that is
+  not the unknown-schema signal, such as an unparseable instance — so it can
+  be mistaken neither for a clean pass nor for a schema violation.
 
 ### Added
 
