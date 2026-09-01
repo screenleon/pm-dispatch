@@ -21,6 +21,14 @@ and closed object properties, arrays, enums, constants, patterns, numeric and
 length bounds, composition, and the current conditional vocabulary. It does
 not contain Gate field names or enum values.
 
+The interpreter also owns the unknown-schema case: given a name the bundle does
+not contain, it writes `unknown schema: <name>` and exits 9, and the shell
+wrapper turns that into an execution failure. This keeps a wrong schema name
+distinct from a schema violation — falling through to validation would report
+it as `invalid schema node`, blaming the caller's instance — and it does so
+without a second jq process probing the bundle for a name the validating pass
+already receives.
+
 `runtime/lib/gate-structural-verify.sh` exposes
 `gate_structural_schema_verify <schema-name> <json-file>`. Gate result
 verification calls it for policy overrides, scope manifests, assurance

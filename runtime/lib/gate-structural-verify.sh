@@ -19,16 +19,25 @@ _gate_structural_schema_errors() {
     printf 'gate-structural-verify: generated validator assets are unavailable\n' >&2
     return 2
   }
-  jq -e --arg name "$schema_name" 'has($name)' \
-    "$_gate_structural_verify_bundle" >/dev/null || {
-    printf 'gate-structural-verify: unknown schema: %s\n' "$schema_name" >&2
-    return 2
-  }
-  jq -n -r \
+  # The validator reports an unknown schema itself (exit 9), so this used to
+  # be two jq processes -- a `has($name)` probe and then the pass that already
+  # receives $name -- for one question. Schema validation runs about thirty
+  # times per gate, so the probe alone was roughly 8% of the gate's jq
+  # start-up cost (CC-579).
+  local issues rc=0
+  issues="$(jq -n -r \
     --arg name "$schema_name" \
     --slurpfile schemas "$_gate_structural_verify_bundle" \
     --slurpfile instance "$instance_file" \
-    -f "$_gate_structural_verify_filter"
+    -f "$_gate_structural_verify_filter")" || rc=$?
+  # Deliberately not branching on the status. The validator exits 9 for an
+  # unknown schema and jq exits with its own codes for anything else, but both
+  # are execution failures with the same obligation: say nothing on stdout, so
+  # no caller can read a validation verdict out of a run that never judged the
+  # instance. The 9 is a distinct, greppable value for a human reading stderr,
+  # not a value this code depends on.
+  [[ "$rc" -eq 0 ]] || return 2
+  printf '%s\n' "$issues"
 }
 
 gate_structural_schema_verify() {

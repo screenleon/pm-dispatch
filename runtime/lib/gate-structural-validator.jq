@@ -141,5 +141,14 @@ def validate($root; $schema; $value; $path):
     ] | add)
   end;
 
-$schemas[0][$name] as $schema |
-validate($schema; $schema; $instance[0]; "$")
+# An unknown schema name is an execution failure, not a validation failure:
+# falling through to validate() would report it as "invalid schema node",
+# i.e. as though the instance were malformed. Exit 9 keeps that distinction
+# without a second jq process just to probe the bundle (9 avoids jq's own
+# 1/2/3/5 exit codes).
+if ($schemas[0] | has($name)) | not
+then ("gate-structural-verify: unknown schema: " + $name + "\n") | halt_error(9)
+else
+  $schemas[0][$name] as $schema |
+  validate($schema; $schema; $instance[0]; "$")
+end

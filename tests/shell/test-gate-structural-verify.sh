@@ -105,14 +105,146 @@ case_first_error_missing_required_omits_value_suffix() {
   fi
 }
 
+# assert_execution_failure <case-name> <rc> <stdout-file> <stderr-file> [needle...]
+#
+# Every entry point owes callers the same classification when validation could
+# not run: a non-zero status, a diagnostic, and -- the part that is easy to
+# lose -- no trace of a *validation verdict*. An execution failure reported as
+# "this instance violates the schema" blames a caller's valid input, and one
+# reported as a clean pass hides the failure entirely.
+#
+# This is a helper rather than five hand-copied assertion blocks because the
+# hand-copied version already drifted once: the JSON-wrapper case checked only
+# the status and was caught in review. Naming the contract makes leaving a
+# clause out structurally impossible instead of a thing to remember.
+assert_execution_failure() {
+  local name="$1" rc="$2" out="$3" err="$4"
+  shift 4
+  local needle
+  if [[ "$rc" -eq 0 ]]; then
+    fail "$name" "expected a non-zero status, got 0 :: err=$(<"$err")"
+    return 1
+  fi
+  if [[ -s "$out" ]]; then
+    fail "$name" "execution failure wrote stdout a caller could read as a verdict: $(<"$out")"
+    return 1
+  fi
+  for needle in 'failed schema-derived structural validation' 'invalid schema node'; do
+    if grep -Fq "$needle" "$err"; then
+      fail "$name" "execution failure was reported as a validation verdict ($needle) :: $(<"$err")"
+      return 1
+    fi
+  done
+  for needle in "$@"; do
+    if ! grep -Fq "$needle" "$err"; then
+      fail "$name" "expected diagnostic '$needle', got: $(<"$err")"
+      return 1
+    fi
+  done
+  pass "$name"
+}
+
 case_first_error_unknown_schema_name_exits_2() {
   local name="gate_structural_schema_first_error: unknown schema name exits 2"
   should_run "$name" || return 0
-  local tmpf rc=0
+  local tmpf out err rc=0
   tmpf="$tmp_root/whatever.json"
+  out="$tmp_root/unknown-first.out"
+  err="$tmp_root/unknown-first.err"
   _gate_scope_manifest_valid_instance > "$tmpf"
-  gate_structural_schema_first_error no-such-schema "$tmpf" >/dev/null 2>/dev/null || rc=$?
-  if [[ "$rc" -eq 2 ]]; then pass "$name"; else fail "$name" "rc=$rc"; fi
+  gate_structural_schema_first_error no-such-schema "$tmpf" >"$out" 2>"$err" || rc=$?
+  # 2 is "could not execute"; 1 would claim a violation was found and printed.
+  [[ "$rc" -eq 2 ]] || { fail "$name" "expected rc=2, got $rc"; return; }
+  assert_execution_failure "$name" "$rc" "$out" "$err" 'unknown schema: no-such-schema'
+}
+
+case_verify_unknown_schema_name_is_execution_failure() {
+  local name="gate_structural_schema_verify: unknown schema name is an execution failure"
+  should_run "$name" || return 0
+  local tmpf out err rc=0
+  tmpf="$tmp_root/unknown-verify.json"
+  out="$tmp_root/unknown-verify.out"
+  err="$tmp_root/unknown-verify.err"
+  _gate_scope_manifest_valid_instance > "$tmpf"
+  gate_structural_schema_verify no-such-schema "$tmpf" >"$out" 2>"$err" || rc=$?
+  assert_execution_failure "$name" "$rc" "$out" "$err" \
+    'unknown schema: no-such-schema' 'could not execute'
+}
+
+case_verify_json_unknown_schema_name_is_execution_failure() {
+  local name="gate_structural_schema_verify_json: unknown schema name is an execution failure"
+  should_run "$name" || return 0
+  local out err rc=0
+  out="$tmp_root/unknown-json.out"
+  err="$tmp_root/unknown-json.err"
+  gate_structural_schema_verify_json no-such-schema '{"a":1}' >"$out" 2>"$err" || rc=$?
+  assert_execution_failure "$name" "$rc" "$out" "$err" \
+    'unknown schema: no-such-schema' 'could not execute'
+}
+
+case_unreadable_instance_is_execution_failure_not_a_verdict() {
+  local name="gate_structural_schema_verify: a jq failure other than unknown-schema is an execution failure"
+  should_run "$name" || return 0
+  local tmpf out err rc=0
+  tmpf="$tmp_root/malformed-instance.json"
+  out="$tmp_root/malformed.out"
+  err="$tmp_root/malformed.err"
+  # Non-empty so the argument guard passes, but not parseable, so jq fails with
+  # a status that is not the interpreter's unknown-schema signal. That branch
+  # must land in the same classification as every other execution failure.
+  printf '{oops\n' > "$tmpf"
+  gate_structural_schema_verify gate-scope-manifest "$tmpf" >"$out" 2>"$err" || rc=$?
+  assert_execution_failure "$name" "$rc" "$out" "$err" 'could not execute'
+  grep -Fq 'unknown schema' "$err" \
+    && fail "$name" "a malformed instance was misreported as an unknown schema"
+  return 0
+}
+
+case_malformed_instance_first_error_reports_execution_failure() {
+  local name="gate_structural_schema_first_error: a jq failure other than unknown-schema exits 2"
+  should_run "$name" || return 0
+  local tmpf out err rc=0
+  tmpf="$tmp_root/malformed-first.json"
+  out="$tmp_root/malformed-first.out"
+  err="$tmp_root/malformed-first.err"
+  printf '{oops\n' > "$tmpf"
+  gate_structural_schema_first_error gate-scope-manifest "$tmpf" >"$out" 2>"$err" || rc=$?
+  [[ "$rc" -eq 2 ]] || { fail "$name" "expected rc=2, got $rc"; return; }
+  assert_execution_failure "$name" "$rc" "$out" "$err"
+}
+
+case_schema_validation_spawns_one_jq_per_call() {
+  local name="schema validation spawns exactly one jq per validation"
+  should_run "$name" || return 0
+  local shimdir tally tmpf real_jq count rc=0
+  real_jq="$(type -P jq)"
+  shimdir="$tmp_root/jqcount-shim"
+  tally="$tmp_root/jqcount.tally"
+  mkdir -p "$shimdir"
+  {
+    printf '%s\n' '#!/usr/bin/env bash'
+    printf 'printf x >> %q\n' "$tally"
+    printf 'exec %q "$@"\n' "$real_jq"
+  } > "$shimdir/jq"
+  chmod +x "$shimdir/jq"
+  tmpf="$tmp_root/onepass.json"
+  _gate_scope_manifest_valid_instance > "$tmpf"
+  : > "$tally"
+  # Five validations of a valid instance: the issue-printing jq only runs when
+  # there are issues, so a clean run should be one process each. This locks the
+  # CC-579 collapse -- a reinstated `has($name)` probe, or any other per-call
+  # helper process, doubles the count while the output stays identical.
+  local remaining=5
+  while (( remaining-- > 0 )); do
+    PATH="$shimdir:$PATH" gate_structural_schema_verify gate-scope-manifest "$tmpf" \
+      >/dev/null 2>&1 || rc=$?
+  done
+  count="$(wc -c < "$tally" | tr -d ' ')"
+  if [[ "$rc" -eq 0 && "$count" -eq 5 ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc expected 5 jq invocations, got $count"
+  fi
 }
 
 # --- gate-reviewer-result.schema.json: verdict/findings correlation ---
@@ -175,6 +307,11 @@ case_first_error_valid_instance_no_output
 case_first_error_includes_path_message_and_value
 case_first_error_missing_required_omits_value_suffix
 case_first_error_unknown_schema_name_exits_2
+case_verify_unknown_schema_name_is_execution_failure
+case_verify_json_unknown_schema_name_is_execution_failure
+case_unreadable_instance_is_execution_failure_not_a_verdict
+case_malformed_instance_first_error_reports_execution_failure
+case_schema_validation_spawns_one_jq_per_call
 case_verdict_approve_with_no_blocking_findings_passes
 case_verdict_approve_with_hard_block_finding_rejected
 case_verdict_advise_with_soft_block_finding_rejected
