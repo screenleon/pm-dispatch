@@ -1913,11 +1913,11 @@ test_install_hooks_gate_perms_uninstall_copy_mode_fallback() {
   pass "$name"
 }
 
-test_install_hooks_windows_profile_full_downgrades_to_minimal() {
-  # Proves PM_DISPATCH_PLATFORM=windows and --profile full downgrades to minimal.
-  # Codex hooks are not wired; base managed hooks still are. The expected warning
-  # about fallback to minimal is also required.
-  local name="install-guards-windows-full-downgraded-to-minimal"
+test_install_hooks_windows_profile_full_preserved() {
+  # Proves PM_DISPATCH_PLATFORM=windows preserves --profile full. Codex host
+  # wiring is still explicitly opted in, but Windows no longer downgrades the
+  # requested Claude profile.
+  local name="install-guards-windows-full-preserved"
   should_run "$name" || return 0
   local home="$tmp_root/$name"
   local out err
@@ -1939,8 +1939,8 @@ test_install_hooks_windows_profile_full_downgrades_to_minimal() {
     return
   fi
 
-  if ! grep -q 'platform=windows, --profile full requested; codex hooks unsupported on Windows yet, falling back to minimal' "$err"; then
-    fail "$name" "missing profile downgrade warning"
+  if grep -q 'falling back to minimal' "$err"; then
+    fail "$name" "unexpected profile downgrade warning"
     return
   fi
 
@@ -1979,7 +1979,7 @@ test_install_hooks_windows_profile_minimal_silent() {
     return
   fi
 
-  if grep -q 'platform=windows, --profile full requested; codex hooks unsupported on Windows yet, falling back to minimal' "$err"; then
+  if grep -q 'falling back to minimal' "$err"; then
     fail "$name" "unexpected downgrade warning on minimal profile"
     return
   fi
@@ -3258,7 +3258,7 @@ test_install_sh_profile_full_wires_no_adapter_bash_guard
 test_install_hooks_orphan_cleanup_removes_retired_adapter_guard
 test_install_hooks_auto_detect_with_codex_wires_full
 test_install_hooks_auto_detect_without_codex_wires_minimal
-test_install_hooks_windows_profile_full_downgrades_to_minimal
+test_install_hooks_windows_profile_full_preserved
 test_install_hooks_windows_profile_minimal_silent
 test_install_hooks_dry_run_does_not_modify
 test_install_hooks_platform_linux_explicit

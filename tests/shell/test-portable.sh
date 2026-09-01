@@ -774,11 +774,10 @@ case_realpath_m_symlink_resolves() {
   local root="$tmp_root/sym"
   mkdir -p "$root/target"
   printf 'ok\n' > "$root/target/file.txt"
-  ln -s "$root/target" "$root/link"
-  # Skip when ln -s did not actually create a symlink (Git Bash on Windows
-  # without `MSYS=winsymlinks:nativestrict` + Developer Mode falls back to
-  # copying the directory). The shim's symlink semantics are still tested
-  # natively on Linux/macOS/WSL CI; on Windows the precondition fails.
+  _portable_make_symlink "$root/target" "$root/link"
+  # Skip when a native symlink cannot be created (for example Git Bash on
+  # Windows without Developer Mode). The helper enables the MSYS native-link
+  # mode on Windows; Linux/macOS/WSL retain normal ln semantics.
   if [[ ! -L "$root/link" ]]; then
     printf 'SKIP: %s (ln -s did not create a symlink on this platform)\n' "$name"
     return

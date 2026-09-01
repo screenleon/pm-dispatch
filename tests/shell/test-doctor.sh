@@ -2575,8 +2575,8 @@ case_doctor_stale_hook_sibling_prefix_warns() {
 }
 
 case_doctor_native_windows_notice() {
-  # On native Windows (Git Bash) doctor prints a "use WSL2" unsupported-platform
-  # notice in text mode and omits it in --json mode (machine output stays clean).
+  # On native Windows (Git Bash) doctor prints an experimental-platform notice
+  # in text mode and omits it in --json mode (machine output stays clean).
   # Platform is forced via PM_DISPATCH_PLATFORM=windows (same override the
   # auto-profile case uses); fails if the notice branch is removed.
   local name="doctor-native-windows-notice"
@@ -2595,7 +2595,7 @@ case_doctor_native_windows_notice() {
   out_json="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
     PM_DISPATCH_PLATFORM=windows bash "$DOCTOR" --json --repo "$REPO_ROOT" 2>/dev/null || true)"
   # Text mode must carry the notice.
-  if [[ "$out_text" != *"run under WSL2"* ]]; then
+  if [[ "$out_text" != *"experimental for local Claude/Codex use"* ]]; then
     fail "$name" "text mode missing the native-Windows notice"
     return
   fi

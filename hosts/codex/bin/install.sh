@@ -46,6 +46,8 @@ fi
 
 # shellcheck source=runtime/lib/host-manifest.sh
 . "$REPO_ROOT/runtime/lib/host-manifest.sh"
+# shellcheck source=runtime/lib/portable.sh
+. "$REPO_ROOT/runtime/lib/portable.sh"
 # shellcheck source=hosts/codex/lib/hook-paths.sh
 . "$REPO_ROOT/hosts/codex/lib/hook-paths.sh"
 # shellcheck source=hosts/codex/lib/memory-contract.sh
@@ -107,16 +109,24 @@ if [[ ! -x "$hook_cmd" || ! -x "$memory_hook_cmd" || ! -x "$memory_update_cmd" ]
   exit 2
 fi
 
-# Codex runs each hook `command` string through the shell, same as Claude's
-# hooks.json (see install-guards.sh). An unquoted path with a space is
-# word-split and the hook fails to launch, so shell-escape it before writing
-# — printf %q only adds backslashes when needed, so space-free paths are
-# stored verbatim (no churn for existing installs).
-hook_cmd_q="$(printf '%q' "$hook_cmd")"
-legacy_hook_cmd_q="$(printf '%q' "$legacy_hook_cmd")"
-memory_hook_cmd_q="$(printf '%q' "$memory_hook_cmd")"
+# Codex invokes hook commands through PowerShell on native Windows. Route the
+# POSIX script path through Git Bash as one quoted argument; a bare /c/... path
+# or Bash backslash escaping is not executable by PowerShell.
+codex_hook_command() {
+  local path="$1" quoted
+  if [[ "$(detect_platform)" == "windows" ]]; then
+    quoted="${path//\'/\'\'}"
+    printf "bash '%s'" "$quoted"
+  else
+    printf '%q' "$path"
+  fi
+}
+
+hook_cmd_q="$(codex_hook_command "$hook_cmd")"
+legacy_hook_cmd_q="$(codex_hook_command "$legacy_hook_cmd")"
+memory_hook_cmd_q="$(codex_hook_command "$memory_hook_cmd")"
 session_hook_cmd_q="$(printf '%q' "$session_hook_cmd") --host codex"
-legacy_memory_hook_cmd_q="$(printf '%q' "$legacy_memory_hook_cmd")"
+legacy_memory_hook_cmd_q="$(codex_hook_command "$legacy_memory_hook_cmd")"
 memory_update_cmd_q="$(printf '%q' "$memory_update_cmd")"
 
 tmp_new="$(mktemp)"
@@ -178,7 +188,7 @@ while IFS= read -r previous_command; do
     previous_repo_root="$previous_root"
     break
   fi
-done < <(jq -r '.. | objects | .command? // empty' "$tmp_current")
+done < <(jq -r '.. | objects | .command? // empty' < "$tmp_current")
 
 previous_hook_cmd_q=""
 previous_legacy_hook_cmd_q=""
@@ -195,18 +205,24 @@ fi
 
 # Merge idempotently: only append the managed hook entry if no existing
 # PreToolUse/Bash entry already points at this repo's guard script.
-jq --arg cmd "$hook_cmd_q" --arg legacy_cmd "$legacy_hook_cmd" --arg legacy_cmd_q "$legacy_hook_cmd_q" \
+MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq --arg cmd "$hook_cmd_q" --arg legacy_cmd "$legacy_hook_cmd" --arg legacy_cmd_q "$legacy_hook_cmd_q" \
   --arg memory_cmd "$memory_hook_cmd_q" --arg session_cmd "$session_hook_cmd_q" \
   --arg legacy_memory_cmd "$legacy_memory_hook_cmd" --arg legacy_memory_cmd_q "$legacy_memory_hook_cmd_q" \
   --arg previous_hook_cmd_q "$previous_hook_cmd_q" --arg previous_legacy_hook_cmd_q "$previous_legacy_hook_cmd_q" \
   --arg previous_memory_hook_cmd_q "$previous_memory_hook_cmd_q" --arg previous_legacy_memory_hook_cmd_q "$previous_legacy_memory_hook_cmd_q" \
   --arg previous_session_hook_cmd_q "$previous_session_hook_cmd_q" '
+  def broken_windows_guard:
+    contains("pm-dispatch/hosts/codex/hooks/command-guard.sh");
+  def broken_windows_memory:
+    contains("pm-dispatch/runtime/hooks/guard-inject-memory.sh");
   def managed_guard:
     . == $cmd or . == $legacy_cmd or . == $legacy_cmd_q or
+    broken_windows_guard or
     ($previous_hook_cmd_q != "" and
       (. == $previous_hook_cmd_q or . == $previous_legacy_hook_cmd_q));
   def managed_memory:
     . == $memory_cmd or . == $legacy_memory_cmd or . == $legacy_memory_cmd_q or
+    broken_windows_memory or
     ($previous_memory_hook_cmd_q != "" and
       (. == $previous_memory_hook_cmd_q or . == $previous_legacy_memory_hook_cmd_q));
   def managed_session:
@@ -238,7 +254,7 @@ jq --arg cmd "$hook_cmd_q" --arg legacy_cmd "$legacy_hook_cmd" --arg legacy_cmd_
   (if $already != null then . else .hooks.PreToolUse += [{"matcher": "Bash", "hooks": [{"type": "command", "command": $cmd}]}] end) |
   ([.hooks.UserPromptSubmit[]? | .hooks[]?.command] | index($memory_cmd)) as $memory_already |
   if $memory_already != null then . else .hooks.UserPromptSubmit += [{"hooks": [{"type": "command", "command": $memory_cmd}]}] end
-' "$tmp_current" > "$tmp_new"
+' < "$tmp_current" > "$tmp_new"
 
 if [[ -f "$instructions_file" ]]; then
   cp "$instructions_file" "$tmp_instructions_current"

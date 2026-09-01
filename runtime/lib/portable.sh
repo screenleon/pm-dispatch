@@ -1203,6 +1203,27 @@ remove_junction_windows() {
     >/dev/null 2>&1
 }
 
+# _portable_make_symlink <src> <dst>
+# Create a symlink while preserving the existing copy fallback contract in
+# link_or_copy. Git Bash needs winsymlinks:nativestrict to request a native
+# Windows reparse point; with Developer Mode enabled this works without an
+# elevated shell. Other hosts retain their normal ln behavior.
+_portable_make_symlink() {
+  local src="$1" dst="$2" msys_value
+
+  if [[ "$(detect_platform)" != "windows" ]]; then
+    ln -s "$src" "$dst"
+    return $?
+  fi
+
+  msys_value="${MSYS:-}"
+  if [[ "$msys_value" != *"winsymlinks:nativestrict"* ]]; then
+    [[ -n "$msys_value" ]] && msys_value+=" "
+    msys_value+="winsymlinks:nativestrict"
+  fi
+  MSYS="$msys_value" ln -s "$src" "$dst"
+}
+
 link_or_copy() {
   local src="${1-}"
   local dst="${2-}"
@@ -1340,7 +1361,7 @@ link_or_copy() {
   if [[ "${FAKE_SYMLINK_UNSUPPORTED:-0}" == "1" ]]; then
     ln_rc=1
   else
-    ln -s "$src" "$dst"; ln_rc=$?
+    _portable_make_symlink "$src" "$dst"; ln_rc=$?
   fi
 
   if [[ "${FAKE_SYMLINK_BOGUS:-0}" == "1" && "$ln_rc" -eq 0 ]]; then
