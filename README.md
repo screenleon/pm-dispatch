@@ -116,7 +116,7 @@ The install destination defaults to `~/.claude`; `CLAUDE_CONFIG_DIR` is the cano
 
 Idempotent — re-run safely after adding files. Per-file symlinks keep other tools' agents in `~/.claude/agents/` intact. Receipt-owned Gate and Adapter runtime/assets are installed with the same link-or-copy policy; a foreign load-bearing bundle is rejected before copied entrypoints are wired.
 
-> **Supported platforms (core-development phase):** Linux and WSL2 only (WSL2 is treated as Linux). **Native Windows Git Bash is not officially supported right now** — platform-hardening is deferred until the core stabilizes (CC-370); run under **WSL2** instead. See [`docs/platform-support.md`](docs/platform-support.md).
+> **Supported platforms (core-development phase):** Linux and WSL2 are first-class (WSL2 is treated as Linux). **Native Windows Git Bash is experimental** for local Claude and Codex use: install Git Bash, jq, sqlite3, and enable Windows Developer Mode; use WSL2 for CI and release sign-off. See [`docs/platform-support.md`](docs/platform-support.md).
 
 On platforms without symlink support (e.g. native Windows Git Bash, best-effort only), the installer falls back to **copy mode**: managed directories use junctions or receipt-owned copies, while helpers, the Gate shared runtime, Adapter bootstrap libraries, aliases, and usage support are copied — re-run `install.sh` after `git pull` to refresh changed snapshots. See [`docs/platform-support.md`](docs/platform-support.md) for the per-platform install model.
 

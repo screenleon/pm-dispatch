@@ -12,11 +12,19 @@ set -uo pipefail
 # Keep the host continuation boundary on the same run-id grammar as pmctl's
 # dispatch, supervisor, state-path, and verifier paths.
 _wait_dispatch_source="${BASH_SOURCE[0]}"
-_wait_dispatch_real="$(readlink -f -- "$_wait_dispatch_source" 2>/dev/null || printf '%s' "$_wait_dispatch_source")"
-_wait_dispatch_dir="${_wait_dispatch_real%/*}"
+# Match the runtime supervisors' portable resolver instead of relying on
+# readlink -f, which does not consistently dereference a Git-Bash-created
+# native Windows symlink. Installed waiters must import policy from the
+# receipt-owned checkout, not a sibling path beside the link.
+while [[ -L "$_wait_dispatch_source" ]]; do
+  _wait_dispatch_dir="$(cd "$(dirname "$_wait_dispatch_source")" && pwd)"
+  _wait_dispatch_source="$(readlink "$_wait_dispatch_source")"
+  [[ "$_wait_dispatch_source" == /* ]] || _wait_dispatch_source="$_wait_dispatch_dir/$_wait_dispatch_source"
+done
+_wait_dispatch_dir="$(cd "$(dirname "$_wait_dispatch_source")" && pwd)"
 # shellcheck disable=SC1091 # Runtime library path is resolved from this host entrypoint.
 . "$_wait_dispatch_dir/../../../runtime/lib/identifier-policy.sh"
-unset _wait_dispatch_dir
+unset _wait_dispatch_dir _wait_dispatch_source
 
 usage() {
   cat >&2 <<'EOF'
