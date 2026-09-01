@@ -609,6 +609,42 @@ test_install_guards_codex_windows_quoted_checkout_path_escaped() {
   pass "$name"
 }
 
+# Behavior: the Windows adoption predicate is exact — a foreign COMPOSITE
+# command that merely embeds the managed pathname, and a foreign checkout whose
+# guard script still exists on disk, both survive the install byte-for-byte;
+# only a whole-command, self-or-dead path is adopted.
+# Steps: seed a composite command and an existing foreign checkout command,
+# install with the windows override, assert both survive unchanged alongside
+# the appended canonical entry.
+test_install_guards_codex_windows_preserves_foreign_composite_and_live_checkout() {
+  local name="install-guards-codex-windows-preserves-foreign-composite-and-live-checkout"
+  should_run "$name" || return 0
+  local codex_home="$tmp_root/win-foreign/.codex"
+  local live_root="$tmp_root/win-foreign/other-checkout"
+  mkdir -p "$codex_home" "$live_root/hosts/codex/hooks"
+  printf '#!/usr/bin/env bash\n' > "$live_root/hosts/codex/hooks/command-guard.sh"
+  local composite="/dead/pm-dispatch/hosts/codex/hooks/command-guard.sh && echo audit"
+  local live="$live_root/hosts/codex/hooks/command-guard.sh"
+  jq -n --arg composite "$composite" --arg live "$live" '{hooks:{
+      PreToolUse:[
+        {matcher:"Bash",hooks:[{type:"command",command:$composite}]},
+        {matcher:"Bash",hooks:[{type:"command",command:$live}]}
+      ]
+    }}' > "$codex_home/hooks.json"
+  CODEX_HOME="$codex_home" PM_DISPATCH_PLATFORM=windows \
+    bash "$REPO_ROOT/hosts/codex/bin/install.sh" --repo-root "$REPO_ROOT" >/dev/null 2>&1
+  if jq -e --arg composite "$composite" --arg live "$live" \
+      --arg cmd "bash '$REPO_ROOT/hosts/codex/hooks/command-guard.sh'" '
+      any(.hooks.PreToolUse[]?.hooks[]?; .command == $composite) and
+      any(.hooks.PreToolUse[]?.hooks[]?; .command == $live) and
+      any(.hooks.PreToolUse[]?.hooks[]?; .command == $cmd)
+    ' "$codex_home/hooks.json" >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name" "foreign composite or live foreign-checkout command did not survive: $(jq -c '[.. | objects | .command? // empty]' "$codex_home/hooks.json")"
+  fi
+}
+
 # Behavior: the broken-path adoption is Windows-gated — on Linux a same-suffix
 # command under a different (nonexistent) root stays foreign; the canonical
 # entry is appended beside it, never overwriting it.
@@ -1162,6 +1198,7 @@ test_install_guards_codex_windows_hook_commands_bash_wrapped
 test_install_guards_codex_windows_adopts_broken_path_hooks
 test_install_guards_codex_windows_cross_checkout_wrapped_migration
 test_install_guards_codex_windows_quoted_checkout_path_escaped
+test_install_guards_codex_windows_preserves_foreign_composite_and_live_checkout
 test_install_guards_codex_linux_preserves_foreign_same_suffix_path
 test_codex_memory_update_writes_only_canonical_episode
 test_codex_memory_update_invalid_explicit_fails_closed

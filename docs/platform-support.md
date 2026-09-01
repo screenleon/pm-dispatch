@@ -5,6 +5,13 @@
 > local Claude and Codex use when Git Bash, jq, sqlite3, and Windows Developer
 > Mode are available, but it is not a release-sign-off platform. macOS and other
 > hosts remain unsupported.
+>
+> **Evidence boundary:** no automated test executes on native Windows. Linux
+> CI exercises the Windows code paths only under a `PM_DISPATCH_PLATFORM`
+> override (command representation, migration, and symlink-mode selection are
+> asserted there); actual PowerShell hook launch and native symlink creation
+> are verified only by manual maintainer dogfood, and may regress between
+> releases without CI detection.
 
 ## Support matrix
 

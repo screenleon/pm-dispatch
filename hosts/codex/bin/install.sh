@@ -171,6 +171,32 @@ codex_hook_command_word() {
   printf '%s\n' "$output"
 }
 
+# codex_hook_command_exact <command>
+# Like codex_hook_command_word, but fail-closed unless the WHOLE command is one
+# decodable word: a composite command (`<path> && ...`, `<path> --flag`) is
+# rejected, never partially matched. Used by the Windows broken-path adoption
+# below, where matching a prefix of a foreign composite command would delete
+# user configuration.
+codex_hook_command_exact() {
+  local input="$1" output="" char escaped=0 i
+  [[ "$input" != \$\'* ]] || return 1
+  for ((i = 0; i < ${#input}; i++)); do
+    char="${input:i:1}"
+    if [[ "$escaped" -eq 1 ]]; then
+      output+="$char"
+      escaped=0
+    elif [[ "$char" == "\\" ]]; then
+      escaped=1
+    elif [[ "$char" == " " || "$char" == $'\t' || "$char" == $'\n' || "$char" == "'" || "$char" == '"' ]]; then
+      return 1
+    else
+      output+="$char"
+    fi
+  done
+  [[ "$escaped" -eq 0 && -n "$output" ]] || return 1
+  printf '%s\n' "$output"
+}
+
 previous_repo_root=""
 while IFS= read -r previous_command; do
   # Our own Windows representation is `bash '<literal path>'`; unwrap it before
@@ -220,6 +246,36 @@ if [[ -n "$previous_repo_root" ]]; then
   previous_legacy_memory_hook_cmd_w="$(portable_bash_wrapped_command "$previous_repo_root/scripts/guard-inject-memory.sh")"
 fi
 
+# Pre-fix Windows installs wrote raw or %q POSIX paths that PowerShell could
+# never launch. Collect the EXACT command strings to adopt-and-rewrite:
+# Windows only, the whole command must decode to a single word with the managed
+# suffix, and the path must either belong to this checkout or no longer exist
+# on disk (a dead entry). A foreign composite command, or a foreign checkout
+# whose script still exists, is never adopted — exact strings, no substring
+# matching, so user configuration cannot be silently deleted.
+broken_guard_cmds_json='[]'
+broken_memory_cmds_json='[]'
+if [[ "$(detect_platform)" == "windows" ]]; then
+  while IFS= read -r broken_candidate; do
+    broken_word="$(portable_bash_unwrap_command "$broken_candidate")"
+    if [[ "$broken_word" == "$broken_candidate" ]]; then
+      broken_word="$(codex_hook_command_exact "$broken_candidate")" || continue
+    fi
+    case "$broken_word" in
+      */hosts/codex/hooks/command-guard.sh)
+        broken_root="${broken_word%/hosts/codex/hooks/command-guard.sh}"
+        [[ "$broken_root" == "$REPO_ROOT" || ! -e "$broken_word" ]] || continue
+        broken_guard_cmds_json="$(jq -c --arg c "$broken_candidate" '. + [$c]' <<< "$broken_guard_cmds_json")"
+        ;;
+      */runtime/hooks/guard-inject-memory.sh)
+        broken_root="${broken_word%/runtime/hooks/guard-inject-memory.sh}"
+        [[ "$broken_root" == "$REPO_ROOT" || ! -e "$broken_word" ]] || continue
+        broken_memory_cmds_json="$(jq -c --arg c "$broken_candidate" '. + [$c]' <<< "$broken_memory_cmds_json")"
+        ;;
+    esac
+  done < <(jq -r '.. | objects | .command? // empty' < "$tmp_current")
+fi
+
 # Merge idempotently: only append the managed hook entry if no existing
 # PreToolUse/Bash entry already points at this repo's guard script.
 MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq --arg cmd "$hook_cmd_q" --arg legacy_cmd "$legacy_hook_cmd" --arg legacy_cmd_q "$legacy_hook_cmd_q" \
@@ -230,17 +286,15 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq --arg cmd "$hook_cmd_q" --arg lega
   --arg previous_session_hook_cmd_q "$previous_session_hook_cmd_q" \
   --arg previous_hook_cmd_w "$previous_hook_cmd_w" --arg previous_legacy_hook_cmd_w "$previous_legacy_hook_cmd_w" \
   --arg previous_memory_hook_cmd_w "$previous_memory_hook_cmd_w" --arg previous_legacy_memory_hook_cmd_w "$previous_legacy_memory_hook_cmd_w" \
-  --arg platform "$(detect_platform)" '
-  # Pre-fix Windows installs wrote raw or %q POSIX paths that PowerShell could
-  # never launch; adopt-and-rewrite them by path suffix. Windows-only: on other
-  # platforms a same-named sibling checkout must stay foreign, and the
-  # previous_* repo-root detection already covers legitimate moves.
+  --argjson broken_guard_cmds "$broken_guard_cmds_json" \
+  --argjson broken_memory_cmds "$broken_memory_cmds_json" '
+  # Exact command strings the Windows adoption pre-pass verified as this
+  # checkout'\''s own (or dead) pre-fix representations — membership only,
+  # never substring matching.
   def broken_windows_guard:
-    ($platform == "windows") and
-    contains("pm-dispatch/hosts/codex/hooks/command-guard.sh");
+    ($broken_guard_cmds | index(.)) != null;
   def broken_windows_memory:
-    ($platform == "windows") and
-    contains("pm-dispatch/runtime/hooks/guard-inject-memory.sh");
+    ($broken_memory_cmds | index(.)) != null;
   def managed_guard:
     . == $cmd or . == $legacy_cmd or . == $legacy_cmd_q or
     broken_windows_guard or
