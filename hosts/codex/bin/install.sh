@@ -124,7 +124,12 @@ codex_hook_command() {
 hook_cmd_q="$(codex_hook_command "$hook_cmd")"
 legacy_hook_cmd_q="$(codex_hook_command "$legacy_hook_cmd")"
 memory_hook_cmd_q="$(codex_hook_command "$memory_hook_cmd")"
+# The session-summary Stop hook is a retired capability: it is never written,
+# only recognized for REMOVAL of legacy entries. Match both the historical %q
+# representation and the platform-current codex_hook_command one so a stale
+# entry is pruned regardless of which installer generation wrote it.
 session_hook_cmd_q="$(printf '%q' "$session_hook_cmd") --host codex"
+session_hook_cmd_p="$(codex_hook_command "$session_hook_cmd") --host codex"
 legacy_memory_hook_cmd_q="$(codex_hook_command "$legacy_memory_hook_cmd")"
 memory_update_cmd_q="$(printf '%q' "$memory_update_cmd")"
 
@@ -280,6 +285,7 @@ fi
 # PreToolUse/Bash entry already points at this repo's guard script.
 MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq --arg cmd "$hook_cmd_q" --arg legacy_cmd "$legacy_hook_cmd" --arg legacy_cmd_q "$legacy_hook_cmd_q" \
   --arg memory_cmd "$memory_hook_cmd_q" --arg session_cmd "$session_hook_cmd_q" \
+  --arg session_cmd_p "$session_hook_cmd_p" \
   --arg legacy_memory_cmd "$legacy_memory_hook_cmd" --arg legacy_memory_cmd_q "$legacy_memory_hook_cmd_q" \
   --arg previous_hook_cmd_q "$previous_hook_cmd_q" --arg previous_legacy_hook_cmd_q "$previous_legacy_hook_cmd_q" \
   --arg previous_memory_hook_cmd_q "$previous_memory_hook_cmd_q" --arg previous_legacy_memory_hook_cmd_q "$previous_legacy_memory_hook_cmd_q" \
@@ -308,7 +314,7 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq --arg cmd "$hook_cmd_q" --arg lega
       (. == $previous_memory_hook_cmd_q or . == $previous_legacy_memory_hook_cmd_q or
        . == $previous_memory_hook_cmd_w or . == $previous_legacy_memory_hook_cmd_w));
   def managed_session:
-    . == $session_cmd or
+    . == $session_cmd or . == $session_cmd_p or
     ($previous_session_hook_cmd_q != "" and . == $previous_session_hook_cmd_q);
   .hooks = (.hooks // {}) |
   .hooks.PreToolUse = (.hooks.PreToolUse // []) |

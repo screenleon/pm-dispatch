@@ -645,6 +645,34 @@ test_install_guards_codex_windows_preserves_foreign_composite_and_live_checkout(
   fi
 }
 
+# Behavior: the session-summary Stop hook is a retired capability — the
+# installer never writes one, and on Windows it prunes stale entries in BOTH
+# historical representations (%q and bash-wrapped) instead of leaving a dead
+# Stop hook behind.
+# Steps: seed a Stop hook in each representation, install with the windows
+# override, assert the Stop list is empty and no session hook was written.
+test_install_guards_codex_windows_prunes_retired_session_hook_both_forms() {
+  local name="install-guards-codex-windows-prunes-retired-session-hook-both-forms"
+  should_run "$name" || return 0
+  local codex_home="$tmp_root/win-session/.codex"
+  mkdir -p "$codex_home"
+  jq -n \
+    --arg q "$REPO_ROOT/runtime/hooks/guard-session-summary.sh --host codex" \
+    --arg w "bash '$REPO_ROOT/runtime/hooks/guard-session-summary.sh' --host codex" '{hooks:{
+      Stop:[{hooks:[{type:"command",command:$q},{type:"command",command:$w}]}]
+    }}' > "$codex_home/hooks.json"
+  CODEX_HOME="$codex_home" PM_DISPATCH_PLATFORM=windows \
+    bash "$REPO_ROOT/hosts/codex/bin/install.sh" --repo-root "$REPO_ROOT" >/dev/null 2>&1
+  if jq -e '
+      ([.hooks.Stop[]?.hooks[]?.command] | length) == 0 and
+      ([.. | strings | select(contains("guard-session-summary.sh"))] | length) == 0
+    ' "$codex_home/hooks.json" >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name" "retired session hook survived or was rewired: $(jq -c '[.. | objects | .command? // empty]' "$codex_home/hooks.json")"
+  fi
+}
+
 # Behavior: the broken-path adoption is Windows-gated — on Linux a same-suffix
 # command under a different (nonexistent) root stays foreign; the canonical
 # entry is appended beside it, never overwriting it.
@@ -1199,6 +1227,7 @@ test_install_guards_codex_windows_adopts_broken_path_hooks
 test_install_guards_codex_windows_cross_checkout_wrapped_migration
 test_install_guards_codex_windows_quoted_checkout_path_escaped
 test_install_guards_codex_windows_preserves_foreign_composite_and_live_checkout
+test_install_guards_codex_windows_prunes_retired_session_hook_both_forms
 test_install_guards_codex_linux_preserves_foreign_same_suffix_path
 test_codex_memory_update_writes_only_canonical_episode
 test_codex_memory_update_invalid_explicit_fails_closed
