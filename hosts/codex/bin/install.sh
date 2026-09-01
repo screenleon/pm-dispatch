@@ -113,10 +113,9 @@ fi
 # POSIX script path through Git Bash as one quoted argument; a bare /c/... path
 # or Bash backslash escaping is not executable by PowerShell.
 codex_hook_command() {
-  local path="$1" quoted
+  local path="$1"
   if [[ "$(detect_platform)" == "windows" ]]; then
-    quoted="${path//\'/\'\'}"
-    printf "bash '%s'" "$quoted"
+    portable_bash_wrapped_command "$path"
   else
     printf '%q' "$path"
   fi
@@ -174,7 +173,15 @@ codex_hook_command_word() {
 
 previous_repo_root=""
 while IFS= read -r previous_command; do
-  previous_word="$(codex_hook_command_word "$previous_command")" || continue
+  # Our own Windows representation is `bash '<literal path>'`; unwrap it before
+  # the %q decoder (which rejects quotes fail-closed) so a moved Windows
+  # checkout is still recognized as the compatible previous root.
+  previous_unwrapped="$(portable_bash_unwrap_command "$previous_command")"
+  if [[ "$previous_unwrapped" != "$previous_command" ]]; then
+    previous_word="$previous_unwrapped"
+  else
+    previous_word="$(codex_hook_command_word "$previous_command")" || continue
+  fi
   case "$previous_word" in
     */hosts/codex/hooks/command-guard.sh) previous_root="${previous_word%/hosts/codex/hooks/command-guard.sh}" ;;
     */scripts/hook-codex-command-guard.sh) previous_root="${previous_word%/scripts/hook-codex-command-guard.sh}" ;;
@@ -195,12 +202,22 @@ previous_legacy_hook_cmd_q=""
 previous_memory_hook_cmd_q=""
 previous_legacy_memory_hook_cmd_q=""
 previous_session_hook_cmd_q=""
+previous_hook_cmd_w=""
+previous_legacy_hook_cmd_w=""
+previous_memory_hook_cmd_w=""
+previous_legacy_memory_hook_cmd_w=""
 if [[ -n "$previous_repo_root" ]]; then
   previous_hook_cmd_q="$(printf '%q' "$previous_repo_root/hosts/codex/hooks/command-guard.sh")"
   previous_legacy_hook_cmd_q="$(printf '%q' "$previous_repo_root/scripts/hook-codex-command-guard.sh")"
   previous_memory_hook_cmd_q="$(printf '%q' "$previous_repo_root/runtime/hooks/guard-inject-memory.sh")"
   previous_legacy_memory_hook_cmd_q="$(printf '%q' "$previous_repo_root/scripts/guard-inject-memory.sh")"
   previous_session_hook_cmd_q="$(printf '%q' "$previous_repo_root/runtime/hooks/guard-session-summary.sh") --host codex"
+  # A previous Windows install stored the wrapped representation; recognize it
+  # too so a moved checkout is replaced, never duplicated.
+  previous_hook_cmd_w="$(portable_bash_wrapped_command "$previous_repo_root/hosts/codex/hooks/command-guard.sh")"
+  previous_legacy_hook_cmd_w="$(portable_bash_wrapped_command "$previous_repo_root/scripts/hook-codex-command-guard.sh")"
+  previous_memory_hook_cmd_w="$(portable_bash_wrapped_command "$previous_repo_root/runtime/hooks/guard-inject-memory.sh")"
+  previous_legacy_memory_hook_cmd_w="$(portable_bash_wrapped_command "$previous_repo_root/scripts/guard-inject-memory.sh")"
 fi
 
 # Merge idempotently: only append the managed hook entry if no existing
@@ -211,6 +228,8 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq --arg cmd "$hook_cmd_q" --arg lega
   --arg previous_hook_cmd_q "$previous_hook_cmd_q" --arg previous_legacy_hook_cmd_q "$previous_legacy_hook_cmd_q" \
   --arg previous_memory_hook_cmd_q "$previous_memory_hook_cmd_q" --arg previous_legacy_memory_hook_cmd_q "$previous_legacy_memory_hook_cmd_q" \
   --arg previous_session_hook_cmd_q "$previous_session_hook_cmd_q" \
+  --arg previous_hook_cmd_w "$previous_hook_cmd_w" --arg previous_legacy_hook_cmd_w "$previous_legacy_hook_cmd_w" \
+  --arg previous_memory_hook_cmd_w "$previous_memory_hook_cmd_w" --arg previous_legacy_memory_hook_cmd_w "$previous_legacy_memory_hook_cmd_w" \
   --arg platform "$(detect_platform)" '
   # Pre-fix Windows installs wrote raw or %q POSIX paths that PowerShell could
   # never launch; adopt-and-rewrite them by path suffix. Windows-only: on other
@@ -226,12 +245,14 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq --arg cmd "$hook_cmd_q" --arg lega
     . == $cmd or . == $legacy_cmd or . == $legacy_cmd_q or
     broken_windows_guard or
     ($previous_hook_cmd_q != "" and
-      (. == $previous_hook_cmd_q or . == $previous_legacy_hook_cmd_q));
+      (. == $previous_hook_cmd_q or . == $previous_legacy_hook_cmd_q or
+       . == $previous_hook_cmd_w or . == $previous_legacy_hook_cmd_w));
   def managed_memory:
     . == $memory_cmd or . == $legacy_memory_cmd or . == $legacy_memory_cmd_q or
     broken_windows_memory or
     ($previous_memory_hook_cmd_q != "" and
-      (. == $previous_memory_hook_cmd_q or . == $previous_legacy_memory_hook_cmd_q));
+      (. == $previous_memory_hook_cmd_q or . == $previous_legacy_memory_hook_cmd_q or
+       . == $previous_memory_hook_cmd_w or . == $previous_legacy_memory_hook_cmd_w));
   def managed_session:
     . == $session_cmd or
     ($previous_session_hook_cmd_q != "" and . == $previous_session_hook_cmd_q);

@@ -2078,6 +2078,45 @@ test_install_hooks_windows_migrates_raw_path_hooks() {
   pass "$name"
 }
 
+test_install_hooks_windows_statusline_chain_no_self_entry() {
+  # On Windows the managed statusline command is stored bash-wrapped. The
+  # pre-jq chain detection must recognize that wrapped form as already-wired on
+  # a repeat install: the chain file keeps the foreign predecessor exactly
+  # once and never gains the managed command's wrapped representation (which
+  # would make the statusline hook invoke itself through its own chain).
+  local name="install-guards-windows-statusline-chain-no-self-entry"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name"
+  mkdir -p "$home/.claude"
+  local settings="$home/.claude/settings.json"
+  local chain="$home/.claude/statusline-chain.conf"
+  local foreign="$home/bin/custom-status.sh"
+  jq -n --arg sl "$foreign" '{permissions:{}, statusLine:{type:"command", command:$sl}}' > "$settings"
+
+  HOME="$home" CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 PM_DISPATCH_PLATFORM=windows \
+    bash "$REPO_ROOT/scripts/install-guards.sh" --profile minimal >/dev/null 2>&1
+  HOME="$home" CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 PM_DISPATCH_PLATFORM=windows \
+    bash "$REPO_ROOT/scripts/install-guards.sh" --profile minimal >/dev/null 2>&1
+
+  if [[ "$(jq -r '.statusLine.command' "$settings")" != "bash '$REPO_ROOT/hosts/claude/hooks/save-rate-limits.sh'" ]]; then
+    fail "$name" "statusLine.command is not the bash-wrapped managed form after repeat install"
+    return
+  fi
+  if [[ ! -f "$chain" ]]; then
+    fail "$name" "statusline chain file was not written for the foreign predecessor"
+    return
+  fi
+  if [[ "$(grep -Fc -- "$foreign" "$chain")" != "1" ]]; then
+    fail "$name" "foreign statusline predecessor not preserved exactly once: $(cat "$chain")"
+    return
+  fi
+  if grep -Fq -- "save-rate-limits.sh" "$chain"; then
+    fail "$name" "managed statusline command leaked into its own chain: $(cat "$chain")"
+    return
+  fi
+  pass "$name"
+}
+
 test_install_hooks_orphan_cleanup_removes_retired_adapter_guard() {
   # Regression for the codex-executor retirement: a settings.json left over from
   # a prior install that still wires adapters/codex/bash-guard.sh (now a deleted
@@ -3346,6 +3385,7 @@ test_install_hooks_windows_profile_full_preserved
 test_install_hooks_windows_profile_minimal_silent
 test_install_hooks_windows_hook_commands_bash_wrapped
 test_install_hooks_windows_migrates_raw_path_hooks
+test_install_hooks_windows_statusline_chain_no_self_entry
 test_install_hooks_dry_run_does_not_modify
 test_install_hooks_platform_linux_explicit
 test_install_hooks_platform_invalid_value_rejected

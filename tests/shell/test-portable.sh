@@ -1984,6 +1984,69 @@ case_portable_source_is_side_effect_free() {
   pass "$name"
 }
 
+# Behavior: _portable_make_symlink requests a native Windows reparse point via
+# MSYS=winsymlinks:nativestrict (appending to a caller-set MSYS value), and
+# leaves MSYS untouched on other platforms.
+# Steps: put an ln stub on PATH that records its MSYS environment, invoke the
+# helper under the windows override (bare and with a pre-set MSYS), then under
+# linux, and assert the recorded values.
+case_portable_make_symlink_windows_msys() {
+  local name="portable/make-symlink-windows-msys"
+  should_run "$name" || return 0
+  local stub_dir="$tmp_root/msys-stub" sink="$tmp_root/msys-stub/seen"
+  mkdir -p "$stub_dir"
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "${MSYS:-}" >> "%s"\nexit 0\n' "$sink" > "$stub_dir/ln"
+  chmod +x "$stub_dir/ln"
+
+  : > "$sink"
+  PATH="$stub_dir:$PATH" PM_DISPATCH_PLATFORM=windows \
+    _portable_make_symlink "$tmp_root/src" "$tmp_root/dst-win"
+  PATH="$stub_dir:$PATH" PM_DISPATCH_PLATFORM=windows MSYS="disable_pcon" \
+    _portable_make_symlink "$tmp_root/src" "$tmp_root/dst-win2"
+  PATH="$stub_dir:$PATH" PM_DISPATCH_PLATFORM=linux \
+    _portable_make_symlink "$tmp_root/src" "$tmp_root/dst-linux"
+
+  local expected
+  expected="$(printf 'winsymlinks:nativestrict\ndisable_pcon winsymlinks:nativestrict\n\n')"
+  if [[ "$(cat "$sink")" == "$expected" ]]; then
+    pass "$name"
+  else
+    fail "$name" "recorded MSYS values: [$(tr '\n' '|' < "$sink")] expected [winsymlinks:nativestrict|disable_pcon winsymlinks:nativestrict||]"
+  fi
+}
+
+# Behavior: portable_bash_wrapped_command emits the PowerShell-launchable
+# `bash '<path>'` form with embedded single quotes doubled, and
+# portable_bash_unwrap_command is its exact inverse; a non-wrapped command
+# passes through unwrap unchanged.
+# Steps: round-trip a plain path and a single-quote-containing path, assert
+# the wrapped byte form, and assert pass-through for plain and %q commands.
+case_portable_bash_wrap_unwrap_round_trip() {
+  local name="portable/bash-wrap-unwrap-round-trip"
+  should_run "$name" || return 0
+  local plain="/c/Users/dev/repo/hooks/guard.sh"
+  local quoted="/c/Users/O'Brien/repo/hooks/guard.sh"
+  if [[ "$(portable_bash_wrapped_command "$plain")" != "bash '$plain'" ]]; then
+    fail "$name" "plain path not wrapped as bash '<path>'"
+    return
+  fi
+  if [[ "$(portable_bash_wrapped_command "$quoted")" != "bash '/c/Users/O''Brien/repo/hooks/guard.sh'" ]]; then
+    fail "$name" "embedded single quote not doubled in wrapped form"
+    return
+  fi
+  if [[ "$(portable_bash_unwrap_command "$(portable_bash_wrapped_command "$plain")")" != "$plain" ]] \
+    || [[ "$(portable_bash_unwrap_command "$(portable_bash_wrapped_command "$quoted")")" != "$quoted" ]]; then
+    fail "$name" "unwrap is not the inverse of wrap"
+    return
+  fi
+  if [[ "$(portable_bash_unwrap_command "$plain")" != "$plain" ]] \
+    || [[ "$(portable_bash_unwrap_command "/c/Users/First\\ Last/guard.sh")" != "/c/Users/First\\ Last/guard.sh" ]]; then
+    fail "$name" "non-wrapped command did not pass through unchanged"
+    return
+  fi
+  pass "$name"
+}
+
 case_link_or_copy_symlink_success
 case_link_or_copy_post_check_reject
 case_link_or_copy_copy_fallback
@@ -2004,5 +2067,7 @@ case_portable_directory_digest_is_canonical
 case_portable_legacy_directory_receipt_migration
 case_portable_canonical_path
 case_portable_source_is_side_effect_free
+case_portable_make_symlink_windows_msys
+case_portable_bash_wrap_unwrap_round_trip
 
 th_summary

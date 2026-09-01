@@ -201,8 +201,11 @@ write_statusline_chain() {
     if [[ -f "$statusline_chain_conf" ]]; then
       while IFS= read -r chain_entry || [[ -n "$chain_entry" ]]; do
         [[ -n "$chain_entry" ]] || continue
-        [[ "$chain_entry" == "$statusline_cmd" ]] && continue
-        [[ "$chain_entry" == "$legacy_statusline_cmd" ]] && continue
+        # Unwrap before comparing so the Windows `bash '<path>'` representation
+        # of a managed statusline command can never survive as a chain entry
+        # (a plain command unwraps to itself).
+        [[ "$(portable_bash_unwrap_command "$chain_entry")" == "$statusline_cmd" ]] && continue
+        [[ "$(portable_bash_unwrap_command "$chain_entry")" == "$legacy_statusline_cmd" ]] && continue
         [[ "$chain_entry" == "$first_cmd" ]] && continue
         printf '%s\n' "$chain_entry"
       done < "$statusline_chain_conf"
@@ -226,16 +229,20 @@ fi
 tmp_new="$(mktemp)"
 trap 'rm -f "$tmp_new"' EXIT
 
-# Read current statusLine.command to determine if chaining is needed.
+# Read current statusLine.command to determine if chaining is needed. Compare
+# the unwrapped form: a previous Windows install stores the managed command as
+# `bash '<path>'`, and treating that as foreign would chain the managed
+# statusline to itself (a plain command unwraps to itself).
 _current_statusline=$(jq -r '.statusLine.command // empty' "$settings" 2>/dev/null || true)
+_current_statusline_plain="$(portable_bash_unwrap_command "${_current_statusline:-}")"
 _statusline_already_wired=0
-if [[ "${_current_statusline:-}" == "$statusline_cmd" || "${_current_statusline:-}" == "$legacy_statusline_cmd" ]]; then
+if [[ "$_current_statusline_plain" == "$statusline_cmd" || "$_current_statusline_plain" == "$legacy_statusline_cmd" ]]; then
     _statusline_already_wired=1
-elif [[ "$(basename "${_current_statusline:-}")" == "$(basename "$legacy_statusline_cmd")" \
-    && "$(basename "$(dirname "${_current_statusline%%[[:space:]]*}")")" == "scripts" ]]; then
+elif [[ "$(basename "$_current_statusline_plain")" == "$(basename "$legacy_statusline_cmd")" \
+    && "$(basename "$(dirname "${_current_statusline_plain%%[[:space:]]*}")")" == "scripts" ]]; then
     _statusline_already_wired=1
-elif [[ "$(basename "${_current_statusline:-}")" == "$(basename "$statusline_cmd")" ]]; then
-    _current_statusline_path="${_current_statusline%%[[:space:]]*}"
+elif [[ "$(basename "$_current_statusline_plain")" == "$(basename "$statusline_cmd")" ]]; then
+    _current_statusline_path="${_current_statusline_plain%%[[:space:]]*}"
     if [[ ! -e "$_current_statusline_path" ]]; then
         _statusline_already_wired=1
     elif [[ "$DRY_RUN" -eq 0 ]]; then
@@ -256,10 +263,9 @@ fi
 # POSIX script path as one single-quoted argument. Other platforms retain the
 # existing shell-escaped direct invocation.
 claude_hook_command() {
-  local path="$1" quoted
+  local path="$1"
   if [[ "$PLATFORM" == "windows" ]]; then
-    quoted="${path//\'/\'\'}"
-    printf "bash '%s'" "$quoted"
+    portable_bash_wrapped_command "$path"
   else
     printf '%q' "$path"
   fi
