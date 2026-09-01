@@ -210,10 +210,17 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq --arg cmd "$hook_cmd_q" --arg lega
   --arg legacy_memory_cmd "$legacy_memory_hook_cmd" --arg legacy_memory_cmd_q "$legacy_memory_hook_cmd_q" \
   --arg previous_hook_cmd_q "$previous_hook_cmd_q" --arg previous_legacy_hook_cmd_q "$previous_legacy_hook_cmd_q" \
   --arg previous_memory_hook_cmd_q "$previous_memory_hook_cmd_q" --arg previous_legacy_memory_hook_cmd_q "$previous_legacy_memory_hook_cmd_q" \
-  --arg previous_session_hook_cmd_q "$previous_session_hook_cmd_q" '
+  --arg previous_session_hook_cmd_q "$previous_session_hook_cmd_q" \
+  --arg platform "$(detect_platform)" '
+  # Pre-fix Windows installs wrote raw or %q POSIX paths that PowerShell could
+  # never launch; adopt-and-rewrite them by path suffix. Windows-only: on other
+  # platforms a same-named sibling checkout must stay foreign, and the
+  # previous_* repo-root detection already covers legitimate moves.
   def broken_windows_guard:
+    ($platform == "windows") and
     contains("pm-dispatch/hosts/codex/hooks/command-guard.sh");
   def broken_windows_memory:
+    ($platform == "windows") and
     contains("pm-dispatch/runtime/hooks/guard-inject-memory.sh");
   def managed_guard:
     . == $cmd or . == $legacy_cmd or . == $legacy_cmd_q or

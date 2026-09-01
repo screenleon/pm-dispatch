@@ -134,8 +134,10 @@ HOME	HOME	tools/lint/lint-portable-repo-paths.sh	production
 HOME	HOME	uninstall.sh	production
 MSYS2_ARG_CONV_EXCL	MSYS2_ARG_CONV_EXCL	hosts/claude/bin/install-guards.sh	production
 MSYS2_ARG_CONV_EXCL	MSYS2_ARG_CONV_EXCL	hosts/claude/bin/uninstall-guards.sh	production
+MSYS2_ARG_CONV_EXCL	MSYS2_ARG_CONV_EXCL	hosts/codex/bin/install.sh	production
 MSYS_NO_PATHCONV	MSYS_NO_PATHCONV	hosts/claude/bin/install-guards.sh	production
 MSYS_NO_PATHCONV	MSYS_NO_PATHCONV	hosts/claude/bin/uninstall-guards.sh	production
+MSYS_NO_PATHCONV	MSYS_NO_PATHCONV	hosts/codex/bin/install.sh	production
 OPENAI_API_KEY	OPENAI_API_KEY	hosts/codex/lib/doctor.sh	production
 OPENAI_API_KEY	OPENAI_API_KEY	runtime/bin/doctor.sh	production
 OPENCODE_DISPATCH_TIMEOUT	OPENCODE_DISPATCH_TIMEOUT	adapters/opencode/dispatch.sh	production

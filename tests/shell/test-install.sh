@@ -1994,6 +1994,90 @@ test_install_hooks_windows_profile_minimal_silent() {
   pass "$name"
 }
 
+test_install_hooks_windows_hook_commands_bash_wrapped() {
+  # On PM_DISPATCH_PLATFORM=windows every managed hook command must be written
+  # as a PowerShell-launchable `bash '<posix path>'` invocation (a bare or %q
+  # POSIX path is not executable by the PowerShell hook runner). A second run
+  # must recognize the wrapped form as managed and not duplicate entries.
+  local name="install-guards-windows-hook-commands-bash-wrapped"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name"
+  mkdir -p "$home/.claude"
+  printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
+  local settings="$home/.claude/settings.json"
+
+  HOME="$home" CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 PM_DISPATCH_PLATFORM=windows \
+    bash "$REPO_ROOT/scripts/install-guards.sh" --profile minimal >/dev/null 2>&1
+
+  if ! jq -e \
+      --arg pm "bash '$REPO_ROOT/runtime/hooks/guard-pm-write.sh'" \
+      --arg stop "bash '$REPO_ROOT/hosts/claude/hooks/log-usage.sh'" \
+      --arg inject "bash '$REPO_ROOT/runtime/hooks/guard-inject-memory.sh' --host claude" \
+      --arg ctx "bash '$REPO_ROOT/hosts/claude/hooks/inject-context.sh'" '
+      any(.hooks.PreToolUse[]?.hooks[]?; .command == $pm) and
+      any(.hooks.Stop[]?.hooks[]?; .command == $stop) and
+      any(.hooks.UserPromptSubmit[]?.hooks[]?; .command == $inject) and
+      any(.hooks.UserPromptSubmit[]?.hooks[]?; .command == $ctx)
+    ' "$settings" >/dev/null 2>&1; then
+    fail "$name" "managed hooks are not written in the bash-wrapped Windows form"
+    return
+  fi
+
+  HOME="$home" CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 PM_DISPATCH_PLATFORM=windows \
+    bash "$REPO_ROOT/scripts/install-guards.sh" --profile minimal >/dev/null 2>&1
+  if [[ "$(jq '[.hooks.PreToolUse[]?.hooks[]? | select(.command | contains("guard-pm-write.sh"))] | length' "$settings")" != "1" ]] \
+    || [[ "$(jq '[.hooks.UserPromptSubmit[]?.hooks[]? | select(.command | contains("guard-inject-memory.sh"))] | length' "$settings")" != "1" ]]; then
+    fail "$name" "re-run duplicated a bash-wrapped managed hook"
+    return
+  fi
+  pass "$name"
+}
+
+test_install_hooks_windows_migrates_raw_path_hooks() {
+  # A pre-fix Windows install stored the managed commands as bare POSIX paths
+  # (printf %q of a space-free path). Re-running on windows must rewrite each
+  # one in place to the bash-wrapped form — no duplicate entries, no leftover
+  # raw-path command.
+  local name="install-guards-windows-migrates-raw-path-hooks"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name"
+  mkdir -p "$home/.claude"
+  local settings="$home/.claude/settings.json"
+  jq -n \
+    --arg pm "$REPO_ROOT/runtime/hooks/guard-pm-write.sh" \
+    --arg stop "$REPO_ROOT/hosts/claude/hooks/log-usage.sh" \
+    --arg inject "$REPO_ROOT/runtime/hooks/guard-inject-memory.sh --host claude" \
+    --arg ctx "$REPO_ROOT/hosts/claude/hooks/inject-context.sh" '{
+      permissions: {},
+      hooks: {
+        PreToolUse: [{matcher:"Write|Edit", hooks:[{type:"command", command:$pm}]}],
+        Stop: [{hooks:[{type:"command", command:$stop}]}],
+        UserPromptSubmit: [
+          {hooks:[{type:"command", command:$inject}]},
+          {hooks:[{type:"command", command:$ctx, timeout: 5}]}
+        ]
+      }
+    }' > "$settings"
+
+  HOME="$home" CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 PM_DISPATCH_PLATFORM=windows \
+    bash "$REPO_ROOT/scripts/install-guards.sh" --profile minimal >/dev/null 2>&1
+
+  if ! jq -e \
+      --arg pm "bash '$REPO_ROOT/runtime/hooks/guard-pm-write.sh'" \
+      --arg stop "bash '$REPO_ROOT/hosts/claude/hooks/log-usage.sh'" \
+      --arg inject "bash '$REPO_ROOT/runtime/hooks/guard-inject-memory.sh' --host claude" \
+      --arg ctx "bash '$REPO_ROOT/hosts/claude/hooks/inject-context.sh'" '
+      ([.hooks.PreToolUse[]?.hooks[]? | select(.command | contains("guard-pm-write.sh"))] | map(.command)) == [$pm] and
+      ([.hooks.Stop[]?.hooks[]? | select(.command | contains("log-usage.sh"))] | map(.command)) == [$stop] and
+      ([.hooks.UserPromptSubmit[]?.hooks[]? | select(.command | contains("guard-inject-memory.sh"))] | map(.command)) == [$inject] and
+      ([.hooks.UserPromptSubmit[]?.hooks[]? | select(.command | contains("inject-context.sh"))] | map(.command)) == [$ctx]
+    ' "$settings" >/dev/null 2>&1; then
+    fail "$name" "raw-path managed hooks were not migrated in place to the bash-wrapped form"
+    return
+  fi
+  pass "$name"
+}
+
 test_install_hooks_orphan_cleanup_removes_retired_adapter_guard() {
   # Regression for the codex-executor retirement: a settings.json left over from
   # a prior install that still wires adapters/codex/bash-guard.sh (now a deleted
@@ -3260,6 +3344,8 @@ test_install_hooks_auto_detect_with_codex_wires_full
 test_install_hooks_auto_detect_without_codex_wires_minimal
 test_install_hooks_windows_profile_full_preserved
 test_install_hooks_windows_profile_minimal_silent
+test_install_hooks_windows_hook_commands_bash_wrapped
+test_install_hooks_windows_migrates_raw_path_hooks
 test_install_hooks_dry_run_does_not_modify
 test_install_hooks_platform_linux_explicit
 test_install_hooks_platform_invalid_value_rejected

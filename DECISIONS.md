@@ -7,6 +7,47 @@ H2 標題格式：## YYYY-MM-DD: <短描述>
 與 BACKLOG closure 對應的 entry，內文首行寫：Closes: BACKLOG.md#<PREFIX>-NNN
 -->
 
+## 2026-09-01: windows-git-bash-experimental-local-use-exception
+
+### Context
+
+The 2026-06-13 decision (defer-native-windows-support-during-core-dev)
+narrowed the platform contract to Linux + WSL2 and parked all native-Windows
+defects under CC-370. The maintainer now has a concrete, immediate need to run
+pm-dispatch (Claude and Codex hosts) on a native Windows Git Bash machine.
+Running under WSL2 is not an option for that workflow. The blocking defects
+were not cosmetic: hooks are launched by PowerShell on native Windows, so the
+`printf %q` POSIX command paths written by the installers could never start,
+and Git Bash `ln -s` without `MSYS=winsymlinks:nativestrict` silently copies
+instead of linking.
+
+### Decision
+
+Open a bounded **experimental local-use exception**: native Windows Git Bash
+is supported for local Claude/Codex use when Git Bash, jq, sqlite3, and
+Windows Developer Mode are present. The installers write PowerShell-launchable
+`bash '<posix path>'` hook commands on Windows and migrate pre-fix raw/%q
+entries in place; `link_or_copy` requests native symlinks via
+`MSYS=winsymlinks:nativestrict` with the existing copy fallback intact. The
+CC-370 deferral otherwise stands: CI and release sign-off remain Linux/WSL2
+only, Windows is not a release-qualification platform, and parked CC-104x
+tickets stay parked — this exception does not reopen them.
+
+### Alternatives considered
+
+- Stay WSL2-only and run the tool from WSL2 against Windows-side checkouts —
+  rejected: the workflow that motivates this runs the host CLIs natively.
+- Full un-deferral of CC-370 — rejected: core-dev focus rationale is
+  unchanged; only the minimal hook/symlink path needed for local use moves.
+
+### Constraints introduced
+
+- Windows-only code paths must be platform-gated (`detect_platform` /
+  `PM_DISPATCH_PLATFORM`) and covered by Linux-runnable tests using the
+  platform override; behavior on Linux/WSL2 must be byte-identical.
+- docs/platform-support.md is the single statement of the experimental scope;
+  release evidence never cites a Windows run.
+
 ## 2026-08-28: case-level-skip-disqualifies-authoritative-evidence
 
 ### Context
