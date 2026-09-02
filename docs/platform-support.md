@@ -2,9 +2,11 @@
 
 > **Platform contract (core-development phase):** Linux and WSL2 are
 > first-class. Native Windows Git Bash is **experimental**: it is supported for
-> local Claude and Codex use when Git Bash, jq, sqlite3, and Windows Developer
-> Mode are available, but it is not a release-sign-off platform. macOS and other
-> hosts remain unsupported.
+> local Claude and Codex use when Git Bash, jq, and sqlite3 are available, but
+> it is not a release-sign-off platform. Windows Developer Mode is required
+> only for **native symlinks** (auto-sync after `git pull`); without it the
+> installer still works via receipt-owned copy fallback — re-run `install.sh`
+> after pulling. macOS and other hosts remain unsupported.
 >
 > **Evidence boundary:** no automated test executes on native Windows. Linux
 > CI exercises the Windows code paths only under a `PM_DISPATCH_PLATFORM`
