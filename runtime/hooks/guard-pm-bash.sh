@@ -33,6 +33,21 @@
 # below with a one-line reason when a new destructive command class is
 # identified. Prefer denying a specific dangerous invocation shape over a
 # broad command name (e.g. deny `git push.*--force`, not `git push` outright).
+#
+# PORTABILITY — do NOT use `\b` (or `\<` / `\>` / `[[:<:]]`) in these patterns.
+# The bash `[[ =~ ]]` engine on native Windows Git Bash (MSYS2) silently fails
+# to match any pattern containing `\b` — no error, just a non-match — so every
+# `\b`-anchored entry became a no-op there and the guard allowed `rm -rf`,
+# `git push --force`, `sudo`, `mkfs`, `shutdown`, ... through unimpeded. Use
+# explicit POSIX-ERE boundaries instead, which behave identically on GNU and
+# MSYS:
+#   trailing word boundary:  ([^[:alnum:]_]|$)
+#   leading  word boundary:  (^|[^[:alnum:]_])
+# These consume one character rather than being zero-width; where a following
+# token needs that same separator (e.g. `rm ` whose space is also the flag
+# delimiter) the boundary is written as an optional group —
+# `rm([^[:alnum:]_].*)?[[:space:]]` — so it collapses when the tight form is
+# matched. `ops/diagnostics/windows-acceptance.sh` exercises this on-platform.
 
 # No `-e` here, unlike the other guard hooks: the no-op fast paths below use
 # `[[ cond ]] && exit 0`, which returns non-zero when the condition is false —
@@ -240,45 +255,47 @@ declare -a DENY_PATTERNS=(
   # token) so a preceding unrelated option does not shield the cluster —
   # `rm -v -rf x` and `rm --one-file-system -rf x` are denied too, not just
   # `rm -rf x`.
-  'rm\b.*[[:space:]](-[a-zA-Z]*[rR][a-zA-Z]*f[a-zA-Z]*|-[a-zA-Z]*f[a-zA-Z]*[rR][a-zA-Z]*)([[:space:]]|$)'
+  'rm([^[:alnum:]_].*)?[[:space:]](-[a-zA-Z]*[rR][a-zA-Z]*f[a-zA-Z]*|-[a-zA-Z]*f[a-zA-Z]*[rR][a-zA-Z]*)([[:space:]]|$)'
   # rm with recursive and force passed as SEPARATE flags (either order),
   # short or long form: `rm -r -f`, `rm --force --recursive`, etc.
-  'rm\b.*(-r\b|-R\b|--recursive\b).*(-f\b|--force\b)'
-  'rm\b.*(-f\b|--force\b).*(-r\b|-R\b|--recursive\b)'
-  # git subcommand patterns below all use `git\b.*[[:space:]]<subcmd>\b`
+  'rm[^[:alnum:]_].*(-r([^[:alnum:]_]|$)|-R([^[:alnum:]_]|$)|--recursive([^[:alnum:]_]|$)).*(-f([^[:alnum:]_]|$)|--force([^[:alnum:]_]|$))'
+  'rm[^[:alnum:]_].*(-f([^[:alnum:]_]|$)|--force([^[:alnum:]_]|$)).*(-r([^[:alnum:]_]|$)|-R([^[:alnum:]_]|$)|--recursive([^[:alnum:]_]|$))'
+  # git subcommand patterns below all use `git([^[:alnum:]_].*)?[[:space:]]<subcmd>`
   # rather than `git[[:space:]]+<subcmd>` so a Git global option before the
   # subcommand does not shield it — `git -C /tmp reset --hard` and
   # `git -c foo=bar push --force` are denied too, not just the bare form
-  # (same fix shape as the rm cluster pattern above).
+  # (same fix shape as the rm cluster pattern above). The optional leading
+  # group is what absorbs `-C /tmp` etc.; when absent, the `git ` space is the
+  # subcommand delimiter.
   # force push: bare `-f`/`--force` plus the safer-looking variants that still
   # rewrite or delete remote refs — `--force-with-lease`/`--force-if-includes`
   # (optionally with a `=<refspec>` value, hence the `=` alternative in the
   # trailing boundary) still force-overwrite, and `--mirror` can delete remote
   # refs/branches wholesale.
-  'git\b.*[[:space:]]push\b([[:space:]]+[^|;&]*)?[[:space:]](-f|--force(-with-lease|-if-includes)?|--mirror)([[:space:]=]|$)'
+  'git([^[:alnum:]_].*)?[[:space:]]push([[:space:]]+[^|;&]*)?[[:space:]](-f|--force(-with-lease|-if-includes)?|--mirror)([[:space:]=]|$)'
   # force-refspec push: `git push origin +main`, `git push +HEAD:main` — a
   # `+` prefix on a refspec argument means "force this update" without
   # spelling `-f`/`--force`, so it must be matched independently of the
   # pattern above (anywhere after `push`, not just as the first argument).
-  'git\b.*[[:space:]]push\b.*[[:space:]]\+[^[:space:]]'
-  'git\b.*[[:space:]]reset\b[[:space:]]+--hard'                            # discards uncommitted work irreversibly
+  'git([^[:alnum:]_].*)?[[:space:]]push([[:space:]].*)?[[:space:]]\+[^[:space:]]'
+  'git([^[:alnum:]_].*)?[[:space:]]reset[[:space:]]+--hard'               # discards uncommitted work irreversibly
   # git clean force flag: matched anywhere after `clean` (not just the
   # immediately-following token) so `git clean -d -f` (force passed as a
   # SEPARATE token from -d) is denied too, not just the combined `-df`/`-fd` form.
-  'git\b.*[[:space:]]clean\b.*[[:space:]](-[a-zA-Z]*f[a-zA-Z]*|--force)([[:space:]]|$)'
-  'git\b.*[[:space:]]branch\b[[:space:]]+-D'                               # force-deletes a branch, bypassing merge check
-  '\-\-no-verify\b'                                                        # skips commit/push hooks
-  '\-\-no-gpg-sign\b'                                                      # bypasses commit signing
+  'git([^[:alnum:]_].*)?[[:space:]]clean([^[:alnum:]_].*)?[[:space:]](-[a-zA-Z]*f[a-zA-Z]*|--force)([[:space:]]|$)'
+  'git([^[:alnum:]_].*)?[[:space:]]branch[[:space:]]+-D'                  # force-deletes a branch, bypassing merge check
+  '\-\-no-verify([^[:alnum:]_]|$)'                                        # skips commit/push hooks
+  '\-\-no-gpg-sign([^[:alnum:]_]|$)'                                      # bypasses commit signing
   # pipe-to-shell remote code execution: `| sh`, `| bash`, plus common
   # equivalent spellings — an absolute/relative interpreter path (`/bin/sh`,
   # `./sh`), an `env`-wrapped invocation (`env bash`), and `sudo`-prefixed
   # forms, any of which reach the same shell interpreter as the bare form.
-  '(curl|wget)[^|]*\|[[:space:]]*(sudo[[:space:]]+)?(([[:alnum:]_./-]*/)?env[[:space:]]+)?([[:alnum:]_./-]*/)?(ba|da|z)?sh\b'
-  '\bsudo\b'                                                               # PM sessions should never need root
-  '\bmkfs(\.[a-z0-9]+)?\b'                                                 # filesystem-format, irreversibly destroys data
-  '\bdd[[:space:]]+.*of=/dev/'                                             # raw block-device write
+  '(curl|wget)[^|]*\|[[:space:]]*(sudo[[:space:]]+)?(([[:alnum:]_./-]*/)?env[[:space:]]+)?([[:alnum:]_./-]*/)?(ba|da|z)?sh([^[:alnum:]_]|$)'
+  '(^|[^[:alnum:]_])sudo([^[:alnum:]_]|$)'                                 # PM sessions should never need root
+  '(^|[^[:alnum:]_])mkfs(\.[a-z0-9]+)?([^[:alnum:]_]|$)'                   # filesystem-format, irreversibly destroys data
+  '(^|[^[:alnum:]_])dd[[:space:]]+.*of=/dev/'                             # raw block-device write
   'chmod[[:space:]]+-R[[:space:]]+777[[:space:]]+/'                       # recursive world-writable from root
-  '\b(shutdown|reboot|poweroff|halt)\b'                                    # host power-state changes
+  '(^|[^[:alnum:]_])(shutdown|reboot|poweroff|halt)([^[:alnum:]_]|$)'     # host power-state changes
 )
 
 # Matched case-sensitively, not lowercased: several patterns rely on case to
