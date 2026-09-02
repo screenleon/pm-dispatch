@@ -17,6 +17,7 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd -P)"
 # shellcheck source=runtime/lib/portable.sh
+# shellcheck disable=SC1091 # CI shellcheck runs without -x; path resolved from this entrypoint.
 . "$REPO_ROOT/runtime/lib/portable.sh"
 
 if [[ "$(detect_platform)" != "windows" ]]; then
