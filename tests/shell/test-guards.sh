@@ -2288,12 +2288,12 @@ inject_hook_byte_cap_counts_utf8_bytes_not_characters() {
   dir="$(mktemp -d)"
   cwd="$dir/workspace"
   mkdir -p "$cwd"
-  pad="$(python3 -c "print('あ' * 250)" 2>/dev/null || true)"
-  if [[ -z "$pad" ]]; then
-    fail "$name" "setup: python3 unavailable to build CJK fixture padding"
-    rm -rf "$dir"
-    return 0
-  fi
+  # 250 × U+3042 (あ) = 750 UTF-8 bytes of CJK padding. Pure bash — the repo
+  # deliberately carries no python3 dependency (see the "no python3" assertions
+  # in tests/shell/test-commands.sh and test-runtime-lib-coverage.sh), and a
+  # test fixture must not reintroduce one. `printf 'あ%.0s'` emits the literal
+  # multibyte format text once per positional arg, discarding each via `%.0s`.
+  printf -v pad 'あ%.0s' {1..250}
   {
     printf '# title\n'
     for i in $(seq 1 10); do

@@ -6,6 +6,16 @@
 # Specific call-out: hook scripts are interpreted by /bin/bash; a CR at
 # the end of the first line breaks shebang resolution silently.
 
+# Catch-all first: every text file normalizes to LF regardless of extension.
+# The per-extension lines below are kept as explicit documentation and to
+# pin the intent, but this line is what covers EXTENSIONLESS executables
+# (`cli/pmctl`, future `bin/*` scripts) that the globs miss — on a
+# core.autocrlf=true checkout those were landing with CRLF and silently
+# breaking. `text=auto` still lets Git auto-detect and leave real binaries
+# alone; the explicit `binary` rules at the bottom are belt-and-braces.
+# Safe to add with no renormalization churn: no committed blob contains CRLF.
+*           text=auto eol=lf
+
 *.sh        text eol=lf
 *.bash      text eol=lf
 *.md        text eol=lf

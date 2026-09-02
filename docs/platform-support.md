@@ -1,9 +1,22 @@
 # Platform support
 
-> **Platform contract (core-development phase):** pm-dispatch officially targets
-> **Linux and WSL2 only** (WSL2 is treated as Linux, first-class). CI and release
-> sign-off run on Linux/WSL2. macOS, native Windows Git Bash, and all other hosts
-> are unsupported; use WSL2 instead of a native Windows shell.
+> **Platform contract (core-development phase):** Linux and WSL2 are
+> first-class. Native Windows Git Bash is **experimental**: it is supported for
+> local Claude and Codex use when Git Bash, jq, and sqlite3 are available, but
+> it is not a release-sign-off platform. Windows Developer Mode is required
+> only for **native symlinks** (auto-sync after `git pull`); without it the
+> installer still works via receipt-owned copy fallback — re-run `install.sh`
+> after pulling. macOS and other hosts remain unsupported.
+>
+> **Evidence boundary:** no automated test executes on native Windows. Linux
+> CI exercises the Windows code paths only under a `PM_DISPATCH_PLATFORM`
+> override (command representation, migration, and symlink-mode selection are
+> asserted there); actual PowerShell hook launch and native symlink creation
+> are verified only by manual maintainer dogfood, and may regress between
+> releases without CI detection. Acceptance runs are performed with
+> `ops/diagnostics/windows-acceptance.sh` on the Windows machine and recorded
+> under `docs/audits/` (latest: `docs/audits/windows-acceptance-2026-09-02.md`,
+> 10/0).
 
 ## Support matrix
 
@@ -12,7 +25,7 @@
 | Linux                            | **First-class**      | Full profile + minimal profile |
 | WSL2                             | **First-class**      | Treated as Linux |
 | macOS                            | **Not supported**    | Use a Linux host instead |
-| Windows Git Bash (`msys2/mingw`) | **Not supported**    | Use WSL2 instead |
+| Windows Git Bash (`msys2/mingw`) | **Experimental**     | Git Bash, jq, sqlite3, Developer Mode; local Claude/Codex use |
 | Other / unrecognized             | **Not supported**    | Use Linux or WSL2 |
 
 ---
@@ -73,23 +86,26 @@ It also symlinks `cli/pmctl` into `${PMCTL_BIN_DIR:-$HOME/.local/bin}/pmctl`;
 if that bin directory is not already on PATH, the installer prints the exact
 `export PATH=...` command to add.
 
-### Windows Git Bash (best-effort, not officially supported — prefer WSL2)
+### Windows Git Bash (experimental; prefer WSL2 for release sign-off)
 
-> This walkthrough is retained for the best-effort native-Windows path, but
-> native Windows Git Bash is **not officially supported** during core development
-> (see the contract at the top of this page). It is not verified by CI or release
-> sign-off and may regress. **Run under WSL2 instead** for a supported setup.
+> Native Windows Git Bash supports local Claude and Codex use when the
+> prerequisites below are present. It is not verified for CI or release sign-off
+> and may regress; use WSL2 for a first-class or release workflow.
 
 ```bash
 # Prerequisites (run in PowerShell or terminal):
 winget install jqlang.jq
 winget install Git.Git          # provides Git Bash
+winget install SQLite.SQLite
+# Settings → Privacy & security → For developers → Developer Mode
 
 # Then in Git Bash:
 git clone https://github.com/screenleon/pm-dispatch "${PM_DISPATCH_REPO}"
 cd "${PM_DISPATCH_REPO}"
 
 bash install.sh
+# Optional: wire the Codex command guard and memory hook into ~/.codex.
+bash install.sh --enable-host codex
 ```
 
 Add the repo CLI directory to PATH so `pmctl` can run in place:
@@ -98,12 +114,14 @@ Add the repo CLI directory to PATH so `pmctl` can run in place:
 export PATH="${PM_DISPATCH_REPO}/cli:$PATH"
 ```
 
-> **Symlink support:** On Git Bash, `ln -s` does not create real
-> symlinks. `install.sh` uses `powershell.exe New-Item -ItemType Junction`
-> for `agents/`, `commands/`, `skills/`, `adapters/`, and `pm-schema` directories
-> so those paths auto-sync after pulling. Individual helpers plus the Gate
-> shared runtime/policy and Adapter runtime/share/usage assets are receipt-owned
-> copies. See *Update* below.
+> **Symlink support:** With Windows Developer Mode enabled, the installer
+> automatically invokes Git Bash `ln` with `MSYS=winsymlinks:nativestrict`.
+> This creates native Windows symlinks for individual helpers and receipt-owned
+> runtime/assets. `install.sh` continues to use `powershell.exe New-Item
+> -ItemType Junction` for the managed `agents/`, `commands/`, `skills/`,
+> `adapters/`, and `pm-schema` directories so those paths auto-sync after
+> pulling. Without Developer Mode, the post-create check fails safely and the
+> installer falls back to receipt-owned copies.
 
 > **Copy-mode installs (no dev-mode):** Helpers and runtime/assets are installed
 > via copy on Git Bash. Re-run `bash install.sh` after pulling to refresh the
@@ -157,10 +175,12 @@ bash install.sh    # creates symlinks for any new files
 
 ### Windows Git Bash
 
-Pull and agents/commands/skills/adapters auto-sync via junction. Helpers, the
-Gate shared runtime/policy, and Adapter bootstrap/share/usage assets are copied
-to their receipt-owned locations. Re-run `install.sh` to refresh stale copies;
-foreign or locally modified load-bearing paths fail closed instead of being used:
+Pull and agents/commands/skills/adapters auto-sync via junction. With Developer
+Mode, individual helpers, the Gate shared runtime/policy, and Adapter
+bootstrap/share/usage assets are native symlinks and update with the checkout.
+Without it, those paths are receipt-owned copies; re-run `install.sh` to refresh
+them. Foreign or locally modified load-bearing paths fail closed instead of
+being used:
 
 ```bash
 cd "${PM_DISPATCH_REPO}"

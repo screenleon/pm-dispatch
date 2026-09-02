@@ -116,11 +116,6 @@ if [[ "$PLATFORM" == "auto" ]]; then
   PLATFORM="$(detect_platform)"
 fi
 
-if [[ "$PLATFORM" == "windows" && "$PROFILE" == "full" ]]; then
-  echo "install-guards: platform=windows, --profile full requested; codex hooks unsupported on Windows yet, falling back to minimal" >&2
-  PROFILE=minimal
-fi
-
 repo_root="$REPO_ROOT"
 settings="$CLAUDE_HOME/settings.json"
 # shellcheck source=runtime/lib/memory-dir.sh
@@ -206,8 +201,11 @@ write_statusline_chain() {
     if [[ -f "$statusline_chain_conf" ]]; then
       while IFS= read -r chain_entry || [[ -n "$chain_entry" ]]; do
         [[ -n "$chain_entry" ]] || continue
-        [[ "$chain_entry" == "$statusline_cmd" ]] && continue
-        [[ "$chain_entry" == "$legacy_statusline_cmd" ]] && continue
+        # Unwrap before comparing so the Windows `bash '<path>'` representation
+        # of a managed statusline command can never survive as a chain entry
+        # (a plain command unwraps to itself).
+        [[ "$(portable_bash_unwrap_command "$chain_entry")" == "$statusline_cmd" ]] && continue
+        [[ "$(portable_bash_unwrap_command "$chain_entry")" == "$legacy_statusline_cmd" ]] && continue
         [[ "$chain_entry" == "$first_cmd" ]] && continue
         printf '%s\n' "$chain_entry"
       done < "$statusline_chain_conf"
@@ -231,16 +229,20 @@ fi
 tmp_new="$(mktemp)"
 trap 'rm -f "$tmp_new"' EXIT
 
-# Read current statusLine.command to determine if chaining is needed.
+# Read current statusLine.command to determine if chaining is needed. Compare
+# the unwrapped form: a previous Windows install stores the managed command as
+# `bash '<path>'`, and treating that as foreign would chain the managed
+# statusline to itself (a plain command unwraps to itself).
 _current_statusline=$(jq -r '.statusLine.command // empty' "$settings" 2>/dev/null || true)
+_current_statusline_plain="$(portable_bash_unwrap_command "${_current_statusline:-}")"
 _statusline_already_wired=0
-if [[ "${_current_statusline:-}" == "$statusline_cmd" || "${_current_statusline:-}" == "$legacy_statusline_cmd" ]]; then
+if [[ "$_current_statusline_plain" == "$statusline_cmd" || "$_current_statusline_plain" == "$legacy_statusline_cmd" ]]; then
     _statusline_already_wired=1
-elif [[ "$(basename "${_current_statusline:-}")" == "$(basename "$legacy_statusline_cmd")" \
-    && "$(basename "$(dirname "${_current_statusline%%[[:space:]]*}")")" == "scripts" ]]; then
+elif [[ "$(basename "$_current_statusline_plain")" == "$(basename "$legacy_statusline_cmd")" \
+    && "$(basename "$(dirname "${_current_statusline_plain%%[[:space:]]*}")")" == "scripts" ]]; then
     _statusline_already_wired=1
-elif [[ "$(basename "${_current_statusline:-}")" == "$(basename "$statusline_cmd")" ]]; then
-    _current_statusline_path="${_current_statusline%%[[:space:]]*}"
+elif [[ "$(basename "$_current_statusline_plain")" == "$(basename "$statusline_cmd")" ]]; then
+    _current_statusline_path="${_current_statusline_plain%%[[:space:]]*}"
     if [[ ! -e "$_current_statusline_path" ]]; then
         _statusline_already_wired=1
     elif [[ "$DRY_RUN" -eq 0 ]]; then
@@ -254,19 +256,33 @@ elif [[ -n "$_current_statusline" && "$DRY_RUN" -eq 0 ]]; then
     write_statusline_chain "$_current_statusline"
 fi
 
-# Claude Code runs each hook `command` string through the shell. An unquoted
-# path with a space (e.g. a Windows home like C:/Users/First Last/) is word-split
-# and the hook fails ("No such file or directory"). Shell-escape every managed
-# command path before it is written. printf %q only adds backslashes when needed,
-# so space-free paths are stored verbatim (no churn for existing installs). The
-# escaping is transparent to the split("/")|last basename matching below — a
-# backslash-escaped space stays inside a path component, never a "/" boundary.
-# old_stop is NOT escaped: it is matched verbatim against the legacy unmanaged
-# path to remove it, so it must stay in raw (unescaped) form.
-pm_cmd_q="$(printf '%q' "$pm_cmd")"
-stop_cmd_q="$(printf '%q' "$stop_cmd")"
-legacy_stop_cmd_q="$(printf '%q' "$legacy_stop_cmd")"
-inject_cmd_q="$(printf '%q' "$inject_cmd")"
+# Claude Code invokes hooks with PowerShell on native Windows. A Git-Bash
+# `printf %q` path such as /c/Users/First\ Last is not a valid PowerShell
+# command, which makes every hook fail before Bash starts. On Windows write a
+# PowerShell-safe command that explicitly starts the Bash shim and passes the
+# POSIX script path as one single-quoted argument. Other platforms retain the
+# existing shell-escaped direct invocation.
+claude_hook_command() {
+  local path="$1"
+  if [[ "$PLATFORM" == "windows" ]]; then
+    portable_bash_wrapped_command "$path"
+  else
+    printf '%q' "$path"
+  fi
+}
+
+# Keep the prior direct-path representation so an existing Windows install is
+# migrated in place on the next run.
+pm_cmd_previous_q="$(printf '%q' "$pm_cmd")"
+stop_cmd_previous_q="$(printf '%q' "$stop_cmd")"
+inject_cmd_previous_q="$(printf '%q' "$inject_cmd")"
+ctx_inject_cmd_previous_q="$(printf '%q' "$ctx_inject_cmd")"
+statusline_cmd_previous_q="$(printf '%q' "$statusline_cmd")"
+
+pm_cmd_q="$(claude_hook_command "$pm_cmd")"
+stop_cmd_q="$(claude_hook_command "$stop_cmd")"
+legacy_stop_cmd_q="$(claude_hook_command "$legacy_stop_cmd")"
+inject_cmd_q="$(claude_hook_command "$inject_cmd")"
 # Wired command carries an explicit `--host claude` so guard-inject-memory.sh
 # applies the Claude-only smaller injection budget (see MEMORY_CLAUDE_MAX_INJECT_*
 # in runtime/lib/memory.sh / CC-566). $inject_cmd_q itself (no suffix) stays the
@@ -275,9 +291,10 @@ inject_cmd_q="$(printf '%q' "$inject_cmd")"
 # comparing, so a pre-CC-566 install (bare path, no --host) is still recognized
 # as managed and gets refreshed to the suffixed form on the next install run.
 inject_wired_cmd_q="$inject_cmd_q --host claude"
-ctx_inject_cmd_q="$(printf '%q' "$ctx_inject_cmd")"
-statusline_cmd_q="$(printf '%q' "$statusline_cmd")"
-legacy_statusline_cmd_q="$(printf '%q' "$legacy_statusline_cmd")"
+inject_wired_previous_q="$inject_cmd_previous_q --host claude"
+ctx_inject_cmd_q="$(claude_hook_command "$ctx_inject_cmd")"
+statusline_cmd_q="$(claude_hook_command "$statusline_cmd")"
+legacy_statusline_cmd_q="$(claude_hook_command "$legacy_statusline_cmd")"
 
 # MSYS2/Git-Bash rewrites `\` → `/` when passing args to a native jq.exe, which
 # corrupts the printf %q escaping in a spaced path (Lien\ Chen → Lien/ Chen).
@@ -288,14 +305,19 @@ legacy_statusline_cmd_q="$(printf '%q' "$legacy_statusline_cmd")"
 # are no-ops on Linux/macOS where MSYS is absent.
 MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
   --arg pm "$pm_cmd_q" \
+  --arg pm_previous "$pm_cmd_previous_q" \
   --arg stop "$stop_cmd_q" \
+  --arg stop_previous "$stop_cmd_previous_q" \
   --arg old_stop "$old_stop_cmd" \
   --arg legacy_stop "$legacy_stop_cmd" \
   --arg legacy_stop_q "$legacy_stop_cmd_q" \
   --arg inject "$inject_wired_cmd_q" \
+  --arg inject_previous "$inject_wired_previous_q" \
   --arg ctx_inject "$ctx_inject_cmd_q" \
+  --arg ctx_inject_previous "$ctx_inject_cmd_previous_q" \
   --argjson ctx_inject_timeout "$CLAUDE_PROMPT_CONTEXT_HOOK_TIMEOUT" \
   --arg statusline "$statusline_cmd_q" \
+  --arg statusline_previous "$statusline_cmd_previous_q" \
   --arg legacy_statusline "$legacy_statusline_cmd" \
   --arg legacy_statusline_q "$legacy_statusline_cmd_q" \
   --argjson sl_present "$_statusline_already_wired" \
@@ -303,9 +325,12 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
   --arg profile "$PROFILE" \
   '
   def without_host_arg: sub(" --host (claude|codex|opencode|grok|generic)$"; "");
+  def hook_path:
+    without_host_arg
+    | if startswith("bash '") and endswith("'") then .[6:-1] else . end;
   def managed_shared($cmd; $expected):
-    ($cmd | without_host_arg | split("/")) as $parts |
-    ($expected | without_host_arg | split("/")) as $wanted |
+    ($cmd | hook_path | split("/")) as $parts |
+    ($expected | hook_path | split("/")) as $wanted |
     ($parts[-1] == $wanted[-1] and
       ($parts[-2] == "scripts" or
        ($parts[-2] == "hooks" and $parts[-3] == "runtime") or
@@ -406,18 +431,24 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
   .hooks.PostToolUse |= map(select((.hooks | length) > 0)) |
 
   # Helper: an entry already exists if any matcher block has a managed hook with the same command basename.
-  ( [ .hooks.PreToolUse[]? | (.hooks // [])[]? | select(managed_shared(.command; $pm)) ] | length ) as $pm_present |
+  ( [ .hooks.PreToolUse[]? | (.hooks // [])[]? | select(
+      .command == $pm_previous or managed_shared(.command; $pm)
+    ) ] | length ) as $pm_present |
   ( [ .hooks.Stop[]? | (.hooks // [])[]? | select(
-      .command == $stop or .command == $legacy_stop or .command == $legacy_stop_q or
+      .command == $stop or .command == $stop_previous or .command == $legacy_stop or .command == $legacy_stop_q or
       (((.command | split("/") | last) == ($legacy_stop | split("/") | last)) and ((.command | split("/") | .[-2]) == "scripts"))
     ) ] | length ) as $stop_present |
-  ( [ .hooks.UserPromptSubmit[]? | (.hooks // [])[]? | select(managed_shared(.command; $inject)) ] | length ) as $inject_present |
-  ( [ .hooks.UserPromptSubmit[]? | (.hooks // [])[]? | select(managed_shared(.command; $ctx_inject)) ] | length ) as $ctx_inject_present |
+  ( [ .hooks.UserPromptSubmit[]? | (.hooks // [])[]? | select(
+      .command == $inject_previous or managed_shared(.command; $inject)
+    ) ] | length ) as $inject_present |
+  ( [ .hooks.UserPromptSubmit[]? | (.hooks // [])[]? | select(
+      .command == $ctx_inject_previous or managed_shared(.command; $ctx_inject)
+    ) ] | length ) as $ctx_inject_present |
 
   # Refresh stale command paths for managed hooks (scripts/<basename> path shape).
   .hooks.PreToolUse |= map(
     .hooks |= map(
-      if managed_shared(.command; $pm) then .command = $pm
+      if (.command == $pm_previous or managed_shared(.command; $pm)) then .command = $pm
       else . end
     )
   ) |
@@ -436,21 +467,22 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
   ) |
   .hooks.Stop |= map(
     .hooks |= map(
-      if   (.command == $legacy_stop or .command == $legacy_stop_q or .command == $stop
+      if   (.command == $legacy_stop or .command == $legacy_stop_q or .command == $stop_previous or .command == $stop
             or (((.command | split("/") | last) == ($legacy_stop | split("/") | last)) and ((.command | split("/") | .[-2]) == "scripts"))) then .command = $stop
       else . end
     )
   ) |
   .hooks.UserPromptSubmit |= map(
     .hooks |= map(
-      if   managed_shared(.command; $inject) then .command = $inject
-      elif managed_shared(.command; $ctx_inject) then
+      if   (.command == $inject_previous or managed_shared(.command; $inject)) then .command = $inject
+      elif (.command == $ctx_inject_previous or managed_shared(.command; $ctx_inject)) then
         .command = $ctx_inject | .timeout = $ctx_inject_timeout
       else . end
     )
   ) |
   ( if ((.statusLine.command? // "") == $legacy_statusline
         or (.statusLine.command? // "") == $legacy_statusline_q
+        or (.statusLine.command? // "") == $statusline_previous
         or (.statusLine.command? // "") == $statusline
         or ((((.statusLine.command? // "") | split("/") | last) == ($legacy_statusline | split("/") | last))
             and (((.statusLine.command? // "") | split("/") | .[-2]) == "scripts"))) then

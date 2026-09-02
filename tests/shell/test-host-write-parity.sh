@@ -78,6 +78,7 @@ make_relocated_codex_fixture() {
   cp "$REPO_ROOT/runtime/lib/host-manifest.sh" "$root/runtime/lib/host-manifest.sh"
   cp "$REPO_ROOT/runtime/lib/host-resolver.sh" "$root/runtime/lib/host-resolver.sh"
   cp "$REPO_ROOT/runtime/lib/host-write.sh" "$root/runtime/lib/host-write.sh"
+  cp "$REPO_ROOT/runtime/lib/portable.sh" "$root/runtime/lib/portable.sh"
   cp "$REPO_ROOT/hosts/codex/bin/install.sh" "$root/hosts/codex/bin/install.sh"
   cp "$REPO_ROOT/hosts/codex/bin/uninstall.sh" "$root/hosts/codex/bin/uninstall.sh"
   cp "$REPO_ROOT/hosts/codex/hooks/command-guard.sh" "$root/hosts/codex/hooks/command-guard.sh"

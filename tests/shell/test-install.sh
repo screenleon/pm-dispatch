@@ -1913,11 +1913,11 @@ test_install_hooks_gate_perms_uninstall_copy_mode_fallback() {
   pass "$name"
 }
 
-test_install_hooks_windows_profile_full_downgrades_to_minimal() {
-  # Proves PM_DISPATCH_PLATFORM=windows and --profile full downgrades to minimal.
-  # Codex hooks are not wired; base managed hooks still are. The expected warning
-  # about fallback to minimal is also required.
-  local name="install-guards-windows-full-downgraded-to-minimal"
+test_install_hooks_windows_profile_full_preserved() {
+  # Proves PM_DISPATCH_PLATFORM=windows preserves --profile full. Codex host
+  # wiring is still explicitly opted in, but Windows no longer downgrades the
+  # requested Claude profile.
+  local name="install-guards-windows-full-preserved"
   should_run "$name" || return 0
   local home="$tmp_root/$name"
   local out err
@@ -1939,8 +1939,8 @@ test_install_hooks_windows_profile_full_downgrades_to_minimal() {
     return
   fi
 
-  if ! grep -q 'platform=windows, --profile full requested; codex hooks unsupported on Windows yet, falling back to minimal' "$err"; then
-    fail "$name" "missing profile downgrade warning"
+  if grep -q 'falling back to minimal' "$err"; then
+    fail "$name" "unexpected profile downgrade warning"
     return
   fi
 
@@ -1979,7 +1979,7 @@ test_install_hooks_windows_profile_minimal_silent() {
     return
   fi
 
-  if grep -q 'platform=windows, --profile full requested; codex hooks unsupported on Windows yet, falling back to minimal' "$err"; then
+  if grep -q 'falling back to minimal' "$err"; then
     fail "$name" "unexpected downgrade warning on minimal profile"
     return
   fi
@@ -1991,6 +1991,129 @@ test_install_hooks_windows_profile_minimal_silent() {
   assert_not_contains "$name" "$home/.claude/settings.json" "guard-session-summary.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "guard-executor-write.sh" || return
+  pass "$name"
+}
+
+test_install_hooks_windows_hook_commands_bash_wrapped() {
+  # On PM_DISPATCH_PLATFORM=windows every managed hook command must be written
+  # as a PowerShell-launchable `bash '<posix path>'` invocation (a bare or %q
+  # POSIX path is not executable by the PowerShell hook runner). A second run
+  # must recognize the wrapped form as managed and not duplicate entries.
+  local name="install-guards-windows-hook-commands-bash-wrapped"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name"
+  mkdir -p "$home/.claude"
+  printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
+  local settings="$home/.claude/settings.json"
+
+  HOME="$home" CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 PM_DISPATCH_PLATFORM=windows \
+    bash "$REPO_ROOT/scripts/install-guards.sh" --profile minimal >/dev/null 2>&1
+
+  if ! jq -e \
+      --arg pm "bash '$REPO_ROOT/runtime/hooks/guard-pm-write.sh'" \
+      --arg stop "bash '$REPO_ROOT/hosts/claude/hooks/log-usage.sh'" \
+      --arg inject "bash '$REPO_ROOT/runtime/hooks/guard-inject-memory.sh' --host claude" \
+      --arg ctx "bash '$REPO_ROOT/hosts/claude/hooks/inject-context.sh'" '
+      any(.hooks.PreToolUse[]?.hooks[]?; .command == $pm) and
+      any(.hooks.Stop[]?.hooks[]?; .command == $stop) and
+      any(.hooks.UserPromptSubmit[]?.hooks[]?; .command == $inject) and
+      any(.hooks.UserPromptSubmit[]?.hooks[]?; .command == $ctx)
+    ' "$settings" >/dev/null 2>&1; then
+    fail "$name" "managed hooks are not written in the bash-wrapped Windows form"
+    return
+  fi
+
+  HOME="$home" CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 PM_DISPATCH_PLATFORM=windows \
+    bash "$REPO_ROOT/scripts/install-guards.sh" --profile minimal >/dev/null 2>&1
+  if [[ "$(jq '[.hooks.PreToolUse[]?.hooks[]? | select(.command | contains("guard-pm-write.sh"))] | length' "$settings")" != "1" ]] \
+    || [[ "$(jq '[.hooks.UserPromptSubmit[]?.hooks[]? | select(.command | contains("guard-inject-memory.sh"))] | length' "$settings")" != "1" ]]; then
+    fail "$name" "re-run duplicated a bash-wrapped managed hook"
+    return
+  fi
+  pass "$name"
+}
+
+test_install_hooks_windows_migrates_raw_path_hooks() {
+  # A pre-fix Windows install stored the managed commands as bare POSIX paths
+  # (printf %q of a space-free path). Re-running on windows must rewrite each
+  # one in place to the bash-wrapped form — no duplicate entries, no leftover
+  # raw-path command.
+  local name="install-guards-windows-migrates-raw-path-hooks"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name"
+  mkdir -p "$home/.claude"
+  local settings="$home/.claude/settings.json"
+  jq -n \
+    --arg pm "$REPO_ROOT/runtime/hooks/guard-pm-write.sh" \
+    --arg stop "$REPO_ROOT/hosts/claude/hooks/log-usage.sh" \
+    --arg inject "$REPO_ROOT/runtime/hooks/guard-inject-memory.sh --host claude" \
+    --arg ctx "$REPO_ROOT/hosts/claude/hooks/inject-context.sh" '{
+      permissions: {},
+      hooks: {
+        PreToolUse: [{matcher:"Write|Edit", hooks:[{type:"command", command:$pm}]}],
+        Stop: [{hooks:[{type:"command", command:$stop}]}],
+        UserPromptSubmit: [
+          {hooks:[{type:"command", command:$inject}]},
+          {hooks:[{type:"command", command:$ctx, timeout: 5}]}
+        ]
+      }
+    }' > "$settings"
+
+  HOME="$home" CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 PM_DISPATCH_PLATFORM=windows \
+    bash "$REPO_ROOT/scripts/install-guards.sh" --profile minimal >/dev/null 2>&1
+
+  if ! jq -e \
+      --arg pm "bash '$REPO_ROOT/runtime/hooks/guard-pm-write.sh'" \
+      --arg stop "bash '$REPO_ROOT/hosts/claude/hooks/log-usage.sh'" \
+      --arg inject "bash '$REPO_ROOT/runtime/hooks/guard-inject-memory.sh' --host claude" \
+      --arg ctx "bash '$REPO_ROOT/hosts/claude/hooks/inject-context.sh'" '
+      ([.hooks.PreToolUse[]?.hooks[]? | select(.command | contains("guard-pm-write.sh"))] | map(.command)) == [$pm] and
+      ([.hooks.Stop[]?.hooks[]? | select(.command | contains("log-usage.sh"))] | map(.command)) == [$stop] and
+      ([.hooks.UserPromptSubmit[]?.hooks[]? | select(.command | contains("guard-inject-memory.sh"))] | map(.command)) == [$inject] and
+      ([.hooks.UserPromptSubmit[]?.hooks[]? | select(.command | contains("inject-context.sh"))] | map(.command)) == [$ctx]
+    ' "$settings" >/dev/null 2>&1; then
+    fail "$name" "raw-path managed hooks were not migrated in place to the bash-wrapped form"
+    return
+  fi
+  pass "$name"
+}
+
+test_install_hooks_windows_statusline_chain_no_self_entry() {
+  # On Windows the managed statusline command is stored bash-wrapped. The
+  # pre-jq chain detection must recognize that wrapped form as already-wired on
+  # a repeat install: the chain file keeps the foreign predecessor exactly
+  # once and never gains the managed command's wrapped representation (which
+  # would make the statusline hook invoke itself through its own chain).
+  local name="install-guards-windows-statusline-chain-no-self-entry"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name"
+  mkdir -p "$home/.claude"
+  local settings="$home/.claude/settings.json"
+  local chain="$home/.claude/statusline-chain.conf"
+  local foreign="$home/bin/custom-status.sh"
+  jq -n --arg sl "$foreign" '{permissions:{}, statusLine:{type:"command", command:$sl}}' > "$settings"
+
+  HOME="$home" CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 PM_DISPATCH_PLATFORM=windows \
+    bash "$REPO_ROOT/scripts/install-guards.sh" --profile minimal >/dev/null 2>&1
+  HOME="$home" CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 PM_DISPATCH_PLATFORM=windows \
+    bash "$REPO_ROOT/scripts/install-guards.sh" --profile minimal >/dev/null 2>&1
+
+  if [[ "$(jq -r '.statusLine.command' "$settings")" != "bash '$REPO_ROOT/hosts/claude/hooks/save-rate-limits.sh'" ]]; then
+    fail "$name" "statusLine.command is not the bash-wrapped managed form after repeat install"
+    return
+  fi
+  if [[ ! -f "$chain" ]]; then
+    fail "$name" "statusline chain file was not written for the foreign predecessor"
+    return
+  fi
+  if [[ "$(grep -Fc -- "$foreign" "$chain")" != "1" ]]; then
+    fail "$name" "foreign statusline predecessor not preserved exactly once: $(cat "$chain")"
+    return
+  fi
+  if grep -Fq -- "save-rate-limits.sh" "$chain"; then
+    fail "$name" "managed statusline command leaked into its own chain: $(cat "$chain")"
+    return
+  fi
   pass "$name"
 }
 
@@ -3258,8 +3381,11 @@ test_install_sh_profile_full_wires_no_adapter_bash_guard
 test_install_hooks_orphan_cleanup_removes_retired_adapter_guard
 test_install_hooks_auto_detect_with_codex_wires_full
 test_install_hooks_auto_detect_without_codex_wires_minimal
-test_install_hooks_windows_profile_full_downgrades_to_minimal
+test_install_hooks_windows_profile_full_preserved
 test_install_hooks_windows_profile_minimal_silent
+test_install_hooks_windows_hook_commands_bash_wrapped
+test_install_hooks_windows_migrates_raw_path_hooks
+test_install_hooks_windows_statusline_chain_no_self_entry
 test_install_hooks_dry_run_does_not_modify
 test_install_hooks_platform_linux_explicit
 test_install_hooks_platform_invalid_value_rejected

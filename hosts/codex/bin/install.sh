@@ -46,6 +46,8 @@ fi
 
 # shellcheck source=runtime/lib/host-manifest.sh
 . "$REPO_ROOT/runtime/lib/host-manifest.sh"
+# shellcheck source=runtime/lib/portable.sh
+. "$REPO_ROOT/runtime/lib/portable.sh"
 # shellcheck source=hosts/codex/lib/hook-paths.sh
 . "$REPO_ROOT/hosts/codex/lib/hook-paths.sh"
 # shellcheck source=hosts/codex/lib/memory-contract.sh
@@ -107,16 +109,28 @@ if [[ ! -x "$hook_cmd" || ! -x "$memory_hook_cmd" || ! -x "$memory_update_cmd" ]
   exit 2
 fi
 
-# Codex runs each hook `command` string through the shell, same as Claude's
-# hooks.json (see install-guards.sh). An unquoted path with a space is
-# word-split and the hook fails to launch, so shell-escape it before writing
-# — printf %q only adds backslashes when needed, so space-free paths are
-# stored verbatim (no churn for existing installs).
-hook_cmd_q="$(printf '%q' "$hook_cmd")"
-legacy_hook_cmd_q="$(printf '%q' "$legacy_hook_cmd")"
-memory_hook_cmd_q="$(printf '%q' "$memory_hook_cmd")"
+# Codex invokes hook commands through PowerShell on native Windows. Route the
+# POSIX script path through Git Bash as one quoted argument; a bare /c/... path
+# or Bash backslash escaping is not executable by PowerShell.
+codex_hook_command() {
+  local path="$1"
+  if [[ "$(detect_platform)" == "windows" ]]; then
+    portable_bash_wrapped_command "$path"
+  else
+    printf '%q' "$path"
+  fi
+}
+
+hook_cmd_q="$(codex_hook_command "$hook_cmd")"
+legacy_hook_cmd_q="$(codex_hook_command "$legacy_hook_cmd")"
+memory_hook_cmd_q="$(codex_hook_command "$memory_hook_cmd")"
+# The session-summary Stop hook is a retired capability: it is never written,
+# only recognized for REMOVAL of legacy entries. Match both the historical %q
+# representation and the platform-current codex_hook_command one so a stale
+# entry is pruned regardless of which installer generation wrote it.
 session_hook_cmd_q="$(printf '%q' "$session_hook_cmd") --host codex"
-legacy_memory_hook_cmd_q="$(printf '%q' "$legacy_memory_hook_cmd")"
+session_hook_cmd_p="$(codex_hook_command "$session_hook_cmd") --host codex"
+legacy_memory_hook_cmd_q="$(codex_hook_command "$legacy_memory_hook_cmd")"
 memory_update_cmd_q="$(printf '%q' "$memory_update_cmd")"
 
 tmp_new="$(mktemp)"
@@ -162,9 +176,43 @@ codex_hook_command_word() {
   printf '%s\n' "$output"
 }
 
+# codex_hook_command_exact <command>
+# Like codex_hook_command_word, but fail-closed unless the WHOLE command is one
+# decodable word: a composite command (`<path> && ...`, `<path> --flag`) is
+# rejected, never partially matched. Used by the Windows broken-path adoption
+# below, where matching a prefix of a foreign composite command would delete
+# user configuration.
+codex_hook_command_exact() {
+  local input="$1" output="" char escaped=0 i
+  [[ "$input" != \$\'* ]] || return 1
+  for ((i = 0; i < ${#input}; i++)); do
+    char="${input:i:1}"
+    if [[ "$escaped" -eq 1 ]]; then
+      output+="$char"
+      escaped=0
+    elif [[ "$char" == "\\" ]]; then
+      escaped=1
+    elif [[ "$char" == " " || "$char" == $'\t' || "$char" == $'\n' || "$char" == "'" || "$char" == '"' ]]; then
+      return 1
+    else
+      output+="$char"
+    fi
+  done
+  [[ "$escaped" -eq 0 && -n "$output" ]] || return 1
+  printf '%s\n' "$output"
+}
+
 previous_repo_root=""
 while IFS= read -r previous_command; do
-  previous_word="$(codex_hook_command_word "$previous_command")" || continue
+  # Our own Windows representation is `bash '<literal path>'`; unwrap it before
+  # the %q decoder (which rejects quotes fail-closed) so a moved Windows
+  # checkout is still recognized as the compatible previous root.
+  previous_unwrapped="$(portable_bash_unwrap_command "$previous_command")"
+  if [[ "$previous_unwrapped" != "$previous_command" ]]; then
+    previous_word="$previous_unwrapped"
+  else
+    previous_word="$(codex_hook_command_word "$previous_command")" || continue
+  fi
   case "$previous_word" in
     */hosts/codex/hooks/command-guard.sh) previous_root="${previous_word%/hosts/codex/hooks/command-guard.sh}" ;;
     */scripts/hook-codex-command-guard.sh) previous_root="${previous_word%/scripts/hook-codex-command-guard.sh}" ;;
@@ -178,39 +226,95 @@ while IFS= read -r previous_command; do
     previous_repo_root="$previous_root"
     break
   fi
-done < <(jq -r '.. | objects | .command? // empty' "$tmp_current")
+done < <(jq -r '.. | objects | .command? // empty' < "$tmp_current")
 
 previous_hook_cmd_q=""
 previous_legacy_hook_cmd_q=""
 previous_memory_hook_cmd_q=""
 previous_legacy_memory_hook_cmd_q=""
 previous_session_hook_cmd_q=""
+previous_hook_cmd_w=""
+previous_legacy_hook_cmd_w=""
+previous_memory_hook_cmd_w=""
+previous_legacy_memory_hook_cmd_w=""
 if [[ -n "$previous_repo_root" ]]; then
   previous_hook_cmd_q="$(printf '%q' "$previous_repo_root/hosts/codex/hooks/command-guard.sh")"
   previous_legacy_hook_cmd_q="$(printf '%q' "$previous_repo_root/scripts/hook-codex-command-guard.sh")"
   previous_memory_hook_cmd_q="$(printf '%q' "$previous_repo_root/runtime/hooks/guard-inject-memory.sh")"
   previous_legacy_memory_hook_cmd_q="$(printf '%q' "$previous_repo_root/scripts/guard-inject-memory.sh")"
   previous_session_hook_cmd_q="$(printf '%q' "$previous_repo_root/runtime/hooks/guard-session-summary.sh") --host codex"
+  # A previous Windows install stored the wrapped representation; recognize it
+  # too so a moved checkout is replaced, never duplicated.
+  previous_hook_cmd_w="$(portable_bash_wrapped_command "$previous_repo_root/hosts/codex/hooks/command-guard.sh")"
+  previous_legacy_hook_cmd_w="$(portable_bash_wrapped_command "$previous_repo_root/scripts/hook-codex-command-guard.sh")"
+  previous_memory_hook_cmd_w="$(portable_bash_wrapped_command "$previous_repo_root/runtime/hooks/guard-inject-memory.sh")"
+  previous_legacy_memory_hook_cmd_w="$(portable_bash_wrapped_command "$previous_repo_root/scripts/guard-inject-memory.sh")"
+fi
+
+# Pre-fix Windows installs wrote raw or %q POSIX paths that PowerShell could
+# never launch. Collect the EXACT command strings to adopt-and-rewrite:
+# Windows only, the whole command must decode to a single word with the managed
+# suffix, and the path must either belong to this checkout or no longer exist
+# on disk (a dead entry). A foreign composite command, or a foreign checkout
+# whose script still exists, is never adopted — exact strings, no substring
+# matching, so user configuration cannot be silently deleted.
+broken_guard_cmds_json='[]'
+broken_memory_cmds_json='[]'
+if [[ "$(detect_platform)" == "windows" ]]; then
+  while IFS= read -r broken_candidate; do
+    broken_word="$(portable_bash_unwrap_command "$broken_candidate")"
+    if [[ "$broken_word" == "$broken_candidate" ]]; then
+      broken_word="$(codex_hook_command_exact "$broken_candidate")" || continue
+    fi
+    case "$broken_word" in
+      */hosts/codex/hooks/command-guard.sh)
+        broken_root="${broken_word%/hosts/codex/hooks/command-guard.sh}"
+        [[ "$broken_root" == "$REPO_ROOT" || ! -e "$broken_word" ]] || continue
+        broken_guard_cmds_json="$(jq -c --arg c "$broken_candidate" '. + [$c]' <<< "$broken_guard_cmds_json")"
+        ;;
+      */runtime/hooks/guard-inject-memory.sh)
+        broken_root="${broken_word%/runtime/hooks/guard-inject-memory.sh}"
+        [[ "$broken_root" == "$REPO_ROOT" || ! -e "$broken_word" ]] || continue
+        broken_memory_cmds_json="$(jq -c --arg c "$broken_candidate" '. + [$c]' <<< "$broken_memory_cmds_json")"
+        ;;
+    esac
+  done < <(jq -r '.. | objects | .command? // empty' < "$tmp_current")
 fi
 
 # Merge idempotently: only append the managed hook entry if no existing
 # PreToolUse/Bash entry already points at this repo's guard script.
-jq --arg cmd "$hook_cmd_q" --arg legacy_cmd "$legacy_hook_cmd" --arg legacy_cmd_q "$legacy_hook_cmd_q" \
+MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq --arg cmd "$hook_cmd_q" --arg legacy_cmd "$legacy_hook_cmd" --arg legacy_cmd_q "$legacy_hook_cmd_q" \
   --arg memory_cmd "$memory_hook_cmd_q" --arg session_cmd "$session_hook_cmd_q" \
+  --arg session_cmd_p "$session_hook_cmd_p" \
   --arg legacy_memory_cmd "$legacy_memory_hook_cmd" --arg legacy_memory_cmd_q "$legacy_memory_hook_cmd_q" \
   --arg previous_hook_cmd_q "$previous_hook_cmd_q" --arg previous_legacy_hook_cmd_q "$previous_legacy_hook_cmd_q" \
   --arg previous_memory_hook_cmd_q "$previous_memory_hook_cmd_q" --arg previous_legacy_memory_hook_cmd_q "$previous_legacy_memory_hook_cmd_q" \
-  --arg previous_session_hook_cmd_q "$previous_session_hook_cmd_q" '
+  --arg previous_session_hook_cmd_q "$previous_session_hook_cmd_q" \
+  --arg previous_hook_cmd_w "$previous_hook_cmd_w" --arg previous_legacy_hook_cmd_w "$previous_legacy_hook_cmd_w" \
+  --arg previous_memory_hook_cmd_w "$previous_memory_hook_cmd_w" --arg previous_legacy_memory_hook_cmd_w "$previous_legacy_memory_hook_cmd_w" \
+  --argjson broken_guard_cmds "$broken_guard_cmds_json" \
+  --argjson broken_memory_cmds "$broken_memory_cmds_json" '
+  # Exact command strings the Windows adoption pre-pass verified as this
+  # checkout'\''s own (or dead) pre-fix representations — membership only,
+  # never substring matching.
+  def broken_windows_guard:
+    ($broken_guard_cmds | index(.)) != null;
+  def broken_windows_memory:
+    ($broken_memory_cmds | index(.)) != null;
   def managed_guard:
     . == $cmd or . == $legacy_cmd or . == $legacy_cmd_q or
+    broken_windows_guard or
     ($previous_hook_cmd_q != "" and
-      (. == $previous_hook_cmd_q or . == $previous_legacy_hook_cmd_q));
+      (. == $previous_hook_cmd_q or . == $previous_legacy_hook_cmd_q or
+       . == $previous_hook_cmd_w or . == $previous_legacy_hook_cmd_w));
   def managed_memory:
     . == $memory_cmd or . == $legacy_memory_cmd or . == $legacy_memory_cmd_q or
+    broken_windows_memory or
     ($previous_memory_hook_cmd_q != "" and
-      (. == $previous_memory_hook_cmd_q or . == $previous_legacy_memory_hook_cmd_q));
+      (. == $previous_memory_hook_cmd_q or . == $previous_legacy_memory_hook_cmd_q or
+       . == $previous_memory_hook_cmd_w or . == $previous_legacy_memory_hook_cmd_w));
   def managed_session:
-    . == $session_cmd or
+    . == $session_cmd or . == $session_cmd_p or
     ($previous_session_hook_cmd_q != "" and . == $previous_session_hook_cmd_q);
   .hooks = (.hooks // {}) |
   .hooks.PreToolUse = (.hooks.PreToolUse // []) |
@@ -238,7 +342,7 @@ jq --arg cmd "$hook_cmd_q" --arg legacy_cmd "$legacy_hook_cmd" --arg legacy_cmd_
   (if $already != null then . else .hooks.PreToolUse += [{"matcher": "Bash", "hooks": [{"type": "command", "command": $cmd}]}] end) |
   ([.hooks.UserPromptSubmit[]? | .hooks[]?.command] | index($memory_cmd)) as $memory_already |
   if $memory_already != null then . else .hooks.UserPromptSubmit += [{"hooks": [{"type": "command", "command": $memory_cmd}]}] end
-' "$tmp_current" > "$tmp_new"
+' < "$tmp_current" > "$tmp_new"
 
 if [[ -f "$instructions_file" ]]; then
   cp "$instructions_file" "$tmp_instructions_current"
