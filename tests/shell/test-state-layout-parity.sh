@@ -70,12 +70,22 @@ writer_lock_names() {
 }
 
 layout_writer_entry_points() {
-  python3 -c '
-import sys, yaml
-data = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
-for name in data.get("writer", {}).get("entry_points", []):
-    print(name)
-' "$LAYOUT" | sort
+  # writer.entry_points from layout.yaml: the block sequence directly under the
+  # 2-space-indented `entry_points:` key. Pure awk — the repo deliberately
+  # carries no python3 / yq dependency (every other layout.yaml reader in this
+  # file is grep/sed too; see the "no python3" assertions in
+  # tests/shell/test-commands.sh).
+  awk '
+    /^  entry_points:[[:space:]]*$/ { in_ep = 1; next }
+    in_ep && /^    - / {
+      name = $0
+      sub(/^    - /, "", name)
+      sub(/[[:space:]]+$/, "", name)
+      print name
+      next
+    }
+    in_ep { in_ep = 0 }
+  ' "$LAYOUT" | sort
 }
 
 writer_public_mutating_entry_points() {
@@ -91,28 +101,41 @@ writer_public_mutating_entry_points() {
 }
 
 layout_operation_contract() {
-  python3 -c '
-import sys, yaml
-data = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
-operations = [
-    item for item in data["project_partition"]["subdirs"]
-    if item.get("path") == "operations/"
-]
-if len(operations) != 1:
-    raise SystemExit(f"expected one operations/ declaration, found {len(operations)}")
-item = operations[0]
-relation = item.get("child_relation", {})
-strategies = item.get("write_strategies", {})
-print("\t".join([
-    str(item.get("file_pattern", "")),
-    str(strategies.get("create", "")),
-    str(strategies.get("update", "")),
-    str(relation.get("path_pattern", "")),
-    str(relation.get("format", "")),
-    str(relation.get("lock_base_pattern", "")),
-    str(relation.get("write_strategy", "")),
-]))
-' "$LAYOUT"
+  # The operations/ subdir contract from layout.yaml as one TAB-separated line:
+  #   file_pattern, write_strategies.create, write_strategies.update,
+  #   child_relation.path_pattern, child_relation.format,
+  #   child_relation.lock_base_pattern, child_relation.write_strategy
+  # Exits non-zero unless exactly one operations/ declaration exists. Pure awk;
+  # see layout_writer_entry_points above for why not python.
+  awk '
+    function val(s) {
+      sub(/^[^:]*:[[:space:]]*/, "", s)
+      sub(/[[:space:]]+$/, "", s)
+      sub(/^"/, "", s); sub(/"$/, "", s)
+      return s
+    }
+    /^    - path: "operations\/"[[:space:]]*$/ { count++; blk = 1; ctx = ""; next }
+    blk && /^    - / { blk = 0 }
+    blk && /^[^ ]/  { blk = 0 }
+    blk {
+      if      ($0 ~ /^      file_pattern:/)                       fp  = val($0)
+      else if ($0 ~ /^      write_strategies:/)                   ctx = "ws"
+      else if ($0 ~ /^      child_relation:/)                     ctx = "cr"
+      else if (ctx == "ws" && $0 ~ /^        create:/)            cre = val($0)
+      else if (ctx == "ws" && $0 ~ /^        update:/)            upd = val($0)
+      else if (ctx == "cr" && $0 ~ /^        path_pattern:/)      cpp = val($0)
+      else if (ctx == "cr" && $0 ~ /^        format:/)            cfm = val($0)
+      else if (ctx == "cr" && $0 ~ /^        lock_base_pattern:/) clb = val($0)
+      else if (ctx == "cr" && $0 ~ /^        write_strategy:/)    cws = val($0)
+    }
+    END {
+      if (count != 1) {
+        print "expected one operations/ declaration, found " count+0 > "/dev/stderr"
+        exit 1
+      }
+      printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", fp, cre, upd, cpp, cfm, clb, cws
+    }
+  ' "$LAYOUT"
 }
 
 writer_operation_create_strategy() {
@@ -159,13 +182,43 @@ make_writer_store() {
     '{"schema_version":1,"id":"evt-20260101T000000Z-abcdef","kind":"run.completed","subject_type":"run","subject_id":"run-20260101T000000Z-abcdef","ts":"2026-01-01T00:00:00Z","payload":{"run_id":"run-20260101T000000Z-abcdef","state":"ok","from_state":"verifying","to_state":"ok"}}'
 }
 
+# Structural lint for the restricted YAML dialect layout.yaml uses — block
+# mappings, block sequences, plain/double-quoted scalars, `#` comments. NOT a
+# full parser (no flow collections, anchors, or multi-line scalars, none of
+# which appear here); it catches the realistic hand-edit breakages: hard tabs,
+# odd indentation, unbalanced double quotes, and lines that are neither a
+# `key:` / `key: value` nor a `- item`. Pure bash — the repo carries no
+# python3 / yq, and no runtime code parses YAML with one either.
+yaml_structure_errors() {
+  local file="$1" lineno=0 line indent dq
+  [[ -s "$file" ]] || { printf 'file missing or empty\n'; return; }
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    lineno=$((lineno + 1))
+    line="${line%$'\r'}"
+    case "$line" in
+      *$'\t'*) printf 'line %d: hard tab\n' "$lineno" ;;
+    esac
+    [[ -z "${line//[[:space:]]/}" ]] && continue          # blank
+    [[ "$line" =~ ^[[:space:]]*# ]] && continue            # comment
+    indent="${line%%[! ]*}"
+    (( ${#indent} % 2 == 0 )) || printf 'line %d: odd indent (%d)\n' "$lineno" "${#indent}"
+    dq="${line//[!\"]/}"
+    (( ${#dq} % 2 == 0 )) || printf 'line %d: unbalanced double quote\n' "$lineno"
+    [[ "$line" =~ ^[[:space:]]*-([[:space:]]|$) ]] && continue       # - list item
+    [[ "$line" =~ ^[[:space:]]*[A-Za-z0-9_-]+:([[:space:]]|$) ]] && continue  # key: / key:<space>value
+    printf 'line %d: not a key or list item: %s\n' "$lineno" "$line"
+  done < "$file"
+}
+
 case_layout_is_valid_yaml() {
-  local name="state-layout-parity: layout is valid YAML"
+  local name="state-layout-parity: layout is structurally valid YAML"
   should_run "$name" || return 0
-  if python3 -c 'import sys, yaml; yaml.safe_load(open(sys.argv[1], encoding="utf-8"))' "$LAYOUT"; then
+  local errs
+  errs="$(yaml_structure_errors "$LAYOUT")"
+  if [[ -z "$errs" ]]; then
     pass "$name"
   else
-    fail "$name" "YAML parser rejected $LAYOUT"
+    fail "$name" "structural lint rejected $LAYOUT: $(printf '%s' "$errs" | tr '\n' '; ')"
   fi
 }
 
