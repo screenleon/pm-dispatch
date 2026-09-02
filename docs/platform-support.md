@@ -11,7 +11,10 @@
 > override (command representation, migration, and symlink-mode selection are
 > asserted there); actual PowerShell hook launch and native symlink creation
 > are verified only by manual maintainer dogfood, and may regress between
-> releases without CI detection.
+> releases without CI detection. Acceptance runs are performed with
+> `ops/diagnostics/windows-acceptance.sh` on the Windows machine and recorded
+> under `docs/audits/` (latest: `docs/audits/windows-acceptance-2026-09-02.md`,
+> 10/0).
 
 ## Support matrix
 
