@@ -8,6 +8,34 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **CC-447 offline release-acceptance smokes: clean-install and N-1 upgrade.**
+  `ops/release/clean-install-smoke.sh` runs a single-checkout dry-run install
+  &rarr; real install &rarr; `doctor.sh` zero-fail &rarr; uninstall &rarr;
+  no-residue sequence in an isolated sandbox, allowlisting the intentional
+  `.bak.*` backups and empty config skeletons uninstall deliberately leaves
+  behind. `ops/release/upgrade-smoke-v0.10-v0.11.sh` adapts the existing
+  v0.8-v0.9 harness to the v0.10.0 baseline, adding grok as a fresh candidate
+  host and dropping the v0.8.0-specific opencode predecessor-owner fixture
+  (opencode already has a normal write path at v0.10.0). Both are the last
+  requirement standing before the v0.11.0 freeze.
+
+### Fixed
+
+- **Codex host install/uninstall leaked scratch temp files on the success
+  path (CC-580).** `hosts/codex/bin/install.sh` and `hosts/codex/bin/uninstall.sh`
+  each `mktemp` several scratch files and register a whole-lifetime `trap ...
+  EXIT` to clean them up, but then unconditionally ran `trap - EXIT` right
+  before a successful return. Only the scratch file that actually got `mv`'d
+  into place was consumed; whichever side (hooks or instructions) had no
+  change in a given run left its scratch file behind once the trap was
+  disarmed. Found by the new `clean-install-smoke.sh` (a single round trip
+  left 3 stray files in `$TMPDIR`). Fix: stop disarming the trap on success —
+  `rm -f` on an already-consumed path is a safe no-op, so the trap can just
+  always run. Each script gets a regression test that forces the hooks-only
+  and instructions-only branches and asserts no scratch file survives.
+
 ### Changed
 
 - **Schema validation no longer probes the bundle before validating (CC-579

@@ -188,4 +188,3 @@ if [[ "$instructions_changed" -eq 1 ]]; then
   fi
   echo "uninstall-guards-codex: backup at $instructions_backup"
 fi
-trap - EXIT
