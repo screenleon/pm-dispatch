@@ -35,3 +35,5 @@ test-pre-release\tconstraint: release audit fixtures validate historical changel
 test-release-verify\tconstraint: release verification invokes broad orchestration and conflicts with parallel context tests; promotion: run in an exclusive release CI job
 test-upgrade-smoke\tconstraint: upgrade smoke is a compatibility checkpoint with no changed-path trigger; promotion: run in a scheduled upgrade job
 test-e2e-script\tconstraint: script contract reports partial GO without authenticated adapters and is not a true CI E2E signal; promotion: run against authenticated adapters in a protected scheduled job
+test-clean-install-smoke\tconstraint: offline clean-install smoke is a release-acceptance checkpoint with no changed-path trigger; promotion: run in a scheduled release-readiness job
+test-upgrade-smoke-v0.10-v0.11\tconstraint: N-1 upgrade smoke is a compatibility checkpoint with no changed-path trigger; promotion: run in a scheduled upgrade job

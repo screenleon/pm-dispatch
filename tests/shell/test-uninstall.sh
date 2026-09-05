@@ -1334,6 +1334,47 @@ test_missing_host_write_library_warns_and_preserves_hooks() {
   pass "$name"
 }
 
+# Behavior: Codex uninstall always removes every scratch file after a successful
+# one-sided update, including the temporary file for the unchanged target.
+# Steps: Seed both Codex targets, independently change hooks and instructions,
+# then run the host uninstaller with a fresh TMPDIR and assert it is empty.
+test_codex_uninstall_success_cleans_unchanged_target_scratch() {
+  local name="codex-uninstall-success-cleans-unchanged-target-scratch"
+  local codex_home="$tmp_root/$name-codex" prep_tmp="$tmp_root/$name-prep-tmp"
+  local scratch="$tmp_root/$name-scratch" rc=0
+  mkdir -p "$prep_tmp" "$scratch"
+
+  TMPDIR="$prep_tmp" CODEX_HOME="$codex_home" \
+    bash "$REPO_ROOT/hosts/codex/bin/install.sh" --repo-root "$REPO_ROOT" >/dev/null || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    fail "$name" "precondition install exited $rc"
+    return
+  fi
+
+  printf '\n' > "$codex_home/AGENTS.md"
+  TMPDIR="$scratch" CODEX_HOME="$codex_home" \
+    bash "$REPO_ROOT/hosts/codex/bin/uninstall.sh" --repo-root "$REPO_ROOT" >/dev/null || rc=$?
+  if [[ "$rc" -ne 0 || -n "$(compgen -G "$scratch/tmp.*")" ]]; then
+    fail "$name" "hooks-only uninstall left scratch files (rc=$rc)"
+    return
+  fi
+
+  TMPDIR="$prep_tmp" CODEX_HOME="$codex_home" \
+    bash "$REPO_ROOT/hosts/codex/bin/install.sh" --repo-root "$REPO_ROOT" >/dev/null || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    fail "$name" "second precondition install exited $rc"
+    return
+  fi
+  printf '{}\n' > "$codex_home/hooks.json"
+  TMPDIR="$scratch" CODEX_HOME="$codex_home" \
+    bash "$REPO_ROOT/hosts/codex/bin/uninstall.sh" --repo-root "$REPO_ROOT" >/dev/null || rc=$?
+  if [[ "$rc" -ne 0 || -n "$(compgen -G "$scratch/tmp.*")" ]]; then
+    fail "$name" "instructions-only uninstall left scratch files (rc=$rc)"
+    return
+  fi
+  pass "$name"
+}
+
 run_case "TC-01 no-manifest" test_no_manifest
 run_case "TC-02 symlink-removed" test_symlink_removed
 run_case "TC-03 symlink-foreign" test_symlink_foreign
@@ -1372,5 +1413,6 @@ run_case "TC-26 pmctl-real-file-preserved" test_pmctl_real_file_preserved
 run_case "TC-27 prune-feedback" test_prune_feedback
 run_case "TC-28 claude-home-dst-rejected" test_claude_home_dst_rejected
 run_case "TC-29 missing-host-write-library-warns-and-preserves-hooks" test_missing_host_write_library_warns_and_preserves_hooks
+run_case "TC-30 codex-uninstall-success-cleans-unchanged-target-scratch" test_codex_uninstall_success_cleans_unchanged_target_scratch
 
 th_summary

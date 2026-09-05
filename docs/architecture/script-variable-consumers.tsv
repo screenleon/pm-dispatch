@@ -10,6 +10,8 @@ CLAUDE_CONFIG_DIR	CLAUDE_CONFIG_DIR	hosts/claude/lib/doctor.sh	production
 CLAUDE_CONFIG_DIR	CLAUDE_CONFIG_DIR	hosts/claude/lib/path-resolver.sh	production
 CLAUDE_CONFIG_DIR	CLAUDE_CONFIG_DIR	install.sh	production
 CLAUDE_CONFIG_DIR	CLAUDE_CONFIG_DIR	ops/diagnostics/windows-acceptance.sh	production
+CLAUDE_CONFIG_DIR	CLAUDE_CONFIG_DIR	ops/release/clean-install-smoke.sh	production
+CLAUDE_CONFIG_DIR	CLAUDE_CONFIG_DIR	ops/release/upgrade-smoke-v0.10-v0.11.sh	production
 CLAUDE_CONFIG_DIR	CLAUDE_CONFIG_DIR	ops/release/upgrade-smoke-v0.8-v0.9.sh	production
 CLAUDE_CONFIG_DIR	CLAUDE_CONFIG_DIR	ops/usage/token-usage.sh	production
 CLAUDE_CONFIG_DIR	CLAUDE_CONFIG_DIR	runtime/bin/doctor.sh	production
@@ -34,6 +36,8 @@ CLAUDE_HOME	CLAUDE_HOME	hosts/claude/bin/uninstall-guards.sh	production
 CLAUDE_HOME	CLAUDE_HOME	hosts/claude/lib/doctor.sh	production
 CLAUDE_HOME	CLAUDE_HOME	hosts/claude/lib/path-resolver.sh	production
 CLAUDE_HOME	CLAUDE_HOME	install.sh	production
+CLAUDE_HOME	CLAUDE_HOME	ops/release/clean-install-smoke.sh	production
+CLAUDE_HOME	CLAUDE_HOME	ops/release/upgrade-smoke-v0.10-v0.11.sh	production
 CLAUDE_HOME	CLAUDE_HOME	ops/release/upgrade-smoke-v0.8-v0.9.sh	production
 CLAUDE_HOME	CLAUDE_HOME	runtime/lib/install-receipt.sh	production
 CLAUDE_HOME	CLAUDE_HOME	runtime/lib/portable.sh	production
@@ -86,6 +90,8 @@ CODEX_HOME	CODEX_HOME	hosts/codex/lib/doctor.sh	production
 CODEX_HOME	CODEX_HOME	hosts/codex/lib/path-resolver.sh	production
 CODEX_HOME	CODEX_HOME	install.sh	production
 CODEX_HOME	CODEX_HOME	ops/diagnostics/windows-acceptance.sh	production
+CODEX_HOME	CODEX_HOME	ops/release/clean-install-smoke.sh	production
+CODEX_HOME	CODEX_HOME	ops/release/upgrade-smoke-v0.10-v0.11.sh	production
 CODEX_HOME	CODEX_HOME	ops/release/upgrade-smoke-v0.8-v0.9.sh	production
 DRY_RUN	DRY_RUN	hosts/claude/bin/install-guards.sh	production
 DRY_RUN	DRY_RUN	hosts/claude/bin/uninstall-guards.sh	production
@@ -115,6 +121,8 @@ HOME	HOME	hosts/claude/lib/path-resolver.sh	production
 HOME	HOME	hosts/codex/lib/doctor.sh	production
 HOME	HOME	install.sh	production
 HOME	HOME	ops/diagnostics/windows-acceptance.sh	production
+HOME	HOME	ops/release/clean-install-smoke.sh	production
+HOME	HOME	ops/release/upgrade-smoke-v0.10-v0.11.sh	production
 HOME	HOME	ops/release/upgrade-smoke-v0.8-v0.9.sh	production
 HOME	HOME	ops/usage/log-usage.sh	production
 HOME	HOME	ops/usage/token-usage.sh	production
@@ -162,7 +170,9 @@ PATH	PATH	hosts/opencode/lib/doctor.sh	production
 PATH	PATH	install.sh	production
 PATH	PATH	ops/diagnostics/gate-subprocess-census.sh	production
 PATH	PATH	ops/diagnostics/windows-acceptance.sh	production
+PATH	PATH	ops/release/clean-install-smoke.sh	production
 PATH	PATH	ops/release/release-verify.sh	production
+PATH	PATH	ops/release/upgrade-smoke-v0.10-v0.11.sh	production
 PATH	PATH	ops/release/upgrade-smoke-v0.8-v0.9.sh	production
 PATH	PATH	ops/usage/usage-weekly.sh	production
 PATH	PATH	runtime/bin/doctor.sh	production
@@ -185,6 +195,8 @@ PATH	PATH	tools/lint/check-docs-freshness.sh	production
 PMCTL_BIN_DIR	PMCTL_BIN_DIR	hosts/claude/bin/install-guards.sh	production
 PMCTL_BIN_DIR	PMCTL_BIN_DIR	hosts/claude/bin/uninstall-guards.sh	production
 PMCTL_BIN_DIR	PMCTL_BIN_DIR	install.sh	production
+PMCTL_BIN_DIR	PMCTL_BIN_DIR	ops/release/clean-install-smoke.sh	production
+PMCTL_BIN_DIR	PMCTL_BIN_DIR	ops/release/upgrade-smoke-v0.10-v0.11.sh	production
 PMCTL_BIN_DIR	PMCTL_BIN_DIR	ops/release/upgrade-smoke-v0.8-v0.9.sh	production
 PMCTL_BIN_DIR	PMCTL_BIN_DIR	runtime/bin/doctor.sh	production
 PMCTL_BIN_DIR	PMCTL_BIN_DIR	uninstall.sh	production
@@ -248,15 +260,15 @@ PM_DISPATCH_CONFIG_FILE	PM_DISPATCH_CONFIG_FILE	runtime/lib/pmctl-memory-config.
 PM_DISPATCH_CONTEXT_AUTOBUILD	PM_DISPATCH_CONTEXT_AUTOBUILD	runtime/lib/pmctl-context.sh	production
 PM_DISPATCH_CONTEXT_AUTOBUILD	PM_DISPATCH_CONTEXT_AUTOBUILD	runtime/lib/prompt-context.sh	production
 PM_DISPATCH_CONTEXT_AUTOREFRESH	PM_DISPATCH_CONTEXT_AUTOREFRESH	runtime/lib/pmctl-context.sh	production
-PM_DISPATCH_CONTEXT_PACK_MAX_ITEMS	PM_DISPATCH_CONTEXT_PACK_MAX_ITEMS	runtime/lib/pmctl-context.sh	production
 PM_DISPATCH_CONTEXT_PACK_MAX_BYTES	PM_DISPATCH_CONTEXT_PACK_MAX_BYTES	runtime/lib/pmctl-context.sh	production
+PM_DISPATCH_CONTEXT_PACK_MAX_ITEMS	PM_DISPATCH_CONTEXT_PACK_MAX_ITEMS	runtime/lib/pmctl-context.sh	production
 PM_DISPATCH_CONTEXT_PACK_MAX_TERMS	PM_DISPATCH_CONTEXT_PACK_MAX_TERMS	runtime/lib/pmctl-context.sh	production
 PM_DISPATCH_DISABLE_PROMPT_CONTEXT	PM_DISPATCH_DISABLE_PROMPT_CONTEXT	hosts/claude/hooks/inject-context.sh	production
 PM_DISPATCH_GATE_WORKSPACE	PM_DISPATCH_GATE_WORKSPACE	hosts/claude/bin/uninstall-guards.sh	production
 PM_DISPATCH_GATE_WORKSPACE	PM_DISPATCH_GATE_WORKSPACE	runtime/lib/gate-workspace.sh	production
+PM_DISPATCH_GC_GRACE_DAYS	PM_DISPATCH_GC_GRACE_DAYS	runtime/lib/pmctl-artifacts.sh	production
 PM_DISPATCH_GC_KEEP_LAST	PM_DISPATCH_GC_KEEP_LAST	runtime/lib/pmctl-artifacts.sh	production
 PM_DISPATCH_GC_MAX_AGE_DAYS	PM_DISPATCH_GC_MAX_AGE_DAYS	runtime/lib/pmctl-artifacts.sh	production
-PM_DISPATCH_GC_GRACE_DAYS	PM_DISPATCH_GC_GRACE_DAYS	runtime/lib/pmctl-artifacts.sh	production
 PM_DISPATCH_INSTALL_ROOT	PM_DISPATCH_INSTALL_ROOT	runtime/lib/install-receipt.sh	production
 PM_DISPATCH_LOCK_STALE_SECS	PM_DISPATCH_LOCK_STALE_SECS	runtime/lib/portable.sh	production
 PM_DISPATCH_LOCK_TIMEOUT_SECS	PM_DISPATCH_LOCK_TIMEOUT_SECS	runtime/lib/portable.sh	production
@@ -282,7 +294,9 @@ PM_DISPATCH_REPOS_ROOT	PM_DISPATCH_REPOS_ROOT	runtime/lib/repo-layout.sh	product
 PM_DISPATCH_REPOS_ROOT	PM_DISPATCH_REPOS_ROOT	tools/lint/lint-portable-repo-paths.sh	production
 PM_DISPATCH_ROTATE_MAX_BYTES	PM_DISPATCH_ROTATE_MAX_BYTES	runtime/lib/state-writer.sh	production
 PM_DISPATCH_STATE_ROOT	PM_DISPATCH_STATE_ROOT	hosts/claude/lib/doctor.sh	production
+PM_DISPATCH_STATE_ROOT	PM_DISPATCH_STATE_ROOT	ops/release/clean-install-smoke.sh	production
 PM_DISPATCH_STATE_ROOT	PM_DISPATCH_STATE_ROOT	ops/release/release-verify.sh	production
+PM_DISPATCH_STATE_ROOT	PM_DISPATCH_STATE_ROOT	ops/release/upgrade-smoke-v0.10-v0.11.sh	production
 PM_DISPATCH_STATE_ROOT	PM_DISPATCH_STATE_ROOT	ops/release/upgrade-smoke-v0.8-v0.9.sh	production
 PM_DISPATCH_STATE_ROOT	PM_DISPATCH_STATE_ROOT	runtime/lib/guard-log.sh	production
 PM_DISPATCH_STATE_ROOT	PM_DISPATCH_STATE_ROOT	runtime/lib/pmctl-context.sh	production
@@ -309,6 +323,8 @@ PM_E2E_PMCTL	PM_E2E_PMCTL	tests/shell/test-e2e-script.sh	test
 PM_E2E_PMCTL	PM_E2E_PMCTL	tests/shell/test-e2e.sh	test
 PM_GATE_WAIT_DEFAULT_TIMEOUT	PM_GATE_WAIT_DEFAULT_TIMEOUT	runtime/lib/pmctl-gate.sh	production
 PM_GATE_WAIT_POLL_INTERVAL	PM_GATE_WAIT_POLL_INTERVAL	runtime/lib/pmctl-gate.sh	production
+PM_MEMORY_DIR	PM_MEMORY_DIR	ops/release/clean-install-smoke.sh	production
+PM_MEMORY_DIR	PM_MEMORY_DIR	ops/release/upgrade-smoke-v0.10-v0.11.sh	production
 PM_MEMORY_DIR	PM_MEMORY_DIR	ops/release/upgrade-smoke-v0.8-v0.9.sh	production
 PM_MEMORY_DIR	PM_MEMORY_DIR	runtime/lib/memory.sh	production
 PM_MEMORY_DIR	PM_MEMORY_DIR	runtime/lib/pmctl-memory.sh	production
@@ -412,6 +428,8 @@ TEST_GUARDS_*	TEST_GUARDS_SELF_TIMEOUT	tests/shell/test-guards.sh	test
 TMPDIR	TMPDIR	hosts/codex/bin/continue-dispatch.sh	production
 TMPDIR	TMPDIR	hosts/opencode/bin/install.sh	production
 TMPDIR	TMPDIR	ops/diagnostics/gate-subprocess-census.sh	production
+TMPDIR	TMPDIR	ops/release/clean-install-smoke.sh	production
+TMPDIR	TMPDIR	ops/release/upgrade-smoke-v0.10-v0.11.sh	production
 TMPDIR	TMPDIR	ops/release/upgrade-smoke-v0.8-v0.9.sh	production
 TMPDIR	TMPDIR	runtime/bin/pr-gate.sh	production
 TMPDIR	TMPDIR	runtime/lib/gate-closure.sh	production
@@ -435,6 +453,8 @@ XAI_API_KEY	XAI_API_KEY	hosts/grok/lib/doctor.sh	production
 XAI_API_KEY	XAI_API_KEY	runtime/bin/doctor.sh	production
 XDG_CACHE_HOME	XDG_CACHE_HOME	tools/lint/bootstrap-shellcheck.sh	production
 XDG_CONFIG_HOME	XDG_CONFIG_HOME	hosts/opencode/lib/path-resolver.sh	production
+XDG_CONFIG_HOME	XDG_CONFIG_HOME	ops/release/clean-install-smoke.sh	production
+XDG_CONFIG_HOME	XDG_CONFIG_HOME	ops/release/upgrade-smoke-v0.10-v0.11.sh	production
 XDG_CONFIG_HOME	XDG_CONFIG_HOME	ops/release/upgrade-smoke-v0.8-v0.9.sh	production
 XDG_DATA_HOME	XDG_DATA_HOME	hosts/claude/lib/doctor.sh	production
 XDG_DATA_HOME	XDG_DATA_HOME	runtime/lib/guard-log.sh	production

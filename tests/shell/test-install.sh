@@ -4320,6 +4320,42 @@ test_host_selected_codex_lifecycle_skips_claude_tree() {
   pass "$name"
 }
 
+# Behavior: Codex install always removes every scratch file after a successful
+# one-sided update, including the temporary file for the unchanged target.
+# Steps: Seed both Codex targets, independently change hooks and instructions,
+# then run the host installer with a fresh TMPDIR and assert it is empty.
+test_codex_install_success_cleans_unchanged_target_scratch() {
+  local name="codex-install-success-cleans-unchanged-target-scratch"
+  should_run "$name" || return 0
+  local codex_home="$tmp_root/$name-codex" prep_tmp="$tmp_root/$name-prep-tmp"
+  local scratch="$tmp_root/$name-scratch" rc=0
+  mkdir -p "$prep_tmp" "$scratch"
+
+  TMPDIR="$prep_tmp" CODEX_HOME="$codex_home" \
+    bash "$REPO_ROOT/hosts/codex/bin/install.sh" --repo-root "$REPO_ROOT" >/dev/null || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    fail "$name" "precondition install exited $rc"
+    return
+  fi
+
+  printf '{}\n' > "$codex_home/hooks.json"
+  TMPDIR="$scratch" CODEX_HOME="$codex_home" \
+    bash "$REPO_ROOT/hosts/codex/bin/install.sh" --repo-root "$REPO_ROOT" >/dev/null || rc=$?
+  if [[ "$rc" -ne 0 || -n "$(compgen -G "$scratch/tmp.*")" ]]; then
+    fail "$name" "hooks-only install left scratch files (rc=$rc)"
+    return
+  fi
+
+  printf '\n' > "$codex_home/AGENTS.md"
+  TMPDIR="$scratch" CODEX_HOME="$codex_home" \
+    bash "$REPO_ROOT/hosts/codex/bin/install.sh" --repo-root "$REPO_ROOT" >/dev/null || rc=$?
+  if [[ "$rc" -ne 0 || -n "$(compgen -G "$scratch/tmp.*")" ]]; then
+    fail "$name" "instructions-only install left scratch files (rc=$rc)"
+    return
+  fi
+  pass "$name"
+}
+
 test_host_selected_opencode_lifecycle_skips_claude_tree() {
   local name="host-selected-opencode-lifecycle-skips-claude-tree"
   should_run "$name" || return 0
@@ -4547,6 +4583,7 @@ test_install_missing_host_write_library_fails_loudly
 test_install_missing_load_bearing_source_fails_before_mutation
 test_install_managed_tree_removed_after_preflight_blocks_entrypoints
 test_host_selected_codex_lifecycle_skips_claude_tree
+test_codex_install_success_cleans_unchanged_target_scratch
 test_host_selected_opencode_lifecycle_skips_claude_tree
 test_host_equals_form_codex_lifecycle_skips_claude_tree
 test_host_selected_claude_and_codex_lifecycle

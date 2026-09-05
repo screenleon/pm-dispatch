@@ -399,4 +399,3 @@ if [[ "$instructions_changed" -eq 1 ]]; then
   mv "$tmp_instructions_new" "$instructions_file"
   echo "install-guards-codex: wrote $instructions_file"
 fi
-trap - EXIT
