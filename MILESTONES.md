@@ -144,7 +144,7 @@ P1 的每張實作 PR 都應綁定 deterministic contract tests；任何 reviewe
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-447 | offline clean install + latest released tag→v0.11 RC N-1 upgrade；foreign config/memory/user data 不變。屬正式 release evidence，若 release surface 改變即重跑 | 🔵 |
+| CC-447 | offline clean install + latest released tag→v0.11 RC N-1 upgrade；foreign config/memory/user data 不變。屬正式 release evidence，若 release surface 改變即重跑 | 🔵（offline+N-1 ✅ pr:#573；live dogfood 待 v0.12.0 readiness review 後再排） |
 
 ### Phase 6 — immediate publish correctness
 
