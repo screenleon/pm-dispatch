@@ -139,6 +139,8 @@ SUITE_NAMES=(
   test-pre-release
   test-release-verify
   test-upgrade-smoke
+  test-clean-install-smoke
+  test-upgrade-smoke-v0.10-v0.11
   test-e2e-script
 )
 
@@ -262,6 +264,8 @@ declare -A SUITE_PATHS=(
   [test-pre-release]="tests/shell/test-pre-release.sh"
   [test-release-verify]="tests/shell/test-release-verify.sh"
   [test-upgrade-smoke]="tests/shell/test-upgrade-smoke.sh"
+  [test-clean-install-smoke]="tests/shell/test-clean-install-smoke.sh"
+  [test-upgrade-smoke-v0.10-v0.11]="tests/shell/test-upgrade-smoke-v0.10-v0.11.sh"
   [test-e2e-script]="tests/shell/test-e2e-script.sh"
 )
 

@@ -108,7 +108,11 @@ assert_fail() {
 }
 assert_equal() {
   local name="$1" expected="$2" actual="$3" detail="$4"
-  [[ "$actual" == "$expected" ]] && assert_ok "$name" "$detail" || assert_fail "$name" "expected=$expected actual=$actual"
+  if [[ "$actual" == "$expected" ]]; then
+    assert_ok "$name" "$detail"
+  else
+    assert_fail "$name" "expected=$expected actual=$actual"
+  fi
 }
 snapshot_tree() { find "$SANDBOX" -mindepth 1 -printf '%P\n' | sort; }
 
