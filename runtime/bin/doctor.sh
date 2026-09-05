@@ -174,6 +174,7 @@ QUIET=0
 COLOR=0
 REPO_ROOT=""
 PROFILE="auto"
+FIX=0
 [[ -t 1 ]] && COLOR=1
 
 _OK_COUNT=0
@@ -184,7 +185,7 @@ _SETTINGS_FILE_INVALID=0
 
 usage() {
   cat <<'EOF'
-Usage: doctor.sh [--json] [--quiet] [--no-color] [--repo <path>] [--profile auto|minimal|full]
+Usage: doctor.sh [--json] [--quiet] [--no-color] [--fix] [--repo <path>] [--profile auto|minimal|full]
 
 Run pm-dispatch environment health checks.
 
@@ -192,6 +193,7 @@ Options:
   --json        Emit JSON Lines output and disable color
   --quiet       Suppress OK lines in human output
   --no-color    Disable colorized human output
+  --fix         Restore executable modes for managed scripts only
   --repo PATH   Repository root to check (default: script directory parent)
   --profile auto|minimal|full
                 Override hook-profile detection (default: auto)
@@ -217,15 +219,17 @@ _print_tagged() {
   fi
 }
 
-# Usage: emit_check <slug> <status: ok|warn|fail> <message> [fix]
+# Usage: emit_check <slug> <status: ok|warn|fail> <message> [fix] [fixed]
 emit_check() {
-  local slug="$1" status="$2" msg="$3" fix="${4-}"
+  local slug="$1" status="$2" msg="$3" fix="${4-}" fixed="${5-}"
   case "$status" in
     ok)
       _OK_COUNT=$((_OK_COUNT + 1))
       [[ "$QUIET" -eq 1 ]] && return 0
       if [[ "$JSON" -eq 1 ]]; then
-        printf '{"check":"%s","status":"ok","message":"%s"}\n' "$slug" "$(_json_esc "$msg")"
+        local fld=""
+        [[ "$fixed" == "true" ]] && fld=',"fixed":true'
+        printf '{"check":"%s","status":"ok","message":"%s"%s}\n' "$slug" "$(_json_esc "$msg")" "$fld"
       else
         _print_tagged "[OK]  " "\033[32m[OK]\033[0m  " "$msg"
       fi
@@ -469,6 +473,7 @@ check_host_fallback_copy_mode() {
 }
 
 check_scripts_executable() {
+  local fix="${1:-0}"
   local -a scripts=(
     runtime/hooks/guard-pm-write.sh
     runtime/hooks/guard-reviewer-write.sh
@@ -491,6 +496,27 @@ check_scripts_executable() {
       missing+=("$script")
     fi
   done
+
+  if [[ "$fix" -eq 1 && "${#missing[@]}" -gt 0 ]]; then
+    local -a repaired=("${missing[@]}")
+    for script in "${missing[@]}"; do
+      # Refuse to chmod through a symlink: a managed path here must be a real
+      # regular file inside the repo, never a link to an external target.
+      if [[ ! -L "${REPO_ROOT}/${script}" && -f "${REPO_ROOT}/${script}" ]]; then
+        chmod +x "${REPO_ROOT}/${script}" || true
+      fi
+    done
+    missing=()
+    for script in "${scripts[@]}"; do
+      if [[ ! -x "${REPO_ROOT}/${script}" ]]; then
+        missing+=("$script")
+      fi
+    done
+    if [[ "${#missing[@]}" -eq 0 ]]; then
+      emit_check scripts-executable ok "restored executable modes: ${repaired[*]}" "" true
+      return
+    fi
+  fi
 
   if [[ "${#missing[@]}" -gt 0 ]]; then
     emit_check scripts-executable fail "non-executable scripts: ${missing[*]}" \
@@ -661,6 +687,10 @@ main() {
         COLOR=0
         shift
         ;;
+      --fix)
+        FIX=1
+        shift
+        ;;
       --repo)
         if [[ -z "${2:-}" || "${2:-}" == --* ]]; then
           printf 'doctor: --repo requires a path\n' >&2
@@ -740,6 +770,12 @@ main() {
     printf '  Use WSL2 for CI and release sign-off. See docs/platform-support.md.\n\n'
   fi
 
+  # This is the only --fix whitelist entry. Run it first in fix mode because
+  # host checks also validate managed hook executability.
+  if [[ "$FIX" -eq 1 ]]; then
+    check_scripts_executable "$FIX"
+  fi
+
   check_jq
   check_pmctl
   # Host axis: generic dispatch into manifest-declared doctor modules. Copy-mode
@@ -768,7 +804,9 @@ main() {
   else
     check_host_fallback_copy_mode
   fi
-  check_scripts_executable
+  if [[ "$FIX" -eq 0 ]]; then
+    check_scripts_executable "$FIX"
+  fi
   check_memory_dir
   check_frontmatter_lint
   check_detached_runs

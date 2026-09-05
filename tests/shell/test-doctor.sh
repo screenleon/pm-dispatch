@@ -1009,6 +1009,185 @@ case_doctor_scripts_not_executable_fail() {
   fi
 }
 
+make_doctor_fix_fixture() {
+  local fake_repo="$1" home_dir="$2" encoded
+  mkdir -p "$fake_repo"
+  (cd "$REPO_ROOT" && git ls-files -z | tar --null -T - -cf -) | tar -xf - -C "$fake_repo"
+  git -C "$fake_repo" init -q
+  write_full_settings "$home_dir"
+  sed -i "s|$REPO_ROOT|$fake_repo|g" "$home_dir/.claude/settings.json"
+  write_manifest "$home_dir"
+  # shellcheck source=runtime/lib/memory.sh
+  . "$REPO_ROOT/runtime/lib/memory.sh"
+  encoded="$(encode_path "$fake_repo")"
+  mkdir -p "$home_dir/.claude/projects/$encoded/memory"
+}
+
+case_doctor_fix_scripts_executable() {
+  local name="doctor-fix-scripts-executable"
+  should_run "$name" || return 0
+  if ! _td_needs_chmod_x "$name"; then return 0; fi
+  if ! _td_needs_symlink "$name"; then return 0; fi
+  local home="$tmp_root/home-fix-scripts" fake_repo="$tmp_root/fake-repo-fix-scripts"
+  local bin="$tmp_root/bin-fix-scripts" out status=0 path
+  make_doctor_fix_fixture "$fake_repo" "$home"
+  chmod -x "$fake_repo/runtime/hooks/guard-pm-write.sh"
+  path="$(make_stub_bin "$bin" claude codex grok)"
+  ln -sf "$fake_repo/cli/pmctl" "$bin/pmctl"
+
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" bash "$DOCTOR" --no-color --fix --repo "$fake_repo" 2>&1)" || status=$?
+  if [[ "$status" -eq 0 && -x "$fake_repo/runtime/hooks/guard-pm-write.sh" \
+      && "$out" == *"[OK]   restored executable modes: runtime/hooks/guard-pm-write.sh"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out"
+  fi
+}
+
+case_doctor_fix_scripts_idempotent() {
+  local name="doctor-fix-scripts-idempotent"
+  should_run "$name" || return 0
+  if ! _td_needs_chmod_x "$name"; then return 0; fi
+  if ! _td_needs_symlink "$name"; then return 0; fi
+  local home="$tmp_root/home-fix-idempotent" fake_repo="$tmp_root/fake-repo-fix-idempotent"
+  local bin="$tmp_root/bin-fix-idempotent" first second status=0 path
+  make_doctor_fix_fixture "$fake_repo" "$home"
+  chmod -x "$fake_repo/runtime/hooks/guard-pm-write.sh"
+  path="$(make_stub_bin "$bin" claude codex grok)"
+  ln -sf "$fake_repo/cli/pmctl" "$bin/pmctl"
+
+  first="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" bash "$DOCTOR" --no-color --fix --repo "$fake_repo" 2>&1)" || status=$?
+  second="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" bash "$DOCTOR" --no-color --fix --repo "$fake_repo" 2>&1)" || status=$?
+  if [[ "$status" -eq 0 && -x "$fake_repo/runtime/hooks/guard-pm-write.sh" \
+      && "$first" == *"restored executable modes"* \
+      && "$second" == *"[OK]   managed scripts are executable"* \
+      && "$second" != *"restored executable modes"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status first=$first second=$second"
+  fi
+}
+
+case_doctor_fix_leaves_other_checks_unchanged() {
+  local name="doctor-fix-leaves-other-checks-unchanged"
+  should_run "$name" || return 0
+  local home="$tmp_root/home-fix-whitelist" no_fix with_fix no_fix_settings with_fix_settings status=0
+  mkdir -p "$home/.claude"
+  no_fix="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
+  with_fix="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" bash "$DOCTOR" --no-color --fix --repo "$REPO_ROOT" 2>&1)" || status=$?
+  no_fix_settings="$(sed -n '/settings.json missing/{N;p;}' <<< "$no_fix")"
+  with_fix_settings="$(sed -n '/settings.json missing/{N;p;}' <<< "$with_fix")"
+  if [[ "$status" -eq 1 && -n "$no_fix_settings" \
+      && "$with_fix_settings" == "$no_fix_settings" \
+      && "$with_fix_settings" == *"Fix: bash '$REPO_ROOT/install.sh'"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status no_fix=$no_fix with_fix=$with_fix"
+  fi
+}
+
+case_doctor_fix_json_fixed_field() {
+  local name="doctor-fix-json-fixed-field"
+  should_run "$name" || return 0
+  if ! _td_needs_chmod_x "$name"; then return 0; fi
+  if ! _td_needs_symlink "$name"; then return 0; fi
+  if ! command -v jq >/dev/null 2>&1; then
+    skip "$name" "jq unavailable"
+    return
+  fi
+  local home="$tmp_root/home-fix-json" fake_repo="$tmp_root/fake-repo-fix-json"
+  local bin="$tmp_root/bin-fix-json" out status=0 path line fixed
+  make_doctor_fix_fixture "$fake_repo" "$home"
+  chmod -x "$fake_repo/runtime/hooks/guard-pm-write.sh"
+  path="$(make_stub_bin "$bin" claude codex grok)"
+  ln -sf "$fake_repo/cli/pmctl" "$bin/pmctl"
+
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" bash "$DOCTOR" --json --fix --repo "$fake_repo" 2>&1)" || status=$?
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    if ! jq . >/dev/null 2>&1 <<< "$line"; then
+      fail "$name" "invalid JSON line: $line"
+      return
+    fi
+  done <<< "$out"
+  fixed="$(printf '%s\n' "$out" | jq -r 'select(.check == "scripts-executable") | .fixed')"
+  if [[ "$status" -eq 0 && "$fixed" == "true" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status fixed=$fixed out=$out"
+  fi
+}
+
+case_doctor_fix_refuses_symlinked_script() {
+  # Verifies that --fix never chmods through a symlink: a managed path that has
+  # been replaced with a symlink to an external target must be refused, not
+  # silently granted +x via the link.
+  #
+  # Steps:
+  #   1. Build the fix fixture; replace guard-pm-write.sh with a symlink to a
+  #      non-executable file outside the fake repo.
+  #   2. Run doctor --fix --repo <fake-repo>.
+  #   3. Assert the symlink itself was not chmod'd (still not executable
+  #      through the link) and the external target file was not chmod'd either.
+  local name="doctor-fix-refuses-symlinked-script"
+  should_run "$name" || return 0
+  if ! _td_needs_chmod_x "$name"; then return 0; fi
+  if ! _td_needs_symlink "$name"; then return 0; fi
+  local home="$tmp_root/home-fix-symlink" fake_repo="$tmp_root/fake-repo-fix-symlink"
+  local bin="$tmp_root/bin-fix-symlink" out status=0 path outside_target
+  make_doctor_fix_fixture "$fake_repo" "$home"
+  outside_target="$tmp_root/outside-target-fix-symlink.sh"
+  printf '#!/bin/sh\n' > "$outside_target"
+  rm -f "$fake_repo/runtime/hooks/guard-pm-write.sh"
+  ln -sf "$outside_target" "$fake_repo/runtime/hooks/guard-pm-write.sh"
+  path="$(make_stub_bin "$bin" claude codex grok)"
+  ln -sf "$fake_repo/cli/pmctl" "$bin/pmctl"
+
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" bash "$DOCTOR" --no-color --fix --repo "$fake_repo" 2>&1)" || status=$?
+  if [[ "$status" -eq 1 && ! -x "$outside_target" \
+      && "$out" == *"non-executable scripts"*"guard-pm-write.sh"* \
+      && "$out" != *"restored executable modes"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out"
+  fi
+}
+
+case_doctor_fix_recheck_still_fails_reports_fail() {
+  # Verifies that when chmod is attempted but the post-chmod recheck still
+  # finds the script non-executable (e.g. the file was removed out from under
+  # the check between the initial scan and the fix pass, so chmod +x cannot
+  # act on it), --fix falls through to the honest [FAIL] report instead of a
+  # false "restored" success. Deleting the managed path is a portable way to
+  # force chmod to have no effect -- unlike an unwritable parent directory,
+  # this doesn't depend on directory-permission semantics that root or some
+  # filesystems bypass.
+  #
+  # Steps:
+  #   1. Build the fix fixture; delete guard-pm-write.sh entirely.
+  #   2. Run doctor --fix --repo <fake-repo>.
+  #   3. Assert exit 1, output still says non-executable, not "restored".
+  local name="doctor-fix-recheck-still-fails-reports-fail"
+  should_run "$name" || return 0
+  if ! _td_needs_chmod_x "$name"; then return 0; fi
+  if ! _td_needs_symlink "$name"; then return 0; fi
+  local home="$tmp_root/home-fix-recheck-fail" fake_repo="$tmp_root/fake-repo-fix-recheck-fail"
+  local bin="$tmp_root/bin-fix-recheck-fail" out status=0 path
+  make_doctor_fix_fixture "$fake_repo" "$home"
+  rm -f "$fake_repo/runtime/hooks/guard-pm-write.sh"
+  path="$(make_stub_bin "$bin" claude codex grok)"
+  ln -sf "$fake_repo/cli/pmctl" "$bin/pmctl"
+
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" bash "$DOCTOR" --no-color --fix --repo "$fake_repo" 2>&1)" || status=$?
+  if [[ "$status" -eq 1 \
+      && "$out" == *"non-executable scripts"*"guard-pm-write.sh"* \
+      && "$out" != *"restored executable modes"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out"
+  fi
+}
+
 case_doctor_manifest_missing_warn() {
   # Verifies that a missing install-manifest.json emits [WARN] but not [FAIL].
   #
@@ -2702,6 +2881,12 @@ case_doctor_help_exits_0
 case_doctor_unknown_flag
 case_doctor_repo_missing_arg
 case_doctor_scripts_not_executable_fail
+case_doctor_fix_scripts_executable
+case_doctor_fix_scripts_idempotent
+case_doctor_fix_leaves_other_checks_unchanged
+case_doctor_fix_json_fixed_field
+case_doctor_fix_refuses_symlinked_script
+case_doctor_fix_recheck_still_fails_reports_fail
 case_doctor_manifest_missing_warn
 case_doctor_manifest_bad_version_warn
 case_doctor_legacy_guard_log_warns

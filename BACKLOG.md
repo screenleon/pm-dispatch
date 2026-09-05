@@ -10,7 +10,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | #  | Status | 主題 | 影響面 | 首次記錄 | Refs | Priority | Epic |
 |----|--------|------|--------|----------|------|----------|------|
 | CC-450 | 🟢 someday | 其餘 9 個 test-*.sh docstring 格式統一（CC-004 同款 Behavior/Steps，跨檔） | ops | 2026-07-03 | — | P3 | — |
-| CC-461 | 🟢 someday | `doctor.sh --fix`：僅限冪等/可逆/不碰使用者內容類別的自動修復；待 CC-447 offline smoke 產出摔倒點清單後定白名單（2026-07-07 openyida 跨專案分析） | ops/install | 2026-07-07 | — | P3 | — |
+| CC-461 | 🔵 active | `doctor.sh --fix`：僅限冪等/可逆/不碰使用者內容類別的自動修復；第一刀白名單直接取自 doctor.sh 既有檢查項（`scripts-executable`），不等 CC-447 摔倒點清單（實測只有 n=1 且已在上游修掉，非 doctor 可修材料）（2026-07-07 openyida 跨專案分析） | ops/install | 2026-07-07 | — | P3 | — |
 | CC-462 | 🟢 someday | e2e 可拋棄資源紀律：前綴命名 + registry JSON + result artifact；掛在 CC-449 e2e 新 phase 之後，與 CC-447 live smoke 共用同一 registry（2026-07-07 openyida 跨專案分析） | ops/test | 2026-07-07 | — | P3 | — |
 | CC-463 | 🟢 someday | `pmctl batch` 泛用批次執行原語；依賴 CC-460（合法性驗證來源）；新注入面須過 security-reviewer（2026-07-07 openyida 跨專案分析） | arch/process | 2026-07-07 | — | P3 | design |
 | CC-464 | 🟢 someday | `pmctl ticket draft --from <notes>`：隨手筆記→結構化 backlog 票草稿；依賴 CC-286（prefix-generic next-id，⏸ deferred 尚未排程）；review-first 邊界獨立設計，CC-054 僅供鬆散參照非直接前例（2026-07-07 openyida 跨專案分析） | ux/process | 2026-07-07 | — | P3 | — |
@@ -208,7 +208,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `ops/backlog/archive-cl
 **Dependencies**：offline/N-1 smoke 在 [[CC-497]]、[[CC-456]]、[[CC-449]]、[[CC-503]] 後，且 v0.11.0 release freeze 中執行；live smoke 不預先綁 v1.0，待 v0.12.0 後 readiness review 排程。
 **See**: DECISIONS.md 2026-07-04
 
-## CC-461 — `doctor.sh --fix`：冪等/可逆自動修復 🟢 someday
+## CC-461 — `doctor.sh --fix`：冪等/可逆自動修復 🔵 active
 
 **Problem**: `doctor.sh` 目前只診斷不修復——使用者發現問題後仍要手動對照文件執行修復步驟。2026-07-07 openyida 跨專案分析發現其 `doctor --fix` 模式：對可安全自動化的檢查項提供一鍵修復。
 
@@ -216,12 +216,12 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `ops/backlog/archive-cl
 
 **Requirement**:
 1. 範圍限定：僅冪等（重跑無副作用）、可逆（有明確復原路徑）、不碰使用者內容（不動 BACKLOG/DECISIONS/memory 等使用者資料）三類檢查項可自動修復；每項修復動作需獨立小函式、獨立測試。
-2. 白名單需待 [[CC-447]] offline smoke 產出摔倒點清單後才定案——避免憑空猜測要修什麼。
-3. 與 [[CC-437]] doctor host module 介面對齊（host-specific 檢查項若可修復，走同一 module 介面）。
+2. **範圍改訂（2026-09-05）**：原計畫等 [[CC-447]] offline smoke 產出摔倒點清單才定白名單，但實測只有 n=1（[[CC-580]] 的 codex host temp-file 洩漏），且該缺陷已直接在上游程式碼修掉——它是一次性的 trap-disarm bug，不是「診斷後讓使用者按 `--fix`」的材料，不適合當白名單第一項。改為第一刀白名單直接取自 doctor.sh 既有檢查項清單中已符合冪等/可逆/不碰使用者內容三條件者：`scripts-executable`（missing +x → `chmod +x`，天然冪等可逆）。後續 slice 再視是否有更多真實摔倒點擴充白名單。
+3. 與 [[CC-437]] doctor host module 介面對齊（host-specific 檢查項若可修復，走同一 module 介面）——CC-437 已交付。
 
 **Done-when**: 白名單內每個修復項有「修復前狀態 → `--fix` → 修復後狀態」的回歸測試；`--fix` 對白名單外的問題明確拒絕（不猜測性修復）。
 
-**Dependencies**: 宜在 [[CC-447]] offline smoke 產出摔倒點清單後啟動；與 [[CC-437]] 對齊。
+**Dependencies**: 與 [[CC-437]]（已交付）對齊；不再依賴 [[CC-447]] 摔倒點清單（該依賴已由 Requirement 2 的範圍改訂解除）。
 **Source**: 2026-07-07 openyida 跨專案分析——`doctor --fix` 模式。
 
 ## CC-462 — e2e 可拋棄資源紀律：前綴 + registry JSON + result artifact 🟢 someday
