@@ -137,7 +137,7 @@ After installing, verify the environment is healthy:
 bash runtime/bin/doctor.sh
 ```
 
-`doctor.sh` checks that `claude`, `jq`, and `pmctl` are on `$PATH`, hooks are wired into `~/.claude/settings.json`, the memory directory exists, scripts are executable, and frontmatter passes lint — each failing check prints a concrete remediation command.
+`doctor.sh` checks that `claude`, `jq`, and `pmctl` are on `$PATH`, hooks are wired into `~/.claude/settings.json`, the memory directory exists, scripts are executable, and frontmatter passes lint — each failing check prints a concrete remediation command. Its `--fix` mode only restores executable modes for managed scripts.
 
 ## Testing
 
@@ -320,7 +320,7 @@ usage.
 - **tools/lint/lint-frontmatter.sh** — Validates YAML frontmatter in `agents/`, `commands/`, and `skills/` against PyYAML flow-collection semantics (dq-escape whitelist, adjacent-quote, tab-indent, and empty-entry detection across all four collection paths). Run by CI and `doctor.sh`.
 - **tests/bin/run-tests.sh** — pm-dispatch-specific, direct-impact iteration planner. It can be supplied explicitly to generic `pr-gate --test-cmd`; it is not final sign-off evidence.
 - **tests/bin/run-all-tests.sh** — Authoritative full-suite entrypoint. `install.sh --verify` uses it; `--list` and `--skip <name>` remain available in full mode.
-- **runtime/bin/doctor.sh** — Environment health check: verifies `claude`/`jq`/`pmctl` are on `$PATH`, hooks are wired into `~/.claude/settings.json`, the memory directory exists, scripts are executable, and frontmatter passes lint. `--profile minimal|full|auto` scopes which hook checks apply. Each failing check prints a concrete remediation command.
+- **runtime/bin/doctor.sh** — Environment health check: verifies `claude`/`jq`/`pmctl` are on `$PATH`, hooks are wired into `~/.claude/settings.json`, the memory directory exists, scripts are executable, and frontmatter passes lint. `--profile minimal|full|auto` scopes which hook checks apply. `--fix` only restores executable modes for managed scripts. Each failing check prints a concrete remediation command.
 - **token-usage.sh** — Multi-pool token usage estimator (Claude / Codex / Spark). Reads `~/.pm-dispatch/usage-tracker.jsonl` by default; set `PM_DISPATCH_USAGE_LOG_FILE` to retain an existing tracker elsewhere. Symlinked to `~/.claude/scripts/token-usage.sh` by `install.sh`. Usage: `bash ~/.claude/scripts/token-usage.sh [--today|--all]`. `--remaining` (no arg) auto-reads `~/.claude/rate-limits.json` if the StatusLine hook is installed; `--remaining N` accepts manual dashboard value.
 - **log-usage.sh** — Appends one entry to `~/.pm-dispatch/usage-tracker.jsonl` by default; set `PM_DISPATCH_USAGE_LOG_FILE` to retain an existing tracker elsewhere. Symlinked to `~/.claude/scripts/log-usage.sh` by `install.sh`. Usage: `bash ~/.claude/scripts/log-usage.sh <type> <tokens> [note]`. Call after any significant agent operation; standard types in the script header.
 - **usage-weekly.sh** — Weekly Markdown report from `~/.claude/stats-cache.json` (Claude internal cache) and Codex session JSONL files. Read-only. Run manually or from a cron job.

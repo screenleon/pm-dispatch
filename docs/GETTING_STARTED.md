@@ -120,7 +120,8 @@ bash runtime/bin/doctor.sh
 `doctor.sh` checks that `claude` and `jq` are on PATH, hooks are wired in
 `~/.claude/settings.json`, the memory directory is present, scripts are
 executable, and frontmatter passes lint. Each failing check prints a concrete
-remediation command.
+remediation command. Its `--fix` mode only restores executable modes for
+managed scripts.
 
 If you want to see what was linked rather than just whether it is healthy:
 
@@ -144,7 +145,8 @@ bash tests/bin/run-all-tests.sh
 ```
 
 In normal docs-first workflows, passing `doctor.sh` alone is sufficient before
-your first `/pm` run.
+your first `/pm` run. If needed, `doctor.sh --fix` has the narrow scope of
+restoring executable modes for managed scripts only.
 
 ## 5) (Optional) Build the repo-local context index
 
