@@ -228,7 +228,7 @@ emit_check() {
       [[ "$QUIET" -eq 1 ]] && return 0
       if [[ "$JSON" -eq 1 ]]; then
         local fld=""
-        [[ "$slug" == "scripts-executable" && "$fixed" == "true" ]] && fld=',"fixed":true'
+        [[ "$fixed" == "true" ]] && fld=',"fixed":true'
         printf '{"check":"%s","status":"ok","message":"%s"%s}\n' "$slug" "$(_json_esc "$msg")" "$fld"
       else
         _print_tagged "[OK]  " "\033[32m[OK]\033[0m  " "$msg"
@@ -500,7 +500,11 @@ check_scripts_executable() {
   if [[ "$fix" -eq 1 && "${#missing[@]}" -gt 0 ]]; then
     local -a repaired=("${missing[@]}")
     for script in "${missing[@]}"; do
-      chmod +x "${REPO_ROOT}/${script}" || true
+      # Refuse to chmod through a symlink: a managed path here must be a real
+      # regular file inside the repo, never a link to an external target.
+      if [[ ! -L "${REPO_ROOT}/${script}" && -f "${REPO_ROOT}/${script}" ]]; then
+        chmod +x "${REPO_ROOT}/${script}" || true
+      fi
     done
     missing=()
     for script in "${scripts[@]}"; do
