@@ -100,7 +100,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-393 | 🟢 someday | design: portable-skill-substrate — CLI-agnostic skill 控制層（design seed after v0.6.0 N≥2；3 control skills + Portable Skill v0 frontmatter；umbrella: CC-333） | arch | 2026-06-16 | — | — | design |
 | CC-435 | 🟢 someday | **[poll→通知機制 single-waiter guard：條件觸發，非既定後續票]** 只有在真正出現多個 waiter 需要同時等待同一個 run_id/gate_id 的場景時才拿出來討論；候選設計見 `docs/spikes/CC-433.md` Open risks（方案 A：`flock` 搶鎖+敗者退回輪詢；方案 B：per-waiter 專屬 fifo+supervisor 廣播）。CC-434 完成後重新盤點成本效益：輪詢 vs blocking read 在單一 waiter/數分鐘等待場景下資源消耗差距趨近於零，延遲改善（≤2s→近乎即時）對人在等 gate 結果無感，而兩個方案都要在安全敏感的 supervisor 檔案引入新 race condition，投資報酬率目前不足，故不排入既定實作，僅記錄設計供未來觸發條件成立時起步。 | arch/gate | 2026-07-02 | — | P3 | design |
 | CC-446 | ✅ done | public contract candidate：stable/experimental CLI + schema、SemVer/deprecation 政策；Slice B `docs/stability-contract.md` + 首輪 CLI 分類（#564），Slice C `lint-deprecation-sunset` + `threshold_days` 移除，CC-296 兩個具名目標早於 v0.5.0／v0.3.0 移除。Req 6（config-surface authority 標記，~44 檔）拆出 [[CC-578]] | process/DX | 2026-07-04 | pr:#560, pr:#564 | P2 | design |
-| CC-447 | 🔵 active | onboarding 三 smoke：offline clean install + N-1 upgrade（v0.11.0）+ live dogfood（readiness review 後再排） | docs/ops | 2026-07-04 | — | P2 | — |
+| CC-447 | 🔵 active | onboarding 三 smoke：offline clean install + N-1 upgrade（v0.11.0，**✅ 已交付**）+ live dogfood（readiness review 後再排，票維持 active 待此項） | docs/ops | 2026-07-04 | pr:#573 | P2 | — |
 | CC-472 | 🟢 someday | spike: antigravity（`agy` CLI）host 唯讀 probe——比照 CC-436/CC-448 階段 1 模式，實測 command 載入能力 + hook/plugin 機制 + 五個 capability enum 的 provider/confidence 判定，不落地 `hosts/antigravity/host.yaml`；排在 CC-445 通用 install/uninstall dispatcher 之後、與 CC-448 opencode 同批或緊接其後評估（N=3 驗證點） | arch/install | 2026-07-08 | — | P3 | spike |
 | CC-566 | ✅ done | `guard-inject-memory.sh` 依 host 給獨立注入預算：實測確認 Claude 端有原生 `claudeMd` 全量 MEMORY.md 載入（無上限，session 一次）與 hook 每輪裁切注入雙重疊加；Codex 無對應原生全量安全網，不能單純調降全域常數（2026-08-23 token-cost 分析） | memory/DX | 2026-08-23 | pr:#519 | P2 | hygiene |
 | CC-567 | ✅ done | memory `selected`→`applied`→`outcome` 追蹤：擴充 `pmctl memory stats` 既有 matched/injected 遙測，補上「PM 是否判為相關」「是否真的影響 brief/執行」「是否真有幫助」三段缺口（2026-08-25 memory 架構設計討論；本題優先序高於分類法，見 [[CC-570]]） | memory/DX | 2026-08-25 | pr:#532 | P1 | retrieval |
@@ -116,7 +116,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-577 | ✅ done | lint 規則穿測試外衣的 case 退場（評估 4 個、搬 2 個、留 2 個）：`test-pmctl-memory.sh` 的 `case_memory_shared_readers_avoid_bash_43_namerefs`（grep 3 個硬編檔禁 `local -n`）、`test-dispatch-common.sh` 的 `case_dispatch_common_no_adapter_name_in_code`（grep 禁 adapter 字面值）、`test-host-manifest.sh:596`（grep `doctor.sh` 格式字串）、`test-e2e-script.sh` 的 `test_phase_c_commits_context_ignore`（斷言腳本內文含某行而非跑它）。全語料掃描確認只有這 4 個是真 proxy（另 12 處讀 production 檔的斷言都合法）。搬進 `test-layer-boundaries.sh`（既有「掃 ROOT + fixture 種違規」模式、全套 1 秒）：規則從「查 3 個硬編檔」變「掃整棵樹」覆蓋變強；e2e 那個改真跑再驗檔。買到的是先例與覆蓋強度，不是時間（4 case 省不到 5s）。是 [[CC-576]] Req 2「測試層級判準」的示範案例 | ops/test | 2026-08-29 | pr:#559 | P3 | hygiene |
 | CC-579 | 🔵 active | pr-gate 執行成本：一次 gate 執行 14s 全是 shell 自身工作（stub reviewer 不做模型工作），其中 **jq 佔 child time 88%**——每次 gate ~368 次 jq 呼叫 × ~39ms 啟動成本 ≈ 14s。`test-pr-gate` 家族＝全套 10,707 CPU-s 的 **49%**，且每次真 gate 也付同一筆。Slice 0（本 PR）：`ops/diagnostics/gate-subprocess-census.sh` 三模式量測工具 + `docs/audits/CC-579-gate-subprocess-baseline.md` 基線，不改任何 production 行為。後續 slice：收斂 jq 呼叫點（[[CC-364]]／[[CC-573]] 既有單次串流 pass 模式）、再重測並行度上限 | ops/gate | 2026-08-31 | pr:#568 | P1 | design |
 | CC-578 | 🟢 someday | config-surface authority 標記（[[CC-446]] Req 6 拆出）：每份 manifest／schema／registry／policy／layout spec（~44 檔：19 `core/schema/*.json` + 20 `*.yaml` + 5 `core/policy/*.tsv`）標記為 `runtime authority`／`build-time authority`／`parity/documentation spec`；runtime／build-time authority 必須有單一 consumer/generator 路徑與 drift check，不得一面宣稱 source of truth 一面維護等價手寫實作。多為逐檔判斷、多數需新增 drift 測試，是獨立多 PR 工程；與 [[CC-451]] 同批評估（runtime 從不驗證的 schema 不列 stable） | process/DX | 2026-08-30 | — | P2 | design |
-| CC-580 | 🔵 active | [[CC-447]] offline clean-install smoke 摔倒點：codex host `install.sh`／`uninstall.sh` 各自 `mktemp` 出 4／2 個 scratch temp file，成功路徑在 `mv` 消費掉「_new」那份後就對整組 `trap ... EXIT` 下 `trap - EXIT`（見 `hosts/codex/bin/install.sh:140-402`、`hosts/codex/bin/uninstall.sh:105-191`）——「_current」那份（僅用於 hooks_file 不存在分支的 diff 顯示）或未觸發變更分支的那份「_new」從未被消費也從未被顯式 `rm -f`，安全網一撤銷就直接洩漏進 `$TMPDIR`。單次 clean-install→uninstall round-trip 實測留下 3 個 stray `tmp.*`（`ops/release/clean-install-smoke.sh` 診斷發現）。**Requirement 1（本票立即修）**：不要在成功路徑撤銷 trap，改成 trap 對已消費(已 `mv` 走)的路徑 `rm -f` 是安全的 no-op，讓 EXIT trap 一律負責清乾淨；加 regression test 鎖住「hooks 或 instructions 其中一路未變更時另一路 scratch temp 不洩漏」。**Requirement 2（someday，需先拍板再動）**：`.bak.*` 備份檔（`install.sh:412-419`、`hosts/codex/bin/install.sh:387-397`／`uninstall.sh:173-189`）與解除安裝後留下的空骨架檔（`settings.json:{"permissions":{}}`、`hooks.json:{}`）、空目錄（如 `xdg/opencode`）是刻意的安全網／「不刪不完全擁有的檔案」設計，即使該檔是本次全新建立、事前根本不存在也照樣備份——這不是清乾淨的 bug，是既有安全語意；`clean-install-smoke.sh` 的殘留判定要改成對這類已知安全產物做 allowlist，而非要求逐位元組回到安裝前快照。不在本票內改變任何備份/骨架保留行為 | ops/install | 2026-09-05 | — | P1 | hygiene |
+| CC-580 | ✅ done | [[CC-447]] offline clean-install smoke 摔倒點：codex host `install.sh`／`uninstall.sh` 各自 `mktemp` 出 4／2 個 scratch temp file，成功路徑無條件 `trap - EXIT` 導致未消費的 scratch temp 洩漏進 `$TMPDIR`。**Requirement 1 已修復**（pr:#573）：移除成功路徑的 `trap - EXIT`，讓已註冊的 EXIT trap 一律負責清乾淨；兩個 host 腳本各補一個 regression test 鎖住「hooks 或 instructions 其中一路未變更時另一路 scratch temp 不洩漏」。`clean-install-smoke.sh` 的殘留判定同時補上安全產物 allowlist（`.bak.*`／空骨架檔／`xdg/opencode`），修復後跑出 `GO`。**Requirement 2（.bak.*／空骨架檔的保留語意要不要改）維持 someday、未拍板、未立獨立票**——非阻塞，若日後要動再重新評估是否值得開票 | ops/install | 2026-09-05 | pr:#573 | P1 | hygiene |
 
 ---
 
@@ -201,7 +201,9 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `ops/backlog/archive-cl
 
 **Release qualification**：offline clean-install 與 N-1 upgrade 是 v0.11.0 release candidate 的最終驗證，不是中途功能票。可先維護可重現的 harness 與報告模板；只有在所有會改 lifecycle、shared hooks、state 或文件的 v0.11.0 work 已進入 freeze 後，才可產生可用於 release 的正式證據。若 release surface 在 smoke 後改變，該 smoke 必須重跑。
 
-**Done-when**：在 v0.11.0 release candidate 上，三個 smoke 的實測報告 committed（`docs/notes/` 或票內）；clean install 與 N-1 upgrade 都有可重現證據；摔倒點全部開票；GETTING_STARTED 修正到與實測一致。
+**2026-09-05 交付（pr:#573）**：Requirement 1／3 完成——`ops/release/clean-install-smoke.sh`（單一 checkout dry-run→install→doctor→uninstall→無殘留，對 `.bak.*`／空骨架檔／`xdg/opencode` 空目錄做安全產物 allowlist）與 `ops/release/upgrade-smoke-v0.10-v0.11.sh`（v0.10.0 baseline→目前 candidate，改用真實安裝流程即為可重現 harness，取代原先設想的一次性報告文件）皆跑出 `GO`。摔倒點依 Requirement 4 開票：clean-install smoke 首次跑就抓到 codex host install/uninstall 的 scratch temp file 洩漏，即 [[CC-580]]，其 Requirement 1 已在同一 PR 內修復並驗證（allowlist 已排除掉刻意保留的備份/骨架安全產物，不誤判為殘留）。Requirement 5（`QA_RULES_DIR` 缺席行為）與 Requirement 2（live dogfood）維持未動，票繼續 active。
+
+**Done-when**：在 v0.11.0 release candidate 上，三個 smoke 的實測報告 committed（`docs/notes/` 或票內）；clean install 與 N-1 upgrade 都有可重現證據——**已達成**；摔倒點全部開票——offline smoke 摔倒點已開 [[CC-580]]；GETTING_STARTED 修正到與實測一致——**尚未做**；live dogfood 完成——**待 readiness review**。
 
 **Dependencies**：offline/N-1 smoke 在 [[CC-497]]、[[CC-456]]、[[CC-449]]、[[CC-503]] 後，且 v0.11.0 release freeze 中執行；live smoke 不預先綁 v1.0，待 v0.12.0 後 readiness review 排程。
 **See**: DECISIONS.md 2026-07-04
@@ -4099,7 +4101,7 @@ time 的 **88%**，其餘 awk/git/grep/cat/sha256sum/mktemp/sed 加起來只有 
 
 ---
 
-## CC-580 — codex host install/uninstall scratch temp file leak 🔵 active
+## CC-580 — codex host install/uninstall scratch temp file leak ✅ 2026-09-05
 
 **Problem**：[[CC-447]] 的 offline clean-install smoke（`ops/release/clean-install-smoke.sh`）
 跑一次 install→doctor→uninstall round-trip，`$TMPDIR` 下留了 3 個 stray `tmp.*` 檔案。
@@ -4113,12 +4115,13 @@ time 的 **88%**，其餘 awk/git/grep/cat/sha256sum/mktemp/sed 加起來只有 
 `hosts/codex/bin/uninstall.sh` 第 103-105、191 行是鏡像的同型缺陷（2 個 scratch
 檔：`tmp_new`／`tmp_instructions_new`）。
 
-**Requirement 1（本票立即修）**：不要在成功路徑撤銷 trap——移除
+**Requirement 1 — ✅ 已修復（pr:#573，2026-09-05）**：移除
 `hosts/codex/bin/install.sh:402` 與 `hosts/codex/bin/uninstall.sh:191` 的兩個
 `trap - EXIT`。對已 `mv` 走的路徑 `rm -f` 是安全的 no-op，讓原本註冊的 EXIT
-trap 一律負責清乾淨即可，不需要額外追蹤哪個檔案已被消費。加 regression test
-鎖住「hooks 或 instructions 其中一路未變更時，另一路的 scratch temp 不洩漏」，
-覆蓋 install 與 uninstall 兩邊。
+trap 一律負責清乾淨即可，不需要額外追蹤哪個檔案已被消費。兩個 host 腳本各補
+一個 regression test，鎖住「hooks 或 instructions 其中一路未變更時，另一路的
+scratch temp 不洩漏」；PR-gate 標準 tier 四位審查者皆 approve/pass，修復後
+`clean-install-smoke.sh` 端到端跑出 `GO`，assertions.tsv 零 FAIL。
 
 **Requirement 2（someday，需先拍板再動）**：`.bak.*` 備份檔（`install.sh:412-419`、
 `hosts/codex/bin/install.sh:387-397`／`uninstall.sh:173-189`）與解除安裝後留下的
@@ -4131,6 +4134,9 @@ trap 一律負責清乾淨即可，不需要額外追蹤哪個檔案已被消費
 （`.bak.*`、`claude/settings.json`、`codex/hooks.json`、`xdg/opencode`），把
 Requirement 2 的既有安全產物排除在外，讓殘留檢查只對 Requirement 1 這類真洩漏
 負責；這是驅動修復的量測工具本身的校正，不是 Requirement 2 的拍板决定。
+
+**結案 2026-09-05**：Requirement 1 交付（pr:#573）。Requirement 2 維持 someday、
+未拍板、未立獨立票——非阻塞，若日後要動再重新評估是否值得開票。
 
 **See**: [[CC-447]]（offline clean-install smoke，本票的觸發來源）
 
