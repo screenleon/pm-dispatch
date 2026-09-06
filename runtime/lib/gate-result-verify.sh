@@ -254,17 +254,8 @@ _gate_reviewer_protocol_document_verify() {
   # expected_reviewer from this same document's .reviewer field, making that
   # specific comparison a no-op in practice, but the parameter exists for a
   # future caller that supplies a genuinely external expectation.)
-  local reviewer_actual scope_actual
-  reviewer_actual="$(jq -r '.reviewer // empty' "$document" 2>/dev/null)"
-  if [[ "$reviewer_actual" != "$expected_reviewer" ]]; then
-    GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR="invalid top-level or binding contract"
-    return 1
-  fi
-  scope_actual="$(jq -r '.scope_manifest_sha256 // empty' "$document" 2>/dev/null)"
-  if [[ "$scope_actual" != "$expected_scope_sha" ]]; then
-    GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR="stale subject binding"
-    return 1
-  fi
+  # Compare bindings inside the diagnostic pass below, before findings, so
+  # reading this document does not start two additional jq interpreters.
   # Shared by both hand-written jq passes below (they run as separate
   # processes, split around the schema call in between, so each must define
   # its own copy rather than sharing a single jq program).
@@ -280,7 +271,10 @@ _gate_reviewer_protocol_document_verify() {
   # naming the exact offending finding id and phrasing the fix is retry-loop
   # UX that a generic schema message cannot produce. Run before the schema
   # pass below so these get first refusal on this specific pattern.
-  validation="$(jq -r "$jq_display_def"'
+  validation="$(jq -r \
+    --arg expected_reviewer "$expected_reviewer" \
+    --arg expected_scope_sha "$expected_scope_sha" \
+    "$jq_display_def"'
     def findings_array:
       if (.findings | type) == "array" then .findings else [] end;
     def duplicate_finding_id:
@@ -301,7 +295,11 @@ _gate_reviewer_protocol_document_verify() {
         )
       ] | first;
     try (
-    if duplicate_finding_id
+    if (.reviewer // "") != $expected_reviewer
+    then "invalid top-level or binding contract"
+    elif (.scope_manifest_sha256 // "") != $expected_scope_sha
+    then "stale subject binding"
+    elif duplicate_finding_id
     then "invalid finding contract"
     elif (blocking_severity_violation != null)
     then (blocking_severity_violation as $invalid |
