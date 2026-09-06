@@ -211,3 +211,32 @@ fixture; no new parser, serialization delimiter, cache, or helper abstraction
 is needed. Parsing, healing, and structural-validation passes have distinct
 failure contracts and remain separate. Further call-site batching and the
 subsequent concurrency experiment remain later CC-579 slices.
+
+## Slice 1 continuation — empty policy matches (2026-09-06)
+
+After the reviewer-binding slice (#576), the same two-gate `tier-detection`
+census measured **640 → 608 jq calls**: one empty-array probe removed for each
+of 16 signal rows per gate, or **16 fewer calls per gate (5.0%)**. Both measured
+subjects passed two cases, and the other instrumented binary counts stayed
+unchanged. This is a process-count result; it does not establish a wall-time
+improvement, and earlier cross-day timing figures are not comparable.
+
+Every match producer in `_gate_policy_resolve` already returns a compact JSON
+array, or leaves the initial literal `[]`. Comparing that internal output with
+`[]` removes the separate `jq -r length` process. The classification, path
+regex, and brief-value match computations themselves are unchanged. A failed
+brief-value array producer now explicitly returns execution failure, matching
+the other array producers, before any policy result can be emitted.
+
+The library-level cost case checks exact tier/reviewer/match evidence for all
+three match-source kinds. Adding eight unmatched classification rules leaves
+the entire policy result unchanged and adds eight jq calls, not sixteen. A
+temporary reintroduction of the old length probe failed that assertion with
+growth=16; restoring the optimization passed. A separate one-off fault probe
+confirmed a failed brief-value jq returns exit 2 with no policy result.
+
+Refactor/reuse audit: reuse the existing compact-array producers and their
+error cleanup; no new JSON encoder, cache, matcher, or helper layer is needed.
+Existing end-to-end policy cases remain in place. This is another bounded
+cost reduction, not evidence that a tenfold reduction in gate overhead is
+achievable; larger batching needs separate safety and payoff evidence.
