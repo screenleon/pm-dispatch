@@ -30,6 +30,8 @@ th_init "$@"
 . "$SCRIPT_DIR/../lib/gate-scope-manifest-fixtures.sh"
 # shellcheck source=tests/lib/gate-reviewer-result-fixtures.sh
 . "$SCRIPT_DIR/../lib/gate-reviewer-result-fixtures.sh"
+# shellcheck source=runtime/lib/gate-result-verify.sh
+. "$REPO_ROOT/runtime/lib/gate-result-verify.sh"
 
 case_verify_valid_instance_passes() {
   local name="gate_structural_schema_verify: valid instance passes with no stderr"
@@ -301,6 +303,66 @@ case_verdict_block_with_hard_block_finding_still_passes() {
   if [[ "$rc" -eq 0 ]]; then pass "$name"; else fail "$name" "rc=$rc"; fi
 }
 
+case_reviewer_binding_diagnostics_and_process_budget() {
+  # Behavior: external bindings fail before finding diagnostics, and a valid
+  # reviewer document uses at most six jq processes (CC-579's measured budget).
+  # Steps: vary expected bindings against the shared fixture, including a
+  # competing finding error; count real jq invocations on the valid path.
+  # Library-level coverage: no reviewer dispatch or full gate is needed.
+  local name="reviewer protocol: binding precedence and jq process budget"
+  should_run "$name" || return 0
+  local document="$tmp_root/reviewer-bindings.json" scope reviewer expected rc
+  local shimdir="$tmp_root/reviewer-jq-shim" tally="$tmp_root/reviewer-jq.tally"
+  local real_jq count
+  scope="$(printf 'a%.0s' {1..64})"
+  _gate_reviewer_result_valid_instance \
+    | jq '.test_gaps[0].affected_behavior = .findings[0].affected_behavior' > "$document"
+  real_jq="$(type -P jq)"
+  mkdir -p "$shimdir"
+  {
+    printf '%s\n' '#!/usr/bin/env bash'
+    printf 'printf x >> %q\n' "$tally"
+    printf 'exec %q "$@"\n' "$real_jq"
+  } > "$shimdir/jq"
+  chmod +x "$shimdir/jq"
+  : > "$tally"
+  rc=0
+  PATH="$shimdir:$PATH" _gate_reviewer_protocol_document_verify \
+    "$document" critic "$scope" || rc=$?
+  count="$(wc -c < "$tally")"
+  if [[ "$rc" -ne 0 || "$count" -gt 6 ]]; then
+    fail "$name" "valid document rc=$rc jq=$count error=$GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR"
+    return
+  fi
+  # An invalid finding must not mask either external binding failure.
+  _gate_reviewer_result_valid_instance | jq '.findings += .findings' > "$document"
+  for reviewer in qa-tester critic; do
+    expected="invalid top-level or binding contract"
+    [[ "$reviewer" == critic ]] && expected="stale subject binding"
+    rc=0
+    _gate_reviewer_protocol_document_verify "$document" "$reviewer" stale || rc=$?
+    if [[ "$rc" -ne 1 || "$GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR" != "$expected" ]]; then
+      fail "$name" "reviewer=$reviewer rc=$rc error=$GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR"
+      return
+    fi
+  done
+  rc=0
+  _gate_reviewer_protocol_document_verify "$document" critic "$scope" || rc=$?
+  if [[ "$rc" -ne 1 || "$GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR" != "invalid finding contract" ]]; then
+    fail "$name" "matching bindings rc=$rc error=$GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR"
+    return
+  fi
+  printf '{oops\n' > "$document"
+  rc=0
+  _gate_reviewer_protocol_document_verify "$document" critic "$scope" || rc=$?
+  if [[ "$rc" -eq 1 && "$GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR" == "invalid JSON document"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "malformed JSON rc=$rc error=$GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR"
+  fi
+}
+
+case_reviewer_binding_diagnostics_and_process_budget
 case_verify_valid_instance_passes
 case_verify_invalid_instance_reports_path_and_message
 case_first_error_valid_instance_no_output

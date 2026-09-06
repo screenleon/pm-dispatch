@@ -180,3 +180,34 @@ sites are 9 per gate each rather than 30.
   loudly" contract, so each collapse needs that checked explicitly.
 - Any number for a real (non-stub) gate. The reviewer dispatch dominates there;
   this baseline only bounds the shell overhead.
+
+## Slice 1 continuation — reviewer bindings (2026-09-06)
+
+The reviewer verifier used two separate jq processes to read `reviewer` and
+`scope_manifest_sha256` before its finding diagnostics. Both comparisons now
+run at the start of that existing diagnostic pass. JSON parsing and evidence
+healing still precede it; reviewer mismatch, stale scope, and finding errors
+retain that precedence. Schema and evidence-reference validation still run.
+
+On the same `tier-detection` subject, `--mode exec` measured **676 → 640 jq
+calls** across two gate runs: 18 reviewer-document validations save two calls
+each, or **18 fewer calls per gate (5.3%)**. Both subjects passed all two cases;
+other instrumented binary counts were unchanged. This is a process-count
+measurement, not a claim about end-to-end latency or reviewer model time.
+
+Reproduce before and after the change:
+
+```bash
+bash ops/diagnostics/gate-subprocess-census.sh --mode exec
+```
+
+The library-level case in `test-gate-structural-verify.sh` checks binding-error
+precedence, malformed JSON rejection, acceptance of a complete reviewer
+document, and a maximum of six jq processes for that document. The affected
+suite mapping includes this case when `gate-result-verify.sh` changes.
+
+Refactor/reuse audit: reuse the existing diagnostic pass and canonical reviewer
+fixture; no new parser, serialization delimiter, cache, or helper abstraction
+is needed. Parsing, healing, and structural-validation passes have distinct
+failure contracts and remain separate. Further call-site batching and the
+subsequent concurrency experiment remain later CC-579 slices.
