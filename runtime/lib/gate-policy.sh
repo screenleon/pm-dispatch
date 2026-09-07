@@ -574,7 +574,10 @@ _gate_policy_resolve() {
         ;;
       brief-value)
         if [[ "$(jq -r '.classification.architecture_impact' <<<"$input_json")" == "$pattern" ]]; then
-          matches_json="$(jq -nc --arg value "$pattern" '[$value]')"
+          matches_json="$(jq -nc --arg value "$pattern" '[$value]')" || {
+            rm -f "$signals_file"
+            return 2
+          }
         fi
         ;;
       *)
@@ -583,7 +586,9 @@ _gate_policy_resolve() {
         return 2
         ;;
     esac
-    [[ "$(jq -r 'length' <<<"$matches_json")" -gt 0 ]] || continue
+    # Every producer above emits a compact JSON array (jq -c), or leaves the
+    # initial literal []. No additional parser is needed to detect no match.
+    [[ "$matches_json" != '[]' ]] || continue
 
     current_rank="$(_gate_policy_tier_rank "$minimum_tier")" || {
       rm -f "$signals_file"

@@ -8,9 +8,9 @@
 # $PR_GATE_POLICY_DIR), so they belong at ~0.12s/case. No production change:
 # gate-policy.sh is only sourced and called.
 #
-# gate-policy.sh's risk/policy *resolver* (_gate_policy_resolve) is deliberately
-# NOT covered here -- its input is a large hand-built JSON contract and moving
-# those cases safely needs a captured golden input; they stay end-to-end for now.
+# Resolver integration remains in test-pr-gate.sh. The focused cost case below
+# uses the same input shape as pr-gate.sh's GATE_POLICY_INPUT producer, without
+# dispatching reviewers, to measure unmatched-signal overhead directly.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -159,4 +159,58 @@ if should_run "$name"; then
   if [[ "$rc0" -eq 2 && "$rc1" -eq 2 && "$rc2" -eq 2 ]]; then pass "$name"; else fail "$name" "rc0=$rc0 rc1=$rc1 rc2=$rc2"; fi
 fi
 
+case_resolver_unmatched_signal_cost() {
+  # Behavior: unmatched classification rules add only the match-producing jq,
+  # and do not change the resolved tier, reviewer set, or matched evidence.
+  # Steps: resolve a fixture matching all three signal-source kinds, append
+  # unmatched rules, and compare both output and actual process-count growth.
+  local name="policy resolver: unmatched signals avoid extra jq probes"
+  should_run "$name" || return 0
+  local policy_dir input first second first_count second_count rc=0 index
+  local shimdir="$tmp_root/policy-jq-shim" tally="$tmp_root/policy-jq.tally" real_jq
+  policy_dir="$(_policy_dir resolver-cost)"
+  input="$(jq -nc '{
+    policy:"generic",policy_source:"repo",scope_fingerprint:("a" * 64),
+    requested:{tier:"auto",mode:"default",pass_kind:"initial",reviewers:null},
+    reviewer_vocabulary:["critic","qa-tester","architecture-reviewer","security-reviewer","risk-reviewer"],
+    changed_paths:["runtime/auth/example.sh"],
+    classifications:[{id:"bounded-runtime",matches:["runtime/auth/example.sh"]}],
+    classification:{architecture_impact:"minor",line_changes:1,binary_or_unknown_count:0,layer_roots:["runtime"]},
+    reviewer_override:null
+  }')"
+  real_jq="$(type -P jq)"
+  mkdir -p "$shimdir"
+  {
+    printf '%s\n' '#!/usr/bin/env bash'
+    printf 'printf x >> %q\n' "$tally"
+    printf 'exec %q "$@"\n' "$real_jq"
+  } > "$shimdir/jq"
+  chmod +x "$shimdir/jq"
+  : > "$tally"
+  first="$(PR_GATE_POLICY_DIR="$policy_dir" PATH="$shimdir:$PATH" _gate_policy_resolve "$input")" || rc=$?
+  first_count="$(wc -c < "$tally")"
+  for index in {1..8}; do
+    printf 'unmatched-%s\tclassification\tdocs-only\tfull\trisk-reviewer\tparallel\n' "$index" \
+      >> "$policy_dir/gate-policy-signals.tsv"
+  done
+  : > "$tally"
+  second="$(PR_GATE_POLICY_DIR="$policy_dir" PATH="$shimdir:$PATH" _gate_policy_resolve "$input")" || rc=$?
+  second_count="$(wc -c < "$tally")"
+  if [[ "$rc" -ne 0 || "$first" != "$second" || $((second_count - first_count)) -ne 8 ]]; then
+    fail "$name" "rc=$rc jq growth=$((second_count - first_count)); expected 8 and unchanged resolution"
+    return
+  fi
+  if jq -e '
+    .resolved == {tier:"standard",mode:"parallel",reviewers:["critic","qa-tester","architecture-reviewer","security-reviewer"]} and
+    .enforcement.status == "pass" and
+    [.matched_signals[].id] == ["consumer-policy","bounded-runtime","security-sensitive-path","brief-architecture-minor"] and
+    [.matched_signals[].matches] == [["generic:initial"],["runtime/auth/example.sh"],["runtime/auth/example.sh"],["minor"]]
+  ' <<< "$first" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "matched classification/path/brief evidence changed: $first"
+  fi
+}
+
+case_resolver_unmatched_signal_cost
 th_summary
