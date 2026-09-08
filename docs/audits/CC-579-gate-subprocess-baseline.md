@@ -240,3 +240,80 @@ error cleanup; no new JSON encoder, cache, matcher, or helper layer is needed.
 Existing end-to-end policy cases remain in place. This is another bounded
 cost reduction, not evidence that a tenfold reduction in gate overhead is
 achievable; larger batching needs separate safety and payoff evidence.
+
+## Slice 1 close-out — subject-field batch + census hardening (2026-09-08)
+
+Re-measurement at HEAD `e610245` (after #568/#569/#570/#576/#577), same
+two-gate `tier-detection` subject:
+
+| point | jq calls / 2 runs | jq / gate |
+|---|---|---|
+| Slice 0 baseline (#568) | 736 | 368 |
+| after schema probe (#570) | 676 | 338 |
+| after reviewer bindings (#576) | 640 | 320 |
+| after empty-policy skip (#577) | 608 | 304 |
+| **this change** | **588** | **294** |
+
+Cumulative: **368 → 294 jq/gate, −74 (−20%)**.
+
+This change folds the six per-field `jq -r` reads that
+`_gate_assurance_linked_evidence_verify` makes on the assurance file before
+calling `gate_scope_manifest_verify` into one `@tsv` pass (**−10 jq/gate**),
+and applies the same fold to the four-field wait decision and the human
+`pmctl gate verify` summary in `runtime/lib/pmctl-gate.sh` (not exercised by
+this census subject, which drives `pr-gate.sh` directly). Every folded read is
+`jq -r` on a document already schema-verified upstream; `jq -r` on a missing
+field and `@tsv` on a null field both yield an empty value, so an absent field
+still arrives as an empty argument exactly as before, and `|| true` on the
+`read` preserves the prior non-fatal behaviour on an unreadable file. The
+values are git keys, commit SHAs, refs and enum statuses, none of which can
+contain a tab or newline, so `@tsv` escaping cannot desync the split.
+
+`ops/diagnostics/gate-subprocess-census.sh` itself had two defects found while
+re-measuring, both now fixed and locked with regression cases in
+`tests/shell/test-gate-subprocess-census.sh`:
+
+- `--mode bash` exited **rc=141**: each tally pipeline ends in `head -N`, and
+  once `sort -rn`'s output exceeds a pipe buffer the closed pipe drives it to
+  SIGPIPE, which under `pipefail` + `set -e` aborted the script *before* the
+  `--attribute` table — the entire point of `--mode bash`. The reporting
+  pipelines now cannot end the script; the measurement's usability is still
+  the subject exit code.
+- the `mktemp -d` scratch dir (~3.6 MB/run) was never removed; the EXIT trap
+  now deletes it after the optional `--out` copy.
+
+## Close-out: CC-579 done (2026-09-08)
+
+Five slices shipped: the census tool + baseline (#568), exact per-call-site
+attribution (#569), schema-probe merge (#570), reviewer-binding batch (#576),
+empty-policy probe skip (#577), and this subject-field batch + census
+hardening. jq per gate fell **368 → 294 (−20%)**.
+
+The remainder is not safely collapsible:
+
+- **~30 jq/gate is the schema validator itself** (`gate-structural-verify.sh`
+  `jq -f`) — that *is* the verification, not overhead.
+- **~63 jq/gate is the per-reviewer-document chain** in
+  `gate-result-verify.sh` (`:190`–`:703`): a sequence of distinct
+  "bad data must fail loudly" boundaries — invalid-JSON, binding-mismatch,
+  schema, test-gap, evidence-ref — each raising its own
+  `GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR`. They run as separate processes by
+  design; folding them is exactly the CC-573 hazard this ticket's Risks
+  section forbids without per-merge-point proof, and #576 already folded the
+  cheap reads there.
+- the rest is a 2–4 jq/gate long tail in the repo's most security-sensitive
+  script, each site needing individual failure-isolation review, for a
+  projected full-suite saving below the mechanical-optimisation ROI floor
+  (see the `test-suite-duration-ceiling` note) — and cross-day wall/CPU on
+  this machine is not comparable, so the saving is not reliably measurable.
+
+The concurrency re-test (originally "Slice 2") is **not pursued**: the earlier
+8-job experiment failed on the correctness axis (two suites failed), which a
+20% jq reduction does not change; revisit only if suite composition changes.
+
+The durable win is the repeatable census tool + this baseline: any future gate
+change now has a before/after oracle.
+
+The quadratic `block="${block}…"` accumulation in
+`gate_reviewer_protocol_verify` (`gate-result-verify.sh:651`) is bash-side, not
+the 88% jq cost, and is spun out to CC-581 rather than held here.

@@ -791,10 +791,16 @@ pmctl_gate_wait() {
           fi
           return 2
         fi
-        _artifact_axis="$(jq -r '.axes.artifact_valid.status' <<<"$_assessment")"
-        _subject_axis="$(jq -r '.axes.subject_current.status' <<<"$_assessment")"
-        _policy_axis="$(jq -r '.axes.policy_applicable.status' <<<"$_assessment")"
-        _assurance_kind="$(jq -r '.assurance.kind // "legacy"' <<<"$_assessment")"
+        # One jq pass for the four fields the wait decision needs. $_assessment
+        # was already confirmed to be gate_verification_v1 above; the `// "legacy"`
+        # fallback is kept inside the array, and axis values are enum strings
+        # with no tab/newline, so @tsv + IFS split reproduces the four separate
+        # `jq -r` reads exactly. `|| true` preserves their non-fatal behaviour.
+        IFS=$'\t' read -r _artifact_axis _subject_axis _policy_axis _assurance_kind < <(
+          jq -r '[.axes.artifact_valid.status, .axes.subject_current.status,
+                  .axes.policy_applicable.status, (.assurance.kind // "legacy")] |
+                 @tsv' <<<"$_assessment"
+        ) || true
         if [[ "$_artifact_axis" != pass \
             || ( "$_assurance_kind" == gate_assurance_v3 \
               && "$_subject_axis" != pass ) ]]; then
@@ -1112,17 +1118,24 @@ pmctl_gate_verify() {
   if [[ "$json_output" == true ]]; then
     printf '%s\n' "$report"
   else
-    if [[ "$(jq -r '.axes.artifact_valid.status' <<<"$report")" == pass ]]; then
+    # One jq pass for the four scalar fields this human summary prints (one was
+    # read three times). $report was schema-verified just above; values are
+    # enum statuses with no tab/newline. The reason-code list below is a
+    # different projection and stays its own call.
+    local _art_status _asr_status _sub_status _pol_status
+    IFS=$'\t' read -r _art_status _asr_status _sub_status _pol_status < <(
+      jq -r '[.axes.artifact_valid.status, .assurance.status,
+              .axes.subject_current.status, .axes.policy_applicable.status] |
+             @tsv' <<<"$report"
+    ) || true
+    if [[ "$_art_status" == pass ]]; then
       printf 'gate result OK: %s\n' "$result_abs"
     fi
-    printf 'assurance: %s\n' "$(jq -r '.assurance.status' <<<"$report")"
+    printf 'assurance: %s\n' "$_asr_status"
     [[ -n "$assurance_file" ]] && printf 'assurance file: %s\n' "$assurance_file"
-    printf 'artifact_valid: %s\n' \
-      "$(jq -r '.axes.artifact_valid.status' <<<"$report")"
-    printf 'subject_current: %s\n' \
-      "$(jq -r '.axes.subject_current.status' <<<"$report")"
-    printf 'policy_applicable: %s (consumer=%s)\n' \
-      "$(jq -r '.axes.policy_applicable.status' <<<"$report")" "$consumer"
+    printf 'artifact_valid: %s\n' "$_art_status"
+    printf 'subject_current: %s\n' "$_sub_status"
+    printf 'policy_applicable: %s (consumer=%s)\n' "$_pol_status" "$consumer"
     jq -r '.axes | to_entries[] |
       select(.value.reason_codes | length > 0) |
       "\(.key) reasons: \(.value.reason_codes | join(","))"' <<<"$report"
