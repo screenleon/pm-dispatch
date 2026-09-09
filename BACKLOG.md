@@ -4249,6 +4249,16 @@ document in the middle of a pipeline`）；建議 ship 一個 `pmctl.cmd` shim �
 ＋`test-pmctl-gate.sh`＋`test-pmctl-pm.sh` 綠、pr-gate GO、PR 開出；Req 2／3 各自
 維持 someday／deferred，日後要動再評估。
 
+**Gate saga（Req 1）**：4 輪。R1 NO-GO 6 findings（`timeout 0` 未擋、gate/PM
+124-fallback 無 e2e、no-`timeout` 分支未測、變數未進 ownership inventory、process
+tree kill）全數 remediate。R2 GO。改動 shellcheck-only（SC2016：`env "PATH=..."
+bash -c` 讓 shellcheck 認不出 `bash -c` idiom→改回 assignment-prefix）後 subject
+漂移，R3 重跑 NO-GO，收斂到單一主題「要真的證明 timeout 殺掉整棵 refresh process
+tree，不能只靠 stub `timeout` 斷言」→ 加真 descendant 整合測試（真跑 `timeout`
+對一個 fork 出被追蹤子孫並 hang 住 stdout pipe 的 stub `cli/pmctl`，斷言 caller
+快速返回、exit 124、無 stdout、子孫 PID 已死）。R4 GO。全套 `--all` 綠（唯一
+skip 是 non-root `state_store_init`，環境性、與本題無關）。
+
 **See**: issue #579；[[CC-370]]（Req 3 去處）；[[CC-461]]（Req 2 的 `--fix` 先例）
 
 ---
