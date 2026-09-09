@@ -395,6 +395,58 @@ test_unreadable_flags_reported_subject_command() {
   else fail "$name" "expected the subject line to name $suite, got :: $out"; fi
 }
 
+# ------------------------------------------------------ report survives head(1)
+
+test_bash_mode_report_completes_when_pipelines_are_truncated() {
+  local name="bash mode prints the --attribute table even when head truncates the tallies"
+  should_run "$name" || return 0
+  local gate suite out rc=0 i
+  gate="$tmp_root/truncate-runner/pr-gate.sh"
+  mkdir -p "$tmp_root/truncate-runner"
+  # Every tally section ends in `head -N`. Once `sort -rn`'s output is larger
+  # than a pipe buffer (~2500 rows), the head closes the pipe mid-write, sort
+  # takes SIGPIPE, and under `pipefail` + `set -e` the census aborts -- in the
+  # "hottest source:line" section, i.e. *before* the --attribute table that is
+  # the whole point of --mode bash. The real gate trace has several thousand
+  # distinct source:line rows; this fake reaches the same threshold with 3500
+  # distinct assignment lines, plus two real jq calls so the attribution table
+  # has content to show.
+  {
+    printf '#!/usr/bin/env bash\n'
+    for ((i = 0; i < 3500; i++)); do printf 'v%d=%d\n' "$i" "$i"; done
+    printf 'jq -n 1 >/dev/null\n'
+    printf 'jq -n 2 >/dev/null\n'
+    printf 'exit 0\n'
+  } > "$gate"
+  chmod +x "$gate"
+  suite="$(fake_suite truncate-driver "bash '$gate'; exit 0")"
+  out="$(bash "$CENSUS" --suite "$suite" --case any --timeout 60 --mode bash 2>&1)" || rc=$?
+  local attributed
+  attributed="$(awk '/TOTAL attributed/ { print $1 }' <<< "$out")"
+  if [[ "$rc" -eq 0 && "$out" == *"jq invocations per source:line"* && "${attributed:-0}" -eq 2 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected rc=0 and the full attribution table (2 jq sites), got rc=$rc attributed=${attributed:-0} :: $out"
+  fi
+}
+
+test_work_dir_is_removed_on_exit() {
+  local name="the census scratch dir is cleaned up, not left under TMPDIR"
+  should_run "$name" || return 0
+  local suite priv rc=0 leftover
+  suite="$(fake_suite workdir-clean 'jq -n 1 >/dev/null; exit 0')"
+  priv="$tmp_root/private-tmpdir"
+  mkdir -p "$priv"
+  TMPDIR="$priv" bash "$CENSUS" --suite "$suite" --case any --timeout 30 --mode time \
+    >/dev/null 2>&1 || rc=$?
+  leftover="$(find "$priv" -maxdepth 1 -type d -name 'gate-census.*' 2>/dev/null)"
+  if [[ "$rc" -eq 0 && -z "$leftover" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected a clean TMPDIR after a successful run, got rc=$rc leftover=[$leftover]"
+  fi
+}
+
 test_unknown_flag_is_usage_error
 test_invalid_mode_is_usage_error
 test_non_numeric_timeout_is_usage_error
@@ -417,5 +469,7 @@ test_hard_killed_census_does_not_strand_the_lock
 test_lock_is_released_after_a_run
 test_out_dir_receives_the_raw_log
 test_unreadable_flags_reported_subject_command
+test_bash_mode_report_completes_when_pipelines_are_truncated
+test_work_dir_is_removed_on_exit
 
 th_summary

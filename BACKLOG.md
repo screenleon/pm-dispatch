@@ -114,9 +114,10 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-575 | 🟢 someday | test-governance Batch 1 存量遷移：把其餘 ~35 處 `pass "$name (... unavailable ...)"`（多在 `test-doctor.sh` 的 jq guard、也有 `test-core-schemas`／`test-install`／`test-pmctl-memory`／`test-runtime-lib-coverage` 的 `UNAVAILABLE:` 裸行）改用 case-level `skip()`。primitive 與 authoritative gate 已於 pr:#<TBD> 落地並遷移 6 個代表站點；本票只做剩餘機械遷移，不再動 harness/runner/schema | ops/test | 2026-08-28 | — | P3 | hygiene |
 | CC-576 | ✅ done | 測試成本重新規劃（實測基線）：全套 10,764 CPU-s／110 suite，`test-pr-gate` 4 shard 佔 49.1%、top-10 佔 72%、其餘 85 個 suite 只佔 6.1%。成本不是「測試太多」也不是「斷言劣質」（290 case 只有 9 個純文字斷言），而是 243 個 case 每個都 spawn 一次真的 `pr-gate.sh`（uncontended 實測 mean 8.2s／p90 18s）。唯一會複利的槓桿是把行為從 integration 層（8.2s/case）搬到 unit 層（`test-gate-protocol` 實測 0.12s/case，68×），也就是續拆 `pr-gate.sh` 時**同時搬測試**；已辨識 57 個可搬 case（pre-dispatch policy 29 + brief-composition 28）。本票只定基線、判準與順序，不含實作 | ops/test | 2026-08-29 | pr:#560 | P2 | design |
 | CC-577 | ✅ done | lint 規則穿測試外衣的 case 退場（評估 4 個、搬 2 個、留 2 個）：`test-pmctl-memory.sh` 的 `case_memory_shared_readers_avoid_bash_43_namerefs`（grep 3 個硬編檔禁 `local -n`）、`test-dispatch-common.sh` 的 `case_dispatch_common_no_adapter_name_in_code`（grep 禁 adapter 字面值）、`test-host-manifest.sh:596`（grep `doctor.sh` 格式字串）、`test-e2e-script.sh` 的 `test_phase_c_commits_context_ignore`（斷言腳本內文含某行而非跑它）。全語料掃描確認只有這 4 個是真 proxy（另 12 處讀 production 檔的斷言都合法）。搬進 `test-layer-boundaries.sh`（既有「掃 ROOT + fixture 種違規」模式、全套 1 秒）：規則從「查 3 個硬編檔」變「掃整棵樹」覆蓋變強；e2e 那個改真跑再驗檔。買到的是先例與覆蓋強度，不是時間（4 case 省不到 5s）。是 [[CC-576]] Req 2「測試層級判準」的示範案例 | ops/test | 2026-08-29 | pr:#559 | P3 | hygiene |
-| CC-579 | 🔵 active | pr-gate 執行成本：一次 gate 執行 14s 全是 shell 自身工作（stub reviewer 不做模型工作），其中 **jq 佔 child time 88%**——每次 gate ~368 次 jq 呼叫 × ~39ms 啟動成本 ≈ 14s。`test-pr-gate` 家族＝全套 10,707 CPU-s 的 **49%**，且每次真 gate 也付同一筆。Slice 0（本 PR）：`ops/diagnostics/gate-subprocess-census.sh` 三模式量測工具 + `docs/audits/CC-579-gate-subprocess-baseline.md` 基線，不改任何 production 行為。後續 slice：收斂 jq 呼叫點（[[CC-364]]／[[CC-573]] 既有單次串流 pass 模式）、再重測並行度上限 | ops/gate | 2026-08-31 | pr:#568 | P1 | design |
+| CC-579 | ✅ done | pr-gate 執行成本：jq 佔 gate child time 88%。五刀收斂——census 工具＋基線（#568）、精確 per-call-site 歸因（#569）、schema 探測併入 validator（#570）、reviewer binding 批次化（#576）、空 policy match 略過探測（#577）、subject-field 批次＋census 硬化（本 PR）。jq/gate 368→294（−20%）。剩餘不可安全收斂：~30/gate 是 schema validator 本身，~63/gate 是 `gate-result-verify.sh` per-reviewer 逐檔「壞資料大聲失敗」鏈（刻意分行程，屬 [[CC-573]] 禁區），其餘 2–4/gate 長尾在最安全敏感腳本、投報低於 ROI 底線。並行度重測不追（前次 8-job 敗在正確性非 CPU）。二次方 `block=` 累加拆 [[CC-581]] | ops/gate | 2026-08-31 | pr:#568, pr:#569, pr:#570, pr:#576, pr:#577, pr:#578 | P1 | design |
 | CC-578 | 🟢 someday | config-surface authority 標記（[[CC-446]] Req 6 拆出）：每份 manifest／schema／registry／policy／layout spec（~44 檔：19 `core/schema/*.json` + 20 `*.yaml` + 5 `core/policy/*.tsv`）標記為 `runtime authority`／`build-time authority`／`parity/documentation spec`；runtime／build-time authority 必須有單一 consumer/generator 路徑與 drift check，不得一面宣稱 source of truth 一面維護等價手寫實作。多為逐檔判斷、多數需新增 drift 測試，是獨立多 PR 工程；與 [[CC-451]] 同批評估（runtime 從不驗證的 schema 不列 stable） | process/DX | 2026-08-30 | — | P2 | design |
 | CC-580 | ✅ done | [[CC-447]] offline clean-install smoke 摔倒點：codex host `install.sh`／`uninstall.sh` 各自 `mktemp` 出 4／2 個 scratch temp file，成功路徑無條件 `trap - EXIT` 導致未消費的 scratch temp 洩漏進 `$TMPDIR`。**Requirement 1 已修復**（pr:#573）：移除成功路徑的 `trap - EXIT`，讓已註冊的 EXIT trap 一律負責清乾淨；兩個 host 腳本各補一個 regression test 鎖住「hooks 或 instructions 其中一路未變更時另一路 scratch temp 不洩漏」。`clean-install-smoke.sh` 的殘留判定同時補上安全產物 allowlist（`.bak.*`／空骨架檔／`xdg/opencode`），修復後跑出 `GO`。**Requirement 2（.bak.*／空骨架檔的保留語意要不要改）維持 someday、未拍板、未立獨立票**——非阻塞，若日後要動再重新評估是否值得開票 | ops/install | 2026-09-05 | pr:#573 | P1 | hygiene |
+| CC-581 | 🟢 someday | `gate_reviewer_protocol_verify` 的二次方 `block=` 累加（`runtime/lib/gate-result-verify.sh:651`）：逐行 bash 字串串接抽 fenced reviewer_result 區塊，對區塊行數 O(n²)。[[CC-579]] census 實測 bash 端非 gate 主成本（88% 在 jq），故列次要未動。無感但屬演算法級劣化，值得在有人為別因動到該函式時順手換 O(n)（`mapfile`＋`printf` 或單次 `awk` 切檔），維持 fence 巢狀／截斷／空區塊失敗語意與 `GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR` 值不變。獨立排程投報不足 | ops/gate | 2026-09-08 | — | P3 | — |
 
 ---
 
@@ -4046,7 +4047,7 @@ consumer + drift check（而不是一面宣稱 source of truth、一面維護等
 
 **See**: [[CC-446]] Req 6；DECISIONS.md 2026-07-04
 
-## CC-579 — pr-gate 執行成本：jq 呼叫密度 🔵 active
+## CC-579 — pr-gate 執行成本：jq 呼叫密度 ✅ 2026-09-08
 
 **Problem**：一次 `pr-gate.sh` 執行要 **14 秒**，而測試裡的 reviewer 是立即回覆的 stub
 ——完全沒有模型工作，那 14 秒全部是 gate 自己的 shell 工作。實測（2026-08-31，
@@ -4096,8 +4097,54 @@ time 的 **88%**，其餘 awk/git/grep/cat/sha256sum/mktemp/sed 加起來只有 
 `block="${block}...${line}"` 累加、對 block 大小是二次方。bash 端整體不是主成本，故列為
 次要。
 
+**Closure 2026-09-08**：五刀出貨——census 工具＋基線（#568）、精確 per-call-site
+歸因（#569）、`gate-structural-verify.sh` 存在性探測併入 validator（#570）、
+reviewer binding 批次化（#576）、空 policy match 略過 `jq -r length` 探測（#577）、
+以及 #578 的 subject-field 批次（`_gate_assurance_linked_evidence_verify` 對
+assurance file 的 6 次 `jq -r` 併成一次 `@tsv` pass，同法套到 `runtime/lib/pmctl-gate.sh`
+的 wait 判定與 `pmctl gate verify` 人類摘要）＋ `gate-subprocess-census.sh` 兩個
+缺陷修復（`--mode bash` 的 `pipefail`+`head` SIGPIPE 讓歸因表未印就 rc=141；
+scratch dir 從不清）。census 實測 jq/gate **368 → 294（−20%）**。
+
+剩餘不追，理由：(a) ~30/gate 是 `gate-structural-verify.sh` 的 schema validator
+本身（`jq -f`），那是驗證不是開銷；(b) ~63/gate 是 `gate-result-verify.sh:190-703`
+的 per-reviewer 逐檔驗證鏈，一連串各自 raise `GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR`
+的獨立失敗邊界，刻意分行程，折疊即踩 [[CC-573]] 記載的「單次 jq 靜默丟掉大聲失敗契約」
+禁區，且 #576 已折掉該處便宜讀取；(c) 其餘 2–4/gate 長尾在 repo 最安全敏感腳本、
+每點需個別失敗隔離審查，全套節省低於 `test-suite-duration-ceiling` 的機械優化 ROI 底線，
+且跨日 wall/CPU 不可比、節省量測不可靠。並行度重測（原 Slice 2）不追：前次 8-job
+實驗敗在正確性軸（2 套件失敗），20% jq 降低改變不了這點，僅在套件組成變動時重評。
+持久產物＝可重跑的 census 工具＋本基線，任何後續 gate 改動都有 before/after oracle。
+`gate_reviewer_protocol_verify` 的二次方 `block="${block}…"` 累加（`gate-result-verify.sh:651`）
+是 bash 端、非 88% jq 成本，拆出 [[CC-581]]。
+
 **See**: `docs/audits/CC-579-gate-subprocess-baseline.md`；[[CC-576]]（測試成本基線）、
-[[CC-561]]（並行度實測）、[[CC-364]]／[[CC-573]]（單次串流 jq pass 前例）
+[[CC-561]]（並行度實測）、[[CC-364]]／[[CC-573]]（單次串流 jq pass 前例）、
+[[CC-581]]（二次方 block 累加 follow-up）
+
+---
+
+## CC-581 — gate_reviewer_protocol_verify 二次方 block 累加 🟢 someday
+
+**Problem**：`runtime/lib/gate-result-verify.sh:651` 的
+`block="${block}${block:+$'\n'}${line}"` 在 `while IFS= read -r line` 迴圈裡逐行
+累加 fenced reviewer_result 區塊；bash 字串串接每次都複製整段已累積內容，對區塊行數
+是 O(n²)。[[CC-579]] census 實測 bash 端整體不是 gate 主成本（88% 在 jq），故當時
+列為次要、未動。
+
+**Why**：reviewer_result 區塊通常只有數十行，二次方成本目前無感；但這是已知的
+演算法級劣化，值得在有人為別的原因動到 `gate_reviewer_protocol_verify` 時順手換成
+一次性 `awk` 抽取或陣列 append + `printf '%s\n'`。獨立排程投報不足。
+
+**Requirement**：把逐行 `block=` 字串累加換成 O(n) 做法（例：`mapfile` 到陣列後
+`printf`，或單次 `awk` 依 fence 切檔），維持現有 fence 巢狀／截斷／空區塊的失敗語意
+與 `GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR` 值不變；`test-pr-gate.sh` 的 reviewer
+protocol case 全綠。
+
+**Non-goals**：不改 fenced-block 契約、不動 per-reviewer 逐檔驗證鏈的行程邊界
+（[[CC-573]] 禁區）。
+
+**See**: [[CC-579]]（本票的觸發來源與次要目標段）
 
 ---
 

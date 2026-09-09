@@ -134,6 +134,11 @@ cleanup() {
   if [[ -n "$subject_pgid" ]]; then
     kill -9 -- "-$subject_pgid" 2>/dev/null || true
   fi
+  # The subject tree writes ~3.6 MB of census log plus a suite transcript into
+  # this scratch dir every run; nothing reads it after the report is printed
+  # (and after the optional --out copy, which happens before this trap fires),
+  # so leaving it behind just accretes under $TMPDIR.
+  [[ -n "${work_dir:-}" ]] && rm -rf -- "$work_dir"
   # The lock is released when fd 8 closes at exit; dropping it here as well
   # would open a window where a second census starts before the subject's
   # process group has been reaped.
@@ -271,17 +276,27 @@ case "$mode" in
     printf '=== call count by binary ===\n'
     awk -F '\t' '$1 == "CENSUS" { print $2 }' "$census_log" | sort | uniq -c | sort -rn
     printf '\n=== flag shape, most frequent first (cluster back to call sites) ===\n'
-    awk -F '\t' '$1 == "CENSUS" { printf "%s%s\n", $2, $3 }' "$census_log" \
-      | sort | uniq -c | sort -rn | head -25
+    # head closes the pipe early, so under `pipefail` the upstream sort exits
+    # SIGPIPE and `set -e` would abort before the next section prints. The
+    # script's usability verdict is the subject rc, not this pipeline's status
+    # (see the exit block at the end), so drop the pipe status here.
+    { awk -F '\t' '$1 == "CENSUS" { printf "%s%s\n", $2, $3 }' "$census_log" \
+      | sort | uniq -c | sort -rn | head -25; } || true
     ;;
   bash)
     printf 'traced simple commands: %s\n\n' "$(wc -l < "$census_log")"
+    # Each of these three pipelines ends in `head`, which closes the pipe and
+    # drives the upstream stage to SIGPIPE; under `pipefail` + `set -e` that
+    # would abort the report partway -- in particular before the --attribute
+    # table below, which is the point of `--mode bash`. The measurement's
+    # usability is the subject rc (see the exit block at the end), so these
+    # reporting pipelines must not be able to end the script.
     printf '=== bash work by source file ===\n'
-    { grep -oE '^\++[a-zA-Z0-9._-]+\.sh:' "$census_log" || true; } | tr -d '+' | sed 's/^/+/' \
-      | sort | uniq -c | sort -rn | head -12
+    { { grep -oE '^\++[a-zA-Z0-9._-]+\.sh:' "$census_log" || true; } | tr -d '+' | sed 's/^/+/' \
+      | sort | uniq -c | sort -rn | head -12; } || true
     printf '\n=== hottest source:line ===\n'
-    { grep -oE '^\++[a-zA-Z0-9._-]+\.sh:[0-9]+' "$census_log" || true; } | tr -d '+' | sed 's/^/+/' \
-      | sort | uniq -c | sort -rn | head -15
+    { { grep -oE '^\++[a-zA-Z0-9._-]+\.sh:[0-9]+' "$census_log" || true; } | tr -d '+' | sed 's/^/+/' \
+      | sort | uniq -c | sort -rn | head -15; } || true
     printf '\n=== %s invocations per source:line ===\n' "$attribute"
     # Three details decide whether this total is trustworthy, and getting any
     # of them wrong produced a plausible-looking but wrong ranking during
@@ -295,7 +310,7 @@ case "$mode" in
     #     xtrace prints every simple command separately -- accepting the name
     #     anywhere promotes argument mentions into call sites that do not exist.
     # With all three, this total reconciles exactly with `--mode exec`.
-    awk -v want="$attribute" '
+    { awk -v want="$attribute" '
       # xtrace prints every simple command as its own record, so a real
       # invocation is always the command word of its record. Requiring that --
       # rather than accepting the name anywhere in the text -- keeps an
@@ -327,7 +342,7 @@ case "$mode" in
         for (s in count) total += count[s]
         for (s in count) printf "%6d  %s\n", count[s], s
         printf "%6d  TOTAL attributed\n", total
-      }' "$census_log" | sort -rn | head -22
+      }' "$census_log" | sort -rn | head -22; } || true
     ;;
 esac
 

@@ -36,7 +36,32 @@ Versions follow [Semantic Versioning](https://semver.org/).
   always run. Each script gets a regression test that forces the hooks-only
   and instructions-only branches and asserts no scratch file survives.
 
+- **`gate-subprocess-census.sh --mode bash` aborted with rc=141 before its
+  attribution table (CC-579).** Each tally pipeline ends in `head -N`; once
+  `sort -rn`'s output exceeds a pipe buffer the closed pipe drives it to
+  SIGPIPE, which under `pipefail` + `set -e` ended the script just before the
+  `--attribute` table that is the whole point of `--mode bash`. The reporting
+  pipelines can no longer end the script; the measurement's usability is still
+  the subject exit code. Also: the `mktemp -d` scratch dir (~3.6 MB/run) is now
+  removed by the EXIT trap instead of accreting under `$TMPDIR`. Both locked
+  with regression cases in `tests/shell/test-gate-subprocess-census.sh`.
+
 ### Changed
+
+- **CC-579 closed: gate jq call density down 20%, remainder is irreducible.**
+  Final slice batches the six per-field `jq -r` reads
+  `_gate_assurance_linked_evidence_verify` makes on the assurance file before
+  `gate_scope_manifest_verify` into one `@tsv` pass, and applies the same fold
+  to the four-field wait decision and the human `pmctl gate verify` summary in
+  `runtime/lib/pmctl-gate.sh`. Each folded read is `jq -r` on a document
+  already schema-verified upstream, so a missing field still arrives as an
+  empty argument exactly as before. Census (`--mode time`, two-gate
+  `tier-detection`): **608 &rarr; 588 jq**; cumulative across all five slices
+  **368 &rarr; 294 jq per gate (&minus;20%)**. What is left is the schema
+  validator itself (~30/gate) and the per-reviewer-document fail-loud chain
+  (~63/gate) that is separate processes by design; see
+  `docs/audits/CC-579-gate-subprocess-baseline.md`. The concurrency re-test is
+  not pursued (the earlier 8-job experiment failed on correctness, not CPU).
 
 - **Schema validation no longer probes the bundle before validating (CC-579
   Slice 1).** `_gate_structural_schema_errors` ran two jq processes for one

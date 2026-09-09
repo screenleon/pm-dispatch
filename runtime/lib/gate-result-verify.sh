@@ -2051,14 +2051,32 @@ _gate_assurance_linked_evidence_verify() {
         return 1
       fi
     elif [[ "$label" == scope_manifest ]]; then
+      # One jq pass for the six subject fields instead of one interpreter start
+      # apiece. `jq -r` on a missing field prints an empty line and `@tsv`
+      # renders a null field as empty, so a field that was absent still arrives
+      # as an empty argument -- identical to the six command substitutions this
+      # replaces. `|| true` matches their behaviour when $assurance_file cannot
+      # be read: proceed with empty values and let gate_scope_manifest_verify
+      # raise the specific failure, rather than aborting here. The values are
+      # git keys, commit SHAs and refs, none of which can contain a tab or
+      # newline, so @tsv escaping cannot desync the split.
+      local _sm_repo_key _sm_base_commit _sm_head_commit
+      local _sm_subject_kind _sm_base_ref _sm_head_ref
+      IFS=$'\t' read -r _sm_repo_key _sm_base_commit _sm_head_commit \
+        _sm_subject_kind _sm_base_ref _sm_head_ref < <(
+        jq -r '[.subject.repository.key, .subject.base.commit,
+                .subject.head.commit, .subject.subject_kind,
+                .subject.base.ref, .subject.head.ref] | @tsv' \
+          "$assurance_file"
+      ) || true
       if ! gate_scope_manifest_verify "$artifact_path" \
-          "$(jq -r '.subject.repository.key' "$assurance_file")" \
-          "$(jq -r '.subject.base.commit' "$assurance_file")" \
-          "$(jq -r '.subject.head.commit' "$assurance_file")" \
+          "$_sm_repo_key" \
+          "$_sm_base_commit" \
+          "$_sm_head_commit" \
           "$linked_subject" \
-          "$(jq -r '.subject.subject_kind' "$assurance_file")" \
-          "$(jq -r '.subject.base.ref' "$assurance_file")" \
-          "$(jq -r '.subject.head.ref' "$assurance_file")"; then
+          "$_sm_subject_kind" \
+          "$_sm_base_ref" \
+          "$_sm_head_ref"; then
         return 1
       fi
       if ! jq -e --slurpfile scope "$artifact_path" '
