@@ -193,7 +193,7 @@ case_gate_run_refreshes_context_before_dispatch() {
 #!/usr/bin/env bash
 set -euo pipefail
 . "$fixture/runtime/lib/pmctl-gate.sh"
-pmctl_context_workflow_refresh() {
+pmctl_context_workflow_refresh_bounded() {
   printf '%s\n' "\$1" > "$marker"
   jq -cn --arg repo "\$1" --arg db "\$1/.pm-dispatch/ctx/context.db" '{refresh_status:"refreshed",freshness:"fresh",resolved_repo_root:\$repo,db_path:\$db}'
 }

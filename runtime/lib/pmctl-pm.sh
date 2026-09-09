@@ -187,8 +187,10 @@ pmctl_pm_prepare() {
 
   local repo_context
   repo_context="$(jq -cn --arg repo "$work_dir" '{schema_version:1,resolved_repo_root:$repo,db_path:null,sqlite_available:false,db_exists:false,freshness:"unavailable",indexed_files:0,new_files:0,changed_files:0,deleted_files:0,db_mtime:null,latest_indexed_at:null,refresh_status:"unavailable"}')"
-  if declare -F pmctl_context_workflow_refresh >/dev/null 2>&1; then
-    repo_context="$(pmctl_context_workflow_refresh "$work_dir" --json 2>/dev/null)" || \
+  if declare -F pmctl_context_workflow_refresh_bounded >/dev/null 2>&1; then
+    # Bounded + stderr-visible so a slow or hung index build on the target repo
+    # cannot stall PM preparation (issue #579).
+    repo_context="$(pmctl_context_workflow_refresh_bounded "$work_dir")" || \
       repo_context="$(jq -cn --arg repo "$work_dir" '{schema_version:1,resolved_repo_root:$repo,db_path:null,sqlite_available:true,db_exists:false,freshness:"error",indexed_files:0,new_files:0,changed_files:0,deleted_files:0,db_mtime:null,latest_indexed_at:null,refresh_status:"error"}')"
   fi
 

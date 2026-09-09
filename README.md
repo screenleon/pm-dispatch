@@ -228,6 +228,7 @@ router and [`cli/commands.tsv`](cli/commands.tsv).
 - `context pack` — Build a bounded JSON context pack. [experimental; JSON: true; mutating: true]
 - `context reuse-scan` — Scan indexed context for prior art. [experimental; JSON: false; mutating: true]
 - `context prompt-scan` — Scan a prompt for context references. [experimental; JSON: false; mutating: true]
+- `context workflow-refresh` — Refresh the repository context index within workflow bounds. [experimental; JSON: true; mutating: true]
 - `memory dir` — Print the canonical project memory directory. [experimental; JSON: false; mutating: false]
 - `memory resolve` — Resolve canonical project memory configuration. [experimental; JSON: true; mutating: false]
 - `memory config` — Read or update memory configuration. [experimental; JSON: true; mutating: true]

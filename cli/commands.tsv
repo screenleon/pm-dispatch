@@ -52,6 +52,7 @@ context query	Query indexed project context.	pmctl context query [<repo-root>] [
 context pack	Build a bounded JSON context pack.	pmctl context pack [<repo-root>] --task-id <id> --query <term>... [--source <repo|memory|all>]	experimental	true	true	--task-id, --query, --source	pmctl context pack . --task-id CC-NNN --query "dispatch lifecycle"
 context reuse-scan	Scan indexed context for prior art.	pmctl context reuse-scan [<repo-root>] <description>	experimental	false	true	none	pmctl context reuse-scan . "dispatch lifecycle"
 context prompt-scan	Scan a prompt for context references.	pmctl context prompt-scan [<repo-root>] <prompt>	experimental	false	true	none	pmctl context prompt-scan . "dispatch lifecycle"
+context workflow-refresh	Refresh the repository context index within workflow bounds.	pmctl context workflow-refresh <repo-root> [--json]	experimental	true	true	--json	pmctl context workflow-refresh . --json
 memory dir	Print the canonical project memory directory.	pmctl memory dir [working-directory]	experimental	false	false	none	pmctl memory dir .
 memory resolve	Resolve canonical project memory configuration.	pmctl memory resolve [options]	experimental	true	false	--repo-root, --allow-non-git, --json	pmctl memory resolve --repo-root . --json
 memory config	Read or update memory configuration.	pmctl memory config <set|migrate|lint> [options]	experimental	true	true	--repo-root, --memory-dir, --json	pmctl memory config lint --json

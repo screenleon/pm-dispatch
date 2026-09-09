@@ -1106,6 +1106,42 @@ pmctl_context_workflow_refresh() {
   fi
 }
 
+# Bounded best-effort wrapper for the workflow call sites (`pmctl gate run`,
+# `pmctl pm prepare`). For those callers the repo context is optional gravy: a
+# slow or hung first-time index build on the target repo must never block the
+# workflow before it starts. runtime/lib/prompt-context.sh already bounds the
+# same operation on the prompt-hook path with `timeout`; this mirrors it so the
+# gate/PM paths cannot drift back to an unbounded call.
+#
+# Prints the `--json` status object on stdout on success. On timeout or any
+# failure it prints nothing on stdout and returns non-zero, so callers keep
+# their existing empty/error fallback. Child stderr (including the
+# "context: no index found — building" progress line) is forwarded so a slow or
+# stuck refresh is visible instead of silent.
+#
+# Bound: PM_DISPATCH_CONTEXT_REFRESH_TIMEOUT seconds (default 90). When `timeout`
+# is not on PATH the refresh runs in-process and unbounded — the same
+# degradation prompt-context.sh accepts.
+pmctl_context_workflow_refresh_bounded() {
+  local repo_root="${1:-}"
+  local timeout_secs="${PM_DISPATCH_CONTEXT_REFRESH_TIMEOUT:-90}"
+  [[ "$timeout_secs" =~ ^[0-9]+$ ]] || timeout_secs=90
+
+  if command -v timeout >/dev/null 2>&1; then
+    local pmctl_cli="$_CTX_LIB_DIR/../../cli/pmctl"
+    local rc=0
+    printf 'context: refreshing repo index for %s (bound %ss)\n' "$repo_root" "$timeout_secs" >&2
+    timeout "$timeout_secs" bash "$pmctl_cli" context workflow-refresh "$repo_root" --json || rc=$?
+    if [[ "$rc" -eq 124 ]]; then
+      printf 'context: index refresh exceeded %ss bound for %s — continuing without a fresh index\n' \
+        "$timeout_secs" "$repo_root" >&2
+    fi
+    return "$rc"
+  fi
+
+  pmctl_context_workflow_refresh "$repo_root" --json
+}
+
 # ── pmctl_context_update ───────────────────────────────────────────────────────
 
 pmctl_context_update() {

@@ -118,6 +118,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-578 | 🟢 someday | config-surface authority 標記（[[CC-446]] Req 6 拆出）：每份 manifest／schema／registry／policy／layout spec（~44 檔：19 `core/schema/*.json` + 20 `*.yaml` + 5 `core/policy/*.tsv`）標記為 `runtime authority`／`build-time authority`／`parity/documentation spec`；runtime／build-time authority 必須有單一 consumer/generator 路徑與 drift check，不得一面宣稱 source of truth 一面維護等價手寫實作。多為逐檔判斷、多數需新增 drift 測試，是獨立多 PR 工程；與 [[CC-451]] 同批評估（runtime 從不驗證的 schema 不列 stable） | process/DX | 2026-08-30 | — | P2 | design |
 | CC-580 | ✅ done | [[CC-447]] offline clean-install smoke 摔倒點：codex host `install.sh`／`uninstall.sh` 各自 `mktemp` 出 4／2 個 scratch temp file，成功路徑無條件 `trap - EXIT` 導致未消費的 scratch temp 洩漏進 `$TMPDIR`。**Requirement 1 已修復**（pr:#573）：移除成功路徑的 `trap - EXIT`，讓已註冊的 EXIT trap 一律負責清乾淨；兩個 host 腳本各補一個 regression test 鎖住「hooks 或 instructions 其中一路未變更時另一路 scratch temp 不洩漏」。`clean-install-smoke.sh` 的殘留判定同時補上安全產物 allowlist（`.bak.*`／空骨架檔／`xdg/opencode`），修復後跑出 `GO`。**Requirement 2（.bak.*／空骨架檔的保留語意要不要改）維持 someday、未拍板、未立獨立票**——非阻塞，若日後要動再重新評估是否值得開票 | ops/install | 2026-09-05 | pr:#573 | P1 | hygiene |
 | CC-581 | 🟢 someday | `gate_reviewer_protocol_verify` 的二次方 `block=` 累加（`runtime/lib/gate-result-verify.sh:651`）：逐行 bash 字串串接抽 fenced reviewer_result 區塊，對區塊行數 O(n²)。[[CC-579]] census 實測 bash 端非 gate 主成本（88% 在 jq），故列次要未動。無感但屬演算法級劣化，值得在有人為別因動到該函式時順手換 O(n)（`mapfile`＋`printf` 或單次 `awk` 切檔），維持 fence 巢狀／截斷／空區塊失敗語意與 `GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR` 值不變。獨立排程投報不足 | ops/gate | 2026-09-08 | — | P3 | — |
+| CC-582 | 🔵 active | issue #579：`pmctl gate run` 對 target repo 首建 context index 時，`pmctl_context_workflow_refresh` 無 timeout 又吞 stderr，任何慢／卡的索引建置都會在 dispatch 前無限 hang、零輸出（Windows/Git Bash nested process-sub 或 sqlite WAL lock 為已知觸發，缺陷本身平台無關）。`prompt-context.sh` 早已用 `timeout` 綁同一操作，gate／pm-prepare 漂走。Req 1（本 PR）：新增 `pmctl context workflow-refresh` 子指令 + `pmctl_context_workflow_refresh_bounded`（`PM_DISPATCH_CONTEXT_REFRESH_TIMEOUT` 預設 90s，`timeout` 缺席則 in-process），gate／pm-prepare 改走它並放行進度行。Req 2：`doctor.sh` 加 tracked shell script CRLF 檢查（issue secondary finding，`text=auto` 下 `git status` 看不到）。Req 3：`pmctl.cmd` shim／PowerShell 呼叫文件掛 [[CC-370]] | ops/gate | 2026-09-09 | — | P2 | hygiene |
 
 ---
 
@@ -4186,5 +4187,68 @@ Requirement 2 的既有安全產物排除在外，讓殘留檢查只對 Requirem
 未拍板、未立獨立票——非阻塞，若日後要動再重新評估是否值得開票。
 
 **See**: [[CC-447]]（offline clean-install smoke，本票的觸發來源）
+
+---
+
+## CC-582 — `pmctl gate run` 對 target repo 的 context refresh 無界會無限 hang（issue #579）🔵 active
+
+**Problem**：Windows 11 / Git Bash（MSYS2）上 `pmctl gate run` 無限 hang、零輸出，
+從不建立 gate working dir，`--lifecycle detached` 從不回傳 `gate_id`。`bash -x`
+把卡點釘在 `pmctl_context_workflow_refresh`：對 target repo 第一次跑時 DB 不存在
+→ `_ctx_ensure_fresh` → `pmctl_context_index` → `_ctx_index_tree` 首建索引，在
+MSYS2 下某個環節永久阻塞（reporter 實測 ~0.2% CPU over 188 min，卡在 syscall
+不是在算）。最可能的三個嫌疑遠端無法確診：(a) `sqlite3` 的 `PRAGMA journal_mode=WAL`
+＋後續 writer 在 `/c/Users/...` 上的 `LockFileEx` 語意；(b) bash process substitution
+`< <(...)` 在 MSYS2 的模擬實作 deadlock（`_ctx_index_tree` 主迴圈＋巢狀
+`_ctx_chunk_file`／`_ctx_extract_symbols` pipeline）；(c) 函式入口的
+`git rev-parse --show-toplevel` 卡在 Windows fsmonitor／credential daemon。
+
+**Why**：MSYS 為什麼卡屬 [[CC-370]]（原生 Windows 已 defer），不值得投資查清。
+真正的缺陷平台無關：這是 gate 程式碼自己標註 `gate continues; context is optional`
+的 best-effort 呼叫，卻**沒有 timeout、而且 `2>/dev/null` 吞掉 stderr**——任何
+病態 target repo（巨大檔案樹、慢 FS、NFS、sqlite lock 競爭）都會讓 `gate run` 在
+dispatch 前無限卡住、零輸出，`|| _ctx_status=""` fallback 永遠等不到。對照組：
+prompt hook 路徑（`runtime/lib/prompt-context.sh:44`）對同一個 context 建索引操作
+**已經**包 `timeout` + `command -v timeout` 可攜 guard，甚至在失敗時清半成品 DB。
+gate（`pmctl-gate.sh`）與 pm-prepare（`pmctl-pm.sh`）從那個 precedent 漂走，各自
+裸呼叫 `$(pmctl_context_workflow_refresh ...)`。
+
+**Requirement 1（本 PR）**：
+- 把 `pmctl_context_workflow_refresh` 這個一直是 subcommand 形狀（`--json`、arg 驗證、
+  `pmctl context workflow-refresh:` 錯誤前綴）卻沒進 `commands.tsv` 的函式，補成真的
+  `pmctl context workflow-refresh <repo-root> [--json]` 子指令（router case ＋
+  `commands.tsv` ＋ README index 三處 parity）。
+- 新增 `pmctl_context_workflow_refresh_bounded`：`command -v timeout` 存在時 re-exec
+  `timeout ${PM_DISPATCH_CONTEXT_REFRESH_TIMEOUT:-90} bash pmctl context workflow-refresh
+  <repo> --json`（re-exec 才能真的殺掉 sqlite3／find／subshell 整棵 grandchild 樹）；
+  `timeout` 缺席則 in-process 呼叫原函式、不設界（與 prompt-context.sh 相同降級）。
+  逾時 → stdout 空、rc 非零、stderr 一行說明。
+- `pmctl gate run` 與 `pmctl pm prepare` 改呼叫 bounded 版並拿掉 `2>/dev/null`，讓
+  `context: no index found — building …` 進度行可見（zero-bytes 症狀的直接原因）。
+- regression：`test-pmctl-context.sh` 兩個 case（子指令 JSON 契約＋bounded 逾時
+  fallback，用 PATH-shadow 的 `timeout` stub 造 exit 124）；`test-pmctl-gate.sh`
+  既有 context-refresh case 的 stub 改對 `_bounded` 名稱。
+
+**Requirement 2（someday，本 PR 不含）**：`scripts/doctor.sh` 加一個 Layer-1 檢查——
+掃 tracked `*.sh`／extensionless-bash 檔的工作區副本是否為 CRLF（`grep -lU $'\r'`），
+提示 `git add --renormalize .`。issue secondary finding：`cli/pmctl`／`cli/commands.tsv`
+被舊 checkout 留成 CRLF，`.gitattributes` 的 `text=auto` 在讀取時正規化所以
+`git status` 永遠看不到；CRLF 會壞 heredoc／shebang。可比照 [[CC-461]] 做成
+`--fix` 白名單候選。
+
+**Requirement 3（掛 [[CC-370]]，本 PR 不含）**：issue 另兩個 minor——`pmctl` 是
+無副檔名 bash script，PowerShell `Get-Command` 找得到卻不能執行（`Cannot run a
+document in the middle of a pipeline`）；建議 ship 一個 `pmctl.cmd` shim 或在安裝
+文件寫明 `function pmctl { bash "<path>" @args }`。原生 Windows 已 defer，僅記錄。
+
+**Non-goals**：不查清 MSYS 的實際卡因（屬 [[CC-370]]）；不改 `pmctl_context_workflow_refresh`
+的既有語意（skipped／unavailable／built／refreshed／error 狀態不變）；不動 prompt-hook
+路徑（已自帶 bound）。
+
+**Done-when**：Req 1 三處 parity lint（`lint-pmctl-commands.sh`）綠、`test-pmctl-context.sh`
+＋`test-pmctl-gate.sh`＋`test-pmctl-pm.sh` 綠、pr-gate GO、PR 開出；Req 2／3 各自
+維持 someday／deferred，日後要動再評估。
+
+**See**: issue #579；[[CC-370]]（Req 3 去處）；[[CC-461]]（Req 2 的 `--fix` 先例）
 
 ---

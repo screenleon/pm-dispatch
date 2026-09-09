@@ -3011,6 +3011,71 @@ case_context_workflow_refresh_sqlite_unavailable() {
   fi
 }
 
+case_context_workflow_refresh_bounded_forwards_status_json() {
+  local name="pmctl context workflow refresh: subcommand emits the --json status object, bounded wrapper forwards it"
+  should_run "$name" || return 0
+  command -v sqlite3 >/dev/null 2>&1 || { skip "$name" "sqlite3 not on PATH"; return 0; }
+
+  local fix_repo="$tmp_root/fix-repo-bounded-ok" out target
+  make_fixture_repo "$fix_repo"
+  target="$(ctx_fixture_target "$fix_repo")" || { fail "$name" "fixture target rejected"; return 0; }
+
+  # 1. the published subcommand itself (router wiring + JSON contract).
+  out="$("$PMCTL" context workflow-refresh "$target" --json 2>/dev/null)" || {
+    fail "$name" "context workflow-refresh subcommand exited non-zero"; return 0;
+  }
+  if ! jq -e --arg repo "$fix_repo" \
+      '.resolved_repo_root == $repo and (.refresh_status == "built" or .refresh_status == "refreshed")' \
+      <<<"$out" >/dev/null; then
+    fail "$name" "subcommand json unexpected: $out"; return 0
+  fi
+
+  # 2. the bounded wrapper the workflow call sites use forwards that same object.
+  if ! command -v timeout >/dev/null 2>&1; then
+    pass "$name (bounded wrapper timeout path skipped: timeout not on PATH)"
+    return 0
+  fi
+  out="$(bash -c '. "$1"; pmctl_context_workflow_refresh_bounded "$2"' \
+    bash "$REPO_ROOT/runtime/lib/pmctl-context.sh" "$target" 2>/dev/null)" || {
+      fail "$name" "bounded wrapper exited non-zero on happy path"; return 0;
+    }
+  if jq -e --arg repo "$fix_repo" \
+      '.resolved_repo_root == $repo and (.refresh_status == "built" or .refresh_status == "refreshed")' \
+      <<<"$out" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "bounded wrapper json unexpected: $out"
+  fi
+}
+
+case_context_workflow_refresh_bounded_timeout_yields_empty_nonzero() {
+  local name="pmctl context workflow refresh (bounded): a timeout expiry yields empty stdout + non-zero so callers fall back"
+  should_run "$name" || return 0
+
+  # Shadow `timeout` with a stub that always reports expiry (exit 124) without
+  # running the child. The bounded wrapper must surface nothing on stdout and
+  # propagate the non-zero code so `pmctl gate run` / `pmctl pm prepare` take
+  # their existing empty/error fallback instead of hanging (issue #579).
+  local stub_bin="$tmp_root/bounded-timeout-stub"
+  mkdir -p "$stub_bin"
+  cat > "$stub_bin/timeout" <<'STUB'
+#!/usr/bin/env bash
+exit 124
+STUB
+  chmod +x "$stub_bin/timeout"
+
+  local fix_repo="$tmp_root/fix-repo-bounded-timeout" out code=0 target
+  make_fixture_repo "$fix_repo"
+  target="$(ctx_fixture_target "$fix_repo")" || { fail "$name" "fixture target rejected"; return 0; }
+  out="$(PATH="$stub_bin:$PATH" bash -c '. "$1"; pmctl_context_workflow_refresh_bounded "$2"' \
+    bash "$REPO_ROOT/runtime/lib/pmctl-context.sh" "$target" 2>/dev/null)" || code=$?
+  if [[ "$code" -eq 124 && -z "$out" ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
 case_context_index_gitignore_symlink() {
   local name="pmctl context index: does not write through a symlinked .gitignore"
   should_run "$name" || return 0
@@ -5736,6 +5801,8 @@ case_context_status_marker_round_trip
 case_context_status_explicit_repo_isolated
 case_context_workflow_refresh_opt_out_reports_skipped
 case_context_workflow_refresh_sqlite_unavailable
+case_context_workflow_refresh_bounded_forwards_status_json
+case_context_workflow_refresh_bounded_timeout_yields_empty_nonzero
 case_context_index_gitignore_symlink
 case_context_index_gitignore_hardlink
 case_context_index_gitignore_preexisting_dir

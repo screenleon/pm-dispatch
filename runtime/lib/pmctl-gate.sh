@@ -269,9 +269,11 @@ pmctl_gate_run() {
   # pmctl-owned workflow boundary: refresh the generic repo context cache
   # before dispatch. pr-gate.sh remains repo-agnostic and knows nothing about
   # sqlite, context DB paths, or repository-specific content.
-  if declare -F pmctl_context_workflow_refresh >/dev/null 2>&1; then
+  if declare -F pmctl_context_workflow_refresh_bounded >/dev/null 2>&1; then
     local _ctx_status _ctx_refresh _ctx_db
-    _ctx_status="$(pmctl_context_workflow_refresh "$effective_cd" --json 2>/dev/null)" || _ctx_status=""
+    # Bounded + stderr-visible: a slow or hung first-time index build on the
+    # target repo must not block the gate before dispatch (issue #579).
+    _ctx_status="$(pmctl_context_workflow_refresh_bounded "$effective_cd")" || _ctx_status=""
     if [[ -n "$_ctx_status" ]]; then
       _ctx_refresh="$(jq -r '.refresh_status // .freshness // "unknown"' <<<"$_ctx_status" 2>/dev/null || printf unknown)"
       _ctx_db="$(jq -r '.db_path // ""' <<<"$_ctx_status" 2>/dev/null || true)"
