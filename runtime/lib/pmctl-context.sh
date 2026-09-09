@@ -1133,11 +1133,13 @@ pmctl_context_workflow_refresh_bounded() {
     local pmctl_cli="$_CTX_LIB_DIR/../../cli/pmctl"
     local rc=0
     printf 'context: refreshing repo index for %s (bound %ss)\n' "$repo_root" "$timeout_secs" >&2
-    # GNU coreutils `timeout` runs the child in its own process group and, on
-    # expiry, signals that whole group — so a spawned sqlite3/find/subshell
-    # descendant is killed too and this command substitution unblocks
-    # (verified on coreutils 8.32). `-k 5` escalates to SIGKILL for a child
-    # that ignores the initial SIGTERM.
+    # GNU coreutils `timeout` puts the child in its own process group and, on
+    # expiry, signals that whole group (SIGTERM, then SIGKILL after `-k 5`), so
+    # a spawned sqlite3/find/subshell descendant is terminated too and this
+    # command substitution's pipe is released. The index path never setsids or
+    # backgrounds a worker, so nothing escapes that group. The whole-tree
+    # termination is covered end-to-end by test-pmctl-context.sh's
+    # "terminates the whole refresh process tree" case.
     timeout -k 5 "$timeout_secs" bash "$pmctl_cli" context workflow-refresh "$repo_root" --json || rc=$?
     if [[ "$rc" -eq 124 || "$rc" -eq 137 ]]; then
       printf 'context: index refresh exceeded %ss bound for %s — continuing without a fresh index\n' \

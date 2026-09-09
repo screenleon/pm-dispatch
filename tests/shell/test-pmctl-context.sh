@@ -3151,6 +3151,56 @@ case_context_workflow_refresh_bounded_no_timeout_binary_runs_in_process() {
   fi
 }
 
+case_context_workflow_refresh_bounded_timeout_terminates_process_tree() {
+  local name="pmctl context workflow refresh (bounded): a timeout terminates the whole refresh process tree, not just the direct child"
+  should_run "$name" || return 0
+  command -v timeout >/dev/null 2>&1 || { skip "$name" "timeout not on PATH (bounded wrapper takes the in-process branch)"; return 0; }
+
+  # issue #579 / critic-F001 + qa-tester-F001: a stub `timeout` (exit 124) never
+  # proves the real kill. Here the wrapper runs the real `timeout` against a
+  # stub `cli/pmctl` that forks a tracked descendant and then hangs holding the
+  # inherited stdout pipe. For the caller's $(...) to return, `timeout` must
+  # terminate the child's whole process group -- direct child AND descendant.
+  local fx="$tmp_root/bounded-tree-kill"
+  mkdir -p "$fx/runtime" "$fx/cli"
+  cp -r "$REPO_ROOT/runtime/lib" "$fx/runtime/lib"
+  local desc_pid_file="$fx/descendant.pid"
+  # The wrapper resolves the re-exec target as <lib dir>/../../cli/pmctl, so a
+  # copy of pmctl-context.sh under $fx/runtime/lib makes $fx/cli/pmctl the
+  # target. The stub ignores its `context workflow-refresh <repo> --json` argv.
+  cat > "$fx/cli/pmctl" <<STUB
+#!/usr/bin/env bash
+( exec sleep 30 ) &
+printf '%s\n' "\$!" > "$desc_pid_file"
+sleep 30
+STUB
+  chmod +x "$fx/cli/pmctl"
+
+  local out code=0 start end elapsed
+  start="$(date +%s)"
+  out="$(PM_DISPATCH_CONTEXT_REFRESH_TIMEOUT=2 bash -c \
+    '. "$1"; pmctl_context_workflow_refresh_bounded /nonexistent/repo' \
+    bash "$fx/runtime/lib/pmctl-context.sh" 2>/dev/null)" || code=$?
+  end="$(date +%s)"; elapsed=$((end - start))
+
+  local desc_pid i
+  desc_pid="$(cat "$desc_pid_file" 2>/dev/null || true)"
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    [[ -n "$desc_pid" ]] || break
+    kill -0 "$desc_pid" 2>/dev/null || break
+    sleep 1
+  done
+
+  if [[ "$code" -eq 124 && -z "$out" && "$elapsed" -lt 25 && -n "$desc_pid" ]] \
+    && ! kill -0 "$desc_pid" 2>/dev/null; then
+    pass "$name"
+  else
+    local alive=no; [[ -n "$desc_pid" ]] && kill -0 "$desc_pid" 2>/dev/null && alive=yes
+    kill "$desc_pid" 2>/dev/null || true
+    fail "$name" "code=$code elapsed=${elapsed}s out=$out desc_pid=${desc_pid:-none} descendant_alive=$alive"
+  fi
+}
+
 case_context_index_gitignore_symlink() {
   local name="pmctl context index: does not write through a symlinked .gitignore"
   should_run "$name" || return 0
@@ -5880,6 +5930,7 @@ case_context_workflow_refresh_bounded_forwards_status_json
 case_context_workflow_refresh_bounded_timeout_yields_empty_nonzero
 case_context_workflow_refresh_bounded_zero_timeout_uses_default_bound
 case_context_workflow_refresh_bounded_no_timeout_binary_runs_in_process
+case_context_workflow_refresh_bounded_timeout_terminates_process_tree
 case_context_index_gitignore_symlink
 case_context_index_gitignore_hardlink
 case_context_index_gitignore_preexisting_dir
