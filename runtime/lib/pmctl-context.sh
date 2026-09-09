@@ -1124,13 +1124,15 @@ pmctl_context_workflow_refresh() {
 # because `timeout 0` disables expiry and would reinstate the unbounded hang
 # this wrapper exists to prevent. When `timeout` is not on PATH the refresh runs
 # in-process and unbounded — the same degradation prompt-context.sh accepts.
+# PM_DISPATCH_CONTEXT_REFRESH_PMCTL replaces the re-executed pmctl entrypoint
+# (test seam only, mirrors the prompt-hook path's own pmctl-override env var).
 pmctl_context_workflow_refresh_bounded() {
   local repo_root="${1:-}"
   local timeout_secs="${PM_DISPATCH_CONTEXT_REFRESH_TIMEOUT:-90}"
   [[ "$timeout_secs" =~ ^[1-9][0-9]*$ ]] || timeout_secs=90
 
   if command -v timeout >/dev/null 2>&1; then
-    local pmctl_cli="$_CTX_LIB_DIR/../../cli/pmctl"
+    local pmctl_cli="${PM_DISPATCH_CONTEXT_REFRESH_PMCTL:-$_CTX_LIB_DIR/../../cli/pmctl}"
     local rc=0
     printf 'context: refreshing repo index for %s (bound %ss)\n' "$repo_root" "$timeout_secs" >&2
     # GNU coreutils `timeout` puts the child in its own process group and, on

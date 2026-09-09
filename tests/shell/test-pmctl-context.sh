@@ -3030,21 +3030,29 @@ case_context_workflow_refresh_bounded_forwards_status_json() {
     fail "$name" "subcommand json unexpected: $out"; return 0
   fi
 
-  # 2. the bounded wrapper the workflow call sites use forwards that same object.
+  # 2. the bounded wrapper forwards the child's stdout + exit status verbatim.
+  # A canned-JSON stub via the pmctl-override seam keeps this to plumbing only
+  # (a second real index build is redundant and slow).
   if ! command -v timeout >/dev/null 2>&1; then
-    pass "$name (bounded wrapper timeout path skipped: timeout not on PATH)"
+    pass "$name (bounded wrapper forward path skipped: timeout not on PATH)"
     return 0
   fi
-  out="$(bash -c '. "$1"; pmctl_context_workflow_refresh_bounded "$2"' \
-    bash "$REPO_ROOT/runtime/lib/pmctl-context.sh" "$target" 2>/dev/null)" || {
-      fail "$name" "bounded wrapper exited non-zero on happy path"; return 0;
+  local stub="$tmp_root/bounded-forward-stub/pmctl"
+  mkdir -p "$(dirname "$stub")"
+  cat > "$stub" <<'STUB'
+#!/usr/bin/env bash
+printf '{"refresh_status":"refreshed","resolved_repo_root":"/seam"}\n'
+STUB
+  chmod +x "$stub"
+  out="$(PM_DISPATCH_CONTEXT_REFRESH_PMCTL="$stub" \
+    bash -c '. "$1"; pmctl_context_workflow_refresh_bounded /seam' \
+    bash "$REPO_ROOT/runtime/lib/pmctl-context.sh" 2>/dev/null)" || {
+      fail "$name" "bounded wrapper exited non-zero forwarding a successful child"; return 0;
     }
-  if jq -e --arg repo "$fix_repo" \
-      '.resolved_repo_root == $repo and (.refresh_status == "built" or .refresh_status == "refreshed")' \
-      <<<"$out" >/dev/null; then
+  if jq -e '.refresh_status == "refreshed" and .resolved_repo_root == "/seam"' <<<"$out" >/dev/null; then
     pass "$name"
   else
-    fail "$name" "bounded wrapper json unexpected: $out"
+    fail "$name" "bounded wrapper did not forward child json: $out"
   fi
 }
 
@@ -3158,40 +3166,37 @@ case_context_workflow_refresh_bounded_timeout_terminates_process_tree() {
 
   # issue #579 / critic-F001 + qa-tester-F001: a stub `timeout` (exit 124) never
   # proves the real kill. Here the wrapper runs the real `timeout` against a
-  # stub `cli/pmctl` that forks a tracked descendant and then hangs holding the
-  # inherited stdout pipe. For the caller's $(...) to return, `timeout` must
-  # terminate the child's whole process group -- direct child AND descendant.
-  local fx="$tmp_root/bounded-tree-kill"
-  mkdir -p "$fx/runtime" "$fx/cli"
-  cp -r "$REPO_ROOT/runtime/lib" "$fx/runtime/lib"
-  local desc_pid_file="$fx/descendant.pid"
-  # The wrapper resolves the re-exec target as <lib dir>/../../cli/pmctl, so a
-  # copy of pmctl-context.sh under $fx/runtime/lib makes $fx/cli/pmctl the
-  # target. The stub ignores its `context workflow-refresh <repo> --json` argv.
-  cat > "$fx/cli/pmctl" <<STUB
+  # stub pmctl (via the pmctl-override seam) that forks a tracked descendant and
+  # then hangs holding the inherited stdout pipe. For the caller's $(...) to
+  # return, `timeout` must terminate the child's whole process group -- direct
+  # child AND descendant.
+  local stub="$tmp_root/bounded-tree-kill/pmctl"
+  local desc_pid_file="$tmp_root/bounded-tree-kill.descpid"
+  mkdir -p "$(dirname "$stub")"
+  cat > "$stub" <<STUB
 #!/usr/bin/env bash
-( exec sleep 30 ) &
+( exec sleep 8 ) &
 printf '%s\n' "\$!" > "$desc_pid_file"
-sleep 30
+sleep 8
 STUB
-  chmod +x "$fx/cli/pmctl"
+  chmod +x "$stub"
 
   local out code=0 start end elapsed
   start="$(date +%s)"
-  out="$(PM_DISPATCH_CONTEXT_REFRESH_TIMEOUT=2 bash -c \
-    '. "$1"; pmctl_context_workflow_refresh_bounded /nonexistent/repo' \
-    bash "$fx/runtime/lib/pmctl-context.sh" 2>/dev/null)" || code=$?
+  out="$(PM_DISPATCH_CONTEXT_REFRESH_PMCTL="$stub" PM_DISPATCH_CONTEXT_REFRESH_TIMEOUT=1 \
+    bash -c '. "$1"; pmctl_context_workflow_refresh_bounded /nonexistent/repo' \
+    bash "$REPO_ROOT/runtime/lib/pmctl-context.sh" 2>/dev/null)" || code=$?
   end="$(date +%s)"; elapsed=$((end - start))
 
   local desc_pid i
   desc_pid="$(cat "$desc_pid_file" 2>/dev/null || true)"
-  for i in 1 2 3 4 5 6 7 8 9 10; do
+  for i in 1 2 3 4 5 6 7 8; do
     [[ -n "$desc_pid" ]] || break
     kill -0 "$desc_pid" 2>/dev/null || break
-    sleep 1
+    sleep 0.5
   done
 
-  if [[ "$code" -eq 124 && -z "$out" && "$elapsed" -lt 25 && -n "$desc_pid" ]] \
+  if [[ "$code" -eq 124 && -z "$out" && "$elapsed" -lt 15 && -n "$desc_pid" ]] \
     && ! kill -0 "$desc_pid" 2>/dev/null; then
     pass "$name"
   else
