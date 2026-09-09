@@ -3067,9 +3067,84 @@ STUB
   local fix_repo="$tmp_root/fix-repo-bounded-timeout" out code=0 target
   make_fixture_repo "$fix_repo"
   target="$(ctx_fixture_target "$fix_repo")" || { fail "$name" "fixture target rejected"; return 0; }
-  out="$(PATH="$stub_bin:$PATH" bash -c '. "$1"; pmctl_context_workflow_refresh_bounded "$2"' \
+  out="$(env "PATH=$stub_bin:$PATH" bash -c '. "$1"; pmctl_context_workflow_refresh_bounded "$2"' \
     bash "$REPO_ROOT/runtime/lib/pmctl-context.sh" "$target" 2>/dev/null)" || code=$?
   if [[ "$code" -eq 124 && -z "$out" ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+case_context_workflow_refresh_bounded_zero_timeout_uses_default_bound() {
+  local name="pmctl context workflow refresh (bounded): PM_DISPATCH_CONTEXT_REFRESH_TIMEOUT=0 falls back to the 90s bound, never 'timeout 0'"
+  should_run "$name" || return 0
+
+  # `timeout 0` disables expiry -- a zero (or non-positive) env value must not
+  # reach the timeout invocation (issue #579 / critic-F001). Shadow `timeout`
+  # with a stub that skips option flags and echoes the duration argument it was
+  # actually handed, so the test asserts the resolved bound rather than the raw
+  # env value.
+  local stub_bin="$tmp_root/bounded-zero-stub"
+  mkdir -p "$stub_bin"
+  cat > "$stub_bin/timeout" <<'STUB'
+#!/usr/bin/env bash
+dur=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -k|--kill-after|-s|--signal) shift 2 ;;
+    --) shift; break ;;
+    -*) shift ;;
+    *) dur="$1"; break ;;
+  esac
+done
+printf '{"timeout_duration_arg":"%s"}\n' "$dur"
+STUB
+  chmod +x "$stub_bin/timeout"
+
+  local fix_repo="$tmp_root/fix-repo-bounded-zero" target zero_out seven_out
+  make_fixture_repo "$fix_repo"
+  target="$(ctx_fixture_target "$fix_repo")" || { fail "$name" "fixture target rejected"; return 0; }
+
+  zero_out="$(env "PATH=$stub_bin:$PATH" PM_DISPATCH_CONTEXT_REFRESH_TIMEOUT=0 \
+    bash -c '. "$1"; pmctl_context_workflow_refresh_bounded "$2"' \
+    bash "$REPO_ROOT/runtime/lib/pmctl-context.sh" "$target" 2>/dev/null)" || true
+  seven_out="$(env "PATH=$stub_bin:$PATH" PM_DISPATCH_CONTEXT_REFRESH_TIMEOUT=7 \
+    bash -c '. "$1"; pmctl_context_workflow_refresh_bounded "$2"' \
+    bash "$REPO_ROOT/runtime/lib/pmctl-context.sh" "$target" 2>/dev/null)" || true
+
+  if jq -e '.timeout_duration_arg == "90"' <<<"$zero_out" >/dev/null \
+    && jq -e '.timeout_duration_arg == "7"' <<<"$seven_out" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "zero_out=$zero_out seven_out=$seven_out"
+  fi
+}
+
+case_context_workflow_refresh_bounded_no_timeout_binary_runs_in_process() {
+  local name="pmctl context workflow refresh (bounded): no timeout binary -> in-process refresh called with --json, status forwarded"
+  should_run "$name" || return 0
+
+  # The stated portability degradation (issue #579 / qa-tester-F002): when
+  # `timeout` is not on PATH the wrapper must call pmctl_context_workflow_refresh
+  # in-process, pass --json, and forward its stdout + exit status verbatim. The
+  # lib is sourced under a normal PATH, then PATH is emptied so `command -v
+  # timeout` fails; a stub replaces the refresh so no real index build is needed.
+  local fix_repo="$tmp_root/fix-repo-bounded-notimeout" out code=0
+  mkdir -p "$fix_repo"
+  out="$(bash -c '
+    . "$1"
+    PATH=/nonexistent-pm-dispatch-no-timeout
+    pmctl_context_workflow_refresh() {
+      printf "{\"stub\":true,\"repo\":\"%s\",\"args\":\"%s\"}\n" "$1" "$*"
+      return 0
+    }
+    pmctl_context_workflow_refresh_bounded "$2"
+  ' bash "$REPO_ROOT/runtime/lib/pmctl-context.sh" "$fix_repo" 2>/dev/null)" || code=$?
+
+  if [[ "$code" -eq 0 ]] \
+    && jq -e --arg r "$fix_repo" '.stub == true and .repo == $r and (.args | test("(^| )--json($| )"))' \
+       <<<"$out" >/dev/null; then
     pass "$name"
   else
     fail "$name" "code=$code out=$out"
@@ -5803,6 +5878,8 @@ case_context_workflow_refresh_opt_out_reports_skipped
 case_context_workflow_refresh_sqlite_unavailable
 case_context_workflow_refresh_bounded_forwards_status_json
 case_context_workflow_refresh_bounded_timeout_yields_empty_nonzero
+case_context_workflow_refresh_bounded_zero_timeout_uses_default_bound
+case_context_workflow_refresh_bounded_no_timeout_binary_runs_in_process
 case_context_index_gitignore_symlink
 case_context_index_gitignore_hardlink
 case_context_index_gitignore_preexisting_dir

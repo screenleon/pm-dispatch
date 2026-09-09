@@ -4229,7 +4229,7 @@ gate（`pmctl-gate.sh`）與 pm-prepare（`pmctl-pm.sh`）從那個 precedent �
   fallback，用 PATH-shadow 的 `timeout` stub 造 exit 124）；`test-pmctl-gate.sh`
   既有 context-refresh case 的 stub 改對 `_bounded` 名稱。
 
-**Requirement 2（someday，本 PR 不含）**：`scripts/doctor.sh` 加一個 Layer-1 檢查——
+**Requirement 2（someday，本 PR 不含）**：`runtime/bin/doctor.sh` 加一個 Layer-1 檢查——
 掃 tracked `*.sh`／extensionless-bash 檔的工作區副本是否為 CRLF（`grep -lU $'\r'`），
 提示 `git add --renormalize .`。issue secondary finding：`cli/pmctl`／`cli/commands.tsv`
 被舊 checkout 留成 CRLF，`.gitattributes` 的 `text=auto` 在讀取時正規化所以
