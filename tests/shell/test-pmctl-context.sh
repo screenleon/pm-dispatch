@@ -3067,7 +3067,7 @@ STUB
   local fix_repo="$tmp_root/fix-repo-bounded-timeout" out code=0 target
   make_fixture_repo "$fix_repo"
   target="$(ctx_fixture_target "$fix_repo")" || { fail "$name" "fixture target rejected"; return 0; }
-  out="$(env "PATH=$stub_bin:$PATH" bash -c '. "$1"; pmctl_context_workflow_refresh_bounded "$2"' \
+  out="$(PATH="$stub_bin:$PATH" bash -c '. "$1"; pmctl_context_workflow_refresh_bounded "$2"' \
     bash "$REPO_ROOT/runtime/lib/pmctl-context.sh" "$target" 2>/dev/null)" || code=$?
   if [[ "$code" -eq 124 && -z "$out" ]]; then
     pass "$name"
@@ -3106,10 +3106,10 @@ STUB
   make_fixture_repo "$fix_repo"
   target="$(ctx_fixture_target "$fix_repo")" || { fail "$name" "fixture target rejected"; return 0; }
 
-  zero_out="$(env "PATH=$stub_bin:$PATH" PM_DISPATCH_CONTEXT_REFRESH_TIMEOUT=0 \
+  zero_out="$(PATH="$stub_bin:$PATH" PM_DISPATCH_CONTEXT_REFRESH_TIMEOUT=0 \
     bash -c '. "$1"; pmctl_context_workflow_refresh_bounded "$2"' \
     bash "$REPO_ROOT/runtime/lib/pmctl-context.sh" "$target" 2>/dev/null)" || true
-  seven_out="$(env "PATH=$stub_bin:$PATH" PM_DISPATCH_CONTEXT_REFRESH_TIMEOUT=7 \
+  seven_out="$(PATH="$stub_bin:$PATH" PM_DISPATCH_CONTEXT_REFRESH_TIMEOUT=7 \
     bash -c '. "$1"; pmctl_context_workflow_refresh_bounded "$2"' \
     bash "$REPO_ROOT/runtime/lib/pmctl-context.sh" "$target" 2>/dev/null)" || true
 
