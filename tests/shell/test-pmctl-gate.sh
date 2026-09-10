@@ -210,39 +210,44 @@ WRAPPER
   fi
 }
 
-case_gate_run_continues_when_bounded_context_refresh_times_out() {
-  # issue #579 / qa-tester-F001: the bounded context refresh is best-effort. When
-  # it times out (empty stdout, exit 124) the gate must still dispatch pr-gate
-  # with unchanged argv and emit the "gate continues" diagnostic -- never abort
-  # or block.
-  local name="gate/run: a timed-out bounded context refresh does not block dispatch"
+case_gate_run_continues_when_bounded_context_refresh_fails() {
+  # issue #579 / critic-F001 + qa-tester-F001: the bounded context refresh is
+  # best-effort. Whenever it returns non-zero -- timeout expiry (124) or the
+  # no-`timeout`-binary skip (1) -- the gate must still dispatch pr-gate with
+  # unchanged argv and emit the "gate continues" diagnostic, never abort or block.
+  local name="gate/run: a failed bounded context refresh (timeout or skip) does not block dispatch"
   should_run "$name" || return 0
-  local fixture="$tmp_root/gate-ctx-timeout-fixture" wrapper="$tmp_root/gate-ctx-timeout-wrapper"
-  local target="$tmp_root/gate-ctx-timeout-target" out code=0
+  local fixture="$tmp_root/gate-ctx-fail-fixture" wrapper="$tmp_root/gate-ctx-fail-wrapper"
+  local target="$tmp_root/gate-ctx-fail-target"
   mkdir -p "$fixture/runtime/lib" "$target"
   git -C "$target" init -q
   _mk_fake_gate "$fixture" 0
   cp "$REPO_ROOT/runtime/lib/pmctl-gate.sh" "$fixture/runtime/lib/pmctl-gate.sh"
   cp "$REPO_ROOT/runtime/lib/identifier-policy.sh" "$fixture/runtime/lib/identifier-policy.sh"
-  cat > "$wrapper" <<WRAPPER
+
+  local stub_rc
+  for stub_rc in 124 1; do
+    cat > "$wrapper" <<WRAPPER
 #!/usr/bin/env bash
 set -euo pipefail
 . "$fixture/runtime/lib/pmctl-gate.sh"
 pmctl_context_workflow_refresh_bounded() {
-  printf 'context: index refresh exceeded 90s bound for %s\n' "\$1" >&2
-  return 124
+  printf 'context: bounded refresh failed (simulated rc=%s) for %s\n' "$stub_rc" "\$1" >&2
+  return $stub_rc
 }
 pmctl_gate_run "$fixture" "\$@"
 WRAPPER
-  chmod +x "$wrapper"
-  out="$("$wrapper" --cd "$target" --lifecycle foreground --tier express 2>&1)" || code=$?
-  if [[ "$code" -eq 0 ]] \
-    && [[ "$out" == *"pmctl gate context: status=error repo=$target (gate continues; context is optional)"* ]] \
-    && [[ "$out" == *"fake-gate-args:"*"--cd $target"*"--tier express"* ]]; then
-    pass "$name"
-  else
-    fail "$name" "code=$code out=$out"
-  fi
+    chmod +x "$wrapper"
+    local out code=0
+    out="$("$wrapper" --cd "$target" --lifecycle foreground --tier express 2>&1)" || code=$?
+    if [[ "$code" -ne 0 ]] \
+      || [[ "$out" != *"pmctl gate context: status=error repo=$target (gate continues; context is optional)"* ]] \
+      || [[ "$out" != *"fake-gate-args:"*"--cd $target"*"--tier express"* ]]; then
+      fail "$name" "stub_rc=$stub_rc code=$code out=$out"
+      return 0
+    fi
+  done
+  pass "$name"
 }
 
 # ---- 2: missing --cd defaults to the CWD git toplevel (then $PWD) ------------
@@ -3083,7 +3088,7 @@ FAKE_GATE
 
 case_explicit_cd_passthrough
 case_gate_run_refreshes_context_before_dispatch
-case_gate_run_continues_when_bounded_context_refresh_times_out
+case_gate_run_continues_when_bounded_context_refresh_fails
 case_default_cd_injected
 case_exit_propagated
 case_missing_gate_script

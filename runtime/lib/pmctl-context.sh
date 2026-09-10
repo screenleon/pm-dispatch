@@ -1109,9 +1109,7 @@ pmctl_context_workflow_refresh() {
 # Bounded best-effort wrapper for the workflow call sites (`pmctl gate run`,
 # `pmctl pm prepare`). For those callers the repo context is optional gravy: a
 # slow or hung first-time index build on the target repo must never block the
-# workflow before it starts. runtime/lib/prompt-context.sh already bounds the
-# same operation on the prompt-hook path with `timeout`; this mirrors it so the
-# gate/PM paths cannot drift back to an unbounded call.
+# workflow before it starts.
 #
 # Prints the `--json` status object on stdout on success. On timeout or any
 # failure it prints nothing on stdout and returns non-zero, so callers keep
@@ -1122,8 +1120,10 @@ pmctl_context_workflow_refresh() {
 # Bound: PM_DISPATCH_CONTEXT_REFRESH_TIMEOUT seconds (default 90). Only a
 # positive integer is honored — 0 / negative / non-numeric fall back to 90,
 # because `timeout 0` disables expiry and would reinstate the unbounded hang
-# this wrapper exists to prevent. When `timeout` is not on PATH the refresh runs
-# in-process and unbounded — the same degradation prompt-context.sh accepts.
+# this wrapper exists to prevent. When `timeout` is not on PATH there is no
+# portable way to bound the refresh, so it is SKIPPED (return 1, no work) rather
+# than run unbounded — the caller takes its empty/error fallback. Every
+# supported platform ships coreutils `timeout`; this branch is a defensive edge.
 # PM_DISPATCH_CONTEXT_REFRESH_PMCTL replaces the re-executed pmctl entrypoint
 # (test seam only, mirrors the prompt-hook path's own pmctl-override env var).
 pmctl_context_workflow_refresh_bounded() {
@@ -1131,26 +1131,28 @@ pmctl_context_workflow_refresh_bounded() {
   local timeout_secs="${PM_DISPATCH_CONTEXT_REFRESH_TIMEOUT:-90}"
   [[ "$timeout_secs" =~ ^[1-9][0-9]*$ ]] || timeout_secs=90
 
-  if command -v timeout >/dev/null 2>&1; then
-    local pmctl_cli="${PM_DISPATCH_CONTEXT_REFRESH_PMCTL:-$_CTX_LIB_DIR/../../cli/pmctl}"
-    local rc=0
-    printf 'context: refreshing repo index for %s (bound %ss)\n' "$repo_root" "$timeout_secs" >&2
-    # GNU coreutils `timeout` puts the child in its own process group and, on
-    # expiry, signals that whole group (SIGTERM, then SIGKILL after `-k 5`), so
-    # a spawned sqlite3/find/subshell descendant is terminated too and this
-    # command substitution's pipe is released. The index path never setsids or
-    # backgrounds a worker, so nothing escapes that group. The whole-tree
-    # termination is covered end-to-end by test-pmctl-context.sh's
-    # "terminates the whole refresh process tree" case.
-    timeout -k 5 "$timeout_secs" bash "$pmctl_cli" context workflow-refresh "$repo_root" --json || rc=$?
-    if [[ "$rc" -eq 124 || "$rc" -eq 137 ]]; then
-      printf 'context: index refresh exceeded %ss bound for %s — continuing without a fresh index\n' \
-        "$timeout_secs" "$repo_root" >&2
-    fi
-    return "$rc"
+  if ! command -v timeout >/dev/null 2>&1; then
+    printf 'context: timeout command unavailable — skipping the optional repo index refresh for %s\n' \
+      "$repo_root" >&2
+    return 1
   fi
 
-  pmctl_context_workflow_refresh "$repo_root" --json
+  local pmctl_cli="${PM_DISPATCH_CONTEXT_REFRESH_PMCTL:-$_CTX_LIB_DIR/../../cli/pmctl}"
+  local rc=0
+  printf 'context: refreshing repo index for %s (bound %ss)\n' "$repo_root" "$timeout_secs" >&2
+  # GNU coreutils `timeout` puts the child in its own process group and, on
+  # expiry, signals that whole group (SIGTERM, then SIGKILL after `-k 5`), so
+  # a spawned sqlite3/find/subshell descendant is terminated too and this
+  # command substitution's pipe is released. The index path never setsids or
+  # backgrounds a worker, so nothing escapes that group. The whole-tree
+  # termination is covered end-to-end by test-pmctl-context.sh's
+  # "terminates the whole refresh process tree" case.
+  timeout -k 5 "$timeout_secs" bash "$pmctl_cli" context workflow-refresh "$repo_root" --json || rc=$?
+  if [[ "$rc" -eq 124 || "$rc" -eq 137 ]]; then
+    printf 'context: index refresh exceeded %ss bound for %s — continuing without a fresh index\n' \
+      "$timeout_secs" "$repo_root" >&2
+  fi
+  return "$rc"
 }
 
 # ── pmctl_context_update ───────────────────────────────────────────────────────

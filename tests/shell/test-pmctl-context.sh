@@ -3129,33 +3129,31 @@ STUB
   fi
 }
 
-case_context_workflow_refresh_bounded_no_timeout_binary_runs_in_process() {
-  local name="pmctl context workflow refresh (bounded): no timeout binary -> in-process refresh called with --json, status forwarded"
+case_context_workflow_refresh_bounded_no_timeout_binary_skips_refresh() {
+  local name="pmctl context workflow refresh (bounded): no timeout binary -> skip the refresh (no work, non-zero), never run it unbounded"
   should_run "$name" || return 0
 
-  # The stated portability degradation (issue #579 / qa-tester-F002): when
-  # `timeout` is not on PATH the wrapper must call pmctl_context_workflow_refresh
-  # in-process, pass --json, and forward its stdout + exit status verbatim. The
-  # lib is sourced under a normal PATH, then PATH is emptied so `command -v
-  # timeout` fails; a stub replaces the refresh so no real index build is needed.
-  local fix_repo="$tmp_root/fix-repo-bounded-notimeout" out code=0
-  mkdir -p "$fix_repo"
+  # issue #579 / critic-F001 + qa-tester-F001: when `timeout` is not on PATH
+  # there is no portable bound, so the wrapper must SKIP the optional refresh
+  # (return non-zero, do no work) rather than fall through to an unbounded
+  # in-process call that reinstates the hang. The lib is sourced under a normal
+  # PATH, then PATH is emptied so `command -v timeout` fails. A marker-touching
+  # stub proves the underlying refresh is not invoked at all.
+  local marker="$tmp_root/bounded-notimeout.invoked" out code=0 err
+  rm -f "$marker"
+  err="$(mktemp "$tmp_root/bounded-notimeout.err.XXXXXX")"
   out="$(bash -c '
     . "$1"
     PATH=/nonexistent-pm-dispatch-no-timeout
-    pmctl_context_workflow_refresh() {
-      printf "{\"stub\":true,\"repo\":\"%s\",\"args\":\"%s\"}\n" "$1" "$*"
-      return 0
-    }
-    pmctl_context_workflow_refresh_bounded "$2"
-  ' bash "$REPO_ROOT/runtime/lib/pmctl-context.sh" "$fix_repo" 2>/dev/null)" || code=$?
+    pmctl_context_workflow_refresh() { : > "'"$marker"'"; printf "SHOULD-NOT-RUN\n"; return 0; }
+    pmctl_context_workflow_refresh_bounded /some/repo
+  ' bash "$REPO_ROOT/runtime/lib/pmctl-context.sh" 2>"$err")" || code=$?
 
-  if [[ "$code" -eq 0 ]] \
-    && jq -e --arg r "$fix_repo" '.stub == true and .repo == $r and (.args | test("(^| )--json($| )"))' \
-       <<<"$out" >/dev/null; then
+  if [[ "$code" -ne 0 && -z "$out" && ! -e "$marker" ]] \
+    && grep -q 'timeout command unavailable' "$err"; then
     pass "$name"
   else
-    fail "$name" "code=$code out=$out"
+    fail "$name" "code=$code out=$out marker_exists=$([[ -e "$marker" ]] && echo yes || echo no) err=$(cat "$err")"
   fi
 }
 
@@ -5934,7 +5932,7 @@ case_context_workflow_refresh_sqlite_unavailable
 case_context_workflow_refresh_bounded_forwards_status_json
 case_context_workflow_refresh_bounded_timeout_yields_empty_nonzero
 case_context_workflow_refresh_bounded_zero_timeout_uses_default_bound
-case_context_workflow_refresh_bounded_no_timeout_binary_runs_in_process
+case_context_workflow_refresh_bounded_no_timeout_binary_skips_refresh
 case_context_workflow_refresh_bounded_timeout_terminates_process_tree
 case_context_index_gitignore_symlink
 case_context_index_gitignore_hardlink
