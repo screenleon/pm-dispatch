@@ -1263,6 +1263,37 @@ case_doctor_fix_tracked_line_endings() {
   fi
 }
 
+case_doctor_fix_tracked_line_endings_preserves_independent_edits() {
+  # --fix must never discard local work: a CRLF file that also carries an
+  # unrelated uncommitted content edit is reported, not rewritten to the index
+  # (gate RCG-001 -- critic/qa/security).
+  local name="doctor-fix-tracked-line-endings-preserves-independent-edits"
+  should_run "$name" || return 0
+  if ! _td_needs_symlink "$name"; then return 0; fi
+  local home="$tmp_root/home-crlf-mixed" fake_repo="$tmp_root/fake-repo-crlf-mixed"
+  local bin="$tmp_root/bin-crlf-mixed" out status=0 path body
+  make_doctor_fix_fixture "$fake_repo" "$home"
+  _td_commit_fixture "$fake_repo"
+  printf '#!/usr/bin/env bash\necho original\n' > "$fake_repo/crlf-probe"
+  git -C "$fake_repo" add crlf-probe
+  git -C "$fake_repo" -c core.autocrlf=false commit -qm "add probe" >/dev/null
+  # CRLF *and* an independent content change on the same file.
+  printf '#!/usr/bin/env bash\r\necho EDITED-LOCALLY\r\n' > "$fake_repo/crlf-probe"
+  path="$(make_stub_bin "$bin" claude codex grok)"
+  ln -sf "$fake_repo/cli/pmctl" "$bin/pmctl"
+
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" bash "$DOCTOR" --no-color --fix --repo "$fake_repo" 2>&1)" || status=$?
+  body="$(cat "$fake_repo/crlf-probe")"
+  if [[ "$status" -eq 1 \
+      && "$body" == *"EDITED-LOCALLY"* \
+      && "$out" == *"[FAIL]"*"left untouched (CRLF plus independent uncommitted edits): crlf-probe"* \
+      && "$out" != *"restored LF line endings: crlf-probe"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status body=$body out=$out"
+  fi
+}
+
 case_doctor_tracked_line_endings_skips_without_git() {
   # Copy-mode / non-git checkout: the check needs a work tree to compare
   # against, so it warns and does not fail.
@@ -2986,6 +3017,7 @@ case_doctor_fix_refuses_symlinked_script
 case_doctor_fix_recheck_still_fails_reports_fail
 case_doctor_tracked_line_endings_flags_crlf
 case_doctor_fix_tracked_line_endings
+case_doctor_fix_tracked_line_endings_preserves_independent_edits
 case_doctor_tracked_line_endings_skips_without_git
 case_doctor_manifest_missing_warn
 case_doctor_manifest_bad_version_warn

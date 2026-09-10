@@ -556,34 +556,43 @@ check_tracked_line_endings() {
   done < <(git -C "$REPO_ROOT" ls-files --eol 2>/dev/null || true)
 
   if [[ "$fix" -eq 1 && "${#offenders[@]}" -gt 0 ]]; then
-    local -a repaired=("${offenders[@]}") p
+    local -a repaired=() unsafe=() p abs
     for p in "${offenders[@]}"; do
-      # Never act through a symlink; a managed path must be a real regular file
-      # inside the repo. `git checkout -- <path>` alone is a no-op here because
-      # git reads the CRLF file back as LF and sees it as unmodified, so remove
-      # the working copy first and let checkout re-materialise it from the (LF)
-      # index.
-      if [[ ! -L "$REPO_ROOT/$p" && -f "$REPO_ROOT/$p" ]]; then
-        rm -f "$REPO_ROOT/$p" \
-          && git -C "$REPO_ROOT" checkout -- "$p" 2>/dev/null || true
+      abs="$REPO_ROOT/$p"
+      # Never act through a symlink; a managed path must be a real regular file.
+      if [[ -L "$abs" || ! -f "$abs" ]]; then
+        unsafe+=("$p")
+        continue
+      fi
+      # Only strip CR bytes when that is provably the *sole* difference from the
+      # index -- i.e. the CR-stripped working copy equals the staged blob byte
+      # for byte. A file that also carries independent uncommitted content edits
+      # is left untouched: --fix must never discard local work.
+      if git -C "$REPO_ROOT" show ":$p" 2>/dev/null | cmp -s - <(tr -d '\r' < "$abs") \
+        && tr -d '\r' < "$abs" > "$abs.crlf-fix.$$" \
+        && mv -f "$abs.crlf-fix.$$" "$abs"; then
+        repaired+=("$p")
+      else
+        rm -f "$abs.crlf-fix.$$"
+        unsafe+=("$p")
       fi
     done
-    offenders=()
-    while IFS=$'\t' read -r eolinfo path; do
-      [[ -n "$path" ]] || continue
-      case "$eolinfo" in *eol=lf*) ;; *) continue ;; esac
-      case "$eolinfo" in *w/crlf*|*w/mixed*) ;; *) continue ;; esac
-      offenders+=("$path")
-    done < <(git -C "$REPO_ROOT" ls-files --eol 2>/dev/null || true)
-    if [[ "${#offenders[@]}" -eq 0 ]]; then
+
+    if [[ "${#unsafe[@]}" -eq 0 ]]; then
       emit_check tracked-line-endings ok "restored LF line endings: ${repaired[*]}" "" true
       return
     fi
+    local _note=""
+    [[ "${#repaired[@]}" -gt 0 ]] && _note="restored: ${repaired[*]}; "
+    emit_check tracked-line-endings fail \
+      "${_note}left untouched (CRLF plus independent uncommitted edits): ${unsafe[*]}" \
+      "review each file, then: git add --renormalize -- ${unsafe[*]} && git commit"
+    return
   fi
 
   if [[ "${#offenders[@]}" -gt 0 ]]; then
     emit_check tracked-line-endings fail "working-tree CRLF in tracked LF files: ${offenders[*]}" \
-      "run: git add --renormalize . && git checkout -- ${offenders[*]}  (or doctor.sh --fix)"
+      "run: doctor.sh --fix  (files with independent edits are reported, not touched)"
   else
     emit_check tracked-line-endings ok "tracked files use LF line endings"
   fi
@@ -833,10 +842,13 @@ main() {
     printf '  Use WSL2 for CI and release sign-off. See docs/platform-support.md.\n\n'
   fi
 
-  # --fix whitelist: idempotent, reversible, never touches file content.
-  # scripts-executable runs first in fix mode because host checks also validate
-  # managed hook executability; tracked-line-endings has no such ordering need
-  # and runs later in the normal check sequence.
+  # --fix whitelist: idempotent and reversible. scripts-executable only touches
+  # the mode bit; tracked-line-endings only strips CR bytes, and only from files
+  # proven CR-only-different from the index (one with independent uncommitted
+  # edits is reported, never rewritten). scripts-executable runs first in fix
+  # mode because host checks also validate managed hook executability;
+  # tracked-line-endings has no such ordering need and runs in the normal
+  # check sequence.
   if [[ "$FIX" -eq 1 ]]; then
     check_scripts_executable "$FIX"
   fi

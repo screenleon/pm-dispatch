@@ -121,9 +121,10 @@ bash runtime/bin/doctor.sh
 `~/.claude/settings.json`, the memory directory is present, scripts are
 executable, tracked files use LF line endings, and frontmatter passes lint.
 Each failing check prints a concrete remediation command. Its `--fix` mode is
-limited to two idempotent, reversible repairs that never touch file content:
-restoring executable modes on managed scripts, and rewriting a stale CRLF
-working copy back to LF from the index.
+limited to two idempotent, reversible repairs: restoring executable modes on
+managed scripts, and stripping stray CR bytes from a CRLF working copy — the
+latter only when the file differs from the index by line endings alone, so a
+file that also carries local edits is reported, never rewritten.
 
 If you want to see what was linked rather than just whether it is healthy:
 
