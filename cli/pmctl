@@ -458,6 +458,12 @@ case "$cmd/$sub" in
     fi
     pmctl_context_prompt_scan "$@"
     ;;
+  context/workflow-refresh)
+    if ! declare -F pmctl_context_workflow_refresh >/dev/null; then
+      pmctl_die "context workflow-refresh unavailable"
+    fi
+    pmctl_context_workflow_refresh "$@"
+    ;;
   memory/dir)
     if ! declare -F pmctl_memory_dir >/dev/null; then
       pmctl_die "memory dir unavailable"

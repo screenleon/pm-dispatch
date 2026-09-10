@@ -3011,6 +3011,199 @@ case_context_workflow_refresh_sqlite_unavailable() {
   fi
 }
 
+case_context_workflow_refresh_bounded_forwards_status_json() {
+  local name="pmctl context workflow refresh: subcommand emits the --json status object, bounded wrapper forwards it"
+  should_run "$name" || return 0
+  command -v sqlite3 >/dev/null 2>&1 || { skip "$name" "sqlite3 not on PATH"; return 0; }
+
+  local fix_repo="$tmp_root/fix-repo-bounded-ok" out target
+  make_fixture_repo "$fix_repo"
+  target="$(ctx_fixture_target "$fix_repo")" || { fail "$name" "fixture target rejected"; return 0; }
+
+  # 1. the published subcommand itself (router wiring + JSON contract).
+  out="$("$PMCTL" context workflow-refresh "$target" --json 2>/dev/null)" || {
+    fail "$name" "context workflow-refresh subcommand exited non-zero"; return 0;
+  }
+  if ! jq -e --arg repo "$fix_repo" \
+      '.resolved_repo_root == $repo and (.refresh_status == "built" or .refresh_status == "refreshed")' \
+      <<<"$out" >/dev/null; then
+    fail "$name" "subcommand json unexpected: $out"; return 0
+  fi
+
+  # 2. the bounded wrapper forwards the child's stdout + exit status verbatim.
+  # A canned-JSON stub via the pmctl-override seam keeps this to plumbing only
+  # (a second real index build is redundant and slow).
+  if ! command -v timeout >/dev/null 2>&1; then
+    pass "$name (bounded wrapper forward path skipped: timeout not on PATH)"
+    return 0
+  fi
+  local stub="$tmp_root/bounded-forward-stub/pmctl"
+  mkdir -p "$(dirname "$stub")"
+  cat > "$stub" <<'STUB'
+#!/usr/bin/env bash
+printf '{"refresh_status":"refreshed","resolved_repo_root":"/seam"}\n'
+STUB
+  chmod +x "$stub"
+  out="$(PM_DISPATCH_CONTEXT_REFRESH_PMCTL="$stub" \
+    bash -c '. "$1"; pmctl_context_workflow_refresh_bounded /seam' \
+    bash "$REPO_ROOT/runtime/lib/pmctl-context.sh" 2>/dev/null)" || {
+      fail "$name" "bounded wrapper exited non-zero forwarding a successful child"; return 0;
+    }
+  if jq -e '.refresh_status == "refreshed" and .resolved_repo_root == "/seam"' <<<"$out" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "bounded wrapper did not forward child json: $out"
+  fi
+}
+
+case_context_workflow_refresh_bounded_timeout_yields_empty_nonzero() {
+  local name="pmctl context workflow refresh (bounded): a timeout expiry yields empty stdout + non-zero so callers fall back"
+  should_run "$name" || return 0
+
+  # Shadow `timeout` with a stub that always reports expiry (exit 124) without
+  # running the child. The bounded wrapper must surface nothing on stdout and
+  # propagate the non-zero code so `pmctl gate run` / `pmctl pm prepare` take
+  # their existing empty/error fallback instead of hanging (issue #579).
+  local stub_bin="$tmp_root/bounded-timeout-stub"
+  mkdir -p "$stub_bin"
+  cat > "$stub_bin/timeout" <<'STUB'
+#!/usr/bin/env bash
+exit 124
+STUB
+  chmod +x "$stub_bin/timeout"
+
+  local fix_repo="$tmp_root/fix-repo-bounded-timeout" out code=0 target
+  make_fixture_repo "$fix_repo"
+  target="$(ctx_fixture_target "$fix_repo")" || { fail "$name" "fixture target rejected"; return 0; }
+  out="$(PATH="$stub_bin:$PATH" bash -c '. "$1"; pmctl_context_workflow_refresh_bounded "$2"' \
+    bash "$REPO_ROOT/runtime/lib/pmctl-context.sh" "$target" 2>/dev/null)" || code=$?
+  if [[ "$code" -eq 124 && -z "$out" ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+case_context_workflow_refresh_bounded_zero_timeout_uses_default_bound() {
+  local name="pmctl context workflow refresh (bounded): PM_DISPATCH_CONTEXT_REFRESH_TIMEOUT=0 falls back to the 90s bound, never 'timeout 0'"
+  should_run "$name" || return 0
+
+  # `timeout 0` disables expiry -- a zero (or non-positive) env value must not
+  # reach the timeout invocation (issue #579 / critic-F001). Shadow `timeout`
+  # with a stub that skips option flags and echoes the duration argument it was
+  # actually handed, so the test asserts the resolved bound rather than the raw
+  # env value.
+  local stub_bin="$tmp_root/bounded-zero-stub"
+  mkdir -p "$stub_bin"
+  cat > "$stub_bin/timeout" <<'STUB'
+#!/usr/bin/env bash
+dur=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -k|--kill-after|-s|--signal) shift 2 ;;
+    --) shift; break ;;
+    -*) shift ;;
+    *) dur="$1"; break ;;
+  esac
+done
+printf '{"timeout_duration_arg":"%s"}\n' "$dur"
+STUB
+  chmod +x "$stub_bin/timeout"
+
+  local fix_repo="$tmp_root/fix-repo-bounded-zero" target zero_out seven_out
+  make_fixture_repo "$fix_repo"
+  target="$(ctx_fixture_target "$fix_repo")" || { fail "$name" "fixture target rejected"; return 0; }
+
+  zero_out="$(PATH="$stub_bin:$PATH" PM_DISPATCH_CONTEXT_REFRESH_TIMEOUT=0 \
+    bash -c '. "$1"; pmctl_context_workflow_refresh_bounded "$2"' \
+    bash "$REPO_ROOT/runtime/lib/pmctl-context.sh" "$target" 2>/dev/null)" || true
+  seven_out="$(PATH="$stub_bin:$PATH" PM_DISPATCH_CONTEXT_REFRESH_TIMEOUT=7 \
+    bash -c '. "$1"; pmctl_context_workflow_refresh_bounded "$2"' \
+    bash "$REPO_ROOT/runtime/lib/pmctl-context.sh" "$target" 2>/dev/null)" || true
+
+  if jq -e '.timeout_duration_arg == "90"' <<<"$zero_out" >/dev/null \
+    && jq -e '.timeout_duration_arg == "7"' <<<"$seven_out" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "zero_out=$zero_out seven_out=$seven_out"
+  fi
+}
+
+case_context_workflow_refresh_bounded_no_timeout_binary_skips_refresh() {
+  local name="pmctl context workflow refresh (bounded): no timeout binary -> skip the refresh (no work, non-zero), never run it unbounded"
+  should_run "$name" || return 0
+
+  # issue #579 / critic-F001 + qa-tester-F001: when `timeout` is not on PATH
+  # there is no portable bound, so the wrapper must SKIP the optional refresh
+  # (return non-zero, do no work) rather than fall through to an unbounded
+  # in-process call that reinstates the hang. The lib is sourced under a normal
+  # PATH, then PATH is emptied so `command -v timeout` fails. A marker-touching
+  # stub proves the underlying refresh is not invoked at all.
+  local marker="$tmp_root/bounded-notimeout.invoked" out code=0 err
+  rm -f "$marker"
+  err="$(mktemp "$tmp_root/bounded-notimeout.err.XXXXXX")"
+  out="$(bash -c '
+    . "$1"
+    PATH=/nonexistent-pm-dispatch-no-timeout
+    pmctl_context_workflow_refresh() { : > "'"$marker"'"; printf "SHOULD-NOT-RUN\n"; return 0; }
+    pmctl_context_workflow_refresh_bounded /some/repo
+  ' bash "$REPO_ROOT/runtime/lib/pmctl-context.sh" 2>"$err")" || code=$?
+
+  if [[ "$code" -ne 0 && -z "$out" && ! -e "$marker" ]] \
+    && grep -q 'timeout command unavailable' "$err"; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out marker_exists=$([[ -e "$marker" ]] && echo yes || echo no) err=$(cat "$err")"
+  fi
+}
+
+case_context_workflow_refresh_bounded_timeout_terminates_process_tree() {
+  local name="pmctl context workflow refresh (bounded): a timeout terminates the whole refresh process tree, not just the direct child"
+  should_run "$name" || return 0
+  command -v timeout >/dev/null 2>&1 || { skip "$name" "timeout not on PATH (bounded wrapper takes the in-process branch)"; return 0; }
+
+  # issue #579 / critic-F001 + qa-tester-F001: a stub `timeout` (exit 124) never
+  # proves the real kill. Here the wrapper runs the real `timeout` against a
+  # stub pmctl (via the pmctl-override seam) that forks a tracked descendant and
+  # then hangs holding the inherited stdout pipe. For the caller's $(...) to
+  # return, `timeout` must terminate the child's whole process group -- direct
+  # child AND descendant.
+  local stub="$tmp_root/bounded-tree-kill/pmctl"
+  local desc_pid_file="$tmp_root/bounded-tree-kill.descpid"
+  mkdir -p "$(dirname "$stub")"
+  cat > "$stub" <<STUB
+#!/usr/bin/env bash
+( exec sleep 8 ) &
+printf '%s\n' "\$!" > "$desc_pid_file"
+sleep 8
+STUB
+  chmod +x "$stub"
+
+  local out code=0 start end elapsed
+  start="$(date +%s)"
+  out="$(PM_DISPATCH_CONTEXT_REFRESH_PMCTL="$stub" PM_DISPATCH_CONTEXT_REFRESH_TIMEOUT=1 \
+    bash -c '. "$1"; pmctl_context_workflow_refresh_bounded /nonexistent/repo' \
+    bash "$REPO_ROOT/runtime/lib/pmctl-context.sh" 2>/dev/null)" || code=$?
+  end="$(date +%s)"; elapsed=$((end - start))
+
+  local desc_pid i
+  desc_pid="$(cat "$desc_pid_file" 2>/dev/null || true)"
+  for i in 1 2 3 4 5 6 7 8; do
+    [[ -n "$desc_pid" ]] || break
+    kill -0 "$desc_pid" 2>/dev/null || break
+    sleep 0.5
+  done
+
+  if [[ "$code" -eq 124 && -z "$out" && "$elapsed" -lt 15 && -n "$desc_pid" ]] \
+    && ! kill -0 "$desc_pid" 2>/dev/null; then
+    pass "$name"
+  else
+    local alive=no; [[ -n "$desc_pid" ]] && kill -0 "$desc_pid" 2>/dev/null && alive=yes
+    kill "$desc_pid" 2>/dev/null || true
+    fail "$name" "code=$code elapsed=${elapsed}s out=$out desc_pid=${desc_pid:-none} descendant_alive=$alive"
+  fi
+}
+
 case_context_index_gitignore_symlink() {
   local name="pmctl context index: does not write through a symlinked .gitignore"
   should_run "$name" || return 0
@@ -5736,6 +5929,11 @@ case_context_status_marker_round_trip
 case_context_status_explicit_repo_isolated
 case_context_workflow_refresh_opt_out_reports_skipped
 case_context_workflow_refresh_sqlite_unavailable
+case_context_workflow_refresh_bounded_forwards_status_json
+case_context_workflow_refresh_bounded_timeout_yields_empty_nonzero
+case_context_workflow_refresh_bounded_zero_timeout_uses_default_bound
+case_context_workflow_refresh_bounded_no_timeout_binary_skips_refresh
+case_context_workflow_refresh_bounded_timeout_terminates_process_tree
 case_context_index_gitignore_symlink
 case_context_index_gitignore_hardlink
 case_context_index_gitignore_preexisting_dir

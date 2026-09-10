@@ -129,6 +129,39 @@ case_prepare_repo_context_marker_round_trip() {
   fi
 }
 
+# Behavior: a failed bounded context refresh does not abort or stall prepare
+# (issue #579 / critic-F001 + qa-tester-F001). The caller branches only on
+# zero vs non-zero from the wrapper, so exit 124 (timeout expiry) exercises the
+# same path as exit 1 (the no-`timeout`-binary skip, covered directly in
+# test-pmctl-context.sh and the gate suite). Steps: shadow `timeout` with a stub
+# that reports expiry (exit 124), run prepare, assert it completes with the
+# documented error context rather than propagating the failure.
+case_prepare_continues_when_bounded_context_refresh_fails() {
+  local name="pmctl pm prepare: a failed bounded context refresh still yields a completed prepare with error context"
+  should_run "$name" || return 0
+  command -v timeout >/dev/null 2>&1 || { skip "$name" "timeout not on PATH (bounded wrapper takes the in-process branch)"; return 0; }
+  local work="$tmp_root/prepare-ctx-timeout-work" stub_bin="$tmp_root/prepare-ctx-timeout-stub"
+  local out snapshot code=0
+  mkdir -p "$work" "$stub_bin"
+  git -C "$work" init -q
+  cat > "$stub_bin/timeout" <<'STUB'
+#!/usr/bin/env bash
+exit 124
+STUB
+  chmod +x "$stub_bin/timeout"
+  out="$(env "PATH=$stub_bin:$PATH" "$PMCTL" pm prepare --cd "$work" --request 'cc582 bounded refresh timeout' --json 2>/dev/null)" || code=$?
+  snapshot="$(jq -r '.snapshot_file // empty' <<<"$out" 2>/dev/null || true)"
+  [[ -n "$snapshot" && -f "$snapshot" ]] && rm -f "$snapshot"
+  # prepare must complete (exit 0, full result object) and record the refresh
+  # failure as error context rather than propagating it or hanging.
+  if [[ "$code" -eq 0 ]] \
+    && jq -e '.schema_version == 1 and .repo_context.refresh_status == "error" and .handover_required == true' <<<"$out" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
 # Behavior: prepare extracts each CC ticket once even when it occurs repeatedly in the request.
 # Steps: prepare a request containing duplicate IDs; assert focus_tickets preserves first-seen unique order.
 case_prepare_deduplicates_focus_tickets() {
@@ -676,6 +709,7 @@ case_prepare_emits_human_contract
 case_prepare_defaults_to_caller_git_root
 case_prepare_degrades_without_backlog
 case_prepare_repo_context_marker_round_trip
+case_prepare_continues_when_bounded_context_refresh_fails
 case_prepare_deduplicates_focus_tickets
 case_prepare_rejects_empty_request
 case_prepare_rejects_non_git_workdir
