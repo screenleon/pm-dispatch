@@ -1188,6 +1188,103 @@ case_doctor_fix_recheck_still_fails_reports_fail() {
   fi
 }
 
+# Commit the copied working tree so `git ls-files --eol` has an index to compare
+# the working copy against (make_doctor_fix_fixture git-inits but never commits).
+_td_commit_fixture() {
+  local repo="$1"
+  git -C "$repo" config user.email doctor-test@example.invalid
+  git -C "$repo" config user.name doctor-test
+  git -C "$repo" add -A
+  git -C "$repo" -c core.autocrlf=false commit -qm "fixture baseline" >/dev/null
+}
+
+case_doctor_tracked_line_endings_flags_crlf() {
+  # issue #579: a tracked file that .gitattributes normalizes to LF but whose
+  # working copy carries CRLF. Whether `git status` surfaces this is
+  # git-version-dependent (the Git for Windows build in the report hid it under
+  # `text=auto`); doctor must flag it regardless, via `git ls-files --eol`.
+  #
+  # Steps:
+  #   1. Build + commit the fix fixture; add + commit an extension-less probe (LF).
+  #   2. Rewrite the probe's working copy with CRLF.
+  #   3. Run doctor; assert exit 1 and the CRLF [FAIL] names the probe.
+  local name="doctor-tracked-line-endings-flags-crlf"
+  should_run "$name" || return 0
+  if ! _td_needs_symlink "$name"; then return 0; fi
+  local home="$tmp_root/home-crlf-flag" fake_repo="$tmp_root/fake-repo-crlf-flag"
+  local bin="$tmp_root/bin-crlf-flag" out status=0 path
+  make_doctor_fix_fixture "$fake_repo" "$home"
+  _td_commit_fixture "$fake_repo"
+  printf '#!/usr/bin/env bash\necho probe\n' > "$fake_repo/crlf-probe"
+  git -C "$fake_repo" add crlf-probe
+  git -C "$fake_repo" -c core.autocrlf=false commit -qm "add probe" >/dev/null
+  printf '#!/usr/bin/env bash\r\necho probe\r\n' > "$fake_repo/crlf-probe"
+  path="$(make_stub_bin "$bin" claude codex grok)"
+  ln -sf "$fake_repo/cli/pmctl" "$bin/pmctl"
+
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" bash "$DOCTOR" --no-color --repo "$fake_repo" 2>&1)" || status=$?
+  if [[ "$status" -eq 1 \
+      && "$out" == *"[FAIL]"*"working-tree CRLF in tracked LF files: crlf-probe"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out"
+  fi
+}
+
+case_doctor_fix_tracked_line_endings() {
+  # --fix restores LF from the (LF) index for a CRLF working copy, and is
+  # idempotent: a second --fix run reports the clean state, not another repair.
+  local name="doctor-fix-tracked-line-endings"
+  should_run "$name" || return 0
+  if ! _td_needs_symlink "$name"; then return 0; fi
+  local home="$tmp_root/home-crlf-fix" fake_repo="$tmp_root/fake-repo-crlf-fix"
+  local bin="$tmp_root/bin-crlf-fix" first second status=0 path cr_after
+  make_doctor_fix_fixture "$fake_repo" "$home"
+  _td_commit_fixture "$fake_repo"
+  printf '#!/usr/bin/env bash\necho probe\n' > "$fake_repo/crlf-probe"
+  git -C "$fake_repo" add crlf-probe
+  git -C "$fake_repo" -c core.autocrlf=false commit -qm "add probe" >/dev/null
+  printf '#!/usr/bin/env bash\r\necho probe\r\n' > "$fake_repo/crlf-probe"
+  path="$(make_stub_bin "$bin" claude codex grok)"
+  ln -sf "$fake_repo/cli/pmctl" "$bin/pmctl"
+
+  first="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" bash "$DOCTOR" --no-color --fix --repo "$fake_repo" 2>&1)" || status=$?
+  cr_after="$(tr -cd '\r' < "$fake_repo/crlf-probe" | wc -c | tr -d ' ')"
+  second="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" bash "$DOCTOR" --no-color --fix --repo "$fake_repo" 2>&1)" || status=$?
+
+  if [[ "$cr_after" -eq 0 \
+      && "$first" == *"[OK]"*"restored LF line endings: crlf-probe"* \
+      && "$second" == *"[OK]"*"tracked files use LF line endings"* \
+      && "$second" != *"restored LF line endings"* \
+      && -z "$(git -C "$fake_repo" status --porcelain)" ]]; then
+    pass "$name"
+  else
+    fail "$name" "cr_after=$cr_after first=$first second=$second"
+  fi
+}
+
+case_doctor_tracked_line_endings_skips_without_git() {
+  # Copy-mode / non-git checkout: the check needs a work tree to compare
+  # against, so it warns and does not fail.
+  local name="doctor-tracked-line-endings-skips-without-git"
+  should_run "$name" || return 0
+  local home="$tmp_root/home-crlf-nogit" out status=0
+  local fake_repo="$tmp_root/fake-repo-crlf-nogit"
+  mkdir -p "$fake_repo"
+  cp -r "$REPO_ROOT/runtime" "$REPO_ROOT/hosts" "$REPO_ROOT/ops" "$fake_repo/"
+  find "$fake_repo/runtime" "$fake_repo/hosts" "$fake_repo/ops" -type f -name '*.sh' -exec chmod +x {} +
+  write_minimal_settings "$home"
+  write_manifest "$home"
+
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" bash "$DOCTOR" --no-color --repo "$fake_repo" 2>&1)" || status=$?
+  if [[ "$out" == *"[WARN]"*"line-ending check needs a git work tree"* \
+      && "$out" != *"working-tree CRLF"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out"
+  fi
+}
+
 case_doctor_manifest_missing_warn() {
   # Verifies that a missing install-manifest.json emits [WARN] but not [FAIL].
   #
@@ -2887,6 +2984,9 @@ case_doctor_fix_leaves_other_checks_unchanged
 case_doctor_fix_json_fixed_field
 case_doctor_fix_refuses_symlinked_script
 case_doctor_fix_recheck_still_fails_reports_fail
+case_doctor_tracked_line_endings_flags_crlf
+case_doctor_fix_tracked_line_endings
+case_doctor_tracked_line_endings_skips_without_git
 case_doctor_manifest_missing_warn
 case_doctor_manifest_bad_version_warn
 case_doctor_legacy_guard_log_warns

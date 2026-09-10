@@ -193,7 +193,7 @@ Options:
   --json        Emit JSON Lines output and disable color
   --quiet       Suppress OK lines in human output
   --no-color    Disable colorized human output
-  --fix         Restore executable modes for managed scripts only
+  --fix         Restore managed script executable modes and LF line endings only
   --repo PATH   Repository root to check (default: script directory parent)
   --profile auto|minimal|full
                 Override hook-profile detection (default: auto)
@@ -526,6 +526,69 @@ check_scripts_executable() {
   fi
 }
 
+# CRLF in a tracked LF file is invisible to `git status` -- `.gitattributes`'
+# `text=auto` normalizes on read -- yet it silently breaks bash heredocs and
+# shebang resolution (issue #579: a stale core.autocrlf=true checkout left
+# cli/pmctl and cli/commands.tsv with CRLF). `git ls-files --eol` compares the
+# working-tree bytes against each path's resolved normalization attribute, which
+# surfaces exactly that mismatch; the repo's `* text=auto eol=lf` catch-all
+# means every text path (extension-less executables included) resolves to
+# `eol=lf`, so a CRLF working copy is always a defect here.
+check_tracked_line_endings() {
+  local fix="${1:-0}"
+
+  if ! command -v git >/dev/null 2>&1 \
+    || ! git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    emit_check tracked-line-endings warn "line-ending check needs a git work tree (skipped)"
+    return
+  fi
+
+  local -a offenders=()
+  local eolinfo path
+  while IFS=$'\t' read -r eolinfo path; do
+    [[ -n "$path" ]] || continue
+    # attr column resolves to eol=lf for every text path in this repo; a
+    # deliberately CRLF path (e.g. *.cmd with `eol=crlf`) resolves otherwise
+    # and is left alone.
+    case "$eolinfo" in *eol=lf*) ;; *) continue ;; esac
+    case "$eolinfo" in *w/crlf*|*w/mixed*) ;; *) continue ;; esac
+    offenders+=("$path")
+  done < <(git -C "$REPO_ROOT" ls-files --eol 2>/dev/null || true)
+
+  if [[ "$fix" -eq 1 && "${#offenders[@]}" -gt 0 ]]; then
+    local -a repaired=("${offenders[@]}") p
+    for p in "${offenders[@]}"; do
+      # Never act through a symlink; a managed path must be a real regular file
+      # inside the repo. `git checkout -- <path>` alone is a no-op here because
+      # git reads the CRLF file back as LF and sees it as unmodified, so remove
+      # the working copy first and let checkout re-materialise it from the (LF)
+      # index.
+      if [[ ! -L "$REPO_ROOT/$p" && -f "$REPO_ROOT/$p" ]]; then
+        rm -f "$REPO_ROOT/$p" \
+          && git -C "$REPO_ROOT" checkout -- "$p" 2>/dev/null || true
+      fi
+    done
+    offenders=()
+    while IFS=$'\t' read -r eolinfo path; do
+      [[ -n "$path" ]] || continue
+      case "$eolinfo" in *eol=lf*) ;; *) continue ;; esac
+      case "$eolinfo" in *w/crlf*|*w/mixed*) ;; *) continue ;; esac
+      offenders+=("$path")
+    done < <(git -C "$REPO_ROOT" ls-files --eol 2>/dev/null || true)
+    if [[ "${#offenders[@]}" -eq 0 ]]; then
+      emit_check tracked-line-endings ok "restored LF line endings: ${repaired[*]}" "" true
+      return
+    fi
+  fi
+
+  if [[ "${#offenders[@]}" -gt 0 ]]; then
+    emit_check tracked-line-endings fail "working-tree CRLF in tracked LF files: ${offenders[*]}" \
+      "run: git add --renormalize . && git checkout -- ${offenders[*]}  (or doctor.sh --fix)"
+  else
+    emit_check tracked-line-endings ok "tracked files use LF line endings"
+  fi
+}
+
 check_memory_dir() {
   if [[ "$_MEMORY_DIR_AVAILABLE" -eq 0 ]]; then
     emit_check memory-dir warn "memory-dir check skipped (lib/memory-dir.sh not available)"
@@ -770,8 +833,10 @@ main() {
     printf '  Use WSL2 for CI and release sign-off. See docs/platform-support.md.\n\n'
   fi
 
-  # This is the only --fix whitelist entry. Run it first in fix mode because
-  # host checks also validate managed hook executability.
+  # --fix whitelist: idempotent, reversible, never touches file content.
+  # scripts-executable runs first in fix mode because host checks also validate
+  # managed hook executability; tracked-line-endings has no such ordering need
+  # and runs later in the normal check sequence.
   if [[ "$FIX" -eq 1 ]]; then
     check_scripts_executable "$FIX"
   fi
@@ -807,6 +872,7 @@ main() {
   if [[ "$FIX" -eq 0 ]]; then
     check_scripts_executable "$FIX"
   fi
+  check_tracked_line_endings "$FIX"
   check_memory_dir
   check_frontmatter_lint
   check_detached_runs
