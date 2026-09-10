@@ -556,7 +556,7 @@ check_tracked_line_endings() {
   done < <(git -C "$REPO_ROOT" ls-files --eol 2>/dev/null || true)
 
   if [[ "$fix" -eq 1 && "${#offenders[@]}" -gt 0 ]]; then
-    local -a repaired=() unsafe=() p abs
+    local -a repaired=() unsafe=() p abs dir mode tmp
     for p in "${offenders[@]}"; do
       abs="$REPO_ROOT/$p"
       # Never act through a symlink; a managed path must be a real regular file.
@@ -568,12 +568,22 @@ check_tracked_line_endings() {
       # index -- i.e. the CR-stripped working copy equals the staged blob byte
       # for byte. A file that also carries independent uncommitted content edits
       # is left untouched: --fix must never discard local work.
-      if git -C "$REPO_ROOT" show ":$p" 2>/dev/null | cmp -s - <(tr -d '\r' < "$abs") \
-        && tr -d '\r' < "$abs" > "$abs.crlf-fix.$$" \
-        && mv -f "$abs.crlf-fix.$$" "$abs"; then
+      if ! git -C "$REPO_ROOT" show ":$p" 2>/dev/null | cmp -s - <(tr -d '\r' < "$abs"); then
+        unsafe+=("$p")
+        continue
+      fi
+      # Repair through a same-directory mktemp: a random O_EXCL name that no
+      # repo-directory writer can pre-place a symlink at, and whose mode is
+      # copied from the target so a repaired executable (cli/pmctl) keeps +x.
+      dir="$(dirname "$abs")"
+      mode="$(stat -c '%a' "$abs" 2>/dev/null || stat -f '%Lp' "$abs" 2>/dev/null || printf '644')"
+      if tmp="$(mktemp "$dir/.doctor-crlf.XXXXXX" 2>/dev/null)" \
+        && tr -d '\r' < "$abs" > "$tmp" \
+        && chmod "$mode" "$tmp" 2>/dev/null \
+        && mv -f "$tmp" "$abs"; then
         repaired+=("$p")
       else
-        rm -f "$abs.crlf-fix.$$"
+        [[ -n "${tmp:-}" ]] && rm -f "$tmp"
         unsafe+=("$p")
       fi
     done
@@ -843,12 +853,13 @@ main() {
   fi
 
   # --fix whitelist: idempotent and reversible. scripts-executable only touches
-  # the mode bit; tracked-line-endings only strips CR bytes, and only from files
-  # proven CR-only-different from the index (one with independent uncommitted
-  # edits is reported, never rewritten). scripts-executable runs first in fix
-  # mode because host checks also validate managed hook executability;
-  # tracked-line-endings has no such ordering need and runs in the normal
-  # check sequence.
+  # the mode bit; tracked-line-endings only strips CR bytes, from files proven
+  # CR-only-different from the index (one with independent uncommitted edits is
+  # reported, never rewritten), through a same-dir mktemp whose mode is copied
+  # from the target so a repaired executable keeps +x. scripts-executable runs
+  # first in fix mode because host checks also validate managed hook
+  # executability; tracked-line-endings has no such ordering need and runs in
+  # the normal check sequence.
   if [[ "$FIX" -eq 1 ]]; then
     check_scripts_executable "$FIX"
   fi

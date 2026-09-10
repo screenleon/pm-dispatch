@@ -1294,21 +1294,54 @@ case_doctor_fix_tracked_line_endings_preserves_independent_edits() {
   fi
 }
 
+case_doctor_fix_tracked_line_endings_preserves_executable_mode() {
+  # The repair writes through a fresh mktemp; its mode must be copied from the
+  # target so a repaired executable (e.g. cli/pmctl) keeps +x (gate
+  # critic-F001 / qa-tester-F001).
+  local name="doctor-fix-tracked-line-endings-preserves-executable-mode"
+  should_run "$name" || return 0
+  if ! _td_needs_symlink "$name"; then return 0; fi
+  if ! _td_needs_chmod_x "$name"; then return 0; fi
+  local home="$tmp_root/home-crlf-exec" fake_repo="$tmp_root/fake-repo-crlf-exec"
+  local bin="$tmp_root/bin-crlf-exec" out status=0 path
+  make_doctor_fix_fixture "$fake_repo" "$home"
+  _td_commit_fixture "$fake_repo"
+  printf '#!/usr/bin/env bash\necho probe\n' > "$fake_repo/crlf-exec-probe"
+  chmod 755 "$fake_repo/crlf-exec-probe"
+  git -C "$fake_repo" add crlf-exec-probe
+  git -C "$fake_repo" -c core.autocrlf=false commit -qm "add exec probe" >/dev/null
+  printf '#!/usr/bin/env bash\r\necho probe\r\n' > "$fake_repo/crlf-exec-probe"
+  chmod 755 "$fake_repo/crlf-exec-probe"
+  path="$(make_stub_bin "$bin" claude codex grok)"
+  ln -sf "$fake_repo/cli/pmctl" "$bin/pmctl"
+
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" bash "$DOCTOR" --no-color --fix --repo "$fake_repo" 2>&1)" || status=$?
+  if [[ "$status" -eq 0 \
+      && -x "$fake_repo/crlf-exec-probe" \
+      && "$(tr -cd '\r' < "$fake_repo/crlf-exec-probe" | wc -c | tr -d ' ')" -eq 0 \
+      && "$out" == *"[OK]"*"restored LF line endings: crlf-exec-probe"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status x=$([[ -x "$fake_repo/crlf-exec-probe" ]] && echo yes || echo no) out=$out"
+  fi
+}
+
 case_doctor_tracked_line_endings_skips_without_git() {
   # Copy-mode / non-git checkout: the check needs a work tree to compare
-  # against, so it warns and does not fail.
+  # against, so it WARNs (does not FAIL) and doctor still exits 0.
   local name="doctor-tracked-line-endings-skips-without-git"
   should_run "$name" || return 0
-  local home="$tmp_root/home-crlf-nogit" out status=0
-  local fake_repo="$tmp_root/fake-repo-crlf-nogit"
-  mkdir -p "$fake_repo"
-  cp -r "$REPO_ROOT/runtime" "$REPO_ROOT/hosts" "$REPO_ROOT/ops" "$fake_repo/"
-  find "$fake_repo/runtime" "$fake_repo/hosts" "$fake_repo/ops" -type f -name '*.sh' -exec chmod +x {} +
-  write_minimal_settings "$home"
-  write_manifest "$home"
+  if ! _td_needs_symlink "$name"; then return 0; fi
+  local home="$tmp_root/home-crlf-nogit" fake_repo="$tmp_root/fake-repo-crlf-nogit"
+  local bin="$tmp_root/bin-crlf-nogit" out status=0 path
+  make_doctor_fix_fixture "$fake_repo" "$home"
+  rm -rf "$fake_repo/.git"   # otherwise-healthy checkout, minus the work tree
+  path="$(make_stub_bin "$bin" claude codex grok)"
+  ln -sf "$fake_repo/cli/pmctl" "$bin/pmctl"
 
-  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" bash "$DOCTOR" --no-color --repo "$fake_repo" 2>&1)" || status=$?
-  if [[ "$out" == *"[WARN]"*"line-ending check needs a git work tree"* \
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" bash "$DOCTOR" --no-color --repo "$fake_repo" 2>&1)" || status=$?
+  if [[ "$status" -eq 0 \
+      && "$out" == *"[WARN]"*"line-ending check needs a git work tree"* \
       && "$out" != *"working-tree CRLF"* ]]; then
     pass "$name"
   else
@@ -3018,6 +3051,7 @@ case_doctor_fix_recheck_still_fails_reports_fail
 case_doctor_tracked_line_endings_flags_crlf
 case_doctor_fix_tracked_line_endings
 case_doctor_fix_tracked_line_endings_preserves_independent_edits
+case_doctor_fix_tracked_line_endings_preserves_executable_mode
 case_doctor_tracked_line_endings_skips_without_git
 case_doctor_manifest_missing_warn
 case_doctor_manifest_bad_version_warn
