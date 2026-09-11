@@ -2475,19 +2475,28 @@ case_finish_go_dirty_tree_refuses_push() {
   fi
 }
 
-# write_dispatched_lane_tracking_entry <store> <work_dir> <ticket_id> <adapter>
+# write_dispatched_lane_tracking_entry <store> <work_dir> <ticket_id> <adapter> [declared_path...]
 # Writes a ship-lanes.jsonl entry directly (bypassing a real/stubbed dispatch)
 # so _pmctl_ship_lane_was_dispatched (CC-584) sees this ticket+path as an
 # --adapter-dispatched lane, matching _pmctl_ship_lanes_tracking_write's shape.
+# Any trailing args become the entry's `declared_paths` allowlist (CC-584) --
+# omit them to test the "no declared paths" refusal path.
 write_dispatched_lane_tracking_entry() {
-  local store="$1" work_dir="$2" ticket_id="$3" adapter="$4" reg_dir
+  local store="$1" work_dir="$2" ticket_id="$3" adapter="$4" reg_dir declared_paths_json
+  shift 4
   reg_dir="$(reg_dir_for "$store" "$work_dir")"
   mkdir -p "$reg_dir"
+  if [[ $# -gt 0 ]]; then
+    declared_paths_json="$(jq -cn '$ARGS.positional' --args "$@")"
+  else
+    declared_paths_json='[]'
+  fi
   jq -cn --arg ticket "$ticket_id" --arg branch "feat/$ticket_id" --arg path "$work_dir" \
-    --arg adapter "$adapter" \
+    --arg adapter "$adapter" --argjson declared_paths "$declared_paths_json" \
     '{ticket:$ticket,branch:$branch,path:$path,run_id:"run-test-fixture",
       operation_id:"",operation_work_dir:"",adapter:$adapter,status:"running",
-      created_ts:"2026-01-01T00:00:00Z",lane_id:"lane-test-fixture"}' \
+      created_ts:"2026-01-01T00:00:00Z",lane_id:"lane-test-fixture",
+      declared_paths:$declared_paths}' \
     >> "$reg_dir/ship-lanes.jsonl"
 }
 
@@ -2500,7 +2509,7 @@ case_finish_dispatched_lane_auto_commits_before_gate() {
   make_work_repo "$work" "CC-9001"
   checkout_ticket_branch "$work" "CC-9001"
   add_bare_origin "$work"
-  write_dispatched_lane_tracking_entry "$store" "$work" "CC-9001" "codex"
+  write_dispatched_lane_tracking_entry "$store" "$work" "CC-9001" "codex" "OUTPUT.md"
   local pre_head
   pre_head="$(git -C "$work" rev-parse HEAD)"
   # Simulated dispatch output: a real deliverable file, plus pm-dispatch's own
@@ -2550,6 +2559,101 @@ case_finish_manual_lane_still_refuses_on_dirty_tree_when_not_dispatched() {
     pass "$name"
   else
     fail "$name" "expected exit 1 + no push; got status=$status pushed=$pushed stderr=$(cat "$err")"
+  fi
+}
+
+case_finish_dispatched_lane_refuses_undeclared_collateral_file() {
+  local name="ship finish: an --adapter-dispatched lane refuses to auto-commit when it touched a file outside its declared allowlist (CC-584)"
+  should_run "$name" || return 0
+  local store work out err status=0
+  store="$tmp_root/state-finish-collateral"
+  work="$tmp_root/work-finish-collateral"
+  make_work_repo "$work" "CC-9001"
+  checkout_ticket_branch "$work" "CC-9001"
+  add_bare_origin "$work"
+  # Declares only OUTPUT.md -- COLLATERAL.md is real, non-bookkeeping, and
+  # never declared, so finish must refuse before staging/committing/pushing
+  # anything at all, not just silently drop the one undeclared file.
+  write_dispatched_lane_tracking_entry "$store" "$work" "CC-9001" "codex" "OUTPUT.md"
+  local pre_head
+  pre_head="$(git -C "$work" rev-parse HEAD)"
+  printf 'dispatched output\n' > "$work/OUTPUT.md"
+  printf 'not part of the ticket\n' > "$work/COLLATERAL.md"
+  out="$tmp_root/out-finish-collateral"; err="$tmp_root/err-finish-collateral"
+  PM_DISPATCH_STATE_ROOT="$store" run_finish_with_fake_gate "$work" "CC-9001" "GO" > "$out" 2> "$err" || status=$?
+  local post_head pushed=0
+  post_head="$(git -C "$work" rev-parse HEAD 2>/dev/null || true)"
+  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
+  if [[ "$status" -eq 1 && "$post_head" == "$pre_head" && "$pushed" -eq 0 ]] \
+    && grep -q "undeclared path" "$err" && grep -q "COLLATERAL.md" "$err"; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 1, no new commit, no push; got status=$status pre=$pre_head post=$post_head pushed=$pushed stderr=$(cat "$err")"
+  fi
+}
+
+case_finish_dispatched_lane_refuses_with_no_declared_allowlist() {
+  local name="ship finish: an --adapter-dispatched lane with no declared edit-path allowlist refuses to auto-commit at all (CC-584)"
+  should_run "$name" || return 0
+  local store work out err status=0
+  store="$tmp_root/state-finish-no-allowlist"
+  work="$tmp_root/work-finish-no-allowlist"
+  make_work_repo "$work" "CC-9001"
+  checkout_ticket_branch "$work" "CC-9001"
+  add_bare_origin "$work"
+  # No trailing declared_path args -- entry's declared_paths is [].
+  write_dispatched_lane_tracking_entry "$store" "$work" "CC-9001" "codex"
+  local pre_head
+  pre_head="$(git -C "$work" rev-parse HEAD)"
+  printf 'dispatched output\n' > "$work/OUTPUT.md"
+  out="$tmp_root/out-finish-no-allowlist"; err="$tmp_root/err-finish-no-allowlist"
+  PM_DISPATCH_STATE_ROOT="$store" run_finish_with_fake_gate "$work" "CC-9001" "GO" > "$out" 2> "$err" || status=$?
+  local post_head pushed=0
+  post_head="$(git -C "$work" rev-parse HEAD 2>/dev/null || true)"
+  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
+  if [[ "$status" -eq 1 && "$post_head" == "$pre_head" && "$pushed" -eq 0 ]] \
+    && grep -q "no declared edit-path allowlist" "$err"; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 1, no new commit, no push; got status=$status pre=$pre_head post=$post_head pushed=$pushed stderr=$(cat "$err")"
+  fi
+}
+
+case_finish_dispatched_lane_bookkeeping_only_reports_explicitly_and_gates_old_head() {
+  local name="ship finish: an --adapter-dispatched lane whose only dirty paths are pm-dispatch bookkeeping reports explicitly and never claims a ticket deliverable was committed (CC-584)"
+  should_run "$name" || return 0
+  local store work out err status=0
+  store="$tmp_root/state-finish-bookkeeping-only"
+  work="$tmp_root/work-finish-bookkeeping-only"
+  make_work_repo "$work" "CC-9001"
+  checkout_ticket_branch "$work" "CC-9001"
+  add_bare_origin "$work"
+  write_dispatched_lane_tracking_entry "$store" "$work" "CC-9001" "codex" "OUTPUT.md"
+  local pre_head
+  pre_head="$(git -C "$work" rev-parse HEAD)"
+  # Only bookkeeping paths are dirty -- no OUTPUT.md, nothing declared was
+  # touched. Must be reported explicitly (not silently passed through) and
+  # must never claim a "dispatched implementation" was committed; a lone
+  # .gitignore bookkeeping-patch commit is the one exception allowed to
+  # land on HEAD (needed so the tree is clean for gate/push), and its own
+  # message says so rather than pretending it is the ticket's deliverable.
+  mkdir -p "$work/.dispatch-results"
+  printf 'bookkeeping\n' > "$work/.dispatch-results/fake.md"
+  local gh_bin="$tmp_root/fake-gh-bookkeeping-only-bin"
+  install_fake_gh "$gh_bin" "https://example.invalid/pr/bookkeeping-only"
+  out="$tmp_root/out-finish-bookkeeping-only"; err="$tmp_root/err-finish-bookkeeping-only"
+  PM_DISPATCH_STATE_ROOT="$store" PATH="$gh_bin:$PATH" run_finish_with_fake_gate "$work" "CC-9001" "GO" > "$out" 2> "$err" || status=$?
+  local post_head pushed=0 committed_files
+  post_head="$(git -C "$work" rev-parse HEAD 2>/dev/null || true)"
+  committed_files="$(git -C "$work" diff --name-only "$pre_head" "$post_head" 2>/dev/null || true)"
+  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
+  if [[ "$status" -eq 0 && "$pushed" -eq 1 ]] \
+    && [[ "$committed_files" == ".gitignore" || -z "$committed_files" ]] \
+    && grep -q "only pm-dispatch bookkeeping changes" "$err" \
+    && ! grep -q "committed dispatched changes for CC-9001" "$err"; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 0, pushed, only .gitignore (if anything) committed; got status=$status pre=$pre_head post=$post_head committed_files=[$committed_files] pushed=$pushed stderr=$(cat "$err")"
   fi
 }
 
@@ -3748,6 +3852,9 @@ case_finish_help_names_artifact_options
 case_finish_go_dirty_tree_refuses_push
 case_finish_dispatched_lane_auto_commits_before_gate
 case_finish_manual_lane_still_refuses_on_dirty_tree_when_not_dispatched
+case_finish_dispatched_lane_refuses_undeclared_collateral_file
+case_finish_dispatched_lane_refuses_with_no_declared_allowlist
+case_finish_dispatched_lane_bookkeeping_only_reports_explicitly_and_gates_old_head
 case_finish_go_head_moved_refuses_push
 case_finish_supplied_gate_result_head_moved_refuses_push
 case_finish_gh_missing_refuses_before_gate_or_push

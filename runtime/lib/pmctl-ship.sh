@@ -113,6 +113,47 @@ _pmctl_ship_heading_exists() {
   ' "$file"
 }
 
+# _pmctl_ship_ticket_declared_paths <file> <ticket_id>
+# Extracts the body of BACKLOG.md's `## <ticket_id>` section (from that
+# heading to the next `## ` heading or the `---` divider that closes it) and
+# prints every backtick-quoted, path-shaped token found there -- one
+# repo-relative path per line, deduped -- as this ticket's declared edit-path
+# allowlist (CC-584). `pmctl_ship_finish` stages only these paths (plus its
+# own bookkeeping ignore-list) for a dispatched lane's auto-commit, refusing
+# anything else the executor touched. "Path-shaped" requires a `/` (so a bare
+# command name like `git commit` never matches) and a trailing `.<ext>` (so a
+# bare directory name doesn't either); the path need not already exist on
+# disk -- a ticket's Requirement legitimately names a file the dispatch is
+# about to create. Prints nothing (not an error) when the section has no
+# such token -- callers decide how to treat an empty allowlist.
+_pmctl_ship_ticket_declared_paths() {
+  local file="$1" ticket_id="$2"
+  [[ -f "$file" ]] || return 0
+  # shellcheck disable=SC2016 # the grep pattern below is a literal backtick match, not an unexpanded variable
+  awk -v want="## $ticket_id" '
+    {
+      prefix = substr($0, 1, length(want))
+      if (in_section && ($0 == "---" || $0 ~ /^## /)) { exit }
+      if (prefix == want) {
+        next_char = substr($0, length(want) + 1, 1)
+        if (next_char == "" || next_char !~ /[A-Za-z0-9]/) { in_section = 1; next }
+      }
+      if (in_section) { print }
+    }
+  ' "$file" \
+    | grep -oE '`[A-Za-z0-9_./-]*/[A-Za-z0-9_./-]+\.[A-Za-z0-9]+`' \
+    | tr -d '`' \
+    | sort -u \
+    || true
+  # `grep -oE` with zero matches (a legitimate outcome -- see the doc
+  # comment above) exits 1, and with `pipefail` (this file's callers all run
+  # under `set -e -o pipefail`) that makes the WHOLE pipeline's status 1 too
+  # -- unguarded, that would abort the caller instead of just yielding an
+  # empty allowlist. `|| true` is appended to this SAME pipeline statement
+  # deliberately: `set -e` aborts as soon as a simple command fails, so a
+  # guard on any later, separate statement would never run.
+}
+
 # pmctl_ship_prepare <repo_root> <work_dir> <ticket-id>
 # Explicit, permanent CLI-facing alias for pmctl_ship_run's in-place path
 # (no --worktree, no --adapter) -- kept for CC-439/CC-441 script callers and
@@ -240,13 +281,84 @@ pmctl_ship_finish() {
   if _pmctl_ship_lane_was_dispatched "$repo_root" "$work_dir" "$ticket_id"; then
     if [[ -n "$(git -C "$work_dir" status --porcelain 2>/dev/null)" ]]; then
       _pmctl_ship_ensure_gitignore "$work_dir"
-      if [[ -n "$(git -C "$work_dir" status --porcelain 2>/dev/null)" ]]; then
-        if ! git -C "$work_dir" add -A 2>&1; then
-          printf 'pmctl ship finish: failed to stage dispatched lane changes for %s\n' "$ticket_id" >&2
+      local dirty_status
+      dirty_status="$(git -C "$work_dir" status --porcelain 2>/dev/null)"
+      if [[ -z "$dirty_status" ]]; then
+        # Every dirty path was pm-dispatch's own bookkeeping and is now
+        # gitignored -- explicit, not silent (CC-584 gate finding qa-F002):
+        # a truly empty dispatch result must be distinguishable from one
+        # that produced a real, committed deliverable.
+        printf 'pmctl ship finish: dispatched lane for %s had only pm-dispatch bookkeeping changes (now gitignored) -- no ticket deliverable to commit; continuing to gate the existing HEAD.\n' "$ticket_id" >&2
+      else
+        # Stage only the ticket's declared edit-path allowlist (CC-584 gate
+        # findings critic-F001/qa-F001/architecture-F001/security-F001):
+        # `git add -A` would hand a dispatched executor unbounded commit
+        # authority over the whole worktree, including any unrelated,
+        # sensitive, or ambiently-present file. Refuse outright, before
+        # staging anything, on any dirty path this lane did not declare.
+        local declared_paths declared_line
+        declared_paths="$(_pmctl_ship_lane_declared_paths "$repo_root" "$work_dir" "$ticket_id")"
+        if [[ -z "$declared_paths" ]]; then
+          # Backticks below are literal Markdown code spans, not command substitution.
+          # shellcheck disable=SC2016
+          printf 'pmctl ship finish: refusing to auto-commit dispatched changes for %s -- this lane recorded no declared edit-path allowlist (BACKLOG.md'\''s `## %s` section had no backtick-quoted file path to derive one from). Commit the intended files manually, or add explicit backtick-quoted paths to the ticket'\''s Requirement section and re-dispatch, then re-run finish.\n' \
+            "$ticket_id" "$ticket_id" >&2
           return 1
         fi
-        if git -C "$work_dir" diff --cached --quiet 2>/dev/null; then
-          : # everything staged was gitignored bookkeeping only -- nothing to commit
+        local -A _declared_set=()
+        while IFS= read -r declared_line; do
+          [[ -n "$declared_line" ]] && _declared_set["$declared_line"]=1
+        done <<<"$declared_paths"
+        local status_line status_path to_add=() undeclared=()
+        while IFS= read -r status_line; do
+          [[ -n "$status_line" ]] || continue
+          status_path="${status_line:3}"
+          # A rename/copy status line is "R  old -> new" (or "C  ..."); the
+          # path actually landing in the tree -- the one that must be
+          # declared -- is the new (right-hand) side.
+          [[ "$status_path" == *" -> "* ]] && status_path="${status_path##* -> }"
+          if [[ -n "${_declared_set[$status_path]:-}" || "$status_path" == ".gitignore" ]]; then
+            # `.gitignore` is host-authored bookkeeping (_pmctl_ship_ensure_gitignore
+            # above may have just created/patched it), never the executor's, so it
+            # is always safe to stage alongside a declared change -- it cannot
+            # itself be gitignored to exclude it the way the other bookkeeping
+            # paths are.
+            to_add+=("$status_path")
+          else
+            undeclared+=("$status_path")
+          fi
+        done <<<"$dirty_status"
+        if [[ "${#undeclared[@]}" -gt 0 ]]; then
+          local undeclared_list
+          undeclared_list="$(printf '%s, ' "${undeclared[@]}")"
+          undeclared_list="${undeclared_list%, }"
+          printf 'pmctl ship finish: refusing to auto-commit dispatched changes for %s -- touched undeclared path(s) outside the ticket'\''s declared edit scope: %s. Review manually; either amend the ticket'\''s Requirement section (and re-dispatch) or commit by hand, then re-run finish.\n' \
+            "$ticket_id" "$undeclared_list" >&2
+          return 1
+        fi
+        # `.gitignore` staged alone (no declared deliverable dirty) is still
+        # bookkeeping, not a ticket deliverable -- it must still be committed
+        # (left dirty, it would trip the post-gate/post-suite dirty-tree
+        # guards below), but say so plainly rather than claiming "committed
+        # dispatched changes" for what is, from the ticket's perspective, an
+        # empty dispatch (RCG-002).
+        local only_gitignore=0
+        if [[ "${#to_add[@]}" -eq 1 && "${to_add[0]}" == ".gitignore" ]]; then
+          only_gitignore=1
+        fi
+        if [[ "${#to_add[@]}" -eq 0 ]]; then
+          printf 'pmctl ship finish: dispatched lane for %s had only pm-dispatch bookkeeping changes (now gitignored) -- no ticket deliverable to commit; continuing to gate the existing HEAD.\n' "$ticket_id" >&2
+        elif ! git -C "$work_dir" add -- "${to_add[@]}" 2>&1; then
+          printf 'pmctl ship finish: failed to stage dispatched lane changes for %s\n' "$ticket_id" >&2
+          return 1
+        elif git -C "$work_dir" diff --cached --quiet 2>/dev/null; then
+          printf 'pmctl ship finish: dispatched lane for %s staged no net change (declared paths matched byte-for-byte HEAD) -- nothing to commit; continuing to gate the existing HEAD.\n' "$ticket_id" >&2
+        elif [[ "$only_gitignore" -eq 1 ]]; then
+          if ! git -C "$work_dir" commit -q -m "ship: $ticket_id pm-dispatch bookkeeping .gitignore patch" 2>&1; then
+            printf 'pmctl ship finish: failed to commit the bookkeeping .gitignore patch for %s\n' "$ticket_id" >&2
+            return 1
+          fi
+          printf 'pmctl ship finish: dispatched lane for %s had only pm-dispatch bookkeeping changes (patched .gitignore only) -- no ticket deliverable; committed the bookkeeping patch alone so the tree is clean for gate.\n' "$ticket_id" >&2
         elif ! git -C "$work_dir" commit -q -m "ship: $ticket_id dispatched implementation" 2>&1; then
           printf 'pmctl ship finish: failed to commit dispatched lane changes for %s\n' "$ticket_id" >&2
           return 1
@@ -701,6 +813,34 @@ _pmctl_ship_lane_was_dispatched() {
   return 1
 }
 
+# _pmctl_ship_lane_declared_paths <repo_root> <work_dir> <ticket-id>
+# Prints this lane's declared edit-path allowlist (CC-584), one
+# repo-relative path per line, as recorded in ship-lanes.jsonl's
+# `declared_paths` field at dispatch time -- same (ticket_id, canonical
+# work_dir) match as _pmctl_ship_lane_was_dispatched. Prints nothing and
+# returns 1 when no matching tracking entry exists; prints nothing (exit 0)
+# when a matching entry exists but recorded no declared paths -- callers
+# must tell the two apart via their own dirty-tree/adapter checks, not this
+# function's exit code alone.
+_pmctl_ship_lane_declared_paths() {
+  local repo_root="$1" work_dir="$2" ticket_id="$3" reg_dir tracking_file
+  local canonical_path line tracked_ticket tracked_path
+  canonical_path="$(cd "$work_dir" 2>/dev/null && pwd -P)" || return 1
+  reg_dir="$(_pmctl_ship_lanes_reg_dir "$repo_root" "$work_dir")" || return 1
+  tracking_file="$(_pmctl_ship_lanes_tracking_file "$reg_dir")"
+  [[ -f "$tracking_file" ]] || return 1
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    tracked_ticket="$(jq -r '.ticket // empty' <<<"$line")"
+    [[ "$tracked_ticket" == "$ticket_id" ]] || continue
+    tracked_path="$(jq -r '.path // empty' <<<"$line")"
+    [[ "$(cd "$tracked_path" 2>/dev/null && pwd -P || true)" == "$canonical_path" ]] || continue
+    jq -r '.declared_paths // [] | .[]' <<<"$line"
+    return 0
+  done < "$tracking_file"
+  return 1
+}
+
 _pmctl_ship_partial_record_write() {
   local repo_root="$1" work_dir="$2" ticket_id="$3" payload="$4"
   local record record_dir tmp
@@ -988,14 +1128,18 @@ _pmctl_ship_ensure_gitignore() {
   [[ "${#added[@]}" -gt 0 ]] && printf 'pmctl ship finish: added %s to .gitignore\n' "${added[*]}" >&2
 }
 
-# _pmctl_ship_brief_write <repo_root> <ticket_id> <lane_work_dir> <branch> <out_path>
+# _pmctl_ship_brief_write <repo_root> <ticket_id> <lane_work_dir> <branch> <out_path> [declared_paths]
 # Writes a dispatch brief scoped to /ship's Step 2 (implement) only -- the
 # executor cannot reach Step 2.5 onward itself (git add/commit is refused by
 # the executor sandbox; see the "Do NOT run git add..." constraint below and
 # CC-584). Step 1 (branch) is also dropped -- the caller already created and
-# checked out <branch> via `pmctl worktree create`.
+# checked out <branch> via `pmctl worktree create`. <declared_paths>, if
+# given, is a newline-separated list (as from _pmctl_ship_ticket_declared_paths)
+# of this ticket's declared edit-path allowlist -- the SAME list
+# `pmctl_ship_finish` later enforces when staging this lane's auto-commit,
+# so the brief and the host's enforcement never drift apart.
 _pmctl_ship_brief_write() {
-  local repo_root="$1" ticket_id="$2" lane_work_dir="$3" branch="$4" out_path="$5"
+  local repo_root="$1" ticket_id="$2" lane_work_dir="$3" branch="$4" out_path="$5" declared_paths="${6:-}"
   # Backticks below are literal Markdown code spans, not command substitution.
   # shellcheck disable=SC2016
   {
@@ -1014,8 +1158,17 @@ _pmctl_ship_brief_write() {
     printf -- '  - The ship contract this brief draws its scope from is defined in `commands/ship.md` (CC-439) -- read its Step 2/2.5 guidance for what "implement" covers here; the gate-loop and PR steps described there do NOT apply to this dispatch (see constraints).\n'
     printf 'files:\n'
     printf -- '  - read: BACKLOG.md (section `## %s`) for Problem/Requirement/Dependencies\n' "$ticket_id"
-    printf -- '  - edit: files named by the ticket'\''s own Requirement section\n'
+    if [[ -n "$declared_paths" ]]; then
+      local _declared_path_line
+      while IFS= read -r _declared_path_line; do
+        [[ -n "$_declared_path_line" ]] || continue
+        printf -- '  - edit: %s\n' "$_declared_path_line"
+      done <<<"$declared_paths"
+    else
+      printf -- '  - edit: files named by the ticket'\''s own Requirement section (none could be auto-derived as backtick-quoted paths -- name every file you touch explicitly in your report)\n'
+    fi
     printf 'constraints:\n'
+    printf -- '  - The host stages and commits ONLY the `edit:` paths declared above (plus its own pm-dispatch bookkeeping ignore-list) before gating -- it will refuse to commit anything else you create or modify, leaving it uncommitted until a human resolves it. Do not touch files outside that list; if the ticket genuinely requires it, stop and report instead of proceeding.\n'
     printf -- '  - Re-run the ticket-id consistency check yourself (Dependencies terminal-state, DECISIONS.md conflict scan) before implementing -- the orchestrator only did the cheap active-heading check, not this.\n'
     printf -- '  - Do not run `git checkout -b` or otherwise switch branches; `%s` is already checked out.\n' "$branch"
     printf -- '  - Do not run `pmctl worktree remove` or otherwise touch worktree lifecycle -- that is manual, user-triggered, and out of this lane'\''s scope.\n'
@@ -1074,9 +1227,15 @@ _pmctl_ship_lane_in_flight() {
 # happy path, so a lane can never exist on disk without a corresponding
 # tracking record (CC-442/CC-443 gate finding).
 _pmctl_ship_lanes_tracking_write() {
-  local reg_dir="$1" ticket_id="$2" branch="$3" lane_path="$4" run_id="$5" adapter="$6" status="$7" created_ts="$8" operation_id="${9:-}" operation_work_dir="${10:-}" lane_id="${11:-}"
+  local reg_dir="$1" ticket_id="$2" branch="$3" lane_path="$4" run_id="$5" adapter="$6" status="$7" created_ts="$8" operation_id="${9:-}" operation_work_dir="${10:-}" lane_id="${11:-}" declared_paths_json="${12:-[]}"
   local json_line
   [[ -n "$lane_id" ]] || lane_id="$(printf 'ship-lane-v1\n%s\n%s\n%s\n' "$ticket_id" "$lane_path" "$created_ts" | gate_digest_stream)"
+  # A malformed caller-supplied JSON array must never abort tracking-append
+  # (the lane would then be invisible to `ship status`/`list` -- see the
+  # CRITICAL warnings at this function's call sites) -- fail closed to an
+  # empty allowlist instead, which `pmctl_ship_finish` already treats as
+  # "refuse to auto-commit", never as "commit everything".
+  jq -e 'type == "array"' <<<"$declared_paths_json" >/dev/null 2>&1 || declared_paths_json='[]'
   json_line="$(printf '{"ticket":%s,"branch":%s,"path":%s,"run_id":%s,"operation_id":%s,"operation_work_dir":%s,"adapter":%s,"status":%s,"created_ts":%s}' \
     "$(jq -Rn --arg v "$ticket_id" '$v')" \
     "$(jq -Rn --arg v "$branch" '$v')" \
@@ -1087,7 +1246,8 @@ _pmctl_ship_lanes_tracking_write() {
     "$(jq -Rn --arg v "$adapter" '$v')" \
     "$(jq -Rn --arg v "$status" '$v')" \
     "$(jq -Rn --arg v "$created_ts" '$v')")"
-  json_line="$(jq -c --arg lane_id "$lane_id" '. + {lane_id:$lane_id}' <<<"$json_line")"
+  json_line="$(jq -c --arg lane_id "$lane_id" --argjson declared_paths "$declared_paths_json" \
+    '. + {lane_id:$lane_id, declared_paths:$declared_paths}' <<<"$json_line")"
   pmctl_ship_lanes_tracking_append "$reg_dir" "$json_line"
 }
 
@@ -1265,7 +1425,16 @@ pmctl_ship_run() {
     return 1
   }
   chmod 0600 "$brief_path" 2>/dev/null || true
-  _pmctl_ship_brief_write "$repo_root" "$ticket_id" "$lane_path" "$branch" "$brief_path"
+  # CC-584: derive the declared edit-path allowlist ONCE, from the ticket
+  # text as it stood at dispatch time, and thread the SAME list into both
+  # the brief the executor reads and the tracking record `finish` later
+  # enforces against -- so what the executor was told it may touch and what
+  # the host will actually let it commit never drift apart.
+  local declared_paths declared_paths_json
+  declared_paths="$(_pmctl_ship_ticket_declared_paths "$work_dir/BACKLOG.md" "$ticket_id")"
+  declared_paths_json="$(jq -Rn '[inputs | select(length > 0)]' <<<"$declared_paths" 2>/dev/null)"
+  [[ -n "$declared_paths_json" ]] || declared_paths_json='[]'
+  _pmctl_ship_brief_write "$repo_root" "$ticket_id" "$lane_path" "$branch" "$brief_path" "$declared_paths"
 
   local dispatch_args=(--adapter "$adapter" --cd "$lane_path" --isolation "$isolation" --lifecycle detached --brief-file "$brief_path")
   [[ -n "$model" ]] && dispatch_args+=(--model "$model")
@@ -1318,7 +1487,7 @@ pmctl_ship_run() {
   fi
   run_id="$(printf '%s\n' "$run_id" | tail -1 | tr -d '[:space:]')"
 
-  if ! _pmctl_ship_lanes_tracking_write "$reg_dir" "$ticket_id" "$branch" "$lane_path" "$run_id" "$adapter" "dispatched" "$created_ts" "$operation_id" "$work_dir"; then
+  if ! _pmctl_ship_lanes_tracking_write "$reg_dir" "$ticket_id" "$branch" "$lane_path" "$run_id" "$adapter" "dispatched" "$created_ts" "$operation_id" "$work_dir" "" "$declared_paths_json"; then
     # Backticks below are literal Markdown code spans, not command substitution.
     # shellcheck disable=SC2016
     printf 'pmctl ship: %s CRITICAL -- dispatched (run_id=%s) at %s but tracking-append failed; the executor IS running but `pmctl ship status`/`list` cannot see it. Recover manually via `pmctl worktree list` / `pmctl artifacts show %s`.\n' \
