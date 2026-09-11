@@ -114,6 +114,21 @@ Add the repo CLI directory to PATH so `pmctl` can run in place:
 export PATH="${PM_DISPATCH_REPO}/cli:$PATH"
 ```
 
+> **Running `pmctl` from PowerShell:** `cli/pmctl` is an extension-less bash
+> script. Git Bash runs it directly; PowerShell resolves it with `Get-Command`
+> but refuses to execute it (`Cannot run a document in the middle of a
+> pipeline`). Add a function to your PowerShell `$PROFILE` — `@args` forwards
+> arguments through PowerShell's own argv without a `cmd.exe` re-parse:
+>
+> ```powershell
+> function pmctl { bash "$env:PM_DISPATCH_REPO\cli\pmctl" @args }
+> ```
+>
+> Requires `bash` (from Git for Windows) on `PATH`. A `cmd`/batch shim was
+> considered and rejected: `%*` forwarding is re-parsed by `cmd.exe`, so an
+> argument carrying shell metacharacters could break out of the intended
+> invocation, and native Windows has no CI to regression-test it.
+
 > **Symlink support:** With Windows Developer Mode enabled, the installer
 > automatically invokes Git Bash `ln` with `MSYS=winsymlinks:nativestrict`.
 > This creates native Windows symlinks for individual helpers and receipt-owned
