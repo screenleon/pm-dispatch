@@ -333,7 +333,18 @@ pmctl_ship_finish() {
   # where the existing "commit before finish" contract already holds and is
   # covered by case_finish_go_dirty_tree_refuses_push -- is never affected.
   if _pmctl_ship_lane_was_dispatched "$repo_root" "$work_dir" "$ticket_id"; then
-    if [[ -n "$(git -C "$work_dir" status --porcelain 2>/dev/null)" ]]; then
+    local pre_ensure_status
+    pre_ensure_status="$(git -C "$work_dir" status --porcelain 2>/dev/null)"
+    if [[ -n "$pre_ensure_status" ]]; then
+      # Whether `.gitignore` was ALREADY dirty before the host's own patch
+      # below -- i.e. the executor itself modified it -- decides whether it
+      # gets the "host-authored bookkeeping" staging exception further down
+      # (CC-584 gate finding, all five reviewers converged: an unconditional
+      # `.gitignore` exception let an executor-authored ignore-rule change
+      # slip past the declared-path allowlist and hide collateral output
+      # from the very porcelain status this staging decision reads).
+      local gitignore_pre_dirty=0
+      grep -qE '^.. \.gitignore$' <<<"$pre_ensure_status" && gitignore_pre_dirty=1
       _pmctl_ship_ensure_gitignore "$work_dir"
       local dirty_status
       dirty_status="$(git -C "$work_dir" status --porcelain 2>/dev/null)"
@@ -371,12 +382,16 @@ pmctl_ship_finish() {
           # path actually landing in the tree -- the one that must be
           # declared -- is the new (right-hand) side.
           [[ "$status_path" == *" -> "* ]] && status_path="${status_path##* -> }"
-          if [[ -n "${_declared_set[$status_path]:-}" || "$status_path" == ".gitignore" ]]; then
-            # `.gitignore` is host-authored bookkeeping (_pmctl_ship_ensure_gitignore
-            # above may have just created/patched it), never the executor's, so it
-            # is always safe to stage alongside a declared change -- it cannot
-            # itself be gitignored to exclude it the way the other bookkeeping
-            # paths are.
+          if [[ -n "${_declared_set[$status_path]:-}" \
+              || ( "$status_path" == ".gitignore" && "$gitignore_pre_dirty" -eq 0 ) ]]; then
+            # `.gitignore` gets the host-authored-bookkeeping exception ONLY
+            # when it was clean before `_pmctl_ship_ensure_gitignore` ran --
+            # i.e. every byte of its current diff is the host's own patch.
+            # It cannot itself be gitignored to exclude it the way the other
+            # bookkeeping paths are, so this path-name check is the only
+            # gate; if the executor already dirtied it, that diff mixes
+            # host and executor bytes and must be declared like any other
+            # touched file, not exempted.
             to_add+=("$status_path")
           else
             undeclared+=("$status_path")

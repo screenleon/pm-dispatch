@@ -2594,6 +2594,39 @@ case_finish_dispatched_lane_refuses_undeclared_collateral_file() {
   fi
 }
 
+case_finish_dispatched_lane_refuses_executor_authored_gitignore() {
+  local name="ship finish: an --adapter-dispatched lane refuses to auto-commit when the EXECUTOR (not the host) already modified .gitignore before dispatch finished (CC-584)"
+  should_run "$name" || return 0
+  local store work out err status=0
+  store="$tmp_root/state-finish-gitignore-executor"
+  work="$tmp_root/work-finish-gitignore-executor"
+  make_work_repo "$work" "CC-9001"
+  checkout_ticket_branch "$work" "CC-9001"
+  add_bare_origin "$work"
+  # Declares only OUTPUT.md -- .gitignore is NOT declared. Unlike the host's
+  # own later patch (_pmctl_ship_ensure_gitignore), this .gitignore change
+  # is already dirty BEFORE finish runs, simulating an executor that
+  # rewrote it (e.g. to hide further collateral output from porcelain
+  # status) -- it must be treated exactly like any other undeclared file,
+  # not exempted as bookkeeping.
+  write_dispatched_lane_tracking_entry "$store" "$work" "CC-9001" "codex" "OUTPUT.md"
+  local pre_head
+  pre_head="$(git -C "$work" rev-parse HEAD)"
+  printf 'dispatched output\n' > "$work/OUTPUT.md"
+  printf '.pm-dispatch/\nsecret-output/\n' > "$work/.gitignore"
+  out="$tmp_root/out-finish-gitignore-executor"; err="$tmp_root/err-finish-gitignore-executor"
+  PM_DISPATCH_STATE_ROOT="$store" run_finish_with_fake_gate "$work" "CC-9001" "GO" > "$out" 2> "$err" || status=$?
+  local post_head pushed=0
+  post_head="$(git -C "$work" rev-parse HEAD 2>/dev/null || true)"
+  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
+  if [[ "$status" -eq 1 && "$post_head" == "$pre_head" && "$pushed" -eq 0 ]] \
+    && grep -q "undeclared path" "$err" && grep -q "\.gitignore" "$err"; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 1, no new commit, no push; got status=$status pre=$pre_head post=$post_head pushed=$pushed stderr=$(cat "$err")"
+  fi
+}
+
 case_finish_dispatched_lane_refuses_with_no_declared_allowlist() {
   local name="ship finish: an --adapter-dispatched lane with no declared edit-path allowlist refuses to auto-commit at all (CC-584)"
   should_run "$name" || return 0
@@ -3919,6 +3952,7 @@ case_finish_go_dirty_tree_refuses_push
 case_finish_dispatched_lane_auto_commits_before_gate
 case_finish_manual_lane_still_refuses_on_dirty_tree_when_not_dispatched
 case_finish_dispatched_lane_refuses_undeclared_collateral_file
+case_finish_dispatched_lane_refuses_executor_authored_gitignore
 case_finish_dispatched_lane_refuses_with_no_declared_allowlist
 case_finish_dispatched_lane_bookkeeping_only_reports_explicitly_and_gates_old_head
 case_finish_go_head_moved_refuses_push
