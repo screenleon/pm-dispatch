@@ -1846,9 +1846,9 @@ case_run_brief_preserves_ship_contract() {
   # Backticks below are literal Markdown code spans in the assertion text, not command substitution.
   # shellcheck disable=SC2016
   if [[ "$status" -eq 0 && -f "$brief" ]] \
-    && grep -q 'pmctl ship finish CC-9001' "$brief" \
     && grep -q 'Do not run `git checkout -b`' "$brief" \
-    && grep -q 'Do not run `pmctl worktree remove`' "$brief"; then
+    && grep -q 'Do not run `pmctl worktree remove`' "$brief" \
+    && grep -q 'Do NOT run `git add`, `git commit`, `pmctl ship finish`, or `pmctl gate run`' "$brief"; then
     pass "$name"
   else
     fail "$name" "brief missing expected ship-contract constraints (status=$status, brief=$brief)"
@@ -2466,6 +2466,84 @@ case_finish_go_dirty_tree_refuses_push() {
   printf 'uncommitted\n' > "$work/dirty.txt"
   out="$tmp_root/out-finish-dirty"; err="$tmp_root/err-finish-dirty"
   run_finish_with_fake_gate "$work" "CC-9001" "GO" > "$out" 2> "$err" || status=$?
+  local pushed=0
+  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
+  if [[ "$status" -eq 1 ]] && grep -q "tree is dirty" "$err" && [[ "$pushed" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 1 + no push; got status=$status pushed=$pushed stderr=$(cat "$err")"
+  fi
+}
+
+# write_dispatched_lane_tracking_entry <store> <work_dir> <ticket_id> <adapter>
+# Writes a ship-lanes.jsonl entry directly (bypassing a real/stubbed dispatch)
+# so _pmctl_ship_lane_was_dispatched (CC-584) sees this ticket+path as an
+# --adapter-dispatched lane, matching _pmctl_ship_lanes_tracking_write's shape.
+write_dispatched_lane_tracking_entry() {
+  local store="$1" work_dir="$2" ticket_id="$3" adapter="$4" reg_dir
+  reg_dir="$(reg_dir_for "$store" "$work_dir")"
+  mkdir -p "$reg_dir"
+  jq -cn --arg ticket "$ticket_id" --arg branch "feat/$ticket_id" --arg path "$work_dir" \
+    --arg adapter "$adapter" \
+    '{ticket:$ticket,branch:$branch,path:$path,run_id:"run-test-fixture",
+      operation_id:"",operation_work_dir:"",adapter:$adapter,status:"running",
+      created_ts:"2026-01-01T00:00:00Z",lane_id:"lane-test-fixture"}' \
+    >> "$reg_dir/ship-lanes.jsonl"
+}
+
+case_finish_dispatched_lane_auto_commits_before_gate() {
+  local name="ship finish: an --adapter-dispatched lane's uncommitted output is staged and committed before gating (CC-584) -- pm-dispatch bookkeeping paths excluded"
+  should_run "$name" || return 0
+  local store work out err status=0
+  store="$tmp_root/state-finish-autocommit"
+  work="$tmp_root/work-finish-autocommit"
+  make_work_repo "$work" "CC-9001"
+  checkout_ticket_branch "$work" "CC-9001"
+  add_bare_origin "$work"
+  write_dispatched_lane_tracking_entry "$store" "$work" "CC-9001" "codex"
+  local pre_head
+  pre_head="$(git -C "$work" rev-parse HEAD)"
+  # Simulated dispatch output: a real deliverable file, plus pm-dispatch's own
+  # bookkeeping directories that must never enter the ticket's commit.
+  printf 'dispatched output\n' > "$work/OUTPUT.md"
+  mkdir -p "$work/.dispatch-results" "$work/.pm-dispatch-state"
+  printf 'bookkeeping\n' > "$work/.dispatch-results/fake.md"
+  printf 'bookkeeping\n' > "$work/.pm-dispatch-state/fake.json"
+  local gh_bin="$tmp_root/fake-gh-autocommit-bin"
+  install_fake_gh "$gh_bin" "https://example.invalid/pr/autocommit"
+  out="$tmp_root/out-finish-autocommit"; err="$tmp_root/err-finish-autocommit"
+  PM_DISPATCH_STATE_ROOT="$store" PATH="$gh_bin:$PATH" run_finish_with_fake_gate "$work" "CC-9001" "GO" > "$out" 2> "$err" || status=$?
+  local post_head committed_files pushed=0
+  post_head="$(git -C "$work" rev-parse HEAD 2>/dev/null || true)"
+  committed_files="$(git -C "$work" diff --name-only "$pre_head" "$post_head" 2>/dev/null || true)"
+  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
+  if [[ "$status" -eq 0 ]] \
+    && [[ "$post_head" != "$pre_head" ]] \
+    && [[ "$committed_files" == *"OUTPUT.md"* ]] \
+    && [[ "$committed_files" != *".dispatch-results"* ]] \
+    && [[ "$committed_files" != *".pm-dispatch-state"* ]] \
+    && [[ "$pushed" -eq 1 ]] \
+    && grep -q "committed dispatched changes for CC-9001" "$err"; then
+    pass "$name"
+  else
+    fail "$name" "status=$status pushed=$pushed pre=$pre_head post=$post_head committed_files=[$committed_files] stderr=$(cat "$err")"
+  fi
+}
+
+case_finish_manual_lane_still_refuses_on_dirty_tree_when_not_dispatched() {
+  local name="ship finish: a manual/in-place lane (no adapter tracking entry) keeps refusing on a dirty tree -- CC-584's auto-commit never fires without dispatch provenance"
+  should_run "$name" || return 0
+  local store work out err status=0
+  store="$tmp_root/state-finish-manual-dirty"
+  work="$tmp_root/work-finish-manual-dirty"
+  make_work_repo "$work" "CC-9001"
+  checkout_ticket_branch "$work" "CC-9001"
+  add_bare_origin "$work"
+  # No tracking entry written at all -- _pmctl_ship_lane_was_dispatched must
+  # find nothing and the pre-existing dirty-tree refusal must still apply.
+  printf 'uncommitted\n' > "$work/dirty.txt"
+  out="$tmp_root/out-finish-manual-dirty"; err="$tmp_root/err-finish-manual-dirty"
+  PM_DISPATCH_STATE_ROOT="$store" run_finish_with_fake_gate "$work" "CC-9001" "GO" > "$out" 2> "$err" || status=$?
   local pushed=0
   git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
   if [[ "$status" -eq 1 ]] && grep -q "tree is dirty" "$err" && [[ "$pushed" -eq 0 ]]; then
@@ -3607,7 +3685,7 @@ case_ship_single_ticket_from_and_auto_pack_flags_reach_dispatch() {
 }
 
 case_ship_brief_quotes_metacharacter_lane_path() {
-  local name="ship brief writer: a lane path with shell metacharacters is safely quoted in EVERY generated command (export, finish --cd, self_verify), not just some"
+  local name="ship brief writer: a lane path with shell metacharacters is safely quoted in every generated command (self_verify), and never instructs the executor to commit/finish (CC-584)"
   should_run "$name" || return 0
   local evil_path="$tmp_root/evil dir; touch pwned-marker"
   local brief_path="$tmp_root/brief-metachar-test.md"
@@ -3616,23 +3694,23 @@ case_ship_brief_quotes_metacharacter_lane_path() {
     . "$repo_root/runtime/lib/pmctl-ship.sh"
     _pmctl_ship_brief_write "$repo_root" "$ticket_id" "$lane_work_dir" "$branch" "$out_path"
   ' _ "$REPO_ROOT" "CC-9001" "$evil_path" "feat/CC-9001" "$brief_path"
-  local quoted export_line finish_line self_verify_line
+  local quoted self_verify_line
   quoted="$(printf '%q' "$evil_path")"
-  export_line="$(grep 'export PM_DISPATCH_STATE_ROOT=' "$brief_path")"
-  finish_line="$(grep -m1 'Gate + PR: run' "$brief_path")"
   self_verify_line="$(grep -m1 '^  - cmd: ' "$brief_path")"
-  # All three shell-command instructions referencing the lane path must use
-  # the SAME shell-escaped form -- a raw, unescaped occurrence of the
-  # semicolon in any of them would mean that command can be reinterpreted by
-  # the executor's shell as two commands instead of one argument. (The plain
-  # `working_dir:` YAML metadata field legitimately keeps the raw path --
-  # it is read as data, never executed as a shell command -- so this test
-  # only checks the three lines that generate shell commands.)
-  if [[ "$export_line" == *"$quoted"* && "$finish_line" == *"--cd $quoted"* && "$self_verify_line" == *"$quoted"* ]] \
-     && [[ "$export_line" != *"$evil_path"* ]] && [[ "$finish_line" != *"$evil_path"* ]] && [[ "$self_verify_line" != *"$evil_path"* ]]; then
+  # self_verify's `cmd:` is the ONLY line in this brief that generates a shell
+  # command referencing the lane path (CC-584 removed the export/finish
+  # instructions entirely -- the executor's sandbox cannot reach either, since
+  # it cannot commit; see the "Do NOT run git add..." constraint). It must use
+  # the shell-escaped form -- a raw, unescaped semicolon would let the
+  # executor's shell reinterpret it as two commands instead of one argument.
+  # (The plain `working_dir:` YAML metadata field legitimately keeps the raw
+  # path -- it is read as data, never executed as a shell command.)
+  if [[ "$self_verify_line" == *"$quoted"* ]] && [[ "$self_verify_line" != *"$evil_path"* ]] \
+     && ! grep -q 'export PM_DISPATCH_STATE_ROOT=' "$brief_path" \
+     && ! grep -q '^  - Gate + PR: run' "$brief_path"; then
     pass "$name"
   else
-    fail "$name" "expected export, --cd, and self_verify lines to all use the shell-escaped form ($quoted); export_line=$export_line finish_line=$finish_line self_verify_line=$self_verify_line"
+    fail "$name" "expected self_verify to use the shell-escaped form ($quoted) and no export/finish instruction; self_verify_line=$self_verify_line brief=$(cat "$brief_path")"
   fi
 }
 
@@ -3668,6 +3746,8 @@ case_finish_invalid_supplied_gate_result_refuses_publish
 case_finish_gate_result_rejects_reviewers
 case_finish_help_names_artifact_options
 case_finish_go_dirty_tree_refuses_push
+case_finish_dispatched_lane_auto_commits_before_gate
+case_finish_manual_lane_still_refuses_on_dirty_tree_when_not_dispatched
 case_finish_go_head_moved_refuses_push
 case_finish_supplied_gate_result_head_moved_refuses_push
 case_finish_gh_missing_refuses_before_gate_or_push

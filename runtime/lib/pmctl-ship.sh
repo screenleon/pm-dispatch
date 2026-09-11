@@ -224,6 +224,39 @@ pmctl_ship_finish() {
     return 1
   fi
 
+  # CC-584: an --adapter-dispatched lane's executor can implement the ticket
+  # but can never itself `git add`/`git commit` -- codex's workspace-write
+  # sandbox refuses ANY write under .git/ (confirmed: `git commit` there fails
+  # with "Unable to create .../.git/index.lock: Read-only file system", even
+  # in a plain non-worktree clone), matching docs/sandbox-limitations.md
+  # Pattern 4's rule that commit is always the main thread's job. `finish`
+  # running here, on the host, outside any executor sandbox, IS that main
+  # thread -- so for a lane this process itself dispatched, stage and commit
+  # any pending lane changes before gating, instead of requiring the caller to
+  # have already committed. Gated on lane provenance (ship-lanes.jsonl's
+  # tracked adapter for this exact ticket+path) so a manual/in-place lane --
+  # where the existing "commit before finish" contract already holds and is
+  # covered by case_finish_go_dirty_tree_refuses_push -- is never affected.
+  if _pmctl_ship_lane_was_dispatched "$repo_root" "$work_dir" "$ticket_id"; then
+    if [[ -n "$(git -C "$work_dir" status --porcelain 2>/dev/null)" ]]; then
+      _pmctl_ship_ensure_gitignore "$work_dir"
+      if [[ -n "$(git -C "$work_dir" status --porcelain 2>/dev/null)" ]]; then
+        if ! git -C "$work_dir" add -A 2>&1; then
+          printf 'pmctl ship finish: failed to stage dispatched lane changes for %s\n' "$ticket_id" >&2
+          return 1
+        fi
+        if git -C "$work_dir" diff --cached --quiet 2>/dev/null; then
+          : # everything staged was gitignored bookkeeping only -- nothing to commit
+        elif ! git -C "$work_dir" commit -q -m "ship: $ticket_id dispatched implementation" 2>&1; then
+          printf 'pmctl ship finish: failed to commit dispatched lane changes for %s\n' "$ticket_id" >&2
+          return 1
+        else
+          printf 'pmctl ship finish: committed dispatched changes for %s\n' "$ticket_id" >&2
+        fi
+      fi
+    fi
+  fi
+
   # Preflight `gh` before the gate even runs (not merely before push) --
   # finding out post-GO, after a push already happened, is the exact
   # PUSHED_NO_PR partial state risk-reviewer flagged. Fail fast instead.
@@ -641,6 +674,33 @@ _pmctl_ship_lane_identity_for_finish() {
   _pmctl_ship_legacy_lane_identity "$work_dir" "$ticket_id"
 }
 
+# _pmctl_ship_lane_was_dispatched <repo_root> <work_dir> <ticket-id>
+# True (exit 0) when ship-lanes.jsonl's tracked entry for this exact
+# (ticket_id, canonical work_dir) pair carries a non-empty adapter -- i.e. this
+# lane was created via `pmctl ship <id> --adapter <name>` (CC-584), not the
+# manual/in-place or `--worktree`-without-`--adapter` paths. Same match logic
+# as _pmctl_ship_lane_identity_for_finish (ticket + canonical path), kept as a
+# separate small loop rather than widening that function's single-purpose
+# lane_id-only return contract for its existing callers.
+_pmctl_ship_lane_was_dispatched() {
+  local repo_root="$1" work_dir="$2" ticket_id="$3" reg_dir tracking_file
+  local canonical_path line tracked_ticket tracked_path tracked_adapter
+  canonical_path="$(cd "$work_dir" 2>/dev/null && pwd -P)" || return 1
+  reg_dir="$(_pmctl_ship_lanes_reg_dir "$repo_root" "$work_dir")" || return 1
+  tracking_file="$(_pmctl_ship_lanes_tracking_file "$reg_dir")"
+  [[ -f "$tracking_file" ]] || return 1
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    tracked_ticket="$(jq -r '.ticket // empty' <<<"$line")"
+    [[ "$tracked_ticket" == "$ticket_id" ]] || continue
+    tracked_path="$(jq -r '.path // empty' <<<"$line")"
+    [[ "$(cd "$tracked_path" 2>/dev/null && pwd -P || true)" == "$canonical_path" ]] || continue
+    tracked_adapter="$(jq -r '.adapter // empty' <<<"$line")"
+    [[ -n "$tracked_adapter" ]] && return 0
+  done < "$tracking_file"
+  return 1
+}
+
 _pmctl_ship_partial_record_write() {
   local repo_root="$1" work_dir="$2" ticket_id="$3" payload="$4"
   local record record_dir tmp
@@ -892,46 +952,80 @@ _pmctl_ship_lane_status() {
   esac
 }
 
+# _pmctl_ship_ensure_gitignore <lane_work_dir>
+# Best-effort: patch the lane's .gitignore so pm-dispatch's own bookkeeping
+# directories (dispatch results, gate results/briefs, agent traces, the
+# repo-local state root) never enter a ticket's commit when CC-584's
+# post-dispatch auto-commit stages the lane. Mirrors the safety guards in
+# _ctx_ensure_gitignore (runtime/lib/pmctl-context.sh): only ever read/write a
+# real, single-linked regular file; skip (never touch) a symlink, non-regular
+# path, or hardlinked file. Idempotent -- only appends patterns not already
+# present, verbatim or with a trailing slash.
+_pmctl_ship_ensure_gitignore() {
+  local lane_work_dir="$1"
+  local gitignore="$lane_work_dir/.gitignore"
+  if [[ -L "$gitignore" || ( -e "$gitignore" && ! -f "$gitignore" ) ]]; then
+    printf 'pmctl ship finish: .gitignore is not a regular file; skipping auto-patch\n' >&2
+    return 0
+  fi
+  if [[ -f "$gitignore" ]]; then
+    local nlink
+    nlink="$(stat -c '%h' "$gitignore" 2>/dev/null || stat -f '%l' "$gitignore" 2>/dev/null || printf '1')"
+    if [[ "$nlink" =~ ^[0-9]+$ && "$nlink" -gt 1 ]]; then
+      printf 'pmctl ship finish: .gitignore is hardlinked (shared inode); skipping auto-patch\n' >&2
+      return 0
+    fi
+  fi
+  local pattern added=()
+  for pattern in .dispatch-results .gate-results .gate-briefs .agent-trace .pm-dispatch-state .pm-dispatch; do
+    if [[ -f "$gitignore" ]] \
+      && { grep -qxF "$pattern" "$gitignore" 2>/dev/null || grep -qxF "$pattern/" "$gitignore" 2>/dev/null; }; then
+      continue
+    fi
+    printf '%s\n' "$pattern" >> "$gitignore"
+    added+=("$pattern")
+  done
+  [[ "${#added[@]}" -gt 0 ]] && printf 'pmctl ship finish: added %s to .gitignore\n' "${added[*]}" >&2
+}
+
 # _pmctl_ship_brief_write <repo_root> <ticket_id> <lane_work_dir> <branch> <out_path>
-# Writes a dispatch brief whose instructions are /ship's own Steps 2-5
-# (implement -> gate loop foreground -> PR, no auto-merge) re-targeted at the
-# lane's worktree, with Step 1 (branch) dropped -- the caller already
-# created and checked out <branch> via `pmctl worktree create`.
+# Writes a dispatch brief scoped to /ship's Step 2 (implement) only -- the
+# executor cannot reach Step 2.5 onward itself (git add/commit is refused by
+# the executor sandbox; see the "Do NOT run git add..." constraint below and
+# CC-584). Step 1 (branch) is also dropped -- the caller already created and
+# checked out <branch> via `pmctl worktree create`.
 _pmctl_ship_brief_write() {
   local repo_root="$1" ticket_id="$2" lane_work_dir="$3" branch="$4" out_path="$5"
   # Backticks below are literal Markdown code spans, not command substitution.
   # shellcheck disable=SC2016
   {
+    # Shell-quote lane_work_dir before embedding it in ANY generated shell
+    # command string in this brief (self_verify's cmd:) -- a state-store path
+    # containing a space or shell metacharacter would otherwise change the
+    # command the executor is instructed to run, or split into multiple
+    # `git -C` arguments.
+    local quoted_lane_work_dir
+    printf -v quoted_lane_work_dir '%q' "$lane_work_dir"
     printf 'schema_version: 1\n'
     printf 'working_dir: %s\n' "$lane_work_dir"
-    printf 'goal: Ship %s end-to-end inside this pre-created worktree lane -- implement, gate to GO, open a PR. Do not merge.\n' "$ticket_id"
+    printf 'goal: Implement %s inside this pre-created worktree lane. Do not commit, gate, or open a PR -- those run on the host after this dispatch finishes (see constraints).\n' "$ticket_id"
     printf 'context:\n'
     printf -- '  - This lane was created as an isolated ship worktree. The branch `%s` is already checked out here (i.e. `pmctl ship prepare`'\''s equivalent step already ran); do not create or switch branches.\n' "$branch"
-    printf -- '  - The ship contract this brief reuses is defined in `commands/ship.md` (CC-439) -- read it once for the exact stop conditions and gate-loop discipline; do not re-derive them from scratch.\n'
+    printf -- '  - The ship contract this brief draws its scope from is defined in `commands/ship.md` (CC-439) -- read its Step 2/2.5 guidance for what "implement" covers here; the gate-loop and PR steps described there do NOT apply to this dispatch (see constraints).\n'
     printf 'files:\n'
     printf -- '  - read: BACKLOG.md (section `## %s`) for Problem/Requirement/Dependencies\n' "$ticket_id"
-    printf -- '  - read: commands/ship.md for the exact implement/gate/PR steps to reproduce\n'
     printf -- '  - edit: files named by the ticket'\''s own Requirement section\n'
     printf 'constraints:\n'
     printf -- '  - Re-run the ticket-id consistency check yourself (Dependencies terminal-state, DECISIONS.md conflict scan) before implementing -- the orchestrator only did the cheap active-heading check, not this.\n'
     printf -- '  - Do not run `git checkout -b` or otherwise switch branches; `%s` is already checked out.\n' "$branch"
     printf -- '  - Do not run `pmctl worktree remove` or otherwise touch worktree lifecycle -- that is manual, user-triggered, and out of this lane'\''s scope.\n'
-    # Shell-quote lane_work_dir before embedding it in ANY generated shell
-    # command string in this brief (both the export instruction below and
-    # self_verify's cmd:) -- a state-store path containing a space or shell
-    # metacharacter would otherwise change the command the executor is
-    # instructed to run, or split into multiple `git -C` arguments.
-    local quoted_lane_work_dir
-    printf -v quoted_lane_work_dir '%q' "$lane_work_dir"
-    printf -- '  - Before running `pmctl ship finish`, `export PM_DISPATCH_STATE_ROOT=%s/.pm-dispatch-state` in this shell. `pmctl gate run`'\''s nested reviewer dispatch writes run/trace records to the out-of-repo state store; the default location resolves under `$HOME`, which is OUTSIDE this sandbox'\''s writable root (workspace-write only permits writes under this working_dir) and the write is rejected. Redirecting the state root to a path INSIDE this working_dir keeps every nested pmctl write inside the sandbox boundary. This is scoped to this one lane'\''s own dispatch tree; it does not touch any other lane'\''s state.\n' "$quoted_lane_work_dir"
-    printf -- '  - Gate + PR: run `pmctl ship finish %s --cd %s` -- it runs one gate round and, on GO, pushes and opens the PR (never merges). On NO-GO it prints the result path and exits 1: fix every finding -- high/medium/low, hard-gate and advisory -- and re-run `pmctl ship finish %s --cd %s`; repeat.\n' "$ticket_id" "$quoted_lane_work_dir" "$ticket_id" "$quoted_lane_work_dir"
-    printf -- '  - Stop and report instead of continuing only if the ticket'\''s own premise turns out wrong, or a fix would require contradicting a DECISIONS.md constraint, or a gate round produces no new progress after Rule A'\''s 3-strike audit already ran -- same stopping rule as `/ship`, not a new one.\n'
+    printf -- '  - Do NOT run `git add`, `git commit`, `pmctl ship finish`, or `pmctl gate run`. This sandbox cannot write under `.git/` (workspace-write denies it, confirmed: `git commit` fails with '\''Unable to create .../.git/index.lock: Read-only file system'\'') -- per docs/sandbox-limitations.md Pattern 4, commit is always the main thread'\''s job, never the executor'\''s. Leave the implementation uncommitted in the working tree; the host stages, commits, gates, and (on GO) opens the PR after this dispatch completes.\n'
+    printf -- '  - Stop and report instead of continuing only if the ticket'\''s own premise turns out wrong, or a fix would require contradicting a DECISIONS.md constraint.\n'
     printf 'self_verify:\n'
     printf -- '  - cmd: "git -C %s rev-parse --abbrev-ref HEAD | grep -qx %s"\n' "$quoted_lane_work_dir" "$branch"
     printf -- '  - git-status no-collateral-damage\n'
     printf 'acceptance:\n'
-    printf -- '  - Gate final verdict is GO, or the run stopped at one of the explicit stopping conditions above with a stated reason\n'
-    printf -- '  - PR opened when GO (report the URL); no merge performed\n'
+    printf -- '  - Working tree matches the ticket'\''s Requirement section, left uncommitted\n'
     printf -- '  - self_verify all pass\n'
   } > "$out_path"
 }
