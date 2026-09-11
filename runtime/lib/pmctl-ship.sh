@@ -142,9 +142,12 @@ _pmctl_ship_ticket_section_body() {
 # ticket's declared edit-path allowlist (CC-584). `pmctl_ship_finish` stages
 # only these paths (plus its own bookkeeping ignore-list) for a dispatched
 # lane's auto-commit, refusing anything else the executor touched.
-# "Path-shaped" requires a `/` (so a bare command name like `git commit`
-# never matches) and a trailing `.<ext>` (so a bare directory name doesn't
-# either); the path need not already exist on disk -- a ticket's Requirement
+# "Path-shaped" requires a trailing `.<ext>` (so a bare command name like
+# `git commit`, which has neither a dot nor -- unlike a real deliverable --
+# any reason to be a declared edit target, never matches); a `/` is NOT
+# required, since a ticket legitimately declares a repository-ROOT
+# deliverable (the CC-584 ticket's own real-dogfood evidence: `SECOND.md`).
+# The path need not already exist on disk -- a ticket's Requirement
 # legitimately names a file the dispatch is about to create. Prints nothing
 # (not an error) when the section has no such token -- callers decide how to
 # treat an empty allowlist.
@@ -152,7 +155,7 @@ _pmctl_ship_ticket_declared_paths() {
   local file="$1" ticket_id="$2"
   # shellcheck disable=SC2016 # the grep pattern below is a literal backtick match, not an unexpanded variable
   _pmctl_ship_ticket_section_body "$file" "$ticket_id" \
-    | grep -oE '`[A-Za-z0-9_./-]*/[A-Za-z0-9_./-]+\.[A-Za-z0-9]+`' \
+    | grep -oE '`[A-Za-z0-9_./-]+\.[A-Za-z0-9]+`' \
     | tr -d '`' \
     | sort -u \
     || true

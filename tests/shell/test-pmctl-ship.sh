@@ -3573,6 +3573,56 @@ case_ship_run_to_finish_declared_allowlist_flows_end_to_end() {
   fi
 }
 
+case_ship_run_to_finish_declared_root_level_file_commits_pre_gate() {
+  local name="ship run->finish: a ticket declaring a repository-ROOT deliverable (no directory component) flows through parsing, brief, tracking, and finish to a real pre-gate commit (CC-584)"
+  should_run "$name" || return 0
+  local store work status=0
+  local ticket="CC-9043"
+  store="$tmp_root/state-e2e-root-file"
+  work="$tmp_root/work-e2e-root-file"
+  # Root-level (no `/`) declared path -- the exact shape of the real
+  # dogfood evidence that motivated this whole ticket (`SECOND.md`,
+  # documented in BACKLOG.md's `## CC-584` section).
+  # shellcheck disable=SC2016
+  make_work_repo "$work" "$ticket" 'produce `SECOND.md` at the repository root.'
+  local out="$tmp_root/out-e2e-root-file"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" ship "$ticket" --adapter claude --no-auto-pack --cd "$work" > "$out" 2>&1 || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "dispatch failed: status=$status $(cat "$out")"
+    return
+  fi
+  local reg_dir tracking lane_path
+  reg_dir="$(reg_dir_for "$store" "$work")"
+  tracking="$reg_dir/ship-lanes.jsonl"
+  lane_path="$reg_dir/checkouts/$ticket"
+  local tracked_declared
+  tracked_declared="$(jq -r --arg t "$ticket" 'select(.ticket == $t) | .declared_paths[]?' "$tracking" 2>/dev/null)"
+  if [[ "$tracked_declared" != "SECOND.md" ]]; then
+    fail "$name" "tracking declared_paths mismatch: got=[$tracked_declared] tracking=$(cat "$tracking" 2>/dev/null)"
+    return
+  fi
+  printf 'the deliverable\n' > "$lane_path/SECOND.md"
+  add_bare_origin "$lane_path"
+  local pre_head
+  pre_head="$(git -C "$lane_path" rev-parse HEAD)"
+  local gh_bin="$tmp_root/fake-gh-e2e-root-file-bin"
+  install_fake_gh "$gh_bin" "https://example.invalid/pr/e2e-root-file"
+  local finish_out="$tmp_root/out-e2e-root-file-finish" finish_err="$tmp_root/err-e2e-root-file-finish"
+  local finish_status=0
+  PM_DISPATCH_STATE_ROOT="$store" PATH="$gh_bin:$PATH" run_finish_with_fake_gate "$lane_path" "$ticket" "GO" \
+    > "$finish_out" 2> "$finish_err" || finish_status=$?
+  local post_head committed_files pushed=0
+  post_head="$(git -C "$lane_path" rev-parse HEAD 2>/dev/null || true)"
+  committed_files="$(git -C "$lane_path" diff --name-only "$pre_head" "$post_head" 2>/dev/null || true)"
+  git -C "$lane_path.bare-origin.git" show-ref --quiet "feat/$ticket" 2>/dev/null && pushed=1
+  if [[ "$finish_status" -eq 0 && "$post_head" != "$pre_head" ]] \
+    && [[ "$committed_files" == *"SECOND.md"* ]] && [[ "$pushed" -eq 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected the root-level declared file to be committed pre-gate and pushed; finish_status=$finish_status pre=$pre_head post=$post_head committed_files=[$committed_files] pushed=$pushed stderr=$(cat "$finish_err")"
+  fi
+}
+
 case_ship_status_reports_prepared_for_manual_worktree_lane() {
   local name="ship status: a manual --worktree lane (no dispatch, no finish marker) surfaces as status=prepared, not running"
   should_run "$name" || return 0
@@ -4035,6 +4085,7 @@ case_ship_worktree_flag_creates_isolated_lane_no_dispatch
 case_ship_adapter_flag_implies_worktree_and_dispatches
 case_ship_worktree_and_adapter_together_dispatches_same_as_adapter_alone
 case_ship_run_to_finish_declared_allowlist_flows_end_to_end
+case_ship_run_to_finish_declared_root_level_file_commits_pre_gate
 case_ship_status_reports_prepared_for_manual_worktree_lane
 case_ship_run_refuses_redispatch_while_in_flight_standalone
 case_ship_dispatch_failure_after_worktree_records_dispatch_failed_lane
