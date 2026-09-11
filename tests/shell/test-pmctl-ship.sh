@@ -76,14 +76,14 @@ chmod +x "$FAKE_CODEX_BINDIR/claude"
 export PATH="$FAKE_CODEX_BINDIR:$PATH"
 
 make_work_repo() {
-  local path="$1" ticket="${2:-CC-9001}"
+  local path="$1" ticket="${2:-CC-9001}" requirement="${3:-none}"
   mkdir -p "$path"
   git init -q "$path"
   git -C "$path" config user.email test@example.com
   git -C "$path" config user.name test
   {
     printf '## %s -- mock ticket for ship-parallel tests %s\n\n' "$ticket" "🔵 active"
-    printf 'Problem: test fixture.\n\nRequirement: none.\n\nDependencies: none.\n'
+    printf 'Problem: test fixture.\n\nRequirement: %s\n\nDependencies: none.\n' "$requirement"
   } > "$path/BACKLOG.md"
   printf '.pm-dispatch/\n' > "$path/.gitignore"
   mkdir -p "$path/tests/bin"
@@ -2506,7 +2506,7 @@ case_finish_dispatched_lane_auto_commits_before_gate() {
   local store work out err status=0
   store="$tmp_root/state-finish-autocommit"
   work="$tmp_root/work-finish-autocommit"
-  make_work_repo "$work" "CC-9001"
+  make_work_repo "$work" "CC-9001" "produce OUTPUT.md with the deliverable text."
   checkout_ticket_branch "$work" "CC-9001"
   add_bare_origin "$work"
   write_dispatched_lane_tracking_entry "$store" "$work" "CC-9001" "codex" "OUTPUT.md"
@@ -2522,9 +2522,10 @@ case_finish_dispatched_lane_auto_commits_before_gate() {
   install_fake_gh "$gh_bin" "https://example.invalid/pr/autocommit"
   out="$tmp_root/out-finish-autocommit"; err="$tmp_root/err-finish-autocommit"
   PM_DISPATCH_STATE_ROOT="$store" PATH="$gh_bin:$PATH" run_finish_with_fake_gate "$work" "CC-9001" "GO" > "$out" 2> "$err" || status=$?
-  local post_head committed_files pushed=0
+  local post_head committed_files commit_subject pushed=0
   post_head="$(git -C "$work" rev-parse HEAD 2>/dev/null || true)"
   committed_files="$(git -C "$work" diff --name-only "$pre_head" "$post_head" 2>/dev/null || true)"
+  commit_subject="$(git -C "$work" log -1 --format=%s "$post_head" 2>/dev/null || true)"
   git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
   if [[ "$status" -eq 0 ]] \
     && [[ "$post_head" != "$pre_head" ]] \
@@ -2532,10 +2533,11 @@ case_finish_dispatched_lane_auto_commits_before_gate() {
     && [[ "$committed_files" != *".dispatch-results"* ]] \
     && [[ "$committed_files" != *".pm-dispatch-state"* ]] \
     && [[ "$pushed" -eq 1 ]] \
+    && [[ "$commit_subject" == "ship: CC-9001 dispatched implementation -- produce OUTPUT.md with the deliverable text." ]] \
     && grep -q "committed dispatched changes for CC-9001" "$err"; then
     pass "$name"
   else
-    fail "$name" "status=$status pushed=$pushed pre=$pre_head post=$post_head committed_files=[$committed_files] stderr=$(cat "$err")"
+    fail "$name" "status=$status pushed=$pushed pre=$pre_head post=$post_head committed_files=[$committed_files] subject=[$commit_subject] stderr=$(cat "$err")"
   fi
 }
 
@@ -3474,6 +3476,70 @@ case_ship_worktree_and_adapter_together_dispatches_same_as_adapter_alone() {
   fi
 }
 
+case_ship_run_to_finish_declared_allowlist_flows_end_to_end() {
+  local name="ship run->finish: a ticket's declared edit paths agree, unchanged, across BACKLOG parsing, the generated brief, the tracking record, and finish's staging enforcement (CC-584)"
+  should_run "$name" || return 0
+  local store work status=0
+  local ticket="CC-9042"
+  store="$tmp_root/state-e2e-allowlist"
+  work="$tmp_root/work-e2e-allowlist"
+  # A distinct ticket id (not CC-9001, used by many sibling cases) so this
+  # case's brief file -- mktemp'd under /tmp keyed by ticket id, never
+  # cleaned up by pmctl_ship_run itself -- can be found unambiguously by
+  # glob below without racing another case's leftover CC-9001 brief.
+  # Backtick below is a literal Markdown code span in the ticket text, not
+  # command substitution.
+  # shellcheck disable=SC2016
+  make_work_repo "$work" "$ticket" 'create `notes/output.md` with the summary.'
+  local out="$tmp_root/out-e2e-allowlist"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" ship "$ticket" --adapter claude --no-auto-pack --cd "$work" > "$out" 2>&1 || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "dispatch failed: status=$status $(cat "$out")"
+    return
+  fi
+  local reg_dir tracking lane_path
+  reg_dir="$(reg_dir_for "$store" "$work")"
+  tracking="$reg_dir/ship-lanes.jsonl"
+  lane_path="$reg_dir/checkouts/$ticket"
+  # 1) BACKLOG parsing -> brief propagation: the generated brief's `edit:`
+  # bullet must contain the exact ticket-declared path.
+  local brief_glob brief_file=""
+  brief_glob="/tmp/brief-ship-${ticket}-*.md"
+  # shellcheck disable=SC2086 # deliberate glob expansion, ticket id is fixed alnum/dash
+  for f in $brief_glob; do [[ -f "$f" ]] && brief_file="$f" && break; done
+  if [[ -z "$brief_file" ]] || ! grep -qF '  - edit: notes/output.md' "$brief_file"; then
+    fail "$name" "brief missing declared-path edit bullet: brief=${brief_file:-<none>} $(cat "${brief_file:-/dev/null}" 2>/dev/null)"
+    return
+  fi
+  # 2) BACKLOG parsing -> durable tracking persistence: the SAME path, as
+  # actually written to ship-lanes.jsonl by _pmctl_ship_lanes_tracking_write.
+  local tracked_declared
+  tracked_declared="$(jq -r --arg t "$ticket" 'select(.ticket == $t) | .declared_paths[]?' "$tracking" 2>/dev/null)"
+  if [[ "$tracked_declared" != "notes/output.md" ]]; then
+    fail "$name" "tracking declared_paths mismatch: got=[$tracked_declared] tracking=$(cat "$tracking" 2>/dev/null)"
+    return
+  fi
+  # 3) Persistence -> finish enforcement: simulate the dispatched executor's
+  # real output (the fake claude/codex binaries installed for this whole
+  # suite never touch the worktree) -- one declared file, one undeclared
+  # collateral file -- and prove finish enforces exactly the SAME allowlist
+  # that was parsed from the ticket and persisted above, not a hand-crafted
+  # test fixture's own copy of it.
+  mkdir -p "$lane_path/notes"
+  printf 'summary\n' > "$lane_path/notes/output.md"
+  printf 'not declared\n' > "$lane_path/COLLATERAL.md"
+  add_bare_origin "$lane_path"
+  local finish_out="$tmp_root/out-e2e-allowlist-finish" finish_err="$tmp_root/err-e2e-allowlist-finish"
+  local finish_status=0
+  PM_DISPATCH_STATE_ROOT="$store" run_finish_with_fake_gate "$lane_path" "$ticket" "GO" \
+    > "$finish_out" 2> "$finish_err" || finish_status=$?
+  if [[ "$finish_status" -eq 1 ]] && grep -q "undeclared path" "$finish_err" && grep -q "COLLATERAL.md" "$finish_err"; then
+    pass "$name"
+  else
+    fail "$name" "expected the SAME parsed/persisted allowlist to refuse the undeclared collateral file; finish_status=$finish_status stderr=$(cat "$finish_err")"
+  fi
+}
+
 case_ship_status_reports_prepared_for_manual_worktree_lane() {
   local name="ship status: a manual --worktree lane (no dispatch, no finish marker) surfaces as status=prepared, not running"
   should_run "$name" || return 0
@@ -3934,6 +4000,7 @@ case_ship_bare_start_behaves_like_prepare
 case_ship_worktree_flag_creates_isolated_lane_no_dispatch
 case_ship_adapter_flag_implies_worktree_and_dispatches
 case_ship_worktree_and_adapter_together_dispatches_same_as_adapter_alone
+case_ship_run_to_finish_declared_allowlist_flows_end_to_end
 case_ship_status_reports_prepared_for_manual_worktree_lane
 case_ship_run_refuses_redispatch_while_in_flight_standalone
 case_ship_dispatch_failure_after_worktree_records_dispatch_failed_lane

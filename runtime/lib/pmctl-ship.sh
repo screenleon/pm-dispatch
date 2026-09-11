@@ -113,23 +113,16 @@ _pmctl_ship_heading_exists() {
   ' "$file"
 }
 
-# _pmctl_ship_ticket_declared_paths <file> <ticket_id>
-# Extracts the body of BACKLOG.md's `## <ticket_id>` section (from that
-# heading to the next `## ` heading or the `---` divider that closes it) and
-# prints every backtick-quoted, path-shaped token found there -- one
-# repo-relative path per line, deduped -- as this ticket's declared edit-path
-# allowlist (CC-584). `pmctl_ship_finish` stages only these paths (plus its
-# own bookkeeping ignore-list) for a dispatched lane's auto-commit, refusing
-# anything else the executor touched. "Path-shaped" requires a `/` (so a bare
-# command name like `git commit` never matches) and a trailing `.<ext>` (so a
-# bare directory name doesn't either); the path need not already exist on
-# disk -- a ticket's Requirement legitimately names a file the dispatch is
-# about to create. Prints nothing (not an error) when the section has no
-# such token -- callers decide how to treat an empty allowlist.
-_pmctl_ship_ticket_declared_paths() {
+# _pmctl_ship_ticket_section_body <file> <ticket_id>
+# Prints the body of BACKLOG.md's `## <ticket_id>` section -- every line
+# from that heading (exclusive) to the next `## ` heading or the `---`
+# divider that closes it (exclusive). Shared by both
+# _pmctl_ship_ticket_declared_paths and _pmctl_ship_ticket_goal_summary
+# (CC-584) so the two never drift on what counts as "this ticket's text".
+# Prints nothing (not an error) when the heading doesn't exist.
+_pmctl_ship_ticket_section_body() {
   local file="$1" ticket_id="$2"
   [[ -f "$file" ]] || return 0
-  # shellcheck disable=SC2016 # the grep pattern below is a literal backtick match, not an unexpanded variable
   awk -v want="## $ticket_id" '
     {
       prefix = substr($0, 1, length(want))
@@ -140,7 +133,25 @@ _pmctl_ship_ticket_declared_paths() {
       }
       if (in_section) { print }
     }
-  ' "$file" \
+  ' "$file"
+}
+
+# _pmctl_ship_ticket_declared_paths <file> <ticket_id>
+# Prints every backtick-quoted, path-shaped token found in the ticket's
+# section body -- one repo-relative path per line, deduped -- as this
+# ticket's declared edit-path allowlist (CC-584). `pmctl_ship_finish` stages
+# only these paths (plus its own bookkeeping ignore-list) for a dispatched
+# lane's auto-commit, refusing anything else the executor touched.
+# "Path-shaped" requires a `/` (so a bare command name like `git commit`
+# never matches) and a trailing `.<ext>` (so a bare directory name doesn't
+# either); the path need not already exist on disk -- a ticket's Requirement
+# legitimately names a file the dispatch is about to create. Prints nothing
+# (not an error) when the section has no such token -- callers decide how to
+# treat an empty allowlist.
+_pmctl_ship_ticket_declared_paths() {
+  local file="$1" ticket_id="$2"
+  # shellcheck disable=SC2016 # the grep pattern below is a literal backtick match, not an unexpanded variable
+  _pmctl_ship_ticket_section_body "$file" "$ticket_id" \
     | grep -oE '`[A-Za-z0-9_./-]*/[A-Za-z0-9_./-]+\.[A-Za-z0-9]+`' \
     | tr -d '`' \
     | sort -u \
@@ -152,6 +163,49 @@ _pmctl_ship_ticket_declared_paths() {
   # empty allowlist. `|| true` is appended to this SAME pipeline statement
   # deliberately: `set -e` aborts as soon as a simple command fails, so a
   # guard on any later, separate statement would never run.
+}
+
+# _pmctl_ship_ticket_goal_summary <file> <ticket_id>
+# Prints a short (<=72 char), single-line summary of the ticket's stated
+# goal -- the text following a `Requirement:` label in its BACKLOG.md
+# section, truncated -- for the dispatched-lane auto-commit's subject line
+# (CC-584 gate finding critic-F001: a bare "ship: <ticket-id>" message
+# wasn't traceable to which deliverable it was without reopening the
+# ticket). Prints nothing when the section has no such label.
+_pmctl_ship_ticket_goal_summary() {
+  local file="$1" ticket_id="$2" body label_line label_index total_lines summary
+  body="$(_pmctl_ship_ticket_section_body "$file" "$ticket_id")"
+  [[ -n "$body" ]] || return 0
+  # The label is commonly bold-markdown'd (`**Requirement**`) and, in this
+  # project's own BACKLOG.md, followed by a full-width colon (`：`), not
+  # necessarily an ASCII one -- match both, and match the label with or
+  # without surrounding `**`.
+  label_index="$(grep -nE '^\*{0,2}Requirement\*{0,2}[:：]' <<<"$body" | head -1 | cut -d: -f1)"
+  [[ -n "$label_index" ]] || return 0
+  label_line="$(sed -n "${label_index}p" <<<"$body")"
+  summary="$(sed -E 's/^\*{0,2}Requirement\*{0,2}[:：][[:space:]]*//' <<<"$label_line")"
+  if [[ -z "$summary" ]]; then
+    # The label line carries nothing after the colon (this project's own
+    # ticket convention: the label sits alone, the content is the next
+    # line(s), often a `- ` bulleted list) -- fall back to the next
+    # non-empty line, with any leading bullet marker stripped.
+    total_lines="$(wc -l <<<"$body")"
+    local i next_line
+    for ((i = label_index + 1; i <= total_lines; i++)); do
+      next_line="$(sed -n "${i}p" <<<"$body")"
+      next_line="$(sed -E 's/^[[:space:]]*[-*][[:space:]]+//' <<<"$next_line")"
+      [[ -n "${next_line//[[:space:]]/}" ]] && { summary="$next_line"; break; }
+    done
+  fi
+  # Collapse any leading/trailing whitespace left after the substitutions
+  # above (a Requirement line/next-line can still start with blank/indent
+  # noise the regexes didn't anticipate).
+  summary="$(sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' <<<"$summary")"
+  [[ -n "$summary" ]] || return 0
+  if [[ "${#summary}" -gt 72 ]]; then
+    summary="${summary:0:69}..."
+  fi
+  printf '%s\n' "$summary"
 }
 
 # pmctl_ship_prepare <repo_root> <work_dir> <ticket-id>
@@ -359,10 +413,23 @@ pmctl_ship_finish() {
             return 1
           fi
           printf 'pmctl ship finish: dispatched lane for %s had only pm-dispatch bookkeeping changes (patched .gitignore only) -- no ticket deliverable; committed the bookkeeping patch alone so the tree is clean for gate.\n' "$ticket_id" >&2
-        elif ! git -C "$work_dir" commit -q -m "ship: $ticket_id dispatched implementation" 2>&1; then
-          printf 'pmctl ship finish: failed to commit dispatched lane changes for %s\n' "$ticket_id" >&2
-          return 1
         else
+          # Traceable subject (CC-584 gate finding critic-F001): a bare
+          # "ship: <ticket-id>" message can't tell which deliverable a
+          # dispatched-lane auto-commit carries without reopening the
+          # ticket. Fall back to the old bare form only if the ticket's
+          # section has no Requirement label to summarize.
+          local goal_summary commit_subject
+          goal_summary="$(_pmctl_ship_ticket_goal_summary "$work_dir/BACKLOG.md" "$ticket_id")"
+          if [[ -n "$goal_summary" ]]; then
+            commit_subject="ship: $ticket_id dispatched implementation -- $goal_summary"
+          else
+            commit_subject="ship: $ticket_id dispatched implementation"
+          fi
+          if ! git -C "$work_dir" commit -q -m "$commit_subject" 2>&1; then
+            printf 'pmctl ship finish: failed to commit dispatched lane changes for %s\n' "$ticket_id" >&2
+            return 1
+          fi
           printf 'pmctl ship finish: committed dispatched changes for %s\n' "$ticket_id" >&2
         fi
       fi
