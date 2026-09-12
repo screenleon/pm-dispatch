@@ -120,7 +120,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-581 | 🟢 someday | `gate_reviewer_protocol_verify` 的二次方 `block=` 累加（`runtime/lib/gate-result-verify.sh:651`）：逐行 bash 字串串接抽 fenced reviewer_result 區塊，對區塊行數 O(n²)。[[CC-579]] census 實測 bash 端非 gate 主成本（88% 在 jq），故列次要未動。無感但屬演算法級劣化，值得在有人為別因動到該函式時順手換 O(n)（`mapfile`＋`printf` 或單次 `awk` 切檔），維持 fence 巢狀／截斷／空區塊失敗語意與 `GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR` 值不變。獨立排程投報不足 | ops/gate | 2026-09-08 | — | P3 | — |
 | CC-582 | ✅ done | issue #579：`pmctl gate run` 對 target repo 首建 context index 時，`pmctl_context_workflow_refresh` 無 timeout 又吞 stderr，任何慢／卡的索引建置都會在 dispatch 前無限 hang、零輸出（Windows/Git Bash nested process-sub 或 sqlite WAL lock 為已知觸發，缺陷本身平台無關）。`prompt-context.sh` 早已用 `timeout` 綁同一操作，gate／pm-prepare 漂走。**Req 1 已交付（#580）**：新增 `pmctl context workflow-refresh` 子指令 + `pmctl_context_workflow_refresh_bounded`（`PM_DISPATCH_CONTEXT_REFRESH_TIMEOUT` 預設 90s、`timeout -k 5` 群組殺、無 `timeout` 則**跳過**不做無界執行），gate／pm-prepare 改走它並放行進度行。**Req 2 已交付（#582）**：`doctor.sh` `tracked-line-endings` 檢查（`git ls-files --eol` 抓 `text=auto` 下 `git status` 看不到的 CRLF）＋安全 `--fix`（只對「與 index 僅差 CR」的檔案原地去 CR）。**Req 3 已交付（#582）**：docs-only——`platform-support.md` PowerShell `$PROFILE` function（`@args` 安全轉發）；`.cmd` shim 評估後撤回（`cmd.exe` 重解析 `%*` 注入風險＋無原生 Windows CI）。 | ops/gate | 2026-09-09 | pr:#580, pr:#582 | P2 | hygiene |
 | CC-583 | 🔵 active | [[CC-447]] live dogfood smoke 摔倒點：`doctor.sh` `executor_authed()`（`runtime/bin/doctor.sh:338`）檢查 codex/claude 認證時寫死讀 `${HOME}/.codex/auth.json`／`${HOME}/.claude/.credentials.json`，完全不跟 `CODEX_HOME`／`CLAUDE_CONFIG_DIR` override（這兩個 env var 在 install.sh／其餘所有 doctor 檢查項都是正式支援的間接層）。在 `CODEX_HOME`／`CLAUDE_CONFIG_DIR` 與 `$HOME/.codex`／`$HOME/.claude` 不同路徑的機器上（例如隔離 sandbox、或未來任何 per-project config-dir 場景），doctor 會誤報「not authenticated」，即使實際 dispatch 能正常運作（已用 `claude --print`／`codex exec` 直接對真實憑證檔實測驗證）。**Requirement**：`executor_authed()` 改吃 `${CODEX_HOME:-$HOME/.codex}`／`${CLAUDE_CONFIG_DIR:-$HOME/.claude}`，與其餘檢查項的 override 邏輯一致；補 regression（env var 指到非 `$HOME` 路徑時 doctor 仍正確回報 ok/fail）。 | ops/install | 2026-09-11 | — | P3 | hygiene |
-| CC-584 | 🔵 active | [[CC-447]] live dogfood smoke 摔倒點（重大）：`pmctl ship` 的自動化 pipeline 從沒做過「main thread 在 dispatch 後 commit」這一步——`runtime/lib/pmctl-ship.sh` 全文零 `git commit`／`git add`。`docs/sandbox-limitations.md` Pattern 4 明文規定 commit 是**刻意**設計成執行者 sandbox 擋下、必須由呼叫端（main thread）在 dispatch 後審查 diff 再 commit——但 `ship` 從沒實作這一步，所以任何真實 dispatch （非 test 樁）的 ship 跑到 implement 完成後就卡死在 uncommitted 狀態，`ship status` 回報 `no-go`，永遠到不了 gate／PR。真實對 codex 執行一輪 `pmctl ship <ticket> --adapter codex` 實測重現。 | ops/gate | 2026-09-11 | — | P1 | design |
+| CC-584 | ✅ done | [[CC-447]] live dogfood smoke 摔倒點（重大）：`pmctl ship` 的自動化 pipeline 從沒做過「main thread 在 dispatch 後 commit」這一步——`runtime/lib/pmctl-ship.sh` 全文零 `git commit`／`git add`。`docs/sandbox-limitations.md` Pattern 4 明文規定 commit 是**刻意**設計成執行者 sandbox 擋下、必須由呼叫端（main thread）在 dispatch 後審查 diff 再 commit——但 `ship` 從沒實作這一步，所以任何真實 dispatch （非 test 樁）的 ship 跑到 implement 完成後就卡死在 uncommitted 狀態，`ship status` 回報 `no-go`，永遠到不了 gate／PR。真實對 codex 執行一輪 `pmctl ship <ticket> --adapter codex` 實測重現。**已交付（pr:#583）**：main-thread 在 dispatch 後自動 stage＋commit，範圍嚴格限定票面 Requirement 段落宣告的路徑（禁用 `git add -A`）；9 輪 gate 修 6 個真缺陷（無界 commit 權限／`.gitignore` 執行者權限混淆／根目錄檔案 regex／掃描範圍誤含 Problem／Why 引用路徑＋順帶抓到 `git status` 壓縮全新目錄的獨立缺陷／commit 訊息可追溯）＋拆測試檔解決 QA harness 逾時。 | ops/gate | 2026-09-12 | pr:#583 | P1 | design |
 
 ---
 
@@ -4318,7 +4318,7 @@ issue #579 的 secondary/minor 均已處理；主 issue 由使用者決定是否
 
 ---
 
-## CC-584 — `pmctl ship` 缺少 dispatch 後的 main-thread commit 步驟 🔵 active
+## CC-584 — `pmctl ship` 缺少 dispatch 後的 main-thread commit 步驟 ✅ 2026-09-12
 
 **Problem**：[[CC-447]] live dogfood smoke 第一次對真實 codex 執行 `pmctl ship <ticket>
 --adapter codex`（非 test stub），implement 階段本身成功（codex 正確 diagnose 出
@@ -4364,6 +4364,28 @@ sandbox），所以這個缺口沒被抓到；這正是 live dogfood（真實 au
 **Done-when**：真實 codex dispatch 跑一輪 `pmctl ship <ticket>`，能推進到 gate 並
 拿到 GO/NO-GO 判決（不再卡在 implement 完成後的 no-go）；新 regression 涵蓋
 dispatch-後-commit 的分支。
+
+**已交付（pr:#583）**：main-thread 在 dispatch 後、gate 前自動 stage＋commit，
+範圍嚴格限定在票面 Requirement 段落宣告的路徑（`_pmctl_ship_ticket_declared_paths`
+解析 backtick 路徑，經 brief＋`ship-lanes.jsonl` 的 `declared_paths` 傳遞到 finish
+端強制執行，禁用 `git add -A`）；commit message 帶 Requirement 摘要可追溯；
+`.gitignore` 僅在 host 補丁前是乾淨的才豁免掃描。
+
+**Gate saga（9 輪）**：R1 NO-GO——`git add -A` 給執行者無界 commit 權限，四位審查者
+同一 RCG。R2 NO-GO——qa-tester 要求黑箱 e2e 證明 brief／tracking／finish 三處解析
+結果一致，非各自獨立斷言；順帶補上 commit message 摘要（critic advise）。R3
+NO-GO——`.gitignore` 的 bookkeeping 豁免沒分辨 host 補丁前後，執行者可搶先動
+`.gitignore` 夾帶未宣告變更。R4 NO-GO——宣告路徑 regex 要求含 `/`，擋掉本票自己
+的實測案例（根目錄檔 `SECOND.md`）。R5 NO-GO——qa-tester harness 逾時（非診斷
+內容，非本票缺陷）。R6 NO-GO——五位審查者同一 RCG：掃描範圍含整個票面（Problem／
+Why），票面裡「順帶提到」的路徑被誤判成可寫入目標；改成只掃 Requirement 子段落，
+順帶抓到 `git status --porcelain` 預設模式壓縮全新目錄成一行、導致宣告路徑比對
+失效的獨立缺陷。R7 NO-GO——qa-tester harness 再度逾時，改為拆分 `test-pmctl-ship.sh`
+（4245 行／126 case → `test-pmctl-ship.sh` 56 case ＋ `test-pmctl-ship-finish.sh`
+70 assertion，兩檔完整複製共用 fixture）。R8 GO。`run-tests.sh --all` 抓到
+`docs/architecture/script-variable-consumers.tsv` 過期（本票移除了 `pmctl-ship.sh`
+對 `$HOME`／`$PM_DISPATCH_STATE_ROOT` 的引用），修掉後 123/123 suite 綠，補跑
+R9 覆蓋此最終 commit，GO。
 
 **See**: [[CC-447]]（live dogfood smoke，本票的觸發來源）；[[CC-443]]（`ship` 統一入口原票）；
 `docs/sandbox-limitations.md` Pattern 4
