@@ -287,7 +287,7 @@ map_path() {
     runtime/lib/gate-result-read.sh)
       add_suite test-pmctl-gate-stats; add_suite test-pmctl-artifacts; behavioral=1 ;;
     runtime/lib/gate-publish.sh|runtime/lib/pmctl-ship.sh)
-      add_suite test-pmctl-ship; add_suite test-core-schemas
+      add_suite test-pmctl-ship; add_suite test-pmctl-ship-finish; add_suite test-core-schemas
       add_suite test-pmctl-gate; behavioral=1 ;;
     tests/lib/test-pr-gate-fixture.sh)
       add_pr_gate_shards; add_suite test-pr-gate-profile; behavioral=1 ;;
