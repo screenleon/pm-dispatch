@@ -121,6 +121,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-582 | ✅ done | issue #579：`pmctl gate run` 對 target repo 首建 context index 時，`pmctl_context_workflow_refresh` 無 timeout 又吞 stderr，任何慢／卡的索引建置都會在 dispatch 前無限 hang、零輸出（Windows/Git Bash nested process-sub 或 sqlite WAL lock 為已知觸發，缺陷本身平台無關）。`prompt-context.sh` 早已用 `timeout` 綁同一操作，gate／pm-prepare 漂走。**Req 1 已交付（#580）**：新增 `pmctl context workflow-refresh` 子指令 + `pmctl_context_workflow_refresh_bounded`（`PM_DISPATCH_CONTEXT_REFRESH_TIMEOUT` 預設 90s、`timeout -k 5` 群組殺、無 `timeout` 則**跳過**不做無界執行），gate／pm-prepare 改走它並放行進度行。**Req 2 已交付（#582）**：`doctor.sh` `tracked-line-endings` 檢查（`git ls-files --eol` 抓 `text=auto` 下 `git status` 看不到的 CRLF）＋安全 `--fix`（只對「與 index 僅差 CR」的檔案原地去 CR）。**Req 3 已交付（#582）**：docs-only——`platform-support.md` PowerShell `$PROFILE` function（`@args` 安全轉發）；`.cmd` shim 評估後撤回（`cmd.exe` 重解析 `%*` 注入風險＋無原生 Windows CI）。 | ops/gate | 2026-09-09 | pr:#580, pr:#582 | P2 | hygiene |
 | CC-583 | 🔵 active | [[CC-447]] live dogfood smoke 摔倒點：`doctor.sh` `executor_authed()`（`runtime/bin/doctor.sh:338`）檢查 codex/claude 認證時寫死讀 `${HOME}/.codex/auth.json`／`${HOME}/.claude/.credentials.json`，完全不跟 `CODEX_HOME`／`CLAUDE_CONFIG_DIR` override（這兩個 env var 在 install.sh／其餘所有 doctor 檢查項都是正式支援的間接層）。在 `CODEX_HOME`／`CLAUDE_CONFIG_DIR` 與 `$HOME/.codex`／`$HOME/.claude` 不同路徑的機器上（例如隔離 sandbox、或未來任何 per-project config-dir 場景），doctor 會誤報「not authenticated」，即使實際 dispatch 能正常運作（已用 `claude --print`／`codex exec` 直接對真實憑證檔實測驗證）。**Requirement**：`executor_authed()` 改吃 `${CODEX_HOME:-$HOME/.codex}`／`${CLAUDE_CONFIG_DIR:-$HOME/.claude}`，與其餘檢查項的 override 邏輯一致；補 regression（env var 指到非 `$HOME` 路徑時 doctor 仍正確回報 ok/fail）。 | ops/install | 2026-09-11 | — | P3 | hygiene |
 | CC-584 | ✅ done | [[CC-447]] live dogfood smoke 摔倒點（重大）：`pmctl ship` 的自動化 pipeline 從沒做過「main thread 在 dispatch 後 commit」這一步——`runtime/lib/pmctl-ship.sh` 全文零 `git commit`／`git add`。`docs/sandbox-limitations.md` Pattern 4 明文規定 commit 是**刻意**設計成執行者 sandbox 擋下、必須由呼叫端（main thread）在 dispatch 後審查 diff 再 commit——但 `ship` 從沒實作這一步，所以任何真實 dispatch （非 test 樁）的 ship 跑到 implement 完成後就卡死在 uncommitted 狀態，`ship status` 回報 `no-go`，永遠到不了 gate／PR。真實對 codex 執行一輪 `pmctl ship <ticket> --adapter codex` 實測重現。**已交付（pr:#583）**：main-thread 在 dispatch 後自動 stage＋commit，範圍嚴格限定票面 Requirement 段落宣告的路徑（禁用 `git add -A`）；9 輪 gate 修 6 個真缺陷（無界 commit 權限／`.gitignore` 執行者權限混淆／根目錄檔案 regex／掃描範圍誤含 Problem／Why 引用路徑＋順帶抓到 `git status` 壓縮全新目錄的獨立缺陷／commit 訊息可追溯）＋拆測試檔解決 QA harness 逾時。 | ops/gate | 2026-09-12 | pr:#583 | P1 | design |
+| CC-585 | 🔵 active | [[CC-447]] live dogfood smoke 摔倒點：[[CC-584]] 修完後第一次對真實 codex 執行 `pmctl ship finish` 就卡住——`pmctl_context_workflow_refresh`（既有、跟 CC-584 無關的功能）在 dispatch 階段會自己建立一份 `.gitignore`（內容只有 `.pm-dispatch`），發生在 CC-584 的「host 補丁前 `.gitignore` 是否乾淨」判準檢查**之前**。CC-584 R3 修法只分辨得出「`_pmctl_ship_ensure_gitignore` 自己的補丁前後」，沒考慮到「host 端其他既有功能也可能合法建立 `.gitignore`」這第三種情況——兩者在 finish 開始檢查時看起來一模一樣（都是 untracked），導致這份完全合法、host 端建立的 `.gitignore` 被誤判成「未宣告路徑」，整條 commit／gate／push 被擋下。**Requirement**：把「時間點」判準（補丁前是否乾淨）改成「內容」判準——只要 `.gitignore`（或其新增的部分）整份內容都落在已知的 bookkeeping 排除規則允許清單內（`.pm-dispatch`／`.dispatch-results`／`.gate-results`／`.gate-briefs`／`.agent-trace`／`.pm-dispatch-state` 等），不論誰、什麼時候建立都放行；只要出現一行不在清單內，才判定為可疑並比照未宣告路徑處理。補 regression：dispatch 前 context-index 已建立僅含已知 bookkeeping pattern 的 `.gitignore`（無關 `_pmctl_ship_ensure_gitignore`）時，finish 仍正確完成；`.gitignore` 混入未知規則時仍正確拒絕。 | ops/gate | 2026-09-12 | — | P2 | design |
+| CC-586 | 🔵 active | [[CC-447]] live dogfood smoke 摔倒點（嚴重，已找到根因並修復）：`_pmctl_ship_ensure_gitignore`（[[CC-584]] pr:#583 新增）最後一行是裸露的 `[[ "${#added[@]}" -gt 0 ]] && printf ...`——當 `.gitignore` 已經含有全部 bookkeeping pattern（例如對同一個已 dispatch 過的 lane 第二次跑 `pmctl ship finish`，第一次已經把 pattern 補齊）、沒有新東西要加時，這個 `[[ ]]` 判斷式為 false，成為函式的隱式回傳值 1；`pmctl_ship_finish` 呼叫這個函式時沒有包 `\|\| true`／`if`，在 `cli/pmctl` 自己的 `set -euo pipefail` 底下，函式回傳非零直接讓整支 CLI 靜默終止——**沒有任何錯誤訊息、沒有 stdout、沒有 stderr**，只留下 exit code 1。真實 codex dispatch＋兩位使用者（本 session 沙盒 + 使用者本機 WSL）各自獨立重現，兩邊 `bash -x` 追蹤都在同一行後面死掉。已定位修復：把最後一行改成 `if [[ ... ]]; then printf ...; fi` 再加明確 `return 0`。**Requirement**：加入這個真實 CLI（非測試套件內建、非 `set -e` 的 fixture stub）情境下的迴歸測試，證明修復前會 100% 重現、修復後正確通過。 | ops/gate | 2026-09-12 | — | P1 | design |
 
 ---
 
@@ -4389,5 +4391,124 @@ R9 覆蓋此最終 commit，GO。
 
 **See**: [[CC-447]]（live dogfood smoke，本票的觸發來源）；[[CC-443]]（`ship` 統一入口原票）；
 `docs/sandbox-limitations.md` Pattern 4
+
+---
+
+## CC-585 — `.gitignore` 判準漏了「host 端但非 CC-584 補丁」這個第三種情況 🔵 active
+
+**Problem**：[[CC-584]] 修完、pr:#583 merge 後，[[CC-447]] live dogfood 第一次對真實
+codex 跑 `pmctl ship finish DOG-2` 就卡住——`pmctl_context_workflow_refresh`（既有、
+跟 CC-584 完全無關的 context-index 功能）在 dispatch 階段會自己建立一份 `.gitignore`
+（內容只有 `.pm-dispatch` 一行），這件事發生在 CC-584 R3 的「host 補丁前 `.gitignore`
+是否乾淨」判準檢查**之前**（即 `pre_ensure_status` 快照的時候，這份 `.gitignore` 就已經
+是 untracked 狀態了）。
+
+**實測重現**（scratch throwaway repo，真實 codex CLI + 真實憑證）：
+1. `pmctl ship DOG-2 --adapter codex` 真實 dispatch，`context: no index found — building
+   .../.pm-dispatch/ctx/context.db` 之後印出「context index: created .gitignore with
+   .pm-dispatch」——`.gitignore` 在這一刻就已經是 untracked。
+2. 執行者正確產出 `SECOND.md`。
+3. `pmctl ship finish DOG-2 --cd <lane>` 執行：`_pmctl_ship_ensure_gitignore` 補上
+   bookkeeping pattern 後，`.gitignore` 內容合併了 context-index 的 `.pm-dispatch` 與
+   host 補丁的 5 個 pattern；因為 `pre_ensure_status` 快照時 `.gitignore` 已經是 dirty
+   （被 context-index 建立），CC-584 R3 的判準把它歸類為「非 host 補丁前乾淨」，等同
+   「執行者夾帶」，回報：「refusing to auto-commit ... touched undeclared path(s) ...:
+   .gitignore」，整條 commit／gate／push 卡死。
+
+**Why**：CC-584 R3 的判準只分辨得出「`_pmctl_ship_ensure_gitignore` 自己的補丁前後」
+兩種狀態，沒考慮到「host 端其他既有功能（如 context-index）也可能合法建立
+`.gitignore`」這第三種情況——這兩種在 finish 開始檢查時看起來一模一樣（都是
+untracked），時間點判準區分不出來。
+
+**Requirement**：
+- 把「時間點」判準（補丁前是否乾淨）改成「內容」判準：只要 `.gitignore`（或其相對
+  HEAD／或相對 `_pmctl_ship_ensure_gitignore` 執行前基準的新增部分）整份內容的每一行
+  都落在已知 bookkeeping 排除規則允許清單內（`.pm-dispatch`／`.dispatch-results`／
+  `.gate-results`／`.gate-briefs`／`.agent-trace`／`.pm-dispatch-state` 等，可含
+  `_pmctl_ship_ensure_gitignore` 自己的清單），不論是誰、什麼時候建立都放行；只要
+  出現一行不在清單內，才判定為可疑，比照其他未宣告路徑一律拒絕。
+- regression：(a) dispatch 前 context-index 已建立僅含已知 bookkeeping pattern的
+  `.gitignore`（無關 `_pmctl_ship_ensure_gitignore`）時，finish 仍正確完成到
+  commit／gate／push；(b) `.gitignore` 混入一行未知規則（模擬執行者夾帶）時仍正確
+  拒絕，不因為其餘行合法而被放行。
+
+**Non-goals**：不改 `pmctl_context_workflow_refresh` 建立 `.gitignore` 這個既有行為
+本身；不放寬「執行者不能自主 commit」的 Pattern 4 邊界。
+
+**Done-when**：真實 codex dispatch 對一個全新 repo（context-index 會建立
+`.gitignore`）跑一輪 `pmctl ship <ticket>`，`finish` 不再誤擋，能推進到 gate 並拿到
+GO/NO-GO 判決；新 regression 涵蓋上述兩個分支。
+
+**See**: [[CC-584]]（本票發現的根票，R3 判準的後續缺口）；[[CC-447]]（live dogfood
+smoke，本票的觸發來源）
+
+---
+
+## CC-586 — `_pmctl_ship_ensure_gitignore` 隱式回傳值 1 在 `set -e` 下靜默砍死整支 CLI 🔵 active
+
+**Problem**：[[CC-584]]（pr:#583）新增的 `_pmctl_ship_ensure_gitignore`
+（`runtime/lib/pmctl-ship.sh`）最後一行是裸露的：
+
+```bash
+[[ "${#added[@]}" -gt 0 ]] && printf 'pmctl ship finish: added %s to .gitignore\n' "${added[*]}" >&2
+```
+
+這是函式的最後一個陳述式，所以函式本身的隱式回傳值就是這個 `[[ ]] && cmd`
+複合命令的結果——當 `.gitignore` 已經含有全部 bookkeeping pattern（例如對同一個
+已 dispatch 過的 lane 第二次跑 `pmctl ship finish`，第一次已經把 pattern 補齊；
+或任何原因造成 `.gitignore` 早已是完整狀態），`added` 陣列是空的，`[[ 0 -gt 0 ]]`
+為 false，整個複合命令（也就是函式的回傳值）就是 1。
+
+`pmctl_ship_finish` 呼叫這個函式時是裸露陳述式，沒有包 `|| true` 或放進 `if`：
+
+```bash
+_pmctl_ship_ensure_gitignore "$work_dir"
+```
+
+`cli/pmctl` 自己在檔案最上方就是 `set -euo pipefail`——函式回傳非零，在真實 CLI
+執行環境下會讓整支腳本立刻、靜默終止：**沒有任何錯誤訊息、沒有 stdout、沒有
+stderr**，只留下 exit code 1。
+
+**實測重現**（兩個完全獨立的環境，各自使用 `bash -x` 直接對 `cli/pmctl` 追蹤，
+結果逐行一致）：
+1. 本 session 沙盒：真實 codex dispatch 產出 `SECOND.md` 後，對同一個 lane 跑
+   `pmctl ship finish` — 第一次因為 [[CC-585]] 的另一個缺陷卡住，但過程中已經把
+   `.gitignore` 補上全部 pattern；之後任何一次重跑都在
+   `_pmctl_ship_ensure_gitignore` 內部同一行後面靜默死掉，`bash -x` 追蹤停在
+   `+ [[ 0 -gt 0 ]]`，之後沒有任何一行輸出，`$?=1`。
+2. 使用者本機 WSL（獨立於本 session 的工具環境）：同樣的指令、同樣的死點、
+   逐行一致——排除了「這是這個對話工具沙盒的限制」這個假說，確認是程式碼本身的
+   bug。
+
+**Why**：這是經典的 bash 陷阱——用 `cond && action` 當函式最後一行，把函式的
+隱式回傳值交給一個「條件為假時完全合理、不代表錯誤」的判斷式決定。9 輪 CC-584
+gate 審查跟 126 個既有測試案例都沒抓到，因為現有測試的 fixture
+（`run_finish_with_fake_gate`，`bash -c '...'` 內的程式碼）從未設定 `set -e`，
+跟真實 `cli/pmctl` 的執行環境不同，無法重現這個失敗模式；且既有測試從未對「同一
+lane 跑第二次 finish（`.gitignore` 已經補完）」這個情境建過 fixture。
+
+**Requirement**：
+- 把最後一行改成：
+  ```bash
+  if [[ "${#added[@]}" -gt 0 ]]; then
+    printf 'pmctl ship finish: added %s to .gitignore\n' "${added[*]}" >&2
+  fi
+  return 0
+  ```
+- regression 必須透過真實 `cli/pmctl` 二進位（例如既有的
+  `make_cli_fixture_with_fake_gate` 樣式，而非 `run_finish_with_fake_gate`
+  的 `bash -c` fixture）執行，確保跑在真正的 `set -e` 底下，才能實際證明
+  修復前會 100% 重現、修復後正確通過。
+
+**Non-goals**：不改其他函式的隱式回傳值寫法（本票只處理這個具體已確認的
+安全隱患）；不追查是否有其他函式潛藏相同模式——若之後又真的撞到才處理
+（[[verify-code-before-test-gap-assumption]]）。
+
+**Done-when**：新 regression 在真實 CLI 執行環境下對修復前的程式碼碼斷言失敗、
+對修復後的程式碼碼斷言通過；126+1 個 `test-pmctl-ship*.sh` 案例全綠。
+
+**See**: [[CC-584]]（本票的根票，本函式的原始出處）；[[CC-585]]（同一輪 live
+dogfood 抓到的另一個獨立 `.gitignore` 缺陷）；[[CC-447]]（live dogfood smoke，
+本票的觸發來源）
 
 ---
