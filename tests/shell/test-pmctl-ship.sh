@@ -76,14 +76,14 @@ chmod +x "$FAKE_CODEX_BINDIR/claude"
 export PATH="$FAKE_CODEX_BINDIR:$PATH"
 
 make_work_repo() {
-  local path="$1" ticket="${2:-CC-9001}" requirement="${3:-none}"
+  local path="$1" ticket="${2:-CC-9001}" requirement="${3:-none}" problem="${4:-test fixture.}"
   mkdir -p "$path"
   git init -q "$path"
   git -C "$path" config user.email test@example.com
   git -C "$path" config user.name test
   {
     printf '## %s -- mock ticket for ship-parallel tests %s\n\n' "$ticket" "🔵 active"
-    printf 'Problem: test fixture.\n\nRequirement: %s\n\nDependencies: none.\n' "$requirement"
+    printf 'Problem: %s\n\nRequirement: %s\n\nDependencies: none.\n' "$problem" "$requirement"
   } > "$path/BACKLOG.md"
   printf '.pm-dispatch/\n' > "$path/.gitignore"
   mkdir -p "$path/tests/bin"
@@ -3623,6 +3623,67 @@ case_ship_run_to_finish_declared_root_level_file_commits_pre_gate() {
   fi
 }
 
+case_ship_run_to_finish_ignores_paths_cited_outside_requirement() {
+  local name="ship run->finish: a path merely CITED in Problem/Why prose (not the Requirement section) never enters the declared allowlist, brief, or tracking (CC-584 gate round 6)"
+  should_run "$name" || return 0
+  local store work status=0
+  local ticket="CC-9044"
+  store="$tmp_root/state-e2e-prose-citation"
+  work="$tmp_root/work-e2e-prose-citation"
+  # Problem cites a real-looking path for CONTEXT only; Requirement declares
+  # a completely different, actual deliverable. Only the latter may ever
+  # become commit-authorized.
+  # shellcheck disable=SC2016
+  make_work_repo "$work" "$ticket" \
+    'create `notes/output.md` with the summary.' \
+    'the bug lives near `docs/sandbox-limitations.md` for reference.'
+  local out="$tmp_root/out-e2e-prose-citation"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" ship "$ticket" --adapter claude --no-auto-pack --cd "$work" > "$out" 2>&1 || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "dispatch failed: status=$status $(cat "$out")"
+    return
+  fi
+  local reg_dir tracking lane_path
+  reg_dir="$(reg_dir_for "$store" "$work")"
+  tracking="$reg_dir/ship-lanes.jsonl"
+  lane_path="$reg_dir/checkouts/$ticket"
+  # 1) The cited-but-not-declared path never enters the brief's `edit:`
+  # list -- NOT "never appears anywhere in the brief": the brief's own
+  # boilerplate sandbox-limitations constraint legitimately cites
+  # `docs/sandbox-limitations.md` by name (Pattern 4's explanation), so
+  # that generic mention must not be confused with an edit declaration.
+  local brief_glob brief_file=""
+  brief_glob="/tmp/brief-ship-${ticket}-*.md"
+  # shellcheck disable=SC2086 # deliberate glob expansion, ticket id is fixed alnum/dash
+  for f in $brief_glob; do [[ -f "$f" ]] && brief_file="$f" && break; done
+  if [[ -z "$brief_file" ]] || grep -qF '  - edit: docs/sandbox-limitations.md' "$brief_file"; then
+    fail "$name" "brief must not declare the Problem-cited path as an edit target: brief=${brief_file:-<none>} $(cat "${brief_file:-/dev/null}" 2>/dev/null)"
+    return
+  fi
+  # 2) Nor the durable tracking record.
+  local tracked_declared
+  tracked_declared="$(jq -r --arg t "$ticket" 'select(.ticket == $t) | .declared_paths[]?' "$tracking" 2>/dev/null)"
+  if [[ "$tracked_declared" != "notes/output.md" ]]; then
+    fail "$name" "tracking declared_paths mismatch: got=[$tracked_declared] tracking=$(cat "$tracking" 2>/dev/null)"
+    return
+  fi
+  # 3) If the executor DID touch the cited path, finish refuses exactly like
+  # any other undeclared collateral file.
+  mkdir -p "$lane_path/notes" "$lane_path/docs"
+  printf 'summary\n' > "$lane_path/notes/output.md"
+  printf 'unrelated edit\n' > "$lane_path/docs/sandbox-limitations.md"
+  add_bare_origin "$lane_path"
+  local finish_out="$tmp_root/out-e2e-prose-citation-finish" finish_err="$tmp_root/err-e2e-prose-citation-finish"
+  local finish_status=0
+  PM_DISPATCH_STATE_ROOT="$store" run_finish_with_fake_gate "$lane_path" "$ticket" "GO" \
+    > "$finish_out" 2> "$finish_err" || finish_status=$?
+  if [[ "$finish_status" -eq 1 ]] && grep -q "undeclared path" "$finish_err" && grep -q "sandbox-limitations.md" "$finish_err"; then
+    pass "$name"
+  else
+    fail "$name" "expected the cited-only path to be refused as undeclared; finish_status=$finish_status stderr=$(cat "$finish_err")"
+  fi
+}
+
 case_ship_status_reports_prepared_for_manual_worktree_lane() {
   local name="ship status: a manual --worktree lane (no dispatch, no finish marker) surfaces as status=prepared, not running"
   should_run "$name" || return 0
@@ -4086,6 +4147,7 @@ case_ship_adapter_flag_implies_worktree_and_dispatches
 case_ship_worktree_and_adapter_together_dispatches_same_as_adapter_alone
 case_ship_run_to_finish_declared_allowlist_flows_end_to_end
 case_ship_run_to_finish_declared_root_level_file_commits_pre_gate
+case_ship_run_to_finish_ignores_paths_cited_outside_requirement
 case_ship_status_reports_prepared_for_manual_worktree_lane
 case_ship_run_refuses_redispatch_while_in_flight_standalone
 case_ship_dispatch_failure_after_worktree_records_dispatch_failed_lane

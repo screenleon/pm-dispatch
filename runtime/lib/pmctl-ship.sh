@@ -136,25 +136,50 @@ _pmctl_ship_ticket_section_body() {
   ' "$file"
 }
 
+# _pmctl_ship_ticket_requirement_body <file> <ticket_id>
+# Prints ONLY the ticket's `Requirement`/`**Requirement**` sub-section --
+# from that label line (inclusive) to the next bold-labeled line (e.g.
+# `**Non-goals**：`, `**Done-when**：`, `**See**:`) or plain-labeled line
+# (e.g. the test fixtures' `Dependencies: none.`), exclusive. Shared by
+# _pmctl_ship_ticket_declared_paths and _pmctl_ship_ticket_goal_summary
+# (CC-584) so the two never drift on what counts as "the declared scope".
+# Deliberately narrower than the whole ticket section
+# (_pmctl_ship_ticket_section_body): CC-584 gate round 6 -- all five
+# reviewers converged -- caught that scanning the WHOLE section let a path
+# merely CITED in Problem/Why prose (for context, not as an edit target)
+# be treated as commit-authorized; only Requirement is an edit declaration.
+# Prints nothing (not an error) when the ticket or the label doesn't exist.
+_pmctl_ship_ticket_requirement_body() {
+  local file="$1" ticket_id="$2" body
+  body="$(_pmctl_ship_ticket_section_body "$file" "$ticket_id")"
+  [[ -n "$body" ]] || return 0
+  awk '
+    /^\*{0,2}Requirement\*{0,2}[:：]/ { in_req = 1 }
+    in_req && !/^\*{0,2}Requirement\*{0,2}[:：]/ && /^\*{0,2}[A-Za-z][A-Za-z0-9 _-]*\*{0,2}[:：]/ { exit }
+    in_req { print }
+  ' <<<"$body"
+}
+
 # _pmctl_ship_ticket_declared_paths <file> <ticket_id>
 # Prints every backtick-quoted, path-shaped token found in the ticket's
-# section body -- one repo-relative path per line, deduped -- as this
-# ticket's declared edit-path allowlist (CC-584). `pmctl_ship_finish` stages
-# only these paths (plus its own bookkeeping ignore-list) for a dispatched
-# lane's auto-commit, refusing anything else the executor touched.
-# "Path-shaped" requires a trailing `.<ext>` (so a bare command name like
-# `git commit`, which has neither a dot nor -- unlike a real deliverable --
-# any reason to be a declared edit target, never matches); a `/` is NOT
-# required, since a ticket legitimately declares a repository-ROOT
-# deliverable (the CC-584 ticket's own real-dogfood evidence: `SECOND.md`).
-# The path need not already exist on disk -- a ticket's Requirement
-# legitimately names a file the dispatch is about to create. Prints nothing
-# (not an error) when the section has no such token -- callers decide how to
-# treat an empty allowlist.
+# Requirement sub-section (see _pmctl_ship_ticket_requirement_body) -- one
+# repo-relative path per line, deduped -- as this ticket's declared
+# edit-path allowlist (CC-584). `pmctl_ship_finish` stages only these paths
+# (plus its own bookkeeping ignore-list) for a dispatched lane's
+# auto-commit, refusing anything else the executor touched. "Path-shaped"
+# requires a trailing `.<ext>` (so a bare command name like `git commit`,
+# which has neither a dot nor -- unlike a real deliverable -- any reason to
+# be a declared edit target, never matches); a `/` is NOT required, since a
+# ticket legitimately declares a repository-ROOT deliverable (the CC-584
+# ticket's own real-dogfood evidence: `SECOND.md`). The path need not
+# already exist on disk -- a ticket's Requirement legitimately names a file
+# the dispatch is about to create. Prints nothing (not an error) when the
+# Requirement sub-section has no such token -- callers decide how to treat
+# an empty allowlist.
 _pmctl_ship_ticket_declared_paths() {
   local file="$1" ticket_id="$2"
   # shellcheck disable=SC2016 # the grep pattern below is a literal backtick match, not an unexpanded variable
-  _pmctl_ship_ticket_section_body "$file" "$ticket_id" \
+  _pmctl_ship_ticket_requirement_body "$file" "$ticket_id" \
     | grep -oE '`[A-Za-z0-9_./-]+\.[A-Za-z0-9]+`' \
     | tr -d '`' \
     | sort -u \
@@ -170,31 +195,28 @@ _pmctl_ship_ticket_declared_paths() {
 
 # _pmctl_ship_ticket_goal_summary <file> <ticket_id>
 # Prints a short (<=72 char), single-line summary of the ticket's stated
-# goal -- the text following a `Requirement:` label in its BACKLOG.md
-# section, truncated -- for the dispatched-lane auto-commit's subject line
-# (CC-584 gate finding critic-F001: a bare "ship: <ticket-id>" message
-# wasn't traceable to which deliverable it was without reopening the
-# ticket). Prints nothing when the section has no such label.
+# goal -- the text following the `Requirement:` label in its Requirement
+# sub-section (see _pmctl_ship_ticket_requirement_body), truncated -- for
+# the dispatched-lane auto-commit's subject line (CC-584 gate finding
+# critic-F001: a bare "ship: <ticket-id>" message wasn't traceable to which
+# deliverable it was without reopening the ticket). Prints nothing when the
+# ticket has no Requirement label.
 _pmctl_ship_ticket_goal_summary() {
-  local file="$1" ticket_id="$2" body label_line label_index total_lines summary
-  body="$(_pmctl_ship_ticket_section_body "$file" "$ticket_id")"
+  local file="$1" ticket_id="$2" body summary
+  body="$(_pmctl_ship_ticket_requirement_body "$file" "$ticket_id")"
   [[ -n "$body" ]] || return 0
-  # The label is commonly bold-markdown'd (`**Requirement**`) and, in this
-  # project's own BACKLOG.md, followed by a full-width colon (`：`), not
-  # necessarily an ASCII one -- match both, and match the label with or
-  # without surrounding `**`.
-  label_index="$(grep -nE '^\*{0,2}Requirement\*{0,2}[:：]' <<<"$body" | head -1 | cut -d: -f1)"
-  [[ -n "$label_index" ]] || return 0
-  label_line="$(sed -n "${label_index}p" <<<"$body")"
-  summary="$(sed -E 's/^\*{0,2}Requirement\*{0,2}[:：][[:space:]]*//' <<<"$label_line")"
+  # Line 1 of this body IS the label line (see
+  # _pmctl_ship_ticket_requirement_body): strip the label to get any
+  # same-line content.
+  summary="$(sed -nE '1s/^\*{0,2}Requirement\*{0,2}[:：][[:space:]]*//p' <<<"$body")"
   if [[ -z "$summary" ]]; then
     # The label line carries nothing after the colon (this project's own
     # ticket convention: the label sits alone, the content is the next
-    # line(s), often a `- ` bulleted list) -- fall back to the next
-    # non-empty line, with any leading bullet marker stripped.
+    # line(s), often a `- ` bulleted list) -- fall back to the first
+    # non-empty line after it, with any leading bullet marker stripped.
+    local total_lines i next_line
     total_lines="$(wc -l <<<"$body")"
-    local i next_line
-    for ((i = label_index + 1; i <= total_lines; i++)); do
+    for ((i = 2; i <= total_lines; i++)); do
       next_line="$(sed -n "${i}p" <<<"$body")"
       next_line="$(sed -E 's/^[[:space:]]*[-*][[:space:]]+//' <<<"$next_line")"
       [[ -n "${next_line//[[:space:]]/}" ]] && { summary="$next_line"; break; }
@@ -337,7 +359,14 @@ pmctl_ship_finish() {
   # covered by case_finish_go_dirty_tree_refuses_push -- is never affected.
   if _pmctl_ship_lane_was_dispatched "$repo_root" "$work_dir" "$ticket_id"; then
     local pre_ensure_status
-    pre_ensure_status="$(git -C "$work_dir" status --porcelain 2>/dev/null)"
+    # `--untracked-files=all` is required here, not merely the default
+    # (`normal`) mode: without it, git collapses an entirely-new untracked
+    # directory into a single `?? dir/` porcelain line instead of listing
+    # the individual file(s) inside it, so a declared path like
+    # `notes/output.md` created fresh (its parent directory is new too)
+    # would never exact-match anything in the per-path allowlist check
+    # below -- it would show up only as the undeclared-looking `notes/`.
+    pre_ensure_status="$(git -C "$work_dir" status --porcelain --untracked-files=all 2>/dev/null)"
     if [[ -n "$pre_ensure_status" ]]; then
       # Whether `.gitignore` was ALREADY dirty before the host's own patch
       # below -- i.e. the executor itself modified it -- decides whether it
@@ -350,7 +379,8 @@ pmctl_ship_finish() {
       grep -qE '^.. \.gitignore$' <<<"$pre_ensure_status" && gitignore_pre_dirty=1
       _pmctl_ship_ensure_gitignore "$work_dir"
       local dirty_status
-      dirty_status="$(git -C "$work_dir" status --porcelain 2>/dev/null)"
+      # Same `--untracked-files=all` requirement as pre_ensure_status above.
+      dirty_status="$(git -C "$work_dir" status --porcelain --untracked-files=all 2>/dev/null)"
       if [[ -z "$dirty_status" ]]; then
         # Every dirty path was pm-dispatch's own bookkeeping and is now
         # gitignored -- explicit, not silent (CC-584 gate finding qa-F002):
