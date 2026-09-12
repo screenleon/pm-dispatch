@@ -119,6 +119,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-580 | ✅ done | [[CC-447]] offline clean-install smoke 摔倒點：codex host `install.sh`／`uninstall.sh` 各自 `mktemp` 出 4／2 個 scratch temp file，成功路徑無條件 `trap - EXIT` 導致未消費的 scratch temp 洩漏進 `$TMPDIR`。**Requirement 1 已修復**（pr:#573）：移除成功路徑的 `trap - EXIT`，讓已註冊的 EXIT trap 一律負責清乾淨；兩個 host 腳本各補一個 regression test 鎖住「hooks 或 instructions 其中一路未變更時另一路 scratch temp 不洩漏」。`clean-install-smoke.sh` 的殘留判定同時補上安全產物 allowlist（`.bak.*`／空骨架檔／`xdg/opencode`），修復後跑出 `GO`。**Requirement 2（.bak.*／空骨架檔的保留語意要不要改）維持 someday、未拍板、未立獨立票**——非阻塞，若日後要動再重新評估是否值得開票 | ops/install | 2026-09-05 | pr:#573 | P1 | hygiene |
 | CC-581 | 🟢 someday | `gate_reviewer_protocol_verify` 的二次方 `block=` 累加（`runtime/lib/gate-result-verify.sh:651`）：逐行 bash 字串串接抽 fenced reviewer_result 區塊，對區塊行數 O(n²)。[[CC-579]] census 實測 bash 端非 gate 主成本（88% 在 jq），故列次要未動。無感但屬演算法級劣化，值得在有人為別因動到該函式時順手換 O(n)（`mapfile`＋`printf` 或單次 `awk` 切檔），維持 fence 巢狀／截斷／空區塊失敗語意與 `GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR` 值不變。獨立排程投報不足 | ops/gate | 2026-09-08 | — | P3 | — |
 | CC-582 | ✅ done | issue #579：`pmctl gate run` 對 target repo 首建 context index 時，`pmctl_context_workflow_refresh` 無 timeout 又吞 stderr，任何慢／卡的索引建置都會在 dispatch 前無限 hang、零輸出（Windows/Git Bash nested process-sub 或 sqlite WAL lock 為已知觸發，缺陷本身平台無關）。`prompt-context.sh` 早已用 `timeout` 綁同一操作，gate／pm-prepare 漂走。**Req 1 已交付（#580）**：新增 `pmctl context workflow-refresh` 子指令 + `pmctl_context_workflow_refresh_bounded`（`PM_DISPATCH_CONTEXT_REFRESH_TIMEOUT` 預設 90s、`timeout -k 5` 群組殺、無 `timeout` 則**跳過**不做無界執行），gate／pm-prepare 改走它並放行進度行。**Req 2 已交付（#582）**：`doctor.sh` `tracked-line-endings` 檢查（`git ls-files --eol` 抓 `text=auto` 下 `git status` 看不到的 CRLF）＋安全 `--fix`（只對「與 index 僅差 CR」的檔案原地去 CR）。**Req 3 已交付（#582）**：docs-only——`platform-support.md` PowerShell `$PROFILE` function（`@args` 安全轉發）；`.cmd` shim 評估後撤回（`cmd.exe` 重解析 `%*` 注入風險＋無原生 Windows CI）。 | ops/gate | 2026-09-09 | pr:#580, pr:#582 | P2 | hygiene |
+| CC-583 | 🔵 active | [[CC-447]] live dogfood smoke 摔倒點：`doctor.sh` `executor_authed()`（`runtime/bin/doctor.sh:338`）檢查 codex/claude 認證時寫死讀 `${HOME}/.codex/auth.json`／`${HOME}/.claude/.credentials.json`，完全不跟 `CODEX_HOME`／`CLAUDE_CONFIG_DIR` override（這兩個 env var 在 install.sh／其餘所有 doctor 檢查項都是正式支援的間接層）。在 `CODEX_HOME`／`CLAUDE_CONFIG_DIR` 與 `$HOME/.codex`／`$HOME/.claude` 不同路徑的機器上（例如隔離 sandbox、或未來任何 per-project config-dir 場景），doctor 會誤報「not authenticated」，即使實際 dispatch 能正常運作（已用 `claude --print`／`codex exec` 直接對真實憑證檔實測驗證）。**Requirement**：`executor_authed()` 改吃 `${CODEX_HOME:-$HOME/.codex}`／`${CLAUDE_CONFIG_DIR:-$HOME/.claude}`，與其餘檢查項的 override 邏輯一致；補 regression（env var 指到非 `$HOME` 路徑時 doctor 仍正確回報 ok/fail）。 | ops/install | 2026-09-11 | — | P3 | hygiene |
+| CC-584 | 🔵 active | [[CC-447]] live dogfood smoke 摔倒點（重大）：`pmctl ship` 的自動化 pipeline 從沒做過「main thread 在 dispatch 後 commit」這一步——`runtime/lib/pmctl-ship.sh` 全文零 `git commit`／`git add`。`docs/sandbox-limitations.md` Pattern 4 明文規定 commit 是**刻意**設計成執行者 sandbox 擋下、必須由呼叫端（main thread）在 dispatch 後審查 diff 再 commit——但 `ship` 從沒實作這一步，所以任何真實 dispatch （非 test 樁）的 ship 跑到 implement 完成後就卡死在 uncommitted 狀態，`ship status` 回報 `no-go`，永遠到不了 gate／PR。真實對 codex 執行一輪 `pmctl ship <ticket> --adapter codex` 實測重現。 | ops/gate | 2026-09-11 | — | P1 | design |
 
 ---
 
@@ -4281,5 +4283,89 @@ hard block（`cmd.exe` 重解析 `%*` 注入面、無原生 Windows CI）→ 撤
 issue #579 的 secondary/minor 均已處理；主 issue 由使用者決定是否關閉。
 
 **See**: issue #579；[[CC-370]]（原生 Windows）；[[CC-461]]（`--fix` 白名單先例）
+
+---
+
+## CC-583 — `doctor.sh` `executor_authed()` 不跟 `CODEX_HOME`／`CLAUDE_CONFIG_DIR` override 🔵 active
+
+**Problem**：`runtime/bin/doctor.sh:338` 的 `executor_authed()` 判斷 codex/claude 是否已登入，
+直接寫死讀 `${HOME}/.codex/auth.json`（codex）與 `${HOME}/.claude/.credentials.json`（claude），
+完全繞過 `CODEX_HOME`／`CLAUDE_CONFIG_DIR` 這兩個 env var——而它們在 `install.sh` 與同一支
+`doctor.sh` 其餘所有 host 檢查項（`host.claude.config-root` 等）都是正式支援的間接層。
+
+**Why**：[[CC-447]] live dogfood smoke 首次實測就踩到——在隔離 sandbox 裡把
+`CLAUDE_CONFIG_DIR`／`CODEX_HOME` 指到非 `$HOME` 路徑（並放入複製的認證檔），
+`claude --print`／`codex exec` 都能正常認證並完成真實 dispatch，但 `doctor.sh`
+仍回報「claude present but not authenticated」／「codex present but not authenticated」。
+這是判斷邏輯與其餘系統假設不一致的真缺陷，不是本次 smoke 的環境問題——任何
+`CODEX_HOME`／`CLAUDE_CONFIG_DIR` 與預設 `$HOME/.codex`／`$HOME/.claude` 不同路徑的機器
+都會誤報。
+
+**Requirement**：
+- `executor_authed()` 的 codex 分支改讀 `${CODEX_HOME:-$HOME/.codex}/auth.json`；
+  claude 分支改讀 `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.credentials.json`。
+- `tests/shell/test-doctor.sh` 補 regression：`CODEX_HOME`／`CLAUDE_CONFIG_DIR` 指到非
+  `$HOME` 路徑、認證檔放在該路徑下時，doctor 仍回報 `ok`；env var 未設時維持現有
+  `$HOME` 預設行為不變（不破壞既有 case）。
+
+**Non-goals**：不改 `check_pmctl`／host module 的其他認證/健康檢查邏輯；不動
+`OPENAI_API_KEY`／`ANTHROPIC_API_KEY` 等既有 env-var-first 分支。
+
+**Done-when**：`test-doctor.sh` 全綠且含新 regression；手動用非 `$HOME` 的
+`CODEX_HOME`／`CLAUDE_CONFIG_DIR` 沙盒重跑 doctor，兩項認證檢查回報 `ok`。
+
+**See**: [[CC-447]]（live dogfood smoke，本票的觸發來源）
+
+---
+
+## CC-584 — `pmctl ship` 缺少 dispatch 後的 main-thread commit 步驟 🔵 active
+
+**Problem**：[[CC-447]] live dogfood smoke 第一次對真實 codex 執行 `pmctl ship <ticket>
+--adapter codex`（非 test stub），implement 階段本身成功（codex 正確 diagnose 出
+`docs/sandbox-limitations.md` Pattern 4 的限制、正確產出檔案內容），但整條 ship pipeline
+從沒有「main thread 審查 diff 後 commit」這一步——`runtime/lib/pmctl-ship.sh`／
+`runtime/lib/pmctl-ship-parallel.sh`／dispatch 相關 lib 全文搜尋 `git commit`／`git add`
+零命中。`pmctl ship status` 因此回報 `"status":"no-go"`，pipeline 停在 dispatch 完成、
+gate 從未啟動、PR 從未開出。
+
+**實測重現**（scratch throwaway repo，真實 codex CLI + 真實憑證，非隔離假設）：
+1. `pmctl ship DOG-2 --adapter codex --cd <target>` → dispatch 成功，worktree 內
+   `SECOND.md` 內容完全正確。
+2. codex 的 dispatch trace 自己記錄：「A commit is required for the gate to see
+   `SECOND.md`；否則 gate 會看到空 diff、開出一個沒有改動的 PR」——它嘗試自己
+   `git add && git commit`，被 sandbox 擋下（linked worktree 的 `.git/worktrees/<name>/`
+   index 檔落在 worktree checkout 樹之外，codex 的 `workspace-write` sandbox 只授權
+   `--cd` 給的目錄本身，寫不到外面）。
+3. `git status --short` 顯示 `SECOND.md` 是 untracked；`pmctl ship status --json`
+   的該筆記錄 `"status":"no-go"`；worktree 底下沒有 `.gate-results/`——gate 從未被觸發。
+
+**Why**：`docs/sandbox-limitations.md` Pattern 4 明文：「commit is always delegated
+to the main thread after you review the executor's diff...There is no allow-list
+workaround: the commit delegation rule is structural」。這是刻意的安全設計（執行者不能
+自主推進到 branch），但 `ship`——CC-443 標榜的「一次 gate 到 PR」統一入口——從未實作
+Pattern 4 要求的呼叫端 commit 步驟。過去的 ship 測試多半用 dispatch stub（不觸發真實
+sandbox），所以這個缺口沒被抓到；這正是 live dogfood（真實 auth + 真實執行器）存在的
+意義。
+
+**Requirement**：
+- 在 `ship` pipeline 裡、dispatch 完成之後、gate 啟動之前，加入 main-thread 的
+  `git add <files touched> && git commit` 步驟（審查範圍：只 add brief `files:`
+  宣告過的路徑，避免吞入無關的 untracked 產物如 `.pm-dispatch/`／`.dispatch-results/`）。
+- commit message 需可追溯（ticket id + brief goal 摘要）。
+- 若 dispatch 後 working tree 為空（executor 判斷不需要改動或本來就沒有變更），
+  ship 要能區分「真的沒有改動」與「改動了但沒東西可 commit（如全部被上面的 add
+  filter 濾掉）」，給出明確訊息而非靜默卡住。
+- regression：對一個真實（或忠實模擬 codex 真實輸出的）dispatch 結果跑 ship，
+  斷言 commit 存在、gate 有被觸發、`ship status` 不再卡在 `no-go`。
+
+**Non-goals**：不改 Pattern 4 本身的「執行者不能 commit」安全邊界；不改
+`docs/sandbox-limitations.md` 既有指引。
+
+**Done-when**：真實 codex dispatch 跑一輪 `pmctl ship <ticket>`，能推進到 gate 並
+拿到 GO/NO-GO 判決（不再卡在 implement 完成後的 no-go）；新 regression 涵蓋
+dispatch-後-commit 的分支。
+
+**See**: [[CC-447]]（live dogfood smoke，本票的觸發來源）；[[CC-443]]（`ship` 統一入口原票）；
+`docs/sandbox-limitations.md` Pattern 4
 
 ---

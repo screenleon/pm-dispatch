@@ -134,6 +134,7 @@ SUITE_NAMES=(
   test-pmctl-backlog
   test-pmctl-guard
   test-pmctl-ship
+  test-pmctl-ship-finish
   test-pmctl-worktree
   test-pmctl-discovery
   test-pre-release
@@ -259,6 +260,7 @@ declare -A SUITE_PATHS=(
   [test-pmctl-backlog]="tests/shell/test-pmctl-backlog.sh"
   [test-pmctl-guard]="tests/shell/test-pmctl-guard.sh"
   [test-pmctl-ship]="tests/shell/test-pmctl-ship.sh"
+  [test-pmctl-ship-finish]="tests/shell/test-pmctl-ship-finish.sh"
   [test-pmctl-worktree]="tests/shell/test-pmctl-worktree.sh"
   [test-pmctl-discovery]="tests/shell/test-pmctl-discovery.sh"
   [test-pre-release]="tests/shell/test-pre-release.sh"

@@ -587,6 +587,13 @@ jobs:
       - name: pmctl ship regression suite
         run: bash tests/shell/test-pmctl-ship.sh
 
+  test-pmctl-ship-finish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: pmctl ship finish regression suite
+        run: bash tests/shell/test-pmctl-ship-finish.sh
+
   lint-backlog:
     runs-on: ubuntu-latest
     steps:

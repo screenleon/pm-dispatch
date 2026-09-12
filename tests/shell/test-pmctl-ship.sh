@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
-# Regression tests for `pmctl ship prepare/finish/--parallel/status/list`.
+# Regression tests for `pmctl ship prepare/run/--parallel/status/list/
+# worktree/operation` -- the dispatch-and-lifecycle half of the ship
+# surface. `finish`/gate/publish-assessment/closure coverage lives in the
+# sibling suite `test-pmctl-ship-finish.sh` (split out in CC-584 gate
+# round 7 purely so each half completes within the QA harness's per-suite
+# timeout; the two files share the same fixtures verbatim by design --
+# keep them in sync if a shared helper changes).
 # shellcheck disable=SC2154  # tmp_root supplied by sourced test-harness
 set -euo pipefail
 
@@ -76,14 +82,14 @@ chmod +x "$FAKE_CODEX_BINDIR/claude"
 export PATH="$FAKE_CODEX_BINDIR:$PATH"
 
 make_work_repo() {
-  local path="$1" ticket="${2:-CC-9001}"
+  local path="$1" ticket="${2:-CC-9001}" requirement="${3:-none}" problem="${4:-test fixture.}"
   mkdir -p "$path"
   git init -q "$path"
   git -C "$path" config user.email test@example.com
   git -C "$path" config user.name test
   {
     printf '## %s -- mock ticket for ship-parallel tests %s\n\n' "$ticket" "🔵 active"
-    printf 'Problem: test fixture.\n\nRequirement: none.\n\nDependencies: none.\n'
+    printf 'Problem: %s\n\nRequirement: %s\n\nDependencies: none.\n' "$problem" "$requirement"
   } > "$path/BACKLOG.md"
   printf '.pm-dispatch/\n' > "$path/.gitignore"
   mkdir -p "$path/tests/bin"
@@ -115,28 +121,17 @@ FAKEOF
   git -C "$path" commit -q -m seed
 }
 
-# add_bare_origin <work_repo>
-# Creates a local bare repo and wires it as `origin` so `pmctl ship finish`
-# tests can exercise a real `git push` without touching any real remote.
 add_bare_origin() {
   local work="$1" bare="$1.bare-origin.git"
   git init -q --bare "$bare"
   git -C "$work" remote add origin "$bare"
 }
 
-# checkout_ticket_branch <work_repo> <ticket_id>
-# `pmctl_ship_finish` operates on whatever branch is currently checked out
-# (mirrors real usage: always called after `pmctl ship prepare` already
-# created and checked out `feat/<ticket-id>`) -- these finish-focused test
-# cases call `finish` directly without going through `prepare` first, so
-# they set that precondition up explicitly.
 checkout_ticket_branch() {
   local work="$1" ticket_id="$2"
   git -C "$work" checkout -q -b "feat/$ticket_id"
 }
 
-# install_fake_gh <bindir> <pr_url>
-# A fake `gh` that only understands `gh pr create` (prints pr_url, exit 0).
 install_fake_gh() {
   local bindir="$1" pr_url="$2"
   mkdir -p "$bindir"
@@ -174,10 +169,6 @@ FAKEOF
   chmod +x "$bindir/gh"
 }
 
-# install_fake_gh_pr_create_fails <bindir>
-# `command -v gh` finds this binary (so the earlier preflight passes), but
-# `gh pr create` itself fails at runtime -- simulates network/auth/API
-# failure AFTER a successful `git push`, distinct from "gh unavailable".
 install_fake_gh_pr_create_fails() {
   local bindir="$1"
   mkdir -p "$bindir"
@@ -211,10 +202,6 @@ FAKEOF
   chmod +x "$bindir/gh"
 }
 
-# make_cli_fixture_with_fake_gate <path>
-# Copies the real CLI/runtime libraries, then replaces only the external gate
-# invocation after those libraries load. This keeps CLI option parsing and the
-# real ship finish implementation under test without dispatching a model.
 make_cli_fixture_with_fake_gate() {
   local path="$1"
   mkdir -p "$path/cli" "$path/runtime"
@@ -241,6 +228,7 @@ gate_remediation_closure_publish() {
   printf '%s\n' '{}' > "$3"
   printf '%s\n' "$3"
 }
+
 gate_publish_assessment_build() {
   local output="$1" head tree
   head="$(git -C "$work_dir" rev-parse HEAD)"
@@ -255,18 +243,12 @@ gate_publish_assessment_build() {
      full_suite:{artifact:"/tmp/full.json",sha256:("0"*64),status:"pass",subject_fingerprint:$tree}}' > "$output"
   printf '%s\n' "$1"
 }
+
 gate_publish_assessment_verify() { return 0; }
 FIXTURE
   chmod +x "$path/cli/pmctl"
 }
 
-# run_finish_with_fake_gate <work_dir> <ticket_id> <verdict> [extra_args...]
-# Calls `pmctl_ship_finish` directly (function-level, not via the CLI) with
-# `pmctl_gate_run` stubbed out -- avoids invoking the real, heavy
-# runtime/bin/pr-gate.sh pipeline just to unit-test finish's own push/PR/guard
-# logic. The stub writes a real result FILE with a `Final:` line and prints
-# `result: <path>` on stdout, mirroring pr-gate.sh's actual output contract
-# byte-for-byte (same contract `pmctl_ship_finish` itself parses).
 run_finish_with_fake_gate() {
   local work_dir="$1" ticket_id="$2" verdict="$3"
   shift 3
@@ -470,51 +452,6 @@ JQ
   ' _ "$REPO_ROOT" "$work_dir" "$ticket_id" "$mode" "$body_file"
 }
 
-# Behavior: a valid publish assessment binds the Gate, assurance, closure, and full-suite evidence to one subject.
-# Steps: 1) Arrange matching evidence fixtures; 2) build and verify the assessment; 3) assert its route and policy fields.
-case_publish_assessment_binds_closure_and_full_suite() {
-  local name="ship publish assessment: closure and full suite must bind to the Gate subject"
-  should_run "$name" || return 0
-  local dir gate assurance closure full assessment out err status=0
-  dir="$tmp_root/publish-assessment-bind"
-  mkdir -p "$dir"
-  gate="$dir/gate.json"; assurance="$dir/gate.assurance.json"
-  closure="$dir/closure.json"; full="$dir/full.json"; assessment="$dir/assessment.json"
-  printf 'gate result\n' > "$dir/gate.md"
-  jq -n --arg assurance "$assurance" --arg result "$dir/gate.md" '
-    {kind:"gate_verification_v1",schema_version:1,result_file:$result,verdict:"GO",
-     assurance:{status:"verified",kind:"gate_assurance_v3",file:$assurance},consumer:"embedded",
-     axes:{artifact_valid:{status:"pass",reason_codes:[]},
-       subject_current:{status:"pass",reason_codes:[],current:{repository_key:("a"*64),base_commit:("1"*40),head_commit:("2"*40),tree_fingerprint:("b"*64),observed_root:"/tmp/repo"}},
-       policy_applicable:{status:"pass",reason_codes:[],consumer:"embedded",required_policy:"generic",preferred_policy:"generic",embedded_policy:"generic",policy_satisfaction:"preferred"}}}
-  ' > "$gate"
-  jq -n '{evidence:{scope_manifest:{sha256:("c"*64)}}}' > "$assurance"
-  jq -n '{kind:"remediation_closure_v1",schema_version:1,state:"closed",final_assessment:{publish_authorized:true,subject_fingerprint:("b"*64)},final_subject:{tree_fingerprint:("b"*64)},targeted_confirmation:{status:"pass"}}' > "$closure"
-  jq -n '{kind:"pm_test_result_v2",contract:"full",authoritative:true,status:"pass",aggregate:{status:"pass"},exit_code:0,tree_fingerprint:("b"*64)}' > "$full"
-  out="$dir/out"; err="$dir/err"
-  bash -c '
-    repo_root="$1"; output="$2"; gate="$3"; closure="$4"; full="$5"
-    gate_structural_schema_verify() { return 0; }
-    gate_remediation_closure_verify() { return 0; }
-    gate_digest_file() { sha256sum "$1" | awk '\''{print $1}'\''; }
-    gate_policy_applicability_assess() {
-      jq -n '\''{status:"pass",reason_codes:[],embedded_policy:"generic",required_policy:"generic",preferred_policy:"maintainer",policy_satisfaction:"baseline"}'\''
-    }
-    . "$repo_root/runtime/lib/gate-publish.sh"
-    gate_publish_assessment_build "$output" "$gate" "$closure" "$full" CC-511
-    gate_publish_assessment_verify "$output"
-  ' _ "$REPO_ROOT" "$assessment" "$gate" "$closure" "$full" > "$out" 2> "$err" || status=$?
-  if [[ "$status" -eq 0 ]] \
-      && jq -e '.authorization.route == "primary_review_closure" and .policy.policy_satisfaction == "baseline" and .closure.targeted_confirmation == "pass"' "$assessment" >/dev/null 2>&1; then
-    pass "$name"
-  else
-    fail "$name" "assessment builder failed: status=$status stdout=$(cat "$out") stderr=$(cat "$err")"
-  fi
-}
-
-# $2 (optional) is the tree fingerprint the primary review examined; when given,
-# the closure carries a `.primary` block, which is what separates the two
-# authorization routes. $3 (optional) overrides the targeted-confirmation status.
 publish_assessment_fixture() {
   local dir="$1" gate="$1/gate.json" assurance="$1/assurance.json"
   local gate_result="$1/gate-result.md" closure="$1/closure.json" full="$1/full.json"
@@ -553,46 +490,6 @@ run_real_publish_assessment_build() {
   ' _ "$REPO_ROOT" "$dir"
 }
 
-# Behavior: the authorization route names which review authorized the publish,
-# read from the subject the primary review examined rather than from whether a
-# targeted confirmation ran. The two answer different questions and the closure
-# schema lets them disagree.
-# Steps: 1) Build a real assessment for each (primary subject, targeted status)
-# combination; 2) assert the route each one records.
-case_publish_assessment_route_follows_reviewed_subject() {
-  local name="ship publish assessment: route follows the subject the primary review examined"
-  should_run "$name" || return 0
-  local final_fp same_fp other_fp row primary targeted expected actual dir n=0 bad=""
-  final_fp="$(printf 'b%.0s' {1..64})"
-  same_fp="$final_fp"
-  other_fp="$(printf 'd%.0s' {1..64})"
-
-  # primary-subject | targeted-confirmation | expected route
-  #
-  # Row 3 is the case a confirmation-derived label gets wrong: remediation that
-  # closed entirely locally needs no targeted confirmation, yet the primary
-  # review remains bound to the pre-remediation tree.
-  for row in \
-    "$same_fp|not_required|final_tree_review" \
-    "$same_fp|pass|final_tree_review" \
-    "$other_fp|not_required|primary_review_closure" \
-    "$other_fp|pass|primary_review_closure"; do
-    primary="${row%%|*}"; targeted="${row#*|}"; expected="${targeted#*|}"; targeted="${targeted%%|*}"
-    n=$((n + 1))
-    dir="$tmp_root/publish-route-matrix/$n"
-    publish_assessment_fixture "$dir" "$primary" "$targeted"
-    if ! run_real_publish_assessment_build "$dir" >/dev/null 2>"$dir/err"; then
-      bad+=" row$n:build-failed($(tr -d '\n' < "$dir/err"))"
-      continue
-    fi
-    actual="$(jq -r '.authorization.route' "$dir/assessment.json")"
-    [[ "$actual" == "$expected" ]] || \
-      bad+=" row$n:primary=${primary:0:1}*,targeted=$targeted expected=$expected actual=$actual"
-  done
-
-  if [[ -z "$bad" ]]; then pass "$name"; else fail "$name" "route mismatches:$bad"; fi
-}
-
 run_real_publish_assessment_verify() {
   local assessment="$1"
   bash -c '
@@ -602,32 +499,6 @@ run_real_publish_assessment_verify() {
   ' _ "$REPO_ROOT" "$assessment"
 }
 
-# Behavior: ship subject checks refuse to fall back to a weaker fingerprint
-# algorithm when the canonical Gate helper is unavailable.
-# Steps: 1) Create a valid fixture repo; 2) remove the canonical helper from a
-# sourced ship shell; 3) require the subject fingerprint call to fail closed.
-case_ship_subject_fingerprint_requires_canonical_helper() {
-  local name="ship subject fingerprint requires canonical Gate helper"
-  should_run "$name" || return 0
-  local work="$tmp_root/ship-canonical-subject-helper" status=0
-  make_work_repo "$work" "CC-9001"
-  bash -c '
-    repo_root="$1"; work_dir="$2"
-    . "$repo_root/runtime/lib/pmctl-ship.sh"
-    unset -f _gate_subject_tree_fingerprint
-    _pmctl_ship_tree_fingerprint "$work_dir" committed_head HEAD
-  ' _ "$REPO_ROOT" "$work" >/dev/null 2>&1 || status=$?
-  if [[ "$status" -ne 0 ]]; then
-    pass "$name"
-  else
-    fail "$name" "ship accepted a missing canonical subject helper"
-  fi
-}
-
-# Build the committed-tree digest independently from the production subject helper.
-# This intentionally mirrors only the published manifest contract with direct Git
-# and sha256sum primitives, so a shared helper regression cannot make both sides
-# of the assertion agree.
 independent_fixed_tree_fingerprint() {
   local repo_root="$1" head_commit="$2" manifest entry metadata path mode object digest
   manifest="$(mktemp "${TMPDIR:-/tmp}/ship-independent-tree.XXXXXX")" || return 2
@@ -666,766 +537,6 @@ independent_fixed_tree_fingerprint() {
   return "$status"
 }
 
-# Behavior: the canonical subject helper matches an independent Gate manifest oracle and reacts only to relevant tree mutations.
-# Steps: 1) Arrange committed regular, executable, symlink, and ignored runtime paths; 2) compare the independent committed digest and mutate each working-tree input; 3) assert relevant changes alter the digest, excluded artifacts do not, and invalid kinds fail closed.
-case_ship_subject_fingerprint_matches_independent_gate_oracle() {
-  local name="ship subject fingerprint matches independent Gate oracle and mutation contract"
-  should_run "$name" || return 0
-  local work head expected baseline mode_changed link_changed content_changed excluded status=0
-  work="$tmp_root/ship-independent-subject-oracle"
-  make_work_repo "$work" "CC-9001"
-  printf 'regular fixture\n' > "$work/regular.txt"
-  printf '#!/usr/bin/env bash\nprintf executable\\n\n' > "$work/run.sh"
-  chmod +x "$work/run.sh"
-  ln -s regular.txt "$work/link"
-  printf '.gate-results/\n' >> "$work/.gitignore"
-  git -C "$work" add .gitignore regular.txt run.sh link
-  git -C "$work" -c user.email=test@example.com -c user.name=test commit -q -m subject-fixture
-  head="$(git -C "$work" rev-parse HEAD)"
-  expected="$(independent_fixed_tree_fingerprint "$work" "$head")"
-  actual="$(_gate_subject_tree_fingerprint "$work" fixed_ref "$head")"
-  if [[ "$actual" != "$expected" ]]; then
-    fail "$name" "committed subject differs from independent oracle: expected=$expected actual=$actual"
-    return 0
-  fi
-
-  baseline="$(_gate_subject_tree_fingerprint "$work" working_tree "$head")"
-  chmod -x "$work/run.sh"
-  mode_changed="$(_gate_subject_tree_fingerprint "$work" working_tree "$head")"
-  chmod +x "$work/run.sh"
-  rm -f -- "$work/link"
-  ln -s run.sh "$work/link"
-  link_changed="$(_gate_subject_tree_fingerprint "$work" working_tree "$head")"
-  rm -f -- "$work/link"
-  ln -s regular.txt "$work/link"
-  printf 'changed fixture\n' > "$work/regular.txt"
-  content_changed="$(_gate_subject_tree_fingerprint "$work" working_tree "$head")"
-  printf 'regular fixture\n' > "$work/regular.txt"
-  mkdir -p "$work/.gate-results"
-  printf 'runtime artifact\n' > "$work/.gate-results/ignored.txt"
-  excluded="$(_gate_subject_tree_fingerprint "$work" working_tree "$head")"
-  if [[ "$mode_changed" == "$baseline" || "$link_changed" == "$baseline" ||
-        "$content_changed" == "$baseline" || "$excluded" != "$baseline" ]]; then
-    fail "$name" "mutation contract failed: baseline=$baseline mode=$mode_changed link=$link_changed content=$content_changed excluded=$excluded"
-    return 0
-  fi
-  if _gate_subject_tree_fingerprint "$work" invalid_kind "$head" >/dev/null 2>&1; then
-    fail "$name" "unsupported subject kind was accepted"
-    return 0
-  fi
-  pass "$name"
-}
-
-# Behavior: the publish-assessment builder refuses a different pre-existing destination without overwriting it.
-# Steps: 1) Arrange valid source fixtures and a sentinel output; 2) invoke the real builder; 3) require failure and byte-for-byte sentinel preservation.
-case_publish_assessment_rejects_existing_destination() {
-  local name="ship publish assessment: existing destination is not overwritten"
-  should_run "$name" || return 0
-  local dir status=0 before after
-  dir="$tmp_root/publish-assessment-existing"
-  publish_assessment_fixture "$dir"
-  printf 'pre-existing immutable assessment\n' > "$dir/assessment.json"
-  before="$(sha256sum "$dir/assessment.json" | awk '{print $1}')"
-  run_real_publish_assessment_build "$dir" > "$dir/stdout" 2> "$dir/stderr" || status=$?
-  after="$(sha256sum "$dir/assessment.json" | awk '{print $1}')"
-  if [[ "$status" -ne 0 && "$before" == "$after" ]] \
-      && grep -q 'assessment destination already exists' "$dir/stderr"; then
-    pass "$name"
-  else
-    fail "$name" "expected no-replace refusal: status=$status before=$before after=$after stderr=$(cat "$dir/stderr")"
-  fi
-}
-
-# Behavior: concurrent assessment and closure publishers have one immutable winner and never overwrite it.
-# Steps: 1) Start two independent real builders against each absent destination; 2) allow exact reuse or deterministic refusal for the loser; 3) verify the winner remains schema-valid and byte-stable.
-case_publish_assessment_and_closure_are_concurrent_no_replace() {
-  local name="ship publish artifacts: concurrent writers have one immutable winner"
-  should_run "$name" || return 0
-  local assessment_dir closure_dir pid_a pid_b status_a status_b initial_success reuse_count
-  assessment_dir="$tmp_root/publish-assessment-concurrent"
-  publish_assessment_fixture "$assessment_dir"
-  status_a=0; status_b=0
-  run_real_publish_assessment_build "$assessment_dir" > "$assessment_dir/a.out" 2> "$assessment_dir/a.err" & pid_a=$!
-  run_real_publish_assessment_build "$assessment_dir" > "$assessment_dir/b.out" 2> "$assessment_dir/b.err" & pid_b=$!
-  wait "$pid_a" || status_a=$?
-  wait "$pid_b" || status_b=$?
-  initial_success=0
-  if [[ "$status_a" -eq 0 ]] \
-      && ! grep -q 'reusing unchanged assessment destination' "$assessment_dir/a.err"; then
-    initial_success=$((initial_success + 1))
-  fi
-  if [[ "$status_b" -eq 0 ]] \
-      && ! grep -q 'reusing unchanged assessment destination' "$assessment_dir/b.err"; then
-    initial_success=$((initial_success + 1))
-  fi
-  reuse_count="$( {
-    grep -h -c 'reusing unchanged assessment destination' "$assessment_dir/a.err" "$assessment_dir/b.err" 2>/dev/null || true
-  } | awk '{sum += $1} END {print sum + 0}' )"
-  if [[ "$initial_success" -ne 1 || "$reuse_count" -gt 1 || ! -f "$assessment_dir/assessment.json" ]] \
-      || ! bash -c '. "$1/runtime/lib/gate-publish.sh"; gate_publish_assessment_verify "$2"' _ "$REPO_ROOT" "$assessment_dir/assessment.json" >/dev/null 2>&1; then
-    fail "$name/assessment" "concurrent assessment publication was not one-winner/no-replace: statuses=$status_a,$status_b initial=$initial_success reuse=$reuse_count a_err=$(cat "$assessment_dir/a.err") b_err=$(cat "$assessment_dir/b.err")"
-    return 1
-  fi
-  pass "$name/assessment"
-
-  closure_dir="$tmp_root/closure-concurrent"
-  mkdir -p "$closure_dir"
-  printf 'Final: GO\n' > "$closure_dir/result.md"
-  jq -n '{changes:{changed_paths:[],renamed_paths:[],untracked_paths:[]},diff:{binary_or_special_paths:[]}}' > "$closure_dir/scope.json"
-  local closure_scope_sha
-  closure_scope_sha="$(sha256sum "$closure_dir/scope.json" | awk '{print $1}')"
-  jq -n --arg scope_sha "$closure_scope_sha" '{subject:{repository_key:("a"*64),base_commit:("b"*40),head_commit:("c"*40),tree_fingerprint:("d"*64),subject_kind:"committed_head"},evidence:{scope_manifest:{artifact:"scope.json",sha256:$scope_sha}}}' > "$closure_dir/result.md.assurance.json"
-  status_a=0; status_b=0
-  bash -c '
-    repo_root="$1"; dir="$2"
-    . "$repo_root/runtime/lib/gate-closure.sh"
-    gate_remediation_closure_publish "$dir/result.md" "$dir/result.md.assurance.json" "$dir/closure.json" "" CC-511
-  ' _ "$REPO_ROOT" "$closure_dir" > "$closure_dir/a.out" 2> "$closure_dir/a.err" & pid_a=$!
-  bash -c '
-    repo_root="$1"; dir="$2"
-    . "$repo_root/runtime/lib/gate-closure.sh"
-    gate_remediation_closure_publish "$dir/result.md" "$dir/result.md.assurance.json" "$dir/closure.json" "" CC-511
-  ' _ "$REPO_ROOT" "$closure_dir" > "$closure_dir/b.out" 2> "$closure_dir/b.err" & pid_b=$!
-  wait "$pid_a" || status_a=$?
-  wait "$pid_b" || status_b=$?
-  initial_success=0
-  if [[ "$status_a" -eq 0 ]] \
-      && ! grep -q 'reusing unchanged closure destination' "$closure_dir/a.err"; then
-    initial_success=$((initial_success + 1))
-  fi
-  if [[ "$status_b" -eq 0 ]] \
-      && ! grep -q 'reusing unchanged closure destination' "$closure_dir/b.err"; then
-    initial_success=$((initial_success + 1))
-  fi
-  reuse_count="$( {
-    grep -h -c 'reusing unchanged closure destination' "$closure_dir/a.err" "$closure_dir/b.err" 2>/dev/null || true
-  } | awk '{sum += $1} END {print sum + 0}' )"
-  if [[ "$initial_success" -ne 1 || "$reuse_count" -gt 1 || ! -f "$closure_dir/closure.json" ]] \
-      || ! bash -c '. "$1/runtime/lib/gate-closure.sh"; gate_remediation_closure_verify "$2" "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" "$(sha256sum "$3" | awk '\''{print $1}'\'')"' _ "$REPO_ROOT" "$closure_dir/closure.json" "$closure_dir/scope.json" >/dev/null 2>&1; then
-    fail "$name/closure" "concurrent closure publication was not one-winner/no-replace: statuses=$status_a,$status_b initial=$initial_success reuse=$reuse_count a_err=$(cat "$closure_dir/a.err") b_err=$(cat "$closure_dir/b.err")"
-    return 1
-  fi
-  pass "$name/closure"
-}
-
-# Behavior: the publish-assessment verifier rejects malformed artifacts before ship can consume them.
-# Steps: 1) Build one canonical assessment; 2) remove a required object, add an undeclared key, and corrupt a referenced path; 3) require each mutation to fail while the original passes.
-case_publish_assessment_verify_rejects_malformed_artifacts() {
-  local name="ship publish assessment: verifier rejects malformed required fields, unknown fields, and artifact paths"
-  should_run "$name" || return 0
-  local dir assessment mutation status=0 variant
-  dir="$tmp_root/publish-assessment-verify-negative"
-  publish_assessment_fixture "$dir"
-  run_real_publish_assessment_build "$dir" >/dev/null 2>"$dir/build.err" || {
-    fail "$name" "failed to build canonical assessment: $(cat "$dir/build.err")"
-    return 0
-  }
-  assessment="$dir/assessment.json"
-  if ! run_real_publish_assessment_verify "$assessment"; then
-    fail "$name" "canonical assessment was rejected"
-    return 0
-  fi
-  for variant in missing-required unknown-field malformed-path; do
-    mutation="$dir/assessment-$variant.json"
-    case "$variant" in
-      missing-required)
-        jq 'del(.closure)' "$assessment" > "$mutation"
-        ;;
-      unknown-field)
-        jq '.unexpected_test_field = true' "$assessment" > "$mutation"
-        ;;
-      malformed-path)
-        jq '.full_suite.artifact = "/tmp/pm-dispatch-missing-full-suite.json"' "$assessment" > "$mutation"
-        ;;
-    esac
-    if run_real_publish_assessment_verify "$mutation"; then
-      fail "$name" "malformed variant was accepted: $variant"
-      status=1
-    fi
-  done
-  [[ "$status" -eq 0 ]] && pass "$name"
-}
-
-# Behavior: a targeted GO cannot replace an initial comprehensive finding ledger or authorize a partial remediation.
-# Steps: 1) Arrange an initial NO-GO with two diff-caused blockers and a targeted GO covering one; 2) publish with the real closure builder; 3) require refusal and no closure artifact.
-case_targeted_closure_requires_initial_finding_ledger() {
-  local name="ship closure: targeted GO must cover every initial blocker"
-  should_run "$name" || return 0
-  local dir initial target assurance scope full closure scope_sha status=0
-  dir="$tmp_root/targeted-closure-ledger"
-  mkdir -p "$dir"
-  initial="$dir/initial.md"; target="$dir/target.md"; assurance="$dir/target.md.assurance.json"
-  scope="$dir/scope.json"; full="$dir/full.json"; closure="$dir/closure.json"
-  jq -n '{changes:{changed_paths:["runtime/lib/gate-closure.sh"],renamed_paths:[],untracked_paths:[]},diff:{binary_or_special_paths:[]}}' > "$scope"
-  scope_sha="$(sha256sum "$scope" | awk '{print $1}')"
-  {
-    printf 'Final: NO-GO\n```synthesis_result_v1\n'
-    jq -n '{kind:"gate_synthesis_result_v1",findings_union:[
-      {id:"risk-reviewer-F001",origin:"diff_caused",hard_gate_class:"hard_block",source:{path:"runtime/lib/gate-closure.sh",line:145,symbol:"gate_remediation_closure_publish"}},
-      {id:"qa-tester-F001",origin:"diff_caused",hard_gate_class:"hard_block",source:{path:"tests/shell/test-pmctl-ship.sh",line:1,symbol:"concurrency"}}],selected_reviewers:["risk-reviewer","qa-tester"]}'
-    printf '```\n'
-  } > "$initial"
-  jq -n --arg scope_sha "$scope_sha" '{subject:{repository_key:("a"*64),base_commit:("b"*40),head_commit:("c"*40),tree_fingerprint:("d"*64),subject_kind:"committed_head"},evidence:{scope_manifest:{artifact:"scope.json",sha256:$scope_sha}}}' > "$initial.assurance.json"
-  {
-    printf 'Final: GO\n```synthesis_result_v1\n'
-    jq -n '{kind:"gate_synthesis_result_v1",findings_union:[{id:"risk-reviewer-F001",origin:"diff_caused",hard_gate_class:"hard_block",source:{path:"runtime/lib/gate-closure.sh",line:145,symbol:"gate_remediation_closure_publish"}}],remediation_confirmations:[{finding_id:"risk-reviewer-F001",status:"confirmed",summary:"The targeted review confirmed the first fix.",evidence_refs:[{path:"runtime/lib/gate-closure.sh",line:145,symbol:"gate_remediation_closure_publish"}]}],selected_reviewers:["risk-reviewer"]}'
-    printf '```\n'
-  } > "$target"
-  jq -n --arg scope_sha "$scope_sha" --arg initial "$initial" '{coordinates:{pass:{resolved:"targeted",initial_result:$initial}},subject:{repository_key:("a"*64),base_commit:("b"*40),head_commit:("c"*40),tree_fingerprint:("d"*64),subject_kind:"committed_head"},evidence:{scope_manifest:{artifact:"scope.json",sha256:$scope_sha}}}' > "$assurance"
-  jq -n '{kind:"pm_test_result_v2",contract:"full",authoritative:true,status:"pass",aggregate:{status:"pass"},exit_code:0,tree_fingerprint:("d"*64)}' > "$full"
-  bash -c '
-    repo_root="$1"; target="$2"; assurance="$3"; closure="$4"; full="$5"
-    . "$repo_root/runtime/lib/gate-closure.sh"
-    gate_remediation_closure_publish "$target" "$assurance" "$closure" "$full" CC-511
-  ' _ "$REPO_ROOT" "$target" "$assurance" "$closure" "$full" > "$dir/out" 2> "$dir/err" || status=$?
-  if [[ "$status" -ne 0 && ! -e "$closure" ]] \
-      && grep -q 'does not explicitly confirm initial blocking findings' "$dir/err"; then
-    pass "$name"
-  else
-    fail "$name" "partial targeted closure was accepted: status=$status closure=$(cat "$closure" 2>/dev/null) stderr=$(cat "$dir/err")"
-  fi
-}
-
-# Behavior: a targeted GO cannot consume a valid initial ledger from another immutable subject.
-# Steps: 1) Arrange a valid initial NO-GO and targeted GO; 2) change only the initial subject provenance;
-# 3) require closure publication to fail before emitting any authorization artifact.
-case_targeted_closure_rejects_initial_subject_mismatch() {
-  local name="ship closure: targeted GO rejects initial subject provenance mismatch"
-  should_run "$name" || return 0
-  local dir initial target assurance scope full closure scope_sha status=0
-  dir="$tmp_root/targeted-closure-subject-mismatch"
-  mkdir -p "$dir"
-  initial="$dir/initial.md"; target="$dir/target.md"; assurance="$dir/target.md.assurance.json"
-  scope="$dir/scope.json"; full="$dir/full.json"; closure="$dir/closure.json"
-  jq -n '{changes:{changed_paths:["runtime/lib/gate-closure.sh"],renamed_paths:[],untracked_paths:[]},diff:{binary_or_special_paths:[]}}' > "$scope"
-  scope_sha="$(sha256sum "$scope" | awk '{print $1}')"
-  {
-    printf 'Final: NO-GO\n```synthesis_result_v1\n'
-    jq -n '{kind:"gate_synthesis_result_v1",findings_union:[{id:"critic-F001",origin:"diff_caused",hard_gate_class:"soft_block",source:{path:"runtime/lib/gate-closure.sh",line:131,symbol:"gate_remediation_closure_publish"}}],selected_reviewers:["critic"]}'
-    printf '```\n'
-  } > "$initial"
-  jq -n --arg scope_sha "$scope_sha" '{subject:{repository_key:("f"*64),base_commit:("b"*40),head_commit:("c"*40),tree_fingerprint:("d"*64),subject_kind:"committed_head"},evidence:{scope_manifest:{artifact:"scope.json",sha256:$scope_sha}}}' > "$initial.assurance.json"
-  {
-    printf 'Final: GO\n```synthesis_result_v1\n'
-    jq -n '{kind:"gate_synthesis_result_v1",findings_union:[],remediation_confirmations:[{finding_id:"critic-F001",status:"confirmed",summary:"The targeted review confirmed the fix.",evidence_refs:[{path:"runtime/lib/gate-closure.sh",line:131,symbol:"gate_remediation_closure_publish"}]}],selected_reviewers:["critic"]}'
-    printf '```\n'
-  } > "$target"
-  jq -n --arg scope_sha "$scope_sha" --arg initial "$initial" '{coordinates:{pass:{resolved:"targeted",initial_result:$initial}},subject:{repository_key:("a"*64),base_commit:("b"*40),head_commit:("c"*40),tree_fingerprint:("d"*64),subject_kind:"committed_head"},evidence:{scope_manifest:{artifact:"scope.json",sha256:$scope_sha}}}' > "$assurance"
-  jq -n '{kind:"pm_test_result_v2",contract:"full",authoritative:true,status:"pass",aggregate:{status:"pass"},exit_code:0,tree_fingerprint:("d"*64)}' > "$full"
-  bash -c '
-    repo_root="$1"; target="$2"; assurance="$3"; closure="$4"; full="$5"
-    . "$repo_root/runtime/lib/gate-closure.sh"
-    gate_remediation_closure_publish "$target" "$assurance" "$closure" "$full" CC-511
-  ' _ "$REPO_ROOT" "$target" "$assurance" "$closure" "$full" > "$dir/out" 2> "$dir/err" || status=$?
-  if [[ "$status" -ne 0 && ! -e "$closure" ]] \
-      && grep -q 'initial assurance provenance does not match targeted subject or scope' "$dir/err"; then
-    pass "$name"
-  else
-    fail "$name" "mismatched targeted closure was accepted: status=$status closure=$(cat "$closure" 2>/dev/null) stderr=$(cat "$dir/err")"
-  fi
-}
-
-# Behavior: a legacy initial result without immutable assurance/ledger evidence cannot authorize a targeted GO.
-# Steps: 1) Provide only legacy initial prose and a clean targeted result; 2) publish the targeted closure; 3) require fail-closed refusal.
-case_targeted_closure_rejects_legacy_initial_without_immutable_evidence() {
-  local name="ship closure: legacy targeted initial result is not publish-authorizing"
-  should_run "$name" || return 0
-  local dir initial target assurance scope full closure scope_sha status=0
-  dir="$tmp_root/targeted-closure-legacy-initial"
-  mkdir -p "$dir"
-  initial="$dir/initial.md"; target="$dir/target.md"; assurance="$dir/target.md.assurance.json"
-  scope="$dir/scope.json"; full="$dir/full.json"; closure="$dir/closure.json"
-  printf 'Final: NO-GO\nlegacy gate result without synthesis\n' > "$initial"
-  jq -n '{changes:{changed_paths:["runtime/lib/gate-closure.sh"],renamed_paths:[],untracked_paths:[]},diff:{binary_or_special_paths:[]}}' > "$scope"
-  scope_sha="$(sha256sum "$scope" | awk '{print $1}')"
-  {
-    printf 'Final: GO\n```synthesis_result_v1\n'
-    jq -n '{kind:"gate_synthesis_result_v1",findings_union:[],remediation_confirmations:[],selected_reviewers:["risk-reviewer"]}'
-    printf '```\n'
-  } > "$target"
-  jq -n --arg scope_sha "$scope_sha" --arg initial "$initial" \
-    '{coordinates:{pass:{resolved:"targeted",initial_result:$initial}},subject:{repository_key:("a"*64),base_commit:("b"*40),head_commit:("c"*40),tree_fingerprint:("d"*64),subject_kind:"committed_head"},evidence:{scope_manifest:{artifact:"scope.json",sha256:$scope_sha}}}' > "$assurance"
-  jq -n '{kind:"pm_test_result_v2",contract:"full",authoritative:true,status:"pass",aggregate:{status:"pass"},exit_code:0,tree_fingerprint:("d"*64)}' > "$full"
-  bash -c '
-    repo_root="$1"; target="$2"; assurance="$3"; closure="$4"; full="$5"
-    . "$repo_root/runtime/lib/gate-closure.sh"
-    gate_remediation_closure_publish "$target" "$assurance" "$closure" "$full" CC-511
-  ' _ "$REPO_ROOT" "$target" "$assurance" "$closure" "$full" > "$dir/out" 2> "$dir/err" || status=$?
-  if [[ "$status" -ne 0 && ! -e "$closure" ]] &&
-      grep -q 'initial immutable assurance sidecar' "$dir/err"; then
-    pass "$name"
-  else
-    fail "$name" "legacy targeted closure was accepted: status=$status closure=$(cat "$closure" 2>/dev/null) stderr=$(cat "$dir/err")"
-  fi
-}
-
-# Behavior: a clean targeted GO closes the initial blocker ledger through an independent confirmation ledger.
-# Steps: 1) Arrange a protocol-shaped initial NO-GO with two blockers; 2) arrange a targeted GO with no current findings and two confirmations; 3) require closed authorization and recorded IDs.
-case_targeted_closure_accepts_clean_go_with_confirmations() {
-  local name="ship closure: clean targeted GO closes initial blockers through confirmation ledger"
-  should_run "$name" || return 0
-  local dir initial target assurance scope full closure scope_sha status=0
-  dir="$tmp_root/targeted-closure-confirmations"
-  mkdir -p "$dir"
-  initial="$dir/initial.md"; target="$dir/target.md"; assurance="$dir/target.md.assurance.json"
-  scope="$dir/scope.json"; full="$dir/full.json"; closure="$dir/closure.json"
-  jq -n '{changes:{changed_paths:["runtime/lib/gate-closure.sh","tests/shell/test-pmctl-ship.sh"],renamed_paths:[],untracked_paths:[]},diff:{binary_or_special_paths:[]}}' > "$scope"
-  scope_sha="$(sha256sum "$scope" | awk '{print $1}')"
-  {
-    printf 'Final: NO-GO\n```synthesis_result_v1\n'
-    jq -n '{kind:"gate_synthesis_result_v1",findings_union:[
-      {id:"risk-reviewer-F001",origin:"diff_caused",hard_gate_class:"hard_block",source:{path:"runtime/lib/gate-closure.sh",line:145,symbol:"gate_remediation_closure_publish"}},
-      {id:"qa-tester-F001",origin:"diff_caused",hard_gate_class:"soft_block",source:{path:"tests/shell/test-pmctl-ship.sh",line:1,symbol:"case_targeted_closure_accepts_clean_go_with_confirmations"}}],selected_reviewers:["risk-reviewer","qa-tester"]}'
-    printf '```\n'
-  } > "$initial"
-  jq -n --arg scope_sha "$scope_sha" '{subject:{repository_key:("a"*64),base_commit:("b"*40),head_commit:("c"*40),tree_fingerprint:("d"*64),subject_kind:"committed_head"},evidence:{scope_manifest:{artifact:"scope.json",sha256:$scope_sha}}}' > "$initial.assurance.json"
-  {
-    printf 'Final: GO\n```synthesis_result_v1\n'
-    jq -n '{kind:"gate_synthesis_result_v1",findings_union:[],remediation_confirmations:[
-      {finding_id:"risk-reviewer-F001",status:"confirmed",summary:"Risk fix confirmed by targeted review.",evidence_refs:[{path:"runtime/lib/gate-closure.sh",line:145,symbol:"gate_remediation_closure_publish"}]},
-      {finding_id:"qa-tester-F001",status:"confirmed",summary:"QA fix confirmed by targeted review.",evidence_refs:[{path:"tests/shell/test-pmctl-ship.sh",line:1,symbol:"case_targeted_closure_accepts_clean_go_with_confirmations"}]}],selected_reviewers:["risk-reviewer","qa-tester"]}'
-    printf '```\n'
-  } > "$target"
-  jq -n --arg scope_sha "$scope_sha" --arg initial "$initial" '{coordinates:{pass:{resolved:"targeted",initial_result:$initial}},subject:{repository_key:("a"*64),base_commit:("b"*40),head_commit:("c"*40),tree_fingerprint:("d"*64),subject_kind:"committed_head"},evidence:{scope_manifest:{artifact:"scope.json",sha256:$scope_sha}}}' > "$assurance"
-  jq -n '{kind:"pm_test_result_v2",contract:"full",authoritative:true,status:"pass",aggregate:{status:"pass"},exit_code:0,tree_fingerprint:("d"*64)}' > "$full"
-  bash -c '
-    repo_root="$1"; target="$2"; assurance="$3"; closure="$4"; full="$5"
-    . "$repo_root/runtime/lib/gate-closure.sh"
-    gate_remediation_closure_publish "$target" "$assurance" "$closure" "$full" CC-511
-  ' _ "$REPO_ROOT" "$target" "$assurance" "$closure" "$full" > "$dir/out" 2> "$dir/err" || status=$?
-  if [[ "$status" -eq 0 && -s "$closure" ]] \
-      && jq -e '.state == "closed" and .final_assessment.publish_authorized == true and (.targeted_confirmation.finding_ids | sort) == ["qa-tester-F001","risk-reviewer-F001"]' "$closure" >/dev/null 2>&1; then
-    pass "$name"
-  else
-    fail "$name" "clean targeted GO was not authorized: status=$status stderr=$(cat "$dir/err") closure=$(cat "$closure" 2>/dev/null)"
-  fi
-}
-
-# Behavior: an uncertain initial blocker may close only when the targeted GO independently confirms that exact finding.
-# Steps: 1) Arrange an uncertain initial NO-GO and a clean targeted GO; 2) provide the matching confirmation; 3) require closed authorization and targeted classification.
-case_targeted_closure_accepts_uncertain_go_with_confirmation() {
-  local name="ship closure: uncertain initial blocker closes only with matching targeted confirmation"
-  should_run "$name" || return 0
-  local dir initial target assurance scope full closure scope_sha status=0
-  dir="$tmp_root/targeted-closure-uncertain-confirmation"
-  mkdir -p "$dir"
-  initial="$dir/initial.md"; target="$dir/target.md"; assurance="$dir/target.md.assurance.json"
-  scope="$dir/scope.json"; full="$dir/full.json"; closure="$dir/closure.json"
-  jq -n '{changes:{changed_paths:["runtime/lib/gate-closure.sh"],renamed_paths:[],untracked_paths:[]},diff:{binary_or_special_paths:[]}}' > "$scope"
-  scope_sha="$(sha256sum "$scope" | awk '{print $1}')"
-  {
-    printf 'Final: NO-GO\n```synthesis_result_v1\n'
-    jq -n '{kind:"gate_synthesis_result_v1",findings_union:[
-      {id:"risk-reviewer-F001",origin:"uncertain",hard_gate_class:"hard_block",source:{path:"runtime/lib/gate-closure.sh",line:269,symbol:"gate_remediation_closure_publish"}}],selected_reviewers:["risk-reviewer"]}'
-    printf '```\n'
-  } > "$initial"
-  jq -n --arg scope_sha "$scope_sha" '{subject:{repository_key:("a"*64),base_commit:("b"*40),head_commit:("c"*40),tree_fingerprint:("d"*64),subject_kind:"committed_head"},evidence:{scope_manifest:{artifact:"scope.json",sha256:$scope_sha}}}' > "$initial.assurance.json"
-  {
-    printf 'Final: GO\n```synthesis_result_v1\n'
-    jq -n '{kind:"gate_synthesis_result_v1",findings_union:[],remediation_confirmations:[
-      {finding_id:"risk-reviewer-F001",status:"confirmed",summary:"Uncertain blocker independently confirmed fixed.",evidence_refs:[{path:"runtime/lib/gate-closure.sh",line:269,symbol:"gate_remediation_closure_publish"}]}],selected_reviewers:["risk-reviewer"]}'
-    printf '```\n'
-  } > "$target"
-  jq -n --arg scope_sha "$scope_sha" --arg initial "$initial" '{coordinates:{pass:{resolved:"targeted",initial_result:$initial}},subject:{repository_key:("a"*64),base_commit:("b"*40),head_commit:("c"*40),tree_fingerprint:("d"*64),subject_kind:"committed_head"},evidence:{scope_manifest:{artifact:"scope.json",sha256:$scope_sha}}}' > "$assurance"
-  jq -n '{kind:"pm_test_result_v2",contract:"full",authoritative:true,status:"pass",aggregate:{status:"pass"},exit_code:0,tree_fingerprint:("d"*64)}' > "$full"
-  bash -c '
-    repo_root="$1"; target="$2"; assurance="$3"; closure="$4"; full="$5"
-    . "$repo_root/runtime/lib/gate-closure.sh"
-    gate_remediation_closure_publish "$target" "$assurance" "$closure" "$full" CC-511
-  ' _ "$REPO_ROOT" "$target" "$assurance" "$closure" "$full" > "$dir/out" 2> "$dir/err" || status=$?
-  if [[ "$status" -eq 0 && -s "$closure" ]] \
-      && jq -e '.state == "closed" and .final_assessment.publish_authorized == true and .findings[0].disposition == "closed" and .findings[0].classification == "targeted_confirmation" and .targeted_confirmation.finding_ids == ["risk-reviewer-F001"]' "$closure" >/dev/null 2>&1; then
-    pass "$name"
-  else
-    fail "$name" "matching uncertain confirmation was not authorized: status=$status stderr=$(cat "$dir/err") closure=$(cat "$closure" 2>/dev/null)"
-  fi
-}
-
-# Behavior: invalid or subject-mismatched closure/full-suite evidence is rejected before publication authorization.
-# Steps: 1) Arrange one malformed evidence variant at a time; 2) build the assessment; 3) require nonzero refusal and no output artifact.
-case_publish_assessment_rejects_invalid_or_mismatched_evidence() {
-  local name="ship publish assessment: invalid or mismatched evidence is rejected"
-  should_run "$name" || return 0
-  local mode dir status=0 failures=0
-  for mode in closure-subject full-subject closure-authorization full-status; do
-    dir="$tmp_root/publish-assessment-reject-$mode"
-    publish_assessment_fixture "$dir"
-    case "$mode" in
-      closure-subject)
-        jq '.final_assessment.subject_fingerprint = ("e"*64)' "$dir/closure.json" > "$dir/changed"
-        mv -- "$dir/changed" "$dir/closure.json"
-        ;;
-      full-subject)
-        jq '.tree_fingerprint = ("e"*64)' "$dir/full.json" > "$dir/changed"
-        mv -- "$dir/changed" "$dir/full.json"
-        ;;
-      closure-authorization)
-        jq '.final_assessment.publish_authorized = false' "$dir/closure.json" > "$dir/changed"
-        mv -- "$dir/changed" "$dir/closure.json"
-        ;;
-      full-status)
-        jq '.status = "fail" | .aggregate.status = "fail" | .exit_code = 1' "$dir/full.json" > "$dir/changed"
-        mv -- "$dir/changed" "$dir/full.json"
-        ;;
-    esac
-    status=0
-    run_real_publish_assessment_build "$dir" > "$dir/stdout" 2> "$dir/stderr" || status=$?
-    if [[ "$status" -eq 0 || -e "$dir/assessment.json" ]]; then
-      fail "$name/$mode" "expected rejection; status=$status assessment=$(cat "$dir/assessment.json" 2>/dev/null) stderr=$(cat "$dir/stderr")"
-      failures=$((failures + 1))
-    else
-      pass "$name/$mode"
-    fi
-  done
-  [[ "$failures" -eq 0 ]]
-}
-
-# Behavior: mutating any assessment source after build, including the Gate assurance sidecar, makes verification fail closed.
-# Steps: 1) Arrange and build a valid assessment; 2) mutate one referenced source; 3) require verification failure before publication.
-case_publish_assessment_rejects_post_build_source_mutation() {
-  local name="ship publish assessment: post-build source mutation is rejected before publication"
-  should_run "$name" || return 0
-  local source dir status=0 failures=0
-  for source in gate assurance closure full_suite; do
-    dir="$tmp_root/publish-assessment-mutation-$source"
-    publish_assessment_fixture "$dir"
-    status=0
-    run_real_publish_assessment_build "$dir" > "$dir/build-stdout" 2> "$dir/build-stderr" || status=$?
-    if [[ "$status" -ne 0 ]]; then
-      fail "$name/$source" "fixture build failed: status=$status stderr=$(cat "$dir/build-stderr")"
-      failures=$((failures + 1))
-      continue
-    fi
-    case "$source" in
-      gate) printf 'mutated after build\n' >> "$dir/gate-result.md" ;;
-      assurance) printf '\n' >> "$dir/assurance.json" ;;
-      closure) printf '\n' >> "$dir/closure.json" ;;
-      full_suite) printf '\n' >> "$dir/full.json" ;;
-    esac
-    status=0
-    bash -c '
-      repo_root="$1"; assessment="$2"
-      . "$repo_root/runtime/lib/gate-publish.sh"
-      gate_publish_assessment_verify "$assessment"
-    ' _ "$REPO_ROOT" "$dir/assessment.json" > "$dir/verify-stdout" 2> "$dir/verify-stderr" || status=$?
-    if [[ "$status" -eq 0 ]]; then
-      fail "$name/$source" "expected post-build digest rejection; stdout=$(cat "$dir/verify-stdout") stderr=$(cat "$dir/verify-stderr")"
-      failures=$((failures + 1))
-    else
-      pass "$name/$source"
-    fi
-  done
-  [[ "$failures" -eq 0 ]]
-}
-
-# Behavior: finish publishes stdout, PR body, and marker assurance values from the real shared assessment for preferred and baseline policy paths.
-# Steps: 1) Arrange real finish fixtures for maintainer and generic Gate inputs; 2) publish each through fake gh; 3) compare all three surfaces with the assessment.
-case_finish_real_publish_assessment_surfaces() {
-  local name="ship finish: real publish assessment drives stdout, PR body, and marker"
-  should_run "$name" || return 0
-  local mode work gh_bin body out err status pushed expected_producer expected_satisfaction expected_preferred
-  local marker_assessment producer satisfaction preferred assessment_json marker_producer marker_satisfaction
-  local stdout_match body_match failures=0
-  for mode in maintainer generic; do
-    work="$tmp_root/work-real-publish-surfaces-$mode"
-    make_work_repo "$work" "CC-9001"
-    checkout_ticket_branch "$work" "CC-9001"
-    add_bare_origin "$work"
-    gh_bin="$tmp_root/fake-gh-real-publish-$mode"
-    body="$tmp_root/real-publish-pr-body-$mode"
-    install_fake_gh_capture_body "$gh_bin" "https://example.invalid/pr/real-publish-$mode"
-    out="$tmp_root/out-real-publish-$mode"; err="$tmp_root/err-real-publish-$mode"
-    status=0; pushed=0; stdout_match=0; body_match=0
-    export GH_PR_URL="https://example.invalid/pr/real-publish-$mode" GH_PR_BODY_FILE="$body"
-    PATH="$gh_bin:$PATH" run_finish_with_real_publish_assessment \
-      "$work" "CC-9001" "$mode" "$body" > "$out" 2> "$err" || status=$?
-    unset GH_PR_URL GH_PR_BODY_FILE
-    git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
-    marker_assessment="$(jq -r '.publish_assessment // empty' "$work/.pm-dispatch-ship-finish.json" 2>/dev/null || true)"
-    assessment_json="$(cat "$marker_assessment" 2>/dev/null || true)"
-    producer="$(jq -r '.policy.embedded_policy // empty' <<<"$assessment_json")"
-    satisfaction="$(jq -r '.policy.policy_satisfaction // empty' <<<"$assessment_json")"
-    preferred="$(jq -r '.policy.preferred_policy // empty' <<<"$assessment_json")"
-    marker_producer="$(jq -r '.publish_assurance.embedded_policy // empty' "$work/.pm-dispatch-ship-finish.json" 2>/dev/null || true)"
-    marker_satisfaction="$(jq -r '.publish_assurance.policy_satisfaction // empty' "$work/.pm-dispatch-ship-finish.json" 2>/dev/null || true)"
-    if [[ "$mode" == generic ]]; then
-      expected_producer=generic expected_satisfaction=baseline expected_preferred=generic
-    else
-      expected_producer=maintainer expected_satisfaction=preferred expected_preferred=maintainer
-    fi
-    grep -Fq "publish assurance: producer=$producer satisfaction=$satisfaction preferred=$preferred" "$out" && stdout_match=1
-    grep -Fq "Publish assurance: producer=$producer, satisfaction=$satisfaction (preferred=$preferred)" "$body" && body_match=1
-    if [[ "$status" -eq 0 && "$pushed" -eq 1 \
-        && "$producer" == "$expected_producer" && "$satisfaction" == "$expected_satisfaction" && "$preferred" == "$expected_preferred" \
-        && -s "$body" && "$stdout_match" -eq 1 && "$body_match" -eq 1 \
-        && "$marker_producer" == "$producer" && "$marker_satisfaction" == "$satisfaction" ]]; then
-      pass "$name/$mode"
-    else
-      fail "$name/$mode" "real assessment surfaces disagreed: status=$status pushed=$pushed producer=$producer satisfaction=$satisfaction preferred=$preferred stdout=$(cat "$out") stderr=$(cat "$err") body=$(cat "$body" 2>/dev/null)"
-      failures=$((failures + 1))
-    fi
-  done
-  [[ "$failures" -eq 0 ]]
-}
-
-# Behavior: targeted fallback uses the real assessment route only for a valid closure and refuses an invalid closure before push.
-# Steps: 1) Arrange valid and invalid targeted fixtures; 2) run finish with the real builder/verifier; 3) assert route, push, and refusal outcomes.
-case_finish_real_targeted_publish_assessment_path() {
-  local name="ship finish: targeted fallback uses real publish assessment and rejects invalid closure"
-  should_run "$name" || return 0
-  local gh_bin work_valid work_invalid body out err status=0 pushed=0
-  gh_bin="$tmp_root/fake-gh-targeted-real"
-  install_fake_gh_capture_body "$gh_bin" "https://example.invalid/pr/targeted-real"
-
-  work_valid="$tmp_root/work-targeted-real-valid"
-  make_work_repo "$work_valid" "CC-9001"
-  checkout_ticket_branch "$work_valid" "CC-9001"
-  add_bare_origin "$work_valid"
-  body="$tmp_root/targeted-real-body"
-  out="$tmp_root/out-targeted-real-valid"; err="$tmp_root/err-targeted-real-valid"
-  export GH_PR_URL="https://example.invalid/pr/targeted-real" GH_PR_BODY_FILE="$body"
-  PATH="$gh_bin:$PATH" run_finish_with_real_publish_assessment \
-    "$work_valid" "CC-9001" targeted "$body" > "$out" 2> "$err" || status=$?
-  unset GH_PR_URL GH_PR_BODY_FILE
-  git -C "$work_valid.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
-  local route_valid
-  route_valid="$(jq -r '.authorization.route // empty' "$(jq -r '.publish_assessment' "$work_valid/.pm-dispatch-ship-finish.json" 2>/dev/null)" 2>/dev/null)"
-  if [[ "$status" -ne 0 || "$pushed" -ne 1 || "$route_valid" != primary_review_closure ]]; then
-    fail "$name/valid" "expected targeted closure publication: status=$status pushed=$pushed route=$route_valid stdout=$(cat "$out") stderr=$(cat "$err")"
-    return 1
-  fi
-  pass "$name/valid"
-
-  work_invalid="$tmp_root/work-targeted-real-invalid"
-  make_work_repo "$work_invalid" "CC-9001"
-  checkout_ticket_branch "$work_invalid" "CC-9001"
-  add_bare_origin "$work_invalid"
-  out="$tmp_root/out-targeted-real-invalid"; err="$tmp_root/err-targeted-real-invalid"
-  status=0
-  PATH="$gh_bin:$PATH" run_finish_with_real_publish_assessment \
-    "$work_invalid" "CC-9001" targeted-invalid "$body" > "$out" 2> "$err" || status=$?
-  pushed=0
-  git -C "$work_invalid.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
-  if [[ "$status" -eq 1 && "$pushed" -eq 0 \
-      && ! -e "$work_invalid/.pm-dispatch-ship-finish.json" ]]; then
-    pass "$name/invalid-closure"
-  else
-    fail "$name/invalid-closure" "expected refusal before push: status=$status pushed=$pushed stdout=$(cat "$out") stderr=$(cat "$err")"
-  fi
-}
-
-# Behavior (CC-511 Phase B dogfood): every other case in this file that drives
-# `pmctl ship finish` stubs gate_remediation_closure_verify to `return 0` --
-# including "real-closure" mode's own retry test -- so the closure this test
-# suite's real gate_remediation_closure_publish produces has never been
-# consumed by the real gate_remediation_closure_verify inside a live finish
-# run. This case removes that stub for real-closure mode and asserts the
-# producer and consumer genuinely interoperate end to end.
-# Steps: 1) Run finish with mode=real-closure and the verify stub absent;
-# 2) assert the run succeeds, pushes, and the finish marker's publish
-# assessment references a closure that independently re-verifies.
-case_finish_real_closure_verify_accepts_producer_output() {
-  local name="ship finish: real closure producer output survives the real closure verifier"
-  should_run "$name" || return 0
-  local work gh_bin body out err status=0 pushed=0
-  work="$tmp_root/work-real-closure-verify"
-  make_work_repo "$work" "CC-9001"
-  checkout_ticket_branch "$work" "CC-9001"
-  add_bare_origin "$work"
-  gh_bin="$tmp_root/fake-gh-real-closure-verify"
-  install_fake_gh_capture_body "$gh_bin" "https://example.invalid/pr/real-closure-verify"
-  body="$tmp_root/real-closure-verify-body"
-  out="$tmp_root/out-real-closure-verify"; err="$tmp_root/err-real-closure-verify"
-  export GH_PR_URL="https://example.invalid/pr/real-closure-verify" GH_PR_BODY_FILE="$body"
-  PATH="$gh_bin:$PATH" run_finish_with_real_publish_assessment \
-    "$work" "CC-9001" real-closure "$body" > "$out" 2> "$err" || status=$?
-  unset GH_PR_URL GH_PR_BODY_FILE
-  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
-  local closure_path closure_reverify_status=1
-  closure_path="$(jq -r '.remediation_closure // empty' "$work/.pm-dispatch-ship-finish.json" 2>/dev/null || true)"
-  if [[ -n "$closure_path" && -f "$closure_path" ]]; then
-    local subject_fp scope_sha
-    subject_fp="$(jq -r '.subject.tree_fingerprint // empty' "$work/.pm-dispatch-ship-finish.json" 2>/dev/null || true)"
-    scope_sha="$(jq -r '.scope_manifest_sha256 // empty' "$closure_path")"
-    if bash -c '
-        . "$1/runtime/lib/gate-closure.sh"
-        gate_remediation_closure_verify "$2" "$3" "$4"
-      ' _ "$REPO_ROOT" "$closure_path" "$subject_fp" "$scope_sha"; then
-      closure_reverify_status=0
-    fi
-  fi
-  if [[ "$status" -eq 0 && "$pushed" -eq 1 && "$closure_reverify_status" -eq 0 ]]; then
-    pass "$name"
-  else
-    fail "$name" "expected real producer/consumer success: status=$status pushed=$pushed reverify=$closure_reverify_status stdout=$(cat "$out") stderr=$(cat "$err")"
-  fi
-}
-
-# Behavior (CC-511 Phase B dogfood): the consumer-side check inside
-# gate_publish_assessment_build must genuinely call gate_remediation_closure_verify
-# rather than a shortcut -- a closure mutated after real publication (an
-# unresolved_counts total that no longer matches its own blocking+advisory
-# breakdown) must be rejected before the assessment builds, and the failure
-# must trace through gate-publish.sh's own closure-rejection message.
-# Steps: 1) Build a real closure with the real producer; 2) mutate one
-# invariant field on the copy handed to the builder; 3) assert
-# gate_publish_assessment_build fails with the closure-specific reason.
-case_publish_assessment_rejects_closure_mutated_after_real_publish() {
-  local name="ship publish assessment: real verify rejects a closure mutated after real publication"
-  should_run "$name" || return 0
-  local dir="$tmp_root/real-closure-mutation-reject"
-  mkdir -p "$dir"
-  local out="$dir/out" err="$dir/err" status=0
-  set +e
-  bash -c '
-      set -euo pipefail
-      repo_root="$1"; dir="$2"
-      . "$repo_root/runtime/lib/gate-closure.sh"
-      . "$repo_root/runtime/lib/gate-publish.sh"
-      head="1111111111111111111111111111111111111111"
-      subject="$(printf "d%.0s" {1..64})"
-      result_file="$dir/gate-result.md"
-      assurance_file="$dir/gate-assurance.json"
-      scope_file="$dir/scope-manifest.json"
-      closure_file="$dir/closure.json"
-      mutated_closure="$dir/closure-mutated.json"
-      full_result="$dir/full-result.json"
-      gate_report="$dir/gate-verification.json"
-      printf "Final: GO\n" > "$result_file"
-      jq -n '"'"'{changes:{changed_paths:[],renamed_paths:[],untracked_paths:[]},diff:{binary_or_special_paths:[]}}'"'"' > "$scope_file"
-      jq -n --arg subject "$subject" --arg head "$head" '"'"'
-        {subject:{repository_key:("a"*64),base_commit:("1"*40),head_commit:$head,tree_fingerprint:$subject,subject_kind:"committed_head"},
-         evidence:{scope_manifest:{artifact:"scope-manifest.json",sha256:("c"*64)}}}'"'"' > "$assurance_file"
-      scope_sha_actual="$(sha256sum "$scope_file" | awk "{print \$1}")"
-      jq --arg sha "$scope_sha_actual" ".evidence.scope_manifest.sha256 = \$sha" "$assurance_file" > "$assurance_file.tmp"
-      mv "$assurance_file.tmp" "$assurance_file"
-      gate_remediation_closure_publish "$result_file" "$assurance_file" "$closure_file"
-      jq ".unresolved_counts.total = 5" "$closure_file" > "$mutated_closure"
-      jq -n --arg result "$result_file" --arg assurance "$assurance_file" --arg subject "$subject" --arg head "$head" '"'"'
-        {kind:"gate_verification_v1",schema_version:1,result_file:$result,verdict:"GO",
-         assurance:{status:"verified",kind:"gate_assurance_v3",file:$assurance},consumer:"embedded",
-         axes:{artifact_valid:{status:"pass",reason_codes:[]},
-           subject_current:{status:"pass",reason_codes:[],current:{repository_key:("a"*64),base_commit:("1"*40),head_commit:$head,tree_fingerprint:$subject,observed_root:"/tmp/repo"}},
-           policy_applicable:{status:"pass",reason_codes:[],consumer:"embedded",required_policy:"generic",preferred_policy:"generic",embedded_policy:"generic",policy_satisfaction:"preferred"}}}'"'"' > "$gate_report"
-      jq -n --arg subject "$subject" '"'"'{kind:"pm_test_result_v2",contract:"full",authoritative:true,status:"pass",aggregate:{status:"pass"},exit_code:0,tree_fingerprint:$subject}'"'"' > "$full_result"
-      gate_policy_applicability_assess() {
-        jq -n '"'"'{status:"pass",reason_codes:[],embedded_policy:"generic",required_policy:"generic",preferred_policy:"generic",policy_satisfaction:"preferred"}'"'"'
-      }
-      gate_publish_assessment_build "$dir/assessment.json" "$gate_report" "$mutated_closure" "$full_result" CC-511
-    ' _ "$REPO_ROOT" "$dir" > "$out" 2> "$err"
-  status=$?
-  set -e
-  if [[ "$status" -ne 0 ]] \
-      && grep -qF 'remediation closure is not valid for the current Gate subject' "$err"; then
-    pass "$name"
-  else
-    fail "$name" "expected the real verify to reject the mutated closure: status=$status stdout=$(cat "$out") stderr=$(cat "$err")"
-  fi
-}
-
-# Behavior: a HEAD or working-tree mutation after assessment verification is rejected before any remote ref is pushed.
-# Steps: 1) Arrange a successful fake Gate/full-suite path; 2) mutate HEAD or the tree at the assessment boundary; 3) require final subject-check failure and no remote branch.
-case_finish_post_assessment_drift_refuses_publish() {
-  local name="ship finish: post-assessment HEAD/tree drift refuses push"
-  should_run "$name" || return 0
-  local mutation work gh_bin out err status pushed failures=0
-  for mutation in head tree; do
-    work="$tmp_root/work-finish-post-assessment-$mutation"
-    make_work_repo "$work" "CC-9001"
-    checkout_ticket_branch "$work" "CC-9001"
-    add_bare_origin "$work"
-    gh_bin="$tmp_root/fake-gh-post-assessment-$mutation"
-    install_fake_gh "$gh_bin" "https://example.invalid/pr/post-assessment-$mutation"
-    out="$tmp_root/out-post-assessment-$mutation"; err="$tmp_root/err-post-assessment-$mutation"
-    status=0; pushed=0
-    PM_TEST_ASSESSMENT_MUTATE="$mutation" PATH="$gh_bin:$PATH" \
-      run_finish_with_fake_gate "$work" "CC-9001" GO > "$out" 2> "$err" || status=$?
-    unset PM_TEST_ASSESSMENT_MUTATE
-    git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
-    if [[ "$status" -eq 1 && "$pushed" -eq 0 ]] \
-        && { grep -q 'tree became dirty before push' "$err" || grep -q 'HEAD moved before push' "$err"; }; then
-      pass "$name/$mutation"
-    else
-      fail "$name/$mutation" "expected final subject guard to refuse publication: status=$status pushed=$pushed stdout=$(cat "$out") stderr=$(cat "$err")"
-      failures=$((failures + 1))
-    fi
-  done
-  [[ "$failures" -eq 0 ]]
-}
-
-# Behavior: replacing the already verified assessment before the immutable snapshot is detected and cannot authorize a forged subject.
-# Steps: 1) Verify a clean assessment; 2) replace its subject and advance HEAD at the post-verification seam; 3) require refusal with no remote push.
-case_finish_assessment_replacement_after_verification_refuses_publish() {
-  local name="ship finish: assessment replacement after verification refuses push"
-  should_run "$name" || return 0
-  local work gh_bin out err status=0 pushed=0
-  work="$tmp_root/work-finish-assessment-replacement"
-  make_work_repo "$work" "CC-9001"
-  checkout_ticket_branch "$work" "CC-9001"
-  add_bare_origin "$work"
-  gh_bin="$tmp_root/fake-gh-assessment-replacement"
-  install_fake_gh "$gh_bin" "https://example.invalid/pr/assessment-replacement"
-  out="$tmp_root/out-assessment-replacement"; err="$tmp_root/err-assessment-replacement"
-  PM_TEST_ASSESSMENT_REPLACE=1 PATH="$gh_bin:$PATH" \
-    run_finish_with_fake_gate "$work" "CC-9001" GO > "$out" 2> "$err" || status=$?
-  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
-  if [[ "$status" -eq 1 && "$pushed" -eq 0 ]] &&
-      grep -q 'assessment changed after verification' "$err"; then
-    pass "$name"
-  else
-    fail "$name" "expected assessment TOCTOU refusal: status=$status pushed=$pushed stdout=$(cat "$out") stderr=$(cat "$err")"
-  fi
-}
-
-# Behavior: ship finish pushes the exact assessed commit even if the local branch advances during the push invocation.
-# Steps: 1) Arrange a successful finish against a bare origin; 2) intercept push to add an unassessed local commit; 3) assert the remote receives only the assessed head.
-case_finish_pushes_only_assessed_head_when_branch_advances_at_push() {
-  local name="ship finish: branch advance at push cannot publish an unassessed commit"
-  should_run "$name" || return 0
-  local work gh_bin hook_bin marker out err status=0 real_git assessed_head local_head remote_head
-  work="$tmp_root/work-finish-push-race"
-  make_work_repo "$work" "CC-9001"
-  checkout_ticket_branch "$work" "CC-9001"
-  add_bare_origin "$work"
-  assessed_head="$(git -C "$work" rev-parse HEAD)"
-  gh_bin="$tmp_root/fake-gh-push-race"
-  install_fake_gh "$gh_bin" "https://example.invalid/pr/push-race"
-  hook_bin="$tmp_root/fake-git-push-race"
-  marker="$tmp_root/fake-git-push-race.marker"
-  real_git="$(command -v git)"
-  mkdir -p "$hook_bin"
-  cat > "$hook_bin/git" <<'FAKEOF'
-#!/usr/bin/env bash
-if [[ "${1:-}" == "-C" && "${3:-}" == "push" \
-    && -n "${PM_TEST_PUSH_RACE_WORK:-}" \
-    && ! -e "${PM_TEST_PUSH_RACE_MARKER:-}" ]]; then
-  printf 'unassessed branch advance\n' > "$PM_TEST_PUSH_RACE_WORK/push-race.txt"
-  "$PM_TEST_REAL_GIT" -C "$PM_TEST_PUSH_RACE_WORK" add push-race.txt
-  "$PM_TEST_REAL_GIT" -C "$PM_TEST_PUSH_RACE_WORK" \
-    -c user.email=test@example.com -c user.name=test commit -q -m push-race
-  : > "$PM_TEST_PUSH_RACE_MARKER"
-fi
-exec "$PM_TEST_REAL_GIT" "$@"
-FAKEOF
-  chmod +x "$hook_bin/git"
-  out="$tmp_root/out-finish-push-race"
-  err="$tmp_root/err-finish-push-race"
-  PM_TEST_PUSH_RACE_WORK="$work" PM_TEST_PUSH_RACE_MARKER="$marker" \
-    PM_TEST_REAL_GIT="$real_git" PATH="$hook_bin:$gh_bin:$PATH" \
-    run_finish_with_fake_gate "$work" "CC-9001" GO > "$out" 2> "$err" || status=$?
-  local_head="$(git -C "$work" rev-parse HEAD)"
-  remote_head="$(git --git-dir="$work.bare-origin.git" rev-parse refs/heads/feat/CC-9001 2>/dev/null || true)"
-  if [[ "$status" -eq 0 && "$local_head" != "$assessed_head" \
-      && "$remote_head" == "$assessed_head" ]]; then
-    pass "$name"
-  else
-    fail "$name" "expected assessed head only: status=$status assessed=$assessed_head local=$local_head remote=$remote_head stdout=$(cat "$out") stderr=$(cat "$err")"
-  fi
-}
-
-# run_finish_with_no_result_line <work_dir> <ticket_id>
-# Same stub shape, but the fake gate never prints a `result: <path>` line at
-# all -- covers the "could not locate gate result file" branch.
 run_finish_with_no_result_line() {
   local work_dir="$1" ticket_id="$2"
   bash -c '
@@ -1436,10 +547,6 @@ run_finish_with_no_result_line() {
   ' _ "$REPO_ROOT" "$work_dir" "$ticket_id"
 }
 
-# run_finish_with_broken_shared_verifier <work_dir> <ticket_id>
-#                                        <missing|malformed>
-# Reaches the post-gate publication boundary with either no shared verifier
-# function or one that violates the structured-assessment contract.
 run_finish_with_broken_shared_verifier() {
   local work_dir="$1" ticket_id="$2" verifier_mode="$3"
   bash -c '
@@ -1460,13 +567,6 @@ run_finish_with_broken_shared_verifier() {
   ' _ "$REPO_ROOT" "$work_dir" "$ticket_id" "$verifier_mode"
 }
 
-# run_ship_parallel_capture_dispatch_argv <store> <work_dir> <ticket-id> [ship --parallel flags...]
-# Runs the REAL `pmctl_ship_parallel_run` (real worktree creation, so
-# --from is genuinely exercised against git) but with `pmctl_dispatch_run`
-# stubbed to capture its argv to a file instead of performing a real
-# dispatch -- lets --adapter/--isolation/--model/--auto-pack be asserted
-# directly against what actually reaches the dispatch call, rather than
-# inferred from a real (slow, adapter-dependent) end-to-end run.
 run_ship_parallel_capture_dispatch_argv() {
   local store="$1" work_dir="$2" ticket_id="$3"
   shift 3
@@ -1498,10 +598,6 @@ reg_dir_for() {
     _ "$REPO_ROOT" "$work"
 }
 
-# seed_dispatch_record <lane_path> <run_id> <final_state> <verify_summary>
-# Writes a `.dispatch-results/<run_id>.md` record directly, bypassing a real
-# executor run, so status-transition cases are deterministic and don't
-# depend on codex/claude being installed in the test environment.
 seed_dispatch_record() {
   local lane_path="$1" run_id="$2" final_state="$3" summary="$4"
   bash -c '
@@ -1510,6 +606,25 @@ seed_dispatch_record() {
     dispatch_record_write "$run_id" "task" "codex" "default" "/tmp/brief-x.md" \
       "$lane_path" 0 "$final_state" "$summary" "" "" "" "2026-01-01T00:00:00Z" "2026-01-01T00:01:00Z"
   ' _ "$REPO_ROOT" "$lane_path" "$run_id" "$final_state" "$summary"
+}
+
+write_dispatched_lane_tracking_entry() {
+  local store="$1" work_dir="$2" ticket_id="$3" adapter="$4" reg_dir declared_paths_json
+  shift 4
+  reg_dir="$(reg_dir_for "$store" "$work_dir")"
+  mkdir -p "$reg_dir"
+  if [[ $# -gt 0 ]]; then
+    declared_paths_json="$(jq -cn '$ARGS.positional' --args "$@")"
+  else
+    declared_paths_json='[]'
+  fi
+  jq -cn --arg ticket "$ticket_id" --arg branch "feat/$ticket_id" --arg path "$work_dir" \
+    --arg adapter "$adapter" --argjson declared_paths "$declared_paths_json" \
+    '{ticket:$ticket,branch:$branch,path:$path,run_id:"run-test-fixture",
+      operation_id:"",operation_work_dir:"",adapter:$adapter,status:"running",
+      created_ts:"2026-01-01T00:00:00Z",lane_id:"lane-test-fixture",
+      declared_paths:$declared_paths}' \
+    >> "$reg_dir/ship-lanes.jsonl"
 }
 
 case_run_requires_ticket() {
@@ -1846,9 +961,9 @@ case_run_brief_preserves_ship_contract() {
   # Backticks below are literal Markdown code spans in the assertion text, not command substitution.
   # shellcheck disable=SC2016
   if [[ "$status" -eq 0 && -f "$brief" ]] \
-    && grep -q 'pmctl ship finish CC-9001' "$brief" \
     && grep -q 'Do not run `git checkout -b`' "$brief" \
-    && grep -q 'Do not run `pmctl worktree remove`' "$brief"; then
+    && grep -q 'Do not run `pmctl worktree remove`' "$brief" \
+    && grep -q 'Do NOT run `git add`, `git commit`, `pmctl ship finish`, or `pmctl gate run`' "$brief"; then
     pass "$name"
   else
     fail "$name" "brief missing expected ship-contract constraints (status=$status, brief=$brief)"
@@ -2161,871 +1276,6 @@ case_prepare_happy_path_creates_branch() {
   fi
 }
 
-case_finish_requires_ticket() {
-  local name="ship finish: missing ticket-id exits 2"
-  should_run "$name" || return 0
-  local store work out err status=0
-  store="$tmp_root/state-finish-noarg"
-  work="$tmp_root/work-finish-noarg"
-  make_work_repo "$work" "CC-9001"
-  out="$tmp_root/out-finish-noarg"; err="$tmp_root/err-finish-noarg"
-  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" ship finish --cd "$work" > "$out" 2> "$err" || status=$?
-  assert_exit "$name" "$status" 2 && \
-    assert_file_contains "$name" "$err" "<ticket-id> is required" && \
-    pass "$name"
-}
-
-case_finish_no_go_does_not_push() {
-  local name="ship finish: NO-GO exits 1, prints the result path, and never pushes"
-  should_run "$name" || return 0
-  local work out err status=0
-  work="$tmp_root/work-finish-nogo"
-  make_work_repo "$work" "CC-9001"
-  checkout_ticket_branch "$work" "CC-9001"
-  add_bare_origin "$work"
-  out="$tmp_root/out-finish-nogo"; err="$tmp_root/err-finish-nogo"
-  run_finish_with_fake_gate "$work" "CC-9001" "NO-GO" > "$out" 2> "$err" || status=$?
-  local pushed=0
-  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
-  if [[ "$status" -eq 1 ]] && grep -q "NO-GO" "$err" && [[ "$pushed" -eq 0 ]]; then
-    pass "$name"
-  else
-    fail "$name" "expected exit 1 + no push; got status=$status pushed=$pushed stderr=$(cat "$err")"
-  fi
-}
-
-case_finish_missing_result_file() {
-  local name="ship finish: a gate that never prints a result: line exits 1 with a clear message"
-  should_run "$name" || return 0
-  local work out err status=0
-  work="$tmp_root/work-finish-noresult"
-  make_work_repo "$work" "CC-9001"
-  checkout_ticket_branch "$work" "CC-9001"
-  out="$tmp_root/out-finish-noresult"; err="$tmp_root/err-finish-noresult"
-  run_finish_with_no_result_line "$work" "CC-9001" > "$out" 2> "$err" || status=$?
-  assert_exit "$name" "$status" 1 && \
-    assert_file_contains "$name" "$err" "could not locate gate result file" && \
-    pass "$name"
-}
-
-case_finish_missing_shared_verifier_refuses_publish() {
-  local name="ship finish: missing shared gate verifier fails closed"
-  should_run "$name" || return 0
-  local work out err status=0
-  work="$tmp_root/work-finish-missing-verifier"
-  make_work_repo "$work" "CC-9001"
-  checkout_ticket_branch "$work" "CC-9001"
-  out="$tmp_root/out-finish-missing-verifier"
-  err="$tmp_root/err-finish-missing-verifier"
-  run_finish_with_broken_shared_verifier "$work" "CC-9001" missing \
-    > "$out" 2> "$err" || status=$?
-  if [[ "$status" -eq 2 ]] \
-      && grep -q "shared gate verifier is unavailable" "$err"; then
-    pass "$name"
-  else
-    fail "$name" "expected exit 2 fail-closed; status=$status stderr=$(cat "$err")"
-  fi
-}
-
-case_finish_malformed_shared_assessment_refuses_publish() {
-  local name="ship finish: malformed shared gate assessment fails closed"
-  should_run "$name" || return 0
-  local work out err status=0
-  work="$tmp_root/work-finish-malformed-verifier"
-  make_work_repo "$work" "CC-9001"
-  checkout_ticket_branch "$work" "CC-9001"
-  out="$tmp_root/out-finish-malformed-verifier"
-  err="$tmp_root/err-finish-malformed-verifier"
-  run_finish_with_broken_shared_verifier "$work" "CC-9001" malformed \
-    > "$out" 2> "$err" || status=$?
-  if [[ "$status" -eq 1 ]] \
-      && grep -q "returned no structured assessment" "$err"; then
-    pass "$name"
-  else
-    fail "$name" "expected exit 1 fail-closed; status=$status stderr=$(cat "$err")"
-  fi
-}
-
-case_finish_go_stale_subject_does_not_push() {
-  local name="ship finish: GO with stale subject exits 1 before push"
-  should_run "$name" || return 0
-  local work out err status=0
-  work="$tmp_root/work-finish-stale-subject"
-  make_work_repo "$work" "CC-9001"
-  checkout_ticket_branch "$work" "CC-9001"
-  add_bare_origin "$work"
-  out="$tmp_root/out-finish-stale-subject"
-  err="$tmp_root/err-finish-stale-subject"
-  PM_TEST_GATE_SUBJECT_STATUS=fail \
-    run_finish_with_fake_gate "$work" "CC-9001" "GO" \
-      > "$out" 2> "$err" || status=$?
-  local pushed=0
-  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 \
-    2>/dev/null && pushed=1
-  if [[ "$status" -eq 1 ]] \
-      && grep -q "invalid, stale, or below the publish policy baseline" "$err" \
-      && [[ "$pushed" -eq 0 ]]; then
-    pass "$name"
-  else
-    fail "$name" "expected exit 1 + no push; got status=$status pushed=$pushed stderr=$(cat "$err")"
-  fi
-}
-
-# Behavior: an explicit current-tree Gate result may satisfy the publish review
-# boundary without spending a second Gate round.
-# Steps: supply an absolute artifact, record verifier and Gate invocations, and
-# require publish verification, no new Gate, full-suite evidence, and a push.
-case_finish_valid_supplied_gate_result_publishes_without_new_gate() {
-  local name="ship finish: valid absolute supplied Gate result is verified for publish without a new Gate"
-  should_run "$name" || return 0
-  local work out err marker verify_argv status=0
-  work="$tmp_root/work-finish-gate-supplied"
-  marker="$tmp_root/finish-gate-supplied-run"
-  verify_argv="$tmp_root/finish-gate-supplied-verify-argv"
-  make_work_repo "$work" "CC-9001"
-  checkout_ticket_branch "$work" "CC-9001"
-  add_bare_origin "$work"
-  mkdir -p "$work/evidence"
-  printf 'Final: GO\n' > "$work/evidence/gate.md"
-  git -C "$work" add evidence/gate.md
-  git -C "$work" commit -q -m supplied-gate-result
-  local gh_bin="$tmp_root/fake-gh-gate-supplied-bin"
-  install_fake_gh "$gh_bin" "https://example.invalid/pr/gate-supplied"
-  out="$tmp_root/out-finish-gate-supplied"
-  err="$tmp_root/err-finish-gate-supplied"
-  PM_TEST_GATE_RUN_MARKER="$marker" \
-    PM_TEST_GATE_VERIFY_ARGV="$verify_argv" \
-    PATH="$gh_bin:$PATH" \
-    run_finish_with_fake_gate "$work" "CC-9001" "GO" \
-      --gate-result "$work/evidence/gate.md" > "$out" 2> "$err" || status=$?
-  local pushed=0
-  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 \
-    2>/dev/null && pushed=1
-  if [[ "$status" -eq 0 && "$pushed" -eq 1 && ! -e "$marker" ]] \
-      && grep -Fxq "$work/evidence/gate.md" "$verify_argv" \
-      && grep -Fxq -- '--consumer' "$verify_argv" \
-      && grep -Fxq 'publish' "$verify_argv"; then
-    pass "$name"
-  else
-    fail "$name" "status=$status pushed=$pushed gate_called=$([[ -e "$marker" ]] && echo yes || echo no) verify=$(cat "$verify_argv" 2>/dev/null) stderr=$(cat "$err")"
-  fi
-}
-
-# Behavior: a missing caller-supplied artifact is reported as a path error, not
-# as a Gate process that exited successfully without writing a result.
-# Steps: supply a missing relative artifact and require exit 1, its resolved
-# path in stderr, no fresh Gate invocation, and no pushed branch.
-case_finish_missing_supplied_gate_result_reports_artifact_path() {
-  local name="ship finish: missing supplied Gate result reports the artifact path"
-  should_run "$name" || return 0
-  local work out err marker status=0
-  work="$tmp_root/work-finish-gate-missing"
-  marker="$tmp_root/finish-gate-missing-run"
-  make_work_repo "$work" "CC-9001"
-  checkout_ticket_branch "$work" "CC-9001"
-  add_bare_origin "$work"
-  local gh_bin="$tmp_root/fake-gh-gate-missing-bin"
-  install_fake_gh "$gh_bin" "https://example.invalid/pr/gate-missing"
-  out="$tmp_root/out-finish-gate-missing"
-  err="$tmp_root/err-finish-gate-missing"
-  PM_TEST_GATE_RUN_MARKER="$marker" PATH="$gh_bin:$PATH" \
-    run_finish_with_fake_gate "$work" "CC-9001" "GO" \
-      --gate-result evidence/missing.md > "$out" 2> "$err" || status=$?
-  local pushed=0
-  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 \
-    2>/dev/null && pushed=1
-  if [[ "$status" -eq 1 && "$pushed" -eq 0 && ! -e "$marker" ]] \
-      && grep -Fq \
-        "supplied --gate-result artifact not found: $work/evidence/missing.md" \
-        "$err" \
-      && ! grep -Fq 'gate exit 0' "$err"; then
-    pass "$name"
-  else
-    fail "$name" "status=$status pushed=$pushed gate_called=$([[ -e "$marker" ]] && echo yes || echo no) stderr=$(cat "$err")"
-  fi
-}
-
-# Behavior: supplying an artifact bypasses only Gate dispatch, never the
-# current-subject check.
-# Steps: make the verifier report subject drift for a supplied result and
-# require publication refusal with no pushed branch.
-case_finish_stale_supplied_gate_result_refuses_publish() {
-  local name="ship finish: stale supplied Gate result refuses publication"
-  should_run "$name" || return 0
-  local work out err status=0
-  work="$tmp_root/work-finish-gate-stale"
-  make_work_repo "$work" "CC-9001"
-  checkout_ticket_branch "$work" "CC-9001"
-  add_bare_origin "$work"
-  printf 'Final: GO\n' > "$work/gate.md"
-  git -C "$work" add gate.md
-  git -C "$work" commit -q -m stale-gate-result
-  local gh_bin="$tmp_root/fake-gh-gate-stale-bin"
-  install_fake_gh "$gh_bin" "https://example.invalid/pr/gate-stale"
-  out="$tmp_root/out-finish-gate-stale"
-  err="$tmp_root/err-finish-gate-stale"
-  PM_TEST_GATE_SUBJECT_STATUS=fail PATH="$gh_bin:$PATH" \
-    run_finish_with_fake_gate "$work" "CC-9001" "GO" \
-      --gate-result gate.md > "$out" 2> "$err" || status=$?
-  local pushed=0
-  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 \
-    2>/dev/null && pushed=1
-  if [[ "$status" -eq 1 && "$pushed" -eq 0 ]] \
-      && grep -q "invalid, stale, or below the publish policy baseline" "$err"; then
-    pass "$name"
-  else
-    fail "$name" "status=$status pushed=$pushed stderr=$(cat "$err")"
-  fi
-}
-
-# Behavior: a caller-supplied result remains subject to artifact-integrity
-# verification before any full suite or remote mutation.
-# Steps: make the verifier reject a supplied artifact and require exit 1,
-# the shared verification diagnostic, and no pushed branch.
-case_finish_invalid_supplied_gate_result_refuses_publish() {
-  local name="ship finish: invalid supplied Gate result refuses publication"
-  should_run "$name" || return 0
-  local work out err status=0
-  work="$tmp_root/work-finish-gate-invalid"
-  make_work_repo "$work" "CC-9001"
-  checkout_ticket_branch "$work" "CC-9001"
-  add_bare_origin "$work"
-  printf 'tampered\n' > "$work/gate.md"
-  git -C "$work" add gate.md
-  git -C "$work" commit -q -m invalid-gate-result
-  local gh_bin="$tmp_root/fake-gh-gate-invalid-bin"
-  install_fake_gh "$gh_bin" "https://example.invalid/pr/gate-invalid"
-  out="$tmp_root/out-finish-gate-invalid"
-  err="$tmp_root/err-finish-gate-invalid"
-  PM_TEST_GATE_ARTIFACT_STATUS=fail PATH="$gh_bin:$PATH" \
-    run_finish_with_fake_gate "$work" "CC-9001" "GO" \
-      --gate-result gate.md > "$out" 2> "$err" || status=$?
-  local pushed=0
-  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 \
-    2>/dev/null && pushed=1
-  if [[ "$status" -eq 1 && "$pushed" -eq 0 ]] \
-      && grep -q "invalid, stale, or below the publish policy baseline" "$err"; then
-    pass "$name"
-  else
-    fail "$name" "status=$status pushed=$pushed stderr=$(cat "$err")"
-  fi
-}
-
-# Behavior: reviewer selection is rejected when finish is told to reuse an
-# already-produced Gate artifact.
-# Steps: combine --gate-result with --reviewers through the public CLI and
-# require the mutual-exclusion usage error before side effects.
-case_finish_gate_result_rejects_reviewers() {
-  local name="ship finish: supplied Gate result rejects reviewers"
-  should_run "$name" || return 0
-  local work out err status=0
-  work="$tmp_root/work-finish-gate-reviewers"
-  make_work_repo "$work" "CC-9001"
-  out="$tmp_root/out-finish-gate-reviewers"
-  err="$tmp_root/err-finish-gate-reviewers"
-  "$PMCTL" ship finish CC-9001 --cd "$work" \
-    --gate-result result.md --reviewers critic > "$out" 2> "$err" || status=$?
-  if [[ "$status" -eq 2 ]] \
-      && grep -q -- '--gate-result cannot be combined with --reviewers' "$err"; then
-    pass "$name"
-  else
-    fail "$name" "status=$status stderr=$(cat "$err")"
-  fi
-}
-
-# Behavior: the public help for ship finish keeps naming the artifact-reuse
-# options, so an operator can discover them without reading the parser.
-# Steps: read `ship finish --help` and require both artifact flags in it.
-# The parser's own behavior stays covered by the mutual-exclusion case above;
-# this is the discoverability half, which no assertion held.
-case_finish_help_names_artifact_options() {
-  local name="ship finish: help names the artifact-reuse options"
-  should_run "$name" || return 0
-  local out status=0 missing=""
-  out="$tmp_root/out-finish-help"
-  "$PMCTL" ship finish --help > "$out" 2>&1 || status=$?
-  local flag
-  for flag in --gate-result --full-result; do
-    grep -q -- "$flag" "$out" || missing+=" $flag"
-  done
-  if [[ "$status" -eq 0 && -z "$missing" ]]; then
-    pass "$name"
-  else
-    fail "$name" "status=$status missing:$missing help=$(cat "$out")"
-  fi
-}
-
-case_finish_go_dirty_tree_refuses_push() {
-  local name="ship finish: GO with an uncommitted (dirty) tree refuses to push -- committed-diff guard"
-  should_run "$name" || return 0
-  local work out err status=0
-  work="$tmp_root/work-finish-dirty"
-  make_work_repo "$work" "CC-9001"
-  checkout_ticket_branch "$work" "CC-9001"
-  add_bare_origin "$work"
-  printf 'uncommitted\n' > "$work/dirty.txt"
-  out="$tmp_root/out-finish-dirty"; err="$tmp_root/err-finish-dirty"
-  run_finish_with_fake_gate "$work" "CC-9001" "GO" > "$out" 2> "$err" || status=$?
-  local pushed=0
-  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
-  if [[ "$status" -eq 1 ]] && grep -q "tree is dirty" "$err" && [[ "$pushed" -eq 0 ]]; then
-    pass "$name"
-  else
-    fail "$name" "expected exit 1 + no push; got status=$status pushed=$pushed stderr=$(cat "$err")"
-  fi
-}
-
-case_finish_go_head_moved_refuses_push() {
-  local name="ship finish: GO but HEAD moved during the gate run refuses to push an un-gated commit"
-  should_run "$name" || return 0
-  local work out err status=0
-  work="$tmp_root/work-finish-headmoved"
-  make_work_repo "$work" "CC-9001"
-  checkout_ticket_branch "$work" "CC-9001"
-  add_bare_origin "$work"
-  out="$tmp_root/out-finish-headmoved"; err="$tmp_root/err-finish-headmoved"
-  # Stub gate that ALSO makes an extra, never-reviewed commit as a side
-  # effect -- simulates something landing on HEAD during the gate window.
-  bash -c '
-    repo_root="$1"; work_dir="$2"; ticket_id="$3"
-    pmctl_gate_run() {
-      printf "sneaky\n" > "'"$work"'/sneaky.txt"
-      git -C "'"$work"'" add sneaky.txt
-      git -C "'"$work"'" commit -q -m sneaky
-      local result_file
-      result_file="$(mktemp)"
-      printf "Final: GO\n" > "$result_file"
-      printf "result: %s\n" "$result_file"
-      return 0
-    }
-    pmctl_gate_verify() {
-      jq -n '"'"'{
-        kind:"gate_verification_v1",
-        verdict:"GO",
-        axes:{
-          artifact_valid:{status:"pass",reason_codes:[]},
-          subject_current:{status:"pass",reason_codes:[]},
-          policy_applicable:{status:"pass",reason_codes:[]}
-        }
-      }'"'"'
-    }
-    . "$repo_root/runtime/lib/pmctl-ship.sh"
-    pmctl_ship_finish "$repo_root" "$work_dir" "$ticket_id"
-  ' _ "$REPO_ROOT" "$work" "CC-9001" > "$out" 2> "$err" || status=$?
-  local pushed=0
-  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
-  if [[ "$status" -eq 1 ]] && grep -q "HEAD moved during the gate run" "$err" && [[ "$pushed" -eq 0 ]]; then
-    pass "$name"
-  else
-    fail "$name" "expected exit 1 + no push; got status=$status pushed=$pushed stderr=$(cat "$err")"
-  fi
-}
-
-# Behavior: HEAD drift while verifying a supplied Gate artifact refuses
-# publication without claiming that a fresh Gate ran.
-# Steps: commit during the verifier stub, then require the supplied-artifact
-# drift diagnostic, no fresh-Gate wording, and no pushed branch.
-case_finish_supplied_gate_result_head_moved_refuses_push() {
-  local name="ship finish: supplied Gate result reports HEAD drift without claiming a Gate ran"
-  should_run "$name" || return 0
-  local work out err status=0
-  work="$tmp_root/work-finish-supplied-headmoved"
-  make_work_repo "$work" "CC-9001"
-  checkout_ticket_branch "$work" "CC-9001"
-  add_bare_origin "$work"
-  printf 'Final: GO\n' > "$work/gate.md"
-  git -C "$work" add gate.md
-  git -C "$work" commit -q -m supplied-gate-result
-  local gh_bin="$tmp_root/fake-gh-supplied-headmoved-bin"
-  install_fake_gh "$gh_bin" "https://example.invalid/pr/supplied-headmoved"
-  out="$tmp_root/out-finish-supplied-headmoved"
-  err="$tmp_root/err-finish-supplied-headmoved"
-  PATH="$gh_bin:$PATH" bash -c '
-    repo_root="$1"; work_dir="$2"; ticket_id="$3"
-    pmctl_gate_run() {
-      printf "unexpected Gate run\n" >&2
-      return 99
-    }
-    pmctl_gate_verify() {
-      printf "sneaky\n" > "$work_dir/sneaky.txt"
-      git -C "$work_dir" add sneaky.txt
-      git -C "$work_dir" commit -q -m sneaky
-      jq -n '"'"'{
-        kind:"gate_verification_v1",
-        verdict:"GO",
-        axes:{
-          artifact_valid:{status:"pass",reason_codes:[]},
-          subject_current:{status:"pass",reason_codes:[]},
-          policy_applicable:{status:"pass",reason_codes:[]}
-        }
-      }'"'"'
-    }
-    . "$repo_root/runtime/lib/pmctl-ship.sh"
-    pmctl_ship_finish "$repo_root" "$work_dir" "$ticket_id" \
-      --gate-result "$work_dir/gate.md"
-  ' _ "$REPO_ROOT" "$work" "CC-9001" > "$out" 2> "$err" || status=$?
-  local pushed=0
-  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 \
-    2>/dev/null && pushed=1
-  if [[ "$status" -eq 1 && "$pushed" -eq 0 ]] \
-      && grep -q "HEAD moved while verifying supplied --gate-result" "$err" \
-      && ! grep -q "HEAD moved during the gate run" "$err" \
-      && ! grep -q "unexpected Gate run" "$err"; then
-    pass "$name"
-  else
-    fail "$name" "status=$status pushed=$pushed stderr=$(cat "$err")"
-  fi
-}
-
-case_finish_gh_missing_refuses_before_gate_or_push() {
-  local name="ship finish: gh unavailable refuses before the gate even runs -- no push, no gate round spent"
-  should_run "$name" || return 0
-  local work out err status=0
-  work="$tmp_root/work-finish-nogh"
-  make_work_repo "$work" "CC-9001"
-  checkout_ticket_branch "$work" "CC-9001"
-  add_bare_origin "$work"
-  out="$tmp_root/out-finish-nogh"; err="$tmp_root/err-finish-nogh"
-  # A curated PATH containing symlinks to exactly the tools finish needs
-  # (git/jq/bash/coreutils) but NOT `gh` -- simulates "gh unavailable"
-  # without the earlier approach's bug (removing whole real-PATH dirs that
-  # happen to contain `gh` alongside `git`/`jq` on this host removed those
-  # too, so `command -v git` etc. failed with 127 -- a false "gh missing"
-  # signal for the wrong reason).
-  local nogh_bin="$tmp_root/nogh-bin"
-  mkdir -p "$nogh_bin"
-  local tool tool_path
-  for tool in git jq bash mktemp awk sed grep date dirname basename cat mv rm mkdir; do
-    tool_path="$(command -v "$tool" 2>/dev/null)" || continue
-    ln -sf "$tool_path" "$nogh_bin/$tool"
-  done
-  # gate_call_marker: the stub pmctl_gate_run touches this if it is ever
-  # invoked -- proves finish refused BEFORE spending a gate round, per the
-  # risk-reviewer fix (preflight gh before the gate runs, not just before
-  # push), not merely before push.
-  local gate_call_marker="$tmp_root/gate-was-called"
-  rm -f "$gate_call_marker"
-  PATH="$nogh_bin" bash -c '
-    repo_root="$1"; work_dir="$2"; ticket_id="$3"; gate_call_marker="$4"
-    pmctl_gate_run() { touch "$gate_call_marker"; printf "result: /dev/null\n"; return 1; }
-    . "$repo_root/runtime/lib/pmctl-ship.sh"
-    pmctl_ship_finish "$repo_root" "$work_dir" "$ticket_id"
-  ' _ "$REPO_ROOT" "$work" "CC-9001" "$gate_call_marker" > "$out" 2> "$err" || status=$?
-  local pushed=0
-  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
-  if [[ "$status" -eq 1 ]] && grep -q "gh.*unavailable" "$err" && [[ "$pushed" -eq 0 ]] && [[ ! -f "$gate_call_marker" ]]; then
-    pass "$name"
-  else
-    fail "$name" "expected exit 1 + no push + no gate call; got status=$status pushed=$pushed gate_called=$([[ -f "$gate_call_marker" ]] && echo yes || echo no) stderr=$(cat "$err")"
-  fi
-}
-
-case_finish_wrong_branch_refuses_before_gate_or_push() {
-  local name="ship finish: checked-out branch not matching feat/<ticket-id> refuses before the gate runs -- branch/ticket-identity guard"
-  should_run "$name" || return 0
-  local work out err status=0
-  work="$tmp_root/work-finish-wrongbranch"
-  make_work_repo "$work" "CC-9001"
-  # Deliberately checked out on a DIFFERENT branch than feat/CC-9001 --
-  # simulates a wrong --cd, stale worktree, or confused executor call.
-  git -C "$work" checkout -q -b some-other-branch
-  add_bare_origin "$work"
-  out="$tmp_root/out-finish-wrongbranch"; err="$tmp_root/err-finish-wrongbranch"
-  local gate_call_marker="$tmp_root/gate-was-called-wrongbranch"
-  rm -f "$gate_call_marker"
-  bash -c '
-    repo_root="$1"; work_dir="$2"; ticket_id="$3"; gate_call_marker="$4"
-    pmctl_gate_run() { touch "$gate_call_marker"; printf "result: /dev/null\n"; return 1; }
-    . "$repo_root/runtime/lib/pmctl-ship.sh"
-    pmctl_ship_finish "$repo_root" "$work_dir" "$ticket_id"
-  ' _ "$REPO_ROOT" "$work" "CC-9001" "$gate_call_marker" > "$out" 2> "$err" || status=$?
-  local pushed=0
-  git -C "$work.bare-origin.git" show-ref --quiet some-other-branch 2>/dev/null && pushed=1
-  if [[ "$status" -eq 1 ]] && grep -q "does not match the ticket" "$err" && [[ "$pushed" -eq 0 ]] && [[ ! -f "$gate_call_marker" ]]; then
-    pass "$name"
-  else
-    fail "$name" "expected exit 1 + no push + no gate call; got status=$status pushed=$pushed gate_called=$([[ -f "$gate_call_marker" ]] && echo yes || echo no) stderr=$(cat "$err")"
-  fi
-}
-
-case_finish_go_pushes_and_opens_pr() {
-  local name="ship finish: GO + clean tree + gh available pushes, opens PR, writes GO marker with the pr_url"
-  should_run "$name" || return 0
-  local work out err status=0
-  work="$tmp_root/work-finish-go"
-  make_work_repo "$work" "CC-9001"
-  checkout_ticket_branch "$work" "CC-9001"
-  add_bare_origin "$work"
-  local gh_bin="$tmp_root/fake-gh-bin"
-  install_fake_gh "$gh_bin" "https://example.invalid/pr/99"
-  out="$tmp_root/out-finish-go"; err="$tmp_root/err-finish-go"
-  PATH="$gh_bin:$PATH" run_finish_with_fake_gate "$work" "CC-9001" "GO" > "$out" 2> "$err" || status=$?
-  local pushed=0
-  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
-  local marker_verdict marker_pr marker_schema marker_satisfaction marker_assessment assurance_line=0
-  marker_verdict="$(jq -r '.verdict // ""' "$work/.pm-dispatch-ship-finish.json" 2>/dev/null)"
-  marker_pr="$(jq -r '.pr_url // ""' "$work/.pm-dispatch-ship-finish.json" 2>/dev/null)"
-  marker_schema="$(jq -r '.schema_version // ""' "$work/.pm-dispatch-ship-finish.json" 2>/dev/null)"
-  marker_satisfaction="$(jq -r '.publish_assurance.policy_satisfaction // ""' "$work/.pm-dispatch-ship-finish.json" 2>/dev/null)"
-  marker_assessment="$(jq -r '.publish_assessment // ""' "$work/.pm-dispatch-ship-finish.json" 2>/dev/null)"
-  grep -Fq 'publish assurance: producer=maintainer satisfaction=preferred' "$out" && assurance_line=1
-  if [[ "$status" -eq 0 && "$pushed" -eq 1 && "$marker_verdict" == "GO" \
-      && "$marker_pr" == "https://example.invalid/pr/99" \
-      && "$marker_schema" == "2" && "$marker_satisfaction" == "preferred" \
-      && "$marker_assessment" == *ship-publish-assessment-CC-9001-* \
-      && "$assurance_line" -eq 1 ]]; then
-    pass "$name"
-  else
-    fail "$name" "expected GO marker plus verified assurance; got status=$status pushed=$pushed marker=$marker_verdict pr=$marker_pr schema=$marker_schema satisfaction=$marker_satisfaction assessment=$marker_assessment stdout=$(cat "$out")"
-  fi
-}
-
-case_finish_runs_and_verifies_current_tree_full_suite_before_publish() {
-  # Behavior: a successful finish produces and verifies current-tree full-suite evidence before publishing.
-  # Steps: run a GO fixture with a recording runner, then require both full-run and verify calls plus a pushed branch.
-  local name="ship finish: fresh current-tree full suite is run and canonically verified before push/PR"
-  should_run "$name" || return 0
-  local work out err log status=0
-  work="$tmp_root/work-finish-full-auto"
-  log="$tmp_root/finish-full-auto.log"
-  make_work_repo "$work" "CC-9001"
-  checkout_ticket_branch "$work" "CC-9001"
-  add_bare_origin "$work"
-  local gh_bin="$tmp_root/fake-gh-full-auto-bin"
-  install_fake_gh "$gh_bin" "https://example.invalid/pr/full-auto"
-  out="$tmp_root/out-finish-full-auto"; err="$tmp_root/err-finish-full-auto"
-  PM_TEST_RUNNER_LOG="$log" PATH="$gh_bin:$PATH" run_finish_with_fake_gate "$work" "CC-9001" "GO" > "$out" 2> "$err" || status=$?
-  local pushed=0
-  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
-  if [[ "$status" -eq 0 && "$pushed" -eq 1 ]] \
-    && grep -q '^--all --result-file ' "$log" \
-    && grep -q '^--verify-full ' "$log"; then
-    pass "$name"
-  else
-    fail "$name" "expected fresh full run + verify before publish; status=$status pushed=$pushed log=$(cat "$log" 2>/dev/null) stderr=$(cat "$err")"
-  fi
-}
-
-case_finish_invalid_supplied_full_result_refuses_publish() {
-  # Behavior: supplied evidence cannot bypass canonical full-result verification.
-  # Steps: make the runner reject a caller artifact and require no remote branch is created.
-  local name="ship finish: invalid caller-supplied full result fails closed before push/PR"
-  should_run "$name" || return 0
-  local work out err log artifact status=0
-  work="$tmp_root/work-finish-full-invalid"
-  log="$tmp_root/finish-full-invalid.log"
-  artifact="$tmp_root/invalid-full-result.json"
-  printf '{"not":"authoritative"}\n' > "$artifact"
-  make_work_repo "$work" "CC-9001"
-  checkout_ticket_branch "$work" "CC-9001"
-  add_bare_origin "$work"
-  local gh_bin="$tmp_root/fake-gh-full-invalid-bin"
-  install_fake_gh "$gh_bin" "https://example.invalid/pr/full-invalid"
-  out="$tmp_root/out-finish-full-invalid"; err="$tmp_root/err-finish-full-invalid"
-  PM_TEST_RUNNER_LOG="$log" PM_TEST_FULL_VERIFY_STATUS=1 PATH="$gh_bin:$PATH" \
-    run_finish_with_fake_gate "$work" "CC-9001" "GO" --full-result "$artifact" > "$out" 2> "$err" || status=$?
-  local pushed=0
-  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
-  if [[ "$status" -eq 1 && "$pushed" -eq 0 ]] \
-    && grep -Fxq -- "--verify-full $artifact" "$log" \
-    && ! grep -q '^--all ' "$log" \
-    && grep -q 'evidence is not valid for the current tree' "$err"; then
-    pass "$name"
-  else
-    fail "$name" "expected fail-closed supplied artifact rejection; status=$status pushed=$pushed log=$(cat "$log" 2>/dev/null) stderr=$(cat "$err")"
-  fi
-}
-
-case_finish_failed_full_suite_refuses_publish() {
-  # Behavior: a fresh full-suite failure blocks all publication side effects.
-  # Steps: force the recording runner's full invocation to fail and require no remote branch is created.
-  local name="ship finish: failed fresh full suite refuses push/PR"
-  should_run "$name" || return 0
-  local work out err log status=0
-  work="$tmp_root/work-finish-full-failed"
-  log="$tmp_root/finish-full-failed.log"
-  make_work_repo "$work" "CC-9001"
-  checkout_ticket_branch "$work" "CC-9001"
-  add_bare_origin "$work"
-  local gh_bin="$tmp_root/fake-gh-full-failed-bin"
-  install_fake_gh "$gh_bin" "https://example.invalid/pr/full-failed"
-  out="$tmp_root/out-finish-full-failed"; err="$tmp_root/err-finish-full-failed"
-  PM_TEST_RUNNER_LOG="$log" PM_TEST_FULL_RUN_STATUS=1 PATH="$gh_bin:$PATH" \
-    run_finish_with_fake_gate "$work" "CC-9001" "GO" > "$out" 2> "$err" || status=$?
-  local pushed=0
-  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
-  if [[ "$status" -eq 1 && "$pushed" -eq 0 ]] \
-    && grep -q '^--all --result-file ' "$log" \
-    && ! grep -q '^--verify-full ' "$log" \
-    && grep -q 'authoritative full suite failed' "$err"; then
-    pass "$name"
-  else
-    fail "$name" "expected failed suite to block publish; status=$status pushed=$pushed log=$(cat "$log" 2>/dev/null) stderr=$(cat "$err")"
-  fi
-}
-
-case_finish_post_suite_head_drift_refuses_publish() {
-  # Behavior: publication rejects a commit created after the gate and during an otherwise-successful full suite.
-  # Steps: make the runner commit a fixture mutation, then require the post-suite HEAD guard and no remote branch.
-  local name="ship finish: HEAD changed while a full suite ran refuses push/PR despite runner success"
-  should_run "$name" || return 0
-  local work out err log status=0
-  work="$tmp_root/work-finish-full-head-drift"
-  log="$tmp_root/finish-full-head-drift.log"
-  make_work_repo "$work" "CC-9001"
-  checkout_ticket_branch "$work" "CC-9001"
-  add_bare_origin "$work"
-  local gh_bin="$tmp_root/fake-gh-full-head-drift-bin"
-  install_fake_gh "$gh_bin" "https://example.invalid/pr/full-head-drift"
-  out="$tmp_root/out-finish-full-head-drift"; err="$tmp_root/err-finish-full-head-drift"
-  PM_TEST_RUNNER_LOG="$log" PM_TEST_FULL_RUN_MUTATE=head PATH="$gh_bin:$PATH" \
-    run_finish_with_fake_gate "$work" "CC-9001" "GO" > "$out" 2> "$err" || status=$?
-  local pushed=0
-  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
-  if [[ "$status" -eq 1 && "$pushed" -eq 0 ]] \
-    && grep -q '^--verify-full ' "$log" \
-    && grep -q 'HEAD moved after the gate' "$err"; then
-    pass "$name"
-  else
-    fail "$name" "expected post-suite HEAD drift to block publish; status=$status pushed=$pushed log=$(cat "$log" 2>/dev/null) stderr=$(cat "$err")"
-  fi
-}
-
-case_finish_valid_supplied_full_result_publishes() {
-  # Behavior: a canonically accepted caller full-result artifact may satisfy the publish evidence requirement.
-  # Steps: supply a relative artifact path to a passing recording verifier and require verification plus a pushed branch.
-  local name="ship finish: valid supplied full result is resolved against --cd, verified, and permits publish"
-  should_run "$name" || return 0
-  local work out err log status=0
-  work="$tmp_root/work-finish-full-supplied"
-  log="$tmp_root/finish-full-supplied.log"
-  make_work_repo "$work" "CC-9001"
-  checkout_ticket_branch "$work" "CC-9001"
-  add_bare_origin "$work"
-  mkdir -p "$work/evidence"
-  printf '{"fake":"supplied-full-result"}\n' > "$work/evidence/full.json"
-  git -C "$work" add evidence/full.json
-  git -C "$work" commit -q -m supplied-full-result
-  local gh_bin="$tmp_root/fake-gh-full-supplied-bin"
-  install_fake_gh "$gh_bin" "https://example.invalid/pr/full-supplied"
-  out="$tmp_root/out-finish-full-supplied"; err="$tmp_root/err-finish-full-supplied"
-  PM_TEST_RUNNER_LOG="$log" PATH="$gh_bin:$PATH" \
-    run_finish_with_fake_gate "$work" "CC-9001" "GO" --full-result evidence/full.json > "$out" 2> "$err" || status=$?
-  local pushed=0
-  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
-  if [[ "$status" -eq 0 && "$pushed" -eq 1 ]] \
-    && grep -Fxq -- "--verify-full $work/evidence/full.json" "$log" \
-    && ! grep -q '^--all ' "$log"; then
-    pass "$name"
-  else
-    fail "$name" "expected verified supplied evidence to publish; status=$status pushed=$pushed log=$(cat "$log" 2>/dev/null) stderr=$(cat "$err")"
-  fi
-}
-
-case_finish_cli_forwards_full_result_option() {
-  # Behavior: the public CLI recognizes --full-result rather than rejecting it as an unknown finish option.
-  # Steps: invoke the real CLI with a missing option value and require the finish-specific argument diagnostic.
-  local name="ship finish CLI: --full-result is forwarded to the finish contract"
-  should_run "$name" || return 0
-  local work out err status=0
-  work="$tmp_root/work-finish-cli-full-result"
-  make_work_repo "$work" "CC-9001"
-  out="$tmp_root/out-finish-cli-full-result"; err="$tmp_root/err-finish-cli-full-result"
-  "$PMCTL" ship finish CC-9001 --full-result --cd "$work" > "$out" 2> "$err" || status=$?
-  if [[ "$status" -eq 2 ]] && grep -q -- '--full-result requires an artifact path' "$err"; then
-    pass "$name"
-  else
-    fail "$name" "expected finish-specific --full-result diagnostic; status=$status stderr=$(cat "$err")"
-  fi
-}
-
-# Behavior: the public CLI recognizes --gate-result and reports its
-# finish-specific missing-value diagnostic.
-# Steps: invoke the real CLI without an artifact value and require the
-# --gate-result parser error rather than an unknown-option failure.
-case_finish_cli_forwards_gate_result_option() {
-  local name="ship finish CLI: --gate-result is forwarded to the finish contract"
-  should_run "$name" || return 0
-  local work out err status=0
-  work="$tmp_root/work-finish-cli-gate-result"
-  make_work_repo "$work" "CC-9001"
-  out="$tmp_root/out-finish-cli-gate-result"
-  err="$tmp_root/err-finish-cli-gate-result"
-  "$PMCTL" ship finish CC-9001 --gate-result --cd "$work" \
-    > "$out" 2> "$err" || status=$?
-  if [[ "$status" -eq 2 ]] \
-      && grep -q -- '--gate-result requires an artifact path' "$err"; then
-    pass "$name"
-  else
-    fail "$name" "status=$status stderr=$(cat "$err")"
-  fi
-}
-
-# Behavior: a valid public --gate-result invocation reaches the real finish
-# path without invoking the fixture Gate producer.
-# Steps: pass a committed relative artifact through a CLI fixture and require
-# the resolved verification message plus a successfully pushed branch.
-case_finish_cli_valid_gate_result_publishes() {
-  local name="ship finish CLI: valid --gate-result reaches publish verification"
-  should_run "$name" || return 0
-  local work product out err status=0
-  work="$tmp_root/work-finish-cli-gate-success"
-  product="$tmp_root/product-cli-gate-success"
-  make_work_repo "$work" "CC-9001"
-  checkout_ticket_branch "$work" "CC-9001"
-  add_bare_origin "$work"
-  mkdir -p "$work/evidence"
-  printf 'Final: GO\n' > "$work/evidence/gate.md"
-  git -C "$work" add evidence/gate.md
-  git -C "$work" commit -q -m cli-supplied-gate-result
-  make_cli_fixture_with_fake_gate "$product"
-  local gh_bin="$tmp_root/fake-gh-cli-gate-success-bin"
-  install_fake_gh "$gh_bin" "https://example.invalid/pr/cli-gate-success"
-  out="$tmp_root/out-finish-cli-gate-success"
-  err="$tmp_root/err-finish-cli-gate-success"
-  PATH="$gh_bin:$PATH" \
-    "$product/cli/pmctl" ship finish CC-9001 --cd "$work" \
-      --gate-result evidence/gate.md > "$out" 2> "$err" || status=$?
-  local pushed=0
-  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 \
-    2>/dev/null && pushed=1
-  if [[ "$status" -eq 0 && "$pushed" -eq 1 ]] \
-      && grep -q "verifying supplied Gate result: $work/evidence/gate.md" "$out"; then
-    pass "$name"
-  else
-    fail "$name" "status=$status pushed=$pushed stderr=$(cat "$err")"
-  fi
-}
-
-case_finish_cli_valid_full_result_publishes() {
-  # Behavior: a valid public --full-result invocation reaches the real finish verifier and publish path.
-  # Steps: invoke a minimal real CLI/runtime fixture with a post-load fake gate, then require resolved verification and push.
-  local name="ship finish CLI: valid --full-result reaches verifier and permits publish"
-  should_run "$name" || return 0
-  local work product out err log status=0
-  work="$tmp_root/work-finish-cli-full-success"
-  product="$tmp_root/product-cli-full-success"
-  log="$tmp_root/finish-cli-full-success.log"
-  make_work_repo "$work" "CC-9001"
-  checkout_ticket_branch "$work" "CC-9001"
-  add_bare_origin "$work"
-  mkdir -p "$work/evidence"
-  printf '{"fake":"cli-supplied-full-result"}\n' > "$work/evidence/full.json"
-  git -C "$work" add evidence/full.json
-  git -C "$work" commit -q -m cli-supplied-full-result
-  make_cli_fixture_with_fake_gate "$product"
-  local gh_bin="$tmp_root/fake-gh-cli-full-success-bin"
-  install_fake_gh "$gh_bin" "https://example.invalid/pr/cli-full-success"
-  out="$tmp_root/out-finish-cli-full-success"; err="$tmp_root/err-finish-cli-full-success"
-  PM_TEST_RUNNER_LOG="$log" PATH="$gh_bin:$PATH" \
-    "$product/cli/pmctl" ship finish CC-9001 --cd "$work" --full-result evidence/full.json > "$out" 2> "$err" || status=$?
-  local pushed=0
-  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
-  if [[ "$status" -eq 0 && "$pushed" -eq 1 ]] \
-    && grep -Fxq -- "--verify-full $work/evidence/full.json" "$log"; then
-    pass "$name"
-  else
-    fail "$name" "expected valid CLI artifact to verify and publish; status=$status pushed=$pushed log=$(cat "$log" 2>/dev/null) stderr=$(cat "$err")"
-  fi
-}
-
-case_finish_gh_pr_create_runtime_failure_writes_pushed_pr_failed_marker() {
-  local name="ship finish: gh pr create fails at runtime after a successful push -- writes PUSHED_PR_FAILED marker, exits nonzero"
-  should_run "$name" || return 0
-  local work out err status=0
-  work="$tmp_root/work-finish-prfail"
-  make_work_repo "$work" "CC-9001"
-  checkout_ticket_branch "$work" "CC-9001"
-  add_bare_origin "$work"
-  local gh_bin="$tmp_root/fake-gh-prfail-bin"
-  install_fake_gh_pr_create_fails "$gh_bin"
-  out="$tmp_root/out-finish-prfail"; err="$tmp_root/err-finish-prfail"
-  PATH="$gh_bin:$PATH" run_finish_with_fake_gate "$work" "CC-9001" "GO" > "$out" 2> "$err" || status=$?
-  local pushed=0
-  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
-  local marker_verdict
-  marker_verdict="$(jq -r '.verdict // ""' "$work/.pm-dispatch-ship-finish.json" 2>/dev/null)"
-  if [[ "$status" -ne 0 && "$pushed" -eq 1 && "$marker_verdict" == "PUSHED_PR_FAILED" ]]; then
-    pass "$name"
-  else
-    fail "$name" "expected nonzero exit + pushed + PUSHED_PR_FAILED marker; got status=$status pushed=$pushed marker=$marker_verdict"
-  fi
-}
-
-# Behavior: a successful push remains queryable when gh fails and the
-# lane-local finish marker cannot be written.
-# Steps: 1) Make the marker path unwritable; 2) simulate PR creation failure
-# after push; 3) require a canonical fallback record and partial status.
-case_finish_pr_failure_persists_fallback_when_marker_write_fails() {
-  local name="ship finish: PR failure persists queryable fallback when marker write fails"
-  should_run "$name" || return 0
-  local store work gh_bin out err status=0 pushed=0 reg_dir partial partial_verdict lane_status
-  store="$tmp_root/state-finish-prfail-fallback"
-  work="$tmp_root/work-finish-prfail-fallback"
-  make_work_repo "$work" "CC-9001"
-  checkout_ticket_branch "$work" "CC-9001"
-  add_bare_origin "$work"
-  mkdir -p "$work/.pm-dispatch-ship-finish.json"
-  gh_bin="$tmp_root/fake-gh-prfail-fallback-bin"
-  install_fake_gh_pr_create_fails "$gh_bin"
-  out="$tmp_root/out-finish-prfail-fallback"; err="$tmp_root/err-finish-prfail-fallback"
-  PM_DISPATCH_STATE_ROOT="$store" PATH="$gh_bin:$PATH" \
-    run_finish_with_fake_gate "$work" "CC-9001" "GO" > "$out" 2> "$err" || status=$?
-  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
-  reg_dir="$(reg_dir_for "$store" "$work")"
-  partial="$reg_dir/ship-partial-CC-9001.json"
-  partial_verdict="$(jq -r '.verdict // ""' "$partial" 2>/dev/null || true)"
-  lane_status="$(PM_DISPATCH_STATE_ROOT="$store" bash -c '
-    . "$1/runtime/lib/pmctl-ship.sh"
-    _pmctl_ship_lane_status "$2" "" "" CC-9001
-  ' _ "$REPO_ROOT" "$work" 2>/dev/null || true)"
-  if [[ "$status" -ne 0 && "$pushed" -eq 1 && "$partial_verdict" == "PUSHED_PR_FAILED" \
-      && "$lane_status" == "partial" ]] \
-      && grep -q 'durable publication recovery record' "$err"; then
-    pass "$name"
-  else
-    fail "$name" "expected durable fallback + partial status; status=$status pushed=$pushed partial=$partial_verdict lane_status=$lane_status stderr=$(cat "$err")"
-  fi
-}
-
-# Behavior: a successful GO publication remains queryable when only the lane-local marker write fails.
-# Steps: 1) Make the marker path a directory; 2) simulate successful push and PR creation; 3) require a durable GO recovery record and status=go.
-case_finish_go_persists_fallback_when_marker_write_fails() {
-  local name="ship finish: GO persists recovery record when marker write fails"
-  should_run "$name" || return 0
-  local store work gh_bin out err status=0 pushed=0 reg_dir recovery recovery_verdict lane_status
-  store="$tmp_root/state-finish-go-fallback"
-  work="$tmp_root/work-finish-go-fallback"
-  make_work_repo "$work" "CC-9001"
-  checkout_ticket_branch "$work" "CC-9001"
-  add_bare_origin "$work"
-  mkdir -p "$work/.pm-dispatch-ship-finish.json"
-  gh_bin="$tmp_root/fake-gh-go-fallback"
-  install_fake_gh "$gh_bin" "https://example.invalid/pr/go-fallback"
-  out="$tmp_root/out-finish-go-fallback"; err="$tmp_root/err-finish-go-fallback"
-  PM_DISPATCH_STATE_ROOT="$store" PATH="$gh_bin:$PATH" \
-    run_finish_with_fake_gate "$work" "CC-9001" GO > "$out" 2> "$err" || status=$?
-  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
-  reg_dir="$(reg_dir_for "$store" "$work")"
-  recovery="$reg_dir/ship-partial-CC-9001.json"
-  recovery_verdict="$(jq -r '.verdict // ""' "$recovery" 2>/dev/null || true)"
-  lane_status="$(PM_DISPATCH_STATE_ROOT="$store" bash -c '
-    . "$1/runtime/lib/pmctl-ship.sh"
-    _pmctl_ship_lane_status "$2" "" "" CC-9001
-  ' _ "$REPO_ROOT" "$work" 2>/dev/null || true)"
-  if [[ "$status" -eq 0 && "$pushed" -eq 1 && "$recovery_verdict" == GO \
-      && "$lane_status" == go ]] && grep -q 'durable publication recovery record' "$err"; then
-    pass "$name"
-  else
-    fail "$name" "expected durable GO fallback + go status; status=$status pushed=$pushed verdict=$recovery_verdict lane_status=$lane_status stderr=$(cat "$err")"
-  fi
-}
-
-# Behavior: a fallback record from an earlier same-ticket lane is ignored by
-# the later lane until that lane writes its own marker/recovery evidence.
-# Steps: 1) create two tracked-style worktree lanes for the same ticket; 2)
-# persist GO for the old lane; 3) track the new lane with no marker; 4) require
-# status=prepared rather than inheriting the old GO.
 case_status_ignores_stale_fallback_from_replaced_lane() {
   local name="ship status: ignores stale same-ticket fallback from a replaced lane"
   should_run "$name" || return 0
@@ -3059,70 +1309,6 @@ case_status_ignores_stale_fallback_from_replaced_lane() {
   fi
 }
 
-# Behavior: a successful push/PR is not reported as normal completion when both recovery sinks fail.
-# Steps: 1) Make the lane marker a directory; 2) force canonical recovery writes to fail; 3) require nonzero finish and a critical manual-recovery signal.
-case_finish_go_fails_when_all_recovery_sinks_fail() {
-  local name="ship finish: GO returns partial failure when all recovery sinks fail"
-  should_run "$name" || return 0
-  local store work gh_bin out err status=0 pushed=0 lane_status
-  store="$tmp_root/state-finish-go-recovery-failure"
-  work="$tmp_root/work-finish-go-recovery-failure"
-  make_work_repo "$work" "CC-9001"
-  checkout_ticket_branch "$work" "CC-9001"
-  add_bare_origin "$work"
-  mkdir -p "$work/.pm-dispatch-ship-finish.json"
-  gh_bin="$tmp_root/fake-gh-go-recovery-failure"
-  install_fake_gh "$gh_bin" "https://example.invalid/pr/go-recovery-failure"
-  out="$tmp_root/out-finish-go-recovery-failure"; err="$tmp_root/err-finish-go-recovery-failure"
-  PM_DISPATCH_STATE_ROOT="$store" PM_TEST_FAIL_RECOVERY_RECORD=1 PATH="$gh_bin:$PATH" \
-    run_finish_with_fake_gate "$work" "CC-9001" GO > "$out" 2> "$err" || status=$?
-  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
-  lane_status="$(PM_DISPATCH_STATE_ROOT="$store" bash -c '
-    . "$1/runtime/lib/pmctl-ship.sh"
-    _pmctl_ship_lane_status "$2" "" "" CC-9001
-  ' _ "$REPO_ROOT" "$work" 2>/dev/null || true)"
-  if [[ "$status" -ne 0 && "$pushed" -eq 1 && "$lane_status" != go ]] \
-      && grep -q 'no durable recovery record was persisted' "$err" \
-      && grep -q 'recover the pushed branch and PR manually' "$err"; then
-    pass "$name"
-  else
-    fail "$name" "expected nonzero recovery failure; status=$status pushed=$pushed lane_status=$lane_status stderr=$(cat "$err")"
-  fi
-}
-
-# Behavior: a transient PR-creation failure can be retried on the unchanged subject using the same verified assessment.
-# Steps: 1) Arrange fake gh to fail once and a clean ticket branch; 2) run finish twice without changing HEAD/tree; 3) require the second run to open the PR and write GO.
-case_finish_retries_after_pr_create_failure() {
-  local name="ship finish: retry after PR-create failure reuses verified assessment"
-  should_run "$name" || return 0
-  local work gh_bin first_marker body out1 err1 out2 err2 status1=0 status2=0 pushed=0 marker_verdict
-  work="$tmp_root/work-finish-pr-retry"
-  make_work_repo "$work" "CC-9001"
-  checkout_ticket_branch "$work" "CC-9001"
-  add_bare_origin "$work"
-  gh_bin="$tmp_root/fake-gh-pr-retry-bin"
-  first_marker="$tmp_root/fake-gh-pr-retry-first-attempt"
-  install_fake_gh_pr_create_fails_once "$gh_bin" "$first_marker" "https://example.invalid/pr/retry"
-  body="$tmp_root/real-publish-pr-retry-body"
-  out1="$tmp_root/out-finish-pr-retry-first"; err1="$tmp_root/err-finish-pr-retry-first"
-  export GH_PR_URL="https://example.invalid/pr/retry" GH_PR_BODY_FILE="$body"
-  PATH="$gh_bin:$PATH" run_finish_with_real_publish_assessment \
-    "$work" "CC-9001" real-closure "$body" > "$out1" 2> "$err1" || status1=$?
-  out2="$tmp_root/out-finish-pr-retry-second"; err2="$tmp_root/err-finish-pr-retry-second"
-  PATH="$gh_bin:$PATH" run_finish_with_real_publish_assessment \
-    "$work" "CC-9001" real-closure "$body" > "$out2" 2> "$err2" || status2=$?
-  unset GH_PR_URL GH_PR_BODY_FILE
-  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
-  marker_verdict="$(jq -r '.verdict // empty' "$work/.pm-dispatch-ship-finish.json" 2>/dev/null || true)"
-  if [[ "$status1" -ne 0 && "$status2" -eq 0 && "$pushed" -eq 1 \
-      && "$marker_verdict" == GO ]] \
-      && grep -q 'reusing unchanged assessment' "$err2"; then
-    pass "$name"
-  else
-    fail "$name" "expected retry recovery: status1=$status1 status2=$status2 pushed=$pushed marker=$marker_verdict first_err=$(cat "$err1") second_out=$(cat "$out2") second_err=$(cat "$err2")"
-  fi
-}
-
 case_status_reports_partial_for_pushed_pr_failed() {
   local name="ship-parallel status: a PUSHED_PR_FAILED marker surfaces as status=partial, distinct from no-go"
   should_run "$name" || return 0
@@ -3146,43 +1332,6 @@ case_status_reports_partial_for_pushed_pr_failed() {
     fail "$name" "expected status=partial, got $json"
   fi
 }
-
-case_finish_reviewers_flag_reaches_gate_call() {
-  local name="ship finish: --reviewers reaches pmctl_gate_run's argv"
-  should_run "$name" || return 0
-  local work
-  work="$tmp_root/work-finish-reviewers"
-  make_work_repo "$work" "CC-9001"
-  checkout_ticket_branch "$work" "CC-9001"
-  local argv_file="$tmp_root/finish-reviewers-argv"
-  rm -f "$argv_file"
-  bash -c '
-    repo_root="$1"; work_dir="$2"; ticket_id="$3"; argv_file="$4"
-    pmctl_gate_run() {
-      shift
-      printf "%s\n" "$@" > "$argv_file"
-      local result_file
-      result_file="$(mktemp)"
-      printf "Final: NO-GO\n" > "$result_file"
-      printf "result: %s\n" "$result_file"
-      return 1
-    }
-    . "$repo_root/runtime/lib/pmctl-ship.sh"
-    pmctl_ship_finish "$repo_root" "$work_dir" "$ticket_id" --reviewers critic,qa-tester
-  ' _ "$REPO_ROOT" "$work" "CC-9001" "$argv_file" >/dev/null 2>&1 || true
-  local argv
-  argv="$(cat "$argv_file" 2>/dev/null)"
-  if grep -q -- '--reviewers' <<<"$argv" \
-      && grep -Fxq 'critic,qa-tester' <<<"$argv" \
-      && grep -q -- '--policy' <<<"$argv" \
-      && grep -Fxq 'maintainer' <<<"$argv"; then
-    pass "$name"
-  else
-    fail "$name" "expected maintainer policy plus --reviewers critic,qa-tester in captured gate argv, got: $argv"
-  fi
-}
-
-# --- CC-442/CC-443: unified `pmctl ship <id> [--worktree] [--adapter]` entry ---
 
 case_ship_bare_start_behaves_like_prepare() {
   local name="ship <id>: bare call behaves like prepare -- branch only, no worktree, no tracking entry"
@@ -3289,6 +1438,181 @@ case_ship_worktree_and_adapter_together_dispatches_same_as_adapter_alone() {
     pass "$name"
   else
     fail "$name" "expected dispatched tracking entry; status=$status tracking=$(cat "$tracking" 2>/dev/null)"
+  fi
+}
+
+case_ship_run_to_finish_declared_allowlist_flows_end_to_end() {
+  local name="ship run->finish: a ticket's declared edit paths agree, unchanged, across BACKLOG parsing, the generated brief, the tracking record, and finish's staging enforcement (CC-584)"
+  should_run "$name" || return 0
+  local store work status=0
+  local ticket="CC-9042"
+  store="$tmp_root/state-e2e-allowlist"
+  work="$tmp_root/work-e2e-allowlist"
+  # A distinct ticket id (not CC-9001, used by many sibling cases) so this
+  # case's brief file -- mktemp'd under /tmp keyed by ticket id, never
+  # cleaned up by pmctl_ship_run itself -- can be found unambiguously by
+  # glob below without racing another case's leftover CC-9001 brief.
+  # Backtick below is a literal Markdown code span in the ticket text, not
+  # command substitution.
+  # shellcheck disable=SC2016
+  make_work_repo "$work" "$ticket" 'create `notes/output.md` with the summary.'
+  local out="$tmp_root/out-e2e-allowlist"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" ship "$ticket" --adapter claude --no-auto-pack --cd "$work" > "$out" 2>&1 || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "dispatch failed: status=$status $(cat "$out")"
+    return
+  fi
+  local reg_dir tracking lane_path
+  reg_dir="$(reg_dir_for "$store" "$work")"
+  tracking="$reg_dir/ship-lanes.jsonl"
+  lane_path="$reg_dir/checkouts/$ticket"
+  # 1) BACKLOG parsing -> brief propagation: the generated brief's `edit:`
+  # bullet must contain the exact ticket-declared path.
+  local brief_glob brief_file=""
+  brief_glob="/tmp/brief-ship-${ticket}-*.md"
+  # shellcheck disable=SC2086 # deliberate glob expansion, ticket id is fixed alnum/dash
+  for f in $brief_glob; do [[ -f "$f" ]] && brief_file="$f" && break; done
+  if [[ -z "$brief_file" ]] || ! grep -qF '  - edit: notes/output.md' "$brief_file"; then
+    fail "$name" "brief missing declared-path edit bullet: brief=${brief_file:-<none>} $(cat "${brief_file:-/dev/null}" 2>/dev/null)"
+    return
+  fi
+  # 2) BACKLOG parsing -> durable tracking persistence: the SAME path, as
+  # actually written to ship-lanes.jsonl by _pmctl_ship_lanes_tracking_write.
+  local tracked_declared
+  tracked_declared="$(jq -r --arg t "$ticket" 'select(.ticket == $t) | .declared_paths[]?' "$tracking" 2>/dev/null)"
+  if [[ "$tracked_declared" != "notes/output.md" ]]; then
+    fail "$name" "tracking declared_paths mismatch: got=[$tracked_declared] tracking=$(cat "$tracking" 2>/dev/null)"
+    return
+  fi
+  # 3) Persistence -> finish enforcement: simulate the dispatched executor's
+  # real output (the fake claude/codex binaries installed for this whole
+  # suite never touch the worktree) -- one declared file, one undeclared
+  # collateral file -- and prove finish enforces exactly the SAME allowlist
+  # that was parsed from the ticket and persisted above, not a hand-crafted
+  # test fixture's own copy of it.
+  mkdir -p "$lane_path/notes"
+  printf 'summary\n' > "$lane_path/notes/output.md"
+  printf 'not declared\n' > "$lane_path/COLLATERAL.md"
+  add_bare_origin "$lane_path"
+  local finish_out="$tmp_root/out-e2e-allowlist-finish" finish_err="$tmp_root/err-e2e-allowlist-finish"
+  local finish_status=0
+  PM_DISPATCH_STATE_ROOT="$store" run_finish_with_fake_gate "$lane_path" "$ticket" "GO" \
+    > "$finish_out" 2> "$finish_err" || finish_status=$?
+  if [[ "$finish_status" -eq 1 ]] && grep -q "undeclared path" "$finish_err" && grep -q "COLLATERAL.md" "$finish_err"; then
+    pass "$name"
+  else
+    fail "$name" "expected the SAME parsed/persisted allowlist to refuse the undeclared collateral file; finish_status=$finish_status stderr=$(cat "$finish_err")"
+  fi
+}
+
+case_ship_run_to_finish_declared_root_level_file_commits_pre_gate() {
+  local name="ship run->finish: a ticket declaring a repository-ROOT deliverable (no directory component) flows through parsing, brief, tracking, and finish to a real pre-gate commit (CC-584)"
+  should_run "$name" || return 0
+  local store work status=0
+  local ticket="CC-9043"
+  store="$tmp_root/state-e2e-root-file"
+  work="$tmp_root/work-e2e-root-file"
+  # Root-level (no `/`) declared path -- the exact shape of the real
+  # dogfood evidence that motivated this whole ticket (`SECOND.md`,
+  # documented in BACKLOG.md's `## CC-584` section).
+  # shellcheck disable=SC2016
+  make_work_repo "$work" "$ticket" 'produce `SECOND.md` at the repository root.'
+  local out="$tmp_root/out-e2e-root-file"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" ship "$ticket" --adapter claude --no-auto-pack --cd "$work" > "$out" 2>&1 || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "dispatch failed: status=$status $(cat "$out")"
+    return
+  fi
+  local reg_dir tracking lane_path
+  reg_dir="$(reg_dir_for "$store" "$work")"
+  tracking="$reg_dir/ship-lanes.jsonl"
+  lane_path="$reg_dir/checkouts/$ticket"
+  local tracked_declared
+  tracked_declared="$(jq -r --arg t "$ticket" 'select(.ticket == $t) | .declared_paths[]?' "$tracking" 2>/dev/null)"
+  if [[ "$tracked_declared" != "SECOND.md" ]]; then
+    fail "$name" "tracking declared_paths mismatch: got=[$tracked_declared] tracking=$(cat "$tracking" 2>/dev/null)"
+    return
+  fi
+  printf 'the deliverable\n' > "$lane_path/SECOND.md"
+  add_bare_origin "$lane_path"
+  local pre_head
+  pre_head="$(git -C "$lane_path" rev-parse HEAD)"
+  local gh_bin="$tmp_root/fake-gh-e2e-root-file-bin"
+  install_fake_gh "$gh_bin" "https://example.invalid/pr/e2e-root-file"
+  local finish_out="$tmp_root/out-e2e-root-file-finish" finish_err="$tmp_root/err-e2e-root-file-finish"
+  local finish_status=0
+  PM_DISPATCH_STATE_ROOT="$store" PATH="$gh_bin:$PATH" run_finish_with_fake_gate "$lane_path" "$ticket" "GO" \
+    > "$finish_out" 2> "$finish_err" || finish_status=$?
+  local post_head committed_files pushed=0
+  post_head="$(git -C "$lane_path" rev-parse HEAD 2>/dev/null || true)"
+  committed_files="$(git -C "$lane_path" diff --name-only "$pre_head" "$post_head" 2>/dev/null || true)"
+  git -C "$lane_path.bare-origin.git" show-ref --quiet "feat/$ticket" 2>/dev/null && pushed=1
+  if [[ "$finish_status" -eq 0 && "$post_head" != "$pre_head" ]] \
+    && [[ "$committed_files" == *"SECOND.md"* ]] && [[ "$pushed" -eq 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected the root-level declared file to be committed pre-gate and pushed; finish_status=$finish_status pre=$pre_head post=$post_head committed_files=[$committed_files] pushed=$pushed stderr=$(cat "$finish_err")"
+  fi
+}
+
+case_ship_run_to_finish_ignores_paths_cited_outside_requirement() {
+  local name="ship run->finish: a path merely CITED in Problem/Why prose (not the Requirement section) never enters the declared allowlist, brief, or tracking (CC-584 gate round 6)"
+  should_run "$name" || return 0
+  local store work status=0
+  local ticket="CC-9044"
+  store="$tmp_root/state-e2e-prose-citation"
+  work="$tmp_root/work-e2e-prose-citation"
+  # Problem cites a real-looking path for CONTEXT only; Requirement declares
+  # a completely different, actual deliverable. Only the latter may ever
+  # become commit-authorized.
+  # shellcheck disable=SC2016
+  make_work_repo "$work" "$ticket" \
+    'create `notes/output.md` with the summary.' \
+    'the bug lives near `docs/sandbox-limitations.md` for reference.'
+  local out="$tmp_root/out-e2e-prose-citation"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" ship "$ticket" --adapter claude --no-auto-pack --cd "$work" > "$out" 2>&1 || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "dispatch failed: status=$status $(cat "$out")"
+    return
+  fi
+  local reg_dir tracking lane_path
+  reg_dir="$(reg_dir_for "$store" "$work")"
+  tracking="$reg_dir/ship-lanes.jsonl"
+  lane_path="$reg_dir/checkouts/$ticket"
+  # 1) The cited-but-not-declared path never enters the brief's `edit:`
+  # list -- NOT "never appears anywhere in the brief": the brief's own
+  # boilerplate sandbox-limitations constraint legitimately cites
+  # `docs/sandbox-limitations.md` by name (Pattern 4's explanation), so
+  # that generic mention must not be confused with an edit declaration.
+  local brief_glob brief_file=""
+  brief_glob="/tmp/brief-ship-${ticket}-*.md"
+  # shellcheck disable=SC2086 # deliberate glob expansion, ticket id is fixed alnum/dash
+  for f in $brief_glob; do [[ -f "$f" ]] && brief_file="$f" && break; done
+  if [[ -z "$brief_file" ]] || grep -qF '  - edit: docs/sandbox-limitations.md' "$brief_file"; then
+    fail "$name" "brief must not declare the Problem-cited path as an edit target: brief=${brief_file:-<none>} $(cat "${brief_file:-/dev/null}" 2>/dev/null)"
+    return
+  fi
+  # 2) Nor the durable tracking record.
+  local tracked_declared
+  tracked_declared="$(jq -r --arg t "$ticket" 'select(.ticket == $t) | .declared_paths[]?' "$tracking" 2>/dev/null)"
+  if [[ "$tracked_declared" != "notes/output.md" ]]; then
+    fail "$name" "tracking declared_paths mismatch: got=[$tracked_declared] tracking=$(cat "$tracking" 2>/dev/null)"
+    return
+  fi
+  # 3) If the executor DID touch the cited path, finish refuses exactly like
+  # any other undeclared collateral file.
+  mkdir -p "$lane_path/notes" "$lane_path/docs"
+  printf 'summary\n' > "$lane_path/notes/output.md"
+  printf 'unrelated edit\n' > "$lane_path/docs/sandbox-limitations.md"
+  add_bare_origin "$lane_path"
+  local finish_out="$tmp_root/out-e2e-prose-citation-finish" finish_err="$tmp_root/err-e2e-prose-citation-finish"
+  local finish_status=0
+  PM_DISPATCH_STATE_ROOT="$store" run_finish_with_fake_gate "$lane_path" "$ticket" "GO" \
+    > "$finish_out" 2> "$finish_err" || finish_status=$?
+  if [[ "$finish_status" -eq 1 ]] && grep -q "undeclared path" "$finish_err" && grep -q "sandbox-limitations.md" "$finish_err"; then
+    pass "$name"
+  else
+    fail "$name" "expected the cited-only path to be refused as undeclared; finish_status=$finish_status stderr=$(cat "$finish_err")"
   fi
 }
 
@@ -3607,7 +1931,7 @@ case_ship_single_ticket_from_and_auto_pack_flags_reach_dispatch() {
 }
 
 case_ship_brief_quotes_metacharacter_lane_path() {
-  local name="ship brief writer: a lane path with shell metacharacters is safely quoted in EVERY generated command (export, finish --cd, self_verify), not just some"
+  local name="ship brief writer: a lane path with shell metacharacters is safely quoted in every generated command (self_verify), and never instructs the executor to commit/finish (CC-584)"
   should_run "$name" || return 0
   local evil_path="$tmp_root/evil dir; touch pwned-marker"
   local brief_path="$tmp_root/brief-metachar-test.md"
@@ -3616,23 +1940,23 @@ case_ship_brief_quotes_metacharacter_lane_path() {
     . "$repo_root/runtime/lib/pmctl-ship.sh"
     _pmctl_ship_brief_write "$repo_root" "$ticket_id" "$lane_work_dir" "$branch" "$out_path"
   ' _ "$REPO_ROOT" "CC-9001" "$evil_path" "feat/CC-9001" "$brief_path"
-  local quoted export_line finish_line self_verify_line
+  local quoted self_verify_line
   quoted="$(printf '%q' "$evil_path")"
-  export_line="$(grep 'export PM_DISPATCH_STATE_ROOT=' "$brief_path")"
-  finish_line="$(grep -m1 'Gate + PR: run' "$brief_path")"
   self_verify_line="$(grep -m1 '^  - cmd: ' "$brief_path")"
-  # All three shell-command instructions referencing the lane path must use
-  # the SAME shell-escaped form -- a raw, unescaped occurrence of the
-  # semicolon in any of them would mean that command can be reinterpreted by
-  # the executor's shell as two commands instead of one argument. (The plain
-  # `working_dir:` YAML metadata field legitimately keeps the raw path --
-  # it is read as data, never executed as a shell command -- so this test
-  # only checks the three lines that generate shell commands.)
-  if [[ "$export_line" == *"$quoted"* && "$finish_line" == *"--cd $quoted"* && "$self_verify_line" == *"$quoted"* ]] \
-     && [[ "$export_line" != *"$evil_path"* ]] && [[ "$finish_line" != *"$evil_path"* ]] && [[ "$self_verify_line" != *"$evil_path"* ]]; then
+  # self_verify's `cmd:` is the ONLY line in this brief that generates a shell
+  # command referencing the lane path (CC-584 removed the export/finish
+  # instructions entirely -- the executor's sandbox cannot reach either, since
+  # it cannot commit; see the "Do NOT run git add..." constraint). It must use
+  # the shell-escaped form -- a raw, unescaped semicolon would let the
+  # executor's shell reinterpret it as two commands instead of one argument.
+  # (The plain `working_dir:` YAML metadata field legitimately keeps the raw
+  # path -- it is read as data, never executed as a shell command.)
+  if [[ "$self_verify_line" == *"$quoted"* ]] && [[ "$self_verify_line" != *"$evil_path"* ]] \
+     && ! grep -q 'export PM_DISPATCH_STATE_ROOT=' "$brief_path" \
+     && ! grep -q '^  - Gate + PR: run' "$brief_path"; then
     pass "$name"
   else
-    fail "$name" "expected export, --cd, and self_verify lines to all use the shell-escaped form ($quoted); export_line=$export_line finish_line=$finish_line self_verify_line=$self_verify_line"
+    fail "$name" "expected self_verify to use the shell-escaped form ($quoted) and no export/finish instruction; self_verify_line=$self_verify_line brief=$(cat "$brief_path")"
   fi
 }
 
@@ -3655,111 +1979,6 @@ case_run_tracks_adapter_field() {
     fail "$name" "expected adapter=claude in tracking entry; status=$status tracking=$(cat "$tracking" 2>/dev/null)"
   fi
 }
-
-case_finish_no_go_does_not_push
-case_finish_missing_result_file
-case_finish_missing_shared_verifier_refuses_publish
-case_finish_malformed_shared_assessment_refuses_publish
-case_finish_go_stale_subject_does_not_push
-case_finish_valid_supplied_gate_result_publishes_without_new_gate
-case_finish_missing_supplied_gate_result_reports_artifact_path
-case_finish_stale_supplied_gate_result_refuses_publish
-case_finish_invalid_supplied_gate_result_refuses_publish
-case_finish_gate_result_rejects_reviewers
-case_finish_help_names_artifact_options
-case_finish_go_dirty_tree_refuses_push
-case_finish_go_head_moved_refuses_push
-case_finish_supplied_gate_result_head_moved_refuses_push
-case_finish_gh_missing_refuses_before_gate_or_push
-case_finish_wrong_branch_refuses_before_gate_or_push
-case_finish_go_pushes_and_opens_pr
-case_finish_runs_and_verifies_current_tree_full_suite_before_publish
-case_finish_invalid_supplied_full_result_refuses_publish
-case_finish_failed_full_suite_refuses_publish
-case_finish_post_suite_head_drift_refuses_publish
-case_finish_valid_supplied_full_result_publishes
-case_finish_cli_forwards_full_result_option
-case_finish_cli_forwards_gate_result_option
-case_finish_cli_valid_gate_result_publishes
-case_finish_cli_valid_full_result_publishes
-case_ship_subject_fingerprint_requires_canonical_helper
-case_publish_assessment_binds_closure_and_full_suite
-case_publish_assessment_route_follows_reviewed_subject
-case_publish_assessment_rejects_existing_destination
-case_publish_assessment_and_closure_are_concurrent_no_replace
-case_publish_assessment_verify_rejects_malformed_artifacts
-case_targeted_closure_requires_initial_finding_ledger
-case_targeted_closure_rejects_initial_subject_mismatch
-case_targeted_closure_rejects_legacy_initial_without_immutable_evidence
-case_targeted_closure_accepts_clean_go_with_confirmations
-case_targeted_closure_accepts_uncertain_go_with_confirmation
-case_ship_subject_fingerprint_matches_independent_gate_oracle
-case_publish_assessment_rejects_invalid_or_mismatched_evidence
-case_publish_assessment_rejects_post_build_source_mutation
-case_finish_real_publish_assessment_surfaces
-case_finish_real_targeted_publish_assessment_path
-case_finish_real_closure_verify_accepts_producer_output
-case_publish_assessment_rejects_closure_mutated_after_real_publish
-case_finish_post_assessment_drift_refuses_publish
-case_finish_assessment_replacement_after_verification_refuses_publish
-case_finish_pushes_only_assessed_head_when_branch_advances_at_push
-case_finish_gh_pr_create_runtime_failure_writes_pushed_pr_failed_marker
-case_finish_pr_failure_persists_fallback_when_marker_write_fails
-case_finish_go_persists_fallback_when_marker_write_fails
-case_status_ignores_stale_fallback_from_replaced_lane
-case_finish_go_fails_when_all_recovery_sinks_fail
-case_finish_retries_after_pr_create_failure
-case_status_reports_partial_for_pushed_pr_failed
-case_finish_reviewers_flag_reaches_gate_call
-case_prepare_empty_argument
-case_prepare_malformed_shape
-case_prepare_no_such_ticket
-case_prepare_archived_ticket
-case_prepare_dirty_tree_refused
-case_prepare_happy_path_creates_branch
-case_finish_requires_ticket
-case_run_requires_ticket
-case_run_rejects_unknown_ticket
-case_run_rejects_regex_metachar_ticket_id
-case_run_rejects_prefix_collision_ticket_id
-case_prepare_rejects_prefix_collision_ticket_id
-case_run_rejects_duplicate_ticket_in_batch
-case_run_bad_ticket_leaves_no_worktree
-case_run_refuses_redispatch_while_in_flight
-case_run_flag_adapter_reaches_dispatch
-case_run_flag_isolation_reaches_dispatch
-case_run_flag_model_reaches_dispatch
-case_run_flag_no_auto_pack_reaches_dispatch
-case_run_flag_auto_pack_reaches_dispatch
-case_run_flag_from_sets_worktree_base
-case_run_dispatches_and_tracks
-case_run_brief_preserves_ship_contract
-case_run_restores_gc_auto_previously_set
-case_run_restores_gc_auto_previously_unset
-case_status_never_reports_go_from_free_text_without_marker
-case_status_reports_go_from_finish_marker_even_without_final_go_text
-case_status_reports_no_go_from_final_line
-case_status_no_record_yet_is_running
-case_list_filters_to_go_only
-case_list_empty_when_none_go
-case_status_no_tracked_lanes
-case_ship_bare_start_behaves_like_prepare
-case_ship_worktree_flag_creates_isolated_lane_no_dispatch
-case_ship_adapter_flag_implies_worktree_and_dispatches
-case_ship_worktree_and_adapter_together_dispatches_same_as_adapter_alone
-case_ship_status_reports_prepared_for_manual_worktree_lane
-case_ship_run_refuses_redispatch_while_in_flight_standalone
-case_ship_dispatch_failure_after_worktree_records_dispatch_failed_lane
-case_ship_status_preserves_dispatch_failed_across_refresh
-case_ship_tracking_append_failure_is_hard_failure
-case_ship_status_warns_on_legacy_tracking_file
-case_ship_rejects_duplicate_positional_ticket
-case_ship_single_ticket_isolation_and_model_reach_real_dispatch
-case_ship_single_ticket_from_and_auto_pack_flags_reach_dispatch
-case_ship_brief_quotes_metacharacter_lane_path
-case_ship_adapter_missing_value_fails_before_any_side_effect
-case_ship_adapter_trailing_flag_missing_value_fails
-case_run_tracks_adapter_field
 
 case_ship_operation_routes_via_cli() {
   local name="ship operation CLI: cancel and reconcile route with positional operation id and --cd"
@@ -3806,6 +2025,60 @@ case_ship_standalone_source_loads_identifier_policy_for_terminal_reconciliation(
   if [[ "$status" -eq 0 ]]; then pass "$name"; else fail "$name" "standalone refresh did not reconcile the terminal operation"; fi
 }
 
+
+case_status_ignores_stale_fallback_from_replaced_lane
+case_status_reports_partial_for_pushed_pr_failed
+case_prepare_empty_argument
+case_prepare_malformed_shape
+case_prepare_no_such_ticket
+case_prepare_archived_ticket
+case_prepare_dirty_tree_refused
+case_prepare_happy_path_creates_branch
+case_run_requires_ticket
+case_run_rejects_unknown_ticket
+case_run_rejects_regex_metachar_ticket_id
+case_run_rejects_prefix_collision_ticket_id
+case_prepare_rejects_prefix_collision_ticket_id
+case_run_rejects_duplicate_ticket_in_batch
+case_run_bad_ticket_leaves_no_worktree
+case_run_refuses_redispatch_while_in_flight
+case_run_flag_adapter_reaches_dispatch
+case_run_flag_isolation_reaches_dispatch
+case_run_flag_model_reaches_dispatch
+case_run_flag_no_auto_pack_reaches_dispatch
+case_run_flag_auto_pack_reaches_dispatch
+case_run_flag_from_sets_worktree_base
+case_run_dispatches_and_tracks
+case_run_brief_preserves_ship_contract
+case_run_restores_gc_auto_previously_set
+case_run_restores_gc_auto_previously_unset
+case_status_never_reports_go_from_free_text_without_marker
+case_status_reports_go_from_finish_marker_even_without_final_go_text
+case_status_reports_no_go_from_final_line
+case_status_no_record_yet_is_running
+case_list_filters_to_go_only
+case_list_empty_when_none_go
+case_status_no_tracked_lanes
+case_ship_bare_start_behaves_like_prepare
+case_ship_worktree_flag_creates_isolated_lane_no_dispatch
+case_ship_adapter_flag_implies_worktree_and_dispatches
+case_ship_worktree_and_adapter_together_dispatches_same_as_adapter_alone
+case_ship_run_to_finish_declared_allowlist_flows_end_to_end
+case_ship_run_to_finish_declared_root_level_file_commits_pre_gate
+case_ship_run_to_finish_ignores_paths_cited_outside_requirement
+case_ship_status_reports_prepared_for_manual_worktree_lane
+case_ship_run_refuses_redispatch_while_in_flight_standalone
+case_ship_dispatch_failure_after_worktree_records_dispatch_failed_lane
+case_ship_status_preserves_dispatch_failed_across_refresh
+case_ship_tracking_append_failure_is_hard_failure
+case_ship_status_warns_on_legacy_tracking_file
+case_ship_rejects_duplicate_positional_ticket
+case_ship_single_ticket_isolation_and_model_reach_real_dispatch
+case_ship_single_ticket_from_and_auto_pack_flags_reach_dispatch
+case_ship_brief_quotes_metacharacter_lane_path
+case_ship_adapter_missing_value_fails_before_any_side_effect
+case_ship_adapter_trailing_flag_missing_value_fails
+case_run_tracks_adapter_field
 case_ship_operation_routes_via_cli
 case_ship_operation_cli_unavailable_fallbacks
 case_ship_standalone_source_loads_identifier_policy_for_terminal_reconciliation
