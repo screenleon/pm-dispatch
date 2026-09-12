@@ -1904,8 +1904,24 @@ case_finish_dispatched_lane_bookkeeping_only_reports_explicitly_and_gates_old_he
   fi
 }
 
+# Purpose: prove a dispatched lane's SECOND (or later) `pmctl ship finish` --
+# one whose `.gitignore` a prior attempt already fully patched -- completes
+# instead of dying silently (CC-586: _pmctl_ship_ensure_gitignore's last
+# statement was a bare `[[ cond ]] && printf`, so an empty `added` array made
+# the function's own implicit return status 1, which the real CLI's
+# `set -euo pipefail` turned into a zero-output, zero-diagnostic abort).
+#   Arrange: a dispatched-lane tracking entry declaring `OUTPUT.md`; a
+#     `.gitignore` pre-seeded with every bookkeeping pattern and committed
+#     (so this run's `_pmctl_ship_ensure_gitignore` call has nothing new to
+#     add); a real, uncommitted `OUTPUT.md` deliverable; a real `cli/pmctl`
+#     binary via `make_cli_fixture_with_fake_gate` (genuine `set -e`, unlike
+#     this suite's non-set-e `run_finish_with_fake_gate` fixture).
+#   Act: invoke that real CLI's `ship finish CC-9001 --cd <work>`.
+#   Assert: exit 0, the branch is pushed to the bare origin, and stderr
+#     reports the deliverable commit -- not the silent status=1/no-output
+#     failure this case guards against.
 case_finish_dispatched_lane_already_fully_gitignore_patched_does_not_abort() {
-  local name="ship finish: a dispatched lane whose .gitignore ALREADY has every bookkeeping pattern (nothing new to add) still commits and pushes -- CC-584 live-dogfood regression: _pmctl_ship_ensure_gitignore's last statement was a bare '[[ cond ]] && printf', so an empty \$added made the function's own exit status 1 and, under the REAL CLI's set -e (not this suite's non-set-e fixture stub), silently killed finish with zero output before ever reaching a printf"
+  local name="ship finish: a dispatched lane whose .gitignore ALREADY has every bookkeeping pattern (nothing new to add) still commits and pushes (CC-586)"
   should_run "$name" || return 0
   # This MUST run through a real `cli/pmctl` binary (`set -euo pipefail` at
   # its own top), not run_finish_with_fake_gate's `bash -c '...'` fixture --
