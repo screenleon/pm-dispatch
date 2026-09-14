@@ -412,24 +412,29 @@ case_state_store_init_non_owner_rejected_when_simulatable() {
   # Verifies that an existing store root not owned by the effective user is rejected.
   #
   # Steps:
-  #   1. Skip unless running with permission to change ownership.
-  #   2. Create a store root and chown it away from the effective user.
-  #   3. Assert state_store_init fails loudly without writing VERSION.
+  #   1. As a non-root Linux user, use the read-only, foreign-owned /sys mount;
+  #      as root, create a store root and chown it away from the effective user.
+  #   2. Assert state_store_init fails loudly without writing VERSION.
   local name="state_store_init: non-owned store root is rejected"
   should_run "$name" || return 0
-  if [[ "$(id -u)" -ne 0 ]]; then
-    skip "$name" "not running as root; cannot chown the store root away from the effective user"
-    return 0
-  fi
-  local store rc=0 stderr_out
-  store="$tmp_root/root-non-owner"
-  mkdir -p "$store"
-  if ! chown 65534:65534 "$store" 2>/dev/null; then
-    skip "$name" "chown to an alternate uid failed in this environment"
-    return 0
+  local store rc=0 stderr_out created_fixture=0
+  if [[ "$(id -u)" -ne 0 && -d /sys && ! -O /sys ]]; then
+    # /sys is kernel-owned and read-only to an ordinary user, so even a broken
+    # ownership precheck cannot mutate this shared fixture before failing.
+    store=/sys
+  else
+    store="$tmp_root/root-non-owner"
+    mkdir -p "$store"
+    if ! chown 65534:65534 "$store" 2>/dev/null; then
+      skip "$name" "cannot obtain a safe foreign-owned directory in this environment"
+      return 0
+    fi
+    created_fixture=1
   fi
   stderr_out="$(PM_DISPATCH_STATE_ROOT="$store" _SW_ALLOW_GLOBAL_PARTITION=1 state_store_init 2>&1 >/dev/null)" || rc=$?
-  chown "$(id -u):$(id -g)" "$store" 2>/dev/null || true
+  if [[ "$created_fixture" -eq 1 ]]; then
+    chown "$(id -u):$(id -g)" "$store" 2>/dev/null || true
+  fi
   if [[ "$rc" -ne 0 && "$stderr_out" == *"not owned"* && ! -e "$store/VERSION" ]]; then
     pass "$name"
   else
