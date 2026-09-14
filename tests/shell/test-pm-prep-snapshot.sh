@@ -387,11 +387,12 @@ fi
 #   3. Assert exit is non-zero and error output contains "not inside a git repository".
 if should_run "error-hard-non-git"; then
   nongit="$tmp_root/non-git"
+  error_log="$tmp_root/non-git.err"
   mkdir -p "$nongit"
-  if (cd "$nongit" && run_snapshot "$nongit/out.md" >/tmp/pm-prep-snapshot.err 2>&1); then
+  if (cd "$nongit" && run_snapshot "$nongit/out.md" >"$error_log" 2>&1); then
     fail "error-hard-non-git" "expected non-zero exit for non-git dir"
   else
-    if grep -q "not inside a git repository" /tmp/pm-prep-snapshot.err; then
+    if grep -q "not inside a git repository" "$error_log"; then
       pass "error-hard-non-git"
     else
       fail "error-hard-non-git" "missing clear non-git error"
@@ -408,14 +409,15 @@ fi
 #   3. Assert exit is non-zero and error output contains "cannot write to output path".
 if should_run "error-hard-unwritable-output"; then
   ro="$tmp_root/unwritable"
+  error_log="$tmp_root/unwritable-output.err"
   mkdir -p "$ro"
   chmod 500 "$ro"
   out="$ro/out.md"
-  if (PATH="$FAKE_GH_DIR:$PATH" "$SCRIPT_PATH" --out "$out" >/tmp/pm-prep-snapshot.err 2>&1); then
+  if (PATH="$FAKE_GH_DIR:$PATH" "$SCRIPT_PATH" --out "$out" >"$error_log" 2>&1); then
     chmod 700 "$ro"
     fail "error-hard-unwritable-output" "expected non-zero exit"
   else
-    if grep -q "cannot write to output path" /tmp/pm-prep-snapshot.err; then
+    if grep -q "cannot write to output path" "$error_log"; then
       pass "error-hard-unwritable-output"
     else
       fail "error-hard-unwritable-output" "missing clear unwritable-output error"
@@ -431,8 +433,10 @@ fi
 #   2. Assert exit code is 0.
 #   3. Assert stderr contains "Usage:".
 if should_run "cli-help"; then
-  if (PATH="$FAKE_GH_DIR:$PATH" "$SCRIPT_PATH" --help >/tmp/pm-prep-snapshot.out 2>/tmp/pm-prep-snapshot.err); then
-    if grep -q "^Usage:" /tmp/pm-prep-snapshot.err; then
+  help_out="$tmp_root/help.out"
+  help_err="$tmp_root/help.err"
+  if (PATH="$FAKE_GH_DIR:$PATH" "$SCRIPT_PATH" --help >"$help_out" 2>"$help_err"); then
+    if grep -q "^Usage:" "$help_err"; then
       pass "cli-help: prints usage on stderr"
     else
       fail "cli-help" "missing 'Usage:' on stderr"
@@ -450,10 +454,12 @@ fi
 #   2. Assert exit is non-zero.
 #   3. Assert stderr contains "unknown argument".
 if should_run "cli-unknown-flag"; then
-  if (PATH="$FAKE_GH_DIR:$PATH" "$SCRIPT_PATH" --not-a-real-flag >/tmp/pm-prep-snapshot.out 2>/tmp/pm-prep-snapshot.err); then
+  unknown_out="$tmp_root/unknown-flag.out"
+  unknown_err="$tmp_root/unknown-flag.err"
+  if (PATH="$FAKE_GH_DIR:$PATH" "$SCRIPT_PATH" --not-a-real-flag >"$unknown_out" 2>"$unknown_err"); then
     fail "cli-unknown-flag" "expected non-zero exit for unknown flag"
   else
-    if grep -q "unknown argument" /tmp/pm-prep-snapshot.err; then
+    if grep -q "unknown argument" "$unknown_err"; then
       pass "cli-unknown-flag: clear error message"
     else
       fail "cli-unknown-flag" "missing 'unknown argument' error"
@@ -478,9 +484,10 @@ if should_run "branch-base-warn-on-missing-origin-main"; then
   # Use the real BACKLOG.md so the snapshot script can compute backlog_next_id.
   cp "$REPO_ROOT/BACKLOG.md" "$local_repo/"
   _snap_out="$tmp_root/local-only-snap.md"
+  _snap_err="$tmp_root/local-only-snap.err"
   _snap_exit=0
   (cd "$local_repo" && PATH="$FAKE_GH_DIR:$PATH" "$SCRIPT_PATH" --out "$_snap_out") \
-    >/tmp/pm-prep-snapshot.err 2>&1 || _snap_exit=$?
+    >"$_snap_err" 2>&1 || _snap_exit=$?
   if [[ "$_snap_exit" -eq 0 ]]; then
     if grep -qE "^# warn: origin/main unresolved" "$_snap_out" && \
        grep -qE "^branch_base: main@[0-9a-f]+" "$_snap_out"; then
@@ -559,15 +566,16 @@ if should_run "repo-name-from-remote-url"; then
   git -C "$_wt_root" remote add origin "git@github.com:org/canonical-repo-name.git"
   cp "$REPO_ROOT/BACKLOG.md" "$_wt_root/"
   _rn_out="$tmp_root/remote-repo-name-snap.md"
+  _rn_err="$tmp_root/remote-repo-name-snap.err"
   _rn_exit=0
   (cd "$_wt_root" && PATH="$FAKE_GH_DIR:$PATH" "$SCRIPT_PATH" --out "$_rn_out") \
-    >/tmp/pm-prep-snapshot-remote.err 2>&1 || _rn_exit=$?
+    >"$_rn_err" 2>&1 || _rn_exit=$?
   if [[ "$_rn_exit" -eq 0 ]]; then
     require_file_contains "$_rn_out" '^repo: canonical-repo-name$' "repo-name-from-remote-url: repo field uses remote basename"
     require_no_match "$_rn_out" '^repo: my-local-dir$' "repo-name-from-remote-url: must not use directory name"
     pass "repo-name-from-remote-url"
   else
-    fail "repo-name-from-remote-url" "snapshot exited $_rn_exit, expected 0 - see /tmp/pm-prep-snapshot-remote.err"
+    fail "repo-name-from-remote-url" "snapshot exited $_rn_exit, expected 0 - see $_rn_err"
   fi
 fi
 
