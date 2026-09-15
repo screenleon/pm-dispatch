@@ -429,7 +429,7 @@ case_repeated_cancel_preserves_cancelled_terminal() {
 case_expect_producer_windows_replace_fallback() {
   local name="operation producer reservation: native Windows replace fallback preserves the record"
   should_run "$name" || return 0
-  local work="$tmp_root/windows replace work" store="$tmp_root/windows-replace-state"
+  local work="$tmp_root/windows replace work" store="$tmp_root/windows replace state"
   local stubs="$tmp_root/windows-replace-stubs" sink="$tmp_root/windows-replace-called"
   local op state record real_mv replace_args replace_src replace_dest
   local replace_src_dir replace_dest_normal replace_before replace_after rc=0
@@ -495,7 +495,7 @@ case_expect_producer_windows_replace_failure_preserves_record() {
   local name="operation producer reservation: failed Windows replace preserves record and cleans temp"
   should_run "$name" || return 0
   local work="$tmp_root/windows replace failure work"
-  local store="$tmp_root/windows-replace-failure-state"
+  local store="$tmp_root/windows replace failure state"
   local stubs="$tmp_root/windows-replace-failure-stubs"
   local sink="$tmp_root/windows-replace-failure-called"
   local op state record before after rc=0 schema_rc=0
