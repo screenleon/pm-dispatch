@@ -1456,7 +1456,9 @@ case_ship_run_to_finish_declared_allowlist_flows_end_to_end() {
   # command substitution.
   # shellcheck disable=SC2016
   make_work_repo "$work" "$ticket" 'create `notes/output.md` with the summary.'
-  local out="$tmp_root/out-e2e-allowlist"
+  local out="$tmp_root/out-e2e-allowlist" brief_marker
+  brief_marker="$tmp_root/e2e-allowlist-brief.marker"
+  touch "$brief_marker"
   PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" ship "$ticket" --adapter claude --no-auto-pack --cd "$work" > "$out" 2>&1 || status=$?
   if [[ "$status" -ne 0 ]]; then
     fail "$name" "dispatch failed: status=$status $(cat "$out")"
@@ -1468,10 +1470,9 @@ case_ship_run_to_finish_declared_allowlist_flows_end_to_end() {
   lane_path="$reg_dir/checkouts/$ticket"
   # 1) BACKLOG parsing -> brief propagation: the generated brief's `edit:`
   # bullet must contain the exact ticket-declared path.
-  local brief_glob brief_file=""
-  brief_glob="/tmp/brief-ship-${ticket}-*.md"
-  # shellcheck disable=SC2086 # deliberate glob expansion, ticket id is fixed alnum/dash
-  for f in $brief_glob; do [[ -f "$f" ]] && brief_file="$f" && break; done
+  local brief_file=""
+  brief_file="$(find /tmp -maxdepth 1 -type f -name "brief-ship-${ticket}-*.md" \
+    -newer "$brief_marker" -print -quit 2>/dev/null)"
   if [[ -z "$brief_file" ]] || ! grep -qF '  - edit: notes/output.md' "$brief_file"; then
     fail "$name" "brief missing declared-path edit bullet: brief=${brief_file:-<none>} $(cat "${brief_file:-/dev/null}" 2>/dev/null)"
     return
@@ -1569,7 +1570,9 @@ case_ship_run_to_finish_ignores_paths_cited_outside_requirement() {
   make_work_repo "$work" "$ticket" \
     'create `notes/output.md` with the summary.' \
     'the bug lives near `docs/sandbox-limitations.md` for reference.'
-  local out="$tmp_root/out-e2e-prose-citation"
+  local out="$tmp_root/out-e2e-prose-citation" brief_marker
+  brief_marker="$tmp_root/e2e-prose-citation-brief.marker"
+  touch "$brief_marker"
   PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" ship "$ticket" --adapter claude --no-auto-pack --cd "$work" > "$out" 2>&1 || status=$?
   if [[ "$status" -ne 0 ]]; then
     fail "$name" "dispatch failed: status=$status $(cat "$out")"
@@ -1584,10 +1587,9 @@ case_ship_run_to_finish_ignores_paths_cited_outside_requirement() {
   # boilerplate sandbox-limitations constraint legitimately cites
   # `docs/sandbox-limitations.md` by name (Pattern 4's explanation), so
   # that generic mention must not be confused with an edit declaration.
-  local brief_glob brief_file=""
-  brief_glob="/tmp/brief-ship-${ticket}-*.md"
-  # shellcheck disable=SC2086 # deliberate glob expansion, ticket id is fixed alnum/dash
-  for f in $brief_glob; do [[ -f "$f" ]] && brief_file="$f" && break; done
+  local brief_file=""
+  brief_file="$(find /tmp -maxdepth 1 -type f -name "brief-ship-${ticket}-*.md" \
+    -newer "$brief_marker" -print -quit 2>/dev/null)"
   if [[ -z "$brief_file" ]] || grep -qF '  - edit: docs/sandbox-limitations.md' "$brief_file"; then
     fail "$name" "brief must not declare the Problem-cited path as an edit target: brief=${brief_file:-<none>} $(cat "${brief_file:-/dev/null}" 2>/dev/null)"
     return

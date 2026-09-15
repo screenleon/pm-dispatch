@@ -1240,7 +1240,10 @@ _pmctl_ship_ensure_gitignore() {
     printf '%s\n' "$pattern" >> "$gitignore"
     added+=("$pattern")
   done
-  [[ "${#added[@]}" -gt 0 ]] && printf 'pmctl ship finish: added %s to .gitignore\n' "${added[*]}" >&2
+  if [[ "${#added[@]}" -gt 0 ]]; then
+    printf 'pmctl ship finish: added %s to .gitignore\n' "${added[*]}" >&2
+  fi
+  return 0
 }
 
 # _pmctl_ship_brief_write <repo_root> <ticket_id> <lane_work_dir> <branch> <out_path> [declared_paths]

@@ -1904,6 +1904,61 @@ case_finish_dispatched_lane_bookkeeping_only_reports_explicitly_and_gates_old_he
   fi
 }
 
+# Purpose: prove a dispatched lane's SECOND (or later) `pmctl ship finish` --
+# one whose `.gitignore` a prior attempt already fully patched -- completes
+# instead of dying silently (CC-586: _pmctl_ship_ensure_gitignore's last
+# statement was a bare `[[ cond ]] && printf`, so an empty `added` array made
+# the function's own implicit return status 1, which the real CLI's
+# `set -euo pipefail` turned into a zero-output, zero-diagnostic abort).
+#   Arrange: a dispatched-lane tracking entry declaring `OUTPUT.md`; a
+#     `.gitignore` pre-seeded with every bookkeeping pattern and committed
+#     (so this run's `_pmctl_ship_ensure_gitignore` call has nothing new to
+#     add); a real, uncommitted `OUTPUT.md` deliverable; a real `cli/pmctl`
+#     binary via `make_cli_fixture_with_fake_gate` (genuine `set -e`, unlike
+#     this suite's non-set-e `run_finish_with_fake_gate` fixture).
+#   Act: invoke that real CLI's `ship finish CC-9001 --cd <work>`.
+#   Assert: exit 0, the branch is pushed to the bare origin, and stderr
+#     reports the deliverable commit -- not the silent status=1/no-output
+#     failure this case guards against.
+case_finish_dispatched_lane_already_fully_gitignore_patched_does_not_abort() {
+  local name="ship finish: a dispatched lane whose .gitignore ALREADY has every bookkeeping pattern (nothing new to add) still commits and pushes (CC-586)"
+  should_run "$name" || return 0
+  # This MUST run through a real `cli/pmctl` binary (`set -euo pipefail` at
+  # its own top), not run_finish_with_fake_gate's `bash -c '...'` fixture --
+  # that fixture body never sets `-e`, so it cannot distinguish the buggy
+  # implicit-return-1 shape from a fixed one; only a genuinely `set -e`
+  # process reproduces the live-dogfood failure this case guards against.
+  local store work product out err status=0
+  store="$tmp_root/state-finish-gitignore-prepatched"
+  work="$tmp_root/work-finish-gitignore-prepatched"
+  product="$tmp_root/product-gitignore-prepatched"
+  make_work_repo "$work" "CC-9001"
+  checkout_ticket_branch "$work" "CC-9001"
+  add_bare_origin "$work"
+  write_dispatched_lane_tracking_entry "$store" "$work" "CC-9001" "codex" "OUTPUT.md"
+  # Pre-seed .gitignore with every bookkeeping pattern _pmctl_ship_ensure_gitignore
+  # would otherwise add -- reproducing a lane that already went through one
+  # finish attempt (or was seeded some other way): this finish call has
+  # nothing new to append, so `added` stays empty.
+  printf '.dispatch-results\n.gate-results\n.gate-briefs\n.agent-trace\n.pm-dispatch-state\n.pm-dispatch\n' > "$work/.gitignore"
+  git -C "$work" add .gitignore
+  git -C "$work" -c user.email=test@example.com -c user.name=test commit -q -m "pre-seed fully patched .gitignore"
+  printf 'dispatched output\n' > "$work/OUTPUT.md"
+  make_cli_fixture_with_fake_gate "$product"
+  local gh_bin="$tmp_root/fake-gh-gitignore-prepatched-bin"
+  install_fake_gh "$gh_bin" "https://example.invalid/pr/gitignore-prepatched"
+  out="$tmp_root/out-finish-gitignore-prepatched"; err="$tmp_root/err-finish-gitignore-prepatched"
+  PM_DISPATCH_STATE_ROOT="$store" PATH="$gh_bin:$PATH" \
+    "$product/cli/pmctl" ship finish CC-9001 --cd "$work" > "$out" 2> "$err" || status=$?
+  local pushed=0
+  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
+  if [[ "$status" -eq 0 && "$pushed" -eq 1 ]] && grep -q "committed dispatched changes for CC-9001" "$err"; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 0, pushed, deliverable committed; got status=$status pushed=$pushed stdout=$(cat "$out") stderr=$(cat "$err")"
+  fi
+}
+
 case_finish_go_head_moved_refuses_push() {
   local name="ship finish: GO but HEAD moved during the gate run refuses to push an un-gated commit"
   should_run "$name" || return 0
@@ -2546,6 +2601,7 @@ case_finish_dispatched_lane_refuses_undeclared_collateral_file
 case_finish_dispatched_lane_refuses_executor_authored_gitignore
 case_finish_dispatched_lane_refuses_with_no_declared_allowlist
 case_finish_dispatched_lane_bookkeeping_only_reports_explicitly_and_gates_old_head
+case_finish_dispatched_lane_already_fully_gitignore_patched_does_not_abort
 case_finish_go_head_moved_refuses_push
 case_finish_supplied_gate_result_head_moved_refuses_push
 case_finish_gh_missing_refuses_before_gate_or_push
