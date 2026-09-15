@@ -432,7 +432,7 @@ case_expect_producer_windows_replace_fallback() {
   local work="$tmp_root/windows replace work" store="$tmp_root/windows-replace-state"
   local stubs="$tmp_root/windows-replace-stubs" sink="$tmp_root/windows-replace-called"
   local op state record real_mv replace_args replace_src replace_dest
-  local replace_src_dir replace_dest_normal rc=0
+  local replace_src_dir replace_dest_normal replace_before replace_after rc=0
   make_repo "$work"
   _pmctl_operation_load_writer "$REPO_ROOT"
   op="$(PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_create "$REPO_ROOT" "$work" gate codex)"
@@ -445,9 +445,21 @@ case_expect_producer_windows_replace_fallback() {
   printf '#!/usr/bin/env bash\n[[ "$1" == "-w" ]] || exit 1\nprintf "%%s\\n" "$2"\n' > "$stubs/cygpath"
   cat > "$stubs/powershell.exe" <<'EOF'
 #!/usr/bin/env bash
-printf '%s\n%s\n%s\n' "$*" "$PM_DISPATCH_REPLACE_SOURCE" \
-  "$PM_DISPATCH_REPLACE_DESTINATION" > "$CC587_REPLACE_SINK"
+set -euo pipefail
+# This is the observable replacement boundary: a fallback that unlinks or
+# partially rewrites the destination before invoking ReplaceFile must fail the
+# regression instead of being hidden by the final-state assertion.
+[[ -f "$PM_DISPATCH_REPLACE_SOURCE" && -f "$PM_DISPATCH_REPLACE_DESTINATION" ]]
+jq -e 'type == "object" and .id != null and .state != null' \
+  "$PM_DISPATCH_REPLACE_SOURCE" "$PM_DISPATCH_REPLACE_DESTINATION" >/dev/null
+before="$(jq -c . "$PM_DISPATCH_REPLACE_DESTINATION")"
 "$CC587_REAL_MV" -f -- "$PM_DISPATCH_REPLACE_SOURCE" "$PM_DISPATCH_REPLACE_DESTINATION"
+[[ ! -e "$PM_DISPATCH_REPLACE_SOURCE" && -f "$PM_DISPATCH_REPLACE_DESTINATION" ]]
+jq -e 'type == "object" and .id != null and .state != null' \
+  "$PM_DISPATCH_REPLACE_DESTINATION" >/dev/null
+after="$(jq -c . "$PM_DISPATCH_REPLACE_DESTINATION")"
+printf '%s\n%s\n%s\n%s\n%s\n' "$*" "$PM_DISPATCH_REPLACE_SOURCE" \
+  "$PM_DISPATCH_REPLACE_DESTINATION" "$before" "$after" > "$CC587_REPLACE_SINK"
 EOF
   chmod +x "$stubs/mv" "$stubs/cygpath" "$stubs/powershell.exe"
   PATH="$stubs:$PATH" PM_DISPATCH_PLATFORM=windows PM_DISPATCH_STATE_ROOT="$store" \
@@ -456,6 +468,8 @@ EOF
   replace_args="$(sed -n '1p' "$sink" 2>/dev/null || true)"
   replace_src="$(sed -n '2p' "$sink" 2>/dev/null || true)"
   replace_dest="$(sed -n '3p' "$sink" 2>/dev/null || true)"
+  replace_before="$(sed -n '4p' "$sink" 2>/dev/null || true)"
+  replace_after="$(sed -n '5p' "$sink" 2>/dev/null || true)"
   replace_src_dir="$(realpath_m "${replace_src%/*}" 2>/dev/null || true)"
   replace_dest_normal="$(realpath_m "$replace_dest" 2>/dev/null || true)"
   # shellcheck disable=SC2016 # The assertion requires literal PowerShell $env references.
@@ -463,11 +477,13 @@ EOF
       && "$replace_args" == *'[System.IO.File]::Replace($env:PM_DISPATCH_REPLACE_SOURCE, $env:PM_DISPATCH_REPLACE_DESTINATION, $null)'* \
       && "$replace_args" != *"$record"* && "${replace_src##*/}" == .tmp-* \
       && "$replace_src_dir" == "${record%/*}" && "$replace_dest_normal" == "$record" \
+      && "$(jq -r '.producer // ""' <<< "$replace_before")" == "" \
+      && "$(jq -r '.producer.status // ""' <<< "$replace_after")" == pending \
       && "$(jq -r '.producer.status // ""' "$record")" == pending ]] \
       && ! find "${record%/*}" -maxdepth 1 -name '.tmp-*' -print -quit | grep -q .; then
     pass "$name"
   else
-    fail "$name" "rc=$rc record=$(jq -c . "$record" 2>/dev/null || true) fallback=$([[ -f "$sink" ]] && printf called || printf missing) args=$replace_args src=$replace_src dest=$replace_dest temps=$(find "${record%/*}" -maxdepth 1 -name '.tmp-*' -print 2>/dev/null | tr '\n' '|')"
+    fail "$name" "rc=$rc record=$(jq -c . "$record" 2>/dev/null || true) fallback=$([[ -f "$sink" ]] && printf called || printf missing) args=$replace_args src=$replace_src dest=$replace_dest before=$replace_before after=$replace_after temps=$(find "${record%/*}" -maxdepth 1 -name '.tmp-*' -print 2>/dev/null | tr '\n' '|')"
   fi
 }
 
