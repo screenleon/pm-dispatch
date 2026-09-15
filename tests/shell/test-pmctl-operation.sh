@@ -420,6 +420,116 @@ case_repeated_cancel_preserves_cancelled_terminal() {
   fi
 }
 
+# Verifies that reserving producer ownership survives the native-Windows
+# replace boundary when MSYS mv cannot overwrite the existing operation file.
+# Behavior: the writer falls back to PowerShell File.Replace without exposing
+# a missing or partial operation record.
+# Steps: create an operation normally, force mv to fail under the Windows
+# platform override, provide path/PowerShell stubs, then assert pending state.
+case_expect_producer_windows_replace_fallback() {
+  local name="operation producer reservation: native Windows replace fallback preserves the record"
+  should_run "$name" || return 0
+  local work="$tmp_root/windows replace work" store="$tmp_root/windows replace state"
+  local stubs="$tmp_root/windows-replace-stubs" sink="$tmp_root/windows-replace-called"
+  local op state record real_mv replace_args replace_src replace_dest
+  local replace_src_dir replace_dest_normal replace_before replace_after rc=0
+  make_repo "$work"
+  _pmctl_operation_load_writer "$REPO_ROOT"
+  op="$(PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_create "$REPO_ROOT" "$work" gate codex)"
+  state="$(PM_DISPATCH_STATE_ROOT="$store" _SW_REPO_ROOT="$work" _sw_project_dir)"
+  record="${state%/}/operations/$op.json"
+  real_mv="$(command -v mv)"
+  mkdir -p "$stubs"
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$stubs/mv"
+  # shellcheck disable=SC2016 # $1/$2 expand when the generated cygpath stub runs.
+  printf '#!/usr/bin/env bash\n[[ "$1" == "-w" ]] || exit 1\nprintf "%%s\\n" "$2"\n' > "$stubs/cygpath"
+  cat > "$stubs/powershell.exe" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+# This is the observable replacement boundary: a fallback that unlinks or
+# partially rewrites the destination before invoking ReplaceFile must fail the
+# regression instead of being hidden by the final-state assertion.
+[[ -f "$PM_DISPATCH_REPLACE_SOURCE" && -f "$PM_DISPATCH_REPLACE_DESTINATION" ]]
+jq -e 'type == "object" and .id != null and .state != null' \
+  "$PM_DISPATCH_REPLACE_SOURCE" "$PM_DISPATCH_REPLACE_DESTINATION" >/dev/null
+before="$(jq -c . "$PM_DISPATCH_REPLACE_DESTINATION")"
+"$CC587_REAL_MV" -f -- "$PM_DISPATCH_REPLACE_SOURCE" "$PM_DISPATCH_REPLACE_DESTINATION"
+[[ ! -e "$PM_DISPATCH_REPLACE_SOURCE" && -f "$PM_DISPATCH_REPLACE_DESTINATION" ]]
+jq -e 'type == "object" and .id != null and .state != null' \
+  "$PM_DISPATCH_REPLACE_DESTINATION" >/dev/null
+after="$(jq -c . "$PM_DISPATCH_REPLACE_DESTINATION")"
+printf '%s\n%s\n%s\n%s\n%s\n' "$*" "$PM_DISPATCH_REPLACE_SOURCE" \
+  "$PM_DISPATCH_REPLACE_DESTINATION" "$before" "$after" > "$CC587_REPLACE_SINK"
+EOF
+  chmod +x "$stubs/mv" "$stubs/cygpath" "$stubs/powershell.exe"
+  PATH="$stubs:$PATH" PM_DISPATCH_PLATFORM=windows PM_DISPATCH_STATE_ROOT="$store" \
+    CC587_REAL_MV="$real_mv" CC587_REPLACE_SINK="$sink" \
+    pmctl_operation_expect_producer "$REPO_ROOT" gate "$op" "$work" || rc=$?
+  replace_args="$(sed -n '1p' "$sink" 2>/dev/null || true)"
+  replace_src="$(sed -n '2p' "$sink" 2>/dev/null || true)"
+  replace_dest="$(sed -n '3p' "$sink" 2>/dev/null || true)"
+  replace_before="$(sed -n '4p' "$sink" 2>/dev/null || true)"
+  replace_after="$(sed -n '5p' "$sink" 2>/dev/null || true)"
+  replace_src_dir="$(realpath_m "${replace_src%/*}" 2>/dev/null || true)"
+  replace_dest_normal="$(realpath_m "$replace_dest" 2>/dev/null || true)"
+  # shellcheck disable=SC2016 # The assertion requires literal PowerShell $env references.
+  if [[ "$rc" -eq 0 && -f "$sink" && -f "$record" \
+      && "$replace_args" == *'[System.IO.File]::Replace($env:PM_DISPATCH_REPLACE_SOURCE, $env:PM_DISPATCH_REPLACE_DESTINATION, $null)'* \
+      && "$replace_args" != *"$record"* && "${replace_src##*/}" == .tmp-* \
+      && "$replace_src_dir" == "${record%/*}" && "$replace_dest_normal" == "$record" \
+      && "$(jq -r '.producer // ""' <<< "$replace_before")" == "" \
+      && "$(jq -r '.producer.status // ""' <<< "$replace_after")" == pending \
+      && "$(jq -r '.producer.status // ""' "$record")" == pending ]] \
+      && ! find "${record%/*}" -maxdepth 1 -name '.tmp-*' -print -quit | grep -q .; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc record=$(jq -c . "$record" 2>/dev/null || true) fallback=$([[ -f "$sink" ]] && printf called || printf missing) args=$replace_args src=$replace_src dest=$replace_dest before=$replace_before after=$replace_after temps=$(find "${record%/*}" -maxdepth 1 -name '.tmp-*' -print 2>/dev/null | tr '\n' '|')"
+  fi
+}
+
+# Behavior: a failed native-Windows replacement preserves the existing valid
+# operation projection, reports failure, and removes its temporary projection.
+# Steps: force both the primary mv and PowerShell fallback to fail, then compare
+# the record byte-for-byte and validate it through the writer's schema boundary.
+case_expect_producer_windows_replace_failure_preserves_record() {
+  local name="operation producer reservation: failed Windows replace preserves record and cleans temp"
+  should_run "$name" || return 0
+  local work="$tmp_root/windows replace failure work"
+  local store="$tmp_root/windows replace failure state"
+  local stubs="$tmp_root/windows-replace-failure-stubs"
+  local sink="$tmp_root/windows-replace-failure-called"
+  local op state record before after rc=0 schema_rc=0
+  make_repo "$work"
+  _pmctl_operation_load_writer "$REPO_ROOT"
+  op="$(PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_create "$REPO_ROOT" "$work" gate codex)"
+  state="$(PM_DISPATCH_STATE_ROOT="$store" _SW_REPO_ROOT="$work" _sw_project_dir)"
+  record="${state%/}/operations/$op.json"
+  before="$(cat "$record")"
+  mkdir -p "$stubs"
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$stubs/mv"
+  # shellcheck disable=SC2016 # $1/$2 expand when the generated cygpath stub runs.
+  printf '#!/usr/bin/env bash\n[[ "$1" == "-w" ]] || exit 1\nprintf "%%s\\n" "$2"\n' > "$stubs/cygpath"
+  cat > "$stubs/powershell.exe" <<'EOF'
+#!/usr/bin/env bash
+printf 'called\n' > "$CC587_REPLACE_FAILURE_SINK"
+exit 23
+EOF
+  chmod +x "$stubs/mv" "$stubs/cygpath" "$stubs/powershell.exe"
+  PATH="$stubs:$PATH" PM_DISPATCH_PLATFORM=windows PM_DISPATCH_STATE_ROOT="$store" \
+    CC587_REPLACE_FAILURE_SINK="$sink" \
+    pmctl_operation_expect_producer "$REPO_ROOT" gate "$op" "$work" \
+    >/dev/null 2>&1 || rc=$?
+  after="$(cat "$record" 2>/dev/null || true)"
+  _sw_validate_compacted_json_line operation "$after" >/dev/null 2>&1 || schema_rc=$?
+  if [[ "$rc" -ne 0 && "$schema_rc" -eq 0 && -f "$sink" \
+      && "$after" == "$before" && "$(jq -r '.producer // ""' "$record")" == "" ]] \
+      && ! find "${record%/*}" -maxdepth 1 -name '.tmp-*' -print -quit | grep -q .; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc schema_rc=$schema_rc fallback=$([[ -f "$sink" ]] && printf called || printf missing) before=$before after=$after temps=$(find "${record%/*}" -maxdepth 1 -name '.tmp-*' -print 2>/dev/null | tr '\n' '|')"
+  fi
+}
+
 case_unknown_operation_is_diagnosed_not_silent() {
   local name="operation cancel/reconcile: unknown id reports why instead of exiting silently"
   should_run "$name" || return 0
@@ -487,4 +597,6 @@ case_cancel_deduplicates_repeated_child_records
 case_cancel_refuses_reused_producer_identity
 case_cancel_accepts_producer_that_exited_before_signal
 case_repeated_cancel_preserves_cancelled_terminal
+case_expect_producer_windows_replace_fallback
+case_expect_producer_windows_replace_failure_preserves_record
 th_summary
