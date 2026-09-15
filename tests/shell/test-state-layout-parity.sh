@@ -149,7 +149,7 @@ writer_operation_create_strategy() {
 writer_operation_update_strategy() {
   local body
   body="$(sed -n '/^operation_upsert() {/,/^}/p' "$STATE_WRITER")"
-  if grep -Fq 'mv -f "$tmp" "$proj_dir/operations/${operation_id}.json"' <<< "$body"; then
+  if grep -Fq '_sw_operation_replace_file "$tmp" "$proj_dir/operations/${operation_id}.json"' <<< "$body"; then
     printf 'write-temp-then-rename\n'
   fi
 }

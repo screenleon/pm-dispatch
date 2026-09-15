@@ -594,6 +594,30 @@ _sw_decision_id_valid() {
 
 _sw_operation_id_valid() { pm_identifier_operation_is_valid "$@"; }
 
+# Replace an existing operation projection from a same-directory temporary
+# file. POSIX mv is the normal atomic path. Native Windows/MSYS can refuse the
+# overwrite even though both files are closed; use the platform's ReplaceFile
+# primitive through PowerShell rather than opening a non-atomic rm+mv window.
+_sw_operation_replace_file() {
+  local src="$1" dest="$2" win_src win_dest
+  if mv -f "$src" "$dest" 2>/dev/null; then
+    return 0
+  fi
+  [[ "$(detect_platform)" == windows && -f "$src" && -f "$dest" ]] || return 1
+  command -v powershell.exe >/dev/null 2>&1 || return 1
+  command -v cygpath >/dev/null 2>&1 || return 1
+  win_src="$(cygpath -w "$src" 2>/dev/null)" || return 1
+  win_dest="$(cygpath -w "$dest" 2>/dev/null)" || return 1
+  [[ -n "$win_src" && -n "$win_dest" ]] || return 1
+  # shellcheck disable=SC2016 # PowerShell, not Bash, expands the env references.
+  PM_DISPATCH_REPLACE_SOURCE="$win_src" \
+    PM_DISPATCH_REPLACE_DESTINATION="$win_dest" \
+    powershell.exe -NoProfile -NonInteractive -Command \
+    '[System.IO.File]::Replace($env:PM_DISPATCH_REPLACE_SOURCE, $env:PM_DISPATCH_REPLACE_DESTINATION, $null)' \
+    >/dev/null 2>&1 || return 1
+  [[ ! -e "$src" && -f "$dest" ]]
+}
+
 # operation_upsert <operation-id> <JSON>
 # The operation projection is deliberately separate from Run transition
 # operation_id values.  The latter pair a Run row with one Event row; this
@@ -613,7 +637,7 @@ operation_upsert() {
     return 1
   }
   printf '%s\n' "$compact" > "$tmp" 2>/dev/null || { rm -f "$tmp" 2>/dev/null; return 1; }
-  mv -f "$tmp" "$proj_dir/operations/${operation_id}.json" 2>/dev/null || {
+  _sw_operation_replace_file "$tmp" "$proj_dir/operations/${operation_id}.json" || {
     _sw_log_error "operation_upsert rename failed: $proj_dir/operations/${operation_id}.json"
     rm -f "$tmp" 2>/dev/null
     return 1
