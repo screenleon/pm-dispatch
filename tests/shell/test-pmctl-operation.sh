@@ -487,6 +487,49 @@ EOF
   fi
 }
 
+# Behavior: a failed native-Windows replacement preserves the existing valid
+# operation projection, reports failure, and removes its temporary projection.
+# Steps: force both the primary mv and PowerShell fallback to fail, then compare
+# the record byte-for-byte and validate it through the writer's schema boundary.
+case_expect_producer_windows_replace_failure_preserves_record() {
+  local name="operation producer reservation: failed Windows replace preserves record and cleans temp"
+  should_run "$name" || return 0
+  local work="$tmp_root/windows replace failure work"
+  local store="$tmp_root/windows-replace-failure-state"
+  local stubs="$tmp_root/windows-replace-failure-stubs"
+  local sink="$tmp_root/windows-replace-failure-called"
+  local op state record before after rc=0 schema_rc=0
+  make_repo "$work"
+  _pmctl_operation_load_writer "$REPO_ROOT"
+  op="$(PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_create "$REPO_ROOT" "$work" gate codex)"
+  state="$(PM_DISPATCH_STATE_ROOT="$store" _SW_REPO_ROOT="$work" _sw_project_dir)"
+  record="${state%/}/operations/$op.json"
+  before="$(cat "$record")"
+  mkdir -p "$stubs"
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$stubs/mv"
+  # shellcheck disable=SC2016 # $1/$2 expand when the generated cygpath stub runs.
+  printf '#!/usr/bin/env bash\n[[ "$1" == "-w" ]] || exit 1\nprintf "%%s\\n" "$2"\n' > "$stubs/cygpath"
+  cat > "$stubs/powershell.exe" <<'EOF'
+#!/usr/bin/env bash
+printf 'called\n' > "$CC587_REPLACE_FAILURE_SINK"
+exit 23
+EOF
+  chmod +x "$stubs/mv" "$stubs/cygpath" "$stubs/powershell.exe"
+  PATH="$stubs:$PATH" PM_DISPATCH_PLATFORM=windows PM_DISPATCH_STATE_ROOT="$store" \
+    CC587_REPLACE_FAILURE_SINK="$sink" \
+    pmctl_operation_expect_producer "$REPO_ROOT" gate "$op" "$work" \
+    >/dev/null 2>&1 || rc=$?
+  after="$(cat "$record" 2>/dev/null || true)"
+  _sw_validate_compacted_json_line operation "$after" >/dev/null 2>&1 || schema_rc=$?
+  if [[ "$rc" -ne 0 && "$schema_rc" -eq 0 && -f "$sink" \
+      && "$after" == "$before" && "$(jq -r '.producer // ""' "$record")" == "" ]] \
+      && ! find "${record%/*}" -maxdepth 1 -name '.tmp-*' -print -quit | grep -q .; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc schema_rc=$schema_rc fallback=$([[ -f "$sink" ]] && printf called || printf missing) before=$before after=$after temps=$(find "${record%/*}" -maxdepth 1 -name '.tmp-*' -print 2>/dev/null | tr '\n' '|')"
+  fi
+}
+
 case_unknown_operation_is_diagnosed_not_silent() {
   local name="operation cancel/reconcile: unknown id reports why instead of exiting silently"
   should_run "$name" || return 0
@@ -555,4 +598,5 @@ case_cancel_refuses_reused_producer_identity
 case_cancel_accepts_producer_that_exited_before_signal
 case_repeated_cancel_preserves_cancelled_terminal
 case_expect_producer_windows_replace_fallback
+case_expect_producer_windows_replace_failure_preserves_record
 th_summary
