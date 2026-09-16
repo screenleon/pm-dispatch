@@ -162,7 +162,13 @@ _pmctl_operation_validate_record() {
   json="$(jq -c . "$record")" || return 2
   kind="$(jq -r '.kind // ""' <<<"$json")"
   owner="$(jq -r '.working_dir // ""' <<<"$json")"
-  [[ "$kind" == "$expected_kind" && "$owner" == "$work_dir" ]] || return 2
+  # Compare canonicalized forms: on native Windows Git Bash the caller's
+  # path and the record's stored path can both be valid but differently
+  # spelled (POSIX /c/Users/... vs drive-letter C:/Users/...), which a raw
+  # string compare never matches (CC-587).
+  [[ "$kind" == "$expected_kind" \
+    && "$(_portable_canonical_path "$owner")" == "$(_portable_canonical_path "$work_dir")" ]] \
+    || return 2
   PMCTL_OPERATION_RECORD_JSON="$json"
   PMCTL_OPERATION_RECORD_STATE="$(jq -r '.state // ""' <<<"$json")"
 }
