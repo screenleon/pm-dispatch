@@ -5874,6 +5874,74 @@ test_scope_manifest_large_expansion_uses_file_input() {
   pass "$name"
 }
 
+# Behavior: pr-gate.sh's classification/policy-input assembly and the scope
+# manifest writer both transport the changed-path list through scratch files
+# read with --slurpfile now (CC-587), because a large diff's serialized
+# changed-path array can exceed the Windows CreateProcess argv/env limit
+# (~32K) that --argjson would hit. On Linux the corresponding failure mode
+# would be an oversized argv to jq or a silently truncated/empty classification
+# reaching the policy resolver.
+# Steps: commit 500 new files (long names, one hunk each -- comfortably under
+# the 512-hunk scope budget) on a feature branch so the serialized
+# changed-path JSON exceeds 32 KiB and the change qualifies for the
+# large-change policy signal (>500 changed lines -> tier=full). Run the gate
+# and assert dispatch succeeds, the scope manifest's changed_paths array is
+# complete, and the large-change signal actually reached policy resolution.
+test_large_diff_classification_transport_survives_slurpfile_boundary() {
+  local name="large-diff-classification/transport-survives-slurpfile-boundary"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  local file_count=500 n result assurance manifest changed_paths_bytes code
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  git init -q -b main "$repo"
+  (
+    cd "$repo"
+    git config user.email test@example.com
+    git config user.name 'Gate Test'
+    mkdir -p src
+    write_managed_gitignore
+    printf '# baseline\n' > README.md
+    git add .
+    git commit -q -m initial
+    git checkout -q -b feature
+    for n in $(seq -w 1 "$file_count"); do
+      printf 'line one\nline two\n' > \
+        "src/generated-fixture-module-large-diff-boundary-case-${n}-padding-segment.txt"
+    done
+    git add src
+    git commit -q -m "large change"
+  )
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0: $(tail -n 30 "$err" 2>/dev/null)"
+    return
+  fi
+  assert_not_contains "$name" "$err" "Argument list too long" || return
+  result="$(awk -F'result: ' '/^result: /{path=$2} END{print path}' "$out")"
+  assurance="${result}.assurance.json"
+  manifest="$(dirname "$assurance")/$(jq -r '.evidence.scope_manifest.artifact' "$assurance")"
+  changed_paths_bytes="$(jq -c '.changes.changed_paths' "$manifest" | wc -c | tr -d ' ')"
+  if ! jq -e --argjson expected "$file_count" '
+      (.changes.changed_paths | length) == $expected
+    ' "$manifest" >/dev/null || [[ "$changed_paths_bytes" -le 32768 ]]; then
+    fail "$name" "changed_paths was narrowed or too small: count=$(jq -r '.changes.changed_paths | length' "$manifest" 2>/dev/null) bytes=$changed_paths_bytes"
+    return
+  fi
+  if ! jq -e '.coordinates.tier.resolved == "full"' "$assurance" >/dev/null; then
+    fail "$name" "large-change classification did not survive the policy resolver: $(jq -c '.coordinates.tier' "$assurance" 2>/dev/null)"
+    return
+  fi
+  pass "$name"
+}
+
 # Behavior: _gate_scope_reference_index_collect's NUL-record decode path
 # (CC-560) reproduces the exact per-path object contract the per-record jq
 # constructor it replaced produced -- path/snapshot/line_count/sha256 -- one
@@ -6078,6 +6146,7 @@ run_test test_scope_manifest_contract_bundle_uses_bounded_consumer_summary
 run_test test_scope_manifest_contract_bundle_overflow_is_truthful_truncation
 run_test test_scope_manifest_semantic_search_overflow_fails_closed
 run_test test_scope_manifest_large_expansion_uses_file_input
+run_test test_large_diff_classification_transport_survives_slurpfile_boundary
 run_test test_scope_reference_index_collector_direct_decode
 run_test test_scope_manifest_truncation_requires_explicit_acceptance
 run_test test_parallel_launches_per_reviewer
@@ -6648,6 +6717,96 @@ test_effort_forwarding_through_pr_gate() {
   fi
   if ! grep -qx 'low' "$dispatch_args"; then
     fail "$name" "low value not forwarded to adapter dispatch"
+    return
+  fi
+  pass "$name"
+}
+
+# Behavior: when a parent gate operation is set, reviewer dispatch forwards
+# --parent-operation-cd alongside --parent-operation, naming the actual
+# reviewed workspace so the child dispatch's parent-operation lookup is
+# unambiguous rather than defaulting to its own --cd (CC-587). Only the
+# repo-layout dispatch route calls pmctl_dispatch_run at all (copy-mode uses
+# compatible direct reviewer dispatch, per pr-gate.sh's own layout-gated
+# PMCTL_DISPATCH_LIB_DIR resolution), so this needs the repo-layout fixture,
+# not the copy-mode create_runner()/run_gate() pair used elsewhere in this file.
+# Steps: build the repo-layout fixture (as in
+# test_repo_layout_captures_dispatch_run_id), override its
+# runtime/lib/pmctl-dispatch.sh with a stub that captures
+# pmctl_dispatch_run's own argument list, run the gate with
+# PM_GATE_PARENT_OPERATION set, and assert the captured --cd and
+# --parent-operation-cd values match.
+test_parent_operation_cd_forwarded_to_dispatch() {
+  local name="parent-operation-cd-forwarded-to-dispatch"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" source_runner layout home repo out err dispatch_args
+  dir="$TMP_ROOT/$name"
+  source_runner="$dir/source-runner"
+  layout="$dir/layout"
+  home="$dir/home"
+  repo="$dir/repo"
+  out="$dir/out"
+  err="$dir/err"
+  dispatch_args="$dir/dispatch_run.args"
+  mkdir -p "$dir" "$layout/runtime/bin" "$layout/runtime/lib" "$layout/core/policy"
+  create_runner "$source_runner"
+  cp "$source_runner/pr-gate.sh" "$layout/runtime/bin/pr-gate.sh"
+  cp -R "$source_runner/lib/." "$layout/runtime/lib/"
+  cp -R "$source_runner/core/policy/." "$layout/core/policy/"
+  cp -R "$REPO_ROOT/agents" "$layout/agents"
+  cp -R "$REPO_ROOT/adapters" "$layout/adapters"
+  cp "$source_runner/adapters/codex/dispatch.sh" "$layout/adapters/codex/dispatch.sh"
+  chmod +x "$layout/runtime/bin/pr-gate.sh" "$layout/adapters/codex/dispatch.sh"
+  cat > "$layout/runtime/lib/pmctl-dispatch.sh" <<STUB_PMCTL_PARENT_OP_CD
+pmctl_dispatch_run() {
+  local root="\$1" brief="" work="" timeout=""
+  shift
+  printf '%s\n' "\$@" >> "$dispatch_args"
+  while [[ \$# -gt 0 ]]; do
+    case "\$1" in
+      --brief-file) brief="\$2"; shift 2 ;;
+      --cd) work="\$2"; shift 2 ;;
+      --timeout) timeout="\$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  "\$root/adapters/codex/dispatch.sh" --brief-file "\$brief" --cd "\$work" --timeout "\$timeout"
+  printf 'run-20260727T000000Z-dddddd\n'
+}
+pmctl_dispatch_wait() { return 0; }
+STUB_PMCTL_PARENT_OP_CD
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  local code=0
+  set +e
+  HOME="$home" PM_DISPATCH_STATE_ROOT="$dir/state" \
+    PM_GATE_PARENT_OPERATION="op-20260101T000000Z-abcdef" \
+    "$layout/runtime/bin/pr-gate.sh" --cd "$repo" --base main --executor codex \
+      --mode sequential > "$out" 2> "$err"
+  code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0: $(tail -n 20 "$err" 2>/dev/null)"
+    return
+  fi
+  if [[ ! -f "$dispatch_args" ]]; then
+    fail "$name" "dispatch args file not written"
+    return
+  fi
+  local work_cd parent_cd
+  work_cd="$(awk '$0=="--cd"{getline; print; exit}' "$dispatch_args")"
+  parent_cd="$(awk '$0=="--parent-operation-cd"{getline; print; exit}' "$dispatch_args")"
+  if ! grep -qx -- '--parent-operation' "$dispatch_args"; then
+    fail "$name" "--parent-operation not forwarded to dispatch (args: $(cat "$dispatch_args"))"
+    return
+  fi
+  if [[ -z "$parent_cd" ]]; then
+    fail "$name" "--parent-operation-cd not forwarded to dispatch (args: $(cat "$dispatch_args"))"
+    return
+  fi
+  if [[ "$parent_cd" != "$work_cd" ]]; then
+    fail "$name" "--parent-operation-cd ($parent_cd) does not match the reviewed workspace ($work_cd)"
     return
   fi
   pass "$name"
@@ -8293,6 +8452,7 @@ run_test test_hook_skipped_without_allow_hooks
 run_test test_isolation_flag_validation
 run_test test_isolation_forwarding_through_pr_gate
 run_test test_effort_forwarding_through_pr_gate
+run_test test_parent_operation_cd_forwarded_to_dispatch
 run_test test_effort_invalid_value_rejected
 run_test test_copy_mode_dispatches_via_adapter
 run_test test_copy_mode_missing_manifest_reader_fails_closed

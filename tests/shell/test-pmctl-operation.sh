@@ -530,6 +530,51 @@ EOF
   fi
 }
 
+# Behavior: a record's stored working_dir and a caller's --cd can be two valid
+# but differently spelled forms of the same native-Windows path (POSIX
+# /c/Users/... vs drive-letter C:/Users/...); ownership validation must accept
+# that equivalence instead of rejecting the record as foreign (CC-587).
+# Steps: hand-write a record whose working_dir is drive-letter form, stub
+# cygpath to perform the same /x -> X: fold `_portable_canonical_path` relies
+# on, then validate against an equivalent POSIX spelling and a genuinely
+# different directory.
+case_validate_record_canonicalizes_windows_path_spelling() {
+  local name="operation record validation: equivalent Windows path spellings are the same owner"
+  should_run "$name" || return 0
+  local stubs="$tmp_root/windows-spelling-stubs"
+  local record="$tmp_root/windows-spelling-record.json"
+  local rc=0 other_rc=0
+  mkdir -p "$stubs"
+  cat > "$stubs/cygpath" <<'EOF'
+#!/usr/bin/env bash
+[[ "$1" == "-m" && "$2" == "--" ]] || exit 1
+path="$3"
+if [[ "$path" =~ ^/([A-Za-z])(/.*)?$ ]]; then
+  printf '%s:%s\n' "${BASH_REMATCH[1]^^}" "${BASH_REMATCH[2]:-/}"
+else
+  printf '%s\n' "$path"
+fi
+EOF
+  chmod +x "$stubs/cygpath"
+  jq -n '{schema_version:1,id:"op-windows-spelling-test",kind:"gate",
+    working_dir:"C:/Users/First Last/repo",state:"running",
+    created_ts:"2026-01-01T00:00:00Z",terminal_ts:null,producer:null,
+    cancellation:null}' > "$record"
+  (
+    PATH="$stubs:$PATH"
+    _pmctl_operation_validate_record "$record" gate "/c/Users/First Last/repo"
+  ) || rc=$?
+  (
+    PATH="$stubs:$PATH"
+    _pmctl_operation_validate_record "$record" gate "/c/Users/Someone/other"
+  ) || other_rc=$?
+  if [[ "$rc" -eq 0 && "$other_rc" -eq 2 ]]; then
+    pass "$name"
+  else
+    fail "$name" "equivalent-spelling-rc=$rc different-path-rc=$other_rc"
+  fi
+}
+
 case_unknown_operation_is_diagnosed_not_silent() {
   local name="operation cancel/reconcile: unknown id reports why instead of exiting silently"
   should_run "$name" || return 0
@@ -599,4 +644,5 @@ case_cancel_accepts_producer_that_exited_before_signal
 case_repeated_cancel_preserves_cancelled_terminal
 case_expect_producer_windows_replace_fallback
 case_expect_producer_windows_replace_failure_preserves_record
+case_validate_record_canonicalizes_windows_path_spelling
 th_summary
