@@ -6812,6 +6812,54 @@ STUB_PMCTL_PARENT_OP_CD
   pass "$name"
 }
 
+# Behavior: the classification/policy-input scratch directory pr-gate.sh
+# creates for its --slurpfile jq transport (CC-587) is reclaimed by the EXIT
+# trap even when a failure happens strictly between its creation and its own
+# inline cleanup, not only on the success path.
+# Steps: stub jq so only the one call carrying a literal "classifications"
+# argument (the GATE_POLICY_INPUT assembly, which runs after the scratch
+# directory already holds several written files) fails, run the gate with a
+# controlled TMPDIR, and assert no pr-gate-policy-input.* directory remains
+# under it after the nonzero exit.
+test_policy_input_dir_cleaned_up_on_jq_failure() {
+  local name="policy-input-scratch/cleaned-up-on-jq-failure"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  local stub_dir="$dir/jq-stub" tmp_scratch="$dir/tmpdir"
+  local real_jq code leaked
+  mkdir -p "$dir" "$stub_dir" "$tmp_scratch"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  real_jq="$(command -v jq)"
+  cat > "$stub_dir/jq" <<STUB_JQ_EOF
+#!/usr/bin/env bash
+for a in "\$@"; do
+  [[ "\$a" == "classifications" ]] && exit 1
+done
+exec "$real_jq" "\$@"
+STUB_JQ_EOF
+  chmod +x "$stub_dir/jq"
+
+  set +e
+  PATH="$stub_dir:$PATH" TMPDIR="$tmp_scratch" \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then
+    fail "$name" "expected nonzero exit from the injected jq failure, got 0"
+    return
+  fi
+  leaked="$(find "$tmp_scratch" -maxdepth 1 -name 'pr-gate-policy-input.*' -print 2>/dev/null)"
+  if [[ -n "$leaked" ]]; then
+    fail "$name" "policy-input scratch directory leaked after jq failure: $leaked"
+    return
+  fi
+  pass "$name"
+}
+
 # Behavior: an invalid --effort value is rejected at pr-gate.sh's own flag
 # parsing, before any dispatch is attempted.
 test_effort_invalid_value_rejected() {
@@ -8453,6 +8501,7 @@ run_test test_isolation_flag_validation
 run_test test_isolation_forwarding_through_pr_gate
 run_test test_effort_forwarding_through_pr_gate
 run_test test_parent_operation_cd_forwarded_to_dispatch
+run_test test_policy_input_dir_cleaned_up_on_jq_failure
 run_test test_effort_invalid_value_rejected
 run_test test_copy_mode_dispatches_via_adapter
 run_test test_copy_mode_missing_manifest_reader_fails_closed
