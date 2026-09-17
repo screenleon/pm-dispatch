@@ -764,18 +764,31 @@ _gate_policy_resolve() {
     override_json='{"status":"not_provided","source":null,"sha256":null,"reason":null,"approver":null}'
   fi
 
-  signal_json="$(jq -s '.' "$signals_file")" || {
+  # classification_json (echoes the caller's full classification/changed-path
+  # payload back into the resolution) and the accumulated matched_signals
+  # both grow with diff size, so they go through scratch files read with
+  # --slurpfile instead of --argjson, which can exceed the Windows
+  # CreateProcess argv/env limit (~32K) (CC-587). matched_signals reads
+  # signals_file directly -- it is already one JSON object per line, exactly
+  # what --slurpfile expects, so the prior `jq -s '.' "$signals_file"`
+  # stringify step is no longer needed.
+  local classification_file resolution_json resolve_rc
+  classification_file="$(mktemp "${TMPDIR:-/tmp}/gate-policy-classification.XXXXXX")" || {
     rm -f "$signals_file"
     return 2
   }
-  rm -f "$signals_file"
+  printf '%s' "$classification_json" > "$classification_file"
 
-  jq -nc \
+  # Captured to a variable rather than streamed straight to stdout so the
+  # scratch files can be cleaned up before returning; the exit code is taken
+  # from jq explicitly rather than relying on the assignment's own status,
+  # which is always 0 (the same command-substitution pitfall CC-586 hit).
+  resolution_json="$(jq -nc \
     --arg policy "$policy" --arg policy_source "$policy_source" \
     --arg scope_fingerprint "$scope_fingerprint" \
     --arg requested_tier "$requested_tier" --arg requested_mode "$requested_mode" \
     --arg pass_kind "$pass_kind" --argjson requested_reviewers "$requested_reviewers_json" \
-    --argjson classification "$classification_json" \
+    --slurpfile classification "$classification_file" \
     --arg minimum_tier "$minimum_tier" \
     --argjson required_reviewers "$(_gate_policy_words_json "$required_reviewers")" \
     --arg recommended_mode "$recommended_mode" \
@@ -783,7 +796,7 @@ _gate_policy_resolve() {
     --argjson mode_recommendation_overridden "$mode_recommendation_overridden" \
     --argjson downgrade_requested "$downgrade_requested" \
     --argjson downgrade_allowed "$downgrade_allowed" \
-    --argjson matched_signals "$signal_json" \
+    --slurpfile matched_signals "$signals_file" \
     --arg resolved_tier "$resolved_tier" --arg resolved_mode "$resolved_mode" \
     --argjson selected_reviewers "$(_gate_policy_words_json "$selected_reviewers")" \
     --arg enforcement_status "$enforcement_status" \
@@ -800,7 +813,7 @@ _gate_policy_resolve() {
         pass_kind:$pass_kind,
         reviewers:$requested_reviewers
       },
-      classification:$classification,
+      classification:$classification[0],
       resolution:{
         minimum_tier:$minimum_tier,
         required_reviewers:$required_reviewers,
@@ -819,5 +832,9 @@ _gate_policy_resolve() {
       enforcement:{status:$enforcement_status,violations:$violations},
       override:$override,
       reviewer_override:$reviewer_override
-    }'
+    }')"
+  resolve_rc=$?
+  rm -f "$signals_file" "$classification_file"
+  [[ "$resolve_rc" -eq 0 ]] && printf '%s\n' "$resolution_json"
+  return "$resolve_rc"
 }

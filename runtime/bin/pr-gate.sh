@@ -6,6 +6,7 @@ GATE_CANCELLED=false
 GATE_ACTIVE_PREFLIGHT_PID=""
 GATE_ACTIVE_PREFLIGHT_PGID=""
 GATE_REVIEWER_OVERRIDE_SNAPSHOT=""
+GATE_POLICY_INPUT_DIR=""
 
 gate_cleanup_reviewer_override_snapshot() {
   local snapshot="${GATE_REVIEWER_OVERRIDE_SNAPSHOT:-}"
@@ -14,12 +15,26 @@ gate_cleanup_reviewer_override_snapshot() {
   GATE_REVIEWER_OVERRIDE_SNAPSHOT=""
 }
 
+# The classification/policy-input scratch directory (CC-587) is created well
+# before gate_exit_cleanup() is installed and has several early `|| exit 2`
+# failure paths between its creation and its own inline removal, so its
+# lifetime is tracked in a global the same way the reviewer-override snapshot
+# above is, and reclaimed by both EXIT traps rather than solely by the inline
+# cleanup on the success path.
+gate_cleanup_policy_input_dir() {
+  local dir="${GATE_POLICY_INPUT_DIR:-}"
+  [[ -n "$dir" ]] || return 0
+  rm -rf -- "$dir" 2>/dev/null || true
+  GATE_POLICY_INPUT_DIR=""
+}
+
 # The full gate cleanup is installed only after result/brief paths exist.  This
 # early trap covers the reviewer-override snapshot created before that point;
 # gate_exit_cleanup() calls the same helper after it replaces this trap.
 gate_early_exit_cleanup() {
   local gate_status=$?
   gate_cleanup_reviewer_override_snapshot
+  gate_cleanup_policy_input_dir
   return "$gate_status"
 }
 trap gate_early_exit_cleanup EXIT
@@ -738,7 +753,8 @@ pmctl_gate_dispatch_and_wait() {
   [[ -n "$effort" ]] && args+=(--effort "$effort")
   [[ -n "${PM_DISPATCH_TRACE_DIR:-}" ]] && args+=(--trace-dir "$PM_DISPATCH_TRACE_DIR")
   [[ "$executor" == codex ]] && args+=(--sandbox "$sandbox" --approval "$approval")
-  [[ -n "${PM_GATE_PARENT_OPERATION:-}" ]] && args+=(--parent-operation "$PM_GATE_PARENT_OPERATION")
+  [[ -n "${PM_GATE_PARENT_OPERATION:-}" ]] && \
+    args+=(--parent-operation "$PM_GATE_PARENT_OPERATION" --parent-operation-cd "$working_dir")
   local run_id
   run_id="$(
     pmctl_gate_dispatch_lib_load || exit 2
@@ -1103,13 +1119,29 @@ _policy_docs_only=false
 [[ -z "$NON_DOCS" ]] && _policy_docs_only=true
 _policy_cross_boundary=false
 [[ "$LAYER_ROOT_COUNT" -gt 1 ]] && _policy_cross_boundary=true
+# These path lists grow with diff size and can exceed the Windows
+# CreateProcess argv/env limit (~32K) that --argjson would otherwise hit
+# (CC-587), so they are written to scratch files and read with --slurpfile.
+GATE_POLICY_INPUT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/pr-gate-policy-input.XXXXXX")" || exit 2
+printf '%s' "$DIFF_FILES_JSON" > "$GATE_POLICY_INPUT_DIR/changed_paths.json"
+printf '%s' "$NON_DOCS_JSON" > "$GATE_POLICY_INPUT_DIR/non_docs.json"
+printf '%s' "$RENAMED_PATHS_JSON" > "$GATE_POLICY_INPUT_DIR/renamed.json"
+printf '%s' "$UNTRACKED_PATHS_JSON" > "$GATE_POLICY_INPUT_DIR/untracked.json"
+printf '%s' "$GENERATED_PATHS_JSON" > "$GATE_POLICY_INPUT_DIR/generated.json"
+printf '%s' "$LAYER_ROOTS_JSON" > "$GATE_POLICY_INPUT_DIR/layer_roots.json"
 CLASSIFICATIONS_JSON="$(jq -nc \
   --argjson docs_only "$_policy_docs_only" \
-  --argjson changed_paths "$DIFF_FILES_JSON" --argjson non_docs "$NON_DOCS_JSON" \
-  --argjson renamed "$RENAMED_PATHS_JSON" --argjson untracked "$UNTRACKED_PATHS_JSON" \
-  --argjson generated "$GENERATED_PATHS_JSON" --argjson layer_roots "$LAYER_ROOTS_JSON" \
+  --slurpfile changed_paths "$GATE_POLICY_INPUT_DIR/changed_paths.json" \
+  --slurpfile non_docs "$GATE_POLICY_INPUT_DIR/non_docs.json" \
+  --slurpfile renamed "$GATE_POLICY_INPUT_DIR/renamed.json" \
+  --slurpfile untracked "$GATE_POLICY_INPUT_DIR/untracked.json" \
+  --slurpfile generated "$GATE_POLICY_INPUT_DIR/generated.json" \
+  --slurpfile layer_roots "$GATE_POLICY_INPUT_DIR/layer_roots.json" \
   --argjson cross_boundary "$_policy_cross_boundary" \
-  --argjson lines "$LINES" --argjson binary_or_unknown "${BINARY_HIT:-0}" '[
+  --argjson lines "$LINES" --argjson binary_or_unknown "${BINARY_HIT:-0}" '
+  ($changed_paths[0]) as $changed_paths | ($non_docs[0]) as $non_docs |
+  ($renamed[0]) as $renamed | ($untracked[0]) as $untracked |
+  ($generated[0]) as $generated | ($layer_roots[0]) as $layer_roots | [
     if $docs_only then {id:"docs-only",matches:$changed_paths}
     else {id:"bounded-runtime",matches:$non_docs} end,
     if $lines > 500 then {id:"large-change",matches:[("changed-lines:" + ($lines|tostring))]}
@@ -1122,7 +1154,7 @@ CLASSIFICATIONS_JSON="$(jq -nc \
     if ($untracked|length) > 0 then {id:"untracked",matches:$untracked} else empty end,
     if ($generated|length) > 0 then {id:"generated",matches:$generated} else empty end,
     if $cross_boundary then {id:"cross-boundary",matches:$layer_roots} else empty end
-  ]')"
+  ]')" || exit 2
 POLICY_SCOPE_CONTENT_DIGEST="$(
   _gate_policy_scope_content_digest \
     "$POLICY_DIFF_KIND" "$BASE" "$HEAD_REF" "$POLICY_SCOPE_INCLUDE_UNTRACKED"
@@ -1147,6 +1179,7 @@ else
   COVERAGE_REQUESTED_DISPLAY="default"
 fi
 
+printf '%s' "$CLASSIFICATIONS_JSON" > "$GATE_POLICY_INPUT_DIR/classifications.json"
 GATE_POLICY_INPUT="$(jq -nc \
   --arg policy "$POLICY_CONSUMER" --arg policy_source "$GATE_ASSURANCE_POLICY_SOURCE" \
   --arg scope_fingerprint "$POLICY_SCOPE_FINGERPRINT" \
@@ -1157,25 +1190,26 @@ GATE_POLICY_INPUT="$(jq -nc \
   --arg architecture_impact "$ARCHITECTURE_IMPACT" \
   --argjson line_changes "$LINES" \
   --argjson binary_or_unknown "${BINARY_HIT:-0}" \
-  --argjson layer_roots "$LAYER_ROOTS_JSON" \
-  --argjson classifications "$CLASSIFICATIONS_JSON" \
-  --argjson changed_paths "$DIFF_FILES_JSON" \
+  --slurpfile layer_roots "$GATE_POLICY_INPUT_DIR/layer_roots.json" \
+  --slurpfile classifications "$GATE_POLICY_INPUT_DIR/classifications.json" \
+  --slurpfile changed_paths "$GATE_POLICY_INPUT_DIR/changed_paths.json" \
   --argjson reviewer_override "$REVIEWER_OVERRIDE_PROVENANCE_JSON" '{
     policy:$policy,
     policy_source:$policy_source,
     scope_fingerprint:$scope_fingerprint,
     requested:{tier:$tier,mode:$mode,pass_kind:$pass_kind,reviewers:$reviewers},
     reviewer_vocabulary:$vocabulary,
-    changed_paths:$changed_paths,
-    classifications:$classifications,
+    changed_paths:$changed_paths[0],
+    classifications:$classifications[0],
     classification:{
       architecture_impact:$architecture_impact,
       line_changes:$line_changes,
       binary_or_unknown_count:$binary_or_unknown,
-      layer_roots:$layer_roots
+      layer_roots:$layer_roots[0]
     },
     reviewer_override:$reviewer_override
-  }')"
+  }')" || exit 2
+gate_cleanup_policy_input_dir
 GATE_POLICY_RESOLUTION="$(_gate_policy_resolve \
   "$GATE_POLICY_INPUT" "$POLICY_OVERRIDE_FILE")" || exit 2
 if [[ "$(jq -r '.enforcement.status' <<<"$GATE_POLICY_RESOLUTION")" != pass ]]; then
@@ -1431,6 +1465,7 @@ relocate_gate_artifacts() {
 gate_exit_cleanup() {
   local _gate_exit_status=$?
   gate_cleanup_reviewer_override_snapshot
+  gate_cleanup_policy_input_dir
   # CC-522 Slice B: a killed reviewer cannot be trusted to write a final
   # result. Preserve the host-owned QA checkpoint/log pointer as an explicit
   # non-authorizing partial artifact before any run-dir relocation.
@@ -2455,7 +2490,12 @@ qa_execution_prepare || { printf 'Error: unable to prepare QA execution evidence
 # immutable local copies without broad host-home access; cleanup_briefs removes
 # them on every success/failure path.
 REVIEWER_DEFINITION_DIR="$WORK_DIR/.gate-briefs/reviewer-definitions-${TIMESTAMP}"
-mkdir -m 700 -p -- "$REVIEWER_DEFINITION_DIR"
+# umask rather than `mkdir -m`/chmod: on native Windows Git Bash a chmod-style
+# mode change on a freshly created directory can fail with Permission denied
+# even though the directory itself is fine, which under set -e aborted the
+# whole gate (CC-587). umask achieves the same owner-only result at creation
+# time without a follow-up permission syscall.
+(umask 077; mkdir -p -- "$REVIEWER_DEFINITION_DIR")
 for r in $REVIEWERS; do
   _reviewer_source="$AGENT_DIR/${r}.md"
   _reviewer_snapshot="$REVIEWER_DEFINITION_DIR/${r}.md"

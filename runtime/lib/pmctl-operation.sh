@@ -62,6 +62,16 @@ _pmctl_operation_ensure_loaded() {
     && declare -F pmctl_operation_reconcile >/dev/null 2>&1
 }
 
+# A caller-supplied work/child dir can arrive already canonicalized to
+# Windows drive-letter form (e.g. pmctl-dispatch.sh's --cd handling runs it
+# through _portable_canonical_path before this library ever sees it), not
+# just POSIX/MSYS form. An absolute-path guard that only accepts a leading
+# `/` rejects every such call on native Windows before it reaches any real
+# validation -- accept both spellings here.
+_pmctl_operation_is_absolute_dir() {
+  [[ "$1" == /* || "$1" =~ ^[A-Za-z]:/ ]]
+}
+
 _pmctl_operation_dir() {
   local repo_root="$1" work_dir="$2" operation_id="$3" project_dir
   _pmctl_operation_load_writer "$repo_root" || return 1
@@ -73,7 +83,7 @@ _pmctl_operation_dir() {
 # pmctl_operation_create <repo-root> <work-dir> <gate|ship|task> [executor]
 pmctl_operation_create() {
   local repo_root="$1" work_dir="$2" kind="$3" executor="${4:-}" id ts json attempt rc
-  [[ "$kind" =~ ^(gate|ship|task)$ && "$work_dir" == /* && -d "$work_dir" ]] || return 2
+  [[ "$kind" =~ ^(gate|ship|task)$ ]] && _pmctl_operation_is_absolute_dir "$work_dir" && [[ -d "$work_dir" ]] || return 2
   _pmctl_operation_load_writer "$repo_root" || return 2
   # Timestamp-plus-random IDs make collisions extraordinarily unlikely, but
   # creation must still be non-destructive if one does occur.
@@ -105,7 +115,7 @@ _pmctl_operation_attach_child_inner() {
 
 pmctl_operation_attach_child() {
   local repo_root="$1" parent_dir="$2" op_id="$3" run_id="$4" child_dir="$5" op_dir
-  pm_identifier_run_is_valid "$run_id" && [[ "$child_dir" == /* ]] || return 2
+  pm_identifier_run_is_valid "$run_id" && _pmctl_operation_is_absolute_dir "$child_dir" || return 2
   _pmctl_operation_load_writer "$repo_root" || return 2
   op_dir="$(_pmctl_operation_dir "$repo_root" "$parent_dir" "$op_id")" || return 2
   [[ -f "${op_dir%/*}/${op_id}.json" ]] || return 2
@@ -162,7 +172,13 @@ _pmctl_operation_validate_record() {
   json="$(jq -c . "$record")" || return 2
   kind="$(jq -r '.kind // ""' <<<"$json")"
   owner="$(jq -r '.working_dir // ""' <<<"$json")"
-  [[ "$kind" == "$expected_kind" && "$owner" == "$work_dir" ]] || return 2
+  # Compare canonicalized forms: on native Windows Git Bash the caller's
+  # path and the record's stored path can both be valid but differently
+  # spelled (POSIX /c/Users/... vs drive-letter C:/Users/...), which a raw
+  # string compare never matches (CC-587).
+  [[ "$kind" == "$expected_kind" \
+    && "$(_portable_canonical_path "$owner")" == "$(_portable_canonical_path "$work_dir")" ]] \
+    || return 2
   PMCTL_OPERATION_RECORD_JSON="$json"
   PMCTL_OPERATION_RECORD_STATE="$(jq -r '.state // ""' <<<"$json")"
 }

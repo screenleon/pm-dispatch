@@ -677,8 +677,14 @@ _gate_scope_expansions_collect() {
 }
 
 _gate_scope_flags_resolve() {
-  local changed_paths_json="$1"
-  jq -nc --argjson paths "$changed_paths_json" '
+  local changed_paths_json="$1" paths_file rc
+  # Written to a temp file and read with --slurpfile rather than --argjson:
+  # a large diff's changed-paths list can exceed the Windows CreateProcess
+  # argv/env limit (~32K), which --argjson would blow past (CC-587).
+  paths_file="$(mktemp "${TMPDIR:-/tmp}/gate-scope-flags-paths.XXXXXX")" || return 2
+  printf '%s' "$changed_paths_json" > "$paths_file"
+  jq -nc --slurpfile paths "$paths_file" '
+    ($paths[0]) as $paths |
     def flag($pattern):
       ($paths | map(select(test($pattern))) | unique | sort) as $matched |
       {matched:($matched|length > 0),paths:$matched};
@@ -692,6 +698,9 @@ _gate_scope_flags_resolve() {
       migration:flag("(^|/)(migration|migrations|migrate)(/|[-_.])")
     }
   '
+  rc=$?
+  rm -f -- "$paths_file"
+  return "$rc"
 }
 
 _gate_scope_reference_index_collect() {
@@ -700,6 +709,7 @@ _gate_scope_reference_index_collect() {
   local expansion_file="$5" output="$6"
   local paths_file content_file sorted_file path snapshot line_count digest
   local reference_fd
+  local in_changed_file in_paired_file in_signals_file in_flags_file
   paths_file="$(mktemp "${TMPDIR:-/tmp}/gate-scope-reference-paths.XXXXXX")" \
     || return 2
   content_file="$(mktemp "${TMPDIR:-/tmp}/gate-scope-reference-content.XXXXXX")" \
@@ -712,23 +722,54 @@ _gate_scope_reference_index_collect() {
       rm -f -- "$paths_file" "$content_file"
       return 2
     }
+  # Written to scratch files and read with --slurpfile rather than --argjson:
+  # these lists grow with diff size and can exceed the Windows CreateProcess
+  # argv/env limit (~32K) that --argjson would otherwise hit (CC-587).
+  in_changed_file="$(mktemp "${TMPDIR:-/tmp}/gate-scope-reference-in-changed.XXXXXX")" \
+    || {
+      rm -f -- "$paths_file" "$content_file" "$sorted_file"
+      return 2
+    }
+  in_paired_file="$(mktemp "${TMPDIR:-/tmp}/gate-scope-reference-in-paired.XXXXXX")" \
+    || {
+      rm -f -- "$paths_file" "$content_file" "$sorted_file" "$in_changed_file"
+      return 2
+    }
+  in_signals_file="$(mktemp "${TMPDIR:-/tmp}/gate-scope-reference-in-signals.XXXXXX")" \
+    || {
+      rm -f -- "$paths_file" "$content_file" "$sorted_file" \
+        "$in_changed_file" "$in_paired_file"
+      return 2
+    }
+  in_flags_file="$(mktemp "${TMPDIR:-/tmp}/gate-scope-reference-in-flags.XXXXXX")" \
+    || {
+      rm -f -- "$paths_file" "$content_file" "$sorted_file" \
+        "$in_changed_file" "$in_paired_file" "$in_signals_file"
+      return 2
+    }
+  printf '%s' "$changed_paths_json" > "$in_changed_file"
+  printf '%s' "$paired_tests_json" > "$in_paired_file"
+  printf '%s' "$sensitive_signals_json" > "$in_signals_file"
+  printf '%s' "$flags_json" > "$in_flags_file"
   : > "$output"
   if ! jq -jnr \
-      --argjson changed "$changed_paths_json" \
-      --argjson paired "$paired_tests_json" \
-      --argjson signals "$sensitive_signals_json" \
-      --argjson flags "$flags_json" \
+      --slurpfile changed "$in_changed_file" \
+      --slurpfile paired "$in_paired_file" \
+      --slurpfile signals "$in_signals_file" \
+      --slurpfile flags "$in_flags_file" \
       --slurpfile expansion "$expansion_file" '
-      ([$changed[]] +
-       [$paired[] | .source_path, .test_path] +
-       [$signals[] | .matches[]] +
-       [$flags[] | .paths[]] +
+      ([$changed[0][]] +
+       [$paired[0][] | .source_path, .test_path] +
+       [$signals[0][] | .matches[]] +
+       [$flags[0][] | .paths[]] +
        [$expansion[0][] | .path] |
        unique | sort | .[]) + "\u0000"
     ' > "$paths_file"; then
-    rm -f -- "$paths_file" "$content_file" "$sorted_file"
+    rm -f -- "$paths_file" "$content_file" "$sorted_file" \
+      "$in_changed_file" "$in_paired_file" "$in_signals_file" "$in_flags_file"
     return 2
   fi
+  rm -f -- "$in_changed_file" "$in_paired_file" "$in_signals_file" "$in_flags_file"
 
   exec {reference_fd}< "$paths_file" || {
     rm -f -- "$paths_file" "$content_file" "$sorted_file"
@@ -805,6 +846,7 @@ _gate_scope_manifest_write() {
   local paired_tests_json sensitive_signals_json flags_json
   local truncation_occurred=false truncation_accepted=false
   local status=complete acceptance_source="" reasons_json content_digest
+  local manifest_input_dir
   hunks_file="$(mktemp "${TMPDIR:-/tmp}/gate-scope-hunks.XXXXXX")" || return 2
   binary_file="$(mktemp "${TMPDIR:-/tmp}/gate-scope-binary.XXXXXX")" || {
     rm -f -- "$hunks_file"
@@ -822,6 +864,14 @@ _gate_scope_manifest_write() {
     rm -f -- "$hunks_file" "$binary_file" "$expansion_file" "$reference_file"
     return 2
   }
+  # Scratch dir for the manifest-assembly jq's --slurpfile inputs below: these
+  # grow with diff size and can exceed the Windows CreateProcess argv/env
+  # limit (~32K) that --argjson would otherwise hit (CC-587).
+  manifest_input_dir="$(mktemp -d "${TMPDIR:-/tmp}/gate-scope-manifest-input.XXXXXX")" || {
+    rm -f -- "$hunks_file" "$binary_file" "$expansion_file" "$reference_file" \
+      "$manifest_tmp"
+    return 2
+  }
 
   changed_paths_json="$(jq -c '[
     .[] | .old_path, .new_path | select(. != null)
@@ -837,16 +887,19 @@ _gate_scope_manifest_write() {
   _gate_scope_hunks_collect "$changes_json" "$hunks_file" "$binary_file" || {
     rm -f -- "$hunks_file" "$binary_file" "$expansion_file" \
       "$reference_file" "$manifest_tmp"
+    rm -rf -- "$manifest_input_dir"
     return 2
   }
   paired_tests_json="$(_gate_scope_paired_tests_collect "$changed_paths_json")" || {
     rm -f -- "$hunks_file" "$binary_file" "$expansion_file" \
       "$reference_file" "$manifest_tmp"
+    rm -rf -- "$manifest_input_dir"
     return 2
   }
   _gate_scope_expansions_collect "$changed_paths_json" "$expansion_file" || {
       rm -f -- "$hunks_file" "$binary_file" "$expansion_file" \
         "$reference_file" "$manifest_tmp"
+      rm -rf -- "$manifest_input_dir"
       return 2
     }
   sensitive_signals_json="$(jq -c '[
@@ -858,6 +911,7 @@ _gate_scope_manifest_write() {
     "$flags_json" "$expansion_file" "$reference_file" || {
       rm -f -- "$hunks_file" "$binary_file" "$expansion_file" \
         "$reference_file" "$manifest_tmp"
+      rm -rf -- "$manifest_input_dir"
       return 2
     }
 
@@ -891,6 +945,18 @@ _gate_scope_manifest_write() {
       if $entries > 0 then "expansion-entry-budget" else empty end
     ]')"
 
+  # Written to the manifest_input_dir scratch files and read with
+  # --slurpfile rather than --argjson: these lists grow with diff size and
+  # can exceed the Windows CreateProcess argv/env limit (~32K) that
+  # --argjson would otherwise hit (CC-587).
+  printf '%s' "$changes_json" > "$manifest_input_dir/changes.json"
+  printf '%s' "$changed_paths_json" > "$manifest_input_dir/changed_paths.json"
+  printf '%s' "$renamed_paths_json" > "$manifest_input_dir/renamed_paths.json"
+  printf '%s' "$untracked_paths_json" > "$manifest_input_dir/untracked_paths.json"
+  printf '%s' "$paired_tests_json" > "$manifest_input_dir/paired_tests.json"
+  printf '%s' "$sensitive_signals_json" > "$manifest_input_dir/sensitive_signals.json"
+  printf '%s' "$flags_json" > "$manifest_input_dir/flags.json"
+
   if ! jq -n \
       --arg status "$status" \
       --arg repository_key "$GATE_SUBJECT_REPOSITORY_KEY" \
@@ -902,14 +968,15 @@ _gate_scope_manifest_write() {
       --arg head_ref "$HEAD_REF" \
       --arg acceptance_source "$acceptance_source" \
       --argjson include_untracked "$POLICY_SCOPE_INCLUDE_UNTRACKED" \
-      --argjson changes "$changes_json" \
-      --argjson changed_paths "$changed_paths_json" \
-      --argjson renamed_paths "$renamed_paths_json" \
-      --argjson untracked_paths "$untracked_paths_json" \
+      --slurpfile changes "$manifest_input_dir/changes.json" \
+      --slurpfile changed_paths "$manifest_input_dir/changed_paths.json" \
+      --slurpfile renamed_paths "$manifest_input_dir/renamed_paths.json" \
+      --slurpfile untracked_paths "$manifest_input_dir/untracked_paths.json" \
       --slurpfile hunks "$hunks_file" --slurpfile binary "$binary_file" \
-      --argjson paired_tests "$paired_tests_json" \
-      --argjson sensitive_signals "$sensitive_signals_json" \
-      --argjson flags "$flags_json" --slurpfile expansion "$expansion_file" \
+      --slurpfile paired_tests "$manifest_input_dir/paired_tests.json" \
+      --slurpfile sensitive_signals "$manifest_input_dir/sensitive_signals.json" \
+      --slurpfile flags "$manifest_input_dir/flags.json" \
+      --slurpfile expansion "$expansion_file" \
       --slurpfile references "$reference_file" \
       --argjson truncation_occurred "$truncation_occurred" \
       --argjson truncation_accepted "$truncation_accepted" \
@@ -943,18 +1010,18 @@ _gate_scope_manifest_write() {
           include_untracked:$include_untracked
         },
         changes:{
-          entries:$changes,
-          changed_paths:$changed_paths,
-          renamed_paths:$renamed_paths,
-          untracked_paths:$untracked_paths
+          entries:$changes[0],
+          changed_paths:$changed_paths[0],
+          renamed_paths:$renamed_paths[0],
+          untracked_paths:$untracked_paths[0]
         },
         diff:{
           hunks:$hunks,
           binary_or_special_paths:($binary | unique | sort)
         },
-        paired_tests:$paired_tests,
-        sensitive_signals:$sensitive_signals,
-        flags:$flags,
+        paired_tests:$paired_tests[0],
+        sensitive_signals:$sensitive_signals[0],
+        flags:$flags[0],
         expansion:{
           claim:"bounded-hints-not-complete-call-graph",
           entries:$expansion[0],
@@ -996,25 +1063,30 @@ _gate_scope_manifest_write() {
       }' > "$manifest_tmp"; then
     rm -f -- "$hunks_file" "$binary_file" "$expansion_file" \
       "$reference_file" "$manifest_tmp"
+    rm -rf -- "$manifest_input_dir"
     return 2
   fi
   content_digest="$(jq -cS 'del(.content.digest)' "$manifest_tmp" |
     gate_digest_stream)" || {
       rm -f -- "$hunks_file" "$binary_file" "$expansion_file" \
         "$reference_file" "$manifest_tmp"
+      rm -rf -- "$manifest_input_dir"
       return 2
     }
   jq --arg digest "$content_digest" '.content.digest=$digest' \
     "$manifest_tmp" > "${manifest_tmp}.final" || {
       rm -f -- "$hunks_file" "$binary_file" "$expansion_file" \
         "$reference_file" "$manifest_tmp" "${manifest_tmp}.final"
+      rm -rf -- "$manifest_input_dir"
       return 2
     }
   mv -- "${manifest_tmp}.final" "$destination" || {
     rm -f -- "$hunks_file" "$binary_file" "$expansion_file" \
       "$reference_file" "$manifest_tmp" "${manifest_tmp}.final"
+    rm -rf -- "$manifest_input_dir"
     return 2
   }
   rm -f -- "$hunks_file" "$binary_file" "$expansion_file" \
     "$reference_file" "$manifest_tmp"
+  rm -rf -- "$manifest_input_dir"
 }

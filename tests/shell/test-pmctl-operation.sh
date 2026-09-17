@@ -420,6 +420,214 @@ case_repeated_cancel_preserves_cancelled_terminal() {
   fi
 }
 
+# Verifies that reserving producer ownership survives the native-Windows
+# replace boundary when MSYS mv cannot overwrite the existing operation file.
+# Behavior: the writer falls back to PowerShell File.Replace without exposing
+# a missing or partial operation record.
+# Steps: create an operation normally, force mv to fail under the Windows
+# platform override, provide path/PowerShell stubs, then assert pending state.
+case_expect_producer_windows_replace_fallback() {
+  local name="operation producer reservation: native Windows replace fallback preserves the record"
+  should_run "$name" || return 0
+  local work="$tmp_root/windows replace work" store="$tmp_root/windows replace state"
+  local stubs="$tmp_root/windows-replace-stubs" sink="$tmp_root/windows-replace-called"
+  local op state record real_mv replace_args replace_src replace_dest
+  local replace_src_dir replace_dest_normal replace_before replace_after rc=0
+  make_repo "$work"
+  _pmctl_operation_load_writer "$REPO_ROOT"
+  op="$(PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_create "$REPO_ROOT" "$work" gate codex)"
+  state="$(PM_DISPATCH_STATE_ROOT="$store" _SW_REPO_ROOT="$work" _sw_project_dir)"
+  record="${state%/}/operations/$op.json"
+  real_mv="$(command -v mv)"
+  mkdir -p "$stubs"
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$stubs/mv"
+  # shellcheck disable=SC2016 # $1/$2 expand when the generated cygpath stub runs.
+  printf '#!/usr/bin/env bash\n[[ "$1" == "-w" ]] || exit 1\nprintf "%%s\\n" "$2"\n' > "$stubs/cygpath"
+  cat > "$stubs/powershell.exe" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+# This is the observable replacement boundary: a fallback that unlinks or
+# partially rewrites the destination before invoking ReplaceFile must fail the
+# regression instead of being hidden by the final-state assertion.
+[[ -f "$PM_DISPATCH_REPLACE_SOURCE" && -f "$PM_DISPATCH_REPLACE_DESTINATION" ]]
+jq -e 'type == "object" and .id != null and .state != null' \
+  "$PM_DISPATCH_REPLACE_SOURCE" "$PM_DISPATCH_REPLACE_DESTINATION" >/dev/null
+before="$(jq -c . "$PM_DISPATCH_REPLACE_DESTINATION")"
+"$CC587_REAL_MV" -f -- "$PM_DISPATCH_REPLACE_SOURCE" "$PM_DISPATCH_REPLACE_DESTINATION"
+[[ ! -e "$PM_DISPATCH_REPLACE_SOURCE" && -f "$PM_DISPATCH_REPLACE_DESTINATION" ]]
+jq -e 'type == "object" and .id != null and .state != null' \
+  "$PM_DISPATCH_REPLACE_DESTINATION" >/dev/null
+after="$(jq -c . "$PM_DISPATCH_REPLACE_DESTINATION")"
+printf '%s\n%s\n%s\n%s\n%s\n' "$*" "$PM_DISPATCH_REPLACE_SOURCE" \
+  "$PM_DISPATCH_REPLACE_DESTINATION" "$before" "$after" > "$CC587_REPLACE_SINK"
+EOF
+  chmod +x "$stubs/mv" "$stubs/cygpath" "$stubs/powershell.exe"
+  PATH="$stubs:$PATH" PM_DISPATCH_PLATFORM=windows PM_DISPATCH_STATE_ROOT="$store" \
+    CC587_REAL_MV="$real_mv" CC587_REPLACE_SINK="$sink" \
+    pmctl_operation_expect_producer "$REPO_ROOT" gate "$op" "$work" || rc=$?
+  replace_args="$(sed -n '1p' "$sink" 2>/dev/null || true)"
+  replace_src="$(sed -n '2p' "$sink" 2>/dev/null || true)"
+  replace_dest="$(sed -n '3p' "$sink" 2>/dev/null || true)"
+  replace_before="$(sed -n '4p' "$sink" 2>/dev/null || true)"
+  replace_after="$(sed -n '5p' "$sink" 2>/dev/null || true)"
+  replace_src_dir="$(realpath_m "${replace_src%/*}" 2>/dev/null || true)"
+  replace_dest_normal="$(realpath_m "$replace_dest" 2>/dev/null || true)"
+  # shellcheck disable=SC2016 # The assertion requires literal PowerShell $env references.
+  if [[ "$rc" -eq 0 && -f "$sink" && -f "$record" \
+      && "$replace_args" == *'[System.IO.File]::Replace($env:PM_DISPATCH_REPLACE_SOURCE, $env:PM_DISPATCH_REPLACE_DESTINATION, $null)'* \
+      && "$replace_args" != *"$record"* && "${replace_src##*/}" == .tmp-* \
+      && "$replace_src_dir" == "${record%/*}" && "$replace_dest_normal" == "$record" \
+      && "$(jq -r '.producer // ""' <<< "$replace_before")" == "" \
+      && "$(jq -r '.producer.status // ""' <<< "$replace_after")" == pending \
+      && "$(jq -r '.producer.status // ""' "$record")" == pending ]] \
+      && ! find "${record%/*}" -maxdepth 1 -name '.tmp-*' -print -quit | grep -q .; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc record=$(jq -c . "$record" 2>/dev/null || true) fallback=$([[ -f "$sink" ]] && printf called || printf missing) args=$replace_args src=$replace_src dest=$replace_dest before=$replace_before after=$replace_after temps=$(find "${record%/*}" -maxdepth 1 -name '.tmp-*' -print 2>/dev/null | tr '\n' '|')"
+  fi
+}
+
+# Behavior: a failed native-Windows replacement preserves the existing valid
+# operation projection, reports failure, and removes its temporary projection.
+# Steps: force both the primary mv and PowerShell fallback to fail, then compare
+# the record byte-for-byte and validate it through the writer's schema boundary.
+case_expect_producer_windows_replace_failure_preserves_record() {
+  local name="operation producer reservation: failed Windows replace preserves record and cleans temp"
+  should_run "$name" || return 0
+  local work="$tmp_root/windows replace failure work"
+  local store="$tmp_root/windows replace failure state"
+  local stubs="$tmp_root/windows-replace-failure-stubs"
+  local sink="$tmp_root/windows-replace-failure-called"
+  local op state record before after rc=0 schema_rc=0
+  make_repo "$work"
+  _pmctl_operation_load_writer "$REPO_ROOT"
+  op="$(PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_create "$REPO_ROOT" "$work" gate codex)"
+  state="$(PM_DISPATCH_STATE_ROOT="$store" _SW_REPO_ROOT="$work" _sw_project_dir)"
+  record="${state%/}/operations/$op.json"
+  before="$(cat "$record")"
+  mkdir -p "$stubs"
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$stubs/mv"
+  # shellcheck disable=SC2016 # $1/$2 expand when the generated cygpath stub runs.
+  printf '#!/usr/bin/env bash\n[[ "$1" == "-w" ]] || exit 1\nprintf "%%s\\n" "$2"\n' > "$stubs/cygpath"
+  cat > "$stubs/powershell.exe" <<'EOF'
+#!/usr/bin/env bash
+printf 'called\n' > "$CC587_REPLACE_FAILURE_SINK"
+exit 23
+EOF
+  chmod +x "$stubs/mv" "$stubs/cygpath" "$stubs/powershell.exe"
+  PATH="$stubs:$PATH" PM_DISPATCH_PLATFORM=windows PM_DISPATCH_STATE_ROOT="$store" \
+    CC587_REPLACE_FAILURE_SINK="$sink" \
+    pmctl_operation_expect_producer "$REPO_ROOT" gate "$op" "$work" \
+    >/dev/null 2>&1 || rc=$?
+  after="$(cat "$record" 2>/dev/null || true)"
+  _sw_validate_compacted_json_line operation "$after" >/dev/null 2>&1 || schema_rc=$?
+  if [[ "$rc" -ne 0 && "$schema_rc" -eq 0 && -f "$sink" \
+      && "$after" == "$before" && "$(jq -r '.producer // ""' "$record")" == "" ]] \
+      && ! find "${record%/*}" -maxdepth 1 -name '.tmp-*' -print -quit | grep -q .; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc schema_rc=$schema_rc fallback=$([[ -f "$sink" ]] && printf called || printf missing) before=$before after=$after temps=$(find "${record%/*}" -maxdepth 1 -name '.tmp-*' -print 2>/dev/null | tr '\n' '|')"
+  fi
+}
+
+# Behavior: a record's stored working_dir and a caller's --cd can be two valid
+# but differently spelled forms of the same native-Windows path (POSIX
+# /c/Users/... vs drive-letter C:/Users/...); ownership validation must accept
+# that equivalence instead of rejecting the record as foreign (CC-587).
+# Steps: hand-write a record whose working_dir is drive-letter form, stub
+# cygpath to perform the same /x -> X: fold `_portable_canonical_path` relies
+# on, then validate against an equivalent POSIX spelling and a genuinely
+# different directory.
+case_validate_record_canonicalizes_windows_path_spelling() {
+  local name="operation record validation: equivalent Windows path spellings are the same owner"
+  should_run "$name" || return 0
+  local stubs="$tmp_root/windows-spelling-stubs"
+  local record="$tmp_root/windows-spelling-record.json"
+  local rc=0 other_rc=0
+  mkdir -p "$stubs"
+  cat > "$stubs/cygpath" <<'EOF'
+#!/usr/bin/env bash
+[[ "$1" == "-m" && "$2" == "--" ]] || exit 1
+path="$3"
+if [[ "$path" =~ ^/([A-Za-z])(/.*)?$ ]]; then
+  printf '%s:%s\n' "${BASH_REMATCH[1]^^}" "${BASH_REMATCH[2]:-/}"
+else
+  printf '%s\n' "$path"
+fi
+EOF
+  chmod +x "$stubs/cygpath"
+  jq -n '{schema_version:1,id:"op-windows-spelling-test",kind:"gate",
+    working_dir:"C:/Users/First Last/repo",state:"running",
+    created_ts:"2026-01-01T00:00:00Z",terminal_ts:null,producer:null,
+    cancellation:null}' > "$record"
+  (
+    # shellcheck disable=SC2030,SC2031  # deliberately subshell-local; only this call needs the stubbed cygpath.
+    PATH="$stubs:$PATH"
+    _pmctl_operation_validate_record "$record" gate "/c/Users/First Last/repo"
+  ) || rc=$?
+  (
+    # shellcheck disable=SC2030,SC2031  # deliberately subshell-local; only this call needs the stubbed cygpath.
+    PATH="$stubs:$PATH"
+    _pmctl_operation_validate_record "$record" gate "/c/Users/Someone/other"
+  ) || other_rc=$?
+  if [[ "$rc" -eq 0 && "$other_rc" -eq 2 ]]; then
+    pass "$name"
+  else
+    fail "$name" "equivalent-spelling-rc=$rc different-path-rc=$other_rc"
+  fi
+}
+
+# Behavior: _pmctl_operation_is_absolute_dir accepts both POSIX and Windows
+# drive-letter absolute forms. pmctl_operation_create's and
+# pmctl_operation_attach_child's own absolute-path guards used a POSIX-only
+# `== /*` test that rejected every call on native Windows, where
+# pmctl-dispatch.sh's --cd handling canonicalizes the path to drive-letter
+# form (e.g. c:/Users/...) before this library ever sees it -- rejecting it
+# before _pmctl_operation_validate_record even runs, with a silent exit 2
+# (CC-587). This is the actual root cause behind the 100% native-Windows gate
+# failure; the earlier record-ownership canonicalization fix alone was
+# insufficient because this guard rejected the call first.
+case_absolute_dir_accepts_windows_drive_letter_form() {
+  local name="operation absolute-path guard: accepts Windows drive-letter form"
+  should_run "$name" || return 0
+  local rc=0
+  if _pmctl_operation_is_absolute_dir '/posix/style/path' \
+      && _pmctl_operation_is_absolute_dir 'C:/Users/First Last/repo' \
+      && _pmctl_operation_is_absolute_dir 'c:/users/first' \
+      && ! _pmctl_operation_is_absolute_dir 'relative/path' \
+      && ! _pmctl_operation_is_absolute_dir 'C:no-slash-after-colon'; then
+    pass "$name"
+  else
+    fail "$name" "one or more absolute-dir classifications were wrong"
+  fi
+}
+
+# Behavior: pmctl_operation_attach_child itself (not just the predicate in
+# isolation) accepts a Windows drive-letter-form child_dir end-to-end.
+# Steps: create a real parent operation on a POSIX work dir, then attach a
+# child using a synthetic drive-letter-spelled child_dir; the guard must let
+# it through and the appended child record must preserve that exact spelling
+# (attach_child does not canonicalize its stored value).
+case_attach_child_accepts_windows_drive_letter_child_dir() {
+  local name="operation attach: accepts a Windows drive-letter child_dir"
+  should_run "$name" || return 0
+  local work="$tmp_root/win-child-dir-work" store="$tmp_root/win-child-dir-state"
+  local op run_id="run-20260917T000000Z-abcdef" rc=0 state record children
+  make_repo "$work"
+  op="$(PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_create "$REPO_ROOT" "$work" gate)"
+  PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_attach_child \
+    "$REPO_ROOT" "$work" "$op" "$run_id" 'C:/Users/First Last/child-repo' || rc=$?
+  state="$(PM_DISPATCH_STATE_ROOT="$store" bash -c '. "$1/runtime/lib/state-writer.sh"; cd "$2"; _sw_project_dir' _ "$REPO_ROOT" "$work")"
+  record="${state%/}/operations/$op/children.jsonl"
+  children="$(cat "$record" 2>/dev/null || true)"
+  if [[ "$rc" -eq 0 \
+      && "$(jq -r '.working_dir' <<<"$children")" == 'C:/Users/First Last/child-repo' ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc children=$children"
+  fi
+}
+
 case_unknown_operation_is_diagnosed_not_silent() {
   local name="operation cancel/reconcile: unknown id reports why instead of exiting silently"
   should_run "$name" || return 0
@@ -487,4 +695,9 @@ case_cancel_deduplicates_repeated_child_records
 case_cancel_refuses_reused_producer_identity
 case_cancel_accepts_producer_that_exited_before_signal
 case_repeated_cancel_preserves_cancelled_terminal
+case_expect_producer_windows_replace_fallback
+case_expect_producer_windows_replace_failure_preserves_record
+case_validate_record_canonicalizes_windows_path_spelling
+case_absolute_dir_accepts_windows_drive_letter_form
+case_attach_child_accepts_windows_drive_letter_child_dir
 th_summary
