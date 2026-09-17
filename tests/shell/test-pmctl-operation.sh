@@ -561,10 +561,12 @@ EOF
     created_ts:"2026-01-01T00:00:00Z",terminal_ts:null,producer:null,
     cancellation:null}' > "$record"
   (
+    # shellcheck disable=SC2030,SC2031  # deliberately subshell-local; only this call needs the stubbed cygpath.
     PATH="$stubs:$PATH"
     _pmctl_operation_validate_record "$record" gate "/c/Users/First Last/repo"
   ) || rc=$?
   (
+    # shellcheck disable=SC2030,SC2031  # deliberately subshell-local; only this call needs the stubbed cygpath.
     PATH="$stubs:$PATH"
     _pmctl_operation_validate_record "$record" gate "/c/Users/Someone/other"
   ) || other_rc=$?
