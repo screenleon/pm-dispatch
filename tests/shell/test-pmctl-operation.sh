@@ -575,6 +575,57 @@ EOF
   fi
 }
 
+# Behavior: _pmctl_operation_is_absolute_dir accepts both POSIX and Windows
+# drive-letter absolute forms. pmctl_operation_create's and
+# pmctl_operation_attach_child's own absolute-path guards used a POSIX-only
+# `== /*` test that rejected every call on native Windows, where
+# pmctl-dispatch.sh's --cd handling canonicalizes the path to drive-letter
+# form (e.g. c:/Users/...) before this library ever sees it -- rejecting it
+# before _pmctl_operation_validate_record even runs, with a silent exit 2
+# (CC-587). This is the actual root cause behind the 100% native-Windows gate
+# failure; the earlier record-ownership canonicalization fix alone was
+# insufficient because this guard rejected the call first.
+case_absolute_dir_accepts_windows_drive_letter_form() {
+  local name="operation absolute-path guard: accepts Windows drive-letter form"
+  should_run "$name" || return 0
+  local rc=0
+  if _pmctl_operation_is_absolute_dir '/posix/style/path' \
+      && _pmctl_operation_is_absolute_dir 'C:/Users/First Last/repo' \
+      && _pmctl_operation_is_absolute_dir 'c:/users/first' \
+      && ! _pmctl_operation_is_absolute_dir 'relative/path' \
+      && ! _pmctl_operation_is_absolute_dir 'C:no-slash-after-colon'; then
+    pass "$name"
+  else
+    fail "$name" "one or more absolute-dir classifications were wrong"
+  fi
+}
+
+# Behavior: pmctl_operation_attach_child itself (not just the predicate in
+# isolation) accepts a Windows drive-letter-form child_dir end-to-end.
+# Steps: create a real parent operation on a POSIX work dir, then attach a
+# child using a synthetic drive-letter-spelled child_dir; the guard must let
+# it through and the appended child record must preserve that exact spelling
+# (attach_child does not canonicalize its stored value).
+case_attach_child_accepts_windows_drive_letter_child_dir() {
+  local name="operation attach: accepts a Windows drive-letter child_dir"
+  should_run "$name" || return 0
+  local work="$tmp_root/win-child-dir-work" store="$tmp_root/win-child-dir-state"
+  local op run_id="run-20260917T000000Z-abcdef" rc=0 state record children
+  make_repo "$work"
+  op="$(PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_create "$REPO_ROOT" "$work" gate)"
+  PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_attach_child \
+    "$REPO_ROOT" "$work" "$op" "$run_id" 'C:/Users/First Last/child-repo' || rc=$?
+  state="$(PM_DISPATCH_STATE_ROOT="$store" bash -c '. "$1/runtime/lib/state-writer.sh"; cd "$2"; _sw_project_dir' _ "$REPO_ROOT" "$work")"
+  record="${state%/}/operations/$op/children.jsonl"
+  children="$(cat "$record" 2>/dev/null || true)"
+  if [[ "$rc" -eq 0 \
+      && "$(jq -r '.working_dir' <<<"$children")" == 'C:/Users/First Last/child-repo' ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc children=$children"
+  fi
+}
+
 case_unknown_operation_is_diagnosed_not_silent() {
   local name="operation cancel/reconcile: unknown id reports why instead of exiting silently"
   should_run "$name" || return 0
@@ -645,4 +696,6 @@ case_repeated_cancel_preserves_cancelled_terminal
 case_expect_producer_windows_replace_fallback
 case_expect_producer_windows_replace_failure_preserves_record
 case_validate_record_canonicalizes_windows_path_spelling
+case_absolute_dir_accepts_windows_drive_letter_form
+case_attach_child_accepts_windows_drive_letter_child_dir
 th_summary
