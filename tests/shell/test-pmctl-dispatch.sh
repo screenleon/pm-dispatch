@@ -1465,6 +1465,72 @@ EOF
   rm -rf "$work" "$state_root"; rm -f "$stderr" 2>/dev/null || true
 }
 
+case_auto_pack_bounded_refresh_does_not_hang() {
+  # issue #598: pmctl_dispatch_auto_pack used to call _ctx_ensure_fresh
+  # directly and unbounded, so a stuck/slow index refresh (observed on
+  # native Windows) hung the WHOLE dispatch -- and therefore every reviewer
+  # dispatch inside `pmctl gate run` -- indefinitely. It must instead route
+  # through the same bounded wrapper the gate's own startup context step
+  # uses (pmctl-context.sh:1129 / issue #579), degrading to freshness=stale
+  # and letting dispatch proceed rather than hanging.
+  #
+  # Simulate a hung refresh with PM_DISPATCH_CONTEXT_REFRESH_PMCTL (the
+  # bounded wrapper's own test seam) pointed at a stub `pmctl` that sleeps
+  # forever, paired with a short PM_DISPATCH_CONTEXT_REFRESH_TIMEOUT. If the
+  # #598 defect regressed (a direct unbounded call bypassing the wrapper),
+  # this dispatch would hang until the suite's own outer harness kills it;
+  # instead assert it returns well within the bound.
+  local name="dispatch/--auto-pack bounds the context refresh instead of hanging on a stuck index (issue #598)"
+  should_run "$name" || return 0
+  command -v timeout >/dev/null 2>&1 || { skip "$name" "timeout not on PATH"; return 0; }
+
+  local work brief state_root stderr evt code start end elapsed
+  work="$(mktemp -d)"; git init -q "$work"
+  mkdir -p "$work/src"
+  cat > "$work/src/alpha.sh" <<'EOF'
+#!/usr/bin/env bash
+alpha_beta_dispatch_helper() {
+  printf 'alpha beta dispatch helper\n'
+}
+EOF
+  "$PMCTL" context index "$work" >/dev/null 2>/dev/null
+
+  local hang_pmctl="$tmp_root/hang-pmctl-$$/pmctl"
+  mkdir -p "$(dirname "$hang_pmctl")"
+  cat > "$hang_pmctl" <<'STUB'
+#!/usr/bin/env bash
+sleep 300
+STUB
+  chmod +x "$hang_pmctl"
+
+  brief="$(_mk_guard_brief "$work")"
+  state_root="$(mktemp -d)"
+  stderr="$(mktemp)"
+  set +e
+  start="$(date +%s)"
+  PM_DISPATCH_STATE_ROOT="$state_root" \
+    PM_DISPATCH_CONTEXT_REFRESH_PMCTL="$hang_pmctl" \
+    PM_DISPATCH_CONTEXT_REFRESH_TIMEOUT=2 \
+    "$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$work" --brief-file "$brief" --auto-pack --print-cmd \
+    >/dev/null 2>"$stderr"; code=$?
+  end="$(date +%s)"
+  set -e
+  elapsed=$((end - start))
+  evt="$(PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" trace tail --kind context.auto_packed --all --json 2>/dev/null | tail -1)"
+
+  local freshness
+  freshness="$(printf '%s\n' "$evt" | jq -r '.payload.freshness // "MISSING"' 2>/dev/null)"
+
+  # Bound is 2s; the stub sleeps 300s. A generous 30s ceiling proves this
+  # returned via the timeout bound, not by the stub finishing on its own.
+  if [[ "$code" -eq 0 && "$elapsed" -lt 30 && "$freshness" == "stale" ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code elapsed=${elapsed}s freshness=$freshness evt=$evt"
+  fi
+  rm -rf "$work" "$state_root" "$(dirname "$hang_pmctl")"; rm -f "$stderr" 2>/dev/null || true
+}
+
 case_auto_pack_foreground_records_executed_snapshot() {
   # CC-402 / QA: a NON-dry-run foreground auto-pack run. The brief recorded in
   # runs.jsonl must be the SAME augmented effective brief the adapter executed —
@@ -1830,6 +1896,7 @@ case_auto_pack_nonexistent_absolute_work_dir_fails_loud
 case_auto_pack_hits_creates_pack_and_forwards_copy
 case_auto_pack_hits_event_carries_shadow_telemetry
 case_auto_pack_stale_freshness_on_refresh_failure
+case_auto_pack_bounded_refresh_does_not_hang
 case_auto_pack_foreground_records_executed_snapshot
 case_dispatch_cd_canonicalized_for_pack_path
 case_auto_pack_subdir_cd_roots_context_at_git_top

@@ -456,12 +456,39 @@ pmctl_dispatch_auto_pack() {
   # _ctx_ensure_fresh internally but swallows its result (`|| true`), so a
   # reuse-scan that succeeds against a STALE index (refresh failed, hits
   # still came from the old data) is indistinguishable from a genuinely
-  # fresh one from this function's perspective. Call _ctx_ensure_fresh
+  # fresh one from this function's perspective. Call the freshness check
   # directly here first -- idempotent with reuse-scan's own internal call
   # (mtime-based, a no-op refresh the second time) -- and use ITS result as
   # the freshness this event reports, rather than hard-coding "fresh".
+  #
+  # issue #598: this runs before EVERY reviewer dispatch inside `pmctl gate
+  # run`, unlike the gate's own startup context refresh (#579, PR #580).
+  # A raw, unbounded _ctx_ensure_fresh call here reaches the same slow
+  # index codepath but with no timeout, hanging the whole gate indefinitely
+  # on a slow/stuck index (observed on native Windows). Route through the
+  # same bounded, best-effort wrapper the gate's startup step already uses
+  # (pmctl-context.sh:1129) so auto-pack degrades to "stale" instead of
+  # blocking dispatch. Fall back to the raw call only if the bounded
+  # wrapper is unavailable for some reason (defensive; it is sourced above).
   local auto_freshness="fresh"
-  _ctx_ensure_fresh "$ctx_root" || auto_freshness="stale"
+  if declare -F pmctl_context_workflow_refresh_bounded >/dev/null 2>&1; then
+    local _refresh_status_json _refresh_status
+    if _refresh_status_json="$(pmctl_context_workflow_refresh_bounded "$ctx_root")"; then
+      _refresh_status="$(jq -r '.refresh_status // "error"' <<<"$_refresh_status_json" 2>/dev/null || printf error)"
+      # "skipped" (auto-refresh opted out via env) and "unavailable" (no
+      # sqlite3) are deliberate non-refresh states, not failures -- the
+      # existing index data (if any) is still the freshest available and
+      # reporting "stale" for them would be a false degrade. Only "error"
+      # (refresh attempted and failed) downgrades freshness.
+      [[ "$_refresh_status" == "error" ]] && auto_freshness="stale"
+    else
+      # Bounded wrapper itself failed: timed out, `timeout` unavailable, or
+      # the child pmctl invocation errored before it could emit JSON.
+      auto_freshness="stale"
+    fi
+  else
+    _ctx_ensure_fresh "$ctx_root" || auto_freshness="stale"
+  fi
 
   reuse_err="$(mktemp)" || {
     printf 'pmctl dispatch run: warning: auto-pack skipped: mktemp failed\n' >&2
