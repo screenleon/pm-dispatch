@@ -157,7 +157,18 @@ detect_platform() {
     Linux:aarch64|Linux:arm64) printf 'linux.aarch64\n' ;;
     Darwin:x86_64) printf 'darwin.x86_64\n' ;;
     Darwin:arm64|Darwin:aarch64) printf 'darwin.aarch64\n' ;;
+    MINGW64_NT-*:x86_64|MSYS_NT-*:x86_64) printf 'windows.x86_64\n' ;;
     *) return 1 ;;
+  esac
+}
+
+# The published ShellCheck release asset for Windows is a .zip with the
+# .exe at its root (no version-prefixed directory, unlike the .tar.gz
+# releases); every other platform gets the plain POSIX binary name.
+bin_name() {
+  case "$1" in
+    windows.*) printf 'shellcheck.exe\n' ;;
+    *) printf 'shellcheck\n' ;;
   esac
 }
 
@@ -170,8 +181,9 @@ cached_bin_dir() {
   printf '%s/shellcheck/%s/%s/bin\n' "$cache_root" "$expected_version" "$platform"
 }
 
-# --resolve: report a bin directory holding the pinned ShellCheck, WITHOUT
-# touching the network. Callers that need a working toolchain use this instead
+# --resolve: report the full path to an authenticated pinned ShellCheck
+# binary, WITHOUT touching the network. Callers that need a working
+# toolchain use this instead
 # of requiring the pin to already sit on PATH: a gate reviewer or CI sandbox
 # inherits a PATH nobody in this repo controls, but it does reach the cache a
 # previous bootstrap already populated. Downloading here is deliberately still
@@ -181,12 +193,16 @@ if [[ "$resolve_only" -eq 1 ]]; then
   shellcheck_path="$(command -v shellcheck || true)"
   if [[ -n "$shellcheck_path" ]]; then
     if check_binary "$shellcheck_path" 2>/dev/null; then
+      # Print the authenticated binary's own path, not merely its directory:
+      # on Windows a POSIX-named PATH binary and an unrelated, unauthenticated
+      # same-directory .exe could coexist, and the caller must run exactly
+      # the file this check just approved -- never infer a sibling by name.
       resolved_dir="$(cd "$(dirname "$shellcheck_path")" && pwd)" || {
         printf 'bootstrap-shellcheck: cannot resolve the directory of %s\n' \
           "$shellcheck_path" >&2
         exit 2
       }
-      printf '%s\n' "$resolved_dir"
+      printf '%s/%s\n' "$resolved_dir" "$(basename "$shellcheck_path")"
       exit 0
     fi
     path_diagnostic="$(check_binary "$shellcheck_path" 2>&1 >/dev/null || true)"
@@ -198,24 +214,26 @@ if [[ "$resolve_only" -eq 1 ]]; then
   # the operator chose the binary — a cached binary must match the digest the
   # repository records before it is offered to a caller that will run it. A
   # tampered binary can print any version it likes.
+  resolve_platform="$(detect_platform || true)"
+  resolve_bin="$(bin_name "$resolve_platform")"
   resolve_cache_dir="$(cached_bin_dir)"
   resolve_cache_diagnostic=""
-  if [[ -n "$resolve_cache_dir" && -x "$resolve_cache_dir/shellcheck" ]]; then
+  if [[ -n "$resolve_cache_dir" && -x "$resolve_cache_dir/$resolve_bin" ]]; then
     # Digest BEFORE the version probe: check_binary runs the candidate, and
     # running it is the thing digest verification exists to gate. Probing first
     # would hand control to an unauthenticated binary and only then ask whether
     # it was the right one.
     if resolve_cache_diagnostic="$( { verify_binary_digest \
-            "$resolve_cache_dir/shellcheck" "$(detect_platform)" \
-          && check_binary "$resolve_cache_dir/shellcheck"; } 2>&1 )"; then
-      # Absolute, because callers run the returned binary from their own CWD —
-      # lint chdirs to the repository root before every scan.
+            "$resolve_cache_dir/$resolve_bin" "$resolve_platform" \
+          && check_binary "$resolve_cache_dir/$resolve_bin"; } 2>&1 )"; then
+      # Absolute, and the exact authenticated file -- not a sibling picked by
+      # a downstream caller guessing a platform-specific filename.
       resolved_dir="$(cd "$resolve_cache_dir" && pwd)" || {
         printf 'bootstrap-shellcheck: cannot resolve the cache directory %s\n' \
           "$resolve_cache_dir" >&2
         exit 2
       }
-      printf '%s\n' "$resolved_dir"
+      printf '%s/%s\n' "$resolved_dir" "$resolve_bin"
       exit 0
     fi
   fi
@@ -225,8 +243,8 @@ if [[ "$resolve_only" -eq 1 ]]; then
   if [[ -n "$resolve_cache_diagnostic" ]]; then
     printf '%s\n' "$resolve_cache_diagnostic" >&2
   elif [[ -n "$resolve_cache_dir" ]]; then
-    printf 'bootstrap-shellcheck: cache: no pinned binary at %s/shellcheck\n' \
-      "$resolve_cache_dir" >&2
+    printf 'bootstrap-shellcheck: cache: no pinned binary at %s/%s\n' \
+      "$resolve_cache_dir" "$resolve_bin" >&2
   else
     printf 'bootstrap-shellcheck: cache: no cache root for this platform\n' >&2
   fi
@@ -285,8 +303,9 @@ fi
 
 # Same helper --resolve probes, so the install target and the offline lookup
 # cannot drift apart.
+bin="$(bin_name "$platform")"
 target_dir="$(cached_bin_dir)"
-target_bin="$target_dir/shellcheck"
+target_bin="$target_dir/$bin"
 # Same order as --resolve: authenticate the cached file, then run it.
 if [[ -x "$target_bin" ]] && verify_binary_digest "$target_bin" "$platform" 2>/dev/null \
     && check_binary "$target_bin" 2>/dev/null; then
@@ -294,7 +313,11 @@ if [[ -x "$target_bin" ]] && verify_binary_digest "$target_bin" "$platform" 2>/d
   exit 0
 fi
 
-for required_tool in curl tar; do
+case "$platform" in
+  windows.*) required_tools=(curl unzip) ;;
+  *) required_tools=(curl tar) ;;
+esac
+for required_tool in "${required_tools[@]}"; do
   command -v "$required_tool" >/dev/null 2>&1 || {
     printf 'bootstrap-shellcheck: %s is required to install the pinned tool\n' "$required_tool" >&2
     exit 2
@@ -317,11 +340,21 @@ if [[ "$actual_sha256" != "$asset_sha256" ]]; then
   exit 2
 fi
 
-tar -xzf "$archive" -C "$extract_dir"
-extracted_bin="$extract_dir/shellcheck-v${expected_version}/shellcheck"
+# The Windows release is a .zip with shellcheck.exe at its root; every other
+# platform's release is a .tar.gz nested under a version-prefixed directory.
+case "$platform" in
+  windows.*)
+    unzip -q "$archive" -d "$extract_dir"
+    extracted_bin="$extract_dir/shellcheck.exe"
+    ;;
+  *)
+    tar -xzf "$archive" -C "$extract_dir"
+    extracted_bin="$extract_dir/shellcheck-v${expected_version}/shellcheck"
+    ;;
+esac
 [[ -f "$extracted_bin" ]] || {
-  printf 'bootstrap-shellcheck: archive is missing shellcheck-v%s/shellcheck\n' \
-    "$expected_version" >&2
+  printf 'bootstrap-shellcheck: archive is missing %s\n' \
+    "${extracted_bin#"$extract_dir"/}" >&2
   exit 2
 }
 chmod +x "$extracted_bin"
@@ -331,7 +364,7 @@ verify_binary_digest "$extracted_bin" "$platform"
 check_binary "$extracted_bin"
 
 mkdir -p "$target_dir"
-staged_bin="$target_dir/.shellcheck.$$.$RANDOM"
+staged_bin="$target_dir/.shellcheck.$$.$RANDOM${bin#shellcheck}"
 cp "$extracted_bin" "$staged_bin"
 chmod +x "$staged_bin"
 mv -f "$staged_bin" "$target_bin"

@@ -117,8 +117,7 @@ fi
 # control, and a system ShellCheck there used to stop the whole test run at this
 # structural precheck — before a single behavioral suite ran. Resolution stays
 # offline: it uses an already-populated cache, never downloads.
-shellcheck_bin_dir="$(bash "$bootstrap" --repo "$repo_root" --resolve)" || exit $?
-shellcheck_bin="$shellcheck_bin_dir/shellcheck"
+shellcheck_bin="$(bash "$bootstrap" --repo "$repo_root" --resolve)" || exit $?
 
 jobs="${PM_DISPATCH_SHELLCHECK_JOBS:-2}"
 [[ "$jobs" =~ ^[1-8]$ ]] || {
