@@ -1531,6 +1531,160 @@ STUB
   rm -rf "$work" "$state_root" "$(dirname "$hang_pmctl")"; rm -f "$stderr" 2>/dev/null || true
 }
 
+case_auto_pack_reuse_scan_never_reattempts_refresh() {
+  # critic-F001 (issue #598 gate round 1): the bounded pre-refresh above is
+  # this function's ONE chance to refresh the index -- pmctl_context_reuse_scan
+  # also calls _ctx_ensure_fresh internally (swallowed via `|| true`), and
+  # THAT internal call was not bound, so re-entering it could hang the
+  # dispatch a second time even after the bound above was respected. The fix
+  # forces PM_DISPATCH_CONTEXT_AUTOREFRESH=0 for the reuse-scan call so its
+  # internal _ctx_ensure_fresh short-circuits before ever calling
+  # pmctl_context_index (pmctl-context.sh:982). Prove this by calling
+  # pmctl_dispatch_auto_pack directly (in-process, so a shadowed
+  # pmctl_context_index is observable) with a stub that would hang if
+  # invoked; the call must return promptly with the stub uninvoked.
+  local name="dispatch/--auto-pack: reuse-scan's internal refresh never re-invokes pmctl_context_index (issue #598 / critic-F001)"
+  should_run "$name" || return 0
+  local work brief state_root call_count_file evt code=0 start end elapsed
+  work="$(mktemp -d)"; git init -q "$work"
+  mkdir -p "$work/src"
+  cat > "$work/src/alpha.sh" <<'EOF'
+#!/usr/bin/env bash
+alpha_beta_dispatch_helper() {
+  printf 'alpha beta dispatch helper\n'
+}
+EOF
+  "$PMCTL" context index "$work" >/dev/null 2>/dev/null
+  brief="$(_mk_guard_brief "$work")"
+  state_root="$(mktemp -d)"
+  call_count_file="$(mktemp)"; printf '0' > "$call_count_file"
+
+  start="$(date +%s)"
+  (
+    export PM_DISPATCH_STATE_ROOT="$state_root"
+    # Shadowed for THIS subshell only -- never leaks to sibling test cases.
+    # If reuse-scan's internal _ctx_ensure_fresh call reaches this, it hangs;
+    # the AUTOREFRESH=0 override must keep it from ever being invoked.
+    pmctl_context_index() {
+      local n; n="$(cat "$call_count_file")"
+      printf '%s' "$((n + 1))" > "$call_count_file"
+      sleep 300
+    }
+    pmctl_dispatch_auto_pack "$REPO_ROOT" "$work" "$brief" "test-run-noreattempt-$$"
+  ) >/dev/null 2>&1 || code=$?
+  end="$(date +%s)"
+  elapsed=$((end - start))
+
+  evt="$(PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" trace tail --kind context.auto_packed --all --json 2>/dev/null | tail -1)"
+  local freshness hits call_count
+  freshness="$(printf '%s\n' "$evt" | jq -r '.payload.freshness // "MISSING"' 2>/dev/null)"
+  hits="$(printf '%s\n' "$evt" | jq -r '.payload.hits // -1' 2>/dev/null || printf '-1')"
+  call_count="$(cat "$call_count_file" 2>/dev/null || printf 'MISSING')"
+
+  if [[ "$code" -eq 0 && "$elapsed" -lt 30 && "$call_count" == "0" \
+      && "$freshness" == "fresh" && "$hits" -ge 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code elapsed=${elapsed}s call_count=$call_count freshness=$freshness hits=$hits evt=$evt"
+  fi
+  rm -rf "$work" "$state_root"; rm -f "$call_count_file" 2>/dev/null || true
+}
+
+case_auto_pack_bounded_refresh_skipped_reports_fresh() {
+  # qa-tester-F001 (issue #598 gate round 1): the bounded-refresh status
+  # mapping at runtime/lib/pmctl-dispatch.sh:483 only downgrades freshness on
+  # "error" -- "skipped" (auto-refresh opted out via
+  # PM_DISPATCH_CONTEXT_AUTOREFRESH=0) is a deliberate non-refresh state, not
+  # a failure, and must keep reporting freshness=fresh against the existing
+  # index. Run a real dispatch with auto-refresh opted out end-to-end and
+  # assert the emitted event still reports fresh, not stale.
+  local name="dispatch/--auto-pack: a skipped bounded refresh (AUTOREFRESH=0) reports freshness=fresh, not stale"
+  should_run "$name" || return 0
+  local work brief state_root stderr evt code
+  work="$(mktemp -d)"; git init -q "$work"
+  mkdir -p "$work/src"
+  cat > "$work/src/alpha.sh" <<'EOF'
+#!/usr/bin/env bash
+alpha_beta_dispatch_helper() {
+  printf 'alpha beta dispatch helper\n'
+}
+EOF
+  "$PMCTL" context index "$work" >/dev/null 2>/dev/null
+  brief="$(_mk_guard_brief "$work")"
+  state_root="$(mktemp -d)"
+  stderr="$(mktemp)"
+  set +e
+  PM_DISPATCH_STATE_ROOT="$state_root" \
+    PM_DISPATCH_CONTEXT_AUTOREFRESH=0 \
+    "$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$work" --brief-file "$brief" --auto-pack --print-cmd \
+    >/dev/null 2>"$stderr"; code=$?
+  set -e
+  evt="$(PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" trace tail --kind context.auto_packed --all --json 2>/dev/null | tail -1)"
+
+  local freshness hits
+  freshness="$(printf '%s\n' "$evt" | jq -r '.payload.freshness // "MISSING"' 2>/dev/null)"
+  hits="$(printf '%s\n' "$evt" | jq -r '.payload.hits // -1' 2>/dev/null || printf '-1')"
+
+  if [[ "$code" -eq 0 && "$freshness" == "fresh" && "$hits" -ge 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code freshness=$freshness hits=$hits evt=$evt"
+  fi
+  rm -rf "$work" "$state_root"; rm -f "$stderr" 2>/dev/null || true
+}
+
+case_auto_pack_bounded_refresh_unavailable_reports_fresh() {
+  # qa-tester-F001 (issue #598 gate round 1): "unavailable" (no sqlite3 for
+  # the bounded pre-refresh) is likewise a non-error state and must not
+  # downgrade freshness. Simulate it via the bounded wrapper's own test seam
+  # (PM_DISPATCH_CONTEXT_REFRESH_PMCTL), which affects only the standalone
+  # pre-refresh subprocess -- the real reuse-scan below still runs against
+  # the genuinely-available local sqlite3 and finds real hits, isolating the
+  # status-mapping branch under test from environment sqlite availability.
+  local name="dispatch/--auto-pack: an unavailable bounded refresh reports freshness=fresh, not stale"
+  should_run "$name" || return 0
+  local work brief state_root stderr evt code
+  work="$(mktemp -d)"; git init -q "$work"
+  mkdir -p "$work/src"
+  cat > "$work/src/alpha.sh" <<'EOF'
+#!/usr/bin/env bash
+alpha_beta_dispatch_helper() {
+  printf 'alpha beta dispatch helper\n'
+}
+EOF
+  "$PMCTL" context index "$work" >/dev/null 2>/dev/null
+
+  local unavailable_pmctl="$tmp_root/unavailable-pmctl-$$/pmctl"
+  mkdir -p "$(dirname "$unavailable_pmctl")"
+  cat > "$unavailable_pmctl" <<'STUB'
+#!/usr/bin/env bash
+printf '{"refresh_status":"unavailable"}\n'
+STUB
+  chmod +x "$unavailable_pmctl"
+
+  brief="$(_mk_guard_brief "$work")"
+  state_root="$(mktemp -d)"
+  stderr="$(mktemp)"
+  set +e
+  PM_DISPATCH_STATE_ROOT="$state_root" \
+    PM_DISPATCH_CONTEXT_REFRESH_PMCTL="$unavailable_pmctl" \
+    "$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$work" --brief-file "$brief" --auto-pack --print-cmd \
+    >/dev/null 2>"$stderr"; code=$?
+  set -e
+  evt="$(PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" trace tail --kind context.auto_packed --all --json 2>/dev/null | tail -1)"
+
+  local freshness hits
+  freshness="$(printf '%s\n' "$evt" | jq -r '.payload.freshness // "MISSING"' 2>/dev/null)"
+  hits="$(printf '%s\n' "$evt" | jq -r '.payload.hits // -1' 2>/dev/null || printf '-1')"
+
+  if [[ "$code" -eq 0 && "$freshness" == "fresh" && "$hits" -ge 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code freshness=$freshness hits=$hits evt=$evt"
+  fi
+  rm -rf "$work" "$state_root" "$(dirname "$unavailable_pmctl")"; rm -f "$stderr" 2>/dev/null || true
+}
+
 case_auto_pack_foreground_records_executed_snapshot() {
   # CC-402 / QA: a NON-dry-run foreground auto-pack run. The brief recorded in
   # runs.jsonl must be the SAME augmented effective brief the adapter executed —
@@ -1897,6 +2051,9 @@ case_auto_pack_hits_creates_pack_and_forwards_copy
 case_auto_pack_hits_event_carries_shadow_telemetry
 case_auto_pack_stale_freshness_on_refresh_failure
 case_auto_pack_bounded_refresh_does_not_hang
+case_auto_pack_reuse_scan_never_reattempts_refresh
+case_auto_pack_bounded_refresh_skipped_reports_fresh
+case_auto_pack_bounded_refresh_unavailable_reports_fresh
 case_auto_pack_foreground_records_executed_snapshot
 case_dispatch_cd_canonicalized_for_pack_path
 case_auto_pack_subdir_cd_roots_context_at_git_top

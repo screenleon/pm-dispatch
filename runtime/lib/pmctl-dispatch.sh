@@ -457,9 +457,10 @@ pmctl_dispatch_auto_pack() {
   # reuse-scan that succeeds against a STALE index (refresh failed, hits
   # still came from the old data) is indistinguishable from a genuinely
   # fresh one from this function's perspective. Call the freshness check
-  # directly here first -- idempotent with reuse-scan's own internal call
-  # (mtime-based, a no-op refresh the second time) -- and use ITS result as
-  # the freshness this event reports, rather than hard-coding "fresh".
+  # directly here first, and use ITS result as the freshness this event
+  # reports, rather than hard-coding "fresh". reuse-scan's own internal
+  # attempt is then suppressed below (critic-F001) -- this is the ONE
+  # refresh attempt this dispatch makes, not merely the first of two.
   #
   # issue #598: this runs before EVERY reviewer dispatch inside `pmctl gate
   # run`, unlike the gate's own startup context refresh (#579, PR #580).
@@ -495,7 +496,15 @@ pmctl_dispatch_auto_pack() {
     pmctl_dispatch_emit_auto_packed_event "$repo_root" "$run_id" 0 "" "$brief_file"
     return 0
   }
-  if ! reuse_yaml="$(pmctl_context_reuse_scan "$ctx_root" "$goal" 2>"$reuse_err")"; then
+  # critic-F001: the freshness attempt above (bounded or, on a missing
+  # wrapper, the raw fallback) is this function's ONE chance to refresh the
+  # index. pmctl_context_reuse_scan also calls _ctx_ensure_fresh internally
+  # (pmctl-context.sh, swallowed via `|| true`), and that internal call is
+  # NOT bound -- re-entering it here would let a stuck/slow index hang this
+  # dispatch a second time, defeating the bound just established. Force it
+  # to skip its own refresh attempt (mtime/status diagnosis is unaffected)
+  # by opting out for this one call only.
+  if ! reuse_yaml="$(PM_DISPATCH_CONTEXT_AUTOREFRESH=0 pmctl_context_reuse_scan "$ctx_root" "$goal" 2>"$reuse_err")"; then
     printf 'pmctl dispatch run: warning: auto-pack skipped: reuse-scan failed: %s\n' "$(tr '\n' ' ' < "$reuse_err")" >&2
     rm -f "$reuse_err"
     pmctl_dispatch_emit_auto_packed_event "$repo_root" "$run_id" 0 "" "$brief_file"
