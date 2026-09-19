@@ -30,6 +30,25 @@ for required in "$inventory" "$variables" "$consumers" "$reference_allowlist" "$
 done
 [[ "$failures" -eq 0 ]] || exit 1
 
+# A CRLF worktree (e.g. a native-Windows checkout under core.autocrlf=true)
+# is invisible to git status -- .gitattributes normalizes it away on
+# check-in -- yet every awk/read consumer below sees the trailing \r as
+# live field content. Read all four TSVs this script parses through a
+# CR-stripped copy once, up front, rather than patching every downstream
+# awk/read call site.
+_inventory_raw="$inventory"
+_variables_raw="$variables"
+_consumers_raw="$consumers"
+_reference_allowlist_raw="$reference_allowlist"
+inventory="$(mktemp)"
+variables="$(mktemp)"
+consumers="$(mktemp)"
+reference_allowlist="$(mktemp)"
+tr -d '\r' < "$_inventory_raw" > "$inventory"
+tr -d '\r' < "$_variables_raw" > "$variables"
+tr -d '\r' < "$_consumers_raw" > "$consumers"
+tr -d '\r' < "$_reference_allowlist_raw" > "$reference_allowlist"
+
 expected_path_header=$'current_path\tartifact_kind\towner_domain\tproposed_target\tdisposition\tstability'
 expected_variable_header=$'name_or_pattern\towner_domain\tinput_class\tdefault_source\tprecedence\tpropagation\trisk_or_side_effect\ttest_isolation\tfixture_scrub'
 expected_consumer_header=$'declared_name_or_pattern\tactual_name\tconsumer_path\treference_scope'
@@ -85,7 +104,8 @@ milestone_open_view="$(mktemp)"
 cleanup() {
   rm -f "$actual_paths" "$declared_paths" "$raw_refs" \
     "$expected_consumers" "$declared_consumers" "$stale_reference_hits" \
-    "$stale_patterns" "$milestone_open_view"
+    "$stale_patterns" "$milestone_open_view" \
+    "$inventory" "$variables" "$consumers" "$reference_allowlist"
 }
 trap cleanup EXIT
 awk -F '\t' 'NR > 1 { print $1 }' "$inventory" > "$stale_patterns"

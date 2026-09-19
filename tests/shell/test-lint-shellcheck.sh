@@ -129,6 +129,30 @@ test_stale_ignore_fails() {
   expect_fail "$name" "$root" "stale ignore path does not exist"
 }
 
+# Behavior: a CRLF-contaminated worktree (e.g. a native-Windows Git Bash
+# checkout under an inherited core.autocrlf=true) does not break the ignores
+# TSV reader, including its header row -- the header check reads the raw
+# file directly rather than through the CR-stripped data loop, so a
+# whole-file CRLF conversion is the case that actually exercises it
+# (issue #588). The domains TSV is deliberately not exercised here: it is
+# matched against a fixed canonical string byte-for-byte (line 44), so any
+# CRLF there is -- correctly -- never valid content in the first place.
+# Steps: build a fixture, add a valid ignore row, then CRLF-convert the whole
+# ignores file; require the run to succeed cleanly.
+test_crlf_ignores_file_passes() {
+  local name="lint-shellcheck/crlf-ignores-file-passes" root output status=0
+  should_run "$name" || return 0
+  root="$(fixture_repo crlf-ignores-file)"
+  printf 'runtime/pass.sh\tSC2034\tlegacy-warning\n' >> "$root/tools/lint/shellcheck-ignores.tsv"
+  sed -i 's/$/\r/' "$root/tools/lint/shellcheck-ignores.tsv"
+  output="$(bash "$root/tools/lint/lint-shellcheck.sh" --repo "$root" 2>&1)" || status=$?
+  if [[ "$status" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status output=$output"
+  fi
+}
+
 # Behavior: every explicit exception carries reviewable provenance and applies only to canonical code.
 # Steps: add a reasonless row and a compatibility-shim row; require both forms to fail.
 test_ignore_contract_fails_closed() {
@@ -475,6 +499,53 @@ test_version_pin_shape_fails_closed() {
   fi
 }
 
+# Behavior: a CRLF-contaminated .shellcheck-version (e.g. a native-Windows
+# Git Bash checkout under an inherited core.autocrlf=true) parses the same as
+# a clean LF pin, instead of the trailing \r tripping the semver shape check
+# and misreporting a well-formed pin as malformed (issue #588).
+# Steps: Arrange a fixture whose .shellcheck-version carries a CRLF line and a
+# matching on-PATH stub; Act via --check; Assert it succeeds and probes the
+# stub exactly once.
+test_check_tolerates_crlf_version_pin() {
+  local name="lint-shellcheck/check-tolerates-crlf-version-pin" root calls output status=0
+  should_run "$name" || return 0
+  root="$(fixture_repo crlf-version-pin)"
+  printf '0.11.0\r\n' > "$root/.shellcheck-version"
+  calls="$root/calls.log"
+  write_shellcheck_stub "$root/bin/shellcheck" 0.11.0 "$calls"
+  : > "$calls"
+  output="$(PATH="$root/bin:$PATH" \
+    bash "$root/tools/lint/bootstrap-shellcheck.sh" --repo "$root" --check 2>&1)" || status=$?
+  if [[ "$status" -eq 0 && "$(grep -c '^version$' "$calls" || true)" -eq 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status output=$output"
+  fi
+}
+
+# Behavior: a CRLF-contaminated worktree does not break the asset-manifest
+# header check either -- like the ignores and allowlist headers, it reads
+# the raw file directly rather than through the CR-stripped row loop
+# (issue #588).
+# Steps: CRLF-convert the whole asset manifest and run --check with a
+# matching on-PATH stub; assert it still succeeds.
+test_check_tolerates_crlf_asset_manifest() {
+  local name="lint-shellcheck/check-tolerates-crlf-asset-manifest" root calls output status=0
+  should_run "$name" || return 0
+  root="$(fixture_repo crlf-asset-manifest)"
+  sed -i 's/$/\r/' "$root/tools/lint/shellcheck-assets.tsv"
+  calls="$root/calls.log"
+  write_shellcheck_stub "$root/bin/shellcheck" 0.11.0 "$calls"
+  : > "$calls"
+  output="$(PATH="$root/bin:$PATH" \
+    bash "$root/tools/lint/bootstrap-shellcheck.sh" --repo "$root" --check 2>&1)" || status=$?
+  if [[ "$status" -eq 0 && "$(grep -c '^version$' "$calls" || true)" -eq 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status output=$output"
+  fi
+}
+
 # Behavior: bootstrap installs only a checksum-matching asset and publishes an
 # executable whose reported version matches the repository pin.
 # Steps: Arrange a local release archive and matching manifest; Act by bootstrapping
@@ -633,17 +704,20 @@ STUB
 test_moved_path_parity
 test_domain_injection_fails
 test_stale_ignore_fails
+test_crlf_ignores_file_passes
 test_ignore_contract_fails_closed
 test_suppression_is_code_scoped
 test_ci_local_entrypoint_parity
 test_wrong_shellcheck_version_fails_closed
 test_check_and_resolve_are_mutually_exclusive
+test_check_tolerates_crlf_asset_manifest
 test_cached_pin_used_when_path_version_wrong
 test_tampered_cache_binary_is_rejected
 test_bootstrap_rejects_wrong_binary_digest
 test_relative_cache_survives_repo_chdir
 test_matching_shellcheck_version_scans
 test_version_pin_shape_fails_closed
+test_check_tolerates_crlf_version_pin
 test_bootstrap_verifies_asset_checksum
 test_default_worker_cap
 test_worker_override_ceiling

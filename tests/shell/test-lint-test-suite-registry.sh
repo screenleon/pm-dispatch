@@ -95,6 +95,20 @@ test_reasoned_ci_exemption_passes() {
   if [[ "$status" -eq 0 ]]; then pass "$name"; else fail "$name" "status=$status output=$output"; fi
 }
 
+# Behavior: a CRLF-contaminated worktree (e.g. a native-Windows Git Bash
+# checkout under an inherited core.autocrlf=true) does not break the
+# exclusions or CI-exemptions TSV readers (issue #588).
+test_crlf_exclusions_and_exemptions_pass() {
+  local name="lint-test-suite-registry/crlf-exclusions-and-exemptions-pass" root output status
+  should_run "$name" || return 0
+  root="$(mktemp -d "$tmp_root/registry-XXXXXX")"; make_fixture "$root"
+  printf '%s\n' 'name: test' > "$root/.github/workflows/lint.yml"
+  printf '%s\t%s\n' 'test-alpha' 'constraint: CI shard not provisioned; promotion: add a dedicated CI job' >> "$root/tests/ci-suite-exemptions.tsv"
+  sed -i 's/$/\r/' "$root/tests/ci-suite-exemptions.tsv" "$root/tests/test-suite-exclusions.tsv"
+  output="$(run_linter "$root")"; status=$?
+  if [[ "$status" -eq 0 ]]; then pass "$name"; else fail "$name" "status=$status output=$output"; fi
+}
+
 test_registered_exclusion_fails() {
   local name="lint-test-suite-registry/registered-exclusion-fails" root output status
   should_run "$name" || return 0
@@ -219,6 +233,7 @@ test_missing_ci_coverage_fails_without_exemption
 test_ci_comment_does_not_count_as_coverage
 test_multiline_ci_run_counts_as_coverage
 test_reasoned_ci_exemption_passes
+test_crlf_exclusions_and_exemptions_pass
 test_registered_exclusion_fails
 test_duplicate_registered_path_fails
 test_duplicate_ci_exemption_fails

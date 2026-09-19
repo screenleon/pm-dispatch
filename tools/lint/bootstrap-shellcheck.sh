@@ -69,6 +69,7 @@ declare -a pin_lines=()
   exit 2
 }
 mapfile -t pin_lines < "$pin_file"
+[[ "${#pin_lines[@]}" -ge 1 ]] && pin_lines[0]="${pin_lines[0]%$'\r'}"
 if [[ "${#pin_lines[@]}" -ne 1 \
     || ! "${pin_lines[0]}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   printf 'bootstrap-shellcheck: .shellcheck-version must contain exactly one semantic version\n' >&2
@@ -103,7 +104,7 @@ check_binary() {
   printf 'bootstrap-shellcheck: missing asset manifest: %s\n' "$assets_file" >&2
   exit 2
 }
-[[ "$(head -n 1 "$assets_file")" == $'version\tplatform\turl\tsha256\tbinary_sha256' ]] || {
+[[ "$(head -n 1 "$assets_file" | tr -d '\r')" == $'version\tplatform\turl\tsha256\tbinary_sha256' ]] || {
   printf 'bootstrap-shellcheck: invalid asset manifest header\n' >&2
   exit 2
 }
@@ -261,6 +262,8 @@ asset_binary_sha256=""
 asset_matches=0
 while IFS=$'\t' read -r version asset_platform url sha256 binary_sha256 extra; do
   [[ "$version" != version ]] || continue
+  extra="${extra%$'\r'}"
+  binary_sha256="${binary_sha256%$'\r'}"
   if [[ "$version" == "$expected_version" && "$asset_platform" == "$platform" ]]; then
     [[ -z "${extra:-}" ]] || {
       printf 'bootstrap-shellcheck: malformed asset row for %s %s\n' "$version" "$asset_platform" >&2

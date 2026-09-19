@@ -71,6 +71,7 @@ while IFS=$'\t' read -r name path; do
 done < "$paths"
 
 while IFS= read -r line; do
+  line="${line%$'\r'}"
   line="${line//\\t/$'\t'}"
   IFS=$'\t' read -r path reason extra <<< "$line"
   [[ -z "$path" || "$path" == \#* ]] && continue
@@ -80,6 +81,7 @@ while IFS= read -r line; do
 done < "$exclusions"
 
 while IFS= read -r line; do
+  line="${line%$'\r'}"
   line="${line//\\t/$'\t'}"
   IFS=$'\t' read -r name reason extra <<< "$line"
   [[ -z "$name" || "$name" == \#* ]] && continue
