@@ -82,6 +82,23 @@ test_allowlisted_unversioned_banner_passes() {
   want_pass "$name" "$root"
 }
 
+# Behavior: a CRLF-contaminated worktree (e.g. a native-Windows Git Bash
+# checkout under an inherited core.autocrlf=true) does not break the
+# allowlist TSV reader, including its header row -- the header check reads
+# the raw file directly rather than through the CR-stripped data loop, so a
+# whole-file CRLF conversion is the case that actually exercises it
+# (issue #588).
+test_crlf_allowlist_file_passes() {
+  local name="a CRLF-converted allowlist file still passes"
+  should_run "$name" || return 0
+  local root; root="$(fixture "$name")"
+  printf '# X\n\n> **DEPRECATED.** kept forever for compat.\n' > "$root/docs/legacy.md"
+  printf 'docs/legacy.md\tinternal-schema compat, no removal planned\n' \
+    >> "$root/tools/lint/deprecation-sunset-allowlist.tsv"
+  sed -i 's/$/\r/' "$root/tools/lint/deprecation-sunset-allowlist.tsv"
+  want_pass "$name" "$root"
+}
+
 test_allowlist_for_versioned_surface_fails() {
   local name="an allowlist entry for an already-versioned surface is rejected"
   should_run "$name" || return 0
@@ -243,6 +260,7 @@ test_unversioned_banner_fails
 test_versioned_banner_passes
 test_retired_banner_needs_version_too
 test_allowlisted_unversioned_banner_passes
+test_crlf_allowlist_file_passes
 test_allowlist_for_versioned_surface_fails
 test_mixed_allowlisted_docs_surface_passes
 test_mixed_allowlisted_docs_surface_without_row_fails

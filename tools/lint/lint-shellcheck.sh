@@ -45,7 +45,7 @@ expected_domains=$'root\trole\nruntime\tcanonical\ntests\tcanonical\ntools\tcano
   printf 'lint-shellcheck: domain inventory must contain the five canonical roots and scripts compatibility root\n' >&2
   exit 1
 }
-[[ "$(head -n1 "$ignores")" == $'path\tcodes\treason' ]] || {
+[[ "$(head -n1 "$ignores" | tr -d '\r')" == $'path\tcodes\treason' ]] || {
   printf 'lint-shellcheck: ignore inventory header must be path<TAB>codes<TAB>reason\n' >&2
   exit 1
 }
@@ -54,6 +54,8 @@ declare -A ignored=()
 ignore_errors=0
 while IFS=$'\t' read -r path codes reason extra; do
   [[ "$path" != path ]] || continue
+  reason="${reason%$'\r'}"
+  extra="${extra%$'\r'}"
   if [[ -z "$path" || -z "$codes" || -z "$reason" || -n "${extra:-}" ]]; then
     printf 'lint-shellcheck: every ignore must be an exact path with codes and one reason slug\n' >&2
     ignore_errors=$((ignore_errors + 1))
@@ -88,6 +90,7 @@ done < "$ignores"
 declare -a all_files=()
 while IFS=$'\t' read -r root _; do
   [[ "$root" != root ]] || continue
+  root="${root%$'\r'}"
   [[ -d "$repo_root/$root" ]] || {
     printf 'lint-shellcheck: missing domain root: %s\n' "$root" >&2
     exit 1

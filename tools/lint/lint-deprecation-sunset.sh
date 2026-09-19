@@ -47,12 +47,16 @@ failures=0
 fail() { printf 'lint-deprecation-sunset: %s\n' "$*" >&2; failures=$((failures + 1)); }
 
 [[ -f "$allowlist" ]] || { fail "missing tools/lint/deprecation-sunset-allowlist.tsv"; exit 1; }
-[[ "$(head -n1 "$allowlist")" == $'path\treason' ]] || fail "allowlist header must be: path<TAB>reason"
+[[ "$(head -n1 "$allowlist" | tr -d '\r')" == $'path\treason' ]] || \
+  fail "allowlist header must be: path<TAB>reason"
 
 # --- load the allowlist -----------------------------------------------------
 declare -A allow_reason=()
 allow_order=()
 while IFS=$'\t' read -r path reason extra || [[ -n "$path" ]]; do
+  path="${path%$'\r'}"
+  reason="${reason%$'\r'}"
+  extra="${extra%$'\r'}"
   [[ -z "$path" || "$path" == '#'* || "$path" == 'path' ]] && continue
   if [[ -z "$reason" || -n "$extra" ]]; then
     fail "malformed allowlist row (want path<TAB>reason): $path"

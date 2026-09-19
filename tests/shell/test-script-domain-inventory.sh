@@ -80,6 +80,23 @@ test_real_repository_passes() {
   expect_pass "$name" "$REPO_ROOT"
 }
 
+# Behavior: a CRLF-contaminated worktree (e.g. a native-Windows Git Bash
+# checkout under an inherited core.autocrlf=true) still ratchets cleanly --
+# the linter reads all four architecture TSVs through a CR-stripped copy, not
+# just the path inventory and reference allowlist (issue #588).
+# Steps: build a valid fixture, rewrite all four TSVs with CRLF line endings,
+# and require the same pass the LF fixture gets.
+test_crlf_worktree_passes() {
+  local name="script-domain-inventory/crlf-worktree-passes" root tsv
+  should_run "$name" || return 0
+  root="$(fixture_repo)"
+  for tsv in script-domain-inventory.tsv script-variable-inventory.tsv \
+      script-variable-consumers.tsv script-domain-reference-allowlist.tsv; do
+    sed -i 's/$/\r/' "$root/docs/architecture/$tsv"
+  done
+  expect_pass "$name" "$root"
+}
+
 # Behavior: an untracked file under scripts is rejected by the inventory ratchet.
 # Steps: build a complete fixture, add one extra script, and assert the file-set diagnostic.
 test_untracked_script_fails() {
@@ -355,6 +372,7 @@ test_production_root_stale_references_fail() {
 }
 
 test_real_repository_passes
+test_crlf_worktree_passes
 test_untracked_script_fails
 test_missing_script_fails
 test_owner_target_mismatch_fails
