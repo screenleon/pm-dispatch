@@ -240,6 +240,24 @@ STUB
   chmod +x "$path"
 }
 
+# Writes a fake `uname` reporting the native-Windows Git Bash (MSYS2)
+# platform to <dir>/uname, so a case can exercise the windows.x86_64 branch
+# of detect_platform without an actual Windows host. Prefix PATH with <dir>
+# for it to take effect.
+write_windows_uname_stub() {
+  local dir="$1"
+  mkdir -p "$dir"
+  cat > "$dir/uname" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+  -s) printf 'MINGW64_NT-10.0-26200\n' ;;
+  -m) printf 'x86_64\n' ;;
+  *) printf 'unknown\n' ;;
+esac
+EOF
+  chmod +x "$dir/uname"
+}
+
 # Behavior: lint fails before scanning when neither PATH nor the tool cache can
 # supply the pinned ShellCheck, and names both probes plus the fix.
 # Steps: Arrange a 0.10.0 PATH stub and an empty tool cache; Act by running the
@@ -588,6 +606,151 @@ test_bootstrap_verifies_asset_checksum() {
   fi
 }
 
+# Behavior: native-Windows Git Bash (MSYS2, uname -s == MINGW64_NT-*) is a
+# supported install platform -- the Windows release is a .zip with the .exe
+# at its root rather than a .tar.gz nested under a version-prefixed
+# directory, and the cached binary must keep the .exe suffix (issue #594).
+# A fake `uname` on PATH stands in for the real platform, since this suite
+# otherwise only runs on the host's actual OS.
+# Steps: build a local .zip whose only entry is a stub shellcheck.exe, point
+# a windows.x86_64 asset row at it, and run bootstrap-shellcheck.sh with the
+# faked platform; require it to install and produce a working .exe.
+test_bootstrap_installs_windows_platform() {
+  local name="lint-shellcheck/bootstrap-installs-windows-platform" root output status=0
+  local fakebin payload archive sha
+  should_run "$name" || return 0
+  root="$(fixture_repo bootstrap-windows)"
+  fakebin="$root/fakebin"
+  mkdir -p "$root/payload"
+  write_windows_uname_stub "$fakebin"
+  payload="$root/payload/shellcheck.exe"
+  write_shellcheck_stub "$payload" 0.11.0
+  archive="$root/shellcheck-v0.11.0.windows.test.zip"
+  (cd "$root/payload" && zip -q "$archive" shellcheck.exe)
+  sha="$(sha256_of "$archive")"
+  printf 'version\tplatform\turl\tsha256\tbinary_sha256\n' \
+    > "$root/tools/lint/shellcheck-assets.tsv"
+  printf '0.11.0\twindows.x86_64\tfile://%s\t%s\t%s\n' \
+    "$archive" "$sha" "$(sha256_of "$payload")" \
+    >> "$root/tools/lint/shellcheck-assets.tsv"
+  output="$(PATH="$fakebin:$PATH" env -u HOME \
+    XDG_CACHE_HOME="$root/xdg-cache" \
+    bash "$root/tools/lint/bootstrap-shellcheck.sh" --repo "$root" \
+    2>"$root/stderr.log")" || status=$?
+  if [[ "$status" -eq 0 && -x "$output/shellcheck.exe" \
+      && "$("$output/shellcheck.exe" --version)" == *"version: 0.11.0"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status stdout=$output stderr=$(cat "$root/stderr.log")"
+  fi
+}
+
+# Behavior: a Windows release archive that does not contain the expected
+# .exe entry (a malformed or mismatched build) fails closed with a
+# diagnostic naming what was missing, the same contract the non-Windows
+# archive layout already has.
+# Steps: build a .zip whose only entry is NOT shellcheck.exe, checksum it
+# correctly so the archive-integrity check passes, and require install to
+# fail with the missing-entry diagnostic rather than silently proceeding.
+test_bootstrap_rejects_windows_zip_missing_exe() {
+  local name="lint-shellcheck/bootstrap-rejects-windows-zip-missing-exe" root output status=0
+  local fakebin payload archive sha
+  should_run "$name" || return 0
+  root="$(fixture_repo bootstrap-windows-missing-exe)"
+  fakebin="$root/fakebin"
+  mkdir -p "$root/payload"
+  write_windows_uname_stub "$fakebin"
+  payload="$root/payload/README.txt"
+  printf 'not a binary\n' > "$payload"
+  archive="$root/shellcheck-v0.11.0.windows.test.zip"
+  (cd "$root/payload" && cd .. && zip -q "$archive" -j "$payload")
+  sha="$(sha256_of "$archive")"
+  printf 'version\tplatform\turl\tsha256\tbinary_sha256\n' \
+    > "$root/tools/lint/shellcheck-assets.tsv"
+  printf '0.11.0\twindows.x86_64\tfile://%s\t%s\t%s\n' \
+    "$archive" "$sha" "$(sha256_of "$payload")" \
+    >> "$root/tools/lint/shellcheck-assets.tsv"
+  output="$(PATH="$fakebin:$PATH" env -u HOME \
+    XDG_CACHE_HOME="$root/xdg-cache" \
+    bash "$root/tools/lint/bootstrap-shellcheck.sh" --repo "$root" 2>&1)" || status=$?
+  if [[ "$status" -eq 2 && "$output" == *"archive is missing"*"shellcheck.exe"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status output=$output"
+  fi
+}
+
+# Behavior: on native Windows, lint-shellcheck.sh's own scan actually invokes
+# the bootstrap-installed shellcheck.exe -- not just that bootstrap installs
+# it. --resolve returns the full path to the one binary it authenticated
+# (issue #594 follow-up: a first pass fixed bootstrap install but left
+# lint-shellcheck.sh appending an assumed POSIX name to --resolve's
+# directory instead of using its returned path directly).
+# Steps: fake the MINGW64 platform, pre-seed the tool cache with a stub
+# .exe matching the trusted digest, and run the real scan; require the
+# stub to have received at least one lint invocation.
+test_windows_lint_invokes_cached_exe() {
+  local name="lint-shellcheck/windows-lint-invokes-cached-exe" root output status=0
+  local fakebin cache_bin calls
+  should_run "$name" || return 0
+  root="$(fixture_repo windows-lint-invoke)"
+  fakebin="$root/fakebin"
+  write_windows_uname_stub "$fakebin"
+  # Shadow any real shellcheck already on this test host's PATH (a POSIX
+  # name, wrong version) so --resolve's PATH probe rejects it and falls
+  # through to the cache lookup this case actually exercises.
+  write_shellcheck_stub "$fakebin/shellcheck" 0.0.0-shadow
+  calls="$root/calls.log"
+  cache_bin="$root/cache/shellcheck/0.11.0/windows.x86_64/bin/shellcheck.exe"
+  write_shellcheck_stub "$cache_bin" 0.11.0 "$calls"
+  write_fixture_manifest "$root" "$cache_bin" "windows.x86_64"
+  : > "$calls"
+  output="$(PATH="$fakebin:$PATH" PM_DISPATCH_TOOL_CACHE="$root/cache" \
+    bash "$root/tools/lint/lint-shellcheck.sh" --repo "$root" 2>&1)" || status=$?
+  local lint_calls
+  lint_calls="$(grep -c '^lint$' "$calls" || true)"
+  if [[ "$status" -eq 0 && "$lint_calls" -ge 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status lint_calls=$lint_calls output=$output"
+  fi
+}
+
+# Behavior: a legitimate, validated PATH shellcheck and an unrelated,
+# unauthenticated sibling .exe in the same directory must not let lint run
+# the sibling. --resolve authenticates the extensionless PATH candidate and
+# must return that exact binary's own path; a consumer that instead widens
+# the directory to any name it recognizes (issue #594 round-2 finding) would
+# execute the never-checked sibling. This is not a Windows-only scenario --
+# any platform's PATH directory could contain a stray shellcheck.exe.
+# Steps: put a version-matching, valid `shellcheck` and a distinct, never
+# version-checked `shellcheck.exe` in the same PATH directory; require the
+# scan to run the validated one and never touch the sibling.
+test_lint_never_executes_unvalidated_sibling_exe() {
+  local name="lint-shellcheck/lint-never-executes-unvalidated-sibling-exe" root output status=0
+  local fakebin valid_calls sibling_calls
+  should_run "$name" || return 0
+  root="$(fixture_repo sibling-exe-guard)"
+  fakebin="$root/fakebin"
+  mkdir -p "$fakebin"
+  valid_calls="$root/valid-calls.log"
+  sibling_calls="$root/sibling-calls.log"
+  write_shellcheck_stub "$fakebin/shellcheck" 0.11.0 "$valid_calls"
+  write_shellcheck_stub "$fakebin/shellcheck.exe" 0.11.0 "$sibling_calls"
+  : > "$valid_calls"
+  : > "$sibling_calls"
+  output="$(PATH="$fakebin:$PATH" \
+    bash "$root/tools/lint/lint-shellcheck.sh" --repo "$root" 2>&1)" || status=$?
+  local valid_lints sibling_lints
+  valid_lints="$(grep -c '^lint$' "$valid_calls" || true)"
+  sibling_lints="$(grep -c '^lint$' "$sibling_calls" || true)"
+  if [[ "$status" -eq 0 && "$valid_lints" -ge 1 && "$sibling_lints" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status valid_lints=$valid_lints sibling_lints=$sibling_lints output=$output"
+  fi
+}
+
 # Behavior: explicit concurrency tuning cannot exceed the supported eight-worker ceiling.
 # Steps: request nine workers in a fixture and require the range validation to fail before execution.
 test_worker_override_ceiling() {
@@ -719,6 +882,10 @@ test_matching_shellcheck_version_scans
 test_version_pin_shape_fails_closed
 test_check_tolerates_crlf_version_pin
 test_bootstrap_verifies_asset_checksum
+test_bootstrap_installs_windows_platform
+test_bootstrap_rejects_windows_zip_missing_exe
+test_windows_lint_invokes_cached_exe
+test_lint_never_executes_unvalidated_sibling_exe
 test_default_worker_cap
 test_worker_override_ceiling
 th_summary
