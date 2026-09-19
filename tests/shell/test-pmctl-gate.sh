@@ -27,13 +27,12 @@ mkdir -p "$_GATE_CLI_XDG_RUNTIME_DIR" && chmod 700 "$_GATE_CLI_XDG_RUNTIME_DIR"
 _GATE_VERIFY_REPO="$tmp_root/gate-verify-repo"
 _GATE_VERIFY_STATE_ROOT="$tmp_root/gate-verify-state"
 mkdir -p "$_GATE_VERIFY_REPO" "$_GATE_VERIFY_STATE_ROOT"
-git -C "$_GATE_VERIFY_REPO" init -q
+git -C "$_GATE_VERIFY_REPO" init -q -b main
 git -C "$_GATE_VERIFY_REPO" config user.email test@example.com
 git -C "$_GATE_VERIFY_REPO" config user.name "Gate Verify Test"
 printf 'fixture\n' > "$_GATE_VERIFY_REPO/input.txt"
 git -C "$_GATE_VERIFY_REPO" add input.txt
 git -C "$_GATE_VERIFY_REPO" commit -qm fixture
-git -C "$_GATE_VERIFY_REPO" branch main
 
 # shellcheck source=runtime/lib/state-paths.sh
 . "$REPO_ROOT/runtime/lib/state-paths.sh"
@@ -1633,7 +1632,6 @@ case_verify_v3_different_repo_same_content_is_stale() {
   other="$tmp_root/gate-verify-other"
   _mk_gate_result_v3_verified "$result" "$_GATE_VERIFY_REPO"
   git clone -q "$_GATE_VERIFY_REPO" "$other"
-  git -C "$other" branch main origin/main
   set +e
   out="$(
     PM_DISPATCH_STATE_ROOT="$_GATE_VERIFY_STATE_ROOT" \
