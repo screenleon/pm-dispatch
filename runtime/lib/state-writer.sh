@@ -139,7 +139,15 @@ _sw_windows_store_root_allows_write() {
         try {
           $sid = $ace.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value
         } catch {
-          continue
+          # gate round 3 (critic/qa-tester/security-reviewer, unanimous): an
+          # Allow ACE whose identity cannot be translated to a SID (e.g. an
+          # orphaned/foreign SID) must NOT be silently skipped -- it could be
+          # the very grant that makes this root unsafe. Make the whole
+          # verification indeterminate instead, which the caller already
+          # treats as fail-closed (rc=2), rather than fail open on exactly
+          # the ACE this check cannot classify.
+          Write-Output "UNKNOWN"
+          exit 0
         }
         if ($allowedSids -contains $sid) { continue }
         if (([int]$ace.FileSystemRights -band $writeMask) -ne 0) {
