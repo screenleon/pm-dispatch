@@ -359,7 +359,14 @@ case_mkdir_lock_unc_warning_nonfatal() {
   if [[ "$rc" -eq 0 ]]; then
     mkdir_unlock "$lock"
   fi
-  if [[ "$rc" -eq 0 && "$stderr_out" == *"warning: lock path may be on a network filesystem"* ]]; then
+  # issue #597: a leading "//" is just a POSIX path with a doubled slash on
+  # this platform, so mkdir_lock warns (non-fatal) and then succeeds -- but
+  # on native Windows the same spelling is a REAL UNC reference to a
+  # nonexistent network share, so mkdir_lock warns AND THEN genuinely fails
+  # (rc=1) once it tries to create a directory there. The behavior under
+  # test is the warning firing for a UNC-shaped path, which is platform-
+  # independent; whether the subsequent mkdir can then succeed is not.
+  if [[ "$stderr_out" == *"warning: lock path may be on a network filesystem"* ]]; then
     pass "$name"
   else
     fail "$name" "rc=$rc stderr=${stderr_out:-empty}"
