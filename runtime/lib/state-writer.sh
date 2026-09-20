@@ -69,12 +69,21 @@ _sw_store_root_mode_allows_write() {
 # the MSYS POSIX emulation cannot do the job" pattern _sw_operation_replace_file
 # already uses for the atomic-replace boundary.
 #
-# Contract mirrors the POSIX helper: 0 = an Allow ACE grants write-capable
-# rights to a principal other than the owner/Administrators/SYSTEM; 1 = safe
-# OR undeterminable. Treating "cannot verify" as safe is not a weaker bar than
-# POSIX already accepts -- the POSIX helper does exactly the same when `stat`
-# itself fails (return 1), so this does not introduce a stricter or laxer
-# default for one platform.
+# Unlike the POSIX helper (which treats "cannot verify" as safe, matching
+# `stat` failure there), this ACL check FAILS CLOSED when it cannot verify
+# (gate round 2, critic/qa-tester/security-reviewer unanimous): this is a
+# newly added control specifically meant to close a gap where the store root
+# was silently unprotected on Windows, so degrading it to "assume safe"
+# whenever PowerShell/cygpath/Get-Acl is unavailable would just recreate the
+# exact silent-acceptance failure mode issue #592 reported, under a new name.
+# The existing PM_DISPATCH_ALLOW_UNSAFE_STATE_ROOT escape hatch remains the
+# one sanctioned way to accept an unverifiable root.
+#
+# Return contract: 0 = an Allow ACE grants write-capable rights to a
+# principal other than the owner/Administrators/SYSTEM (unsafe); 1 = the ACL
+# was verified and grants no such access (safe); 2 = verification could not
+# be completed at all (tool missing, cygpath/PowerShell failed, or an
+# unrecognized/UNKNOWN result) -- callers must treat 2 as unsafe, not as 1.
 #
 # Checked against owner/BUILTIN\Administrators/NT AUTHORITY\SYSTEM, not a
 # fixed enumerable list of "risky" identities -- mirroring the POSIX check's
@@ -99,10 +108,10 @@ _sw_store_root_mode_allows_write() {
 # would miss a real write grant expressed that way.
 _sw_windows_store_root_allows_write() {
   local root="$1" win_root out
-  command -v powershell.exe >/dev/null 2>&1 || return 1
-  command -v cygpath >/dev/null 2>&1 || return 1
-  win_root="$(cygpath -w -- "$root" 2>/dev/null)" || return 1
-  [[ -n "$win_root" ]] || return 1
+  command -v powershell.exe >/dev/null 2>&1 || return 2
+  command -v cygpath >/dev/null 2>&1 || return 2
+  win_root="$(cygpath -w -- "$root" 2>/dev/null)" || return 2
+  [[ -n "$win_root" ]] || return 2
   # shellcheck disable=SC2016 # PowerShell, not Bash, expands $env: references.
   out="$(PM_DISPATCH_ACL_PATH="$win_root" powershell.exe -NoProfile -NonInteractive -Command '
     $ErrorActionPreference = "Stop"
@@ -142,10 +151,11 @@ _sw_windows_store_root_allows_write() {
     } catch {
       Write-Output "UNKNOWN"
     }
-  ' 2>/dev/null)" || return 1
+  ' 2>/dev/null)" || return 2
   case "$(printf '%s' "$out" | tr -d '\r\n')" in
     UNSAFE) return 0 ;;
-    *) return 1 ;;
+    SAFE) return 1 ;;
+    *) return 2 ;;
   esac
 }
 
@@ -197,8 +207,14 @@ _sw_ensure_store_root_safe() {
   if [[ "$(detect_platform)" == windows ]]; then
     # issue #592: chmod/stat mode bits are inert on native Windows Git Bash --
     # skip the POSIX chmod theatre and ask the real OS for the ACL instead.
-    if _sw_windows_store_root_allows_write "$store_root"; then
+    # Fail closed (gate round 2): rc=2 (cannot verify) is rejected exactly
+    # like rc=0 (verified unsafe), not treated as safe.
+    local _win_acl_rc=0
+    _sw_windows_store_root_allows_write "$store_root" || _win_acl_rc=$?
+    if [[ "$_win_acl_rc" -eq 0 ]]; then
       _sw_unsafe_store_root "$canonical_root" "ACL grants write to a non-owner principal" || return 1
+    elif [[ "$_win_acl_rc" -eq 2 ]]; then
+      _sw_unsafe_store_root "$canonical_root" "cannot verify Windows ACL (PowerShell/cygpath unavailable or Get-Acl failed)" || return 1
     fi
   else
     chmod 0700 "$store_root" 2>/dev/null || true

@@ -380,12 +380,13 @@ case_windows_acl_safe_reported() {
   fi
 }
 
-# Behavior: qa-tester-F001 (gate round 1) -- powershell.exe running
-# successfully (exit 0) but reporting "UNKNOWN" (its internal catch fired,
-# e.g. Get-Acl threw) is a distinct path from the tool being unreachable.
-# It must still report safe_root=true, matching the writer's own degrade.
-case_windows_acl_unknown_output_reported_safe() {
-  local name="Windows ACL check reports UNKNOWN (exit 0): safe_root true (issue #592)"
+# Behavior: gate round 2 (critic/qa-tester/security-reviewer, unanimous) --
+# powershell.exe running successfully (exit 0) but reporting "UNKNOWN" (its
+# internal catch fired, e.g. Get-Acl threw) is a distinct path from the tool
+# being unreachable. Both must fail closed: report safe_root=false with an
+# explicit "cannot verify" reason, matching the writer's own rejection.
+case_windows_acl_unknown_output_reported_unsafe() {
+  local name="Windows ACL check reports UNKNOWN (exit 0): safe_root false, cannot-verify reason (issue #592)"
   local store out stubs
   store="$(mk_store windows-unknown-acl 1)"
   stubs="$TMP_ROOT/windows-unknown-acl-stubs"
@@ -395,7 +396,7 @@ case_windows_acl_unknown_output_reported_safe() {
   printf '#!/usr/bin/env bash\nprintf "UNKNOWN\\n"\n' > "$stubs/powershell.exe"
   chmod +x "$stubs/cygpath" "$stubs/powershell.exe"
   out="$(PATH="$stubs:$PATH" PM_DISPATCH_PLATFORM=windows status_json "$store")" || { fail "$name" "status failed"; return; }
-  if jq -e '.safe_root == true and (.safe_root_reasons | length == 0)' <<< "$out" >/dev/null; then
+  if jq -e '.safe_root == false and (.safe_root_reasons | any(test("cannot verify")))' <<< "$out" >/dev/null; then
     pass "$name"
   else
     fail "$name" "unexpected report: $out"
@@ -440,7 +441,7 @@ case_git_cd_matches_writer_key
 case_unsafe_mode_reported_not_repaired
 case_windows_acl_unsafe_reported_not_repaired
 case_windows_acl_safe_reported
-case_windows_acl_unknown_output_reported_safe
+case_windows_acl_unknown_output_reported_unsafe
 case_human_output_facts
 
 th_summary

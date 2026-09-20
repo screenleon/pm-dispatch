@@ -54,12 +54,19 @@ _pmctl_state_root_safety() {
   fi
   # Mirror the writer's own platform branch (issue #592): POSIX mode bits are
   # inert on native Windows Git Bash, so reporting via _sw_store_root_mode_allows_write
-  # there would just repeat the writer's former false "safe" reading.
+  # there would just repeat the writer's former false "safe" reading. Fail
+  # closed on an unverifiable ACL (gate round 2), same as the writer: rc=2
+  # (cannot verify) is reported unsafe, not safe.
   if [[ -d "$store_root" ]]; then
     if [[ "$(detect_platform)" == windows ]] && declare -F _sw_windows_store_root_allows_write >/dev/null 2>&1; then
-      if _sw_windows_store_root_allows_write "$store_root"; then
+      local _win_acl_rc=0
+      _sw_windows_store_root_allows_write "$store_root" || _win_acl_rc=$?
+      if [[ "$_win_acl_rc" -eq 0 ]]; then
         _PMCTL_STATE_SAFE=0
         _PMCTL_STATE_SAFE_REASONS+=("ACL grants write to a non-owner principal")
+      elif [[ "$_win_acl_rc" -eq 2 ]]; then
+        _PMCTL_STATE_SAFE=0
+        _PMCTL_STATE_SAFE_REASONS+=("cannot verify Windows ACL (PowerShell/cygpath unavailable or Get-Acl failed)")
       fi
     elif _sw_store_root_mode_allows_write "$store_root"; then
       _PMCTL_STATE_SAFE=0

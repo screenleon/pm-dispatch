@@ -532,14 +532,16 @@ case_state_store_init_windows_acl_unsafe_escape_hatch() {
   fi
 }
 
-case_state_store_init_windows_acl_tool_missing_fails_open() {
-  # When powershell.exe cannot be found (e.g. exits non-zero / not on PATH),
-  # the ACL cannot be verified at all. This must degrade the same way the
-  # POSIX helper already degrades when its own verification tool (`stat`)
-  # fails: treated as safe, not rejected -- Windows gets no stricter default
-  # than POSIX already has. cygpath is stubbed present so the failure is
-  # isolated to the powershell.exe call specifically.
-  local name="state_store_init: Windows ACL check unavailable degrades to accept, parity with POSIX stat failure"
+case_state_store_init_windows_acl_tool_missing_rejected() {
+  # Gate round 2 (critic/qa-tester/security-reviewer, unanimous): when
+  # powershell.exe cannot be found (e.g. exits non-zero / not on PATH), the
+  # ACL cannot be verified at all -- this is a NEWLY ADDED security control,
+  # so degrading it to "assume safe" would recreate the exact silent
+  # acceptance issue #592 reported, just relocated to a different trigger.
+  # It must FAIL CLOSED: reject like a verified-unsafe root, not accept like
+  # the POSIX helper's own unrelated "stat failed" degrade. cygpath is
+  # stubbed present so the failure is isolated to the powershell.exe call.
+  local name="state_store_init: Windows ACL check unavailable is rejected (fails closed)"
   should_run "$name" || return 0
   local store stubs rc=0 stderr_out
   store="$tmp_root/root-windows-acl-unverifiable"
@@ -552,24 +554,23 @@ case_state_store_init_windows_acl_tool_missing_fails_open() {
   chmod +x "$stubs/cygpath" "$stubs/powershell.exe"
   stderr_out="$(PATH="$stubs:$PATH" PM_DISPATCH_PLATFORM=windows PM_DISPATCH_STATE_ROOT="$store" \
     _SW_ALLOW_GLOBAL_PARTITION=1 state_store_init 2>&1 >/dev/null)" || rc=$?
-  if [[ "$rc" -eq 0 && -z "$stderr_out" && "$(cat "$store/VERSION" 2>/dev/null)" == "1" ]]; then
+  if [[ "$rc" -ne 0 && "$stderr_out" == *"cannot verify Windows ACL"* && ! -e "$store/VERSION" ]]; then
     pass "$name"
   else
     fail "$name" "rc=$rc stderr=${stderr_out:-empty}"
   fi
 }
 
-case_state_store_init_windows_acl_unknown_output_fails_open() {
-  # qa-tester-F001 (gate round 1): the "tool missing" case above exercises
-  # powershell.exe failing to RUN (nonzero exit / not found), which fails the
-  # bash command substitution and takes the `|| return 1` branch. That is a
-  # DIFFERENT code path from powershell.exe running successfully (exit 0) but
-  # reporting "UNKNOWN" from its internal catch block (e.g. Get-Acl itself
-  # threw). Both must degrade to "safe", but only the exit-0 UNKNOWN path
-  # actually exercises the `case ... *) return 1 ;;` fallthrough this test
-  # targets. Also assert no POSIX chmod ever touches the store root, proving
-  # the Windows branch does not silently fall back to the mode-bit path.
-  local name="state_store_init: Windows ACL check reports UNKNOWN (exit 0) degrades to accept, no POSIX fallback"
+case_state_store_init_windows_acl_unknown_output_rejected() {
+  # The "tool missing" case above exercises powershell.exe failing to RUN
+  # (nonzero exit / not found), which fails the bash command substitution.
+  # This is the DIFFERENT code path of powershell.exe running successfully
+  # (exit 0) but reporting "UNKNOWN" from its internal catch block (e.g.
+  # Get-Acl itself threw) -- both must fail closed (gate round 2), but only
+  # this one exercises the `case ... *) return 2 ;;` fallthrough. Also assert
+  # no POSIX chmod ever touches the store root, proving the Windows branch
+  # does not silently fall back to the mode-bit path.
+  local name="state_store_init: Windows ACL check reports UNKNOWN (exit 0) is rejected (fails closed)"
   should_run "$name" || return 0
   local store stubs rc=0 stderr_out chmod_log="$tmp_root/windows-acl-unknown-chmod-log"
   store="$tmp_root/root-windows-acl-unknown"
@@ -586,11 +587,36 @@ case_state_store_init_windows_acl_unknown_output_fails_open() {
     PATH="$stubs:$PATH" PM_DISPATCH_PLATFORM=windows PM_DISPATCH_STATE_ROOT="$store" \
       _SW_ALLOW_GLOBAL_PARTITION=1 state_store_init
   } 2>&1 >/dev/null)" || rc=$?
-  if [[ "$rc" -eq 0 && -z "$stderr_out" && "$(cat "$store/VERSION" 2>/dev/null)" == "1" ]] \
+  if [[ "$rc" -ne 0 && "$stderr_out" == *"cannot verify Windows ACL"* && ! -e "$store/VERSION" ]] \
       && ! grep -xF "0700 $store" "$chmod_log" 2>/dev/null; then
     pass "$name"
   else
     fail "$name" "rc=$rc stderr=${stderr_out:-empty} chmod_log=$(cat "$chmod_log" 2>/dev/null | tr '\n' '|')"
+  fi
+}
+
+case_state_store_init_windows_acl_unverifiable_escape_hatch() {
+  # The existing PM_DISPATCH_ALLOW_UNSAFE_STATE_ROOT escape hatch must also
+  # cover the new "cannot verify" rejection, exactly as it covers the
+  # verified-unsafe and POSIX rejection paths -- an operator can still choose
+  # to proceed on a box where the ACL truly cannot be inspected.
+  local name="state_store_init: unsafe-root escape hatch covers an unverifiable Windows ACL"
+  should_run "$name" || return 0
+  local store stubs rc=0 stderr_out
+  store="$tmp_root/root-windows-acl-unverifiable-allowed"
+  mkdir -p "$store"
+  stubs="$tmp_root/windows-acl-unverifiable-allowed-stubs"
+  mkdir -p "$stubs"
+  # shellcheck disable=SC2016 # $1/$2 expand when the generated cygpath stub runs.
+  printf '#!/usr/bin/env bash\n[[ "$1" == "-w" ]] || exit 1\nprintf "%%s\\n" "$2"\n' > "$stubs/cygpath"
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$stubs/powershell.exe"
+  chmod +x "$stubs/cygpath" "$stubs/powershell.exe"
+  stderr_out="$(PATH="$stubs:$PATH" PM_DISPATCH_PLATFORM=windows PM_DISPATCH_STATE_ROOT="$store" \
+    PM_DISPATCH_ALLOW_UNSAFE_STATE_ROOT=1 _SW_ALLOW_GLOBAL_PARTITION=1 state_store_init 2>&1 >/dev/null)" || rc=$?
+  if [[ "$rc" -eq 0 && "$stderr_out" == *"warning: unsafe state root"* && "$(cat "$store/VERSION" 2>/dev/null)" == "1" ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc stderr=${stderr_out:-empty}"
   fi
 }
 
@@ -2280,8 +2306,9 @@ case_state_store_init_non_owner_rejected_when_simulatable
 case_state_store_init_windows_acl_unsafe_rejected
 case_state_store_init_windows_acl_safe_accepted
 case_state_store_init_windows_acl_unsafe_escape_hatch
-case_state_store_init_windows_acl_tool_missing_fails_open
-case_state_store_init_windows_acl_unknown_output_fails_open
+case_state_store_init_windows_acl_tool_missing_rejected
+case_state_store_init_windows_acl_unknown_output_rejected
+case_state_store_init_windows_acl_unverifiable_escape_hatch
 case_state_store_init_version1_noop
 case_state_store_init_version2_fails
 case_state_store_init_version2_does_not_mutate_mode
