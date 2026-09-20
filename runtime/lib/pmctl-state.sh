@@ -52,9 +52,19 @@ _pmctl_state_root_safety() {
     _PMCTL_STATE_SAFE=0
     _PMCTL_STATE_SAFE_REASONS+=("not owned by effective user")
   fi
-  if [[ -d "$store_root" ]] && _sw_store_root_mode_allows_write "$store_root"; then
-    _PMCTL_STATE_SAFE=0
-    _PMCTL_STATE_SAFE_REASONS+=("group/world writable")
+  # Mirror the writer's own platform branch (issue #592): POSIX mode bits are
+  # inert on native Windows Git Bash, so reporting via _sw_store_root_mode_allows_write
+  # there would just repeat the writer's former false "safe" reading.
+  if [[ -d "$store_root" ]]; then
+    if [[ "$(detect_platform)" == windows ]] && declare -F _sw_windows_store_root_allows_write >/dev/null 2>&1; then
+      if _sw_windows_store_root_allows_write "$store_root"; then
+        _PMCTL_STATE_SAFE=0
+        _PMCTL_STATE_SAFE_REASONS+=("ACL grants write to a non-owner principal")
+      fi
+    elif _sw_store_root_mode_allows_write "$store_root"; then
+      _PMCTL_STATE_SAFE=0
+      _PMCTL_STATE_SAFE_REASONS+=("group/world writable")
+    fi
   fi
   return 0
 }

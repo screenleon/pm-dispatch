@@ -60,6 +60,52 @@ _sw_store_root_mode_allows_write() {
   return 1
 }
 
+# Windows counterpart to _sw_store_root_mode_allows_write (issue #592).
+# `chmod`/`stat` on native Windows Git Bash (MSYS) do not reflect the real
+# NTFS ACL -- `chmod` silently no-ops and `stat -c %a` reports a synthesized,
+# effectively constant mode regardless of the actual ACL -- so the POSIX
+# mode-bit guard is inert there and never fires. Ask the real OS instead via
+# PowerShell's `Get-Acl`, the same "shell to a native Windows primitive when
+# the MSYS POSIX emulation cannot do the job" pattern _sw_operation_replace_file
+# already uses for the atomic-replace boundary.
+#
+# Contract mirrors the POSIX helper: 0 = an Allow ACE grants a non-owner,
+# non-administrative principal (Everyone / Users / Authenticated Users /
+# Anonymous Logon) write-capable rights; 1 = safe OR undeterminable. Treating
+# "cannot verify" as safe is not a weaker bar than POSIX already accepts --
+# the POSIX helper does exactly the same when `stat` itself fails (return 1),
+# so this does not introduce a stricter or laxer default for one platform.
+_sw_windows_store_root_allows_write() {
+  local root="$1" win_root out
+  command -v powershell.exe >/dev/null 2>&1 || return 1
+  command -v cygpath >/dev/null 2>&1 || return 1
+  win_root="$(cygpath -w -- "$root" 2>/dev/null)" || return 1
+  [[ -n "$win_root" ]] || return 1
+  # shellcheck disable=SC2016 # PowerShell, not Bash, expands $env: references.
+  out="$(PM_DISPATCH_ACL_PATH="$win_root" powershell.exe -NoProfile -NonInteractive -Command '
+    $ErrorActionPreference = "Stop"
+    try {
+      $acl = Get-Acl -LiteralPath $env:PM_DISPATCH_ACL_PATH
+      $risky = @("Everyone","BUILTIN\Users","NT AUTHORITY\Authenticated Users","NT AUTHORITY\ANONYMOUS LOGON")
+      foreach ($ace in $acl.Access) {
+        if ($ace.AccessControlType -eq "Allow" -and $risky -contains $ace.IdentityReference.Value) {
+          if ($ace.FileSystemRights -match "Write|Modify|FullControl") {
+            Write-Output "UNSAFE"
+            exit 0
+          }
+        }
+      }
+      Write-Output "SAFE"
+    } catch {
+      Write-Output "UNKNOWN"
+    }
+  ' 2>/dev/null)" || return 1
+  case "$(printf '%s' "$out" | tr -d '\r\n')" in
+    UNSAFE) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 _sw_unsafe_store_root() {
   local root="$1"
   local reason="$2"
@@ -104,11 +150,20 @@ _sw_ensure_store_root_safe() {
     printf 'state-writer: mkdir failed: %s\n' "$canonical_root" >&2
     return 1
   fi
-  chmod 0700 "$store_root" 2>/dev/null || true
 
-  # Post-chmod check: if the root is still others-writable we could not secure it.
-  if _sw_store_root_mode_allows_write "$store_root"; then
-    _sw_unsafe_store_root "$canonical_root" "group/world writable after chmod" || return 1
+  if [[ "$(detect_platform)" == windows ]]; then
+    # issue #592: chmod/stat mode bits are inert on native Windows Git Bash --
+    # skip the POSIX chmod theatre and ask the real OS for the ACL instead.
+    if _sw_windows_store_root_allows_write "$store_root"; then
+      _sw_unsafe_store_root "$canonical_root" "ACL grants write to a non-owner principal" || return 1
+    fi
+  else
+    chmod 0700 "$store_root" 2>/dev/null || true
+
+    # Post-chmod check: if the root is still others-writable we could not secure it.
+    if _sw_store_root_mode_allows_write "$store_root"; then
+      _sw_unsafe_store_root "$canonical_root" "group/world writable after chmod" || return 1
+    fi
   fi
   return 0
 }
