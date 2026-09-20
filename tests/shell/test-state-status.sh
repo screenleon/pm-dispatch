@@ -332,6 +332,77 @@ case_unsafe_mode_reported_not_repaired() {
   fi
 }
 
+# Behavior: on native Windows, POSIX mode bits are inert (issue #592) so
+# status must consult the same PowerShell ACL check the writer's guard uses,
+# not the mode-bit reader that would silently report safe_root=true there.
+# Steps: stub cygpath/powershell.exe to simulate an ACL granting a non-owner
+#        principal write access; run status --json with PM_DISPATCH_PLATFORM
+#        forced to windows; assert safe_root false with a reason, mode untouched.
+case_windows_acl_unsafe_reported_not_repaired() {
+  local name="Windows ACL write-grant: safe_root false, mode untouched (issue #592)"
+  local store out mode_before mode_after stubs
+  store="$(mk_store windows-unsafe-acl 1)"
+  mode_before="$(stat -c %a "$store" 2>/dev/null || stat -f %Lp "$store")"
+  stubs="$TMP_ROOT/windows-unsafe-acl-stubs"
+  mkdir -p "$stubs"
+  # shellcheck disable=SC2016 # $1/$2 expand when the generated cygpath stub runs.
+  printf '#!/usr/bin/env bash\n[[ "$1" == "-w" ]] || exit 1\nprintf "%%s\\n" "$2"\n' > "$stubs/cygpath"
+  printf '#!/usr/bin/env bash\nprintf "UNSAFE\\n"\n' > "$stubs/powershell.exe"
+  chmod +x "$stubs/cygpath" "$stubs/powershell.exe"
+  out="$(PATH="$stubs:$PATH" PM_DISPATCH_PLATFORM=windows status_json "$store")" || { fail "$name" "status failed"; return; }
+  mode_after="$(stat -c %a "$store" 2>/dev/null || stat -f %Lp "$store")"
+  if [[ "$mode_before" != "$mode_after" ]]; then fail "$name" "status changed mode $mode_before -> $mode_after"; return; fi
+  if jq -e '.safe_root == false and (.safe_root_reasons | any(test("non-owner principal")))' <<< "$out" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "unexpected report: $out"
+  fi
+}
+
+# Behavior: on native Windows with a safe ACL, status must NOT fall back to
+# the mode-bit reader (which would be checking meaningless synthesized bits)
+# and must report safe_root=true.
+case_windows_acl_safe_reported() {
+  local name="Windows ACL no write-grant: safe_root true (issue #592)"
+  local store out stubs
+  store="$(mk_store windows-safe-acl 1)"
+  stubs="$TMP_ROOT/windows-safe-acl-stubs"
+  mkdir -p "$stubs"
+  # shellcheck disable=SC2016 # $1/$2 expand when the generated cygpath stub runs.
+  printf '#!/usr/bin/env bash\n[[ "$1" == "-w" ]] || exit 1\nprintf "%%s\\n" "$2"\n' > "$stubs/cygpath"
+  printf '#!/usr/bin/env bash\nprintf "SAFE\\n"\n' > "$stubs/powershell.exe"
+  chmod +x "$stubs/cygpath" "$stubs/powershell.exe"
+  out="$(PATH="$stubs:$PATH" PM_DISPATCH_PLATFORM=windows status_json "$store")" || { fail "$name" "status failed"; return; }
+  if jq -e '.safe_root == true and (.safe_root_reasons | length == 0)' <<< "$out" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "unexpected report: $out"
+  fi
+}
+
+# Behavior: gate round 2 (critic/qa-tester/security-reviewer, unanimous) --
+# powershell.exe running successfully (exit 0) but reporting "UNKNOWN" (its
+# internal catch fired, e.g. Get-Acl threw) is a distinct path from the tool
+# being unreachable. Both must fail closed: report safe_root=false with an
+# explicit "cannot verify" reason, matching the writer's own rejection.
+case_windows_acl_unknown_output_reported_unsafe() {
+  local name="Windows ACL check reports UNKNOWN (exit 0): safe_root false, cannot-verify reason (issue #592)"
+  local store out stubs
+  store="$(mk_store windows-unknown-acl 1)"
+  stubs="$TMP_ROOT/windows-unknown-acl-stubs"
+  mkdir -p "$stubs"
+  # shellcheck disable=SC2016 # $1/$2 expand when the generated cygpath stub runs.
+  printf '#!/usr/bin/env bash\n[[ "$1" == "-w" ]] || exit 1\nprintf "%%s\\n" "$2"\n' > "$stubs/cygpath"
+  printf '#!/usr/bin/env bash\nprintf "UNKNOWN\\n"\n' > "$stubs/powershell.exe"
+  chmod +x "$stubs/cygpath" "$stubs/powershell.exe"
+  out="$(PATH="$stubs:$PATH" PM_DISPATCH_PLATFORM=windows status_json "$store")" || { fail "$name" "status failed"; return; }
+  if jq -e '.safe_root == false and (.safe_root_reasons | any(test("cannot verify")))' <<< "$out" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "unexpected report: $out"
+  fi
+}
+
 # Behavior: human-readable output carries the same load-bearing facts as the
 # JSON (store root, layout version, migration availability).
 # Steps: run plain (human) state status against a VERSION=1 store; grep for
@@ -368,6 +439,9 @@ case_unknown_flag_usage_error
 case_non_git_cwd_null_project_key
 case_git_cd_matches_writer_key
 case_unsafe_mode_reported_not_repaired
+case_windows_acl_unsafe_reported_not_repaired
+case_windows_acl_safe_reported
+case_windows_acl_unknown_output_reported_unsafe
 case_human_output_facts
 
 th_summary

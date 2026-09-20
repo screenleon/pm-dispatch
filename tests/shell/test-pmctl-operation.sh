@@ -446,6 +446,16 @@ case_expect_producer_windows_replace_fallback() {
   cat > "$stubs/powershell.exe" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+# issue #592: state_store_init's Windows ACL guard now also shells to
+# powershell.exe (a DIFFERENT -Command script, matched here by its own
+# env var) on every state write, including the operation-record write this
+# case exercises. Answer that invocation shape distinctly from the
+# replace-file fallback below, which this case is actually testing --
+# report the store root safe so the test reaches its real subject.
+if [[ -n "${PM_DISPATCH_ACL_PATH:-}" ]]; then
+  printf 'SAFE\n'
+  exit 0
+fi
 # This is the observable replacement boundary: a fallback that unlinks or
 # partially rewrites the destination before invoking ReplaceFile must fail the
 # regression instead of being hidden by the final-state assertion.
@@ -511,6 +521,15 @@ case_expect_producer_windows_replace_failure_preserves_record() {
   printf '#!/usr/bin/env bash\n[[ "$1" == "-w" ]] || exit 1\nprintf "%%s\\n" "$2"\n' > "$stubs/cygpath"
   cat > "$stubs/powershell.exe" <<'EOF'
 #!/usr/bin/env bash
+# issue #592: answer the store-root ACL-check invocation (a different
+# -Command script, matched by its own env var) distinctly from the
+# replace-file fallback below, which this case is actually testing --
+# report the store root safe so the induced replace failure below is what
+# actually fails the call, not an unrelated store-root rejection.
+if [[ -n "${PM_DISPATCH_ACL_PATH:-}" ]]; then
+  printf 'SAFE\n'
+  exit 0
+fi
 printf 'called\n' > "$CC587_REPLACE_FAILURE_SINK"
 exit 23
 EOF

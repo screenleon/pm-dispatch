@@ -60,6 +60,113 @@ _sw_store_root_mode_allows_write() {
   return 1
 }
 
+# Windows counterpart to _sw_store_root_mode_allows_write (issue #592).
+# `chmod`/`stat` on native Windows Git Bash (MSYS) do not reflect the real
+# NTFS ACL -- `chmod` silently no-ops and `stat -c %a` reports a synthesized,
+# effectively constant mode regardless of the actual ACL -- so the POSIX
+# mode-bit guard is inert there and never fires. Ask the real OS instead via
+# PowerShell's `Get-Acl`, the same "shell to a native Windows primitive when
+# the MSYS POSIX emulation cannot do the job" pattern _sw_operation_replace_file
+# already uses for the atomic-replace boundary.
+#
+# Unlike the POSIX helper (which treats "cannot verify" as safe, matching
+# `stat` failure there), this ACL check FAILS CLOSED when it cannot verify
+# (gate round 2, critic/qa-tester/security-reviewer unanimous): this is a
+# newly added control specifically meant to close a gap where the store root
+# was silently unprotected on Windows, so degrading it to "assume safe"
+# whenever PowerShell/cygpath/Get-Acl is unavailable would just recreate the
+# exact silent-acceptance failure mode issue #592 reported, under a new name.
+# The existing PM_DISPATCH_ALLOW_UNSAFE_STATE_ROOT escape hatch remains the
+# one sanctioned way to accept an unverifiable root.
+#
+# Return contract: 0 = an Allow ACE grants write-capable rights to a
+# principal other than the owner/Administrators/SYSTEM (unsafe); 1 = the ACL
+# was verified and grants no such access (safe); 2 = verification could not
+# be completed at all (tool missing, cygpath/PowerShell failed, or an
+# unrecognized/UNKNOWN result) -- callers must treat 2 as unsafe, not as 1.
+#
+# Checked against owner/BUILTIN\Administrators/NT AUTHORITY\SYSTEM, not a
+# fixed enumerable list of "risky" identities -- mirroring the POSIX check's
+# own structural semantics (group/world bits catch ANY non-owner writer, not
+# only specific named groups). An earlier draft matched only a handful of
+# well-known broad principals (Everyone / Users / Authenticated Users /
+# Anonymous Logon) and so missed an explicitly-granted custom group or named
+# non-owner user -- exactly the case a POSIX "other"-writable bit would have
+# caught. Comparing against owner/Administrators/SYSTEM instead closes that
+# gap by construction: everyone not on the three-member allowlist is "other",
+# precisely like the POSIX permission model.
+#
+# Principals are compared by well-known/resolved SID, not display name (gate
+# round 1, critic-F001): `Everyone`/`Users`/etc. are English display strings
+# that a localized Windows install translates, so string-matching them would
+# let a genuinely unsafe ACL evade detection on any non-English system. SIDs
+# are locale-independent. Rights are matched via a bitmask over the
+# FileSystemRights flags enum, not a substring match on its rendered ToString
+# (gate round 1, security-reviewer-F001): PowerShell renders a directory ACE
+# holding only the CreateFiles/AppendData bits (no Write/Modify/FullControl
+# superset bit set) without the literal substring "Write", so a text match
+# would miss a real write grant expressed that way.
+_sw_windows_store_root_allows_write() {
+  local root="$1" win_root out
+  command -v powershell.exe >/dev/null 2>&1 || return 2
+  command -v cygpath >/dev/null 2>&1 || return 2
+  win_root="$(cygpath -w -- "$root" 2>/dev/null)" || return 2
+  [[ -n "$win_root" ]] || return 2
+  # shellcheck disable=SC2016 # PowerShell, not Bash, expands $env: references.
+  out="$(PM_DISPATCH_ACL_PATH="$win_root" powershell.exe -NoProfile -NonInteractive -Command '
+    $ErrorActionPreference = "Stop"
+    try {
+      $acl = Get-Acl -LiteralPath $env:PM_DISPATCH_ACL_PATH
+      $ownerSid = $acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value
+      # Well-known SIDs (locale-independent), allowed to write:
+      # BUILTIN\Administrators (S-1-5-32-544), NT AUTHORITY\SYSTEM (S-1-5-18).
+      $allowedSids = @($ownerSid,"S-1-5-32-544","S-1-5-18")
+      $writeMask = [int](
+        [System.Security.AccessControl.FileSystemRights]::Write -bor
+        [System.Security.AccessControl.FileSystemRights]::Modify -bor
+        [System.Security.AccessControl.FileSystemRights]::FullControl -bor
+        [System.Security.AccessControl.FileSystemRights]::CreateFiles -bor
+        [System.Security.AccessControl.FileSystemRights]::CreateDirectories -bor
+        [System.Security.AccessControl.FileSystemRights]::AppendData -bor
+        [System.Security.AccessControl.FileSystemRights]::Delete -bor
+        [System.Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor
+        [System.Security.AccessControl.FileSystemRights]::ChangePermissions -bor
+        [System.Security.AccessControl.FileSystemRights]::TakeOwnership
+      )
+      foreach ($ace in $acl.Access) {
+        if ($ace.AccessControlType -ne "Allow") { continue }
+        $sid = $null
+        try {
+          $sid = $ace.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value
+        } catch {
+          # gate round 3 (critic/qa-tester/security-reviewer, unanimous): an
+          # Allow ACE whose identity cannot be translated to a SID (e.g. an
+          # orphaned/foreign SID) must NOT be silently skipped -- it could be
+          # the very grant that makes this root unsafe. Make the whole
+          # verification indeterminate instead, which the caller already
+          # treats as fail-closed (rc=2), rather than fail open on exactly
+          # the ACE this check cannot classify.
+          Write-Output "UNKNOWN"
+          exit 0
+        }
+        if ($allowedSids -contains $sid) { continue }
+        if (([int]$ace.FileSystemRights -band $writeMask) -ne 0) {
+          Write-Output "UNSAFE"
+          exit 0
+        }
+      }
+      Write-Output "SAFE"
+    } catch {
+      Write-Output "UNKNOWN"
+    }
+  ' 2>/dev/null)" || return 2
+  case "$(printf '%s' "$out" | tr -d '\r\n')" in
+    UNSAFE) return 0 ;;
+    SAFE) return 1 ;;
+    *) return 2 ;;
+  esac
+}
+
 _sw_unsafe_store_root() {
   local root="$1"
   local reason="$2"
@@ -104,11 +211,26 @@ _sw_ensure_store_root_safe() {
     printf 'state-writer: mkdir failed: %s\n' "$canonical_root" >&2
     return 1
   fi
-  chmod 0700 "$store_root" 2>/dev/null || true
 
-  # Post-chmod check: if the root is still others-writable we could not secure it.
-  if _sw_store_root_mode_allows_write "$store_root"; then
-    _sw_unsafe_store_root "$canonical_root" "group/world writable after chmod" || return 1
+  if [[ "$(detect_platform)" == windows ]]; then
+    # issue #592: chmod/stat mode bits are inert on native Windows Git Bash --
+    # skip the POSIX chmod theatre and ask the real OS for the ACL instead.
+    # Fail closed (gate round 2): rc=2 (cannot verify) is rejected exactly
+    # like rc=0 (verified unsafe), not treated as safe.
+    local _win_acl_rc=0
+    _sw_windows_store_root_allows_write "$store_root" || _win_acl_rc=$?
+    if [[ "$_win_acl_rc" -eq 0 ]]; then
+      _sw_unsafe_store_root "$canonical_root" "ACL grants write to a non-owner principal" || return 1
+    elif [[ "$_win_acl_rc" -eq 2 ]]; then
+      _sw_unsafe_store_root "$canonical_root" "cannot verify Windows ACL (PowerShell/cygpath unavailable or Get-Acl failed)" || return 1
+    fi
+  else
+    chmod 0700 "$store_root" 2>/dev/null || true
+
+    # Post-chmod check: if the root is still others-writable we could not secure it.
+    if _sw_store_root_mode_allows_write "$store_root"; then
+      _sw_unsafe_store_root "$canonical_root" "group/world writable after chmod" || return 1
+    fi
   fi
   return 0
 }
