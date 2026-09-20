@@ -536,12 +536,6 @@ _pmctl_gate_supervisor_identity_path() {
 pmctl_gate_run_detached() {
   local repo_root="$1" effective_cd="$2"; shift 2
   local -a forward=("$@")
-  local _ready_timeout="${PM_GATE_READY_TIMEOUT:-5}"
-
-  if ! [[ "$_ready_timeout" =~ ^[1-9][0-9]*$ ]]; then
-    printf 'pmctl gate run: invalid PM_GATE_READY_TIMEOUT %q (expected positive seconds)\n' "$_ready_timeout" >&2
-    return 2
-  fi
 
   if [[ "$(type -t detached_launch_generate_nonce 2>/dev/null)" != function ]]; then
     local _dl_lib="$repo_root/runtime/lib/detached-launch.sh"
@@ -549,6 +543,31 @@ pmctl_gate_run_detached() {
       # shellcheck disable=SC1090,SC1091
       . "$_dl_lib" 2>/dev/null || true
     fi
+  fi
+
+  # CC-606: the fixed 5s default below was never actually reachable on
+  # native Windows before this issue's fix landed (the whole detached path
+  # hard-failed on missing setsid first), so it was never validated there.
+  # Direct measurement on a real Windows 11 host puts ordinary readiness
+  # latency at 70-140s (a context-index refresh plus one or two nested
+  # PowerShell Job Object launches, vs. a couple of seconds with real
+  # setsid -- see tests/shell/test-pmctl-gate.sh's own
+  # PM_GATE_TEST_READY_TIMEOUT for the same finding in the test suite) --
+  # a bare 5s default there does not mean "supervisor is unusually slow",
+  # it means "detached gate runs are unconditionally broken on Windows
+  # unless the caller already knows to raise this env var by hand". Give
+  # Windows a realistic default instead of relying on every caller
+  # rediscovering this the same way. POSIX default is unchanged.
+  local _ready_timeout_default=5
+  if [[ "$(type -t detect_platform 2>/dev/null)" == function \
+      && "$(detect_platform)" == windows ]]; then
+    _ready_timeout_default=150
+  fi
+  local _ready_timeout="${PM_GATE_READY_TIMEOUT:-$_ready_timeout_default}"
+
+  if ! [[ "$_ready_timeout" =~ ^[1-9][0-9]*$ ]]; then
+    printf 'pmctl gate run: invalid PM_GATE_READY_TIMEOUT %q (expected positive seconds)\n' "$_ready_timeout" >&2
+    return 2
   fi
 
   local gate_script="$repo_root/runtime/bin/gate-supervisor.sh"
