@@ -2205,8 +2205,11 @@ if [[ "$SKIP_PREFLIGHT_TESTS" != "true" && -n "$TEST_CMD_OVERRIDE" ]]; then
         # has no job-control relationship to wait() on and must instead poll
         # for this script's own completion record.
         printf 'DL_LIB=%q\n' "$_detached_launch_lib"
+        # shellcheck disable=SC2016 # literal wrapper-script source, expanded by the spawned bash, not this shell.
         printf 'declare -F detached_launch_write_sentinel >/dev/null 2>&1 || . "$DL_LIB"\n'
+        # shellcheck disable=SC2016 # literal wrapper-script source, expanded by the spawned bash, not this shell.
         printf 'detached_launch_write_sentinel %q "exit_code=$_pf_rc"\n' "$_preflight_sentinel"
+        # shellcheck disable=SC2016 # literal wrapper-script source, expanded by the spawned bash, not this shell.
         printf 'exit "$_pf_rc"\n'
       } > "$_preflight_wrapper_script" || {
         printf 'Error: failed to write pre-flight wrapper script\n' >&2

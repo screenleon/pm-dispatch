@@ -391,15 +391,20 @@ pmctl_gate_run() {
         printf '. %q\n' "$repo_root/runtime/lib/detached-launch.sh"
         printf '. %q\n' "$repo_root/runtime/lib/pmctl-operation.sh"
         printf 'register_rc=0\n'
+        # shellcheck disable=SC2016 # literal wrapper-script source, expanded by the spawned bash, not this shell.
         printf 'pmctl_operation_register_producer %q gate %q %q "$(detached_launch_self_pid)" || register_rc=$?\n' \
           "$repo_root" "$PM_GATE_PARENT_OPERATION" "$effective_cd"
+        # shellcheck disable=SC2016 # literal wrapper-script source, expanded by the spawned bash, not this shell.
         printf 'if [[ "$register_rc" -eq 130 ]]; then exit 130; fi\n'
+        # shellcheck disable=SC2016 # literal wrapper-script source, expanded by the spawned bash, not this shell.
         printf 'if [[ "$register_rc" -ne 0 ]]; then printf %q %q >&2; exit 2; fi\n' \
           'pmctl gate run: failed to register foreground producer identity for %s\n' \
           "$PM_GATE_PARENT_OPERATION"
         printf '%s\n' "$_fg_cmd_line"
         printf '_fg_rc=$?\n'
+        # shellcheck disable=SC2016 # literal wrapper-script source, expanded by the spawned bash, not this shell.
         printf 'detached_launch_write_sentinel %q "exit_code=$_fg_rc"\n' "$_fg_sentinel"
+        # shellcheck disable=SC2016 # literal wrapper-script source, expanded by the spawned bash, not this shell.
         printf 'exit "$_fg_rc"\n'
       } > "$_fg_wrapper"
       if ! detached_launch_windows_launch "$_fg_wrapper" "$_fg_log" "$_fg_pid_file"; then

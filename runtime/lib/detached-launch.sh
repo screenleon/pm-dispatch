@@ -29,7 +29,7 @@ _DL_SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
 # #606). Guarded source, same pattern state-writer.sh uses: this file may be
 # sourced before or after portable.sh depending on the caller.
 if ! declare -F detect_platform >/dev/null 2>&1; then
-  # shellcheck source=runtime/lib/portable.sh
+  # shellcheck disable=SC1091
   . "$_DL_SCRIPT_DIR/portable.sh" 2>/dev/null || true
 fi
 
