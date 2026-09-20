@@ -78,18 +78,23 @@ trap _supervisor_exit EXIT
 # authenticates this nonce-derived path before it returns a detached gate ID;
 # therefore a successful `pmctl gate run` means more than a shell fork.
 _write_ready() {
-  local _ready_path _identity _pid _starttime
+  local _ready_path _identity _pid _starttime _self_pid
   pm_identifier_gate_is_valid "$gate_id" || return 1
   [[ -n "$_sentinel_nonce" ]] || return 1
+  # detached_launch_self_pid, not plain $$: on Windows the unit cancel/wait
+  # actually track is the Job Object launcher (see detached-launch.sh's
+  # Windows section header), not this bash.exe process's own MSYS-internal
+  # $$, which no Win32 API recognizes anyway. On POSIX this is exactly $$.
+  _self_pid="$(detached_launch_self_pid)"
   # No isolated= override: by this point setsid has taken effect, so whether
   # this process leads its own group is an observable fact rather than
   # something the launcher has to assert on our behalf. Reading it here also
   # keeps the record honest when setsid was unavailable and the launcher fell
   # back to nohup+disown, where the supervisor shares the caller's group.
-  _identity="$(detached_launch_capture_identity "$$" 2>/dev/null)" || return 1
+  _identity="$(detached_launch_capture_identity "$_self_pid" 2>/dev/null)" || return 1
   _pid="$(printf '%s\n' "$_identity" | grep -m1 '^pid=' | cut -d= -f2-)" || return 1
   _starttime="$(printf '%s\n' "$_identity" | grep -m1 '^starttime=' | cut -d= -f2-)" || return 1
-  [[ "$_pid" == "$$" && -n "$_starttime" ]] || return 1
+  [[ "$_pid" == "$_self_pid" && -n "$_starttime" ]] || return 1
   # Publish the authoritative identity before readiness, never after: a waiter
   # that has seen the ready sentinel then always finds a post-setsid record to
   # re-verify against, instead of the launcher's exec-window snapshot whose
@@ -156,8 +161,12 @@ if [[ -n "${PM_GATE_PARENT_OPERATION:-}" ]]; then
   # shellcheck source=/dev/null
   . "$REPO_ROOT/runtime/lib/pmctl-operation.sh"
   _producer_register_rc=0
+  # detached_launch_self_pid, not plain $$ -- see the matching comment in
+  # _write_ready above; _pmctl_operation_identity_json (pmctl-operation.sh)
+  # goes through the same detached_launch_capture_identity path and has the
+  # identical requirement.
   pmctl_operation_register_producer "$REPO_ROOT" gate "$PM_GATE_PARENT_OPERATION" \
-    "$cd_arg" "$$" || _producer_register_rc=$?
+    "$cd_arg" "$(detached_launch_self_pid)" || _producer_register_rc=$?
   if [[ "$_producer_register_rc" -eq 130 ]]; then
     _write_sentinel "cancelled" 130 ""
     exit 130

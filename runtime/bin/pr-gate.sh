@@ -2170,28 +2170,95 @@ if [[ "$SKIP_PREFLIGHT_TESTS" != "true" && -n "$TEST_CMD_OVERRIDE" ]]; then
       printf 'Error: operation-owned pre-flight cleanup helper is unavailable\n' >&2
       exit 2
     }
-    command -v setsid >/dev/null 2>&1 || {
-      printf 'Error: operation-owned pre-flight isolation requires setsid\n' >&2
-      exit 2
-    }
-    (
-      cd "$WORK_DIR"
-      export PM_DISPATCH_PREFLIGHT_TEST_RESULT="$PREFLIGHT_RICH_RESULT_PATH"
-      export PM_DISPATCH_PREFLIGHT_SUBJECT_FINGERPRINT="$_preflight_before"
-      export PM_DISPATCH_PREFLIGHT_BASE_COMMIT="$_preflight_base_commit"
-      export PM_DISPATCH_PREFLIGHT_HEAD_COMMIT="$_preflight_head_commit"
-      export PM_DISPATCH_TEST_COMMAND_IDENTITY="sha256:${_preflight_command_digest}"
-      # The test command is a subject of this gate, not another producer owned
-      # by the same parent operation.  Do not let nested pmctl/pr-gate fixtures
-      # attach themselves to or infer ownership from the outer gate.
-      unset PM_GATE_PARENT_OPERATION
-      exec setsid timeout --kill-after=15 "$TEST_TIMEOUT" bash -c "$TEST_CMD_OVERRIDE"
-    ) > "$PREFLIGHT_LOG_PATH" 2>&1 &
-    GATE_ACTIVE_PREFLIGHT_PID=$!
-    GATE_ACTIVE_PREFLIGHT_PGID=$!
-    wait "$GATE_ACTIVE_PREFLIGHT_PID" || _preflight_rc=$?
-    GATE_ACTIVE_PREFLIGHT_PID=""
-    GATE_ACTIVE_PREFLIGHT_PGID=""
+    if [[ "$(detect_platform)" == windows ]]; then
+      # CC-606: Windows has no setsid/pgid isolation; delegate to the Job
+      # Object launcher (see detached-launch.sh's Windows section header for
+      # the full design). That launcher needs a real script file, not a raw
+      # command line, so build a small synthetic wrapper here rather than
+      # `exec setsid timeout ... bash -c "$TEST_CMD_OVERRIDE"` directly.
+      declare -F detached_launch_windows_launch >/dev/null 2>&1 || {
+        printf 'Error: operation-owned pre-flight isolation helper is unavailable\n' >&2
+        exit 2
+      }
+      _preflight_sentinel="$WORK_DIR/.gate-results/.preflight-sentinel-${TIMESTAMP}"
+      _preflight_pid_file="$WORK_DIR/.gate-results/.preflight-pid-${TIMESTAMP}"
+      _preflight_wrapper_script="$WORK_DIR/.gate-results/.preflight-wrapper-${TIMESTAMP}.sh"
+      rm -f "$_preflight_sentinel" "$_preflight_pid_file" "$_preflight_wrapper_script" 2>/dev/null || true
+      {
+        printf '#!/usr/bin/env bash\n'
+        printf 'cd %q || exit 2\n' "$WORK_DIR"
+        printf 'export PM_DISPATCH_PREFLIGHT_TEST_RESULT=%q\n' "$PREFLIGHT_RICH_RESULT_PATH"
+        printf 'export PM_DISPATCH_PREFLIGHT_SUBJECT_FINGERPRINT=%q\n' "$_preflight_before"
+        printf 'export PM_DISPATCH_PREFLIGHT_BASE_COMMIT=%q\n' "$_preflight_base_commit"
+        printf 'export PM_DISPATCH_PREFLIGHT_HEAD_COMMIT=%q\n' "$_preflight_head_commit"
+        printf 'export PM_DISPATCH_TEST_COMMAND_IDENTITY=%q\n' "sha256:${_preflight_command_digest}"
+        # Same reasoning as the POSIX subshell below: the test command is a
+        # subject of this gate, not another producer owned by the same
+        # parent operation.
+        printf 'unset PM_GATE_PARENT_OPERATION\n'
+        printf 'timeout --kill-after=15 %q bash -c %q\n' "$TEST_TIMEOUT" "$TEST_CMD_OVERRIDE"
+        printf '_pf_rc=$?\n'
+        # Self-reported sentinel, not `wait`: detached_launch_windows_launch
+        # disowns its own backgrounded PowerShell launcher (this run is
+        # meant to keep going fully detached from pr-gate's job table, same
+        # as every other detached lifecycle in this codebase), so pr-gate
+        # has no job-control relationship to wait() on and must instead poll
+        # for this script's own completion record.
+        printf 'DL_LIB=%q\n' "$_detached_launch_lib"
+        printf 'declare -F detached_launch_write_sentinel >/dev/null 2>&1 || . "$DL_LIB"\n'
+        printf 'detached_launch_write_sentinel %q "exit_code=$_pf_rc"\n' "$_preflight_sentinel"
+        printf 'exit "$_pf_rc"\n'
+      } > "$_preflight_wrapper_script" || {
+        printf 'Error: failed to write pre-flight wrapper script\n' >&2
+        exit 2
+      }
+      if ! detached_launch_windows_launch "$_preflight_wrapper_script" "$PREFLIGHT_LOG_PATH" "$_preflight_pid_file"; then
+        rm -f "$_preflight_wrapper_script" "$_preflight_pid_file" 2>/dev/null || true
+        printf 'Error: failed to launch operation-owned pre-flight test isolation\n' >&2
+        exit 2
+      fi
+      # Populated BEFORE the wait below (not after) so a cancel signal
+      # arriving while the preflight is still running can still reach
+      # gate_stop_active_preflight's kill.
+      GATE_ACTIVE_PREFLIGHT_PID="$(tr -d ' \n' <"$_preflight_pid_file" 2>/dev/null || true)"
+      GATE_ACTIVE_PREFLIGHT_PGID="$GATE_ACTIVE_PREFLIGHT_PID"
+      if detached_launch_wait_for_sentinel "$_preflight_sentinel" "$((TEST_TIMEOUT + 30))" 1; then
+        _preflight_rc="$(grep -m1 '^exit_code=' "$_preflight_sentinel" 2>/dev/null | cut -d= -f2-)"
+        [[ "$_preflight_rc" =~ ^-?[0-9]+$ ]] || _preflight_rc=1
+      else
+        # Sentinel never appeared within a generous bound past the test's
+        # own --kill-after timeout -- the wrapper itself is stuck or gone;
+        # do not hang pr-gate forever waiting on it.
+        detached_launch_kill_process_group "$GATE_ACTIVE_PREFLIGHT_PGID" 5 || true
+        _preflight_rc=124
+      fi
+      rm -f "$_preflight_wrapper_script" "$_preflight_pid_file" "$_preflight_sentinel" 2>/dev/null || true
+      GATE_ACTIVE_PREFLIGHT_PID=""
+      GATE_ACTIVE_PREFLIGHT_PGID=""
+    else
+      command -v setsid >/dev/null 2>&1 || {
+        printf 'Error: operation-owned pre-flight isolation requires setsid\n' >&2
+        exit 2
+      }
+      (
+        cd "$WORK_DIR"
+        export PM_DISPATCH_PREFLIGHT_TEST_RESULT="$PREFLIGHT_RICH_RESULT_PATH"
+        export PM_DISPATCH_PREFLIGHT_SUBJECT_FINGERPRINT="$_preflight_before"
+        export PM_DISPATCH_PREFLIGHT_BASE_COMMIT="$_preflight_base_commit"
+        export PM_DISPATCH_PREFLIGHT_HEAD_COMMIT="$_preflight_head_commit"
+        export PM_DISPATCH_TEST_COMMAND_IDENTITY="sha256:${_preflight_command_digest}"
+        # The test command is a subject of this gate, not another producer owned
+        # by the same parent operation.  Do not let nested pmctl/pr-gate fixtures
+        # attach themselves to or infer ownership from the outer gate.
+        unset PM_GATE_PARENT_OPERATION
+        exec setsid timeout --kill-after=15 "$TEST_TIMEOUT" bash -c "$TEST_CMD_OVERRIDE"
+      ) > "$PREFLIGHT_LOG_PATH" 2>&1 &
+      GATE_ACTIVE_PREFLIGHT_PID=$!
+      GATE_ACTIVE_PREFLIGHT_PGID=$!
+      wait "$GATE_ACTIVE_PREFLIGHT_PID" || _preflight_rc=$?
+      GATE_ACTIVE_PREFLIGHT_PID=""
+      GATE_ACTIVE_PREFLIGHT_PGID=""
+    fi
   else
     ( cd "$WORK_DIR" && PM_DISPATCH_PREFLIGHT_TEST_RESULT="$PREFLIGHT_RICH_RESULT_PATH" \
         PM_DISPATCH_PREFLIGHT_SUBJECT_FINGERPRINT="$_preflight_before" \

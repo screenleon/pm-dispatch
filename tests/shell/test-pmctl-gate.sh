@@ -115,6 +115,15 @@ _mk_gate_wrapper() {
   cp "$REPO_ROOT/runtime/lib/pmctl-gate.sh" "$fixture/runtime/lib/pmctl-gate.sh"
   cp "$REPO_ROOT/runtime/lib/identifier-policy.sh" "$fixture/runtime/lib/identifier-policy.sh"
   cp "$REPO_ROOT/runtime/lib/detached-launch.sh" "$fixture/runtime/lib/detached-launch.sh"
+  # CC-606: detached-launch.sh's Windows branch resolves its PowerShell Job
+  # Object helper relative to its OWN location, not REPO_ROOT -- a copy
+  # without this companion silently breaks native-Windows detached launch
+  # in the fixture (detached_launch_windows_launch's `[[ -r "$ps1" ]]` check
+  # fails closed) while leaving Linux/macOS entirely unaffected, which is
+  # exactly why this was missed until a real Windows run caught it.
+  mkdir -p "$fixture/runtime/lib/windows"
+  cp "$REPO_ROOT/runtime/lib/windows/detached-launch-job.ps1" \
+    "$fixture/runtime/lib/windows/detached-launch-job.ps1"
   cat > "$out" <<WRAPPER
 #!/usr/bin/env bash
 set -euo pipefail
@@ -137,6 +146,11 @@ _mk_gate_cli_fixture() {
       gate-structural-verify; do
     cp "$REPO_ROOT/runtime/lib/$_lib.sh" "$fixture/runtime/lib/$_lib.sh"
   done
+  # CC-606: see the matching comment in _mk_gate_wrapper -- detached-launch.sh
+  # resolves its Windows Job Object helper relative to its own location.
+  mkdir -p "$fixture/runtime/lib/windows"
+  cp "$REPO_ROOT/runtime/lib/windows/detached-launch-job.ps1" \
+    "$fixture/runtime/lib/windows/detached-launch-job.ps1"
   cp "$REPO_ROOT/runtime/lib/gate-structural-validator.jq" \
     "$fixture/runtime/lib/gate-structural-validator.jq"
   cp "$REPO_ROOT/runtime/lib/gate-structural-schemas.json" \

@@ -579,7 +579,7 @@ pmctl_gate_run_detached() {
         break
       fi
       if [[ "$_ready_state" == "ready" && "$_ready_pid" == "$_sup_pid" \
-        && "$_ready_starttime" =~ ^[0-9]+$ ]] && kill -0 "$_sup_pid" 2>/dev/null; then
+        && "$_ready_starttime" =~ ^[0-9]+$ ]] && detached_launch_pid_alive "$_sup_pid"; then
         # A live supervisor may be between ready publication and terminal
         # publication while the parent-side snapshot is unavailable; keep the
         # bounded readiness poll rather than treating that valid transition as

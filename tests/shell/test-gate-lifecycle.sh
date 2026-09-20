@@ -67,6 +67,12 @@ _mk_fixture_repo() {
   for _lib in identifier-policy.sh state-paths.sh portable.sh gate-digest.sh gate-subject.sh gate-result-verify.sh gate-closure.sh detached-launch.sh; do
     cp "$REPO_ROOT/runtime/lib/$_lib" "$fixture/runtime/lib/$_lib"
   done
+  # CC-606: detached-launch.sh resolves its Windows Job Object helper
+  # relative to its own location, not REPO_ROOT -- a copy without this
+  # companion silently breaks native-Windows detached launch in the fixture.
+  mkdir -p "$fixture/runtime/lib/windows"
+  cp "$REPO_ROOT/runtime/lib/windows/detached-launch-job.ps1" \
+    "$fixture/runtime/lib/windows/detached-launch-job.ps1"
   cp "$REPO_ROOT/runtime/lib/gate-structural-verify.sh" \
     "$fixture/runtime/lib/gate-structural-verify.sh"
   cp "$REPO_ROOT/runtime/lib/gate-structural-validator.jq" \
