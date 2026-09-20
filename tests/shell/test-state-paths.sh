@@ -24,6 +24,29 @@ th_init "$@"
 # shellcheck disable=SC1091
 . "$STATE_PATHS"
 
+# _mk_verified_symlink <name> <src> <dst>
+# issue #597: `ln -s` on native Windows Git Bash's default winsymlinks mode
+# silently reports success while creating a directory COPY, not a symlink --
+# a fixture-construction gap, not a product bug (the predicate under test,
+# sw_run_dir_symlink_free, correctly detects a real symlink or NTFS junction
+# via `-L` when one exists; verified manually against both on native Windows).
+# Ask for a native symlink via the existing _portable_make_symlink production
+# helper (same winsymlinks:nativestrict request link_or_copy already uses),
+# then verify with `-L` before the caller trusts the precondition -- skip with
+# a clear reason rather than silently asserting against a copy, which would
+# make the "$name" case a false pass instead of an honest skip.
+# Returns 0 if a real symlink now exists at <dst> (caller proceeds), 1 if the
+# caller already skipped and must `return 0` without asserting anything.
+_mk_verified_symlink() {
+  local name="$1" src="$2" dst="$3"
+  _portable_make_symlink "$src" "$dst" 2>/dev/null
+  if [[ -L "$dst" ]]; then
+    return 0
+  fi
+  skip "$name" "platform cannot construct a real symlink here (ln -s produced a copy, not a symlink)"
+  return 1
+}
+
 # ---- 1: store root honors PM_DISPATCH_STATE_ROOT ----
 case_store_root_explicit() {
   # Behavior: PM_DISPATCH_STATE_ROOT wins over every other source.
@@ -147,7 +170,10 @@ case_run_dir_symlink_free_rejects_symlinked_leaf() {
   real_target="$root/elsewhere"
   mkdir -p "$root/projects/key/runs" "$real_target"
   run_dir="$root/projects/key/runs/run-1"
-  ln -s "$real_target" "$run_dir"
+  if ! _mk_verified_symlink "$name" "$real_target" "$run_dir"; then
+    rm -rf "$root"
+    return 0
+  fi
   if ! sw_run_dir_symlink_free "$run_dir"; then
     pass "$name"
   else
@@ -169,7 +195,10 @@ case_run_dir_symlink_free_rejects_symlinked_runs_parent() {
   outside="$(mktemp -d)"
   mkdir -p "$root/projects/key" "$outside/run-1"
   runs_dir="$root/projects/key/runs"
-  ln -s "$outside" "$runs_dir"
+  if ! _mk_verified_symlink "$name" "$outside" "$runs_dir"; then
+    rm -rf "$root" "$outside"
+    return 0
+  fi
   run_dir="$runs_dir/run-1"
   if ! sw_run_dir_symlink_free "$run_dir"; then
     pass "$name"
