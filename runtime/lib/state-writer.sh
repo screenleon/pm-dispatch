@@ -75,6 +75,17 @@ _sw_store_root_mode_allows_write() {
 # "cannot verify" as safe is not a weaker bar than POSIX already accepts --
 # the POSIX helper does exactly the same when `stat` itself fails (return 1),
 # so this does not introduce a stricter or laxer default for one platform.
+#
+# Principals are matched by well-known SID, not display name (gate round 1,
+# critic-F001): `Everyone`/`Users`/etc. are English display strings that a
+# localized Windows install translates, so string-matching them would let a
+# genuinely unsafe ACL evade detection on any non-English system. SIDs are
+# locale-independent. Rights are matched via a bitmask over the
+# FileSystemRights flags enum, not a substring match on its rendered ToString
+# (gate round 1, security-reviewer-F001): PowerShell renders a directory ACE
+# holding only the CreateFiles/AppendData bits (no Write/Modify/FullControl
+# superset bit set) without the literal substring "Write", so a text match
+# would miss a real write grant expressed that way.
 _sw_windows_store_root_allows_write() {
   local root="$1" win_root out
   command -v powershell.exe >/dev/null 2>&1 || return 1
@@ -86,13 +97,33 @@ _sw_windows_store_root_allows_write() {
     $ErrorActionPreference = "Stop"
     try {
       $acl = Get-Acl -LiteralPath $env:PM_DISPATCH_ACL_PATH
-      $risky = @("Everyone","BUILTIN\Users","NT AUTHORITY\Authenticated Users","NT AUTHORITY\ANONYMOUS LOGON")
+      # Well-known SIDs (locale-independent): Everyone, BUILTIN\Users,
+      # NT AUTHORITY\Authenticated Users, NT AUTHORITY\ANONYMOUS LOGON.
+      $riskySids = @("S-1-1-0","S-1-5-32-545","S-1-5-11","S-1-5-7")
+      $writeMask = [int](
+        [System.Security.AccessControl.FileSystemRights]::Write -bor
+        [System.Security.AccessControl.FileSystemRights]::Modify -bor
+        [System.Security.AccessControl.FileSystemRights]::FullControl -bor
+        [System.Security.AccessControl.FileSystemRights]::CreateFiles -bor
+        [System.Security.AccessControl.FileSystemRights]::CreateDirectories -bor
+        [System.Security.AccessControl.FileSystemRights]::AppendData -bor
+        [System.Security.AccessControl.FileSystemRights]::Delete -bor
+        [System.Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor
+        [System.Security.AccessControl.FileSystemRights]::ChangePermissions -bor
+        [System.Security.AccessControl.FileSystemRights]::TakeOwnership
+      )
       foreach ($ace in $acl.Access) {
-        if ($ace.AccessControlType -eq "Allow" -and $risky -contains $ace.IdentityReference.Value) {
-          if ($ace.FileSystemRights -match "Write|Modify|FullControl") {
-            Write-Output "UNSAFE"
-            exit 0
-          }
+        if ($ace.AccessControlType -ne "Allow") { continue }
+        $sid = $null
+        try {
+          $sid = $ace.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value
+        } catch {
+          continue
+        }
+        if ($riskySids -notcontains $sid) { continue }
+        if (([int]$ace.FileSystemRights -band $writeMask) -ne 0) {
+          Write-Output "UNSAFE"
+          exit 0
         }
       }
       Write-Output "SAFE"

@@ -559,6 +559,41 @@ case_state_store_init_windows_acl_tool_missing_fails_open() {
   fi
 }
 
+case_state_store_init_windows_acl_unknown_output_fails_open() {
+  # qa-tester-F001 (gate round 1): the "tool missing" case above exercises
+  # powershell.exe failing to RUN (nonzero exit / not found), which fails the
+  # bash command substitution and takes the `|| return 1` branch. That is a
+  # DIFFERENT code path from powershell.exe running successfully (exit 0) but
+  # reporting "UNKNOWN" from its internal catch block (e.g. Get-Acl itself
+  # threw). Both must degrade to "safe", but only the exit-0 UNKNOWN path
+  # actually exercises the `case ... *) return 1 ;;` fallthrough this test
+  # targets. Also assert no POSIX chmod ever touches the store root, proving
+  # the Windows branch does not silently fall back to the mode-bit path.
+  local name="state_store_init: Windows ACL check reports UNKNOWN (exit 0) degrades to accept, no POSIX fallback"
+  should_run "$name" || return 0
+  local store stubs rc=0 stderr_out chmod_log="$tmp_root/windows-acl-unknown-chmod-log"
+  store="$tmp_root/root-windows-acl-unknown"
+  mkdir -p "$store"
+  stubs="$tmp_root/windows-acl-unknown-stubs"
+  mkdir -p "$stubs"
+  # shellcheck disable=SC2016 # $1/$2 expand when the generated cygpath stub runs.
+  printf '#!/usr/bin/env bash\n[[ "$1" == "-w" ]] || exit 1\nprintf "%%s\\n" "$2"\n' > "$stubs/cygpath"
+  printf '#!/usr/bin/env bash\nprintf "UNKNOWN\\n"\n' > "$stubs/powershell.exe"
+  chmod +x "$stubs/cygpath" "$stubs/powershell.exe"
+  rm -f "$chmod_log"
+  stderr_out="$({
+    chmod() { printf '%s\n' "$*" >> "$chmod_log"; command chmod "$@"; }
+    PATH="$stubs:$PATH" PM_DISPATCH_PLATFORM=windows PM_DISPATCH_STATE_ROOT="$store" \
+      _SW_ALLOW_GLOBAL_PARTITION=1 state_store_init
+  } 2>&1 >/dev/null)" || rc=$?
+  if [[ "$rc" -eq 0 && -z "$stderr_out" && "$(cat "$store/VERSION" 2>/dev/null)" == "1" ]] \
+      && ! grep -xF "0700 $store" "$chmod_log" 2>/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc stderr=${stderr_out:-empty} chmod_log=$(cat "$chmod_log" 2>/dev/null | tr '\n' '|')"
+  fi
+}
+
 case_state_store_init_version1_noop() {
   # Verifies that state_store_init is idempotent when VERSION=1 already exists.
   #
@@ -2246,6 +2281,7 @@ case_state_store_init_windows_acl_unsafe_rejected
 case_state_store_init_windows_acl_safe_accepted
 case_state_store_init_windows_acl_unsafe_escape_hatch
 case_state_store_init_windows_acl_tool_missing_fails_open
+case_state_store_init_windows_acl_unknown_output_fails_open
 case_state_store_init_version1_noop
 case_state_store_init_version2_fails
 case_state_store_init_version2_does_not_mutate_mode
