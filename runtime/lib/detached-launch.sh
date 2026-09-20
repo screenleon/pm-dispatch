@@ -479,6 +479,15 @@ detached_launch_load_identity_file() {
   DL_ID_PID=""; DL_ID_PGID=""; DL_ID_STARTTIME=""; DL_ID_COMM=""; DL_ID_ISOLATED=""; DL_ID_BOOT_ID=""
   [[ -f "$path" ]] || return 1
   while IFS= read -r line || [[ -n "$line" ]]; do
+    # Strip a trailing CR: identity files written via jq's `>` file
+    # redirection on native Windows come out CRLF-terminated (confirmed by
+    # direct test -- this jq build emits \r\n even for a plain `\n` in the
+    # format string), which would otherwise make every value compare unequal
+    # to its non-CR-suffixed counterpart and make detached_launch_verify_
+    # identity report a false mismatch on every Windows producer-identity
+    # round-trip. Harmless no-op for files that never had a CR (the normal
+    # detached_launch_write_sentinel-authored ones, and all of POSIX).
+    line="${line%$'\r'}"
     [[ -z "$line" || "$line" == \#* ]] && continue
     key="${line%%=*}"
     val="${line#*=}"

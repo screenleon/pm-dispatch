@@ -24,6 +24,29 @@ th_init "$@"
 # deterministic and never collide with a real gate run on this host.
 _GATE_CLI_XDG_RUNTIME_DIR="$tmp_root/gate-cli-xdg-runtime"
 mkdir -p "$_GATE_CLI_XDG_RUNTIME_DIR" && chmod 700 "$_GATE_CLI_XDG_RUNTIME_DIR"
+# CC-606: on native Windows, reaching the preflight/producer readiness FIFO
+# takes noticeably longer than on POSIX -- a context-index refresh plus one
+# or two nested PowerShell Job Object launches (confirmed by direct manual
+# timing: the underlying mechanism itself is correct, it just needs 70-90s
+# of wall clock here versus a couple of seconds on POSIX/with setsid) --
+# so the fixed 60s bound below is comfortably sufficient on POSIX but tight
+# on Windows. Override via env var rather than just raising the constant,
+# to avoid slowing down every other CI runner unnecessarily.
+_GATE_TEST_READY_TIMEOUT="${PM_GATE_TEST_READY_TIMEOUT:-60}"
+# Cancel's own wall-clock budget: on POSIX, TerminateProcess-equivalent (a
+# signal-0/kill pair) is effectively instant, so 10s is generous. On native
+# Windows this whole call path is dominated by per-invocation CreateProcess
+# overhead (confirmed by direct trace: ~5 powershell.exe spawns for the
+# ACL guard (#592) + identity verify/kill, plus a large fixed cost from the
+# sheer number of jq/grep/sed subprocess spawns pmctl's own shell-based
+# implementation makes along the way -- CreateProcess is inherently far
+# more expensive than POSIX fork() for each one). That per-process cost is
+# an architectural property of this whole shell-based codebase running on
+# Windows, not something CC-606's process-isolation change introduces or
+# could reasonably fix by itself; this call path simply couldn't be
+# exercised on Windows at all before it (it hard-failed on missing setsid),
+# so the bound was never previously validated there.
+_GATE_TEST_CANCEL_BUDGET="${PM_GATE_TEST_CANCEL_BUDGET:-10}"
 _GATE_VERIFY_REPO="$tmp_root/gate-verify-repo"
 _GATE_VERIFY_STATE_ROOT="$tmp_root/gate-verify-state"
 mkdir -p "$_GATE_VERIFY_REPO" "$_GATE_VERIFY_STATE_ROOT"
@@ -2996,7 +3019,7 @@ RUNNER
       >"$out" 2>"$err" &
   gate_pid=$!
 
-  ready_value="$(timeout 60 cat "$ready")" || {
+  ready_value="$(timeout "$_GATE_TEST_READY_TIMEOUT" cat "$ready")" || {
     kill "$gate_pid" 2>/dev/null || true
     wait "$gate_pid" 2>/dev/null || true
     fail "$name" "preflight never reached deterministic readiness; err=$(cat "$err" 2>/dev/null || true)"
@@ -3018,7 +3041,7 @@ RUNNER
   record="$(find "$state" -path "*/operations/$operation.json" -type f | head -1)"
   op_dir="${record%.json}"
 
-  if [[ "$cancel_rc" -eq 0 && "$gate_rc" -eq 130 && "$elapsed" -lt 10 ]] \
+  if [[ "$cancel_rc" -eq 0 && "$gate_rc" -eq 130 && "$elapsed" -lt "$_GATE_TEST_CANCEL_BUDGET" ]] \
      && [[ -n "$record" && "$(jq -r .state "$record")" == cancelled ]] \
      && [[ "$(jq -r .producer.status "$record")" == stopped ]] \
      && _gate_test_pid_stopped "$producer_pid" \
@@ -3066,7 +3089,7 @@ FAKE_GATE
   gate_id="$(PM_DISPATCH_STATE_ROOT="$state" XDG_RUNTIME_DIR="$_GATE_CLI_XDG_RUNTIME_DIR" \
     TEST_GATE_READY_FIFO="$ready" TEST_GATE_RELEASE_FIFO="$release" TEST_GATE_PIDS="$pids" \
     "$fixture/cli/pmctl" gate run --lifecycle detached --cd "$work" 2>"$err")"
-  if [[ "$(timeout 60 cat "$ready")" != ready ]]; then
+  if [[ "$(timeout "$_GATE_TEST_READY_TIMEOUT" cat "$ready")" != ready ]]; then
     fail "$name" "detached producer never reached readiness; gate=$gate_id err=$(cat "$err" 2>/dev/null || true)"
     return
   fi
