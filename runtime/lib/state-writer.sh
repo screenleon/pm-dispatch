@@ -69,18 +69,29 @@ _sw_store_root_mode_allows_write() {
 # the MSYS POSIX emulation cannot do the job" pattern _sw_operation_replace_file
 # already uses for the atomic-replace boundary.
 #
-# Contract mirrors the POSIX helper: 0 = an Allow ACE grants a non-owner,
-# non-administrative principal (Everyone / Users / Authenticated Users /
-# Anonymous Logon) write-capable rights; 1 = safe OR undeterminable. Treating
-# "cannot verify" as safe is not a weaker bar than POSIX already accepts --
-# the POSIX helper does exactly the same when `stat` itself fails (return 1),
-# so this does not introduce a stricter or laxer default for one platform.
+# Contract mirrors the POSIX helper: 0 = an Allow ACE grants write-capable
+# rights to a principal other than the owner/Administrators/SYSTEM; 1 = safe
+# OR undeterminable. Treating "cannot verify" as safe is not a weaker bar than
+# POSIX already accepts -- the POSIX helper does exactly the same when `stat`
+# itself fails (return 1), so this does not introduce a stricter or laxer
+# default for one platform.
 #
-# Principals are matched by well-known SID, not display name (gate round 1,
-# critic-F001): `Everyone`/`Users`/etc. are English display strings that a
-# localized Windows install translates, so string-matching them would let a
-# genuinely unsafe ACL evade detection on any non-English system. SIDs are
-# locale-independent. Rights are matched via a bitmask over the
+# Checked against owner/BUILTIN\Administrators/NT AUTHORITY\SYSTEM, not a
+# fixed enumerable list of "risky" identities -- mirroring the POSIX check's
+# own structural semantics (group/world bits catch ANY non-owner writer, not
+# only specific named groups). An earlier draft matched only a handful of
+# well-known broad principals (Everyone / Users / Authenticated Users /
+# Anonymous Logon) and so missed an explicitly-granted custom group or named
+# non-owner user -- exactly the case a POSIX "other"-writable bit would have
+# caught. Comparing against owner/Administrators/SYSTEM instead closes that
+# gap by construction: everyone not on the three-member allowlist is "other",
+# precisely like the POSIX permission model.
+#
+# Principals are compared by well-known/resolved SID, not display name (gate
+# round 1, critic-F001): `Everyone`/`Users`/etc. are English display strings
+# that a localized Windows install translates, so string-matching them would
+# let a genuinely unsafe ACL evade detection on any non-English system. SIDs
+# are locale-independent. Rights are matched via a bitmask over the
 # FileSystemRights flags enum, not a substring match on its rendered ToString
 # (gate round 1, security-reviewer-F001): PowerShell renders a directory ACE
 # holding only the CreateFiles/AppendData bits (no Write/Modify/FullControl
@@ -97,9 +108,10 @@ _sw_windows_store_root_allows_write() {
     $ErrorActionPreference = "Stop"
     try {
       $acl = Get-Acl -LiteralPath $env:PM_DISPATCH_ACL_PATH
-      # Well-known SIDs (locale-independent): Everyone, BUILTIN\Users,
-      # NT AUTHORITY\Authenticated Users, NT AUTHORITY\ANONYMOUS LOGON.
-      $riskySids = @("S-1-1-0","S-1-5-32-545","S-1-5-11","S-1-5-7")
+      $ownerSid = $acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value
+      # Well-known SIDs (locale-independent), allowed to write:
+      # BUILTIN\Administrators (S-1-5-32-544), NT AUTHORITY\SYSTEM (S-1-5-18).
+      $allowedSids = @($ownerSid,"S-1-5-32-544","S-1-5-18")
       $writeMask = [int](
         [System.Security.AccessControl.FileSystemRights]::Write -bor
         [System.Security.AccessControl.FileSystemRights]::Modify -bor
@@ -120,7 +132,7 @@ _sw_windows_store_root_allows_write() {
         } catch {
           continue
         }
-        if ($riskySids -notcontains $sid) { continue }
+        if ($allowedSids -contains $sid) { continue }
         if (([int]$ace.FileSystemRights -band $writeMask) -ne 0) {
           Write-Output "UNSAFE"
           exit 0
