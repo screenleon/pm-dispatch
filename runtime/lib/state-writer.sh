@@ -121,10 +121,24 @@ _sw_windows_store_root_allows_write() {
       # Well-known SIDs (locale-independent), allowed to write:
       # BUILTIN\Administrators (S-1-5-32-544), NT AUTHORITY\SYSTEM (S-1-5-18).
       $allowedSids = @($ownerSid,"S-1-5-32-544","S-1-5-18")
+      # Deliberately built from atomic write-capable bits only -- Modify and
+      # FullControl are excluded even though they are conceptually
+      # write-capable, because their own numeric values are a superset that
+      # also sets pure-read bits (Modify = ReadAndExecute|Write|Delete, so
+      # bit 0x1/ReadData is set; FullControl sets every bit including all of
+      # Read). OR-ing either into this mask makes it match ANY non-empty
+      # grant, including a read-only one -- confirmed directly: a real
+      # ReadAndExecute-only ACE (added elsewhere for a sandboxed reviewer
+      # principal to read the state store) was misclassified UNSAFE by the
+      # original FullControl-inclusive mask. Every atomic bit below is
+      # write-capable and does NOT overlap with ReadData/ReadExtendedAttributes/
+      # ExecuteFile/ReadAttributes/ReadPermissions/Synchronize (confirmed
+      # numerically), and a genuine Modify or FullControl grant is still
+      # caught here regardless -- its own access-mask value already has
+      # these same atomic bits set, since Modify/FullControl are themselves
+      # defined as the union that includes them.
       $writeMask = [int](
         [System.Security.AccessControl.FileSystemRights]::Write -bor
-        [System.Security.AccessControl.FileSystemRights]::Modify -bor
-        [System.Security.AccessControl.FileSystemRights]::FullControl -bor
         [System.Security.AccessControl.FileSystemRights]::CreateFiles -bor
         [System.Security.AccessControl.FileSystemRights]::CreateDirectories -bor
         [System.Security.AccessControl.FileSystemRights]::AppendData -bor
