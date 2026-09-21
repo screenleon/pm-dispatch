@@ -130,7 +130,11 @@ $ErrorActionPreference = 'Stop'
 
 Add-Type -TypeDefinition @'
 using System;
+using System.IO;
 using System.Runtime.InteropServices;
+using System.Text;
+using System.Threading;
+using Microsoft.Win32.SafeHandles;
 
 public static class PmJobObject {
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
@@ -187,6 +191,175 @@ public static class PmJobObject {
             return SetInformationJobObject(hJob, JobObjectExtendedLimitInformation, p, (uint)length);
         } finally {
             Marshal.FreeHGlobal(p);
+        }
+    }
+
+    // --- Suspended-create + job-assign-before-resume (issue #606 follow-up:
+    // closes the "early-child escape" window a plain Process.Start() then
+    // AssignProcessToJobObject() leaves open, where a fast child could spawn
+    // grandchildren of its own before the parent call below ever assigns it
+    // to the job, letting those grandchildren escape KILL_ON_JOB_CLOSE).
+    // CREATE_SUSPENDED guarantees the new process cannot execute a single
+    // instruction -- let alone spawn anything -- until ResumeThread is
+    // called, and that call happens only after AssignProcessToJobObject has
+    // already succeeded below.
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct SECURITY_ATTRIBUTES {
+        public int nLength;
+        public IntPtr lpSecurityDescriptor;
+        public bool bInheritHandle;
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct STARTUPINFO {
+        public int cb;
+        public string lpReserved;
+        public string lpDesktop;
+        public string lpTitle;
+        public int dwX, dwY, dwXSize, dwYSize, dwXCountChars, dwYCountChars;
+        public int dwFillAttribute, dwFlags;
+        public short wShowWindow, cbReserved2;
+        public IntPtr lpReserved2;
+        public IntPtr hStdInput, hStdOutput, hStdError;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct PROCESS_INFORMATION {
+        public IntPtr hProcess, hThread;
+        public int dwProcessId, dwThreadId;
+    }
+
+    public const int STARTF_USESTDHANDLES = 0x00000100;
+    public const uint CREATE_SUSPENDED = 0x00000004;
+    public const uint CREATE_NO_WINDOW = 0x08000000;
+    public const uint HANDLE_FLAG_INHERIT = 1;
+    public const uint INFINITE = 0xFFFFFFFF;
+
+    [DllImport("kernel32.dll", EntryPoint = "CreateProcessW", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern bool CreateProcess(
+        string lpApplicationName, StringBuilder lpCommandLine,
+        IntPtr lpProcessAttributes, IntPtr lpThreadAttributes,
+        bool bInheritHandles, uint dwCreationFlags,
+        IntPtr lpEnvironment, string lpCurrentDirectory,
+        ref STARTUPINFO lpStartupInfo, out PROCESS_INFORMATION lpProcessInformation);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool CreatePipe(out IntPtr hReadPipe, out IntPtr hWritePipe, ref SECURITY_ATTRIBUTES lpPipeAttributes, uint nSize);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool SetHandleInformation(IntPtr hObject, uint dwMask, uint dwFlags);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern uint ResumeThread(IntPtr hThread);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern uint WaitForSingleObject(IntPtr hHandle, uint dwMilliseconds);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GetExitCodeProcess(IntPtr hProcess, out uint lpExitCode);
+
+    private static readonly object LogWriteLock = new object();
+
+    private static void PumpPipeToLog(IntPtr readHandle, string logFile) {
+        // Runs on a plain System.Threading.Thread (not a PowerShell
+        // runspace), so ordinary blocking .NET stream reads are safe here.
+        using (var safeHandle = new SafeFileHandle(readHandle, true))
+        using (var stream = new FileStream(safeHandle, FileAccess.Read))
+        using (var reader = new StreamReader(stream)) {
+            string line;
+            while ((line = reader.ReadLine()) != null) {
+                lock (LogWriteLock) {
+                    File.AppendAllText(logFile, line + "\r\n");
+                }
+            }
+        }
+    }
+
+    // Creates <exePath> suspended, wires its stdout/stderr to <logFile>
+    // (truncated by the caller first), assigns it to <hJob> while still
+    // suspended, resumes it, waits for exit, and returns its exit code.
+    // Writes the real Win32 pid to <childPidFile> as soon as it is known
+    // (right after CreateProcess succeeds), before assign/resume/wait.
+    public static int LaunchSuspendedInJob(IntPtr hJob, string exePath, string cmdLine, string cwd, string logFile, string childPidFile) {
+        var sa = new SECURITY_ATTRIBUTES();
+        sa.nLength = Marshal.SizeOf(typeof(SECURITY_ATTRIBUTES));
+        sa.bInheritHandle = true;
+        sa.lpSecurityDescriptor = IntPtr.Zero;
+
+        IntPtr outRead, outWrite, errRead, errWrite;
+        if (!CreatePipe(out outRead, out outWrite, ref sa, 0)) {
+            throw new InvalidOperationException("CreatePipe(stdout) failed: " + Marshal.GetLastWin32Error());
+        }
+        SetHandleInformation(outRead, HANDLE_FLAG_INHERIT, 0);
+        if (!CreatePipe(out errRead, out errWrite, ref sa, 0)) {
+            throw new InvalidOperationException("CreatePipe(stderr) failed: " + Marshal.GetLastWin32Error());
+        }
+        SetHandleInformation(errRead, HANDLE_FLAG_INHERIT, 0);
+
+        var si = new STARTUPINFO();
+        si.cb = Marshal.SizeOf(typeof(STARTUPINFO));
+        si.dwFlags = STARTF_USESTDHANDLES;
+        si.hStdOutput = outWrite;
+        si.hStdError = errWrite;
+        si.hStdInput = IntPtr.Zero;
+
+        var sb = new StringBuilder(cmdLine, Math.Max(cmdLine.Length + 1, 32768));
+        PROCESS_INFORMATION pi;
+        // lpEnvironment = IntPtr.Zero means "inherit the caller's current
+        // environment block" -- the caller sets PM_WINJOB_WRAPPER_PID in its
+        // own process environment before calling this, exactly matching
+        // ProcessStartInfo.EnvironmentVariables' prior merge-with-parent
+        // behavior.
+        bool ok = CreateProcess(exePath, sb, IntPtr.Zero, IntPtr.Zero, true,
+            CREATE_SUSPENDED | CREATE_NO_WINDOW, IntPtr.Zero, cwd, ref si, out pi);
+
+        // Parent no longer needs its own copies of the write ends regardless
+        // of outcome -- the child (if created) inherited its own copies.
+        CloseHandle(outWrite);
+        CloseHandle(errWrite);
+
+        if (!ok) {
+            CloseHandle(outRead);
+            CloseHandle(errRead);
+            throw new InvalidOperationException("CreateProcess failed: " + Marshal.GetLastWin32Error());
+        }
+
+        try {
+            File.WriteAllText(childPidFile, pi.dwProcessId.ToString());
+
+            if (!AssignProcessToJobObject(hJob, pi.hProcess)) {
+                int err = Marshal.GetLastWin32Error();
+                CloseHandle(outRead);
+                CloseHandle(errRead);
+                throw new InvalidOperationException("AssignProcessToJobObject failed: " + err);
+            }
+
+            var outThread = new Thread(() => PumpPipeToLog(outRead, logFile));
+            var errThread = new Thread(() => PumpPipeToLog(errRead, logFile));
+            outThread.Start();
+            errThread.Start();
+
+            uint resumeResult = ResumeThread(pi.hThread);
+            if (resumeResult == 0xFFFFFFFF) {
+                throw new InvalidOperationException("ResumeThread failed: " + Marshal.GetLastWin32Error());
+            }
+
+            WaitForSingleObject(pi.hProcess, INFINITE);
+            // Pipe write ends are only fully closed once the process (and
+            // any inheriting descendants) exit, which is what lets each
+            // pump thread's ReadLine loop reach EOF and return -- join
+            // after the wait so the log is guaranteed complete before this
+            // returns.
+            outThread.Join();
+            errThread.Join();
+
+            uint exitCode;
+            GetExitCodeProcess(pi.hProcess, out exitCode);
+            return (int)exitCode;
+        } finally {
+            CloseHandle(pi.hThread);
+            CloseHandle(pi.hProcess);
         }
     }
 }
@@ -273,11 +446,12 @@ switch ($Action) {
     $parts = [System.Text.Encoding]::UTF8.GetString($rawBytes) -split "`0"
     $targetArgs = if ($parts.Length -gt 1) { $parts[0..($parts.Length - 2)] } else { @() }
     $quotedArgs = @($targetArgs) | ForEach-Object { ConvertTo-Win32QuotedArg $_ }
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName = $BashExe
-    $psi.Arguments = ($quotedArgs -join ' ')
-    $psi.UseShellExecute = $false
-    $psi.CreateNoWindow = $true
+    # Win32 convention: lpCommandLine's own argv[0] is independent of
+    # lpApplicationName and is what the child sees as its own $0 -- include
+    # the quoted exe path as argv[0] exactly as ProcessStartInfo did
+    # implicitly.
+    $cmdLine = (ConvertTo-Win32QuotedArg $BashExe) + ' ' + ($quotedArgs -join ' ')
+
     # Self-identifying scripts launched this way (gate-supervisor.sh's
     # _write_ready, which captures "its own" identity via detached_launch_
     # capture_identity "$$" to publish for later cancel/verify) cannot use
@@ -286,56 +460,26 @@ switch ($Action) {
     # the unit a later kill actually targets is THIS wrapper process, not
     # the bash.exe child. Exporting this wrapper's own real pid lets such a
     # script ask for the right value instead (see detached_launch_self_pid
-    # in detached-launch.sh).
-    $psi.EnvironmentVariables['PM_WINJOB_WRAPPER_PID'] = [string]$PID
-    # Explicit redirect + async pump to -LogFile, NOT plain handle
-    # inheritance: confirmed by direct test on this host (2026-09-20) that
-    # MSYS2 bash.exe -- unlike a native Win32 console app such as cmd.exe --
-    # does not reliably run when it merely inherits this process's own
-    # stdout/stderr handles through this particular launch chain (it exits
-    # 1 immediately with no output at all); explicitly redirecting and
-    # pumping through .NET is what actually works, verified end to end
-    # including a nested cmd.exe/ping.exe grandchild's output.
-    $psi.RedirectStandardOutput = $true
-    $psi.RedirectStandardError = $true
-
-    try {
-      $proc = [System.Diagnostics.Process]::Start($psi)
-    } catch {
-      Write-Error "failed to start bash: $_"
-      exit 1
-    }
-
-    $assigned = [PmJobObject]::AssignProcessToJobObject($hJob, $proc.Handle)
-    if (-not $assigned) {
-      $err = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
-      try { $proc.Kill() } catch {}
-      Write-Error "AssignProcessToJobObject failed: $err"
-      exit 1
-    }
+    # in detached-launch.sh). Set in THIS process's own environment (not on
+    # a ProcessStartInfo object) because LaunchSuspendedInJob's raw
+    # CreateProcess call passes lpEnvironment=NULL, which means "inherit the
+    # caller's current environment block" -- exactly the merge-with-parent
+    # behavior ProcessStartInfo.EnvironmentVariables gave for free before.
+    [Environment]::SetEnvironmentVariable('PM_WINJOB_WRAPPER_PID', [string]$PID, 'Process')
 
     # Truncate/create the log file up front (matches POSIX `>"$log_file"`
-    # semantics), then append each line as it arrives from either stream.
-    # AppendAllText opens, writes and closes per call -- safe for the two
-    # independent event-driven writers here (stdout pump, stderr pump) to
-    # interleave into the same file without sharing a lock across the
-    # separate runspaces Register-ObjectEvent action blocks execute in.
+    # semantics); LaunchSuspendedInJob appends each line as it arrives from
+    # either stream once the child is assigned to the job and resumed.
     [System.IO.File]::WriteAllText($LogFile, '')
-    $pumpAction = {
-      if ($null -ne $EventArgs.Data) {
-        [System.IO.File]::AppendAllText($Event.MessageData, $EventArgs.Data + "`r`n")
-      }
-    }
-    $outSub = Register-ObjectEvent -InputObject $proc -EventName OutputDataReceived -Action $pumpAction -MessageData $LogFile
-    $errSub = Register-ObjectEvent -InputObject $proc -EventName ErrorDataReceived -Action $pumpAction -MessageData $LogFile
-    $proc.BeginOutputReadLine()
-    $proc.BeginErrorReadLine()
 
-    $proc.Id | Out-File -FilePath $ChildPidFile -Encoding ascii -NoNewline
-    $proc.WaitForExit()
-    $exitCode = $proc.ExitCode
-    Unregister-Event -SourceIdentifier $outSub.Name -ErrorAction SilentlyContinue
-    Unregister-Event -SourceIdentifier $errSub.Name -ErrorAction SilentlyContinue
+    try {
+      $exitCode = [PmJobObject]::LaunchSuspendedInJob($hJob, $BashExe, $cmdLine, (Get-Location).Path, $LogFile, $ChildPidFile)
+    } catch {
+      Write-Error "failed to launch bash under job: $_"
+      [PmJobObject]::CloseHandle($hJob) | Out-Null
+      exit 1
+    }
+
     [PmJobObject]::CloseHandle($hJob) | Out-Null
     exit $exitCode
   }
