@@ -620,6 +620,108 @@ case_state_store_init_windows_acl_unverifiable_escape_hatch() {
   fi
 }
 
+# _acl_writemask_case <case-name> <icacls-perm-spec> <expected-rc> <expected-label>
+#
+# The six cases above stub powershell.exe with a canned SAFE/UNSAFE/UNKNOWN
+# string, which exercises state_store_init's surrounding reject/accept/
+# escape-hatch flow but never the real Get-Acl + bitmask arithmetic inside
+# _sw_windows_store_root_allows_write itself -- confirmed directly: those
+# stubbed cases all still pass even when the mask itself is wrong. This
+# helper instead sets a REAL ACL (via icacls) on a real directory and calls
+# the real function, so it actually exercises the arithmetic that was
+# broken. Requires real native Windows with a working powershell.exe/
+# cygpath/icacls -- skips everywhere else, same "state a reason, don't
+# silently pass" contract as every other skip() in this suite.
+#
+# Ownership is resolved dynamically (never a hardcoded SID) so the case is
+# portable across machines/CI runners: /inheritance:r first strips every
+# inherited ACE (a real risk on this host specifically -- confirmed
+# directly that an inherited sandbox-principal Modify grant on this
+# machine's own temp-file ancestry silently made an otherwise-correct
+# read-only test case fail), then the resolved owner is re-granted
+# FullControl explicitly so the directory remains usable, before the one
+# ACE under test is added for a non-owner well-known principal
+# (BUILTIN\Users, S-1-5-32-545 -- locale-independent, matching the real
+# guard's own SID-based comparison rather than a display-name match).
+_acl_writemask_case() {
+  local name="$1" perm_spec="$2" expected_rc="$3"
+  should_run "$name" || return 0
+  if [[ "$(detect_platform)" != windows ]] \
+      || ! command -v powershell.exe >/dev/null 2>&1 \
+      || ! command -v cygpath >/dev/null 2>&1 \
+      || ! command -v icacls >/dev/null 2>&1; then
+    skip "$name" "requires real native Windows with a working powershell.exe/cygpath/icacls (not a stub) to exercise the actual ACL bitmask arithmetic"
+    return 0
+  fi
+  local dir win_dir owner_sid rc=0
+  dir="$tmp_root/acl-writemask-$(printf '%s' "$name" | tr -c 'A-Za-z0-9' '-')"
+  mkdir -p "$dir"
+  win_dir="$(cygpath -w -- "$dir")" || {
+    fail "$name" "cygpath -w failed for $dir"
+    return 0
+  }
+  owner_sid="$(PM_TEST_ACL_PATH="$win_dir" powershell.exe -NoProfile -NonInteractive -Command '
+    (Get-Acl -LiteralPath $env:PM_TEST_ACL_PATH).GetOwner([System.Security.Principal.SecurityIdentifier]).Value
+  ' 2>/dev/null | tr -d '\r\n')"
+  if [[ -z "$owner_sid" ]]; then
+    skip "$name" "could not resolve the test directory's owner SID via Get-Acl"
+    return 0
+  fi
+  if ! icacls "$win_dir" //inheritance:r //grant "*${owner_sid}:(F)" //grant "*S-1-5-32-545:(${perm_spec})" \
+      >/dev/null 2>&1; then
+    skip "$name" "icacls grant failed in this environment"
+    return 0
+  fi
+  rc=0
+  _sw_windows_store_root_allows_write "$dir" || rc=$?
+  if [[ "$rc" -eq "$expected_rc" ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc (expected $expected_rc)"
+  fi
+}
+
+case_sw_windows_store_root_allows_write_readonly_is_safe() {
+  # qa-tester-F002: a real BUILTIN\Users ReadAndExecute-only ACE (no write
+  # bits at all) must be classified SAFE (rc=1). This is the exact shape of
+  # ACE (well-known principal, read-only) that this repo's own state root
+  # carries on this host for a sandboxed reviewer principal, and which the
+  # pre-fix mask misclassified as UNSAFE because it OR'd in FullControl
+  # (whose own bit value already sets every read bit too).
+  _acl_writemask_case \
+    "_sw_windows_store_root_allows_write: real ReadAndExecute-only ACE is SAFE" \
+    RX 1
+}
+
+case_sw_windows_store_root_allows_write_createfiles_appenddata_is_unsafe() {
+  # qa-tester-F002: an ACE granting only the atomic CreateFiles+AppendData
+  # bits (no Modify/FullControl composite) must still be classified UNSAFE
+  # (rc=0) -- these are two of the genuinely write-capable atomic bits the
+  # fixed mask is built from directly.
+  _acl_writemask_case \
+    "_sw_windows_store_root_allows_write: real CreateFiles+AppendData ACE is UNSAFE" \
+    WD,AD 0
+}
+
+case_sw_windows_store_root_allows_write_modify_is_unsafe() {
+  # qa-tester-F002: a real Modify ACE must still be classified UNSAFE (rc=0)
+  # -- Modify's own numeric value is a superset that includes the atomic
+  # write bits the fixed mask checks for, so removing Modify from the OR'd
+  # mask (done to fix the false positive) must not weaken this detection.
+  _acl_writemask_case \
+    "_sw_windows_store_root_allows_write: real Modify ACE is UNSAFE" \
+    M 0
+}
+
+case_sw_windows_store_root_allows_write_fullcontrol_is_unsafe() {
+  # qa-tester-F002: a real FullControl ACE must still be classified UNSAFE
+  # (rc=0) -- same rationale as Modify above, for the other composite right
+  # that was removed from the OR'd mask.
+  _acl_writemask_case \
+    "_sw_windows_store_root_allows_write: real FullControl ACE is UNSAFE" \
+    F 0
+}
+
 case_state_store_init_version1_noop() {
   # Verifies that state_store_init is idempotent when VERSION=1 already exists.
   #
@@ -2309,6 +2411,10 @@ case_state_store_init_windows_acl_unsafe_escape_hatch
 case_state_store_init_windows_acl_tool_missing_rejected
 case_state_store_init_windows_acl_unknown_output_rejected
 case_state_store_init_windows_acl_unverifiable_escape_hatch
+case_sw_windows_store_root_allows_write_readonly_is_safe
+case_sw_windows_store_root_allows_write_createfiles_appenddata_is_unsafe
+case_sw_windows_store_root_allows_write_modify_is_unsafe
+case_sw_windows_store_root_allows_write_fullcontrol_is_unsafe
 case_state_store_init_version1_noop
 case_state_store_init_version2_fails
 case_state_store_init_version2_does_not_mutate_mode
