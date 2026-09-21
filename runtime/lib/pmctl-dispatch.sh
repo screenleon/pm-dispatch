@@ -1541,7 +1541,7 @@ pmctl_dispatch_cancel() {
       0)
         # Live leader matches identity — only safe path that may signal.
         _pmctl_dispatch_cancel_require_isolated "$run_id" "$isolated" || return 2
-        if [[ -n "$pgid" ]] && kill -0 -- "-$pgid" 2>/dev/null; then
+        if [[ -n "$pgid" ]] && detached_launch_target_alive "$pgid"; then
           if ! detached_launch_kill_process_group "$pgid" "$grace"; then
             printf 'pmctl dispatch cancel: process group %s for %s still alive after SIGKILL; not marking cancelled\n' \
               "$pgid" "$run_id" >&2
@@ -1555,7 +1555,7 @@ pmctl_dispatch_cancel() {
         # belong to an unrelated same-user workload. Fail closed unless the
         # recorded group is already empty (nothing left to signal).
         _pmctl_dispatch_cancel_require_isolated "$run_id" "$isolated" || return 2
-        if [[ -n "$pgid" ]] && kill -0 -- "-$pgid" 2>/dev/null; then
+        if [[ -n "$pgid" ]] && detached_launch_target_alive "$pgid"; then
           printf 'pmctl dispatch cancel: supervisor pid gone but process group %s still live for %s; refusing kill without identity re-proof (fail-closed)\n' \
             "$pgid" "$run_id" >&2
           return 2
@@ -1571,7 +1571,7 @@ pmctl_dispatch_cancel() {
     # Identity missing: refuse kill (cannot prove process identity). Still allow
     # terminalization if the process is already gone and dispatch evidence exists.
     pid="$(tr -d ' \n' <"$pid_file" 2>/dev/null || true)"
-    if [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null; then
+    if [[ "$pid" =~ ^[0-9]+$ ]] && detached_launch_pid_alive "$pid"; then
       printf 'pmctl dispatch cancel: no verified identity for live pid %s of %s; refusing to signal (fail-closed)\n' \
         "$pid" "$run_id" >&2
       return 2
@@ -1741,7 +1741,7 @@ pmctl_dispatch_status() {
     elif [[ -f "$art_dir/$run_id.supervisor.pid" ]]; then
       local _p
       _p="$(tr -d ' \n' <"$art_dir/$run_id.supervisor.pid" 2>/dev/null || true)"
-      if [[ "$_p" =~ ^[0-9]+$ ]] && kill -0 "$_p" 2>/dev/null; then
+      if [[ "$_p" =~ ^[0-9]+$ ]] && detached_launch_pid_alive "$_p"; then
         pid_alive="unknown-identity"
       fi
     fi
@@ -1814,14 +1814,14 @@ _pmctl_dispatch_reconcile_one() {
     local p
     p="$(tr -d ' \n' <"$pid_file" 2>/dev/null || true)"
     if [[ "$p" =~ ^[0-9]+$ ]]; then
-      if kill -0 "$p" 2>/dev/null; then
+      if detached_launch_pid_alive "$p"; then
         printf 'run: %s  status: in-flight  process_alive: unknown-identity\n' "$run_id"
         return 0
       fi
       # Recorded pid confirmed not currently running: provable absence for
-      # THIS specific pid (a negative kill -0 carries no PID-reuse ambiguity —
-      # nothing is running under it right now), even without a full
-      # pid/pgid/starttime identity match. Safe to converge.
+      # THIS specific pid (a negative liveness probe carries no PID-reuse
+      # ambiguity — nothing is running under it right now), even without a
+      # full pid/pgid/starttime identity match. Safe to converge.
       printf 'run: %s  status: process-gone-without-evidence  detail: recorded pid no longer running, no identity captured\n' "$run_id"
       if [[ "$apply" -eq 1 ]]; then
         _pmctl_dispatch_reconcile_converge "$repo_root" "$work_dir" "$run_id"

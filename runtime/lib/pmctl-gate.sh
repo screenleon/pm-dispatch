@@ -354,37 +354,125 @@ pmctl_gate_run() {
     _foreground_args+=("$@")
   fi
   if [[ -n "${PM_GATE_PARENT_OPERATION:-}" ]]; then
-    if ! command -v setsid >/dev/null 2>&1; then
+    if [[ "$(type -t detached_launch_generate_nonce 2>/dev/null)" != function ]]; then
+      local _dl_lib="$repo_root/runtime/lib/detached-launch.sh"
+      if [[ -r "$_dl_lib" ]]; then
+        # shellcheck disable=SC1090,SC1091
+        . "$_dl_lib" 2>/dev/null || true
+      fi
+    fi
+    if [[ "$(type -t detect_platform 2>/dev/null)" == function && "$(detect_platform)" == windows ]]; then
+      # CC-606: Windows has no setsid/process-group isolation. The launcher
+      # (detached_launch_windows_launch) is designed to run detached and
+      # disowned, but this call site needs the opposite -- a synchronous
+      # foreground wait whose stdout/stderr stream to the caller in real
+      # time, matching what every other lifecycle branch here does. Launch
+      # the whole producer tree under a Job Object same as the operation-
+      # owned preflight path (see pr-gate.sh), tail its log to this
+      # process's own stdout while it runs, then block on its self-reported
+      # completion sentinel rather than a bash `wait` (the launcher is
+      # disowned, so there is no job-control relationship to wait() on).
+      if [[ "$(type -t detached_launch_windows_launch 2>/dev/null)" != function ]]; then
+        printf 'pmctl gate run: foreground producer isolation helper is unavailable\n' >&2
+        pmctl_operation_fail_if_childless "$repo_root" gate "$PM_GATE_PARENT_OPERATION" "$effective_cd" >&2 || true
+        return 2
+      fi
+      local _fg_sentinel _fg_wrapper _fg_log _fg_pid_file _fg_cmd_line _fg_arg _fg_tail_pid _fg_launcher_pid
+      _fg_sentinel="$(mktemp -u "${TMPDIR:-/tmp}/pm-gate-fg-sentinel.XXXXXX")"
+      _fg_log="$(mktemp "${TMPDIR:-/tmp}/pm-gate-fg-log.XXXXXX")"
+      _fg_pid_file="$(mktemp -u "${TMPDIR:-/tmp}/pm-gate-fg-pid.XXXXXX")"
+      _fg_wrapper="$(mktemp "${TMPDIR:-/tmp}/pm-gate-fg-wrapper.XXXXXX.sh")"
+      printf -v _fg_cmd_line '%q' "$gate_script"
+      for _fg_arg in "${_foreground_args[@]}"; do
+        printf -v _fg_cmd_line '%s %q' "$_fg_cmd_line" "$_fg_arg"
+      done
+      {
+        printf '#!/usr/bin/env bash\n'
+        printf '. %q\n' "$repo_root/runtime/lib/detached-launch.sh"
+        printf '. %q\n' "$repo_root/runtime/lib/pmctl-operation.sh"
+        printf 'register_rc=0\n'
+        # shellcheck disable=SC2016 # literal wrapper-script source, expanded by the spawned bash, not this shell.
+        printf 'pmctl_operation_register_producer %q gate %q %q "$(detached_launch_self_pid)" || register_rc=$?\n' \
+          "$repo_root" "$PM_GATE_PARENT_OPERATION" "$effective_cd"
+        # shellcheck disable=SC2016 # literal wrapper-script source, expanded by the spawned bash, not this shell.
+        printf 'if [[ "$register_rc" -eq 130 ]]; then exit 130; fi\n'
+        # shellcheck disable=SC2016 # literal wrapper-script source, expanded by the spawned bash, not this shell.
+        printf 'if [[ "$register_rc" -ne 0 ]]; then printf %q %q >&2; exit 2; fi\n' \
+          'pmctl gate run: failed to register foreground producer identity for %s\n' \
+          "$PM_GATE_PARENT_OPERATION"
+        printf '%s\n' "$_fg_cmd_line"
+        printf '_fg_rc=$?\n'
+        # shellcheck disable=SC2016 # literal wrapper-script source, expanded by the spawned bash, not this shell.
+        printf 'detached_launch_write_sentinel %q "exit_code=$_fg_rc"\n' "$_fg_sentinel"
+        # shellcheck disable=SC2016 # literal wrapper-script source, expanded by the spawned bash, not this shell.
+        printf 'exit "$_fg_rc"\n'
+      } > "$_fg_wrapper"
+      if ! detached_launch_windows_launch "$_fg_wrapper" "$_fg_log" "$_fg_pid_file"; then
+        rm -f "$_fg_wrapper" "$_fg_log" "$_fg_sentinel" "$_fg_pid_file" 2>/dev/null || true
+        printf 'pmctl gate run: failed to launch foreground producer isolation\n' >&2
+        pmctl_operation_fail_if_childless "$repo_root" gate "$PM_GATE_PARENT_OPERATION" "$effective_cd" >&2 || true
+        return 2
+      fi
+      _fg_launcher_pid="$(tr -d ' \n' <"$_fg_pid_file" 2>/dev/null || true)"
+      tail -n +1 -f "$_fg_log" &
+      _fg_tail_pid=$!
+      # Unbounded wait: gate reviews have no fixed timeout the way the
+      # bounded preflight test command does; `pmctl gate cancel` (which
+      # goes through detached_launch_kill_process_group's own Windows
+      # branch) is what ends this early, not a timeout here. But a hard
+      # TerminateProcess-based kill never lets the wrapper reach its own
+      # sentinel write, so this loop must ALSO notice "the launcher is
+      # simply gone" -- otherwise a cancel would spin here forever instead
+      # of ever reaching the cancellation check just below this block.
+      while ! detached_launch_wait_for_sentinel "$_fg_sentinel" 5 1; do
+        if [[ -n "$_fg_launcher_pid" ]] && ! detached_launch_pid_alive "$_fg_launcher_pid"; then
+          break
+        fi
+      done
+      kill "$_fg_tail_pid" 2>/dev/null || true
+      wait "$_fg_tail_pid" 2>/dev/null || true
+      if [[ -f "$_fg_sentinel" ]]; then
+        _gate_rc="$(grep -m1 '^exit_code=' "$_fg_sentinel" 2>/dev/null | cut -d= -f2-)"
+        [[ "$_gate_rc" =~ ^-?[0-9]+$ ]] || _gate_rc=1
+      else
+        # No sentinel and the launcher is gone: killed externally
+        # (cancel) before it could self-report. 130 matches the exit
+        # code a POSIX SIGTERM'd producer reports through `wait`.
+        _gate_rc=130
+      fi
+      rm -f "$_fg_wrapper" "$_fg_log" "$_fg_sentinel" "$_fg_pid_file" 2>/dev/null || true
+    elif ! command -v setsid >/dev/null 2>&1; then
       printf 'pmctl gate run: foreground producer isolation requires setsid; gate was not started\n' >&2
       pmctl_operation_fail_if_childless "$repo_root" gate "$PM_GATE_PARENT_OPERATION" "$effective_cd" >&2 || true
       return 2
+    else
+      # Keep the synchronous user experience while isolating the complete gate
+      # producer tree from the invoking shell.  The new session registers its
+      # own kernel identity before execing pr-gate.sh; cancellation can therefore
+      # stop preflight/timeout descendants without accepting a caller-supplied PID.
+      # shellcheck disable=SC2016 # variables are expanded by the spawned bash, not this shell.
+      setsid bash -c '
+        repo_root="$1"; work_dir="$2"; operation_id="$3"; gate_script="$4"
+        shift 4
+        # shellcheck source=/dev/null
+        . "$repo_root/runtime/lib/pmctl-operation.sh"
+        register_rc=0
+        pmctl_operation_register_producer "$repo_root" gate "$operation_id" "$work_dir" "$BASHPID" \
+          || register_rc=$?
+        if [[ "$register_rc" -eq 130 ]]; then
+          exit 130
+        fi
+        if [[ "$register_rc" -ne 0 ]]; then
+          printf "pmctl gate run: failed to register foreground producer identity for %s\n" \
+            "$operation_id" >&2
+          exit 2
+        fi
+        exec "$gate_script" "$@"
+      ' _ "$repo_root" "$effective_cd" "$PM_GATE_PARENT_OPERATION" "$gate_script" \
+        "${_foreground_args[@]}" &
+      local _producer_pid=$!
+      wait "$_producer_pid" || _gate_rc=$?
     fi
-    # Keep the synchronous user experience while isolating the complete gate
-    # producer tree from the invoking shell.  The new session registers its
-    # own kernel identity before execing pr-gate.sh; cancellation can therefore
-    # stop preflight/timeout descendants without accepting a caller-supplied PID.
-    # shellcheck disable=SC2016 # variables are expanded by the spawned bash, not this shell.
-    setsid bash -c '
-      repo_root="$1"; work_dir="$2"; operation_id="$3"; gate_script="$4"
-      shift 4
-      # shellcheck source=/dev/null
-      . "$repo_root/runtime/lib/pmctl-operation.sh"
-      register_rc=0
-      pmctl_operation_register_producer "$repo_root" gate "$operation_id" "$work_dir" "$BASHPID" \
-        || register_rc=$?
-      if [[ "$register_rc" -eq 130 ]]; then
-        exit 130
-      fi
-      if [[ "$register_rc" -ne 0 ]]; then
-        printf "pmctl gate run: failed to register foreground producer identity for %s\n" \
-          "$operation_id" >&2
-        exit 2
-      fi
-      exec "$gate_script" "$@"
-    ' _ "$repo_root" "$effective_cd" "$PM_GATE_PARENT_OPERATION" "$gate_script" \
-      "${_foreground_args[@]}" &
-    local _producer_pid=$!
-    wait "$_producer_pid" || _gate_rc=$?
   else
     "$gate_script" "${_foreground_args[@]}" || _gate_rc=$?
   fi
@@ -448,12 +536,6 @@ _pmctl_gate_supervisor_identity_path() {
 pmctl_gate_run_detached() {
   local repo_root="$1" effective_cd="$2"; shift 2
   local -a forward=("$@")
-  local _ready_timeout="${PM_GATE_READY_TIMEOUT:-5}"
-
-  if ! [[ "$_ready_timeout" =~ ^[1-9][0-9]*$ ]]; then
-    printf 'pmctl gate run: invalid PM_GATE_READY_TIMEOUT %q (expected positive seconds)\n' "$_ready_timeout" >&2
-    return 2
-  fi
 
   if [[ "$(type -t detached_launch_generate_nonce 2>/dev/null)" != function ]]; then
     local _dl_lib="$repo_root/runtime/lib/detached-launch.sh"
@@ -461,6 +543,31 @@ pmctl_gate_run_detached() {
       # shellcheck disable=SC1090,SC1091
       . "$_dl_lib" 2>/dev/null || true
     fi
+  fi
+
+  # CC-606: the fixed 5s default below was never actually reachable on
+  # native Windows before this issue's fix landed (the whole detached path
+  # hard-failed on missing setsid first), so it was never validated there.
+  # Direct measurement on a real Windows 11 host puts ordinary readiness
+  # latency at 70-140s (a context-index refresh plus one or two nested
+  # PowerShell Job Object launches, vs. a couple of seconds with real
+  # setsid -- see tests/shell/test-pmctl-gate.sh's own
+  # PM_GATE_TEST_READY_TIMEOUT for the same finding in the test suite) --
+  # a bare 5s default there does not mean "supervisor is unusually slow",
+  # it means "detached gate runs are unconditionally broken on Windows
+  # unless the caller already knows to raise this env var by hand". Give
+  # Windows a realistic default instead of relying on every caller
+  # rediscovering this the same way. POSIX default is unchanged.
+  local _ready_timeout_default=5
+  if [[ "$(type -t detect_platform 2>/dev/null)" == function \
+      && "$(detect_platform)" == windows ]]; then
+    _ready_timeout_default=150
+  fi
+  local _ready_timeout="${PM_GATE_READY_TIMEOUT:-$_ready_timeout_default}"
+
+  if ! [[ "$_ready_timeout" =~ ^[1-9][0-9]*$ ]]; then
+    printf 'pmctl gate run: invalid PM_GATE_READY_TIMEOUT %q (expected positive seconds)\n' "$_ready_timeout" >&2
+    return 2
   fi
 
   local gate_script="$repo_root/runtime/bin/gate-supervisor.sh"
@@ -579,7 +686,7 @@ pmctl_gate_run_detached() {
         break
       fi
       if [[ "$_ready_state" == "ready" && "$_ready_pid" == "$_sup_pid" \
-        && "$_ready_starttime" =~ ^[0-9]+$ ]] && kill -0 "$_sup_pid" 2>/dev/null; then
+        && "$_ready_starttime" =~ ^[0-9]+$ ]] && detached_launch_pid_alive "$_sup_pid"; then
         # A live supervisor may be between ready publication and terminal
         # publication while the parent-side snapshot is unavailable; keep the
         # bounded readiness poll rather than treating that valid transition as

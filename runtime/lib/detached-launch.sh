@@ -23,6 +23,188 @@
 # runtime/lib/pmctl-dispatch.sh. Do NOT set -euo pipefail here (callers carry
 # their own flags).
 
+_DL_SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
+[[ "$_DL_SCRIPT_DIR" == "${BASH_SOURCE[0]}" ]] && _DL_SCRIPT_DIR=.
+# detect_platform (portable.sh) drives every Windows branch below (issue
+# #606). Guarded source, same pattern state-writer.sh uses: this file may be
+# sourced before or after portable.sh depending on the caller.
+if ! declare -F detect_platform >/dev/null 2>&1; then
+  # shellcheck disable=SC1091
+  . "$_DL_SCRIPT_DIR/portable.sh" 2>/dev/null || true
+fi
+
+# --- Windows-native process-group isolation (issue #606) ------------------
+#
+# Native Windows Git Bash has neither setsid nor /proc, so the POSIX
+# functions below (detached_launch_under_setsid, _capture_identity,
+# _verify_identity, _kill_process_group) each grow a `detect_platform ==
+# windows` branch that delegates to runtime/lib/windows/detached-launch-job.ps1
+# -- a Windows Job Object (JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE) based
+# replacement for setsid+pgid isolation. See that script's own header for
+# the full empirical findings (verified on a real Windows 11 host,
+# 2026-09-20) this design is built on; the short version: a named Job Object
+# does not survive its creator's handle closing, so the PowerShell launcher
+# this repo spawns stays alive for the whole run and IS the unit later
+# terminated to tear the tree down -- its own (translated) Windows pid is
+# recorded as both pid= and pgid= in the identity file, with isolated=1
+# unconditionally (Job Objects have no missing-setsid-style degraded mode).
+#
+# POSIX code paths below are UNCHANGED -- every Windows branch is additive,
+# gated on detect_platform, and never alters what happens on Linux/macOS.
+
+_dl_win_ps1_path() {
+  printf '%s/windows/detached-launch-job.ps1' "$_DL_SCRIPT_DIR"
+}
+
+_dl_win_available() {
+  command -v powershell.exe >/dev/null 2>&1 && command -v cygpath >/dev/null 2>&1
+}
+
+# Real Windows pid of the CURRENT bash process. MSYS's own $$ (and $!, for a
+# backgrounded native Windows exe) is an internal fake pid that no Win32 API
+# recognizes -- confirmed by direct test: `tasklist /FI "PID eq $$"` finds
+# nothing, while `ps -p $$`'s WINPID column holds the real value Get-Process/
+# TerminateProcess/etc. actually operate on. This function is that
+# translation, needed anywhere a bash-side pid must cross into a PowerShell
+# call.
+_dl_win_winpid_of() {
+  local bash_view_pid="${1:?bash_view_pid required}"
+  ps -p "$bash_view_pid" 2>/dev/null | awk 'NR==2{print $4}'
+}
+
+# The pid a script should use to identify ITSELF for later cancel/verify --
+# i.e. what a caller like gate-supervisor.sh's _write_ready should pass to
+# detached_launch_capture_identity when capturing its own identity to
+# publish, instead of assuming plain $$ always means "my own pid" the way
+# it does on POSIX.
+#
+# On POSIX this is exactly $$: the supervisor process launched under setsid
+# IS the group leader that cancel later signals, so its own pid is already
+# the correct value. On Windows it is NOT $$ -- MSYS's $$ is an internal
+# fake pid no Win32 API recognizes, and in any case the unit a later kill
+# actually targets is the PowerShell Job Object launcher (see this file's
+# Windows section header), not the bash.exe supervisor process running this
+# code. detached_launch_windows_launch's PowerShell side exports
+# PM_WINJOB_WRAPPER_PID (its own real pid) into the launched process's
+# environment specifically so this function can hand it back here; a script
+# not running under that launcher (or on POSIX) falls back to $$.
+detached_launch_self_pid() {
+  if [[ "$(detect_platform)" == windows && -n "${PM_WINJOB_WRAPPER_PID:-}" ]]; then
+    printf '%s\n' "$PM_WINJOB_WRAPPER_PID"
+  else
+    printf '%s\n' "$$"
+  fi
+}
+
+# Windows-native launch: creates a Job Object, starts
+# `<bash.exe> <script_path> [args...]` as its sole member, and blocks inside
+# a detached PowerShell process for the run's whole lifetime (see the
+# module header above). Callers should reach this through
+# detached_launch_under_setsid's platform branch, not directly, except
+# runtime/bin/pr-gate.sh's operation-owned preflight path (CC-606), which
+# needs to launch a raw command line rather than a script file and so calls
+# this with a small synthetic wrapper script -- see that call site.
+#
+# Sets DETACHED_LAUNCH_ISOLATED=1 on success (Windows has no isolated=0
+# case). Writes the PowerShell launcher's own (translated) Windows pid to
+# <pid_file> -- NOT the inner bash.exe child's pid; that pid is the unit a
+# later kill must target, per the module header above.
+detached_launch_windows_launch() {
+  local script_path="${1:?script_path required}" log_file="${2:?log_file required}" pid_file="${3-}"
+  shift 3
+  [[ "${1:-}" == "--" ]] && shift
+
+  export DETACHED_LAUNCH_ISOLATED=0
+  _dl_win_available || return 1
+  local ps1 ps1_win bash_exe_win log_win child_pid_file child_pid_win argv_b64
+  ps1="$(_dl_win_ps1_path)"
+  [[ -r "$ps1" ]] || return 1
+  ps1_win="$(cygpath -w -- "$ps1")" || return 1
+  bash_exe_win="$(cygpath -w -- "$(command -v bash)")" || return 1
+
+  mkdir -p "$(dirname "$log_file")" || return 1
+  log_win="$(cygpath -w -- "$log_file")" || return 1
+  [[ -n "$pid_file" ]] && { mkdir -p "$(dirname "$pid_file")" || return 1; }
+  # The launched bash.exe's own pid is informational only (never a kill
+  # target -- see module header); give it a throwaway sibling path when the
+  # caller did not ask for a real pid_file so -ChildPidFile always has
+  # somewhere writable to go.
+  child_pid_file="$(mktemp "${TMPDIR:-/tmp}/pm-winjob-childpid.XXXXXX" 2>/dev/null)" || child_pid_file="${pid_file:-$log_file}.winjob-child-pid"
+  child_pid_win="$(cygpath -w -- "$child_pid_file")" || return 1
+
+  argv_b64="$(printf '%s\0' "$script_path" "$@" | base64 -w0 2>/dev/null)" || return 1
+
+  powershell.exe -NoProfile -NonInteractive -File "$ps1_win" \
+    -Action Launch -BashExe "$bash_exe_win" -ChildPidFile "$child_pid_win" \
+    -LogFile "$log_win" -TargetArgsB64 "$argv_b64" \
+    </dev/null >/dev/null 2>&1 &
+  local bash_view_pid="$!"
+  disown "$bash_view_pid" 2>/dev/null || true
+  rm -f "$child_pid_file" 2>/dev/null || true
+
+  # `ps` can race the fork()/exec() of a just-backgrounded process; retry
+  # briefly rather than fail on the first miss.
+  local win_pid="" _attempt
+  for _attempt in 1 2 3 4 5 6 7 8; do
+    win_pid="$(_dl_win_winpid_of "$bash_view_pid")"
+    [[ "$win_pid" =~ ^[0-9]+$ ]] && break
+    win_pid=""
+    sleep 0.1
+  done
+  [[ -n "$win_pid" ]] || return 1
+
+  if [[ -n "$pid_file" ]]; then
+    printf '%s\n' "$win_pid" > "$pid_file" || return 1
+  fi
+  export DETACHED_LAUNCH_ISOLATED=1
+  return 0
+}
+
+# Platform-neutral "is this launched unit still alive" probe. Used by
+# pmctl-dispatch.sh's cancel path as the decision point for whether a kill
+# attempt is even needed (detached_launch_kill_process_group is itself
+# idempotent either way, but callers like cancel's "leader gone, pgid still
+# reported live" branch need to know NOW, not just "did a kill succeed").
+# POSIX: signal-0 the process group. Windows: pgid IS the launcher's own
+# (translated) Windows pid (see module header); probe it directly.
+detached_launch_target_alive() {
+  local pgid="${1:?pgid required}"
+  [[ "$pgid" =~ ^[1-9][0-9]*$ ]] || return 1
+  if [[ "$(detect_platform)" == windows ]]; then
+    detached_launch_pid_alive "$pgid"
+    return $?
+  fi
+  kill -0 -- "-$pgid" 2>/dev/null
+}
+
+# Plain single-pid liveness probe (not a process-group check). Several
+# pmctl-dispatch.sh call sites use a bare `kill -0 "$pid"` for this on POSIX
+# (status reporting, and the reconcile path's "recorded pid confirmed not
+# running" convergence decision) -- confirmed by direct test that this is
+# NOT just a style difference on Windows: MSYS `kill -0 <real-windows-pid>`
+# reports "No such process" for an arbitrary live Windows process outside
+# this bash session's own process tree (verified against a `ping -t`
+# process independently confirmed alive via `tasklist`), so on Windows it
+# is a silent false negative, not merely unsupported. Any caller checking a
+# pid recorded by detached_launch_windows_launch (a real Windows pid, not
+# an MSYS-internal one) must route through this function instead of a raw
+# `kill -0`.
+detached_launch_pid_alive() {
+  local pid="${1:?pid required}"
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+  if [[ "$(detect_platform)" == windows ]]; then
+    _dl_win_available || return 1
+    local ps1_win
+    ps1_win="$(cygpath -w -- "$(_dl_win_ps1_path)")" || return 1
+    powershell.exe -NoProfile -NonInteractive -File "$ps1_win" \
+      -Action Identity -TargetPid "$pid" >/dev/null 2>&1
+    return $?
+  fi
+  kill -0 "$pid" 2>/dev/null
+}
+
+# --- end Windows-native process-group isolation ----------------------------
+
 # Generate a 32-char nonce suitable for sentinel-path unguessability.
 # /dev/urandom first, $RANDOM concatenation fallback if urandom is
 # unavailable/empty/short. Deliberately does not rely on the pipeline's exit
@@ -127,6 +309,11 @@ detached_launch_under_setsid() {
   mkdir -p "$(dirname "$log_file")" || return 1
   [[ -n "$pid_file" ]] && { mkdir -p "$(dirname "$pid_file")" || return 1; }
 
+  if [[ "$(detect_platform)" == windows ]]; then
+    detached_launch_windows_launch "$script_path" "$log_file" "$pid_file" "$@"
+    return $?
+  fi
+
   local pid
   # Exported so callers (pmctl-dispatch) can record isolated= in identity files.
   export DETACHED_LAUNCH_ISOLATED=0
@@ -220,6 +407,22 @@ detached_launch_capture_identity() {
   local pid="${1:?pid required}" isolated_override="${2-}"
   local stat_file rest pgrp starttime state comm_field comm isolated boot_id
   [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+
+  if [[ "$(detect_platform)" == windows ]]; then
+    # isolated_override is not applicable here: Windows Job Object launches
+    # are always isolated=1 (see module header), so the PowerShell Identity
+    # action hardcodes it rather than accepting an override the way the
+    # /proc-based path below does for its setsid-missing fallback case.
+    _dl_win_available || return 1
+    local ps1_win out
+    ps1_win="$(cygpath -w -- "$(_dl_win_ps1_path)")" || return 1
+    out="$(powershell.exe -NoProfile -NonInteractive -File "$ps1_win" \
+      -Action Identity -TargetPid "$pid" 2>/dev/null)" || return 1
+    [[ -n "$out" ]] || return 1
+    printf '%s\n' "$out" | tr -d '\r'
+    return 0
+  fi
+
   stat_file="/proc/$pid/stat"
   [[ -r "$stat_file" ]] || return 1
   # comm may contain spaces/parentheses; fields after the final ')' are fixed.
@@ -276,6 +479,15 @@ detached_launch_load_identity_file() {
   DL_ID_PID=""; DL_ID_PGID=""; DL_ID_STARTTIME=""; DL_ID_COMM=""; DL_ID_ISOLATED=""; DL_ID_BOOT_ID=""
   [[ -f "$path" ]] || return 1
   while IFS= read -r line || [[ -n "$line" ]]; do
+    # Strip a trailing CR: identity files written via jq's `>` file
+    # redirection on native Windows come out CRLF-terminated (confirmed by
+    # direct test -- this jq build emits \r\n even for a plain `\n` in the
+    # format string), which would otherwise make every value compare unequal
+    # to its non-CR-suffixed counterpart and make detached_launch_verify_
+    # identity report a false mismatch on every Windows producer-identity
+    # round-trip. Harmless no-op for files that never had a CR (the normal
+    # detached_launch_write_sentinel-authored ones, and all of POSIX).
+    line="${line%$'\r'}"
     [[ -z "$line" || "$line" == \#* ]] && continue
     key="${line%%=*}"
     val="${line#*=}"
@@ -311,6 +523,27 @@ detached_launch_verify_identity() {
     return 2
   fi
   [[ "$pid" == "$DL_ID_PID" ]] || return 2
+
+  if [[ "$(detect_platform)" == windows ]]; then
+    _dl_win_available || return 2
+    local ps1_win rc=0
+    ps1_win="$(cygpath -w -- "$(_dl_win_ps1_path)")" || return 2
+    local -a extra_args=()
+    [[ -n "${DL_ID_BOOT_ID:-}" ]] && extra_args=(-ExpectBootId "$DL_ID_BOOT_ID")
+    powershell.exe -NoProfile -NonInteractive -File "$ps1_win" -Action Verify \
+      -TargetPid "$pid" -ExpectStarttime "$DL_ID_STARTTIME" -ExpectComm "$DL_ID_COMM" \
+      "${extra_args[@]}" >/dev/null 2>&1
+    rc=$?
+    # The PowerShell action's own exit codes (0/1/2) already match this
+    # function's contract exactly; a launch failure (missing powershell.exe/
+    # cygpath, or any other non-0/1/2 exit) is not "identity confirmed gone"
+    # and must fail closed as a mismatch, not fall through as if it were 1.
+    case "$rc" in
+      0|1|2) return "$rc" ;;
+      *) return 2 ;;
+    esac
+  fi
+
   # Reboot detection: starttime is boot-relative and resets after reboot, so a
   # post-reboot process could coincidentally collide on pid+pgid+starttime.
   # When both boot ids are known and differ, the original process cannot
@@ -360,6 +593,30 @@ detached_launch_kill_process_group() {
   local pgid="${1:?pgid required}" grace="${2:-5}"
   local self_pgid probe p_pgid
   [[ "$pgid" =~ ^[1-9][0-9]*$ ]] || return 1
+
+  if [[ "$(detect_platform)" == windows ]]; then
+    # pgid IS the PowerShell launcher's own (translated) Windows pid here
+    # (see module header) -- terminating it is what closes the job handle
+    # and, via KILL_ON_JOB_CLOSE, atomically tears down the whole tree.
+    # Windows has no SIGTERM-equivalent soft-kill for an arbitrary console
+    # process tree, so there is no separate TERM phase to attempt first;
+    # -Action Kill itself is the hard kill, with -GraceSeconds bounding how
+    # long it polls afterward to confirm the tree actually went away.
+    _dl_win_available || return 1
+    local ps1_win own_bash_pid own_win_pid
+    ps1_win="$(cygpath -w -- "$(_dl_win_ps1_path)")" || return 1
+    own_bash_pid="$$"
+    own_win_pid="$(_dl_win_winpid_of "$own_bash_pid")"
+    # Fail closed if we cannot determine our own Windows pid: without it we
+    # cannot prove the target is not the invoking shell/automation runner
+    # (the direct analogue of the POSIX self_pgid check just below).
+    [[ "$own_win_pid" =~ ^[0-9]+$ ]] || return 1
+    powershell.exe -NoProfile -NonInteractive -File "$ps1_win" -Action Kill \
+      -TargetPid "$pgid" -CallerWinPid "$own_win_pid" -GraceSeconds "$grace" \
+      >/dev/null 2>&1
+    return $?
+  fi
+
   # Fail closed if we cannot determine our own process group: without it we
   # cannot prove the target is not the invoking shell/automation runner.
   self_pgid="$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')" || self_pgid=""
