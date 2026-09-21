@@ -22,6 +22,22 @@ make_repo() {
   git -C "$dir" init -q
 }
 
+# issue #593: MSYS2/Git Bash does not ship setsid. Three cases in this file
+# use it to get a real, independently-signalable process group (needed to
+# test producer-liveness/kill semantics; a plain background job cannot be
+# targeted the same way). Without a guard, `setsid` failing with "command
+# not found" doesn't just fail the case that calls it directly -- two other
+# cases background a `setsid bash -c 'read ... < fifo'` reader and later
+# write to that FIFO expecting the (never-started) reader to unblock them;
+# with no reader, the write blocks forever, a real deadlock, not merely a
+# failure. Skip the process-group-dependent cases cleanly instead.
+_require_setsid() {
+  local name="$1"
+  command -v setsid >/dev/null 2>&1 && return 0
+  skip "$name" "setsid not available on this platform (issue #593); this case needs a real, killable process group"
+  return 1
+}
+
 # Operation reconciliation needs the PID that will actually remain alive for
 # identity verification.  Do not use `setsid` here: it may fork when invoked
 # by a process-group leader, leaving $! as a short-lived wrapper PID.
@@ -39,6 +55,7 @@ stop_live_test_producer() {
 case_writer_loader_repairs_partial_inherited_functions() {
   local name="operation lock: partial inherited writer functions reload before producer registration"
   should_run "$name" || return 0
+  _require_setsid "$name" || return 0
   local work="$tmp_root/partial-writer-work" store="$tmp_root/partial-writer-state"
   local op out rc=0 state record
   make_repo "$work"
@@ -342,6 +359,7 @@ case_cancel_deduplicates_repeated_child_records() {
 case_cancel_refuses_reused_producer_identity() {
   local name="operation cancel: producer identity mismatch is indeterminate and never signalled"
   should_run "$name" || return 0
+  _require_setsid "$name" || return 0
   local work="$tmp_root/producer-mismatch-work" store="$tmp_root/producer-mismatch-state"
   local op producer release record state tampered out rc=0 reconcile_rc=0 fail_rc=0
   make_repo "$work"
@@ -375,6 +393,7 @@ case_cancel_refuses_reused_producer_identity() {
 case_cancel_accepts_producer_that_exited_before_signal() {
   local name="operation cancel: an already-exited registered producer can terminalize cancelled"
   should_run "$name" || return 0
+  _require_setsid "$name" || return 0
   local work="$tmp_root/producer-gone-work" store="$tmp_root/producer-gone-state"
   local op producer release record state out
   make_repo "$work"
