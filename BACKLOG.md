@@ -124,6 +124,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-585 | 🔵 active | [[CC-447]] live dogfood smoke 摔倒點：[[CC-584]] 修完後第一次對真實 codex 執行 `pmctl ship finish` 就卡住——`pmctl_context_workflow_refresh`（既有、跟 CC-584 無關的功能）在 dispatch 階段會自己建立一份 `.gitignore`（內容只有 `.pm-dispatch`），發生在 CC-584 的「host 補丁前 `.gitignore` 是否乾淨」判準檢查**之前**。CC-584 R3 修法只分辨得出「`_pmctl_ship_ensure_gitignore` 自己的補丁前後」，沒考慮到「host 端其他既有功能也可能合法建立 `.gitignore`」這第三種情況——兩者在 finish 開始檢查時看起來一模一樣（都是 untracked），導致這份完全合法、host 端建立的 `.gitignore` 被誤判成「未宣告路徑」，整條 commit／gate／push 被擋下。**Requirement**：把「時間點」判準（補丁前是否乾淨）改成「內容」判準——只要 `.gitignore`（或其新增的部分）整份內容都落在已知的 bookkeeping 排除規則允許清單內（`.pm-dispatch`／`.dispatch-results`／`.gate-results`／`.gate-briefs`／`.agent-trace`／`.pm-dispatch-state` 等），不論誰、什麼時候建立都放行；只要出現一行不在清單內，才判定為可疑並比照未宣告路徑處理。補 regression：dispatch 前 context-index 已建立僅含已知 bookkeeping pattern 的 `.gitignore`（無關 `_pmctl_ship_ensure_gitignore`）時，finish 仍正確完成；`.gitignore` 混入未知規則時仍正確拒絕。 | ops/gate | 2026-09-12 | — | P2 | design |
 | CC-586 | ✅ done | [[CC-447]] live dogfood smoke 摔倒點（嚴重）：`_pmctl_ship_ensure_gitignore`（[[CC-584]] pr:#583 新增）最後一行以 false 條件成為函式隱式回傳值 1，在真實 `cli/pmctl` 的 `set -euo pipefail` 下會讓 `pmctl ship finish` 靜默終止。**已交付（pr:#585）**：改用明確 `if` 並固定 `return 0`；新增真實 CLI regression；後續 full-suite hardening 隔離共享 `/tmp` fixture，並讓 non-owned state-store case 在非 root 環境保留真實 ownership 語意。Targeted Gate GO；authoritative full suite 123/123、0 failed、0 skipped；GitHub CI 77/77。 | ops/gate | 2026-09-12 | pr:#585 | P1 | design |
 | CC-587 | 🔵 active | GitHub issue #586：原生 Windows Git Bash 上 `pmctl gate run` 能建立 parent operation，卻在 `pmctl_operation_expect_producer` 保留 producer ownership 時失敗，留下 `state: running`／`producer: null` 且 reviewer 未啟動。Linux 的 Windows platform override 與含空白 repo 路徑均無法重現，邊界縮至原生 Windows/MSYS 的既有檔案替換語意。**Requirement**：維持 POSIX 同目錄 temp→rename 快路徑；Windows overwrite 失敗時使用原生原子 replace primitive，不得退化為會短暫移除 record 的 `rm + mv`；補 regression 模擬 MSYS overwrite failure，斷言 producer 進入 pending、record 全程存在且 temp 清乾淨。 | ops/portability | 2026-09-15 | feedback:#586 | P1 | hygiene |
+| CC-588 | ✅ closed 2026-09-22 | GitHub issue #609：codex reviewer session（qa-tester）在 native Windows `workspace-write`（AppContainer）sandbox 下呼叫 MSYS2 bash.exe 觸發 `CreateFileMapping` Win32 error 5——AppContainer 具名物件重導向只作用於 Win32 API 層，MSYS2 runtime 建立全域 `\BaseNamedObjects\` namespace 物件的呼叫（`NtCreateDirectoryObject`）繞過該重導向，token 對真正全域 namespace 無存取權，屬結構性限制（非 race condition，sequential 模式、零併發下一樣重現；[openai/codex#12000](https://github.com/openai/codex/issues/12000)、[microsoft/mxc#1061](https://github.com/microsoft/mxc/issues/1061) 外部佐證同一問題）。Spike 判定 **defer** 大改（host-side QA 執行搬離 reviewer sandbox）：[[CC-370]]／2026-09-01 決議已明訂原生 Windows 為 bounded experimental local-use exception、CI/release 仍僅 Linux/WSL2，PR #611 六次嘗試裡約一半直接成功、其餘重跑後全數順利落地，不足以撐起 reviewer dispatch protocol 重新設計；`--sandbox danger-full-access` escape hatch 維持刻意封閉不重開。See `docs/spikes/CC-588.md`. | ops/portability | 2026-09-22 | feedback:#609 | P3 | spike |
 
 ---
 
@@ -4547,5 +4548,54 @@ repo 路徑重跑 `pmctl gate run`，能越過 producer reservation 並實際啟
 
 **See**: [[CC-370]]（原生 Windows 仍屬 experimental／deferred 支援）；[[CC-447]]
 （live dogfood umbrella）；GitHub issue #586
+
+---
+
+## CC-588 — codex reviewer sessions vs. AppContainer/MSYS2 CreateFileMapping（spike）✅ 2026-09-22
+
+**Problem**：GitHub issue #609 原記為「`--mode parallel` 下多個 bash.exe 並發搶
+`CreateFileMapping` 的 race condition」，導致 `pr-gate` 的 qa-tester reviewer session
+在原生 Windows 上偶發性地撞上 `CreateFileMapping` Win32 error 5、無法完成補充測試執行。
+但這個框架未經驗證就被當成已知因——是否真的是 race、是否有其他專案遇過同樣狀況、
+pm-dispatch 這邊要不要改架構才修得掉，三者都不確定，不能直接寫修復 spec。
+
+**Why**：這個問題直接卡在 PR #611／#613 的 pr-gate 驗收流程上（多輪重跑，約一半撞見同一
+signature），但在動任何架構之前，必須先確認根因框架是否成立——如果實際上是結構性、非
+race 的問題，「靠減少並發」這條路本來就治標不了本，值得先花一次 spike 把根因、外部先例、
+架構選項都攤開，再決定要不要投入，而不是憑猜測動 `pr-gate.sh` 的 dispatch 協定。
+
+**Requirement**：
+- Investigation scope：(1) 用 sequential 模式、零 polling 重現 #609，確認/推翻
+  concurrency race 假說；(2) 上網查證是否有其他專案遇過同一類 MSYS2/AppContainer 衝突，
+  找出精確技術機制；(3) 盤點可能的架構選項（host-side QA 執行、放寬 sandbox、換非 MSYS2
+  shell、有限重試）並逐一權衡成本，對照 [[CC-370]] 既有的「原生 Windows 為 bounded
+  experimental」立場給出是否值得投入的建議。
+- Done-when：`docs/spikes/CC-588.md` 產出明確 Recommendation（adopt／defer／reject 各
+  選項），且已用外部證據佐證根因框架，不是未驗證的臆測。
+- Result log: docs/spikes/CC-588.md — 根因**非 race condition**：sequential 模式、零
+  併發下一樣重現，屬 AppContainer 具名物件重導向只作用於 Win32 API 層、MSYS2 runtime
+  建立全域 `\BaseNamedObjects\` namespace 物件的呼叫繞過該重導向的結構性限制，外部佐證
+  [openai/codex#12000](https://github.com/openai/codex/issues/12000)（codex 自身在
+  Windows 沙盒自動化撞到同一錯誤）、[microsoft/mxc#1061](https://github.com/microsoft/mxc/issues/1061)
+  （精確技術機制）、[finogeeks/finsafe#34](https://github.com/finogeeks/finsafe/issues/34)／
+  [#38](https://github.com/finogeeks/finsafe/issues/38)（另一沙盒工具同類問題）。架構選項
+  評估：(A) host-side QA 執行搬離 reviewer sandbox——唯一真正解法，但需要重新設計 reviewer
+  dispatch 協定（兩階段 propose→execute→resume，目前只有 detached `gate wait` 有這種
+  session 延續機制），成本不小；(B) 放寬 AppContainer 權限——非 pm-dispatch 這端能做，
+  只能靠上游修；(C) 換用非 MSYS2 shell 跑 QA helper——整個 test suite／runtime 都是 bash
+  撰寫，會變成長期雙軌維護或引入 WSL2 依賴，不成比例；(D) 針對此已知 error signature 的
+  有限自動重試——成本最低，PR #611 六次嘗試裡約一半直接成功、其餘重跑後全數順利落地，符合
+  「有限重試能救回大部分」的樣態。**Recommendation：defer (A)**——`DECISIONS.md`
+  2026-09-01 已明訂原生 Windows 為 bounded experimental local-use exception、CI/release
+  仍僅 Linux/WSL2，這個問題只影響原生 Windows 本地 `pr-gate` 執行、不影響 CI，不足以撐起
+  協定重新設計的投入；**reject (B)（非本端可控，只追蹤上游 issue）與 (C)（不成比例）**；
+  **(D) 列為獨立、成本低的後續票候選，本 spike 不自動立票**，留待使用者拍板是否要做。
+
+**Non-goals**：不在本票內實作 (D) 的自動重試機制；不重新開放
+`--sandbox danger-full-access`（`adapters/codex/dispatch.sh` 刻意永久封閉，非本票範圍的
+安全決策）。
+
+**See**: `docs/spikes/CC-588.md`（defer (A)/(B)/(C)，(D) 候選待拍板）；GitHub issue #609；
+[[CC-370]]（原生 Windows experimental posture）。
 
 ---
