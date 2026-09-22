@@ -2850,13 +2850,24 @@ BRIEF_EOF
     _seq_reason_line="${_seq_reason_line//$'\r'/ }"
     [[ "${#_seq_reason_line}" -le 800 ]] \
       || _seq_reason_line="${_seq_reason_line:0:800}~"
-    printf '\ncorrection_retry: |\n  The first attempt was REJECTED for exactly this reason:\n\n    %s\n\n  %s has been removed. Rebuild it completely from scratch, in the\n  required section order, from the same reviewer evidence -- fix that\n  specific defect and do not change any other section to compensate.\n' \
-      "$_seq_reason_line" "$OUTPUT_FILE" >> "$BRIEF_FILE"
+    if [[ "$_seq_reason" == "transport failure" ]]; then
+      # CC-588 follow-up: a crashed dispatch process leaves nothing to
+      # correct -- the "REJECTED"/"rebuild from scratch" framing below
+      # would wrongly imply the model's prior content was judged and found
+      # wanting. Tell it plainly instead: nothing about content is at
+      # fault here, just start the review over.
+      printf '\ncorrection_retry: |\n  The previous attempt did not complete: the dispatch process itself\n  failed (%s) before any output could be judged. This is not a\n  correction of your prior review -- there is nothing to fix, just\n  start the review fresh.\n' \
+        "$_seq_reason_line" >> "$BRIEF_FILE"
+    else
+      printf '\ncorrection_retry: |\n  The first attempt was REJECTED for exactly this reason:\n\n    %s\n\n  %s has been removed. Rebuild it completely from scratch, in the\n  required section order, from the same reviewer evidence -- fix that\n  specific defect and do not change any other section to compensate.\n' \
+        "$_seq_reason_line" "$OUTPUT_FILE" >> "$BRIEF_FILE"
+    fi
     say '  [sequential] retrying once after %s.\n' "$_seq_reason"
   fi
   SEQ_DISPATCH_EXIT=0
   eval "$DISPATCH_CMD" >&2 || SEQ_DISPATCH_EXIT=$?
 
+  _seq_reason=""
   if [[ "$SEQ_DISPATCH_EXIT" -ne 0 ]]; then
     if [[ "$SEQ_DISPATCH_EXIT" -eq 124 ]]; then
       printf 'Timeout: sequential dispatch did not complete within %ss.\n' "$TIMEOUT" >&2
@@ -2881,27 +2892,44 @@ BRIEF_EOF
     else
       printf 'Gate aborted -- no reviewer sections were written before the session stopped: %s\n' "$OUTPUT_FILE" >&2
     fi
-    exit 1
-  fi
-
-  # Validate single-session output via the shared contract (must exist, be
-  # non-empty, carry exactly one Final: GO|NO-GO line that agrees with the
-  # frontmatter final: field). Same checks the parallel synthesis route and
-  # `pmctl gate verify` enforce.
-  _seq_reason=""
-  if ! gate_reviewer_protocol_verify \
-      "$OUTPUT_FILE" "$REVIEWERS" "$SCOPE_MANIFEST_DIGEST" \
-      "$SCOPE_MANIFEST_PATH" true; then
-    _seq_reason="invalid reviewer protocol"
-  elif ! gate_synthesis_restore_copy_fields \
-      "$OUTPUT_FILE" "$REVIEWERS" "$SKIPPED_WORDS"; then
-    _seq_reason="failed to restore synthesis copy fields"
-  elif ! gate_verify_synthesis_protocol \
-      "$OUTPUT_FILE" "$REVIEWERS" "$SKIPPED_WORDS" \
-      "$SCOPE_MANIFEST_DIGEST" true; then
-    _seq_reason="${GATE_SYNTHESIS_PROTOCOL_ERROR:-synthesis parity failure}"
+    # CC-588 follow-up: parallel mode already reclassifies a reviewer
+    # subprocess's hard crash (nonzero wait exit) as "transport failure"
+    # and retries it once via the shared CC-521 taxonomy (see
+    # GATE_PROTOCOL_RETRYABLE_REASONS in gate-protocol.sh, ~line 37) --
+    # this closed an AppContainer/MSYS2 CreateFileMapping-shaped crash
+    # (docs/spikes/CC-588.md) on the parallel path for free, but sequential
+    # mode had no equivalent: any nonzero dispatch exit here went straight
+    # to a hard `exit 1`, even though this exact loop already carries the
+    # gate_protocol_single_retry_outcome machinery two paragraphs below for
+    # content-shaped rejections. Give a dispatch-process crash the same
+    # single retry by reusing that machinery instead of a bespoke one.
+    # Deliberately excludes timeout (124): a slow/stuck task is a different
+    # failure shape than a crashed process, and blindly retrying it would
+    # double the wall-clock cost for a session that may genuinely need more
+    # time, not a second attempt.
+    if [[ "$SEQ_DISPATCH_EXIT" -eq 124 ]]; then
+      exit 1
+    fi
+    _seq_reason="transport failure"
   else
-    _SEQ_PROTOCOL_COMPLETE=true
+    # Validate single-session output via the shared contract (must exist, be
+    # non-empty, carry exactly one Final: GO|NO-GO line that agrees with the
+    # frontmatter final: field). Same checks the parallel synthesis route and
+    # `pmctl gate verify` enforce.
+    if ! gate_reviewer_protocol_verify \
+        "$OUTPUT_FILE" "$REVIEWERS" "$SCOPE_MANIFEST_DIGEST" \
+        "$SCOPE_MANIFEST_PATH" true; then
+      _seq_reason="invalid reviewer protocol"
+    elif ! gate_synthesis_restore_copy_fields \
+        "$OUTPUT_FILE" "$REVIEWERS" "$SKIPPED_WORDS"; then
+      _seq_reason="failed to restore synthesis copy fields"
+    elif ! gate_verify_synthesis_protocol \
+        "$OUTPUT_FILE" "$REVIEWERS" "$SKIPPED_WORDS" \
+        "$SCOPE_MANIFEST_DIGEST" true; then
+      _seq_reason="${GATE_SYNTHESIS_PROTOCOL_ERROR:-synthesis parity failure}"
+    else
+      _SEQ_PROTOCOL_COMPLETE=true
+    fi
   fi
 
   _seq_action="$(gate_protocol_single_retry_outcome sequential "$_seq_attempt" \

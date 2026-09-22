@@ -11987,6 +11987,104 @@ test_sequential_protocol_recovers_on_retry() {
   pass "$name"
 }
 
+# Behavior: CC-588 follow-up -- a sequential dispatch process that crashes
+# outright (nonzero, non-timeout exit -- e.g. the AppContainer/MSYS2
+# CreateFileMapping failure documented in docs/spikes/CC-588.md) gets the
+# same single "transport failure" retry the parallel route already had for
+# a reviewer/synthesis subprocess crash. Before this fix, any nonzero
+# sequential dispatch exit other than 124 went straight to a hard `exit 1`
+# with zero retry.
+# Steps:
+# 1. First dispatch attempt exits 1 with no output written at all
+#    (CODEX_GATE_STUB_MODE=fail, no partial content -- the stub's generic
+#    "fail" mode -- distinct from the sequential-partial-timeout mode,
+#    which is timeout-shaped and already covered by
+#    test_sequential_timeout_preserves_partial_result).
+# 2. CODEX_GATE_STUB_FAIL_ONLY_FIRST=1 makes the retry attempt (whose brief
+#    now carries the sequential correction_retry note) succeed.
+# 3. Assert the gate still succeeds, stderr shows the crash diagnostic and
+#    the "retrying once after transport failure" note (matching the
+#    existing parallel-mode wording exactly), and the recorded
+#    gate_protocol_attempt_v1 trail shows attempt 1 retryable-failure /
+#    transport failure followed by attempt 2 accepted.
+test_sequential_transport_failure_recovers_once() {
+  local name="sequential-protocol/transport-failure-recovers-once"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home="$TMP_ROOT/$name/home"
+  local repo="$TMP_ROOT/$name/repo" runner="$TMP_ROOT/$name/runner"
+  local out="$TMP_ROOT/$name/out" err="$TMP_ROOT/$name/err" code=0 attempts
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester
+  create_repo "$repo" docs
+  set +e
+  CODEX_GATE_STUB_MODE=fail CODEX_GATE_STUB_FAIL_ONLY_FIRST=1 \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester --mode sequential
+  code=$?
+  set -e
+  [[ "$code" -eq 0 ]] || {
+    fail "$name" "sequential did not recover from a transport failure: code=$code $(tail -n 5 "$err" 2>/dev/null)"
+    return
+  }
+  assert_file_contains "$name" "$err" "Error: sequential dispatch exited 1." || return
+  assert_file_contains "$name" "$err" "Gate aborted -- no reviewer sections were written" || return
+  assert_file_contains "$name" "$out" "[sequential] retrying once after transport failure" || return
+  attempts="$(find "$repo/.gate-results" -maxdepth 1 \
+    -name 'gate-protocol-attempts-*.jsonl' -type f | head -n 1)"
+  if [[ -z "$attempts" ]] || ! jq -s -e '
+      any(.[]; .role == "sequential" and .attempt == 1 and
+        .outcome == "retryable-failure" and .reason == "transport failure") and
+      any(.[]; .role == "sequential" and .attempt == 2 and
+        .outcome == "accepted")
+    ' "$attempts" >/dev/null; then
+    fail "$name" "sequential transport-failure recovery attempts were not recorded"
+    return
+  fi
+  pass "$name"
+}
+
+# Behavior: the CC-588 follow-up transport-failure retry above is bounded to
+# exactly one retry, matching every other single-retry path in this file --
+# a dispatch process that keeps crashing must fail closed, not loop forever.
+# Steps: fail both sequential dispatch attempts and assert a hard non-zero
+# exit with exactly two recorded attempts (retryable-failure then exhausted).
+test_sequential_transport_failure_exhausts_after_two_attempts() {
+  local name="sequential-protocol/transport-failure-exhausts"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home="$TMP_ROOT/$name/home"
+  local repo="$TMP_ROOT/$name/repo" runner="$TMP_ROOT/$name/runner"
+  local out="$TMP_ROOT/$name/out" err="$TMP_ROOT/$name/err" code=0 attempts
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester
+  create_repo "$repo" docs
+  set +e
+  CODEX_GATE_STUB_MODE=fail \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester --mode sequential
+  code=$?
+  set -e
+  [[ "$code" -ne 0 ]] || {
+    fail "$name" "a persistently crashing sequential dispatch unexpectedly succeeded"
+    return
+  }
+  assert_file_contains "$name" "$out" "[sequential] retrying once after transport failure" || return
+  attempts="$(find "$repo/.gate-results" -maxdepth 1 \
+    -name 'gate-protocol-attempts-*.jsonl' -type f | head -n 1)"
+  if [[ -z "$attempts" ]] || ! jq -s -e '
+      any(.[]; .role == "sequential" and .attempt == 1 and
+        .outcome == "retryable-failure" and .reason == "transport failure") and
+      any(.[]; .role == "sequential" and .attempt == 2 and
+        .outcome == "exhausted" and .reason == "transport failure") and
+      (length == 2)
+    ' "$attempts" >/dev/null; then
+    fail "$name" "sequential transport-failure exhaustion was not bounded to two attempts"
+    return
+  fi
+  pass "$name"
+}
+
 # Behavior: synthesis recovery is bounded to one retry for synthesis-owned
 # defects that copy-field restore cannot heal.
 # Steps: keep remediation_seed.state invalid on both attempts and assert
@@ -12928,6 +13026,8 @@ run_test test_parallel_synthesis_retry_brief_bounds_long_reason
 run_test test_parallel_synthesis_retry_removes_output_file_before_redispatch
 run_test test_sequential_synthesis_retry_removes_output_file_before_redispatch
 run_test test_sequential_protocol_recovers_on_retry
+run_test test_sequential_transport_failure_recovers_once
+run_test test_sequential_transport_failure_exhausts_after_two_attempts
 run_test test_sequential_protocol_refuses_stale_subject_retry
 run_test test_sequential_retry_brief_bounds_long_reason
 run_test test_handoff_records_result_for_nogo_verdict
