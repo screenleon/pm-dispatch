@@ -1194,7 +1194,13 @@ pmctl_gate_verify() {
   fi
   rm -f -- "$verify_diag"
 
-  report="$(jq -nc \
+  # MSYS2_ARG_CONV_EXCL="*" (scoped to this one jq invocation only, not
+  # exported) stops MSYS from silently rewriting $result_abs/$assurance_file
+  # into Windows drive-letter form on the way into jq's argv -- see the
+  # matching comment on gate_subject_snapshot in gate-result-verify.sh for
+  # the full explanation. Both fields must stay POSIX here --
+  # gate-verification.schema.json's `pattern: "^/"` requires it.
+  report="$(MSYS2_ARG_CONV_EXCL="*" jq -nc \
     --arg result_file "$result_abs" --arg verdict "$verdict" \
     --arg assurance_status "$assurance_status" \
     --arg assurance_kind "${assurance_kind:-}" \

@@ -3121,6 +3121,69 @@ FAKE_GATE
   fi
 }
 
+# pr-gate's own critic/qa-tester flagged (F001/qa-tester-F001, the latter
+# hard_block) that the MSYS2_ARG_CONV_EXCL scoping fix in
+# gate_subject_snapshot/pmctl_gate_verify/gate_finalize_assurance had no
+# direct regression coverage: on this host, jq is a native (non-MSYS)
+# binary, so MSYS auto-rewrites any --arg/--argjson value that merely LOOKS
+# like a POSIX path ("/c/Users/...") into Windows drive-letter form on the
+# way into jq's argv -- silently corrupting schema-bound path fields that
+# must stay POSIX (pattern: "^/"). This case exercises the technique
+# directly and confirms it is what actually prevents the corruption, not
+# merely that the values happen to already be POSIX.
+case_msys_scoped_arg_conv_excl_preserves_posix_path_in_jq() {
+  local name="MSYS2_ARG_CONV_EXCL scoped prefix preserves a POSIX path through native jq --arg"
+  should_run "$name" || return 0
+  if [[ "$(detect_platform)" != windows ]]; then
+    skip "$name" "MSYS argv-conversion only applies when jq is a native (non-MSYS) Windows binary; nothing to regress on other platforms"
+    return 0
+  fi
+  local posix_path unfixed fixed
+  posix_path="$tmp_root/msys-argv-fixture/some path/with spaces"
+  unfixed="$(jq -nc --arg p "$posix_path" '$p')"
+  fixed="$(MSYS2_ARG_CONV_EXCL="*" jq -nc --arg p "$posix_path" '$p')"
+  # Confirming the *unfixed* call actually corrupts the value on this host
+  # is what proves the fixed call's success is the scoped prefix's doing,
+  # not a coincidence of this particular jq build/PATH/value shape.
+  if [[ "$unfixed" != "\"$posix_path\"" && "$fixed" == "\"$posix_path\"" ]]; then
+    pass "$name"
+  else
+    fail "$name" "posix_path=$posix_path unfixed=$unfixed fixed=$fixed"
+  fi
+}
+
+# The specific evidence line both reviewers cited (gate-result-verify.sh
+# gate_subject_snapshot, ~line 1760 at review time): its observed.root and
+# observed.git_common_dir fields are exactly the two schema-bound
+# (pattern: "^/") values the MSYS corruption hit in practice, discovered
+# while re-verifying issue #606 on this host.
+case_gate_subject_snapshot_preserves_posix_paths() {
+  local name="gate_subject_snapshot: observed.root and observed.git_common_dir stay POSIX under MSYS argv conversion"
+  should_run "$name" || return 0
+  if [[ "$(detect_platform)" != windows ]]; then
+    skip "$name" "MSYS argv-conversion only applies when jq is a native (non-MSYS) Windows binary; nothing to regress on other platforms"
+    return 0
+  fi
+  local snap rc=0 observed_root observed_common_dir
+  snap="$(gate_subject_snapshot "$_GATE_VERIFY_REPO" HEAD HEAD committed_head \
+    require_clean "2026-01-01T00:00:00Z")" || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    fail "$name" "gate_subject_snapshot failed: rc=$rc"
+    return
+  fi
+  observed_root="$(jq -r '.observed.root' <<<"$snap")"
+  observed_common_dir="$(jq -r '.observed.git_common_dir' <<<"$snap")"
+  # No dedicated "gate-subject" schema exists -- this shape is only
+  # validated as the embedded .subject field inside the larger
+  # gate-assurance envelope -- so the "^/" pattern requirement is asserted
+  # directly here instead, matching what that embedding schema requires.
+  if [[ "$observed_root" == /* && "$observed_common_dir" == /* ]]; then
+    pass "$name"
+  else
+    fail "$name" "observed.root=$observed_root observed.git_common_dir=$observed_common_dir"
+  fi
+}
+
 case_explicit_cd_passthrough
 case_gate_run_refreshes_context_before_dispatch
 case_gate_run_continues_when_bounded_context_refresh_fails
@@ -3197,5 +3260,7 @@ case_gate_operation_routes_via_cli
 case_gate_operation_cli_unavailable_fallbacks
 case_foreground_cancel_stops_preflight_process_tree
 case_detached_cancel_surfaces_cancelled_wait_terminal
+case_msys_scoped_arg_conv_excl_preserves_posix_path_in_jq
+case_gate_subject_snapshot_preserves_posix_paths
 
 th_summary

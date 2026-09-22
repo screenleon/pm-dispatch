@@ -1745,7 +1745,19 @@ gate_subject_snapshot() {
     _gate_subject_tree_fingerprint "$observed_root" "$fingerprint_kind" "$head_commit"
   )" || return $?
 
-  jq -nc \
+  # MSYS2_ARG_CONV_EXCL="*" (scoped to this one jq invocation only, not
+  # exported) stops MSYS from silently rewriting $observed_root/$common_dir
+  # into Windows drive-letter form on the way into jq's argv -- confirmed
+  # directly: this repo's jq is a native (non-MSYS) binary, and MSYS
+  # auto-converts any argv element that merely LOOKS like a POSIX path
+  # ("/c/Users/...") for such a binary, regardless of whether that argument
+  # is semantically a filesystem path to jq itself. Both fields must stay
+  # POSIX here -- gate-verification.schema.json's `pattern: "^/"` requires
+  # it. Scoped as a one-command env var, not `export`ed: MSYS2_ARG_CONV_EXCL
+  # also affects `git`'s own argv (another native binary), so exporting it
+  # process-wide broke every subsequent `git -C <posix-path>` call in the
+  # same shell (confirmed directly -- a much worse regression than this fix).
+  MSYS2_ARG_CONV_EXCL="*" jq -nc \
     --arg repository_key "$repository_key" \
     --arg common_identity "$common_identity" \
     --arg remote_identity "$remote_identity" \

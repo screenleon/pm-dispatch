@@ -254,7 +254,13 @@ gate_finalize_assurance() {
       "$assurance_file" >&2
     return 1
   }
-  if ! jq -n \
+  # MSYS2_ARG_CONV_EXCL="*" (scoped to this one jq invocation only, not
+  # exported) stops MSYS from silently rewriting $WORK_DIR into Windows
+  # drive-letter form on the way into jq's argv -- see the matching comment
+  # on gate_subject_snapshot in gate-result-verify.sh for the full
+  # explanation. bindings.repo_root must stay POSIX here --
+  # gate-assurance.schema.json's `pattern: "^/"` requires it.
+  if ! MSYS2_ARG_CONV_EXCL="*" jq -n \
     --arg final "$final" \
     --arg result_sha "$result_sha" \
     --arg repo_root "$WORK_DIR" --arg repo_identity "$GATE_SUBJECT_REPOSITORY_KEY" \
@@ -385,7 +391,12 @@ gate_finalize_assurance() {
       printf 'Error: unable to create protected gate assurance attestation\n' >&2
       return 1
     }
-    if ! jq -n \
+    # MSYS2_ARG_CONV_EXCL="*" (scoped to this one jq invocation only, not
+    # exported) -- see the matching comment above on the bindings.repo_root
+    # jq call in this same function. This attestation's own repo_root must
+    # match bindings.repo_root byte-for-byte (gate_result_verify compares
+    # them), so it needs the identical protection.
+    if ! MSYS2_ARG_CONV_EXCL="*" jq -n \
       --arg result_sha "$result_sha" --arg assurance_sha "$assurance_sha" \
       --arg repo_root "$WORK_DIR" --arg repo_identity "$GATE_SUBJECT_REPOSITORY_KEY" \
       --arg base_commit "$GATE_BINDING_BASE_COMMIT" \
