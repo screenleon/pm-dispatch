@@ -125,6 +125,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-586 | ✅ done | [[CC-447]] live dogfood smoke 摔倒點（嚴重）：`_pmctl_ship_ensure_gitignore`（[[CC-584]] pr:#583 新增）最後一行以 false 條件成為函式隱式回傳值 1，在真實 `cli/pmctl` 的 `set -euo pipefail` 下會讓 `pmctl ship finish` 靜默終止。**已交付（pr:#585）**：改用明確 `if` 並固定 `return 0`；新增真實 CLI regression；後續 full-suite hardening 隔離共享 `/tmp` fixture，並讓 non-owned state-store case 在非 root 環境保留真實 ownership 語意。Targeted Gate GO；authoritative full suite 123/123、0 failed、0 skipped；GitHub CI 77/77。 | ops/gate | 2026-09-12 | pr:#585 | P1 | design |
 | CC-587 | 🔵 active | GitHub issue #586：原生 Windows Git Bash 上 `pmctl gate run` 能建立 parent operation，卻在 `pmctl_operation_expect_producer` 保留 producer ownership 時失敗，留下 `state: running`／`producer: null` 且 reviewer 未啟動。Linux 的 Windows platform override 與含空白 repo 路徑均無法重現，邊界縮至原生 Windows/MSYS 的既有檔案替換語意。**Requirement**：維持 POSIX 同目錄 temp→rename 快路徑；Windows overwrite 失敗時使用原生原子 replace primitive，不得退化為會短暫移除 record 的 `rm + mv`；補 regression 模擬 MSYS overwrite failure，斷言 producer 進入 pending、record 全程存在且 temp 清乾淨。 | ops/portability | 2026-09-15 | feedback:#586 | P1 | hygiene |
 | CC-588 | 🟢 someday | 原生 Windows Git Bash 上，`tests/shell/test-pmctl-ship-finish.sh` 部分 fixture（`gate_publish_assessment_build` 等內嵌 override 函式）用 `jq -f /dev/stdin <<\JQ` 讀 heredoc 時噴 `jq: Could not open /proc/self/fd/0: No such file or directory`，導致 `.subject.head_commit` 落空、finish 誤判「HEAD moved before push」而拒絕發布。**在未改動的 main（`75fafa0`）上、單獨 `--filter` 執行既有 `case_finish_dispatched_lane_auto_commits_before_gate` 即可重現**，非 CC-585 引入；CI（Linux runner）不受影響。範圍限於本測試檔用 `--filter` 單跑時的 stdin heredoc 語意，尚未查是否波及其他 fixture（2026-09-24 CC-585 工作中發現） | ops/test | 2026-09-24 | — | P3 | hygiene |
+| CC-589 | 🔵 active | 原生 Windows 上 `pmctl gate run`（`--executor codex`）的 reviewer／synthesis codex session 會不穩定地直接用 PowerShell `& .\cli\pmctl guard check ...`（或類似形式）呼叫 pmctl，而非透過 `docs/platform-support.md` 記載的 `bash.exe --noprofile --norc .../cli/pmctl @args` wrapper——codex 的非互動 PowerShell 子行程不會載入 `$PROFILE`，所以那個 wrapper function 在該 session 裡根本不存在。Windows 對這個 extension-less bash shebang 腳本直接執行的結果是 `Program 'pmctl' failed to run: Access is denied`，導致 reviewer 沒寫出 review 結果檔、或 synthesis 沒寫出 gate 結果檔。**已觀測**：同一分支（CC-585 fix branch）連續兩次 standard-tier parallel gate 都命中，共 3 次獨立發生（synthesis attempt 2 一次；security-reviewer 首次＋重試各一次），每次都是同一句 `Access is denied invoking cli/pmctl`；但並非每次都發生（同一台機器上稍早 CC-587/#617 的 express-tier 2-reviewer gate 完全沒踩到），機率性、非決定性。**Requirement**：讓 codex reviewer／synthesis 的 dispatch 路徑（或其 brief／sandbox 啟動）保證 pmctl 呼叫方式在原生 Windows PowerShell 下總是可執行——例如固定改用 `bash.exe --noprofile --norc <repo>/cli/pmctl @args` 這個 canonical 形式產生 brief 範例／環境變數，而不是依賴 model 自己選對呼叫方式；補 regression 或至少手動驗證：連續多輪 codex reviewer dispatch 在原生 Windows 上 guard pre-write check 不再出現 `Access is denied`。 | ops/gate | 2026-09-24 | — | P1 | hygiene |
 
 ---
 
@@ -4581,5 +4582,44 @@ push」並拒絕發布——即使實際 HEAD 完全沒動、部署邏輯本身�
 case，在原生 Windows Git Bash 上無論整檔跑或 `--filter` 單跑都穩定通過。
 
 **See**: [[CC-585]]（工作中發現本問題）；[[CC-370]]（原生 Windows experimental 支援範圍）
+
+---
+
+## CC-589 — 原生 Windows 上 codex reviewer/synthesis session 偶發直呼 pmctl 遭拒 🔵 active
+
+**Problem**：`pmctl gate run --executor codex`（standard tier, parallel mode）在原生 Windows
+上，codex 的 reviewer 或 synthesis session 有時會用 PowerShell `& .\cli\pmctl guard check
+...`（或類似不經 wrapper 的形式）直接呼叫 `cli/pmctl` 做 pre-write guard check，而非走
+`docs/platform-support.md`（第 117-137 行）記載的 `pmctl` PowerShell wrapper function
+（`& 'C:\Program Files\Git\bin\bash.exe' --noprofile --norc "$env:PM_DISPATCH_REPO/cli/pmctl"
+@args`）。原因：codex 的非互動 PowerShell 子行程不會載入使用者 `$PROFILE`，那個 wrapper
+function 在該 session 裡根本不存在；`cli/pmctl` 本身是 extension-less 的 bash shebang
+腳本，Windows 對它的 `CreateProcess` 直接呼叫回報 `Program 'pmctl' failed to run: Access is
+denied`。guard check 失敗後，reviewer／synthesis 都判定自己「無法通過 pre-write check」而
+主動放棄寫結果檔，最終這個 reviewer 或 synthesis 回合被記為 protocol 失敗。
+
+**已觀測**：CC-585 fix branch（`fix/CC-585-gitignore-content-check`）連續兩輪 standard-tier
+parallel gate（`gate-20260923-155933-257713`、`gate-20260923-163127-886e4f`）各命中一次；
+共 3 個獨立 session 中招（第一輪的 synthesis attempt 2；第二輪的 security-reviewer 初次
+＋重試各一次），每次的 trace 都精確印出同一句 `Access is denied` / `Guard check was
+denied`。**非每次發生**——同一台機器上稍早的 CC-587/pr:#617 express-tier 2-reviewer gate
+完全沒踩到，機率性、非決定性，推測跟 codex model 每次自己選擇怎麼呼叫 pmctl 有關，不是
+固定的環境設定缺陷。
+
+**Requirement**：讓 codex reviewer／synthesis 的 dispatch 路徑不依賴 model 自己選對呼叫
+方式——例如在 dispatch brief 或 codex 的 sandbox 啟動環境裡，把 canonical 呼叫形式
+（`bash.exe --noprofile --norc <repo>/cli/pmctl @args`，或等效的、不依賴 `$PROFILE`
+的 wrapper）直接準備好讓 model 用，而不是只在人類互動 shell 的 `$PROFILE` 裡才有。補
+regression 或至少人工驗證：連續多輪原生 Windows codex reviewer dispatch，guard pre-write
+check 不再出現 `Access is denied`。
+
+**Non-goals**：不處理 [[CC-588]] 記錄的 jq heredoc/stdin 測試 fixture 問題（不同根因、不同
+症狀）；不把原生 Windows 升為正式支援平台。
+
+**Done-when**：同一分支連續數輪 standard-tier parallel gate（4 reviewers）在原生 Windows 上
+不再因這個 guard-check 呼叫方式而使任一 reviewer 或 synthesis 回合失敗。
+
+**See**: [[CC-585]]（工作中發現本問題）；[[CC-370]]（原生 Windows experimental 支援範圍）；
+docs/platform-support.md 第 117-137 行（已記載的正確 wrapper 形式）
 
 ---
