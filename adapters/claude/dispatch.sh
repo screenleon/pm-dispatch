@@ -228,6 +228,29 @@ fi
 
 CMD=(claude -p
   --permission-mode "$PERMISSION_MODE"
+  # Headless --print has no host to answer an interactive permission prompt,
+  # so the default (--permission-prompts host) hangs forever on any command
+  # --permission-mode doesn't already cover -- observed for real: every
+  # non-acceptEdits action (a Bash call, notably the mandatory
+  # `pmctl guard check` pre-write step every reviewer role must run) stalled
+  # until the outer dispatch timeout killed it, silently. none makes an
+  # unapproved action fail closed immediately (a normal deny the caller can
+  # react to) instead of hanging -- it does not loosen what gets approved.
+  --permission-prompts none
+  # `pmctl guard check ...` evaluates policy (exit 0
+  # allow / 2 deny / 3 fail-closed-unregistered -- see
+  # runtime/lib/pmctl-guard.sh's exit-code contract): it inspects and returns
+  # a decision and may append an audit log; it does not perform the proposed
+  # write or command. Every executor
+  # role's brief instructs it to call this exact command before its one
+  # permitted write, so it must be able to actually run under `none` above --
+  # otherwise the real guard policy is never consulted and the role always
+  # fails closed on a permission-layer stall, not a genuine policy decision.
+  # Scoped to this policy-check command family, not a general Bash grant.
+  # Claude checks compound-command subcommands independently; this wildcard
+  # does not authorize a different command after &&, ;, |, or a newline.
+  # https://code.claude.com/docs/en/permissions#compound-commands
+  --allowedTools "Bash(pmctl guard check *)"
   --output-format stream-json
   --verbose
 )

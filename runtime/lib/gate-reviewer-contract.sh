@@ -199,7 +199,9 @@ gate_load_reviewer_override() {
     _gate_reviewer_override_error 'private content snapshot could not be loaded'
     return 2
   fi
-  if ! REVIEWER_OVERRIDE_PROVENANCE_JSON="$(jq -nc \
+  # This is JSON data, not a native-tool filename argument. Keep the POSIX
+  # source spelling required by assurance verification on native Windows.
+  if ! REVIEWER_OVERRIDE_PROVENANCE_JSON="$(MSYS2_ARG_CONV_EXCL='*' jq -nc \
     --arg source "$source" --arg sha256 "$snapshot_sha" \
     '{status:"provided",source:$source,sha256:$sha256}')"; then
     gate_cleanup_reviewer_override_snapshot

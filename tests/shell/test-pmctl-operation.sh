@@ -87,6 +87,39 @@ case_writer_loader_repairs_partial_inherited_functions() {
   fi
 }
 
+# Regression: operation op-20260922T151921Z-2faf65 lost its Windows children.
+# Behavior: Windows drive-letter children use the same trusted terminal claims
+# as POSIX children; failed children must never become parent success.
+# Steps: attach a real native path, publish a failed supervisor terminal claim,
+# reconcile twice, and check the durable failed state and idempotent timestamp.
+case_reconcile_windows_child_terminal_claim() {
+  local name="operation reconcile: Windows child failure converges idempotently"
+  should_run "$name" || return 0
+  if [[ "$(detect_platform)" != windows ]]; then
+    skip "$name" "requires a real native Windows drive-letter path"
+    return
+  fi
+  local work="$tmp_root/windows-reconcile-work" store="$tmp_root/windows-reconcile-state"
+  local op child run_id="run-20260923T000000Z-abcdef" out rc=0 state before after
+  make_repo "$work"
+  work="$(cd "$work" && pwd -P)"
+  child="$(cygpath -m "$work")"
+  op="$(PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_create "$REPO_ROOT" "$work" gate codex)"
+  PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_attach_child "$REPO_ROOT" "$work" "$op" "$run_id" "$child"
+  PM_DISPATCH_STATE_ROOT="$store" _pmctl_dispatch_try_terminal_claim "$child" "$run_id" failed supervisor
+  out="$(PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_reconcile "$REPO_ROOT" gate "$op" --cd "$work")" || rc=$?
+  state="$(PM_DISPATCH_STATE_ROOT="$store" _SW_REPO_ROOT="$work" _sw_project_dir)"
+  before="$(cat "$state/operations/$op.json")"
+  [[ "$rc" -eq 0 && "$out" == *"children: 1  unresolved: 0"* && "$(jq -r .state <<<"$before")" == failed ]] || {
+    fail "$name" "rc=$rc out=$out record=$before"
+    return
+  }
+  PM_DISPATCH_STATE_ROOT="$store" pmctl_operation_reconcile "$REPO_ROOT" gate "$op" --cd "$work" > "$tmp_root/reconcile-again.out" || rc=$?
+  after="$(cat "$state/operations/$op.json")"
+  [[ "$rc" -eq 0 && "$before" == "$after" ]] || { fail "$name" "second reconciliation changed terminal record"; return; }
+  pass "$name"
+}
+
 case_reconcile_uses_trusted_terminal_claims() {
   local name="operation reconcile: all trusted child claims converge parent to completed"
   should_run "$name" || return 0
@@ -445,6 +478,21 @@ case_repeated_cancel_preserves_cancelled_terminal() {
 # a missing or partial operation record.
 # Steps: create an operation normally, force mv to fail under the Windows
 # platform override, provide path/PowerShell stubs, then assert pending state.
+_install_replace_cygpath_stub() {
+  local target="$1" real_cygpath
+  real_cygpath="$(command -v cygpath || true)"
+  # Keep replacement paths usable by the Bash PowerShell stub, but preserve
+  # real -m canonicalization for operation ownership checks on native Windows.
+  # shellcheck disable=SC2016 # Arguments expand when the stub runs.
+  printf '#!/usr/bin/env bash\nif [[ "$1" == "-w" ]]; then\n  shift\n  [[ "${1:-}" == "--" ]] && shift\n  printf "%%s\\n" "$1"\n  exit 0\nfi\n' > "$target"
+  if [[ -n "$real_cygpath" ]]; then
+    # shellcheck disable=SC2016 # Forward the generated stub's arguments.
+    printf 'exec %q "$@"\n' "$real_cygpath" >> "$target"
+  else
+    printf 'exit 1\n' >> "$target"
+  fi
+}
+
 case_expect_producer_windows_replace_fallback() {
   local name="operation producer reservation: native Windows replace fallback preserves the record"
   should_run "$name" || return 0
@@ -460,8 +508,7 @@ case_expect_producer_windows_replace_fallback() {
   real_mv="$(command -v mv)"
   mkdir -p "$stubs"
   printf '#!/usr/bin/env bash\nexit 1\n' > "$stubs/mv"
-  # shellcheck disable=SC2016 # $1/$2 expand when the generated cygpath stub runs.
-  printf '#!/usr/bin/env bash\n[[ "$1" == "-w" ]] || exit 1\nprintf "%%s\\n" "$2"\n' > "$stubs/cygpath"
+  _install_replace_cygpath_stub "$stubs/cygpath"
   cat > "$stubs/powershell.exe" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -536,8 +583,7 @@ case_expect_producer_windows_replace_failure_preserves_record() {
   before="$(cat "$record")"
   mkdir -p "$stubs"
   printf '#!/usr/bin/env bash\nexit 1\n' > "$stubs/mv"
-  # shellcheck disable=SC2016 # $1/$2 expand when the generated cygpath stub runs.
-  printf '#!/usr/bin/env bash\n[[ "$1" == "-w" ]] || exit 1\nprintf "%%s\\n" "$2"\n' > "$stubs/cygpath"
+  _install_replace_cygpath_stub "$stubs/cygpath"
   cat > "$stubs/powershell.exe" <<'EOF'
 #!/usr/bin/env bash
 # issue #592: answer the store-root ACL-check invocation (a different
@@ -714,6 +760,7 @@ case_relative_cd_resolves_to_the_same_operation() {
 }
 
 case_writer_loader_repairs_partial_inherited_functions
+case_reconcile_windows_child_terminal_claim
 case_reconcile_uses_trusted_terminal_claims
 case_reconcile_defers_while_producer_is_running
 case_reconcile_recovers_dead_registered_producer

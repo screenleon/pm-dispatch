@@ -2798,7 +2798,7 @@ output_format: |
   (b) at least one reviewer returned advise|block-soft.
 
 self_verify:
-  - cmd: "test -f ${OUTPUT_FILE}"
+  - cmd: test -f $(printf '%q' "$OUTPUT_FILE")
   - has-conclusion: grep -cE '^Final: (GO|NO-GO)\$' ${OUTPUT_FILE} should be exactly 1
   - frontmatter-final-parity: the value after \`final:\` in the YAML frontmatter MUST equal the value after \`Final:\` in Gate Conclusion (case-sensitive)
 
@@ -3071,7 +3071,7 @@ output_format: |
   The JSON verdict is canonical. Do not emit an upper-case Verdict: marker.
 
 self_verify:
-  - cmd: "test -f ${REVIEWER_OUTPUT}"
+  - cmd: test -f $(printf '%q' "$REVIEWER_OUTPUT")
 
 acceptance:
   - ${REVIEWER_OUTPUT} exists with exactly one reviewer_result_v1 JSON block
@@ -3348,7 +3348,7 @@ output_format: |
   The JSON verdict is canonical. Do not emit an upper-case Verdict: marker.
 
 self_verify:
-  - cmd: "test -f ${_RETRY_OUTPUT}"
+  - cmd: test -f $(printf '%q' "$_RETRY_OUTPUT")
 
 acceptance:
   - ${_RETRY_OUTPUT} exists with exactly one reviewer_result_v1 JSON block
@@ -3667,7 +3667,7 @@ output_format: |
   Rationale: {1-2 sentences explaining the final verdict}
 
 self_verify:
-  - cmd: "test -f ${OUTPUT_FILE}"
+  - cmd: test -f $(printf '%q' "$OUTPUT_FILE")
   - has-final: grep -cE '^Final: (GO|NO-GO)\$' ${OUTPUT_FILE} should be exactly 1
   - frontmatter-final-parity: the value after \`final:\` in the YAML frontmatter MUST equal the value after \`Final:\` in Gate Conclusion (case-sensitive)
   - all-reviewers-present: output must contain a section header for each of: ${REVIEWER_DISPLAY}

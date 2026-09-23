@@ -248,6 +248,76 @@ case_reviewer_role_correlation_rejected() {
   if [[ "$rc" -ne 0 ]]; then pass "$name"; else fail "$name" "rc=$rc (expected rejection)"; fi
 }
 
+# Regression: live Windows run-20260922T234341Z-c1d10c stores native paths,
+# while its assurance binds POSIX paths. The owner and trace boundary must
+# remain identical regardless of the drive-letter spelling.
+_check_windows_dispatch_paths() {
+  local name="$1" mutation="$2" expected_rc="$3"
+  should_run "$name" || return 0
+  case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) ;;
+    *) skip "$name" "requires native Windows path conversion"; return ;;
+  esac
+  local dir="$tmp_root/windows-dispatch-$mutation" RESULT ASSURANCE
+  local repo native_repo native_trace attestation runs out rc=0 sha subject_sha
+  _read_pair "$(_mk_valid_pair "$dir")"
+  mkdir -p "$dir/work" "$dir/.agent-trace"
+  dir="$(cd "$dir" && pwd -P)"
+  repo="$(cd "$dir/work" && pwd -P)"
+  native_repo="$(cygpath -m "$repo")"
+  native_repo="${native_repo,}"
+  native_trace="$(cygpath -m "$dir/.agent-trace/test.last")"
+  printf 'fixture trace\n' > "$dir/.agent-trace/test.last"
+  MSYS2_ARG_CONV_EXCL='*' jq --arg repo "$repo" '
+    .bindings.repo_root=$repo | .subject.observed.root=$repo |
+    .dispatch.outcomes[0].run_id="run-20260923T000000Z-abcdef"
+  ' < "$ASSURANCE" > "$dir/assurance.tmp"
+  mv "$dir/assurance.tmp" "$ASSURANCE"
+  attestation="$dir/attestation.json"; runs="$dir/runs.jsonl"
+  sha="$(gate_digest_file "$ASSURANCE")"
+  subject_sha="$(jq -cS '.subject' "$ASSURANCE" | gate_digest_stream)"
+  jq -n --arg sha "$sha" --arg subject_sha "$subject_sha" \
+      --slurpfile a "$ASSURANCE" '$a[0] as $a | {
+    kind:"gate_assurance_attestation_v2",schema_version:2,
+    result_sha256:$a.bindings.result_sha256,assurance_sha256:$sha,
+    repo_root:$a.bindings.repo_root,repo_identity:$a.bindings.repo_identity,
+    base_commit:$a.bindings.base_commit,head_commit:$a.bindings.head_commit,
+    subject_fingerprint:$a.bindings.subject_fingerprint,
+    repository_key:$a.subject.repository.key,subject_sha256:$subject_sha,
+    run_ids:[$a.dispatch.outcomes[].run_id]
+  }' > "$attestation"
+  case "$mutation" in
+    foreign-repo) native_repo="$native_repo-other" ;;
+    foreign-trace) native_trace="$(cygpath -m "$dir/.agent-trace-other/test.last")" ;;
+  esac
+  jq -nc --arg work "$native_repo" --arg trace "$native_trace" '{
+    id:"run-20260923T000000Z-abcdef",state:"ok",exit_code:0,
+    working_dir:$work,trace_path:$trace
+  }' > "$runs"
+
+  out="$(gate_assurance_authorization_verify "$RESULT" "$ASSURANCE" "$attestation" "$runs" 2>&1)" || rc=$?
+
+  if [[ "$rc" -ne "$expected_rc" ]] \
+      || { [[ "$expected_rc" -eq 1 ]] && [[ "$out" != *"canonical run records"* ]]; }; then
+    fail "$name" "rc=$rc expected=$expected_rc out=$out"
+    return
+  fi
+  pass "$name"
+}
+
+case_windows_dispatch_paths_same_owner() {
+  _check_windows_dispatch_paths 'Windows dispatch authorization: native paths retain the same owner' same 0
+}
+case_windows_dispatch_paths_foreign_repo() {
+  _check_windows_dispatch_paths 'Windows dispatch authorization: another repository is rejected' foreign-repo 1
+}
+case_windows_dispatch_paths_foreign_trace() {
+  _check_windows_dispatch_paths 'Windows dispatch authorization: a sibling trace directory is rejected' foreign-trace 1
+}
+
+case_windows_dispatch_paths_same_owner
+case_windows_dispatch_paths_foreign_repo
+case_windows_dispatch_paths_foreign_trace
 case_valid_v3_passes
 case_valid_v2_passes
 case_v1_legacy_passes
