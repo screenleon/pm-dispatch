@@ -124,6 +124,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-585 | 🔵 active | [[CC-447]] live dogfood smoke 摔倒點：[[CC-584]] 修完後第一次對真實 codex 執行 `pmctl ship finish` 就卡住——`pmctl_context_workflow_refresh`（既有、跟 CC-584 無關的功能）在 dispatch 階段會自己建立一份 `.gitignore`（內容只有 `.pm-dispatch`），發生在 CC-584 的「host 補丁前 `.gitignore` 是否乾淨」判準檢查**之前**。CC-584 R3 修法只分辨得出「`_pmctl_ship_ensure_gitignore` 自己的補丁前後」，沒考慮到「host 端其他既有功能也可能合法建立 `.gitignore`」這第三種情況——兩者在 finish 開始檢查時看起來一模一樣（都是 untracked），導致這份完全合法、host 端建立的 `.gitignore` 被誤判成「未宣告路徑」，整條 commit／gate／push 被擋下。**Requirement**：把「時間點」判準（補丁前是否乾淨）改成「內容」判準——只要 `.gitignore`（或其新增的部分）整份內容都落在已知的 bookkeeping 排除規則允許清單內（`.pm-dispatch`／`.dispatch-results`／`.gate-results`／`.gate-briefs`／`.agent-trace`／`.pm-dispatch-state` 等），不論誰、什麼時候建立都放行；只要出現一行不在清單內，才判定為可疑並比照未宣告路徑處理。補 regression：dispatch 前 context-index 已建立僅含已知 bookkeeping pattern 的 `.gitignore`（無關 `_pmctl_ship_ensure_gitignore`）時，finish 仍正確完成；`.gitignore` 混入未知規則時仍正確拒絕。 | ops/gate | 2026-09-12 | — | P2 | design |
 | CC-586 | ✅ done | [[CC-447]] live dogfood smoke 摔倒點（嚴重）：`_pmctl_ship_ensure_gitignore`（[[CC-584]] pr:#583 新增）最後一行以 false 條件成為函式隱式回傳值 1，在真實 `cli/pmctl` 的 `set -euo pipefail` 下會讓 `pmctl ship finish` 靜默終止。**已交付（pr:#585）**：改用明確 `if` 並固定 `return 0`；新增真實 CLI regression；後續 full-suite hardening 隔離共享 `/tmp` fixture，並讓 non-owned state-store case 在非 root 環境保留真實 ownership 語意。Targeted Gate GO；authoritative full suite 123/123、0 failed、0 skipped；GitHub CI 77/77。 | ops/gate | 2026-09-12 | pr:#585 | P1 | design |
 | CC-587 | 🔵 active | GitHub issue #586：原生 Windows Git Bash 上 `pmctl gate run` 能建立 parent operation，卻在 `pmctl_operation_expect_producer` 保留 producer ownership 時失敗，留下 `state: running`／`producer: null` 且 reviewer 未啟動。Linux 的 Windows platform override 與含空白 repo 路徑均無法重現，邊界縮至原生 Windows/MSYS 的既有檔案替換語意。**Requirement**：維持 POSIX 同目錄 temp→rename 快路徑；Windows overwrite 失敗時使用原生原子 replace primitive，不得退化為會短暫移除 record 的 `rm + mv`；補 regression 模擬 MSYS overwrite failure，斷言 producer 進入 pending、record 全程存在且 temp 清乾淨。 | ops/portability | 2026-09-15 | feedback:#586 | P1 | hygiene |
+| CC-588 | 🟢 someday | 原生 Windows Git Bash 上，`tests/shell/test-pmctl-ship-finish.sh` 部分 fixture（`gate_publish_assessment_build` 等內嵌 override 函式）用 `jq -f /dev/stdin <<\JQ` 讀 heredoc 時噴 `jq: Could not open /proc/self/fd/0: No such file or directory`，導致 `.subject.head_commit` 落空、finish 誤判「HEAD moved before push」而拒絕發布。**在未改動的 main（`75fafa0`）上、單獨 `--filter` 執行既有 `case_finish_dispatched_lane_auto_commits_before_gate` 即可重現**，非 CC-585 引入；CI（Linux runner）不受影響。範圍限於本測試檔用 `--filter` 單跑時的 stdin heredoc 語意，尚未查是否波及其他 fixture（2026-09-24 CC-585 工作中發現） | ops/test | 2026-09-24 | — | P3 | hygiene |
 
 ---
 
@@ -4547,5 +4548,38 @@ repo 路徑重跑 `pmctl gate run`，能越過 producer reservation 並實際啟
 
 **See**: [[CC-370]]（原生 Windows 仍屬 experimental／deferred 支援）；[[CC-447]]
 （live dogfood umbrella）；GitHub issue #586
+
+---
+
+## CC-588 — Windows `--filter` 單跑 `test-pmctl-ship-finish.sh` 時 jq heredoc stdin 失敗 🟢 someday
+
+**Problem**：`tests/shell/test-pmctl-ship-finish.sh` 的 `run_finish_with_fake_gate` fixture 內，
+`gate_publish_assessment_build`（以及同檔另一處類似 override）用
+`jq -n ... -f /dev/stdin <<\JQ > "$output"` 讀 heredoc 內容。在原生 Windows Git Bash 上單獨用
+`--filter` 執行涉及該 fixture 的 case 時，這行噴出
+`jq: Could not open /proc/self/fd/0: No such file or directory`，導致寫出的
+`gate_publish_assessment_v1` JSON 缺 `.subject.head_commit`。`pmctl_ship_finish` 稍後比對
+`verified_head`（讀自這份 JSON，因而是空字串）與 `current_head`，判定「HEAD moved before
+push」並拒絕發布——即使實際 HEAD 完全沒動、部署邏輯本身正確。
+
+**已確認範圍**：
+- 在未改動的 `main`（commit `75fafa0`）上，單獨 `--filter` 執行既有
+  `case_finish_dispatched_lane_auto_commits_before_gate` 即可 100% 重現，證明與
+  [[CC-585]] 的改動無關，是既有 fixture 在此平台的既有缺口。
+- 同一測試檔內用**真正 `cli/pmctl` product build**（`make_cli_fixture_with_fake_gate`，見
+  `case_finish_dispatched_lane_already_fully_gitignore_patched_does_not_abort`）而非這個
+  inline-override fixture的 case 不受影響。
+- CI 在 Linux runner 上執行，不重現此問題；本票不影響任何已合併變更的正確性判定。
+- 尚未確認：(a) 不加 `--filter`、整檔跑是否同樣觸發（另有 `gh` 不在 PATH 等其他環境落差需
+  先排除）；(b) 是否為 MSYS heredoc→`/proc/self/fd/0` 轉譯的已知限制，或可用
+  `jq -n ... "$(cat <<JQ ... JQ)"` 之類的純變數替換改寫規避。
+
+**Non-goals**：不改動 CC-585 已交付的內容判準邏輯本身；不在本票內動
+`gate_publish_assessment_build` 之外的其他 fixture，除非後續盤點發現同款寫法。
+
+**Done-when**：`case_finish_dispatched_lane_auto_commits_before_gate` 與其他觸及此 fixture 的
+case，在原生 Windows Git Bash 上無論整檔跑或 `--filter` 單跑都穩定通過。
+
+**See**: [[CC-585]]（工作中發現本問題）；[[CC-370]]（原生 Windows experimental 支援範圍）
 
 ---
