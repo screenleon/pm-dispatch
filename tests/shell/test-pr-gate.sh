@@ -127,7 +127,7 @@ reviewer_name="$(awk '$1 == "Reviewer:" { print $2; exit }' "$brief_file")"
 # begins. Must run before any other block below that might create the file.
 if [[ -n "${CODEX_GATE_CAPTURE_OUTPUT_EXISTS_DIR:-}" ]] \
     && { [[ "$brief_file" == *-synthesis.md ]] || grep -q '^goal: Sequential ' "$brief_file"; }; then
-  _output_exists_path=$(grep -o '\- new:.*' "$brief_file" | head -1 | awk '{print $NF}')
+  _output_exists_path=$(grep -o '\- new:.*' "$brief_file" | head -1 | sed 's/^- new:[[:space:]]*//')
   mkdir -p "$CODEX_GATE_CAPTURE_OUTPUT_EXISTS_DIR"
   # Each gate run's synthesis dispatches at most twice (initial + one
   # retry), so a fixed first/second pair of files is simpler than a
@@ -153,7 +153,7 @@ if [[ -n "${CODEX_GATE_CAPTURE_SCOPE_DIR:-}" ]]; then
   capture_name="$reviewer_name"
   [[ "$brief_file" == *-synthesis.md ]] && capture_name=synthesis
   scope_digest="$(awk '$1 == "artifact_sha256:" { print $2; exit }' "$brief_file")"
-  scope_artifact="$(awk '$1 == "artifact:" { print $2; exit }' "$brief_file")"
+  scope_artifact="$(awk '$1 == "artifact:" { sub(/^[[:space:]]*artifact:[[:space:]]*/, ""); print; exit }' "$brief_file")"
   printf '%s\t%s\n' "$scope_digest" "$scope_artifact" \
     > "$CODEX_GATE_CAPTURE_SCOPE_DIR/$capture_name"
 fi
@@ -258,7 +258,7 @@ fi
 
 # Simulate reviewer-side tampering with the machine-owned declared scope.
 if [[ "${CODEX_GATE_STUB_TAMPER_SCOPE:-}" == "1" && "$brief_file" != *-synthesis.md ]]; then
-  scope_path=$(awk '$1 == "artifact:" { print $2; exit }' "$brief_file")
+  scope_path=$(awk '$1 == "artifact:" { sub(/^[[:space:]]*artifact:[[:space:]]*/, ""); print; exit }' "$brief_file")
   [[ -n "$scope_path" ]] && printf '\n' >> "$scope_path"
 fi
 
@@ -288,7 +288,7 @@ if [[ "${CODEX_GATE_STUB_QA_ABORT_AFTER_CHECKPOINT:-}" == "1" \
     printf 'QA helper did not flush running checkpoint\n' >&2; exit 4; }
   kill -KILL "$helper_pid" 2>/dev/null || true
   wait "$helper_pid" 2>/dev/null || true
-  output_path=$(grep -o '\- new:.*' "$brief_file" | head -1 | awk '{print $NF}')
+  output_path=$(grep -o '\- new:.*' "$brief_file" | head -1 | sed 's/^- new:[[:space:]]*//')
   mkdir -p "$(dirname "$output_path")"
   write_reviewer_protocol_stub "$output_path" "$reviewer_name" advise
   exit 0
@@ -298,7 +298,7 @@ fi
 # with the right prefix) to verify the anchored regex rejects it.
 # CODEX_GATE_STUB_VERDICT_PREFIX_ONLY=1: write an invalid prefix verdict instead of a valid one.
 if [[ "${CODEX_GATE_STUB_VERDICT_PREFIX_ONLY:-}" == "1" && "$brief_file" != *-synthesis.md ]]; then
-  output_path=$(grep -o '\- new:.*' "$brief_file" | head -1 | awk '{print $NF}')
+  output_path=$(grep -o '\- new:.*' "$brief_file" | head -1 | sed 's/^- new:[[:space:]]*//')
   if [[ -n "$output_path" ]]; then
     mkdir -p "$(dirname "$output_path")"
     printf '## %s -- approved\nVerdict: approved. Prefix-only bypass attempt.\n' \
@@ -312,7 +312,7 @@ fi
 # machine verdict.
 if [[ "${CODEX_GATE_STUB_HEADER_ONLY_VERDICT:-}" == "1" \
     && "$brief_file" != *-synthesis.md ]]; then
-  output_path=$(grep -o '\- new:.*' "$brief_file" | head -1 | awk '{print $NF}')
+  output_path=$(grep -o '\- new:.*' "$brief_file" | head -1 | sed 's/^- new:[[:space:]]*//')
   if [[ -n "$output_path" ]]; then
     mkdir -p "$(dirname "$output_path")"
     printf '## %s -- advise\n\nstatus: advise\nfindings: []\nverdict: Structured narrative.\n' \
@@ -326,7 +326,7 @@ fi
 # The gate must fail closed because no canonical reviewer_result_v1 exists.
 if [[ "${CODEX_GATE_STUB_CONFLICTING_VERDICT:-}" == "1" \
     && "$brief_file" != *-synthesis.md ]]; then
-  output_path=$(grep -o '\- new:.*' "$brief_file" | head -1 | awk '{print $NF}')
+  output_path=$(grep -o '\- new:.*' "$brief_file" | head -1 | sed 's/^- new:[[:space:]]*//')
   if [[ -n "$output_path" ]]; then
     mkdir -p "$(dirname "$output_path")"
     printf '## %s -- approve\nVerdict: block. Conflicting marker.\n' \
@@ -339,7 +339,7 @@ fi
 # Verifies the gate rejects ambiguous output rather than silently taking the first match.
 # CODEX_GATE_STUB_MULTIPLE_VERDICTS=1: write two valid verdict lines to the reviewer output.
 if [[ "${CODEX_GATE_STUB_MULTIPLE_VERDICTS:-}" == "1" && "$brief_file" != *-synthesis.md ]]; then
-  output_path=$(grep -o '\- new:.*' "$brief_file" | head -1 | awk '{print $NF}')
+  output_path=$(grep -o '\- new:.*' "$brief_file" | head -1 | sed 's/^- new:[[:space:]]*//')
   if [[ -n "$output_path" ]]; then
     mkdir -p "$(dirname "$output_path")"
     printf '## %s -- approve\nVerdict: approve. First verdict line.\nSome additional content.\nVerdict: block. Second verdict line.\n' \
@@ -472,7 +472,7 @@ case "$effective_mode" in
   no-verdict)
     # Writes a non-empty output file but omits the Verdict line — simulates
     # malformed reviewer output (caught by reviewer structure validation).
-    output_path=$(grep -o '\- new:.*' "$brief_file" | head -1 | awk '{print $NF}')
+    output_path=$(grep -o '\- new:.*' "$brief_file" | head -1 | sed 's/^- new:[[:space:]]*//')
     if [[ -n "$output_path" ]]; then
       mkdir -p "$(dirname "$output_path")"
       printf '## stub-reviewer\nSome content without a verdict line.\n' > "$output_path"
@@ -489,7 +489,7 @@ case "$effective_mode" in
     # after ALL reviewers finish — see pr-gate.sh task step 9), then exits
     # 124 to simulate the dispatch timeout.
     if grep -q '^goal: Sequential ' "$brief_file"; then
-      output_path=$(grep -o '\- new:.*' "$brief_file" | head -1 | awk '{print $NF}')
+      output_path=$(grep -o '\- new:.*' "$brief_file" | head -1 | sed 's/^- new:[[:space:]]*//')
       if [[ -n "$output_path" ]]; then
         mkdir -p "$(dirname "$output_path")"
         cat > "$output_path" << PARTIAL_EOF
@@ -514,7 +514,7 @@ PARTIAL_EOF
     ;;
   *)
     # Success: write a stub output file so the gate's output validation passes.
-    output_path=$(grep -o '\- new:.*' "$brief_file" | head -1 | awk '{print $NF}')
+    output_path=$(grep -o '\- new:.*' "$brief_file" | head -1 | sed 's/^- new:[[:space:]]*//')
     if [[ -n "$output_path" ]]; then
       mkdir -p "$(dirname "$output_path")"
       if [[ "$brief_file" == *-synthesis.md ]]; then
@@ -4172,7 +4172,7 @@ done
 
 printf 'DISPATCH_STUB:success\n'
 
-output_path=$(grep -o '\- new:.*' "$brief_file" | head -1 | awk '{print $NF}')
+output_path=$(grep -o '\- new:.*' "$brief_file" | head -1 | sed 's/^- new:[[:space:]]*//')
 [[ -n "$output_path" ]] && mkdir -p "$(dirname "$output_path")"
 
 if [[ "$brief_file" == *-synthesis.md ]]; then
@@ -8975,17 +8975,17 @@ test_override_file_explicit_flag() {
   local code=$?
   set -e
   if [[ "$code" -ne 0 ]]; then
-    fail "$name" "exit $code, expected 0"
+    fail "$name" "exit $code, expected 0: $(tail -n 12 "$err")"
     return
   fi
   assert_file_contains "$name" "$brief" "explicit override content" || return
   assert_file_contains "$name" "$result" "## Gate Overrides Applied" || return
   assert_file_contains "$name" "$result" "explicit override content" || return
-  if ! jq -e --arg source "$expected_source" --arg sha "$expected_sha" '
+  if ! MSYS2_ARG_CONV_EXCL='*' jq -e --arg source "$expected_source" --arg sha "$expected_sha" '
       .policy.reviewer_override == {
         status:"provided", source:$source, sha256:$sha
       }
-    ' "${result}.assurance.json" >/dev/null; then
+    ' < "${result}.assurance.json" >/dev/null; then
     fail "$name" "assurance provenance did not bind the canonical source and full-file digest"
     return
   fi
@@ -9475,11 +9475,11 @@ EOF
   assert_file_contains "$name" "$result" "## Gate Overrides Applied" || return
   assert_file_contains "$name" "$result" "accepted snapshot bytes" || return
   assert_not_contains "$name" "$result" "REJECTED post-validation bytes" || return
-  if ! jq -e --arg source "$expected_source" --arg sha "$expected_sha" '
+  if ! MSYS2_ARG_CONV_EXCL='*' jq -e --arg source "$expected_source" --arg sha "$expected_sha" '
       .policy.reviewer_override == {
         status:"provided", source:$source, sha256:$sha
       }
-    ' "${result}.assurance.json" >/dev/null; then
+    ' < "${result}.assurance.json" >/dev/null; then
     fail "$name" "post-validation provenance did not retain the accepted snapshot digest"
     return
   fi
@@ -10194,7 +10194,7 @@ if [[ -n "${CODEX_GATE_REVIEWER_DEFS_MARKER:-}" ]]; then
   count="$(printf '%s\n' "$brief" | awk '/^  - read: .*\/\.gate-briefs\/reviewer-definitions-.*\.md$/ { count += 1 } END { print count + 0 }')"
   printf '%s\n' "$count" > "$CODEX_GATE_REVIEWER_DEFS_MARKER"
 fi
-output_path="$(printf '%s\n' "$brief" | grep -o '\- new:.*' | head -1 | awk '{print $NF}')"
+output_path="$(printf '%s\n' "$brief" | grep -o '\- new:.*' | head -1 | sed 's/^- new:[[:space:]]*//')"
 if [[ -n "$output_path" ]]; then
   scope_sha="$(printf '%s\n' "$brief" | awk '$1 == "artifact_sha256:" { print $2; exit }')"
   mkdir -p "$(dirname "$output_path")"
@@ -11987,6 +11987,146 @@ test_sequential_protocol_recovers_on_retry() {
   pass "$name"
 }
 
+# Regression: native Windows gate-20260922-151929-5272ce.
+# Behavior: the real generated self-verify command treats an output path as
+# one literal filename, and still fails if that file is absent.
+# Steps: capture a gate brief at the adapter boundary, create its result at a
+# space/quote/shell-metacharacter path, run the real post-verifier, then remove
+# the result and verify failure and the absence of command-substitution effects.
+test_self_verify_output_path_is_literal() {
+  local name="self-verify-output-path-is-literal"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home="$TMP_ROOT/$name/home"
+  local repo="$TMP_ROOT/$name/repo" runner="$TMP_ROOT/$name/runner"
+  local out="$TMP_ROOT/$name/out" err="$TMP_ROOT/$name/err"
+  local brief="$TMP_ROOT/$name/captured.md" result code=0 verify_rc=0 missing_rc=0
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester
+  create_repo "$repo" docs
+  result="$repo/.gate-results/gate ' result;\$(touch INJECTED).md"
+
+  CODEX_GATE_CAPTURE_BRIEF="$brief" CODEX_GATE_STUB_MODE=no-output \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --mode sequential --output "$result" || code=$?
+  [[ "$code" -eq 1 && -s "$brief" ]] || {
+    fail "$name" "expected missing-protocol exit 1 and captured brief, got $code; $(tail -n 8 "$err"); $(tail -n 3 "$out")"
+    return
+  }
+  mkdir -p "$repo/.agent-trace" "${result%/*}"
+  printf 'fake external reviewer completed\n' > "$repo/.agent-trace/latest.last"
+  printf 'Final: GO\n' > "$result"
+  bash "$REPO_ROOT/runtime/bin/dispatch-post-verify.sh" "$repo" "$brief" \
+    > "$dir/verify.out" 2>&1 || verify_rc=$?
+  rm -f -- "$result"
+  bash "$REPO_ROOT/runtime/bin/dispatch-post-verify.sh" "$repo" "$brief" \
+    > "$dir/missing.out" 2>&1 || missing_rc=$?
+
+  [[ "$verify_rc" -eq 0 && "$missing_rc" -eq 1 && ! -e "$repo/INJECTED" ]] || {
+    fail "$name" "present=$verify_rc (want 0), absent=$missing_rc (want 1), injected=$([[ -e "$repo/INJECTED" ]] && printf yes || printf no)"
+    return
+  }
+  pass "$name"
+}
+
+# Behavior: CC-588 follow-up -- a sequential dispatch process that crashes
+# outright (nonzero, non-timeout exit -- e.g. the AppContainer/MSYS2
+# CreateFileMapping failure documented in docs/spikes/CC-588.md) gets the
+# same single "transport failure" retry the parallel route already had for
+# a reviewer/synthesis subprocess crash. Before this fix, any nonzero
+# sequential dispatch exit other than 124 went straight to a hard `exit 1`
+# with zero retry.
+# Steps:
+# 1. First dispatch attempt exits 1 with no output written at all
+#    (CODEX_GATE_STUB_MODE=fail, no partial content -- the stub's generic
+#    "fail" mode -- distinct from the sequential-partial-timeout mode,
+#    which is timeout-shaped and already covered by
+#    test_sequential_timeout_preserves_partial_result).
+# 2. CODEX_GATE_STUB_FAIL_ONLY_FIRST=1 makes the retry attempt (whose brief
+#    now carries the sequential correction_retry note) succeed.
+# 3. Assert the gate still succeeds, stderr shows the crash diagnostic and
+#    the "retrying once after transport failure" note (matching the
+#    existing parallel-mode wording exactly), and the recorded
+#    gate_protocol_attempt_v1 trail shows attempt 1 retryable-failure /
+#    transport failure followed by attempt 2 accepted.
+test_sequential_transport_failure_recovers_once() {
+  local name="sequential-protocol/transport-failure-recovers-once"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home="$TMP_ROOT/$name/home"
+  local repo="$TMP_ROOT/$name/repo" runner="$TMP_ROOT/$name/runner"
+  local out="$TMP_ROOT/$name/out" err="$TMP_ROOT/$name/err" code=0 attempts
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester
+  create_repo "$repo" docs
+  set +e
+  CODEX_GATE_STUB_MODE=fail CODEX_GATE_STUB_FAIL_ONLY_FIRST=1 \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester --mode sequential
+  code=$?
+  set -e
+  [[ "$code" -eq 0 ]] || {
+    fail "$name" "sequential did not recover from a transport failure: code=$code $(tail -n 5 "$err" 2>/dev/null)"
+    return
+  }
+  assert_file_contains "$name" "$err" "Error: sequential dispatch exited 1." || return
+  assert_file_contains "$name" "$err" "Gate aborted -- no reviewer sections were written" || return
+  assert_file_contains "$name" "$out" "[sequential] retrying once after transport failure" || return
+  attempts="$(find "$repo/.gate-results" -maxdepth 1 \
+    -name 'gate-protocol-attempts-*.jsonl' -type f | head -n 1)"
+  if [[ -z "$attempts" ]] || ! jq -s -e '
+      any(.[]; .role == "sequential" and .attempt == 1 and
+        .outcome == "retryable-failure" and .reason == "transport failure") and
+      any(.[]; .role == "sequential" and .attempt == 2 and
+        .outcome == "accepted")
+    ' "$attempts" >/dev/null; then
+    fail "$name" "sequential transport-failure recovery attempts were not recorded"
+    return
+  fi
+  pass "$name"
+}
+
+# Behavior: the CC-588 follow-up transport-failure retry above is bounded to
+# exactly one retry, matching every other single-retry path in this file --
+# a dispatch process that keeps crashing must fail closed, not loop forever.
+# Steps: fail both sequential dispatch attempts and assert a hard non-zero
+# exit with exactly two recorded attempts (retryable-failure then exhausted).
+test_sequential_transport_failure_exhausts_after_two_attempts() {
+  local name="sequential-protocol/transport-failure-exhausts"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home="$TMP_ROOT/$name/home"
+  local repo="$TMP_ROOT/$name/repo" runner="$TMP_ROOT/$name/runner"
+  local out="$TMP_ROOT/$name/out" err="$TMP_ROOT/$name/err" code=0 attempts
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester
+  create_repo "$repo" docs
+  set +e
+  CODEX_GATE_STUB_MODE=fail \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers critic,qa-tester --mode sequential
+  code=$?
+  set -e
+  [[ "$code" -ne 0 ]] || {
+    fail "$name" "a persistently crashing sequential dispatch unexpectedly succeeded"
+    return
+  }
+  assert_file_contains "$name" "$out" "[sequential] retrying once after transport failure" || return
+  attempts="$(find "$repo/.gate-results" -maxdepth 1 \
+    -name 'gate-protocol-attempts-*.jsonl' -type f | head -n 1)"
+  if [[ -z "$attempts" ]] || ! jq -s -e '
+      any(.[]; .role == "sequential" and .attempt == 1 and
+        .outcome == "retryable-failure" and .reason == "transport failure") and
+      any(.[]; .role == "sequential" and .attempt == 2 and
+        .outcome == "exhausted" and .reason == "transport failure") and
+      (length == 2)
+    ' "$attempts" >/dev/null; then
+    fail "$name" "sequential transport-failure exhaustion was not bounded to two attempts"
+    return
+  fi
+  pass "$name"
+}
+
 # Behavior: synthesis recovery is bounded to one retry for synthesis-owned
 # defects that copy-field restore cannot heal.
 # Steps: keep remediation_seed.state invalid on both attempts and assert
@@ -12928,6 +13068,9 @@ run_test test_parallel_synthesis_retry_brief_bounds_long_reason
 run_test test_parallel_synthesis_retry_removes_output_file_before_redispatch
 run_test test_sequential_synthesis_retry_removes_output_file_before_redispatch
 run_test test_sequential_protocol_recovers_on_retry
+run_test test_self_verify_output_path_is_literal
+run_test test_sequential_transport_failure_recovers_once
+run_test test_sequential_transport_failure_exhausts_after_two_attempts
 run_test test_sequential_protocol_refuses_stale_subject_retry
 run_test test_sequential_retry_brief_bounds_long_reason
 run_test test_handoff_records_result_for_nogo_verdict

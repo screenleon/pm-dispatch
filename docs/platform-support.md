@@ -121,10 +121,25 @@ export PATH="${PM_DISPATCH_REPO}/cli:$PATH"
 > arguments through PowerShell's own argv without a `cmd.exe` re-parse:
 >
 > ```powershell
-> function pmctl { bash "$env:PM_DISPATCH_REPO\cli\pmctl" @args }
+> $env:PM_DISPATCH_REPO = 'C:\path\to\pm-dispatch'
+> function pmctl {
+>     $previousPath = $env:PATH
+>     try {
+>         $env:PATH = "C:\Program Files\Git\usr\bin;$env:PM_DISPATCH_REPO\cli;$previousPath"
+>         & 'C:\Program Files\Git\bin\bash.exe' --noprofile --norc "$env:PM_DISPATCH_REPO/cli/pmctl" @args
+>     } finally {
+>         $env:PATH = $previousPath
+>     }
+> }
 > ```
 >
-> Requires `bash` (from Git for Windows) on `PATH`. A `cmd`/batch shim was
+> Adjust both Git paths if Git for Windows is installed elsewhere. The temporary
+> PATH prefix also lets nested `bash` and `pmctl` calls resolve correctly; the
+> function restores the caller's PATH afterward. Use
+> the explicit Git Bash executable: `Get-Command bash -All` can resolve the
+> Windows/WSL launcher (`C:\Windows\System32\bash.exe`) first, which is a
+> different runtime. This function is for the native Windows checkout.
+> A `cmd`/batch shim was
 > considered and rejected: `%*` forwarding is re-parsed by `cmd.exe`, so an
 > argument carrying shell metacharacters could break out of the intended
 > invocation, and native Windows has no CI to regression-test it.

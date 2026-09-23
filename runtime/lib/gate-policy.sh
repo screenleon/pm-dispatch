@@ -755,7 +755,9 @@ _gate_policy_resolve() {
         override_status=allowance_mismatch
       fi
     fi
-    override_json="$(jq -nc --arg status "$override_status" \
+    # Preserve the canonical POSIX source as JSON data; native Windows jq
+    # must not let MSYS rewrite this provenance field to a drive-letter path.
+    override_json="$(MSYS2_ARG_CONV_EXCL='*' jq -nc --arg status "$override_status" \
       --arg source "$policy_override" --arg sha256 "$override_sha" \
       --arg reason "$override_reason" --argjson approver "$override_approver_json" '{
         status:$status,source:$source,sha256:$sha256,reason:$reason,approver:$approver

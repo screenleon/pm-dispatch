@@ -497,7 +497,7 @@ _pmctl_operation_reconcile_inner() {
   if [[ -f "$op_dir/children.jsonl" ]]; then
     while IFS= read -r line; do
       run_id="$(jq -r '.run_id // ""' <<<"$line")"; child_dir="$(jq -r '.working_dir // ""' <<<"$line")"
-      if ! pm_identifier_run_is_valid "$run_id" || [[ "$child_dir" != /* ]]; then
+      if ! pm_identifier_run_is_valid "$run_id" || ! _pmctl_operation_is_absolute_dir "$child_dir"; then
         missing=$((missing + 1))
         continue
       fi

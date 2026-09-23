@@ -1996,6 +1996,9 @@ _gate_assurance_linked_evidence_verify() {
     || return 1
   subject_fingerprint="$(jq -r '.subject.tree_fingerprint' "$assurance_file")"
   while IFS=$'\t' read -r label artifact expected_sha linked_subject; do
+    # Native Windows jq emits CRLF. @tsv escapes any CR in field data, so
+    # this trailing literal CR can only be the record terminator.
+    linked_subject="${linked_subject%$'\r'}"
     [[ -n "$label" ]] || continue
     artifact_path="$assurance_dir/$artifact"
     if [[ ! -f "$artifact_path" || -L "$artifact_path" ]]; then
@@ -2081,6 +2084,7 @@ _gate_assurance_linked_evidence_verify() {
                 .subject.base.ref, .subject.head.ref] | @tsv' \
           "$assurance_file"
       ) || true
+      _sm_head_ref="${_sm_head_ref%$'\r'}"
       if ! gate_scope_manifest_verify "$artifact_path" \
           "$_sm_repo_key" \
           "$_sm_base_commit" \
@@ -2484,6 +2488,7 @@ _gate_result_sha256_file() {
 gate_assurance_authorization_verify() {
   local result_file="$1" assurance_file="$2" attestation_file="$3" runs_file="$4"
   local result_sha assurance_sha subject_sha="" run_root assurance_kind
+  local bound_repo native_repo="" native_run="" comparison_paths
   [[ -s "$attestation_file" && -s "$runs_file" ]] || {
     printf 'Error: verified gate assurance requires protected attestation and canonical run records\n' >&2
     return 1
@@ -2523,17 +2528,39 @@ gate_assurance_authorization_verify() {
       "$attestation_file" >&2
     return 1
   }
+  bound_repo="$(jq -r '.bindings.repo_root' "$assurance_file")" || return 1
+  case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*)
+      native_repo="$(cygpath -m -- "$bound_repo")" || return 1
+      native_run="$(cygpath -m -- "$run_root")" || return 1
+      ;;
+  esac
+  # Derive aliases only from the bound roots, never from untrusted records.
+  # On POSIX the sets remain exact singletons. On Windows allow the native
+  # spelling and either drive-letter case, preserving all other path bytes.
+  comparison_paths="$(MSYS2_ARG_CONV_EXCL='*' jq -nc \
+    --arg repo "$bound_repo" --arg run "$run_root" \
+    --arg native_repo "$native_repo" --arg native_run "$native_run" '
+      def aliases($posix; $native):
+        ([$posix] + (if $native == "" then []
+          elif ($native | test("^[A-Za-z]:/")) then
+            [(($native[0:1] | ascii_downcase) + $native[1:]),
+             (($native[0:1] | ascii_upcase) + $native[1:])]
+          else [$native] end)) | unique;
+      {repo:aliases($repo; $native_repo),run:aliases($run; $native_run)}
+    ')" || return 1
   jq -s -e --slurpfile assurance "$assurance_file" \
-    --arg run_root "$run_root" '
+    --argjson paths "$comparison_paths" '
       $assurance[0] as $a |
       . as $records |
       all($a.dispatch.outcomes[].run_id;
         . as $id |
         ([$records[] | select(.id == $id)] | last) as $record |
         $record != null and $record.state == "ok" and $record.exit_code == 0 and
-        $record.working_dir == $a.bindings.repo_root and
-        ($record.trace_path | type == "string" and
-          startswith($run_root + "/.agent-trace/")))
+        ($paths.repo | index($record.working_dir)) != null and
+        ($record.trace_path | type == "string") and
+        any($paths.run[]; . as $root |
+          $record.trace_path | startswith($root + "/.agent-trace/")))
     ' "$runs_file" >/dev/null || {
     printf 'Error: gate assurance dispatch evidence does not match canonical run records\n' >&2
     return 1

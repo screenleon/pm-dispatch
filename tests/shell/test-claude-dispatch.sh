@@ -17,7 +17,8 @@ DISPATCH="$REPO_ROOT/adapters/claude/dispatch.sh"
 . "$SCRIPT_DIR/../lib/test-harness.sh"
 th_init "$@"
 
-SNAP_RE="exec [^ ]*claude-dispatch\.[A-Za-z0-9]+/claude-dispatch\.sh"
+# Bash xtrace quotes snapshot paths containing spaces (e.g. Windows profiles).
+SNAP_RE="exec .*claude-dispatch\.[A-Za-z0-9]+/claude-dispatch\.sh"
 
 # Fake claude honoring the output contract: drains the prompt on stdin and emits
 # stream-json JSONL events matching --output-format stream-json --verbose.

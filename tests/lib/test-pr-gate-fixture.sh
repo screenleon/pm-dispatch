@@ -35,7 +35,7 @@ pr_gate_fixture_write_reviewer_protocol() {
   fi
   local scope_sha scope_path evidence_path hard_gate_class findings_json
   scope_sha="$(awk '$1 == "artifact_sha256:" { print $2; exit }' "$brief_file")"
-  scope_path="$(awk '$1 == "artifact:" { print $2; exit }' "$brief_file")"
+  scope_path="$(awk '$1 == "artifact:" { sub(/^[[:space:]]*artifact:[[:space:]]*/, ""); print; exit }' "$brief_file")"
   evidence_path=".gate-results/$(basename "$scope_path")"
   hard_gate_class=none
   case "$verdict" in
@@ -418,7 +418,7 @@ pr_gate_fixture_profile_dispatch() {
 
   output_path=""
   if [[ -f "$brief_file" ]]; then
-    output_path="$(grep -o '\- new:.*' "$brief_file" | head -1 | awk '{print $NF}' || true)"
+    output_path="$(grep -o '\- new:.*' "$brief_file" | head -1 | sed 's/^- new:[[:space:]]*//' || true)"
   fi
   [[ -n "$output_path" ]] || return 0
   mkdir -p "$(dirname "$output_path")"
