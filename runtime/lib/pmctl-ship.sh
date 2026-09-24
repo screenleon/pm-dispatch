@@ -1220,6 +1220,16 @@ _pmctl_ship_lane_status() {
 # real, single-linked regular file; skip (never touch) a symlink, non-regular
 # path, or hardlinked file. Idempotent -- only appends patterns not already
 # present, verbatim or with a trailing slash.
+#
+# _PMCTL_SHIP_BOOKKEEPING_PATTERNS is the single source of truth for
+# pm-dispatch's own bookkeeping ignore patterns, space-separated -- consumed
+# both here (appending whichever are missing) and by
+# _pmctl_ship_gitignore_is_bookkeeping_only below (classifying whether a
+# `.gitignore`'s content is entirely bookkeeping). Keeping one shared list
+# means a future pattern addition/removal can't update one path without the
+# other (CC-585 gate review, architecture-reviewer-F001).
+_PMCTL_SHIP_BOOKKEEPING_PATTERNS=".dispatch-results .gate-results .gate-briefs .agent-trace .pm-dispatch-state .pm-dispatch"
+
 _pmctl_ship_ensure_gitignore() {
   local lane_work_dir="$1"
   local gitignore="$lane_work_dir/.gitignore"
@@ -1236,7 +1246,7 @@ _pmctl_ship_ensure_gitignore() {
     fi
   fi
   local pattern added=()
-  for pattern in .dispatch-results .gate-results .gate-briefs .agent-trace .pm-dispatch-state .pm-dispatch; do
+  for pattern in $_PMCTL_SHIP_BOOKKEEPING_PATTERNS; do
     if [[ -f "$gitignore" ]] \
       && { grep -qxF "$pattern" "$gitignore" 2>/dev/null || grep -qxF "$pattern/" "$gitignore" 2>/dev/null; }; then
       continue
@@ -1253,7 +1263,7 @@ _pmctl_ship_ensure_gitignore() {
 # _pmctl_ship_gitignore_is_bookkeeping_only <path>
 # Returns 0 iff <path> exists and every non-blank, non-comment line in it is
 # one of pm-dispatch's own known bookkeeping ignore patterns (bare or with a
-# trailing slash -- the same set _pmctl_ship_ensure_gitignore appends).
+# trailing slash -- see _PMCTL_SHIP_BOOKKEEPING_PATTERNS above).
 # Content-based, not time-based (CC-585): it does not matter who created or
 # last touched the file, or when -- a `.gitignore` whose entire content is
 # already inside this allowlist is safe to auto-stage as bookkeeping. Any
@@ -1263,20 +1273,19 @@ _pmctl_ship_ensure_gitignore() {
 _pmctl_ship_gitignore_is_bookkeeping_only() {
   local path="$1"
   [[ -f "$path" && ! -L "$path" ]] || return 1
-  local line trimmed
+  local line trimmed pattern matched
   while IFS= read -r line || [[ -n "$line" ]]; do
     trimmed="${line%$'\r'}"
     [[ -z "$trimmed" ]] && continue
     [[ "$trimmed" == \#* ]] && continue
-    case "$trimmed" in
-      .dispatch-results | .dispatch-results/ \
-        | .gate-results | .gate-results/ \
-        | .gate-briefs | .gate-briefs/ \
-        | .agent-trace | .agent-trace/ \
-        | .pm-dispatch-state | .pm-dispatch-state/ \
-        | .pm-dispatch | .pm-dispatch/) ;;
-      *) return 1 ;;
-    esac
+    matched=0
+    for pattern in $_PMCTL_SHIP_BOOKKEEPING_PATTERNS; do
+      if [[ "$trimmed" == "$pattern" || "$trimmed" == "$pattern/" ]]; then
+        matched=1
+        break
+      fi
+    done
+    [[ "$matched" -eq 1 ]] || return 1
   done < "$path"
   return 0
 }
