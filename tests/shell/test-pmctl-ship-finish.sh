@@ -1861,6 +1861,12 @@ case_finish_dispatched_lane_refuses_symlinked_gitignore_even_with_bookkeeping_ta
   pre_head="$(git -C "$work" rev-parse HEAD)"
   printf 'dispatched output\n' > "$work/OUTPUT.md"
   printf '.pm-dispatch\n' > "$work/.gitignore-bookkeeping-target"
+  # make_work_repo already seeds and commits a `.gitignore` -- remove it
+  # first so `ln -s` has a free path to create the symlink at (CC-585 gate
+  # review, qa-tester-F001: the prior version's `ln -s` silently failed here
+  # because the target path already existed, aborting the whole focused
+  # suite before this case's assertions ever ran).
+  rm -f -- "$work/.gitignore"
   ln -s .gitignore-bookkeeping-target "$work/.gitignore"
   out="$tmp_root/out-finish-gitignore-symlink"; err="$tmp_root/err-finish-gitignore-symlink"
   PM_DISPATCH_STATE_ROOT="$store" run_finish_with_fake_gate "$work" "CC-9001" "GO" > "$out" 2> "$err" || status=$?
