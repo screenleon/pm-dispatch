@@ -301,10 +301,16 @@ run_finish_with_fake_gate() {
     printf "%s\\n" "$3"
   }
   gate_publish_assessment_build() {
-      local output="$1" head tree
+      local output="$1" head tree _jq_prog
       head="$(git -C "$work_dir" rev-parse HEAD)"
       tree="$(_pmctl_ship_tree_fingerprint "$work_dir" committed_head "$head")"
-      jq -n --arg output "$output" --arg head "$head" --arg tree "$tree" -f /dev/stdin <<\JQ > "$output"
+      # A real temp file, not `-f /dev/stdin` off a heredoc (CC-588): on
+      # native Windows Git Bash, jq opening its own stdin via
+      # /proc/self/fd/0 to read a heredoc-backed filter program fails with
+      # "Could not open /proc/self/fd/0" -- a real file has no such fd
+      # indirection to fail.
+      _jq_prog="$(mktemp)"
+      cat > "$_jq_prog" <<\JQ
         {kind:"gate_publish_assessment_v1",schema_version:1,ticket:"CC-9001",
          subject:{repository_key:("a"*64),base_commit:("b"*40),head_commit:$head,tree_fingerprint:$tree},
          authorization:{status:"authorized",route:"final_tree_review",reason_codes:[]},
@@ -313,6 +319,8 @@ run_finish_with_fake_gate() {
          closure:{artifact:"/tmp/closure.json",sha256:("f"*64),state:"closed",subject_fingerprint:$tree,targeted_confirmation:"not_required"},
          full_suite:{artifact:"/tmp/full.json",sha256:("0"*64),status:"pass",subject_fingerprint:$tree}}
 JQ
+      jq -n --arg output "$output" --arg head "$head" --arg tree "$tree" -f "$_jq_prog" > "$output"
+      rm -f "$_jq_prog"
       printf "%s\\n" "$output"
     }
     gate_publish_assessment_verify() {
@@ -437,13 +445,18 @@ run_finish_with_real_publish_assessment() {
     }
     if [[ "$mode" != real-closure ]]; then
       gate_remediation_closure_publish() {
-        local output="$3" authorized=true
+        local output="$3" authorized=true _jq_prog
         [[ "$mode" == targeted-invalid ]] && authorized=false
-        jq -n --arg subject "$subject" --arg scope "$(jq -r .evidence.scope_manifest.sha256 "$assurance_file")" --argjson authorized "$authorized" -f /dev/stdin <<\JQ > "$output"
+        # Real temp file, not `-f /dev/stdin` off a heredoc -- see the
+        # matching CC-588 note in gate_publish_assessment_build above.
+        _jq_prog="$(mktemp)"
+        cat > "$_jq_prog" <<\JQ
           {kind:"remediation_closure_v1",schema_version:1,state:"closed",scope_manifest_sha256:$scope,
            final_assessment:{publish_authorized:$authorized,subject_fingerprint:$subject},
            final_subject:{tree_fingerprint:$subject},targeted_confirmation:{status:(if $authorized then "pass" else "not_required" end)}}
 JQ
+        jq -n --arg subject "$subject" --arg scope "$(jq -r .evidence.scope_manifest.sha256 "$assurance_file")" --argjson authorized "$authorized" -f "$_jq_prog" > "$output"
+        rm -f "$_jq_prog"
         printf "%s\n" "$output"
       }
     fi

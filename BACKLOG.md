@@ -124,7 +124,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-585 | 🔵 active | [[CC-447]] live dogfood smoke 摔倒點：[[CC-584]] 修完後第一次對真實 codex 執行 `pmctl ship finish` 就卡住——`pmctl_context_workflow_refresh`（既有、跟 CC-584 無關的功能）在 dispatch 階段會自己建立一份 `.gitignore`（內容只有 `.pm-dispatch`），發生在 CC-584 的「host 補丁前 `.gitignore` 是否乾淨」判準檢查**之前**。CC-584 R3 修法只分辨得出「`_pmctl_ship_ensure_gitignore` 自己的補丁前後」，沒考慮到「host 端其他既有功能也可能合法建立 `.gitignore`」這第三種情況——兩者在 finish 開始檢查時看起來一模一樣（都是 untracked），導致這份完全合法、host 端建立的 `.gitignore` 被誤判成「未宣告路徑」，整條 commit／gate／push 被擋下。**Requirement**：把「時間點」判準（補丁前是否乾淨）改成「內容」判準——只要 `.gitignore`（或其新增的部分）整份內容都落在已知的 bookkeeping 排除規則允許清單內（`.pm-dispatch`／`.dispatch-results`／`.gate-results`／`.gate-briefs`／`.agent-trace`／`.pm-dispatch-state` 等），不論誰、什麼時候建立都放行；只要出現一行不在清單內，才判定為可疑並比照未宣告路徑處理。補 regression：dispatch 前 context-index 已建立僅含已知 bookkeeping pattern 的 `.gitignore`（無關 `_pmctl_ship_ensure_gitignore`）時，finish 仍正確完成；`.gitignore` 混入未知規則時仍正確拒絕。 | ops/gate | 2026-09-12 | — | P2 | design |
 | CC-586 | ✅ done | [[CC-447]] live dogfood smoke 摔倒點（嚴重）：`_pmctl_ship_ensure_gitignore`（[[CC-584]] pr:#583 新增）最後一行以 false 條件成為函式隱式回傳值 1，在真實 `cli/pmctl` 的 `set -euo pipefail` 下會讓 `pmctl ship finish` 靜默終止。**已交付（pr:#585）**：改用明確 `if` 並固定 `return 0`；新增真實 CLI regression；後續 full-suite hardening 隔離共享 `/tmp` fixture，並讓 non-owned state-store case 在非 root 環境保留真實 ownership 語意。Targeted Gate GO；authoritative full suite 123/123、0 failed、0 skipped；GitHub CI 77/77。 | ops/gate | 2026-09-12 | pr:#585 | P1 | design |
 | CC-587 | 🔵 active | GitHub issue #586：原生 Windows Git Bash 上 `pmctl gate run` 能建立 parent operation，卻在 `pmctl_operation_expect_producer` 保留 producer ownership 時失敗，留下 `state: running`／`producer: null` 且 reviewer 未啟動。Linux 的 Windows platform override 與含空白 repo 路徑均無法重現，邊界縮至原生 Windows/MSYS 的既有檔案替換語意。**Requirement**：維持 POSIX 同目錄 temp→rename 快路徑；Windows overwrite 失敗時使用原生原子 replace primitive，不得退化為會短暫移除 record 的 `rm + mv`；補 regression 模擬 MSYS overwrite failure，斷言 producer 進入 pending、record 全程存在且 temp 清乾淨。 | ops/portability | 2026-09-15 | feedback:#586 | P1 | hygiene |
-| CC-588 | 🟢 someday | 原生 Windows Git Bash 上，`tests/shell/test-pmctl-ship-finish.sh` 部分 fixture（`gate_publish_assessment_build` 等內嵌 override 函式）用 `jq -f /dev/stdin <<\JQ` 讀 heredoc 時噴 `jq: Could not open /proc/self/fd/0: No such file or directory`，導致 `.subject.head_commit` 落空、finish 誤判「HEAD moved before push」而拒絕發布。**在未改動的 main（`75fafa0`）上、單獨 `--filter` 執行既有 `case_finish_dispatched_lane_auto_commits_before_gate` 即可重現**，非 CC-585 引入；CI（Linux runner）不受影響。範圍限於本測試檔用 `--filter` 單跑時的 stdin heredoc 語意，尚未查是否波及其他 fixture（2026-09-24 CC-585 工作中發現） | ops/test | 2026-09-24 | — | P3 | hygiene |
+| CC-588 | ✅ done | 原生 Windows Git Bash 上，`tests/shell/test-pmctl-ship-finish.sh` 部分 fixture（`gate_publish_assessment_build`／`gate_remediation_closure_publish`）用 `jq -f /dev/stdin <<\JQ` 讀 heredoc 時噴 `jq: Could not open /proc/self/fd/0: No such file or directory`，導致 `.subject.head_commit` 落空、finish 誤判「HEAD moved before push」而拒絕發布。**在未改動的 main（`75fafa0`）上、單獨 `--filter` 執行既有 `case_finish_dispatched_lane_auto_commits_before_gate` 即可重現**，非 CC-585 引入；CI（Linux runner）不受影響。**已交付（隨 CC-585 一併修復，同一 PR）**：兩處 `-f /dev/stdin <<\JQ` 改成先 `mktemp` 寫入真實暫存檔再 `-f <tmpfile>`，不再依賴 `/proc/self/fd/0`；本機驗證 `--filter gitignore` 全數 7 案例由部分失敗轉為全綠。**範圍縮小**：`tests/shell/test-pmctl-ship.sh` 仍有一處同款 `-f /dev/stdin` 寫法未修，留待日後另開票（同根因，不同檔案，非本票必要範圍）。 | ops/test | 2026-09-24 | — | P3 | hygiene |
 | CC-589 | 🔵 active | 原生 Windows 上 `pmctl gate run`（`--executor codex`）的 reviewer／synthesis codex session 會不穩定地直接用 PowerShell `& .\cli\pmctl guard check ...`（或類似形式）呼叫 pmctl，而非透過 `docs/platform-support.md` 記載的 `bash.exe --noprofile --norc .../cli/pmctl @args` wrapper——codex 的非互動 PowerShell 子行程不會載入 `$PROFILE`，所以那個 wrapper function 在該 session 裡根本不存在。Windows 對這個 extension-less bash shebang 腳本直接執行的結果是 `Program 'pmctl' failed to run: Access is denied`，導致 reviewer 沒寫出 review 結果檔、或 synthesis 沒寫出 gate 結果檔。**已觀測**：同一分支（CC-585 fix branch）連續兩次 standard-tier parallel gate 都命中，共 3 次獨立發生（synthesis attempt 2 一次；security-reviewer 首次＋重試各一次），每次都是同一句 `Access is denied invoking cli/pmctl`；但並非每次都發生（同一台機器上稍早 CC-587/#617 的 express-tier 2-reviewer gate 完全沒踩到），機率性、非決定性。**Requirement**：讓 codex reviewer／synthesis 的 dispatch 路徑（或其 brief／sandbox 啟動）保證 pmctl 呼叫方式在原生 Windows PowerShell 下總是可執行——例如固定改用 `bash.exe --noprofile --norc <repo>/cli/pmctl @args` 這個 canonical 形式產生 brief 範例／環境變數，而不是依賴 model 自己選對呼叫方式；補 regression 或至少手動驗證：連續多輪 codex reviewer dispatch 在原生 Windows 上 guard pre-write check 不再出現 `Access is denied`。 | ops/gate | 2026-09-24 | — | P1 | hygiene |
 
 ---
@@ -4552,7 +4552,7 @@ repo 路徑重跑 `pmctl gate run`，能越過 producer reservation 並實際啟
 
 ---
 
-## CC-588 — Windows `--filter` 單跑 `test-pmctl-ship-finish.sh` 時 jq heredoc stdin 失敗 🟢 someday
+## CC-588 — Windows `--filter` 單跑 `test-pmctl-ship-finish.sh` 時 jq heredoc stdin 失敗 ✅ 2026-09-24
 
 **Problem**：`tests/shell/test-pmctl-ship-finish.sh` 的 `run_finish_with_fake_gate` fixture 內，
 `gate_publish_assessment_build`（以及同檔另一處類似 override）用
@@ -4580,6 +4580,15 @@ push」並拒絕發布——即使實際 HEAD 完全沒動、部署邏輯本身�
 
 **Done-when**：`case_finish_dispatched_lane_auto_commits_before_gate` 與其他觸及此 fixture 的
 case，在原生 Windows Git Bash 上無論整檔跑或 `--filter` 單跑都穩定通過。
+
+**已交付**（隨 CC-585 同一 PR）：`gate_publish_assessment_build` 與
+`gate_remediation_closure_publish` 兩處都從 `jq -n ... -f /dev/stdin <<\JQ` 改成先用
+`mktemp` 寫出一份真實暫存檔、再 `-f <tmpfile>` 讀取，不再經過 `/dev/stdin`／
+`/proc/self/fd/0` 這條路徑。本機驗證：`bash tests/shell/test-pmctl-ship-finish.sh --filter
+gitignore` 從「3 passed, 4 failed」轉為「7 passed, 0 failed」；`--filter
+"uncommitted output is staged"` 等其餘原本命中同一根因的既有 case 也一併轉綠。範圍內未改動的
+`test-pmctl-ship.sh` 仍有一處同款 `-f /dev/stdin` 寫法，留給後續另開票處理（同根因、不同檔
+案，非本票 done-when 範圍）。
 
 **See**: [[CC-585]]（工作中發現本問題）；[[CC-370]]（原生 Windows experimental 支援範圍）
 
@@ -4618,6 +4627,16 @@ check 不再出現 `Access is denied`。
 
 **Done-when**：同一分支連續數輪 standard-tier parallel gate（4 reviewers）在原生 Windows 上
 不再因這個 guard-check 呼叫方式而使任一 reviewer 或 synthesis 回合失敗。
+
+**已知規避（非修復）**：`--mode sequential`（單一合併 session，沒有獨立的 synthesis
+dispatch 步驟）在同一分支上連續兩輪都完全避開此問題，而 `parallel` 模式在同一分支五次
+gate 嘗試中命中 4 次（見上）。單一合併 session 底下 pmctl 呼叫方式是否還會偶發出錯尚未
+長期觀察，此規避不能取代 Requirement 的根本修法，僅供暫時繞過。額外多發現一次同款錯誤
+也出現在 `--executor claude`（非 codex 專屬）：4 個 reviewer 首次全數因 `pmctl` 不在
+sandbox PATH 上、且 fallback 絕對路徑呼叫被 session 的 non-interactive 權限層拒絕而失敗
+（重試後 2/4 自行判斷是 sandbox 產物而繼續寫出結果）——顯示這不只是 codex 的 PowerShell
+呼叫選字問題，claude adapter 的 sandbox 環境本身也缺 `pmctl` 可執行路徑，範圍比原始
+Problem 描述的還廣。
 
 **See**: [[CC-585]]（工作中發現本問題）；[[CC-370]]（原生 Windows experimental 支援範圍）；
 docs/platform-support.md 第 117-137 行（已記載的正確 wrapper 形式）
