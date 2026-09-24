@@ -1874,6 +1874,39 @@ case_finish_dispatched_lane_accepts_preexisting_bookkeeping_only_gitignore() {
   fi
 }
 
+case_finish_dispatched_lane_accepts_bookkeeping_only_gitignore_with_crlf() {
+  local name="ship finish: a pre-existing bookkeeping-only .gitignore with CRLF line endings is still auto-staged as bookkeeping (CC-585)"
+  should_run "$name" || return 0
+  local store work out err status=0
+  store="$tmp_root/state-finish-gitignore-crlf"
+  work="$tmp_root/work-finish-gitignore-crlf"
+  make_work_repo "$work" "CC-9001"
+  checkout_ticket_branch "$work" "CC-9001"
+  add_bare_origin "$work"
+  write_dispatched_lane_tracking_entry "$store" "$work" "CC-9001" "codex" "OUTPUT.md"
+  printf 'dispatched output\n' > "$work/OUTPUT.md"
+  # Same scenario as case_finish_dispatched_lane_accepts_preexisting_bookkeeping_only_gitignore,
+  # but with CRLF line endings -- _pmctl_ship_gitignore_is_bookkeeping_only
+  # strips a trailing \r per line before matching against the allowlist;
+  # this is the only case exercising that branch directly (CC-585 gate
+  # review, all four reviewers independently flagged the CRLF branch as
+  # untested given this repo's active Windows-parity focus).
+  printf '.pm-dispatch\r\n.dispatch-results\r\n' > "$work/.gitignore"
+  local gh_bin="$tmp_root/fake-gh-gitignore-crlf-bin"
+  install_fake_gh "$gh_bin" "https://example.invalid/pr/gitignore-crlf"
+  out="$tmp_root/out-finish-gitignore-crlf"; err="$tmp_root/err-finish-gitignore-crlf"
+  PM_DISPATCH_STATE_ROOT="$store" PATH="$gh_bin:$PATH" run_finish_with_fake_gate "$work" "CC-9001" "GO" > "$out" 2> "$err" || status=$?
+  local pushed=0
+  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
+  if [[ "$status" -eq 0 && "$pushed" -eq 1 ]] \
+    && grep -q "committed dispatched changes for CC-9001" "$err" \
+    && ! grep -q "undeclared path" "$err"; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 0, pushed, deliverable committed, no undeclared-path refusal; got status=$status pushed=$pushed stdout=$(cat "$out") stderr=$(cat "$err")"
+  fi
+}
+
 case_finish_dispatched_lane_refuses_with_no_declared_allowlist() {
   local name="ship finish: an --adapter-dispatched lane with no declared edit-path allowlist refuses to auto-commit at all (CC-584)"
   should_run "$name" || return 0
@@ -2635,6 +2668,7 @@ case_finish_manual_lane_still_refuses_on_dirty_tree_when_not_dispatched
 case_finish_dispatched_lane_refuses_undeclared_collateral_file
 case_finish_dispatched_lane_refuses_executor_authored_gitignore
 case_finish_dispatched_lane_accepts_preexisting_bookkeeping_only_gitignore
+case_finish_dispatched_lane_accepts_bookkeeping_only_gitignore_with_crlf
 case_finish_dispatched_lane_refuses_with_no_declared_allowlist
 case_finish_dispatched_lane_bookkeeping_only_reports_explicitly_and_gates_old_head
 case_finish_dispatched_lane_already_fully_gitignore_patched_does_not_abort
