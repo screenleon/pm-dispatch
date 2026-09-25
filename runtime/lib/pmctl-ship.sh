@@ -368,16 +368,21 @@ pmctl_ship_finish() {
     # below -- it would show up only as the undeclared-looking `notes/`.
     pre_ensure_status="$(git -C "$work_dir" status --porcelain --untracked-files=all 2>/dev/null)"
     if [[ -n "$pre_ensure_status" ]]; then
-      # Whether `.gitignore` was ALREADY dirty before the host's own patch
-      # below -- i.e. the executor itself modified it -- decides whether it
-      # gets the "host-authored bookkeeping" staging exception further down
-      # (CC-584 gate finding, all five reviewers converged: an unconditional
-      # `.gitignore` exception let an executor-authored ignore-rule change
-      # slip past the declared-path allowlist and hide collateral output
-      # from the very porcelain status this staging decision reads).
-      local gitignore_pre_dirty=0
-      grep -qE '^.. \.gitignore$' <<<"$pre_ensure_status" && gitignore_pre_dirty=1
       _pmctl_ship_ensure_gitignore "$work_dir"
+      # Whether `.gitignore`'s CONTENT, after the host's own patch above, is
+      # entirely pm-dispatch bookkeeping patterns decides whether it gets the
+      # "host-authored bookkeeping" staging exception further down (CC-585:
+      # a purely time-based "was it dirty before the patch" judgment
+      # misclassified a `.gitignore` some OTHER host-side feature legitimately
+      # created earlier in the same run -- e.g. `pmctl_context_workflow_refresh`
+      # -- as executor-authored, even though its content was pure bookkeeping.
+      # Judging by content instead means it does not matter who created the
+      # file or when; CC-584's original concern -- an executor-authored
+      # ignore-rule change slipping past the declared-path allowlist to hide
+      # collateral output -- is still caught, because any non-bookkeeping line
+      # fails this check regardless of timing).
+      local gitignore_bookkeeping_only=0
+      _pmctl_ship_gitignore_is_bookkeeping_only "$work_dir/.gitignore" && gitignore_bookkeeping_only=1
       local dirty_status
       # Same `--untracked-files=all` requirement as pre_ensure_status above.
       dirty_status="$(git -C "$work_dir" status --porcelain --untracked-files=all 2>/dev/null)"
@@ -416,15 +421,14 @@ pmctl_ship_finish() {
           # declared -- is the new (right-hand) side.
           [[ "$status_path" == *" -> "* ]] && status_path="${status_path##* -> }"
           if [[ -n "${_declared_set[$status_path]:-}" \
-              || ( "$status_path" == ".gitignore" && "$gitignore_pre_dirty" -eq 0 ) ]]; then
+              || ( "$status_path" == ".gitignore" && "$gitignore_bookkeeping_only" -eq 1 ) ]]; then
             # `.gitignore` gets the host-authored-bookkeeping exception ONLY
-            # when it was clean before `_pmctl_ship_ensure_gitignore` ran --
-            # i.e. every byte of its current diff is the host's own patch.
-            # It cannot itself be gitignored to exclude it the way the other
-            # bookkeeping paths are, so this path-name check is the only
-            # gate; if the executor already dirtied it, that diff mixes
-            # host and executor bytes and must be declared like any other
-            # touched file, not exempted.
+            # when its current content is entirely known bookkeeping patterns
+            # (CC-585). It cannot itself be gitignored to exclude it the way
+            # the other bookkeeping paths are, so this content check is the
+            # only gate; if any line -- from the executor or from any other
+            # source -- is not a known bookkeeping pattern, it must be
+            # declared like any other touched file, not exempted.
             to_add+=("$status_path")
           else
             undeclared+=("$status_path")
@@ -1216,6 +1220,16 @@ _pmctl_ship_lane_status() {
 # real, single-linked regular file; skip (never touch) a symlink, non-regular
 # path, or hardlinked file. Idempotent -- only appends patterns not already
 # present, verbatim or with a trailing slash.
+#
+# _PMCTL_SHIP_BOOKKEEPING_PATTERNS is the single source of truth for
+# pm-dispatch's own bookkeeping ignore patterns, space-separated -- consumed
+# both here (appending whichever are missing) and by
+# _pmctl_ship_gitignore_is_bookkeeping_only below (classifying whether a
+# `.gitignore`'s content is entirely bookkeeping). Keeping one shared list
+# means a future pattern addition/removal can't update one path without the
+# other (CC-585 gate review, architecture-reviewer-F001).
+_PMCTL_SHIP_BOOKKEEPING_PATTERNS=".dispatch-results .gate-results .gate-briefs .agent-trace .pm-dispatch-state .pm-dispatch"
+
 _pmctl_ship_ensure_gitignore() {
   local lane_work_dir="$1"
   local gitignore="$lane_work_dir/.gitignore"
@@ -1232,7 +1246,7 @@ _pmctl_ship_ensure_gitignore() {
     fi
   fi
   local pattern added=()
-  for pattern in .dispatch-results .gate-results .gate-briefs .agent-trace .pm-dispatch-state .pm-dispatch; do
+  for pattern in $_PMCTL_SHIP_BOOKKEEPING_PATTERNS; do
     if [[ -f "$gitignore" ]] \
       && { grep -qxF "$pattern" "$gitignore" 2>/dev/null || grep -qxF "$pattern/" "$gitignore" 2>/dev/null; }; then
       continue
@@ -1243,6 +1257,36 @@ _pmctl_ship_ensure_gitignore() {
   if [[ "${#added[@]}" -gt 0 ]]; then
     printf 'pmctl ship finish: added %s to .gitignore\n' "${added[*]}" >&2
   fi
+  return 0
+}
+
+# _pmctl_ship_gitignore_is_bookkeeping_only <path>
+# Returns 0 iff <path> exists and every non-blank, non-comment line in it is
+# one of pm-dispatch's own known bookkeeping ignore patterns (bare or with a
+# trailing slash -- see _PMCTL_SHIP_BOOKKEEPING_PATTERNS above).
+# Content-based, not time-based (CC-585): it does not matter who created or
+# last touched the file, or when -- a `.gitignore` whose entire content is
+# already inside this allowlist is safe to auto-stage as bookkeeping. Any
+# line outside the allowlist (even mixed in alongside allowlisted ones) fails
+# the check, so the caller falls back to treating `.gitignore` like any other
+# undeclared path.
+_pmctl_ship_gitignore_is_bookkeeping_only() {
+  local path="$1"
+  [[ -f "$path" && ! -L "$path" ]] || return 1
+  local line trimmed pattern matched
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    trimmed="${line%$'\r'}"
+    [[ -z "$trimmed" ]] && continue
+    [[ "$trimmed" == \#* ]] && continue
+    matched=0
+    for pattern in $_PMCTL_SHIP_BOOKKEEPING_PATTERNS; do
+      if [[ "$trimmed" == "$pattern" || "$trimmed" == "$pattern/" ]]; then
+        matched=1
+        break
+      fi
+    done
+    [[ "$matched" -eq 1 ]] || return 1
+  done < "$path"
   return 0
 }
 

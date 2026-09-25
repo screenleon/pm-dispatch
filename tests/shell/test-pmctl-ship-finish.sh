@@ -301,10 +301,16 @@ run_finish_with_fake_gate() {
     printf "%s\\n" "$3"
   }
   gate_publish_assessment_build() {
-      local output="$1" head tree
+      local output="$1" head tree _jq_prog
       head="$(git -C "$work_dir" rev-parse HEAD)"
       tree="$(_pmctl_ship_tree_fingerprint "$work_dir" committed_head "$head")"
-      jq -n --arg output "$output" --arg head "$head" --arg tree "$tree" -f /dev/stdin <<\JQ > "$output"
+      # A real temp file, not `-f /dev/stdin` off a heredoc (CC-588): on
+      # native Windows Git Bash, jq opening its own stdin via
+      # /proc/self/fd/0 to read a heredoc-backed filter program fails with
+      # "Could not open /proc/self/fd/0" -- a real file has no such fd
+      # indirection to fail.
+      _jq_prog="$(mktemp)"
+      cat > "$_jq_prog" <<\JQ
         {kind:"gate_publish_assessment_v1",schema_version:1,ticket:"CC-9001",
          subject:{repository_key:("a"*64),base_commit:("b"*40),head_commit:$head,tree_fingerprint:$tree},
          authorization:{status:"authorized",route:"final_tree_review",reason_codes:[]},
@@ -313,6 +319,8 @@ run_finish_with_fake_gate() {
          closure:{artifact:"/tmp/closure.json",sha256:("f"*64),state:"closed",subject_fingerprint:$tree,targeted_confirmation:"not_required"},
          full_suite:{artifact:"/tmp/full.json",sha256:("0"*64),status:"pass",subject_fingerprint:$tree}}
 JQ
+      jq -n --arg output "$output" --arg head "$head" --arg tree "$tree" -f "$_jq_prog" > "$output"
+      rm -f "$_jq_prog"
       printf "%s\\n" "$output"
     }
     gate_publish_assessment_verify() {
@@ -437,13 +445,18 @@ run_finish_with_real_publish_assessment() {
     }
     if [[ "$mode" != real-closure ]]; then
       gate_remediation_closure_publish() {
-        local output="$3" authorized=true
+        local output="$3" authorized=true _jq_prog
         [[ "$mode" == targeted-invalid ]] && authorized=false
-        jq -n --arg subject "$subject" --arg scope "$(jq -r .evidence.scope_manifest.sha256 "$assurance_file")" --argjson authorized "$authorized" -f /dev/stdin <<\JQ > "$output"
+        # Real temp file, not `-f /dev/stdin` off a heredoc -- see the
+        # matching CC-588 note in gate_publish_assessment_build above.
+        _jq_prog="$(mktemp)"
+        cat > "$_jq_prog" <<\JQ
           {kind:"remediation_closure_v1",schema_version:1,state:"closed",scope_manifest_sha256:$scope,
            final_assessment:{publish_authorized:$authorized,subject_fingerprint:$subject},
            final_subject:{tree_fingerprint:$subject},targeted_confirmation:{status:(if $authorized then "pass" else "not_required" end)}}
 JQ
+        jq -n --arg subject "$subject" --arg scope "$(jq -r .evidence.scope_manifest.sha256 "$assurance_file")" --argjson authorized "$authorized" -f "$_jq_prog" > "$output"
+        rm -f "$_jq_prog"
         printf "%s\n" "$output"
       }
     fi
@@ -1839,6 +1852,183 @@ case_finish_dispatched_lane_refuses_executor_authored_gitignore() {
   fi
 }
 
+case_finish_dispatched_lane_refuses_symlinked_gitignore_even_with_bookkeeping_target() {
+  local name="ship finish: a symlinked .gitignore is refused even when its target is pure bookkeeping content (CC-585)"
+  should_run "$name" || return 0
+  local store work out err status=0
+  store="$tmp_root/state-finish-gitignore-symlink"
+  work="$tmp_root/work-finish-gitignore-symlink"
+  make_work_repo "$work" "CC-9001"
+  checkout_ticket_branch "$work" "CC-9001"
+  add_bare_origin "$work"
+  # Declares only OUTPUT.md -- .gitignore is NOT declared. The symlink's
+  # TARGET content is pure bookkeeping (would pass the content check on its
+  # own), but _pmctl_ship_gitignore_is_bookkeeping_only requires a real,
+  # single-linked regular file (`! -L`) before it even reads content -- a
+  # symlink fails that check regardless of what it resolves to (CC-585 gate
+  # review, security-reviewer-F001: this is the boundary preventing an
+  # executor-controlled symlink from resolving the staging exception outside
+  # the lane).
+  write_dispatched_lane_tracking_entry "$store" "$work" "CC-9001" "codex" "OUTPUT.md"
+  local pre_head
+  pre_head="$(git -C "$work" rev-parse HEAD)"
+  printf 'dispatched output\n' > "$work/OUTPUT.md"
+  printf '.pm-dispatch\n' > "$work/.gitignore-bookkeeping-target"
+  # make_work_repo already seeds and commits a `.gitignore` -- remove it
+  # first so `ln -s` has a free path to create the symlink at (CC-585 gate
+  # review, qa-tester-F001: the prior version's `ln -s` silently failed here
+  # because the target path already existed, aborting the whole focused
+  # suite before this case's assertions ever ran).
+  rm -f -- "$work/.gitignore"
+  ln -s .gitignore-bookkeeping-target "$work/.gitignore"
+  out="$tmp_root/out-finish-gitignore-symlink"; err="$tmp_root/err-finish-gitignore-symlink"
+  PM_DISPATCH_STATE_ROOT="$store" run_finish_with_fake_gate "$work" "CC-9001" "GO" > "$out" 2> "$err" || status=$?
+  local post_head pushed=0
+  post_head="$(git -C "$work" rev-parse HEAD 2>/dev/null || true)"
+  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
+  if [[ "$status" -eq 1 && "$post_head" == "$pre_head" && "$pushed" -eq 0 ]] \
+    && grep -q "undeclared path" "$err" && grep -q "\.gitignore" "$err"; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 1, no new commit, no push; got status=$status pre=$pre_head post=$post_head pushed=$pushed stderr=$(cat "$err")"
+  fi
+}
+
+case_finish_dispatched_lane_accepts_preexisting_bookkeeping_only_gitignore() {
+  local name="ship finish: a .gitignore already dirty BEFORE finish runs, containing ONLY known bookkeeping patterns, is still auto-staged as bookkeeping (CC-585)"
+  should_run "$name" || return 0
+  local store work out err status=0
+  store="$tmp_root/state-finish-gitignore-prebookkeeping"
+  work="$tmp_root/work-finish-gitignore-prebookkeeping"
+  make_work_repo "$work" "CC-9001"
+  checkout_ticket_branch "$work" "CC-9001"
+  add_bare_origin "$work"
+  write_dispatched_lane_tracking_entry "$store" "$work" "CC-9001" "codex" "OUTPUT.md"
+  printf 'dispatched output\n' > "$work/OUTPUT.md"
+  # Simulate a `.gitignore` some OTHER host-side feature (e.g.
+  # pmctl_context_workflow_refresh) legitimately created earlier in the same
+  # run, BEFORE _pmctl_ship_ensure_gitignore's own patch runs -- i.e. it is
+  # already dirty at pre_ensure_status time, same as the executor-authored
+  # case above. Unlike that case, every line here is a known bookkeeping
+  # pattern; the old time-based "was it dirty before the patch" judgment
+  # could not tell these two cases apart and refused both. The content-based
+  # check must accept this one.
+  printf '.pm-dispatch\n' > "$work/.gitignore"
+  local gh_bin="$tmp_root/fake-gh-gitignore-prebookkeeping-bin"
+  install_fake_gh "$gh_bin" "https://example.invalid/pr/gitignore-prebookkeeping"
+  out="$tmp_root/out-finish-gitignore-prebookkeeping"; err="$tmp_root/err-finish-gitignore-prebookkeeping"
+  PM_DISPATCH_STATE_ROOT="$store" PATH="$gh_bin:$PATH" run_finish_with_fake_gate "$work" "CC-9001" "GO" > "$out" 2> "$err" || status=$?
+  local pushed=0
+  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
+  if [[ "$status" -eq 0 && "$pushed" -eq 1 ]] \
+    && grep -q "committed dispatched changes for CC-9001" "$err" \
+    && ! grep -q "undeclared path" "$err"; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 0, pushed, deliverable committed, no undeclared-path refusal; got status=$status pushed=$pushed stdout=$(cat "$out") stderr=$(cat "$err")"
+  fi
+}
+
+case_finish_dispatched_lane_accepts_bookkeeping_only_gitignore_with_crlf() {
+  local name="ship finish: a pre-existing bookkeeping-only .gitignore with CRLF line endings is still auto-staged as bookkeeping (CC-585)"
+  should_run "$name" || return 0
+  local store work out err status=0
+  store="$tmp_root/state-finish-gitignore-crlf"
+  work="$tmp_root/work-finish-gitignore-crlf"
+  make_work_repo "$work" "CC-9001"
+  checkout_ticket_branch "$work" "CC-9001"
+  add_bare_origin "$work"
+  write_dispatched_lane_tracking_entry "$store" "$work" "CC-9001" "codex" "OUTPUT.md"
+  printf 'dispatched output\n' > "$work/OUTPUT.md"
+  # Same scenario as case_finish_dispatched_lane_accepts_preexisting_bookkeeping_only_gitignore,
+  # but with CRLF line endings -- _pmctl_ship_gitignore_is_bookkeeping_only
+  # strips a trailing \r per line before matching against the allowlist;
+  # this is the only case exercising that branch directly (CC-585 gate
+  # review, all four reviewers independently flagged the CRLF branch as
+  # untested given this repo's active Windows-parity focus).
+  printf '.pm-dispatch\r\n.dispatch-results\r\n' > "$work/.gitignore"
+  local gh_bin="$tmp_root/fake-gh-gitignore-crlf-bin"
+  install_fake_gh "$gh_bin" "https://example.invalid/pr/gitignore-crlf"
+  out="$tmp_root/out-finish-gitignore-crlf"; err="$tmp_root/err-finish-gitignore-crlf"
+  PM_DISPATCH_STATE_ROOT="$store" PATH="$gh_bin:$PATH" run_finish_with_fake_gate "$work" "CC-9001" "GO" > "$out" 2> "$err" || status=$?
+  local pushed=0
+  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
+  if [[ "$status" -eq 0 && "$pushed" -eq 1 ]] \
+    && grep -q "committed dispatched changes for CC-9001" "$err" \
+    && ! grep -q "undeclared path" "$err"; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 0, pushed, deliverable committed, no undeclared-path refusal; got status=$status pushed=$pushed stdout=$(cat "$out") stderr=$(cat "$err")"
+  fi
+}
+
+case_finish_dispatched_lane_accepts_gitignore_with_every_bookkeeping_pattern() {
+  local name="ship finish: a pre-existing .gitignore listing every bookkeeping pattern (mixed bare/trailing-slash forms) is still auto-staged as bookkeeping (CC-585)"
+  should_run "$name" || return 0
+  local store work out err status=0
+  store="$tmp_root/state-finish-gitignore-allpatterns"
+  work="$tmp_root/work-finish-gitignore-allpatterns"
+  make_work_repo "$work" "CC-9001"
+  checkout_ticket_branch "$work" "CC-9001"
+  add_bare_origin "$work"
+  write_dispatched_lane_tracking_entry "$store" "$work" "CC-9001" "codex" "OUTPUT.md"
+  printf 'dispatched output\n' > "$work/OUTPUT.md"
+  # Mutation-sensitive coverage (CC-585 gate review, qa-tester-F001): the
+  # earlier cases only ever exercised .pm-dispatch and .dispatch-results.
+  # This one lists all six allowlisted patterns, half bare and half with a
+  # trailing slash, interleaved with a comment and a blank line -- if any
+  # single pattern's spelling, its trailing-slash form, or the
+  # comment/blank-line skip were ever broken, this .gitignore would stop
+  # being classified as bookkeeping-only and the case would fail.
+  printf '# pm-dispatch bookkeeping\n.dispatch-results/\n.gate-results\n\n.gate-briefs/\n.agent-trace\n.pm-dispatch-state/\n.pm-dispatch\n' > "$work/.gitignore"
+  local gh_bin="$tmp_root/fake-gh-gitignore-allpatterns-bin"
+  install_fake_gh "$gh_bin" "https://example.invalid/pr/gitignore-allpatterns"
+  out="$tmp_root/out-finish-gitignore-allpatterns"; err="$tmp_root/err-finish-gitignore-allpatterns"
+  PM_DISPATCH_STATE_ROOT="$store" PATH="$gh_bin:$PATH" run_finish_with_fake_gate "$work" "CC-9001" "GO" > "$out" 2> "$err" || status=$?
+  local pushed=0
+  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
+  if [[ "$status" -eq 0 && "$pushed" -eq 1 ]] \
+    && grep -q "committed dispatched changes for CC-9001" "$err" \
+    && ! grep -q "undeclared path" "$err"; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 0, pushed, deliverable committed, no undeclared-path refusal; got status=$status pushed=$pushed stdout=$(cat "$out") stderr=$(cat "$err")"
+  fi
+}
+
+case_finish_dispatched_lane_accepts_gitignore_with_only_blank_and_comment_lines() {
+  local name="ship finish: a pre-existing .gitignore containing only blank lines and comments is still auto-staged as bookkeeping (CC-585)"
+  should_run "$name" || return 0
+  local store work out err status=0
+  store="$tmp_root/state-finish-gitignore-blankcomment"
+  work="$tmp_root/work-finish-gitignore-blankcomment"
+  make_work_repo "$work" "CC-9001"
+  checkout_ticket_branch "$work" "CC-9001"
+  add_bare_origin "$work"
+  write_dispatched_lane_tracking_entry "$store" "$work" "CC-9001" "codex" "OUTPUT.md"
+  printf 'dispatched output\n' > "$work/OUTPUT.md"
+  # CC-585 gate review, critic-F001: _pmctl_ship_gitignore_is_bookkeeping_only
+  # treats blank and comment-only lines as vacuously bookkeeping (there is no
+  # non-bookkeeping content to object to), but nothing exercised a
+  # .gitignore that is ENTIRELY blank/comment lines with no actual pattern
+  # at all -- distinct from the interleaved case above, which always has at
+  # least one real pattern line.
+  printf '# nothing but noise\n\n# still nothing\n\n' > "$work/.gitignore"
+  local gh_bin="$tmp_root/fake-gh-gitignore-blankcomment-bin"
+  install_fake_gh "$gh_bin" "https://example.invalid/pr/gitignore-blankcomment"
+  out="$tmp_root/out-finish-gitignore-blankcomment"; err="$tmp_root/err-finish-gitignore-blankcomment"
+  PM_DISPATCH_STATE_ROOT="$store" PATH="$gh_bin:$PATH" run_finish_with_fake_gate "$work" "CC-9001" "GO" > "$out" 2> "$err" || status=$?
+  local pushed=0
+  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
+  if [[ "$status" -eq 0 && "$pushed" -eq 1 ]] \
+    && grep -q "committed dispatched changes for CC-9001" "$err" \
+    && ! grep -q "undeclared path" "$err"; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 0, pushed, deliverable committed, no undeclared-path refusal; got status=$status pushed=$pushed stdout=$(cat "$out") stderr=$(cat "$err")"
+  fi
+}
+
 case_finish_dispatched_lane_refuses_with_no_declared_allowlist() {
   local name="ship finish: an --adapter-dispatched lane with no declared edit-path allowlist refuses to auto-commit at all (CC-584)"
   should_run "$name" || return 0
@@ -2599,6 +2789,11 @@ case_finish_dispatched_lane_auto_commits_before_gate
 case_finish_manual_lane_still_refuses_on_dirty_tree_when_not_dispatched
 case_finish_dispatched_lane_refuses_undeclared_collateral_file
 case_finish_dispatched_lane_refuses_executor_authored_gitignore
+case_finish_dispatched_lane_refuses_symlinked_gitignore_even_with_bookkeeping_target
+case_finish_dispatched_lane_accepts_preexisting_bookkeeping_only_gitignore
+case_finish_dispatched_lane_accepts_bookkeeping_only_gitignore_with_crlf
+case_finish_dispatched_lane_accepts_gitignore_with_every_bookkeeping_pattern
+case_finish_dispatched_lane_accepts_gitignore_with_only_blank_and_comment_lines
 case_finish_dispatched_lane_refuses_with_no_declared_allowlist
 case_finish_dispatched_lane_bookkeeping_only_reports_explicitly_and_gates_old_head
 case_finish_dispatched_lane_already_fully_gitignore_patched_does_not_abort
