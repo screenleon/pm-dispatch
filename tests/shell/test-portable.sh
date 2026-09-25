@@ -329,6 +329,114 @@ case_mkdir_lock_live_owner_old_age_not_stolen() {
   fi
 }
 
+case_mkdir_lock_no_leak_on_owner_write_failure() {
+  # Behavior: issue #622 -- when mkdir succeeds but the owner-file election
+  #   fails, mkdir_lock must not leave the directory it just created behind.
+  #   An ownerless lockdir that nothing ever reclaims bricks every future
+  #   dispatch for the project.
+  # Steps: 1. Shadow _portable_lock_write_owner to always fail, in a subshell
+  #   so the override doesn't leak to other tests; 2. Run mkdir_lock to
+  #   timeout and assert it reports failure -- an unexpected success would
+  #   mean the forced owner-write failure was never exercised; 3. Assert no
+  #   lockdir was left on disk.
+  local name="portable-mkdir-lock-no-leak-on-owner-write-failure"
+  should_run "$name" || return 0
+  local lock="$tmp_root/lock-owner-write-fail" rc=0
+
+  (
+    _portable_lock_write_owner() { return 1; }
+    mkdir_lock "$lock" 1
+  ) >/dev/null 2>&1 || rc=$?
+
+  if [[ "$rc" -eq 0 ]]; then
+    fail "$name" "mkdir_lock unexpectedly succeeded despite forced owner-write failure"
+    return
+  fi
+  if [[ ! -e "$lock" ]]; then
+    pass "$name"
+  else
+    fail "$name" "ownerless lockdir leaked after owner-write failure: $lock"
+  fi
+}
+
+case_mkdir_lock_skips_owner_write_cleanup_on_risky_fs() {
+  # Behavior: on a filesystem where mkdir cannot be trusted to be exclusive
+  #   (network/overlay), a second claimant's own mkdir can also report
+  #   success, and its in-flight owner write can be invisible to us for a
+  #   moment -- a check/act race. Deleting the directory in that window can
+  #   remove a lock a concurrent claimant is legitimately about to hold, so
+  #   the new owner-write-failure cleanup must not run there; the caller
+  #   times out instead, exactly like the pre-#622 behavior.
+  # Steps: 1. Shadow both _portable_lock_write_owner (always fails) and
+  #   _portable_lock_path_is_risky_fs (always risky), in a subshell; 2. Run
+  #   mkdir_lock to timeout; 3. Assert the ownerless lockdir it created was
+  #   left in place, not cleaned up.
+  local name="portable-mkdir-lock-skips-cleanup-on-risky-fs"
+  should_run "$name" || return 0
+  local lock="$tmp_root/lock-owner-write-fail-risky-fs" rc=0
+
+  (
+    _portable_lock_write_owner() { return 1; }
+    _portable_lock_path_is_risky_fs() { return 0; }
+    mkdir_lock "$lock" 1
+  ) >/dev/null 2>&1 || rc=$?
+
+  if [[ "$rc" -eq 0 ]]; then
+    fail "$name" "mkdir_lock unexpectedly succeeded despite forced owner-write failure"
+    return
+  fi
+  if [[ -d "$lock" && ! -f "$lock/owner" ]]; then
+    pass "$name"
+    rmdir "$lock" 2>/dev/null || true
+  else
+    fail "$name" "lockdir was removed (or never created) despite a risky filesystem: $lock"
+  fi
+}
+
+case_mkdir_lock_reclaims_aged_ownerless_dir() {
+  # Behavior: issue #622 -- an ownerless lockdir (owner-write failure, or a
+  #   killed acquirer caught between mkdir and the owner write) must
+  #   eventually self-heal once it is far older than any legitimate
+  #   mkdir-to-owner-write window, instead of bricking dispatch forever.
+  # Steps: 1. Pre-create an ownerless lockdir and backdate its mtime past the
+  #   stale ceiling; 2. Attempt mkdir_lock with a short stale ceiling; 3.
+  #   Assert it reclaims and acquires.
+  local name="portable-mkdir-lock-reclaims-aged-ownerless-lockdir"
+  should_run "$name" || return 0
+  local lock="$tmp_root/lock-ownerless-aged" old_epoch
+  mkdir "$lock"
+  old_epoch="$(( $(_portable_lock_now) - 10 ))"
+  touch -d "@$old_epoch" "$lock" 2>/dev/null || true
+
+  if PM_DISPATCH_LOCK_STALE_SECS=1 mkdir_lock "$lock" 2; then
+    mkdir_unlock "$lock"
+    pass "$name"
+  else
+    fail "$name" "lock acquire did not reclaim aged ownerless lockdir"
+  fi
+}
+
+case_mkdir_lock_does_not_reclaim_fresh_ownerless_dir() {
+  # Behavior: the mkdir-to-owner-write window must still be protected -- a
+  #   fresh ownerless lockdir (well under the stale ceiling) is never
+  #   reclaimed, only a lockdir old enough that it can only be a leak.
+  # Steps: 1. Pre-create an ownerless lockdir with a fresh (current) mtime;
+  #   2. Attempt mkdir_lock with a generous stale ceiling and short timeout;
+  #   3. Assert it times out rather than stealing the fresh lock.
+  local name="portable-mkdir-lock-does-not-reclaim-fresh-ownerless-lockdir"
+  should_run "$name" || return 0
+  local lock="$tmp_root/lock-ownerless-fresh" rc=0
+  mkdir "$lock"
+
+  PM_DISPATCH_LOCK_STALE_SECS=999 mkdir_lock "$lock" 1 >/dev/null 2>&1 || rc=$?
+  rmdir "$lock" 2>/dev/null || true
+  if [[ "$rc" -ne 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "fresh ownerless lockdir was reclaimed"
+  fi
+}
+
 _slw_term_self() {
   kill -TERM "$BASHPID"
   sleep 2
@@ -1276,6 +1384,10 @@ case_mkdir_lock_reclaims_dead_same_host_owner
 case_mkdir_lock_reclaims_age_ceiling_owner
 case_mkdir_lock_does_not_steal_live_lock
 case_mkdir_lock_live_owner_old_age_not_stolen
+case_mkdir_lock_no_leak_on_owner_write_failure
+case_mkdir_lock_skips_owner_write_cleanup_on_risky_fs
+case_mkdir_lock_reclaims_aged_ownerless_dir
+case_mkdir_lock_does_not_reclaim_fresh_ownerless_dir
 case_serialize_with_lock_basic
 case_serialize_with_lock_propagates_rc
 case_serialize_with_lock_contention_diagnostic

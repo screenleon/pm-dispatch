@@ -194,6 +194,18 @@ mkdir_lock() {
       # Some network/overlay filesystems can expose a just-created directory
       # to simultaneous creators in surprising ways. The owner file is the
       # second, exclusive election: never overwrite another claimant.
+      # But on a filesystem where mkdir IS exclusive, nobody else could have
+      # won that election if it's still ownerless -- remove the directory we
+      # just created so a failed owner write can't leak a permanently
+      # ownerless lockdir. Skip this on a risky filesystem: there, a second
+      # claimant's own mkdir can also report success, and this ownerless
+      # check can observe its in-flight owner write too early (a check/act
+      # race), which would delete a directory it is about to legitimately
+      # hold -- the exact hazard the comment above already protects against
+      # for the owner-file write itself.
+      if [[ ! -f "$lockdir/owner" ]] && ! _portable_lock_path_is_risky_fs "$lockdir"; then
+        rmdir "$lockdir" 2>/dev/null || true
+      fi
     fi
     if (( stale_reclaims < max_reclaims )) && stale_owner="$(_portable_lock_stale_owner "$lockdir")"; then
       if mkdir "$reclaimdir" 2>/dev/null; then
@@ -448,10 +460,19 @@ _portable_lock_stale_owner() {
     return 1
   fi
 
-  # Never reclaim an ownerless directory. A prior owner can be between mkdir
-  # and writing its metadata; reclaiming based only on the directory mtime can
-  # delete that newly acquired lock. The caller will time out safely instead of
-  # allowing two writers into the critical section.
+  # An ownerless directory is normally left alone: a prior owner can be
+  # between mkdir and writing its metadata, and reclaiming based only on the
+  # directory mtime could delete that newly acquired lock. But once it has
+  # aged well past that window -- the same stale ceiling used for a dead
+  # owner's lock, via the mtime fallback below -- it can only be a leak (a
+  # killed acquirer, or a failed owner write; see mkdir_lock), so refusing to
+  # reclaim it forever would brick every future dispatch. Reuse the existing
+  # owner-line-stale check with an empty line so the mtime path decides, and
+  # go through the same .reclaim fence and post-fence re-verification as a
+  # dead owner to stay ABA-safe.
+  if _portable_lock_owner_line_stale "$lockdir" ""; then
+    return 0
+  fi
   return 1
 }
 
@@ -466,19 +487,27 @@ _portable_lock_fs_type() {
   printf '%s\n' "$fs_type"
 }
 
-_portable_lock_preflight_warn() {
-  local path="$1" fs_type warn=0
-  [[ -z "${_PORTABLE_LOCK_PREFLIGHT_WARNED:-}" ]] || return 0
+# True if mkdir at this path cannot be trusted to be exclusive: a UNC-shaped
+# path, or a filesystem type known to expose a just-created directory to
+# simultaneous creators (network/overlay filesystems). Shared by the
+# preflight warning and by anything that must only act on a lockdir it can
+# prove it exclusively created.
+_portable_lock_path_is_risky_fs() {
+  local path="$1" fs_type=""
   case "$path" in
-    //*|\\\\*) warn=1 ;;
+    //*|\\\\*) return 0 ;;
   esac
-  if [[ "$warn" -eq 0 ]]; then
-    fs_type="$(_portable_lock_fs_type "$path")"
-    case "$fs_type" in
-      9p|nfs|nfs4|cifs|smb|smbfs) warn=1 ;;
-    esac
-  fi
-  if [[ "$warn" -eq 1 ]]; then
+  fs_type="$(_portable_lock_fs_type "$path")"
+  case "$fs_type" in
+    9p|nfs|nfs4|cifs|smb|smbfs) return 0 ;;
+  esac
+  return 1
+}
+
+_portable_lock_preflight_warn() {
+  local path="$1"
+  [[ -z "${_PORTABLE_LOCK_PREFLIGHT_WARNED:-}" ]] || return 0
+  if _portable_lock_path_is_risky_fs "$path"; then
     _PORTABLE_LOCK_PREFLIGHT_WARNED=1
     printf 'portable: warning: lock path may be on a network filesystem with unreliable advisory locking: %s\n' "$path" >&2
   fi
