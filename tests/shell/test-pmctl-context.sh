@@ -5851,11 +5851,248 @@ case_context_prompt_scan_cli_orders_and_dedups() {
   pass "$name"
 }
 
+# Behavior (issue #620): inside a real git work tree, indexing must respect
+# .gitignore instead of the fixed `find` denylist -- a gitignored build
+# directory (e.g. a framework's `.next/`) must never be indexed, even though
+# it has extension-matching files the fixed denylist knows nothing about.
+# Steps: git-init a fixture repo with a committed source file and a gitignored
+# build directory holding extension-matching files; index it; assert the
+# build directory's files never reached the DB while the real source did.
+case_context_index_respects_gitignore() {
+  local name="pmctl context index: gitignored build directory is never indexed"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-gitignore-build"
+  mkdir -p "$fix_repo/src" "$fix_repo/.next/static"
+  ( cd "$fix_repo" && git init -q && git config user.email t@t.example && git config user.name t )
+  printf '/.next/\n' > "$fix_repo/.gitignore"
+  printf 'export const alpha = 1;\n' > "$fix_repo/src/index.js"
+  printf '{"alpha":1}\n' > "$fix_repo/.next/build-manifest.json"
+  printf 'console.log("built");\n' > "$fix_repo/.next/static/chunk.js"
+  ( cd "$fix_repo" && git add .gitignore src && git commit -q -m init )
+
+  local out err status=0
+  out="$tmp_root/idx-gitignore.out"; err="$tmp_root/idx-gitignore.err"
+  "$PMCTL" context index "$fix_repo" --source repo > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "pmctl context index exited $status: $(<"$err")"; return 0
+  fi
+
+  local db
+  db="$(grep '^db: ' "$out" | sed 's/^db: //')"
+  if [[ -z "$db" || ! -f "$db" ]]; then
+    fail "$name" "DB file not found; index output: $(<"$out")"; return 0
+  fi
+
+  local paths
+  paths="$(sqlite3 "$db" 'SELECT path FROM files;' 2>/dev/null | tr -d '\r')"
+  if grep -q '^\.next/' <<<"$paths"; then
+    fail "$name" "gitignored .next/ files were indexed: $paths"; return 0
+  fi
+  if ! grep -qxF 'src/index.js' <<<"$paths"; then
+    fail "$name" "real tracked source file missing from index: $paths"; return 0
+  fi
+  pass "$name"
+}
+
+# Behavior (issue #620 defence in depth): even a git-tracked (committed)
+# `vendor/` file must stay excluded -- this indexer's own denylist, not just
+# .gitignore, decides that dir's fate.
+# Steps: git-init a fixture with a COMMITTED file under vendor/; index it;
+# assert it never reached the DB despite being tracked, not ignored.
+case_context_index_git_tracked_vendor_still_excluded() {
+  local name="pmctl context index: git-tracked vendor/ file is still excluded"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-git-vendor"
+  mkdir -p "$fix_repo/vendor/pkg" "$fix_repo/src"
+  ( cd "$fix_repo" && git init -q && git config user.email t@t.example && git config user.name t )
+  printf 'export const alpha = 1;\n' > "$fix_repo/src/index.js"
+  printf 'package pkg\n' > "$fix_repo/vendor/pkg/pkg.go"
+  ( cd "$fix_repo" && git add -A && git commit -q -m init )
+
+  local out err status=0
+  out="$tmp_root/idx-git-vendor.out"; err="$tmp_root/idx-git-vendor.err"
+  "$PMCTL" context index "$fix_repo" --source repo > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "pmctl context index exited $status: $(<"$err")"; return 0
+  fi
+
+  local db
+  db="$(grep '^db: ' "$out" | sed 's/^db: //')"
+  if [[ -z "$db" || ! -f "$db" ]]; then
+    fail "$name" "DB file not found; index output: $(<"$out")"; return 0
+  fi
+
+  local paths
+  paths="$(sqlite3 "$db" 'SELECT path FROM files;' 2>/dev/null | tr -d '\r')"
+  if grep -q '^vendor/' <<<"$paths"; then
+    fail "$name" "git-tracked vendor/ file was indexed despite the denylist: $paths"; return 0
+  fi
+  if ! grep -qxF 'src/index.js' <<<"$paths"; then
+    fail "$name" "real tracked source file missing from index: $paths"; return 0
+  fi
+  pass "$name"
+}
+
+# Behavior (issue #620 follow-up): `.pm-dispatch/ctx/ignore`, when present, is
+# an optional supplementary excludes list (one path/glob per line) for
+# indexing-only exclusions independent of git's own tracking or ignore
+# state -- unlike .gitignore, a listed path is excluded whether or not git
+# tracks it (git's own exclude machinery can never un-index an already
+# tracked file; this is a real denylist, just user-configurable instead of
+# hardcoded like the vendor/ case above).
+# Steps: git-init a fixture with two COMMITTED extension-matching files; list
+# one of them in .pm-dispatch/ctx/ignore; index it; assert the listed file
+# never reached the DB despite being tracked, while the other did.
+case_context_index_supplementary_ignore_file() {
+  local name="pmctl context index: .pm-dispatch/ctx/ignore excludes a candidate regardless of git tracking"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-ctx-ignore"
+  mkdir -p "$fix_repo/src" "$fix_repo/docs" "$fix_repo/.pm-dispatch/ctx"
+  ( cd "$fix_repo" && git init -q && git config user.email t@t.example && git config user.name t )
+  printf 'export const alpha = 1;\n' > "$fix_repo/src/index.js"
+  printf '# generated (tracked, but must still be excluded)\n' > "$fix_repo/docs/generated.md"
+  ( cd "$fix_repo" && git add src docs && git commit -q -m init )
+  printf 'docs/generated.md\n' > "$fix_repo/.pm-dispatch/ctx/ignore"
+
+  local out err status=0
+  out="$tmp_root/idx-ctx-ignore.out"; err="$tmp_root/idx-ctx-ignore.err"
+  "$PMCTL" context index "$fix_repo" --source repo > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "pmctl context index exited $status: $(<"$err")"; return 0
+  fi
+
+  local db
+  db="$(grep '^db: ' "$out" | sed 's/^db: //')"
+  if [[ -z "$db" || ! -f "$db" ]]; then
+    fail "$name" "DB file not found; index output: $(<"$out")"; return 0
+  fi
+
+  local paths
+  paths="$(sqlite3 "$db" 'SELECT path FROM files;' 2>/dev/null | tr -d '\r')"
+  if grep -qxF 'docs/generated.md' <<<"$paths"; then
+    fail "$name" ".pm-dispatch/ctx/ignore did not exclude the tracked, listed candidate: $paths"; return 0
+  fi
+  if ! grep -qxF 'src/index.js' <<<"$paths"; then
+    fail "$name" "real tracked source file missing from index: $paths"; return 0
+  fi
+  pass "$name"
+}
+
+# Behavior (issue #620, qa-tester finding): the non-git fallback
+# (_ctx_find_index_files_walk) has its own hard-coded build-directory
+# denylist -- added because a bare directory has no .gitignore to consult --
+# and needs its own direct coverage, distinct from the git-path tests above.
+# Steps: build a fixture that is a plain directory (never git-init'd, so the
+# fallback path is the one actually exercised); give it a source file and a
+# dist/ build-output file; index it; assert dist/ never reached the DB while
+# the source file did.
+case_context_index_fallback_excludes_build_dirs() {
+  local name="pmctl context index: non-git fallback excludes build-output directories"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-fallback-builddir"
+  mkdir -p "$fix_repo/src" "$fix_repo/dist"
+  printf 'export const alpha = 1;\n' > "$fix_repo/src/index.js"
+  printf 'console.log("built");\n' > "$fix_repo/dist/bundle.js"
+
+  if git -C "$fix_repo" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    fail "$name" "fixture unexpectedly resolved inside a git work tree; test would not exercise the fallback"
+    return 0
+  fi
+
+  local out err status=0
+  out="$tmp_root/idx-fallback-builddir.out"; err="$tmp_root/idx-fallback-builddir.err"
+  "$PMCTL" context index "$fix_repo" --source repo > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "pmctl context index exited $status: $(<"$err")"; return 0
+  fi
+
+  local db
+  db="$(grep '^db: ' "$out" | sed 's/^db: //')"
+  if [[ -z "$db" || ! -f "$db" ]]; then
+    fail "$name" "DB file not found; index output: $(<"$out")"; return 0
+  fi
+
+  local paths
+  paths="$(sqlite3 "$db" 'SELECT path FROM files;' 2>/dev/null | tr -d '\r')"
+  if grep -q '^dist/' <<<"$paths"; then
+    fail "$name" "non-git fallback indexed dist/ despite the build-dir denylist: $paths"; return 0
+  fi
+  if ! grep -qxF 'src/index.js' <<<"$paths"; then
+    fail "$name" "real source file missing from index: $paths"; return 0
+  fi
+  pass "$name"
+}
+
+# Behavior (issue #620, reviewer finding -- disputed and verified wrong, but
+# the requested coverage is worth having on its own merits): `git -C <dir>
+# ls-files` returns paths relative to <dir> itself, not the git worktree
+# root (confirmed empirically: `git -C sub ls-files` from a repo root with
+# tracked files in and outside `sub/` lists only `sub/`'s files, spelled
+# relative to `sub/`, on git 2.42.0 -- this is `-C`'s documented contract,
+# "as if git was started in <dir>", identical to a plain `cd sub && git
+# ls-files`). So `_ctx_find_index_files_git`'s `printf '%s/%s\n' "$root"
+# "$rel"` does not double the root when `$root` is a subdirectory of a
+# larger git worktree, contrary to a finding claiming it does.
+# Steps: git-init a fixture with a tracked file inside a subdirectory AND a
+# tracked file outside it; index only the subdirectory; assert the DB's
+# resolved_repo_root is the subdirectory and its one file is indexed under
+# its own root-relative path, with no doubled-root or sibling-file leakage.
+case_context_index_nested_worktree_subtree() {
+  local name="pmctl context index: a subtree of a larger git worktree indexes only its own eligible files"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-nested-subtree"
+  mkdir -p "$fix_repo/sub/inner"
+  ( cd "$fix_repo" && git init -q && git config user.email t@t.example && git config user.name t )
+  printf 'export const top = 1;\n' > "$fix_repo/top.js"
+  printf 'export const mid = 1;\n' > "$fix_repo/sub/mid.js"
+  printf 'export const deep = 1;\n' > "$fix_repo/sub/inner/deep.js"
+  ( cd "$fix_repo" && git add -A && git commit -q -m init )
+
+  local out err status=0
+  out="$tmp_root/idx-nested-subtree.out"; err="$tmp_root/idx-nested-subtree.err"
+  "$PMCTL" context index "$fix_repo/sub" --source repo > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "pmctl context index exited $status: $(<"$err")"; return 0
+  fi
+
+  local db
+  db="$(grep '^db: ' "$out" | sed 's/^db: //')"
+  if [[ -z "$db" || ! -f "$db" ]]; then
+    fail "$name" "DB file not found; index output: $(<"$out")"; return 0
+  fi
+
+  local paths
+  paths="$(sqlite3 "$db" 'SELECT path FROM files;' 2>/dev/null | tr -d '\r')"
+  if grep -qxF 'sub/mid.js' <<<"$paths" || grep -q '^sub/' <<<"$paths"; then
+    fail "$name" "path was doubled with the subtree root: $paths"; return 0
+  fi
+  if grep -qxF 'top.js' <<<"$paths"; then
+    fail "$name" "a file outside the indexed subtree leaked in: $paths"; return 0
+  fi
+  if ! grep -qxF 'mid.js' <<<"$paths"; then
+    fail "$name" "the subtree's own top-level file is missing: $paths"; return 0
+  fi
+  if ! grep -qxF 'inner/deep.js' <<<"$paths"; then
+    fail "$name" "the subtree's own nested file is missing: $paths"; return 0
+  fi
+  pass "$name"
+}
+
 # ── Run all cases ──────────────────────────────────────────────────────────────
 
 case_context_index_missing_repo
 case_context_index_unknown_flag
 case_context_index_creates_db
+case_context_index_respects_gitignore
+case_context_index_git_tracked_vendor_still_excluded
+case_context_index_supplementary_ignore_file
+case_context_index_fallback_excludes_build_dirs
+case_context_index_nested_worktree_subtree
 case_context_index_incremental_skip
 case_context_update_specific_path
 case_context_update_no_path_full_scan
