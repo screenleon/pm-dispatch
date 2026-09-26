@@ -2926,11 +2926,12 @@ test_reviewer_no_output_aborts_gate() {
   pass "$name"
 }
 
-# Behavior (issue #619): a reviewer session that hits the known Codex Windows
-# sandbox-unavailable signature (deterministic on every attempt, an upstream
-# bug pm-dispatch cannot fix) fails the gate immediately, WITHOUT spending a
-# retry round on a failure the log already proves cannot recover -- and the
-# failure report names the actual reason, not just the reviewer.
+# Behavior: a reviewer session that hits the known Codex Windows
+# sandbox-unavailable signature (issue #619 -- deterministic on every
+# attempt, an upstream bug pm-dispatch cannot fix) fails the gate
+# immediately, WITHOUT spending a retry round on a failure the log already
+# proves cannot recover -- and the failure report names the actual reason,
+# not just the reviewer.
 # Steps:
 #   1. Create a minimal repo (express tier, docs change)
 #   2. CODEX_GATE_STUB_MODE=sandbox-unavailable: every reviewer prints the
