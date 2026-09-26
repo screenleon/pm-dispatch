@@ -344,6 +344,7 @@ case_mkdir_lock_no_leak_on_owner_write_failure() {
   local lock="$tmp_root/lock-owner-write-fail" rc=0
 
   (
+    # shellcheck disable=SC2317,SC2329  # mkdir_lock invokes this test override indirectly.
     _portable_lock_write_owner() { return 1; }
     mkdir_lock "$lock" 1
   ) >/dev/null 2>&1 || rc=$?
@@ -376,7 +377,9 @@ case_mkdir_lock_skips_owner_write_cleanup_on_risky_fs() {
   local lock="$tmp_root/lock-owner-write-fail-risky-fs" rc=0
 
   (
+    # shellcheck disable=SC2317,SC2329  # mkdir_lock invokes these test overrides indirectly.
     _portable_lock_write_owner() { return 1; }
+    # shellcheck disable=SC2317,SC2329  # mkdir_lock invokes these test overrides indirectly.
     _portable_lock_path_is_risky_fs() { return 0; }
     mkdir_lock "$lock" 1
   ) >/dev/null 2>&1 || rc=$?
@@ -386,8 +389,11 @@ case_mkdir_lock_skips_owner_write_cleanup_on_risky_fs() {
     return
   fi
   if [[ -d "$lock" && ! -f "$lock/owner" ]]; then
+    if ! rmdir "$lock" 2>/dev/null; then
+      fail "$name" "test cleanup could not remove the lockdir it created: $lock"
+      return
+    fi
     pass "$name"
-    rmdir "$lock" 2>/dev/null || true
   else
     fail "$name" "lockdir was removed (or never created) despite a risky filesystem: $lock"
   fi
@@ -889,7 +895,12 @@ case_realpath_m_symlink_resolves() {
   local root="$tmp_root/sym"
   mkdir -p "$root/target"
   printf 'ok\n' > "$root/target/file.txt"
-  _portable_make_symlink "$root/target" "$root/link"
+  # `|| true`: under `set -e`, an unguarded failure here would abort the
+  # whole suite instead of reaching the skip check below -- exactly what
+  # happens on a Windows host without Developer Mode, where `ln -s` exits
+  # nonzero. The skip check is the actual capability gate; this call must
+  # never itself be fatal.
+  _portable_make_symlink "$root/target" "$root/link" 2>/dev/null || true
   # Skip when a native symlink cannot be created (for example Git Bash on
   # Windows without Developer Mode). The helper enables the MSYS native-link
   # mode on Windows; Linux/macOS/WSL retain normal ln semantics.
@@ -1068,7 +1079,11 @@ case_link_or_copy_symlink_success() {
     return
   fi
   src_abs="$(realpath_m "$src")"
-  dst_abs="$(cd "$(dirname "$dst")" && pwd -P)/$(basename "$dst")"
+  # Match the manifest's own dst canonicalization (_portable_manifest_dst_key),
+  # not a hand-rolled `pwd -P`: on MSYS, `/tmp` is a virtual mount that `pwd -P`
+  # resolves to its underlying Windows path but `realpath` (what the manifest
+  # key uses) does not, so the two disagree on the same physical directory.
+  dst_abs="$(_portable_manifest_dst_key "$dst")"
   if ! grep -Fq "\"src\":\"$src_abs\"" "$manifest"; then
     fail "$name" "manifest missing src entry $src_abs"
     return
@@ -1167,7 +1182,11 @@ case_link_or_copy_post_check_reject() {
     return
   fi
   src_abs="$(realpath_m "$src")"
-  dst_abs="$(cd "$(dirname "$dst")" && pwd -P)/$(basename "$dst")"
+  # Match the manifest's own dst canonicalization (_portable_manifest_dst_key),
+  # not a hand-rolled `pwd -P`: on MSYS, `/tmp` is a virtual mount that `pwd -P`
+  # resolves to its underlying Windows path but `realpath` (what the manifest
+  # key uses) does not, so the two disagree on the same physical directory.
+  dst_abs="$(_portable_manifest_dst_key "$dst")"
   if ! grep -Fq "\"src\":\"$src_abs\"" "$manifest" || ! grep -Fq "\"dst\":\"$dst_abs\"" "$manifest"; then
     fail "$name" "manifest copy entry lacks src/dst"
     return
@@ -1246,7 +1265,11 @@ case_link_or_copy_copy_fallback() {
     return
   fi
   src_abs="$(realpath_m "$src")"
-  dst_abs="$(cd "$(dirname "$dst")" && pwd -P)/$(basename "$dst")"
+  # Match the manifest's own dst canonicalization (_portable_manifest_dst_key),
+  # not a hand-rolled `pwd -P`: on MSYS, `/tmp` is a virtual mount that `pwd -P`
+  # resolves to its underlying Windows path but `realpath` (what the manifest
+  # key uses) does not, so the two disagree on the same physical directory.
+  dst_abs="$(_portable_manifest_dst_key "$dst")"
   if ! grep -Fq "\"src\":\"$src_abs\"" "$manifest" || ! grep -Fq "\"dst\":\"$dst_abs\"" "$manifest"; then
     fail "$name" "manifest copy entry lacks src/dst"
     return
@@ -1658,8 +1681,18 @@ case_link_or_copy_receipt_json_round_trip() {
   local dst="$tmp_root/$name/"$'dest "quoted" \\ path\nfile.txt'
   local out="$tmp_root/$name/out" old_sha rc old_unsupported
   mkdir -p "$root"
-  printf 'old\n' > "$src"
-  printf 'old\n' > "$dst"
+  # `"`, `\`, and a literal newline are all forbidden in a Windows filename
+  # (Win32 rejects `"` outright and treats control bytes and `\` as invalid
+  # or as a separator), so this fixture cannot exist on native Windows.
+  # Skip rather than let file creation fail under `set -e` mid-suite.
+  if ! printf 'old\n' > "$src" 2>/dev/null || [[ ! -f "$src" ]]; then
+    printf 'SKIP: %s (host filesystem rejects quote/backslash/newline bytes in a filename)\n' "$name"
+    return
+  fi
+  if ! printf 'old\n' > "$dst" 2>/dev/null || [[ ! -f "$dst" ]]; then
+    printf 'SKIP: %s (host filesystem rejects quote/backslash/newline bytes in a filename)\n' "$name"
+    return
+  fi
   old_sha="$(_portable_sha256_path "$dst")"
   _PORTABLE_MANIFEST_RECORDS=()
   manifest_record "$src" "$dst" copy "$old_sha" "special path fixture" || {
@@ -1880,6 +1913,24 @@ case_portable_directory_digest_is_canonical() {
   first="$root/first"
   second="$root/second"
   local newline_name=$'line\nbreak.txt' first_sha second_sha mutated_sha
+  local exec_probe="$tmp_root/${name}-exec-probe"
+
+  # NTFS has no per-file POSIX executable bit; `chmod +x/-x` on a plain file
+  # outside a git worktree is a silent no-op on some native-Windows hosts.
+  # The digest's executable-bit mutation assertion below is untestable
+  # there, so skip the whole case rather than report a false failure.
+  mkdir -p "$root"
+  printf 'x\n' > "$exec_probe"
+  chmod +x "$exec_probe"
+  if [[ ! -x "$exec_probe" ]]; then
+    printf 'SKIP: %s (host filesystem does not track a per-file executable bit)\n' "$name"
+    return
+  fi
+  chmod -x "$exec_probe"
+  if [[ -x "$exec_probe" ]]; then
+    printf 'SKIP: %s (host filesystem does not track a per-file executable bit)\n' "$name"
+    return
+  fi
 
   # Create the same logical tree in deliberately different filesystem orders.
   mkdir -p "$first/z-empty" "$first/a dir/nested"
@@ -1894,12 +1945,23 @@ case_portable_directory_digest_is_canonical() {
   printf 'payload\n' > "$second/a dir/nested/$newline_name"
   printf 'hidden\n' > "$second/.hidden"
 
-  if ln -s 'a dir/nested' "$first/link" 2>/dev/null \
-      && ln -s 'a dir/nested' "$second/link" 2>/dev/null \
+  # Use the production symlink helper, not a bare `ln -s`: on Windows a plain
+  # `ln -s` to a directory target skips the `winsymlinks:nativestrict` MSYS
+  # setting that _portable_make_symlink applies, which can leave a real
+  # directory reparse point on disk even when `ln` itself reports failure.
+  if _portable_make_symlink 'a dir/nested' "$first/link" 2>/dev/null \
+      && _portable_make_symlink 'a dir/nested' "$second/link" 2>/dev/null \
       && [[ -L "$first/link" && -L "$second/link" ]]; then
     :
   else
-    rm -f "$first/link" "$second/link"
+    # A directory symlink/reparse point on Windows must be removed with
+    # `rmdir`, not `rm -f` (which refuses it as "Is a directory"); try both
+    # so cleanup is safe whether creation left a symlink, a real directory,
+    # or nothing at all.
+    for _digest_link in "$first/link" "$second/link"; do
+      rm -f "$_digest_link" 2>/dev/null || rmdir "$_digest_link" 2>/dev/null || true
+    done
+    unset _digest_link
   fi
 
   # Bash 5.3 lets callers override glob order with GLOBSORT; digesting must
@@ -2047,13 +2109,19 @@ case_portable_canonical_path() {
   local name="portable-canonical-path: POSIX no-op, drive-case fold, cygpath dialect collapse"
   should_run "$name" || return 0
 
-  local posix dotseg drivecase stub c_slash drive_up drive_lo
-  # cygpath is absent on this host, so a POSIX absolute path is returned unchanged
-  # and dot segments collapse via _portable_normalize_path only.
-  posix="$(_portable_canonical_path "/home/user/repo")"
-  dotseg="$(_portable_canonical_path "/srv/app/./sub/../sub2")"
+  local posix dotseg drivecase stub c_slash drive_up drive_lo no_cygpath_dir
+  # Force cygpath off PATH for this section, even on native Windows where a
+  # real cygpath is normally present (it would otherwise translate these MSYS
+  # root-relative paths to a Windows path, which is exactly what the "with
+  # cygpath" section below already covers via its own stub). A POSIX absolute
+  # path is returned unchanged and dot segments collapse via
+  # _portable_normalize_path only.
+  no_cygpath_dir="$(mktemp -d)"
+  posix="$(PATH="$no_cygpath_dir" _portable_canonical_path "/home/user/repo")"
+  dotseg="$(PATH="$no_cygpath_dir" _portable_canonical_path "/srv/app/./sub/../sub2")"
   # A bare drive letter is lowercased even without cygpath (case-insensitive on Windows).
-  drivecase="$(_portable_canonical_path "C:/Users/First Last/repo")"
+  drivecase="$(PATH="$no_cygpath_dir" _portable_canonical_path "C:/Users/First Last/repo")"
+  rmdir "$no_cygpath_dir"
 
   # With a cygpath stub, the three Windows spellings of one location collapse.
   stub="$(mktemp -d)"
