@@ -690,25 +690,114 @@ _ctx_find_index_files() {
         -type f \( -name '*.md' -o -name '*.jsonl' \) 2>/dev/null | sort
       ;;
     *)
-      find "$root" \
-        -not -path '*/.git/*' \
-        -not -path '*/.pm-dispatch/*' \
-        -not -path '*/node_modules/*' \
-        -not -path '*/vendor/*' \
-        -not -path '*/.cache/*' \
-        -type f \( \
-          -name '*.sh'   -o -name '*.bash' -o \
-          -name '*.go'   -o \
-          -name '*.py'   -o \
-          -name '*.ts'   -o -name '*.tsx'  -o \
-          -name '*.js'   -o -name '*.jsx'  -o \
-          -name '*.md'   -o \
-          -name '*.yaml' -o -name '*.yml'  -o \
-          -name '*.json' -o \
-          -name '*.txt' \
-        \) 2>/dev/null | sort
+      # Prefer git's own view of the tree: it respects every nested
+      # .gitignore and .git/info/exclude for free, where the fixed `find`
+      # denylist below cannot (issue #620 -- a Next.js `.next/` build
+      # directory, ignored but not in that denylist, bloated the index to
+      # 190MB and pushed every refresh past its bound on Windows). Falls
+      # back to `find` for a non-git tree (e.g. the memory plane's own
+      # source, or a bare directory).
+      if git -C "$root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        _ctx_find_index_files_git "$root"
+      else
+        _ctx_find_index_files_walk "$root"
+      fi
       ;;
   esac
+}
+
+# git-tracked or untracked-but-not-ignored candidates under $root, filtered to
+# the same extension set and always-excluded operational dirs as the `find`
+# fallback. `--exclude-standard` already keeps out anything `.gitignore`,
+# `.git/info/exclude`, or a global excludesfile names; the case-pattern
+# denylist below covers dirs this indexer excludes regardless of a project's
+# own ignore rules (e.g. `vendor/` is sometimes intentionally tracked).
+#
+# `.pm-dispatch/ctx/ignore`, when present, is an optional supplementary
+# excludes list -- one path/glob per line -- for indexing-only exclusions
+# independent of git's own tracking or ignore state. Unlike .gitignore, a
+# pattern here excludes a match whether or not git tracks it: this indexer's
+# own denylist, just user-configurable instead of hardcoded. It lives under
+# the already-gitignored `.pm-dispatch/` state dir, so it is local/per-
+# checkout by default, not team-shared, unless a project deliberately
+# un-ignores it.
+_ctx_find_index_files_git() {
+  local root="$1" rel
+  local -a extra_patterns=()
+  local ignore_file="$root/.pm-dispatch/ctx/ignore"
+  if [[ -f "$ignore_file" ]]; then
+    local line
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      line="${line%$'\r'}"
+      [[ -z "$line" || "$line" == \#* ]] && continue
+      extra_patterns+=("$line")
+    done < "$ignore_file"
+  fi
+  git -C "$root" ls-files --cached --others --exclude-standard 2>/dev/null \
+    | while IFS= read -r rel; do
+        case "$rel" in
+          .pm-dispatch/*|*/.pm-dispatch/*) continue ;;
+          node_modules/*|*/node_modules/*) continue ;;
+          vendor/*|*/vendor/*) continue ;;
+          .cache/*|*/.cache/*) continue ;;
+        esac
+        _ctx_path_matches_ignore_patterns "$rel" "${extra_patterns[@]}" && continue
+        case "$rel" in
+          *.sh|*.bash|*.go|*.py|*.ts|*.tsx|*.js|*.jsx|*.md|*.yaml|*.yml|*.json|*.txt)
+            printf '%s/%s\n' "$root" "$rel"
+            ;;
+        esac
+      done | sort
+}
+
+# True if $1 (a path relative to repo root) matches any of the remaining
+# arguments as a shell glob -- tried anchored at root, nested at any depth,
+# and as a directory prefix in both positions, matching a bare gitignore-
+# style name's usual reach without needing a real gitignore engine.
+_ctx_path_matches_ignore_patterns() {
+  local path="$1"; shift
+  local pat
+  for pat in "$@"; do
+    [[ -n "$pat" ]] || continue
+    pat="${pat%/}"
+    # shellcheck disable=SC2254  # deliberately unquoted: $pat is a glob a
+    # caller writes (e.g. "*.log"), not a literal to match verbatim.
+    case "$path" in
+      $pat|$pat/*|*/$pat|*/$pat/*) return 0 ;;
+    esac
+  done
+  return 1
+}
+
+# Non-git fallback. Defence in depth: also excludes common build-output
+# directory names directly, since there is no .gitignore to consult here.
+_ctx_find_index_files_walk() {
+  local root="$1"
+  find "$root" \
+    -not -path '*/.git/*' \
+    -not -path '*/.pm-dispatch/*' \
+    -not -path '*/node_modules/*' \
+    -not -path '*/vendor/*' \
+    -not -path '*/.cache/*' \
+    -not -path '*/.next/*' \
+    -not -path '*/dist/*' \
+    -not -path '*/build/*' \
+    -not -path '*/out/*' \
+    -not -path '*/.expo/*' \
+    -not -path '*/.turbo/*' \
+    -not -path '*/coverage/*' \
+    -not -path '*/target/*' \
+    -type f \( \
+      -name '*.sh'   -o -name '*.bash' -o \
+      -name '*.go'   -o \
+      -name '*.py'   -o \
+      -name '*.ts'   -o -name '*.tsx'  -o \
+      -name '*.js'   -o -name '*.jsx'  -o \
+      -name '*.md'   -o \
+      -name '*.yaml' -o -name '*.yml'  -o \
+      -name '*.json' -o \
+      -name '*.txt' \
+    \) 2>/dev/null | sort
 }
 
 # ── Shared index core (plane-agnostic) ────────────────────────────────────────
