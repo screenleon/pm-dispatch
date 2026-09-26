@@ -65,6 +65,26 @@ gate_protocol_reason_retryable() {
   return 1
 }
 
+# issue #619: a Codex Windows sandbox bug (upstream, not ours to fix — see
+# openai/codex#44309/#44425/#43416/#42513/#39841) rejects every exec_command
+# a reviewer session tries, deterministically, on every reviewer, every
+# attempt. Left unclassified this used to fall into the generic "transport
+# failure"/"missing reviewer result" buckets, which ARE retryable — so the
+# gate spent a full retry round (once per reviewer) re-hitting the identical
+# deterministic failure before finally giving up, wasting on the order of
+# 30 minutes of wall clock for a result a single log line already ruled out.
+#
+# gate_reviewer_sandbox_unavailable_signature <dispatch_log>
+#   If <dispatch_log> contains a known sandbox-unavailable signature, print
+#   its first matching line on stdout and return 0. Otherwise print nothing
+#   and return 1. Read-only; never mutates the log.
+gate_reviewer_sandbox_unavailable_signature() {
+  local log="$1"
+  [[ -n "$log" && -r "$log" ]] || return 1
+  grep -m1 -E 'helper_unknown_error|Failed to create unified exec process' -- "$log" 2>/dev/null && return 0
+  return 1
+}
+
 # gate_protocol_attempt_record <role> <reviewer> <attempt> <outcome> <reason> <artifact>
 #   Append one gate_protocol_attempt_v1 JSON line to $PROTOCOL_RECOVERY_PATH.
 #   An empty <reviewer> is recorded as JSON null. Returns non-zero only if the

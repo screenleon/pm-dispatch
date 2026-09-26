@@ -469,6 +469,14 @@ case "$effective_mode" in
     # failed its task (caught by missing-output or synthesis-output check).
     exit 0
     ;;
+  sandbox-unavailable)
+    # Exits 0 without writing output, after printing the exact upstream Codex
+    # Windows sandbox signature (issue #619) to stderr. Captured into this
+    # reviewer's own dispatch log, which is what
+    # gate_reviewer_sandbox_unavailable_signature reads.
+    printf 'ERROR codex_core::tools::router: error=exec_command failed: CreateProcess { message: "Rejected(\"Failed to create unified exec process: helper_unknown_error: setup refresh had errors\")" }\n' >&2
+    exit 0
+    ;;
   no-verdict)
     # Writes a non-empty output file but omits the Verdict line — simulates
     # malformed reviewer output (caught by reviewer structure validation).
@@ -2915,6 +2923,44 @@ test_reviewer_no_output_aborts_gate() {
     return
   fi
   assert_file_contains "$name" "$err" "reviewer output missing or empty" || return
+  pass "$name"
+}
+
+# Behavior: a reviewer session that hits the known Codex Windows
+# sandbox-unavailable signature (issue #619 -- deterministic on every
+# attempt, an upstream bug pm-dispatch cannot fix) fails the gate
+# immediately, WITHOUT spending a retry round on a failure the log already
+# proves cannot recover -- and the failure report names the actual reason,
+# not just the reviewer.
+# Steps:
+#   1. Create a minimal repo (express tier, docs change)
+#   2. CODEX_GATE_STUB_MODE=sandbox-unavailable: every reviewer prints the
+#      known signature to stderr, then exits 0 without writing output
+#   3. Run gate in explicit parallel mode
+#   4. Assert non-zero exit, no "retrying once" in stderr (no wasted retry),
+#      and the sandbox-unavailable reason is named in stderr
+test_reviewer_sandbox_unavailable_skips_retry() {
+  local name="reviewer-sandbox-unavailable-skips-retry"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  CODEX_GATE_STUB_MODE=sandbox-unavailable run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --parallel
+  local code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then
+    fail "$name" "expected non-zero exit when every reviewer hits the sandbox-unavailable signature"
+    return
+  fi
+  assert_not_contains "$name" "$out" "retrying once" || return
+  assert_file_contains "$name" "$err" "executor sandbox unavailable" || return
+  assert_file_contains "$name" "$err" "helper_unknown_error" || return
   pass "$name"
 }
 
@@ -6171,6 +6217,7 @@ run_test test_reviewer_invalid_verdict_aborts_gate
 run_test test_reviewer_heading_only_verdict_is_accepted
 run_test test_reviewer_heading_and_explicit_verdict_must_agree
 run_test test_reviewer_no_output_aborts_gate
+run_test test_reviewer_sandbox_unavailable_skips_retry
 run_test test_sequential_no_output_aborts_gate
 run_test test_sequential_no_final_line_aborts_gate
 run_test test_sequential_timeout_preserves_partial_result

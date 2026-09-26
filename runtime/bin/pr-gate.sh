@@ -2969,6 +2969,7 @@ else
   REVIEWER_OUTPUT_FILES=()
   DISPATCH_PIDS=()
   REVIEWER_NAMES=()
+  DISPATCH_LOGS=()
 
   mkdir -p "$_ARTIFACT_ROOT/.agent-trace"
 
@@ -3006,6 +3007,7 @@ else
     BRIEF_FILES+=("$REVIEWER_BRIEF")
     REVIEWER_OUTPUT_FILES+=("$REVIEWER_OUTPUT")
     REVIEWER_NAMES+=("$r")
+    DISPATCH_LOGS+=("$DISPATCH_LOG")
 
     cat > "$REVIEWER_BRIEF" << RBRIEF_EOF
 schema_version: 1
@@ -3174,7 +3176,20 @@ RBRIEF_EOF
       # "evidence reference contract" and make an unrelated failure eligible
       # for the CC-545 corrective retry.
       GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR=""
-      if [[ " ${FAILED_REVIEWERS[*]:-} " == *" $r "* ]]; then
+      _dispatch_log="${DISPATCH_LOGS[$i]:-}"
+      _sandbox_line="$(gate_reviewer_sandbox_unavailable_signature "$_dispatch_log" || true)"
+      if [[ -n "$_sandbox_line" ]]; then
+        # Not "transport failure"/"missing reviewer result": a deterministic
+        # upstream sandbox bug (issue #619) never recovers on a same-shaped
+        # retry, so this reason is deliberately absent from
+        # GATE_PROTOCOL_RETRYABLE_REASONS -- classifying it here, before the
+        # generic buckets below, is what stops the gate from burning a full
+        # retry round on a failure the log already proves is unrecoverable.
+        PROTOCOL_INVALID_OUTPUTS+=("$r")
+        PROTOCOL_INVALID_REASONS+=("executor sandbox unavailable: ${_sandbox_line} (see ${_dispatch_log})")
+        gate_protocol_attempt_record reviewer "$r" 1 unrecoverable \
+          "executor sandbox unavailable: ${_sandbox_line}" "$rf" || exit 2
+      elif [[ " ${FAILED_REVIEWERS[*]:-} " == *" $r "* ]]; then
         PROTOCOL_INVALID_OUTPUTS+=("$r")
         PROTOCOL_INVALID_REASONS+=("transport failure")
         gate_protocol_attempt_record reviewer "$r" 1 retryable-failure \
@@ -3197,6 +3212,17 @@ RBRIEF_EOF
         gate_protocol_attempt_record reviewer "$r" 1 retryable-failure \
           "${GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR:-<other>}" "$rf" || exit 2
       fi
+    done
+
+    # Snapshot the first-attempt reason per reviewer before any retry runs,
+    # so the final failure report (below) can say *why* each reviewer is
+    # still invalid even after PROTOCOL_INVALID_OUTPUTS/REASONS get
+    # overwritten by a post-retry re-classification -- without this, a user
+    # only ever sees reviewer names, never the reason, and has to open
+    # .agent-trace by hand (issue #619).
+    declare -A _PROTOCOL_REASON_BY_REVIEWER=()
+    for _pi in "${!PROTOCOL_INVALID_OUTPUTS[@]}"; do
+      _PROTOCOL_REASON_BY_REVIEWER["${PROTOCOL_INVALID_OUTPUTS[$_pi]}"]="${PROTOCOL_INVALID_REASONS[$_pi]}"
     done
 
     # CC-521: retry exactly once for transport-shaped or machine-contract
@@ -3435,6 +3461,9 @@ RETRY_RBRIEF_EOF
     if [[ "${#PROTOCOL_INVALID_OUTPUTS[@]}" -gt 0 ]]; then
       printf 'Error: reviewer protocol INCOMPLETE for: %s\n' \
         "${PROTOCOL_INVALID_OUTPUTS[*]}" >&2
+      for _pr in "${PROTOCOL_INVALID_OUTPUTS[@]}"; do
+        printf '  %s: %s\n' "$_pr" "${_PROTOCOL_REASON_BY_REVIEWER[$_pr]:-<reason unavailable>}" >&2
+      done
       printf 'Every selected reviewer must complete the declared-surface checklist and actionable finding contract.\n' >&2
       exit 1
     fi
