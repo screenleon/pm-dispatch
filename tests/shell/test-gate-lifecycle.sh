@@ -1046,16 +1046,42 @@ case_wait_detects_force_killed_real_supervisor_early() {
   kill_pgid="$DL_ID_PGID"
 
   # Independent teardown step: force-kill the real supervisor's process
-  # group/job directly, bypassing its FIFO handshake and EXIT trap entirely
-  # -- the platform-appropriate equivalent of `kill -KILL -- -$pgid` (native
-  # Windows has no real process groups; detached_launch_kill_process_group's
-  # own Windows branch terminates the Job Object launcher instead, which is
-  # the unit that actually owns the tree per detached-launch.sh's module
-  # header).
-  if ! detached_launch_kill_process_group "$kill_pgid" 5; then
-    fail "$name" "force-kill of real supervisor pgid=$kill_pgid did not confirm termination"
-    _release_blocked_detached_gate
-    return
+  # group/job directly, bypassing its FIFO handshake and EXIT trap entirely.
+  # On Windows, detached_launch_kill_process_group's own Windows branch (Job
+  # Object -Action Kill) IS already a hard, uncatchable kill with no
+  # SIGTERM-equivalent phase, so it is reused directly. On POSIX, that same
+  # shared function sends SIGTERM first and only escalates to SIGKILL after a
+  # grace period -- the fake supervisor can (and does, on CI) catch that
+  # SIGTERM and shut down gracefully, writing a legitimate "cancelled"
+  # terminal record. That is exactly the OPPOSITE of what this case must
+  # simulate (an abrupt external kill with zero chance to write any terminal
+  # evidence, per issue #618), so POSIX sends SIGKILL to the process group
+  # directly instead of going through the shared TERM-first helper.
+  if [[ "$(detect_platform)" == windows ]]; then
+    if ! detached_launch_kill_process_group "$kill_pgid" 5; then
+      fail "$name" "force-kill of real supervisor pgid=$kill_pgid did not confirm termination"
+      _release_blocked_detached_gate
+      return
+    fi
+  else
+    local self_pgid
+    self_pgid="$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')"
+    if [[ -z "$self_pgid" || "$kill_pgid" == "$self_pgid" ]]; then
+      fail "$name" "refusing to signal own process group (self_pgid=$self_pgid kill_pgid=$kill_pgid)"
+      _release_blocked_detached_gate
+      return
+    fi
+    kill -KILL -- "-$kill_pgid" 2>/dev/null || true
+    local waited=0
+    while kill -0 -- "-$kill_pgid" 2>/dev/null && (( waited < 50 )); do
+      sleep 0.1
+      waited=$((waited + 1))
+    done
+    if kill -0 -- "-$kill_pgid" 2>/dev/null; then
+      fail "$name" "force-kill of real supervisor pgid=$kill_pgid did not confirm termination"
+      _release_blocked_detached_gate
+      return
+    fi
   fi
 
   local wait_wrapper="$tmp_root/c6d/wait"

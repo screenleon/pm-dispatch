@@ -334,12 +334,12 @@ GATE_ARGS=(--cd "<work_dir>" --executor "$GATE_EXECUTOR" --policy generic)
 # "foreground" on Codex absent a confirmed App Server bridge (see Step 2
 # above) -- a literal value, not a shell variable, so the command stays
 # statically analyzable for the `pmctl:*` permission prefix match.
-pmctl gate run "${GATE_ARGS[@]}" --lifecycle <lifecycle_value>
+pmctl gate run "${GATE_ARGS[@]}" --lifecycle "<lifecycle_value>"
 ```
 
 If this fails with `pmctl: command not found` (exit 127), `pmctl` is not on
 PATH — retry with the resolved fallback path instead:
-`"$(cd "$(dirname "$(readlink -f "${HOME}/.claude/commands/pr-gate.md" 2>/dev/null || readlink "${HOME}/.claude/commands/pr-gate.md")")/.." && pwd)/cli/pmctl" gate run "${GATE_ARGS[@]}" --lifecycle <lifecycle_value>`
+`"$(cd "$(dirname "$(readlink -f "${HOME}/.claude/commands/pr-gate.md" 2>/dev/null || readlink "${HOME}/.claude/commands/pr-gate.md")")/.." && pwd)/cli/pmctl" gate run "${GATE_ARGS[@]}" --lifecycle "<lifecycle_value>"`
 (re-run the full arg-parsing block above first — `GATE_ARGS` does not
 survive across Bash calls).
 
