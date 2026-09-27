@@ -77,7 +77,10 @@ if ! "$pmctl" commands --json > "$tmp_dir/commands.json" 2> "$tmp_dir/commands.e
 elif ! jq -e '.commands | type == "array" and all(.[]; (.path|type)=="string" and (.summary|type)=="string" and (.usage|type)=="string" and (.stability|type)=="string" and (.json|type)=="boolean" and (.mutating|type)=="boolean")' "$tmp_dir/commands.json" >/dev/null; then
   fail "pmctl commands --json does not satisfy the discovery schema"
 else
-  jq -r '.commands[].path' "$tmp_dir/commands.json" | LC_ALL=C sort -u > "$json_paths"
+  # `tr -d '\r'`: this host's jq (native Windows build) emits CRLF line
+  # endings on `-r` raw string output; registry_paths is LF-only (built via
+  # awk), so an unstripped CRLF makes every otherwise-identical line diff.
+  jq -r '.commands[].path' "$tmp_dir/commands.json" | tr -d '\r' | LC_ALL=C sort -u > "$json_paths"
   if ! diff -u "$registry_paths" "$json_paths" > "$tmp_dir/registry-json.diff"; then
     fail "registry and commands JSON paths differ:\n$(<"$tmp_dir/registry-json.diff")"
   fi

@@ -66,11 +66,31 @@ for rel in "${files[@]}"; do
       continue
     fi
     [[ "$in_fence" -eq 1 ]] && continue
+    # Cheap pre-filter BEFORE the subprocess-spawning sed pass below: code-span
+    # stripping only ever REMOVES characters, so a raw line with no `[[` at all
+    # can never produce a `[[` match after stripping either. Skipping the sed
+    # call for the vast majority of lines (which contain no `[[`) avoids one
+    # `printf`+`sed` subprocess pair per line -- on native Windows, process
+    # spawn is expensive enough that scanning this scanned-file set's ~13k
+    # total lines unconditionally took 900s+ (vs low single-digit seconds on
+    # Linux); this cuts it to the small minority of lines that actually need
+    # the expensive check.
+    [[ "$line" == *'[['* ]] || continue
     # drop inline code spans before scanning, longest delimiter first: a span
     # opened with N backticks closes on the next run of exactly N, and its
     # content may itself contain shorter backtick runs (```a``b``` is one span).
+    # `LC_ALL=C` on the sed call: under this host's C.UTF-8 (what
+    # tests/bin/run-tests.sh exports), sed's multi-byte handling of a 4-byte
+    # UTF-8 codepoint (e.g. the 🟢 glyph literal in BACKLOG.md) desyncs the
+    # `[^`]` character class from backtick-byte boundaries, so a genuine
+    # `` `...` `` span straddling one silently fails to strip -- confirmed:
+    # this exact call reproducibly mis-stripped BACKLOG.md's
+    # "`Superseded by [[CC-NNN]]`" span only under C.UTF-8, never under an
+    # unset/C locale. Backticks and `[[`/`]]` are single-byte ASCII, so
+    # byte-wise (LC_ALL=C) matching is correct here regardless of what
+    # multi-byte content sits between them.
     # shellcheck disable=SC2016  # the backticks in the sed pattern are literal
-    stripped="$(printf '%s' "$line" | sed -E '
+    stripped="$(printf '%s' "$line" | LC_ALL=C sed -E '
       s/```([^`]|`{1,2}[^`])*```//g
       s/``([^`]|`[^`])*``//g
       s/`[^`]*`//g')"
