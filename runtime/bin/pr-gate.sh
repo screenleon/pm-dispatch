@@ -561,6 +561,13 @@ ARTIFACT_PATHS_PATH="$PR_GATE_LIB_DIR/artifact-paths.sh"
 # shellcheck disable=SC1090  # path is derived from the classified topology
 . "$ARTIFACT_PATHS_PATH"
 
+PORTABLE_PATH="$PR_GATE_LIB_DIR/portable.sh"
+[[ -r "$PORTABLE_PATH" ]] || _gate_lib_unavailable "$PORTABLE_PATH"
+# shellcheck source=runtime/lib/portable.sh
+# shellcheck disable=SC1090  # path is derived from the classified topology
+. "$PORTABLE_PATH"
+unset PORTABLE_PATH
+
 # Executor-name validation is delegated to canonical resolve_executor_at: it is
 # the single, data-driven authority — `auto` autodetects and any other value must
 # be a routable Adapter in the classified root, fail-closed on unknown. A local
@@ -633,6 +640,29 @@ if [[ "$EXECUTOR" == "codex" ]]; then
     _guard_pmctl_abs="$(command -v pmctl 2>/dev/null || true)"
   fi
   [[ -n "$_guard_pmctl_abs" ]] && GUARD_PMCTL_CMD="$_guard_pmctl_abs"
+  if [[ -n "$_guard_pmctl_abs" && "$(detect_platform)" == "windows" ]]; then
+    # A bare `bash` token is ambiguous on a machine with both Git Bash and WSL
+    # installed: PowerShell's PATH search could resolve it to WSL's launcher,
+    # which cannot exec a Git-Bash-style POSIX path (different filesystem
+    # namespace -- CC-589). $BASH is bash's own builtin holding the absolute
+    # path of the interpreter CURRENTLY running this script, i.e. exactly the
+    # Git Bash this same host will later use to run the guard check -- resolve
+    # it to a Windows-native path once here so the embedded command names a
+    # concrete executable instead of relying on PATH order. Fall back to the
+    # bare word (existing, unquoted default -- omit the 2nd argument entirely
+    # so portable_bash_wrapped_command takes its true default path) if $BASH
+    # or cygpath is unavailable.
+    _guard_bash_exe=""
+    if [[ -n "${BASH:-}" ]] && command -v cygpath >/dev/null 2>&1; then
+      _guard_bash_exe="$(cygpath -w -- "$BASH" 2>/dev/null || true)"
+    fi
+    if [[ -n "$_guard_bash_exe" ]]; then
+      GUARD_PMCTL_CMD="$(portable_bash_wrapped_command "$GUARD_PMCTL_CMD" "$_guard_bash_exe")"
+    else
+      GUARD_PMCTL_CMD="$(portable_bash_wrapped_command "$GUARD_PMCTL_CMD")"
+    fi
+    unset _guard_bash_exe
+  fi
   unset _guard_pmctl_abs
 fi
 

@@ -1253,15 +1253,56 @@ _portable_make_symlink() {
   MSYS="$msys_value" ln -s "$src" "$dst"
 }
 
-# portable_bash_wrapped_command <path>
-# PowerShell-launchable representation of a POSIX script path: `bash '<path>'`
-# with embedded single quotes doubled (PowerShell's single-quote escape). The
-# native-Windows hook runner is PowerShell, so a bare or %q POSIX path never
-# starts; both host installers write this form on Windows. Single owner of the
-# wrapping contract — portable_bash_unwrap_command is its inverse.
+# portable_bash_wrapped_command <path> [bash_exe]
+# PowerShell-launchable representation of a POSIX script path:
+# `<bash_exe> '<path>'` with embedded single quotes doubled (PowerShell's
+# single-quote escape). The native-Windows hook runner is PowerShell, so a
+# bare or %q POSIX path never starts; both host installers write this form
+# on Windows. <bash_exe> defaults to the bare word `bash` (existing,
+# installer-compatible behavior, relying on PATH resolution) — pass an
+# absolute, pre-resolved interpreter path (e.g. via `cygpath -w -- "$BASH"`)
+# when PATH-based resolution is itself ambiguous, such as a bare `bash`
+# resolving to WSL's launcher instead of Git Bash on a machine with both
+# installed (CC-589) — WSL's bash operates in a different filesystem
+# namespace (`/mnt/c/...`, not Git Bash's `/c/...`) and cannot exec a POSIX
+# path meant for Git Bash.
+#
+# A resolved absolute interpreter path routinely contains a space (Git for
+# Windows' own default install location is `C:\Program Files\Git\...`) — an
+# UNQUOTED bash_exe token would then split into two words at the space and
+# PowerShell would fail to launch it at all (the same class of bug this
+# whole ticket exists to fix, reintroduced by an unquoted fix for it; caught
+# by 3 independent gate reviewers converging on the identical finding). So a
+# CALLER-SUPPLIED bash_exe (the 2nd argument passed at all, regardless of its
+# content) is always single-quoted (embedded quotes doubled, same convention
+# as the path) and — since a quoted string used as the leading token in
+# PowerShell is a plain string expression, not an invocation, unlike a bare
+# word — prefixed with the `&` call operator so it actually executes.
+# Quoting unconditionally on "was a 2nd argument given" rather than
+# conditionally on content (e.g. "contains a space") is deliberate: a
+# single-quoted PowerShell string is fully literal except for the quote
+# character itself, so this is safe against ANY interpreter path content
+# (spaces, `$`, backticks, semicolons, ...) without having to enumerate every
+# PowerShell-significant character a content-based check could miss (a gap a
+# gate reviewer separately flagged in an earlier, content-conditional version
+# of this same fix). Omitting the 2nd argument (the existing default bare
+# word `bash`) is emitted exactly as before: unquoted, no `&` prefix, byte-
+# for-byte identical to the pre-CC-589 form — this keeps the default-omitted
+# call shape's output unchanged (installed-hook idempotency comparisons in
+# hosts/claude/bin/install-guards.sh and hosts/codex/bin/install.sh depend on
+# that byte-for-byte stability). Single owner of the wrapping contract —
+# portable_bash_unwrap_command is its inverse for the default (bare-word, no
+# `&`) form only; a custom bash_exe's wrapped output does not round-trip
+# through it (no existing caller reads back a custom-bash_exe wrapped
+# string).
 portable_bash_wrapped_command() {
   local path="$1"
-  printf "bash '%s'" "${path//\'/\'\'}"
+  if [[ $# -ge 2 ]]; then
+    local bash_exe="$2"
+    printf "& '%s' '%s'" "${bash_exe//\'/\'\'}" "${path//\'/\'\'}"
+  else
+    printf "bash '%s'" "${path//\'/\'\'}"
+  fi
 }
 
 # portable_bash_unwrap_command <command>

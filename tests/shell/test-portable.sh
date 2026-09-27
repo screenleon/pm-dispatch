@@ -2234,6 +2234,67 @@ case_portable_bash_wrap_unwrap_round_trip() {
   pass "$name"
 }
 
+# Behavior: CC-589's optional second argument lets a caller pin an explicit
+# interpreter (e.g. an absolute Git-Bash path, to avoid a bare `bash` token
+# ambiguously resolving to WSL's launcher on a machine with both installed)
+# without changing the default-omitted call's byte-identical output --
+# existing callers (hosts/claude/bin/install-guards.sh,
+# hosts/codex/bin/install.sh) never pass it, and their installed-hook
+# idempotency comparisons depend on that output staying stable. A
+# space-free custom interpreter path is still single-quoted and
+# `&`-prefixed (quoting is unconditional on "was a 2nd argument given",
+# not on content) — see the sibling test below for why.
+# Steps: wrap with a space-free custom interpreter path, assert it is
+# quoted and `&`-prefixed, and assert the default (omitted) call is
+# unchanged from the existing bare-word form.
+case_portable_bash_wrap_custom_interpreter() {
+  local name="portable/bash-wrap-custom-interpreter"
+  should_run "$name" || return 0
+  local path="/c/Users/dev/repo/hooks/guard.sh"
+  local custom_exe='C:\Git\bin\bash.exe'
+  if [[ "$(portable_bash_wrapped_command "$path" "$custom_exe")" != "& '$custom_exe' '$path'" ]]; then
+    fail "$name" "space-free custom bash_exe argument was not quoted and & -prefixed"
+    return
+  fi
+  if [[ "$(portable_bash_wrapped_command "$path")" != "bash '$path'" ]]; then
+    fail "$name" "omitting bash_exe changed the existing default-wrapped form"
+    return
+  fi
+  pass "$name"
+}
+
+# Behavior: a custom interpreter path is ALWAYS single-quoted (embedded
+# quotes doubled) and `&`-prefixed, regardless of its content -- not just
+# when it happens to contain a space or quote. Git for Windows' own default
+# install location contains a space (`C:\Program Files\Git\...`), and an
+# earlier, content-conditional version of this fix (checking for a space or
+# quote before deciding whether to quote) was exactly the defect 3
+# independent gate reviewers converged on: enumerating "which characters
+# need quoting" is itself the fragile part PowerShell single-quoting is
+# meant to avoid -- a single-quoted string is fully literal except for the
+# quote character itself, so quoting unconditionally is both simpler and
+# safe against ANY interpreter path content ($, backticks, semicolons, ...),
+# not just the one case that was actually tested.
+# Steps: wrap with a space-containing custom interpreter path and an
+# interpreter path that itself contains a single quote, and assert both the
+# quoting and the `&` prefix.
+case_portable_bash_wrap_custom_interpreter_with_space() {
+  local name="portable/bash-wrap-custom-interpreter-with-space"
+  should_run "$name" || return 0
+  local path="/c/Users/dev/repo/hooks/guard.sh"
+  local spaced_exe='C:\Program Files\Git\usr\bin\bash.exe'
+  if [[ "$(portable_bash_wrapped_command "$path" "$spaced_exe")" != "& '$spaced_exe' '$path'" ]]; then
+    fail "$name" "space-containing bash_exe was not quoted and & -prefixed"
+    return
+  fi
+  local quoted_exe="C:\\Users\\O'Brien\\bash.exe"
+  if [[ "$(portable_bash_wrapped_command "$path" "$quoted_exe")" != "& 'C:\Users\O''Brien\bash.exe' '$path'" ]]; then
+    fail "$name" "embedded single quote in bash_exe was not doubled"
+    return
+  fi
+  pass "$name"
+}
+
 case_link_or_copy_symlink_success
 case_link_or_copy_post_check_reject
 case_link_or_copy_copy_fallback
@@ -2256,5 +2317,7 @@ case_portable_canonical_path
 case_portable_source_is_side_effect_free
 case_portable_make_symlink_windows_msys
 case_portable_bash_wrap_unwrap_round_trip
+case_portable_bash_wrap_custom_interpreter
+case_portable_bash_wrap_custom_interpreter_with_space
 
 th_summary
