@@ -84,8 +84,17 @@ agents_inv="$(find "$repo_root/agents" -maxdepth 1 -type f -name '*.md' -printf 
 # session, never repo content; see its .gitignore entry) so a local dev
 # session doesn't spuriously fail this lint over a machine-local artifact
 # that was never meant to have a README bullet.
+# `-c safe.directory='*'`: a reviewer/CI sandbox can check out this repo
+# under a different effective owner than the one running the lint, which
+# makes plain `git check-ignore` fail closed with exit 128 ("detected
+# dubious ownership") rather than exit 1 ("not ignored") -- indistinguishable
+# from a real "not ignored" result by exit code alone, and left unhandled
+# this silently reclassified an ignored harness directory as a real skill
+# needing a README bullet (qa-tester finding, gate-20260928-082547). This
+# plumbing command is read-only and makes no trust decision that ownership
+# verification exists to protect, so bypassing it here is safe.
 skills_inv="$(find "$repo_root/skills" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | while IFS= read -r d; do
-  git -C "$repo_root" check-ignore -q "skills/$d" || printf '%s\n' "$d"
+  git -c safe.directory='*' -C "$repo_root" check-ignore -q "skills/$d" || printf '%s\n' "$d"
 done)"
 
 compare command Commands "$commands_inv"
