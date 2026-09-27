@@ -8575,28 +8575,30 @@ test_cc589_seq_brief_guard_windows_bash_wrapped() {
   # comparing two different spellings of the same file.
   local runner_canon
   runner_canon="$(cd "$runner" && pwd -P)"
-  # pr-gate.sh resolves an unambiguous interpreter via $BASH + cygpath -w when
-  # both are available (CC-589) and falls back to the bare word otherwise --
-  # compute the same expectation here, through the actual production wrap
-  # function (in a subshell, so sourcing portable.sh does not leak into this
-  # suite's own shell), so this assertion is host-independent (a real
-  # Git-Bash-on-Windows host resolves an absolute, space-containing path that
-  # gets quoted and `&`-prefixed; CI's Linux runner has no cygpath and keeps
-  # the bare-word fallback) and never drifts from the wrap function's own
-  # quoting logic.
-  local expected_call
-  expected_call="$(
-    . "$REPO_ROOT/runtime/lib/portable.sh"
-    _exe="bash"
-    if [[ -n "${BASH:-}" ]] && command -v cygpath >/dev/null 2>&1; then
-      _exe="$(cygpath -w -- "$BASH" 2>/dev/null || true)"
-      [[ -n "$_exe" ]] || _exe="bash"
-    fi
-    portable_bash_wrapped_command "$runner_canon/cli/pmctl" "$_exe"
-  )"
+  # Independent oracle (qa-tester-F001): stub `cygpath` to a fixed, hardcoded
+  # fake Windows path instead of re-deriving the expectation by calling the
+  # SUT's own production wrap function with the real host's real cygpath --
+  # a test whose expectation shares the SUT's own resolution logic can't
+  # catch a bug in that shared logic, since both would be wrong the same way.
+  # The stub ignores its real input and always returns this literal, so this
+  # exercises pr-gate.sh's actual $BASH + cygpath + portable_bash_wrapped_command
+  # call chain against a value this test controls and knows independently,
+  # on any host (including CI's Linux runner, where the real cygpath does
+  # not exist at all and would otherwise force the bare-word fallback path
+  # instead of this one).
+  local fake_bash_exe='C:\Fake Git\usr\bin\bash.exe'
+  local fake_cygpath_bin="$dir/fake-cygpath-bin"
+  mkdir -p "$fake_cygpath_bin"
+  cat > "$fake_cygpath_bin/cygpath" <<FAKECYGPATH
+#!/usr/bin/env bash
+printf '%s\n' '$fake_bash_exe'
+FAKECYGPATH
+  chmod +x "$fake_cygpath_bin/cygpath"
+  local expected_call="& '$fake_bash_exe' '$runner_canon/cli/pmctl'"
 
   set +e
   CODEX_GATE_CAPTURE_BRIEF="$brief" HOME="$home" PM_DISPATCH_PLATFORM=windows \
+    PATH="$fake_cygpath_bin:$PATH" \
     run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --sequential
   local code=$?
   set -e
@@ -8626,25 +8628,26 @@ test_cc589_parallel_reviewer_brief_guard_windows_bash_wrapped() {
   printf '#!/usr/bin/env bash\nexit 0\n' > "$runner/cli/pmctl"
   chmod +x "$runner/cli/pmctl"
   # See the sequential test's comment above: pr-gate.sh's bundle-root
-  # detection resolves via `pwd -P`, so assert against the same physical path,
-  # and compute the expected wrap through the actual production function so
-  # this never drifts from its quoting logic.
+  # detection resolves via `pwd -P`, so assert against the same physical
+  # path, and stub `cygpath` to an independently-known fake value (qa-tester
+  # F001) rather than re-deriving the expectation through the SUT's own
+  # production wrap function and real cygpath.
   local runner_canon
   runner_canon="$(cd "$runner" && pwd -P)"
-  local expected_call
-  expected_call="$(
-    . "$REPO_ROOT/runtime/lib/portable.sh"
-    _exe="bash"
-    if [[ -n "${BASH:-}" ]] && command -v cygpath >/dev/null 2>&1; then
-      _exe="$(cygpath -w -- "$BASH" 2>/dev/null || true)"
-      [[ -n "$_exe" ]] || _exe="bash"
-    fi
-    portable_bash_wrapped_command "$runner_canon/cli/pmctl" "$_exe"
-  )"
+  local fake_bash_exe='C:\Fake Git\usr\bin\bash.exe'
+  local fake_cygpath_bin="$dir/fake-cygpath-bin"
+  mkdir -p "$fake_cygpath_bin"
+  cat > "$fake_cygpath_bin/cygpath" <<FAKECYGPATH
+#!/usr/bin/env bash
+printf '%s\n' '$fake_bash_exe'
+FAKECYGPATH
+  chmod +x "$fake_cygpath_bin/cygpath"
+  local expected_call="& '$fake_bash_exe' '$runner_canon/cli/pmctl'"
 
   set +e
   CODEX_GATE_CAPTURE_REVIEWER_BRIEF="$reviewer_brief" \
     CODEX_GATE_CAPTURE_REVIEWER_FILTER=critic HOME="$home" PM_DISPATCH_PLATFORM=windows \
+    PATH="$fake_cygpath_bin:$PATH" \
     run_gate "$home" "$runner" "$repo" "$out" "$err" --base main \
       --reviewers critic,qa-tester --parallel
   local code=$?

@@ -649,13 +649,18 @@ if [[ "$EXECUTOR" == "codex" ]]; then
     # Git Bash this same host will later use to run the guard check -- resolve
     # it to a Windows-native path once here so the embedded command names a
     # concrete executable instead of relying on PATH order. Fall back to the
-    # bare word (existing behavior) if $BASH or cygpath is unavailable.
-    _guard_bash_exe="bash"
+    # bare word (existing, unquoted default -- omit the 2nd argument entirely
+    # so portable_bash_wrapped_command takes its true default path) if $BASH
+    # or cygpath is unavailable.
+    _guard_bash_exe=""
     if [[ -n "${BASH:-}" ]] && command -v cygpath >/dev/null 2>&1; then
       _guard_bash_exe="$(cygpath -w -- "$BASH" 2>/dev/null || true)"
-      [[ -n "$_guard_bash_exe" ]] || _guard_bash_exe="bash"
     fi
-    GUARD_PMCTL_CMD="$(portable_bash_wrapped_command "$GUARD_PMCTL_CMD" "$_guard_bash_exe")"
+    if [[ -n "$_guard_bash_exe" ]]; then
+      GUARD_PMCTL_CMD="$(portable_bash_wrapped_command "$GUARD_PMCTL_CMD" "$_guard_bash_exe")"
+    else
+      GUARD_PMCTL_CMD="$(portable_bash_wrapped_command "$GUARD_PMCTL_CMD")"
+    fi
     unset _guard_bash_exe
   fi
   unset _guard_pmctl_abs
