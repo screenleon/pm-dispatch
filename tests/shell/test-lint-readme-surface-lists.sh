@@ -147,6 +147,23 @@ test_leading_slash_is_optional() {
   want_pass "$name" "$root"
 }
 
+test_gitignored_skill_dir_is_excluded() {
+  local name="a gitignored skill directory (e.g. skills/synced/) is excluded from the surface-list scan (CC-593)"
+  should_run "$name" || return 0
+  local root; root="$(fixture "$name")"
+  # skills/synced/ is Claude Code's own runtime skill-sync cache -- it
+  # reappears on disk every session and is explicitly gitignored as
+  # harness-owned, never repo content. A plain filesystem scan with no
+  # .gitignore awareness flagged it as a missing README bullet; confirmed on
+  # the real repo tree before this fix (a real, reproduced false positive,
+  # not a synthetic one).
+  git -C "$root" init -q
+  printf 'skills/synced/\n' > "$root/.gitignore"
+  mkdir -p "$root/skills/synced"
+  : > "$root/skills/synced/whatever.json"
+  want_pass "$name" "$root"
+}
+
 test_bad_flag_is_usage_error() {
   local name="an unknown flag exits 2"
   should_run "$name" || return 0
@@ -166,6 +183,7 @@ test_missing_agent_fails
 test_missing_skill_fails
 test_absent_section_heading_is_a_hard_finding
 test_leading_slash_is_optional
+test_gitignored_skill_dir_is_excluded
 test_bad_flag_is_usage_error
 
 th_summary

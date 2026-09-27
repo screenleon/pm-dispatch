@@ -164,6 +164,29 @@ test_spikes_dir_is_not_scanned() {
   want_pass "$name" "$root"
 }
 
+test_multibyte_codepoint_in_code_span_under_c_utf8_passes() {
+  local name="a 4-byte UTF-8 codepoint inside a code span is still stripped under LC_ALL=C.UTF-8 (CC-593)"
+  should_run "$name" || return 0
+  local root; root="$(fixture "$name")"
+  # This exact shape (a 4-byte UTF-8 codepoint -- U+1F7E2, generated via
+  # $'\Uxxxxxxxx' rather than written as a literal source byte sequence, since
+  # this host's shellcheck cannot encode it -- inside one backtick span, with
+  # a second, later backtick span on the same line containing a bare
+  # [[slug]]) is what desynced sed's [^`]* character class from backtick-byte
+  # boundaries under this host's jq/sed toolchain when LC_ALL=C.UTF-8 is set
+  # (what tests/bin/run-tests.sh exports, never an interactive shell's own
+  # locale) -- the second span's content leaked through unstripped. Confirmed
+  # mutation-sensitive: fails with the LC_ALL=C scoping reverted on the
+  # internal sed call, passes with it.
+  local glyph=$'\U0001F7E2'
+  # shellcheck disable=SC2016  # literal backticks are markdown fixture content
+  printf -- '- `%s superseded YYYY-MM-DD` archived body keeps a `Superseded by [[CC-NNN]]` pointer, Same %s glyph as `someday` marker, so a %s left on the board should only be `someday`.\n' \
+    "$glyph" "$glyph" "$glyph" > "$root/BACKLOG.md"
+  local out rc=0
+  out="$(LC_ALL=C.UTF-8 bash "$LINTER" --repo-root "$root" 2>&1)" || rc=$?
+  if [[ "$rc" -eq 0 ]]; then pass "$name"; else fail "$name" "expected exit 0 under LC_ALL=C.UTF-8, got $rc :: $out"; fi
+}
+
 test_bad_flag_is_usage_error() {
   local name="an unknown flag exits 2"
   should_run "$name" || return 0
@@ -187,6 +210,7 @@ test_bare_shorter_fence_does_not_close_longer_opener
 test_indented_fence_is_recognised
 test_regex_class_inside_code_passes
 test_spikes_dir_is_not_scanned
+test_multibyte_codepoint_in_code_span_under_c_utf8_passes
 test_bad_flag_is_usage_error
 
 th_summary
