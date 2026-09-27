@@ -2234,6 +2234,32 @@ case_portable_bash_wrap_unwrap_round_trip() {
   pass "$name"
 }
 
+# Behavior: CC-589's optional second argument lets a caller pin an explicit
+# interpreter (e.g. an absolute Git-Bash path, to avoid a bare `bash` token
+# ambiguously resolving to WSL's launcher on a machine with both installed)
+# without changing the default-omitted call's byte-identical output --
+# existing callers (hosts/claude/bin/install-guards.sh,
+# hosts/codex/bin/install.sh) never pass it, and their installed-hook
+# idempotency comparisons depend on that output staying stable.
+# Steps: wrap with an explicit custom interpreter path, assert it replaces
+# the literal word "bash", and assert the default (omitted) call is
+# unchanged from the existing bare-word form.
+case_portable_bash_wrap_custom_interpreter() {
+  local name="portable/bash-wrap-custom-interpreter"
+  should_run "$name" || return 0
+  local path="/c/Users/dev/repo/hooks/guard.sh"
+  local custom_exe='C:\Program Files\Git\usr\bin\bash.exe'
+  if [[ "$(portable_bash_wrapped_command "$path" "$custom_exe")" != "$custom_exe '$path'" ]]; then
+    fail "$name" "custom bash_exe argument was not used as the wrapped command's interpreter token"
+    return
+  fi
+  if [[ "$(portable_bash_wrapped_command "$path")" != "bash '$path'" ]]; then
+    fail "$name" "omitting bash_exe changed the existing default-wrapped form"
+    return
+  fi
+  pass "$name"
+}
+
 case_link_or_copy_symlink_success
 case_link_or_copy_post_check_reject
 case_link_or_copy_copy_fallback
@@ -2256,5 +2282,6 @@ case_portable_canonical_path
 case_portable_source_is_side_effect_free
 case_portable_make_symlink_windows_msys
 case_portable_bash_wrap_unwrap_round_trip
+case_portable_bash_wrap_custom_interpreter
 
 th_summary

@@ -8575,6 +8575,16 @@ test_cc589_seq_brief_guard_windows_bash_wrapped() {
   # comparing two different spellings of the same file.
   local runner_canon
   runner_canon="$(cd "$runner" && pwd -P)"
+  # pr-gate.sh resolves an unambiguous interpreter via $BASH + cygpath -w when
+  # both are available (CC-589) and falls back to the bare word otherwise --
+  # compute the same expectation here so this assertion is host-independent
+  # (a real Git-Bash-on-Windows host resolves an absolute path; CI's Linux
+  # runner has no cygpath and keeps the bare-word fallback).
+  local expected_bash_exe="bash"
+  if [[ -n "${BASH:-}" ]] && command -v cygpath >/dev/null 2>&1; then
+    expected_bash_exe="$(cygpath -w -- "$BASH" 2>/dev/null || true)"
+    [[ -n "$expected_bash_exe" ]] || expected_bash_exe="bash"
+  fi
 
   set +e
   CODEX_GATE_CAPTURE_BRIEF="$brief" HOME="$home" PM_DISPATCH_PLATFORM=windows \
@@ -8585,7 +8595,7 @@ test_cc589_seq_brief_guard_windows_bash_wrapped() {
     fail "$name" "exit $code, expected 0"
     return
   fi
-  assert_file_contains "$name" "$brief" "call: bash '$runner_canon/cli/pmctl' guard check --role reviewer --runtime codex --event pre-write" || return
+  assert_file_contains "$name" "$brief" "call: $expected_bash_exe '$runner_canon/cli/pmctl' guard check --role reviewer --runtime codex --event pre-write" || return
   pass "$name"
 }
 
@@ -8610,6 +8620,11 @@ test_cc589_parallel_reviewer_brief_guard_windows_bash_wrapped() {
   # detection resolves via `pwd -P`, so assert against the same physical path.
   local runner_canon
   runner_canon="$(cd "$runner" && pwd -P)"
+  local expected_bash_exe="bash"
+  if [[ -n "${BASH:-}" ]] && command -v cygpath >/dev/null 2>&1; then
+    expected_bash_exe="$(cygpath -w -- "$BASH" 2>/dev/null || true)"
+    [[ -n "$expected_bash_exe" ]] || expected_bash_exe="bash"
+  fi
 
   set +e
   CODEX_GATE_CAPTURE_REVIEWER_BRIEF="$reviewer_brief" \
@@ -8626,7 +8641,7 @@ test_cc589_parallel_reviewer_brief_guard_windows_bash_wrapped() {
     fail "$name" "reviewer brief not captured -- CODEX_GATE_CAPTURE_REVIEWER_BRIEF not picked up"
     return
   fi
-  assert_file_contains "$name" "$reviewer_brief" "call: bash '$runner_canon/cli/pmctl' guard check --role reviewer --runtime codex --event pre-write" || return
+  assert_file_contains "$name" "$reviewer_brief" "call: $expected_bash_exe '$runner_canon/cli/pmctl' guard check --role reviewer --runtime codex --event pre-write" || return
   pass "$name"
 }
 

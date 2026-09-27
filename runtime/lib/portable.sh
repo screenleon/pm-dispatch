@@ -1253,15 +1253,29 @@ _portable_make_symlink() {
   MSYS="$msys_value" ln -s "$src" "$dst"
 }
 
-# portable_bash_wrapped_command <path>
-# PowerShell-launchable representation of a POSIX script path: `bash '<path>'`
-# with embedded single quotes doubled (PowerShell's single-quote escape). The
-# native-Windows hook runner is PowerShell, so a bare or %q POSIX path never
-# starts; both host installers write this form on Windows. Single owner of the
-# wrapping contract — portable_bash_unwrap_command is its inverse.
+# portable_bash_wrapped_command <path> [bash_exe]
+# PowerShell-launchable representation of a POSIX script path:
+# `<bash_exe> '<path>'` with embedded single quotes doubled (PowerShell's
+# single-quote escape). The native-Windows hook runner is PowerShell, so a
+# bare or %q POSIX path never starts; both host installers write this form
+# on Windows. <bash_exe> defaults to the bare word `bash` (existing,
+# installer-compatible behavior, relying on PATH resolution) — pass an
+# absolute, pre-resolved interpreter path (e.g. via `cygpath -w -- "$BASH"`)
+# when PATH-based resolution is itself ambiguous, such as a bare `bash`
+# resolving to WSL's launcher instead of Git Bash on a machine with both
+# installed (CC-589) — WSL's bash operates in a different filesystem
+# namespace (`/mnt/c/...`, not Git Bash's `/c/...`) and cannot exec a POSIX
+# path meant for Git Bash. Changing only the default-omitted call shape
+# preserves every existing caller's on-disk wrapped-command format
+# byte-for-byte (installed-hook idempotency comparisons in
+# hosts/claude/bin/install-guards.sh and hosts/codex/bin/install.sh depend
+# on this). Single owner of the wrapping contract —
+# portable_bash_unwrap_command is its inverse for the default form only; a
+# custom bash_exe's wrapped output does not round-trip through it (no
+# existing caller reads back a custom-bash_exe wrapped string).
 portable_bash_wrapped_command() {
-  local path="$1"
-  printf "bash '%s'" "${path//\'/\'\'}"
+  local path="$1" bash_exe="${2:-bash}"
+  printf "%s '%s'" "$bash_exe" "${path//\'/\'\'}"
 }
 
 # portable_bash_unwrap_command <command>

@@ -641,7 +641,22 @@ if [[ "$EXECUTOR" == "codex" ]]; then
   fi
   [[ -n "$_guard_pmctl_abs" ]] && GUARD_PMCTL_CMD="$_guard_pmctl_abs"
   if [[ -n "$_guard_pmctl_abs" && "$(detect_platform)" == "windows" ]]; then
-    GUARD_PMCTL_CMD="$(portable_bash_wrapped_command "$GUARD_PMCTL_CMD")"
+    # A bare `bash` token is ambiguous on a machine with both Git Bash and WSL
+    # installed: PowerShell's PATH search could resolve it to WSL's launcher,
+    # which cannot exec a Git-Bash-style POSIX path (different filesystem
+    # namespace -- CC-589). $BASH is bash's own builtin holding the absolute
+    # path of the interpreter CURRENTLY running this script, i.e. exactly the
+    # Git Bash this same host will later use to run the guard check -- resolve
+    # it to a Windows-native path once here so the embedded command names a
+    # concrete executable instead of relying on PATH order. Fall back to the
+    # bare word (existing behavior) if $BASH or cygpath is unavailable.
+    _guard_bash_exe="bash"
+    if [[ -n "${BASH:-}" ]] && command -v cygpath >/dev/null 2>&1; then
+      _guard_bash_exe="$(cygpath -w -- "$BASH" 2>/dev/null || true)"
+      [[ -n "$_guard_bash_exe" ]] || _guard_bash_exe="bash"
+    fi
+    GUARD_PMCTL_CMD="$(portable_bash_wrapped_command "$GUARD_PMCTL_CMD" "$_guard_bash_exe")"
+    unset _guard_bash_exe
   fi
   unset _guard_pmctl_abs
 fi
