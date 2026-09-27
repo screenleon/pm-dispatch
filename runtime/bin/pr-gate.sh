@@ -561,6 +561,13 @@ ARTIFACT_PATHS_PATH="$PR_GATE_LIB_DIR/artifact-paths.sh"
 # shellcheck disable=SC1090  # path is derived from the classified topology
 . "$ARTIFACT_PATHS_PATH"
 
+PORTABLE_PATH="$PR_GATE_LIB_DIR/portable.sh"
+[[ -r "$PORTABLE_PATH" ]] || _gate_lib_unavailable "$PORTABLE_PATH"
+# shellcheck source=runtime/lib/portable.sh
+# shellcheck disable=SC1090  # path is derived from the classified topology
+. "$PORTABLE_PATH"
+unset PORTABLE_PATH
+
 # Executor-name validation is delegated to canonical resolve_executor_at: it is
 # the single, data-driven authority — `auto` autodetects and any other value must
 # be a routable Adapter in the classified root, fail-closed on unknown. A local
@@ -633,6 +640,9 @@ if [[ "$EXECUTOR" == "codex" ]]; then
     _guard_pmctl_abs="$(command -v pmctl 2>/dev/null || true)"
   fi
   [[ -n "$_guard_pmctl_abs" ]] && GUARD_PMCTL_CMD="$_guard_pmctl_abs"
+  if [[ -n "$_guard_pmctl_abs" && "$(detect_platform)" == "windows" ]]; then
+    GUARD_PMCTL_CMD="$(portable_bash_wrapped_command "$GUARD_PMCTL_CMD")"
+  fi
   unset _guard_pmctl_abs
 fi
 

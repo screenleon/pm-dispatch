@@ -2558,7 +2558,11 @@ test_parallel_synthesis_brief_validates() {
   create_repo "$repo" docs
 
   set +e
-  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --parallel
+  # Pin off CC-589's Windows-only bash-wrap: this case asserts the guard
+  # constraint's presence, not its invocation form, so it must stay
+  # host-independent.
+  CODEX_GATE_CAPTURE_BRIEF="$brief" PM_DISPATCH_PLATFORM=linux \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --parallel
   local code=$?
   set -e
   if [[ "$code" -ne 0 ]]; then
@@ -8018,7 +8022,11 @@ test_sequential_brief_has_citation_guard() {
   git -C "$repo" commit -q -m "add fixture agent for citation-guard index test"
 
   set +e
-  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --sequential
+  # Pin off CC-589's Windows-only bash-wrap: this case asserts the guard
+  # constraint's presence, not its invocation form, so it must stay
+  # host-independent.
+  CODEX_GATE_CAPTURE_BRIEF="$brief" PM_DISPATCH_PLATFORM=linux \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --sequential
   local code=$?
   set -e
   if [[ "$code" -ne 0 ]]; then
@@ -8313,7 +8321,12 @@ test_seq_brief_has_reviewer_guard_constraint() {
   create_repo "$repo" docs
 
   set +e
-  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --sequential
+  # This case asserts the guard constraint's presence, not its invocation
+  # form -- pin to a non-Windows platform so CC-589's Windows-only bash-wrap
+  # (which changes "pmctl guard check" to "bash '<path>' guard check") does
+  # not change this assertion's outcome depending on the host running it.
+  CODEX_GATE_CAPTURE_BRIEF="$brief" PM_DISPATCH_PLATFORM=linux \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --sequential
   local code=$?
   set -e
   if [[ "$code" -ne 0 ]]; then
@@ -8346,8 +8359,10 @@ test_parallel_reviewer_brief_has_guard_constraint() {
   create_repo "$repo" docs
 
   set +e
+  # See the sequential case's comment above: pin off CC-589's Windows-only
+  # bash-wrap so this platform-agnostic assertion is host-independent.
   CODEX_GATE_CAPTURE_REVIEWER_BRIEF="$reviewer_brief" \
-    CODEX_GATE_CAPTURE_REVIEWER_FILTER=critic \
+    CODEX_GATE_CAPTURE_REVIEWER_FILTER=critic PM_DISPATCH_PLATFORM=linux \
     run_gate "$home" "$runner" "$repo" "$out" "$err" \
       --base main --reviewers critic,qa-tester --parallel
   local code=$?
@@ -8446,7 +8461,7 @@ test_seq_brief_guard_absolute_path_when_pmctl_not_on_path() {
   local minpath="$REPLY"
 
   set +e
-  CODEX_GATE_CAPTURE_BRIEF="$brief" HOME="$home" PATH="$minpath" \
+  CODEX_GATE_CAPTURE_BRIEF="$brief" HOME="$home" PATH="$minpath" PM_DISPATCH_PLATFORM=linux \
     "$runner/pr-gate.sh" --cd "$repo" --base main --sequential > "$out" 2> "$err"
   local code=$?
   set -e
@@ -8480,7 +8495,7 @@ test_parallel_reviewer_brief_guard_absolute_path_when_pmctl_not_on_path() {
 
   set +e
   CODEX_GATE_CAPTURE_REVIEWER_BRIEF="$reviewer_brief" \
-    CODEX_GATE_CAPTURE_REVIEWER_FILTER=critic HOME="$home" PATH="$minpath" \
+    CODEX_GATE_CAPTURE_REVIEWER_FILTER=critic HOME="$home" PATH="$minpath" PM_DISPATCH_PLATFORM=linux \
     "$runner/pr-gate.sh" --cd "$repo" --base main \
       --reviewers critic,qa-tester --parallel > "$out" 2> "$err"
   local code=$?
@@ -8533,6 +8548,117 @@ test_claude_seq_brief_guard_stays_bare_pmctl_when_pmctl_not_on_path() {
   fi
   assert_file_contains "$name" "$brief" "call: pmctl guard check --role reviewer" || return
   assert_not_contains "$name" "$brief" "call: $runner/cli/pmctl guard check" || return
+  pass "$name"
+}
+
+# Behavior: CC-589 requires sequential Codex briefs generated for Windows to
+# embed the portable bash '<path>' guard command before a reviewer writes.
+# Steps: stage the bundled pmctl path, simulate Windows, and capture the brief.
+test_cc589_seq_brief_guard_windows_bash_wrapped() {
+  local name="cc589-seq-windows-wrap"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  mkdir -p "$runner/cli"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$runner/cli/pmctl"
+  chmod +x "$runner/cli/pmctl"
+  # pr-gate.sh's bundle-root detection resolves its own location via `pwd -P`,
+  # so on a host where /tmp is a mount point (e.g. MSYS's /tmp -> the real
+  # Windows temp dir) the embedded path is the PHYSICAL path, not $runner's
+  # original spelling -- resolve the same way here or this assertion is
+  # comparing two different spellings of the same file.
+  local runner_canon
+  runner_canon="$(cd "$runner" && pwd -P)"
+
+  set +e
+  CODEX_GATE_CAPTURE_BRIEF="$brief" HOME="$home" PM_DISPATCH_PLATFORM=windows \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --sequential
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  assert_file_contains "$name" "$brief" "call: bash '$runner_canon/cli/pmctl' guard check --role reviewer --runtime codex --event pre-write" || return
+  pass "$name"
+}
+
+# Behavior: CC-589's Windows-safe guard command is also embedded in each
+# parallel Codex reviewer brief before the critic writes its result.
+# Steps: stage the bundled pmctl path, simulate Windows, and capture critic's brief.
+test_cc589_parallel_reviewer_brief_guard_windows_bash_wrapped() {
+  local name="cc589-parallel-windows-wrap"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" reviewer_brief="$dir/reviewer-brief.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester
+  create_repo "$repo" docs
+
+  mkdir -p "$runner/cli"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$runner/cli/pmctl"
+  chmod +x "$runner/cli/pmctl"
+  # See the sequential test's comment above: pr-gate.sh's bundle-root
+  # detection resolves via `pwd -P`, so assert against the same physical path.
+  local runner_canon
+  runner_canon="$(cd "$runner" && pwd -P)"
+
+  set +e
+  CODEX_GATE_CAPTURE_REVIEWER_BRIEF="$reviewer_brief" \
+    CODEX_GATE_CAPTURE_REVIEWER_FILTER=critic HOME="$home" PM_DISPATCH_PLATFORM=windows \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" --base main \
+      --reviewers critic,qa-tester --parallel
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  if [[ ! -f "$reviewer_brief" ]]; then
+    fail "$name" "reviewer brief not captured -- CODEX_GATE_CAPTURE_REVIEWER_BRIEF not picked up"
+    return
+  fi
+  assert_file_contains "$name" "$reviewer_brief" "call: bash '$runner_canon/cli/pmctl' guard check --role reviewer --runtime codex --event pre-write" || return
+  pass "$name"
+}
+
+# Behavior: CC-589's Codex-only Windows wrapper must not leak into Claude's
+# literal pmctl permission-allowlist contract.
+# Steps: simulate Windows Claude sequential dispatch and capture its brief.
+test_cc589_claude_seq_brief_guard_windows_stays_bare_pmctl() {
+  local name="cc589-claude-windows-bare"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  mkdir -p "$runner/cli"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$runner/cli/pmctl"
+  chmod +x "$runner/cli/pmctl"
+
+  set +e
+  CODEX_GATE_CAPTURE_BRIEF="$brief" HOME="$home" PM_DISPATCH_PLATFORM=windows \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --executor claude --sequential
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0; stderr: $(cat "$err" 2>/dev/null)"
+    return
+  fi
+  assert_file_contains "$name" "$brief" "call: pmctl guard check --role reviewer --runtime claude --event pre-write" || return
+  assert_not_contains "$name" "$brief" "call: bash '" || return
   pass "$name"
 }
 
@@ -9174,6 +9300,9 @@ run_test test_parallel_reviewer_brief_has_guard_constraint
 run_test test_seq_brief_guard_absolute_path_when_pmctl_not_on_path
 run_test test_parallel_reviewer_brief_guard_absolute_path_when_pmctl_not_on_path
 run_test test_claude_seq_brief_guard_stays_bare_pmctl_when_pmctl_not_on_path
+run_test test_cc589_seq_brief_guard_windows_bash_wrapped
+run_test test_cc589_parallel_reviewer_brief_guard_windows_bash_wrapped
+run_test test_cc589_claude_seq_brief_guard_windows_stays_bare_pmctl
 run_test test_missing_jq_fails_before_dispatch
 run_test test_relative_output_normalized_to_absolute
 run_test test_brief_major_resolves_full

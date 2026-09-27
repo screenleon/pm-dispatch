@@ -144,6 +144,14 @@ export PATH="${PM_DISPATCH_REPO}/cli:$PATH"
 > argument carrying shell metacharacters could break out of the intended
 > invocation, and native Windows has no CI to regression-test it.
 
+> **Gate-dispatch briefs on Windows (CC-589):** Codex reviewer and synthesis
+> briefs automatically embed `bash '<path-to-pmctl>'` for their mandatory
+> pre-write `pmctl guard check`. This is safe for Codex's non-interactive
+> PowerShell subprocess, which does not load your `$PROFILE` and cannot run
+> the extension-less bash script directly. No profile setup is needed for
+> that gate-dispatch invocation. The `pmctl` function above remains for
+> interactive/manual PowerShell use; it is intentionally a separate mechanism.
+
 > **Symlink support:** With Windows Developer Mode enabled, the installer
 > automatically invokes Git Bash `ln` with `MSYS=winsymlinks:nativestrict`.
 > This creates native Windows symlinks for individual helpers and receipt-owned
