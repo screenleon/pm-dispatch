@@ -126,6 +126,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-587 | ✅ done | GitHub issue #586：原生 Windows Git Bash 上 `pmctl gate run` 能建立 parent operation，卻在 `pmctl_operation_expect_producer` 保留 producer ownership 時失敗，留下 `state: running`／`producer: null` 且 reviewer 未啟動。Linux 的 Windows platform override 與含空白 repo 路徑均無法重現，邊界縮至原生 Windows/MSYS 的既有檔案替換語意。**已交付（pr:#587）**：維持 POSIX 同目錄 temp→rename 快路徑；Windows overwrite 失敗時改用原生原子 replace primitive；補 regression 模擬 MSYS overwrite failure，斷言 producer 進入 pending、record 全程存在且 temp 清乾淨。 | ops/portability | 2026-09-15 | pr:#587 | P1 | hygiene |
 | CC-588 | ✅ done | 原生 Windows Git Bash 上，`tests/shell/test-pmctl-ship-finish.sh` 部分 fixture（`gate_publish_assessment_build`／`gate_remediation_closure_publish`）用 `jq -f /dev/stdin <<\JQ` 讀 heredoc 時噴 `jq: Could not open /proc/self/fd/0: No such file or directory`，導致 `.subject.head_commit` 落空、finish 誤判「HEAD moved before push」而拒絕發布。**在未改動的 main（`75fafa0`）上、單獨 `--filter` 執行既有 `case_finish_dispatched_lane_auto_commits_before_gate` 即可重現**，非 CC-585 引入；CI（Linux runner）不受影響。**已交付（隨 CC-585 一併修復，同一 PR）**：兩處 `-f /dev/stdin <<\JQ` 改成先 `mktemp` 寫入真實暫存檔再 `-f <tmpfile>`，不再依賴 `/proc/self/fd/0`；本機驗證 `--filter gitignore` 全數 7 案例由部分失敗轉為全綠。**範圍縮小**：`tests/shell/test-pmctl-ship.sh` 仍有一處同款 `-f /dev/stdin` 寫法未修，留待日後另開票（同根因，不同檔案，非本票必要範圍）。 | ops/test | 2026-09-24 | — | P3 | hygiene |
 | CC-589 | 🔵 active | 原生 Windows 上 `pmctl gate run`（`--executor codex`）的 reviewer／synthesis codex session 會不穩定地直接用 PowerShell `& .\cli\pmctl guard check ...`（或類似形式）呼叫 pmctl，而非透過 `docs/platform-support.md` 記載的 `bash.exe --noprofile --norc .../cli/pmctl @args` wrapper——codex 的非互動 PowerShell 子行程不會載入 `$PROFILE`，所以那個 wrapper function 在該 session 裡根本不存在。Windows 對這個 extension-less bash shebang 腳本直接執行的結果是 `Program 'pmctl' failed to run: Access is denied`，導致 reviewer 沒寫出 review 結果檔、或 synthesis 沒寫出 gate 結果檔。**已觀測**：同一分支（CC-585 fix branch）連續兩次 standard-tier parallel gate 都命中，共 3 次獨立發生（synthesis attempt 2 一次；security-reviewer 首次＋重試各一次），每次都是同一句 `Access is denied invoking cli/pmctl`；但並非每次都發生（同一台機器上稍早 CC-587/#617 的 express-tier 2-reviewer gate 完全沒踩到），機率性、非決定性。**Requirement**：讓 codex reviewer／synthesis 的 dispatch 路徑（或其 brief／sandbox 啟動）保證 pmctl 呼叫方式在原生 Windows PowerShell 下總是可執行——例如固定改用 `bash.exe --noprofile --norc <repo>/cli/pmctl @args` 這個 canonical 形式產生 brief 範例／環境變數，而不是依賴 model 自己選對呼叫方式；補 regression 或至少手動驗證：連續多輪 codex reviewer dispatch 在原生 Windows 上 guard pre-write check 不再出現 `Access is denied`。 | ops/gate | 2026-09-24 | — | P1 | hygiene |
+| CC-590 | 🔵 active | **[原生 Windows：Codex tool-terminal 邊界關閉會殺死已發布 readiness 的 detached gate supervisor]** GitHub issue #618：`pmctl gate run --lifecycle detached` 在原生 Windows、由 Codex tool terminal 呼叫時，PowerShell Job Object launcher 能成功發布 readiness（`supervisor.identity` 記錄 `isolated=1` 的合法 Windows pid）並讓 `gate run` 回傳 gate_id，但該 launcher 隨即在「呼叫本身所在的 terminal/tool-call 邊界關閉」的同一秒被外層宿主一併終止——`disown` 未能阻止，`pr-gate.sh` 從未真正啟動，無 reviewer dispatch／scope／trace／result 產出。`pmctl gate wait` 最終正確回報 indeterminate（fail-closed，未誤判 GO/NO-GO），但要等滿整段 timeout 才浮現。高信度診斷：呼叫者 bash 進程本身很可能被 Codex 宿主自己的外層 Windows Job Object 持有，巢狀 job 在未設 breakaway 許可的情況下對「已中斷持有者」的收尾，會連同尚未離線的內層 launcher 一併關閉——因果與 launcher 自身的行程壽命綁在一起，launcher 進程內部無法在自己結束前觀察到「結束之後才發生」的外層收尾，故不可能單靠 launcher 自我延長存活期偵測到這個結局。非 GitHub issue #609（AppContainer/MSYS2 `CreateFileMapping` namespace 問題，不同機制）、亦非 issue #619（Codex Windows sandbox-unavailable，已由決定性訊號辨識並在 PR #626 修復）——三者現象與根因均不同，僅同屬原生 Windows parity 範圍。**Requirement**：(1) `pmctl gate wait` 的 poll loop 對已發布 `supervisor.identity` 的 detached gate 加入定期 liveness re-check（`detached_launch_target_alive`／`detached_launch_verify_identity`），一旦偵測死亡立即回報既有的 indeterminate（不等滿 timeout，也不改變其 fail-closed 語意／exit code）；(2) 「readiness 之後 supervisor 消失」的既有 indeterminate 訊息比照 `gate run` 既有的啟動失敗訊息，補上 `--lifecycle foreground` 的具體建議；(3) 比照既有 `pmctl dispatch run` 對 Codex host 的「無持久 App Server bridge 時預設 foreground」guidance（`hosts/codex/lib/memory-contract.sh`、`docs/host-contract.md`），把同一預設收斂邏輯延伸到 `pmctl gate run`／`/pr-gate`（`commands/pr-gate.md` 目前對 lifecycle 選擇完全沒有 host 分支）；(4) 新增 CI 可跑的 regression：detached 啟動後、readiness 一發布就由獨立步驟強制 kill 掉 supervisor 行程群（模擬邊界關閉的外部效應，而非讓 run/wait 在同一個常駐測試進程下順序執行），斷言 `gate wait` 快速且正確回報 indeterminate；(5) 另需一輪原生 Windows 主機上的真實驗證（真 Job Object launcher、readiness 後由另一個行程強制終止），因為本 fix 涉及安全敏感的 process-lifecycle 語意，不接受純程式碼審閱作為完工證據——注意實作／驗證所用的 executor 若本身跑在 sandboxed exec_command 環境下，可能正好複現同一種「terminal 邊界殺死 detached 子行程」問題，驗證應在非 sandboxed 的真實原生終端進行。**Non-goals**：不嘗試在 launcher 自身進程內偵測「進程結束後才觸發」的外層收尾（見上方因果論證，技術上不可行）；不建立通用「自動判斷目前是否為 Codex sandboxed tool-call terminal」的執行期啟發式（目前無可靠訊號來源）；不修改既有 Job Object P/Invoke 的 kill／verify 機制本身（`runtime/lib/windows/detached-launch-job.ps1`、`runtime/lib/detached-launch.sh` 現有語意已正確 fail-closed）；不處理 [[CC-589]]（codex/claude reviewer 呼叫 pmctl 被拒絕，不同根因不同症狀）。**Done-when**：`gate wait` 對一個 readiness 後立即被強制終止的 detached gate，能在遠低於預設 timeout 的時間內回報帶有 `--lifecycle foreground` 建議的 indeterminate；`/pr-gate` 與 Codex memory-contract 對「無確認持久 bridge」情境有明確、與 dispatch 一致的 foreground 預設文件；新 regression 與一次真實原生 Windows 驗證均通過。**See**: GitHub issue #618；[[CC-582]]（context-refresh bounded-timeout 前例，本票沿用同一設計語彙）；[[CC-535]]（detached-launch supervised-run 泛化 primitive，related 但不同範圍，未合併）；[[CC-370]]（原生 Windows experimental 支援範圍）；`docs/host-contract.md` 第 141-160 行（既有 dispatch 側 App Server bridge guidance）；`hosts/codex/lib/memory-contract.sh`；`commands/pr-gate.md` | ops/gate | 2026-09-27 | — | P1 | design |
 
 ---
 
@@ -4651,5 +4652,129 @@ Problem 描述的還廣。
 
 **See**: [[CC-585]]（工作中發現本問題）；[[CC-370]]（原生 Windows experimental 支援範圍）；
 docs/platform-support.md 第 117-137 行（已記載的正確 wrapper 形式）
+
+---
+
+## CC-590 — 原生 Windows：Codex tool-terminal 邊界關閉會殺死已發布 readiness 的 detached gate supervisor（GitHub issue #618）🔵 active
+
+**Problem**：在原生 Windows、由一個 Codex tool terminal 呼叫時：
+
+```
+bash cli/pmctl gate run --lifecycle detached --executor codex --cd .
+```
+
+`pmctl gate run --lifecycle detached` 能成功發布 readiness（`supervisor.identity`
+記錄一個合法的原生 Windows pid，`isolated=1`，`comm=powershell`）並回傳
+`gate_id`／parent operation id，但 PowerShell Job Object launcher（`runtime/lib/
+windows/detached-launch-job.ps1` 的 `-Action Launch`）隨即在「這次呼叫本身所在的
+terminal/tool-call 邊界關閉」的同一秒被外層宿主一併終止——`runtime/lib/
+detached-launch.sh` 的 `disown "$bash_view_pid"` 未能阻止。`runtime/bin/
+pr-gate.sh` 從未真正啟動：沒有 reviewer dispatch record、沒有 scope artifact、
+沒有 agent trace、沒有 result handoff，`supervisor-stdout.log` 是空檔。
+`pmctl gate wait <gate_id>` 最終正確回報：
+
+```
+indeterminate: <gate_id> reached readiness but its supervisor (pid=<n>)
+no longer exists and left no terminal evidence (exit=3)
+```
+
+——即既有的 fail-closed 語意本身沒有錯（沒有把這個狀態誤判成 GO/NO-GO），但
+初次 1200 秒 wait 與第二次短 wait 都是等滿全部 timeout 才浮現這個結論，parent
+operation 因此長時間卡在看似 running 的狀態，需要人工介入才能 reconcile。
+
+**高信度診斷**（issue 原文；沒有直接的 Windows process-termination 稽核事件可
+逐一佐證，但與 artifact 時間線與行程拓樸一致）：Codex terminal helper 啟動
+Git Bash → Git Bash 用 setsid 語意等價的方式 background＋disown PowerShell Job
+Object wrapper → wrapper 建立內層 Job Object（`JOB_OBJECT_LIMIT_KILL_ON_JOB_
+CLOSE`）並啟動 `gate-supervisor.sh` → readiness 發布、`gate run` 呼叫本身返回 →
+Codex terminal helper 收尾這次 tool-call 自己的外層 process/job tree 時，把
+PowerShell wrapper 也一併關閉，即使 Bash 端已經 `disown`——最可能的機制是呼叫
+者 bash 進程本身就是這個外層 job 的成員，而該 job 未設 breakaway 許可，巢狀
+job 收尾時無視 `disown` 直接連坐关闭內層 launcher → 內層 Job Object handle 關閉
+觸發 `KILL_ON_JOB_CLOSE`，gate supervisor 與其子孫全滅 → 這是一次外部強制終止，
+`gate-supervisor.sh` 的 EXIT trap 來不及寫出 terminal sentinel（`_supervisor_
+exit`／`_write_sentinel` 從未執行）。
+
+**因果上的關鍵限制**：外層收尾發生在「這次呼叫本身的 bash 進程已經結束」**之後**
+——也就是說，即使在 launcher 或呼叫者進程內部加一段 readiness 後的短暫存活期
+re-check（sleep + re-verify），也無法在自己結束前觀察到「結束之後才觸發」的外
+層收尾事件；那個事件的觸發條件就是本進程的結束本身。因此任何試圖在 `gate run`
+自身進程內用「多等幾秒再回傳」來偵測這個結局的設計，都無法生效（且會把
+`--lifecycle detached` 的「快速回傳」語意變相退化成 foreground）。
+
+**Why**：`/pr-gate` 目前對 lifecycle 選擇完全沒有 host 分支（`commands/pr-gate.md`
+Step 2 一律 `--lifecycle detached`），也沒有比照既有 `pmctl dispatch run` 對
+Codex host 的「無持久 App Server bridge 時預設 foreground」guidance
+（`hosts/codex/lib/memory-contract.sh`、`docs/host-contract.md` 141-160 行）
+延伸到 gate 這一側；而目前 wait 端要等滿 timeout 才浮現 indeterminate，讓每次
+命中都浪費一整輪 dispatch／gate 資源與人工 reconcile 成本。這與 GitHub issue
+#609（AppContainer/MSYS2 `NtCreateDirectoryObject`／`CreateFileMapping`
+namespace 問題，機制完全不同）以及 issue #619（Codex Windows sandbox
+`helper_unknown_error`／`Failed to create unified exec process` 決定性訊號，
+已由 `gate_reviewer_sandbox_unavailable_signature` 辨識並在 PR #626 修復）都
+是不同的失敗模式，僅同屬原生 Windows parity 範圍，不應合併處理。
+
+**Requirement**：
+1. `pmctl_gate_wait`（`runtime/lib/pmctl-gate.sh`）的 poll loop，對已發布
+   `supervisor.identity` 的 detached gate，定期用既有的
+   `detached_launch_target_alive`／`detached_launch_verify_identity` 做 liveness
+   re-check，一旦偵測到死亡就立即回報既有的 indeterminate 訊息（不必等滿
+   `--timeout`），既有 exit code（3）與「不得轉成假 GO/NO-GO」的 fail-closed
+   語意保持不變。
+2. 「readiness 之後 supervisor 消失、留下無 terminal evidence」的既有 indeterminate
+   訊息，比照 `gate run` 本身既有的啟動失敗訊息（`pmctl-gate.sh` 第 650／697／
+   721／724 行已有「retry with --lifecycle foreground」字樣），補上同樣具體的
+   `--lifecycle foreground` 建議。
+3. 比照既有 `pmctl dispatch run` 對 Codex host 的「無確認持久 App Server bridge
+   時預設 foreground」guidance，把同一預設收斂邏輯延伸到 `pmctl gate run`／
+   `/pr-gate`：更新 `hosts/codex/lib/memory-contract.sh`、`docs/host-contract.md`
+   與 `commands/pr-gate.md` Step 2，讓 Codex host 呼叫 `/pr-gate` 時預設走
+   `--lifecycle foreground`，僅在已確認持久 bridge 存在時才可選 detached；
+   Claude host（`run_in_background` 由宿主自己管理生命週期，非受制於單次
+   tool-call 邊界的 OS-level job）維持現行 detached 預設不變。
+4. 新增 CI 可跑的 regression（`tests/shell/test-gate-lifecycle.sh` 或
+   `test-pmctl-gate.sh`）：detached 啟動、readiness 一發布，就由**獨立的**
+   一步強制 kill 掉 supervisor 的行程群（`kill -KILL -- -$pgid` 等價操作），
+   模擬「邊界關閉」的外部效應，而不是只讓 run／wait 在同一個常駐測試進程下
+   依序呼叫（後者從不真正離開該進程的存活範圍，測不到這個缺陷類別）；斷言
+   `gate wait` 在遠低於預設 timeout 的時間內回報帶 `--lifecycle foreground`
+   建議的 indeterminate，且 exit code 仍是 3。
+5. 另需一輪原生 Windows 主機上的真實驗證（Windows verification standard）：
+   用真的 Job Object launcher 跑一次 detached gate，readiness 發布後由**另一個**
+   獨立行程（非同一 bash session）強制終止 launcher，確認 `gate wait` 一樣快速
+   且正確回報 indeterminate。此步驟涉及安全敏感的 process-lifecycle 語意，
+   不接受純程式碼審閱作為完工證據。**注意**：若執行與驗證本票的 executor 自身
+   跑在 sandboxed exec_command 環境下，它可能正好複現issue本身描述的「terminal
+   邊界殺死 detached 子行程」問題（即驗證步驟本身可能被同一類環境吃掉）；此
+   驗證應在非 sandboxed 的真實原生終端（或由人工在旁監督的環境）進行，不能
+   把「sandbox 又把我的驗證行程殺了」誤判成「fix 沒生效」。
+
+**Non-goals**：不嘗試在 launcher 或呼叫者進程內偵測「進程結束後才觸發」的外層
+收尾（見上方因果論證，技術上不可行）；不建立通用「自動判斷目前是否為 Codex
+sandboxed tool-call terminal」的執行期啟發式（目前沒有可靠的環境訊號來源，
+`CODEX_HOME` 等既有 env var 語意不同，不能借用）；不修改既有 Job Object
+P/Invoke 的 kill／verify 機制本身（`runtime/lib/windows/detached-launch-job.ps1`、
+`runtime/lib/detached-launch.sh` 現有語意已正確 fail-closed，issue 也未指出
+其邏輯有誤）；不處理 [[CC-589]]（codex/claude reviewer session 直呼 pmctl 被
+拒絕，不同根因不同症狀，已有獨立票）；不處理 issue #609／#619（不同機制，
+已分別有自己的處置或已修復）。
+
+**Done-when**：`gate wait` 對一個 readiness 後立即被外部強制終止的 detached
+gate，能在遠低於預設 timeout 的時間內回報帶 `--lifecycle foreground` 建議的
+indeterminate（exit=3，非假 GO/NO-GO）；`/pr-gate`、`hosts/codex/lib/
+memory-contract.sh`、`docs/host-contract.md` 對 Codex host 在「無確認持久
+bridge」情境下的 gate lifecycle 預設，與既有 dispatch 側 guidance 一致收斂為
+foreground；新 regression（CI 可跑）與一次原生 Windows 真實驗證（人工或非
+sandboxed 環境執行）均通過；既有 standalone 持久終端下的 detached 行為
+（`--mode`／`--lifecycle detached` 顯式指定時）不受影響、仍可用。
+
+**See**: GitHub issue #618；[[CC-582]]（`pmctl_context_workflow_refresh` 的
+bounded-timeout 前例，本票 Requirement 1 沿用同一「不無界等待、也不吞掉診斷
+訊號」設計語彙）；[[CC-535]]（detached-launch supervised-run 泛化 primitive，
+related 但不同範圍，未合併——本票不依賴其落地）；[[CC-370]]（原生 Windows
+experimental 支援範圍）；[[CC-589]]（同批但不同根因的原生 Windows gate 缺陷）；
+`docs/host-contract.md` 第 141-160 行；`hosts/codex/lib/memory-contract.sh`；
+`commands/pr-gate.md` Step 2；`runtime/lib/detached-launch.sh`；
+`runtime/lib/windows/detached-launch-job.ps1`
 
 ---

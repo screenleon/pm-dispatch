@@ -117,13 +117,30 @@ This fallback form only ever runs once, on the rare not-installed path, and
 naturally needs one manual approval when it does — it does not become the
 default shape of every gate call.
 
-## Step 2 - Parse args and launch detached
+## Step 2 - Parse args and launch (lifecycle depends on host)
 
-Parse `$ARGUMENTS`, build the gate args, then launch with `--lifecycle detached`
-(inline, not `run_in_background`) so the harness sees the launch return fast with
-a `gate_id`. The gate itself keeps running under `setsid`/`nohup`, fully
-OS-decoupled from this session — a session interrupt cannot kill it or corrupt
-its exit-code reporting.
+Parse `$ARGUMENTS`, build the gate args, then launch. The default lifecycle
+depends on which host is running this command:
+
+- **Claude host:** default to `--lifecycle detached` (inline, not
+  `run_in_background`) so the harness sees the launch return fast with a
+  `gate_id`. The gate itself keeps running under `setsid`/`nohup`, fully
+  OS-decoupled from this session — a session interrupt cannot kill it or
+  corrupt its exit-code reporting. `run_in_background` on this host is a
+  host-managed persistent terminal, not an OS-level job scoped to one tool
+  call, so it does not undermine detachment.
+- **Codex host:** default to `--lifecycle foreground` instead, mirroring
+  `hosts/codex/lib/memory-contract.sh`'s "pm-dispatch gate lifecycle
+  continuation" guidance for the same reason its dispatch-side guidance
+  defaults `pmctl dispatch run` to foreground: Codex's sandbox does not
+  promise a persistent App Server control socket, and the tool call that
+  launches `--lifecycle detached` can have its own process/job tree torn down
+  by the host the instant that tool call returns — `disown` does not protect
+  the detached supervisor from that teardown (issue #618). Only use
+  `--lifecycle detached` on Codex inside an explicitly integrated App Server
+  session that exposes both the originating thread id and a reachable
+  control socket (the same bridge criterion the dispatch-side guidance uses);
+  otherwise the launched supervisor can die before `pr-gate.sh` even starts.
 
 **The run call and the wait call below are two SEPARATE Bash tool
 invocations** — each Bash call is its own subprocess, so a shell variable
@@ -310,18 +327,29 @@ GATE_ARGS=(--cd "<work_dir>" --executor "$GATE_EXECUTOR" --policy generic)
 [[ -n "$GATE_MODE" ]] && GATE_ARGS+=(--mode "$GATE_MODE")
 [[ "$ACCEPT_SCOPE_TRUNCATION" == true ]] && GATE_ARGS+=(--accept-scope-truncation)
 
-# Launch detached: this call is inline (NOT run_in_background) and returns in
-# well under a second once the supervisor is forked -- stdout prints exactly
-# one line, the gate_id; stderr prints a ready-to-paste `pmctl gate wait ...`
-# command with the id and --cd already filled in.
-pmctl gate run "${GATE_ARGS[@]}" --lifecycle detached
+# Launch: this call is inline (NOT run_in_background) and returns fast either
+# way -- stdout prints exactly one line, the gate_id; stderr prints a
+# ready-to-paste `pmctl gate wait ...` command with the id and --cd already
+# filled in. Replace <lifecycle_value> with "detached" on Claude, or with
+# "foreground" on Codex absent a confirmed App Server bridge (see Step 2
+# above) -- a literal value, not a shell variable, so the command stays
+# statically analyzable for the `pmctl:*` permission prefix match.
+pmctl gate run "${GATE_ARGS[@]}" --lifecycle "<lifecycle_value>"
 ```
 
 If this fails with `pmctl: command not found` (exit 127), `pmctl` is not on
 PATH — retry with the resolved fallback path instead:
-`"$(cd "$(dirname "$(readlink -f "${HOME}/.claude/commands/pr-gate.md" 2>/dev/null || readlink "${HOME}/.claude/commands/pr-gate.md")")/.." && pwd)/cli/pmctl" gate run "${GATE_ARGS[@]}" --lifecycle detached`
+`"$(cd "$(dirname "$(readlink -f "${HOME}/.claude/commands/pr-gate.md" 2>/dev/null || readlink "${HOME}/.claude/commands/pr-gate.md")")/.." && pwd)/cli/pmctl" gate run "${GATE_ARGS[@]}" --lifecycle "<lifecycle_value>"`
 (re-run the full arg-parsing block above first — `GATE_ARGS` does not
 survive across Bash calls).
+
+With `--lifecycle foreground` (the Codex default absent a confirmed bridge),
+this single call blocks until the gate finishes and prints the same
+`gate: <id> state: <...> exit: <N>` / `result: <path>` / `Final: GO|NO-GO`
+output `pmctl gate wait` would otherwise print — read and relay that directly;
+skip the separate wait call below entirely, since there is no detached
+supervisor to wait on. The rest of this step, and Step 3's `pmctl gate wait`
+call, apply only to the `--lifecycle detached` path.
 
 Read the printed `gate_id` from this call's stdout, then launch the wait as a
 **separate Bash tool call** with `run_in_background: true` so the main thread

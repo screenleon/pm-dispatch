@@ -748,6 +748,56 @@ pmctl_gate_run_detached() {
 # Exit codes are layered: 0 = GO, 1 = NO-GO (a gate verdict, not an execution
 # error), 2 = usage/result-integrity error, 3 = indeterminate (sentinel key
 # absent — never silently reports success), 124 = timeout.
+
+# Shared by pmctl_gate_wait's early-poll loop (checked every
+# PM_GATE_WAIT_POLL_INTERVAL once the ready sentinel exists, so a killed
+# supervisor is reported in roughly one poll interval instead of only after
+# the full --timeout) and its final-timeout fallback (same check, run once
+# more so a supervisor that died between the last poll and the timeout is
+# still classified rather than falling through to the generic "may still be
+# running" message). Three outcomes, classified exactly as
+# _pmctl_dispatch_reconcile_one already classifies the same identity
+# verification: alive/unknown (0, caller keeps waiting), provably gone (3,
+# message printed here), or an identity mismatch that proves neither (3,
+# message printed here). Reporting the mismatch case as a death is what
+# invites the one recovery action that destroys work: re-dispatching a gate
+# that is still running.
+_pmctl_gate_wait_check_dead_supervisor() {
+  local repo_root="$1" work_dir="$2" gate_id="$3" sentinel="$4"
+  _pmctl_gate_ensure_run_dir_fn "$repo_root" || true
+  [[ "$(type -t sw_project_run_dir 2>/dev/null)" == function ]] || return 0
+  local _wait_run_dir _wait_identity _wait_verify_rc
+  _wait_run_dir="$(cd "$work_dir" 2>/dev/null && sw_project_run_dir "$gate_id" 2>/dev/null)" || _wait_run_dir=""
+  _wait_identity="${_wait_run_dir:+$_wait_run_dir/supervisor.identity}"
+  [[ -n "$_wait_identity" && -f "$_wait_identity" ]] || return 0
+  _wait_verify_rc=0
+  if detached_launch_load_identity_file "$_wait_identity"; then
+    detached_launch_verify_identity "$DL_ID_PID" "$_wait_identity" || _wait_verify_rc=$?
+  else
+    _wait_verify_rc=2
+  fi
+  case "$_wait_verify_rc" in
+    0) return 0 ;; # Alive: caller keeps waiting for the ordinary sentinel/timeout outcome.
+    1)
+      # gate-supervisor.sh's EXIT trap (_supervisor_exit) always writes the
+      # terminal sentinel before the process itself finishes exiting, so a
+      # normal completion can never be observed as "gone" here without its
+      # sentinel already on disk. Re-check once more before reporting death,
+      # closing the narrow window between this liveness snapshot and the
+      # caller's own sentinel poll.
+      [[ -f "$sentinel" ]] && return 0
+      printf 'pmctl gate wait: indeterminate: %s reached readiness but its supervisor (pid=%s) no longer exists and left no terminal evidence; retry with --lifecycle foreground (exit=3)\n' \
+        "$gate_id" "$DL_ID_PID" >&2
+      return 3
+      ;;
+    *)
+      printf 'pmctl gate wait: indeterminate: %s reached readiness but its recorded supervisor (pid=%s) shows an identity mismatch (possible PID reuse); that proves neither death nor liveness, so it is not evidence that the gate died. Confirm with: ps -o pid,pgid,lstart,args -p %s -- and re-attach with a longer --timeout rather than re-dispatching, which would discard a still-running gate (exit=3)\n' \
+        "$gate_id" "$DL_ID_PID" "$DL_ID_PID" >&2
+      return 3
+      ;;
+  esac
+}
+
 pmctl_gate_wait() {
   local repo_root="${1:-}"
   shift || true
@@ -835,7 +885,42 @@ pmctl_gate_wait() {
   local _sentinel _ready_sentinel
   _sentinel="$(detached_launch_private_sentinel_path "pm-gate-dispatch" "pm-gate" "$gate_id" "$_key_nonce")"
   _ready_sentinel="$(detached_launch_private_sentinel_path "pm-gate-dispatch" "pm-gate-ready" "$gate_id" "$_key_nonce")"
-  if detached_launch_wait_for_sentinel "$_sentinel" "$timeout" "${PM_GATE_WAIT_POLL_INTERVAL:-2}"; then
+
+  # Poll for the terminal sentinel ourselves (rather than delegating the
+  # whole --timeout budget to a single detached_launch_wait_for_sentinel
+  # call) so a supervisor that dies after publishing readiness -- e.g. an
+  # external boundary teardown killing its process group -- is caught within
+  # roughly one poll interval instead of only at final timeout expiry. Once
+  # ready evidence exists, re-check its recorded identity every poll tick;
+  # _pmctl_gate_wait_check_dead_supervisor prints the exact same
+  # indeterminate report this function used to emit only after timing out.
+  local _poll_interval="${PM_GATE_WAIT_POLL_INTERVAL:-2}"
+  local _wait_start="$SECONDS" _wait_elapsed _sentinel_found=false _wait_died_rc=0
+  while true; do
+    if [[ -f "$_sentinel" ]]; then
+      _sentinel_found=true
+      break
+    fi
+    _wait_elapsed=$((SECONDS - _wait_start))
+    if (( _wait_elapsed >= timeout )); then
+      break
+    fi
+    if [[ -f "$_ready_sentinel" ]]; then
+      _pmctl_gate_wait_check_dead_supervisor "$repo_root" "$work_dir" "$gate_id" "$_sentinel"
+      _wait_died_rc=$?
+      [[ "$_wait_died_rc" -eq 0 ]] || break
+    fi
+    sleep "$_poll_interval"
+  done
+  # The dead-supervisor helper's own sentinel re-check already closes this
+  # window once; re-check here too so a sentinel written between the helper's
+  # check and this loop breaking is still honored as success, not death.
+  if [[ "$_wait_died_rc" -ne 0 && -f "$_sentinel" ]]; then
+    _sentinel_found=true
+    _wait_died_rc=0
+  fi
+
+  if [[ "$_sentinel_found" == true ]]; then
       local _state _exit _result
       _state="$(grep -m1 '^final_state=' "$_sentinel" 2>/dev/null | cut -d= -f2-)" || true
       _exit="$(grep -m1 '^exit_code=' "$_sentinel" 2>/dev/null | cut -d= -f2-)" || true
@@ -958,50 +1043,25 @@ pmctl_gate_wait() {
       fi
       return "$_exit"
   fi
+  # The early-poll loop above already detected and reported a dead/mismatched
+  # supervisor before the timeout budget ran out; nothing further to classify.
+  if [[ "$_wait_died_rc" -ne 0 ]]; then
+    return 3
+  fi
   printf 'pmctl gate wait: timed out after %ss waiting for %s in %s\n' "$timeout" "$gate_id" "$work_dir" >&2
   # A timeout is only meaningful after authenticated startup evidence.  Without
   # it the supervisor never became ready.  With it, the recorded identity says
   # which of the remaining cases applies — still running, provably gone, or
   # unresolvable — and each is reported as itself rather than folded into the
-  # others.
-  local _wait_run_dir _wait_identity _wait_verify_rc
+  # others.  This is the same classification the early-poll loop above already
+  # performed on every tick; it is repeated once more here so a supervisor
+  # that died in the gap between the loop's last poll and this timeout is
+  # still classified instead of falling through to the generic message below.
   if [[ ! -f "$_ready_sentinel" ]]; then
     printf 'pmctl gate wait: indeterminate: %s never reached supervisor readiness; detached launch did not start a waitable gate (exit=3)\n' "$gate_id" >&2
     return 3
   fi
-  _pmctl_gate_ensure_run_dir_fn "$repo_root" || true
-  if [[ "$(type -t sw_project_run_dir 2>/dev/null)" == function ]]; then
-    _wait_run_dir="$(cd "$work_dir" 2>/dev/null && sw_project_run_dir "$gate_id" 2>/dev/null)" || _wait_run_dir=""
-    _wait_identity="${_wait_run_dir:+$_wait_run_dir/supervisor.identity}"
-    if [[ -n "$_wait_identity" && -f "$_wait_identity" ]]; then
-      # Three outcomes, not two, classified exactly as
-      # _pmctl_dispatch_reconcile_one already classifies the same identity
-      # verification: alive, provably gone, or an identity mismatch that proves
-      # neither. The vocabulary is deliberately shared -- the same recorded
-      # evidence should not acquire a second name here. Reporting the mismatch
-      # case as a death is what invites the one recovery action that destroys
-      # work: re-dispatching a gate that is still running.
-      _wait_verify_rc=0
-      if detached_launch_load_identity_file "$_wait_identity"; then
-        detached_launch_verify_identity "$DL_ID_PID" "$_wait_identity" || _wait_verify_rc=$?
-      else
-        _wait_verify_rc=2
-      fi
-      case "$_wait_verify_rc" in
-        0) : ;; # Alive: fall through to the ordinary still-running timeout report.
-        1)
-          printf 'pmctl gate wait: indeterminate: %s reached readiness but its supervisor (pid=%s) no longer exists and left no terminal evidence (exit=3)\n' \
-            "$gate_id" "$DL_ID_PID" >&2
-          return 3
-          ;;
-        *)
-          printf 'pmctl gate wait: indeterminate: %s reached readiness but its recorded supervisor (pid=%s) shows an identity mismatch (possible PID reuse); that proves neither death nor liveness, so it is not evidence that the gate died. Confirm with: ps -o pid,pgid,lstart,args -p %s -- and re-attach with a longer --timeout rather than re-dispatching, which would discard a still-running gate (exit=3)\n' \
-            "$gate_id" "$DL_ID_PID" "$DL_ID_PID" >&2
-          return 3
-          ;;
-      esac
-    fi
-  fi
+  _pmctl_gate_wait_check_dead_supervisor "$repo_root" "$work_dir" "$gate_id" "$_sentinel" || return 3
   # shellcheck disable=SC2016  # literal markdown backticks in the format string, not a command substitution
   printf 'pmctl gate wait: the gate may still be running detached; retry `pmctl gate wait %s --cd %s`, or inspect `pmctl artifacts show %s --cd %s` for the supervisor log\n' \
     "$gate_id" "$work_dir" "$gate_id" "$work_dir" >&2

@@ -159,6 +159,28 @@ the default foreground waiter remains in use. If detached readiness is
 indeterminate, a later **new** attempt may use `--lifecycle foreground`; a
 timeout or indeterminate result is never silently re-dispatched.
 
+### Codex gate-lifecycle continuation
+
+The `pmctl gate run`/`/pr-gate` path carries the identical constraint as
+Codex detached-dispatch continuation above, for the same reason: a Codex
+tool call's own process/job tree can be torn down by the host the instant
+that tool call returns, and `disown` does not protect a detached child from
+that teardown. The default Codex path therefore runs `pmctl gate run
+--lifecycle foreground` and waits on it inline, rather than launching
+`--lifecycle detached` and returning a `gate_id` to wait on later. Only an
+explicitly integrated App Server session that exposes both the originating
+thread id and a reachable control socket may use `--lifecycle detached` plus
+a separate `pmctl gate wait <gate_id>` call — the same bridge criterion the
+dispatch side uses. Absent that confirmed bridge, a detached gate's
+supervisor can die before `runtime/bin/pr-gate.sh` even starts (issue #618):
+`pmctl gate wait` still reports that indeterminately (exit 3, fail-closed,
+never a false verdict) rather than a false success, and now detects a
+force-killed supervisor within roughly one poll interval instead of only
+after the full `--timeout` elapses, with an explicit `--lifecycle foreground`
+suggestion in the reported message. For a **new** attempt after a timeout or
+indeterminate result, prefer `--lifecycle foreground`; a timeout or
+indeterminate result is never silently re-dispatched.
+
 Optional per-entry field `payload_fields` maps guard-check inputs to the
 host's payload field paths, documenting how the binding feeds
 `pmctl guard check`. Its keys are a closed set — `command`, `cwd`,

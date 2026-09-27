@@ -1003,6 +1003,108 @@ case_wait_does_not_report_unverifiable_identity_as_death() {
   fi
 }
 
+# ---- 6d: gate wait detects a force-killed REAL supervisor well before -------
+# --timeout, not only at final timeout expiry (CC-590, issue #618). Unlike
+# case_wait_indeterminate_when_ready_supervisor_died above (a hand-authored
+# fake identity for a pid that was never real), this launches a genuine
+# detached supervisor via _start_blocked_detached_gate, then kills its real
+# process group as an INDEPENDENT step -- reading the pgid from its own
+# published supervisor.identity and calling the shared cross-platform kill
+# primitive directly, not by releasing its FIFO and letting it exit normally
+# -- to simulate the external boundary-teardown effect issue #618 reports
+# (a Codex host tearing down the tool call that launched `gate run
+# --lifecycle detached` before pr-gate.sh even starts). No sleep-based
+# synchronization: the started_fifo handshake inside
+# _start_blocked_detached_gate proves the supervisor is genuinely running
+# before it is killed, and wall-clock elapsed time (not just the exit code)
+# is asserted to prove the new early-poll liveness recheck actually fired,
+# rather than only working because --timeout happened to be small.
+case_wait_detects_force_killed_real_supervisor_early() {
+  local name="gate-lifecycle/gate wait detects a force-killed real supervisor well before --timeout"
+  should_run "$name" || return 0
+
+  local fixture="$tmp_root/c6d/fixture" work="$tmp_root/c6d/work"
+  mkdir -p "$work"
+  _mk_fixture_repo "$fixture"
+  if ! _start_blocked_detached_gate "$fixture" "$work" "$tmp_root/c6d/run"; then
+    fail "$name" "fake pr-gate.sh never signaled started_fifo within 10s"
+    _release_blocked_detached_gate
+    return
+  fi
+
+  if [[ ! -f "$_BLOCKED_RUN_DIR/supervisor.identity" ]]; then
+    fail "$name" "supervisor published no identity record to kill"
+    _release_blocked_detached_gate
+    return
+  fi
+  local kill_pgid
+  if ! detached_launch_load_identity_file "$_BLOCKED_RUN_DIR/supervisor.identity"; then
+    fail "$name" "could not load published supervisor.identity"
+    _release_blocked_detached_gate
+    return
+  fi
+  kill_pgid="$DL_ID_PGID"
+
+  # Independent teardown step: force-kill the real supervisor's process
+  # group/job directly, bypassing its FIFO handshake and EXIT trap entirely.
+  # On Windows, detached_launch_kill_process_group's own Windows branch (Job
+  # Object -Action Kill) IS already a hard, uncatchable kill with no
+  # SIGTERM-equivalent phase, so it is reused directly. On POSIX, that same
+  # shared function sends SIGTERM first and only escalates to SIGKILL after a
+  # grace period -- the fake supervisor can (and does, on CI) catch that
+  # SIGTERM and shut down gracefully, writing a legitimate "cancelled"
+  # terminal record. That is exactly the OPPOSITE of what this case must
+  # simulate (an abrupt external kill with zero chance to write any terminal
+  # evidence, per issue #618), so POSIX sends SIGKILL to the process group
+  # directly instead of going through the shared TERM-first helper.
+  if [[ "$(detect_platform)" == windows ]]; then
+    if ! detached_launch_kill_process_group "$kill_pgid" 5; then
+      fail "$name" "force-kill of real supervisor pgid=$kill_pgid did not confirm termination"
+      _release_blocked_detached_gate
+      return
+    fi
+  else
+    local self_pgid
+    self_pgid="$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')"
+    if [[ -z "$self_pgid" || "$kill_pgid" == "$self_pgid" ]]; then
+      fail "$name" "refusing to signal own process group (self_pgid=$self_pgid kill_pgid=$kill_pgid)"
+      _release_blocked_detached_gate
+      return
+    fi
+    kill -KILL -- "-$kill_pgid" 2>/dev/null || true
+    local waited=0
+    while kill -0 -- "-$kill_pgid" 2>/dev/null && (( waited < 50 )); do
+      sleep 0.1
+      waited=$((waited + 1))
+    done
+    if kill -0 -- "-$kill_pgid" 2>/dev/null; then
+      fail "$name" "force-kill of real supervisor pgid=$kill_pgid did not confirm termination"
+      _release_blocked_detached_gate
+      return
+    fi
+  fi
+
+  local wait_wrapper="$tmp_root/c6d/wait"
+  _wait_wrapper "$fixture" "$wait_wrapper"
+
+  local out code start_s end_s elapsed
+  start_s="$SECONDS"
+  set +e; out="$("$wait_wrapper" "$_BLOCKED_GATE_ID" --cd "$work" --timeout 20 2>&1)"; code=$?; set -e
+  end_s="$SECONDS"
+  elapsed=$((end_s - start_s))
+
+  _release_blocked_detached_gate
+
+  if [[ "$code" -eq 3 ]] \
+    && [[ "$out" == *"no longer exists and left no terminal evidence"* ]] \
+    && [[ "$out" == *"--lifecycle foreground"* ]] \
+    && (( elapsed < 5 )); then
+    pass "$name"
+  else
+    fail "$name" "code=$code elapsed=${elapsed}s out=$out"
+  fi
+}
+
 # ---- 7: --lifecycle foreground behavior unchanged (backward-compat) ----------
 case_foreground_unchanged() {
   local name="gate-lifecycle/--lifecycle foreground behaves like today"
@@ -1403,6 +1505,7 @@ case_wait_indeterminate_when_ready_supervisor_died
 case_wait_times_out
 case_supervisor_publishes_own_post_setsid_identity
 case_wait_does_not_report_unverifiable_identity_as_death
+case_wait_detects_force_killed_real_supervisor_early
 case_foreground_unchanged
 case_detached_requires_state_paths
 case_wait_fails_on_missing_result
