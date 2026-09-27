@@ -1265,17 +1265,35 @@ _portable_make_symlink() {
 # resolving to WSL's launcher instead of Git Bash on a machine with both
 # installed (CC-589) — WSL's bash operates in a different filesystem
 # namespace (`/mnt/c/...`, not Git Bash's `/c/...`) and cannot exec a POSIX
-# path meant for Git Bash. Changing only the default-omitted call shape
-# preserves every existing caller's on-disk wrapped-command format
-# byte-for-byte (installed-hook idempotency comparisons in
-# hosts/claude/bin/install-guards.sh and hosts/codex/bin/install.sh depend
-# on this). Single owner of the wrapping contract —
-# portable_bash_unwrap_command is its inverse for the default form only; a
-# custom bash_exe's wrapped output does not round-trip through it (no
-# existing caller reads back a custom-bash_exe wrapped string).
+# path meant for Git Bash.
+#
+# A resolved absolute interpreter path routinely contains a space (Git for
+# Windows' own default install location is `C:\Program Files\Git\...`) — an
+# UNQUOTED bash_exe token would then split into two words at the space and
+# PowerShell would fail to launch it at all (the same class of bug this
+# whole ticket exists to fix, reintroduced by an unquoted fix for it; caught
+# by 3 independent gate reviewers converging on the identical finding). So
+# any bash_exe containing whitespace or a single quote is itself single-
+# quoted (embedded quotes doubled, same convention as the path), and — since
+# a quoted string used as the leading token in PowerShell is a plain string
+# expression, not an invocation, unlike a bare word — prefixed with the `&`
+# call operator so it actually executes. A bash_exe with neither (including
+# the default bare word `bash`) is emitted exactly as before: unquoted, no
+# `&` prefix, byte-for-byte identical to the pre-CC-589 form. This keeps the
+# default-omitted call shape's output unchanged (installed-hook idempotency
+# comparisons in hosts/claude/bin/install-guards.sh and
+# hosts/codex/bin/install.sh depend on that byte-for-byte stability). Single
+# owner of the wrapping contract — portable_bash_unwrap_command is its
+# inverse for the default (bare-word, no `&`) form only; a custom bash_exe's
+# wrapped output does not round-trip through it (no existing caller reads
+# back a custom-bash_exe wrapped string).
 portable_bash_wrapped_command() {
-  local path="$1" bash_exe="${2:-bash}"
-  printf "%s '%s'" "$bash_exe" "${path//\'/\'\'}"
+  local path="$1" bash_exe="${2:-bash}" prefix=""
+  if [[ "$bash_exe" == *[[:space:]]* || "$bash_exe" == *\'* ]]; then
+    bash_exe="'${bash_exe//\'/\'\'}'"
+    prefix="& "
+  fi
+  printf "%s%s '%s'" "$prefix" "$bash_exe" "${path//\'/\'\'}"
 }
 
 # portable_bash_unwrap_command <command>

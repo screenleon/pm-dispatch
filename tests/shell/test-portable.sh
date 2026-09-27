@@ -2241,20 +2241,47 @@ case_portable_bash_wrap_unwrap_round_trip() {
 # existing callers (hosts/claude/bin/install-guards.sh,
 # hosts/codex/bin/install.sh) never pass it, and their installed-hook
 # idempotency comparisons depend on that output staying stable.
-# Steps: wrap with an explicit custom interpreter path, assert it replaces
-# the literal word "bash", and assert the default (omitted) call is
-# unchanged from the existing bare-word form.
+# Steps: wrap with a space-free custom interpreter path, assert it replaces
+# the literal word "bash" unquoted and with no `&` prefix, and assert the
+# default (omitted) call is unchanged from the existing bare-word form.
 case_portable_bash_wrap_custom_interpreter() {
   local name="portable/bash-wrap-custom-interpreter"
   should_run "$name" || return 0
   local path="/c/Users/dev/repo/hooks/guard.sh"
-  local custom_exe='C:\Program Files\Git\usr\bin\bash.exe'
+  local custom_exe='C:\Git\bin\bash.exe'
   if [[ "$(portable_bash_wrapped_command "$path" "$custom_exe")" != "$custom_exe '$path'" ]]; then
-    fail "$name" "custom bash_exe argument was not used as the wrapped command's interpreter token"
+    fail "$name" "space-free custom bash_exe argument was not used unquoted as the wrapped command's interpreter token"
     return
   fi
   if [[ "$(portable_bash_wrapped_command "$path")" != "bash '$path'" ]]; then
     fail "$name" "omitting bash_exe changed the existing default-wrapped form"
+    return
+  fi
+  pass "$name"
+}
+
+# Behavior: a custom interpreter path containing a space (the common case --
+# Git for Windows' own default install location is `C:\Program Files\Git\...`)
+# must be single-quoted (embedded quotes doubled) and prefixed with the `&`
+# call operator, or PowerShell either splits it into two words at the space
+# (an unquoted path) or treats it as an inert string expression instead of an
+# invocation (a quoted path with no `&`) -- 3 independent gate reviewers
+# converged on exactly this defect in an earlier version of this fix.
+# Steps: wrap with a space-containing custom interpreter path and an
+# interpreter path that itself contains a single quote, and assert both the
+# quoting and the `&` prefix.
+case_portable_bash_wrap_custom_interpreter_with_space() {
+  local name="portable/bash-wrap-custom-interpreter-with-space"
+  should_run "$name" || return 0
+  local path="/c/Users/dev/repo/hooks/guard.sh"
+  local spaced_exe='C:\Program Files\Git\usr\bin\bash.exe'
+  if [[ "$(portable_bash_wrapped_command "$path" "$spaced_exe")" != "& '$spaced_exe' '$path'" ]]; then
+    fail "$name" "space-containing bash_exe was not quoted and & -prefixed"
+    return
+  fi
+  local quoted_exe="C:\\Users\\O'Brien\\bash.exe"
+  if [[ "$(portable_bash_wrapped_command "$path" "$quoted_exe")" != "& 'C:\Users\O''Brien\bash.exe' '$path'" ]]; then
+    fail "$name" "embedded single quote in bash_exe was not doubled"
     return
   fi
   pass "$name"
@@ -2283,5 +2310,6 @@ case_portable_source_is_side_effect_free
 case_portable_make_symlink_windows_msys
 case_portable_bash_wrap_unwrap_round_trip
 case_portable_bash_wrap_custom_interpreter
+case_portable_bash_wrap_custom_interpreter_with_space
 
 th_summary
