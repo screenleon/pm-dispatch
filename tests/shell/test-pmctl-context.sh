@@ -595,6 +595,74 @@ case_context_status_batches_stat_for_unchanged_files() {
   fi
 }
 
+case_context_index_kill_mid_run_does_not_leak_batch_sql() {
+  local name="pmctl context index: abrupt mid-run exit cleans up its batch SQL temp file (issue #634)"
+  # Behavior (issue #634): _ctx_index_tree's per-refresh batch SQL temp file
+  # (mktemp /tmp/ctx-XXXXXX.sql) was cleaned up only via two explicit `rm -f`
+  # calls on its two normal-exit paths, with no `trap ... EXIT` -- unlike
+  # every other multi-temp-file block in this same source file. Any refresh
+  # terminated mid-loop (routinely via
+  # pmctl_context_workflow_refresh_bounded's `timeout -k 5`, issue #632/#633)
+  # skipped both explicit calls and leaked the file permanently: 1.2GB/1147
+  # files accumulated in /tmp over four weeks on the reporting host. Bash's
+  # EXIT trap fires identically whether a shell terminates via an untrapped
+  # signal or via `set -e` aborting on a failing command -- this test uses
+  # the latter to exercise the exact same trap deterministically and
+  # without real signal delivery, which was found to be unsafe to use here:
+  # a self-directed `kill -TERM $$` from a nested `bash -c` on this host
+  # propagated up and terminated the ancestor shell too (an MSYS/Windows
+  # console-signal-group quirk, confirmed by direct reproduction), not a
+  # per-pid targeted signal as on Linux.
+  # Steps: source the lib directly; shadow `mktemp` to record the exact
+  # path it mints (so the check below cannot collide with an unrelated
+  # concurrent process's own /tmp/ctx-*.sql file); shadow
+  # `_ctx_generate_file_sql` to fail on its first call -- guaranteed to run
+  # only after batch_sql already exists and the trap is registered, and
+  # well before either explicit cleanup line -- under `set -e` this aborts
+  # the whole script immediately. Assert the recorded path was actually
+  # created, then no longer exists once the aborted subprocess has exited.
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-kill-leak"
+  make_fixture_repo "$fix_repo"
+  git_init_commit_fixture "$fix_repo"
+
+  local path_file="$tmp_root/kill-leak.path"
+  local out err status=0
+  out="$tmp_root/kill-leak.out"; err="$tmp_root/kill-leak.err"
+  rm -f "$path_file"
+  bash -c '
+    set -euo pipefail
+    # shellcheck source=runtime/lib/pmctl-context.sh
+    . "$1/lib/pmctl-context.sh"
+    root="$2"; db="$3"; path_file="$4"
+    mktemp() {
+      local p
+      p="$(command mktemp "$@")"
+      printf "%s" "$p" > "$path_file"
+      printf "%s" "$p"
+    }
+    _ctx_generate_file_sql() { return 1; }
+    _ctx_index_tree "$root" "$db" 0 repo >/dev/null
+  ' bash "$REPO_ROOT/runtime" "$(ctx_fixture_target "$fix_repo")" \
+    "$tmp_root/kill-leak.db" "$path_file" > "$out" 2> "$err" || status=$?
+
+  if [[ "$status" -eq 0 ]]; then
+    fail "$name" "expected the subprocess to abort (errexit on the shadowed helper's failure), got exit 0; out=$(<"$out") err=$(<"$err")"; return 0
+  fi
+  if [[ ! -s "$path_file" ]]; then
+    fail "$name" "setup: mktemp shadow never recorded a batch_sql path -- _ctx_generate_file_sql was never reached"; return 0
+  fi
+
+  local leaked_path
+  leaked_path="$(<"$path_file")"
+  if [[ -f "$leaked_path" ]]; then
+    fail "$name" "batch_sql temp file survived an aborted mid-run: $leaked_path"
+  else
+    pass "$name"
+  fi
+}
+
 case_context_update_specific_path() {
   local name="pmctl context update: specific path re-indexes only that file"
   should_run "$name" || return 0
@@ -6201,6 +6269,7 @@ case_context_index_nested_worktree_subtree
 case_context_index_incremental_skip
 case_context_index_unchanged_fast_path_batches_subprocesses
 case_context_status_batches_stat_for_unchanged_files
+case_context_index_kill_mid_run_does_not_leak_batch_sql
 case_context_update_specific_path
 case_context_update_no_path_full_scan
 case_context_update_absolute_path_rejected
