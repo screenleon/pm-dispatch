@@ -936,6 +936,13 @@ _ctx_index_tree() {
   # rows for deleted files can be removed in the same transaction (reconciliation).
   local batch_sql
   batch_sql="$(mktemp /tmp/ctx-XXXXXX.sql)"
+  # Issue #634: a refresh killed mid-loop (routinely via
+  # pmctl_context_workflow_refresh_bounded's `timeout -k 5`, issue #632) used
+  # to skip both explicit `rm -f` calls below and leak this file permanently
+  # -- 1.2GB/1147 files accumulated in /tmp over four weeks. Matches the trap
+  # pattern this file already uses for every other multi-temp-file block.
+  # shellcheck disable=SC2064
+  trap "rm -f '$batch_sql'" EXIT
   printf 'PRAGMA busy_timeout=5000;\n' > "$batch_sql"
   printf 'BEGIN;\n' >> "$batch_sql"
   printf 'CREATE TEMP TABLE _cur_paths(path TEXT PRIMARY KEY);\n' >> "$batch_sql"
