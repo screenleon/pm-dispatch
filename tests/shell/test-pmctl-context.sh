@@ -490,6 +490,59 @@ case_context_index_incremental_skip() {
   fi
 }
 
+case_context_index_unchanged_fast_path_batches_subprocesses() {
+  local name="pmctl context index: unchanged-file fast path batches stat/sha1sum instead of forking per file"
+  # Behavior (issue #632): a no-op re-index over N unchanged files must call
+  # `stat`/`sha1sum` a small, file-count-independent number of times, not
+  # once or twice per file -- a per-file fork on native Windows costs
+  # ~50-85ms, and that O(N) shape is what pushed a real refresh past the 90s
+  # bound. case_context_index_incremental_skip (above) already locks the
+  # *skip count*, but a per-file loop that still skips correctly would pass
+  # it unnoticed -- this locks the *subprocess shape* the fix actually
+  # changed, catching a future regression back to one-fork-per-file even
+  # though that regression would leave every functional test green.
+  # Steps: source the lib directly (white-box, bypassing $PMCTL); shadow
+  # `stat` and `sha1sum` with counting wrappers that still delegate to the
+  # real binary; index a multi-file fixture, then index it again unchanged;
+  # assert the second run's combined stat+sha1sum call count is far below
+  # the file count.
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-batch-count"
+  make_fixture_repo "$fix_repo"
+  git_init_commit_fixture "$fix_repo"
+
+  local out err status=0
+  out="$tmp_root/batch-count.out"; err="$tmp_root/batch-count.err"
+  bash -c '
+    set -euo pipefail
+    # shellcheck source=runtime/lib/pmctl-context.sh
+    . "$1/lib/pmctl-context.sh"
+    root="$2"; db="$3"; counter="$4"
+    stat() { printf "s\n" >> "$counter"; command stat "$@"; }
+    sha1sum() { printf "h\n" >> "$counter"; command sha1sum "$@"; }
+    _ctx_index_tree "$root" "$db" 0 repo >/dev/null
+    : > "$counter"
+    _ctx_index_tree "$root" "$db" 0 repo >/dev/null
+  ' bash "$REPO_ROOT/runtime" "$(ctx_fixture_target "$fix_repo")" "$tmp_root/batch-count.db" \
+    "$tmp_root/batch-count.calls" > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "exit $status err=$(<"$err")"; return 0
+  fi
+
+  local call_count
+  call_count="$(wc -l < "$tmp_root/batch-count.calls" | tr -d ' ')"
+  # The fixture has 6 files, all unchanged on the second call; a per-file
+  # loop needs >=6 stat calls alone. The batched path needs a small constant
+  # regardless of file count (one stat-style probe + a couple of chunked
+  # stat/sha1sum calls).
+  if [[ "$call_count" -le 4 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected <=4 stat/sha1sum calls for the unchanged-file fast path over 6 files, got $call_count"
+  fi
+}
+
 case_context_update_specific_path() {
   local name="pmctl context update: specific path re-indexes only that file"
   should_run "$name" || return 0
@@ -6094,6 +6147,7 @@ case_context_index_supplementary_ignore_file
 case_context_index_fallback_excludes_build_dirs
 case_context_index_nested_worktree_subtree
 case_context_index_incremental_skip
+case_context_index_unchanged_fast_path_batches_subprocesses
 case_context_update_specific_path
 case_context_update_no_path_full_scan
 case_context_update_absolute_path_rejected

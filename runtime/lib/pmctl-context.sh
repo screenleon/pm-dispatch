@@ -328,6 +328,96 @@ _ctx_file_sha1() {
   _portable_sha1 < "$f" 2>/dev/null || printf 'unknown'
 }
 
+# _ctx_stat_style
+# Probe once per process whether `stat` takes GNU (`-c`) or BSD (`-f`)
+# format flags, caching the answer in $_CTX_STAT_STYLE. A batch of files can
+# have some entries fail (unreadable, vanished mid-scan) while most succeed,
+# and GNU stat's own exit code doesn't distinguish "wrong flavor" from
+# "some of these files errored" -- probing once against a path known to
+# exist (the shell's own cwd) avoids ever needing to guess from a batch
+# call's mixed-outcome exit status.
+_ctx_stat_style() {
+  if [[ -z "${_CTX_STAT_STYLE:-}" ]]; then
+    if stat -c '%Y' . >/dev/null 2>&1; then
+      _CTX_STAT_STYLE=gnu
+    else
+      _CTX_STAT_STYLE=bsd
+    fi
+  fi
+  printf '%s' "$_CTX_STAT_STYLE"
+}
+
+# _ctx_batch_run <cmd...> -- <abs_path...>
+# Run `<cmd...> <some abs_paths>` repeatedly, chunking the trailing path
+# arguments across as few invocations as the platform's argv-length allows,
+# instead of one fork per file (issue #632: on native Windows, subprocess
+# fork costs ~50-85ms, so hashing/stat-ing hundreds of files one at a time
+# turned a no-op index refresh into 6+ minutes, 4x past the 90s bound).
+# Chunking is done in pure bash rather than by piping through `xargs`: this
+# host's MSYS `xargs.exe` was observed to crash (SIGSEGV, stackdump written
+# to cwd) when driven from this module's real call depth, even though the
+# identical `xargs -0 ... stat ...` pipeline run standalone did not
+# reproduce it -- an msys-runtime instability class, not a logic bug in the
+# pipeline itself (see [[project-windows-native-parity]]'s AppContainer/MSYS2
+# note). Not depending on `xargs` at all sidesteps it entirely, and is one
+# fewer forked process per chunk besides. The 20000-byte-per-chunk cap keeps
+# each invocation's command line well under the ~32KB native Windows
+# CreateProcess argv/env ceiling (see [[feedback-msys-native-binary-argv]]
+# for the sibling jq-argv limit this repo already works around elsewhere).
+_ctx_batch_run() {
+  local -a cmd=()
+  while [[ $# -gt 0 && "$1" != "--" ]]; do
+    cmd+=("$1")
+    shift
+  done
+  shift # drop the -- separator
+  [[ $# -gt 0 ]] || return 0
+
+  local -a chunk=()
+  local chunk_bytes=0 path path_bytes
+  for path in "$@"; do
+    path_bytes=$((${#path} + 1))
+    if [[ "${#chunk[@]}" -gt 0 && $((chunk_bytes + path_bytes)) -gt 20000 ]]; then
+      "${cmd[@]}" "${chunk[@]}" 2>/dev/null
+      chunk=()
+      chunk_bytes=0
+    fi
+    chunk+=("$path")
+    chunk_bytes=$((chunk_bytes + path_bytes))
+  done
+  [[ "${#chunk[@]}" -gt 0 ]] && "${cmd[@]}" "${chunk[@]}" 2>/dev/null
+  return 0
+}
+
+# _ctx_batch_mtimes <abs_path...>
+# Print "<mtime> <abs_path>" for every given path, one line per file. A path
+# that errors (missing, unreadable) simply contributes no output line; the
+# caller's lookup then naturally falls through to "different, needs
+# reindex" rather than staying silently stale.
+_ctx_batch_mtimes() {
+  [[ $# -gt 0 ]] || return 0
+  if [[ "$(_ctx_stat_style)" == gnu ]]; then
+    _ctx_batch_run stat -c '%Y %n' -- "$@"
+  else
+    _ctx_batch_run stat -f '%m %N' -- "$@"
+  fi
+}
+
+# _ctx_batch_sha1s <abs_path...>
+# Print "<sha1>  <abs_path>" (sha1sum's own two-space format) for every
+# given path, batching the same way _ctx_batch_mtimes does and for the same
+# reason. Only ever called for the subset of candidates whose mtime already
+# matched the stored one -- the one case the skip-decision actually needs a
+# hash for -- so an actually-changed file's content is never hashed twice.
+_ctx_batch_sha1s() {
+  [[ $# -gt 0 ]] || return 0
+  if command -v sha1sum >/dev/null 2>&1; then
+    _ctx_batch_run sha1sum -- "$@"
+  elif command -v shasum >/dev/null 2>&1; then
+    _ctx_batch_run shasum -a 1 -- "$@"
+  fi
+}
+
 _ctx_now_epoch() {
   date +%s 2>/dev/null || printf '0'
 }
@@ -851,12 +941,65 @@ _ctx_index_tree() {
   printf 'CREATE TEMP TABLE _cur_paths(path TEXT PRIMARY KEY);\n' >> "$batch_sql"
 
   local indexed=0 skipped=0 found=0
+
+  # Materialize the scan once (instead of streaming one file at a time)
+  # so mtime/sha1 for the *unchanged* fast path can be computed in a
+  # handful of batched `stat`/`sha1sum` calls below rather than forking
+  # per file -- issue #632: on native Windows a subprocess fork costs
+  # ~50-85ms, so a no-op refresh of ~500 files (each paying up to two
+  # forks here) blew well past the 90s bound.
+  local -a _ctx_scan_abs=()
+  local abs_path
   while IFS= read -r abs_path; do
     [[ -f "$abs_path" ]] || continue
-    found=$((found + 1))
-    local rel_path="${abs_path#"$root/"}"
-    local ep
-    ep="$(_ctx_sql_str "$rel_path")"
+    _ctx_scan_abs+=("$abs_path")
+  done < <(_ctx_find_index_files "$root" "$mode")
+  found="${#_ctx_scan_abs[@]}"
+
+  # Batch current mtimes for every candidate in one pass. Keyed by the
+  # exact abs_path string handed to `stat`/`sha1sum`, which both print back
+  # unchanged (as their last field) regardless of embedded spaces.
+  declare -A _ctx_cur_mtimes=()
+  if [[ "$found" -gt 0 ]]; then
+    local _cm_mtime _cm_path
+    while IFS=' ' read -r _cm_mtime _cm_path; do
+      [[ -n "$_cm_path" ]] || continue
+      _ctx_cur_mtimes["$_cm_path"]="$_cm_mtime"
+    done < <(_ctx_batch_mtimes "${_ctx_scan_abs[@]}")
+  fi
+
+  # A file only ever needs its content hashed to decide "unchanged" when its
+  # mtime already matched the stored one (the original per-file `&&` chain's
+  # short-circuit) -- so hash only that subset, in one more batched pass.
+  local -a _ctx_sha1_candidates=()
+  local rel_path cur_mtime
+  for abs_path in "${_ctx_scan_abs[@]}"; do
+    rel_path="${abs_path#"$root/"}"
+    cur_mtime="${_ctx_cur_mtimes[$abs_path]:-}"
+    if [[ "$_force_reextract" -eq 0 \
+       && "${_ctx_db_mtimes[$rel_path]+_}" == '_' \
+       && -n "$cur_mtime" \
+       && "${_ctx_db_mtimes[$rel_path]}" == "$cur_mtime" \
+       && -n "${_ctx_db_sha1s[$rel_path]:-}" ]]; then
+      _ctx_sha1_candidates+=("$abs_path")
+    fi
+  done
+
+  declare -A _ctx_cur_sha1s=()
+  if [[ "${#_ctx_sha1_candidates[@]}" -gt 0 ]]; then
+    local _cs_line _cs_hash _cs_path
+    while IFS= read -r _cs_line; do
+      [[ -n "$_cs_line" ]] || continue
+      _cs_hash="${_cs_line:0:40}"
+      _cs_path="${_cs_line:42}"
+      _ctx_cur_sha1s["$_cs_path"]="$_cs_hash"
+    done < <(_ctx_batch_sha1s "${_ctx_sha1_candidates[@]}")
+  fi
+
+  local ep
+  for abs_path in "${_ctx_scan_abs[@]}"; do
+    rel_path="${abs_path#"$root/"}"
+    _ctx_sql_str_var ep "$rel_path"
 
     # Track every found path for stale-row reconciliation (before mtime skip).
     printf "INSERT OR IGNORE INTO _cur_paths(path) VALUES('%s');\n" "$ep" >> "$batch_sql"
@@ -866,20 +1009,20 @@ _ctx_index_tree() {
     # stored sha1 is what actually decides. Hashing every candidate costs well
     # under a second across this repository, which is worth paying to avoid an
     # index that is silently stale.
-    local cur_mtime
-    cur_mtime="$(_ctx_file_mtime "$abs_path")"
+    cur_mtime="${_ctx_cur_mtimes[$abs_path]:-}"
     if [[ "$_force_reextract" -eq 0 \
        && "${_ctx_db_mtimes[$rel_path]+_}" == '_' \
+       && -n "$cur_mtime" \
        && "${_ctx_db_mtimes[$rel_path]}" == "$cur_mtime" \
        && -n "${_ctx_db_sha1s[$rel_path]:-}" \
-       && "${_ctx_db_sha1s[$rel_path]}" == "$(_ctx_file_sha1 "$abs_path")" ]]; then
+       && "${_ctx_db_sha1s[$rel_path]}" == "${_ctx_cur_sha1s[$abs_path]:-}" ]]; then
       skipped=$((skipped + 1))
       continue
     fi
 
     _ctx_generate_file_sql "$abs_path" "$rel_path" >> "$batch_sql"
     indexed=$((indexed + 1))
-  done < <(_ctx_find_index_files "$root" "$mode")
+  done
 
   # Reconcile deletions: remove rows for files no longer in the tree.
   {
