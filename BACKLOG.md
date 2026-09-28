@@ -131,7 +131,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-592 | 🟢 someday | **[qa-tester 的 codex sandbox 結構性地無法啟動真實 Windows process，導致任何需要真實 process 驗證的 gate finding 卡住]** 兩次獨立 gate dispatch（sequential 90s bound、parallel 120s bound）中，qa-tester 嘗試重新執行一個會啟動真實 Windows Job Object supervisor 的測試時，兩次都在整個 timeout 期間**零輸出**後逾時（exit 124）——同一測試由本機（非 sandbox）直接執行 5 次以上皆在 10 秒內通過。訊號（完全零輸出，而非部分進度）與 #609（AppContainer 阻擋 MSYS2 對全域 namespace 的存取）、#619（codex Windows sandbox 決定性拒絕 exec_command）同一類，但這次發生在 **reviewer 驗證路徑本身**，而非 gate 的 producer 端。目前僅能靠 `.gate-overrides.md` 逐案記錄 accepted risk 繞過（2026-09-27 CC-590 gate 過程中發現，兩輪 gate 皆命中同一訊號）。 | ops/gate | 2026-09-27 | — | P2 | spike |
 | CC-593 | ✅ done | 原生 Windows Git Bash 上，`bash tests/bin/run-tests.sh --all` 完整套件在 Phase 0 連續卡在四個不同 lint：`lint-pmctl-commands`（jq `-r` 輸出帶 CRLF，跟純 LF 的 registry 逐行比對全部誤判失敗）、`lint-doc-wikilinks`（① 每行無條件開 subprocess 做 code-span 過濾，隨 BACKLOG.md 增長被放大到 900+ 秒；② 在測試框架的 `LC_ALL=C.UTF-8` 下，sed 處理 BACKLOG.md 裡的 🟢 等 4-byte UTF-8 字元時 code-span 過濾失效，誤判出從未存在的違規）、`lint-readme-surface-lists`（直接掃檔案系統、沒排除 `.gitignore`，把 Claude Code 自己的 runtime 快取 `skills/synced/` 誤判成「缺 README 條目」）、以及 `tools/generate/gate-structural-validator.sh --check`（同款 jq CRLF 問題，誤判 schema bundle「過期」）。四個都已修復並用 `--filter`／`LC_ALL=C.UTF-8`／完整套件三方比對驗證過，且確認在未改動的 main 上可重現、與任何一張既有票無關（2026-09-27/28 確認完整套件時發現）。**已交付（pr:#631）**：另外補上 gate review 過程中發現的第五個 bug——`git check-ignore` 在 sandboxed reviewer 的不同 owner checkout 下會因 safe-directory 保護而 exit 128，跟「未被 gitignore」的 exit 1 從結果碼上分不出來，靜默地讓 `skills/synced/` 誤判重演；修法是把 `-c safe.directory='*'` 限定在這個唯讀 plumbing 呼叫上。並補齊兩個平台特定條件的 mutation-sensitive regression（`test-lint-doc-wikilinks.sh`／`test-lint-readme-surface-lists.sh`）。Gate：codex executor, sequential mode, standard tier，3 輪後 4 reviewer 全 approve、0 findings。 | ops/test | 2026-09-28 | pr:#631 | P2 | hygiene |
 | CC-594 | 🟢 someday | **[原生 Windows 上這台機器的 jq（WinGet 版）對任何非 TTY 的輸出（重導向到檔案、pipe、command substitution）都會自動加上 CRLF，不限 `-r` 模式，範圍遍布整個 repo]** 修 CC-593 時發現同一根因在 `tests/shell/test-core-schemas.sh` 造成 33 個測試失敗——多數是 `enum-sync` 類檢查：兩邊列印出來的值完全相同（例如 `schema enum: claude,codex,grok,opencode; yaml values: claude,codex,grok,opencode`）卻仍判定 FAIL，因為 `_schema_enum()` 的 `jq -r` 呼叫吐出的每一行列舉值都帶有看不見的尾端 `\r`。全 repo 掃描 `tests/`／`runtime/lib/`／`tools/lint/`／`tools/generate/` 下用到 `jq -r` 的檔案有 **64 個**；此機器沒有行為正常（純 LF）的 MSYS 版 jq 可以直接替換（僅有 WinGet 裝的原生版本，沒有 pacman/MSYS2 完整安裝）。範圍遠大於 CC-593 的四個獨立小修，需要一次性的架構決策（例如統一的 jq 包裝函式／全面補 `tr -d '\r'`／或改善 jq 安裝來源），而非逐一補丁。 | ops/test | 2026-09-28 | — | P2 | spike |
-| CC-595 | 🔵 active | **[原生 Windows：`pmctl context workflow-refresh` 即使零檔案變更仍超過 90s bound——unchanged-file fast path 每個檔案都 fork 約 6 個 subprocess]** GitHub issue #632：#620 修好「該掃描哪些檔案」後，`_ctx_index_tree`（`runtime/lib/pmctl-context.sh`）的 unchanged-file fast path 仍對**每一個**候選檔案各自 fork `stat`／`sha1sum`／`_ctx_sql_str` 命令替換子殼層，在這台機器上單次 fork 成本約 50-85ms，522 檔案的零異動 refresh 實測 6m36s（4 倍於 90s bound）。已改用 `_ctx_batch_mtimes`／`_ctx_batch_sha1s`（純 bash 分批，多檔案一次呼叫 `stat -c '%Y %n' f1 f2 ...`／`sha1sum f1 f2 ...`），並把 `ep="$(_ctx_sql_str ...)"` 換成既有的非 fork 版 `_ctx_sql_str_var`。**實作中發現的獨立 bug**：originally 用 `xargs -0 -s 20000` 做分批，但這台機器的 MSYS `xargs.exe`（GNU findutils 4.9.0）在這個呼叫深度下會 SIGSEGV（留下 `xargs.exe.stackdump`），且失敗是靜默的（`_ctx_batch_mtimes` 的 `2>/dev/null` 吞掉了錯誤，讓「查無 mtime」被誤判成「檔案已變更」，導致每次都全量重索引而非跳過）——同一條 `xargs -0 -s 20000 stat ...` pipeline 在互動 shell 直接跑完全正常，只有從這個函式的實際呼叫深度觸發，屬於 msys runtime 不穩定的一種（與 issue #609 記錄的 AppContainer/MSYS2 不穩定現象同一大類，機制不同）。修法：完全不依賴 `xargs`，改在純 bash 迴圈裡依位元組上限分批後直接呼叫 `stat`/`sha1sum`（`_ctx_batch_run`），少一個轉發進程之餘也繞開這個不穩定點。刻意不採用 issue 建議的「改用 git blob hash」方向（`git hash-object`／`git ls-files -s`），避免變更既有 `_portable_sha1`／`_ctx_file_sha1` 的雜湊語意（`_ctx_generate_file_sql` 也共用同一雜湊)；只批次化既有的 raw-content sha1 呼叫即可達成同等效能增益、零語意風險。 | ops/portability | 2026-09-28 | pr:#635 | P2 | hygiene |
+| CC-595 | ✅ done | **[原生 Windows：`pmctl context workflow-refresh` 即使零檔案變更仍超過 90s bound——unchanged-file fast path 每個檔案都 fork 約 6 個 subprocess]** GitHub issue #632：#620 修好「該掃描哪些檔案」後，`_ctx_index_tree`（`runtime/lib/pmctl-context.sh`）的 unchanged-file fast path 仍對**每一個**候選檔案各自 fork `stat`／`sha1sum`／`_ctx_sql_str` 命令替換子殼層，在這台機器上單次 fork 成本約 50-85ms，522 檔案的零異動 refresh 實測 6m36s（4 倍於 90s bound）。已改用 `_ctx_batch_mtimes`／`_ctx_batch_sha1s`（純 bash 分批，多檔案一次呼叫 `stat -c '%Y %n' f1 f2 ...`／`sha1sum f1 f2 ...`），並把 `ep="$(_ctx_sql_str ...)"` 換成既有的非 fork 版 `_ctx_sql_str_var`。**實作中發現的獨立 bug**：originally 用 `xargs -0 -s 20000` 做分批，但這台機器的 MSYS `xargs.exe`（GNU findutils 4.9.0）在這個呼叫深度下會 SIGSEGV（留下 `xargs.exe.stackdump`），且失敗是靜默的（`_ctx_batch_mtimes` 的 `2>/dev/null` 吞掉了錯誤，讓「查無 mtime」被誤判成「檔案已變更」，導致每次都全量重索引而非跳過）——同一條 `xargs -0 -s 20000 stat ...` pipeline 在互動 shell 直接跑完全正常，只有從這個函式的實際呼叫深度觸發，屬於 msys runtime 不穩定的一種（與 issue #609 記錄的 AppContainer/MSYS2 不穩定現象同一大類，機制不同）。修法：完全不依賴 `xargs`，改在純 bash 迴圈裡依位元組上限分批後直接呼叫 `stat`/`sha1sum`（`_ctx_batch_run`），少一個轉發進程之餘也繞開這個不穩定點。刻意不採用 issue 建議的「改用 git blob hash」方向（`git hash-object`／`git ls-files -s`），避免變更既有 `_portable_sha1`／`_ctx_file_sha1` 的雜湊語意（`_ctx_generate_file_sql` 也共用同一雜湊)；只批次化既有的 raw-content sha1 呼叫即可達成同等效能增益、零語意風險。 | ops/portability | 2026-09-28 | pr:#635 | P2 | hygiene |
 
 ---
 
@@ -5048,7 +5048,7 @@ Windows C runtime「文字模式」stdout 的典型行為，不是 jq 本身的�
 
 ---
 
-## CC-595 — 原生 Windows：unchanged-file fast path 每檔案 fork ~6 個 subprocess，讓 context refresh 超過 90s bound（GitHub issue #632）🔵 active
+## CC-595 — 原生 Windows：unchanged-file fast path 每檔案 fork ~6 個 subprocess，讓 context refresh 超過 90s bound（GitHub issue #632）✅ 2026-09-28
 
 **Problem**：GitHub issue #632 記錄，即使 issue #620（`.gitignore`
 enumeration 修復）已落地，`pmctl_context_workflow_refresh` 在原生 Windows /
@@ -5137,12 +5137,11 @@ Git Bash 上仍超過 90s bound。根因不同：`_ctx_index_tree`
 `time ./cli/pmctl context workflow-refresh . --json` 遠低於 90s bound；
 PR 開出並過 `/pr-gate`。
 
-**PR #635 已開出、gate 已過**：codex executor, sequential mode, standard
-tier，critic／qa-tester／architecture-reviewer／security-reviewer 4 位
-reviewer 全 approve、0 findings、Final: GO；GitHub Actions CI 77/77 全綠；
-`.gate-overrides.md` 記錄的一律是先前 PR 累積下來的既有 accepted-risk 條目
-（非本次 diff 的新 finding）。尚未合併——等使用者明確同意後才 merge，屆時
-補上 merge commit SHA 並改標 ✅ done。
+**已交付（pr:#635）**：codex executor, sequential mode, standard tier，
+critic／qa-tester／architecture-reviewer／security-reviewer 4 位 reviewer
+全 approve、0 findings、Final: GO；GitHub Actions CI 77/77 全綠；`.gate-
+overrides.md` 記錄的一律是先前 PR 累積下來的既有 accepted-risk 條目（非本
+次 diff 的新 finding）。
 
 **See**: GitHub issue #632；issue #620（前置的 `.gitignore` enumeration
 修復，本票的前提條件）；issue #609（同類 AppContainer/MSYS2 不穩定現象，
