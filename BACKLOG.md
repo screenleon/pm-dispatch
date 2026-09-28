@@ -129,6 +129,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-590 | ✅ done | **[原生 Windows：Codex tool-terminal 邊界關閉會殺死已發布 readiness 的 detached gate supervisor]** GitHub issue #618：`pmctl gate run --lifecycle detached` 在原生 Windows、由 Codex tool terminal 呼叫時，PowerShell Job Object launcher 能成功發布 readiness（`supervisor.identity` 記錄 `isolated=1` 的合法 Windows pid）並讓 `gate run` 回傳 gate_id，但該 launcher 隨即在「呼叫本身所在的 terminal/tool-call 邊界關閉」的同一秒被外層宿主一併終止——`disown` 未能阻止，`pr-gate.sh` 從未真正啟動，無 reviewer dispatch／scope／trace／result 產出。`pmctl gate wait` 最終正確回報 indeterminate（fail-closed，未誤判 GO/NO-GO），但要等滿整段 timeout 才浮現。高信度診斷：呼叫者 bash 進程本身很可能被 Codex 宿主自己的外層 Windows Job Object 持有，巢狀 job 在未設 breakaway 許可的情況下對「已中斷持有者」的收尾，會連同尚未離線的內層 launcher 一併關閉——因果與 launcher 自身的行程壽命綁在一起，launcher 進程內部無法在自己結束前觀察到「結束之後才發生」的外層收尾，故不可能單靠 launcher 自我延長存活期偵測到這個結局。非 GitHub issue #609（AppContainer/MSYS2 `CreateFileMapping` namespace 問題，不同機制）、亦非 issue #619（Codex Windows sandbox-unavailable，已由決定性訊號辨識並在 PR #626 修復）——三者現象與根因均不同，僅同屬原生 Windows parity 範圍。**Requirement**：(1) `pmctl gate wait` 的 poll loop 對已發布 `supervisor.identity` 的 detached gate 加入定期 liveness re-check（`detached_launch_target_alive`／`detached_launch_verify_identity`），一旦偵測死亡立即回報既有的 indeterminate（不等滿 timeout，也不改變其 fail-closed 語意／exit code）；(2) 「readiness 之後 supervisor 消失」的既有 indeterminate 訊息比照 `gate run` 既有的啟動失敗訊息，補上 `--lifecycle foreground` 的具體建議；(3) 比照既有 `pmctl dispatch run` 對 Codex host 的「無持久 App Server bridge 時預設 foreground」guidance（`hosts/codex/lib/memory-contract.sh`、`docs/host-contract.md`），把同一預設收斂邏輯延伸到 `pmctl gate run`／`/pr-gate`（`commands/pr-gate.md` 目前對 lifecycle 選擇完全沒有 host 分支）；(4) 新增 CI 可跑的 regression：detached 啟動後、readiness 一發布就由獨立步驟強制 kill 掉 supervisor 行程群（模擬邊界關閉的外部效應，而非讓 run/wait 在同一個常駐測試進程下順序執行），斷言 `gate wait` 快速且正確回報 indeterminate；(5) 另需一輪原生 Windows 主機上的真實驗證（真 Job Object launcher、readiness 後由另一個行程強制終止），因為本 fix 涉及安全敏感的 process-lifecycle 語意，不接受純程式碼審閱作為完工證據——注意實作／驗證所用的 executor 若本身跑在 sandboxed exec_command 環境下，可能正好複現同一種「terminal 邊界殺死 detached 子行程」問題，驗證應在非 sandboxed 的真實原生終端進行。**Non-goals**：不嘗試在 launcher 自身進程內偵測「進程結束後才觸發」的外層收尾（見上方因果論證，技術上不可行）；不建立通用「自動判斷目前是否為 Codex sandboxed tool-call terminal」的執行期啟發式（目前無可靠訊號來源）；不修改既有 Job Object P/Invoke 的 kill／verify 機制本身（`runtime/lib/windows/detached-launch-job.ps1`、`runtime/lib/detached-launch.sh` 現有語意已正確 fail-closed）；不處理 [[CC-589]]（codex/claude reviewer 呼叫 pmctl 被拒絕，不同根因不同症狀）。**Done-when**：`gate wait` 對一個 readiness 後立即被強制終止的 detached gate，能在遠低於預設 timeout 的時間內回報帶有 `--lifecycle foreground` 建議的 indeterminate；`/pr-gate` 與 Codex memory-contract 對「無確認持久 bridge」情境有明確、與 dispatch 一致的 foreground 預設文件；新 regression 與一次真實原生 Windows 驗證均通過。**已交付（pr:#627，2026-09-27 merge，main@66353f3）**：`/pr-gate` 兩輪（sequential + parallel）critic／architecture-reviewer／security-reviewer 全 approve、0 findings；qa-tester 兩輪都因自身 codex sandbox 無法啟動真實 Windows process 而卡住（非本次 diff 缺陷，記錄為 `.gate-overrides.md` accepted risk）。CI（Linux runner）另外抓到兩個純 Windows 本機驗證看不到的真 bug 並修掉：(a) `commands/pr-gate.md` 文件範例裡的 `<lifecycle_value>` 佔位符沒加引號，bash 會把裸 `<foo>` 解讀成 I/O 重導向而非文字，導致該 fence 直接語法錯誤；(b) 新 regression test 的強制 kill 步驟原本借用共用的 `detached_launch_kill_process_group`，該函式在 POSIX 上是「先 SIGTERM、逾時才 SIGKILL」，假 supervisor 在 CI 的 Linux runner 上接住 SIGTERM 後優雅寫下「cancelled」結束紀錄——恰好是本案要驗證的「無任何證據的暴力終止」的反例；Windows 分支不受影響（Job Object `-Action Kill`本來就無 SIGTERM 緩衝階段）。修法：測試改為 Windows 走原共用函式、POSIX 直接送 SIGKILL 略過緩衝階段。修復後 CI 100/100 全綠。**See**: GitHub issue #618；[[CC-582]]（context-refresh bounded-timeout 前例，本票沿用同一設計語彙）；[[CC-535]]（detached-launch supervised-run 泛化 primitive，related 但不同範圍，未合併）；[[CC-370]]（原生 Windows experimental 支援範圍）；`docs/host-contract.md` 第 141-160 行（既有 dispatch 側 App Server bridge guidance）；`hosts/codex/lib/memory-contract.sh`；`commands/pr-gate.md` | ops/gate | 2026-09-27 | pr:#627 | P1 | design |
 | CC-591 | 🔵 active | **[原生 Windows：從 git worktree 內執行 `pmctl gate run` 會讓 gate subject capture 失敗]** `_gate_subject_common_dir`（`runtime/lib/gate-result-verify.sh`）預期 `git rev-parse --git-common-dir` 回傳相對路徑或 POSIX 絕對路徑（`/c/...`），但對一個 git worktree，原生 Windows git 回傳的是 Windows 磁碟機格式絕對路徑（`C:/Users/.../.git`）——`[[ "$common_dir" != /* ]]` 判斷把它誤判為「相對路徑」而把 worktree 自己的 root 疊加上去，產生無意義的路徑，導致 `gate_subject_snapshot` 失敗、`gate_run` 直接印出「unable to capture immutable gate subject」並在任何 reviewer 被 dispatch 之前就中止。已用 `set -x` 直接追蹤確認根因，並確認同一函式呼叫在**非 worktree 的 plain checkout** 上瞬間成功——問題僅限 worktree。目前 workaround：改在非 worktree 的 checkout 跑 gate（2026-09-27 CC-590 落地過程中發現）。 | ops/gate | 2026-09-27 | — | P2 | hygiene |
 | CC-592 | 🟢 someday | **[qa-tester 的 codex sandbox 結構性地無法啟動真實 Windows process，導致任何需要真實 process 驗證的 gate finding 卡住]** 兩次獨立 gate dispatch（sequential 90s bound、parallel 120s bound）中，qa-tester 嘗試重新執行一個會啟動真實 Windows Job Object supervisor 的測試時，兩次都在整個 timeout 期間**零輸出**後逾時（exit 124）——同一測試由本機（非 sandbox）直接執行 5 次以上皆在 10 秒內通過。訊號（完全零輸出，而非部分進度）與 #609（AppContainer 阻擋 MSYS2 對全域 namespace 的存取）、#619（codex Windows sandbox 決定性拒絕 exec_command）同一類，但這次發生在 **reviewer 驗證路徑本身**，而非 gate 的 producer 端。目前僅能靠 `.gate-overrides.md` 逐案記錄 accepted risk 繞過（2026-09-27 CC-590 gate 過程中發現，兩輪 gate 皆命中同一訊號）。 | ops/gate | 2026-09-27 | — | P2 | spike |
+| CC-593 | ✅ done | 原生 Windows Git Bash 上，`bash tests/bin/run-tests.sh --all` 完整套件在 Phase 0 連續卡在四個不同 lint：`lint-pmctl-commands`（jq `-r` 輸出帶 CRLF，跟純 LF 的 registry 逐行比對全部誤判失敗）、`lint-doc-wikilinks`（① 每行無條件開 subprocess 做 code-span 過濾，隨 BACKLOG.md 增長被放大到 900+ 秒；② 在測試框架的 `LC_ALL=C.UTF-8` 下，sed 處理 BACKLOG.md 裡的 🟢 等 4-byte UTF-8 字元時 code-span 過濾失效，誤判出從未存在的違規）、`lint-readme-surface-lists`（直接掃檔案系統、沒排除 `.gitignore`，把 Claude Code 自己的 runtime 快取 `skills/synced/` 誤判成「缺 README 條目」）、以及 `tools/generate/gate-structural-validator.sh --check`（同款 jq CRLF 問題，誤判 schema bundle「過期」）。四個都已修復並用 `--filter`／`LC_ALL=C.UTF-8`／完整套件三方比對驗證過，且確認在未改動的 main 上可重現、與任何一張既有票無關（2026-09-27/28 確認完整套件時發現）。**已交付（pr:#631）**：另外補上 gate review 過程中發現的第五個 bug——`git check-ignore` 在 sandboxed reviewer 的不同 owner checkout 下會因 safe-directory 保護而 exit 128，跟「未被 gitignore」的 exit 1 從結果碼上分不出來，靜默地讓 `skills/synced/` 誤判重演；修法是把 `-c safe.directory='*'` 限定在這個唯讀 plumbing 呼叫上。並補齊兩個平台特定條件的 mutation-sensitive regression（`test-lint-doc-wikilinks.sh`／`test-lint-readme-surface-lists.sh`）。Gate：codex executor, sequential mode, standard tier，3 輪後 4 reviewer 全 approve、0 findings。 | ops/test | 2026-09-28 | pr:#631 | P2 | hygiene |
+| CC-594 | 🟢 someday | **[原生 Windows 上這台機器的 jq（WinGet 版）對任何非 TTY 的輸出（重導向到檔案、pipe、command substitution）都會自動加上 CRLF，不限 `-r` 模式，範圍遍布整個 repo]** 修 CC-593 時發現同一根因在 `tests/shell/test-core-schemas.sh` 造成 33 個測試失敗——多數是 `enum-sync` 類檢查：兩邊列印出來的值完全相同（例如 `schema enum: claude,codex,grok,opencode; yaml values: claude,codex,grok,opencode`）卻仍判定 FAIL，因為 `_schema_enum()` 的 `jq -r` 呼叫吐出的每一行列舉值都帶有看不見的尾端 `\r`。全 repo 掃描 `tests/`／`runtime/lib/`／`tools/lint/`／`tools/generate/` 下用到 `jq -r` 的檔案有 **64 個**；此機器沒有行為正常（純 LF）的 MSYS 版 jq 可以直接替換（僅有 WinGet 裝的原生版本，沒有 pacman/MSYS2 完整安裝）。範圍遠大於 CC-593 的四個獨立小修，需要一次性的架構決策（例如統一的 jq 包裝函式／全面補 `tr -d '\r'`／或改善 jq 安裝來源），而非逐一補丁。 | ops/test | 2026-09-28 | — | P2 | spike |
 
 ---
 
@@ -4939,5 +4941,108 @@ repo 已記錄的兩個原生 Windows sandbox 案例同一類：
 **See**: [[CC-590]]（2026-09-27 gate 過程中兩輪獨立命中同一訊號的 session）；
 GitHub issue #609；GitHub issue #619；`.gate-overrides.md` 內 CC-590 相關的
 accepted-risk 紀錄
+
+---
+
+## CC-593 — 原生 Windows 完整套件 Phase 0 卡在四個獨立 jq/locale/gitignore 問題 ✅ 2026-09-28
+
+**Problem**：`bash tests/bin/run-tests.sh --all` 在原生 Windows Git Bash 上，
+Phase 0（結構性 lint 前置檢查）連續卡在四個不同的既有腳本，每一個都會讓
+Phase 0 判定失敗、後面 100+ 個真正的測試 suite 全被跳過：
+
+1. **`tools/lint/lint-pmctl-commands.sh`**：`pmctl commands --json` 的輸出
+   經過 `jq -r '.commands[].path'` 後，每一行都被這台機器的 jq（WinGet 版）
+   自動加上尾端 `\r`，跟純 LF、經 `awk` 產生的 registry 路徑清單逐行比對時
+   全部誤判為「內容不同」。
+2. **`tools/lint/lint-doc-wikilinks.sh`**（兩個獨立問題）：
+   - 對每一行都無條件開一對 `printf`／`sed` subprocess 做 code-span 過濾，
+     只有濾完之後才檢查該行有沒有 `[[`。BACKLOG.md 等掃描目標檔案總共約
+     13,000 行，在原生 Windows 上開 subprocess 的成本遠高於 Linux，實測
+     900+ 秒（對比本機互動 shell 下 60～75 秒）。
+   - 修好上述效能問題後，在測試框架實際使用的 `LC_ALL=C.UTF-8` locale
+     下，同一個 sed code-span 過濾指令令對 BACKLOG.md 裡的 🟢（4-byte
+     UTF-8 codepoint）處理失準，導致 `` `Superseded by [[CC-NNN]]` ``
+     這種本應被反引號 code span 濾掉的字串沒被濾乾淨，誤判成違規。此機
+     器互動 shell 的預設 locale未設定（空字串），所以直接執行時看不到
+     這個問題，只有透過 `tests/bin/run-tests.sh`（腳本開頭
+     `export LC_ALL=C.UTF-8`）呼叫時才會重現。
+3. **`tools/lint/lint-readme-surface-lists.sh`**：直接用 `find` 掃描
+   `skills/` 目錄下的檔案系統項目，沒有排除 `.gitignore` 內容，把 Claude
+   Code 自己的 runtime skill-sync 快取 `skills/synced/`（`.gitignore` 明確
+   標記為「harness 自動產生、非 repo 內容」）誤判成「repo 裡缺一個技能項目
+   的 README 條目」。
+4. **`tools/generate/gate-structural-validator.sh --check`**：跟第 1 點同一
+   根因，`jq -S .` 產生的 schema bundle 每行也帶 `\r`，跟純 LF、已 commit
+   的 `runtime/lib/gate-structural-schemas.json` 做 byte-exact `cmp` 時被
+   誤判「過期」，即使 JSON 內容完全相同。
+
+四個問題都跟 CC-585／CC-588 完全無關，是這次確認完整套件時才發現、且都在
+未改動的 main 上可獨立重現。
+
+**已交付**：
+1. `lint-pmctl-commands.sh`：`jq -r ... | tr -d '\r' | sort -u`。
+2. `lint-doc-wikilinks.sh`：把「這行有沒有 `[[`」的檢查搬到 sed 呼叫之前
+   （sed 只會刪字元、不會生出 `[[`，原始行沒有就不可能濾出 `[[`）；並把
+   實際做 code-span 過濾的 sed 呼叫改成 `LC_ALL=C sed ...`（反引號與
+   `[[`/`]]` 都是單位元組 ASCII，byte-wise 比對不需要懂 UTF-8 字元邊界）。
+3. `lint-readme-surface-lists.sh`：`skills_inv` 改用 `git check-ignore`
+   過濾掉任何被 gitignore 排除的目錄，而非硬編碼排除 `synced`。
+4. `gate-structural-validator.sh`：`jq -S . "$bundle" | tr -d '\r' > "$generated"`。
+
+**驗證**：每個修正都先用問題重現時的確切呼叫方式（含
+`LC_ALL=C.UTF-8`、`tests/bin/run-tests.sh` 實際會設的 `TMPDIR`／
+`XDG_RUNTIME_DIR`／`timeout --kill-after` wrapper）單獨確認轉綠，
+`tools/lint/lint-shellcheck.sh` 全數通過，最後完整套件的 Phase 0 六項全數
+`PASS`、進入真正的 119 個測試 suite。
+
+**Non-goals**：不處理 [[CC-594]] 記錄的更大範圍 jq CRLF 問題（同根因、影響
+另外約 60 個檔案，需要獨立的架構決策，非本票範圍）；不處理這台機器缺少
+`zip` 執行檔的環境缺口（`test-lint-shellcheck` 兩個案例因此失敗，純環境
+問題非程式碼 bug）。
+
+**See**: [[CC-594]]（同根因、範圍大得多的後續發現）
+
+---
+
+## CC-594 — 原生 Windows 上 jq 對任何非 TTY 輸出都加 CRLF，範圍遍布全 repo 🟢 someday
+
+**Problem**：修 [[CC-593]] 時發現，這台機器上安裝的 jq（WinGet 版
+`jqlang.jq`）只要輸出目的地不是終端機（重導向到檔案、進 pipe、被
+command substitution 捕捉），就會自動把每一行的 `\n` 換成 `\r\n`——不限
+`-r`（raw output）模式，`jq -S .`（一般 JSON 輸出）一樣會發生。這是
+Windows C runtime「文字模式」stdout 的典型行為，不是 jq 本身的邏輯 bug。
+
+**已確認範圍**：`bash tests/shell/test-core-schemas.sh` 單獨執行出現 33 個
+失敗，多數是 `enum-sync` 類檢查——兩邊印出來的值完全相同（例如
+`schema enum: claude,codex,grok,opencode; yaml values: claude,codex,grok,opencode`）
+卻仍判定 FAIL，因為 `_schema_enum()` 的 `jq -r` 呼叫吐出的每一行列舉值都
+帶有看不見的尾端 `\r`，讓字串比對必然失敗。全 repo 掃描
+`tests/`／`runtime/lib/`／`tools/lint/`／`tools/generate/` 下用到
+`jq -r` 的檔案有 **64 個**，尚未逐一確認各自是否真的受影響（有些可能是
+單純顯示用途、無精確字串比對，不受影響）。
+
+**已確認的限制**：此機器沒有行為正常（純 LF）的 MSYS 版 jq 可以直接替換
+——只有 WinGet 裝的原生版本，沒有 pacman／完整 MSYS2 安裝，所以不存在
+「換一個 binary 就整批解決」的捷徑。
+
+**Requirement（尚未決定修法方向，需要架構決策）**：
+1. 盤點 64 個檔案裡，哪些 `jq -r`／`jq` 呼叫的輸出實際會進入精確字串比對
+   （如 `cmp`、`[[ == ]]`、逐行 diff），哪些只是顯示／人類閱讀用途、CRLF
+   不影響正確性。
+2. 決定統一修法：(a) 每個受影響呼叫點各自補 `| tr -d '\r'`（CC-593 採用
+   的做法，逐點侵入性低但要碰很多檔案）；(b) 提供一個共用的 jq 包裝函式
+   （例如 `_jq_lf()`），受影響呼叫點改呼叫它；(c) 改善本機 jq 安裝來源
+   （例如透過完整 MSYS2 環境裝一份行為正常的 jq，環境層面一次解決，但
+   不是所有開發者機器都能／願意裝 MSYS2）。
+3. 補 regression：確認選定修法後，`test-core-schemas.sh` 的 33 個
+   `enum-sync`／schema-validates 案例全數轉綠。
+
+**Non-goals**：不在本票內逐一修那 64 個檔案（範圍需要先盤點＋決策，非
+一次 PR 能處理完）；不假設所有 64 個檔案都受影響，需先驗證。
+
+**Done-when**：盤點文件（或直接的修法 PR）明確列出哪些呼叫點受影響、選定
+哪種修法方向，且 `test-core-schemas.sh` 全數通過。
+
+**See**: [[CC-593]]（同根因，已修復的四個較小範圍案例）
 
 ---

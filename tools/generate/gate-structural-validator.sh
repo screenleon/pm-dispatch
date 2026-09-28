@@ -39,7 +39,14 @@ for schema_file in "${schemas[@]}"; do
   mv -- "$next" "$bundle"
 done
 generated="$tmp_dir/generated.json"
-jq -S . "$bundle" > "$generated"
+# `tr -d '\r'`: on native Windows, this host's jq writes CRLF line endings to
+# a redirected file even for plain (non -r) JSON output -- the tracked
+# runtime/lib/gate-structural-schemas.json is LF-only (git's normal text
+# handling), so an unstripped CRLF makes the byte-exact `cmp` below report
+# "stale" on a semantically identical bundle. Confirmed via direct byte
+# comparison: content is identical, only the OUTPUT's own line endings
+# differed.
+jq -S . "$bundle" | tr -d '\r' > "$generated"
 
 if [[ "$CHECK" == true ]]; then
   [[ -f "$OUTPUT" ]] || {
