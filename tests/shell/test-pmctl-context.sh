@@ -543,6 +543,58 @@ case_context_index_unchanged_fast_path_batches_subprocesses() {
   fi
 }
 
+case_context_status_batches_stat_for_unchanged_files() {
+  local name="pmctl context status: freshness diagnostic batches stat instead of forking per file"
+  # Behavior (issue #632): pmctl_context_status has its OWN separate
+  # new/changed-file diagnosis loop (a second, independent copy of the same
+  # per-file mtime comparison _ctx_index_tree's fast path does), and
+  # pmctl_context_workflow_refresh always calls it right after indexing.
+  # Fixing only _ctx_index_tree's loop (the case above) left this one still
+  # forking `stat` once per file -- confirmed against the real pm-dispatch
+  # repo, where workflow-refresh dropped only to ~8m26s (from the original
+  # ~6m36s baseline -- i.e. NOT fixed) until this second loop was batched
+  # too, after which it dropped to ~11.8s. Locks the same
+  # file-count-independent stat call count for this second call site.
+  # Steps: source the lib directly; build a DB via _ctx_index_tree at the
+  # exact path pmctl_context_status will independently derive; shadow
+  # `stat` with a counting wrapper; call pmctl_context_status --json;
+  # assert the call count is far below the file count.
+  should_run "$name" || return 0
+
+  command -v sqlite3 >/dev/null 2>&1 || { fail "$name" "setup: sqlite3 not on PATH"; return 0; }
+
+  local fix_repo="$tmp_root/fix-repo-status-batch-count"
+  make_fixture_repo "$fix_repo"
+  git_init_commit_fixture "$fix_repo"
+
+  local out err status=0
+  out="$tmp_root/status-batch-count.out"; err="$tmp_root/status-batch-count.err"
+  bash -c '
+    set -euo pipefail
+    # shellcheck source=runtime/lib/pmctl-context.sh
+    . "$1/lib/pmctl-context.sh"
+    root="$2"; counter="$3"
+    db="$(_ctx_db_path "$root")"
+    _ctx_index_tree "$root" "$db" 0 repo >/dev/null
+    stat() { printf "s\n" >> "$counter"; command stat "$@"; }
+    : > "$counter"
+    pmctl_context_status "$root" --json >/dev/null
+  ' bash "$REPO_ROOT/runtime" "$(ctx_fixture_target "$fix_repo")" \
+    "$tmp_root/status-batch-count.calls" > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "exit $status err=$(<"$err")"; return 0
+  fi
+
+  local call_count
+  call_count="$(wc -l < "$tmp_root/status-batch-count.calls" | tr -d ' ')"
+  # 6 unchanged files; a per-file loop needs >=6 stat calls alone.
+  if [[ "$call_count" -le 4 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected <=4 stat calls for pmctl_context_status over 6 unchanged files, got $call_count"
+  fi
+}
+
 case_context_update_specific_path() {
   local name="pmctl context update: specific path re-indexes only that file"
   should_run "$name" || return 0
@@ -6148,6 +6200,7 @@ case_context_index_fallback_excludes_build_dirs
 case_context_index_nested_worktree_subtree
 case_context_index_incremental_skip
 case_context_index_unchanged_fast_path_batches_subprocesses
+case_context_status_batches_stat_for_unchanged_files
 case_context_update_specific_path
 case_context_update_no_path_full_scan
 case_context_update_absolute_path_rejected

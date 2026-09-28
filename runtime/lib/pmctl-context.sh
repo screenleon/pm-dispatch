@@ -1260,16 +1260,32 @@ pmctl_context_status() {
     done < <(sqlite3 "$db" 'SELECT path, mtime FROM files;' 2>/dev/null | tr -d '\r' || true)
     indexed_files="${#_status_mtimes[@]}"
     latest_indexed_at="$(sqlite3 "$db" 'SELECT COALESCE(MAX(indexed_at), "") FROM files;' 2>/dev/null || true)"
+    # Batch current mtimes for the whole candidate set (issue #632: this
+    # diagnostic re-forked stat once per file, same as _ctx_index_tree's
+    # fast path did before it was fixed -- this loop is a separate call site
+    # with its own copy of the same per-file cost, so it needed the same fix).
+    local -a _status_abs=()
     while IFS= read -r abs; do
       [[ -f "$abs" ]] || continue
+      _status_abs+=("$abs")
+    done < <(_ctx_find_index_files "$repo_root" repo)
+    declare -A _status_cur_mtimes=()
+    if [[ "${#_status_abs[@]}" -gt 0 ]]; then
+      local _sm_mtime _sm_path
+      while IFS=' ' read -r _sm_mtime _sm_path; do
+        [[ -n "$_sm_path" ]] || continue
+        _status_cur_mtimes["$_sm_path"]="$_sm_mtime"
+      done < <(_ctx_batch_mtimes "${_status_abs[@]}")
+    fi
+    for abs in "${_status_abs[@]}"; do
       rel="${abs#"$repo_root/"}"
       if [[ -z "${_status_mtimes[$rel]+_}" ]]; then
         new_files=$((new_files + 1))
       else
         matched_files=$((matched_files + 1))
-        [[ "${_status_mtimes[$rel]}" == "$(_ctx_file_mtime "$abs")" ]] || changed_files=$((changed_files + 1))
+        [[ "${_status_mtimes[$rel]}" == "${_status_cur_mtimes[$abs]:-}" ]] || changed_files=$((changed_files + 1))
       fi
-    done < <(_ctx_find_index_files "$repo_root" repo)
+    done
     deleted_files=$((indexed_files - matched_files))
     (( deleted_files < 0 )) && deleted_files=0
     if (( new_files == 0 && changed_files == 0 && deleted_files == 0 )); then

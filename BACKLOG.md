@@ -5110,16 +5110,32 @@ Git Bash 上仍超過 90s bound。根因不同：`_ctx_index_tree`
    只驗證「skip 數量對不對」（既有的
    `case_context_index_incremental_skip` 只斷言 skip 計數，一個仍是
    per-file fork、但邏輯正確的迴圈一樣能通過它，不會抓到這類效能回歸）。
+6. **合併前在真實 pm-dispatch repo（522 檔案）上實測驗證時，發現同一根因
+   的第二個獨立呼叫點**：只修好 `_ctx_index_tree` 後，
+   `time ./cli/pmctl context workflow-refresh . --json` 仍要 8m26s（比原始
+   6m36s 基準還慢，完全沒改善）。追查發現 `pmctl_context_status`
+   （line ~1226，`pmctl context status`／`workflow-refresh` 都會呼叫）有它
+   **自己獨立的一份**新增/變更檔案診斷迴圈，一樣對每個檔案呼叫 forking 版
+   `_ctx_file_mtime`，issue #632 的文字只點名了 `_ctx_build_index`
+   （即 `_ctx_index_tree`）這一處，沒發現這第二處。用同一套
+   `_ctx_batch_mtimes` 批次化後複驗：`context index` 單獨 4.6s、
+   `context status` 單獨 2.3s、完整 `workflow-refresh` 11.8s——全部遠低於
+   90s bound。同步新增第二個 mutation-sensitive regression
+   `case_context_status_batches_stat_for_unchanged_files`：revert 這處
+   lib 修改後得到 7 次 `stat` 呼叫並清楚失敗，套用後降到 ≤4。
 
 **Non-goals**：不處理 [[CC-594]] 記錄的、範圍遍布全 repo 的 jq CRLF 問題
 （同一場 issue #632 調查過程中沒有牽涉到 jq，純屬巧合地與 CC-594 相鄰）；
 不改動實際「檔案已變更」時的內容處理路徑（`_ctx_generate_file_sql`，其
 成本隨變更檔案數而非全樹大小成長，issue 本身也明確排除這部分）。
 
-**Done-when**：`case_context_index_incremental_skip` 與新增的
-`case_context_index_unchanged_fast_path_batches_subprocesses` 皆通過；
+**Done-when**：`case_context_index_incremental_skip`、新增的
+`case_context_index_unchanged_fast_path_batches_subprocesses` 與
+`case_context_status_batches_stat_for_unchanged_files` 皆通過；
 `tests/shell/test-pmctl-context.sh` 全套執行後的 FAIL 清單與同一台機器上
-未修改 main 的 baseline 一致（無新增回歸）；PR 開出並過 `/pr-gate`。
+未修改 main 的 baseline 一致（無新增回歸）；在真實 pm-dispatch repo 上
+`time ./cli/pmctl context workflow-refresh . --json` 遠低於 90s bound；
+PR 開出並過 `/pr-gate`。
 
 **See**: GitHub issue #632；issue #620（前置的 `.gitignore` enumeration
 修復，本票的前提條件）；issue #609（同類 AppContainer/MSYS2 不穩定現象，
