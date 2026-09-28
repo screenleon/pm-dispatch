@@ -276,52 +276,71 @@ _ctx_extract_symbols() {
       ;;
     go)
       # ^func\s → function, ^type\s → type
+      # issue #642: identifier extraction is pure bash regex matching, not a
+      # `printf | sed` pipeline forked per matched line -- on a real
+      # TypeScript/Go/Python codebase with hundreds of matches, that forking
+      # cost alone stretched a first-time index well past 17 minutes (same
+      # per-item fork-cost class as #632/#638/#639/#640, just against a real
+      # external tool instead of a forced-forking pure-bash helper).
       grep -n '^\(func\|type\) ' "$file" 2>/dev/null | while IFS=: read -r lineno rest; do
         case "$rest" in
           func\ *)
-            name="$(printf '%s' "$rest" \
-              | sed 's/^func[[:space:]]*([^)]*)[[:space:]]*\([[:alnum:]_]*\).*/\1/; t done
-                     s/^func[[:space:]]*\([[:alnum:]_]*\).*/\1/; :done')"
-            [[ -n "$name" && "$name" != "$rest" ]] && printf '%s\tfunction\t%s\t%s\n' "$name" "$lineno" "$rest"
+            name=""
+            if [[ "$rest" =~ ^func[[:space:]]*\([^\)]*\)[[:space:]]*([[:alnum:]_]*) ]]; then
+              name="${BASH_REMATCH[1]}"
+            elif [[ "$rest" =~ ^func[[:space:]]*([[:alnum:]_]*) ]]; then
+              name="${BASH_REMATCH[1]}"
+            fi
+            if [[ -n "$name" ]]; then printf '%s\tfunction\t%s\t%s\n' "$name" "$lineno" "$rest"; fi
             ;;
           type\ *)
-            name="$(printf '%s' "$rest" | sed 's/^type[[:space:]]*\([[:alnum:]_]*\).*/\1/')"
-            [[ -n "$name" && "$name" != "$rest" ]] && printf '%s\ttype\t%s\t%s\n' "$name" "$lineno" "$rest"
+            name=""
+            [[ "$rest" =~ ^type[[:space:]]*([[:alnum:]_]*) ]] && name="${BASH_REMATCH[1]}"
+            if [[ -n "$name" ]]; then printf '%s\ttype\t%s\t%s\n' "$name" "$lineno" "$rest"; fi
             ;;
         esac
       done
       ;;
     python)
-      # ^def\s → function, ^class\s → class
+      # ^def\s → function, ^class\s → class (see issue #642 note above)
       grep -n '^\(def\|class\) ' "$file" 2>/dev/null | while IFS=: read -r lineno rest; do
         case "$rest" in
           def\ *)
-            name="$(printf '%s' "$rest" | sed 's/^def[[:space:]]*\([[:alnum:]_]*\).*/\1/')"
-            [[ -n "$name" && "$name" != "$rest" ]] && printf '%s\tfunction\t%s\t%s\n' "$name" "$lineno" "$rest"
+            name=""
+            [[ "$rest" =~ ^def[[:space:]]*([[:alnum:]_]*) ]] && name="${BASH_REMATCH[1]}"
+            if [[ -n "$name" ]]; then printf '%s\tfunction\t%s\t%s\n' "$name" "$lineno" "$rest"; fi
             ;;
           class\ *)
-            name="$(printf '%s' "$rest" | sed 's/^class[[:space:]]*\([[:alnum:]_]*\).*/\1/')"
-            [[ -n "$name" && "$name" != "$rest" ]] && printf '%s\tclass\t%s\t%s\n' "$name" "$lineno" "$rest"
+            name=""
+            [[ "$rest" =~ ^class[[:space:]]*([[:alnum:]_]*) ]] && name="${BASH_REMATCH[1]}"
+            if [[ -n "$name" ]]; then printf '%s\tclass\t%s\t%s\n' "$name" "$lineno" "$rest"; fi
             ;;
         esac
       done
       ;;
     typescript|javascript)
-      # ^function\s → function, ^class\s → class, ^const\s.*=> → arrow
+      # ^function\s → function, ^class\s → class, ^const\s.*=> → arrow (see
+      # issue #642 note above -- this is the branch that actually mattered:
+      # top-level `const Foo = () => {...}` is one of the most common
+      # statement shapes in real TypeScript/React code, easily 5-20+ per
+      # file).
       grep -n '^\(function\|class\|const\) ' "$file" 2>/dev/null | while IFS=: read -r lineno rest; do
         case "$rest" in
           function\ *)
-            name="$(printf '%s' "$rest" | sed 's/^function[[:space:]]*\([[:alnum:]_]*\).*/\1/')"
-            [[ -n "$name" && "$name" != "$rest" ]] && printf '%s\tfunction\t%s\t%s\n' "$name" "$lineno" "$rest"
+            name=""
+            [[ "$rest" =~ ^function[[:space:]]*([[:alnum:]_]*) ]] && name="${BASH_REMATCH[1]}"
+            if [[ -n "$name" ]]; then printf '%s\tfunction\t%s\t%s\n' "$name" "$lineno" "$rest"; fi
             ;;
           class\ *)
-            name="$(printf '%s' "$rest" | sed 's/^class[[:space:]]*\([[:alnum:]_]*\).*/\1/')"
-            [[ -n "$name" && "$name" != "$rest" ]] && printf '%s\tclass\t%s\t%s\n' "$name" "$lineno" "$rest"
+            name=""
+            [[ "$rest" =~ ^class[[:space:]]*([[:alnum:]_]*) ]] && name="${BASH_REMATCH[1]}"
+            if [[ -n "$name" ]]; then printf '%s\tclass\t%s\t%s\n' "$name" "$lineno" "$rest"; fi
             ;;
           const\ *)
-            if printf '%s' "$rest" | grep -q '=>'; then
-              name="$(printf '%s' "$rest" | sed 's/^const[[:space:]]*\([[:alnum:]_]*\).*/\1/')"
-              [[ -n "$name" && "$name" != "$rest" ]] && printf '%s\tarrow\t%s\t%s\n' "$name" "$lineno" "$rest"
+            if [[ "$rest" == *'=>'* ]]; then
+              name=""
+              [[ "$rest" =~ ^const[[:space:]]*([[:alnum:]_]*) ]] && name="${BASH_REMATCH[1]}"
+              if [[ -n "$name" ]]; then printf '%s\tarrow\t%s\t%s\n' "$name" "$lineno" "$rest"; fi
             fi
             ;;
         esac

@@ -134,6 +134,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-595 | ✅ done | **[原生 Windows：`pmctl context workflow-refresh` 即使零檔案變更仍超過 90s bound——unchanged-file fast path 每個檔案都 fork 約 6 個 subprocess]** GitHub issue #632：#620 修好「該掃描哪些檔案」後，`_ctx_index_tree`（`runtime/lib/pmctl-context.sh`）的 unchanged-file fast path 仍對**每一個**候選檔案各自 fork `stat`／`sha1sum`／`_ctx_sql_str` 命令替換子殼層，在這台機器上單次 fork 成本約 50-85ms，522 檔案的零異動 refresh 實測 6m36s（4 倍於 90s bound）。已改用 `_ctx_batch_mtimes`／`_ctx_batch_sha1s`（純 bash 分批，多檔案一次呼叫 `stat -c '%Y %n' f1 f2 ...`／`sha1sum f1 f2 ...`），並把 `ep="$(_ctx_sql_str ...)"` 換成既有的非 fork 版 `_ctx_sql_str_var`。**實作中發現的獨立 bug**：originally 用 `xargs -0 -s 20000` 做分批，但這台機器的 MSYS `xargs.exe`（GNU findutils 4.9.0）在這個呼叫深度下會 SIGSEGV（留下 `xargs.exe.stackdump`），且失敗是靜默的（`_ctx_batch_mtimes` 的 `2>/dev/null` 吞掉了錯誤，讓「查無 mtime」被誤判成「檔案已變更」，導致每次都全量重索引而非跳過）——同一條 `xargs -0 -s 20000 stat ...` pipeline 在互動 shell 直接跑完全正常，只有從這個函式的實際呼叫深度觸發，屬於 msys runtime 不穩定的一種（與 issue #609 記錄的 AppContainer/MSYS2 不穩定現象同一大類，機制不同）。修法：完全不依賴 `xargs`，改在純 bash 迴圈裡依位元組上限分批後直接呼叫 `stat`/`sha1sum`（`_ctx_batch_run`），少一個轉發進程之餘也繞開這個不穩定點。刻意不採用 issue 建議的「改用 git blob hash」方向（`git hash-object`／`git ls-files -s`），避免變更既有 `_portable_sha1`／`_ctx_file_sha1` 的雜湊語意（`_ctx_generate_file_sql` 也共用同一雜湊)；只批次化既有的 raw-content sha1 呼叫即可達成同等效能增益、零語意風險。 | ops/portability | 2026-09-28 | pr:#635 | P2 | hygiene |
 | CC-596 | ✅ done | **[`_ctx_index_tree` 的 per-refresh batch SQL 暫存檔沒有 `trap ... EXIT`，中途被 kill 就永久洩漏——已在 /tmp 累積 1.2GB/1147 個檔案]** GitHub issue #634：`mktemp /tmp/ctx-XXXXXX.sql` 產生的 batch SQL 暫存檔只靠兩個正常結束路徑上的顯式 `rm -f` 清理，同一檔案裡其餘 4 處多暫存檔區塊都已經用 `trap "rm -f '$var'" EXIT` 模式，唯獨這處（也是體積最大的一個，可能是整棵樹重新萃取的多 MB SQL）沒有。由於 CC-595 之前 refresh 經常撞上 90s bound，`pmctl_context_workflow_refresh_bounded` 的 `timeout -k 5` 會例行性地把它 kill 掉，兩個顯式 `rm -f` 都被跳過，檔案永久洩漏。已補上同款 `trap`（含既有慣例的 `# shellcheck disable=SC2064`），新增 regression 用 `set -e` 讓 shadow 過的 helper 失敗來模擬中途中斷（比起真的送 SIGTERM 更安全——實測發現這台機器上巢狀 `bash -c` 對自己 `$$` 送 `SIGTERM` 會往上波及整條祖先 shell，是 MSYS/Windows console-signal-group 的特性，並非針對單一 pid），驗證過 revert 掉 trap 後這個測試會失敗、補回後通過。 | ops/portability | 2026-09-28 | pr:#637 | P2 | hygiene |
 | CC-597 | ✅ done | **[`_ctx_query_hits_raw`／`_ctx_generate_file_sql`／`_ctx_tsv_to_json_array` 仍是 CC-595 已修過的同一種 forking anti-pattern：純 bash helper 透過 `$(...)` 呼叫而非 write-into-變數]** GitHub issue #638（`_ctx_query_hits_raw` 每個 matched row 各 fork `_ctx_memory_trust`／`_ctx_classify_domain`／`_ctx_compose_score`，prompt-scan 每個 prompt 都要付 60-70s）、#639（`_ctx_generate_file_sql` 每個新／變更檔案各 fork `_ctx_detect_language`／`_ctx_file_mtime`／`_ctx_file_sha1`／`_ctx_sql_str`，CC-595 的批次化只覆蓋「判斷是否需要重索引」，沒覆蓋「真的產生 SQL」這段）、#640（`_ctx_tsv_to_json_array` 每筆輸出 row 最多 fork `_ctx_json_str` 7 次，影響 query/pack/reuse-scan，其中 pack 又是 gate dispatch 組 reviewer context 的路徑，跟 #621 疊加）——三個都是同一場「掃描 CC-595 同款 anti-pattern」找到的獨立實例，且都不是零檔案異動的 fast path（CC-595 唯一測過的情境），而是「真的有東西要處理」時才會踩到，所以 CC-595 的驗證完全沒發現。已比照 `_ctx_sql_str`／`_ctx_sql_str_var` 的既有慣例，替 `_ctx_memory_trust`／`_ctx_classify_domain`／`_ctx_compose_score`／`_ctx_detect_language`／`_ctx_json_str` 各補上非 fork 的 `_var` 版本（原本的 stdout 版本改成呼叫 `_var` 版本，避免重複邏輯，且保留給既有白箱測試/其他呼叫者用），`_ctx_query_hits_raw` 三處呼叫點、`_ctx_tsv_to_json_array` 的 7 處呼叫點全部換掉。`_ctx_generate_file_sql` 額外改成接受可選的預算 mtime/sha1 參數；`_ctx_index_tree` 改成兩段式：先分類 skip/reindex（沿用 CC-595 已批次好的 mtime），再對「真的要 reindex」的子集合一次批次算 sha1，最後才呼叫 `_ctx_generate_file_sql` 並把預算值傳進去——單檔案呼叫路徑（`_ctx_index_file`／`pmctl_context_update`）沒有批次值可用，維持原本 per-file fork 的 fallback 行為不變。實機驗證：prompt-scan 69.7s→15.2s（#638+#640 疊加效果，同一份真 query）；全新首次索引（522 檔案，全部視為新檔）5m54.8s→4m55.2s（#639，改善幅度較小是因為主要成本本來就是 symbol/chunk 萃取本身，不是這次修的 metadata forking，issue 本身也沒宣稱會解決那部分）。三個修法各補一個 mutation-sensitive regression：shadow 掉「原本」會被繞過的 stdout 版本 helper 讓它回傳明顯錯誤的哨兵值，驗證真正呼叫路徑已經換成 `_var` 版本（若 revert 回 forking 版本，輸出會出現哨兵值而失敗）——三個都驗證過 revert 對應那行後測試會失敗、補回後通過。 | ops/portability | 2026-09-28 | pr:#641 | P2 | hygiene |
+| CC-598 | 🔵 active | **[`_ctx_extract_symbols` 的 go/python/typescript/javascript 分支每個 matched 行各 fork `sed`／`grep -q`，CC-597 自己的 commit message 誤判這是「真正內容處理、不可避免」]** GitHub issue #642：在真實 mizuho-v1（Next.js + Expo/React Native monorepo，926 檔案）上觀測到首次 `workflow-refresh` 跑了 17m53s+ 還在跑（確認非卡死，batch SQL 暫存檔持續在長大）。pm-dispatch 自己的 repo 幾乎全是 shell script（`_ctx_detect_language` 把 `.sh` 對應到單一整檔 grep 搭配 sed 的 pipeline，不是逐行 per-match），從沒踩過這個分支，這正是 CC-597 驗證時完全沒發現的原因；一個真實 TypeScript/React 專案剛好相反——`const Foo = () => {...}`（component/hook/exported util）是這個語言最常見的頂層語句形狀之一，一個檔案輕鬆 5-20+ 個。已把每個 matched 行都要 printf 搭配 sed（typescript 的 const 分支還多一個 printf 搭配 grep -q）的 pipeline 全部換成純 bash regex 比對（go func 含 receiver 的雙模式、go type、python def/class、typescript function/class/const-arrow 全部覆蓋），逐一跟原本 sed 輸出做過 side-by-side 比對確認語意完全一致，包含原本刻意處理的邊界情況（`func () {}` 空 receiver 應該不產生符號；`const` 沒有 `=>` 不應被當成 arrow function）。**實作過程中額外發現並修掉的獨立正確性 bug**：「非空字串才印出」原本用 bare `&&`-chain 寫法（新舊程式碼都有，不是這次才引入）在 `cli/pmctl` 本身有設 `set -euo pipefail` 的前提下，一旦捕捉到的識別字剛好是空字串（例如真實碼庫常見的 `const { data } = useQuery(() => ...)` 解構賦值），`&&` 左邊為 false 會讓整個腳本在 `-e` 下直接中止——相當於整個索引作業在處理到這種行時會靜默失敗，不只是慢。已全部改成 if/then/fi 寫法，消除這個 errexit 地雷。實機驗證：用合成的 300 檔案 TypeScript fixture（每檔 5 個宣告，共 1500 個 matched 行）量測同一份 fixture 修復前 2m43.7s → 修復後 1m52.99s。 | ops/portability | 2026-09-28 | — | P2 | hygiene |
 
 ---
 
@@ -5310,5 +5311,114 @@ critic／qa-tester／architecture-reviewer／security-reviewer 4 位 reviewer
 本票沿用的既有 `_var` 慣例與批次化基礎設施）；issue #621（`pmctl context
 pack` 的成本跟這個 issue 描述的 gate scope manifest 延遲疊加在同一個
 predecessor budget 上，不同子系統）。
+
+---
+
+## CC-598 — `_ctx_extract_symbols` 每個 matched 行 fork `sed`/`grep -q`，被 CC-597 誤判為不可避免的真實內容處理成本（GitHub issue #642）🔵 active
+
+**Problem**：GitHub issue #642 在真實的 `mizuho-v1`（Next.js + Expo/React
+Native monorepo，926 個 tracked 檔案）上觀測到首次 `pmctl context
+workflow-refresh` 跑了 17m53s+ 仍在執行（確認不是卡死——觀察期間 batch
+SQL 暫存檔以約 12KB/5s 的速度持續成長）。這是 CC-595（issue #632）／
+CC-597（issue #638/#639/#640）已找到並修復的同一種 fork-per-item
+anti-pattern 的第五個獨立實例，差別是這次是**真的**呼叫外部工具
+（`sed`／`grep -q`），不是被迫透過 fork 呼叫的純 bash helper。
+
+`_ctx_extract_symbols`（`runtime/lib/pmctl-context.sh`）的 go/python/
+typescript/javascript 分支，對**每一個**符合外層 `grep -n` 篩選的行（每個
+`func`／`type`／`def`／`class`／`function`／`const` 宣告），都用
+`printf '%s' "$rest" | sed '...'` 抽取識別字名稱；typescript 的 `const`
+分支額外用 `printf '%s' "$rest" | grep -q '=>'` 判斷是不是箭頭函式，一行
+最多 fork 4 次。
+
+**為什麼 CC-595/CC-597 的驗證完全沒抓到**：pm-dispatch 自己的 repo（本
+session 目前為止所有驗證都用的同一個 repo）幾乎全是 shell script——
+`_ctx_detect_language` 把 `.sh` 對應到 `shell` 語言，而 `shell` 分支用的是
+單一整檔 `grep|sed` pipeline（不是逐行 per-match），所以從沒踩過這個
+go/python/typescript 分支的邏輯。CC-597 自己的 commit message 甚至明確把
+這類成本歸類成「real symbol/chunk extraction, not metadata forking」
+（真正的內容處理，非 metadata forking，因此不可避免）——issue #642 正是
+指出這個歸類對 typescript/javascript（以及 go/python）分支不成立：一個
+真實 TypeScript/React 專案裡，`const Foo = () => {...}`（component、hook、
+exported util）是這個語言最常見的頂層語句形狀之一，一個檔案輕鬆
+5-20+ 個，926 個檔案累計起來輕易達到四位數的 fork 次數，在這台機器已知
+~50-85ms/fork 的成本下，足以解釋觀測到的 17+ 分鐘。
+
+**已交付**：
+
+1. 把 go/python/typescript/javascript 四個分支裡所有 `printf | sed`／
+   `printf | grep -q` pipeline，全部換成純 bash `[[ =~ ]]`／
+   `BASH_REMATCH` regex 比對——不需要任何外部指令：
+   - go `func`：原本用 sed 的 `t`/`:done` 分支語法處理「有 receiver」
+     （`func (r *T) M()`）與「無 receiver」（`func M()`）兩種形狀，改成
+     bash 的 if/elif 雙模式：先試比對含 receiver 的 pattern，比對失敗才
+     退回比對不含 receiver 的 pattern。
+   - go `type`、python `def`/`class`、typescript `function`/`class`：
+     單一 capture group 的簡單 pattern 直接翻譯。
+   - typescript `const`：先用 `[[ "$rest" == *'=>'* ]]`（bash 內建
+     子字串比對）取代 `grep -q '=>'`，判斷通過才進一步抽取名稱。
+   - 每一個翻譯後的 bash regex 都跟原本 sed 的輸出做過 side-by-side
+     直接比對（含邊界情況：`func () {}` 空 receiver 應該不產生符號、
+     `type {`／`const notArrow = 5;` 這類抽不出合法識別字的行應該被
+     `-n "$name"` 檔掉），確認語意逐位元組一致。
+2. **實作過程中另外發現並修掉的獨立正確性 bug**：原本「非空字串才印出」
+   用的是 `-n "$name" &&` 這種 bare `&&`-chain 寫法（新舊程式碼皆有，非
+   本票引入）在 `cli/pmctl` 本身開頭就設了 `set -euo pipefail` 的前提下，一旦
+   `$name` 剛好抽到空字串，`&&` 左半邊為 false，整個腳本在 `-e` 下會
+   直接中止——不是「這一個符號沒被索引」而是「整個 index 作業從這一行
+   開始整個安靜地失敗」。這在真實碼庫並非罕見：例如
+   `const { data, error } = useQuery(() => fetchData());` 這種解構賦值
+   內含一個 callback 箭頭函式（`=>` 判斷會通過），但抽取 `const` 後面第
+   一個識別字時遇到的是 `{`（非 alnum），捕捉結果是空字串。已把所有 7
+   處這個模式改成 `if [[ -n "$name" ]]; then printf ...; fi`，徹底消除
+   這個 errexit 地雷（改法本身在測試過程中被新增的 regression 直接
+   驗證：加回 bare `&&` 版本後，go 語言 fixture 裡刻意放的
+   `func () {}` 邊界行會讓整個測試腳本中止失敗）。
+3. 新增 4 個測試：go／python／typescript 三個各自的正確性測試（直接呼叫
+   `_ctx_extract_symbols`，斷言逐行、逐欄位的精確 TSV 輸出，包含前述
+   邊界情況）；以及一個涵蓋全部三種語言的 mutation-sensitive
+   no-fork regression——shadow `sed` 成一個必定失敗並印出訊息的 stub，
+   對三種語言各跑一次 `_ctx_extract_symbols`，斷言輸出仍然完全正確
+   （若哪個分支不小心 revert 回呼叫 `sed`，該語言那段輸出就會消失或
+   整個腳本因為 shadow 失敗而中止）。撰寫過程中發現「只測 go 語言」的
+   版本會漏抓 typescript 分支單獨 revert 回 forking 的回歸（已修正為
+   涵蓋全部三種語言，重新驗證過確實會抓到）。**實作過程中另外撞到、已
+   修正的工具陷阱**：用 `python3`（透過這個環境的 Bash 工具）以文字模式
+   （`open(path, encoding="utf-8")` 搭配 `readlines()`/`writelines()`）
+   改寫 `if/then/fi` 那 7 行時，Python 在這台機器上預設把 `\n`
+   靜默轉成 `\r\n` 寫回，把整個檔案從 LF 污染成 CRLF（WSL shellcheck
+   隨即對每一行報 SC1017）——用 binary mode
+   （`open(path, "rb")`/`open(path, "wb")`）重新正規化回 LF 後確認
+   問題消失；已記錄為 memory
+   `feedback_python3_crlf_write_trap`，供未來 session 參考。全部 4 個
+   新測試都驗證過 revert 對應那段程式碼後會失敗、補回後通過。
+4. 實機驗證：用合成的 300 檔案 TypeScript fixture（`.tsx`，每檔含 1 個
+   `function`、1 個 `class`、2 個 `const ... =>` 箭頭函式，共 1500 個
+   matched 行）量測**同一份 fixture**：修復前 2m43.7s、修復後
+   1m52.99s。改善幅度（約 31%）比 #632/#634/#638/#640 的近乎全部消除
+   來得保守，因為 300 檔案／1500 個 match 這個合成 fixture 的宣告密度
+   仍低於真實 mizuho-v1 描述的規模，且該路徑本身還有其他無法消除的
+   per-file 成本（外層 `grep -n` 掃描整檔一次、chunking）；沒有取得
+   mizuho-v1 本尊直接量測的機會，但同一種 anti-pattern 在
+   #632/#634/#638/#639/#640 上都已經用真實或高保真合成資料驗證過同一
+   套修法有效，這裡的改善方向與量級是一致的。
+
+**Non-goals**：不處理 `_ctx_extract_symbols` 裡 go/python 分支剩餘的、
+真正需要外部工具的部分（`grep -n` 掃描整檔一次，這是找出候選行的必要
+成本，不是這次要清的「純 bash 卻被迫透過 fork 呼叫」這種浪費）；不擴充
+symbol 抽取支援更多語言或更複雜的語法（例如 TypeScript 的
+`export default function`、多行函式簽章）——那是功能擴充，不在這次
+「消除不必要 fork」的範圍內。
+
+**Done-when**：`case_context_extract_symbols_go_correctness`／
+`case_context_extract_symbols_python_correctness`／
+`case_context_extract_symbols_typescript_correctness`／
+`case_context_extract_symbols_no_fork_per_matched_line` 皆通過；
+`tests/shell/test-pmctl-context.sh` 全套執行後的 FAIL 清單與同一台機器上
+未修改 main 的 baseline 一致（無新增回歸）；PR 開出並過 `/pr-gate`。
+
+**See**: GitHub issue #642；issue #632／#638／#639／#640（同一種
+fork-per-item anti-pattern 的前四個獨立實例）；[[CC-595]]／[[CC-597]]
+（同根因的前置修復，本票延續同一套「純 bash 比 fork 更快」的修法方向）。
 
 ---

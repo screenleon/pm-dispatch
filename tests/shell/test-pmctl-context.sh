@@ -976,6 +976,262 @@ MD
   pass "$name"
 }
 
+# Behavior (issue #642): _ctx_extract_symbols's go/python/typescript/javascript
+# branches used to extract each matched identifier via a `printf | sed`
+# (and, for arrow functions, an extra `printf | grep -q`) pipeline forked
+# PER MATCHED LINE, not per file. On a real TypeScript/React codebase
+# (top-level `const Foo = () => {...}` is one of the most common statement
+# shapes in the language) this alone stretched a first-time index of a
+# 926-file repo past 17 minutes. The fix replaced every one of those
+# pipelines with pure bash `[[ =~ ]]`/`BASH_REMATCH` regex matching --
+# these four cases lock its output as byte-for-byte identical to the
+# original sed-based extraction (verified by direct side-by-side
+# comparison during development) for every declaration shape each branch
+# recognizes, including ones the original code specifically special-cased
+# (a Go method's receiver, `func (r *T) M()`; a `const` line without `=>`,
+# which must NOT be captured as an arrow function).
+case_context_extract_symbols_go_correctness() {
+  local name="pmctl-context.sh: _ctx_extract_symbols matches go func/type identifiers correctly (issue #642 rewrite)"
+  should_run "$name" || return 0
+
+  local src="$tmp_root/642-sample.go"
+  cat > "$src" <<'GO'
+package sample
+
+func PlainFunc(x int) string {
+	return ""
+}
+
+func (r *Receiver) Method(x int) error {
+	return nil
+}
+
+type Config struct {
+	Name string
+}
+
+func () {
+}
+GO
+
+  local out err status=0
+  out="$tmp_root/642-go.out"; err="$tmp_root/642-go.err"
+  bash -c '
+    set -euo pipefail
+    # shellcheck source=runtime/lib/pmctl-context.sh
+    . "$1/lib/pmctl-context.sh"
+    _ctx_extract_symbols "$2" go
+  ' bash "$REPO_ROOT/runtime" "$src" > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "exit $status err=$(<"$err")"; return 0
+  fi
+
+  local expected
+  expected="$(cat <<'EOF'
+PlainFunc	function	3	func PlainFunc(x int) string {
+Method	function	7	func (r *Receiver) Method(x int) error {
+Config	type	11	type Config struct {
+EOF
+)"
+  if [[ "$(<"$out")" == "$expected" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected:
+$expected
+got:
+$(<"$out")"
+  fi
+}
+
+case_context_extract_symbols_python_correctness() {
+  local name="pmctl-context.sh: _ctx_extract_symbols matches python def/class identifiers correctly (issue #642 rewrite)"
+  should_run "$name" || return 0
+
+  local src="$tmp_root/642-sample.py"
+  cat > "$src" <<'PY'
+def run_task(name):
+    pass
+
+
+class TaskRunner:
+    pass
+
+
+def helper_fn(a, b):
+    return a + b
+PY
+
+  local out err status=0
+  out="$tmp_root/642-py.out"; err="$tmp_root/642-py.err"
+  bash -c '
+    set -euo pipefail
+    # shellcheck source=runtime/lib/pmctl-context.sh
+    . "$1/lib/pmctl-context.sh"
+    _ctx_extract_symbols "$2" python
+  ' bash "$REPO_ROOT/runtime" "$src" > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "exit $status err=$(<"$err")"; return 0
+  fi
+
+  # Note: no trailing ':' on any captured line text below -- a pre-existing,
+  # unrelated `IFS=: read` quirk (confirmed identical on the original
+  # sed-based extraction, not something #642's rewrite changed): a colon
+  # that is the LAST character of the grep'd line is consumed as a field
+  # separator with nothing after it, so it never reaches `rest`. An
+  # embedded colon (as in the typescript case above, `x: number`) is
+  # unaffected -- only a genuinely trailing one is dropped.
+  local expected
+  expected="$(cat <<'EOF'
+run_task	function	1	def run_task(name)
+TaskRunner	class	5	class TaskRunner
+helper_fn	function	9	def helper_fn(a, b)
+EOF
+)"
+  if [[ "$(<"$out")" == "$expected" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected:
+$expected
+got:
+$(<"$out")"
+  fi
+}
+
+case_context_extract_symbols_typescript_correctness() {
+  local name="pmctl-context.sh: _ctx_extract_symbols matches typescript/javascript function/class/arrow identifiers correctly (issue #642 rewrite)"
+  should_run "$name" || return 0
+
+  local src="$tmp_root/642-sample.ts"
+  cat > "$src" <<'TS'
+function doThing(x: number): number {
+  return x;
+}
+class MyClass extends Base {
+  method() {}
+}
+const Foo = () => {
+  return 1;
+};
+const notArrow = 5;
+const Bar = (x) => x * 2;
+TS
+
+  local out err status=0
+  out="$tmp_root/642-ts.out"; err="$tmp_root/642-ts.err"
+  bash -c '
+    set -euo pipefail
+    # shellcheck source=runtime/lib/pmctl-context.sh
+    . "$1/lib/pmctl-context.sh"
+    _ctx_extract_symbols "$2" typescript
+  ' bash "$REPO_ROOT/runtime" "$src" > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "exit $status err=$(<"$err")"; return 0
+  fi
+
+  local expected
+  expected="$(cat <<'EOF'
+doThing	function	1	function doThing(x: number): number {
+MyClass	class	4	class MyClass extends Base {
+Foo	arrow	7	const Foo = () => {
+Bar	arrow	11	const Bar = (x) => x * 2;
+EOF
+)"
+  if [[ "$(<"$out")" == "$expected" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected (note: 'const notArrow' must NOT appear -- no '=>'):
+$expected
+got:
+$(<"$out")"
+  fi
+}
+
+case_context_extract_symbols_no_fork_per_matched_line() {
+  local name="pmctl-context.sh: _ctx_extract_symbols forks no subprocess per matched identifier line, in any of go/python/typescript (issue #642)"
+  # Steps: source the lib directly; shadow `sed` with a stub that always
+  # fails loudly (the go/python/typescript branches' per-match identifier
+  # extraction was the only remaining use of `sed`/`printf|sed` inside this
+  # function after the #642 rewrite -- the one legitimate per-FILE `grep -n`
+  # call at the top of each branch never invokes `sed` at all). Extract
+  # symbols from a small fixture in EACH of the three languages the rewrite
+  # touched; a correct, still-forking implementation would either crash or
+  # silently lose every match in that language's branch the instant sed is
+  # broken -- this must produce the identical correct output regardless,
+  # for all three (a single-language check would miss a regression
+  # confined to one of the other two branches).
+  should_run "$name" || return 0
+
+  local go_src="$tmp_root/642-nofork.go"
+  cat > "$go_src" <<'GO'
+package sample
+
+func Alpha() {
+}
+
+type Beta struct {
+}
+GO
+
+  local py_src="$tmp_root/642-nofork.py"
+  cat > "$py_src" <<'PY'
+def gamma():
+    pass
+
+
+class Delta:
+    pass
+PY
+
+  local ts_src="$tmp_root/642-nofork.ts"
+  cat > "$ts_src" <<'TS'
+function epsilon() {
+}
+class Zeta {
+}
+const Eta = () => {
+};
+TS
+
+  local out err status=0
+  out="$tmp_root/642-nofork.out"; err="$tmp_root/642-nofork.err"
+  bash -c '
+    set -euo pipefail
+    # shellcheck source=runtime/lib/pmctl-context.sh
+    . "$1/lib/pmctl-context.sh"
+    sed() { printf "sed: shadow invoked, should never happen\n" >&2; return 1; }
+    printf "go:\n";         _ctx_extract_symbols "$2" go
+    printf "python:\n";     _ctx_extract_symbols "$3" python
+    printf "typescript:\n"; _ctx_extract_symbols "$4" typescript
+  ' bash "$REPO_ROOT/runtime" "$go_src" "$py_src" "$ts_src" > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "exit $status (sed shadow was invoked) err=$(<"$err")"; return 0
+  fi
+
+  local expected
+  expected="$(cat <<'EOF'
+go:
+Alpha	function	3	func Alpha() {
+Beta	type	6	type Beta struct {
+python:
+gamma	function	1	def gamma()
+Delta	class	5	class Delta
+typescript:
+epsilon	function	1	function epsilon() {
+Zeta	class	3	class Zeta {
+Eta	arrow	5	const Eta = () => {
+EOF
+)"
+  if [[ "$(<"$out")" == "$expected" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected:
+$expected
+got:
+$(<"$out")
+stderr: $(<"$err")"
+  fi
+}
+
 case_context_query_missing_query() {
   local name="pmctl context query: exits 2 when query string is missing"
   should_run "$name" || return 0
@@ -6417,6 +6673,10 @@ case_context_update_no_path_full_scan
 case_context_update_absolute_path_rejected
 case_context_update_traversal_rejected
 case_context_index_markdown_no_symbols
+case_context_extract_symbols_go_correctness
+case_context_extract_symbols_python_correctness
+case_context_extract_symbols_typescript_correctness
+case_context_extract_symbols_no_fork_per_matched_line
 case_context_query_missing_query
 case_context_query_unknown_flag
 case_context_query_domain_invalid
