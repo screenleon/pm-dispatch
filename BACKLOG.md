@@ -133,6 +133,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-594 | 🟢 someday | **[原生 Windows 上這台機器的 jq（WinGet 版）對任何非 TTY 的輸出（重導向到檔案、pipe、command substitution）都會自動加上 CRLF，不限 `-r` 模式，範圍遍布整個 repo]** 修 CC-593 時發現同一根因在 `tests/shell/test-core-schemas.sh` 造成 33 個測試失敗——多數是 `enum-sync` 類檢查：兩邊列印出來的值完全相同（例如 `schema enum: claude,codex,grok,opencode; yaml values: claude,codex,grok,opencode`）卻仍判定 FAIL，因為 `_schema_enum()` 的 `jq -r` 呼叫吐出的每一行列舉值都帶有看不見的尾端 `\r`。全 repo 掃描 `tests/`／`runtime/lib/`／`tools/lint/`／`tools/generate/` 下用到 `jq -r` 的檔案有 **64 個**；此機器沒有行為正常（純 LF）的 MSYS 版 jq 可以直接替換（僅有 WinGet 裝的原生版本，沒有 pacman/MSYS2 完整安裝）。範圍遠大於 CC-593 的四個獨立小修，需要一次性的架構決策（例如統一的 jq 包裝函式／全面補 `tr -d '\r'`／或改善 jq 安裝來源），而非逐一補丁。 | ops/test | 2026-09-28 | — | P2 | spike |
 | CC-595 | ✅ done | **[原生 Windows：`pmctl context workflow-refresh` 即使零檔案變更仍超過 90s bound——unchanged-file fast path 每個檔案都 fork 約 6 個 subprocess]** GitHub issue #632：#620 修好「該掃描哪些檔案」後，`_ctx_index_tree`（`runtime/lib/pmctl-context.sh`）的 unchanged-file fast path 仍對**每一個**候選檔案各自 fork `stat`／`sha1sum`／`_ctx_sql_str` 命令替換子殼層，在這台機器上單次 fork 成本約 50-85ms，522 檔案的零異動 refresh 實測 6m36s（4 倍於 90s bound）。已改用 `_ctx_batch_mtimes`／`_ctx_batch_sha1s`（純 bash 分批，多檔案一次呼叫 `stat -c '%Y %n' f1 f2 ...`／`sha1sum f1 f2 ...`），並把 `ep="$(_ctx_sql_str ...)"` 換成既有的非 fork 版 `_ctx_sql_str_var`。**實作中發現的獨立 bug**：originally 用 `xargs -0 -s 20000` 做分批，但這台機器的 MSYS `xargs.exe`（GNU findutils 4.9.0）在這個呼叫深度下會 SIGSEGV（留下 `xargs.exe.stackdump`），且失敗是靜默的（`_ctx_batch_mtimes` 的 `2>/dev/null` 吞掉了錯誤，讓「查無 mtime」被誤判成「檔案已變更」，導致每次都全量重索引而非跳過）——同一條 `xargs -0 -s 20000 stat ...` pipeline 在互動 shell 直接跑完全正常，只有從這個函式的實際呼叫深度觸發，屬於 msys runtime 不穩定的一種（與 issue #609 記錄的 AppContainer/MSYS2 不穩定現象同一大類，機制不同）。修法：完全不依賴 `xargs`，改在純 bash 迴圈裡依位元組上限分批後直接呼叫 `stat`/`sha1sum`（`_ctx_batch_run`），少一個轉發進程之餘也繞開這個不穩定點。刻意不採用 issue 建議的「改用 git blob hash」方向（`git hash-object`／`git ls-files -s`），避免變更既有 `_portable_sha1`／`_ctx_file_sha1` 的雜湊語意（`_ctx_generate_file_sql` 也共用同一雜湊)；只批次化既有的 raw-content sha1 呼叫即可達成同等效能增益、零語意風險。 | ops/portability | 2026-09-28 | pr:#635 | P2 | hygiene |
 | CC-596 | ✅ done | **[`_ctx_index_tree` 的 per-refresh batch SQL 暫存檔沒有 `trap ... EXIT`，中途被 kill 就永久洩漏——已在 /tmp 累積 1.2GB/1147 個檔案]** GitHub issue #634：`mktemp /tmp/ctx-XXXXXX.sql` 產生的 batch SQL 暫存檔只靠兩個正常結束路徑上的顯式 `rm -f` 清理，同一檔案裡其餘 4 處多暫存檔區塊都已經用 `trap "rm -f '$var'" EXIT` 模式，唯獨這處（也是體積最大的一個，可能是整棵樹重新萃取的多 MB SQL）沒有。由於 CC-595 之前 refresh 經常撞上 90s bound，`pmctl_context_workflow_refresh_bounded` 的 `timeout -k 5` 會例行性地把它 kill 掉，兩個顯式 `rm -f` 都被跳過，檔案永久洩漏。已補上同款 `trap`（含既有慣例的 `# shellcheck disable=SC2064`），新增 regression 用 `set -e` 讓 shadow 過的 helper 失敗來模擬中途中斷（比起真的送 SIGTERM 更安全——實測發現這台機器上巢狀 `bash -c` 對自己 `$$` 送 `SIGTERM` 會往上波及整條祖先 shell，是 MSYS/Windows console-signal-group 的特性，並非針對單一 pid），驗證過 revert 掉 trap 後這個測試會失敗、補回後通過。 | ops/portability | 2026-09-28 | pr:#637 | P2 | hygiene |
+| CC-597 | 🔵 active | **[`_ctx_query_hits_raw`／`_ctx_generate_file_sql`／`_ctx_tsv_to_json_array` 仍是 CC-595 已修過的同一種 forking anti-pattern：純 bash helper 透過 `$(...)` 呼叫而非 write-into-變數]** GitHub issue #638（`_ctx_query_hits_raw` 每個 matched row 各 fork `_ctx_memory_trust`／`_ctx_classify_domain`／`_ctx_compose_score`，prompt-scan 每個 prompt 都要付 60-70s）、#639（`_ctx_generate_file_sql` 每個新／變更檔案各 fork `_ctx_detect_language`／`_ctx_file_mtime`／`_ctx_file_sha1`／`_ctx_sql_str`，CC-595 的批次化只覆蓋「判斷是否需要重索引」，沒覆蓋「真的產生 SQL」這段）、#640（`_ctx_tsv_to_json_array` 每筆輸出 row 最多 fork `_ctx_json_str` 7 次，影響 query/pack/reuse-scan，其中 pack 又是 gate dispatch 組 reviewer context 的路徑，跟 #621 疊加）——三個都是同一場「掃描 CC-595 同款 anti-pattern」找到的獨立實例，且都不是零檔案異動的 fast path（CC-595 唯一測過的情境），而是「真的有東西要處理」時才會踩到，所以 CC-595 的驗證完全沒發現。已比照 `_ctx_sql_str`／`_ctx_sql_str_var` 的既有慣例，替 `_ctx_memory_trust`／`_ctx_classify_domain`／`_ctx_compose_score`／`_ctx_detect_language`／`_ctx_json_str` 各補上非 fork 的 `_var` 版本（原本的 stdout 版本改成呼叫 `_var` 版本，避免重複邏輯，且保留給既有白箱測試/其他呼叫者用），`_ctx_query_hits_raw` 三處呼叫點、`_ctx_tsv_to_json_array` 的 7 處呼叫點全部換掉。`_ctx_generate_file_sql` 額外改成接受可選的預算 mtime/sha1 參數；`_ctx_index_tree` 改成兩段式：先分類 skip/reindex（沿用 CC-595 已批次好的 mtime），再對「真的要 reindex」的子集合一次批次算 sha1，最後才呼叫 `_ctx_generate_file_sql` 並把預算值傳進去——單檔案呼叫路徑（`_ctx_index_file`／`pmctl_context_update`）沒有批次值可用，維持原本 per-file fork 的 fallback 行為不變。實機驗證：prompt-scan 69.7s→15.2s（#638+#640 疊加效果，同一份真 query）；全新首次索引（522 檔案，全部視為新檔）5m54.8s→4m55.2s（#639，改善幅度較小是因為主要成本本來就是 symbol/chunk 萃取本身，不是這次修的 metadata forking，issue 本身也沒宣稱會解決那部分）。三個修法各補一個 mutation-sensitive regression：shadow 掉「原本」會被繞過的 stdout 版本 helper 讓它回傳明顯錯誤的哨兵值，驗證真正呼叫路徑已經換成 `_var` 版本（若 revert 回 forking 版本，輸出會出現哨兵值而失敗）——三個都驗證過 revert 對應那行後測試會失敗、補回後通過。 | ops/portability | 2026-09-28 | — | P2 | hygiene |
 
 ---
 
@@ -5212,5 +5213,98 @@ critic／qa-tester／architecture-reviewer／security-reviewer 4 位 reviewer
 **See**: GitHub issue #634；issue #632（前置的效能問題，本票修的是它導致
 的 kill 副作用之一）；issue #633（同一個 `timeout -k 5` 觸發點的另一個
 副作用，不同症狀）；[[CC-595]]（本票的前置修復）。
+
+---
+
+## CC-597 — `_ctx_query_hits_raw`/`_ctx_generate_file_sql`/`_ctx_tsv_to_json_array` 同款 forking anti-pattern（GitHub issue #638/#639/#640）🔵 active
+
+**Problem**：CC-595（issue #632）修好了 `_ctx_index_tree` 的 unchanged-file
+fast path，但同一種 anti-pattern——純 bash helper（無外部指令、無 I/O）
+透過 `$(...)`／`<(...)` command substitution 呼叫，而非既有的非 fork
+write-into-變數慣例（`_ctx_sql_str` → `_ctx_sql_str_var`）——在同一個檔案
+裡另外三處還在，全部是掃描這個 anti-pattern 時才發現的獨立實例，且共同點
+是：都不是「零檔案異動」這個 CC-595 唯一驗證過的情境，而是「真的有東西
+要處理」（有查詢結果、有新/變更檔案、有要組 JSON 的 row）時才會踩到：
+
+1. **issue #638**：`_ctx_query_hits_raw`（`pmctl context query`／
+   `prompt-scan`／`pack`／`reuse-scan` 共用的底層查詢函式）對**每一個**
+   matched row 都 fork `_ctx_memory_trust`／`_ctx_classify_domain`／
+   `_ctx_compose_score`——symbol 查詢最多 20 rows、FTS5/LIKE fallback
+   查詢再各 20 rows，每 row 最多 3 次 fork，8 個 term 一次 prompt-scan
+   最壞情況 ~640-960 次 fork。這條路徑在 `UserPromptSubmit` hook 裡**每個
+   使用者輸入的 prompt 都會跑一次**，實測 69.7s。
+2. **issue #639**：`_ctx_generate_file_sql`（產生一個新/變更檔案 INSERT
+   SQL 的函式）仍對每個呼叫各自 fork `_ctx_detect_language`／
+   `_ctx_file_mtime`／`_ctx_file_sha1`／`_ctx_sql_str`——CC-595 的批次化
+   只覆蓋了「判斷這個檔案要不要重索引」那段，從未觸碰「真的要重索引時
+   怎麼產生 SQL」這段，所以 CC-595 自己的驗證（只測零異動 no-op refresh）
+   完全沒發現。同一個函式裡幾行之後的 symbol/chunk 迴圈其實已經在用
+   `_ctx_sql_str_var` 了，只是最上面這幾行沒跟上。
+3. **issue #640**：`_ctx_tsv_to_json_array`（`query --json`／`pack`／
+   `reuse-scan` 共用的 JSON 陣列組裝函式）每筆輸出 row 最多 fork
+   `_ctx_json_str` 7 次。`pmctl context pack` 又是 gate dispatch 組
+   reviewer context pack 的路徑（`context.auto_packed` 事件的來源），
+   跟 issue #621（gate scope manifest 14-17 分鐘）疊加在同一個
+   「reviewer brief 準備好之前要等多久」預算上。
+
+**已交付**：
+
+1. 比照既有 `_ctx_sql_str`／`_ctx_sql_str_var` 慣例，新增 5 組非 fork
+   write-into-變數 sibling：`_ctx_memory_trust_var`、
+   `_ctx_classify_domain_var`、`_ctx_compose_score_vars`（一次寫入
+   score／components 兩個變數）、`_ctx_detect_language_var`、
+   `_ctx_json_str_var`。原本 stdout 版本改成呼叫對應 `_var` 版本再
+   `printf` 輸出（避免邏輯重複），保留給既有白箱測試
+   （`_ctx_classify_domain` 有直接測試）與其他一次性呼叫者用。
+2. `_ctx_query_hits_raw` 的 3 處呼叫點（symbol 分支／FTS5 分支／LIKE
+   fallback 分支）全部換成 `_var` 版本；`_ctx_tsv_to_json_array` 的
+   7 處呼叫點全部換成 `_ctx_json_str_var`。
+3. `_ctx_generate_file_sql` 簽章改成接受可選的第 3/4 參數
+   `mtime`／`sha1`；未提供時（`_ctx_index_file`／`pmctl_context_update`
+   的單檔案呼叫路徑，沒有批次值可用）回退成原本逐檔 fork 的行為，完全
+   相容。`_ctx_index_tree` 的主迴圈改成兩段式：第一段沿用 CC-595 已批次
+   好的 mtime 分類 skip/reindex，把要 reindex 的檔案收集進陣列；第二段
+   對這個陣列一次批次算 sha1（複用 CC-595 的 `_ctx_batch_sha1s`），再呼叫
+   `_ctx_generate_file_sql` 並把預算的 mtime/sha1 傳進去。
+4. **實機驗證**（同一台機器，跟 CC-595/CC-596 用的量測方法一致）：
+   - prompt-scan（issue #638 的重現指令）：69.7s → **15.2s**（#638
+     與 #640 疊加效果，因為 prompt-scan 內部也會組 JSON）。
+   - 全新首次索引 522 個檔案（全部視為新檔，issue #639 描述的情境）：
+     用同一份 fixture 先後量測「修復前」5m54.8s、「修復後」4m55.2s——
+     改善幅度明顯比 #638/#632/#634 小，是因為這條路徑的主要成本本來就是
+     symbol/chunk 萃取本身（真正的檔案內容處理，grep/sed pipeline），不是
+     這次修的 metadata（mtime/sha1/lang/sql_str）forking；issue 本身也
+     沒宣稱會解決那部分。
+   - `pmctl context pack`（4 個 query term）：single-digit 秒完成（9.2s），
+     受益於 #638+#640 疊加。
+5. 三個修法各補一個 mutation-sensitive regression
+   （`case_context_query_hits_use_non_forking_score_domain_trust_helpers`／
+   `case_context_index_new_file_sql_uses_batched_mtime_sha1`／
+   `case_context_pack_json_uses_non_forking_json_str`）：白箱 shadow 掉
+   「原本」理論上已被繞過的 stdout-forking 版本 helper，讓它回傳明顯錯誤
+   的哨兵值（例如 `BROKEN`），驗證真正的呼叫路徑已經改用 `_var` 版本——
+   若哪天有人不小心 revert 回 forking 版本，輸出裡會出現這個哨兵值（或
+   SQL parse error）而測試失敗。三個都驗證過：revert 掉對應那一行呼叫，
+   測試會失敗；補回後通過。
+
+**Non-goals**：不處理 `_ctx_generate_file_sql` 裡仍然存在、且這次刻意
+沒動的兩個 per-file fork——`wc -c < "$abs_path"`（真的需要 exec 一個外部
+指令才能拿到位元組數，屬於本票沒有非 fork 替代方案的類別）與
+`_ctx_now_epoch`（forks `date`；理論上可以在 `_ctx_index_tree` 的迴圈外
+只呼叫一次、所有被 reindex 的檔案共用同一個 `indexed_at` 時間戳，但這是
+語意變動 not 純粹的效能重構——目前每個檔案各自記錄自己真正被寫入的那一刻
+——留給未來單獨決定是否要接受這個語意改變的票，不在本票隨手改掉）；不
+處理 `_ctx_extract_symbols`／各語言 chunker 內部本來就需要的 grep/sed
+per-file 呼叫（那是真正的內容處理，不是這次要清的「純 bash 卻被迫透過
+fork 呼叫」這種浪費）。
+
+**Done-when**：三個新增 regression 全數通過；
+`tests/shell/test-pmctl-context.sh` 全套執行後的 FAIL 清單與同一台機器上
+未修改 main 的 baseline 一致（無新增回歸）；PR 開出並過 `/pr-gate`。
+
+**See**: GitHub issue #638；issue #639；issue #640；[[CC-595]]（同根因、
+本票沿用的既有 `_var` 慣例與批次化基礎設施）；issue #621（`pmctl context
+pack` 的成本跟這個 issue 描述的 gate scope manifest 延遲疊加在同一個
+predecessor budget 上，不同子系統）。
 
 ---

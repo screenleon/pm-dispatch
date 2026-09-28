@@ -99,9 +99,20 @@ _ctx_resolve_memory_dir() {
 # Memory trust tier: curated cards (and the MEMORY.md index) outrank raw
 # episodes. Path-based so it works uniformly across symbol/fts/like hits.
 _ctx_memory_trust() {
-  case "$1" in
-    *episodes*.jsonl) printf 'medium' ;;
-    *)                printf 'high' ;;
+  local __mt_out
+  _ctx_memory_trust_var __mt_out "$1"
+  printf '%s' "$__mt_out"
+}
+
+# Non-forking sibling (see _ctx_sql_str_var's comment for why this matters):
+# issue #638 -- _ctx_query_hits_raw calls this per matched row, and a
+# command-substitution fork costs ~50-85ms on native Windows even though
+# this function does no I/O and execs no external binary.
+_ctx_memory_trust_var() {
+  local __ctx_mt_dest="$1"
+  case "$2" in
+    *episodes*.jsonl) printf -v "$__ctx_mt_dest" 'medium' ;;
+    *)                printf -v "$__ctx_mt_dest" 'high' ;;
   esac
 }
 
@@ -223,18 +234,26 @@ SQLINIT
 # ── Language detection ─────────────────────────────────────────────────────────
 
 _ctx_detect_language() {
-  local path="$1"
-  local ext="${path##*.}"
+  local __dl_out
+  _ctx_detect_language_var __dl_out "$1"
+  printf '%s' "$__dl_out"
+}
+
+# Non-forking sibling -- issue #639: _ctx_generate_file_sql called this via
+# command substitution once per new/changed file.
+_ctx_detect_language_var() {
+  local __ctx_dl_dest="$1"
+  local ext="${2##*.}"
   case "$ext" in
-    sh|bash)   printf 'shell' ;;
-    go)        printf 'go' ;;
-    py)        printf 'python' ;;
-    ts|tsx)    printf 'typescript' ;;
-    js|jsx)    printf 'javascript' ;;
-    md)        printf 'markdown' ;;
-    json)      printf 'json' ;;
-    yaml|yml)  printf 'yaml' ;;
-    *)         printf 'text' ;;
+    sh|bash)   printf -v "$__ctx_dl_dest" 'shell' ;;
+    go)        printf -v "$__ctx_dl_dest" 'go' ;;
+    py)        printf -v "$__ctx_dl_dest" 'python' ;;
+    ts|tsx)    printf -v "$__ctx_dl_dest" 'typescript' ;;
+    js|jsx)    printf -v "$__ctx_dl_dest" 'javascript' ;;
+    md)        printf -v "$__ctx_dl_dest" 'markdown' ;;
+    json)      printf -v "$__ctx_dl_dest" 'json' ;;
+    yaml|yml)  printf -v "$__ctx_dl_dest" 'yaml' ;;
+    *)         printf -v "$__ctx_dl_dest" 'text' ;;
   esac
 }
 
@@ -492,13 +511,21 @@ _ctx_emit_hit() {
 # ── Domain classification (path-based, no DB column) ─────────────────────────
 
 _ctx_classify_domain() {
-  local rel_path="$1"
-  case "$rel_path" in
+  local __cd_out
+  _ctx_classify_domain_var __cd_out "$1"
+  printf '%s' "$__cd_out"
+}
+
+# Non-forking sibling -- issue #638: _ctx_query_hits_raw calls this per
+# matched row.
+_ctx_classify_domain_var() {
+  local __ctx_cd_dest="$1"
+  case "$2" in
     BACKLOG.md|DECISIONS.md|MILESTONES.md|docs/*)
-      printf 'knowledge'
+      printf -v "$__ctx_cd_dest" 'knowledge'
       ;;
     *)
-      printf 'repo'
+      printf -v "$__ctx_cd_dest" 'repo'
       ;;
   esac
 }
@@ -638,17 +665,25 @@ _ctx_chunk_file() {
 #
 # Outputs the SQL statements for one file to stdout.
 # Caller is responsible for wrapping in BEGIN/COMMIT and executing via sqlite3.
+#
+# mtime/sha1 (args 3/4) are optional pre-computed values -- issue #639:
+# _ctx_index_tree's caller already has both batched across every candidate
+# (mtime for all of them, sha1 for the reindex subset via _ctx_batch_sha1s)
+# and passes them in to avoid forking _ctx_file_mtime/_ctx_file_sha1 again
+# per file here. _ctx_index_file's single-file caller has no such batch to
+# draw from, so it omits them and this function falls back to computing
+# them itself exactly as before.
 
 _ctx_generate_file_sql() {
-  local abs_path="$1" rel_path="$2"
-  local lang mtime sha1 size_bytes indexed_at ep
+  local abs_path="$1" rel_path="$2" mtime="${3:-}" sha1="${4:-}"
+  local lang size_bytes indexed_at ep
 
-  lang="$(_ctx_detect_language "$rel_path")"
-  mtime="$(_ctx_file_mtime "$abs_path")"
-  sha1="$(_ctx_file_sha1 "$abs_path")"
+  _ctx_detect_language_var lang "$rel_path"
+  [[ -n "$mtime" ]] || mtime="$(_ctx_file_mtime "$abs_path")"
+  [[ -n "$sha1" ]] || sha1="$(_ctx_file_sha1 "$abs_path")"
   size_bytes="$(wc -c < "$abs_path" 2>/dev/null | tr -d ' ' || printf '0')"
   indexed_at="$(_ctx_now_epoch)"
-  ep="$(_ctx_sql_str "$rel_path")"
+  _ctx_sql_str_var ep "$rel_path"
 
   printf "INSERT INTO files(path,language,size_bytes,mtime,sha1,indexed_at)\n"
   printf "  VALUES('%s','%s',%s,%s,'%s',%s)\n" \
@@ -1003,7 +1038,17 @@ _ctx_index_tree() {
     done < <(_ctx_batch_sha1s "${_ctx_sha1_candidates[@]}")
   fi
 
+  # First pass: decide skip vs reindex for every candidate (cheap -- no
+  # forks, just map lookups and string building). Files that need
+  # (re)generation are collected rather than generated immediately, so their
+  # sha1 can be batch-computed in one more pass below instead of forked
+  # per file inside _ctx_generate_file_sql (issue #639: that function used
+  # to recompute both mtime AND sha1 itself via forking helpers, even
+  # though the caller here already has mtime for every file and could
+  # batch sha1 for the reindex subset the same way it already batches it
+  # for the skip-decision subset above).
   local ep
+  local -a _ctx_reindex_abs=()
   for abs_path in "${_ctx_scan_abs[@]}"; do
     rel_path="${abs_path#"$root/"}"
     _ctx_sql_str_var ep "$rel_path"
@@ -1027,7 +1072,24 @@ _ctx_index_tree() {
       continue
     fi
 
-    _ctx_generate_file_sql "$abs_path" "$rel_path" >> "$batch_sql"
+    _ctx_reindex_abs+=("$abs_path")
+  done
+
+  declare -A _ctx_reindex_sha1s=()
+  if [[ "${#_ctx_reindex_abs[@]}" -gt 0 ]]; then
+    local _rs_line _rs_hash _rs_path
+    while IFS= read -r _rs_line; do
+      [[ -n "$_rs_line" ]] || continue
+      _rs_hash="${_rs_line:0:40}"
+      _rs_path="${_rs_line:42}"
+      _ctx_reindex_sha1s["$_rs_path"]="$_rs_hash"
+    done < <(_ctx_batch_sha1s "${_ctx_reindex_abs[@]}")
+  fi
+
+  for abs_path in "${_ctx_reindex_abs[@]}"; do
+    rel_path="${abs_path#"$root/"}"
+    _ctx_generate_file_sql "$abs_path" "$rel_path" \
+      "${_ctx_cur_mtimes[$abs_path]:-}" "${_ctx_reindex_sha1s[$abs_path]:-}" >> "$batch_sql"
     indexed=$((indexed + 1))
   done
 
@@ -1532,13 +1594,21 @@ _ctx_now_iso8601() {
 # Pure bash parameter expansion — no subshell, no external tool.
 
 _ctx_json_str() {
-  local s="$1"
+  local __js_out
+  _ctx_json_str_var __js_out "$1"
+  printf '%s' "$__js_out"
+}
+
+# Non-forking sibling -- issue #640: _ctx_tsv_to_json_array calls this up to
+# 7 times per output row.
+_ctx_json_str_var() {
+  local __ctx_js_dest="$1" s="$2"
   s="${s//\\/\\\\}"
   s="${s//\"/\\\"}"
   s="${s//$'\n'/\\n}"
   s="${s//$'\r'/\\r}"
   s="${s//$'\t'/\\t}"
-  printf '"%s"' "$s"
+  printf -v "$__ctx_js_dest" '"%s"' "$s"
 }
 
 # ── Usage event emission ──────────────────────────────────────────────────────
@@ -1638,21 +1708,32 @@ _CTX_RANK_BASE_LIKE_FALLBACK=10000
 # the FTS5 branch) are combined into a final ranking_score and its
 # human-readable score_components breakdown. Prints "<score>\t<components>".
 _ctx_compose_score() {
-  local base="$1" trust="$2" domain="$3" bm25_scaled="${4:-}"
-  local tb=0 db_boost=0 score components
+  local __cs_score __cs_components
+  _ctx_compose_score_vars __cs_score __cs_components "$@"
+  printf '%s\t%s\n' "$__cs_score" "$__cs_components"
+}
+
+# Non-forking sibling -- issue #638: _ctx_query_hits_raw calls this per
+# matched row (previously via `IFS=$'\t' read -r score components < <(...)`,
+# which forks both the command substitution AND the process substitution
+# behind it).
+# _ctx_compose_score_vars <score_dest> <components_dest> <tier_base> <trust> <domain> [bm25_scaled]
+_ctx_compose_score_vars() {
+  local __ctx_cs_score_dest="$1" __ctx_cs_components_dest="$2"
+  local base="$3" trust="$4" domain="$5" bm25_scaled="${6:-}"
+  local tb=0 db_boost=0
   case "$trust" in
     high) tb=2000 ;;
     medium) tb=1000 ;;
   esac
   [[ "$domain" == knowledge ]] && db_boost=500
   if [[ -n "$bm25_scaled" ]]; then
-    score=$(( base + bm25_scaled + tb + db_boost ))
-    components="base:${base},bm25:${bm25_scaled},trust:${tb},domain:${db_boost}"
+    printf -v "$__ctx_cs_score_dest" '%s' "$(( base + bm25_scaled + tb + db_boost ))"
+    printf -v "$__ctx_cs_components_dest" 'base:%s,bm25:%s,trust:%s,domain:%s' "$base" "$bm25_scaled" "$tb" "$db_boost"
   else
-    score=$(( base + tb + db_boost ))
-    components="base:${base},trust:${tb},domain:${db_boost}"
+    printf -v "$__ctx_cs_score_dest" '%s' "$(( base + tb + db_boost ))"
+    printf -v "$__ctx_cs_components_dest" 'base:%s,trust:%s,domain:%s' "$base" "$tb" "$db_boost"
   fi
-  printf '%s\t%s\n' "$score" "$components"
 }
 
 _ctx_query_hits_raw() {
@@ -1682,16 +1763,16 @@ _ctx_query_hits_raw() {
     [[ -n "$path" ]] || continue
     local hit_domain hit_trust score components tier_base
     if [[ -n "$domain_label" ]]; then
-      hit_domain="$domain_label"; hit_trust="$(_ctx_memory_trust "$path")"
+      hit_domain="$domain_label"; _ctx_memory_trust_var hit_trust "$path"
     else
-      hit_domain="$(_ctx_classify_domain "$path")"; hit_trust="high"
+      _ctx_classify_domain_var hit_domain "$path"; hit_trust="high"
     fi
     if [[ "$match_kind" == symbol_exact ]]; then
       tier_base="$_CTX_RANK_BASE_SYMBOL_EXACT"
     else
       tier_base="$_CTX_RANK_BASE_SYMBOL_PARTIAL"
     fi
-    IFS=$'\t' read -r score components < <(_ctx_compose_score "$tier_base" "$hit_trust" "$hit_domain")
+    _ctx_compose_score_vars score components "$tier_base" "$hit_trust" "$hit_domain"
     printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
       "$path:$line_start" "$hit_domain" "symbol: $name ($kind)" "0.85" "$hit_trust" \
       "$match_kind" "${line_end:-$line_start}" "$score" "$components"
@@ -1733,15 +1814,15 @@ _ctx_query_hits_raw() {
         fts_line_end="$fts_line_start"
       fi
       if [[ -n "$domain_label" ]]; then
-        fts_domain="$domain_label"; fts_trust="$(_ctx_memory_trust "$fts_path")"
+        fts_domain="$domain_label"; _ctx_memory_trust_var fts_trust "$fts_path"
       else
-        fts_domain="$(_ctx_classify_domain "$fts_path")"; fts_trust="medium"
+        _ctx_classify_domain_var fts_domain "$fts_path"; fts_trust="medium"
       fi
       if [[ -n "$domain" && "$fts_domain" != "$domain" ]]; then
         continue
       fi
       [[ "$bm25_scaled" =~ ^-?[0-9]+$ ]] || bm25_scaled=0
-      IFS=$'\t' read -r score components < <(_ctx_compose_score "$_CTX_RANK_BASE_FTS5" "$fts_trust" "$fts_domain" "$bm25_scaled")
+      _ctx_compose_score_vars score components "$_CTX_RANK_BASE_FTS5" "$fts_trust" "$fts_domain" "$bm25_scaled"
       local snippet
       snippet="${text:0:80}"
       snippet="${snippet//$'\t'/ }"
@@ -1759,11 +1840,11 @@ _ctx_query_hits_raw() {
       [[ -n "$path" ]] || continue
       local hit_domain hit_trust score components
       if [[ -n "$domain_label" ]]; then
-        hit_domain="$domain_label"; hit_trust="$(_ctx_memory_trust "$path")"
+        hit_domain="$domain_label"; _ctx_memory_trust_var hit_trust "$path"
       else
-        hit_domain="$(_ctx_classify_domain "$path")"; hit_trust="medium"
+        _ctx_classify_domain_var hit_domain "$path"; hit_trust="medium"
       fi
-      IFS=$'\t' read -r score components < <(_ctx_compose_score "$_CTX_RANK_BASE_LIKE_FALLBACK" "$hit_trust" "$hit_domain")
+      _ctx_compose_score_vars score components "$_CTX_RANK_BASE_LIKE_FALLBACK" "$hit_trust" "$hit_domain"
       printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
         "$path:$line_start" "$hit_domain" "text match in chunk" "0.7" "$hit_trust" \
         "like_fallback" "${line_end:-$line_start}" "$score" "$components"
@@ -2144,6 +2225,7 @@ _ctx_tsv_to_json_array() {
   fi
   local first=1
   printf '['
+  local _j_ref _j_src _j_domain _j_why _j_trust _j_match_kind _j_components
   while IFS=$'\t' read -r rank ref domain why conf trust match_kind line_end score components; do
     [[ "$first" -eq 0 ]] && printf ','
     first=0
@@ -2152,18 +2234,27 @@ _ctx_tsv_to_json_array() {
     local src="builtin-index" line_start="${ref##*:}"
     [[ "$domain" == "memory" ]] && src="memory-index"
     [[ "$line_start" =~ ^[0-9]+$ ]] || line_start=null
+    # issue #640: was 7 forking `$(_ctx_json_str ...)` command substitutions
+    # per row -- replaced with non-forking write-into-a-variable calls.
+    _ctx_json_str_var _j_ref "$ref"
+    _ctx_json_str_var _j_src "$src"
+    _ctx_json_str_var _j_domain "$domain"
+    _ctx_json_str_var _j_why "$why"
+    _ctx_json_str_var _j_trust "$trust"
+    _ctx_json_str_var _j_match_kind "$match_kind"
+    _ctx_json_str_var _j_components "$components"
     printf '{"ref":%s,"source":%s,"confidence":%s,"source_domain":%s,"why_relevant":%s,"trust_level":%s,"rank":%s,"match_kind":%s,"line_start":%s,"line_end":%s,"ranking_score":%s,"score_components":%s}' \
-      "$(_ctx_json_str "$ref")" \
-      "$(_ctx_json_str "$src")" "$conf" \
-      "$(_ctx_json_str "$domain")" \
-      "$(_ctx_json_str "$why")" \
-      "$(_ctx_json_str "$trust")" \
+      "$_j_ref" \
+      "$_j_src" "$conf" \
+      "$_j_domain" \
+      "$_j_why" \
+      "$_j_trust" \
       "$rank" \
-      "$(_ctx_json_str "$match_kind")" \
+      "$_j_match_kind" \
       "$line_start" \
       "${line_end:-null}" \
       "$score" \
-      "$(_ctx_json_str "$components")"
+      "$_j_components"
   done < "$tsv_file"
   printf ']'
 }

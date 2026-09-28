@@ -663,6 +663,145 @@ case_context_index_kill_mid_run_does_not_leak_batch_sql() {
   fi
 }
 
+case_context_index_new_file_sql_uses_batched_mtime_sha1() {
+  local name="pmctl context index: new-file SQL generation uses batched mtime/sha1, not per-file forks (issue #639)"
+  # Behavior (issue #639): _ctx_generate_file_sql used to recompute mtime
+  # AND sha1 itself via the forking single-file helpers (_ctx_file_mtime /
+  # _ctx_file_sha1), once per new/changed file, even though _ctx_index_tree
+  # already has mtime for every scanned file and now batch-computes sha1
+  # for the whole reindex subset before calling it. The fix threads those
+  # pre-computed values through as parameters instead.
+  # Steps: source the lib directly; shadow the single-file forking helpers
+  # to return an obviously-wrong sentinel value; index a fresh (never
+  # before indexed) fixture, where every file is "new" and therefore goes
+  # through the reindex/generation path. If the fix's pre-computed values
+  # are actually being used, the shadowed helpers are never reached and
+  # every stored mtime/sha1 is correct; if a future edit regresses back to
+  # calling them per file, every row would show the sentinel instead.
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-639"
+  make_fixture_repo "$fix_repo"
+  git_init_commit_fixture "$fix_repo"
+
+  local out err status=0
+  out="$tmp_root/639.out"; err="$tmp_root/639.err"
+  bash -c '
+    set -euo pipefail
+    # shellcheck source=runtime/lib/pmctl-context.sh
+    . "$1/lib/pmctl-context.sh"
+    root="$2"; db="$3"
+    _ctx_file_mtime() { printf "BROKEN"; }
+    _ctx_file_sha1() { printf "BROKEN"; }
+    _ctx_index_tree "$root" "$db" 0 repo >/dev/null
+  ' bash "$REPO_ROOT/runtime" "$(ctx_fixture_target "$fix_repo")" "$tmp_root/639.db" \
+    > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "exit $status err=$(<"$err")"; return 0
+  fi
+
+  local bad_count total_count
+  bad_count="$(sqlite3 "$tmp_root/639.db" "SELECT count(*) FROM files WHERE mtime='BROKEN' OR sha1='BROKEN';" 2>/dev/null || printf -- '-1')"
+  total_count="$(sqlite3 "$tmp_root/639.db" "SELECT count(*) FROM files;" 2>/dev/null || printf '0')"
+  if [[ "$total_count" -eq 0 ]]; then
+    fail "$name" "setup: no files were indexed at all"; return 0
+  fi
+  if [[ "$bad_count" == "0" ]]; then
+    pass "$name"
+  else
+    fail "$name" "$bad_count of $total_count indexed files have the shadowed helper's sentinel mtime/sha1 -- the reindex path is still forking the single-file helpers instead of using pre-computed batch values"
+  fi
+}
+
+case_context_query_hits_use_non_forking_score_domain_trust_helpers() {
+  local name="pmctl context query: hit scoring uses non-forking domain/trust/score helpers (issue #638)"
+  # Behavior (issue #638): _ctx_query_hits_raw used to call
+  # _ctx_memory_trust/_ctx_classify_domain/_ctx_compose_score via forking
+  # command (and process) substitution, once per matched row -- up to
+  # ~640-960 forks for one prompt-scan, a 60-70s tax on every prompt. The
+  # fix gave each a non-forking write-into-a-variable sibling and switched
+  # every call site in _ctx_query_hits_raw to use them instead.
+  # Steps: source the lib directly; shadow the ORIGINAL (stdout-returning)
+  # forms of all three helpers to return an obviously-wrong sentinel;
+  # index a fixture and query a known symbol. If the fix's call sites are
+  # actually using the _var siblings, the shadowed originals are never
+  # reached and the hit's domain/trust/score are still correct; a
+  # regression back to calling the originals would show the sentinel.
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-638"
+  make_fixture_repo "$fix_repo"
+  git_init_commit_fixture "$fix_repo"
+
+  local out err status=0
+  out="$tmp_root/638.out"; err="$tmp_root/638.err"
+  bash -c '
+    set -euo pipefail
+    # shellcheck source=runtime/lib/pmctl-context.sh
+    . "$1/lib/pmctl-context.sh"
+    root="$2"; db="$3"
+    _ctx_index_tree "$root" "$db" 0 repo >/dev/null
+    _ctx_memory_trust() { printf "BROKEN"; }
+    _ctx_classify_domain() { printf "BROKEN"; }
+    _ctx_compose_score() { printf "BROKEN\tBROKEN\n"; }
+    _ctx_query_hits_raw "$root" "my_func_alpha" "" "$db"
+  ' bash "$REPO_ROOT/runtime" "$(ctx_fixture_target "$fix_repo")" "$tmp_root/638.db" \
+    > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "exit $status err=$(<"$err")"; return 0
+  fi
+  if [[ ! -s "$out" ]]; then
+    fail "$name" "setup: query produced no hit rows for my_func_alpha"; return 0
+  fi
+  if grep -q 'BROKEN' "$out"; then
+    fail "$name" "hit row contains the shadowed helper's sentinel -- _ctx_query_hits_raw is still calling the forking stdout form: $(<"$out")"
+  else
+    pass "$name"
+  fi
+}
+
+case_context_pack_json_uses_non_forking_json_str() {
+  local name="pmctl context pack --json: array assembly uses non-forking JSON escaping (issue #640)"
+  # Behavior (issue #640): _ctx_tsv_to_json_array used to call the pure-bash
+  # _ctx_json_str via a forking command substitution up to 7 times per
+  # output row -- called by every consumer of this shared assembler
+  # (query --json, pack, reuse-scan), including the pack path that builds
+  # reviewer context during gate dispatch. The fix gave _ctx_json_str a
+  # non-forking _ctx_json_str_var sibling and switched this loop to use it.
+  # Steps: source the lib directly; shadow the ORIGINAL (stdout-returning)
+  # _ctx_json_str to return an obviously-wrong sentinel; build a small TSV
+  # and run it through _ctx_tsv_to_json_array. If the fix's call sites are
+  # actually using the _var sibling, the shadowed original is never
+  # reached and the resulting JSON is still correctly escaped/valid; a
+  # regression back to the original would show the sentinel and/or invalid
+  # JSON.
+  should_run "$name" || return 0
+
+  local tsv="$tmp_root/640.tsv"
+  printf '1\tfile.js:10\trepo\tsymbol: foo (function)\t0.85\thigh\tsymbol_exact\t12\t1002000\tbase:1000000,trust:2000,domain:0\n' > "$tsv"
+
+  local out err status=0
+  out="$tmp_root/640.out"; err="$tmp_root/640.err"
+  bash -c '
+    set -euo pipefail
+    # shellcheck source=runtime/lib/pmctl-context.sh
+    . "$1/lib/pmctl-context.sh"
+    tsv="$2"
+    _ctx_json_str() { printf "BROKEN"; }
+    _ctx_tsv_to_json_array "$tsv"
+  ' bash "$REPO_ROOT/runtime" "$tsv" > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "exit $status err=$(<"$err")"; return 0
+  fi
+  if grep -q 'BROKEN' "$out"; then
+    fail "$name" "assembled JSON contains the shadowed helper's sentinel -- _ctx_tsv_to_json_array is still calling the forking stdout form: $(<"$out")"; return 0
+  fi
+  if ! jq -e '.[0].ref == "file.js:10"' <<<"$(<"$out")" >/dev/null 2>&1; then
+    fail "$name" "assembled JSON is not well-formed / does not round-trip: $(<"$out")"; return 0
+  fi
+  pass "$name"
+}
+
 case_context_update_specific_path() {
   local name="pmctl context update: specific path re-indexes only that file"
   should_run "$name" || return 0
@@ -6270,6 +6409,9 @@ case_context_index_incremental_skip
 case_context_index_unchanged_fast_path_batches_subprocesses
 case_context_status_batches_stat_for_unchanged_files
 case_context_index_kill_mid_run_does_not_leak_batch_sql
+case_context_index_new_file_sql_uses_batched_mtime_sha1
+case_context_query_hits_use_non_forking_score_domain_trust_helpers
+case_context_pack_json_uses_non_forking_json_str
 case_context_update_specific_path
 case_context_update_no_path_full_scan
 case_context_update_absolute_path_rejected
