@@ -3184,6 +3184,36 @@ case_gate_subject_snapshot_preserves_posix_paths() {
   fi
 }
 
+# CC-591: native Windows git prints a drive-letter absolute path
+# (C:/.../.git) for --git-common-dir inside a linked worktree; subject capture
+# used to treat it as repo-relative and fail before any reviewer dispatch.
+case_gate_subject_snapshot_captures_in_linked_worktree() {
+  local name="gate_subject_snapshot: captures the same common dir from a linked worktree as from the plain checkout"
+  should_run "$name" || return 0
+  local linked plain_snap linked_snap plain_rc=0 linked_rc=0 plain_common linked_common
+  linked="$tmp_root/gate-subject-linked"
+  git -C "$_GATE_VERIFY_REPO" worktree add -q --detach "$linked" HEAD || {
+    fail "$name" "could not create linked worktree fixture"
+    return
+  }
+  plain_snap="$(gate_subject_snapshot "$_GATE_VERIFY_REPO" HEAD HEAD committed_head \
+    require_clean "2026-01-01T00:00:00Z")" || plain_rc=$?
+  linked_snap="$(gate_subject_snapshot "$linked" HEAD HEAD committed_head \
+    require_clean "2026-01-01T00:00:00Z")" || linked_rc=$?
+  git -C "$_GATE_VERIFY_REPO" worktree remove -f "$linked"
+  if [[ "$plain_rc" -ne 0 || "$linked_rc" -ne 0 ]]; then
+    fail "$name" "gate_subject_snapshot failed: plain rc=$plain_rc linked rc=$linked_rc"
+    return
+  fi
+  plain_common="$(jq -r '.observed.git_common_dir' <<<"$plain_snap")"
+  linked_common="$(jq -r '.observed.git_common_dir' <<<"$linked_snap")"
+  if [[ "$linked_common" == /* && "$linked_common" == "$plain_common" ]]; then
+    pass "$name"
+  else
+    fail "$name" "plain=$plain_common linked=$linked_common"
+  fi
+}
+
 case_explicit_cd_passthrough
 case_gate_run_refreshes_context_before_dispatch
 case_gate_run_continues_when_bounded_context_refresh_fails
@@ -3262,5 +3292,6 @@ case_foreground_cancel_stops_preflight_process_tree
 case_detached_cancel_surfaces_cancelled_wait_terminal
 case_msys_scoped_arg_conv_excl_preserves_posix_path_in_jq
 case_gate_subject_snapshot_preserves_posix_paths
+case_gate_subject_snapshot_captures_in_linked_worktree
 
 th_summary

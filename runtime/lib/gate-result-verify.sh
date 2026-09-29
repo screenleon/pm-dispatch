@@ -1697,7 +1697,11 @@ _gate_subject_common_dir() {
     printf 'Error: gate subject is not a Git worktree: %s\n' "$repo_root" >&2
     return 2
   }
-  if [[ "$common_dir" != /* ]]; then
+  # Native Windows git prints a Windows drive-letter absolute path (C:/...) for
+  # a linked worktree's common dir; treat it as absolute, not repo-relative.
+  if [[ "$common_dir" =~ ^[A-Za-z]:[/\\] ]]; then
+    common_dir="${common_dir//\\//}"
+  elif [[ "$common_dir" != /* ]]; then
     common_dir="$repo_root/$common_dir"
   fi
   common_parent="$(cd "$(dirname "$common_dir")" 2>/dev/null && pwd -P)" || return 2
