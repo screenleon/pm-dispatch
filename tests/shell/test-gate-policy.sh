@@ -242,9 +242,152 @@ if should_run "$name"; then
   if [[ "$rc0" -eq 2 && "$rc1" -eq 2 && "$rc2" -eq 2 ]]; then pass "$name"; else fail "$name" "rc0=$rc0 rc1=$rc1 rc2=$rc2"; fi
 fi
 
+case_validate_sources_rejects_bad_tier_and_mode_rows() {
+  # Behavior: a signal row naming an unknown tier or mode is rejected even when
+  # earlier rows already named valid ones. CC-605 remembers the tiers/modes that
+  # passed, so the memo must not leak between the two tables (a valid MODE is not
+  # a valid TIER) nor match by prefix (`stand` is not `standard`).
+  # Steps: append one bad row to the real signals table in each fixture -- tier
+  # `parallel` (a valid mode), mode `standard` (a valid tier), tier `stand` (a
+  # prefix of a valid tier) -- and assert rc 2 with the matching message.
+  local name="validate_sources: an unknown tier or mode row is rejected (even a valid value of the other table)"
+  should_run "$name" || return 0
+  local d out rc bad="" spec
+  for spec in \
+    'bad-tier-mode|parallel|sequential|signal bad-tier-mode has invalid minimum tier: parallel' \
+    'bad-mode-tier|standard|standard|signal bad-mode-tier has invalid recommended mode: standard' \
+    'bad-tier-prefix|stand|sequential|signal bad-tier-prefix has invalid minimum tier: stand'; do
+    IFS='|' read -r sig tier mode want <<<"$spec"
+    d="$(_policy_dir "sources-$sig")"
+    printf '%s\tpath-regex\tnever-match-this-fixture\t%s\tnone\t%s\n' "$sig" "$tier" "$mode" \
+      >> "$d/gate-policy-signals.tsv"
+    out="$( PR_GATE_POLICY_DIR="$d" _gate_policy_validate_sources "$VOCAB" 2>&1 )"; rc=$?
+    if [[ "$rc" -ne 2 || "$out" != *"$want"* ]]; then
+      bad+=" [$sig rc=$rc '$out']"
+    fi
+  done
+  if [[ -z "$bad" ]]; then
+    pass "$name"
+  else
+    fail "$name" "not rejected as expected:$bad"
+  fi
+}
+
+# _resolver_fixture <name>: a policy dir whose signals table is exactly the two
+# rows the resolver cases below depend on, so they do not track the real table.
+_resolver_fixture() {
+  local d
+  d="$(_policy_dir "$1")"
+  printf '%s\n' \
+    $'signal\tmatch_source\tpattern\tminimum_tier\trequired_reviewers\trecommended_mode' \
+    $'bounded-runtime\tclassification\tbounded-runtime\tstandard\tarchitecture-reviewer\tparallel' \
+    $'auth-path\tpath-regex\t(^|/)auth(/|$)\tstandard\tsecurity-reviewer\tparallel' \
+    > "$d/gate-policy-signals.tsv"
+  printf '%s' "$d"
+}
+
+# _resolver_input: a well-formed resolver input (prints one compact JSON line).
+_resolver_input() {
+  jq -nc '{
+    policy:"generic",policy_source:"repo",scope_fingerprint:("a" * 64),
+    requested:{tier:"auto",mode:"default",pass_kind:"initial",reviewers:null},
+    reviewer_vocabulary:["critic","qa-tester","architecture-reviewer","security-reviewer","risk-reviewer"],
+    changed_paths:["runtime/lib/x.sh"],
+    classifications:[{id:"bounded-runtime",matches:["runtime/lib/x.sh"]}],
+    classification:{architecture_impact:"none",line_changes:1,binary_or_unknown_count:0,layer_roots:["runtime"]},
+    reviewer_override:null
+  }' | tr -d '\r'
+}
+
+case_resolver_fails_closed_on_malformed_classifications() {
+  # Behavior: the resolver reads its input once (CC-605) but still fails closed
+  # where per-signal jq reads used to: a classification list it cannot iterate,
+  # or a matching entry whose `.matches` it cannot, is rc 2; the same defect on
+  # an id no signal names is harmless.
+  # Steps: resolve one well-formed input, then variants with a null
+  # `.classifications`, a used id with null matches, and an unused id with null
+  # matches; assert rc 0 / 2 / 2 / 0 and an unchanged resolution for the last.
+  local name="policy resolver: malformed classification input fails closed only where it is used"
+  should_run "$name" || return 0
+  local input ok out null_list used_bad unused_bad d rc_ok=0 rc_null=0 rc_used=0 rc_unused=0
+  d="$(_resolver_fixture resolver-malformed)"
+  input="$(_resolver_input)"
+  null_list="$(jq -c '.classifications = null' <<<"$input" | tr -d '\r')"
+  used_bad="$(jq -c '.classifications = [{id:"bounded-runtime"}]' <<<"$input" | tr -d '\r')"
+  unused_bad="$(jq -c '.classifications += [{id:"id-no-signal-names"}]' <<<"$input" | tr -d '\r')"
+  ok="$(PR_GATE_POLICY_DIR="$d" _gate_policy_resolve "$input" 2>/dev/null)" || rc_ok=$?
+  PR_GATE_POLICY_DIR="$d" _gate_policy_resolve "$null_list" >/dev/null 2>&1 || rc_null=$?
+  PR_GATE_POLICY_DIR="$d" _gate_policy_resolve "$used_bad" >/dev/null 2>&1 || rc_used=$?
+  out="$(PR_GATE_POLICY_DIR="$d" _gate_policy_resolve "$unused_bad" 2>/dev/null)" || rc_unused=$?
+  if [[ "$rc_ok" -eq 0 && "$rc_null" -eq 2 && "$rc_used" -eq 2 && "$rc_unused" -eq 0 \
+      && "$(jq -cS . <<<"$out")" == "$(jq -cS . <<<"$ok")" ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc ok=$rc_ok null-list=$rc_null used-bad=$rc_used unused-bad=$rc_unused (want 0/2/2/0) or resolution differs"
+  fi
+}
+
+case_resolver_rejects_unreadable_input_without_aborting() {
+  # Behavior: input the resolver cannot read safely -- a string holding a NUL
+  # (which would shift the record layout its single jq run hands to bash), or a
+  # `changed_paths` that is not an array (which would read as "no paths" and drop
+  # every path-based reviewer requirement) -- is rc 2, never data used as
+  # arithmetic, never an abort of a `set -u` caller such as pr-gate.sh.
+  # Steps: NUL in a scalar, a NUL-shifted record whose next field looks like a
+  # command substitution, a string `changed_paths`, and a missing one; run each
+  # in a `set -u` subshell and assert rc 2, no marker output, no shell abort.
+  local name="policy resolver: unreadable input (NUL, non-array changed_paths) is rc 2 under set -u"
+  should_run "$name" || return 0
+  local d input variant out rc bad="" label
+  d="$(_resolver_fixture resolver-unreadable)"
+  input="$(_resolver_input)"
+  for label in nul-policy nul-shift-inject string-paths missing-paths; do
+    case "$label" in
+      nul-policy) variant="$(jq -c '.policy = "generic\u0000"' <<<"$input")" ;;
+      nul-shift-inject) variant="$(jq -c '.policy = "generic\u0000\u0000\u0000" | .policy_source = "a[$(echo INJECTED-MARKER >&2)]"' <<<"$input")" ;;
+      string-paths) variant="$(jq -c '.changed_paths = "runtime/lib/x.sh"' <<<"$input")" ;;
+      missing-paths) variant="$(jq -c 'del(.changed_paths)' <<<"$input")" ;;
+    esac
+    variant="$(tr -d '\r' <<<"$variant")"
+    out="$( ( set -u; PR_GATE_POLICY_DIR="$d" _gate_policy_resolve "$variant" ) 2>&1 )"; rc=$?
+    if [[ "$rc" -ne 2 || "$out" == *INJECTED-MARKER* || "$out" == *"unbound variable"* ]]; then
+      bad+=" [$label rc=$rc '$out']"
+    fi
+  done
+  if [[ -z "$bad" ]]; then
+    pass "$name"
+  else
+    fail "$name" "not rejected cleanly:$bad"
+  fi
+}
+
+case_resolver_path_lines_keep_grep_semantics() {
+  # Behavior: changed paths are matched line by line, case-insensitively, exactly
+  # as `jq -r | grep -iE` did: an upper-case path matches, and a path with an
+  # embedded newline or tab, or an empty path, never fakes a match.
+  # Steps: resolve an input whose paths are one upper-case auth path plus
+  # `a\nb`, `t\tc` and "" against the pinned two-row fixture; assert rc 0, the
+  # path signal matched exactly the upper-case path, and its reviewer was added.
+  local name="policy resolver: changed paths keep line-by-line case-insensitive grep semantics"
+  should_run "$name" || return 0
+  local d input out rc=0
+  d="$(_resolver_fixture resolver-paths)"
+  input="$(_resolver_input | jq -c '.changed_paths = ["runtime/AUTH/Example.sh","a\nb","t\tc",""]' | tr -d '\r')"
+  out="$(PR_GATE_POLICY_DIR="$d" _gate_policy_resolve "$input" 2>/dev/null)" || rc=$?
+  if [[ "$rc" -eq 0 ]] && jq -e '
+      ([.matched_signals[] | select(.id == "auth-path") | .matches] == [["runtime/AUTH/Example.sh"]]) and
+      (.resolved.reviewers | index("security-reviewer") != null)
+    ' <<<"$out" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc out=$out"
+  fi
+}
+
 case_resolver_unmatched_signal_cost() {
-  # Behavior: unmatched classification rules add only the match-producing jq,
-  # and do not change the resolved tier, reviewer set, or matched evidence.
+  # Behavior: unmatched classification rules add no jq process at all (the
+  # resolver reads its input once, CC-605), and do not change the resolved tier,
+  # reviewer set, or matched evidence.
   # Steps: resolve a fixture matching all three signal-source kinds, append
   # unmatched rules, and compare both output and actual process-count growth.
   local name="policy resolver: unmatched signals avoid extra jq probes"
@@ -279,8 +422,8 @@ case_resolver_unmatched_signal_cost() {
   : > "$tally"
   second="$(PR_GATE_POLICY_DIR="$policy_dir" PATH="$shimdir:$PATH" _gate_policy_resolve "$input")" || rc=$?
   second_count="$(wc -c < "$tally")"
-  if [[ "$rc" -ne 0 || "$first" != "$second" || $((second_count - first_count)) -ne 8 ]]; then
-    fail "$name" "rc=$rc jq growth=$((second_count - first_count)); expected 8 and unchanged resolution"
+  if [[ "$rc" -ne 0 || "$first" != "$second" || $((second_count - first_count)) -ne 0 ]]; then
+    fail "$name" "rc=$rc jq growth=$((second_count - first_count)); expected 0 and unchanged resolution"
     return
   fi
   if jq -e '
@@ -295,5 +438,9 @@ case_resolver_unmatched_signal_cost() {
   fi
 }
 
+case_validate_sources_rejects_bad_tier_and_mode_rows
+case_resolver_fails_closed_on_malformed_classifications
+case_resolver_rejects_unreadable_input_without_aborting
+case_resolver_path_lines_keep_grep_semantics
 case_resolver_unmatched_signal_cost
 th_summary

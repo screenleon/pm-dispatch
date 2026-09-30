@@ -214,42 +214,70 @@ _gate_assurance_policy_values() {
   '
 }
 
-_gate_policy_tier_rank() {
-  case "${1:-}" in
-    express) printf '1\n' ;;
-    standard) printf '2\n' ;;
-    full) printf '3\n' ;;
+# The `_var` helpers below store their result in the caller's variable named by
+# their FIRST argument (printf -v: no subshell; not a nameref, which runtime/lib
+# forbids, and `${!name}` is plain indirect expansion) and hold their own state
+# in `__gp*`-prefixed locals so the out-variable cannot alias one. The prefix is
+# `__` plus a per-function abbreviation (`__gpt` tier rank, `__gpo` order,
+# `__gpa` add, `__gpk` key known, `__gpr` policy resolve): keep them unique. The
+# resolver calls the helpers dozens of times per gate, and each `$(...)` used to
+# cost a process (~40 ms on native Windows). The plain functions stay as thin
+# printing wrappers over them, so there is one implementation of each rule.
+# _gate_policy_tier_rank_var <out-var> <tier>
+_gate_policy_tier_rank_var() {
+  case "${2:-}" in
+    express) printf -v "$1" '%s' 1 ;;
+    standard) printf -v "$1" '%s' 2 ;;
+    full) printf -v "$1" '%s' 3 ;;
     *) return 2 ;;
   esac
 }
 
-_gate_policy_order_reviewers() {
-  local selected="${1:-}" vocabulary="${2:-}" reviewer ordered=""
-  for reviewer in $vocabulary; do
-    if [[ " $selected " == *" $reviewer "* ]]; then
-      ordered="${ordered:+$ordered }$reviewer"
+_gate_policy_tier_rank() {
+  local __gpt_rank
+  _gate_policy_tier_rank_var __gpt_rank "${1:-}" || return 2
+  printf '%s\n' "$__gpt_rank"
+}
+
+# _gate_policy_order_reviewers_var <out-var> <selected> <vocabulary>
+_gate_policy_order_reviewers_var() {
+  local __gpo_selected="${2:-}" __gpo_vocabulary="${3:-}" __gpo_reviewer __gpo_ordered=""
+  for __gpo_reviewer in $__gpo_vocabulary; do
+    if [[ " $__gpo_selected " == *" $__gpo_reviewer "* ]]; then
+      __gpo_ordered="${__gpo_ordered:+$__gpo_ordered }$__gpo_reviewer"
     fi
   done
-  printf '%s\n' "$ordered"
+  printf -v "$1" '%s' "$__gpo_ordered"
+}
+
+_gate_policy_order_reviewers() {
+  local __gpo_out
+  _gate_policy_order_reviewers_var __gpo_out "${1:-}" "${2:-}"
+  printf '%s\n' "$__gpo_out"
+}
+
+# _gate_policy_add_reviewers_var <out-var> <selected> <csv> <vocabulary>
+_gate_policy_add_reviewers_var() {
+  local __gpa_selected="${2:-}" __gpa_csv="${3:-}" __gpa_vocabulary="${4:-}" __gpa_reviewer
+  if [[ "$__gpa_csv" != none ]]; then
+    for __gpa_reviewer in ${__gpa_csv//,/ }; do
+      if [[ " $__gpa_vocabulary " != *" $__gpa_reviewer "* ]]; then
+        printf 'Error: gate policy names unknown reviewer %s (allowed: %s)\n' \
+          "$__gpa_reviewer" "$__gpa_vocabulary" >&2
+        return 2
+      fi
+      if [[ " $__gpa_selected " != *" $__gpa_reviewer "* ]]; then
+        __gpa_selected="${__gpa_selected:+$__gpa_selected }$__gpa_reviewer"
+      fi
+    done
+  fi
+  _gate_policy_order_reviewers_var "$1" "$__gpa_selected" "$__gpa_vocabulary"
 }
 
 _gate_policy_add_reviewers() {
-  local selected="${1:-}" csv="${2:-}" vocabulary="${3:-}" reviewer
-  [[ "$csv" != none ]] || {
-    _gate_policy_order_reviewers "$selected" "$vocabulary"
-    return
-  }
-  for reviewer in $(printf '%s' "$csv" | tr ',' ' '); do
-    if [[ " $vocabulary " != *" $reviewer "* ]]; then
-      printf 'Error: gate policy names unknown reviewer %s (allowed: %s)\n' \
-        "$reviewer" "$vocabulary" >&2
-      return 2
-    fi
-    if [[ " $selected " != *" $reviewer "* ]]; then
-      selected="${selected:+$selected }$reviewer"
-    fi
-  done
-  _gate_policy_order_reviewers "$selected" "$vocabulary"
+  local __gpa_out
+  _gate_policy_add_reviewers_var __gpa_out "${1:-}" "${2:-}" "${3:-}" || return $?
+  printf '%s\n' "$__gpa_out"
 }
 
 _gate_policy_words_json() {
@@ -330,7 +358,7 @@ _gate_policy_validate_reviewer_csv() {
       "$source_label" "$csv" >&2
     return 2
   fi
-  for reviewer in $(printf '%s' "$csv" | tr ',' ' '); do
+  for reviewer in ${csv//,/ }; do
     if [[ ! "$reviewer" =~ ^[a-z0-9][a-z0-9-]*$ \
         || " $vocabulary " != *" $reviewer "* ]]; then
       printf 'Error: gate policy %s names unknown reviewer %s (allowed: %s)\n' \
@@ -346,11 +374,27 @@ _gate_policy_validate_reviewer_csv() {
   done
 }
 
+# _gate_policy_key_known <memo-var> <table> <key-column> <key> <value-column>
+# `_gate_assurance_policy_lookup` for a key that many rows share (every signal
+# names one of three tiers and one of two modes), remembering keys that already
+# passed in the caller's <memo-var> (a tab-delimited string; a TSV cell cannot
+# hold a tab, so a key cannot collide with its neighbours). Failures are never
+# remembered, so a bad key is still rejected on every row. Valid only within one
+# validation pass: the tables do not change while it runs.
+_gate_policy_key_known() {
+  local __gpk_memo="${!1}"
+  [[ "$__gpk_memo" != *$'\t'"$4"$'\t'* ]] || return 0
+  _gate_assurance_policy_lookup "$2" "$3" "$4" "$5" >/dev/null || return $?
+  printf -v "$1" '%s%s\t' "$__gpk_memo" "$4"
+}
+
 _gate_policy_validate_sources() {
   local vocabulary="${1:-}" policy_pass policy pass_kind minimum_tier
   local required_reviewers recommended_mode consumer_keys=""
   local signal match_source pattern signal_tier signal_reviewers
   local signal_recommended grep_status
+  # shellcheck disable=SC2034 # read and written by _gate_policy_key_known via ${!1} / printf -v
+  local tiers_ok=$'\t' modes_ok=$'\t'
   [[ $# -eq 1 && -n "$vocabulary" ]] || return 2
 
   _gate_policy_source_shape_validate consumers \
@@ -381,7 +425,7 @@ _gate_policy_validate_sources() {
         "$policy_pass" "$policy" "$pass_kind" >&2
       return 2
     fi
-    _gate_assurance_policy_lookup tiers tier "$minimum_tier" evidence_floor >/dev/null \
+    _gate_policy_key_known tiers_ok tiers tier "$minimum_tier" evidence_floor \
       || {
         printf 'Error: gate policy consumer %s has invalid minimum tier: %s\n' \
           "$policy_pass" "$minimum_tier" >&2
@@ -389,7 +433,7 @@ _gate_policy_validate_sources() {
       }
     _gate_policy_validate_reviewer_csv "$required_reviewers" "$vocabulary" \
       "consumer $policy_pass" || return 2
-    _gate_assurance_policy_lookup modes mode "$recommended_mode" topology >/dev/null \
+    _gate_policy_key_known modes_ok modes mode "$recommended_mode" topology \
       || {
         printf 'Error: gate policy consumer %s has invalid recommended mode: %s\n' \
           "$policy_pass" "$recommended_mode" >&2
@@ -458,7 +502,7 @@ _gate_policy_validate_sources() {
         return 2
         ;;
     esac
-    _gate_assurance_policy_lookup tiers tier "$signal_tier" evidence_floor >/dev/null \
+    _gate_policy_key_known tiers_ok tiers tier "$signal_tier" evidence_floor \
       || {
         printf 'Error: gate policy signal %s has invalid minimum tier: %s\n' \
           "$signal" "$signal_tier" >&2
@@ -466,7 +510,7 @@ _gate_policy_validate_sources() {
       }
     _gate_policy_validate_reviewer_csv "$signal_reviewers" "$vocabulary" \
       "signal $signal" || return 2
-    _gate_assurance_policy_lookup modes mode "$signal_recommended" topology >/dev/null \
+    _gate_policy_key_known modes_ok modes mode "$signal_recommended" topology \
       || {
         printf 'Error: gate policy signal %s has invalid recommended mode: %s\n' \
           "$signal" "$signal_recommended" >&2
@@ -500,22 +544,106 @@ _gate_policy_resolve() {
   local reviewer_override_json classification_json policy_source
 
   [[ $# -ge 1 && $# -le 2 ]] || return 2
-  jq -e . >/dev/null 2>&1 <<<"$input_json" || {
-    printf 'Error: invalid gate policy resolver input\n' >&2
+
+  # Everything the resolver reads out of the input, in ONE jq run. It used to be
+  # a validity probe, nine field reads, and one more jq per policy signal (each
+  # `$(...)` a process, ~40 ms on native Windows). Records are NUL-terminated and
+  # written to a file: no newline in a value can be mistaken for a boundary and
+  # `read` on a file is buffered. Field reads keep the old semantics: a scalar
+  # prints as `jq -r` would (null -> "null", trailing newlines dropped like
+  # `$(...)` does) and a field that cannot be read is empty, not fatal.
+  # Layout (the assignments below read it strictly in this order): 11 scalar
+  # fields, classification-iterable flag, path count, paths, classification-id
+  # count, then (id, matches-array-json | "!") pairs. A string holding a NUL, or
+  # a `changed_paths` that is not an array, makes jq fail: the resolver decides
+  # which reviewers a gate REQUIRES, so unreadable input must stop it (rc 2),
+  # never read as "no paths". A non-string scalar is shown as compact JSON
+  # (`jq -r` pretty-printed containers); pr-gate only ever passes strings.
+  local class_ok architecture_impact paths_text n_paths n_class k field
+  local -i pos=0
+  local -a fields=() paths=() class_ids=() class_json=()
+  local fields_file
+  fields_file="$(mktemp "${TMPDIR:-/tmp}/gate-policy-fields.XXXXXX")" || {
+    printf 'Error: gate policy resolver could not create a scratch file\n' >&2
     return 2
   }
+  # shellcheck disable=SC2016 # $in/$paths/$ids are jq variables, not shell ones.
+  if ! jq -je '
+      def nonul: if type == "string" and index("\u0000") != null
+        then error("NUL in gate policy resolver input") else . end;
+      def f(g): (try (g | if type == "string" then . else tojson end | sub("\n+$"; "")) catch "") | nonul;
+      def j(g): try (g | tojson) catch "";
+      def z: "\u0000";
+      if . == null or . == false then error("invalid gate policy resolver input") else . end
+      | if (.changed_paths | type) != "array" then error("changed_paths is not an array") else . end
+      | ([.changed_paths[] | if type == "string" then . else tojson end | nonul]) as $paths
+      | (try ([.classifications[]? | .id | select(type == "string") | nonul] | unique) catch []) as $ids
+      | . as $in
+      | f(.policy), z,
+        f(.requested.pass_kind), z,
+        f(.scope_fingerprint), z,
+        f(.reviewer_vocabulary | join(" ")), z,
+        f(.requested.tier), z,
+        f(.requested.mode), z,
+        j(.requested.reviewers), z,
+        j(.reviewer_override), z,
+        j(.classification), z,
+        f(.policy_source), z,
+        f(.classification.architecture_impact), z,
+        (try ([.classifications[] | .id] | length | "1") catch "0"), z,
+        ($paths | length | tostring), z,
+        ($paths[] | ., z),
+        ($ids | length | tostring), z,
+        ($ids[] as $id | $id, z,
+           (try ([$in.classifications[] | select(.id == $id) | .matches[]] | tojson) catch "!"), z)
+    ' <<<"$input_json" > "$fields_file" 2>/dev/null; then
+    rm -f "$fields_file"
+    printf 'Error: invalid gate policy resolver input\n' >&2
+    return 2
+  fi
+  while IFS= read -r -d '' field; do
+    fields+=("$field")
+  done < "$fields_file"
+  rm -f "$fields_file"
 
-  policy="$(jq -r '.policy' <<<"$input_json")"
-  pass_kind="$(jq -r '.requested.pass_kind' <<<"$input_json")"
+  # Nothing below is trusted until the record layout checks out, and no count is
+  # used in arithmetic before it has matched ^(0|[1-9][0-9]{0,8})$. `${fields[i]-}`
+  # (no colon) is empty, not an unbound-variable abort, when a record is missing.
+  policy="${fields[pos++]-}"
+  pass_kind="${fields[pos++]-}"
   policy_pass="${policy}:${pass_kind}"
-  scope_fingerprint="$(jq -r '.scope_fingerprint' <<<"$input_json")"
-  vocabulary="$(jq -r '.reviewer_vocabulary | join(" ")' <<<"$input_json")"
-  requested_tier="$(jq -r '.requested.tier' <<<"$input_json")"
-  requested_mode="$(jq -r '.requested.mode' <<<"$input_json")"
-  requested_reviewers_json="$(jq -c '.requested.reviewers' <<<"$input_json")"
-  reviewer_override_json="$(jq -c '.reviewer_override' <<<"$input_json")"
-  classification_json="$(jq -c '.classification' <<<"$input_json")"
-  policy_source="$(jq -r '.policy_source' <<<"$input_json")"
+  scope_fingerprint="${fields[pos++]-}"
+  vocabulary="${fields[pos++]-}"
+  requested_tier="${fields[pos++]-}"
+  requested_mode="${fields[pos++]-}"
+  requested_reviewers_json="${fields[pos++]-}"
+  reviewer_override_json="${fields[pos++]-}"
+  classification_json="${fields[pos++]-}"
+  policy_source="${fields[pos++]-}"
+  architecture_impact="${fields[pos++]-}"
+  class_ok="${fields[pos++]-}"
+  n_paths="${fields[pos++]-}"
+  if [[ ! "$n_paths" =~ ^(0|[1-9][0-9]{0,8})$ ]] \
+      || (( pos + n_paths >= ${#fields[@]} )); then
+    printf 'Error: invalid gate policy resolver input\n' >&2
+    return 2
+  fi
+  if (( n_paths > 0 )); then
+    paths=("${fields[@]:pos:n_paths}")
+    printf -v paths_text '%s\n' "${paths[@]}"
+    paths_text="${paths_text%$'\n'}"
+  fi
+  pos=$((pos + n_paths))
+  n_class="${fields[pos++]-}"
+  if [[ ! "$n_class" =~ ^(0|[1-9][0-9]{0,8})$ ]] \
+      || (( pos + 2 * n_class != ${#fields[@]} )); then
+    printf 'Error: invalid gate policy resolver input\n' >&2
+    return 2
+  fi
+  for ((k = 0; k < n_class; k++)); do
+    class_ids+=("${fields[pos++]}")
+    class_json+=("${fields[pos++]}")
+  done
 
   case "$policy" in generic|maintainer) ;; *)
     printf 'Error: --policy must be generic or maintainer (got: %s)\n' "$policy" >&2
@@ -540,7 +668,7 @@ _gate_policy_resolve() {
     || return 2
   recommended_mode="$(_gate_assurance_policy_lookup consumers policy_pass "$policy_pass" recommended_mode)" \
     || return 2
-  required_reviewers="$(_gate_policy_add_reviewers "" "$required_reviewers" "$vocabulary")" \
+  _gate_policy_add_reviewers_var required_reviewers "" "$required_reviewers" "$vocabulary" \
     || return 2
 
   _gate_assurance_policy_lookup tiers tier "$minimum_tier" evidence_floor >/dev/null \
@@ -559,10 +687,11 @@ _gate_policy_resolve() {
   signal_json="$(jq -nc \
     --arg id "consumer-policy" --arg source "consumer-policy" \
     --arg match "$policy_pass" --arg minimum_tier "$minimum_tier" \
-    --argjson required_reviewers "$(_gate_policy_words_json "$required_reviewers")" \
+    --arg words "$required_reviewers" \
     --arg recommended_mode "$recommended_mode" '{
       id:$id,source:$source,matches:[$match],minimum_tier:$minimum_tier,
-      required_reviewers:$required_reviewers,recommended_mode:$recommended_mode
+      required_reviewers:($words | split(" ") | map(select(length > 0))),
+      recommended_mode:$recommended_mode
     }')" || {
       rm -f "$signals_file"
       return 2
@@ -582,24 +711,44 @@ _gate_policy_resolve() {
     matches_json='[]'
     case "$match_source" in
       classification)
-        matches_json="$(jq -c --arg pattern "$pattern" \
-          '[.classifications[] | select(.id == $pattern) | .matches[]]' \
-          <<<"$input_json")" || {
+        # Answered from the pre-read table: a classification list jq cannot
+        # iterate, or an entry whose `.matches` cannot, fails closed exactly
+        # where the per-signal jq used to.
+        if [[ "$class_ok" != 1 ]]; then
+          printf 'Error: gate policy classification input is not a list of objects\n' >&2
+          rm -f "$signals_file"
+          return 2
+        fi
+        for ((k = 0; k < ${#class_ids[@]}; k++)); do
+          [[ "${class_ids[k]}" == "$pattern" ]] || continue
+          matches_json="${class_json[k]}"
+          if [[ "$matches_json" == '!' ]]; then
+            printf 'Error: gate policy classification %s has an unreadable matches list\n' \
+              "$pattern" >&2
             rm -f "$signals_file"
             return 2
-          }
+          fi
+          break
+        done
         ;;
       path-regex)
-        matches_text="$(jq -r '.changed_paths[]' <<<"$input_json" \
-          | { grep -iE -- "$pattern" || true; })"
-        matches_json="$(printf '%s\n' "$matches_text" | _gate_policy_lines_json)" \
-          || {
-            rm -f "$signals_file"
-            return 2
-          }
+        matches_text=""
+        if (( ${#paths[@]} > 0 )); then
+          matches_text="$({ grep -iE -- "$pattern" <<<"$paths_text" || true; })"
+        fi
+        # No matching line means `[]`; only a real match needs jq to build the
+        # array (empty lines are dropped there, and `$(...)` already stripped
+        # trailing ones, so an empty text is exactly "no non-empty line").
+        if [[ -n "$matches_text" ]]; then
+          matches_json="$(printf '%s\n' "$matches_text" | _gate_policy_lines_json)" \
+            || {
+              rm -f "$signals_file"
+              return 2
+            }
+        fi
         ;;
       brief-value)
-        if [[ "$(jq -r '.classification.architecture_impact' <<<"$input_json")" == "$pattern" ]]; then
+        if [[ "$architecture_impact" == "$pattern" ]]; then
           matches_json="$(jq -nc --arg value "$pattern" '[$value]')" || {
             rm -f "$signals_file"
             return 2
@@ -616,11 +765,11 @@ _gate_policy_resolve() {
     # initial literal []. No additional parser is needed to detect no match.
     [[ "$matches_json" != '[]' ]] || continue
 
-    current_rank="$(_gate_policy_tier_rank "$minimum_tier")" || {
+    _gate_policy_tier_rank_var current_rank "$minimum_tier" || {
       rm -f "$signals_file"
       return 2
     }
-    candidate_rank="$(_gate_policy_tier_rank "$signal_tier")" || {
+    _gate_policy_tier_rank_var candidate_rank "$signal_tier" || {
       printf 'Error: gate policy signal %s has invalid minimum tier: %s\n' \
         "$signal" "$signal_tier" >&2
       rm -f "$signals_file"
@@ -629,8 +778,8 @@ _gate_policy_resolve() {
     if (( candidate_rank > current_rank )); then
       minimum_tier="$signal_tier"
     fi
-    normalized_signal_reviewers="$(_gate_policy_add_reviewers "" \
-      "$signal_reviewers" "$vocabulary")" || {
+    _gate_policy_add_reviewers_var normalized_signal_reviewers "" \
+      "$signal_reviewers" "$vocabulary" || {
         rm -f "$signals_file"
         return 2
       }
@@ -639,9 +788,8 @@ _gate_policy_resolve() {
     # artifact supplies context only; current signals remain independently
     # enforceable and may be omitted solely by a scope-bound user override.
     effective_signal_reviewers="$normalized_signal_reviewers"
-    required_reviewers="$(_gate_policy_add_reviewers "$required_reviewers" \
-      "$(printf '%s' "$effective_signal_reviewers" | tr ' ' ',')" \
-      "$vocabulary")" || {
+    _gate_policy_add_reviewers_var required_reviewers "$required_reviewers" \
+      "${effective_signal_reviewers// /,}" "$vocabulary" || {
         rm -f "$signals_file"
         return 2
       }
@@ -658,11 +806,11 @@ _gate_policy_resolve() {
     signal_json="$(jq -nc \
       --arg id "$signal" --arg source "$match_source" \
       --argjson matches "$matches_json" --arg minimum_tier "$signal_tier" \
-      --argjson required_reviewers \
-        "$(_gate_policy_words_json "$effective_signal_reviewers")" \
+      --arg words "$effective_signal_reviewers" \
       --arg recommended_mode "$signal_recommended" '{
         id:$id,source:$source,matches:$matches,minimum_tier:$minimum_tier,
-        required_reviewers:$required_reviewers,recommended_mode:$recommended_mode
+        required_reviewers:($words | split(" ") | map(select(length > 0))),
+        recommended_mode:$recommended_mode
       }')" || {
         rm -f "$signals_file"
         return 2
