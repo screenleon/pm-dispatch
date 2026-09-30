@@ -141,7 +141,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-602 | 🟢 someday | **[context workflow-refresh 的 timeout-kill 有時會印出誤導的 `printf: write error: Permission denied`，而不是安靜結束]** GitHub issue #633；與 [[CC-596]] 相關但不是同一個問題（CC-596 只修暫存檔洩漏）。 | ops/portability | 2026-09-30 | — | P3 | hygiene |
 | CC-603 | 🟢 someday | **[`context.db` 永遠不會縮小：沒有 VACUUM／auto_vacuum，即使 #620 的 `.next` 症狀被正確 reconcile，肥大的 db 也維持肥大]** GitHub issue #636。 | ops | 2026-09-30 | — | P3 | hygiene |
 | CC-604 | 🟢 someday | **[`gate-scope.sh` 收尾整理：collector 過大、三處「檔案內有哪些 symbol」讀取邏輯重複、fixed-head 模式仍有每來源固定次數的 fork]** CC-599 審查（architecture-reviewer／critic）提出但刻意不併入該 PR 的後續：`_gate_scope_expansions_collect_into` 拆成 shell consumer 與 symbol call-site 兩個 per-source emitter；tracked／untracked／shell consumer 三種「一個檔案內出現哪些 symbol」的讀取視需要共用 helper；fixed-head 模式下每個來源對 12 個副檔名各做一次 `git cat-file -e`、每個 consumer 一次 `git show`（CC-599 實測 fixed-head 剩餘成本）。 | ops/gate | 2026-09-30 | pr:#647 | P3 | hygiene |
-| CC-605 | 🟢 someday | **[`_gate_policy_resolve` 的 signal 迴圈對每個 signal 各 fork 多個 jq／grep，是 `gate-policy.sh` 剩餘的主要成本]** [[CC-600]] 之後的剖析（`tier-detection`）中 `gate-policy.sh` 仍約 19.5 秒：15 個 signal 依 `match_source` 各自做 `jq -c`（classification）、`jq -r … \| grep -iE`＋`jq`（path-regex）、`jq -r`（brief-value），加上每個命中 signal 的 `_gate_policy_tier_rank`／`_gate_policy_add_reviewers`／`jq -nc` 子 shell。輸入只需解析一次，比對可在 bash 內完成。風險：`grep -iE` 與 bash `=~` 的正規表達式語意需先逐 pattern 驗證等價。 | ops/gate | 2026-09-30 | pr:#649 | P2 | hygiene |
+| CC-605 | ✅ done | **[`_gate_policy_resolve` 的 signal 迴圈對每個 signal 各 fork 多個 jq／grep，是 `gate-policy.sh` 剩餘的主要成本]** [[CC-600]] 之後的剖析（`tier-detection`）中 `gate-policy.sh` 仍約 19.5 秒：15 個 signal 依 `match_source` 各自做 `jq -c`（classification）、`jq -r … \| grep -iE`＋`jq`（path-regex）、`jq -r`（brief-value），加上每個命中 signal 的 `_gate_policy_tier_rank`／`_gate_policy_add_reviewers`／`jq -nc` 子 shell。輸入只需解析一次，比對可在 bash 內完成。風險：`grep -iE` 與 bash `=~` 的正規表達式語意需先逐 pattern 驗證等價。 | ops/gate | 2026-09-30 | pr:#649, pr:#652 | P2 | hygiene |
 | CC-606 | 🟢 someday | **[`awk -v wanted="$key"` 會處理反斜線跳脫，`--tier`／`--mode` 這類 CLI 值可通過 policy 驗證卻與 bash 字串比較不一致]** [[CC-600]] 的 security-reviewer 指出的既有問題（非該 PR 引入）：`awk -v` 會展開跳脫序列，因此 `--tier 'expre\163s'` 或結尾帶反斜線的 `express\` 會被 `_gate_assurance_policy_lookup` 視為 `express`，但後續 `[[ $TIER == express ]]` 之類的 bash 比較不會。需本機 CLI 控制權，不是提權，屬驗證正規化不一致。修法：改用 `ENVIRON` 傳值，或在 lookup 前拒絕含反斜線的 key。 | ops/gate | 2026-09-30 | pr:#649 | P3 | hygiene |
 | CC-607 | 🟢 someday | **[worktree 主 checkout 解析與 drive-path 判斷的收尾整理]** [[CC-601]] 審查提出但刻意不併入的後續：`_pmctl_worktree_main_root` 與 `_sw_main_repo_root` 近乎重複，應讓前者委派給 state-paths 的解析器（或共用一個 helper）；`portable.sh` 內解析根目錄的 `case [A-Za-z]:/*` 分支與三處 jq regex 尚未統一，其中 `gate-result-verify.sh` 的 jq regex 只接受 `X:/`，`host-doctor-primitives.sh`／`hosts/claude/lib/doctor.sh` 接受 `X:[/\\]`；測試輔助 `tests/lib/test-memory-config-fixtures.sh` 與 `tests/shell/test-pr-gate.sh` 仍有 `--git-common-dir` 加 `== /*` 的寫法；common dir 不是 `<root>/.git`（submodule、`--separate-git-dir`）時 `dirname` 會回傳其父目錄（與 POSIX 相同，但在 Windows 上先前碰巧走 fallback 而答對）。 | ops/portability | 2026-09-30 | pr:#651 | P3 | reuse-debt |
 
@@ -5638,7 +5638,7 @@ emitter（shell consumer hints、symbol call-site hints），並可共用同一�
 
 ---
 
-## CC-605 — `_gate_policy_resolve` 的 signal 迴圈 fork 過多 🟢 someday
+## CC-605 — `_gate_policy_resolve` 的 signal 迴圈 fork 過多 ✅ 2026-10-01
 
 **Problem**：[[CC-600]] 之後重新剖析同一個 pr-gate case（`tier-detection`，約 2,256 個
 bash 程序），`gate-policy.sh` 仍歸因約 19.5 秒，主要在 `_gate_policy_resolve`
@@ -5658,6 +5658,32 @@ classification 的 matches、architecture_impact），signal 比對改在 bash �
 （沿用 [[CC-599]]／[[CC-600]] 的新舊差異比對方式）；`test-gate-policy.sh` 的
 `resolver: unmatched signals avoid extra jq probes` 維持通過；剖析中 `gate-policy.sh`
 歸因時間可量測地下降。
+
+**已交付（pr:#652，2026-10-01；PR 於本次更新時尚待合併）**：`_gate_policy_resolve` 改成
+用**一次** `jq -je` 讀完整份輸入（11 個純量欄位、classification 可迭代旗標、changed_paths、
+各 classification id 的 matches 陣列），以 NUL 分隔寫入暫存檔再解析；classification 與
+brief-value signal 直接由讀好的資料回答，path-regex signal **仍用 `grep -iE`**（對
+changed_paths 的 here-string），所以正規表達式語意完全不變（原本「以 bash `=~` 取代」的
+前置驗證因此不需要，也沒有改變 policy 表格可用的語法）；只有真正命中時才呼叫 jq 組
+matches 陣列。`tier_rank`／`order_reviewers`／`add_reviewers` 新增 `printf -v` 的 `_var` 版本
+（舊函式保留為薄包裝，每條規則仍只有一份實作），`words_json` 併入 signal 的 jq；
+`_gate_policy_validate_sources` 記住已通過的 tier／mode（失敗不記）並以純 bash 取代
+`printf | tr`。本機實測：resolve 7.7 → 2.7 秒（約 2.8 倍）、validate_sources 3.8 → 0.84 秒
+（約 4.5 倍）、每次 resolve 的 bash 程序 130 → 約 60；整個 pr-gate case 2,256 → 2,089 個
+程序、`gate-policy.sh` 歸因時間 19.5 → 7.9 秒。差異比對 40 個輸入（所有 signal 種類、兩種
+consumer 與 pass kind、requested tier／mode／reviewers、大小寫／奇怪字元／空字串／60 個路徑、
+重複 classification id、12 種格式錯誤輸入）：正常輸入 stdout／rc／stderr 逐位元相同，格式
+錯誤輸入兩版皆 rc 2 無輸出。**刻意硬化**（已寫入 CHANGELOG）：resolver 決定 gate 必須有哪些
+reviewer，所以無法安全讀取的輸入現在一律 rc 2，而不是當成「沒有路徑」——缺少或非陣列的
+`changed_paths`、任何含 NUL 的字串；所有計數在用於算術前先驗證（critic 與 security 各自證明
+第一版對含 NUL 的輸入會對未驗證欄位做算術，可執行命令或讓 `set -u` 的 caller 中止，已修正）。
+非字串純量改以精簡 JSON 呈現（原 `jq -r` 會 pretty-print）；pr-gate 只傳字串。既有的 jq 成本
+測試斷言由「未命中 signal 多 8 次 jq」改為 0。新增 3 個測試、修改 1 個（見 PR）。
+**審查方式須如實記錄**：未走 `pmctl gate run`，由五位 reviewer 分別審查（critic 為
+block-soft，其餘 approve／advise，皆已處理），沒有 gate result artifact、沒有 authoritative
+full-suite 結果，且審查者與實作者同模型家族。**剩餘成本（不另開票）**：每個 path-regex signal 一次
+`grep`（約 5 個）、每個命中 signal 一次 jq、以及 resolve 尾段與 consumer／tier／mode 的
+`$(lookup)`／`$(add_reviewers)`，架構審查認為機會主義處理即可。
 
 **See**: [[CC-600]]；[[CC-599]]。
 
