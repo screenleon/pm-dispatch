@@ -23,6 +23,24 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **The gate policy resolver spawned ~130 processes per call and read its input
+  loosely (CC-605).** On native Windows a process costs ~40 ms, so
+  `_gate_policy_resolve` took ~7.7 s and `_gate_policy_validate_sources` ~3.8 s
+  per gate. The resolver now reads its whole input in one `jq` run (NUL-delimited
+  records in a scratch file), answers classification and brief signals from that
+  data, and still matches path-regex signals with `grep -iE`; the reviewer/tier
+  helpers write to caller variables instead of forking, and the validator
+  remembers the tiers and modes that already passed. Output is byte-identical on
+  the 36 well-formed and malformed inputs compared (new resolve ~2.8x and
+  validate ~4.5x faster, 130 -> ~60 processes per resolve). **Deliberate
+  hardening:** the resolver decides which reviewers a gate requires, so input it
+  cannot read safely now stops it with rc 2 instead of reading as "no paths":
+  a `changed_paths` that is missing or not an array, and any string containing a
+  NUL. Every record count is validated before it is used in arithmetic. Malformed
+  classification input names its cause (`Error: gate policy classification ...`).
+  A non-string scalar is shown as compact JSON (previously pretty-printed);
+  pr-gate only ever passes strings.
+
 - **A linked git worktree used a different state partition than its primary
   checkout on native Windows (CC-601).** Native Windows git prints the common
   dir as a drive-letter path (`C:/.../.git`) inside a linked worktree, and
