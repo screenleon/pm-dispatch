@@ -69,7 +69,7 @@ _pmctl_operation_ensure_loaded() {
 # `/` rejects every such call on native Windows before it reaches any real
 # validation -- accept both spellings here.
 _pmctl_operation_is_absolute_dir() {
-  [[ "$1" == /* || "$1" =~ ^[A-Za-z]:/ ]]
+  _portable_is_absolute_path "$1"
 }
 
 _pmctl_operation_dir() {
@@ -590,7 +590,7 @@ pmctl_operation_cancel() {
   if [[ -f "$op_dir/children.jsonl" ]]; then
     while IFS= read -r line; do
       run_id="$(jq -r '.run_id // ""' <<<"$line" 2>/dev/null || true)"; child_dir="$(jq -r '.working_dir // ""' <<<"$line" 2>/dev/null || true)"
-      if ! pm_identifier_run_is_valid "$run_id" || [[ "$child_dir" != /* || "$seen" == *" $run_id "* ]]; then
+      if ! pm_identifier_run_is_valid "$run_id" || ! _pmctl_operation_is_absolute_dir "$child_dir" || [[ "$seen" == *" $run_id "* ]]; then
         continue
       fi
       seen+="$run_id "

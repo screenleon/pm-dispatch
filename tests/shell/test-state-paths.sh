@@ -218,6 +218,72 @@ case_run_dir_symlink_free_rejects_empty_input() {
   fi
 }
 
+# Behavior: _sw_main_repo_root gives a linked worktree the SAME root as the
+# primary checkout, so one project keeps one state partition whichever
+# checkout a command runs from (CC-601). Native Windows git prints the common
+# dir as a drive-letter path (C:/.../.git) inside a linked worktree, which a bare
+# "== /*" test read as relative and answered with the worktree's own toplevel.
+# Steps: make a real repo and a real linked worktree, resolve the root from
+# both, and compare with git's own toplevel of the primary checkout.
+case_main_repo_root_from_linked_worktree() {
+  local name="main-repo-root/a linked worktree resolves to the primary checkout"
+  should_run "$name" || return 0
+  local root main linked expected from_main from_linked
+  root="$(mktemp -d)"
+  main="$root/main"
+  linked="$root/linked"
+  git init -q -b main "$main"
+  git -C "$main" config user.email test@example.com
+  git -C "$main" config user.name test
+  git -C "$main" config core.autocrlf false
+  printf 'seed\n' > "$main/seed.txt"
+  git -C "$main" add seed.txt
+  git -C "$main" commit -q -m seed
+  git -C "$main" worktree add -q --detach "$linked" HEAD
+  expected="$(git -C "$main" rev-parse --show-toplevel)"
+  from_main="$(_sw_main_repo_root "$main")" || from_main=""
+  from_linked="$(_sw_main_repo_root "$linked")" || from_linked=""
+  git -C "$main" worktree remove -f "$linked" || true
+  rm -rf "$root"
+  if [[ -n "$expected" && "$from_main" == "$expected" && "$from_linked" == "$expected" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected=$expected primary=$from_main linked=$from_linked"
+  fi
+}
+
+# Behavior: when git prints a drive-letter common dir (what native Windows git
+# does inside a linked worktree), _sw_main_repo_root answers its parent instead
+# of falling back to the worktree's own toplevel -- on every platform, so a
+# Linux CI run guards the branch a Windows-only host would otherwise be the
+# sole detector of. A backslash spelling is folded to "/" before `dirname`.
+# Steps: shadow `git` with a function that answers --git-common-dir with a
+# literal drive path and delegates everything else, then call the resolver.
+case_main_repo_root_accepts_drive_letter_common_dir() {
+  local name="main-repo-root/a drive-letter common dir resolves to its parent"
+  should_run "$name" || return 0
+  local forward backslash
+  forward="$(
+    # shellcheck disable=SC2329 # shadows git for the resolver called below
+    git() {
+      if [[ "$*" == *"--git-common-dir"* ]]; then printf 'C:/proj/.git\n'; else command git "$@"; fi
+    }
+    _sw_main_repo_root /nonexistent-worktree
+  )" || forward=""
+  backslash="$(
+    # shellcheck disable=SC2329 # shadows git for the resolver called below
+    git() {
+      if [[ "$*" == *"--git-common-dir"* ]]; then printf 'C:\\proj\\.git\n'; else command git "$@"; fi
+    }
+    _sw_main_repo_root /nonexistent-worktree
+  )" || backslash=""
+  if [[ "$forward" == "C:/proj" && "$backslash" == "C:/proj" ]]; then
+    pass "$name"
+  else
+    fail "$name" "forward='$forward' backslash='$backslash' (both must be C:/proj)"
+  fi
+}
+
 # ---- 8: resolve-trace-dir precedence: explicit override wins ----
 case_trace_flag_wins() {
   # Behavior: a non-empty override (the --trace-dir value) beats env and legacy.
@@ -304,5 +370,7 @@ case_trace_env_wins
 case_trace_legacy_default
 case_trace_relative_rejected
 case_state_writer_sources_paths
+case_main_repo_root_from_linked_worktree
+case_main_repo_root_accepts_drive_letter_common_dir
 
 th_summary

@@ -33,6 +33,18 @@ if ! declare -F _gate_subject_tree_fingerprint >/dev/null 2>&1; then
   # shellcheck disable=SC1091
   . "${BASH_SOURCE[0]%/*}/gate-subject.sh"
 fi
+if ! declare -F _portable_is_drive_path >/dev/null 2>&1; then
+  _gate_result_verify_portable="${BASH_SOURCE[0]%/*}/portable.sh"
+  if [[ ! -r "$_gate_result_verify_portable" ]]; then
+    printf 'gate-result-verify: portable module unavailable: %s\n' \
+      "$_gate_result_verify_portable" >&2
+    return 2
+  fi
+  # shellcheck source=runtime/lib/portable.sh
+  # shellcheck disable=SC1091  # dependency path is resolved beside this module
+  . "$_gate_result_verify_portable"
+  unset _gate_result_verify_portable
+fi
 #
 # gate_result_verdict_verify <result_file> [expected_final] [route_label]
 if ! declare -F pm_identifier_run_ere_pattern >/dev/null 2>&1; then
@@ -1699,7 +1711,7 @@ _gate_subject_common_dir() {
   }
   # Native Windows git prints a Windows drive-letter absolute path (C:/...) for
   # a linked worktree's common dir; treat it as absolute, not repo-relative.
-  if [[ "$common_dir" =~ ^[A-Za-z]:[/\\] ]]; then
+  if _portable_is_drive_path "$common_dir"; then
     common_dir="${common_dir//\\//}"
   elif [[ "$common_dir" != /* ]]; then
     common_dir="$repo_root/$common_dir"

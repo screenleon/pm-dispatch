@@ -435,6 +435,52 @@ case_list_cross_worktree_identity() {
   fi
 }
 
+case_main_root_from_linked_worktree() {
+  # behavior: _pmctl_worktree_main_root gives a linked worktree the same main-checkout root as the
+  #           primary checkout (native Windows git prints a drive-letter common dir there -- CC-601)
+  # Steps: make a repo + a real linked worktree, source the lib directly (no state store needed),
+  #        resolve the root from both, compare with git's own toplevel of the primary checkout
+  local name="worktree main root: a linked worktree resolves to the primary checkout"
+  should_run "$name" || return 0
+  local work linked expected from_main from_linked
+  work="$tmp_root/work-main-root"
+  linked="$tmp_root/linked-main-root"
+  make_work_repo "$work"
+  git -C "$work" worktree add -q --detach "$linked" HEAD
+  expected="$(git -C "$work" rev-parse --show-toplevel)"
+  # Sourced WITHOUT portable.sh first: the lib must load its own dependency.
+  from_main="$(bash -c '. "$1/runtime/lib/pmctl-worktree.sh"; _pmctl_worktree_main_root "$2"' _ "$REPO_ROOT" "$work")" || from_main=""
+  from_linked="$(bash -c '. "$1/runtime/lib/pmctl-worktree.sh"; _pmctl_worktree_main_root "$2"' _ "$REPO_ROOT" "$linked")" || from_linked=""
+  git -C "$work" worktree remove -f "$linked" || true
+  if [[ -n "$expected" && "$from_main" == "$expected" && "$from_linked" == "$expected" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected=$expected primary=$from_main linked=$from_linked"
+  fi
+}
+
+case_main_root_accepts_drive_letter_common_dir() {
+  # behavior: _pmctl_worktree_main_root answers the parent of a drive-letter common dir on every
+  #           platform (not only where native Windows git prints one), folding a backslash spelling
+  # Steps: shadow git with a function answering --git-common-dir with a literal drive path, call it
+  local name="worktree main root: a drive-letter common dir resolves to its parent"
+  should_run "$name" || return 0
+  local forward backslash
+  forward="$(bash -c '
+    . "$1/runtime/lib/pmctl-worktree.sh"
+    git() { if [[ "$*" == *"--git-common-dir"* ]]; then printf "C:/proj/.git\n"; else command git "$@"; fi; }
+    _pmctl_worktree_main_root /nonexistent-worktree' _ "$REPO_ROOT")" || forward=""
+  backslash="$(bash -c '
+    . "$1/runtime/lib/pmctl-worktree.sh"
+    git() { if [[ "$*" == *"--git-common-dir"* ]]; then printf "C:\\\\proj\\\\.git\n"; else command git "$@"; fi; }
+    _pmctl_worktree_main_root /nonexistent-worktree' _ "$REPO_ROOT")" || backslash=""
+  if [[ "$forward" == "C:/proj" && "$backslash" == "C:/proj" ]]; then
+    pass "$name"
+  else
+    fail "$name" "forward='$forward' backslash='$backslash' (both must be C:/proj)"
+  fi
+}
+
 case_remove_requires_target() {
   # behavior: remove with no <name|branch> arg exits 2 and prints usage
   # Steps: run remove with only --cd; assert exit 2 and stderr has "<name|branch> is required"
@@ -898,6 +944,8 @@ case_list_missing_cd_value
 case_list_json_valid
 case_list_text_table
 case_list_cross_worktree_identity
+case_main_root_from_linked_worktree
+case_main_root_accepts_drive_letter_common_dir
 case_remove_requires_target
 case_remove_missing_cd_value
 case_remove_unknown_target

@@ -124,7 +124,7 @@ g_check_bypass() {
 # guard is never entered, so POSIX behavior is byte-for-byte identical.
 g_to_posix_path() {
   local path="$1" _posix
-  if [[ "$(detect_platform)" == "windows" && "$path" == [A-Za-z]:[/\\]* ]]; then
+  if [[ "$(detect_platform)" == "windows" ]] && _portable_is_drive_path "$path"; then
     command -v cygpath >/dev/null 2>&1 || return 2
     if _posix="$(cygpath -u -- "$path" 2>/dev/null)" && [[ -n "$_posix" ]]; then
       printf '%s' "$_posix"

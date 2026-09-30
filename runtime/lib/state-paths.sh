@@ -21,7 +21,8 @@ SCRIPT_DIR_SP="${BASH_SOURCE[0]%/*}"
 # already loads portable before sourcing this file, so the guard is a no-op
 # there. portable.sh is source-safe and does not alter caller shell policy.
 if ! declare -F _portable_sha1 >/dev/null 2>&1 \
-    || ! declare -F _portable_canonical_path >/dev/null 2>&1; then
+    || ! declare -F _portable_canonical_path >/dev/null 2>&1 \
+    || ! declare -F _portable_is_absolute_path >/dev/null 2>&1; then
   # shellcheck source=runtime/lib/portable.sh
   # shellcheck disable=SC1091
   . "$SCRIPT_DIR_SP/portable.sh" 2>/dev/null || true
@@ -117,8 +118,14 @@ _sw_main_repo_root() {
       common_dir="$(git rev-parse --git-common-dir 2>/dev/null)"
     fi
     [[ -n "$common_dir" ]] || return 1
-    if [[ "$common_dir" == /* ]]; then
-      dirname "$common_dir"
+    # Native Windows git prints a drive-letter path (C:/.../.git) inside a
+    # linked worktree; a bare `== /*` test called that relative and fell back to
+    # the worktree's own toplevel, splitting one project across partitions.
+    # Git prints forward slashes, but normalise a backslash form anyway so
+    # `dirname` cannot answer ".". A common dir that is not `<root>/.git`
+    # (submodule, --separate-git-dir) still yields its parent, as on POSIX.
+    if _portable_is_absolute_path "$common_dir"; then
+      dirname "${common_dir//\\//}"
     elif [[ -n "$repo_root" ]]; then
       git -C "$repo_root" rev-parse --show-toplevel 2>/dev/null
     else

@@ -12,6 +12,48 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 . "$SCRIPT_DIR/../lib/test-harness.sh"
 th_init "$@"
 
+# Behavior: _portable_is_absolute_path / _portable_is_drive_path classify a path
+# string by shape alone. A POSIX path starting with "/" and a Windows drive-letter
+# path ("C:/x", "c:\x") are absolute; anything else (relative, empty, "C:x",
+# a bare backslash root, a leading-dash operand) is not, and only the drive
+# form counts as a drive path. Native Windows git prints the drive form for a
+# linked worktree's common dir, which a plain "== /*" test calls relative.
+# Steps: feed each literal to both predicates and compare with a literal table.
+case_portable_is_absolute_and_drive_path() {
+  local name="portable-is-absolute-path-and-drive-path-classification"
+  should_run "$name" || return 0
+  local entry path want_abs want_drive got_abs got_drive bad=""
+  # path|absolute|drive   ("|" separates the fields; the paths contain none)
+  for entry in \
+    '/usr/bin|yes|no' \
+    '/|yes|no' \
+    'C:/Users/x|yes|yes' \
+    'c:/users/x|yes|yes' \
+    'C:\Users\x|yes|yes' \
+    'C:relative|no|no' \
+    '\rooted|no|no' \
+    '1:/x|no|no' \
+    'relative/path|no|no' \
+    '.git|no|no' \
+    '|no|no'; do
+    path="${entry%%|*}"
+    entry="${entry#*|}"
+    want_abs="${entry%%|*}"
+    want_drive="${entry#*|}"
+    got_abs=no; got_drive=no
+    if _portable_is_absolute_path "$path"; then got_abs=yes; fi
+    if _portable_is_drive_path "$path"; then got_drive=yes; fi
+    if [[ "$got_abs" != "$want_abs" || "$got_drive" != "$want_drive" ]]; then
+      bad+=" [$path: absolute=$got_abs/$want_abs drive=$got_drive/$want_drive]"
+    fi
+  done
+  if [[ -z "$bad" ]]; then
+    pass "$name"
+  else
+    fail "$name" "mismatches:$bad"
+  fi
+}
+
 case_realpath_m_existing_abs() {
   local name="portable-realpath-m-existing-absolute-file"
   should_run "$name" || return 0
@@ -2319,5 +2361,6 @@ case_portable_make_symlink_windows_msys
 case_portable_bash_wrap_unwrap_round_trip
 case_portable_bash_wrap_custom_interpreter
 case_portable_bash_wrap_custom_interpreter_with_space
+case_portable_is_absolute_and_drive_path
 
 th_summary

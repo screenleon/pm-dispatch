@@ -23,6 +23,33 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **A linked git worktree used a different state partition than its primary
+  checkout on native Windows (CC-601).** Native Windows git prints the common
+  dir as a drive-letter path (`C:/.../.git`) inside a linked worktree, and
+  several libraries tested "absolute" with a bare `== /*`, so they treated it
+  as relative. `_sw_main_repo_root` (state-paths.sh) and
+  `_pmctl_worktree_main_root` (pmctl-worktree.sh) then answered the worktree's
+  own path instead of the primary checkout's; `state-writer.sh` recorded a
+  mangled `git_common_dir` (`C:/wt/C:/proj/.git`) in `repo.json`; and
+  `pmctl_operation_cancel` skipped every child whose `working_dir` was a drive
+  path, so a Windows child was never cancelled. New `_portable_is_drive_path` /
+  `_portable_is_absolute_path` in `portable.sh` now back these checks and the
+  ones in `pmctl-operation.sh`, `handover-validate.sh`, `guard-framework.sh`,
+  `_portable_realpath_windows` and `_gate_subject_common_dir`. `pmctl-worktree.sh`
+  and `state-paths.sh` now guard their own `portable.sh` dependency.
+  **Upgrade note (Windows only; Linux/WSL unchanged):** state keyed by the
+  worktree-aware key (the `pmctl worktree` registry and `checkouts/`,
+  `ship-lanes.jsonl`, `ship-partial-*.json`, and the memory/config project key)
+  that was written while running from inside a linked worktree lives under the
+  old worktree-own key and is no longer listed; entries made from the primary
+  checkout are unaffected. Nothing is deleted or migrated: use `git worktree
+  list` / `git worktree remove` to clean such worktrees up, and re-register from
+  the primary checkout if needed. Run records, operation records and gate
+  results keep their per-checkout keys. `_pmctl_operation_is_absolute_dir` also
+  accepts `X:\` now. Regression tests fail on the old libraries on a native
+  Windows host and the drive-path branch is also exercised on any platform by
+  shadowing `git`.
+
 - **Codex host install/uninstall leaked scratch temp files on the success
   path (CC-580).** `hosts/codex/bin/install.sh` and `hosts/codex/bin/uninstall.sh`
   each `mktemp` several scratch files and register a whole-lifetime `trap ...
