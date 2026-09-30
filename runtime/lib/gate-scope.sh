@@ -427,43 +427,162 @@ _gate_scope_symbol_path_compatible() {
   esac
 }
 
+# _gate_scope_search_paths <path>
+# Lists the files that mention <path> as a fixed string. One search per source,
+# so it stays a single process; the per-symbol search is
+# _gate_scope_symbol_hits_collect.
 _gate_scope_search_paths() {
-  local query="$1" search_kind="$2" source="${3-}" result
-  local -a options=(-l -z -F)
-  [[ "$search_kind" == symbol ]] && options+=(-w)
+  local query="$1" result
   if [[ "$POLICY_DIFF_KIND" == fixed-head ]]; then
     while IFS= read -r -d '' result; do
-      result="${result#*:}"
-      if [[ "$search_kind" != symbol ]] \
-          || _gate_scope_symbol_path_compatible "$source" "$result"; then
-        printf '%s\0' "$result"
-      fi
-    done < <(git grep "${options[@]}" "$query" "$GATE_BINDING_HEAD_COMMIT" -- \
+      printf '%s\0' "${result#*:}"
+    done < <(git grep -l -z -F "$query" "$GATE_BINDING_HEAD_COMMIT" -- \
       2>/dev/null || true)
   else
     while IFS= read -r -d '' result; do
-      if [[ "$search_kind" != symbol ]] \
-          || _gate_scope_symbol_path_compatible "$source" "$result"; then
-        printf '%s\0' "$result"
-      fi
-    done < <(git grep "${options[@]}" "$query" -- 2>/dev/null || true)
+      printf '%s\0' "$result"
+    done < <(git grep -l -z -F "$query" -- 2>/dev/null || true)
     if [[ "$POLICY_SCOPE_INCLUDE_UNTRACKED" == true ]]; then
       while IFS= read -r -d '' result; do
         [[ -f "$WORK_DIR/$result" && ! -L "$WORK_DIR/$result" ]] || continue
-        if [[ "$search_kind" == symbol ]] \
-            && ! _gate_scope_symbol_path_compatible "$source" "$result"; then
-          continue
-        fi
-        if [[ "$search_kind" == symbol ]]; then
-          grep -IqlwF -- "$query" "$WORK_DIR/$result" 2>/dev/null \
-            && printf '%s\0' "$result"
-        else
-          grep -IqlF -- "$query" "$WORK_DIR/$result" 2>/dev/null \
-            && printf '%s\0' "$result"
-        fi
+        grep -IqlF -- "$query" "$WORK_DIR/$result" 2>/dev/null \
+          && printf '%s\0' "$result"
       done < <(git ls-files --others --exclude-standard -z)
     fi
   fi
+}
+
+# A batched symbol search reports every occurrence (`git grep -o`), not one
+# line per file, so a huge or minified file could flood the hits file and the
+# read loop. Past this many bytes the source is searched per symbol instead.
+GATE_SCOPE_MAX_SYMBOL_HIT_BYTES=33554432
+
+# _gate_scope_symbol_hit_add <symbol> <path>
+# Requires caller-declared: local -A sym_hits; local -a hit_paths
+# Records one (symbol, path) hit in `sym_hits` (symbol -> space separated
+# indexes) and `hit_paths` (index -> path). Dynamic scoping lets the collector
+# own the tables without a global or a nameref (runtime/lib forbids namerefs).
+_gate_scope_symbol_hit_add() {
+  local idx="${#hit_paths[@]}"
+  hit_paths+=("$2")
+  sym_hits["$1"]+="$idx "
+}
+
+# _gate_scope_symbol_pathspec <source>
+# Fills the caller's `symbol_pathspec` array with the globs of the file types a
+# symbol from <source> can be consumed from, derived from
+# _gate_scope_symbol_path_compatible so the two cannot drift. Searching only
+# those types keeps incompatible files (lockfiles, minified bundles) out of the
+# scan; the compatibility check still runs on every hit.
+_gate_scope_symbol_pathspec() {
+  local ext
+  symbol_pathspec=()
+  for ext in sh bash go js jsx ts tsx py java kt rs; do
+    if _gate_scope_symbol_path_compatible "$1" "x.$ext"; then
+      symbol_pathspec+=("*.$ext")
+    fi
+  done
+}
+
+# _gate_scope_symbol_hits_fallback <source> <patterns-file>
+# The pre-CC-599 search: one `git grep -l` per symbol. Slow on Windows, but its
+# output is bounded, so it is the safe answer when the batched search errors
+# (git without `grep -o`, killed, out of memory) or overflows.
+_gate_scope_symbol_hits_fallback() {
+  local source="$1" patterns="$2" sym path
+  while IFS= read -r sym; do
+    if [[ "$POLICY_DIFF_KIND" == fixed-head ]]; then
+      while IFS= read -r -d '' path; do
+        path="${path#*:}"
+        if _gate_scope_symbol_path_compatible "$source" "$path"; then
+          _gate_scope_symbol_hit_add "$sym" "$path"
+        fi
+      done < <(git grep -l -z -F -w "$sym" "$GATE_BINDING_HEAD_COMMIT" -- \
+        2>/dev/null || true)
+    else
+      while IFS= read -r -d '' path; do
+        if _gate_scope_symbol_path_compatible "$source" "$path"; then
+          _gate_scope_symbol_hit_add "$sym" "$path"
+        fi
+      done < <(git grep -l -z -F -w "$sym" -- 2>/dev/null || true)
+    fi
+  done < "$patterns"
+  return 0
+}
+
+# _gate_scope_symbol_hits_collect <source> <patterns-file> <hits-file>
+# Requires caller-declared: local -A sym_hits; local -a hit_paths;
+#                           local -a symbol_pathspec
+# Resolves, in one pass, which files contain each symbol listed in
+# <patterns-file> (one per line) as a whole word. This replaces one
+# `_gate_scope_search_paths` call, i.e. one `git grep` process, per symbol: a
+# source may carry 1024 symbols, and process creation is ~40 ms on native
+# Windows, which made the manifest take 14-17 minutes. Each symbol's paths keep
+# the order the per-symbol search produced (tracked files in git order, then
+# untracked files).
+_gate_scope_symbol_hits_collect() {
+  local source="$1" patterns="$2" hits="$3"
+  local path sym last_path="" compat=false size
+  local -A seen_here=()
+  local -a status=()
+  _gate_scope_symbol_pathspec "$source"
+  [[ "${#symbol_pathspec[@]}" -gt 0 ]] || return 0
+  : > "$hits"
+  # `head -c` bounds the output, and asking for one byte more than the limit
+  # lets a truncated file be told apart from one that ended exactly at it. The
+  # `&& ... || ...` pair reads PIPESTATUS on both outcomes without tripping
+  # `set -e`/`pipefail` in the caller.
+  if [[ "$POLICY_DIFF_KIND" == fixed-head ]]; then
+    git grep -o -z -a -F -w -f "$patterns" "$GATE_BINDING_HEAD_COMMIT" -- \
+      "${symbol_pathspec[@]}" 2>/dev/null \
+      | head -c "$((GATE_SCOPE_MAX_SYMBOL_HIT_BYTES + 1))" > "$hits" \
+      && status=("${PIPESTATUS[@]}") || status=("${PIPESTATUS[@]}")
+  else
+    git grep -o -z -a -F -w -f "$patterns" -- "${symbol_pathspec[@]}" 2>/dev/null \
+      | head -c "$((GATE_SCOPE_MAX_SYMBOL_HIT_BYTES + 1))" > "$hits" \
+      && status=("${PIPESTATUS[@]}") || status=("${PIPESTATUS[@]}")
+  fi
+  size="$(wc -c < "$hits")"
+  size="${size//[!0-9]/}"
+  if [[ "${status[0]:-2}" -ge 2 || "${size:-0}" -gt "$GATE_SCOPE_MAX_SYMBOL_HIT_BYTES" ]]; then
+    _gate_scope_symbol_hits_fallback "$source" "$patterns"
+  else
+    # `-z -o` emits "path<NUL>match<LF>" records grouped by file, so a hit is a
+    # duplicate only when it repeats within the current file's run (a repeat
+    # elsewhere would only add a duplicate index that the caller's per-query
+    # dedupe absorbs). Reading from a file keeps `read` buffered; on a pipe it
+    # issues one syscall per byte.
+    while IFS= read -r -d '' path && IFS= read -r sym; do
+      [[ "$POLICY_DIFF_KIND" != fixed-head ]] || path="${path#*:}"
+      if [[ "$path" != "$last_path" ]]; then
+        last_path="$path"
+        seen_here=()
+        compat=false
+        if _gate_scope_symbol_path_compatible "$source" "$path"; then
+          compat=true
+        fi
+      fi
+      [[ "$compat" == true ]] || continue
+      [[ -z "${seen_here[$sym]:-}" ]] || continue
+      seen_here["$sym"]=1
+      _gate_scope_symbol_hit_add "$sym" "$path"
+    done < "$hits"
+  fi
+
+  if [[ "$POLICY_DIFF_KIND" != fixed-head \
+      && "$POLICY_SCOPE_INCLUDE_UNTRACKED" == true ]]; then
+    while IFS= read -r -d '' path; do
+      [[ -f "$WORK_DIR/$path" && ! -L "$WORK_DIR/$path" ]] || continue
+      _gate_scope_symbol_path_compatible "$source" "$path" || continue
+      seen_here=()
+      while IFS= read -r sym; do
+        [[ -z "${seen_here[$sym]:-}" ]] || continue
+        seen_here["$sym"]=1
+        _gate_scope_symbol_hit_add "$sym" "$path"
+      done < <(grep -IowF -f "$patterns" -- "$WORK_DIR/$path" 2>/dev/null)
+    done < <(git ls-files --others --exclude-standard -z)
+  fi
+  return 0
 }
 
 _gate_scope_expansion_append() {
@@ -484,9 +603,34 @@ _gate_scope_expansion_append() {
     "$path" "$reason" "$source" "$evidence" "$limit_kind" "$maximum" >> "$output"
 }
 
+# Owns the four scratch files, so every exit of the collector body (including
+# its many `|| return 2` paths) removes them in one place.
 _gate_scope_expansions_collect() {
+  local candidates sources symbol_patterns symbol_hits status
+  candidates="$(mktemp "${TMPDIR:-/tmp}/gate-scope-expansions.XXXXXX")" || return 2
+  sources="$(mktemp "${TMPDIR:-/tmp}/gate-scope-sources.XXXXXX")" || {
+    rm -f -- "$candidates"
+    return 2
+  }
+  symbol_patterns="$(mktemp "${TMPDIR:-/tmp}/gate-scope-patterns.XXXXXX")" || {
+    rm -f -- "$candidates" "$sources"
+    return 2
+  }
+  symbol_hits="$(mktemp "${TMPDIR:-/tmp}/gate-scope-hits.XXXXXX")" || {
+    rm -f -- "$candidates" "$sources" "$symbol_patterns"
+    return 2
+  }
+  _gate_scope_expansions_collect_into "$@"
+  status=$?
+  rm -f -- "$candidates" "$sources" "$symbol_patterns" "$symbol_hits"
+  return "$status"
+}
+
+# Requires caller-declared scratch files: candidates, sources, symbol_patterns,
+# symbol_hits (see _gate_scope_expansions_collect).
+_gate_scope_expansions_collect_into() {
   local changed_paths_json="$1" output="$2"
-  local candidates sources source_count=0 source path base stem dir ext candidate
+  local source_count=0 source path base stem dir ext candidate
   local query match eligible_count symbol_count
   local source_is_shared=false source_is_shell=false source_is_contract_bundle=false
   local symbol_limit="$GATE_SCOPE_MAX_SYMBOLS_PER_SOURCE"
@@ -498,16 +642,16 @@ _gate_scope_expansions_collect() {
   local omitted_contract_consumers=0 omitted_entries=0
   local -a symbols=() shell_consumers=()
   local -A query_seen=()
+  # Per-source symbol -> file tables, filled by _gate_scope_symbol_hits_collect
+  # (see there) so the symbol loop below does no per-symbol process spawn.
+  local -A sym_hits=() present_words=() eligible_by_symbol=()
+  local -a hit_paths=() symbol_pathspec=()
+  local idx word
   # Membership in the changed set is asked once per expansion candidate, and a
   # bounded run reaches 512 of them. Answering each with its own jq process cost
   # more than every other collector in this file combined. The set is small and
   # fixed for the whole call, so resolve it once here and answer from memory.
   local -A changed_seen=()
-  candidates="$(mktemp "${TMPDIR:-/tmp}/gate-scope-expansions.XXXXXX")" || return 2
-  sources="$(mktemp "${TMPDIR:-/tmp}/gate-scope-sources.XXXXXX")" || {
-    rm -f -- "$candidates"
-    return 2
-  }
   : > "$candidates"
   : > "$sources"
 
@@ -589,7 +733,7 @@ _gate_scope_expansions_collect() {
             omitted_matches=$((omitted_matches + 1))
           fi
         fi
-      done < <(_gate_scope_search_paths "$source" path)
+      done < <(_gate_scope_search_paths "$source")
     fi
 
     # These framework/verification bundles have deliberately broad consumer
@@ -606,14 +750,23 @@ _gate_scope_expansions_collect() {
       omitted_symbols=$((omitted_symbols + symbol_count - symbol_limit))
       symbols=("${symbols[@]:0:symbol_limit}")
     fi
-    for query in "${symbols[@]}"; do
-      eligible_count=0
-      query_seen=()
-      if [[ "$source_is_shell" == true ]]; then
-        for match in "${shell_consumers[@]}"; do
-          _gate_scope_path_content "$match" 2>/dev/null |
-            grep -IwF -- "$query" >/dev/null || continue
-          eligible_count=$((eligible_count + 1))
+    [[ "${#symbols[@]}" -gt 0 ]] || continue
+    printf '%s\n' "${symbols[@]}" > "$symbol_patterns"
+    if [[ "$source_is_shell" == true ]]; then
+      # Ask "which of this source's symbols appear in consumer C" once per
+      # consumer, not once per (symbol, consumer) pair. Counting per symbol in
+      # consumer order keeps every symbol's eligible_count what it was.
+      eligible_by_symbol=()
+      for match in "${shell_consumers[@]}"; do
+        present_words=()
+        while IFS= read -r word; do
+          present_words["$word"]=1
+        done < <(_gate_scope_path_content "$match" 2>/dev/null |
+          grep -IowF -f "$symbol_patterns")
+        for query in "${symbols[@]}"; do
+          [[ -n "${present_words[$query]:-}" ]] || continue
+          eligible_count=$(( ${eligible_by_symbol[$query]:-0} + 1 ))
+          eligible_by_symbol["$query"]="$eligible_count"
           if [[ "$eligible_count" -le "$match_limit" ]]; then
             _gate_scope_expansion_append "$candidates" "$match" \
               call-site-hint "$source#$query" symbol-reference per-symbol "$match_limit" \
@@ -622,8 +775,17 @@ _gate_scope_expansions_collect() {
             omitted_matches=$((omitted_matches + 1))
           fi
         done
-      else
-        while IFS= read -r -d '' match; do
+      done
+    else
+      sym_hits=()
+      hit_paths=()
+      _gate_scope_symbol_hits_collect "$source" "$symbol_patterns" "$symbol_hits"
+      for query in "${symbols[@]}"; do
+        eligible_count=0
+        query_seen=()
+        # shellcheck disable=SC2086 # indexes are digits separated by spaces.
+        for idx in ${sym_hits[$query]:-}; do
+          match="${hit_paths[idx]}"
           [[ "$match" != "$source" ]] || continue
           [[ -z "${query_seen[$match]:-}" ]] || continue
           query_seen["$match"]=1
@@ -636,9 +798,9 @@ _gate_scope_expansions_collect() {
           else
             omitted_matches=$((omitted_matches + 1))
           fi
-        done < <(_gate_scope_search_paths "$query" symbol "$source")
-      fi
-    done
+        done
+      done
+    fi
   done < "$sources"
 
   # Decode the NUL-separated records _gate_scope_expansion_append wrote, then
@@ -656,18 +818,11 @@ _gate_scope_expansions_collect() {
     | unique_by([.path,.reason,.source,.evidence])
     | sort_by(.path,.reason,.source,.evidence)'
   jq -Rs --argjson limit "$expansion_limit" \
-    "$_decode_records | .[:\$limit]" "$candidates" > "$output" || {
-      rm -f -- "$candidates" "$sources"
-      return 2
-    }
+    "$_decode_records | .[:\$limit]" "$candidates" > "$output" || return 2
   local total_entries
-  total_entries="$(jq -Rs "$_decode_records | length" "$candidates")" || {
-      rm -f -- "$candidates" "$sources"
-      return 2
-    }
+  total_entries="$(jq -Rs "$_decode_records | length" "$candidates")" || return 2
   [[ "$total_entries" -le "$expansion_limit" ]] \
     || omitted_entries=$((total_entries - expansion_limit))
-  rm -f -- "$candidates" "$sources"
 
   GATE_SCOPE_OMITTED_EXPANSION_SOURCES="$omitted_sources"
   GATE_SCOPE_OMITTED_SYMBOLS="$omitted_symbols"
