@@ -6047,6 +6047,80 @@ test_scope_reference_index_collector_direct_decode() {
   pass "$name"
 }
 
+# Behavior: the per-symbol call-site search (CC-599 batched it into one search
+# per source) still reports a file for a symbol only when the symbol appears as
+# a whole word there, in a file type compatible with the source, that is not
+# itself a changed path -- and each symbol keeps its own file list.
+# Steps: call _gate_scope_expansions_collect directly against a small git
+# fixture holding a Go source and a shell source, near-miss identifiers
+# (Alphabet, foo_barbaz, xdo_thingx), symbols that share a line (foo, foobar),
+# an incompatible .txt file, a changed consumer and untracked consumers, in
+# working-tree and fixed-head modes, once with the batched search and once with
+# it forced to overflow into the per-symbol fallback, then compare the
+# call-site-hint (path, source#symbol) pairs to a literal set.
+test_scope_symbol_search_matches_whole_words_per_symbol() {
+  local name="scope-collector/symbol-search-whole-word-per-symbol"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" repo mode expected actual code hit_limit
+  repo="$dir/repo"
+  mkdir -p "$dir"
+  git init -q -b main "$repo"
+  (
+    cd "$repo"
+    git config user.email test@example.com
+    git config user.name 'Gate Test'
+    git config core.autocrlf false
+    printf 'package app\nfunc Alpha() {}\nfunc Alp() {}\nfunc foo_bar() {}\nfunc foo() {}\nfunc foobar() {}\n' > app.go
+    printf 'package app\nfunc a() { Alpha(); foo_bar(); foo(foobar) }\n' > use.go
+    printf 'package app\nfunc b() { Alphabet(); foo_barbaz() }\n' > near.go
+    printf 'Alpha\n' > notes.txt
+    printf 'package app\nfunc c() { foo_bar() }\n' > changed.go
+    printf 'do_thing() {\n  :\n}\n' > tool.sh
+    printf '. ./tool.sh\ndo_thing\n' > run.sh
+    printf '. ./tool.sh\nxdo_thingx do_thing_\n' > near.sh
+    git add -A
+    git commit -q -m base
+    printf 'package app\nfunc d() { Alpha() }\n' > fresh.go
+    printf '. ./tool.sh\ndo_thing\n' > fresh.sh
+  )
+  for mode in working-tree fixed-head; do
+    # 33554432 is the default cap; 1 forces every batched search to overflow
+    # into the per-symbol fallback, which must produce the same hints.
+    for hit_limit in 33554432 1; do
+      (
+        cd "$repo"
+        # shellcheck disable=SC2034 # read by gate-scope.sh via dynamic scope
+        WORK_DIR="$repo" POLICY_DIFF_KIND="$mode" POLICY_SCOPE_INCLUDE_UNTRACKED=true
+        # shellcheck disable=SC2034 # read by _gate_scope_path_exists via dynamic scope
+        GATE_BINDING_HEAD_COMMIT="$(git rev-parse HEAD)"
+        # shellcheck source=runtime/lib/gate-scope.sh
+        . "$REPO_ROOT/runtime/lib/gate-scope.sh"
+        # shellcheck disable=SC2034 # read by _gate_scope_symbol_hits_collect
+        GATE_SCOPE_MAX_SYMBOL_HIT_BYTES="$hit_limit"
+        _gate_scope_expansions_collect '["app.go","changed.go","tool.sh"]' \
+          "$dir/expansion-$mode.json"
+      )
+      code=$?
+      [[ "$code" -eq 0 ]] || {
+        fail "$name" "collector exited $code in $mode mode (hit limit $hit_limit)"
+        return
+      }
+      if [[ "$mode" == working-tree ]]; then
+        expected='[["fresh.go","app.go#Alpha"],["fresh.sh","tool.sh#do_thing"],["run.sh","tool.sh#do_thing"],["use.go","app.go#Alpha"],["use.go","app.go#foo"],["use.go","app.go#foo_bar"],["use.go","app.go#foobar"]]'
+      else
+        expected='[["run.sh","tool.sh#do_thing"],["use.go","app.go#Alpha"],["use.go","app.go#foo"],["use.go","app.go#foo_bar"],["use.go","app.go#foobar"]]'
+      fi
+      actual="$(jq -cS '[.[] | select(.reason == "call-site-hint") | [.path, .source]] | sort' \
+        "$dir/expansion-$mode.json")"
+      if [[ "$actual" != "$(jq -cS . <<<"$expected")" ]]; then
+        fail "$name" "$mode (hit limit $hit_limit) call-site hints: got $actual, expected $expected"
+        return
+      fi
+    done
+  done
+  pass "$name"
+}
+
 create_scope_truncation_repo() {
   local repo="$1"
   git init -q -b main "$repo"
@@ -6198,6 +6272,7 @@ run_test test_scope_manifest_semantic_search_overflow_fails_closed
 run_test test_scope_manifest_large_expansion_uses_file_input
 run_test test_large_diff_classification_transport_survives_slurpfile_boundary
 run_test test_scope_reference_index_collector_direct_decode
+run_test test_scope_symbol_search_matches_whole_words_per_symbol
 run_test test_scope_manifest_truncation_requires_explicit_acceptance
 run_test test_parallel_launches_per_reviewer
 run_test test_parallel_timeout_kills_hanging_reviewer
