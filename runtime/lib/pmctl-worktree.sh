@@ -16,6 +16,15 @@
 # that directory is gone, but the already-resolved absolute reg_dir (which
 # lives in the state store, not the repo) keeps working.
 
+# _pmctl_worktree_main_root needs _portable_is_absolute_path. cli/pmctl and
+# state-paths.sh normally load portable.sh first; guard so a standalone source
+# cannot silently fall back to the linked worktree's own toplevel.
+if ! declare -F _portable_is_absolute_path >/dev/null 2>&1; then
+  # shellcheck source=runtime/lib/portable.sh
+  # shellcheck disable=SC1091
+  . "${BASH_SOURCE[0]%/*}/portable.sh"
+fi
+
 pmctl_worktree_usage() {
   printf 'usage: pmctl worktree create <branch> [--from <base-branch>] [--name <slug>] [--cd <work_dir>]\n' >&2
   printf '       pmctl worktree list   [--cd <work_dir>] [--json]\n' >&2
@@ -90,8 +99,9 @@ _pmctl_worktree_slugify() {
 _pmctl_worktree_main_root() {
   local work_dir="$1" common_dir
   common_dir="$(git -C "$work_dir" rev-parse --git-common-dir 2>/dev/null)" || return 1
-  if [[ "$common_dir" == /* ]]; then
-    dirname "$common_dir"
+  # Same drive-letter case as state-paths.sh:_sw_main_repo_root.
+  if _portable_is_absolute_path "$common_dir"; then
+    dirname "${common_dir//\\//}"
   else
     git -C "$work_dir" rev-parse --show-toplevel 2>/dev/null
   fi

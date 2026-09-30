@@ -9,6 +9,10 @@ _HANDOVER_ISOLATION_POLICY_FILE="${_HANDOVER_ISOLATION_POLICY_FILE:-$_HANDOVER_L
 if ! declare -F pmctl_policy_contains >/dev/null 2>&1; then
   . "$_HANDOVER_LIB_DIR/pmctl-policy.sh"
 fi
+# shellcheck source=runtime/lib/portable.sh
+if ! declare -F _portable_is_absolute_path >/dev/null 2>&1; then
+  . "$_HANDOVER_LIB_DIR/portable.sh"
+fi
 # Sourceable validation helpers for dispatch_handover_v1 metadata.
 # No shell options are set here; callers own their execution policy.
 
@@ -186,7 +190,7 @@ handover_validate_brief_file() {
   local normalized="${value//\\//}"
 
   # Absolute-path check: POSIX (/...) or Windows drive-letter (X:/...).
-  if [[ "$normalized" != /* && ! "$normalized" =~ ^[A-Za-z]:/ ]]; then
+  if ! _portable_is_absolute_path "$normalized"; then
     handover_reject brief_file "must be an absolute path"
     return 1
   fi

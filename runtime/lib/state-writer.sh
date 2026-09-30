@@ -531,7 +531,9 @@ _sw_write_repo_json() {
   [[ -z "$repo_path" ]] && return 0
   repo_name="$(basename "$repo_path")"
   git_common_dir="$(git -C "$repo_path" rev-parse --git-common-dir 2>/dev/null || true)"
-  if [[ -n "$git_common_dir" && "$git_common_dir" != /* ]]; then
+  # A drive-letter path (native Windows git, linked worktree) is already
+  # absolute; prefixing repo_path would record `C:/wt/C:/proj/.git`.
+  if [[ -n "$git_common_dir" ]] && ! _portable_is_absolute_path "$git_common_dir"; then
     git_common_dir="$repo_path/$git_common_dir"
   fi
   cygpath_alias=""

@@ -514,6 +514,28 @@ _portable_lock_preflight_warn() {
   return 0
 }
 
+# _portable_is_drive_path <path>
+# True for a Windows drive-letter absolute path: `X:/...` or `X:\...`. Native
+# Windows git prints these (`C:/Users/.../.git`) where a POSIX shell expects
+# `/c/Users/...`, so a plain `== /*` test calls them relative.
+_portable_is_drive_path() {
+  # A glob, not `=~`: under a non-C UTF-8 locale a regex `[A-Za-z]` also
+  # accepts accented letters (`é:/x`), while this pattern does not.
+  case "${1:-}" in
+    [A-Za-z]:[/\\]*) return 0 ;;
+  esac
+  return 1
+}
+
+# _portable_is_absolute_path <path>
+# True for a POSIX absolute path (`/...`) or a drive-letter path. Pure string
+# test: no filesystem access and no backslash rewriting, so callers that need
+# a normalised value convert it themselves (only the drive form ever has
+# backslashes that mean a separator).
+_portable_is_absolute_path() {
+  [[ "${1:-}" == /* ]] || _portable_is_drive_path "${1:-}"
+}
+
 # shellcheck disable=SC2155
 _portable_normalize_path() {
   local path="$1"
@@ -647,7 +669,7 @@ _portable_realpath_windows() {
   local -i max_steps=64
 
   path="${path//\\//}"
-  if [[ "$path" != /* && ! "$path" =~ ^[A-Za-z]:/ ]]; then
+  if ! _portable_is_absolute_path "$path"; then
     path="$PWD/$path"
   fi
   path="$(_portable_normalize_path "$path")"
