@@ -137,12 +137,13 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-598 | ✅ done | **[`_ctx_extract_symbols` 的 go/python/typescript/javascript 分支每個 matched 行各 fork `sed`／`grep -q`，CC-597 自己的 commit message 誤判這是「真正內容處理、不可避免」]** GitHub issue #642：在真實 mizuho-v1（Next.js + Expo/React Native monorepo，926 檔案）上觀測到首次 `workflow-refresh` 跑了 17m53s+ 還在跑（確認非卡死，batch SQL 暫存檔持續在長大）。pm-dispatch 自己的 repo 幾乎全是 shell script（`_ctx_detect_language` 把 `.sh` 對應到單一整檔 grep 搭配 sed 的 pipeline，不是逐行 per-match），從沒踩過這個分支，這正是 CC-597 驗證時完全沒發現的原因；一個真實 TypeScript/React 專案剛好相反——`const Foo = () => {...}`（component/hook/exported util）是這個語言最常見的頂層語句形狀之一，一個檔案輕鬆 5-20+ 個。已把每個 matched 行都要 printf 搭配 sed（typescript 的 const 分支還多一個 printf 搭配 grep -q）的 pipeline 全部換成純 bash regex 比對（go func 含 receiver 的雙模式、go type、python def/class、typescript function/class/const-arrow 全部覆蓋），逐一跟原本 sed 輸出做過 side-by-side 比對確認語意完全一致，包含原本刻意處理的邊界情況（`func () {}` 空 receiver 應該不產生符號；`const` 沒有 `=>` 不應被當成 arrow function）。**實作過程中額外發現並修掉的獨立正確性 bug**：「非空字串才印出」原本用 bare `&&`-chain 寫法（新舊程式碼都有，不是這次才引入）在 `cli/pmctl` 本身有設 `set -euo pipefail` 的前提下，一旦捕捉到的識別字剛好是空字串（例如真實碼庫常見的 `const { data } = useQuery(() => ...)` 解構賦值），`&&` 左邊為 false 會讓整個腳本在 `-e` 下直接中止——相當於整個索引作業在處理到這種行時會靜默失敗，不只是慢。已全部改成 if/then/fi 寫法，消除這個 errexit 地雷。實機驗證：用合成的 300 檔案 TypeScript fixture（每檔 5 個宣告，共 1500 個 matched 行）量測同一份 fixture 修復前 2m43.7s → 修復後 1m52.99s。 | ops/portability | 2026-09-28 | pr:#643 | P2 | hygiene |
 | CC-599 | ✅ done | **[`pr-gate` 的 scope manifest 對每個 changed file 的每個 symbol 各跑一次 `git grep`，原生 Windows 上單次 gate 要 14–17 分鐘，且到 budget 也不提前停止]** GitHub issue #621。2026-09-30 在本機以 xtrace 剖析一個 pr-gate case（`tier-detection`，約 3,050 個 bash 程序、約 188 秒，子程序建立成本 37.5 ms/次），`gate-scope.sh:626`／`:444`／`:434`（per-symbol `git grep` 的 process substitution）合計約 37 秒，是 Windows 放大倍率最高（約 16 倍）的熱點。把多個 symbol 合併成較少次 `git grep`（多 `-e` pattern／單次掃描），行為與截斷語意不變。 | ops/gate | 2026-09-30 | pr:#647 | P2 | hygiene |
 | CC-600 | ✅ done | **[`_gate_assurance_policy_lookup` 每次查詢都 `cat \| awk` 加一個 `$(...)`，約 4 個子程序/次；`pr-gate.sh:28` 的 cleanup `rm -rf` 在剖析中也異常耗時]** 同一份 2026-09-30 剖析：`gate-policy.sh:116`／`:128` 合計約 24 秒（Windows 約 14 倍），`pr-gate.sh:28` 約 14 秒。已由 [[CC-600]] 交付（pr:#649）：lookup 不再每次多個子程序（單次約 121 → 61 ms）；`pr-gate.sh:28` 經查是剖析工具的歸因假象（子程序時間被記到父 PID 前一行），不是 `rm -rf` 慢；原提議的 process 快取因呼叫端都在 `$(...)` 內而不可行。 | ops/gate | 2026-09-30 | pr:#649 | P2 | hygiene |
-| CC-601 | 🟢 someday | **[「路徑是否為絕對路徑」的判斷散落約 6 處 inline，且 `_sw_main_repo_root`／`_pmctl_worktree_main_root` 在 Windows linked worktree 內仍有 CC-591 同型缺陷]** 抽出共用 `_portable_is_absolute_path`（放 `runtime/lib/portable.sh`），遷移全部站點；兩個 worktree 相關函式會退回 `--show-toplevel`，使其 repo 身分與 gate subject 不一致。 | arch/portability | 2026-09-30 | pr:#645 | P2 | reuse-debt |
+| CC-601 | ✅ done | **[「路徑是否為絕對路徑」的判斷散落約 6 處 inline，且 `_sw_main_repo_root`／`_pmctl_worktree_main_root` 在 Windows linked worktree 內仍有 CC-591 同型缺陷]** 抽出共用 `_portable_is_absolute_path`（放 `runtime/lib/portable.sh`），遷移全部站點；兩個 worktree 相關函式會退回 `--show-toplevel`，使其 repo 身分與 gate subject 不一致。 | arch/portability | 2026-09-30 | pr:#645, pr:#651 | P2 | reuse-debt |
 | CC-602 | 🟢 someday | **[context workflow-refresh 的 timeout-kill 有時會印出誤導的 `printf: write error: Permission denied`，而不是安靜結束]** GitHub issue #633；與 [[CC-596]] 相關但不是同一個問題（CC-596 只修暫存檔洩漏）。 | ops/portability | 2026-09-30 | — | P3 | hygiene |
 | CC-603 | 🟢 someday | **[`context.db` 永遠不會縮小：沒有 VACUUM／auto_vacuum，即使 #620 的 `.next` 症狀被正確 reconcile，肥大的 db 也維持肥大]** GitHub issue #636。 | ops | 2026-09-30 | — | P3 | hygiene |
 | CC-604 | 🟢 someday | **[`gate-scope.sh` 收尾整理：collector 過大、三處「檔案內有哪些 symbol」讀取邏輯重複、fixed-head 模式仍有每來源固定次數的 fork]** CC-599 審查（architecture-reviewer／critic）提出但刻意不併入該 PR 的後續：`_gate_scope_expansions_collect_into` 拆成 shell consumer 與 symbol call-site 兩個 per-source emitter；tracked／untracked／shell consumer 三種「一個檔案內出現哪些 symbol」的讀取視需要共用 helper；fixed-head 模式下每個來源對 12 個副檔名各做一次 `git cat-file -e`、每個 consumer 一次 `git show`（CC-599 實測 fixed-head 剩餘成本）。 | ops/gate | 2026-09-30 | pr:#647 | P3 | hygiene |
 | CC-605 | 🟢 someday | **[`_gate_policy_resolve` 的 signal 迴圈對每個 signal 各 fork 多個 jq／grep，是 `gate-policy.sh` 剩餘的主要成本]** [[CC-600]] 之後的剖析（`tier-detection`）中 `gate-policy.sh` 仍約 19.5 秒：15 個 signal 依 `match_source` 各自做 `jq -c`（classification）、`jq -r … \| grep -iE`＋`jq`（path-regex）、`jq -r`（brief-value），加上每個命中 signal 的 `_gate_policy_tier_rank`／`_gate_policy_add_reviewers`／`jq -nc` 子 shell。輸入只需解析一次，比對可在 bash 內完成。風險：`grep -iE` 與 bash `=~` 的正規表達式語意需先逐 pattern 驗證等價。 | ops/gate | 2026-09-30 | pr:#649 | P2 | hygiene |
 | CC-606 | 🟢 someday | **[`awk -v wanted="$key"` 會處理反斜線跳脫，`--tier`／`--mode` 這類 CLI 值可通過 policy 驗證卻與 bash 字串比較不一致]** [[CC-600]] 的 security-reviewer 指出的既有問題（非該 PR 引入）：`awk -v` 會展開跳脫序列，因此 `--tier 'expre\163s'` 或結尾帶反斜線的 `express\` 會被 `_gate_assurance_policy_lookup` 視為 `express`，但後續 `[[ $TIER == express ]]` 之類的 bash 比較不會。需本機 CLI 控制權，不是提權，屬驗證正規化不一致。修法：改用 `ENVIRON` 傳值，或在 lookup 前拒絕含反斜線的 key。 | ops/gate | 2026-09-30 | pr:#649 | P3 | hygiene |
+| CC-607 | 🟢 someday | **[worktree 主 checkout 解析與 drive-path 判斷的收尾整理]** [[CC-601]] 審查提出但刻意不併入的後續：`_pmctl_worktree_main_root` 與 `_sw_main_repo_root` 近乎重複，應讓前者委派給 state-paths 的解析器（或共用一個 helper）；`portable.sh` 內解析根目錄的 `case [A-Za-z]:/*` 分支與三處 jq regex 尚未統一，其中 `gate-result-verify.sh` 的 jq regex 只接受 `X:/`，`host-doctor-primitives.sh`／`hosts/claude/lib/doctor.sh` 接受 `X:[/\\]`；測試輔助 `tests/lib/test-memory-config-fixtures.sh` 與 `tests/shell/test-pr-gate.sh` 仍有 `--git-common-dir` 加 `== /*` 的寫法；common dir 不是 `<root>/.git`（submodule、`--separate-git-dir`）時 `dirname` 會回傳其父目錄（與 POSIX 相同，但在 Windows 上先前碰巧走 fallback 而答對）。 | ops/portability | 2026-09-30 | pr:#651 | P3 | reuse-debt |
 
 ---
 
@@ -5538,7 +5539,7 @@ full-suite 結果，且審查者與實作者同模型家族。剩餘成本與審
 
 ---
 
-## CC-601 — 共用「是否絕對路徑」helper 並修正 worktree 相關函式 🟢 someday
+## CC-601 — 共用「是否絕對路徑」helper 並修正 worktree 相關函式 ✅ 2026-09-30
 
 **Problem**：[[CC-591]] 只修了 `_gate_subject_common_dir`。同樣的
 `git rev-parse --git-common-dir` 加 `== /*` 判斷仍存在於
@@ -5559,6 +5560,29 @@ full-suite 結果，且審查者與實作者同模型家族。剩餘成本與審
 **Done-when**：每個站點的既有測試不變；新增在真實 Windows linked worktree 內
 `_sw_main_repo_root` 與 `_pmctl_worktree_main_root` 回傳主 checkout 路徑的驗證；
 architecture-reviewer 確認沒有新增跨層依賴。
+
+**已交付（pr:#651，2026-09-30；PR 於本次更新時尚待合併）**：`portable.sh` 新增
+`_portable_is_drive_path`（case glob，避免非 C UTF-8 locale 下 regex 接受 `é:/x`）與
+`_portable_is_absolute_path`；遷移判斷完全等價的站點：`pmctl-operation.sh`（守衛與取消
+迴圈）、`handover-validate.sh`（仍在反斜線正規化之後套用）、`_portable_realpath_windows`、
+`_gate_subject_common_dir`、`g_to_posix_path`。審查另外找出兩個漏網站點並已一併修正：
+`state-writer.sh` 把 `git_common_dir` 寫成 `C:/wt/C:/proj/.git`，以及
+`pmctl_operation_cancel` 的取消迴圈對 drive-letter `working_dir` 直接 `continue`（Windows
+子程序永遠不會被取消）。`_sw_main_repo_root` 與 `_pmctl_worktree_main_root` 現在在
+Windows linked worktree 內回傳主 checkout 路徑（真實 worktree 實測：舊版回傳 worktree
+自己的路徑）。`pmctl-worktree.sh`、`state-paths.sh`、`gate-result-verify.sh` 補上對
+`portable.sh` 的依賴保護，`dirname` 前先把反斜線轉成 `/`。新增測試：11 列真值表、兩個函式
+各一個真實 worktree 案例與一個 shadow `git` 的跨平台案例（舊版 libs 上皆失敗）。
+**升級注意（僅 Windows；Linux/WSL 不變，已寫入 CHANGELOG）**：從 linked worktree 內寫入、
+以 worktree 感知 key 存放的狀態（`pmctl worktree` registry 與 `checkouts/`、
+`ship-lanes.jsonl`、`ship-partial-*.json`、memory／config 的 project key）會留在舊的
+worktree 專屬 key 下而不再被列出；從主 checkout 建立的不受影響，不刪除也不遷移。
+**未在本機驗證**：`pmctl worktree`／`pmctl operation cancel` 整合測試與從真實 linked
+worktree lane 執行 `ship finish`／`gc --dry-run`（本機 state root 的 ACL 檢查拒絕 TEMP，
+既有問題），risk-reviewer 指出 `ship finish` 在 Windows lane 內會第一次走到 host 端
+stage/commit/push 分支，需要真實 Windows 執行。**審查方式須如實記錄**：未走
+`pmctl gate run`，由五位 reviewer 分別審查（皆無 block），沒有 gate result artifact、沒有
+authoritative full-suite 結果，且審查者與實作者同模型家族。後續整理見 [[CC-607]]。
 
 **See**: [[CC-591]]（pr:#645，architecture-reviewer 的建議）。
 
@@ -5656,5 +5680,28 @@ classification 的 matches、architecture_impact），signal 比對改在 bash �
 的錯誤與 rc）；既有 lookup 行為不變。
 
 **See**: [[CC-600]]。
+
+---
+
+## CC-607 — worktree 主 checkout 解析與 drive-path 判斷的收尾整理 🟢 someday
+
+**Problem**：[[CC-601]] 修好 Windows linked worktree 的主 checkout 解析後，審查列出幾項刻意
+不併入的整理：(1) `_pmctl_worktree_main_root`（`pmctl-worktree.sh`）與
+`_sw_main_repo_root`（`state-paths.sh`）近乎重複，CC-591／CC-601 已因此連續被重修；自然方向是
+前者委派給後者（`pmctl-worktree.sh` 本來就會載入 `state-paths.sh`）；(2) `portable.sh` 內解析
+根目錄的 `case [A-Za-z]:/*` 分支與 jq 內的 `test("^[A-Za-z]:...")`（`gate-result-verify.sh`
+只接受 `X:/`，`host-doctor-primitives.sh`、`hosts/claude/lib/doctor.sh` 接受 `X:[/\\]`）無法
+呼叫 bash 謂詞，已出現不一致，未來容易再漂移；(3) `tests/lib/test-memory-config-fixtures.sh` 與
+`tests/shell/test-pr-gate.sh` 的測試輔助仍有 `--git-common-dir` 加 `== /*`；(4) common dir 不是
+`<root>/.git`（submodule、`--separate-git-dir`）時 `dirname` 回傳其父目錄，POSIX 上早就如此，
+Windows 上以前因為 drive-letter 被當成相對路徑而碰巧走 `--show-toplevel` fallback 答對。
+
+**Requirement**：依上述整理，行為不變；jq 的 regex 至少統一接受的分隔符；為 (4) 決定是否改用
+`git rev-parse --show-toplevel` 對照，或檢查 common dir 的 basename。
+
+**Done-when**：`_pmctl_worktree_main_root` 不再自帶判斷；jq regex 與 bash 謂詞接受的集合一致並有
+測試；既有 `main-repo-root/`、`worktree main root:` 測試維持通過。
+
+**See**: [[CC-601]]；[[CC-591]]。
 
 ---
