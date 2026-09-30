@@ -135,11 +135,12 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-596 | ✅ done | **[`_ctx_index_tree` 的 per-refresh batch SQL 暫存檔沒有 `trap ... EXIT`，中途被 kill 就永久洩漏——已在 /tmp 累積 1.2GB/1147 個檔案]** GitHub issue #634：`mktemp /tmp/ctx-XXXXXX.sql` 產生的 batch SQL 暫存檔只靠兩個正常結束路徑上的顯式 `rm -f` 清理，同一檔案裡其餘 4 處多暫存檔區塊都已經用 `trap "rm -f '$var'" EXIT` 模式，唯獨這處（也是體積最大的一個，可能是整棵樹重新萃取的多 MB SQL）沒有。由於 CC-595 之前 refresh 經常撞上 90s bound，`pmctl_context_workflow_refresh_bounded` 的 `timeout -k 5` 會例行性地把它 kill 掉，兩個顯式 `rm -f` 都被跳過，檔案永久洩漏。已補上同款 `trap`（含既有慣例的 `# shellcheck disable=SC2064`），新增 regression 用 `set -e` 讓 shadow 過的 helper 失敗來模擬中途中斷（比起真的送 SIGTERM 更安全——實測發現這台機器上巢狀 `bash -c` 對自己 `$$` 送 `SIGTERM` 會往上波及整條祖先 shell，是 MSYS/Windows console-signal-group 的特性，並非針對單一 pid），驗證過 revert 掉 trap 後這個測試會失敗、補回後通過。 | ops/portability | 2026-09-28 | pr:#637 | P2 | hygiene |
 | CC-597 | ✅ done | **[`_ctx_query_hits_raw`／`_ctx_generate_file_sql`／`_ctx_tsv_to_json_array` 仍是 CC-595 已修過的同一種 forking anti-pattern：純 bash helper 透過 `$(...)` 呼叫而非 write-into-變數]** GitHub issue #638（`_ctx_query_hits_raw` 每個 matched row 各 fork `_ctx_memory_trust`／`_ctx_classify_domain`／`_ctx_compose_score`，prompt-scan 每個 prompt 都要付 60-70s）、#639（`_ctx_generate_file_sql` 每個新／變更檔案各 fork `_ctx_detect_language`／`_ctx_file_mtime`／`_ctx_file_sha1`／`_ctx_sql_str`，CC-595 的批次化只覆蓋「判斷是否需要重索引」，沒覆蓋「真的產生 SQL」這段）、#640（`_ctx_tsv_to_json_array` 每筆輸出 row 最多 fork `_ctx_json_str` 7 次，影響 query/pack/reuse-scan，其中 pack 又是 gate dispatch 組 reviewer context 的路徑，跟 #621 疊加）——三個都是同一場「掃描 CC-595 同款 anti-pattern」找到的獨立實例，且都不是零檔案異動的 fast path（CC-595 唯一測過的情境），而是「真的有東西要處理」時才會踩到，所以 CC-595 的驗證完全沒發現。已比照 `_ctx_sql_str`／`_ctx_sql_str_var` 的既有慣例，替 `_ctx_memory_trust`／`_ctx_classify_domain`／`_ctx_compose_score`／`_ctx_detect_language`／`_ctx_json_str` 各補上非 fork 的 `_var` 版本（原本的 stdout 版本改成呼叫 `_var` 版本，避免重複邏輯，且保留給既有白箱測試/其他呼叫者用），`_ctx_query_hits_raw` 三處呼叫點、`_ctx_tsv_to_json_array` 的 7 處呼叫點全部換掉。`_ctx_generate_file_sql` 額外改成接受可選的預算 mtime/sha1 參數；`_ctx_index_tree` 改成兩段式：先分類 skip/reindex（沿用 CC-595 已批次好的 mtime），再對「真的要 reindex」的子集合一次批次算 sha1，最後才呼叫 `_ctx_generate_file_sql` 並把預算值傳進去——單檔案呼叫路徑（`_ctx_index_file`／`pmctl_context_update`）沒有批次值可用，維持原本 per-file fork 的 fallback 行為不變。實機驗證：prompt-scan 69.7s→15.2s（#638+#640 疊加效果，同一份真 query）；全新首次索引（522 檔案，全部視為新檔）5m54.8s→4m55.2s（#639，改善幅度較小是因為主要成本本來就是 symbol/chunk 萃取本身，不是這次修的 metadata forking，issue 本身也沒宣稱會解決那部分）。三個修法各補一個 mutation-sensitive regression：shadow 掉「原本」會被繞過的 stdout 版本 helper 讓它回傳明顯錯誤的哨兵值，驗證真正呼叫路徑已經換成 `_var` 版本（若 revert 回 forking 版本，輸出會出現哨兵值而失敗）——三個都驗證過 revert 對應那行後測試會失敗、補回後通過。 | ops/portability | 2026-09-28 | pr:#641 | P2 | hygiene |
 | CC-598 | ✅ done | **[`_ctx_extract_symbols` 的 go/python/typescript/javascript 分支每個 matched 行各 fork `sed`／`grep -q`，CC-597 自己的 commit message 誤判這是「真正內容處理、不可避免」]** GitHub issue #642：在真實 mizuho-v1（Next.js + Expo/React Native monorepo，926 檔案）上觀測到首次 `workflow-refresh` 跑了 17m53s+ 還在跑（確認非卡死，batch SQL 暫存檔持續在長大）。pm-dispatch 自己的 repo 幾乎全是 shell script（`_ctx_detect_language` 把 `.sh` 對應到單一整檔 grep 搭配 sed 的 pipeline，不是逐行 per-match），從沒踩過這個分支，這正是 CC-597 驗證時完全沒發現的原因；一個真實 TypeScript/React 專案剛好相反——`const Foo = () => {...}`（component/hook/exported util）是這個語言最常見的頂層語句形狀之一，一個檔案輕鬆 5-20+ 個。已把每個 matched 行都要 printf 搭配 sed（typescript 的 const 分支還多一個 printf 搭配 grep -q）的 pipeline 全部換成純 bash regex 比對（go func 含 receiver 的雙模式、go type、python def/class、typescript function/class/const-arrow 全部覆蓋），逐一跟原本 sed 輸出做過 side-by-side 比對確認語意完全一致，包含原本刻意處理的邊界情況（`func () {}` 空 receiver 應該不產生符號；`const` 沒有 `=>` 不應被當成 arrow function）。**實作過程中額外發現並修掉的獨立正確性 bug**：「非空字串才印出」原本用 bare `&&`-chain 寫法（新舊程式碼都有，不是這次才引入）在 `cli/pmctl` 本身有設 `set -euo pipefail` 的前提下，一旦捕捉到的識別字剛好是空字串（例如真實碼庫常見的 `const { data } = useQuery(() => ...)` 解構賦值），`&&` 左邊為 false 會讓整個腳本在 `-e` 下直接中止——相當於整個索引作業在處理到這種行時會靜默失敗，不只是慢。已全部改成 if/then/fi 寫法，消除這個 errexit 地雷。實機驗證：用合成的 300 檔案 TypeScript fixture（每檔 5 個宣告，共 1500 個 matched 行）量測同一份 fixture 修復前 2m43.7s → 修復後 1m52.99s。 | ops/portability | 2026-09-28 | pr:#643 | P2 | hygiene |
-| CC-599 | 🔵 active | **[`pr-gate` 的 scope manifest 對每個 changed file 的每個 symbol 各跑一次 `git grep`，原生 Windows 上單次 gate 要 14–17 分鐘，且到 budget 也不提前停止]** GitHub issue #621。2026-09-30 在本機以 xtrace 剖析一個 pr-gate case（`tier-detection`，約 3,050 個 bash 程序、約 188 秒，子程序建立成本 37.5 ms/次），`gate-scope.sh:626`／`:444`／`:434`（per-symbol `git grep` 的 process substitution）合計約 37 秒，是 Windows 放大倍率最高（約 16 倍）的熱點。把多個 symbol 合併成較少次 `git grep`（多 `-e` pattern／單次掃描），行為與截斷語意不變。 | ops/gate | 2026-09-30 | — | P2 | hygiene |
+| CC-599 | ✅ done | **[`pr-gate` 的 scope manifest 對每個 changed file 的每個 symbol 各跑一次 `git grep`，原生 Windows 上單次 gate 要 14–17 分鐘，且到 budget 也不提前停止]** GitHub issue #621。2026-09-30 在本機以 xtrace 剖析一個 pr-gate case（`tier-detection`，約 3,050 個 bash 程序、約 188 秒，子程序建立成本 37.5 ms/次），`gate-scope.sh:626`／`:444`／`:434`（per-symbol `git grep` 的 process substitution）合計約 37 秒，是 Windows 放大倍率最高（約 16 倍）的熱點。把多個 symbol 合併成較少次 `git grep`（多 `-e` pattern／單次掃描），行為與截斷語意不變。 | ops/gate | 2026-09-30 | pr:#647 | P2 | hygiene |
 | CC-600 | 🟢 someday | **[`_gate_assurance_policy_lookup` 每次查詢都 `cat \| awk` 加一個 `$(...)`，約 4 個子程序/次；`pr-gate.sh:28` 的 cleanup `rm -rf` 在剖析中也異常耗時]** 同一份 2026-09-30 剖析：`gate-policy.sh:116`／`:128` 合計約 24 秒（Windows 約 14 倍），`pr-gate.sh:28` 約 14 秒且 Linux 上同一行也是熱點（原因未查明）。policy 表格每個 process 只解析一次，並查清 `pr-gate.sh:28`。 | ops/gate | 2026-09-30 | — | P2 | hygiene |
 | CC-601 | 🟢 someday | **[「路徑是否為絕對路徑」的判斷散落約 6 處 inline，且 `_sw_main_repo_root`／`_pmctl_worktree_main_root` 在 Windows linked worktree 內仍有 CC-591 同型缺陷]** 抽出共用 `_portable_is_absolute_path`（放 `runtime/lib/portable.sh`），遷移全部站點；兩個 worktree 相關函式會退回 `--show-toplevel`，使其 repo 身分與 gate subject 不一致。 | arch/portability | 2026-09-30 | pr:#645 | P2 | reuse-debt |
 | CC-602 | 🟢 someday | **[context workflow-refresh 的 timeout-kill 有時會印出誤導的 `printf: write error: Permission denied`，而不是安靜結束]** GitHub issue #633；與 [[CC-596]] 相關但不是同一個問題（CC-596 只修暫存檔洩漏）。 | ops/portability | 2026-09-30 | — | P3 | hygiene |
 | CC-603 | 🟢 someday | **[`context.db` 永遠不會縮小：沒有 VACUUM／auto_vacuum，即使 #620 的 `.next` 症狀被正確 reconcile，肥大的 db 也維持肥大]** GitHub issue #636。 | ops | 2026-09-30 | — | P3 | hygiene |
+| CC-604 | 🟢 someday | **[`gate-scope.sh` 收尾整理：collector 過大、三處「檔案內有哪些 symbol」讀取邏輯重複、fixed-head 模式仍有每來源固定次數的 fork]** CC-599 審查（architecture-reviewer／critic）提出但刻意不併入該 PR 的後續：`_gate_scope_expansions_collect_into` 拆成 shell consumer 與 symbol call-site 兩個 per-source emitter；tracked／untracked／shell consumer 三種「一個檔案內出現哪些 symbol」的讀取視需要共用 helper；fixed-head 模式下每個來源對 12 個副檔名各做一次 `git cat-file -e`、每個 consumer 一次 `git show`（CC-599 實測 fixed-head 剩餘成本）。 | ops/gate | 2026-09-30 | pr:#647 | P3 | hygiene |
 
 ---
 
@@ -5448,7 +5449,7 @@ fork-per-item anti-pattern 的前四個獨立實例）；[[CC-595]]／[[CC-597]]
 
 ---
 
-## CC-599 — `pr-gate` scope manifest 對每個 symbol 各跑一次 `git grep`（GitHub issue #621）🔵 active
+## CC-599 — `pr-gate` scope manifest 對每個 symbol 各跑一次 `git grep`（GitHub issue #621）✅ 2026-09-30
 
 **Problem**：原生 Windows 上單次 `pmctl gate run` 的 scope manifest 階段要 14–17 分鐘
 （issue #621 的原始回報）。2026-09-30 在本機對一個 pr-gate 測試 case
@@ -5474,6 +5475,21 @@ pattern 或單次掃描後在 bash 內歸類），保持輸出的排序、去重
 全數維持通過。**驗證注意**：本機 `test-pr-gate.sh` 每個 case 約 150 秒，需設
 `PM_DISPATCH_TEST_PR_GATE_CASE_TIMEOUT_SECS=900`，並以 `--filter` 縮小範圍。
 
+**已交付（pr:#647，2026-09-30；PR 於本次更新時尚待合併）**：每個來源檔只做一次
+`git grep -o -z -F -w -f <symbols>`（pathspec 限縮為該語言可被引用的副檔名），
+由輸出把命中歸屬到各 symbol；shell 來源改成每個 consumer 一次 `grep -o -f`。
+批次搜尋出錯（例如 git 不支援 `grep -o`）或輸出超過 32 MiB 時，該來源退回舊的
+逐 symbol 搜尋，不會靜默漏掉命中。四個暫存檔改由單一 wrapper 清理。實測（本機
+真實 diff，5 個來源檔，232 筆 expansion）新舊輸出逐位元相同：工作樹 202.3 秒 →
+9.4 秒、fixed-head 266.5 秒 → 14.3 秒。新增 regression case
+`scope-collector/symbol-search-whole-word-per-symbol`（對舊實作通過、對三個破壞版
+失敗）。**審查方式須如實記錄**：未走 `pmctl gate run`（本機每個 pr-gate case
+約 100–190 秒，全套跑不完），改由 critic／qa-tester／security／risk／architecture
+五位 reviewer 分別審查，皆無 block；因此沒有 gate result artifact、沒有
+authoritative full-suite 結果，且審查者與實作者同模型家族。既有的
+`scope-manifest/complete-and-shared-parallel`、`large-expansion-uses-file-input`
+在乾淨 main 上同樣失敗（既有問題，與本票無關）。後續整理見 [[CC-604]]。
+
 **See**: GitHub issue #621；[[CC-595]]／[[CC-597]]／[[CC-598]]（同根因的前置修復）；
 [[CC-600]]（同一份剖析的另一個熱點）。
 
@@ -5490,6 +5506,10 @@ Linux 上同一行也是熱點，原因未查明。
 
 **Requirement**：policy 表格每個 process 只讀取並解析一次（變數或關聯陣列快取），
 lookup 改為純 bash 查表；查清 `pr-gate.sh:28` 為何耗時並決定是否處理。
+[[CC-599]] 的 architecture-reviewer 建議：這裡不要沿用 CC-599 的動態範圍表格（lookup
+被多處呼叫、不屬於單一呼叫端），改用檔案層級的 per-process 全域快取（前綴
+`_GATE_POLICY_*`），並確認 policy 檔在同一個 process 內不會變動；若可能變動，
+需要失效機制。
 
 **Done-when**：lookup 的行為與錯誤處理（重複列、缺欄、malformed 表格皆須失敗）不變；
 剖析中 `gate-policy.sh` 的歸因時間可量測地下降。
@@ -5550,5 +5570,26 @@ kill 情境的暫存檔洩漏，但沒有處理這個訊息。
 不影響並行讀取。
 
 **See**: GitHub issue #636。
+
+---
+
+## CC-604 — `gate-scope.sh` 收尾整理 🟢 someday
+
+**Problem**：[[CC-599]] 把 symbol 搜尋批次化後，審查提出但刻意不併入該 PR 的三項整理：
+(1) `_gate_scope_expansions_collect_into` 已經很大，自然的拆法是兩個 per-source
+emitter（shell consumer hints、symbol call-site hints），並可共用同一組動態範圍表格；
+(2) tracked 檔、untracked 檔與 shell consumer 三處都在做「一個檔案內出現哪些 symbol」，
+讀檔方式不同（`git grep -o` 輸出、工作樹 `grep -o`、`_gate_scope_path_content`），
+可在下次修改時抽成共用 helper；(3) fixed-head 模式下，每個來源仍對 12 個副檔名各做
+一次 `git cat-file -e`（`_gate_scope_path_exists`），每個 consumer 一次 `git show`，
+是 CC-599 之後 fixed-head 剩餘的固定成本（真實 diff 仍需約 14 秒）。
+
+**Requirement**：依上述三點整理，行為不變；沿用 CC-599 的新舊輸出逐位元比對方式驗證
+（同一份輸入、舊版 `gate-scope.sh` 對新版）。
+
+**Done-when**：真實 diff 與合成 fixture 的 manifest 與整理前逐位元相同；fixed-head 模式
+耗時可量測地下降；`scope-collector/*` 與既有 scope-manifest 測試維持通過。
+
+**See**: [[CC-599]]；[[CC-600]]。
 
 ---
