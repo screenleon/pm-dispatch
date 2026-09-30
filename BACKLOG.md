@@ -127,7 +127,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-588 | ✅ done | 原生 Windows Git Bash 上，`tests/shell/test-pmctl-ship-finish.sh` 部分 fixture（`gate_publish_assessment_build`／`gate_remediation_closure_publish`）用 `jq -f /dev/stdin <<\JQ` 讀 heredoc 時噴 `jq: Could not open /proc/self/fd/0: No such file or directory`，導致 `.subject.head_commit` 落空、finish 誤判「HEAD moved before push」而拒絕發布。**在未改動的 main（`75fafa0`）上、單獨 `--filter` 執行既有 `case_finish_dispatched_lane_auto_commits_before_gate` 即可重現**，非 CC-585 引入；CI（Linux runner）不受影響。**已交付（隨 CC-585 一併修復，同一 PR）**：兩處 `-f /dev/stdin <<\JQ` 改成先 `mktemp` 寫入真實暫存檔再 `-f <tmpfile>`，不再依賴 `/proc/self/fd/0`；本機驗證 `--filter gitignore` 全數 7 案例由部分失敗轉為全綠。**範圍縮小**：`tests/shell/test-pmctl-ship.sh` 仍有一處同款 `-f /dev/stdin` 寫法未修，留待日後另開票（同根因，不同檔案，非本票必要範圍）。 | ops/test | 2026-09-24 | — | P3 | hygiene |
 | CC-589 | ✅ done | 原生 Windows 上 `pmctl gate run`（`--executor codex`）的 reviewer／synthesis codex session 會不穩定地直接用 PowerShell `& .\cli\pmctl guard check ...`（或類似形式）呼叫 pmctl，而非透過 `docs/platform-support.md` 記載的 `bash.exe --noprofile --norc .../cli/pmctl @args` wrapper——codex 的非互動 PowerShell 子行程不會載入 `$PROFILE`，所以那個 wrapper function 在該 session 裡根本不存在。Windows 對這個 extension-less bash shebang 腳本直接執行的結果是 `Program 'pmctl' failed to run: Access is denied`，導致 reviewer 沒寫出 review 結果檔、或 synthesis 沒寫出 gate 結果檔。**已觀測**：同一分支（CC-585 fix branch）連續兩次 standard-tier parallel gate 都命中，共 3 次獨立發生（synthesis attempt 2 一次；security-reviewer 首次＋重試各一次），每次都是同一句 `Access is denied invoking cli/pmctl`；但並非每次都發生（同一台機器上稍早 CC-587/#617 的 express-tier 2-reviewer gate 完全沒踩到），機率性、非決定性。**Requirement**：讓 codex reviewer／synthesis 的 dispatch 路徑（或其 brief／sandbox 啟動）保證 pmctl 呼叫方式在原生 Windows PowerShell 下總是可執行——例如固定改用 `bash.exe --noprofile --norc <repo>/cli/pmctl @args` 這個 canonical 形式產生 brief 範例／環境變數，而不是依賴 model 自己選對呼叫方式；補 regression 或至少手動驗證：連續多輪 codex reviewer dispatch 在原生 Windows 上 guard pre-write check 不再出現 `Access is denied`。**已交付（pr:#629，2026-09-27 merge，main@de7cd33）**：`pr-gate.sh` 在 codex＋Windows 情境下，改用既有共用 helper `portable_bash_wrapped_command`（沿用 codex hook 註冊已驗證過的同一機制）把 pmctl 路徑解析成明確、不含 PATH 猜測空間的絕對路徑呼叫（透過 `$BASH`／`cygpath -w` 解析出目前執行中的 Git Bash 絕對路徑），不再是裸字 `pmctl` 或裸字 `bash`。過程中 PR-gate 自己抓出並修掉兩個真 bug：(a) 解析出的路徑含空格（`C:\Program Files\Git\...`）未加引號會讓 PowerShell 從空格處斷開失敗，改為只要有呼叫者提供自訂值就一律加引號＋`&` 呼叫運算子，不看內容個別判斷；(b) 新測試原本用「呼叫同一套生產邏輯＋真實 cygpath 算預期值」的寫法，抓不到那套邏輯自己的 bug，改成 stub 一個獨立、寫死的假 cygpath 當 oracle。qa-tester 連續 3 輪都因自身 codex sandbox 結構性限制卡住（症狀每次不同：零輸出逾時、逾時前失敗、連 retry 都直接 transport failure），記錄為 `.gate-overrides.md` accepted risk（同 [[CC-592]]）；critic／architecture-reviewer／security-reviewer 三輪皆收斂為 approve／advise 等非阻擋結果。CI 100/100 全綠。 | ops/gate | 2026-09-24 | pr:#629 | P1 | hygiene |
 | CC-590 | ✅ done | **[原生 Windows：Codex tool-terminal 邊界關閉會殺死已發布 readiness 的 detached gate supervisor]** GitHub issue #618：`pmctl gate run --lifecycle detached` 在原生 Windows、由 Codex tool terminal 呼叫時，PowerShell Job Object launcher 能成功發布 readiness（`supervisor.identity` 記錄 `isolated=1` 的合法 Windows pid）並讓 `gate run` 回傳 gate_id，但該 launcher 隨即在「呼叫本身所在的 terminal/tool-call 邊界關閉」的同一秒被外層宿主一併終止——`disown` 未能阻止，`pr-gate.sh` 從未真正啟動，無 reviewer dispatch／scope／trace／result 產出。`pmctl gate wait` 最終正確回報 indeterminate（fail-closed，未誤判 GO/NO-GO），但要等滿整段 timeout 才浮現。高信度診斷：呼叫者 bash 進程本身很可能被 Codex 宿主自己的外層 Windows Job Object 持有，巢狀 job 在未設 breakaway 許可的情況下對「已中斷持有者」的收尾，會連同尚未離線的內層 launcher 一併關閉——因果與 launcher 自身的行程壽命綁在一起，launcher 進程內部無法在自己結束前觀察到「結束之後才發生」的外層收尾，故不可能單靠 launcher 自我延長存活期偵測到這個結局。非 GitHub issue #609（AppContainer/MSYS2 `CreateFileMapping` namespace 問題，不同機制）、亦非 issue #619（Codex Windows sandbox-unavailable，已由決定性訊號辨識並在 PR #626 修復）——三者現象與根因均不同，僅同屬原生 Windows parity 範圍。**Requirement**：(1) `pmctl gate wait` 的 poll loop 對已發布 `supervisor.identity` 的 detached gate 加入定期 liveness re-check（`detached_launch_target_alive`／`detached_launch_verify_identity`），一旦偵測死亡立即回報既有的 indeterminate（不等滿 timeout，也不改變其 fail-closed 語意／exit code）；(2) 「readiness 之後 supervisor 消失」的既有 indeterminate 訊息比照 `gate run` 既有的啟動失敗訊息，補上 `--lifecycle foreground` 的具體建議；(3) 比照既有 `pmctl dispatch run` 對 Codex host 的「無持久 App Server bridge 時預設 foreground」guidance（`hosts/codex/lib/memory-contract.sh`、`docs/host-contract.md`），把同一預設收斂邏輯延伸到 `pmctl gate run`／`/pr-gate`（`commands/pr-gate.md` 目前對 lifecycle 選擇完全沒有 host 分支）；(4) 新增 CI 可跑的 regression：detached 啟動後、readiness 一發布就由獨立步驟強制 kill 掉 supervisor 行程群（模擬邊界關閉的外部效應，而非讓 run/wait 在同一個常駐測試進程下順序執行），斷言 `gate wait` 快速且正確回報 indeterminate；(5) 另需一輪原生 Windows 主機上的真實驗證（真 Job Object launcher、readiness 後由另一個行程強制終止），因為本 fix 涉及安全敏感的 process-lifecycle 語意，不接受純程式碼審閱作為完工證據——注意實作／驗證所用的 executor 若本身跑在 sandboxed exec_command 環境下，可能正好複現同一種「terminal 邊界殺死 detached 子行程」問題，驗證應在非 sandboxed 的真實原生終端進行。**Non-goals**：不嘗試在 launcher 自身進程內偵測「進程結束後才觸發」的外層收尾（見上方因果論證，技術上不可行）；不建立通用「自動判斷目前是否為 Codex sandboxed tool-call terminal」的執行期啟發式（目前無可靠訊號來源）；不修改既有 Job Object P/Invoke 的 kill／verify 機制本身（`runtime/lib/windows/detached-launch-job.ps1`、`runtime/lib/detached-launch.sh` 現有語意已正確 fail-closed）；不處理 [[CC-589]]（codex/claude reviewer 呼叫 pmctl 被拒絕，不同根因不同症狀）。**Done-when**：`gate wait` 對一個 readiness 後立即被強制終止的 detached gate，能在遠低於預設 timeout 的時間內回報帶有 `--lifecycle foreground` 建議的 indeterminate；`/pr-gate` 與 Codex memory-contract 對「無確認持久 bridge」情境有明確、與 dispatch 一致的 foreground 預設文件；新 regression 與一次真實原生 Windows 驗證均通過。**已交付（pr:#627，2026-09-27 merge，main@66353f3）**：`/pr-gate` 兩輪（sequential + parallel）critic／architecture-reviewer／security-reviewer 全 approve、0 findings；qa-tester 兩輪都因自身 codex sandbox 無法啟動真實 Windows process 而卡住（非本次 diff 缺陷，記錄為 `.gate-overrides.md` accepted risk）。CI（Linux runner）另外抓到兩個純 Windows 本機驗證看不到的真 bug 並修掉：(a) `commands/pr-gate.md` 文件範例裡的 `<lifecycle_value>` 佔位符沒加引號，bash 會把裸 `<foo>` 解讀成 I/O 重導向而非文字，導致該 fence 直接語法錯誤；(b) 新 regression test 的強制 kill 步驟原本借用共用的 `detached_launch_kill_process_group`，該函式在 POSIX 上是「先 SIGTERM、逾時才 SIGKILL」，假 supervisor 在 CI 的 Linux runner 上接住 SIGTERM 後優雅寫下「cancelled」結束紀錄——恰好是本案要驗證的「無任何證據的暴力終止」的反例；Windows 分支不受影響（Job Object `-Action Kill`本來就無 SIGTERM 緩衝階段）。修法：測試改為 Windows 走原共用函式、POSIX 直接送 SIGKILL 略過緩衝階段。修復後 CI 100/100 全綠。**See**: GitHub issue #618；[[CC-582]]（context-refresh bounded-timeout 前例，本票沿用同一設計語彙）；[[CC-535]]（detached-launch supervised-run 泛化 primitive，related 但不同範圍，未合併）；[[CC-370]]（原生 Windows experimental 支援範圍）；`docs/host-contract.md` 第 141-160 行（既有 dispatch 側 App Server bridge guidance）；`hosts/codex/lib/memory-contract.sh`；`commands/pr-gate.md` | ops/gate | 2026-09-27 | pr:#627 | P1 | design |
-| CC-591 | 🔵 active | **[原生 Windows：從 git worktree 內執行 `pmctl gate run` 會讓 gate subject capture 失敗]** `_gate_subject_common_dir`（`runtime/lib/gate-result-verify.sh`）預期 `git rev-parse --git-common-dir` 回傳相對路徑或 POSIX 絕對路徑（`/c/...`），但對一個 git worktree，原生 Windows git 回傳的是 Windows 磁碟機格式絕對路徑（`C:/Users/.../.git`）——`[[ "$common_dir" != /* ]]` 判斷把它誤判為「相對路徑」而把 worktree 自己的 root 疊加上去，產生無意義的路徑，導致 `gate_subject_snapshot` 失敗、`gate_run` 直接印出「unable to capture immutable gate subject」並在任何 reviewer 被 dispatch 之前就中止。已用 `set -x` 直接追蹤確認根因，並確認同一函式呼叫在**非 worktree 的 plain checkout** 上瞬間成功——問題僅限 worktree。目前 workaround：改在非 worktree 的 checkout 跑 gate（2026-09-27 CC-590 落地過程中發現）。 | ops/gate | 2026-09-27 | — | P2 | hygiene |
+| CC-591 | ✅ done | **[原生 Windows：從 git worktree 內執行 `pmctl gate run` 會讓 gate subject capture 失敗]** `_gate_subject_common_dir`（`runtime/lib/gate-result-verify.sh`）預期 `git rev-parse --git-common-dir` 回傳相對路徑或 POSIX 絕對路徑（`/c/...`），但對一個 git worktree，原生 Windows git 回傳的是 Windows 磁碟機格式絕對路徑（`C:/Users/.../.git`）——`[[ "$common_dir" != /* ]]` 判斷把它誤判為「相對路徑」而把 worktree 自己的 root 疊加上去，產生無意義的路徑，導致 `gate_subject_snapshot` 失敗、`gate_run` 直接印出「unable to capture immutable gate subject」並在任何 reviewer 被 dispatch 之前就中止。已用 `set -x` 直接追蹤確認根因，並確認同一函式呼叫在**非 worktree 的 plain checkout** 上瞬間成功——問題僅限 worktree。目前 workaround：改在非 worktree 的 checkout 跑 gate（2026-09-27 CC-590 落地過程中發現）。 | ops/gate | 2026-09-27 | pr:#645 | P2 | hygiene |
 | CC-592 | 🟢 someday | **[qa-tester 的 codex sandbox 結構性地無法啟動真實 Windows process，導致任何需要真實 process 驗證的 gate finding 卡住]** 兩次獨立 gate dispatch（sequential 90s bound、parallel 120s bound）中，qa-tester 嘗試重新執行一個會啟動真實 Windows Job Object supervisor 的測試時，兩次都在整個 timeout 期間**零輸出**後逾時（exit 124）——同一測試由本機（非 sandbox）直接執行 5 次以上皆在 10 秒內通過。訊號（完全零輸出，而非部分進度）與 #609（AppContainer 阻擋 MSYS2 對全域 namespace 的存取）、#619（codex Windows sandbox 決定性拒絕 exec_command）同一類，但這次發生在 **reviewer 驗證路徑本身**，而非 gate 的 producer 端。目前僅能靠 `.gate-overrides.md` 逐案記錄 accepted risk 繞過（2026-09-27 CC-590 gate 過程中發現，兩輪 gate 皆命中同一訊號）。 | ops/gate | 2026-09-27 | — | P2 | spike |
 | CC-593 | ✅ done | 原生 Windows Git Bash 上，`bash tests/bin/run-tests.sh --all` 完整套件在 Phase 0 連續卡在四個不同 lint：`lint-pmctl-commands`（jq `-r` 輸出帶 CRLF，跟純 LF 的 registry 逐行比對全部誤判失敗）、`lint-doc-wikilinks`（① 每行無條件開 subprocess 做 code-span 過濾，隨 BACKLOG.md 增長被放大到 900+ 秒；② 在測試框架的 `LC_ALL=C.UTF-8` 下，sed 處理 BACKLOG.md 裡的 🟢 等 4-byte UTF-8 字元時 code-span 過濾失效，誤判出從未存在的違規）、`lint-readme-surface-lists`（直接掃檔案系統、沒排除 `.gitignore`，把 Claude Code 自己的 runtime 快取 `skills/synced/` 誤判成「缺 README 條目」）、以及 `tools/generate/gate-structural-validator.sh --check`（同款 jq CRLF 問題，誤判 schema bundle「過期」）。四個都已修復並用 `--filter`／`LC_ALL=C.UTF-8`／完整套件三方比對驗證過，且確認在未改動的 main 上可重現、與任何一張既有票無關（2026-09-27/28 確認完整套件時發現）。**已交付（pr:#631）**：另外補上 gate review 過程中發現的第五個 bug——`git check-ignore` 在 sandboxed reviewer 的不同 owner checkout 下會因 safe-directory 保護而 exit 128，跟「未被 gitignore」的 exit 1 從結果碼上分不出來，靜默地讓 `skills/synced/` 誤判重演；修法是把 `-c safe.directory='*'` 限定在這個唯讀 plumbing 呼叫上。並補齊兩個平台特定條件的 mutation-sensitive regression（`test-lint-doc-wikilinks.sh`／`test-lint-readme-surface-lists.sh`）。Gate：codex executor, sequential mode, standard tier，3 輪後 4 reviewer 全 approve、0 findings。 | ops/test | 2026-09-28 | pr:#631 | P2 | hygiene |
 | CC-594 | 🟢 someday | **[原生 Windows 上這台機器的 jq（WinGet 版）對任何非 TTY 的輸出（重導向到檔案、pipe、command substitution）都會自動加上 CRLF，不限 `-r` 模式，範圍遍布整個 repo]** 修 CC-593 時發現同一根因在 `tests/shell/test-core-schemas.sh` 造成 33 個測試失敗——多數是 `enum-sync` 類檢查：兩邊列印出來的值完全相同（例如 `schema enum: claude,codex,grok,opencode; yaml values: claude,codex,grok,opencode`）卻仍判定 FAIL，因為 `_schema_enum()` 的 `jq -r` 呼叫吐出的每一行列舉值都帶有看不見的尾端 `\r`。全 repo 掃描 `tests/`／`runtime/lib/`／`tools/lint/`／`tools/generate/` 下用到 `jq -r` 的檔案有 **64 個**；此機器沒有行為正常（純 LF）的 MSYS 版 jq 可以直接替換（僅有 WinGet 裝的原生版本，沒有 pacman/MSYS2 完整安裝）。範圍遠大於 CC-593 的四個獨立小修，需要一次性的架構決策（例如統一的 jq 包裝函式／全面補 `tr -d '\r'`／或改善 jq 安裝來源），而非逐一補丁。 | ops/test | 2026-09-28 | — | P2 | spike |
@@ -135,6 +135,11 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-596 | ✅ done | **[`_ctx_index_tree` 的 per-refresh batch SQL 暫存檔沒有 `trap ... EXIT`，中途被 kill 就永久洩漏——已在 /tmp 累積 1.2GB/1147 個檔案]** GitHub issue #634：`mktemp /tmp/ctx-XXXXXX.sql` 產生的 batch SQL 暫存檔只靠兩個正常結束路徑上的顯式 `rm -f` 清理，同一檔案裡其餘 4 處多暫存檔區塊都已經用 `trap "rm -f '$var'" EXIT` 模式，唯獨這處（也是體積最大的一個，可能是整棵樹重新萃取的多 MB SQL）沒有。由於 CC-595 之前 refresh 經常撞上 90s bound，`pmctl_context_workflow_refresh_bounded` 的 `timeout -k 5` 會例行性地把它 kill 掉，兩個顯式 `rm -f` 都被跳過，檔案永久洩漏。已補上同款 `trap`（含既有慣例的 `# shellcheck disable=SC2064`），新增 regression 用 `set -e` 讓 shadow 過的 helper 失敗來模擬中途中斷（比起真的送 SIGTERM 更安全——實測發現這台機器上巢狀 `bash -c` 對自己 `$$` 送 `SIGTERM` 會往上波及整條祖先 shell，是 MSYS/Windows console-signal-group 的特性，並非針對單一 pid），驗證過 revert 掉 trap 後這個測試會失敗、補回後通過。 | ops/portability | 2026-09-28 | pr:#637 | P2 | hygiene |
 | CC-597 | ✅ done | **[`_ctx_query_hits_raw`／`_ctx_generate_file_sql`／`_ctx_tsv_to_json_array` 仍是 CC-595 已修過的同一種 forking anti-pattern：純 bash helper 透過 `$(...)` 呼叫而非 write-into-變數]** GitHub issue #638（`_ctx_query_hits_raw` 每個 matched row 各 fork `_ctx_memory_trust`／`_ctx_classify_domain`／`_ctx_compose_score`，prompt-scan 每個 prompt 都要付 60-70s）、#639（`_ctx_generate_file_sql` 每個新／變更檔案各 fork `_ctx_detect_language`／`_ctx_file_mtime`／`_ctx_file_sha1`／`_ctx_sql_str`，CC-595 的批次化只覆蓋「判斷是否需要重索引」，沒覆蓋「真的產生 SQL」這段）、#640（`_ctx_tsv_to_json_array` 每筆輸出 row 最多 fork `_ctx_json_str` 7 次，影響 query/pack/reuse-scan，其中 pack 又是 gate dispatch 組 reviewer context 的路徑，跟 #621 疊加）——三個都是同一場「掃描 CC-595 同款 anti-pattern」找到的獨立實例，且都不是零檔案異動的 fast path（CC-595 唯一測過的情境），而是「真的有東西要處理」時才會踩到，所以 CC-595 的驗證完全沒發現。已比照 `_ctx_sql_str`／`_ctx_sql_str_var` 的既有慣例，替 `_ctx_memory_trust`／`_ctx_classify_domain`／`_ctx_compose_score`／`_ctx_detect_language`／`_ctx_json_str` 各補上非 fork 的 `_var` 版本（原本的 stdout 版本改成呼叫 `_var` 版本，避免重複邏輯，且保留給既有白箱測試/其他呼叫者用），`_ctx_query_hits_raw` 三處呼叫點、`_ctx_tsv_to_json_array` 的 7 處呼叫點全部換掉。`_ctx_generate_file_sql` 額外改成接受可選的預算 mtime/sha1 參數；`_ctx_index_tree` 改成兩段式：先分類 skip/reindex（沿用 CC-595 已批次好的 mtime），再對「真的要 reindex」的子集合一次批次算 sha1，最後才呼叫 `_ctx_generate_file_sql` 並把預算值傳進去——單檔案呼叫路徑（`_ctx_index_file`／`pmctl_context_update`）沒有批次值可用，維持原本 per-file fork 的 fallback 行為不變。實機驗證：prompt-scan 69.7s→15.2s（#638+#640 疊加效果，同一份真 query）；全新首次索引（522 檔案，全部視為新檔）5m54.8s→4m55.2s（#639，改善幅度較小是因為主要成本本來就是 symbol/chunk 萃取本身，不是這次修的 metadata forking，issue 本身也沒宣稱會解決那部分）。三個修法各補一個 mutation-sensitive regression：shadow 掉「原本」會被繞過的 stdout 版本 helper 讓它回傳明顯錯誤的哨兵值，驗證真正呼叫路徑已經換成 `_var` 版本（若 revert 回 forking 版本，輸出會出現哨兵值而失敗）——三個都驗證過 revert 對應那行後測試會失敗、補回後通過。 | ops/portability | 2026-09-28 | pr:#641 | P2 | hygiene |
 | CC-598 | ✅ done | **[`_ctx_extract_symbols` 的 go/python/typescript/javascript 分支每個 matched 行各 fork `sed`／`grep -q`，CC-597 自己的 commit message 誤判這是「真正內容處理、不可避免」]** GitHub issue #642：在真實 mizuho-v1（Next.js + Expo/React Native monorepo，926 檔案）上觀測到首次 `workflow-refresh` 跑了 17m53s+ 還在跑（確認非卡死，batch SQL 暫存檔持續在長大）。pm-dispatch 自己的 repo 幾乎全是 shell script（`_ctx_detect_language` 把 `.sh` 對應到單一整檔 grep 搭配 sed 的 pipeline，不是逐行 per-match），從沒踩過這個分支，這正是 CC-597 驗證時完全沒發現的原因；一個真實 TypeScript/React 專案剛好相反——`const Foo = () => {...}`（component/hook/exported util）是這個語言最常見的頂層語句形狀之一，一個檔案輕鬆 5-20+ 個。已把每個 matched 行都要 printf 搭配 sed（typescript 的 const 分支還多一個 printf 搭配 grep -q）的 pipeline 全部換成純 bash regex 比對（go func 含 receiver 的雙模式、go type、python def/class、typescript function/class/const-arrow 全部覆蓋），逐一跟原本 sed 輸出做過 side-by-side 比對確認語意完全一致，包含原本刻意處理的邊界情況（`func () {}` 空 receiver 應該不產生符號；`const` 沒有 `=>` 不應被當成 arrow function）。**實作過程中額外發現並修掉的獨立正確性 bug**：「非空字串才印出」原本用 bare `&&`-chain 寫法（新舊程式碼都有，不是這次才引入）在 `cli/pmctl` 本身有設 `set -euo pipefail` 的前提下，一旦捕捉到的識別字剛好是空字串（例如真實碼庫常見的 `const { data } = useQuery(() => ...)` 解構賦值），`&&` 左邊為 false 會讓整個腳本在 `-e` 下直接中止——相當於整個索引作業在處理到這種行時會靜默失敗，不只是慢。已全部改成 if/then/fi 寫法，消除這個 errexit 地雷。實機驗證：用合成的 300 檔案 TypeScript fixture（每檔 5 個宣告，共 1500 個 matched 行）量測同一份 fixture 修復前 2m43.7s → 修復後 1m52.99s。 | ops/portability | 2026-09-28 | pr:#643 | P2 | hygiene |
+| CC-599 | 🔵 active | **[`pr-gate` 的 scope manifest 對每個 changed file 的每個 symbol 各跑一次 `git grep`，原生 Windows 上單次 gate 要 14–17 分鐘，且到 budget 也不提前停止]** GitHub issue #621。2026-09-30 在本機以 xtrace 剖析一個 pr-gate case（`tier-detection`，約 3,050 個 bash 程序、約 188 秒，子程序建立成本 37.5 ms/次），`gate-scope.sh:626`／`:444`／`:434`（per-symbol `git grep` 的 process substitution）合計約 37 秒，是 Windows 放大倍率最高（約 16 倍）的熱點。把多個 symbol 合併成較少次 `git grep`（多 `-e` pattern／單次掃描），行為與截斷語意不變。 | ops/gate | 2026-09-30 | — | P2 | hygiene |
+| CC-600 | 🟢 someday | **[`_gate_assurance_policy_lookup` 每次查詢都 `cat \| awk` 加一個 `$(...)`，約 4 個子程序/次；`pr-gate.sh:28` 的 cleanup `rm -rf` 在剖析中也異常耗時]** 同一份 2026-09-30 剖析：`gate-policy.sh:116`／`:128` 合計約 24 秒（Windows 約 14 倍），`pr-gate.sh:28` 約 14 秒且 Linux 上同一行也是熱點（原因未查明）。policy 表格每個 process 只解析一次，並查清 `pr-gate.sh:28`。 | ops/gate | 2026-09-30 | — | P2 | hygiene |
+| CC-601 | 🟢 someday | **[「路徑是否為絕對路徑」的判斷散落約 6 處 inline，且 `_sw_main_repo_root`／`_pmctl_worktree_main_root` 在 Windows linked worktree 內仍有 CC-591 同型缺陷]** 抽出共用 `_portable_is_absolute_path`（放 `runtime/lib/portable.sh`），遷移全部站點；兩個 worktree 相關函式會退回 `--show-toplevel`，使其 repo 身分與 gate subject 不一致。 | arch/portability | 2026-09-30 | pr:#645 | P2 | reuse-debt |
+| CC-602 | 🟢 someday | **[context workflow-refresh 的 timeout-kill 有時會印出誤導的 `printf: write error: Permission denied`，而不是安靜結束]** GitHub issue #633；與 [[CC-596]] 相關但不是同一個問題（CC-596 只修暫存檔洩漏）。 | ops/portability | 2026-09-30 | — | P3 | hygiene |
+| CC-603 | 🟢 someday | **[`context.db` 永遠不會縮小：沒有 VACUUM／auto_vacuum，即使 #620 的 `.next` 症狀被正確 reconcile，肥大的 db 也維持肥大]** GitHub issue #636。 | ops | 2026-09-30 | — | P3 | hygiene |
 
 ---
 
@@ -4836,7 +4841,7 @@ experimental 支援範圍）；[[CC-589]]（同批但不同根因的原生 Windo
 
 ---
 
-## CC-591 — 原生 Windows：從 git worktree 內執行 `pmctl gate run` 會讓 gate subject capture 失敗 🔵 active
+## CC-591 — 原生 Windows：從 git worktree 內執行 `pmctl gate run` 會讓 gate subject capture 失敗 ✅ 2026-09-30
 
 **Problem**：在原生 Windows 上，從一個 git worktree（非主 checkout）內執行
 `pmctl gate run`，一律在任何 reviewer 被 dispatch 之前就失敗：
@@ -4883,6 +4888,20 @@ worktree**，原生 Windows 版 git 讀取 worktree 的 `.git` 檔案裡的 `git
 正常完成 subject capture 並繼續到 reviewer dispatch；新增 regression 涵蓋
 「worktree 內執行」與「plain checkout 內執行」兩種情境，確認兩者都能正確
 拿到合法的 subject JSON。
+
+**已交付（pr:#645，2026-09-30）**：`_gate_subject_common_dir` 新增第三個分支，
+`^[A-Za-z]:[/\\]` 視為絕對路徑，且反斜線只在該形式下才改寫為 `/`（不影響
+POSIX 路徑；原本的全面改寫被 security／risk 兩位 reviewer 指出會誤改合法的
+POSIX 檔名字元，已收窄）。新增 regression case
+`gate_subject_snapshot: captures the same common dir from a linked worktree as
+from the plain checkout`，在真實 Windows linked worktree 內驗證：修正後通過、
+回退修正後 linked rc=2。**審查方式須如實記錄**：此 PR 沒有走 `pmctl gate run`
+（本機每個 pr-gate case 約 150–190 秒，見 [[CC-599]]），改由 critic／qa-tester／
+security／risk／architecture 五位 reviewer 以子代理分別審查，五位皆 approve、
+0 blocking；因此沒有 gate result artifact、`pmctl ship finish` 未使用、沒有
+authoritative full-suite 結果，且審查者與實作者同模型家族。同型的
+`== /*` 缺陷仍存在於 `_sw_main_repo_root`／`_pmctl_worktree_main_root`，由
+[[CC-601]] 處理。
 
 **See**: [[CC-590]]（2026-09-27 落地過程中發現本票的 session）；
 `runtime/lib/gate-result-verify.sh` 的 `gate_subject_snapshot`／
@@ -5426,5 +5445,110 @@ protocol failure，無 result 檔案，重跑後正常過）；GitHub Actions CI
 **See**: GitHub issue #642；issue #632／#638／#639／#640（同一種
 fork-per-item anti-pattern 的前四個獨立實例）；[[CC-595]]／[[CC-597]]
 （同根因的前置修復，本票延續同一套「純 bash 比 fork 更快」的修法方向）。
+
+---
+
+## CC-599 — `pr-gate` scope manifest 對每個 symbol 各跑一次 `git grep`（GitHub issue #621）🔵 active
+
+**Problem**：原生 Windows 上單次 `pmctl gate run` 的 scope manifest 階段要 14–17 分鐘
+（issue #621 的原始回報）。2026-09-30 在本機對一個 pr-gate 測試 case
+（`tier-detection`）做 xtrace 剖析：整個 case 約 188 秒、約 3,050 個 bash 程序
+（與 WSL2 的 3,025 個幾乎相同，所以 Windows 沒有多 fork，只是每次 fork 更貴：
+外部程式 37.5 ms、`$(...)` 18.9 ms、`jq` 49.7 ms）。`gate-scope.sh` 佔約 53 秒（Windows
+與 Linux 的比例約 16 倍，是各檔案中最高）。
+
+**Why**：`_gate_scope_search_paths` 與 symbol 迴圈（`gate-scope.sh:434`／`:444`／`:612`／
+`:626`）對每個 changed file 的每個 symbol 各執行一次 `git grep`，並經 process
+substitution 逐行處理，屬於 [[CC-595]]／[[CC-597]]／[[CC-598]] 同一類 fork-per-item
+anti-pattern。一個大 diff 會產生數百次 `git grep`。
+
+**Requirement**：把同一輪中多個 symbol 的搜尋合併成較少次 `git grep`（多個 `-e`
+pattern 或單次掃描後在 bash 內歸類），保持輸出的排序、去重、`match_limit`、截斷
+（`truncation`）與 `fixed-head` 語意完全不變；到達 budget 時提前停止。
+
+**Non-goals**：不改 scope manifest 的 schema 或 `incomplete` 判定規則；不處理
+[[CC-600]] 的 policy lookup。
+
+**Done-when**：對同一份 diff，修改前後產出的 scope manifest 內容一致（逐位元比對）；
+`tier-detection` 這類 case 在本機的牆鐘時間可量測地下降；既有 scope-manifest 測試
+全數維持通過。**驗證注意**：本機 `test-pr-gate.sh` 每個 case 約 150 秒，需設
+`PM_DISPATCH_TEST_PR_GATE_CASE_TIMEOUT_SECS=900`，並以 `--filter` 縮小範圍。
+
+**See**: GitHub issue #621；[[CC-595]]／[[CC-597]]／[[CC-598]]（同根因的前置修復）；
+[[CC-600]]（同一份剖析的另一個熱點）。
+
+---
+
+## CC-600 — `_gate_assurance_policy_lookup` 每次查詢都 fork 多個子程序 🟢 someday
+
+**Problem**：2026-09-30 剖析（見 [[CC-599]]）中，`gate-policy.sh:116`／`:128` 合計約 24
+秒（Windows 約 14 倍）。`_gate_assurance_policy_lookup` 每次呼叫都執行
+`_gate_assurance_policy_emit`（內含 `$(_gate_assurance_policy_path)` 與 `cat`）再
+接 `awk`，一次查詢約 4 個子程序，而 policy 表格在同一個 process 內不會改變。
+另外 `pr-gate.sh:28`（`gate_cleanup_policy_input_dir` 的 `rm -rf`）約 14 秒，
+Linux 上同一行也是熱點，原因未查明。
+
+**Requirement**：policy 表格每個 process 只讀取並解析一次（變數或關聯陣列快取），
+lookup 改為純 bash 查表；查清 `pr-gate.sh:28` 為何耗時並決定是否處理。
+
+**Done-when**：lookup 的行為與錯誤處理（重複列、缺欄、malformed 表格皆須失敗）不變；
+剖析中 `gate-policy.sh` 的歸因時間可量測地下降。
+
+**See**: [[CC-599]]；[[CC-595]]／[[CC-597]]／[[CC-598]]。
+
+---
+
+## CC-601 — 共用「是否絕對路徑」helper 並修正 worktree 相關函式 🟢 someday
+
+**Problem**：[[CC-591]] 只修了 `_gate_subject_common_dir`。同樣的
+`git rev-parse --git-common-dir` 加 `== /*` 判斷仍存在於
+`runtime/lib/state-paths.sh` 的 `_sw_main_repo_root` 與 `runtime/lib/pmctl-worktree.sh`
+的 `_pmctl_worktree_main_root`：原生 Windows linked worktree 內 git 回傳
+`C:/.../.git`，它們判斷為非絕對而退回 `--show-toplevel`，得到 worktree 自己的路徑，
+導致這兩處的 repo 身分與 gate subject 的身分不一致（可能與 issue #591／#595／#596
+的 partition key 問題相關，尚未確認）。
+
+**Why**：同一個「以 `/` 開頭或 `^[A-Za-z]:/` 為絕對路徑」的判斷已 inline 在
+`pmctl-operation.sh:72`、`handover-validate.sh:189`、`guard-framework.sh:127`、
+`portable.sh:531`／`:626`，加上 CC-591 新增的一處。
+
+**Requirement**：在 `runtime/lib/portable.sh` 新增 `_portable_is_absolute_path`（含
+反斜線正規化，只對磁碟機形式改寫），遷移上述全部站點；考慮共用
+`_portable_git_common_dir <repo>` 回傳絕對路徑，各呼叫端保留自己的 fallback。
+
+**Done-when**：每個站點的既有測試不變；新增在真實 Windows linked worktree 內
+`_sw_main_repo_root` 與 `_pmctl_worktree_main_root` 回傳主 checkout 路徑的驗證；
+architecture-reviewer 確認沒有新增跨層依賴。
+
+**See**: [[CC-591]]（pr:#645，architecture-reviewer 的建議）。
+
+---
+
+## CC-602 — timeout-kill 時誤導的 `printf: write error: Permission denied` 🟢 someday
+
+**Problem**：GitHub issue #633：context workflow-refresh 被 `timeout -k 5` 終止時，有時
+會印出 `printf: write error: Permission denied`，而不是安靜地結束。[[CC-596]] 處理了同一個
+kill 情境的暫存檔洩漏，但沒有處理這個訊息。
+
+**Requirement**：查明寫入失敗的 fd 與來源，讓 kill 後不輸出誤導訊息。
+
+**Done-when**：以與 issue 相同的重現步驟不再出現該訊息。
+
+**See**: GitHub issue #633；[[CC-596]]。
+
+---
+
+## CC-603 — `context.db` 不會縮小 🟢 someday
+
+**Problem**：GitHub issue #636：`context.db` 沒有 `VACUUM`／`auto_vacuum`，即使 #620 的
+`.next` 症狀被 [[CC-595]] 之前的修正正確 reconcile，膨脹過的 db 也永遠維持肥大。
+
+**Requirement**：在 reindex 或明確的 maintenance 動作中安全地縮小 db（需考慮鎖與
+並行）。
+
+**Done-when**：在一個先膨脹再清理過的 fixture 上，執行後檔案大小可量測地下降，且
+不影響並行讀取。
+
+**See**: GitHub issue #636。
 
 ---
