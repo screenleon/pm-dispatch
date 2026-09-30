@@ -28,7 +28,7 @@ th_init "$@"
 VOCAB="critic qa-tester architecture-reviewer security-reviewer risk-reviewer"
 
 # _gate_policy_validate_sources reads its tables from this (same shell -- no
-# export needed; the read is inside the sourced _gate_assurance_policy_path, so
+# export needed; the read is inside the sourced _gate_assurance_policy_resolve, so
 # ShellCheck flags every assignment as unused -- see shellcheck-ignores.tsv).
 # Default to the real tables; the fixture cases point it at a tmp copy.
 PR_GATE_POLICY_DIR="$REPO_ROOT/core/policy"
@@ -117,6 +117,89 @@ name="validate_reviewer_csv: a malformed list is rejected"
 if should_run "$name"; then
   out="$( ( _gate_policy_validate_reviewer_csv ",critic" "$VOCAB" "signals row X" ) 2>&1 )"; rc=$?
   want "$name" 2 "$rc" "has an invalid reviewer list" "$out"
+fi
+
+# --- _gate_assurance_policy_lookup (CC-600: no per-call subshell/cat/pipe) ---
+# A gate resolves the policy ~100 times and every extra process costs ~40 ms on
+# native Windows, so the lookup was reworked to read the table with one awk. The
+# contract is unchanged: exactly one matching row, a non-empty value, and the
+# same answer from the canonical file and from the bundled snapshot.
+
+name="policy_lookup: the canonical file answers, and copy-mode answers from the bundled snapshot instead"
+if should_run "$name"; then
+  # A fixture whose express row differs from the bundled snapshot makes the
+  # source of the answer observable (the real file and the snapshot are
+  # byte-identical by design, so they cannot tell the two paths apart).
+  d="$tmp_root/lookup-source"
+  mkdir -p "$d"
+  printf 'tier\tdefault_reviewers\tevidence_floor\nexpress\tfixture-only\treviewer-verdicts\n' \
+    > "$d/gate-tiers.tsv"
+  # The real answer is read from the shipped file, not hard-coded, so a
+  # legitimate policy edit cannot break a test about *where* the answer comes from.
+  expected="$(awk -F '\t' '$1 == "express" { print $2 }' "$REPO_ROOT/core/policy/gate-tiers.tsv")"
+  real="$( _gate_assurance_policy_lookup tiers tier express default_reviewers 2>&1 )"; rc1=$?
+  canonical="$( PR_GATE_POLICY_DIR="$d" \
+    _gate_assurance_policy_lookup tiers tier express default_reviewers 2>&1 )"; rc2=$?
+  snapshot="$( PR_GATE_POLICY_DIR="$d" PR_GATE_INSTALLED_COPY_ROOT=/nonexistent \
+    _gate_assurance_policy_lookup tiers tier express default_reviewers 2>&1 )"; rc3=$?
+  if [[ "$rc1" -eq 0 && "$rc2" -eq 0 && "$rc3" -eq 0 && -n "$expected" \
+      && "$real" == "$expected" && "$canonical" == "fixture-only" \
+      && "$snapshot" == "$expected" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected '$expected'; real rc=$rc1 '$real'; canonical rc=$rc2 '$canonical'; snapshot rc=$rc3 '$snapshot'"
+  fi
+fi
+
+name="policy_lookup: an unreadable canonical table falls back to the bundled snapshot"
+if should_run "$name"; then
+  d="$tmp_root/lookup-empty-dir"
+  mkdir -p "$d"
+  expected="$(awk -F '\t' '$1 == "express" { print $2 }' "$REPO_ROOT/core/policy/gate-tiers.tsv")"
+  out="$( PR_GATE_POLICY_DIR="$d" \
+    _gate_assurance_policy_lookup tiers tier express default_reviewers 2>&1 )"; rc=$?
+  if [[ "$rc" -eq 0 && -n "$expected" && "$out" == "$expected" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected '$expected'; rc=$rc '$out'"
+  fi
+fi
+
+name="policy_lookup: an unknown table, key, column or argument count is rejected with rc 2"
+if should_run "$name"; then
+  _gate_assurance_policy_lookup nosuchtable tier express default_reviewers >/dev/null 2>&1; rc1=$?
+  _gate_assurance_policy_lookup tiers tier nosuchtier default_reviewers >/dev/null 2>&1; rc2=$?
+  _gate_assurance_policy_lookup tiers tier express nosuchcolumn >/dev/null 2>&1; rc3=$?
+  _gate_assurance_policy_lookup tiers tier express >/dev/null 2>&1; rc4=$?
+  if [[ "$rc1" -eq 2 && "$rc2" -eq 2 && "$rc3" -eq 2 && "$rc4" -eq 2 ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc table=$rc1 key=$rc2 column=$rc3 arity=$rc4 (all must be 2)"
+  fi
+fi
+
+name="policy_path: prints the canonical file, and returns 1 in copy mode and 2 for an unknown table"
+if should_run "$name"; then
+  out="$( _gate_assurance_policy_path tiers )"; rc1=$?
+  copy="$( PR_GATE_INSTALLED_COPY_ROOT=/nonexistent _gate_assurance_policy_path tiers )"; rc2=$?
+  _gate_assurance_policy_path nosuchtable >/dev/null 2>&1; rc3=$?
+  if [[ "$rc1" -eq 0 && "$out" == "$REPO_ROOT/core/policy/gate-tiers.tsv" \
+      && "$rc2" -eq 1 && -z "$copy" && "$rc3" -eq 2 ]]; then
+    pass "$name"
+  else
+    fail "$name" "canonical rc=$rc1 '$out'; copy rc=$rc2 '$copy'; unknown rc=$rc3"
+  fi
+fi
+
+name="policy_lookup: a duplicated key row is rejected rather than answered"
+if should_run "$name"; then
+  d="$tmp_root/lookup-dupkey"
+  mkdir -p "$d"
+  cp "$REPO_ROOT/core/policy/gate-tiers.tsv" "$d/gate-tiers.tsv"
+  printf 'express\tcritic\treviewer-verdicts\n' >> "$d/gate-tiers.tsv"
+  out="$( PR_GATE_POLICY_DIR="$d" \
+    _gate_assurance_policy_lookup tiers tier express default_reviewers 2>&1 )"; rc=$?
+  want "$name" 2 "$rc" "" "$out"
 fi
 
 # --- _gate_policy_validate_sources (migrated: dormant / duplicate signal) ---

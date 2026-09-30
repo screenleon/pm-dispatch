@@ -136,11 +136,13 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-597 | ✅ done | **[`_ctx_query_hits_raw`／`_ctx_generate_file_sql`／`_ctx_tsv_to_json_array` 仍是 CC-595 已修過的同一種 forking anti-pattern：純 bash helper 透過 `$(...)` 呼叫而非 write-into-變數]** GitHub issue #638（`_ctx_query_hits_raw` 每個 matched row 各 fork `_ctx_memory_trust`／`_ctx_classify_domain`／`_ctx_compose_score`，prompt-scan 每個 prompt 都要付 60-70s）、#639（`_ctx_generate_file_sql` 每個新／變更檔案各 fork `_ctx_detect_language`／`_ctx_file_mtime`／`_ctx_file_sha1`／`_ctx_sql_str`，CC-595 的批次化只覆蓋「判斷是否需要重索引」，沒覆蓋「真的產生 SQL」這段）、#640（`_ctx_tsv_to_json_array` 每筆輸出 row 最多 fork `_ctx_json_str` 7 次，影響 query/pack/reuse-scan，其中 pack 又是 gate dispatch 組 reviewer context 的路徑，跟 #621 疊加）——三個都是同一場「掃描 CC-595 同款 anti-pattern」找到的獨立實例，且都不是零檔案異動的 fast path（CC-595 唯一測過的情境），而是「真的有東西要處理」時才會踩到，所以 CC-595 的驗證完全沒發現。已比照 `_ctx_sql_str`／`_ctx_sql_str_var` 的既有慣例，替 `_ctx_memory_trust`／`_ctx_classify_domain`／`_ctx_compose_score`／`_ctx_detect_language`／`_ctx_json_str` 各補上非 fork 的 `_var` 版本（原本的 stdout 版本改成呼叫 `_var` 版本，避免重複邏輯，且保留給既有白箱測試/其他呼叫者用），`_ctx_query_hits_raw` 三處呼叫點、`_ctx_tsv_to_json_array` 的 7 處呼叫點全部換掉。`_ctx_generate_file_sql` 額外改成接受可選的預算 mtime/sha1 參數；`_ctx_index_tree` 改成兩段式：先分類 skip/reindex（沿用 CC-595 已批次好的 mtime），再對「真的要 reindex」的子集合一次批次算 sha1，最後才呼叫 `_ctx_generate_file_sql` 並把預算值傳進去——單檔案呼叫路徑（`_ctx_index_file`／`pmctl_context_update`）沒有批次值可用，維持原本 per-file fork 的 fallback 行為不變。實機驗證：prompt-scan 69.7s→15.2s（#638+#640 疊加效果，同一份真 query）；全新首次索引（522 檔案，全部視為新檔）5m54.8s→4m55.2s（#639，改善幅度較小是因為主要成本本來就是 symbol/chunk 萃取本身，不是這次修的 metadata forking，issue 本身也沒宣稱會解決那部分）。三個修法各補一個 mutation-sensitive regression：shadow 掉「原本」會被繞過的 stdout 版本 helper 讓它回傳明顯錯誤的哨兵值，驗證真正呼叫路徑已經換成 `_var` 版本（若 revert 回 forking 版本，輸出會出現哨兵值而失敗）——三個都驗證過 revert 對應那行後測試會失敗、補回後通過。 | ops/portability | 2026-09-28 | pr:#641 | P2 | hygiene |
 | CC-598 | ✅ done | **[`_ctx_extract_symbols` 的 go/python/typescript/javascript 分支每個 matched 行各 fork `sed`／`grep -q`，CC-597 自己的 commit message 誤判這是「真正內容處理、不可避免」]** GitHub issue #642：在真實 mizuho-v1（Next.js + Expo/React Native monorepo，926 檔案）上觀測到首次 `workflow-refresh` 跑了 17m53s+ 還在跑（確認非卡死，batch SQL 暫存檔持續在長大）。pm-dispatch 自己的 repo 幾乎全是 shell script（`_ctx_detect_language` 把 `.sh` 對應到單一整檔 grep 搭配 sed 的 pipeline，不是逐行 per-match），從沒踩過這個分支，這正是 CC-597 驗證時完全沒發現的原因；一個真實 TypeScript/React 專案剛好相反——`const Foo = () => {...}`（component/hook/exported util）是這個語言最常見的頂層語句形狀之一，一個檔案輕鬆 5-20+ 個。已把每個 matched 行都要 printf 搭配 sed（typescript 的 const 分支還多一個 printf 搭配 grep -q）的 pipeline 全部換成純 bash regex 比對（go func 含 receiver 的雙模式、go type、python def/class、typescript function/class/const-arrow 全部覆蓋），逐一跟原本 sed 輸出做過 side-by-side 比對確認語意完全一致，包含原本刻意處理的邊界情況（`func () {}` 空 receiver 應該不產生符號；`const` 沒有 `=>` 不應被當成 arrow function）。**實作過程中額外發現並修掉的獨立正確性 bug**：「非空字串才印出」原本用 bare `&&`-chain 寫法（新舊程式碼都有，不是這次才引入）在 `cli/pmctl` 本身有設 `set -euo pipefail` 的前提下，一旦捕捉到的識別字剛好是空字串（例如真實碼庫常見的 `const { data } = useQuery(() => ...)` 解構賦值），`&&` 左邊為 false 會讓整個腳本在 `-e` 下直接中止——相當於整個索引作業在處理到這種行時會靜默失敗，不只是慢。已全部改成 if/then/fi 寫法，消除這個 errexit 地雷。實機驗證：用合成的 300 檔案 TypeScript fixture（每檔 5 個宣告，共 1500 個 matched 行）量測同一份 fixture 修復前 2m43.7s → 修復後 1m52.99s。 | ops/portability | 2026-09-28 | pr:#643 | P2 | hygiene |
 | CC-599 | ✅ done | **[`pr-gate` 的 scope manifest 對每個 changed file 的每個 symbol 各跑一次 `git grep`，原生 Windows 上單次 gate 要 14–17 分鐘，且到 budget 也不提前停止]** GitHub issue #621。2026-09-30 在本機以 xtrace 剖析一個 pr-gate case（`tier-detection`，約 3,050 個 bash 程序、約 188 秒，子程序建立成本 37.5 ms/次），`gate-scope.sh:626`／`:444`／`:434`（per-symbol `git grep` 的 process substitution）合計約 37 秒，是 Windows 放大倍率最高（約 16 倍）的熱點。把多個 symbol 合併成較少次 `git grep`（多 `-e` pattern／單次掃描），行為與截斷語意不變。 | ops/gate | 2026-09-30 | pr:#647 | P2 | hygiene |
-| CC-600 | 🟢 someday | **[`_gate_assurance_policy_lookup` 每次查詢都 `cat \| awk` 加一個 `$(...)`，約 4 個子程序/次；`pr-gate.sh:28` 的 cleanup `rm -rf` 在剖析中也異常耗時]** 同一份 2026-09-30 剖析：`gate-policy.sh:116`／`:128` 合計約 24 秒（Windows 約 14 倍），`pr-gate.sh:28` 約 14 秒且 Linux 上同一行也是熱點（原因未查明）。policy 表格每個 process 只解析一次，並查清 `pr-gate.sh:28`。 | ops/gate | 2026-09-30 | — | P2 | hygiene |
+| CC-600 | ✅ done | **[`_gate_assurance_policy_lookup` 每次查詢都 `cat \| awk` 加一個 `$(...)`，約 4 個子程序/次；`pr-gate.sh:28` 的 cleanup `rm -rf` 在剖析中也異常耗時]** 同一份 2026-09-30 剖析：`gate-policy.sh:116`／`:128` 合計約 24 秒（Windows 約 14 倍），`pr-gate.sh:28` 約 14 秒。已由 [[CC-600]] 交付（pr:#649）：lookup 不再每次多個子程序（單次約 121 → 61 ms）；`pr-gate.sh:28` 經查是剖析工具的歸因假象（子程序時間被記到父 PID 前一行），不是 `rm -rf` 慢；原提議的 process 快取因呼叫端都在 `$(...)` 內而不可行。 | ops/gate | 2026-09-30 | pr:#649 | P2 | hygiene |
 | CC-601 | 🟢 someday | **[「路徑是否為絕對路徑」的判斷散落約 6 處 inline，且 `_sw_main_repo_root`／`_pmctl_worktree_main_root` 在 Windows linked worktree 內仍有 CC-591 同型缺陷]** 抽出共用 `_portable_is_absolute_path`（放 `runtime/lib/portable.sh`），遷移全部站點；兩個 worktree 相關函式會退回 `--show-toplevel`，使其 repo 身分與 gate subject 不一致。 | arch/portability | 2026-09-30 | pr:#645 | P2 | reuse-debt |
 | CC-602 | 🟢 someday | **[context workflow-refresh 的 timeout-kill 有時會印出誤導的 `printf: write error: Permission denied`，而不是安靜結束]** GitHub issue #633；與 [[CC-596]] 相關但不是同一個問題（CC-596 只修暫存檔洩漏）。 | ops/portability | 2026-09-30 | — | P3 | hygiene |
 | CC-603 | 🟢 someday | **[`context.db` 永遠不會縮小：沒有 VACUUM／auto_vacuum，即使 #620 的 `.next` 症狀被正確 reconcile，肥大的 db 也維持肥大]** GitHub issue #636。 | ops | 2026-09-30 | — | P3 | hygiene |
 | CC-604 | 🟢 someday | **[`gate-scope.sh` 收尾整理：collector 過大、三處「檔案內有哪些 symbol」讀取邏輯重複、fixed-head 模式仍有每來源固定次數的 fork]** CC-599 審查（architecture-reviewer／critic）提出但刻意不併入該 PR 的後續：`_gate_scope_expansions_collect_into` 拆成 shell consumer 與 symbol call-site 兩個 per-source emitter；tracked／untracked／shell consumer 三種「一個檔案內出現哪些 symbol」的讀取視需要共用 helper；fixed-head 模式下每個來源對 12 個副檔名各做一次 `git cat-file -e`、每個 consumer 一次 `git show`（CC-599 實測 fixed-head 剩餘成本）。 | ops/gate | 2026-09-30 | pr:#647 | P3 | hygiene |
+| CC-605 | 🟢 someday | **[`_gate_policy_resolve` 的 signal 迴圈對每個 signal 各 fork 多個 jq／grep，是 `gate-policy.sh` 剩餘的主要成本]** [[CC-600]] 之後的剖析（`tier-detection`）中 `gate-policy.sh` 仍約 19.5 秒：15 個 signal 依 `match_source` 各自做 `jq -c`（classification）、`jq -r … \| grep -iE`＋`jq`（path-regex）、`jq -r`（brief-value），加上每個命中 signal 的 `_gate_policy_tier_rank`／`_gate_policy_add_reviewers`／`jq -nc` 子 shell。輸入只需解析一次，比對可在 bash 內完成。風險：`grep -iE` 與 bash `=~` 的正規表達式語意需先逐 pattern 驗證等價。 | ops/gate | 2026-09-30 | pr:#649 | P2 | hygiene |
+| CC-606 | 🟢 someday | **[`awk -v wanted="$key"` 會處理反斜線跳脫，`--tier`／`--mode` 這類 CLI 值可通過 policy 驗證卻與 bash 字串比較不一致]** [[CC-600]] 的 security-reviewer 指出的既有問題（非該 PR 引入）：`awk -v` 會展開跳脫序列，因此 `--tier 'expre\163s'` 或結尾帶反斜線的 `express\` 會被 `_gate_assurance_policy_lookup` 視為 `express`，但後續 `[[ $TIER == express ]]` 之類的 bash 比較不會。需本機 CLI 控制權，不是提權，屬驗證正規化不一致。修法：改用 `ENVIRON` 傳值，或在 lookup 前拒絕含反斜線的 key。 | ops/gate | 2026-09-30 | pr:#649 | P3 | hygiene |
 
 ---
 
@@ -5495,7 +5497,7 @@ authoritative full-suite 結果，且審查者與實作者同模型家族。既�
 
 ---
 
-## CC-600 — `_gate_assurance_policy_lookup` 每次查詢都 fork 多個子程序 🟢 someday
+## CC-600 — `_gate_assurance_policy_lookup` 每次查詢都 fork 多個子程序 ✅ 2026-09-30
 
 **Problem**：2026-09-30 剖析（見 [[CC-599]]）中，`gate-policy.sh:116`／`:128` 合計約 24
 秒（Windows 約 14 倍）。`_gate_assurance_policy_lookup` 每次呼叫都執行
@@ -5504,15 +5506,33 @@ authoritative full-suite 結果，且審查者與實作者同模型家族。既�
 另外 `pr-gate.sh:28`（`gate_cleanup_policy_input_dir` 的 `rm -rf`）約 14 秒，
 Linux 上同一行也是熱點，原因未查明。
 
-**Requirement**：policy 表格每個 process 只讀取並解析一次（變數或關聯陣列快取），
-lookup 改為純 bash 查表；查清 `pr-gate.sh:28` 為何耗時並決定是否處理。
-[[CC-599]] 的 architecture-reviewer 建議：這裡不要沿用 CC-599 的動態範圍表格（lookup
-被多處呼叫、不屬於單一呼叫端），改用檔案層級的 per-process 全域快取（前綴
-`_GATE_POLICY_*`），並確認 policy 檔在同一個 process 內不會變動；若可能變動，
-需要失效機制。
+**Requirement**：減少每次 policy lookup 的子程序數，行為與錯誤處理不變；查清
+`pr-gate.sh:28` 為何耗時並決定是否處理。（原本的方向是 per-process 快取，見下方
+「已交付」說明為何改成減少 fork。）
 
 **Done-when**：lookup 的行為與錯誤處理（重複列、缺欄、malformed 表格皆須失敗）不變；
 剖析中 `gate-policy.sh` 的歸因時間可量測地下降。
+
+**已交付（pr:#649，2026-09-30；PR 於本次更新時尚待合併）**：新增
+`_gate_assurance_policy_resolve <table> <out-var>`（用 `printf -v` 寫入呼叫端變數，
+無 subshell、無 nameref；`_gate_assurance_policy_filename` 併入其中）與
+`_gate_assurance_policy_awk`（直接對 canonical 檔案跑 awk，檔案以 stdin 傳入，路徑
+不會被誤判成 awk 的 `name=value` 運算元或選項；copy 模式則把內建 snapshot 接管線
+進去）。`lookup`、`values` 與 source-shape validator 都改用它；awk 程式本身不變。
+舊新 `gate-policy.sh` 在所有表格、未知表格／key／欄位、參數個數錯誤、repo 與 copy
+兩種佈局下，stdout 與 exit code 逐位元相同；單次 lookup 約 121 → 61 ms（copy 模式
+118 → 84 ms）。連同 [[CC-599]]，一個 pr-gate case 的 bash 程序數 3,075 → 2,256，
+xtrace 牆鐘 220 → 148 秒。新增 5 個直接測試（canonical／snapshot 來源、不可讀表格
+退回 snapshot、未知輸入 rc 2、`_gate_assurance_policy_path` 回傳碼、重複 key）。
+**方向修正**：原提議的 `_GATE_POLICY_*` process 快取不可行——所有 lookup 呼叫端都在
+`$(...)` 內執行，子 shell 內建立的快取不會保留。**`pr-gate.sh:28` 之謎已解**：
+它只在 trace 中出現兩次（cleanup 函式最後一行），11 秒是下一行呼叫的
+`_gate_policy_resolve`（另一個 PID 的 `$(...)` 子 shell）被剖析工具歸到父 PID 前一行；
+不是 `rm -rf` 慢。**審查方式須如實記錄**：未走 `pmctl gate run`（本機每個 pr-gate
+case 約 100–190 秒，全套跑不完），改由 critic／qa-tester／security／risk／architecture
+五位 reviewer 分別審查，皆無 block；因此沒有 gate result artifact、沒有 authoritative
+full-suite 結果，且審查者與實作者同模型家族。剩餘成本與審查提出的既有問題見
+[[CC-605]]、[[CC-606]]。
 
 **See**: [[CC-599]]；[[CC-595]]／[[CC-597]]／[[CC-598]]。
 
@@ -5591,5 +5611,50 @@ emitter（shell consumer hints、symbol call-site hints），並可共用同一�
 耗時可量測地下降；`scope-collector/*` 與既有 scope-manifest 測試維持通過。
 
 **See**: [[CC-599]]；[[CC-600]]。
+
+---
+
+## CC-605 — `_gate_policy_resolve` 的 signal 迴圈 fork 過多 🟢 someday
+
+**Problem**：[[CC-600]] 之後重新剖析同一個 pr-gate case（`tier-detection`，約 2,256 個
+bash 程序），`gate-policy.sh` 仍歸因約 19.5 秒，主要在 `_gate_policy_resolve`
+（`runtime/lib/gate-policy.sh`）的 signal 迴圈：每個 signal（約 15 個）依
+`match_source` 各自呼叫 `jq -c`（classification）、`jq -r … | grep -iE`＋
+`_gate_policy_lines_json`（path-regex）、`jq -r`（brief-value），命中時再有
+`_gate_policy_tier_rank`、`_gate_policy_add_reviewers`、`jq -nc` 等 `$(...)`。
+
+**Requirement**：把 `input_json` 只解析一次（例如一次 jq 取出 changed_paths、各
+classification 的 matches、architecture_impact），signal 比對改在 bash 內完成，並把
+每個命中 signal 的 tier／reviewer 處理改成不用子 shell。**前置驗證**：policy 表格的
+`pattern` 目前以 `grep -iE`（GNU ERE）比對；改用 bash `=~`（POSIX ERE，
+`shopt -s nocasematch`）前，必須對現有 15 個 pattern 與代表性路徑逐一證明結果相同，
+並決定是否禁止 policy 表格使用 GNU 擴充語法。
+
+**Done-when**：`_gate_policy_resolve` 對相同輸入產生逐位元相同的 resolution JSON
+（沿用 [[CC-599]]／[[CC-600]] 的新舊差異比對方式）；`test-gate-policy.sh` 的
+`resolver: unmatched signals avoid extra jq probes` 維持通過；剖析中 `gate-policy.sh`
+歸因時間可量測地下降。
+
+**See**: [[CC-600]]；[[CC-599]]。
+
+---
+
+## CC-606 — `awk -v` 反斜線跳脫造成 policy key 驗證與 bash 比較不一致 🟢 someday
+
+**Problem**：[[CC-600]] 的 security-reviewer 以實測指出（既有問題，非該 PR 引入）：
+`_gate_assurance_policy_lookup` 以 `-v wanted="$key"` 傳值，awk 會處理 `-v` 值中的
+反斜線跳脫，所以 `--tier 'expre\163s'`（八進位跳脫）與結尾為反斜線的
+`--tier 'express\'` 都會比對到表格中的 `express`，通過 `pr-gate.sh` 的驗證；但原始字串
+仍存入 `TIER_OVERRIDE`，之後 `[[ $TIER == express ]]` 之類的 bash 比較不會相等。需要
+本機 CLI 控制權，不是提權，是驗證正規化不一致。
+
+**Requirement**：讓 lookup 以位元組原樣比較 key：改用 `ENVIRON` 傳值（不經跳脫處理），
+或在 lookup 前拒絕含反斜線的 key；一併檢查 `_gate_assurance_policy_values` 與
+`pr-gate.sh:395-409` 的 `--tier`／`--mode` 驗證路徑。
+
+**Done-when**：`--tier 'expre\163s'` 與 `--tier 'express\'` 被拒絕（與其他未知 tier 相同
+的錯誤與 rc）；既有 lookup 行為不變。
+
+**See**: [[CC-600]]。
 
 ---

@@ -90,34 +90,60 @@ GATE_POLICY_SIGNALS_TSV
   esac
 }
 
-_gate_assurance_policy_filename() {
+# _gate_assurance_policy_resolve <table> <out-var>
+# Stores the canonical TSV path for <table> in <out-var> (a variable of the
+# caller, set with printf -v: no subshell, no nameref). <out-var> must be a
+# plain identifier that is not `__gpr_filename`; a name printf -v cannot assign
+# makes this fail. Returns 2 for an unknown table and 1 when this run has no
+# canonical file and must use the bundled snapshot. A gate resolves the policy
+# ~100 times, and each `$(...)` here used to cost a process (~40 ms on native
+# Windows).
+_gate_assurance_policy_resolve() {
+  local __gpr_filename
   case "${1:-}" in
-    tiers) printf 'gate-tiers.tsv\n' ;;
-    modes) printf 'gate-modes.tsv\n' ;;
-    pass-kinds) printf 'gate-pass-kinds.tsv\n' ;;
-    consumers) printf 'gate-policy-consumers.tsv\n' ;;
-    signals) printf 'gate-policy-signals.tsv\n' ;;
+    tiers) __gpr_filename=gate-tiers.tsv ;;
+    modes) __gpr_filename=gate-modes.tsv ;;
+    pass-kinds) __gpr_filename=gate-pass-kinds.tsv ;;
+    consumers) __gpr_filename=gate-policy-consumers.tsv ;;
+    signals) __gpr_filename=gate-policy-signals.tsv ;;
     *) return 2 ;;
   esac
-}
-
-_gate_assurance_policy_path() {
-  local filename
-  filename="$(_gate_assurance_policy_filename "${1:-}")" || return 2
   # Installed copy-mode carries the generated policy snapshot in this script;
   # never treat an unrelated ~/core tree as canonical policy.
   [[ -z "${PR_GATE_INSTALLED_COPY_ROOT:-}" ]] || return 1
   [[ -n "${PR_GATE_POLICY_DIR:-}" \
-      && -r "$PR_GATE_POLICY_DIR/$filename" ]] || return 1
-  printf '%s/%s\n' "$PR_GATE_POLICY_DIR" "$filename"
+      && -r "$PR_GATE_POLICY_DIR/$__gpr_filename" ]] || return 1
+  printf -v "$2" '%s/%s' "$PR_GATE_POLICY_DIR" "$__gpr_filename"
+}
+
+_gate_assurance_policy_path() {
+  local path
+  _gate_assurance_policy_resolve "${1:-}" path || return $?
+  printf '%s\n' "$path"
 }
 
 _gate_assurance_policy_emit() {
   local path
-  if path="$(_gate_assurance_policy_path "${1:-}")"; then
+  if _gate_assurance_policy_resolve "${1:-}" path; then
     cat "$path"
   else
     _gate_assurance_policy_snapshot "${1:-}"
+  fi
+}
+
+# _gate_assurance_policy_awk <table> <awk-args...>
+# Runs awk over the table: straight on the canonical file when there is one,
+# otherwise over the bundled snapshot. Same input as `emit | awk`, minus the
+# `cat` and pipeline processes. The file goes in on stdin, not as an operand:
+# awk reads an operand shaped like `name=value` as a variable assignment and
+# would take one starting with `-` for an option.
+_gate_assurance_policy_awk() {
+  local table="${1:-}" path
+  shift
+  if _gate_assurance_policy_resolve "$table" path; then
+    awk "$@" < "$path"
+  else
+    _gate_assurance_policy_snapshot "$table" | awk "$@"
   fi
 }
 
@@ -126,7 +152,7 @@ _gate_assurance_policy_emit() {
 _gate_assurance_policy_lookup() {
   local table="${1:-}" key_column="${2:-}" key="${3:-}" value_column="${4:-}"
   [[ $# -eq 4 ]] || return 2
-  _gate_assurance_policy_emit "$table" | awk -F '\t' \
+  _gate_assurance_policy_awk "$table" -F '\t' \
     -v key_name="$key_column" -v wanted="$key" -v value_name="$value_column" '
       /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
       !header_seen {
@@ -160,7 +186,7 @@ _gate_assurance_policy_lookup() {
 _gate_assurance_policy_values() {
   local table="${1:-}" key_column="${2:-}"
   [[ $# -eq 2 ]] || return 2
-  _gate_assurance_policy_emit "$table" | awk -F '\t' -v key_name="$key_column" '
+  _gate_assurance_policy_awk "$table" -F '\t' -v key_name="$key_column" '
     /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
     !header_seen {
       header_seen=1
@@ -241,7 +267,7 @@ _gate_policy_lines_json() {
 _gate_policy_source_shape_validate() {
   local table="${1:-}" expected_header="${2:-}"
   [[ $# -eq 2 ]] || return 2
-  if ! _gate_assurance_policy_emit "$table" | awk -F '\t' \
+  if ! _gate_assurance_policy_awk "$table" -F '\t' \
       -v expected_header="$expected_header" '
         /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
         !header_seen {
