@@ -1492,6 +1492,47 @@ relocate_gate_artifacts() {
   rmdir "$WORK_DIR/.gate-results" 2>/dev/null || true
 }
 
+# CC-522 Slice B QA execution evidence (qa_execution_prepare, further down, creates
+# it). The full gate_exit_cleanup trap (installed below; the early trap near the
+# top does not call this) calls qa_execution_finalize, so the function and the
+# variables it reads must be defined before that trap is installed, and so must
+# anything else gate_exit_cleanup calls. A gate cancelled or failing in the long
+# scope-manifest phase used to hit "command not found" here (CC-609). Before
+# qa_execution_prepare runs there is no evidence file, and finalize returns at once.
+QA_EXECUTION_EVIDENCE_PATH=""
+QA_EXECUTION_HELPER_PATH=""
+QA_EXECUTION_CONTEXT_BLOCK=""
+
+qa_execution_finalize() {
+  local exit_status="${1:-0}" now tmp terminal
+  [[ -n "$QA_EXECUTION_EVIDENCE_PATH" && -f "$QA_EXECUTION_EVIDENCE_PATH" ]] || return 0
+  terminal="$(jq -r '.status // empty' "$QA_EXECUTION_EVIDENCE_PATH" 2>/dev/null || true)"
+  [[ "$terminal" == completed || "$terminal" == inconclusive || "$terminal" == not_run ]] && return 0
+  now="$(date -u +'%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date +'%Y-%m-%dT%H:%M:%SZ')"
+  tmp="$(mktemp "${QA_EXECUTION_EVIDENCE_PATH}.tmp.XXXXXX")" || return 0
+  # `not_run` is truthful only when the helper never wrote its early
+  # checkpoint.  A `running` record proves that supplemental execution was
+  # requested; if its writer disappears before the terminal update, retain it
+  # as non-authorizing inconclusive evidence even when the overall gate exits
+  # successfully.
+  if [[ "$exit_status" -eq 0 && "$terminal" == awaiting_checkpoint ]]; then
+    if jq --arg now "$now" '.status="not_run" | .host_finalization={reason:"no supplemental QA command requested",at:$now}' \
+        "$QA_EXECUTION_EVIDENCE_PATH" > "$tmp"; then
+      mv "$tmp" "$QA_EXECUTION_EVIDENCE_PATH" || rm -f "$tmp"
+    else
+      rm -f "$tmp"
+    fi
+  else
+    if jq --arg now "$now" --argjson exit_status "$exit_status" --arg terminal "$terminal" \
+        '.status="inconclusive" | .host_finalization={reason:(if $terminal == "running" then "QA test attempt ended before it reached a terminal state" else "reviewer session ended before QA evidence reached a terminal state" end),at:$now,gate_exit_status:$exit_status}' \
+        "$QA_EXECUTION_EVIDENCE_PATH" > "$tmp"; then
+      mv "$tmp" "$QA_EXECUTION_EVIDENCE_PATH" || rm -f "$tmp"
+    else
+      rm -f "$tmp"
+    fi
+  fi
+}
+
 gate_exit_cleanup() {
   local _gate_exit_status=$?
   gate_cleanup_reviewer_override_snapshot
@@ -1862,9 +1903,6 @@ _gate_scope_manifest_write "$SCOPE_MANIFEST_PATH" \
     exit 2
   }
 SCOPE_MANIFEST_DIGEST="$(_gate_result_sha256_file "$SCOPE_MANIFEST_PATH")" || exit 2
-QA_EXECUTION_EVIDENCE_PATH=""
-QA_EXECUTION_HELPER_PATH=""
-QA_EXECUTION_CONTEXT_BLOCK=""
 
 # CC-522 Slice B.  The reviewer cannot make a watchdog-safe test execution
 # record by writing prose after a command returns: a timeout may prevent that
@@ -1951,35 +1989,6 @@ QA_ATTEMPT_EOF
     "$QA_EXECUTION_EVIDENCE_PATH" "$WORK_DIR/.gate-results/qa-test-attempt-${TIMESTAMP}.log"
 }
 
-qa_execution_finalize() {
-  local exit_status="${1:-0}" now tmp terminal
-  [[ -n "$QA_EXECUTION_EVIDENCE_PATH" && -f "$QA_EXECUTION_EVIDENCE_PATH" ]] || return 0
-  terminal="$(jq -r '.status // empty' "$QA_EXECUTION_EVIDENCE_PATH" 2>/dev/null || true)"
-  [[ "$terminal" == completed || "$terminal" == inconclusive || "$terminal" == not_run ]] && return 0
-  now="$(date -u +'%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date +'%Y-%m-%dT%H:%M:%SZ')"
-  tmp="$(mktemp "${QA_EXECUTION_EVIDENCE_PATH}.tmp.XXXXXX")" || return 0
-  # `not_run` is truthful only when the helper never wrote its early
-  # checkpoint.  A `running` record proves that supplemental execution was
-  # requested; if its writer disappears before the terminal update, retain it
-  # as non-authorizing inconclusive evidence even when the overall gate exits
-  # successfully.
-  if [[ "$exit_status" -eq 0 && "$terminal" == awaiting_checkpoint ]]; then
-    if jq --arg now "$now" '.status="not_run" | .host_finalization={reason:"no supplemental QA command requested",at:$now}' \
-        "$QA_EXECUTION_EVIDENCE_PATH" > "$tmp"; then
-      mv "$tmp" "$QA_EXECUTION_EVIDENCE_PATH" || rm -f "$tmp"
-    else
-      rm -f "$tmp"
-    fi
-  else
-    if jq --arg now "$now" --argjson exit_status "$exit_status" --arg terminal "$terminal" \
-        '.status="inconclusive" | .host_finalization={reason:(if $terminal == "running" then "QA test attempt ended before it reached a terminal state" else "reviewer session ended before QA evidence reached a terminal state" end),at:$now,gate_exit_status:$exit_status}' \
-        "$QA_EXECUTION_EVIDENCE_PATH" > "$tmp"; then
-      mv "$tmp" "$QA_EXECUTION_EVIDENCE_PATH" || rm -f "$tmp"
-    else
-      rm -f "$tmp"
-    fi
-  fi
-}
 # shellcheck disable=SC2034 # consumed by gate_protocol_attempt_record in runtime/lib/gate-protocol.sh
 PROTOCOL_RECOVERY_PATH="$WORK_DIR/.gate-results/gate-protocol-attempts-${TIMESTAMP}.jsonl"
 SCOPE_MANIFEST_CONTENT_DIGEST="$(jq -r '.content.digest' "$SCOPE_MANIFEST_PATH")"
