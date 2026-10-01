@@ -42,7 +42,8 @@ fail() { printf 'check-planning-status-consistency: %s\n' "$*" >&2; failures=$((
 # BACKLOG index authority: CC-NNN -> "done" | "open".
 # Status vocabulary is pm/schema.md §"可接受 status token": terminal forms
 # (✅ done / ✅ closed / 🚫 dropped / 🟢 superseded) collapse to "done"; the
-# non-terminal forms (🔵 active / ⏸|🟡 deferred / 🟢 someday) to "open". Note
+# non-terminal forms (🔵 active / ⏸|🟡 deferred / 🟢 someday / ⚠️ partial) to
+# "open" (`⚠️ partial YYYY-MM-DD` is schema §2.3's "shipped in part" state). Note
 # 🟢 is used by both `someday` (open) and `superseded` (terminal) — disambiguate
 # by the word. An unrecognised BACKLOG status is a schema break -> fail closed.
 declare -A backlog_done=()
@@ -55,7 +56,7 @@ while IFS= read -r line; do
   status="${status%"${status##*[![:space:]]}"}"
   case "$status" in
     "✅ done"*|"✅ closed"*|"🚫 dropped"*|"🟢 superseded"*) backlog_done["$cc"]="done" ;;
-    "🔵 active"*|"⏸ deferred"*|"🟡 deferred"*|"🟢 someday"*) backlog_done["$cc"]="open" ;;
+    "🔵 active"*|"⏸ deferred"*|"🟡 deferred"*|"🟢 someday"*|"⚠️ partial"*) backlog_done["$cc"]="open" ;;
     *) backlog_bad="$cc [$status]" ;;
   esac
 done < "$backlog"

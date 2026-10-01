@@ -179,6 +179,20 @@ if should_run "$name"; then
   [[ "$ok" -eq 1 ]] && pass "$name"
 fi
 
+name="planning-status/a partial BACKLOG status is a recognised open status"
+if should_run "$name"; then
+  # pm/schema.md §2.3 lists `⚠️ partial YYYY-MM-DD` as a valid non-terminal status
+  # (shipped in part, kept in the working set); the checker used to reject it as
+  # "unrecognised", failing any PR that recorded a mitigated-but-unconfirmed ticket.
+  root="$(make_fixture partial-open '🔵')"
+  sed -i 's/| CC-002 | ✅ done |/| CC-002 | ⚠️ partial 2026-01-01 |/' "$root/BACKLOG.md"
+  if out="$(run_checker "$root")"; then
+    pass "$name"
+  else
+    fail "$name" "⚠️ partial rejected: $out"
+  fi
+fi
+
 name="planning-status/unrecognised BACKLOG status fails closed"
 if should_run "$name"; then
   root="$(make_fixture bad-backlog '✅ pr:#10')"
