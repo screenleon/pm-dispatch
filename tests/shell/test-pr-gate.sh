@@ -720,13 +720,37 @@ create_repo_with_branch() {
   )
 }
 
+# Default per-case watchdog for run_gate, in seconds (CC-613, #650).  120 s is
+# enough on Linux/macOS CI.  On native Windows every process costs ~40 ms
+# (MSYS fork), the same cases take ~55-120 s there and one case varies ~40%
+# run to run, so the same limit leaves only seconds of margin and flakes.  A
+# stalled case still ends at the limit, so a larger value costs minutes, not
+# the suite.  Same OSTYPE patterns as detect_platform in runtime/lib/portable.sh,
+# repeated here because the suite should not source runtime code for a constant
+# and detect_platform forks and honors PM_DISPATCH_PLATFORM.
+# usage: _pr_gate_case_timeout_default <out-var> <ostype>
+_pr_gate_case_timeout_default() {
+  case "${2:-}" in
+    msys*|cygwin*|mingw*|win32*) printf -v "$1" '%s' 300 ;;
+    *) printf -v "$1" '%s' 120 ;;
+  esac
+}
+
 run_gate() {
   local home="$1" runner="$2" repo="$3" out="$4" err="$5"
-  local case_timeout="${PM_DISPATCH_TEST_PR_GATE_CASE_TIMEOUT_SECS:-120}"
+  local case_timeout watchdog_source
+  # An explicit value always wins, whatever the platform.
+  if [[ -n "${PM_DISPATCH_TEST_PR_GATE_CASE_TIMEOUT_SECS:-}" ]]; then
+    case_timeout="$PM_DISPATCH_TEST_PR_GATE_CASE_TIMEOUT_SECS"
+    watchdog_source="env"
+  else
+    _pr_gate_case_timeout_default case_timeout "${OSTYPE:-}"
+    watchdog_source="default(${OSTYPE:-unknown})"
+  fi
   local started="$SECONDS"
   shift 5
-  printf 'START pr-gate case=%s watchdog=%ss\n' \
-    "${CURRENT_TEST_CASE:-unknown}" "$case_timeout"
+  printf 'START pr-gate case=%s watchdog=%ss source=%s\n' \
+    "${CURRENT_TEST_CASE:-unknown}" "$case_timeout" "$watchdog_source"
   set +e
   if command -v timeout >/dev/null 2>&1; then
     # Keep the fixture's repository layout authoritative.  In particular,
@@ -779,6 +803,39 @@ test_run_gate_case_watchdog_bounds_stalled_fixture() {
     return
   }
   assert_no_process_matching "$name" "sleep $marker" || return
+  pass "$name"
+}
+
+# Behavior: (CC-613) the default per-case watchdog depends on the platform:
+# 300 s where bash runs on MSYS/Cygwin/MinGW (a process costs ~40 ms there and
+# the slowest case measured 116 s against the old fixed 120 s), 120 s elsewhere,
+# and an unknown or empty OSTYPE gets the stricter 120 s.
+# Steps: call the pure default selector with representative OSTYPE strings,
+# including an unrelated value that merely contains "msys". An explicit
+# PM_DISPATCH_TEST_PR_GATE_CASE_TIMEOUT_SECS winning is pinned by
+# run-gate-case-watchdog-bounds-stalled-fixture, which sets it to 1 s.
+test_run_gate_case_watchdog_default_is_platform_aware() {
+  local name="run-gate-case-watchdog-default-is-platform-aware"
+  should_run "$name" || return 0
+  local ostype expected got
+  while IFS='|' read -r ostype expected; do
+    got=""
+    _pr_gate_case_timeout_default got "$ostype"
+    if [[ "$got" != "$expected" ]]; then
+      fail "$name" "OSTYPE='$ostype': expected ${expected}s, got '${got}'"
+      return
+    fi
+  done <<'TABLE'
+msys|300
+cygwin|300
+mingw64|300
+win32|300
+linux-gnu|120
+darwin23.0|120
+freebsd14|120
+not-msys|120
+|120
+TABLE
   pass "$name"
 }
 
@@ -6303,6 +6360,7 @@ run_test test_sequential_timeout_preserves_partial_result
 run_test test_piped_stdout_does_not_abort_gate
 run_test test_sequential_frontmatter_parity_mismatch_aborts_gate
 run_test test_run_gate_case_watchdog_bounds_stalled_fixture
+run_test test_run_gate_case_watchdog_default_is_platform_aware
 run_test test_qa_rules_dir_resolved_and_exported
 run_test test_qa_rules_dir_absent_stays_unset
 run_test test_qa_rules_dir_present_but_reviewer_reports_missing_gets_distinct_diagnostic
