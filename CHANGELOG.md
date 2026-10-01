@@ -23,6 +23,18 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **`pr-gate.sh` no longer calls an undefined function from its EXIT trap when
+  it is cancelled or fails early (CC-609, #650).** `gate_exit_cleanup` calls
+  `qa_execution_finalize` to preserve the CC-522 QA checkpoint as a
+  non-authorizing partial record, but that function (and the three
+  `QA_EXECUTION_*` variables it reads) were defined only after the long
+  scope-manifest phase. A gate killed or failing before that point printed
+  `qa_execution_finalize: command not found`, hidden by `|| true`. Both now sit
+  before the trap is installed. With no evidence file yet, finalize returns at
+  once, so behavior after the point where the evidence is created is unchanged.
+  Observed on native Windows, where a killed gate usually lands in the
+  scope-manifest phase.
+
 - **Context refresh fallback values no longer print `printf: write error` when
   their write fails (CC-602, hardening for #633; trigger not reproduced).**
   When `timeout -k` ends a bounded `workflow-refresh`, native Windows has been

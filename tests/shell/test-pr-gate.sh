@@ -6986,6 +6986,53 @@ STUB_JQ_EOF
   pass "$name"
 }
 
+# Behavior: the EXIT trap pr-gate.sh installs for the scope-manifest phase can
+# run before the QA-execution machinery (qa_execution_prepare, much later in the
+# script) exists, and must then be silent. It used to call qa_execution_finalize
+# while the function was still undefined, printing
+# "qa_execution_finalize: command not found" on every early failure or cancel
+# (CC-609, issue #650); the scope-manifest phase is the longest, so a kill
+# usually lands there.
+# Steps: stub jq so the one call reading `.repository.key` (just after the
+# cleanup trap is installed and long before qa_execution_prepare) fails, run the
+# gate, and assert a nonzero exit with no "command not found" on stderr.
+test_exit_cleanup_before_qa_execution_is_defined_is_silent() {
+  local name="gate-exit-cleanup/early-failure-does-not-call-an-undefined-function"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  local stub_dir="$dir/jq-stub" code
+  local real_jq
+  mkdir -p "$dir" "$stub_dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  real_jq="$(command -v jq)"
+  cat > "$stub_dir/jq" <<STUB_JQ_EOF
+#!/usr/bin/env bash
+for a in "\$@"; do
+  [[ "\$a" == ".repository.key" ]] && exit 1
+done
+exec "$real_jq" "\$@"
+STUB_JQ_EOF
+  chmod +x "$stub_dir/jq"
+
+  set +e
+  PATH="$stub_dir:$PATH" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then
+    fail "$name" "expected nonzero exit from the injected jq failure, got 0"
+    return
+  fi
+  if grep -q "command not found" "$err"; then
+    fail "$name" "cleanup called an undefined function: $(grep 'command not found' "$err" | head -2)"
+    return
+  fi
+  pass "$name"
+}
+
 # Behavior: an invalid --effort value is rejected at pr-gate.sh's own flag
 # parsing, before any dispatch is attempted.
 test_effort_invalid_value_rejected() {
@@ -8784,6 +8831,7 @@ run_test test_isolation_forwarding_through_pr_gate
 run_test test_effort_forwarding_through_pr_gate
 run_test test_parent_operation_cd_forwarded_to_dispatch
 run_test test_policy_input_dir_cleaned_up_on_jq_failure
+run_test test_exit_cleanup_before_qa_execution_is_defined_is_silent
 run_test test_effort_invalid_value_rejected
 run_test test_copy_mode_dispatches_via_adapter
 run_test test_copy_mode_missing_manifest_reader_fails_closed
