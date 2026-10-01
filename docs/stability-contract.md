@@ -164,4 +164,4 @@ emit structured output stays `experimental` until it can.
 - `cli/commands.tsv` — the machine-readable CLI tier projection
 - `tools/lint/lint-deprecation-sunset.sh` + `tools/lint/deprecation-sunset-allowlist.tsv` — the sunset-version enforcer
 - `docs/architecture/script-domain-inventory.tsv` — owns the `scripts/*.sh` path shims (CC-489 ratchet)
-- `BACKLOG.md` CC-446 — the re-scope; CC-578 — the spun-out authority-tagging work
+- `BACKLOG-ARCHIVE.md` CC-446 (archived) — the re-scope; CC-578 — the spun-out authority-tagging work

@@ -201,23 +201,35 @@ fi
 
 # Verifies that pm-prep-snapshot.sh --focus includes a focus_tickets section.
 # Exercises BOTH resolution paths against the live repo:
-#   - CC-244 is a non-terminal (working-set) ticket → index row + body.
+#   - a non-terminal (working-set) ticket → index row + body. The test picks the
+#     first live ticket in BACKLOG.md's index instead of naming one: a fixed ID
+#     stops being live as soon as that ticket is closed and archived (the test
+#     named CC-244, which had long been `✅ done`, and broke on the archive run
+#     of 2026-10-02).
 #   - CC-243 is terminal (archived under the §4 working-set contract) → body
 #     resolved from BACKLOG-ARCHIVE.md with an "archived" note and no index row.
 #
 # Steps:
-#   1. Run pm-prep-snapshot.sh --focus CC-243,CC-244.
-#   2. Assert "## focus_tickets" heading is emitted.
-#   3. Assert live CC-244 yields an index row + body heading.
-#   4. Assert archived CC-243 yields the archived note + body heading (from archive).
+#   1. Pick the first index row whose status is non-terminal (someday, deferred,
+#      active or partial).
+#   2. Run pm-prep-snapshot.sh --focus CC-243,<that ticket>.
+#   3. Assert "## focus_tickets" heading is emitted.
+#   4. Assert the live ticket yields an index row + body heading.
+#   5. Assert archived CC-243 yields the archived note + body heading (from archive).
 if should_run "focus-tickets-section"; then
   out="$tmp_root/focus.md"
-  run_snapshot "$out" --focus CC-243,CC-244 >/dev/null
-  require_file_contains_fixed "$out" "## focus_tickets" "focus-tickets-section: heading"
-  require_file_contains_fixed "$out" "| CC-244 |" "focus-tickets-section: CC-244 (live) row"
-  require_file_contains_fixed "$out" "## CC-244 —" "focus-tickets-section: CC-244 (live) body heading"
-  require_file_contains_fixed "$out" "# CC-243: archived (terminal)" "focus-tickets-section: CC-243 (archived) note"
-  require_file_contains_fixed "$out" "## CC-243 —" "focus-tickets-section: CC-243 (archived) body heading from archive"
+  live_id="$(grep -m1 -E '^\| CC-[0-9]+ \| (🟢 someday|⏸ deferred|🟡 deferred|🔵 active|⚠️ partial)' "$REPO_ROOT/BACKLOG.md" \
+    | grep -oE 'CC-[0-9]+' | head -n 1 || true)"
+  if [[ -z "$live_id" ]]; then
+    fail "focus-tickets-section" "no non-terminal ticket found in BACKLOG.md's index to use as the live example"
+  else
+    run_snapshot "$out" --focus "CC-243,$live_id" >/dev/null
+    require_file_contains_fixed "$out" "## focus_tickets" "focus-tickets-section: heading"
+    require_file_contains_fixed "$out" "| $live_id |" "focus-tickets-section: $live_id (live) row"
+    require_file_contains_fixed "$out" "## $live_id —" "focus-tickets-section: $live_id (live) body heading"
+    require_file_contains_fixed "$out" "# CC-243: archived (terminal)" "focus-tickets-section: CC-243 (archived) note"
+    require_file_contains_fixed "$out" "## CC-243 —" "focus-tickets-section: CC-243 (archived) body heading from archive"
+  fi
 fi
 
 # Verifies that pm-prep-snapshot.sh --focus emits a warning comment when
