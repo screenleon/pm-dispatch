@@ -115,6 +115,12 @@ for _gate_bootstrap_module in gate-digest.sh gate-options.sh; do
   # shellcheck disable=SC1090  # path is selected by gate-layout.sh
   . "$PR_GATE_LIB_DIR/$_gate_bootstrap_module"
 done
+# CC-611: choose the digest tool once, here in the main shell, so each of the
+# gate's dozens of digests starts one process instead of four.  Sourcing the
+# library does not probe, so unrelated commands that load it pay nothing.
+if declare -F gate_digest_init >/dev/null 2>&1; then
+  gate_digest_init
+fi
 unset _gate_bootstrap_dir _gate_bootstrap_entry _gate_bootstrap_link_dir \
   _gate_bootstrap_module
 

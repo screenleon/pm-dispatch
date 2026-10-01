@@ -26,22 +26,28 @@ Versions follow [Semantic Versioning](https://semver.org/).
 - **Gate digests start one process instead of four (CC-611).**
   `gate_digest_stream` probed its tool on every call (`printf '' | sha256sum`,
   a subshell plus the tool) and then piped through `awk`; a gate makes dozens of
-  digests and a process costs ~40 ms on native Windows. The tool is now chosen
-  once when `gate-digest.sh` is sourced, each call confirms it with the builtin
-  `command -v` and runs it once, and `gate_digest_file` no longer wraps the
-  stream in a second command substitution. The old per-call logic stays as the
-  fallback, so a missing or replaced tool, a `PATH` that changes after sourcing,
-  a broken `sha256sum` with a working `shasum`, and the "no sha256sum or shasum"
-  error behave as before. Output, stderr and exit status are identical on the 335
-  scenarios compared (empty/binary/CRLF/1 MiB input, directory and missing file,
-  `pipefail` on and off); the only change is that error text from a missing file
-  names the new source line. On `tier-detection` plus `standard-tier-detection`
-  the gate's bash processes dropped from 2,089 to 1,811 (attributed forks 3,714
-  to 3,284); wall-clock is within run-to-run noise. One tolerated difference: a
-  digest tool that fails mid-call used to abort a `set -e` + `pipefail` pipeline
-  with its status, and now yields an empty digest with status 0 (as it already
-  did inside `$(...)`, where `set -e` is cleared); every in-tree caller captures
-  with `$(...)` or reads from a pipe.
+  digests and a process costs ~40 ms on native Windows. `pr-gate.sh` now calls
+  the new `gate_digest_init` once in its main shell to choose the tool; each
+  digest then confirms it with the builtin `command -v` and runs it once, and
+  `gate_digest_file` no longer wraps the stream in a second command
+  substitution. Sourcing `gate-digest.sh` starts no process (every `pmctl`
+  command loads the gate libraries, and most never digest), and a process that
+  never calls `gate_digest_init` takes the original per-call path, so nothing
+  changes for it. A tool that disappears from `PATH` after initialisation, no
+  tool at all, and the "no sha256sum or shasum" error behave as before. On
+  `tier-detection` plus `standard-tier-detection` the gate's bash processes
+  dropped from 2,089 to 1,811 (attributed forks 3,714 to 3,284); wall-clock is
+  within run-to-run noise. Output, stderr and exit status were identical on 335
+  scenarios compared against the previous library, with and without
+  `gate_digest_init` (empty/binary/CRLF/1 MiB input, directory and missing
+  file, `pipefail` on and off, a missing, broken or shasum-only tool); the
+  comparison harness is not in the repository. **Two differences:** (1) a
+  digest tool that works at initialisation and breaks afterwards yields an empty
+  digest with status 0 instead of falling back to `shasum` (the same result a
+  tool failing mid-call always gave; every consumer that records or compares a
+  digest rejects an empty one), and (2) a tool that fails inside a direct
+  `set -e` + `pipefail` pipeline no longer aborts it (inside `$(...)`, where
+  `set -e` is cleared, nothing changed; every in-tree caller is of that kind).
 
 - **`pr-gate.sh` no longer calls an undefined function from its EXIT trap when
   it is cancelled or fails early (CC-609, #650).** `gate_exit_cleanup` calls
