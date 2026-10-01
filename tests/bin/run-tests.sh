@@ -265,7 +265,9 @@ map_path() {
       add_pr_gate_shards; add_suite test-pr-gate-profile
       add_suite test-gate-protocol; add_suite test-gate-options
       add_suite test-gate-policy; add_suite test-gate-scope; behavioral=1 ;;
-    runtime/lib/gate-assurance.sh|runtime/lib/gate-digest.sh|runtime/lib/gate-layout.sh|runtime/lib/gate-reviewer-contract.sh|runtime/lib/gate-subject.sh)
+    runtime/lib/gate-digest.sh)
+      add_suite test-gate-digest; add_pr_gate_shards; add_suite test-pr-gate-profile; behavioral=1 ;;
+    runtime/lib/gate-assurance.sh|runtime/lib/gate-layout.sh|runtime/lib/gate-reviewer-contract.sh|runtime/lib/gate-subject.sh)
       add_pr_gate_shards; add_suite test-pr-gate-profile; behavioral=1 ;;
     runtime/lib/gate-scope.sh)
       add_suite test-gate-scope; add_pr_gate_shards

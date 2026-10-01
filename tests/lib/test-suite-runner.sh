@@ -122,6 +122,7 @@ SUITE_NAMES=(
   test-gate-options
   test-gate-policy
   test-gate-scope
+  test-gate-digest
   test-pmctl-gate
   test-pmctl-safe
   test-pmctl-validate
@@ -248,6 +249,7 @@ declare -A SUITE_PATHS=(
   [test-gate-options]="tests/shell/test-gate-options.sh"
   [test-gate-policy]="tests/shell/test-gate-policy.sh"
   [test-gate-scope]="tests/shell/test-gate-scope.sh"
+  [test-gate-digest]="tests/shell/test-gate-digest.sh"
   [test-pmctl-gate]="tests/shell/test-pmctl-gate.sh"
   [test-pmctl-safe]="tests/shell/test-pmctl-safe.sh"
   [test-pmctl-validate]="tests/shell/test-pmctl-validate.sh"

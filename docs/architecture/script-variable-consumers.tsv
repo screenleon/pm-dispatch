@@ -184,6 +184,7 @@ PATH	PATH	runtime/bin/pr-gate.sh	production
 PATH	PATH	runtime/lib/allowlist.sh	production
 PATH	PATH	runtime/lib/artifact-paths.sh	production
 PATH	PATH	runtime/lib/executor-router.sh	production
+PATH	PATH	runtime/lib/gate-digest.sh	production
 PATH	PATH	runtime/lib/guard-framework.sh	production
 PATH	PATH	runtime/lib/pmctl-context.sh	production
 PATH	PATH	runtime/lib/pmctl-decision.sh	production
