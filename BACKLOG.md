@@ -149,7 +149,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-610 | 🟢 someday | **[lint：EXIT trap 處理函式（含其內部呼叫）所用的函式必須定義在 `trap ... EXIT` 之前]** [[CC-609]] 的缺陷型態可重現於任何提早安裝 trap 的 `set -u` 腳本，淺層檢查（只看 handler 名稱）會漏掉，因為 `qa_execution_finalize` 是從 handler 本體內被呼叫。需要追蹤 handler 本體的傳遞呼叫。架構審查建議記錄為後續而不放進 CC-609 的小修正。 | ops/test | 2026-10-01 | pr:#654 | P3 | hygiene |
 | CC-611 | 🟢 someday | **[`gate_digest_stream` 每次呼叫都重測 sha256sum 並多接一個 `awk`，約 7 個子程序／次，是 pr-gate 單一最集中的 fork 熱點]** 2026-10-01 在 main（24f71a7）對 `tier-detection` 與 `standard-tier-detection` 重新剖析（xtrace，PS4 含 `EPOCHREALTIME`／`BASHPID`，以 PATH 內的 `bash` shim 只追蹤 pr-gate.sh）：`gate_digest_stream` 兩個 case 合計被呼叫 77 次、歸因 539 個行程（子 shell＋外部指令；兩個 case 總計 3,714，約 14.5%）。每次先跑 `printf '' \| sha256sum` 探測可用工具，再 `sha256sum \| awk '{print $1}'`；其中 51 次經 `gate_digest_file` 的 `$(...)`。呼叫端：`gate-result-verify.sh:2498`×25、`:1703`×12、`pr-gate.sh:1840`×10、`gate-subject.sh:111`×10。工具選擇只需決定一次，去掉 `awk` 後約可省 5 個行程／次（兩個 case 合計約 385 個，以每個行程約 40 ms 估算約 8 秒／case，未實測）。 | ops/gate | 2026-10-01 | — | P2 | hygiene |
 | CC-612 | 🟢 someday | **[`adapter_manifest_file` 每次呼叫都重新做 2 個 `$(cd -P && pwd -P)` 與 2 個 `adapter_manifest_scalar`，兩個 case 合計 37 次]** 同一份剖析（兩個 case 合計）：`adapter_manifest_file` 37 次、148 個行程；`adapter_manifest_runner_kind` 21 次、42；`adapter_manifest_dispatch_path` 7 次、35；合計約 225（約 6%）。呼叫端為 `executor-router.sh:84`／`:151`／`:155`／`:212` 與 `pr-gate.sh:548` 的迴圈。可行方向是依 `(repo-root, adapter)` 快取驗證結果，但該函式的 symlink／「不得逃出 adapters/」檢查是信任邊界，快取必須保留相同保證（例如以解析後路徑與 mtime 當鍵，或明確記錄「單次 gate 內快照」並由 security-reviewer 審查）。 | ops/gate | 2026-10-01 | — | P2 | hygiene |
-| CC-613 | 🟢 someday | **[`test-pr-gate.sh` 的 120 秒 case watchdog 在原生 Windows 上裕度過薄且不穩定，應依平台調整預設值]** [[CC-599]]／[[CC-600]]／[[CC-605]] 之後（main 24f71a7，不插樁、預設 120 秒）#650 列出的 case 在本機全部通過，但耗時為 53／54／65／86／111／116 秒，且 `input-execution-signal-…` 兩次 gate 為 100 與 61 秒；`maintainer-initial-policy-…` 不插樁 116 秒、插樁後反而 81 秒，同一 case 波動約 ±40%。最慢的離 watchdog 只差 4 秒，任何較慢的主機（例如 #650 回報者）仍會逾時。`PM_DISPATCH_TEST_PR_GATE_CASE_TIMEOUT_SECS` 已存在，缺的是平台感知的預設值（Linux CI 維持 120，MSYS／Windows 放寬）。不處理 #650 觀察 2（逾時後暫存目錄 busy）：沒有重現步驟。 | ops/test | 2026-10-01 | — | P2 | hygiene |
+| CC-613 | ✅ done | **[`test-pr-gate.sh` 的 120 秒 case watchdog 在原生 Windows 上裕度過薄且不穩定，應依平台調整預設值]** [[CC-599]]／[[CC-600]]／[[CC-605]] 之後（main 24f71a7，不插樁、預設 120 秒）#650 列出的 case 在本機全部通過，但耗時為 53／54／65／86／111／116 秒，且 `input-execution-signal-…` 兩次 gate 為 100 與 61 秒；`maintainer-initial-policy-…` 不插樁 116 秒、插樁後反而 81 秒，同一 case 波動約 ±40%。最慢的離 watchdog 只差 4 秒，任何較慢的主機（例如 #650 回報者）仍會逾時。`PM_DISPATCH_TEST_PR_GATE_CASE_TIMEOUT_SECS` 已存在，缺的是平台感知的預設值（Linux CI 維持 120，MSYS／Windows 放寬）。不處理 #650 觀察 2（逾時後暫存目錄 busy）：沒有重現步驟。 | ops/test | 2026-10-01 | pr:#656 | P2 | hygiene |
 | CC-614 | 🟢 someday | **[`gate-result-verify.sh` 的重複驗證占 pr-gate 行程數的約 23%，需要更細的剖析才能決定能否去重]** 同一份剖析（兩個 case 合計）：`gate-result-verify.sh` 各函式合計約 850 個行程（`_gate_reviewer_protocol_document_verify` 18 次 162、`gate_synthesis_protocol_verify` 6 次 144、`gate_reviewer_protocol_verify` 9 次 108、`_gate_reviewer_heal_empty_existing_evidence` 90、`gate_result_verify` 6 次 86 等），另有 `gate-structural-verify.sh` 的 `_gate_structural_schema_errors` 60 次（每次 `jq` 一次，`:32`）。`gate_result_verify` 在兩個 case 合計 6 次，是否有同一批檔案被重複驗證尚未查證。需先弄清楚各次驗證是否必要（不同階段、不同保證）或可共用一次解析，再決定是否去重；不得削弱驗證。 | ops/gate | 2026-10-01 | — | P3 | hygiene |
 
 ---
@@ -5838,7 +5838,7 @@ fixture 證明它會失敗。
 **Done-when**：對同一批輸入（空輸入、含換行、二進位）新舊輸出相同；以 xtrace 行程數證明
 每次呼叫的行程數下降；既有 gate 測試維持通過。
 
-**See**：[[CC-599]]／[[CC-600]]／[[CC-605]]（同一方法）；[[CC-579]]（既有
+**See**: [[CC-599]]／[[CC-600]]／[[CC-605]]（同一方法）；[[CC-579]]（既有
 `ops/diagnostics/gate-subprocess-census.sh`，可用來重測行程數）；GitHub issue #650。
 
 ---
@@ -5853,11 +5853,11 @@ fixture 證明它會失敗。
 **Done-when**：行程數下降（xtrace 證明）；既有 adapter 測試維持通過；新增測試證明被替換成
 symlink 或改名的 adapter 仍被拒絕。
 
-**See**：[[CC-611]]；GitHub issue #650。
+**See**: [[CC-611]]；GitHub issue #650。
 
 ---
 
-## CC-613 — pr-gate 測試 watchdog 的平台感知預設值 🟢 someday
+## CC-613 — pr-gate 測試 watchdog 的平台感知預設值 ✅ 2026-10-02
 
 **Problem**：見索引列。固定 120 秒對原生 Windows 的裕度只有數秒，且同一 case 耗時波動約
 ±40%。
@@ -5869,7 +5869,22 @@ symlink 或改名的 adapter 仍被拒絕。
 **Done-when**：Windows 本機不設環境變數也能跑完 #650 列出的 case；Linux CI 行為不變；有測試
 釘住預設值選擇。
 
-**See**：GitHub issue #650；[[CC-599]]。
+**已交付（pr:#656，2026-10-02）**：`run_gate` 的預設 watchdog 依 `OSTYPE` 決定（`msys*`／
+`cygwin*`／`mingw*` 為 300 秒，其餘與未知值為 120 秒）；明確設定的環境變數仍優先（空字串視為未
+設定）；START 行印出 `watchdog=…s source=env|default(<ostype>)`。兩個測試：選擇函式的表格測試，
+以及用不存在的 runner 呼叫真的 `run_gate`、逐次覆寫 `OSTYPE` 的 START 行測試；對選擇函式與
+`run_gate` 共 6 個變異皆被抓到。
+
+**驗證邊界**：Linux CI 行為不變（唯一的 workflow 只用 `ubuntu-latest`）。「Windows 本機不設環境
+變數也能跑完 #650 的 case」的證據是**改動前**預設 120 秒下實測全部通過（53／54／65／86／111／
+116 秒，另一個含兩次 gate 的 case 為 100 與 61 秒）；改動後只用新預設實跑了一個 case。未執行
+`pmctl gate`／`pr-gate.sh`。代價：Windows 上真正卡住的 case 要 300 秒才失敗；較大的預設也可能
+讓逐漸變慢的 case 不被察覺（END 行的 duration 仍可見，沒有告警）。
+
+**Not covered**：#650 觀察 2（逾時被殺後暫存目錄仍被占用）；gate 本身的速度（見 [[CC-611]]、
+[[CC-612]]、[[CC-614]]）。
+
+**See**: GitHub issue #650；[[CC-599]]。
 
 ---
 
@@ -5883,6 +5898,6 @@ symlink 或改名的 adapter 仍被拒絕。
 **Done-when**：產出一份「每次驗證為何存在」的對照，並對可去重者以行程數與測試證明；或記錄結論
 「皆必要」並關閉本票。
 
-**See**：[[CC-611]]；GitHub issue #650。
+**See**: [[CC-611]]；GitHub issue #650。
 
 ---
