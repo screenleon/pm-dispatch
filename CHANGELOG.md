@@ -23,6 +23,19 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Context refresh fallback values no longer print `printf: write error` when
+  their write fails (CC-602, hardening for #633; trigger not reproduced).**
+  When `timeout -k` ends a bounded `workflow-refresh`, native Windows has been
+  reported to print `printf: write error: Permission denied` from a `$(...)`
+  fallback whose reader is already gone. The seven fallback `printf`s in
+  `pmctl-context.sh` (file mtime/sha1, current epoch, byte/line counts, the two
+  FTS probes) now go through `_ctx_fallback`, which ignores a failed write
+  silently. The intermittent Windows trigger was never reproduced here (12 + 12
+  real kills on current main and the pre-CC-595 code, plus 100 stress kills: no
+  hit), CC-595 already removed most of the per-file substitutions, and other
+  writes on the same path (progress lines, the batch SQL file, process-substitution
+  producers) are not covered, so #633 stays open for field confirmation.
+
 - **The gate policy resolver spawned ~130 processes per call and read its input
   loosely (CC-605).** On native Windows a process costs ~40 ms, so
   `_gate_policy_resolve` took ~7.7 s and `_gate_policy_validate_sources` ~3.8 s

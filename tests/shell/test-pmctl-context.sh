@@ -663,6 +663,44 @@ case_context_index_kill_mid_run_does_not_leak_batch_sql() {
   fi
 }
 
+case_context_fallback_write_failure_is_silent() {
+  local name="pmctl context: a fallback value that cannot be written is silent (hardening for issue #633)"
+  # Behavior: the stand-in value a failed `$(...)` producer falls back to is
+  # printed unchanged when it can be delivered, and a failed write of it is
+  # silent with exit 0. Hardening for issue #633 (a `timeout -k` kill of a bounded
+  # refresh; native Windows is reported to print "printf: write error: Permission
+  # denied" from such a fallback). The Windows trigger itself was NOT reproduced,
+  # so this pins only the helper contract, not the field symptom.
+  # Steps: source the lib directly. With stdout open, a missing path and a
+  # failing _portable_sha1 must give `0` and `unknown`. Then repeat both calls,
+  # and _ctx_fallback itself, with stdout CLOSED so the fallback `printf` cannot
+  # succeed (EBADF here, EACCES in the report; same code path and message) and
+  # assert exit 0 and an empty stderr. The old code prints
+  # "printf: write error: Bad file descriptor" and exits 1 under set -e.
+  # Not exercised: the _ctx_now_epoch, `wc` and sqlite3 call sites; they share
+  # the one-line helper, so they are silent whenever the helper is.
+  should_run "$name" || return 0
+  local err="$tmp_root/633.err" out="$tmp_root/633.out" status=0 present="$tmp_root/633.present"
+  : > "$present"
+  bash -c '
+    set -euo pipefail
+    # shellcheck source=runtime/lib/pmctl-context.sh
+    . "$1/lib/pmctl-context.sh"
+    declare -F _portable_sha1 >/dev/null || { echo "setup: _portable_sha1 is gone, the seam below is vacuous" >&2; exit 97; }
+    _portable_sha1() { return 1; }
+    printf "%s|%s\n" "$(_ctx_file_mtime "$2/no-such-dir/no-such-file")" "$(_ctx_file_sha1 "$3")"
+    _ctx_file_mtime "$2/no-such-dir/no-such-file" >&-
+    _ctx_file_sha1 "$3" >&-
+    _ctx_fallback 0 >&-
+  ' bash "$REPO_ROOT/runtime" "$tmp_root" "$present" \
+    > "$out" 2> "$err" || status=$?
+  if [[ "$status" -eq 0 && ! -s "$err" && "$(<"$out")" == "0|unknown" ]]; then
+    pass "$name"
+  else
+    fail "$name" "exit $status stdout='$(<"$out")' stderr=$(<"$err")"
+  fi
+}
+
 case_context_index_new_file_sql_uses_batched_mtime_sha1() {
   local name="pmctl context index: new-file SQL generation uses batched mtime/sha1, not per-file forks (issue #639)"
   # Behavior (issue #639): _ctx_generate_file_sql used to recompute mtime
@@ -6665,6 +6703,7 @@ case_context_index_incremental_skip
 case_context_index_unchanged_fast_path_batches_subprocesses
 case_context_status_batches_stat_for_unchanged_files
 case_context_index_kill_mid_run_does_not_leak_batch_sql
+case_context_fallback_write_failure_is_silent
 case_context_index_new_file_sql_uses_batched_mtime_sha1
 case_context_query_hits_use_non_forking_score_domain_trust_helpers
 case_context_pack_json_uses_non_forking_json_str

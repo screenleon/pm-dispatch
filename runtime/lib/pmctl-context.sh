@@ -354,16 +354,31 @@ _ctx_extract_symbols() {
 
 # ── File metadata helpers ──────────────────────────────────────────────────────
 
+# _ctx_fallback <value>
+# Prints the stand-in value of a `$(...)` whose real producer failed. Hardening
+# for issue #633: when `timeout -k` ends a bounded refresh the whole process
+# group gets SIGTERM, so a substitution's reader (the parent) can be gone before
+# its fallback runs -- the producer (stat, date, wc, sqlite3) then fails on its
+# own write and the fallback `printf` writes to a dead pipe, which native Windows
+# is reported to surface as "printf: write error: Permission denied". That
+# mechanism is the reporter's inference and was never reproduced here. Nobody is
+# left to read the value, so a failed write is ignored and silent instead of an
+# alarming line in gate and dispatch logs. Other writes on the same path (progress
+# lines, the batch SQL file, process-substitution producers) are NOT covered.
+_ctx_fallback() {
+  printf '%s' "$1" 2>/dev/null || :
+}
+
 _ctx_file_mtime() {
   local f="$1"
   stat -c '%Y' "$f" 2>/dev/null && return
   stat -f '%m' "$f" 2>/dev/null && return
-  printf '0'
+  _ctx_fallback 0
 }
 
 _ctx_file_sha1() {
   local f="$1"
-  _portable_sha1 < "$f" 2>/dev/null || printf 'unknown'
+  _portable_sha1 < "$f" 2>/dev/null || _ctx_fallback unknown
 }
 
 # _ctx_stat_style
@@ -457,7 +472,7 @@ _ctx_batch_sha1s() {
 }
 
 _ctx_now_epoch() {
-  date +%s 2>/dev/null || printf '0'
+  date +%s 2>/dev/null || _ctx_fallback 0
 }
 
 # ── SQL escaping ───────────────────────────────────────────────────────────────
@@ -645,7 +660,7 @@ _ctx_chunk_window() {
   local abs_path="$1" window_size="${2:-20}"
   local total line lineno=1 win_start=1 win_body=""
 
-  total="$(wc -l < "$abs_path" 2>/dev/null | tr -d ' ' || printf '0')"
+  total="$(wc -l < "$abs_path" 2>/dev/null | tr -d ' ' || _ctx_fallback 0)"
   [[ "$total" -eq 0 ]] && return 0
 
   while IFS= read -r line || [[ -n "$line" ]]; do
@@ -700,7 +715,7 @@ _ctx_generate_file_sql() {
   _ctx_detect_language_var lang "$rel_path"
   [[ -n "$mtime" ]] || mtime="$(_ctx_file_mtime "$abs_path")"
   [[ -n "$sha1" ]] || sha1="$(_ctx_file_sha1 "$abs_path")"
-  size_bytes="$(wc -c < "$abs_path" 2>/dev/null | tr -d ' ' || printf '0')"
+  size_bytes="$(wc -c < "$abs_path" 2>/dev/null | tr -d ' ' || _ctx_fallback 0)"
   indexed_at="$(_ctx_now_epoch)"
   _ctx_sql_str_var ep "$rel_path"
 
@@ -1144,7 +1159,7 @@ _ctx_index_tree() {
   # scan does not alter symbols/chunks, so preserve the existing FTS table.
   # Rebuild only for changed files or a path-count change (pure deletions).
   local _fts_present
-  _fts_present="$(sqlite3 "$db" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='content_fts';" 2>/dev/null || printf '0')"
+  _fts_present="$(sqlite3 "$db" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='content_fts';" 2>/dev/null || _ctx_fallback 0)"
   # CC-571: FTS rebuild is a best-effort acceleration layer, not the only
   # query path (LIKE fallback remains available), so a failed rebuild does
   # not fail the overall index -- but neither the stderr diagnostic NOR the
@@ -1584,7 +1599,7 @@ pmctl_context_update() {
     # is "retained" when no content_fts existed before this attempt
     # (gate finding critic-F001, round 2).
     local _fts_rebuild_note="" _fts_present_before_update
-    _fts_present_before_update="$(sqlite3 "$db" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='content_fts';" 2>/dev/null || printf '0')"
+    _fts_present_before_update="$(sqlite3 "$db" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='content_fts';" 2>/dev/null || _ctx_fallback 0)"
     if ! _ctx_fts_rebuild "$db"; then
       if [[ "$_fts_present_before_update" == "1" ]]; then
         printf 'pmctl context update: FTS index rebuild failed; existing (now stale) FTS index retained, LIKE fallback still available\n' >&2
