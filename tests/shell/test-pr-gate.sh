@@ -729,9 +729,11 @@ create_repo_with_branch() {
 # repeated here because the suite should not source runtime code for a constant
 # and detect_platform forks and honors PM_DISPATCH_PLATFORM.
 # usage: _pr_gate_case_timeout_default <out-var> <ostype>
+# Do not declare a local named like the out-var here: printf -v writes the
+# caller's variable by dynamic scope, so a same-named local would swallow it.
 _pr_gate_case_timeout_default() {
   case "${2:-}" in
-    msys*|cygwin*|mingw*|win32*) printf -v "$1" '%s' 300 ;;
+    msys*|cygwin*|mingw*) printf -v "$1" '%s' 300 ;;
     *) printf -v "$1" '%s' 120 ;;
   esac
 }
@@ -811,13 +813,13 @@ test_run_gate_case_watchdog_bounds_stalled_fixture() {
 # the slowest case measured 116 s against the old fixed 120 s), 120 s elsewhere,
 # and an unknown or empty OSTYPE gets the stricter 120 s.
 # Steps: call the pure default selector with representative OSTYPE strings,
-# including an unrelated value that merely contains "msys". An explicit
-# PM_DISPATCH_TEST_PR_GATE_CASE_TIMEOUT_SECS winning is pinned by
-# run-gate-case-watchdog-bounds-stalled-fixture, which sets it to 1 s.
+# including an unrelated value that merely contains "msys", and require every
+# table row to have been checked. That run_gate really uses the selector, and
+# that an explicit value wins, is pinned by the next test.
 test_run_gate_case_watchdog_default_is_platform_aware() {
   local name="run-gate-case-watchdog-default-is-platform-aware"
   should_run "$name" || return 0
-  local ostype expected got
+  local ostype expected got rows=0
   while IFS='|' read -r ostype expected; do
     got=""
     _pr_gate_case_timeout_default got "$ostype"
@@ -825,17 +827,66 @@ test_run_gate_case_watchdog_default_is_platform_aware() {
       fail "$name" "OSTYPE='$ostype': expected ${expected}s, got '${got}'"
       return
     fi
+    rows=$((rows + 1))
   done <<'TABLE'
 msys|300
 cygwin|300
 mingw64|300
-win32|300
 linux-gnu|120
 darwin23.0|120
 freebsd14|120
 not-msys|120
 |120
 TABLE
+  if [[ "$rows" -ne 8 ]]; then
+    fail "$name" "expected 8 table rows to be checked, checked $rows"
+    return
+  fi
+  pass "$name"
+}
+
+# Behavior: (CC-613) run_gate takes its watchdog from an explicit
+# PM_DISPATCH_TEST_PR_GATE_CASE_TIMEOUT_SECS first, otherwise from the
+# platform default for the current OSTYPE, and says which in its START line.
+# Steps: call the real run_gate against a runner directory that has no
+# pr-gate.sh, so it prints START and fails at once without running a gate;
+# capture stdout and compare the START line. OSTYPE is overridden per call
+# (a prefix assignment) so the result does not depend on the host, which is
+# what makes a hard-coded or host-only default observable on any platform.
+# Cases: explicit value wins even on an MSYS OSTYPE; an empty value falls back
+# to the default; unset gives 300 for msys and 120 for linux-gnu.
+test_run_gate_case_watchdog_start_line_reports_value_and_source() {
+  local name="run-gate-case-watchdog-start-line-reports-value-and-source"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" start spec env_value ostype expected
+  mkdir -p "$dir"
+  local -a specs=(
+    "7|msys|watchdog=7s source=env"
+    "|msys|watchdog=300s source=default(msys)"
+    "UNSET|msys|watchdog=300s source=default(msys)"
+    "UNSET|linux-gnu|watchdog=120s source=default(linux-gnu)"
+    "900|linux-gnu|watchdog=900s source=env"
+  )
+  for spec in "${specs[@]}"; do
+    IFS='|' read -r env_value ostype expected <<<"$spec"
+    if [[ "$env_value" == "UNSET" ]]; then
+      start="$(
+        unset PM_DISPATCH_TEST_PR_GATE_CASE_TIMEOUT_SECS
+        OSTYPE="$ostype" run_gate "$dir/home" "$dir/no-runner" "$dir/repo" \
+          "$dir/out" "$dir/err" 2>/dev/null | grep '^START ' || true
+      )"
+    else
+      start="$(
+        PM_DISPATCH_TEST_PR_GATE_CASE_TIMEOUT_SECS="$env_value" \
+        OSTYPE="$ostype" run_gate "$dir/home" "$dir/no-runner" "$dir/repo" \
+          "$dir/out" "$dir/err" 2>/dev/null | grep '^START ' || true
+      )"
+    fi
+    if [[ "$start" != *" $expected" ]]; then
+      fail "$name" "env='${env_value}' OSTYPE='${ostype}': expected START line ending '${expected}', got '${start}'"
+      return
+    fi
+  done
   pass "$name"
 }
 
@@ -6361,6 +6412,7 @@ run_test test_piped_stdout_does_not_abort_gate
 run_test test_sequential_frontmatter_parity_mismatch_aborts_gate
 run_test test_run_gate_case_watchdog_bounds_stalled_fixture
 run_test test_run_gate_case_watchdog_default_is_platform_aware
+run_test test_run_gate_case_watchdog_start_line_reports_value_and_source
 run_test test_qa_rules_dir_resolved_and_exported
 run_test test_qa_rules_dir_absent_stays_unset
 run_test test_qa_rules_dir_present_but_reviewer_reports_missing_gets_distinct_diagnostic
