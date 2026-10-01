@@ -29,11 +29,11 @@ Versions follow [Semantic Versioning](https://semver.org/).
   non-authorizing partial record, but that function (and the three
   `QA_EXECUTION_*` variables it reads) were defined only after the long
   scope-manifest phase. A gate killed or failing before that point printed
-  `qa_execution_finalize: command not found`, hidden by `|| true`. Both now sit
-  before the trap is installed. With no evidence file yet, finalize returns at
-  once, so behavior after the point where the evidence is created is unchanged.
-  Observed on native Windows, where a killed gate usually lands in the
-  scope-manifest phase.
+  `qa_execution_finalize: command not found` (hidden from the exit status by
+  `|| true`). Both now sit before the trap is installed. No evidence file
+  exists that early, so nothing was lost and finalize now simply returns at
+  once; behavior from the point where the evidence is created is unchanged.
+  Reported on native Windows in #650, where a killed gate printed the message.
 
 - **Context refresh fallback values no longer print `printf: write error` when
   their write fails (CC-602, hardening for #633; trigger not reproduced).**

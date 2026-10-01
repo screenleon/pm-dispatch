@@ -6986,16 +6986,20 @@ STUB_JQ_EOF
   pass "$name"
 }
 
-# Behavior: the EXIT trap pr-gate.sh installs for the scope-manifest phase can
-# run before the QA-execution machinery (qa_execution_prepare, much later in the
-# script) exists, and must then be silent. It used to call qa_execution_finalize
-# while the function was still undefined, printing
+# Behavior: pr-gate.sh's EXIT trap (gate_exit_cleanup) can fire before the
+# QA-execution machinery (qa_execution_prepare, much later in the script)
+# exists, and must then be silent and keep the gate's own exit status. It used
+# to call qa_execution_finalize while the function was still undefined, printing
 # "qa_execution_finalize: command not found" on every early failure or cancel
-# (CC-609, issue #650); the scope-manifest phase is the longest, so a kill
-# usually lands there.
-# Steps: stub jq so the one call reading `.repository.key` (just after the
-# cleanup trap is installed and long before qa_execution_prepare) fails, run the
-# gate, and assert a nonzero exit with no "command not found" on stderr.
+# (CC-609, issue #650).
+# Steps: stub jq so the one call reading `.repository.key` fails. That call is
+# the first `.repository.key` jq in pr-gate.sh, after gate_exit_cleanup is
+# installed and before qa_execution_prepare; if it moves out of that window this
+# case stops exercising the trap. Run the gate and assert the exit status is
+# exactly 1 (errexit on that assignment, preserved by the trap, so the failure
+# is the injected one and not an earlier crash), and that stderr has neither
+# "command not found" (undefined function) nor "unbound variable" (the
+# QA_EXECUTION_* variables must be initialised before the trap too).
 test_exit_cleanup_before_qa_execution_is_defined_is_silent() {
   local name="gate-exit-cleanup/early-failure-does-not-call-an-undefined-function"
   should_run "$name" || return 0
@@ -7022,12 +7026,12 @@ STUB_JQ_EOF
   PATH="$stub_dir:$PATH" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
   code=$?
   set -e
-  if [[ "$code" -eq 0 ]]; then
-    fail "$name" "expected nonzero exit from the injected jq failure, got 0"
+  if [[ "$code" -ne 1 ]]; then
+    fail "$name" "expected exit 1 (errexit on the injected jq failure), got $code: $(head -c 300 "$err")"
     return
   fi
-  if grep -q "command not found" "$err"; then
-    fail "$name" "cleanup called an undefined function: $(grep 'command not found' "$err" | head -2)"
+  if grep -qE "command not found|unbound variable" "$err"; then
+    fail "$name" "exit cleanup used an undefined function or variable: $(grep -E 'command not found|unbound variable' "$err" | head -2)"
     return
   fi
   pass "$name"

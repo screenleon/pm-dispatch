@@ -1493,11 +1493,12 @@ relocate_gate_artifacts() {
 }
 
 # CC-522 Slice B QA execution evidence (qa_execution_prepare, further down, creates
-# it). The EXIT trap below calls qa_execution_finalize, so the function and the
-# variables it reads must exist before that trap is installed: a gate cancelled or
-# failing early (the scope-manifest phase is the longest) used to hit "command not
-# found" here (CC-609). Before qa_execution_prepare runs there is no evidence file,
-# and finalize returns at once.
+# it). The full gate_exit_cleanup trap (installed below; the early trap near the
+# top does not call this) calls qa_execution_finalize, so the function and the
+# variables it reads must be defined before that trap is installed, and so must
+# anything else gate_exit_cleanup calls. A gate cancelled or failing in the long
+# scope-manifest phase used to hit "command not found" here (CC-609). Before
+# qa_execution_prepare runs there is no evidence file, and finalize returns at once.
 QA_EXECUTION_EVIDENCE_PATH=""
 QA_EXECUTION_HELPER_PATH=""
 QA_EXECUTION_CONTEXT_BLOCK=""
