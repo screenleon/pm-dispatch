@@ -145,6 +145,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-606 | 🟢 someday | **[`awk -v wanted="$key"` 會處理反斜線跳脫，`--tier`／`--mode` 這類 CLI 值可通過 policy 驗證卻與 bash 字串比較不一致]** [[CC-600]] 的 security-reviewer 指出的既有問題（非該 PR 引入）：`awk -v` 會展開跳脫序列，因此 `--tier 'expre\163s'` 或結尾帶反斜線的 `express\` 會被 `_gate_assurance_policy_lookup` 視為 `express`，但後續 `[[ $TIER == express ]]` 之類的 bash 比較不會。需本機 CLI 控制權，不是提權，屬驗證正規化不一致。修法：改用 `ENVIRON` 傳值，或在 lookup 前拒絕含反斜線的 key。 | ops/gate | 2026-09-30 | pr:#649 | P3 | hygiene |
 | CC-607 | 🟢 someday | **[worktree 主 checkout 解析與 drive-path 判斷的收尾整理]** [[CC-601]] 審查提出但刻意不併入的後續：`_pmctl_worktree_main_root` 與 `_sw_main_repo_root` 近乎重複，應讓前者委派給 state-paths 的解析器（或共用一個 helper）；`portable.sh` 內解析根目錄的 `case [A-Za-z]:/*` 分支與三處 jq regex 尚未統一，其中 `gate-result-verify.sh` 的 jq regex 只接受 `X:/`，`host-doctor-primitives.sh`／`hosts/claude/lib/doctor.sh` 接受 `X:[/\\]`；測試輔助 `tests/lib/test-memory-config-fixtures.sh` 與 `tests/shell/test-pr-gate.sh` 仍有 `--git-common-dir` 加 `== /*` 的寫法；common dir 不是 `<root>/.git`（submodule、`--separate-git-dir`）時 `dirname` 會回傳其父目錄（與 POSIX 相同，但在 Windows 上先前碰巧走 fallback 而答對）。 | ops/portability | 2026-09-30 | pr:#651 | P3 | reuse-debt |
 | CC-608 | 🟢 someday | **[kill 時 context refresh 其餘寫入的 `write error`：辨識實際失敗的 fd，必要時才擴大保護]** [[CC-602]] 只靜音了 7 個 `$(...)` 內的 fallback `printf`，原始觸發條件未重現。其餘同一路徑上的寫入仍未保護：`pmctl_context_workflow_refresh_bounded` 的 `>&2` 進度行、`printf >> "$batch_sql"`、`_ctx_extract_symbols`／`_ctx_chunk_emit` 這類 `< <(...)` producer（CC-595 到 CC-598 之後是逐檔案的主要工作，critic 認為是現在最可能的殘留來源）、`pmctl-gate.sh` 等處的 `\|\| printf`。需要先重現（原生 Windows、`timeout -k` 殺受限 refresh，並以 `BASH_XTRACEFD` 或把 fd 1/2 導到已關閉的管線辨識失敗的 fd），再決定是 producer 的 `2>/dev/null`、子程序收到 TERM 後安靜退出，或移除剩餘逐檔案 `$(...)`。 | ops/portability | 2026-10-01 | pr:#653 | P3 | hygiene |
+| CC-609 | ✅ done | **[`pr-gate.sh` 的 EXIT trap 在提早取消／失敗時呼叫尚未定義的 `qa_execution_finalize`]** `gate_exit_cleanup` 呼叫 `qa_execution_finalize`，但該函式與三個 `QA_EXECUTION_*` 變數定義在 scope-manifest 階段之後，比 trap 晚約 450 行。提早被 kill 或失敗時印出 `command not found`（被 `\|\| true` 吞掉退出碼）。#650 觀察 1。已把變數初始化與函式移到 trap 之前，並新增在舊版失敗的回歸測試。 | ops/gate | 2026-10-01 | pr:#654 | P3 | hygiene |
+| CC-610 | 🟢 someday | **[lint：EXIT trap 處理函式（含其內部呼叫）所用的函式必須定義在 `trap ... EXIT` 之前]** [[CC-609]] 的缺陷型態可重現於任何提早安裝 trap 的 `set -u` 腳本，淺層檢查（只看 handler 名稱）會漏掉，因為 `qa_execution_finalize` 是從 handler 本體內被呼叫。需要追蹤 handler 本體的傳遞呼叫。架構審查建議記錄為後續而不放進 CC-609 的小修正。 | ops/test | 2026-10-01 | pr:#654 | P3 | hygiene |
 
 ---
 
@@ -5776,5 +5778,45 @@ kill 的索引 shell，CC-595 到 CC-598 之後是逐檔案的主要工作）；
 釘住所選的保護；#633 因此可以關閉。
 
 **See**: [[CC-602]]；GitHub issue #633；[[CC-595]]／[[CC-597]]／[[CC-598]]。
+
+---
+
+## CC-609 — `pr-gate.sh` EXIT trap 提早呼叫未定義函式 ✅ 2026-10-01
+
+**Problem**：`runtime/bin/pr-gate.sh` 的 `gate_exit_cleanup`（EXIT trap）呼叫
+`qa_execution_finalize "$_gate_exit_status" || true`，但該函式與
+`QA_EXECUTION_EVIDENCE_PATH`／`_HELPER_PATH`／`_CONTEXT_BLOCK` 定義在 scope-manifest
+階段之後（約第 1954 行），trap 在約第 1547 行安裝。gate 在這之間被取消或失敗（scope
+manifest 是最長的階段）就會印出 `qa_execution_finalize: command not found`，被
+`|| true` 吞掉退出碼。這是 issue #650 的觀察 1。此時 evidence 檔案尚未建立，所以沒有東西
+遺失，只有誤導性的錯誤訊息與脆弱的清理程式。
+
+**Requirement**：變數與函式必須定義在 trap 安裝之前。
+
+**Done-when**：已達成（PR #654）。函式本體不變（md5 相同）、搬到 `gate_exit_cleanup` 之前；
+新測試 `gate-exit-cleanup/early-failure-does-not-call-an-undefined-function` 在 `main` 的
+`pr-gate.sh` 上失敗、在修正後通過。本機 40 秒 kill 的重現在舊版出現該訊息、修正後沒有。
+未執行 `pmctl gate`／`pr-gate.sh`（此主機逾時且耗盡記憶體），改由五位審查者逐一審查。
+
+**Not covered**：#650 的主訴（每個 pr-gate 測試 case 在原生 Windows 超過 120 秒 watchdog）、
+觀察 2（`rm: ... Device or resource busy`）與觀察 3（autocrlf 警告）。
+
+**See**: GitHub issue #650；[[CC-522]]；[[CC-610]]；[[CC-599]]／[[CC-600]]／[[CC-605]]。
+
+---
+
+## CC-610 — lint：EXIT trap 用到的函式必須先於 trap 定義 🟢 someday
+
+**Problem**：[[CC-609]] 的缺陷型態（trap 提早安裝，handler 內呼叫的函式定義在後面）可在任何
+`set -u` 腳本重現。只檢查 handler 名稱的淺層 lint 會漏掉它，因為
+`qa_execution_finalize` 是從 `gate_exit_cleanup` 本體內被呼叫。
+
+**Requirement**：實作一個 lint（`tools/lint/`），對每個 `trap <handler> EXIT`，沿 handler
+本體追蹤傳遞呼叫，確認被呼叫的、定義在同一檔的函式都定義在該 trap 之前；並以一個故意違規的
+fixture 證明它會失敗。
+
+**Done-when**：lint 納入 CI，對現有 `pr-gate.sh` 通過，對重現 CC-609 的 fixture 失敗。
+
+**See**: [[CC-609]]；GitHub issue #650。
 
 ---
