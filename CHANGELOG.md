@@ -23,31 +23,34 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
-- **Gate digests start one process instead of four (CC-611).**
-  `gate_digest_stream` probed its tool on every call (`printf '' | sha256sum`,
-  a subshell plus the tool) and then piped through `awk`; a gate makes dozens of
-  digests and a process costs ~40 ms on native Windows. `pr-gate.sh` now calls
-  the new `gate_digest_init` once in its main shell to choose the tool; each
-  digest then confirms it with the builtin `command -v` and runs it once, and
+- **Gate digests no longer probe their tool on every call (CC-611).**
+  `gate_digest_stream` ran `printf '' | sha256sum` (a subshell plus the tool)
+  before every digest and then piped through `awk`, four processes per digest,
+  and a gate makes dozens of them. `pr-gate.sh` now calls the new
+  `gate_digest_init` once in its main shell to choose the tool; each digest then
+  confirms it with the builtin `command -v` and runs it once, and
   `gate_digest_file` no longer wraps the stream in a second command
   substitution. Sourcing `gate-digest.sh` starts no process (every `pmctl`
-  command loads the gate libraries, and most never digest), and a process that
-  never calls `gate_digest_init` takes the original per-call path, so nothing
-  changes for it. A tool that disappears from `PATH` after initialisation, no
-  tool at all, and the "no sha256sum or shasum" error behave as before. On
-  `tier-detection` plus `standard-tier-detection` the gate's bash processes
-  dropped from 2,089 to 1,811 (attributed forks 3,714 to 3,284); wall-clock is
-  within run-to-run noise. Output, stderr and exit status were identical on 335
-  scenarios compared against the previous library, with and without
-  `gate_digest_init` (empty/binary/CRLF/1 MiB input, directory and missing
-  file, `pipefail` on and off, a missing, broken or shasum-only tool); the
-  comparison harness is not in the repository. **Two differences:** (1) a
-  digest tool that works at initialisation and breaks afterwards yields an empty
-  digest with status 0 instead of falling back to `shasum` (the same result a
-  tool failing mid-call always gave; every consumer that records or compares a
-  digest rejects an empty one), and (2) a tool that fails inside a direct
-  `set -e` + `pipefail` pipeline no longer aborts it (inside `$(...)`, where
-  `set -e` is cleared, nothing changed; every in-tree caller is of that kind).
+  command loads the gate libraries and most never digest). A process that never
+  calls `gate_digest_init` takes the original per-call code unchanged: the same
+  tool starts and the same results (compared 10 `sha256sum` and 5 `awk` starts
+  for 5 digests, before and after). Measured with an ad-hoc xtrace profile of
+  `tier-detection` plus `standard-tier-detection`, not with
+  `ops/diagnostics/gate-subprocess-census.sh`: the gate's bash processes went
+  from 2,089 to 1,811 (attributed forks 3,714 to 3,284). Wall-clock was within
+  run-to-run noise, so no speed-up is claimed. Output, stderr and exit status
+  were identical on 335 scenarios compared against the previous library, with
+  and without `gate_digest_init` (empty/binary/CRLF/1 MiB input, directory and
+  missing file, `pipefail` on and off, a missing, broken or shasum-only tool);
+  that harness is not in the repository, and the new `test-gate-digest.sh`
+  pins the contract and the one-process-per-digest property. **Two
+  differences, after `gate_digest_init` only:** (1) a digest tool that works at
+  initialisation and breaks afterwards yields an empty digest with status 0
+  instead of falling back to `shasum` (the result a tool failing mid-call always
+  gave; every consumer that records or compares a digest rejects an empty one),
+  and (2) a tool that fails inside a direct `set -e` + `pipefail` pipeline no
+  longer aborts it (inside `$(...)`, where `set -e` is cleared, nothing changed;
+  every in-tree caller is of that kind).
 
 - **`pr-gate.sh` no longer calls an undefined function from its EXIT trap when
   it is cancelled or fails early (CC-609, #650).** `gate_exit_cleanup` calls

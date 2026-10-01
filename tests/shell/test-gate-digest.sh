@@ -117,25 +117,47 @@ case_gate_digest_matches_oracle_on_awkward_input() {
 }
 
 # Behavior: gate_digest_file refuses a missing argument or a missing file with
-# status 2 and prints nothing, and never prints a digest for a path it cannot
-# read as a file (a directory). What it prints for a directory is not pinned:
-# like the code before CC-611 it reports an empty digest with status 0.
-# Steps: call it with no argument, an empty argument, a missing file and a
-# directory; capture stdout and the status.
+# status 2 and prints nothing, with or without gate_digest_init. (What it prints
+# for a directory depends on the digest tool and is not pinned.)
+# Steps: call it with no argument, an empty argument and a missing file in both
+# modes; capture stdout and the status.
 case_gate_digest_file_rejects_unreadable_input() {
   local name="gate-digest-file-rejects-unreadable-input"
   should_run "$name" || return 0
-  local out rc arg
-  _load_lib init
-  mkdir -p "$TMP_DIR/adir"
-  for arg in "" "$TMP_DIR/does-not-exist"; do
-    rc=0; out="$(gate_digest_file "$arg" 2>/dev/null)" || rc=$?
-    [[ "$rc" -eq 2 && -z "$out" ]] || { fail "$name" "arg '$arg': rc=$rc out='$out'"; return; }
+  local out rc arg mode
+  for mode in init no-init; do
+    _load_lib "$mode"
+    for arg in "" "$TMP_DIR/does-not-exist"; do
+      rc=0; out="$(gate_digest_file "$arg" 2>/dev/null)" || rc=$?
+      [[ "$rc" -eq 2 && -z "$out" ]] || { fail "$name" "$mode arg '$arg': rc=$rc out='$out'"; return; }
+    done
+    rc=0; out="$(gate_digest_file 2>/dev/null)" || rc=$?
+    [[ "$rc" -eq 2 && -z "$out" ]] || { fail "$name" "$mode no argument: rc=$rc out='$out'"; return; }
   done
-  rc=0; out="$(gate_digest_file 2>/dev/null)" || rc=$?
-  [[ "$rc" -eq 2 && -z "$out" ]] || { fail "$name" "no argument: rc=$rc out='$out'"; return; }
-  out="$(gate_digest_file "$TMP_DIR/adir" 2>/dev/null || true)"
-  [[ ! "$out" =~ [0-9a-f]{64} ]] || { fail "$name" "directory produced a digest: '$out'"; return; }
+  pass "$name"
+}
+
+# Behavior: after gate_digest_init a closed stdout does not change the status:
+# gate_digest_stream still returns 0, as the old `tool | awk; return 0` did when
+# awk only warned, so a `set -e` caller is not stopped by the failed write. (The
+# original path, taken without gate_digest_init, is the old `tool | awk` and
+# keeps whatever awk's exit status does under `set -e` + `pipefail`; it is not
+# asserted here.)
+# Steps: in a `set -e` subshell digest "abc" directly (not in an `||` list, where
+# `set -e` is ignored) with stdout closed (`>&-`) and require that the next
+# command still runs.
+case_gate_digest_stream_status_ignores_a_closed_stdout() {
+  local name="gate-digest-stream-status-ignores-a-closed-stdout"
+  should_run "$name" || return 0
+  local out
+  printf 'abc' > "$TMP_DIR/abc"
+  out="$(
+    set -e
+    _load_lib init
+    gate_digest_stream < "$TMP_DIR/abc" >&- 2>/dev/null
+    echo survived
+  )"
+  [[ "$out" == survived ]] || { fail "$name" "a closed stdout stopped a set -e caller: '$out'"; return; }
   pass "$name"
 }
 
@@ -296,10 +318,84 @@ case_gate_digest_tool_broken_after_init_gives_empty_digest() {
   chmod +x "$bad_bin/sha256sum"
   printf 'abc' > "$TMP_DIR/abc"
   _load_lib init
-  rc=0; out="$(PATH="$bad_bin:$PATH" gate_digest_stream < "$TMP_DIR/abc" 2>/dev/null)" || rc=$?
-  [[ "$rc" -eq 0 && -z "$out" ]] || { fail "$name" "stream: rc=$rc out='$out'"; return; }
-  rc=0; out="$(PATH="$bad_bin:$PATH" gate_digest_file "$TMP_DIR/abc" 2>/dev/null)" || rc=$?
-  [[ "$rc" -eq 0 && -z "$out" ]] || { fail "$name" "file: rc=$rc out='$out'"; return; }
+  # The stream prints nothing at all; the file form prints just the newline its
+  # capture-then-print always added.  The trailing "x" keeps the command
+  # substitution from stripping those bytes.
+  rc=0; out="$(PATH="$bad_bin:$PATH" gate_digest_stream < "$TMP_DIR/abc" 2>/dev/null; printf x)" || rc=$?
+  [[ "$rc" -eq 0 && "$out" == x ]] || { fail "$name" "stream: rc=$rc out='$out'"; return; }
+  rc=0; out="$(PATH="$bad_bin:$PATH" gate_digest_file "$TMP_DIR/abc" 2>/dev/null; printf x)" || rc=$?
+  [[ "$rc" -eq 0 && "$out" == $'\n'x ]] || { fail "$name" "file: rc=$rc out='$out'"; return; }
+  # Under `set -e` + `pipefail` a failing tool in a direct pipeline stage used to
+  # abort the shell; it no longer does (inside `$(...)`, where `set -e` is
+  # cleared, it never did).
+  out="$(
+    set -eo pipefail
+    PATH="$bad_bin:$PATH"
+    gate_digest_stream < "$TMP_DIR/abc" 2>/dev/null | cat
+    echo after
+  )"
+  [[ "$out" == after ]] || { fail "$name" "the shell stopped at a failing tool: '$out'"; return; }
+  pass "$name"
+}
+
+# Behavior: a fresh process that sources the library and never calls
+# gate_digest_init works under `set -u` (the state variable exists after
+# sourcing alone), and still digests correctly through the original path.
+# Steps: run `bash -c` with nounset, source, digest "abc" from a pipe, and
+# compare with the known vector.
+case_gate_digest_fresh_process_without_init_works_under_set_u() {
+  local name="gate-digest-fresh-process-without-init-works-under-set-u"
+  should_run "$name" || return 0
+  local got
+  got="$(printf 'abc' | bash -c 'set -u; . "$1"; gate_digest_stream' _ "$LIB" 2>&1)"
+  [[ "$got" == "$ABC_SHA" ]] || { fail "$name" "got '$got'"; return; }
+  pass "$name"
+}
+
+# Behavior: without gate_digest_init and with a broken sha256sum the original
+# path still falls back to shasum and always runs `shasum -a 256` (a bare
+# `shasum` would silently produce SHA-1).
+# Steps: put a failing sha256sum and a logging shasum first on PATH, source the
+# library without initialising, digest "abc", and check the value and the log.
+case_gate_digest_original_path_falls_back_to_shasum_with_algorithm_flag() {
+  local name="gate-digest-original-path-falls-back-to-shasum-with-algorithm-flag"
+  should_run "$name" || return 0
+  command -v sha256sum >/dev/null 2>&1 || { skip "$name" "host has no sha256sum to back the shasum stub"; return 0; }
+  local stubs="$TMP_DIR/orig-stubs" log="$TMP_DIR/orig.log" real got bad
+  real="$(command -v sha256sum)"
+  mkdir -p "$stubs"; : > "$log"
+  printf '#!/bin/sh\nexit 1\n' > "$stubs/sha256sum"
+  printf '#!/bin/sh\necho "shasum $*" >> "%s"\nshift 2\nexec "%s" "$@"\n' "$log" "$real" > "$stubs/shasum"
+  chmod +x "$stubs/sha256sum" "$stubs/shasum"
+  got="$(
+    PATH="$stubs:$PATH"
+    _load_lib no-init
+    printf 'abc' | gate_digest_stream
+  )"
+  [[ "$got" == "$ABC_SHA" ]] || { fail "$name" "digest via the original shasum path: '$got'"; return; }
+  bad="$(grep -vc '^shasum -a 256$' "$log" || true)"
+  [[ -s "$log" && "$bad" -eq 0 ]] || { fail "$name" "shasum was not always run with -a 256: $(cat "$log")"; return; }
+  pass "$name"
+}
+
+# Behavior: (CC-611) pr-gate.sh calls gate_digest_init, so a gate gets the
+# one-process digests. Deleting that call would silently drop the whole speed-up
+# and every other test would still pass.
+# Steps: run pr-gate.sh with an unknown option, which it rejects after the
+# bootstrap and before any digest, with a counting sha256sum first on PATH, and
+# assert the single start is the probe that gate_digest_init makes.
+case_gate_digest_pr_gate_initialises_the_digest_tool() {
+  local name="gate-digest-pr-gate-initialises-the-digest-tool"
+  should_run "$name" || return 0
+  command -v sha256sum >/dev/null 2>&1 || { skip "$name" "host has no sha256sum"; return 0; }
+  local stubs="$TMP_DIR/prgate-stubs" log="$TMP_DIR/prgate.log" repo="$TMP_DIR/prgate-repo" rc=0 starts
+  _counting_stub_dir "$stubs" "$log" sha256sum
+  git init -q "$repo"
+  PATH="$stubs:$PATH" bash "$REPO_ROOT/runtime/bin/pr-gate.sh" --cd "$repo" --no-such-option \
+    > "$TMP_DIR/prgate.out" 2> "$TMP_DIR/prgate.err" || rc=$?
+  [[ "$rc" -eq 2 ]] || { fail "$name" "expected the unknown option to exit 2, got $rc: $(head -c 300 "$TMP_DIR/prgate.err")"; return; }
+  starts="$(grep -c '^sha256sum ' "$log" || true)"
+  [[ "$starts" -eq 1 ]] || { fail "$name" "expected exactly 1 sha256sum start (gate_digest_init's probe), got $starts"; return; }
   pass "$name"
 }
 
@@ -334,11 +430,15 @@ case_gate_digest_source_and_calls_are_side_effect_free() {
 case_gate_digest_known_vectors_in_every_call_shape
 case_gate_digest_matches_oracle_on_awkward_input
 case_gate_digest_file_rejects_unreadable_input
+case_gate_digest_stream_status_ignores_a_closed_stdout
 case_gate_digest_starts_one_tool_process_per_digest
 case_gate_digest_sourcing_starts_no_process
 case_gate_digest_reports_missing_tool
 case_gate_digest_falls_back_to_shasum_when_sha256sum_is_broken
 case_gate_digest_tool_broken_after_init_gives_empty_digest
+case_gate_digest_fresh_process_without_init_works_under_set_u
+case_gate_digest_original_path_falls_back_to_shasum_with_algorithm_flag
+case_gate_digest_pr_gate_initialises_the_digest_tool
 case_gate_digest_source_and_calls_are_side_effect_free
 
 th_summary
