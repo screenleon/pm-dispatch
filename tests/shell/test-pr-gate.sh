@@ -6993,7 +6993,7 @@ STUB_JQ_EOF
 # "qa_execution_finalize: command not found" on every early failure or cancel
 # (CC-609, issue #650).
 # Steps: stub jq so the one call reading `.repository.key` fails. That call is
-# the first `.repository.key` jq in pr-gate.sh, after gate_exit_cleanup is
+# the only `.repository.key` jq call in pr-gate.sh, after gate_exit_cleanup is
 # installed and before qa_execution_prepare; if it moves out of that window this
 # case stops exercising the trap. Run the gate and assert the exit status is
 # exactly 1 (errexit on that assignment, preserved by the trap, so the failure

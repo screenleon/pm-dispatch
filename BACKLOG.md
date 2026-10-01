@@ -5786,7 +5786,7 @@ kill 的索引 shell，CC-595 到 CC-598 之後是逐檔案的主要工作）；
 **Problem**：`runtime/bin/pr-gate.sh` 的 `gate_exit_cleanup`（EXIT trap）呼叫
 `qa_execution_finalize "$_gate_exit_status" || true`，但該函式與
 `QA_EXECUTION_EVIDENCE_PATH`／`_HELPER_PATH`／`_CONTEXT_BLOCK` 定義在 scope-manifest
-階段之後（約第 1954 行），trap 在約第 1547 行安裝。gate 在這之間被取消或失敗（scope
+階段之後（修改前 main 約第 1954 行），trap 在約第 1547 行安裝。gate 在這之間被取消或失敗（scope
 manifest 是最長的階段）就會印出 `qa_execution_finalize: command not found`，被
 `|| true` 吞掉退出碼。這是 issue #650 的觀察 1。此時 evidence 檔案尚未建立，所以沒有東西
 遺失，只有誤導性的錯誤訊息與脆弱的清理程式。
@@ -5815,7 +5815,7 @@ manifest 是最長的階段）就會印出 `qa_execution_finalize: command not f
 本體追蹤傳遞呼叫，確認被呼叫的、定義在同一檔的函式都定義在該 trap 之前；並以一個故意違規的
 fixture 證明它會失敗。
 
-**Done-when**：lint 納入 CI，對現有 `pr-gate.sh` 通過，對重現 CC-609 的 fixture 失敗。
+**Done-when**：lint 納入 CI，對現有 `pr-gate.sh` 通過（範圍含 `runtime/lib` 中被 source 的函式，或明確只檢查同一檔內定義的函式並寫明），對重現 CC-609 的 fixture 失敗。
 
 **See**: [[CC-609]]；GitHub issue #650。
 
