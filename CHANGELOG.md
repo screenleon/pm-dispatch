@@ -23,6 +23,26 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Gate digests start one process instead of four (CC-611).**
+  `gate_digest_stream` probed its tool on every call (`printf '' | sha256sum`,
+  a subshell plus the tool) and then piped through `awk`; a gate makes dozens of
+  digests and a process costs ~40 ms on native Windows. The tool is now chosen
+  once when `gate-digest.sh` is sourced, each call confirms it with the builtin
+  `command -v` and runs it once, and `gate_digest_file` no longer wraps the
+  stream in a second command substitution. The old per-call logic stays as the
+  fallback, so a missing or replaced tool, a `PATH` that changes after sourcing,
+  a broken `sha256sum` with a working `shasum`, and the "no sha256sum or shasum"
+  error behave as before. Output, stderr and exit status are identical on the 335
+  scenarios compared (empty/binary/CRLF/1 MiB input, directory and missing file,
+  `pipefail` on and off); the only change is that error text from a missing file
+  names the new source line. On `tier-detection` plus `standard-tier-detection`
+  the gate's bash processes dropped from 2,089 to 1,811 (attributed forks 3,714
+  to 3,284); wall-clock is within run-to-run noise. One tolerated difference: a
+  digest tool that fails mid-call used to abort a `set -e` + `pipefail` pipeline
+  with its status, and now yields an empty digest with status 0 (as it already
+  did inside `$(...)`, where `set -e` is cleared); every in-tree caller captures
+  with `$(...)` or reads from a pipe.
+
 - **`pr-gate.sh` no longer calls an undefined function from its EXIT trap when
   it is cancelled or fails early (CC-609, #650).** `gate_exit_cleanup` calls
   `qa_execution_finalize` to preserve the CC-522 QA checkpoint as a
