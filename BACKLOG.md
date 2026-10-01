@@ -138,12 +138,13 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-599 | ✅ done | **[`pr-gate` 的 scope manifest 對每個 changed file 的每個 symbol 各跑一次 `git grep`，原生 Windows 上單次 gate 要 14–17 分鐘，且到 budget 也不提前停止]** GitHub issue #621。2026-09-30 在本機以 xtrace 剖析一個 pr-gate case（`tier-detection`，約 3,050 個 bash 程序、約 188 秒，子程序建立成本 37.5 ms/次），`gate-scope.sh:626`／`:444`／`:434`（per-symbol `git grep` 的 process substitution）合計約 37 秒，是 Windows 放大倍率最高（約 16 倍）的熱點。把多個 symbol 合併成較少次 `git grep`（多 `-e` pattern／單次掃描），行為與截斷語意不變。 | ops/gate | 2026-09-30 | pr:#647 | P2 | hygiene |
 | CC-600 | ✅ done | **[`_gate_assurance_policy_lookup` 每次查詢都 `cat \| awk` 加一個 `$(...)`，約 4 個子程序/次；`pr-gate.sh:28` 的 cleanup `rm -rf` 在剖析中也異常耗時]** 同一份 2026-09-30 剖析：`gate-policy.sh:116`／`:128` 合計約 24 秒（Windows 約 14 倍），`pr-gate.sh:28` 約 14 秒。已由 [[CC-600]] 交付（pr:#649）：lookup 不再每次多個子程序（單次約 121 → 61 ms）；`pr-gate.sh:28` 經查是剖析工具的歸因假象（子程序時間被記到父 PID 前一行），不是 `rm -rf` 慢；原提議的 process 快取因呼叫端都在 `$(...)` 內而不可行。 | ops/gate | 2026-09-30 | pr:#649 | P2 | hygiene |
 | CC-601 | ✅ done | **[「路徑是否為絕對路徑」的判斷散落約 6 處 inline，且 `_sw_main_repo_root`／`_pmctl_worktree_main_root` 在 Windows linked worktree 內仍有 CC-591 同型缺陷]** 抽出共用 `_portable_is_absolute_path`（放 `runtime/lib/portable.sh`），遷移全部站點；兩個 worktree 相關函式會退回 `--show-toplevel`，使其 repo 身分與 gate subject 不一致。 | arch/portability | 2026-09-30 | pr:#645, pr:#651 | P2 | reuse-debt |
-| CC-602 | 🟢 someday | **[context workflow-refresh 的 timeout-kill 有時會印出誤導的 `printf: write error: Permission denied`，而不是安靜結束]** GitHub issue #633；與 [[CC-596]] 相關但不是同一個問題（CC-596 只修暫存檔洩漏）。 | ops/portability | 2026-09-30 | — | P3 | hygiene |
+| CC-602 | ⚠️ partial 2026-10-01 | **[context workflow-refresh 的 timeout-kill 有時會印出誤導的 `printf: write error: Permission denied`，而不是安靜結束]** GitHub issue #633；與 [[CC-596]] 相關但不是同一個問題（CC-596 只修暫存檔洩漏）。 | ops/portability | 2026-09-30 | pr:#653 | P3 | hygiene |
 | CC-603 | 🟢 someday | **[`context.db` 永遠不會縮小：沒有 VACUUM／auto_vacuum，即使 #620 的 `.next` 症狀被正確 reconcile，肥大的 db 也維持肥大]** GitHub issue #636。 | ops | 2026-09-30 | — | P3 | hygiene |
 | CC-604 | 🟢 someday | **[`gate-scope.sh` 收尾整理：collector 過大、三處「檔案內有哪些 symbol」讀取邏輯重複、fixed-head 模式仍有每來源固定次數的 fork]** CC-599 審查（architecture-reviewer／critic）提出但刻意不併入該 PR 的後續：`_gate_scope_expansions_collect_into` 拆成 shell consumer 與 symbol call-site 兩個 per-source emitter；tracked／untracked／shell consumer 三種「一個檔案內出現哪些 symbol」的讀取視需要共用 helper；fixed-head 模式下每個來源對 12 個副檔名各做一次 `git cat-file -e`、每個 consumer 一次 `git show`（CC-599 實測 fixed-head 剩餘成本）。 | ops/gate | 2026-09-30 | pr:#647 | P3 | hygiene |
 | CC-605 | ✅ done | **[`_gate_policy_resolve` 的 signal 迴圈對每個 signal 各 fork 多個 jq／grep，是 `gate-policy.sh` 剩餘的主要成本]** [[CC-600]] 之後的剖析（`tier-detection`）中 `gate-policy.sh` 仍約 19.5 秒：15 個 signal 依 `match_source` 各自做 `jq -c`（classification）、`jq -r … \| grep -iE`＋`jq`（path-regex）、`jq -r`（brief-value），加上每個命中 signal 的 `_gate_policy_tier_rank`／`_gate_policy_add_reviewers`／`jq -nc` 子 shell。輸入只需解析一次，比對可在 bash 內完成。風險：`grep -iE` 與 bash `=~` 的正規表達式語意需先逐 pattern 驗證等價。 | ops/gate | 2026-09-30 | pr:#649, pr:#652 | P2 | hygiene |
 | CC-606 | 🟢 someday | **[`awk -v wanted="$key"` 會處理反斜線跳脫，`--tier`／`--mode` 這類 CLI 值可通過 policy 驗證卻與 bash 字串比較不一致]** [[CC-600]] 的 security-reviewer 指出的既有問題（非該 PR 引入）：`awk -v` 會展開跳脫序列，因此 `--tier 'expre\163s'` 或結尾帶反斜線的 `express\` 會被 `_gate_assurance_policy_lookup` 視為 `express`，但後續 `[[ $TIER == express ]]` 之類的 bash 比較不會。需本機 CLI 控制權，不是提權，屬驗證正規化不一致。修法：改用 `ENVIRON` 傳值，或在 lookup 前拒絕含反斜線的 key。 | ops/gate | 2026-09-30 | pr:#649 | P3 | hygiene |
 | CC-607 | 🟢 someday | **[worktree 主 checkout 解析與 drive-path 判斷的收尾整理]** [[CC-601]] 審查提出但刻意不併入的後續：`_pmctl_worktree_main_root` 與 `_sw_main_repo_root` 近乎重複，應讓前者委派給 state-paths 的解析器（或共用一個 helper）；`portable.sh` 內解析根目錄的 `case [A-Za-z]:/*` 分支與三處 jq regex 尚未統一，其中 `gate-result-verify.sh` 的 jq regex 只接受 `X:/`，`host-doctor-primitives.sh`／`hosts/claude/lib/doctor.sh` 接受 `X:[/\\]`；測試輔助 `tests/lib/test-memory-config-fixtures.sh` 與 `tests/shell/test-pr-gate.sh` 仍有 `--git-common-dir` 加 `== /*` 的寫法；common dir 不是 `<root>/.git`（submodule、`--separate-git-dir`）時 `dirname` 會回傳其父目錄（與 POSIX 相同，但在 Windows 上先前碰巧走 fallback 而答對）。 | ops/portability | 2026-09-30 | pr:#651 | P3 | reuse-debt |
+| CC-608 | 🟢 someday | **[kill 時 context refresh 其餘寫入的 `write error`：辨識實際失敗的 fd，必要時才擴大保護]** [[CC-602]] 只靜音了 7 個 `$(...)` 內的 fallback `printf`，原始觸發條件未重現。其餘同一路徑上的寫入仍未保護：`pmctl_context_workflow_refresh_bounded` 的 `>&2` 進度行、`printf >> "$batch_sql"`、`_ctx_extract_symbols`／`_ctx_chunk_emit` 這類 `< <(...)` producer（CC-595 到 CC-598 之後是逐檔案的主要工作，critic 認為是現在最可能的殘留來源）、`pmctl-gate.sh` 等處的 `\|\| printf`。需要先重現（原生 Windows、`timeout -k` 殺受限 refresh，並以 `BASH_XTRACEFD` 或把 fd 1/2 導到已關閉的管線辨識失敗的 fd），再決定是 producer 的 `2>/dev/null`、子程序收到 TERM 後安靜退出，或移除剩餘逐檔案 `$(...)`。 | ops/portability | 2026-10-01 | pr:#653 | P3 | hygiene |
 
 ---
 
@@ -5588,7 +5589,7 @@ authoritative full-suite 結果，且審查者與實作者同模型家族。後�
 
 ---
 
-## CC-602 — timeout-kill 時誤導的 `printf: write error: Permission denied` 🟢 someday
+## CC-602 — timeout-kill 時誤導的 `printf: write error: Permission denied` ⚠️ partial 2026-10-01
 
 **Problem**：GitHub issue #633：context workflow-refresh 被 `timeout -k 5` 終止時，有時
 會印出 `printf: write error: Permission denied`，而不是安靜地結束。[[CC-596]] 處理了同一個
@@ -5596,9 +5597,29 @@ kill 情境的暫存檔洩漏，但沒有處理這個訊息。
 
 **Requirement**：查明寫入失敗的 fd 與來源，讓 kill 後不輸出誤導訊息。
 
-**Done-when**：以與 issue 相同的重現步驟不再出現該訊息。
+**Done-when（原文，尚未達成）**：以與 issue 相同的重現步驟不再出現該訊息。**無法達成**，
+因為本機從未重現出該訊息（沒有基準可比較「不再出現」）。**已驗證的主張**（見下）：fallback
+值寫入失敗現在是安靜的，由測試釘住。
 
-**See**: GitHub issue #633；[[CC-596]]。
+**狀態 `⚠️ partial`（pr:#653，2026-10-01；PR 於本次更新時尚待合併）**：緩解已交付，但原始
+觸發條件未重現、涵蓋不完整，所以不標 ✅ done，PR 用 `Refs #633`，issue 保持開啟。
+**已交付**：新增 `_ctx_fallback`（`printf '%s' "$1" 2>/dev/null || :`），`pmctl-context.sh`
+中放在 `$(...)` 內的 7 個 fallback `printf`（`_ctx_file_mtime`、`_ctx_file_sha1`、
+`_ctx_now_epoch`、兩個 `wc`、兩個 sqlite3 FTS 探測）改用它。新增測試用關閉 stdout（EBADF，
+與 issue 的 EACCES 走相同程式路徑與訊息）驗證：舊版印出
+`line 361: printf: write error: Bad file descriptor` 並以 rc 1 結束，新版安靜且 rc 0；值在
+stdout 開著時不變。**未重現的證據**：在 `main` 與 CC-595 之前的 commit `a4241e0` 上各對真實
+`workflow-refresh` 於 4–15 秒殺 12 次（每次全新 index）、確定性的「只殺讀取端」測試、100 次
+壓力測試，皆 0 次命中；[[CC-595]] 已移除大部分逐檔案 `$(...)`，與此吻合。原始診斷（kill
+時 `stat` 等工具先死、fallback 寫入已無讀取端的管線）是 issue 提出者的推論。**未涵蓋**：同一
+kill 路徑上其他寫入（受限 wrapper 的 `>&2` 進度行、`printf >> "$batch_sql"`、
+`_ctx_extract_symbols`／`_ctx_chunk_emit` 這類 `< <(...)` producer）以及其他 lib 約 15 處同樣的
+`|| printf` 寫法。**收尾條件**：原生 Windows 上實際確認 gate／dispatch log 不再出現該訊息，
+或取得重現並辨識失敗的 fd，後續見 [[CC-608]]。**審查方式須如實記錄**：未走 `pmctl gate
+run`，由五位 reviewer 分別審查（皆無 block），沒有 gate result artifact、沒有 authoritative
+full-suite 結果，且審查者與實作者同模型家族。
+
+**See**: GitHub issue #633；[[CC-596]]；[[CC-595]]。
 
 ---
 
@@ -5729,5 +5750,31 @@ Windows 上以前因為 drive-letter 被當成相對路徑而碰巧走 `--show-t
 測試；既有 `main-repo-root/`、`worktree main root:` 測試維持通過。
 
 **See**: [[CC-601]]；[[CC-591]]。
+
+---
+
+## CC-608 — kill 時 context refresh 其餘寫入的 `write error`：辨識實際失敗的 fd 🟢 someday
+
+**Problem**：[[CC-602]] 依 issue #633 提出者的建議，只靜音了 `pmctl-context.sh` 中放在 `$(...)`
+內的 7 個 fallback `printf`。原始觸發條件（原生 Windows、`timeout -k` 終止受限 refresh 時
+偶爾出現 `printf: write error: Permission denied`）在本機從未重現（`main` 與 CC-595 之前的
+commit 各 12 次真實 kill、確定性機制測試、100 次壓力測試皆 0 次命中），所以不知道實際失敗的
+是哪個 fd。同一 kill 路徑上其餘寫入仍未保護：`pmctl_context_workflow_refresh_bounded` 的
+`printf ... >&2` 進度行；`printf >> "$batch_sql"`（寫檔，不是管線，較不可能）；
+`_ctx_extract_symbols`／`_ctx_chunk_emit` 這類 `< <(...)` producer（寫入的管線其讀取端就是會被
+kill 的索引 shell，CC-595 到 CC-598 之後是逐檔案的主要工作）；以及其他 lib 約 15 處同樣的
+`|| printf` fallback（`pmctl-artifacts.sh`、`pmctl-memory.sh`、`pmctl-worktree.sh`、
+`pmctl-gate.sh` 等）。
+
+**Requirement**：先取得重現或證據（在原生 Windows 以 `timeout -k` 殺受限 refresh，並用
+`BASH_XTRACEFD`／把 fd 1 與 2 導到已關閉的管線辨識失敗的 fd，或請 #633 提出者在新版上重測並
+附完整 stderr），再決定保護方式：producer 加 `2>/dev/null`、子程序收到 TERM 後安靜退出、或
+移除剩餘逐檔案 `$(...)`（CC-595/597/598 的方向）。不要在沒有證據時對全部寫入加 `2>/dev/null`，
+那會掩蓋真正的診斷。
+
+**Done-when**：取得可重現的步驟或在 Windows 上確認 gate／dispatch log 不再出現該訊息，並以測試
+釘住所選的保護；#633 因此可以關閉。
+
+**See**: [[CC-602]]；GitHub issue #633；[[CC-595]]／[[CC-597]]／[[CC-598]]。
 
 ---
