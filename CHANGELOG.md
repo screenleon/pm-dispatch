@@ -84,6 +84,20 @@ Versions follow [Semantic Versioning](https://semver.org/).
   have made its generated wrapper call itself; it uses `type -P` now.
   **Still open (slice 4):** Windows evidence for the whole change.
 
+- **The jq LF shim is observable and has a Linux CI leg (CC-594, slice 4 of 4;
+  closes CC-594).** `doctor.sh` gains a `jq-line-endings` check on native Windows:
+  it runs `jq -n -r '"a","b"'` through the shim, reports OK with the jq path and the
+  `PM_DISPATCH_JQ_LF` value when the result is exactly `a\nb`, and warns with a fix
+  otherwise (no new check elsewhere). When a gate scope-manifest content digest or a
+  protected-attestation comparison fails on Windows, the error now adds a note that an
+  artifact written before the jq line-ending fix fails the same way and the gate should
+  be re-run. A new `PM_DISPATCH_TEST_FORCE_JQ_LF=1` test knob makes `th_init` turn the
+  shim on and export it even on Linux; the new CI job `test-jq-lf-forced` runs eleven
+  suites that read, stub or digest jq output with it, so a PATH-stub `jq` that inspects
+  its first argument (and now receives `-b`) or a reader that relied on Windows' old
+  stdin CR handling fails in CI rather than first on a Windows host. Windows evidence
+  for slices 1-4 is recorded in BACKLOG CC-594.
+
 - **jq readers of CRLF files tolerate the `\r` they now see (CC-594, slice 3 of 4).**
   `jq -b` keeps the `\r` of a CRLF line read from stdin (`-R`, `-Rs`), which Windows
   text mode used to drop and Linux jq never did. Every raw-input call site outside

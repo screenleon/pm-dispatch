@@ -254,6 +254,28 @@ case_jq_lf_is_loaded_by_th_init() {
   pass "$name"
 }
 
+# Behavior: PM_DISPATCH_TEST_FORCE_JQ_LF=1 makes th_init turn the shim on even where
+# the platform would not (the Linux CI leg), and export the knob so a launched
+# pmctl or pr-gate follows; without it nothing changes, and a caller's own
+# PM_DISPATCH_JQ_LF is still scrubbed.
+# Steps: in clean bash processes with OSTYPE=linux-gnu, call th_init with and
+# without the force variable and check for the jq function and the exported knob.
+case_jq_lf_test_force_knob_enables_the_shim() {
+  local name="jq-lf-test-force-knob-enables-the-shim"
+  should_run "$name" || return 0
+  type -P jq >/dev/null 2>&1 || { skip "$name" "host has no jq (the shim is only defined when jq exists)"; return 0; }
+  # shellcheck disable=SC2016 # the probe is a script for the child bash, expanded there
+  local probe='OSTYPE=linux-gnu; . "$1/tests/lib/test-harness.sh"; th_init; if declare -F jq >/dev/null; then f=yes; else f=no; fi; echo "$f ${PM_DISPATCH_JQ_LF:-unset}"'
+  local forced plain scrubbed
+  forced="$(PM_DISPATCH_TEST_FORCE_JQ_LF=1 bash -c "$probe" _ "$REPO_ROOT" 2>&1 | tail -n 1)"
+  plain="$(bash -c "$probe" _ "$REPO_ROOT" 2>&1 | tail -n 1)"
+  scrubbed="$(PM_DISPATCH_JQ_LF=1 bash -c "$probe" _ "$REPO_ROOT" 2>&1 | tail -n 1)"
+  [[ "$forced" == "yes 1" ]] || { fail "$name" "with the force knob: expected 'yes 1', got '$forced'"; return; }
+  [[ "$plain" == "no unset" ]] || { fail "$name" "without it: expected 'no unset', got '$plain'"; return; }
+  [[ "$scrubbed" == "no unset" ]] || { fail "$name" "a caller's PM_DISPATCH_JQ_LF must still be scrubbed: expected 'no unset', got '$scrubbed'"; return; }
+  pass "$name"
+}
+
 # Behavior: cli/pmctl and runtime/bin/pr-gate.sh source the library when they
 # start, so a gate or a pmctl command on native Windows gets LF from jq. Nothing
 # else would notice one of them dropping the line.
@@ -278,6 +300,7 @@ case_jq_lf_adds_binary_flag_and_preserves_arguments
 case_jq_lf_sourcing_is_free_and_leaves_options_alone
 case_jq_lf_is_not_defined_when_jq_is_missing
 case_jq_lf_is_loaded_by_th_init
+case_jq_lf_test_force_knob_enables_the_shim
 case_jq_lf_is_sourced_by_pmctl_and_pr_gate
 case_jq_lf_real_jq_writes_lf_and_matches_the_linux_digest
 

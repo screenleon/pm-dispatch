@@ -161,6 +161,27 @@ case_digest_mismatch_rejected() {
   if [[ "$rc" -ne 0 ]]; then pass "$name"; else fail "$name" "rc=$rc (expected rejection)"; fi
 }
 
+# Behavior: (CC-594) a content-digest mismatch on native Windows tells the user an
+# artifact written before the jq line-ending fix fails the same way and the gate
+# should be re-run; on Linux/macOS the message is unchanged (no hint).
+# Steps: verify a manifest with a wrong digest with OSTYPE set to msys and to
+# linux-gnu; compare the stderr of each.
+case_digest_mismatch_hints_re_run_on_windows_only() {
+  local name="gate_scope_manifest_verify: a digest mismatch hints at re-running the gate on Windows only"
+  should_run "$name" || return 0
+  local f win_err linux_err
+  f="$tmp_root/digest-mismatch-hint.json"
+  _gate_scope_manifest_valid_instance | jq -c '.content.digest = ("9" * 64)' > "$f"
+  win_err="$( (OSTYPE=msys; _verify_valid "$f") 2>&1 >/dev/null || true)"
+  linux_err="$( (OSTYPE=linux-gnu; _verify_valid "$f") 2>&1 >/dev/null || true)"
+  if [[ "$win_err" == *"content digest mismatch"* && "$win_err" == *"re-run the gate"* ]] \
+     && [[ "$linux_err" == *"content digest mismatch"* && "$linux_err" != *"re-run the gate"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "windows=[$win_err] linux=[$linux_err]"
+  fi
+}
+
 case_valid_instance_passes
 case_missing_required_key_rejected
 case_invalid_enum_rejected
@@ -171,5 +192,6 @@ case_changed_paths_derivation_mismatch_rejected
 case_hunk_path_outside_changed_set_rejected
 case_truncation_omitted_occurred_mismatch_rejected
 case_digest_mismatch_rejected
+case_digest_mismatch_hints_re_run_on_windows_only
 
 th_summary

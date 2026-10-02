@@ -35,7 +35,14 @@ th_init() {
   test_env_scrub_fixture_inputs "$(cd "${BASH_SOURCE[0]%/*}/../.." && pwd)" || return 1
   # CC-594: on native Windows make jq write LF, as the code under test expects.
   # Done after the scrub so a caller's PM_DISPATCH_JQ_LF cannot leak in. Defines
-  # a jq() function only on msys/cygwin.
+  # a jq() function only on msys/cygwin, unless the operator sets
+  # PM_DISPATCH_TEST_FORCE_JQ_LF=1: the CI leg that runs a few suites on Linux with
+  # the shim on (exported, so the pmctl and pr-gate a suite launches see it too) to
+  # catch what only Windows would otherwise show, such as a PATH stub jq that
+  # inspects its first argument and now receives -b.
+  if [[ "${PM_DISPATCH_TEST_FORCE_JQ_LF:-}" == 1 ]]; then
+    export PM_DISPATCH_JQ_LF=1
+  fi
   # shellcheck source=runtime/lib/jq-lf.sh
   # shellcheck disable=SC1091 # CI runs shellcheck without -x; the source= hint above names the file.
   . "${BASH_SOURCE[0]%/*}/../../runtime/lib/jq-lf.sh"

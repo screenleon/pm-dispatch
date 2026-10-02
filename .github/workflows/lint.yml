@@ -82,6 +82,27 @@ jobs:
       - name: jq LF shim coverage lint regression suite
         run: bash tests/shell/test-lint-jq-lf.sh
 
+  # CC-594: the jq LF shim only exists on native Windows, and CI is Linux, so a
+  # change that breaks under it (a PATH stub jq that inspects its first argument
+  # and now receives -b, a reader that depended on the old stdin CR handling)
+  # would first show up on a Windows host. th_init turns the shim on for these
+  # suites when PM_DISPATCH_TEST_FORCE_JQ_LF=1 and exports it to launched processes.
+  test-jq-lf-forced:
+    runs-on: ubuntu-latest
+    env:
+      PM_DISPATCH_TEST_FORCE_JQ_LF: "1"
+    steps:
+      - uses: actions/checkout@v6
+      - name: Suites that read, stub or digest jq output, with the jq LF shim forced on
+        run: |
+          set -e
+          for suite in test-jq-lf test-guard-framework test-pmctl-guard test-gate-policy \
+            test-gate-structural-verify test-gate-scope-manifest-verify test-gate-digest \
+            test-pmctl-trace test-pmctl-run-stats test-pmctl-gate-stats test-pmctl-artifacts; do
+            echo "== $suite (shim forced on)"
+            bash "tests/shell/$suite.sh"
+          done
+
   lint-portable-repo-paths:
     runs-on: ubuntu-latest
     steps:

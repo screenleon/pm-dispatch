@@ -85,7 +85,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-581 | 🟢 someday | `gate_reviewer_protocol_verify` 的二次方 `block=` 累加（`runtime/lib/gate-result-verify.sh:651`）：逐行 bash 字串串接抽 fenced reviewer_result 區塊，對區塊行數 O(n²)。[[CC-579]] census 實測 bash 端非 gate 主成本（88% 在 jq），故列次要未動。無感但屬演算法級劣化，值得在有人為別因動到該函式時順手換 O(n)（`mapfile`＋`printf` 或單次 `awk` 切檔），維持 fence 巢狀／截斷／空區塊失敗語意與 `GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR` 值不變。獨立排程投報不足 | ops/gate | 2026-09-08 | — | P3 | — |
 | CC-583 | 🔵 active | [[CC-447]] live dogfood smoke 摔倒點：`doctor.sh` `executor_authed()`（`runtime/bin/doctor.sh:338`）檢查 codex/claude 認證時寫死讀 `${HOME}/.codex/auth.json`／`${HOME}/.claude/.credentials.json`，完全不跟 `CODEX_HOME`／`CLAUDE_CONFIG_DIR` override（這兩個 env var 在 install.sh／其餘所有 doctor 檢查項都是正式支援的間接層）。在 `CODEX_HOME`／`CLAUDE_CONFIG_DIR` 與 `$HOME/.codex`／`$HOME/.claude` 不同路徑的機器上（例如隔離 sandbox、或未來任何 per-project config-dir 場景），doctor 會誤報「not authenticated」，即使實際 dispatch 能正常運作（已用 `claude --print`／`codex exec` 直接對真實憑證檔實測驗證）。**Requirement**：`executor_authed()` 改吃 `${CODEX_HOME:-$HOME/.codex}`／`${CLAUDE_CONFIG_DIR:-$HOME/.claude}`，與其餘檢查項的 override 邏輯一致；補 regression（env var 指到非 `$HOME` 路徑時 doctor 仍正確回報 ok/fail）。 | ops/install | 2026-09-11 | — | P3 | hygiene |
 | CC-592 | 🟢 someday | **[qa-tester 的 codex sandbox 結構性地無法啟動真實 Windows process，導致任何需要真實 process 驗證的 gate finding 卡住]** 兩次獨立 gate dispatch（sequential 90s bound、parallel 120s bound）中，qa-tester 嘗試重新執行一個會啟動真實 Windows Job Object supervisor 的測試時，兩次都在整個 timeout 期間**零輸出**後逾時（exit 124）——同一測試由本機（非 sandbox）直接執行 5 次以上皆在 10 秒內通過。訊號（完全零輸出，而非部分進度）與 #609（AppContainer 阻擋 MSYS2 對全域 namespace 的存取）、#619（codex Windows sandbox 決定性拒絕 exec_command）同一類，但這次發生在 **reviewer 驗證路徑本身**，而非 gate 的 producer 端。目前僅能靠 `.gate-overrides.md` 逐案記錄 accepted risk 繞過（2026-09-27 CC-590 gate 過程中發現，兩輪 gate 皆命中同一訊號）。 | ops/gate | 2026-09-27 | — | P2 | spike |
-| CC-594 | 🔵 active | **[原生 Windows 上這台機器的 jq（WinGet 版）對任何非 TTY 的輸出（重導向到檔案、pipe、command substitution）都會自動加上 CRLF，不限 `-r` 模式，範圍遍布整個 repo]** 修 CC-593 時發現同一根因在 `tests/shell/test-core-schemas.sh` 造成 33 個測試失敗——多數是 `enum-sync` 類檢查：兩邊列印出來的值完全相同（例如 `schema enum: claude,codex,grok,opencode; yaml values: claude,codex,grok,opencode`）卻仍判定 FAIL，因為 `_schema_enum()` 的 `jq -r` 呼叫吐出的每一行列舉值都帶有看不見的尾端 `\r`。全 repo 掃描 `tests/`／`runtime/lib/`／`tools/lint/`／`tools/generate/` 下用到 `jq -r` 的檔案有 **64 個**；此機器沒有行為正常（純 LF）的 MSYS 版 jq 可以直接替換（僅有 WinGet 裝的原生版本，沒有 pacman/MSYS2 完整安裝）。範圍遠大於 CC-593 的四個獨立小修，需要一次性的架構決策（例如統一的 jq 包裝函式／全面補 `tr -d '\r'`／或改善 jq 安裝來源），而非逐一補丁。 | ops/test | 2026-09-28 | pr:#660 | P2 | spike |
+| CC-594 | ✅ closed 2026-10-02 | **[原生 Windows 上這台機器的 jq（WinGet 版）對任何非 TTY 的輸出（重導向到檔案、pipe、command substitution）都會自動加上 CRLF，不限 `-r` 模式，範圍遍布整個 repo]** 修 CC-593 時發現同一根因在 `tests/shell/test-core-schemas.sh` 造成 33 個測試失敗——多數是 `enum-sync` 類檢查：兩邊列印出來的值完全相同（例如 `schema enum: claude,codex,grok,opencode; yaml values: claude,codex,grok,opencode`）卻仍判定 FAIL，因為 `_schema_enum()` 的 `jq -r` 呼叫吐出的每一行列舉值都帶有看不見的尾端 `\r`。全 repo 掃描 `tests/`／`runtime/lib/`／`tools/lint/`／`tools/generate/` 下用到 `jq -r` 的檔案有 **64 個**；此機器沒有行為正常（純 LF）的 MSYS 版 jq 可以直接替換（僅有 WinGet 裝的原生版本，沒有 pacman/MSYS2 完整安裝）。範圍遠大於 CC-593 的四個獨立小修，需要一次性的架構決策（例如統一的 jq 包裝函式／全面補 `tr -d '\r'`／或改善 jq 安裝來源），而非逐一補丁。 | ops/test | 2026-09-28 | pr:#660 | P2 | spike |
 | CC-602 | ⚠️ partial 2026-10-01 | **[context workflow-refresh 的 timeout-kill 有時會印出誤導的 `printf: write error: Permission denied`，而不是安靜結束]** GitHub issue #633；與 [[CC-596]] 相關但不是同一個問題（CC-596 只修暫存檔洩漏）。 | ops/portability | 2026-09-30 | pr:#653 | P3 | hygiene |
 | CC-603 | 🟢 someday | **[`context.db` 永遠不會縮小：沒有 VACUUM／auto_vacuum，即使 #620 的 `.next` 症狀被正確 reconcile，肥大的 db 也維持肥大]** GitHub issue #636。 | ops | 2026-09-30 | — | P3 | hygiene |
 | CC-604 | 🟢 someday | **[`gate-scope.sh` 收尾整理：collector 過大、三處「檔案內有哪些 symbol」讀取邏輯重複、fixed-head 模式仍有每來源固定次數的 fork]** CC-599 審查（architecture-reviewer／critic）提出但刻意不併入該 PR 的後續：`_gate_scope_expansions_collect_into` 拆成 shell consumer 與 symbol call-site 兩個 per-source emitter；tracked／untracked／shell consumer 三種「一個檔案內出現哪些 symbol」的讀取視需要共用 helper；fixed-head 模式下每個來源對 12 個副檔名各做一次 `git cat-file -e`、每個 consumer 一次 `git show`（CC-599 實測 fixed-head 剩餘成本）。 | ops/gate | 2026-09-30 | pr:#647 | P3 | hygiene |
@@ -1593,7 +1593,7 @@ accepted-risk 紀錄
 
 ---
 
-## CC-594 — 原生 Windows 上 jq 對任何非 TTY 輸出都加 CRLF，範圍遍布全 repo 🔵 active
+## CC-594 — 原生 Windows 上 jq 對任何非 TTY 輸出都加 CRLF，範圍遍布全 repo ✅ 2026-10-02
 
 **Problem**：修 [[CC-593]] 時發現，這台機器上安裝的 jq（WinGet 版
 `jqlang.jq`）只要輸出目的地不是終端機（重導向到檔案、進 pipe、被
@@ -1684,11 +1684,34 @@ pmctl 派生子行程那一部分的編輯，且過不了 `env -i`／`timeout`�
    失敗，使 `pmctl-gate-stats.sh:189` 把它算成損毀行並標記歷史不完整。這台機器上唯一的 CRLF
    jsonl 是 `~/.pm-dispatch/usage-tracker.jsonl`（由尚未轉換的 `hooks/log-usage.sh` 寫入，pmctl
    不用 `-R` 讀它）。評估是否移除 [[CC-593]] 留下的 `| tr -d '\r'`。
-4. **S4**：Windows 實測證據、CHANGELOG、關閉本票。可一併評估：`doctor.sh` 加一行 shim 檢查
+4. **S4**（已完成，pr:#PR_NUMBER；本票隨此片關閉，結果見下方「S4 結果與 Windows 實測證據」）：Windows 實測證據、CHANGELOG、關閉本票。可一併評估：`doctor.sh` 加一行 shim 檢查
    （`$(jq -n -r '"a","b"')` 應恰好是 `a\nb`，並顯示 `type -P jq` 與旋鈕值）、摘要不符的錯誤
    訊息加「用舊版產生的產物請重跑 gate」提示（`gate-result-verify.sh:137,1897,2027`）、一個
    強制啟用 shim 的 Linux CI 組態（`th_init` 會清掉旋鈕，需要不被清除的方式；用於抓出 PATH
    stub 檢查 `$1` 而收到多出的 `-b` 這類只有 Windows 看得到的問題）。
+
+*S4 結果與 Windows 實測證據*（2026-10-02，jq 1.8.1 WinGet，本機 Git Bash）：
+- **`doctor.sh` 的 `jq-line-endings` 檢查**（只在原生 Windows 執行）：實機輸出
+  `[OK] jq writes LF line endings (<jq 路徑>; PM_DISPATCH_JQ_LF=auto)`；用會回 CRLF 的 jq stub 得到警告
+  與修法；平台為 linux 時不出現。測試 `doctor-jq-line-endings-check`（移除平台判斷的變異會被抓到）。
+- **摘要不符提示**：只加在「由 `jq -cS` 輸出算摘要」的兩處比對失敗（`gate_scope_manifest_verify` 的
+  內容摘要、protected attestation 的 `subject_sha256`）；`:137`、`:2027` 是對檔案位元組取 sha256，
+  不因本票改變，所以不加。提示只在 msys／cygwin 出現。`gate_scope_manifest_verify` 的接線有測試
+  （移除該呼叫的變異會被抓到）；attestation 那一處的測試需要 JSON-schema 驗證器，這台機器跑不了，
+  只在 Linux CI 驗證。
+- **強制啟用 shim 的 Linux CI**：`PM_DISPATCH_TEST_FORCE_JQ_LF=1`（庫存為 test-config、不被清除）讓
+  `th_init` 匯出 `PM_DISPATCH_JQ_LF=1`；CI job `test-jq-lf-forced` 以它跑 11 個讀／stub／摘要 jq 輸出
+  的套件。行內片段只看 `OSTYPE`，所以這條腿涵蓋的是函式庫路徑（pmctl、pr-gate、`th_init`），不含
+  獨立腳本。
+- **Done-when 逐項**：`test-core-schemas` 138 過／22 敗，`enum-sync` 失敗 0（S1 前 127／33、其中 11 個
+  是 CRLF）；其餘 22 個需要 JSON-schema 驗證器（python `jsonschema` 模組與 CLI 都沒裝），與換行無關。
+  摘要與 Linux 已知向量一致：`test-jq-lf` 的 real-jq 案例（`jq -cS .` 的 sha256 等於 Linux 值；無 `-b`
+  時是 `fdd1d186…`、有 shim 時是 `157b4d1b…`）與 `test-gate-digest` 13／0、`test-gate-assurance-verify`
+  17／0、`test-gate-scope-manifest-verify` 11／0、`test-gate-structural-verify` 16／0、`test-gate-policy`
+  22／0；`tier-detection` 與 `standard-tier-detection` 兩個 pr-gate 案例通過（118 s）；CHANGELOG 已說明
+  Windows 摘要的一次性變動（S1 條目的 Behavior changes）。`pmctl gate`／`pr-gate.sh` 本身沒有跑（記憶體壓力）。
+- **仍存在、已記載的限制**：以「程式」形態啟動的 jq（`timeout 5 jq`、`xargs jq`、`find -exec jq`）繞過函式；
+  lint 檢查「有載入」而非「在第一次 jq 呼叫之前載入」；`dynamic-ok` 的理由是審查過的宣告而非證明。
 
 *S3 審查結果*（非測試檔的每個 `jq -R*`／`--rawfile` 呼叫點；判準：`-b` 只改變 stdin 的 `-R`／`-Rs`，
 檔案讀入不變）：
