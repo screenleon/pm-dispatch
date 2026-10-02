@@ -14,10 +14,6 @@
 # runtime loader supplies a lexical path rooted in the deployed layout; all
 # routing paths below are relative to that same layout. Executable entrypoints
 # perform symlink canonicalization before they source runtime libraries.
-
-# CC-594: native Windows jq writes CRLF to a pipe/file; -b keeps LF (see runtime/lib/jq-lf.sh)
-case "${OSTYPE:-}" in msys*|cygwin*) if type -P jq >/dev/null 2>&1; then jq() { command jq -b "$@"; }; fi ;; esac
-
 EXECUTOR_ROUTER_LIB_DIR="${BASH_SOURCE[0]%/*}"
 [[ "$EXECUTOR_ROUTER_LIB_DIR" == "${BASH_SOURCE[0]}" ]] && EXECUTOR_ROUTER_LIB_DIR=.
 case "$EXECUTOR_ROUTER_LIB_DIR" in

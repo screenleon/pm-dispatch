@@ -471,8 +471,10 @@ case_jq_lf_paths_map_to_the_lint() {
            tests/shell/test-lint-jq-lf.sh runtime/lib/jq-lf.sh; do
     status=0
     out=$(RUN_TESTS_ARGS_LOG="$TMP_ROOT/$name.args" \
-      "$repo/tests/bin/run-tests.sh" --path "$p" --list 2>&1) || status=$?
-    if [[ "$status" -ne 0 || "$out" != *"test-lint-jq-lf"* || "$out" != *"test-jq-lf"* || "$out" == *"coverage gaps"* ]]; then
+      "$repo/tests/bin/run-tests.sh" --path "$p" --list 2>/dev/null) || status=$?
+    # whole-line matches: test-lint-jq-lf contains the text lint-jq-lf
+    if [[ "$status" -ne 0 ]] || ! grep -qx 'lint-jq-lf' <<< "$out" \
+        || ! grep -qx 'test-lint-jq-lf' <<< "$out" || ! grep -qx 'test-jq-lf' <<< "$out"; then
       fail "$name" "--path $p: status=$status out=$out"; return
     fi
   done

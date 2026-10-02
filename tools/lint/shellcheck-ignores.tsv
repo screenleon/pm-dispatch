@@ -3,6 +3,7 @@ ops/migrations/migrate-routing-log.sh	SC1091	pre-existing-shellcheck-debt
 ops/migrations/migrate-routing-to-events.sh	SC1091	pre-existing-shellcheck-debt
 ops/usage/usage-weekly.sh	SC2086	pre-existing-shellcheck-debt
 runtime/bin/dispatch-post-verify.sh	SC1091	pre-existing-shellcheck-debt
+runtime/bin/dispatch-supervisor.sh	SC2329	pre-existing-shellcheck-debt
 runtime/bin/doctor.sh	SC1091,SC2317,SC2329	pre-existing-shellcheck-debt
 runtime/bin/gate-supervisor.sh	SC2329	pre-existing-shellcheck-debt
 runtime/bin/pr-gate.sh	SC1091,SC2002,SC2086,SC2174,SC2209	pre-existing-shellcheck-debt

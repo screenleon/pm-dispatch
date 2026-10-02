@@ -7,22 +7,33 @@
 # runs jq needs its own copy: the entry script sources jq-lf.sh, or carries the
 # two-line standalone snippet quoted in jq-lf.sh's header (a hook may be copied by
 # install.sh and cannot rely on a repo-relative source). This lint finds the
-# entries (tracked files with mode 100755: *.sh and cli/pmctl) and checks:
-#   - an entry whose static `source` closure calls jq (at a command position) must
-#     load the shim itself: a `. .../jq-lf.sh` line, the snippet, or `th_init`
-#     (tests/lib/test-harness.sh loads it);
+# entries and checks:
+#   - an entry is a tracked *.sh or cli/pmctl with git mode 100755, or one outside
+#     a lib/ directory that no other tracked file sources by name (so a script
+#     committed from Windows without `git update-index --chmod=+x` is still
+#     checked);
+#   - an entry whose static `source` closure calls jq (at a command position, with
+#     or without an `if`/`while`/`command`/`exec` prefix, any argument) must load
+#     the shim itself: a `. .../jq-lf.sh` line, the snippet, or `th_init`
+#     (tests/lib/test-harness.sh loads it). The check is that the load is present,
+#     not that it runs before the first jq call: the snippet sits at the top;
 #   - an entry (outside tests/) with a `source` whose target is not a literal
-#     `name.sh` (a dynamic load, e.g. cli/pmctl's module loader) must load it too,
-#     because its closure cannot be known statically;
+#     tracked `name.sh` (a dynamic load such as cli/pmctl's module loader, or a
+#     name built from a variable) must load it too, because its closure cannot be
+#     known statically. `# jq-lf: dynamic-ok: <reason>` on that line or within the
+#     two lines before it waives this for the entries that reach it; the lint does
+#     not verify the reason, so it is a reviewed claim, not a proof;
 #   - the snippet lines must be exactly the ones in jq-lf.sh's header; a near-copy
 #     fails, so the copies cannot drift from the library;
 #   - tools/lint/jq-lf-exemptions.tsv (path<TAB>reason) lists entries that
-#     legitimately do not load it; a row whose file is gone or no longer needs it
-#     fails, so the list does not rot.
-# Libraries (mode 100644) are checked through the entries that source them.
+#     legitimately do not load it (an executable-mode library that no one runs
+#     directly: the entries that source it are checked instead); a row whose file
+#     is gone or no longer needs it fails, so the list does not rot.
+# Libraries are checked through the entries that source them.
 #
 # Usage: lint-jq-lf.sh [--repo-root <path>]
-# Exit: 0 ok, 1 violations, 2 usage / environment error.
+# Exit: 0 ok, 1 violations, 2 usage / environment error (including a tracked file
+# that cannot be read).
 set -euo pipefail
 
 usage() { printf 'usage: %s [--repo-root <path>]\n' "$(basename "$0")" >&2; }
@@ -53,10 +64,10 @@ cat > "$work/lint.awk" <<'AWK'
 function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
 
 # Read one file, filling calls[], loads[], s1[], s2[], bad[], srcs[], dyn[].
-function scan(p,    f, line, t, rest, m, last, b, prev, prev2) {
+function scan(p,    f, line, t, rest, m, last, b, prev, prev2, r, pre) {
   f = ROOT "/" p
   prev = ""; prev2 = ""
-  while ((getline line < f) > 0) {
+  while ((r = (getline line < f)) > 0) {
     t = trim(line)
     # `# jq-lf: dynamic-ok: <reason>` within the two lines before (or on the same
     # line as) a non-literal `source` says it is known not to reach jq for the
@@ -71,21 +82,33 @@ function scan(p,    f, line, t, rest, m, last, b, prev, prev2) {
       bad[p] = 1
     }
     if (t ~ /^#/ || t == "") continue
-    if (t ~ /(^|[|;&({`!]|then|do|else|\$\()[ \t]*jq[ \t]+[-\047"$.[]/) calls[p] = 1
+    # jq at a command position: after a separator, a keyword that takes a command,
+    # `command` or `exec`; followed by an argument or the end of the line (`\`
+    # continuation). `jq()` and `jq=` are not calls.
+    if (t ~ /(^|[|;&{`!]|\$\()[ \t]*jq([ \t]+[^ \t=(]|[ \t]*\\?$)/ ||
+        t ~ /(^|[^A-Za-z0-9_])(then|do|else|elif|if|while|until|command|exec)[ \t]+jq([ \t]+[^ \t=(]|[ \t]*\\?$)/) calls[p] = 1
     if (t ~ /(^|[;&|{(]|then[ \t]|do[ \t]|else[ \t])[ \t]*(\.|source)[ \t]+.*jq-lf\.sh/) loads[p] = 1
     if (t ~ /(^|[ \t;&|(])th_init([ \t]|$)/ && t !~ /th_init[ \t]*\(\)/) loads[p] = 1
     # `source = $0` in an awk program is an assignment, not a source command
     if (match(t, /(^|[;&|{(]|then[ \t]|do[ \t]|else[ \t])[ \t]*(\.|source)[ \t]+[^ \t=]/)) {
       rest = substr(t, RSTART + RLENGTH - 1)
       if (rest ~ /jq-lf\.sh/) continue
-      last = ""
+      sub(/[ \t]#.*$/, "", rest)   # a trailing comment is not a source target
+      last = ""; pre = ""
       while (match(rest, /[A-Za-z0-9_.-]+\.sh/)) {
+        pre = (RSTART > 1) ? substr(rest, RSTART - 1, 1) : ""
         last = substr(rest, RSTART, RLENGTH)
         rest = substr(rest, RSTART + RLENGTH)
       }
-      if (last == "") { if (!annotated) dyn[p] = 1 }
-      else srcs[p] = srcs[p] " " last
+      # not a literal tracked file name (none found, glued to a variable such as
+      # "$d/lib-$x.sh" or "${d}x.sh", or not a tracked basename): dynamic
+      if (last == "" || pre == "$" || pre == "}" || !(last in nb)) { if (!annotated) dyn[p] = 1 }
+      else { srcs[p] = srcs[p] " " last; sourced[last] = 1 }
     }
+  }
+  if (r < 0) {
+    printf "lint-jq-lf: cannot read %s\n", p > "/dev/stderr"
+    unreadable = 1
   }
   close(f)
 }
@@ -112,6 +135,7 @@ function closure(e,    stack, sp, cur, n, bl, i, k, c, b) {
 }
 
 BEGIN {
+  ROOT = ENVIRON["JQLF_ROOT"]; LIST = ENVIRON["JQLF_LIST"]; EXEMPT = ENVIRON["JQLF_EXEMPT"]
   while ((getline line < LIST) > 0) {
     split(line, a, "\t")
     np++; paths[np] = a[2]; mode[a[2]] = a[1]
@@ -133,6 +157,7 @@ BEGIN {
   if (c1 == "" || c2 == "") { print "lint-jq-lf: cannot read the standalone snippet from runtime/lib/jq-lf.sh" > "/dev/stderr"; exit 2 }
 
   for (i = 1; i <= np; i++) scan(paths[i])
+  if (unreadable) exit 2
 
   fails = 0; checked = 0; callers = 0; loaders = 0
   for (i = 1; i <= np; i++) {
@@ -144,7 +169,11 @@ BEGIN {
       continue
     }
     if (snippet) loads[p] = 1
-    if (mode[p] != "100755") continue
+    bn = p; sub(/.*\//, "", bn)
+    # a non-executable file is an entry only when nothing sources it by name and it
+    # is not in a lib/ directory (libraries there are loaded by loaders such as
+    # cli/pmctl's, whose target names are not literal)
+    if (mode[p] != "100755" && ((bn in sourced) || p ~ /(^|\/)lib\//)) continue
     checked++
     istest = (p ~ /^tests\//)
     closure(p)
@@ -176,4 +205,4 @@ BEGIN {
 }
 AWK
 
-awk -v ROOT="$repo_root" -v LIST="$list" -v EXEMPT="$exemptions" -f "$work/lint.awk"
+JQLF_ROOT="$repo_root" JQLF_LIST="$list" JQLF_EXEMPT="$exemptions" awk -f "$work/lint.awk"

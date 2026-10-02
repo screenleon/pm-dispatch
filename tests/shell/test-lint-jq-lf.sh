@@ -208,6 +208,206 @@ case_lint_jq_lf_snippet_matches_the_library() {
   pass "$name"
 }
 
+# Behavior: every common way a script runs jq counts as a call, so an entry that
+# uses jq only in a condition, behind `command`/`exec`, after a pipe or with a bare
+# word argument still has to load the shim.
+# Steps: one entry per call form, none loading the shim; each must be named.
+case_lint_jq_lf_recognises_each_call_form() {
+  local name="lint-jq-lf-recognises-each-call-form"
+  should_run "$name" || return 0
+  local root i=0 form missing=""
+  root="$(make_fixture forms)"
+  local -a forms=(
+    'if jq -e . x; then :; fi'
+    'while jq empty x; do :; done'
+    'until ! jq -e . x; do :; done'
+    'x && jq .a y'
+    'x || jq .a y'
+    '! jq -e . x'
+    'echo 1 | jq length'
+    'v="$(jq keys x)"'
+    'v=$(jq "$f")'
+    '{ jq .a x; }'
+    'command jq -n 1'
+    'exec jq -n 1'
+    'jq empty x # trailing comment'
+    'echo 1 | jq'
+    'exec jq'
+  )
+  for form in "${forms[@]}"; do
+    i=$((i + 1))
+    put "$root" "bin/form$i.sh" exec '#!/usr/bin/env bash' "$form"
+  done
+  put "$root" bin/continued.sh exec '#!/usr/bin/env bash' "jq \\" '  .a x'
+  lint "$root"
+  [[ "$RC" -eq 1 ]] || { fail "$name" "expected rc 1, got $RC: $OUT"; return; }
+  for i in $(seq 1 "${#forms[@]}"); do
+    [[ "$OUT" == *"bin/form$i.sh: calls jq"* ]] || missing="$missing form$i(${forms[$((i - 1))]})"
+  done
+  [[ "$OUT" == *"bin/continued.sh: calls jq"* ]] || missing="$missing continued"
+  [[ -z "$missing" ]] || { fail "$name" "not recognised as a jq call:$missing"; return; }
+  pass "$name"
+}
+
+# Behavior: text that only looks like a jq call does not make a script need the
+# shim: comments, a message, an existence check, a function definition, an array
+# of tool names, an assignment, a `source = $0` awk program.
+# Steps: one entry holding all of them passes.
+case_lint_jq_lf_ignores_lookalikes() {
+  local name="lint-jq-lf-ignores-lookalikes"
+  should_run "$name" || return 0
+  local root; root="$(make_fixture lookalikes)"
+  put "$root" bin/look.sh exec '#!/usr/bin/env bash' \
+    '# jq -r .x file' \
+    'echo "use jq -r to read it"' \
+    'command -v jq >/dev/null 2>&1 || exit 1' \
+    'type -P jq >/dev/null' \
+    'jq() { :; }' \
+    'tools=(jq git awk)' \
+    'jq=1' \
+    "awk '{ source = \$0 }' /dev/null"
+  lint "$root"
+  [[ "$RC" -eq 0 ]] || { fail "$name" "rc=$RC out=$OUT"; return; }
+  pass "$name"
+}
+
+# Behavior: the source closure is followed through more than one hop, and a source
+# line whose target is an earlier word followed by a later `.sh` token resolves to
+# the last one.
+# Steps: entry -> middle.sh -> leaf.sh (calls jq); the entry is named with the leaf.
+case_lint_jq_lf_follows_two_hops() {
+  local name="lint-jq-lf-follows-two-hops"
+  should_run "$name" || return 0
+  local root; root="$(make_fixture hops)"
+  put "$root" lib/leaf.sh lib 'leaf() { jq -n 1; }'
+  put "$root" lib/middle.sh lib '. "$(dirname "$0")/leaf.sh"'
+  put "$root" bin/top.sh exec '#!/usr/bin/env bash' '. "$(dirname "$0")/../lib/middle.sh"'
+  lint "$root"
+  [[ "$RC" -eq 1 && "$OUT" == *"bin/top.sh: calls jq through lib/leaf.sh"* ]] || { fail "$name" "rc=$RC out=$OUT"; return; }
+  pass "$name"
+}
+
+# Behavior: a source target built from a variable ("$d/lib-$x.sh", "${d}x.sh"), a
+# literal name that is not a tracked file ("$HOME/.claude/x.sh"), or
+# followed by a comment naming a .sh file is a dynamic source, not a static edge to
+# some other file, so it needs the shim or an annotation.
+# Steps: a tracked file named like the trailing fragment exists in each fixture.
+case_lint_jq_lf_partial_names_are_dynamic() {
+  local name="lint-jq-lf-partial-names-are-dynamic"
+  should_run "$name" || return 0
+  local root v i=0
+  root="$(make_fixture partial)"
+  put "$root" lib/name.sh lib 'n() { :; }'
+  put "$root" lib/x.sh lib 'n() { :; }'
+  put "$root" lib/other.sh lib 'n() { :; }'
+  for v in '. "$D/lib-$name.sh"' '. "${D}x.sh"' '. "$1" # see other.sh' '. "$HOME/.claude/untracked.sh"'; do
+    i=$((i + 1))
+    put "$root" "bin/p$i.sh" exec '#!/usr/bin/env bash' "$v"
+  done
+  lint "$root"
+  [[ "$RC" -eq 1 && "$OUT" == *"bin/p1.sh: has a dynamic source"* && "$OUT" == *"bin/p2.sh: has a dynamic source"* && "$OUT" == *"bin/p3.sh: has a dynamic source"* \
+     && "$OUT" == *"bin/p4.sh: has a dynamic source"* ]] \
+    || { fail "$name" "rc=$RC out=$OUT"; return; }
+  pass "$name"
+}
+
+# Behavior: a dynamic source is waived only by a `# jq-lf: dynamic-ok: <reason>`
+# comment on the same line or within the two lines before it, and a test script
+# (tests/) is not required to waive one at all.
+# Steps: same-line, one-line-before and two-lines-before annotations pass; three
+# lines before fails; a tests/ entry with a bare dynamic source passes.
+case_lint_jq_lf_annotation_window_and_tests() {
+  local name="lint-jq-lf-annotation-window-and-tests"
+  should_run "$name" || return 0
+  local root; root="$(make_fixture window)"
+  put "$root" bin/same.sh exec '#!/usr/bin/env bash' '. "$1" # jq-lf: dynamic-ok: config file'
+  put "$root" bin/one.sh exec '#!/usr/bin/env bash' '# jq-lf: dynamic-ok: config file' '. "$1"'
+  put "$root" bin/two.sh exec '#!/usr/bin/env bash' '# jq-lf: dynamic-ok: config file' ':' '. "$1"'
+  put "$root" tests/shell/test-dyn.sh exec '#!/usr/bin/env bash' '. "$1"'
+  lint "$root"
+  [[ "$RC" -eq 0 ]] || { fail "$name" "annotated forms and tests/ should pass: rc=$RC out=$OUT"; return; }
+  put "$root" bin/three.sh exec '#!/usr/bin/env bash' '# jq-lf: dynamic-ok: config file' ':' ':' '. "$1"'
+  lint "$root"
+  [[ "$RC" -eq 1 && "$OUT" == *"bin/three.sh"* && "$OUT" != *"bin/two.sh"* && "$OUT" != *"test-dyn.sh"* ]] || { fail "$name" "three lines before: rc=$RC out=$OUT"; return; }
+  pass "$name"
+}
+
+# Behavior: which files are entries. A script committed without the executable bit
+# is still checked unless something sources it by name or it lives in a lib/
+# directory; cli/pmctl (no extension) is an entry.
+# Steps: a 644 script that calls jq fails; the same body under lib/ or sourced by an
+# entry that loads the shim does not; cli/pmctl calling jq fails.
+case_lint_jq_lf_entry_selection() {
+  local name="lint-jq-lf-entry-selection"
+  should_run "$name" || return 0
+  local root; root="$(make_fixture entries)"
+  put "$root" tools/plain.sh lib '#!/usr/bin/env bash' 'jq -n 1'
+  put "$root" cli/pmctl exec '#!/usr/bin/env bash' 'jq -n 1'
+  put "$root" runtime/lib/only-lib.sh lib '#!/usr/bin/env bash' 'jq -n 1'
+  put "$root" tools/helper.sh lib '#!/usr/bin/env bash' 'jq -n 1'
+  put "$root" tools/user.sh exec '#!/usr/bin/env bash' "$SNIP1" "$SNIP2" '. "$(dirname "$0")/helper.sh"'
+  lint "$root"
+  [[ "$RC" -eq 1 && "$OUT" == *"tools/plain.sh: calls jq"* && "$OUT" == *"cli/pmctl: calls jq"* \
+     && "$OUT" != *"only-lib.sh"* && "$OUT" != *"helper.sh: "* && "$OUT" != *"tools/user.sh"* ]] \
+    || { fail "$name" "rc=$RC out=$OUT"; return; }
+  pass "$name"
+}
+
+# Behavior: both snippet lines drifted, and a snippet in a file that does not call
+# jq at all, are rejected; an exemption row for a file that no longer needs the
+# shim is rejected.
+# Steps: three fixtures, one per rule.
+case_lint_jq_lf_more_rejections() {
+  local name="lint-jq-lf-more-rejections"
+  should_run "$name" || return 0
+  local root
+  root="$(make_fixture both-drift)"
+  put "$root" hooks/d.sh exec '#!/usr/bin/env bash' "${SNIP1/native/NATIVE}" "${SNIP2/-b/-B}" 'jq -n 1'
+  lint "$root"
+  [[ "$RC" -eq 1 && "$OUT" == *"hooks/d.sh"* && "$OUT" == *"differs"* ]] || { fail "$name" "both lines drifted: rc=$RC out=$OUT"; return; }
+  root="$(make_fixture no-longer-needed)"
+  put "$root" bin/quiet.sh exec '#!/usr/bin/env bash' 'echo hi'
+  printf 'bin/quiet.sh\tused to call jq\n' > "$root/tools/lint/jq-lf-exemptions.tsv"
+  lint "$root"
+  [[ "$RC" -eq 1 && "$OUT" == *"bin/quiet.sh"* && "$OUT" == *"does not need it"* ]] || { fail "$name" "needless exemption: rc=$RC out=$OUT"; return; }
+  root="$(make_fixture comments-in-tsv)"
+  put "$root" bin/odd.sh exec '#!/usr/bin/env bash' 'jq -n 1'
+  printf '# a comment line\n\nbin/odd.sh\tmanaged elsewhere\n' > "$root/tools/lint/jq-lf-exemptions.tsv"
+  lint "$root"
+  [[ "$RC" -eq 0 ]] || { fail "$name" "comment and blank lines in the exemption file: rc=$RC out=$OUT"; return; }
+  pass "$name"
+}
+
+# Behavior: environment and usage errors exit 2, not 0 or 1, and a tracked file the
+# lint cannot read is an error rather than a silent skip.
+# Steps: unknown argument, a repo without the library, a library without the snippet
+# lines, and a tracked file deleted from the working tree.
+case_lint_jq_lf_exit_two_paths() {
+  local name="lint-jq-lf-exit-two-paths"
+  should_run "$name" || return 0
+  local root rc=0
+  root="$(make_fixture usage)"
+  bash "$root/tools/lint/lint-jq-lf.sh" --bogus >/dev/null 2>&1 || rc=$?
+  [[ "$rc" -eq 2 ]] || { fail "$name" "unknown argument: rc=$rc"; return; }
+  rc=0
+  bash "$root/tools/lint/lint-jq-lf.sh" --repo-root >/dev/null 2>&1 || rc=$?
+  [[ "$rc" -eq 2 ]] || { fail "$name" "--repo-root without a value: rc=$rc"; return; }
+  root="$(make_fixture no-lib)"
+  rm -f "$root/runtime/lib/jq-lf.sh"; git -C "$root" add -A
+  lint "$root"
+  [[ "$RC" -eq 2 && "$OUT" == *"missing runtime/lib/jq-lf.sh"* ]] || { fail "$name" "missing library: rc=$RC out=$OUT"; return; }
+  root="$(make_fixture no-snippet)"
+  printf '# a library without the standalone snippet\n' > "$root/runtime/lib/jq-lf.sh"
+  lint "$root"
+  [[ "$RC" -eq 2 && "$OUT" == *"cannot read the standalone snippet"* ]] || { fail "$name" "library without snippet: rc=$RC out=$OUT"; return; }
+  root="$(make_fixture unreadable)"
+  put "$root" bin/gone.sh exec '#!/usr/bin/env bash' 'jq -n 1'
+  rm -f "$root/bin/gone.sh"
+  lint "$root"
+  [[ "$RC" -eq 2 && "$OUT" == *"cannot read bin/gone.sh"* ]] || { fail "$name" "deleted tracked file: rc=$RC out=$OUT"; return; }
+  pass "$name"
+}
+
 # Behavior: the repository itself satisfies the lint, so a new jq-calling entry
 # that forgets the shim fails CI on Linux, where the CRLF problem never shows.
 # Steps: run the linter on the checkout.
@@ -228,6 +428,14 @@ case_lint_jq_lf_rejects_a_drifted_snippet
 case_lint_jq_lf_handles_dynamic_sources
 case_lint_jq_lf_exemptions_must_stay_needed
 case_lint_jq_lf_snippet_matches_the_library
+case_lint_jq_lf_recognises_each_call_form
+case_lint_jq_lf_ignores_lookalikes
+case_lint_jq_lf_follows_two_hops
+case_lint_jq_lf_partial_names_are_dynamic
+case_lint_jq_lf_annotation_window_and_tests
+case_lint_jq_lf_entry_selection
+case_lint_jq_lf_more_rejections
+case_lint_jq_lf_exit_two_paths
 case_lint_jq_lf_the_repository_passes
 
 th_summary

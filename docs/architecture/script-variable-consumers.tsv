@@ -183,6 +183,7 @@ OSTYPE	OSTYPE	ops/usage/log-usage.sh	production
 OSTYPE	OSTYPE	ops/usage/token-usage.sh	production
 OSTYPE	OSTYPE	ops/usage/usage-weekly.sh	production
 OSTYPE	OSTYPE	runtime/bin/dispatch-post-verify.sh	production
+OSTYPE	OSTYPE	runtime/bin/dispatch-supervisor.sh	production
 OSTYPE	OSTYPE	runtime/bin/doctor.sh	production
 OSTYPE	OSTYPE	runtime/bin/gate-supervisor.sh	production
 OSTYPE	OSTYPE	runtime/bin/pr-gate.sh	production
@@ -191,9 +192,6 @@ OSTYPE	OSTYPE	runtime/hooks/guard-inject-memory.sh	production
 OSTYPE	OSTYPE	runtime/hooks/guard-pm-bash.sh	production
 OSTYPE	OSTYPE	runtime/hooks/guard-pm-write.sh	production
 OSTYPE	OSTYPE	runtime/hooks/guard-reviewer-write.sh	production
-OSTYPE	OSTYPE	runtime/lib/dispatch-record.sh	production
-OSTYPE	OSTYPE	runtime/lib/executor-router.sh	production
-OSTYPE	OSTYPE	runtime/lib/gate-structural-verify.sh	production
 OSTYPE	OSTYPE	runtime/lib/jq-lf.sh	production
 OSTYPE	OSTYPE	runtime/lib/pmctl-context.sh	production
 OSTYPE	OSTYPE	runtime/lib/portable.sh	production

@@ -1,10 +1,6 @@
 #!/usr/bin/env bash
 # Durable per-run dispatch result writer.
 
-
-# CC-594: native Windows jq writes CRLF to a pipe/file; -b keeps LF (see runtime/lib/jq-lf.sh)
-case "${OSTYPE:-}" in msys*|cygwin*) if type -P jq >/dev/null 2>&1; then jq() { command jq -b "$@"; }; fi ;; esac
-
 dispatch_record_write() {
   local run_id="${1:-}" task_id="${2:-}" executor="${3:-}" model="${4:-}" brief_file="${5:-}"
   local working_dir="${6:-}" exit_code="${7:-}" final_state="${8:-}" verify_summary="${9:-}"

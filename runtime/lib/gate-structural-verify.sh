@@ -4,10 +4,6 @@
 # This module contains no Gate field names, enums, or shapes. Those are loaded
 # from the generated bundle, which is built from core/schema/gate-*.schema.json.
 
-
-# CC-594: native Windows jq writes CRLF to a pipe/file; -b keeps LF (see runtime/lib/jq-lf.sh)
-case "${OSTYPE:-}" in msys*|cygwin*) if type -P jq >/dev/null 2>&1; then jq() { command jq -b "$@"; }; fi ;; esac
-
 _gate_structural_verify_dir="${BASH_SOURCE[0]%/*}"
 _gate_structural_verify_filter="$_gate_structural_verify_dir/gate-structural-validator.jq"
 _gate_structural_verify_bundle="$_gate_structural_verify_dir/gate-structural-schemas.json"
