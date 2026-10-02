@@ -1661,7 +1661,12 @@ pmctl 派生子行程那一部分的編輯，且過不了 `env -i`／`timeout`�
    接上 `cli/pmctl`（`-r` 保護，精簡 fixture 不必補檔）、`pr-gate.sh`、測試 harness + 把以
    `command -v` 取 jq 路徑的測試改成 `type -P`、把在行程內用清空 PATH 模擬「沒有 jq」的測試
    加上 `unset -f jq`。
-2. **S2**：22 個獨立入口加片段、其餘入口 source；新增 lint 與其測試（含變異：移除任一入口
+2. **S2**（已完成，pr:#661；實作時加片段的腳本是 44 個，不是估計的 22 個，
+   因為傳遞性 source 閉包把 guard hook、安裝／解除安裝入口、`doctor.sh`、`pmctl-context.sh` 與 5 個
+   測試／runner 腳本也納入；全部加了逐字相同的片段，`lint-jq-lf` 與其 17 案例測試、census 的
+   `type -P` 修正與測試皆已合入；審查補強：偵測 `if jq`／`command jq`／裸字引數等呼叫形式、
+   `"$d/lib-$x.sh"` 這類部分動態 source 視為動態、沒有 +x 的腳本也算入口、`dispatch-supervisor.sh`
+   的動態載入迴圈原本漏網、其餘三個可執行位元函式庫改以 `jq-lf-exemptions.tsv` 豁免而非各塞一份片段）：22 個獨立入口加片段、其餘入口 source；新增 lint 與其測試（含變異：移除任一入口
    會被抓到）。lint 規則要看**傳遞性的 source 閉包**，不是只看「本身呼叫 jq 的腳本」（一個本身
    不呼叫 jq、但 source 了 `guard-framework.sh` 的 hook 否則會漏網）；snippet 要逐字比對。
    自成一體、不呼叫 `th_init` 的 9 個測試套件也要處理。把 snippet 放進 guard hook 前，須確認

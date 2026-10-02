@@ -19,6 +19,9 @@
 # later resolves the terminal outcome from the durable dispatch record.
 set -euo pipefail
 
+# CC-594: native Windows jq writes CRLF to a pipe/file; -b keeps LF (see runtime/lib/jq-lf.sh)
+case "${OSTYPE:-}" in msys*|cygwin*) if type -P jq >/dev/null 2>&1; then jq() { command jq -b "$@"; }; fi ;; esac
+
 # REPO_ROOT resolution stays inline (BEGIN/END markers below): this script
 # must resolve its own root before it can `source` the shared lib, so the
 # resolver cannot itself live in the lib it bootstraps. Duplicated verbatim

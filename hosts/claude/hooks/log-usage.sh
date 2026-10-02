@@ -3,6 +3,9 @@
 # Receives JSON payload via stdin from Claude Code Stop event.
 set -euo pipefail
 
+# CC-594: native Windows jq writes CRLF to a pipe/file; -b keeps LF (see runtime/lib/jq-lf.sh)
+case "${OSTYPE:-}" in msys*|cygwin*) if type -P jq >/dev/null 2>&1; then jq() { command jq -b "$@"; }; fi ;; esac
+
 payload=$(cat)
 transcript=$(printf '%s' "$payload" | jq -r '.transcript_path // empty' 2>/dev/null || true)
 session_id=$(printf '%s' "$payload" | jq -r '.session_id // empty' 2>/dev/null || true)

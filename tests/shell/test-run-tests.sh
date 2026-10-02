@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # Regression tests for the pm-dispatch iteration-only affected test planner.
 set -euo pipefail
+
+# CC-594: native Windows jq writes CRLF to a pipe/file; -b keeps LF (see runtime/lib/jq-lf.sh)
+case "${OSTYPE:-}" in msys*|cygwin*) if type -P jq >/dev/null 2>&1; then jq() { command jq -b "$@"; }; fi ;; esac
+
 export LC_ALL=C.UTF-8
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -39,7 +43,7 @@ make_fixture() {
   cat > "$repo/tests/lib/test-suite-runner.sh" <<'RUNNER'
 #!/usr/bin/env bash
 set -euo pipefail
-suites=(lint-agents lint-scripts lint-script-domain-inventory lint-deprecation-sunset lint-doc-wikilinks lint-readme-surface-lists lint-portable-repo-paths test-lint-shellcheck test-script-domain-inventory test-lint-portable-repo-paths test-lint-frontmatter test-commands test-check-docs-freshness test-guards test-migrate test-portable test-install test-uninstall test-doctor test-hook-profile-parity test-pmctl-dispatch test-pmctl-context test-pmctl-memory test-pmctl-gate test-pmctl-adapter-generate test-executor-router test-runner-kind test-release-verify test-dispatch-lifecycle test-runtime-lib-coverage test-e2e-script test-pr-gate-shard-1 test-pr-gate-shard-2 test-pr-gate-shard-3 test-pr-gate-shard-4 test-pr-gate-profile test-gate-protocol test-gate-structural-verify test-gate-options test-gate-policy test-gate-scope test-pmctl-operation test-host-manifest test-host-write-codex test-codex-dispatch-continuation test-host-write-parity test-core-schemas test-layer-boundaries test-pm-scripts test-run-tests test-setup-project test-state-store test-state-layout-parity test-check-planning-status-consistency test-lint-permanent-test-admissions test-lint-deprecation-sunset test-lint-doc-wikilinks test-lint-readme-surface-lists test-gate-subprocess-census test-schema-task-mirrors-backlog test-pmctl-backlog test-archive-closed-backlog)
+suites=(lint-agents lint-scripts lint-jq-lf test-lint-jq-lf test-jq-lf lint-script-domain-inventory lint-deprecation-sunset lint-doc-wikilinks lint-readme-surface-lists lint-portable-repo-paths test-lint-shellcheck test-script-domain-inventory test-lint-portable-repo-paths test-lint-frontmatter test-commands test-check-docs-freshness test-guards test-migrate test-portable test-install test-uninstall test-doctor test-hook-profile-parity test-pmctl-dispatch test-pmctl-context test-pmctl-memory test-pmctl-gate test-pmctl-adapter-generate test-executor-router test-runner-kind test-release-verify test-dispatch-lifecycle test-runtime-lib-coverage test-e2e-script test-pr-gate-shard-1 test-pr-gate-shard-2 test-pr-gate-shard-3 test-pr-gate-shard-4 test-pr-gate-profile test-gate-protocol test-gate-structural-verify test-gate-options test-gate-policy test-gate-scope test-pmctl-operation test-host-manifest test-host-write-codex test-codex-dispatch-continuation test-host-write-parity test-core-schemas test-layer-boundaries test-pm-scripts test-run-tests test-setup-project test-state-store test-state-layout-parity test-check-planning-status-consistency test-lint-permanent-test-admissions test-lint-deprecation-sunset test-lint-doc-wikilinks test-lint-readme-surface-lists test-gate-subprocess-census test-schema-task-mirrors-backlog test-pmctl-backlog test-archive-closed-backlog)
 for arg in "$@"; do
   if [[ "$arg" == --list ]]; then printf '%s\n' "${suites[@]}"; exit 0; fi
 done
@@ -148,7 +152,7 @@ case_shellcheck_toolchain_mapping_is_complete() {
       .shellcheck-version)
         expected=$'lint-scripts\ntest-lint-shellcheck\ntest-release-verify' ;;
       *.sh)
-        expected=$'lint-script-domain-inventory\nlint-scripts\ntest-layer-boundaries\ntest-lint-shellcheck\ntest-release-verify' ;;
+        expected=$'lint-jq-lf\nlint-script-domain-inventory\nlint-scripts\ntest-layer-boundaries\ntest-lint-shellcheck\ntest-release-verify' ;;
       *)
         expected=$'lint-script-domain-inventory\nlint-scripts\ntest-lint-shellcheck' ;;
     esac
@@ -166,7 +170,7 @@ case_shellcheck_toolchain_mapping_is_complete() {
 # Steps:
 #   1. Arrange a runner fixture with argument and diagnostic capture files.
 #   2. Act by listing suites selected for runtime/lib/adapter-manifest.sh.
-#   3. Assert the exact 23-suite set, zero execution, successful status, and no coverage-gap diagnostic.
+#   3. Assert the exact 24-suite set, zero execution, successful status, and no coverage-gap diagnostic.
 case_adapter_manifest_mapping_covers_consumers() {
   local name=adapter-manifest-mapping-covers-consumers repo out status=0 args diagnostics
   local actual expected
@@ -177,6 +181,7 @@ case_adapter_manifest_mapping_covers_consumers() {
     --path runtime/lib/adapter-manifest.sh --list 2>"$diagnostics") || status=$?
   actual="$(printf '%s\n' "$out" | LC_ALL=C sort)"
   expected="$(printf '%s\n' \
+    lint-jq-lf \
     lint-scripts \
     lint-script-domain-inventory \
     lint-portable-repo-paths \
@@ -201,7 +206,7 @@ case_adapter_manifest_mapping_covers_consumers() {
     test-runtime-lib-coverage \
     test-uninstall | LC_ALL=C sort)"
   if [[ "$status" -eq 0 && "$actual" == "$expected" \
-      && $(wc -l <<< "$out") -eq 23 \
+      && $(wc -l <<< "$out") -eq 24 \
       && ! -s "$args" \
       && "$(<"$diagnostics")" != *"coverage gaps"* ]]; then
     pass "$name"
@@ -226,6 +231,7 @@ case_install_receipt_mapping_covers_consumers() {
     --path runtime/lib/install-receipt.sh --list 2>"$diagnostics") || status=$?
   actual="$(printf '%s\n' "$out" | LC_ALL=C sort)"
   expected="$(printf '%s\n' \
+    lint-jq-lf \
     lint-portable-repo-paths \
     lint-script-domain-inventory \
     lint-scripts \
@@ -236,7 +242,7 @@ case_install_receipt_mapping_covers_consumers() {
     test-portable \
     test-uninstall | LC_ALL=C sort)"
   if [[ "$status" -eq 0 && "$actual" == "$expected" \
-      && $(wc -l <<< "$out") -eq 9 \
+      && $(wc -l <<< "$out") -eq 10 \
       && ! -s "$args" \
       && "$(<"$diagnostics")" != *"coverage gaps"* ]]; then
     pass "$name"
@@ -261,6 +267,7 @@ case_executor_router_mapping_covers_gate_deployments() {
     --path runtime/lib/executor-router.sh --list 2>"$diagnostics") || status=$?
   actual="$(printf '%s\n' "$out" | LC_ALL=C sort)"
   expected="$(printf '%s\n' \
+    lint-jq-lf \
     lint-portable-repo-paths \
     lint-script-domain-inventory \
     lint-scripts \
@@ -274,7 +281,7 @@ case_executor_router_mapping_covers_gate_deployments() {
     test-pr-gate-shard-3 \
     test-pr-gate-shard-4 | LC_ALL=C sort)"
   if [[ "$status" -eq 0 && "$actual" == "$expected" \
-      && $(wc -l <<< "$out") -eq 12 \
+      && $(wc -l <<< "$out") -eq 13 \
       && ! -s "$args" \
       && "$(<"$diagnostics")" != *"coverage gaps"* ]]; then
     pass "$name"
@@ -433,6 +440,41 @@ case_census_paths_map_to_census_suite() {
     out=$(RUN_TESTS_ARGS_LOG="$TMP_ROOT/$name.args" \
       "$repo/tests/bin/run-tests.sh" --path "$p" --list 2>&1) || status=$?
     if [[ "$status" -ne 0 || "$out" != *"test-gate-subprocess-census"* || "$out" == *"coverage gaps"* ]]; then
+      fail "$name" "--path $p: status=$status out=$out"; return
+    fi
+  done
+  pass "$name"
+}
+
+# Behavior: (CC-594) a changed shell entry or cli/pmctl selects lint-jq-lf, so a new
+# jq-calling script that forgets the jq LF shim is caught by the iteration runner
+# and not only by CI; the lint, its exemption list and the shim library also
+# select the lint's regression suites.
+# Steps: list the selection for a hook, for cli/pmctl, and for each lint-owned path.
+case_jq_lf_paths_map_to_the_lint() {
+  local name=jq-lf-paths-map-to-the-lint repo out status p
+  repo="$(make_fixture "$name")"
+  status=0
+  out=$(RUN_TESTS_ARGS_LOG="$TMP_ROOT/$name.args" \
+    "$repo/tests/bin/run-tests.sh" --path runtime/hooks/guard-pm-bash.sh --list 2>&1) || status=$?
+  if [[ "$status" -ne 0 || "$out" != *"lint-jq-lf"* || "$out" == *"coverage gaps"* ]]; then
+    fail "$name" "hook path: status=$status out=$out"; return
+  fi
+  # cli/pmctl selects suites the fixture's stub runner does not declare, so ask
+  # the real planner.
+  status=0
+  out=$("$REPO_ROOT/tests/bin/run-tests.sh" --path cli/pmctl --list 2>&1) || status=$?
+  if [[ "$status" -ne 0 || "$out" != *"lint-jq-lf"* ]]; then
+    fail "$name" "cli/pmctl: status=$status out=$out"; return
+  fi
+  for p in tools/lint/lint-jq-lf.sh tools/lint/jq-lf-exemptions.tsv \
+           tests/shell/test-lint-jq-lf.sh runtime/lib/jq-lf.sh; do
+    status=0
+    out=$(RUN_TESTS_ARGS_LOG="$TMP_ROOT/$name.args" \
+      "$repo/tests/bin/run-tests.sh" --path "$p" --list 2>/dev/null) || status=$?
+    # whole-line matches: test-lint-jq-lf contains the text lint-jq-lf
+    if [[ "$status" -ne 0 ]] || ! grep -qx 'lint-jq-lf' <<< "$out" \
+        || ! grep -qx 'test-lint-jq-lf' <<< "$out" || ! grep -qx 'test-jq-lf' <<< "$out"; then
       fail "$name" "--path $p: status=$status out=$out"; return
     fi
   done
@@ -926,6 +968,7 @@ case_operational_docs_map_to_stale_reference_lint
 case_reader_docs_map_to_wikilink_lint
 case_readme_surface_paths_map_to_lint
 case_census_paths_map_to_census_suite
+case_jq_lf_paths_map_to_the_lint
 case_gitignore_maps_to_setup_project
 case_agent_mapping_uses_registered_frontmatter_suite
 case_command_mapping_uses_registered_frontmatter_suite

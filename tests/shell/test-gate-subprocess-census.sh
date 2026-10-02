@@ -104,6 +104,26 @@ exit 0')"
   else fail "$name" "expected jq=5 awk=3, got jq=$jq_calls awk=$awk_calls :: $CENSUS_OUT"; fi
 }
 
+# Behavior: (CC-594) the census still counts jq correctly when a jq() shell
+# function (the jq LF shim) is exported into its environment. With `command -v`
+# the wrapper's real-binary path would be the bare word jq, which resolves back to
+# the wrapper itself and loops until the timeout.
+# Steps: export a jq function, run a known subject that calls jq five times, and
+# assert exit 0 and jq=5.
+test_time_mode_counts_jq_when_a_jq_function_is_exported() {
+  local name="time mode counts jq calls when a jq function is exported"
+  should_run "$name" || return 0
+  local suite out rc=0 jq_calls
+  suite="$(fake_suite time-jq-function '
+for i in 1 2 3 4 5; do jq -n 1 >/dev/null; done
+exit 0')"
+  # shellcheck disable=SC2329 # jq() is exported and called by the subject, not here
+  out="$(jq() { command jq -b "$@"; }; export -f jq; bash "$CENSUS" --suite "$suite" --case any --timeout 30 --mode time 2>&1)" || rc=$?
+  jq_calls="$(awk '$1 == "jq" { print $2 }' <<< "$out")"
+  if [[ "$rc" -eq 0 && "$jq_calls" == "5" ]]; then pass "$name"
+  else fail "$name" "expected exit 0 and jq=5, got rc=$rc jq=$jq_calls :: $out"; fi
+}
+
 test_time_mode_reports_a_passing_subject_as_usable() {
   local name="time mode labels a passing subject's numbers usable"
   should_run "$name" || return 0
@@ -452,6 +472,7 @@ test_invalid_mode_is_usage_error
 test_non_numeric_timeout_is_usage_error
 test_unreadable_suite_is_rejected_before_setup
 test_time_mode_counts_every_call_of_a_known_subject
+test_time_mode_counts_jq_when_a_jq_function_is_exported
 test_time_mode_reports_a_passing_subject_as_usable
 test_exec_mode_clusters_flags_without_program_spill
 test_bash_mode_traces_the_gate_not_the_suite_driver

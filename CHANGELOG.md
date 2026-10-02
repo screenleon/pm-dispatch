@@ -57,6 +57,33 @@ Versions follow [Semantic Versioning](https://semver.org/).
     `command -v jq`, or simulate a missing jq in-process, were adjusted.
   A `jq` started as a program (`timeout 5 jq`, `xargs jq`) bypasses the function.
 
+- **The standalone entry scripts load the jq LF shim too, and a lint keeps it that
+  way (CC-594, slice 2 of 4).** The 44 scripts that call jq, directly or through
+  a library, without going through `pmctl`, `pr-gate.sh` or the test harness (the
+  Claude/Codex hooks, the install and uninstall entries, the four adapter
+  `dispatch.sh`, the detached `dispatch-supervisor.sh`, `doctor.sh`, the usage and
+  migration tools, the release smokes, the guard hooks and the test runners) now
+  carry the two-line snippet quoted in `runtime/lib/jq-lf.sh`'s header, so on
+  native Windows their `jq` output is LF as well. New `tools/lint/lint-jq-lf.sh`
+  (CI job `lint-jq-lf`, and selected by `tests/bin/run-tests.sh` for any shell
+  file) fails an entry whose `source` closure calls jq (in a condition, behind
+  `command`/`exec`, after a pipe, with any argument) without loading the shim;
+  an entry is a mode-100755 file or a script outside `lib/` that nothing sources,
+  so a script committed without the executable bit is still checked. It compares
+  the snippet to the library's text so the copies cannot drift, treats a
+  `source` whose target is not a literal tracked file (including `"$d/lib-$x.sh"`)
+  as unknown unless annotated `# jq-lf: dynamic-ok: <reason>`, fails on a tracked
+  file it cannot read, and rejects stale rows in `tools/lint/jq-lf-exemptions.tsv`,
+  which lists the three executable-mode libraries nothing runs directly. The
+  loader loop in `dispatch-supervisor.sh` (`. "$REPO_ROOT/runtime/lib/$_lib.sh"`),
+  which reaches jq through `dispatch-record.sh` and `pmctl-dispatch.sh`, had
+  escaped notice before; it now loads the shim itself.
+  `ops/diagnostics/gate-subprocess-census.sh` took the real tool path from
+  `command -v`, which prints the bare word `jq` once the shim exists and would
+  have made its generated wrapper call itself; it uses `type -P` now.
+  **Still open (slices 3-4):** readers of CRLF data (`jq -R`), and Windows
+  evidence for the whole change.
+
 - **Gate digests no longer probe their tool on every call (CC-611).**
   `gate_digest_stream` ran `printf '' | sha256sum` (a subshell plus the tool)
   before every digest and then piped through `awk`, four processes per digest,

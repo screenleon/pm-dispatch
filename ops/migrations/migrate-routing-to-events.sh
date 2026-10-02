@@ -3,6 +3,9 @@
 
 set -uo pipefail
 
+# CC-594: native Windows jq writes CRLF to a pipe/file; -b keeps LF (see runtime/lib/jq-lf.sh)
+case "${OSTYPE:-}" in msys*|cygwin*) if type -P jq >/dev/null 2>&1; then jq() { command jq -b "$@"; }; fi ;; esac
+
 BASH_DISPATCH_KIND="run.dispatched"
 AGENT_DISPATCH_KIND="run.dispatched"
 

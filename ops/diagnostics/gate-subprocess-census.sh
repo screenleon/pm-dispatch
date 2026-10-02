@@ -151,7 +151,9 @@ WRAPPED_BINARIES=(jq git awk grep sed sha256sum cat mktemp)
 write_wrappers() {
   local tool real
   for tool in "${WRAPPED_BINARIES[@]}"; do
-    real="$(command -v "$tool" 2>/dev/null)" || continue
+    # type -P, not command -v: with an exported jq() function in the environment (the
+    # CC-594 shim) command -v prints the word jq and the wrapper would exec itself.
+    real="$(type -P "$tool" 2>/dev/null)" || continue
     case "$mode" in
       time)
         # bash's EPOCHREALTIME times the child without forking a clock.

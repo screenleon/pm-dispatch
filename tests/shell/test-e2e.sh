@@ -17,6 +17,10 @@
 # Exit status: 0 = GO (all phases passed), 1 = NO-GO (one or more failed),
 #              2 = usage error, 4 = PARTIAL GO (required phases skipped, no failures).
 set -uo pipefail
+
+# CC-594: native Windows jq writes CRLF to a pipe/file; -b keeps LF (see runtime/lib/jq-lf.sh)
+case "${OSTYPE:-}" in msys*|cygwin*) if type -P jq >/dev/null 2>&1; then jq() { command jq -b "$@"; }; fi ;; esac
+
 export LC_ALL=C.UTF-8
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

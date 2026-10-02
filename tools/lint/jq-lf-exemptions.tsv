@@ -1,0 +1,3 @@
+runtime/lib/dispatch-record.sh	executable-mode library that nothing runs directly; the entries that source it are checked
+runtime/lib/executor-router.sh	executable-mode library that nothing runs directly (its dynamic load is checked through the entries that source it)
+runtime/lib/gate-structural-verify.sh	executable-mode library that nothing runs directly; the entries that source it are checked

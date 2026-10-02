@@ -16,6 +16,10 @@
 # precheck failure -- used when full diagnostic evidence across all phases is
 # needed (e.g. release sign-off).
 set -euo pipefail
+
+# CC-594: native Windows jq writes CRLF to a pipe/file; -b keeps LF (see runtime/lib/jq-lf.sh)
+case "${OSTYPE:-}" in msys*|cygwin*) if type -P jq >/dev/null 2>&1; then jq() { command jq -b "$@"; }; fi ;; esac
+
 export LC_ALL=C.UTF-8
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -190,6 +194,8 @@ map_path() {
   esac
 
   [[ "$path" == *.sh ]] && add_suite lint-scripts
+  # CC-594: any shell entry (or cli/pmctl) can gain a jq call without the shim.
+  if [[ "$path" == *.sh || "$path" == cli/pmctl ]]; then add_suite lint-jq-lf; fi
 
   case "$path" in
     tests/shell/test-pr-gate.sh|tests/shell/test-pr-gate-shard-*.sh)
@@ -208,6 +214,8 @@ map_path() {
   esac
 
   case "$path" in
+    tools/lint/lint-jq-lf.sh|tools/lint/jq-lf-exemptions.tsv|tests/shell/test-lint-jq-lf.sh|runtime/lib/jq-lf.sh)
+      add_suite lint-jq-lf; add_suite test-lint-jq-lf; add_suite test-jq-lf; behavioral=1 ;;
     .gitignore)
       add_suite test-setup-project; behavioral=1 ;;
     .shellcheck-version|tools/lint/bootstrap-shellcheck.sh)
